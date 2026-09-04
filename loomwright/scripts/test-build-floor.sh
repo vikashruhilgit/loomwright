@@ -64,6 +64,20 @@
 #   (q) add_surface's invalid-detail guard - an unparseable `detail` still emits the surface
 #       (without `detail`) and names the key and the reason in notes[]; two controls, one
 #       reverting the guard (the surface vanishes) and one passing VALID detail through
+#   (r) rules detail - deterministic rows; `applies_to` AND `check` each a genuine TRI-STATE
+#       (key absent / present-and-null / value), with a mutation control showing the truthy-only
+#       reading collapses two of the three; `count` still means category FILES
+#   (s) supersedes - a TRANSITIVE, in-order chain, a dangling pointer REPORTED as dangling, and an
+#       A->B->C->A cycle reported whole; the deliberate divergence from read-rules.sh's
+#       hide/single-hop/ignore-dangling routing semantics, with its BOUNDED walk inherited
+#   (t) unparseable rules file - named with its reason, valid rules still reported, and the
+#       all / partial / none read distinction, with two mutation controls
+#   (u) churn detail - the flow-stage basis PINNED to `.categories[].flow_stage` against a fixture
+#       whose `.flow_stages` counter disagrees, malformed lines counted and named, nothing scored
+#   (v) correlation - evidence travels with it, it is labelled an observation, and an uncomputable
+#       one is OMITTED rather than emitted as zero
+#   (w) the empty fixture still yields `absent` for both new-detail surfaces, and no env seam was
+#       added for either (both stay cwd-relative)
 #   (m) real `.supervisor/` corroboration (local only) or an explicit SKIPPED line. Runs LAST
 #       despite its letter, because it is the only case that may SKIP and because its `(m)`
 #       label is what the brief commissioning (n)-(q) refers to; renaming it would break that
@@ -78,6 +92,10 @@ SCHEMA_MD="$(cd "$HERE/../docs" && pwd)/RESULT_SCHEMAS.md"
 SESS_FIXTURE="$HERE/fixtures/floor-sessions.jsonl"
 SESS_CUR_FIXTURE="$HERE/fixtures/floor-sessions-current.jsonl"
 AGENTS_FIXTURE_DIR="$HERE/fixtures/floor-agents"
+RULES_FIXTURE_DIR="$HERE/fixtures/floor-rules"
+RULES_BROKEN_FIXTURE="$HERE/fixtures/floor-rules-broken/broken.json"
+PM_FIXTURE="$HERE/fixtures/floor-postmortem.jsonl"
+PM_BAD_FIXTURE="$HERE/fixtures/floor-postmortem-malformed.jsonl"
 
 pass=0; fail=0; skip=0
 ok()   { echo "  ok: $1";        pass=$((pass+1)); }
@@ -126,7 +144,10 @@ EXP_INSIGHTS=2
 EXP_POSTMORTEM=4
 EXP_DRAIN=7
 EXP_WORKER_SUMMARIES=6
-EXP_RULES=2
+EXP_RULES=2                # category FILES, never rules - the count key keeps that meaning
+EXP_RULES_DETAIL=16        # rule OBJECTS across those two files; a separate, differently-named field
+EXP_PM_CATEGORIES=4        # category objects across the 4 ledger lines (2 + 1 + 0 + 1)
+EXP_PM_DISAGREE=1          # ledger lines whose .flow_stages counter disagrees with .categories[].flow_stage
 EXP_AGENTS=3              # the three committed fixture agent files, copied into <fixture>/agents/
 
 # The roster expectations are LITERALS, and the premise block in (n) re-greps each one out of
@@ -180,17 +201,21 @@ seed_tree() {
 
   for i in $(seq 1 $EXP_INSIGHTS); do echo "# run note $i" > "$r/.supervisor/insights/runs/run-$i.md"; done
 
-  : > "$r/.supervisor/postmortem/results.jsonl"
-  for i in $(seq 1 $EXP_POSTMORTEM); do
-    printf '{"schema_version":1,"number":%s,"review_rounds":%s}\n' "$i" "$i" \
-      >> "$r/.supervisor/postmortem/results.jsonl"
-  done
+  # The ledger is a COMMITTED fixture rather than a generated one, because the churn detail
+  # asserts on the SHAPE of a record (categories[].class / .flow_stage / .evidence, and the
+  # .flow_stages counter that disagrees with them) and a loop printing `{"number":N}` carries
+  # none of it. Its line count is still EXP_POSTMORTEM, and the drift check below re-derives
+  # that from the file so the literal cannot silently outlive the fixture.
+  cp "$PM_FIXTURE" "$r/.supervisor/postmortem/results.jsonl"
 
   for i in $(seq 1 $EXP_DRAIN); do printf '{"rounds":%s,"max_rounds":5}\n' "$i" \
       > "$r/.supervisor/drain-rounds/round-$i.json"; done
   for i in $(seq 1 $EXP_WORKER_SUMMARIES); do echo "## WORKER_SUMMARY $i" \
       > "$r/.supervisor/worker-summaries/w$i.md"; done
-  for i in $(seq 1 $EXP_RULES); do printf '[{"id":"r%s"}]\n' "$i" > "$r/.agent/rules/rule-$i.json"; done
+  # Same reasoning for the rules store: `[{"id":"rN"}]` proves a file count and nothing about
+  # the tri-state fields, the supersedes graph or the row shape. The fixture is TWO category
+  # files (so `rules` still counts 2) holding TEN rules (a separate, differently-named field).
+  cp "$RULES_FIXTURE_DIR"/*.json "$r/.agent/rules/"
 
   # The agent roster's real-run source is the PLUGIN directory, not a .supervisor/ one, so the
   # fixture needs its own copy and run_build must point FLOOR_AGENTS_DIR at it. Without that
@@ -219,6 +244,10 @@ command -v jq >/dev/null 2>&1 || { echo "test-build-floor: jq required to run th
 [ -f "$SESS_FIXTURE" ] || { echo "test-build-floor: committed fixture $SESS_FIXTURE missing" >&2; exit 1; }
 [ -f "$SESS_CUR_FIXTURE" ] || { echo "test-build-floor: committed fixture $SESS_CUR_FIXTURE missing" >&2; exit 1; }
 [ -d "$AGENTS_FIXTURE_DIR" ] || { echo "test-build-floor: committed fixture dir $AGENTS_FIXTURE_DIR missing" >&2; exit 1; }
+[ -d "$RULES_FIXTURE_DIR" ] || { echo "test-build-floor: committed fixture dir $RULES_FIXTURE_DIR missing" >&2; exit 1; }
+[ -f "$RULES_BROKEN_FIXTURE" ] || { echo "test-build-floor: committed fixture $RULES_BROKEN_FIXTURE missing" >&2; exit 1; }
+[ -f "$PM_FIXTURE" ]     || { echo "test-build-floor: committed fixture $PM_FIXTURE missing" >&2; exit 1; }
+[ -f "$PM_BAD_FIXTURE" ] || { echo "test-build-floor: committed fixture $PM_BAD_FIXTURE missing" >&2; exit 1; }
 
 # ============================================================================
 echo "== (a) hermetic fixture: every count equals its independently known value =="
@@ -485,10 +514,16 @@ GSMUT="$ROOT/blank-gsub-mutant.sh"
 GS_OLD="$GS_OLD" GS_NEW="$GS_NEW" awk '
   BEGIN{o=ENVIRON["GS_OLD"]; n=ENVIRON["GS_NEW"]}
   $0==o && !d {print n; d=1; next} {print}' "$BUILD" > "$GSMUT"
-# Exactly one gsub must survive. The identical line appears in the postmortem classifier and
-# only the SESSIONS one (the first) may be mutated, or this control changes two things at once.
+# EXACTLY ONE site may be mutated: the identical normalisation appears in the postmortem
+# classifier and in the churn-detail / correlation readers, and mutating more than the SESSIONS
+# one (the first) would change several things at once. The survivor count is DERIVED from the
+# unmutated script rather than written as a literal - a hard-coded `1` silently becomes a
+# vacuous premise the moment another reader legitimately uses the same normalisation, which is
+# exactly what happened when the churn detail was added.
+GS_BEFORE="$(grep -cF 'gsub("\\s"; "")' "$BUILD")"
+GS_AFTER="$(grep -cF 'gsub("\\s"; "")' "$GSMUT")"
 if [ -s "$GSMUT" ] && ! cmp -s "$GSMUT" "$BUILD" && bash -n "$GSMUT" 2>/dev/null \
-   && [ "$(grep -cF 'gsub("\\s"; "")' "$GSMUT")" = "1" ]; then
+   && [ "$GS_BEFORE" -ge 2 ] && [ "$GS_AFTER" -eq "$((GS_BEFORE - 1))" ]; then
   ok "the whitespace-normalisation mutant is buildable, bash -n clean, and touches only the sessions classifier"
   RGS="$(new_repo)"; mkdir -p "$RGS/.supervisor/logs"
   seed_blank_log "$RGS/.supervisor/logs/blank-lines.jsonl"
@@ -879,13 +914,32 @@ grep -qF "no_such_surface" <<< "$skeys_line" \
 # The three documented `detail` sub-keys, each marked optional. They are six-space lines, so
 # they are deliberately invisible to the two- and four-space parsers above - a consumer reads
 # them, and nothing else would notice if they were deleted.
-missing_detail=""
-for k in roster current subtasks; do
-  grep -qE "^      $k:.*optional" <<< "$SCHEMA_BLOCK_TXT" || missing_detail="$missing_detail $k"
-done
+# This list is HARD-CODED, and that is exactly why it has to grow with the producer: a sub-key
+# absent from it falls outside the loop and can ship undocumented behind a fully green (h). The
+# mutation control below is what keeps the list itself honest.
+DETAIL_SUBKEYS="roster current subtasks \
+rules rules_parsed files_parsed files_unparseable files_not_an_array read_completeness supersedes correlations \
+class_distribution class_basis flow_stage_distribution flow_stage_basis categories_total \
+lines_without_categories flow_stage_counter_disagreements entries lines_malformed malformed_lines"
+undocumented_detail() {  # <block-text> -> the sub-keys it fails to document, space-separated
+  local blk="$1" k out=""
+  for k in $DETAIL_SUBKEYS; do
+    grep -qE "^      $k:.*optional" <<< "$blk" || out="$out $k"
+  done
+  printf '%s' "$out"
+}
+missing_detail="$(undocumented_detail "$SCHEMA_BLOCK_TXT")"
+n_subkeys="$(printf '%s\n' $DETAIL_SUBKEYS | awk 'NF{n++} END{print n+0}')"
 [ -z "$missing_detail" ] \
-  && ok "the schema block documents roster: / current: / subtasks: as optional detail sub-keys" \
+  && ok "the schema block documents all $n_subkeys detail sub-keys as optional" \
   || no "detail sub-keys missing or not marked optional:$missing_detail"
+# MUTATION CONTROL: remove ONE sub-key line from the block and the same check must go red, naming
+# it. Without this the loop could be pointed at a list of names nothing emits and stay green.
+MUT_BLOCK="$(grep -v '^      flow_stage_basis:' <<< "$SCHEMA_BLOCK_TXT")"
+mut_missing="$(undocumented_detail "$MUT_BLOCK")"
+[ "$mut_missing" = " flow_stage_basis" ] \
+  && ok "MUTATION CONTROL: deleting the flow_stage_basis line from the block turns this check RED, naming it" \
+  || no "the sub-key check did not react to a deleted line (got '$mut_missing') - it is vacuous"
 
 # ============================================================================
 echo "== (h2) RESULT_SCHEMAS.md companion edits (enforced by no other gate) =="
@@ -1795,6 +1849,362 @@ else
 fi
 
 # ============================================================================
+echo "== (r) rules detail: deterministic rows, tri-state applies_to AND check, count unchanged =="
+# PREMISE, re-derived from the committed fixture so the literals above cannot outlive it.
+fx_files="$(ls "$RULES_FIXTURE_DIR"/*.json 2>/dev/null | awk 'NF{n++} END{print n+0}')"
+fx_rules="$(jq -s 'add | length' "$RULES_FIXTURE_DIR"/*.json 2>/dev/null)"
+[ "$fx_files" = "$EXP_RULES" ] && [ "$fx_rules" = "$EXP_RULES_DETAIL" ] \
+  && ok "PREMISE: the committed rules fixture is $EXP_RULES category files holding $EXP_RULES_DETAIL rules" \
+  || no "rules fixture drift: files=$fx_files (want $EXP_RULES) rules=$fx_rules (want $EXP_RULES_DETAIL)"
+fx_pm_lines="$(awk 'NF{n++} END{print n+0}' "$PM_FIXTURE" 2>/dev/null)"
+fx_pm_cats="$(jq -s '[.[].categories[]?] | length' "$PM_FIXTURE" 2>/dev/null)"
+[ "$fx_pm_lines" = "$EXP_POSTMORTEM" ] && [ "$fx_pm_cats" = "$EXP_PM_CATEGORIES" ] \
+  && ok "PREMISE: the committed ledger fixture is $EXP_POSTMORTEM lines carrying $EXP_PM_CATEGORIES category objects" \
+  || no "ledger fixture drift: lines=$fx_pm_lines (want $EXP_POSTMORTEM) categories=$fx_pm_cats (want $EXP_PM_CATEGORIES)"
+
+rdet() { jq -c "$2" "$1/.supervisor/floor/floor.json" 2>/dev/null; }
+
+[ "$(rdet "$RA" '.surfaces.rules.detail.rules_parsed')" = "$EXP_RULES_DETAIL" ] \
+  && ok "detail.rules_parsed == $EXP_RULES_DETAIL (rule OBJECTS)" \
+  || no "detail.rules_parsed: got $(rdet "$RA" '.surfaces.rules.detail.rules_parsed'), want $EXP_RULES_DETAIL"
+[ "$(scount "$JA" rules)" = "$EXP_RULES" ] \
+  && ok "...while surfaces.rules.count is STILL $EXP_RULES - the count key keeps meaning category files, not rules" \
+  || no "count was silently redefined: $(scount "$JA" rules)"
+[ "$(rdet "$RA" '.surfaces.rules.detail.rules_parsed')" != "$(scount "$JA" rules)" ] \
+  && ok "the two numbers are different fields carrying different meanings, and differ on this fixture" \
+  || no "rules_parsed and count are the same number - the fixture cannot tell them apart"
+[ "$(rdet "$RA" '.surfaces.rules.detail.rules | length')" = "$EXP_RULES_DETAIL" ] \
+  && ok "detail.rules[] holds $EXP_RULES_DETAIL rows" \
+  || no "detail.rules[] length: $(rdet "$RA" '.surfaces.rules.detail.rules | length')"
+
+# Deterministic order, stated as a literal rather than read back out of the artefact.
+EXP_ROW_IDS='["fixture-applies-absent-check-absent","fixture-applies-array-check-string","fixture-applies-null-check-null","fixture-chain-head","fixture-chain-mid","fixture-chain-tail","fixture-cycle-a","fixture-cycle-b","fixture-cycle-c","fixture-dangling-source","fixture-malformed-applies-to","fixture-provenance-empty-object","fixture-provenance-malformed","fixture-supersedes-empty","fixture-supersedes-malformed","fixture-supersedes-null"]'
+[ "$(rdet "$RA" '[.surfaces.rules.detail.rules[].id]')" = "$EXP_ROW_IDS" ] \
+  && ok "detail.rules[] is in a deterministic (category, id, source_file) order" \
+  || no "row order/ids: $(rdet "$RA" '[.surfaces.rules.detail.rules[].id]')"
+# ...and a second run over the unchanged tree reproduces it byte for byte.
+RA2="$(new_repo)"; seed_tree "$RA2"; run_build "$RA2"
+[ "$(rdet "$RA2" '.surfaces.rules.detail')" = "$(rdet "$RA" '.surfaces.rules.detail')" ] \
+  && ok "a second run over an identical tree emits a byte-identical rules detail" \
+  || no "rules detail is not deterministic across two identical trees"
+
+miss_field=""
+for f in id category statement enforcement provenance; do
+  [ "$(rdet "$RA" "[.surfaces.rules.detail.rules[] | select(has(\"$f\") | not)] | length")" = "0" ] \
+    || miss_field="$miss_field $f"
+done
+[ -z "$miss_field" ] && ok "every row carries id / category / statement / enforcement / provenance" \
+  || no "rows missing always-present fields:$miss_field"
+
+echo "-- applies_to and check are BOTH genuine tri-states, all three states distinguishable --"
+row() { rdet "$RA" ".surfaces.rules.detail.rules[] | select(.id == \"$1\")"; }
+tri() { # <row-id> <field> -> absent | null | value
+  local r; r="$(row "$1")"
+  printf '%s' "$r" | jq -r --arg f "$2" 'if (has($f) | not) then "absent" elif (.[$f] == null) then "null" else "value" end' 2>/dev/null
+}
+tri_bad=""
+[ "$(tri fixture-applies-absent-check-absent applies_to)" = "absent" ] || tri_bad="$tri_bad applies_to/absent"
+[ "$(tri fixture-applies-null-check-null     applies_to)" = "null"   ] || tri_bad="$tri_bad applies_to/null"
+[ "$(tri fixture-applies-array-check-string  applies_to)" = "value"  ] || tri_bad="$tri_bad applies_to/value"
+[ "$(tri fixture-applies-absent-check-absent check)"      = "absent" ] || tri_bad="$tri_bad check/absent"
+[ "$(tri fixture-applies-null-check-null     check)"      = "null"   ] || tri_bad="$tri_bad check/null"
+[ "$(tri fixture-applies-array-check-string  check)"      = "value"  ] || tri_bad="$tri_bad check/value"
+[ -z "$tri_bad" ] \
+  && ok "applies_to and check each render absent / null / value as THREE distinct states" \
+  || no "tri-state collapsed for:$tri_bad"
+[ "$(row fixture-applies-array-check-string | jq -c '.applies_to')" = '["loomwright/scripts/*","CLAUDE.md"]' ] \
+  && ok "the non-empty applies_to array is carried verbatim" \
+  || no "applies_to array: $(row fixture-applies-array-check-string | jq -c '.applies_to')"
+[ "$(row fixture-applies-array-check-string | jq -r '.check')" = "grep -q 'a literal this fixture never runs' CLAUDE.md" ] \
+  && ok "the check string is carried verbatim as DATA" \
+  || no "check string: $(row fixture-applies-array-check-string | jq -r '.check')"
+# MUTATION CONTROL for the tri-state: the truthy-only reading a `if .check then` producer would
+# emit collapses absent and null into one bucket. Run that reading over the SAME rows and show it.
+truthy_absent="$(row fixture-applies-absent-check-absent | jq -r 'if (.check // null) == null then "no-check" else "check" end')"
+truthy_null="$(row fixture-applies-null-check-null       | jq -r 'if (.check // null) == null then "no-check" else "check" end')"
+[ "$truthy_absent" = "$truthy_null" ] \
+  && ok "MUTATION CONTROL: a truthy-only reading of the SAME rows collapses absent and null into one bucket ($truthy_absent) - which is what has() avoids" \
+  || no "the truthy-only control did not collapse - it proves nothing about has()"
+# ...and the check string is never executed anywhere in the producer.
+[ "$(grep -cE '(^|[^[:alnum:]_-])(eval|exec)[[:space:]]' "$BUILD" 2>/dev/null)" = "0" ] \
+  && ok "build-floor.sh contains no eval / exec construct - a check string cannot be executed" \
+  || no "build-floor.sh carries an eval/exec construct: $(grep -nE '(^|[^[:alnum:]_-])(eval|exec)[[:space:]]' "$BUILD" | head -3)"
+
+# ============================================================================
+echo "== (s) supersedes: transitive chain in order, dangling reported, cycle bounded and whole =="
+sup() { rdet "$RA" ".surfaces.rules.detail.supersedes$1"; }
+[ "$(sup '.chains')" = '[["fixture-chain-head","fixture-chain-mid","fixture-chain-tail"]]' ] \
+  && ok "the two-hop chain resolves TRANSITIVELY and IN ORDER (read-rules.sh would stop at one hop)" \
+  || no "chains: $(sup '.chains')"
+[ "$(sup '.dangling')" = '[{"from":"fixture-dangling-source","to":"fixture-no-such-rule-id"}]' ] \
+  && ok "the dangling pointer is REPORTED as dangling (read-rules.sh ignores it)" \
+  || no "dangling: $(sup '.dangling')"
+[ "$(rdet "$RA" '[.surfaces.rules.detail.rules[] | select(.id == "fixture-dangling-source")] | length')" = "1" ] \
+  && ok "...and the carrying row is still emitted, with its pointer preserved" \
+  || no "the dangling row was dropped"
+[ "$(sup '.cycles')" = '[["fixture-cycle-a","fixture-cycle-b","fixture-cycle-c"]]' ] \
+  && ok "the A->B->C->A cycle is reported AS a cycle, canonicalised from its smallest member" \
+  || no "cycles: $(sup '.cycles')"
+cyc_rows="$(rdet "$RA" '[.surfaces.rules.detail.rules[] | select(.id | startswith("fixture-cycle-"))] | length')"
+[ "$cyc_rows" = "3" ] \
+  && ok "EVERY cycle member is emitted - none is dropped (read-rules.sh hides nothing here either, but for a different reason)" \
+  || no "cycle members emitted: $cyc_rows of 3"
+# TERMINATION, on a fixture that is nothing BUT a cycle: the run must return, exit 0 and write.
+RCYC="$(new_repo)"; mkdir -p "$RCYC/.agent/rules"
+jq -c '[.[] | select(.id | startswith("fixture-cycle-"))]' "$RULES_FIXTURE_DIR/process.json" \
+  > "$RCYC/.agent/rules/only-a-cycle.json" 2>/dev/null
+run_build "$RCYC"; rcCyc=$?
+JCYC="$RCYC/.supervisor/floor/floor.json"
+[ "$rcCyc" -eq 0 ] && [ -f "$JCYC" ] \
+  && ok "a rules store that is ONLY a cycle still terminates, exits 0 and writes an artefact" \
+  || no "the cycle-only fixture did not terminate cleanly (rc=$rcCyc)"
+[ "$(jq -c '.surfaces.rules.detail.supersedes.cycles' "$JCYC" 2>/dev/null)" = '[["fixture-cycle-a","fixture-cycle-b","fixture-cycle-c"]]' ] \
+  && ok "...and reports the cycle with all three members" \
+  || no "cycle-only fixture cycles: $(jq -c '.surfaces.rules.detail.supersedes.cycles' "$JCYC" 2>/dev/null)"
+[ "$(jq -c '[.surfaces.rules.detail.rules[].id] | sort' "$JCYC" 2>/dev/null)" = '["fixture-cycle-a","fixture-cycle-b","fixture-cycle-c"]' ] \
+  && ok "...and emits every member as a row rather than dropping any" \
+  || no "cycle-only fixture rows: $(jq -c '[.surfaces.rules.detail.rules[].id]' "$JCYC" 2>/dev/null)"
+# The termination PROPERTY is inherited structurally, not by luck: a bounded, non-recursive walk.
+grep -qF 'reduce range(0; $edge_n)' "$BUILD" \
+  && ok "the walk is the same BOUNDED reduce range(0; \$edge_n) construction read-rules.sh uses" \
+  || no "no bounded range(0; \$edge_n) walk found in build-floor.sh"
+[ "$(grep -cE 'recurse|getpath\(\[|while\(' "$BUILD" 2>/dev/null)" = "0" ] \
+  && ok "and carries no open-ended jq traversal (recurse / while) that could run unbounded" \
+  || no "an open-ended jq traversal is present: $(grep -nE 'recurse|while\(' "$BUILD" | head -3)"
+# The DIVERGENCE from read-rules.sh is stated where a reader will meet it, not left to be found.
+grep -q 'read-rules.sh' "$BUILD" && grep -qi 'transitiv' "$BUILD" && grep -qi 'dangling' "$BUILD" \
+  && ok "build-floor.sh states the read-rules.sh divergence (transitive / dangling) in a comment" \
+  || no "build-floor.sh does not state the read-rules.sh divergence"
+grep -q 'read-rules.sh' "$SCHEMA_MD" && grep -qi 'single-hop' "$SCHEMA_MD" \
+  && ok "RESULT_SCHEMAS.md states the same divergence" \
+  || no "RESULT_SCHEMAS.md does not state the read-rules.sh divergence"
+# read-rules.sh itself is UNTOUCHED by this change - it is a different reader with pinned semantics.
+grep -q 'single-hop only, NEVER transitive' "$HERE/read-rules.sh" \
+  && ok "read-rules.sh keeps its own pinned single-hop contract (not modified by this surface)" \
+  || no "read-rules.sh's pinned single-hop contract is missing - it must not be edited"
+
+# ============================================================================
+echo "== (t) unparseable rules file: named, never counted clean, valid rules still reported =="
+mk_rules_repo() { # <"broken"|"good"|"both"> -> repo path
+  local r; r="$(new_repo)"; mkdir -p "$r/.agent/rules" "$r/agents"
+  cp "$AGENTS_FIXTURE_DIR"/*.md "$r/agents/" 2>/dev/null
+  case "$1" in
+    good|both) cp "$RULES_FIXTURE_DIR"/*.json "$r/.agent/rules/" ;;
+  esac
+  case "$1" in
+    broken|both) cp "$RULES_BROKEN_FIXTURE" "$r/.agent/rules/broken.json" ;;
+  esac
+  printf '%s' "$r"
+}
+RPART="$(mk_rules_repo both)";   run_build "$RPART"; JPART="$RPART/.supervisor/floor/floor.json"
+RNONE="$(mk_rules_repo broken)"; run_build "$RNONE"; JNONE="$RNONE/.supervisor/floor/floor.json"
+
+[ "$(sstatus "$JPART" rules)" = "unverified" ] && [ "$(scount "$JPART" rules)" = "ABSENT" ] \
+  && ok "a store with one unparseable file is unverified with NO count - never counted clean" \
+  || no "partial store: status=$(sstatus "$JPART" rules) count=$(scount "$JPART" rules)"
+printf '%s' "$(sreason "$JPART" rules)" | grep -qF 'broken.json' \
+  && ok "...and the reason NAMES the offending file" \
+  || no "the reason does not name the offender: $(sreason "$JPART" rules)"
+[ "$(jq -r '.surfaces.rules.detail.read_completeness' "$JPART" 2>/dev/null)" = "partial" ] \
+  && ok "read_completeness is 'partial' - read some, could not read others" \
+  || no "partial read_completeness: $(jq -r '.surfaces.rules.detail.read_completeness' "$JPART" 2>/dev/null)"
+[ "$(jq -r '.surfaces.rules.detail.rules_parsed' "$JPART" 2>/dev/null)" = "$EXP_RULES_DETAIL" ] \
+  && ok "...and the VALID files' $EXP_RULES_DETAIL rules are still reported" \
+  || no "valid rules lost on a partial read: $(jq -r '.surfaces.rules.detail.rules_parsed' "$JPART" 2>/dev/null)"
+[ "$(jq -r '.surfaces.rules.detail.files_unparseable[0].file' "$JPART" 2>/dev/null)" = ".agent/rules/broken.json" ] \
+  && ok "files_unparseable names the file" \
+  || no "files_unparseable: $(jq -c '.surfaces.rules.detail.files_unparseable' "$JPART" 2>/dev/null)"
+[ -n "$(jq -r '.surfaces.rules.detail.files_unparseable[0].reason // ""' "$JPART" 2>/dev/null)" ] \
+  && ok "...and carries the parser's own reason" \
+  || no "files_unparseable carries no reason"
+[ "$(jq -r '.surfaces.rules.detail.read_completeness' "$JNONE" 2>/dev/null)" = "none" ] \
+  && ok "a store whose ONLY file is unparseable reads 'none' - distinct from partial and from all" \
+  || no "none read_completeness: $(jq -r '.surfaces.rules.detail.read_completeness' "$JNONE" 2>/dev/null)"
+[ "$(jq -r '.surfaces.rules.detail | has("rules")' "$JNONE" 2>/dev/null)" = "false" ] \
+  && ok "...and emits no rules[] at all rather than an empty array that would read as 'examined and clean'" \
+  || no "the read-nothing case emitted a rules[] array"
+[ "$(jq -r '.surfaces.rules.detail.read_completeness' "$JA" 2>/dev/null)" = "all" ] \
+  && [ "$(jq -r '.surfaces.rules.detail | has("files_unparseable")' "$JA" 2>/dev/null)" = "false" ] \
+  && ok "a fully-parsed store reads 'all' with no files_unparseable key - the third distinct render" \
+  || no "the all-parsed case: completeness=$(jq -r '.surfaces.rules.detail.read_completeness' "$JA" 2>/dev/null)"
+
+echo "-- MUTATION CONTROLS: a producer that does not report the unreadable file must turn these red --"
+mutate_build() { # <sed-expr> -> mutant path
+  local m="$ROOT/mut-build-$2.sh"
+  sed "$1" "$BUILD" > "$m" 2>/dev/null
+  printf '%s' "$m"
+}
+run_mutant() { ( cd "$1" && FLOOR_AGENTS_DIR="$1/agents" bash "$2" >/dev/null 2>&1 ); }
+MUT1="$(mutate_build 's/"partial"/"all"/' completeness)"
+RM1="$(mk_rules_repo both)"; run_mutant "$RM1" "$MUT1"; JM1="$RM1/.supervisor/floor/floor.json"
+if [ -f "$JM1" ] && ! cmp -s "$MUT1" "$BUILD"; then
+  [ "$(jq -r '.surfaces.rules.detail.read_completeness' "$JM1" 2>/dev/null)" = "partial" ] \
+    && no "the mutant that reports a partial read as 'all' still satisfied the assertion" \
+    || ok "MUTATION CONTROL: a producer calling a partial read 'all' turns the read_completeness assertion RED"
+else
+  no "the read_completeness mutant could not be built - this control is inconclusive"
+fi
+MUT2="$(mutate_build '/files_unparseable: \$badfiles/d' unparseable)"
+RM2="$(mk_rules_repo both)"; run_mutant "$RM2" "$MUT2"; JM2="$RM2/.supervisor/floor/floor.json"
+if [ -f "$JM2" ] && ! cmp -s "$MUT2" "$BUILD"; then
+  [ "$(jq -r '.surfaces.rules.detail.files_unparseable[0].file' "$JM2" 2>/dev/null)" = ".agent/rules/broken.json" ] \
+    && no "the mutant that drops the files_unparseable report still satisfied the assertion" \
+    || ok "MUTATION CONTROL: dropping the files_unparseable report turns the naming assertion RED"
+else
+  no "the files_unparseable mutant could not be built - this control is inconclusive"
+fi
+
+# ============================================================================
+echo "== (u) churn detail: basis PINNED to .categories[].flow_stage, malformed never a class =="
+pmd() { jq -c "$2" "$1" 2>/dev/null; }
+[ "$(jq -r '.surfaces.postmortem.detail.flow_stage_basis' "$JA" 2>/dev/null)" = ".categories[].flow_stage" ] \
+  && ok "flow_stage_basis is the EXACT literal .categories[].flow_stage" \
+  || no "flow_stage_basis: '$(jq -r '.surfaces.postmortem.detail.flow_stage_basis' "$JA" 2>/dev/null)'"
+[ "$(jq -r '.surfaces.postmortem.detail.class_basis' "$JA" 2>/dev/null)" = ".categories[].class" ] \
+  && ok "class_basis is .categories[].class - the SAME denominator as the flow-stage half" \
+  || no "class_basis: '$(jq -r '.surfaces.postmortem.detail.class_basis' "$JA" 2>/dev/null)'"
+[ "$(pmd "$JA" '.surfaces.postmortem.detail.categories_total')" = "$EXP_PM_CATEGORIES" ] \
+  && ok "categories_total == $EXP_PM_CATEGORIES - the one denominator both distributions are over" \
+  || no "categories_total: $(pmd "$JA" '.surfaces.postmortem.detail.categories_total')"
+[ "$(pmd "$JA" '.surfaces.postmortem.detail.class_distribution')" = '{"convention_mismatch":1,"drain_churn":1,"execution_bug":1,"quality_gap":1}' ] \
+  && ok "class_distribution matches the fixture's four classes" \
+  || no "class_distribution: $(pmd "$JA" '.surfaces.postmortem.detail.class_distribution')"
+[ "$(pmd "$JA" '.surfaces.postmortem.detail.flow_stage_distribution')" = '{"self_heal":2,"unknowable":1,"worker":1}' ] \
+  && ok "flow_stage_distribution is computed over the category objects (self_heal == 2)" \
+  || no "flow_stage_distribution: $(pmd "$JA" '.surfaces.postmortem.detail.flow_stage_distribution')"
+# THE DISCRIMINATOR: recompute the OTHER representation from the fixture and show they differ,
+# so this assertion could not pass had the producer picked `.flow_stages`.
+counter_dist="$(jq -s -c '[.[].flow_stages? // {} | to_entries[]] | group_by(.key)
+  | map({(.[0].key): (map(.value) | add)}) | add | with_entries(select(.value > 0))' "$PM_FIXTURE" 2>/dev/null)"
+[ "$counter_dist" = '{"self_heal":4,"unknowable":1,"worker":1}' ] \
+  && ok "PREMISE: the fixture's .flow_stages counter reads $counter_dist - a DIFFERENT number" \
+  || no "the fixture no longer carries a disagreeing counter: $counter_dist"
+[ "$(pmd "$JA" '.surfaces.postmortem.detail.flow_stage_distribution')" != "$counter_dist" ] \
+  && ok "MUTATION-EQUIVALENT CONTROL: the emitted distribution is NOT the counter reading - picking .flow_stages would turn this red" \
+  || no "the emitted distribution equals the counter reading - the basis assertion is vacuous"
+[ "$(pmd "$JA" '.surfaces.postmortem.detail.flow_stage_counter_disagreements')" = "$EXP_PM_DISAGREE" ] \
+  && ok "the projector counts the $EXP_PM_DISAGREE line where the two representations disagree" \
+  || no "flow_stage_counter_disagreements: $(pmd "$JA" '.surfaces.postmortem.detail.flow_stage_counter_disagreements')"
+[ "$(pmd "$JA" '.surfaces.postmortem.detail.lines_without_categories')" = "1" ] \
+  && ok "the one line with an empty categories[] is counted as such, not folded into a class" \
+  || no "lines_without_categories: $(pmd "$JA" '.surfaces.postmortem.detail.lines_without_categories')"
+[ "$(pmd "$JA" '.surfaces.postmortem.detail.entries | length')" = "$EXP_PM_CATEGORIES" ] \
+  && ok "entries[] carries one row per category object" \
+  || no "entries[] length: $(pmd "$JA" '.surfaces.postmortem.detail.entries | length')"
+[ "$(pmd "$JA" '[.surfaces.postmortem.detail.entries[] | select(has("evidence") | not)] | length')" = "0" ] \
+  && ok "...each carrying the per-category evidence string it was derived from" \
+  || no "an entry lost its evidence: $(pmd "$JA" '[.surfaces.postmortem.detail.entries[] | select(has("evidence") | not)]')"
+[ "$(pmd "$JA" '.surfaces.postmortem.detail.entries[0].evidence')" = '"the reviewer asked for the pinned literal and got a variant"' ] \
+  && ok "and the evidence is the fixture's own string, verbatim" \
+  || no "entries[0].evidence: $(pmd "$JA" '.surfaces.postmortem.detail.entries[0].evidence')"
+# No rate / score / ranking anywhere in the churn detail.
+bad_keys="$(jq -r '[.surfaces.postmortem.detail | paths(scalars) | join(".")]
+  | map(select(test("rate|score|rank|top_|percent|pct"; "i"))) | join(" ")' "$JA" 2>/dev/null)"
+[ -z "$bad_keys" ] \
+  && ok "no rate / score / rank / top-N key appears in the churn detail" \
+  || no "a scoring-shaped key is present: $bad_keys"
+[ "$(pmd "$JA" '.surfaces.postmortem.detail.class_distribution | type')" = '"object"' ] \
+  && ok "the distributions are key-addressed objects, never arrays ordered by desirability" \
+  || no "class_distribution is not an object"
+
+echo "-- malformed ledger lines are counted and NAMED, never folded into a class --"
+RPMB="$(new_repo)"; mkdir -p "$RPMB/.supervisor/postmortem" "$RPMB/agents"
+cp "$AGENTS_FIXTURE_DIR"/*.md "$RPMB/agents/" 2>/dev/null
+cp "$PM_BAD_FIXTURE" "$RPMB/.supervisor/postmortem/results.jsonl"
+run_build "$RPMB"; JPMB="$RPMB/.supervisor/floor/floor.json"
+[ "$(sstatus "$JPMB" postmortem)" = "unverified" ] && [ "$(scount "$JPMB" postmortem)" = "ABSENT" ] \
+  && ok "a ledger with a malformed line is unverified with NO count" \
+  || no "malformed ledger: status=$(sstatus "$JPMB" postmortem) count=$(scount "$JPMB" postmortem)"
+[ "$(pmd "$JPMB" '.surfaces.postmortem.detail.lines_malformed')" = "1" ] \
+  && ok "...the malformed line is COUNTED" \
+  || no "lines_malformed: $(pmd "$JPMB" '.surfaces.postmortem.detail.lines_malformed')"
+[ "$(pmd "$JPMB" '.surfaces.postmortem.detail.malformed_lines')" = "[5]" ] \
+  && ok "...and NAMED by its line number" \
+  || no "malformed_lines: $(pmd "$JPMB" '.surfaces.postmortem.detail.malformed_lines')"
+[ "$(pmd "$JPMB" '.surfaces.postmortem.detail.class_distribution')" = "$(pmd "$JA" '.surfaces.postmortem.detail.class_distribution')" ] \
+  && ok "...and contributes to NO class - the distribution is unchanged by it" \
+  || no "the malformed line leaked into a class: $(pmd "$JPMB" '.surfaces.postmortem.detail.class_distribution')"
+
+# ============================================================================
+echo "== (v) correlation carries its evidence, is labelled an observation, and is omitted when uncomputable =="
+cor() { jq -c "$2" "$1" 2>/dev/null; }
+[ "$(cor "$JA" '.surfaces.rules.detail.correlations | length')" = "1" ] \
+  && ok "exactly one rule has a computable correlation on this fixture" \
+  || no "correlations length: $(cor "$JA" '.surfaces.rules.detail.correlations | length')"
+[ "$(cor "$JA" '.surfaces.rules.detail.correlations[0].rule_id')" = '"fixture-applies-array-check-string"' ] \
+  && ok "...the only rule carrying a non-empty applies_to array" \
+  || no "correlation rule_id: $(cor "$JA" '.surfaces.rules.detail.correlations[0].rule_id')"
+[ "$(cor "$JA" '.surfaces.rules.detail.correlations[0].label')" = '"observation"' ] \
+  && ok "it is LABELLED an observation, not a measurement" \
+  || no "correlation label: $(cor "$JA" '.surfaces.rules.detail.correlations[0].label')"
+cbasis="$(jq -r '.surfaces.rules.detail.correlations[0].basis // ""' "$JA" 2>/dev/null)"
+printf '%s' "$cbasis" | grep -qF 'changed_paths' && printf '%s' "$cbasis" | grep -qi 'not evidence' \
+  && ok "...and states its basis, including that a path overlap is not evidence of a violation" \
+  || no "correlation basis is missing or does not disclaim: '$cbasis'"
+[ "$(cor "$JA" '.surfaces.rules.detail.correlations[0].matched | length')" = "3" ] \
+  && ok "three ledger paths overlap this rule's globs" \
+  || no "matched length: $(cor "$JA" '.surfaces.rules.detail.correlations[0].matched | length')"
+# Evidence is carried ONCE PER CORRELATION keyed by line, not once per (rule, path) match: a
+# rule's globs typically match many paths on the same ledger line, and attaching the array to
+# every match re-serialised it (measured: 612 occurrences for 154 distinct strings). What
+# AC-correlation-evidence requires is that the evidence travel WITH the correlation it was
+# derived from - so the assertion is that EVERY matched line RESOLVES to evidence, which is the
+# property that matters and is stronger than checking a key exists on each match.
+[ "$(cor "$JA" '[.surfaces.rules.detail.correlations[0].matched[] | select((has("line") and has("path") and has("pattern")) | not)] | length')" = "0" ] \
+  && ok "every match carries the line, the path and the pattern it matched" \
+  || no "a match is missing line/path/pattern: $(cor "$JA" '.surfaces.rules.detail.correlations[0].matched')"
+# NB the `as $l` capture is load-bearing: inside `has(.)` the `.` would rebind to
+# evidence_by_line itself, not the line - the same jq scoping trap that silently emptied the
+# supersedes chain walk during subtask 1 (there via `index(.)`). Capture, then test.
+[ "$(cor "$JA" '.surfaces.rules.detail.correlations[0] as $c | [$c.matched[].line | tostring as $l | select((($c.evidence_by_line // {}) | has($l)) | not)] | length')" = "0" ] \
+  && ok "...and every matched line resolves to the ledger's own evidence in evidence_by_line" \
+  || no "a matched line has no evidence: $(cor "$JA" '.surfaces.rules.detail.correlations[0].evidence_by_line')"
+[ "$(cor "$JA" '[.surfaces.rules.detail.correlations[].rule_id] | sort == .')" = "true" ] \
+  && ok "correlations are ordered by rule_id - never ranked by match count" \
+  || no "correlations are not in rule_id order"
+# OMITTED, never zero: the nine rules with no computable correlation appear nowhere.
+[ "$(cor "$JA" '[.surfaces.rules.detail.correlations[].rule_id] | map(select(. == "fixture-applies-null-check-null" or . == "fixture-applies-absent-check-absent")) | length')" = "0" ] \
+  && ok "a rule with applies_to null or absent is OMITTED from correlations, not emitted as zero" \
+  || no "an uncomputable correlation was emitted anyway"
+[ "$(cor "$JA" '[.surfaces.rules.detail.correlations[].matched | length] | map(select(. == 0)) | length')" = "0" ] \
+  && ok "no correlation carries an empty match set - a zero there would read as 'measured no violations'" \
+  || no "a zero-match correlation was emitted"
+# CONTROL: the same rules store against a ledger whose paths overlap NOTHING - the key vanishes.
+RNC="$(new_repo)"; mkdir -p "$RNC/.agent/rules" "$RNC/.supervisor/postmortem" "$RNC/agents"
+cp "$AGENTS_FIXTURE_DIR"/*.md "$RNC/agents/" 2>/dev/null
+cp "$RULES_FIXTURE_DIR"/*.json "$RNC/.agent/rules/"
+jq -c '.changed_paths = ["nothing/that/matches.txt"]' "$PM_FIXTURE" > "$RNC/.supervisor/postmortem/results.jsonl" 2>/dev/null
+run_build "$RNC"; JNC="$RNC/.supervisor/floor/floor.json"
+[ "$(jq -r '.surfaces.rules.detail | has("correlations")' "$JNC" 2>/dev/null)" = "false" ] \
+  && ok "CONTROL: with no overlapping path the correlations key is ABSENT entirely, not an empty array" \
+  || no "a non-overlapping ledger still produced: $(cor "$JNC" '.surfaces.rules.detail.correlations')"
+[ "$(jq -r '.surfaces.rules.detail.rules_parsed' "$JNC" 2>/dev/null)" = "$EXP_RULES_DETAIL" ] \
+  && ok "...and the rest of the rules detail is unaffected by the absent correlation" \
+  || no "the no-correlation tree lost its rules detail"
+
+# ============================================================================
+echo "== (w) both new surfaces stay ABSENT on the empty fixture (the anti-vacuity premise) =="
+[ "$(sstatus "$JEMPTY" rules)" = "absent" ] && [ "$(scount "$JEMPTY" rules)" = "ABSENT" ] \
+  && ok "rules is absent with no count on the EMPTY fixture" \
+  || no "empty fixture rules: status=$(sstatus "$JEMPTY" rules) count=$(scount "$JEMPTY" rules)"
+[ "$(sstatus "$JEMPTY" postmortem)" = "absent" ] && [ "$(scount "$JEMPTY" postmortem)" = "ABSENT" ] \
+  && ok "postmortem is absent with no count on the EMPTY fixture" \
+  || no "empty fixture postmortem: status=$(sstatus "$JEMPTY" postmortem) count=$(scount "$JEMPTY" postmortem)"
+[ "$(jq -r '.surfaces.rules | has("detail")' "$JEMPTY" 2>/dev/null)" = "false" ] \
+  && [ "$(jq -r '.surfaces.postmortem | has("detail")' "$JEMPTY" 2>/dev/null)" = "false" ] \
+  && ok "neither surface emits a detail on a tree it never read" \
+  || no "a detail was emitted for a surface that was never read"
+# No env seam was introduced: both surfaces stay cwd-relative, which is what already makes them
+# hermetic through run_build's `cd`. A FLOOR_RULES_DIR / FLOOR_POSTMORTEM override would be a
+# redundant second seam, and its absence is asserted rather than assumed.
+[ "$(grep -cE 'FLOOR_RULES_DIR|FLOOR_POSTMORTEM' "$BUILD" 2>/dev/null)" = "0" ] \
+  && ok "no FLOOR_RULES_DIR / FLOOR_POSTMORTEM override exists - the surfaces stay cwd-relative" \
+  || no "a redundant env seam was added: $(grep -nE 'FLOOR_RULES_DIR|FLOOR_POSTMORTEM' "$BUILD" | head -2)"
+[ "$(grep -cF 'FLOOR_AGENTS_DIR' "$BUILD" 2>/dev/null)" -gt 0 ] \
+  && ok "CONTROL: the one legitimate override, FLOOR_AGENTS_DIR, IS present - the grep can find a seam" \
+  || no "the seam grep found nothing at all - it proves nothing"
+
+# ============================================================================
 echo "== (m) real .supervisor/ corroboration (local only) =="
 REAL="$(cd "$HERE/../.." 2>/dev/null && pwd)"
 real_logs=("$REAL"/.supervisor/logs/*.jsonl)
@@ -1852,6 +2262,220 @@ else
   validate_floor "$JM" >/dev/null 2>&1 \
     && ok "the real-tree artefact conforms to the schema parsed from RESULT_SCHEMAS.md" \
     || no "the real-tree artefact failed schema validation: $(validate_floor "$JM" 2>&1 | head -3)"
+fi
+
+# ============================================================================
+echo "== (x) runtime bound - the multi-scan regression cannot return silently =="
+# WHY THIS CASE EXISTS, and why it is shaped the way it is.
+#
+# The detail readers this suite commissions ((r)-(v)) shipped 4.1x SLOWER than the surface
+# they extended: 0.85s -> 3.5s on the maintainer tree, because each new reader re-walked
+# ledgers an existing pass had already walked. That is load-bearing, not cosmetic:
+# `setup-ui.sh serve` regenerates on a 2-SECOND default interval, so the loop had begun
+# taking longer than its own tick, and requirement 06 pins its whole scheduling design on
+# the measured sub-second figure. It passed 338 assertions and seven repo gates in silence.
+# THAT silence is the defect this case closes - not the timing number itself.
+#
+# Two shapes were rejected before this one:
+#
+#   1. Timing the SMALL fixtures. Redundant scans of a 4-line ledger cost nothing measurable
+#      -- `jq` process startup dominates entirely -- so a small-fixture bound would have gone
+#      green straight through the very 4x regression it was written to catch. Vacuous.
+#   2. An ABSOLUTE wall-clock ceiling. CI hardware is slower and noisier than a laptop, so
+#      any ceiling tight enough to catch a 4x regression here would flake there, and any
+#      ceiling loose enough to survive CI would not catch it. Unusable either way.
+#
+# So the bound is a RATIO against a real artefact: commit 2b41286, the last commit that
+# still had the multi-scan readers. Both versions run on the SAME synthesized input on the
+# SAME machine in the same test run, so a slow or loaded runner slows BOTH and the ratio
+# holds -- the guard is hardware-independent by construction. And the control is not a
+# hand-built mutant that might not represent anything: it IS the slow code, so this
+# assertion has demonstrably been red, in production, on the commit it names.
+#
+# The input is synthesized (~800 ledger lines), never the real tree, so the measurement does
+# not drift as `.supervisor/` grows.
+PERF_PRE_SHA="2b41286"
+PERF_MIN_RATIO_X10=20        # historical arm: require >= 2.0x; integer tenths (bash 3.2 has no floats)
+PERF_MAX_UNITS=180           # primary arm: see the calibration note below
+
+# ---------------------------------------------------------------------------
+# PRIMARY ARM - a CALIBRATED bound that needs NO git history, so it runs on CI.
+#
+# The first version of this case had only the historical arm below, and it was wrong in the
+# way that matters: `2b41286` is a BRANCH commit, so `actions/checkout` (depth 1) cannot
+# reach it and the entire case degraded to SKIPPED on CI - permanently so once this branch
+# squash-merges. A regression bound that runs only on the author's laptop is the
+# "a claim no check backs" class this repo keeps recording. So the arm that must always run
+# is measured against a UNIT calibrated in the same run:
+#
+#   unit  = wall time for ONE full `jq` scan of the synthesized ledger
+#   bound = projector wall time / unit
+#
+# Both numbers move with the machine, so a slow or loaded runner cancels out - exactly what
+# an absolute millisecond ceiling cannot do. Measured on the maintainer tree: the
+# bound sits at 180. These are wall-clock figures and therefore NOISY: across repeated runs on
+# this machine the consolidated readers measured 93-109 units and the pre-consolidation code
+# 266-313. The bound sits above the top of the first range and well below the bottom of the
+# second, which is the property that matters; quoting one exact pair here would claim a
+# precision this measurement does not have.
+#
+# Counting `jq` INVOCATIONS was tried first and REJECTED after measuring - 37 now versus 35
+# then. The regression was work done per invocation, not process count, so that gate would
+# have gone green straight through it. A second vacuous bound, avoided only by measuring
+# instead of assuming.
+# ---------------------------------------------------------------------------
+RPERF="$(new_repo)"
+mkdir -p "$RPERF/.supervisor/postmortem" "$RPERF/.agent/rules" "$RPERF/agents"
+cp "$RULES_FIXTURE_DIR"/*.json "$RPERF/.agent/rules/" 2>/dev/null
+: > "$RPERF/.supervisor/postmortem/results.jsonl"
+iperf=0
+while [ "$iperf" -lt 200 ]; do cat "$PM_FIXTURE" >> "$RPERF/.supervisor/postmortem/results.jsonl"; iperf=$((iperf+1)); done
+perf_lines="$(awk 'NF{n++} END{print n+0}' "$RPERF/.supervisor/postmortem/results.jsonl")"
+
+perf_units="$(python3 - "$RPERF" "$BUILD" 2>/dev/null <<'__PY1__'
+import subprocess, sys, time, os
+repo, script = sys.argv[1], sys.argv[2]
+led = repo + "/.supervisor/postmortem/results.jsonl"
+env = dict(os.environ); env["FLOOR_AGENTS_DIR"] = repo + "/agents"
+
+def best(fn, n=3):
+    return min(fn() for _ in range(n))
+
+def unit():
+    t = time.time()
+    subprocess.run(["jq", "-s", "[.[]|.categories]|length", led],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return time.time() - t
+
+def run():
+    t = time.time()
+    subprocess.run(["bash", script], cwd=repo, env=env,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return time.time() - t
+
+u = best(unit)
+if u <= 0:
+    print("ERR")
+else:
+    print(int(best(run) / u))
+__PY1__
+)"
+case "$perf_units" in
+  ''|*[!0-9]*) no "(x) could not calibrate the runtime bound (got '$perf_units') - PRIMARY arm inconclusive" ;;
+  *)
+    if [ "$perf_units" -le "$PERF_MAX_UNITS" ]; then
+      ok "(x) PRIMARY: the projector costs $perf_units calibrated units on $perf_lines ledger lines, within the $PERF_MAX_UNITS bound (1 unit = one full jq scan measured in this same run, so the machine cancels out)"
+    else
+      no "(x) RUNTIME REGRESSION: $perf_units calibrated units on $perf_lines ledger lines, over the $PERF_MAX_UNITS bound - a reader is re-walking an input an earlier pass already read"
+    fi ;;
+esac
+
+# ---------------------------------------------------------------------------
+# HISTORICAL ARM - a direct A/B against the real pre-consolidation code, when git history
+# reaches it. Strictly a BONUS: it is the strongest control available (the control IS the
+# slow code, not a hand-built mutant that might represent nothing), but it cannot run on a
+# shallow clone, which is why it is no longer the only arm.
+# ---------------------------------------------------------------------------
+perf_pre="$ROOT/build-floor-preperf.sh"
+if git -C "$HERE/../.." cat-file -e "$PERF_PRE_SHA:loomwright/scripts/build-floor.sh" 2>/dev/null \
+   && git -C "$HERE/../.." show "$PERF_PRE_SHA:loomwright/scripts/build-floor.sh" > "$perf_pre" 2>/dev/null \
+   && [ -s "$perf_pre" ] && bash -n "$perf_pre" 2>/dev/null; then
+
+  perf_ms() {
+    python3 - "$1" "$2" <<'__PY2__'
+import subprocess, sys, time, os
+script, cwd = sys.argv[1], sys.argv[2]
+env = dict(os.environ); env["FLOOR_AGENTS_DIR"] = cwd + "/agents"
+best = None
+for _ in range(3):
+    t = time.time()
+    subprocess.run(["bash", script], cwd=cwd, env=env,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    d = int((time.time() - t) * 1000)
+    best = d if best is None else min(best, d)
+print(best)
+__PY2__
+  }
+
+  ms_now="$(perf_ms "$BUILD" "$RPERF")"
+  ms_pre="$(perf_ms "$perf_pre" "$RPERF")"
+
+  case "$ms_now$ms_pre" in
+    ''|*[!0-9]*) no "(x) HISTORICAL: could not measure (now='$ms_now' pre='$ms_pre') - inconclusive" ;;
+    *)
+      if [ "$ms_now" -le 0 ]; then
+        no "(x) HISTORICAL: the current script measured ${ms_now}ms - too fast to ratio, inconclusive"
+      else
+        ratio_x10=$(( ms_pre * 10 / ms_now ))
+        if [ "$ratio_x10" -ge "$PERF_MIN_RATIO_X10" ]; then
+          ok "(x) HISTORICAL: ${ratio_x10}/10x faster than $PERF_PRE_SHA's multi-scan readers (${ms_now}ms vs ${ms_pre}ms), at or above the required ${PERF_MIN_RATIO_X10}/10x"
+        else
+          no "(x) HISTORICAL REGRESSION: only ${ratio_x10}/10x faster than $PERF_PRE_SHA (${ms_now}ms vs ${ms_pre}ms), below the required ${PERF_MIN_RATIO_X10}/10x"
+        fi
+        if [ "$ms_pre" -gt "$ms_now" ]; then
+          ok "(x) ANTI-VACUITY: the $PERF_PRE_SHA control is measurably slower here (${ms_pre}ms > ${ms_now}ms), so the ratio compares two different implementations"
+        else
+          no "(x) ANTI-VACUITY FAILED: control ${ms_pre}ms vs HEAD ${ms_now}ms - the control is not slow, so the ratio proves nothing"
+        fi
+      fi ;;
+  esac
+else
+  skipn "(x) HISTORICAL arm: commit $PERF_PRE_SHA is unreachable (shallow clone / post-squash-merge). The PRIMARY calibrated arm above still ran - which is precisely why it exists"
+fi
+
+# ============================================================================
+echo "== (y) curation faults: rendered by the page, driven by nothing until now =="
+# `self_referential`, `duplicate_ids` and `files_not_an_array` are jq-computed AND rendered in
+# floor.js, and until this fixture existed NO committed input produced any of them: 0 rules with
+# supersedes == .id, 0 repeated ids, 0 non-array files. The single prior `files_not_an_array`
+# occurrence in this suite is the DETAIL_SUBKEYS doc-key list, which asserts the schema documents
+# the key - not that anything ever emits it. Three rendered branches with no driving input, in a
+# PR whose own narrative is "a stale fixture kept the suite green".
+CURATION_FIXTURE_DIR="$HERE/fixtures/floor-rules-curation"
+[ -d "$CURATION_FIXTURE_DIR" ] || { echo "test-build-floor: committed fixture $CURATION_FIXTURE_DIR missing" >&2; exit 1; }
+RCUR="$(new_repo)"; mkdir -p "$RCUR/.agent/rules" "$RCUR/agents"
+cp "$AGENTS_FIXTURE_DIR"/*.md "$RCUR/agents/" 2>/dev/null
+cp "$CURATION_FIXTURE_DIR"/*.json "$RCUR/.agent/rules/"
+run_build "$RCUR"; JCUR="$RCUR/.supervisor/floor/floor.json"
+
+[ "$(jq -r '[.surfaces.rules.detail.supersedes.self_referential[]?] | length' "$JCUR" 2>/dev/null)" = "1" ] \
+  && ok "(y) a rule whose supersedes names its own id is reported as self_referential" \
+  || no "(y) self_referential: $(jq -c '.surfaces.rules.detail.supersedes.self_referential' "$JCUR" 2>/dev/null)"
+[ "$(jq -r '[.surfaces.rules.detail.supersedes.duplicate_ids[]?] | length' "$JCUR" 2>/dev/null)" = "1" ] \
+  && ok "(y) an id appearing twice in the merged store is reported as a duplicate" \
+  || no "(y) duplicate_ids: $(jq -c '.surfaces.rules.detail.supersedes.duplicate_ids' "$JCUR" 2>/dev/null)"
+[ "$(jq -r '[.surfaces.rules.detail.files_not_an_array[]?] | length' "$JCUR" 2>/dev/null)" = "1" ] \
+  && ok "(y) a file that parses but is not an array is NAMED, not folded into unparseable" \
+  || no "(y) files_not_an_array: $(jq -c '.surfaces.rules.detail.files_not_an_array' "$JCUR" 2>/dev/null)"
+
+# read_completeness must count "parsed but not understood" against completeness. Keying only on
+# UNPARSEABLE files reported "all" beside a file the projector had just refused to read - the
+# examined-and-clean claim this projection exists to never make.
+[ "$(jq -r '.surfaces.rules.detail.read_completeness' "$JCUR" 2>/dev/null)" = "partial" ] \
+  && ok "(y) a store holding one usable and one not-an-array file reads PARTIAL, never all" \
+  || no "(y) read_completeness with a not-an-array file: $(jq -r '.surfaces.rules.detail.read_completeness' "$JCUR" 2>/dev/null)"
+RONLY="$(new_repo)"; mkdir -p "$RONLY/.agent/rules" "$RONLY/agents"
+cp "$AGENTS_FIXTURE_DIR"/*.md "$RONLY/agents/" 2>/dev/null
+cp "$CURATION_FIXTURE_DIR/notarray.json" "$RONLY/.agent/rules/"
+run_build "$RONLY"
+[ "$(jq -r '.surfaces.rules.detail.read_completeness' "$RONLY/.supervisor/floor/floor.json" 2>/dev/null)" = "none" ] \
+  && ok "(y) a store whose only file is not an array reads NONE - nothing usable was read" \
+  || no "(y) read_completeness with only a not-an-array file: $(jq -r '.surfaces.rules.detail.read_completeness' "$RONLY/.supervisor/floor/floor.json" 2>/dev/null)"
+
+# MUTATION CONTROL: revert read_completeness to keying on $badfiles alone and require the
+# PARTIAL assertion above to go red - otherwise it is a restatement of current behaviour.
+MUTY="$ROOT/build-floor-completeness.sh"
+# NB the delimiter: the pattern is full of jq pipes, so `s|...|...|` would terminate early.
+sed 's@(($badfiles . length) + ($notarray . length)) == 0@($badfiles | length) == 0@' "$BUILD" > "$MUTY" 2>/dev/null
+if [ -s "$MUTY" ] && ! cmp -s "$MUTY" "$BUILD" && bash -n "$MUTY" 2>/dev/null; then
+  RMUT="$(new_repo)"; mkdir -p "$RMUT/.agent/rules" "$RMUT/agents"
+  cp "$CURATION_FIXTURE_DIR"/*.json "$RMUT/.agent/rules/"
+  ( cd "$RMUT" && FLOOR_AGENTS_DIR="$RMUT/agents" bash "$MUTY" >/dev/null 2>&1 )
+  [ "$(jq -r '.surfaces.rules.detail.read_completeness' "$RMUT/.supervisor/floor/floor.json" 2>/dev/null)" = "all" ] \
+    && ok "(y2) MUTATION CONTROL: keying completeness on unparseable-only DOES report the banned 'all' - the assertion discriminates" \
+    || no "(y2) MUTATION CONTROL: the reverted computation did not report 'all' - (y) proves nothing"
+else
+  no "(y2) MUTATION CONTROL: could not build the completeness mutant - control inconclusive"
 fi
 
 echo

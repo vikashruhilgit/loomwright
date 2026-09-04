@@ -230,6 +230,521 @@
     return 'the projector recorded no reason for this surface';
   }
 
+  /* RULES BROWSER + CHURN VIEW. Both views read ONLY the `rules` / `postmortem` surfaces the
+   * projector already carries — no new fetch, no new endpoint, no new timer. Both honour the
+   * same four-state contract as the rest of the page: absent (surface key missing), unverified
+   * (present but the projector names a reason it could not fully read it — the survivable
+   * partial detail is still shown), a counted surface with nothing in it (empty), and a
+   * counted surface with recorded rows (the browsable case). NOTHING here ranks, scores or
+   * sorts by desirability: every list below is sorted by KEY (category name, scope text, class
+   * name), never by a count, and a correlation is rendered as a labelled observation with its
+   * evidence, never as a rate. */
+
+  function clearHost(id) {
+    var h = el(id);
+    if (h) { h.innerHTML = ''; }
+    return h;
+  }
+
+  /* surfaceState mirrors countCell's absent/unverified/counted trichotomy but returns the
+   * surface itself rather than a rendered cell, because both views need the surface's own
+   * `detail` to render anything beyond the state banner. */
+  function surfaceState(d, key) {
+    var s = surfaceOf(d, key);
+    if (!s) { return { state: 'absent', s: null }; }
+    if (s.status === 'absent') { return { state: 'absent', s: s }; }
+    if (s.status === 'unverified') { return { state: 'unverified', s: s }; }
+    return { state: 'counted', s: s };
+  }
+
+  function sortedKeys(obj) {
+    var keys = [], k;
+    for (k in obj) { if (Object.prototype.hasOwnProperty.call(obj, k)) { keys.push(k); } }
+    keys.sort();
+    return keys;
+  }
+
+  /* applies_to is a genuine TRI-STATE, decided by key PRESENCE, never by truthiness: the key
+   * absent, present-and-null, or a (possibly empty) array. A truthy test would collapse a
+   * declared-null rule into "no scope recorded", which is a different, false claim. */
+  function ruleScopeLabel(r) {
+    if (!Object.prototype.hasOwnProperty.call(r, 'applies_to')) { return 'no scope recorded'; }
+    var v = r.applies_to;
+    if (v === null) { return 'declared repo-wide (applies_to recorded as null)'; }
+    if (Object.prototype.toString.call(v) === '[object Array]') {
+      return v.length ? ('scoped to ' + v.join(', ')) : 'declared with an empty glob list';
+    }
+    /* FOURTH state: the key is present but the value is neither null nor an array - most often
+     * a bare string glob written without the array brackets. Returning the absent-key text here
+     * would collapse "declared, but malformed" into "never declared", which is the very defect
+     * class the null branch above exists to prevent, one branch later. It is not hypothetical:
+     * read-rules.sh carries a dedicated WARN channel for a malformed applies_to, and
+     * build-floor.sh forwards the value verbatim whenever the key is present without validating
+     * its shape - so this reaches the page intact. Name the type so the author can see what the
+     * store actually holds. */
+    return 'applies_to is present but malformed (' +
+      (Object.prototype.toString.call(v) === '[object String]' ? 'a bare string, not an array'
+        : (('aeiou'.indexOf((typeof v).charAt(0)) >= 0 ? 'an ' : 'a ') + typeof v)) +
+      ') — scope not interpretable';
+  }
+
+  /* check gets the identical tri-state treatment for the identical reason. The string is
+   * rendered as DATA via textContent below — it is never evaluated or executed. */
+  /* The THIRD of the three optional rule fields, and it was left raw when applies_to and check
+   * were guarded one commit earlier (2337397) - the same class, one field over. The projector
+   * forwards `supersedes` on key presence with no type filter, while its OWN edge walk selects
+   * `type == "string"`; so a non-string is silently excluded from chains/dangling/cycles and yet
+   * still printed on the card, leaving the walk and the card disagreeing about what the value is.
+   * add-rule.sh never writes a non-string here, so this reaches the page only via a hand-edited
+   * store - but applies_to is equally validated by add-rule.sh and was still guarded. */
+  function ruleSupersedesLabel(r) {
+    if (!Object.prototype.hasOwnProperty.call(r, 'supersedes')) { return null; }
+    var v = r.supersedes;
+    if (v === null) { return 'supersedes: declared, but recorded as null — names no rule'; }
+    if (Object.prototype.toString.call(v) !== '[object String]') {
+      return 'supersedes is present but malformed (' +
+        ('aeiou'.indexOf((typeof v).charAt(0)) >= 0 ? 'an ' : 'a ') + typeof v +
+        '), so the supersession walk excluded it';
+    }
+    if (!v) { return 'supersedes: declared, but empty — names no rule'; }
+    return 'supersedes: ' + v;
+  }
+
+  /* provenance is an OBJECT ({source, added}) and was concatenated straight into the meta line,
+   * rendering "provenance: [object Object]" on EVERY rule card against the real store - not an
+   * edge case reachable only from a hand-edited store, but the default render. Found while
+   * verifying the supersedes fix in a browser; it is the fourth field of four to need this, and
+   * the only one where the junk was already on screen. Show the fields, and say so plainly when
+   * the value is not the object shape read-rules.sh documents. */
+  function ruleProvenanceLabel(r) {
+    var v = r.provenance;
+    if (v === undefined || v === null) { return null; }
+    if (Object.prototype.toString.call(v) === '[object String]') { return 'provenance: ' + v; }
+    if (Object.prototype.toString.call(v) !== '[object Object]') {
+      return 'provenance is present but malformed (' +
+        ('aeiou'.indexOf((typeof v).charAt(0)) >= 0 ? 'an ' : 'a ') + typeof v + ')';
+    }
+    /* PRESENCE, not truthiness - the same correction every sibling field in this file already
+     * got, and the one place it was missed. `&& v.source` dropped a present-but-EMPTY source,
+     * and when both fields were empty the function then claimed the object "carries no source or
+     * added field" while both keys were demonstrably there. A false statement about the store,
+     * which is worse than the bare render it was written to avoid. build-floor.sh forwards
+     * provenance verbatim on has() without validating the inner shape, so an empty string is a
+     * value this page can actually receive. */
+    var parts = [];
+    var hasSrc = Object.prototype.hasOwnProperty.call(v, 'source');
+    var hasAdd = Object.prototype.hasOwnProperty.call(v, 'added');
+    if (hasSrc) {
+      parts.push(typeof v.source === 'string'
+        ? (v.source === '' ? 'source declared, but empty' : v.source)
+        : 'source is not a string');
+    }
+    if (hasAdd) {
+      parts.push(typeof v.added === 'string'
+        ? (v.added === '' ? 'added declared, but empty' : 'added ' + v.added)
+        : 'added is not a string');
+    }
+    /* Only when NEITHER key is present is "carries no source or added field" a true statement. */
+    return parts.length ? ('provenance: ' + parts.join(' · '))
+                        : 'provenance is recorded but carries no source or added field';
+  }
+
+  function ruleCheckLabel(r) {
+    if (!Object.prototype.hasOwnProperty.call(r, 'check')) { return 'no check declared'; }
+    if (r.check === null) { return 'declared, no runnable check (null)'; }
+    /* read-rules.sh types this `string | null`. Anything else is malformed, and concatenating it
+     * would render "[object Object]" - junk that reads like content. Same reasoning as
+     * ruleScopeLabel's fourth state: say what it is instead. */
+    if (Object.prototype.toString.call(r.check) !== '[object String]') {
+      return 'check is present but malformed (' +
+        ('aeiou'.indexOf((typeof r.check).charAt(0)) >= 0 ? 'an ' : 'a ') + typeof r.check +
+        '), not a runnable string';
+    }
+    /* An empty check is legal (read-rules.sh types it `string | null`) and used to render as a
+     * bare "check: " with nothing after the colon. Name it, the way `enforcement` does. */
+    return r.check === '' ? 'check: declared, but empty' : 'check: ' + r.check;
+  }
+
+  function renderRules(d) {
+    var basisEl = el('rules-basis');
+    var srcEl = el('rules-src');
+    var body = clearHost('rules-body');
+    if (!body) { return; }
+    var st = surfaceState(d, 'rules');
+
+    if (st.state === 'absent') {
+      if (basisEl) { basisEl.textContent = ''; }
+      if (srcEl) { srcEl.textContent = ''; }
+      var pAbsent = document.createElement('p');
+      pAbsent.className = 'empty';
+      pAbsent.textContent = st.s
+        ? ('rules surface ' + st.s.status + ': ' + reasonFor(d, st.s, 'rules'))
+        : 'rules surface is not present in floor.json';
+      body.appendChild(pAbsent);
+      return;
+    }
+
+    var s = st.s;
+    if (basisEl) { basisEl.textContent = s.basis || ''; }
+    if (st.state === 'unverified') {
+      var pUnv = document.createElement('p');
+      pUnv.className = 'view-banner';
+      pUnv.textContent = 'could not examine every rule file: ' + reasonFor(d, s, 'rules');
+      body.appendChild(pUnv);
+      /* fall through: the valid files' rules, if any, are still rendered below — "could not
+       * examine X" must never read as "examined and clean" for the files that DID parse. */
+    }
+
+    var detail = s.detail || {};
+    var rows = detail.rules || [];
+    if (srcEl) {
+      /* NO FALLBACK TO rows.length. When the surface carries no `detail` at all - an artefact
+       * from a projector older than this page, which `schema_version: 1` deliberately keeps
+       * legal - rows is [] and a rows.length fallback would print "(0 rule(s))" for a store the
+       * projector actually counted: the banned shape named in this file's own header rule
+       * (absent evidence is rendered as unknown, never as zero). Cite the surface's own `count`,
+       * which IS recorded, and say plainly that the detail is missing. */
+      if (typeof detail.rules_parsed === 'number') {
+        srcEl.textContent = '(' + detail.rules_parsed + ' rule(s)' +
+          (detail.read_completeness ? (' · read ' + detail.read_completeness) : '') + ')';
+      } else if (st.s && st.s.count === 0) {
+        srcEl.textContent = '(0 rule(s))';
+      } else if (st.s && typeof st.s.count === 'number') {
+        /* surfaceState returns { state, s } - the surface object is under `.s`. Reading
+         * `st.count` here was a branch that could never fire, which is the same
+         * guard-that-cannot-fire class this render is guarding against. */
+        srcEl.textContent = '(' + st.s.count + ' file(s) counted · no rule detail in this projection)';
+      } else {
+        srcEl.textContent = '(no rule detail in this projection)';
+      }
+    }
+
+    var unparse = detail.files_unparseable || [];
+    if (unparse.length) {
+      var ulU = document.createElement('ul');
+      ulU.className = 'notes';
+      for (var u = 0; u < unparse.length; u++) {
+        var fu = unparse[u] || {};
+        var liU = document.createElement('li');
+        liU.textContent = 'could not examine ' + (fu.file || 'a file') + ': ' + (fu.reason || 'no reason recorded');
+        ulU.appendChild(liU);
+      }
+      body.appendChild(ulU);
+    }
+
+    /* "Parsed as JSON, but not the ARRAY this store uses" is a THIRD outcome, distinct from both
+     * unparseable and clean — the projector's own comment calls it the difference between
+     * "held no rules" and "was never understood". It was emitted and rendered nowhere, so on the
+     * page a misunderstood file looked exactly like a file that simply held nothing. */
+    var notArr = detail.files_not_an_array || [];
+    if (notArr.length) {
+      var ulNA = document.createElement('ul');
+      ulNA.className = 'notes';
+      for (var na = 0; na < notArr.length; na++) {
+        var liNA = document.createElement('li');
+        liNA.textContent = 'parsed but not understood: ' + (notArr[na] || 'a file') +
+          ' holds valid JSON that is not the array of rule objects this store uses';
+        ulNA.appendChild(liNA);
+      }
+      body.appendChild(ulNA);
+    }
+
+    if (!rows.length) {
+      var pEmpty = document.createElement('p');
+      pEmpty.className = 'empty';
+      /* "no rules recorded" is a CLAIM about an examined store, so it is made only when the
+       * evidence supports it. Measured: a genuinely EMPTY store and an artefact from a projector
+       * older than this page produce the SAME shape - status counted, no `detail` - so `detail`
+       * alone cannot separate them. `count` can, and does: zero files means there is nothing to
+       * browse whether or not detail was supplied, while a positive count with no detail means
+       * this page cannot enumerate a store the projector did count. Saying "no rules recorded"
+       * for that second case is the fabricated zero; saying it for the first is simply true. */
+      if (typeof detail.rules_parsed !== 'number'
+          && !(st.s && st.s.count === 0)) {
+        pEmpty.textContent = 'this projection carries no rule detail — regenerate floor.json with a current projector to browse the store';
+        body.appendChild(pEmpty);
+        return;
+      }
+      pEmpty.textContent = 'no rules recorded';
+      body.appendChild(pEmpty);
+      return;
+    }
+
+    var byCat = {}, catOrder = [], i;
+    for (i = 0; i < rows.length; i++) {
+      var r = rows[i] || {};
+      var cat = r.category || 'uncategorised';
+      if (!Object.prototype.hasOwnProperty.call(byCat, cat)) { byCat[cat] = []; catOrder.push(cat); }
+      byCat[cat].push(r);
+    }
+    catOrder.sort();
+
+    var corrIndex = {}, corr = detail.correlations || [], c;
+    for (c = 0; c < corr.length; c++) {
+      if (corr[c] && corr[c].rule_id) { corrIndex[corr[c].rule_id] = corr[c]; }
+    }
+
+    for (var ci = 0; ci < catOrder.length; ci++) {
+      var catName = catOrder[ci];
+      var h3 = document.createElement('h3');
+      h3.className = 'rules-category';
+      h3.textContent = catName;
+      body.appendChild(h3);
+
+      var byScope = {}, scopeOrder = [], j;
+      var catRows = byCat[catName];
+      for (j = 0; j < catRows.length; j++) {
+        var scope = ruleScopeLabel(catRows[j]);
+        if (!Object.prototype.hasOwnProperty.call(byScope, scope)) { byScope[scope] = []; scopeOrder.push(scope); }
+        byScope[scope].push(catRows[j]);
+      }
+      scopeOrder.sort();
+
+      for (var si = 0; si < scopeOrder.length; si++) {
+        var h4 = document.createElement('h4');
+        h4.className = 'rules-scope';
+        h4.textContent = scopeOrder[si];
+        body.appendChild(h4);
+
+        var ulR = document.createElement('ul');
+        ulR.className = 'rules-list';
+        var scopeRows = byScope[scopeOrder[si]];
+        for (var k = 0; k < scopeRows.length; k++) {
+          var rule = scopeRows[k];
+          var li = document.createElement('li');
+          li.className = 'rule-card';
+
+          var idLine = document.createElement('div');
+          idLine.className = 'rule-id';
+          idLine.textContent = rule.id || '(no id recorded)';
+          li.appendChild(idLine);
+
+          var stmt = document.createElement('p');
+          stmt.textContent = rule.statement || '(no statement recorded)';
+          li.appendChild(stmt);
+
+          var meta = document.createElement('p');
+          meta.className = 'rule-meta';
+          var bits = [];
+          /* Key presence, not truthiness - the standard every other field in this file is held
+           * to, and this was the one exception. build-floor.sh forwards ANY string including "",
+           * which a truthy test silently drops: a rule that recorded an empty enforcement would
+           * render identically to one that recorded none. Same nullable-required-field class the
+           * `check` field already cost this repo once. */
+          if (Object.prototype.hasOwnProperty.call(rule, 'enforcement')) {
+            bits.push(rule.enforcement === ''
+              ? 'enforcement: declared, but empty'
+              : 'enforcement: ' + rule.enforcement);
+          }
+          var provLabel = ruleProvenanceLabel(rule);
+          if (provLabel !== null) { bits.push(provLabel); }
+          bits.push(ruleCheckLabel(rule));
+          meta.textContent = bits.join(' · ');
+          li.appendChild(meta);
+
+          var supLabel = ruleSupersedesLabel(rule);
+          if (supLabel !== null) {
+            var supP = document.createElement('p');
+            supP.className = 'rule-meta';
+            supP.textContent = supLabel;
+            li.appendChild(supP);
+          }
+
+          var rc = rule.id ? corrIndex[rule.id] : null;
+          if (rc) {
+            var corrDiv = document.createElement('div');
+            corrDiv.className = 'rule-correlation';
+            var corrHead = document.createElement('p');
+            corrHead.textContent = (rc.label || 'observation') + ' — not a measurement: ' + (rc.basis || '');
+            corrDiv.appendChild(corrHead);
+            var ulEv = document.createElement('ul');
+            var matched = rc.matched || [];
+            for (var m = 0; m < matched.length; m++) {
+              var mm = matched[m] || {};
+              var liEv = document.createElement('li');
+              var evTxt = 'line ' + mm.line + ' · ' + mm.path + ' matched ' + mm.pattern;
+              /* Evidence is carried ONCE PER CORRELATION in `evidence_by_line`, keyed by line -
+               * `matched[].line` is the key into it. This branch used to read `mm.evidence`, which
+               * the projector stopped emitting when the evidence was hoisted to kill a ~4x
+               * duplication; the read was not updated, so the branch was DEAD for every artefact
+               * the current projector can produce and every correlation rendered as a label and a
+               * basis with nothing under it - while three doc surfaces claimed the evidence was
+               * shown. The `mm.evidence` fallback is kept for an artefact produced BEFORE the
+               * hoist, which schema_version 1 still makes legal. */
+              var evList = (mm.evidence && mm.evidence.length) ? mm.evidence
+                         : ((rc.evidence_by_line || {})[String(mm.line)] || []);
+              if (evList.length) { evTxt += ' — evidence: ' + evList.join('; '); }
+              else { evTxt += ' — no evidence recorded for this line'; }
+              liEv.textContent = evTxt;
+              ulEv.appendChild(liEv);
+            }
+            corrDiv.appendChild(ulEv);
+            li.appendChild(corrDiv);
+          }
+
+          ulR.appendChild(li);
+        }
+        body.appendChild(ulR);
+      }
+    }
+
+    var sup = detail.supersedes;
+    if (sup) {
+      var h3s = document.createElement('h3');
+      h3s.className = 'rules-category';
+      h3s.textContent = 'Supersession history';
+      body.appendChild(h3s);
+
+      var ulS = document.createElement('ul');
+      ulS.className = 'notes';
+      var chains = sup.chains || [], dangling = sup.dangling || [], cycles = sup.cycles || [];
+      for (var ch = 0; ch < chains.length; ch++) {
+        var liCh = document.createElement('li');
+        liCh.textContent = 'chain: ' + chains[ch].join(' → ');
+        ulS.appendChild(liCh);
+      }
+      for (var dg = 0; dg < dangling.length; dg++) {
+        var dd = dangling[dg] || {};
+        var liDg = document.createElement('li');
+        liDg.textContent = 'dangling: ' + dd.from + ' supersedes ' + dd.to + ', which does not exist in the parsed set';
+        ulS.appendChild(liDg);
+      }
+      for (var cy = 0; cy < cycles.length; cy++) {
+        var liCy = document.createElement('li');
+        liCy.textContent = 'cycle: ' + cycles[cy].join(' → ') + ' → ' + cycles[cy][0];
+        ulS.appendChild(liCy);
+      }
+      /* Two more shapes the walk records and the page used to drop on the floor. Both are
+       * curation faults a browser of curation history exists to surface. */
+      var selfRef = sup.self_referential || [], dupIds = sup.duplicate_ids || [];
+      for (var sr = 0; sr < selfRef.length; sr++) {
+        var liSR = document.createElement('li');
+        liSR.textContent = 'self-referential: ' + selfRef[sr] + ' names itself, so it supersedes nothing';
+        ulS.appendChild(liSR);
+      }
+      for (var di = 0; di < dupIds.length; di++) {
+        var liDI = document.createElement('li');
+        /* "first seen wins" was FALSE in both readings available, and this is the ONLY sentence
+         * on the page that states a resolution rule - in the view whose whole premise is
+         * reporting curation history faithfully. The edge map is `add` over single-key objects,
+         * which is LAST-write-wins (documented and verified at the edge_map site in
+         * build-floor.sh: two `dup` rules superseding `target` and `other` yield the chain
+         * ["dup","other"], the first edge gone), and `rules[]` dedups nothing at all - both rows
+         * are emitted and rendered above this line. Say what actually happens. */
+        liDI.textContent = 'duplicate id: ' + dupIds[di] +
+          ' appears more than once in the merged store — both rows are listed above; where duplicates carry different supersedes values the walk follows the last';
+        ulS.appendChild(liDI);
+      }
+      if (!chains.length && !dangling.length && !cycles.length && !selfRef.length && !dupIds.length) {
+        var liNone = document.createElement('li');
+        liNone.className = 'empty';
+        liNone.textContent = 'no chains, dangling pointers or cycles recorded';
+        ulS.appendChild(liNone);
+      }
+      body.appendChild(ulS);
+    }
+  }
+
+  function renderDistribution(host, obj, label) {
+    var ul = document.createElement('ul');
+    ul.className = 'churn-dist';
+    var keys = sortedKeys(obj || {}), i;
+    if (!keys.length) {
+      var li0 = document.createElement('li');
+      li0.className = 'empty';
+      li0.textContent = 'no ' + label + ' recorded';
+      ul.appendChild(li0);
+    } else {
+      for (i = 0; i < keys.length; i++) {
+        var li = document.createElement('li');
+        li.textContent = keys[i] + ': ' + obj[keys[i]];
+        ul.appendChild(li);
+      }
+    }
+    host.appendChild(ul);
+  }
+
+  function renderChurn(d) {
+    var basisEl = el('churn-basis');
+    var srcEl = el('churn-src');
+    var body = clearHost('churn-body');
+    if (!body) { return; }
+    var st = surfaceState(d, 'postmortem');
+
+    if (st.state === 'absent') {
+      if (basisEl) { basisEl.textContent = ''; }
+      if (srcEl) { srcEl.textContent = ''; }
+      var pAbsent = document.createElement('p');
+      pAbsent.className = 'empty';
+      pAbsent.textContent = st.s
+        ? ('postmortem surface ' + st.s.status + ': ' + reasonFor(d, st.s, 'postmortem'))
+        : 'postmortem surface is not present in floor.json';
+      body.appendChild(pAbsent);
+      return;
+    }
+
+    var s = st.s;
+    var detail = s.detail || {};
+    /* THE BASIS IS READ FROM THE PROJECTION, NEVER RESTATED. flow_stage_basis exists precisely
+     * because the ledger carries two disagreeing flow-stage representations (see build-floor.sh);
+     * a literal copy of the chosen predicate here would be a second place for that choice to
+     * drift out of sync with the one the projector actually applied. */
+    if (basisEl) {
+      var basisBits = [];
+      if (detail.class_basis) { basisBits.push('class basis: ' + detail.class_basis); }
+      if (detail.flow_stage_basis) { basisBits.push('flow-stage basis: ' + detail.flow_stage_basis); }
+      basisEl.textContent = basisBits.length ? basisBits.join(' · ') : (s.basis || '');
+    }
+    if (st.state === 'unverified') {
+      var pUnv = document.createElement('p');
+      pUnv.className = 'view-banner';
+      pUnv.textContent = 'could not examine every ledger line: ' + reasonFor(d, s, 'postmortem');
+      body.appendChild(pUnv);
+    }
+    if (srcEl) {
+      var bits = [];
+      if (typeof detail.categories_total === 'number') { bits.push(detail.categories_total + ' categorised finding(s)'); }
+      if (typeof detail.lines_without_categories === 'number') { bits.push(detail.lines_without_categories + ' line(s) without categories'); }
+      if (typeof detail.flow_stage_counter_disagreements === 'number') {
+        bits.push(detail.flow_stage_counter_disagreements + ' disagreement(s) with the unpublished flow-stage counter');
+      }
+      srcEl.textContent = bits.length ? ('(' + bits.join(' · ') + ')') : '';
+    }
+
+    var classKeys = sortedKeys(detail.class_distribution || {});
+    var flowKeys = sortedKeys(detail.flow_stage_distribution || {});
+    if (!classKeys.length && !flowKeys.length) {
+      var pEmpty = document.createElement('p');
+      pEmpty.className = 'empty';
+      /* Same distinction as renderRules above: an EMPTY distribution is "no churn recorded";
+       * a projection carrying no churn detail at all was never examined and says so. */
+      pEmpty.textContent = (typeof detail.categories_total === 'number' || (st.s && st.s.count === 0))
+        ? 'no churn recorded'
+        : 'this projection carries no churn detail — regenerate floor.json with a current projector';
+      body.appendChild(pEmpty);
+    } else {
+      var h3c = document.createElement('h3');
+      h3c.className = 'rules-category';
+      h3c.textContent = 'By root-cause class';
+      body.appendChild(h3c);
+      renderDistribution(body, detail.class_distribution, 'classes');
+
+      var h3f = document.createElement('h3');
+      h3f.className = 'rules-category';
+      h3f.textContent = 'By flow stage';
+      body.appendChild(h3f);
+      renderDistribution(body, detail.flow_stage_distribution, 'flow stages');
+    }
+
+    var malformed = detail.malformed_lines || [];
+    if (malformed.length) {
+      var pMal = document.createElement('p');
+      pMal.className = 'view-banner';
+      pMal.textContent = 'malformed line(s), never folded into any class: ' + malformed.join(', ');
+      body.appendChild(pMal);
+    }
+  }
+
   /* IDLE IS A MEASURED STATE, NEVER A DEFAULT. An empty lane list has three very different
    * causes and only one of them is "nothing is running":
    *   - sessions counted + `current` present + zero agents  -> a session was identified and
@@ -473,6 +988,8 @@
       renderStages(d);
       apply.lanes = renderLanes(d);
       renderRoster(d);
+      renderRules(d);
+      renderChurn(d);
       renderNotes(d);
     }
     renderFreshness(d, apply.lanes || 0);

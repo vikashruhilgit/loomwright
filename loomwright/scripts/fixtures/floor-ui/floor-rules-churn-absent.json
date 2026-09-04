@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "generated_at_epoch": 1788440000,
+  "generator": "build-floor.sh",
+  "notes": [
+    "rules omitted: input directory .agent/rules is not present",
+    "postmortem omitted: .supervisor/postmortem/results.jsonl is not present"
+  ],
+  "surfaces": {}
+}

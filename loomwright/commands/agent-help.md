@@ -690,9 +690,9 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 
 **Purpose:** Assemble ONE recency-focused, per-work-item catch-up digest so a second person can pick up where you left off in ~2 minutes. Interleaves work items across Supervisor jobs, autonomous runs, and automate runs into a single newest-first list, surfacing the five facets where derivable — decision · why · tried/rejected · current state · provenance — plus an honest freshness/basis line (mtime vs recorded commit-SHA, never conflated). Reuses the sanctioned `read-project-memory.sh` / `read-lessons.sh` readers, silently skips absent surfaces, and writes a derived digest to `.supervisor/handoff/digest.md` (gitignored) via `scripts/build-handoff.sh`. Read-only on your work; always exits 0. Distinct from `/insights` (run trends/aggregates) and `/obsidian` (external vault projection).
 
-**Usage:** `/handoff`
+**Usage:** `/handoff` · `/handoff --publish` (ALSO writes a shareable, point-in-time snapshot)
 
-**Learn More:** see `loomwright/commands/handoff.md` for the facet-derivation rules, the freshness-basis contract, and the surfaces it reads
+**Learn More:** see `loomwright/commands/handoff.md` for the facet-derivation rules, the freshness-basis contract, the surfaces it reads, and the opt-in `--publish` snapshot written to `.supervisor/handoff/snapshot.md` (the default digest path is byte-identical with or without the flag)
 
 ---
 

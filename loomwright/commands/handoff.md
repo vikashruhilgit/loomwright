@@ -15,15 +15,23 @@ When you (or a teammate) come back to a project, the knowledge needed to continu
 ## Usage
 
 ```bash
-/handoff
+/handoff                # Rebuild the digest (default — unchanged, byte-for-byte, since the flag below shipped)
+/handoff --publish      # ALSO write a shareable, point-in-time snapshot alongside the digest
 ```
+
+## Parameters
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `--publish` | No | off | **Opt-in.** Emits the existing digest a second time as a shareable **snapshot** at `.supervisor/handoff/snapshot.md` — the same what-shipped / what-was-decided / what-was-tried-and-rejected / current-state / provenance content, wrapped in a banner that states its own generation time and explicitly disclaims polling: it is a static, point-in-time export, not a live view, and will not update itself. **Absent this flag, no new code path executes** — the default `digest.md` write is byte-for-byte identical to every pre-`--publish` release. The publish path writes only under `.supervisor/handoff/`; it never touches any source-of-truth surface (`.supervisor/jobs/`, `.agent/`, `.supervisor/postmortem/`, etc.). |
 
 ## What it does
 
 Runs the deterministic assembler and reports where it wrote:
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/build-handoff.sh"
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/build-handoff.sh"            # default
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/build-handoff.sh" --publish  # with the opt-in flag
 ```
 
 1. Assembles **ONE mode-agnostic digest** by interleaving work items across **Supervisor jobs** (`.supervisor/jobs/{pending,in-progress,done,failed}/*.md`), **autonomous runs** (`.supervisor/autonomous/<session_id>/`), and **automate runs** (`.supervisor/automate/*.md`) into a single newest-first list — not three per-mode digests.
@@ -31,6 +39,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/build-handoff.sh"
 3. **Freshness is honest about its basis** — mtime and commit-SHA are **never conflated**. A commit-SHA comparison against current `HEAD` appears **only** when an artifact recorded an actual SHA in a structured trailer (match ⇒ fresh; mismatch ⇒ a hint showing both SHAs, never silently dropped). Otherwise (the common case — jobs / autonomous / automate / `state.md` carry no SHA) the basis is the artifact's mtime and freshness is reported as **unknown**, with no SHA comparison.
 4. **Reuses the existing readers** — where it surfaces verified project memory / lessons it **calls** the sanctioned `read-project-memory.sh` / `read-lessons.sh` helpers rather than re-parsing those stores.
 5. **Absent surfaces are silently skipped** (e.g. `.supervisor/automate/` does not exist on every repo); with no continuity surfaces at all it emits a benign "nothing to summarize yet" line. It then writes **`.supervisor/handoff/digest.md`** (gitignored) and **echoes the path**.
+6. **With `--publish`** it additionally writes **`.supervisor/handoff/snapshot.md`** (also gitignored) — the digest content re-emitted as a shareable snapshot, framed as a static export rather than a live view, for handing to a teammate, pasting into a PR description, or archiving outside this checkout.
 
 It always exits 0 — a digest tool must never break its caller. Re-run any time to refresh.
 

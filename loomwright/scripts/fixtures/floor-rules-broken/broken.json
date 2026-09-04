@@ -1,0 +1,2 @@
+[{"id": "fixture-unparseable", "category": "process",
+  "statement": "this file is deliberately truncated mid-object and will not parse"
