@@ -10,6 +10,13 @@
 #   2. `.supervisor/floor/floor.json` UNDER THE CURRENT PROJECT ROOT — and only ever by
 #      running `build-floor.sh`, never by writing that path itself. `serve --no-regen` makes
 #      even that write impossible.
+#   3. THE PROJECT REGISTRY — `projects.json` sitting BESIDE the ui directory (that is, in
+#      its parent), overridable with `--registry`. Only `add`, `forget` and a CONFIRMED `scan`
+#      write it; `check`, `list` and an unconfirmed `scan` only read it. Its being a SIBLING of
+#      the ui directory rather than a file inside it is load-bearing, not incidental: `remove`
+#      deletes the ui directory, and the list of the user's projects has to outlive that.
+#      Registering a project writes NOTHING into the project itself, and `forget` is a registry
+#      edit only — it never touches the directory it is forgetting.
 #   Nothing else, anywhere. It never writes the user-scope settings file (that is the
 #   statusline module's one write domain and this module has no business in it), and it never
 #   runs a history-touching git command — no add, no commit, no checkout, no stash.
@@ -46,7 +53,13 @@
 #           dir, and serve that directory on 127.0.0.1. Foreground by default.
 #   stop    kill the pids in `<ui dir>/serve.pid`, and ONLY if their command line names
 #           `http.server` or `setup-ui.sh`.
-#   remove  delete the ui directory, marker-gated (see above).
+#   remove  delete the ui directory, marker-gated (see above). The registry is NOT touched.
+#   add     register a project (the current directory, or `add <path>`) in the registry.
+#   list    print every registered project with its slug, path and last-regenerated age.
+#   forget  drop one project from the registry BY SLUG. Deliberately not called `remove`: one
+#           word meaning both "tear down the module" and "drop a project" is a data-loss shape.
+#   scan    walk a directory for candidate projects and print them as a PROPOSAL. It writes
+#           nothing until re-run with `--confirm`.
 #
 # FLAGS
 #   --ui-dir <dir>    override the ui directory (default $HOME/.claude/loomwright/ui)
@@ -57,10 +70,25 @@
 #                     so `serve` prints the `?stale=` URL to open whenever this outgrows it
 #   --no-regen        serve whatever `floor.json` is already in the ui dir; run nothing
 #   --detach          `serve` returns immediately and records its pids in <ui dir>/serve.pid
+#   --registry <file> override the project registry (default: projects.json beside the ui
+#                     directory). `--ui-dir` CANNOT redirect the registry - the registry is a
+#                     sibling of the ui dir, not a file in it - so this is the only override,
+#                     and it is what lets a test run without going near a real config tree
+#   --confirm         `scan` only: actually register the candidates it proposed
 #
 # Portability: bash 3.2 / BSD userland safe. No GNU-only date/stat/sed flags, no associative
-# arrays, no `timeout`. `jq` is NOT a dependency of this script (only of build-floor.sh, which
-# guards it itself); `python3 >= 3.7` is required only by `serve`, and only there.
+# arrays, no `timeout`.
+#
+# THE jq POSTURE, stated here because the registry is JSON and this paragraph used to say flatly
+# that jq was not a dependency of this script. That is still true of everything the module did
+# before the registry existed: `apply`, `serve`, `stop`, `remove` and `check`'s module half all
+# behave identically with jq absent. jq IS a dependency of the five registry-touching paths -
+# `add`, `list`, `forget`, `scan`, and `check`'s registry section - and it is GUARDED rather
+# than assumed: with jq unfindable each of them refuses to read or write, names jq as the
+# reason, and exits 0 like every other branch in this file. Hand-rolling JSON with sed and awk
+# was the alternative, and it was rejected: it would silently mangle a registry the user
+# hand-edited, and a mangled registry is strictly worse than a named refusal. `python3 >= 3.7`
+# is still required only by `serve`, and only there.
 
 set -uo pipefail
 
@@ -82,14 +110,28 @@ PAGE_STALE_DEFAULT=6
 # contract - and an unset HOME is not exotic: cron, containers and `env -i` all produce one.
 # Everything downstream uses HOME_DIR, so the guard cannot be bypassed by a later reader.
 HOME_DIR="${HOME:-}"
+# The user-scope loomwright directory is named ONCE. The ui directory and the registry are both
+# derived from it, which is what makes their sibling relationship a fact of the code rather than
+# a coincidence of two independently spelled paths.
+LOOM_HOME=""
+[ -n "$HOME_DIR" ] && LOOM_HOME="$HOME_DIR/.claude/loomwright"
 DEFAULT_UI_DIR=""
-[ -n "$HOME_DIR" ] && DEFAULT_UI_DIR="$HOME_DIR/.claude/loomwright/ui"
+DEFAULT_REGISTRY=""
+[ -n "$LOOM_HOME" ] && DEFAULT_UI_DIR="$LOOM_HOME/ui"
+[ -n "$LOOM_HOME" ] && DEFAULT_REGISTRY="$LOOM_HOME/projects.json"
 
 UI_DIR="$DEFAULT_UI_DIR"
 PORT=7734
 INTERVAL=2
 REGEN=1
 DETACH=0
+REGISTRY=""
+CONFIRM=0
+POSARG=""
+# The scan's depth bound is a constant, not a flag: `scan` is a convenience over `add`, and an
+# unbounded walk of a home directory is a very long pause with no output. It is STATED in the
+# report so a candidate that was never reached is explainable rather than merely absent.
+SCAN_MAX_DEPTH=3
 
 SUBCMD="${1:-check}"
 [ $# -gt 0 ] && shift
@@ -101,7 +143,13 @@ while [ $# -gt 0 ]; do
     --interval) shift; INTERVAL="${1:-}" ;;
     --no-regen) REGEN=0 ;;
     --detach)   DETACH=1 ;;
-    *) echo "setup-ui: unknown argument '$1' (ignored)" >&2 ;;
+    --registry) shift; REGISTRY="${1:-}" ;;
+    --confirm)  CONFIRM=1 ;;
+    # The FIRST non-flag argument is positional: a path for `add`/`scan`, a slug for `forget`.
+    # Anything beginning with `-` stays an unknown FLAG and is still reported and ignored, so
+    # a typo like `--uidir` cannot be silently swallowed as a project path.
+    -*) echo "setup-ui: unknown argument '$1' (ignored)" >&2 ;;
+    *)  if [ -z "$POSARG" ]; then POSARG="$1"; else echo "setup-ui: extra argument '$1' (ignored)" >&2; fi ;;
   esac
   shift
 done
@@ -179,9 +227,362 @@ PY
 }
 
 # ---------------------------------------------------------------------------
+# The project registry
+# ---------------------------------------------------------------------------
+# EVERY function below is either read-only or funnels through reg_write, and every one of them
+# returns rather than exits: the fail-safe contract at the top of this file is refuse-to-write
+# plus a named reason, and a registry verb is not allowed to be the one branch that breaks it.
+
+# registry_path -> the absolute path of the registry file on stdout, or nothing with rc 1 when
+# there is no path to name at all (no --registry and no HOME). `--registry` WINS over the
+# HOME-derived default, and that precedence is load-bearing for the self-tests: the registry is
+# a SIBLING of the ui directory, so `--ui-dir` structurally cannot redirect it and a test that
+# relied on `--ui-dir` alone would be writing the developer's own projects.json.
+registry_path() {
+  if [ -n "$REGISTRY" ]; then printf '%s' "$REGISTRY"; return 0; fi
+  [ -n "$DEFAULT_REGISTRY" ] || return 1
+  printf '%s' "$DEFAULT_REGISTRY"
+  return 0
+}
+
+# registry_read <file> -> the registry JSON on stdout. Three distinct outcomes, because the
+# caller must treat them differently and "empty output" cannot distinguish them:
+#   rc 0  read, and it is an object carrying a `projects` ARRAY
+#   rc 1  the file is not there at all - which is the NORMAL state before the first `add`
+#   rc 2  the file is there but is not a registry this script will touch
+# rc 2 covers both "not JSON" and "JSON of the wrong shape" on purpose: in both cases the only
+# safe action is to refuse, because rewriting it would destroy whatever the user actually has.
+registry_read() {
+  local rp="$1"
+  [ -f "$rp" ] || return 1
+  jq -e 'type == "object" and ((.projects | type) == "array")' "$rp" >/dev/null 2>&1 || return 2
+  cat "$rp"
+}
+
+# reg_write <json> -> writes REG_FILE atomically (temp file in the SAME directory, then mv, so
+# a reader never sees a half-written registry). rc 1 on any failure, with nothing left behind.
+reg_write() {
+  local dir tmp
+  dir="$(dirname "$REG_FILE")"
+  [ -d "$dir" ] || mkdir -p "$dir" 2>/dev/null || return 1
+  tmp="$REG_FILE.tmp.$$"
+  printf '%s\n' "$1" > "$tmp" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 1; }
+  mv "$tmp" "$REG_FILE" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 1; }
+  return 0
+}
+
+# project_slug <path> -> a short, stable, filesystem-agnostic handle for a project directory.
+# Lowercased, everything outside [a-z0-9] folded to a single `-`, no leading or trailing `-`.
+# A path whose basename folds away entirely still gets a name rather than an empty slug.
+project_slug() {
+  local p b s
+  p="$(strip_slashes "$1")"
+  b="$(basename "$p")"
+  s="$(printf '%s' "$b" | LC_ALL=C tr '[:upper:]' '[:lower:]' | LC_ALL=C sed -e 's/[^a-z0-9]/-/g' -e 's/--*/-/g' -e 's/^-//' -e 's/-$//')"
+  [ -n "$s" ] || s="project"
+  printf '%s' "$s"
+}
+
+# uniq_slug <json> <base> -> <base>, or <base>-2, <base>-3 ... until it is free in <json>.
+# Two projects with the same basename are ordinary (`~/work/api` and `~/play/api`), and a
+# COLLIDING slug would make `forget <slug>` ambiguous, which is a data-loss shape.
+uniq_slug() {
+  local json="$1" base="$2" s n
+  s="$base"; n=2
+  while printf '%s' "$json" | jq -e --arg s "$s" 'any(.projects[]; .slug == $s)' >/dev/null 2>&1; do
+    s="$base-$n"
+    n=$((n + 1))
+    [ "$n" -gt 999 ] && break
+  done
+  printf '%s' "$s"
+}
+
+# reg_prepare <verb> -> the single place where "there is no path to name", "jq is missing" and
+# "this file is not a registry" are decided, so no verb can answer any of them differently.
+# On success sets REG_FILE and REG_JSON (an EMPTY registry when the file does not exist yet).
+REG_FILE=""
+REG_JSON=""
+reg_prepare() {
+  local verb="$1" rp rc
+  REG_FILE=""; REG_JSON=""
+  if ! have jq; then
+    echo "$verb: ABORTED — jq not found, and the project registry is JSON this script will not parse by hand (doing so would mangle a registry you had hand-edited). Install jq; check's module half, apply, serve, stop and remove do not need it. Nothing was read and nothing was written."
+    return 1
+  fi
+  rp="$(registry_path)" || {
+    echo "$verb: ABORTED — HOME is unset or empty and no --registry was given, so there is no registry file to name. Re-run with --registry <file>. Nothing was read and nothing was written."
+    return 1
+  }
+  REG_FILE="$rp"
+  REG_JSON="$(registry_read "$rp")"; rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    1) REG_JSON='{"version":1,"projects":[]}'; return 0 ;;
+    *)
+      echo "$verb: ABORTED — $rp is not valid JSON carrying a \"projects\" array, so this module will not touch it. It has NOT been modified; fix or delete it by hand. Nothing was written."
+      return 1 ;;
+  esac
+}
+
+# file_mtime <file> -> the epoch seconds of its last modification, or rc 1.
+# GNU first, BSD second, and the result is VALIDATED NUMERIC before either is believed: BSD's
+# `stat -f %m` is GNU's FILESYSTEM stat and succeeds with something that is not an mtime, which
+# would then reach arithmetic and, under `set -u`, take the whole script with it.
+file_mtime() {
+  local m
+  m="$(stat -c %Y "$1" 2>/dev/null)" || m=""
+  case "$m" in ''|*[!0-9]*) m="$(stat -f %m "$1" 2>/dev/null)" || m="" ;; esac
+  case "$m" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s' "$m"
+  return 0
+}
+
+# age_human <seconds> -> "42s ago" / "7m ago" / "3h ago" / "5d ago".
+age_human() {
+  local s="$1"
+  case "$s" in ''|*[!0-9]*) printf 'unknown'; return 0 ;; esac
+  if   [ "$s" -lt 60 ];    then printf '%ss ago' "$s"
+  elif [ "$s" -lt 3600 ];  then printf '%sm ago' "$((s / 60))"
+  elif [ "$s" -lt 86400 ]; then printf '%sh ago' "$((s / 3600))"
+  else                          printf '%sd ago' "$((s / 86400))"
+  fi
+}
+
+# project_freshness <project path> -> the human age of that project's own floor.json, or the
+# reason there is not one. The registry never caches this: a cached age is a claim about a file
+# the module does not own and cannot see change.
+project_freshness() {
+  local d="$1" m now
+  if [ ! -d "$d" ]; then printf 'unavailable — the directory is not present'; return 0; fi
+  if [ ! -f "$d/.supervisor/floor/floor.json" ]; then printf 'never regenerated (no .supervisor/floor/floor.json yet)'; return 0; fi
+  m="$(file_mtime "$d/.supervisor/floor/floor.json")" || { printf 'age unknown (its timestamp could not be read)'; return 0; }
+  now="$(date -u +%s 2>/dev/null)"
+  case "$now" in ''|*[!0-9]*) printf 'age unknown (this system clock could not be read)'; return 0 ;; esac
+  [ "$now" -ge "$m" ] || { printf 'age unknown (its timestamp is in the future)'; return 0; }
+  age_human "$((now - m))"
+  return 0
+}
+
+# registry_report — check's registry half. READ-ONLY, and every outcome is a report rather than
+# an error: an absent registry is the normal state of a fresh install, not a fault.
+registry_report() {
+  local rp rc json n
+  echo "== projects =="
+  rp="$(registry_path)" || {
+    echo "registry: none — HOME is unset or empty and no --registry was given, so there is no registry file to name."
+    return 0
+  }
+  echo "registry: $rp"
+  if ! have jq; then
+    echo "registry state: UNREADABLE — jq not found, and the registry is JSON this script will not parse by hand. Install jq; nothing else in this module needs it."
+    return 0
+  fi
+  json="$(registry_read "$rp")"; rc=$?
+  if [ "$rc" -eq 1 ]; then
+    echo "registry state: no projects registered (there is no file there yet — 'setup-ui.sh add' creates it)"
+    return 0
+  fi
+  if [ "$rc" -ne 0 ]; then
+    echo "registry state: UNREADABLE — that file is not valid JSON carrying a \"projects\" array. It has NOT been modified and nothing will be written to it until you fix or delete it."
+    return 0
+  fi
+  n="$(printf '%s' "$json" | jq -r '.projects | length' 2>/dev/null)"
+  case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  if [ "$n" -eq 0 ]; then
+    echo "registry state: no projects registered (the file exists but lists none)"
+  else
+    echo "registry state: $n project(s) registered — 'setup-ui.sh list' prints them"
+  fi
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# add
+# ---------------------------------------------------------------------------
+do_add() {
+  local target abs slug new existing
+  target="$POSARG"
+  [ -n "$target" ] || target="$(pwd)"
+  if [ ! -d "$target" ]; then
+    echo "add: ABORTED — $target is not an existing directory, so there is no project there to register. Nothing was written."
+    return 0
+  fi
+  abs="$(cd -P "$target" 2>/dev/null && pwd -P)" || abs=""
+  if [ -z "$abs" ]; then
+    echo "add: ABORTED — $target could not be resolved to an absolute path. Nothing was written."
+    return 0
+  fi
+
+  reg_prepare add || return 0
+
+  existing="$(printf '%s' "$REG_JSON" | jq -r --arg p "$abs" '[.projects[] | select(.path == $p) | .slug] | first // ""' 2>/dev/null)"
+  if [ -n "$existing" ]; then
+    echo "add: no-op — $abs is already registered as '$existing'. Nothing was written."
+    echo "  registry: $REG_FILE"
+    return 0
+  fi
+
+  slug="$(uniq_slug "$REG_JSON" "$(project_slug "$abs")")"
+  new="$(printf '%s' "$REG_JSON" | jq --arg p "$abs" --arg s "$slug" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" \
+        '.version = 1 | .projects += [{slug: $s, path: $p, added: $t}]' 2>/dev/null)"
+  if [ -z "$new" ]; then
+    echo "add: ABORTED — the updated registry could not be produced. $REG_FILE has NOT been modified."
+    return 0
+  fi
+  if ! reg_write "$new"; then
+    echo "add: ABORTED — could not write $REG_FILE. It has NOT been modified."
+    return 0
+  fi
+  echo "add: registered '$slug' — $abs"
+  echo "  registry: $REG_FILE"
+  echo "  nothing was written into the project itself; the registry is the only file this touched."
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# list
+# ---------------------------------------------------------------------------
+do_list() {
+  local n
+  reg_prepare list || return 0
+  n="$(printf '%s' "$REG_JSON" | jq -r '.projects | length' 2>/dev/null)"
+  case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  echo "registry: $REG_FILE"
+  if [ "$n" -eq 0 ]; then
+    echo "list: no projects registered — run 'setup-ui.sh add' from inside a project, or 'setup-ui.sh scan <dir>'."
+    return 0
+  fi
+  echo "list: $n project(s) registered"
+  # The loop body only PRINTS, so running it in a pipeline subshell costs nothing. Fields are
+  # tab-separated by jq and split on tab alone, because a project path may contain spaces.
+  printf '%s' "$REG_JSON" | jq -r '.projects[] | [.slug, .path] | @tsv' 2>/dev/null |
+  while IFS="$(printf '\t')" read -r slug path; do
+    [ -n "$slug" ] || continue
+    printf '  %s\n' "$slug"
+    printf '    path:              %s\n' "$path"
+    printf '    last regenerated:  %s\n' "$(project_freshness "$path")"
+  done
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# forget
+# ---------------------------------------------------------------------------
+do_forget() {
+  local slug new gone
+  slug="$POSARG"
+  if [ -z "$slug" ]; then
+    echo "forget: ABORTED — no slug given. Run 'setup-ui.sh list' to see the registered slugs. Nothing was written."
+    return 0
+  fi
+
+  reg_prepare forget || return 0
+
+  gone="$(printf '%s' "$REG_JSON" | jq -r --arg s "$slug" '[.projects[] | select(.slug == $s) | .path] | first // ""' 2>/dev/null)"
+  if [ -z "$gone" ]; then
+    echo "forget: no-op — '$slug' is not a registered project slug, so there was nothing to remove. Nothing was written."
+    echo "  registry: $REG_FILE"
+    return 0
+  fi
+
+  new="$(printf '%s' "$REG_JSON" | jq --arg s "$slug" '.projects |= map(select(.slug != $s))' 2>/dev/null)"
+  if [ -z "$new" ]; then
+    echo "forget: ABORTED — the updated registry could not be produced. $REG_FILE has NOT been modified."
+    return 0
+  fi
+  if ! reg_write "$new"; then
+    echo "forget: ABORTED — could not write $REG_FILE. It has NOT been modified."
+    return 0
+  fi
+  echo "forget: removed '$slug' from the registry"
+  echo "  the project directory itself was NOT touched: $gone is exactly as it was. This verb edits one JSON file and nothing else — 'remove' is the verb that deletes something."
+  echo "  registry: $REG_FILE"
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# scan
+# ---------------------------------------------------------------------------
+# A candidate is a directory containing `.git`. The walk is bounded at SCAN_MAX_DEPTH levels
+# below the scan root, and the bound is PRINTED: a project that was never reached has to be
+# explainable, not merely missing from a list that looks complete.
+do_scan() {
+  local root abs g d slug proposed=0 already=0 lines="" new_json
+  root="$POSARG"
+  [ -n "$root" ] || root="$(pwd)"
+  if [ ! -d "$root" ]; then
+    echo "scan: ABORTED — $root is not an existing directory. Nothing was scanned and nothing was written."
+    return 0
+  fi
+  abs="$(cd -P "$root" 2>/dev/null && pwd -P)" || abs=""
+  if [ -z "$abs" ]; then
+    echo "scan: ABORTED — $root could not be resolved to an absolute path. Nothing was written."
+    return 0
+  fi
+
+  reg_prepare scan || return 0
+
+  echo "scan: $abs (maximum depth $SCAN_MAX_DEPTH directory levels below the scan root)"
+  new_json="$REG_JSON"
+  # `find -maxdepth` first, before any other primary: GNU find warns when it comes later, and
+  # the depth is +1 because the marker found is `<project>/.git`, one level below the project.
+  while IFS= read -r g; do
+    [ -n "$g" ] || continue
+    d="${g%/.git}"
+    [ -n "$d" ] || continue
+    if printf '%s' "$new_json" | jq -e --arg p "$d" 'any(.projects[]; .path == $p)' >/dev/null 2>&1; then
+      already=$((already + 1))
+      continue
+    fi
+    slug="$(uniq_slug "$new_json" "$(project_slug "$d")")"
+    new_json="$(printf '%s' "$new_json" | jq --arg p "$d" --arg s "$slug" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" \
+          '.version = 1 | .projects += [{slug: $s, path: $p, added: $t}]' 2>/dev/null)"
+    if [ -z "$new_json" ]; then
+      echo "scan: ABORTED — the proposed registry could not be produced. $REG_FILE has NOT been modified."
+      return 0
+    fi
+    proposed=$((proposed + 1))
+    lines="$lines
+  $slug  $d"
+  done < <(find "$abs" -maxdepth $((SCAN_MAX_DEPTH + 1)) -name .git 2>/dev/null | LC_ALL=C sort)
+
+  if [ "$proposed" -eq 0 ]; then
+    echo "scan: found no unregistered project here (a candidate is a directory containing .git). Nothing was written."
+    [ "$already" -gt 0 ] && echo "  $already candidate(s) were skipped because they are already registered."
+    return 0
+  fi
+
+  echo "scan: PROPOSAL — $proposed candidate(s):$lines"
+  [ "$already" -gt 0 ] && echo "  ($already further candidate(s) skipped: already registered.)"
+  if [ "$CONFIRM" -ne 1 ]; then
+    echo "scan: nothing was written. Re-run the same command with --confirm to register the $proposed candidate(s) above."
+    echo "  registry: $REG_FILE"
+    return 0
+  fi
+  if ! reg_write "$new_json"; then
+    echo "scan: ABORTED — could not write $REG_FILE. It has NOT been modified."
+    return 0
+  fi
+  echo "scan: registered $proposed project(s) (--confirm was given)"
+  echo "  registry: $REG_FILE"
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # check
 # ---------------------------------------------------------------------------
+# `check` is ONE report covering both halves of the module: the bundle/ui state and the
+# registry state. They are separate functions only because the module half has several early
+# returns, and a registry section that hung off one of them would silently disappear whenever
+# the ui directory happened to be absent - which is precisely the fresh-install case.
 do_check() {
+  check_module
+  echo
+  registry_report
+  return 0
+}
+
+check_module() {
   echo "== ui =="
   echo "ui dir:  $UI_DIR"
   echo "bundle:  $BUNDLE_DIR"
@@ -496,9 +897,13 @@ case "$SUBCMD" in
   serve)  do_serve ;;
   stop)   do_stop ;;
   remove) do_remove ;;
+  add)    do_add ;;
+  list)   do_list ;;
+  forget) do_forget ;;
+  scan)   do_scan ;;
   *)
-    echo "setup-ui: unknown subcommand '$SUBCMD' (expected check | apply | serve | stop | remove)"
-    echo "usage: setup-ui.sh <check|apply|serve|stop|remove> [--ui-dir <dir>] [--port <n>] [--interval <n>] [--no-regen] [--detach]"
+    echo "setup-ui: unknown subcommand '$SUBCMD' (expected check | apply | serve | stop | remove | add | list | forget | scan)"
+    echo "usage: setup-ui.sh <check|apply|serve|stop|remove|add|list|forget|scan> [--ui-dir <dir>] [--registry <file>] [--port <n>] [--interval <n>] [--no-regen] [--detach] [--confirm]"
     ;;
 esac
 exit 0

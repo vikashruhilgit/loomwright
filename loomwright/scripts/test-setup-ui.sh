@@ -19,12 +19,30 @@
 # static half of each: the literal strings, the occurrence COUNTS that make "nothing animates
 # on a timer" checkable, the fixture facts the browser pass will read, and the whole engine.
 #
-# ISOLATION IS LOAD-BEARING AND IS ASSERTED, NOT ASSUMED. Every engine case passes `--ui-dir`
-# into its own `mktemp -d`, so no case can reach the developer's real `~/.claude` tree; group
-# (i) hashes two trees — the fixture parent AND a fixture git repo used as the working
-# directory — before and after the full apply/serve/stop/remove sequence, because `serve`
-# without `--no-regen` runs `build-floor.sh` in the CWD and that write must land in the
-# fixture repo rather than in this checkout.
+# ISOLATION IS LOAD-BEARING AND IS ASSERTED, NOT ASSUMED — and it takes TWO mechanisms, not one.
+# Every engine case passes `--ui-dir` into its own `mktemp -d`; group (i) hashes two trees — the
+# fixture parent AND a fixture git repo used as the working directory — before and after the
+# full apply/serve/stop/remove sequence, because `serve` without `--no-regen` runs
+# `build-floor.sh` in the CWD and that write must land in the fixture repo rather than in this
+# checkout.
+#
+# `--ui-dir` IS NOT ENOUGH FOR THE REGISTRY, and this paragraph used to say it was enough for
+# everything. The project registry is deliberately a SIBLING of the ui directory (that sibling
+# placement is what makes it survive `remove`), and the engine's arg loop sets only UI_DIR from
+# `--ui-dir` — so `--ui-dir` provably cannot redirect the registry, and a registry case written
+# in the ordinary style would write the DEVELOPER'S OWN projects.json while every one of its
+# assertions passed. Group (k) therefore runs every registry-touching invocation under a fixture
+# `HOME` or the engine's explicit `--registry` override, and (k26) is a static gate over THIS
+# FILE asserting exactly that — with a mutation control at (k27) that strips one `HOME=` and
+# requires the gate to redden. The gate is what enforces the rule; a hash alone cannot, because
+# an add-then-forget sequence writes and then restores, so on a machine with no pre-existing
+# registry the two hashes would match and the tree would still have been touched.
+#
+# ONE INVOCATION IN THIS FILE DELIBERATELY RUNS AGAINST THE REAL HOME: the `check` inside
+# `real_loom_home` near the top, whose only purpose is to learn the path that the (k28)/(k29)
+# backstop must then prove was never written. It is read-only by contract ((f2) asserts `check`
+# writes nothing), and reading the path out of the engine is what keeps it from being restated
+# here — and therefore able to drift — the same reason (z8) quotes build-floor.sh.
 #
 # Covers (each = an acceptance criterion):
 #   (a) AC-no-egress — the three bundle files carry no http/https URL, no protocol-relative
@@ -85,6 +103,16 @@
 #       SKIPPED (reported separately from passes) when the host has no non-loopback address
 #   (i) AC-remove-residue — the two hashed trees described above, plus the plugin's own bundle
 #       hashed before and after
+#   (k) AC-registry — the project registry the module keeps BESIDE its ui directory: `add`
+#       registers the current project (or a named path) with a derived, collision-free slug and
+#       is a no-op the second time; `list` prints slug, path and last-regenerated age and marks
+#       a missing path `unavailable`, never mutating; `forget` drops one entry and is hash-proven
+#       to leave the project directory itself alone; `scan` proposes and writes nothing until
+#       `--confirm`, bounded at a stated depth; a module `remove` leaves the registry intact; an
+#       unparseable registry makes every verb refuse by name, exit 0 and preserve the file byte
+#       for byte; and with jq made UNFINDABLE on PATH every registry verb names jq rather than
+#       pretending. Plus the isolation gate, its mutation control, and the real-tree backstop —
+#       all three described in the isolation paragraph above
 #   (z) release-surface parity for the /setup ui module registration, plus the surfaces/formats
 #       basis sentence, which is QUOTED from build-floor.sh rather than restated
 #
@@ -194,6 +222,35 @@ trap finish EXIT INT TERM
 mktmp() { mktemp -d "$TMPROOT/d.XXXXXX"; }
 
 REAL_BUNDLE_SIG="$(tree_sig "$BUNDLE_DIR")"
+
+# THE REAL USER-SCOPE TREE — captured HERE, before the first assertion, and compared again in
+# group (k). Its path is deliberately NOT restated in this file: it is read OUT of the engine's
+# own `check` report, for the same reason (z8) quotes build-floor.sh instead of repeating its
+# numbers — a hard-coded second copy of the path would keep passing after the engine moved it.
+# That single `check` is this suite's ONLY invocation against the developer's real HOME. It is
+# read-only by contract ((f2) asserts check writes nothing), and it exists precisely so the
+# backstop at (k) has a subject the rest of the suite must be proven never to have touched.
+real_loom_home() {
+  local line
+  line="$(bash "$ENGINE" check 2>/dev/null | sed -n 's/^registry: //p' | awk 'NR==1')"
+  case "$line" in
+    /*) dirname "$line" ;;
+    *)  printf 'UNRESOLVED' ;;
+  esac
+}
+# real_tree_sig — DEFINED for an absent tree rather than skipped. CI has no user-scope
+# loomwright directory at all, and "skip when absent" would make this backstop vacuous exactly
+# where it is cheapest to run: `ABSENT` is a VALUE, so a run that turns ABSENT into a directory
+# listing reddens instead of quietly passing.
+real_tree_sig() {
+  case "$1" in /*) ;; *) printf 'UNRESOLVED'; return 0 ;; esac
+  [ -d "$1" ] || { printf 'ABSENT'; return 0; }
+  tree_sig "$1"
+}
+REAL_LOOM_HOME="$(real_loom_home)"
+REAL_LOOM_SIG_BEFORE="$(real_tree_sig "$REAL_LOOM_HOME")"
+REAL_REG_BEFORE="ABSENT"
+[ -f "$REAL_LOOM_HOME/projects.json" ] && REAL_REG_BEFORE="$(csum "$REAL_LOOM_HOME/projects.json")"
 
 # ===========================================================================
 echo "(a) AC-no-egress — the bundle references nothing off this origin"
@@ -1881,6 +1938,418 @@ n_corr_ev="$(jq -r '[.surfaces.rules.detail.correlations[].evidence_by_line // {
 
 # The RESULT summary and the exit status are emitted by `finish` from the EXIT trap (see its
 # definition above), so every assertion group below still runs and still counts.
+
+# ===========================================================================
+echo "(k) AC-registry — add / list / forget / scan, and the isolation that keeps them off the real tree"
+# ===========================================================================
+# WHY ISOLATION HERE IS NOT THE ISOLATION EVERY OTHER GROUP USES. This file's header says every
+# engine case passes `--ui-dir` into its own `mktemp -d`. That is true, and for every other
+# group it is enough. It is NOT enough here. The registry is deliberately a SIBLING of the ui
+# directory — that sibling placement is the whole reason it survives `remove` — and the engine's
+# arg loop sets only UI_DIR from `--ui-dir`, so `--ui-dir` provably cannot redirect it. A
+# registry case written in the ordinary style would write the DEVELOPER'S OWN projects.json
+# while every assertion in it passed. So every engine invocation below carries a fixture `HOME`
+# (the precedent (f14)/(f15)/(f18) already set in this file) or the engine's explicit
+# `--registry` override, and (k26) is a STATIC gate asserting exactly that, with a mutation
+# control at (k27) that strips one `HOME=` and requires the gate to redden.
+#
+# The hash backstop ((k28)/(k29)) is deliberately NOT the primary assertion and could not be:
+# an add-then-forget sequence — the natural shape of these cases — writes and then restores, so
+# on a machine with no pre-existing registry the two hashes would match and the tree would
+# still have been touched. The static gate is what enforces the rule; the hashes catch residue.
+
+K="$(mktmp)" || setup_fail "(k) fixture: mktemp under $TMPROOT failed"
+KH="$K/home"
+mkdir -p "$KH" || setup_fail "(k) fixture: could not create the fixture HOME $KH"
+KUI="$K/ui"
+
+# The registry path is READ OUT of the engine under the fixture HOME instead of being spelled
+# here. That does two jobs at once: it gives every assertion below a subject that cannot drift
+# from the engine, and it is itself the proof that a fixture HOME is what redirects the registry.
+KREG="$(HOME="$KH" bash "$ENGINE" check --ui-dir "$KUI" 2>/dev/null | sed -n 's/^registry: //p' | awk 'NR==1')"
+case "$KREG" in
+  "$KH"/*)
+    ok "(k1) a fixture HOME redirects the registry the engine names — asserted rather than assumed, because --ui-dir structurally cannot do it" ;;
+  *)
+    no "(k1) a fixture HOME redirects the registry the engine names" \
+       "the engine reported registry '$KREG', which is not under the fixture HOME $KH"
+    KREG="$KH/unresolved-registry.json" ;;
+esac
+
+out="$(HOME="$KH" bash "$ENGINE" check --ui-dir "$KUI" 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && in_str "$out" "UI readiness" && in_str "$out" "no projects registered" \
+  && ok "(k2) check reports module state AND registry state in ONE report, and an absent registry reads as 'no projects registered', never as an error" \
+  || no "(k2) check reports module and registry state in one report; an absent registry reads as 'no projects registered'" "rc=$rc :: $out"
+
+[ ! -e "$KREG" ] \
+  && ok "(k3) that check WROTE NOTHING — the registry file still does not exist" \
+  || no "(k3) check writes nothing" "a read-only subcommand created $KREG"
+
+# --- add ------------------------------------------------------------------------------
+KP1="$K/proj-alpha"
+mkdir -p "$KP1/.git" || setup_fail "(k) fixture: could not create the fixture project $KP1"
+KP1_PHYS="$(cd -P "$KP1" 2>/dev/null && pwd -P)" || setup_fail "(k) fixture: could not resolve $KP1"
+out="$(cd "$KP1" && HOME="$KH" bash "$ENGINE" add 2>&1)"; rc=$?
+k_path="$(jq -r '[.projects[].path] | first // ""' "$KREG" 2>/dev/null)"
+k_slug="$(jq -r '[.projects[].slug] | first // ""' "$KREG" 2>/dev/null)"
+[ "$rc" -eq 0 ] && [ "$k_path" = "$KP1_PHYS" ] && [ "$k_slug" = "proj-alpha" ] \
+  && ok "(k4) 'add' with no argument registers the CURRENT project by absolute path, with a slug derived from it (slug=$k_slug)" \
+  || no "(k4) 'add' with no argument registers the current project by absolute path and derived slug" \
+       "rc=$rc path='$k_path' (want '$KP1_PHYS') slug='$k_slug' (want 'proj-alpha') :: $out"
+
+k_sig="$(csum "$KREG")"
+out="$(cd "$KP1" && HOME="$KH" bash "$ENGINE" add 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && in_str "$out" "already registered" && [ "$k_sig" = "$(csum "$KREG")" ] \
+  && ok "(k5) a second 'add' in the same project reports 'already registered' and leaves the registry byte-identical" \
+  || no "(k5) a second 'add' reports 'already registered' and writes nothing" "rc=$rc :: $out"
+
+k_sig="$(csum "$KREG")"
+out="$(HOME="$KH" bash "$ENGINE" add "$K/no-such-project" 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ -f "$KREG" ] && in_str "$out" "$K/no-such-project" && [ "$k_sig" = "$(csum "$KREG")" ] \
+  && ok "(k6) 'add <path>' on a path that does not exist writes nothing and NAMES the path in the reason" \
+  || no "(k6) 'add <path>' on a non-existent path writes nothing and names the path" "rc=$rc :: $out"
+
+# Two projects sharing a basename. A colliding slug would make 'forget <slug>' ambiguous, which
+# is a data-loss shape, so the slugs must differ even though the basenames do not.
+KP2="$K/proj-beta"
+KP3="$K/nest/proj-alpha"
+mkdir -p "$KP2/.git" "$KP3/.git" || setup_fail "(k) fixture: could not create the sibling fixture projects"
+HOME="$KH" bash "$ENGINE" add "$KP2" >/dev/null 2>&1
+HOME="$KH" bash "$ENGINE" add "$KP3" >/dev/null 2>&1
+k_n="$(jq -r '.projects | length' "$KREG" 2>/dev/null)"
+k_uniq="$(jq -r '[.projects[].slug] | if (length) == (unique | length) then "unique" else "COLLIDING" end' "$KREG" 2>/dev/null)"
+[ "$k_n" = "3" ] && [ "$k_uniq" = "unique" ] \
+  && ok "(k7) three projects register, and two projects sharing a basename get DISTINCT slugs" \
+  || no "(k7) three projects register with distinct slugs" "count='$k_n' (want 3) slugs='$k_uniq'"
+
+# --- list -----------------------------------------------------------------------------
+mkdir -p "$KP1/.supervisor/floor" && printf '{}\n' > "$KP1/.supervisor/floor/floor.json" \
+  || setup_fail "(k) fixture: could not give $KP1 a floor.json for the age assertion"
+rm -r "$KP2" 2>/dev/null
+[ ! -d "$KP2" ] || setup_fail "(k) fixture: $KP2 had to be removed so 'unavailable' has a subject"
+
+k_sig="$(csum "$KREG")"
+out="$(HOME="$KH" bash "$ENGINE" list 2>&1)"; rc=$?
+k_after="$(csum "$KREG")"
+[ "$rc" -eq 0 ] && in_str "$out" "$KP1_PHYS" && in_str "$out" "proj-alpha" && in_str "$out" "ago" \
+  && ok "(k8) 'list' prints each project with its path, its slug and its last-regenerated age" \
+  || no "(k8) 'list' prints path, slug and last-regenerated age" "rc=$rc :: $out"
+in_str "$out" "unavailable" \
+  && ok "(k9) a registered project whose path is currently missing is marked 'unavailable'" \
+  || no "(k9) a missing project path is marked 'unavailable'" "$out"
+[ -f "$KREG" ] && [ -n "$k_sig" ] && [ "$k_sig" = "$k_after" ] \
+  && ok "(k10) 'list' never mutates the registry — including on the run where an entry was unavailable" \
+  || no "(k10) 'list' never mutates the registry" "the registry checksum changed across a read-only verb"
+
+# --- forget ---------------------------------------------------------------------------
+KP3_PHYS="$(cd -P "$KP3" 2>/dev/null && pwd -P)" || setup_fail "(k) fixture: could not resolve $KP3"
+k_slug3="$(jq -r --arg p "$KP3_PHYS" '[.projects[] | select(.path == $p) | .slug] | first // ""' "$KREG" 2>/dev/null)"
+[ -n "$k_slug3" ] || setup_fail "(k) fixture: $KP3_PHYS is not in the registry, so the forget assertions would have no subject"
+kp3_before="$(tree_sig "$KP3")"
+out="$(HOME="$KH" bash "$ENGINE" forget "$k_slug3" 2>&1)"; rc=$?
+kp3_after="$(tree_sig "$KP3")"
+k_still="$(jq -r --arg s "$k_slug3" '[.projects[] | select(.slug == $s)] | length' "$KREG" 2>/dev/null)"
+[ "$rc" -eq 0 ] && [ "$k_still" = "0" ] \
+  && ok "(k11) 'forget <slug>' removes exactly that entry from the registry" \
+  || no "(k11) 'forget <slug>' removes that entry" "rc=$rc still-present='$k_still' :: $out"
+[ -d "$KP3" ] && [ -n "$kp3_before" ] && [ "$kp3_before" = "$kp3_after" ] \
+  && ok "(k12) 'forget' leaves the project DIRECTORY itself untouched — the tree is hashed before and after" \
+  || no "(k12) 'forget' leaves the project directory untouched (hashed before and after)" \
+       "dir=$([ -d "$KP3" ] && echo present || echo GONE) unchanged=$([ "$kp3_before" = "$kp3_after" ] && echo yes || echo NO)"
+
+k_sig="$(csum "$KREG")"
+out="$(HOME="$KH" bash "$ENGINE" forget not-a-registered-slug 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && in_str "$out" "not-a-registered-slug" && [ "$k_sig" = "$(csum "$KREG")" ] \
+  && ok "(k13) 'forget' on an unregistered slug writes nothing and says so, naming the slug" \
+  || no "(k13) 'forget' on an unregistered slug writes nothing and says so" "rc=$rc :: $out"
+
+# --- the module's own `remove` must not take the registry with it ----------------------
+HOME="$KH" bash "$ENGINE" apply --ui-dir "$KUI" >/dev/null 2>&1
+[ -f "$KUI/.loomwright-ui-module" ] || setup_fail "(k) fixture: apply did not install into $KUI, so the remove assertion would be vacuous"
+k_sig="$(csum "$KREG")"
+out="$(HOME="$KH" bash "$ENGINE" remove --ui-dir "$KUI" 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ ! -d "$KUI" ] && [ -f "$KREG" ] && [ "$k_sig" = "$(csum "$KREG")" ] \
+  && ok "(k14) a module 'remove' deletes the ui dir and leaves the registry INTACT — asserted directly, not reasoned from the path" \
+  || no "(k14) a module 'remove' leaves the registry intact" \
+       "rc=$rc ui=$([ -d "$KUI" ] && echo present || echo gone) registry=$([ -f "$KREG" ] && echo present || echo GONE) unchanged=$([ "$k_sig" = "$(csum "$KREG")" ] && echo yes || echo NO) :: $out"
+
+# --- a registry that is not valid JSON ------------------------------------------------
+# The bad registry lives under its OWN fixture HOME, derived from the good one by substituting
+# the home prefix, so the path is never restated and this block cannot corrupt the fixture above.
+KBAD="$K/home-bad"
+mkdir -p "$KBAD" || setup_fail "(k) fixture: could not create $KBAD"
+KBADREG="$KBAD${KREG#$KH}"
+mkdir -p "$(dirname "$KBADREG")" 2>/dev/null
+printf 'this is not JSON {{{\n' > "$KBADREG" || setup_fail "(k) fixture: could not write the malformed registry at $KBADREG"
+kbad_sig="$(csum "$KBADREG")"
+bad_bad=""; bad_out=""
+for v in add list forget scan check; do
+  o="$(HOME="$KBAD" bash "$ENGINE" "$v" "$K" --ui-dir "$K/ui-bad" 2>&1)"; r=$?
+  [ "$r" -eq 0 ] || bad_bad="$bad_bad [$v exit=$r]"
+  in_str "$o" "not valid JSON" || bad_bad="$bad_bad [$v names-no-reason]"
+  bad_out="$bad_out
+  --- $v: $o"
+done
+[ -z "$bad_bad" ] \
+  && ok "(k15) a registry that is not valid JSON makes every registry-touching subcommand (add/list/forget/scan/check) refuse by name and exit 0" \
+  || no "(k15) an unparseable registry: every subcommand refuses by name and exits 0" "$bad_bad ::$bad_out"
+[ "$kbad_sig" = "$(csum "$KBADREG")" ] \
+  && ok "(k16) the unparseable registry is preserved BYTE FOR BYTE across all five — the engine never rewrites a file it could not read" \
+  || no "(k16) the unparseable registry is preserved byte for byte" "its checksum changed"
+
+# --- jq unfindable --------------------------------------------------------------------
+# AC-1e requires this asserted by making jq UNFINDABLE, not by inspecting the source. The stub
+# PATH is the same mechanism group (g) uses, and the probe below proves the stub really works —
+# without it, (k18) would pass just as happily against a PATH that still resolved jq.
+KSTUB="$K/bin-nojq"
+mkstub "$KSTUB" "jq" || setup_fail "(k) fixture: could not build the jq-absent PATH stub"
+[ ! -e "$KSTUB/jq" ] || setup_fail "(k) fixture: the jq-absent stub still contains jq"
+kj_probe="$(PATH="$KSTUB" bash -c 'command -v jq' 2>/dev/null || true)"
+[ -z "$kj_probe" ] \
+  && ok "(k17) the probe makes jq genuinely UNFINDABLE on PATH, so (k18) is a measurement rather than an inspection" \
+  || no "(k17) the jq-absent probe makes jq unfindable" "PATH=$KSTUB still resolves jq to '$kj_probe'"
+
+KJH="$K/home-nojq"
+mkdir -p "$KJH" || setup_fail "(k) fixture: could not create $KJH"
+KJREG="$KJH${KREG#$KH}"
+jq_bad=""; jq_out=""
+for v in add list forget scan check; do
+  o="$(PATH="$KSTUB" HOME="$KJH" bash "$ENGINE" "$v" "$K" --ui-dir "$K/ui-nojq" 2>&1)"; r=$?
+  [ "$r" -eq 0 ] || jq_bad="$jq_bad [$v exit=$r]"
+  in_str "$o" "jq" || jq_bad="$jq_bad [$v does-not-name-jq]"
+  jq_out="$jq_out
+  --- $v: $o"
+done
+[ -z "$jq_bad" ] && [ ! -e "$KJREG" ] \
+  && ok "(k18) with jq UNFINDABLE, every registry subcommand names jq as the reason, writes no registry, and exits 0 — the posture the engine header states" \
+  || no "(k18) with jq unfindable, every registry subcommand names jq, writes nothing and exits 0" \
+       "$jq_bad registry=$([ -e "$KJREG" ] && echo CREATED || echo absent) ::$jq_out"
+
+# --- scan -----------------------------------------------------------------------------
+KSCAN="$K/scanroot"
+mkdir -p "$KSCAN/one/.git" "$KSCAN/a/b/two/.git" "$KSCAN/a/b/c/d/deep/.git" \
+  || setup_fail "(k) fixture: could not build the scan fixture tree"
+KSCAN_PHYS="$(cd -P "$KSCAN" 2>/dev/null && pwd -P)" || setup_fail "(k) fixture: could not resolve $KSCAN"
+KSH="$K/home-scan"
+mkdir -p "$KSH" || setup_fail "(k) fixture: could not create $KSH"
+KSREG="$KSH${KREG#$KH}"
+out="$(HOME="$KSH" bash "$ENGINE" scan "$KSCAN" 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && in_str "$out" "$KSCAN_PHYS/one" && in_str "$out" "$KSCAN_PHYS/a/b/two" \
+  && ok "(k19) 'scan <dir>' lists the candidate projects it found" \
+  || no "(k19) 'scan <dir>' lists the candidates it found" "rc=$rc :: $out"
+[ ! -e "$KSREG" ] \
+  && ok "(k20) an unconfirmed scan is a PROPOSAL: the registry was not written — not even created" \
+  || no "(k20) an unconfirmed scan writes nothing" "$KSREG exists after a scan with no confirmation"
+if in_str "$out" "$KSCAN_PHYS/a/b/c/d/deep"; then
+  no "(k21) the scan is bounded by a stated maximum depth" "a repo five levels below the scan root was proposed"
+elif in_str "$out" "depth"; then
+  ok "(k21) the scan is BOUNDED and says so: a repo five levels below the scan root is not proposed, and the report states the maximum depth"
+else
+  no "(k21) the scan states its maximum depth" "the depth bound held, but the report never states it :: $out"
+fi
+out="$(HOME="$KSH" bash "$ENGINE" scan "$KSCAN" --confirm 2>&1)"; rc=$?
+ks_n="$(jq -r '.projects | length' "$KSREG" 2>/dev/null)"
+[ "$rc" -eq 0 ] && [ "$ks_n" = "2" ] \
+  && ok "(k22) an explicit --confirm is what actually registers the proposal (the two candidates within the depth bound)" \
+  || no "(k22) --confirm registers the proposed candidates" "rc=$rc registered='$ks_n' (want 2) :: $out"
+
+KEMPTY="$K/scan-empty"
+mkdir -p "$KEMPTY/no/repos/here" || setup_fail "(k) fixture: could not create $KEMPTY"
+out="$(HOME="$KSH" bash "$ENGINE" scan "$KEMPTY" 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && in_str "$out" "found no" \
+  && ok "(k23) a scan that finds nothing SAYS so rather than printing an empty success" \
+  || no "(k23) a scan that finds nothing says so" "rc=$rc :: $out"
+
+# --- the explicit override, and having no registry to name at all ----------------------
+KALT="$K/alt-registry.json"
+k_sig="$(csum "$KREG")"
+out="$(HOME="$KH" bash "$ENGINE" add "$KP1" --registry "$KALT" 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ -f "$KALT" ] && [ "$k_sig" = "$(csum "$KREG")" ] \
+  && ok "(k24) '--registry <file>' is honoured by registry_path and WINS over the HOME-derived default, which was not touched" \
+  || no "(k24) '--registry <file>' is honoured and wins over the HOME-derived default" \
+       "rc=$rc alt=$([ -f "$KALT" ] && echo written || echo MISSING) home-registry-unchanged=$([ "$k_sig" = "$(csum "$KREG")" ] && echo yes || echo NO) :: $out"
+
+if env -u HOME true >/dev/null 2>&1 && [ "$(env -u HOME bash -c 'printf %s "${HOME:-<unset>}"' 2>/dev/null)" = "<unset>" ]; then
+  out="$(env -u HOME bash "$ENGINE" list --ui-dir "$K/ui-nohome" 2>&1)"; rc=$?
+  [ "$rc" -eq 0 ] && in_str "$out" "--registry" \
+    && ok "(k25) with HOME unset and no --registry there is no registry file to name: the engine says so by name and still exits 0" \
+    || no "(k25) with HOME unset and no --registry, the engine aborts by name and exits 0" "rc=$rc :: $out"
+else
+  skipn "(k25) \`env -u\` cannot produce an unset HOME on this host, so the no-registry-to-name branch cannot be exercised"
+fi
+
+# --- MUTATION CONTROLS for (k12) and (k16) ---------------------------------------------
+# (k12) and (k16) are both PRESERVATION assertions — "this hash did not change" — and a
+# preservation assertion passes just as happily against an engine that never ran at all. Each
+# therefore gets an engine mutant that commits exactly the damage the assertion claims to
+# detect, and the control is that the damage IS detected. They are named after the assertions
+# they guard rather than given the next free number, because a control is only meaningful
+# beside its subject; (k26a)/(k26b) already establish the suffix form in this file. They sit
+# here, BEFORE the (k28)/(k29) backstop, so that backstop still covers every engine invocation.
+#
+# Neither control mutates the real engine: each writes a separate copy and (k16d) re-hashes the
+# original afterwards. The mutants live under $TMPROOT and go with it in the EXIT trap.
+K_ENGINE_SIG_BEFORE="$(csum "$ENGINE")"
+KMUTDIR="$K/mutbin"
+mkdir -p "$KMUTDIR" || setup_fail "(k12c) fixture: could not create $KMUTDIR"
+KMH="$K/home-mut"
+mkdir -p "$KMH" || setup_fail "(k12c) fixture: could not create the mutant-control fixture HOME $KMH"
+KMREG="$KMH${KREG#$KH}"
+KMP="$K/mut-project"
+mkdir -p "$KMP" || setup_fail "(k12c) fixture: could not create $KMP"
+printf 'the user keeps this\n' > "$KMP/precious.txt" || setup_fail "(k12c) fixture: could not seed $KMP"
+
+# (k12c) — an engine whose `forget` also deletes a file inside the project it is forgetting.
+# That is precisely the data-loss shape R5 names, and (k12) exists to catch it.
+KMUT_FORGET="$KMUTDIR/setup-ui-forget.sh"
+awk 'BEGIN { done = 0 }
+     {
+       if (!done && index($0, "forget: removed") > 0) { print "  rm -f \"$gone/precious.txt\" 2>/dev/null"; done = 1 }
+       print
+     }' "$ENGINE" > "$KMUT_FORGET" 2>/dev/null
+if mutant_ok "$ENGINE" "$KMUT_FORGET" shell; then
+  HOME="$KMH" bash "$ENGINE" add "$KMP" >/dev/null 2>&1
+  km_slug="$(jq -r '[.projects[].slug] | first // ""' "$KMREG" 2>/dev/null)"
+  kmp_before="$(tree_sig "$KMP")"
+  out="$(HOME="$KMH" bash "$KMUT_FORGET" forget "$km_slug" 2>&1)"; rc=$?
+  kmp_after="$(tree_sig "$KMP")"
+  km_left="$(jq -r '.projects | length' "$KMREG" 2>/dev/null)"
+  # THE MUTANT MUST HAVE REACHED ITS OWN CODE PATH. A mutant that died early — a syntax error,
+  # a missing fixture, an abort before the write — leaves the project tree untouched and is
+  # indistinguishable from a control that failed to redden, so it is checked separately and
+  # reported as a BROKEN CONTROL rather than allowed to look like either outcome.
+  if [ -z "$km_slug" ] || [ "$km_left" != "0" ] || ! in_str "$out" "forget: removed"; then
+    no "(k12c) MUTATION CONTROL: (k12) catches a forget that damages the project tree" \
+       "the mutant never reached its own forget path, so this control proves nothing: slug='$km_slug' entries-left='$km_left' rc=$rc :: $out"
+  elif [ -n "$kmp_before" ] && [ "$kmp_before" != "$kmp_after" ]; then
+    ok "(k12c) MUTATION CONTROL: an engine whose forget deletes a file inside the registered project makes (k12)'s before/after tree hash DIFFER — (k12) can detect the damage it claims to"
+  else
+    no "(k12c) MUTATION CONTROL: (k12) catches a forget that damages the project tree" \
+       "the mutant ran and removed the registry entry, but the project tree hash did not change — (k12) would NOT have caught it"
+  fi
+fi
+
+# (k16c) — an engine that treats an UNPARSEABLE registry as an empty one instead of refusing.
+# It is a one-token change (the rc-1 arm of reg_prepare's case swallowing rc 2 as well), and it
+# is the realistic bug: the next `add` then overwrites whatever the user actually had there.
+KMUT_BAD="$KMUTDIR/setup-ui-badreg.sh"
+awk 'BEGIN { done = 0 }
+     {
+       if (!done && index($0, "1) REG_JSON=") > 0) { sub(/1\) REG_JSON=/, "1|2) REG_JSON="); done = 1 }
+       print
+     }' "$ENGINE" > "$KMUT_BAD" 2>/dev/null
+if mutant_ok "$ENGINE" "$KMUT_BAD" shell; then
+  KMBH="$K/home-mut-bad"
+  mkdir -p "$KMBH" || setup_fail "(k16c) fixture: could not create $KMBH"
+  KMBREG="$KMBH${KREG#$KH}"
+  mkdir -p "$(dirname "$KMBREG")" 2>/dev/null
+  printf 'this is not JSON {{{\n' > "$KMBREG" || setup_fail "(k16c) fixture: could not write the malformed registry at $KMBREG"
+  kmb_before="$(csum "$KMBREG")"
+  out="$(HOME="$KMBH" bash "$KMUT_BAD" add "$KMP" 2>&1)"; rc=$?
+  kmb_after="$(csum "$KMBREG")"
+  if ! in_str "$out" "add: registered"; then
+    no "(k16c) MUTATION CONTROL: (k16) catches an engine that rewrites an unparseable registry" \
+       "the mutant never reached its write path, so this control proves nothing: rc=$rc :: $out"
+  elif [ -n "$kmb_before" ] && [ "$kmb_before" != "$kmb_after" ]; then
+    ok "(k16c) MUTATION CONTROL: an engine that treats an unparseable registry as empty OVERWRITES it, and (k16)'s byte-for-byte checksum sees that — (k16) is not passing on a file nothing opened"
+  else
+    no "(k16c) MUTATION CONTROL: (k16) catches an engine that rewrites an unparseable registry" \
+       "the mutant reported a successful registration, but the malformed file's checksum did not change — (k16) would NOT have caught it"
+  fi
+fi
+
+# (k16d) — the restore check. Neither control above edits the real engine, and this is what
+# proves it: the same sha256 before and after, plus no mutant left anywhere in the plugin's own
+# scripts directory. Without it, a control that mutated in place could leave every assertion in
+# this file testing a file the repository does not contain.
+k_eng_after="$(csum "$ENGINE")"
+k_residue="$(ls "$script_dir"/setup-ui-*.sh 2>/dev/null || true)"
+[ -n "$K_ENGINE_SIG_BEFORE" ] && [ "$K_ENGINE_SIG_BEFORE" = "$k_eng_after" ] && [ -z "$k_residue" ] \
+  && ok "(k16d) the real engine is byte-identical after both mutation controls (sha256 unchanged) and no mutant copy was left in the plugin's scripts directory" \
+  || no "(k16d) the real engine is byte-identical after both mutation controls and no mutant was left behind" \
+       "before='$K_ENGINE_SIG_BEFORE' after='$k_eng_after' residue='$k_residue'"
+
+# --- (k26) THE STATIC ISOLATION GATE — this is what actually enforces AC-1h ------------
+# Two rules, and both are needed:
+#   A. INSIDE this group, EVERY engine invocation must carry an isolation token. The verb is a
+#      loop variable in several cases above, so a literal-verb rule alone would see half of them.
+#   B. ANYWHERE in this file, an engine invocation naming a literal registry verb must carry
+#      one. This is the rule that binds the groups a later subtask appends.
+# An isolation token is a fixture `HOME=`, an explicit `--registry`, or `env -u HOME` (which
+# provably cannot reach a home directory because there is not one).
+SELF="$script_dir/test-setup-ui.sh"
+[ -f "$SELF" ] || setup_fail "(k26) fixture: this file is not readable at $SELF, so the isolation gate has no subject"
+
+reg_isolation_scan() {
+  awk -v mode="$2" '
+    function isolated(l) { return (l ~ /HOME=/) || (l ~ /--registry/) || (l ~ /env -u HOME/) }
+    /^echo "\(k\) AC-registry/ { ink = 1 }
+    /^echo "\(z\)/            { ink = 0 }
+    {
+      if ($0 !~ /bash[[:space:]]+"\$[A-Za-z_][A-Za-z_0-9]*"/) next
+      regverb = ($0 ~ /"\$[A-Za-z_][A-Za-z_0-9]*"[[:space:]]+(add|list|forget|scan)([[:space:]]|$)/)
+      if (!(ink || regverb)) next
+      seen++
+      if (mode == "findings" && !isolated($0)) printf "%d: %s\n", FNR, $0
+    }
+    END { if (mode == "count") print seen+0 }
+  ' "$1"
+}
+
+k_seen="$(reg_isolation_scan "$SELF" count)"
+case "$k_seen" in ''|*[!0-9]*) k_seen=0 ;; esac
+[ "$k_seen" -ge 15 ] \
+  && ok "(k26a) the isolation gate actually SEES the registry-touching invocations ($k_seen of them) — a gate whose pattern matched nothing would report 'clean' forever" \
+  || no "(k26a) the isolation gate sees the registry-touching invocations" "it inspected only $k_seen lines; a pattern that stopped matching would make (k26b) vacuous"
+
+k_viol="$(reg_isolation_scan "$SELF" findings)"
+[ -z "$k_viol" ] \
+  && ok "(k26b) every registry-touching engine invocation in this file carries a fixture HOME, an explicit --registry, or an unset HOME" \
+  || no "(k26b) every registry-touching engine invocation carries an isolation token" \
+       "these would run against the developer's real config tree:
+$k_viol"
+
+# MUTATION CONTROL for (k26b): strip the fixture HOME from ONE call site and the gate must
+# redden. Without this the gate would also "pass" if its rules had quietly stopped applying.
+KMUT="$TMPROOT/k-self-mutant.sh"
+awk 'BEGIN { done = 0 }
+     {
+       if (!done && index($0, "HOME=\"$KH\" bash \"$ENGINE\" list") > 0) { sub(/HOME="\$KH" /, ""); done = 1 }
+       print
+     }' "$SELF" > "$KMUT" 2>/dev/null
+if mutant_ok "$SELF" "$KMUT" shell; then
+  k_mviol="$(reg_isolation_scan "$KMUT" findings)"
+  [ -n "$k_mviol" ] \
+    && ok "(k27) MUTATION CONTROL: stripping the fixture HOME from one call site reddens the gate — (k26b) is enforcing the rule, not restating it" \
+    || no "(k27) MUTATION CONTROL: a call site with the fixture HOME stripped is flagged" \
+         "the gate stayed clean on a mutant that reaches the real config tree"
+fi
+
+# --- (k28)/(k29) THE BACKSTOP: the real user-scope tree, hashed around the whole suite ---
+# Captured before the first assertion in this file (see real_tree_sig near the top) and compared
+# here — after every group that invokes the engine, since (z) below reads documents only. ABSENT
+# is a DEFINED value, so CI, which has no user-scope loomwright directory at all, still runs
+# this assertion instead of skipping it.
+k_real_after="$(real_tree_sig "$REAL_LOOM_HOME")"
+if [ "$REAL_LOOM_SIG_BEFORE" = "UNRESOLVED" ]; then
+  no "(k28) the real user-scope tree is unchanged across the whole suite" \
+     "the engine named no absolute registry path under the real HOME, so this backstop has no subject and is NOT passing"
+elif [ "$REAL_LOOM_SIG_BEFORE" = "$k_real_after" ]; then
+  ok "(k28) the real user-scope tree is byte-identical across the whole suite (state before: $([ "$REAL_LOOM_SIG_BEFORE" = "ABSENT" ] && echo ABSENT || echo present))"
+else
+  printf '%s\n' "$REAL_LOOM_SIG_BEFORE" > "$TMPROOT/real-before" 2>/dev/null
+  printf '%s\n' "$k_real_after"         > "$TMPROOT/real-after"  2>/dev/null
+  no "(k28) the real user-scope tree is unchanged across the whole suite" \
+     "$(diff "$TMPROOT/real-before" "$TMPROOT/real-after" 2>/dev/null | head -20)
+     (a live 'serve' writing into the real ui dir would also show here; a projects.json line means a case escaped its fixture HOME)"
+fi
+
+k_real_reg_after="ABSENT"
+[ -f "$REAL_LOOM_HOME/projects.json" ] && k_real_reg_after="$(csum "$REAL_LOOM_HOME/projects.json")"
+[ "$REAL_REG_BEFORE" = "$k_real_reg_after" ] \
+  && ok "(k29) the real projects.json is unchanged across the whole suite (state before: $([ "$REAL_REG_BEFORE" = "ABSENT" ] && echo ABSENT || echo present)) — the precise subject, immune to anything else writing under that directory" \
+  || no "(k29) the real projects.json is unchanged across the whole suite" \
+       "before='$REAL_REG_BEFORE' after='$k_real_reg_after' — a registry case reached the developer's real config tree"
 
 # (z) release-surface parity — appended by subtask 3
 # ===========================================================================
