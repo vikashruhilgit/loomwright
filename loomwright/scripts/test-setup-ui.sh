@@ -3375,6 +3375,48 @@ else
      "the engine writes '$served_index_name' but that section does not name it — the section claims to be the whole list"
 fi
 
+
+# (l29)/(l30) — LANE MEMORY MUST BE RESET BY THE ASSIGNMENT, NOT BY ONE CALLER OF IT.
+# The CI reviewer found that resetProjectMemory() was wired to the picker's onchange alone,
+# while renderProjectPicker ALSO reassigns selectedSlug on two paths the reader never touches:
+# the served index going momentarily absent/unreadable (root fallback), and the "follow it"
+# branch when the viewed project drops out of the registry. Those paths switched the rendered
+# document while prevEvents/shuttleStep still held the PREVIOUS project's per-agent counts —
+# and untyped rows fall back to a positional id ('row-' + i), so two unrelated projects' first
+# untyped rows collide on "row-0" and a shuttle can advance purely because the old project
+# reported a higher count there. Motion with no event behind it in the document being rendered
+# is the single invariant this bundle exists to enforce, so the guard is STRUCTURAL: exactly one
+# site may mutate selectedSlug, and that site resets. A future author adding a fourth assignment
+# reintroduces the bug silently, which is what (l29) is here to stop.
+l_sel_assign="$(grep -cE '(^|[^a-zA-Z])selectedSlug[[:space:]]*=[^=]' "$JS")"
+l_sel_infn="$(awk '/^  function setSelectedSlug/{f=1} f&&/selectedSlug[[:space:]]*=[^=]/{n++} f&&/^  }/{exit} END{print n+0}' "$JS")"
+l_sel_decl="$(grep -cE '^  var selectedSlug = null;$' "$JS")"
+if [ "$l_sel_assign" = "$((l_sel_infn + l_sel_decl))" ] && [ "$l_sel_infn" = "1" ] && [ "$l_sel_decl" = "1" ]; then
+  ok "(l29) selectedSlug is mutated in exactly ONE place — inside setSelectedSlug, which always resets lane memory (found $l_sel_assign assignment(s): $l_sel_decl declaration + $l_sel_infn in the setter)"
+else
+  no "(l29) selectedSlug is mutated only inside setSelectedSlug" \
+     "found $l_sel_assign total assignment(s), $l_sel_infn in the setter, $l_sel_decl declaration — an assignment outside the setter switches the document without clearing prevEvents/shuttleStep"
+fi
+
+# (l30) ANTI-VACUITY. (l29) is a counting assertion, and a counting assertion whose count can
+# never move proves nothing. Reintroduce a bare assignment outside the setter — the exact shape
+# of the reported defect — and require (l29)'s predicate to break.
+l_sel_mut="$TMPROOT/floor-sel-mutant.js"
+sed 's|      setSelectedSlug(null);|      selectedSlug = null;|' "$JS" > "$l_sel_mut" 2>/dev/null
+if mutant_ok "$JS" "$l_sel_mut"; then
+  m_assign="$(grep -cE '(^|[^a-zA-Z])selectedSlug[[:space:]]*=[^=]' "$l_sel_mut")"
+  m_infn="$(awk '/^  function setSelectedSlug/{f=1} f&&/selectedSlug[[:space:]]*=[^=]/{n++} f&&/^  }/{exit} END{print n+0}' "$l_sel_mut")"
+  m_decl="$(grep -cE '^  var selectedSlug = null;$' "$l_sel_mut")"
+  if [ "$m_assign" != "$((m_infn + m_decl))" ]; then
+    ok "(l30) ANTI-VACUITY: a bare selectedSlug assignment outside the setter BREAKS (l29)'s predicate ($m_assign total vs $((m_infn + m_decl))) — the count can move, so (l29) is a real gate"
+  else
+    no "(l30) ANTI-VACUITY: a bare assignment outside the setter breaks (l29)" \
+       "the mutant counted $m_assign total and $((m_infn + m_decl)) accounted-for — (l29) would pass with the defect present"
+  fi
+else
+  no "(l30) ANTI-VACUITY fixture: the selectedSlug mutant is unusable" "mutant_ok rejected it"
+fi
+
 # ===========================================================================
 echo "(m) AC-entrypoint-parity — /setup ui, /ui and the engine name the same verbs"
 # ===========================================================================

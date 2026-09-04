@@ -81,6 +81,22 @@
    * remains what it does when no served index is present. */
   var SERVED_INDEX = 'index.json';
   var selectedSlug = null;
+  /* THE ONLY WAY selectedSlug CHANGES. resetProjectMemory() used to be wired to the dropdown's
+     onchange alone, but selectedSlug is ALSO reassigned by renderProjectPicker on paths the
+     reader never touches: the served index going momentarily absent/unreadable (root fallback),
+     and the "follow it" branch when the project being viewed drops out of the registry. Those
+     paths switched the document while lane memory still held the PREVIOUS project's per-agent
+     counts — and untyped rows fall back to a positional id ('row-' + i), so two unrelated
+     projects' first untyped rows collide on "row-0" and a shuttle can advance purely because
+     the old project reported a higher count at that slot. Motion with no event behind it in the
+     document being rendered is the one thing this file exists to prevent, so the reset belongs
+     to the ASSIGNMENT, not to one caller of it. Resets only on a real change, so the per-tick
+     re-render of an unchanged selection costs nothing. */
+  function setSelectedSlug(v) {
+    if (v === selectedSlug) { return; }
+    selectedSlug = v;
+    resetProjectMemory();
+  }
   var pickerSig = null;
   var pickerTouched = false;
 
@@ -270,7 +286,7 @@
             ? ('the served index could not be read (' + idx.fetchError + ') — showing the single floor.json this directory serves')
             : 'no served index at this origin — showing the single floor.json this directory serves. `setup-ui.sh serve` writes one.');
       }
-      selectedSlug = null;
+      setSelectedSlug(null);
       pickerSig = null;
       return;
     }
@@ -310,17 +326,20 @@
        * actually regenerating on the fast cadence. After that the reader's choice wins, even
        * across a registry change, because clobbering it would be motion they did not ask for. */
       if (!pickerTouched) {
-        selectedSlug = null;
+        /* Computed into a local and assigned ONCE: assigning through the setter inside the loop
+           would reset lane memory two or three times for a single decision. */
+        var chosen = null;
         for (i = 0; i < rows.length; i++) {
-          if (rows[i] && rows[i].selected === true) { selectedSlug = String(rows[i].slug); break; }
+          if (rows[i] && rows[i].selected === true) { chosen = String(rows[i].slug); break; }
         }
-        if (selectedSlug === null && !rootOption && rows.length) { selectedSlug = String(rows[0].slug); }
+        if (chosen === null && !rootOption && rows.length) { chosen = String(rows[0].slug); }
+        setSelectedSlug(chosen);
       }
       sel.value = (selectedSlug === null) ? '' : selectedSlug;
       /* If the project the reader was on has gone from the registry, the select would silently
        * fall back to its first option while this page kept fetching the old slug. Follow it. */
       if (sel.value !== ((selectedSlug === null) ? '' : selectedSlug)) {
-        selectedSlug = sel.value === '' ? null : sel.value;
+        setSelectedSlug(sel.value === '' ? null : sel.value);
       }
     }
     sel.hidden = false;
@@ -1350,8 +1369,7 @@
     if (!sel) { return; }
     sel.onchange = function () {
       pickerTouched = true;
-      selectedSlug = (sel.value === '') ? null : sel.value;
-      resetProjectMemory();
+      setSelectedSlug((sel.value === '') ? null : sel.value);
       banner('');
       poll();
     };
