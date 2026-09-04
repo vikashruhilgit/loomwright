@@ -508,7 +508,16 @@
           var meta = document.createElement('p');
           meta.className = 'rule-meta';
           var bits = [];
-          if (rule.enforcement) { bits.push('enforcement: ' + rule.enforcement); }
+          /* Key presence, not truthiness - the standard every other field in this file is held
+           * to, and this was the one exception. build-floor.sh forwards ANY string including "",
+           * which a truthy test silently drops: a rule that recorded an empty enforcement would
+           * render identically to one that recorded none. Same nullable-required-field class the
+           * `check` field already cost this repo once. */
+          if (Object.prototype.hasOwnProperty.call(rule, 'enforcement')) {
+            bits.push(rule.enforcement === ''
+              ? 'enforcement: declared, but empty'
+              : 'enforcement: ' + rule.enforcement);
+          }
           var provLabel = ruleProvenanceLabel(rule);
           if (provLabel !== null) { bits.push(provLabel); }
           bits.push(ruleCheckLabel(rule));

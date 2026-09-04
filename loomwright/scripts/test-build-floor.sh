@@ -2423,6 +2423,61 @@ else
   skipn "(x) HISTORICAL arm: commit $PERF_PRE_SHA is unreachable (shallow clone / post-squash-merge). The PRIMARY calibrated arm above still ran - which is precisely why it exists"
 fi
 
+# ============================================================================
+echo "== (y) curation faults: rendered by the page, driven by nothing until now =="
+# `self_referential`, `duplicate_ids` and `files_not_an_array` are jq-computed AND rendered in
+# floor.js, and until this fixture existed NO committed input produced any of them: 0 rules with
+# supersedes == .id, 0 repeated ids, 0 non-array files. The single prior `files_not_an_array`
+# occurrence in this suite is the DETAIL_SUBKEYS doc-key list, which asserts the schema documents
+# the key - not that anything ever emits it. Three rendered branches with no driving input, in a
+# PR whose own narrative is "a stale fixture kept the suite green".
+CURATION_FIXTURE_DIR="$HERE/fixtures/floor-rules-curation"
+[ -d "$CURATION_FIXTURE_DIR" ] || { echo "test-build-floor: committed fixture $CURATION_FIXTURE_DIR missing" >&2; exit 1; }
+RCUR="$(new_repo)"; mkdir -p "$RCUR/.agent/rules" "$RCUR/agents"
+cp "$AGENTS_FIXTURE_DIR"/*.md "$RCUR/agents/" 2>/dev/null
+cp "$CURATION_FIXTURE_DIR"/*.json "$RCUR/.agent/rules/"
+run_build "$RCUR"; JCUR="$RCUR/.supervisor/floor/floor.json"
+
+[ "$(jq -r '[.surfaces.rules.detail.supersedes.self_referential[]?] | length' "$JCUR" 2>/dev/null)" = "1" ] \
+  && ok "(y) a rule whose supersedes names its own id is reported as self_referential" \
+  || no "(y) self_referential: $(jq -c '.surfaces.rules.detail.supersedes.self_referential' "$JCUR" 2>/dev/null)"
+[ "$(jq -r '[.surfaces.rules.detail.supersedes.duplicate_ids[]?] | length' "$JCUR" 2>/dev/null)" = "1" ] \
+  && ok "(y) an id appearing twice in the merged store is reported as a duplicate" \
+  || no "(y) duplicate_ids: $(jq -c '.surfaces.rules.detail.supersedes.duplicate_ids' "$JCUR" 2>/dev/null)"
+[ "$(jq -r '[.surfaces.rules.detail.files_not_an_array[]?] | length' "$JCUR" 2>/dev/null)" = "1" ] \
+  && ok "(y) a file that parses but is not an array is NAMED, not folded into unparseable" \
+  || no "(y) files_not_an_array: $(jq -c '.surfaces.rules.detail.files_not_an_array' "$JCUR" 2>/dev/null)"
+
+# read_completeness must count "parsed but not understood" against completeness. Keying only on
+# UNPARSEABLE files reported "all" beside a file the projector had just refused to read - the
+# examined-and-clean claim this projection exists to never make.
+[ "$(jq -r '.surfaces.rules.detail.read_completeness' "$JCUR" 2>/dev/null)" = "partial" ] \
+  && ok "(y) a store holding one usable and one not-an-array file reads PARTIAL, never all" \
+  || no "(y) read_completeness with a not-an-array file: $(jq -r '.surfaces.rules.detail.read_completeness' "$JCUR" 2>/dev/null)"
+RONLY="$(new_repo)"; mkdir -p "$RONLY/.agent/rules" "$RONLY/agents"
+cp "$AGENTS_FIXTURE_DIR"/*.md "$RONLY/agents/" 2>/dev/null
+cp "$CURATION_FIXTURE_DIR/notarray.json" "$RONLY/.agent/rules/"
+run_build "$RONLY"
+[ "$(jq -r '.surfaces.rules.detail.read_completeness' "$RONLY/.supervisor/floor/floor.json" 2>/dev/null)" = "none" ] \
+  && ok "(y) a store whose only file is not an array reads NONE - nothing usable was read" \
+  || no "(y) read_completeness with only a not-an-array file: $(jq -r '.surfaces.rules.detail.read_completeness' "$RONLY/.supervisor/floor/floor.json" 2>/dev/null)"
+
+# MUTATION CONTROL: revert read_completeness to keying on $badfiles alone and require the
+# PARTIAL assertion above to go red - otherwise it is a restatement of current behaviour.
+MUTY="$ROOT/build-floor-completeness.sh"
+# NB the delimiter: the pattern is full of jq pipes, so `s|...|...|` would terminate early.
+sed 's@(($badfiles . length) + ($notarray . length)) == 0@($badfiles | length) == 0@' "$BUILD" > "$MUTY" 2>/dev/null
+if [ -s "$MUTY" ] && ! cmp -s "$MUTY" "$BUILD" && bash -n "$MUTY" 2>/dev/null; then
+  RMUT="$(new_repo)"; mkdir -p "$RMUT/.agent/rules" "$RMUT/agents"
+  cp "$CURATION_FIXTURE_DIR"/*.json "$RMUT/.agent/rules/"
+  ( cd "$RMUT" && FLOOR_AGENTS_DIR="$RMUT/agents" bash "$MUTY" >/dev/null 2>&1 )
+  [ "$(jq -r '.surfaces.rules.detail.read_completeness' "$RMUT/.supervisor/floor/floor.json" 2>/dev/null)" = "all" ] \
+    && ok "(y2) MUTATION CONTROL: keying completeness on unparseable-only DOES report the banned 'all' - the assertion discriminates" \
+    || no "(y2) MUTATION CONTROL: the reverted computation did not report 'all' - (y) proves nothing"
+else
+  no "(y2) MUTATION CONTROL: could not build the completeness mutant - control inconclusive"
+fi
+
 echo
 echo "RESULT: $pass passed, $fail failed, $skip skipped"
 [ "$fail" -eq 0 ] || exit 1

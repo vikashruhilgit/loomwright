@@ -770,8 +770,13 @@ if [ -n "$rules_docs" ]; then
          | $w.path ] | map(select(length > 1)) | sort)                     as $chains
     | ({files_parsed: ($okfiles | length),
         rules_parsed: ($rules | length),
-        read_completeness: (if   ($badfiles | length) == 0 then "all"
-                            elif ($okfiles  | length) == 0 then "none"
+        # A file that PARSED but is not the array this store uses was not understood either, so
+        # it counts against completeness exactly as an unparseable one does. Keying only on
+        # $badfiles reported "all" beside a file the projector had just refused to read - the
+        # "could not examine displayed as examined and clean" shape AC-rules-unparseable exists
+        # to prevent, one file-shape over. `none` now means nothing usable was read at all.
+        read_completeness: (if   (($badfiles | length) + ($notarray | length)) == 0 then "all"
+                            elif (($okfiles | length) - ($notarray | length)) <= 0 then "none"
                             else "partial" end)}
        + (if ($rules    | length) == 0 then {} else {rules:             $rules}    end)
        + (if ($badfiles | length) == 0 then {} else {files_unparseable: $badfiles} end)

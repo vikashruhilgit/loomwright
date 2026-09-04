@@ -1,0 +1,1 @@
+{ "note": "Valid JSON, but an OBJECT rather than the array of rule objects this store uses. Drives files_not_an_array: parsed successfully, yet not understood - which the projector keeps distinct from both unparseable and clean." }

@@ -1,0 +1,30 @@
+[
+  {
+    "id": "fixture-self-referential",
+    "category": "process",
+    "statement": "supersedes names this rule's OWN id, so it supersedes nothing. Drives supersedes.self_referential.",
+    "enforcement": "advisory",
+    "check": null,
+    "provenance": { "source": "fixture", "added": "2026-09-04T00:00:00Z" },
+    "applies_to": null,
+    "supersedes": "fixture-self-referential"
+  },
+  {
+    "id": "fixture-duplicate-id",
+    "category": "process",
+    "statement": "First of two rules sharing an id. Drives supersedes.duplicate_ids; first-seen wins.",
+    "enforcement": "advisory",
+    "check": null,
+    "provenance": { "source": "fixture", "added": "2026-09-04T00:00:00Z" },
+    "applies_to": null
+  },
+  {
+    "id": "fixture-duplicate-id",
+    "category": "process",
+    "statement": "Second rule sharing that id - must not silently replace the first.",
+    "enforcement": "advisory",
+    "check": null,
+    "provenance": { "source": "fixture", "added": "2026-09-04T00:00:01Z" },
+    "applies_to": null
+  }
+]
