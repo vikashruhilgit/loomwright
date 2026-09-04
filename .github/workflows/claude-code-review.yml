@@ -141,19 +141,32 @@ jobs:
           # 2026-09-04 — `Bash(grep:*)` added, plus `cmp`/`comm`/`basename`/`dirname`.
           # The list granted the `Grep` TOOL but not the `grep` COMMAND, and on a diff that is
           # mostly bash and jq a reviewer reaches for `grep -c` in Bash constantly; every such
-          # call was refused and burned a turn. Measured across four runs on PR #177:
+          # call is refused and burns a turn. That much is a real gap in the list and is what
+          # this change fixes.
           #
-          #   head      result   turns  denials  productive (turns - denials)
-          #   7efb64d   POSTED      53       12  41
-          #   2337397   silent      27       12  15
-          #   f7983cf   silent      16        5  11
-          #   0abd91e   silent      44       39   5
+          # What it is NOT is a proven explanation of the intermittent silence. Seven runs on
+          # PR #177, in commit order:
           #
-          # That data FALSIFIES the denial-RATIO advice this file prints in the guard below
-          # (see the corrected text there): the run that posted sat at 23% denials while a
-          # silent one sat at 31%. Ratio does not separate them; PRODUCTIVE TURNS does — the
-          # reviewer needs roughly 20+ turns of real work to finish reading and reach the
-          # mandated post, and denials eat that budget directly.
+          #   head      result   turns  denials  productive  duration
+          #   f7983cf   silent      16        5          11      119s
+          #   2337397   silent      27       12          15      113s
+          #   7efb64d   POSTED      53       12          41      280s
+          #   0abd91e   silent      44       39           5      248s
+          #   43feb6f   POSTED      52       10          42      259s
+          #   8a74fba   POSTED      36       24          12      646s
+          #   4793850   silent      36       13          23      174s
+          #
+          # NOTHING in that table separates posted from silent:
+          #   * denial RATIO does not — 8a74fba POSTED at 67% while 4793850 was silent at 36%.
+          #     (An earlier version of this comment, and of the guard below, claimed a ratio
+          #     band from PR #147. Discard it.)
+          #   * PRODUCTIVE TURNS does not — 8a74fba POSTED on 12 while 4793850 was silent on 23.
+          #     An earlier version of this comment claimed a ~20 threshold on the first four
+          #     rows; the last three break it. Discard that too.
+          #   * duration very nearly does (posted 259-646s, silent 113-248s) but 0abd91e is
+          #     silent at 248s, so it is a correlation with one counterexample, not a rule.
+          # Every run ends `is_error: false`. Treat the cause as UNEXPLAINED by the telemetry
+          # this job records, and do not let a green check stand in for a posted review.
           #
           # Each addition was checked against the write/exec test this list already applies,
           # and the ones that FAIL it were deliberately NOT added, for the same reason
@@ -297,17 +310,16 @@ jobs:
           echo "action's defaults, so anything absent from that list is denied, each denial burns a"
           echo "turn, and the reviewer can exhaust itself before reaching the mandated final post."
           echo ""
-          echo "Read PRODUCTIVE TURNS, not the denial ratio: (num_turns - permission_denials_count)"
-          echo "from this job's result block above. Measured across four runs on PR #177 —"
-          echo "  POSTED  53 turns / 12 denials -> 41 productive"
-          echo "  silent  27 turns / 12 denials -> 15 productive"
-          echo "  silent  16 turns /  5 denials -> 11 productive"
-          echo "  silent  44 turns / 39 denials ->  5 productive"
-          echo "Below roughly 20 productive turns the reviewer does not reach the post. Note the"
-          echo "ratio does NOT separate these: the run that POSTED sat at 23% denials while a"
-          echo "silent one sat at 31%. An earlier version of this message advised the opposite,"
-          echo "citing PR #147 bands (36-46% posted, 53-93% silent); the PR #177 data falsifies"
-          echo "that reading, so trust the productive-turn count instead."
+          echo "Do NOT reach for a metric in the result block to explain this. Seven runs on"
+          echo "PR #177 were tabulated (see the allowlist comment above) and none of turns,"
+          echo "denials, denial ratio or productive turns separates posted from silent:"
+          echo "one run POSTED on 24 denials / 12 productive turns, while another stayed"
+          echo "SILENT on 13 denials / 23 productive turns. Two earlier versions of this"
+          echo "message asserted a ratio band and then a productive-turn threshold; both were"
+          echo "falsified by later runs. The cause is UNEXPLAINED by this job's telemetry."
+          echo ""
+          echo "A missing tool permission is still worth ruling out, because a denial does"
+          echo "cost a turn: compare the attempted commands against the --allowed-tools list."
           echo ""
           echo "Note this log records only the AGGREGATE denial count, never WHICH command was"
           echo "refused — so the fix is inferred from the allowlist, not read off the run."
