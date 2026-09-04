@@ -3153,3 +3153,336 @@ if [ -r "$FLOOR_MD" ] && [ -r "$FLOOR_SH" ]; then
 else
   no "(z8/z9) FLOOR_UI.md and build-floor.sh are both readable" "FLOOR_UI.md or build-floor.sh could not be read"
 fi
+
+# --- (z10)-(z15): the /ui command's own registration surfaces ---------------------------
+# Appended by the `/ui` item. Same reasoning as (z1)-(z3) one level out: a new COMMAND has
+# enumerations spread across a command-reference doc, its own flow file and the module docs
+# that must not pretend it does not exist, and NO CI gate covers any of them —
+# check-command-sync.sh guards only commands/code-reviewer.md, and check-doc-currency.sh
+# derives no per-command registration claim at all. These are FOUR separate subjects on
+# purpose: a single added row must not be able to satisfy the gate while three go unmet.
+UI_MD="$script_dir/../commands/ui.md"
+REPO_ROOT="$(cd "$script_dir/../.." 2>/dev/null && pwd)"
+
+# --- (z10) the registry row: the command-reference doc lists /ui ------------------------
+# Matched on the heading shape so a passing mention of `/ui` in prose cannot satisfy it.
+if has_re "$HELP_MD" '^### .* /ui — '; then
+  ok "(z10) commands/agent-help.md carries a \`/ui\` row in its command reference"
+else
+  no "(z10) commands/agent-help.md carries a \`/ui\` row in its command reference" \
+     "agent-help.md is the surface a user reads to discover a command; a command absent from it is unregistered in practice"
+fi
+
+# --- (z11) the module flow: the command's own flow document exists ----------------------
+if [ -r "$UI_MD" ] && has_re "$UI_MD" '^# Command: /ui$'; then
+  ok "(z11) commands/ui.md exists and carries the '# Command: /ui' flow heading"
+else
+  no "(z11) commands/ui.md exists and carries the '# Command: /ui' flow heading" \
+     "the command file IS the flow; agent-help.md only points at it"
+fi
+
+# --- (z12) the cross-reference: the module docs do not hide the second entry point ------
+# ONE claim, two places it has to hold: a reader who arrives at the module through either
+# `/setup ui`'s flow or the setup skill's registry row must learn that the operational half
+# lives in `/ui`. Two entry points documented in mutual ignorance is how a user ends up back
+# in a terminal running the engine by hand, which is the friction this item removed.
+z12_flow=0; z12_row=0
+if awk '/^## Module: ui$/{f=1} f&&/^## /&&!/^## Module: ui$/{f=0} f&&index($0,"`/ui`")>0{n++} END{exit !(n>0)}' "$SETUP_MD"; then z12_flow=1; fi
+if awk 'index($0,"| `ui` |")==1 && index($0,"`/ui`")>0 {n++} END{exit !(n>0)}' "$SKILL_MD"; then z12_row=1; fi
+if [ "$z12_flow" -eq 1 ] && [ "$z12_row" -eq 1 ]; then
+  ok "(z12) commands/setup.md's '## Module: ui' flow AND skills/setup/SKILL.md's \`ui\` registry row both name the direct \`/ui\` command"
+else
+  no "(z12) the module docs name the direct \`/ui\` command" \
+     "flow=$z12_flow row=$z12_row (1 = names it) — the half that says 0 documents the module as if the second entry point did not exist"
+fi
+
+# --- (z13) zero stale command-count residue ---------------------------------------------
+# The command count moved 21 -> 22. Grep the OLD value across the release surfaces rather
+# than trusting an enumeration of where it was believed to live: check-doc-currency.sh
+# verifies claims that ARE made and structurally cannot see one that should have been made,
+# and the previous count bump found two sites its own plan had not named. CHANGELOG.md is
+# deliberately NOT scanned — its entries are historical and correctly keep the old number.
+#
+# WHICH PHRASINGS ARE SWEPT, and one that is DELIBERATELY NOT, because getting this wrong in
+# either direction is silent. Only the CURRENT-STATE phrasings are swept. The bare form
+# `21 commands` is excluded on measurement, not on taste: README.md's dated `NEW in vX.Y.Z`
+# banners each close with a per-release `Counts: 14 agents / N commands / N skills / N hooks`
+# line describing THAT release — nine of them today, several stating skill and hook counts
+# this repo left behind long ago — which is the same historical convention CHANGELOG.md uses
+# and is why CHANGELOG.md is unscanned. Sweeping the bare form would flag all nine forever and
+# pressure the next author into rewriting frozen release history to appease a gate. The
+# parenthesised `(21 commands` IS swept, because that is the current-state form README uses
+# in its live "Commands are in ..." pointer. (z14) is what keeps this narrowing honest: it
+# requires the current claim to actually be present, so a surface that simply stopped stating
+# a count cannot pass (z13) by having nothing to be stale about.
+Z_SURFACES="$REPO_ROOT/README.md $REPO_ROOT/CLAUDE.md $REPO_ROOT/.claude-plugin/README.md $REPO_ROOT/.claude-plugin/marketplace.json $script_dir/../.claude-plugin/plugin.json $HELP_MD"
+z_seen=0; z_stale=""
+for f in $Z_SURFACES; do
+  [ -r "$f" ] || continue
+  z_seen=$((z_seen + 1))
+  for pat in '21 slash commands' 'Slash commands (21)' '21 entry points' '(21 commands'; do
+    if has_lit "$f" "$pat"; then z_stale="$z_stale [$(basename "$f"):$pat]"; fi
+  done
+done
+if [ "$z_seen" -lt 5 ]; then
+  no "(z13) no stale '21 commands' residue on the release surfaces" \
+     "only $z_seen of 6 surfaces were readable from this suite, so the sweep would be near-vacuous"
+elif [ -z "$z_stale" ]; then
+  ok "(z13) no stale '21 commands' residue across $z_seen release surfaces"
+else
+  no "(z13) no stale '21 commands' residue across the release surfaces" "still stale in:$z_stale"
+fi
+
+# --- (z14) ANTI-VACUITY for (z13) --------------------------------------------------------
+# The grep above proves nothing if the count claim is simply ABSENT: a surface that states no
+# command count at all passes (z13) while being just as rotten. This is the same anti-vacuity
+# pairing (z6) makes for (z5), one enumeration over.
+z14_missing=""
+for f in "$REPO_ROOT/README.md" "$REPO_ROOT/CLAUDE.md" "$REPO_ROOT/.claude-plugin/README.md" "$HELP_MD"; do
+  [ -r "$f" ] || { z14_missing="$z14_missing [unreadable:$(basename "$f")]"; continue; }
+  if has_re "$f" '22 slash commands|Slash commands \(22\)|22 entry points|\(22 commands'; then :; else
+    z14_missing="$z14_missing [$(basename "$f")]"
+  fi
+done
+if [ -z "$z14_missing" ]; then
+  ok "(z14) all four prose surfaces state the CURRENT command count, so (z13) is not passing on an absent claim"
+else
+  no "(z14) all four prose surfaces state the CURRENT command count" \
+     "(z13) may be vacuous — no command-count claim found in:$z14_missing"
+fi
+
+# --- (z15) AC-3d: the write list stays EXHAUSTIVE ----------------------------------------
+# `docs/FLOOR_UI.md`'s "What it writes — the whole list" says "the whole list" and "Nothing
+# else, anywhere". `serve` gained a served index, and a section that claims exhaustiveness
+# while omitting a write is worse than one that never claimed it. The obligation gets a
+# MECHANICAL subject rather than staying prose: the filename is read out of the engine's own
+# SERVED_INDEX assignment, so this cannot rot into a check for a literal the engine renamed.
+served_index_name="$(sed -n 's/^SERVED_INDEX="\([^"]*\)".*$/\1/p' "$ENGINE" | head -1)"
+write_list="$(awk '/^## What it writes — the whole list$/{f=1;next} f&&/^## /{f=0} f{print}' "$FLOOR_MD")"
+if [ -z "$served_index_name" ]; then
+  no "(z15) FLOOR_UI.md's write list names the served index" \
+     "SERVED_INDEX could not be parsed out of the engine, so this assertion would be vacuous"
+elif [ -z "$write_list" ]; then
+  no "(z15) FLOOR_UI.md's write list names the served index" \
+     "the '## What it writes — the whole list' section was not found in $FLOOR_MD"
+elif in_str "$write_list" "$served_index_name"; then
+  ok "(z15) FLOOR_UI.md's '## What it writes — the whole list' names the served index ('$served_index_name'), read out of the engine"
+else
+  no "(z15) FLOOR_UI.md's '## What it writes — the whole list' names the served index" \
+     "the engine writes '$served_index_name' but that section does not name it — the section claims to be the whole list"
+fi
+
+# ===========================================================================
+echo "(m) AC-entrypoint-parity — /setup ui, /ui and the engine name the same verbs"
+# ===========================================================================
+# WHAT THIS GROUP PROVES. Two commands now drive one engine, and the failure this prevents is
+# quiet: the engine gains a subcommand and NEITHER file documents it, so it exists and nobody
+# can find it. The predicate is therefore not pairwise equality — the three sets are
+# deliberately unequal (`/setup ui` keeps apply/remove, `/ui` adds the registry verbs) — it is
+# that the UNION of the two documented sets EQUALS the engine's real set.
+#
+# THE ENGINE'S SET IS PARSED, NEVER RESTATED HERE. A literal list in this file would be a
+# third enumeration that rots on its own, which is the exact defect (z8) exists to prevent one
+# document over. Two details of the parse are load-bearing:
+#   1. It is PINNED to `case "$SUBCMD" in`. The engine contains several `case` statements
+#      (argument parsing, numeric validation, pid filtering); parsing the wrong one silently
+#      yields a nonsense verb set and every clause below would then be measuring nothing.
+#      (m1) asserts the anchor is unique and (m2) asserts the parsed set is plausible.
+#   2. It reads the ARM LABELS. The `*)` arm's error text restates the verb list in prose —
+#      a SECOND in-file enumeration that can drift by itself — so reading it would be reading
+#      a copy rather than the dispatch. (m10) controls for exactly that.
+#
+# WHY THE OBVIOUS MUTATION CONTROL IS ABSENT, recorded rather than glossed: deleting one of
+# check/apply/serve/stop/remove from commands/ui.md provably does NOT redden, because
+# commands/setup.md documents all five and the UNION is unchanged. The two controls used
+# instead are (m8) delete a verb documented ONLY in commands/ui.md, and (m9) append an
+# undocumented verb to a scratch copy of the engine's dispatch.
+
+for f in "$ENGINE" "$SETUP_MD" "$UI_MD"; do
+  [ -r "$f" ] || setup_fail "(m) fixture: $f is not readable, so every assertion below would be vacuous"
+done
+M_ENG_SIG_BEFORE="$(csum "$ENGINE")"
+M_UI_SIG_BEFORE="$(csum "$UI_MD")"
+
+# engine_verbs <engine file> -> the arm labels of the pinned dispatch case, one per line.
+engine_verbs() {
+  awk '
+    $0 == "case \"$SUBCMD\" in" { inb = 1; next }
+    inb && $0 == "esac" { inb = 0 }
+    inb {
+      line = $0
+      sub(/^[ \t]+/, "", line)
+      if (match(line, /^[a-z][a-z0-9_-]*\)/)) print substr(line, 1, RLENGTH - 1)
+    }
+  ' "$1"
+}
+# doc_verbs <md file> <section-start ERE|""> <section-end ERE|""> -> the backticked tokens on
+# the section's `subcommands` enumeration line(s). The token filter is shape-based
+# (`^[a-z][a-z0-9_-]*$`) and DELIBERATELY does not consult the engine's set: a documented verb
+# the engine does not have must be able to fail clauses (i)/(ii) rather than be filtered away.
+# It drops the backticked PATHS that share those lines - the engine's own filename, the
+# projector's, and the plugin-install-root variable form the command files use - because none
+# of them match that shape. (Those path forms are DESCRIBED rather than quoted here on purpose:
+# this file deliberately holds no vendor-coupling allowance, and spelling one of them literally
+# would put the first entry on it just to write a comment.)
+doc_verbs() {
+  awk -v s="$2" -v e="$3" '
+    BEGIN { inb = (s == "") ? 1 : 0 }
+    s != "" && $0 ~ s { inb = 1; next }
+    inb && e != "" && $0 ~ e { inb = 0 }
+    inb && index($0, "subcommands") > 0 {
+      n = split($0, parts, "`")
+      for (i = 2; i <= n; i += 2) if (parts[i] ~ /^[a-z][a-z0-9_-]*$/) print parts[i]
+    }
+  ' "$1"
+}
+doc_enum_lines() {
+  awk -v s="$2" -v e="$3" '
+    BEGIN { inb = (s == "") ? 1 : 0; n = 0 }
+    s != "" && $0 ~ s { inb = 1; next }
+    inb && e != "" && $0 ~ e { inb = 0 }
+    inb && index($0, "subcommands") > 0 { n++ }
+    END { print n + 0 }
+  ' "$1"
+}
+setify() { tr ' \t' '\n\n' | sed '/^$/d' | LC_ALL=C sort -u | tr '\n' ' '; }
+# not_in <candidate set> <reference set> -> members of the candidate absent from the reference
+not_in() {
+  local v out=""
+  for v in $1; do case " $2 " in *" $v "*) ;; *) out="$out $v" ;; esac; done
+  printf '%s' "${out# }"
+}
+
+m_anchor_n="$(grep -c -F -- 'case "$SUBCMD" in' "$ENGINE" 2>/dev/null || true)"
+case "$m_anchor_n" in ''|*[!0-9]*) m_anchor_n=0 ;; esac
+if [ "$m_anchor_n" -eq 1 ]; then
+  ok "(m1) the dispatch anchor \`case \"\$SUBCMD\" in\` occurs exactly once in setup-ui.sh — the parse is pinned to one of the file's several case statements"
+else
+  no "(m1) the dispatch anchor occurs exactly once in setup-ui.sh" \
+     "found $m_anchor_n — a second anchor would make the parsed verb set ambiguous and every clause below unreliable"
+fi
+
+M_ENGINE_SET="$(engine_verbs "$ENGINE" | setify)"
+M_SETUP_SET="$(doc_verbs "$SETUP_MD" '^## Module: ui$' '^## ' | setify)"
+M_UI_SET="$(doc_verbs "$UI_MD" '' '' | setify)"
+
+# (m2) PREMISE: the parsed engine set is plausible. Without this, a parse that silently
+# returned nothing would make (m4)/(m5) pass vacuously (every member of a set is in it).
+m2_missing="$(not_in "check apply serve stop remove" "$M_ENGINE_SET")"
+m2_n="$(printf '%s' "$M_ENGINE_SET" | wc -w | tr -d ' ')"
+if [ -z "$m2_missing" ] && [ "$m2_n" -ge 5 ]; then
+  ok "(m2) the parsed engine verb set is plausible ($m2_n verbs, including all five module verbs): $M_ENGINE_SET"
+else
+  no "(m2) the parsed engine verb set is plausible" \
+     "parsed '$M_ENGINE_SET' ($m2_n verbs); missing from it: '$m2_missing' — the wrong case statement was almost certainly read"
+fi
+
+# (m3) PREMISE: each document carries EXACTLY ONE enumeration line and it yields verbs. A
+# second enumeration in either file is a loud failure rather than a silently merged basis.
+m3_setup_lines="$(doc_enum_lines "$SETUP_MD" '^## Module: ui$' '^## ')"
+m3_ui_lines="$(doc_enum_lines "$UI_MD" '' '')"
+if [ "$m3_setup_lines" = "1" ] && [ "$m3_ui_lines" = "1" ] && [ -n "$M_SETUP_SET" ] && [ -n "$M_UI_SET" ]; then
+  ok "(m3) each command file carries exactly one verb enumeration and both parse non-empty — setup.md: $M_SETUP_SET| ui.md: $M_UI_SET"
+else
+  no "(m3) each command file carries exactly one verb enumeration and both parse non-empty" \
+     "setup.md lines=$m3_setup_lines set='$M_SETUP_SET'; ui.md lines=$m3_ui_lines set='$M_UI_SET'"
+fi
+
+# (m4) CLAUSE (i)
+m4_extra="$(not_in "$M_SETUP_SET" "$M_ENGINE_SET")"
+if [ -z "$m4_extra" ]; then
+  ok "(m4) clause (i): every verb documented in commands/setup.md's '## Module: ui' flow exists in the engine's dispatch"
+else
+  no "(m4) clause (i): every verb documented in commands/setup.md's '## Module: ui' flow exists in the engine" \
+     "documented but not dispatched: $m4_extra"
+fi
+
+# (m5) CLAUSE (ii)
+m5_extra="$(not_in "$M_UI_SET" "$M_ENGINE_SET")"
+if [ -z "$m5_extra" ]; then
+  ok "(m5) clause (ii): every verb documented in commands/ui.md exists in the engine's dispatch"
+else
+  no "(m5) clause (ii): every verb documented in commands/ui.md exists in the engine" \
+     "documented but not dispatched: $m5_extra"
+fi
+
+# (m6) CLAUSE (iii) — the union, which is the clause the two controls exercise.
+M_UNION="$(printf '%s %s' "$M_SETUP_SET" "$M_UI_SET" | setify)"
+if [ "$M_UNION" = "$M_ENGINE_SET" ]; then
+  ok "(m6) clause (iii): the UNION of the two documented sets equals the engine's dispatch set ($M_ENGINE_SET)"
+else
+  no "(m6) clause (iii): the UNION of the two documented sets equals the engine's dispatch set" \
+     "union='$M_UNION' engine='$M_ENGINE_SET'; undocumented by either file: '$(not_in "$M_ENGINE_SET" "$M_UNION")'"
+fi
+
+# (m7) the enumeration is a FAITHFUL PROXY for "documented" in commands/ui.md: every verb it
+# lists has a `### \`verb\`` section, and every such section is listed. Without this, the
+# enumeration line could drift away from the sections it summarises and the clauses above
+# would be measuring a sentence rather than the document.
+M_UI_SECTIONS="$(sed -n 's/^### `\([a-z][a-z0-9_-]*\)`.*$/\1/p' "$UI_MD" | setify)"
+if [ "$M_UI_SECTIONS" = "$M_UI_SET" ]; then
+  ok "(m7) commands/ui.md's verb enumeration and its per-verb '###' sections name the same verbs ($M_UI_SET)"
+else
+  no "(m7) commands/ui.md's verb enumeration and its per-verb sections name the same verbs" \
+     "enumeration='$M_UI_SET' sections='$M_UI_SECTIONS'"
+fi
+
+# --- (m8) CONTROL c1: a verb documented ONLY in commands/ui.md is deleted ----------------
+m_c1="$TMPROOT/ui.md.c1.mut"
+awk 'index($0,"subcommands")>0 { gsub(/ \/ `forget`/, "") } { print }' "$UI_MD" > "$m_c1" 2>/dev/null
+if mutant_ok "$UI_MD" "$m_c1"; then
+  m_c1_set="$(doc_verbs "$m_c1" '' '' | setify)"
+  m_c1_union="$(printf '%s %s' "$M_SETUP_SET" "$m_c1_set" | setify)"
+  if [ "$m_c1_union" != "$M_ENGINE_SET" ]; then
+    ok "(m8) CONTROL c1: dropping \`forget\` — documented ONLY in commands/ui.md — reddens clause (iii) (union='$m_c1_union')"
+  else
+    no "(m8) CONTROL c1: dropping a ui.md-only verb must redden clause (iii)" \
+       "the union still equals the engine set, so (m6) cannot detect a doc-side drop and is vacuous"
+  fi
+fi
+
+# --- (m9) CONTROL c2: the engine gains a verb nobody documents ---------------------------
+# The engine-side drift, which otherwise has NO control at all. The mutant is a scratch copy
+# in the temp tree; the shipped engine is never written (m11 proves it by hash).
+m_c2="$TMPROOT/setup-ui.c2.mut.sh"
+awk '$0 == "case \"$SUBCMD\" in" { print; print "  purge)  do_check ;;"; next } { print }' "$ENGINE" > "$m_c2" 2>/dev/null
+if mutant_ok "$ENGINE" "$m_c2" shell; then
+  m_c2_set="$(engine_verbs "$m_c2" | setify)"
+  case " $m_c2_set " in
+    *" purge "*)
+      if [ "$M_UNION" != "$m_c2_set" ]; then
+        ok "(m9) CONTROL c2: a verb appended to the engine's dispatch and documented nowhere reddens clause (iii) (engine set gained 'purge')"
+      else
+        no "(m9) CONTROL c2: an undocumented engine verb must redden clause (iii)" \
+           "the union still equals the mutated engine set ('$m_c2_set'), so engine-side drift is invisible"
+      fi ;;
+    *)
+      no "(m9) CONTROL c2 is well-formed" "the mutant's parsed set '$m_c2_set' does not contain the injected verb, so the control proves nothing" ;;
+  esac
+fi
+
+# --- (m10) CONTROL c3: the parse reads ARM LABELS, not the *) arm's error string ----------
+# The `*)` arm restates the verb list in prose. A parser that read THAT would be reading a
+# second enumeration which can drift on its own — so a mutant that drifts ONLY the error
+# string must leave the parsed set completely unchanged.
+m_c3="$TMPROOT/setup-ui.c3.mut.sh"
+awk '{ gsub(/expected check \| apply/, "expected purge | check | apply"); print }' "$ENGINE" > "$m_c3" 2>/dev/null
+if mutant_ok "$ENGINE" "$m_c3" shell; then
+  m_c3_set="$(engine_verbs "$m_c3" | setify)"
+  if [ "$m_c3_set" = "$M_ENGINE_SET" ]; then
+    ok "(m10) CONTROL c3: drifting the \`*)\` arm's error string leaves the parsed set unchanged — the parse reads arm labels, not that second enumeration"
+  else
+    no "(m10) CONTROL c3: the parse must read arm labels, not the \`*)\` arm's error string" \
+       "the error-string mutant changed the parsed set: '$m_c3_set' vs '$M_ENGINE_SET'"
+  fi
+fi
+
+# --- (m11) the shipped files are untouched by every (m) mutant ---------------------------
+m_eng_after="$(csum "$ENGINE")"; m_ui_after="$(csum "$UI_MD")"
+m_residue="$(ls "$script_dir"/*.mut.sh "$script_dir"/../commands/*.mut* 2>/dev/null || true)"
+if [ "$M_ENG_SIG_BEFORE" = "$m_eng_after" ] && [ "$M_UI_SIG_BEFORE" = "$m_ui_after" ] && [ -z "$m_residue" ]; then
+  ok "(m11) setup-ui.sh and commands/ui.md are byte-identical after every (m) mutation control (sha256 unchanged) and no mutant was left in the plugin's own directories"
+else
+  no "(m11) setup-ui.sh and commands/ui.md are byte-identical after the (m) mutation controls" \
+     "engine before='$M_ENG_SIG_BEFORE' after='$m_eng_after'; ui.md before='$M_UI_SIG_BEFORE' after='$m_ui_after'; residue='$m_residue'"
+fi
