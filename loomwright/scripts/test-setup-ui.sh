@@ -1343,12 +1343,24 @@ case "$port" in ''|*[!0-9]*) setup_fail "(h) fixture: could not obtain a free po
 # Excluding `^\s*#` is still what makes this an assertion about the code: the engine's header
 # now carries the words `python3 -m http.server` in PROSE (explaining what was replaced and
 # why), and it names the bind in prose too. A comment that claims the bind is not the bind.
-BIND_EXPR='ThreadingHTTPServer[(]'
+# RE-EXPRESSED A SECOND TIME, and again the SHAPE is what is kept. The traceback fix subclasses
+# `ThreadingHTTPServer` as `FloorServer` (so that `handle_error` can be overridden for the whole
+# server rather than patched at two known raises), which moved the construction off the base
+# class name — taking the old count to ZERO, not to two. The tempting repairs were the same two
+# as last time: delete the assertion, or accept `>= 1`. Instead the pattern matches a
+# CONSTRUCTION of either name — `Name((` , the double paren of `(server_address, handler)` —
+# which the `class FloorServer(ThreadingHTTPServer):` definition line does NOT match (one paren)
+# and the import line does not match either. So it still resolves to exactly one line, and that
+# line still has to carry the loopback literal. `n_srvdef` keeps the two names tied together:
+# the thing constructed must actually BE the threading HTTP server, or an author could satisfy
+# this gate with a `FloorServer` that subclasses something else entirely.
+BIND_EXPR='(ThreadingHTTPServer|FloorServer)[(][(]'
 binds="$(awk -v pat="$BIND_EXPR" '$0 !~ /^[[:space:]]*#/ && $0 ~ pat { t++; if ($0 ~ /"127\.0\.0\.1"/) b++ } END { print (t+0) " " (b+0) }' "$ENGINE")"
 n_bind="${binds%% *}"; n_loop="${binds##* }"
-[ "$n_bind" = "1" ] 2>/dev/null && [ "$n_loop" = "1" ] \
-  && ok "(h1) setup-ui.sh constructs exactly ONE non-comment HTTP server and it binds 127.0.0.1 (constructions=$n_bind bound=$n_loop)" \
-  || no "(h1) setup-ui.sh constructs exactly ONE non-comment HTTP server carrying the 127.0.0.1 bind" "constructions=$n_bind bound=$n_loop"
+n_srvdef="$(awk '$0 !~ /^[[:space:]]*#/ && /^class FloorServer\(ThreadingHTTPServer\):$/ {n++} END{print n+0}' "$ENGINE")"
+[ "$n_bind" = "1" ] 2>/dev/null && [ "$n_loop" = "1" ] && [ "$n_srvdef" = "1" ] \
+  && ok "(h1) setup-ui.sh constructs exactly ONE non-comment HTTP server, it binds 127.0.0.1, and the class it constructs is the ONE subclass of ThreadingHTTPServer (constructions=$n_bind bound=$n_loop subclass-definitions=$n_srvdef)" \
+  || no "(h1) setup-ui.sh constructs exactly ONE non-comment HTTP server carrying the 127.0.0.1 bind" "constructions=$n_bind bound=$n_loop subclass-definitions=$n_srvdef"
 # MUTATION CONTROL, RE-AUTHORED SO IT ACTUALLY RUNS. The old mutant sed-replaced the literal
 # `python3 -m http.server --bind 127.0.0.1`; the moment that literal left the engine the sed
 # became a NO-OP, `mutant_ok` saw an unchanged file, and this control would have been SKIPPED
@@ -1356,7 +1368,7 @@ n_bind="${binds%% *}"; n_loop="${binds##* }"
 # The mutant below rebinds the real constructor to a wildcard address, so it genuinely differs
 # from the shipped engine; `mutant_ok` returning true is therefore part of what (h3b) asserts.
 MUT_BIND="$TMPROOT/mut-bind.sh"
-sed 's/ThreadingHTTPServer(("127\.0\.0\.1", PORT)/ThreadingHTTPServer(("0.0.0.0", PORT)/' "$ENGINE" > "$MUT_BIND" 2>/dev/null
+sed 's/FloorServer(("127\.0\.0\.1", PORT)/FloorServer(("0.0.0.0", PORT)/' "$ENGINE" > "$MUT_BIND" 2>/dev/null
 h2_ran=0
 if mutant_ok "$ENGINE" "$MUT_BIND" shell; then
   h2_ran=1
@@ -1370,7 +1382,7 @@ fi
 # engine — the exact way the previous (h2) died — this goes RED instead of disappearing.
 [ "$h2_ran" = "1" ] \
   && ok "(h3b) ANTI-VACUITY: (h2)'s mutant passed mutant_ok, so the control above actually EXECUTED rather than being skipped inside its if" \
-  || no "(h3b) ANTI-VACUITY: (h2)'s mutation control actually executed" "mutant_ok rejected $MUT_BIND — the sed no longer matches the engine, so (h2) was SKIPPED and (h1) is uncontrolled" 
+  || no "(h3b) ANTI-VACUITY: (h2)'s mutation control actually executed" "mutant_ok rejected $MUT_BIND — the sed no longer matches the engine, so (h2) was SKIPPED and (h1) is uncontrolled"
 
 out="$(bash "$ENGINE" serve --registry "$NOREG" --no-regen --detach --port "$port" --ui-dir "$HUI" 2>&1)"; rc=$?
 SERVE_PIDFILES="$SERVE_PIDFILES $HUI/serve.pid"
@@ -4215,7 +4227,10 @@ n_probe() { n_req "$1" POST /api/scan "$2" "$3" "$4" '{"path":"'"$NPROJ"'","conf
 
 # --- (n23) PART 1: the token VALUE -------------------------------------------------------
 n_shipped="$(n_status "$(n_probe "$NSHIP_PORT" "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" "$NSHIP_ORIGIN" "" "")")"
-if n_stage_mutant token 's|    return raw is not None and TOKEN != "" and hmac.compare_digest(str(raw), TOKEN)|    return True|'; then
+# The sed targets the COMPARISON line alone. The `if raw is None or TOKEN == ""` line above it
+# in the engine stays intact, so the mutant still refuses a missing header — what it stops
+# checking is the token's VALUE, which is exactly the one part this control is for.
+if n_stage_mutant token 's|        return hmac.compare_digest(str(raw).encode("utf-8", "replace"), TOKEN.encode("utf-8"))|        return True|'; then
   n_mut="$(n_status "$(n_probe "$NG_PORT" "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" "http://127.0.0.1:$NG_PORT" "" "")")"
   [ "$n_mut" = "200" ] \
     && ok "(n23) MUTATION CONTROL — PART 1 (the token value): the SHIPPED engine answered $n_shipped to a wrong token; with the token comparison alone disabled the identical request SUCCEEDS ($n_mut) — so the token check is load-bearing, not decoration" \
@@ -4256,6 +4271,8 @@ if n_stage_mutant host 's|    return host is not None and host in ALLOWED_HOSTS|
   [ "$n_mut" = "200" ] \
     && ok "(n26) MUTATION CONTROL — PART 4 (Host): with the Host check alone disabled, a request carrying a FORGED Host SUCCEEDS ($n_mut) — this is the DNS-rebinding case, and it is the part an Origin check provably cannot cover, since the Origin above was the legitimate one" \
     || no "(n26) MUTATION CONTROL: disabling the Host check alone lets a rebound request through" "the mutant answered $n_mut, expected 200"
+else
+  no "(n26) MUTATION CONTROL — PART 4 (Host)" "the host mutant could not be staged or started"
 fi
 
 # --- (n27) ANTI-VACUITY: all four controls actually EXECUTED -------------------------------
@@ -4325,3 +4342,116 @@ n_acao_code="$(awk '$0 !~ /^[[:space:]]*#/ && /Access-Control-Allow-Origin/ {n++
 [ "$n_acao_code" = "0" ] && [ "$n_opts" = "0" ] && [ "$n_cors" -ge 1 ] 2>/dev/null \
   && ok "(n32) the engine sends NO Access-Control-Allow-Origin on any response and answers no OPTIONS preflight — both verified in CODE (0 and 0), while the comment saying so is still present ($n_cors raw mentions), so a future author reads the reason before deleting the property" \
   || no "(n32) no CORS header and no preflight answer" "ACAO in code=$n_acao_code do_OPTIONS=$n_opts raw mentions=$n_cors — a raw count of 0 would mean the explanatory comment went too, which is how this property gets removed by accident"
+
+# --- (n33)-(n35) NOTHING PUTS A TRACEBACK INTO THE LOG THE PAGE CAN FETCH -------------------
+# TWO CONFIRMED WAYS a request thread used to raise, and one class-level fix for both.
+#   (a) PRE-AUTHENTICATION. `hmac.compare_digest` on two `str` raises TypeError the moment
+#       either side carries a character above 127. HTTP headers are latin-1 decoded, so ANY
+#       unauthenticated caller could reach that raise with one byte > 127 in the token header,
+#       and the reply it produced was NO reply at all — the client saw the connection drop.
+#       That is the exact opposite of AC12: every failure path refuses with a NAMED reason.
+#   (b) ORDINARY USE. A client that closes its tab mid-reply raises BrokenPipeError inside the
+#       response write, which reached `socketserver.handle_error` and its `print_exc`.
+# In both cases the traceback went to stderr, which for this server IS `serve.log` — a file
+# INSIDE THE SERVED ROOT, fetchable with `GET /serve.log` — written unlocked from every thread
+# at once, so two concurrent aborts interleave into corrupted multi-line noise. That falsified
+# the log invariant restated on four surfaces (engine header, SERVE_LOG comment, FLOOR_UI.md
+# and CHANGELOG.md). The fix is `FloorServer.handle_error`, which is why this asserts the CLASS
+# property — zero `Traceback` lines, whatever raised — rather than the two known instances.
+#
+# The probes speak raw sockets rather than http.client: (a) has to put a byte on the wire that
+# a client-side header encoder would refuse first, and (b) has to RESET a connection, which no
+# request helper offers.
+n_tb_probe() {
+  python3 - "$1" "$2" 2>/dev/null <<'__PY_TB__'
+import socket
+import struct
+import sys
+
+port = int(sys.argv[1])
+mode = sys.argv[2]
+host_hdr = ("127.0.0.1:%d" % port).encode("ascii")
+
+if mode == "nonascii":
+    req = (b"POST /api/scan HTTP/1.1\r\nHost: " + host_hdr +
+           b"\r\nX-Floor-Token: \xc3\xa9\xff\r\nOrigin: http://" + host_hdr +
+           b"\r\nContent-Type: application/json\r\nContent-Length: 2\r\n"
+           b"Connection: close\r\n\r\n{}")
+    s = socket.create_connection(("127.0.0.1", port), timeout=15)
+    s.sendall(req)
+    data = b""
+    try:
+        while True:
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+            data += chunk
+    except Exception:
+        pass
+    s.close()
+    if not data:
+        # "0" is the status this suite never gets from a live server, so the no-reply case can
+        # never be mistaken for a refusal — which is precisely what the old behaviour was.
+        sys.stdout.write("0\tthe connection was closed without any response being written")
+    else:
+        head, _sep, body = data.partition(b"\r\n\r\n")
+        parts = head.split(b"\r\n", 1)[0].decode("latin-1").split(" ")
+        sys.stdout.write((parts[1] if len(parts) > 1 else "0") + "\t" +
+                         body.decode("utf-8", "replace").replace("\n", " "))
+else:
+    # SO_LINGER 0 makes `close` send an RST, so the handler's write lands on a dead peer.
+    # Repeated, because whether the reply had already been flushed is a race and one attempt
+    # could miss it; the reviewer's own reproduction took three.
+    for _i in range(6):
+        s = socket.create_connection(("127.0.0.1", port), timeout=15)
+        s.sendall(b"GET /floor.json HTTP/1.1\r\nHost: " + host_hdr + b"\r\n\r\n")
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        s.close()
+    sys.stdout.write("aborted\tsix requests were sent and reset before any reply could be read")
+__PY_TB__
+}
+# ONE grep, named once, used by both the measurement and its anti-vacuity control — so the two
+# cannot drift into asserting different things about different patterns.
+n_tb_count() {
+  local c
+  c="$(grep -c -F -- 'Traceback' "$1" 2>/dev/null || true)"
+  case "$c" in ''|*[!0-9]*) c=0 ;; esac
+  printf '%s' "$c"
+}
+
+n_tb_log="$NUI/$(sed -n 's/^SERVE_LOG="\([^"]*\)".*$/\1/p' "$ENGINE" | head -1)"
+n_tb_a="$(n_tb_probe "$NSHIP_PORT" nonascii)"
+n_tb_b="$(n_tb_probe "$NSHIP_PORT" abort)"
+n_tb_alive="$(n_status "$(n_req "$NSHIP_PORT" GET /index.json "" "" "" "" "")")"
+
+# --- (n33) AC12: a non-ASCII token header is REFUSED BY NAME, not dropped -------------------
+n_tb_bad=""
+[ "$(n_status "$n_tb_a")" = "403" ] || n_tb_bad="$n_tb_bad [status $(n_status "$n_tb_a"), expected 403 — a status of 0 is the pre-fix behaviour: no reply at all]"
+in_str "$(n_body "$n_tb_a")" "token-missing-or-wrong" || n_tb_bad="$n_tb_bad [the reply does not name the refusing part: $(n_body "$n_tb_a")]"
+[ "$n_tb_alive" = "200" ] || n_tb_bad="$n_tb_bad [the handler stopped serving afterwards: GET /index.json answered $n_tb_alive]"
+[ -z "$n_tb_bad" ] \
+  && ok "(n33) AC12: a token header carrying a byte above 127 — reachable PRE-AUTHENTICATION by any caller, and the input on which comparing two str raises TypeError — is refused 403 with the guard part NAMED, and the handler keeps serving" \
+  || no "(n33) AC12: a non-ASCII token header is refused with a named reason" "$n_tb_bad"
+
+# --- (n34) the serve log carries NO traceback after either trigger --------------------------
+n_tb_hits="$(n_tb_count "$n_tb_log")"
+if [ ! -f "$n_tb_log" ]; then
+  no "(n34) the serve log holds no traceback after a non-ASCII token header and an aborted connection" "there is no serve log at $n_tb_log, so this could not be measured at all"
+else
+  [ "$n_tb_hits" = "0" ] \
+    && ok "(n34) after a non-ASCII token header ($(n_status "$n_tb_a")) and six reset connections, the serve log holds ZERO 'Traceback' lines — FloorServer.handle_error collapses every unhandled raise to one audited line in a file the page can itself fetch" \
+    || no "(n34) the serve log holds no traceback after a non-ASCII token header and an aborted connection" "$n_tb_hits 'Traceback' line(s) in $n_tb_log — the multi-line, thread-interleaved dump is back, in a file inside the served root"
+fi
+
+# --- (n35) ANTI-VACUITY: that grep can actually find a traceback ----------------------------
+# Without this, (n34) passes just as happily against a misspelled pattern, an unreadable file,
+# or a `grep -c` whose non-zero exit was swallowed. The plant goes into a scratch COPY, never
+# into the served directory, so the measurement above is not disturbed by its own control.
+n_tb_planted="$N/n-traceback-planted.log"
+{ cat "$n_tb_log" 2>/dev/null || true
+  printf 'Traceback (most recent call last):\n  File "<string>", line 1, in <module>\nTypeError: comparing strings with non-ASCII characters is not supported\n'
+} > "$n_tb_planted" 2>/dev/null
+n_tb_plant_hits="$(n_tb_count "$n_tb_planted")"
+[ "$n_tb_plant_hits" -ge 1 ] 2>/dev/null \
+  && ok "(n35) ANTI-VACUITY: the same grep (n34) uses finds $n_tb_plant_hits planted 'Traceback' line(s) in a scratch copy of that very log — so (n34)'s zero is a measurement, not an empty needle" \
+  || no "(n35) ANTI-VACUITY: (n34)'s traceback scan can find a planted traceback" "the planted copy $n_tb_planted returned $n_tb_plant_hits hits"

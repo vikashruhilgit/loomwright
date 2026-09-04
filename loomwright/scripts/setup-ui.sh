@@ -14,9 +14,10 @@
 #      everything it DISPLAYS, so everything it can show has to be a file the server already
 #      holds. `serve.log` is written by `serve` alone too: it is the request handler's own
 #      stdout and stderr, which used to go to /dev/null and took every traceback with them.
-#      It records ONE line per MUTATING request — the route and the outcome — and never a
-#      caller-supplied string, so it can be neither injected into nor made to leak the
-#      per-run token.
+#      It records ONE line per MUTATING request — the route and the outcome — plus ONE line for
+#      a request that could not be answered at all, and never a caller-supplied string, so it
+#      can be neither injected into nor made to leak the per-run token. A read that completes
+#      is not logged, so the page's own two-second polling never grows it.
 #   2. `.supervisor/floor/floor.json` UNDER THE CURRENT PROJECT ROOT, AND UNDER EACH REGISTERED
 #      PROJECT ROOT that `serve` regenerates — and only ever by running `build-floor.sh` in
 #      that directory, never by writing that path itself. `serve --no-regen` makes even that
@@ -175,8 +176,9 @@ SERVED_INDEX="index.json"
 SLOW_FACTOR=5
 # The request handler's own stdout and stderr. Named here, once, so the write list at the top of
 # this file and the reference doc's exhaustive one can both be checked against the code rather
-# than against a memory of it. It holds one line per MUTATING request — route and outcome — and
-# nothing a caller supplied.
+# than against a memory of it. It holds one line per MUTATING request — route and outcome —
+# plus one line for a request that could not be answered at all, and nothing a caller supplied:
+# `FloorServer.handle_error` is what keeps that second case to a line instead of a traceback.
 SERVE_LOG="serve.log"
 # The name of the CUSTOM request header the token travels in. Custom is the whole point: a
 # request carrying it can never be a CORS "simple request", so a hostile cross-origin page has
@@ -1143,8 +1145,9 @@ REFUSALS = {
 
 
 def audit(line):
-    """One line per mutating request: the ROUTE and the OUTCOME, and nothing a caller supplied.
-    That is what makes this log neither injectable nor able to leak the token."""
+    """One line per mutating request — the ROUTE and the OUTCOME — plus one line for a request
+    that could not be answered at all, and nothing a caller supplied in either. That is what
+    makes this log neither injectable nor able to leak the token."""
     sys.stderr.write(line + "\n")
     sys.stderr.flush()
 
@@ -1153,7 +1156,18 @@ def audit(line):
 # them and watch the previously-refused request succeed. A guard with no such control is
 # indistinguishable from a guard that never fires.
 def _token_ok(raw):
-    return raw is not None and TOKEN != "" and hmac.compare_digest(str(raw), TOKEN)
+    # BYTES, NOT STR, AND WRAPPED. `hmac.compare_digest` on two `str` raises TypeError the
+    # moment either side carries a character above 127 — and an HTTP header is latin-1 decoded,
+    # so ANY UNAUTHENTICATED caller could reach that raise with a single byte > 127 in the token
+    # header, getting no reply at all where the contract promises a named refusal. Comparing the
+    # utf-8 ENCODINGS cannot raise it; the `except` is the belt to that brace, so a later change
+    # to the comparison cannot re-open a pre-authentication crash.
+    if raw is None or TOKEN == "":
+        return False
+    try:
+        return hmac.compare_digest(str(raw).encode("utf-8", "replace"), TOKEN.encode("utf-8"))
+    except Exception:
+        return False
 
 
 def _origin_ok(origin):
@@ -1343,12 +1357,27 @@ class FloorHandler(SimpleHTTPRequestHandler):
         self._report(action, rc, out)
 
 
+class FloorServer(ThreadingHTTPServer):
+    """THE ONE PLACE AN UNHANDLED EXCEPTION IN A REQUEST THREAD CAN LAND, overridden as a CLASS
+    property rather than patched at the two raises that were found. `socketserver`'s default
+    `handle_error` prints a full traceback to stderr, which here IS `serve.log` — a file inside
+    the served root, so it is fetchable — and it does so from every thread at once on an
+    unlocked stream, which is how two concurrent aborts produce interleaved, corrupted noise.
+    Overriding it collapses EVERY such event to ONE audited line: the two known ones (a token
+    header carrying a byte above 127, and a client that went away before the reply was flushed)
+    and every one a later edit introduces, each naming a reason and carrying nothing a caller
+    supplied."""
+
+    def handle_error(self, request, client_address):
+        audit("request-aborted -> the connection ended, or the request could not be answered, before a reply was written")
+
+
 def main():
     if TOKEN == "":
         audit("serve: ABORTED — no per-run token reached the request handler, so nothing was served")
         return 0
     signal.signal(signal.SIGTERM, lambda *_ignored: os._exit(0))
-    httpd = ThreadingHTTPServer(("127.0.0.1", PORT), FloorHandler)
+    httpd = FloorServer(("127.0.0.1", PORT), FloorHandler)
     httpd.serve_forever()
     return 0
 
