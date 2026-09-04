@@ -88,8 +88,19 @@ jobs:
                 so nothing needs fetching; the ref you want is already local.
               * SHELL LOOPS. `for f in a b c; do ...; done` is refused as a construct.
                 Expand it: one call per file, or a single `ls`/`grep` that covers them.
-            Chaining allowed commands with `;` or `|` IS permitted — it is substitution
-            and control-flow constructs that are refused, not compounding.
+              * OUTPUT REDIRECTION. `cmd > file` and `cmd >> file` are refused. Pipe to
+                `head`/`tail`/`wc` instead — piping between allowed commands IS permitted.
+              * RUNNING ANYTHING. You CANNOT execute scripts or tests: `bash`, `sh`,
+                `python3`, `node` and `timeout` are all refused, so no `bash
+                scripts/test-*.sh`, no gate, no suite. Do not try — this is the single
+                biggest waster of turns in this job's history, because the natural
+                instinct on a shell-heavy diff is to run the suite and then retry it four
+                or five different ways. The PR body and the `ci` check already report
+                suite and gate results; treat those as the execution evidence and spend
+                your turns READING instead. If a claimed result is what you doubt, say
+                you could not execute it rather than burning the run trying.
+            Chaining allowed commands with `;` or `|` IS permitted — it is substitution,
+            control flow, redirection and execution that are refused, not compounding.
 
             Use `gh pr comment` with your Bash tool to leave your review as a comment on
             the PR. Posting is not optional and it is the LAST thing you do: if you run
@@ -200,10 +211,24 @@ jobs:
           #   4x  `git fetch ...`                     — not on the allowlist
           #   3x  commands containing `$(...)`        — refused on the SUBSTITUTION itself
           # Re-running the SAME allowlist against the CORRECTED prompt took denials from
-          # 7 to 2 over 26 turns, which is the measurement that justifies this change. The
-          # 2 that remain are a `for f in ...; do ... done` loop (control flow is refused
-          # as a construct, so the warning names loops too) and one `gh pr view` variant
-          # that was not isolated further.
+          # 7 to 2 over 26 turns.
+          #
+          # 2026-09-04 (third pass) — that 7->2 did NOT hold in CI: the next run came back
+          # with 19 denials in 14 turns. The local repro had been run on the BRANCH, while
+          # CI checks out `refs/remotes/pull/N/merge` — a detached MERGE commit. Repeating
+          # the repro against a faithful CI checkout (clone, fetch the merge ref, detach
+          # onto it) reproduced the real pattern, and it was none of the earlier guesses:
+          #   5x  `bash loomwright/scripts/test-setup-ui.sh` (five variants - bare, with
+          #       `timeout`, with `> file`, with `; tail`, with `| tail`)
+          #   1x  `git diff ... > /tmp/floorjs.diff`   — output REDIRECTION
+          # Isolated: `git log --oneline -2 > /tmp/x.txt` DENIED, `git log --oneline -2 |
+          # head -1` ALLOWED. So `>` is refused and `|` is not.
+          # The dominant cost is the reviewer trying to RUN THE SUITES on a shell-heavy
+          # diff and retrying five ways when refused. `bash` is excluded on purpose (it is
+          # arbitrary execution, the thing this whole list exists to prevent), so the fix
+          # is to TELL the reviewer it cannot execute anything rather than to permit it.
+          # Its own posted review on PR #177 already said "script execution wasn't
+          # available in this review environment" - it worked that out by wasting the turns.
           # Both were then isolated one shape at a time:
           #   `git diff --stat $(git merge-base HEAD origin/main)`  -> DENIED
           #   `git log --oneline -3; echo sep; ls loomwright`       -> ALLOWED
