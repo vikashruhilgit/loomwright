@@ -624,7 +624,15 @@
       }
       for (var di = 0; di < dupIds.length; di++) {
         var liDI = document.createElement('li');
-        liDI.textContent = 'duplicate id: ' + dupIds[di] + ' appears more than once in the merged store — first seen wins';
+        /* "first seen wins" was FALSE in both readings available, and this is the ONLY sentence
+         * on the page that states a resolution rule - in the view whose whole premise is
+         * reporting curation history faithfully. The edge map is `add` over single-key objects,
+         * which is LAST-write-wins (documented and verified at the edge_map site in
+         * build-floor.sh: two `dup` rules superseding `target` and `other` yield the chain
+         * ["dup","other"], the first edge gone), and `rules[]` dedups nothing at all - both rows
+         * are emitted and rendered above this line. Say what actually happens. */
+        liDI.textContent = 'duplicate id: ' + dupIds[di] +
+          ' appears more than once in the merged store — both rows are listed above; where duplicates carry different supersedes values the walk follows the last';
         ulS.appendChild(liDI);
       }
       if (!chains.length && !dangling.length && !cycles.length && !selfRef.length && !dupIds.length) {

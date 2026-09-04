@@ -1608,6 +1608,51 @@ done
   && ok "(j42) ruleProvenanceLabel no longer truthiness-tests its sub-fields" \
   || no "(j42) ruleProvenanceLabel still drops a present-but-empty source"
 
+# --- (j44) the duplicate-id line must not state a resolution rule the projector contradicts ---
+# The render said "first seen wins". The projector is LAST-write-wins: the edge map is `add` over
+# single-key objects, so two rules sharing an id with different `supersedes` resolve to the LAST
+# edge and the first vanishes. It was also false the other way round - `rules[]` dedups nothing,
+# both rows are rendered. A false statement in the one view whose premise is reporting curation
+# history faithfully, and the existing assertion could not catch it because it matched only the
+# `duplicate id:` PREFIX. This pins the CLAUSE.
+[ "$(grep -cF 'first seen wins' "$JS")" -le 1 ] \
+  && ok "(j44) the duplicate-id render no longer claims first-seen-wins (any survivor is the comment explaining why)" \
+  || no "(j44) 'first seen wins' still appears outside the explanatory comment"
+grep -n 'liDI.textContent' -A2 "$JS" 2>/dev/null | grep -qF 'the walk follows the last' \
+  && ok "(j44) the duplicate-id render states the actual resolution rule (walk follows the last)" \
+  || no "(j44) the duplicate-id render does not state the projector's real resolution rule"
+
+# The claim on the page and the claim in the projector must not diverge again.
+grep -qF 'LAST-write-wins' "$script_dir/build-floor.sh" \
+  && ok "(j44) build-floor.sh still documents LAST-write-wins, so page and projector agree" \
+  || no "(j44) build-floor.sh no longer documents the merge order the page now cites"
+
+# MUTATION CONTROL: restore the false clause and require (j44) to catch it.
+MUT_DUP="$TMPROOT/mut-dup.js"
+sed 's@ appears more than once in the merged store — both rows are listed above; where duplicates carry different supersedes values the walk follows the last@ appears more than once in the merged store — first seen wins@' "$JS" > "$MUT_DUP" 2>/dev/null
+if [ -s "$MUT_DUP" ] && ! cmp -s "$MUT_DUP" "$JS"; then
+  [ "$(grep -cF 'first seen wins' "$MUT_DUP")" -gt "$(grep -cF 'first seen wins' "$JS")" ] \
+    && ok "(j45) MUTATION CONTROL: restoring the false first-seen-wins clause IS detected by (j44)" \
+    || no "(j45) MUTATION CONTROL: the restored false clause was not detected - (j44) proves nothing"
+else
+  no "(j45) MUTATION CONTROL: could not build the duplicate-id mutant - control inconclusive"
+fi
+
+# The discovery surface must name --publish; commands/handoff.md documenting it is not enough,
+# because check-command-sync.sh does not cover agent-help's Usage prose - which is exactly why
+# all seven gates went green over the omission.
+AH="$script_dir/../commands/agent-help.md"
+if [ -r "$AH" ]; then
+  grep -qF -- '--publish' "$AH" \
+    && ok "(j44) agent-help.md's /handoff entry names --publish" \
+    || no "(j44) agent-help.md still shows the pre-flag /handoff usage"
+  grep -qF 'snapshot.md' "$AH" \
+    && ok "(j44) agent-help.md names the snapshot output path" \
+    || no "(j44) agent-help.md does not name .supervisor/handoff/snapshot.md"
+else
+  no "(j44) commands/agent-help.md is unreadable - the discovery-surface check cannot run"
+fi
+
 # --- (j38) no committed fixture pins a key the projector can no longer emit -------------------
 # THE MISSING GATE, and the reason this case exists rather than the one-line fix above it.
 #
