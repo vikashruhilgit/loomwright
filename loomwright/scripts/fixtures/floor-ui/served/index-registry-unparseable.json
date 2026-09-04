@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "generated_at_epoch": 1788523142,
+  "module": {
+    "ui_dir": "/home/you/work/.local/ui-registry-unparseable",
+    "bundle": "present",
+    "marker": true
+  },
+  "serve": {
+    "interval_seconds": 2,
+    "slow_cadence_ticks": 5,
+    "regen": false,
+    "selected_path": "/home/you/work/proj-1",
+    "selected_registered": false
+  },
+  "registry": {
+    "state": "unparseable",
+    "reason": "that file is there but is not valid JSON carrying a \"projects\" array; it has NOT been modified",
+    "path": "/home/you/work/.local/reg-registry-unparseable.json"
+  },
+  "projects": []
+}

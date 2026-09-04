@@ -48,8 +48,12 @@
 #   (a) AC-no-egress — the three bundle files carry no http/https URL, no protocol-relative
 #       reference inside a src/href/url(, no @import, no preconnect, no @font-face and no
 #       url() at all; the CSP meta line is present VERBATIM; floor.js fetches exactly the
-#       relative path `floor.json`. With a mutation control: a copy carrying one remote href
-#       must be flagged, or the scanner proves nothing
+#       relative path `floor.json`, the served index and a per-project URL BUILT from a fixed
+#       prefix and an encoded slug rather than taken from a served document, through exactly
+#       ONE call site COUNTED IN CODE (see code_occ: a truthful comment naming `fetch(` must
+#       not redden a gate that is counting calls). With mutation controls: a copy carrying one
+#       remote href must be flagged, a real second call site must be counted, and a
+#       commented-out one must not be, or the scanner proves nothing
 #   (b) AC-lanes / AC-stall / AC-three-states static halves — the literal strings the browser
 #       pass will read, the doubled-prefix stripping expression, `cache: 'no-store'`, the stall
 #       query parameter, and THE MOTION BUDGET: exactly one setInterval and zero rAF calls in
@@ -113,6 +117,20 @@
 #       for byte; and with jq made UNFINDABLE on PATH every registry verb names jq rather than
 #       pretending. Plus the isolation gate, its mutation control, and the real-tree backstop —
 #       all three described in the isolation paragraph above
+#   (l) AC-multiproject — one server showing many projects. The SCHEDULING BOUND is a
+#       MEASUREMENT, not an inspection: a stub projector of known cost, five registered
+#       projects, a fixed number of ticks, and a budget expressed in units of that same stub
+#       calibrated in the same run — with a naive mutant that must be OVER it and a null mutant
+#       that must be within it. Plus the served index (`index.json`) that the picker reads:
+#       every registered project at the exact relative path the page builds, a project deleted
+#       under a live serve rendering `unavailable` with its reason while the others keep going
+#       and the server survives, an ABSENT registry and an UNPARSEABLE one reported as the two
+#       different claims they are, jq unfindable still yielding a valid index that names jq, and
+#       write containment hashed rather than argued. Plus the page halves that are checkable
+#       headlessly: no write verb, no egress, no second timer, both fetched URLs built in
+#       floor.js rather than read out of the served document, and the five committed
+#       served-index fixtures a browser pass will load — none of which may pin a key the engine
+#       can no longer emit
 #   (z) release-surface parity for the /setup ui module registration, plus the surfaces/formats
 #       basis sentence, which is QUOTED from build-floor.sh rather than restated
 #
@@ -143,6 +161,40 @@ has_re()  { local c; c="$(grep -c -E -- "$2" "$1" 2>/dev/null || true)"; case "$
 # occ counts OCCURRENCES (not matching lines): "exactly one timer" is a per-occurrence claim
 # and grep -c would happily read two setInterval calls on one line as 1.
 occ() { awk -v pat="$2" 'BEGIN{n=0}{n+=gsub(pat,"")}END{print n+0}' "$1" 2>/dev/null; }
+# code_occ counts occurrences in CODE ONLY, with /* */ and // comments stripped first.
+# WHY IT EXISTS, because a comment-aware counter can be WEAKER than a naive one and that is a
+# real cost: `occ` counts raw text, so a truthful comment NAMING the construct it describes
+# ("there is exactly ONE `fetch(` call site in this file") reddened (a4) while the code still
+# held exactly one call. That is the same false-positive class item 05 recorded when a widened
+# read-only scanner matched JavaScript's own `delete` OPERATOR - a gate that pressures the next
+# author into deleting a correct line to appease it. The resolution there was to scope the gate
+# rather than contort the source, and it is the resolution here.
+# THE STRIPPER IS DELIBERATELY NAIVE - it knows nothing about string literals - and that is safe
+# in THIS bundle for a reason that is itself asserted: (a1) proves no `//`-bearing URL exists in
+# any of the three files, so there is no string a `//` scan can truncate. It is used ONLY by the
+# counting assertions below, each of which carries both controls: one proving a real second call
+# still reddens, one proving a merely-mentioned or commented-out call does not.
+code_occ() {
+  awk -v pat="$2" '
+    BEGIN { inblk = 0; n = 0 }
+    {
+      line = $0; out = ""
+      while (length(line)) {
+        if (inblk) {
+          i = index(line, "*/")
+          if (i == 0) { line = "" } else { line = substr(line, i + 2); inblk = 0 }
+        } else {
+          i = index(line, "/*"); j = index(line, "//")
+          if (i > 0 && (j == 0 || i < j)) { out = out substr(line, 1, i - 1); line = substr(line, i + 2); inblk = 1 }
+          else if (j > 0) { out = out substr(line, 1, j - 1); line = "" }
+          else { out = out line; line = "" }
+        }
+      }
+      n += gsub(pat, "", out)
+    }
+    END { print n + 0 }
+  ' "$1" 2>/dev/null
+}
 in_str() { case "$1" in *"$2"*) return 0 ;; esac; return 1; }
 
 csum() {
@@ -183,6 +235,14 @@ command -v python3 >/dev/null 2>&1 || setup_fail "python3 is required to run the
 
 TMPROOT="$(mktemp -d)" || setup_fail "mktemp -d failed"
 SERVE_PIDFILES=""
+# NOREG — a registry path that deliberately does NOT exist, passed to every `serve` in this
+# file. `serve` became a registry-touching verb when it gained the multi-project half: it
+# READS the registry and then runs the projector INSIDE every project it finds there, so a
+# serve case written in the ordinary style would regenerate the developer's real projects —
+# writing `.supervisor/floor/floor.json` into repositories this suite has never heard of. The
+# ui-directory override cannot prevent that (the registry is a SIBLING of the ui dir), so the
+# isolation gate at (k26) now requires an explicit token on `serve` too, and this is it.
+NOREG="$TMPROOT/no-such-registry.json"
 # HOLDER_PIDS: processes this suite starts that are NOT the engine's own server — currently
 # the socket held on a port so the busy-port branch has something to collide with. They are
 # killed from the same EXIT trap, because a probe that outlives the run holds a port hostage.
@@ -222,6 +282,7 @@ trap finish EXIT INT TERM
 mktmp() { mktemp -d "$TMPROOT/d.XXXXXX"; }
 
 REAL_BUNDLE_SIG="$(tree_sig "$BUNDLE_DIR")"
+JS_SIG_BEFORE="$(csum "$JS")"
 
 # THE REAL USER-SCOPE TREE — captured HERE, before the first assertion, and compared again in
 # group (k). Its path is deliberately NOT restated in this file: it is read OUT of the engine's
@@ -289,15 +350,59 @@ else
   no "(a2) index.html carries the Content-Security-Policy meta line verbatim" "expected: $CSP_LINE"
 fi
 
-if has_lit "$JS" "fetch('floor.json', { cache: 'no-store' })"; then
-  ok "(a3) floor.js fetches the relative path floor.json with cache: 'no-store'"
-else
-  no "(a3) floor.js fetches the relative path floor.json with cache: 'no-store'"
-fi
-n_fetch="$(occ "$JS" 'fetch[(]')"
+# (a3) The page now reads TWO documents per tick - the served index, then the selected
+# project's floor - and it does so through ONE call site, `fetchText(url)`. So the assertion is
+# no longer a single literal call: it is the call site's shape PLUS every URL that call site can
+# ever be given, each of which is built in floor.js from a fixed relative string. A URL taken
+# verbatim from a served document would be the hole this checks for.
+a3_bad=""
+has_lit "$JS" "fetch(url, { cache: 'no-store' })" || a3_bad="$a3_bad [no single no-store call site]"
+has_lit "$JS" "return 'floor.json';" || a3_bad="$a3_bad [the root url is not a relative literal]"
+has_lit "$JS" "return 'projects/' + encodeURIComponent(slug) + '/floor.json';" \
+  || a3_bad="$a3_bad [the per-project url is not built from a fixed prefix and an encoded slug]"
+has_lit "$JS" "var SERVED_INDEX = 'index.json';" || a3_bad="$a3_bad [the served index url is not a relative literal]"
+[ -z "$a3_bad" ] \
+  && ok "(a3) every URL floor.js fetches is a relative literal built in floor.js (floor.json, index.json, projects/<encoded slug>/floor.json) and the one call site passes cache: 'no-store'" \
+  || no "(a3) every URL floor.js fetches is a relative literal built in floor.js" "$a3_bad"
+
+# (a4) counts CALL SITES IN CODE. See code_occ above for why this is comment-aware and why that
+# does not weaken it: the two controls below are what keep it honest.
+n_fetch="$(code_occ "$JS" 'fetch[(]')"
+n_fetch_raw="$(occ "$JS" 'fetch[(]')"
 [ "$n_fetch" = "1" ] \
-  && ok "(a4) floor.js makes exactly ONE fetch call (found $n_fetch)" \
-  || no "(a4) floor.js makes exactly ONE fetch call" "found $n_fetch"
+  && ok "(a4) floor.js makes exactly ONE fetch call in code (found $n_fetch; $n_fetch_raw occurrences including the comments that describe it)" \
+  || no "(a4) floor.js makes exactly ONE fetch call in code" "found $n_fetch"
+# ANTI-VACUITY: comment-stripping must actually be doing something here, or (a4) is just `occ`
+# under another name and the two controls below would be testing a mechanism nothing uses.
+[ "${n_fetch_raw:-0}" -gt "${n_fetch:-0}" ] 2>/dev/null \
+  && ok "(a4a) ANTI-VACUITY: the raw count ($n_fetch_raw) exceeds the code count ($n_fetch), so the comment-stripping in (a4) is live rather than decorative" \
+  || no "(a4a) ANTI-VACUITY: the comment-stripping in (a4) is live" "raw=$n_fetch_raw code=$n_fetch — if these are equal, (a4) is `occ` under another name"
+# CONTROL 1 - a REAL second call site must still redden (a4). This is the property a
+# comment-aware counter could have silently lost.
+MUT_F2="$TMPROOT/mut-fetch-two.js"
+{ cat "$JS"; printf '\nvar sneaky = fetch("floor.json");\n'; } > "$MUT_F2" 2>/dev/null
+if mutant_ok "$JS" "$MUT_F2"; then
+  m_f2="$(code_occ "$MUT_F2" 'fetch[(]')"
+  [ "$m_f2" = "2" ] \
+    && ok "(a4b) MUTATION CONTROL: a genuine SECOND fetch call site is counted ($m_f2) — comment-awareness did not blind the gate" \
+    || no "(a4b) MUTATION CONTROL: a genuine second fetch call site is counted" "code_occ said $m_f2, expected 2"
+fi
+# CONTROL 2 - prose must NOT redden it. A commented-out call and a comment naming `fetch(` are
+# both legitimate; flagging either is the false positive this fix exists to remove, and the one
+# that pressures the next author into deleting a correct comment.
+MUT_FC="$TMPROOT/mut-fetch-comment.js"
+{ cat "$JS"; printf '\n// var oldWay = fetch("floor.json");\n/* the fetch( above is the only one */\n'; } > "$MUT_FC" 2>/dev/null
+if mutant_ok "$JS" "$MUT_FC"; then
+  m_fc="$(code_occ "$MUT_FC" 'fetch[(]')"
+  m_fc_raw="$(occ "$MUT_FC" 'fetch[(]')"
+  [ "$m_fc" = "1" ] && [ "${m_fc_raw:-0}" -ge 3 ] 2>/dev/null \
+    && ok "(a4c) MUTATION CONTROL: a commented-out call and a comment MENTIONING fetch( leave the code count at $m_fc (raw count $m_fc_raw) — the gate reads code, not prose" \
+    || no "(a4c) MUTATION CONTROL: commented-out and mentioned fetch( calls do not redden (a4)" "code=$m_fc (want 1) raw=$m_fc_raw (want >=3)"
+fi
+# The mutation controls above must not have touched the shipped file.
+[ "$(csum "$JS")" = "$JS_SIG_BEFORE" ] \
+  && ok "(a4d) floor.js is byte-identical after both (a4) mutation controls (sha256 unchanged)" \
+  || no "(a4d) floor.js is byte-identical after the (a4) mutation controls" "before='$JS_SIG_BEFORE' after='$(csum "$JS")'"
 
 # Mutation control: the scanner must fire on a file that really does reach off-origin.
 MUT_HTML="$TMPROOT/mut-index.html"
@@ -1034,7 +1139,7 @@ bash "$ENGINE" apply --ui-dir "$GUI" >/dev/null 2>&1
 STUB_NOPY="$G/bin-nopy"
 mkstub "$STUB_NOPY" "python3" || setup_fail "(g) fixture: could not build the python3-absent PATH stub"
 [ ! -e "$STUB_NOPY/python3" ] || setup_fail "(g) fixture: the python3-absent stub still contains python3"
-out="$(PATH="$STUB_NOPY" bash "$ENGINE" serve --ui-dir "$GUI" --no-regen 2>&1)"; rc=$?
+out="$(PATH="$STUB_NOPY" bash "$ENGINE" serve --registry "$NOREG" --ui-dir "$GUI" --no-regen 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && in_str "$out" "serve: ABORTED — python3 not found" \
   && ok "(g1) with python3 absent, serve aborts by name and exits 0" \
   || no "(g1) with python3 absent, serve aborts by name and exits 0" "rc=$rc :: $out"
@@ -1051,7 +1156,7 @@ out="$(PATH="$STUB_NOJQ" bash "$ENGINE" apply --ui-dir "$JQUI" 2>&1)"; rc=$?
 jq_port="$(python3 -c 'import socket
 s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()' 2>/dev/null)"
 case "$jq_port" in ''|*[!0-9]*) setup_fail "(g) fixture: could not obtain a free port for the jq-absent serve probe" ;; esac
-out="$(PATH="$STUB_NOJQ" bash "$ENGINE" serve --ui-dir "$JQUI" --port "$jq_port" --detach 2>&1)"; rc=$?
+out="$(PATH="$STUB_NOJQ" bash "$ENGINE" serve --registry "$NOREG" --ui-dir "$JQUI" --port "$jq_port" --detach 2>&1)"; rc=$?
 SERVE_PIDFILES="$SERVE_PIDFILES $JQUI/serve.pid"
 [ "$rc" -eq 0 ] && in_str "$out" "jq not found" && in_str "$out" "will NOT be regenerated" \
   && ok "(g3) with jq absent, serve reports that build-floor.sh will skip rather than pretending to regenerate" \
@@ -1065,7 +1170,7 @@ cp "$ENGINE" "$LONE/setup-ui.sh" || setup_fail "(g) fixture: could not stage a l
 LUI="$G/lone-ui"; mkdir -p "$LUI"
 printf 'marker\n' > "$LUI/.loomwright-ui-module"
 printf '<!doctype html>\n' > "$LUI/index.html"
-out="$(bash "$LONE/setup-ui.sh" serve --ui-dir "$LUI" 2>&1)"; rc=$?
+out="$(bash "$LONE/setup-ui.sh" serve --registry "$NOREG" --ui-dir "$LUI" 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && in_str "$out" "serve: ABORTED — build-floor.sh not found" \
   && ok "(g4) with build-floor.sh missing, serve aborts by name and exits 0" \
   || no "(g4) with build-floor.sh missing, serve aborts by name and exits 0" "rc=$rc :: $out"
@@ -1117,7 +1222,7 @@ case "$hint_port" in ''|*[!0-9]*) setup_fail "(g9) fixture: could not obtain a f
 HINTUI="$G/ui-hint"
 bash "$ENGINE" apply --ui-dir "$HINTUI" >/dev/null 2>&1
 [ -f "$HINTUI/index.html" ] || setup_fail "(g9) fixture: apply did not install into $HINTUI"
-out="$(bash "$ENGINE" serve --ui-dir "$HINTUI" --no-regen --detach --port "$hint_port" --interval 10 2>&1)"; rc=$?
+out="$(bash "$ENGINE" serve --registry "$NOREG" --ui-dir "$HINTUI" --no-regen --detach --port "$hint_port" --interval 10 2>&1)"; rc=$?
 SERVE_PIDFILES="$SERVE_PIDFILES $HINTUI/serve.pid"
 [ "$rc" -eq 0 ] && in_str "$out" "?stale=30" \
   && ok "(g9) with --interval 10, serve prints the ?stale=30 the page needs to avoid a false stale banner" \
@@ -1142,7 +1247,7 @@ esac
 hint_port2="$(python3 -c 'import socket
 s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()' 2>/dev/null)"
 case "$hint_port2" in ''|*[!0-9]*) setup_fail "(g10) fixture: could not obtain a second free port" ;; esac
-out="$(bash "$ENGINE" serve --ui-dir "$HINTUI" --no-regen --detach --port "$hint_port2" 2>&1)"; rc=$?
+out="$(bash "$ENGINE" serve --registry "$NOREG" --ui-dir "$HINTUI" --no-regen --detach --port "$hint_port2" 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ! in_str "$out" "?stale=" \
   && ok "(g10) CONTROL: at the default interval serve prints no ?stale= hint — the hint is interval-driven, not decoration" \
   || no "(g10) CONTROL: at the default interval serve prints no ?stale= hint" "rc=$rc :: $out"
@@ -1181,7 +1286,7 @@ case "${busy_port:-x}" in
       skipn "(g12) the port holder exited before the probe, so the port would not have been busy"
     else
       rm -f "$GUI/serve.pid" 2>/dev/null
-      out="$(bash "$ENGINE" serve --ui-dir "$GUI" --no-regen --port "$busy_port" 2>&1)"; rc=$?
+      out="$(bash "$ENGINE" serve --registry "$NOREG" --ui-dir "$GUI" --no-regen --port "$busy_port" 2>&1)"; rc=$?
       if [ "$rc" -eq 0 ] \
          && in_str "$out" "serve: ABORTED — port $busy_port is already in use" \
          && in_str "$out" "Nothing was started" \
@@ -1197,7 +1302,7 @@ s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.clos
       case "${free_port:-x}" in
         ''|*[!0-9]*) skipn "(g13) CONTROL: no free port could be obtained for the contrast run" ;;
         *)
-          out="$(bash "$ENGINE" serve --ui-dir "$GUI" --no-regen --detach --port "$free_port" 2>&1)"; rc=$?
+          out="$(bash "$ENGINE" serve --registry "$NOREG" --ui-dir "$GUI" --no-regen --detach --port "$free_port" 2>&1)"; rc=$?
           SERVE_PIDFILES="$SERVE_PIDFILES $GUI/serve.pid"
           if [ "$rc" -eq 0 ] && ! in_str "$out" "already in use"; then
             ok "(g13) CONTROL: on a FREE port the same invocation does not abort — the refusal is the conflict, not a blanket refusal"
@@ -1240,7 +1345,7 @@ if mutant_ok "$ENGINE" "$MUT_BIND" shell; then
     || no "(h2) MUTATION CONTROL: an invocation with the loopback bind removed IS caught" "got invocations=${mb%% *} bound=${mb##* }"
 fi
 
-out="$(bash "$ENGINE" serve --no-regen --detach --port "$port" --ui-dir "$HUI" 2>&1)"; rc=$?
+out="$(bash "$ENGINE" serve --registry "$NOREG" --no-regen --detach --port "$port" --ui-dir "$HUI" 2>&1)"; rc=$?
 SERVE_PIDFILES="$SERVE_PIDFILES $HUI/serve.pid"
 if [ "$rc" -ne 0 ] || [ ! -f "$HUI/serve.pid" ]; then
   no "(h3) serve --detach starts and records its pid" "rc=$rc :: $out"
@@ -1340,7 +1445,7 @@ case "$rport" in ''|*[!0-9]*) setup_fail "(i) fixture: could not obtain a free p
 (
   cd "$REPO" || exit 1
   bash "$ENGINE" apply --ui-dir "$RUI" >/dev/null 2>&1
-  bash "$ENGINE" serve --detach --interval 1 --port "$rport" --ui-dir "$RUI" >/dev/null 2>&1
+  bash "$ENGINE" serve --registry "$NOREG" --detach --interval 1 --port "$rport" --ui-dir "$RUI" >/dev/null 2>&1
 ) || setup_fail "(i) fixture: the apply/serve sequence could not be run from $REPO"
 SERVE_PIDFILES="$SERVE_PIDFILES $RUI/serve.pid"
 sleep 2
@@ -2274,7 +2379,10 @@ k_residue="$(ls "$script_dir"/setup-ui-*.sh 2>/dev/null || true)"
 #   A. INSIDE this group, EVERY engine invocation must carry an isolation token. The verb is a
 #      loop variable in several cases above, so a literal-verb rule alone would see half of them.
 #   B. ANYWHERE in this file, an engine invocation naming a literal registry verb must carry
-#      one. This is the rule that binds the groups a later subtask appends.
+#      one. This is the rule that binds the groups a later subtask appends. `serve` is on that
+#      list and was ADDED to it by the multi-project change: it reads the registry and then runs
+#      the projector inside every project it finds, so an unisolated `serve` does not merely
+#      read the developer's config tree, it writes into every repository named in it.
 # An isolation token is a fixture `HOME=`, an explicit `--registry`, or `env -u HOME` (which
 # provably cannot reach a home directory because there is not one).
 SELF="$script_dir/test-setup-ui.sh"
@@ -2287,7 +2395,7 @@ reg_isolation_scan() {
     /^echo "\(z\)/            { ink = 0 }
     {
       if ($0 !~ /bash[[:space:]]+"\$[A-Za-z_][A-Za-z_0-9]*"/) next
-      regverb = ($0 ~ /"\$[A-Za-z_][A-Za-z_0-9]*"[[:space:]]+(add|list|forget|scan)([[:space:]]|$)/)
+      regverb = ($0 ~ /"\$[A-Za-z_][A-Za-z_0-9]*"[[:space:]]+(add|list|forget|scan|serve)([[:space:]]|$)/)
       if (!(ink || regverb)) next
       seen++
       if (mode == "findings" && !isolated($0)) printf "%d: %s\n", FNR, $0
@@ -2325,6 +2433,24 @@ if mutant_ok "$SELF" "$KMUT" shell; then
          "the gate stayed clean on a mutant that reaches the real config tree"
 fi
 
+# MUTATION CONTROL for the SERVE half of rule B, which (k27) above does not cover: it strips a
+# fixture HOME from a `list`, and would still pass if `serve` had never been added to the rule.
+# `serve` is the invocation with the largest blast radius in this file — it writes into every
+# registered project — so the rule that isolates it gets its own control.
+KMUT2="$TMPROOT/k-self-mutant-serve.sh"
+awk 'BEGIN { done = 0 }
+     {
+       if (!done && index($0, "bash \"$ENGINE\" serve --registry \"$NOREG\"") > 0) { sub(/--registry "\$NOREG" /, ""); done = 1 }
+       print
+     }' "$SELF" > "$KMUT2" 2>/dev/null
+if mutant_ok "$SELF" "$KMUT2" shell; then
+  k_mviol2="$(reg_isolation_scan "$KMUT2" findings)"
+  [ -n "$k_mviol2" ] \
+    && ok "(k27b) MUTATION CONTROL: stripping the registry override from one SERVE call site reddens the gate — serve really is covered by rule B, not merely mentioned in its comment" \
+    || no "(k27b) MUTATION CONTROL: a serve call site with its registry override stripped is flagged" \
+         "the gate stayed clean on a serve that would regenerate every project in the developer's real registry"
+fi
+
 # --- (k28)/(k29) THE BACKSTOP: the real user-scope tree, hashed around the whole suite ---
 # Captured before the first assertion in this file (see real_tree_sig near the top) and compared
 # here — after every group that invokes the engine, since (z) below reads documents only. ABSENT
@@ -2350,6 +2476,560 @@ k_real_reg_after="ABSENT"
   && ok "(k29) the real projects.json is unchanged across the whole suite (state before: $([ "$REAL_REG_BEFORE" = "ABSENT" ] && echo ABSENT || echo present)) — the precise subject, immune to anything else writing under that directory" \
   || no "(k29) the real projects.json is unchanged across the whole suite" \
        "before='$REAL_REG_BEFORE' after='$k_real_reg_after' — a registry case reached the developer's real config tree"
+
+# ===========================================================================
+echo "(l) AC-multiproject — one server, many projects, and a loop whose cost is measured"
+# ===========================================================================
+# WHAT THIS GROUP PROVES AND WHAT IT DELIBERATELY CANNOT.
+#
+# AC-2b is a TIMING claim and it is asserted by MEASUREMENT, never by reading the loop: at the
+# measured ~1 s per real projector run, regenerating every registered project on every tick
+# falls behind a 2 s interval at TWO projects, and every project then renders permanently
+# stale. Item 05 shipped a 4.1x runtime regression that passed 338 assertions and seven repo
+# gates in silence, which is exactly why inspection is not accepted here.
+#
+# The measurement follows test-build-floor.sh case (x) and rejects the same two shapes it did:
+#   1. Timing the REAL projector. Too slow to run three arms of, and machine-dependent.
+#   2. An ABSOLUTE wall-clock ceiling. This repo has rejected that twice: a bound tight enough
+#      to catch a regression on a laptop flakes on CI, and one loose enough for CI catches
+#      nothing. Unusable in both directions.
+# So the bound is a RATIO against a UNIT calibrated in the SAME RUN on the SAME machine: one
+# invocation of a STUB projector whose cost is known because it sleeps for it. The bound is
+#   budget = (measured tick period - the configured interval) / unit
+# i.e. "how many projector runs of work does one tick cost", which is hardware-independent by
+# construction - a slow or loaded runner slows the unit and the loop together.
+#
+# THREE ARMS, because a bound with no control is a bound that has never been red:
+#   (l6)  PRIMARY  - the shipped engine, five projects, must be WITHIN budget.
+#   (l8)  CONTROL  - a mutant whose loop regenerates EVERY project EVERY tick (the naive shape
+#                    R2 names) must be OVER it. This is the arm that proves the measurement can
+#                    detect the starvation it claims to.
+#   (l9)  NULL-MUTATION CONTROL - a mutant that differs, still parses, and changes nothing the
+#                    loop does must stay WITHIN budget. Without it, (l8) would also "pass"
+#                    against a measurement that simply flagged any mutant at all.
+# Measured on the maintainer tree at STUB_COST=0.4 s, interval 1 s, 5 projects, 6 ticks: the
+# shipped engine and the null mutant both sit at 137 hundredths (1.37 projector runs of work
+# per tick - the selected project every tick, one other every fifth, plus the index write); the
+# naive mutant sits at 412. The budget below sits between them with margin on both sides.
+# Wall-clock figures are NOISY, so quoting one exact pair as though it were repeatable would
+# claim a precision this measurement does not have; the property that matters is the gap.
+
+L="$(mktmp)" || setup_fail "(l) fixture: mktemp under $TMPROOT failed"
+LSCHED_BUDGET=250          # hundredths of one projector run of work per tick; see above
+LSTUB_COST="0.4"
+LTICKS=6
+LINTERVAL=1
+LREG="$L/registry.json"
+LENG_SIG_BEFORE="$(csum "$ENGINE")"
+LJS_SIG_BEFORE="$(csum "$JS")"
+
+# --- (l1) PRESERVATION: subtask 1 is still standing after this subtask's edits ----------
+# Sequential sharing grants VISIBILITY, not PRESERVATION: the deterministic outputs gate checked
+# subtask 1's symbols at ITS completion and nothing re-checks them after a later subtask edits
+# the same file. This is that re-check, and it is an assertion rather than authoring discipline.
+l_missing=""
+for fn in do_add do_list do_forget do_scan registry_path registry_read project_slug; do
+  [ "$(grep -c "^$fn()" "$ENGINE")" -ge 1 ] || l_missing="$l_missing $fn"
+done
+# The sibling relationship is MEASURED from the engine's own report rather than matched against
+# the literal path, for two reasons: a literal would be a second copy of a path that can move,
+# and spelling a host-tool directory here would put a vendor token in a file that carries none
+# and move a ratchet this subtask has no business moving. Under a fixture HOME with no --ui-dir,
+# the reported ui dir and the reported registry must live in the SAME parent — which is the
+# property `remove` depends on and the reason the registry survives it.
+LSIB_H="$L/home-sibling"
+mkdir -p "$LSIB_H" || setup_fail "(l1) fixture: could not create $LSIB_H"
+l_sib_out="$(HOME="$LSIB_H" bash "$ENGINE" check 2>/dev/null)"
+l_sib_ui="$(printf '%s\n' "$l_sib_out" | sed -n 's/^ui dir:  *//p' | awk 'NR==1')"
+l_sib_reg="$(printf '%s\n' "$l_sib_out" | sed -n 's/^registry: //p' | awk 'NR==1')"
+case "$l_sib_ui/$l_sib_reg" in
+  /*) [ "$(dirname "$l_sib_ui")" = "$(dirname "$l_sib_reg")" ] || l_missing="$l_missing registry-is-no-longer-a-sibling-of-the-ui-dir" ;;
+  *)  l_missing="$l_missing could-not-read-the-engine's-own-paths" ;;
+esac
+[ -z "$l_missing" ] \
+  && ok "(l1) PRESERVATION: every symbol subtask 1 provided still resolves in the engine, and the registry the engine names is still a SIBLING of the ui dir it names ($(dirname "$l_sib_reg"))" \
+  || no "(l1) PRESERVATION: subtask 1's symbols still resolve and the registry is still a sibling of the ui dir" "missing:$l_missing"
+
+# --- (l2) the symbols THIS subtask provides, in the engine and in the page ---------------
+l_missing=""
+for fn in regen_project write_served_index; do
+  [ "$(grep -c "^$fn()" "$ENGINE")" -ge 1 ] || l_missing="$l_missing $fn"
+done
+for fn in renderProjectPicker projectStateLabel; do
+  [ "$(grep -c "function $fn" "$JS")" -ge 1 ] || l_missing="$l_missing $fn"
+done
+has_lit "$HTML" 'id="project-picker"' || l_missing="$l_missing project-picker"
+[ -z "$l_missing" ] \
+  && ok "(l2) regen_project and write_served_index exist in the engine, renderProjectPicker and projectStateLabel in floor.js, and index.html carries the project-picker element" \
+  || no "(l2) the multi-project symbols exist in the engine, the page and the markup" "missing:$l_missing"
+
+# --- the timing fixture: a plugin directory holding a COPY of the real engine beside a stub --
+# The engine resolves build-floor.sh as its own sibling, so a stub projector is installed by
+# giving the engine a different directory to live in - never by editing the engine, which is
+# what keeps (l6) a measurement of the SHIPPED code. (l3) asserts that copy is byte-identical.
+LP="$L/plugin"
+mkdir -p "$LP/floor-ui" || setup_fail "(l) fixture: could not create $LP"
+cp "$ENGINE" "$LP/setup-ui.sh" || setup_fail "(l) fixture: could not copy the engine"
+cp "$BUNDLE_DIR"/* "$LP/floor-ui/" 2>/dev/null || setup_fail "(l) fixture: could not copy the bundle"
+cat > "$LP/build-floor.sh" <<'__STUB__'
+#!/usr/bin/env bash
+# STUB PROJECTOR with a KNOWN cost. It writes the artefact the engine copies, then sleeps for
+# STUB_COST and records the finishing time and the directory it ran in. The sleep and the
+# timestamp come from ONE python3 process, so the recorded cost includes the startup the
+# harness will later calibrate against.
+mkdir -p .supervisor/floor 2>/dev/null
+printf '{"schema_version":1,"generated_at_epoch":0,"repo_head":"stub","surfaces":{},"notes":[]}\n' \
+  > .supervisor/floor/floor.json 2>/dev/null
+python3 -c 'import time,os
+time.sleep(float(os.environ.get("STUB_COST","0.4")))
+f = open(os.environ["STUB_LOG"], "a"); f.write("%.4f %s\n" % (time.time(), os.getcwd())); f.close()' 2>/dev/null
+exit 0
+__STUB__
+LENG="$LP/setup-ui.sh"
+[ "$(csum "$LENG")" = "$LENG_SIG_BEFORE" ] \
+  && ok "(l3) the engine the timing arms measure is byte-identical to the shipped one (sha256) — the stub is installed by moving the engine, never by editing it" \
+  || no "(l3) the engine the timing arms measure is byte-identical to the shipped one" "the copy at $LENG differs from $ENGINE"
+
+# five registered projects, each a real directory, registered by the engine's own `add`
+li=1
+while [ "$li" -le 5 ]; do
+  mkdir -p "$L/proj-$li" || setup_fail "(l) fixture: could not create $L/proj-$li"
+  ( cd "$L/proj-$li" && bash "$LENG" add --registry "$LREG" ) >/dev/null 2>&1
+  li=$((li + 1))
+done
+l_n_reg="$(jq -r '.projects | length' "$LREG" 2>/dev/null)"
+[ "$l_n_reg" = "5" ] \
+  || setup_fail "(l) fixture: five projects were not registered (got '$l_n_reg') — every timing arm below would measure the wrong scenario"
+
+# The measurement driver. It calibrates the unit, starts the loop, waits for a FIXED number of
+# ticks of the SELECTED project and reports the period - never a pass/fail verdict, which stays
+# in bash where every other assertion in this file lives.
+LDRV="$L/measure.py"
+cat > "$LDRV" <<'__PY_SCHED__'
+import json, os, subprocess, sys, time
+engine, uidir, reg, sel, stub_log, interval, nticks, port = sys.argv[1:9]
+interval = int(interval); nticks = int(nticks)
+env = dict(os.environ); env["STUB_LOG"] = stub_log
+stubdir = os.path.dirname(engine)
+scratch = os.path.join(os.path.dirname(stub_log), "unit-scratch-" + os.path.basename(stub_log))
+if not os.path.isdir(scratch):
+    os.makedirs(scratch)
+
+def one():
+    t = time.time()
+    subprocess.call(["bash", os.path.join(stubdir, "build-floor.sh")], cwd=scratch, env=env,
+                    stdout=open(os.devnull, "w"), stderr=subprocess.STDOUT)
+    return time.time() - t
+
+# THE UNIT: the cheapest of three runs of the same stub, in this same run on this same machine.
+unit = min(one() for _ in range(3))
+open(stub_log, "w").close()
+
+subprocess.call(["bash", engine, "serve", "--ui-dir", uidir, "--registry", reg,
+                 "--port", port, "--interval", str(interval), "--detach"],
+                cwd=sel, env=env, stdout=open(os.devnull, "w"), stderr=subprocess.STDOUT)
+deadline = time.time() + nticks * (interval + 6 * unit) + 25
+sel_real = os.path.realpath(sel)
+
+def stamps():
+    out = []
+    try:
+        for ln in open(stub_log):
+            parts = ln.rstrip("\n").split(" ", 1)
+            if len(parts) == 2 and os.path.realpath(parts[1]) == sel_real:
+                out.append(float(parts[0]))
+    except Exception:
+        pass
+    return out
+
+while time.time() < deadline:
+    if len(stamps()) >= nticks + 1:
+        break
+    time.sleep(0.05)
+s = stamps()
+subprocess.call(["bash", engine, "stop", "--ui-dir", uidir, "--registry", reg],
+                stdout=open(os.devnull, "w"), stderr=subprocess.STDOUT)
+total = 0
+if os.path.exists(stub_log):
+    total = sum(1 for _ in open(stub_log))
+others = total - len(s)
+if unit <= 0 or len(s) < nticks + 1:
+    print(json.dumps({"ok": False, "ticks_seen": len(s), "total_runs": total}))
+else:
+    period = (s[nticks] - s[0]) / nticks
+    print(json.dumps({"ok": True, "unit_ms": int(unit * 1000), "period_ms": int(period * 1000),
+                      "units_x100": int(round((period - interval) / unit * 100)),
+                      "selected_runs": len(s), "other_runs": others, "total_runs": total}))
+__PY_SCHED__
+
+l_free_port() { python3 -c 'import socket
+s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()' 2>/dev/null; }
+
+# l_measure <engine> <ui dir> <log> -> the driver's JSON on stdout
+l_measure() {
+  local eng="$1" uid="$2" log="$3" port
+  port="$(l_free_port)"
+  case "${port:-x}" in ''|*[!0-9]*) printf '{"ok":false,"reason":"no free port"}'; return 0 ;; esac
+  bash "$eng" apply --ui-dir "$uid" --registry "$LREG" >/dev/null 2>&1
+  SERVE_PIDFILES="$SERVE_PIDFILES $uid/serve.pid"
+  STUB_COST="$LSTUB_COST" python3 "$LDRV" "$eng" "$uid" "$LREG" "$L/proj-1" "$log" "$LINTERVAL" "$LTICKS" "$port" 2>/dev/null
+}
+
+l_field() { printf '%s' "$1" | jq -r --arg k "$2" '.[$k] // "x"' 2>/dev/null; }
+
+# --- (l4) PREMISE: the stub really costs something, and really writes the artefact -------
+# A stub that cost nothing would make every arm below measure only the sleep in the loop, and a
+# stub that wrote nothing would make the engine's copy step a no-op.
+mkdir -p "$L/premise" || setup_fail "(l) fixture: could not create $L/premise"
+l_prem_ms="$(python3 -c 'import sys,os,time,subprocess
+env = dict(os.environ); env["STUB_LOG"] = sys.argv[3]; env["STUB_COST"] = sys.argv[4]
+t = time.time()
+subprocess.call(["bash", sys.argv[1]], cwd=sys.argv[2], env=env, stdout=open(os.devnull,"w"), stderr=subprocess.STDOUT)
+print(int((time.time() - t) * 1000))' "$LP/build-floor.sh" "$L/premise" "$L/premise.log" "$LSTUB_COST" 2>/dev/null)"
+case "${l_prem_ms:-x}" in
+  ''|*[!0-9]*) no "(l4) PREMISE: the stub projector has a measurable cost" "could not time it (got '$l_prem_ms')" ;;
+  *)
+    [ "$l_prem_ms" -ge 300 ] && [ -f "$L/premise/.supervisor/floor/floor.json" ] \
+      && ok "(l4) PREMISE: the stub projector costs ${l_prem_ms}ms and writes .supervisor/floor/floor.json — the arms below measure a real cost, not an empty loop" \
+      || no "(l4) PREMISE: the stub projector has a real cost and writes the artefact" \
+           "cost=${l_prem_ms}ms artefact=$([ -f "$L/premise/.supervisor/floor/floor.json" ] && echo written || echo MISSING)" ;;
+esac
+
+# --- (l5)/(l6)/(l7) PRIMARY ARM: the shipped engine, five projects -----------------------
+L_REAL="$(l_measure "$LENG" "$L/ui-real" "$L/stub-real.log")"
+l_ok="$(l_field "$L_REAL" ok)"
+l_units="$(l_field "$L_REAL" units_x100)"
+l_sel_runs="$(l_field "$L_REAL" selected_runs)"
+l_other_runs="$(l_field "$L_REAL" other_runs)"
+if [ "$l_ok" != "true" ]; then
+  no "(l5) PRIMARY: the serve loop completed $LTICKS ticks with five projects registered" \
+     "the loop never reached $((LTICKS + 1)) regenerations of the selected project: $L_REAL — which is ITSELF the starvation this case is about, reported as inconclusive rather than as a pass"
+  no "(l6) PRIMARY: the loop's per-tick cost is within $LSCHED_BUDGET hundredths of one projector run" "no measurement: $L_REAL"
+  no "(l7) ANTI-VACUITY: the background projects were really regenerated" "no measurement: $L_REAL"
+else
+  ok "(l5) PRIMARY: with five projects registered the loop completed $LTICKS ticks and regenerated the selected project $l_sel_runs times (period $(l_field "$L_REAL" period_ms)ms against a ${LINTERVAL}s interval, unit $(l_field "$L_REAL" unit_ms)ms)"
+  if [ "$l_units" -le "$LSCHED_BUDGET" ] 2>/dev/null; then
+    ok "(l6) PRIMARY: one tick costs $l_units hundredths of a projector run, within the $LSCHED_BUDGET budget — the loop does not fall behind its own interval at five projects"
+  else
+    no "(l6) PRIMARY: one tick costs $l_units hundredths of a projector run, OVER the $LSCHED_BUDGET budget" \
+       "the loop is falling behind its own interval — every project on this page would render permanently stale"
+  fi
+  if [ "$l_other_runs" -ge 1 ] 2>/dev/null; then
+    ok "(l7) ANTI-VACUITY: $l_other_runs background regeneration(s) happened inside that window — the bound is not being met by simply never regenerating the other projects"
+  else
+    no "(l7) ANTI-VACUITY: the background projects were regenerated at least once in the window" \
+       "0 background runs — (l6) would pass for a loop that ignores every project but the selected one"
+  fi
+fi
+
+# --- (l8) CONTROL: the naive shape must be OVER budget ----------------------------------
+LNAIVE="$L/naive"
+mkdir -p "$LNAIVE/floor-ui" || setup_fail "(l) fixture: could not create $LNAIVE"
+cp "$LP/build-floor.sh" "$LNAIVE/" && cp "$BUNDLE_DIR"/* "$LNAIVE/floor-ui/" \
+  || setup_fail "(l) fixture: could not stage the naive mutant's plugin directory"
+python3 - "$ENGINE" "$LNAIVE/setup-ui.sh" <<'__PY_NAIVE__'
+import io, sys
+src, dst = sys.argv[1], sys.argv[2]
+s = io.open(src, encoding='utf-8').read()
+a = '  if [ "$REGEN" -eq 1 ] && [ $((tick % SLOW_FACTOR)) -eq 0 ]; then\n'
+b = '  write_served_index\n'
+i = s.index(a)
+j = s.index(b, i)
+naive = (
+  '  if [ "$REGEN" -eq 1 ]; then\n'
+  '    reg_rows | awk -F"$TAB" -v sel="$SELECTED_SLUG" \'NF && $1 != sel\' > "$UI_DIR/.mutant-others" 2>/dev/null\n'
+  '    while IFS="$TAB" read -r o_slug o_path; do\n'
+  '      [ -n "$o_slug" ] && [ -n "$o_path" ] && regen_project "$o_path" "$o_slug"\n'
+  '    done < "$UI_DIR/.mutant-others"\n'
+  '  fi\n'
+)
+io.open(dst, 'w', encoding='utf-8').write(s[:i] + naive + s[j:])
+__PY_NAIVE__
+if mutant_ok "$ENGINE" "$LNAIVE/setup-ui.sh" shell; then
+  L_NAIVE="$(l_measure "$LNAIVE/setup-ui.sh" "$L/ui-naive" "$L/stub-naive.log")"
+  l_n_units="$(l_field "$L_NAIVE" units_x100)"
+  if [ "$(l_field "$L_NAIVE" ok)" != "true" ]; then
+    ok "(l8) MUTATION CONTROL: the naive mutant (every project regenerated every tick) could not deliver $LTICKS ticks inside the deadline at all — the starvation is measurable ($L_NAIVE)"
+  elif [ "$l_n_units" -gt "$LSCHED_BUDGET" ] 2>/dev/null; then
+    ok "(l8) MUTATION CONTROL: the naive mutant costs $l_n_units hundredths per tick, OVER the $LSCHED_BUDGET budget (shipped engine: $l_units) — (l6) can detect the starvation it claims to"
+  else
+    no "(l8) MUTATION CONTROL: a loop that regenerates every project every tick is OVER budget" \
+       "the naive mutant measured $l_n_units, within the $LSCHED_BUDGET budget — (l6) is not discriminating and would pass through the very regression it exists to catch"
+  fi
+fi
+
+# --- (l9) NULL-MUTATION CONTROL: a harmless mutant must stay WITHIN budget ---------------
+# Without this, (l8) would also "pass" for a measurement that flagged any mutant whatsoever,
+# and the naive control would be proving nothing about the SCHEDULING.
+LNULL="$L/nullmut"
+mkdir -p "$LNULL/floor-ui" || setup_fail "(l) fixture: could not create $LNULL"
+cp "$LP/build-floor.sh" "$LNULL/" && cp "$BUNDLE_DIR"/* "$LNULL/floor-ui/" \
+  || setup_fail "(l) fixture: could not stage the null mutant's plugin directory"
+{ cat "$ENGINE"; printf '\n# null mutation: this comment changes nothing the serve loop does.\n'; } > "$LNULL/setup-ui.sh" 2>/dev/null
+if mutant_ok "$ENGINE" "$LNULL/setup-ui.sh" shell; then
+  L_NULL="$(l_measure "$LNULL/setup-ui.sh" "$L/ui-null" "$L/stub-null.log")"
+  l_z_units="$(l_field "$L_NULL" units_x100)"
+  if [ "$(l_field "$L_NULL" ok)" != "true" ]; then
+    no "(l9) NULL-MUTATION CONTROL: a mutant that changes nothing measures within budget" "inconclusive: $L_NULL"
+  elif [ "$l_z_units" -le "$LSCHED_BUDGET" ] 2>/dev/null; then
+    ok "(l9) NULL-MUTATION CONTROL: a mutant that parses, differs and does no damage measures $l_z_units hundredths — still within budget, so (l8) is detecting the SCHEDULING change and not merely the presence of a mutant"
+  else
+    no "(l9) NULL-MUTATION CONTROL: a harmless mutant stays within budget" \
+       "it measured $l_z_units, over the $LSCHED_BUDGET budget — the measurement flags mutants rather than starvation, which would make (l8) worthless"
+  fi
+fi
+
+# --- (l10)/(l11) the served index: every registered project, at the paths the page builds --
+L_IDX="$L/ui-real/index.json"
+if [ -f "$L_IDX" ]; then
+  l_idx_n="$(jq -r '.projects | length' "$L_IDX" 2>/dev/null)"
+  l_idx_sel="$(jq -r '.serve.selected_slug // ""' "$L_IDX" 2>/dev/null)"
+  l_idx_keys="$(jq -r '[(.module|has("bundle")), (.registry|has("state")), (.serve|has("interval_seconds")), (.serve|has("slow_cadence_ticks"))] | all' "$L_IDX" 2>/dev/null)"
+  [ "$l_idx_n" = "5" ] && [ "$l_idx_sel" = "proj-1" ] && [ "$l_idx_keys" = "true" ] \
+    && ok "(l10) the served index lists all five registered projects, names the selected one ($l_idx_sel) and carries the module state, the registry state and the cadence the page renders" \
+    || no "(l10) the served index lists every registered project and carries module/registry/cadence state" \
+         "projects=$l_idx_n selected='$l_idx_sel' keys=$l_idx_keys"
+  l_slots="$(find "$L/ui-real/projects" -name floor.json 2>/dev/null | awk 'END{print NR+0}')"
+  l_slot_named="$(jq -r '[.projects[] | select(.state == "ready") | .slug] | length' "$L_IDX" 2>/dev/null)"
+  [ "${l_slots:-0}" -ge 2 ] 2>/dev/null && [ "${l_slot_named:-0}" -ge 2 ] 2>/dev/null \
+    && ok "(l11) every project the loop regenerated has a document at the exact relative path the page builds — projects/<slug>/floor.json, $l_slots slot(s) on disk and $l_slot_named row(s) reported ready — so the picker adds no request this static server cannot answer" \
+    || no "(l11) each regenerated project has a document at projects/<slug>/floor.json" "slots=$l_slots ready-rows=$l_slot_named"
+else
+  no "(l10) the served index is written into the ui directory" "no index.json in $L/ui-real"
+  no "(l11) each regenerated project has a document at projects/<slug>/floor.json" "no index.json to read"
+fi
+
+# --- (l12)/(l13) AC-2c: a project whose directory vanishes UNDER A LIVE SERVE ------------
+# The other projects must keep rendering and the server must not exit - so this deletes the
+# directory WHILE the loop is running and then reads the next index the loop wrote.
+LC_UI="$L/ui-vanish"
+bash "$LENG" apply --ui-dir "$LC_UI" --registry "$LREG" >/dev/null 2>&1
+lc_port="$(l_free_port)"
+case "${lc_port:-x}" in
+  ''|*[!0-9]*) skipn "(l12) no free port could be obtained for the vanishing-project probe" ;;
+  *)
+    ( cd "$L/proj-1" && STUB_COST="$LSTUB_COST" STUB_LOG="$L/stub-vanish.log" \
+        bash "$LENG" serve --ui-dir "$LC_UI" --registry "$LREG" --port "$lc_port" --interval 1 --detach ) >/dev/null 2>&1
+    SERVE_PIDFILES="$SERVE_PIDFILES $LC_UI/serve.pid"
+    lc_pid="$(awk 'NR==1' "$LC_UI/serve.pid" 2>/dev/null)"
+    rm -rf "$L/proj-3"
+    lc_state=""; lc_i=0
+    while [ "$lc_i" -lt 60 ]; do
+      lc_state="$(jq -r '[.projects[] | select(.slug == "proj-3") | .state] | first // ""' "$LC_UI/index.json" 2>/dev/null)"
+      [ "$lc_state" = "unavailable" ] && break
+      sleep 0.25; lc_i=$((lc_i + 1))
+    done
+    lc_reason="$(jq -r '[.projects[] | select(.slug == "proj-3") | .reason] | first // ""' "$LC_UI/index.json" 2>/dev/null)"
+    lc_others="$(jq -r '[.projects[] | select(.slug != "proj-3")] | length' "$LC_UI/index.json" 2>/dev/null)"
+    lc_alive=no; kill -0 "$lc_pid" 2>/dev/null && lc_alive=yes
+    bash "$LENG" stop --ui-dir "$LC_UI" --registry "$LREG" >/dev/null 2>&1
+    [ "$lc_state" = "unavailable" ] && [ -n "$lc_reason" ] && [ "$lc_others" = "4" ] && [ "$lc_alive" = "yes" ] \
+      && ok "(l12) AC-2c: a registered project deleted UNDER a live serve renders 'unavailable' with a reason, the other 4 keep being listed, and the server was still running afterwards" \
+      || no "(l12) a project deleted under a live serve renders unavailable with its reason, the others keep rendering and the server survives" \
+           "state='$lc_state' reason='$lc_reason' others='$lc_others' (want 4) server-alive=$lc_alive"
+    lc_still="$(jq -r '[.projects[] | select(.slug == "proj-3")] | length' "$LREG" 2>/dev/null)"
+    [ "$lc_still" = "1" ] \
+      && ok "(l13) the vanished project is STILL in the registry — the serve loop reports what it found and never edits the user's registry on its behalf" \
+      || no "(l13) the vanished project is still in the registry" "found $lc_still entries for proj-3 — the loop mutated the registry" ;;
+esac
+
+# --- (l14)/(l15) AC-2e: absent and unparseable are TWO different claims ------------------
+LE_UI="$L/ui-regstate"
+bash "$LENG" apply --ui-dir "$LE_UI" --registry "$L/no-such-registry.json" >/dev/null 2>&1
+le_port="$(l_free_port)"
+( cd "$L/proj-1" && bash "$LENG" serve --ui-dir "$LE_UI" --registry "$L/no-such-registry.json" --port "$le_port" --no-regen --detach ) >/dev/null 2>&1
+SERVE_PIDFILES="$SERVE_PIDFILES $LE_UI/serve.pid"
+bash "$LENG" stop --ui-dir "$LE_UI" --registry "$L/no-such-registry.json" >/dev/null 2>&1
+le_absent="$(jq -r '.registry.state' "$LE_UI/index.json" 2>/dev/null)"
+le_absent_reason="$(jq -r '.registry.reason // ""' "$LE_UI/index.json" 2>/dev/null)"
+[ "$le_absent" = "absent" ] && [ -n "$le_absent_reason" ] && [ ! -e "$L/no-such-registry.json" ] \
+  && ok "(l14) AC-2e: with no registry file the served index says 'absent' with a reason and creates nothing — never 'unparseable', which is a different claim about a file the user actually has" \
+  || no "(l14) an absent registry is reported as absent, with a reason, and is not created" \
+       "state='$le_absent' reason='$le_absent_reason' created=$([ -e "$L/no-such-registry.json" ] && echo YES || echo no)"
+
+LBAD="$L/bad-registry.json"
+printf '{ this is not json\n' > "$LBAD"
+lbad_sig="$(csum "$LBAD")"
+LB_UI="$L/ui-badreg"
+bash "$LENG" apply --ui-dir "$LB_UI" --registry "$LBAD" >/dev/null 2>&1
+lb_port="$(l_free_port)"
+( cd "$L/proj-1" && bash "$LENG" serve --ui-dir "$LB_UI" --registry "$LBAD" --port "$lb_port" --no-regen --detach ) >/dev/null 2>&1
+SERVE_PIDFILES="$SERVE_PIDFILES $LB_UI/serve.pid"
+bash "$LENG" stop --ui-dir "$LB_UI" --registry "$LBAD" >/dev/null 2>&1
+lb_state="$(jq -r '.registry.state' "$LB_UI/index.json" 2>/dev/null)"
+lb_reason="$(jq -r '.registry.reason // ""' "$LB_UI/index.json" 2>/dev/null)"
+[ "$lb_state" = "unparseable" ] && [ -n "$lb_reason" ] && [ "$lbad_sig" = "$(csum "$LBAD")" ] \
+  && ok "(l15) AC-2e: an unparseable registry is reported as 'unparseable' with a reason, DISTINCTLY from absent, and the file is preserved byte for byte — serve reads it and refuses, exactly like every other verb" \
+  || no "(l15) an unparseable registry is reported as unparseable, distinctly, and preserved byte for byte" \
+       "state='$lb_state' reason='$lb_reason' preserved=$([ "$lbad_sig" = "$(csum "$LBAD")" ] && echo yes || echo NO)"
+
+# --- (l16) with jq UNFINDABLE, serve still writes an honest index ------------------------
+# The registry is JSON this engine will not parse by hand, and without jq nothing can be
+# regenerated either, because build-floor.sh needs it too. The page must therefore receive a
+# document that NAMES jq rather than an empty project list with no reason.
+LJ_STUB="$L/bin-nojq"
+mkstub "$LJ_STUB" "jq" || setup_fail "(l) fixture: could not build the jq-absent PATH stub"
+[ ! -e "$LJ_STUB/jq" ] || setup_fail "(l) fixture: the jq-absent stub still contains jq"
+LJ_UI="$L/ui-nojq"
+bash "$LENG" apply --ui-dir "$LJ_UI" --registry "$LREG" >/dev/null 2>&1
+lj_port="$(l_free_port)"
+( cd "$L/proj-1" && PATH="$LJ_STUB" bash "$LENG" serve --ui-dir "$LJ_UI" --registry "$LREG" --port "$lj_port" --no-regen --detach ) >/dev/null 2>&1
+SERVE_PIDFILES="$SERVE_PIDFILES $LJ_UI/serve.pid"
+bash "$LENG" stop --ui-dir "$LJ_UI" --registry "$LREG" >/dev/null 2>&1
+lj_state="$(jq -r '.registry.state' "$LJ_UI/index.json" 2>/dev/null)"
+lj_reason="$(jq -r '.registry.reason // ""' "$LJ_UI/index.json" 2>/dev/null)"
+lj_valid=no; jq -e . "$LJ_UI/index.json" >/dev/null 2>&1 && lj_valid=yes
+[ "$lj_state" = "unreadable" ] && [ "$lj_valid" = "yes" ] && in_str "$lj_reason" "jq" \
+  && ok "(l16) with jq UNFINDABLE, serve still writes a VALID served index reporting the registry 'unreadable' and naming jq — the page gets a reason, not an empty list" \
+  || no "(l16) with jq unfindable, serve writes a valid index naming jq as the reason" \
+       "state='$lj_state' valid-json=$lj_valid reason='$lj_reason'"
+
+# --- (l17)/(l18) WRITE CONTAINMENT: a regenerated project gains its floor.json, nothing else -
+# `serve` now runs the projector inside directories the user registered. That is the feature and
+# it is also the largest new blast radius in this change, so it is HASHED rather than reasoned
+# about: every fixture project must hold exactly the projector's own artefact and nothing more.
+l_dirty=""
+for li in 1 2 4 5; do
+  [ -d "$L/proj-$li" ] || continue
+  l_extra="$(cd "$L/proj-$li" && find . -mindepth 1 2>/dev/null \
+    | grep -v -E '^\./\.supervisor(/floor(/floor\.json)?)?$' | LC_ALL=C sort | tr '\n' ' ')"
+  [ -n "$l_extra" ] && l_dirty="$l_dirty [proj-$li:$l_extra]"
+done
+[ -z "$l_dirty" ] \
+  && ok "(l17) every regenerated project contains .supervisor/floor/floor.json and NOTHING else — registering a project is not a licence to write into it" \
+  || no "(l17) a regenerated project contains only .supervisor/floor/floor.json" "$l_dirty"
+l_wrote="$(find "$L/proj-2" "$L/proj-4" "$L/proj-5" -name floor.json 2>/dev/null | awk 'END{print NR+0}')"
+[ "${l_wrote:-0}" -ge 1 ] 2>/dev/null \
+  && ok "(l18) ANTI-VACUITY: the loop really did regenerate a project other than the selected one ($l_wrote artefact(s)), so (l17) is not passing on directories nothing ever touched" \
+  || no "(l18) ANTI-VACUITY: the loop regenerated at least one background project" "found $l_wrote — (l17) may be vacuous"
+
+# --- (l19)/(l20) AC-2d and AC-2f, re-run over the CHANGED bundle -------------------------
+l_write_findings="$(no_write_verbs)"
+[ -z "$l_write_findings" ] \
+  && ok "(l19) AC-2d: the bundle carrying the picker still contains no POST, no PUT, no DELETE and no fetch with a method option (the scanner (j13) defines, re-run over the changed files)" \
+  || no "(l19) the bundle carrying the picker contains no write verb" "$l_write_findings"
+l_egress=""
+for lf in "$HTML" "$CSS" "$JS"; do
+  lout="$(scan_egress "$lf")"
+  [ -n "$lout" ] && l_egress="$l_egress
+$(basename "$lf"): $lout"
+done
+[ -z "$l_egress" ] \
+  && ok "(l20) AC-2f: the bundle carrying the picker still references nothing off this origin (the scanner (a1) defines, re-run over the changed files)" \
+  || no "(l20) the bundle carrying the picker references nothing off this origin" "$l_egress"
+
+# --- (l21) THE MOTION BUDGET SURVIVES THE PICKER -----------------------------------------
+# Per-project scheduling on the page is driven from the ONE existing poll. A second timer would
+# be the easiest possible way to smuggle motion in, so the budget is re-counted, in code.
+l_int="$(code_occ "$JS" 'setInterval[(]')"
+l_raf="$(code_occ "$JS" 'requestAnimationFrame')"
+l_to="$(code_occ "$JS" 'setTimeout[(]')"
+[ "$l_int" = "1" ] && [ "$l_raf" = "0" ] && [ "$l_to" = "0" ] \
+  && ok "(l21) the picker added NO timer: floor.js still has exactly one setInterval and no rAF or setTimeout in code (int=$l_int rAF=$l_raf timeout=$l_to)" \
+  || no "(l21) the picker added no timer" "setInterval=$l_int rAF=$l_raf setTimeout=$l_to"
+
+# --- (l22)/(l23) the fetched URL is BUILT here, never taken from the served document ------
+# The index is a document the page did not author. If the per-project URL were read out of it, a
+# hostile or merely wrong index could point the page at another path entirely; the CSP would
+# refuse an off-origin fetch, but that is a header, and this makes it a property of the code.
+l_url_bad=""
+has_lit "$JS" "fetchText(projectUrl(selectedSlug))" || l_url_bad="$l_url_bad [the floor url is not built by projectUrl]"
+has_lit "$JS" "fetchText(SERVED_INDEX)" || l_url_bad="$l_url_bad [the index url is not the fixed constant]"
+[ "$(code_occ "$JS" 'fetchText[(]')" = "3" ] || l_url_bad="$l_url_bad [fetchText has call sites beyond the two expected]"
+[ -z "$l_url_bad" ] \
+  && ok "(l22) both URLs the page fetches are built in floor.js — a fixed constant and projectUrl(<encoded slug>) — never read out of the served index" \
+  || no "(l22) both fetched URLs are built in floor.js, never read from the served index" "$l_url_bad"
+MUT_URL="$TMPROOT/mut-url.js"
+sed 's|fetchText(projectUrl(selectedSlug))|fetchText(idx.projects[0].floor_url)|' "$JS" > "$MUT_URL" 2>/dev/null
+if mutant_ok "$JS" "$MUT_URL"; then
+  m_url=0
+  has_lit "$MUT_URL" "fetchText(projectUrl(selectedSlug))" && m_url=1
+  [ "$m_url" = "0" ] \
+    && ok "(l23) MUTATION CONTROL: a page that fetched a URL taken verbatim from the served index IS flagged by (l22)" \
+    || no "(l23) MUTATION CONTROL: a URL taken from the served index is flagged" "the gate stayed clean on a mutant that fetches a document-supplied path"
+fi
+
+# --- (l24)/(l25) the page's OWN words for each state --------------------------------------
+l_lit_bad=""
+for llit in "'unavailable'" "'never-regenerated'" "registry absent" "registry unparseable" "no served index at this origin"; do
+  has_lit "$JS" "$llit" || l_lit_bad="$l_lit_bad [$llit]"
+done
+[ -z "$l_lit_bad" ] \
+  && ok "(l24) floor.js names each state in its own words: unavailable, never regenerated, registry absent, registry unparseable, and no served index at this origin" \
+  || no "(l24) floor.js names each project and registry state distinctly" "missing:$l_lit_bad"
+# MUTATION CONTROL: collapsing absent and unparseable into one message must redden (l24). That
+# collapse is the specific defect AC-2e forbids and it is invisible to every other assertion.
+MUT_REG="$TMPROOT/mut-regstate.js"
+sed "s|return 'registry unparseable|return 'registry absent|" "$JS" > "$MUT_REG" 2>/dev/null
+if mutant_ok "$JS" "$MUT_REG"; then
+  m_reg=0
+  has_lit "$MUT_REG" "registry unparseable" && m_reg=1
+  [ "$m_reg" = "0" ] \
+    && ok "(l25) MUTATION CONTROL: a page reporting an unparseable registry as an absent one IS flagged — the two claims cannot be collapsed without (l24) noticing" \
+    || no "(l25) MUTATION CONTROL: collapsing unparseable into absent is flagged" "the mutant still carries both literals"
+fi
+
+# --- (l26)/(l27) THE COMMITTED BROWSER FIXTURES -------------------------------------------
+# The browser halves of AC-2a, AC-2d and AC-2e are NOT verified here and this file does not
+# pretend otherwise (see the header). What IS asserted is that the fixtures a browser pass will
+# load exist, that each really exercises the state it is named for, and — crucially — that none
+# of them pins a shape the engine can no longer produce. They were GENERATED by running the real
+# engine against fixture registries, with the temp paths then rewritten to a readable stand-in;
+# (l27) is what keeps that generation honest as the engine moves.
+LFIX="$FIX_DIR/served"
+if [ ! -d "$LFIX" ]; then
+  no "(l26) the served-index browser fixtures are committed" "no directory at $LFIX"
+  no "(l27) no committed served-index fixture pins a key the engine can no longer emit" "no fixtures to check"
+else
+  l_fix_bad=""
+  l_check() {
+    local got; got="$(jq -r "$2" "$LFIX/$1" 2>/dev/null)"
+    [ "$got" = "$3" ] || l_fix_bad="$l_fix_bad [$1: $2 = '$got', want '$3']"
+  }
+  l_check index-two-projects.json         '.projects | length' 2
+  l_check index-two-projects.json         '.registry.state' ok
+  l_check index-five-projects.json        '.projects | length' 5
+  l_check index-five-projects.json        '[.projects[] | select(.selected == true)] | length' 1
+  l_check index-three-one-missing.json    '.projects | length' 3
+  l_check index-three-one-missing.json    '[.projects[] | select(.state == "unavailable")] | length' 1
+  l_check index-three-one-missing.json    '[.projects[] | select(.state == "unavailable") | .reason] | first | (. != null and . != "")' true
+  l_check index-registry-absent.json      '.registry.state' absent
+  l_check index-registry-unparseable.json '.registry.state' unparseable
+  [ -z "$l_fix_bad" ] \
+    && ok "(l26) all five committed served-index fixtures exercise the states they are named for (two projects, five projects, one missing path WITH a reason, registry absent, registry unparseable)" \
+    || no "(l26) the committed served-index fixtures exercise their named states" "$l_fix_bad"
+
+  # The live key set is the UNION over every index this run wrote — the registry-ok one, the
+  # absent one, the unparseable one and the jq-less one. One index alone would be the wrong
+  # subject: `registry.reason` is OMITTED when the registry read cleanly, so comparing an
+  # absent-registry fixture against an ok-registry index would flag a key the engine emits
+  # constantly. The union is the set of keys the engine CAN emit, which is the actual claim.
+  if [ -f "$L_IDX" ]; then
+    l_keys_live=" $(jq -r '[paths(scalars) | map(select(type == "string")) | join(".")] | unique | .[]' \
+        "$L_IDX" "$LE_UI/index.json" "$LB_UI/index.json" "$LJ_UI/index.json" 2>/dev/null \
+        | LC_ALL=C sort -u | tr '\n' ' ')"
+    l_key_bad=""
+    for lfx in "$LFIX"/*.json; do
+      [ -f "$lfx" ] || continue
+      for lk in $(jq -r '[paths(scalars) | map(select(type == "string")) | join(".")] | unique | .[]' "$lfx" 2>/dev/null); do
+        in_str "$l_keys_live" " $lk " || l_key_bad="$l_key_bad [$(basename "$lfx"):$lk]"
+      done
+    done
+    [ -z "$l_key_bad" ] \
+      && ok "(l27) no committed served-index fixture pins a key the engine no longer emits — every key in every fixture appears in an index this run's engine actually wrote" \
+      || no "(l27) no committed fixture pins a key the engine can no longer emit" "$l_key_bad"
+  else
+    no "(l27) no committed fixture pins a key the engine can no longer emit" "the live index from (l10) is missing, so there is nothing to compare against"
+  fi
+fi
+
+# --- (l28) the shipped files are untouched by every mutant above ---------------------------
+l_eng_after="$(csum "$ENGINE")"; l_js_after="$(csum "$JS")"
+l_residue="$(ls "$script_dir"/setup-ui-*.sh "$BUNDLE_DIR"/*.mut.js 2>/dev/null || true)"
+[ "$LENG_SIG_BEFORE" = "$l_eng_after" ] && [ "$LJS_SIG_BEFORE" = "$l_js_after" ] && [ -z "$l_residue" ] \
+  && ok "(l28) the shipped engine and floor.js are byte-identical after every (l) mutation control (sha256 unchanged) and no mutant was left in the plugin's own directories" \
+  || no "(l28) the shipped engine and floor.js are byte-identical after the (l) mutation controls" \
+       "engine before='$LENG_SIG_BEFORE' after='$l_eng_after'; js before='$LJS_SIG_BEFORE' after='$l_js_after'; residue='$l_residue'"
 
 # (z) release-surface parity — appended by subtask 3
 # ===========================================================================

@@ -31,6 +31,23 @@
 <p class="banner" id="banner" role="status" aria-live="polite" hidden></p>
 
 <main>
+  <!--
+    THE PROJECTS SECTION. Everything in it is filled from `index.json`, a plain file the same
+    static server already holds - no new endpoint, no second timer, and nothing that writes.
+    The select changes which already-written document this page READS; it cannot ask the server
+    to regenerate anything, and the note under it states the cadence the engine reported so a
+    project that is legitimately old reads as old rather than as broken.
+  -->
+  <section aria-labelledby="projects-h">
+    <h2 id="projects-h">Projects <span class="sub" id="registry-state"></span></h2>
+    <p class="picker">
+      <label for="project-picker">Showing</label>
+      <select id="project-picker" hidden></select>
+    </p>
+    <ul class="projects" id="project-rows"></ul>
+    <p class="sub" id="project-note"></p>
+  </section>
+
   <section aria-labelledby="stages-h">
     <h2 id="stages-h">Pipeline</h2>
     <ol class="stages" id="stages">

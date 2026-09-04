@@ -267,6 +267,36 @@ code { font-family: var(--mono); font-size: 0.85em; }
 }
 .empty { margin: 0 1.25rem; color: var(--ink-dim); font-style: italic; }
 
+/* ---- projects ----
+ * Text and tokens only. No animation, no transition, no keyframe: switching project is a
+ * READ, and a read that announced itself with movement would be motion no recorded event is
+ * backing. An unavailable project is marked with a non-colour cue (a dashed left rule) for
+ * the same reason a stalled lane is - colour alone is not a state anyone can rely on. */
+.picker { margin: 0 1.25rem 0.4rem; display: flex; gap: 0.5rem; align-items: center; }
+.picker label { color: var(--ink-dim); font-size: 0.85rem; }
+#project-picker {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.25rem 0.4rem;
+  max-width: 100%;
+}
+.projects { list-style: none; margin: 0 1.25rem; padding: 0; }
+.projects li {
+  border-left: 3px solid var(--line);
+  padding: 0.2rem 0 0.2rem 0.6rem;
+  margin-bottom: 0.25rem;
+  font-size: 0.85rem;
+}
+.projects li.showing { border-left-style: double; }
+.projects li.unavailable { border-left-style: dashed; }
+.project-slug { font-family: var(--mono); color: var(--ink); }
+.project-path { font-family: var(--mono); color: var(--ink-dim); font-size: 0.78rem; }
+.project-state { color: var(--ink-dim); }
+
 /* ---- reduced motion ----
  * Removes every animation and every transition on the page while leaving every state class
  * rendered: a stalled lane is still dashed and still says "no event for <age>", and the
