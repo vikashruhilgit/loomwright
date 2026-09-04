@@ -138,6 +138,50 @@ jobs:
           # show/cat-file/log/diff/blame/ls-files/rev-parse/merge-base, and file
           # discovery by `Glob` plus `Bash(git ls-files:*)`.
           #
+          # 2026-09-04 — `Bash(grep:*)` added, plus `cmp`/`comm`/`basename`/`dirname`.
+          # The list granted the `Grep` TOOL but not the `grep` COMMAND, and on a diff that is
+          # mostly bash and jq a reviewer reaches for `grep -c` in Bash constantly; every such
+          # call was refused and burned a turn. Measured across four runs on PR #177:
+          #
+          #   head      result   turns  denials  productive (turns - denials)
+          #   7efb64d   POSTED      53       12  41
+          #   2337397   silent      27       12  15
+          #   f7983cf   silent      16        5  11
+          #   0abd91e   silent      44       39   5
+          #
+          # That data FALSIFIES the denial-RATIO advice this file prints in the guard below
+          # (see the corrected text there): the run that posted sat at 23% denials while a
+          # silent one sat at 31%. Ratio does not separate them; PRODUCTIVE TURNS does — the
+          # reviewer needs roughly 20+ turns of real work to finish reading and reach the
+          # mandated post, and denials eat that budget directly.
+          #
+          # Each addition was checked against the write/exec test this list already applies,
+          # and the ones that FAIL it were deliberately NOT added, for the same reason
+          # `Bash(find:*)` was dropped above:
+          #   * `awk` — `awk 'BEGIN{system("...")}'` executes arbitrary commands.
+          #   * `xargs` — executes arbitrary commands by construction.
+          #   * `sed`  — `sed -i` rewrites files in place.
+          #   * `bash`/`sh`/`python3`/`node` — arbitrary execution, obviously.
+          # `grep`, `cmp`, `comm`, `basename` and `dirname` write only to stdout and have no
+          # exec primitive, so they add reach without widening the blast radius.
+          #
+          # Diagnosability gap, and why it is LEFT OPEN rather than closed (2026-09-04):
+          # this job's log records only the aggregate `permission_denials_count` — never WHICH
+          # command was refused — so the allowlist fix above is INFERRED, not read off a run.
+          # The obvious levers were checked against the action's documented inputs and rejected:
+          #   * `display_report: true` prints the Claude-authored report to the Step Summary. It
+          #     is not documented to name denied tool calls.
+          #   * `show_full_output: true` prints full tool RESULTS (successes), is likewise not
+          #     documented to name denials, and the action's own security guide warns it can
+          #     surface secrets and API keys.
+          #   * `--debug` / `ACTIONS_STEP_DEBUG` enable deeper logging and auto-enable
+          #     show_full_output; also not documented to name denials.
+          # THIS REPOSITORY IS PUBLIC, so all three would publish that content into
+          # world-readable logs in exchange for a diagnostic none of them promises. Do not
+          # enable any of them here to chase a denial list. If this needs solving properly,
+          # reproduce locally with `claude --debug --allowed-tools "<this list>"`, or ask
+          # upstream (anthropics/claude-code-action) whether denials can be surfaced.
+          #
           # Self-test caveat: claude-code-action SKIPS any PR that modifies a workflow
           # file (it exits 0 with a "workflow validation failed" annotation and posts
           # nothing), so a change to this file can never be validated by its own PR.
@@ -146,7 +190,7 @@ jobs:
           # Kept on ONE line on purpose: a YAML folded scalar (`>-`) joins its lines
           # with a space, which would inject a leading space into every wrapped tool
           # name (`" Bash(git blame:*)"`) and is not worth betting the allowlist on.
-          claude_args: '--allowed-tools "Read,Grep,Glob,Task,TodoWrite,Bash(git log:*),Bash(git show:*),Bash(git diff:*),Bash(git cat-file:*),Bash(git blame:*),Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git merge-base:*),Bash(git status:*),Bash(jq:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(sort:*),Bash(uniq:*),Bash(cut:*),Bash(tr:*),Bash(diff:*),Bash(ls:*),Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'
+          claude_args: '--allowed-tools "Read,Grep,Glob,Task,TodoWrite,Bash(git log:*),Bash(git show:*),Bash(git diff:*),Bash(git cat-file:*),Bash(git blame:*),Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git merge-base:*),Bash(git status:*),Bash(jq:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(sort:*),Bash(uniq:*),Bash(cut:*),Bash(tr:*),Bash(diff:*),Bash(ls:*),Bash(grep:*),Bash(cmp:*),Bash(comm:*),Bash(basename:*),Bash(dirname:*),Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'
 
       # ---------------------------------------------------------------------
       # A run that ends without a posted comment is indistinguishable from no
@@ -252,6 +296,19 @@ jobs:
           echo "The most common cause is tool-permission starvation: --allowed-tools REPLACES the"
           echo "action's defaults, so anything absent from that list is denied, each denial burns a"
           echo "turn, and the reviewer can exhaust itself before reaching the mandated final post."
-          echo "Check permission_denials_count against num_turns in this job's result block above:"
-          echo "on PR #147 the runs that posted sat at 36-46% denials; the silent ones ran 53-93%."
+          echo ""
+          echo "Read PRODUCTIVE TURNS, not the denial ratio: (num_turns - permission_denials_count)"
+          echo "from this job's result block above. Measured across four runs on PR #177 —"
+          echo "  POSTED  53 turns / 12 denials -> 41 productive"
+          echo "  silent  27 turns / 12 denials -> 15 productive"
+          echo "  silent  16 turns /  5 denials -> 11 productive"
+          echo "  silent  44 turns / 39 denials ->  5 productive"
+          echo "Below roughly 20 productive turns the reviewer does not reach the post. Note the"
+          echo "ratio does NOT separate these: the run that POSTED sat at 23% denials while a"
+          echo "silent one sat at 31%. An earlier version of this message advised the opposite,"
+          echo "citing PR #147 bands (36-46% posted, 53-93% silent); the PR #177 data falsifies"
+          echo "that reading, so trust the productive-turn count instead."
+          echo ""
+          echo "Note this log records only the AGGREGATE denial count, never WHICH command was"
+          echo "refused — so the fix is inferred from the allowlist, not read off the run."
           exit 1
