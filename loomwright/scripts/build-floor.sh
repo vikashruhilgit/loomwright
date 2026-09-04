@@ -829,6 +829,14 @@ CORR_PATHS
 $corr_pats
 CORR_PATTERNS
 
+  # EVIDENCE IS CARRIED ONCE PER CORRELATION, KEYED BY LINE - not once per (rule, path) match.
+  # A rule's globs typically match many paths on the SAME ledger line, and attaching the full
+  # evidence array to every match re-serialised it once per path: measured on this repo, 612
+  # evidence occurrences for 154 distinct strings, 60,773 B of a 90,460 B correlations block, on
+  # an artefact the page re-fetches every 2 s with cache:'no-store'. The evidence still travels
+  # WITH the correlation object that was derived from it - AC-correlation-evidence asks for that,
+  # not for a particular serialisation - it is simply stated once per line instead of once per
+  # match, and `matched[].line` is the key into it.
   if [ -n "$rules_corr" ]; then
     corr_json="$(printf '%s' "$rules_corr" | jq -R -s -c --argjson ev "$pm_evidence_json" '
       split("\n") | map(select(length > 0)) | map(split("\t"))
@@ -838,10 +846,11 @@ CORR_PATTERNS
       | map({rule_id: .[0].rule_id,
              label: "observation",
              basis: "ledger lines whose changed_paths match this rules applies_to globs, matched with the same native shell case-glob read-rules.sh routes with; a path overlap is an observation that the rules scope and the churn record touch the same files and is NOT evidence the rule was violated",
-             matched: (map({line: .line, path: .path, pattern: .pattern}
-                           + ((($ev[(.line | tostring)]) // []) as $e
-                              | if ($e | length) == 0 then {} else {evidence: $e} end))
-                       | sort_by([.line, .path, .pattern]))})
+             matched: (map({line: .line, path: .path, pattern: .pattern})
+                       | sort_by([.line, .path, .pattern])),
+             evidence_by_line: (map(.line) | unique
+                                | map({key: (. | tostring), value: (($ev[(. | tostring)]) // [])})
+                                | map(select((.value | length) > 0)) | from_entries)})
       | sort_by(.rule_id)' 2>/dev/null)"
     case "$corr_json" in
       ''|'[]') : ;;

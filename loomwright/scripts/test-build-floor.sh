@@ -2144,9 +2144,21 @@ printf '%s' "$cbasis" | grep -qF 'changed_paths' && printf '%s' "$cbasis" | grep
 [ "$(cor "$JA" '.surfaces.rules.detail.correlations[0].matched | length')" = "3" ] \
   && ok "three ledger paths overlap this rule's globs" \
   || no "matched length: $(cor "$JA" '.surfaces.rules.detail.correlations[0].matched | length')"
-[ "$(cor "$JA" '[.surfaces.rules.detail.correlations[0].matched[] | select((has("line") and has("path") and has("pattern") and has("evidence")) | not)] | length')" = "0" ] \
-  && ok "every match carries the line, the path, the pattern it matched and the ledger's own evidence" \
-  || no "a match is missing its evidence: $(cor "$JA" '.surfaces.rules.detail.correlations[0].matched')"
+# Evidence is carried ONCE PER CORRELATION keyed by line, not once per (rule, path) match: a
+# rule's globs typically match many paths on the same ledger line, and attaching the array to
+# every match re-serialised it (measured: 612 occurrences for 154 distinct strings). What
+# AC-correlation-evidence requires is that the evidence travel WITH the correlation it was
+# derived from - so the assertion is that EVERY matched line RESOLVES to evidence, which is the
+# property that matters and is stronger than checking a key exists on each match.
+[ "$(cor "$JA" '[.surfaces.rules.detail.correlations[0].matched[] | select((has("line") and has("path") and has("pattern")) | not)] | length')" = "0" ] \
+  && ok "every match carries the line, the path and the pattern it matched" \
+  || no "a match is missing line/path/pattern: $(cor "$JA" '.surfaces.rules.detail.correlations[0].matched')"
+# NB the `as $l` capture is load-bearing: inside `has(.)` the `.` would rebind to
+# evidence_by_line itself, not the line - the same jq scoping trap that silently emptied the
+# supersedes chain walk during subtask 1 (there via `index(.)`). Capture, then test.
+[ "$(cor "$JA" '.surfaces.rules.detail.correlations[0] as $c | [$c.matched[].line | tostring as $l | select((($c.evidence_by_line // {}) | has($l)) | not)] | length')" = "0" ] \
+  && ok "...and every matched line resolves to the ledger's own evidence in evidence_by_line" \
+  || no "a matched line has no evidence: $(cor "$JA" '.surfaces.rules.detail.correlations[0].evidence_by_line')"
 [ "$(cor "$JA" '[.surfaces.rules.detail.correlations[].rule_id] | sort == .')" = "true" ] \
   && ok "correlations are ordered by rule_id - never ranked by match count" \
   || no "correlations are not in rule_id order"
