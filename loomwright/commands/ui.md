@@ -49,7 +49,7 @@ Installing and uninstalling the bundle are configuration, so `apply` and `remove
 | `--registry <file>` | all | override the project registry (default `projects.json` beside the ui directory). The only way to redirect it. |
 | `--port <n>` | `serve` | default `7734`. A busy port is **reported and the server does not start**. |
 | `--interval <n>` | `serve` | seconds between regenerations of the selected project (default `2`, minimum `1`). |
-| `--no-regen` | `serve` | serve the `floor.json` already in the ui directory; run the projector for nothing. |
+| `--no-regen` | `serve` | serve the `floor.json` already in the ui directory; never run the projector. |
 | `--detach` | `serve` | return immediately, recording pids in `<ui dir>/serve.pid`. |
 | `--confirm` | `scan` | actually register the candidates the proposal listed. Without it, `scan` writes nothing. |
 

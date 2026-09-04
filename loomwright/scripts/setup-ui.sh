@@ -766,10 +766,20 @@ reg_probe() {
 # but `ok`. That emptiness is deliberately NOT how the page learns why: ABSENT and UNPARSEABLE
 # are different claims about the user's registry and both produce no rows, so the distinction
 # is carried by REG_STATE, which is exactly why these are two functions rather than one.
+# A slug reaches a FILESYSTEM WRITE (regen_project builds "$UI_DIR/projects/$slug"), so its
+# SHAPE is a containment question, not a cosmetic one. `add`/`scan` can never produce a bad one
+# — project_slug folds [^a-z0-9] to `-` — but this file explicitly designs for a hand-edited
+# registry, and a hand-written `"slug": "../../x"` would otherwise walk straight out of the ui
+# directory and falsify the header's "Nothing else, anywhere" write list. The page already
+# defends against exactly this input (floor.js builds its URL with encodeURIComponent and says
+# so); this is the writer half of that same guard, and the asymmetry was the defect. Rejecting
+# HERE — the one place rows enter the engine — keeps it a single decision point, the same shape
+# reg_prepare uses for its three refusals. The pattern is precisely what project_slug guarantees.
 reg_rows() {
   [ "$REG_STATE" = "ok" ] || return 0
   jq -r '.projects[]
-         | select((.slug | type) == "string" and (.path | type) == "string")
+         | select((.slug | type) == "string" and (.path | type) == "string"
+                  and (.slug | test("^[a-z0-9][a-z0-9-]*$")))
          | [.slug, .path] | @tsv' "$REG_PATH" 2>/dev/null
 }
 
@@ -800,6 +810,13 @@ regen_project() {
   src="$dir/.supervisor/floor/floor.json"
   [ -f "$src" ] || return 2
   if [ -n "$slug" ]; then
+    # Defence in depth. reg_rows already shape-filters every slug it emits, so this can only
+    # fire if a future caller reaches regen_project by another route — which is exactly when a
+    # containment guard earns its keep. Refuse rather than write; the fail-safe contract is
+    # refuse-plus-return, never a non-zero exit from the script.
+    case "$slug" in
+      *[!a-z0-9-]*|-*|"") return 5 ;;
+    esac
     dest="$UI_DIR/projects/$slug"
     [ -d "$dest" ] || mkdir -p "$dest" 2>/dev/null || return 3
     cp "$src" "$dest/floor.json.tmp" 2>/dev/null || return 3

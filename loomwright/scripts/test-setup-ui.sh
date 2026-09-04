@@ -2477,6 +2477,50 @@ k_real_reg_after="ABSENT"
   || no "(k29) the real projects.json is unchanged across the whole suite" \
        "before='$REAL_REG_BEFORE' after='$k_real_reg_after' — a registry case reached the developer's real config tree"
 
+
+# (k30)/(k31) — write CONTAINMENT against a hostile slug. Added at Phase 4.5 after the
+# integrated reviewer DEMONSTRATED (not inferred) that a hand-edited registry slug of
+# "../../ESCAPED" walked regen_project's `mkdir -p "$UI_DIR/projects/$slug"` clean out of the
+# ui directory. `add`/`scan` can never generate such a slug — project_slug folds [^a-z0-9] to
+# `-` — which is exactly why the (i) write-containment group could not see it: every slug it
+# uses is well formed. The engine designs for hand-edited registries explicitly, and the PAGE
+# already defended against this input while the WRITER did not; that asymmetry was the defect.
+#
+# (k31) IS THE ANTI-VACUITY ARM AND IT IS NOT OPTIONAL. A guard that rejected every slug would
+# satisfy (k30) perfectly while destroying the feature, so a well-formed slug must still
+# produce its slot IN THE SAME RUN, from the same registry, or (k30) proves nothing worth
+# having. Both arms share one serve so neither can pass under conditions the other did not face.
+k_hs_root="$TMPROOT/hostile-slug"; mkdir -p "$k_hs_root/home" "$k_hs_root/elsewhere"
+k_hs_ui="$k_hs_root/uidir"; k_hs_reg="$k_hs_root/reg.json"
+HOME="$k_hs_root/fakehome" bash "$ENGINE" apply --ui-dir "$k_hs_ui" >/dev/null 2>&1
+printf '{"projects":[{"slug":"../../ESCAPED","path":"%s"},{"slug":"goodslug","path":"%s"}]}\n' \
+  "$k_hs_root/home" "$k_hs_root/home" > "$k_hs_reg"
+k_hs_port="$(python3 -c 'import socket
+s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()' 2>/dev/null)"
+case "$k_hs_port" in ''|*[!0-9]*) setup_fail "(k30) fixture: could not obtain a free port for the hostile-slug serve probe" ;; esac
+( cd "$k_hs_root/elsewhere" && HOME="$k_hs_root/fakehome" bash "$ENGINE" serve \
+    --ui-dir "$k_hs_ui" --registry "$k_hs_reg" --port "$k_hs_port" --interval 1 --detach >/dev/null 2>&1 )
+k_hs_waited=0
+while [ "$k_hs_waited" -lt 30 ]; do
+  [ -d "$k_hs_ui/projects/goodslug" ] && break
+  sleep 1; k_hs_waited=$((k_hs_waited+1))
+done
+HOME="$k_hs_root/fakehome" bash "$ENGINE" stop --ui-dir "$k_hs_ui" >/dev/null 2>&1
+
+if [ ! -e "$k_hs_root/ESCAPED" ] && [ -z "$(find "$k_hs_root" -path "$k_hs_ui" -prune -o -type d -name 'ESCAPED*' -print 2>/dev/null)" ]; then
+  ok "(k30) a hand-edited registry slug of '../../ESCAPED' writes NOTHING outside the ui directory — reg_rows shape-filters it out and regen_project refuses it a second time"
+else
+  no "(k30) a traversal slug writes nothing outside the ui directory" \
+     "found an ESCAPED path under $k_hs_root — the slug reached a filesystem write"
+fi
+
+if [ -d "$k_hs_ui/projects/goodslug" ]; then
+  ok "(k31) ANTI-VACUITY: a well-formed slug in that SAME registry still gets its slot — (k30) is containment, not a guard that rejects everything"
+else
+  no "(k31) ANTI-VACUITY: a well-formed slug still gets its slot" \
+     "goodslug produced no slot after ${k_hs_waited}s, so (k30) would pass even with the feature broken"
+fi
+
 # ===========================================================================
 echo "(l) AC-multiproject — one server, many projects, and a loop whose cost is measured"
 # ===========================================================================
