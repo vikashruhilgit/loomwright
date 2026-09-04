@@ -1398,7 +1398,7 @@ PY
 do_serve() {
   if ! have python3; then
     echo "serve: ABORTED — python3 not found"
-    echo "  The Floor is served by python3's own http.server; there is no bundled server and no other dependency to fall back to."
+    echo "  The Floor is served by a routed handler built on python3's own http.server module; there is no bundled server and no other dependency to fall back to."
     return 0
   fi
 
