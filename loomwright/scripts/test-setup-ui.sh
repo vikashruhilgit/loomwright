@@ -19,19 +19,41 @@
 # static half of each: the literal strings, the occurrence COUNTS that make "nothing animates
 # on a timer" checkable, the fixture facts the browser pass will read, and the whole engine.
 #
-# ISOLATION IS LOAD-BEARING AND IS ASSERTED, NOT ASSUMED. Every engine case passes `--ui-dir`
-# into its own `mktemp -d`, so no case can reach the developer's real `~/.claude` tree; group
-# (i) hashes two trees — the fixture parent AND a fixture git repo used as the working
-# directory — before and after the full apply/serve/stop/remove sequence, because `serve`
-# without `--no-regen` runs `build-floor.sh` in the CWD and that write must land in the
-# fixture repo rather than in this checkout.
+# ISOLATION IS LOAD-BEARING AND IS ASSERTED, NOT ASSUMED — and it takes TWO mechanisms, not one.
+# Every engine case passes `--ui-dir` into its own `mktemp -d`; group (i) hashes two trees — the
+# fixture parent AND a fixture git repo used as the working directory — before and after the
+# full apply/serve/stop/remove sequence, because `serve` without `--no-regen` runs
+# `build-floor.sh` in the CWD and that write must land in the fixture repo rather than in this
+# checkout.
+#
+# `--ui-dir` IS NOT ENOUGH FOR THE REGISTRY, and this paragraph used to say it was enough for
+# everything. The project registry is deliberately a SIBLING of the ui directory (that sibling
+# placement is what makes it survive `remove`), and the engine's arg loop sets only UI_DIR from
+# `--ui-dir` — so `--ui-dir` provably cannot redirect the registry, and a registry case written
+# in the ordinary style would write the DEVELOPER'S OWN projects.json while every one of its
+# assertions passed. Group (k) therefore runs every registry-touching invocation under a fixture
+# `HOME` or the engine's explicit `--registry` override, and (k26) is a static gate over THIS
+# FILE asserting exactly that — with a mutation control at (k27) that strips one `HOME=` and
+# requires the gate to redden. The gate is what enforces the rule; a hash alone cannot, because
+# an add-then-forget sequence writes and then restores, so on a machine with no pre-existing
+# registry the two hashes would match and the tree would still have been touched.
+#
+# ONE INVOCATION IN THIS FILE DELIBERATELY RUNS AGAINST THE REAL HOME: the `check` inside
+# `real_loom_home` near the top, whose only purpose is to learn the path that the (k28)/(k29)
+# backstop must then prove was never written. It is read-only by contract ((f2) asserts `check`
+# writes nothing), and reading the path out of the engine is what keeps it from being restated
+# here — and therefore able to drift — the same reason (z8) quotes build-floor.sh.
 #
 # Covers (each = an acceptance criterion):
 #   (a) AC-no-egress — the three bundle files carry no http/https URL, no protocol-relative
 #       reference inside a src/href/url(, no @import, no preconnect, no @font-face and no
 #       url() at all; the CSP meta line is present VERBATIM; floor.js fetches exactly the
-#       relative path `floor.json`. With a mutation control: a copy carrying one remote href
-#       must be flagged, or the scanner proves nothing
+#       relative path `floor.json`, the served index and a per-project URL BUILT from a fixed
+#       prefix and an encoded slug rather than taken from a served document, through exactly
+#       ONE call site COUNTED IN CODE (see code_occ: a truthful comment naming `fetch(` must
+#       not redden a gate that is counting calls). With mutation controls: a copy carrying one
+#       remote href must be flagged, a real second call site must be counted, and a
+#       commented-out one must not be, or the scanner proves nothing
 #   (b) AC-lanes / AC-stall / AC-three-states static halves — the literal strings the browser
 #       pass will read, the doubled-prefix stripping expression, `cache: 'no-store'`, the stall
 #       query parameter, and THE MOTION BUDGET: exactly one setInterval and zero rAF calls in
@@ -85,6 +107,30 @@
 #       SKIPPED (reported separately from passes) when the host has no non-loopback address
 #   (i) AC-remove-residue — the two hashed trees described above, plus the plugin's own bundle
 #       hashed before and after
+#   (k) AC-registry — the project registry the module keeps BESIDE its ui directory: `add`
+#       registers the current project (or a named path) with a derived, collision-free slug and
+#       is a no-op the second time; `list` prints slug, path and last-regenerated age and marks
+#       a missing path `unavailable`, never mutating; `forget` drops one entry and is hash-proven
+#       to leave the project directory itself alone; `scan` proposes and writes nothing until
+#       `--confirm`, bounded at a stated depth; a module `remove` leaves the registry intact; an
+#       unparseable registry makes every verb refuse by name, exit 0 and preserve the file byte
+#       for byte; and with jq made UNFINDABLE on PATH every registry verb names jq rather than
+#       pretending. Plus the isolation gate, its mutation control, and the real-tree backstop —
+#       all three described in the isolation paragraph above
+#   (l) AC-multiproject — one server showing many projects. The SCHEDULING BOUND is a
+#       MEASUREMENT, not an inspection: a stub projector of known cost, five registered
+#       projects, a fixed number of ticks, and a budget expressed in units of that same stub
+#       calibrated in the same run — with a naive mutant that must be OVER it and a null mutant
+#       that must be within it. Plus the served index (`index.json`) that the picker reads:
+#       every registered project at the exact relative path the page builds, a project deleted
+#       under a live serve rendering `unavailable` with its reason while the others keep going
+#       and the server survives, an ABSENT registry and an UNPARSEABLE one reported as the two
+#       different claims they are, jq unfindable still yielding a valid index that names jq, and
+#       write containment hashed rather than argued. Plus the page halves that are checkable
+#       headlessly: no write verb, no egress, no second timer, both fetched URLs built in
+#       floor.js rather than read out of the served document, and the five committed
+#       served-index fixtures a browser pass will load — none of which may pin a key the engine
+#       can no longer emit
 #   (z) release-surface parity for the /setup ui module registration, plus the surfaces/formats
 #       basis sentence, which is QUOTED from build-floor.sh rather than restated
 #
@@ -115,6 +161,40 @@ has_re()  { local c; c="$(grep -c -E -- "$2" "$1" 2>/dev/null || true)"; case "$
 # occ counts OCCURRENCES (not matching lines): "exactly one timer" is a per-occurrence claim
 # and grep -c would happily read two setInterval calls on one line as 1.
 occ() { awk -v pat="$2" 'BEGIN{n=0}{n+=gsub(pat,"")}END{print n+0}' "$1" 2>/dev/null; }
+# code_occ counts occurrences in CODE ONLY, with /* */ and // comments stripped first.
+# WHY IT EXISTS, because a comment-aware counter can be WEAKER than a naive one and that is a
+# real cost: `occ` counts raw text, so a truthful comment NAMING the construct it describes
+# ("there is exactly ONE `fetch(` call site in this file") reddened (a4) while the code still
+# held exactly one call. That is the same false-positive class item 05 recorded when a widened
+# read-only scanner matched JavaScript's own `delete` OPERATOR - a gate that pressures the next
+# author into deleting a correct line to appease it. The resolution there was to scope the gate
+# rather than contort the source, and it is the resolution here.
+# THE STRIPPER IS DELIBERATELY NAIVE - it knows nothing about string literals - and that is safe
+# in THIS bundle for a reason that is itself asserted: (a1) proves no `//`-bearing URL exists in
+# any of the three files, so there is no string a `//` scan can truncate. It is used ONLY by the
+# counting assertions below, each of which carries both controls: one proving a real second call
+# still reddens, one proving a merely-mentioned or commented-out call does not.
+code_occ() {
+  awk -v pat="$2" '
+    BEGIN { inblk = 0; n = 0 }
+    {
+      line = $0; out = ""
+      while (length(line)) {
+        if (inblk) {
+          i = index(line, "*/")
+          if (i == 0) { line = "" } else { line = substr(line, i + 2); inblk = 0 }
+        } else {
+          i = index(line, "/*"); j = index(line, "//")
+          if (i > 0 && (j == 0 || i < j)) { out = out substr(line, 1, i - 1); line = substr(line, i + 2); inblk = 1 }
+          else if (j > 0) { out = out substr(line, 1, j - 1); line = "" }
+          else { out = out line; line = "" }
+        }
+      }
+      n += gsub(pat, "", out)
+    }
+    END { print n + 0 }
+  ' "$1" 2>/dev/null
+}
 in_str() { case "$1" in *"$2"*) return 0 ;; esac; return 1; }
 
 csum() {
@@ -155,6 +235,14 @@ command -v python3 >/dev/null 2>&1 || setup_fail "python3 is required to run the
 
 TMPROOT="$(mktemp -d)" || setup_fail "mktemp -d failed"
 SERVE_PIDFILES=""
+# NOREG — a registry path that deliberately does NOT exist, passed to every `serve` in this
+# file. `serve` became a registry-touching verb when it gained the multi-project half: it
+# READS the registry and then runs the projector INSIDE every project it finds there, so a
+# serve case written in the ordinary style would regenerate the developer's real projects —
+# writing `.supervisor/floor/floor.json` into repositories this suite has never heard of. The
+# ui-directory override cannot prevent that (the registry is a SIBLING of the ui dir), so the
+# isolation gate at (k26) now requires an explicit token on `serve` too, and this is it.
+NOREG="$TMPROOT/no-such-registry.json"
 # HOLDER_PIDS: processes this suite starts that are NOT the engine's own server — currently
 # the socket held on a port so the busy-port branch has something to collide with. They are
 # killed from the same EXIT trap, because a probe that outlives the run holds a port hostage.
@@ -194,6 +282,36 @@ trap finish EXIT INT TERM
 mktmp() { mktemp -d "$TMPROOT/d.XXXXXX"; }
 
 REAL_BUNDLE_SIG="$(tree_sig "$BUNDLE_DIR")"
+JS_SIG_BEFORE="$(csum "$JS")"
+
+# THE REAL USER-SCOPE TREE — captured HERE, before the first assertion, and compared again in
+# group (k). Its path is deliberately NOT restated in this file: it is read OUT of the engine's
+# own `check` report, for the same reason (z8) quotes build-floor.sh instead of repeating its
+# numbers — a hard-coded second copy of the path would keep passing after the engine moved it.
+# That single `check` is this suite's ONLY invocation against the developer's real HOME. It is
+# read-only by contract ((f2) asserts check writes nothing), and it exists precisely so the
+# backstop at (k) has a subject the rest of the suite must be proven never to have touched.
+real_loom_home() {
+  local line
+  line="$(bash "$ENGINE" check 2>/dev/null | sed -n 's/^registry: //p' | awk 'NR==1')"
+  case "$line" in
+    /*) dirname "$line" ;;
+    *)  printf 'UNRESOLVED' ;;
+  esac
+}
+# real_tree_sig — DEFINED for an absent tree rather than skipped. CI has no user-scope
+# loomwright directory at all, and "skip when absent" would make this backstop vacuous exactly
+# where it is cheapest to run: `ABSENT` is a VALUE, so a run that turns ABSENT into a directory
+# listing reddens instead of quietly passing.
+real_tree_sig() {
+  case "$1" in /*) ;; *) printf 'UNRESOLVED'; return 0 ;; esac
+  [ -d "$1" ] || { printf 'ABSENT'; return 0; }
+  tree_sig "$1"
+}
+REAL_LOOM_HOME="$(real_loom_home)"
+REAL_LOOM_SIG_BEFORE="$(real_tree_sig "$REAL_LOOM_HOME")"
+REAL_REG_BEFORE="ABSENT"
+[ -f "$REAL_LOOM_HOME/projects.json" ] && REAL_REG_BEFORE="$(csum "$REAL_LOOM_HOME/projects.json")"
 
 # ===========================================================================
 echo "(a) AC-no-egress — the bundle references nothing off this origin"
@@ -232,15 +350,59 @@ else
   no "(a2) index.html carries the Content-Security-Policy meta line verbatim" "expected: $CSP_LINE"
 fi
 
-if has_lit "$JS" "fetch('floor.json', { cache: 'no-store' })"; then
-  ok "(a3) floor.js fetches the relative path floor.json with cache: 'no-store'"
-else
-  no "(a3) floor.js fetches the relative path floor.json with cache: 'no-store'"
-fi
-n_fetch="$(occ "$JS" 'fetch[(]')"
+# (a3) The page now reads TWO documents per tick - the served index, then the selected
+# project's floor - and it does so through ONE call site, `fetchText(url)`. So the assertion is
+# no longer a single literal call: it is the call site's shape PLUS every URL that call site can
+# ever be given, each of which is built in floor.js from a fixed relative string. A URL taken
+# verbatim from a served document would be the hole this checks for.
+a3_bad=""
+has_lit "$JS" "fetch(url, { cache: 'no-store' })" || a3_bad="$a3_bad [no single no-store call site]"
+has_lit "$JS" "return 'floor.json';" || a3_bad="$a3_bad [the root url is not a relative literal]"
+has_lit "$JS" "return 'projects/' + encodeURIComponent(slug) + '/floor.json';" \
+  || a3_bad="$a3_bad [the per-project url is not built from a fixed prefix and an encoded slug]"
+has_lit "$JS" "var SERVED_INDEX = 'index.json';" || a3_bad="$a3_bad [the served index url is not a relative literal]"
+[ -z "$a3_bad" ] \
+  && ok "(a3) every URL floor.js fetches is a relative literal built in floor.js (floor.json, index.json, projects/<encoded slug>/floor.json) and the one call site passes cache: 'no-store'" \
+  || no "(a3) every URL floor.js fetches is a relative literal built in floor.js" "$a3_bad"
+
+# (a4) counts CALL SITES IN CODE. See code_occ above for why this is comment-aware and why that
+# does not weaken it: the two controls below are what keep it honest.
+n_fetch="$(code_occ "$JS" 'fetch[(]')"
+n_fetch_raw="$(occ "$JS" 'fetch[(]')"
 [ "$n_fetch" = "1" ] \
-  && ok "(a4) floor.js makes exactly ONE fetch call (found $n_fetch)" \
-  || no "(a4) floor.js makes exactly ONE fetch call" "found $n_fetch"
+  && ok "(a4) floor.js makes exactly ONE fetch call in code (found $n_fetch; $n_fetch_raw occurrences including the comments that describe it)" \
+  || no "(a4) floor.js makes exactly ONE fetch call in code" "found $n_fetch"
+# ANTI-VACUITY: comment-stripping must actually be doing something here, or (a4) is just `occ`
+# under another name and the two controls below would be testing a mechanism nothing uses.
+[ "${n_fetch_raw:-0}" -gt "${n_fetch:-0}" ] 2>/dev/null \
+  && ok "(a4a) ANTI-VACUITY: the raw count ($n_fetch_raw) exceeds the code count ($n_fetch), so the comment-stripping in (a4) is live rather than decorative" \
+  || no "(a4a) ANTI-VACUITY: the comment-stripping in (a4) is live" "raw=$n_fetch_raw code=$n_fetch — if these are equal, (a4) is `occ` under another name"
+# CONTROL 1 - a REAL second call site must still redden (a4). This is the property a
+# comment-aware counter could have silently lost.
+MUT_F2="$TMPROOT/mut-fetch-two.js"
+{ cat "$JS"; printf '\nvar sneaky = fetch("floor.json");\n'; } > "$MUT_F2" 2>/dev/null
+if mutant_ok "$JS" "$MUT_F2"; then
+  m_f2="$(code_occ "$MUT_F2" 'fetch[(]')"
+  [ "$m_f2" = "2" ] \
+    && ok "(a4b) MUTATION CONTROL: a genuine SECOND fetch call site is counted ($m_f2) — comment-awareness did not blind the gate" \
+    || no "(a4b) MUTATION CONTROL: a genuine second fetch call site is counted" "code_occ said $m_f2, expected 2"
+fi
+# CONTROL 2 - prose must NOT redden it. A commented-out call and a comment naming `fetch(` are
+# both legitimate; flagging either is the false positive this fix exists to remove, and the one
+# that pressures the next author into deleting a correct comment.
+MUT_FC="$TMPROOT/mut-fetch-comment.js"
+{ cat "$JS"; printf '\n// var oldWay = fetch("floor.json");\n/* the fetch( above is the only one */\n'; } > "$MUT_FC" 2>/dev/null
+if mutant_ok "$JS" "$MUT_FC"; then
+  m_fc="$(code_occ "$MUT_FC" 'fetch[(]')"
+  m_fc_raw="$(occ "$MUT_FC" 'fetch[(]')"
+  [ "$m_fc" = "1" ] && [ "${m_fc_raw:-0}" -ge 3 ] 2>/dev/null \
+    && ok "(a4c) MUTATION CONTROL: a commented-out call and a comment MENTIONING fetch( leave the code count at $m_fc (raw count $m_fc_raw) — the gate reads code, not prose" \
+    || no "(a4c) MUTATION CONTROL: commented-out and mentioned fetch( calls do not redden (a4)" "code=$m_fc (want 1) raw=$m_fc_raw (want >=3)"
+fi
+# The mutation controls above must not have touched the shipped file.
+[ "$(csum "$JS")" = "$JS_SIG_BEFORE" ] \
+  && ok "(a4d) floor.js is byte-identical after both (a4) mutation controls (sha256 unchanged)" \
+  || no "(a4d) floor.js is byte-identical after the (a4) mutation controls" "before='$JS_SIG_BEFORE' after='$(csum "$JS")'"
 
 # Mutation control: the scanner must fire on a file that really does reach off-origin.
 MUT_HTML="$TMPROOT/mut-index.html"
@@ -977,7 +1139,7 @@ bash "$ENGINE" apply --ui-dir "$GUI" >/dev/null 2>&1
 STUB_NOPY="$G/bin-nopy"
 mkstub "$STUB_NOPY" "python3" || setup_fail "(g) fixture: could not build the python3-absent PATH stub"
 [ ! -e "$STUB_NOPY/python3" ] || setup_fail "(g) fixture: the python3-absent stub still contains python3"
-out="$(PATH="$STUB_NOPY" bash "$ENGINE" serve --ui-dir "$GUI" --no-regen 2>&1)"; rc=$?
+out="$(PATH="$STUB_NOPY" bash "$ENGINE" serve --registry "$NOREG" --ui-dir "$GUI" --no-regen 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && in_str "$out" "serve: ABORTED — python3 not found" \
   && ok "(g1) with python3 absent, serve aborts by name and exits 0" \
   || no "(g1) with python3 absent, serve aborts by name and exits 0" "rc=$rc :: $out"
@@ -994,7 +1156,7 @@ out="$(PATH="$STUB_NOJQ" bash "$ENGINE" apply --ui-dir "$JQUI" 2>&1)"; rc=$?
 jq_port="$(python3 -c 'import socket
 s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()' 2>/dev/null)"
 case "$jq_port" in ''|*[!0-9]*) setup_fail "(g) fixture: could not obtain a free port for the jq-absent serve probe" ;; esac
-out="$(PATH="$STUB_NOJQ" bash "$ENGINE" serve --ui-dir "$JQUI" --port "$jq_port" --detach 2>&1)"; rc=$?
+out="$(PATH="$STUB_NOJQ" bash "$ENGINE" serve --registry "$NOREG" --ui-dir "$JQUI" --port "$jq_port" --detach 2>&1)"; rc=$?
 SERVE_PIDFILES="$SERVE_PIDFILES $JQUI/serve.pid"
 [ "$rc" -eq 0 ] && in_str "$out" "jq not found" && in_str "$out" "will NOT be regenerated" \
   && ok "(g3) with jq absent, serve reports that build-floor.sh will skip rather than pretending to regenerate" \
@@ -1008,7 +1170,7 @@ cp "$ENGINE" "$LONE/setup-ui.sh" || setup_fail "(g) fixture: could not stage a l
 LUI="$G/lone-ui"; mkdir -p "$LUI"
 printf 'marker\n' > "$LUI/.loomwright-ui-module"
 printf '<!doctype html>\n' > "$LUI/index.html"
-out="$(bash "$LONE/setup-ui.sh" serve --ui-dir "$LUI" 2>&1)"; rc=$?
+out="$(bash "$LONE/setup-ui.sh" serve --registry "$NOREG" --ui-dir "$LUI" 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && in_str "$out" "serve: ABORTED — build-floor.sh not found" \
   && ok "(g4) with build-floor.sh missing, serve aborts by name and exits 0" \
   || no "(g4) with build-floor.sh missing, serve aborts by name and exits 0" "rc=$rc :: $out"
@@ -1060,7 +1222,7 @@ case "$hint_port" in ''|*[!0-9]*) setup_fail "(g9) fixture: could not obtain a f
 HINTUI="$G/ui-hint"
 bash "$ENGINE" apply --ui-dir "$HINTUI" >/dev/null 2>&1
 [ -f "$HINTUI/index.html" ] || setup_fail "(g9) fixture: apply did not install into $HINTUI"
-out="$(bash "$ENGINE" serve --ui-dir "$HINTUI" --no-regen --detach --port "$hint_port" --interval 10 2>&1)"; rc=$?
+out="$(bash "$ENGINE" serve --registry "$NOREG" --ui-dir "$HINTUI" --no-regen --detach --port "$hint_port" --interval 10 2>&1)"; rc=$?
 SERVE_PIDFILES="$SERVE_PIDFILES $HINTUI/serve.pid"
 [ "$rc" -eq 0 ] && in_str "$out" "?stale=30" \
   && ok "(g9) with --interval 10, serve prints the ?stale=30 the page needs to avoid a false stale banner" \
@@ -1085,7 +1247,7 @@ esac
 hint_port2="$(python3 -c 'import socket
 s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()' 2>/dev/null)"
 case "$hint_port2" in ''|*[!0-9]*) setup_fail "(g10) fixture: could not obtain a second free port" ;; esac
-out="$(bash "$ENGINE" serve --ui-dir "$HINTUI" --no-regen --detach --port "$hint_port2" 2>&1)"; rc=$?
+out="$(bash "$ENGINE" serve --registry "$NOREG" --ui-dir "$HINTUI" --no-regen --detach --port "$hint_port2" 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ! in_str "$out" "?stale=" \
   && ok "(g10) CONTROL: at the default interval serve prints no ?stale= hint — the hint is interval-driven, not decoration" \
   || no "(g10) CONTROL: at the default interval serve prints no ?stale= hint" "rc=$rc :: $out"
@@ -1124,7 +1286,7 @@ case "${busy_port:-x}" in
       skipn "(g12) the port holder exited before the probe, so the port would not have been busy"
     else
       rm -f "$GUI/serve.pid" 2>/dev/null
-      out="$(bash "$ENGINE" serve --ui-dir "$GUI" --no-regen --port "$busy_port" 2>&1)"; rc=$?
+      out="$(bash "$ENGINE" serve --registry "$NOREG" --ui-dir "$GUI" --no-regen --port "$busy_port" 2>&1)"; rc=$?
       if [ "$rc" -eq 0 ] \
          && in_str "$out" "serve: ABORTED — port $busy_port is already in use" \
          && in_str "$out" "Nothing was started" \
@@ -1140,7 +1302,7 @@ s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.clos
       case "${free_port:-x}" in
         ''|*[!0-9]*) skipn "(g13) CONTROL: no free port could be obtained for the contrast run" ;;
         *)
-          out="$(bash "$ENGINE" serve --ui-dir "$GUI" --no-regen --detach --port "$free_port" 2>&1)"; rc=$?
+          out="$(bash "$ENGINE" serve --registry "$NOREG" --ui-dir "$GUI" --no-regen --detach --port "$free_port" 2>&1)"; rc=$?
           SERVE_PIDFILES="$SERVE_PIDFILES $GUI/serve.pid"
           if [ "$rc" -eq 0 ] && ! in_str "$out" "already in use"; then
             ok "(g13) CONTROL: on a FREE port the same invocation does not abort — the refusal is the conflict, not a blanket refusal"
@@ -1183,7 +1345,7 @@ if mutant_ok "$ENGINE" "$MUT_BIND" shell; then
     || no "(h2) MUTATION CONTROL: an invocation with the loopback bind removed IS caught" "got invocations=${mb%% *} bound=${mb##* }"
 fi
 
-out="$(bash "$ENGINE" serve --no-regen --detach --port "$port" --ui-dir "$HUI" 2>&1)"; rc=$?
+out="$(bash "$ENGINE" serve --registry "$NOREG" --no-regen --detach --port "$port" --ui-dir "$HUI" 2>&1)"; rc=$?
 SERVE_PIDFILES="$SERVE_PIDFILES $HUI/serve.pid"
 if [ "$rc" -ne 0 ] || [ ! -f "$HUI/serve.pid" ]; then
   no "(h3) serve --detach starts and records its pid" "rc=$rc :: $out"
@@ -1283,7 +1445,7 @@ case "$rport" in ''|*[!0-9]*) setup_fail "(i) fixture: could not obtain a free p
 (
   cd "$REPO" || exit 1
   bash "$ENGINE" apply --ui-dir "$RUI" >/dev/null 2>&1
-  bash "$ENGINE" serve --detach --interval 1 --port "$rport" --ui-dir "$RUI" >/dev/null 2>&1
+  bash "$ENGINE" serve --registry "$NOREG" --detach --interval 1 --port "$rport" --ui-dir "$RUI" >/dev/null 2>&1
 ) || setup_fail "(i) fixture: the apply/serve sequence could not be run from $REPO"
 SERVE_PIDFILES="$SERVE_PIDFILES $RUI/serve.pid"
 sleep 2
@@ -1882,6 +2044,1096 @@ n_corr_ev="$(jq -r '[.surfaces.rules.detail.correlations[].evidence_by_line // {
 # The RESULT summary and the exit status are emitted by `finish` from the EXIT trap (see its
 # definition above), so every assertion group below still runs and still counts.
 
+# ===========================================================================
+echo "(k) AC-registry — add / list / forget / scan, and the isolation that keeps them off the real tree"
+# ===========================================================================
+# WHY ISOLATION HERE IS NOT THE ISOLATION EVERY OTHER GROUP USES. This file's header says every
+# engine case passes `--ui-dir` into its own `mktemp -d`. That is true, and for every other
+# group it is enough. It is NOT enough here. The registry is deliberately a SIBLING of the ui
+# directory — that sibling placement is the whole reason it survives `remove` — and the engine's
+# arg loop sets only UI_DIR from `--ui-dir`, so `--ui-dir` provably cannot redirect it. A
+# registry case written in the ordinary style would write the DEVELOPER'S OWN projects.json
+# while every assertion in it passed. So every engine invocation below carries a fixture `HOME`
+# (the precedent (f14)/(f15)/(f18) already set in this file) or the engine's explicit
+# `--registry` override, and (k26) is a STATIC gate asserting exactly that, with a mutation
+# control at (k27) that strips one `HOME=` and requires the gate to redden.
+#
+# The hash backstop ((k28)/(k29)) is deliberately NOT the primary assertion and could not be:
+# an add-then-forget sequence — the natural shape of these cases — writes and then restores, so
+# on a machine with no pre-existing registry the two hashes would match and the tree would
+# still have been touched. The static gate is what enforces the rule; the hashes catch residue.
+
+K="$(mktmp)" || setup_fail "(k) fixture: mktemp under $TMPROOT failed"
+KH="$K/home"
+mkdir -p "$KH" || setup_fail "(k) fixture: could not create the fixture HOME $KH"
+KUI="$K/ui"
+
+# The registry path is READ OUT of the engine under the fixture HOME instead of being spelled
+# here. That does two jobs at once: it gives every assertion below a subject that cannot drift
+# from the engine, and it is itself the proof that a fixture HOME is what redirects the registry.
+KREG="$(HOME="$KH" bash "$ENGINE" check --ui-dir "$KUI" 2>/dev/null | sed -n 's/^registry: //p' | awk 'NR==1')"
+case "$KREG" in
+  "$KH"/*)
+    ok "(k1) a fixture HOME redirects the registry the engine names — asserted rather than assumed, because --ui-dir structurally cannot do it" ;;
+  *)
+    no "(k1) a fixture HOME redirects the registry the engine names" \
+       "the engine reported registry '$KREG', which is not under the fixture HOME $KH"
+    KREG="$KH/unresolved-registry.json" ;;
+esac
+
+out="$(HOME="$KH" bash "$ENGINE" check --ui-dir "$KUI" 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && in_str "$out" "UI readiness" && in_str "$out" "no projects registered" \
+  && ok "(k2) check reports module state AND registry state in ONE report, and an absent registry reads as 'no projects registered', never as an error" \
+  || no "(k2) check reports module and registry state in one report; an absent registry reads as 'no projects registered'" "rc=$rc :: $out"
+
+[ ! -e "$KREG" ] \
+  && ok "(k3) that check WROTE NOTHING — the registry file still does not exist" \
+  || no "(k3) check writes nothing" "a read-only subcommand created $KREG"
+
+# --- add ------------------------------------------------------------------------------
+KP1="$K/proj-alpha"
+mkdir -p "$KP1/.git" || setup_fail "(k) fixture: could not create the fixture project $KP1"
+KP1_PHYS="$(cd -P "$KP1" 2>/dev/null && pwd -P)" || setup_fail "(k) fixture: could not resolve $KP1"
+out="$(cd "$KP1" && HOME="$KH" bash "$ENGINE" add 2>&1)"; rc=$?
+k_path="$(jq -r '[.projects[].path] | first // ""' "$KREG" 2>/dev/null)"
+k_slug="$(jq -r '[.projects[].slug] | first // ""' "$KREG" 2>/dev/null)"
+[ "$rc" -eq 0 ] && [ "$k_path" = "$KP1_PHYS" ] && [ "$k_slug" = "proj-alpha" ] \
+  && ok "(k4) 'add' with no argument registers the CURRENT project by absolute path, with a slug derived from it (slug=$k_slug)" \
+  || no "(k4) 'add' with no argument registers the current project by absolute path and derived slug" \
+       "rc=$rc path='$k_path' (want '$KP1_PHYS') slug='$k_slug' (want 'proj-alpha') :: $out"
+
+k_sig="$(csum "$KREG")"
+out="$(cd "$KP1" && HOME="$KH" bash "$ENGINE" add 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && in_str "$out" "already registered" && [ "$k_sig" = "$(csum "$KREG")" ] \
+  && ok "(k5) a second 'add' in the same project reports 'already registered' and leaves the registry byte-identical" \
+  || no "(k5) a second 'add' reports 'already registered' and writes nothing" "rc=$rc :: $out"
+
+k_sig="$(csum "$KREG")"
+out="$(HOME="$KH" bash "$ENGINE" add "$K/no-such-project" 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ -f "$KREG" ] && in_str "$out" "$K/no-such-project" && [ "$k_sig" = "$(csum "$KREG")" ] \
+  && ok "(k6) 'add <path>' on a path that does not exist writes nothing and NAMES the path in the reason" \
+  || no "(k6) 'add <path>' on a non-existent path writes nothing and names the path" "rc=$rc :: $out"
+
+# Two projects sharing a basename. A colliding slug would make 'forget <slug>' ambiguous, which
+# is a data-loss shape, so the slugs must differ even though the basenames do not.
+KP2="$K/proj-beta"
+KP3="$K/nest/proj-alpha"
+mkdir -p "$KP2/.git" "$KP3/.git" || setup_fail "(k) fixture: could not create the sibling fixture projects"
+HOME="$KH" bash "$ENGINE" add "$KP2" >/dev/null 2>&1
+HOME="$KH" bash "$ENGINE" add "$KP3" >/dev/null 2>&1
+k_n="$(jq -r '.projects | length' "$KREG" 2>/dev/null)"
+k_uniq="$(jq -r '[.projects[].slug] | if (length) == (unique | length) then "unique" else "COLLIDING" end' "$KREG" 2>/dev/null)"
+[ "$k_n" = "3" ] && [ "$k_uniq" = "unique" ] \
+  && ok "(k7) three projects register, and two projects sharing a basename get DISTINCT slugs" \
+  || no "(k7) three projects register with distinct slugs" "count='$k_n' (want 3) slugs='$k_uniq'"
+
+# --- list -----------------------------------------------------------------------------
+mkdir -p "$KP1/.supervisor/floor" && printf '{}\n' > "$KP1/.supervisor/floor/floor.json" \
+  || setup_fail "(k) fixture: could not give $KP1 a floor.json for the age assertion"
+rm -r "$KP2" 2>/dev/null
+[ ! -d "$KP2" ] || setup_fail "(k) fixture: $KP2 had to be removed so 'unavailable' has a subject"
+
+k_sig="$(csum "$KREG")"
+out="$(HOME="$KH" bash "$ENGINE" list 2>&1)"; rc=$?
+k_after="$(csum "$KREG")"
+[ "$rc" -eq 0 ] && in_str "$out" "$KP1_PHYS" && in_str "$out" "proj-alpha" && in_str "$out" "ago" \
+  && ok "(k8) 'list' prints each project with its path, its slug and its last-regenerated age" \
+  || no "(k8) 'list' prints path, slug and last-regenerated age" "rc=$rc :: $out"
+in_str "$out" "unavailable" \
+  && ok "(k9) a registered project whose path is currently missing is marked 'unavailable'" \
+  || no "(k9) a missing project path is marked 'unavailable'" "$out"
+[ -f "$KREG" ] && [ -n "$k_sig" ] && [ "$k_sig" = "$k_after" ] \
+  && ok "(k10) 'list' never mutates the registry — including on the run where an entry was unavailable" \
+  || no "(k10) 'list' never mutates the registry" "the registry checksum changed across a read-only verb"
+
+# --- forget ---------------------------------------------------------------------------
+KP3_PHYS="$(cd -P "$KP3" 2>/dev/null && pwd -P)" || setup_fail "(k) fixture: could not resolve $KP3"
+k_slug3="$(jq -r --arg p "$KP3_PHYS" '[.projects[] | select(.path == $p) | .slug] | first // ""' "$KREG" 2>/dev/null)"
+[ -n "$k_slug3" ] || setup_fail "(k) fixture: $KP3_PHYS is not in the registry, so the forget assertions would have no subject"
+kp3_before="$(tree_sig "$KP3")"
+out="$(HOME="$KH" bash "$ENGINE" forget "$k_slug3" 2>&1)"; rc=$?
+kp3_after="$(tree_sig "$KP3")"
+k_still="$(jq -r --arg s "$k_slug3" '[.projects[] | select(.slug == $s)] | length' "$KREG" 2>/dev/null)"
+[ "$rc" -eq 0 ] && [ "$k_still" = "0" ] \
+  && ok "(k11) 'forget <slug>' removes exactly that entry from the registry" \
+  || no "(k11) 'forget <slug>' removes that entry" "rc=$rc still-present='$k_still' :: $out"
+[ -d "$KP3" ] && [ -n "$kp3_before" ] && [ "$kp3_before" = "$kp3_after" ] \
+  && ok "(k12) 'forget' leaves the project DIRECTORY itself untouched — the tree is hashed before and after" \
+  || no "(k12) 'forget' leaves the project directory untouched (hashed before and after)" \
+       "dir=$([ -d "$KP3" ] && echo present || echo GONE) unchanged=$([ "$kp3_before" = "$kp3_after" ] && echo yes || echo NO)"
+
+k_sig="$(csum "$KREG")"
+out="$(HOME="$KH" bash "$ENGINE" forget not-a-registered-slug 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && in_str "$out" "not-a-registered-slug" && [ "$k_sig" = "$(csum "$KREG")" ] \
+  && ok "(k13) 'forget' on an unregistered slug writes nothing and says so, naming the slug" \
+  || no "(k13) 'forget' on an unregistered slug writes nothing and says so" "rc=$rc :: $out"
+
+# --- the module's own `remove` must not take the registry with it ----------------------
+HOME="$KH" bash "$ENGINE" apply --ui-dir "$KUI" >/dev/null 2>&1
+[ -f "$KUI/.loomwright-ui-module" ] || setup_fail "(k) fixture: apply did not install into $KUI, so the remove assertion would be vacuous"
+k_sig="$(csum "$KREG")"
+out="$(HOME="$KH" bash "$ENGINE" remove --ui-dir "$KUI" 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ ! -d "$KUI" ] && [ -f "$KREG" ] && [ "$k_sig" = "$(csum "$KREG")" ] \
+  && ok "(k14) a module 'remove' deletes the ui dir and leaves the registry INTACT — asserted directly, not reasoned from the path" \
+  || no "(k14) a module 'remove' leaves the registry intact" \
+       "rc=$rc ui=$([ -d "$KUI" ] && echo present || echo gone) registry=$([ -f "$KREG" ] && echo present || echo GONE) unchanged=$([ "$k_sig" = "$(csum "$KREG")" ] && echo yes || echo NO) :: $out"
+
+# --- a registry that is not valid JSON ------------------------------------------------
+# The bad registry lives under its OWN fixture HOME, derived from the good one by substituting
+# the home prefix, so the path is never restated and this block cannot corrupt the fixture above.
+KBAD="$K/home-bad"
+mkdir -p "$KBAD" || setup_fail "(k) fixture: could not create $KBAD"
+KBADREG="$KBAD${KREG#$KH}"
+mkdir -p "$(dirname "$KBADREG")" 2>/dev/null
+printf 'this is not JSON {{{\n' > "$KBADREG" || setup_fail "(k) fixture: could not write the malformed registry at $KBADREG"
+kbad_sig="$(csum "$KBADREG")"
+bad_bad=""; bad_out=""
+for v in add list forget scan check; do
+  o="$(HOME="$KBAD" bash "$ENGINE" "$v" "$K" --ui-dir "$K/ui-bad" 2>&1)"; r=$?
+  [ "$r" -eq 0 ] || bad_bad="$bad_bad [$v exit=$r]"
+  in_str "$o" "not valid JSON" || bad_bad="$bad_bad [$v names-no-reason]"
+  bad_out="$bad_out
+  --- $v: $o"
+done
+[ -z "$bad_bad" ] \
+  && ok "(k15) a registry that is not valid JSON makes every registry-touching subcommand (add/list/forget/scan/check) refuse by name and exit 0" \
+  || no "(k15) an unparseable registry: every subcommand refuses by name and exits 0" "$bad_bad ::$bad_out"
+[ "$kbad_sig" = "$(csum "$KBADREG")" ] \
+  && ok "(k16) the unparseable registry is preserved BYTE FOR BYTE across all five — the engine never rewrites a file it could not read" \
+  || no "(k16) the unparseable registry is preserved byte for byte" "its checksum changed"
+
+# --- jq unfindable --------------------------------------------------------------------
+# AC-1e requires this asserted by making jq UNFINDABLE, not by inspecting the source. The stub
+# PATH is the same mechanism group (g) uses, and the probe below proves the stub really works —
+# without it, (k18) would pass just as happily against a PATH that still resolved jq.
+KSTUB="$K/bin-nojq"
+mkstub "$KSTUB" "jq" || setup_fail "(k) fixture: could not build the jq-absent PATH stub"
+[ ! -e "$KSTUB/jq" ] || setup_fail "(k) fixture: the jq-absent stub still contains jq"
+kj_probe="$(PATH="$KSTUB" bash -c 'command -v jq' 2>/dev/null || true)"
+[ -z "$kj_probe" ] \
+  && ok "(k17) the probe makes jq genuinely UNFINDABLE on PATH, so (k18) is a measurement rather than an inspection" \
+  || no "(k17) the jq-absent probe makes jq unfindable" "PATH=$KSTUB still resolves jq to '$kj_probe'"
+
+KJH="$K/home-nojq"
+mkdir -p "$KJH" || setup_fail "(k) fixture: could not create $KJH"
+KJREG="$KJH${KREG#$KH}"
+jq_bad=""; jq_out=""
+for v in add list forget scan check; do
+  o="$(PATH="$KSTUB" HOME="$KJH" bash "$ENGINE" "$v" "$K" --ui-dir "$K/ui-nojq" 2>&1)"; r=$?
+  [ "$r" -eq 0 ] || jq_bad="$jq_bad [$v exit=$r]"
+  in_str "$o" "jq" || jq_bad="$jq_bad [$v does-not-name-jq]"
+  jq_out="$jq_out
+  --- $v: $o"
+done
+[ -z "$jq_bad" ] && [ ! -e "$KJREG" ] \
+  && ok "(k18) with jq UNFINDABLE, every registry subcommand names jq as the reason, writes no registry, and exits 0 — the posture the engine header states" \
+  || no "(k18) with jq unfindable, every registry subcommand names jq, writes nothing and exits 0" \
+       "$jq_bad registry=$([ -e "$KJREG" ] && echo CREATED || echo absent) ::$jq_out"
+
+# --- scan -----------------------------------------------------------------------------
+KSCAN="$K/scanroot"
+mkdir -p "$KSCAN/one/.git" "$KSCAN/a/b/two/.git" "$KSCAN/a/b/c/d/deep/.git" \
+  || setup_fail "(k) fixture: could not build the scan fixture tree"
+KSCAN_PHYS="$(cd -P "$KSCAN" 2>/dev/null && pwd -P)" || setup_fail "(k) fixture: could not resolve $KSCAN"
+KSH="$K/home-scan"
+mkdir -p "$KSH" || setup_fail "(k) fixture: could not create $KSH"
+KSREG="$KSH${KREG#$KH}"
+out="$(HOME="$KSH" bash "$ENGINE" scan "$KSCAN" 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && in_str "$out" "$KSCAN_PHYS/one" && in_str "$out" "$KSCAN_PHYS/a/b/two" \
+  && ok "(k19) 'scan <dir>' lists the candidate projects it found" \
+  || no "(k19) 'scan <dir>' lists the candidates it found" "rc=$rc :: $out"
+[ ! -e "$KSREG" ] \
+  && ok "(k20) an unconfirmed scan is a PROPOSAL: the registry was not written — not even created" \
+  || no "(k20) an unconfirmed scan writes nothing" "$KSREG exists after a scan with no confirmation"
+if in_str "$out" "$KSCAN_PHYS/a/b/c/d/deep"; then
+  no "(k21) the scan is bounded by a stated maximum depth" "a repo five levels below the scan root was proposed"
+elif in_str "$out" "depth"; then
+  ok "(k21) the scan is BOUNDED and says so: a repo five levels below the scan root is not proposed, and the report states the maximum depth"
+else
+  no "(k21) the scan states its maximum depth" "the depth bound held, but the report never states it :: $out"
+fi
+out="$(HOME="$KSH" bash "$ENGINE" scan "$KSCAN" --confirm 2>&1)"; rc=$?
+ks_n="$(jq -r '.projects | length' "$KSREG" 2>/dev/null)"
+[ "$rc" -eq 0 ] && [ "$ks_n" = "2" ] \
+  && ok "(k22) an explicit --confirm is what actually registers the proposal (the two candidates within the depth bound)" \
+  || no "(k22) --confirm registers the proposed candidates" "rc=$rc registered='$ks_n' (want 2) :: $out"
+
+KEMPTY="$K/scan-empty"
+mkdir -p "$KEMPTY/no/repos/here" || setup_fail "(k) fixture: could not create $KEMPTY"
+out="$(HOME="$KSH" bash "$ENGINE" scan "$KEMPTY" 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && in_str "$out" "found no" \
+  && ok "(k23) a scan that finds nothing SAYS so rather than printing an empty success" \
+  || no "(k23) a scan that finds nothing says so" "rc=$rc :: $out"
+
+# --- the explicit override, and having no registry to name at all ----------------------
+KALT="$K/alt-registry.json"
+k_sig="$(csum "$KREG")"
+out="$(HOME="$KH" bash "$ENGINE" add "$KP1" --registry "$KALT" 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ -f "$KALT" ] && [ "$k_sig" = "$(csum "$KREG")" ] \
+  && ok "(k24) '--registry <file>' is honoured by registry_path and WINS over the HOME-derived default, which was not touched" \
+  || no "(k24) '--registry <file>' is honoured and wins over the HOME-derived default" \
+       "rc=$rc alt=$([ -f "$KALT" ] && echo written || echo MISSING) home-registry-unchanged=$([ "$k_sig" = "$(csum "$KREG")" ] && echo yes || echo NO) :: $out"
+
+if env -u HOME true >/dev/null 2>&1 && [ "$(env -u HOME bash -c 'printf %s "${HOME:-<unset>}"' 2>/dev/null)" = "<unset>" ]; then
+  out="$(env -u HOME bash "$ENGINE" list --ui-dir "$K/ui-nohome" 2>&1)"; rc=$?
+  [ "$rc" -eq 0 ] && in_str "$out" "--registry" \
+    && ok "(k25) with HOME unset and no --registry there is no registry file to name: the engine says so by name and still exits 0" \
+    || no "(k25) with HOME unset and no --registry, the engine aborts by name and exits 0" "rc=$rc :: $out"
+else
+  skipn "(k25) \`env -u\` cannot produce an unset HOME on this host, so the no-registry-to-name branch cannot be exercised"
+fi
+
+# --- MUTATION CONTROLS for (k12) and (k16) ---------------------------------------------
+# (k12) and (k16) are both PRESERVATION assertions — "this hash did not change" — and a
+# preservation assertion passes just as happily against an engine that never ran at all. Each
+# therefore gets an engine mutant that commits exactly the damage the assertion claims to
+# detect, and the control is that the damage IS detected. They are named after the assertions
+# they guard rather than given the next free number, because a control is only meaningful
+# beside its subject; (k26a)/(k26b) already establish the suffix form in this file. They sit
+# here, BEFORE the (k28)/(k29) backstop, so that backstop still covers every engine invocation.
+#
+# Neither control mutates the real engine: each writes a separate copy and (k16d) re-hashes the
+# original afterwards. The mutants live under $TMPROOT and go with it in the EXIT trap.
+K_ENGINE_SIG_BEFORE="$(csum "$ENGINE")"
+KMUTDIR="$K/mutbin"
+mkdir -p "$KMUTDIR" || setup_fail "(k12c) fixture: could not create $KMUTDIR"
+KMH="$K/home-mut"
+mkdir -p "$KMH" || setup_fail "(k12c) fixture: could not create the mutant-control fixture HOME $KMH"
+KMREG="$KMH${KREG#$KH}"
+KMP="$K/mut-project"
+mkdir -p "$KMP" || setup_fail "(k12c) fixture: could not create $KMP"
+printf 'the user keeps this\n' > "$KMP/precious.txt" || setup_fail "(k12c) fixture: could not seed $KMP"
+
+# (k12c) — an engine whose `forget` also deletes a file inside the project it is forgetting.
+# That is precisely the data-loss shape R5 names, and (k12) exists to catch it.
+KMUT_FORGET="$KMUTDIR/setup-ui-forget.sh"
+awk 'BEGIN { done = 0 }
+     {
+       if (!done && index($0, "forget: removed") > 0) { print "  rm -f \"$gone/precious.txt\" 2>/dev/null"; done = 1 }
+       print
+     }' "$ENGINE" > "$KMUT_FORGET" 2>/dev/null
+if mutant_ok "$ENGINE" "$KMUT_FORGET" shell; then
+  HOME="$KMH" bash "$ENGINE" add "$KMP" >/dev/null 2>&1
+  km_slug="$(jq -r '[.projects[].slug] | first // ""' "$KMREG" 2>/dev/null)"
+  kmp_before="$(tree_sig "$KMP")"
+  out="$(HOME="$KMH" bash "$KMUT_FORGET" forget "$km_slug" 2>&1)"; rc=$?
+  kmp_after="$(tree_sig "$KMP")"
+  km_left="$(jq -r '.projects | length' "$KMREG" 2>/dev/null)"
+  # THE MUTANT MUST HAVE REACHED ITS OWN CODE PATH. A mutant that died early — a syntax error,
+  # a missing fixture, an abort before the write — leaves the project tree untouched and is
+  # indistinguishable from a control that failed to redden, so it is checked separately and
+  # reported as a BROKEN CONTROL rather than allowed to look like either outcome.
+  if [ -z "$km_slug" ] || [ "$km_left" != "0" ] || ! in_str "$out" "forget: removed"; then
+    no "(k12c) MUTATION CONTROL: (k12) catches a forget that damages the project tree" \
+       "the mutant never reached its own forget path, so this control proves nothing: slug='$km_slug' entries-left='$km_left' rc=$rc :: $out"
+  elif [ -n "$kmp_before" ] && [ "$kmp_before" != "$kmp_after" ]; then
+    ok "(k12c) MUTATION CONTROL: an engine whose forget deletes a file inside the registered project makes (k12)'s before/after tree hash DIFFER — (k12) can detect the damage it claims to"
+  else
+    no "(k12c) MUTATION CONTROL: (k12) catches a forget that damages the project tree" \
+       "the mutant ran and removed the registry entry, but the project tree hash did not change — (k12) would NOT have caught it"
+  fi
+fi
+
+# (k16c) — an engine that treats an UNPARSEABLE registry as an empty one instead of refusing.
+# It is a one-token change (the rc-1 arm of reg_prepare's case swallowing rc 2 as well), and it
+# is the realistic bug: the next `add` then overwrites whatever the user actually had there.
+KMUT_BAD="$KMUTDIR/setup-ui-badreg.sh"
+awk 'BEGIN { done = 0 }
+     {
+       if (!done && index($0, "1) REG_JSON=") > 0) { sub(/1\) REG_JSON=/, "1|2) REG_JSON="); done = 1 }
+       print
+     }' "$ENGINE" > "$KMUT_BAD" 2>/dev/null
+if mutant_ok "$ENGINE" "$KMUT_BAD" shell; then
+  KMBH="$K/home-mut-bad"
+  mkdir -p "$KMBH" || setup_fail "(k16c) fixture: could not create $KMBH"
+  KMBREG="$KMBH${KREG#$KH}"
+  mkdir -p "$(dirname "$KMBREG")" 2>/dev/null
+  printf 'this is not JSON {{{\n' > "$KMBREG" || setup_fail "(k16c) fixture: could not write the malformed registry at $KMBREG"
+  kmb_before="$(csum "$KMBREG")"
+  out="$(HOME="$KMBH" bash "$KMUT_BAD" add "$KMP" 2>&1)"; rc=$?
+  kmb_after="$(csum "$KMBREG")"
+  if ! in_str "$out" "add: registered"; then
+    no "(k16c) MUTATION CONTROL: (k16) catches an engine that rewrites an unparseable registry" \
+       "the mutant never reached its write path, so this control proves nothing: rc=$rc :: $out"
+  elif [ -n "$kmb_before" ] && [ "$kmb_before" != "$kmb_after" ]; then
+    ok "(k16c) MUTATION CONTROL: an engine that treats an unparseable registry as empty OVERWRITES it, and (k16)'s byte-for-byte checksum sees that — (k16) is not passing on a file nothing opened"
+  else
+    no "(k16c) MUTATION CONTROL: (k16) catches an engine that rewrites an unparseable registry" \
+       "the mutant reported a successful registration, but the malformed file's checksum did not change — (k16) would NOT have caught it"
+  fi
+fi
+
+# (k16d) — the restore check. Neither control above edits the real engine, and this is what
+# proves it: the same sha256 before and after, plus no mutant left anywhere in the plugin's own
+# scripts directory. Without it, a control that mutated in place could leave every assertion in
+# this file testing a file the repository does not contain.
+k_eng_after="$(csum "$ENGINE")"
+k_residue="$(ls "$script_dir"/setup-ui-*.sh 2>/dev/null || true)"
+[ -n "$K_ENGINE_SIG_BEFORE" ] && [ "$K_ENGINE_SIG_BEFORE" = "$k_eng_after" ] && [ -z "$k_residue" ] \
+  && ok "(k16d) the real engine is byte-identical after both mutation controls (sha256 unchanged) and no mutant copy was left in the plugin's scripts directory" \
+  || no "(k16d) the real engine is byte-identical after both mutation controls and no mutant was left behind" \
+       "before='$K_ENGINE_SIG_BEFORE' after='$k_eng_after' residue='$k_residue'"
+
+# --- (k26) THE STATIC ISOLATION GATE — this is what actually enforces AC-1h ------------
+# Two rules, and both are needed:
+#   A. INSIDE this group, EVERY engine invocation must carry an isolation token. The verb is a
+#      loop variable in several cases above, so a literal-verb rule alone would see half of them.
+#   B. ANYWHERE in this file, an engine invocation naming a literal registry verb must carry
+#      one. This is the rule that binds the groups a later subtask appends. `serve` is on that
+#      list and was ADDED to it by the multi-project change: it reads the registry and then runs
+#      the projector inside every project it finds, so an unisolated `serve` does not merely
+#      read the developer's config tree, it writes into every repository named in it.
+# An isolation token is a fixture `HOME=`, an explicit `--registry`, or `env -u HOME` (which
+# provably cannot reach a home directory because there is not one).
+SELF="$script_dir/test-setup-ui.sh"
+[ -f "$SELF" ] || setup_fail "(k26) fixture: this file is not readable at $SELF, so the isolation gate has no subject"
+
+reg_isolation_scan() {
+  awk -v mode="$2" '
+    function isolated(l) { return (l ~ /HOME=/) || (l ~ /--registry/) || (l ~ /env -u HOME/) }
+    /^echo "\(k\) AC-registry/ { ink = 1 }
+    /^echo "\(z\)/            { ink = 0 }
+    {
+      if ($0 !~ /bash[[:space:]]+"\$[A-Za-z_][A-Za-z_0-9]*"/) next
+      regverb = ($0 ~ /"\$[A-Za-z_][A-Za-z_0-9]*"[[:space:]]+(add|list|forget|scan|serve)([[:space:]]|$)/)
+      if (!(ink || regverb)) next
+      seen++
+      if (mode == "findings" && !isolated($0)) printf "%d: %s\n", FNR, $0
+    }
+    END { if (mode == "count") print seen+0 }
+  ' "$1"
+}
+
+k_seen="$(reg_isolation_scan "$SELF" count)"
+case "$k_seen" in ''|*[!0-9]*) k_seen=0 ;; esac
+[ "$k_seen" -ge 15 ] \
+  && ok "(k26a) the isolation gate actually SEES the registry-touching invocations ($k_seen of them) — a gate whose pattern matched nothing would report 'clean' forever" \
+  || no "(k26a) the isolation gate sees the registry-touching invocations" "it inspected only $k_seen lines; a pattern that stopped matching would make (k26b) vacuous"
+
+k_viol="$(reg_isolation_scan "$SELF" findings)"
+[ -z "$k_viol" ] \
+  && ok "(k26b) every registry-touching engine invocation in this file carries a fixture HOME, an explicit --registry, or an unset HOME" \
+  || no "(k26b) every registry-touching engine invocation carries an isolation token" \
+       "these would run against the developer's real config tree:
+$k_viol"
+
+# MUTATION CONTROL for (k26b): strip the fixture HOME from ONE call site and the gate must
+# redden. Without this the gate would also "pass" if its rules had quietly stopped applying.
+KMUT="$TMPROOT/k-self-mutant.sh"
+awk 'BEGIN { done = 0 }
+     {
+       if (!done && index($0, "HOME=\"$KH\" bash \"$ENGINE\" list") > 0) { sub(/HOME="\$KH" /, ""); done = 1 }
+       print
+     }' "$SELF" > "$KMUT" 2>/dev/null
+if mutant_ok "$SELF" "$KMUT" shell; then
+  k_mviol="$(reg_isolation_scan "$KMUT" findings)"
+  [ -n "$k_mviol" ] \
+    && ok "(k27) MUTATION CONTROL: stripping the fixture HOME from one call site reddens the gate — (k26b) is enforcing the rule, not restating it" \
+    || no "(k27) MUTATION CONTROL: a call site with the fixture HOME stripped is flagged" \
+         "the gate stayed clean on a mutant that reaches the real config tree"
+fi
+
+# MUTATION CONTROL for the SERVE half of rule B, which (k27) above does not cover: it strips a
+# fixture HOME from a `list`, and would still pass if `serve` had never been added to the rule.
+# `serve` is the invocation with the largest blast radius in this file — it writes into every
+# registered project — so the rule that isolates it gets its own control.
+KMUT2="$TMPROOT/k-self-mutant-serve.sh"
+awk 'BEGIN { done = 0 }
+     {
+       if (!done && index($0, "bash \"$ENGINE\" serve --registry \"$NOREG\"") > 0) { sub(/--registry "\$NOREG" /, ""); done = 1 }
+       print
+     }' "$SELF" > "$KMUT2" 2>/dev/null
+if mutant_ok "$SELF" "$KMUT2" shell; then
+  k_mviol2="$(reg_isolation_scan "$KMUT2" findings)"
+  [ -n "$k_mviol2" ] \
+    && ok "(k27b) MUTATION CONTROL: stripping the registry override from one SERVE call site reddens the gate — serve really is covered by rule B, not merely mentioned in its comment" \
+    || no "(k27b) MUTATION CONTROL: a serve call site with its registry override stripped is flagged" \
+         "the gate stayed clean on a serve that would regenerate every project in the developer's real registry"
+fi
+
+# --- (k28)/(k29) THE BACKSTOP: the real user-scope tree, hashed around the whole suite ---
+# Captured before the first assertion in this file (see real_tree_sig near the top) and compared
+# here — after every group that invokes the engine, since (z) below reads documents only. ABSENT
+# is a DEFINED value, so CI, which has no user-scope loomwright directory at all, still runs
+# this assertion instead of skipping it.
+k_real_after="$(real_tree_sig "$REAL_LOOM_HOME")"
+if [ "$REAL_LOOM_SIG_BEFORE" = "UNRESOLVED" ]; then
+  no "(k28) the real user-scope tree is unchanged across the whole suite" \
+     "the engine named no absolute registry path under the real HOME, so this backstop has no subject and is NOT passing"
+elif [ "$REAL_LOOM_SIG_BEFORE" = "$k_real_after" ]; then
+  ok "(k28) the real user-scope tree is byte-identical across the whole suite (state before: $([ "$REAL_LOOM_SIG_BEFORE" = "ABSENT" ] && echo ABSENT || echo present))"
+else
+  printf '%s\n' "$REAL_LOOM_SIG_BEFORE" > "$TMPROOT/real-before" 2>/dev/null
+  printf '%s\n' "$k_real_after"         > "$TMPROOT/real-after"  2>/dev/null
+  no "(k28) the real user-scope tree is unchanged across the whole suite" \
+     "$(diff "$TMPROOT/real-before" "$TMPROOT/real-after" 2>/dev/null | head -20)
+     (a live 'serve' writing into the real ui dir would also show here; a projects.json line means a case escaped its fixture HOME)"
+fi
+
+k_real_reg_after="ABSENT"
+[ -f "$REAL_LOOM_HOME/projects.json" ] && k_real_reg_after="$(csum "$REAL_LOOM_HOME/projects.json")"
+[ "$REAL_REG_BEFORE" = "$k_real_reg_after" ] \
+  && ok "(k29) the real projects.json is unchanged across the whole suite (state before: $([ "$REAL_REG_BEFORE" = "ABSENT" ] && echo ABSENT || echo present)) — the precise subject, immune to anything else writing under that directory" \
+  || no "(k29) the real projects.json is unchanged across the whole suite" \
+       "before='$REAL_REG_BEFORE' after='$k_real_reg_after' — a registry case reached the developer's real config tree"
+
+
+# (k30)/(k31) — write CONTAINMENT against a hostile slug. Added at Phase 4.5 after the
+# integrated reviewer DEMONSTRATED (not inferred) that a hand-edited registry slug of
+# "../../ESCAPED" walked regen_project's `mkdir -p "$UI_DIR/projects/$slug"` clean out of the
+# ui directory. `add`/`scan` can never generate such a slug — project_slug folds [^a-z0-9] to
+# `-` — which is exactly why the (i) write-containment group could not see it: every slug it
+# uses is well formed. The engine designs for hand-edited registries explicitly, and the PAGE
+# already defended against this input while the WRITER did not; that asymmetry was the defect.
+#
+# (k31) IS THE ANTI-VACUITY ARM AND IT IS NOT OPTIONAL. A guard that rejected every slug would
+# satisfy (k30) perfectly while destroying the feature, so a well-formed slug must still
+# produce its slot IN THE SAME RUN, from the same registry, or (k30) proves nothing worth
+# having. Both arms share one serve so neither can pass under conditions the other did not face.
+k_hs_root="$TMPROOT/hostile-slug"; mkdir -p "$k_hs_root/home" "$k_hs_root/elsewhere"
+k_hs_ui="$k_hs_root/uidir"; k_hs_reg="$k_hs_root/reg.json"
+HOME="$k_hs_root/fakehome" bash "$ENGINE" apply --ui-dir "$k_hs_ui" >/dev/null 2>&1
+printf '{"projects":[{"slug":"../../ESCAPED","path":"%s"},{"slug":"goodslug","path":"%s"}]}\n' \
+  "$k_hs_root/home" "$k_hs_root/home" > "$k_hs_reg"
+k_hs_port="$(python3 -c 'import socket
+s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()' 2>/dev/null)"
+case "$k_hs_port" in ''|*[!0-9]*) setup_fail "(k30) fixture: could not obtain a free port for the hostile-slug serve probe" ;; esac
+( cd "$k_hs_root/elsewhere" && HOME="$k_hs_root/fakehome" bash "$ENGINE" serve \
+    --ui-dir "$k_hs_ui" --registry "$k_hs_reg" --port "$k_hs_port" --interval 1 --detach >/dev/null 2>&1 )
+# THE WINDOW MUST OUTLAST A FULL ROUND-ROBIN, NOT JUST THE FIRST HIT. Non-selected projects
+# regenerate ONE AT A TIME on the slow cadence, so stopping the moment goodslug appears leaves
+# whichever entry is scheduled later without a turn. With the hostile entry listed first that
+# happens to be harmless; REORDER THE FIXTURE AND (k30) GOES GREEN ON A BROKEN ENGINE, because
+# the traversal write would have landed on the NEXT background tick and the server is already
+# stopped. That is the same under-powered-negative trap that made the original reproduction of
+# this very defect fail twice, and leaving it here would bake it into a permanent gate. So:
+# wait for goodslug, THEN keep serving for a full slow cycle across every entry, so each one
+# provably gets its turn regardless of registry order.
+k_hs_waited=0
+while [ "$k_hs_waited" -lt 30 ]; do
+  [ -d "$k_hs_ui/projects/goodslug" ] && break
+  sleep 1; k_hs_waited=$((k_hs_waited+1))
+done
+# SLOW_FACTOR ticks per entry, 2 entries, 1s interval, plus margin — order-independent.
+k_hs_extra=0
+while [ "$k_hs_extra" -lt 14 ]; do sleep 1; k_hs_extra=$((k_hs_extra+1)); done
+HOME="$k_hs_root/fakehome" bash "$ENGINE" stop --ui-dir "$k_hs_ui" >/dev/null 2>&1
+
+if [ ! -e "$k_hs_root/ESCAPED" ] && [ -z "$(find "$k_hs_root" -path "$k_hs_ui" -prune -o -type d -name 'ESCAPED*' -print 2>/dev/null)" ]; then
+  ok "(k30) a hand-edited registry slug of '../../ESCAPED' writes NOTHING outside the ui directory — reg_rows shape-filters it out and regen_project refuses it a second time"
+else
+  no "(k30) a traversal slug writes nothing outside the ui directory" \
+     "found an ESCAPED path under $k_hs_root — the slug reached a filesystem write"
+fi
+
+if [ -d "$k_hs_ui/projects/goodslug" ]; then
+  ok "(k31) ANTI-VACUITY: a well-formed slug in that SAME registry still gets its slot — (k30) is containment, not a guard that rejects everything"
+else
+  no "(k31) ANTI-VACUITY: a well-formed slug still gets its slot" \
+     "goodslug produced no slot after ${k_hs_waited}s, so (k30) would pass even with the feature broken"
+fi
+
+
+# (k32) — the SELECTED project's slug takes a DIFFERENT path into the engine than every other
+# project's: selected_slug_for() reads the registry directly, while reg_rows() feeds the rest.
+# (k30)/(k31) poison an "other" project and therefore cannot see this path at all. The CI
+# reviewer found the consequence: a function-wide `return` in regen_project's slug guard also
+# skipped the root_too copy, which has NOTHING to do with the slug — so one hand-edited entry
+# matching the serve directory silently stopped "$UI_DIR/floor.json" updating on EVERY tick.
+# Fail-safe, but a silent availability regression against pre-registry behaviour, and the root
+# copy is exactly what a page with no served index falls back to. This case pins the root copy
+# keeping up while the slot is refused.
+k_sel_root="$TMPROOT/poisoned-selected"; mkdir -p "$k_sel_root/home"
+k_sel_ui="$k_sel_root/uidir"; k_sel_reg="$k_sel_root/reg.json"
+HOME="$k_sel_root/fakehome" bash "$ENGINE" apply --ui-dir "$k_sel_ui" >/dev/null 2>&1
+# The poisoned entry's path IS the directory serve runs in, so it becomes the SELECTED project.
+# THE PATH MUST BE THE PHYSICAL ONE. selected_slug_for() matches `.path == $SERVE_CWD`, and
+# SERVE_CWD is resolved (`pwd -P`), so on a host where the fixture root sits under a symlinked
+# /tmp a logical path NEVER matches — SELECTED_SLUG comes back empty, the slug guard is never
+# reached, and this case passes for the wrong reason. Observed exactly that on macOS while
+# proving this assertion red: it stayed green with the bug reinstated because it was measuring
+# nothing. Resolve it here so the entry genuinely becomes the SELECTED project.
+k_sel_home_phys="$(cd "$k_sel_root/home" && pwd -P)"
+printf '{"projects":[{"slug":"BAD..slug","path":"%s"}]}\n' "$k_sel_home_phys" > "$k_sel_reg"
+k_sel_port="$(python3 -c 'import socket
+s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()' 2>/dev/null)"
+case "$k_sel_port" in ''|*[!0-9]*) setup_fail "(k32) fixture: could not obtain a free port" ;; esac
+( cd "$k_sel_root/home" && HOME="$k_sel_root/fakehome" bash "$ENGINE" serve \
+    --ui-dir "$k_sel_ui" --registry "$k_sel_reg" --port "$k_sel_port" --interval 1 --detach >/dev/null 2>&1 )
+k_sel_waited=0
+while [ "$k_sel_waited" -lt 20 ]; do
+  [ -f "$k_sel_ui/floor.json" ] && break
+  sleep 1; k_sel_waited=$((k_sel_waited+1))
+done
+HOME="$k_sel_root/fakehome" bash "$ENGINE" stop --ui-dir "$k_sel_ui" >/dev/null 2>&1
+
+if [ -f "$k_sel_ui/floor.json" ]; then
+  ok "(k32) a malformed slug on the SELECTED project refuses only its own slot — the root floor.json still updates, so one hand-edited entry cannot silently stop the whole page refreshing"
+else
+  no "(k32) a malformed slug on the selected project still lets the root floor.json update" \
+     "no $k_sel_ui/floor.json after ${k_sel_waited}s — the slug guard skipped the root copy too"
+fi
+
+if [ ! -d "$k_sel_ui/projects/BAD..slug" ] && [ -z "$(find "$k_sel_root" -path "$k_sel_ui" -prune -o -name 'BAD*' -print 2>/dev/null)" ]; then
+  ok "(k32b) and its slot is still refused — the root copy proceeding is not the guard failing open"
+else
+  no "(k32b) the malformed selected slug is still refused a slot" "a BAD..slug path exists"
+fi
+
+# ===========================================================================
+echo "(l) AC-multiproject — one server, many projects, and a loop whose cost is measured"
+# ===========================================================================
+# WHAT THIS GROUP PROVES AND WHAT IT DELIBERATELY CANNOT.
+#
+# AC-2b is a TIMING claim and it is asserted by MEASUREMENT, never by reading the loop: at the
+# measured ~1 s per real projector run, regenerating every registered project on every tick
+# falls behind a 2 s interval at TWO projects, and every project then renders permanently
+# stale. Item 05 shipped a 4.1x runtime regression that passed 338 assertions and seven repo
+# gates in silence, which is exactly why inspection is not accepted here.
+#
+# The measurement follows test-build-floor.sh case (x) and rejects the same two shapes it did:
+#   1. Timing the REAL projector. Too slow to run three arms of, and machine-dependent.
+#   2. An ABSOLUTE wall-clock ceiling. This repo has rejected that twice: a bound tight enough
+#      to catch a regression on a laptop flakes on CI, and one loose enough for CI catches
+#      nothing. Unusable in both directions.
+# So the bound is a RATIO against a UNIT calibrated in the SAME RUN on the SAME machine: one
+# invocation of a STUB projector whose cost is known because it sleeps for it. The bound is
+#   budget = (measured tick period - the configured interval) / unit
+# i.e. "how many projector runs of work does one tick cost", which is hardware-independent by
+# construction - a slow or loaded runner slows the unit and the loop together.
+#
+# THREE ARMS, because a bound with no control is a bound that has never been red:
+#   (l6)  PRIMARY  - the shipped engine, five projects, must be WITHIN budget.
+#   (l8)  CONTROL  - a mutant whose loop regenerates EVERY project EVERY tick (the naive shape
+#                    R2 names) must be OVER it. This is the arm that proves the measurement can
+#                    detect the starvation it claims to.
+#   (l9)  NULL-MUTATION CONTROL - a mutant that differs, still parses, and changes nothing the
+#                    loop does must stay WITHIN budget. Without it, (l8) would also "pass"
+#                    against a measurement that simply flagged any mutant at all.
+# Measured on the maintainer tree at STUB_COST=0.4 s, interval 1 s, 5 projects, 6 ticks: the
+# shipped engine and the null mutant both sit at 137 hundredths (1.37 projector runs of work
+# per tick - the selected project every tick, one other every fifth, plus the index write); the
+# naive mutant sits at 412. The budget below sits between them with margin on both sides.
+# Wall-clock figures are NOISY, so quoting one exact pair as though it were repeatable would
+# claim a precision this measurement does not have; the property that matters is the gap.
+
+L="$(mktmp)" || setup_fail "(l) fixture: mktemp under $TMPROOT failed"
+LSCHED_BUDGET=250          # hundredths of one projector run of work per tick; see above
+LSTUB_COST="0.4"
+LTICKS=6
+LINTERVAL=1
+LREG="$L/registry.json"
+LENG_SIG_BEFORE="$(csum "$ENGINE")"
+LJS_SIG_BEFORE="$(csum "$JS")"
+
+# --- (l1) PRESERVATION: subtask 1 is still standing after this subtask's edits ----------
+# Sequential sharing grants VISIBILITY, not PRESERVATION: the deterministic outputs gate checked
+# subtask 1's symbols at ITS completion and nothing re-checks them after a later subtask edits
+# the same file. This is that re-check, and it is an assertion rather than authoring discipline.
+l_missing=""
+for fn in do_add do_list do_forget do_scan registry_path registry_read project_slug; do
+  [ "$(grep -c "^$fn()" "$ENGINE")" -ge 1 ] || l_missing="$l_missing $fn"
+done
+# The sibling relationship is MEASURED from the engine's own report rather than matched against
+# the literal path, for two reasons: a literal would be a second copy of a path that can move,
+# and spelling a host-tool directory here would put a vendor token in a file that carries none
+# and move a ratchet this subtask has no business moving. Under a fixture HOME with no --ui-dir,
+# the reported ui dir and the reported registry must live in the SAME parent — which is the
+# property `remove` depends on and the reason the registry survives it.
+LSIB_H="$L/home-sibling"
+mkdir -p "$LSIB_H" || setup_fail "(l1) fixture: could not create $LSIB_H"
+l_sib_out="$(HOME="$LSIB_H" bash "$ENGINE" check 2>/dev/null)"
+l_sib_ui="$(printf '%s\n' "$l_sib_out" | sed -n 's/^ui dir:  *//p' | awk 'NR==1')"
+l_sib_reg="$(printf '%s\n' "$l_sib_out" | sed -n 's/^registry: //p' | awk 'NR==1')"
+case "$l_sib_ui/$l_sib_reg" in
+  /*) [ "$(dirname "$l_sib_ui")" = "$(dirname "$l_sib_reg")" ] || l_missing="$l_missing registry-is-no-longer-a-sibling-of-the-ui-dir" ;;
+  *)  l_missing="$l_missing could-not-read-the-engine's-own-paths" ;;
+esac
+[ -z "$l_missing" ] \
+  && ok "(l1) PRESERVATION: every symbol subtask 1 provided still resolves in the engine, and the registry the engine names is still a SIBLING of the ui dir it names ($(dirname "$l_sib_reg"))" \
+  || no "(l1) PRESERVATION: subtask 1's symbols still resolve and the registry is still a sibling of the ui dir" "missing:$l_missing"
+
+# --- (l2) the symbols THIS subtask provides, in the engine and in the page ---------------
+l_missing=""
+for fn in regen_project write_served_index; do
+  [ "$(grep -c "^$fn()" "$ENGINE")" -ge 1 ] || l_missing="$l_missing $fn"
+done
+for fn in renderProjectPicker projectStateLabel; do
+  [ "$(grep -c "function $fn" "$JS")" -ge 1 ] || l_missing="$l_missing $fn"
+done
+has_lit "$HTML" 'id="project-picker"' || l_missing="$l_missing project-picker"
+[ -z "$l_missing" ] \
+  && ok "(l2) regen_project and write_served_index exist in the engine, renderProjectPicker and projectStateLabel in floor.js, and index.html carries the project-picker element" \
+  || no "(l2) the multi-project symbols exist in the engine, the page and the markup" "missing:$l_missing"
+
+# --- the timing fixture: a plugin directory holding a COPY of the real engine beside a stub --
+# The engine resolves build-floor.sh as its own sibling, so a stub projector is installed by
+# giving the engine a different directory to live in - never by editing the engine, which is
+# what keeps (l6) a measurement of the SHIPPED code. (l3) asserts that copy is byte-identical.
+LP="$L/plugin"
+mkdir -p "$LP/floor-ui" || setup_fail "(l) fixture: could not create $LP"
+cp "$ENGINE" "$LP/setup-ui.sh" || setup_fail "(l) fixture: could not copy the engine"
+cp "$BUNDLE_DIR"/* "$LP/floor-ui/" 2>/dev/null || setup_fail "(l) fixture: could not copy the bundle"
+cat > "$LP/build-floor.sh" <<'__STUB__'
+#!/usr/bin/env bash
+# STUB PROJECTOR with a KNOWN cost. It writes the artefact the engine copies, then sleeps for
+# STUB_COST and records the finishing time and the directory it ran in. The sleep and the
+# timestamp come from ONE python3 process, so the recorded cost includes the startup the
+# harness will later calibrate against.
+mkdir -p .supervisor/floor 2>/dev/null
+printf '{"schema_version":1,"generated_at_epoch":0,"repo_head":"stub","surfaces":{},"notes":[]}\n' \
+  > .supervisor/floor/floor.json 2>/dev/null
+python3 -c 'import time,os
+time.sleep(float(os.environ.get("STUB_COST","0.4")))
+f = open(os.environ["STUB_LOG"], "a"); f.write("%.4f %s\n" % (time.time(), os.getcwd())); f.close()' 2>/dev/null
+exit 0
+__STUB__
+LENG="$LP/setup-ui.sh"
+[ "$(csum "$LENG")" = "$LENG_SIG_BEFORE" ] \
+  && ok "(l3) the engine the timing arms measure is byte-identical to the shipped one (sha256) — the stub is installed by moving the engine, never by editing it" \
+  || no "(l3) the engine the timing arms measure is byte-identical to the shipped one" "the copy at $LENG differs from $ENGINE"
+
+# five registered projects, each a real directory, registered by the engine's own `add`
+li=1
+while [ "$li" -le 5 ]; do
+  mkdir -p "$L/proj-$li" || setup_fail "(l) fixture: could not create $L/proj-$li"
+  ( cd "$L/proj-$li" && bash "$LENG" add --registry "$LREG" ) >/dev/null 2>&1
+  li=$((li + 1))
+done
+l_n_reg="$(jq -r '.projects | length' "$LREG" 2>/dev/null)"
+[ "$l_n_reg" = "5" ] \
+  || setup_fail "(l) fixture: five projects were not registered (got '$l_n_reg') — every timing arm below would measure the wrong scenario"
+
+# The measurement driver. It calibrates the unit, starts the loop, waits for a FIXED number of
+# ticks of the SELECTED project and reports the period - never a pass/fail verdict, which stays
+# in bash where every other assertion in this file lives.
+LDRV="$L/measure.py"
+cat > "$LDRV" <<'__PY_SCHED__'
+import json, os, subprocess, sys, time
+engine, uidir, reg, sel, stub_log, interval, nticks, port = sys.argv[1:9]
+interval = int(interval); nticks = int(nticks)
+env = dict(os.environ); env["STUB_LOG"] = stub_log
+stubdir = os.path.dirname(engine)
+scratch = os.path.join(os.path.dirname(stub_log), "unit-scratch-" + os.path.basename(stub_log))
+if not os.path.isdir(scratch):
+    os.makedirs(scratch)
+
+def one():
+    t = time.time()
+    subprocess.call(["bash", os.path.join(stubdir, "build-floor.sh")], cwd=scratch, env=env,
+                    stdout=open(os.devnull, "w"), stderr=subprocess.STDOUT)
+    return time.time() - t
+
+# THE UNIT: the cheapest of three runs of the same stub, in this same run on this same machine.
+unit = min(one() for _ in range(3))
+open(stub_log, "w").close()
+
+subprocess.call(["bash", engine, "serve", "--ui-dir", uidir, "--registry", reg,
+                 "--port", port, "--interval", str(interval), "--detach"],
+                cwd=sel, env=env, stdout=open(os.devnull, "w"), stderr=subprocess.STDOUT)
+deadline = time.time() + nticks * (interval + 6 * unit) + 25
+sel_real = os.path.realpath(sel)
+
+def stamps():
+    out = []
+    try:
+        for ln in open(stub_log):
+            parts = ln.rstrip("\n").split(" ", 1)
+            if len(parts) == 2 and os.path.realpath(parts[1]) == sel_real:
+                out.append(float(parts[0]))
+    except Exception:
+        pass
+    return out
+
+while time.time() < deadline:
+    if len(stamps()) >= nticks + 1:
+        break
+    time.sleep(0.05)
+s = stamps()
+subprocess.call(["bash", engine, "stop", "--ui-dir", uidir, "--registry", reg],
+                stdout=open(os.devnull, "w"), stderr=subprocess.STDOUT)
+total = 0
+if os.path.exists(stub_log):
+    total = sum(1 for _ in open(stub_log))
+others = total - len(s)
+if unit <= 0 or len(s) < nticks + 1:
+    print(json.dumps({"ok": False, "ticks_seen": len(s), "total_runs": total}))
+else:
+    period = (s[nticks] - s[0]) / nticks
+    print(json.dumps({"ok": True, "unit_ms": int(unit * 1000), "period_ms": int(period * 1000),
+                      "units_x100": int(round((period - interval) / unit * 100)),
+                      "selected_runs": len(s), "other_runs": others, "total_runs": total}))
+__PY_SCHED__
+
+l_free_port() { python3 -c 'import socket
+s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()' 2>/dev/null; }
+
+# l_measure <engine> <ui dir> <log> -> the driver's JSON on stdout
+l_measure() {
+  local eng="$1" uid="$2" log="$3" port
+  port="$(l_free_port)"
+  case "${port:-x}" in ''|*[!0-9]*) printf '{"ok":false,"reason":"no free port"}'; return 0 ;; esac
+  bash "$eng" apply --ui-dir "$uid" --registry "$LREG" >/dev/null 2>&1
+  SERVE_PIDFILES="$SERVE_PIDFILES $uid/serve.pid"
+  STUB_COST="$LSTUB_COST" python3 "$LDRV" "$eng" "$uid" "$LREG" "$L/proj-1" "$log" "$LINTERVAL" "$LTICKS" "$port" 2>/dev/null
+}
+
+l_field() { printf '%s' "$1" | jq -r --arg k "$2" '.[$k] // "x"' 2>/dev/null; }
+
+# --- (l4) PREMISE: the stub really costs something, and really writes the artefact -------
+# A stub that cost nothing would make every arm below measure only the sleep in the loop, and a
+# stub that wrote nothing would make the engine's copy step a no-op.
+mkdir -p "$L/premise" || setup_fail "(l) fixture: could not create $L/premise"
+l_prem_ms="$(python3 -c 'import sys,os,time,subprocess
+env = dict(os.environ); env["STUB_LOG"] = sys.argv[3]; env["STUB_COST"] = sys.argv[4]
+t = time.time()
+subprocess.call(["bash", sys.argv[1]], cwd=sys.argv[2], env=env, stdout=open(os.devnull,"w"), stderr=subprocess.STDOUT)
+print(int((time.time() - t) * 1000))' "$LP/build-floor.sh" "$L/premise" "$L/premise.log" "$LSTUB_COST" 2>/dev/null)"
+case "${l_prem_ms:-x}" in
+  ''|*[!0-9]*) no "(l4) PREMISE: the stub projector has a measurable cost" "could not time it (got '$l_prem_ms')" ;;
+  *)
+    [ "$l_prem_ms" -ge 300 ] && [ -f "$L/premise/.supervisor/floor/floor.json" ] \
+      && ok "(l4) PREMISE: the stub projector costs ${l_prem_ms}ms and writes .supervisor/floor/floor.json — the arms below measure a real cost, not an empty loop" \
+      || no "(l4) PREMISE: the stub projector has a real cost and writes the artefact" \
+           "cost=${l_prem_ms}ms artefact=$([ -f "$L/premise/.supervisor/floor/floor.json" ] && echo written || echo MISSING)" ;;
+esac
+
+# --- (l5)/(l6)/(l7) PRIMARY ARM: the shipped engine, five projects -----------------------
+L_REAL="$(l_measure "$LENG" "$L/ui-real" "$L/stub-real.log")"
+l_ok="$(l_field "$L_REAL" ok)"
+l_units="$(l_field "$L_REAL" units_x100)"
+l_sel_runs="$(l_field "$L_REAL" selected_runs)"
+l_other_runs="$(l_field "$L_REAL" other_runs)"
+if [ "$l_ok" != "true" ]; then
+  no "(l5) PRIMARY: the serve loop completed $LTICKS ticks with five projects registered" \
+     "the loop never reached $((LTICKS + 1)) regenerations of the selected project: $L_REAL — which is ITSELF the starvation this case is about, reported as inconclusive rather than as a pass"
+  no "(l6) PRIMARY: the loop's per-tick cost is within $LSCHED_BUDGET hundredths of one projector run" "no measurement: $L_REAL"
+  no "(l7) ANTI-VACUITY: the background projects were really regenerated" "no measurement: $L_REAL"
+else
+  ok "(l5) PRIMARY: with five projects registered the loop completed $LTICKS ticks and regenerated the selected project $l_sel_runs times (period $(l_field "$L_REAL" period_ms)ms against a ${LINTERVAL}s interval, unit $(l_field "$L_REAL" unit_ms)ms)"
+  if [ "$l_units" -le "$LSCHED_BUDGET" ] 2>/dev/null; then
+    ok "(l6) PRIMARY: one tick costs $l_units hundredths of a projector run, within the $LSCHED_BUDGET budget — the loop does not fall behind its own interval at five projects"
+  else
+    no "(l6) PRIMARY: one tick costs $l_units hundredths of a projector run, OVER the $LSCHED_BUDGET budget" \
+       "the loop is falling behind its own interval — every project on this page would render permanently stale"
+  fi
+  if [ "$l_other_runs" -ge 1 ] 2>/dev/null; then
+    ok "(l7) ANTI-VACUITY: $l_other_runs background regeneration(s) happened inside that window — the bound is not being met by simply never regenerating the other projects"
+  else
+    no "(l7) ANTI-VACUITY: the background projects were regenerated at least once in the window" \
+       "0 background runs — (l6) would pass for a loop that ignores every project but the selected one"
+  fi
+fi
+
+# --- (l8) CONTROL: the naive shape must be OVER budget ----------------------------------
+LNAIVE="$L/naive"
+mkdir -p "$LNAIVE/floor-ui" || setup_fail "(l) fixture: could not create $LNAIVE"
+cp "$LP/build-floor.sh" "$LNAIVE/" && cp "$BUNDLE_DIR"/* "$LNAIVE/floor-ui/" \
+  || setup_fail "(l) fixture: could not stage the naive mutant's plugin directory"
+python3 - "$ENGINE" "$LNAIVE/setup-ui.sh" <<'__PY_NAIVE__'
+import io, sys
+src, dst = sys.argv[1], sys.argv[2]
+s = io.open(src, encoding='utf-8').read()
+a = '  if [ "$REGEN" -eq 1 ] && [ $((tick % SLOW_FACTOR)) -eq 0 ]; then\n'
+b = '  write_served_index\n'
+i = s.index(a)
+j = s.index(b, i)
+naive = (
+  '  if [ "$REGEN" -eq 1 ]; then\n'
+  '    reg_rows | awk -F"$TAB" -v sel="$SELECTED_SLUG" \'NF && $1 != sel\' > "$UI_DIR/.mutant-others" 2>/dev/null\n'
+  '    while IFS="$TAB" read -r o_slug o_path; do\n'
+  '      [ -n "$o_slug" ] && [ -n "$o_path" ] && regen_project "$o_path" "$o_slug"\n'
+  '    done < "$UI_DIR/.mutant-others"\n'
+  '  fi\n'
+)
+io.open(dst, 'w', encoding='utf-8').write(s[:i] + naive + s[j:])
+__PY_NAIVE__
+if mutant_ok "$ENGINE" "$LNAIVE/setup-ui.sh" shell; then
+  L_NAIVE="$(l_measure "$LNAIVE/setup-ui.sh" "$L/ui-naive" "$L/stub-naive.log")"
+  l_n_units="$(l_field "$L_NAIVE" units_x100)"
+  if [ "$(l_field "$L_NAIVE" ok)" != "true" ]; then
+    ok "(l8) MUTATION CONTROL: the naive mutant (every project regenerated every tick) could not deliver $LTICKS ticks inside the deadline at all — the starvation is measurable ($L_NAIVE)"
+  elif [ "$l_n_units" -gt "$LSCHED_BUDGET" ] 2>/dev/null; then
+    ok "(l8) MUTATION CONTROL: the naive mutant costs $l_n_units hundredths per tick, OVER the $LSCHED_BUDGET budget (shipped engine: $l_units) — (l6) can detect the starvation it claims to"
+  else
+    no "(l8) MUTATION CONTROL: a loop that regenerates every project every tick is OVER budget" \
+       "the naive mutant measured $l_n_units, within the $LSCHED_BUDGET budget — (l6) is not discriminating and would pass through the very regression it exists to catch"
+  fi
+fi
+
+# --- (l9) NULL-MUTATION CONTROL: a harmless mutant must stay WITHIN budget ---------------
+# Without this, (l8) would also "pass" for a measurement that flagged any mutant whatsoever,
+# and the naive control would be proving nothing about the SCHEDULING.
+LNULL="$L/nullmut"
+mkdir -p "$LNULL/floor-ui" || setup_fail "(l) fixture: could not create $LNULL"
+cp "$LP/build-floor.sh" "$LNULL/" && cp "$BUNDLE_DIR"/* "$LNULL/floor-ui/" \
+  || setup_fail "(l) fixture: could not stage the null mutant's plugin directory"
+{ cat "$ENGINE"; printf '\n# null mutation: this comment changes nothing the serve loop does.\n'; } > "$LNULL/setup-ui.sh" 2>/dev/null
+if mutant_ok "$ENGINE" "$LNULL/setup-ui.sh" shell; then
+  L_NULL="$(l_measure "$LNULL/setup-ui.sh" "$L/ui-null" "$L/stub-null.log")"
+  l_z_units="$(l_field "$L_NULL" units_x100)"
+  if [ "$(l_field "$L_NULL" ok)" != "true" ]; then
+    no "(l9) NULL-MUTATION CONTROL: a mutant that changes nothing measures within budget" "inconclusive: $L_NULL"
+  elif [ "$l_z_units" -le "$LSCHED_BUDGET" ] 2>/dev/null; then
+    ok "(l9) NULL-MUTATION CONTROL: a mutant that parses, differs and does no damage measures $l_z_units hundredths — still within budget, so (l8) is detecting the SCHEDULING change and not merely the presence of a mutant"
+  else
+    no "(l9) NULL-MUTATION CONTROL: a harmless mutant stays within budget" \
+       "it measured $l_z_units, over the $LSCHED_BUDGET budget — the measurement flags mutants rather than starvation, which would make (l8) worthless"
+  fi
+fi
+
+# --- (l10)/(l11) the served index: every registered project, at the paths the page builds --
+L_IDX="$L/ui-real/index.json"
+if [ -f "$L_IDX" ]; then
+  l_idx_n="$(jq -r '.projects | length' "$L_IDX" 2>/dev/null)"
+  l_idx_sel="$(jq -r '.serve.selected_slug // ""' "$L_IDX" 2>/dev/null)"
+  l_idx_keys="$(jq -r '[(.module|has("bundle")), (.registry|has("state")), (.serve|has("interval_seconds")), (.serve|has("slow_cadence_ticks"))] | all' "$L_IDX" 2>/dev/null)"
+  [ "$l_idx_n" = "5" ] && [ "$l_idx_sel" = "proj-1" ] && [ "$l_idx_keys" = "true" ] \
+    && ok "(l10) the served index lists all five registered projects, names the selected one ($l_idx_sel) and carries the module state, the registry state and the cadence the page renders" \
+    || no "(l10) the served index lists every registered project and carries module/registry/cadence state" \
+         "projects=$l_idx_n selected='$l_idx_sel' keys=$l_idx_keys"
+  l_slots="$(find "$L/ui-real/projects" -name floor.json 2>/dev/null | awk 'END{print NR+0}')"
+  l_slot_named="$(jq -r '[.projects[] | select(.state == "ready") | .slug] | length' "$L_IDX" 2>/dev/null)"
+  [ "${l_slots:-0}" -ge 2 ] 2>/dev/null && [ "${l_slot_named:-0}" -ge 2 ] 2>/dev/null \
+    && ok "(l11) every project the loop regenerated has a document at the exact relative path the page builds — projects/<slug>/floor.json, $l_slots slot(s) on disk and $l_slot_named row(s) reported ready — so the picker adds no request this static server cannot answer" \
+    || no "(l11) each regenerated project has a document at projects/<slug>/floor.json" "slots=$l_slots ready-rows=$l_slot_named"
+else
+  no "(l10) the served index is written into the ui directory" "no index.json in $L/ui-real"
+  no "(l11) each regenerated project has a document at projects/<slug>/floor.json" "no index.json to read"
+fi
+
+# --- (l12)/(l13) AC-2c: a project whose directory vanishes UNDER A LIVE SERVE ------------
+# The other projects must keep rendering and the server must not exit - so this deletes the
+# directory WHILE the loop is running and then reads the next index the loop wrote.
+LC_UI="$L/ui-vanish"
+bash "$LENG" apply --ui-dir "$LC_UI" --registry "$LREG" >/dev/null 2>&1
+lc_port="$(l_free_port)"
+case "${lc_port:-x}" in
+  ''|*[!0-9]*) skipn "(l12) no free port could be obtained for the vanishing-project probe" ;;
+  *)
+    ( cd "$L/proj-1" && STUB_COST="$LSTUB_COST" STUB_LOG="$L/stub-vanish.log" \
+        bash "$LENG" serve --ui-dir "$LC_UI" --registry "$LREG" --port "$lc_port" --interval 1 --detach ) >/dev/null 2>&1
+    SERVE_PIDFILES="$SERVE_PIDFILES $LC_UI/serve.pid"
+    lc_pid="$(awk 'NR==1' "$LC_UI/serve.pid" 2>/dev/null)"
+    rm -rf "$L/proj-3"
+    lc_state=""; lc_i=0
+    while [ "$lc_i" -lt 60 ]; do
+      lc_state="$(jq -r '[.projects[] | select(.slug == "proj-3") | .state] | first // ""' "$LC_UI/index.json" 2>/dev/null)"
+      [ "$lc_state" = "unavailable" ] && break
+      sleep 0.25; lc_i=$((lc_i + 1))
+    done
+    lc_reason="$(jq -r '[.projects[] | select(.slug == "proj-3") | .reason] | first // ""' "$LC_UI/index.json" 2>/dev/null)"
+    lc_others="$(jq -r '[.projects[] | select(.slug != "proj-3")] | length' "$LC_UI/index.json" 2>/dev/null)"
+    lc_alive=no; kill -0 "$lc_pid" 2>/dev/null && lc_alive=yes
+    bash "$LENG" stop --ui-dir "$LC_UI" --registry "$LREG" >/dev/null 2>&1
+    [ "$lc_state" = "unavailable" ] && [ -n "$lc_reason" ] && [ "$lc_others" = "4" ] && [ "$lc_alive" = "yes" ] \
+      && ok "(l12) AC-2c: a registered project deleted UNDER a live serve renders 'unavailable' with a reason, the other 4 keep being listed, and the server was still running afterwards" \
+      || no "(l12) a project deleted under a live serve renders unavailable with its reason, the others keep rendering and the server survives" \
+           "state='$lc_state' reason='$lc_reason' others='$lc_others' (want 4) server-alive=$lc_alive"
+    lc_still="$(jq -r '[.projects[] | select(.slug == "proj-3")] | length' "$LREG" 2>/dev/null)"
+    [ "$lc_still" = "1" ] \
+      && ok "(l13) the vanished project is STILL in the registry — the serve loop reports what it found and never edits the user's registry on its behalf" \
+      || no "(l13) the vanished project is still in the registry" "found $lc_still entries for proj-3 — the loop mutated the registry" ;;
+esac
+
+# --- (l14)/(l15) AC-2e: absent and unparseable are TWO different claims ------------------
+LE_UI="$L/ui-regstate"
+bash "$LENG" apply --ui-dir "$LE_UI" --registry "$L/no-such-registry.json" >/dev/null 2>&1
+le_port="$(l_free_port)"
+( cd "$L/proj-1" && bash "$LENG" serve --ui-dir "$LE_UI" --registry "$L/no-such-registry.json" --port "$le_port" --no-regen --detach ) >/dev/null 2>&1
+SERVE_PIDFILES="$SERVE_PIDFILES $LE_UI/serve.pid"
+bash "$LENG" stop --ui-dir "$LE_UI" --registry "$L/no-such-registry.json" >/dev/null 2>&1
+le_absent="$(jq -r '.registry.state' "$LE_UI/index.json" 2>/dev/null)"
+le_absent_reason="$(jq -r '.registry.reason // ""' "$LE_UI/index.json" 2>/dev/null)"
+[ "$le_absent" = "absent" ] && [ -n "$le_absent_reason" ] && [ ! -e "$L/no-such-registry.json" ] \
+  && ok "(l14) AC-2e: with no registry file the served index says 'absent' with a reason and creates nothing — never 'unparseable', which is a different claim about a file the user actually has" \
+  || no "(l14) an absent registry is reported as absent, with a reason, and is not created" \
+       "state='$le_absent' reason='$le_absent_reason' created=$([ -e "$L/no-such-registry.json" ] && echo YES || echo no)"
+
+LBAD="$L/bad-registry.json"
+printf '{ this is not json\n' > "$LBAD"
+lbad_sig="$(csum "$LBAD")"
+LB_UI="$L/ui-badreg"
+bash "$LENG" apply --ui-dir "$LB_UI" --registry "$LBAD" >/dev/null 2>&1
+lb_port="$(l_free_port)"
+( cd "$L/proj-1" && bash "$LENG" serve --ui-dir "$LB_UI" --registry "$LBAD" --port "$lb_port" --no-regen --detach ) >/dev/null 2>&1
+SERVE_PIDFILES="$SERVE_PIDFILES $LB_UI/serve.pid"
+bash "$LENG" stop --ui-dir "$LB_UI" --registry "$LBAD" >/dev/null 2>&1
+lb_state="$(jq -r '.registry.state' "$LB_UI/index.json" 2>/dev/null)"
+lb_reason="$(jq -r '.registry.reason // ""' "$LB_UI/index.json" 2>/dev/null)"
+[ "$lb_state" = "unparseable" ] && [ -n "$lb_reason" ] && [ "$lbad_sig" = "$(csum "$LBAD")" ] \
+  && ok "(l15) AC-2e: an unparseable registry is reported as 'unparseable' with a reason, DISTINCTLY from absent, and the file is preserved byte for byte — serve reads it and refuses, exactly like every other verb" \
+  || no "(l15) an unparseable registry is reported as unparseable, distinctly, and preserved byte for byte" \
+       "state='$lb_state' reason='$lb_reason' preserved=$([ "$lbad_sig" = "$(csum "$LBAD")" ] && echo yes || echo NO)"
+
+# --- (l16) with jq UNFINDABLE, serve still writes an honest index ------------------------
+# The registry is JSON this engine will not parse by hand, and without jq nothing can be
+# regenerated either, because build-floor.sh needs it too. The page must therefore receive a
+# document that NAMES jq rather than an empty project list with no reason.
+LJ_STUB="$L/bin-nojq"
+mkstub "$LJ_STUB" "jq" || setup_fail "(l) fixture: could not build the jq-absent PATH stub"
+[ ! -e "$LJ_STUB/jq" ] || setup_fail "(l) fixture: the jq-absent stub still contains jq"
+LJ_UI="$L/ui-nojq"
+bash "$LENG" apply --ui-dir "$LJ_UI" --registry "$LREG" >/dev/null 2>&1
+lj_port="$(l_free_port)"
+( cd "$L/proj-1" && PATH="$LJ_STUB" bash "$LENG" serve --ui-dir "$LJ_UI" --registry "$LREG" --port "$lj_port" --no-regen --detach ) >/dev/null 2>&1
+SERVE_PIDFILES="$SERVE_PIDFILES $LJ_UI/serve.pid"
+bash "$LENG" stop --ui-dir "$LJ_UI" --registry "$LREG" >/dev/null 2>&1
+lj_state="$(jq -r '.registry.state' "$LJ_UI/index.json" 2>/dev/null)"
+lj_reason="$(jq -r '.registry.reason // ""' "$LJ_UI/index.json" 2>/dev/null)"
+lj_valid=no; jq -e . "$LJ_UI/index.json" >/dev/null 2>&1 && lj_valid=yes
+[ "$lj_state" = "unreadable" ] && [ "$lj_valid" = "yes" ] && in_str "$lj_reason" "jq" \
+  && ok "(l16) with jq UNFINDABLE, serve still writes a VALID served index reporting the registry 'unreadable' and naming jq — the page gets a reason, not an empty list" \
+  || no "(l16) with jq unfindable, serve writes a valid index naming jq as the reason" \
+       "state='$lj_state' valid-json=$lj_valid reason='$lj_reason'"
+
+# --- (l17)/(l18) WRITE CONTAINMENT: a regenerated project gains its floor.json, nothing else -
+# `serve` now runs the projector inside directories the user registered. That is the feature and
+# it is also the largest new blast radius in this change, so it is HASHED rather than reasoned
+# about: every fixture project must hold exactly the projector's own artefact and nothing more.
+l_dirty=""
+for li in 1 2 4 5; do
+  [ -d "$L/proj-$li" ] || continue
+  l_extra="$(cd "$L/proj-$li" && find . -mindepth 1 2>/dev/null \
+    | grep -v -E '^\./\.supervisor(/floor(/floor\.json)?)?$' | LC_ALL=C sort | tr '\n' ' ')"
+  [ -n "$l_extra" ] && l_dirty="$l_dirty [proj-$li:$l_extra]"
+done
+[ -z "$l_dirty" ] \
+  && ok "(l17) every regenerated project contains .supervisor/floor/floor.json and NOTHING else — registering a project is not a licence to write into it" \
+  || no "(l17) a regenerated project contains only .supervisor/floor/floor.json" "$l_dirty"
+l_wrote="$(find "$L/proj-2" "$L/proj-4" "$L/proj-5" -name floor.json 2>/dev/null | awk 'END{print NR+0}')"
+[ "${l_wrote:-0}" -ge 1 ] 2>/dev/null \
+  && ok "(l18) ANTI-VACUITY: the loop really did regenerate a project other than the selected one ($l_wrote artefact(s)), so (l17) is not passing on directories nothing ever touched" \
+  || no "(l18) ANTI-VACUITY: the loop regenerated at least one background project" "found $l_wrote — (l17) may be vacuous"
+
+# --- (l19)/(l20) AC-2d and AC-2f, re-run over the CHANGED bundle -------------------------
+l_write_findings="$(no_write_verbs)"
+[ -z "$l_write_findings" ] \
+  && ok "(l19) AC-2d: the bundle carrying the picker still contains no POST, no PUT, no DELETE and no fetch with a method option (the scanner (j13) defines, re-run over the changed files)" \
+  || no "(l19) the bundle carrying the picker contains no write verb" "$l_write_findings"
+l_egress=""
+for lf in "$HTML" "$CSS" "$JS"; do
+  lout="$(scan_egress "$lf")"
+  [ -n "$lout" ] && l_egress="$l_egress
+$(basename "$lf"): $lout"
+done
+[ -z "$l_egress" ] \
+  && ok "(l20) AC-2f: the bundle carrying the picker still references nothing off this origin (the scanner (a1) defines, re-run over the changed files)" \
+  || no "(l20) the bundle carrying the picker references nothing off this origin" "$l_egress"
+
+# --- (l21) THE MOTION BUDGET SURVIVES THE PICKER -----------------------------------------
+# Per-project scheduling on the page is driven from the ONE existing poll. A second timer would
+# be the easiest possible way to smuggle motion in, so the budget is re-counted, in code.
+l_int="$(code_occ "$JS" 'setInterval[(]')"
+l_raf="$(code_occ "$JS" 'requestAnimationFrame')"
+l_to="$(code_occ "$JS" 'setTimeout[(]')"
+[ "$l_int" = "1" ] && [ "$l_raf" = "0" ] && [ "$l_to" = "0" ] \
+  && ok "(l21) the picker added NO timer: floor.js still has exactly one setInterval and no rAF or setTimeout in code (int=$l_int rAF=$l_raf timeout=$l_to)" \
+  || no "(l21) the picker added no timer" "setInterval=$l_int rAF=$l_raf setTimeout=$l_to"
+
+# --- (l22)/(l23) the fetched URL is BUILT here, never taken from the served document ------
+# The index is a document the page did not author. If the per-project URL were read out of it, a
+# hostile or merely wrong index could point the page at another path entirely; the CSP would
+# refuse an off-origin fetch, but that is a header, and this makes it a property of the code.
+l_url_bad=""
+has_lit "$JS" "fetchText(projectUrl(selectedSlug))" || l_url_bad="$l_url_bad [the floor url is not built by projectUrl]"
+has_lit "$JS" "fetchText(SERVED_INDEX)" || l_url_bad="$l_url_bad [the index url is not the fixed constant]"
+[ "$(code_occ "$JS" 'fetchText[(]')" = "3" ] || l_url_bad="$l_url_bad [fetchText has call sites beyond the two expected]"
+[ -z "$l_url_bad" ] \
+  && ok "(l22) both URLs the page fetches are built in floor.js — a fixed constant and projectUrl(<encoded slug>) — never read out of the served index" \
+  || no "(l22) both fetched URLs are built in floor.js, never read from the served index" "$l_url_bad"
+MUT_URL="$TMPROOT/mut-url.js"
+sed 's|fetchText(projectUrl(selectedSlug))|fetchText(idx.projects[0].floor_url)|' "$JS" > "$MUT_URL" 2>/dev/null
+if mutant_ok "$JS" "$MUT_URL"; then
+  m_url=0
+  has_lit "$MUT_URL" "fetchText(projectUrl(selectedSlug))" && m_url=1
+  [ "$m_url" = "0" ] \
+    && ok "(l23) MUTATION CONTROL: a page that fetched a URL taken verbatim from the served index IS flagged by (l22)" \
+    || no "(l23) MUTATION CONTROL: a URL taken from the served index is flagged" "the gate stayed clean on a mutant that fetches a document-supplied path"
+fi
+
+# --- (l24)/(l25) the page's OWN words for each state --------------------------------------
+l_lit_bad=""
+for llit in "'unavailable'" "'never-regenerated'" "registry absent" "registry unparseable" "no served index at this origin"; do
+  has_lit "$JS" "$llit" || l_lit_bad="$l_lit_bad [$llit]"
+done
+[ -z "$l_lit_bad" ] \
+  && ok "(l24) floor.js names each state in its own words: unavailable, never regenerated, registry absent, registry unparseable, and no served index at this origin" \
+  || no "(l24) floor.js names each project and registry state distinctly" "missing:$l_lit_bad"
+# MUTATION CONTROL: collapsing absent and unparseable into one message must redden (l24). That
+# collapse is the specific defect AC-2e forbids and it is invisible to every other assertion.
+MUT_REG="$TMPROOT/mut-regstate.js"
+sed "s|return 'registry unparseable|return 'registry absent|" "$JS" > "$MUT_REG" 2>/dev/null
+if mutant_ok "$JS" "$MUT_REG"; then
+  m_reg=0
+  has_lit "$MUT_REG" "registry unparseable" && m_reg=1
+  [ "$m_reg" = "0" ] \
+    && ok "(l25) MUTATION CONTROL: a page reporting an unparseable registry as an absent one IS flagged — the two claims cannot be collapsed without (l24) noticing" \
+    || no "(l25) MUTATION CONTROL: collapsing unparseable into absent is flagged" "the mutant still carries both literals"
+fi
+
+# --- (l26)/(l27) THE COMMITTED BROWSER FIXTURES -------------------------------------------
+# The browser halves of AC-2a, AC-2d and AC-2e are NOT verified here and this file does not
+# pretend otherwise (see the header). What IS asserted is that the fixtures a browser pass will
+# load exist, that each really exercises the state it is named for, and — crucially — that none
+# of them pins a shape the engine can no longer produce. They were GENERATED by running the real
+# engine against fixture registries, with the temp paths then rewritten to a readable stand-in;
+# (l27) is what keeps that generation honest as the engine moves.
+LFIX="$FIX_DIR/served"
+if [ ! -d "$LFIX" ]; then
+  no "(l26) the served-index browser fixtures are committed" "no directory at $LFIX"
+  no "(l27) no committed served-index fixture pins a key the engine can no longer emit" "no fixtures to check"
+else
+  l_fix_bad=""
+  l_check() {
+    local got; got="$(jq -r "$2" "$LFIX/$1" 2>/dev/null)"
+    [ "$got" = "$3" ] || l_fix_bad="$l_fix_bad [$1: $2 = '$got', want '$3']"
+  }
+  l_check index-two-projects.json         '.projects | length' 2
+  l_check index-two-projects.json         '.registry.state' ok
+  l_check index-five-projects.json        '.projects | length' 5
+  l_check index-five-projects.json        '[.projects[] | select(.selected == true)] | length' 1
+  l_check index-three-one-missing.json    '.projects | length' 3
+  l_check index-three-one-missing.json    '[.projects[] | select(.state == "unavailable")] | length' 1
+  l_check index-three-one-missing.json    '[.projects[] | select(.state == "unavailable") | .reason] | first | (. != null and . != "")' true
+  l_check index-registry-absent.json      '.registry.state' absent
+  l_check index-registry-unparseable.json '.registry.state' unparseable
+  [ -z "$l_fix_bad" ] \
+    && ok "(l26) all five committed served-index fixtures exercise the states they are named for (two projects, five projects, one missing path WITH a reason, registry absent, registry unparseable)" \
+    || no "(l26) the committed served-index fixtures exercise their named states" "$l_fix_bad"
+
+  # The live key set is the UNION over every index this run wrote — the registry-ok one, the
+  # absent one, the unparseable one and the jq-less one. One index alone would be the wrong
+  # subject: `registry.reason` is OMITTED when the registry read cleanly, so comparing an
+  # absent-registry fixture against an ok-registry index would flag a key the engine emits
+  # constantly. The union is the set of keys the engine CAN emit, which is the actual claim.
+  if [ -f "$L_IDX" ]; then
+    l_keys_live=" $(jq -r '[paths(scalars) | map(select(type == "string")) | join(".")] | unique | .[]' \
+        "$L_IDX" "$LE_UI/index.json" "$LB_UI/index.json" "$LJ_UI/index.json" 2>/dev/null \
+        | LC_ALL=C sort -u | tr '\n' ' ')"
+    l_key_bad=""
+    for lfx in "$LFIX"/*.json; do
+      [ -f "$lfx" ] || continue
+      for lk in $(jq -r '[paths(scalars) | map(select(type == "string")) | join(".")] | unique | .[]' "$lfx" 2>/dev/null); do
+        in_str "$l_keys_live" " $lk " || l_key_bad="$l_key_bad [$(basename "$lfx"):$lk]"
+      done
+    done
+    [ -z "$l_key_bad" ] \
+      && ok "(l27) no committed served-index fixture pins a key the engine no longer emits — every key in every fixture appears in an index this run's engine actually wrote" \
+      || no "(l27) no committed fixture pins a key the engine can no longer emit" "$l_key_bad"
+  else
+    no "(l27) no committed fixture pins a key the engine can no longer emit" "the live index from (l10) is missing, so there is nothing to compare against"
+  fi
+fi
+
+# --- (l28) the shipped files are untouched by every mutant above ---------------------------
+l_eng_after="$(csum "$ENGINE")"; l_js_after="$(csum "$JS")"
+l_residue="$(ls "$script_dir"/setup-ui-*.sh "$BUNDLE_DIR"/*.mut.js 2>/dev/null || true)"
+[ "$LENG_SIG_BEFORE" = "$l_eng_after" ] && [ "$LJS_SIG_BEFORE" = "$l_js_after" ] && [ -z "$l_residue" ] \
+  && ok "(l28) the shipped engine and floor.js are byte-identical after every (l) mutation control (sha256 unchanged) and no mutant was left in the plugin's own directories" \
+  || no "(l28) the shipped engine and floor.js are byte-identical after the (l) mutation controls" \
+       "engine before='$LENG_SIG_BEFORE' after='$l_eng_after'; js before='$LJS_SIG_BEFORE' after='$l_js_after'; residue='$l_residue'"
+
 # (z) release-surface parity — appended by subtask 3
 # ===========================================================================
 echo "(z) AC-module-registered — the release surfaces that make /setup ui a real module"
@@ -2003,4 +3255,379 @@ if [ -r "$FLOOR_MD" ] && [ -r "$FLOOR_SH" ]; then
     || no "(z9) no pre-fourteen surfaces/formats residue survives in FLOOR_UI.md" "still present:$stale_md"
 else
   no "(z8/z9) FLOOR_UI.md and build-floor.sh are both readable" "FLOOR_UI.md or build-floor.sh could not be read"
+fi
+
+# --- (z10)-(z15): the /ui command's own registration surfaces ---------------------------
+# Appended by the `/ui` item. Same reasoning as (z1)-(z3) one level out: a new COMMAND has
+# enumerations spread across a command-reference doc, its own flow file and the module docs
+# that must not pretend it does not exist, and NO CI gate covers any of them —
+# check-command-sync.sh guards only commands/code-reviewer.md, and check-doc-currency.sh
+# derives no per-command registration claim at all. These are FOUR separate subjects on
+# purpose: a single added row must not be able to satisfy the gate while three go unmet.
+UI_MD="$script_dir/../commands/ui.md"
+REPO_ROOT="$(cd "$script_dir/../.." 2>/dev/null && pwd)"
+
+# --- (z10) the registry row: the command-reference doc lists /ui ------------------------
+# Matched on the heading shape so a passing mention of `/ui` in prose cannot satisfy it.
+if has_re "$HELP_MD" '^### .* /ui — '; then
+  ok "(z10) commands/agent-help.md carries a \`/ui\` row in its command reference"
+else
+  no "(z10) commands/agent-help.md carries a \`/ui\` row in its command reference" \
+     "agent-help.md is the surface a user reads to discover a command; a command absent from it is unregistered in practice"
+fi
+
+# --- (z11) the module flow: the command's own flow document exists ----------------------
+if [ -r "$UI_MD" ] && has_re "$UI_MD" '^# Command: /ui$'; then
+  ok "(z11) commands/ui.md exists and carries the '# Command: /ui' flow heading"
+else
+  no "(z11) commands/ui.md exists and carries the '# Command: /ui' flow heading" \
+     "the command file IS the flow; agent-help.md only points at it"
+fi
+
+# --- (z12) the cross-reference: the module docs do not hide the second entry point ------
+# ONE claim, two places it has to hold: a reader who arrives at the module through either
+# `/setup ui`'s flow or the setup skill's registry row must learn that the operational half
+# lives in `/ui`. Two entry points documented in mutual ignorance is how a user ends up back
+# in a terminal running the engine by hand, which is the friction this item removed.
+z12_flow=0; z12_row=0
+if awk '/^## Module: ui$/{f=1} f&&/^## /&&!/^## Module: ui$/{f=0} f&&index($0,"`/ui`")>0{n++} END{exit !(n>0)}' "$SETUP_MD"; then z12_flow=1; fi
+if awk 'index($0,"| `ui` |")==1 && index($0,"`/ui`")>0 {n++} END{exit !(n>0)}' "$SKILL_MD"; then z12_row=1; fi
+if [ "$z12_flow" -eq 1 ] && [ "$z12_row" -eq 1 ]; then
+  ok "(z12) commands/setup.md's '## Module: ui' flow AND skills/setup/SKILL.md's \`ui\` registry row both name the direct \`/ui\` command"
+else
+  no "(z12) the module docs name the direct \`/ui\` command" \
+     "flow=$z12_flow row=$z12_row (1 = names it) — the half that says 0 documents the module as if the second entry point did not exist"
+fi
+
+# --- (z13) zero stale command-count residue ---------------------------------------------
+# The command count moved 21 -> 22. Grep the OLD value across the release surfaces rather
+# than trusting an enumeration of where it was believed to live: check-doc-currency.sh
+# verifies claims that ARE made and structurally cannot see one that should have been made,
+# and the previous count bump found two sites its own plan had not named. CHANGELOG.md is
+# deliberately NOT scanned — its entries are historical and correctly keep the old number.
+#
+# WHICH PHRASINGS ARE SWEPT, and one that is DELIBERATELY NOT, because getting this wrong in
+# either direction is silent. Only the CURRENT-STATE phrasings are swept. The bare form
+# `21 commands` is excluded on measurement, not on taste: README.md's dated `NEW in vX.Y.Z`
+# banners each close with a per-release `Counts: 14 agents / N commands / N skills / N hooks`
+# line describing THAT release — nine of them today, several stating skill and hook counts
+# this repo left behind long ago — which is the same historical convention CHANGELOG.md uses
+# and is why CHANGELOG.md is unscanned. Sweeping the bare form would flag all nine forever and
+# pressure the next author into rewriting frozen release history to appease a gate. The
+# parenthesised `(21 commands` IS swept, because that is the current-state form README uses
+# in its live "Commands are in ..." pointer. (z14) is what keeps this narrowing honest: it
+# requires the current claim to actually be present, so a surface that simply stopped stating
+# a count cannot pass (z13) by having nothing to be stale about.
+Z_SURFACES="$REPO_ROOT/README.md $REPO_ROOT/CLAUDE.md $REPO_ROOT/.claude-plugin/README.md $REPO_ROOT/.claude-plugin/marketplace.json $script_dir/../.claude-plugin/plugin.json $HELP_MD"
+z_seen=0; z_stale=""
+for f in $Z_SURFACES; do
+  [ -r "$f" ] || continue
+  z_seen=$((z_seen + 1))
+  for pat in '21 slash commands' 'Slash commands (21)' '21 entry points' '(21 commands'; do
+    if has_lit "$f" "$pat"; then z_stale="$z_stale [$(basename "$f"):$pat]"; fi
+  done
+done
+if [ "$z_seen" -lt 5 ]; then
+  no "(z13) no stale '21 commands' residue on the release surfaces" \
+     "only $z_seen of 6 surfaces were readable from this suite, so the sweep would be near-vacuous"
+elif [ -z "$z_stale" ]; then
+  ok "(z13) no stale '21 commands' residue across $z_seen release surfaces"
+else
+  no "(z13) no stale '21 commands' residue across the release surfaces" "still stale in:$z_stale"
+fi
+
+# --- (z14) ANTI-VACUITY for (z13) --------------------------------------------------------
+# The grep above proves nothing if the count claim is simply ABSENT: a surface that states no
+# command count at all passes (z13) while being just as rotten. This is the same anti-vacuity
+# pairing (z6) makes for (z5), one enumeration over.
+z14_missing=""
+for f in "$REPO_ROOT/README.md" "$REPO_ROOT/CLAUDE.md" "$REPO_ROOT/.claude-plugin/README.md" "$HELP_MD"; do
+  [ -r "$f" ] || { z14_missing="$z14_missing [unreadable:$(basename "$f")]"; continue; }
+  if has_re "$f" '22 slash commands|Slash commands \(22\)|22 entry points|\(22 commands'; then :; else
+    z14_missing="$z14_missing [$(basename "$f")]"
+  fi
+done
+if [ -z "$z14_missing" ]; then
+  ok "(z14) all four prose surfaces state the CURRENT command count, so (z13) is not passing on an absent claim"
+else
+  no "(z14) all four prose surfaces state the CURRENT command count" \
+     "(z13) may be vacuous — no command-count claim found in:$z14_missing"
+fi
+
+# --- (z15) AC-3d: the write list stays EXHAUSTIVE ----------------------------------------
+# `docs/FLOOR_UI.md`'s "What it writes — the whole list" says "the whole list" and "Nothing
+# else, anywhere". `serve` gained a served index, and a section that claims exhaustiveness
+# while omitting a write is worse than one that never claimed it. The obligation gets a
+# MECHANICAL subject rather than staying prose: the filename is read out of the engine's own
+# SERVED_INDEX assignment, so this cannot rot into a check for a literal the engine renamed.
+served_index_name="$(sed -n 's/^SERVED_INDEX="\([^"]*\)".*$/\1/p' "$ENGINE" | head -1)"
+write_list="$(awk '/^## What it writes — the whole list$/{f=1;next} f&&/^## /{f=0} f{print}' "$FLOOR_MD")"
+if [ -z "$served_index_name" ]; then
+  no "(z15) FLOOR_UI.md's write list names the served index" \
+     "SERVED_INDEX could not be parsed out of the engine, so this assertion would be vacuous"
+elif [ -z "$write_list" ]; then
+  no "(z15) FLOOR_UI.md's write list names the served index" \
+     "the '## What it writes — the whole list' section was not found in $FLOOR_MD"
+elif in_str "$write_list" "$served_index_name"; then
+  ok "(z15) FLOOR_UI.md's '## What it writes — the whole list' names the served index ('$served_index_name'), read out of the engine"
+else
+  no "(z15) FLOOR_UI.md's '## What it writes — the whole list' names the served index" \
+     "the engine writes '$served_index_name' but that section does not name it — the section claims to be the whole list"
+fi
+
+
+# (l29)/(l30) — LANE MEMORY MUST BE RESET BY THE ASSIGNMENT, NOT BY ONE CALLER OF IT.
+# The CI reviewer found that resetProjectMemory() was wired to the picker's onchange alone,
+# while renderProjectPicker ALSO reassigns selectedSlug on two paths the reader never touches:
+# the served index going momentarily absent/unreadable (root fallback), and the "follow it"
+# branch when the viewed project drops out of the registry. Those paths switched the rendered
+# document while prevEvents/shuttleStep still held the PREVIOUS project's per-agent counts —
+# and untyped rows fall back to a positional id ('row-' + i), so two unrelated projects' first
+# untyped rows collide on "row-0" and a shuttle can advance purely because the old project
+# reported a higher count there. Motion with no event behind it in the document being rendered
+# is the single invariant this bundle exists to enforce, so the guard is STRUCTURAL: exactly one
+# site may mutate selectedSlug, and that site resets. A future author adding a fourth assignment
+# reintroduces the bug silently, which is what (l29) is here to stop.
+l_sel_assign="$(grep -cE '(^|[^a-zA-Z])selectedSlug[[:space:]]*=[^=]' "$JS")"
+l_sel_infn="$(awk '/^  function setSelectedSlug/{f=1} f&&/selectedSlug[[:space:]]*=[^=]/{n++} f&&/^  }/{exit} END{print n+0}' "$JS")"
+l_sel_decl="$(grep -cE '^  var selectedSlug = null;$' "$JS")"
+if [ "$l_sel_assign" = "$((l_sel_infn + l_sel_decl))" ] && [ "$l_sel_infn" = "1" ] && [ "$l_sel_decl" = "1" ]; then
+  ok "(l29) selectedSlug is mutated in exactly ONE place — inside setSelectedSlug, which always resets lane memory (found $l_sel_assign assignment(s): $l_sel_decl declaration + $l_sel_infn in the setter)"
+else
+  no "(l29) selectedSlug is mutated only inside setSelectedSlug" \
+     "found $l_sel_assign total assignment(s), $l_sel_infn in the setter, $l_sel_decl declaration — an assignment outside the setter switches the document without clearing prevEvents/shuttleStep"
+fi
+
+# (l30) ANTI-VACUITY. (l29) is a counting assertion, and a counting assertion whose count can
+# never move proves nothing. Reintroduce a bare assignment outside the setter — the exact shape
+# of the reported defect — and require (l29)'s predicate to break.
+l_sel_mut="$TMPROOT/floor-sel-mutant.js"
+sed 's|      setSelectedSlug(null);|      selectedSlug = null;|' "$JS" > "$l_sel_mut" 2>/dev/null
+if mutant_ok "$JS" "$l_sel_mut"; then
+  m_assign="$(grep -cE '(^|[^a-zA-Z])selectedSlug[[:space:]]*=[^=]' "$l_sel_mut")"
+  m_infn="$(awk '/^  function setSelectedSlug/{f=1} f&&/selectedSlug[[:space:]]*=[^=]/{n++} f&&/^  }/{exit} END{print n+0}' "$l_sel_mut")"
+  m_decl="$(grep -cE '^  var selectedSlug = null;$' "$l_sel_mut")"
+  if [ "$m_assign" != "$((m_infn + m_decl))" ]; then
+    ok "(l30) ANTI-VACUITY: a bare selectedSlug assignment outside the setter BREAKS (l29)'s predicate ($m_assign total vs $((m_infn + m_decl))) — the count can move, so (l29) is a real gate"
+  else
+    no "(l30) ANTI-VACUITY: a bare assignment outside the setter breaks (l29)" \
+       "the mutant counted $m_assign total and $((m_infn + m_decl)) accounted-for — (l29) would pass with the defect present"
+  fi
+else
+  no "(l30) ANTI-VACUITY fixture: the selectedSlug mutant is unusable" "mutant_ok rejected it"
+fi
+
+# ===========================================================================
+echo "(m) AC-entrypoint-parity — /setup ui, /ui and the engine name the same verbs"
+# ===========================================================================
+# WHAT THIS GROUP PROVES. Two commands now drive one engine, and the failure this prevents is
+# quiet: the engine gains a subcommand and NEITHER file documents it, so it exists and nobody
+# can find it. The predicate is therefore not pairwise equality — the three sets are
+# deliberately unequal (`/setup ui` keeps apply/remove, `/ui` adds the registry verbs) — it is
+# that the UNION of the two documented sets EQUALS the engine's real set.
+#
+# THE ENGINE'S SET IS PARSED, NEVER RESTATED HERE. A literal list in this file would be a
+# third enumeration that rots on its own, which is the exact defect (z8) exists to prevent one
+# document over. Two details of the parse are load-bearing:
+#   1. It is PINNED to `case "$SUBCMD" in`. The engine contains several `case` statements
+#      (argument parsing, numeric validation, pid filtering); parsing the wrong one silently
+#      yields a nonsense verb set and every clause below would then be measuring nothing.
+#      (m1) asserts the anchor is unique and (m2) asserts the parsed set is plausible.
+#   2. It reads the ARM LABELS. The `*)` arm's error text restates the verb list in prose —
+#      a SECOND in-file enumeration that can drift by itself — so reading it would be reading
+#      a copy rather than the dispatch. (m10) controls for exactly that.
+#
+# WHY THE OBVIOUS MUTATION CONTROL IS ABSENT, recorded rather than glossed: deleting one of
+# check/apply/serve/stop/remove from commands/ui.md provably does NOT redden, because
+# commands/setup.md documents all five and the UNION is unchanged. The two controls used
+# instead are (m8) delete a verb documented ONLY in commands/ui.md, and (m9) append an
+# undocumented verb to a scratch copy of the engine's dispatch.
+
+for f in "$ENGINE" "$SETUP_MD" "$UI_MD"; do
+  [ -r "$f" ] || setup_fail "(m) fixture: $f is not readable, so every assertion below would be vacuous"
+done
+M_ENG_SIG_BEFORE="$(csum "$ENGINE")"
+M_UI_SIG_BEFORE="$(csum "$UI_MD")"
+
+# engine_verbs <engine file> -> the arm labels of the pinned dispatch case, one per line.
+engine_verbs() {
+  awk '
+    $0 == "case \"$SUBCMD\" in" { inb = 1; next }
+    inb && $0 == "esac" { inb = 0 }
+    inb {
+      line = $0
+      sub(/^[ \t]+/, "", line)
+      if (match(line, /^[a-z][a-z0-9_-]*\)/)) print substr(line, 1, RLENGTH - 1)
+    }
+  ' "$1"
+}
+# doc_verbs <md file> <section-start ERE|""> <section-end ERE|""> -> the backticked tokens on
+# the section's `subcommands` enumeration line(s). The token filter is shape-based
+# (`^[a-z][a-z0-9_-]*$`) and DELIBERATELY does not consult the engine's set: a documented verb
+# the engine does not have must be able to fail clauses (i)/(ii) rather than be filtered away.
+# It drops the backticked PATHS that share those lines - the engine's own filename, the
+# projector's, and the plugin-install-root variable form the command files use - because none
+# of them match that shape. (Those path forms are DESCRIBED rather than quoted here on purpose:
+# this file deliberately holds no vendor-coupling allowance, and spelling one of them literally
+# would put the first entry on it just to write a comment.)
+doc_verbs() {
+  awk -v s="$2" -v e="$3" '
+    BEGIN { inb = (s == "") ? 1 : 0 }
+    s != "" && $0 ~ s { inb = 1; next }
+    inb && e != "" && $0 ~ e { inb = 0 }
+    inb && index($0, "subcommands") > 0 {
+      n = split($0, parts, "`")
+      for (i = 2; i <= n; i += 2) if (parts[i] ~ /^[a-z][a-z0-9_-]*$/) print parts[i]
+    }
+  ' "$1"
+}
+doc_enum_lines() {
+  awk -v s="$2" -v e="$3" '
+    BEGIN { inb = (s == "") ? 1 : 0; n = 0 }
+    s != "" && $0 ~ s { inb = 1; next }
+    inb && e != "" && $0 ~ e { inb = 0 }
+    inb && index($0, "subcommands") > 0 { n++ }
+    END { print n + 0 }
+  ' "$1"
+}
+setify() { tr ' \t' '\n\n' | sed '/^$/d' | LC_ALL=C sort -u | tr '\n' ' '; }
+# not_in <candidate set> <reference set> -> members of the candidate absent from the reference
+not_in() {
+  local v out=""
+  for v in $1; do case " $2 " in *" $v "*) ;; *) out="$out $v" ;; esac; done
+  printf '%s' "${out# }"
+}
+
+m_anchor_n="$(grep -c -F -- 'case "$SUBCMD" in' "$ENGINE" 2>/dev/null || true)"
+case "$m_anchor_n" in ''|*[!0-9]*) m_anchor_n=0 ;; esac
+if [ "$m_anchor_n" -eq 1 ]; then
+  ok "(m1) the dispatch anchor \`case \"\$SUBCMD\" in\` occurs exactly once in setup-ui.sh — the parse is pinned to one of the file's several case statements"
+else
+  no "(m1) the dispatch anchor occurs exactly once in setup-ui.sh" \
+     "found $m_anchor_n — a second anchor would make the parsed verb set ambiguous and every clause below unreliable"
+fi
+
+M_ENGINE_SET="$(engine_verbs "$ENGINE" | setify)"
+M_SETUP_SET="$(doc_verbs "$SETUP_MD" '^## Module: ui$' '^## ' | setify)"
+M_UI_SET="$(doc_verbs "$UI_MD" '' '' | setify)"
+
+# (m2) PREMISE: the parsed engine set is plausible. Without this, a parse that silently
+# returned nothing would make (m4)/(m5) pass vacuously (every member of a set is in it).
+m2_missing="$(not_in "check apply serve stop remove" "$M_ENGINE_SET")"
+m2_n="$(printf '%s' "$M_ENGINE_SET" | wc -w | tr -d ' ')"
+if [ -z "$m2_missing" ] && [ "$m2_n" -ge 5 ]; then
+  ok "(m2) the parsed engine verb set is plausible ($m2_n verbs, including all five module verbs): $M_ENGINE_SET"
+else
+  no "(m2) the parsed engine verb set is plausible" \
+     "parsed '$M_ENGINE_SET' ($m2_n verbs); missing from it: '$m2_missing' — the wrong case statement was almost certainly read"
+fi
+
+# (m3) PREMISE: each document carries EXACTLY ONE enumeration line and it yields verbs. A
+# second enumeration in either file is a loud failure rather than a silently merged basis.
+m3_setup_lines="$(doc_enum_lines "$SETUP_MD" '^## Module: ui$' '^## ')"
+m3_ui_lines="$(doc_enum_lines "$UI_MD" '' '')"
+if [ "$m3_setup_lines" = "1" ] && [ "$m3_ui_lines" = "1" ] && [ -n "$M_SETUP_SET" ] && [ -n "$M_UI_SET" ]; then
+  ok "(m3) each command file carries exactly one verb enumeration and both parse non-empty — setup.md: $M_SETUP_SET| ui.md: $M_UI_SET"
+else
+  no "(m3) each command file carries exactly one verb enumeration and both parse non-empty" \
+     "setup.md lines=$m3_setup_lines set='$M_SETUP_SET'; ui.md lines=$m3_ui_lines set='$M_UI_SET'"
+fi
+
+# (m4) CLAUSE (i)
+m4_extra="$(not_in "$M_SETUP_SET" "$M_ENGINE_SET")"
+if [ -z "$m4_extra" ]; then
+  ok "(m4) clause (i): every verb documented in commands/setup.md's '## Module: ui' flow exists in the engine's dispatch"
+else
+  no "(m4) clause (i): every verb documented in commands/setup.md's '## Module: ui' flow exists in the engine" \
+     "documented but not dispatched: $m4_extra"
+fi
+
+# (m5) CLAUSE (ii)
+m5_extra="$(not_in "$M_UI_SET" "$M_ENGINE_SET")"
+if [ -z "$m5_extra" ]; then
+  ok "(m5) clause (ii): every verb documented in commands/ui.md exists in the engine's dispatch"
+else
+  no "(m5) clause (ii): every verb documented in commands/ui.md exists in the engine" \
+     "documented but not dispatched: $m5_extra"
+fi
+
+# (m6) CLAUSE (iii) — the union, which is the clause the two controls exercise.
+M_UNION="$(printf '%s %s' "$M_SETUP_SET" "$M_UI_SET" | setify)"
+if [ "$M_UNION" = "$M_ENGINE_SET" ]; then
+  ok "(m6) clause (iii): the UNION of the two documented sets equals the engine's dispatch set ($M_ENGINE_SET)"
+else
+  no "(m6) clause (iii): the UNION of the two documented sets equals the engine's dispatch set" \
+     "union='$M_UNION' engine='$M_ENGINE_SET'; undocumented by either file: '$(not_in "$M_ENGINE_SET" "$M_UNION")'"
+fi
+
+# (m7) the enumeration is a FAITHFUL PROXY for "documented" in commands/ui.md: every verb it
+# lists has a `### \`verb\`` section, and every such section is listed. Without this, the
+# enumeration line could drift away from the sections it summarises and the clauses above
+# would be measuring a sentence rather than the document.
+M_UI_SECTIONS="$(sed -n 's/^### `\([a-z][a-z0-9_-]*\)`.*$/\1/p' "$UI_MD" | setify)"
+if [ "$M_UI_SECTIONS" = "$M_UI_SET" ]; then
+  ok "(m7) commands/ui.md's verb enumeration and its per-verb '###' sections name the same verbs ($M_UI_SET)"
+else
+  no "(m7) commands/ui.md's verb enumeration and its per-verb sections name the same verbs" \
+     "enumeration='$M_UI_SET' sections='$M_UI_SECTIONS'"
+fi
+
+# --- (m8) CONTROL c1: a verb documented ONLY in commands/ui.md is deleted ----------------
+m_c1="$TMPROOT/ui.md.c1.mut"
+awk 'index($0,"subcommands")>0 { gsub(/ \/ `forget`/, "") } { print }' "$UI_MD" > "$m_c1" 2>/dev/null
+if mutant_ok "$UI_MD" "$m_c1"; then
+  m_c1_set="$(doc_verbs "$m_c1" '' '' | setify)"
+  m_c1_union="$(printf '%s %s' "$M_SETUP_SET" "$m_c1_set" | setify)"
+  if [ "$m_c1_union" != "$M_ENGINE_SET" ]; then
+    ok "(m8) CONTROL c1: dropping \`forget\` — documented ONLY in commands/ui.md — reddens clause (iii) (union='$m_c1_union')"
+  else
+    no "(m8) CONTROL c1: dropping a ui.md-only verb must redden clause (iii)" \
+       "the union still equals the engine set, so (m6) cannot detect a doc-side drop and is vacuous"
+  fi
+fi
+
+# --- (m9) CONTROL c2: the engine gains a verb nobody documents ---------------------------
+# The engine-side drift, which otherwise has NO control at all. The mutant is a scratch copy
+# in the temp tree; the shipped engine is never written (m11 proves it by hash).
+m_c2="$TMPROOT/setup-ui.c2.mut.sh"
+awk '$0 == "case \"$SUBCMD\" in" { print; print "  purge)  do_check ;;"; next } { print }' "$ENGINE" > "$m_c2" 2>/dev/null
+if mutant_ok "$ENGINE" "$m_c2" shell; then
+  m_c2_set="$(engine_verbs "$m_c2" | setify)"
+  case " $m_c2_set " in
+    *" purge "*)
+      if [ "$M_UNION" != "$m_c2_set" ]; then
+        ok "(m9) CONTROL c2: a verb appended to the engine's dispatch and documented nowhere reddens clause (iii) (engine set gained 'purge')"
+      else
+        no "(m9) CONTROL c2: an undocumented engine verb must redden clause (iii)" \
+           "the union still equals the mutated engine set ('$m_c2_set'), so engine-side drift is invisible"
+      fi ;;
+    *)
+      no "(m9) CONTROL c2 is well-formed" "the mutant's parsed set '$m_c2_set' does not contain the injected verb, so the control proves nothing" ;;
+  esac
+fi
+
+# --- (m10) CONTROL c3: the parse reads ARM LABELS, not the *) arm's error string ----------
+# The `*)` arm restates the verb list in prose. A parser that read THAT would be reading a
+# second enumeration which can drift on its own — so a mutant that drifts ONLY the error
+# string must leave the parsed set completely unchanged.
+m_c3="$TMPROOT/setup-ui.c3.mut.sh"
+awk '{ gsub(/expected check \| apply/, "expected purge | check | apply"); print }' "$ENGINE" > "$m_c3" 2>/dev/null
+if mutant_ok "$ENGINE" "$m_c3" shell; then
+  m_c3_set="$(engine_verbs "$m_c3" | setify)"
+  if [ "$m_c3_set" = "$M_ENGINE_SET" ]; then
+    ok "(m10) CONTROL c3: drifting the \`*)\` arm's error string leaves the parsed set unchanged — the parse reads arm labels, not that second enumeration"
+  else
+    no "(m10) CONTROL c3: the parse must read arm labels, not the \`*)\` arm's error string" \
+       "the error-string mutant changed the parsed set: '$m_c3_set' vs '$M_ENGINE_SET'"
+  fi
+fi
+
+# --- (m11) the shipped files are untouched by every (m) mutant ---------------------------
+m_eng_after="$(csum "$ENGINE")"; m_ui_after="$(csum "$UI_MD")"
+m_residue="$(ls "$script_dir"/*.mut.sh "$script_dir"/../commands/*.mut* 2>/dev/null || true)"
+if [ "$M_ENG_SIG_BEFORE" = "$m_eng_after" ] && [ "$M_UI_SIG_BEFORE" = "$m_ui_after" ] && [ -z "$m_residue" ]; then
+  ok "(m11) setup-ui.sh and commands/ui.md are byte-identical after every (m) mutation control (sha256 unchanged) and no mutant was left in the plugin's own directories"
+else
+  no "(m11) setup-ui.sh and commands/ui.md are byte-identical after the (m) mutation controls" \
+     "engine before='$M_ENG_SIG_BEFORE' after='$m_eng_after'; ui.md before='$M_UI_SIG_BEFORE' after='$m_ui_after'; residue='$m_residue'"
 fi

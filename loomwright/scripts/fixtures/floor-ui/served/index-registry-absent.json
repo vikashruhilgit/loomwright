@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "generated_at_epoch": 1788523142,
+  "module": {
+    "ui_dir": "/home/you/work/.local/ui-registry-absent",
+    "bundle": "present",
+    "marker": true
+  },
+  "serve": {
+    "interval_seconds": 2,
+    "slow_cadence_ticks": 5,
+    "regen": false,
+    "selected_path": "/home/you/work/.local",
+    "selected_registered": false
+  },
+  "registry": {
+    "state": "absent",
+    "reason": "there is no registry file at that path yet — 'setup-ui.sh add' creates it",
+    "path": "/home/you/work/.local/reg-registry-absent.json"
+  },
+  "projects": []
+}

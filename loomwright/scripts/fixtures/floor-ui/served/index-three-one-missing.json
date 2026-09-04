@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "generated_at_epoch": 1788523142,
+  "module": {
+    "ui_dir": "/home/you/work/.local/ui-three-one-missing",
+    "bundle": "present",
+    "marker": true
+  },
+  "serve": {
+    "interval_seconds": 2,
+    "slow_cadence_ticks": 5,
+    "regen": false,
+    "selected_path": "/home/you/work/proj-1",
+    "selected_registered": true,
+    "selected_slug": "proj-1"
+  },
+  "registry": {
+    "state": "ok",
+    "path": "/home/you/work/.local/reg-three-one-missing.json"
+  },
+  "projects": [
+    {
+      "slug": "proj-1",
+      "path": "/home/you/work/proj-1",
+      "state": "ready",
+      "selected": true,
+      "last_regenerated_epoch": 1788523142
+    },
+    {
+      "slug": "proj-2",
+      "path": "/home/you/work/proj-2",
+      "state": "unavailable",
+      "selected": false,
+      "reason": "the registered directory is not present at that path — it was moved or deleted; nothing has been removed from the registry, so 'forget' is still yours to run"
+    },
+    {
+      "slug": "proj-3",
+      "path": "/home/you/work/proj-3",
+      "state": "never-regenerated",
+      "selected": false,
+      "reason": "this serve has not produced a floor for this project yet; projects other than the selected one are regenerated one at a time on the slower cadence"
+    }
+  ]
+}

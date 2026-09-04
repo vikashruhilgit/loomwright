@@ -24,9 +24,19 @@
  * page is labelled with a word that would claim a running process; the permanent note under
  * the lanes says so on every render, and the self-test scans for those words by name.
  *
- * NETWORK: one relative fetch of `floor.json` against this page's own origin. Nothing else,
- * and never two at once - the poll holds an in-flight flag so a hung origin cannot stack
- * requests, cleared on both settle paths of that single request.
+ * NETWORK: relative GETs against this page's own origin and nothing else. There is exactly ONE
+ * `fetch(` call site in this file - `fetchText` below - and every URL handed to it is built
+ * HERE from a fixed string, never taken verbatim from a document the page just read. Two
+ * documents are read per tick (`index.json`, then the selected project's `floor.json`) and
+ * they are CHAINED, never concurrent: the poll holds one in-flight flag across both, so a hung
+ * origin cannot stack requests, and the flag is cleared on every settle path.
+ *
+ * THE PAGE ONLY READS, AND THE PICKER DOES NOT CHANGE THAT. Selecting a project switches which
+ * already-written document this page DISPLAYS. It sends nothing, asks for nothing the static
+ * server does not already hold as a file, and cannot cause a regeneration: which project the
+ * serve loop regenerates on the fast cadence is decided by the engine, from the directory
+ * `serve` was launched in. So a project on the slow cadence reads as exactly that - its own
+ * recorded age, next to the cadence the served index states - rather than as a fresh floor.
  */
 'use strict';
 
@@ -65,6 +75,30 @@
   var prevEvents = {};
   var shuttleStep = {};
   var lastGen = null;
+
+  /* THE PROJECT PICKER'S STATE. `selectedSlug === null` means the ui directory's own root
+   * `floor.json` - which is exactly what this page did before there were projects at all, and
+   * remains what it does when no served index is present. */
+  var SERVED_INDEX = 'index.json';
+  var selectedSlug = null;
+  /* THE ONLY WAY selectedSlug CHANGES. resetProjectMemory() used to be wired to the dropdown's
+     onchange alone, but selectedSlug is ALSO reassigned by renderProjectPicker on paths the
+     reader never touches: the served index going momentarily absent/unreadable (root fallback),
+     and the "follow it" branch when the project being viewed drops out of the registry. Those
+     paths switched the document while lane memory still held the PREVIOUS project's per-agent
+     counts — and untyped rows fall back to a positional id ('row-' + i), so two unrelated
+     projects' first untyped rows collide on "row-0" and a shuttle can advance purely because
+     the old project reported a higher count at that slot. Motion with no event behind it in the
+     document being rendered is the one thing this file exists to prevent, so the reset belongs
+     to the ASSIGNMENT, not to one caller of it. Resets only on a real change, so the per-tick
+     re-render of an unchanged selection costs nothing. */
+  function setSelectedSlug(v) {
+    if (v === selectedSlug) { return; }
+    selectedSlug = v;
+    resetProjectMemory();
+  }
+  var pickerSig = null;
+  var pickerTouched = false;
 
   function fmtAge(sec) {
     if (sec === null || sec === undefined || !isFinite(sec)) { return 'unknown'; }
@@ -140,6 +174,241 @@
     if (!text) { b.hidden = true; b.textContent = ''; return; }
     b.hidden = false;
     b.textContent = text;
+  }
+
+  /* ------------------------------------------------------------------------------------
+   * THE PROJECT PICKER
+   *
+   * Everything below reads `index.json` - the served index the engine writes into the very
+   * directory this page is served from. No new endpoint, no new timer, no write of any kind:
+   * the picker changes which already-written document this page displays and nothing else.
+   *
+   * FOUR STATES, and they are four because they are four different claims - the same rule the
+   * rules and churn views already follow:
+   *   the index is ABSENT        -> no served index at this origin. Say so, and go on rendering
+   *                                 the single root floor.json, which is what this page did
+   *                                 before projects existed.
+   *   the index is UNPARSEABLE   -> it was served and could not be read. Distinct from absent.
+   *   the registry is ABSENT vs UNPARSEABLE -> two different facts about the user's own file,
+   *                                 carried by the engine as `registry.state` precisely because
+   *                                 both produce an empty project list. Never collapsed.
+   *   a project row               -> ready / never regenerated / unavailable / unreadable age,
+   *                                 each with the engine's own reason.
+   * ------------------------------------------------------------------------------------ */
+
+  /* projectUrl is built HERE, from a fixed prefix and an encoded slug, and never from a URL
+   * the index supplies. encodeURIComponent leaves no `/` and no `:` intact, so a served index
+   * carrying a hostile slug still resolves to a path inside this origin's own projects
+   * directory. The CSP would refuse an off-origin fetch anyway; this makes the guarantee a
+   * property of the code rather than only of a header. */
+  function projectUrl(slug) {
+    if (!slug) { return 'floor.json'; }
+    return 'projects/' + encodeURIComponent(slug) + '/floor.json';
+  }
+
+  /* projectStateLabel -> the honest one-line state of one project row. Every branch names the
+   * engine's own `reason` when there is one and says that there is none when there is not; an
+   * unrecognised state is NAMED rather than rendered as any of the states this page does know,
+   * because an artefact from a newer engine must not be silently mapped onto the wrong claim. */
+  function projectStateLabel(p) {
+    if (!p || Object.prototype.toString.call(p) !== '[object Object]') {
+      return 'this row is not a project record';
+    }
+    if (!Object.prototype.hasOwnProperty.call(p, 'state')) {
+      return 'the served index records no state for this project';
+    }
+    var st = String(p.state);
+    var why = (typeof p.reason === 'string' && p.reason)
+      ? (' — ' + p.reason)
+      : ' — the served index records no reason';
+    if (st === 'unavailable') { return 'unavailable' + why; }
+    if (st === 'never-regenerated') { return 'never regenerated' + why; }
+    if (st === 'unreadable') { return 'age unknown' + why; }
+    if (st === 'ready') {
+      if (typeof p.last_regenerated_epoch !== 'number') {
+        return 'regenerated, but the served index records no time for it';
+      }
+      return 'last regenerated ' + fmtAge(Math.floor(Date.now() / 1000) - p.last_regenerated_epoch) + ' ago';
+    }
+    return 'state "' + st + '" is not one this page knows how to render';
+  }
+
+  /* registryStateLabel -> ABSENT and UNPARSEABLE said as the two different things they are.
+   * A registry that was never created is the normal state of a fresh install; one that cannot
+   * be parsed is a file the user has and this module refuses to touch. Reporting either as the
+   * other would send a reader to fix the wrong thing. */
+  function registryStateLabel(reg) {
+    if (!reg || Object.prototype.toString.call(reg) !== '[object Object]') {
+      return 'the served index carries no registry state';
+    }
+    if (!Object.prototype.hasOwnProperty.call(reg, 'state')) {
+      return 'the served index carries no registry state';
+    }
+    var st = String(reg.state);
+    var why = (typeof reg.reason === 'string' && reg.reason) ? (' — ' + reg.reason) : '';
+    var where = (typeof reg.path === 'string' && reg.path) ? (' (' + reg.path + ')') : '';
+    if (st === 'ok') { return 'registry read' + where; }
+    if (st === 'absent') { return 'registry absent: no projects are registered yet' + where + why; }
+    if (st === 'unparseable') { return 'registry unparseable: the file is there but could not be read' + where + why; }
+    if (st === 'unreadable') { return 'registry unreadable' + where + why; }
+    if (st === 'unnameable') { return 'registry unnameable' + where + why; }
+    return 'registry state "' + st + '" is not one this page knows how to render';
+  }
+
+  function projectRows(idx) {
+    var rows = idx && idx.projects;
+    if (Object.prototype.toString.call(rows) !== '[object Array]') { return []; }
+    return rows;
+  }
+
+  /* renderProjectPicker — the whole projects section: the select, the per-project list and the
+   * cadence note. Called on every tick from the ONE existing poll; it starts no timer.
+   *
+   * The <select> is rebuilt only when its OPTION SET changes (a signature over the slugs), not
+   * on every tick: rebuilding it every two seconds would silently snap the reader's choice back
+   * to the default while they were looking at another project. The per-project list beside it
+   * IS rebuilt every tick, because it is text and its ages must move. */
+  function renderProjectPicker(idx) {
+    var sel = el('project-picker');
+    var host = el('project-rows');
+    var note = el('project-note');
+    var regEl = el('registry-state');
+    if (!sel || !host) { return; }
+
+    if (!idx || idx.absent === true) {
+      sel.hidden = true;
+      host.innerHTML = '';
+      if (regEl) { regEl.textContent = ''; }
+      if (note) {
+        note.textContent = (idx && idx.parseError)
+          ? ('the served index was served but could not be read (' + idx.parseError + ') — showing the single floor.json this directory serves')
+          : ((idx && idx.fetchError)
+            ? ('the served index could not be read (' + idx.fetchError + ') — showing the single floor.json this directory serves')
+            : 'no served index at this origin — showing the single floor.json this directory serves. `setup-ui.sh serve` writes one.');
+      }
+      setSelectedSlug(null);
+      pickerSig = null;
+      return;
+    }
+
+    var rows = projectRows(idx);
+    var srv = (idx.serve && Object.prototype.toString.call(idx.serve) === '[object Object]') ? idx.serve : {};
+    if (regEl) { regEl.textContent = registryStateLabel(idx.registry); }
+
+    /* The root option exists only when the directory this serve was launched in is NOT one of
+     * the registered projects. When it IS registered, its slot document and the root
+     * floor.json are the same bytes, and offering both would be two names for one thing. */
+    var rootOption = (srv.selected_registered !== true);
+    var i, sig = (rootOption ? '*root*' : '');
+    for (i = 0; i < rows.length; i++) { sig += '|' + String(rows[i] && rows[i].slug); }
+
+    if (sig !== pickerSig) {
+      pickerSig = sig;
+      sel.innerHTML = '';
+      var opt;
+      if (rootOption) {
+        opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = (typeof srv.selected_path === 'string' && srv.selected_path)
+          ? ('this serve’s own directory — ' + srv.selected_path + ' (not registered)')
+          : 'this serve’s own directory (not registered)';
+        sel.appendChild(opt);
+      }
+      for (i = 0; i < rows.length; i++) {
+        var r = rows[i] || {};
+        opt = document.createElement('option');
+        opt.value = String(r.slug === undefined ? '' : r.slug);
+        opt.textContent = String(r.slug === undefined ? '(no slug recorded)' : r.slug) +
+          (r.selected === true ? ' — selected by this serve' : '');
+        sel.appendChild(opt);
+      }
+      /* Only the FIRST build chooses for the reader, and it chooses what the engine is
+       * actually regenerating on the fast cadence. After that the reader's choice wins, even
+       * across a registry change, because clobbering it would be motion they did not ask for. */
+      if (!pickerTouched) {
+        /* Computed into a local and assigned ONCE: assigning through the setter inside the loop
+           would reset lane memory two or three times for a single decision. */
+        var chosen = null;
+        for (i = 0; i < rows.length; i++) {
+          if (rows[i] && rows[i].selected === true) { chosen = String(rows[i].slug); break; }
+        }
+        if (chosen === null && !rootOption && rows.length) { chosen = String(rows[0].slug); }
+        setSelectedSlug(chosen);
+      }
+      sel.value = (selectedSlug === null) ? '' : selectedSlug;
+      /* If the project the reader was on has gone from the registry, the select would silently
+       * fall back to its first option while this page kept fetching the old slug. Follow it. */
+      if (sel.value !== ((selectedSlug === null) ? '' : selectedSlug)) {
+        setSelectedSlug(sel.value === '' ? null : sel.value);
+      }
+    }
+    sel.hidden = false;
+
+    host.innerHTML = '';
+    if (!rows.length) {
+      var liNone = document.createElement('li');
+      liNone.className = 'empty';
+      liNone.textContent = 'no projects registered — `setup-ui.sh add`, run inside a project, puts one here. A project appears on this page only because a human added it.';
+      host.appendChild(liNone);
+    }
+    for (i = 0; i < rows.length; i++) {
+      var p = rows[i] || {};
+      var li = document.createElement('li');
+      li.className = 'project';
+      if (p.state === 'unavailable') { li.classList.add('unavailable'); }
+      if (String(p.slug) === String(selectedSlug)) { li.classList.add('showing'); }
+
+      var nameEl = document.createElement('span');
+      nameEl.className = 'project-slug';
+      nameEl.textContent = (p.slug === undefined) ? '(no slug recorded)' : String(p.slug);
+      li.appendChild(nameEl);
+
+      var pathEl = document.createElement('span');
+      pathEl.className = 'project-path';
+      pathEl.textContent = ' ' + ((typeof p.path === 'string' && p.path) ? p.path : '(no path recorded)');
+      li.appendChild(pathEl);
+
+      var stEl = document.createElement('span');
+      stEl.className = 'project-state';
+      stEl.textContent = ' · ' + projectStateLabel(p);
+      li.appendChild(stEl);
+      host.appendChild(li);
+    }
+
+    if (note) {
+      /* The cadence is READ from the served index, never assumed: this page cannot see
+       * `--interval` and the slow factor is the engine's constant, not the page's. Stating
+       * both is what makes a project that is legitimately old readable as such. */
+      var bits = [];
+      if (typeof srv.interval_seconds === 'number') {
+        bits.push('the project this serve was launched in regenerates every ' + srv.interval_seconds + 's');
+        if (typeof srv.slow_cadence_ticks === 'number') {
+          bits.push('every other registered project one at a time every ' +
+            (srv.interval_seconds * srv.slow_cadence_ticks) + 's');
+        }
+      }
+      if (srv.regen === false) { bits.push('regeneration is OFF for this serve (--no-regen), so every age below is frozen'); }
+      note.textContent = bits.length
+        ? (bits.join(' · ') + '. Selecting a project switches what this page reads; it never asks the server to regenerate anything.')
+        : 'the served index records no cadence for this serve';
+    }
+  }
+
+  /* Lane memory belongs to ONE project's document. Carrying it across a switch would let a
+   * shuttle advance because two different projects reported different counts - motion with no
+   * event behind it, which is the one thing this file exists to prevent. */
+  function resetProjectMemory() {
+    var k;
+    for (k in laneEls) {
+      if (Object.prototype.hasOwnProperty.call(laneEls, k)) {
+        if (laneEls[k].parentNode) { laneEls[k].parentNode.removeChild(laneEls[k]); }
+      }
+    }
+    laneEls = {};
+    prevEvents = {};
+    shuttleStep = {};
+    lastGen = null;
+    apply.lanes = 0;
   }
 
   function rosterIndex(d) {
@@ -1010,19 +1279,59 @@
    * can never wedge the page permanently. */
   var inFlight = false;
 
+  /* THE ONE AND ONLY `fetch(` CALL SITE IN THIS FILE. Both documents the page reads go
+   * through it, which is what keeps "exactly one request shape, relative, no-store, no method
+   * option" a property that can be counted rather than reviewed. It RESOLVES on every HTTP
+   * outcome, describing it, and rejects only when the request itself failed - so a caller
+   * never has to tell "404" apart from "the origin vanished" by inspecting an exception. */
+  function fetchText(url) {
+    return fetch(url, { cache: 'no-store' }).then(function (r) {
+      if (r.status === 404) { return { missing: true }; }
+      if (!r.ok) { return { error: 'status ' + r.status }; }
+      return r.text().then(function (t) { return { text: t }; });
+    });
+  }
+
   function poll() {
     if (inFlight) { return; }
     inFlight = true;
     try {
-      fetch('floor.json', { cache: 'no-store' }).then(function (r) {
-        if (r.status === 404) { fail('no floor.json at this origin'); return null; }
-        if (!r.ok) { fail('floor.json could not be read (status ' + r.status + ')'); return null; }
-        return r.text();
-      }).then(function (t) {
+      /* CHAINED, NEVER CONCURRENT. The served index is read first because it decides WHICH
+       * floor.json the second read asks for; the single in-flight flag spans both. */
+      /* Which document the shared catch below should name. Set BEFORE each leg can reject,
+         so a rejection is attributed to the read that actually failed rather than to
+         whichever document the handler happened to be written about. */
+      var failedDoc = SERVED_INDEX;
+      fetchText(SERVED_INDEX).then(function (res) {
+        var idx;
+        if (res && res.missing) {
+          idx = { absent: true };
+        } else if (res && res.error) {
+          idx = { absent: true, fetchError: res.error };
+        } else {
+          try { idx = JSON.parse(res.text); } catch (e) {
+            idx = { absent: true, parseError: (e && e.message) || 'not valid JSON' };
+          }
+        }
+        try { renderProjectPicker(idx); } catch (e) {
+          /* A picker that throws must not take the floor down with it: the floor is the
+             document this page exists to render, and it is already on its way. */
+          var pn = el('project-note');
+          if (pn) { pn.textContent = 'the served index was read but the picker could not be rendered (' + ((e && e.message) || 'render failed') + ')'; }
+        }
+        failedDoc = projectUrl(selectedSlug);
+        return fetchText(projectUrl(selectedSlug));
+      }).then(function (res) {
         inFlight = false;
-        if (t === null || t === undefined) { return; }
+        if (!res) { return; }
+        if (res.missing) {
+          fail('no floor.json at ' + projectUrl(selectedSlug) +
+            ' — this origin holds no document for that project yet');
+          return;
+        }
+        if (res.error) { fail('floor.json could not be read (' + res.error + ')'); return; }
         var d;
-        try { d = JSON.parse(t); } catch (e) {
+        try { d = JSON.parse(res.text); } catch (e) {
           fail('floor.json is present but is not valid JSON');
           return;
         }
@@ -1036,13 +1345,35 @@
         }
       })['catch'](function (e) {
         inFlight = false;
-        fail('no floor.json at this origin (' + ((e && e.message) || 'fetch failed') + ')');
+        /* poll() chains TWO fetches - the served index, then the selected project's floor.json -
+           behind this one handler, so blaming floor.json unconditionally names a document that
+           may have read fine. `failedDoc` is set by whichever leg actually rejected; the page
+           states what it measured and nothing more, which is the same rule the stale banner and
+           the render-failure branch above already follow. */
+        fail('could not read ' + (failedDoc || 'floor.json') + ' at this origin (' + ((e && e.message) || 'fetch failed') + ')');
       });
     } catch (e) {
+      /* Deliberately NOT failedDoc: this catch fires when the fetch could not even be
+         STARTED, so no document has been attempted and naming one would be a guess. */
       inFlight = false;
-      fail('no floor.json at this origin (' + ((e && e.message) || 'fetch unavailable') + ')');
+      fail('the floor could not be requested at this origin (' + ((e && e.message) || 'fetch unavailable') + ')');
     }
   }
+
+  /* The picker's change handler. An EVENT, not a timer: it fires because a human chose
+   * something, and it re-polls immediately so the switch lands inside one poll interval
+   * rather than up to one interval later. The lane memory is dropped first - see
+   * resetProjectMemory - because it describes the document being left behind. */
+  (function () {
+    var sel = el('project-picker');
+    if (!sel) { return; }
+    sel.onchange = function () {
+      pickerTouched = true;
+      setSelectedSlug((sel.value === '') ? null : sel.value);
+      banner('');
+      poll();
+    };
+  }());
 
   poll();
   /* The one and only timer on this page. It fetches; it does not animate. */

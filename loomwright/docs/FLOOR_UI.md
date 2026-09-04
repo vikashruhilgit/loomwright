@@ -1,6 +1,6 @@
-# The Floor (`/setup ui`)
+# The Floor (`/setup ui` to install, `/ui` to run)
 
-How the plugin's optional local run view works: what it renders, where the data comes from, what it deliberately does **not** claim, and how to take it away again. Configured via `/setup ui` (authority: the `setup` skill — `${CLAUDE_PLUGIN_ROOT}/skills/setup/SKILL.md`); this document is the reference companion, in the same relationship to that skill as `OBSERVABILITY.md` is for the observability module.
+How the plugin's optional local run view works: what it renders, where the data comes from, what it deliberately does **not** claim, and how to take it away again. **Two entry points, one engine:** `/setup ui` is the *configuration* half (install / uninstall the bundle) and `/ui` is the *operational* half (start it, stop it, and manage the project registry) — see §"Projects". Configured via `/setup ui` (authority: the `setup` skill — `${CLAUDE_PLUGIN_ROOT}/skills/setup/SKILL.md`); this document is the reference companion, in the same relationship to that skill as `OBSERVABILITY.md` is for the observability module.
 
 > **Repo vs. runtime paths:** repo-relative paths like `loomwright/scripts/floor-ui/...` below describe this repo's layout only. Anything executed at runtime resolves through `${CLAUDE_PLUGIN_ROOT}/...` (e.g. `${CLAUDE_PLUGIN_ROOT}/scripts/setup-ui.sh`), and the served page is always the **copy** in the ui directory — never the plugin install dir, which `serve` only ever reads.
 
@@ -29,6 +29,7 @@ The page shows, top to bottom:
 
 | Region | Source | Rendering rule |
 |---|---|---|
+| The **projects** picker | `index.json` (the served index `serve` writes into the ui directory) | Every registered project with its slug, path and last-regenerated age, plus the module's own state. Selecting one switches which already-written `projects/<slug>/floor.json` the page READS — it sends nothing and cannot cause a regeneration. A project whose directory has gone renders `unavailable` **with the engine's reason** and is never dropped from the list; one this serve has not reached yet says `never regenerated` rather than showing an empty floor. The registry's own state distinguishes **absent** (no projects registered yet) from **unparseable** (the file is there and this module refuses to touch it) — two different claims, never collapsed. With no served index at this origin the section says so and the page goes on rendering the single root `floor.json`. The cadence note is read from the index, never assumed: the selected project regenerates on `--interval`, every other one at a time on the slower cadence, because one projector run costs about a second and regenerating all of them every tick would starve the loop. |
 | Five **stages** — Queue · Plan · Execute · Review · Shipped | `jobs_pending.count`, `state.detail.phase`, `jobs_done.count` | `PLAN`/`ACQUIRE`/`INIT` highlight Plan, `EXECUTE` highlights Execute, `FINALIZE`/`SELF_HEAL` highlight Review. `LOOP` — the seventh member of the closed phase set, Supervisor's Phase 5, which runs *between* items — highlights **nothing**, and neither would a phase added to that set later: the map is deliberately partial. A surface with **no** `count` renders `—` with its `reason` as the cell's `title` — never `0`. |
 | The **phase note** under the stages | `state.mtime_epoch`, `state.detail.{branch,run_status,phase}` | The `state.md` write age, plus the branch and `run_status` when recorded. A phase the stage map does not carry is named here — `recorded phase LOOP — no pipeline stage corresponds to it` — because all three middle cells sit at `—` for it, which is *also* what an unrecorded phase looks like; without the note, a **measured** phase would be indistinguishable from a missing one. The no-phase case says `no phase is recorded` instead. Fixture: `floor-loop.json`. |
 | One **lane per agent** in the newest session | `sessions.detail.current.agents[]` | Ordered by `last_ts` descending. Label: name (or `identity unknown`) · event count · last-event age. A typed lane takes the colour of the matching roster row; an untyped lane is neutral and dashed. |
@@ -61,6 +62,40 @@ The page shows, top to bottom:
 `?stale=` exists for a specific reason worth stating: a **committed fixture's `generated_at_epoch` is always in the past**, so without it every fixture would render under the stale banner and nothing else about the page could be demonstrated. Raise it when loading `fixtures/floor-ui/*.json` by hand.
 
 It has a second, less obvious use. The page has **no way to observe `serve --interval`** — it polls on its own fixed 2 s clock, and its default threshold is three of those. With a perfectly legal `--interval 10` every render is older than that default, so the page would report a document that is being regenerated exactly as configured. Two things keep that from becoming a false claim: the banner states only what the page measured (the age, and the threshold it was measured against), never a cause it cannot see; and `serve` prints the URL to open — including `?stale=<3 × interval>` whenever its own interval outgrows the page default, and the bare URL when it does not.
+
+## Projects
+
+One server on one port can show **more than one project**, and which ones is decided by a registry a human writes — never by discovery.
+
+```
+/ui add                 # register the project you are standing in
+/ui list                # slug · path · last-regenerated age  (never mutates)
+/ui forget <slug>       # drop an entry; the project directory is untouched
+/ui scan <dir>          # PROPOSE candidates; writes nothing without --confirm
+```
+
+**Where the registry lives, and why it is not in the ui directory.** `projects.json` sits *beside* the ui directory, in its parent — overridable with `--registry`, which is the **only** override (`--ui-dir` provably cannot redirect it, because the two are siblings rather than parent and child). That placement is load-bearing rather than incidental: `remove` deletes the ui directory, and the user's list of projects has to outlive a module teardown. `test-setup-ui.sh` asserts the registry survives a `remove` directly, rather than reasoning from the path.
+
+**`forget` is deliberately not named `remove`.** One word meaning both "tear down the module" and "drop a project from a list" is a data-loss shape. `remove` deletes a directory; `forget` edits one JSON file, and the suite hashes the project tree before and after to prove it.
+
+**What `serve` does with the registry.** It writes a served index — `index.json` in the ui directory — carrying the module's own state, the registry's state, and one row per registered project. The page reads that index for its picker and then reads the selected project's already-written `projects/<slug>/floor.json`. **Selecting a project sends nothing**: it changes which file the page fetches, and it cannot cause a regeneration.
+
+**The cadence is stated, not assumed.** The selected project regenerates every `--interval` seconds; the others are regenerated **one at a time** on a slower cadence, and that ratio is carried in the served index so the page can print it. This is a measured constraint, not a preference: one projector run costs about a second on a 13k-line log tree, so regenerating every project on every tick starves a 2 s loop at **two** projects and would render everything permanently stale. `test-setup-ui.sh` measures elapsed time across a fixed number of ticks against a stub projector of known cost, with a control proving the naive shape really does exceed the budget.
+
+**Four states per project, because they are four different claims:**
+
+| State | What it means |
+|---|---|
+| `ready` | a floor document exists for this project and its generation time is recorded beside it |
+| `never regenerated` | the directory is there, but this serve has not reached it yet — not an empty floor |
+| `unavailable` | the registered directory is not present at that path. The entry is **reported and kept**, never dropped: a project silently missing from the picker is indistinguishable from one that was never added. `forget` remains the user's to run. |
+| `unreadable` | a slot document exists but its timestamp could not be read, so no age can be claimed for it |
+
+A project whose directory is deleted **while `serve` is running** flips to `unavailable` with its reason at the next poll; the other projects keep rendering and the server does not exit.
+
+**The registry's own state is a separate claim from any project's.** *Absent* (no registry file yet — the ordinary state of a fresh install, never an error) and *unparseable* (the file is there and this module refuses to touch it) are rendered as two different sentences, never collapsed into one. With `jq` unfindable the index still gets written and says so, naming jq: the project list and every project path are **omitted rather than guessed**, because `build-floor.sh` needs jq too and nothing could have been regenerated either.
+
+**Nothing is written into a registered project except its own `.supervisor/floor/floor.json`**, and that only by running `build-floor.sh` inside it. `add`, `list`, `forget` and `scan` touch exactly one file between them — the registry — and `list` touches none.
 
 ## Honest states
 
@@ -97,13 +132,14 @@ These limits are copied from the source requirement's 2026-09-03 amendment and a
 `floor.json` is a projection of this machine's run state and **it carries branch names, session ids and agent ids**. Treat it as local data:
 
 - `serve` **always** passes `--bind 127.0.0.1`. There is no flag to change that and no code path that omits it — the bind address is the whole security posture and it is deliberately not negotiable at the command line.
-- `index.html` carries a `Content-Security-Policy` meta with `default-src 'self'` (and `connect-src 'self'`), `floor.js` fetches only the relative path `floor.json`, and the bundle contains no absolute URL, no protocol-relative reference, no `@import`, no preconnect and no web font — system font stacks only. `test-setup-ui.sh` scans all three files for each of those and carries a mutation control, so the scan cannot rot into a check that passes on anything.
-- `python3 -m http.server` serves the **whole ui directory**, which is why the ui directory holds only the three bundle files, the marker, an optional `serve.pid` and the `floor.json` copy — nothing else is ever written there.
+- `index.html` carries a `Content-Security-Policy` meta with `default-src 'self'` (and `connect-src 'self'`), `floor.js` fetches only relative paths it builds itself — `floor.json`, the served index `index.json`, and `projects/<encoded slug>/floor.json` (the slug is passed through `encodeURIComponent`, and the engine additionally shape-filters it before ever writing such a slot), and the bundle contains no absolute URL, no protocol-relative reference, no `@import`, no preconnect and no web font — system font stacks only. `test-setup-ui.sh` scans all three files for each of those and carries a mutation control, so the scan cannot rot into a check that passes on anything.
+- `python3 -m http.server` serves the **whole ui directory**, which is why the ui directory holds only the three bundle files, the marker, an optional `serve.pid`, the `floor.json` copy, the served index `index.json` and the `projects/<slug>/floor.json` slots — nothing else is ever written there, and every one of those is a projection this machine already produced. The registry itself is deliberately **not** in that directory and is therefore never served: absolute project paths are not something a page needs, and the served index carries only what the picker actually renders.
 
 ## What it writes — the whole list
 
-1. **The ui directory** (default `$HOME/.claude/loomwright/ui`, overridable with `--ui-dir`, which is how every self-test runs inside a `mktemp -d`): the three bundle files, the ownership marker `.loomwright-ui-module`, an optional `serve.pid`, and a copy of `floor.json`.
-2. **`.supervisor/floor/floor.json` under the current project root** — and only ever by running `build-floor.sh`, never by writing that path directly. `serve --no-regen` makes even that write impossible.
+1. **The ui directory** (default `$HOME/.claude/loomwright/ui`, overridable with `--ui-dir`, which is how every self-test runs inside a `mktemp -d`): the three bundle files, the ownership marker `.loomwright-ui-module`, an optional `serve.pid`, a copy of `floor.json`, **the served index `index.json`**, and one **`projects/<slug>/floor.json`** per registered project that `serve` has reached. `index.json` is written by `serve` alone — atomically, temp-file-then-`mv`, so a poll landing mid-write reads the previous document rather than half of this one — and it is the page's ONLY source for the project picker, the module's own state and per-project freshness. The page is a reader, so everything it can show has to be a file the static server can already hand it.
+2. **`.supervisor/floor/floor.json` under the current project root, and under each registered project root that `serve` regenerates** — and only ever by running `build-floor.sh` in that directory, never by writing that path directly. `serve --no-regen` makes even that write impossible. A project reaches this list only because a human ran `add`.
+3. **The project registry `projects.json`**, sitting *beside* the ui directory (in its parent), overridable with `--registry`. Only `add`, `forget` and a **confirmed** `scan` write it; `check`, `list` and an unconfirmed `scan` only read it. Its being a sibling rather than a file inside the ui directory is load-bearing: `remove` deletes the ui directory, and the user's list of projects has to outlive that. Registering a project writes **nothing into the project itself**, and `forget` never touches the directory it is forgetting.
 
 Nothing else, anywhere. It never touches the user-scope settings document (that is the `statusline` module's one write domain), never writes a project `.gitignore`, and never runs a history-touching git command. `test-setup-ui.sh` hashes two whole trees — the fixture parent and a fixture git repo used as the working directory — before and after a full `apply` → `serve` → `stop` → `remove` sequence, and asserts the only difference is that one regenerated file.
 
@@ -128,7 +164,7 @@ Nothing else, anywhere. It never touches the user-scope settings document (that 
 
 ## Reference
 
-- Engine: `loomwright/scripts/setup-ui.sh` (`check` / `apply` / `serve` / `stop` / `remove`; always exits 0 — "fails closed" means refuse-to-write plus a named-reason headline, never a non-zero exit)
+- Engine: `loomwright/scripts/setup-ui.sh` (`check` / `apply` / `serve` / `stop` / `remove` / `add` / `list` / `forget` / `scan`; always exits 0 — "fails closed" means refuse-to-write plus a named-reason headline, never a non-zero exit)
 - Bundle: `loomwright/scripts/floor-ui/{index.html,floor.css,floor.js}`
 - Projector: `loomwright/scripts/build-floor.sh` → `.supervisor/floor/floor.json`
 - Schema: `loomwright/docs/RESULT_SCHEMAS.md` §`FLOOR_PROJECTION`
