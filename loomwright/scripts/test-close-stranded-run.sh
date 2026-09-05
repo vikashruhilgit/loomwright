@@ -259,19 +259,28 @@ else
   ok "case4c no side effects outside a git repo"
 fi
 
-echo "-- 4d. empty stdin + unknown owner -> ADOPT (the stranded run still gets closed) --"
+echo "-- 4d. empty stdin + unknown owner -> WITHHOLD (cannot identify itself as the run) --"
+# CHANGED BEHAVIOUR (see 4n for the defect this closes): an empty payload
+# yields no `session_id`, so this session cannot show it is the run `state.md`
+# names. With no owner recorded there is nothing else to check against, so it
+# writes nothing rather than closing out a run that may be someone else's and
+# still live. The rule is now uniform: a session that cannot identify itself
+# never closes a run out, whether the owner is known (Honest limit 8) or not.
 REPO4D="$(init_repo "feature/case4d")"
 seed_state "$REPO4D" "sid-case4d" "running"
 mkdir -p "$REPO4D/.supervisor/logs"
+BEFORE4D="$(sup_snapshot "$REPO4D")"
 OUT4D="$(run_sut "$REPO4D" --empty)"
 assert_eq "case4d exit 0" "0" "$(get_rc "$OUT4D")"
 LOG4D="$REPO4D/.supervisor/logs/sid-case4d.jsonl"
-assert_eq "case4d unknown owner ADOPTS — the session_end is still written" "1" "$(count_lines "$LOG4D")"
-LINE4D="$(tail -1 "$LOG4D" 2>/dev/null)"
-assert_eq "case4d reason" "session_ended_without_completion" "$(printf '%s' "$LINE4D" | jq -r '.reason // empty')"
-# No CC session id was supplied, so the key must be ABSENT — not "" and not null.
-assert_eq "case4d cc_session_id key ABSENT when stdin carried none" "false" \
-  "$(printf '%s' "$LINE4D" | jq -r 'has("cc_session_id")')"
+assert_eq "case4d .supervisor/ byte-unchanged (nothing written)" "$BEFORE4D" "$(sup_snapshot "$REPO4D")"
+if [ -e "$LOG4D" ]; then
+  no "case4d created a log for a run it cannot identify itself as"
+else
+  ok "case4d no log created — an unidentifiable session writes NOTHING"
+fi
+assert_eq "case4d state.md is left non-terminal for the real owner to close" "running" \
+  "$(sed -nE 's/^- status:[[:space:]]*//p' "$REPO4D/.supervisor/state.md" 2>/dev/null)"
 
 echo "-- 4e. functionally-broken jq --"
 REPO4E="$(init_repo "feature/case4e")"
@@ -279,10 +288,17 @@ seed_owned_log "$REPO4E" "sid-case4e" "cc-owner-4e"
 seed_state "$REPO4E" "sid-case4e" "running"
 OUT4E="$(run_sut_brokenjq "$REPO4E" "cc-owner-4e")"
 assert_eq "case4e exit 0 with a broken jq" "0" "$(get_rc "$OUT4E")"
-assert_eq "case4e broken jq ADOPTS — exactly one session_end appended" "2" \
+# CHANGED BEHAVIOUR: a broken jq yields NEITHER the log owner NOR the payload
+# `session_id`, so this session has zero identity information and cannot show
+# it is the run. It therefore withholds, exactly like 4d/4n. Consistent rather
+# than special-cased: the ownership rule, the emitters' gate and the staleness
+# backstop are all jq-dependent, so a jq-less host has already lost the ability
+# to attribute anything — inventing a `failed` there would be the one
+# unrecoverable move available to it. Still exits 0 (AC-8 unchanged).
+assert_eq "case4e broken jq WITHHOLDS — log untouched" "1" \
   "$(count_lines "$REPO4E/.supervisor/logs/sid-case4e.jsonl")"
-assert_eq "case4e appended record is a session_end" "session_end" \
-  "$(tail -1 "$REPO4E/.supervisor/logs/sid-case4e.jsonl" | jq -r '.event // empty')"
+assert_eq "case4e state.md left non-terminal" "running" \
+  "$(sed -nE 's/^- status:[[:space:]]*//p' "$REPO4E/.supervisor/state.md" 2>/dev/null)"
 
 echo "-- 4f. unreadable log --"
 REPO4F="$(init_repo "feature/case4f")"
@@ -302,10 +318,15 @@ printf 'not { valid json\n' > "$REPO4G/.supervisor/logs/sid-case4g.jsonl"
 seed_state "$REPO4G" "sid-case4g" "running"
 OUT4G="$(run_sut "$REPO4G" "cc-any-4g")"
 assert_eq "case4g exit 0" "0" "$(get_rc "$OUT4G")"
-assert_eq "case4g malformed first line means unknown owner -> ADOPT (session_end appended)" "2" \
+# CHANGED BEHAVIOUR: a malformed first line means the owner is UNKNOWN, and
+# the payload here (`cc-any-4g`) is not the run id `state.md` names, so this is
+# the 4n hole in another costume — an unrelated session closing out a run whose
+# ownership it cannot establish. It withholds. Case 4m is the control proving
+# the unknown-owner path still closes for the run's OWN session.
+assert_eq "case4g malformed first line + unrelated session WITHHOLDS" "1" \
   "$(count_lines "$REPO4G/.supervisor/logs/sid-case4g.jsonl")"
-assert_eq "case4g appended record is a session_end" "session_end" \
-  "$(tail -1 "$REPO4G/.supervisor/logs/sid-case4g.jsonl" | jq -r '.event // empty')"
+assert_eq "case4g state.md left non-terminal" "running" \
+  "$(sed -nE 's/^- status:[[:space:]]*//p' "$REPO4G/.supervisor/state.md" 2>/dev/null)"
 
 echo "-- 4h. log already CLOSED: the tail guard skips a second session_end --"
 # The guard must be positive-form checked (skip) AND controlled (still appends
@@ -385,6 +406,66 @@ assert_eq "case4l appended record is a session_end" "session_end" \
   "$(tail -1 "$LOG4L" | jq -r '.event // empty')"
 assert_eq "case4l state.md reaches a terminal status" "failed" \
   "$(sed -nE 's/^- status:[[:space:]]*//p' "$REPO4L/.supervisor/state.md" 2>/dev/null)"
+
+echo "-- 4m. unknown owner + the run's OWN session -> still closes out --"
+# The preserved half of the unknown-owner path. `state.md` session ids come in
+# two shapes on disk — a CC uuid AND a plugin slug (`auto-…`, `…-supervisor`) —
+# so this cannot be asserted only for uuids: for a run keyed by the session's
+# own id, the owning session CAN identify itself and must still close the run
+# out with no log present. Without this case, 4n would also pass if the guard
+# had simply disabled the unknown-owner path outright.
+REPO4M="$(init_repo "feature/case4m")"
+seed_state "$REPO4M" "sid-case4m" "running"
+mkdir -p "$REPO4M/.supervisor/logs"
+OUT4M="$(run_sut "$REPO4M" "sid-case4m")"
+assert_eq "case4m exit 0" "0" "$(get_rc "$OUT4M")"
+LOG4M="$REPO4M/.supervisor/logs/sid-case4m.jsonl"
+assert_eq "case4m the run's own session DOES close it out" "1" "$(count_lines "$LOG4M")"
+assert_eq "case4m appended record is a session_end" "session_end" \
+  "$(tail -1 "$LOG4M" | jq -r '.event // empty')"
+assert_eq "case4m status" "failed" "$(tail -1 "$LOG4M" | jq -r '.status // empty')"
+assert_eq "case4m state.md reaches a terminal status" "failed" \
+  "$(sed -nE 's/^- status:[[:space:]]*//p' "$REPO4M/.supervisor/state.md" 2>/dev/null)"
+
+echo "-- 4n. unknown owner + an UNRELATED session -> WITHHOLD (the false close-out) --"
+# THE DEFECT. `.supervisor/state.md` is repo-global, so session A can start a
+# run (status running, id sid-case4n) and, before A's first worker completion
+# creates the log, an entirely unrelated session B simply ENDING would satisfy
+# every remaining condition and stamp `failed` onto A's LIVE run — leaving a
+# fabricated hard-signal session_end that nothing retracts. B cannot identify
+# itself as sid-case4n, so it must now write nothing.
+REPO4N="$(init_repo "feature/case4n")"
+seed_state "$REPO4N" "sid-case4n" "running"
+mkdir -p "$REPO4N/.supervisor/logs"
+BEFORE4N="$(sup_snapshot "$REPO4N")"
+OUT4N="$(run_sut "$REPO4N" "cc-unrelated-session-4n")"
+assert_eq "case4n exit 0" "0" "$(get_rc "$OUT4N")"
+LOG4N="$REPO4N/.supervisor/logs/sid-case4n.jsonl"
+assert_eq "case4n .supervisor/ byte-unchanged (nothing written)" "$BEFORE4N" "$(sup_snapshot "$REPO4N")"
+if [ -e "$LOG4N" ]; then
+  no "case4n an unrelated session fabricated a log for someone else's live run"
+else
+  ok "case4n an unrelated session writes NOTHING into the run's log"
+fi
+assert_eq "case4n the live run is NOT marked failed" "running" \
+  "$(sed -nE 's/^- status:[[:space:]]*//p' "$REPO4N/.supervisor/state.md" 2>/dev/null)"
+
+echo "-- 4o. log EXISTS but its first line records no owner + unrelated session --"
+# The second shape of "unknown owner": events exist, but the first line carries
+# no `cc_session_id`, so `loom_log_owner` yields nothing. 4n alone would pass a
+# guard that only handled the absent-log case, so this pins the other variant
+# of the same hole.
+REPO4O="$(init_repo "feature/case4o")"
+seed_state "$REPO4O" "sid-case4o" "running"
+mkdir -p "$REPO4O/.supervisor/logs"
+LOG4O="$REPO4O/.supervisor/logs/sid-case4o.jsonl"
+printf '{"event":"subtask_complete","type":"subtask_complete","session_id":"sid-case4o"}\n' > "$LOG4O"
+OUT4O="$(run_sut "$REPO4O" "cc-unrelated-session-4o")"
+assert_eq "case4o exit 0" "0" "$(get_rc "$OUT4O")"
+assert_eq "case4o ownerless log is not adoptable by an unrelated session" "1" \
+  "$(count_lines "$LOG4O")"
+assert_eq "case4o the live run is NOT marked failed" "running" \
+  "$(sed -nE 's/^- status:[[:space:]]*//p' "$REPO4O/.supervisor/state.md" 2>/dev/null)"
 
 echo "== real repo .supervisor untouched =="
 assert_eq "real .supervisor snapshot unchanged" "$REAL_BEFORE" "$(snapshot_real)"

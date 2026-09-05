@@ -590,10 +590,86 @@ staleness backstop in `build-state.sh` described above — a derived `running`
 whose newest owner-originated event is older than the threshold is downgraded
 to `failed` without needing any `session_end` to land. So the run does reach a
 terminal status; it reaches it on the backstop's timescale rather than
-immediately. Note the empty-owner case is different and unaffected: an
-UNKNOWN owner still ADOPTS, so a fresh run's first close-out is not blocked.
-Pinned by case 4j in `scripts/test-close-stranded-run.sh` (empty stdin +
-known owner ⇒ nothing written, exit 0, `state.md` still non-terminal).
+immediately. Pinned by case 4j in `scripts/test-close-stranded-run.sh` (empty
+stdin + known owner ⇒ nothing written, exit 0, `state.md` still non-terminal),
+and by case 4d for the same payload against an UNKNOWN owner — see limit 9,
+which is why that case no longer adopts either.
+
+**9. A run whose log records no owner is closed out only by the session whose
+own id the run is keyed to — no other session, and never one that cannot
+identify itself.** `.supervisor/state.md` is **repo-global, not
+session-scoped**: every session anchored to the same main worktree reads the
+same `- session_id:` and `- status: running`. Before a run's first worker
+completion creates `logs/<id>.jsonl` there is no recorded owner, and the
+close-out originally ADOPTED on that unknown — which meant session A could
+start a run and an entirely unrelated session B, merely by ENDING, would
+satisfy every remaining condition and stamp `status: failed` onto A's LIVE
+run, leaving a fabricated hard-signal `session_end` (consumed by
+`build-insights.sh`) that nothing retracts. That is the same false-attribution
+class this whole change exists to remove, pointed the other way.
+
+So an unknown owner is now adoptable **only** by a session whose payload
+`session_id` equals the run id `state.md` names. The narrower rule the review
+first suggested — require that equality unconditionally — was measured and
+rejected: `state.md` session ids exist in TWO shapes on disk, a Claude Code
+uuid AND a plugin slug (`auto-2026-09-05-050440`, `20260426-004614-supervisor`),
+and a uuid payload can never equal a slug, so an unconditional demand would
+have silently disabled close-out for every slug-keyed autonomous run. Applying
+it only on the unknown-owner path keeps the known-owner main path — which is
+what a real run reaches after its first event — completely untouched.
+
+**This does NOT weaken the emitters' adopt-on-unknown rule**, and the
+distinction is the point: `emit-progress-event.sh` / `emit-token-ledger.sh`
+still ADOPT unconditionally on an unknown owner, because their protected
+property is the fresh-run bootstrap (a fresh run's first worker completion
+must join on the seeded plugin id). They can only mis-file an event. The
+close-out is the one writer that can mark a LIVE run dead, so it alone demands
+self-identification.
+
+**Residual — and it is GUARANTEED for slug-keyed runs, not incidental.** State
+this precisely, because the loose reading ("a run that ends before emitting any
+event, under a session whose id happens not to be the run id") makes it sound
+like an edge case, and for `/autonomous` and `/automate` it is not one.
+
+`state.md` session ids come in two shapes, and only one of them can ever
+self-identify:
+
+| Run shape | `state.md` `session_id` | Can the ending session match it? |
+|---|---|---|
+| session-keyed | the Claude Code session uuid | **yes** — close-out works |
+| slug-keyed (`/autonomous`, `/automate`, named Supervisor runs) | a synthetic slug (`auto-2026-09-05-050440`) minted by the loop and seeded at `initialize` | **structurally never** — a `SessionEnd` payload always carries the real uuid |
+
+So for **every** slug-keyed run, the unknown-owner path is unreachable, and the
+exposed window is the whole span from `initialize` (Phase 0) to the first
+worker `SubagentStop` — through ACQUIRE, PRE-FLIGHT SYNC and PLAN, which is
+minutes, not an instant. A run that strands anywhere in there stays
+`status: running` **permanently**: the staleness backstop cannot rescue it
+either, and for a second reason beyond having no owner lines — the projector
+returns early on its log-exists guard (`build-state.sh`, the
+`[ -f "$LOG_FILE" ] && [ -s "$LOG_FILE" ]` test before any status derivation),
+and in this window the log does not exist at all.
+
+**This is not a regression introduced by the rule above; it is the same missing
+fact seen from the other side.** In that window NO owner is recorded, so
+nothing can distinguish "stranded" from "live". The previous behaviour guessed
+*stranded* and let any ending session close the run out — which is exactly the
+false-close-out defect entry 9 exists to fix. The current behaviour guesses
+*live*. Neither guess is correct, and no gate placed at `SessionEnd` can be:
+the real fix is to record the owning Claude Code session id **at run creation**,
+alongside the slug, so ownership is knowable before the first log line exists.
+That is tracked as follow-up work and deliberately not bolted on here — the
+seed happens in an agent prompt (`agents/context-keeper.md` `initialize`), and
+`docs/PITFALLS.md` records why agent-written state is the wrong mechanism for a
+fact a hook must rely on (560 hook-written events vs 6 agent-written).
+
+Between the two guesses this one is preferred because its failure is the
+recoverable side of the asymmetry: a stranded `running` is a stale advisory
+label a human can see and reset, whereas a live run marked `failed` writes a
+false hard signal into the log that `build-insights.sh` consumes and nothing
+retracts. Pinned by cases 4m (own session ⇒ still closes), 4n (unrelated session ⇒
+writes nothing), 4o (ownerless log, unrelated session ⇒ writes nothing) and
+4g/4e in `scripts/test-close-stranded-run.sh`; 4m is the control that stops
+the others from passing under a guard that simply disabled the path.
 
 ### Run ownership
 
@@ -638,6 +714,20 @@ already terminal, when there is no `state.md`, or when this session is not
 the run's owner — including the ownership-unprovable case in §"Honest limits"
 entry 8, where the payload arrives empty or unparseable against a log that
 has a known owner.
+
+**Ownership for the close-out is stricter than for the emitters**, and
+deliberately so:
+
+| Log owner | Emitters (`emit-*.sh`) | Close-out (`close-stranded-run.sh`) |
+|---|---|---|
+| recorded, matches payload | join the run's log | close the run out |
+| recorded, differs | divert to `<cc_uuid>.jsonl` | write nothing |
+| **not recorded** | **ADOPT** (fresh-run bootstrap) | **adopt only if the payload `session_id` IS the run id** |
+
+The emitters can only mis-file an event; the close-out can mark a LIVE run
+dead, and `state.md` is repo-global so any session can reach it. Full
+rationale, the rejected stricter variant, and the residual: §"Honest limits"
+entry 9.
 
 **`SessionEnd` is scoped to real termination — `/clear` must never close a
 run.** `SessionEnd` fires for `clear` as well as for genuine termination, and

@@ -49,12 +49,23 @@
 # the run ended without completing.
 #
 # OWNERSHIP: same `loom_log_owner` rule the two emitters use — the log's FIRST
-# line records who opened it. An unknown owner (absent/empty/unreadable log,
-# unparseable first line, or no `cc_session_id` on it) is treated as OWNED, so
-# the stranded run still gets closed; that is the same ADOPT-on-unknown
-# direction the emitters take, kept identical on purpose. Note this is the
-# direction that makes the mechanism work at all: refusing on unknown owner
-# would leave exactly the stranded runs this exists to close.
+# line records who opened it — plus ONE additional demand this writer makes and
+# the emitters deliberately do not.
+#
+#   owner recorded      → only that `cc_session_id` may close the run out.
+#   owner NOT recorded  → adoptable ONLY by a session whose payload
+#                         `session_id` EQUALS the run id `state.md` names.
+#
+# The emitters ADOPT unconditionally on an unknown owner and still do; that is
+# non-negotiable 2, and its protected property is their fresh-run bootstrap.
+# This script is different in kind: it is the only writer that can mark a LIVE
+# run dead. `.supervisor/state.md` is REPO-GLOBAL, so before a run's first
+# worker completion creates its log there is no owner to compare against, and
+# unconditional adoption let any unrelated ending session close out a run it
+# had no connection to. Requiring self-identification closes that without
+# touching the emitters. Residual, stated rather than hidden: a run whose log
+# records no owner is not closed out by any OTHER session — see
+# docs/TELEMETRY.md §"Honest limits" entry 9.
 #
 # No-op (exit 0) when: the SessionEnd reason is `clear`, main worktree
 # unresolvable, not a git repo, no state.md, terminal status, non-owner
@@ -167,10 +178,42 @@ fi
 LOG_OWNER="$(loom_log_owner "$LOG_FILE" || true)"
 LOG_OWNER="$(printf '%s' "$LOG_OWNER" | tr -cd 'A-Za-z0-9_-' || true)"
 
-if [ -n "$LOG_OWNER" ] && [ "$LOG_OWNER" != "$CC_SESSION_ID" ]; then
-  # A DIFFERENT session owns this run — it is still in flight from someone
-  # else's point of view. Write nothing.
-  exit 0
+if [ -n "$LOG_OWNER" ]; then
+  # An owner IS recorded. Only that session may close this run out.
+  if [ "$LOG_OWNER" != "$CC_SESSION_ID" ]; then
+    # A DIFFERENT session owns this run — it is still in flight from someone
+    # else's point of view. Write nothing.
+    exit 0
+  fi
+else
+  # NO owner is recorded (absent/empty/unreadable log, unparseable first line,
+  # or a first line with no `cc_session_id`). Adopting unconditionally here —
+  # the behaviour that shipped first — let ANY ending session close out a run
+  # it has no connection to, because `.supervisor/state.md` is REPO-GLOBAL, not
+  # session-scoped: every session anchored to the same main worktree reads the
+  # same `- session_id:` / `- status: running`. Session A starts a run; before
+  # A's first worker completion creates `logs/<id>.jsonl` there is no owner to
+  # compare against, so an unrelated session B merely ENDING would stamp
+  # `status: failed` onto A's live run and leave a fabricated hard-signal
+  # `session_end` (which build-insights.sh consumes) that nothing retracts.
+  # That is the same false-attribution class this script exists to remove.
+  #
+  # So an unknown owner is adoptable ONLY by a session that can identify itself
+  # AS this run: the payload `session_id` must equal the run id `state.md`
+  # names. A session that cannot prove that writes nothing.
+  #
+  # This does NOT weaken non-negotiable 2, whose protected property is the
+  # EMITTERS' fresh-run bootstrap — "the first worker completion of a fresh run
+  # joins on the seeded plugin id" (agents/context-keeper.md). That property
+  # lives in emit-progress-event.sh / emit-token-ledger.sh, which are unchanged
+  # and still ADOPT on unknown owner. Only this close-out — the one writer here
+  # that can mark a LIVE run dead — additionally demands self-identification.
+  #
+  # Failure direction is the same asymmetry the `clear` guard settles above: a
+  # run left stranded is RECOVERABLE, a live run wrongly marked `failed` is not.
+  if [ -z "$CC_SESSION_ID" ] || [ "$CC_SESSION_ID" != "$PLUGIN_SESSION_ID" ]; then
+    exit 0
+  fi
 fi
 
 # ---- Idempotency: never append a SECOND session_end -------------------------
