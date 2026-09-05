@@ -335,7 +335,7 @@ from evidence only — it never guesses:
 |---|---|---|
 | `session_id` | the id the emitter resolved | file not written |
 | `branch` | **live** `git -C main_root branch --show-current` at projection time (a property of the checkout, not stored per-event) | field omitted |
-| `status` | **ordering rule** (PR #116 review fix, replacing "any `session_end` present"): the LAST of `{subtask_complete, session_end}` in the log decides. Last event `subtask_complete` ⇒ `running` (even when an EARLIER `session_end` exists — the multi-task `/autonomous` LOOP case, so task 1's `session_end` can't mark task 2 `completed`); last event `session_end` ⇒ its own `status` mapped into `completed \| completed_with_escalation \| failed` (unrecognized/missing status ⇒ `completed`, the closest safe closed-enum reading — not a zero-evidence guess) | `status` is **never** omitted once the file exists — an absent `- status:` trips the `s1_status` presence guard in `hook-dispatch-on-pr-create.sh`'s Source 1 block and fails closed |
+| `status` | **ordering rule** (PR #116 review fix, replacing "any `session_end` present"): the LAST of `{subtask_complete, session_end}` in the log decides. Last event `subtask_complete` ⇒ `running` (even when an EARLIER `session_end` exists — the multi-task `/autonomous` LOOP case, so task 1's `session_end` can't mark task 2 `completed`); last event `session_end` ⇒ its own `status` mapped into `completed \| completed_with_escalation \| failed` (unrecognized/missing status ⇒ `completed`, the closest safe closed-enum reading — not a zero-evidence guess). **Staleness backstop (v15.49.0):** a derived `running` is downgraded to `failed` when the newest **owner-originated** event in the log is older than `LOOMWRIGHT_STALE_RUN_SECONDS` (default 86400) — age is measured over owner lines ONLY (see §"Run ownership"); the backstop skips when ownership or a timestamp cannot be established, and introduces no new status word (`paused` is never emitted) | `status` is **never** omitted once the file exists — an absent `- status:` trips the `s1_status` presence guard in `hook-dispatch-on-pr-create.sh`'s Source 1 block and fails closed |
 | `phase` | same ordering rule: last event `subtask_complete` ⇒ `EXECUTE`; last event `session_end` ⇒ `LOOP` | file not written |
 | *(non-derived keys, e.g. `task_id`, `self_heal_resume_count`)* | preserved verbatim from the pre-projection `## Session` block, in original order (PR #116 review fix — this projector owns exactly the four keys above, not the whole block) | n/a — nothing to preserve on a brand-new block |
 
@@ -346,12 +346,14 @@ preserving `## Decisions Log`, `## Phase Flags`, `## Checkpoint`, and every
 other section byte-for-byte. An absent/empty log means **no `state.md` at
 all** — start-fresh, strictly better than the pre-change failure mode (a
 stale lie left on disk). Self-test: `scripts/test-progress-state.sh`
-(fixture-driven; 117 assertions covering idempotency, every fail-safe path,
+(fixture-driven; 161 assertions covering idempotency, every fail-safe path,
 the worktree-anchoring hazard from inside a real `git worktree add`, the
 Parallel-Path case, projector round-trip byte-identity, section
 preservation, the AC-5 hook-dispatch positive/negative cases, and the
 PR #116 review round's ordering rule, mkdir-lock, permission-preservation,
-non-derived-key-preservation, and `reproject-state-on-terminal.sh` cases).
+non-derived-key-preservation, and `reproject-state-on-terminal.sh` cases,
+plus the run-ownership, agent-identity, and staleness-backstop cases added
+in v15.49.0 — see §"Run ownership" below).
 
 **Honest limits of this change (not papered over):**
 
@@ -546,6 +548,112 @@ bookkeeping this whole change deletes; the branch-guard above is the
 narrower, mechanical fix for the one failure mode this window actually
 produces (a hard-erroring resume), not a reintroduction of per-phase
 checkpointing.
+
+**7. A run resumed under a DIFFERENT Claude Code session id will no longer
+join its original log.** This is the accepted cost of the run-ownership gate
+below, stated plainly rather than hedged: ownership is keyed on the
+`cc_session_id` of the log's first line, so if the same logical run is
+resumed in a new Claude Code session (a `--resume`/`--continue` that the
+harness gives a fresh UUID, or a crash-and-restart), that session is a
+foreign session by this rule. Its events land in `<new-cc-uuid>.jsonl`, the
+original run's log stops receiving them, and `build-state.sh` will project
+the original run's status from the evidence that log already holds — which,
+once the staleness threshold elapses, reads `failed`. The resumed work is
+not lost and nothing blocks: the events are all on disk, just split across
+two files, and `/insights` and the postmortem readers aggregate across log
+files. The trade is deliberate — a split log for a genuinely resumed run is
+strictly cheaper than the alternative it replaces, which was one finished
+run silently capturing 140 later sessions' events. Do **not** close this by
+widening ownership to "any session whose id appears anywhere in the log":
+that is the measure-over-all-lines mistake that made the original loop
+circular.
+
+### Run ownership
+
+**The problem this exists to stop.** Both emitters used to join a run's log
+whenever `.supervisor/state.md` read `status: running`/`checkpoint`. A run
+that ended WITHOUT emitting `session_end` left that status on disk forever,
+so every later session's SubagentStop appended to that one run's log —
+measured on this repo: **14,416 lines, 3.9 MB, 140 distinct
+`cc_session_id`s** in a single file. `build-state.sh` then re-derived
+`running` from the newest FOREIGN `subtask_complete` in that same log, so
+the stale status caused the fan-in and the fan-in re-asserted the stale
+status. The Floor rendered ordinary interactive chat turns as a live
+Supervisor run.
+
+**The owner rule.** The log's FIRST line records who opened it: the owner of
+`.supervisor/logs/<PLUGIN_SESSION_ID>.jsonl` is the `cc_session_id` on that
+first line. Only that session may join the log. On an owner mismatch, both
+`emit-token-ledger.sh` and `emit-progress-event.sh` blank
+`PLUGIN_SESSION_ID`, so the firing falls back to the Claude Code UUID and
+lands in its own `<cc_uuid>.jsonl` — the owned log's line count is
+unchanged. The gate is defined AFTER the status block in each emitter, not
+before it, so the CI-pinned `running|checkpoint)` case line does not drift.
+
+**Unknown owner means ADOPT (do not invert this).** An absent, empty, or
+unreadable log, an unparseable first line, or a first line carrying no
+`cc_session_id` all yield an empty owner, and an empty owner adopts the
+plugin session id exactly as before. A broken or missing `jq` (probed
+functionally, never by `command -v` alone) also yields an empty owner, i.e.
+adopt. This direction is load-bearing: refusing on unknown owner would
+regress the very first worker completion of every fresh run, because the log
+does not exist yet at that point and there is nothing to be the owner of.
+
+**Session close-out (`SessionEnd` → `close-stranded-run.sh`).** The gate
+stops the fan-in; it does not by itself make a stranded run terminal. The
+plugin's `SessionEnd` hook runs `scripts/close-stranded-run.sh`, which
+appends exactly ONE `session_end` record carrying `status: failed` and
+`reason: session_ended_without_completion` — with BOTH the canonical `event`
+key and the legacy `type` key, the contract `build-insights.sh` filters on
+(see `docs/RESULT_SCHEMAS.md` §"`session_end` JSONL hard-signal fields") —
+then re-projects via `build-state.sh`. It writes nothing when `state.md` is
+already terminal, when there is no `state.md`, or when this session is not
+the run's owner. `failed` is the only status it emits; `paused` is never
+used, because `paused` is classified LIVE by
+`hook-dispatch-on-pr-create.sh` and DEAD by both emitters, so emitting it
+would put two consumers in disagreement about the same file. Like the
+emitters, it is fail-SAFE by construction and always exits 0 — it can never
+block session teardown.
+
+**`LOOMWRIGHT_STALE_RUN_SECONDS` (default 86400).** A close-out only fires
+if the session that owned the run actually reaches `SessionEnd`; a killed
+terminal or a crashed host never does. `build-state.sh` therefore carries a
+backstop: when the derived status would be `running` but the newest
+**owner-originated** event in the log is older than
+`LOOMWRIGHT_STALE_RUN_SECONDS`, it emits `failed` instead. **Owner-only
+measurement is the entire point** — measuring age over ALL lines is exactly
+what made the original loop circular, because foreign sessions kept
+appending fresh events to a finished run's log and so the log always looked
+fresh. The backstop SKIPS (never guesses a run dead) when the log's first
+line carries no `cc_session_id`, when no owner timestamp parses, or when the
+override is not a positive integer, in which case the default applies. It
+introduces no new status word: it can only turn a derived `running` into
+`failed`, both already members of the closed enum in
+`skills/state-management/SKILL.md` §"State File Schema". `paused` is never
+emitted by this projector.
+
+**Agent identity on ledger lines (`LOOMWRIGHT_AGENT_TYPE`).** The real
+`SubagentStop` payload frequently carries no `agent_type` at all, which left
+ledger lines unattributed. Resolution order is now: the payload's
+`agent_type` first, else the `LOOMWRIGHT_AGENT_TYPE` env var that
+`hooks.json` sets per-matcher (`loomwright:code-reviewer`,
+`loomwright:qa-executor`, `loomwright:supervisor-runner`,
+`loomwright:worker`), else the key is **omitted entirely** — never an empty
+string, never `null`.
+
+**Adjacent-duplicate guard (confirmed, not assumed).**
+`emit-token-ledger.sh` is registered under three mutually-exclusive
+`SubagentStop` matchers, and those matchers only discriminate when the
+payload actually carries an `agent_type`. Measured on the live log: **94/94**
+typed firings emitted exactly 1 line, and **4,376/4,376** untyped firings
+emitted exactly 2 — the duplication is perfectly correlated with the absence
+of `agent_type`, and typed agents were never duplicated. The guard is
+minimal and consecutive-only: skip the append when the line is byte-identical
+to the log's CURRENT last line. Duplicate blocks fire back-to-back within one
+firing, so they are always adjacent; byte-identity spans `ts`, `agent_id` and
+the transcript byte count together, so two genuinely distinct completions
+cannot collide. Reading only the last line keeps this O(1) on a large log,
+and every failure absorbs to the normal append path.
 
 ### Script-location convention
 

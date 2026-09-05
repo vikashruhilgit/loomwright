@@ -268,6 +268,14 @@ Two downstream consumers read the on-disk canonical lowercase form and break on 
 
 The canonical `## Session` block is no longer written by Context-Keeper or by a Supervisor inline write. It is derived by the hook-triggered `scripts/emit-progress-event.sh` (fired at the `loomwright:worker` `SubagentStop` hook) and projected into `.supervisor/state.md` by `scripts/build-state.sh`. See `docs/TELEMETRY.md`.
 
+**Run ownership (v15.49.0) — a session may only write to the run it owns.** A run's log is owned by
+one session, and a run that ends without completing is closed out mechanically rather than leaving
+`status: running` on disk forever. Consequences you need here: a foreign session's events never join
+another run's log, and `status` can now reach the terminal `failed` without any agent writing it.
+No new status or phase word is introduced — the enums in §"State File Schema" above are unchanged.
+**`docs/TELEMETRY.md` §"Run ownership" is the authority** for the owner rule, the adopt-on-unknown-owner
+fallback, the `SessionEnd` close-out, and `LOOMWRIGHT_STALE_RUN_SECONDS`; do not restate them here.
+
 **Supported operations (state sections other than `## Session`):**
 
 | Operation | What Changes | When |

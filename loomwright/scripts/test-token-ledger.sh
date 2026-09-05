@@ -29,6 +29,18 @@
 #      advisory_total + advisory_total_kind:"context_bytes" emitted; unset ⇒ both
 #      fields absent; a negative/float/non-numeric value ⇒ both fields absent
 #      (fail-safe omission); event is still written in every case
+#  17. RUN OWNERSHIP GATE (loom_log_owner): the log's FIRST line records who
+#      opened the run, and only that session may join it —
+#        17a owner matches ⇒ still joins the plugin session id
+#        17b foreign session ⇒ lands in <foreign>.jsonl AND the owned log's
+#            line COUNT is unchanged (asserted, not merely "a new file exists")
+#        17c/d/e/f four degenerate inputs, each asserted separately: absent log,
+#            empty log, unreadable log, first line with no cc_session_id — all
+#            four ADOPT (the non-negotiable fail-safe direction)
+#        17g a functionally-broken jq ⇒ exit 0 and ADOPT
+#  18. agent identity: LOOMWRIGHT_AGENT_TYPE env used when the payload carries
+#      no agent_type; payload WINS when both are present; the key is ABSENT
+#      (has("agent_type")==false — not "", not null) when neither is present
 
 # EXIT: 0 on full pass, 1 on any failed assertion.
 # Style mirrors test-insights.sh / test-send-telemetry-core.sh.
@@ -88,13 +100,17 @@ run_sut() {
   # assertions (cases 14b/15b and all pre-14 cases); case 14 sets the
   # orientation var explicitly via run_sut_env, case 15 the prefix var via
   # run_sut_sp.
+  # LOOMWRIGHT_AGENT_TYPE is scrubbed here for the same reason as the three
+  # vars above: case 18c asserts the agent_type key is ABSENT, and a developer
+  # export would otherwise supply it. This is a SCRUB, never a default — case
+  # 18a/18b set the var explicitly through run_sut_agent.
   local payload="$1"
   local out rc
   if [ "$payload" = "--empty" ]; then
-    out="$( cd "$SANDBOX" && env -u LOOMWRIGHT_ORIENTATION_SOURCE -u LOOMWRIGHT_SHARED_PREFIX -u LOOMWRIGHT_ADVISORY_TOTAL_BYTES bash "$SUT" </dev/null 2>&1 )"
+    out="$( cd "$SANDBOX" && env -u LOOMWRIGHT_ORIENTATION_SOURCE -u LOOMWRIGHT_SHARED_PREFIX -u LOOMWRIGHT_ADVISORY_TOTAL_BYTES -u LOOMWRIGHT_AGENT_TYPE bash "$SUT" </dev/null 2>&1 )"
     rc=$?
   else
-    out="$( cd "$SANDBOX" && env -u LOOMWRIGHT_ORIENTATION_SOURCE -u LOOMWRIGHT_SHARED_PREFIX -u LOOMWRIGHT_ADVISORY_TOTAL_BYTES bash "$SUT" < "$payload" 2>&1 )"
+    out="$( cd "$SANDBOX" && env -u LOOMWRIGHT_ORIENTATION_SOURCE -u LOOMWRIGHT_SHARED_PREFIX -u LOOMWRIGHT_ADVISORY_TOTAL_BYTES -u LOOMWRIGHT_AGENT_TYPE bash "$SUT" < "$payload" 2>&1 )"
     rc=$?
   fi
   printf '%s\n' "$out"
@@ -120,6 +136,31 @@ run_sut_sp() {
   local spv="$1" payload="$2"
   local out rc
   out="$( cd "$SANDBOX" && env -u LOOMWRIGHT_ORIENTATION_SOURCE -u LOOMWRIGHT_ADVISORY_TOTAL_BYTES LOOMWRIGHT_SHARED_PREFIX="$spv" bash "$SUT" < "$payload" 2>&1 )"
+  rc=$?
+  printf '%s\n' "$out"
+  printf 'RC=%s\n' "$rc"
+}
+
+run_sut_agent() {
+  # Usage: run_sut_agent <LOOMWRIGHT_AGENT_TYPE-value> <payload-file>
+  # Same contract as run_sut, with the agent-type env var set EXPLICITLY by the
+  # calling case (cases 18a/18b). The other advisory vars stay scrubbed.
+  local atv="$1" payload="$2"
+  local out rc
+  out="$( cd "$SANDBOX" && env -u LOOMWRIGHT_ORIENTATION_SOURCE -u LOOMWRIGHT_SHARED_PREFIX -u LOOMWRIGHT_ADVISORY_TOTAL_BYTES LOOMWRIGHT_AGENT_TYPE="$atv" bash "$SUT" < "$payload" 2>&1 )"
+  rc=$?
+  printf '%s\n' "$out"
+  printf 'RC=%s\n' "$rc"
+}
+
+run_sut_brokenjq() {
+  # Usage: run_sut_brokenjq <payload-file>
+  # Same contract as run_sut, but with a jq on PATH that is PRESENT and
+  # EXECUTABLE and always fails — the case `command -v jq` cannot detect and the
+  # reason the SUT probes jq functionally (AC-8).
+  local payload="$1"
+  local out rc
+  out="$( cd "$SANDBOX" && PATH="$BROKEN_BIN:$PATH" env -u LOOMWRIGHT_ORIENTATION_SOURCE -u LOOMWRIGHT_SHARED_PREFIX -u LOOMWRIGHT_ADVISORY_TOTAL_BYTES -u LOOMWRIGHT_AGENT_TYPE bash "$SUT" < "$payload" 2>&1 )"
   rc=$?
   printf '%s\n' "$out"
   printf 'RC=%s\n' "$rc"
@@ -654,6 +695,210 @@ for atv in "-1" "3.5" "abc" "" "1e3" "0x10"; do
   # The line itself must still be written (marker never drops the event).
   assert_eq "case16c(${atv:-empty}) event still written" "token_ledger" "$(printf '%s' "$LINE16C" | jq -r '.event')"
 done
+
+echo "== 17. run ownership gate (loom_log_owner) =="
+# The log's FIRST line records who opened the run. Only that session may join
+# it. A `running` state.md is NOT sufficient authority on its own — that is the
+# whole point of this gate.
+OWN_TRANSCRIPT="$SANDBOX/ownership-transcript.jsonl"
+printf 'HHHHHHHH' > "$OWN_TRANSCRIPT"   # 8 bytes
+
+BROKEN_BIN="$SANDBOX/broken-bin"
+mkdir -p "$BROKEN_BIN"
+printf '#!/bin/sh\nexit 1\n' > "$BROKEN_BIN/jq"
+chmod +x "$BROKEN_BIN/jq"
+
+count_lines() { wc -l < "$1" 2>/dev/null | tr -d '[:space:]'; }
+
+write_running_state() {
+  # Usage: write_running_state <plugin-session-id>
+  # A `running` state.md naming that run — the authority the gate deliberately
+  # does NOT treat as sufficient.
+  local psid="$1"
+  mkdir -p "$SANDBOX/.supervisor"
+  cat > "$SANDBOX/.supervisor/state.md" <<EOF
+## Session
+- session_id: $psid
+- status: running
+- phase: EXECUTE
+- branch: feature/ownership
+EOF
+}
+
+seed_owned_log() {
+  # Usage: seed_owned_log <plugin-session-id> <owner-cc-session-id>
+  # Both ids are REQUIRED positionally and neither has a default: a case must
+  # state the owner it is asserting against, so no shared-fixture default can
+  # disarm the assertion under test.
+  local psid="$1" owner="$2"
+  mkdir -p "$SANDBOX/.supervisor/logs"
+  printf '{"event":"token_ledger","session_id":"%s","cc_session_id":"%s"}\n' "$psid" "$owner" \
+    > "$SANDBOX/.supervisor/logs/${psid}.jsonl"
+  write_running_state "$psid"
+}
+
+make_own_payload() {
+  # Usage: make_own_payload <file> <cc-session-id>
+  local file="$1" cc="$2"
+  jq -n --arg cc "$cc" --arg tp "$OWN_TRANSCRIPT" '{
+    session_id: $cc,
+    agent_type: "loomwright:code-reviewer",
+    agent_transcript_path: $tp
+  }' > "$file"
+}
+
+echo "-- 17a. owner matches -> still joins the plugin session id (AC-1) --"
+seed_owned_log "sid-owner-17" "cc-owner-17"
+OWNLOG17="$SANDBOX/.supervisor/logs/sid-owner-17.jsonl"
+make_own_payload "$SANDBOX/own17a.json" "cc-owner-17"
+OUT17A="$(run_sut "$SANDBOX/own17a.json")"
+assert_eq "case17a exit 0" "0" "$(printf '%s\n' "$OUT17A" | grep '^RC=' | tail -1 | cut -d= -f2)"
+assert_eq "case17a owned log grew by exactly one line" "2" "$(count_lines "$OWNLOG17")"
+LINE17A="$(tail -1 "$OWNLOG17")"
+assert_eq "case17a joined on the PLUGIN session id" "sid-owner-17" "$(printf '%s' "$LINE17A" | jq -r '.session_id')"
+assert_eq "case17a cc_session_id retained" "cc-owner-17" "$(printf '%s' "$LINE17A" | jq -r '.cc_session_id')"
+if [ -f "$SANDBOX/.supervisor/logs/cc-owner-17.jsonl" ]; then
+  no "case17a owner was wrongly diverted to its own cc-uuid log"
+else
+  ok "case17a no cc-uuid log for the owner (joined, not diverted)"
+fi
+
+echo "-- 17b. foreign session -> own log file, owned log line COUNT unchanged (AC-2) --"
+COUNT17B_BEFORE="$(count_lines "$OWNLOG17")"
+make_own_payload "$SANDBOX/own17b.json" "cc-foreign-17"
+OUT17B="$(run_sut "$SANDBOX/own17b.json")"
+assert_eq "case17b exit 0" "0" "$(printf '%s\n' "$OUT17B" | grep '^RC=' | tail -1 | cut -d= -f2)"
+FOREIGNLOG17="$SANDBOX/.supervisor/logs/cc-foreign-17.jsonl"
+if [ -f "$FOREIGNLOG17" ]; then ok "case17b line landed in <foreign-uuid>.jsonl"; else no "case17b foreign log missing"; fi
+assert_eq "case17b owned log line count UNCHANGED" "$COUNT17B_BEFORE" "$(count_lines "$OWNLOG17")"
+assert_eq "case17b foreign line carries the foreign id" "cc-foreign-17" "$(tail -1 "$FOREIGNLOG17" 2>/dev/null | jq -r '.session_id')"
+
+echo "-- 17c. ABSENT log -> ADOPT (AC-3) --"
+write_running_state "sid-adopt-absent"
+rm -f "$SANDBOX/.supervisor/logs/sid-adopt-absent.jsonl"
+make_own_payload "$SANDBOX/own17c.json" "cc-any-17c"
+OUT17C="$(run_sut "$SANDBOX/own17c.json")"
+assert_eq "case17c exit 0" "0" "$(printf '%s\n' "$OUT17C" | grep '^RC=' | tail -1 | cut -d= -f2)"
+assert_eq "case17c adopted the plugin session id (absent log)" "sid-adopt-absent" \
+  "$(tail -1 "$SANDBOX/.supervisor/logs/sid-adopt-absent.jsonl" 2>/dev/null | jq -r '.session_id')"
+if [ -f "$SANDBOX/.supervisor/logs/cc-any-17c.jsonl" ]; then
+  no "case17c refused on an absent log (must ADOPT)"
+else
+  ok "case17c no cc-uuid fallback log (absent log ADOPTS)"
+fi
+
+echo "-- 17d. EMPTY log -> ADOPT (AC-3) --"
+write_running_state "sid-adopt-empty"
+mkdir -p "$SANDBOX/.supervisor/logs"
+: > "$SANDBOX/.supervisor/logs/sid-adopt-empty.jsonl"
+make_own_payload "$SANDBOX/own17d.json" "cc-any-17d"
+OUT17D="$(run_sut "$SANDBOX/own17d.json")"
+assert_eq "case17d exit 0" "0" "$(printf '%s\n' "$OUT17D" | grep '^RC=' | tail -1 | cut -d= -f2)"
+assert_eq "case17d adopted the plugin session id (empty log)" "sid-adopt-empty" \
+  "$(tail -1 "$SANDBOX/.supervisor/logs/sid-adopt-empty.jsonl" 2>/dev/null | jq -r '.session_id')"
+if [ -f "$SANDBOX/.supervisor/logs/cc-any-17d.jsonl" ]; then
+  no "case17d refused on an empty log (must ADOPT)"
+else
+  ok "case17d no cc-uuid fallback log (empty log ADOPTS)"
+fi
+
+echo "-- 17e. UNREADABLE log -> ADOPT (AC-3) --"
+# Seeded with a FOREIGN owner on purpose: if the gate could read this file it
+# would REJECT and divert to cc-any-17e.jsonl, so the absence of that file is a
+# discriminating assertion, not a vacuous one. The adopted append to a mode-000
+# file fails and is absorbed (fail-SAFE), which is why the owned log is also
+# asserted unchanged.
+write_running_state "sid-adopt-unreadable"
+UNREADABLE17="$SANDBOX/.supervisor/logs/sid-adopt-unreadable.jsonl"
+printf '{"event":"token_ledger","session_id":"sid-adopt-unreadable","cc_session_id":"cc-someone-else"}\n' > "$UNREADABLE17"
+chmod 000 "$UNREADABLE17" 2>/dev/null || true
+make_own_payload "$SANDBOX/own17e.json" "cc-any-17e"
+OUT17E="$(run_sut "$SANDBOX/own17e.json")"
+assert_eq "case17e exit 0" "0" "$(printf '%s\n' "$OUT17E" | grep '^RC=' | tail -1 | cut -d= -f2)"
+if [ -f "$SANDBOX/.supervisor/logs/cc-any-17e.jsonl" ]; then
+  no "case17e refused on an unreadable log (must ADOPT, not divert)"
+else
+  ok "case17e no cc-uuid fallback log (unreadable log ADOPTS)"
+fi
+chmod 644 "$UNREADABLE17" 2>/dev/null || true
+assert_eq "case17e unreadable log left untouched" "1" "$(count_lines "$UNREADABLE17")"
+
+echo "-- 17f. first line carries NO cc_session_id -> ADOPT (AC-3) --"
+write_running_state "sid-adopt-noowner"
+NOOWNER17="$SANDBOX/.supervisor/logs/sid-adopt-noowner.jsonl"
+printf '{"event":"token_ledger","session_id":"sid-adopt-noowner"}\n' > "$NOOWNER17"
+make_own_payload "$SANDBOX/own17f.json" "cc-any-17f"
+OUT17F="$(run_sut "$SANDBOX/own17f.json")"
+assert_eq "case17f exit 0" "0" "$(printf '%s\n' "$OUT17F" | grep '^RC=' | tail -1 | cut -d= -f2)"
+assert_eq "case17f adopted the plugin session id (no cc_session_id on line 1)" "2" "$(count_lines "$NOOWNER17")"
+assert_eq "case17f adopted line joined on the plugin sid" "sid-adopt-noowner" \
+  "$(tail -1 "$NOOWNER17" | jq -r '.session_id')"
+if [ -f "$SANDBOX/.supervisor/logs/cc-any-17f.jsonl" ]; then
+  no "case17f refused when no owner was recorded (must ADOPT)"
+else
+  ok "case17f no cc-uuid fallback log (unrecorded owner ADOPTS)"
+fi
+
+echo "-- 17g. functionally-broken jq -> exit 0 and ADOPT (AC-8) --"
+# jq is on PATH and executable but always fails — `command -v jq` cannot see
+# this. The owner becomes unreadable, so the fail-SAFE direction is ADOPT even
+# though the payload carries a foreign id.
+seed_owned_log "sid-brokenjq-17" "cc-owner-brokenjq"
+BROKENLOG17="$SANDBOX/.supervisor/logs/sid-brokenjq-17.jsonl"
+make_own_payload "$SANDBOX/own17g.json" "cc-foreign-brokenjq"
+OUT17G="$(run_sut_brokenjq "$SANDBOX/own17g.json")"
+assert_eq "case17g exit 0 with a broken jq" "0" "$(printf '%s\n' "$OUT17G" | grep '^RC=' | tail -1 | cut -d= -f2)"
+assert_eq "case17g broken jq ADOPTS (owned log grew)" "2" "$(count_lines "$BROKENLOG17")"
+if [ -f "$SANDBOX/.supervisor/logs/cc-foreign-brokenjq.jsonl" ]; then
+  no "case17g broken jq took the refuse branch (must fail SAFE to ADOPT)"
+else
+  ok "case17g broken jq did not divert to a cc-uuid log"
+fi
+
+echo "== 18. agent identity: payload > LOOMWRIGHT_AGENT_TYPE > key omitted (AC-7) =="
+# No state.md from here on: these cases are about the emitted line's fields,
+# not about which run it joins.
+rm -f "$SANDBOX/.supervisor/state.md" 2>/dev/null || true
+AT_TRANSCRIPT="$SANDBOX/agent-type-transcript.jsonl"
+printf 'IIII' > "$AT_TRANSCRIPT"   # 4 bytes
+
+PAYLOAD18A="$SANDBOX/agenttype-envonly.json"
+jq -n --arg tp "$AT_TRANSCRIPT" '{
+  session_id: "fixture-token-ledger-agenttype-env-001",
+  agent_transcript_path: $tp
+}' > "$PAYLOAD18A"
+OUT18A="$(run_sut_agent "loomwright:worker" "$PAYLOAD18A")"
+assert_eq "case18a exit 0" "0" "$(printf '%s\n' "$OUT18A" | grep '^RC=' | tail -1 | cut -d= -f2)"
+LINE18A="$(tail -1 "$SANDBOX/.supervisor/logs/fixture-token-ledger-agenttype-env-001.jsonl" 2>/dev/null)"
+assert_eq "case18a env value used when payload carries no agent_type" "loomwright:worker" \
+  "$(printf '%s' "$LINE18A" | jq -r '.agent_type // empty')"
+
+PAYLOAD18B="$SANDBOX/agenttype-both.json"
+jq -n --arg tp "$AT_TRANSCRIPT" '{
+  session_id: "fixture-token-ledger-agenttype-both-001",
+  agent_type: "loomwright:code-reviewer",
+  agent_transcript_path: $tp
+}' > "$PAYLOAD18B"
+OUT18B="$(run_sut_agent "loomwright:env-must-lose" "$PAYLOAD18B")"
+assert_eq "case18b exit 0" "0" "$(printf '%s\n' "$OUT18B" | grep '^RC=' | tail -1 | cut -d= -f2)"
+LINE18B="$(tail -1 "$SANDBOX/.supervisor/logs/fixture-token-ledger-agenttype-both-001.jsonl" 2>/dev/null)"
+assert_eq "case18b payload agent_type WINS over the env value" "loomwright:code-reviewer" \
+  "$(printf '%s' "$LINE18B" | jq -r '.agent_type // empty')"
+
+PAYLOAD18C="$SANDBOX/agenttype-neither.json"
+jq -n --arg tp "$AT_TRANSCRIPT" '{
+  session_id: "fixture-token-ledger-agenttype-none-001",
+  agent_transcript_path: $tp
+}' > "$PAYLOAD18C"
+OUT18C="$(run_sut "$PAYLOAD18C")"
+assert_eq "case18c exit 0" "0" "$(printf '%s\n' "$OUT18C" | grep '^RC=' | tail -1 | cut -d= -f2)"
+LINE18C="$(tail -1 "$SANDBOX/.supervisor/logs/fixture-token-ledger-agenttype-none-001.jsonl" 2>/dev/null)"
+# Absence asserted as key absence — NOT `== ""` and NOT `== null`, either of
+# which a present-but-empty key would satisfy.
+assert_eq "case18c agent_type key ABSENT when neither source supplies it" "false" \
+  "$(printf '%s' "$LINE18C" | jq -r 'has("agent_type")')"
+assert_eq "case18c the event line is still written" "token_ledger" \
+  "$(printf '%s' "$LINE18C" | jq -r '.event')"
 
 echo ""
 echo "RESULT  pass=$PASS_COUNT  fail=$FAIL_COUNT"

@@ -798,7 +798,19 @@ exactly like it already reads `rubric_score`. It does NOT parse the nested SUPER
 > The session_end record carries both an `event` and a (legacy) `type` key with the same value
 > `"session_end"`. **`event` is canonical going forward** — `build-insights.sh` filters on `.event`;
 > the duplicate `type` is retained only for backward-compatibility with older logs. New consumers
-> should read `.event`.
+> should read `.event`. **This applies to machine-written close-out records too:** the record
+> `scripts/close-stranded-run.sh` appends on `SessionEnd` carries BOTH keys, deliberately — dropping
+> the legacy `type` would make the close-out invisible to `build-insights.sh`'s older filter path.
+
+**`reason` (additive, optional — added v15.49.0):** a short lowercase snake_case string explaining
+WHY the session ended, present only when a machine writer had a specific reason to record. Known
+values: `session_ended_without_completion` — written by `scripts/close-stranded-run.sh` (the
+`SessionEnd` hook) when a session ends while `.supervisor/state.md` is still non-terminal and this
+session owns the run's log; that record always pairs `reason` with `"status":"failed"`. Absent (the
+common case — an ordinary agent-written `session_end`) means "no specific reason recorded" and is
+NOT an error. Purely additive: no `schema_version` change, no reader is required to consume it, and
+records with or without it remain valid. See `docs/TELEMETRY.md` §"Run ownership" for the ownership
+rule that decides whether the close-out writes at all.
 
 **Hard-signal field contract (the same data in two shapes):** the FLAT `session_end` fields above
 and the nested `SUPERVISOR_RESULT.contract_conformance` / `.benchmark_result` objects carry **the
