@@ -190,7 +190,7 @@ by the **plugin** session id (e.g. `supervisor-2026-07-07-fable-parity`). To kee
 | `token_proxy_kind` | proxy path only | Closed value today: `"transcript_bytes"` |
 | `token_proxy_transcript_bytes` | proxy path only | Byte size of `agent_transcript_path` (preferred) or `transcript_path` via `os.path.getsize` only |
 | `agent_type`, `agent_id`, `ts` | optional / when present | Identity + UTC ISO timestamp; **omitted when absent** (never the literal `"unknown"`) |
-| `agent_scope` | when the payload transcript path identifies a thread | `"main"` (the path named `<cc_session_id>.jsonl`, i.e. the session itself) or `"subagent"` (the path named `subagents/agent-<agent_id>.jsonl`); **omitted** when neither matches, when no path is carried, or when `agent_id` is absent. Answers WHICH THREAD, never WHICH ROLE — see §"Agent identity on emitted lines" |
+| `agent_scope` | when the payload transcript path identifies a thread | `"main"` (the path named `<cc_session_id>.jsonl`, i.e. the session itself) or `"subagent"` (the path named `subagents/agent-<agent_id>.jsonl` for THIS `agent_id`, so an absent `agent_id` omits **that** arm); **omitted** when neither matches, or when no path is carried at all. Answers WHICH THREAD, never WHICH ROLE — see §"Agent identity on emitted lines" |
 
 **Additive key (v15.12.0+):** `orientation_source` — emitted only when `LOOMWRIGHT_ORIENTATION_SOURCE` is one of `memos|repo_map|graphify|none` (orientation attribution); omitted on unset/empty/invalid (fail-safe — the event line still writes). **Reader-side plumbing only in v15.12.0 — no in-repo producer sets the env var yet.** The emitter runs inside a SubagentStop `type: command` hook, which inherits the MAIN session environment — an `export` inside a subagent's Bash call (where the orientation tier is actually known) does NOT reach the hook process. The intended producer (a follow-up) writes the tier to a small gitignored state file under `.supervisor/` that the hook-side emitter reads; until that lands, the field is reserved plumbing and is simply omitted.
 
@@ -929,7 +929,9 @@ Both emitters carry the same block, byte-parallel, and record:
 |---|---|
 | `agent_scope: "main"` | no `agent_transcript_path`, and `transcript_path` basenames to `<cc_session_id>.jsonl` — the payload describes the session's own thread |
 | `agent_scope: "subagent"` | `agent_transcript_path` basenames to `agent-<agent_id>.jsonl` for THIS `agent_id` — a spawned agent, whatever its type |
-| *key omitted* | any other path, no path at all, or no `agent_id` to compare against |
+| *key omitted* | any other path, or no path at all |
+
+`agent_id` gates the **`subagent`** arm only, and deliberately so: that arm asserts the transcript belongs to THIS agent, which is unanswerable without an id, while `main` compares the path against `cc_session_id` and needs no id to do it. A payload with a session-named `transcript_path` and no `agent_id` therefore still records `main` — the fact is known, so it is not discarded, and nothing downstream is misled: `build-floor.sh` builds lane rows only from lines that carry an `agent_id`, so such a line reaches no lane at all. The doc previously listed a missing `agent_id` as a blanket omission condition, which overstated the guarantee; `test-token-ledger.sh` case 20f and `test-progress-state.sh` case 40f pin the actual behaviour in both emitters.
 
 **Measured, not assumed** (live log, 2026-09-05): every typed line's
 `token_proxy_transcript_bytes` equalled a `subagents/agent-<id>.jsonl` file on

@@ -63,7 +63,11 @@
 #      20d ANTI-VACUITY: an agent_transcript_path present but NOT matching
 #          agent-<agent_id>.jsonl ⇒ ABSENT, never falling through to "main"
 #          on the strength of transcript_path (an if/if instead of if/elif)
-#      20e no agent_id in the payload ⇒ ABSENT (nothing to compare against)
+#      20e an AGENT transcript with no agent_id ⇒ ABSENT: that arm claims the
+#          transcript belongs to THIS agent, unanswerable without an id
+#      20f the SAME absence on the main arm still records "main" - that arm
+#          compares the path against cc_session_id and needs no agent_id, so a
+#          blanket "omitted when agent_id is absent" claim would be false
 
 # EXIT: 0 on full pass, 1 on any failed assertion.
 # Style mirrors test-insights.sh / test-send-telemetry-core.sh.
@@ -1158,8 +1162,32 @@ jq -n --arg atp "$SC_E_ATP" --arg sid "$SC_E_SID" '{
 OUT20E="$(run_sut "$PAYLOAD20E")"
 assert_eq "case20e exit 0" "0" "$(printf '%s\n' "$OUT20E" | grep '^RC=' | tail -1 | cut -d= -f2)"
 LINE20E="$(tail -1 "$SANDBOX/.supervisor/logs/${SC_E_SID}.jsonl" 2>/dev/null)"
-assert_eq "case20e no agent_id ⇒ agent_scope key ABSENT" "false" \
+assert_eq "case20e an AGENT transcript with no agent_id to compare against ⇒ ABSENT (the subagent arm alone)" "false" \
   "$(printf '%s' "$LINE20E" | jq -r 'has("agent_scope")')"
+
+
+# 20f — THE OTHER SIDE OF 20e, and the branch the docs used to describe wrongly.
+# `agent_id` gates the SUBAGENT arm only: that arm claims the transcript belongs
+# to THIS agent, which is unanswerable without an id. `main` compares the path
+# against cc_session_id and needs no id at all, so it is still recorded here. The
+# fact is known and is not discarded; nothing downstream is misled either, since
+# build-floor.sh builds lane rows only from lines carrying an agent_id, so a line
+# like this reaches no lane. Asserted rather than left to the reader, because a
+# blanket "omitted when agent_id is absent" claim would be false of this payload.
+SC_F_SID="fixture-token-ledger-scope-main-noid-001"
+SC_F_TP="$SANDBOX/scope-transcripts/${SC_F_SID}.jsonl"
+printf 'FFFF' > "$SC_F_TP"
+PAYLOAD20F="$SANDBOX/scope-main-noid.json"
+jq -n --arg tp "$SC_F_TP" --arg sid "$SC_F_SID" '{
+  session_id: $sid, transcript_path: $tp
+}' > "$PAYLOAD20F"
+OUT20F="$(run_sut "$PAYLOAD20F")"
+assert_eq "case20f exit 0" "0" "$(printf '%s\n' "$OUT20F" | grep '^RC=' | tail -1 | cut -d= -f2)"
+LINE20F="$(tail -1 "$SANDBOX/.supervisor/logs/${SC_F_SID}.jsonl" 2>/dev/null)"
+assert_eq "case20f session-named transcript with NO agent_id still ⇒ main (agent_id gates only the subagent arm)" "main" \
+  "$(printf '%s' "$LINE20F" | jq -r '.agent_scope // empty')"
+assert_eq "case20f and the line carries no agent_id to have gated it" "false" \
+  "$(printf '%s' "$LINE20F" | jq -r 'has("agent_id")')"
 
 
 echo ""

@@ -117,7 +117,9 @@
 #       => ABSENT, never falling through to "main". Byte-parallel with
 #       test-token-ledger.sh case 20 - the two emitters must not diverge; 40e
 #       asserts that byte-parallelism directly, comparing the block extracted
-#       from each file rather than trusting the prose that claims it
+#       from each file rather than trusting the prose that claims it; 40f pins
+#       the arm the doc got wrong - a session-named transcript with NO agent_id
+#       still records "main", because agent_id gates the subagent arm alone
 #
 # EXIT: 0 on full pass, 1 on any failed assertion.
 
@@ -1473,6 +1475,26 @@ else
   assert_eq "case40e the two copies are byte-identical" "same" \
     "$( [ "$SB_PROGRESS" = "$SB_LEDGER" ] && echo same || echo differ )"
 fi
+
+# 40f — the branch the docs used to describe wrongly, mirrored from
+# test-token-ledger.sh case 20f. `agent_id` gates the SUBAGENT arm only: that arm
+# claims the transcript belongs to THIS agent and cannot be answered without an
+# id, while `main` compares the path against cc_session_id and needs none. So a
+# payload with a session-named transcript and no agent_id still records `main` —
+# the fact is known and is not discarded, and nothing downstream is misled, since
+# build-floor.sh builds lane rows only from lines that carry an agent_id.
+REPO40F="$(init_repo "feature/case40f")"
+P40F="$PAYLOAD_DIR/p40f.json"
+jq -n '{session_id:"sid-case40f",
+        transcript_path:"/nonexistent/projects/proj/sid-case40f.jsonl",
+        hook_event_name:"SubagentStop"}' > "$P40F"
+OUT40F="$(run_emitter "$REPO40F" "$P40F")"
+assert_eq "case40f exit 0" "0" "$(get_rc "$OUT40F")"
+LINE40F="$(tail -1 "$REPO40F/.supervisor/logs/sid-case40f.jsonl" 2>/dev/null)"
+assert_eq "case40f session-named transcript with NO agent_id still ⇒ main (agent_id gates only the subagent arm)" "main" \
+  "$(printf '%s' "$LINE40F" | jq -r '.agent_scope // empty')"
+assert_eq "case40f and the line carries no agent_id to have gated it" "false" \
+  "$(printf '%s' "$LINE40F" | jq -r 'has("agent_id")')"
 
 echo "== real repo .supervisor/logs untouched =="
 assert_eq "real logs snapshot unchanged" "$REAL_BEFORE" "$(snapshot_real)"
