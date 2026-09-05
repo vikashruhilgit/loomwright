@@ -101,7 +101,10 @@
 #   apply   copy the three bundle files and write the marker. Byte-compares first: an apply
 #           that would change nothing reports `apply: no-op — already configured`.
 #   serve   regenerate `floor.json` on an interval (unless `--no-regen`), copy it into the ui
-#           dir, and serve that directory on 127.0.0.1. Foreground by default. With projects
+#           dir, and serve that directory on 127.0.0.1. Foreground by default, for a human at
+#           a terminal; a serve started by an agent must pass `--detach`, because that caller
+#           has no Ctrl-C: on the agent path a foreground serve blocks until the tool call
+#           times out and the EXIT trap kills the server it just started. With projects
 #           registered it also regenerates them on the SLOWER cadence below and writes the
 #           served index every tick. It prints ONE URL carrying this run's token in the
 #           FRAGMENT — which a browser never sends to any server, so the token cannot reach a

@@ -19,6 +19,10 @@
 
 <header class="bar">
   <h1>The Floor</h1>
+  <p class="lede">A read-only picture of one Loomwright run, drawn from a file on this machine and served
+     only to this machine. It shows what was <strong>recorded</strong>: nothing here claims a process is
+     running, and no number here is a guess. Where the projector could not see something, the page says so
+     in words rather than showing a zero.</p>
   <p class="sub" id="origin-note">a read-only projection of <code>.supervisor/floor/floor.json</code></p>
   <p class="sub" id="generated">reading floor.json&hellip;</p>
 </header>
@@ -40,6 +44,7 @@
   -->
   <section aria-labelledby="projects-h">
     <h2 id="projects-h">Projects <span class="sub" id="registry-state"></span></h2>
+    <p class="caption">Every project a human registered with this server, and which one everything below is reading. Freshness is each row&rsquo;s own last-regenerated age, reported by the served index &mdash; not the moment you opened this page.</p>
     <p class="picker">
       <label for="project-picker">Showing</label>
       <select id="project-picker" hidden></select>
@@ -75,6 +80,7 @@
 
   <section aria-labelledby="stages-h">
     <h2 id="stages-h">Pipeline</h2>
+    <p class="caption">Where this run stands in the five-step pipeline, counted from the projection. A cell reading &mdash; means the projector could not count that surface, never that the count is zero. Freshness is the age of the <code>state.md</code> write, printed in the note under the row.</p>
     <ol class="stages" id="stages">
       <li class="stage" data-stage="queue"><span class="stage-name">Queue</span><span class="stage-val" id="st-queue">&mdash;</span></li>
       <li class="stage" data-stage="plan"><span class="stage-name">Plan</span><span class="stage-val" id="st-plan">&mdash;</span></li>
@@ -87,29 +93,34 @@
 
   <section aria-labelledby="lanes-h">
     <h2 id="lanes-h">Lanes <span class="sub" id="lane-count"></span></h2>
+    <p class="caption">One row per agent that appears in the newest recorded session, newest event first. The number is recorded log lines for that agent, not turns and not progress. Freshness is each lane&rsquo;s own last recorded event, measured against the moment this document was generated.</p>
     <ul class="lanes" id="lanes"></ul>
     <p class="note-permanent" id="liveness-note">liveness unavailable — a lane shows recorded events, never a running process</p>
   </section>
 
   <section aria-labelledby="roster-h">
     <h2 id="roster-h">Roster <span class="sub" id="roster-src"></span></h2>
+    <p class="caption">Every agent this plugin ships, whether or not it appears in the run above &mdash; so you can see what did <em>not</em> take part. Freshness is the plugin&rsquo;s own agent files as they were read when this document was generated.</p>
     <ul class="roster" id="roster"></ul>
   </section>
 
   <section aria-labelledby="rules-h">
     <h2 id="rules-h">Rules <span class="sub" id="rules-src"></span></h2>
+    <p class="caption">Every rule in the committed <code>.agent/rules/</code> store, grouped by category and then by scope. Freshness is the store as it was read when this document was generated; the basis line below names exactly what was examined and what went unread.</p>
     <p class="sub" id="rules-basis"></p>
     <div id="rules-body"></div>
   </section>
 
   <section aria-labelledby="churn-h">
     <h2 id="churn-h">Churn <span class="sub" id="churn-src"></span></h2>
+    <p class="caption">The review-churn ledger, as two distributions ordered by key rather than by size &mdash; this view deliberately does not order anything by desirability. Freshness is the ledger as it was read when this document was generated; the basis line below names it.</p>
     <p class="sub" id="churn-basis"></p>
     <div id="churn-body"></div>
   </section>
 
   <section aria-labelledby="notes-h">
     <h2 id="notes-h">Projector notes</h2>
+    <p class="caption">What the projector could not examine, in its own words. An empty strip means every surface was counted. Freshness is the generation time of this document, printed at the top of the page.</p>
     <ul class="notes" id="notes"></ul>
   </section>
 </main>

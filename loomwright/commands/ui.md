@@ -24,8 +24,8 @@ The Floor is a single static page — three files, no framework, no bundler, no 
 ```bash
 /ui                     # same as `/ui check` — module state and registry state, writes nothing
 /ui check               # report both halves in one report
-/ui serve               # start the floor on 127.0.0.1:7734 (Ctrl-C stops it)
-/ui serve --detach      # start it in the background, pids recorded in <ui dir>/serve.pid
+/ui serve               # HUMAN AT A TERMINAL ONLY: foreground, and Ctrl-C is that human's own shell
+/ui serve --detach      # WHAT THIS COMMAND RUNS: returns at once, pids in <ui dir>/serve.pid
 /ui stop                # stop a server this module recorded
 /ui add                 # register the CURRENT project
 /ui add <path>          # register <path>
@@ -78,16 +78,18 @@ If `UI readiness:` is `not configured`, say so and point at `/setup ui` — `/ui
 ### `serve`
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-ui.sh" serve
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-ui.sh" serve --detach
 ```
 
-Run it **from the project root**. Relay the headline (`serve: 127.0.0.1:<port> — loopback only, this listener is not reachable from any other host`) and the lines under it: the ui dir, whether regeneration is on and from which directory, the `projects:` line, and the `open:` URL — **on one line so it can be copied whole**.
+Run it **from the project root**, and run it **with `--detach`** — see the caller note below. Relay the headline (`serve: 127.0.0.1:<port> — loopback only, this listener is not reachable from any other host`) and the lines under it: the ui dir, whether regeneration is on and from which directory, the `projects:` line, and the `open:` URL — **on one line so it can be copied whole**.
 
 - **The `projects:` line states the cadence, not just the count.** The selected project regenerates every `--interval` seconds; the others one at a time on a slower cadence. That is not an oversight: one projector run costs about a second, so regenerating every project on every tick would starve the loop and render everything permanently stale.
 - **The `open:` URL may carry `?stale=<n>`.** The page cannot see `--interval` — it judges freshness against three times its own fixed 2 s poll — so with a longer interval `serve` prints the URL that keeps the page from calling a perfectly current document stale. Relay whichever URL it printed; do not construct one.
 - Fail-safe branches to relay **verbatim**: `serve: ABORTED — python3 not found`; `serve: ABORTED — <dir> does not exist. Run 'setup-ui.sh apply' first.`; `serve: ABORTED — build-floor.sh not found …` (suggest `--no-regen`); `serve: ABORTED — port <n> is already in use` — **this module never moves the port for you**, because a silently moved port is a browser tab reading bytes from something else; and the non-fatal `serve: note — jq not found …`.
 - **The `open:` URL also carries `#token=<this run's token>`. Relay it whole and say to open THAT url, not a bare one.** The token is per-run, lives only in the fragment (which a browser never sends to any server), and is what the page's four buttons — add, forget, scan, stop — must present to be accepted. A bare `http://127.0.0.1:<port>/` still renders everything; only the buttons are refused, and the page says so. Never invent, echo back or store the token anywhere: it dies with the server, and `serve`'s own output is the only place it is meant to appear. The extra fail-safe branch to relay verbatim is `serve: ABORTED — could not mint a per-run access token …` — nothing was started.
-- Foreground is the default and Ctrl-C is enough. `--detach` records pids in `<ui dir>/serve.pid`.
+- **Which caller each description is for — the two are different, and confusing them is the defect this note exists to prevent.**
+  - **A human running the engine directly in their own terminal:** foreground is the engine's default and Ctrl-C is enough, because that human owns the shell the server is attached to.
+  - **This command — whose only caller is an agent:** always pass `--detach`. There is no Ctrl-C on this path, so a foreground `serve` blocks the tool call until it times out, and the `EXIT` trap then kills the server it just started: a hung turn and no running server. `--detach` returns immediately and records pids in `<ui dir>/serve.pid`; relay that pids line, and tell the user `/ui stop` is how it stops.
 
 ### `stop`
 

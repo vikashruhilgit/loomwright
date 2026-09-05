@@ -88,3 +88,7 @@ temp/
 .supervisor/postmortem/*
 !.supervisor/postmortem/results.jsonl
 # <<< loomwright /setup memory END <<<
+
+# impeccable design-detector: share the reviewable config, never the cache or per-dev overrides
+.impeccable/hook.cache.json
+.impeccable/config.local.json

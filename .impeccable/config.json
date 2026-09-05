@@ -1,0 +1,26 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "border-accent-on-rounded",
+        "value": "*",
+        "files": [
+          "loomwright/scripts/floor-ui/floor.css"
+        ],
+        "createdAt": "2026-09-05T09:14:20.580Z",
+        "reason": "False positive: the two accented rules (.banner, .stage.active) each declare border-radius: 0 on the line after the accent, so neither is rounded. The repo's own gate (c18) REQUIRES that explicit zero, because a radius can arrive through the CSS cascade from a base rule and an absent declaration proves nothing about the computed value — that is exactly how .stage.active carried one unnoticed. This rule reads the same declaration as evidence of rounding, so the two cannot both be satisfied; (c18) has a mutation control behind it. User confirmed 2026-09-05."
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "loomwright/scripts/floor-ui/floor.css"
+        ],
+        "createdAt": "2026-09-05T09:14:29.575Z",
+        "reason": "Pre-existing on main (border-left: 3px appears 3x there), not introduced by the redesign. .projects li uses --hair, the hairline token, not a colour; .note-permanent uses --cue at a measured 5.59:1. Both are list-row markers rather than card side-tabs. User confirmed 2026-09-05."
+      }
+    ]
+  }
+}
