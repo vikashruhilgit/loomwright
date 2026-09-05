@@ -220,7 +220,7 @@ Every agent (full standard in `AGENT_GUIDELINES.md`):
 | `.supervisor/jobs/in-progress/` | Supervisor (move from pending) | Supervisor (move to done/failed); `scripts/reconcile-jobs.sh --repair` (v15.39.0) as a **second, evidence-gated mover** — the completion tail's move is prompt-instructed, so an agent that dies before it strands the brief; the reconciler finishes only a `stranded_merged` / `stranded_closed` brief and never an `unknown` one |
 | `.supervisor/jobs/done/` | Supervisor (move from in-progress); `scripts/reconcile-jobs.sh --repair` (v15.39.0) | Read-only after move. `scripts/stamp-requirement-status.sh` READS this dir exclusively to close out the source requirement — which is why a brief stranded in `in-progress/` structurally blocks that reconciler too |
 | `.supervisor/jobs/failed/` | Supervisor (move from in-progress) | Read-only after move |
-| `.supervisor/logs/` | Supervisor, Execute Manager, Worker | Append-only JSONL |
+| `.supervisor/logs/` | Supervisor, Execute Manager, Worker | Append-only JSONL. Also holds non-JSONL files written by hooks, none of them events: the dispatch transcripts, the telemetry logs/markers, and `<run_id>.owner` — the write-once run-owner seed (`scripts/seed-run-owner.sh`; see `docs/TELEMETRY.md` §"Run ownership"). Every consumer globs `*.jsonl` explicitly |
 | `.supervisor/history/` | Supervisor (create) | Read-only after creation |
 | `.supervisor/worker-summaries/` | Worker (inline mode) | Execute Manager (read) |
 | `.worker-summary.md` (in worktree) | Worker (parallel mode) | Execute Manager (read) |

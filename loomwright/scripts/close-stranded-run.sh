@@ -48,9 +48,17 @@
 # skills/state-management/SKILL.md §"State File Schema" and reads correctly —
 # the run ended without completing.
 #
-# OWNERSHIP: same `loom_log_owner` rule the two emitters use — the log's FIRST
-# line records who opened it — plus ONE additional demand this writer makes and
-# the emitters deliberately do not.
+# OWNERSHIP is resolved from TWO sources, seed first:
+#
+#   1. `.supervisor/logs/<run_id>.owner` — the run-creation seed written by
+#      `seed-run-owner.sh` at the moment `state.md` is created. This is what
+#      makes ownership knowable during the ACQUIRE → PRE-FLIGHT SYNC → PLAN
+#      window, before any log line exists.
+#   2. the log's FIRST line — the same `loom_log_owner` rule the two emitters
+#      use, and the only source that existed before the seed.
+#
+# On top of whichever answers, this writer makes ONE additional demand the
+# emitters deliberately do not:
 #
 #   owner recorded      → only that `cc_session_id` may close the run out.
 #   owner NOT recorded  → adoptable ONLY by a session whose payload
@@ -63,9 +71,12 @@
 # worker completion creates its log there is no owner to compare against, and
 # unconditional adoption let any unrelated ending session close out a run it
 # had no connection to. Requiring self-identification closes that without
-# touching the emitters. Residual, stated rather than hidden: a run whose log
-# records no owner is not closed out by any OTHER session — see
-# docs/TELEMETRY.md §"Honest limits" entry 9.
+# touching the emitters. The unknown-owner rule above is what a run with NO
+# seed and no log line still falls back to — pre-seed runs, and any run whose
+# `state.md` was not created through the Write/Edit tool path the seed hook
+# watches. It is no longer the main path for slug-keyed runs: those now have a
+# seed, so they take the known-owner branch. See docs/TELEMETRY.md
+# §"Honest limits" entry 9 for what remains.
 #
 # No-op (exit 0) when: the SessionEnd reason is `clear`, main worktree
 # unresolvable, not a git repo, no state.md, terminal status, non-owner
@@ -154,8 +165,35 @@ case "$PLUGIN_STATUS" in
 esac
 
 LOG_FILE="$LOG_DIR/${PLUGIN_SESSION_ID}.jsonl"
+OWNER_FILE="$LOG_DIR/${PLUGIN_SESSION_ID}.owner"
 
-# ---- Ownership (identical rule to both emitters' loom_log_owner) ------------
+# ---- Ownership, source 1: the run-creation seed -----------------------------
+# `seed-run-owner.sh` (PostToolUse[Write|Edit]) records the owning Claude Code
+# session id the moment `.supervisor/state.md` is created, which is what makes
+# ownership knowable BEFORE the first worker completion writes the log's first
+# line. Read that file's header for why the seed is script-owned rather than
+# written by the agent that creates `state.md`.
+#
+# Plain `key=value`, so this reader needs no jq. That is deliberate: it means a
+# jq-less host can still learn WHO owns a run. It changes nothing about what
+# such a host DOES, because the ending session's own id still comes from the
+# JSON payload via jq — with no jq the known-owner branch below is taken with
+# an empty `CC_SESSION_ID` and this script withholds, exactly as before.
+#
+# KEPT BYTE-IDENTICAL to the copy in build-state.sh — change them together.
+# `scripts/test-seed-run-owner.sh` asserts the two bodies match.
+loom_run_owner_seed() {
+  # Echo the `cc_session_id` recorded at run creation, or NOTHING when no seed
+  # exists / it carries no owner. Always returns 0 — "no seed" and "cannot
+  # tell" are the same answer, and both mean "fall back to the log".
+  local _seed="${1:-}"
+  [ -n "$_seed" ] && [ -f "$_seed" ] && [ -r "$_seed" ] || return 0
+  sed -nE 's/^cc_session_id=//p' "$_seed" 2>/dev/null | head -1 || true
+  return 0
+}
+
+# ---- Ownership, source 2: the log's first line ------------------------------
+# (identical rule to both emitters' loom_log_owner)
 loom_log_owner() {
   # Echo the `cc_session_id` on the FIRST line of the given log, or NOTHING
   # when no owner is recorded. Always returns 0.
@@ -175,7 +213,18 @@ if printf '{}' | jq -e . >/dev/null 2>&1 && [ -n "$INPUT" ]; then
   CC_SESSION_ID="$(printf '%s' "$CC_SESSION_ID" | tr -cd 'A-Za-z0-9_-' || true)"
 fi
 
-LOG_OWNER="$(loom_log_owner "$LOG_FILE" || true)"
+# The SEED WINS when both sources exist, and the precedence is load-bearing
+# rather than arbitrary. The seed is written by a hook at the moment the run was
+# created and is keyed to that run id; the log's first line is merely whoever
+# appended first — and while the owner is unknown, the emitters'
+# adopt-on-unknown rule explicitly permits that to be a FOREIGN session. Where
+# the two disagree, the disagreement IS the foreign-append case, and the seed is
+# the one that is right. `seed-run-owner.sh` never writes a seed for a run whose
+# log already records an owner, so the two can only diverge that way round.
+LOG_OWNER="$(loom_run_owner_seed "$OWNER_FILE" || true)"
+if [ -z "$LOG_OWNER" ]; then
+  LOG_OWNER="$(loom_log_owner "$LOG_FILE" || true)"
+fi
 LOG_OWNER="$(printf '%s' "$LOG_OWNER" | tr -cd 'A-Za-z0-9_-' || true)"
 
 if [ -n "$LOG_OWNER" ]; then

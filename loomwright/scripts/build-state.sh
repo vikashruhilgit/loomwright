@@ -67,8 +67,17 @@
 # ALL lines is precisely what made the original failure circular: foreign
 # sessions kept appending fresh `subtask_complete` events to a finished run's
 # log, so the log always LOOKED fresh and `running` was re-asserted forever.
-# When ownership cannot be established (no `cc_session_id` on the first line) or
-# a timestamp cannot be parsed, the backstop SKIPS — it never guesses a run dead.
+# When ownership cannot be established or a timestamp cannot be parsed, the
+# backstop SKIPS — it never guesses a run dead.
+#
+# OWNER AND AGE BOTH ALSO COME FROM THE RUN-CREATION SEED
+# (`.supervisor/logs/<run_id>.owner`, written by `seed-run-owner.sh` when
+# `state.md` is created). The seed is consulted FIRST for the owner, and its
+# `started_at` counts as owner-originated evidence — it is the last thing we
+# know the owner did when the owner has emitted no events of its own. That is
+# what lets the backstop reach the ACQUIRE → PRE-FLIGHT SYNC → PLAN window at
+# all: before, this script returned on its log-exists guard below, and in that
+# window the log does not exist. A log with no seed behaves exactly as before.
 #
 # The status vocabulary this projector emits is UNCHANGED by the backstop:
 # `failed` is already in the set below. `paused` is NEVER emitted (frozen
@@ -87,8 +96,12 @@
 # backstop introduces NO new status word — it can only turn a derived `running`
 # into `failed`, both already in that list.
 #
-# An empty/absent log means NO `state.md` at all — start-fresh, strictly
-# better than the pre-change failure mode (a stale lie left on disk).
+# An empty/absent log still means NO `state.md` is ever CREATED — start-fresh,
+# strictly better than the pre-change failure mode (a stale lie left on disk).
+# The one thing an empty/absent log can now do is close out an ALREADY-EXISTING
+# non-terminal `state.md` for this same run, and only when the seed's
+# `started_at` is older than the staleness threshold: `failed`/`LOOP`, the same
+# pair a `session_end` produces. It can never write `running` from this branch.
 #
 # FIELD OWNERSHIP (PR #116 review Finding 4 — narrowed from "owns the whole
 # block"): this projector owns and re-derives EXACTLY FOUR keys —
@@ -149,10 +162,78 @@ TOP="$(git -C "$MAIN_ROOT" rev-parse --path-format=absolute --show-toplevel 2>/d
 [ "$TOP" = "$MAIN_ROOT" ] || exit 0
 
 LOG_FILE="$MAIN_ROOT/.supervisor/logs/${SESSION_ID}.jsonl"
+OWNER_FILE="$MAIN_ROOT/.supervisor/logs/${SESSION_ID}.owner"
 STATE_MD="$MAIN_ROOT/.supervisor/state.md"
 
-# Absent/empty log => no state.md at all (start-fresh).
-[ -f "$LOG_FILE" ] && [ -s "$LOG_FILE" ] || exit 0
+# ---- The run-creation seed (`<run_id>.owner`) -------------------------------
+# Written by `seed-run-owner.sh` at the moment `state.md` is created, so both
+# WHO owns a run and WHEN it began are knowable before the log's first line
+# exists. Plain `key=value`; no jq needed to read it.
+#
+# `loom_run_owner_seed` is KEPT BYTE-IDENTICAL to the copy in
+# close-stranded-run.sh — change them together;
+# `scripts/test-seed-run-owner.sh` asserts the two bodies match.
+loom_run_owner_seed() {
+  # Echo the `cc_session_id` recorded at run creation, or NOTHING when no seed
+  # exists / it carries no owner. Always returns 0 — "no seed" and "cannot
+  # tell" are the same answer, and both mean "fall back to the log".
+  local _seed="${1:-}"
+  [ -n "$_seed" ] && [ -f "$_seed" ] && [ -r "$_seed" ] || return 0
+  sed -nE 's/^cc_session_id=//p' "$_seed" 2>/dev/null | head -1 || true
+  return 0
+}
+
+loom_run_started_at() {
+  # Echo the seed's `started_at` when it is a strict UTC ISO-8601 instant, or
+  # NOTHING. Always returns 0 — a malformed value is treated as absent, never
+  # allowed to reach the age arithmetic.
+  local _seed="${1:-}" _ts=""
+  [ -n "$_seed" ] && [ -f "$_seed" ] && [ -r "$_seed" ] || return 0
+  _ts="$(sed -nE 's/^started_at=//p' "$_seed" 2>/dev/null | head -1 || true)"
+  case "${_ts:-}" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) printf '%s\n' "$_ts" ;;
+  esac
+  return 0
+}
+
+# ---- Log present, or the pre-first-event window? ----------------------------
+# An absent/empty log used to exit here unconditionally, which is why the
+# staleness backstop could never reach a run stranded between `initialize` and
+# its first worker completion: the projector returned on this guard before any
+# derivation ran, and in that window the log does not exist at all.
+#
+# It still exits when there is nothing to derive from. What it no longer does is
+# exit when the run-creation seed carries evidence — specifically a
+# `started_at`, which is the last thing we know the owner did and therefore a
+# legitimate staleness anchor. The branch below is DELIBERATELY narrow: the ONLY
+# outcome it can produce is the staleness verdict `failed` (see the
+# PRE_EVENT_RUN gate after the backstop). It can never project `running` over a
+# live run's block, and it can never bring a `state.md` into existence — an
+# absent state file still means start-fresh, exactly as before.
+LOG_PRESENT=0
+if [ -f "$LOG_FILE" ] && [ -s "$LOG_FILE" ]; then
+  LOG_PRESENT=1
+fi
+
+PRE_EVENT_RUN=0
+if [ "$LOG_PRESENT" -eq 0 ]; then
+  [ -f "$STATE_MD" ] && [ -r "$STATE_MD" ] || exit 0
+  _sm_session="$(sed -nE 's/^- session_id:[[:space:]]*//p' "$STATE_MD" 2>/dev/null | head -1 || true)"
+  _sm_session="$(printf '%s' "$_sm_session" | tr -cd 'A-Za-z0-9_-' || true)"
+  # Only act on the run `state.md` currently describes. A caller passing some
+  # OTHER run's id must not repaint this file with that run's verdict.
+  [ "$_sm_session" = "$SESSION_ID" ] || exit 0
+  _sm_status="$(sed -nE 's/^- status:[[:space:]]*//p' "$STATE_MD" 2>/dev/null | head -1 || true)"
+  case "$_sm_status" in
+    running|checkpoint|paused) ;;
+    *) exit 0 ;;   # already terminal, or unrecognised — never guess
+  esac
+  # No seed ⇒ no owner and no start instant ⇒ nothing to measure. Exit exactly
+  # as this guard did before, rather than guessing the run dead.
+  [ -n "$(loom_run_owner_seed "$OWNER_FILE" || true)" ] || exit 0
+  [ -n "$(loom_run_started_at "$OWNER_FILE" || true)" ] || exit 0
+  PRE_EVENT_RUN=1
+fi
 
 # ---- Derive status/phase from the log (evidence-only, ORDERING RULE) --------
 # `-R` (raw input, one JSON value per line) + `fromjson?` skips any malformed
@@ -164,30 +245,42 @@ STATE_MD="$MAIN_ROOT/.supervisor/state.md"
 # session_end in a shared multi-task /autonomous LOOP log falsely mark task 2
 # "completed" while task 2 was still running; `subtask_complete` carries no
 # task id to disambiguate by, so ordering is the only evidence available).
-SESSION_END_STATUS="$(jq -R -r 'fromjson? | select(.event? == "session_end") | (.status // empty)' "$LOG_FILE" 2>/dev/null | tail -1)"
-LAST_RELEVANT_EVENT="$(jq -R -r 'fromjson? | select(.event? == "session_end" or .event? == "subtask_complete") | .event' "$LOG_FILE" 2>/dev/null | tail -1)"
-
 STATUS=""
 PHASE=""
-case "$LAST_RELEVANT_EVENT" in
-  session_end)
-    PHASE="LOOP"
-    case "$SESSION_END_STATUS" in
-      completed) STATUS="completed" ;;
-      completed_with_escalation) STATUS="completed_with_escalation" ;;
-      failed) STATUS="failed" ;;
-      *) STATUS="completed" ;;   # session_end fired but status missing/unrecognized — see header note
-    esac
-    ;;
-  subtask_complete)
-    PHASE="EXECUTE"
-    STATUS="running"
-    ;;
-  *)
-    # Neither event type present with valid JSON => no positive evidence => do not write.
-    exit 0
-    ;;
-esac
+if [ "$LOG_PRESENT" -eq 1 ]; then
+  SESSION_END_STATUS="$(jq -R -r 'fromjson? | select(.event? == "session_end") | (.status // empty)' "$LOG_FILE" 2>/dev/null | tail -1)"
+  LAST_RELEVANT_EVENT="$(jq -R -r 'fromjson? | select(.event? == "session_end" or .event? == "subtask_complete") | .event' "$LOG_FILE" 2>/dev/null | tail -1)"
+
+  case "$LAST_RELEVANT_EVENT" in
+    session_end)
+      PHASE="LOOP"
+      case "$SESSION_END_STATUS" in
+        completed) STATUS="completed" ;;
+        completed_with_escalation) STATUS="completed_with_escalation" ;;
+        failed) STATUS="failed" ;;
+        *) STATUS="completed" ;;   # session_end fired but status missing/unrecognized — see header note
+      esac
+      ;;
+    subtask_complete)
+      PHASE="EXECUTE"
+      STATUS="running"
+      ;;
+    *)
+      # Neither event type present with valid JSON => no positive evidence => do not write.
+      exit 0
+      ;;
+  esac
+else
+  # PRE-FIRST-EVENT WINDOW. The seed is evidence that a run BEGAN and nothing
+  # more, so `running` is the only honest starting point — and it is never
+  # written as such: the gate after the backstop drops this branch unless the
+  # backstop turned it into `failed`. `LOOP` is set here because it is the
+  # phase word this projector already pairs with EVERY terminal status (the
+  # `session_end` arm above), so a run closed by the backstop reads exactly
+  # like one closed by an event. No new phase word is introduced.
+  STATUS="running"
+  PHASE="LOOP"
+fi
 
 # ---- Staleness backstop -----------------------------------------------------
 # A run whose OWNER stopped emitting long ago is not running, whatever the last
@@ -227,7 +320,15 @@ iso_to_epoch() {
 }
 
 if [ "$STATUS" = "running" ]; then
-  LOG_OWNER="$(head -1 "$LOG_FILE" 2>/dev/null | jq -r '.cc_session_id // empty' 2>/dev/null || true)"
+  # SEED FIRST, log first line second — the same precedence close-stranded-run.sh
+  # applies, for the same reason: the seed is recorded at run creation and keyed
+  # to the run id, whereas the log's first line is whoever appended first, which
+  # the emitters' adopt-on-unknown rule allows to be a FOREIGN session. Where the
+  # two disagree, the disagreement IS that foreign append.
+  LOG_OWNER="$(loom_run_owner_seed "$OWNER_FILE" || true)"
+  if [ -z "$LOG_OWNER" ] && [ "$LOG_PRESENT" -eq 1 ]; then
+    LOG_OWNER="$(head -1 "$LOG_FILE" 2>/dev/null | jq -r '.cc_session_id // empty' 2>/dev/null || true)"
+  fi
   LOG_OWNER="$(printf '%s' "$LOG_OWNER" | tr -cd 'A-Za-z0-9_-' || true)"
   if [ -n "$LOG_OWNER" ]; then
     # UTC ISO-8601 sorts lexicographically in chronological order, so `sort |
@@ -238,9 +339,25 @@ if [ "$STATUS" = "running" ]; then
     # character match NOTHING — the backstop would silently find no owner
     # lines and skip. The gsub below applies the same character class to the
     # log side, so the two are compared in the same normalised space.
-    NEWEST_OWNER_TS="$(jq -R -r --arg owner "$LOG_OWNER" \
-      'fromjson? | select(((.cc_session_id // "") | gsub("[^A-Za-z0-9_-]";"")) == $owner) | (.ts // empty)' \
-      "$LOG_FILE" 2>/dev/null | sort | tail -1)"
+    NEWEST_OWNER_TS=""
+    if [ "$LOG_PRESENT" -eq 1 ]; then
+      NEWEST_OWNER_TS="$(jq -R -r --arg owner "$LOG_OWNER" \
+        'fromjson? | select(((.cc_session_id // "") | gsub("[^A-Za-z0-9_-]";"")) == $owner) | (.ts // empty)' \
+        "$LOG_FILE" 2>/dev/null | sort | tail -1)"
+    fi
+    # The run's START is owner-originated evidence too — it is the last thing we
+    # know the owner did when it has emitted no events of its own, which is the
+    # entire pre-first-event window. Without this the backstop had NOTHING to
+    # measure there and skipped, so a run stranded before its first worker stayed
+    # `running` forever. Taking the LATER of the two also keeps a log that DOES
+    # carry owner lines authoritative over the (necessarily older) start instant.
+    # Strict UTC ISO-8601 sorts lexicographically in chronological order, so the
+    # string comparison is the chronological one — the same property the `sort |
+    # tail -1` above already relies on.
+    RUN_STARTED_AT="$(loom_run_started_at "$OWNER_FILE" || true)"
+    if [ -n "${RUN_STARTED_AT:-}" ] && [ "$RUN_STARTED_AT" \> "${NEWEST_OWNER_TS:-}" ]; then
+      NEWEST_OWNER_TS="$RUN_STARTED_AT"
+    fi
     if [ -n "${NEWEST_OWNER_TS:-}" ]; then
       _now="$(date -u +%s 2>/dev/null)"
       # Command substitution discards the callee's exit status, so validate the
@@ -256,6 +373,17 @@ if [ "$STATUS" = "running" ]; then
 fi
 
 [ -n "$STATUS" ] && [ -n "$PHASE" ] || exit 0
+
+# ---- The pre-first-event branch may write ONLY the staleness verdict --------
+# A run with no log has no evidence of PROGRESS — only of having begun. If the
+# backstop did not turn that into `failed`, there is nothing to project, and
+# writing `running`/`LOOP` would actively destroy information: it would stamp
+# the projector's terminal phase word onto a live run and overwrite whatever
+# phase Context-Keeper's seed put there. So this branch either closes the run
+# out or writes nothing at all.
+if [ "$PRE_EVENT_RUN" -eq 1 ] && [ "$STATUS" != "failed" ]; then
+  exit 0
+fi
 
 # `branch` is LIVE git state at the main root, not log content (see header).
 BRANCH="$(git -C "$MAIN_ROOT" branch --show-current 2>/dev/null || true)"
