@@ -492,7 +492,7 @@ Queue 2   Plan   [Execute]   Review   Shipped 41
 
 > **There is deliberately NO liveness and NO "currently running agent", and that absence is the honest answer rather than a gap.** No spawn event exists in any log, so a lane can only ever report events that were RECORDED — never that anything is running now. The page renders that sentence permanently under the lanes. Identity is partial for the same reason: a lane whose `agent_id` never appeared on a line carrying `agent_type` is drawn `identity unknown` rather than assigned a plausible role, and a roster row whose agent declares no `disallowedTools` reads `read-only unknown` rather than "not read-only".
 
-> **`floor.json` is local data.** It carries branch names, session ids and agent ids. `serve` always passes `--bind 127.0.0.1`; there is no flag to change that and no code path that omits it.
+> **`floor.json` is local data.** It carries branch names, session ids and agent ids. `serve` binds `127.0.0.1` in the listener itself; there is no flag to change that and no code path that omits it. Since the page can now write, the bind is no longer the whole posture — the four mutating routes are additionally guarded by a per-run token in a custom header plus `Origin` and `Host` validation.
 
 The deterministic engine is `${CLAUDE_PLUGIN_ROOT}/scripts/setup-ui.sh` (subcommands `check` / `apply` / `serve` / `stop` / `remove`). It is fail-safe (always exits 0 — "fails closed" here means refuse-to-write plus a named-reason headline status line, never a non-zero exit), write-contained to the ui directory plus `build-floor.sh`'s own output, and it never touches the user-scope settings document. This command owns the INTERACTIVE half.
 

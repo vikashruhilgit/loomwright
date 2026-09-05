@@ -1188,12 +1188,30 @@
       if (row && row.color) { dot.style.background = (row.read_only === true) ? 'transparent' : row.color; dot.style.borderColor = row.color; }
       else { dot.style.background = ''; dot.style.borderColor = ''; }
 
+      /* THE OTHER HALF OF THE READ-ONLY CUE. floor.css states the page-wide rule as
+       * "read-only agent -> hollow dot + the text 'read-only'", and this view used to render
+       * the dot ALONE: a read-only lane was distinguishable by SHAPE only, which is the
+       * colour-is-never-the-only-signal rule broken in the one view that shows a run. The
+       * words are renderRoster's own, reused rather than reinvented, and so is the TRI-STATE:
+       *   true    -> say "read-only";
+       *   false   -> say nothing here, because a writing agent is the unremarkable case and
+       *              renderRoster's 'writes' belongs to a column this one-line meta lacks;
+       *   neither -> a roster row that OMITS the key, and equally a lane with NO roster row at
+       *              all, is reported as UNKNOWN rather than silently as "not read-only" -
+       *              the same refusal renderRoster already makes, for the same reason.
+       * The condition mirrors the dot's above exactly, so the shape and the words can never
+       * disagree about the same agent. */
+      var roTxt = (row && row.read_only === true) ? 'read-only'
+        : (row && row.read_only === false) ? ''
+          : 'read-only unknown';
+      var roSuffix = roTxt ? (' · ' + roTxt) : '';
+
       var evTxt = (ev === null) ? '— events' : (ev + ' events');
       var meta = li.querySelector('[data-role="meta"]');
       if (stalled) {
-        meta.textContent = evTxt + ' · no event for ' + fmtAge(age);
+        meta.textContent = evTxt + ' · no event for ' + fmtAge(age) + roSuffix;
       } else {
-        meta.textContent = evTxt + ' · last ' + (age === null ? 'unknown' : fmtAge(age));
+        meta.textContent = evTxt + ' · last ' + (age === null ? 'unknown' : fmtAge(age)) + roSuffix;
       }
       meta.title = 'agent_id ' + id + (r.first_ts ? (' · first ' + r.first_ts) : '') + (r.last_ts ? (' · last ' + r.last_ts) : '');
 
@@ -1473,6 +1491,17 @@
     if (r) { r.textContent = text || ''; }
   }
 
+  /* THE ONE PLACE THE ACTION CONTROLS ARE ENABLED OR DISABLED. Two callers need it - the
+   * stopped render, permanently, and the write guard below, for the length of one request -
+   * and a second, hand-rolled copy of "what the controls are" is how the two would come to
+   * disagree about which of them counts. One selector, one loop, one caller-supplied flag. */
+  function setActionsDisabled(flag) {
+    var host = el('actions');
+    if (!host) { return; }
+    var controls = host.querySelectorAll('button, input');
+    for (var i = 0; i < controls.length; i++) { controls[i].disabled = flag; }
+  }
+
   /* THE STOPPED RENDER. Four things a reader could otherwise be shown instead, and all four
    * would be lies: a spinner (nothing is coming), the last floor presented as current (it is a
    * snapshot of a server that no longer exists), a fetch error (the reader asked for this), or
@@ -1492,13 +1521,35 @@
     if (lc) { lc.textContent = ''; }
     var sel = el('project-picker');
     if (sel) { sel.disabled = true; }
-    var host = el('actions');
-    if (host) {
-      host.setAttribute('data-stopped', 'true');
-      var controls = host.querySelectorAll('button, input');
-      for (var i = 0; i < controls.length; i++) { controls[i].disabled = true; }
-    }
+    /* The dimming is the `data-stopped` attribute set on the BODY one line above, and only
+     * that one. floor.css reaches `.lanes` and `.projects` through an ANCESTOR carrying the
+     * attribute; #actions is a SIBLING of both, so a second copy of it there matched nothing
+     * and has been removed rather than left to read as the thing doing the work. */
+    setActionsDisabled(true);
     actionNote('stopped. There is nothing left at this origin to ask.');
+  }
+
+  /* ONE WRITE AT A TIME, for the same reason and in the same shape as the read poll's
+   * `inFlight` flag above - a flag, never a second timer. The read path has held that guard
+   * since it existed; the write path did not, and the gap was reachable by a reader rather
+   * than only by a hung origin: each of the four buttons could be fired again while its own
+   * request was still open, so one double-click put two `add` / `scan --confirm` / `forget`
+   * requests on the wire at once against a registry that is a single file.
+   * ITS HONEST LIMIT, stated because the fix does not reach it: this is a per-PAGE flag, and
+   * it therefore says nothing about the same URL opened in a SECOND TAB - two documents, two
+   * closures, and only the server sees both. What it closes is every re-entry inside one
+   * page. Disabling the buttons is the visible half; the flag is what actually refuses the
+   * second call, because a control can be re-enabled by anything with a console. */
+  var writeInFlight = false;
+
+  /* Cleared on EVERY exit - success, refusal, rejected request and a request that could not
+   * be started at all - because a button left permanently disabled by one failed write is a
+   * defect of its own, and a worse one than the double-click it was guarding against. The one
+   * thing it must not undo is the stopped render: those controls are disabled for good, and
+   * re-enabling them would offer writes this origin can no longer accept. */
+  function releaseWrite() {
+    writeInFlight = false;
+    if (!serverStopped) { setActionsDisabled(false); }
   }
 
   /* runAction — the one place a button's outcome is turned into words. A refusal is reported by
@@ -1506,33 +1557,47 @@
    * "failed" would send the reader to fix the wrong thing. */
   function runAction(action, payload) {
     if (serverStopped) { return; }
+    if (writeInFlight) { return; }
     if (!floorToken) {
       actionNote('this page holds no token for this run, so the server would refuse the write. Open the URL `setup-ui.sh serve` printed — it carries the token in its #fragment — rather than a bare address.');
       actionReport('');
       return;
     }
+    writeInFlight = true;
+    setActionsDisabled(true);
     actionNote(action + ': asked the server…');
-    postAction(action, payload).then(function (res) {
-      var body = res.body || {};
-      var reason = (typeof body.reason === 'string' && body.reason) ? body.reason : ('status ' + res.status);
-      if (res.status === 403) {
-        actionNote(action + ' was REFUSED by the server guard (' + reason + '). Reopen the page from the URL this run of `serve` printed.');
-      } else if (res.status === 501) {
-        actionNote(action + ' is not a route this server answers (501) — the page and the engine are different versions.');
-      } else if (body.ok === true) {
-        actionNote(action + ': done.');
-        if (action === STOP_ACTION) { renderStopped(); }
-      } else {
-        actionNote(action + ' was refused: ' + reason);
-      }
-      actionReport(typeof body.report === 'string' ? body.report : res.text);
-      /* Re-read immediately rather than waiting for the next tick — but only for the writes
-       * that can have changed what the page shows. */
-      if (body.ok === true && action !== STOP_ACTION) { poll(); }
-    })['catch'](function (e) {
-      actionNote(action + ' could not be sent to this origin (' + ((e && e.message) || 'request failed') + ')');
+    try {
+      postAction(action, payload).then(function (res) {
+        releaseWrite();
+        var body = res.body || {};
+        var reason = (typeof body.reason === 'string' && body.reason) ? body.reason : ('status ' + res.status);
+        if (res.status === 403) {
+          actionNote(action + ' was REFUSED by the server guard (' + reason + '). Reopen the page from the URL this run of `serve` printed.');
+        } else if (res.status === 501) {
+          actionNote(action + ' is not a route this server answers (501) — the page and the engine are different versions.');
+        } else if (body.ok === true) {
+          actionNote(action + ': done.');
+          if (action === STOP_ACTION) { renderStopped(); }
+        } else {
+          actionNote(action + ' was refused: ' + reason);
+        }
+        actionReport(typeof body.report === 'string' ? body.report : res.text);
+        /* Re-read immediately rather than waiting for the next tick — but only for the writes
+         * that can have changed what the page shows. */
+        if (body.ok === true && action !== STOP_ACTION) { poll(); }
+      })['catch'](function (e) {
+        releaseWrite();
+        actionNote(action + ' could not be sent to this origin (' + ((e && e.message) || 'request failed') + ')');
+        actionReport('');
+      });
+    } catch (e) {
+      /* The request could not even be STARTED. Same discipline as the poll's outer catch, and
+       * the reason this branch exists at all is the guard: without it a synchronous throw here
+       * would leave the flag raised and every button dead for the rest of the page's life. */
+      releaseWrite();
+      actionNote(action + ' could not be requested at this origin (' + ((e && e.message) || 'request unavailable') + ')');
       actionReport('');
-    });
+    }
   }
 
   (function () {

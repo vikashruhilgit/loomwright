@@ -676,6 +676,74 @@ n_active_html="$(occ "$HTML" '[Aa]ctive')"
   && ok "(c12) no liveness word is rendered: 'live' as a label appears $n_live times, and 'active' $n_active_html times in the markup (only the stage class in the script, $n_active)" \
   || no "(c12) no liveness word is rendered" "live=$n_live active=$n_active active_in_markup=$n_active_html"
 
+# --- (c13)-(c17) THE LANES VIEW RENDERS THE READ-ONLY WORDS, NOT THE DOT SHAPE ALONE ------
+# floor.css's own header states the page-wide rule as "read-only agent -> hollow dot + the text
+# 'read-only'", and (c9)/(c10) each checked one half of it in the wrong place: (c9) that the
+# hollow-dot RULE exists in the stylesheet, (c10) that the string 'read-only unknown' exists
+# SOMEWHERE in floor.js. Both passed while the Lanes view — the one view that shows a run —
+# applied the hollow class and rendered no words at all, so a read-only lane was distinguishable
+# by SHAPE alone. Neither assertion could have caught that, because neither is scoped to a VIEW.
+# This one is: the whole predicate is evaluated over renderLanes's own body, which is also what
+# lets the two controls below point the SAME rule at a mutant rather than hold a second copy of
+# it — the drift (j14) recorded when a re-inlined copy of a shared scanner went quietly vacuous.
+lane_ro_faults() { # <file> -> the halves of the read-only cue this file's LANES view is missing
+  local body bad=""
+  body="$(awk '/^  function renderLanes/{f=1} f{print} f&&/^  }$/{exit}' "$1" 2>/dev/null)"
+  [ -n "$body" ] || { printf '%s' "[renderLanes was not found in $(basename "$1") — every claim below would be vacuous]"; return 0; }
+  in_str "$body" "classList.add('hollow')" || bad="$bad [no hollow dot]"
+  in_str "$body" "row.read_only === true) ? 'read-only'" || bad="$bad [a read-only agent's lane carries no 'read-only' text — the dot shape is the only cue]"
+  in_str "$body" "row.read_only === false) ? ''" || bad="$bad [a WRITING agent's lane is not left silent, so the cue would appear on every lane and distinguish nothing]"
+  in_str "$body" "'read-only unknown'" || bad="$bad [an absent read_only is not reported as unknown, so it reads as 'not read-only']"
+  in_str "$body" "fmtAge(age) + roSuffix" || bad="$bad [the text never reaches a STALLED lane's meta line]"
+  in_str "$body" "fmtAge(age)) + roSuffix" || bad="$bad [the text never reaches a non-stalled lane's meta line]"
+  printf '%s' "${bad# }"
+}
+C_RO_MUTANTS=0
+c_ro_faults="$(lane_ro_faults "$JS")"
+[ -z "$c_ro_faults" ] \
+  && ok "(c13) the Lanes view renders BOTH halves of the read-only cue — the hollow dot AND renderRoster's own words, on the same tri-state and the same condition as the dot, reaching the meta line of a stalled lane and a non-stalled one alike" \
+  || no "(c13) the Lanes view renders both halves of the read-only cue" "$c_ro_faults"
+
+# CONTROL 1 — the exact defect this fixes: the class is applied, the words are not rendered.
+MUT_LRO1="$TMPROOT/mut-lane-readonly-silent.js"
+sed 's/ + roSuffix;/;/g' "$JS" > "$MUT_LRO1" 2>/dev/null
+if mutant_ok "$JS" "$MUT_LRO1"; then
+  C_RO_MUTANTS=$((C_RO_MUTANTS + 1))
+  m_lro1="$(lane_ro_faults "$MUT_LRO1")"
+  if in_str "$m_lro1" "STALLED lane's meta line" && in_str "$m_lro1" "non-stalled lane's meta line"; then
+    ok "(c14) MUTATION CONTROL: a Lanes view that computes the read-only words and never renders them IS flagged, on BOTH the stalled and the non-stalled branch — which is precisely the state this view shipped in"
+  else
+    no "(c14) MUTATION CONTROL: words computed but never rendered IS flagged" "lane_ro_faults said: ${m_lro1:-<clean, so (c13) would pass a view that renders nothing>}"
+  fi
+fi
+
+# CONTROL 2 — the tri-state's third arm collapsed to silence. An agent whose roster row omits
+# read_only, or that has no roster row at all, would then be rendered exactly like one that is
+# known to write: measured-absence presented as a measured negative, which is the failure
+# renderRoster's own comment names and (c10) exists for.
+MUT_LRO2="$TMPROOT/mut-lane-readonly-unknown.js"
+sed "s/          : 'read-only unknown';/          : '';/" "$JS" > "$MUT_LRO2" 2>/dev/null
+if mutant_ok "$JS" "$MUT_LRO2"; then
+  C_RO_MUTANTS=$((C_RO_MUTANTS + 1))
+  m_lro2="$(lane_ro_faults "$MUT_LRO2")"
+  if in_str "$m_lro2" "absent read_only is not reported as unknown"; then
+    ok "(c15) MUTATION CONTROL: a Lanes view that renders an ABSENT read_only as silence — indistinguishable from a known writer — IS flagged"
+  else
+    no "(c15) MUTATION CONTROL: an absent read_only rendered as silence IS flagged" "lane_ro_faults said: ${m_lro2:-<clean>}"
+  fi
+fi
+
+# ANTI-VACUITY: both controls must have EXECUTED. Each lives inside an `if mutant_ok`, and a
+# mutant whose sed anchor no longer matches the file produces an identical copy — mutant_ok
+# reddens on that, but the control it guards is then simply not run, which is the silent-skip
+# shape this suite has been bitten by before. The count is the proof that neither was skipped.
+[ "$C_RO_MUTANTS" = "2" ] \
+  && ok "(c16) ANTI-VACUITY: both (c13) mutation controls EXECUTED — neither (c14) nor (c15) was skipped inside its if" \
+  || no "(c16) ANTI-VACUITY: both (c13) mutation controls executed" "$C_RO_MUTANTS of 2 ran — a control that did not run proves nothing about (c13)"
+[ "$(csum "$JS")" = "$JS_SIG_BEFORE" ] \
+  && ok "(c17) floor.js is byte-identical after the (c13) mutation controls (sha256 unchanged)" \
+  || no "(c17) floor.js is byte-identical after the (c13) mutation controls" "before='$JS_SIG_BEFORE' after='$(csum "$JS")'"
+
 # ===========================================================================
 echo "(d) AC-fixtures-conform — validated against the schema block, not a restated key list"
 # ===========================================================================
@@ -4472,7 +4540,14 @@ has_lit "$JS" "function renderStopped()" || n_stop_bad="$n_stop_bad [no renderSt
 has_lit "$JS" "if (serverStopped) { return; }" || n_stop_bad="$n_stop_bad [the poll is not gated on the stopped flag, so it would keep fetching a server that is gone]"
 has_lit "$JS" "this server was stopped from this page" || n_stop_bad="$n_stop_bad [the stopped state has no words of its own]"
 has_lit "$JS" "not a current one" || n_stop_bad="$n_stop_bad [the page does not say the floor it is showing is a snapshot rather than current]"
-has_lit "$JS" "controls[i].disabled = true;" || n_stop_bad="$n_stop_bad [the action controls are not disabled, so the page still offers writes it cannot make]"
+# RE-POINTED, NOT RELAXED. The inline disable loop this used to match was hoisted into
+# `setActionsDisabled(flag)` when the write guard below became its second caller, so the old
+# literal would have vanished and this half of (n30) would have gone red for a property that
+# is still there. Both halves are asserted instead, and the second is scoped to renderStopped's
+# own body so that runAction's identical call cannot satisfy it on renderStopped's behalf.
+has_lit "$JS" "controls[i].disabled = flag;" || n_stop_bad="$n_stop_bad [there is no single place that enables or disables the action controls]"
+n_stop_body="$(awk '/^  function renderStopped\(\)/{f=1} f{print} f&&/^  }$/{exit}' "$JS" 2>/dev/null)"
+in_str "$n_stop_body" "setActionsDisabled(true);" || n_stop_bad="$n_stop_bad [the action controls are not disabled, so the page still offers writes it cannot make]"
 [ -z "$n_stop_bad" ] \
   && ok "(n30) AC10 (static half): the page carries a distinct stopped render — a flag the ONE poll returns early on, its own words, an explicit statement that the floor shown is a snapshot rather than current, and disabled controls" \
   || no "(n30) AC10: the page renders a distinct stopped state" "$n_stop_bad"
@@ -4610,3 +4685,93 @@ n_tb_plant_hits="$(n_tb_count "$n_tb_planted")"
 [ "$n_tb_plant_hits" -ge 1 ] 2>/dev/null \
   && ok "(n35) ANTI-VACUITY: the same grep (n34) uses finds $n_tb_plant_hits planted 'Traceback' line(s) in a scratch copy of that very log — so (n34)'s zero is a measurement, not an empty needle" \
   || no "(n35) ANTI-VACUITY: (n34)'s traceback scan can find a planted traceback" "the planted copy $n_tb_planted returned $n_tb_plant_hits hits"
+
+# --- (n38)-(n43) THE WRITE PATH CARRIES THE READ PATH'S IN-FLIGHT GUARD --------------------
+# The read poll has held an explicit in-flight flag for as long as it has existed, and
+# (b20)/(b21) assert it: one request at a time, cleared on every settle path, so a hung origin
+# cannot stack fetches. runAction — which backs all four write buttons — had no equivalent. It
+# checked `serverStopped` and the token and fired, so one double-click put two `add` /
+# `scan --confirm` / `forget` requests on the wire at once against a registry that is a single
+# file. The flag is per-PAGE and the assertion claims no more than that: the same URL in a
+# SECOND TAB is a different closure and only the server sees both. The asymmetry with the read-side
+# guard is what makes this a gap rather than an accepted trade-off, so the assertion is written
+# to the same shape and adds the half a write has that a read does not: controls disabled for
+# the length of the request and re-enabled on EVERY exit — including the failing ones, because a
+# button left permanently dead by one network error is a worse defect than the double-click.
+# As in (c13), the rule lives in ONE function so the three controls can point it at a mutant.
+n_write_guard_faults() { # <file> -> the parts of the write-side in-flight guard it is missing
+  local f="$1" bad="" n body
+  has_lit "$f" "var writeInFlight = false;" \
+    || bad="$bad [no write in-flight flag]"
+  has_lit "$f" "if (writeInFlight) { return; }" \
+    || bad="$bad [runAction is not gated on the flag, so a second click is not refused]"
+  has_lit "$f" "writeInFlight = true;" \
+    || bad="$bad [the flag is never raised, so the gate can never fire]"
+  has_lit "$f" "if (!serverStopped) { setActionsDisabled(false); }" \
+    || bad="$bad [the controls are never re-enabled, or the re-enable is not withheld from the stopped state]"
+  body="$(awk '/^  function runAction\(/{f=1} f{print} f&&/^  }$/{exit}' "$f" 2>/dev/null)"
+  in_str "$body" "setActionsDisabled(true);" \
+    || bad="$bad [the controls are not disabled while a write is outstanding]"
+  n="$(occ "$f" 'releaseWrite[(][)];')"
+  [ "${n:-0}" -ge 3 ] 2>/dev/null \
+    || bad="$bad [${n:-0} release site(s), expected one per exit path — resolve, reject, and a request that could not be started at all]"
+  printf '%s' "${bad# }"
+}
+N_WG_MUTANTS=0
+n_wg_faults="$(n_write_guard_faults "$JS")"
+[ -z "$n_wg_faults" ] \
+  && ok "(n38) the write path carries an in-flight guard in the same shape as the read poll's — a flag, an early return, the controls disabled for the length of the request, and a release on each of the three exit paths" \
+  || no "(n38) the write path carries an in-flight guard in the read poll's shape" "$n_wg_faults"
+
+# CONTROL 1 — the guard itself removed. This is the shipped state the finding names: two
+# concurrent writes are reachable by a reader, not only by a hung origin.
+MUT_WG1="$TMPROOT/mut-write-ungated.js"
+sed 's|if (writeInFlight) { return; }||' "$JS" > "$MUT_WG1" 2>/dev/null
+if mutant_ok "$JS" "$MUT_WG1"; then
+  N_WG_MUTANTS=$((N_WG_MUTANTS + 1))
+  m_wg1="$(n_write_guard_faults "$MUT_WG1")"
+  if in_str "$m_wg1" "not gated on the flag"; then
+    ok "(n39) MUTATION CONTROL: a runAction that raises the flag but never RETURNS on it IS flagged by (n38) — so that assertion is reading the gate rather than merely finding the variable"
+  else
+    no "(n39) MUTATION CONTROL: an ungated runAction IS flagged" "n_write_guard_faults said: ${m_wg1:-<clean, so (n38) would pass a write path with no guard at all>}"
+  fi
+fi
+
+# CONTROL 2 — the re-enable removed. A guard whose visible half never comes back leaves every
+# button dead after the first failed write; it is a guard that has become the bug.
+MUT_WG2="$TMPROOT/mut-write-stuck.js"
+sed 's|if (!serverStopped) { setActionsDisabled(false); }||' "$JS" > "$MUT_WG2" 2>/dev/null
+if mutant_ok "$JS" "$MUT_WG2"; then
+  N_WG_MUTANTS=$((N_WG_MUTANTS + 1))
+  m_wg2="$(n_write_guard_faults "$MUT_WG2")"
+  if in_str "$m_wg2" "never re-enabled"; then
+    ok "(n40) MUTATION CONTROL: a guard that disables the controls and never re-enables them IS flagged — the stuck-button failure a network error would otherwise make permanent"
+  else
+    no "(n40) MUTATION CONTROL: controls that are never re-enabled ARE flagged" "n_write_guard_faults said: ${m_wg2:-<clean>}"
+  fi
+fi
+
+# CONTROL 3 — ONE release site dropped. The count is the only part of (n38) that says the
+# release happens on every exit rather than merely somewhere, so it needs its own control: a
+# guard released on two of three paths passes every literal check above.
+MUT_WG3="$TMPROOT/mut-write-one-exit.js"
+awk 'BEGIN{done=0} { if (!done && index($0, "releaseWrite();")) { sub(/releaseWrite\(\);/, ""); done=1 } print }' "$JS" > "$MUT_WG3" 2>/dev/null
+if mutant_ok "$JS" "$MUT_WG3"; then
+  N_WG_MUTANTS=$((N_WG_MUTANTS + 1))
+  m_wg3="$(n_write_guard_faults "$MUT_WG3")"
+  if in_str "$m_wg3" "release site(s)"; then
+    ok "(n41) MUTATION CONTROL: dropping ONE of the three release sites IS flagged — every literal in (n38) still matches that file, so the per-exit-path count is doing work no presence check does"
+  else
+    no "(n41) MUTATION CONTROL: a missing release site IS flagged" "n_write_guard_faults said: ${m_wg3:-<clean>}"
+  fi
+fi
+
+# ANTI-VACUITY: all three controls must have EXECUTED. Each sits inside an `if mutant_ok`, and
+# a sed whose anchor has moved yields an identical copy — mutant_ok reddens, but the control it
+# guards is then silently not run, which is exactly how a gate goes vacuous without going red.
+[ "$N_WG_MUTANTS" = "3" ] \
+  && ok "(n42) ANTI-VACUITY: all three (n38) mutation controls EXECUTED — none of (n39), (n40) or (n41) was skipped inside its if" \
+  || no "(n42) ANTI-VACUITY: all three (n38) mutation controls executed" "$N_WG_MUTANTS of 3 ran — a control that did not run proves nothing about (n38)"
+[ "$(csum "$JS")" = "$JS_SIG_BEFORE" ] \
+  && ok "(n43) floor.js is byte-identical after the three (n38) mutation controls (sha256 unchanged)" \
+  || no "(n43) floor.js is byte-identical after the (n38) mutation controls" "before='$JS_SIG_BEFORE' after='$(csum "$JS")'"
