@@ -835,7 +835,8 @@ anywhere; never rename or restructure the existing flat fields above.
 > have no currency requirement and `check-doc-currency.sh` deliberately does not scan them. Bumping
 > them every release is a drift-treadmill the gate cannot enforce (they just re-stale at the next
 > version). Leave them frozen. Only genuine current-claims — the manifest `version`/headline, the
-> `plugin.json (vX.Y.Z)` annotations, and the CLAUDE.md banner — track the live version. See CLAUDE.md
+> `plugin.json (vX.Y.Z)` annotations — track the live version. (CLAUDE.md no longer carries a
+> per-release banner: it points at `CHANGELOG.md` instead.) See CLAUDE.md
 > §"Doc currency is CI-enforced".
 
 > **ST4 aggregation status (M2b slice 1a):** `build-insights.sh` currently aggregates the
