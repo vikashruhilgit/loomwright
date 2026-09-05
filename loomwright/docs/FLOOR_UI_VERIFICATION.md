@@ -124,10 +124,10 @@ needed would be the dishonest move; not needing it is different.*
 | 1 | absent | *(no `floor.json` at the origin — delete the served copy)* | banner `no floor.json at this origin`; never a blank page, never a spinner | banner `no floor.json at floor.json — this origin holds no document for that project yet` | no JS error (404s for the deleted document are expected) |
 | 2 | empty / earned idle | `fixtures/floor-ui/floor-empty.json` | banner `no run in flight` — the **measured** zero, reached only through the gated verdict | banner `no run in flight`; lanes empty | clean |
 | 3 | stale | `fixtures/floor-ui/floor-stale.json` | banner naming the age **and** the threshold it was measured against, and no cause it cannot observe | banner `floor.json is stale (612d 7h) - older than the 6s freshness threshold…` — age AND threshold, no cause | clean |
-| 4 | no run in flight / no session | `fixtures/floor-ui/floor-nosession.json` | banner `session data unavailable — <the projector's own reason>`, beside a `state` surface still recording phase `EXECUTE` — a different claim from row 2, never collapsed into it | not re-exercised in the browser — covered by the static suite | — |
+| 4 | no run in flight / no session | `fixtures/floor-ui/floor-nosession.json` | banner `session data unavailable — <the projector's own reason>`, beside a `state` surface still recording phase `EXECUTE` — a different claim from row 2, never collapsed into it | banner `session data unavailable — sessions current omitted: no line under .supervisor/logs/*.jsonl carries a ts, so the newest session cannot be identified from the events themselves (file order is not evidence of recency)` — the projector's OWN reason, a different claim from row 2 | clean |
 | 5 | registry absent | *served index with the registry reported absent* | the projects section says no project is registered — not an empty list read as "none exist" | projects section names the path and says no file exists there yet | clean |
-| 6 | registry unparseable | *served index with the registry reported unparseable* | a **different** message from row 5: the file is there and this module refuses to touch it | not re-exercised in the browser — covered by the static suite | — |
-| 7 | project unavailable | *a registered project whose directory is removed under a live serve* | that row renders `unavailable` **with the engine's reason**, is not dropped from the list, and the other projects keep rendering | not re-exercised in the browser — covered by the static suite | — |
+| 6 | registry unparseable | *served index with the registry reported unparseable* | a **different** message from row 5: the file is there and this module refuses to touch it | `registry unparseable: the file is there but could not be read (…) — that file is there but is not valid JSON carrying a "projects" array; it has NOT been modified` — a different sentence from row 5, not collapsed into it | clean |
+| 7 | project unavailable | *a registered project whose directory is removed under a live serve* | that row renders `unavailable` **with the engine's reason**, is not dropped from the list, and the other projects keep rendering | `r-gone … · unavailable — the registered directory is not present`, and the row is KEPT in the list (2 rows, not 1) while the other project keeps rendering | clean |
 | 8 | stopped | *press **Stop this server**, or run the `stop` verb* | a distinct render: not a spinner, not the last floor shown as current; the four controls disabled; the poll still ticking and doing nothing; **no uncaught error** | distinct banner; **all five** controls `disabled=true`; `body[data-stopped=true]`; socket refused after | **zero uncaught errors, zero rejections** (error trap installed before the click) |
 
 Two further browser-only checks, same status:
@@ -181,9 +181,15 @@ it did under the old one: hue was introduced, and hue is never the only carrier 
 
 ### Honest limits
 
-- The seven honest states listed in AC13 were exercised as the six rows above; the
-  `registry-unparseable` and `project-unavailable` rows are covered by the static suite
-  (`(k32)`, `(l)` group) and were **not** re-exercised in the browser here.
+- **All eight rows are now browser-exercised.** An earlier pass covered six and recorded the
+  other three as not done; rows 4, 6 and 7 were closed afterwards using the committed
+  `fixtures/floor-ui/served/*.json` for the two registry states and a genuinely deleted
+  registered directory for `project unavailable`. Nothing in this table is inferred from code.
+- One mechanism worth recording, because it will catch the next person: under `--no-regen` the
+  engine starts **no tick loop**, so `index.json` is written once at serve start and never
+  refreshed. Corrupting the registry on disk therefore does *not* change what the page reads —
+  the registry states have to be exercised through the served-index fixtures, which is what the
+  suite does too.
 - Dark theme was verified by emulating `prefers-color-scheme: dark`, not by a system theme switch.
 - This note is self-reported evidence. It makes the claim **auditable for completeness** — a
   reviewer can check each state has a row — it does not make it independently true.
