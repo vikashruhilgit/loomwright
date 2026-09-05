@@ -632,28 +632,73 @@ introduces no new status word: it can only turn a derived `running` into
 `skills/state-management/SKILL.md` §"State File Schema". `paused` is never
 emitted by this projector.
 
-**Agent identity on ledger lines (`LOOMWRIGHT_AGENT_TYPE`).** The real
-`SubagentStop` payload frequently carries no `agent_type` at all, which left
-ledger lines unattributed. Resolution order is now: the payload's
-`agent_type` first, else the `LOOMWRIGHT_AGENT_TYPE` env var that
-`hooks.json` sets per-matcher (`loomwright:code-reviewer`,
-`loomwright:qa-executor`, `loomwright:supervisor-runner`,
-`loomwright:worker`), else the key is **omitted entirely** — never an empty
+**Agent identity on emitted lines (`agent_type`).** The real `SubagentStop`
+payload frequently carries no `agent_type` at all. The two emitters resolve it
+**differently, on purpose**, and neither ever invents it:
+
+| Emitter | Resolution order |
+|---|---|
+| `emit-progress-event.sh` | payload `agent_type` → `LOOMWRIGHT_AGENT_TYPE` env var → key **omitted** |
+| `emit-token-ledger.sh` | payload `agent_type` → key **omitted** (no env fallback) |
+
+In both cases "omitted" means the key is absent entirely — never an empty
 string, never `null`.
 
+`emit-progress-event.sh` keeps the env fallback because `hooks.json` registers
+it under exactly ONE `SubagentStop` matcher (`loomwright:worker`), which
+provably discriminates: the injected value is the identity of the only block
+that can run it.
+
+`emit-token-ledger.sh` deliberately has **no** env fallback, because it is
+registered under THREE `SubagentStop` matchers that only discriminate when the
+payload already carries an `agent_type` (see the duplicate guard below: 94/94
+typed firings emitted 1 line, 4,376/4,376 untyped emitted 2, so more than one
+block runs for an untyped payload). Adopting the identity of whichever matcher
+happened to run would be a **guess in exactly the population where we have no
+identity**, and it would also defeat the byte-identity dedupe guard — two lines
+differing only in a fabricated `agent_type` can never compare equal. The
+standing rule is: **`agent_type` is never invented.**
+
 **Adjacent-duplicate guard (confirmed, not assumed).**
-`emit-token-ledger.sh` is registered under three mutually-exclusive
-`SubagentStop` matchers, and those matchers only discriminate when the
-payload actually carries an `agent_type`. Measured on the live log: **94/94**
-typed firings emitted exactly 1 line, and **4,376/4,376** untyped firings
-emitted exactly 2 — the duplication is perfectly correlated with the absence
-of `agent_type`, and typed agents were never duplicated. The guard is
-minimal and consecutive-only: skip the append when the line is byte-identical
-to the log's CURRENT last line. Duplicate blocks fire back-to-back within one
-firing, so they are always adjacent; byte-identity spans `ts`, `agent_id` and
-the transcript byte count together, so two genuinely distinct completions
-cannot collide. Reading only the last line keeps this O(1) on a large log,
-and every failure absorbs to the normal append path.
+`emit-token-ledger.sh` is registered under three `SubagentStop` matchers
+(`loomwright:code-reviewer`, `loomwright:qa-executor`,
+`loomwright:supervisor-runner`). They are **not** mutually exclusive in
+practice: they only discriminate when the payload actually carries an
+`agent_type`. Measured on the live log: **94/94** typed firings emitted
+exactly 1 line, and **4,376/4,376** untyped firings emitted exactly 2 — the
+duplication is perfectly correlated with the absence of `agent_type`, and
+typed agents were never duplicated.
+
+**Open question — why 2 and not 3.** Three blocks are registered but only two
+lines were measured per untyped firing, so exactly one block's emitter
+produces nothing. What is established from the repo: an emitter handed empty
+stdin writes no line and exits 0 (probed directly); both
+`validate-qa-result.py` and `validate-supervisor-result.py` read stdin to EOF
+via `result_block_parser.extract_payload()`, and each sits in the same matcher
+block AHEAD of that block's ledger command, whereas the `code-reviewer`
+block's preceding hook is `type: prompt` (not a stdin-consuming subprocess);
+and all three registrations landed in a single commit, so "the third block was
+added after the measurement" is ruled out. What is NOT established: a
+stdin-consumed explanation predicts **1** surviving line if the hook runner
+shares one stdin stream across the entries of a block, and **3** if it hands
+each command its own copy — neither yields 2. Deciding between them requires
+observing the harness's stdin delivery semantics, which this repo does not
+pin. Recorded as unresolved rather than guessed; the guard below is correct
+either way, since it keys on byte-identity and not on a duplicate count.
+
+The guard is minimal and consecutive-only: skip the append when the line is
+byte-identical to the log's CURRENT last line. Duplicate blocks fire
+back-to-back within one firing, so they are always adjacent. Byte-identity
+spans `ts`, `agent_id` and the transcript byte count together. That is
+**vanishingly unlikely to collide, not impossible**: `ts` is only
+second-granularity, `agent_id` is OMITTED for exactly the untyped population
+this guard targets, and parallel worker completion is a designed feature — so
+a collision requires two distinct completions in the same second, with an
+identical transcript byte count, and no `agent_id` on either. The failure
+direction is benign and one-way: the loser is one **advisory** ledger line,
+silently dropped. No state, decision, or gate reads it. Reading only the last
+line keeps this O(1) on a large log, and every failure absorbs to the normal
+append path.
 
 ### Script-location convention
 

@@ -292,6 +292,32 @@ assert_eq "case4g malformed first line means unknown owner -> ADOPT (session_end
 assert_eq "case4g appended record is a session_end" "session_end" \
   "$(tail -1 "$REPO4G/.supervisor/logs/sid-case4g.jsonl" | jq -r '.event // empty')"
 
+echo "-- 4h. log already CLOSED: the tail guard skips a second session_end --"
+# The guard must be positive-form checked (skip) AND controlled (still appends
+# when the tail is NOT a session_end), or a mutation that deletes it passes.
+REPO4H="$(init_repo "feature/case4h")"
+seed_owned_log "$REPO4H" "sid-case4h" "cc-owner-4h"
+LOG4H="$REPO4H/.supervisor/logs/sid-case4h.jsonl"
+printf '{"event":"session_end","type":"session_end","session_id":"sid-case4h","status":"failed"}\n' >> "$LOG4H"
+seed_state "$REPO4H" "sid-case4h" "running"
+OUT4H="$(run_sut "$REPO4H" "cc-owner-4h")"
+assert_eq "case4h exit 0" "0" "$(get_rc "$OUT4H")"
+assert_eq "case4h already-closed log gets NO second session_end (stays at 2 lines)" "2" \
+  "$(count_lines "$LOG4H")"
+
+echo "-- 4i. control for 4h: a trailing NON-terminal line still appends --"
+REPO4I="$(init_repo "feature/case4i")"
+seed_owned_log "$REPO4I" "sid-case4i" "cc-owner-4i"
+LOG4I="$REPO4I/.supervisor/logs/sid-case4i.jsonl"
+printf '{"event":"subtask_complete","type":"subtask_complete","session_id":"sid-case4i"}\n' >> "$LOG4I"
+seed_state "$REPO4I" "sid-case4i" "running"
+OUT4I="$(run_sut "$REPO4I" "cc-owner-4i")"
+assert_eq "case4i exit 0" "0" "$(get_rc "$OUT4I")"
+assert_eq "case4i non-terminal tail still appends (guard is not blanket suppression)" "3" \
+  "$(count_lines "$LOG4I")"
+assert_eq "case4i appended record is a session_end" "session_end" \
+  "$(tail -1 "$LOG4I" | jq -r '.event // empty')"
+
 echo "== real repo .supervisor untouched =="
 assert_eq "real .supervisor snapshot unchanged" "$REAL_BEFORE" "$(snapshot_real)"
 

@@ -130,6 +130,20 @@ if [ -n "$LOG_OWNER" ] && [ "$LOG_OWNER" != "$CC_SESSION_ID" ]; then
   exit 0
 fi
 
+# ---- Idempotency: never append a SECOND session_end -------------------------
+# Cheap TAIL guard, deliberately the same shape as the one
+# reproject-state-on-terminal.sh already uses (a `tail` plus a literal match —
+# no jq, no full-file parse): if the log's last parsable line already carries a
+# session_end, this run has been closed out and a second closing event would be
+# a duplicate hard signal for build-insights.sh and a second terminal record
+# for build-state.sh. Blank trailing lines are skipped so a stray newline
+# cannot defeat the guard. Any read failure yields an empty LAST_LINE and falls
+# through to the normal append path — fail-safe, and it can never exit non-zero.
+LAST_LINE="$(tail -5 "$LOG_FILE" 2>/dev/null | grep -v '^[[:space:]]*$' | tail -1 || true)"
+case "${LAST_LINE:-}" in
+  *'"session_end"'*) exit 0 ;;
+esac
+
 # ---- Timestamp (omit entirely when date fails — never the literal "unknown")
 UTC_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
 case "$UTC_TS" in

@@ -232,8 +232,14 @@ if [ "$STATUS" = "running" ]; then
   if [ -n "$LOG_OWNER" ]; then
     # UTC ISO-8601 sorts lexicographically in chronological order, so `sort |
     # tail -1` is the newest owner-originated timestamp without any date math.
+    # SANITISE BOTH SIDES IDENTICALLY. $owner has already been through
+    # `tr -cd 'A-Za-z0-9_-'` above, so comparing it against a RAW
+    # `.cc_session_id` would make every owner id containing a stripped
+    # character match NOTHING — the backstop would silently find no owner
+    # lines and skip. The gsub below applies the same character class to the
+    # log side, so the two are compared in the same normalised space.
     NEWEST_OWNER_TS="$(jq -R -r --arg owner "$LOG_OWNER" \
-      'fromjson? | select((.cc_session_id // "") == $owner) | (.ts // empty)' \
+      'fromjson? | select(((.cc_session_id // "") | gsub("[^A-Za-z0-9_-]";"")) == $owner) | (.ts // empty)' \
       "$LOG_FILE" 2>/dev/null | sort | tail -1)"
     if [ -n "${NEWEST_OWNER_TS:-}" ]; then
       _now="$(date -u +%s 2>/dev/null)"

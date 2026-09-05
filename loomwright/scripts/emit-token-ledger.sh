@@ -280,15 +280,19 @@ event = {
 if cc_session_id:
     event["cc_session_id"] = cc_session_id
 
-# `agent_type`: payload FIRST, else the LOOMWRIGHT_AGENT_TYPE env var the hook
-# entry sets from its own matcher, else the key is OMITTED ENTIRELY — never an
-# empty string, never null. Same additive-if-present discipline as
-# orientation_source below. The env fallback exists because the real
-# SubagentStop payload frequently carries no agent_type at all (measured: 14,368
-# of 14,539 log lines had no such key), which left every ledger line unattributed.
+# `agent_type`: PAYLOAD ONLY, else the key is OMITTED ENTIRELY — never an empty
+# string, never null, never invented. Same additive-if-present discipline as
+# orientation_source below. There is deliberately NO LOOMWRIGHT_AGENT_TYPE env
+# fallback here (unlike emit-progress-event.sh, whose single `loomwright:worker`
+# matcher provably discriminates): this emitter is registered under THREE
+# SubagentStop matchers that only discriminate when the payload ALREADY carries
+# an `agent_type`. Measured on the live log, 94/94 typed firings emitted 1 line
+# and 4,376/4,376 untyped emitted 2 — i.e. more than one block runs for an
+# untyped payload. Adopting an identity from whichever matcher happened to run
+# would be a GUESS in exactly the population where we have no identity, and it
+# would also defeat the byte-identity dedupe guard below (two lines differing
+# only in a fabricated `agent_type` can never compare equal).
 agent_type = payload.get("agent_type")
-if not (isinstance(agent_type, str) and agent_type):
-    agent_type = os.environ.get("LOOMWRIGHT_AGENT_TYPE", "")
 if isinstance(agent_type, str) and agent_type:
     event["agent_type"] = agent_type
 
@@ -387,21 +391,31 @@ LOG_FILE="$LOG_DIR/${SESSION_ID}.jsonl"
 
 # ---- Per-firing idempotency guard (confirmed duplicate mechanism) ------------
 # CONFIRMED, not assumed. hooks.json registers emit-token-ledger.sh under THREE
-# mutually-exclusive SubagentStop matchers (code-reviewer, qa-executor,
-# supervisor-runner). Those matchers only discriminate when the payload actually
-# carries an `agent_type`; when it does not, more than one matcher block runs for
-# a single subagent completion. Measured on the live 14,539-line log:
+# SubagentStop matchers (code-reviewer, qa-executor, supervisor-runner). They are
+# NOT mutually exclusive in practice: they only discriminate when the payload
+# actually carries an `agent_type`; when it does not, more than one matcher block
+# runs for a single subagent completion. Measured on the live 14,539-line log:
 #   token_ledger lines WITH agent_type    → 94 firings, 94/94 emitted exactly 1
 #   token_ledger lines WITHOUT agent_type → 4,376 firings emitted exactly 2
 # i.e. the duplication is perfectly correlated with the absence of `agent_type`,
 # and real typed loomwright agents were never duplicated.
 #
+# Three blocks are registered but exactly TWO lines were measured per untyped
+# firing; why one block emits nothing is an OPEN QUESTION, recorded rather than
+# guessed in docs/TELEMETRY.md §"Adjacent-duplicate guard". The guard does not
+# depend on the answer: it keys on byte-identity, not on a duplicate count.
+#
 # The guard is minimal and consecutive-only: skip the append when the line is
 # byte-identical to the CURRENT last line of the log. Duplicate blocks fire
 # back-to-back within one firing, so they are always adjacent. Byte-identity
-# includes ts, agent_id, and transcript byte count together, so two genuinely
-# distinct completions cannot collide. Reading only the last line keeps this O(1)
-# on a large log, and every failure absorbs to the normal append path.
+# includes ts, agent_id, and transcript byte count together — vanishingly
+# unlikely to collide, NOT impossible: ts is second-granularity, agent_id is
+# omitted for exactly the untyped population this targets, and parallel worker
+# completion is a designed feature. A collision therefore needs the same second,
+# an identical transcript byte count, and an absent agent_id on both. The failure
+# direction is one-way and benign: one ADVISORY ledger line is silently lost;
+# nothing reads it for state or gating. Reading only the last line keeps this
+# O(1) on a large log, and every failure absorbs to the normal append path.
 if [ -f "$LOG_FILE" ]; then
   _last_line="$(tail -1 "$LOG_FILE" 2>/dev/null || true)"
   if [ -n "$_last_line" ] && [ "$_last_line" = "$LINE" ]; then

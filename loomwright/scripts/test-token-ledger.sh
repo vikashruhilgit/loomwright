@@ -38,9 +38,20 @@
 #            empty log, unreadable log, first line with no cc_session_id — all
 #            four ADOPT (the non-negotiable fail-safe direction)
 #        17g a functionally-broken jq ⇒ exit 0 and ADOPT
-#  18. agent identity: LOOMWRIGHT_AGENT_TYPE env used when the payload carries
-#      no agent_type; payload WINS when both are present; the key is ABSENT
-#      (has("agent_type")==false — not "", not null) when neither is present
+#  18. agent identity: agent_type comes from the PAYLOAD ONLY —
+#      18a a set LOOMWRIGHT_AGENT_TYPE is IGNORED (no env fallback: this emitter
+#          runs under three matchers, so a matcher-derived identity would be a
+#          fabrication for exactly the untyped population)
+#      18b the payload value is emitted when present (control for 18a — the
+#          field is not simply always absent)
+#      18c the key is ABSENT (has("agent_type")==false — not "", not null) when
+#          the payload carries none
+#  19. ADJACENT-DUPLICATE GUARD —
+#      19a two firings with byte-identical payloads leave the log at ONE line
+#      19b CONTROL: two firings differing in one field leave TWO lines (the
+#          guard cannot pass by suppressing everything)
+#      19c a NON-adjacent repeat still appends (the guard compares only the
+#          LAST line), so suppression is bounded to the consecutive case
 
 # EXIT: 0 on full pass, 1 on any failed assertion.
 # Style mirrors test-insights.sh / test-send-telemetry-core.sh.
@@ -101,9 +112,10 @@ run_sut() {
   # orientation var explicitly via run_sut_env, case 15 the prefix var via
   # run_sut_sp.
   # LOOMWRIGHT_AGENT_TYPE is scrubbed here for the same reason as the three
-  # vars above: case 18c asserts the agent_type key is ABSENT, and a developer
-  # export would otherwise supply it. This is a SCRUB, never a default — case
-  # 18a/18b set the var explicitly through run_sut_agent.
+  # vars above: cases 18a/18c assert the agent_type key is ABSENT, and a
+  # developer export must not be able to make that assertion pass or fail for
+  # the wrong reason. This is a SCRUB, never a default — case 18a sets the var
+  # explicitly through run_sut_agent to prove the SUT IGNORES it.
   local payload="$1"
   local out rc
   if [ "$payload" = "--empty" ]; then
@@ -144,7 +156,8 @@ run_sut_sp() {
 run_sut_agent() {
   # Usage: run_sut_agent <LOOMWRIGHT_AGENT_TYPE-value> <payload-file>
   # Same contract as run_sut, with the agent-type env var set EXPLICITLY by the
-  # calling case (cases 18a/18b). The other advisory vars stay scrubbed.
+  # calling case (case 18a, which asserts the SUT IGNORES it). The other
+  # advisory vars stay scrubbed.
   local atv="$1" payload="$2"
   local out rc
   out="$( cd "$SANDBOX" && env -u LOOMWRIGHT_ORIENTATION_SOURCE -u LOOMWRIGHT_SHARED_PREFIX -u LOOMWRIGHT_ADVISORY_TOTAL_BYTES LOOMWRIGHT_AGENT_TYPE="$atv" bash "$SUT" < "$payload" 2>&1 )"
@@ -855,36 +868,47 @@ else
   ok "case17g broken jq did not divert to a cc-uuid log"
 fi
 
-echo "== 18. agent identity: payload > LOOMWRIGHT_AGENT_TYPE > key omitted (AC-7) =="
+echo "== 18. agent identity: PAYLOAD ONLY — no env fallback (AC-7) =="
 # No state.md from here on: these cases are about the emitted line's fields,
 # not about which run it joins.
 rm -f "$SANDBOX/.supervisor/state.md" 2>/dev/null || true
 AT_TRANSCRIPT="$SANDBOX/agent-type-transcript.jsonl"
 printf 'IIII' > "$AT_TRANSCRIPT"   # 4 bytes
 
+# 18a — the env var is set and MUST be ignored. This emitter is registered under
+# three SubagentStop matchers and more than one block runs for an untyped
+# payload, so a matcher-derived agent_type would stamp two different fabricated
+# identities onto one completion (and would also make the case-19 guard unable
+# to fire, since the two lines would no longer be byte-identical).
 PAYLOAD18A="$SANDBOX/agenttype-envonly.json"
 jq -n --arg tp "$AT_TRANSCRIPT" '{
   session_id: "fixture-token-ledger-agenttype-env-001",
   agent_transcript_path: $tp
 }' > "$PAYLOAD18A"
-OUT18A="$(run_sut_agent "loomwright:worker" "$PAYLOAD18A")"
+OUT18A="$(run_sut_agent "loomwright:code-reviewer" "$PAYLOAD18A")"
 assert_eq "case18a exit 0" "0" "$(printf '%s\n' "$OUT18A" | grep '^RC=' | tail -1 | cut -d= -f2)"
 LINE18A="$(tail -1 "$SANDBOX/.supervisor/logs/fixture-token-ledger-agenttype-env-001.jsonl" 2>/dev/null)"
-assert_eq "case18a env value used when payload carries no agent_type" "loomwright:worker" \
-  "$(printf '%s' "$LINE18A" | jq -r '.agent_type // empty')"
+# Absence asserted as key absence — NOT `== ""` and NOT `== null`.
+assert_eq "case18a LOOMWRIGHT_AGENT_TYPE is IGNORED (key absent, never invented)" "false" \
+  "$(printf '%s' "$LINE18A" | jq -r 'has("agent_type")')"
+assert_eq "case18a the event line is still written" "token_ledger" \
+  "$(printf '%s' "$LINE18A" | jq -r '.event')"
 
+# 18b — control for 18a: the field is not simply always absent; a payload that
+# CARRIES agent_type still emits it, and the env value does not override it.
 PAYLOAD18B="$SANDBOX/agenttype-both.json"
 jq -n --arg tp "$AT_TRANSCRIPT" '{
   session_id: "fixture-token-ledger-agenttype-both-001",
-  agent_type: "loomwright:code-reviewer",
+  agent_type: "loomwright:loomwright:code-reviewer",
   agent_transcript_path: $tp
 }' > "$PAYLOAD18B"
 OUT18B="$(run_sut_agent "loomwright:env-must-lose" "$PAYLOAD18B")"
 assert_eq "case18b exit 0" "0" "$(printf '%s\n' "$OUT18B" | grep '^RC=' | tail -1 | cut -d= -f2)"
 LINE18B="$(tail -1 "$SANDBOX/.supervisor/logs/fixture-token-ledger-agenttype-both-001.jsonl" 2>/dev/null)"
-assert_eq "case18b payload agent_type WINS over the env value" "loomwright:code-reviewer" \
+assert_eq "case18b payload agent_type is emitted verbatim" "loomwright:loomwright:code-reviewer" \
   "$(printf '%s' "$LINE18B" | jq -r '.agent_type // empty')"
 
+# 18c — neither source: key absent with the env var scrubbed entirely.
 PAYLOAD18C="$SANDBOX/agenttype-neither.json"
 jq -n --arg tp "$AT_TRANSCRIPT" '{
   session_id: "fixture-token-ledger-agenttype-none-001",
@@ -895,10 +919,80 @@ assert_eq "case18c exit 0" "0" "$(printf '%s\n' "$OUT18C" | grep '^RC=' | tail -
 LINE18C="$(tail -1 "$SANDBOX/.supervisor/logs/fixture-token-ledger-agenttype-none-001.jsonl" 2>/dev/null)"
 # Absence asserted as key absence — NOT `== ""` and NOT `== null`, either of
 # which a present-but-empty key would satisfy.
-assert_eq "case18c agent_type key ABSENT when neither source supplies it" "false" \
+assert_eq "case18c agent_type key ABSENT when the payload supplies none" "false" \
   "$(printf '%s' "$LINE18C" | jq -r 'has("agent_type")')"
 assert_eq "case18c the event line is still written" "token_ledger" \
   "$(printf '%s' "$LINE18C" | jq -r '.event')"
+
+echo "== 19. adjacent-duplicate guard: suppress a repeat of the LAST line only =="
+# The duplicate this guard exists for: more than one SubagentStop matcher block
+# runs for a payload carrying no agent_type, so the SAME completion is emitted
+# more than once, back-to-back, byte-identically.
+DUP_TRANSCRIPT="$SANDBOX/dup-transcript.jsonl"
+printf 'DDDDDDDD' > "$DUP_TRANSCRIPT"   # 8 bytes
+
+# 19a — two firings, identical payloads → exactly ONE line.
+DUP_SID="fixture-token-ledger-dupe-001"
+PAYLOAD19A="$SANDBOX/dupe-payload.json"
+jq -n --arg tp "$DUP_TRANSCRIPT" --arg sid "$DUP_SID" '{
+  session_id: $sid,
+  agent_transcript_path: $tp
+}' > "$PAYLOAD19A"
+LOG19A="$SANDBOX/.supervisor/logs/${DUP_SID}.jsonl"
+OUT19A1="$(run_sut "$PAYLOAD19A")"
+assert_eq "case19a first firing exit 0" "0" "$(printf '%s\n' "$OUT19A1" | grep '^RC=' | tail -1 | cut -d= -f2)"
+OUT19A2="$(run_sut "$PAYLOAD19A")"
+assert_eq "case19a second firing exit 0" "0" "$(printf '%s\n' "$OUT19A2" | grep '^RC=' | tail -1 | cut -d= -f2)"
+assert_eq "case19a byte-identical repeat suppressed (log stays at ONE line)" "1" \
+  "$(wc -l < "$LOG19A" 2>/dev/null | tr -d '[:space:]')"
+assert_eq "case19a the surviving line is the real event" "token_ledger" \
+  "$(tail -1 "$LOG19A" | jq -r '.event')"
+
+# 19b — CONTROL, the assertion that keeps 19a honest: a guard that suppressed
+# everything would also pass 19a. Two firings differing in ONE field (the
+# transcript byte count, which is part of the emitted line) must leave TWO lines.
+DIFF_SID="fixture-token-ledger-dupe-002"
+DIFF_TRANSCRIPT="$SANDBOX/dup-transcript-longer.jsonl"
+printf 'DDDDDDDDDDDDDDDD' > "$DIFF_TRANSCRIPT"   # 16 bytes — different proxy size
+PAYLOAD19B1="$SANDBOX/dupe-diff-1.json"
+PAYLOAD19B2="$SANDBOX/dupe-diff-2.json"
+jq -n --arg tp "$DUP_TRANSCRIPT" --arg sid "$DIFF_SID" '{
+  session_id: $sid, agent_transcript_path: $tp
+}' > "$PAYLOAD19B1"
+jq -n --arg tp "$DIFF_TRANSCRIPT" --arg sid "$DIFF_SID" '{
+  session_id: $sid, agent_transcript_path: $tp
+}' > "$PAYLOAD19B2"
+LOG19B="$SANDBOX/.supervisor/logs/${DIFF_SID}.jsonl"
+OUT19B1="$(run_sut "$PAYLOAD19B1")"
+assert_eq "case19b first firing exit 0" "0" "$(printf '%s\n' "$OUT19B1" | grep '^RC=' | tail -1 | cut -d= -f2)"
+OUT19B2="$(run_sut "$PAYLOAD19B2")"
+assert_eq "case19b second firing exit 0" "0" "$(printf '%s\n' "$OUT19B2" | grep '^RC=' | tail -1 | cut -d= -f2)"
+assert_eq "case19b two DIFFERING firings both recorded (guard is not blanket suppression)" "2" \
+  "$(wc -l < "$LOG19B" 2>/dev/null | tr -d '[:space:]')"
+assert_eq "case19b the two lines carry the two distinct proxy sizes" "8 16" \
+  "$(jq -r '.token_proxy_transcript_bytes' "$LOG19B" 2>/dev/null | tr '\n' ' ' | sed 's/ $//')"
+
+# 19c — a NON-adjacent repeat still appends: the guard compares only the LAST
+# line, so A,B,A must leave THREE lines. This bounds the suppression to the
+# consecutive case rather than de-duplicating the whole log.
+NADJ_SID="fixture-token-ledger-dupe-003"
+PAYLOAD19C1="$SANDBOX/dupe-nonadj-1.json"
+PAYLOAD19C2="$SANDBOX/dupe-nonadj-2.json"
+jq -n --arg tp "$DUP_TRANSCRIPT" --arg sid "$NADJ_SID" '{
+  session_id: $sid, agent_transcript_path: $tp
+}' > "$PAYLOAD19C1"
+jq -n --arg tp "$DIFF_TRANSCRIPT" --arg sid "$NADJ_SID" '{
+  session_id: $sid, agent_transcript_path: $tp
+}' > "$PAYLOAD19C2"
+LOG19C="$SANDBOX/.supervisor/logs/${NADJ_SID}.jsonl"
+run_sut "$PAYLOAD19C1" >/dev/null    # A
+run_sut "$PAYLOAD19C2" >/dev/null    # B
+OUT19C3="$(run_sut "$PAYLOAD19C1")"  # A again — no longer the last line
+assert_eq "case19c third firing exit 0" "0" "$(printf '%s\n' "$OUT19C3" | grep '^RC=' | tail -1 | cut -d= -f2)"
+assert_eq "case19c non-adjacent repeat still appends (A,B,A ⇒ 3 lines)" "3" \
+  "$(wc -l < "$LOG19C" 2>/dev/null | tr -d '[:space:]')"
+assert_eq "case19c line 1 and line 3 are byte-identical (a true repeat, not a variant)" "same" \
+  "$( [ "$(sed -n '1p' "$LOG19C")" = "$(sed -n '3p' "$LOG19C")" ] && echo same || echo differ )"
 
 echo ""
 echo "RESULT  pass=$PASS_COUNT  fail=$FAIL_COUNT"
