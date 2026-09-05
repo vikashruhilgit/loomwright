@@ -321,9 +321,11 @@ code { font-family: var(--mono); font-size: 0.85em; }
 }
 /* The active stage is distinguishable WITHOUT COLOUR, and not by the frame: its value cell
  * prints the phase word (EXECUTE) where every inactive cell prints an em dash, and it is set
- * in bold. The accent here is the third, redundant channel - drop the colour entirely and the
- * word and the weight still carry the state. The site's `border-top:3px solid var(--copper)`
- * card marker is the fourth, and it is a SHAPE change, so it survives greyscale too. */
+ * in bold, and the card's shape changes. The colour accent is the FOURTH and last redundant
+ * channel - word, weight, shape, then colour - so dropping it entirely leaves the state fully
+ * readable. That ordering is deliberate and matches FLOOR_UI_VERIFICATION.md and the changelog:
+ * colour is counted last because it is the one that must be droppable. The shape change is a
+ * shape, so it survives greyscale too. */
 .stage.active {
   border-color: var(--hair);
   border-top: 3px solid var(--copper);

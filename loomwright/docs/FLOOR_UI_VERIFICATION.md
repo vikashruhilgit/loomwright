@@ -110,8 +110,9 @@ The seven honest states and the stopped state are enumerated below with the fixt
 reproduced from, so the pass is auditable for completeness. **Every "what rendered" and "console"
 cell below records what was actually observed in a browser** — the table was authored as a
 template with those cells reading `NOT VERIFIED HERE`, and they were filled in only once the
-pass had genuinely been run. Three rows that were never exercised in a browser say exactly that
-rather than being quietly completed to match the heading; see "Honest limits" below.
+pass had genuinely been run. Rows 4, 6 and 7 were ORIGINALLY recorded as `NOT VERIFIED HERE`
+and were closed in a later pass rather than quietly completed to match the heading; "Honest
+limits" below records when. No row reads `NOT VERIFIED HERE` today.
 
 To reproduce: run the module's own `setup-ui.sh serve --detach` from wherever the plugin is
 installed, copy the fixture over the served `floor.json` in the ui directory, and open the
