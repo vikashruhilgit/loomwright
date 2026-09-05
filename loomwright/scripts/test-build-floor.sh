@@ -78,10 +78,23 @@
 #       one is OMITTED rather than emitted as zero
 #   (w) the empty fixture still yields `absent` for both new-detail surfaces, and no env seam was
 #       added for either (both stay cwd-relative)
-#   (m) real `.supervisor/` corroboration (local only) or an explicit SKIPPED line. Runs LAST
-#       despite its letter, because it is the only case that may SKIP and because its `(m)`
-#       label is what the brief commissioning (n)-(q) refers to; renaming it would break that
-#       reference to buy nothing.
+#   (z) the output path is CWD-RELATIVE, proven by running a COPY of the projector from a
+#       foreign install directory with the cwd elsewhere and hashing that install tree exactly -
+#       the always-on, CI-running form of (m)'s claim, with a mutation control that resolves the
+#       output from `$0` and must turn the same assertion red
+#   (m) real `.supervisor/` corroboration (local only) or an explicit SKIPPED line. Placed out of
+#       alphabetical order - after (w), before (x)/(y) - because it is the only case that may
+#       SKIP and because its `(m)` label is what the brief commissioning (n)-(q) refers to;
+#       renaming it would break that reference to buy nothing. Its containment assertion
+#       ATTRIBUTES rather than suppresses: a live Floor that regenerates THIS project rewrites
+#       `.supervisor/floor/floor.json` inside it every couple of seconds, so a change to that one
+#       artefact is excused only on evidence of such a server, every other path in that directory
+#       is DIRTY unconditionally, and with no such server these same paths still redden
+#   (m1)-(m8) the controls for that attribution, run UNCONDITIONALLY (the assertion they control
+#       is the one that skips): a foreign path stays DIRTY under a live Floor, the serve's own
+#       artefact stays DIRTY without one, a mixed delta names only the foreign path, and the
+#       detector is proven to reject a no-index / other-project / `--no-regen` server while
+#       still firing for one that lists this repo
 #
 # Exit 0 = all pass, 1 = any failure. Registered automatically by ci.yml's test-*.sh glob.
 
@@ -2205,6 +2218,206 @@ echo "== (w) both new surfaces stay ABSENT on the empty fixture (the anti-vacuit
   || no "the seam grep found nothing at all - it proves nothing"
 
 # ============================================================================
+echo "== (z) the output path is CWD-relative - a \$0-derived write cannot reach the checkout =="
+# THE ENFORCEMENT GATE THAT (m) BELOW IS THE RESIDUE-CATCHER FOR, and the reason (m) is allowed
+# to attribute serve churn at all.
+#
+# (m) mirrors the real `.supervisor/` by symlink and runs the projector against it, then checks
+# that nothing landed in the developer's own checkout. The escape it guards is not imaginary:
+# this script ALREADY resolves one input directory from `$0` rather than from the cwd (the
+# agents roster - see (n)), so "a path derived from the plugin's install location instead of the
+# project root" is a shape that exists here and could spread to the OUTPUT path. But (m) can
+# only ever be a corroboration: it is local-only, it skips on a fresh clone and in CI, and -
+# since the previous release - it must attribute the churn of a live Floor server rather than
+# report it, which is a narrowing however carefully evidenced.
+#
+# So the absolute, always-on, CI-running form of that same claim is HERE, and it is hermetic:
+# the projector is COPIED into a temp directory that is not a repository, and run with the cwd
+# in a fixture repo somewhere else entirely. Every write must land under the cwd. A `$0`-derived
+# output would land beside the copy, where nothing else writes and where a hash is therefore
+# exact rather than attributed - no live server, no concurrent session, no skip.
+RZ="$(new_repo)"; seed_tree "$RZ"
+ZPLUG="$(mktmp)"; mkdir -p "$ZPLUG/scripts"
+cp "$BUILD" "$ZPLUG/scripts/build-floor.sh" 2>/dev/null
+# The hash covers the copy's whole parent, not just its own directory, so a write ONE LEVEL UP
+# from the script (the `<plugin>/agents` shape (n) describes, resolved from `$0`) is in scope.
+z_sig() {
+  ( cd "$1" 2>/dev/null || return 1
+    find . \( -type f -o -type l -o -type d \) -print | LC_ALL=C sort \
+      | while IFS= read -r p; do
+          if [ -f "$p" ] && [ ! -L "$p" ]; then printf '%s  %s\n' "$(csum "$p")" "$p"
+          else printf 'NONFILE  %s\n' "$p"; fi
+        done )
+}
+z_before="$(z_sig "$ZPLUG")"
+[ -n "$z_before" ] \
+  && ok "(z) pre-run signature of the copied projector's install tree is non-empty" \
+  || no "(z) the install-tree signature is empty - the containment assertion below would be vacuous"
+( cd "$RZ" && bash "$ZPLUG/scripts/build-floor.sh" ) >/dev/null 2>&1
+z_after="$(z_sig "$ZPLUG")"
+[ -f "$RZ/.supervisor/floor/floor.json" ] \
+  && ok "(z) the artefact landed under the CWD, not beside the script" \
+  || no "(z) the projector wrote no artefact under the cwd - the containment claim has no subject"
+[ "$z_before" = "$z_after" ] \
+  && ok "(z) ...and the projector's own install tree is byte-unchanged and gained no path - no write is derived from \$0" \
+  || no "(z) the projector wrote into its own install directory:
+$(diff <(printf '%s\n' "$z_before") <(printf '%s\n' "$z_after") 2>/dev/null | head -10)"
+
+# (z2) MUTATION CONTROL. Without it (z) is a restatement of current behaviour: a signature that
+# never changes is satisfied just as well by a projector that writes NOTHING anywhere. The
+# mutant is the exact defect (z) exists to catch - the output path resolved from `$0` instead of
+# the cwd - and it must turn the SAME assertion red.
+MUTZ="$ZPLUG/scripts/build-floor-escaped.sh"
+sed 's@^OUT_DIR="\.supervisor/floor"$@OUT_DIR="$(cd "$(dirname "$0")" \&\& pwd)/.supervisor/floor"@' \
+  "$BUILD" > "$MUTZ" 2>/dev/null
+if [ -s "$MUTZ" ] && ! cmp -s "$MUTZ" "$BUILD" && bash -n "$MUTZ" 2>/dev/null; then
+  RZ2="$(new_repo)"; seed_tree "$RZ2"
+  z2_before="$(z_sig "$ZPLUG")"
+  ( cd "$RZ2" && bash "$MUTZ" ) >/dev/null 2>&1
+  z2_after="$(z_sig "$ZPLUG")"
+  [ "$z2_before" != "$z2_after" ] \
+    && ok "(z2) MUTATION CONTROL: an output path resolved from \$0 DOES change the install-tree signature - (z) discriminates rather than passing on any projector" \
+    || no "(z2) MUTATION CONTROL: the escaped mutant left the install tree unchanged - (z) proves nothing"
+else
+  no "(z2) MUTATION CONTROL: could not build the \$0-derived output mutant - the sed no longer matches build-floor.sh's OUT_DIR assignment, so (z) is uncontrolled"
+fi
+
+# --- ATTRIBUTING A CHANGE IN THE DEVELOPER'S OWN CHECKOUT --------------------------------
+# WHY THIS EXISTS. The corroboration below hashes `.supervisor/floor/` in the developer's
+# checkout around its own run, to prove it wrote nothing there. But `setup-ui.sh serve` - the
+# Floor - regenerates `.supervisor/floor/floor.json` UNDER EVERY PROJECT IT SERVES, by running
+# this very projector inside it, on a 2-second default interval. Measured on the maintainer
+# machine: the artefact's checksum moves every ~3 seconds with the Floor up. So for a developer
+# who actually RUNS the tool on the repo they develop it in, the hash changed for a reason with
+# nothing to do with this suite, and the assertion was unpassable. That is the same defect, in
+# the same population, that (k28) had in test-setup-ui.sh, and it is fixed the same way: the
+# subject is writes ATTRIBUTABLE TO THIS SUITE, so this ATTRIBUTES rather than suppresses.
+#
+# WHAT IS AND IS NOT EXEMPTED. `serve` reaches this directory by exactly one route -
+# `regen_project` runs `build-floor.sh` in the project root - and `build-floor.sh` writes its
+# output in place, with no staging file (see (z) above, whose subject is that write). So the
+# closed set a serve owns inside a repo is the directory itself (`mkdir -p`) and `floor.json`,
+# and nothing else. Measured: the real directory holds that one file and no other. Any other
+# path appearing or changing there is DIRTY unconditionally, and so is `floor.json` itself
+# whenever no live Floor that regenerates THIS repo can be found - which is the state on CI, on
+# a fresh clone, and on any machine with the Floor stopped.
+#
+# THE HONEST LIMIT, stated because a narrowing that hides its own cost is worse than none: while
+# a Floor that regenerates this checkout IS live, a write to `floor.json` by this suite would be
+# attributed to that server rather than reported. That case is not left uncovered - it is moved
+# to where it can be proven absolutely: (z) above runs the projector from a foreign install
+# directory with the cwd elsewhere and hashes the install tree exactly, on every machine and in
+# CI, with a mutation control. The enforcement is there; this remains the residue-catcher.
+
+# floor_dir_sig <dir> -> a per-path signature of the directory, or the VALUE `ABSENT`.
+# ABSENT is a value rather than a skip on purpose: a run that turns an absent directory into a
+# present one must be a CHANGE, not an untested state.
+floor_dir_sig() {
+  [ -d "$1" ] || { printf 'ABSENT\n'; return 0; }
+  ( cd "$1" 2>/dev/null || return 1
+    find . \( -type f -o -type l -o -type d \) -print | LC_ALL=C sort \
+      | while IFS= read -r p; do
+          if [ -f "$p" ] && [ ! -L "$p" ]; then printf '%s  %s\n' "$(csum "$p")" "$p"
+          else printf 'NONFILE  %s\n' "$p"; fi
+        done )
+}
+
+# serve_owned_floor_rel <rel> - is this path one a Floor's own regen writes? See the closed set
+# above. Deliberately exact: `./floor.json` and the directory, never a prefix match.
+#
+# `ABSENT` - the value floor_dir_sig reports for a directory that does not exist at all - is
+# NOT in the set, and that asymmetry is deliberate rather than an oversight. A serve does create
+# the directory (`mkdir -p`), so the argument for exempting the transition exists; it is refused
+# because the exemption is for CHURN, and a directory coming into existence is not churn. The
+# case it costs is narrow and self-limiting - a Floor's first ever tick for a project that has
+# never been regenerated, landing inside this one run's window - and it costs a red, which is
+# the safe direction. Creating that directory in the developer's checkout is, meanwhile, exactly
+# what a containment breach looks like, and (z) above catches it absolutely either way.
+serve_owned_floor_rel() {
+  case "$1" in
+    .|./floor.json) return 0 ;;
+  esac
+  return 1
+}
+
+# floor_changed_paths <before file> <after file> - the paths that differ. The path is cut by
+# stripping the leading checksum field rather than by taking $2, so a path containing a space is
+# reported whole instead of truncated into something that then fails serve_owned_floor_rel and
+# is misreported as a foreign write.
+floor_changed_paths() {
+  diff "$1" "$2" 2>/dev/null | awk '
+    /^[<>] / { line = substr($0, 3)
+               if (line == "ABSENT") { print "ABSENT"; next }
+               sub(/^[^ ]+  /, "", line)
+               if (line != "") print line }' \
+    | LC_ALL=C sort -u
+}
+
+# classify_real_floor_delta <before file> <after file> <live serve: yes|no>
+#   -> "CLEAN" | "SERVE <paths...>" | "DIRTY <paths...>"
+# The whole decision in one place, so the controls below drive the SAME code the live assertion
+# runs rather than a re-implementation that could drift from it.
+classify_real_floor_delta() {
+  local bf="$1" af="$2" live="$3" paths p all="" foreign=""
+  paths="$(floor_changed_paths "$bf" "$af")"
+  [ -n "$paths" ] || { printf 'CLEAN'; return 0; }
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    all="$all $p"
+    serve_owned_floor_rel "$p" || foreign="$foreign $p"
+  done <<FLOOR_DELTA_EOF
+$paths
+FLOOR_DELTA_EOF
+  if [ -n "$foreign" ]; then printf 'DIRTY%s' "$foreign"; return 0; fi
+  if [ "$live" = "yes" ]; then printf 'SERVE%s' "$all"; return 0; fi
+  printf 'DIRTY%s' "$all"
+  return 0
+}
+
+# live_floor_regen_pids <repo path> -> the pids of a LIVE Floor server that REGENERATES that
+# repo. Three clauses, each load-bearing, and none of them satisfiable by a file alone:
+#   * the process must be ALIVE and answer to this module's own command-line description - the
+#     same ownership test `setup-ui.sh stop` applies. A pidfile outlives its process, so a
+#     pidfile is not evidence.
+#   * it must be regenerating AT ALL: `serve --no-regen` writes nothing into any project.
+#   * it must regenerate THIS repo. A Floor serving somebody else's project cannot excuse a
+#     change here, and the selected project is not the only one a serve writes to - it also
+#     regenerates registered projects on the slow cadence - so "is it this repo's" is asked of
+#     the server's OWN published project list, not of its cwd.
+# Read-only throughout, and it never signals anything. The server's ui directory is taken from
+# its argv rather than spelled here, which is also what keeps this file's literal count of
+# host-tool paths at the zero the vendor-coupling manifest records for it. Every failure to read
+# - no `ps`, no `jq`, an unreadable or unparseable index - yields NO pid, so the exemption is
+# simply not granted and the assertion stays as absolute as it was before this change.
+live_floor_regen_pids() {
+  local repo="$1" snapshot
+  [ -n "$repo" ] || return 0
+  # The snapshot is taken into a variable BEFORE the awk that filters it, so that awk's own
+  # argv - which carries the string being searched for - cannot appear in its own input.
+  snapshot="$(ps -eo pid=,command= 2>/dev/null || true)"
+  [ -n "$snapshot" ] || return 0
+  printf '%s\n' "$snapshot" \
+    | awk '
+        index($0, "setup-ui.sh") == 0 { next }
+        # The served config is handed to the HTTP engine on its command line, and the ui
+        # directory is the argument immediately after the bare `-` that feeds the engine on
+        # stdin. Positional-from-the-front only as far as that marker: later arguments can be
+        # EMPTY (an unset --registry is passed as ""), and `ps` collapses an empty argument, so
+        # counting fields past this point would silently read the wrong one.
+        { for (i = 2; i < NF; i++) if ($i == "-") { print $1 "\t" $(i + 1); break } }' \
+    | while IFS="$(printf '\t')" read -r pid uidir; do
+        case "$pid" in ''|*[!0-9]*) continue ;; esac
+        [ -n "$uidir" ] || continue
+        [ -f "$uidir/index.json" ] || continue
+        jq -e --arg p "$repo" '
+          (.serve.regen == true)
+          and ((.serve.selected_path == $p) or ([.projects[]?.path] | index($p) != null))
+        ' "$uidir/index.json" >/dev/null 2>&1 || continue
+        printf '%s\n' "$pid"
+      done
+  return 0
+}
+# ============================================================================
 echo "== (m) real .supervisor/ corroboration (local only) =="
 REAL="$(cd "$HERE/../.." 2>/dev/null && pwd)"
 real_logs=("$REAL"/.supervisor/logs/*.jsonl)
@@ -2227,17 +2440,35 @@ else
   # this buys is a corroboration against the REAL agent files' CONTENT (via cmp_real below) -
   # NOT a test of the `$0`-derived default path, which the export short-circuits either way.
   [ -d "$HERE/../agents" ] && ln -s "$HERE/../agents" "$MIR/agents"
-  REALART="$REAL/.supervisor/floor/floor.json"
-  real_before="$( [ -f "$REALART" ] && csum "$REALART" || echo ABSENT )"
+  REALFLOOR="$REAL/.supervisor/floor"
+  # The SUBJECT IS THE DIRECTORY, not the single artefact it holds. A serve owns `floor.json`
+  # inside it and nothing else, so hashing the directory is what leaves the attribution below
+  # something to still be absolute ABOUT: any other file, directory or symlink appearing here
+  # is a containment breach whatever any server is doing.
+  real_before="$(floor_dir_sig "$REALFLOOR")"
   run_build "$MIR"; rcM=$?
   JM="$MIR/.supervisor/floor/floor.json"
-  real_after="$( [ -f "$REALART" ] && csum "$REALART" || echo ABSENT )"
+  real_after="$(floor_dir_sig "$REALFLOOR")"
   [ "$rcM" -eq 0 ] && [ -f "$JM" ] && ok "real-tree mirror: exits 0 and writes the artefact" \
     || no "real-tree mirror: rc=$rcM, artefact $( [ -f "$JM" ] && echo present || echo absent )"
   # Reported either way - never a silently-vanishing assertion.
-  [ "$real_before" = "$real_after" ] \
-    && ok "the developer checkout is byte-unchanged by this corroboration (was: $real_before)" \
-    || no "the corroboration wrote into the developer checkout ($real_before -> $real_after)"
+  if [ "$real_before" = "$real_after" ]; then
+    ok "the developer checkout is byte-unchanged by this corroboration"
+  else
+    printf '%s\n' "$real_before" > "$ROOT/real-floor-before" 2>/dev/null
+    printf '%s\n' "$real_after"  > "$ROOT/real-floor-after"  2>/dev/null
+    m_live_pids="$(live_floor_regen_pids "$REAL" | tr '\n' ' ' | sed 's/ *$//')"
+    m_live=no; [ -n "$m_live_pids" ] && m_live=yes
+    m_verdict="$(classify_real_floor_delta "$ROOT/real-floor-before" "$ROOT/real-floor-after" "$m_live")"
+    case "$m_verdict" in
+      SERVE*)
+        ok "the developer checkout changed ONLY in what a LIVE Floor regenerating this project owns (pid(s): $m_live_pids), so no write here is attributable to this corroboration -$(printf '%s' "${m_verdict#SERVE}"). With no such server running these same paths would have reddened, and every other path in that directory is still absolute" ;;
+      *)
+        no "the corroboration wrote into the developer checkout: these paths changed and no live Floor regenerating this project owns them -$(printf '%s' "${m_verdict#DIRTY}")
+     (live Floor regenerating $REAL: $m_live${m_live_pids:+ - pid(s) $m_live_pids})
+$(diff "$ROOT/real-floor-before" "$ROOT/real-floor-after" 2>/dev/null | head -20)" ;;
+    esac
+  fi
 
   real_n() { ls -1 "$@" 2>/dev/null | awk 'NF{n++} END{print n+0}'; }
   cmp_real() {
@@ -2263,6 +2494,134 @@ else
     && ok "the real-tree artefact conforms to the schema parsed from RESULT_SCHEMAS.md" \
     || no "the real-tree artefact failed schema validation: $(validate_floor "$JM" 2>&1 | head -3)"
 fi
+
+# ============================================================================
+echo "== (m1)-(m8) the controls for that attribution =="
+# An exemption that is never tested is a hole with a comment over it. These run UNCONDITIONALLY
+# - outside the skip above - because the assertion they control is the one that skips, and CI is
+# exactly where a classifier bug would otherwise go unexamined. Nothing here reads or writes the
+# developer's tree: (m1)-(m5) drive the classifier on SYNTHETIC signatures, which is the only
+# way to test a "somebody wrote into the checkout" case without doing it.
+M_A="$ROOT/m-sig-a"; M_B="$ROOT/m-sig-b"
+{ printf 'NONFILE  .\n'; printf 'AAA  ./floor.json\n'; } > "$M_A"
+
+# (m1) THE ONE THAT MATTERS MOST: proof the narrowing did not blind the backstop. A path a serve
+# does not own must redden even while a serve is live.
+{ cat "$M_A"; printf 'BBB  ./stray.json\n'; } > "$M_B"
+m_c="$(classify_real_floor_delta "$M_A" "$M_B" yes)"
+case "$m_c" in
+  DIRTY*./stray.json*)
+    ok "(m1) CONTROL: with a live Floor running, a path the serve does not own is still DIRTY - the exemption covers the serve's own artefact and nothing else" ;;
+  *)
+    no "(m1) CONTROL: a foreign path is still DIRTY while a Floor is live" \
+       "classifier returned '$m_c' - the narrowing is swallowing writes it must never swallow" ;;
+esac
+
+# (m2) the serve's OWN artefact, with NO live serve. Must stay DIRTY: the exemption is earned by
+# evidence that a server is running, never granted to a path list.
+sed 's|^AAA  \./floor\.json$|ZZZ  ./floor.json|' "$M_A" > "$M_B"
+m_c="$(classify_real_floor_delta "$M_A" "$M_B" no)"
+case "$m_c" in
+  DIRTY*./floor.json*)
+    ok "(m2) CONTROL: with NO live Floor, a change to floor.json is DIRTY - so CI, a fresh clone and a stopped Floor all keep the absolute backstop" ;;
+  *)
+    no "(m2) CONTROL: floor.json is still DIRTY when no Floor is live" \
+       "classifier returned '$m_c' - the path alone is granting the exemption" ;;
+esac
+
+# (m3) the defect itself: the SAME change with a live serve is attributed, not reported.
+m_c="$(classify_real_floor_delta "$M_A" "$M_B" yes)"
+case "$m_c" in
+  SERVE*./floor.json*)
+    ok "(m3) CONTROL: the same change WITH a live Floor is attributed to it - this is the false positive that made this assertion unpassable for anyone actually running the Floor on this repo" ;;
+  *)
+    no "(m3) CONTROL: serve-owned churn under a live Floor is attributed to the serve" "classifier returned '$m_c'" ;;
+esac
+
+# (m4) MIXED - the case a per-path exemption is most likely to get wrong. A write hiding among
+# genuine server churn must still redden, and must name ONLY the write.
+{ sed 's|^AAA  \./floor\.json$|ZZZ  ./floor.json|' "$M_A"; printf 'BBB  ./stray.json\n'; } > "$M_B"
+m_c="$(classify_real_floor_delta "$M_A" "$M_B" yes)"
+case "$m_c" in
+  DIRTY*./stray.json*)
+    case "$m_c" in
+      *floor.json*) no "(m4) CONTROL: a mixed delta reddens and names only the unattributable path" \
+                       "it named the serve's own floor.json too: '$m_c'" ;;
+      *) ok "(m4) CONTROL: a write hidden among live-Floor churn still reddens, and the report names ONLY the unattributable path - the server's noise cannot cover a write" ;;
+    esac ;;
+  *)
+    no "(m4) CONTROL: a write mixed with live-Floor churn still reddens" "classifier returned '$m_c'" ;;
+esac
+
+# (m5) the ABSENT -> present transition, with no live serve. `floor_dir_sig` reports an absent
+# directory as a VALUE, and this is what that buys: a corroboration that CREATES the directory
+# in a checkout that had none is a change, not an untested state.
+printf 'ABSENT\n' > "$M_B"
+m_c="$(classify_real_floor_delta "$M_B" "$M_A" no)"
+case "$m_c" in
+  DIRTY*ABSENT*|DIRTY*floor.json*)
+    ok "(m5) CONTROL: a directory that did not exist before and does after is DIRTY with no live Floor - ABSENT is a value, so the absent case is compared rather than skipped" ;;
+  *)
+    no "(m5) CONTROL: an ABSENT -> present transition is a change" "classifier returned '$m_c'" ;;
+esac
+
+# --- (m6)-(m8) THE OTHER HALF: the EVIDENCE that grants the exemption -------------------
+# (m1)-(m5) are handed the live/not-live answer. Nothing above tests what PRODUCES it, and that
+# is the only input that can grant the exemption wrongly: if live_floor_regen_pids called a
+# server that does not regenerate this repo "a live Floor", the narrowing would apply on a
+# machine where nothing writes here at all - silently reopening the hole (m2) keeps shut.
+# ONE live process, three states of its published index, so each arm differs in exactly the
+# clause it is about. `sleep` is BACKGROUNDED behind a trap rather than run in the foreground:
+# non-interactive bash defers a signal until the foreground child it is waiting on finishes, so
+# a plain `sleep` here would make the kill below block this suite for the whole duration.
+MDET="$(mktmp)"; mkdir -p "$MDET/plugin" "$MDET/ui"
+printf '#!/usr/bin/env bash\nsleep 30 & c=$!\ntrap "kill $c 2>/dev/null; exit 0" TERM INT\nwait\n' \
+  > "$MDET/plugin/setup-ui.sh"
+M_REPO="$MDET/some-project"
+# argv shaped the way `serve` hands its config to the HTTP engine: the bare `-` then the ui dir.
+bash "$MDET/plugin/setup-ui.sh" - "$MDET/ui" 7734 "$MDET/plugin/setup-ui.sh" "" "$MDET" "$M_REPO" X-Floor-Token &
+m_pid=$!
+
+# (m6) no published index at all - a ui directory a server has not written yet.
+m_out="$(live_floor_regen_pids "$M_REPO")"
+[ -z "$m_out" ] \
+  && ok "(m6) CONTROL: a live server with no published index yields no live Floor - the evidence is what the server SAYS it regenerates, never merely that a process exists" \
+  || no "(m6) CONTROL: a server with no index is not read as regenerating this repo" "live_floor_regen_pids returned '$m_out'"
+
+# (m7) an index that does not list this repo - THE REGISTRATION CLAUSE. A Floor serving somebody
+# else's project is live, and must excuse nothing here.
+printf '{"serve":{"regen":true,"selected_path":"/somewhere/else"},"projects":[{"path":"/somewhere/else"}]}\n' \
+  > "$MDET/ui/index.json"
+m_out="$(live_floor_regen_pids "$M_REPO")"
+[ -z "$m_out" ] \
+  && ok "(m7) CONTROL: a live Floor that regenerates a DIFFERENT project yields nothing for this one - the exemption is repo-scoped, not machine-scoped" \
+  || no "(m7) CONTROL: a Floor serving another project does not excuse a change here" "live_floor_regen_pids returned '$m_out'"
+
+# (m7b) the same server, listing this repo, but started --no-regen: it serves the copy already
+# in its ui dir and writes into no project at all.
+printf '{"serve":{"regen":false,"selected_path":"%s"},"projects":[{"path":"%s"}]}\n' "$M_REPO" "$M_REPO" \
+  > "$MDET/ui/index.json"
+m_out="$(live_floor_regen_pids "$M_REPO")"
+[ -z "$m_out" ] \
+  && ok "(m7b) CONTROL: a --no-regen Floor yields nothing even for a project it lists - a server that regenerates nothing cannot have written this artefact" \
+  || no "(m7b) CONTROL: a --no-regen Floor grants no exemption" "live_floor_regen_pids returned '$m_out'"
+
+# (m8) ANTI-VACUITY, and it is not optional: (m6), (m7) and (m7b) are all satisfied perfectly by
+# a detector that returns NOTHING, ever - which would leave this assertion permanently red for
+# the very people the change is for. This is the arm that proves it discriminates.
+printf '{"serve":{"regen":true,"selected_path":"/elsewhere"},"projects":[{"path":"/elsewhere"},{"path":"%s"}]}\n' "$M_REPO" \
+  > "$MDET/ui/index.json"
+m_wait=0; m_out=""
+while [ "$m_wait" -lt 20 ]; do
+  m_out="$(live_floor_regen_pids "$M_REPO")"
+  [ -n "$m_out" ] && break
+  sleep 0.25; m_wait=$((m_wait + 1))
+done
+[ "$m_out" = "$m_pid" ] \
+  && ok "(m8) ANTI-VACUITY: a live server whose published index lists this repo as one it regenerates IS reported (pid $m_pid) - and it is listed as a REGISTERED project, not the selected one, which is the arm a cwd-only test would have missed" \
+  || no "(m8) ANTI-VACUITY: a live Floor regenerating this repo is reported" \
+       "live_floor_regen_pids returned '$m_out', wanted '$m_pid' - the detector never fires, so the exemption could never be granted and this assertion is unpassable under a live Floor again"
+kill "$m_pid" 2>/dev/null; wait "$m_pid" 2>/dev/null
 
 # ============================================================================
 echo "== (x) runtime bound - the multi-scan regression cannot return silently =="
