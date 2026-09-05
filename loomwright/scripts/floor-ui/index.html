@@ -46,6 +46,31 @@
     </p>
     <ul class="projects" id="project-rows"></ul>
     <p class="sub" id="project-note"></p>
+
+    <!--
+      THE FOUR ACTIONS. Deliberately NOT a <form>: a form is a cross-origin write primitive that
+      needs no script and cannot carry a custom header, which is exactly the shape the server's
+      guard is built to refuse. These are buttons, and every one of them goes through the single
+      guarded write helper in floor.js.
+      There are FOUR and there will not be a fifth here: `apply` and `remove` are install-level,
+      and a page able to uninstall itself buys nothing and risks something.
+    -->
+    <div class="actions" id="actions">
+      <p class="row">
+        <label for="add-path">Project directory</label>
+        <input type="text" id="add-path" autocomplete="off" spellcheck="false"
+               placeholder="/an/absolute/path (leave empty to mean the directory this serve was launched in)">
+      </p>
+      <p class="row">
+        <button type="button" id="btn-add">Add it</button>
+        <button type="button" id="btn-scan">Scan it for candidates</button>
+        <button type="button" id="btn-scan-confirm">Register the candidates</button>
+        <button type="button" id="btn-forget">Forget the shown project</button>
+        <button type="button" id="btn-stop">Stop this server</button>
+      </p>
+      <p class="sub" id="action-note"></p>
+      <pre class="report" id="action-report"></pre>
+    </div>
   </section>
 
   <section aria-labelledby="stages-h">
@@ -90,7 +115,7 @@
 </main>
 
 <footer class="bar">
-  <p class="sub">Served from this origin only. Nothing on this page reaches the network.</p>
+  <p class="sub">Served from this origin only. This page talks to this origin and never to any other.</p>
 </footer>
 
 <script src="floor.js"></script>

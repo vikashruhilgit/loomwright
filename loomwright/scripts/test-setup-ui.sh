@@ -49,10 +49,11 @@
 #       reference inside a src/href/url(, no @import, no preconnect, no @font-face and no
 #       url() at all; the CSP meta line is present VERBATIM; floor.js fetches exactly the
 #       relative path `floor.json`, the served index and a per-project URL BUILT from a fixed
-#       prefix and an encoded slug rather than taken from a served document, through exactly
-#       ONE call site COUNTED IN CODE (see code_occ: a truthful comment naming `fetch(` must
-#       not redden a gate that is counting calls). With mutation controls: a copy carrying one
-#       remote href must be flagged, a real second call site must be counted, and a
+#       prefix and an encoded slug rather than taken from a served document. TWO call sites
+#       COUNTED IN CODE — the READ helper `fetchText` and the WRITE helper `postAction`, which
+#       item 07 added — and no third (see code_occ: a truthful comment naming `fetch(` must not
+#       redden a gate that is counting calls). With mutation controls: a copy carrying one
+#       remote href must be flagged, a real EXTRA call site must be counted, and a
 #       commented-out one must not be, or the scanner proves nothing
 #   (b) AC-lanes / AC-stall / AC-three-states static halves — the literal strings the browser
 #       pass will read, the doubled-prefix stripping expression, `cache: 'no-store'`, the stall
@@ -362,16 +363,21 @@ has_lit "$JS" "return 'projects/' + encodeURIComponent(slug) + '/floor.json';" \
   || a3_bad="$a3_bad [the per-project url is not built from a fixed prefix and an encoded slug]"
 has_lit "$JS" "var SERVED_INDEX = 'index.json';" || a3_bad="$a3_bad [the served index url is not a relative literal]"
 [ -z "$a3_bad" ] \
-  && ok "(a3) every URL floor.js fetches is a relative literal built in floor.js (floor.json, index.json, projects/<encoded slug>/floor.json) and the one call site passes cache: 'no-store'" \
+  && ok "(a3) every URL floor.js fetches is a relative literal built in floor.js (floor.json, index.json, projects/<encoded slug>/floor.json) and the READ call site passes cache: 'no-store'" \
   || no "(a3) every URL floor.js fetches is a relative literal built in floor.js" "$a3_bad"
 
 # (a4) counts CALL SITES IN CODE. See code_occ above for why this is comment-aware and why that
 # does not weaken it: the two controls below are what keep it honest.
 n_fetch="$(code_occ "$JS" 'fetch[(]')"
 n_fetch_raw="$(occ "$JS" 'fetch[(]')"
-[ "$n_fetch" = "1" ] \
-  && ok "(a4) floor.js makes exactly ONE fetch call in code (found $n_fetch; $n_fetch_raw occurrences including the comments that describe it)" \
-  || no "(a4) floor.js makes exactly ONE fetch call in code" "found $n_fetch"
+# RE-BASELINED, NOT LOOSENED. Item 07 gave the page a WRITE helper, so there are now exactly
+# TWO call sites in code: `fetchText` (read) and `postAction` (write). The tempting repair —
+# relaxing this to `-ge 1` — would destroy the gate, because "at least one" is satisfied by any
+# number of smuggled-in third, fourth and fifth requests. The number moved; the SHAPE did not.
+N_FETCH_EXPECT=2
+[ "$n_fetch" = "$N_FETCH_EXPECT" ] \
+  && ok "(a4) floor.js makes exactly $N_FETCH_EXPECT fetch calls in code — the read helper and the write helper, and no third (found $n_fetch; $n_fetch_raw occurrences including the comments that describe them)" \
+  || no "(a4) floor.js makes exactly $N_FETCH_EXPECT fetch calls in code" "found $n_fetch"
 # ANTI-VACUITY: comment-stripping must actually be doing something here, or (a4) is just `occ`
 # under another name and the two controls below would be testing a mechanism nothing uses.
 [ "${n_fetch_raw:-0}" -gt "${n_fetch:-0}" ] 2>/dev/null \
@@ -383,9 +389,11 @@ MUT_F2="$TMPROOT/mut-fetch-two.js"
 { cat "$JS"; printf '\nvar sneaky = fetch("floor.json");\n'; } > "$MUT_F2" 2>/dev/null
 if mutant_ok "$JS" "$MUT_F2"; then
   m_f2="$(code_occ "$MUT_F2" 'fetch[(]')"
-  [ "$m_f2" = "2" ] \
-    && ok "(a4b) MUTATION CONTROL: a genuine SECOND fetch call site is counted ($m_f2) — comment-awareness did not blind the gate" \
-    || no "(a4b) MUTATION CONTROL: a genuine second fetch call site is counted" "code_occ said $m_f2, expected 2"
+  # The expected value is DERIVED from (a4)'s baseline rather than restated, so re-baselining
+  # (a4) can never leave this control asserting a number the shipped file no longer has.
+  [ "$m_f2" = "$((N_FETCH_EXPECT + 1))" ] \
+    && ok "(a4b) MUTATION CONTROL: a genuine EXTRA fetch call site is counted ($m_f2 = the $N_FETCH_EXPECT baseline plus one) — comment-awareness did not blind the gate" \
+    || no "(a4b) MUTATION CONTROL: a genuine extra fetch call site is counted" "code_occ said $m_f2, expected $((N_FETCH_EXPECT + 1))"
 fi
 # CONTROL 2 - prose must NOT redden it. A commented-out call and a comment naming `fetch(` are
 # both legitimate; flagging either is the false positive this fix exists to remove, and the one
@@ -395,9 +403,9 @@ MUT_FC="$TMPROOT/mut-fetch-comment.js"
 if mutant_ok "$JS" "$MUT_FC"; then
   m_fc="$(code_occ "$MUT_FC" 'fetch[(]')"
   m_fc_raw="$(occ "$MUT_FC" 'fetch[(]')"
-  [ "$m_fc" = "1" ] && [ "${m_fc_raw:-0}" -ge 3 ] 2>/dev/null \
+  [ "$m_fc" = "$N_FETCH_EXPECT" ] && [ "${m_fc_raw:-0}" -ge 3 ] 2>/dev/null \
     && ok "(a4c) MUTATION CONTROL: a commented-out call and a comment MENTIONING fetch( leave the code count at $m_fc (raw count $m_fc_raw) — the gate reads code, not prose" \
-    || no "(a4c) MUTATION CONTROL: commented-out and mentioned fetch( calls do not redden (a4)" "code=$m_fc (want 1) raw=$m_fc_raw (want >=3)"
+    || no "(a4c) MUTATION CONTROL: commented-out and mentioned fetch( calls do not redden (a4)" "code=$m_fc (want $N_FETCH_EXPECT) raw=$m_fc_raw (want >=3)"
 fi
 # The mutation controls above must not have touched the shipped file.
 [ "$(csum "$JS")" = "$JS_SIG_BEFORE" ] \
@@ -667,6 +675,74 @@ n_active_html="$(occ "$HTML" '[Aa]ctive')"
 [ "$n_live" = "0" ] && [ "$n_active_html" = "0" ] && [ "$n_active" -le 6 ] \
   && ok "(c12) no liveness word is rendered: 'live' as a label appears $n_live times, and 'active' $n_active_html times in the markup (only the stage class in the script, $n_active)" \
   || no "(c12) no liveness word is rendered" "live=$n_live active=$n_active active_in_markup=$n_active_html"
+
+# --- (c13)-(c17) THE LANES VIEW RENDERS THE READ-ONLY WORDS, NOT THE DOT SHAPE ALONE ------
+# floor.css's own header states the page-wide rule as "read-only agent -> hollow dot + the text
+# 'read-only'", and (c9)/(c10) each checked one half of it in the wrong place: (c9) that the
+# hollow-dot RULE exists in the stylesheet, (c10) that the string 'read-only unknown' exists
+# SOMEWHERE in floor.js. Both passed while the Lanes view — the one view that shows a run —
+# applied the hollow class and rendered no words at all, so a read-only lane was distinguishable
+# by SHAPE alone. Neither assertion could have caught that, because neither is scoped to a VIEW.
+# This one is: the whole predicate is evaluated over renderLanes's own body, which is also what
+# lets the two controls below point the SAME rule at a mutant rather than hold a second copy of
+# it — the drift (j14) recorded when a re-inlined copy of a shared scanner went quietly vacuous.
+lane_ro_faults() { # <file> -> the halves of the read-only cue this file's LANES view is missing
+  local body bad=""
+  body="$(awk '/^  function renderLanes/{f=1} f{print} f&&/^  }$/{exit}' "$1" 2>/dev/null)"
+  [ -n "$body" ] || { printf '%s' "[renderLanes was not found in $(basename "$1") — every claim below would be vacuous]"; return 0; }
+  in_str "$body" "classList.add('hollow')" || bad="$bad [no hollow dot]"
+  in_str "$body" "row.read_only === true) ? 'read-only'" || bad="$bad [a read-only agent's lane carries no 'read-only' text — the dot shape is the only cue]"
+  in_str "$body" "row.read_only === false) ? ''" || bad="$bad [a WRITING agent's lane is not left silent, so the cue would appear on every lane and distinguish nothing]"
+  in_str "$body" "'read-only unknown'" || bad="$bad [an absent read_only is not reported as unknown, so it reads as 'not read-only']"
+  in_str "$body" "fmtAge(age) + roSuffix" || bad="$bad [the text never reaches a STALLED lane's meta line]"
+  in_str "$body" "fmtAge(age)) + roSuffix" || bad="$bad [the text never reaches a non-stalled lane's meta line]"
+  printf '%s' "${bad# }"
+}
+C_RO_MUTANTS=0
+c_ro_faults="$(lane_ro_faults "$JS")"
+[ -z "$c_ro_faults" ] \
+  && ok "(c13) the Lanes view renders BOTH halves of the read-only cue — the hollow dot AND renderRoster's own words, on the same tri-state and the same condition as the dot, reaching the meta line of a stalled lane and a non-stalled one alike" \
+  || no "(c13) the Lanes view renders both halves of the read-only cue" "$c_ro_faults"
+
+# CONTROL 1 — the exact defect this fixes: the class is applied, the words are not rendered.
+MUT_LRO1="$TMPROOT/mut-lane-readonly-silent.js"
+sed 's/ + roSuffix;/;/g' "$JS" > "$MUT_LRO1" 2>/dev/null
+if mutant_ok "$JS" "$MUT_LRO1"; then
+  C_RO_MUTANTS=$((C_RO_MUTANTS + 1))
+  m_lro1="$(lane_ro_faults "$MUT_LRO1")"
+  if in_str "$m_lro1" "STALLED lane's meta line" && in_str "$m_lro1" "non-stalled lane's meta line"; then
+    ok "(c14) MUTATION CONTROL: a Lanes view that computes the read-only words and never renders them IS flagged, on BOTH the stalled and the non-stalled branch — which is precisely the state this view shipped in"
+  else
+    no "(c14) MUTATION CONTROL: words computed but never rendered IS flagged" "lane_ro_faults said: ${m_lro1:-<clean, so (c13) would pass a view that renders nothing>}"
+  fi
+fi
+
+# CONTROL 2 — the tri-state's third arm collapsed to silence. An agent whose roster row omits
+# read_only, or that has no roster row at all, would then be rendered exactly like one that is
+# known to write: measured-absence presented as a measured negative, which is the failure
+# renderRoster's own comment names and (c10) exists for.
+MUT_LRO2="$TMPROOT/mut-lane-readonly-unknown.js"
+sed "s/          : 'read-only unknown';/          : '';/" "$JS" > "$MUT_LRO2" 2>/dev/null
+if mutant_ok "$JS" "$MUT_LRO2"; then
+  C_RO_MUTANTS=$((C_RO_MUTANTS + 1))
+  m_lro2="$(lane_ro_faults "$MUT_LRO2")"
+  if in_str "$m_lro2" "absent read_only is not reported as unknown"; then
+    ok "(c15) MUTATION CONTROL: a Lanes view that renders an ABSENT read_only as silence — indistinguishable from a known writer — IS flagged"
+  else
+    no "(c15) MUTATION CONTROL: an absent read_only rendered as silence IS flagged" "lane_ro_faults said: ${m_lro2:-<clean>}"
+  fi
+fi
+
+# ANTI-VACUITY: both controls must have EXECUTED. Each lives inside an `if mutant_ok`, and a
+# mutant whose sed anchor no longer matches the file produces an identical copy — mutant_ok
+# reddens on that, but the control it guards is then simply not run, which is the silent-skip
+# shape this suite has been bitten by before. The count is the proof that neither was skipped.
+[ "$C_RO_MUTANTS" = "2" ] \
+  && ok "(c16) ANTI-VACUITY: both (c13) mutation controls EXECUTED — neither (c14) nor (c15) was skipped inside its if" \
+  || no "(c16) ANTI-VACUITY: both (c13) mutation controls executed" "$C_RO_MUTANTS of 2 ran — a control that did not run proves nothing about (c13)"
+[ "$(csum "$JS")" = "$JS_SIG_BEFORE" ] \
+  && ok "(c17) floor.js is byte-identical after the (c13) mutation controls (sha256 unchanged)" \
+  || no "(c17) floor.js is byte-identical after the (c13) mutation controls" "before='$JS_SIG_BEFORE' after='$(csum "$JS")'"
 
 # ===========================================================================
 echo "(d) AC-fixtures-conform — validated against the schema block, not a restated key list"
@@ -1325,25 +1401,56 @@ port="$(python3 -c 'import socket
 s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()' 2>/dev/null)"
 case "$port" in ''|*[!0-9]*) setup_fail "(h) fixture: could not obtain a free port" ;; esac
 
-# CODE ONLY. The engine's header comment carries both `python3 -m http.server` and
-# `--bind 127.0.0.1` on ONE line, so a whole-file scan was partly satisfied by PROSE — and
-# reported "2 invocations" where the engine has one. A comment that claims the bind is not
-# the bind; excluding `^\s*#` is what makes these two assertions about the code.
-binds="$(awk '$0 !~ /^[[:space:]]*#/ && /python3 -m http[.]server/ { t++; if ($0 ~ /--bind 127\.0\.0\.1/) b++ } END { print (t+0) " " (b+0) }' "$ENGINE")"
+# CODE ONLY, AND RE-EXPRESSED AGAINST THE NEW ENGINE — not deleted, and not loosened.
+# (h1) used to require exactly one non-comment `python3 -m http.server ... --bind 127.0.0.1`.
+# Item 07 replaced that static server with a routed stdlib handler, which took BOTH counts to
+# zero and would have reddened this assertion; the tempting repairs were to delete it or to
+# accept "at least one bind". The SHAPE is what matters and the shape is kept: exactly ONE
+# non-comment construction of the server, and that one construction binds the loopback address.
+# The subject moved from an invocation to a constructor expression; the claim did not.
+# Excluding `^\s*#` is still what makes this an assertion about the code: the engine's header
+# now carries the words `python3 -m http.server` in PROSE (explaining what was replaced and
+# why), and it names the bind in prose too. A comment that claims the bind is not the bind.
+# RE-EXPRESSED A SECOND TIME, and again the SHAPE is what is kept. The traceback fix subclasses
+# `ThreadingHTTPServer` as `FloorServer` (so that `handle_error` can be overridden for the whole
+# server rather than patched at two known raises), which moved the construction off the base
+# class name — taking the old count to ZERO, not to two. The tempting repairs were the same two
+# as last time: delete the assertion, or accept `>= 1`. Instead the pattern matches a
+# CONSTRUCTION of either name — `Name((` , the double paren of `(server_address, handler)` —
+# which the `class FloorServer(ThreadingHTTPServer):` definition line does NOT match (one paren)
+# and the import line does not match either. So it still resolves to exactly one line, and that
+# line still has to carry the loopback literal. `n_srvdef` keeps the two names tied together:
+# the thing constructed must actually BE the threading HTTP server, or an author could satisfy
+# this gate with a `FloorServer` that subclasses something else entirely.
+BIND_EXPR='(ThreadingHTTPServer|FloorServer)[(][(]'
+binds="$(awk -v pat="$BIND_EXPR" '$0 !~ /^[[:space:]]*#/ && $0 ~ pat { t++; if ($0 ~ /"127\.0\.0\.1"/) b++ } END { print (t+0) " " (b+0) }' "$ENGINE")"
 n_bind="${binds%% *}"; n_loop="${binds##* }"
-[ "$n_bind" = "1" ] 2>/dev/null && [ "$n_loop" = "1" ] \
-  && ok "(h1) setup-ui.sh has exactly ONE non-comment http.server invocation and it passes --bind 127.0.0.1" \
-  || no "(h1) setup-ui.sh has exactly ONE non-comment http.server invocation carrying --bind 127.0.0.1" "invocations=$n_bind bound=$n_loop"
-# MUTATION CONTROL: drop the flag from the one real invocation and the count must diverge.
-# Without this, (h1) would also pass against a scan that matched nothing at all.
+n_srvdef="$(awk '$0 !~ /^[[:space:]]*#/ && /^class FloorServer\(ThreadingHTTPServer\):$/ {n++} END{print n+0}' "$ENGINE")"
+[ "$n_bind" = "1" ] 2>/dev/null && [ "$n_loop" = "1" ] && [ "$n_srvdef" = "1" ] \
+  && ok "(h1) setup-ui.sh constructs exactly ONE non-comment HTTP server, it binds 127.0.0.1, and the class it constructs is the ONE subclass of ThreadingHTTPServer (constructions=$n_bind bound=$n_loop subclass-definitions=$n_srvdef)" \
+  || no "(h1) setup-ui.sh constructs exactly ONE non-comment HTTP server carrying the 127.0.0.1 bind" "constructions=$n_bind bound=$n_loop subclass-definitions=$n_srvdef"
+# MUTATION CONTROL, RE-AUTHORED SO IT ACTUALLY RUNS. The old mutant sed-replaced the literal
+# `python3 -m http.server --bind 127.0.0.1`; the moment that literal left the engine the sed
+# became a NO-OP, `mutant_ok` saw an unchanged file, and this control would have been SKIPPED
+# INSIDE ITS `if` — neither red nor green — leaving (h1) with nothing proving it can fail.
+# The mutant below rebinds the real constructor to a wildcard address, so it genuinely differs
+# from the shipped engine; `mutant_ok` returning true is therefore part of what (h3b) asserts.
 MUT_BIND="$TMPROOT/mut-bind.sh"
-sed 's/python3 -m http.server --bind 127.0.0.1/python3 -m http.server/' "$ENGINE" > "$MUT_BIND" 2>/dev/null
+sed 's/FloorServer(("127\.0\.0\.1", PORT)/FloorServer(("0.0.0.0", PORT)/' "$ENGINE" > "$MUT_BIND" 2>/dev/null
+h2_ran=0
 if mutant_ok "$ENGINE" "$MUT_BIND" shell; then
-  mb="$(awk '$0 !~ /^[[:space:]]*#/ && /python3 -m http[.]server/ { t++; if ($0 ~ /--bind 127\.0\.0\.1/) b++ } END { print (t+0) " " (b+0) }' "$MUT_BIND")"
+  h2_ran=1
+  mb="$(awk -v pat="$BIND_EXPR" '$0 !~ /^[[:space:]]*#/ && $0 ~ pat { t++; if ($0 ~ /"127\.0\.0\.1"/) b++ } END { print (t+0) " " (b+0) }' "$MUT_BIND")"
   [ "${mb%% *}" = "1" ] && [ "${mb##* }" = "0" ] \
-    && ok "(h2) MUTATION CONTROL: an invocation with the loopback bind removed IS caught (invocations=${mb%% *} bound=${mb##* })" \
-    || no "(h2) MUTATION CONTROL: an invocation with the loopback bind removed IS caught" "got invocations=${mb%% *} bound=${mb##* }"
+    && ok "(h2) MUTATION CONTROL: a construction with the loopback bind replaced by a wildcard IS caught (constructions=${mb%% *} bound=${mb##* })" \
+    || no "(h2) MUTATION CONTROL: a construction with the loopback bind replaced IS caught" "got constructions=${mb%% *} bound=${mb##* }"
 fi
+# (h2) IS AN `if`, AND A SKIPPED `if` IS NOT A PASS. This is the assertion that makes the
+# silent-vacuity failure mode visible: if the mutant were ever to stop differing from the
+# engine — the exact way the previous (h2) died — this goes RED instead of disappearing.
+[ "$h2_ran" = "1" ] \
+  && ok "(h3b) ANTI-VACUITY: (h2)'s mutant passed mutant_ok, so the control above actually EXECUTED rather than being skipped inside its if" \
+  || no "(h3b) ANTI-VACUITY: (h2)'s mutation control actually executed" "mutant_ok rejected $MUT_BIND — the sed no longer matches the engine, so (h2) was SKIPPED and (h1) is uncontrolled"
 
 out="$(bash "$ENGINE" serve --registry "$NOREG" --no-regen --detach --port "$port" --ui-dir "$HUI" 2>&1)"; rc=$?
 SERVE_PIDFILES="$SERVE_PIDFILES $HUI/serve.pid"
@@ -1566,38 +1673,84 @@ check_lit "$JS" "keys.sort();" "(j12) distribution keys are sorted lexically (so
 # no_write_verbs — the literal name this subtask's `provides` entry pins, because the
 # outputs_verified gate greps THIS repo for that exact token. Whole-word, uppercase (the HTTP
 # method spelling), scoped to the three bundle files that ship to the browser.
+# THE RULE LIVES IN EXACTLY ONE PLACE. It used to live in two: this function, and a verbatim
+# re-inlined copy inside (j14)'s mutation control. That was harmless only while the expected
+# answer was "no matches anywhere" — the moment the shared rule was re-baselined (which item 07
+# forced, because the page gained a write helper), the control would have kept grepping with the
+# OLD rule, its mutant would still have matched, and (j14) would have stayed GREEN while
+# controlling nothing. One copy; every caller reaches it through no_write_verbs.
+NO_WRITE_VERB_RE="(method[[:space:]]*[:=][[:space:]]*['\"]?(post|put|delete)|['\"](post|put|delete)['\"])"
+# no_write_verbs [file ...] — PARAMETERISED over a file list, defaulting to the three bundle
+# files. The parameter is what lets (j14) point the SHARED scanner at a mutant instead of
+# holding its own copy of the rule.
 no_write_verbs() {
   local f
-  for f in "$HTML" "$CSS" "$JS"; do
+  if [ $# -eq 0 ]; then set -- "$HTML" "$CSS" "$JS"; fi
+  for f in "$@"; do
     # Matches the METHOD POSITION, case-insensitively, rather than bare verb tokens. Both halves
     # of that are load-bearing and each was arrived at by measurement, not taste:
     #   * case-insensitive, because the Fetch spec NORMALIZES a lowercase known method, so
     #     `fetch(u, {method: 'post'})` performs a real POST. An uppercase-only scanner reads like
     #     a read-only guarantee while letting the lowercase spelling straight through.
     #   * position-scoped, because a bare case-insensitive \bDELETE\b matches JavaScript's own
-    #     `delete` OPERATOR - floor.js:726 `delete laneEls[k];` is legitimate object-property
+    #     `delete` OPERATOR - `delete laneEls[k];` in floor.js is legitimate object-property
     #     removal, and flagging it would be a false positive that pressures a future author into
     #     deleting a correct line to appease the gate.
-    # Verified against four inputs: the real bundle 0, `method: 'post'` 1, `method: 'PUT'` 1,
+    # Verified against four inputs: the pre-07 bundle 0, `method: 'post'` 1, `method: 'PUT'` 1,
     # and the bare `delete` operator 0.
-    grep -inE "(method[[:space:]]*[:=][[:space:]]*['\"]?(post|put|delete)|['\"](post|put|delete)['\"])" "$f" 2>/dev/null | sed "s|^|$(basename "$f"): |"
+    grep -inE "$NO_WRITE_VERB_RE" "$f" 2>/dev/null | sed "s|^|$(basename "$f"): |"
   done
 }
-write_findings="$(no_write_verbs)"
+
+# THE EXACT, ENUMERATED BASELINE — re-baselined for item 07's write path, never widened.
+# The page can now write, so `method: 'POST'` is legitimately in floor.js and this scanner
+# necessarily matches it. Both tempting repairs destroy the gate: relaxing the PATTERN would
+# stop it seeing a real smuggled verb, and relaxing the ASSERTION to "no worse than before"
+# would let any number of further ones through. What is asserted instead is a count PER FILE.
+# index.html and floor.css stay at ZERO — the markup and the styles have no business carrying a
+# write verb at all, and a <form method="post"> is a cross-origin write primitive that needs no
+# script and cannot carry the custom header the guard requires, so zero there is load-bearing.
+NWV_HTML_EXPECT=0
+NWV_CSS_EXPECT=0
+NWV_JS_EXPECT=1
+# ...and floor.js's ONE permitted occurrence is NAMED, not merely counted, so a different single
+# occurrence cannot quietly take the write helper's place.
+NWV_JS_ALLOWED="method: 'POST'"
+nwv_count() { no_write_verbs "$1" | awk 'END{print NR+0}'; }
+# no_write_verbs_baseline -> empty when the bundle matches the baseline exactly, else the
+# deviation. BOTH assertion sites call THIS. That is the point: (j13) and (l19) run the same
+# scanner against the same expectation 1,400 lines apart, so they cannot drift apart, and a
+# fix applied to one is applied to both by construction rather than by discipline.
+no_write_verbs_baseline() {
+  local n_html n_css n_js bad="" js_hits
+  n_html="$(nwv_count "$HTML")"; n_css="$(nwv_count "$CSS")"; n_js="$(nwv_count "$JS")"
+  [ "$n_html" = "$NWV_HTML_EXPECT" ] || bad="$bad [index.html: $n_html write-verb occurrence(s), expected exactly $NWV_HTML_EXPECT]"
+  [ "$n_css"  = "$NWV_CSS_EXPECT"  ] || bad="$bad [floor.css: $n_css write-verb occurrence(s), expected exactly $NWV_CSS_EXPECT]"
+  [ "$n_js"   = "$NWV_JS_EXPECT"   ] || bad="$bad [floor.js: $n_js write-verb occurrence(s), expected exactly $NWV_JS_EXPECT]"
+  js_hits="$(no_write_verbs "$JS")"
+  case "$js_hits" in
+    *"$NWV_JS_ALLOWED"*) ;;
+    *) bad="$bad [floor.js's permitted occurrence is not the write helper's \`$NWV_JS_ALLOWED\`: ${js_hits:-<nothing found>}]" ;;
+  esac
+  printf '%s' "${bad# }"
+}
+
+write_findings="$(no_write_verbs_baseline)"
 [ -z "$write_findings" ] \
-  && ok "(j13) no_write_verbs: index.html / floor.css / floor.js carry no POST, PUT or DELETE token" \
-  || no "(j13) no_write_verbs: index.html / floor.css / floor.js carry no POST, PUT or DELETE token" "$write_findings"
-# Mutation control: a write verb really appearing in the bundle must be caught.
+  && ok "(j13) no_write_verbs: index.html and floor.css carry no POST/PUT/DELETE token at all, and floor.js carries exactly $NWV_JS_EXPECT — the write helper's own \`$NWV_JS_ALLOWED\` and nothing else" \
+  || no "(j13) no_write_verbs: the bundle matches the exact write-verb baseline" "$write_findings"
+# Mutation control: a write verb appearing BEYOND the baseline must be caught.
 MUT_WRITE="$TMPROOT/mut-write.js"
-# The mutant uses the LOWERCASE spelling on purpose: an uppercase one passes against the old
-# uppercase-only scanner too, so it could not prove the widening. This one is red before the
-# `grep -i` above and green after.
+# The mutant uses the LOWERCASE spelling on purpose: an uppercase one passes against an
+# uppercase-only scanner too, so it could not prove the case-insensitive widening.
 { cat "$JS"; printf "\n// fetch('floor.json', { method: 'post' })\n"; } > "$MUT_WRITE" 2>/dev/null
 if mutant_ok "$JS" "$MUT_WRITE"; then
-  m_write="$(grep -inE "(method[[:space:]]*[:=][[:space:]]*['\"]?(post|put|delete)|['\"](post|put|delete)['\"])" "$MUT_WRITE" 2>/dev/null || true)"
-  [ -n "$m_write" ] \
-    && ok "(j14) MUTATION CONTROL: a LOWERCASE post token added to floor.js IS flagged by no_write_verbs (an uppercase-only scanner would have missed it)" \
-    || no "(j14) MUTATION CONTROL: a POST token added to floor.js IS flagged by no_write_verbs" "scanner said: ${m_write:-<nothing>}"
+  # CALLS THE SHARED SCANNER against the mutant — it does NOT re-inline the rule. And the
+  # expected value is DERIVED from the baseline, so re-baselining moves this control with it.
+  m_write="$(nwv_count "$MUT_WRITE")"
+  [ "$m_write" = "$((NWV_JS_EXPECT + 1))" ] \
+    && ok "(j14) MUTATION CONTROL: a LOWERCASE post token added BEYOND the baseline takes the shared scanner's count to $m_write (baseline $NWV_JS_EXPECT + 1) — the control calls no_write_verbs rather than holding a private copy of its regex, so a re-baselined rule cannot leave it green and controlling nothing" \
+    || no "(j14) MUTATION CONTROL: an added lowercase post token is flagged by the SHARED no_write_verbs" "the shared scanner counted $m_write in the mutant, expected $((NWV_JS_EXPECT + 1))"
 fi
 
 # --- (j32) a COUNTED surface with NO detail must not be rendered as an EMPTY one --------------
@@ -3007,10 +3160,14 @@ l_wrote="$(find "$L/proj-2" "$L/proj-4" "$L/proj-5" -name floor.json 2>/dev/null
   || no "(l18) ANTI-VACUITY: the loop regenerated at least one background project" "found $l_wrote — (l17) may be vacuous"
 
 # --- (l19)/(l20) AC-2d and AC-2f, re-run over the CHANGED bundle -------------------------
-l_write_findings="$(no_write_verbs)"
+# The SAME shared scanner AND the same shared expectation (j13) uses — not a private copy of
+# either. This site re-runs the check 1,400 lines later over the same shipped bundle, and it
+# reddens byte-for-byte identically; routing both through no_write_verbs_baseline is what makes
+# "they cannot drift apart" a fact of the code rather than a note in a review.
+l_write_findings="$(no_write_verbs_baseline)"
 [ -z "$l_write_findings" ] \
-  && ok "(l19) AC-2d: the bundle carrying the picker still contains no POST, no PUT, no DELETE and no fetch with a method option (the scanner (j13) defines, re-run over the changed files)" \
-  || no "(l19) the bundle carrying the picker contains no write verb" "$l_write_findings"
+  && ok "(l19) AC-2d: the bundle carrying the picker AND the write path still matches the exact write-verb baseline — index.html and floor.css at zero, floor.js at exactly $NWV_JS_EXPECT (the shared scanner and shared expectation (j13) defines, re-run over the changed files)" \
+  || no "(l19) the bundle matches the exact write-verb baseline" "$l_write_findings"
 l_egress=""
 for lf in "$HTML" "$CSS" "$JS"; do
   lout="$(scan_egress "$lf")"
@@ -3378,6 +3535,42 @@ else
      "the engine writes '$served_index_name' but that section does not name it — the section claims to be the whole list"
 fi
 
+# --- (z16) the same exhaustiveness claim, for the SERVE LOG this item added ----------------
+# `serve` gained a second file it writes into the ui directory, and "the whole list" is a claim
+# that has to be re-earned every time the engine grows a write — mechanically, with the engine
+# as the subject, rather than by a reviewer remembering. Same shape as (z15) deliberately: the
+# name is READ OUT OF THE ENGINE, so renaming it there fails here instead of shipping a write
+# list that quietly stopped being whole.
+serve_log_name="$(sed -n 's/^SERVE_LOG="\([^"]*\)".*$/\1/p' "$ENGINE" | head -1)"
+if [ -z "$serve_log_name" ]; then
+  no "(z16) FLOOR_UI.md's write list names the serve log" \
+     "SERVE_LOG could not be parsed out of the engine, so this assertion would be vacuous"
+elif [ -z "$write_list" ]; then
+  no "(z16) FLOOR_UI.md's write list names the serve log" \
+     "the '## What it writes — the whole list' section could not be read out of FLOOR_UI.md"
+elif in_str "$write_list" "$serve_log_name"; then
+  ok "(z16) FLOOR_UI.md's '## What it writes — the whole list' names the serve log ('$serve_log_name'), read out of the engine"
+else
+  no "(z16) FLOOR_UI.md's '## What it writes — the whole list' names the serve log" \
+     "the engine writes '$serve_log_name' into the ui directory but that section does not name it — the section claims to be the whole list"
+fi
+
+# --- (z17) FLOOR_UI.md explains the threat model, in its own section (AC17) ----------------
+# A reader who does not understand WHY a loopback port needs a token will remove the guard as
+# ceremony. The section is required to exist AND to name both attacks by their mechanism —
+# the other tab's write landing without the reply being readable, and DNS rebinding — plus the
+# fact an Origin check alone cannot cover the second, which is the whole reason Host is a
+# separate part. Presence of the heading alone would be satisfied by an empty section.
+z_guard="$(awk '/^## Why the guard exists$/{f=1;next} f&&/^## /{f=0} f{print}' "$FLOOR_MD")"
+z_missing=""
+for zphrase in "another tab" "rebinding" "preflight" "Host" "Origin"; do
+  case "$z_guard" in *"$zphrase"*) ;; *) z_missing="$z_missing [$zphrase]" ;; esac
+done
+[ -n "$z_guard" ] && [ -z "$z_missing" ] \
+  && ok "(z17) FLOOR_UI.md carries a '## Why the guard exists' section that states the threat model in plain terms — the other-tab write, DNS rebinding, the preflight the custom header forces, and why an Origin check alone does not cover the rebinding case" \
+  || no "(z17) FLOOR_UI.md documents the threat model in plain terms" "section $( [ -n "$z_guard" ] && echo present || echo ABSENT ); unexplained:$z_missing"
+
+
 
 # (l29)/(l30) — LANE MEMORY MUST BE RESET BY THE ASSIGNMENT, NOT BY ONE CALLER OF IT.
 # The CI reviewer found that resetProjectMemory() was wired to the picker's onchange alone,
@@ -3634,3 +3827,954 @@ else
   no "(m11) setup-ui.sh and commands/ui.md are byte-identical after the (m) mutation controls" \
      "engine before='$M_ENG_SIG_BEFORE' after='$m_eng_after'; ui.md before='$M_UI_SIG_BEFORE' after='$m_ui_after'; residue='$m_residue'"
 fi
+
+# ===========================================================================
+echo "(n) AC-guarded-writes — four endpoints, a four-part guard, and a control per part"
+# ---------------------------------------------------------------------------
+# WHAT THIS GROUP IS FOR. Item 04 justified having no authentication with "there is nothing to
+# authenticate against on loopback". That was sound for a page that could only render, and it
+# stopped being sound the moment a write existed: a loopback port is NOT a security boundary in
+# a browser. Any site open in another tab can `fetch` a POST at 127.0.0.1:<port> — the attacker
+# never reads the response, but the write has already landed — and DNS rebinding extends the
+# same reach to a remote origin.
+#
+# THE FOUR CONTROLS AT THE END ARE THE POINT OF THE GROUP. A four-part guard is exactly where a
+# vacuous assertion hides: every refusal below would also be produced by a server that refused
+# EVERYTHING, and every acceptance by one that checked NOTHING. So each part is disabled ALONE,
+# in a mutant that must first pass `mutant_ok`, and the previously-refused request is watched
+# SUCCEEDING. Without those four, this group could not tell a working guard from a guard that
+# never fires.
+#
+# Every request below goes through n_req, which speaks http.client rather than curl: curl is not
+# guaranteed on the plugin's CI image and python3 already is (the suite refuses to start
+# without it). n_req prints "<status><TAB><body>", and "0" is a status this suite never gets
+# from a live server, so a connection failure can never be mistaken for a refusal.
+
+# n_req <port> <method> <path> <token> <origin> <host> <body> <token-header-name>
+# Every argument is positional and REQUIRED (pass "" to omit one), because an optional argument
+# that silently defaults is how a test ends up asserting against a request it did not send.
+n_req() {
+  python3 - "$@" 2>/dev/null <<'__PY_REQ__'
+import sys
+import http.client
+
+port, method, path, token, origin, host, body, hdrname = sys.argv[1:9]
+try:
+    conn = http.client.HTTPConnection("127.0.0.1", int(port), timeout=15)
+    headers = {}
+    if token:
+        headers[hdrname or "X-Floor-Token"] = token
+    if origin:
+        headers["Origin"] = origin
+    if host:
+        headers["Host"] = host
+    if body:
+        headers["Content-Type"] = "application/json"
+    conn.request(method, path, body=(body if body else None), headers=headers)
+    resp = conn.getresponse()
+    data = resp.read().decode("utf-8", "replace")
+    sys.stdout.write(str(resp.status) + "\t" + data.replace("\n", " "))
+except Exception as exc:
+    sys.stdout.write("0\t" + type(exc).__name__ + ": " + str(exc))
+__PY_REQ__
+}
+n_status() { printf '%s' "$1" | awk -F'\t' '{print $1; exit}'; }
+n_body()   { printf '%s' "$1" | awk -F'\t' '{print $2; exit}'; }
+
+n_free_port() {
+  python3 -c 'import socket
+s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()' 2>/dev/null
+}
+# n_wait_up <port> — a bounded poll, never a fixed sleep and never `timeout` (which stock macOS
+# does not ship). "Dispatched" is not "listening", and asserting on a socket that has not been
+# accepted yet is the race that makes a suite flaky rather than wrong.
+n_wait_up() {
+  local i=0 st
+  while [ "$i" -lt 60 ]; do
+    st="$(n_status "$(n_req "$1" GET / "" "" "" "" "")")"
+    [ "$st" = "200" ] && return 0
+    i=$((i + 1)); sleep 0.1
+  done
+  return 1
+}
+n_wait_down() {
+  local i=0 st
+  while [ "$i" -lt 60 ]; do
+    st="$(n_status "$(n_req "$1" GET / "" "" "" "" "")")"
+    [ "$st" = "0" ] && return 0
+    i=$((i + 1)); sleep 0.1
+  done
+  return 1
+}
+n_token_of() { printf '%s' "$1" | sed -n 's|.*#token=\([A-Za-z0-9_-][A-Za-z0-9_-]*\).*|\1|p' | head -1; }
+
+# ---- the fixture: a private HOME, because the permitted root IS $HOME ---------------------
+# The engine confines every page-supplied path to the home directory of the serve that received
+# it. A fixture HOME is therefore not merely isolation hygiene here (though it is that too, and
+# (k26) requires it): it is what makes the confinement assertions testable at all without
+# naming a real directory of the developer's.
+N="$(mktmp)"
+# Captured before any (n) mutant exists, so (n28) can prove the plugin's own engine was never
+# the thing being mutated.
+N_ENG_SIG_BEFORE="$(csum "$ENGINE")"
+# The ui directory deliberately does NOT mirror the engine's real default path here, and this
+# comment deliberately does not spell that path either — the ratchet is a literal `grep -oF`,
+# so a PROSE mention of it counts exactly as much as a code one, which is a thing this file
+# learned by tripping the gate with the sentence that was here before:
+# this suite is CORE at allowance 0 in the vendor-coupling manifest, and spelling that path
+# would be a vendor reference the ratchet counts. `--ui-dir` makes the location irrelevant to
+# every assertion below, and the permitted root is $HOME, which is what NHOME is for.
+NHOME="$N/home"; NUI="$N/ui"; NREG="$N/projects.json"
+NPROJ="$NHOME/work/demo-project"; NOTHER="$NHOME/work/second-project"
+mkdir -p "$NPROJ/.git" "$NOTHER/.git" || setup_fail "(n) fixture: could not create the fixture project tree"
+printf 'a\n' > "$NPROJ/file.txt" || setup_fail "(n) fixture: could not seed the fixture project"
+bash "$ENGINE" apply --ui-dir "$NUI" >/dev/null 2>&1
+[ -f "$NUI/index.html" ] || setup_fail "(n) fixture: apply did not install the bundle into $NUI"
+cp "$LIVE" "$NUI/floor.json" || setup_fail "(n) fixture: could not stage floor.json into $NUI"
+
+nport="$(n_free_port)"
+case "$nport" in ''|*[!0-9]*) setup_fail "(n) fixture: could not obtain a free port" ;; esac
+
+# A FIRST serve run, started and stopped, exists ONLY to mint a token that will be stale by the
+# time (n8) presents it. A "previous run's token" cannot be simulated by inventing a string —
+# an invented one is merely a WRONG token, which is a different claim.
+nstale_port="$(n_free_port)"
+case "$nstale_port" in ''|*[!0-9]*) setup_fail "(n) fixture: could not obtain a second free port" ;; esac
+n_prev_out="$( cd "$NPROJ" && HOME="$NHOME" bash "$ENGINE" serve --registry "$NREG" --ui-dir "$NUI" --no-regen --detach --port "$nstale_port" 2>&1 )"
+SERVE_PIDFILES="$SERVE_PIDFILES $NUI/serve.pid"
+NSTALE_TOKEN="$(n_token_of "$n_prev_out")"
+[ -n "$NSTALE_TOKEN" ] || setup_fail "(n) fixture: the first serve run printed no #token= to go stale"
+n_wait_up "$nstale_port" >/dev/null 2>&1
+bash "$ENGINE" stop --ui-dir "$NUI" >/dev/null 2>&1
+n_wait_down "$nstale_port" >/dev/null 2>&1
+
+# THE RUN EVERY ASSERTION BELOW TALKS TO.
+n_out="$( cd "$NPROJ" && HOME="$NHOME" bash "$ENGINE" serve --registry "$NREG" --ui-dir "$NUI" --no-regen --detach --port "$nport" 2>&1 )"; n_rc=$?
+SERVE_PIDFILES="$SERVE_PIDFILES $NUI/serve.pid"
+NTOKEN="$(n_token_of "$n_out")"
+[ "$n_rc" -eq 0 ] || setup_fail "(n) fixture: serve exited $n_rc :: $n_out"
+[ -n "$NTOKEN" ] || setup_fail "(n) fixture: serve printed no #token= URL :: $n_out"
+[ "$NTOKEN" != "$NSTALE_TOKEN" ] || setup_fail "(n) fixture: two serve runs minted the SAME token — the per-run claim is false and (n8) could not test it"
+n_wait_up "$nport" || setup_fail "(n) fixture: the new handler never answered a GET on 127.0.0.1:$nport"
+
+NORIGIN="http://127.0.0.1:$nport"
+nreg_sig() { [ -f "$NREG" ] && csum "$NREG" || printf 'ABSENT'; }
+
+# --- (n1) AC1: GET IS BYTE-FOR-BYTE WHAT THE STATIC SERVER ANSWERED ------------------------
+# Not "looks right" and not "still 200": the SAME bytes, captured from BOTH servers in the same
+# run, over the same directory. `python3 -m http.server` is started here for exactly this
+# comparison — it is the thing being replaced, and it is the only honest reference for the
+# claim that replacing it changed nothing on the read path.
+nold_port="$(n_free_port)"
+case "$nold_port" in ''|*[!0-9]*) setup_fail "(n1) fixture: could not obtain a port for the reference server" ;; esac
+python3 -m http.server --bind 127.0.0.1 --directory "$NUI" "$nold_port" >/dev/null 2>&1 &
+n_old_pid=$!
+HOLDER_PIDS="$HOLDER_PIDS $n_old_pid"
+if ! n_wait_up "$nold_port"; then
+  no "(n1) every GET the static server answered is answered byte-for-byte by the new handler" "the reference python3 -m http.server never came up on $nold_port"
+  no "(n2) an unrouted write still answers 501, exactly as the static server did" "no reference server"
+else
+  n_diff=""
+  for ndoc in /index.html /floor.css /floor.js /index.json /floor.json; do
+    n_new="$(n_req "$nport" GET "$ndoc" "" "" "" "" "")"
+    n_ref="$(n_req "$nold_port" GET "$ndoc" "" "" "" "" "")"
+    [ "$n_new" = "$n_ref" ] || n_diff="$n_diff [$ndoc: new='$(n_status "$n_new")' ref='$(n_status "$n_ref")' bodies $( [ "$(n_body "$n_new")" = "$(n_body "$n_ref")" ] && echo match || echo DIFFER )]"
+  done
+  [ -z "$n_diff" ] \
+    && ok "(n1) AC1: index.html, floor.css, floor.js, index.json and floor.json come back with the same status AND the same bytes from the new handler as from python3 -m http.server over the same directory" \
+    || no "(n1) AC1: every GET is byte-identical to the static server's answer" "$n_diff"
+  # --- (n2) AC1: the unrouted write answers what it always answered -----------------------
+  n_bad=""
+  for npair in "PUT /" "POST /floor.json" "PATCH /index.json"; do
+    nm="${npair%% *}"; np="${npair##* }"
+    n_new="$(n_status "$(n_req "$nport" "$nm" "$np" "" "" "" "" "")")"
+    n_ref="$(n_status "$(n_req "$nold_port" "$nm" "$np" "" "" "" "" "")")"
+    [ "$n_new" = "501" ] && [ "$n_ref" = "501" ] || n_bad="$n_bad [$npair: new=$n_new ref=$n_ref]"
+  done
+  [ -z "$n_bad" ] \
+    && ok "(n2) AC1: an unrouted write (PUT /, POST /floor.json, PATCH /index.json) still answers 501 — the same status the static file server answered, verified against it in this run" \
+    || no "(n2) AC1: an unrouted write still answers 501" "$n_bad"
+fi
+kill "$n_old_pid" 2>/dev/null
+
+# --- (n3) AC2: NO TOKEN -> 403 ON ALL FOUR, AND THE REGISTRY IS UNTOUCHED ------------------
+# Hashed before and after each call, per endpoint, because "the write was refused" and "the
+# write happened and was then undone" produce the same final list and different histories.
+n_bad=""
+for nact in add forget scan stop; do
+  nsig="$(nreg_sig)"
+  nres="$(n_req "$nport" POST "/api/$nact" "" "$NORIGIN" "" '{"path":"'"$NPROJ"'","slug":"demo-project"}' "")"
+  nst="$(n_status "$nres")"
+  [ "$nst" = "403" ] || n_bad="$n_bad [$nact: status $nst, expected 403]"
+  case "$(n_body "$nres")" in *token-missing-or-wrong*) ;; *) n_bad="$n_bad [$nact: the refusal does not name the token part: $(n_body "$nres")]" ;; esac
+  [ "$(nreg_sig)" = "$nsig" ] || n_bad="$n_bad [$nact: THE REGISTRY CHANGED across a refused request]"
+done
+[ -z "$n_bad" ] \
+  && ok "(n3) AC2: add, forget, scan and stop each answer 403 with no token, each names the token as the reason, and the registry is byte-identical across every one of the four" \
+  || no "(n3) AC2: a mutating request with no token is refused and writes nothing" "$n_bad"
+
+# --- (n4) AC2/AC12: the server is still alive after all that, and still serving ------------
+[ "$(n_status "$(n_req "$nport" GET /index.json "" "" "" "" "")")" = "200" ] \
+  && ok "(n4) AC12: four refused writes later the handler is still serving — a refusal is a refusal, never a crash" \
+  || no "(n4) AC12: the handler survives a refused write" "GET /index.json no longer answers 200"
+
+# --- (n5) AC13 PRECONDITION / R8: a FULLY VALID request must SUCCEED ----------------------
+# Every refusal above is also what a server that refused everything would produce. This is the
+# positive control that makes the whole group non-vacuous, and it is asserted BEFORE the
+# stale-token case so that case cannot pass for the wrong reason.
+nsig="$(nreg_sig)"
+n_ok_res="$(n_req "$nport" POST /api/add "$NTOKEN" "$NORIGIN" "" '{"path":"'"$NPROJ"'"}' "")"
+n_ok_st="$(n_status "$n_ok_res")"
+n_registered="$(jq -r '[.projects[] | select(.path | endswith("demo-project"))] | length' "$NREG" 2>/dev/null)"
+case "$n_registered" in ''|*[!0-9]*) n_registered=0 ;; esac
+[ "$n_ok_st" = "200" ] && [ "$n_registered" -eq 1 ] && [ "$(nreg_sig)" != "$nsig" ] \
+  && ok "(n5) POSITIVE CONTROL: a request carrying this run's token, the custom header, a loopback Origin and a loopback Host is ACCEPTED and really registers the project — so every refusal in this group is discriminating, not blanket" \
+  || no "(n5) POSITIVE CONTROL: a fully valid mutating request succeeds" "status=$n_ok_st registered=$n_registered :: $(n_body "$n_ok_res")"
+
+# --- (n6) AC7: a legitimate absolute path DISCRIMINATES from the refusals below ------------
+nsig="$(nreg_sig)"
+n_res="$(n_req "$nport" POST /api/add "$NTOKEN" "$NORIGIN" "" '{"path":"'"$NOTHER"'"}' "")"
+n_second="$(jq -r '[.projects[] | select(.path | endswith("second-project"))] | length' "$NREG" 2>/dev/null)"
+case "$n_second" in ''|*[!0-9]*) n_second=0 ;; esac
+[ "$(n_status "$n_res")" = "200" ] && [ "$n_second" -eq 1 ] \
+  && ok "(n6) AC7: a legitimate absolute path to a real directory inside the permitted root is REGISTERED — the confinement check discriminates rather than blanket-refusing" \
+  || no "(n6) AC7: a legitimate absolute path succeeds" "status=$(n_status "$n_res") registered=$n_second :: $(n_body "$n_res")"
+
+# --- (n7) AC3: a WRONG token is refused ---------------------------------------------------
+nsig="$(nreg_sig)"
+n_res="$(n_req "$nport" POST /api/add "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" "$NORIGIN" "" '{"path":"'"$NPROJ"'"}' "")"
+[ "$(n_status "$n_res")" = "403" ] && [ "$(nreg_sig)" = "$nsig" ] \
+  && ok "(n7) AC3: a syntactically valid but WRONG token is refused and the registry is byte-identical" \
+  || no "(n7) AC3: a wrong token is refused" "status=$(n_status "$n_res") :: $(n_body "$n_res")"
+
+# --- (n8) AC3: a token from a PREVIOUS serve run is refused — the token is PER-RUN ---------
+nsig="$(nreg_sig)"
+n_res="$(n_req "$nport" POST /api/add "$NSTALE_TOKEN" "$NORIGIN" "" '{"path":"'"$NPROJ"'"}' "")"
+[ "$(n_status "$n_res")" = "403" ] && [ "$(nreg_sig)" = "$nsig" ] \
+  && ok "(n8) AC3: a token minted by a PREVIOUS serve run — captured from that run's own printed URL, not invented — is refused by this one, and (n5) already proved this server accepts its own; so the token is per-run and dies with the process" \
+  || no "(n8) AC3: a previous run's token is refused" "status=$(n_status "$n_res") :: $(n_body "$n_res")"
+
+# --- (n9) AC4: a foreign Origin, and NO Origin at all, are both refused --------------------
+n_bad=""
+for norg in "http://evil.example.test" "https://attacker.example.com:8443" "null" ""; do
+  nsig="$(nreg_sig)"
+  n_res="$(n_req "$nport" POST /api/add "$NTOKEN" "$norg" "" '{"path":"'"$NPROJ"'"}' "")"
+  [ "$(n_status "$n_res")" = "403" ] || n_bad="$n_bad [Origin='${norg:-<absent>}': status $(n_status "$n_res")]"
+  case "$(n_body "$n_res")" in *origin-not-this-server*) ;; *) n_bad="$n_bad [Origin='${norg:-<absent>}': refusal does not name the Origin part]" ;; esac
+  [ "$(nreg_sig)" = "$nsig" ] || n_bad="$n_bad [Origin='${norg:-<absent>}': THE REGISTRY CHANGED]"
+done
+[ -z "$n_bad" ] \
+  && ok "(n9) AC4: a foreign Origin, an https one, the literal 'null' Origin a sandboxed frame sends, and NO Origin at all are each refused by name with the registry unchanged" \
+  || no "(n9) AC4: a cross-origin mutating request is refused" "$n_bad"
+
+# --- (n10) AC5: a non-loopback Host is refused (the DNS-rebinding case) --------------------
+n_bad=""
+for nhost in "evil.example.com" "evil.example.com:$nport" "192.168.1.10:$nport" "127.0.0.1.nip.io:$nport"; do
+  nsig="$(nreg_sig)"
+  n_res="$(n_req "$nport" POST /api/add "$NTOKEN" "$NORIGIN" "$nhost" '{"path":"'"$NPROJ"'"}' "")"
+  [ "$(n_status "$n_res")" = "403" ] || n_bad="$n_bad [Host=$nhost: status $(n_status "$n_res")]"
+  case "$(n_body "$n_res")" in *host-not-loopback*) ;; *) n_bad="$n_bad [Host=$nhost: refusal does not name the Host part]" ;; esac
+  [ "$(nreg_sig)" = "$nsig" ] || n_bad="$n_bad [Host=$nhost: THE REGISTRY CHANGED]"
+done
+[ -z "$n_bad" ] \
+  && ok "(n10) AC5: a forged Host sent to the loopback socket is refused by name — including a rebinding-style name that RESOLVES to 127.0.0.1, which an Origin check alone cannot catch" \
+  || no "(n10) AC5: a non-loopback Host is refused" "$n_bad"
+
+# --- (n11) AC5: all six accepted loopback Host spellings really are accepted ---------------
+# The refusals above would also be produced by a server that refused every Host it was given.
+# `scan` without --confirm is the probe because it writes nothing, so this stays a pure
+# read of the guard's decision.
+n_bad=""
+for nhost in "127.0.0.1" "127.0.0.1:$nport" "localhost" "localhost:$nport" "[::1]" "[::1]:$nport"; do
+  n_res="$(n_req "$nport" POST /api/scan "$NTOKEN" "$NORIGIN" "$nhost" '{"path":"'"$NPROJ"'","confirm":false}' "")"
+  [ "$(n_status "$n_res")" = "200" ] || n_bad="$n_bad [Host=$nhost: status $(n_status "$n_res") :: $(n_body "$n_res")]"
+done
+[ -z "$n_bad" ] \
+  && ok "(n11) AC5: 127.0.0.1, localhost and [::1] are each accepted with and without the :$nport suffix — all six spellings, so (n10) is refusing foreign names rather than refusing everything" \
+  || no "(n11) AC5: the six loopback Host spellings are accepted" "$n_bad"
+
+# --- (n12) AC7: untrusted paths are refused with a NAMED reason and register nothing -------
+ln -sfn /etc "$NHOME/escape-link" 2>/dev/null
+printf 'x\n' > "$NHOME/not-a-directory" 2>/dev/null
+n_bad=""
+n_case() {
+  local label="$1" path="$2" want="$3" sig res
+  sig="$(nreg_sig)"
+  res="$(n_req "$nport" POST /api/add "$NTOKEN" "$NORIGIN" "" '{"path":"'"$path"'"}' "")"
+  case "$(n_status "$res")" in 400) ;; *) n_bad="$n_bad [$label: status $(n_status "$res"), expected 400]" ;; esac
+  case "$(n_body "$res")" in *"$want"*) ;; *) n_bad="$n_bad [$label: expected the named reason '$want', got: $(n_body "$res")]" ;; esac
+  [ "$(nreg_sig)" = "$sig" ] || n_bad="$n_bad [$label: THE REGISTRY CHANGED across a refused path]"
+}
+n_case "traversal sequence"       "$NHOME/../../etc"      "path-traversal"
+n_case "relative traversal"       "../../etc"             "path-not-absolute"
+n_case "not a directory"          "$NHOME/not-a-directory" "path-not-a-directory"
+n_case "symlink escaping the root" "$NHOME/escape-link"    "path-outside-permitted-root"
+n_case "a real directory outside the root" "/etc"          "path-outside-permitted-root"
+[ -z "$n_bad" ] \
+  && ok "(n12) AC7: a traversal sequence, a bare relative path, a non-directory, a symlink resolving outside the permitted root and a real directory outside it are each refused with their OWN named reason and register nothing" \
+  || no "(n12) AC7: add rejects untrusted paths by name and registers nothing" "$n_bad"
+
+# --- (n13) AC7: a malformed slug cannot reach `forget` -------------------------------------
+nsig="$(nreg_sig)"
+n_res="$(n_req "$nport" POST /api/forget "$NTOKEN" "$NORIGIN" "" '{"slug":"../../x"}' "")"
+[ "$(n_status "$n_res")" = "400" ] && [ "$(nreg_sig)" = "$nsig" ] \
+  && case "$(n_body "$n_res")" in *slug-malformed*) true ;; *) false ;; esac \
+  && ok "(n13) AC7: a slug carrying a traversal sequence is refused by name before it reaches the engine — a slug is a filesystem path component and one arriving from a browser is untrusted input" \
+  || no "(n13) AC7: a malformed slug is refused by name" "status=$(n_status "$n_res") :: $(n_body "$n_res")"
+
+# --- (n14)/(n15) AC8: scan PROPOSES and does not write; only --confirm registers -----------
+bash "$ENGINE" forget second-project --ui-dir "$NUI" --registry "$NREG" >/dev/null 2>&1
+bash "$ENGINE" forget demo-project --ui-dir "$NUI" --registry "$NREG" >/dev/null 2>&1
+nsig="$(nreg_sig)"
+n_res="$(n_req "$nport" POST /api/scan "$NTOKEN" "$NORIGIN" "" '{"path":"'"$NHOME/work"'","confirm":false}' "")"
+n_body_txt="$(n_body "$n_res")"
+[ "$(n_status "$n_res")" = "200" ] && [ "$(nreg_sig)" = "$nsig" ] \
+  && case "$n_body_txt" in *"PROPOSAL"*) true ;; *) false ;; esac \
+  && ok "(n14) AC8: scan from the page lists its candidates as a PROPOSAL and the registry is byte-identical afterwards — the same --confirm contract the command has, because the endpoint runs the command" \
+  || no "(n14) AC8: an unconfirmed scan proposes and writes nothing" "status=$(n_status "$n_res") registry-changed=$( [ "$(nreg_sig)" = "$nsig" ] && echo no || echo YES ) :: $n_body_txt"
+n_res="$(n_req "$nport" POST /api/scan "$NTOKEN" "$NORIGIN" "" '{"path":"'"$NHOME/work"'","confirm":true}' "")"
+n_after="$(jq -r '.projects | length' "$NREG" 2>/dev/null)"
+case "$n_after" in ''|*[!0-9]*) n_after=0 ;; esac
+[ "$(n_status "$n_res")" = "200" ] && [ "$n_after" -eq 2 ] \
+  && ok "(n15) AC8: only the explicitly CONFIRMING request registers anything — it registered the $n_after candidates the proposal named" \
+  || no "(n15) AC8: a confirming scan registers the proposed candidates" "status=$(n_status "$n_res") projects=$n_after :: $(n_body "$n_res")"
+
+# --- (n16) AC9: forget removes a registry entry and NOTHING else ---------------------------
+n_tree_before="$(tree_sig "$NPROJ")"
+n_res="$(n_req "$nport" POST /api/forget "$NTOKEN" "$NORIGIN" "" '{"slug":"demo-project"}' "")"
+n_tree_after="$(tree_sig "$NPROJ")"
+n_left="$(jq -r '[.projects[] | select(.slug == "demo-project")] | length' "$NREG" 2>/dev/null)"
+case "$n_left" in ''|*[!0-9]*) n_left=9 ;; esac
+[ "$(n_status "$n_res")" = "200" ] && [ "$n_left" -eq 0 ] && [ "$n_tree_before" = "$n_tree_after" ] \
+  && ok "(n16) AC9: forget from the page dropped the registry entry and the project directory is byte-identical — hashed whole, before and after, not reasoned about" \
+  || no "(n16) AC9: forget removes only a registry entry" "status=$(n_status "$n_res") remaining=$n_left tree-changed=$( [ "$n_tree_before" = "$n_tree_after" ] && echo no || echo YES )"
+
+# --- (n17) AC6: THE TOKEN APPEARS NOWHERE IT COULD LEAK ------------------------------------
+# (a) the served bytes of every document the page can fetch, read back OFF THE WIRE rather than
+# off disk, because the claim is about what a browser receives; (b) every file the module
+# writes anywhere under the ui directory, and the registry beside it; (c) the server's own
+# stdout and stderr, which is why `serve.log` exists at all — it used to be /dev/null, and a
+# claim about a stream nothing captures is unfalsifiable.
+n_leak=""
+for ndoc in / /index.html /floor.css /floor.js /index.json /floor.json; do
+  case "$(n_body "$(n_req "$nport" GET "$ndoc" "" "" "" "" "")")" in
+    *"$NTOKEN"*) n_leak="$n_leak [served $ndoc]" ;;
+  esac
+done
+while IFS= read -r nf; do
+  [ -f "$nf" ] || continue
+  c="$(grep -c -F -- "$NTOKEN" "$nf" 2>/dev/null || true)"
+  case "$c" in ''|*[!0-9]*) c=0 ;; esac
+  [ "$c" -gt 0 ] && n_leak="$n_leak [file $nf]"
+done <<EOF
+$(find "$NUI" -type f 2>/dev/null; printf '%s\n' "$NREG")
+EOF
+[ -f "$NUI/$(sed -n 's/^SERVE_LOG="\([^"]*\)".*$/\1/p' "$ENGINE" | head -1)" ] \
+  || n_leak="$n_leak [there is no serve log, so claim (c) could not be tested at all]"
+[ -z "$n_leak" ] \
+  && ok "(n17) AC6: this run's token appears in NONE of the served documents, none of the files under the ui directory, the registry, or the server's own captured stdout/stderr — the single place a human sees it is the URL serve printed" \
+  || no "(n17) AC6: the token never appears where it could leak" "$n_leak"
+
+# --- (n18) AC6 ANTI-VACUITY: the leak scan can actually find a token -----------------------
+# Without this, (n17) passes just as happily against a token that is the empty string or a
+# grep that never runs.
+n_canary="$TMPROOT/n-canary.txt"
+printf 'prefix %s suffix\n' "$NTOKEN" > "$n_canary" 2>/dev/null
+n_canary_hits="$(grep -c -F -- "$NTOKEN" "$n_canary" 2>/dev/null || true)"
+case "$n_canary_hits" in ''|*[!0-9]*) n_canary_hits=0 ;; esac
+[ "${#NTOKEN}" -ge 20 ] && [ "$n_canary_hits" -ge 1 ] \
+  && ok "(n18) ANTI-VACUITY: the token is ${#NTOKEN} characters long and the same grep (n17) uses finds it in a planted file — so (n17)'s clean result is a measurement, not an empty needle" \
+  || no "(n18) ANTI-VACUITY: (n17)'s leak scan can find a planted token" "token length ${#NTOKEN}, canary hits $n_canary_hits"
+
+# --- (n19) AC12: a bad request is refused, names a reason, and does not take the server down
+n_bad=""
+n_res="$(n_req "$nport" POST /api/add "$NTOKEN" "$NORIGIN" "" 'this is not json at all' "")"
+case "$(n_status "$n_res")" in 400) ;; *) n_bad="$n_bad [malformed body: status $(n_status "$n_res")]" ;; esac
+n_res="$(n_req "$nport" POST /api/nonesuch "$NTOKEN" "$NORIGIN" "" '{}' "")"
+case "$(n_status "$n_res")" in 501) ;; *) n_bad="$n_bad [unknown route: status $(n_status "$n_res"), expected 501]" ;; esac
+n_res="$(n_req "$nport" POST /api/add "$NTOKEN" "$NORIGIN" "" '{"path":12345}' "")"
+case "$(n_status "$n_res")" in 400) ;; *) n_bad="$n_bad [non-string path: status $(n_status "$n_res")]" ;; esac
+[ "$(n_status "$(n_req "$nport" GET /index.json "" "" "" "" "")")" = "200" ] || n_bad="$n_bad [the handler stopped serving after the bad requests]"
+[ -z "$n_bad" ] \
+  && ok "(n19) AC12: a malformed body, an unknown route and a non-string path are each refused with a named reason, and the handler is still serving afterwards — refuse-and-name, never a crash and never a non-zero exit" \
+  || no "(n19) AC12: every bad-request path refuses safely" "$n_bad"
+
+# --- (n20)/(n21) AC11: the page's stop really kills THIS server, and reports it as stopped --
+# R1 IN FULL. `do_stop` kills only a pid whose command line names `http.server` or
+# `setup-ui.sh`. Replacing the static server changed that command line, so the regression this
+# case exists for is a `stop` that reports "0 process(es) stopped" while the server keeps
+# running — silently, because nothing else would notice.
+n_res="$(n_req "$nport" POST /api/stop "$NTOKEN" "$NORIGIN" "" '{}' "")"
+n_stop_st="$(n_status "$n_res")"
+n_down=no; n_wait_down "$nport" && n_down=yes
+[ "$n_stop_st" = "200" ] && [ "$n_down" = "yes" ] \
+  && ok "(n20) AC11: stop from the page answered 200 and the socket really stopped answering — the process is gone, not merely asked" \
+  || no "(n20) AC11: stop from the page stops the server" "status=$n_stop_st still-listening=$( [ "$n_down" = yes ] && echo no || echo YES )"
+
+# The command-line half of the same claim, on a FRESH server: `stop` must report it as stopped
+# and must NOT report it as `not killed … (not-ours)`.
+nport2="$(n_free_port)"
+case "$nport2" in ''|*[!0-9]*) setup_fail "(n21) fixture: could not obtain a port" ;; esac
+n_out2="$( cd "$NPROJ" && HOME="$NHOME" bash "$ENGINE" serve --registry "$NREG" --ui-dir "$NUI" --no-regen --detach --port "$nport2" 2>&1 )"
+SERVE_PIDFILES="$SERVE_PIDFILES $NUI/serve.pid"
+if n_wait_up "$nport2"; then
+  n_stop_out="$(bash "$ENGINE" stop --ui-dir "$NUI" 2>&1)"
+  n_down=no; n_wait_down "$nport2" && n_down=yes
+  n_killed="$(printf '%s' "$n_stop_out" | sed -n 's/^stop: \([0-9][0-9]*\) process.*$/\1/p' | head -1)"
+  case "$n_killed" in ''|*[!0-9]*) n_killed=0 ;; esac
+  [ "$n_killed" -ge 1 ] && [ "$n_down" = "yes" ] && ! in_str "$n_stop_out" "not-ours" \
+    && ok "(n21) AC11 (R1 REGRESSION GUARD): 'stop' killed $n_killed recorded process(es), the socket went quiet, and it did NOT report the new handler as 'not killed … (not-ours)' — the replaced server still matches the pidfile guard verbatim" \
+    || no "(n21) AC11: stop kills the replaced server and does not refuse it as not-ours" "killed=$n_killed still-listening=$( [ "$n_down" = yes ] && echo no || echo YES ) :: $n_stop_out"
+else
+  no "(n21) AC11: stop kills the replaced server" "the second serve never came up on $nport2 :: $n_out2"
+fi
+
+# --- (n22) AC11: the pidfile guard still REFUSES a pid that is not this module's -----------
+# That refusal path had ZERO coverage before this item (grep -c 'not killed' returned 0), which
+# is precisely why extending the guard would have been the dangerous repair: nothing would have
+# noticed it going too far.
+n_foreign_ui="$(mktmp)"
+mkdir -p "$n_foreign_ui" 2>/dev/null
+sleep 30 &
+n_foreign_pid=$!
+HOLDER_PIDS="$HOLDER_PIDS $n_foreign_pid"
+printf '%s\n' "$n_foreign_pid" > "$n_foreign_ui/serve.pid"
+n_stop_out="$(bash "$ENGINE" stop --ui-dir "$n_foreign_ui" 2>&1)"
+n_alive=no; kill -0 "$n_foreign_pid" 2>/dev/null && n_alive=yes
+in_str "$n_stop_out" "not-ours" && [ "$n_alive" = "yes" ] \
+  && ok "(n22) AC11: a pidfile naming a process whose command line is NOT this module's is REFUSED by name ('not-ours') and that process is still running — the guard was matched, not widened" \
+  || no "(n22) AC11: stop refuses a foreign pid and leaves it alone" "still-running=$n_alive :: $n_stop_out"
+kill "$n_foreign_pid" 2>/dev/null
+
+# A THIRD shipped-engine server, started here because (n20) and (n21) deliberately killed the
+# other two: each control below compares the mutant's answer against the SHIPPED engine's answer
+# to the identical request, and a comparison probe sent to a dead socket would come back "0" and
+# quietly prove nothing.
+NSHIP_PORT="$(n_free_port)"
+case "$NSHIP_PORT" in ''|*[!0-9]*) setup_fail "(n) fixture: could not obtain a port for the reference run" ;; esac
+n_ship_out="$( cd "$NPROJ" && HOME="$NHOME" bash "$ENGINE" serve --registry "$N/ship.json" --ui-dir "$NUI" --no-regen --detach --port "$NSHIP_PORT" 2>&1 )"
+SERVE_PIDFILES="$SERVE_PIDFILES $NUI/serve.pid"
+NSHIP_TOKEN="$(n_token_of "$n_ship_out")"
+NSHIP_ORIGIN="http://127.0.0.1:$NSHIP_PORT"
+[ -n "$NSHIP_TOKEN" ] || setup_fail "(n) fixture: the reference serve printed no #token= :: $n_ship_out"
+n_wait_up "$NSHIP_PORT" || setup_fail "(n) fixture: the reference serve never came up on $NSHIP_PORT"
+
+# ===========================================================================
+# (n23)-(n26) AC13 — ONE MUTATION CONTROL PER GUARD PART
+# ---------------------------------------------------------------------------
+# Each mutant disables EXACTLY ONE part and leaves the other three intact, then sends the
+# request that part alone was refusing and requires it to SUCCEED. A guard with no such control
+# is indistinguishable from a guard that never fires: every 403 above would be produced by a
+# server that refused everything, and the four positive cases ((n5), (n6), (n11), (n15)) prove
+# only that the guard can say yes, not that each part is load-bearing.
+# Every mutant goes through `mutant_ok` first — non-empty, genuinely different, and still valid
+# bash — and n_guard_ran records whether it did, so a sed that silently stops matching the
+# engine goes RED at (n27) instead of skipping inside its `if`.
+NG_PORT=""; NG_TOKEN=""; NG_UI=""; NG_ENGINE=""; NG_RAN=""
+n_stage_mutant() {
+  # <name> <sed expression> [serve cwd]. The cwd defaults to the fixture project; (n37)
+  # overrides it, because that control's whole subject is a serve whose LAUNCH DIRECTORY
+  # differs from the path the request body carries — the defect registers the former in place
+  # of the latter, and the two are indistinguishable when they are the same directory.
+  local name="$1" sedexpr="$2" cwd="${3:-$NPROJ}" d out
+  NG_PORT=""; NG_TOKEN=""; NG_UI=""; NG_ENGINE=""
+  d="$N/mut-$name"
+  mkdir -p "$d/floor-ui" 2>/dev/null || return 1
+  cp "$BUNDLE_DIR"/* "$d/floor-ui/" 2>/dev/null || return 1
+  sed "$sedexpr" "$ENGINE" > "$d/setup-ui.sh" 2>/dev/null || return 1
+  mutant_ok "$ENGINE" "$d/setup-ui.sh" shell || return 1
+  NG_RAN="$NG_RAN $name"
+  NG_ENGINE="$d/setup-ui.sh"; NG_UI="$d/ui"
+  bash "$NG_ENGINE" apply --ui-dir "$NG_UI" >/dev/null 2>&1
+  [ -f "$NG_UI/index.html" ] || return 1
+  NG_PORT="$(n_free_port)"
+  case "$NG_PORT" in ''|*[!0-9]*) return 1 ;; esac
+  out="$( cd "$cwd" && HOME="$NHOME" bash "$NG_ENGINE" serve --registry "$N/mut-$name.json" --ui-dir "$NG_UI" --no-regen --detach --port "$NG_PORT" 2>&1 )"
+  SERVE_PIDFILES="$SERVE_PIDFILES $NG_UI/serve.pid"
+  NG_TOKEN="$(n_token_of "$out")"
+  [ -n "$NG_TOKEN" ] || return 1
+  n_wait_up "$NG_PORT" || return 1
+  return 0
+}
+# The probe every control sends is `scan` WITHOUT --confirm: it exercises the full guard and
+# writes nothing, so a control that succeeds does not leave a registered project behind.
+n_probe() { n_req "$1" POST /api/scan "$2" "$3" "$4" '{"path":"'"$NPROJ"'","confirm":false}' "$5"; }
+
+# --- (n23) PART 1: the token VALUE -------------------------------------------------------
+n_shipped="$(n_status "$(n_probe "$NSHIP_PORT" "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" "$NSHIP_ORIGIN" "" "")")"
+# The sed targets the COMPARISON line alone. The `if raw is None or TOKEN == ""` line above it
+# in the engine stays intact, so the mutant still refuses a missing header — what it stops
+# checking is the token's VALUE, which is exactly the one part this control is for.
+if n_stage_mutant token 's|        return hmac.compare_digest(str(raw).encode("utf-8", "replace"), TOKEN.encode("utf-8"))|        return True|'; then
+  n_mut="$(n_status "$(n_probe "$NG_PORT" "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" "http://127.0.0.1:$NG_PORT" "" "")")"
+  [ "$n_mut" = "200" ] \
+    && ok "(n23) MUTATION CONTROL — PART 1 (the token value): the SHIPPED engine answered $n_shipped to a wrong token; with the token comparison alone disabled the identical request SUCCEEDS ($n_mut) — so the token check is load-bearing, not decoration" \
+    || no "(n23) MUTATION CONTROL: disabling the token check alone lets a wrong-token write through" "the mutant answered $n_mut, expected 200 — this control cannot distinguish a working token check from one that never fires"
+else
+  no "(n23) MUTATION CONTROL — PART 1 (the token value)" "the token mutant could not be staged or started"
+fi
+
+# --- (n24) PART 2: the CUSTOM header ------------------------------------------------------
+# The custom header is what forces a CORS preflight a hostile page cannot satisfy. Disabling
+# that part means accepting the token from a CORS-SAFELISTED header instead — `Content-Language`
+# — which is precisely the "simple request" hole where a write lands even though the attacker
+# never reads the reply. The probe sends the token ONLY in that safelisted header.
+if n_stage_mutant header 's|^TOKEN_HEADER="X-Floor-Token"$|TOKEN_HEADER="Content-Language"|'; then
+  n_mut="$(n_status "$(n_probe "$NG_PORT" "$NG_TOKEN" "http://127.0.0.1:$NG_PORT" "" "Content-Language")")"
+  n_ship="$(n_status "$(n_probe "$NSHIP_PORT" "$NSHIP_TOKEN" "$NSHIP_ORIGIN" "" "Content-Language")")"
+  [ "$n_mut" = "200" ] \
+    && [ "$n_ship" != "200" ] \
+    && ok "(n24) MUTATION CONTROL — PART 2 (the custom header): the SHIPPED engine answered $n_ship to a token sent ONLY in the CORS-safelisted Content-Language header; with the header name alone changed to that same safelisted header, the identical request SUCCEEDS ($n_mut) — so requiring a CUSTOM header is what closes the simple-request hole, and it is load-bearing" \
+    || no "(n24) MUTATION CONTROL: moving the token to a safelisted header lets the write through" "the mutant answered $n_mut, expected 200 (the shipped engine answered $n_ship to the same shape)"
+else
+  no "(n24) MUTATION CONTROL — PART 2 (the custom header)" "the header mutant could not be staged or started"
+fi
+
+# --- (n25) PART 3: Origin validation ------------------------------------------------------
+if n_stage_mutant origin 's|    return origin is not None and origin in ALLOWED_ORIGINS|    return True|'; then
+  n_mut="$(n_status "$(n_probe "$NG_PORT" "$NG_TOKEN" "http://evil.example.test" "" "")")"
+  [ "$n_mut" = "200" ] \
+    && ok "(n25) MUTATION CONTROL — PART 3 (Origin): with the Origin check alone disabled, a request carrying a FOREIGN Origin SUCCEEDS ($n_mut) where the shipped engine refuses it" \
+    || no "(n25) MUTATION CONTROL: disabling the Origin check alone lets a cross-origin write through" "the mutant answered $n_mut, expected 200"
+else
+  no "(n25) MUTATION CONTROL — PART 3 (Origin)" "the origin mutant could not be staged or started"
+fi
+
+# --- (n26) PART 4: Host validation --------------------------------------------------------
+if n_stage_mutant host 's|    return host is not None and host in ALLOWED_HOSTS|    return True|'; then
+  n_mut="$(n_status "$(n_probe "$NG_PORT" "$NG_TOKEN" "http://127.0.0.1:$NG_PORT" "evil.example.com" "")")"
+  [ "$n_mut" = "200" ] \
+    && ok "(n26) MUTATION CONTROL — PART 4 (Host): with the Host check alone disabled, a request carrying a FORGED Host SUCCEEDS ($n_mut) — this is the DNS-rebinding case, and it is the part an Origin check provably cannot cover, since the Origin above was the legitimate one" \
+    || no "(n26) MUTATION CONTROL: disabling the Host check alone lets a rebound request through" "the mutant answered $n_mut, expected 200"
+else
+  no "(n26) MUTATION CONTROL — PART 4 (Host)" "the host mutant could not be staged or started"
+fi
+
+# ===========================================================================
+# (n36)/(n37) A BODY THIS SERVER CANNOT READ IS REFUSED, NEVER TREATED AS ABSENT
+# ---------------------------------------------------------------------------
+# These sit HERE, between (n26) and (n27), rather than at the end of the group where their
+# numbers would suggest: (n37) is the fifth engine mutation control, (n27) is the anti-vacuity
+# check over ALL of them, and an anti-vacuity check that runs before the thing it is checking
+# would report a mutant it could not yet have seen as missing. Contiguous controls, one check
+# over the set, in that order.
+#
+# THE DEFECT. `_payload` branched on `Content-Length` alone. A request carrying
+# `Transfer-Encoding: chunked` has NO `Content-Length`, so it fell into the
+# `raw is None -> return {}` arm — "no body, use the defaults". For `add` the default path is
+# the directory `serve` was launched in, so a chunked POST carrying a real path in its body
+# silently registered THE SERVE CWD INSTEAD: a WRITE on a failure path, which is precisely the
+# outcome `_payload`'s own docstring says the None-vs-{} split exists to prevent. The body also
+# stayed unread on the socket. The fix reads `Transfer-Encoding` FIRST and returns None, so the
+# request is refused by name like any other body this server cannot read.
+#
+# THE FIXTURE'S ONE LOAD-BEARING PROPERTY: the serve is launched in a directory that is NOT the
+# one the request body names. When the two are the same directory, "registered the serve cwd"
+# and "registered the requested path" produce an identical registry and the control below could
+# not tell the defect from the fix.
+NCWD="$NHOME/work/chunked-serve-cwd"
+mkdir -p "$NCWD/.git" || setup_fail "(n36) fixture: could not create the distinct serve-cwd directory"
+# `add` stores what `cd -P … pwd -P` gives it, and the fixture root sits under a symlinked
+# temporary directory on this platform, so the raw fixture strings would never match a registry
+# entry. Resolve both sides the same way the engine does, once.
+NCWD_REAL="$( cd -P "$NCWD" 2>/dev/null && pwd -P )"
+NPROJ_REAL="$( cd -P "$NPROJ" 2>/dev/null && pwd -P )"
+[ -n "$NCWD_REAL" ] && [ -n "$NPROJ_REAL" ] && [ "$NCWD_REAL" != "$NPROJ_REAL" ] \
+  || setup_fail "(n36) fixture: the serve cwd and the requested path must resolve to two DIFFERENT directories, or the control below cannot discriminate (cwd='$NCWD_REAL' path='$NPROJ_REAL')"
+
+# n_reg_has <registry file> <resolved absolute path> -> "yes" / "no".
+# "no" for a registry that does not exist, because ABSENT is a defined state here and a missing
+# file must not make this read like an error.
+n_reg_has() {
+  [ -f "$1" ] || { printf 'no'; return 0; }
+  if jq -e --arg p "$2" 'any(.projects[]?; .path == $p)' "$1" >/dev/null 2>&1; then
+    printf 'yes'
+  else
+    printf 'no'
+  fi
+}
+
+# n_chunked_probe <port> <token> <origin> <json body>
+# A RAW SOCKET, because `n_req` speaks http.client and http.client ALWAYS sets Content-Length —
+# it structurally cannot emit the request this case is about. The body is properly chunk-encoded
+# (`<hexlen>\r\n<data>\r\n0\r\n\r\n`) under `Transfer-Encoding: chunked` with NO `Content-Length`:
+# a well-formed HTTP/1.1 request, not a malformed one, which is what makes it the interesting
+# case. Prints "<status><TAB><body>" exactly like n_req, and "0" — a status this suite never
+# gets from a live server — when no reply was written at all, so a dropped connection can never
+# be misread as a refusal.
+n_chunked_probe() {
+  python3 - "$1" "$2" "$3" "$4" 2>/dev/null <<'__PY_CH__'
+import socket
+import sys
+
+port = int(sys.argv[1])
+token, origin, body = sys.argv[2], sys.argv[3], sys.argv[4].encode("utf-8")
+host_hdr = ("127.0.0.1:%d" % port).encode("ascii")
+req = (b"POST /api/add HTTP/1.1\r\nHost: " + host_hdr +
+       b"\r\nOrigin: " + origin.encode("ascii") +
+       b"\r\nX-Floor-Token: " + token.encode("ascii") +
+       b"\r\nContent-Type: application/json" +
+       b"\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n" +
+       ("%x\r\n" % len(body)).encode("ascii") + body + b"\r\n0\r\n\r\n")
+s = socket.create_connection(("127.0.0.1", port), timeout=15)
+try:
+    s.sendall(req)
+except Exception:
+    # A server that refuses without draining the body may close first. Whatever it managed to
+    # write is still worth reading, so this does not abort the probe.
+    pass
+data = b""
+try:
+    while True:
+        chunk = s.recv(4096)
+        if not chunk:
+            break
+        data += chunk
+except Exception:
+    pass
+s.close()
+if not data:
+    sys.stdout.write("0\tthe connection was closed without any response being written")
+else:
+    head, _sep, rest = data.partition(b"\r\n\r\n")
+    parts = head.split(b"\r\n", 1)[0].decode("latin-1").split(" ")
+    sys.stdout.write((parts[1] if len(parts) > 1 else "0") + "\t" +
+                     rest.decode("utf-8", "replace").replace("\n", " "))
+__PY_CH__
+}
+
+# A SHIPPED-ENGINE serve of its own, launched in NCWD with its own registry and its own ui
+# directory: the runs above were all launched in the fixture project, and reusing one would make
+# the serve cwd and the requested path the same directory. Its own ui dir also keeps its pidfile
+# from displacing another run's in the cleanup list.
+NCH_UI="$N/chunk-ui"
+NCH_REG="$N/chunk-ship.json"
+bash "$ENGINE" apply --ui-dir "$NCH_UI" >/dev/null 2>&1
+[ -f "$NCH_UI/index.html" ] || setup_fail "(n36) fixture: apply did not install the bundle into $NCH_UI"
+NCH_PORT="$(n_free_port)"
+case "$NCH_PORT" in ''|*[!0-9]*) setup_fail "(n36) fixture: could not obtain a port for the chunked-body run" ;; esac
+n_ch_out="$( cd "$NCWD" && HOME="$NHOME" bash "$ENGINE" serve --registry "$NCH_REG" --ui-dir "$NCH_UI" --no-regen --detach --port "$NCH_PORT" 2>&1 )"
+SERVE_PIDFILES="$SERVE_PIDFILES $NCH_UI/serve.pid"
+NCH_TOKEN="$(n_token_of "$n_ch_out")"
+[ -n "$NCH_TOKEN" ] || setup_fail "(n36) fixture: the chunked-body serve printed no #token= :: $n_ch_out"
+n_wait_up "$NCH_PORT" || setup_fail "(n36) fixture: the chunked-body serve never came up on $NCH_PORT"
+n_ch_sig() { [ -f "$NCH_REG" ] && csum "$NCH_REG" || printf 'ABSENT'; }
+
+# --- (n36) a chunked POST to /api/add is REFUSED and writes nothing ------------------------
+# Everything else about this request is VALID — this run's token in the custom header, a
+# loopback Origin, a loopback Host, and a real absolute path inside the permitted root — so the
+# only thing it can be refused for is the one property under test. (n5) already proved the same
+# shape with a Content-Length body is accepted and really registers.
+n_ch_before="$(n_ch_sig)"
+n_ch_res="$(n_chunked_probe "$NCH_PORT" "$NCH_TOKEN" "http://127.0.0.1:$NCH_PORT" '{"path":"'"$NPROJ"'"}')"
+n_ch_after="$(n_ch_sig)"
+n_ch_cwd_in="$(n_reg_has "$NCH_REG" "$NCWD_REAL")"
+n_ch_proj_in="$(n_reg_has "$NCH_REG" "$NPROJ_REAL")"
+n_ch_bad=""
+[ "$(n_status "$n_ch_res")" = "400" ] || n_ch_bad="$n_ch_bad [status $(n_status "$n_ch_res"), expected 400 — a status of 0 would mean no reply was written at all]"
+in_str "$(n_body "$n_ch_res")" "body-not-json" || n_ch_bad="$n_ch_bad [the reply does not name body-not-json: $(n_body "$n_ch_res")]"
+[ "$n_ch_before" = "$n_ch_after" ] || n_ch_bad="$n_ch_bad [the registry changed on a refused request: before='$n_ch_before' after='$n_ch_after']"
+[ "$n_ch_cwd_in" = "no" ] || n_ch_bad="$n_ch_bad [THE SERVE CWD $NCWD_REAL WAS REGISTERED — this is the defect itself: the write landed, on a failure path, naming a directory nobody asked for]"
+[ "$n_ch_proj_in" = "no" ] || n_ch_bad="$n_ch_bad [the requested path $NPROJ_REAL was registered, so the chunked body was decoded after all and this case is testing something else]"
+[ -z "$n_ch_bad" ] \
+  && ok "(n36) a chunked POST to /api/add — valid token, custom header, loopback Origin and Host, a real absolute path in a correctly chunk-encoded body — is REFUSED 400 naming body-not-json, the registry is byte-identical across it, and the directory serve was launched in ($NCWD_REAL) was NOT registered: a body this server cannot read is refused, never treated as absent" \
+  || no "(n36) a chunked body is refused by name and registers nothing" "$n_ch_bad"
+
+# --- (n37) MUTATION CONTROL: the Transfer-Encoding check is what stops the wrong write ------
+# The one part disabled is the `Transfer-Encoding` test itself; `_payload`'s Content-Length
+# arms, and all four guard parts, stay intact — so the identical request is refused by nothing
+# and takes the pre-fix route. This is the control that proves BOTH halves of the claim: that
+# the check is load-bearing, and that the defect it closes was real rather than theoretical.
+# It must fail RED, not skip, if the mutant cannot be staged: a control that quietly disappears
+# proves exactly nothing, which is why the `else` below is a `no` and why (n27) enumerates it.
+if n_stage_mutant chunked 's|if self.headers.get("Transfer-Encoding") is not None:|if False:|' "$NCWD"; then
+  n_ch_mut_reg="$N/mut-chunked.json"
+  n_ch_mut_res="$(n_chunked_probe "$NG_PORT" "$NG_TOKEN" "http://127.0.0.1:$NG_PORT" '{"path":"'"$NPROJ"'"}')"
+  n_ch_mut_st="$(n_status "$n_ch_mut_res")"
+  n_ch_mut_cwd="$(n_reg_has "$n_ch_mut_reg" "$NCWD_REAL")"
+  n_ch_mut_proj="$(n_reg_has "$n_ch_mut_reg" "$NPROJ_REAL")"
+  [ "$n_ch_mut_st" = "200" ] && [ "$n_ch_mut_cwd" = "yes" ] && [ "$n_ch_mut_proj" = "no" ] \
+    && ok "(n37) MUTATION CONTROL — the chunked body: the SHIPPED engine refused this exact request 400 body-not-json and wrote nothing; with the Transfer-Encoding check ALONE disabled it SUCCEEDS ($n_ch_mut_st) and registers THE WRONG DIRECTORY — $NCWD_REAL, the one serve was launched in, in place of the $NPROJ_REAL the body asked for — so the check is load-bearing and the silent wrong write it prevents was real" \
+    || no "(n37) MUTATION CONTROL: removing the Transfer-Encoding check lets a chunked body register the serve cwd" \
+         "the mutant answered $n_ch_mut_st (expected 200); serve-cwd registered=$n_ch_mut_cwd (expected yes); requested-path registered=$n_ch_mut_proj (expected no) :: $(n_body "$n_ch_mut_res")"
+else
+  no "(n37) MUTATION CONTROL — the chunked body" "the chunked mutant could not be staged or started, so the Transfer-Encoding check is UNCONTROLLED"
+fi
+
+# --- (n27) ANTI-VACUITY: all five mutation controls actually EXECUTED -------------------------------
+# Each control lives inside an `if mutant_ok`. A sed that stops matching the engine makes that
+# `if` false, and the control then disappears — neither red nor green — which is exactly how
+# the previous (h2) died. This turns that silence into a failure.
+n_missing=""
+for npart in token header origin host chunked; do
+  case " $NG_RAN " in *" $npart "*) ;; *) n_missing="$n_missing $npart" ;; esac
+done
+[ -z "$n_missing" ] \
+  && ok "(n27) ANTI-VACUITY: all five engine mutants — the four guard parts and the chunked-body check — passed mutant_ok and their controls EXECUTED: none of (n23)-(n26) or (n37) was skipped inside its if" \
+  || no "(n27) ANTI-VACUITY: all five mutation controls executed" "these mutants never ran:$n_missing — their sed no longer matches the engine, so the corresponding check is UNCONTROLLED"
+
+# --- (n28) the shipped engine and bundle are untouched by every (n) mutant -----------------
+n_eng_after="$(csum "$ENGINE")"
+n_residue="$(ls "$script_dir"/*.n.mut.sh 2>/dev/null || true)"
+[ "$n_eng_after" = "$N_ENG_SIG_BEFORE" ] && [ -z "$n_residue" ] \
+  && ok "(n28) setup-ui.sh is byte-identical after every (n) mutation control (sha256 unchanged) and no mutant was left in the plugin's own directories" \
+  || no "(n28) setup-ui.sh is byte-identical after the (n) mutation controls" "before='$N_ENG_SIG_BEFORE' after='$n_eng_after' residue='$n_residue'"
+
+# --- (n29) the four routes are FOUR, read out of the engine --------------------------------
+# `apply` and `remove` are excluded BY DECISION, not by omission: they are install-level, and a
+# page able to uninstall itself buys nothing and risks something. Read from the engine rather
+# than restated, so a fifth route added there fails here instead of shipping unnoticed.
+n_routes="$(sed -n 's/^ROUTES = (\(.*\))$/\1/p' "$ENGINE" | head -1 | tr -d '"' | tr ',' ' ')"
+n_route_set="$(printf '%s\n' $n_routes | LC_ALL=C sort | tr '\n' ' ')"
+[ "$n_route_set" = "add forget scan stop " ] \
+  && ok "(n29) the engine exposes exactly four mutating routes and they are add, forget, scan and stop — apply and remove are excluded by decision, and the set is read out of the engine rather than restated here" \
+  || no "(n29) the engine exposes exactly the four intended mutating routes" "parsed '$n_route_set', expected 'add forget scan stop '"
+
+# --- (n30) AC10 STATIC HALF: the page has a DISTINCT stopped state --------------------------
+# The browser half of AC10 (does the stopped banner actually read that way in a DOM, with a
+# clean console?) is verified by a human or at Phase 4.5 against the committed fixtures, exactly
+# like the other render states in this suite. What is checkable HERE is the mechanism, and the
+# mechanism is what makes the browser half possible: a flag the poll is gated on, a render that
+# names the state, controls that disable, and NOT any of the three dishonest alternatives — a
+# spinner, the last floor presented as current, or a stream of fetch errors about a server the
+# reader deliberately stopped.
+n_stop_bad=""
+has_lit "$JS" "function renderStopped()" || n_stop_bad="$n_stop_bad [no renderStopped]"
+has_lit "$JS" "if (serverStopped) { return; }" || n_stop_bad="$n_stop_bad [the poll is not gated on the stopped flag, so it would keep fetching a server that is gone]"
+has_lit "$JS" "this server was stopped from this page" || n_stop_bad="$n_stop_bad [the stopped state has no words of its own]"
+has_lit "$JS" "not a current one" || n_stop_bad="$n_stop_bad [the page does not say the floor it is showing is a snapshot rather than current]"
+# RE-POINTED, NOT RELAXED. The inline disable loop this used to match was hoisted into
+# `setActionsDisabled(flag)` when the write guard below became its second caller, so the old
+# literal would have vanished and this half of (n30) would have gone red for a property that
+# is still there. Both halves are asserted instead, and the second is scoped to renderStopped's
+# own body so that runAction's identical call cannot satisfy it on renderStopped's behalf.
+has_lit "$JS" "controls[i].disabled = flag;" || n_stop_bad="$n_stop_bad [there is no single place that enables or disables the action controls]"
+n_stop_body="$(awk '/^  function renderStopped\(\)/{f=1} f{print} f&&/^  }$/{exit}' "$JS" 2>/dev/null)"
+in_str "$n_stop_body" "setActionsDisabled(true);" || n_stop_bad="$n_stop_bad [the action controls are not disabled, so the page still offers writes it cannot make]"
+[ -z "$n_stop_bad" ] \
+  && ok "(n30) AC10 (static half): the page carries a distinct stopped render — a flag the ONE poll returns early on, its own words, an explicit statement that the floor shown is a snapshot rather than current, and disabled controls" \
+  || no "(n30) AC10: the page renders a distinct stopped state" "$n_stop_bad"
+# MUTATION CONTROL: an ungated poll is the specific defect this state exists to prevent — it
+# would banner a fetch failure about a server the reader themselves stopped.
+MUT_STOP="$TMPROOT/mut-stopped.js"
+sed 's|if (serverStopped) { return; }||' "$JS" > "$MUT_STOP" 2>/dev/null
+if mutant_ok "$JS" "$MUT_STOP"; then
+  m_stop=0; has_lit "$MUT_STOP" "if (serverStopped) { return; }" && m_stop=1
+  [ "$m_stop" = "0" ] \
+    && ok "(n31) MUTATION CONTROL: a poll that is NOT gated on the stopped flag IS flagged by (n30) — so that assertion is reading the gate rather than merely finding the word" \
+    || no "(n31) MUTATION CONTROL: an ungated poll is flagged" "the mutant still carries the guard literal"
+fi
+
+# --- (n32) NO CORS HEADER, EVER, AND NO PREFLIGHT ANSWER ------------------------------------
+# Both are one-line regressions that re-open the other-tab attack the custom header closes, and
+# neither would redden any other assertion in this suite: adding `Access-Control-Allow-Origin`
+# lets the attacker READ the reply, and answering an OPTIONS preflight lets the write be SENT.
+n_cors="$(occ "$ENGINE" 'Access-Control-Allow-Origin')"
+n_opts="$(awk '$0 !~ /^[[:space:]]*#/ && /def do_OPTIONS/ {n++} END{print n+0}' "$ENGINE")"
+n_acao_code="$(awk '$0 !~ /^[[:space:]]*#/ && /Access-Control-Allow-Origin/ {n++} END{print n+0}' "$ENGINE")"
+[ "$n_acao_code" = "0" ] && [ "$n_opts" = "0" ] && [ "$n_cors" -ge 1 ] 2>/dev/null \
+  && ok "(n32) the engine sends NO Access-Control-Allow-Origin on any response and answers no OPTIONS preflight — both verified in CODE (0 and 0), while the comment saying so is still present ($n_cors raw mentions), so a future author reads the reason before deleting the property" \
+  || no "(n32) no CORS header and no preflight answer" "ACAO in code=$n_acao_code do_OPTIONS=$n_opts raw mentions=$n_cors — a raw count of 0 would mean the explanatory comment went too, which is how this property gets removed by accident"
+
+# --- (n33)-(n35) NOTHING PUTS A TRACEBACK INTO THE LOG THE PAGE CAN FETCH -------------------
+# TWO CONFIRMED WAYS a request thread used to raise, and one class-level fix for both.
+#   (a) PRE-AUTHENTICATION. `hmac.compare_digest` on two `str` raises TypeError the moment
+#       either side carries a character above 127. HTTP headers are latin-1 decoded, so ANY
+#       unauthenticated caller could reach that raise with one byte > 127 in the token header,
+#       and the reply it produced was NO reply at all — the client saw the connection drop.
+#       That is the exact opposite of AC12: every failure path refuses with a NAMED reason.
+#   (b) ORDINARY USE. A client that closes its tab mid-reply raises BrokenPipeError inside the
+#       response write, which reached `socketserver.handle_error` and its `print_exc`.
+# In both cases the traceback went to stderr, which for this server IS `serve.log` — a file
+# INSIDE THE SERVED ROOT, fetchable with `GET /serve.log` — written unlocked from every thread
+# at once, so two concurrent aborts interleave into corrupted multi-line noise. That falsified
+# the log invariant restated on four surfaces (engine header, SERVE_LOG comment, FLOOR_UI.md
+# and CHANGELOG.md). The fix is `FloorServer.handle_error`, which is why this asserts the CLASS
+# property — zero `Traceback` lines, whatever raised — rather than the two known instances.
+#
+# The probes speak raw sockets rather than http.client: (a) has to put a byte on the wire that
+# a client-side header encoder would refuse first, and (b) has to RESET a connection, which no
+# request helper offers.
+n_tb_probe() {
+  python3 - "$1" "$2" 2>/dev/null <<'__PY_TB__'
+import socket
+import struct
+import sys
+
+port = int(sys.argv[1])
+mode = sys.argv[2]
+host_hdr = ("127.0.0.1:%d" % port).encode("ascii")
+
+if mode == "nonascii":
+    req = (b"POST /api/scan HTTP/1.1\r\nHost: " + host_hdr +
+           b"\r\nX-Floor-Token: \xc3\xa9\xff\r\nOrigin: http://" + host_hdr +
+           b"\r\nContent-Type: application/json\r\nContent-Length: 2\r\n"
+           b"Connection: close\r\n\r\n{}")
+    s = socket.create_connection(("127.0.0.1", port), timeout=15)
+    s.sendall(req)
+    data = b""
+    try:
+        while True:
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+            data += chunk
+    except Exception:
+        pass
+    s.close()
+    if not data:
+        # "0" is the status this suite never gets from a live server, so the no-reply case can
+        # never be mistaken for a refusal — which is precisely what the old behaviour was.
+        sys.stdout.write("0\tthe connection was closed without any response being written")
+    else:
+        head, _sep, body = data.partition(b"\r\n\r\n")
+        parts = head.split(b"\r\n", 1)[0].decode("latin-1").split(" ")
+        sys.stdout.write((parts[1] if len(parts) > 1 else "0") + "\t" +
+                         body.decode("utf-8", "replace").replace("\n", " "))
+else:
+    # SO_LINGER 0 makes `close` send an RST, so the handler's write lands on a dead peer.
+    # Repeated, because whether the reply had already been flushed is a race and one attempt
+    # could miss it; the reviewer's own reproduction took three.
+    for _i in range(6):
+        s = socket.create_connection(("127.0.0.1", port), timeout=15)
+        s.sendall(b"GET /floor.json HTTP/1.1\r\nHost: " + host_hdr + b"\r\n\r\n")
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        s.close()
+    sys.stdout.write("aborted\tsix requests were sent and reset before any reply could be read")
+__PY_TB__
+}
+# ONE grep, named once, used by both the measurement and its anti-vacuity control — so the two
+# cannot drift into asserting different things about different patterns.
+n_tb_count() {
+  local c
+  c="$(grep -c -F -- 'Traceback' "$1" 2>/dev/null || true)"
+  case "$c" in ''|*[!0-9]*) c=0 ;; esac
+  printf '%s' "$c"
+}
+
+n_tb_log="$NUI/$(sed -n 's/^SERVE_LOG="\([^"]*\)".*$/\1/p' "$ENGINE" | head -1)"
+n_tb_a="$(n_tb_probe "$NSHIP_PORT" nonascii)"
+n_tb_b="$(n_tb_probe "$NSHIP_PORT" abort)"
+n_tb_alive="$(n_status "$(n_req "$NSHIP_PORT" GET /index.json "" "" "" "" "")")"
+
+# --- (n33) AC12: a non-ASCII token header is REFUSED BY NAME, not dropped -------------------
+n_tb_bad=""
+[ "$(n_status "$n_tb_a")" = "403" ] || n_tb_bad="$n_tb_bad [status $(n_status "$n_tb_a"), expected 403 — a status of 0 is the pre-fix behaviour: no reply at all]"
+in_str "$(n_body "$n_tb_a")" "token-missing-or-wrong" || n_tb_bad="$n_tb_bad [the reply does not name the refusing part: $(n_body "$n_tb_a")]"
+[ "$n_tb_alive" = "200" ] || n_tb_bad="$n_tb_bad [the handler stopped serving afterwards: GET /index.json answered $n_tb_alive]"
+[ -z "$n_tb_bad" ] \
+  && ok "(n33) AC12: a token header carrying a byte above 127 — reachable PRE-AUTHENTICATION by any caller, and the input on which comparing two str raises TypeError — is refused 403 with the guard part NAMED, and the handler keeps serving" \
+  || no "(n33) AC12: a non-ASCII token header is refused with a named reason" "$n_tb_bad"
+
+# --- (n34) the serve log carries NO traceback after either trigger --------------------------
+n_tb_hits="$(n_tb_count "$n_tb_log")"
+if [ ! -f "$n_tb_log" ]; then
+  no "(n34) the serve log holds no traceback after a non-ASCII token header and an aborted connection" "there is no serve log at $n_tb_log, so this could not be measured at all"
+else
+  [ "$n_tb_hits" = "0" ] \
+    && ok "(n34) after a non-ASCII token header ($(n_status "$n_tb_a")) and six reset connections, the serve log holds ZERO 'Traceback' lines — FloorServer.handle_error collapses every unhandled raise to one audited line in a file the page can itself fetch" \
+    || no "(n34) the serve log holds no traceback after a non-ASCII token header and an aborted connection" "$n_tb_hits 'Traceback' line(s) in $n_tb_log — the multi-line, thread-interleaved dump is back, in a file inside the served root"
+fi
+
+# --- (n35) ANTI-VACUITY: that grep can actually find a traceback ----------------------------
+# Without this, (n34) passes just as happily against a misspelled pattern, an unreadable file,
+# or a `grep -c` whose non-zero exit was swallowed. The plant goes into a scratch COPY, never
+# into the served directory, so the measurement above is not disturbed by its own control.
+n_tb_planted="$N/n-traceback-planted.log"
+{ cat "$n_tb_log" 2>/dev/null || true
+  printf 'Traceback (most recent call last):\n  File "<string>", line 1, in <module>\nTypeError: comparing strings with non-ASCII characters is not supported\n'
+} > "$n_tb_planted" 2>/dev/null
+n_tb_plant_hits="$(n_tb_count "$n_tb_planted")"
+[ "$n_tb_plant_hits" -ge 1 ] 2>/dev/null \
+  && ok "(n35) ANTI-VACUITY: the same grep (n34) uses finds $n_tb_plant_hits planted 'Traceback' line(s) in a scratch copy of that very log — so (n34)'s zero is a measurement, not an empty needle" \
+  || no "(n35) ANTI-VACUITY: (n34)'s traceback scan can find a planted traceback" "the planted copy $n_tb_planted returned $n_tb_plant_hits hits"
+
+# --- (n38)-(n43) THE WRITE PATH CARRIES THE READ PATH'S IN-FLIGHT GUARD --------------------
+# The read poll has held an explicit in-flight flag for as long as it has existed, and
+# (b20)/(b21) assert it: one request at a time, cleared on every settle path, so a hung origin
+# cannot stack fetches. runAction — which backs all four write buttons — had no equivalent. It
+# checked `serverStopped` and the token and fired, so one double-click put two `add` /
+# `scan --confirm` / `forget` requests on the wire at once against a registry that is a single
+# file. The flag is per-PAGE and the assertion claims no more than that: the same URL in a
+# SECOND TAB is a different closure and only the server sees both. The asymmetry with the read-side
+# guard is what makes this a gap rather than an accepted trade-off, so the assertion is written
+# to the same shape and adds the half a write has that a read does not: controls disabled for
+# the length of the request and re-enabled on EVERY exit — including the failing ones, because a
+# button left permanently dead by one network error is a worse defect than the double-click.
+# As in (c13), the rule lives in ONE function so the three controls can point it at a mutant.
+n_write_guard_faults() { # <file> -> the parts of the write-side in-flight guard it is missing
+  local f="$1" bad="" n body
+  has_lit "$f" "var writeInFlight = false;" \
+    || bad="$bad [no write in-flight flag]"
+  has_lit "$f" "if (writeInFlight) { return; }" \
+    || bad="$bad [runAction is not gated on the flag, so a second click is not refused]"
+  has_lit "$f" "writeInFlight = true;" \
+    || bad="$bad [the flag is never raised, so the gate can never fire]"
+  has_lit "$f" "if (!serverStopped) { setActionsDisabled(false); }" \
+    || bad="$bad [the controls are never re-enabled, or the re-enable is not withheld from the stopped state]"
+  body="$(awk '/^  function runAction\(/{f=1} f{print} f&&/^  }$/{exit}' "$f" 2>/dev/null)"
+  in_str "$body" "setActionsDisabled(true);" \
+    || bad="$bad [the controls are not disabled while a write is outstanding]"
+  n="$(occ "$f" 'releaseWrite[(][)];')"
+  [ "${n:-0}" -ge 3 ] 2>/dev/null \
+    || bad="$bad [${n:-0} release site(s), expected one per exit path — resolve, reject, and a request that could not be started at all]"
+  printf '%s' "${bad# }"
+}
+N_WG_MUTANTS=0
+n_wg_faults="$(n_write_guard_faults "$JS")"
+[ -z "$n_wg_faults" ] \
+  && ok "(n38) the write path carries an in-flight guard in the same shape as the read poll's — a flag, an early return, the controls disabled for the length of the request, and a release on each of the three exit paths" \
+  || no "(n38) the write path carries an in-flight guard in the read poll's shape" "$n_wg_faults"
+
+# CONTROL 1 — the guard itself removed. This is the shipped state the finding names: two
+# concurrent writes are reachable by a reader, not only by a hung origin.
+MUT_WG1="$TMPROOT/mut-write-ungated.js"
+sed 's|if (writeInFlight) { return; }||' "$JS" > "$MUT_WG1" 2>/dev/null
+if mutant_ok "$JS" "$MUT_WG1"; then
+  N_WG_MUTANTS=$((N_WG_MUTANTS + 1))
+  m_wg1="$(n_write_guard_faults "$MUT_WG1")"
+  if in_str "$m_wg1" "not gated on the flag"; then
+    ok "(n39) MUTATION CONTROL: a runAction that raises the flag but never RETURNS on it IS flagged by (n38) — so that assertion is reading the gate rather than merely finding the variable"
+  else
+    no "(n39) MUTATION CONTROL: an ungated runAction IS flagged" "n_write_guard_faults said: ${m_wg1:-<clean, so (n38) would pass a write path with no guard at all>}"
+  fi
+fi
+
+# CONTROL 2 — the re-enable removed. A guard whose visible half never comes back leaves every
+# button dead after the first failed write; it is a guard that has become the bug.
+MUT_WG2="$TMPROOT/mut-write-stuck.js"
+sed 's|if (!serverStopped) { setActionsDisabled(false); }||' "$JS" > "$MUT_WG2" 2>/dev/null
+if mutant_ok "$JS" "$MUT_WG2"; then
+  N_WG_MUTANTS=$((N_WG_MUTANTS + 1))
+  m_wg2="$(n_write_guard_faults "$MUT_WG2")"
+  if in_str "$m_wg2" "never re-enabled"; then
+    ok "(n40) MUTATION CONTROL: a guard that disables the controls and never re-enables them IS flagged — the stuck-button failure a network error would otherwise make permanent"
+  else
+    no "(n40) MUTATION CONTROL: controls that are never re-enabled ARE flagged" "n_write_guard_faults said: ${m_wg2:-<clean>}"
+  fi
+fi
+
+# CONTROL 3 — ONE release site dropped. The count is the only part of (n38) that says the
+# release happens on every exit rather than merely somewhere, so it needs its own control: a
+# guard released on two of three paths passes every literal check above.
+MUT_WG3="$TMPROOT/mut-write-one-exit.js"
+awk 'BEGIN{done=0} { if (!done && index($0, "releaseWrite();")) { sub(/releaseWrite\(\);/, ""); done=1 } print }' "$JS" > "$MUT_WG3" 2>/dev/null
+if mutant_ok "$JS" "$MUT_WG3"; then
+  N_WG_MUTANTS=$((N_WG_MUTANTS + 1))
+  m_wg3="$(n_write_guard_faults "$MUT_WG3")"
+  if in_str "$m_wg3" "release site(s)"; then
+    ok "(n41) MUTATION CONTROL: dropping ONE of the three release sites IS flagged — every literal in (n38) still matches that file, so the per-exit-path count is doing work no presence check does"
+  else
+    no "(n41) MUTATION CONTROL: a missing release site IS flagged" "n_write_guard_faults said: ${m_wg3:-<clean>}"
+  fi
+fi
+
+# ANTI-VACUITY: all three controls must have EXECUTED. Each sits inside an `if mutant_ok`, and
+# a sed whose anchor has moved yields an identical copy — mutant_ok reddens, but the control it
+# guards is then silently not run, which is exactly how a gate goes vacuous without going red.
+[ "$N_WG_MUTANTS" = "3" ] \
+  && ok "(n42) ANTI-VACUITY: all three (n38) mutation controls EXECUTED — none of (n39), (n40) or (n41) was skipped inside its if" \
+  || no "(n42) ANTI-VACUITY: all three (n38) mutation controls executed" "$N_WG_MUTANTS of 3 ran — a control that did not run proves nothing about (n38)"
+[ "$(csum "$JS")" = "$JS_SIG_BEFORE" ] \
+  && ok "(n43) floor.js is byte-identical after the three (n38) mutation controls (sha256 unchanged)" \
+  || no "(n43) floor.js is byte-identical after the (n38) mutation controls" "before='$JS_SIG_BEFORE' after='$(csum "$JS")'"

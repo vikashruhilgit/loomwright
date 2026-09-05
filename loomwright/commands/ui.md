@@ -17,7 +17,7 @@ The Floor is a single static page — three files, no framework, no bundler, no 
 
 `/ui` fixes the first directly and the second through a **project registry** — a small JSON file, `projects.json`, sitting *beside* the ui directory rather than inside it, so `remove` cannot take the user's list of projects with it. One server on one port then serves every registered project, chosen **in the page** rather than by which terminal you happened to be in.
 
-**A project appears on the page only because a human ran `add` (or confirmed a `scan`).** There is no discovery-on-serve, and the page itself has no write path of any kind — it fetches two documents and sends nothing.
+**A project appears on the page only because a human ran `add` (or confirmed a `scan`), or because someone with this run's token pressed one of the four buttons on the page.** There is no discovery-on-serve. The page has exactly **four** write paths — `add`, `forget`, `scan`, `stop` — each a guarded `POST`; everything else it does is reading two documents.
 
 ## Usage
 
@@ -85,6 +85,7 @@ Run it **from the project root**. Relay the headline (`serve: 127.0.0.1:<port> �
 - **The `projects:` line states the cadence, not just the count.** The selected project regenerates every `--interval` seconds; the others one at a time on a slower cadence. That is not an oversight: one projector run costs about a second, so regenerating every project on every tick would starve the loop and render everything permanently stale.
 - **The `open:` URL may carry `?stale=<n>`.** The page cannot see `--interval` — it judges freshness against three times its own fixed 2 s poll — so with a longer interval `serve` prints the URL that keeps the page from calling a perfectly current document stale. Relay whichever URL it printed; do not construct one.
 - Fail-safe branches to relay **verbatim**: `serve: ABORTED — python3 not found`; `serve: ABORTED — <dir> does not exist. Run 'setup-ui.sh apply' first.`; `serve: ABORTED — build-floor.sh not found …` (suggest `--no-regen`); `serve: ABORTED — port <n> is already in use` — **this module never moves the port for you**, because a silently moved port is a browser tab reading bytes from something else; and the non-fatal `serve: note — jq not found …`.
+- **The `open:` URL also carries `#token=<this run's token>`. Relay it whole and say to open THAT url, not a bare one.** The token is per-run, lives only in the fragment (which a browser never sends to any server), and is what the page's four buttons — add, forget, scan, stop — must present to be accepted. A bare `http://127.0.0.1:<port>/` still renders everything; only the buttons are refused, and the page says so. Never invent, echo back or store the token anywhere: it dies with the server, and `serve`'s own output is the only place it is meant to appear. The extra fail-safe branch to relay verbatim is `serve: ABORTED — could not mint a per-run access token …` — nothing was started.
 - Foreground is the default and Ctrl-C is enough. `--detach` records pids in `<ui dir>/serve.pid`.
 
 ### `stop`
@@ -93,7 +94,7 @@ Run it **from the project root**. Relay the headline (`serve: 127.0.0.1:<port> �
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-ui.sh" stop
 ```
 
-Kills **only** pids whose command line names `http.server` or `setup-ui.sh`, and prints `stop: no-op` when there is no recorded server. Relay `no-op` as the ordinary answer it is, never as a failure.
+Kills **only** pids whose command line names `http.server` or `setup-ui.sh`, and prints `stop: no-op` when there is no recorded server. Relay `no-op` as the ordinary answer it is, never as a failure. The page's own **Stop this server** button runs this same verb, so a stop from the page and a stop from here leave identical state — the pidfile removed and the regeneration loop down with the listener.
 
 ### `add`
 
@@ -137,8 +138,8 @@ A convenience over `add`. A candidate is a directory containing `.git`, and the 
 
 ## Constraints
 
-- **Loopback only.** `serve` always passes `--bind 127.0.0.1`. There is no flag to change that and no code path that omits it. `floor.json` carries branch names, session ids and agent ids: the bind address is the whole security posture and it is deliberately not negotiable at the command line.
-- **The page only reads.** It fetches two relative paths (the served index, then the selected project's floor document) with no `method` option, and it declares a self-only content policy. Adding a write path here would invalidate the stated reason there is no auth layer.
+- **Loopback only.** `serve` binds `127.0.0.1` in the listener itself. There is no flag to change that and no code path that omits it. `floor.json` carries branch names, session ids and agent ids — but since the page can now write, **the bind address is no longer the whole security posture**: a loopback port is not a security boundary in a browser, because any site open in another tab can `POST` at it. See `docs/FLOOR_UI.md` §"Why the guard exists".
+- **The page reads freely and writes only through four guarded routes.** Reads are two relative paths (the served index, then the selected project's floor document) under a self-only content policy. Writes are `add` / `forget` / `scan` / `stop`, each requiring **all four** of: this run's bearer token, carried in a **custom header** (which forces a preflight a hostile cross-origin page cannot satisfy), a valid `Origin`, and a loopback `Host`. The earlier note here said adding a write path would invalidate the reason there was no auth layer — correct, and that is exactly why the guard exists: the auth layer arrived with the write path. `apply` and `remove` are still unreachable from the page **by decision**, since a page able to uninstall itself buys nothing.
 - **This command never installs and never deletes.** `apply` and `remove` are `/setup ui`'s, and both WITHHOLD on a directory this module did not create.
 - **Never re-run a refusal to "get past" it.** `WITHHELD`, `ABORTED` and `no-op` are all exit-0 answers with a named reason; surface the reason and stop.
 - Do not hand-edit the registry on the user's behalf. If it is `UNREADABLE`, report the path and the reason and let the user fix or delete it.

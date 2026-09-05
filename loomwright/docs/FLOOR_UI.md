@@ -17,10 +17,12 @@ Claude Code run  →  .supervisor/{state.md, jobs/, logs/, …}     (the project
                     .supervisor/floor/floor.json                 (ONE versioned contract)
                           │
                           ▼  setup-ui.sh serve  (copies it into the ui dir on an interval)
-                    python3 -m http.server --bind 127.0.0.1
+              a stdlib request handler bound to 127.0.0.1        (GET unchanged; 4 guarded writes)
                           │
                           ▼  fetch('floor.json', {cache: 'no-store'}) every 2 s
                     index.html + floor.css + floor.js            (the page)
+                          │
+                          ▲  POST api/{add,forget,scan,stop} + X-Floor-Token   (see §"Why the guard exists")
 ```
 
 The count of inputs on the first line is stated **once**, in `build-floor.sh`'s own header — "spread across FOURTEEN projected surfaces in five formats" — with the counting basis (one key under `surfaces`, which is *not* the number of directories read) spelled out beside it. That sentence is quoted here rather than paraphrased into a fourth independent copy of the number: this document carried the previous, smaller count for a release after the projector had already outgrown it, and no gate could see it because nothing tied the two sentences together. `test-setup-ui.sh` case (z8) now reads the words out of `build-floor.sh` and requires this quote to match them.
@@ -45,11 +47,14 @@ The page shows, top to bottom:
 
 1. runs `build-floor.sh` from the **current project root** (skip this with `--no-regen`),
 2. copies `.supervisor/floor/floor.json` into the ui directory,
-3. serves the ui directory with `python3 -m http.server --bind 127.0.0.1 --directory <ui dir> <port>`.
+3. serves the ui directory with a **stdlib request handler** (`ThreadingHTTPServer` + a subclass of the very `SimpleHTTPRequestHandler` that `python3 -m http.server` itself instantiates), bound to `127.0.0.1` and rooted at the ui directory.
+
+**`GET` is unchanged by construction, not by care.** The handler subclasses the same class over the same directory and overrides nothing on the read path, so every byte the old static server answered is the byte this one answers — asserted by fetching each document from **both** servers in the same test run and diffing. Anything not explicitly routed still answers exactly what it answered before, `501` for an unrouted write included. Everything added is on the **write** side, and all of it is behind the guard below.
 
 - **Interval** is `--interval` seconds, default **2**, minimum 1. `build-floor.sh` takes ~0.5 s on a 13k-line log tree here, and the loop runs it **synchronously**, so two regenerations can never overlap regardless of interval.
 - **Port** is `--port`, default **7734**. A busy port is **reported and the server does not start** — this module never moves the port for you, because a silently moved port is a browser tab reading bytes from something else.
-- `--detach` returns immediately and records the pids in `<ui dir>/serve.pid`; `setup-ui.sh stop` kills only pids whose command line names `http.server` or `setup-ui.sh`. Foreground is the default and Ctrl-C is enough.
+- `--detach` returns immediately and records the pids in `<ui dir>/serve.pid`; `setup-ui.sh stop` kills only pids whose command line names `http.server` or `setup-ui.sh`. That guard was **matched, not widened**, when the server was replaced: the handler is launched with the engine's own path in its argv, so the existing pattern keeps matching it verbatim. The refusal half — a pidfile naming a process that is *not* this module's, reported as `not killed … (not-ours)` and left running — had zero test coverage until item 07 and now has its own case, because a guard nobody exercises is a guard nobody would notice going too far. Foreground is the default and Ctrl-C is enough.
+- **`serve` prints one URL carrying this run's token in the `#fragment`.** Open *that* URL. A fragment is never transmitted to any server, so the token cannot reach a request line, an access log, a proxy or a referrer header; the page reads it once and strips it from the address bar, so it cannot leak through history, a bookmark or a screenshot either. Opening a bare `http://127.0.0.1:<port>/` still works — the page reads everything — but the four buttons will be refused, and the page says so rather than failing silently.
 - **`python3 >= 3.7`** is the only runtime requirement, and only for `serve` (both `--bind` and `--directory` date from 3.7). `jq` is a dependency of `build-floor.sh`, not of this engine: without it the page still serves and simply says how stale the copy it is showing has become.
 
 ### Query parameters (both read from the page URL)
@@ -97,6 +102,42 @@ A project whose directory is deleted **while `serve` is running** flips to `unav
 
 **Nothing is written into a registered project except its own `.supervisor/floor/floor.json`**, and that only by running `build-floor.sh` inside it. `add`, `list`, `forget` and `scan` touch exactly one file between them — the registry — and `list` touches none.
 
+**Four of those verbs can also be reached from the page.** The projects section carries a path field and five buttons — *Add it*, *Scan it for candidates*, *Register the candidates*, *Forget the shown project*, *Stop this server* — covering exactly four endpoints (`scan` proposes and confirms through the same one). Each button **runs the command**: the endpoint shells back into this same engine, so `scan`'s propose-then-`--confirm` contract, `forget`'s registry-only edit and every named refusal are identical whether they were reached from the page or from a terminal. They are **buttons and never a `<form>`** — a form is a cross-origin write primitive that needs no script and cannot carry a custom header, which is the exact shape the guard refuses. Every one of them goes through the four-part guard in §"Why the guard exists"; leaving the path field empty means *the directory this serve was launched in*, which is the one path that skips confinement because it never came from the page.
+
+**After `stop`, the page says so.** It renders a distinct **stopped** state — not a spinner, not the last floor presented as current, and no console error: the single poll keeps ticking and does nothing, the controls disable, and the banner states that this server was stopped from this page and how to start it again.
+
+## Why the guard exists
+
+Read this before removing anything below it. Item 04 shipped the page with **no authentication at all**, and justified it: *"there is nothing to authenticate against on loopback."* That was **sound for a page that could only render**, and it stopped being sound the moment a write existed. The four buttons are the moment.
+
+**A loopback port is not a security boundary in a browser.** Two concrete attacks, neither hypothetical:
+
+1. **The other tab.** Any site you have open in another tab can run `fetch('http://127.0.0.1:7734/api/add', {method: 'POST', …})`. The browser's same-origin policy stops that page **reading the reply** — it does not stop the request being **sent**. For a simple request the write has already landed by the time anything is blocked, and the attacker never needed to see the response: they only needed the write.
+2. **DNS rebinding.** A name the attacker controls resolves first to their own server (so their script loads), then re-resolves to `127.0.0.1`. Their page is now *same-origin with your loopback server* as far as the browser is concerned, so even the reply is readable. **In the general case an `Origin` check does not stop this** — the Origin the browser sends is the attacker's own name, and any check that *reflects* the Origin, or matches it against a pattern the attacker can satisfy, is defeated by a name they own. **Stated precisely for this server, because the stronger version of the claim is false here:** `ALLOWED_ORIGINS` is a fixed list of loopback literals, which the rebound name cannot match either — so on this implementation the `Origin` check *also* blocks attack 2, independently. `Host` is still required, for two reasons that survive that. It does not depend on the browser choosing to send an `Origin` at all, so it is the part that holds if the Origin policy is ever loosened to a pattern — the exact edit that would silently re-open this. And it is the check whose *subject* is the attack: `Host` is where a rebound name actually shows up. Keeping both is defence in depth against a future edit to either one, not redundancy.
+
+So every mutating request must satisfy **all four** of these together. Each one alone is defeatable, which is why none of them is optional:
+
+| Part | What it is | What it stops | What it does **not** stop |
+|---|---|---|---|
+| **A per-run bearer token** | minted fresh by `serve`, handed to the handler through the environment, never in argv (`ps` is world-readable), never written to a file, never logged, never in the served HTML. It dies with the server. | a page that guesses the endpoint but not the secret | nothing, on its own, if the secret can be sent by a channel that needs no preflight |
+| **Sent in a custom header** (`X-Floor-Token`) | a custom header makes the request **non-simple**, so the browser must win a CORS **preflight** first — and this server answers no preflight at all | attack 1: the other tab's write is never sent, rather than being sent and merely unreadable | a request that is same-origin already |
+| **`Origin` validated** | must be this server, under a loopback spelling. **Absent is refused too** — `fetch` sets an Origin on every cross-origin request, so its absence on a write is not the page this server serves | a scripted cross-origin write that somehow got past the preflight — **and, because the allowlist is loopback literals rather than a pattern, attack 2 as well** | a genuinely same-origin request; and it would stop covering attack 2 the moment this allowlist became a pattern, which is why `Host` is not optional |
+| **`Host` validated** | must be `127.0.0.1`, `localhost` or `[::1]`, with or without the port | **attack 2 on every mutating route** — a rebound name reaches this socket carrying the attacker's own name in `Host`. Here it blocks that attack *alongside* the fixed-allowlist `Origin` check rather than instead of it (see attack 2 above); it is the half that does not depend on an `Origin` being sent, or on that allowlist staying literal | a genuinely same-origin request, which is the point — and it is not reached on a `GET` at all: see the note directly below |
+
+**Scope, stated rather than implied: this guard is on the write side and only there.** `_host_ok` is reached from `do_POST` and from nowhere else, so `Host` validation stops attack 2 **for every mutating route** — and for nothing beyond them. A rebound page is still same-origin with this server for a **read**, so it can fetch `floor.json` and `index.json`, which carry branch names, session ids and agent ids. That read exposure is **unchanged from the static-server era**: `GET` is byte-for-byte what `python3 -m http.server` answered (§"The serve loop"), and on the read path the loopback bind is still the whole of the protection, exactly as it was before there were any buttons. Closing it would mean changing `GET`, which this release deliberately does not do — §"Local-only posture" is the standing statement of what follows from that: `floor.json` is local data, and anything with a browser on this machine is inside the boundary.
+
+**A path typed into the page is untrusted input, not a filename.** It becomes a directory the projector runs in, so it is resolved, confined to the permitted root (**your home directory** — the serve's own `$HOME`), and refused **with a named reason** when it is not an existing directory, contains a `..` segment, or is a symlink resolving outside that root. `realpath` is what makes the symlink case work: a link inside your home pointing at `/etc` resolves to `/etc` and is refused by the same comparison that refuses a literal `/etc`. The **command line is deliberately not confined this way** — `setup-ui.sh add /anywhere` still works. That asymmetry is the design: the terminal is the trusted channel and the browser is not.
+
+**Every guard part is proven load-bearing by a control that removes it.** `test-setup-ui.sh` group (n) disables each part **alone** — the token comparison, the header *name* (moved to the CORS-safelisted `Content-Language`, which is exactly the simple-request hole), the `Origin` check, the `Host` check — and requires the previously-refused request to **succeed** against the mutant. Without those four, the suite could not tell a working guard from a guard that never fires, and a fifth assertion goes red if any of the four controls is ever silently skipped.
+
+**What is deliberately NOT here**, so nobody adds it back believing it was an oversight:
+
+- **No fifth endpoint.** `add`, `forget`, `scan`, `stop` — and no more. `apply` and `remove` are excluded **by decision**: they are install-level, and a page able to uninstall itself buys nothing and risks something.
+- **No `Access-Control-Allow-Origin` on any response, ever**, and no preflight answer. Adding either re-opens attack 1 in one line.
+- **No binding beyond loopback.** The guard is defence in depth for a loopback listener; it is not permission to expose one.
+- **No accounts, no passwords, no sessions.** The token authenticates *this browser tab to this server run* and nothing more.
+- **No remembering the token across runs.** A per-run secret that survived a restart would be a stored credential with none of the handling a stored credential deserves.
+
 ## Honest states
 
 The page never renders a blank screen, a spinner, or a console error. Exactly one of these is shown when there is nothing normal to draw. There were three of them until a review found the fourth hiding inside the second — an idle claim being made from evidence the projector had declined to give:
@@ -127,17 +168,36 @@ These limits are copied from the source requirement's 2026-09-03 amendment and a
 - **A lane's number is events, not turns and not progress.** It counts recorded log lines for that `agent_id` in the newest session. Two lanes with the same count have not necessarily done the same amount of work.
 - **The `state.md` phase can be stale on a real machine** (it has read `status: running` for long stretches). The page shows the state surface's own `mtime_epoch` age beside the phase and never labels a run "live".
 
+
+**It does not claim the registry is safe against two writers at once.** Every registry edit is a
+read-modify-write — snapshot the JSON, compute the new document, write it to a temp file and
+`mv` it into place. The `mv` makes each write *atomic*, so no reader ever sees a half-written
+registry and a crash mid-write leaves the previous document intact. What it does **not** do is
+serialise two writers: two engine invocations racing on the same registry each snapshot the same
+starting document, and whichever `mv` lands last wins — silently discarding the other's `add` or
+`forget` rather than erroring or merging.
+
+That is a **single-writer assumption**, and it is stated here because nothing else stated it. In
+practice it holds: the registry is edited by a human running a verb, or by one page holding one
+run's token. The page's own write path additionally holds an in-flight flag, so a double-click
+cannot produce the race from within one document — but that flag is per-page, so two tabs open on
+the same `#token=` URL are two closures and only the server sees both. Closing this properly means
+a cross-process lock, and `flock` is not on stock macOS, so it means a hand-rolled one inside a
+script whose whole contract is *always exit 0, never leave a partial write*. That is its own
+change with its own tests, not a clause here.
+
 ## Local-only posture
 
 `floor.json` is a projection of this machine's run state and **it carries branch names, session ids and agent ids**. Treat it as local data:
 
-- `serve` **always** passes `--bind 127.0.0.1`. There is no flag to change that and no code path that omits it — the bind address is the whole security posture and it is deliberately not negotiable at the command line.
+- `serve` **always** binds `127.0.0.1`. There is no flag to change that and no code path that omits it. The bind address is **no longer the whole security posture** — that sentence was here while the page could only render, and §"Why the guard exists" is what replaced it — but it is still not negotiable at the command line.
 - `index.html` carries a `Content-Security-Policy` meta with `default-src 'self'` (and `connect-src 'self'`), `floor.js` fetches only relative paths it builds itself — `floor.json`, the served index `index.json`, and `projects/<encoded slug>/floor.json` (the slug is passed through `encodeURIComponent`, and the engine additionally shape-filters it before ever writing such a slot), and the bundle contains no absolute URL, no protocol-relative reference, no `@import`, no preconnect and no web font — system font stacks only. `test-setup-ui.sh` scans all three files for each of those and carries a mutation control, so the scan cannot rot into a check that passes on anything.
-- `python3 -m http.server` serves the **whole ui directory**, which is why the ui directory holds only the three bundle files, the marker, an optional `serve.pid`, the `floor.json` copy, the served index `index.json` and the `projects/<slug>/floor.json` slots — nothing else is ever written there, and every one of those is a projection this machine already produced. The registry itself is deliberately **not** in that directory and is therefore never served: absolute project paths are not something a page needs, and the served index carries only what the picker actually renders.
+- The handler serves the **whole ui directory**, which is why the ui directory holds only the three bundle files, the marker, an optional `serve.pid`, the serve log `serve.log`, the `floor.json` copy, the served index `index.json` and the `projects/<slug>/floor.json` slots — nothing else is ever written there, and every one of those is a projection this machine already produced. The registry itself is deliberately **not** in that directory and is therefore never served: absolute project paths are not something a page needs, and the served index carries only what the picker actually renders.
+- **The token appears in none of those bytes.** `test-setup-ui.sh` reads every document back **off the wire** (not off disk — the claim is about what a browser receives), greps every file under the ui directory and the registry beside it, and greps the server's own captured stdout and stderr, with an anti-vacuity case proving that same grep can find a planted token. The one place a human ever sees it is the URL `serve` prints.
 
 ## What it writes — the whole list
 
-1. **The ui directory** (default `$HOME/.claude/loomwright/ui`, overridable with `--ui-dir`, which is how every self-test runs inside a `mktemp -d`): the three bundle files, the ownership marker `.loomwright-ui-module`, an optional `serve.pid`, a copy of `floor.json`, **the served index `index.json`**, and one **`projects/<slug>/floor.json`** per registered project that `serve` has reached. `index.json` is written by `serve` alone — atomically, temp-file-then-`mv`, so a poll landing mid-write reads the previous document rather than half of this one — and it is the page's ONLY source for the project picker, the module's own state and per-project freshness. The page is a reader, so everything it can show has to be a file the static server can already hand it.
+1. **The ui directory** (default `$HOME/.claude/loomwright/ui`, overridable with `--ui-dir`, which is how every self-test runs inside a `mktemp -d`): the three bundle files, the ownership marker `.loomwright-ui-module`, an optional `serve.pid`, **the serve log `serve.log`**, a copy of `floor.json`, **the served index `index.json`**, and one **`projects/<slug>/floor.json`** per registered project that `serve` has reached. `serve.log` is the request handler's own stdout and stderr, which used to go to `/dev/null` and took every traceback with them; it records **one line per mutating request** — the route and the outcome — **plus one line for a request that could not be answered at all** (`FloorServer.handle_error`, which is what keeps an aborted connection or an unexpected raise to a line instead of a multi-line traceback interleaved across threads), and never a caller-supplied string, so it can be neither injected into nor made to leak the token. A read that completes is not logged, so the page's own two-second poll never grows it. It sits **inside the served root like everything else in that directory**, so `GET /serve.log` returns it — which is precisely why nothing a caller supplied, and no traceback, may ever be written into it. `index.json` is written by `serve` alone — atomically, temp-file-then-`mv`, so a poll landing mid-write reads the previous document rather than half of this one — and it is the page's ONLY source for the project picker, the module's own state and per-project freshness. The page is a reader, so everything it can show has to be a file the static server can already hand it.
 2. **`.supervisor/floor/floor.json` under the current project root, and under each registered project root that `serve` regenerates** — and only ever by running `build-floor.sh` in that directory, never by writing that path directly. `serve --no-regen` makes even that write impossible. A project reaches this list only because a human ran `add`.
 3. **The project registry `projects.json`**, sitting *beside* the ui directory (in its parent), overridable with `--registry`. Only `add`, `forget` and a **confirmed** `scan` write it; `check`, `list` and an unconfirmed `scan` only read it. Its being a sibling rather than a file inside the ui directory is load-bearing: `remove` deletes the ui directory, and the user's list of projects has to outlive that. Registering a project writes **nothing into the project itself**, and `forget` never touches the directory it is forgetting.
 
@@ -149,7 +209,7 @@ Nothing else, anywhere. It never touches the user-scope settings document (that 
 /setup ui              # check → report → offer, including remove when it is installed
 ```
 
-`remove` deletes the ui directory **only** when the `.loomwright-ui-module` marker is present *at the resolved path*, and it additionally refuses `/`, `$HOME`, and anything at or under the plugin install directory. The resolved path is the **physical** one (`cd -P` / `pwd -P`): bash's logical `pwd` hands back the path you typed with its symlinks intact, so those three refusals would never see a target reached through a symlinked parent. A `--ui-dir` that is **itself a symlink** is refused outright — unlinking it would leave every byte of the target in place under a report saying it was removed, and a false "removed" is worse than a refusal. A directory without the marker is **reported and preserved** — `--ui-dir` is user-supplied, and a typo pointing at a real directory must not cost you that directory. Removal takes the bundle, the marker, the pidfile and the `floor.json` copy with it; the projection under `.supervisor/floor/` is regenerable and is left alone.
+`remove` deletes the ui directory **only** when the `.loomwright-ui-module` marker is present *at the resolved path*, and it additionally refuses `/`, `$HOME`, and anything at or under the plugin install directory. The resolved path is the **physical** one (`cd -P` / `pwd -P`): bash's logical `pwd` hands back the path you typed with its symlinks intact, so those three refusals would never see a target reached through a symlinked parent. A `--ui-dir` that is **itself a symlink** is refused outright — unlinking it would leave every byte of the target in place under a report saying it was removed, and a false "removed" is worse than a refusal. A directory without the marker is **reported and preserved** — `--ui-dir` is user-supplied, and a typo pointing at a real directory must not cost you that directory. Removal takes the bundle, the marker, the pidfile, the serve log and the `floor.json` copy with it; the projection under `.supervisor/floor/` is regenerable and is left alone.
 
 ## Troubleshooting
 
@@ -161,6 +221,9 @@ Nothing else, anywhere. It never touches the user-scope settings document (that 
 | The page says `no floor.json at this origin` | `serve` has not copied one yet (first tick), or you are serving a ui dir that was never applied to. Run `/setup ui` and re-check. |
 | Everything renders but every lane says `identity unknown` | Expected on most sessions — see §"What it does not claim". The roster strip is still complete, because it comes from agent frontmatter rather than from logs. |
 | `apply: WITHHELD — … carries no .loomwright-ui-module marker` | The ui directory exists but this module did not create it. Nothing was written. Point `--ui-dir` somewhere else, or remove that directory yourself. |
+| A button says the write was **REFUSED by the server guard** | Almost always the token: you opened a bare `http://127.0.0.1:<port>/` rather than the `#token=…` URL `serve` printed, or you are looking at a tab left over from a **previous** run (the token is per-run and dies with the server). Re-open the URL this run printed. The refusal names which of the four parts said no. |
+| A path is refused with `path-outside-permitted-root` | A path supplied **through the page** is confined to your home directory, and `realpath` is applied first — so a symlink pointing outside is refused exactly like a literal outside path. Use `setup-ui.sh add <path>` from a terminal, which is the trusted channel and is not confined. |
+| `serve: ABORTED — could not mint a per-run access token` | `python3`'s `secrets` module produced nothing usable. Nothing was started and nothing was written; the module will not serve write endpoints without a token rather than serve them unguarded. |
 
 ## Reference
 
