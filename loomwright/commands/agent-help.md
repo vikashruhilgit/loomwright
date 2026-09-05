@@ -818,7 +818,8 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 **Usage:**
 ```
 /ui                       # same as `/ui check` — module state and registry state in one report
-/ui serve                 # start the floor on 127.0.0.1:7734 (Ctrl-C stops it; --detach backgrounds it)
+/ui serve --detach        # start the floor on 127.0.0.1:7734 — AGENT PATH, always --detach; returns at once
+#                           (bare `serve` is foreground and Ctrl-C stops it: a human in their own terminal only)
 /ui stop                  # stop a server this module recorded
 /ui add [<path>]          # register the current project (or <path>)
 /ui list                  # slug, path and last-regenerated age for each registered project

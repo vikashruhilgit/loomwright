@@ -151,6 +151,25 @@
 #       FOUR staleness verdicts — owner exited, pid reused, ownerless-and-old, and the arm that
 #       an ownerless-and-FRESH lock is left alone, without which a detector that called every
 #       lock stale would pass the other three while destroying the mechanism
+#   (p) AC-no-blocking-foreground-serve — a command body may not instruct the agent to run a
+#       FOREGROUND `serve`, because on that caller the call blocks until the tool timeout and
+#       the EXIT trap then kills the server it just started. The scan covers ALL of
+#       commands/*.md — agent-help.md included, it being the mirror an earlier pass missed —
+#       AND scripts/*.sh (all but this suite's own source, which cannot be its own subject —
+#       see (p0b)), so that the runtime carve-out is a discrimination the guard has to
+#       implement rather than a clause that is true for nothing: the engine's own printed
+#       `foreground: Ctrl-C to stop` must be SEEN and NOT flagged, and the same words written
+#       as a directive in the same file must be. Plus controls for the un-detached invocation,
+#       the un-scoped sentence and the agent-help mirror
+#   (q) AC-a11y-static — the accessibility half of the non-negotiables, which no test backed
+#       until now: the skip link, the banner's role=status AND aria-live=polite on one element,
+#       and the closing form count(<section carrying aria-labelledby) == count(<section) == 7,
+#       taken over MULTI-LINE-stripped text. Two removal controls, because one cannot see both
+#       failures — remove the attribute, and MOVE it onto a non-section sibling, which leaves
+#       both document-wide totals at 7 and would pass a two-count guard. Plus a control for the
+#       stripper itself (the reflexive one-line sed strips nothing in this file), an
+#       anti-vacuity guard tying (j36)'s enumeration input to the section count with a rename
+#       mutant, and AC16's captions counted per section
 #
 # NO `producer | grep -q` PIPELINES (SIGPIPE turns a match into rc=141 under pipefail).
 
@@ -5471,3 +5490,381 @@ case "${p_port:-x}" in
       || no "(p3) ANTI-VACUITY: the detector stops naming a killed server" \
            "pid $p_pid still reported after $((p_wait / 4))s — the detector matches regardless of liveness, which would make (p1) permanently red" ;;
 esac
+# =========================================================================================
+# (r) AC-no-blocking-foreground-serve — a COMMAND BODY may not tell the agent to run a
+#     foreground `serve`.
+#
+# WHY THIS GROUP EXISTS. `do_serve` without `--detach` ends in `wait` under an EXIT trap.
+# That is correct for a human who owns the shell the server is attached to. It is broken for
+# an agent: the call blocks until the tool times out, the tool kills the process, the trap
+# fires, and the server the agent just started is killed with it — a hung turn and nothing
+# running. The engine is right; the command bodies were describing the wrong caller.
+#
+# THE SCAN COVERS TWO GLOBS AND EXCLUDES NO FILE. `loomwright/commands/*.md` in full —
+# `agent-help.md` above all, because it is the surface an earlier pass of this work missed and
+# narrowing the file set to make the gate pass would be the gate-relaxation this module's
+# requirement forbids — AND `loomwright/scripts/*.sh`, so the runtime carve-out below is a
+# discrimination the guard has to IMPLEMENT rather than a sentence that is true for nothing.
+# A guard scoped to `commands/*.md` alone could say "it does not flag setup-ui.sh" while never
+# having looked at a shell script: self-satisfiable, which is a defect class this repo has
+# already recorded more than once.
+#
+# IT KEYS ON SERVE/FOREGROUND SEMANTICS, NOT ON THE WORD "blocking". Nineteen command files
+# use "blocking" in the unrelated subagent sense; a keyword guard would demand edits to files
+# this change has no business touching.
+#
+# no_blocking_foreground_serve <file>... -> one `file:line: text` record per OFFENDING line.
+# nbfs_candidates <file>...              -> every line the guard CONSIDERED, offending or not.
+# The second exists so the runtime carve-out can be asserted the only way that means anything:
+# that the engine's own `foreground: Ctrl-C to stop` was SEEN and then deliberately not flagged,
+# rather than never having been looked at.
+nbfs_scan() {   # <mode: flag|candidates> <file>...
+  local mode="$1"; shift
+  local f
+  for f in "$@"; do
+    [ -r "$f" ] || continue
+    awk -v file="$f" -v mode="$mode" '
+      BEGIN { md = (file ~ /\.md$/) }
+      {
+        line = $0; low = tolower(line); cand = 0
+        # CLASS I — an INVOCATION of the serve verb. Scoped to .md because a command body is
+        # prose that INSTRUCTS an agent, whereas a shell script running or naming the verb is
+        # code and a test that exercises the foreground branch on purpose. That is a statement
+        # about what the text IS, not a per-file exclusion: every commands/*.md is in it.
+        if (md && line ~ /(setup-ui\.sh"?|\/ui|\/setup ui)[ \t]+serve([^a-zA-Z0-9_-]|$)/) cand = 1
+        # CLASS F — a FOREGROUND / Ctrl-C description of serve, in EITHER glob.
+        if (line ~ /Ctrl-C/ && (line ~ /serve/ || low ~ /foreground/)) cand = 1
+        if (!cand) next
+        if (mode == "candidates") { printf "%s:%d: %s\n", file, NR, substr(line, 1, 140); next }
+        # E1 RUNTIME EMISSION. A line the process PRINTS is output to whoever is watching the
+        # terminal, and at a terminal "Ctrl-C to stop" is unconditionally true. This is the
+        # carve-out the .sh half of the scan exists to make load-bearing — and (r5) proves it
+        # discriminates, by putting the same words in the same file as a directive instead.
+        if (line ~ /^[ \t]*(echo|printf)[ \t]/ || line ~ />&2/) next
+        # E2 CALLER-SCOPED. The defect was prose that never said which caller it described, so
+        # the exemption is that the line NAMES one.
+        if (low ~ /human/ || low ~ /agent/) next
+        # E3 the invocation already carries --detach, which is the fix itself.
+        if (line ~ /--detach/) next
+        printf "%s:%d: %s\n", file, NR, substr(line, 1, 140)
+      }
+    ' "$f"
+  done
+}
+no_blocking_foreground_serve() { nbfs_scan flag "$@"; }
+nbfs_candidates()              { nbfs_scan candidates "$@"; }
+
+# THE ONE FILE THE .sh HALF DOES NOT SCAN IS THIS ONE, and the reason is the precedent already
+# recorded a few hundred lines up for `code_occ`: a scanner that is its own subject turns every
+# truthful sentence ABOUT it into a violation of it, and the only way to go green is to stop
+# describing the guard accurately. That is a gate pressuring the next author into deleting a
+# correct line, which this repo has resolved once before by SCOPING the gate rather than
+# contorting the source. It costs nothing here: (r5) proves the directive-vs-emission
+# discrimination on a COPY that is inside the scanned set, and (r0b) asserts the exclusion is
+# exactly one file and is this file — not a list that could quietly grow to cover a real defect.
+NBFS_SELF="$script_dir/test-setup-ui.sh"
+
+P_CMD_DIR="$script_dir/../commands"
+P_TMP="$(mktemp -d 2>/dev/null || mktemp -d -t nbfs)"
+[ -d "$P_TMP" ] || setup_fail "(r) fixture: could not create a scratch directory for the mutation controls"
+P_UI_SIG_BEFORE="$(csum "$P_CMD_DIR/ui.md")"
+P_SETUP_SIG_BEFORE="$(csum "$P_CMD_DIR/setup.md")"
+P_HELP_SIG_BEFORE="$(csum "$P_CMD_DIR/agent-help.md")"
+P_ENG_SIG_BEFORE="$(csum "$ENGINE")"
+
+# --- (r0) the scan really has both globs, and agent-help.md is provably inside one ---------
+p_md_files=""; for f in "$P_CMD_DIR"/*.md; do [ -f "$f" ] && p_md_files="$p_md_files $f"; done
+p_sh_all=""; p_sh_files=""; p_sh_skipped=""
+for f in "$script_dir"/*.sh; do
+  [ -f "$f" ] || continue
+  p_sh_all="$p_sh_all $f"
+  if [ "$f" = "$NBFS_SELF" ]; then p_sh_skipped="$p_sh_skipped $f"; else p_sh_files="$p_sh_files $f"; fi
+done
+p_md_n="$(printf '%s' "$p_md_files" | tr ' ' '\n' | sed '/^$/d' | awk 'END{print NR+0}')"
+p_sh_n="$(printf '%s' "$p_sh_files" | tr ' ' '\n' | sed '/^$/d' | awk 'END{print NR+0}')"
+p_help_in=0; case " $p_md_files " in *" $P_CMD_DIR/agent-help.md "*) p_help_in=1 ;; esac
+p_eng_in=0;  case " $p_sh_files "  in *" $ENGINE "*) p_eng_in=1 ;; esac
+[ "$p_md_n" -ge 20 ] && [ "$p_sh_n" -ge 10 ] && [ "$p_help_in" -eq 1 ] && [ "$p_eng_in" -eq 1 ] \
+  && ok "(r0) the guard's subject is every commands/*.md ($p_md_n files, agent-help.md among them) AND every scripts/*.sh ($p_sh_n files, setup-ui.sh among them) — no file is excluded, and the surface an earlier pass missed is provably inside the set" \
+  || no "(r0) the guard scans both globs with no exclusions" \
+       "md=$p_md_n sh=$p_sh_n agent-help-present=$p_help_in setup-ui-present=$p_eng_in"
+
+# --- (r0b) the .sh exclusion is exactly one file, and it is the scanner's own source ---------
+p_skip_n="$(printf '%s' "$p_sh_skipped" | tr ' ' '\n' | sed '/^$/d' | awk 'END{print NR+0}')"
+p_skip_is_self=0; [ "$(printf '%s' "$p_sh_skipped" | tr -d ' ')" = "$NBFS_SELF" ] && p_skip_is_self=1
+p_md_excluded=0; for f in "$P_CMD_DIR"/*.md; do case " $p_md_files " in *" $f "*) ;; *) p_md_excluded=1 ;; esac; done
+[ "$p_skip_n" = "1" ] && [ "$p_skip_is_self" -eq 1 ] && [ "$p_md_excluded" -eq 0 ] \
+  && ok "(r0b) exactly ONE file is held out of the .sh half — this suite itself, because a scanner cannot be its own subject without every accurate description of it becoming a violation (the `code_occ` precedent above). NO commands/*.md is held out at all, which is the exclusion that would actually matter, and the held-out set is asserted to be that single file rather than a list that could later grow over a real defect" \
+  || no "(r0b) the .sh exclusion is exactly this file, and no command body is excluded" \
+       "held-out=$p_skip_n self=$p_skip_is_self md-excluded=$p_md_excluded"
+
+# --- (r1) the shipped tree is clean ---------------------------------------------------------
+p_hits="$(no_blocking_foreground_serve $p_md_files $p_sh_files)"
+[ -z "$p_hits" ] \
+  && ok "(r1) no command body and no script instructs the agent to run a foreground \`serve\` — every serve invocation on the agent path carries --detach, and every foreground description names the caller it is describing" \
+  || no "(r1) a blocking foreground serve instruction is present" "$p_hits"
+
+# --- (r2) THE RUNTIME CARVE-OUT, asserted as seen-and-not-flagged --------------------------
+# The engine prints `foreground: Ctrl-C to stop` when it really is running in the foreground of
+# somebody's terminal. If the guard never SAW that line, "it does not flag the engine" would be
+# an accident of the glob rather than a decision, and this whole clause would assert nothing.
+p_cands="$(nbfs_candidates "$ENGINE")"
+p_eng_flags="$(no_blocking_foreground_serve "$ENGINE")"
+if in_str "$p_cands" "foreground: Ctrl-C to stop" && [ -z "$p_eng_flags" ]; then
+  ok "(r2) setup-ui.sh's runtime \`foreground: Ctrl-C to stop\` is SEEN by the guard as a candidate and deliberately NOT flagged — it is engine output to a human at a terminal, the one caller for whom the message is unconditionally true"
+else
+  no "(r2) the engine's runtime foreground line is seen and not flagged" \
+     "seen='$(printf '%s' "$p_cands" | awk 'END{print NR+0}') candidate line(s)' flagged='$p_eng_flags'"
+fi
+
+# --- (r3) MUTATION CONTROL: strip --detach off the fenced invocation in commands/ui.md ------
+sed 's|scripts/setup-ui.sh" serve --detach|scripts/setup-ui.sh" serve|' "$P_CMD_DIR/ui.md" > "$P_TMP/ui.md"
+p_m3_changed=0; csum "$P_TMP/ui.md" >/dev/null; [ "$(csum "$P_TMP/ui.md")" != "$P_UI_SIG_BEFORE" ] && p_m3_changed=1
+p_m3="$(no_blocking_foreground_serve "$P_TMP/ui.md")"
+[ "$p_m3_changed" -eq 1 ] && [ -n "$p_m3" ] \
+  && ok "(r3) MUTATION CONTROL: taking --detach off the invocation an agent actually executes IS flagged — the guard is watching the executed line, not only the prose around it" \
+  || no "(r3) MUTATION CONTROL: the un-detached invocation is flagged" \
+       "mutant-differs=$p_m3_changed hits='$p_m3'"
+
+# --- (r4) MUTATION CONTROL: un-scope the foreground sentence in commands/setup.md -----------
+# The caller words are removed and nothing else, so what reddens is the loss of caller scoping.
+sed 's|^4\. \*\*Say which caller you are describing\.\*\* Foreground is the engine.s default and Ctrl-C stops it .*$|4. Foreground is the default (Ctrl-C stops it) for `setup-ui.sh serve`.|' \
+  "$P_CMD_DIR/setup.md" > "$P_TMP/setup.md"
+p_m4_changed=0; [ "$(csum "$P_TMP/setup.md")" != "$P_SETUP_SIG_BEFORE" ] && p_m4_changed=1
+p_m4="$(no_blocking_foreground_serve "$P_TMP/setup.md")"
+[ "$p_m4_changed" -eq 1 ] && [ -n "$p_m4" ] \
+  && ok "(r4) MUTATION CONTROL: a foreground/Ctrl-C sentence that names no caller IS flagged — which is exactly the shape the four surfaces carried before this change" \
+  || no "(r4) MUTATION CONTROL: an unscoped foreground sentence is flagged" \
+       "mutant-differs=$p_m4_changed hits='$p_m4'"
+
+# --- (r5) MUTATION CONTROL FOR THE CARVE-OUT ITSELF ---------------------------------------
+# The same words, in the same file, as a DIRECTIVE rather than as something the process prints.
+# Without this, (r2) would be satisfied by a guard that simply skips every .sh file, and the
+# whole second glob would be decoration.
+{ printf '# Run `bash setup-ui.sh serve` and leave it in the foreground; Ctrl-C to stop it.\n'
+  cat "$ENGINE"; } > "$P_TMP/setup-ui.sh"
+p_m5="$(no_blocking_foreground_serve "$P_TMP/setup-ui.sh")"
+p_m5_cands="$(nbfs_candidates "$P_TMP/setup-ui.sh")"
+[ -n "$p_m5" ] && in_str "$p_m5_cands" "foreground: Ctrl-C to stop" \
+  && ok "(r5) MUTATION CONTROL: the SAME words in the SAME file, written as a directive instead of printed at runtime, ARE flagged while the printed line beside them still is not — the runtime carve-out discriminates on what the line is, and is not a blanket skip of scripts/*.sh" \
+  || no "(r5) MUTATION CONTROL: a non-emitted foreground directive inside a script is flagged" \
+       "hits='$p_m5'"
+
+# --- (r6) MUTATION CONTROL on agent-help.md, the surface that was missed --------------------
+sed 's|^/ui serve --detach .*$|/ui serve                 # start the floor on 127.0.0.1:7734 (Ctrl-C stops it)|' \
+  "$P_CMD_DIR/agent-help.md" > "$P_TMP/agent-help.md"
+p_m6_changed=0; [ "$(csum "$P_TMP/agent-help.md")" != "$P_HELP_SIG_BEFORE" ] && p_m6_changed=1
+p_m6="$(no_blocking_foreground_serve "$P_TMP/agent-help.md")"
+[ "$p_m6_changed" -eq 1 ] && [ -n "$p_m6" ] \
+  && ok "(r6) MUTATION CONTROL: restoring agent-help.md's original unscoped usage line IS flagged — the mirror surface an earlier pass of this work missed is inside the guard's set, not merely adjacent to it" \
+  || no "(r6) MUTATION CONTROL: the agent-help.md mirror is inside the guard's set" \
+       "mutant-differs=$p_m6_changed hits='$p_m6'"
+
+# --- (r7) AC2 half one: --detach is present on BOTH invocation surfaces ---------------------
+p_inv_ui="$(grep -cE 'setup-ui\.sh"[ \t]+serve[ \t]+--detach' "$P_CMD_DIR/ui.md" 2>/dev/null || true)"
+p_inv_st="$(grep -cE 'setup-ui\.sh"[ \t]+serve[ \t]+--detach' "$P_CMD_DIR/setup.md" 2>/dev/null || true)"
+case "$p_inv_ui" in ''|*[!0-9]*) p_inv_ui=0 ;; esac
+case "$p_inv_st" in ''|*[!0-9]*) p_inv_st=0 ;; esac
+[ "$p_inv_ui" -ge 1 ] && [ "$p_inv_st" -ge 1 ] \
+  && ok "(r7) both surfaces an agent actually EXECUTES carry --detach — the fenced block in commands/ui.md and the run step in commands/setup.md's ui flow. Scoping the prose without fixing these two would have left the defect standing" \
+  || no "(r7) both invocation surfaces carry --detach" "ui.md=$p_inv_ui setup.md=$p_inv_st"
+
+# --- (r8) AC2 half two: all FIVE prose surfaces name their caller ---------------------------
+p_missing=""
+p_prose_files="$P_CMD_DIR/ui.md $P_CMD_DIR/setup.md $P_CMD_DIR/agent-help.md $script_dir/../docs/FLOOR_UI.md"
+p_prose_total=0
+for f in $p_prose_files; do
+  p_n="$(awk '{ low = tolower($0) } /Ctrl-C/ && (/serve/ || low ~ /foreground/) { n++ } END { print n+0 }' "$f")"
+  p_ok="$(awk '{ low = tolower($0) } /Ctrl-C/ && (/serve/ || low ~ /foreground/) && (low ~ /human/ || low ~ /agent/) { n++ } END { print n+0 }' "$f")"
+  p_prose_total=$((p_prose_total + p_n))
+  [ "$p_n" = "$p_ok" ] || p_missing="$p_missing $f($p_ok/$p_n scoped)"
+done
+[ -z "$p_missing" ] && [ "$p_prose_total" -ge 5 ] \
+  && ok "(r8) all $p_prose_total foreground/Ctrl-C prose surfaces across commands/ui.md, commands/setup.md, commands/agent-help.md and docs/FLOOR_UI.md state which caller they describe — the description SURVIVED and was scoped, which is the criterion; deleting it would have been the cheap wrong answer" \
+  || no "(r8) every foreground/Ctrl-C prose surface names its caller" \
+       "total=$p_prose_total unscoped:$p_missing"
+
+# --- (r9) the real files are untouched by the (r3)-(r6) controls ----------------------------
+p_residue=""
+[ "$(csum "$P_CMD_DIR/ui.md")" = "$P_UI_SIG_BEFORE" ] || p_residue="$p_residue ui.md"
+[ "$(csum "$P_CMD_DIR/setup.md")" = "$P_SETUP_SIG_BEFORE" ] || p_residue="$p_residue setup.md"
+[ "$(csum "$P_CMD_DIR/agent-help.md")" = "$P_HELP_SIG_BEFORE" ] || p_residue="$p_residue agent-help.md"
+[ "$(csum "$ENGINE")" = "$P_ENG_SIG_BEFORE" ] || p_residue="$p_residue setup-ui.sh"
+[ -z "$p_residue" ] \
+  && ok "(r9) every mutation control above ran against a COPY — the four real files are byte-identical (sha256) and no mutant was left behind" \
+  || no "(r9) the real files are byte-identical after the (r) controls" "changed:$p_residue"
+rm -rf "$P_TMP"
+
+# =========================================================================================
+# (q) AC-a11y-static — the accessibility properties of index.html, which until now were the
+#     ONE item on this module's non-negotiables list that no test backed.
+#
+# Measured before writing this group: `skip-link` had 0 occurrences in this file; `aria-live`
+# had exactly 1, and it was a comment excluding the attribute from an unrelated count; there
+# was no contrast assertion anywhere; and (j36)'s label-association loop reads its section list
+# OUT OF `aria-labelledby`, so a section that loses the attribute drops out of the loop's input
+# and (j36) passes VACUOUSLY. These are unguarded properties sitting inside the file this
+# change rewrites, which is the worst possible time for them to be unguarded.
+#
+# THE CLOSING FORM IS PER-SECTION, NOT PER-DOCUMENT, and the three escapes it closes are all
+# reachable, not theoretical:
+#   1. COMMENT-INCLUSIVE. index.html comments ON these very attributes, so a count taken over
+#      raw bytes lets one comment restore a count a real removal dropped. Hence the stripper.
+#   2. NOT ANCHORED TO SECTIONS. `aria-labelledby` is legal on any element, and giving each
+#      section a caption makes adding a captioned <nav>/<aside>/<div role=region> a natural
+#      next move. A section could then LOSE the attribute while a non-section GAINS one, both
+#      document-wide totals still reading 7, and a two-count guard would pass while the
+#      property it names is false. (q6) exhibits exactly that mutant and shows the totals
+#      staying put — the equality is anchored to `<section` for this reason and no other.
+#   3. THE `[a-z]+-h` SHAPE. (j36) enumerates with a pattern that excludes hyphenated and
+#      digit-bearing ids, so renaming `stages-h` to `run-summary-h` keeps the attribute and
+#      still drops the section out of (j36)'s input. (q8) asserts shape parity; (q9) mutates it.
+#
+# html_decomment <file> -> the file with every <!-- ... --> block removed, ACROSS LINES.
+# All four comment blocks in index.html span multiple lines, so the reflexive one-line
+# `sed 's/<!--.*-->//g'` strips NOTHING (7 attributes before, 7 after) and would silently
+# re-open escape 1 in full while both removal controls still passed. (q7) is that control.
+html_decomment() {
+  awk '
+    BEGIN { inb = 0 }
+    {
+      line = $0; out = ""
+      while (length(line)) {
+        if (inb) {
+          i = index(line, "-->")
+          if (i == 0) { line = "" } else { line = substr(line, i + 3); inb = 0 }
+        } else {
+          i = index(line, "<!--")
+          if (i > 0) { out = out substr(line, 1, i - 1); line = substr(line, i + 4); inb = 1 }
+          else { out = out line; line = "" }
+        }
+      }
+      print out
+    }
+  ' "$1" 2>/dev/null
+}
+# The three counts every assertion below is built from, taken over DECOMMENTED text.
+q_sections()  { html_decomment "$1" | awk 'BEGIN{n=0}{n+=gsub(/<section([^a-zA-Z0-9_-]|$)/,"")}END{print n+0}'; }
+q_labelled()  { html_decomment "$1" | awk 'BEGIN{n=0}{n+=gsub(/<section[^>]*aria-labelledby="[^"]+"/,"")}END{print n+0}'; }
+q_anywhere()  { html_decomment "$1" | awk 'BEGIN{n=0}{n+=gsub(/aria-labelledby="[^"]+"/,"")}END{print n+0}'; }
+q_captions()  { html_decomment "$1" | awk 'BEGIN{n=0}{n+=gsub(/<p class="caption"/,"")}END{print n+0}'; }
+
+Q_TMP="$(mktemp -d 2>/dev/null || mktemp -d -t a11y)"
+[ -d "$Q_TMP" ] || setup_fail "(q) fixture: could not create a scratch directory for the a11y mutation controls"
+Q_HTML_SIG_BEFORE="$(csum "$HTML")"
+Q_SEC="$(q_sections "$HTML")"
+Q_LAB="$(q_labelled "$HTML")"
+Q_ANY="$(q_anywhere "$HTML")"
+
+# --- (q0) the one-line-open-tag assumption the counts rest on -------------------------------
+# `<section[^>]*aria-labelledby` is a per-LINE match. A `<section` whose open tag wrapped onto
+# a second line would silently stop matching and the equality would redden for the wrong reason
+# — or, worse, a future refactor could hide a section from the anchored count. Assert it.
+q_wrapped="$(html_decomment "$HTML" | awk '/<section([^a-zA-Z0-9_-]|$)/ { s = substr($0, index($0, "<section")); if (index(s, ">") == 0) n++ } END { print n+0 }')"
+[ "$q_wrapped" = "0" ] \
+  && ok "(q0) every \`<section\` open tag closes on its own line — the precondition the per-section match below depends on, asserted rather than assumed, because a wrapped tag would drop a section out of the anchored count without dropping it out of the page" \
+  || no "(q0) every <section> open tag closes on its own line" "$q_wrapped tag(s) wrap"
+
+# --- (q1) the skip link ---------------------------------------------------------------------
+q_skip="$(html_decomment "$HTML" | awk 'BEGIN{n=0}{n+=gsub(/class="skip-link"[^>]*href="#[a-z-]+"/,"")}END{print n+0}')"
+[ "$q_skip" = "1" ] \
+  && ok "(q1) the skip-link anchor is present exactly once and targets an in-page id — the first thing a keyboard user meets, and it had zero coverage in this suite before now" \
+  || no "(q1) the skip-link anchor is present and targets an in-page id" "found $q_skip (want 1)"
+
+# --- (q2) the banner keeps BOTH role=status and aria-live=polite ----------------------------
+# Both, on the SAME element: role alone announces nothing on a live change, and aria-live alone
+# loses the semantic. Matched on one line so a role on the banner and an aria-live on some other
+# element cannot satisfy it jointly.
+q_banner="$(html_decomment "$HTML" | awk 'BEGIN{n=0} /id="banner"/ && /role="status"/ && /aria-live="polite"/ {n++} END{print n+0}')"
+[ "$q_banner" = "1" ] \
+  && ok "(q2) the honest-state banner carries BOTH role=\"status\" and aria-live=\"polite\" on the one element — absent/stale/no-run-in-flight are announced when they change, not merely present in the DOM for someone who thought to look" \
+  || no "(q2) the banner carries both role=status and aria-live=polite on one element" "matching elements: $q_banner (want 1)"
+
+# --- (q3) THE CLOSING FORM: per-section, not per-document -----------------------------------
+[ "$Q_SEC" = "7" ] && [ "$Q_LAB" = "7" ] \
+  && ok "(q3) count(<section carrying a non-empty aria-labelledby) == count(<section) == 7, over comment-stripped text — every section is labelled and no section is unlabelled. Anchored to \`<section\` on purpose: two document-wide totals would read 7 in a page where a section had lost the attribute and a non-section had gained one" \
+  || no "(q3) every <section> carries a non-empty aria-labelledby, and there are 7 of each" \
+       "sections=$Q_SEC labelled-sections=$Q_LAB (want 7 == 7)"
+
+# --- (q4) AC16 made countable: every section states its own subject and freshness basis -----
+q_cap="$(q_captions "$HTML")"
+q_cap_words="$(html_decomment "$HTML" | awk 'BEGIN{n=0} /<p class="caption"/ && tolower($0) ~ /freshness/ {n++} END{print n+0}')"
+[ "$q_cap" = "$Q_SEC" ] && [ "$q_cap_words" = "$Q_SEC" ] \
+  && ok "(q4) all $q_cap sections carry a caption, and every one of them names what its freshness is measured against — 'a first-time reader can explain the page' turned into something countable rather than something two reviewers would grade differently" \
+  || no "(q4) every section carries a caption naming its subject and its freshness basis" \
+       "sections=$Q_SEC captions=$q_cap captions-naming-freshness=$q_cap_words"
+
+# --- (q5) MUTATION CONTROL (i): remove the attribute from a section, keep the section --------
+sed 's|<section aria-labelledby="roster-h">|<section>|' "$HTML" > "$Q_TMP/i-remove.html"
+q_m5_sec="$(q_sections "$Q_TMP/i-remove.html")"; q_m5_lab="$(q_labelled "$Q_TMP/i-remove.html")"
+[ "$q_m5_sec" = "7" ] && [ "$q_m5_lab" = "6" ] \
+  && ok "(q5) MUTATION CONTROL (i): a section stripped of its aria-labelledby breaks the equality (7 sections, 6 labelled) — the case a plain count already caught, asserted so the harder control below is not the only thing holding the gate up" \
+  || no "(q5) MUTATION CONTROL (i): removing one section's aria-labelledby reddens (q3)" \
+       "sections=$q_m5_sec labelled=$q_m5_lab (want 7 and 6)"
+
+# --- (q6) MUTATION CONTROL (ii): MOVE it to a non-section sibling ---------------------------
+# The displacement hole, and the only control that can see it. Both document-wide totals stay
+# at 7 — which is the proof that the two-count form would have passed this mutant.
+sed -e 's|<section aria-labelledby="roster-h">|<section>|' \
+    -e 's|<main>|<main aria-labelledby="roster-h">|' "$HTML" > "$Q_TMP/ii-move.html"
+q_m6_sec="$(q_sections "$Q_TMP/ii-move.html")"
+q_m6_lab="$(q_labelled "$Q_TMP/ii-move.html")"
+q_m6_any="$(q_anywhere "$Q_TMP/ii-move.html")"
+[ "$q_m6_sec" = "7" ] && [ "$q_m6_any" = "$Q_ANY" ] && [ "$q_m6_lab" = "6" ] \
+  && ok "(q6) MUTATION CONTROL (ii): moving aria-labelledby off a section onto a non-section sibling leaves BOTH document-wide totals unchanged ($q_m6_sec sections, $q_m6_any attributes — exactly what the shipped page reads) while the section-anchored count drops to 6. The two-count form would have passed this page with its own stated property false; anchoring the equality to \`<section\` is what catches it" \
+  || no "(q6) MUTATION CONTROL (ii): displacing the attribute onto a non-section reddens (q3)" \
+       "sections=$q_m6_sec attributes=$q_m6_any (baseline $Q_ANY) labelled-sections=$q_m6_lab (want 6)"
+
+# --- (q7) CONTROL FOR THE STRIPPER ITSELF ---------------------------------------------------
+# Two arms, because either alone is satisfiable by a stripper that does nothing.
+#   arm A: an attribute and a `<section` written INSIDE a comment block must not move a count.
+#   arm B: the naive one-line strip really is inadequate here, so arm A is a live hazard rather
+#          than a hypothetical one — it must leave the raw counts exactly where it found them.
+awk 'NR==8 { print "<!--" ; print "  a comment that names <section aria-labelledby=\"decoy-h\"> and closes later"; print "-->" } { print }' \
+  "$HTML" > "$Q_TMP/comment.html"
+q_m7_sec="$(q_sections "$Q_TMP/comment.html")"; q_m7_lab="$(q_labelled "$Q_TMP/comment.html")"; q_m7_any="$(q_anywhere "$Q_TMP/comment.html")"
+# Arm B is measured ON THE DECOY, which is the only file where the two strippers can disagree:
+# the shipped page has no attribute inside a comment, so on it every stripper looks identical.
+q_decoy_raw="$(awk 'BEGIN{n=0}{n+=gsub(/aria-labelledby="[^"]+"/,"")}END{print n+0}' "$Q_TMP/comment.html")"
+q_decoy_naive="$(sed 's/<!--.*-->//g' "$Q_TMP/comment.html" | awk 'BEGIN{n=0}{n+=gsub(/aria-labelledby="[^"]+"/,"")}END{print n+0}')"
+if [ "$q_m7_sec" = "7" ] && [ "$q_m7_lab" = "7" ] && [ "$q_m7_any" = "$Q_ANY" ] \
+   && [ "$q_decoy_raw" = "8" ] && [ "$q_decoy_naive" = "8" ]; then
+  ok "(q7) CONTROL FOR THE COMMENT STRIPPER, both arms. (A) a decoy \`<section aria-labelledby>\` written inside a comment block moves none of the three counts — 7/7/$Q_ANY, unchanged. (B) on that same decoy the raw text holds $q_decoy_raw attributes and the reflexive one-line \`sed 's/<!--.*-->//g'\` still holds $q_decoy_naive: it strips NOTHING, because every comment block in this file spans several lines. Arm B is what makes arm A a live hazard rather than a hypothetical one, and it is measured on the decoy because the shipped page — having no attribute inside a comment — is a file on which every stripper, working or not, looks identical"
+else
+  no "(q7) the comment stripper is multi-line-capable and a commented decoy moves no count" \
+     "decoy counts: sections=$q_m7_sec labelled=$q_m7_lab any=$q_m7_any (baseline 7/7/$Q_ANY); raw=$q_decoy_raw naive-stripped=$q_decoy_naive (both want 8)"
+fi
+
+# --- (q8) ANTI-VACUITY FOR (j36) ------------------------------------------------------------
+# (j36) reads its section list out of `aria-labelledby="[a-z]+-h"`. That input is never asserted
+# to be non-empty and is never tied to the number of sections, so (j36) has always been able to
+# pass by enumerating nothing. Both halves are closed here.
+q_j36_in="$(grep -oE 'aria-labelledby="[a-z]+-h"' "$HTML" 2>/dev/null | awk 'END{print NR+0}')"
+[ "$q_j36_in" = "$Q_SEC" ] && [ "$q_j36_in" -gt 0 ] \
+  && ok "(q8) ANTI-VACUITY FOR (j36): its enumeration pattern still matches all $q_j36_in sections. (j36) derives its subject list from that pattern, so a section whose id stopped matching would leave the loop's INPUT and let (j36) pass without ever looking at it — tying the input size to the section count is what stops the region-parity check going quietly empty" \
+  || no "(q8) ANTI-VACUITY FOR (j36): its enumeration pattern matches every section" \
+       "(j36) input=$q_j36_in sections=$Q_SEC"
+
+# --- (q9) MUTATION CONTROL for (q8): a rename that keeps the attribute -----------------------
+sed 's|aria-labelledby="stages-h"|aria-labelledby="run-summary-h"|; s|id="stages-h"|id="run-summary-h"|' \
+  "$HTML" > "$Q_TMP/rename.html"
+q_m9_in="$(grep -oE 'aria-labelledby="[a-z]+-h"' "$Q_TMP/rename.html" 2>/dev/null | awk 'END{print NR+0}')"
+q_m9_lab="$(q_labelled "$Q_TMP/rename.html")"
+[ "$q_m9_in" = "6" ] && [ "$q_m9_lab" = "7" ] \
+  && ok "(q9) MUTATION CONTROL: renaming one section's id to the hyphenated \`run-summary-h\` keeps the attribute — (q3) still reads 7 labelled sections, correctly — while (j36)'s \`[a-z]+-h\` pattern silently drops to 6. A perfectly reasonable rename is all it takes to shrink that loop's input, which is why (q8) exists" \
+  || no "(q9) MUTATION CONTROL: a hyphenated rename shrinks (j36)'s input while (q3) stays green" \
+       "(j36) input=$q_m9_in (want 6) labelled-sections=$q_m9_lab (want 7)"
+
+# --- (q10) MUTATION CONTROL for (q4): a section that lost its caption -------------------------
+sed 's|<p class="caption">What the projector could not examine|<p class="cap">What the projector could not examine|' \
+  "$HTML" > "$Q_TMP/nocap.html"
+q_m10="$(q_captions "$Q_TMP/nocap.html")"
+[ "$q_m10" = "6" ] \
+  && ok "(q10) MUTATION CONTROL: a section that loses its caption drops the count to 6 — (q4) is counting captions rather than trusting that a section which has one always will" \
+  || no "(q10) MUTATION CONTROL: removing a caption reddens (q4)" "captions=$q_m10 (want 6)"
+
+# --- (q11) the real page is untouched by the (q5)-(q10) controls ------------------------------
+[ "$(csum "$HTML")" = "$Q_HTML_SIG_BEFORE" ] \
+  && ok "(q11) every a11y mutation control above ran against a COPY — index.html is byte-identical (sha256) and no mutant was left in the bundle directory" \
+  || no "(q11) index.html is byte-identical after the (q) controls" "sha256 changed"
+rm -rf "$Q_TMP"

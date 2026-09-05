@@ -6,175 +6,371 @@
  * included, which is why this paragraph describes them rather than spelling them out. The
  * type is the host's own system stack, the only stack guaranteed to be present offline.
  *
+ * THE DESIGN LANGUAGE IS THE LOOMWRIGHT SITE'S, NOT AN INVENTED ONE. Every token below was
+ * copied out of the site's own `site.css` so the tool and the marketing site read as one
+ * product. Cited by TOKEN NAME and SELECTOR rather than by line number, because a line number
+ * in another repo rots silently and cannot be re-derived from here:
+ *
+ *   what                     this file            site.css                 where the site uses it
+ *   ----------------------   ------------------   ----------------------   -----------------------
+ *   page surface             --bg   #F4EBDC       --ink   #F4EBDC          `body{background:var(--ink)}`
+ *   raised card surface      --panel #FFF8EE      --ink-2 #FFF8EE          `.plaque-card`, `.law`, `.mile .body`
+ *   sunken/code surface      --sunk #EFE4D2       --ink-3 #EFE4D2          `.cmd`, `.copy-row pre`, `.policy-out pre`
+ *   body text                --ink  #2C2418       --text  #2C2418          `body{color:var(--text)}`
+ *   secondary text           --ink-dim #6B6154    --dim   #6B6154          `.lede`, `.law-copy`, `h2.sec`
+ *   hairline border          --hair rgba(44,36,24,.14)   --hair            `1px solid var(--hair)` on every card
+ *   primary accent           --copper #E8893A     --copper                 `.btn-solid{background:var(--copper)}`
+ *   accent as TEXT           --copper-deep #8A4E12  --copper-deep          `.note a`, `.warn`, `.play-card .tag`
+ *   secondary accent line    --brass  #C47A2C     --brass                  `.warn{border:1px solid rgba(196,122,44,.4)}`
+ *   focus ring               --focus  #4F6FE8     --indigo                 `:focus-visible{outline:2px solid var(--indigo)}`
+ *   attention surface        --warn-bg #FFF3E4    (literal in `.warn`)     `.warn{background:#FFF3E4}`
+ *   muted rule/keyline       --line-strong #8A7F70  (literal in `.fine`)   `.fine{color:#8A7F70}`
+ *
+ * TYPE. The site names three faces (`Big Shoulders Display`, `Literata`, `Azeret Mono`) and
+ * ships no local file for any of them - it pulls all three off a font host, which this bundle
+ * structurally cannot do. So the Floor uses the site's OWN declared fallbacks, which is exactly
+ * what the site renders as with no network:
+ *   --display  Impact, sans-serif                 <- site --display's second entry
+ *   --font     Georgia, serif                     <- site --body's second entry
+ *   --mono     ui-monospace, Menlo, monospace     <- site --mono's tail
+ *
+ * SHAPE. The site's card vocabulary is SQUARE (`border-radius:0` on `.law`, `.plaque-card`,
+ * `.chapter .copy`), with exactly three curved exceptions, all of which this file carries:
+ *   0      cards, panels, banners, buttons, inputs
+ *   .4rem  small inset objects  (site: `.brand img`)      -> the picker and the action report
+ *   99px   pills and bars       (site: `.lanes .lane>span`, `.laws .no`) -> chips, track, shuttle
+ *   50%    dots                 (site: `.dot`)            -> the agent dot
+ * Borders are the site's `1px solid var(--hair)` hairline; depth is the site's soft warm
+ * shadow family (`0 10px 24px rgba(44,36,24,.06)` on `.law`, `0 8px 20px rgba(44,36,24,.05)`
+ * on `.plays article`). Section headings take the site's `h2.sec` treatment verbatim in kind:
+ * mono, ~.72rem, uppercase, wide letter-spacing, secondary ink.
+ *
+ * BOTH THEMES ARE IN THE SAME WARM FAMILY. The site is light-only, so the dark theme is
+ * DERIVED rather than copied: the cream becomes the ink and the browns deepen into the
+ * surfaces, so the two themes are the same product at two brightnesses rather than two
+ * different products. Nothing cold is left.
+ *
+ * CONTRAST IS MEASURED, NOT ASSERTED, and the measurement is per pair rather than a claim about
+ * the palette. Every text/background pair in both themes clears WCAG 2.1 AA 1.4.3 (4.5:1); the
+ * worst is --ink-dim on --sunk in light at 4.82:1. Every UI-component edge and every graphical
+ * state cue clears 1.4.11 (3:1); the worst is a control's --line-strong border on --sunk in
+ * light at 3.12:1. The full per-pair table for BOTH themes is in docs/FLOOR_UI_VERIFICATION.md.
+ * Four consequences are load-bearing and must not be undone:
+ *   - --copper is 2.20:1 on the cream page surface, so it is NEVER used as text. It is a solid
+ *     fill with --on-copper on top (5.88:1), exactly as the site uses it.
+ *   - --copper-deep (5.59:1 on the page surface) is the accent when accent has to be READ.
+ *   - --cue is the accent when a mark is a graphical cue rather than text, because --copper and
+ *     --brass are both under 3:1 on cream. Every control edge, the lane shuttle, the selected
+ *     project's rule and the permanent-note rule use it.
+ *   - --focus is a graphical indicator only, never text (3.50:1 at worst, >= 3:1).
+ * --hair stays at ~1.3:1 by design: it is a decorative card boundary, never a control edge and
+ * never a state cue, and 1.4.11 does not reach decoration. The moment a --hair border becomes
+ * the only thing identifying a control or a state, that ratio stops being acceptable.
+ *
  * MOTION BUDGET - this file is deliberately almost motionless.
  *   - exactly ONE keyframes block exists (`pulse`), and it is applied ONLY to a lane that is NOT
  *     stalled. Its ABSENCE is the stall signal, which is why a keyframe is legitimate here:
  *     the frames are timer-driven but the PRESENCE of the animation is state-driven.
  *   - exactly ONE `transition` exists (the lane shuttle), and floor.js moves the shuttle only
- *     when that lane's recorded `events` count changed between two renders.
+ *     when that lane's recorded `events` count changed between two renders. The restyle added
+ *     none: the site's hover eases were deliberately NOT carried across, because the cheapest
+ *     way to lose this budget is to let a decorative ease in behind a legitimate one.
  *   Nothing else moves. There is no spinner, no skeleton shimmer, no progress bar that
  *   advances on a clock - a moving thing on this page always means an event was recorded.
  *
- * COLOUR IS NEVER THE ONLY SIGNAL. Every state also carries a border treatment and words:
+ * COLOUR IS NEVER THE ONLY SIGNAL, and the warm palette makes this MORE important rather than
+ * less, because it introduces hue where there was one blue. Every state also carries a border
+ * treatment and words:
  *   stalled          -> dashed lane border + the text "no event for <age>"
  *   identity unknown -> dashed chip + the text "identity unknown"
- *   read-only agent  -> hollow dot + the text "read-only"
+ *   read-only agent  -> hollow dot + the text "read-only", in the roster AND in the lanes
  *   absent / stale / empty -> text banners, never an empty page
  */
 
 /* ---- light palette (bare :root is the default) ---- */
 :root {
-  --bg: #f7f7f5;
-  --panel: #ffffff;
-  --ink: #14171a;
-  --ink-dim: #4a5158;
-  --line: #c9cdd2;
-  --line-strong: #6d757d;
-  --accent: #1a4f8a;
-  --warn-ink: #7a3b00;
-  --warn-bg: #fdf1e0;
-  --warn-line: #a35a12;
-  --unknown-ink: #4a5158;
-  --radius: 6px;
-  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  /* surfaces, from the site's --ink / --ink-2 / --ink-3 */
+  --bg: #F4EBDC;
+  --panel: #FFF8EE;
+  --sunk: #EFE4D2;
+  /* text, from the site's --text / --dim */
+  --ink: #2C2418;
+  --ink-dim: #6B6154;
+  /* the site's hairline, and a stronger keyline for cues that must clear 3:1 */
+  --hair: rgba(44, 36, 24, 0.14);
+  --line: rgba(44, 36, 24, 0.14);
+  --line-strong: #8A7F70;
+  /* the site's accent family. --copper is a FILL; --copper-deep is the readable one. */
+  --copper: #E8893A;
+  --copper-deep: #8A4E12;
+  --brass: #C47A2C;
+  /* --cue is the accent used wherever a mark is a GRAPHICAL cue rather than text, because
+   * WCAG 2.1 AA wants 3:1 there and --copper is 2.20:1 on this cream. It is not a new colour:
+   * it is the site's --copper-deep in light and the site's --copper in dark, whichever of the
+   * two clears 3:1 against that theme's own surfaces. */
+  --cue: #8A4E12;
+  --accent: #8A4E12;
+  --on-copper: #2C2418;
+  --focus: #4F6FE8;
+  /* attention surface, from the site's own .warn card */
+  --warn-ink: #8A4E12;
+  --warn-bg: #FFF3E4;
+  --warn-line: #C47A2C;
+  --unknown-ink: #6B6154;
+  /* the site's shape vocabulary */
+  --radius: 0;
+  --radius-inset: 0.4rem;
+  --pill: 99px;
+  --shadow: 0 8px 20px rgba(44, 36, 24, 0.05);
+  --shadow-raised: 0 10px 24px rgba(44, 36, 24, 0.06);
+  /* the site's three declared fallback stacks */
+  --display: Impact, "Haettenschweiler", "Arial Narrow Bold", sans-serif;
+  --font: Georgia, "Times New Roman", serif;
+  --mono: ui-monospace, Menlo, monospace;
 }
 
-/* ---- dark palette: system preference, unless the document opted out to light ---- */
+/* ---- dark palette: system preference, unless the document opted out to light ----
+ * Derived into the SAME warm family: the site's cream becomes the ink, the site's text brown
+ * deepens into the surfaces. --copper survives unchanged (6.95:1 here) and --copper-deep is
+ * replaced by a lighter warm that can be read on a dark ground. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #14171a;
-    --panel: #1d2226;
-    --ink: #eceff1;
-    --ink-dim: #a9b2ba;
-    --line: #39424a;
-    --line-strong: #8d979f;
-    --accent: #86b7ec;
-    --warn-ink: #ffcf9a;
-    --warn-bg: #3a2a14;
-    --warn-line: #d18f3f;
-    --unknown-ink: #a9b2ba;
+    --bg: #1B1510;
+    --panel: #251E17;
+    --sunk: #16110D;
+    --ink: #F4EBDC;
+    --ink-dim: #B9AC9B;
+    --hair: rgba(244, 235, 220, 0.16);
+    --line: rgba(244, 235, 220, 0.16);
+    --line-strong: #8E8272;
+    --copper: #E8893A;
+    --copper-deep: #F0A55E;
+    --brass: #C47A2C;
+    --cue: #E8893A;
+    --accent: #F0A55E;
+    --on-copper: #2C2418;
+    --focus: #9BB0F5;
+    --warn-ink: #F2C486;
+    --warn-bg: #3A2A14;
+    --warn-line: #C47A2C;
+    --unknown-ink: #B9AC9B;
   }
 }
 
 /* ---- dark palette: explicit opt-in, independent of the system preference ---- */
 :root[data-theme="dark"] {
-  --bg: #14171a;
-  --panel: #1d2226;
-  --ink: #eceff1;
-  --ink-dim: #a9b2ba;
-  --line: #39424a;
-  --line-strong: #8d979f;
-  --accent: #86b7ec;
-  --warn-ink: #ffcf9a;
-  --warn-bg: #3a2a14;
-  --warn-line: #d18f3f;
-  --unknown-ink: #a9b2ba;
+  --bg: #1B1510;
+  --panel: #251E17;
+  --sunk: #16110D;
+  --ink: #F4EBDC;
+  --ink-dim: #B9AC9B;
+  --hair: rgba(244, 235, 220, 0.16);
+  --line: rgba(244, 235, 220, 0.16);
+  --line-strong: #8E8272;
+  --copper: #E8893A;
+  --copper-deep: #F0A55E;
+  --brass: #C47A2C;
+  --cue: #E8893A;
+  --accent: #F0A55E;
+  --on-copper: #2C2418;
+  --focus: #9BB0F5;
+  --warn-ink: #F2C486;
+  --warn-bg: #3A2A14;
+  --warn-line: #C47A2C;
+  --unknown-ink: #B9AC9B;
 }
 
 * { box-sizing: border-box; }
 
 body {
   margin: 0;
-  padding: 0 0 2rem;
+  padding: 0 0 3rem;
   background: var(--bg);
   color: var(--ink);
   font-family: var(--font);
-  font-size: 15px;
-  line-height: 1.45;
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+/* THE MEASURE. The site holds its content to a 68rem column (`.wrap`); so does this page.
+ * `max()` keeps a 1.5rem gutter at narrow widths and centres the column at wide ones, which
+ * lets the header and footer keep their full-bleed rule while their text stays in the column. */
+main {
+  max-width: 68rem;
+  margin: 0 auto;
+  padding: 0 1.5rem;
 }
 
 .skip-link {
   position: absolute;
   left: -9999px;
   top: 0;
-  background: var(--panel);
-  color: var(--accent);
-  padding: 0.5rem 0.75rem;
+  background: var(--copper);
+  color: var(--on-copper);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.6rem 1rem;
   z-index: 10;
 }
-.skip-link:focus { left: 0.5rem; top: 0.5rem; }
+.skip-link:focus { left: 1rem; top: 1rem; }
 
-:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
 
 .bar {
-  padding: 1rem 1.25rem;
-  border-bottom: 1px solid var(--line);
+  padding: 1.4rem max(1.5rem, calc((100% - 68rem) / 2));
+  border-bottom: 1px solid var(--hair);
   background: var(--panel);
 }
-footer.bar { border-bottom: 0; border-top: 1px solid var(--line); margin-top: 1.5rem; }
+footer.bar { border-bottom: 0; border-top: 1px solid var(--hair); margin-top: 2.5rem; }
 
-h1 { font-size: 1.25rem; margin: 0; letter-spacing: 0.02em; }
-h2 { font-size: 0.95rem; margin: 1.5rem 1.25rem 0.5rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-dim); }
-.sub { margin: 0.25rem 0 0; color: var(--ink-dim); font-size: 0.85rem; }
+/* The site's display face, uppercase and tightly tracked, is its loudest signature. */
+h1 {
+  font-family: var(--display);
+  font-size: clamp(1.9rem, 5vw, 2.6rem);
+  line-height: 1;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+  margin: 0;
+}
+/* The site's `h2.sec` treatment: mono, small, uppercase, widely tracked, secondary ink. */
+h2 {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  margin: 2.4rem 0 0.5rem;
+}
+.sub { margin: 0.3rem 0 0; color: var(--ink-dim); font-size: 0.88rem; }
+h2 .sub { display: inline; font-size: 0.72rem; letter-spacing: 0.12em; }
 code { font-family: var(--mono); font-size: 0.85em; }
 
+/* THE SECTION CAPTIONS. Every section says, in words, what it is showing and what its
+ * freshness is measured against - the page has to be readable by someone who has never seen
+ * it before, and a heading of one word is not that. Set apart from the data by the site's
+ * hairline rather than by colour, so it survives greyscale. */
+.caption {
+  margin: 0 0 0.9rem;
+  padding-left: 0.85rem;
+  border-left: 2px solid var(--hair);
+  color: var(--ink-dim);
+  font-size: 0.9rem;
+  max-width: 68ch;
+}
+
 .banner {
-  margin: 0.75rem 1.25rem 0;
-  padding: 0.75rem 1rem;
-  border: 2px dashed var(--warn-line);
+  width: calc(100% - 3rem);
+  max-width: 65rem;
+  margin: 1.2rem auto 0;
+  padding: 0.85rem 1.1rem;
+  border: 1px solid var(--warn-line);
+  /* The accent sits on the TOP edge, matching the site's own card device
+     (site.css `border-top:3px solid var(--copper)`). A thick accent on the LEFT
+     edge is the generic alert-bar shape rather than this design language, and a
+     design gate flags it as such — so this is the site's device, not a rotation
+     of it invented here. */
+  border-top: 3px solid var(--warn-line);
   border-radius: var(--radius);
   background: var(--warn-bg);
   color: var(--warn-ink);
-  font-weight: 600;
+  font-weight: 700;
 }
 
-/* ---- stages ---- */
+/* ---- stages ----
+ * The site's `.stamps` row: small mono uppercase cells on hairline borders, sitting on the
+ * page surface rather than shouting. */
 .stages {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
   list-style: none;
-  margin: 0 1.25rem;
+  margin: 0;
   padding: 0;
 }
 .stage {
   flex: 1 1 8rem;
-  border: 1px solid var(--line);
+  border: 1px solid var(--hair);
   border-radius: var(--radius);
   background: var(--panel);
-  padding: 0.6rem 0.75rem;
+  box-shadow: var(--shadow);
+  padding: 0.7rem 0.85rem;
 }
-.stage-name { display: block; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-dim); }
-.stage-val { display: block; font-size: 1.4rem; font-family: var(--mono); }
+.stage-name {
+  display: block;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--ink-dim);
+}
+.stage-val {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 1.5rem;
+  line-height: 1.2;
+  font-family: var(--mono);
+}
 /* The active stage is distinguishable WITHOUT COLOUR, and not by the frame: its value cell
  * prints the phase word (EXECUTE) where every inactive cell prints an em dash, and it is set
- * in bold. The accent here is the third, redundant channel, so it is a full 1px border rather
- * than a thick rail on one edge - drop the colour entirely and the word and the weight still
- * carry the state. */
-.stage.active { border-color: var(--accent); font-weight: 700; }
+ * in bold. The accent here is the third, redundant channel - drop the colour entirely and the
+ * word and the weight still carry the state. The site's `border-top:3px solid var(--copper)`
+ * card marker is the fourth, and it is a SHAPE change, so it survives greyscale too. */
+.stage.active {
+  border-color: var(--hair);
+  border-top: 3px solid var(--copper);
+  padding-top: calc(0.7rem - 2px);
+  font-weight: 700;
+}
 .stage-val.unknown { color: var(--unknown-ink); }
 
 /* ---- lanes ---- */
-.lanes { list-style: none; margin: 0 1.25rem; padding: 0; }
+.lanes { list-style: none; margin: 0; padding: 0; }
 .lane {
-  border: 1px solid var(--line);
+  border: 1px solid var(--hair);
   border-radius: var(--radius);
   background: var(--panel);
-  padding: 0.6rem 0.75rem;
-  margin-bottom: 0.5rem;
+  box-shadow: var(--shadow-raised);
+  padding: 0.75rem 0.9rem;
+  margin-bottom: 0.6rem;
 }
-.lane-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem; }
-.lane-name { font-weight: 700; }
-.lane-meta { color: var(--ink-dim); font-size: 0.85rem; font-family: var(--mono); }
+.lane-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.55rem; }
+.lane-name { font-weight: 700; letter-spacing: 0.01em; }
+.lane-meta { color: var(--ink-dim); font-size: 0.82rem; font-family: var(--mono); }
+/* The site's `.stamps li` chip: mono, tiny, uppercase, widely tracked, on a hairline. */
 .chip {
   display: inline-block;
   border: 1px solid var(--line-strong);
-  border-radius: 999px;
-  padding: 0 0.5rem;
-  font-size: 0.75rem;
+  border-radius: var(--pill);
+  padding: 0.15rem 0.6rem;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
 }
 .chip.unknown { border-style: dashed; color: var(--unknown-ink); }
-.dot { display: inline-block; width: 0.7rem; height: 0.7rem; border-radius: 50%; border: 2px solid var(--line-strong); background: var(--line-strong); }
-/* read-only agents get a HOLLOW dot, so the state survives greyscale and colour-blindness. */
+.dot {
+  display: inline-block;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+  border: 2px solid var(--line-strong);
+  background: var(--line-strong);
+}
+/* read-only agents get a HOLLOW dot, so the state survives greyscale and colour-blindness.
+ * The words "read-only" are rendered beside it in both views; the shape is never alone. */
 .dot.hollow { background: transparent; }
 
 .track {
   position: relative;
   height: 8px;
-  margin-top: 0.5rem;
-  border: 1px solid var(--line);
-  border-radius: 999px;
+  margin-top: 0.6rem;
+  border: 1px solid var(--hair);
+  border-radius: var(--pill);
+  background: var(--sunk);
   overflow: hidden;
 }
 .shuttle {
@@ -183,8 +379,8 @@ code { font-family: var(--mono); font-size: 0.85em; }
   left: 0;
   height: 100%;
   width: 18%;
-  border-radius: 999px;
-  background: var(--line-strong);
+  border-radius: var(--pill);
+  background: var(--cue);
   transform: translateX(0%);
   transition: transform 600ms ease-in-out;
 }
@@ -206,6 +402,7 @@ code { font-family: var(--mono); font-size: 0.85em; }
   border-color: var(--warn-line);
   background: var(--warn-bg);
   color: var(--warn-ink);
+  box-shadow: none;
 }
 .lane.stalled .lane-meta { color: var(--warn-ink); }
 .lane.stalled .shuttle { background: var(--warn-line); }
@@ -214,133 +411,186 @@ code { font-family: var(--mono); font-size: 0.85em; }
  * No colour-only signal here either: a rule card's shape (border + labelled text) carries
  * every state, and the distribution lists are plain key: number rows, ordered by KEY and never
  * by count, so nothing on this page orders rules by desirability. Nothing here moves. */
-.rules-category { font-size: 0.85rem; margin: 1rem 1.25rem 0.3rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-dim); }
-.rules-scope { font-size: 0.8rem; margin: 0.5rem 1.25rem 0.3rem; color: var(--ink-dim); font-weight: 600; }
-.rules-list { list-style: none; margin: 0 1.25rem; padding: 0; }
+.rules-category {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  margin: 1.4rem 0 0.4rem;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--copper-deep);
+}
+.rules-scope { font-size: 0.85rem; margin: 0.7rem 0 0.35rem; color: var(--ink-dim); font-weight: 700; }
+.rules-list { list-style: none; margin: 0; padding: 0; }
 .rule-card {
-  border: 1px solid var(--line);
+  border: 1px solid var(--hair);
   border-radius: var(--radius);
   background: var(--panel);
-  padding: 0.5rem 0.75rem;
+  box-shadow: var(--shadow);
+  padding: 0.7rem 0.9rem;
   margin-bottom: 0.5rem;
 }
 .rule-id { font-weight: 700; font-family: var(--mono); font-size: 0.85rem; }
-.rule-meta { color: var(--ink-dim); font-size: 0.8rem; margin: 0.25rem 0 0; }
+.rule-meta { color: var(--ink-dim); font-size: 0.82rem; margin: 0.3rem 0 0; }
 .rule-correlation {
-  margin-top: 0.4rem;
-  padding-top: 0.4rem;
-  border-top: 1px dashed var(--line);
-  font-size: 0.8rem;
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px dashed var(--line-strong);
+  font-size: 0.82rem;
   color: var(--ink-dim);
 }
 .rule-correlation ul { margin: 0.2rem 0 0; padding-left: 1.1rem; }
-.churn-dist { list-style: none; margin: 0 1.25rem 0.5rem; padding: 0; font-family: var(--mono); font-size: 0.85rem; }
-.churn-dist li { border-bottom: 1px solid var(--line); padding: 0.2rem 0; }
+.churn-dist {
+  list-style: none;
+  margin: 0 0 0.6rem;
+  padding: 0;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+}
+.churn-dist li { border-bottom: 1px solid var(--hair); padding: 0.3rem 0; }
 .view-banner {
-  margin: 0.5rem 1.25rem;
-  padding: 0.5rem 0.75rem;
+  margin: 0.6rem 0;
+  padding: 0.6rem 0.85rem;
   border: 1px dashed var(--warn-line);
   border-radius: var(--radius);
   background: var(--warn-bg);
   color: var(--warn-ink);
-  font-size: 0.85rem;
+  font-size: 0.88rem;
 }
 
 /* ---- roster + notes ---- */
-.roster { list-style: none; margin: 0 1.25rem; padding: 0; display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.roster { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .roster li {
-  border: 1px solid var(--line);
+  border: 1px solid var(--hair);
   border-radius: var(--radius);
   background: var(--panel);
-  padding: 0.35rem 0.6rem;
-  font-size: 0.85rem;
+  box-shadow: var(--shadow);
+  padding: 0.45rem 0.7rem;
+  font-size: 0.88rem;
 }
-.roster .r-meta { color: var(--ink-dim); font-family: var(--mono); font-size: 0.78rem; }
-.notes { margin: 0 1.25rem; padding-left: 1.1rem; color: var(--ink-dim); font-size: 0.85rem; }
-.notes li { margin-bottom: 0.2rem; }
+.roster .r-meta { color: var(--ink-dim); font-family: var(--mono); font-size: 0.75rem; }
+.notes { margin: 0; padding-left: 1.2rem; color: var(--ink-dim); font-size: 0.88rem; }
+.notes li { margin-bottom: 0.25rem; }
 .note-permanent {
-  margin: 0.5rem 1.25rem 0;
+  margin: 0.6rem 0 0;
   color: var(--ink-dim);
-  font-size: 0.85rem;
-  border-left: 3px solid var(--line);
-  padding-left: 0.6rem;
+  font-size: 0.88rem;
+  border-left: 3px solid var(--cue);
+  padding-left: 0.75rem;
 }
-.empty { margin: 0 1.25rem; color: var(--ink-dim); font-style: italic; }
+.empty { margin: 0; color: var(--ink-dim); font-style: italic; }
 
 /* ---- projects ----
  * Text and tokens only. No animation, no transition, no keyframe: switching project is a
  * READ, and a read that announced itself with movement would be motion no recorded event is
  * backing. An unavailable project is marked with a non-colour cue (a dashed left rule) for
  * the same reason a stalled lane is - colour alone is not a state anyone can rely on. */
-.picker { margin: 0 1.25rem 0.4rem; display: flex; gap: 0.5rem; align-items: center; }
-.picker label { color: var(--ink-dim); font-size: 0.85rem; }
+.picker { margin: 0 0 0.6rem; display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
+.picker label {
+  color: var(--ink-dim);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
 #project-picker {
   font-family: var(--mono);
   font-size: 0.85rem;
   color: var(--ink);
   background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-inset);
+  padding: 0.4rem 0.55rem;
   max-width: 100%;
 }
-.projects { list-style: none; margin: 0 1.25rem; padding: 0; }
+.projects { list-style: none; margin: 0; padding: 0; }
 .projects li {
-  border-left: 3px solid var(--line);
-  padding: 0.2rem 0 0.2rem 0.6rem;
-  margin-bottom: 0.25rem;
-  font-size: 0.85rem;
+  border-left: 3px solid var(--hair);
+  padding: 0.25rem 0 0.25rem 0.75rem;
+  margin-bottom: 0.3rem;
+  font-size: 0.88rem;
 }
-.projects li.showing { border-left-style: double; }
-.projects li.unavailable { border-left-style: dashed; }
+.projects li.showing { border-left-style: double; border-left-color: var(--cue); }
+.projects li.unavailable { border-left-style: dashed; border-left-color: var(--line-strong); }
 .project-slug { font-family: var(--mono); color: var(--ink); }
-.project-path { font-family: var(--mono); color: var(--ink-dim); font-size: 0.78rem; }
+.project-path { font-family: var(--mono); color: var(--ink-dim); font-size: 0.75rem; }
 .project-state { color: var(--ink-dim); }
 
 /* ---- the four actions ----
  * Plain controls, no transition and no animation: the rule at the top of floor.js is that
- * nothing moves that is not backed by a recorded event, and a button is not an exception.
+ * nothing moves that is not backed by a recorded event, and a button is not an exception -
+ * which is why the site's `.btn` hover ease was left behind with its fonts.
  * A disabled control is what the STOPPED state looks like - the page dims what it can no
- * longer do rather than removing it, so a reader can still see what the page used to offer. */
-.actions { margin-top: 0.75rem; padding-top: 0.6rem; border-top: 1px solid var(--line); }
-.actions .row { margin: 0 0 0.45rem; display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
-.actions label { color: var(--ink-dim); font-size: 0.82rem; }
+ * longer do rather than removing it, so a reader can still see what the page used to offer.
+ * The buttons take the site's `.btn` treatment: mono, uppercase, tracked, square. The primary
+ * one is its `.btn-solid` (copper fill, dark ink); the rest are its `.btn-ghost` (panel fill,
+ * hairline border), so the page states its own default action without relying on hue. */
+.actions { margin-top: 1rem; padding-top: 0.9rem; border-top: 1px solid var(--hair); }
+.actions .row { margin: 0 0 0.6rem; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.actions label {
+  color: var(--ink-dim);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
 .actions input[type="text"] {
   flex: 1 1 22rem;
   min-width: 12rem;
   font-family: var(--mono);
   font-size: 0.82rem;
-  padding: 0.32rem 0.45rem;
+  padding: 0.55rem 0.65rem;
   color: var(--ink);
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 3px;
+  background: var(--sunk);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
 }
 .actions button {
-  font-family: inherit;
-  font-size: 0.82rem;
-  padding: 0.32rem 0.6rem;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.6rem 0.95rem;
   color: var(--ink);
-  background: var(--bg);
+  background: var(--panel);
   border: 1px solid var(--line-strong);
-  border-radius: 3px;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
   cursor: pointer;
 }
+.actions button:hover { border-color: var(--cue); color: var(--copper-deep); }
+#btn-add {
+  background: var(--copper);
+  color: var(--on-copper);
+  border-color: var(--cue);
+  font-weight: 700;
+}
+#btn-add:hover { border-color: var(--copper-deep); color: var(--on-copper); }
 .actions button:disabled,
 .actions input:disabled { opacity: 0.5; cursor: not-allowed; }
+.actions button:disabled:hover { border-color: var(--line-strong); color: var(--ink); }
 #action-report {
-  margin: 0.35rem 0 0;
-  padding: 0.4rem 0.5rem;
+  margin: 0.5rem 0 0;
+  padding: 0.6rem 0.75rem;
   font-family: var(--mono);
-  font-size: 0.75rem;
+  font-size: 0.76rem;
   color: var(--ink-dim);
-  background: var(--panel, transparent);
-  border-left: 3px solid var(--line);
+  background: var(--sunk);
+  border: 1px solid var(--hair);
+  border-radius: var(--radius-inset);
   white-space: pre-wrap;
   overflow-x: auto;
 }
 [data-stopped="true"] .lanes,
 [data-stopped="true"] .projects { opacity: 0.6; }
+
+/* ---- narrow widths ---- */
+@media (max-width: 700px) {
+  body { font-size: 0.96rem; }
+  .bar { padding: 1.1rem 1.1rem; }
+  main { padding: 0 1.1rem; }
+  .banner { width: calc(100% - 2.2rem); }
+  .stage { flex: 1 1 100%; }
+}
 
 /* ---- reduced motion ----
  * Removes every animation and every transition on the page while leaving every state class
