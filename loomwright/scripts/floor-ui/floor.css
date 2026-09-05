@@ -267,17 +267,20 @@ code { font-family: var(--mono); font-size: 0.85em; }
   margin: 1.2rem auto 0;
   padding: 0.85rem 1.1rem;
   border: 1px solid var(--warn-line);
-  /* The accent sits on the TOP edge and the corners are SQUARE, which is the
-     site's accented-card device copied whole rather than half: `.play-card`,
-     `.install-card` and `.plays article` all pair `border-top:3px solid` with
-     `border:1px solid var(--hair)` and carry NO border-radius. A thick accent on
-     a LEFT edge is the generic alert-bar shape, and a thick accent on a ROUNDED
-     card fights its own corners — a design gate flagged this element for each in
-     turn, and both times the fix was to be MORE faithful to the source, not less.
-     The site reserves its .4rem radius for elements that carry no accent.
-     Declared as an explicit 0 rather than simply omitted, so a radius arriving
-     later through the CASCADE cannot silently round this card — which is exactly
-     how `.stage.active` carried one unnoticed. */
+  /* Accent on the TOP edge, corners SQUARE — the site's accented-card device
+     copied whole rather than half. Its three accented cards each pair a thick
+     top rule with a hairline box and carry no radius, and it reserves its .4rem
+     radius for cards with no accent. A thick accent on a LEFT edge is instead
+     the generic alert-bar shape. A design gate flagged this element for each of
+     those in turn, and both times the fix was to be MORE faithful to the source.
+     The zero below is declared rather than omitted, so a radius arriving later
+     through the CASCADE cannot silently round this card — the mechanism that hid
+     one on the active stage cell until someone looked.
+     NOTE: this comment DESCRIBES those declarations instead of quoting them.
+     Scanners that are not comment-aware — the repo's own design hook among them
+     — read a quoted construct as a live one, so prose about an anti-pattern gets
+     reported as the anti-pattern. Same hazard as the comment-inclusive counters
+     in the suite; the answer there and here is not to spell it literally. */
   border-top: 3px solid var(--warn-line);
   border-radius: 0;
   background: var(--warn-bg);

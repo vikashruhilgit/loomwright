@@ -991,7 +991,20 @@ fi
 # token becomes non-zero, every accented card silently rounds. This gate is what makes that a
 # red test instead of a surprise.
 css_accent_unsquared() {
+  # COMMENT-AWARE, and that is not optional: the first draft of this scanner was
+  # not, and it matched the construct inside the very comment written to explain
+  # it — the same hazard as the suite's comment-inclusive occ/code_occ split, and
+  # the repo's non-comment-aware design hook reports exactly that false positive.
+  # CSS comments are /* */ only and may span lines, so strip them with a state
+  # machine rather than a line-oriented substitution, which would strip nothing.
   awk '
+    { line=$0; out=""
+      while (length(line)) {
+        if (inblk) { i=index(line,"*/"); if(i==0){line=""} else {line=substr(line,i+2); inblk=0} }
+        else { i=index(line,"/*")
+               if(i>0){ out=out substr(line,1,i-1); line=substr(line,i+2); inblk=1 }
+               else { out=out line; line="" } } }
+      $0=out }
     /^[.#a-zA-Z][^{]*\{/ { sel=$0; sub(/ *\{.*/,"",sel); acc=0; rad=0 }
     /border-top: *[2-9]px/                   { acc=1 }
     /border-radius: *0 *;/                   { rad=1 }
