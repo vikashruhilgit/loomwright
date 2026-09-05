@@ -568,6 +568,33 @@ widening ownership to "any session whose id appears anywhere in the log":
 that is the measure-over-all-lines mistake that made the original loop
 circular.
 
+**8. A close-out whose SessionEnd payload is empty or unparseable does not
+fire, and the run stays stranded.** `close-stranded-run.sh` identifies itself
+from the payload's `session_id`. When stdin arrives empty or unparseable
+there is no `cc_session_id` to compare, so a log that has a KNOWN owner —
+the normal state of any real run past its first worker completion, and
+therefore exactly the 140-session incident this work exists to close — takes
+the non-owner branch and the script writes nothing. It exits 0 silently, with
+no error and no signal.
+
+This is deliberate and is **not** closed by writing anyway. The script cannot
+distinguish "I am the owner but my payload was lost" from "a different,
+still-LIVE session owns this run", and writing on that ambiguity would stamp
+`status: failed` onto a live run — the same false-positive corruption the
+`clear` guard exists to prevent, and strictly worse than the condition it
+would be trying to fix. The asymmetry decides it: a stranded run is
+recoverable, a wrongly-closed live run is not.
+
+**Recovery path:** `LOOMWRIGHT_STALE_RUN_SECONDS` (default 86400), the
+staleness backstop in `build-state.sh` described above — a derived `running`
+whose newest owner-originated event is older than the threshold is downgraded
+to `failed` without needing any `session_end` to land. So the run does reach a
+terminal status; it reaches it on the backstop's timescale rather than
+immediately. Note the empty-owner case is different and unaffected: an
+UNKNOWN owner still ADOPTS, so a fresh run's first close-out is not blocked.
+Pinned by case 4j in `scripts/test-close-stranded-run.sh` (empty stdin +
+known owner ⇒ nothing written, exit 0, `state.md` still non-terminal).
+
 ### Run ownership
 
 **The problem this exists to stop.** Both emitters used to join a run's log
@@ -608,7 +635,29 @@ key and the legacy `type` key, the contract `build-insights.sh` filters on
 (see `docs/RESULT_SCHEMAS.md` §"`session_end` JSONL hard-signal fields") —
 then re-projects via `build-state.sh`. It writes nothing when `state.md` is
 already terminal, when there is no `state.md`, or when this session is not
-the run's owner. `failed` is the only status it emits; `paused` is never
+the run's owner — including the ownership-unprovable case in §"Honest limits"
+entry 8, where the payload arrives empty or unparseable against a log that
+has a known owner.
+
+**`SessionEnd` is scoped to real termination — `/clear` must never close a
+run.** `SessionEnd` fires for `clear` as well as for genuine termination, and
+`cc_session_id` is STABLE across `/clear` within one CLI process. A user
+running `/clear` mid-run therefore presents a NON-TERMINAL `state.md` with a
+MATCHING owner: every condition above is satisfied, and an unscoped hook would
+write `status: failed` over a run that is still executing — corrupting state
+in the OPPOSITE direction from the fan-in this work exists to close. Two
+layers stop it: `hooks.json` registers the hook under
+`"matcher": "logout|prompt_input_exit|other"`, and the script itself exits 0
+writing nothing when the payload's `.reason` is exactly `clear`. The in-script
+layer is a **DENY-LIST, never an allow-list**: an absent, empty, or
+unparseable reason PROCEEDS, because the no-`reason` payload is the main path
+(the self-tests emit exactly that), and because a stranded run is recoverable
+via the staleness backstop while a wrongly-closed live run is not. Pinned by
+cases 4k (`clear` ⇒ no-op) and 4l (`logout` ⇒ still closes out) in
+`scripts/test-close-stranded-run.sh`; 4l is the control that stops 4k from
+passing under a blanket suppression of every reason-bearing payload.
+
+`failed` is the only status it emits; `paused` is never
 used, because `paused` is classified LIVE by
 `hook-dispatch-on-pr-create.sh` and DEAD by both emitters, so emitting it
 would put two consumers in disagreement about the same file. Like the

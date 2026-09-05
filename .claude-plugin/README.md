@@ -506,6 +506,7 @@ Agents with `memory: project` build knowledge across sessions:
 - **Notification:** desktop banner on permission/idle/elicitation prompts, `auth_success` excluded (v14.1.0)
 - **SessionStart:** crash/compact recovery context via `session-resume.sh` (v14.2.0) + per-project OpenTelemetry resource-attribute labeling via `set-otel-resource-attrs.sh` — telemetry-gated, fail-safe (v14.47.0)
 - **PostToolUse (Bash):** PR-create backstop for the until-mergeable review drain — fires on `gh pr create`, session-scope gated, fail-safe (v14.34.0) + 1 `type: command` progress-state re-projection hook (`reproject-state-on-terminal.sh`, PR #116 review round, v15.16.0) that mechanically re-invokes `build-state.sh` once a `session_end` event lands in the session log
+- **SessionEnd:** stranded-run close-out via `close-stranded-run.sh` (v15.49.0) — appends the missing `session_end` (`status: failed`) and re-projects `state.md` when a run ends without completing; scoped to `logout|prompt_input_exit|other` so `/clear` can never close a live run, and fail-safe/always-exits-0 like the other emitters
 - **Stop:** Code Reviewer (completeness gate)
 - **TaskCompleted:** Verify task genuinely done
 - **WorktreeCreate / WorktreeRemove / StopFailure:** Logging (`WorktreeRemove` added v15.5.0 — logs worktree cleanup to `.supervisor/logs/worktrees.log`)

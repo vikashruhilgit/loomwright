@@ -122,15 +122,30 @@ seed_owned_log() {
 }
 
 run_sut() {
-  # Usage: run_sut <workdir> <session-id-or---empty>
+  # Usage: run_sut <workdir> <session-id-or---empty> [reason]
   # Echoes the SUT's output, then RC=<n> on the last line.
-  local wd="$1" sid="$2"
-  local out rc
+  #
+  # The third positional is OPTIONAL and adds a `reason` field to the
+  # SessionEnd payload. It is OMITTED when not passed — every pre-existing
+  # caller keeps its exact two-argument behaviour, byte for byte, and that is
+  # load-bearing rather than incidental: the SUT's `clear` guard is a
+  # DENY-LIST, so a payload carrying NO `reason` must still take the main
+  # close-out path. If this helper ever acquired a default reason, the
+  # no-reason population — which is what every other case in this file
+  # exercises — would stop being tested at all.
+  local wd="$1" sid="$2" reason="${3:-}"
+  local out rc payload
   if [ "$sid" = "--empty" ]; then
     out="$( cd "$wd" && "$REALBASH" "$SUT" </dev/null 2>&1 )"
   else
-    out="$( cd "$wd" && printf '{"session_id":"%s","hook_event_name":"SessionEnd"}' "$sid" \
-            | "$REALBASH" "$SUT" 2>&1 )"
+    if [ -n "$reason" ]; then
+      payload="$(printf '{"session_id":"%s","hook_event_name":"SessionEnd","reason":"%s"}' "$sid" "$reason")"
+    else
+      payload="$(printf '{"session_id":"%s","hook_event_name":"SessionEnd"}' "$sid")"
+    fi
+    # The `out=` assignment MUST remain the last command before `rc=$?`, or the
+    # captured status becomes the payload builder's instead of the SUT's.
+    out="$( cd "$wd" && printf '%s' "$payload" | "$REALBASH" "$SUT" 2>&1 )"
   fi
   rc=$?
   printf '%s\n' "$out"
@@ -317,6 +332,59 @@ assert_eq "case4i non-terminal tail still appends (guard is not blanket suppress
   "$(count_lines "$LOG4I")"
 assert_eq "case4i appended record is a session_end" "session_end" \
   "$(tail -1 "$LOG4I" | jq -r '.event // empty')"
+
+echo "-- 4j. empty stdin + KNOWN owner -> writes nothing (documented gap) --"
+# Pairs empty/unparseable stdin with a KNOWN owner, which case 4d does NOT:
+# 4d has an UNKNOWN owner, so the adopt-on-unknown-owner rule rescues it. Here
+# the owner IS recorded, so the non-owner branch is taken with an empty
+# CC_SESSION_ID and the run stays stranded. That is deliberate — we cannot
+# prove ownership, and wrongly closing a LIVE run owned by another session is
+# worse than leaving a stranded one for the staleness backstop. This case
+# pins the behaviour so a future change to the ownership branch has to
+# confront it rather than alter it silently. See docs/TELEMETRY.md
+# §"Honest limits" entry 8.
+REPO4J="$(init_repo "feature/case4j")"
+seed_owned_log "$REPO4J" "sid-case4j" "cc-owner-4j"
+seed_state "$REPO4J" "sid-case4j" "running"
+LOG4J="$REPO4J/.supervisor/logs/sid-case4j.jsonl"
+OUT4J="$(run_sut "$REPO4J" --empty)"
+assert_eq "case4j exit 0" "0" "$(get_rc "$OUT4J")"
+assert_eq "case4j empty stdin + KNOWN owner appends nothing (stays stranded)" "1" \
+  "$(count_lines "$LOG4J")"
+assert_eq "case4j state.md left non-terminal (ownership unproven)" "running" \
+  "$(sed -nE 's/^- status:[[:space:]]*//p' "$REPO4J/.supervisor/state.md" 2>/dev/null)"
+
+echo "-- 4k. reason=clear against a LIVE owned run -> no-op --"
+# `/clear` keeps the SAME cc_session_id, so every other condition in the SUT
+# is satisfied: non-terminal state.md, matching owner. Only the reason guard
+# stops the write. Delete that guard and this case appends a `failed`
+# session_end to a run that is still executing.
+REPO4K="$(init_repo "feature/case4k")"
+seed_owned_log "$REPO4K" "sid-case4k" "cc-owner-4k"
+seed_state "$REPO4K" "sid-case4k" "running"
+LOG4K="$REPO4K/.supervisor/logs/sid-case4k.jsonl"
+OUT4K="$(run_sut "$REPO4K" "cc-owner-4k" "clear")"
+assert_eq "case4k exit 0" "0" "$(get_rc "$OUT4K")"
+assert_eq "case4k /clear appends nothing to a live owned log" "1" \
+  "$(count_lines "$LOG4K")"
+assert_eq "case4k /clear leaves state.md non-terminal" "running" \
+  "$(sed -nE 's/^- status:[[:space:]]*//p' "$REPO4K/.supervisor/state.md" 2>/dev/null)"
+
+echo "-- 4l. control for 4k: reason=logout still closes out normally --"
+# Without this control, 4k would also pass if the guard suppressed EVERY
+# payload that carries a reason at all — a blanket break dressed as a fix.
+REPO4L="$(init_repo "feature/case4l")"
+seed_owned_log "$REPO4L" "sid-case4l" "cc-owner-4l"
+seed_state "$REPO4L" "sid-case4l" "running"
+LOG4L="$REPO4L/.supervisor/logs/sid-case4l.jsonl"
+OUT4L="$(run_sut "$REPO4L" "cc-owner-4l" "logout")"
+assert_eq "case4l exit 0" "0" "$(get_rc "$OUT4L")"
+assert_eq "case4l reason=logout still appends exactly one session_end" "2" \
+  "$(count_lines "$LOG4L")"
+assert_eq "case4l appended record is a session_end" "session_end" \
+  "$(tail -1 "$LOG4L" | jq -r '.event // empty')"
+assert_eq "case4l state.md reaches a terminal status" "failed" \
+  "$(sed -nE 's/^- status:[[:space:]]*//p' "$REPO4L/.supervisor/state.md" 2>/dev/null)"
 
 echo "== real repo .supervisor untouched =="
 assert_eq "real .supervisor snapshot unchanged" "$REAL_BEFORE" "$(snapshot_real)"

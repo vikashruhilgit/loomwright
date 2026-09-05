@@ -33,11 +33,13 @@
 # Writes exactly ONE `session_end` event (`status: failed`,
 # `reason: session_ended_without_completion`) and re-projects via build-state.sh
 # when ALL of the following hold:
+#   0. the SessionEnd `reason` is NOT `clear` (see the deny-list guard below —
+#      absent/empty/unparseable reason satisfies this), and
 #   1. `.supervisor/state.md` exists at the MAIN worktree, and
 #   2. its `- status:` is NON-TERMINAL (running | checkpoint | paused), and
 #   3. THIS session is the recorded owner of that run's log.
-# Anything else — a terminal status, no state.md, a non-owner session — writes
-# NOTHING and exits 0.
+# Anything else — a `clear`, a terminal status, no state.md, a non-owner
+# session — writes NOTHING and exits 0.
 #
 # `failed` is the ONLY status this emits. `paused` is deliberately never used:
 # it is classified LIVE by hook-dispatch-on-pr-create.sh and DEAD by both
@@ -54,9 +56,15 @@
 # direction that makes the mechanism work at all: refusing on unknown owner
 # would leave exactly the stranded runs this exists to close.
 #
-# No-op (exit 0) when: main worktree unresolvable, not a git repo, no state.md,
-# terminal status, non-owner session, no plugin session id, broken/absent jq,
-# unwritable log.
+# No-op (exit 0) when: the SessionEnd reason is `clear`, main worktree
+# unresolvable, not a git repo, no state.md, terminal status, non-owner
+# session, no plugin session id, broken/absent jq, unwritable log.
+#
+# KNOWN, DELIBERATE GAP: an owning session whose SessionEnd payload arrives
+# EMPTY or UNPARSEABLE cannot be proven to be the owner, so a run with a KNOWN
+# (non-empty) log owner is NOT closed out and stays stranded until the
+# staleness backstop fires. Documented in docs/TELEMETRY.md §"Honest limits"
+# entry 8; pinned by case 4j in test-close-stranded-run.sh.
 #
 # Authoritative spec: this repo's 2026-09-05 brief
 # (.supervisor/jobs/*/auto-2026-09-05-121712-run-ownership-and-session-close-out.md).
@@ -68,6 +76,41 @@ trap 'exit 0' EXIT
 
 # ---- Read the SessionEnd payload (may legitimately be empty) -----------------
 INPUT="$(cat 2>/dev/null || true)"
+
+# ---- Scope: `/clear` is NOT a session termination ---------------------------
+# `SessionEnd` fires for `clear` as well as for real termination, and
+# `cc_session_id` is STABLE across `/clear` within one CLI process. So a
+# user running `/clear` mid-run — ordinary context hygiene during a long
+# autonomous loop — presents a NON-TERMINAL state.md whose log owner MATCHES,
+# i.e. every condition below is satisfied, and this script would stamp
+# `status: failed` onto a run that is still very much alive. That corrupts
+# state in the OPPOSITE direction from the fan-in this script exists to close.
+#
+# Defense in depth, layer 2 of 2: `hooks.json` scopes the registration to
+# `"matcher": "logout|prompt_input_exit|other"` (the same scoping the earlier
+# design work already chose for a different SessionEnd hook — see
+# docs/SPIKES/ENHANCEMENT_PLAN_v15_DRAFT.md §2.4). This in-script guard is the
+# second layer, so a harness that ignores the matcher still cannot corrupt a
+# live run.
+#
+# DENY-LIST, NEVER AN ALLOW-LIST. Only the exact string `clear` suppresses;
+# an ABSENT, EMPTY, or UNPARSEABLE reason PROCEEDS. Requiring the reason to be
+# a member of {logout,prompt_input_exit,other} would make a payload with no
+# `reason` field skip — and that is the main path, not an edge case. The
+# failure directions are asymmetric and settle the default: a run left
+# stranded is RECOVERABLE (build-state.sh's `LOOMWRIGHT_STALE_RUN_SECONDS`
+# backstop closes it, see docs/TELEMETRY.md §"Run ownership"), whereas a live
+# run wrongly marked `failed` is not.
+#
+# Probe jq FUNCTIONALLY, never `command -v` alone — same idiom as below. A
+# broken or absent jq yields no reason and therefore PROCEEDS, which is the
+# safe direction by the asymmetry above.
+if printf '{}' | jq -e . >/dev/null 2>&1 && [ -n "$INPUT" ]; then
+  END_REASON="$(printf '%s' "$INPUT" | jq -r '.reason // empty' 2>/dev/null || true)"
+  case "${END_REASON:-}" in
+    clear) exit 0 ;;
+  esac
+fi
 
 # ---- Worktree-safe anchoring (R1 — same idiom as emit-progress-event.sh) -----
 # Resolve the MAIN worktree BY NAME: `git worktree list --porcelain`'s first
