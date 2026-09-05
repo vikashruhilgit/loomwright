@@ -976,6 +976,48 @@ fi
   && ok "(c17) floor.js is byte-identical after the (c13) mutation controls (sha256 unchanged)" \
   || no "(c17) floor.js is byte-identical after the (c13) mutation controls" "before='$JS_SIG_BEFORE' after='$(csum "$JS")'"
 
+# --- (c18)/(c19) AN ACCENTED CARD IS SQUARE, AND SAYS SO EXPLICITLY -----------------------
+# The site pairs its 3px top accent ONLY with square corners: .play-card, .install-card and
+# .plays article each carry `border-top:3px solid` plus `border:1px solid var(--hair)` and NO
+# border-radius, and it reserves its .4rem radius for elements with no accent. Two rules here
+# carry an accent and both must therefore be square.
+#
+# THE ASSERTION IS "DECLARES AN EXPLICIT 0", NOT "DECLARES NOTHING", and that distinction is
+# the whole gate. A radius can arrive through the CASCADE from a base rule — which is exactly
+# how `.stage.active` carried one unnoticed: `.stage` declared `border-radius: var(--radius)`
+# and `.stage.active` only added the accent. An absent declaration proves nothing about the
+# computed value; an explicit 0 does. It is also invisible-by-luck today because `--radius` is
+# currently 0, so every `border-radius: var(--radius)` computes to square anyway — the day that
+# token becomes non-zero, every accented card silently rounds. This gate is what makes that a
+# red test instead of a surprise.
+css_accent_unsquared() {
+  awk '
+    /^[.#a-zA-Z][^{]*\{/ { sel=$0; sub(/ *\{.*/,"",sel); acc=0; rad=0 }
+    /border-top: *[2-9]px/                   { acc=1 }
+    /border-radius: *0 *;/                   { rad=1 }
+    /^\}/ { if (acc && !rad) print sel }
+  ' "$1"
+}
+c_acc_bad="$(css_accent_unsquared "$CSS")"
+c_acc_n="$(awk '/border-top: *[2-9]px/{n++} END{print n+0}' "$CSS")"
+[ -z "$c_acc_bad" ] && [ "$c_acc_n" -ge 2 ] \
+  && ok "(c18) every rule carrying a thick top accent declares an explicit border-radius: 0 — $c_acc_n accented rule(s), none relying on --radius happening to be 0 or on a base rule not having set one" \
+  || no "(c18) an accented rule declares an explicit border-radius: 0" "unsquared:${c_acc_bad:-<none>} accented-rules=$c_acc_n"
+
+# MUTATION CONTROL — the cascade case specifically, because that is the one a reader misses:
+# strip the explicit 0 from an accented rule and the gate must name it. Without this, (c18)
+# would pass just as happily against a scanner that never matched an accent at all.
+MUT_CSS="$TMPROOT/mut-accent-radius.css"
+awk 'BEGIN{done=0} { if(!done && $0 ~ /border-radius: *0 *;/){ done=1; next } print }' "$CSS" > "$MUT_CSS" 2>/dev/null
+if mutant_ok "$CSS" "$MUT_CSS"; then
+  m_acc="$(css_accent_unsquared "$MUT_CSS")"
+  [ -n "$m_acc" ] \
+    && ok "(c19) MUTATION CONTROL: an accented rule whose explicit border-radius: 0 is removed IS named by (c18) ($m_acc) — the gate reads the declaration, not the token's current value" \
+    || no "(c19) MUTATION CONTROL: a thick accent left un-squared IS flagged" "the scanner named nothing on the mutant"
+else
+  no "(c19) MUTATION CONTROL: the accent/radius mutant could not be staged, so (c18) is UNCONTROLLED" "mutant_ok rejected $MUT_CSS"
+fi
+
 # ===========================================================================
 echo "(d) AC-fixtures-conform — validated against the schema block, not a restated key list"
 # ===========================================================================

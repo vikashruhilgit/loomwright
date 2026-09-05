@@ -274,8 +274,12 @@ code { font-family: var(--mono); font-size: 0.85em; }
      a LEFT edge is the generic alert-bar shape, and a thick accent on a ROUNDED
      card fights its own corners — a design gate flagged this element for each in
      turn, and both times the fix was to be MORE faithful to the source, not less.
-     The site reserves its .4rem radius for elements that carry no accent. */
+     The site reserves its .4rem radius for elements that carry no accent.
+     Declared as an explicit 0 rather than simply omitted, so a radius arriving
+     later through the CASCADE cannot silently round this card — which is exactly
+     how `.stage.active` carried one unnoticed. */
   border-top: 3px solid var(--warn-line);
+  border-radius: 0;
   background: var(--warn-bg);
   color: var(--warn-ink);
   font-weight: 700;
@@ -323,6 +327,12 @@ code { font-family: var(--mono); font-size: 0.85em; }
 .stage.active {
   border-color: var(--hair);
   border-top: 3px solid var(--copper);
+  /* Explicitly square, for the same reason .banner is: this element carries a
+     thick accent, and the site pairs that accent only with square corners. The
+     radius arrives here through the CASCADE — `.stage` declares it, this rule
+     adds the accent — which is why it is easy to miss and why zeroing it here
+     has to be explicit rather than assumed from `--radius` being 0 today. */
+  border-radius: 0;
   padding-top: calc(0.7rem - 2px);
   font-weight: 700;
 }
