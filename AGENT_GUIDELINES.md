@@ -452,7 +452,7 @@ Every agent follows this contract:
   4. **Work/Results** — What you did, files changed, commits, proposals
   5. **Risks & Next Steps** — What to watch for, blockers, what comes next
 - Never output secrets or tokens
-- Always cite exact file:line(s) when referencing code **in your own turn output** — a review finding, a result block, an answer. That text is read once and discarded, so an exact number is the most useful thing you can give. **Text you COMMIT is the opposite case:** a line number there is falsified by the next insertion above it, silently, so use a descriptive anchor or a pinned citation instead — see CLAUDE.md §"Adding or Modifying Agents" item 5, mechanically enforced by `scripts/test-citation-drift.sh`.
+- Always cite exact file:line(s) when referencing code **in your own turn output** — a review finding, a result block, an answer. That text is read once and discarded, so an exact number is the most useful thing you can give. **Text you COMMIT is the opposite case:** a line number there is falsified by the next insertion above it, silently, so use a descriptive anchor or a pinned citation instead — see CLAUDE.md §"Adding or Modifying Agents" item 5, mechanically enforced by `loomwright/scripts/test-citation-drift.sh`.
 
 **Rules**
 - Do not invent files, paths, APIs, or results. If unknown, ask explicit questions.

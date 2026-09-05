@@ -3465,12 +3465,15 @@ fi
 #
 # WHICH PHRASINGS ARE SWEPT, and one that is DELIBERATELY NOT, because getting this wrong in
 # either direction is silent. Only the CURRENT-STATE phrasings are swept. The bare form
-# `21 commands` is excluded on measurement, not on taste: README.md's dated `NEW in vX.Y.Z`
-# banners each close with a per-release `Counts: 14 agents / N commands / N skills / N hooks`
-# line describing THAT release — nine of them today, several stating skill and hook counts
-# this repo left behind long ago — which is the same historical convention CHANGELOG.md uses
-# and is why CHANGELOG.md is unscanned. Sweeping the bare form would flag all nine forever and
-# pressure the next author into rewriting frozen release history to appease a gate. The
+# `21 commands` is excluded because a per-release `Counts: 14 agents / N commands / N skills /
+# N hooks` line describes THAT release, not the current state, and sweeping the bare form would
+# pressure the next author into rewriting frozen release history to appease a gate. That is the
+# historical convention CHANGELOG.md uses, and is why CHANGELOG.md is unscanned.
+# NOTE (README banners removed): README.md used to carry nine such dated `NEW in vX.Y.Z` banners
+# and was the measurement behind this exclusion; its release banners have since been replaced by
+# a pointer to CHANGELOG.md, so no scanned surface states a historical count today. The
+# narrowing is retained as-is rather than silently tightened — sweeping the bare form is now
+# available as a deliberate change, not a side effect of a docs edit. The
 # parenthesised `(21 commands` IS swept, because that is the current-state form README uses
 # in its live "Commands are in ..." pointer. (z14) is what keeps this narrowing honest: it
 # requires the current claim to actually be present, so a surface that simply stopped stating
