@@ -209,4 +209,4 @@ nobody re-verifies them by hand:
   `aria-labelledby` equality with two removal controls and a comment-stripper control — group (q)
 - every section carrying a caption that names its freshness basis — group (q)
 - no command body instructing the agent to run a foreground `serve`, with the runtime carve-out
-  proved to discriminate rather than skip — group (p)
+  proved to discriminate rather than skip — group (r)

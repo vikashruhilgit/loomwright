@@ -6034,24 +6034,24 @@ nbfs_control() {   # <id> <rel-path under $P_TMP> <expect: flag|silent> <what it
       || no "($id) NEGATIVE CONTROL: $what is not flagged" "the guard flagged: $hits"
   fi
 }
-nbfs_control p11 commands/m-agentword.md flag \
+nbfs_control r11 commands/m-agentword.md flag \
   'an un-detached invocation whose trailing comment merely CONTAINS the word "agent" (`# the agent runs this`) — the exact line the old bare-substring E2 exempted, and the exemption six of the ten shipped candidate lines ride on, so it could be narrowed but not deleted' \
   'bash "$PLUGIN_DIR/scripts/setup-ui.sh" serve   # the agent runs this'
-nbfs_control p12 commands/m-humanword.md flag \
+nbfs_control r12 commands/m-humanword.md flag \
   'the same bypass through the other half of the old E2 — the bare word "human" somewhere on the line (`# ask a human first`), which scopes no claim to any caller' \
   'bash "$PLUGIN_DIR/scripts/setup-ui.sh" serve   # ask a human first'
-nbfs_control p13 commands/m-notdetach.md flag \
+nbfs_control r13 commands/m-notdetach.md flag \
   'an un-detached invocation exempted by the very words that NEGATE the flag (`# NOT --detach on purpose`) — the old E3 matched `--detach` anywhere on the line rather than adjacent to `serve`' \
   'bash "$PLUGIN_DIR/scripts/setup-ui.sh" serve  # NOT --detach on purpose'
-nbfs_control p14 commands/m-indirect.md flag \
+nbfs_control r14 commands/m-indirect.md flag \
   'ONE level of variable indirection — the engine path bound to a shell variable on one line and the verb run through it on the next' \
   'SCRIPT="$PLUGIN_DIR/scripts/setup-ui.sh"' \
   '"$SCRIPT" serve'
-nbfs_control p15 commands/m-continued.md flag \
+nbfs_control r15 commands/m-continued.md flag \
   'a backslash continuation that puts the verb on the following line' \
   'bash "$PLUGIN_DIR/scripts/setup-ui.sh" \' \
   '  serve'
-nbfs_control p16 commands/m-plainenglish.md flag \
+nbfs_control r16 commands/m-plainenglish.md flag \
   'a plain-English foreground directive naming no keystroke at all (`Run the floor server in the foreground and wait for it to exit.`) — not even a CANDIDATE while CLASS F required the literal Ctrl-C, which is what made the group headline "keys on serve/foreground semantics" untrue' \
   'Run the floor server in the foreground and wait for it to exit.'
 
@@ -6087,14 +6087,14 @@ fi
 # forms still pass. Without these three, every (r11)-(r16) pass above would also be produced by
 # a guard that simply flagged every candidate line — and the shipped tree, which (r1) proves is
 # clean, would be the only thing standing between that guard and a green suite.
-nbfs_control p19a commands/n-detached.md silent \
+nbfs_control r19a commands/n-detached.md silent \
   'the same invocation written correctly, with --detach adjacent to the verb' \
   'bash "$PLUGIN_DIR/scripts/setup-ui.sh" serve --detach'
-nbfs_control p19b commands/n-indirect-detached.md silent \
+nbfs_control r19b commands/n-indirect-detached.md silent \
   'the indirection form written correctly — the verb reached through a variable, with --detach adjacent' \
   'SCRIPT="$PLUGIN_DIR/scripts/setup-ui.sh"' \
   '"$SCRIPT" serve --detach'
-nbfs_control p19c commands/n-scoped.md silent \
+nbfs_control r19c commands/n-scoped.md silent \
   'a foreground description that really does scope its claim to a caller (`for a human`), which is the sentence shape (r8) requires the four prose surfaces to keep' \
   'Foreground is the default and Ctrl-C stops `serve`, for a human running the engine directly.'
 

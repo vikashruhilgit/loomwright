@@ -98,7 +98,6 @@
   --ink-dim: #6B6154;
   /* the site's hairline, and a stronger keyline for cues that must clear 3:1 */
   --hair: rgba(44, 36, 24, 0.14);
-  --line: rgba(44, 36, 24, 0.14);
   --line-strong: #8A7F70;
   /* the site's accent family. --copper is a FILL; --copper-deep is the readable one. */
   --copper: #E8893A;
@@ -141,7 +140,6 @@
     --ink: #F4EBDC;
     --ink-dim: #B9AC9B;
     --hair: rgba(244, 235, 220, 0.16);
-    --line: rgba(244, 235, 220, 0.16);
     --line-strong: #8E8272;
     --copper: #E8893A;
     --copper-deep: #F0A55E;
@@ -165,7 +163,6 @@
   --ink: #F4EBDC;
   --ink-dim: #B9AC9B;
   --hair: rgba(244, 235, 220, 0.16);
-  --line: rgba(244, 235, 220, 0.16);
   --line-strong: #8E8272;
   --copper: #E8893A;
   --copper-deep: #F0A55E;
