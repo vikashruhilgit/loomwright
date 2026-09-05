@@ -29,6 +29,11 @@
 #      deletes the ui directory, and the list of the user's projects has to outlive that.
 #      Registering a project writes NOTHING into the project itself, and `forget` is a registry
 #      edit only — it never touches the directory it is forgetting.
+#   4. THE REGISTRY LOCK — a DIRECTORY `<registry>.lock` beside the registry, held only for
+#      the length of one registry-writing verb and removed by an EXIT trap on every path out.
+#      It is listed here because it is a real filesystem write, transient or not: a lock left
+#      behind by a killed process is a file the user can find, and a write list that omitted it
+#      would be the reason nobody recognised it.
 #   Nothing else, anywhere. It never writes the user-scope settings file (that is the
 #   statusline module's one write domain and this module has no business in it), and it never
 #   runs a history-touching git command — no add, no commit, no checkout, no stash.
@@ -127,6 +132,49 @@
 #                     sibling of the ui dir, not a file in it - so this is the only override,
 #                     and it is what lets a test run without going near a real config tree
 #   --confirm         `scan` only: actually register the candidates it proposed
+#   --lock-timeout <n> seconds a registry-writing verb waits for the registry lock before it
+#                     REFUSES (default 10; 0 means do not wait at all). A timeout is a named
+#                     refusal that writes nothing, never a silent overwrite of the other writer
+#
+# TWO WRITERS ON ONE REGISTRY, WHICH `mv` ALONE DOES NOT SOLVE. Every registry edit is a
+# read-modify-write: snapshot the JSON, compute the new document, write a temp file, `mv` it
+# into place. The `mv` makes each write ATOMIC — no reader ever sees a half-written registry,
+# and a crash mid-write leaves the previous document intact — but atomic is not serialised.
+# Two invocations racing on the same registry each snapshot the SAME starting document, and
+# whichever `mv` lands last wins, silently discarding the other's `add` or `forget`. That is a
+# lost update, and it is reachable in practice now that `serve` runs the write verbs on the
+# page's behalf: a terminal and a page are two processes.
+#
+# So the WRITE verbs — `add`, `forget`, and a CONFIRMED `scan` — take a lock, and they take it
+# BEFORE the snapshot rather than around the `mv`: a lock that covered only the write would
+# serialise two `mv`s that had already read the same document, which is the same lost update
+# with extra steps. The READ verbs (`check`, `list`, an unconfirmed `scan`) take nothing: a
+# reader is already safe by construction, because the document it opens only ever appeared
+# whole via `mv`, and a lock on the read path would buy contention and no correctness.
+#
+# `flock` IS NOT ON STOCK macOS, so the lock is `mkdir`, which is atomic on every POSIX
+# filesystem: exactly one of N racing callers creates the directory and the rest see EEXIST.
+# That buys mutual exclusion and brings TWO failure modes this script could not have before —
+# both handled by name, both still exiting 0:
+#   A STALE LOCK left by a process that was killed between `mkdir` and its release. The holder's
+#     pid is recorded inside the lock; a lock whose owner is GONE (`kill -0` fails) is stale and
+#     is broken. A lock whose owner is ALIVE but whose command line is demonstrably some other
+#     program is a REUSED pid and is also stale. A lock whose owner is alive and IS this engine
+#     is not stale — it is simply busy — and neither is one this script cannot judge, because
+#     `ps` produced nothing: refusing to judge means waiting, which is the direction that
+#     cannot destroy a registry. A lock directory carrying no readable owner at all is broken
+#     only once it is older than the acquisition grace below, since that is also what a holder
+#     mid-`mkdir` looks like for a few milliseconds.
+#     Breaking is itself a race — two callers can both decide the same lock is stale — so it is
+#     done by RENAMING the lock aside and removing the rename. `mv` of a directory is one
+#     rename(2): the second breaker finds nothing to move and loses cleanly instead of both
+#     of them proceeding to `mkdir`.
+#   A DEADLOCK, or simply a slow holder. The wait is bounded by `--lock-timeout` and ends in a
+#     named refusal that has written nothing — never in a silent proceed, which would be the
+#     lost update the lock exists to prevent, and never in a non-zero exit.
+# RELEASE IS STRUCTURAL, NOT PER-PATH: one EXIT/INT/TERM trap, so a return path added later
+# cannot forget it. Every verb in this file is terminal — the dispatch runs one and the script
+# exits — so the trap fires on the abort branches exactly as it does on the success branch.
 #
 # Portability: bash 3.2 / BSD userland safe. No GNU-only date/stat/sed flags, no associative
 # arrays, no `timeout`.
@@ -212,6 +260,18 @@ DETACH=0
 REGISTRY=""
 CONFIRM=0
 POSARG=""
+# How long a registry-WRITING verb waits for the lock before refusing. A bound is not optional:
+# without one a wedged lock turns every future `add` into a hang, and a hang in a script whose
+# contract is "always exit 0" is worse than the refusal it replaced.
+LOCK_TIMEOUT=10
+# How old a lock directory carrying NO readable owner must be before it is treated as a corpse.
+# It cannot be zero: `mkdir` and the owner write are two syscalls, so for a few milliseconds a
+# perfectly healthy holder looks exactly like a crash between them.
+LOCK_STALE_GRACE=5
+# Bound on stale-lock breaks within one acquisition. Breaking is only ever a response to a lock
+# nobody owns, so needing it repeatedly means something else is wrong; without the bound, a
+# break that keeps failing (a read-only parent, say) would spin here forever.
+LOCK_MAX_BREAKS=3
 # The scan's depth bound is a constant, not a flag: `scan` is a convenience over `add`, and an
 # unbounded walk of a home directory is a very long pause with no output. It is STATED in the
 # report so a candidate that was never reached is explainable rather than merely absent.
@@ -229,6 +289,7 @@ while [ $# -gt 0 ]; do
     --detach)   DETACH=1 ;;
     --registry) shift; REGISTRY="${1:-}" ;;
     --confirm)  CONFIRM=1 ;;
+    --lock-timeout) shift; LOCK_TIMEOUT="${1:-}" ;;
     # The FIRST non-flag argument is positional: a path for `add`/`scan`, a slug for `forget`.
     # Anything beginning with `-` stays an unknown FLAG and is still reported and ignored, so
     # a typo like `--uidir` cannot be silently swallowed as a project path.
@@ -244,6 +305,10 @@ done
 case "$PORT" in ''|*[!0-9]*) echo "setup-ui: --port must be a positive integer; falling back to 7734"; PORT=7734 ;; esac
 case "$INTERVAL" in ''|*[!0-9]*) echo "setup-ui: --interval must be a positive integer; falling back to 2"; INTERVAL=2 ;; esac
 [ "$INTERVAL" -lt 1 ] && INTERVAL=1
+# Zero IS legal here and is not a typo: `--lock-timeout 0` means "refuse immediately rather than
+# wait", which is what a scripted caller that would rather retry itself wants. Anything
+# non-numeric falls back rather than reaching arithmetic under `set -u`.
+case "$LOCK_TIMEOUT" in ''|*[!0-9]*) echo "setup-ui: --lock-timeout must be a non-negative integer; falling back to 10"; LOCK_TIMEOUT=10 ;; esac
 
 [ -n "$UI_DIR" ] || UI_DIR="$DEFAULT_UI_DIR"
 
@@ -355,6 +420,137 @@ reg_write() {
   return 0
 }
 
+# ---------------------------------------------------------------------------
+# The registry lock — see "TWO WRITERS ON ONE REGISTRY" in the header for why it exists and
+# why `mkdir` rather than `flock`. Everything here is used by the WRITE verbs only.
+# ---------------------------------------------------------------------------
+
+# The lock currently held by THIS process, or empty. It is the trap's whole input, which is why
+# it is set only after a `mkdir` that succeeded: a variable set optimistically before the
+# acquisition would make the trap delete a directory belonging to whoever really holds it.
+LOCK_HELD=""
+
+# lock_release -> remove the lock this process holds, if any. Idempotent, silent, always rc 0:
+# it runs from a trap, and a trap that can fail is a trap that can change an exit status.
+lock_release() {
+  [ -n "$LOCK_HELD" ] || return 0
+  rm -f "$LOCK_HELD/owner" 2>/dev/null
+  rmdir "$LOCK_HELD" 2>/dev/null || rm -rf "$LOCK_HELD" 2>/dev/null
+  LOCK_HELD=""
+  return 0
+}
+
+# ONE RELEASE SITE, INSTALLED ONCE, COVERING EVERY PATH OUT. Each write verb has four or five
+# `return 0` branches and more will be added; releasing at each of them would make "did the new
+# branch release?" a question every future change has to answer correctly. Every verb in this
+# file is terminal — the dispatch at the bottom runs exactly one and the script exits — so the
+# trap fires on the refusals exactly as it does on the successes.
+# `do_serve` installs its OWN EXIT trap and therefore replaces this one; that is currently
+# harmless because `serve` takes no lock, so LOCK_HELD is empty for its whole life. If a future
+# change ever makes `serve` take this lock, that trap must chain this release.
+trap 'lock_release' EXIT INT TERM
+
+# lock_owner_pid <lockdir> -> the recorded holder pid on stdout, or rc 1 when there is not a
+# readable numeric one. Validated numeric before it can reach `kill`, for the same reason
+# file_mtime validates: an unvalidated value here reaches a builtin that would take the script
+# with it under `set -u`.
+lock_owner_pid() {
+  local pid
+  pid="$(cat "$1/owner" 2>/dev/null)" || pid=""
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s' "$pid"
+  return 0
+}
+
+# lock_is_stale <lockdir> -> rc 0 when the lock is a corpse and may be broken, rc 1 when it is
+# held by something this script must WAIT for. Every uncertain case answers rc 1 on purpose:
+# waiting costs a bounded delay and a named refusal, while breaking a live holder's lock costs
+# the registry, so the two errors are not symmetric and this function is not neutral between them.
+#
+# It also sets LOCK_STALE_REASON, and that is not decoration. There are THREE ways to be stale
+# and they are three different findings; reporting all of them as "the owning process was gone"
+# would be stating something this function did not measure in two of the three, which is exactly
+# what the rest of this module refuses to do with a `reason`.
+LOCK_STALE_REASON=""
+lock_is_stale() {
+  local ld="$1" pid cmd mt now age
+  LOCK_STALE_REASON=""
+  if ! pid="$(lock_owner_pid "$ld")"; then
+    # No readable owner. That is EITHER a holder caught between its `mkdir` and its owner write
+    # OR a corpse that never got that far, and only age separates them.
+    mt="$(file_mtime "$ld")" || return 1
+    now="$(date +%s 2>/dev/null)"
+    case "$now" in ''|*[!0-9]*) return 1 ;; esac
+    age=$((now - mt))
+    if [ "$age" -ge "$LOCK_STALE_GRACE" ]; then
+      LOCK_STALE_REASON="it records no owner and has been there for ${age}s, longer than the ${LOCK_STALE_GRACE}s a holder can legitimately take between creating it and writing its pid"
+      return 0
+    fi
+    return 1
+  fi
+  # The holder is gone. Nothing else can be true of a pid that does not answer `kill -0`.
+  if ! kill -0 "$pid" 2>/dev/null; then
+    LOCK_STALE_REASON="the process that took it (pid $pid) is gone"
+    return 0
+  fi
+  # The pid is alive, which is not the same as "the holder is alive": pids are reused. The same
+  # `ps -o command=` shape `stop` already uses answers whether it is still this engine.
+  cmd="$(ps -o command= -p "$pid" 2>/dev/null || true)"
+  # `ps` said nothing at all — unavailable, restricted, or a kernel that hides it. This script
+  # will not guess from silence, so the lock counts as held and the caller waits it out.
+  [ -n "$cmd" ] || return 1
+  case "$cmd" in
+    # A live invocation of this engine. Busy, not stale. The match is the same substring `stop`
+    # uses, so `test-setup-ui.sh` matches it too — which only ever makes this MORE conservative.
+    *setup-ui.sh*) return 1 ;;
+  esac
+  # Alive, and provably some other program: the recorded pid was reused after the holder died.
+  LOCK_STALE_REASON="the pid it records ($pid) now belongs to a different program"
+  return 0
+}
+
+# lock_acquire <verb> -> rc 0 with LOCK_HELD set, or rc 1 having PRINTED a named refusal.
+# Never exits, never blocks unbounded, and never returns 0 without holding the directory.
+lock_acquire() {
+  local verb="$1" ld dir waited=0 breaks=0 broke="" aside
+  dir="$(dirname "$REG_FILE")"
+  if [ ! -d "$dir" ] && ! mkdir -p "$dir" 2>/dev/null; then
+    echo "$verb: ABORTED — $dir could not be created, so the registry lock has nowhere to live. Nothing was read and nothing was written."
+    return 1
+  fi
+  ld="$REG_FILE.lock"
+  while : ; do
+    if mkdir "$ld" 2>/dev/null; then
+      # LOCK_HELD is set FIRST, before the owner write: if the owner write fails, this process
+      # still holds the directory and must still release it. The owner file is how OTHER
+      # processes judge staleness; its absence costs them the grace delay, not correctness.
+      LOCK_HELD="$ld"
+      printf '%s\n' "$$" > "$ld/owner" 2>/dev/null
+      [ -n "$broke" ] && echo "$verb: note — a stale registry lock at $ld was cleared first: $broke. The registry itself was not affected."
+      return 0
+    fi
+    if [ "$breaks" -lt "$LOCK_MAX_BREAKS" ] && lock_is_stale "$ld"; then
+      # ONE BREAKER WINS. Two processes can reach this line about the same lock; `mv` of a
+      # directory is a single rename, so the loser finds nothing to move and falls through to
+      # the ordinary wait instead of both of them clearing the way for each other.
+      aside="$ld.stale.$$"
+      if mv "$ld" "$aside" 2>/dev/null; then
+        rm -rf "$aside" 2>/dev/null
+        broke="$LOCK_STALE_REASON"
+        [ -n "$broke" ] || broke="its owner could not be identified"
+      fi
+      breaks=$((breaks + 1))
+      continue
+    fi
+    if [ "$waited" -ge "$LOCK_TIMEOUT" ]; then
+      echo "$verb: ABORTED — the registry lock $ld is held by another run and did not clear within ${LOCK_TIMEOUT}s. $REG_FILE has NOT been read or modified and nothing was written. Let the other run finish and try again, or re-run with a longer --lock-timeout; if you are certain nothing else is running, delete that directory by hand."
+      return 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+}
+
 # project_slug <path> -> a short, stable, filesystem-agnostic handle for a project directory.
 # Lowercased, everything outside [a-z0-9] folded to a single `-`, no leading or trailing `-`.
 # A path whose basename folds away entirely still gets a name rather than an empty slug.
@@ -381,13 +577,22 @@ uniq_slug() {
   printf '%s' "$s"
 }
 
-# reg_prepare <verb> -> the single place where "there is no path to name", "jq is missing" and
-# "this file is not a registry" are decided, so no verb can answer any of them differently.
-# On success sets REG_FILE and REG_JSON (an EMPTY registry when the file does not exist yet).
+# reg_prepare <verb> [write] -> the single place where "there is no path to name", "jq is
+# missing" and "this file is not a registry" are decided, so no verb can answer any of them
+# differently. On success sets REG_FILE and REG_JSON (an EMPTY registry when the file does not
+# exist yet).
+#
+# THE SECOND ARGUMENT IS WHERE THE LOCK LIVES, and it lives here rather than in the verbs for
+# one reason: REG_JSON is the SNAPSHOT, and a lock taken after the snapshot serialises two
+# writers that have already read the same document — the same lost update, later. Passing
+# `write` acquires before the read and adds a FOURTH refusal to the three above, in the same
+# shape: a message naming the reason, rc 1, and nothing read or written. Every other caller
+# passes nothing and takes no lock, because a reader is already safe against a writer here:
+# the registry only ever becomes visible whole, via `mv`.
 REG_FILE=""
 REG_JSON=""
 reg_prepare() {
-  local verb="$1" rp rc
+  local verb="$1" mode="${2:-read}" rp rc
   REG_FILE=""; REG_JSON=""
   if ! have jq; then
     echo "$verb: ABORTED — jq not found, and the project registry is JSON this script will not parse by hand (doing so would mangle a registry you had hand-edited). Install jq; check's module half, apply, serve, stop and remove do not need it. Nothing was read and nothing was written."
@@ -398,6 +603,10 @@ reg_prepare() {
     return 1
   }
   REG_FILE="$rp"
+  # The lock is released by the EXIT trap, on this refusal path and on every other one.
+  if [ "$mode" = "write" ]; then
+    lock_acquire "$verb" || return 1
+  fi
   REG_JSON="$(registry_read "$rp")"; rc=$?
   case "$rc" in
     0) return 0 ;;
@@ -497,7 +706,7 @@ do_add() {
     return 0
   fi
 
-  reg_prepare add || return 0
+  reg_prepare add write || return 0
 
   existing="$(printf '%s' "$REG_JSON" | jq -r --arg p "$abs" '[.projects[] | select(.path == $p) | .slug] | first // ""' 2>/dev/null)"
   if [ -n "$existing" ]; then
@@ -560,7 +769,7 @@ do_forget() {
     return 0
   fi
 
-  reg_prepare forget || return 0
+  reg_prepare forget write || return 0
 
   gone="$(printf '%s' "$REG_JSON" | jq -r --arg s "$slug" '[.projects[] | select(.slug == $s) | .path] | first // ""' 2>/dev/null)"
   if [ -z "$gone" ]; then
@@ -604,7 +813,15 @@ do_scan() {
     return 0
   fi
 
-  reg_prepare scan || return 0
+  # AN UNCONFIRMED SCAN IS A READ, so it takes no lock: it walks, prints a proposal and stops.
+  # A CONFIRMED one holds the lock across the whole walk, which is the deliberate trade — the
+  # walk is bounded at SCAN_MAX_DEPTH and typically fast, and re-reading the registry after the
+  # walk instead would mean a second slug-collision pass against a document that had moved.
+  if [ "$CONFIRM" -eq 1 ]; then
+    reg_prepare scan write || return 0
+  else
+    reg_prepare scan || return 0
+  fi
 
   echo "scan: $abs (maximum depth $SCAN_MAX_DEPTH directory levels below the scan root)"
   new_json="$REG_JSON"
@@ -1666,7 +1883,7 @@ case "$SUBCMD" in
   scan)   do_scan ;;
   *)
     echo "setup-ui: unknown subcommand '$SUBCMD' (expected check | apply | serve | stop | remove | add | list | forget | scan)"
-    echo "usage: setup-ui.sh <check|apply|serve|stop|remove|add|list|forget|scan> [--ui-dir <dir>] [--registry <file>] [--port <n>] [--interval <n>] [--no-regen] [--detach] [--confirm]"
+    echo "usage: setup-ui.sh <check|apply|serve|stop|remove|add|list|forget|scan> [--ui-dir <dir>] [--registry <file>] [--port <n>] [--interval <n>] [--no-regen] [--detach] [--confirm] [--lock-timeout <n>]"
     ;;
 esac
 exit 0
