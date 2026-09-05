@@ -626,12 +626,47 @@ must join on the seeded plugin id). They can only mis-file an event. The
 close-out is the one writer that can mark a LIVE run dead, so it alone demands
 self-identification.
 
-**Residual:** a run that ends before emitting any event, under a session whose
-id is not the run id, is not closed out by anyone and stays non-terminal. The
-staleness backstop cannot help there — it measures owner-originated lines, and
-there are none. This is the recoverable side of the asymmetry, and it is
-preferred over the alternative of letting any passing session close a live
-run. Pinned by cases 4m (own session ⇒ still closes), 4n (unrelated session ⇒
+**Residual — and it is GUARANTEED for slug-keyed runs, not incidental.** State
+this precisely, because the loose reading ("a run that ends before emitting any
+event, under a session whose id happens not to be the run id") makes it sound
+like an edge case, and for `/autonomous` and `/automate` it is not one.
+
+`state.md` session ids come in two shapes, and only one of them can ever
+self-identify:
+
+| Run shape | `state.md` `session_id` | Can the ending session match it? |
+|---|---|---|
+| session-keyed | the Claude Code session uuid | **yes** — close-out works |
+| slug-keyed (`/autonomous`, `/automate`, named Supervisor runs) | a synthetic slug (`auto-2026-09-05-050440`) minted by the loop and seeded at `initialize` | **structurally never** — a `SessionEnd` payload always carries the real uuid |
+
+So for **every** slug-keyed run, the unknown-owner path is unreachable, and the
+exposed window is the whole span from `initialize` (Phase 0) to the first
+worker `SubagentStop` — through ACQUIRE, PRE-FLIGHT SYNC and PLAN, which is
+minutes, not an instant. A run that strands anywhere in there stays
+`status: running` **permanently**: the staleness backstop cannot rescue it
+either, and for a second reason beyond having no owner lines — the projector
+returns early on its log-exists guard (`build-state.sh`, the
+`[ -f "$LOG_FILE" ] && [ -s "$LOG_FILE" ]` test before any status derivation),
+and in this window the log does not exist at all.
+
+**This is not a regression introduced by the rule above; it is the same missing
+fact seen from the other side.** In that window NO owner is recorded, so
+nothing can distinguish "stranded" from "live". The previous behaviour guessed
+*stranded* and let any ending session close the run out — which is exactly the
+false-close-out defect entry 9 exists to fix. The current behaviour guesses
+*live*. Neither guess is correct, and no gate placed at `SessionEnd` can be:
+the real fix is to record the owning Claude Code session id **at run creation**,
+alongside the slug, so ownership is knowable before the first log line exists.
+That is tracked as follow-up work and deliberately not bolted on here — the
+seed happens in an agent prompt (`agents/context-keeper.md` `initialize`), and
+`docs/PITFALLS.md` records why agent-written state is the wrong mechanism for a
+fact a hook must rely on (560 hook-written events vs 6 agent-written).
+
+Between the two guesses this one is preferred because its failure is the
+recoverable side of the asymmetry: a stranded `running` is a stale advisory
+label a human can see and reset, whereas a live run marked `failed` writes a
+false hard signal into the log that `build-insights.sh` consumes and nothing
+retracts. Pinned by cases 4m (own session ⇒ still closes), 4n (unrelated session ⇒
 writes nothing), 4o (ownerless log, unrelated session ⇒ writes nothing) and
 4g/4e in `scripts/test-close-stranded-run.sh`; 4m is the control that stops
 the others from passing under a guard that simply disabled the path.
