@@ -56,6 +56,14 @@
 #          asserting: `ts` has second granularity, so a straddled pair is not
 #          a byte-identical repeat at all. The precondition is retried under a
 #          hard bound and reported as a named FAIL if unachievable.
+#  20. agent_scope (WHICH THREAD, never WHICH ROLE) —
+#      20a payload naming the session transcript ⇒ agent_scope:"main"
+#      20b payload naming subagents/agent-<agent_id>.jsonl ⇒ "subagent"
+#      20c a transcript path matching neither ⇒ key ABSENT (has()==false)
+#      20d ANTI-VACUITY: an agent_transcript_path present but NOT matching
+#          agent-<agent_id>.jsonl ⇒ ABSENT, never falling through to "main"
+#          on the strength of transcript_path (an if/if instead of if/elif)
+#      20e no agent_id in the payload ⇒ ABSENT (nothing to compare against)
 
 # EXIT: 0 on full pass, 1 on any failed assertion.
 # Style mirrors test-insights.sh / test-send-telemetry-core.sh.
@@ -1057,6 +1065,102 @@ assert_eq "case19c non-adjacent repeat still appends (A,B,A ⇒ 3 lines)" "3" \
   "$(wc -l < "$LOG19C" 2>/dev/null | tr -d '[:space:]')"
 assert_eq "case19c line 1 and line 3 are byte-identical (a true repeat, not a variant)" "same" \
   "$( [ "$(sed -n '1p' "$LOG19C")" = "$(sed -n '3p' "$LOG19C")" ] && echo same || echo differ )"
+
+echo "== 20. agent_scope: WHICH THREAD, derived from the payload transcript path only =="
+# The field exists so a reader can tell the two reasons for a missing agent_type
+# apart: the session's own thread (positively identified) versus an identity that
+# genuinely is not known. Every case below asserts a POSITIVE match or an ABSENT
+# key — never "" and never null, the same discipline as case 18.
+SCOPE_SUB_DIR="$SANDBOX/scope-transcripts/subagents"
+mkdir -p "$SCOPE_SUB_DIR" 2>/dev/null || true
+
+# 20a — MAIN: no agent_transcript_path, and transcript_path basenamed for the
+# session itself. This is the shape the live log showed for every untyped lane.
+SC_A_SID="fixture-token-ledger-scope-main-001"
+SC_A_TP="$SANDBOX/scope-transcripts/${SC_A_SID}.jsonl"
+printf 'MMMM' > "$SC_A_TP"
+PAYLOAD20A="$SANDBOX/scope-main.json"
+jq -n --arg tp "$SC_A_TP" --arg sid "$SC_A_SID" '{
+  session_id: $sid, agent_id: "a1111111111111111", transcript_path: $tp
+}' > "$PAYLOAD20A"
+OUT20A="$(run_sut "$PAYLOAD20A")"
+assert_eq "case20a exit 0" "0" "$(printf '%s\n' "$OUT20A" | grep '^RC=' | tail -1 | cut -d= -f2)"
+LINE20A="$(tail -1 "$SANDBOX/.supervisor/logs/${SC_A_SID}.jsonl" 2>/dev/null)"
+assert_eq "case20a session-named transcript ⇒ agent_scope main" "main" \
+  "$(printf '%s' "$LINE20A" | jq -r '.agent_scope // empty')"
+assert_eq "case20a agent_type stays ABSENT (scope is not a role)" "false" \
+  "$(printf '%s' "$LINE20A" | jq -r 'has("agent_type")')"
+
+# 20b — SUBAGENT: an agent_transcript_path basenamed agent-<agent_id>.jsonl.
+SC_B_SID="fixture-token-ledger-scope-sub-001"
+SC_B_AID="a2222222222222222"
+SC_B_ATP="$SCOPE_SUB_DIR/agent-${SC_B_AID}.jsonl"
+printf 'SSSS' > "$SC_B_ATP"
+PAYLOAD20B="$SANDBOX/scope-sub.json"
+jq -n --arg atp "$SC_B_ATP" --arg tp "$SANDBOX/scope-transcripts/${SC_B_SID}.jsonl" \
+      --arg sid "$SC_B_SID" --arg aid "$SC_B_AID" '{
+  session_id: $sid, agent_id: $aid, transcript_path: $tp, agent_transcript_path: $atp
+}' > "$PAYLOAD20B"
+OUT20B="$(run_sut "$PAYLOAD20B")"
+assert_eq "case20b exit 0" "0" "$(printf '%s\n' "$OUT20B" | grep '^RC=' | tail -1 | cut -d= -f2)"
+LINE20B="$(tail -1 "$SANDBOX/.supervisor/logs/${SC_B_SID}.jsonl" 2>/dev/null)"
+assert_eq "case20b agent-<id> transcript ⇒ agent_scope subagent" "subagent" \
+  "$(printf '%s' "$LINE20B" | jq -r '.agent_scope // empty')"
+
+# 20c — NEITHER: a transcript_path that names no thread we can recognise. The
+# key must be ABSENT, not defaulted to either value.
+SC_C_SID="fixture-token-ledger-scope-none-001"
+SC_C_TP="$SANDBOX/scope-transcripts/unrelated.jsonl"
+printf 'NNNN' > "$SC_C_TP"
+PAYLOAD20C="$SANDBOX/scope-none.json"
+jq -n --arg tp "$SC_C_TP" --arg sid "$SC_C_SID" '{
+  session_id: $sid, agent_id: "a3333333333333333", transcript_path: $tp
+}' > "$PAYLOAD20C"
+OUT20C="$(run_sut "$PAYLOAD20C")"
+assert_eq "case20c exit 0" "0" "$(printf '%s\n' "$OUT20C" | grep '^RC=' | tail -1 | cut -d= -f2)"
+LINE20C="$(tail -1 "$SANDBOX/.supervisor/logs/${SC_C_SID}.jsonl" 2>/dev/null)"
+assert_eq "case20c unrecognised transcript ⇒ agent_scope key ABSENT" "false" \
+  "$(printf '%s' "$LINE20C" | jq -r 'has("agent_scope")')"
+assert_eq "case20c the event line is still written" "token_ledger" \
+  "$(printf '%s' "$LINE20C" | jq -r '.event')"
+
+# 20d — THE ANTI-VACUITY ARM. A payload carrying an agent_transcript_path whose
+# basename does NOT match agent-<agent_id>.jsonl must fall to ABSENT, never
+# through to the main branch on the strength of its transcript_path. Without
+# this, an `if`/`if` instead of `if`/`elif` would call a spawned agent whose
+# transcript was renamed the session thread — the exact mislabel this field
+# exists to prevent, in the opposite direction.
+SC_D_SID="fixture-token-ledger-scope-mismatch-001"
+SC_D_TP="$SANDBOX/scope-transcripts/${SC_D_SID}.jsonl"
+SC_D_ATP="$SCOPE_SUB_DIR/agent-someone-else.jsonl"
+printf 'DDDD' > "$SC_D_TP"
+printf 'DDDD' > "$SC_D_ATP"
+PAYLOAD20D="$SANDBOX/scope-mismatch.json"
+jq -n --arg tp "$SC_D_TP" --arg atp "$SC_D_ATP" --arg sid "$SC_D_SID" '{
+  session_id: $sid, agent_id: "a4444444444444444",
+  transcript_path: $tp, agent_transcript_path: $atp
+}' > "$PAYLOAD20D"
+OUT20D="$(run_sut "$PAYLOAD20D")"
+assert_eq "case20d exit 0" "0" "$(printf '%s\n' "$OUT20D" | grep '^RC=' | tail -1 | cut -d= -f2)"
+LINE20D="$(tail -1 "$SANDBOX/.supervisor/logs/${SC_D_SID}.jsonl" 2>/dev/null)"
+assert_eq "case20d agent transcript present but unmatched ⇒ ABSENT, never main" "false" \
+  "$(printf '%s' "$LINE20D" | jq -r 'has("agent_scope")')"
+
+# 20e — no agent_id at all: the subagent test has nothing to compare against, so
+# the key stays ABSENT rather than being read off the path shape alone.
+SC_E_SID="fixture-token-ledger-scope-noid-001"
+SC_E_ATP="$SCOPE_SUB_DIR/agent-a5555555555555555.jsonl"
+printf 'EEEE' > "$SC_E_ATP"
+PAYLOAD20E="$SANDBOX/scope-noid.json"
+jq -n --arg atp "$SC_E_ATP" --arg sid "$SC_E_SID" '{
+  session_id: $sid, agent_transcript_path: $atp
+}' > "$PAYLOAD20E"
+OUT20E="$(run_sut "$PAYLOAD20E")"
+assert_eq "case20e exit 0" "0" "$(printf '%s\n' "$OUT20E" | grep '^RC=' | tail -1 | cut -d= -f2)"
+LINE20E="$(tail -1 "$SANDBOX/.supervisor/logs/${SC_E_SID}.jsonl" 2>/dev/null)"
+assert_eq "case20e no agent_id ⇒ agent_scope key ABSENT" "false" \
+  "$(printf '%s' "$LINE20E" | jq -r 'has("agent_scope")')"
+
 
 echo ""
 echo "RESULT  pass=$PASS_COUNT  fail=$FAIL_COUNT"

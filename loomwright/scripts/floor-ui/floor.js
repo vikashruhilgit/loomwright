@@ -1162,6 +1162,17 @@
       var name = typed ? stripPrefix(r.agent_type) : null;
       var row = typed ? (renderLanes.roster || {})[name] : null;
 
+      /* TWO REASONS FOR A MISSING ROLE, AND ONLY ONE OF THEM IS IGNORANCE. `agent_scope`
+       * is recorded by the emitters from the transcript path the hook payload itself
+       * carried: `main` means that path was the transcript of the SESSION, not a
+       * `subagents/agent-<id>.jsonl` one, so the row is the session's own thread - a
+       * lane with no agent role because it is not an agent. Calling that "identity
+       * unknown" was the page reporting its own question as a missing answer.
+       * `subagent` (a spawned agent whose payload carried no type) and an ABSENT scope
+       * (nothing was provable either way) both keep the unknown label: they are the
+       * cases where the identity really is not known. */
+      var mainThread = !typed && r.agent_scope === 'main';
+
       var lastEp = tsToEpoch(r.last_ts);
       var age = (gen !== null && lastEp !== null) ? (gen - lastEp) : null;
       var stalled = (age !== null && age > STALL_SEC);
@@ -1169,17 +1180,22 @@
       var evRaw = r.events;
       var ev = (typeof evRaw === 'number') ? evRaw : null;
 
-      li.querySelector('[data-role="name"]').textContent = typed ? name : 'identity unknown';
+      li.querySelector('[data-role="name"]').textContent =
+        typed ? name : (mainThread ? 'main thread' : 'identity unknown');
 
       var chip = li.querySelector('[data-role="chip"]');
       if (typed) {
         chip.className = 'chip';
         chip.textContent = r.branch ? ('branch ' + r.branch) : ('agent ' + id);
         chip.title = 'agent_type ' + r.agent_type;
+      } else if (mainThread) {
+        chip.className = 'chip';
+        chip.textContent = r.branch ? ('branch ' + r.branch) : ('agent ' + id);
+        chip.title = 'agent_scope main - every event for this agent_id came from a payload naming the transcript of the session itself, not a spawned agent transcript, so this lane is the session thread and has no agent role to report';
       } else {
         chip.className = 'chip unknown';
         chip.textContent = 'identity unknown';
-        chip.title = 'no event for this agent_id carried an agent_type; the projector records no spawn event, so the role cannot be derived';
+        chip.title = 'no event for this agent_id carried an agent_type, and none carried an agent_scope that identifies the thread either, so the role cannot be derived';
       }
 
       var dot = li.querySelector('[data-role="dot"]');
@@ -1201,9 +1217,15 @@
        *              the same refusal renderRoster already makes, for the same reason.
        * The condition mirrors the dot's above exactly, so the shape and the words can never
        * disagree about the same agent. */
+      /* The main thread is the ONE case that leaves this tri-state, and not by relaxing
+       * it: the roster describes the agents this plugin ships, and the session thread is
+       * not one of them, so there is no roster row here to be missing. Reporting
+       * "read-only unknown" would answer a question that does not apply, which is a
+       * different error from the one the tri-state exists to prevent. */
       var roTxt = (row && row.read_only === true) ? 'read-only'
         : (row && row.read_only === false) ? ''
-          : 'read-only unknown';
+          : mainThread ? ''
+            : 'read-only unknown';
       var roSuffix = roTxt ? (' · ' + roTxt) : '';
 
       var evTxt = (ev === null) ? '— events' : (ev + ' events');

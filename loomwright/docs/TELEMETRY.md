@@ -190,6 +190,7 @@ by the **plugin** session id (e.g. `supervisor-2026-07-07-fable-parity`). To kee
 | `token_proxy_kind` | proxy path only | Closed value today: `"transcript_bytes"` |
 | `token_proxy_transcript_bytes` | proxy path only | Byte size of `agent_transcript_path` (preferred) or `transcript_path` via `os.path.getsize` only |
 | `agent_type`, `agent_id`, `ts` | optional / when present | Identity + UTC ISO timestamp; **omitted when absent** (never the literal `"unknown"`) |
+| `agent_scope` | when the payload transcript path identifies a thread | `"main"` (the path named `<cc_session_id>.jsonl`, i.e. the session itself) or `"subagent"` (the path named `subagents/agent-<agent_id>.jsonl`); **omitted** when neither matches, when no path is carried, or when `agent_id` is absent. Answers WHICH THREAD, never WHICH ROLE — see §"Agent identity on emitted lines" |
 
 **Additive key (v15.12.0+):** `orientation_source` — emitted only when `LOOMWRIGHT_ORIENTATION_SOURCE` is one of `memos|repo_map|graphify|none` (orientation attribution); omitted on unset/empty/invalid (fail-safe — the event line still writes). **Reader-side plumbing only in v15.12.0 — no in-repo producer sets the env var yet.** The emitter runs inside a SubagentStop `type: command` hook, which inherits the MAIN session environment — an `export` inside a subagent's Bash call (where the orientation tier is actually known) does NOT reach the hook process. The intended producer (a follow-up) writes the tier to a small gitignored state file under `.supervisor/` that the hook-side emitter reads; until that lands, the field is reserved plumbing and is simply omitted.
 
@@ -295,6 +296,7 @@ new file):
 | `session_id` | always (when emitted) | Same two-source join key as `token_ledger`: the plugin session id from `.supervisor/state.md`'s `- session_id:` when `- status:` is `running` (`checkpoint` also accepted, backward-compat only — it is not in the closed status enum and the projector never emits it), else the Claude Code UUID. Log filename key. |
 | `cc_session_id` | when SubagentStop carries `session_id` | Claude Code UUID, retained even when `session_id` above resolved to the plugin id |
 | `agent_type`, `agent_id` | when present in the payload | Copied as-is |
+| `agent_scope` | when the payload transcript path identifies a thread | Identical derivation and identical omission rule as on `token_ledger` above — the two emitters carry the same block verbatim and must not diverge |
 | `branch` | always when resolvable | The **session** feature branch (see anchoring below) — never a subtask branch, never empty on a successful write |
 | `ts` | when `date -u` succeeds | UTC ISO-8601; omitted (not `"unknown"`) on failure |
 
@@ -906,12 +908,45 @@ identity**, and it would also defeat the byte-identity dedupe guard — two line
 differing only in a fabricated `agent_type` can never compare equal. The
 standing rule is: **`agent_type` is never invented.**
 
-**Accepted limit, not a gap.** The consequence is that **most Floor lanes will
-still read `identity unknown`**, because the hook layer genuinely cannot tell
-which agent fired: the payload is the only trustworthy source and it usually
+**Accepted limit, not a gap.** The consequence is that a Floor lane whose events
+carried no `agent_type` gets **no role**, because the hook layer genuinely cannot
+tell which agent fired: the payload is the only trustworthy source and it usually
 carries nothing. That is an honest limit of the current hook surface. Closing it
 requires a payload that actually carries `agent_type` — not a matcher-derived
 substitute, which would only replace "unknown" with "wrong".
+
+**Which THREAD is a different question, and it is answerable (`agent_scope`).**
+The paragraph above was, for a while, also used to explain why the Floor showed
+`identity unknown` on lanes that were not agents at all. Those are two different
+facts, and the second one is not missing from the payload — it is in the
+transcript path the payload already carries. Claude Code writes a spawned
+subagent's transcript to `<session>/subagents/agent-<agent_id>.jsonl` and the
+transcript of the session itself to `<cc_session_id>.jsonl`, so the basename is a
+**positive identification of the thread**, not an inference from the absent type.
+Both emitters carry the same block, byte-parallel, and record:
+
+| Recorded | When |
+|---|---|
+| `agent_scope: "main"` | no `agent_transcript_path`, and `transcript_path` basenames to `<cc_session_id>.jsonl` — the payload describes the session's own thread |
+| `agent_scope: "subagent"` | `agent_transcript_path` basenames to `agent-<agent_id>.jsonl` for THIS `agent_id` — a spawned agent, whatever its type |
+| *key omitted* | any other path, no path at all, or no `agent_id` to compare against |
+
+**Measured, not assumed** (live log, 2026-09-05): every typed line's
+`token_proxy_transcript_bytes` equalled a `subagents/agent-<id>.jsonl` file on
+disk, while all three untyped agent ids of the newest session reported the exact
+byte size of the session transcript — for a session with no `subagents/`
+directory at all and no `Task` spawn anywhere in its transcript. Those lanes were
+never agents; the page was reporting its own question as a missing answer.
+
+The omission rule is the one `agent_type` follows and for the same reason: an
+`agent_transcript_path` that does not name THIS agent records **nothing**, rather
+than falling through to `main` on the strength of the `transcript_path` beside it
+— that fall-through would mislabel a spawned agent as the session thread, the
+same fabrication in the opposite direction. Tests
+`test-token-ledger.sh` case 20 and `test-progress-state.sh` case 40 each carry an
+explicit anti-vacuity arm for exactly that mutation. **Retroactive nothing:**
+lines written before this field existed carry no scope and keep reading
+`identity unknown` on the Floor, which is honest rather than repaired.
 
 **Adjacent-duplicate guard (confirmed, not assumed).**
 `emit-token-ledger.sh` is registered under three `SubagentStop` matchers

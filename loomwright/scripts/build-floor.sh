@@ -322,7 +322,8 @@ else
              and (($o.cc_session_id | length) > 0)
           then "id\t" + $o.cc_session_id + "\t" +
                ({sid: $o.cc_session_id, ts: $o.ts, agent_id: $o.agent_id,
-                 agent_type: $o.agent_type, branch: $o.branch}
+                 agent_type: $o.agent_type, agent_scope: $o.agent_scope,
+                 branch: $o.branch}
                 | with_entries(select(.value != null and .value != "")) | tojson)
         else "noid" end
     end
@@ -352,8 +353,12 @@ else
   #
   # `events` counts every line the agent appears on, including one with no `ts`; `first_ts`
   # and `last_ts` span only the lines that carried one, and are omitted when none did.
-  # `agent_type` and `branch` are additive fields present on only some events, so they are
-  # taken from ANY line of that agent and omitted when no line carried them.
+  # `agent_type`, `agent_scope` and `branch` are additive fields present on only some events,
+  # so they are taken from ANY line of that agent and omitted when no line carried them.
+  # `agent_scope` is what lets the reader tell the two REASONS for a missing `agent_type`
+  # apart: `main` says the emitter positively identified the thread of the session itself
+  # (its payload named the session transcript, not a `subagents/agent-<id>.jsonl` one), so
+  # the row has no role because it IS the session; absent says nothing is known either way.
   sess_current="$(printf '%s\n' "$classified" | awk -F'\t' '/^id\t/{print $3}' | jq -s -c '
     map(select(type == "object")) as $all
     | ($all | map(select(has("ts"))) | sort_by(.ts | tostring) | last) as $newest
@@ -371,6 +376,8 @@ else
                           else {first_ts: ($tss | min), last_ts: ($tss | max)} end)
                        + ((map(select(has("agent_type")) | .agent_type) | first) as $t
                           | if $t == null then {} else {agent_type: $t} end)
+                       + ((map(select(has("agent_scope")) | .agent_scope) | first) as $sc
+                          | if $sc == null then {} else {agent_scope: $sc} end)
                        + ((map(select(has("branch")) | .branch) | first) as $b
                           | if $b == null then {} else {branch: $b} end)
                    ) | sort_by(.agent_id))}

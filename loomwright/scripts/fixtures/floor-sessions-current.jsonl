@@ -1,8 +1,8 @@
 {"ts":"2026-08-30T09:00:00Z","event":"session_start","cc_session_id":"sess-old-9999","agent_id":"agt-old-1","agent_type":"loomwright:loomwright:supervisor","branch":"feature/older-run"}
 {"ts":"2026-08-30T09:05:00Z","event":"session_end","cc_session_id":"sess-old-9999","agent_id":"agt-old-1"}
-{"ts":"2026-09-01T10:00:00Z","event":"subtask_start","cc_session_id":"sess-new-0001","agent_id":"agt-aaa","agent_type":"loomwright:loomwright:worker","branch":"feature/the-floor"}
+{"ts":"2026-09-01T10:00:00Z","event":"subtask_start","cc_session_id":"sess-new-0001","agent_id":"agt-aaa","agent_type":"loomwright:loomwright:worker","agent_scope":"subagent","branch":"feature/the-floor"}
 {"ts":"2026-09-01T10:05:00Z","event":"tool_use","cc_session_id":"sess-new-0001","agent_id":"agt-aaa"}
-{"ts":"2026-09-01T10:06:00Z","event":"tool_use","cc_session_id":"sess-new-0001","agent_id":"agt-bbb"}
+{"ts":"2026-09-01T10:06:00Z","event":"tool_use","cc_session_id":"sess-new-0001","agent_id":"agt-bbb","agent_scope":"main"}
 {"ts":"2026-09-01T10:07:00Z","event":"tool_use","cc_session_id":"sess-new-0001","agent_id":"agt-bbb"}
 {"ts":"2026-09-01T10:08:00Z","event":"tool_use","cc_session_id":"sess-new-0001","agent_id":"agt-ccc"}
 {"event":"note","cc_session_id":"sess-new-0001","agent_id":"agt-ccc"}

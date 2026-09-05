@@ -110,6 +110,14 @@
 #       NO log — the only path by which a run whose terminal was KILLED before
 #       its first event ever leaves `running` — plus its fresh-seed and
 #       no-seed controls
+#   40. emitter: agent_scope - WHICH THREAD, never WHICH ROLE. Session-named
+#       transcript => "main" (40a); subagents/agent-<agent_id>.jsonl =>
+#       "subagent" (40b); a path matching neither => key ABSENT (40c);
+#       ANTI-VACUITY (40d): an agent_transcript_path naming a DIFFERENT agent
+#       => ABSENT, never falling through to "main". Byte-parallel with
+#       test-token-ledger.sh case 20 - the two emitters must not diverge; 40e
+#       asserts that byte-parallelism directly, comparing the block extracted
+#       from each file rather than trusting the prose that claims it
 #
 # EXIT: 0 on full pass, 1 on any failed assertion.
 
@@ -1388,6 +1396,83 @@ BEFORE39C="$(cksum < "$REPO39C/.supervisor/state.md")"
 OUT39C="$( cd "$REPO39C" && env -u LOOMWRIGHT_STALE_RUN_SECONDS "$REALBASH" "$REPROJECT_HOOK" 2>&1 )"
 assert_eq "case39c exit 0" "0" "$?"
 assert_eq "case39c no seed, no reach — state.md byte-unchanged" "$BEFORE39C" "$(cksum < "$REPO39C/.supervisor/state.md")"
+
+echo "== 40. emitter: agent_scope — WHICH THREAD, from the payload transcript path only =="
+# The sibling of case 36. `agent_type` answers WHICH ROLE and is often absent;
+# `agent_scope` answers WHICH THREAD and is derivable from a path the payload
+# already carries, which is what lets a reader tell the session's own thread
+# apart from an agent whose identity is genuinely unknown. Byte-parallel with
+# test-token-ledger.sh case 20 — the two emitters must never diverge here.
+# One repo PER sub-case, for the same re-projection reason case 36 gives.
+REPO40A="$(init_repo "feature/case40a")"
+P40A="$PAYLOAD_DIR/p40a.json"
+jq -n '{session_id:"sid-case40a", agent_id:"a40a",
+        transcript_path:"/nonexistent/projects/proj/sid-case40a.jsonl",
+        hook_event_name:"SubagentStop"}' > "$P40A"
+OUT40A="$(run_emitter "$REPO40A" "$P40A")"
+assert_eq "case40a exit 0" "0" "$(get_rc "$OUT40A")"
+LINE40A="$(tail -1 "$REPO40A/.supervisor/logs/sid-case40a.jsonl" 2>/dev/null)"
+assert_eq "case40a session-named transcript ⇒ agent_scope main" "main" \
+  "$(printf '%s' "$LINE40A" | jq -r '.agent_scope // empty')"
+assert_eq "case40a agent_type still ABSENT (scope is not a role)" "false" \
+  "$(printf '%s' "$LINE40A" | jq -r 'has("agent_type")')"
+
+REPO40B="$(init_repo "feature/case40b")"
+P40B="$PAYLOAD_DIR/p40b.json"
+jq -n '{session_id:"sid-case40b", agent_id:"a40b",
+        transcript_path:"/nonexistent/projects/proj/sid-case40b.jsonl",
+        agent_transcript_path:"/nonexistent/projects/proj/sid-case40b/subagents/agent-a40b.jsonl",
+        hook_event_name:"SubagentStop"}' > "$P40B"
+OUT40B="$(run_emitter "$REPO40B" "$P40B")"
+assert_eq "case40b exit 0" "0" "$(get_rc "$OUT40B")"
+assert_eq "case40b agent-<id> transcript ⇒ agent_scope subagent" "subagent" \
+  "$(tail -1 "$REPO40B/.supervisor/logs/sid-case40b.jsonl" 2>/dev/null | jq -r '.agent_scope // empty')"
+
+REPO40C="$(init_repo "feature/case40c")"
+P40C="$PAYLOAD_DIR/p40c.json"
+jq -n '{session_id:"sid-case40c", agent_id:"a40c",
+        transcript_path:"/nonexistent/projects/proj/unrelated.jsonl",
+        hook_event_name:"SubagentStop"}' > "$P40C"
+OUT40C="$(run_emitter "$REPO40C" "$P40C")"
+assert_eq "case40c exit 0" "0" "$(get_rc "$OUT40C")"
+LINE40C="$(tail -1 "$REPO40C/.supervisor/logs/sid-case40c.jsonl" 2>/dev/null)"
+assert_eq "case40c unrecognised transcript ⇒ agent_scope key ABSENT" "false" \
+  "$(printf '%s' "$LINE40C" | jq -r 'has("agent_scope")')"
+assert_eq "case40c the event line is still written" "subtask_complete" \
+  "$(printf '%s' "$LINE40C" | jq -r '.event')"
+
+# 40d — THE ANTI-VACUITY ARM (see case 20d): an agent_transcript_path that does
+# not name THIS agent must not fall through to `main` on the strength of the
+# session-named transcript_path beside it.
+REPO40D="$(init_repo "feature/case40d")"
+P40D="$PAYLOAD_DIR/p40d.json"
+jq -n '{session_id:"sid-case40d", agent_id:"a40d",
+        transcript_path:"/nonexistent/projects/proj/sid-case40d.jsonl",
+        agent_transcript_path:"/nonexistent/projects/proj/sid-case40d/subagents/agent-someone-else.jsonl",
+        hook_event_name:"SubagentStop"}' > "$P40D"
+OUT40D="$(run_emitter "$REPO40D" "$P40D")"
+assert_eq "case40d exit 0" "0" "$(get_rc "$OUT40D")"
+assert_eq "case40d agent transcript present but unmatched ⇒ ABSENT, never main" "false" \
+  "$(tail -1 "$REPO40D/.supervisor/logs/sid-case40d.jsonl" 2>/dev/null | jq -r 'has("agent_scope")')"
+
+# 40e — THE TWO COPIES ARE BYTE-IDENTICAL, asserted rather than claimed. Both
+# emitters carry this block verbatim, and TELEMETRY.md says so; a claim about two
+# files staying in step is worth exactly as much as the check that compares them
+# (the `loom_run_owner_seed` precedent in test-seed-run-owner.sh). The extractor
+# is anchored on the block's own first and last lines, so a copy that loses
+# either end fails here too rather than silently comparing a shorter region.
+scope_block() {
+  awk '/^# `agent_scope`: WHICH THREAD/{f=1} f{print} f&&/^    event\["agent_scope"\] = _scope$/{exit}' "$1" 2>/dev/null
+}
+SB_LEDGER="$(scope_block "$SCRIPT_DIR/emit-token-ledger.sh")"
+SB_PROGRESS="$(scope_block "$EMITTER")"
+if [ -z "$SB_PROGRESS" ] || [ -z "$SB_LEDGER" ]; then
+  no "case40e agent_scope block extracted from BOTH emitters (progress=$(printf '%s' "$SB_PROGRESS" | wc -l | tr -d ' ') lines, ledger=$(printf '%s' "$SB_LEDGER" | wc -l | tr -d ' ') lines)"
+else
+  ok "case40e the agent_scope block is extractable from both emitters (anti-vacuity: neither side is empty)"
+  assert_eq "case40e the two copies are byte-identical" "same" \
+    "$( [ "$SB_PROGRESS" = "$SB_LEDGER" ] && echo same || echo differ )"
+fi
 
 echo "== real repo .supervisor/logs untouched =="
 assert_eq "real logs snapshot unchanged" "$REAL_BEFORE" "$(snapshot_real)"

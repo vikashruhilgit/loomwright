@@ -1595,6 +1595,14 @@ cf_n_agents="$(printf '%s' "$cf_agents" | tr ' ' '\n' | awk 'NF{n++} END{print n
 cf_typed="$(jq -r --arg s "$cf_new_sid" 'select(.cc_session_id == $s and has("agent_type")) | .agent_id' "$SESS_CUR_FIXTURE" 2>/dev/null | LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//')"
 cf_type_val="$(jq -r --arg s "$cf_new_sid" 'select(.cc_session_id == $s and has("agent_type")) | .agent_type' "$SESS_CUR_FIXTURE" 2>/dev/null | head -1)"
 cf_branch_val="$(jq -r --arg s "$cf_new_sid" 'select(.cc_session_id == $s and has("branch")) | .branch' "$SESS_CUR_FIXTURE" 2>/dev/null | head -1)"
+cf_scoped="$(jq -r --arg s "$cf_new_sid" 'select(.cc_session_id == $s and has("agent_scope")) | .agent_id' "$SESS_CUR_FIXTURE" 2>/dev/null | LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//')"
+cf_main_agent="$(jq -r --arg s "$cf_new_sid" 'select(.cc_session_id == $s and .agent_scope == "main") | .agent_id' "$SESS_CUR_FIXTURE" 2>/dev/null | head -1)"
+cf_unscoped="$(jq -r --arg s "$cf_new_sid" 'select(.cc_session_id == $s and has("agent_id")) | .agent_id' "$SESS_CUR_FIXTURE" 2>/dev/null | LC_ALL=C sort -u | grep -v -x -F -f <(printf '%s\n' $cf_scoped) | tr '\n' ' ' | sed 's/ $//')"
+# The main-scoped agent's OWN newest line must NOT carry the scope either - same
+# take-from-ANY-line rule as agent_type, and it is only tested if the newest lacks it.
+cf_main_newest="$(jq -r --arg s "$cf_new_sid" --arg a "$cf_main_agent" \
+  'select(.cc_session_id == $s and .agent_id == $a and has("ts")) | [.ts, (.agent_scope // "-")] | @tsv' \
+  "$SESS_CUR_FIXTURE" 2>/dev/null | LC_ALL=C sort | tail -1 | awk -F'\t' '{print $2}')"
 cf_other_agents="$(jq -r --arg s "$cf_new_sid" 'select(.cc_session_id != $s and has("agent_id")) | .agent_id' "$SESS_CUR_FIXTURE" 2>/dev/null | LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//')"
 # The typed agent's OWN newest line must NOT be the one carrying agent_type: "take the type
 # from ANY of the agent's lines" is only tested if the newest line lacks it.
@@ -1611,6 +1619,14 @@ cf_typed_newest="$(jq -r --arg s "$cf_new_sid" --arg a "$cf_typed" \
 [ -n "$cf_other_agents" ] \
   && ok "PREMISE: the older session contributes agent ids of its own ($cf_other_agents) that must NOT appear" \
   || no "the older session carries no agent id - the cross-session isolation assertion would be vacuous"
+# agent_scope carries THREE states in this one fixture, and all three must be present or
+# the assertions below prove less than they read: a typed+subagent row, an UNtyped row
+# scoped `main` (the whole point of the field - a lane with no role that is nevertheless
+# identified), and a row with no scope at all (the genuinely-unknown case).
+[ "$(printf '%s' "$cf_scoped" | tr ' ' '\n' | awk 'NF{n++} END{print n+0}')" -eq 2 ] \
+  && [ -n "$cf_main_agent" ] && [ -n "$cf_unscoped" ] && [ "$cf_main_newest" = "-" ] \
+  && ok "PREMISE: the fixture carries all three agent_scope states (scoped: $cf_scoped / unscoped: $cf_unscoped), and main is on an OLDER line than that agent's newest" \
+  || no "the agent_scope premise does not hold (scoped='$cf_scoped', main='$cf_main_agent', unscoped='$cf_unscoped', newest line's scope='$cf_main_newest')"
 
 # ITS OWN new_repo, deliberately not seed_tree: this fixture would re-key EXP_LOGS,
 # EXP_LOG_DIR_ENTRIES, EXP_SESSIONS, EXP_SESS_LINES and the "3 jsonl + 5 plain .log" basis
@@ -1672,6 +1688,21 @@ branch_rows="$(jq -r '[.surfaces.sessions.detail.current.agents[] | select(has("
 [ "$branch_rows" = "$cf_typed" ] \
   && ok "branch is present ONLY on the row whose lines carried one ($cf_branch_val), omitted on the rest" \
   || no "branch rows are '$branch_rows', expected '$cf_typed'"
+scope_rows="$(jq -r '[.surfaces.sessions.detail.current.agents[] | select(has("agent_scope")) | .agent_id] | join(" ")' "$JO" 2>/dev/null)"
+[ "$scope_rows" = "$cf_scoped" ] \
+  && ok "agent_scope is present for exactly $cf_scoped - taken from an OLDER line than that agent's newest" \
+  || no "scoped rows are '$scope_rows', expected '$cf_scoped'"
+[ "$(jq -r --arg a "$cf_main_agent" '[.surfaces.sessions.detail.current.agents[] | select(.agent_id == $a) | .agent_scope] | .[0]' "$JO" 2>/dev/null)" = "main" ] \
+  && ok "and $cf_main_agent - untyped, so a lane the page used to call 'identity unknown' - projects agent_scope main" \
+  || no "agent_scope for $cf_main_agent is $(jq -r --arg a "$cf_main_agent" '[.surfaces.sessions.detail.current.agents[] | select(.agent_id == $a) | .agent_scope] | .[0]' "$JO" 2>/dev/null), expected main"
+scope_unk_bad=""
+for a in $cf_unscoped; do
+  jq -e --arg a "$a" '[.surfaces.sessions.detail.current.agents[] | select(.agent_id == $a) | has("agent_scope")] | .[0] | not' "$JO" >/dev/null 2>&1 \
+    || scope_unk_bad="$scope_unk_bad $a"
+done
+[ -z "$scope_unk_bad" ] \
+  && ok "an agent no line scoped keeps the key ABSENT ($cf_unscoped) - unknown stays unknown, never defaulted to main" \
+  || no "agent_scope was invented for:$scope_unk_bad"
 
 iso_bad=""
 for a in $cf_other_agents; do

@@ -168,6 +168,26 @@ real server on port 7734 was left untouched and was confirmed still answering `2
 Read out of the live DOM rather than eyeballed:
 
 - **Lanes:** `code-reviewer … 17 events · last 45s · read-only` and `identity unknown … · read-only unknown`, alongside **2** hollow dots.
+
+### AC-scope — `main thread` vs `identity unknown`, both arms in one browser (2026-09-05)
+
+The lane label is a three-way choice, and the third arm is new. Verified against a real
+`floor.json` — the live one, with `agent_scope: "main"` set on the row the emitters would now
+scope that way — served from a scratch directory so nothing in the installed module was touched.
+Read out of the live DOM, not eyeballed:
+
+| Rendered state | `name` | `chip` (+ class) | `meta` tail |
+|---|---|---|---|
+| **scope `main`** | `main thread` | `branch feature/floor-ui-redesign`, class `chip` — the plain treatment | *(no read-only clause)* |
+| **CONTROL: same row, `agent_scope` deleted, one poll later** | `identity unknown` | `identity unknown`, class `chip unknown` — dashed | `· read-only unknown` |
+
+The control is what makes the first row evidence: the two states were produced from the SAME
+document by removing one key, on the page's own 2 s poll, so the label is reacting to the
+projected field and not to anything else about that row. The `main` chip's `title` states the
+evidence it rests on (`agent_scope main - every event for this agent_id came from a payload
+naming the transcript of the session itself…`). Zero uncaught JS errors; the only console
+entries were 404s for the served project index, which that scratch directory deliberately has
+no copy of and which the page reports as a state rather than an error.
 - **Roster:** `code-reviewer · inherit · budget 40 · read-only`, `rubric-grader · haiku · budget 12 · read-only unknown`, `worker · inherit · budget 40 · writes`.
 
 All three tri-state arms render as text in both views. This matters more under the new palette than
