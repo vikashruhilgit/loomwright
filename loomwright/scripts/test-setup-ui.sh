@@ -265,19 +265,96 @@ NOREG="$TMPROOT/no-such-registry.json"
 # the socket held on a port so the busy-port branch has something to collide with. They are
 # killed from the same EXIT trap, because a probe that outlives the run holds a port hostage.
 HOLDER_PIDS=""
+
+# SERVE_PIDS — THE APPEND-ONLY PID REGISTRY, and the reason it exists rather than SERVE_PIDFILES
+# alone. Reaping by PIDFILE means reaping through an artefact the CODE UNDER TEST owns, and the
+# engine's `stop` deletes that artefact on EVERY path, including the path where it killed
+# NOTHING: `do_stop` refuses a pid whose `ps` line it cannot match ("not killed: <pid>(gone)"),
+# and then `rm -f "$pf"` runs anyway. One refused `stop` therefore erases the only record this
+# suite had of a live server, and `cleanup_files` later finds an empty list and reaps nothing —
+# the process serves a `mktemp -d` directory that no longer exists, holding a port, until the
+# machine reboots. That is not a hypothesis: with `ps` made unavailable to `stop`, the refusal
+# path deletes the pidfile and leaves the server running every single time, which is exactly the
+# intermittent shape observed in the wild (the same two cases, (l15)/(l16), leaking on some runs
+# and not others — both of them a `serve --detach` followed with no delay by a `stop`).
+#
+# So the pids are SNAPSHOTTED at start time into a list nothing else can rewrite. `track_serve`
+# replaces the bare SERVE_PIDFILES assignments and does BOTH jobs, so a later case that copies
+# the surrounding style cannot register only half of it.
+SERVE_PIDS=""
+track_serve() {
+  local pf="$1/serve.pid" pid
+  SERVE_PIDFILES="$SERVE_PIDFILES $pf"
+  [ -f "$pf" ] || return 0
+  while IFS= read -r pid; do
+    case "$pid" in ''|*[!0-9]*) continue ;; esac
+    SERVE_PIDS="$SERVE_PIDS $pid"
+  done < "$pf"
+  return 0
+}
+
+# fixture_serve_pids — every LIVE process that is one of this module's servers AND names THIS
+# RUN's temp root on its command line. Both clauses are load-bearing:
+#   * "setup-ui.sh" alone would select the developer's own Floor, which may legitimately be
+#     serving on 7734 while this suite runs. Killing it would be the same class of damage the
+#     (k) group's whole isolation apparatus exists to prevent.
+#   * "$TMPROOT" alone would select nothing useful; together they select exactly the servers
+#     THIS process started, and provably not another concurrent run's (a different mktemp root)
+#     and not the developer's (their command line names their home directory, never our root).
+# `ps` is snapshotted into a variable FIRST so that the awk that filters it — whose own argv
+# would carry both strings — cannot appear in its own input and report itself as a leak.
+fixture_serve_pids() {
+  local snapshot
+  snapshot="$(ps -eo pid=,command= 2>/dev/null || true)"
+  [ -n "$snapshot" ] || return 0
+  printf '%s\n' "$snapshot" | awk -v root="$TMPROOT" '
+    index($0, "setup-ui.sh") > 0 && index($0, root) > 0 { print $1 }'
+  return 0
+}
+
+# kill_if_fixture — kill a pid ONLY while it still answers to the description above. A pidfile
+# outlives its process and pids get recycled, so an unconditional `kill` of a remembered pid is
+# a kill of whatever now holds it. The engine's own `stop` guards this way for the same reason.
+kill_if_fixture() {
+  local pid="$1" cmd
+  case "$pid" in ''|*[!0-9]*) return 0 ;; esac
+  cmd="$(ps -o command= -p "$pid" 2>/dev/null || true)"
+  [ -n "$cmd" ] || return 0
+  case "$cmd" in *setup-ui.sh*|*http.server*) ;; *) return 0 ;; esac
+  case "$cmd" in *"$TMPROOT"*) kill "$pid" 2>/dev/null ;; esac
+  return 0
+}
+
+# LEAKED_PIDS — what survived the reap. Set by cleanup_files, asserted on by finish (p1).
+LEAKED_PIDS=""
 cleanup_files() {
-  local pf pid
+  local pf pid waited
   for pid in $HOLDER_PIDS; do
     case "$pid" in ''|*[!0-9]*) continue ;; esac
     kill "$pid" 2>/dev/null
   done
   for pf in $SERVE_PIDFILES; do
     [ -f "$pf" ] || continue
-    while IFS= read -r pid; do
-      case "$pid" in ''|*[!0-9]*) continue ;; esac
-      kill "$pid" 2>/dev/null
-    done < "$pf"
+    while IFS= read -r pid; do kill_if_fixture "$pid"; done < "$pf"
   done
+  for pid in $SERVE_PIDS; do kill_if_fixture "$pid"; done
+
+  # THE READING (p1) ASSERTS ON IS TAKEN HERE, AFTER the registry-driven reap and BEFORE the
+  # sweep below. That ordering is what keeps the assertion from being vacuous: if the sweep ran
+  # first there would never be a survivor to report and (p1) would pass forever with the whole
+  # registry deleted. A short poll first, because SIGTERM is asynchronous and a process that is
+  # about to die is not a leak. No `timeout` on macOS, so this is a bounded loop.
+  waited=0
+  while [ "$waited" -lt 8 ]; do
+    LEAKED_PIDS="$(fixture_serve_pids | tr '\n' ' ' | sed 's/ *$//')"
+    [ -z "$LEAKED_PIDS" ] && break
+    sleep 0.5; waited=$((waited + 1))
+  done
+
+  # The sweep. It runs whatever (p1) is about to report, so a red assertion still leaves the
+  # machine clean — the point is to make a leak VISIBLE, not to make the developer chase pids.
+  for pid in $LEAKED_PIDS; do kill_if_fixture "$pid"; done
+
   chmod -R u+rwX "$TMPROOT" >/dev/null 2>&1
   rm -r "$TMPROOT" >/dev/null 2>&1
 }
@@ -291,6 +368,17 @@ cleanup_files() {
 finish() {
   cleanup_files
   [ "$SETUP_BROKEN" -eq 1 ] && exit 2
+  # (p1) — THE LEAK ASSERTION, and it lives here because its subject is what survived the
+  # teardown, which does not exist until the teardown has run. Its input is the reading
+  # cleanup_files took after the registry reap and before the safety sweep; its detector is
+  # proven non-vacuous by (p2)/(p3) at the bottom of this file, which leak a server on purpose.
+  if [ -z "$LEAKED_PIDS" ]; then
+    ok "(p1) no fixture server outlived the suite — every server this run started was reaped by the pid registry, so none is left holding a port on a mktemp directory that no longer exists"
+  else
+    no "(p1) no fixture server outlives the suite" \
+       "these were still running after the registry reap: $LEAKED_PIDS
+       (they have since been swept, so the machine is clean, but a server this suite started escaped its teardown — find the case that started it and give it a track_serve)"
+  fi
   echo
   echo "RESULT: $pass passed, $fail failed, $skip skipped"
   [ "$fail" -eq 0 ] || exit 1
@@ -309,13 +397,26 @@ JS_SIG_BEFORE="$(csum "$JS")"
 # That single `check` is this suite's ONLY invocation against the developer's real HOME. It is
 # read-only by contract ((f2) asserts check writes nothing), and it exists precisely so the
 # backstop at (k) has a subject the rest of the suite must be proven never to have touched.
+# ONE report, read ONCE, and both paths derived from it. (k28) needs the ui directory as well as
+# the registry's parent, and running `check` a second time would break the single-invocation
+# property the paragraph above states — so the report is captured, not the path.
+REAL_CHECK_REPORT="$(bash "$ENGINE" check 2>/dev/null)"
 real_loom_home() {
   local line
-  line="$(bash "$ENGINE" check 2>/dev/null | sed -n 's/^registry: //p' | awk 'NR==1')"
+  line="$(printf '%s\n' "$REAL_CHECK_REPORT" | sed -n 's/^registry: //p' | awk 'NR==1')"
   case "$line" in
     /*) dirname "$line" ;;
     *)  printf 'UNRESOLVED' ;;
   esac
+}
+# real_ui_dir — the ui directory the engine itself names, for the same reason and by the same
+# route as the registry above: a hard-coded "ui" here would keep passing after the engine moved
+# or renamed it, and (k28) would then exempt a directory that no longer exists while hashing the
+# real one absolutely — a silent, permanent false failure of exactly the kind being fixed.
+real_ui_dir() {
+  local line
+  line="$(printf '%s\n' "$REAL_CHECK_REPORT" | sed -n 's/^ui dir:[[:space:]]*//p' | awk 'NR==1')"
+  case "$line" in /*) printf '%s' "$line" ;; *) printf 'UNRESOLVED' ;; esac
 }
 # real_tree_sig — DEFINED for an absent tree rather than skipped. CI has no user-scope
 # loomwright directory at all, and "skip when absent" would make this backstop vacuous exactly
@@ -330,6 +431,101 @@ REAL_LOOM_HOME="$(real_loom_home)"
 REAL_LOOM_SIG_BEFORE="$(real_tree_sig "$REAL_LOOM_HOME")"
 REAL_REG_BEFORE="ABSENT"
 [ -f "$REAL_LOOM_HOME/projects.json" ] && REAL_REG_BEFORE="$(csum "$REAL_LOOM_HOME/projects.json")"
+REAL_UI_DIR="$(real_ui_dir)"
+# The ui directory expressed the way tree_sig prints it — relative to the hashed root. If it is
+# NOT inside that root there is nothing in the hash a serve could own, and the empty value makes
+# serve_owned_rel match nothing, so (k28) stays absolute. That is the fail-CLOSED direction.
+REAL_UI_REL=""
+case "$REAL_UI_DIR" in
+  "$REAL_LOOM_HOME"/*) REAL_UI_REL="${REAL_UI_DIR#"$REAL_LOOM_HOME"/}" ;;
+esac
+
+# --- ATTRIBUTING A CHANGE IN THE REAL TREE ----------------------------------------------
+# WHY THIS EXISTS. (k28) hashes the developer's own user-scope tree — the one the engine names,
+# never spelled here, because this file's vendor-coupling allowance is zero and quoting the
+# host-tool config path in a comment would put the first coupling entry on the one file the
+# manifest records as holding none — around the whole suite. A developer who actually USES this
+# tool has a Floor server running, and that server rewrites floor.json, index.json and one
+# projects/<slug>/floor.json every couple of seconds —
+# so the hash changed, (k28) went red, and the reason had nothing to do with the suite. The
+# population most likely to run these tests was the one population that could never get a green
+# run. A backstop that cannot tell "a test wrote here" from "the owner's server is running here"
+# is not reporting on its own subject.
+#
+# WHAT IS AND IS NOT EXEMPTED, and why the exemption is safe rather than merely convenient.
+# `serve` is the ONLY verb that writes any of the paths below — `apply` writes bundle files,
+# `remove` deletes, and every other verb writes the registry, none of which are in this set, so
+# any of those reaching the real tree still reddens. And an unisolated `serve` cannot get here
+# unnoticed in the first place: `serve` is on (k26)'s literal-verb list, so the STATIC gate
+# already requires every serve in this file to carry a fixture HOME or an explicit --registry,
+# with (k27b) as its mutation control. The static gate is the enforcement; this remains, as the
+# paragraph above (k26) says, the thing that catches residue.
+#
+# The exemption is also CONDITIONAL on evidence, not on the path alone: with no live serve
+# detected, a change to these very same paths is still DIRTY. So the narrowing cannot apply on
+# CI, or on a developer's machine with the Floor stopped, which is where the tree is quiet and
+# the backstop is at its strongest.
+serve_owned_rel() {
+  local rel="$1" ui="$2" sub
+  [ -n "$ui" ] || return 1
+  case "$rel" in "./$ui/"*) sub="${rel#./$ui/}" ;; *) return 1 ;; esac
+  case "$sub" in
+    floor.json|floor.json.tmp)           return 0 ;;  # regen_project's copy + its staging name
+    index.json|index.json.tmp.*)         return 0 ;;  # write_served_index, every tick
+    serve.log|serve.pid)                 return 0 ;;  # the request log and the pidfile
+    projects)                            return 0 ;;  # the per-project parent directory
+    projects/*/floor.json|projects/*/floor.json.tmp) return 0 ;;
+    projects/*) case "${sub#projects/}" in */*) return 1 ;; *) return 0 ;; esac ;;  # a slug dir
+  esac
+  return 1
+}
+
+# real_tree_changed_paths — the PATHS that differ between two tree_sig outputs. The path is cut
+# by stripping diff's marker and the trailing checksum rather than by taking $1, so a path with
+# a space in it is reported whole instead of silently truncated into something that then fails
+# to match serve_owned_rel and is misreported as a foreign write.
+real_tree_changed_paths() {
+  diff "$1" "$2" 2>/dev/null | awk '
+    /^[<>] / { line = substr($0, 3); sub(/ [^ ]+$/, "", line); if (line != "") print line }' \
+    | LC_ALL=C sort -u
+}
+
+# classify_real_tree_delta <before file> <after file> <ui rel> <live serve: yes|no>
+#   -> "CLEAN" | "SERVE <paths…>" | "DIRTY <paths…>"
+# The whole decision, in one place, so that the controls at (k28a)-(k28d) exercise the SAME code
+# the live assertion runs rather than a re-implementation of it that could drift from it.
+classify_real_tree_delta() {
+  local bf="$1" af="$2" ui="$3" live="$4" paths p all="" foreign=""
+  paths="$(real_tree_changed_paths "$bf" "$af")"
+  [ -n "$paths" ] || { printf 'CLEAN'; return 0; }
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    all="$all $p"
+    serve_owned_rel "$p" "$ui" || foreign="$foreign $p"
+  done <<REAL_DELTA_EOF
+$paths
+REAL_DELTA_EOF
+  if [ -n "$foreign" ]; then printf 'DIRTY%s' "$foreign"; return 0; fi
+  if [ "$live" = "yes" ]; then printf 'SERVE%s' "$all"; return 0; fi
+  printf 'DIRTY%s' "$all"
+  return 0
+}
+
+# live_serve_pids — the pids of a serve that is ACTUALLY RUNNING against a given ui directory.
+# The pidfile alone is not evidence (it outlives its process), so each pid must still be alive
+# AND still answer to this module's own command-line description — the same ownership test the
+# engine's `stop` applies, for the same reason. Read-only: this never signals anything.
+live_serve_pids() {
+  local pf="$1/serve.pid" pid cmd
+  [ -f "$pf" ] || return 0
+  while IFS= read -r pid; do
+    case "$pid" in ''|*[!0-9]*) continue ;; esac
+    cmd="$(ps -o command= -p "$pid" 2>/dev/null || true)"
+    [ -n "$cmd" ] || continue
+    case "$cmd" in *setup-ui.sh*|*http.server*) printf '%s\n' "$pid" ;; esac
+  done < "$pf"
+  return 0
+}
 
 # ===========================================================================
 echo "(a) AC-no-egress — the bundle references nothing off this origin"
@@ -1250,7 +1446,7 @@ jq_port="$(python3 -c 'import socket
 s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()' 2>/dev/null)"
 case "$jq_port" in ''|*[!0-9]*) setup_fail "(g) fixture: could not obtain a free port for the jq-absent serve probe" ;; esac
 out="$(PATH="$STUB_NOJQ" bash "$ENGINE" serve --registry "$NOREG" --ui-dir "$JQUI" --port "$jq_port" --detach 2>&1)"; rc=$?
-SERVE_PIDFILES="$SERVE_PIDFILES $JQUI/serve.pid"
+track_serve "$JQUI"
 [ "$rc" -eq 0 ] && in_str "$out" "jq not found" && in_str "$out" "will NOT be regenerated" \
   && ok "(g3) with jq absent, serve reports that build-floor.sh will skip rather than pretending to regenerate" \
   || no "(g3) with jq absent, serve reports that build-floor.sh will skip" "rc=$rc :: $out"
@@ -1316,7 +1512,7 @@ HINTUI="$G/ui-hint"
 bash "$ENGINE" apply --ui-dir "$HINTUI" >/dev/null 2>&1
 [ -f "$HINTUI/index.html" ] || setup_fail "(g9) fixture: apply did not install into $HINTUI"
 out="$(bash "$ENGINE" serve --registry "$NOREG" --ui-dir "$HINTUI" --no-regen --detach --port "$hint_port" --interval 10 2>&1)"; rc=$?
-SERVE_PIDFILES="$SERVE_PIDFILES $HINTUI/serve.pid"
+track_serve "$HINTUI"
 [ "$rc" -eq 0 ] && in_str "$out" "?stale=30" \
   && ok "(g9) with --interval 10, serve prints the ?stale=30 the page needs to avoid a false stale banner" \
   || no "(g9) with --interval 10, serve prints the ?stale= value the page needs" "rc=$rc :: $out"
@@ -1341,6 +1537,9 @@ hint_port2="$(python3 -c 'import socket
 s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()' 2>/dev/null)"
 case "$hint_port2" in ''|*[!0-9]*) setup_fail "(g10) fixture: could not obtain a second free port" ;; esac
 out="$(bash "$ENGINE" serve --registry "$NOREG" --ui-dir "$HINTUI" --no-regen --detach --port "$hint_port2" 2>&1)"; rc=$?
+# The SECOND serve into this same ui dir overwrites the pidfile the first one wrote, so the
+# registration above is NOT still standing in for this process — it must be tracked too.
+track_serve "$HINTUI"
 [ "$rc" -eq 0 ] && ! in_str "$out" "?stale=" \
   && ok "(g10) CONTROL: at the default interval serve prints no ?stale= hint — the hint is interval-driven, not decoration" \
   || no "(g10) CONTROL: at the default interval serve prints no ?stale= hint" "rc=$rc :: $out"
@@ -1396,7 +1595,7 @@ s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.clos
         ''|*[!0-9]*) skipn "(g13) CONTROL: no free port could be obtained for the contrast run" ;;
         *)
           out="$(bash "$ENGINE" serve --registry "$NOREG" --ui-dir "$GUI" --no-regen --detach --port "$free_port" 2>&1)"; rc=$?
-          SERVE_PIDFILES="$SERVE_PIDFILES $GUI/serve.pid"
+          track_serve "$GUI"
           if [ "$rc" -eq 0 ] && ! in_str "$out" "already in use"; then
             ok "(g13) CONTROL: on a FREE port the same invocation does not abort — the refusal is the conflict, not a blanket refusal"
           else
@@ -1470,7 +1669,7 @@ fi
   || no "(h3b) ANTI-VACUITY: (h2)'s mutation control actually executed" "mutant_ok rejected $MUT_BIND — the sed no longer matches the engine, so (h2) was SKIPPED and (h1) is uncontrolled"
 
 out="$(bash "$ENGINE" serve --registry "$NOREG" --no-regen --detach --port "$port" --ui-dir "$HUI" 2>&1)"; rc=$?
-SERVE_PIDFILES="$SERVE_PIDFILES $HUI/serve.pid"
+track_serve "$HUI"
 if [ "$rc" -ne 0 ] || [ ! -f "$HUI/serve.pid" ]; then
   no "(h3) serve --detach starts and records its pid" "rc=$rc :: $out"
 else
@@ -1571,7 +1770,7 @@ case "$rport" in ''|*[!0-9]*) setup_fail "(i) fixture: could not obtain a free p
   bash "$ENGINE" apply --ui-dir "$RUI" >/dev/null 2>&1
   bash "$ENGINE" serve --registry "$NOREG" --detach --interval 1 --port "$rport" --ui-dir "$RUI" >/dev/null 2>&1
 ) || setup_fail "(i) fixture: the apply/serve sequence could not be run from $REPO"
-SERVE_PIDFILES="$SERVE_PIDFILES $RUI/serve.pid"
+track_serve "$RUI"
 sleep 2
 bash "$ENGINE" stop --ui-dir "$RUI" >/dev/null 2>&1
 sleep 2
@@ -2635,10 +2834,134 @@ elif [ "$REAL_LOOM_SIG_BEFORE" = "$k_real_after" ]; then
 else
   printf '%s\n' "$REAL_LOOM_SIG_BEFORE" > "$TMPROOT/real-before" 2>/dev/null
   printf '%s\n' "$k_real_after"         > "$TMPROOT/real-after"  2>/dev/null
-  no "(k28) the real user-scope tree is unchanged across the whole suite" \
-     "$(diff "$TMPROOT/real-before" "$TMPROOT/real-after" 2>/dev/null | head -20)
-     (a live 'serve' writing into the real ui dir would also show here; a projects.json line means a case escaped its fixture HOME)"
+  k_live_pids="$(live_serve_pids "$REAL_UI_DIR" | tr '\n' ' ' | sed 's/ *$//')"
+  k_live=no; [ -n "$k_live_pids" ] && k_live=yes
+  k_verdict="$(classify_real_tree_delta "$TMPROOT/real-before" "$TMPROOT/real-after" "$REAL_UI_REL" "$k_live")"
+  case "$k_verdict" in
+    SERVE*)
+      ok "(k28) the real user-scope tree changed ONLY in artefacts a LIVE serve owns (pid(s): $k_live_pids), so no write here is attributable to this suite —$(printf '%s' "${k_verdict#SERVE}"). Everything else in that tree is still hashed absolutely, and with no live serve these same paths would have reddened" ;;
+    *)
+      no "(k28) the real user-scope tree is unchanged across the whole suite" \
+         "these paths changed and NO live serve owns them:$(printf '%s' "${k_verdict#DIRTY}")
+       (live serve detected: $k_live${k_live_pids:+ — pid(s) $k_live_pids})
+$(diff "$TMPROOT/real-before" "$TMPROOT/real-after" 2>/dev/null | head -20)" ;;
+  esac
 fi
+
+# --- (k28a)-(k28d) THE CONTROLS FOR THAT NARROWING --------------------------------------
+# An exemption that is never tested is a hole with a comment over it. These four drive the exact
+# function (k28) just ran, on SYNTHETIC signatures — nothing here reads or writes the real tree,
+# which is the only way to test a "someone wrote to the developer's config" case without doing
+# it. (k28a) is the one that matters most: it is the proof that the narrowing did not blind the
+# backstop to the thing it exists to catch.
+k_ui_rel="${REAL_UI_REL:-ui}"
+k_sig_a="$TMPROOT/k28-a"; k_sig_b="$TMPROOT/k28-b"
+{ printf './%s/floor.json AAA\n' "$k_ui_rel"
+  printf './%s/index.json BBB\n' "$k_ui_rel"
+  printf './%s/projects/demo/floor.json CCC\n' "$k_ui_rel"
+  printf './projects.json DDD\n'; } > "$k_sig_a"
+
+# (k28a) a write the suite could really make — the registry — with a live serve running anyway.
+sed 's/^\.\/projects\.json DDD$/.\/projects.json ZZZ/' "$k_sig_a" > "$k_sig_b"
+k_c="$(classify_real_tree_delta "$k_sig_a" "$k_sig_b" "$k_ui_rel" yes)"
+case "$k_c" in
+  DIRTY*./projects.json*)
+    ok "(k28a) CONTROL: with a live serve running, a change to projects.json is still DIRTY — the live-serve narrowing exempts the serve's own artefacts and nothing else, so a case that escaped its fixture HOME still reddens (k28)" ;;
+  *)
+    no "(k28a) CONTROL: a real write to the tree is still DIRTY while a serve is live" \
+       "classifier returned '$k_c' — the narrowing is swallowing writes it must never swallow" ;;
+esac
+
+# (k28b) the SAME serve-owned churn, with NO live serve. Must stay DIRTY: the exemption is
+# earned by detecting a running server, not granted to a path list.
+sed "s|^\./$k_ui_rel/floor.json AAA$|./$k_ui_rel/floor.json ZZZ|" "$k_sig_a" > "$k_sig_b"
+k_c="$(classify_real_tree_delta "$k_sig_a" "$k_sig_b" "$k_ui_rel" no)"
+case "$k_c" in
+  DIRTY*floor.json*)
+    ok "(k28b) CONTROL: with NO live serve, a change to floor.json is DIRTY — the exemption is conditional on evidence that a server is actually running, so CI and a stopped Floor keep the absolute backstop" ;;
+  *)
+    no "(k28b) CONTROL: serve-owned paths are still DIRTY when no serve is live" \
+       "classifier returned '$k_c' — the path list alone is granting the exemption" ;;
+esac
+
+# (k28c) the defect itself: the same churn WITH a live serve is attributed, not reported.
+k_c="$(classify_real_tree_delta "$k_sig_a" "$k_sig_b" "$k_ui_rel" yes)"
+case "$k_c" in
+  SERVE*floor.json*)
+    ok "(k28c) CONTROL: the same churn WITH a live serve is attributed to it — this is the false positive that made (k28) unpassable for anyone actually running the Floor" ;;
+  *)
+    no "(k28c) CONTROL: serve-owned churn under a live serve is attributed to the serve" "classifier returned '$k_c'" ;;
+esac
+
+# (k28d) MIXED — the case a per-path exemption is most likely to get wrong. A suite write hiding
+# among genuine server churn must still redden, and must name ONLY the write.
+{ sed "s|^\./$k_ui_rel/floor.json AAA$|./$k_ui_rel/floor.json ZZZ|" "$k_sig_a" \
+    | sed 's/^\.\/projects\.json DDD$/.\/projects.json ZZZ/'; } > "$k_sig_b"
+k_c="$(classify_real_tree_delta "$k_sig_a" "$k_sig_b" "$k_ui_rel" yes)"
+case "$k_c" in
+  DIRTY*./projects.json*)
+    case "$k_c" in
+      *floor.json*) no "(k28d) CONTROL: a mixed delta reddens and names only the unattributable path" \
+                       "it named the serve's own floor.json too: '$k_c'" ;;
+      *) ok "(k28d) CONTROL: a real write hidden among live-serve churn still reddens, and the report names ONLY the unattributable path — the server's noise cannot cover a suite write" ;;
+    esac ;;
+  *)
+    no "(k28d) CONTROL: a real write mixed with live-serve churn still reddens" "classifier returned '$k_c'" ;;
+esac
+
+# --- (k28e)-(k28g) THE OTHER HALF OF THE EXEMPTION: the EVIDENCE that grants it ----------
+# (k28a)-(k28d) drive the classifier with the live/not-live answer handed to them. Nothing above
+# tests the thing that PRODUCES that answer, and it is the only input that can grant the
+# exemption wrongly: if live_serve_pids called a dead or foreign pidfile "a live serve", the
+# narrowing would apply on a machine with no server running at all — silently restoring the hole
+# (k28b) exists to keep shut. A pidfile is not evidence; a live process of ours is.
+K28="$(mktmp)" || setup_fail "(k28e) fixture: mktemp under $TMPROOT failed"
+mkdir -p "$K28/ui" || setup_fail "(k28e) fixture: could not create $K28/ui"
+
+# (k28e) a STALE pidfile — the pid has exited. This is the ordinary state of a ui directory
+# after a crash, and it must not look like a running server.
+sleep 30 & k28_dead=$!
+kill "$k28_dead" 2>/dev/null; wait "$k28_dead" 2>/dev/null
+printf '%s\n' "$k28_dead" > "$K28/ui/serve.pid"
+k28_out="$(live_serve_pids "$K28/ui")"
+[ -z "$k28_out" ] \
+  && ok "(k28e) CONTROL: a pidfile naming an EXITED pid yields no live serve — a stale pidfile left by a crashed server cannot grant (k28) its exemption" \
+  || no "(k28e) CONTROL: a stale pidfile is not read as a live serve" "live_serve_pids returned '$k28_out' for exited pid $k28_dead"
+
+# (k28f) a pidfile naming a LIVE process that is NOT one of ours — the recycled-pid case the
+# engine's own `stop` guards against, for exactly the same reason.
+sleep 30 & k28_alien=$!
+printf '%s\n' "$k28_alien" > "$K28/ui/serve.pid"
+k28_out="$(live_serve_pids "$K28/ui")"
+[ -z "$k28_out" ] \
+  && ok "(k28f) CONTROL: a pidfile naming a live but FOREIGN process yields no live serve — a recycled pid cannot grant the exemption either, so the evidence is 'one of ours is running', not 'this file has a number in it'" \
+  || no "(k28f) CONTROL: a live foreign pid is not read as a live serve" "live_serve_pids returned '$k28_out' for unrelated pid $k28_alien"
+kill "$k28_alien" 2>/dev/null; wait "$k28_alien" 2>/dev/null
+
+# (k28g) ANTI-VACUITY, and it is not optional: (k28e) and (k28f) are both satisfied perfectly by
+# a live_serve_pids that returns NOTHING, ever — which would leave (k28) permanently red for the
+# very people this fix is for. The subject is a real background process whose command line names
+# this module, created here rather than borrowed from the suite's own invocation so the arm does
+# not quietly depend on how the suite happened to be started.
+mkdir -p "$K28/plugin" || setup_fail "(k28g) fixture: could not create $K28/plugin"
+# `sleep` is BACKGROUNDED behind a trap rather than run in the foreground, and that detail is
+# load-bearing: non-interactive bash defers a signal until the foreground child it is waiting on
+# finishes, so a plain `sleep 30` here would make the kill below block this suite for half a
+# minute. Backgrounded plus `wait`, the trap runs the moment the signal lands.
+printf '#!/usr/bin/env bash\nsleep 30 & c=$!\ntrap "kill $c 2>/dev/null; exit 0" TERM INT\nwait\n' > "$K28/plugin/setup-ui.sh"
+bash "$K28/plugin/setup-ui.sh" & k28_ours=$!
+printf '%s\n' "$k28_ours" > "$K28/ui/serve.pid"
+k28_wait=0
+while [ "$k28_wait" -lt 20 ]; do
+  k28_out="$(live_serve_pids "$K28/ui")"
+  [ -n "$k28_out" ] && break
+  sleep 0.25; k28_wait=$((k28_wait + 1))
+done
+[ "$k28_out" = "$k28_ours" ] \
+  && ok "(k28g) ANTI-VACUITY: a live process whose command line names this module IS reported (pid $k28_ours) — (k28e) and (k28f) are a detector discriminating, not one that never fires and would make (k28) unpassable again" \
+  || no "(k28g) ANTI-VACUITY: a live serve of ours is reported" \
+       "live_serve_pids returned '$k28_out', wanted '$k28_ours' — the detector never fires, so the live-serve exemption could never be granted"
+kill "$k28_ours" 2>/dev/null; wait "$k28_ours" 2>/dev/null
 
 k_real_reg_after="ABSENT"
 [ -f "$REAL_LOOM_HOME/projects.json" ] && k_real_reg_after="$(csum "$REAL_LOOM_HOME/projects.json")"
@@ -2670,6 +2993,9 @@ s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()
 case "$k_hs_port" in ''|*[!0-9]*) setup_fail "(k30) fixture: could not obtain a free port for the hostile-slug serve probe" ;; esac
 ( cd "$k_hs_root/elsewhere" && HOME="$k_hs_root/fakehome" bash "$ENGINE" serve \
     --ui-dir "$k_hs_ui" --registry "$k_hs_reg" --port "$k_hs_port" --interval 1 --detach >/dev/null 2>&1 )
+# Tracked even though a `stop` follows below: the `stop` is what CANNOT be relied on. This
+# serve regenerates on a 1s interval, so a refused stop leaks a process that keeps writing.
+track_serve "$k_hs_ui"
 # THE WINDOW MUST OUTLAST A FULL ROUND-ROBIN, NOT JUST THE FIRST HIT. Non-selected projects
 # regenerate ONE AT A TIME on the slow cadence, so stopping the moment goodslug appears leaves
 # whichever entry is scheduled later without a turn. With the hostile entry listed first that
@@ -2730,6 +3056,8 @@ s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.clos
 case "$k_sel_port" in ''|*[!0-9]*) setup_fail "(k32) fixture: could not obtain a free port" ;; esac
 ( cd "$k_sel_root/home" && HOME="$k_sel_root/fakehome" bash "$ENGINE" serve \
     --ui-dir "$k_sel_ui" --registry "$k_sel_reg" --port "$k_sel_port" --interval 1 --detach >/dev/null 2>&1 )
+# Same as (k30): the stop below is the thing that can fail, so the pid is captured here.
+track_serve "$k_sel_ui"
 k_sel_waited=0
 while [ "$k_sel_waited" -lt 20 ]; do
   [ -f "$k_sel_ui/floor.json" ] && break
@@ -2944,7 +3272,7 @@ l_measure() {
   port="$(l_free_port)"
   case "${port:-x}" in ''|*[!0-9]*) printf '{"ok":false,"reason":"no free port"}'; return 0 ;; esac
   bash "$eng" apply --ui-dir "$uid" --registry "$LREG" >/dev/null 2>&1
-  SERVE_PIDFILES="$SERVE_PIDFILES $uid/serve.pid"
+  track_serve "$uid"
   STUB_COST="$LSTUB_COST" python3 "$LDRV" "$eng" "$uid" "$LREG" "$L/proj-1" "$log" "$LINTERVAL" "$LTICKS" "$port" 2>/dev/null
 }
 
@@ -3083,7 +3411,7 @@ case "${lc_port:-x}" in
   *)
     ( cd "$L/proj-1" && STUB_COST="$LSTUB_COST" STUB_LOG="$L/stub-vanish.log" \
         bash "$LENG" serve --ui-dir "$LC_UI" --registry "$LREG" --port "$lc_port" --interval 1 --detach ) >/dev/null 2>&1
-    SERVE_PIDFILES="$SERVE_PIDFILES $LC_UI/serve.pid"
+    track_serve "$LC_UI"
     lc_pid="$(awk 'NR==1' "$LC_UI/serve.pid" 2>/dev/null)"
     rm -rf "$L/proj-3"
     lc_state=""; lc_i=0
@@ -3111,7 +3439,7 @@ LE_UI="$L/ui-regstate"
 bash "$LENG" apply --ui-dir "$LE_UI" --registry "$L/no-such-registry.json" >/dev/null 2>&1
 le_port="$(l_free_port)"
 ( cd "$L/proj-1" && bash "$LENG" serve --ui-dir "$LE_UI" --registry "$L/no-such-registry.json" --port "$le_port" --no-regen --detach ) >/dev/null 2>&1
-SERVE_PIDFILES="$SERVE_PIDFILES $LE_UI/serve.pid"
+track_serve "$LE_UI"
 bash "$LENG" stop --ui-dir "$LE_UI" --registry "$L/no-such-registry.json" >/dev/null 2>&1
 le_absent="$(jq -r '.registry.state' "$LE_UI/index.json" 2>/dev/null)"
 le_absent_reason="$(jq -r '.registry.reason // ""' "$LE_UI/index.json" 2>/dev/null)"
@@ -3127,7 +3455,7 @@ LB_UI="$L/ui-badreg"
 bash "$LENG" apply --ui-dir "$LB_UI" --registry "$LBAD" >/dev/null 2>&1
 lb_port="$(l_free_port)"
 ( cd "$L/proj-1" && bash "$LENG" serve --ui-dir "$LB_UI" --registry "$LBAD" --port "$lb_port" --no-regen --detach ) >/dev/null 2>&1
-SERVE_PIDFILES="$SERVE_PIDFILES $LB_UI/serve.pid"
+track_serve "$LB_UI"
 bash "$LENG" stop --ui-dir "$LB_UI" --registry "$LBAD" >/dev/null 2>&1
 lb_state="$(jq -r '.registry.state' "$LB_UI/index.json" 2>/dev/null)"
 lb_reason="$(jq -r '.registry.reason // ""' "$LB_UI/index.json" 2>/dev/null)"
@@ -3147,7 +3475,7 @@ LJ_UI="$L/ui-nojq"
 bash "$LENG" apply --ui-dir "$LJ_UI" --registry "$LREG" >/dev/null 2>&1
 lj_port="$(l_free_port)"
 ( cd "$L/proj-1" && PATH="$LJ_STUB" bash "$LENG" serve --ui-dir "$LJ_UI" --registry "$LREG" --port "$lj_port" --no-regen --detach ) >/dev/null 2>&1
-SERVE_PIDFILES="$SERVE_PIDFILES $LJ_UI/serve.pid"
+track_serve "$LJ_UI"
 bash "$LENG" stop --ui-dir "$LJ_UI" --registry "$LREG" >/dev/null 2>&1
 lj_state="$(jq -r '.registry.state' "$LJ_UI/index.json" 2>/dev/null)"
 lj_reason="$(jq -r '.registry.reason // ""' "$LJ_UI/index.json" 2>/dev/null)"
@@ -3958,7 +4286,7 @@ case "$nport" in ''|*[!0-9]*) setup_fail "(n) fixture: could not obtain a free p
 nstale_port="$(n_free_port)"
 case "$nstale_port" in ''|*[!0-9]*) setup_fail "(n) fixture: could not obtain a second free port" ;; esac
 n_prev_out="$( cd "$NPROJ" && HOME="$NHOME" bash "$ENGINE" serve --registry "$NREG" --ui-dir "$NUI" --no-regen --detach --port "$nstale_port" 2>&1 )"
-SERVE_PIDFILES="$SERVE_PIDFILES $NUI/serve.pid"
+track_serve "$NUI"
 NSTALE_TOKEN="$(n_token_of "$n_prev_out")"
 [ -n "$NSTALE_TOKEN" ] || setup_fail "(n) fixture: the first serve run printed no #token= to go stale"
 n_wait_up "$nstale_port" >/dev/null 2>&1
@@ -3967,7 +4295,7 @@ n_wait_down "$nstale_port" >/dev/null 2>&1
 
 # THE RUN EVERY ASSERTION BELOW TALKS TO.
 n_out="$( cd "$NPROJ" && HOME="$NHOME" bash "$ENGINE" serve --registry "$NREG" --ui-dir "$NUI" --no-regen --detach --port "$nport" 2>&1 )"; n_rc=$?
-SERVE_PIDFILES="$SERVE_PIDFILES $NUI/serve.pid"
+track_serve "$NUI"
 NTOKEN="$(n_token_of "$n_out")"
 [ "$n_rc" -eq 0 ] || setup_fail "(n) fixture: serve exited $n_rc :: $n_out"
 [ -n "$NTOKEN" ] || setup_fail "(n) fixture: serve printed no #token= URL :: $n_out"
@@ -4233,7 +4561,7 @@ n_down=no; n_wait_down "$nport" && n_down=yes
 nport2="$(n_free_port)"
 case "$nport2" in ''|*[!0-9]*) setup_fail "(n21) fixture: could not obtain a port" ;; esac
 n_out2="$( cd "$NPROJ" && HOME="$NHOME" bash "$ENGINE" serve --registry "$NREG" --ui-dir "$NUI" --no-regen --detach --port "$nport2" 2>&1 )"
-SERVE_PIDFILES="$SERVE_PIDFILES $NUI/serve.pid"
+track_serve "$NUI"
 if n_wait_up "$nport2"; then
   n_stop_out="$(bash "$ENGINE" stop --ui-dir "$NUI" 2>&1)"
   n_down=no; n_wait_down "$nport2" && n_down=yes
@@ -4270,7 +4598,7 @@ kill "$n_foreign_pid" 2>/dev/null
 NSHIP_PORT="$(n_free_port)"
 case "$NSHIP_PORT" in ''|*[!0-9]*) setup_fail "(n) fixture: could not obtain a port for the reference run" ;; esac
 n_ship_out="$( cd "$NPROJ" && HOME="$NHOME" bash "$ENGINE" serve --registry "$N/ship.json" --ui-dir "$NUI" --no-regen --detach --port "$NSHIP_PORT" 2>&1 )"
-SERVE_PIDFILES="$SERVE_PIDFILES $NUI/serve.pid"
+track_serve "$NUI"
 NSHIP_TOKEN="$(n_token_of "$n_ship_out")"
 NSHIP_ORIGIN="http://127.0.0.1:$NSHIP_PORT"
 [ -n "$NSHIP_TOKEN" ] || setup_fail "(n) fixture: the reference serve printed no #token= :: $n_ship_out"
@@ -4307,7 +4635,7 @@ n_stage_mutant() {
   NG_PORT="$(n_free_port)"
   case "$NG_PORT" in ''|*[!0-9]*) return 1 ;; esac
   out="$( cd "$cwd" && HOME="$NHOME" bash "$NG_ENGINE" serve --registry "$N/mut-$name.json" --ui-dir "$NG_UI" --no-regen --detach --port "$NG_PORT" 2>&1 )"
-  SERVE_PIDFILES="$SERVE_PIDFILES $NG_UI/serve.pid"
+  track_serve "$NG_UI"
   NG_TOKEN="$(n_token_of "$out")"
   [ -n "$NG_TOKEN" ] || return 1
   n_wait_up "$NG_PORT" || return 1
@@ -4471,7 +4799,7 @@ bash "$ENGINE" apply --ui-dir "$NCH_UI" >/dev/null 2>&1
 NCH_PORT="$(n_free_port)"
 case "$NCH_PORT" in ''|*[!0-9]*) setup_fail "(n36) fixture: could not obtain a port for the chunked-body run" ;; esac
 n_ch_out="$( cd "$NCWD" && HOME="$NHOME" bash "$ENGINE" serve --registry "$NCH_REG" --ui-dir "$NCH_UI" --no-regen --detach --port "$NCH_PORT" 2>&1 )"
-SERVE_PIDFILES="$SERVE_PIDFILES $NCH_UI/serve.pid"
+track_serve "$NCH_UI"
 NCH_TOKEN="$(n_token_of "$n_ch_out")"
 [ -n "$NCH_TOKEN" ] || setup_fail "(n36) fixture: the chunked-body serve printed no #token= :: $n_ch_out"
 n_wait_up "$NCH_PORT" || setup_fail "(n36) fixture: the chunked-body serve never came up on $NCH_PORT"
@@ -5082,3 +5410,64 @@ o_residue="$(ls "$script_dir"/setup-ui-*.sh 2>/dev/null || true)"
   && ok "(o16) the real engine is byte-identical after the (o3) mutation control (sha256 unchanged) and no mutant copy was left in the plugin's scripts directory" \
   || no "(o16) the real engine is byte-identical after the (o3) mutation control" \
        "before='$O_ENGINE_SIG_BEFORE' after='$o_eng_after' residue='$o_residue'"
+
+# ===========================================================================
+echo "(p) AC-no-leaked-servers — the suite reaps every server it starts"
+# ===========================================================================
+# (p1) IS EMITTED FROM finish(), because its subject — what survived the teardown — does not
+# exist until the teardown has run. That makes its detector, fixture_serve_pids, the one piece
+# of this suite that nothing else can put under load, so it is exercised HERE against a server
+# deliberately left untracked. Without these two, (p1) would be a green line proving only that
+# `ps | awk` returned nothing, which is also what a detector matching NOTHING returns.
+#
+# THE SERVER STARTED HERE IS A TMP-FIXTURE ONE and it is killed by pid, directly, below. The
+# developer's own Floor is never a candidate: fixture_serve_pids requires this run's TMPROOT on
+# the command line, and a real Floor's names their home directory.
+P="$(mktmp)" || setup_fail "(p) fixture: mktemp under $TMPROOT failed"
+PH="$P/home"; P_UI="$P/ui"; mkdir -p "$PH" "$P/proj" \
+  || setup_fail "(p) fixture: could not create the fixture home and project under $P"
+HOME="$PH" bash "$ENGINE" apply --ui-dir "$P_UI" --registry "$P/reg.json" >/dev/null 2>&1
+p_port="$(l_free_port)"
+case "${p_port:-x}" in
+  ''|*[!0-9]*)
+    skipn "(p2) no free port could be obtained for the leaked-server control"
+    skipn "(p3) no free port could be obtained for the leaked-server control" ;;
+  *)
+    # DELIBERATELY NOT track_serve'd — that omission IS the defect being detected.
+    ( cd "$P/proj" && HOME="$PH" bash "$ENGINE" serve --ui-dir "$P_UI" --registry "$P/reg.json" \
+        --port "$p_port" --no-regen --detach ) >/dev/null 2>&1
+    p_pid="$(awk 'NR==1' "$P_UI/serve.pid" 2>/dev/null)"
+    p_wait=0
+    while [ "$p_wait" -lt 20 ]; do
+      case "$p_pid" in ''|*[!0-9]*) ;; *) kill -0 "$p_pid" 2>/dev/null && break ;; esac
+      sleep 0.25; p_wait=$((p_wait + 1))
+      p_pid="$(awk 'NR==1' "$P_UI/serve.pid" 2>/dev/null)"
+    done
+    p_seen=""
+    case "$p_pid" in
+      ''|*[!0-9]*) ;;
+      *) p_seen="$(fixture_serve_pids | awk -v want="$p_pid" '$1 == want {print; exit}')" ;;
+    esac
+    if [ -n "$p_seen" ]; then
+      ok "(p2) CONTROL: a server started and left untracked IS detected as a survivor (pid $p_pid) — (p1)'s detector reports leaks rather than reporting nothing"
+    else
+      no "(p2) CONTROL: an untracked server is detected as a survivor" \
+         "started pid '$p_pid' but fixture_serve_pids did not name it, so (p1) would pass through a real leak"
+    fi
+
+    # (p3) ANTI-VACUITY. A "detector" that named every pid forever would satisfy (p2) perfectly
+    # while making (p1) permanently red and useless. So the same detector must go quiet once the
+    # process is actually gone — and this is also what stops THIS control leaking the server it
+    # started, which would be a fine way to fix a leak by adding one.
+    case "$p_pid" in ''|*[!0-9]*) ;; *) kill "$p_pid" 2>/dev/null ;; esac
+    p_wait=0; p_still="x"
+    while [ "$p_wait" -lt 20 ]; do
+      p_still="$(fixture_serve_pids | awk -v want="$p_pid" '$1 == want {print; exit}')"
+      [ -z "$p_still" ] && break
+      sleep 0.25; p_wait=$((p_wait + 1))
+    done
+    [ -z "$p_still" ] \
+      && ok "(p3) ANTI-VACUITY: once that server is killed the same detector stops naming it — (p2) is observing a live process, not matching unconditionally, and this control leaves nothing behind for (p1) to find" \
+      || no "(p3) ANTI-VACUITY: the detector stops naming a killed server" \
+           "pid $p_pid still reported after $((p_wait / 4))s — the detector matches regardless of liveness, which would make (p1) permanently red" ;;
+esac
