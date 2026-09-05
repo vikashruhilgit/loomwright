@@ -89,8 +89,9 @@
 #       COUNT unchanged (AC-2); absent / empty / unreadable / no-cc_session_id
 #       first line each ADOPT, asserted separately (AC-3); a functionally
 #       broken jq exits 0 and ADOPTS (AC-8)
-#   36. emitter: agent identity — LOOMWRIGHT_AGENT_TYPE used when the payload
-#       has none, payload WINS when both present, key ABSENT when neither
+#   36. emitter: agent identity — PAYLOAD ONLY: a set LOOMWRIGHT_AGENT_TYPE is
+#       IGNORED (never invented), a payload-supplied agent_type IS carried
+#       through (positive control), key ABSENT when the payload has none
 #       (has("agent_type")==false, not "" and not null) (AC-7)
 #   37. build-state.sh: staleness backstop (LOOMWRIGHT_STALE_RUN_SECONDS) —
 #       fresh owner line stays running (control), stale owner line reads
@@ -216,8 +217,8 @@ build_curated_path() {
 
 # run_emitter <workdir> <payload-file-or--empty> [extra PATH exclusions]
 # LOOMWRIGHT_AGENT_TYPE is UNSET here so a developer export cannot supply the
-# field case 36c asserts is absent. This is a SCRUB, never a default — cases
-# 36a/36b set the var explicitly through run_emitter_agent.
+# field case 36c asserts is absent. This is a SCRUB, never a default — case 36a
+# sets the var explicitly through run_emitter_agent to prove it is IGNORED.
 run_emitter() {
   local wd="$1" payload="$2" exclude="${3:-}"
   local path; path="$(build_curated_path "$exclude")"
@@ -234,7 +235,8 @@ run_emitter() {
 
 # run_emitter_agent <workdir> <payload-file> <LOOMWRIGHT_AGENT_TYPE value>
 # Same contract as run_emitter, with the agent-type env var set EXPLICITLY by
-# the calling case (36a/36b).
+# the calling case (36a/36b) — which assert the SUT IGNORES it. Mirrors
+# test-token-ledger.sh run_sut_agent.
 run_emitter_agent() {
   local wd="$1" payload="$2" atv="$3"
   local path; path="$(build_curated_path "")"
@@ -1084,7 +1086,7 @@ else
   ok "case35g broken jq did not divert to a cc-uuid log"
 fi
 
-echo "== 36. emitter: agent identity — payload > env > key omitted (AC-7) =="
+echo "== 36. emitter: agent identity — PAYLOAD ONLY, env IGNORED (AC-7) =="
 # One repo PER sub-case: the emitter re-projects state.md after each firing, so
 # a shared repo would make the second and third payloads depend on the
 # ownership gate diverting them — coupling an agent-identity assertion to a
@@ -1092,17 +1094,26 @@ echo "== 36. emitter: agent identity — payload > env > key omitted (AC-7) =="
 REPO36A="$(init_repo "feature/case36a")"
 P36A="$PAYLOAD_DIR/p36a.json"
 jq -n '{session_id:"sid-case36a", agent_id:"a36a", hook_event_name:"SubagentStop"}' > "$P36A"
+# 36a — a SET env var must NOT reach the line. There is no env fallback in
+# either emitter: the `loomwright:worker` matcher does not discriminate (grouping
+# untyped live-log events by agent_id gives a fixed 2 token_ledger : 1
+# subtask_complete per bucket), so injecting its name would fabricate identity.
+# Absence asserted as key absence — NOT `== ""` and NOT `== null`, mirroring
+# test-token-ledger.sh case18a.
 OUT36A="$(run_emitter_agent "$REPO36A" "$P36A" "loomwright:worker")"
 assert_eq "case36a exit 0" "0" "$(get_rc "$OUT36A")"
-assert_eq "case36a env value used when payload carries no agent_type" "loomwright:worker" \
-  "$(tail -1 "$REPO36A/.supervisor/logs/sid-case36a.jsonl" 2>/dev/null | jq -r '.agent_type // empty')"
+assert_eq "case36a LOOMWRIGHT_AGENT_TYPE is IGNORED (key absent, never invented)" "false" \
+  "$(tail -1 "$REPO36A/.supervisor/logs/sid-case36a.jsonl" 2>/dev/null | jq -r 'has("agent_type")')"
 
 REPO36B="$(init_repo "feature/case36b")"
 P36B="$PAYLOAD_DIR/p36b.json"
-jq -n '{session_id:"sid-case36b", agent_id:"a36b", agent_type:"loomwright:code-reviewer", hook_event_name:"SubagentStop"}' > "$P36B"
+# 36b — POSITIVE CONTROL for 36a and 36c: the field is not simply always
+# absent. A payload that CARRIES agent_type still emits it verbatim, in the
+# real DOUBLED-prefix vocabulary the live log uses, and the env value loses.
+jq -n '{session_id:"sid-case36b", agent_id:"a36b", agent_type:"loomwright:loomwright:code-reviewer", hook_event_name:"SubagentStop"}' > "$P36B"
 OUT36B="$(run_emitter_agent "$REPO36B" "$P36B" "loomwright:env-must-lose")"
 assert_eq "case36b exit 0" "0" "$(get_rc "$OUT36B")"
-assert_eq "case36b payload agent_type WINS over the env value" "loomwright:code-reviewer" \
+assert_eq "case36b payload agent_type is emitted verbatim (env ignored)" "loomwright:loomwright:code-reviewer" \
   "$(tail -1 "$REPO36B/.supervisor/logs/sid-case36b.jsonl" 2>/dev/null | jq -r '.agent_type // empty')"
 
 REPO36C="$(init_repo "feature/case36c")"
@@ -1113,7 +1124,7 @@ assert_eq "case36c exit 0" "0" "$(get_rc "$OUT36C")"
 LINE36C="$(tail -1 "$REPO36C/.supervisor/logs/sid-case36c.jsonl" 2>/dev/null)"
 # Absence asserted as key absence — NOT `== ""` and NOT `== null`, either of
 # which a present-but-empty key would satisfy.
-assert_eq "case36c agent_type key ABSENT when neither source supplies it" "false" \
+assert_eq "case36c agent_type key ABSENT when the payload supplies none" "false" \
   "$(printf '%s' "$LINE36C" | jq -r 'has("agent_type")')"
 assert_eq "case36c the event line is still written" "subtask_complete" \
   "$(printf '%s' "$LINE36C" | jq -r '.event')"

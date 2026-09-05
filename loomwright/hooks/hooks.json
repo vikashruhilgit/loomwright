@@ -38,7 +38,7 @@
           },
           {
             "type": "command",
-            "command": "payload=$(cat); printf '%s' \"$payload\" | LOOMWRIGHT_AGENT_TYPE=loomwright:worker bash \"${CLAUDE_PLUGIN_ROOT}/scripts/emit-progress-event.sh\" || true"
+            "command": "payload=$(cat); printf '%s' \"$payload\" | bash \"${CLAUDE_PLUGIN_ROOT}/scripts/emit-progress-event.sh\" || true"
           }
         ]
       },

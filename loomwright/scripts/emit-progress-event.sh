@@ -219,12 +219,15 @@ event = {
 if cc_session_id:
     event["cc_session_id"] = cc_session_id
 
-# `agent_type`: payload FIRST, else the LOOMWRIGHT_AGENT_TYPE env var the hook
-# entry sets from its own matcher, else the key is OMITTED ENTIRELY — never an
-# empty string, never null. Byte-parallel with emit-token-ledger.sh.
+# `agent_type`: PAYLOAD ONLY, else the key is OMITTED ENTIRELY — never an empty
+# string, never null, never invented. Byte-parallel with emit-token-ledger.sh:
+# NEITHER emitter derives `agent_type` from the matcher it was registered under,
+# because a matcher does not discriminate — grouping untyped events by `agent_id`
+# on the live log yields a fixed 2 `token_ledger` : 1 `subtask_complete` in every
+# bucket, so the single `loomwright:worker` block runs on the same untyped
+# payloads as the three ledger blocks. Stamping the name of a block onto those
+# payloads would INVENT an identity we do not have.
 agent_type = payload.get("agent_type")
-if not (isinstance(agent_type, str) and agent_type):
-    agent_type = os.environ.get("LOOMWRIGHT_AGENT_TYPE", "")
 if isinstance(agent_type, str) and agent_type:
     event["agent_type"] = agent_type
 

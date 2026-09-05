@@ -682,23 +682,34 @@ introduces no new status word: it can only turn a derived `running` into
 emitted by this projector.
 
 **Agent identity on emitted lines (`agent_type`).** The real `SubagentStop`
-payload frequently carries no `agent_type` at all. The two emitters resolve it
-**differently, on purpose**, and neither ever invents it:
+payload frequently carries no `agent_type` at all. Both emitters resolve it the
+**same way** — from the payload only — and neither ever invents it:
 
 | Emitter | Resolution order |
 |---|---|
-| `emit-progress-event.sh` | payload `agent_type` → `LOOMWRIGHT_AGENT_TYPE` env var → key **omitted** |
+| `emit-progress-event.sh` | payload `agent_type` → key **omitted** (no env fallback) |
 | `emit-token-ledger.sh` | payload `agent_type` → key **omitted** (no env fallback) |
 
 In both cases "omitted" means the key is absent entirely — never an empty
 string, never `null`.
 
-`emit-progress-event.sh` keeps the env fallback because `hooks.json` registers
-it under exactly ONE `SubagentStop` matcher (`loomwright:worker`), which
-provably discriminates: the injected value is the identity of the only block
-that can run it.
+**A matcher does not identify the agent — measured, not assumed.** An earlier
+revision of this change injected the matcher's own name into
+`emit-progress-event.sh` through a `LOOMWRIGHT_AGENT_TYPE` env var set by the
+`loomwright:worker` hook entry, on the claim that a single matcher "provably
+discriminates". **That claim is false and the mechanism was removed.** Grouping
+untyped events by `agent_id` on the live log yields a fixed **2 `token_ledger` :
+1 `subtask_complete`** in every bucket — (2,1)×125, (18,9)×107, (24,12)×63,
+(22,11)×61, (4,2)×45, (26,13)×37. The single `loomwright:worker` block therefore
+runs on the **same untyped payloads** as the three ledger blocks. Registering an
+emitter under one matcher prevents DUPLICATION; it proves nothing about
+DISCRIMINATION. Injecting `loomwright:worker` would have stamped that identity
+onto thousands of completions that are not workers — and the injected literal
+was single-prefix, while the payload vocabulary is doubled-prefix
+(`loomwright:loomwright:worker`), so it would not have matched even on a real
+worker.
 
-`emit-token-ledger.sh` deliberately has **no** env fallback, because it is
+`emit-token-ledger.sh` has had **no** env fallback for the same reason: it is
 registered under THREE `SubagentStop` matchers that only discriminate when the
 payload already carries an `agent_type` (see the duplicate guard below: 94/94
 typed firings emitted 1 line, 4,376/4,376 untyped emitted 2, so more than one
@@ -707,6 +718,13 @@ happened to run would be a **guess in exactly the population where we have no
 identity**, and it would also defeat the byte-identity dedupe guard — two lines
 differing only in a fabricated `agent_type` can never compare equal. The
 standing rule is: **`agent_type` is never invented.**
+
+**Accepted limit, not a gap.** The consequence is that **most Floor lanes will
+still read `identity unknown`**, because the hook layer genuinely cannot tell
+which agent fired: the payload is the only trustworthy source and it usually
+carries nothing. That is an honest limit of the current hook surface. Closing it
+requires a payload that actually carries `agent_type` — not a matcher-derived
+substitute, which would only replace "unknown" with "wrong".
 
 **Adjacent-duplicate guard (confirmed, not assumed).**
 `emit-token-ledger.sh` is registered under three `SubagentStop` matchers
@@ -727,10 +745,17 @@ via `result_block_parser.extract_payload()`, and each sits in the same matcher
 block AHEAD of that block's ledger command, whereas the `code-reviewer`
 block's preceding hook is `type: prompt` (not a stdin-consuming subprocess);
 and all three registrations landed in a single commit, so "the third block was
-added after the measurement" is ruled out. What is NOT established: a
+added after the measurement" is ruled out. **One datum refutes the shared-stdin
+explanation:** the `loomwright:worker` block has the SAME shape — a
+stdin-reading Python validator (`validate-worker-result.py`) at entry 0 and an
+emitter at entry 1 — and its emitter demonstrably DOES write (the
+`subtask_complete` lines counted in the ratio above). So a preceding
+stdin-consuming validator does not silence the emitter behind it, which sharpens
+the prediction to **3** rather than explaining 2. What is NOT established: a
 stdin-consumed explanation predicts **1** surviving line if the hook runner
 shares one stdin stream across the entries of a block, and **3** if it hands
-each command its own copy — neither yields 2. Deciding between them requires
+each command its own copy — neither yields 2, and the datum above argues
+against the sharing variant. Deciding between them requires
 observing the harness's stdin delivery semantics, which this repo does not
 pin. Recorded as unresolved rather than guessed; the guard below is correct
 either way, since it keys on byte-identity and not on a duplicate count.

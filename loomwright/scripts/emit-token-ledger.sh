@@ -282,13 +282,16 @@ if cc_session_id:
 
 # `agent_type`: PAYLOAD ONLY, else the key is OMITTED ENTIRELY — never an empty
 # string, never null, never invented. Same additive-if-present discipline as
-# orientation_source below. There is deliberately NO LOOMWRIGHT_AGENT_TYPE env
-# fallback here (unlike emit-progress-event.sh, whose single `loomwright:worker`
-# matcher provably discriminates): this emitter is registered under THREE
+# orientation_source below. There is deliberately NO env fallback that would
+# inject the name of a matcher — byte-parallel with emit-progress-event.sh, which
+# omits one for the same reason: this emitter is registered under THREE
 # SubagentStop matchers that only discriminate when the payload ALREADY carries
-# an `agent_type`. Measured on the live log, 94/94 typed firings emitted 1 line
-# and 4,376/4,376 untyped emitted 2 — i.e. more than one block runs for an
-# untyped payload. Adopting an identity from whichever matcher happened to run
+# an `agent_type`, and the single `loomwright:worker` matcher of the other
+# emitter does not discriminate either (grouping untyped events by `agent_id` on the live
+# log gives a fixed 2 ledger : 1 subtask_complete in every bucket, so all four
+# blocks see the same untyped payloads). Measured on the live log, 94/94 typed
+# firings emitted 1 line and 4,376/4,376 untyped emitted 2 — i.e. more than one
+# block runs for an untyped payload. Adopting an identity from whichever matcher happened to run
 # would be a GUESS in exactly the population where we have no identity, and it
 # would also defeat the byte-identity dedupe guard below (two lines differing
 # only in a fabricated `agent_type` can never compare equal).
