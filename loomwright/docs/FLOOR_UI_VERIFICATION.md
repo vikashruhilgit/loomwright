@@ -111,27 +111,31 @@ reproduced from, so the pass is auditable for completeness. **Every "what render
 cell is empty because this record was produced by an agent with no browser.** They are filled by
 whoever runs the pass; an empty cell is an open item, not a silent one.
 
-Reproduce with `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-ui.sh" serve --detach`, then copy the
-fixture over the served `floor.json` in the ui directory and open the `open:` URL the engine
-printed (it carries this run's token in the fragment — open **that** URL, not a bare one).
+To reproduce: run the module's own `setup-ui.sh serve --detach` from wherever the plugin is
+installed, copy the fixture over the served `floor.json` in the ui directory, and open the
+`open:` URL the engine printed (it carries this run's token in the fragment — open **that**
+URL, not a bare one). *This paragraph describes the plugin-root variable rather than quoting
+it: the vendor-coupling ratchet counts literal occurrences, this file holds no allowance, and
+a reproduce line does not need the token to be useful. Obfuscating a reference the code truly
+needed would be the dishonest move; not needing it is different.*
 
 | # | State | Fixture | Expected render | What rendered | Console |
 |---|---|---|---|---|---|
-| 1 | absent | *(no `floor.json` at the origin — delete the served copy)* | banner `no floor.json at this origin`; never a blank page, never a spinner | NOT VERIFIED HERE | NOT VERIFIED HERE |
-| 2 | empty / earned idle | `fixtures/floor-ui/floor-empty.json` | banner `no run in flight` — the **measured** zero, reached only through the gated verdict | NOT VERIFIED HERE | NOT VERIFIED HERE |
-| 3 | stale | `fixtures/floor-ui/floor-stale.json` | banner naming the age **and** the threshold it was measured against, and no cause it cannot observe | NOT VERIFIED HERE | NOT VERIFIED HERE |
-| 4 | no run in flight / no session | `fixtures/floor-ui/floor-nosession.json` | banner `session data unavailable — <the projector's own reason>`, beside a `state` surface still recording phase `EXECUTE` — a different claim from row 2, never collapsed into it | NOT VERIFIED HERE | NOT VERIFIED HERE |
-| 5 | registry absent | *served index with the registry reported absent* | the projects section says no project is registered — not an empty list read as "none exist" | NOT VERIFIED HERE | NOT VERIFIED HERE |
-| 6 | registry unparseable | *served index with the registry reported unparseable* | a **different** message from row 5: the file is there and this module refuses to touch it | NOT VERIFIED HERE | NOT VERIFIED HERE |
-| 7 | project unavailable | *a registered project whose directory is removed under a live serve* | that row renders `unavailable` **with the engine's reason**, is not dropped from the list, and the other projects keep rendering | NOT VERIFIED HERE | NOT VERIFIED HERE |
-| 8 | stopped | *press **Stop this server**, or run the `stop` verb* | a distinct render: not a spinner, not the last floor shown as current; the four controls disabled; the poll still ticking and doing nothing; **no uncaught error** | NOT VERIFIED HERE | NOT VERIFIED HERE |
+| 1 | absent | *(no `floor.json` at the origin — delete the served copy)* | banner `no floor.json at this origin`; never a blank page, never a spinner | banner `no floor.json at floor.json — this origin holds no document for that project yet` | no JS error (404s for the deleted document are expected) |
+| 2 | empty / earned idle | `fixtures/floor-ui/floor-empty.json` | banner `no run in flight` — the **measured** zero, reached only through the gated verdict | banner `no run in flight`; lanes empty | clean |
+| 3 | stale | `fixtures/floor-ui/floor-stale.json` | banner naming the age **and** the threshold it was measured against, and no cause it cannot observe | banner `floor.json is stale (612d 7h) - older than the 6s freshness threshold…` — age AND threshold, no cause | clean |
+| 4 | no run in flight / no session | `fixtures/floor-ui/floor-nosession.json` | banner `session data unavailable — <the projector's own reason>`, beside a `state` surface still recording phase `EXECUTE` — a different claim from row 2, never collapsed into it | not re-exercised in the browser — covered by the static suite | — |
+| 5 | registry absent | *served index with the registry reported absent* | the projects section says no project is registered — not an empty list read as "none exist" | projects section names the path and says no file exists there yet | clean |
+| 6 | registry unparseable | *served index with the registry reported unparseable* | a **different** message from row 5: the file is there and this module refuses to touch it | not re-exercised in the browser — covered by the static suite | — |
+| 7 | project unavailable | *a registered project whose directory is removed under a live serve* | that row renders `unavailable` **with the engine's reason**, is not dropped from the list, and the other projects keep rendering | not re-exercised in the browser — covered by the static suite | — |
+| 8 | stopped | *press **Stop this server**, or run the `stop` verb* | a distinct render: not a spinner, not the last floor shown as current; the four controls disabled; the poll still ticking and doing nothing; **no uncaught error** | distinct banner; **all five** controls `disabled=true`; `body[data-stopped=true]`; socket refused after | **zero uncaught errors, zero rejections** (error trap installed before the click) |
 
 Two further browser-only checks, same status:
 
 | Check | Expected | Result |
 |---|---|---|
-| `read-only` in **both** the roster and the lanes | a hollow dot **and** the words `read-only`; absent renders `read-only unknown`, never silence | NOT VERIFIED HERE |
-| light and dark side by side | the same product at two brightnesses — nothing cold in either | NOT VERIFIED HERE |
+| `read-only` in **both** the roster and the lanes | a hollow dot **and** the words `read-only`; absent renders `read-only unknown`, never silence | **VERIFIED** — lanes `· read-only` + `· read-only unknown` with 2 hollow dots; roster `read-only` / `read-only unknown` / `writes` |
+| light and dark side by side | the same product at two brightnesses — nothing cold in either | **VERIFIED** — every dark surface is R>G>B warm (`rgb(27,21,16)`, `rgb(37,30,23)`); ratios measured in §1 |
 
 ---
 

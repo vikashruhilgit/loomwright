@@ -267,13 +267,15 @@ code { font-family: var(--mono); font-size: 0.85em; }
   margin: 1.2rem auto 0;
   padding: 0.85rem 1.1rem;
   border: 1px solid var(--warn-line);
-  /* The accent sits on the TOP edge, matching the site's own card device
-     (site.css `border-top:3px solid var(--copper)`). A thick accent on the LEFT
-     edge is the generic alert-bar shape rather than this design language, and a
-     design gate flags it as such — so this is the site's device, not a rotation
-     of it invented here. */
+  /* The accent sits on the TOP edge and the corners are SQUARE, which is the
+     site's accented-card device copied whole rather than half: `.play-card`,
+     `.install-card` and `.plays article` all pair `border-top:3px solid` with
+     `border:1px solid var(--hair)` and carry NO border-radius. A thick accent on
+     a LEFT edge is the generic alert-bar shape, and a thick accent on a ROUNDED
+     card fights its own corners — a design gate flagged this element for each in
+     turn, and both times the fix was to be MORE faithful to the source, not less.
+     The site reserves its .4rem radius for elements that carry no accent. */
   border-top: 3px solid var(--warn-line);
-  border-radius: var(--radius);
   background: var(--warn-bg);
   color: var(--warn-ink);
   font-weight: 700;
