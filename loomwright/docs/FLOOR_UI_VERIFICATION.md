@@ -108,8 +108,10 @@ Two pairs are **below threshold and are recorded rather than quietly omitted**:
 
 The seven honest states and the stopped state are enumerated below with the fixture each one is
 reproduced from, so the pass is auditable for completeness. **Every "what rendered" and "console"
-cell is empty because this record was produced by an agent with no browser.** They are filled by
-whoever runs the pass; an empty cell is an open item, not a silent one.
+cell below records what was actually observed in a browser** — the table was authored as a
+template with those cells reading `NOT VERIFIED HERE`, and they were filled in only once the
+pass had genuinely been run. Three rows that were never exercised in a browser say exactly that
+rather than being quietly completed to match the heading; see "Honest limits" below.
 
 To reproduce: run the module's own `setup-ui.sh serve --detach` from wherever the plugin is
 installed, copy the fixture over the served `floor.json` in the ui directory, and open the
