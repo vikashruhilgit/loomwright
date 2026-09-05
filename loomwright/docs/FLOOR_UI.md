@@ -168,6 +168,24 @@ These limits are copied from the source requirement's 2026-09-03 amendment and a
 - **A lane's number is events, not turns and not progress.** It counts recorded log lines for that `agent_id` in the newest session. Two lanes with the same count have not necessarily done the same amount of work.
 - **The `state.md` phase can be stale on a real machine** (it has read `status: running` for long stretches). The page shows the state surface's own `mtime_epoch` age beside the phase and never labels a run "live".
 
+
+**It does not claim the registry is safe against two writers at once.** Every registry edit is a
+read-modify-write — snapshot the JSON, compute the new document, write it to a temp file and
+`mv` it into place. The `mv` makes each write *atomic*, so no reader ever sees a half-written
+registry and a crash mid-write leaves the previous document intact. What it does **not** do is
+serialise two writers: two engine invocations racing on the same registry each snapshot the same
+starting document, and whichever `mv` lands last wins — silently discarding the other's `add` or
+`forget` rather than erroring or merging.
+
+That is a **single-writer assumption**, and it is stated here because nothing else stated it. In
+practice it holds: the registry is edited by a human running a verb, or by one page holding one
+run's token. The page's own write path additionally holds an in-flight flag, so a double-click
+cannot produce the race from within one document — but that flag is per-page, so two tabs open on
+the same `#token=` URL are two closures and only the server sees both. Closing this properly means
+a cross-process lock, and `flock` is not on stock macOS, so it means a hand-rolled one inside a
+script whose whole contract is *always exit 0, never leave a partial write*. That is its own
+change with its own tests, not a clause here.
+
 ## Local-only posture
 
 `floor.json` is a projection of this machine's run state and **it carries branch names, session ids and agent ids**. Treat it as local data:
