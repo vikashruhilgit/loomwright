@@ -52,6 +52,10 @@
 #          guard cannot pass by suppressing everything)
 #      19c a NON-adjacent repeat still appends (the guard compares only the
 #          LAST line), so suppression is bounded to the consecutive case
+#      19a/19c bound their firings inside ONE wall-clock second before
+#          asserting: `ts` has second granularity, so a straddled pair is not
+#          a byte-identical repeat at all. The precondition is retried under a
+#          hard bound and reported as a named FAIL if unachievable.
 
 # EXIT: 0 on full pass, 1 on any failed assertion.
 # Style mirrors test-insights.sh / test-send-telemetry-core.sh.
@@ -931,6 +935,32 @@ echo "== 19. adjacent-duplicate guard: suppress a repeat of the LAST line only =
 DUP_TRANSCRIPT="$SANDBOX/dup-transcript.jsonl"
 printf 'DDDDDDDD' > "$DUP_TRANSCRIPT"   # 8 bytes
 
+# SAME-SECOND PRECONDITION (explicit, not accidental). The guard compares the
+# WHOLE emitted line and `ts` has one-second granularity, so two firings are
+# byte-identical ONLY when both land inside the same wall-clock second. A pair
+# that straddles a second boundary is a genuinely different line and MUST NOT
+# be suppressed — the production guard is right, so the requirement is stated
+# here instead of hoped for: each attempt starts immediately after a second
+# ticks over (a full second of headroom) and any attempt that still straddled
+# is discarded and re-run from a clean log. The bound below keeps an
+# unachievable precondition LOUD (a counted FAIL naming it) rather than
+# looping or silently retrying a real defect away. No assertion in 19a/19c is
+# relaxed to tolerate a straddle.
+DUP_ATTEMPT_MAX=8
+
+wait_for_second_tick() {
+  # Block until the UTC second changes, so the caller begins its firings at the
+  # top of a fresh second. Fractional sleep is best-effort; where the platform
+  # rejects it this degrades to a short spin, never to a hang.
+  local start now
+  start="$(date -u +%S 2>/dev/null || echo unavailable-start)"
+  now="$start"
+  while [ "$now" = "$start" ]; do
+    sleep 0.02 2>/dev/null || true
+    now="$(date -u +%S 2>/dev/null || echo unavailable-now)"
+  done
+}
+
 # 19a — two firings, identical payloads → exactly ONE line.
 DUP_SID="fixture-token-ledger-dupe-001"
 PAYLOAD19A="$SANDBOX/dupe-payload.json"
@@ -939,9 +969,27 @@ jq -n --arg tp "$DUP_TRANSCRIPT" --arg sid "$DUP_SID" '{
   agent_transcript_path: $tp
 }' > "$PAYLOAD19A"
 LOG19A="$SANDBOX/.supervisor/logs/${DUP_SID}.jsonl"
-OUT19A1="$(run_sut "$PAYLOAD19A")"
+OUT19A1=""
+OUT19A2=""
+DUP19A_SAMESEC=no
+DUP19A_ATTEMPT=0
+while [ "$DUP19A_ATTEMPT" -lt "$DUP_ATTEMPT_MAX" ]; do
+  DUP19A_ATTEMPT=$((DUP19A_ATTEMPT + 1))
+  rm -f "$LOG19A" 2>/dev/null || true
+  wait_for_second_tick
+  DUP19A_TS_BEFORE="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo before)"
+  OUT19A1="$(run_sut "$PAYLOAD19A")"
+  OUT19A2="$(run_sut "$PAYLOAD19A")"
+  DUP19A_TS_AFTER="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo after)"
+  # Both firings read the clock between BEFORE and AFTER, so equal endpoints
+  # prove both stamped the same second — no inspection of the log needed (the
+  # second line may legitimately not exist).
+  if [ "$DUP19A_TS_BEFORE" = "$DUP19A_TS_AFTER" ]; then DUP19A_SAMESEC=yes; break; fi
+done
+if [ "$DUP19A_SAMESEC" != "yes" ]; then
+  no "case19a PRECONDITION: could not land two firings inside ONE wall-clock second in $DUP_ATTEMPT_MAX attempts — the suppression assertions below are not meaningful on this host"
+fi
 assert_eq "case19a first firing exit 0" "0" "$(printf '%s\n' "$OUT19A1" | grep '^RC=' | tail -1 | cut -d= -f2)"
-OUT19A2="$(run_sut "$PAYLOAD19A")"
 assert_eq "case19a second firing exit 0" "0" "$(printf '%s\n' "$OUT19A2" | grep '^RC=' | tail -1 | cut -d= -f2)"
 assert_eq "case19a byte-identical repeat suppressed (log stays at ONE line)" "1" \
   "$(wc -l < "$LOG19A" 2>/dev/null | tr -d '[:space:]')"
@@ -985,9 +1033,25 @@ jq -n --arg tp "$DIFF_TRANSCRIPT" --arg sid "$NADJ_SID" '{
   session_id: $sid, agent_transcript_path: $tp
 }' > "$PAYLOAD19C2"
 LOG19C="$SANDBOX/.supervisor/logs/${NADJ_SID}.jsonl"
-run_sut "$PAYLOAD19C1" >/dev/null    # A
-run_sut "$PAYLOAD19C2" >/dev/null    # B
-OUT19C3="$(run_sut "$PAYLOAD19C1")"  # A again — no longer the last line
+OUT19C3=""
+DUP19C_SAMESEC=no
+DUP19C_ATTEMPT=0
+while [ "$DUP19C_ATTEMPT" -lt "$DUP_ATTEMPT_MAX" ]; do
+  DUP19C_ATTEMPT=$((DUP19C_ATTEMPT + 1))
+  rm -f "$LOG19C" 2>/dev/null || true
+  wait_for_second_tick
+  DUP19C_TS_BEFORE="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo before)"
+  run_sut "$PAYLOAD19C1" >/dev/null    # A
+  run_sut "$PAYLOAD19C2" >/dev/null    # B
+  OUT19C3="$(run_sut "$PAYLOAD19C1")"  # A again — no longer the last line
+  DUP19C_TS_AFTER="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo after)"
+  # A and its repeat must share a second for line 1 and line 3 to be byte
+  # identical; bounding the whole triple is the simplest sufficient condition.
+  if [ "$DUP19C_TS_BEFORE" = "$DUP19C_TS_AFTER" ]; then DUP19C_SAMESEC=yes; break; fi
+done
+if [ "$DUP19C_SAMESEC" != "yes" ]; then
+  no "case19c PRECONDITION: could not land the A,B,A triple inside ONE wall-clock second in $DUP_ATTEMPT_MAX attempts — the byte-identity assertion below is not meaningful on this host"
+fi
 assert_eq "case19c third firing exit 0" "0" "$(printf '%s\n' "$OUT19C3" | grep '^RC=' | tail -1 | cut -d= -f2)"
 assert_eq "case19c non-adjacent repeat still appends (A,B,A ⇒ 3 lines)" "3" \
   "$(wc -l < "$LOG19C" 2>/dev/null | tr -d '[:space:]')"
