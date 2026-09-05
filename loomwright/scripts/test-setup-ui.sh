@@ -134,6 +134,23 @@
 #       can no longer emit
 #   (z) release-surface parity for the /setup ui module registration, plus the surfaces/formats
 #       basis sentence, which is QUOTED from build-floor.sh rather than restated
+#   (m) AC-entrypoint-parity — the two commands' documented verb sets must UNION to exactly the
+#       engine's own dispatch table, parsed out of the pinned `case "$SUBCMD" in` rather than
+#       restated here. (Listed late because this list stopped being maintained for a release;
+#       (m) and (n) below existed before (o) was written and were missing from it.)
+#   (n) AC-guarded-writes — the four mutating endpoints, the four-part guard, and one control
+#       per part that disables that part alone and watches the refused request succeed
+#   (o) AC-registry-lock — the cross-process lock that lets two writers share one registry. It
+#       is a MEASUREMENT, not an inspection: real concurrent invocations, with the race made
+#       deterministic by a deliberately slowed `jq` on PATH rather than by editing the engine,
+#       so the subject of the primary assertion is the shipped file byte for byte. Both
+#       registrations must survive and the pair must take materially longer than one writer;
+#       the control changes ONE token so the write path takes no lock, and one write is lost.
+#       Plus release proven on a refusal path taken with the lock already held (the EXIT trap
+#       is the only release site there), the timeout refusal and its anti-vacuity arm, and all
+#       FOUR staleness verdicts — owner exited, pid reused, ownerless-and-old, and the arm that
+#       an ownerless-and-FRESH lock is left alone, without which a detector that called every
+#       lock stale would pass the other three while destroying the mechanism
 #
 # NO `producer | grep -q` PIPELINES (SIGPIPE turns a match into rc=141 under pipefail).
 
@@ -4778,3 +4795,290 @@ fi
 [ "$(csum "$JS")" = "$JS_SIG_BEFORE" ] \
   && ok "(n43) floor.js is byte-identical after the three (n38) mutation controls (sha256 unchanged)" \
   || no "(n43) floor.js is byte-identical after the (n38) mutation controls" "before='$JS_SIG_BEFORE' after='$(csum "$JS")'"
+
+# ===========================================================================
+echo "(o) AC-registry-lock — two writers on one registry, and the lock that makes both survive"
+# ===========================================================================
+# WHY THIS GROUP IS A MEASUREMENT AND NOT AN INSPECTION. Every other engine guard in this file
+# can be shown with a single invocation: give it the input, read the refusal. A concurrency
+# control cannot — its whole subject is what TWO processes do to each other, and reading the
+# lock code proves only that a lock was typed. So this group runs real concurrent invocations
+# and asserts on the registry they leave behind.
+#
+# THE RACE IS MADE DETERMINISTIC BY THE ENVIRONMENT, NOT BY EDITING THE ENGINE. Two `add`s
+# launched together overlap only if their read-modify-write windows overlap, and that window is
+# a few tens of milliseconds — so a naive pair would race sometimes, which is a flaky test in
+# BOTH directions: green by luck on a broken engine, red by luck on a correct one. The window is
+# therefore widened by putting a jq on PATH that sleeps before exec'ing the real one. `add` calls
+# jq several times between its snapshot and its `mv`, so the critical section grows to seconds
+# while THE ENGINE UNDER TEST STAYS BYTE-IDENTICAL — the subject of (o2) is the shipped file.
+# (o1) measures that the stub really is slow, so the widening is asserted rather than assumed.
+#
+# THE CONTROL CHANGES EXACTLY ONE THING. (o3) runs the same two writers, under the same slow jq,
+# against an engine copy whose only difference is that the write path never takes the lock — one
+# token in reg_prepare's mode test. One writer's registration must be LOST there. Without that
+# arm (o2) would pass just as happily against an engine that serialises for some other reason,
+# or against a race that simply did not happen.
+#
+# STALENESS GETS FOUR CASES, NOT ONE, because a detector that called every lock stale would pass
+# the three breaking cases while destroying the mechanism: (o9)/(o10)/(o12) are the three ways to
+# be stale, and (o11) is the arm proving a lock that is NOT stale is left alone.
+
+O="$(mktmp)" || setup_fail "(o) fixture: mktemp under $TMPROOT failed"
+OREG="$O/reg.json"
+mkdir -p "$O/p1" "$O/p2" "$O/slowbin" || setup_fail "(o) fixture: could not build the lock fixture tree"
+
+O_REALJQ="$(command -v jq 2>/dev/null || true)"
+[ -n "$O_REALJQ" ] || setup_fail "(o) fixture: jq is not on PATH, and every assertion in this group needs the registry verbs to work at all"
+# The stub is a REAL executable that delays and then hands over to the real jq. It is not a
+# mock: the engine's jq output has to stay correct, or (o2) would be measuring a broken `add`.
+cat > "$O/slowbin/jq" <<SLOWJQ
+#!/bin/sh
+sleep 1
+exec "$O_REALJQ" "\$@"
+SLOWJQ
+chmod +x "$O/slowbin/jq" || setup_fail "(o) fixture: could not make the slow-jq stub executable"
+OSLOW="$O/slowbin"
+
+# --- (o1) the widened window is MEASURED ------------------------------------------------
+o_t0="$(date +%s)"
+PATH="$OSLOW:$PATH" jq -n '1' >/dev/null 2>&1
+o_t1="$(date +%s)"
+o_stub_cost=$((o_t1 - o_t0))
+[ "$o_stub_cost" -ge 1 ] \
+  && ok "(o1) the slow-jq stub really delays a jq call (${o_stub_cost}s), so the critical section (o2)/(o3) race inside is genuinely widened rather than assumed to be" \
+  || no "(o1) the slow-jq stub delays a jq call" \
+       "one jq call took ${o_stub_cost}s — the window is not widened, so (o2) would pass on luck and (o3) could not lose a write reliably"
+
+# --- calibration: what ONE writer costs, in this run, on this host ----------------------
+# (o2)'s serialisation claim is "the pair took materially longer than one writer", and that
+# needs one writer's cost measured HERE rather than a constant — the same reason group (l)
+# calibrates its stub projector in the run that uses it.
+o_t0="$(date +%s)"
+PATH="$OSLOW:$PATH" bash "$ENGINE" add "$O/p1" --registry "$O/calib.json" >/dev/null 2>&1
+o_t1="$(date +%s)"
+o_solo=$((o_t1 - o_t0))
+[ "$o_solo" -ge 2 ] \
+  && ok "(o1b) one locked writer under the slow stub costs ${o_solo}s — a measured baseline for (o2), not a constant that could drift away from this host" \
+  || no "(o1b) one writer under the slow stub has a measurable cost" \
+       "a single add took ${o_solo}s, which is too short to distinguish serialised from overlapped in (o2)"
+o_min=$((o_solo + o_solo / 2))
+
+# --- (o2) THE CLAIM: two concurrent writers, both registrations survive -----------------
+rm -f "$OREG"
+o_t0="$(date +%s)"
+( PATH="$OSLOW:$PATH" bash "$ENGINE" add "$O/p1" --registry "$OREG" >"$O/a.log" 2>&1 ) &
+( PATH="$OSLOW:$PATH" bash "$ENGINE" add "$O/p2" --registry "$OREG" >"$O/b.log" 2>&1 ) &
+wait
+o_t1="$(date +%s)"
+o_pair=$((o_t1 - o_t0))
+o_n="$(jq -r '.projects | length' "$OREG" 2>/dev/null)"
+o_slugs="$(jq -r '[.projects[].slug] | sort | join(",")' "$OREG" 2>/dev/null)"
+if [ "$o_n" = "2" ] && [ "$o_slugs" = "p1,p2" ]; then
+  ok "(o2) two genuinely concurrent 'add' invocations on ONE registry both survive — the shipped engine, unmutated, left both p1 and p2 registered where a last-mv-wins engine keeps one"
+else
+  no "(o2) two concurrent 'add' invocations both survive" \
+     "entries='$o_n' (want 2) slugs='$o_slugs' (want 'p1,p2') — one registration was discarded
+     a.log: $(cat "$O/a.log" 2>/dev/null)
+     b.log: $(cat "$O/b.log" 2>/dev/null)"
+fi
+[ "$o_pair" -ge "$o_min" ] \
+  && ok "(o2b) and they were SERIALISED rather than merely lucky: the pair took ${o_pair}s against a ${o_solo}s single writer (threshold ${o_min}s), so the second one demonstrably waited for the first" \
+  || no "(o2b) the two writers were serialised" \
+       "the pair took ${o_pair}s against a ${o_solo}s single writer — under the ${o_min}s threshold, so their critical sections may simply not have overlapped and (o2) proves nothing about the lock"
+
+# --- (o3) MUTATION CONTROL: the lock is load-bearing ------------------------------------
+# One token: reg_prepare's write-mode test can no longer be true, so `add`/`forget`/`scan
+# --confirm` run exactly as before EXCEPT that they take nothing. Everything else — the slow
+# jq, the two projects, the concurrency — is identical to (o2).
+O_ENGINE_SIG_BEFORE="$(csum "$ENGINE")"
+OMUT="$O/setup-ui-nolock.sh"
+awk 'BEGIN { done = 0 }
+     {
+       if (!done && index($0, "if [ \"$mode\" = \"write\" ]; then") > 0) { sub(/= "write"/, "= \"never\""); done = 1 }
+       print
+     }' "$ENGINE" > "$OMUT" 2>/dev/null
+O_MUT_RAN=0
+if mutant_ok "$ENGINE" "$OMUT" shell; then
+  O_MUT_RAN=1
+  rm -f "$O/mut.json"
+  ( PATH="$OSLOW:$PATH" bash "$OMUT" add "$O/p1" --registry "$O/mut.json" >"$O/ma.log" 2>&1 ) &
+  ( PATH="$OSLOW:$PATH" bash "$OMUT" add "$O/p2" --registry "$O/mut.json" >"$O/mb.log" 2>&1 ) &
+  wait
+  om_n="$(jq -r '.projects | length' "$O/mut.json" 2>/dev/null)"
+  # THE MUTANT MUST HAVE REACHED ITS OWN WRITE PATH, TWICE. "One entry" is also what one dead
+  # writer looks like, and the two are indistinguishable from the registry alone — so both
+  # reports are read, and a control that only half ran is called BROKEN rather than passing.
+  om_wrote=0
+  in_str "$(cat "$O/ma.log" 2>/dev/null)" "add: registered" && om_wrote=$((om_wrote + 1))
+  in_str "$(cat "$O/mb.log" 2>/dev/null)" "add: registered" && om_wrote=$((om_wrote + 1))
+  if [ "$om_wrote" != "2" ]; then
+    no "(o3) MUTATION CONTROL: without the lock, one concurrent registration is LOST" \
+       "only $om_wrote of the 2 mutant writers reported a successful registration, so this control proves nothing:
+       ma.log: $(cat "$O/ma.log" 2>/dev/null)
+       mb.log: $(cat "$O/mb.log" 2>/dev/null)"
+  elif [ "$om_n" = "1" ]; then
+    ok "(o3) MUTATION CONTROL: an engine identical except that the write path takes NO lock loses one of the two registrations — both writers reported success, one entry survives. The lock in (o2) is load-bearing, not decorative"
+  else
+    no "(o3) MUTATION CONTROL: without the lock, one concurrent registration is LOST" \
+       "both mutant writers reported success and the registry holds $om_n entries (want 1) — the race did not occur, so (o2) is not being controlled for"
+  fi
+fi
+[ "$O_MUT_RAN" = "1" ] \
+  && ok "(o3b) ANTI-VACUITY: the (o3) mutant was actually built and RUN — an awk whose anchor had moved would yield an identical copy, reddening mutant_ok while silently skipping the control it guards" \
+  || no "(o3b) ANTI-VACUITY: the (o3) mutant executed" "mutant_ok rejected it, so the only control over (o2) did not run"
+
+# --- (o4) release is structural: no lock survives ANY path out --------------------------
+rm -f "$OREG"
+bash "$ENGINE" add "$O/p1" --registry "$OREG" >/dev/null 2>&1
+[ ! -e "$OREG.lock" ] \
+  && ok "(o4) a SUCCESSFUL write leaves no lock behind — the next verb is not blocked by the last one" \
+  || no "(o4) a successful write leaves no lock behind" "$OREG.lock still exists"
+
+# The abort path matters more than the success path: the lock is taken BEFORE the registry is
+# read, so an unparseable registry is refused with the lock already held. That branch has no
+# release of its own — the EXIT trap is the only one — which is precisely what this asserts.
+OBAD="$O/bad.json"
+printf 'this is not JSON {{{\n' > "$OBAD" || setup_fail "(o4) fixture: could not write the malformed registry $OBAD"
+o_bad_sig="$(csum "$OBAD")"
+out="$(bash "$ENGINE" add "$O/p1" --registry "$OBAD" 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && in_str "$out" "not valid JSON" && [ ! -e "$OBAD.lock" ] && [ "$o_bad_sig" = "$(csum "$OBAD")" ] \
+  && ok "(o5) a REFUSAL taken with the lock already held still releases it — the unparseable-registry branch has no release of its own, so this is the EXIT trap being asserted rather than a per-path release being counted" \
+  || no "(o5) a refusal taken with the lock held still releases it" \
+       "rc=$rc lock=$([ -e "$OBAD.lock" ] && echo LEFT-BEHIND || echo released) registry-unchanged=$([ "$o_bad_sig" = "$(csum "$OBAD")" ] && echo yes || echo NO) :: $out"
+
+# --- (o6)/(o7) the TIMEOUT branch, and the control that it is the lock saying no ---------
+rm -f "$OREG"
+( PATH="$OSLOW:$PATH" bash "$ENGINE" add "$O/p1" --registry "$OREG" >/dev/null 2>&1 ) &
+o_holder=$!
+sleep 1
+out="$(bash "$ENGINE" add "$O/p2" --registry "$OREG" --lock-timeout 1 2>&1)"; rc=$?
+wait "$o_holder" 2>/dev/null
+o_n="$(jq -r '[.projects[] | select(.slug == "p2")] | length' "$OREG" 2>/dev/null)"
+[ "$rc" -eq 0 ] && in_str "$out" "ABORTED" && in_str "$out" "$OREG.lock" && in_str "$out" "1s" && [ "$o_n" = "0" ] \
+  && ok "(o6) a writer that cannot get the lock within --lock-timeout REFUSES by name — it names the lock path and the timeout, writes nothing, and exits 0 like every other branch in this engine" \
+  || no "(o6) a contended writer refuses by name, writes nothing and exits 0" \
+       "rc=$rc registered-anyway='$o_n' :: $out"
+[ ! -e "$OREG.lock" ] \
+  && ok "(o6b) and the holder released the lock when it finished — a timeout refusal does not leave the loser's or the winner's lock behind" \
+  || no "(o6b) the lock is gone after the contended pair" "$OREG.lock still exists"
+out="$(bash "$ENGINE" add "$O/p2" --registry "$OREG" --lock-timeout 30 2>&1)"; rc=$?
+o_n="$(jq -r '[.projects[] | select(.slug == "p2")] | length' "$OREG" 2>/dev/null)"
+[ "$rc" -eq 0 ] && [ "$o_n" = "1" ] \
+  && ok "(o7) ANTI-VACUITY: the SAME add succeeds once the lock is free — (o6) is the lock refusing, not a blanket refusal that would pass with the feature broken" \
+  || no "(o7) ANTI-VACUITY: the same add succeeds once the lock is free" "rc=$rc registered='$o_n' (want 1) :: $out"
+
+# --- (o8)-(o11) the four staleness verdicts ---------------------------------------------
+# Each builds the lock BY HAND, in the exact shape a crash would leave, and asserts on what the
+# engine then does. The three breaking cases must each name their OWN reason: "the owner is
+# gone", "the pid was reused" and "there is no owner and it is old" are three different
+# findings, and reporting all three as the first would be claiming something unmeasured.
+o_lockcase() {   # <label> -> prints the engine's add output for a hand-built lock
+  rm -f "$O/s.json"
+  printf '{"version":1,"projects":[]}\n' > "$O/s.json"
+  rm -rf "$O/s.json.lock"
+  mkdir -p "$O/s.json.lock"
+}
+
+o_lockcase
+( bash -c 'exit 0' ) & o_dead=$!
+wait "$o_dead" 2>/dev/null
+printf '%s\n' "$o_dead" > "$O/s.json.lock/owner"
+out="$(bash "$ENGINE" add "$O/p1" --registry "$O/s.json" --lock-timeout 2 2>&1)"; rc=$?
+o_n="$(jq -r '.projects | length' "$O/s.json" 2>/dev/null)"
+[ "$rc" -eq 0 ] && [ "$o_n" = "1" ] && in_str "$out" "stale registry lock" && in_str "$out" "(pid $o_dead) is gone" \
+  && ok "(o8) a lock whose recorded owner has EXITED is broken, named as such (pid $o_dead), and the write proceeds — a killed run cannot wedge the registry permanently" \
+  || no "(o8) a lock whose owner has exited is broken and named" "rc=$rc entries='$o_n' :: $out"
+
+o_lockcase
+sleep 60 & o_alien=$!
+printf '%s\n' "$o_alien" > "$O/s.json.lock/owner"
+out="$(bash "$ENGINE" add "$O/p1" --registry "$O/s.json" --lock-timeout 2 2>&1)"; rc=$?
+kill "$o_alien" 2>/dev/null
+o_n="$(jq -r '.projects | length' "$O/s.json" 2>/dev/null)"
+[ "$rc" -eq 0 ] && [ "$o_n" = "1" ] && in_str "$out" "now belongs to a different program" \
+  && ok "(o9) a lock whose recorded pid is ALIVE but belongs to some other program is treated as a REUSED pid — broken, and named differently from (o8), because 'the owner exited' is not what was observed here" \
+  || no "(o9) a live-but-foreign owner pid is treated as reuse and named as such" "rc=$rc entries='$o_n' :: $out"
+
+o_lockcase
+out="$(bash "$ENGINE" add "$O/p1" --registry "$O/s.json" --lock-timeout 1 2>&1)"; rc=$?
+o_n="$(jq -r '.projects | length' "$O/s.json" 2>/dev/null)"
+[ "$rc" -eq 0 ] && [ "$o_n" = "0" ] && in_str "$out" "ABORTED" \
+  && ok "(o10) ANTI-VACUITY FOR STALENESS: a FRESH lock carrying no owner yet is NOT broken — that is what a healthy holder looks like between its mkdir and its pid write, so the engine waits and refuses instead. A detector that called everything stale would pass (o8), (o9) and (o11) and fail only here" \
+  || no "(o10) a fresh ownerless lock is not broken" \
+       "rc=$rc entries='$o_n' (want 0 — the lock was broken, so nothing is protecting a holder mid-acquisition) :: $out"
+
+# Same lock, same shape, one variable changed: its age. It must now break.
+touch -t 202001010000 "$O/s.json.lock" 2>/dev/null || setup_fail "(o11) fixture: could not backdate the lock directory"
+out="$(bash "$ENGINE" add "$O/p1" --registry "$O/s.json" --lock-timeout 2 2>&1)"; rc=$?
+o_n="$(jq -r '.projects | length' "$O/s.json" 2>/dev/null)"
+[ "$rc" -eq 0 ] && [ "$o_n" = "1" ] && in_str "$out" "records no owner" \
+  && ok "(o11) the SAME ownerless lock, backdated and nothing else changed, IS broken and says why — so (o10)'s refusal is the grace period doing work rather than an ownerless lock never being breakable" \
+  || no "(o11) an old ownerless lock is broken and names the reason" "rc=$rc entries='$o_n' :: $out"
+
+# --- (o12) the READ verbs are not gated -------------------------------------------------
+# A lock a writer must wait for must NOT stop `list`, `check` or an unconfirmed `scan`: a reader
+# is already safe against a writer here, because the registry only ever becomes visible whole
+# via `mv`. If reads took the lock, one wedged writer would blind every view of the registry.
+o_lockcase
+o_t0="$(date +%s)"
+out="$(bash "$ENGINE" list --registry "$O/s.json" 2>&1)"; rc=$?
+out2="$(bash "$ENGINE" scan "$O" --registry "$O/s.json" 2>&1)"; rc2=$?
+o_t1="$(date +%s)"
+o_read=$((o_t1 - o_t0))
+[ "$rc" -eq 0 ] && [ "$rc2" -eq 0 ] && in_str "$out" "registry:" && in_str "$out2" "scan:" && [ "$o_read" -lt 5 ] \
+  && ok "(o12) with a lock held, 'list' and an unconfirmed 'scan' both answer immediately (${o_read}s) — the read verbs take no lock, so a wedged writer cannot blind every view of the registry" \
+  || no "(o12) the read verbs are not gated by the lock" \
+       "list rc=$rc scan rc=$rc2 elapsed=${o_read}s (a value near the default timeout means the read path is waiting on a writer's lock)"
+
+# --- (o13) a CONFIRMED scan is a writer, and an unconfirmed one is not -------------------
+mkdir -p "$O/scanroot/repo-x/.git" || setup_fail "(o13) fixture: could not build the scan fixture"
+# RE-STAMP THE LOCK THIS INHERITS FROM (o12). It is an OWNERLESS lock, which the engine breaks
+# once it is older than the acquisition grace — so on a host slow enough for (o12)'s two reads
+# plus this mkdir to outlast that grace, (o13) would be measuring the stale-break path instead
+# of the contended one and would fail for a reason that has nothing to do with `scan`.
+touch "$O/s.json.lock" 2>/dev/null || setup_fail "(o13) fixture: could not re-stamp the held lock"
+out="$(bash "$ENGINE" scan "$O/scanroot" --confirm --registry "$O/s.json" --lock-timeout 1 2>&1)"; rc=$?
+o_n="$(jq -r '.projects | length' "$O/s.json" 2>/dev/null)"
+[ "$rc" -eq 0 ] && in_str "$out" "ABORTED" && [ "$o_n" = "0" ] \
+  && ok "(o13) 'scan --confirm' is a WRITER and is refused by the same held lock, registering nothing — the verb that takes no lock when it only proposes takes one when it writes" \
+  || no "(o13) 'scan --confirm' is gated by the lock" "rc=$rc entries='$o_n' :: $out"
+rm -rf "$O/s.json.lock"
+out="$(bash "$ENGINE" scan "$O/scanroot" --confirm --registry "$O/s.json" --lock-timeout 5 2>&1)"; rc=$?
+o_n="$(jq -r '.projects | length' "$O/s.json" 2>/dev/null)"
+[ "$rc" -eq 0 ] && [ "$o_n" -ge 1 ] \
+  && ok "(o13b) ANTI-VACUITY: the same confirmed scan registers its candidate once the lock is gone — (o13) is the lock refusing, not a scan that never writes" \
+  || no "(o13b) ANTI-VACUITY: the confirmed scan writes once the lock is free" "rc=$rc entries='$o_n' :: $out"
+
+# --- (o14) 'forget' holds the lock too --------------------------------------------------
+# Asserted separately rather than reasoned from `add`: the two verbs call reg_prepare on
+# different lines, and a lock wired into one of them is exactly the shape this group exists for.
+o_fslug="$(jq -r '[.projects[].slug] | first // ""' "$O/s.json" 2>/dev/null)"
+[ -n "$o_fslug" ] || setup_fail "(o14) fixture: $O/s.json holds no entry, so the forget assertion would have no subject"
+mkdir -p "$O/s.json.lock"
+out="$(bash "$ENGINE" forget "$o_fslug" --registry "$O/s.json" --lock-timeout 1 2>&1)"; rc=$?
+o_n="$(jq -r --arg s "$o_fslug" '[.projects[] | select(.slug == $s)] | length' "$O/s.json" 2>/dev/null)"
+[ "$rc" -eq 0 ] && in_str "$out" "ABORTED" && [ "$o_n" = "1" ] \
+  && ok "(o14) 'forget' takes the lock as well — with it held the entry SURVIVES, so a contended forget cannot half-drop a project" \
+  || no "(o14) 'forget' is gated by the lock" "rc=$rc entry-still-present='$o_n' (want 1) :: $out"
+rm -rf "$O/s.json.lock"
+out="$(bash "$ENGINE" forget "$o_fslug" --registry "$O/s.json" --lock-timeout 5 2>&1)"; rc=$?
+o_n="$(jq -r --arg s "$o_fslug" '[.projects[] | select(.slug == $s)] | length' "$O/s.json" 2>/dev/null)"
+[ "$rc" -eq 0 ] && [ "$o_n" = "0" ] \
+  && ok "(o14b) ANTI-VACUITY: the same forget drops the entry once the lock is gone" \
+  || no "(o14b) ANTI-VACUITY: the same forget succeeds once the lock is free" "rc=$rc still-present='$o_n' :: $out"
+
+# --- (o15) --lock-timeout gets the same numeric hygiene as --port and --interval ---------
+out="$(bash "$ENGINE" add "$O/p1" --registry "$O/hyg.json" --lock-timeout not-a-number 2>&1)"; rc=$?
+o_n="$(jq -r '.projects | length' "$O/hyg.json" 2>/dev/null)"
+[ "$rc" -eq 0 ] && in_str "$out" "--lock-timeout must be" && [ "$o_n" = "1" ] \
+  && ok "(o15) a non-numeric --lock-timeout is reported and falls back rather than reaching arithmetic under 'set -u' — the same hygiene --port and --interval already get, and the verb still does its job" \
+  || no "(o15) a non-numeric --lock-timeout is reported and falls back" "rc=$rc entries='$o_n' :: $out"
+
+# --- (o16) the real engine is untouched by the (o3) mutant ------------------------------
+o_eng_after="$(csum "$ENGINE")"
+o_residue="$(ls "$script_dir"/setup-ui-*.sh 2>/dev/null || true)"
+[ -n "$O_ENGINE_SIG_BEFORE" ] && [ "$O_ENGINE_SIG_BEFORE" = "$o_eng_after" ] && [ -z "$o_residue" ] \
+  && ok "(o16) the real engine is byte-identical after the (o3) mutation control (sha256 unchanged) and no mutant copy was left in the plugin's scripts directory" \
+  || no "(o16) the real engine is byte-identical after the (o3) mutation control" \
+       "before='$O_ENGINE_SIG_BEFORE' after='$o_eng_after' residue='$o_residue'"

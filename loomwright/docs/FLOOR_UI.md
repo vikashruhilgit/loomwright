@@ -100,6 +100,41 @@ A project whose directory is deleted **while `serve` is running** flips to `unav
 
 **The registry's own state is a separate claim from any project's.** *Absent* (no registry file yet — the ordinary state of a fresh install, never an error) and *unparseable* (the file is there and this module refuses to touch it) are rendered as two different sentences, never collapsed into one. With `jq` unfindable the index still gets written and says so, naming jq: the project list and every project path are **omitted rather than guessed**, because `build-floor.sh` needs jq too and nothing could have been regenerated either.
 
+### The registry lock
+
+Two processes can want the registry at the same time — a terminal running `/ui add` and the page
+running the same verb through the server are two processes, not one — so the **write** verbs
+(`add`, `forget`, and a **confirmed** `scan`) take a lock. It is a directory, `<registry>.lock`
+beside the registry itself, because `flock` is not on stock macOS and `mkdir` is atomic on every
+POSIX filesystem: exactly one of N racing callers creates it and the rest see `EEXIST`.
+
+- **The lock is taken before the snapshot, not around the write.** A lock covering only the `mv`
+  would serialise two writers that had already read the same document — the same lost update,
+  later. Taking it first is the whole point.
+- **The read verbs take nothing.** `check`, `list` and an unconfirmed `scan` are already safe
+  against a writer, because the registry only ever becomes visible whole, via `mv`. Locking them
+  would buy contention and no correctness, and one wedged writer would blind every view.
+- **A stale lock is broken, and the reason is named.** Three findings, three sentences, never
+  collapsed into one: the recorded owner **has exited**; the recorded pid is alive but **belongs
+  to a different program** (it was reused after the holder died); or the lock **records no owner
+  and is older** than the few seconds a healthy holder can take between creating it and writing
+  its pid. A lock whose owner is alive and *is* this engine is busy, not stale — and so is one
+  the engine cannot judge, because `ps` said nothing: refusing to judge means waiting, which is
+  the direction that cannot destroy a registry. Breaking is done by renaming the lock aside, so
+  two processes that both decide the same lock is stale cannot both proceed.
+- **The wait is bounded and ends in a refusal, never a silent proceed.** `--lock-timeout <n>`
+  (default **10**, and `0` means do not wait at all) caps it; on timeout the verb names the lock
+  path and the timeout, writes nothing, and exits 0 like every other branch in this engine.
+- **What it still does not promise.** It serialises *this engine's* writers. A registry edited by
+  hand in an editor while a verb runs is outside it, and always was — the lock is a convention
+  between processes running this script, not a filesystem-level guarantee.
+
+`test-setup-ui.sh` group `(o)` proves this by running real concurrent invocations rather than by
+reading the code: two `add`s under a deliberately slowed `jq` (which widens the critical section
+while leaving the engine byte-identical), asserting both registrations survive and that the pair
+took materially longer than one writer — with a control that changes **one token** so the write
+path takes no lock, where one registration is then lost.
+
 **Nothing is written into a registered project except its own `.supervisor/floor/floor.json`**, and that only by running `build-floor.sh` inside it. `add`, `list`, `forget` and `scan` touch exactly one file between them — the registry — and `list` touches none.
 
 **Four of those verbs can also be reached from the page.** The projects section carries a path field and five buttons — *Add it*, *Scan it for candidates*, *Register the candidates*, *Forget the shown project*, *Stop this server* — covering exactly four endpoints (`scan` proposes and confirms through the same one). Each button **runs the command**: the endpoint shells back into this same engine, so `scan`'s propose-then-`--confirm` contract, `forget`'s registry-only edit and every named refusal are identical whether they were reached from the page or from a terminal. They are **buttons and never a `<form>`** — a form is a cross-origin write primitive that needs no script and cannot carry a custom header, which is the exact shape the guard refuses. Every one of them goes through the four-part guard in §"Why the guard exists"; leaving the path field empty means *the directory this serve was launched in*, which is the one path that skips confinement because it never came from the page.
@@ -169,22 +204,13 @@ These limits are copied from the source requirement's 2026-09-03 amendment and a
 - **The `state.md` phase can be stale on a real machine** (it has read `status: running` for long stretches). The page shows the state surface's own `mtime_epoch` age beside the phase and never labels a run "live".
 
 
-**It does not claim the registry is safe against two writers at once.** Every registry edit is a
-read-modify-write — snapshot the JSON, compute the new document, write it to a temp file and
-`mv` it into place. The `mv` makes each write *atomic*, so no reader ever sees a half-written
-registry and a crash mid-write leaves the previous document intact. What it does **not** do is
-serialise two writers: two engine invocations racing on the same registry each snapshot the same
-starting document, and whichever `mv` lands last wins — silently discarding the other's `add` or
-`forget` rather than erroring or merging.
-
-That is a **single-writer assumption**, and it is stated here because nothing else stated it. In
-practice it holds: the registry is edited by a human running a verb, or by one page holding one
-run's token. The page's own write path additionally holds an in-flight flag, so a double-click
-cannot produce the race from within one document — but that flag is per-page, so two tabs open on
-the same `#token=` URL are two closures and only the server sees both. Closing this properly means
-a cross-process lock, and `flock` is not on stock macOS, so it means a hand-rolled one inside a
-script whose whole contract is *always exit 0, never leave a partial write*. That is its own
-change with its own tests, not a clause here.
+**It no longer assumes a single writer** — that clause was here for one release and is now
+closed. Every registry edit is still a read-modify-write (snapshot the JSON, compute the new
+document, write a temp file, `mv` it into place), and the `mv` still makes each write *atomic*.
+But atomic is not serialised: two invocations racing on one registry each snapshot the **same**
+starting document, and whichever `mv` lands last used to win, silently discarding the other's
+`add` or `forget`. See §"The registry lock" for what closed it, including what it still does not
+promise.
 
 ## Local-only posture
 
@@ -200,6 +226,8 @@ change with its own tests, not a clause here.
 1. **The ui directory** (default `$HOME/.claude/loomwright/ui`, overridable with `--ui-dir`, which is how every self-test runs inside a `mktemp -d`): the three bundle files, the ownership marker `.loomwright-ui-module`, an optional `serve.pid`, **the serve log `serve.log`**, a copy of `floor.json`, **the served index `index.json`**, and one **`projects/<slug>/floor.json`** per registered project that `serve` has reached. `serve.log` is the request handler's own stdout and stderr, which used to go to `/dev/null` and took every traceback with them; it records **one line per mutating request** — the route and the outcome — **plus one line for a request that could not be answered at all** (`FloorServer.handle_error`, which is what keeps an aborted connection or an unexpected raise to a line instead of a multi-line traceback interleaved across threads), and never a caller-supplied string, so it can be neither injected into nor made to leak the token. A read that completes is not logged, so the page's own two-second poll never grows it. It sits **inside the served root like everything else in that directory**, so `GET /serve.log` returns it — which is precisely why nothing a caller supplied, and no traceback, may ever be written into it. `index.json` is written by `serve` alone — atomically, temp-file-then-`mv`, so a poll landing mid-write reads the previous document rather than half of this one — and it is the page's ONLY source for the project picker, the module's own state and per-project freshness. The page is a reader, so everything it can show has to be a file the static server can already hand it.
 2. **`.supervisor/floor/floor.json` under the current project root, and under each registered project root that `serve` regenerates** — and only ever by running `build-floor.sh` in that directory, never by writing that path directly. `serve --no-regen` makes even that write impossible. A project reaches this list only because a human ran `add`.
 3. **The project registry `projects.json`**, sitting *beside* the ui directory (in its parent), overridable with `--registry`. Only `add`, `forget` and a **confirmed** `scan` write it; `check`, `list` and an unconfirmed `scan` only read it. Its being a sibling rather than a file inside the ui directory is load-bearing: `remove` deletes the ui directory, and the user's list of projects has to outlive that. Registering a project writes **nothing into the project itself**, and `forget` never touches the directory it is forgetting.
+
+4. **The registry lock `<registry>.lock`** — a *directory* beside the registry, created by a registry-writing verb and removed by an EXIT trap on every path out of it, including the refusals. It is listed here rather than dismissed as transient for one reason: a lock left behind by a killed process is a real file the user can find, and a write list that omitted it would be the reason nobody recognised it. See §"The registry lock".
 
 Nothing else, anywhere. It never touches the user-scope settings document (that is the `statusline` module's one write domain), never writes a project `.gitignore`, and never runs a history-touching git command. `test-setup-ui.sh` hashes two whole trees — the fixture parent and a fixture git repo used as the working directory — before and after a full `apply` → `serve` → `stop` → `remove` sequence, and asserts the only difference is that one regenerated file.
 
@@ -223,6 +251,7 @@ Nothing else, anywhere. It never touches the user-scope settings document (that 
 | `apply: WITHHELD — … carries no .loomwright-ui-module marker` | The ui directory exists but this module did not create it. Nothing was written. Point `--ui-dir` somewhere else, or remove that directory yourself. |
 | A button says the write was **REFUSED by the server guard** | Almost always the token: you opened a bare `http://127.0.0.1:<port>/` rather than the `#token=…` URL `serve` printed, or you are looking at a tab left over from a **previous** run (the token is per-run and dies with the server). Re-open the URL this run printed. The refusal names which of the four parts said no. |
 | A path is refused with `path-outside-permitted-root` | A path supplied **through the page** is confined to your home directory, and `realpath` is applied first — so a symlink pointing outside is refused exactly like a literal outside path. Use `setup-ui.sh add <path>` from a terminal, which is the trusted channel and is not confined. |
+| `add: ABORTED — the registry lock … did not clear within <n>s` | Another `add`, `forget` or confirmed `scan` is holding the registry — often the page and a terminal at the same moment. Nothing was read or written; run it again, or raise `--lock-timeout`. If you are certain nothing else is running (and the engine has not already reported clearing it as stale), delete that `.lock` directory by hand. |
 | `serve: ABORTED — could not mint a per-run access token` | `python3`'s `secrets` module produced nothing usable. Nothing was started and nothing was written; the module will not serve write endpoints without a token rather than serve them unguarded. |
 
 ## Reference

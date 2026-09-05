@@ -52,6 +52,7 @@ Installing and uninstalling the bundle are configuration, so `apply` and `remove
 | `--no-regen` | `serve` | serve the `floor.json` already in the ui directory; never run the projector. |
 | `--detach` | `serve` | return immediately, recording pids in `<ui dir>/serve.pid`. |
 | `--confirm` | `scan` | actually register the candidates the proposal listed. Without it, `scan` writes nothing. |
+| `--lock-timeout <n>` | `add`, `forget`, `scan --confirm` | seconds to wait for the registry lock before **refusing by name** (default `10`; `0` means do not wait). The write verbs serialise on a lock directory beside the registry so two runs — a terminal and the page, say — cannot silently discard each other's edit. Read verbs take no lock. |
 
 ## Subcommands
 
