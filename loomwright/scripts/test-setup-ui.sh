@@ -982,21 +982,40 @@ fi
 # border-radius, and it reserves its .4rem radius for elements with no accent. Two rules here
 # carry an accent and both must therefore be square.
 #
-# THE ASSERTION IS "DECLARES AN EXPLICIT 0", NOT "DECLARES NOTHING", and that distinction is
-# the whole gate. A radius can arrive through the CASCADE from a base rule — which is exactly
-# how `.stage.active` carried one unnoticed: `.stage` declared `border-radius: var(--radius)`
-# and `.stage.active` only added the accent. An absent declaration proves nothing about the
-# computed value; an explicit 0 does. It is also invisible-by-luck today because `--radius` is
-# currently 0, so every `border-radius: var(--radius)` computes to square anyway — the day that
-# token becomes non-zero, every accented card silently rounds. This gate is what makes that a
-# red test instead of a surprise.
-css_accent_unsquared() {
-  # COMMENT-AWARE, and that is not optional: the first draft of this scanner was
-  # not, and it matched the construct inside the very comment written to explain
-  # it — the same hazard as the suite's comment-inclusive occ/code_occ split, and
-  # the repo's non-comment-aware design hook reports exactly that false positive.
-  # CSS comments are /* */ only and may span lines, so strip them with a state
-  # machine rather than a line-oriented substitution, which would strip nothing.
+# WHAT THIS GATE ASSERTS, EXACTLY: *the accented rule itself declares an explicit
+# `border-radius: 0`*. Not "declares nothing" — an absent declaration proves nothing about the
+# computed value, and a radius can arrive through the CASCADE from a base rule, which is
+# exactly how `.stage.active` carried one unnoticed: `.stage` declared
+# `border-radius: var(--radius)` and `.stage.active` only added the accent. An explicit 0 in
+# the accented rule beats a BASE rule, and that is the case this gate closes.
+#
+# AND WHAT IT DOES NOT ASSERT — a stated limit, not an implication, and controlled at (c26).
+# This scanner reads DECLARATIONS; it does not RESOLVE the cascade. A LATER rule with the same
+# selector and the same specificity — `.stage.active { border-radius: 8px; }` written below —
+# wins at render time and this gate stays SILENT, because the accented rule it inspects still
+# declares its own 0. Catching that would mean implementing specificity and source order, i.e.
+# a CSS engine, which is not a thing a bash suite should grow; the honest alternative is to
+# narrow the claim to what the code checks and prove the silence with a control. (c26) appends
+# exactly that overriding rule and asserts the guard says nothing, so the hole is a recorded
+# fact rather than an implied capability.
+#
+# It is also invisible-by-luck today because `--radius` is currently 0, so every
+# `border-radius: var(--radius)` computes to square anyway — the day that token becomes
+# non-zero, every accented card silently rounds. This gate is what makes that a red test
+# instead of a surprise.
+
+# css_decomment <file> -> the stylesheet with every /* ... */ block removed, ACROSS LINES.
+# COMMENT-AWARENESS IS NOT OPTIONAL, and it belongs in ONE place: the first draft of the
+# scanner below was not comment-aware and matched the construct inside the very comment
+# written to explain it — the same hazard as the suite's comment-inclusive occ/code_occ split,
+# and the repo's non-comment-aware design hook reports exactly that false positive. The
+# COUNTER then fixed the scanner and left itself raw, so it read 3 accented rules where
+# floor.css has 2 (the third being the prose at the head of `.stage.active`) — a headline
+# number that was wrong and an anti-vacuity floor a comment could satisfy a third of. Both
+# consumers are fed from here for that reason; two copies of a stripper is how the second one
+# rots. CSS comments are /* */ only and may span lines, so this is a state machine rather than
+# a line-oriented substitution, which would strip nothing.
+css_decomment() {
   awk '
     { line=$0; out=""
       while (length(line)) {
@@ -1004,25 +1023,95 @@ css_accent_unsquared() {
         else { i=index(line,"/*")
                if(i>0){ out=out substr(line,1,i-1); line=substr(line,i+2); inblk=1 }
                else { out=out line; line="" } } }
-      $0=out }
-    /^[.#a-zA-Z][^{]*\{/ { sel=$0; sub(/ *\{.*/,"",sel); acc=0; rad=0 }
-    /border-top: *[2-9]px/                   { acc=1 }
-    /border-radius: *0 *;/                   { rad=1 }
-    /^\}/ { if (acc && !rad) print sel }
-  ' "$1"
+      print out }
+  ' "$1" 2>/dev/null
 }
+
+# css_accent_rules <mode: unsquared|count> <file>
+#   unsquared -> one selector per accented rule that does NOT declare its own border-radius: 0
+#   count     -> how many accented rules there are at all (the anti-vacuity denominator)
+# Both modes share ONE definition of "accented rule", which is the point of the mode argument.
+#
+# BLOCKS ARE FOUND BY BRACE DEPTH, not by column-0 anchors. The previous form opened a rule on
+# `^[.#a-zA-Z][^{]*\{` and closed it on `^\}`, which structurally could not see an INDENTED
+# rule (everything inside a `@media` block — floor.css ends in two of them), an
+# attribute-selector rule (`[data-stopped="true"] .lanes` already ships here), or a `:where()`
+# rule. Depth counting sees all three and needs no list of selector shapes.
+#
+# THE ACCENT IS A WIDTH, NOT A SPELLING. `border-top:` and `border-top-width:` both count, the
+# number may sit anywhere in the shorthand (`border-top: solid 3px var(--copper)` is legal
+# CSS), and the unit is converted rather than pattern-matched (`0.2rem` is 3.2px and is an
+# accent; `1px` is a hairline and is not). The old `border-top: *[2-9]px` matched exactly one
+# of those spellings.
+css_accent_rules() {
+  css_decomment "$2" | awk -v mode="$1" '
+    function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+    # accented(txt) — does this rule declare a top border thicker than a hairline?
+    # Every border-top / border-top-width declaration in the rule is inspected, and every
+    # length token inside it, so shorthand ORDER is irrelevant. px is taken as-is; rem/em are
+    # converted at the 16px root default, which is what floor.css assumes throughout.
+    function accented(txt,   d, v, best) {
+      best = 0
+      while (match(txt, /border-top(-width)?:[^;}]*/)) {
+        d = substr(txt, RSTART, RLENGTH); txt = substr(txt, RSTART + RLENGTH)
+        while (match(d, /[0-9]*\.?[0-9]+(px|rem|em)/)) {
+          v = substr(d, RSTART, RLENGTH); d = substr(d, RSTART + RLENGTH)
+          if (v ~ /r?em$/) v = (v + 0) * 16; else v = v + 0
+          if (v > best) best = v
+        }
+      }
+      return (best >= 2)
+    }
+    function squared(txt) { return (txt ~ /border-radius:[ \t]*0(px|rem|em)?[ \t]*;/) }
+    {
+      line = $0; buf = ""
+      n = length(line)
+      for (i = 1; i <= n; i++) {
+        c = substr(line, i, 1)
+        if (c == "{") {
+          pend = pend " " buf; buf = ""
+          depth++
+          sel[depth] = trim(pend); txt[depth] = ""
+          pend = ""
+        } else if (c == "}") {
+          txt[depth] = txt[depth] " " buf; buf = ""
+          if (depth > 0) {
+            # A trailing ";" so the LAST declaration in a block is terminated like the others.
+            body = txt[depth] ";"
+            if (accented(body)) {
+              nacc++
+              if (mode == "unsquared" && !squared(body)) print sel[depth]
+            }
+            depth--
+          }
+          pend = ""
+        } else buf = buf c
+      }
+      txt[depth] = txt[depth] " " buf
+      pend = pend " " buf
+    }
+    END { if (mode == "count") print nacc + 0 }
+  '
+}
+css_accent_unsquared() { css_accent_rules unsquared "$1"; }
+
 c_acc_bad="$(css_accent_unsquared "$CSS")"
-c_acc_n="$(awk '/border-top: *[2-9]px/{n++} END{print n+0}' "$CSS")"
+c_acc_n="$(css_accent_rules count "$CSS")"
+case "$c_acc_n" in ''|*[!0-9]*) c_acc_n=0 ;; esac
 [ -z "$c_acc_bad" ] && [ "$c_acc_n" -ge 2 ] \
-  && ok "(c18) every rule carrying a thick top accent declares an explicit border-radius: 0 — $c_acc_n accented rule(s), none relying on --radius happening to be 0 or on a base rule not having set one" \
+  && ok "(c18) every RULE carrying a thick top accent declares, IN ITSELF, an explicit border-radius: 0 — $c_acc_n accented rule(s) (counted over comment-stripped text, so prose about an accent is not one), none relying on --radius happening to be 0 or on a base rule not having set one. Scoped claim: this reads declarations and beats a BASE rule; it does not resolve the cascade, so a LATER same-specificity override is not caught — see (c26)" \
   || no "(c18) an accented rule declares an explicit border-radius: 0" "unsquared:${c_acc_bad:-<none>} accented-rules=$c_acc_n"
 
-# MUTATION CONTROL — the cascade case specifically, because that is the one a reader misses:
-# strip the explicit 0 from an accented rule and the gate must name it. Without this, (c18)
-# would pass just as happily against a scanner that never matched an accent at all.
+C_ACC_MUTANTS=0
+C_CSS_SIG_BEFORE="$(csum "$CSS")"
+
+# MUTATION CONTROL — the base-rule cascade case specifically, because that is the one a reader
+# misses: strip the explicit 0 from an accented rule and the gate must name it. Without this,
+# (c18) would pass just as happily against a scanner that never matched an accent at all.
 MUT_CSS="$TMPROOT/mut-accent-radius.css"
 awk 'BEGIN{done=0} { if(!done && $0 ~ /border-radius: *0 *;/){ done=1; next } print }' "$CSS" > "$MUT_CSS" 2>/dev/null
 if mutant_ok "$CSS" "$MUT_CSS"; then
+  C_ACC_MUTANTS=$((C_ACC_MUTANTS + 1))
   m_acc="$(css_accent_unsquared "$MUT_CSS")"
   [ -n "$m_acc" ] \
     && ok "(c19) MUTATION CONTROL: an accented rule whose explicit border-radius: 0 is removed IS named by (c18) ($m_acc) — the gate reads the declaration, not the token's current value" \
@@ -1030,6 +1119,82 @@ if mutant_ok "$CSS" "$MUT_CSS"; then
 else
   no "(c19) MUTATION CONTROL: the accent/radius mutant could not be staged, so (c18) is UNCONTROLLED" "mutant_ok rejected $MUT_CSS"
 fi
+
+# --- (c20)-(c25) ONE CONTROL PER SPELLING --------------------------------------------------
+# Six ordinary ways to write "an accented rule that is NOT square", appended to a COPY of the
+# real stylesheet. Every one of them was silently green against the previous single-spelling,
+# column-anchored scanner, and none of them is exotic: the attribute-selector shape already
+# ships in this very file (`[data-stopped="true"] .lanes, [data-stopped="true"] .projects`),
+# and every rule in the two @media blocks at the end of the file is indented. A guard that
+# names "a thick top accent" as its subject has to see the subject however it is spelled, or
+# the name is broader than the check.
+accent_spelling_control() {   # <id> <selector the guard must name> <what it exercises> <css line>...
+  local id="$1" marker="$2" what="$3"; shift 3
+  local f="$TMPROOT/mut-accent-$(printf '%s' "$id" | tr -cd 'a-z0-9').css"
+  { cat "$CSS"; printf '%s\n' "$@"; } > "$f" 2>/dev/null
+  if mutant_ok "$CSS" "$f"; then
+    C_ACC_MUTANTS=$((C_ACC_MUTANTS + 1))
+    local hits; hits="$(css_accent_unsquared "$f")"
+    if in_str "$hits" "$marker"; then
+      ok "($id) MUTATION CONTROL: $what IS named by (c18) — the scanner reported \`$marker\`"
+    else
+      no "($id) MUTATION CONTROL: $what is named by (c18)" "the scanner named: ${hits:-<nothing — the spelling is invisible to it>}"
+    fi
+  else
+    no "($id) MUTATION CONTROL: $what could not be staged, so the spelling is UNCONTROLLED" "mutant_ok rejected $f"
+  fi
+}
+accent_spelling_control c20 '.acc-split' \
+  'a top accent written as border-top-width, split from its style and colour' \
+  '.acc-split { border-top-width: 3px; border-top-style: solid; border-top-color: var(--copper); border-radius: 8px; }'
+accent_spelling_control c21 '.acc-reorder' \
+  'a shorthand with the width in second position (`border-top: solid 3px var(--copper)`), which is legal CSS' \
+  '.acc-reorder { border-top: solid 3px var(--copper); border-radius: 8px; }'
+accent_spelling_control c22 '.acc-rem' \
+  'an accent measured in rem rather than px (0.2rem = 3.2px)' \
+  '.acc-rem { border-top: 0.2rem solid var(--copper); border-radius: 8px; }'
+accent_spelling_control c23 '[data-accent="1"]' \
+  'an ATTRIBUTE-SELECTOR rule, the shape already shipping at `[data-stopped="true"] .lanes`' \
+  '[data-accent="1"] { border-top: 3px solid var(--copper); border-radius: 8px; }'
+accent_spelling_control c24 ':where(.play-card)' \
+  'a :where() rule, whose selector starts with a colon' \
+  ':where(.play-card) { border-top: 3px solid var(--copper); border-radius: 8px; }'
+accent_spelling_control c25 '.acc-media' \
+  'an INDENTED rule inside a @media block — every rule in the two @media blocks this file already ends with' \
+  '@media (max-width: 700px) {' \
+  '  .acc-media { border-top: 3px solid var(--copper); border-radius: 8px; }' \
+  '}'
+
+# --- (c26) THE STATED LIMIT, CONTROLLED --------------------------------------------------
+# A later rule with the SAME selector and the same specificity wins at render time. (c18) does
+# not resolve the cascade and therefore does not see it. This control asserts the silence, so
+# the limit written into (c18)'s comment above is a measured fact rather than a hedge — and so
+# that anyone who later teaches the scanner to resolve source order finds a red test here
+# telling them the claim can now be widened.
+MUT_CSS_CASCADE="$TMPROOT/mut-accent-cascade.css"
+{ cat "$CSS"; printf '%s\n' '.stage.active { border-radius: 8px; }'; } > "$MUT_CSS_CASCADE" 2>/dev/null
+if mutant_ok "$CSS" "$MUT_CSS_CASCADE"; then
+  C_ACC_MUTANTS=$((C_ACC_MUTANTS + 1))
+  c_casc="$(css_accent_unsquared "$MUT_CSS_CASCADE")"
+  c_casc_n="$(css_accent_rules count "$MUT_CSS_CASCADE")"
+  [ -z "$c_casc" ] && [ "$c_casc_n" = "$c_acc_n" ] \
+    && ok "(c26) RECORDED LIMIT: appending \`.stage.active { border-radius: 8px; }\` — equal specificity, later in source, so it WINS — leaves (c18) silent and the accented-rule count unmoved at $c_casc_n. That is the gate's stated boundary, not a passing grade: (c18) claims the accented rule declares its own 0, and it still does. A same-selector override is NOT caught, and no wording above implies it is" \
+    || no "(c26) RECORDED LIMIT: a later same-specificity override is (knowingly) not caught" \
+         "the scanner named '${c_casc:-<nothing, as documented>}' and counted $c_casc_n accented rules (baseline $c_acc_n) — if it now NAMES the override the limit has been closed and (c18)'s comment must be widened to match"
+fi
+
+# --- (c27) ANTI-VACUITY: every accent control above EXECUTED ------------------------------
+# Each control lives inside an `if mutant_ok`, and a mutant whose staging silently produced an
+# identical copy would leave the control it guards simply not run — the silent-skip shape this
+# suite has been bitten by before. The count is the proof: 1 (c19) + 6 spellings + 1 limit.
+[ "$C_ACC_MUTANTS" = "8" ] \
+  && ok "(c27) ANTI-VACUITY: all 8 accent mutation controls EXECUTED — (c19), the six spelling controls (c20)-(c25) and the recorded-limit control (c26); a control that did not run proves nothing about (c18)" \
+  || no "(c27) ANTI-VACUITY: all 8 accent mutation controls executed" "$C_ACC_MUTANTS of 8 ran"
+
+# --- (c28) the real stylesheet is untouched by the (c19)-(c26) controls ---------------------
+[ "$(csum "$CSS")" = "$C_CSS_SIG_BEFORE" ] \
+  && ok "(c28) floor.css is byte-identical after the (c19)-(c26) mutation controls (sha256 unchanged) — every accent mutant was staged in the scratch directory, none in the bundle" \
+  || no "(c28) floor.css is byte-identical after the accent mutation controls" "before='$C_CSS_SIG_BEFORE' after='$(csum "$CSS")'"
 
 # ===========================================================================
 echo "(d) AC-fixtures-conform — validated against the schema block, not a restated key list"
@@ -5555,40 +5720,95 @@ esac
 # fires, and the server the agent just started is killed with it — a hung turn and nothing
 # running. The engine is right; the command bodies were describing the wrong caller.
 #
-# THE SCAN COVERS TWO GLOBS AND EXCLUDES NO FILE. `loomwright/commands/*.md` in full —
-# `agent-help.md` above all, because it is the surface an earlier pass of this work missed and
-# narrowing the file set to make the gate pass would be the gate-relaxation this module's
-# requirement forbids — AND `loomwright/scripts/*.sh`, so the runtime carve-out below is a
-# discrimination the guard has to IMPLEMENT rather than a sentence that is true for nothing.
-# A guard scoped to `commands/*.md` alone could say "it does not flag setup-ui.sh" while never
-# having looked at a shell script: self-satisfiable, which is a defect class this repo has
-# already recorded more than once.
+# THE SCAN COVERS FIVE SURFACES AND EXCLUDES NO FILE INSIDE THEM. `loomwright/commands/*.md`
+# in full — `agent-help.md` above all, because it is the surface an earlier pass of this work
+# missed and narrowing the file set to make the gate pass would be the gate-relaxation this
+# module's requirement forbids — plus `loomwright/agents/*.md` (agent prompts ARE instructions
+# to an agent, and they were in neither original glob), `loomwright/skills/setup/SKILL.md` (the
+# ui module's protocol authority, pre-injected into agents that carry the skill) and
+# `loomwright/docs/FLOOR_UI.md` (the module's reference doc, which an agent reads), AND
+# `loomwright/scripts/*.sh`, so the runtime carve-out below is a discrimination the guard has
+# to IMPLEMENT rather than a sentence that is true for nothing. A guard scoped to
+# `commands/*.md` alone could say "it does not flag setup-ui.sh" while never having looked at a
+# shell script: self-satisfiable, which is a defect class this repo has already recorded more
+# than once. (p0) counts the set; (p15)/(p16) inject a real defect into the two surfaces this
+# scan grew to cover, so the widening is PROVEN rather than declared.
 #
-# IT KEYS ON SERVE/FOREGROUND SEMANTICS, NOT ON THE WORD "blocking". Nineteen command files
-# use "blocking" in the unrelated subagent sense; a keyword guard would demand edits to files
-# this change has no business touching.
+# INSTRUCTION SURFACES vs REFERENCE SURFACES — a NARROWED claim, stated rather than implied.
+# CLASS I below flags an INVOCATION of the serve verb, on the theory that an invocation written
+# into a file an agent executes is a directive. That theory holds for `commands/*.md`,
+# `agents/*.md` and `skills/setup/SKILL.md`, and it does NOT hold for `docs/FLOOR_UI.md`, whose
+# whole "The serve loop" section is prose ABOUT the verb (``setup-ui.sh serve` does three things
+# per tick`) and for `scripts/*.sh`, which is code. So CLASS I runs on the instruction surfaces
+# only, CLASS F runs everywhere, and `nbfs_instr_surface` is the one place that decides which a
+# file is — asserted at (p10) rather than left as an assumption about path shapes. WHAT THIS
+# GIVES UP, precisely: a bare, un-detached `setup-ui.sh serve` written into FLOOR_UI.md as
+# reference prose is not flagged. What is still flagged there is an unscoped foreground/blocking
+# claim, which is the defect this group was created for, and (p16) proves it.
+#
+# IT KEYS ON SERVE/FOREGROUND SEMANTICS, NOT ON THE WORD "blocking", AND NOT ON ONE KEYSTROKE
+# NAME. Nineteen command files use "blocking" in the unrelated subagent sense; a keyword guard
+# would demand edits to files this change has no business touching. But the first version of
+# CLASS F required the literal `Ctrl-C`, which made the headline claim false in the other
+# direction: `Run the floor server in the foreground and wait for it to exit.` is exactly the
+# instruction this group exists to forbid and named no keystroke at all, so it was not even a
+# candidate. CLASS F now fires on `foreground` / `blocks` / `until it exits` / `leave it
+# running` independently of `Ctrl-C` — and the serve token is word-scoped, because an
+# unanchored `/serve/` also matches "server" and made a paragraph about DNS rebinding a
+# candidate.
 #
 # no_blocking_foreground_serve <file>... -> one `file:line: text` record per OFFENDING line.
 # nbfs_candidates <file>...              -> every line the guard CONSIDERED, offending or not.
 # The second exists so the runtime carve-out can be asserted the only way that means anything:
 # that the engine's own `foreground: Ctrl-C to stop` was SEEN and then deliberately not flagged,
 # rather than never having been looked at.
+
+# nbfs_instr_surface <file> -> 0 (true) when the file INSTRUCTS an agent, 1 otherwise.
+# One place, so the CLASS I / CLASS F split above is a single readable decision instead of a
+# path test buried in the scanner. (p10) exercises both answers on real paths.
+nbfs_instr_surface() {
+  case "$1" in
+    */commands/*.md|*/agents/*.md|*/skills/setup/SKILL.md) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 nbfs_scan() {   # <mode: flag|candidates> <file>...
   local mode="$1"; shift
-  local f
+  local f instr
   for f in "$@"; do
     [ -r "$f" ] || continue
-    awk -v file="$f" -v mode="$mode" '
-      BEGIN { md = (file ~ /\.md$/) }
+    instr=0; nbfs_instr_surface "$f" && instr=1
+    awk -v file="$f" -v mode="$mode" -v instr="$instr" '
       {
         line = $0; low = tolower(line); cand = 0
-        # CLASS I — an INVOCATION of the serve verb. Scoped to .md because a command body is
-        # prose that INSTRUCTS an agent, whereas a shell script running or naming the verb is
-        # code and a test that exercises the foreground branch on purpose. That is a statement
-        # about what the text IS, not a per-file exclusion: every commands/*.md is in it.
-        if (md && line ~ /(setup-ui\.sh"?|\/ui|\/setup ui)[ \t]+serve([^a-zA-Z0-9_-]|$)/) cand = 1
-        # CLASS F — a FOREGROUND / Ctrl-C description of serve, in EITHER glob.
-        if (line ~ /Ctrl-C/ && (line ~ /serve/ || low ~ /foreground/)) cand = 1
+        # An assignment whose VALUE names the engine binds a variable to it, so the
+        # two-line `SCRIPT=".../setup-ui.sh"` / `"$SCRIPT" serve` shape is recognised as the
+        # invocation it is. Without this, one level of indirection walked straight past a
+        # guard whose stated subject is "an INVOCATION of the serve verb".
+        if (match(line, /^[ \t]*(export[ \t]+)?[A-Za-z_][A-Za-z0-9_]*=[^=]*setup-ui\.sh/)) {
+          v = line; sub(/^[ \t]*(export[ \t]+)?/, "", v); sub(/=.*/, "", v); alias[v] = 1
+        }
+        if (instr) {
+          # CLASS I — an INVOCATION of the serve verb, on an instruction surface. Three
+          # spellings: written out, through a variable bound above, and split across a
+          # backslash continuation (`cont` is set at the bottom of the previous line).
+          if (line ~ /(setup-ui\.sh"?|\/ui|\/setup ui)[ \t]+serve([^a-zA-Z0-9_-]|$)/) cand = 1
+          for (v in alias) if (line ~ ("[$]\\{?" v "\\}?\"?[ \t]+serve([^a-zA-Z0-9_-]|$)")) cand = 1
+          if (cont && line ~ /^[ \t]*serve([^a-zA-Z0-9_-]|$)/) cand = 1
+        }
+        # CLASS F — a FOREGROUND / BLOCKING description of serve, on EVERY surface. `Ctrl-C`
+        # is one spelling of it and no longer the only one.
+        fg  = (line ~ /Ctrl-C/ || low ~ /foreground/ || low ~ /until it exits/ \
+               || low ~ /leave it running/ || low ~ /blocks/)
+        srv = (low ~ /(^|[^a-z])serve([^a-z]|$)/ || low ~ /floor server/ || low ~ /local server/)
+        if (fg && (srv || (line ~ /Ctrl-C/ && low ~ /foreground/))) cand = 1
+        nextcont = 0
+        if (instr) {
+          if (line ~ /(setup-ui\.sh"?|\/ui|\/setup ui)[ \t]*\\[ \t]*$/) nextcont = 1
+          for (v in alias) if (line ~ ("[$]\\{?" v "\\}?\"?[ \t]*\\\\[ \t]*$")) nextcont = 1
+        }
+        cont = nextcont
         if (!cand) next
         if (mode == "candidates") { printf "%s:%d: %s\n", file, NR, substr(line, 1, 140); next }
         # E1 RUNTIME EMISSION. A line the process PRINTS is output to whoever is watching the
@@ -5596,11 +5816,22 @@ nbfs_scan() {   # <mode: flag|candidates> <file>...
         # carve-out the .sh half of the scan exists to make load-bearing — and (r5) proves it
         # discriminates, by putting the same words in the same file as a directive instead.
         if (line ~ /^[ \t]*(echo|printf)[ \t]/ || line ~ />&2/) next
-        # E2 CALLER-SCOPED. The defect was prose that never said which caller it described, so
-        # the exemption is that the line NAMES one.
-        if (low ~ /human/ || low ~ /agent/) next
-        # E3 the invocation already carries --detach, which is the fix itself.
-        if (line ~ /--detach/) next
+        # E2 CALLER-SCOPED — a CLOSED LIST of caller-scoping phrases, and that is the whole
+        # point. This used to be `low ~ /human/ || low ~ /agent/`: a bare substring anywhere on
+        # the line, which exempted `setup-ui.sh serve   # the agent runs this` — an instruction
+        # telling the AGENT to run a foreground serve, exempted by the word "agent". Six of the
+        # ten candidate lines in the shipped tree ride on this exemption, so it is load-bearing
+        # and could not simply be deleted; what it can be is NARROWED to phrases that scope the
+        # CLAIM to a caller rather than merely mentioning one. NARROWED CLAIM: the exemption is
+        # this list and nothing else, so a new caller phrasing reddens the gate until it is
+        # added here — deliberately fail-closed toward flagging. (p11) is the control.
+        if (low ~ /(for|to) a human/ || low ~ /a human (running|at|in) / \
+            || low ~ /human at a terminal/ || low ~ /human.s own/ \
+            || low ~ /caller is an agent/ || low ~ /agent path/ || low ~ /agent-invoked/) next
+        # E3 the invocation already carries --detach, ADJACENTLY. `line ~ /--detach/` anywhere
+        # on the line exempted `... serve  # NOT --detach on purpose` — a line that names the
+        # flag in order to say it is absent. Adjacency is what `(p7)` already greps for.
+        if (line ~ /serve[ \t]+--detach/) next
         printf "%s:%d: %s\n", file, NR, substr(line, 1, 140)
       }
     ' "$f"
@@ -5620,43 +5851,60 @@ nbfs_candidates()              { nbfs_scan candidates "$@"; }
 NBFS_SELF="$script_dir/test-setup-ui.sh"
 
 P_CMD_DIR="$script_dir/../commands"
+P_AGENT_DIR="$script_dir/../agents"
+P_SKILL_MD="$script_dir/../skills/setup/SKILL.md"
+P_FLOOR_MD="$script_dir/../docs/FLOOR_UI.md"
 P_TMP="$(mktemp -d 2>/dev/null || mktemp -d -t nbfs)"
 [ -d "$P_TMP" ] || setup_fail "(r) fixture: could not create a scratch directory for the mutation controls"
+# The mutants live under `commands/`, `skills/setup/` and `docs/` inside the scratch tree
+# ON PURPOSE: `nbfs_instr_surface` classifies by directory, so a copy of a command body
+# dropped at the top of a scratch directory would be scanned as a REFERENCE surface and the
+# control would quietly stop exercising CLASS I. Same shape, same classification.
+mkdir -p "$P_TMP/commands" "$P_TMP/agents" "$P_TMP/skills/setup" "$P_TMP/docs" 2>/dev/null
 P_UI_SIG_BEFORE="$(csum "$P_CMD_DIR/ui.md")"
 P_SETUP_SIG_BEFORE="$(csum "$P_CMD_DIR/setup.md")"
 P_HELP_SIG_BEFORE="$(csum "$P_CMD_DIR/agent-help.md")"
 P_ENG_SIG_BEFORE="$(csum "$ENGINE")"
+P_SKILL_SIG_BEFORE="$(csum "$P_SKILL_MD")"
+P_FLOOR_SIG_BEFORE="$(csum "$P_FLOOR_MD")"
 
-# --- (r0) the scan really has both globs, and agent-help.md is provably inside one ---------
+# --- (r0) the scan really covers all five surfaces, and agent-help.md is provably inside one -
 p_md_files=""; for f in "$P_CMD_DIR"/*.md; do [ -f "$f" ] && p_md_files="$p_md_files $f"; done
+p_ag_files=""; for f in "$P_AGENT_DIR"/*.md; do [ -f "$f" ] && p_ag_files="$p_ag_files $f"; done
+p_ref_files=""; for f in "$P_SKILL_MD" "$P_FLOOR_MD"; do [ -f "$f" ] && p_ref_files="$p_ref_files $f"; done
 p_sh_all=""; p_sh_files=""; p_sh_skipped=""
 for f in "$script_dir"/*.sh; do
   [ -f "$f" ] || continue
   p_sh_all="$p_sh_all $f"
   if [ "$f" = "$NBFS_SELF" ]; then p_sh_skipped="$p_sh_skipped $f"; else p_sh_files="$p_sh_files $f"; fi
 done
-p_md_n="$(printf '%s' "$p_md_files" | tr ' ' '\n' | sed '/^$/d' | awk 'END{print NR+0}')"
-p_sh_n="$(printf '%s' "$p_sh_files" | tr ' ' '\n' | sed '/^$/d' | awk 'END{print NR+0}')"
+P_ALL_FILES="$p_md_files $p_ag_files $p_ref_files $p_sh_files"
+n_of() { printf '%s' "$1" | tr ' ' '\n' | sed '/^$/d' | awk 'END{print NR+0}'; }
+p_md_n="$(n_of "$p_md_files")"
+p_ag_n="$(n_of "$p_ag_files")"
+p_ref_n="$(n_of "$p_ref_files")"
+p_sh_n="$(n_of "$p_sh_files")"
 p_help_in=0; case " $p_md_files " in *" $P_CMD_DIR/agent-help.md "*) p_help_in=1 ;; esac
 p_eng_in=0;  case " $p_sh_files "  in *" $ENGINE "*) p_eng_in=1 ;; esac
-[ "$p_md_n" -ge 20 ] && [ "$p_sh_n" -ge 10 ] && [ "$p_help_in" -eq 1 ] && [ "$p_eng_in" -eq 1 ] \
-  && ok "(r0) the guard's subject is every commands/*.md ($p_md_n files, agent-help.md among them) AND every scripts/*.sh ($p_sh_n files, setup-ui.sh among them) — no file is excluded, and the surface an earlier pass missed is provably inside the set" \
-  || no "(r0) the guard scans both globs with no exclusions" \
-       "md=$p_md_n sh=$p_sh_n agent-help-present=$p_help_in setup-ui-present=$p_eng_in"
+[ "$p_md_n" -ge 20 ] && [ "$p_ag_n" -ge 10 ] && [ "$p_ref_n" -eq 2 ] && [ "$p_sh_n" -ge 10 ] \
+  && [ "$p_help_in" -eq 1 ] && [ "$p_eng_in" -eq 1 ] \
+  && ok "(r0) the guard's subject is every commands/*.md ($p_md_n files, agent-help.md among them), every agents/*.md ($p_ag_n prompts — instructions to an agent, and in neither original glob), the ui module's two reference surfaces ($p_ref_n: skills/setup/SKILL.md and docs/FLOOR_UI.md) AND every scripts/*.sh ($p_sh_n files, setup-ui.sh among them) — no file inside those five is excluded, and the surface an earlier pass missed is provably inside the set" \
+  || no "(r0) the guard scans all five surfaces with no exclusions" \
+       "md=$p_md_n agents=$p_ag_n ref=$p_ref_n (want 2) sh=$p_sh_n agent-help-present=$p_help_in setup-ui-present=$p_eng_in"
 
 # --- (r0b) the .sh exclusion is exactly one file, and it is the scanner's own source ---------
-p_skip_n="$(printf '%s' "$p_sh_skipped" | tr ' ' '\n' | sed '/^$/d' | awk 'END{print NR+0}')"
+p_skip_n="$(n_of "$p_sh_skipped")"
 p_skip_is_self=0; [ "$(printf '%s' "$p_sh_skipped" | tr -d ' ')" = "$NBFS_SELF" ] && p_skip_is_self=1
 p_md_excluded=0; for f in "$P_CMD_DIR"/*.md; do case " $p_md_files " in *" $f "*) ;; *) p_md_excluded=1 ;; esac; done
 [ "$p_skip_n" = "1" ] && [ "$p_skip_is_self" -eq 1 ] && [ "$p_md_excluded" -eq 0 ] \
-  && ok "(r0b) exactly ONE file is held out of the .sh half — this suite itself, because a scanner cannot be its own subject without every accurate description of it becoming a violation (the `code_occ` precedent above). NO commands/*.md is held out at all, which is the exclusion that would actually matter, and the held-out set is asserted to be that single file rather than a list that could later grow over a real defect" \
+  && ok "(r0b) exactly ONE file is held out of the .sh half — this suite itself, because a scanner cannot be its own subject without every accurate description of it becoming a violation (the \`code_occ\` precedent above). NO commands/*.md is held out at all, which is the exclusion that would actually matter, and the held-out set is asserted to be that single file rather than a list that could later grow over a real defect" \
   || no "(r0b) the .sh exclusion is exactly this file, and no command body is excluded" \
        "held-out=$p_skip_n self=$p_skip_is_self md-excluded=$p_md_excluded"
 
 # --- (r1) the shipped tree is clean ---------------------------------------------------------
-p_hits="$(no_blocking_foreground_serve $p_md_files $p_sh_files)"
+p_hits="$(no_blocking_foreground_serve $P_ALL_FILES)"
 [ -z "$p_hits" ] \
-  && ok "(r1) no command body and no script instructs the agent to run a foreground \`serve\` — every serve invocation on the agent path carries --detach, and every foreground description names the caller it is describing" \
+  && ok "(r1) across all five scanned surfaces — commands/*.md, agents/*.md, skills/setup/SKILL.md, docs/FLOOR_UI.md and scripts/*.sh — nothing instructs the agent to run a foreground \`serve\`: every serve invocation on the agent path carries --detach ADJACENTLY, and every foreground/blocking description carries one of E2's caller-scoping phrases" \
   || no "(r1) a blocking foreground serve instruction is present" "$p_hits"
 
 # --- (r2) THE RUNTIME CARVE-OUT, asserted as seen-and-not-flagged --------------------------
@@ -5673,9 +5921,9 @@ else
 fi
 
 # --- (r3) MUTATION CONTROL: strip --detach off the fenced invocation in commands/ui.md ------
-sed 's|scripts/setup-ui.sh" serve --detach|scripts/setup-ui.sh" serve|' "$P_CMD_DIR/ui.md" > "$P_TMP/ui.md"
-p_m3_changed=0; csum "$P_TMP/ui.md" >/dev/null; [ "$(csum "$P_TMP/ui.md")" != "$P_UI_SIG_BEFORE" ] && p_m3_changed=1
-p_m3="$(no_blocking_foreground_serve "$P_TMP/ui.md")"
+sed 's|scripts/setup-ui.sh" serve --detach|scripts/setup-ui.sh" serve|' "$P_CMD_DIR/ui.md" > "$P_TMP/commands/ui.md"
+p_m3_changed=0; [ "$(csum "$P_TMP/commands/ui.md")" != "$P_UI_SIG_BEFORE" ] && p_m3_changed=1
+p_m3="$(no_blocking_foreground_serve "$P_TMP/commands/ui.md")"
 [ "$p_m3_changed" -eq 1 ] && [ -n "$p_m3" ] \
   && ok "(r3) MUTATION CONTROL: taking --detach off the invocation an agent actually executes IS flagged — the guard is watching the executed line, not only the prose around it" \
   || no "(r3) MUTATION CONTROL: the un-detached invocation is flagged" \
@@ -5684,9 +5932,9 @@ p_m3="$(no_blocking_foreground_serve "$P_TMP/ui.md")"
 # --- (r4) MUTATION CONTROL: un-scope the foreground sentence in commands/setup.md -----------
 # The caller words are removed and nothing else, so what reddens is the loss of caller scoping.
 sed 's|^4\. \*\*Say which caller you are describing\.\*\* Foreground is the engine.s default and Ctrl-C stops it .*$|4. Foreground is the default (Ctrl-C stops it) for `setup-ui.sh serve`.|' \
-  "$P_CMD_DIR/setup.md" > "$P_TMP/setup.md"
-p_m4_changed=0; [ "$(csum "$P_TMP/setup.md")" != "$P_SETUP_SIG_BEFORE" ] && p_m4_changed=1
-p_m4="$(no_blocking_foreground_serve "$P_TMP/setup.md")"
+  "$P_CMD_DIR/setup.md" > "$P_TMP/commands/setup.md"
+p_m4_changed=0; [ "$(csum "$P_TMP/commands/setup.md")" != "$P_SETUP_SIG_BEFORE" ] && p_m4_changed=1
+p_m4="$(no_blocking_foreground_serve "$P_TMP/commands/setup.md")"
 [ "$p_m4_changed" -eq 1 ] && [ -n "$p_m4" ] \
   && ok "(r4) MUTATION CONTROL: a foreground/Ctrl-C sentence that names no caller IS flagged — which is exactly the shape the four surfaces carried before this change" \
   || no "(r4) MUTATION CONTROL: an unscoped foreground sentence is flagged" \
@@ -5707,9 +5955,9 @@ p_m5_cands="$(nbfs_candidates "$P_TMP/setup-ui.sh")"
 
 # --- (r6) MUTATION CONTROL on agent-help.md, the surface that was missed --------------------
 sed 's|^/ui serve --detach .*$|/ui serve                 # start the floor on 127.0.0.1:7734 (Ctrl-C stops it)|' \
-  "$P_CMD_DIR/agent-help.md" > "$P_TMP/agent-help.md"
-p_m6_changed=0; [ "$(csum "$P_TMP/agent-help.md")" != "$P_HELP_SIG_BEFORE" ] && p_m6_changed=1
-p_m6="$(no_blocking_foreground_serve "$P_TMP/agent-help.md")"
+  "$P_CMD_DIR/agent-help.md" > "$P_TMP/commands/agent-help.md"
+p_m6_changed=0; [ "$(csum "$P_TMP/commands/agent-help.md")" != "$P_HELP_SIG_BEFORE" ] && p_m6_changed=1
+p_m6="$(no_blocking_foreground_serve "$P_TMP/commands/agent-help.md")"
 [ "$p_m6_changed" -eq 1 ] && [ -n "$p_m6" ] \
   && ok "(r6) MUTATION CONTROL: restoring agent-help.md's original unscoped usage line IS flagged — the mirror surface an earlier pass of this work missed is inside the guard's set, not merely adjacent to it" \
   || no "(r6) MUTATION CONTROL: the agent-help.md mirror is inside the guard's set" \
@@ -5739,14 +5987,132 @@ done
   || no "(r8) every foreground/Ctrl-C prose surface names its caller" \
        "total=$p_prose_total unscoped:$p_missing"
 
-# --- (r9) the real files are untouched by the (r3)-(r6) controls ----------------------------
+# --- (r10) the CLASS I / CLASS F split is a decision, exercised on both answers -------------
+# `nbfs_instr_surface` is what makes "CLASS I runs on instruction surfaces only" true. If it
+# answered the same way for every path the split would be decoration, and the narrowed claim
+# written above it would describe nothing. Both answers, on real paths from the scanned set.
+p_cls_bad=""
+for f in "$P_CMD_DIR/ui.md" "$P_AGENT_DIR/supervisor.md" "$P_SKILL_MD"; do
+  nbfs_instr_surface "$f" || p_cls_bad="$p_cls_bad not-instruction:$(basename "$f")"
+done
+for f in "$P_FLOOR_MD" "$ENGINE"; do
+  nbfs_instr_surface "$f" && p_cls_bad="$p_cls_bad instruction:$(basename "$f")"
+done
+[ -z "$p_cls_bad" ] \
+  && ok "(r10) the instruction/reference classifier answers BOTH ways on real paths: commands/ui.md, agents/supervisor.md and skills/setup/SKILL.md are instruction surfaces (CLASS I applies); docs/FLOOR_UI.md and scripts/setup-ui.sh are not (CLASS F only). A classifier with one answer would make the narrowed claim above vacuous in whichever direction it defaulted" \
+  || no "(r10) nbfs_instr_surface classifies both instruction and reference surfaces" "misclassified:$p_cls_bad"
+
+# --- (r11)-(r16) THE SIX SHAPES THAT PREVIOUSLY WALKED THROUGH THE GUARD -------------------
+# Each is a real line written into a scratch COPY under the directory that gives it the right
+# classification, and each was verified GREEN against the previous form of this scanner. The
+# helper keeps the staging identical so the only thing that varies between them is the line.
+#
+# THE FIXTURES SPELL THE ENGINE PATH `$PLUGIN_DIR/scripts/setup-ui.sh` rather than with the
+# plugin-root environment variable the shipped command bodies use, and that is deliberate: the
+# guard's CLASS I regex keys on `setup-ui.sh"? serve`, so the prefix is irrelevant to what is
+# being tested, while eight literal vendor tokens in fixture strings would push this file over
+# the vendor-coupling ratchet (`scripts/check-vendor-coupling.sh`) for no gain in coverage.
+# Do not "restore" them.
+P_NBFS_MUTANTS=0
+nbfs_control() {   # <id> <rel-path under $P_TMP> <expect: flag|silent> <what it exercises> <line>...
+  local id="$1" rel="$2" expect="$3" what="$4"; shift 4
+  local f="$P_TMP/$rel"
+  printf '%s\n' "$@" > "$f" 2>/dev/null
+  if [ ! -s "$f" ]; then
+    no "($id) MUTATION CONTROL: $what could not be staged, so the shape is UNCONTROLLED" "empty fixture at $f"
+    return 0
+  fi
+  P_NBFS_MUTANTS=$((P_NBFS_MUTANTS + 1))
+  local hits; hits="$(no_blocking_foreground_serve "$f")"
+  if [ "$expect" = flag ]; then
+    [ -n "$hits" ] \
+      && ok "($id) MUTATION CONTROL: $what IS flagged" \
+      || no "($id) MUTATION CONTROL: $what is flagged" "the guard said nothing about: $*"
+  else
+    [ -z "$hits" ] \
+      && ok "($id) NEGATIVE CONTROL: $what is correctly NOT flagged" \
+      || no "($id) NEGATIVE CONTROL: $what is not flagged" "the guard flagged: $hits"
+  fi
+}
+nbfs_control p11 commands/m-agentword.md flag \
+  'an un-detached invocation whose trailing comment merely CONTAINS the word "agent" (`# the agent runs this`) — the exact line the old bare-substring E2 exempted, and the exemption six of the ten shipped candidate lines ride on, so it could be narrowed but not deleted' \
+  'bash "$PLUGIN_DIR/scripts/setup-ui.sh" serve   # the agent runs this'
+nbfs_control p12 commands/m-humanword.md flag \
+  'the same bypass through the other half of the old E2 — the bare word "human" somewhere on the line (`# ask a human first`), which scopes no claim to any caller' \
+  'bash "$PLUGIN_DIR/scripts/setup-ui.sh" serve   # ask a human first'
+nbfs_control p13 commands/m-notdetach.md flag \
+  'an un-detached invocation exempted by the very words that NEGATE the flag (`# NOT --detach on purpose`) — the old E3 matched `--detach` anywhere on the line rather than adjacent to `serve`' \
+  'bash "$PLUGIN_DIR/scripts/setup-ui.sh" serve  # NOT --detach on purpose'
+nbfs_control p14 commands/m-indirect.md flag \
+  'ONE level of variable indirection — the engine path bound to a shell variable on one line and the verb run through it on the next' \
+  'SCRIPT="$PLUGIN_DIR/scripts/setup-ui.sh"' \
+  '"$SCRIPT" serve'
+nbfs_control p15 commands/m-continued.md flag \
+  'a backslash continuation that puts the verb on the following line' \
+  'bash "$PLUGIN_DIR/scripts/setup-ui.sh" \' \
+  '  serve'
+nbfs_control p16 commands/m-plainenglish.md flag \
+  'a plain-English foreground directive naming no keystroke at all (`Run the floor server in the foreground and wait for it to exit.`) — not even a CANDIDATE while CLASS F required the literal Ctrl-C, which is what made the group headline "keys on serve/foreground semantics" untrue' \
+  'Run the floor server in the foreground and wait for it to exit.'
+
+# --- (r17)/(r18) THE WIDENED SURFACES, PROVEN RATHER THAN DECLARED -------------------------
+# A file named in the glob but never shown to flag anything is a file the guard has not been
+# demonstrated to read. One mutant per newly-covered surface, each in the class that surface
+# is actually scanned for: CLASS I on the skill (an instruction surface), CLASS F on the doc.
+{ cat "$P_SKILL_MD"; printf '%s\n' 'Then run `bash "$PLUGIN_DIR/scripts/setup-ui.sh" serve` from the project root.'; } \
+  > "$P_TMP/skills/setup/SKILL.md" 2>/dev/null
+p_m17="$(no_blocking_foreground_serve "$P_TMP/skills/setup/SKILL.md")"
+if mutant_ok "$P_SKILL_MD" "$P_TMP/skills/setup/SKILL.md"; then
+  P_NBFS_MUTANTS=$((P_NBFS_MUTANTS + 1))
+  [ -n "$p_m17" ] \
+    && ok "(r17) MUTATION CONTROL: an un-detached serve instruction appended to skills/setup/SKILL.md IS flagged — the ui module's protocol authority is a surface an agent is given, and it was in neither original glob" \
+    || no "(r17) MUTATION CONTROL: skills/setup/SKILL.md is inside the guard's set" "the guard said nothing"
+else
+  no "(r17) MUTATION CONTROL: the SKILL.md mutant could not be staged" "mutant_ok rejected the copy"
+fi
+{ cat "$P_FLOOR_MD"; printf '%s\n' 'Start `serve` and leave it running in the foreground until it exits.'; } \
+  > "$P_TMP/docs/FLOOR_UI.md" 2>/dev/null
+p_m18="$(no_blocking_foreground_serve "$P_TMP/docs/FLOOR_UI.md")"
+if mutant_ok "$P_FLOOR_MD" "$P_TMP/docs/FLOOR_UI.md"; then
+  P_NBFS_MUTANTS=$((P_NBFS_MUTANTS + 1))
+  [ -n "$p_m18" ] \
+    && ok "(r18) MUTATION CONTROL: an unscoped foreground/blocking sentence appended to docs/FLOOR_UI.md IS flagged — the surface is inside the scan, and it is scanned for the class it can actually be judged on (CLASS F), which is exactly the narrowed claim stated above the scanner" \
+    || no "(r18) MUTATION CONTROL: docs/FLOOR_UI.md is inside the guard's set" "the guard said nothing"
+else
+  no "(r18) MUTATION CONTROL: the FLOOR_UI.md mutant could not be staged" "mutant_ok rejected the copy"
+fi
+
+# --- (r19) NEGATIVE CONTROLS: the tightened exemptions did not become a blanket flag --------
+# Tightening E2 to a closed phrase list and E3 to adjacency is only a repair if the CORRECT
+# forms still pass. Without these three, every (r11)-(r16) pass above would also be produced by
+# a guard that simply flagged every candidate line — and the shipped tree, which (r1) proves is
+# clean, would be the only thing standing between that guard and a green suite.
+nbfs_control p19a commands/n-detached.md silent \
+  'the same invocation written correctly, with --detach adjacent to the verb' \
+  'bash "$PLUGIN_DIR/scripts/setup-ui.sh" serve --detach'
+nbfs_control p19b commands/n-indirect-detached.md silent \
+  'the indirection form written correctly — the verb reached through a variable, with --detach adjacent' \
+  'SCRIPT="$PLUGIN_DIR/scripts/setup-ui.sh"' \
+  '"$SCRIPT" serve --detach'
+nbfs_control p19c commands/n-scoped.md silent \
+  'a foreground description that really does scope its claim to a caller (`for a human`), which is the sentence shape (r8) requires the four prose surfaces to keep' \
+  'Foreground is the default and Ctrl-C stops `serve`, for a human running the engine directly.'
+
+# --- (r20) ANTI-VACUITY: every (r11)-(r19) control EXECUTED --------------------------------
+[ "$P_NBFS_MUTANTS" = "11" ] \
+  && ok "(r20) ANTI-VACUITY: all 11 nbfs controls EXECUTED — six defeat shapes (r11)-(r16), two widened surfaces (r17)/(r18) and three negative controls (r19a)-(r19c); a control that silently failed to stage would leave the shape it names unproven either way" \
+  || no "(r20) ANTI-VACUITY: all 11 nbfs controls executed" "$P_NBFS_MUTANTS of 11 ran"
+
+# --- (r9) the real files are untouched by the (r3)-(r19) controls ----------------------------
 p_residue=""
 [ "$(csum "$P_CMD_DIR/ui.md")" = "$P_UI_SIG_BEFORE" ] || p_residue="$p_residue ui.md"
 [ "$(csum "$P_CMD_DIR/setup.md")" = "$P_SETUP_SIG_BEFORE" ] || p_residue="$p_residue setup.md"
 [ "$(csum "$P_CMD_DIR/agent-help.md")" = "$P_HELP_SIG_BEFORE" ] || p_residue="$p_residue agent-help.md"
 [ "$(csum "$ENGINE")" = "$P_ENG_SIG_BEFORE" ] || p_residue="$p_residue setup-ui.sh"
+[ "$(csum "$P_SKILL_MD")" = "$P_SKILL_SIG_BEFORE" ] || p_residue="$p_residue skills/setup/SKILL.md"
+[ "$(csum "$P_FLOOR_MD")" = "$P_FLOOR_SIG_BEFORE" ] || p_residue="$p_residue docs/FLOOR_UI.md"
 [ -z "$p_residue" ] \
-  && ok "(r9) every mutation control above ran against a COPY — the four real files are byte-identical (sha256) and no mutant was left behind" \
+  && ok "(r9) every mutation control above ran against a COPY — all six real files are byte-identical (sha256) and no mutant was left behind" \
   || no "(r9) the real files are byte-identical after the (r) controls" "changed:$p_residue"
 rm -rf "$P_TMP"
 
@@ -5774,6 +6140,19 @@ rm -rf "$P_TMP"
 #   3. THE `[a-z]+-h` SHAPE. (j36) enumerates with a pattern that excludes hyphenated and
 #      digit-bearing ids, so renaming `stages-h` to `run-summary-h` keeps the attribute and
 #      still drops the section out of (j36)'s input. (q8) asserts shape parity; (q9) mutates it.
+#   4. TAG CASE. HTML tag names are ASCII case-INSENSITIVE — `<SECTION>` is a section, and a
+#      browser renders it as one — but every count here is a case-sensitive awk regex. So
+#      `<SECTION><h2>Extra</h2></SECTION>` written before `</main>` is a real, rendered,
+#      UNLABELLED eighth section that moves NONE of the five metrics: they all stay at
+#      7/7/7/0/7 and every assertion in this group stays green. `html_norm` folds case before
+#      counting; (q14) is the control, with a second arm showing the un-folded counters really
+#      do read 7/7 on that same mutant.
+#   5. A DANGLING REFERENCE. `aria-labelledby="[^"]+"` proves the attribute is NON-EMPTY, not
+#      that it RESOLVES. Retarget one section at `project-h` — a one-character typo against the
+#      real `projects-h` — and the section has NO ACCESSIBLE NAME AT ALL, while all five
+#      metrics hold at baseline and (q8)'s `[a-z]+-h` pattern still matches it, so (j36)'s
+#      input stays 7 too. Nothing in this group looked at whether the id existed. (q12) resolves
+#      every target against the ids in the same document; (q13) is the control.
 #
 # html_decomment <file> -> the file with every <!-- ... --> block removed, ACROSS LINES.
 # All four comment blocks in index.html span multiple lines, so the reflexive one-line
@@ -5798,11 +6177,71 @@ html_decomment() {
     }
   ' "$1" 2>/dev/null
 }
-# The three counts every assertion below is built from, taken over DECOMMENTED text.
-q_sections()  { html_decomment "$1" | awk 'BEGIN{n=0}{n+=gsub(/<section([^a-zA-Z0-9_-]|$)/,"")}END{print n+0}'; }
-q_labelled()  { html_decomment "$1" | awk 'BEGIN{n=0}{n+=gsub(/<section[^>]*aria-labelledby="[^"]+"/,"")}END{print n+0}'; }
-q_anywhere()  { html_decomment "$1" | awk 'BEGIN{n=0}{n+=gsub(/aria-labelledby="[^"]+"/,"")}END{print n+0}'; }
+# html_norm <file> -> decommented AND case-folded, which is the stream every count below reads.
+# It lower-cases everything OUTSIDE a quoted attribute value, so tag names and attribute names
+# are normalised (`<SECTION aria-LabelledBy=` and `<section aria-labelledby=` count alike, which
+# is what the HTML parser does) while VALUES are left byte-for-byte — ids are case-SENSITIVE for
+# the purposes of (q12)'s resolution check, and folding them would let `id="Roster-h"` satisfy
+# `aria-labelledby="roster-h"` when a browser would not.
+html_norm() {
+  html_decomment "$1" | awk '
+    {
+      out = ""; q = ""; n = length($0)
+      for (i = 1; i <= n; i++) {
+        c = substr($0, i, 1)
+        if (q == "") {
+          if (c == "\"" || c == "'\''") { q = c; out = out c } else out = out tolower(c)
+        } else {
+          out = out c
+          if (c == q) q = ""
+        }
+      }
+      print out
+    }' 2>/dev/null
+}
+# The counts every assertion below is built from, taken over DECOMMENTED, CASE-FOLDED text.
+q_sections()  { html_norm "$1" | awk 'BEGIN{n=0}{n+=gsub(/<section([^a-zA-Z0-9_-]|$)/,"")}END{print n+0}'; }
+q_labelled()  { html_norm "$1" | awk 'BEGIN{n=0}{n+=gsub(/<section[^>]*aria-labelledby="[^"]+"/,"")}END{print n+0}'; }
+q_anywhere()  { html_norm "$1" | awk 'BEGIN{n=0}{n+=gsub(/aria-labelledby="[^"]+"/,"")}END{print n+0}'; }
 q_captions()  { html_decomment "$1" | awk 'BEGIN{n=0}{n+=gsub(/<p class="caption"/,"")}END{print n+0}'; }
+# The pre-(q14) counters, kept ONLY as (q14)'s second arm: a case-sensitive count is the thing
+# whose inadequacy has to be exhibited, or arm A is a hypothetical rather than a live hazard.
+q_sections_cs() { html_decomment "$1" | awk 'BEGIN{n=0}{n+=gsub(/<section([^a-zA-Z0-9_-]|$)/,"")}END{print n+0}'; }
+q_labelled_cs() { html_decomment "$1" | awk 'BEGIN{n=0}{n+=gsub(/<section[^>]*aria-labelledby="[^"]+"/,"")}END{print n+0}'; }
+# q_dangling <file> -> one `target(N matching id)` record per section caption reference that
+# does not resolve to EXACTLY ONE id in the same document. Zero ids is a section with no
+# accessible name; two is an ambiguous one, which is equally not a name.
+q_dangling() {
+  html_norm "$1" | awk '
+    {
+      s = $0
+      while (match(s, /<section[^>]*aria-labelledby="[^"]*"/)) {
+        t = substr(s, RSTART, RLENGTH); s = substr(s, RSTART + RLENGTH)
+        sub(/^.*aria-labelledby="/, "", t); sub(/"$/, "", t)
+        want[t] = 1
+      }
+      s = $0
+      while (match(s, /[ \t]id="[^"]*"/)) {
+        t = substr(s, RSTART, RLENGTH); s = substr(s, RSTART + RLENGTH)
+        sub(/^[ \t]id="/, "", t); sub(/"$/, "", t)
+        seen[t]++
+      }
+    }
+    END { for (v in want) if (seen[v] != 1) printf "%s(%d matching id)\n", v, seen[v] + 0 }
+  ' 2>/dev/null
+}
+# q_targets <file> -> how many DISTINCT ids the sections point at; (q12)'s anti-vacuity input.
+q_targets() {
+  html_norm "$1" | awk '
+    { s = $0
+      while (match(s, /<section[^>]*aria-labelledby="[^"]*"/)) {
+        t = substr(s, RSTART, RLENGTH); s = substr(s, RSTART + RLENGTH)
+        sub(/^.*aria-labelledby="/, "", t); sub(/"$/, "", t)
+        want[t] = 1
+      } }
+    END { n = 0; for (v in want) n++; print n + 0 }
+  ' 2>/dev/null
+}
 
 Q_TMP="$(mktemp -d 2>/dev/null || mktemp -d -t a11y)"
 [ -d "$Q_TMP" ] || setup_fail "(q) fixture: could not create a scratch directory for the a11y mutation controls"
@@ -5918,7 +6357,63 @@ q_m10="$(q_captions "$Q_TMP/nocap.html")"
   && ok "(q10) MUTATION CONTROL: a section that loses its caption drops the count to 6 — (q4) is counting captions rather than trusting that a section which has one always will" \
   || no "(q10) MUTATION CONTROL: removing a caption reddens (q4)" "captions=$q_m10 (want 6)"
 
-# --- (q11) the real page is untouched by the (q5)-(q10) controls ------------------------------
+# --- (q12) THE REFERENCE RESOLVES ------------------------------------------------------------
+# `aria-labelledby="[^"]+"` proves the attribute is non-EMPTY. It says nothing about whether the
+# id it names is in the document, and an attribute pointing at nothing gives its section NO
+# accessible name at all — strictly worse than having no attribute, because every count in this
+# group reads it as a labelled section. Exactly one id, because two is ambiguous and is equally
+# not a name. The target count is tied to the section count so this cannot pass by resolving an
+# empty set, which is the failure mode (q8) exists to close for (j36).
+q_dangle="$(q_dangling "$HTML")"
+q_tgt="$(q_targets "$HTML")"
+[ -z "$q_dangle" ] && [ "$q_tgt" = "$Q_SEC" ] && [ "$q_tgt" -gt 0 ] \
+  && ok "(q12) all $q_tgt section captions RESOLVE: every \`aria-labelledby\` on a \`<section\` names an id that appears exactly once in the same comment-stripped document, and the number of distinct targets equals the number of sections ($Q_SEC), so the check cannot go quietly empty. Until now nothing in this group asked whether the id existed" \
+  || no "(q12) every section's aria-labelledby resolves to exactly one id in the document" \
+       "unresolved:${q_dangle:-<none>} distinct-targets=$q_tgt sections=$Q_SEC"
+
+# --- (q13) MUTATION CONTROL for (q12): the one-character typo -------------------------------
+# The projects section is retargeted from `projects-h` to `project-h` and the id is NOT renamed
+# — the exact shape a careless edit produces. The section is then unlabelled in every sense a
+# screen reader cares about, and this control asserts what the OTHER metrics do on it: nothing.
+# Both counts stay at 7, (q8)'s `[a-z]+-h` enumeration still matches all 7 so (j36) keeps its
+# full input, and only the resolution check moves. That is the whole reason (q12) had to exist.
+sed 's|<section aria-labelledby="projects-h">|<section aria-labelledby="project-h">|' \
+  "$HTML" > "$Q_TMP/dangle.html"
+if mutant_ok "$HTML" "$Q_TMP/dangle.html"; then
+  q_m13="$(q_dangling "$Q_TMP/dangle.html")"
+  q_m13_sec="$(q_sections "$Q_TMP/dangle.html")"; q_m13_lab="$(q_labelled "$Q_TMP/dangle.html")"
+  q_m13_j36="$(grep -oE 'aria-labelledby="[a-z]+-h"' "$Q_TMP/dangle.html" 2>/dev/null | awk 'END{print NR+0}')"
+  if in_str "$q_m13" "project-h(0 matching id)" && [ "$q_m13_sec" = "7" ] && [ "$q_m13_lab" = "7" ] && [ "$q_m13_j36" = "$Q_SEC" ]; then
+    ok "(q13) MUTATION CONTROL: retargeting a section at \`project-h\` while the real id stays \`projects-h\` IS named by (q12) ($q_m13) — and NOTHING else moves: still 7 sections, still 7 labelled, and (j36)'s enumeration still reads $q_m13_j36. A section with no accessible name whatsoever, passing every metric this group had before (q12)"
+  else
+    no "(q13) MUTATION CONTROL: a dangling aria-labelledby target is named by (q12)" \
+       "unresolved='${q_m13:-<nothing>}' sections=$q_m13_sec labelled=$q_m13_lab (j36) input=$q_m13_j36 (want 'project-h(0 matching id)' with 7/7/$Q_SEC)"
+  fi
+else
+  no "(q13) MUTATION CONTROL: the dangling-reference mutant could not be staged, so (q12) is UNCONTROLLED" "mutant_ok rejected $Q_TMP/dangle.html"
+fi
+
+# --- (q14) MUTATION CONTROL for the CASE FOLDING, both arms ---------------------------------
+# arm A: an UPPER-CASE `<SECTION>` before `</main>` is a real, rendered, unlabelled section and
+#        the folded counts must see it — 8 sections, still 7 labelled, so (q3)'s equality breaks.
+# arm B: the same mutant read by the pre-folding, case-SENSITIVE counters still reads 7 and 7.
+#        Without arm B, arm A would be satisfied by any counter at all and the hazard it closes
+#        would be a hypothesis; measured, it is the reason html_norm exists.
+awk '/<\/main>/ { print "  <SECTION><h2>Extra</h2></SECTION>" } { print }' "$HTML" > "$Q_TMP/upper.html"
+if mutant_ok "$HTML" "$Q_TMP/upper.html"; then
+  q_m14_sec="$(q_sections "$Q_TMP/upper.html")";    q_m14_lab="$(q_labelled "$Q_TMP/upper.html")"
+  q_m14_cs="$(q_sections_cs "$Q_TMP/upper.html")";  q_m14_cslab="$(q_labelled_cs "$Q_TMP/upper.html")"
+  if [ "$q_m14_sec" = "8" ] && [ "$q_m14_lab" = "7" ] && [ "$q_m14_cs" = "7" ] && [ "$q_m14_cslab" = "7" ]; then
+    ok "(q14) MUTATION CONTROL FOR THE CASE FOLDING, both arms. (A) an upper-case \`<SECTION>\` written before \`</main>\` — a real, rendered, UNLABELLED eighth section, since HTML tag names are case-insensitive — reads $q_m14_sec sections against $q_m14_lab labelled, so (q3)'s equality breaks as it must. (B) on the SAME mutant the case-sensitive counters this replaced still read $q_m14_cs and $q_m14_cslab: 7 == 7, green, with an unlabelled section on the page. Arm B is what makes arm A a live hazard rather than a hypothetical one"
+  else
+    no "(q14) an upper-case <SECTION> is counted, and the case-sensitive counters demonstrably miss it" \
+       "folded: sections=$q_m14_sec (want 8) labelled=$q_m14_lab (want 7); case-sensitive: sections=$q_m14_cs labelled=$q_m14_cslab (both want 7)"
+  fi
+else
+  no "(q14) MUTATION CONTROL: the upper-case <SECTION> mutant could not be staged, so the folding is UNCONTROLLED" "mutant_ok rejected $Q_TMP/upper.html"
+fi
+
+# --- (q11) the real page is untouched by the (q5)-(q14) controls ------------------------------
 [ "$(csum "$HTML")" = "$Q_HTML_SIG_BEFORE" ] \
   && ok "(q11) every a11y mutation control above ran against a COPY — index.html is byte-identical (sha256) and no mutant was left in the bundle directory" \
   || no "(q11) index.html is byte-identical after the (q) controls" "sha256 changed"
