@@ -98,6 +98,18 @@
 #       `failed`, a stale OWNER line with FRESH FOREIGN lines still reads
 #       `failed`, and a non-integer threshold falls back to the default
 #       instead of tripping `set -u` arithmetic (AC-6)
+#   38. build-state.sh: the PRE-FIRST-EVENT window — with the run-creation seed
+#       (`<run_id>.owner`) a run stranded before any log exists reaches `failed`
+#       (38a), while a live one is left byte-identical, phase included (38b),
+#       and with no seed nothing happens at all (38c); the branch refuses a
+#       mismatched run id, a terminal status, an absent state.md and a malformed
+#       `started_at` (38d-g), and the seed's owner beats a fresh FOREIGN first
+#       log line for the age measurement (38h) without making every log-bearing
+#       run read stale (38i)
+#   39. reproject-state-on-terminal.sh: the arm that reaches a run stranded with
+#       NO log — the only path by which a run whose terminal was KILLED before
+#       its first event ever leaves `running` — plus its fresh-seed and
+#       no-seed controls
 #
 # EXIT: 0 on full pass, 1 on any failed assertion.
 
@@ -1190,6 +1202,192 @@ printf '{"event":"subtask_complete","type":"subtask_complete","session_id":"sid-
 LOOMWRIGHT_STALE_RUN_SECONDS=99999999999 bash "$PROJECTOR" "sid-case37e" "$REPO37E" >/dev/null 2>&1
 assert_eq "case37e large valid threshold keeps the same log running" "running" \
   "$(sed -nE 's/^- status:[[:space:]]*//p' "$REPO37E/.supervisor/state.md" 2>/dev/null)"
+
+echo "== 38. build-state.sh: the pre-first-event window (run-creation seed) =="
+# The window this closes: between Context-Keeper's `initialize` and the first
+# worker `SubagentStop` there is NO log, so the projector returned on its
+# log-exists guard before deriving anything and the staleness backstop could
+# never reach a run stranded there. `.supervisor/logs/<id>.owner` — written by
+# seed-run-owner.sh at run creation — supplies the two missing facts: WHO owns
+# the run and WHEN it began.
+seed38_state() {
+  # Usage: seed38_state <repo> <run-id> <status> <phase>
+  # status and phase are both REQUIRED positionally: the cases below assert on
+  # BOTH (a live run's phase must survive), so a shared default for either would
+  # disarm the assertion that depends on it.
+  local repo="$1" rid="$2" status="$3" phase="$4"
+  mkdir -p "$repo/.supervisor"
+  cat > "$repo/.supervisor/state.md" <<EOF
+## Session
+- session_id: $rid
+- status: $status
+- phase: $phase
+- task_id: task-38
+EOF
+}
+seed38_owner() {
+  # Usage: seed38_owner <repo> <run-id> <owner-cc-id> <started_at>
+  local repo="$1" rid="$2" owner="$3" started="$4"
+  mkdir -p "$repo/.supervisor/logs"
+  printf 'cc_session_id=%s\nsession_id=%s\nstarted_at=%s\n' \
+    "$owner" "$rid" "$started" > "$repo/.supervisor/logs/${rid}.owner"
+}
+st38() { sed -nE 's/^- status:[[:space:]]*//p' "$1/.supervisor/state.md" 2>/dev/null; }
+ph38() { sed -nE 's/^- phase:[[:space:]]*//p'  "$1/.supervisor/state.md" 2>/dev/null; }
+
+echo "-- 38a. STALE seed + no log -> the stranded run reaches a terminal status --"
+REPO38A="$(init_repo "feature/case38a")"
+seed38_state "$REPO38A" "auto-2026-09-05-050440" "running" "PLAN"
+seed38_owner "$REPO38A" "auto-2026-09-05-050440" "cc-owner-38a" "$STALE_TS"
+env -u LOOMWRIGHT_STALE_RUN_SECONDS bash "$PROJECTOR" "auto-2026-09-05-050440" "$REPO38A" >/dev/null 2>&1
+RC38A=$?
+assert_eq "case38a exit 0" "0" "$RC38A"
+assert_eq "case38a a run stranded before its first event reads failed" "failed" "$(st38 "$REPO38A")"
+assert_eq "case38a phase is the same terminal word a session_end produces" "LOOP" "$(ph38 "$REPO38A")"
+assert_eq "case38a non-derived keys are still preserved" "task-38" \
+  "$(sed -nE 's/^- task_id:[[:space:]]*//p' "$REPO38A/.supervisor/state.md" 2>/dev/null)"
+if [ -e "$REPO38A/.supervisor/logs/auto-2026-09-05-050440.jsonl" ]; then
+  no "case38a the projector fabricated a log event — it derives, it never writes the event stream"
+else
+  ok "case38a no hard-signal event fabricated (the projector only derives)"
+fi
+
+echo "-- 38b. control for 38a: a FRESH seed leaves the LIVE run completely alone --"
+# Without this control, 38a would also pass under a branch that closed out every
+# log-less run on sight. It additionally pins that a live run's PHASE survives:
+# writing `running`/`LOOP` here would stamp the terminal phase word onto a run
+# that is mid-PLAN, destroying information rather than adding any.
+REPO38B="$(init_repo "feature/case38b")"
+seed38_state "$REPO38B" "auto-2026-09-05-050441" "running" "PLAN"
+seed38_owner "$REPO38B" "auto-2026-09-05-050441" "cc-owner-38b" "$FRESH_TS"
+BEFORE38B="$(cksum < "$REPO38B/.supervisor/state.md")"
+env -u LOOMWRIGHT_STALE_RUN_SECONDS bash "$PROJECTOR" "auto-2026-09-05-050441" "$REPO38B" >/dev/null 2>&1
+assert_eq "case38b a live pre-event run stays running" "running" "$(st38 "$REPO38B")"
+assert_eq "case38b the live run's phase is NOT overwritten" "PLAN" "$(ph38 "$REPO38B")"
+assert_eq "case38b state.md is byte-unchanged" "$BEFORE38B" "$(cksum < "$REPO38B/.supervisor/state.md")"
+
+echo "-- 38c. control for 38a: NO seed + no log -> unchanged (pre-seed behaviour) --"
+REPO38C="$(init_repo "feature/case38c")"
+seed38_state "$REPO38C" "auto-2026-09-05-050442" "running" "PLAN"
+mkdir -p "$REPO38C/.supervisor/logs"
+BEFORE38C="$(cksum < "$REPO38C/.supervisor/state.md")"
+env -u LOOMWRIGHT_STALE_RUN_SECONDS bash "$PROJECTOR" "auto-2026-09-05-050442" "$REPO38C" >/dev/null 2>&1
+assert_eq "case38c with no seed there is nothing to measure — state.md byte-unchanged" \
+  "$BEFORE38C" "$(cksum < "$REPO38C/.supervisor/state.md")"
+
+echo "-- 38d. the seed belongs to a DIFFERENT run than state.md names -> unchanged --"
+REPO38D="$(init_repo "feature/case38d")"
+seed38_state "$REPO38D" "auto-live-run-38d" "running" "PLAN"
+seed38_owner "$REPO38D" "auto-other-run-38d" "cc-owner-38d" "$STALE_TS"
+BEFORE38D="$(cksum < "$REPO38D/.supervisor/state.md")"
+env -u LOOMWRIGHT_STALE_RUN_SECONDS bash "$PROJECTOR" "auto-other-run-38d" "$REPO38D" >/dev/null 2>&1
+assert_eq "case38d another run's verdict is not painted onto this state.md" \
+  "$BEFORE38D" "$(cksum < "$REPO38D/.supervisor/state.md")"
+
+echo "-- 38e. an ALREADY-TERMINAL state.md -> unchanged --"
+REPO38E="$(init_repo "feature/case38e")"
+seed38_state "$REPO38E" "auto-2026-09-05-050443" "completed" "LOOP"
+seed38_owner "$REPO38E" "auto-2026-09-05-050443" "cc-owner-38e" "$STALE_TS"
+BEFORE38E="$(cksum < "$REPO38E/.supervisor/state.md")"
+env -u LOOMWRIGHT_STALE_RUN_SECONDS bash "$PROJECTOR" "auto-2026-09-05-050443" "$REPO38E" >/dev/null 2>&1
+assert_eq "case38e a completed run is not re-closed as failed" "completed" "$(st38 "$REPO38E")"
+assert_eq "case38e state.md byte-unchanged" "$BEFORE38E" "$(cksum < "$REPO38E/.supervisor/state.md")"
+
+echo "-- 38f. no state.md at all -> none is CREATED (start-fresh preserved) --"
+REPO38F="$(init_repo "feature/case38f")"
+seed38_owner "$REPO38F" "auto-2026-09-05-050444" "cc-owner-38f" "$STALE_TS"
+env -u LOOMWRIGHT_STALE_RUN_SECONDS bash "$PROJECTOR" "auto-2026-09-05-050444" "$REPO38F" >/dev/null 2>&1
+if [ -e "$REPO38F/.supervisor/state.md" ]; then
+  no "case38f a log-less run created a state.md from nothing"
+else
+  ok "case38f absent state.md still means start-fresh, never a fabricated one"
+fi
+
+echo "-- 38g. a malformed started_at is treated as absent, never as arithmetic input --"
+for bad in "not-a-timestamp" "2020-01-01" ""; do
+  REPO38G="$(init_repo "feature/case38g-${bad:-empty}")"
+  seed38_state "$REPO38G" "auto-38g" "running" "PLAN"
+  seed38_owner "$REPO38G" "auto-38g" "cc-owner-38g" "$bad"
+  BEFORE38G="$(cksum < "$REPO38G/.supervisor/state.md")"
+  OUT38G="$(env -u LOOMWRIGHT_STALE_RUN_SECONDS bash "$PROJECTOR" "auto-38g" "$REPO38G" 2>&1)"
+  RC38G=$?
+  assert_eq "case38g(${bad:-empty}) exit 0" "0" "$RC38G"
+  assert_eq "case38g(${bad:-empty}) state.md byte-unchanged" "$BEFORE38G" "$(cksum < "$REPO38G/.supervisor/state.md")"
+done
+
+echo "-- 38h. the SEED owner beats a foreign first log line for the age measurement --"
+# The precedence, measured on the projector side. The log's first line is a
+# FOREIGN session with a FRESH timestamp — under the old first-line-only rule
+# that session was the owner and the run looked alive forever. The seed names
+# the true owner, who has emitted nothing, so the run's own start instant is the
+# newest owner-originated evidence and the backstop can finally see it is stale.
+REPO38H="$(init_repo "feature/case38h")"
+seed38_state "$REPO38H" "auto-38h" "running" "EXECUTE"
+seed38_owner "$REPO38H" "auto-38h" "cc-true-owner-38h" "$STALE_TS"
+printf '{"event":"subtask_complete","type":"subtask_complete","session_id":"auto-38h","cc_session_id":"cc-foreign-38h","ts":"%s"}\n' \
+  "$FRESH_TS" > "$REPO38H/.supervisor/logs/auto-38h.jsonl"
+env -u LOOMWRIGHT_STALE_RUN_SECONDS bash "$PROJECTOR" "auto-38h" "$REPO38H" >/dev/null 2>&1
+assert_eq "case38h a fresh FOREIGN first line no longer keeps a stale run alive" "failed" "$(st38 "$REPO38H")"
+
+echo "-- 38i. control for 38h: a fresh line from the SEEDED owner keeps it running --"
+# Without this control, 38h would also pass if the seed had simply made every
+# log-bearing run read stale.
+REPO38I="$(init_repo "feature/case38i")"
+seed38_state "$REPO38I" "auto-38i" "running" "EXECUTE"
+seed38_owner "$REPO38I" "auto-38i" "cc-true-owner-38i" "$STALE_TS"
+printf '{"event":"subtask_complete","type":"subtask_complete","session_id":"auto-38i","cc_session_id":"cc-true-owner-38i","ts":"%s"}\n' \
+  "$FRESH_TS" > "$REPO38I/.supervisor/logs/auto-38i.jsonl"
+env -u LOOMWRIGHT_STALE_RUN_SECONDS bash "$PROJECTOR" "auto-38i" "$REPO38I" >/dev/null 2>&1
+assert_eq "case38i a fresh OWNER line still keeps the run running" "running" "$(st38 "$REPO38I")"
+assert_eq "case38i and the run is in EXECUTE, derived from its own event" "EXECUTE" "$(ph38 "$REPO38I")"
+
+echo "== 39. reproject-state-on-terminal.sh: reaching a run stranded with NO log =="
+# Case 33 covers the arm that needs a `session_end` in the log's tail. A run
+# stranded before its first event has no log at all, and nothing else can invoke
+# the projector there — the emitters need a worker completion, and a KILLED
+# terminal never reaches `SessionEnd` so the close-out cannot fire either. This
+# arm is the only path by which such a run ever leaves `running`.
+echo "-- 39a. no log + a seed older than the threshold -> the projector is invoked --"
+REPO39A="$(init_repo "feature/case39a")"
+seed38_state "$REPO39A" "auto-39a" "running" "PLAN"
+seed38_owner "$REPO39A" "auto-39a" "cc-owner-39a" "$STALE_TS"
+# The GUARD reads mtime (cheap, no date parsing); the projector re-decides from
+# the seed's `started_at` field. Both must be stale for the flip to happen, so
+# both are set stale here — and 39b/39c below isolate which one is doing what.
+touch -t 202001010000 "$REPO39A/.supervisor/logs/auto-39a.owner" 2>/dev/null || true
+OUT39A="$( cd "$REPO39A" && env -u LOOMWRIGHT_STALE_RUN_SECONDS "$REALBASH" "$REPROJECT_HOOK" 2>&1 )"
+RC39A=$?
+assert_eq "case39a exit 0" "0" "$RC39A"
+assert_eq "case39a a log-less stranded run finally reaches a terminal status" "failed" "$(st38 "$REPO39A")"
+
+echo "-- 39b. control for 39a: a FRESH seed leaves the live run byte-identical --"
+# STATED PRECISELY, because the loose reading overclaims: this pins the
+# END-TO-END behaviour (guard + projector), not the hook's mtime guard in
+# isolation. Measured: deleting that guard entirely leaves this suite 189/189
+# green, because build-state.sh refuses the same case independently. That is
+# defence in depth working as intended, and it means the mtime guard is a COST
+# gate — it decides only whether the projector is invoked, never what it writes.
+# The correctness half is 38b, which a mutation DOES turn red.
+REPO39B="$(init_repo "feature/case39b")"
+seed38_state "$REPO39B" "auto-39b" "running" "PLAN"
+seed38_owner "$REPO39B" "auto-39b" "cc-owner-39b" "$FRESH_TS"
+BEFORE39B="$(cksum < "$REPO39B/.supervisor/state.md")"
+OUT39B="$( cd "$REPO39B" && env -u LOOMWRIGHT_STALE_RUN_SECONDS "$REALBASH" "$REPROJECT_HOOK" 2>&1 )"
+assert_eq "case39b exit 0" "0" "$?"
+assert_eq "case39b a live pre-event run is left byte-identical" "$BEFORE39B" "$(cksum < "$REPO39B/.supervisor/state.md")"
+
+echo "-- 39c. control for 39a: with NO seed nothing happens at all --"
+# Isolates the SEED as the thing that authorised 39a — 39a and 39c differ in
+# exactly one input — rather than "any log-less non-terminal state.md now gets
+# closed out". Like 39b this is an end-to-end pin: the hook's `[ -f "$OWNER_FILE" ]`
+# guard and the projector's own seed guard both refuse here.
+REPO39C="$(init_repo "feature/case39c")"
+seed38_state "$REPO39C" "auto-39c" "running" "PLAN"
+mkdir -p "$REPO39C/.supervisor/logs"
+BEFORE39C="$(cksum < "$REPO39C/.supervisor/state.md")"
+OUT39C="$( cd "$REPO39C" && env -u LOOMWRIGHT_STALE_RUN_SECONDS "$REALBASH" "$REPROJECT_HOOK" 2>&1 )"
+assert_eq "case39c exit 0" "0" "$?"
+assert_eq "case39c no seed, no reach — state.md byte-unchanged" "$BEFORE39C" "$(cksum < "$REPO39C/.supervisor/state.md")"
 
 echo "== real repo .supervisor/logs untouched =="
 assert_eq "real logs snapshot unchanged" "$REAL_BEFORE" "$(snapshot_real)"

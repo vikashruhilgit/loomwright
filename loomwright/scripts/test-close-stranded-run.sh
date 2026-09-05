@@ -22,6 +22,11 @@
 #   4.  degenerate inputs all exit 0 (AC-8): absent state.md, unreadable
 #       state.md, not-a-git-repo cwd, empty stdin (unknown owner ⇒ ADOPT),
 #       functionally-broken jq, unreadable log, malformed first log line
+#   5.  the run-creation seed (`<run_id>.owner`) makes ownership knowable before
+#       the first log line exists — a SLUG-KEYED run stranded in that window now
+#       closes out for its own session (5a) and still for NO ONE else (5b), with
+#       the seed isolated as the authorising fact (5c) and taking precedence over
+#       a foreign first log line (5d) without becoming a blanket suppression (5e)
 #
 # EXIT: 0 on full pass, 1 on any failed assertion.
 # Style mirrors test-progress-state.sh / test-token-ledger.sh.
@@ -110,6 +115,19 @@ seed_state() {
 - phase: EXECUTE
 - branch: feature/close-stranded-test
 EOF
+}
+
+seed_run_owner() {
+  # Usage: seed_run_owner <repo> <plugin-session-id> <owner-cc-session-id> [started_at]
+  # Writes the run-creation seed `seed-run-owner.sh` produces at `initialize`.
+  # `started_at` is REQUIRED to be stated by any case that depends on it and
+  # defaults only to "now" — the close-out never reads it (that is the
+  # projector's staleness anchor), so no assertion in THIS file rests on it.
+  local repo="$1" psid="$2" owner="$3"
+  local started="${4:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+  mkdir -p "$repo/.supervisor/logs"
+  printf 'cc_session_id=%s\nsession_id=%s\nstarted_at=%s\n' \
+    "$owner" "$psid" "$started" > "$repo/.supervisor/logs/${psid}.owner"
 }
 
 seed_owned_log() {
@@ -466,6 +484,94 @@ assert_eq "case4o ownerless log is not adoptable by an unrelated session" "1" \
   "$(count_lines "$LOG4O")"
 assert_eq "case4o the live run is NOT marked failed" "running" \
   "$(sed -nE 's/^- status:[[:space:]]*//p' "$REPO4O/.supervisor/state.md" 2>/dev/null)"
+
+echo "== 5. the run-creation seed makes ownership knowable BEFORE the first event =="
+# `.supervisor/logs/<run_id>.owner` is written by seed-run-owner.sh when
+# `state.md` is created. Every case here uses a SLUG-KEYED run id, because that
+# is the population the seed exists for: a `SessionEnd` payload always carries
+# the real Claude Code uuid, so the unknown-owner self-identification test
+# (payload session_id == the run id) is STRUCTURALLY unsatisfiable for a
+# synthetic `auto-…` id, and 4m's path can never rescue these runs.
+
+echo "-- 5a. slug-keyed run, no log, seed names THIS session -> closes out --"
+# The capability this change exists to add. Before the seed, this exact
+# situation (`auto-…` run stranded between `initialize` and its first worker)
+# could not reach a terminal status by any path.
+REPO5A="$(init_repo "feature/case5a")"
+seed_state "$REPO5A" "auto-2026-09-05-050440" "running"
+seed_run_owner "$REPO5A" "auto-2026-09-05-050440" "cc-owner-5a"
+OUT5A="$(run_sut "$REPO5A" "cc-owner-5a")"
+LOG5A="$REPO5A/.supervisor/logs/auto-2026-09-05-050440.jsonl"
+assert_eq "case5a exit 0" "0" "$(get_rc "$OUT5A")"
+assert_eq "case5a the seeded owner closes out a slug-keyed run with no log" "1" "$(count_lines "$LOG5A")"
+assert_eq "case5a appended record is a session_end" "session_end" "$(tail -1 "$LOG5A" | jq -r '.event // empty')"
+assert_eq "case5a status" "failed" "$(tail -1 "$LOG5A" | jq -r '.status // empty')"
+assert_eq "case5a state.md reaches a terminal status" "failed" \
+  "$(sed -nE 's/^- status:[[:space:]]*//p' "$REPO5A/.supervisor/state.md" 2>/dev/null)"
+
+echo "-- 5b. THE REGRESSION THAT MATTERS: an unrelated session still writes nothing --"
+# Identical to 5a except for WHO is ending. The seed must make the owner
+# knowable WITHOUT making the run closable by anyone else — that is the defect
+# 4n pins for the ownerless case, and the seed must not reopen it.
+REPO5B="$(init_repo "feature/case5b")"
+seed_state "$REPO5B" "auto-2026-09-05-050441" "running"
+seed_run_owner "$REPO5B" "auto-2026-09-05-050441" "cc-owner-5b"
+BEFORE5B="$(sup_snapshot "$REPO5B")"
+OUT5B="$(run_sut "$REPO5B" "cc-unrelated-session-5b")"
+LOG5B="$REPO5B/.supervisor/logs/auto-2026-09-05-050441.jsonl"
+assert_eq "case5b exit 0" "0" "$(get_rc "$OUT5B")"
+assert_eq "case5b .supervisor/ byte-unchanged (nothing written)" "$BEFORE5B" "$(sup_snapshot "$REPO5B")"
+if [ -e "$LOG5B" ]; then
+  no "case5b an unrelated session closed out a run the seed says it does not own"
+else
+  ok "case5b an unrelated session writes NOTHING into a seeded run's log"
+fi
+assert_eq "case5b the live run is NOT marked failed" "running" \
+  "$(sed -nE 's/^- status:[[:space:]]*//p' "$REPO5B/.supervisor/state.md" 2>/dev/null)"
+
+echo "-- 5c. control for 5a: WITHOUT the seed the same session writes nothing --"
+# Without this control, 5a would also pass under a guard that had simply gone
+# back to closing out any slug-keyed run for anyone — it isolates the seed as
+# the thing that authorised 5a, rather than a loosened ownership rule.
+REPO5C="$(init_repo "feature/case5c")"
+seed_state "$REPO5C" "auto-2026-09-05-050442" "running"
+mkdir -p "$REPO5C/.supervisor/logs"
+OUT5C="$(run_sut "$REPO5C" "cc-owner-5c")"
+assert_eq "case5c exit 0" "0" "$(get_rc "$OUT5C")"
+if [ -e "$REPO5C/.supervisor/logs/auto-2026-09-05-050442.jsonl" ]; then
+  no "case5c a slug-keyed run with NO seed was closed out — the seed is not what authorised 5a"
+else
+  ok "case5c no seed, no close-out (the seed is what authorises 5a)"
+fi
+assert_eq "case5c state.md left non-terminal" "running" \
+  "$(sed -nE 's/^- status:[[:space:]]*//p' "$REPO5C/.supervisor/state.md" 2>/dev/null)"
+
+echo "-- 5d. seed BEATS a foreign first log line -> the foreign session writes nothing --"
+# The divergence the precedence exists for. While the owner is unknown the
+# emitters ADOPT (deliberately — the fresh-run bootstrap), so a FOREIGN
+# session's first worker completion can land as the log's first line and make
+# that session look like the owner. The seed was recorded earlier and by the
+# session that created the run, so it wins.
+REPO5D="$(init_repo "feature/case5d")"
+seed_state "$REPO5D" "auto-2026-09-05-050443" "running"
+seed_run_owner "$REPO5D" "auto-2026-09-05-050443" "cc-true-owner-5d"
+seed_owned_log "$REPO5D" "auto-2026-09-05-050443" "cc-foreign-first-appender"
+LOG5D="$REPO5D/.supervisor/logs/auto-2026-09-05-050443.jsonl"
+OUT5D="$(run_sut "$REPO5D" "cc-foreign-first-appender")"
+assert_eq "case5d exit 0" "0" "$(get_rc "$OUT5D")"
+assert_eq "case5d a foreign first-line appender does NOT own the run" "1" "$(count_lines "$LOG5D")"
+assert_eq "case5d the live run is NOT marked failed" "running" \
+  "$(sed -nE 's/^- status:[[:space:]]*//p' "$REPO5D/.supervisor/state.md" 2>/dev/null)"
+
+echo "-- 5e. control for 5d: the SEEDED owner still closes that same run out --"
+# Without this control, 5d would also pass if the seed simply disabled close-out
+# whenever a log's first line disagreed with it.
+OUT5E="$(run_sut "$REPO5D" "cc-true-owner-5d")"
+assert_eq "case5e exit 0" "0" "$(get_rc "$OUT5E")"
+assert_eq "case5e the seeded owner appends exactly one session_end" "2" "$(count_lines "$LOG5D")"
+assert_eq "case5e appended record is a session_end" "session_end" "$(tail -1 "$LOG5D" | jq -r '.event // empty')"
+assert_eq "case5e state.md reaches a terminal status" "failed" \
+  "$(sed -nE 's/^- status:[[:space:]]*//p' "$REPO5D/.supervisor/state.md" 2>/dev/null)"
 
 echo "== real repo .supervisor untouched =="
 assert_eq "real .supervisor snapshot unchanged" "$REAL_BEFORE" "$(snapshot_real)"

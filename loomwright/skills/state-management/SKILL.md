@@ -273,10 +273,18 @@ one session, and a run that ends without completing is closed out mechanically r
 `status: running` on disk forever. Consequences you need here: a foreign session's events never join
 another run's log, and `status` can now reach the terminal `failed` without any agent writing it.
 No new status or phase word is introduced — the enums in §"State File Schema" above are unchanged.
-**`docs/TELEMETRY.md` §"Run ownership" is the authority** for the owner rule, the adopt-on-unknown-owner
-fallback (which is the EMITTERS' rule — the `SessionEnd` close-out is stricter, adopting an unknown owner
-only when the payload `session_id` IS the run id, so an unrelated session cannot mark a live run `failed`),
-the `SessionEnd` close-out, and `LOOMWRIGHT_STALE_RUN_SECONDS`; do not restate them here.
+The owner is recorded **at run creation** — `seed-run-owner.sh` (a
+`PostToolUse[Write|Edit]` hook) writes `.supervisor/logs/<run_id>.owner` the moment this file is created,
+which is what makes ownership knowable before the first worker completion writes the log's first line. That
+is a SCRIPT-owned fact: **do not add a `## Session` key an agent is instructed to fill in with a session id**
+— an agent cannot know its own Claude Code session id, and prompt-instructed bookkeeping is the miss rate
+this whole mechanism exists to delete.
+
+**`docs/TELEMETRY.md` §"Run ownership" is the authority** for the run-creation seed, the owner rule and its
+precedence, the adopt-on-unknown-owner fallback (which is the EMITTERS' rule — the `SessionEnd` close-out is
+stricter, adopting an unknown owner only when the payload `session_id` IS the run id, so an unrelated session
+cannot mark a live run `failed`), the `SessionEnd` close-out, and `LOOMWRIGHT_STALE_RUN_SECONDS`; do not
+restate them here.
 
 **Supported operations (state sections other than `## Session`):**
 

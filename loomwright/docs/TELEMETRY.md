@@ -335,7 +335,7 @@ from evidence only — it never guesses:
 |---|---|---|
 | `session_id` | the id the emitter resolved | file not written |
 | `branch` | **live** `git -C main_root branch --show-current` at projection time (a property of the checkout, not stored per-event) | field omitted |
-| `status` | **ordering rule** (PR #116 review fix, replacing "any `session_end` present"): the LAST of `{subtask_complete, session_end}` in the log decides. Last event `subtask_complete` ⇒ `running` (even when an EARLIER `session_end` exists — the multi-task `/autonomous` LOOP case, so task 1's `session_end` can't mark task 2 `completed`); last event `session_end` ⇒ its own `status` mapped into `completed \| completed_with_escalation \| failed` (unrecognized/missing status ⇒ `completed`, the closest safe closed-enum reading — not a zero-evidence guess). **Staleness backstop (v15.49.0):** a derived `running` is downgraded to `failed` when the newest **owner-originated** event in the log is older than `LOOMWRIGHT_STALE_RUN_SECONDS` (default 86400) — age is measured over owner lines ONLY (see §"Run ownership"); the backstop skips when ownership or a timestamp cannot be established, and introduces no new status word (`paused` is never emitted) | `status` is **never** omitted once the file exists — an absent `- status:` trips the `s1_status` presence guard in `hook-dispatch-on-pr-create.sh`'s Source 1 block and fails closed |
+| `status` | **ordering rule** (PR #116 review fix, replacing "any `session_end` present"): the LAST of `{subtask_complete, session_end}` in the log decides. Last event `subtask_complete` ⇒ `running` (even when an EARLIER `session_end` exists — the multi-task `/autonomous` LOOP case, so task 1's `session_end` can't mark task 2 `completed`); last event `session_end` ⇒ its own `status` mapped into `completed \| completed_with_escalation \| failed` (unrecognized/missing status ⇒ `completed`, the closest safe closed-enum reading — not a zero-evidence guess). **Staleness backstop (v15.49.0):** a derived `running` is downgraded to `failed` when the newest **owner-originated** event in the log is older than `LOOMWRIGHT_STALE_RUN_SECONDS` (default 86400) — age is measured over owner lines ONLY (see §"Run ownership"); the backstop skips when ownership or a timestamp cannot be established, and introduces no new status word (`paused` is never emitted). **Pre-first-event window:** with NO log the projector can still emit the staleness verdict alone — `failed`/`LOOP`, never `running` — measured against the run-creation seed's `started_at` (see §"Run ownership"); with no seed it exits as before | `status` is **never** omitted once the file exists — an absent `- status:` trips the `s1_status` presence guard in `hook-dispatch-on-pr-create.sh`'s Source 1 block and fails closed |
 | `phase` | same ordering rule: last event `subtask_complete` ⇒ `EXECUTE`; last event `session_end` ⇒ `LOOP` | file not written |
 | *(non-derived keys, e.g. `task_id`, `self_heal_resume_count`)* | preserved verbatim from the pre-projection `## Session` block, in original order (PR #116 review fix — this projector owns exactly the four keys above, not the whole block) | n/a — nothing to preserve on a brand-new block |
 
@@ -343,17 +343,21 @@ Both fields always land inside the closed enums in
 `skills/state-management/SKILL.md` §"State File Schema". The write is a
 **targeted in-place edit of `## Session` only** (temp-file + rename),
 preserving `## Decisions Log`, `## Phase Flags`, `## Checkpoint`, and every
-other section byte-for-byte. An absent/empty log means **no `state.md` at
-all** — start-fresh, strictly better than the pre-change failure mode (a
-stale lie left on disk). Self-test: `scripts/test-progress-state.sh`
-(fixture-driven; 161 assertions covering idempotency, every fail-safe path,
+other section byte-for-byte. An absent/empty log still means **no `state.md` is
+ever CREATED** — start-fresh, strictly better than the pre-change failure mode
+(a stale lie left on disk); the one thing it can now do is close out an
+ALREADY-EXISTING non-terminal block for the same run, and only as the staleness
+verdict (see §"Run ownership"). Self-test: `scripts/test-progress-state.sh`
+(fixture-driven; 189 assertions covering idempotency, every fail-safe path,
 the worktree-anchoring hazard from inside a real `git worktree add`, the
 Parallel-Path case, projector round-trip byte-identity, section
 preservation, the AC-5 hook-dispatch positive/negative cases, and the
 PR #116 review round's ordering rule, mkdir-lock, permission-preservation,
 non-derived-key-preservation, and `reproject-state-on-terminal.sh` cases,
 plus the run-ownership, agent-identity, and staleness-backstop cases added
-in v15.49.0 — see §"Run ownership" below).
+in v15.49.0 and the pre-first-event-window cases added with the run-creation
+seed — see §"Run ownership" below). The seed itself has its own suite,
+`scripts/test-seed-run-owner.sh`.
 
 **Honest limits of this change (not papered over):**
 
@@ -552,7 +556,14 @@ checkpointing.
 **7. A run resumed under a DIFFERENT Claude Code session id will no longer
 join its original log.** This is the accepted cost of the run-ownership gate
 below, stated plainly rather than hedged: ownership is keyed on the
-`cc_session_id` of the log's first line, so if the same logical run is
+`cc_session_id` recorded for the run — the run-creation seed for the strict
+consumers, the log's first line for the emitters (§"Run ownership") — and the
+**seed does not change this conclusion**, because it is written once at
+creation and names the ORIGINAL session; a resumed session is foreign to both
+sources alike. The one case it does decide is a run that stranded before any
+log line AND before any seed existed: the resuming session's first edit of
+`state.md` seeds it as the owner, which is correct — that session is the one
+actually running it now. So if the same logical run is
 resumed in a new Claude Code session (a `--resume`/`--continue` that the
 harness gives a fresh UUID, or a crash-and-restart), that session is a
 foreign session by this rule. Its events land in `<new-cc-uuid>.jsonl`, the
@@ -595,81 +606,84 @@ stdin + known owner ⇒ nothing written, exit 0, `state.md` still non-terminal),
 and by case 4d for the same payload against an UNKNOWN owner — see limit 9,
 which is why that case no longer adopts either.
 
-**9. A run whose log records no owner is closed out only by the session whose
-own id the run is keyed to — no other session, and never one that cannot
-identify itself.** `.supervisor/state.md` is **repo-global, not
-session-scoped**: every session anchored to the same main worktree reads the
-same `- session_id:` and `- status: running`. Before a run's first worker
-completion creates `logs/<id>.jsonl` there is no recorded owner, and the
-close-out originally ADOPTED on that unknown — which meant session A could
-start a run and an entirely unrelated session B, merely by ENDING, would
-satisfy every remaining condition and stamp `status: failed` onto A's LIVE
-run, leaving a fabricated hard-signal `session_end` (consumed by
-`build-insights.sh`) that nothing retracts. That is the same false-attribution
-class this whole change exists to remove, pointed the other way.
+**9. Ownership is now recorded AT RUN CREATION, so the pre-first-event window
+is no longer a guess.** The rule this entry used to describe is intact and
+unchanged: an unknown log owner is adoptable by the `SessionEnd` close-out
+**only** by a session whose payload `session_id` equals the run id `state.md`
+names. What changed is how often "unknown" happens.
 
-So an unknown owner is now adoptable **only** by a session whose payload
-`session_id` equals the run id `state.md` names. The narrower rule the review
-first suggested — require that equality unconditionally — was measured and
-rejected: `state.md` session ids exist in TWO shapes on disk, a Claude Code
-uuid AND a plugin slug (`auto-2026-09-05-050440`, `20260426-004614-supervisor`),
-and a uuid payload can never equal a slug, so an unconditional demand would
-have silently disabled close-out for every slug-keyed autonomous run. Applying
-it only on the unknown-owner path keeps the known-owner main path — which is
-what a real run reaches after its first event — completely untouched.
+The problem was that a run's owner became knowable only when the FIRST line of
+`.supervisor/logs/<run_id>.jsonl` was written, and that line does not exist
+until the first worker `SubagentStop`. `.supervisor/state.md` is **repo-global,
+not session-scoped** — every session anchored to the same main worktree reads
+the same `- session_id:` and `- status: running` — so across the whole
+`initialize` → ACQUIRE → PRE-FLIGHT SYNC → PLAN span (minutes, not an instant)
+nothing could tell a **stranded** run from a **live** one. Both available
+guesses were wrong: guessing *stranded* let any ending session stamp
+`status: failed` onto a LIVE run and leave a fabricated hard-signal
+`session_end` that `build-insights.sh` consumes and nothing retracts; guessing
+*live* left a stranded run non-terminal forever. And for **slug-keyed** runs the
+gap was GUARANTEED rather than incidental — `/autonomous` and `/automate` mint a
+synthetic `auto-2026-09-05-050440` id, while a `SessionEnd` payload always
+carries the real Claude Code uuid, so the self-identification test above was
+structurally unsatisfiable for them and the unknown-owner path was *unreachable*
+rather than occasionally missed.
 
-**This does NOT weaken the emitters' adopt-on-unknown rule**, and the
-distinction is the point: `emit-progress-event.sh` / `emit-token-ledger.sh`
-still ADOPT unconditionally on an unknown owner, because their protected
-property is the fresh-run bootstrap (a fresh run's first worker completion
-must join on the seeded plugin id). They can only mis-file an event. The
-close-out is the one writer that can mark a LIVE run dead, so it alone demands
-self-identification.
+**The fix is a SCRIPT-OWNED seed, not a prompt instruction.** `seed-run-owner.sh`
+runs on `PostToolUse[Write|Edit]` and writes
+`.supervisor/logs/<run_id>.owner` — `cc_session_id`, `session_id`, `started_at` —
+the moment `.supervisor/state.md` is created. See §"Run ownership" for the
+mechanism, the write-once guarantee, and why the seed takes precedence over the
+log's first line. Two properties it depends on were **measured against a live
+headless CLI session** (see §"Run ownership" for the exact invocation) rather
+than assumed: `PostToolUse[Write]` does fire for a
+SUBAGENT's Write (Context-Keeper has no Bash — see its `disallowedTools` — so
+the Write tool is the only way it can create the file), and the payload
+`session_id` for that firing is **byte-identical** to the `SessionEnd` payload's
+`session_id` for the same CLI session, which is exactly the value the close-out
+compares against. The seed is deliberately NOT written by the agent that creates
+`state.md`: that would put a fact a hook must rely on into an agent prompt, and
+this repo has measured what that costs (560 hook-written `token_ledger` events
+vs 6 agent-written `phase_transition` events — `docs/PITFALLS.md`). An agent
+also cannot know its own Claude Code session id; the hook payload is the only
+place it appears.
 
-**Residual — and it is GUARANTEED for slug-keyed runs, not incidental.** State
-this precisely, because the loose reading ("a run that ends before emitting any
-event, under a session whose id happens not to be the run id") makes it sound
-like an edge case, and for `/autonomous` and `/automate` it is not one.
+Both consumers named in the old residual now work in that window. The close-out
+takes its ordinary known-owner path (pinned by cases 5a/5b/5c/5d/5e in
+`scripts/test-close-stranded-run.sh`), and the staleness backstop — which used
+to return early on `build-state.sh`'s log-exists guard, since in this window the
+log does not exist at all — now reaches it, because the seed supplies both the
+owner and a `started_at` that counts as owner-originated evidence (cases 38a-38i
+and 39a-39c in `scripts/test-progress-state.sh`). No new `status` or `phase`
+word is introduced: the log-less branch can emit only `failed`/`LOOP`, the same
+pair a `session_end` produces, and it can write nothing else — not even
+`running` — so it can never overwrite a live run's phase.
 
-`state.md` session ids come in two shapes, and only one of them can ever
-self-identify:
+**What actually remains, stated so it is not mistaken for closed:**
 
-| Run shape | `state.md` `session_id` | Can the ending session match it? |
+| Residual | Why it remains | Recovery |
 |---|---|---|
-| session-keyed | the Claude Code session uuid | **yes** — close-out works |
-| slug-keyed (`/autonomous`, `/automate`, named Supervisor runs) | a synthetic slug (`auto-2026-09-05-050440`) minted by the loop and seeded at `initialize` | **structurally never** — a `SessionEnd` payload always carries the real uuid |
+| A run with **no seed** — every run whose `state.md` predates this release, and any run whose state file was not created through the watched Write/Edit tool path | The seed is written forward-only; nothing retro-fits an owner onto a run already in flight | The old rule verbatim: the run's OWN session can still close it out (case 4m), no other session can (4n/4o), and it otherwise stays `running` |
+| The seed stops being written if the harness ever stops firing `PostToolUse` for subagent tool calls | The plugin cannot assert a harness behaviour continuously — it was verified on 2026-09-05, not pinned | Fail-SAFE and INVISIBLE: with no seed, behaviour reverts exactly to the row above. Nothing breaks; the window simply reopens |
+| A killed terminal's run stays `running` for up to `LOOMWRIGHT_STALE_RUN_SECONDS` (default 24h) **and** until the next Bash tool call in that checkout | `SessionEnd` never fires for a killed terminal, so only the staleness backstop can reach it, and only a hook can invoke the projector | Bounded rather than permanent, which is the change — previously it was forever |
+| An owning session whose `SessionEnd` payload arrives empty or unparseable still cannot prove ownership | Unchanged from limit 8; a seeded run has a KNOWN owner, so it takes the non-owner branch | Staleness backstop, as before (case 4j) |
+| **The two emitters are NOT changed and still resolve ownership from the log's first line alone**, adopting on unknown | Non-negotiable: their protected property is the fresh-run bootstrap, and this change deliberately did not touch it | See the follow-up below |
 
-So for **every** slug-keyed run, the unknown-owner path is unreachable, and the
-exposed window is the whole span from `initialize` (Phase 0) to the first
-worker `SubagentStop` — through ACQUIRE, PRE-FLIGHT SYNC and PLAN, which is
-minutes, not an instant. A run that strands anywhere in there stays
-`status: running` **permanently**: the staleness backstop cannot rescue it
-either, and for a second reason beyond having no owner lines — the projector
-returns early on its log-exists guard (`build-state.sh`, the
-`[ -f "$LOG_FILE" ] && [ -s "$LOG_FILE" ]` test before any status derivation),
-and in this window the log does not exist at all.
-
-**This is not a regression introduced by the rule above; it is the same missing
-fact seen from the other side.** In that window NO owner is recorded, so
-nothing can distinguish "stranded" from "live". The previous behaviour guessed
-*stranded* and let any ending session close the run out — which is exactly the
-false-close-out defect entry 9 exists to fix. The current behaviour guesses
-*live*. Neither guess is correct, and no gate placed at `SessionEnd` can be:
-the real fix is to record the owning Claude Code session id **at run creation**,
-alongside the slug, so ownership is knowable before the first log line exists.
-That is tracked as follow-up work and deliberately not bolted on here — the
-seed happens in an agent prompt (`agents/context-keeper.md` `initialize`), and
-`docs/PITFALLS.md` records why agent-written state is the wrong mechanism for a
-fact a hook must rely on (560 hook-written events vs 6 agent-written).
-
-Between the two guesses this one is preferred because its failure is the
-recoverable side of the asymmetry: a stranded `running` is a stale advisory
-label a human can see and reset, whereas a live run marked `failed` writes a
-false hard signal into the log that `build-insights.sh` consumes and nothing
-retracts. Pinned by cases 4m (own session ⇒ still closes), 4n (unrelated session ⇒
-writes nothing), 4o (ownerless log, unrelated session ⇒ writes nothing) and
-4g/4e in `scripts/test-close-stranded-run.sh`; 4m is the control that stops
-the others from passing under a guard that simply disabled the path.
+**One follow-up is named rather than bundled.** Because the emitters read only
+the log's first line, their ownership gate is **inert for `/autonomous` runs**:
+those logs open with an `autonomous_session_start` line that carries no
+`cc_session_id`, so the owner reads unknown and every session adopts. A foreign
+session's worker completion can therefore still fan into a slug-keyed run's log
+during this window. Neither the close-out nor the projector is fooled by it —
+both prefer the seed, and case 5d pins that a foreign first-line appender does
+not thereby own the run — but the log itself still grows. Closing it is the same
+three-line sidecar fallback added to `loom_log_owner` in
+`emit-progress-event.sh` / `emit-token-ledger.sh`, and it would STRENGTHEN the
+gate rather than weaken adopt-on-unknown (an unknown owner would still adopt;
+it would simply be unknown less often). It is left out of this change because
+those two emitters are covered by an explicit non-negotiable and their suites
+are the load-bearing ones, so it deserves its own change and its own controls —
+not a rider on this one.
 
 ### Run ownership
 
@@ -684,14 +698,63 @@ the stale status caused the fan-in and the fan-in re-asserted the stale
 status. The Floor rendered ordinary interactive chat turns as a live
 Supervisor run.
 
-**The owner rule.** The log's FIRST line records who opened it: the owner of
-`.supervisor/logs/<PLUGIN_SESSION_ID>.jsonl` is the `cc_session_id` on that
-first line. Only that session may join the log. On an owner mismatch, both
+**The owner is recorded at RUN CREATION — `.supervisor/logs/<run_id>.owner`.**
+`seed-run-owner.sh` fires on `PostToolUse[Write|Edit]`, recognises a write to
+the main worktree's `.supervisor/state.md`, and records three `key=value` lines:
+
+```
+cc_session_id=<the Claude Code session that created this run>
+session_id=<the run id state.md names>
+started_at=<UTC ISO-8601 — the projector's staleness anchor>
+```
+
+Why a hook and not the agent that creates the file: the fact has to be readable
+BY a hook, an agent cannot know its own Claude Code session id, and
+prompt-instructed bookkeeping is measurably unreliable here (560 hook-written
+events vs 6 agent-written — `docs/PITFALLS.md`). Why this trigger: Context-Keeper
+has no Bash (`disallowedTools`), so the Write tool is the only way `initialize`
+can create `state.md`, which makes the session that wrote it the run's owner **by
+definition** — there is no "first observer claims it" race for an unrelated
+session to win. A seed driven by the already-firing `PostToolUse[Bash]` matcher
+was rejected for exactly that reason. Both harness properties it rests on were
+measured on a live `claude -p` session, not assumed: `PostToolUse[Write]` fires
+for a SUBAGENT's Write, and its `session_id` is byte-identical to the
+`SessionEnd` payload's for the same CLI session.
+
+Creation is atomic (`set -C` → `O_EXCL`), so it is **write-once**: a run's owner
+cannot change under it, and a second firing — Context-Keeper edits `state.md`
+many times per run — is a no-op. The seed is never written for a terminal run,
+and never for a run whose log already records an owner (so a
+`/supervisor --continue` resume cannot contradict the original owner).
+
+It is a **sidecar rather than a JSONL line** because the log may already have a
+first line by the time `state.md` exists (`/autonomous` appends
+`autonomous_session_start` at INIT), because the log is append-only, and because
+a new event type would grow a case in `build-insights.sh`,
+`build-loop-evidence.sh`, `build-floor.sh` and every other consumer.
+`.supervisor/logs/` already holds non-JSONL files and every consumer globs
+`*.jsonl` explicitly, so `.owner` is inert to all of them.
+
+**The fallback owner rule.** The log's FIRST line records who opened it: the
+owner of `.supervisor/logs/<PLUGIN_SESSION_ID>.jsonl` is the `cc_session_id` on
+that first line. This is the only source that existed before the seed, and it
+remains the answer for any run with no seed. Only that session may join the log.
+On an owner mismatch, both
 `emit-token-ledger.sh` and `emit-progress-event.sh` blank
 `PLUGIN_SESSION_ID`, so the firing falls back to the Claude Code UUID and
 lands in its own `<cc_uuid>.jsonl` — the owned log's line count is
 unchanged. The gate is defined AFTER the status block in each emitter, not
 before it, so the CI-pinned `running|checkpoint)` case line does not drift.
+
+**Precedence: the seed wins over the log's first line.** Where the two
+disagree, the disagreement IS the foreign-append case — while the owner is
+unknown the emitters' adopt-on-unknown rule (below) explicitly permits a
+FOREIGN session's event to land as the log's first line, whereas the seed was
+written at run creation by the session that created the run. Only the two
+STRICT consumers apply this precedence — the `SessionEnd` close-out and
+`build-state.sh` — because they are the ones a wrong owner can make write a
+false verdict. `seed-run-owner.sh` never seeds a run whose log already records
+an owner, so the two can only ever diverge that way round.
 
 **Unknown owner means ADOPT (do not invert this).** An absent, empty, or
 unreadable log, an unparseable first line, or a first line carrying no
@@ -712,8 +775,11 @@ key and the legacy `type` key, the contract `build-insights.sh` filters on
 then re-projects via `build-state.sh`. It writes nothing when `state.md` is
 already terminal, when there is no `state.md`, or when this session is not
 the run's owner — including the ownership-unprovable case in §"Honest limits"
-entry 8, where the payload arrives empty or unparseable against a log that
-has a known owner.
+entry 8, where the payload arrives empty or unparseable against a run that
+has a known owner. **A seeded run has a known owner from creation**, so it
+reaches this ordinary path during the pre-first-event window instead of the
+unknown-owner rule below; that is what makes a stranded `/autonomous` or
+`/automate` run closable at all (§"Honest limits" entry 9).
 
 **Ownership for the close-out is stricter than for the emitters**, and
 deliberately so:
@@ -724,10 +790,21 @@ deliberately so:
 | recorded, differs | divert to `<cc_uuid>.jsonl` | write nothing |
 | **not recorded** | **ADOPT** (fresh-run bootstrap) | **adopt only if the payload `session_id` IS the run id** |
 
-The emitters can only mis-file an event; the close-out can mark a LIVE run
-dead, and `state.md` is repo-global so any session can reach it. Full
-rationale, the rejected stricter variant, and the residual: §"Honest limits"
-entry 9.
+**The two columns also read DIFFERENT sources, and that asymmetry is
+deliberate.** "Log owner" above means, for the close-out, the run-creation seed
+first and the log's first line second; for the emitters it means the log's first
+line ONLY. The emitters were left unchanged because their protected property is
+the fresh-run bootstrap and the worst they can do is mis-file an event, whereas
+the close-out can mark a LIVE run dead and `state.md` is repo-global so any
+session can reach it. `build-state.sh` reads the same two sources as the
+close-out, in the same order, for the same reason — its staleness backstop can
+also turn a run `failed`. The consequence of leaving the emitters on one source
+(their gate is inert for `/autonomous` runs, whose first log line carries no
+`cc_session_id`) is named as follow-up, with the change that would close it, in
+§"Honest limits" entry 9.
+
+Full rationale, the rejected stricter variant, and the residual: §"Honest
+limits" entry 9.
 
 **`SessionEnd` is scoped to real termination — `/clear` must never close a
 run.** `SessionEnd` fires for `clear` as well as for genuine termination, and
@@ -763,9 +840,29 @@ backstop: when the derived status would be `running` but the newest
 measurement is the entire point** — measuring age over ALL lines is exactly
 what made the original loop circular, because foreign sessions kept
 appending fresh events to a finished run's log and so the log always looked
-fresh. The backstop SKIPS (never guesses a run dead) when the log's first
-line carries no `cc_session_id`, when no owner timestamp parses, or when the
-override is not a positive integer, in which case the default applies. It
+fresh. The backstop SKIPS (never guesses a run dead) when no owner can be
+resolved, when no owner timestamp parses, or when the override is not a
+positive integer, in which case the default applies.
+
+**It reaches the pre-first-event window too, via the seed.** When there is no
+log at all, `build-state.sh` used to return on its log-exists guard before any
+derivation ran, so a run stranded between `initialize` and its first worker
+completion could never be closed by anything. It now takes the seed's owner and
+treats `started_at` as owner-originated evidence — the last thing we know the
+owner did, when the owner has emitted no events of its own — and the later of
+{newest owner line, `started_at`} is what the age is measured against, so a log
+that DOES carry owner lines stays authoritative. That branch is narrow by
+construction: with no log it may write ONLY the staleness verdict
+`failed`/`LOOP`, never `running`, so it cannot overwrite a live run's phase, and
+it never brings a `state.md` into existence (an absent state file still means
+start-fresh). `reproject-state-on-terminal.sh` gains the matching cheap trigger
+— when the log is absent it checks the seed's mtime instead of the log's tail —
+because nothing else can invoke the projector in that window, and a KILLED
+terminal never reaches `SessionEnd` for the close-out to fire either. That mtime
+check is a COST gate only; the projector re-decides from `started_at` and owns
+the verdict.
+
+The backstop still
 introduces no new status word: it can only turn a derived `running` into
 `failed`, both already members of the closed enum in
 `skills/state-management/SKILL.md` §"State File Schema". `paused` is never
