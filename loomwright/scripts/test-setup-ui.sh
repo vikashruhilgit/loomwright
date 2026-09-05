@@ -4201,7 +4201,11 @@ n_wait_up "$NSHIP_PORT" || setup_fail "(n) fixture: the reference serve never ca
 # engine goes RED at (n27) instead of skipping inside its `if`.
 NG_PORT=""; NG_TOKEN=""; NG_UI=""; NG_ENGINE=""; NG_RAN=""
 n_stage_mutant() {
-  local name="$1" sedexpr="$2" d out
+  # <name> <sed expression> [serve cwd]. The cwd defaults to the fixture project; (n37)
+  # overrides it, because that control's whole subject is a serve whose LAUNCH DIRECTORY
+  # differs from the path the request body carries — the defect registers the former in place
+  # of the latter, and the two are indistinguishable when they are the same directory.
+  local name="$1" sedexpr="$2" cwd="${3:-$NPROJ}" d out
   NG_PORT=""; NG_TOKEN=""; NG_UI=""; NG_ENGINE=""
   d="$N/mut-$name"
   mkdir -p "$d/floor-ui" 2>/dev/null || return 1
@@ -4214,7 +4218,7 @@ n_stage_mutant() {
   [ -f "$NG_UI/index.html" ] || return 1
   NG_PORT="$(n_free_port)"
   case "$NG_PORT" in ''|*[!0-9]*) return 1 ;; esac
-  out="$( cd "$NPROJ" && HOME="$NHOME" bash "$NG_ENGINE" serve --registry "$N/mut-$name.json" --ui-dir "$NG_UI" --no-regen --detach --port "$NG_PORT" 2>&1 )"
+  out="$( cd "$cwd" && HOME="$NHOME" bash "$NG_ENGINE" serve --registry "$N/mut-$name.json" --ui-dir "$NG_UI" --no-regen --detach --port "$NG_PORT" 2>&1 )"
   SERVE_PIDFILES="$SERVE_PIDFILES $NG_UI/serve.pid"
   NG_TOKEN="$(n_token_of "$out")"
   [ -n "$NG_TOKEN" ] || return 1
@@ -4275,17 +4279,168 @@ else
   no "(n26) MUTATION CONTROL — PART 4 (Host)" "the host mutant could not be staged or started"
 fi
 
-# --- (n27) ANTI-VACUITY: all four controls actually EXECUTED -------------------------------
+# ===========================================================================
+# (n36)/(n37) A BODY THIS SERVER CANNOT READ IS REFUSED, NEVER TREATED AS ABSENT
+# ---------------------------------------------------------------------------
+# These sit HERE, between (n26) and (n27), rather than at the end of the group where their
+# numbers would suggest: (n37) is the fifth engine mutation control, (n27) is the anti-vacuity
+# check over ALL of them, and an anti-vacuity check that runs before the thing it is checking
+# would report a mutant it could not yet have seen as missing. Contiguous controls, one check
+# over the set, in that order.
+#
+# THE DEFECT. `_payload` branched on `Content-Length` alone. A request carrying
+# `Transfer-Encoding: chunked` has NO `Content-Length`, so it fell into the
+# `raw is None -> return {}` arm — "no body, use the defaults". For `add` the default path is
+# the directory `serve` was launched in, so a chunked POST carrying a real path in its body
+# silently registered THE SERVE CWD INSTEAD: a WRITE on a failure path, which is precisely the
+# outcome `_payload`'s own docstring says the None-vs-{} split exists to prevent. The body also
+# stayed unread on the socket. The fix reads `Transfer-Encoding` FIRST and returns None, so the
+# request is refused by name like any other body this server cannot read.
+#
+# THE FIXTURE'S ONE LOAD-BEARING PROPERTY: the serve is launched in a directory that is NOT the
+# one the request body names. When the two are the same directory, "registered the serve cwd"
+# and "registered the requested path" produce an identical registry and the control below could
+# not tell the defect from the fix.
+NCWD="$NHOME/work/chunked-serve-cwd"
+mkdir -p "$NCWD/.git" || setup_fail "(n36) fixture: could not create the distinct serve-cwd directory"
+# `add` stores what `cd -P … pwd -P` gives it, and the fixture root sits under a symlinked
+# temporary directory on this platform, so the raw fixture strings would never match a registry
+# entry. Resolve both sides the same way the engine does, once.
+NCWD_REAL="$( cd -P "$NCWD" 2>/dev/null && pwd -P )"
+NPROJ_REAL="$( cd -P "$NPROJ" 2>/dev/null && pwd -P )"
+[ -n "$NCWD_REAL" ] && [ -n "$NPROJ_REAL" ] && [ "$NCWD_REAL" != "$NPROJ_REAL" ] \
+  || setup_fail "(n36) fixture: the serve cwd and the requested path must resolve to two DIFFERENT directories, or the control below cannot discriminate (cwd='$NCWD_REAL' path='$NPROJ_REAL')"
+
+# n_reg_has <registry file> <resolved absolute path> -> "yes" / "no".
+# "no" for a registry that does not exist, because ABSENT is a defined state here and a missing
+# file must not make this read like an error.
+n_reg_has() {
+  [ -f "$1" ] || { printf 'no'; return 0; }
+  if jq -e --arg p "$2" 'any(.projects[]?; .path == $p)' "$1" >/dev/null 2>&1; then
+    printf 'yes'
+  else
+    printf 'no'
+  fi
+}
+
+# n_chunked_probe <port> <token> <origin> <json body>
+# A RAW SOCKET, because `n_req` speaks http.client and http.client ALWAYS sets Content-Length —
+# it structurally cannot emit the request this case is about. The body is properly chunk-encoded
+# (`<hexlen>\r\n<data>\r\n0\r\n\r\n`) under `Transfer-Encoding: chunked` with NO `Content-Length`:
+# a well-formed HTTP/1.1 request, not a malformed one, which is what makes it the interesting
+# case. Prints "<status><TAB><body>" exactly like n_req, and "0" — a status this suite never
+# gets from a live server — when no reply was written at all, so a dropped connection can never
+# be misread as a refusal.
+n_chunked_probe() {
+  python3 - "$1" "$2" "$3" "$4" 2>/dev/null <<'__PY_CH__'
+import socket
+import sys
+
+port = int(sys.argv[1])
+token, origin, body = sys.argv[2], sys.argv[3], sys.argv[4].encode("utf-8")
+host_hdr = ("127.0.0.1:%d" % port).encode("ascii")
+req = (b"POST /api/add HTTP/1.1\r\nHost: " + host_hdr +
+       b"\r\nOrigin: " + origin.encode("ascii") +
+       b"\r\nX-Floor-Token: " + token.encode("ascii") +
+       b"\r\nContent-Type: application/json" +
+       b"\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n" +
+       ("%x\r\n" % len(body)).encode("ascii") + body + b"\r\n0\r\n\r\n")
+s = socket.create_connection(("127.0.0.1", port), timeout=15)
+try:
+    s.sendall(req)
+except Exception:
+    # A server that refuses without draining the body may close first. Whatever it managed to
+    # write is still worth reading, so this does not abort the probe.
+    pass
+data = b""
+try:
+    while True:
+        chunk = s.recv(4096)
+        if not chunk:
+            break
+        data += chunk
+except Exception:
+    pass
+s.close()
+if not data:
+    sys.stdout.write("0\tthe connection was closed without any response being written")
+else:
+    head, _sep, rest = data.partition(b"\r\n\r\n")
+    parts = head.split(b"\r\n", 1)[0].decode("latin-1").split(" ")
+    sys.stdout.write((parts[1] if len(parts) > 1 else "0") + "\t" +
+                     rest.decode("utf-8", "replace").replace("\n", " "))
+__PY_CH__
+}
+
+# A SHIPPED-ENGINE serve of its own, launched in NCWD with its own registry and its own ui
+# directory: the runs above were all launched in the fixture project, and reusing one would make
+# the serve cwd and the requested path the same directory. Its own ui dir also keeps its pidfile
+# from displacing another run's in the cleanup list.
+NCH_UI="$N/chunk-ui"
+NCH_REG="$N/chunk-ship.json"
+bash "$ENGINE" apply --ui-dir "$NCH_UI" >/dev/null 2>&1
+[ -f "$NCH_UI/index.html" ] || setup_fail "(n36) fixture: apply did not install the bundle into $NCH_UI"
+NCH_PORT="$(n_free_port)"
+case "$NCH_PORT" in ''|*[!0-9]*) setup_fail "(n36) fixture: could not obtain a port for the chunked-body run" ;; esac
+n_ch_out="$( cd "$NCWD" && HOME="$NHOME" bash "$ENGINE" serve --registry "$NCH_REG" --ui-dir "$NCH_UI" --no-regen --detach --port "$NCH_PORT" 2>&1 )"
+SERVE_PIDFILES="$SERVE_PIDFILES $NCH_UI/serve.pid"
+NCH_TOKEN="$(n_token_of "$n_ch_out")"
+[ -n "$NCH_TOKEN" ] || setup_fail "(n36) fixture: the chunked-body serve printed no #token= :: $n_ch_out"
+n_wait_up "$NCH_PORT" || setup_fail "(n36) fixture: the chunked-body serve never came up on $NCH_PORT"
+n_ch_sig() { [ -f "$NCH_REG" ] && csum "$NCH_REG" || printf 'ABSENT'; }
+
+# --- (n36) a chunked POST to /api/add is REFUSED and writes nothing ------------------------
+# Everything else about this request is VALID — this run's token in the custom header, a
+# loopback Origin, a loopback Host, and a real absolute path inside the permitted root — so the
+# only thing it can be refused for is the one property under test. (n5) already proved the same
+# shape with a Content-Length body is accepted and really registers.
+n_ch_before="$(n_ch_sig)"
+n_ch_res="$(n_chunked_probe "$NCH_PORT" "$NCH_TOKEN" "http://127.0.0.1:$NCH_PORT" '{"path":"'"$NPROJ"'"}')"
+n_ch_after="$(n_ch_sig)"
+n_ch_cwd_in="$(n_reg_has "$NCH_REG" "$NCWD_REAL")"
+n_ch_proj_in="$(n_reg_has "$NCH_REG" "$NPROJ_REAL")"
+n_ch_bad=""
+[ "$(n_status "$n_ch_res")" = "400" ] || n_ch_bad="$n_ch_bad [status $(n_status "$n_ch_res"), expected 400 — a status of 0 would mean no reply was written at all]"
+in_str "$(n_body "$n_ch_res")" "body-not-json" || n_ch_bad="$n_ch_bad [the reply does not name body-not-json: $(n_body "$n_ch_res")]"
+[ "$n_ch_before" = "$n_ch_after" ] || n_ch_bad="$n_ch_bad [the registry changed on a refused request: before='$n_ch_before' after='$n_ch_after']"
+[ "$n_ch_cwd_in" = "no" ] || n_ch_bad="$n_ch_bad [THE SERVE CWD $NCWD_REAL WAS REGISTERED — this is the defect itself: the write landed, on a failure path, naming a directory nobody asked for]"
+[ "$n_ch_proj_in" = "no" ] || n_ch_bad="$n_ch_bad [the requested path $NPROJ_REAL was registered, so the chunked body was decoded after all and this case is testing something else]"
+[ -z "$n_ch_bad" ] \
+  && ok "(n36) a chunked POST to /api/add — valid token, custom header, loopback Origin and Host, a real absolute path in a correctly chunk-encoded body — is REFUSED 400 naming body-not-json, the registry is byte-identical across it, and the directory serve was launched in ($NCWD_REAL) was NOT registered: a body this server cannot read is refused, never treated as absent" \
+  || no "(n36) a chunked body is refused by name and registers nothing" "$n_ch_bad"
+
+# --- (n37) MUTATION CONTROL: the Transfer-Encoding check is what stops the wrong write ------
+# The one part disabled is the `Transfer-Encoding` test itself; `_payload`'s Content-Length
+# arms, and all four guard parts, stay intact — so the identical request is refused by nothing
+# and takes the pre-fix route. This is the control that proves BOTH halves of the claim: that
+# the check is load-bearing, and that the defect it closes was real rather than theoretical.
+# It must fail RED, not skip, if the mutant cannot be staged: a control that quietly disappears
+# proves exactly nothing, which is why the `else` below is a `no` and why (n27) enumerates it.
+if n_stage_mutant chunked 's|if self.headers.get("Transfer-Encoding") is not None:|if False:|' "$NCWD"; then
+  n_ch_mut_reg="$N/mut-chunked.json"
+  n_ch_mut_res="$(n_chunked_probe "$NG_PORT" "$NG_TOKEN" "http://127.0.0.1:$NG_PORT" '{"path":"'"$NPROJ"'"}')"
+  n_ch_mut_st="$(n_status "$n_ch_mut_res")"
+  n_ch_mut_cwd="$(n_reg_has "$n_ch_mut_reg" "$NCWD_REAL")"
+  n_ch_mut_proj="$(n_reg_has "$n_ch_mut_reg" "$NPROJ_REAL")"
+  [ "$n_ch_mut_st" = "200" ] && [ "$n_ch_mut_cwd" = "yes" ] && [ "$n_ch_mut_proj" = "no" ] \
+    && ok "(n37) MUTATION CONTROL — the chunked body: the SHIPPED engine refused this exact request 400 body-not-json and wrote nothing; with the Transfer-Encoding check ALONE disabled it SUCCEEDS ($n_ch_mut_st) and registers THE WRONG DIRECTORY — $NCWD_REAL, the one serve was launched in, in place of the $NPROJ_REAL the body asked for — so the check is load-bearing and the silent wrong write it prevents was real" \
+    || no "(n37) MUTATION CONTROL: removing the Transfer-Encoding check lets a chunked body register the serve cwd" \
+         "the mutant answered $n_ch_mut_st (expected 200); serve-cwd registered=$n_ch_mut_cwd (expected yes); requested-path registered=$n_ch_mut_proj (expected no) :: $(n_body "$n_ch_mut_res")"
+else
+  no "(n37) MUTATION CONTROL — the chunked body" "the chunked mutant could not be staged or started, so the Transfer-Encoding check is UNCONTROLLED"
+fi
+
+# --- (n27) ANTI-VACUITY: all five mutation controls actually EXECUTED -------------------------------
 # Each control lives inside an `if mutant_ok`. A sed that stops matching the engine makes that
 # `if` false, and the control then disappears — neither red nor green — which is exactly how
 # the previous (h2) died. This turns that silence into a failure.
 n_missing=""
-for npart in token header origin host; do
+for npart in token header origin host chunked; do
   case " $NG_RAN " in *" $npart "*) ;; *) n_missing="$n_missing $npart" ;; esac
 done
 [ -z "$n_missing" ] \
-  && ok "(n27) ANTI-VACUITY: all four guard mutants passed mutant_ok and their controls EXECUTED — none of (n23)-(n26) was skipped inside its if" \
-  || no "(n27) ANTI-VACUITY: all four guard mutation controls executed" "these mutants never ran:$n_missing — their sed no longer matches the engine, so the corresponding guard part is UNCONTROLLED"
+  && ok "(n27) ANTI-VACUITY: all five engine mutants — the four guard parts and the chunked-body check — passed mutant_ok and their controls EXECUTED: none of (n23)-(n26) or (n37) was skipped inside its if" \
+  || no "(n27) ANTI-VACUITY: all five mutation controls executed" "these mutants never ran:$n_missing — their sed no longer matches the engine, so the corresponding check is UNCONTROLLED"
 
 # --- (n28) the shipped engine and bundle are untouched by every (n) mutant -----------------
 n_eng_after="$(csum "$ENGINE")"

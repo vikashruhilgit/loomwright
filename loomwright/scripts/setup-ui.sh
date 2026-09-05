@@ -1109,6 +1109,14 @@ TOKEN_HEADER = sys.argv[7]
 TOKEN = os.environ.pop("LOOM_UI_TOKEN", "")
 
 # The loopback names a `Host` header may carry, with and without the port suffix.
+# `[::1]` IS CURRENTLY UNREACHABLE and is kept deliberately, not by oversight: the listener binds
+# `127.0.0.1` (IPv4 only - see the FloorServer construction below), so no connection can arrive
+# over IPv6 and no request can legitimately carry that Host. It is listed so the allowlist stays
+# a complete statement of "the loopback spellings", and so the check does not silently start
+# refusing valid traffic if the bind ever becomes dual-stack. Accepting it costs nothing today:
+# the connection must already have arrived on the loopback socket, so a Host header that lies
+# about which loopback spelling was used widens nothing. Do NOT read this line as evidence that
+# dual-stack binding exists - it does not.
 ALLOWED_HOSTS = set()
 for _h in ("127.0.0.1", "localhost", "[::1]"):
     ALLOWED_HOSTS.add(_h)
@@ -1137,7 +1145,7 @@ REFUSALS = {
     "path-not-a-directory": "that path does not resolve to an existing directory",
     "path-outside-permitted-root": "that path resolves outside the permitted root; a symlink that escapes is refused exactly like a literal one",
     "slug-malformed": "that is not a slug this module could have written",
-    "body-not-json": "the request body was supplied and is not a JSON object this server can read",
+    "body-not-json": "the request body was supplied and is not a JSON object this server can read (a chunked body counts: this server does not decode one, and will not treat it as absent)",
     "token-missing-or-wrong": "no valid per-run token in the " + TOKEN_HEADER + " header",
     "origin-not-this-server": "the Origin header is absent or is not this server",
     "host-not-loopback": "the Host header is not a loopback name",
@@ -1272,6 +1280,16 @@ class FloorHandler(SimpleHTTPRequestHandler):
         be REFUSED. Collapsing the two would make a malformed request silently register the
         directory `serve` was launched in - a WRITE on a failure path, which is exactly what
         this module's refuse-and-name-the-reason contract exists to prevent."""
+        # TRANSFER-ENCODING FIRST, and this order is the whole fix. This server never decodes a
+        # chunked body, and a chunked request carries NO Content-Length - so reading
+        # Content-Length first sent it into the `raw is None -> {}` arm, i.e. "no body, use the
+        # defaults". For `add` the default is the directory `serve` was launched in, so a chunked
+        # POST carrying a real path REGISTERED THE SERVE CWD INSTEAD - silently, on a failure
+        # path, which is precisely the outcome the docstring above says this None/{} split exists
+        # to prevent. The body also stayed unread on the socket. A body this server cannot read is
+        # REFUSED, exactly like one it cannot parse; it is never treated as absent.
+        if self.headers.get("Transfer-Encoding") is not None:
+            return None
         raw = self.headers.get("Content-Length")
         if raw is None:
             return {}
