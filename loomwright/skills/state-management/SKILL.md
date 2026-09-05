@@ -274,7 +274,9 @@ one session, and a run that ends without completing is closed out mechanically r
 another run's log, and `status` can now reach the terminal `failed` without any agent writing it.
 No new status or phase word is introduced — the enums in §"State File Schema" above are unchanged.
 **`docs/TELEMETRY.md` §"Run ownership" is the authority** for the owner rule, the adopt-on-unknown-owner
-fallback, the `SessionEnd` close-out, and `LOOMWRIGHT_STALE_RUN_SECONDS`; do not restate them here.
+fallback (which is the EMITTERS' rule — the `SessionEnd` close-out is stricter, adopting an unknown owner
+only when the payload `session_id` IS the run id, so an unrelated session cannot mark a live run `failed`),
+the `SessionEnd` close-out, and `LOOMWRIGHT_STALE_RUN_SECONDS`; do not restate them here.
 
 **Supported operations (state sections other than `## Session`):**
 
