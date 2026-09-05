@@ -131,6 +131,58 @@ if [ -f "$STATE_MD" ]; then
   esac
 fi
 
+# ---- Run ownership gate ------------------------------------------------------
+# Byte-parallel with emit-token-ledger.sh's gate of the same name — read that
+# file's comment for the full rationale; the two are deliberately kept identical
+# and must be changed together.
+#
+# A `running`/`checkpoint` status alone is NOT sufficient authority to join a
+# run's log: a run that ended WITHOUT emitting `session_end` leaves that status
+# on disk forever, so every later session's SubagentStop appends to that one
+# run's log, and build-state.sh then re-derives `running` from the newest
+# FOREIGN `subtask_complete` it just wrote. The stale status causes the fan-in
+# and the fan-in re-asserts the stale status.
+#
+# The log's FIRST line records who opened it. Only that session may join it.
+#
+# UNKNOWN OWNER MEANS ADOPT (non-negotiable — do NOT invert this): an absent,
+# empty, or unreadable log, an unparseable first line, or a first line with no
+# `cc_session_id` all yield an empty owner, which ADOPTS the plugin session id
+# exactly as before. Refusing on unknown owner would regress the very first
+# worker completion of every fresh run.
+loom_log_owner() {
+  # Echo the `cc_session_id` on the FIRST line of the given log, or NOTHING
+  # when no owner is recorded. Always returns 0 — "no owner" and "cannot tell"
+  # are the same answer here, and both mean ADOPT.
+  local _log="${1:-}" _first=""
+  [ -n "$_log" ] && [ -f "$_log" ] && [ -r "$_log" ] || return 0
+  _first="$(head -1 "$_log" 2>/dev/null || true)"
+  [ -n "$_first" ] || return 0
+  # Probe jq FUNCTIONALLY, never `command -v` alone. A broken jq yields an empty
+  # owner, i.e. ADOPT, which is the fail-safe direction.
+  printf '{}' | jq -e . >/dev/null 2>&1 || return 0
+  printf '%s' "$_first" | jq -r '.cc_session_id // empty' 2>/dev/null || true
+  return 0
+}
+
+if [ -n "$PLUGIN_SESSION_ID" ]; then
+  _log_owner="$(loom_log_owner "${LOG_DIR}/${PLUGIN_SESSION_ID}.jsonl" || true)"
+  _log_owner="$(printf '%s' "$_log_owner" | tr -cd 'A-Za-z0-9_-' || true)"
+  if [ -n "$_log_owner" ]; then
+    # An owner IS recorded — this firing may join only if it is that session.
+    _payload_session_id=""
+    if printf '{}' | jq -e . >/dev/null 2>&1; then
+      _payload_session_id="$(printf '%s' "$INPUT" | jq -r '.session_id // empty' 2>/dev/null || true)"
+      _payload_session_id="$(printf '%s' "$_payload_session_id" | tr -cd 'A-Za-z0-9_-' || true)"
+    fi
+    if [ "$_log_owner" != "$_payload_session_id" ]; then
+      # Foreign session → fall back to the CC uuid so this line lands in
+      # `<cc_uuid>.jsonl` and the owned log stops growing.
+      PLUGIN_SESSION_ID=""
+    fi
+  fi
+fi
+
 export UTC_TS PLUGIN_SESSION_ID SESSION_BRANCH="$session_branch"
 
 # ---- Build one JSONL line (or empty → no-op) ---------------------------------
@@ -167,10 +219,21 @@ event = {
 if cc_session_id:
     event["cc_session_id"] = cc_session_id
 
-for opt in ("agent_type", "agent_id"):
-    val = payload.get(opt)
-    if isinstance(val, str) and val:
-        event[opt] = val
+# `agent_type`: PAYLOAD ONLY, else the key is OMITTED ENTIRELY — never an empty
+# string, never null, never invented. Byte-parallel with emit-token-ledger.sh:
+# NEITHER emitter derives `agent_type` from the matcher it was registered under,
+# because a matcher does not discriminate — grouping untyped events by `agent_id`
+# on the live log yields a fixed 2 `token_ledger` : 1 `subtask_complete` in every
+# bucket, so the single `loomwright:worker` block runs on the same untyped
+# payloads as the three ledger blocks. Stamping the name of a block onto those
+# payloads would INVENT an identity we do not have.
+agent_type = payload.get("agent_type")
+if isinstance(agent_type, str) and agent_type:
+    event["agent_type"] = agent_type
+
+agent_id = payload.get("agent_id")
+if isinstance(agent_id, str) and agent_id:
+    event["agent_id"] = agent_id
 
 branch = os.environ.get("SESSION_BRANCH", "")
 if branch:

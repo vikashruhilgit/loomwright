@@ -180,6 +180,17 @@
         ]
       }
     ],
+    "SessionEnd": [
+      {
+        "matcher": "logout|prompt_input_exit|other",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/close-stranded-run.sh\" || true"
+          }
+        ]
+      }
+    ],
     "SessionStart": [
       {
         "hooks": [

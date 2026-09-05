@@ -335,7 +335,7 @@ from evidence only — it never guesses:
 |---|---|---|
 | `session_id` | the id the emitter resolved | file not written |
 | `branch` | **live** `git -C main_root branch --show-current` at projection time (a property of the checkout, not stored per-event) | field omitted |
-| `status` | **ordering rule** (PR #116 review fix, replacing "any `session_end` present"): the LAST of `{subtask_complete, session_end}` in the log decides. Last event `subtask_complete` ⇒ `running` (even when an EARLIER `session_end` exists — the multi-task `/autonomous` LOOP case, so task 1's `session_end` can't mark task 2 `completed`); last event `session_end` ⇒ its own `status` mapped into `completed \| completed_with_escalation \| failed` (unrecognized/missing status ⇒ `completed`, the closest safe closed-enum reading — not a zero-evidence guess) | `status` is **never** omitted once the file exists — an absent `- status:` trips the `s1_status` presence guard in `hook-dispatch-on-pr-create.sh`'s Source 1 block and fails closed |
+| `status` | **ordering rule** (PR #116 review fix, replacing "any `session_end` present"): the LAST of `{subtask_complete, session_end}` in the log decides. Last event `subtask_complete` ⇒ `running` (even when an EARLIER `session_end` exists — the multi-task `/autonomous` LOOP case, so task 1's `session_end` can't mark task 2 `completed`); last event `session_end` ⇒ its own `status` mapped into `completed \| completed_with_escalation \| failed` (unrecognized/missing status ⇒ `completed`, the closest safe closed-enum reading — not a zero-evidence guess). **Staleness backstop (v15.49.0):** a derived `running` is downgraded to `failed` when the newest **owner-originated** event in the log is older than `LOOMWRIGHT_STALE_RUN_SECONDS` (default 86400) — age is measured over owner lines ONLY (see §"Run ownership"); the backstop skips when ownership or a timestamp cannot be established, and introduces no new status word (`paused` is never emitted) | `status` is **never** omitted once the file exists — an absent `- status:` trips the `s1_status` presence guard in `hook-dispatch-on-pr-create.sh`'s Source 1 block and fails closed |
 | `phase` | same ordering rule: last event `subtask_complete` ⇒ `EXECUTE`; last event `session_end` ⇒ `LOOP` | file not written |
 | *(non-derived keys, e.g. `task_id`, `self_heal_resume_count`)* | preserved verbatim from the pre-projection `## Session` block, in original order (PR #116 review fix — this projector owns exactly the four keys above, not the whole block) | n/a — nothing to preserve on a brand-new block |
 
@@ -346,12 +346,14 @@ preserving `## Decisions Log`, `## Phase Flags`, `## Checkpoint`, and every
 other section byte-for-byte. An absent/empty log means **no `state.md` at
 all** — start-fresh, strictly better than the pre-change failure mode (a
 stale lie left on disk). Self-test: `scripts/test-progress-state.sh`
-(fixture-driven; 117 assertions covering idempotency, every fail-safe path,
+(fixture-driven; 161 assertions covering idempotency, every fail-safe path,
 the worktree-anchoring hazard from inside a real `git worktree add`, the
 Parallel-Path case, projector round-trip byte-identity, section
 preservation, the AC-5 hook-dispatch positive/negative cases, and the
 PR #116 review round's ordering rule, mkdir-lock, permission-preservation,
-non-derived-key-preservation, and `reproject-state-on-terminal.sh` cases).
+non-derived-key-preservation, and `reproject-state-on-terminal.sh` cases,
+plus the run-ownership, agent-identity, and staleness-backstop cases added
+in v15.49.0 — see §"Run ownership" below).
 
 **Honest limits of this change (not papered over):**
 
@@ -546,6 +548,231 @@ bookkeeping this whole change deletes; the branch-guard above is the
 narrower, mechanical fix for the one failure mode this window actually
 produces (a hard-erroring resume), not a reintroduction of per-phase
 checkpointing.
+
+**7. A run resumed under a DIFFERENT Claude Code session id will no longer
+join its original log.** This is the accepted cost of the run-ownership gate
+below, stated plainly rather than hedged: ownership is keyed on the
+`cc_session_id` of the log's first line, so if the same logical run is
+resumed in a new Claude Code session (a `--resume`/`--continue` that the
+harness gives a fresh UUID, or a crash-and-restart), that session is a
+foreign session by this rule. Its events land in `<new-cc-uuid>.jsonl`, the
+original run's log stops receiving them, and `build-state.sh` will project
+the original run's status from the evidence that log already holds — which,
+once the staleness threshold elapses, reads `failed`. The resumed work is
+not lost and nothing blocks: the events are all on disk, just split across
+two files, and `/insights` and the postmortem readers aggregate across log
+files. The trade is deliberate — a split log for a genuinely resumed run is
+strictly cheaper than the alternative it replaces, which was one finished
+run silently capturing 140 later sessions' events. Do **not** close this by
+widening ownership to "any session whose id appears anywhere in the log":
+that is the measure-over-all-lines mistake that made the original loop
+circular.
+
+**8. A close-out whose SessionEnd payload is empty or unparseable does not
+fire, and the run stays stranded.** `close-stranded-run.sh` identifies itself
+from the payload's `session_id`. When stdin arrives empty or unparseable
+there is no `cc_session_id` to compare, so a log that has a KNOWN owner —
+the normal state of any real run past its first worker completion, and
+therefore exactly the 140-session incident this work exists to close — takes
+the non-owner branch and the script writes nothing. It exits 0 silently, with
+no error and no signal.
+
+This is deliberate and is **not** closed by writing anyway. The script cannot
+distinguish "I am the owner but my payload was lost" from "a different,
+still-LIVE session owns this run", and writing on that ambiguity would stamp
+`status: failed` onto a live run — the same false-positive corruption the
+`clear` guard exists to prevent, and strictly worse than the condition it
+would be trying to fix. The asymmetry decides it: a stranded run is
+recoverable, a wrongly-closed live run is not.
+
+**Recovery path:** `LOOMWRIGHT_STALE_RUN_SECONDS` (default 86400), the
+staleness backstop in `build-state.sh` described above — a derived `running`
+whose newest owner-originated event is older than the threshold is downgraded
+to `failed` without needing any `session_end` to land. So the run does reach a
+terminal status; it reaches it on the backstop's timescale rather than
+immediately. Note the empty-owner case is different and unaffected: an
+UNKNOWN owner still ADOPTS, so a fresh run's first close-out is not blocked.
+Pinned by case 4j in `scripts/test-close-stranded-run.sh` (empty stdin +
+known owner ⇒ nothing written, exit 0, `state.md` still non-terminal).
+
+### Run ownership
+
+**The problem this exists to stop.** Both emitters used to join a run's log
+whenever `.supervisor/state.md` read `status: running`/`checkpoint`. A run
+that ended WITHOUT emitting `session_end` left that status on disk forever,
+so every later session's SubagentStop appended to that one run's log —
+measured on this repo: **14,416 lines, 3.9 MB, 140 distinct
+`cc_session_id`s** in a single file. `build-state.sh` then re-derived
+`running` from the newest FOREIGN `subtask_complete` in that same log, so
+the stale status caused the fan-in and the fan-in re-asserted the stale
+status. The Floor rendered ordinary interactive chat turns as a live
+Supervisor run.
+
+**The owner rule.** The log's FIRST line records who opened it: the owner of
+`.supervisor/logs/<PLUGIN_SESSION_ID>.jsonl` is the `cc_session_id` on that
+first line. Only that session may join the log. On an owner mismatch, both
+`emit-token-ledger.sh` and `emit-progress-event.sh` blank
+`PLUGIN_SESSION_ID`, so the firing falls back to the Claude Code UUID and
+lands in its own `<cc_uuid>.jsonl` — the owned log's line count is
+unchanged. The gate is defined AFTER the status block in each emitter, not
+before it, so the CI-pinned `running|checkpoint)` case line does not drift.
+
+**Unknown owner means ADOPT (do not invert this).** An absent, empty, or
+unreadable log, an unparseable first line, or a first line carrying no
+`cc_session_id` all yield an empty owner, and an empty owner adopts the
+plugin session id exactly as before. A broken or missing `jq` (probed
+functionally, never by `command -v` alone) also yields an empty owner, i.e.
+adopt. This direction is load-bearing: refusing on unknown owner would
+regress the very first worker completion of every fresh run, because the log
+does not exist yet at that point and there is nothing to be the owner of.
+
+**Session close-out (`SessionEnd` → `close-stranded-run.sh`).** The gate
+stops the fan-in; it does not by itself make a stranded run terminal. The
+plugin's `SessionEnd` hook runs `scripts/close-stranded-run.sh`, which
+appends exactly ONE `session_end` record carrying `status: failed` and
+`reason: session_ended_without_completion` — with BOTH the canonical `event`
+key and the legacy `type` key, the contract `build-insights.sh` filters on
+(see `docs/RESULT_SCHEMAS.md` §"`session_end` JSONL hard-signal fields") —
+then re-projects via `build-state.sh`. It writes nothing when `state.md` is
+already terminal, when there is no `state.md`, or when this session is not
+the run's owner — including the ownership-unprovable case in §"Honest limits"
+entry 8, where the payload arrives empty or unparseable against a log that
+has a known owner.
+
+**`SessionEnd` is scoped to real termination — `/clear` must never close a
+run.** `SessionEnd` fires for `clear` as well as for genuine termination, and
+`cc_session_id` is STABLE across `/clear` within one CLI process. A user
+running `/clear` mid-run therefore presents a NON-TERMINAL `state.md` with a
+MATCHING owner: every condition above is satisfied, and an unscoped hook would
+write `status: failed` over a run that is still executing — corrupting state
+in the OPPOSITE direction from the fan-in this work exists to close. Two
+layers stop it: `hooks.json` registers the hook under
+`"matcher": "logout|prompt_input_exit|other"`, and the script itself exits 0
+writing nothing when the payload's `.reason` is exactly `clear`. The in-script
+layer is a **DENY-LIST, never an allow-list**: an absent, empty, or
+unparseable reason PROCEEDS, because the no-`reason` payload is the main path
+(the self-tests emit exactly that), and because a stranded run is recoverable
+via the staleness backstop while a wrongly-closed live run is not. Pinned by
+cases 4k (`clear` ⇒ no-op) and 4l (`logout` ⇒ still closes out) in
+`scripts/test-close-stranded-run.sh`; 4l is the control that stops 4k from
+passing under a blanket suppression of every reason-bearing payload.
+
+`failed` is the only status it emits; `paused` is never
+used, because `paused` is classified LIVE by
+`hook-dispatch-on-pr-create.sh` and DEAD by both emitters, so emitting it
+would put two consumers in disagreement about the same file. Like the
+emitters, it is fail-SAFE by construction and always exits 0 — it can never
+block session teardown.
+
+**`LOOMWRIGHT_STALE_RUN_SECONDS` (default 86400).** A close-out only fires
+if the session that owned the run actually reaches `SessionEnd`; a killed
+terminal or a crashed host never does. `build-state.sh` therefore carries a
+backstop: when the derived status would be `running` but the newest
+**owner-originated** event in the log is older than
+`LOOMWRIGHT_STALE_RUN_SECONDS`, it emits `failed` instead. **Owner-only
+measurement is the entire point** — measuring age over ALL lines is exactly
+what made the original loop circular, because foreign sessions kept
+appending fresh events to a finished run's log and so the log always looked
+fresh. The backstop SKIPS (never guesses a run dead) when the log's first
+line carries no `cc_session_id`, when no owner timestamp parses, or when the
+override is not a positive integer, in which case the default applies. It
+introduces no new status word: it can only turn a derived `running` into
+`failed`, both already members of the closed enum in
+`skills/state-management/SKILL.md` §"State File Schema". `paused` is never
+emitted by this projector.
+
+**Agent identity on emitted lines (`agent_type`).** The real `SubagentStop`
+payload frequently carries no `agent_type` at all. Both emitters resolve it the
+**same way** — from the payload only — and neither ever invents it:
+
+| Emitter | Resolution order |
+|---|---|
+| `emit-progress-event.sh` | payload `agent_type` → key **omitted** (no env fallback) |
+| `emit-token-ledger.sh` | payload `agent_type` → key **omitted** (no env fallback) |
+
+In both cases "omitted" means the key is absent entirely — never an empty
+string, never `null`.
+
+**A matcher does not identify the agent — measured, not assumed.** An earlier
+revision of this change injected the matcher's own name into
+`emit-progress-event.sh` through a `LOOMWRIGHT_AGENT_TYPE` env var set by the
+`loomwright:worker` hook entry, on the claim that a single matcher "provably
+discriminates". **That claim is false and the mechanism was removed.** Grouping
+untyped events by `agent_id` on the live log yields a fixed **2 `token_ledger` :
+1 `subtask_complete`** in every bucket — (2,1)×125, (18,9)×107, (24,12)×63,
+(22,11)×61, (4,2)×45, (26,13)×37. The single `loomwright:worker` block therefore
+runs on the **same untyped payloads** as the three ledger blocks. Registering an
+emitter under one matcher prevents DUPLICATION; it proves nothing about
+DISCRIMINATION. Injecting `loomwright:worker` would have stamped that identity
+onto thousands of completions that are not workers — and the injected literal
+was single-prefix, while the payload vocabulary is doubled-prefix
+(`loomwright:loomwright:worker`), so it would not have matched even on a real
+worker.
+
+`emit-token-ledger.sh` has had **no** env fallback for the same reason: it is
+registered under THREE `SubagentStop` matchers that only discriminate when the
+payload already carries an `agent_type` (see the duplicate guard below: 94/94
+typed firings emitted 1 line, 4,376/4,376 untyped emitted 2, so more than one
+block runs for an untyped payload). Adopting the identity of whichever matcher
+happened to run would be a **guess in exactly the population where we have no
+identity**, and it would also defeat the byte-identity dedupe guard — two lines
+differing only in a fabricated `agent_type` can never compare equal. The
+standing rule is: **`agent_type` is never invented.**
+
+**Accepted limit, not a gap.** The consequence is that **most Floor lanes will
+still read `identity unknown`**, because the hook layer genuinely cannot tell
+which agent fired: the payload is the only trustworthy source and it usually
+carries nothing. That is an honest limit of the current hook surface. Closing it
+requires a payload that actually carries `agent_type` — not a matcher-derived
+substitute, which would only replace "unknown" with "wrong".
+
+**Adjacent-duplicate guard (confirmed, not assumed).**
+`emit-token-ledger.sh` is registered under three `SubagentStop` matchers
+(`loomwright:code-reviewer`, `loomwright:qa-executor`,
+`loomwright:supervisor-runner`). They are **not** mutually exclusive in
+practice: they only discriminate when the payload actually carries an
+`agent_type`. Measured on the live log: **94/94** typed firings emitted
+exactly 1 line, and **4,376/4,376** untyped firings emitted exactly 2 — the
+duplication is perfectly correlated with the absence of `agent_type`, and
+typed agents were never duplicated.
+
+**Open question — why 2 and not 3.** Three blocks are registered but only two
+lines were measured per untyped firing, so exactly one block's emitter
+produces nothing. What is established from the repo: an emitter handed empty
+stdin writes no line and exits 0 (probed directly); both
+`validate-qa-result.py` and `validate-supervisor-result.py` read stdin to EOF
+via `result_block_parser.extract_payload()`, and each sits in the same matcher
+block AHEAD of that block's ledger command, whereas the `code-reviewer`
+block's preceding hook is `type: prompt` (not a stdin-consuming subprocess);
+and all three registrations landed in a single commit, so "the third block was
+added after the measurement" is ruled out. **One datum refutes the shared-stdin
+explanation:** the `loomwright:worker` block has the SAME shape — a
+stdin-reading Python validator (`validate-worker-result.py`) at entry 0 and an
+emitter at entry 1 — and its emitter demonstrably DOES write (the
+`subtask_complete` lines counted in the ratio above). So a preceding
+stdin-consuming validator does not silence the emitter behind it, which sharpens
+the prediction to **3** rather than explaining 2. What is NOT established: a
+stdin-consumed explanation predicts **1** surviving line if the hook runner
+shares one stdin stream across the entries of a block, and **3** if it hands
+each command its own copy — neither yields 2, and the datum above argues
+against the sharing variant. Deciding between them requires
+observing the harness's stdin delivery semantics, which this repo does not
+pin. Recorded as unresolved rather than guessed; the guard below is correct
+either way, since it keys on byte-identity and not on a duplicate count.
+
+The guard is minimal and consecutive-only: skip the append when the line is
+byte-identical to the log's CURRENT last line. Duplicate blocks fire
+back-to-back within one firing, so they are always adjacent. Byte-identity
+spans `ts`, `agent_id` and the transcript byte count together. That is
+**vanishingly unlikely to collide, not impossible**: `ts` is only
+second-granularity, `agent_id` is OMITTED for exactly the untyped population
+this guard targets, and parallel worker completion is a designed feature — so
+a collision requires two distinct completions in the same second, with an
+identical transcript byte count, and no `agent_id` on either. The failure
+direction is benign and one-way: the loser is one **advisory** ledger line,
+silently dropped. No state, decision, or gate reads it. Reading only the last
+line keeps this O(1) on a large log, and every failure absorbs to the normal
+append path.
 
 ### Script-location convention
 

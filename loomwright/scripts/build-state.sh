@@ -60,6 +60,21 @@
 #               | subtask_complete => "EXECUTE"; last event |
 #               | is session_end => "LOOP"                  |
 #
+# STALENESS BACKSTOP (LOOMWRIGHT_STALE_RUN_SECONDS, default 86400): a derived
+# `running` whose newest OWNER-ORIGINATED event is older than the threshold is
+# reported as `failed` instead. Age is measured over OWNER lines ONLY — lines
+# whose `cc_session_id` equals the one on the log's FIRST line. Measuring over
+# ALL lines is precisely what made the original failure circular: foreign
+# sessions kept appending fresh `subtask_complete` events to a finished run's
+# log, so the log always LOOKED fresh and `running` was re-asserted forever.
+# When ownership cannot be established (no `cc_session_id` on the first line) or
+# a timestamp cannot be parsed, the backstop SKIPS — it never guesses a run dead.
+#
+# The status vocabulary this projector emits is UNCHANGED by the backstop:
+# `failed` is already in the set below. `paused` is NEVER emitted (frozen
+# decision D2 — it is classified live by hook-dispatch-on-pr-create.sh and dead
+# by both emitters, so emitting it would put two consumers in disagreement).
+#
 # `status` is NEVER omitted once the file is written — an absent `- status:`
 # trips the `[ -n "$s1_status" ]` presence guard (the `s1_status` variable in
 # `hook-dispatch-on-pr-create.sh`'s Source 1 block) and fails the
@@ -68,7 +83,9 @@
 # Schema" (phase: INIT|ACQUIRE|PLAN|EXECUTE|FINALIZE|SELF_HEAL|LOOP; status:
 # running|paused|completed|completed_with_escalation|failed) — verified: this
 # projector only ever emits EXECUTE|LOOP and running|completed|
-# completed_with_escalation|failed, all members of those sets.
+# completed_with_escalation|failed, all members of those sets. The staleness
+# backstop introduces NO new status word — it can only turn a derived `running`
+# into `failed`, both already in that list.
 #
 # An empty/absent log means NO `state.md` at all — start-fresh, strictly
 # better than the pre-change failure mode (a stale lie left on disk).
@@ -171,6 +188,72 @@ case "$LAST_RELEVANT_EVENT" in
     exit 0
     ;;
 esac
+
+# ---- Staleness backstop -----------------------------------------------------
+# A run whose OWNER stopped emitting long ago is not running, whatever the last
+# event in the log says. Without this, a run that ends without a `session_end`
+# leaves `running` on disk permanently, which is exactly what let a finished run
+# capture 140 later sessions' events.
+#
+# MEASURED OVER OWNER LINES ONLY. The owner is the `cc_session_id` on the log's
+# FIRST line. Measuring over every line would re-create the original circularity:
+# foreign appends kept the log looking fresh forever.
+LOOMWRIGHT_STALE_RUN_SECONDS="${LOOMWRIGHT_STALE_RUN_SECONDS:-86400}"
+case "$LOOMWRIGHT_STALE_RUN_SECONDS" in
+  ''|*[!0-9]*) LOOMWRIGHT_STALE_RUN_SECONDS=86400 ;;   # non-integer override → default, never `set -u` arithmetic on it
+esac
+
+iso_to_epoch() {
+  # Convert a strict UTC ISO-8601 `YYYY-MM-DDTHH:MM:SSZ` string to epoch
+  # seconds. Returns non-zero (and prints nothing) when it cannot.
+  local _iso="${1:-}" _e=""
+  case "$_iso" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) ;;
+    *) return 1 ;;
+  esac
+  # GNU first, then BSD — the same never-assume-a-flavor convention this file
+  # already applies to `stat` (see the permission-mode block below). Both
+  # flavors reject the other's flag cleanly here, and the numeric guard below
+  # catches anything that slips through, so neither platform can produce
+  # garbage that reaches arithmetic.
+  _e="$(date -u -d "$_iso" +%s 2>/dev/null)"
+  case "$_e" in
+    ''|*[!0-9]*) _e="$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$_iso" +%s 2>/dev/null)" ;;
+  esac
+  case "$_e" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  printf '%s\n' "$_e"
+}
+
+if [ "$STATUS" = "running" ]; then
+  LOG_OWNER="$(head -1 "$LOG_FILE" 2>/dev/null | jq -r '.cc_session_id // empty' 2>/dev/null || true)"
+  LOG_OWNER="$(printf '%s' "$LOG_OWNER" | tr -cd 'A-Za-z0-9_-' || true)"
+  if [ -n "$LOG_OWNER" ]; then
+    # UTC ISO-8601 sorts lexicographically in chronological order, so `sort |
+    # tail -1` is the newest owner-originated timestamp without any date math.
+    # SANITISE BOTH SIDES IDENTICALLY. $owner has already been through
+    # `tr -cd 'A-Za-z0-9_-'` above, so comparing it against a RAW
+    # `.cc_session_id` would make every owner id containing a stripped
+    # character match NOTHING — the backstop would silently find no owner
+    # lines and skip. The gsub below applies the same character class to the
+    # log side, so the two are compared in the same normalised space.
+    NEWEST_OWNER_TS="$(jq -R -r --arg owner "$LOG_OWNER" \
+      'fromjson? | select(((.cc_session_id // "") | gsub("[^A-Za-z0-9_-]";"")) == $owner) | (.ts // empty)' \
+      "$LOG_FILE" 2>/dev/null | sort | tail -1)"
+    if [ -n "${NEWEST_OWNER_TS:-}" ]; then
+      _now="$(date -u +%s 2>/dev/null)"
+      # Command substitution discards the callee's exit status, so validate the
+      # VALUE — an empty string reaching `$(( ))` under `set -u` is a silent trap.
+      _then="$(iso_to_epoch "$NEWEST_OWNER_TS" 2>/dev/null || true)"
+      case "$_now" in ''|*[!0-9]*) _now="" ;; esac
+      case "${_then:-}" in ''|*[!0-9]*) _then="" ;; esac
+      if [ -n "$_now" ] && [ -n "$_then" ] && [ "$((_now - _then))" -ge "$LOOMWRIGHT_STALE_RUN_SECONDS" ]; then
+        STATUS="failed"
+      fi
+    fi
+  fi
+fi
 
 [ -n "$STATUS" ] && [ -n "$PHASE" ] || exit 0
 

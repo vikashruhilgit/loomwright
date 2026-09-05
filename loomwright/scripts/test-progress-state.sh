@@ -83,6 +83,22 @@
 #   34. reproject-state-on-terminal.sh: no-op, no side effects, when
 #       state.md does not exist at all
 #
+# --- Run ownership + session close-out (2026-09-05 brief) ---
+#   35. emitter: RUN OWNERSHIP GATE (loom_log_owner) — owner joins (AC-1);
+#       foreign session lands in <foreign>.jsonl with the owned log's line
+#       COUNT unchanged (AC-2); absent / empty / unreadable / no-cc_session_id
+#       first line each ADOPT, asserted separately (AC-3); a functionally
+#       broken jq exits 0 and ADOPTS (AC-8)
+#   36. emitter: agent identity — PAYLOAD ONLY: a set LOOMWRIGHT_AGENT_TYPE is
+#       IGNORED (never invented), a payload-supplied agent_type IS carried
+#       through (positive control), key ABSENT when the payload has none
+#       (has("agent_type")==false, not "" and not null) (AC-7)
+#   37. build-state.sh: staleness backstop (LOOMWRIGHT_STALE_RUN_SECONDS) —
+#       fresh owner line stays running (control), stale owner line reads
+#       `failed`, a stale OWNER line with FRESH FOREIGN lines still reads
+#       `failed`, and a non-integer threshold falls back to the default
+#       instead of tripping `set -u` arithmetic (AC-6)
+#
 # EXIT: 0 on full pass, 1 on any failed assertion.
 
 set -u
@@ -200,15 +216,48 @@ build_curated_path() {
 }
 
 # run_emitter <workdir> <payload-file-or--empty> [extra PATH exclusions]
+# LOOMWRIGHT_AGENT_TYPE is UNSET here so a developer export cannot supply the
+# field case 36c asserts is absent. This is a SCRUB, never a default — case 36a
+# sets the var explicitly through run_emitter_agent to prove it is IGNORED.
 run_emitter() {
   local wd="$1" payload="$2" exclude="${3:-}"
   local path; path="$(build_curated_path "$exclude")"
   local out rc
   if [ "$payload" = "--empty" ]; then
-    out="$( cd "$wd" && PATH="$path" "$REALBASH" "$EMITTER" </dev/null 2>&1 )"
+    out="$( cd "$wd" && unset LOOMWRIGHT_AGENT_TYPE && PATH="$path" "$REALBASH" "$EMITTER" </dev/null 2>&1 )"
   else
-    out="$( cd "$wd" && PATH="$path" "$REALBASH" "$EMITTER" < "$payload" 2>&1 )"
+    out="$( cd "$wd" && unset LOOMWRIGHT_AGENT_TYPE && PATH="$path" "$REALBASH" "$EMITTER" < "$payload" 2>&1 )"
   fi
+  rc=$?
+  printf '%s\n' "$out"
+  printf 'RC=%s\n' "$rc"
+}
+
+# run_emitter_agent <workdir> <payload-file> <LOOMWRIGHT_AGENT_TYPE value>
+# Same contract as run_emitter, with the agent-type env var set EXPLICITLY by
+# the calling case (36a/36b) — which assert the SUT IGNORES it. Mirrors
+# test-token-ledger.sh run_sut_agent.
+run_emitter_agent() {
+  local wd="$1" payload="$2" atv="$3"
+  local path; path="$(build_curated_path "")"
+  local out rc
+  out="$( cd "$wd" && PATH="$path" LOOMWRIGHT_AGENT_TYPE="$atv" "$REALBASH" "$EMITTER" < "$payload" 2>&1 )"
+  rc=$?
+  printf '%s\n' "$out"
+  printf 'RC=%s\n' "$rc"
+}
+
+# run_emitter_brokenjq <workdir> <payload-file>
+# jq is PRESENT and EXECUTABLE on PATH but always fails — the case
+# `command -v jq` structurally cannot detect, and the reason the SUT probes jq
+# functionally (AC-8).
+run_emitter_brokenjq() {
+  local wd="$1" payload="$2"
+  local path; path="$(build_curated_path "jq")"
+  printf '#!/bin/sh\nexit 1\n' > "$path/jq"
+  chmod +x "$path/jq"
+  local out rc
+  out="$( cd "$wd" && unset LOOMWRIGHT_AGENT_TYPE && PATH="$path" "$REALBASH" "$EMITTER" < "$payload" 2>&1 )"
   rc=$?
   printf '%s\n' "$out"
   printf 'RC=%s\n' "$rc"
@@ -408,7 +457,13 @@ WT11="$REPO11-subtask-wt"
 git -C "$REPO11" worktree add -q -b subtask/case11-a "$WT11" >/dev/null 2>&1
 CLEANUP_WORKTREES+=("$REPO11|$WT11")
 P11="$PAYLOAD_DIR/p11.json"
-make_payload "$P11" "sid-case11-cc-fallback" "loomwright:worker" "a11-from-worktree"
+# SAME cc session id as the seed above, deliberately: the seed OPENED the log,
+# so it is the recorded owner, and the real Parallel Path fires every worktree
+# SubagentStop from that one Claude session. This case's subject is worktree
+# ANCHORING (main-checkout log + SESSION branch), which is orthogonal to run
+# ownership — carrying a foreign id here would silently convert it into an
+# ownership test. Ownership itself is asserted separately in case 35.
+make_payload "$P11" "sid-case11" "loomwright:worker" "a11-from-worktree"
 OUT11="$(run_emitter "$WT11" "$P11")"
 assert_eq "case11 exit 0" "0" "$(get_rc "$OUT11")"
 if [ -d "$WT11/.supervisor" ]; then
@@ -427,8 +482,10 @@ echo "== 12. AC-6: worktree-cwd token_ledger emission lands in the SAME log file
 TRANSCRIPT12="$PAYLOAD_DIR/transcript12.jsonl"
 printf 'ABCDEFGHIJ' > "$TRANSCRIPT12"   # 10 bytes
 P12="$PAYLOAD_DIR/p12.json"
+# Same-owner id for the same reason as case 11 — the subject here is the log
+# FILE the ledger lands in, not who may join the run.
 jq -n --arg tp "$TRANSCRIPT12" '{
-  session_id: "sid-case12-cc-fallback",
+  session_id: "sid-case11",
   agent_type: "loomwright:code-reviewer",
   agent_id: "a12-reviewer",
   agent_transcript_path: $tp
@@ -861,6 +918,278 @@ if [ -f "$REPO34/.supervisor/state.md" ]; then
 else
   ok "case34 no state.md created when none existed"
 fi
+
+echo "== 35. emitter: run ownership gate (loom_log_owner) =="
+# The log's FIRST line records who opened the run; a `running` state.md is NOT
+# on its own sufficient authority to join it (that insufficiency is the bug
+# this gate fixes). Each sub-case gets its OWN repo, because the emitter
+# re-projects state.md after every firing.
+count_lines() { wc -l < "$1" 2>/dev/null | tr -d '[:space:]'; }
+
+seed_owned_run() {
+  # Usage: seed_owned_run <repo> <plugin-session-id> <owner-cc-session-id>
+  # Writes a one-line log whose FIRST line records the owner, plus a `running`
+  # state.md naming the run. Both ids are REQUIRED positionally and neither has
+  # a default: a case must state the owner it asserts against, so no shared
+  # fixture default can disarm the assertion under test.
+  local repo="$1" psid="$2" owner="$3"
+  mkdir -p "$repo/.supervisor/logs"
+  printf '{"event":"subtask_complete","type":"subtask_complete","session_id":"%s","cc_session_id":"%s"}\n' \
+    "$psid" "$owner" > "$repo/.supervisor/logs/${psid}.jsonl"
+  seed_running_state "$repo" "$psid"
+}
+
+seed_running_state() {
+  # Usage: seed_running_state <repo> <plugin-session-id>
+  local repo="$1" psid="$2"
+  mkdir -p "$repo/.supervisor"
+  cat > "$repo/.supervisor/state.md" <<EOF
+## Session
+- session_id: $psid
+- status: running
+- phase: EXECUTE
+- branch: feature/ownership
+EOF
+}
+
+make_cc_payload() {
+  # Usage: make_cc_payload <file> <cc-session-id> <agent-id>
+  local file="$1" cc="$2" aid="$3"
+  jq -n --arg sid "$cc" --arg aid "$aid" '{
+    session_id: $sid,
+    agent_id: $aid,
+    agent_type: "loomwright:worker",
+    hook_event_name: "SubagentStop",
+    last_assistant_message: "## WORKER_RESULT\n- status: completed\n"
+  }' > "$file"
+}
+
+echo "-- 35a. owner matches -> still joins the plugin session id (AC-1) --"
+REPO35A="$(init_repo "feature/case35a")"
+seed_owned_run "$REPO35A" "sid-owner-35" "cc-owner-35"
+OWNLOG35="$REPO35A/.supervisor/logs/sid-owner-35.jsonl"
+P35A="$PAYLOAD_DIR/p35a.json"
+make_cc_payload "$P35A" "cc-owner-35" "a35-owner"
+OUT35A="$(run_emitter "$REPO35A" "$P35A")"
+assert_eq "case35a exit 0" "0" "$(get_rc "$OUT35A")"
+assert_eq "case35a owned log grew by exactly one line" "2" "$(count_lines "$OWNLOG35")"
+assert_eq "case35a joined on the PLUGIN session id" "sid-owner-35" \
+  "$(tail -1 "$OWNLOG35" | jq -r '.session_id')"
+if [ -f "$REPO35A/.supervisor/logs/cc-owner-35.jsonl" ]; then
+  no "case35a owner was wrongly diverted to its own cc-uuid log"
+else
+  ok "case35a no cc-uuid log for the owner (joined, not diverted)"
+fi
+
+echo "-- 35b. foreign session -> own log file, owned log line COUNT unchanged (AC-2) --"
+REPO35B="$(init_repo "feature/case35b")"
+seed_owned_run "$REPO35B" "sid-owner-35b" "cc-owner-35b"
+OWNLOG35B="$REPO35B/.supervisor/logs/sid-owner-35b.jsonl"
+COUNT35B_BEFORE="$(count_lines "$OWNLOG35B")"
+P35B="$PAYLOAD_DIR/p35b.json"
+make_cc_payload "$P35B" "cc-foreign-35b" "a35-foreign"
+OUT35B="$(run_emitter "$REPO35B" "$P35B")"
+assert_eq "case35b exit 0" "0" "$(get_rc "$OUT35B")"
+FOREIGNLOG35="$REPO35B/.supervisor/logs/cc-foreign-35b.jsonl"
+if [ -f "$FOREIGNLOG35" ]; then ok "case35b line landed in <foreign-uuid>.jsonl"; else no "case35b foreign log missing"; fi
+assert_eq "case35b owned log line count UNCHANGED" "$COUNT35B_BEFORE" "$(count_lines "$OWNLOG35B")"
+assert_eq "case35b foreign line carries the foreign id" "cc-foreign-35b" \
+  "$(tail -1 "$FOREIGNLOG35" 2>/dev/null | jq -r '.session_id')"
+
+echo "-- 35c. ABSENT log -> ADOPT (AC-3) --"
+REPO35C="$(init_repo "feature/case35c")"
+seed_running_state "$REPO35C" "sid-adopt-absent"
+mkdir -p "$REPO35C/.supervisor/logs"
+P35C="$PAYLOAD_DIR/p35c.json"
+make_cc_payload "$P35C" "cc-any-35c" "a35c"
+OUT35C="$(run_emitter "$REPO35C" "$P35C")"
+assert_eq "case35c exit 0" "0" "$(get_rc "$OUT35C")"
+assert_eq "case35c adopted the plugin session id (absent log)" "sid-adopt-absent" \
+  "$(tail -1 "$REPO35C/.supervisor/logs/sid-adopt-absent.jsonl" 2>/dev/null | jq -r '.session_id')"
+if [ -f "$REPO35C/.supervisor/logs/cc-any-35c.jsonl" ]; then
+  no "case35c refused on an absent log (must ADOPT)"
+else
+  ok "case35c no cc-uuid fallback log (absent log ADOPTS)"
+fi
+
+echo "-- 35d. EMPTY log -> ADOPT (AC-3) --"
+REPO35D="$(init_repo "feature/case35d")"
+seed_running_state "$REPO35D" "sid-adopt-empty"
+mkdir -p "$REPO35D/.supervisor/logs"
+: > "$REPO35D/.supervisor/logs/sid-adopt-empty.jsonl"
+P35D="$PAYLOAD_DIR/p35d.json"
+make_cc_payload "$P35D" "cc-any-35d" "a35d"
+OUT35D="$(run_emitter "$REPO35D" "$P35D")"
+assert_eq "case35d exit 0" "0" "$(get_rc "$OUT35D")"
+assert_eq "case35d adopted the plugin session id (empty log)" "sid-adopt-empty" \
+  "$(tail -1 "$REPO35D/.supervisor/logs/sid-adopt-empty.jsonl" 2>/dev/null | jq -r '.session_id')"
+if [ -f "$REPO35D/.supervisor/logs/cc-any-35d.jsonl" ]; then
+  no "case35d refused on an empty log (must ADOPT)"
+else
+  ok "case35d no cc-uuid fallback log (empty log ADOPTS)"
+fi
+
+echo "-- 35e. UNREADABLE log -> ADOPT (AC-3) --"
+# Seeded with a FOREIGN owner deliberately: a gate that COULD read this file
+# would REJECT and divert to cc-any-35e.jsonl, so the absence of that file is a
+# discriminating assertion. The adopted append to a mode-000 file fails and is
+# absorbed (fail-SAFE), hence the unchanged-line-count assertion.
+REPO35E="$(init_repo "feature/case35e")"
+seed_running_state "$REPO35E" "sid-adopt-unreadable"
+mkdir -p "$REPO35E/.supervisor/logs"
+UNREADABLE35="$REPO35E/.supervisor/logs/sid-adopt-unreadable.jsonl"
+printf '{"event":"subtask_complete","type":"subtask_complete","session_id":"sid-adopt-unreadable","cc_session_id":"cc-someone-else"}\n' > "$UNREADABLE35"
+chmod 000 "$UNREADABLE35" 2>/dev/null || true
+P35E="$PAYLOAD_DIR/p35e.json"
+make_cc_payload "$P35E" "cc-any-35e" "a35e"
+OUT35E="$(run_emitter "$REPO35E" "$P35E")"
+assert_eq "case35e exit 0" "0" "$(get_rc "$OUT35E")"
+if [ -f "$REPO35E/.supervisor/logs/cc-any-35e.jsonl" ]; then
+  no "case35e refused on an unreadable log (must ADOPT, not divert)"
+else
+  ok "case35e no cc-uuid fallback log (unreadable log ADOPTS)"
+fi
+chmod 644 "$UNREADABLE35" 2>/dev/null || true
+assert_eq "case35e unreadable log left untouched" "1" "$(count_lines "$UNREADABLE35")"
+
+echo "-- 35f. first line carries NO cc_session_id -> ADOPT (AC-3) --"
+REPO35F="$(init_repo "feature/case35f")"
+seed_running_state "$REPO35F" "sid-adopt-noowner"
+mkdir -p "$REPO35F/.supervisor/logs"
+NOOWNER35="$REPO35F/.supervisor/logs/sid-adopt-noowner.jsonl"
+printf '{"event":"subtask_complete","type":"subtask_complete","session_id":"sid-adopt-noowner"}\n' > "$NOOWNER35"
+P35F="$PAYLOAD_DIR/p35f.json"
+make_cc_payload "$P35F" "cc-any-35f" "a35f"
+OUT35F="$(run_emitter "$REPO35F" "$P35F")"
+assert_eq "case35f exit 0" "0" "$(get_rc "$OUT35F")"
+assert_eq "case35f adopted (log grew) with no owner recorded" "2" "$(count_lines "$NOOWNER35")"
+assert_eq "case35f adopted line joined on the plugin sid" "sid-adopt-noowner" \
+  "$(tail -1 "$NOOWNER35" | jq -r '.session_id')"
+if [ -f "$REPO35F/.supervisor/logs/cc-any-35f.jsonl" ]; then
+  no "case35f refused when no owner was recorded (must ADOPT)"
+else
+  ok "case35f no cc-uuid fallback log (unrecorded owner ADOPTS)"
+fi
+
+echo "-- 35g. functionally-broken jq -> exit 0 and ADOPT (AC-8) --"
+REPO35G="$(init_repo "feature/case35g")"
+seed_owned_run "$REPO35G" "sid-brokenjq-35" "cc-owner-brokenjq-35"
+BROKENLOG35="$REPO35G/.supervisor/logs/sid-brokenjq-35.jsonl"
+P35G="$PAYLOAD_DIR/p35g.json"
+make_cc_payload "$P35G" "cc-foreign-brokenjq-35" "a35g"
+OUT35G="$(run_emitter_brokenjq "$REPO35G" "$P35G")"
+assert_eq "case35g exit 0 with a broken jq" "0" "$(get_rc "$OUT35G")"
+assert_eq "case35g broken jq ADOPTS (owned log grew)" "2" "$(count_lines "$BROKENLOG35")"
+if [ -f "$REPO35G/.supervisor/logs/cc-foreign-brokenjq-35.jsonl" ]; then
+  no "case35g broken jq took the refuse branch (must fail SAFE to ADOPT)"
+else
+  ok "case35g broken jq did not divert to a cc-uuid log"
+fi
+
+echo "== 36. emitter: agent identity — PAYLOAD ONLY, env IGNORED (AC-7) =="
+# One repo PER sub-case: the emitter re-projects state.md after each firing, so
+# a shared repo would make the second and third payloads depend on the
+# ownership gate diverting them — coupling an agent-identity assertion to a
+# different mechanism.
+REPO36A="$(init_repo "feature/case36a")"
+P36A="$PAYLOAD_DIR/p36a.json"
+jq -n '{session_id:"sid-case36a", agent_id:"a36a", hook_event_name:"SubagentStop"}' > "$P36A"
+# 36a — a SET env var must NOT reach the line. There is no env fallback in
+# either emitter: the `loomwright:worker` matcher does not discriminate (grouping
+# untyped live-log events by agent_id gives a fixed 2 token_ledger : 1
+# subtask_complete per bucket), so injecting its name would fabricate identity.
+# Absence asserted as key absence — NOT `== ""` and NOT `== null`, mirroring
+# test-token-ledger.sh case18a.
+OUT36A="$(run_emitter_agent "$REPO36A" "$P36A" "loomwright:worker")"
+assert_eq "case36a exit 0" "0" "$(get_rc "$OUT36A")"
+assert_eq "case36a LOOMWRIGHT_AGENT_TYPE is IGNORED (key absent, never invented)" "false" \
+  "$(tail -1 "$REPO36A/.supervisor/logs/sid-case36a.jsonl" 2>/dev/null | jq -r 'has("agent_type")')"
+
+REPO36B="$(init_repo "feature/case36b")"
+P36B="$PAYLOAD_DIR/p36b.json"
+# 36b — POSITIVE CONTROL for 36a and 36c: the field is not simply always
+# absent. A payload that CARRIES agent_type still emits it verbatim, in the
+# real DOUBLED-prefix vocabulary the live log uses, and the env value loses.
+jq -n '{session_id:"sid-case36b", agent_id:"a36b", agent_type:"loomwright:loomwright:code-reviewer", hook_event_name:"SubagentStop"}' > "$P36B"
+OUT36B="$(run_emitter_agent "$REPO36B" "$P36B" "loomwright:env-must-lose")"
+assert_eq "case36b exit 0" "0" "$(get_rc "$OUT36B")"
+assert_eq "case36b payload agent_type is emitted verbatim (env ignored)" "loomwright:loomwright:code-reviewer" \
+  "$(tail -1 "$REPO36B/.supervisor/logs/sid-case36b.jsonl" 2>/dev/null | jq -r '.agent_type // empty')"
+
+REPO36C="$(init_repo "feature/case36c")"
+P36C="$PAYLOAD_DIR/p36c.json"
+jq -n '{session_id:"sid-case36c", agent_id:"a36c", hook_event_name:"SubagentStop"}' > "$P36C"
+OUT36C="$(run_emitter "$REPO36C" "$P36C")"
+assert_eq "case36c exit 0" "0" "$(get_rc "$OUT36C")"
+LINE36C="$(tail -1 "$REPO36C/.supervisor/logs/sid-case36c.jsonl" 2>/dev/null)"
+# Absence asserted as key absence — NOT `== ""` and NOT `== null`, either of
+# which a present-but-empty key would satisfy.
+assert_eq "case36c agent_type key ABSENT when the payload supplies none" "false" \
+  "$(printf '%s' "$LINE36C" | jq -r 'has("agent_type")')"
+assert_eq "case36c the event line is still written" "subtask_complete" \
+  "$(printf '%s' "$LINE36C" | jq -r '.event')"
+
+echo "== 37. build-state.sh: staleness backstop (LOOMWRIGHT_STALE_RUN_SECONDS) (AC-6) =="
+STALE_TS="2020-01-01T00:00:00Z"
+FRESH_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+echo "-- 37a. fresh OWNER line -> still running (the control that keeps 37b honest) --"
+REPO37A="$(init_repo "feature/case37a")"
+mkdir -p "$REPO37A/.supervisor/logs"
+printf '{"event":"subtask_complete","type":"subtask_complete","session_id":"sid-case37a","cc_session_id":"cc-owner-37a","ts":"%s"}\n' \
+  "$FRESH_TS" > "$REPO37A/.supervisor/logs/sid-case37a.jsonl"
+env -u LOOMWRIGHT_STALE_RUN_SECONDS bash "$PROJECTOR" "sid-case37a" "$REPO37A" >/dev/null 2>&1
+assert_eq "case37a fresh owner line stays running" "running" \
+  "$(sed -nE 's/^- status:[[:space:]]*//p' "$REPO37A/.supervisor/state.md" 2>/dev/null)"
+
+echo "-- 37b. stale OWNER line -> failed --"
+REPO37B="$(init_repo "feature/case37b")"
+mkdir -p "$REPO37B/.supervisor/logs"
+printf '{"event":"subtask_complete","type":"subtask_complete","session_id":"sid-case37b","cc_session_id":"cc-owner-37b","ts":"%s"}\n' \
+  "$STALE_TS" > "$REPO37B/.supervisor/logs/sid-case37b.jsonl"
+env -u LOOMWRIGHT_STALE_RUN_SECONDS bash "$PROJECTOR" "sid-case37b" "$REPO37B" >/dev/null 2>&1
+RC37B=$?
+assert_eq "case37b exit 0" "0" "$RC37B"
+assert_eq "case37b stale owner line reads failed" "failed" \
+  "$(sed -nE 's/^- status:[[:space:]]*//p' "$REPO37B/.supervisor/state.md" 2>/dev/null)"
+
+echo "-- 37c. stale OWNER line WITH fresh FOREIGN lines -> STILL failed (the load-bearing one) --"
+# This is the exact production shape: a finished run's log kept looking fresh
+# because 140 later sessions appended to it. Age must be measured over OWNER
+# lines only, or the projector re-asserts `running` forever.
+REPO37C="$(init_repo "feature/case37c")"
+mkdir -p "$REPO37C/.supervisor/logs"
+{
+  printf '{"event":"subtask_complete","type":"subtask_complete","session_id":"sid-case37c","cc_session_id":"cc-owner-37c","ts":"%s"}\n' "$STALE_TS"
+  printf '{"event":"subtask_complete","type":"subtask_complete","session_id":"sid-case37c","cc_session_id":"cc-foreign-one","ts":"%s"}\n' "$FRESH_TS"
+  printf '{"event":"subtask_complete","type":"subtask_complete","session_id":"sid-case37c","cc_session_id":"cc-foreign-two","ts":"%s"}\n' "$FRESH_TS"
+} > "$REPO37C/.supervisor/logs/sid-case37c.jsonl"
+env -u LOOMWRIGHT_STALE_RUN_SECONDS bash "$PROJECTOR" "sid-case37c" "$REPO37C" >/dev/null 2>&1
+assert_eq "case37c fresh FOREIGN lines do not refresh a stale OWNER run" "failed" \
+  "$(sed -nE 's/^- status:[[:space:]]*//p' "$REPO37C/.supervisor/state.md" 2>/dev/null)"
+
+echo "-- 37d. non-integer LOOMWRIGHT_STALE_RUN_SECONDS -> default, no set -u arithmetic trip --"
+for bad in "abc" "" "12.5" "-1"; do
+  SLUG="$(printf '%s' "$bad" | tr -cd 'a-z0-9')"
+  REPO37D="$(init_repo "feature/case37d-${SLUG:-empty}")"
+  mkdir -p "$REPO37D/.supervisor/logs"
+  printf '{"event":"subtask_complete","type":"subtask_complete","session_id":"sid-case37d","cc_session_id":"cc-owner-37d","ts":"%s"}\n' \
+    "$STALE_TS" > "$REPO37D/.supervisor/logs/sid-case37d.jsonl"
+  OUT37D="$(LOOMWRIGHT_STALE_RUN_SECONDS="$bad" bash "$PROJECTOR" "sid-case37d" "$REPO37D" 2>&1)"
+  RC37D=$?
+  assert_eq "case37d(${bad:-empty}) exit 0" "0" "$RC37D"
+  assert_eq "case37d(${bad:-empty}) falls back to the default threshold" "failed" \
+    "$(sed -nE 's/^- status:[[:space:]]*//p' "$REPO37D/.supervisor/state.md" 2>/dev/null)"
+done
+
+echo "-- 37e. a VALID large threshold is honoured (keeps 37d's fallback claim discriminating) --"
+REPO37E="$(init_repo "feature/case37e")"
+mkdir -p "$REPO37E/.supervisor/logs"
+printf '{"event":"subtask_complete","type":"subtask_complete","session_id":"sid-case37e","cc_session_id":"cc-owner-37e","ts":"%s"}\n' \
+  "$STALE_TS" > "$REPO37E/.supervisor/logs/sid-case37e.jsonl"
+LOOMWRIGHT_STALE_RUN_SECONDS=99999999999 bash "$PROJECTOR" "sid-case37e" "$REPO37E" >/dev/null 2>&1
+assert_eq "case37e large valid threshold keeps the same log running" "running" \
+  "$(sed -nE 's/^- status:[[:space:]]*//p' "$REPO37E/.supervisor/state.md" 2>/dev/null)"
 
 echo "== real repo .supervisor/logs untouched =="
 assert_eq "real logs snapshot unchanged" "$REAL_BEFORE" "$(snapshot_real)"

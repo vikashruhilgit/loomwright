@@ -129,6 +129,62 @@ if [ -f "$STATE_MD" ]; then
     *) PLUGIN_SESSION_ID="" ;;   # stale completed/failed → do not join to finished run
   esac
 fi
+
+# ---- Run ownership gate ------------------------------------------------------
+# A `running`/`checkpoint` status alone is NOT sufficient authority to join a
+# run's log: a run that ended WITHOUT emitting `session_end` leaves that status
+# on disk forever, and every later session's SubagentStop then appends to that
+# one run's log (measured: 14,416 lines / 140 distinct `cc_session_id`s in a
+# single file). The stale status caused the fan-in and the fan-in re-asserted
+# the stale status, because build-state.sh derives `running` from the newest
+# foreign `subtask_complete` in that same log.
+#
+# The log's FIRST line records who opened it. Only that session may join it.
+#
+# UNKNOWN OWNER MEANS ADOPT (non-negotiable — do NOT invert this): an absent,
+# empty, or unreadable log, an unparseable first line, or a first line with no
+# `cc_session_id` all yield an empty owner, which ADOPTS the plugin session id
+# exactly as before. Refusing on unknown owner would regress the very first
+# worker completion of every fresh run — the log does not exist yet at that
+# point, so there is nothing to be the owner of.
+#
+# Defined AFTER the status block above (not before it) deliberately: the
+# `running|checkpoint)` case line is a CI-pinned citation target in root
+# CLAUDE.md and in emit-progress-event.sh's header, and inserting above it
+# would silently drift both pins.
+loom_log_owner() {
+  # Echo the `cc_session_id` on the FIRST line of the given log, or NOTHING
+  # when no owner is recorded. Always returns 0 — "no owner" and "cannot tell"
+  # are the same answer here, and both mean ADOPT.
+  local _log="${1:-}" _first=""
+  [ -n "$_log" ] && [ -f "$_log" ] && [ -r "$_log" ] || return 0
+  _first="$(head -1 "$_log" 2>/dev/null || true)"
+  [ -n "$_first" ] || return 0
+  # Probe jq FUNCTIONALLY, never `command -v` alone — a jq on PATH that cannot
+  # execute would otherwise take the refuse branch. A broken jq yields an empty
+  # owner, i.e. ADOPT, which is the fail-safe direction.
+  printf '{}' | jq -e . >/dev/null 2>&1 || return 0
+  printf '%s' "$_first" | jq -r '.cc_session_id // empty' 2>/dev/null || true
+  return 0
+}
+
+if [ -n "$PLUGIN_SESSION_ID" ]; then
+  _log_owner="$(loom_log_owner "${LOG_DIR}/${PLUGIN_SESSION_ID}.jsonl" || true)"
+  _log_owner="$(printf '%s' "$_log_owner" | tr -cd 'A-Za-z0-9_-' || true)"
+  if [ -n "$_log_owner" ]; then
+    # An owner IS recorded — this firing may join only if it is that session.
+    _payload_session_id=""
+    if printf '{}' | jq -e . >/dev/null 2>&1; then
+      _payload_session_id="$(printf '%s' "$INPUT" | jq -r '.session_id // empty' 2>/dev/null || true)"
+      _payload_session_id="$(printf '%s' "$_payload_session_id" | tr -cd 'A-Za-z0-9_-' || true)"
+    fi
+    if [ "$_log_owner" != "$_payload_session_id" ]; then
+      # Foreign session → fall back to the CC uuid so this line lands in
+      # `<cc_uuid>.jsonl` and the owned log stops growing.
+      PLUGIN_SESSION_ID=""
+    fi
+  fi
+fi
 export PLUGIN_SESSION_ID
 
 # ---- Build one JSONL line (or empty → no-op) ---------------------------------
@@ -224,10 +280,28 @@ event = {
 if cc_session_id:
     event["cc_session_id"] = cc_session_id
 
-for opt in ("agent_type", "agent_id"):
-    val = payload.get(opt)
-    if isinstance(val, str) and val:
-        event[opt] = val
+# `agent_type`: PAYLOAD ONLY, else the key is OMITTED ENTIRELY — never an empty
+# string, never null, never invented. Same additive-if-present discipline as
+# orientation_source below. There is deliberately NO env fallback that would
+# inject the name of a matcher — byte-parallel with emit-progress-event.sh, which
+# omits one for the same reason: this emitter is registered under THREE
+# SubagentStop matchers that only discriminate when the payload ALREADY carries
+# an `agent_type`, and the single `loomwright:worker` matcher of the other
+# emitter does not discriminate either (grouping untyped events by `agent_id` on the live
+# log gives a fixed 2 ledger : 1 subtask_complete in every bucket, so all four
+# blocks see the same untyped payloads). Measured on the live log, 94/94 typed
+# firings emitted 1 line and 4,376/4,376 untyped emitted 2 — i.e. more than one
+# block runs for an untyped payload. Adopting an identity from whichever matcher happened to run
+# would be a GUESS in exactly the population where we have no identity, and it
+# would also defeat the byte-identity dedupe guard below (two lines differing
+# only in a fabricated `agent_type` can never compare equal).
+agent_type = payload.get("agent_type")
+if isinstance(agent_type, str) and agent_type:
+    event["agent_type"] = agent_type
+
+agent_id = payload.get("agent_id")
+if isinstance(agent_id, str) and agent_id:
+    event["agent_id"] = agent_id
 
 utc = os.environ.get("UTC_TS", "")
 if isinstance(utc, str) and utc:
@@ -317,6 +391,40 @@ esac
 
 mkdir -p "$LOG_DIR" 2>/dev/null || true
 LOG_FILE="$LOG_DIR/${SESSION_ID}.jsonl"
+
+# ---- Per-firing idempotency guard (confirmed duplicate mechanism) ------------
+# CONFIRMED, not assumed. hooks.json registers emit-token-ledger.sh under THREE
+# SubagentStop matchers (code-reviewer, qa-executor, supervisor-runner). They are
+# NOT mutually exclusive in practice: they only discriminate when the payload
+# actually carries an `agent_type`; when it does not, more than one matcher block
+# runs for a single subagent completion. Measured on the live 14,539-line log:
+#   token_ledger lines WITH agent_type    → 94 firings, 94/94 emitted exactly 1
+#   token_ledger lines WITHOUT agent_type → 4,376 firings emitted exactly 2
+# i.e. the duplication is perfectly correlated with the absence of `agent_type`,
+# and real typed loomwright agents were never duplicated.
+#
+# Three blocks are registered but exactly TWO lines were measured per untyped
+# firing; why one block emits nothing is an OPEN QUESTION, recorded rather than
+# guessed in docs/TELEMETRY.md §"Adjacent-duplicate guard". The guard does not
+# depend on the answer: it keys on byte-identity, not on a duplicate count.
+#
+# The guard is minimal and consecutive-only: skip the append when the line is
+# byte-identical to the CURRENT last line of the log. Duplicate blocks fire
+# back-to-back within one firing, so they are always adjacent. Byte-identity
+# includes ts, agent_id, and transcript byte count together — vanishingly
+# unlikely to collide, NOT impossible: ts is second-granularity, agent_id is
+# omitted for exactly the untyped population this targets, and parallel worker
+# completion is a designed feature. A collision therefore needs the same second,
+# an identical transcript byte count, and an absent agent_id on both. The failure
+# direction is one-way and benign: one ADVISORY ledger line is silently lost;
+# nothing reads it for state or gating. Reading only the last line keeps this
+# O(1) on a large log, and every failure absorbs to the normal append path.
+if [ -f "$LOG_FILE" ]; then
+  _last_line="$(tail -1 "$LOG_FILE" 2>/dev/null || true)"
+  if [ -n "$_last_line" ] && [ "$_last_line" = "$LINE" ]; then
+    exit 0
+  fi
+fi
 
 # Append exactly one JSONL line. `$(...)` strips a trailing newline from LINE,
 # so re-add it here — swallow all write errors.
