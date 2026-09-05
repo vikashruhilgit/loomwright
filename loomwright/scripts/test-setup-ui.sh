@@ -151,12 +151,12 @@
 #       FOUR staleness verdicts — owner exited, pid reused, ownerless-and-old, and the arm that
 #       an ownerless-and-FRESH lock is left alone, without which a detector that called every
 #       lock stale would pass the other three while destroying the mechanism
-#   (p) AC-no-blocking-foreground-serve — a command body may not instruct the agent to run a
+#   (r) AC-no-blocking-foreground-serve — a command body may not instruct the agent to run a
 #       FOREGROUND `serve`, because on that caller the call blocks until the tool timeout and
 #       the EXIT trap then kills the server it just started. The scan covers ALL of
 #       commands/*.md — agent-help.md included, it being the mirror an earlier pass missed —
 #       AND scripts/*.sh (all but this suite's own source, which cannot be its own subject —
-#       see (p0b)), so that the runtime carve-out is a discrimination the guard has to
+#       see (r0b)), so that the runtime carve-out is a discrimination the guard has to
 #       implement rather than a clause that is true for nothing: the engine's own printed
 #       `foreground: Ctrl-C to stop` must be SEEN and NOT flagged, and the same words written
 #       as a directive in the same file must be. Plus controls for the un-detached invocation,
@@ -5731,7 +5731,7 @@ esac
 # to IMPLEMENT rather than a sentence that is true for nothing. A guard scoped to
 # `commands/*.md` alone could say "it does not flag setup-ui.sh" while never having looked at a
 # shell script: self-satisfiable, which is a defect class this repo has already recorded more
-# than once. (p0) counts the set; (p15)/(p16) inject a real defect into the two surfaces this
+# than once. (r0) counts the set; (r15)/(r16) inject a real defect into the two surfaces this
 # scan grew to cover, so the widening is PROVEN rather than declared.
 #
 # INSTRUCTION SURFACES vs REFERENCE SURFACES — a NARROWED claim, stated rather than implied.
@@ -5741,10 +5741,10 @@ esac
 # whole "The serve loop" section is prose ABOUT the verb (``setup-ui.sh serve` does three things
 # per tick`) and for `scripts/*.sh`, which is code. So CLASS I runs on the instruction surfaces
 # only, CLASS F runs everywhere, and `nbfs_instr_surface` is the one place that decides which a
-# file is — asserted at (p10) rather than left as an assumption about path shapes. WHAT THIS
+# file is — asserted at (r10) rather than left as an assumption about path shapes. WHAT THIS
 # GIVES UP, precisely: a bare, un-detached `setup-ui.sh serve` written into FLOOR_UI.md as
 # reference prose is not flagged. What is still flagged there is an unscoped foreground/blocking
-# claim, which is the defect this group was created for, and (p16) proves it.
+# claim, which is the defect this group was created for, and (r16) proves it.
 #
 # IT KEYS ON SERVE/FOREGROUND SEMANTICS, NOT ON THE WORD "blocking", AND NOT ON ONE KEYSTROKE
 # NAME. Nineteen command files use "blocking" in the unrelated subagent sense; a keyword guard
@@ -5765,7 +5765,7 @@ esac
 
 # nbfs_instr_surface <file> -> 0 (true) when the file INSTRUCTS an agent, 1 otherwise.
 # One place, so the CLASS I / CLASS F split above is a single readable decision instead of a
-# path test buried in the scanner. (p10) exercises both answers on real paths.
+# path test buried in the scanner. (r10) exercises both answers on real paths.
 nbfs_instr_surface() {
   case "$1" in
     */commands/*.md|*/agents/*.md|*/skills/setup/SKILL.md) return 0 ;;
@@ -5824,13 +5824,13 @@ nbfs_scan() {   # <mode: flag|candidates> <file>...
         # and could not simply be deleted; what it can be is NARROWED to phrases that scope the
         # CLAIM to a caller rather than merely mentioning one. NARROWED CLAIM: the exemption is
         # this list and nothing else, so a new caller phrasing reddens the gate until it is
-        # added here — deliberately fail-closed toward flagging. (p11) is the control.
+        # added here — deliberately fail-closed toward flagging. (r11) is the control.
         if (low ~ /(for|to) a human/ || low ~ /a human (running|at|in) / \
             || low ~ /human at a terminal/ || low ~ /human.s own/ \
             || low ~ /caller is an agent/ || low ~ /agent path/ || low ~ /agent-invoked/) next
         # E3 the invocation already carries --detach, ADJACENTLY. `line ~ /--detach/` anywhere
         # on the line exempted `... serve  # NOT --detach on purpose` — a line that names the
-        # flag in order to say it is absent. Adjacency is what `(p7)` already greps for.
+        # flag in order to say it is absent. Adjacency is what `(r7)` already greps for.
         if (line ~ /serve[ \t]+--detach/) next
         printf "%s:%d: %s\n", file, NR, substr(line, 1, 140)
       }
