@@ -60,12 +60,13 @@ The page shows, top to bottom:
 - **The page holds the token for the life of the TAB, not of one load.** It is kept in `sessionStorage` (per-origin, per-tab, never sent anywhere, gone when the tab closes) so a **reload** no longer silently demotes the page to read-only, and a `hashchange` listener picks the token up when the printed URL is pasted into a tab that is **already** on this page — which reloads nothing, so before that listener existed the paste was simply inert. A token the server then **rejects** is discarded rather than replayed, since `sessionStorage` can outlive the run that minted it where a fragment never could.
 - **`python3 >= 3.7`** is the only runtime requirement, and only for `serve` (both `--bind` and `--directory` date from 3.7). `jq` is a dependency of `build-floor.sh`, not of this engine: without it the page still serves and simply says how stale the copy it is showing has become.
 
-### Query parameters (both read from the page URL)
+### Query parameters (all three read from the page URL)
 
 | Parameter | Default | Meaning |
 |---|---|---|
 | `?stall=<seconds>` | `300` | how old a lane's last event may get before that lane reads **stalled** |
 | `?stale=<seconds>` | `6` — `3 ×` the **page's own 2 s poll**, *not* `serve --interval` | how old `floor.json` itself may get before the page says so |
+| `?lane=<seconds>` | `1800` (30 min) | how old a lane's last event may get before that lane is **not listed at all** — the count of lanes dropped this way is printed in the Lanes heading, and a lane with NO recorded `ts` is unknown rather than old and is never dropped |
 
 `?stale=` exists for a specific reason worth stating: a **committed fixture's `generated_at_epoch` is always in the past**, so without it every fixture would render under the stale banner and nothing else about the page could be demonstrated. Raise it when loading `fixtures/floor-ui/*.json` by hand.
 

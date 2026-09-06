@@ -2470,6 +2470,41 @@ if mutant_ok "$JS" "$MUT_J51"; then
     || ok "(j52) MUTATION CONTROL: restoring the label-repeating cell IS detected by (j51) — the stutter cannot come back unnoticed"
 fi
 
+# --- (j53) every query parameter the page reads is documented, counted not eyeballed ---------
+# Found in review, twice over: this PR added a third query parameter (`?lane=`) while FLOOR_UI.md's
+# table still listed two under a heading that said "both". The class is the one this repo names —
+# a restated copy drifting from its authority — and NOTHING mechanical could see it:
+# check-doc-currency.sh verifies version and count claims, not prose or table completeness, so CI
+# stayed green with the page reading a parameter no reader could look up.
+#
+# Tie the two together by COUNT rather than by asserting the current names, so the gate keeps
+# working for the fourth parameter nobody has written yet. `qpInt('` matches the call sites only,
+# never the function's own definition.
+j53_calls="$(grep -c "qpInt('" "$JS" 2>/dev/null || true)"
+j53_doc="$script_dir/../docs/FLOOR_UI.md"
+j53_rows="$(grep -cE '^\| `\?[a-z]+=' "$j53_doc" 2>/dev/null || true)"
+case "$j53_calls" in ''|*[!0-9]*) j53_calls=0 ;; esac
+case "$j53_rows"  in ''|*[!0-9]*) j53_rows=0 ;; esac
+if [ "$j53_calls" -eq 0 ]; then
+  no "(j53) no qpInt( call site found in floor.js — the parameter gate has no subject and is NOT passing"
+elif [ "$j53_calls" = "$j53_rows" ]; then
+  ok "(j53) floor.js reads $j53_calls query parameters and FLOOR_UI.md documents $j53_rows — a parameter the page honours cannot ship undocumented"
+else
+  no "(j53) floor.js reads $j53_calls query parameter(s) but FLOOR_UI.md's table documents $j53_rows" "add the missing row (or drop the stale one) — this is the drift that shipped ?lane= undocumented"
+fi
+
+# MUTATION CONTROL: a fourth parameter with no doc row must be caught, or (j53) is counting two
+# numbers that happen to agree rather than measuring the relationship between them.
+MUT_J53="$TMPROOT/mut-qp.js"
+{ cat "$JS"; printf "\n  var UNDOC_SEC = qpInt('undocumented', 1, 1);\n"; } > "$MUT_J53" 2>/dev/null
+if mutant_ok "$JS" "$MUT_J53"; then
+  m_j53="$(grep -c "qpInt('" "$MUT_J53" 2>/dev/null || true)"
+  case "$m_j53" in ''|*[!0-9]*) m_j53=0 ;; esac
+  [ "$m_j53" -gt "$j53_rows" ] \
+    && ok "(j54) MUTATION CONTROL: a fourth undocumented parameter pushes the call count to $m_j53 against $j53_rows documented rows — (j53) measures the relationship, not a coincidence" \
+    || no "(j54) MUTATION CONTROL: the planted parameter did not break the equality (calls=$m_j53 rows=$j53_rows) — (j53) proves nothing"
+fi
+
 # --- (j42) the three curation-fault RENDER branches, driven by a UI fixture -------------------
 # (y)/(y2) in test-build-floor.sh pinned these three on the PROJECTOR side. The RENDER side was
 # still uncovered: floor.js has a branch for each of files_not_an_array, self_referential and
