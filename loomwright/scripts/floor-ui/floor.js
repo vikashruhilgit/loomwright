@@ -45,9 +45,10 @@
  * 127.0.0.1:<port> and never read the reply, and the write has still landed. Every mutating
  * request therefore carries this run's token in a CUSTOM header, which is what forces a CORS
  * preflight the other tab cannot satisfy; the server checks that token, the `Origin` and the
- * `Host` besides. The token is read ONCE, out of the URL fragment `serve` printed - a fragment
- * is never sent to any server - and stripped from the address bar immediately, so it cannot
- * leak through history, a bookmark or a shared screenshot.
+ * `Host` besides. The token comes out of the URL fragment `serve` printed - a fragment is never
+ * sent to any server - and is stripped from the address bar immediately, so it cannot leak
+ * through history, a bookmark or a shared screenshot. It is held for the life of the TAB, not
+ * of one load: see the token block below for why one load was not enough.
  *
  * NO NEW TIMER, NOT EVEN FOR THE WRITE PATH. There is still exactly one timer on this page.
  * A write is followed by an immediate re-poll of the ONE existing loop, never by a retry
@@ -129,29 +130,107 @@
    * document it read: the same guarantee projectUrl already gives the read path. */
   var API_PREFIX = 'api/';
   var TOKEN_HEADER = 'X-Floor-Token';
+  /* The ONE refusal of the guard's three that is actually about the token, named here as a
+   * literal because the 403 branch below has to tell it apart from the other two rather than
+   * treat every refusal as a dead credential. It is the server's own spelling. */
+  var TOKEN_REFUSAL = 'token-missing-or-wrong';
   var STOP_ACTION = 'stop';
 
   /* THE PER-RUN TOKEN. It arrives in the URL FRAGMENT, which a browser never transmits to any
-   * server, so it cannot appear in a request line, an access log, a proxy or a referrer. It is
-   * read once and the fragment is removed from the address bar in the same breath, because the
-   * address bar is exactly what ends up in history, in a bookmark and in a screenshot.
+   * server, so it cannot appear in a request line, an access log, a proxy or a referrer. The
+   * fragment is removed from the address bar the moment it is read, because the address bar is
+   * exactly what ends up in history, in a bookmark and in a screenshot.
+   *
+   * THAT STRIP USED TO BE THE WHOLE STORY, AND IT MADE THE TOKEN SURVIVE EXACTLY ONE LOAD.
+   * Every ordinary way of arriving back at this page then arrived without it - a reload, a
+   * bookmark, an omnibox completion (which can only ever offer the STRIPPED url, because the
+   * strip is precisely what put that url in history), a restored session - and each one
+   * dropped the reader into read-only silently, while the refusal blamed them for opening "a
+   * bare address" they had not typed. Two additions, neither of which gives up any property
+   * claimed above:
+   *
+   *   - sessionStorage, so a RELOAD of this tab keeps the token. It is per-origin and per-tab,
+   *     it never reaches a url, a server or another tab, and it dies with the tab - the same
+   *     lifetime the closure variable already had, minus the reload.
+   *   - a `hashchange` listener, so a token appended to the url of a page ALREADY OPEN is
+   *     picked up. Adding a fragment to the url a tab is already on is a same-document
+   *     navigation: nothing reloads, this script never runs again, and pasting the printed url
+   *     into the tab already showing this page therefore did nothing whatsoever. That is the
+   *     likeliest way a reader reaches the refusal, and it now works.
+   *
+   * A STALE token is the one thing the store can hand back that a fragment never could, since
+   * it survives the SERVER and not merely the load. So a 403 from the guard CLEARS it (see
+   * runAction) rather than letting the page replay a dead credential on every click.
    * An empty token is a legitimate state, not an error: the page still READS everything. Only
    * the four buttons are refused, and they say why rather than failing silently. */
+  var TOKEN_STORE_KEY = 'loomwright.floor.token';
   var floorToken = '';
-  (function () {
-    var raw = String(window.location.hash || '');
-    var m = /(?:^#|[#&])token=([A-Za-z0-9_-]+)/.exec(raw);
-    if (!m) { return; }
-    floorToken = m[1];
+
+  /* EVERY sessionStorage touch is wrapped. A browser in a private mode, or one configured to
+   * refuse site data, throws on the property access itself rather than returning null - and a
+   * page that died there would have lost the READ path too, over a convenience. */
+  function storeToken(t) {
+    try { window.sessionStorage.setItem(TOKEN_STORE_KEY, t); } catch (e) { /* memory-only, as before */ }
+  }
+  function storedToken() {
+    try { return String(window.sessionStorage.getItem(TOKEN_STORE_KEY) || ''); } catch (e) { return ''; }
+  }
+  /* Called only when the SERVER says the token is no good. Dropping it here is what stops a
+   * token left over from a previous run being replayed on every subsequent click. */
+  function dropToken() {
+    floorToken = '';
+    try { window.sessionStorage.removeItem(TOKEN_STORE_KEY); } catch (e) { /* nothing to drop */ }
+  }
+  function fragmentToken() {
+    var m = /(?:^#|[#&])token=([A-Za-z0-9_-]+)/.exec(String(window.location.hash || ''));
+    return m ? m[1] : '';
+  }
+  /* THE STRIP, ON ITS OWN, because it has two callers and only one of them adopts anything.
+   * The file's stated invariant is that the fragment leaves the address bar the moment it is
+   * read - and that has to hold for a token this page ALREADY holds, not only for a new one.
+   * Pasting the same url a second time (a habit a reader picks up precisely because the first
+   * paste used to do nothing) took the `t === floorToken` early return below and never reached
+   * the strip, so the token stayed in the address bar and went to history from there. */
+  function stripFragment() {
     if (window.history && window.history.replaceState) {
       try {
         window.history.replaceState(null, '', window.location.pathname + (window.location.search || ''));
       } catch (e) {
         /* A browser that refuses the rewrite must not take the page down with it: the token is
-         * already held in the closure above, and the only cost is a URL that still shows it. */
+         * already held by the caller, and the only cost is a url that still shows it. */
       }
     }
+  }
+
+  /* Read, remember, THEN erase from the address bar - in that order, because the strip must not
+   * happen until the token is held somewhere that survives the address bar. */
+  function adoptToken(t) {
+    floorToken = t;
+    storeToken(t);
+    stripFragment();
+  }
+
+  (function () {
+    var t = fragmentToken();
+    if (t) { adoptToken(t); return; }
+    /* No fragment on this load. A token THIS TAB adopted earlier is the honest fallback: same
+     * tab, same origin, same browsing session - which is the reload case this exists for. */
+    floorToken = storedToken();
   }());
+
+  /* THE SAME-DOCUMENT CASE, and the reason it needs an event at all: changing only the fragment
+   * reloads nothing, so without this listener the paste is inert. `replaceState` does not fire
+   * `hashchange`, so adoptToken's own strip cannot re-enter here. */
+  window.addEventListener('hashchange', function () {
+    var t = fragmentToken();
+    if (!t) { return; }
+    /* ALREADY HELD. There is nothing to adopt and nothing to announce - but the address bar is
+     * showing a token, and this page's whole claim about fragments is that it does not leave
+     * one there. Strip and say nothing. */
+    if (t === floorToken) { stripFragment(); return; }
+    adoptToken(t);
+    actionNote('token accepted from the url — the four buttons will now be accepted for this run.');
+  });
 
   /* postAction — THE ONE AND ONLY WRITE CALL SITE IN THIS FILE, and the second of the two
    * `fetch(` call sites the header counts. Every part of it is deliberate:
@@ -1706,7 +1785,12 @@
     if (serverStopped) { return; }
     if (writeInFlight) { return; }
     if (!floorToken) {
-      actionNote('this page holds no token for this run, so the server would refuse the write. Open the URL `setup-ui.sh serve` printed — it carries the token in its #fragment — rather than a bare address.');
+      /* NAME THE THING THE READER ACTUALLY DID. The old wording said "rather than a bare
+       * address", which reads as an accusation of typing one - and the commonest way to land
+       * here never involved typing anything: an omnibox completion, a bookmark or a restored
+       * session hands back the STRIPPED url on its own. Say where the token comes from and
+       * what to do, and name the exit that needs no token at all. */
+      actionNote('this page holds no token for this run, so the server would refuse the write — nothing was sent. `setup-ui.sh serve` prints the token once, in the #fragment of the url it prints: paste that whole url into this tab and press Enter, and this page will pick it up. Each of these four buttons also has a command-line verb — add, forget, scan, stop — that needs no token.');
       actionReport('');
       return;
     }
@@ -1719,7 +1803,26 @@
         var body = res.body || {};
         var reason = (typeof body.reason === 'string' && body.reason) ? body.reason : ('status ' + res.status);
         if (res.status === 403) {
-          actionNote(action + ' was REFUSED by the server guard (' + reason + '). Reopen the page from the URL this run of `serve` printed.');
+          /* THE ONE PLACE A HELD TOKEN IS THROWN AWAY, and it is the server's word that does
+           * it, never a guess on this side. A token can now survive the run that minted it -
+           * sessionStorage survives the server, which the fragment never did - so without this
+           * the page would replay a dead credential on every click and report the same 403
+           * forever. Cleared, the NEXT click gets the honest no-token message and its remedy.
+           *
+           * BUT ONLY FOR THE REFUSAL THAT IS ABOUT THE TOKEN. The guard answers 403 for THREE
+           * distinct reasons and names which in the body: the token, the `Origin`, or the
+           * `Host`. Discarding on all three threw away a token that was very likely fine -
+           * an extension or a proxy rewriting a header is not a stale credential - and then
+           * told the reader a specific and wrong story about a previous run, sending them to
+           * re-paste a url that reproduces the identical refusal. The server already draws
+           * this distinction; the page now reads it instead of flattening it. */
+          if (reason === TOKEN_REFUSAL) {
+            dropToken();
+            actionNote(action + ' was REFUSED by the server guard (' + reason + '). That token is now discarded — it was almost certainly minted by a PREVIOUS run of `serve`, since the token dies with its server. Run `setup-ui.sh check` for this run\'s url, paste it into this tab and press Enter.');
+          } else {
+            /* The token is KEPT, because nothing here said anything about it. */
+            actionNote(action + ' was REFUSED by the server guard (' + reason + '). This is not about the token, so it has been kept — the server refused the request\'s Origin or Host, which is what a browser extension or a proxy rewriting those headers looks like. Re-pasting the url will reproduce it.');
+          }
         } else if (res.status === 501) {
           actionNote(action + ' is not a route this server answers (501) — the page and the engine are different versions.');
         } else if (body.ok === true) {
