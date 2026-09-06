@@ -130,6 +130,10 @@
    * document it read: the same guarantee projectUrl already gives the read path. */
   var API_PREFIX = 'api/';
   var TOKEN_HEADER = 'X-Floor-Token';
+  /* The ONE refusal of the guard's three that is actually about the token, named here as a
+   * literal because the 403 branch below has to tell it apart from the other two rather than
+   * treat every refusal as a dead credential. It is the server's own spelling. */
+  var TOKEN_REFUSAL = 'token-missing-or-wrong';
   var STOP_ACTION = 'stop';
 
   /* THE PER-RUN TOKEN. It arrives in the URL FRAGMENT, which a browser never transmits to any
@@ -1803,9 +1807,22 @@
            * it, never a guess on this side. A token can now survive the run that minted it -
            * sessionStorage survives the server, which the fragment never did - so without this
            * the page would replay a dead credential on every click and report the same 403
-           * forever. Cleared, the NEXT click gets the honest no-token message and its remedy. */
-          dropToken();
-          actionNote(action + ' was REFUSED by the server guard (' + reason + '). That token is now discarded — it was almost certainly minted by a PREVIOUS run of `serve`, since the token dies with its server. Paste the url this run printed into this tab and press Enter.');
+           * forever. Cleared, the NEXT click gets the honest no-token message and its remedy.
+           *
+           * BUT ONLY FOR THE REFUSAL THAT IS ABOUT THE TOKEN. The guard answers 403 for THREE
+           * distinct reasons and names which in the body: the token, the `Origin`, or the
+           * `Host`. Discarding on all three threw away a token that was very likely fine -
+           * an extension or a proxy rewriting a header is not a stale credential - and then
+           * told the reader a specific and wrong story about a previous run, sending them to
+           * re-paste a url that reproduces the identical refusal. The server already draws
+           * this distinction; the page now reads it instead of flattening it. */
+          if (reason === TOKEN_REFUSAL) {
+            dropToken();
+            actionNote(action + ' was REFUSED by the server guard (' + reason + '). That token is now discarded — it was almost certainly minted by a PREVIOUS run of `serve`, since the token dies with its server. Run `setup-ui.sh check` for this run\'s url, paste it into this tab and press Enter.');
+          } else {
+            /* The token is KEPT, because nothing here said anything about it. */
+            actionNote(action + ' was REFUSED by the server guard (' + reason + '). This is not about the token, so it has been kept — the server refused the request\'s Origin or Host, which is what a browser extension or a proxy rewriting those headers looks like. Re-pasting the url will reproduce it.');
+          }
         } else if (res.status === 501) {
           actionNote(action + ' is not a route this server answers (501) — the page and the engine are different versions.');
         } else if (body.ok === true) {

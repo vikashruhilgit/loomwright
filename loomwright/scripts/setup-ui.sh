@@ -1931,8 +1931,25 @@ do_serve() {
 # stop
 # ---------------------------------------------------------------------------
 do_stop() {
-  local pf="$UI_DIR/serve.pid" pid cmd killed=0 refused=""
+  local pf="$UI_DIR/serve.pid" pid cmd killed=0 refused="" tf_leftover
   if [ ! -f "$pf" ]; then
+    # NO PIDFILE IS STILL NOT "NOTHING TO DO", and this branch used to act as if it were: it
+    # returned before `serve_cleanup` ever ran, so a leftover open-url file survived. That made
+    # a liar of `check`, which prints "'serve' overwrites it; 'stop' deletes it" about exactly
+    # this state — the pidfile can be gone while the url file is not (the ui directory removed
+    # out of band, a pidfile lost on its own) and `check`'s "not running" arm is reached by a
+    # MISSING pidfile just as much as by a dead one. A reader who followed the remedy that note
+    # names got `stop: no-op` and a file still on disk.
+    #
+    # The url file is removed here, and the removal is REPORTED rather than done silently: a
+    # stale credential quietly deleted is indistinguishable from one that was never there.
+    tf_leftover="$(serve_token_path)" || tf_leftover=""
+    if [ -n "$tf_leftover" ] && [ -f "$tf_leftover" ]; then
+      rm -f "$tf_leftover" 2>/dev/null
+      echo "stop: no-op — no $pf, so this module has no recorded server to stop."
+      echo "  removed: $tf_leftover — a leftover open url whose server is gone. Its token died with that process, so nothing that could still be used was deleted."
+      return 0
+    fi
     echo "stop: no-op — no $pf, so this module has no recorded server to stop."
     return 0
   fi

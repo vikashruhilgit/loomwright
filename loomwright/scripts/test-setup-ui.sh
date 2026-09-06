@@ -6826,6 +6826,35 @@ fi
 rm -rf "$S_FG" 2>/dev/null
 
 
+# --- (s16)/(s17) `stop` HONOURS THE REMEDY `check` NAMES, PIDFILE OR NO PIDFILE ----------------
+# `check`'s leftover note ends "'serve' overwrites it; 'stop' deletes it", and `commands/ui.md`
+# and FLOOR_UI.md repeat the claim. `do_stop` returned at its pidfile check BEFORE reaching the
+# cleanup, so in the very state the note describes — a leftover url whose pidfile is gone, which
+# is also how `check` reaches that arm — the remedy printed `stop: no-op` and left the file. A
+# claim no code backs is the defect this repo has already paid for; this pair backs it.
+S_LO="$(mktmp)"
+bash "$ENGINE" apply --ui-dir "$S_LO/ui" >/dev/null 2>&1
+printf 'http://127.0.0.1:9/#token=leftoverwithnopidfile\n' > "$S_LO/ui-serve.token"
+chmod 600 "$S_LO/ui-serve.token" 2>/dev/null
+s_lo_out="$(bash "$ENGINE" stop --ui-dir "$S_LO/ui" 2>&1)"
+if [ ! -f "$S_LO/ui-serve.token" ] && in_str "$s_lo_out" "stop: no-op" && in_str "$s_lo_out" "removed:"; then
+  ok "(s16) with a leftover open-url file and NO pidfile, stop deletes the file and SAYS it did — the state check's own note sends the reader to stop for, where stop used to return at the pidfile check and leave it"
+else
+  no "(s16) stop removes a leftover url when the pidfile is gone" \
+     "still_present=$([ -f "$S_LO/ui-serve.token" ] && echo YES || echo no) :: $(printf '%s' "$s_lo_out" | tr '\n' '|')"
+fi
+
+# The removal must be REPORTED, never silent, and must not appear when there was nothing to
+# remove — otherwise the line is noise and cannot be trusted to mean a deletion happened.
+s_lo_out2="$(bash "$ENGINE" stop --ui-dir "$S_LO/ui" 2>&1)"
+if in_str "$s_lo_out2" "stop: no-op" && ! in_str "$s_lo_out2" "removed:"; then
+  ok "(s17) a second stop, with nothing left to remove, is a plain no-op and prints no 'removed:' line — so that line always means a file was actually deleted"
+else
+  no "(s17) stop reports no removal when there was nothing to remove" "$(printf '%s' "$s_lo_out2" | tr '\n' '|')"
+fi
+rm -rf "$S_LO" 2>/dev/null
+
+
 # =============================================================================================
 # (t) THE PAGE-SIDE TOKEN LOGIC — sessionStorage, hashchange adoption, and the 403 drop
 # ---------------------------------------------------------------------------------------------
@@ -6887,7 +6916,12 @@ t_d="$(t_drop_faults "$JS")"
   || no "(t1) a 403 discards the held token" "$t_d"
 
 cp "$JS" "$T_JS"
-sed 's/^          dropToken();$//' "$JS" > "$T_JS"
+# INDENTATION-AGNOSTIC on purpose. This was pinned to ten leading spaces, and scoping the drop
+# to one refusal (t13) put it inside an `if` at twelve — so the mutation matched nothing, the
+# "mutant" still contained the call, and the control failed loudly rather than passing while
+# testing an unchanged file. Second time a refactor has disarmed a (t) control this way; the
+# lesson both times is that a mutation keyed on layout tests the layout.
+sed 's/^ *dropToken();$//' "$JS" > "$T_JS"
 t_d_mut="$(t_drop_faults "$T_JS")"
 [ -n "$t_d_mut" ] \
   && ok "(t2) MUTATION CONTROL: a 403 branch that does NOT discard the token IS flagged — (t1) is reading the branch, not merely finding the word somewhere in the file" \
@@ -6988,6 +7022,43 @@ t_rs2_mut="$(t_restrip_faults "$T_JS")"
 [ -n "$t_rs2_mut" ] \
   && ok "(t12) MUTATION CONTROL: an early return that skips the strip IS flagged — the shape this listener shipped in, and one every other (t) case passes happily" \
   || no "(t12) MUTATION CONTROL: a strip-skipping early return is flagged" "the mutant passed (t11)'s predicate"
+
+# --- (t13)/(t14)/(t15) THE DROP IS SCOPED TO THE REFUSAL THAT IS ABOUT THE TOKEN --------------
+# The guard answers 403 for THREE reasons and names which in the body: the token, the `Origin`,
+# or the `Host`. Discarding on all three threw away a token that was very likely fine — an
+# extension or a proxy rewriting a header is not a stale credential — and then told the reader a
+# specific, wrong story about a previous run, sending them to re-paste a url that reproduces the
+# identical refusal. (t1) asserts only that SOME 403 path drops; these say which.
+t_scope_faults() {
+  local body bad=""
+  body="$(t_fn_body "$1" runAction)"
+  [ -n "$body" ] || { printf '%s' "[runAction not found]"; return 0; }
+  in_str "$body" "if (reason === TOKEN_REFUSAL) {" \
+    || bad="$bad [the drop is not conditioned on the refusal being about the token, so an Origin/Host refusal discards a token that is probably valid]"
+  printf '%s' "$bad"
+}
+t_sc="$(t_scope_faults "$JS")"
+[ -z "$t_sc" ] \
+  && ok "(t13) the token is discarded ONLY for the refusal that names the token — an Origin or Host refusal keeps it, because neither says anything about the credential and re-pasting the url would reproduce the same failure" \
+  || no "(t13) the drop is scoped to the token refusal" "$t_sc"
+
+sed "s/if (reason === TOKEN_REFUSAL) {/if (true) {/" "$JS" > "$T_JS"
+t_sc_mut="$(t_scope_faults "$T_JS")"
+[ -n "$t_sc_mut" ] \
+  && ok "(t14) MUTATION CONTROL: an unconditional drop on any 403 IS flagged — the shape this branch shipped in, and one (t1)/(t2) pass happily since a drop is still present" \
+  || no "(t14) MUTATION CONTROL: an unconditional 403 drop is flagged" "the mutant passed (t13)'s predicate"
+
+# (t15) CROSS-FILE PARITY. The client compares against a literal; the server owns the spelling.
+# Nothing else in this suite would notice them drifting apart, and the drift is silent in the
+# worst way — the comparison simply stops matching, so every 403 keeps the token and the stale
+# one is replayed for ever, which is (t1)'s failure wearing (t13)'s fix.
+t_js_reason="$(awk -F"'" '/var TOKEN_REFUSAL = /{print $2; exit}' "$JS")"
+t_sh_reason="$(awk -F'"' '/"token-missing-or-wrong": "no valid per-run token/{print $2; exit}' "$ENGINE")"
+if [ -n "$t_js_reason" ] && [ "$t_js_reason" = "$t_sh_reason" ]; then
+  ok "(t15) the page's TOKEN_REFUSAL literal ('$t_js_reason') is byte-identical to the reason the ENGINE emits — a rename on either side would silently stop the comparison matching, and every 403 would then keep a token the server has already rejected"
+else
+  no "(t15) the client's token-refusal literal matches the engine's" "page='$t_js_reason' engine='$t_sh_reason'"
+fi
 
 # --- (t10) the real page is untouched by the controls above ------------------------------------
 [ "$(csum "$JS")" = "$T_JS_SIG_BEFORE" ] \

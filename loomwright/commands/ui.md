@@ -103,7 +103,7 @@ Run it **from the project root**, and run it **with `--detach`** — see the cal
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-ui.sh" stop
 ```
 
-Kills **only** pids whose command line names `http.server` or `setup-ui.sh`, and prints `stop: no-op` when there is no recorded server. It also deletes the open-URL file `ui-serve.token`, because that URL names a server that no longer exists and its token died with the process. Relay `no-op` as the ordinary answer it is, never as a failure. The page's own **Stop this server** button runs this same verb, so a stop from the page and a stop from here leave identical state — the pidfile removed and the regeneration loop down with the listener.
+Kills **only** pids whose command line names `http.server` or `setup-ui.sh`, and prints `stop: no-op` when there is no recorded server. It also deletes the open-URL file, because that URL names a server that no longer exists and its token died with the process — **including on the `no-op` path**, where there is no pidfile to act on but a leftover URL may still be sitting there. That case is exactly what `check`'s leftover note sends the reader here for, so `stop` printing `no-op` and leaving the file would make the note untrue. A deletion is always reported on a `removed:` line; no line means there was nothing to remove. Relay `no-op` as the ordinary answer it is, never as a failure. The page's own **Stop this server** button runs this same verb, so a stop from the page and a stop from here leave identical state — the pidfile removed and the regeneration loop down with the listener.
 
 ### `add`
 
