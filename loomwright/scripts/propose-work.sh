@@ -125,7 +125,16 @@ if [ "$have_entries" != "yes" ]; then
   exit 0
 fi
 
-total_entries="$(jq -r "$ENTRIES_PATH | length" "$FLOOR" 2>/dev/null)"
+# Count on the SAME basis as the two numbers printed beside it. The pair count and the
+# per-class count both filter to entries carrying a real class/flow_stage string, but a raw
+# `length` here counts every categories[] object build-floor.sh saw -- and build-floor.sh
+# includes class/flow_stage only CONDITIONALLY on type, so an entry can legitimately appear
+# with no class key at all. Printing that under the label "classified entries" overstates the
+# basis, and puts three numbers in one block on two different footings.
+total_entries="$(jq -r "
+  $ENTRIES_PATH
+  | map(select((.class? | type) == \"string\" and (.flow_stage? | type) == \"string\"))
+  | length" "$FLOOR" 2>/dev/null)"
 case "$total_entries" in ''|*[!0-9]*) total_entries="" ;; esac
 
 # The postmortem surface mtime is REPORTED (it is the age of the underlying ledger) but is

@@ -1,0 +1,169 @@
+{
+  "generated_at_epoch": 1788600000,
+  "repo_head": "0000000",
+  "schema_version": 1,
+  "surfaces": {
+    "postmortem": {
+      "basis": "non-blank lines in .supervisor/postmortem/results.jsonl that parse as a JSON object, one record per line",
+      "count": 22,
+      "detail": {
+        "categories_total": 17,
+        "class_basis": ".categories[].class",
+        "class_distribution": {
+          "convention_mismatch": 12
+        },
+        "entries": [
+          {
+            "class": "convention_mismatch",
+            "evidence": "count restated in CLAUDE.md instead of read from plugin.json",
+            "flow_stage": "worker",
+            "index": 0,
+            "line": 10,
+            "round": 1,
+            "self_heal_miss": false
+          },
+          {
+            "class": "convention_mismatch",
+            "evidence": "marketplace description grew a second version clause",
+            "flow_stage": "worker",
+            "index": 0,
+            "line": 11,
+            "round": 1,
+            "self_heal_miss": false
+          },
+          {
+            "class": "convention_mismatch",
+            "evidence": "README count and plugin.json count diverged in the same commit",
+            "flow_stage": "worker",
+            "index": 0,
+            "line": 12,
+            "round": 1,
+            "self_heal_miss": false
+          },
+          {
+            "class": "convention_mismatch",
+            "evidence": "CHANGELOG entry placed outside the Version History block",
+            "flow_stage": "worker",
+            "index": 0,
+            "line": 13,
+            "round": 2,
+            "self_heal_miss": false
+          },
+          {
+            "class": "convention_mismatch",
+            "evidence": "header comment contradicts the behaviour of the code below it",
+            "flow_stage": "worker",
+            "index": 0,
+            "line": 14,
+            "round": 3,
+            "self_heal_miss": false
+          },
+          {
+            "class": "convention_mismatch",
+            "evidence": "worker restated a version number CLAUDE.md forbids restating",
+            "flow_stage": "worker",
+            "index": 0,
+            "line": 15,
+            "round": 1,
+            "self_heal_miss": false
+          },
+          {
+            "class": "convention_mismatch",
+            "evidence": "absolute line reference drifted after an insertion above it",
+            "flow_stage": "worker",
+            "index": 0,
+            "line": 16,
+            "round": 2,
+            "self_heal_miss": false
+          },
+          {
+            "class": "convention_mismatch",
+            "evidence": "agent prompt edited without the mirrored commands/*.md prose",
+            "flow_stage": "worker",
+            "index": 0,
+            "line": 17,
+            "round": 1,
+            "self_heal_miss": false
+          },
+          {
+            "class": "convention_mismatch",
+            "evidence": "doc-currency claim added that no check backs",
+            "flow_stage": "worker",
+            "index": 0,
+            "line": 18,
+            "round": 3,
+            "self_heal_miss": false
+          },
+          {
+            "class": "convention_mismatch",
+            "evidence": "pinned citation dropped its pins clause",
+            "flow_stage": "worker",
+            "index": 0,
+            "line": 19,
+            "round": 1,
+            "self_heal_miss": false
+          },
+          {
+            "class": "convention_mismatch",
+            "evidence": "skill frontmatter version not bumped with its body",
+            "flow_stage": "worker",
+            "index": 0,
+            "line": 20,
+            "round": 2,
+            "self_heal_miss": false
+          },
+          {
+            "class": "convention_mismatch",
+            "evidence": "bare file.ext:N citation introduced in committed prose",
+            "flow_stage": "worker",
+            "index": 0,
+            "line": 21,
+            "round": 1,
+            "self_heal_miss": false
+          },
+          {
+            "evidence": "malformed categories[] object - no class key",
+            "index": 0,
+            "line": 900,
+            "round": 1
+          },
+          {
+            "evidence": "malformed categories[] object - no class key",
+            "index": 0,
+            "line": 901,
+            "round": 1
+          },
+          {
+            "evidence": "malformed categories[] object - no class key",
+            "index": 0,
+            "line": 902,
+            "round": 1
+          },
+          {
+            "evidence": "malformed categories[] object - no class key",
+            "index": 0,
+            "line": 903,
+            "round": 1
+          },
+          {
+            "evidence": "malformed categories[] object - no class key",
+            "index": 0,
+            "line": 904,
+            "round": 1
+          }
+        ],
+        "flow_stage_basis": ".categories[].flow_stage",
+        "flow_stage_distribution": {
+          "self_heal": 4,
+          "unknowable": 11,
+          "worker": 15
+        },
+        "lines_malformed": 0,
+        "lines_without_categories": 0
+      },
+      "mtime_epoch": 1788599000,
+      "source": ".supervisor/postmortem/results.jsonl",
+      "status": "counted"
+    }
+  }
+}
