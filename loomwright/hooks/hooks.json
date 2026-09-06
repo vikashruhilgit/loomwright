@@ -161,6 +161,15 @@
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/seed-run-owner.sh\" || true"
           }
         ]
+      },
+      {
+        "matcher": "Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "payload=$(cat); printf '%s' \"$payload\" | bash \"${CLAUDE_PLUGIN_ROOT}/scripts/emit-agent-identity.sh\" || true"
+          }
+        ]
       }
     ],
     "PreToolUse": [

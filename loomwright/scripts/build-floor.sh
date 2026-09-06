@@ -323,7 +323,7 @@ else
           then "id\t" + $o.cc_session_id + "\t" +
                ({sid: $o.cc_session_id, ts: $o.ts, agent_id: $o.agent_id,
                  agent_type: $o.agent_type, agent_scope: $o.agent_scope,
-                 branch: $o.branch}
+                 branch: $o.branch, event: $o.event}
                 | with_entries(select(.value != null and .value != "")) | tojson)
         else "noid" end
     end
@@ -359,6 +359,17 @@ else
   # apart: `main` says the emitter positively identified the thread of the session itself
   # (its payload named the session transcript, not a `subagents/agent-<id>.jsonl` one), so
   # the row has no role because it IS the session; absent says nothing is known either way.
+  #
+  # `agent_identity` LINES CONTRIBUTE A TYPE AND NOTHING ELSE, and both halves of that are
+  # deliberate. They are written by emit-agent-identity.sh from `PostToolUse[Task]`, which is
+  # the only payload carrying `subagent_type` and an id in this namespace together; the
+  # take-from-any-line rule above therefore joins them for free, with no new read path. But
+  # such a line is a fact ABOUT an agent, not an event OF one, so it is excluded from `events`
+  # — a count that has just been corrected for a 3x inflation must not gain a different +1 —
+  # and it carries no `ts`, which keeps it out of `first_ts`/`last_ts` and out of the
+  # newest-session selection by construction rather than by a second filter here.
+  # An agent seen ONLY on such a line renders `0 events`, which is the honest reading:
+  # identified, with nothing else recorded for it.
   sess_current="$(printf '%s\n' "$classified" | awk -F'\t' '/^id\t/{print $3}' | jq -s -c '
     map(select(type == "object")) as $all
     | ($all | map(select(has("ts"))) | sort_by(.ts | tostring) | last) as $newest
@@ -371,7 +382,8 @@ else
           + (if ($ev | length) == 0 then {}
              else {agents: ($ev | group_by(.agent_id) | map(
                      (map(select(has("ts")) | .ts)) as $tss
-                     | {agent_id: .[0].agent_id, events: length}
+                     | {agent_id: .[0].agent_id,
+                          events: (map(select((.event // "") != "agent_identity")) | length)}
                        + (if ($tss | length) == 0 then {}
                           else {first_ts: ($tss | min), last_ts: ($tss | max)} end)
                        + ((map(select(has("agent_type")) | .agent_type) | first) as $t

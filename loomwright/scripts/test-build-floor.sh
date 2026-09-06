@@ -2868,6 +2868,61 @@ else
   no "(y2) MUTATION CONTROL: could not build the completeness mutant - control inconclusive"
 fi
 
+# ============================================================================
+echo "== (z) an agent_identity line NAMES a lane and is not counted as one of its events =="
+# The lane identity problem, measured rather than argued: across one real project's whole
+# history 1,040 agent ids appeared and only 64 carried an `agent_type`. The type is not in
+# the SubagentStop payload and not in the `agent-<id>.meta.json` sidecar (which intersects
+# the typed set 64/64 and the untyped set 0/976 — it is present exactly when the answer is
+# already known). It IS in `PostToolUse[Task]`, which carries `tool_input.subagent_type` and
+# `tool_response.agentId` in ONE payload, and emit-agent-identity.sh writes that as a line.
+#
+# The projector needed no new read path: `agent_type` was already taken from ANY line of an
+# agent. What it needed is the EXCLUSION asserted here — such a line is a fact about an
+# agent, not an event of one, and a count just corrected for a 3x inflation must not gain a
+# different +1. `first_ts`/`last_ts` are excluded by construction instead of by a filter,
+# because the emitter writes no `ts`; that is asserted too, so the day someone adds one the
+# reason it was omitted is not lost.
+RZ="$(new_repo)"; mkdir -p "$RZ/.supervisor/logs" "$RZ/agents"
+{
+  printf '{"ts":"2026-09-06T10:00:00Z","event":"token_ledger","cc_session_id":"zsess","agent_id":"az111"}\n'
+  printf '{"ts":"2026-09-06T10:00:05Z","event":"token_ledger","cc_session_id":"zsess","agent_id":"az111"}\n'
+  printf '{"event":"agent_identity","cc_session_id":"zsess","agent_id":"az111","agent_type":"loomwright:loomwright:worker","recorded_at":"2026-09-06T10:00:06Z"}\n'
+} > "$RZ/.supervisor/logs/z.jsonl"
+run_build "$RZ"
+JZ="$RZ/.supervisor/floor/floor.json"
+zq() { jq -r "$1" "$JZ" 2>/dev/null; }
+[ "$(zq '.surfaces.sessions.detail.current.agents | length')" = "1" ] \
+  && ok "(z) the three lines collapse to ONE lane" \
+  || no "(z) expected 1 lane, got $(zq '.surfaces.sessions.detail.current.agents | length')"
+[ "$(zq '.surfaces.sessions.detail.current.agents[0].agent_type')" = "loomwright:loomwright:worker" ] \
+  && ok "(z) the lane is NAMED from the agent_identity line — the join needs no correlation store and no new read path" \
+  || no "(z) lane type is '$(zq '.surfaces.sessions.detail.current.agents[0].agent_type')', expected the identity's type"
+[ "$(zq '.surfaces.sessions.detail.current.agents[0].events')" = "2" ] \
+  && ok "(z) events == 2, the real events only — the identity line is excluded from the count" \
+  || no "(z) events == $(zq '.surfaces.sessions.detail.current.agents[0].events'), expected 2 (the identity line was counted)"
+[ "$(zq '.surfaces.sessions.detail.current.agents[0].last_ts')" = "2026-09-06T10:00:05Z" ] \
+  && ok "(z) last_ts is the newest REAL event, not the identity's recorded_at — a lane's freshness still measures its own work" \
+  || no "(z) last_ts == $(zq '.surfaces.sessions.detail.current.agents[0].last_ts'), expected 2026-09-06T10:00:05Z"
+
+# MUTATION CONTROL: drop the exclusion and the identity line becomes a third event. Without
+# this, (z)'s events assertion would pass on any projector that happened to produce 2.
+MUT_Z="$ROOT/mut-identity-count.sh"
+sed 's#events: (map(select((.event // "") != "agent_identity")) | length)#events: length#' \
+  "$BUILD" > "$MUT_Z" 2>/dev/null
+if [ -s "$MUT_Z" ] && ! cmp -s "$MUT_Z" "$BUILD"; then
+  RZM="$(new_repo)"; mkdir -p "$RZM/.supervisor/logs" "$RZM/agents"
+  cp "$RZ/.supervisor/logs/z.jsonl" "$RZM/.supervisor/logs/z.jsonl"
+  ( cd "$RZM" && FLOOR_AGENTS_DIR="$RZM/agents" bash "$MUT_Z" >/dev/null 2>&1 )
+  zmut="$(jq -r '.surfaces.sessions.detail.current.agents[0].events' "$RZM/.supervisor/floor/floor.json" 2>/dev/null)"
+  [ "$zmut" = "3" ] \
+    && ok "(z2) MUTATION CONTROL: without the exclusion the identity line IS counted (events=3) — (z) is measuring the exclusion, not a coincidence" \
+    || no "(z2) MUTATION CONTROL: the unexcluded projector reported events=$zmut, expected 3 — (z) proves nothing"
+else
+  no "(z2) MUTATION CONTROL: could not build the identity-count mutant - control inconclusive"
+fi
+
+
 echo
 echo "RESULT: $pass passed, $fail failed, $skip skipped"
 [ "$fail" -eq 0 ] || exit 1
