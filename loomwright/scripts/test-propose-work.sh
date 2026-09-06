@@ -738,6 +738,45 @@ else
   no "no /propose command file - propose-work.sh is wired to nothing and the loop still cannot propose"
 fi
 
+echo "== AC14: a '--' inside class/flow_stage cannot silently overwrite another pair =="
+# Two DISTINCT pairs -- (a, b--c) and (a--b, c) -- both join to "a--b--c.md". Without a guard
+# the second silently overwrites the first through guarded_write's `cat >`, losing a candidate
+# with no error. The six-class enum that makes this unreachable today lives in another file.
+COL="$FIX/floor-delimiter-collision.json"
+if [ -f "$COL" ]; then
+  ok "the delimiter-collision fixture is committed"
+  CJ="$(mktmp)"; fresh_basis "$COL" "$CJ/floor.json"
+  run_sut "$CJ/floor.json" "$CJ/out" "$CJ/req" >/dev/null 2>&1; crc=$?
+  [ "$crc" -eq 0 ] && ok "AC14: exit 0 on the collision fixture (advisory, never breaks its caller)" \
+    || no "AC14: exit $crc on the collision fixture"
+  [ "$(count_props "$CJ/out")" -eq 0 ] \
+    && ok "AC14: neither colliding pair was written" \
+    || no "AC14: a colliding pair was written - $(count_props "$CJ/out") proposal(s) present"
+  grep -Fq 'collides with the filename delimiter' "$LOGERR" 2>/dev/null \
+    && ok "AC14: the refusal names the reason rather than dropping the pair silently" \
+    || no "AC14: the pair was skipped without naming why"
+
+  # Mutation control: without the guard the two pairs MUST collide onto one file - which is
+  # the whole defect. If the mutant also writes 0, AC14 proves nothing.
+  MUT14="$ROOT/mutant-nodelim.sh"
+  awk '/# Delimiter safety\./{skip=1} skip && /^  esac$/{skip=0; next} !skip' "$SUT" > "$MUT14" 2>/dev/null
+  if [ -s "$MUT14" ] && ! cmp -s "$MUT14" "$SUT" && bash -n "$MUT14" 2>/dev/null; then
+    ok "built a syntactically valid mutant with the delimiter guard deleted"
+    M14="$(mktmp)"
+    run_sut "$CJ/floor.json" "$M14/out" "$M14/req" "$MUT14" >/dev/null 2>&1
+    mcount="$(count_props "$M14/out")"
+    if [ "$mcount" -eq 1 ]; then
+      ok "mutation control: without the guard the two distinct pairs collapse to 1 file - a silent overwrite AC14 prevents"
+    else
+      no "the mutant wrote $mcount file(s), not the expected 1 collision - the AC14 control is inconclusive"
+    fi
+  else
+    no "could not build a valid delimiter mutant - AC14 is uncontrolled"
+  fi
+else
+  no "AC14: the delimiter-collision fixture is missing - the guard is untested"
+fi
+
 echo
 echo "propose-work: $pass passed, $fail failed, $skip skipped"
 [ "$fail" -eq 0 ] || exit 1

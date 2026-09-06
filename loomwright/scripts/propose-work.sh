@@ -285,6 +285,18 @@ while IFS="$(printf '\t')" read -r cls fs n; do
   [ -n "${cls:-}" ] && [ -n "${fs:-}" ] || continue
   case "${n:-}" in ''|*[!0-9]*) continue ;; esac
 
+  # Delimiter safety. The filename joins class and flow_stage as "<cls>--<fs>.md", so a value
+  # containing "--" could make two DISTINCT pairs resolve to one name and silently overwrite
+  # through guarded_write's `cat >`. The six-class/four-stage enum that makes this unreachable
+  # today is enforced in skills/pr-postmortem, NOT at the boundary this script reads - and a
+  # constraint held in another file is exactly the kind of silent data assumption the rest of
+  # this script refuses to make. Refuse loudly instead; a skipped pair is named, never dropped.
+  case "$cls$fs" in
+    *--*)
+      echo "propose-work: refusing $cls/$fs - '--' inside class or flow_stage collides with the filename delimiter - not proposed" >&2
+      continue ;;
+  esac
+
   if [ "$n" -lt "$PAIR_THRESHOLD" ]; then
     echo "propose-work: below threshold ($n < $PAIR_THRESHOLD): $cls/$fs - not proposed" >&2
     continue

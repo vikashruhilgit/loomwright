@@ -696,6 +696,32 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 
 ---
 
+### 🌱 /propose — Candidate Work Items from the Churn Ledger (Read-Only, Propose-Only)
+
+**Purpose:** Turn the recorded churn ledger into candidate work. The learning loop records and never proposes — findings accumulate, but nothing converts a trend into a piece of work, so every item this system executes was human-typed. `/propose` reads the pre-aggregated `.supervisor/floor/floor.json` and writes evidence-carrying candidate requirement files to `.supervisor/requirements/proposed/` (gitignored) via `scripts/propose-work.sh`. **It proposes; it never queues** — `proposed/` is deliberately NOT an `/automate --folder` target, and promotion is a human moving a file out of it. Threshold, never ranking: a `(class, flow_stage)` pair emits at ≥10 entries, with no score, rank, priority or top-N. A candidate that cannot cite ≥3 distinct ledger entries is not written; a basis older than 24h proposes nothing and names the age. Advisory and fail-safe — `set -uo pipefail` with no `set -e`, a `jq` guard that skips, `exit 0` always.
+
+**Parameters:** none. Tuned by env vars read by the script: `PROPOSE_FLOOR_JSON`, `PROPOSE_OUT_DIR`, `PROPOSE_REQUIREMENTS_DIR`, `PROPOSE_THRESHOLD` (10), `PROPOSE_MAX_AGE_SECONDS` (86400), `PROPOSE_SOURCE_DATE_EPOCH`.
+
+```
+/propose                                       # read floor.json, write candidates to .supervisor/requirements/proposed/
+```
+
+**Note — deleting a proposal is NOT a durable dismissal.** The cited coordinates are the earliest entries for a pair, so the `evidence-set:` token is stable and the candidate returns on the next run. To dismiss permanently, paste that token into a requirement file stamped `## Status: done` anywhere under `.supervisor/requirements/`.
+
+**Learn More:** see `loomwright/commands/propose.md` for the env table, the promote/dismiss contract, and the emission + staleness thresholds
+
+---
+
+### 📡 /telemetry — Opt-In GitHub Issues Telemetry
+
+**Purpose:** Manage the plugin's opt-in telemetry, which is **disabled by default** and posts anonymised run outcomes as GitHub Issues to a repo you name. Consent flows only through this command — hooks **never** prompt. It fails **CLOSED on privacy**: any privacy-whitelist match aborts the post (core exits `2`), and there is **no origin-remote fallback**, because the plugin runs in arbitrary user projects whose origin is the wrong place to send telemetry.
+
+**Usage:** `/telemetry status` · `/telemetry enable` · `/telemetry disable` · `/telemetry test`
+
+**Learn More:** see `loomwright/commands/telemetry.md` and `loomwright/docs/TELEMETRY.md` for the wrapper-vs-core architecture, the scoring rubric, the privacy whitelist, and the exit-code table (0..5)
+
+---
+
 ### 📜 /rules — House Rules Substrate (Committed `.agent/rules/`)
 
 **Purpose:** Maintain the plugin's first **committed-convention** surface — `.agent/rules/*.json`, a version-controlled source of truth for project conventions so an implementer can read them on the DO side, not only get caught on review. Six subcommands: `list` (show all valid rules via the fail-safe `read-rules.sh` reader), `suggest` (scan the repo → PROPOSE rules for human review, never auto-writes), `add` (append-only, confirm-only write to a path-contained `.agent/rules/<category-slug>.json`, with optional `--supersedes` and repeatable `--applies-to` path routing), `retract` (curation/anti-rot: remove one existing rule object by id, confirm-only), `audit` (READ-ONLY, PROPOSE-ONLY re-validation of the STANDING store via `audit-rules.sh` — it has no write mode and NEVER runs a rule's `check`), and `check` (HUMAN-invoked: display + run `must` rules' checks only after explicit confirmation). **Trust boundary:** the reader emits each `check` as DATA and never executes it; `/rules check` requires explicit confirmation (mechanized in `rules-check.sh`, with a default-off `--no-cmd` unattended valve that wins over `--confirm`). **Advisory enforcement is wired (never-gating)** at the worker / Phase 4.5 self-heal / SessionStart-nudge seams (the reader is consumed as review/DO-side context, never a gate); `/rules add` and `/rules retract` are both mechanized into the sole-writer `add-rule.sh`. Subordinate to CLAUDE.md (on conflict, CLAUDE.md wins).
