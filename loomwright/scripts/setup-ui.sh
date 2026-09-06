@@ -260,15 +260,34 @@ SERVE_LOG="serve.log"
 # disagree with the other two about what `--ui-dir` means. The module's convention is an
 # absolute `--ui-dir` (or none, taking the default); `resolved_ui_dir` exists for `remove`,
 # where the cost of getting a path wrong is a deleted directory rather than a re-run.
-SERVE_TOKEN_NAME="ui-serve.token"
+# The name is DERIVED FROM THE UI DIRECTORY, not fixed, and the difference is a correctness
+# bug rather than a nicety. A fixed name in the PARENT collides for any two `--ui-dir` values
+# that share one - `~/.claude/loomwright/ui` and `~/.claude/loomwright/ui-staging`, say, which
+# is exactly where a second install goes. Both absolute, both legitimate, one file: the second
+# `serve` overwrote the first's url, so `check --ui-dir ui` handed out the OTHER server's token
+# (a 403 the reader would debug as their own mistake), and `stop --ui-dir ui-staging` deleted
+# the shared file, after which `check --ui-dir ui` called a perfectly healthy server
+# unrecoverable. `serve.pid` never had this because it lives INSIDE its own UI_DIR; the
+# registry does not because it is meant to be shared. This file is neither - it is per RUNNING
+# SERVER - so it takes the one thing that distinguishes two siblings: their own names.
+# `<basename>-serve.token` is collision-free for any two distinct absolute paths (equal parent
+# AND equal basename is the same directory), and for the default `.../ui` it spells exactly the
+# `ui-serve.token` this file has always used.
+SERVE_TOKEN_SUFFIX="-serve.token"
 # Resolved as a function rather than frozen into a variable at startup, because `--ui-dir` is
 # parsed AFTER these declarations and a path computed too early would silently point at the
 # default while every self-test ran inside its mktemp dir.
 serve_token_path() {
-  local parent
+  local parent base
   parent="$(dirname "$UI_DIR" 2>/dev/null)" || parent=""
+  base="$(basename "$UI_DIR" 2>/dev/null)" || base=""
   [ -n "$parent" ] || return 1
-  printf '%s/%s' "$parent" "$SERVE_TOKEN_NAME"
+  # A basename that is not a NAME cannot namespace anything, and every one of these would put
+  # the file somewhere the caller did not ask for. Refusing returns 1, which `serve` already
+  # degrades to a note and `check`/`stop` already treat as "no file" - no new branch, and no
+  # path that silently writes a secret to a guessed location.
+  case "$base" in ''|.|..|/) return 1 ;; esac
+  printf '%s/%s%s' "$parent" "$base" "$SERVE_TOKEN_SUFFIX"
   return 0
 }
 

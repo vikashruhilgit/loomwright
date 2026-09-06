@@ -6700,6 +6700,55 @@ fi
 
 rm -rf "$S_TMP" 2>/dev/null
 
+# --- (s14)/(s15) TWO UI DIRECTORIES THAT SHARE A PARENT -----------------------------------------
+# The open-url file lives in the PARENT of the ui directory, which is what keeps it out of the
+# served root. A FIXED name there collides for any two `--ui-dir` values that share that parent
+# — `.../ui` and `.../ui-staging`, both absolute, both legitimate, and exactly where a second
+# install goes. Measured before the fix: the second `serve` overwrote the first's url, so
+# `check --ui-dir ui` printed the OTHER server's port and token (a 403 the reader debugs as
+# their own mistake), and `stop --ui-dir ui-staging` deleted the shared file, after which
+# `check --ui-dir ui` called a still-running server unrecoverable.
+#
+# `serve.pid` never had this — it lives INSIDE its own UI_DIR — and the registry is meant to be
+# shared, so neither precedent transfers. The name is therefore derived from the ui directory's
+# own basename, which is the one thing that distinguishes two siblings.
+S_TWO="$(mktmp)"
+bash "$ENGINE" apply --ui-dir "$S_TWO/ui" >/dev/null 2>&1
+bash "$ENGINE" apply --ui-dir "$S_TWO/ui-staging" >/dev/null 2>&1
+s_pa="$(n_free_port)"; s_pb="$(n_free_port)"
+case "$s_pa$s_pb" in *[!0-9]*) setup_fail "(s14) fixture: could not obtain two free ports" ;; esac
+bash "$ENGINE" serve --registry "$S_TWO/rA.json" --ui-dir "$S_TWO/ui"         --no-regen --detach --port "$s_pa" >"$S_TWO/A" 2>&1
+track_serve "$S_TWO/ui"
+bash "$ENGINE" serve --registry "$S_TWO/rB.json" --ui-dir "$S_TWO/ui-staging" --no-regen --detach --port "$s_pb" >"$S_TWO/B" 2>&1
+track_serve "$S_TWO/ui-staging"
+n_wait_up "$s_pa" >/dev/null 2>&1
+n_wait_up "$s_pb" >/dev/null 2>&1
+
+# (s14) each names its OWN url — the wrong-token handout
+s_ua="$(bash "$ENGINE" check --registry "$S_TWO/rA.json" --ui-dir "$S_TWO/ui" 2>&1 | awk '/^  open: /{sub(/^  open: +/, ""); print; exit}')"
+s_ub="$(bash "$ENGINE" check --registry "$S_TWO/rB.json" --ui-dir "$S_TWO/ui-staging" 2>&1 | awk '/^  open: /{sub(/^  open: +/, ""); print; exit}')"
+s_a_ok=0; case "$s_ua" in *":$s_pa/"*) s_a_ok=1 ;; esac
+s_b_ok=0; case "$s_ub" in *":$s_pb/"*) s_b_ok=1 ;; esac
+if [ "$s_a_ok" = "1" ] && [ "$s_b_ok" = "1" ] && [ "$s_ua" != "$s_ub" ]; then
+  ok "(s14) two ui directories SHARING A PARENT each get their own open-url file: check names each server's own port and token, where a fixed filename handed back whichever serve ran last — a token the other server answers with a 403"
+else
+  no "(s14) two ui dirs sharing a parent each keep their own url" \
+     "A(port $s_pa)=$s_ua :: B(port $s_pb)=$s_ub"
+fi
+
+# (s15) stopping one must not blind the other — the destructive half of the same collision
+bash "$ENGINE" stop --ui-dir "$S_TWO/ui-staging" >/dev/null 2>&1
+n_wait_down "$s_pb" >/dev/null 2>&1
+s_ua2="$(bash "$ENGINE" check --registry "$S_TWO/rA.json" --ui-dir "$S_TWO/ui" 2>&1 | awk '/^  open: /{sub(/^  open: +/, ""); print; exit}')"
+if [ "$s_ua2" = "$s_ua" ]; then
+  ok "(s15) stopping the SIBLING install leaves this one's url intact — serve_cleanup deletes the file belonging to the ui dir it was given, and a shared file meant 'stop' on one server reported the other, still running, as unrecoverable"
+else
+  no "(s15) stopping a sibling install does not delete this one's url" "before=$s_ua after=$s_ua2"
+fi
+bash "$ENGINE" stop --ui-dir "$S_TWO/ui" >/dev/null 2>&1
+rm -rf "$S_TWO" 2>/dev/null
+
+
 # --- (s12)/(s13) THE FOREGROUND SHUTDOWN PATH, WHICH IS THE ONE A HUMAN IS TOLD TO USE --------
 # (s8) covers `do_stop` — the path `/ui stop` and every agent takes. It is NOT the only way a
 # server ends: foreground is the engine's documented default and Ctrl-C is the sanctioned human
@@ -6822,7 +6871,7 @@ t_order_faults() {
   body="$(t_fn_body "$1" adoptToken)"
   [ -n "$body" ] || { printf '%s' "[adoptToken not found — every claim here would be vacuous]"; return 0; }
   store_at="$(printf '%s\n' "$body" | grep -n 'storeToken(t);' | head -1 | cut -d: -f1)"
-  stripe_at="$(printf '%s\n' "$body" | grep -n 'replaceState' | head -1 | cut -d: -f1)"
+  stripe_at="$(printf '%s\n' "$body" | grep -n 'stripFragment();' | head -1 | cut -d: -f1)"
   [ -n "$store_at" ] || bad="$bad [adoptToken never stores the token]"
   [ -n "$stripe_at" ] || bad="$bad [adoptToken never strips the fragment]"
   if [ -n "$store_at" ] && [ -n "$stripe_at" ] && [ "$store_at" -ge "$stripe_at" ]; then
@@ -6869,7 +6918,7 @@ awk '
   /^  function adoptToken/{f=1}
   f && /^    storeToken\(t\);$/ { held=$0; next }
   { print }
-  f && held != "" && /^    \}$/ { print held; held=""; f=0 }
+  f && held != "" && /^    stripFragment\(\);$/ { print held; held=""; f=0 }
 ' "$JS" > "$T_JS"
 t_o_mut="$(t_order_faults "$T_JS")"
 [ -n "$t_o_mut" ] \
@@ -6914,6 +6963,31 @@ if in_str "$t_body_ra" "holds no token" && in_str "$t_body_ra" "setup-ui.sh serv
 else
   no "(t9) the no-token refusal names the recovery rather than blaming the reader" "$(printf '%s' "$t_body_ra" | grep -c 'holds no token') holds-no-token / serve-named=$(in_str "$t_body_ra" "setup-ui.sh serve" && echo yes || echo no) / blames=$(in_str "$t_body_ra" "rather than a bare address" && echo YES || echo no)"
 fi
+
+# --- (t11)/(t12) the strip runs even when the token is one this page ALREADY holds -------------
+# The file's stated invariant is that the fragment leaves the address bar the moment it is read.
+# The listener's early return for an unchanged token skipped it: pasting the same url a second
+# time — a habit a reader acquires precisely because the first paste used to do nothing — left
+# the token sitting in the address bar, and from there in history, which is the one place this
+# whole design exists to keep it out of.
+t_restrip_faults() {
+  local body bad=""
+  body="$(t_hash_body "$1")"
+  [ -n "$body" ] || { printf '%s' "[no hashchange listener at all]"; return 0; }
+  in_str "$body" "t === floorToken) { stripFragment(); return; }" \
+    || bad="$bad [an ALREADY-HELD token returns without stripping, so re-pasting the url leaves it in the address bar and in history]"
+  printf '%s' "$bad"
+}
+t_rs2="$(t_restrip_faults "$JS")"
+[ -z "$t_rs2" ] \
+  && ok "(t11) a hashchange carrying a token this page ALREADY holds still strips the address bar — nothing to adopt and nothing to announce, but the fragment must not be left where history will take it" \
+  || no "(t11) an already-held token still strips the address bar" "$t_rs2"
+
+sed "s/if (t === floorToken) { stripFragment(); return; }/if (t === floorToken) { return; }/" "$JS" > "$T_JS"
+t_rs2_mut="$(t_restrip_faults "$T_JS")"
+[ -n "$t_rs2_mut" ] \
+  && ok "(t12) MUTATION CONTROL: an early return that skips the strip IS flagged — the shape this listener shipped in, and one every other (t) case passes happily" \
+  || no "(t12) MUTATION CONTROL: a strip-skipping early return is flagged" "the mutant passed (t11)'s predicate"
 
 # --- (t10) the real page is untouched by the controls above ------------------------------------
 [ "$(csum "$JS")" = "$T_JS_SIG_BEFORE" ] \

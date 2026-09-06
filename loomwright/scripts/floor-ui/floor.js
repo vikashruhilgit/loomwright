@@ -181,19 +181,29 @@
     var m = /(?:^#|[#&])token=([A-Za-z0-9_-]+)/.exec(String(window.location.hash || ''));
     return m ? m[1] : '';
   }
-  /* Read, remember, THEN erase from the address bar - in that order, because the strip must not
-   * happen until the token is held somewhere that survives the address bar. */
-  function adoptToken(t) {
-    floorToken = t;
-    storeToken(t);
+  /* THE STRIP, ON ITS OWN, because it has two callers and only one of them adopts anything.
+   * The file's stated invariant is that the fragment leaves the address bar the moment it is
+   * read - and that has to hold for a token this page ALREADY holds, not only for a new one.
+   * Pasting the same url a second time (a habit a reader picks up precisely because the first
+   * paste used to do nothing) took the `t === floorToken` early return below and never reached
+   * the strip, so the token stayed in the address bar and went to history from there. */
+  function stripFragment() {
     if (window.history && window.history.replaceState) {
       try {
         window.history.replaceState(null, '', window.location.pathname + (window.location.search || ''));
       } catch (e) {
         /* A browser that refuses the rewrite must not take the page down with it: the token is
-         * already held above, and the only cost is a url that still shows it. */
+         * already held by the caller, and the only cost is a url that still shows it. */
       }
     }
+  }
+
+  /* Read, remember, THEN erase from the address bar - in that order, because the strip must not
+   * happen until the token is held somewhere that survives the address bar. */
+  function adoptToken(t) {
+    floorToken = t;
+    storeToken(t);
+    stripFragment();
   }
 
   (function () {
@@ -209,7 +219,11 @@
    * `hashchange`, so adoptToken's own strip cannot re-enter here. */
   window.addEventListener('hashchange', function () {
     var t = fragmentToken();
-    if (!t || t === floorToken) { return; }
+    if (!t) { return; }
+    /* ALREADY HELD. There is nothing to adopt and nothing to announce - but the address bar is
+     * showing a token, and this page's whole claim about fragments is that it does not leave
+     * one there. Strip and say nothing. */
+    if (t === floorToken) { stripFragment(); return; }
     adoptToken(t);
     actionNote('token accepted from the url — the four buttons will now be accepted for this run.');
   });
