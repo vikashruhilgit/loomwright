@@ -1,6 +1,6 @@
 ---
 name: rules
-description: Protocol authority for the /rules command and the committed .agent/rules/ house-rules substrate — the rule JSON schema + per-object fail-safe-skip validation, the `applies_to` path-routing read contract (bash `case` globs, fail-OPEN on every ambiguity and on a zero-arg call, resolved AFTER supersession), the scan-to-suggest spec, the advisory/must/no-op-when-absent reader contract (read-rules.sh), the /rules add path-contained atomic-append write discipline (mechanized in add-rule.sh, with an optional `--supersedes` flag), the /rules retract remove-only write discipline (also mechanized in add-rule.sh), the /rules check human-invoked+confirmed execution semantics (mechanized in rules-check.sh), the single-hop supersession read contract, and the check-is-arbitrary-shell trust boundary (unattended `check` execution is now GATED via rules-check.sh --no-cmd). Use when running /rules or modifying any part of the rules substrate.
+description: Protocol authority for the /rules command and the committed .agent/rules/ house-rules substrate — the rule JSON schema + per-object fail-safe-skip validation, the `applies_to` path-routing read contract (bash `case` globs, fail-OPEN on every ambiguity and on a zero-arg call, resolved AFTER supersession), the scan-to-suggest spec, the advisory/must/no-op-when-absent reader contract (read-rules.sh), the /rules add path-contained atomic-append write discipline (mechanized in add-rule.sh, with an optional `--supersedes` flag), the /rules retract remove-only write discipline (also mechanized in add-rule.sh), the /rules check human-invoked+confirmed execution semantics (mechanized in rules-check.sh), the single-hop supersession read contract, the READ-ONLY/PROPOSE-ONLY `/rules audit` correctness audit over the standing store (mechanized in audit-rules.sh: no write mode, never executes a `check`, fails CLOSED on could-not-examine), and the check-is-arbitrary-shell trust boundary (unattended `check` execution is now GATED via rules-check.sh --no-cmd). Use when running /rules or modifying any part of the rules substrate.
 version: "1.3.0"
 lastUpdated: "2026-08-17"
 ---
@@ -17,7 +17,7 @@ Protocol authority for `/rules` (see `${CLAUDE_PLUGIN_ROOT}/commands/rules.md` f
 
 ## When to Use
 
-- Executing any `/rules` flow (the command reads this skill at Step 0): `list`, `suggest`, `add`, `check`.
+- Executing any `/rules` flow (the command reads this skill at Step 0): `list`, `suggest`, `add`, `retract`, `audit`, `check`.
 - Implementing or modifying `read-rules.sh` — the reader conforms to the contract below, never the reverse.
 - Reviewing changes that touch `.agent/rules/` or the rules reader/command.
 
@@ -226,6 +226,65 @@ A layered model — a company-base rule set composed with per-project overrides 
 
 ---
 
+## §11 — `/rules audit` (READ-ONLY, PROPOSE-ONLY)
+
+`audit` re-validates the **standing** store. §7's write-time gate runs the five shared correctness checks **once, against the store as it stood the day a rule was written** — and nothing re-validates that rule as the repo drifts underneath it: the path it scoped itself to is renamed, the rule it was written to replace is retracted, a later rule says the opposite. **§11 is the over-time half of §7's gate**, and it is the only part of this substrate that looks at the store *as a whole*. The engine is `${CLAUDE_PLUGIN_ROOT}/scripts/audit-rules.sh`; `/rules audit` is a thin caller of it, exactly as `add` is a thin caller of `add-rule.sh` (§9.1) and `check` is of `rules-check.sh` (§8).
+
+### §11.1 — Posture: read-only and propose-only (there is no write mode to disable)
+
+- **No write mode and no write flag exist** — not "dry-run by default", dry-run **only**. A read-only engine is strictly stronger than an opt-in write flag: there is no flag that could be passed by accident, misread from a doc, or reached by a caller who copied an invocation without reading it. An **unknown flag is REFUSED, never ignored.**
+- **A run leaves the store byte-identical**, and the engine **asserts that from its own run** — a content fingerprint taken before the first check and compared after the last — rather than inferring it from the absence of a write path. A mismatch means a concurrent writer moved underneath the run, so every finding describes a store that no longer exists: that is a could-not-examine condition, not a finding (§11.5).
+- **Every recommendation names an EXISTING action**: `/rules add --supersedes <id> …` (§7) to replace a rule with a corrected one, or `add-rule.sh --retract --target <id> --reason <text>` (§7.5) to remove one outright. **§11 introduces no new write path and no new action verb**; `add-rule.sh` remains the **sole writer** (§9.1). A recommendation naming an action that does not already exist is a defect in the audit, not a feature request for the writer.
+- **The schema stays frozen.** The audit adds no member to a rule object and writes no sidecar store — a "last audited" stamp or a findings file would be a new store, which the curation freeze forbids for the same reason §7.5 refuses a provenance sidecar. Its entire output is stdout.
+
+### §11.2 — `audit` is NOT `check` — the two verbs are opposites
+
+This is a **security distinction wearing two similar names**, so it is stated normatively here and asserted in `test-rules-docs.sh` (block `(j)`, flag `audit_vs_check_ok`) against **both** this file and `commands/rules.md`, so the confusion cannot quietly drift back in:
+
+| | `/rules check` (§8) | `/rules audit` (§11) |
+|---|---|---|
+| Subject | runs the **rules against the repo** | examines the **store for correctness** |
+| A rule's `check` value | **EXECUTED**, behind a human confirmation gate | **NEVER executed** — read as data, statically linted |
+| Sole mechanism | `rules-check.sh` — **the sole executor** | `audit-rules.sh` — executes nothing |
+| Caller | **human-invoked only** (§9) | safe for **any unattended caller**, zero code-execution risk |
+
+The audit's only interest in a `check` string is **static**: is it absent, is it whitespace-only (`no_mechanism`, §11.4). It never runs, evals, sources, or `bash -c`s one. **The §9 trust boundary extends unchanged to the audit** — this verb adds a second *read-only consumer* of `check`, never a second executor. Any future change that gives the audit an execution path breaks §9 and is out of contract; the suite proves the invariant with a `check` whose value would create a canary file and asserts the canary never appears.
+
+### §11.3 — It re-runs the shared checks; it reimplements none of them
+
+The five correctness checks live in `validate-entry.sh` and are **loaded, not copied**. A second copy of the correctness logic would drift silently from the first — which is the exact defect the standing `process` rule in this store names.
+
+- The engine **SOURCES the validator under the same three-clause LOAD GUARD `add-rule.sh` uses** (`add-rule.sh`'s `_ve_load_validator`): **(i)** the `source` itself must exit 0, with the status captured in a variable and the caller's errexit saved/restored — `|| true` on that line is **forbidden**, since it would convert a truncated validator into a silent success; a readability precheck sits **above** clause (i) but **inside** the same `LOAD GUARD BEGIN`/`END` delimiters, which mark the guard as one replaceable unit so a mutation control can swap it in a single edit. **(ii)** every required function name must be defined after loading — the five checks plus the advisory notice **plus the aggregate the call site actually invokes** (a partially-loaded validator would otherwise report "examined and clean" over half a check). **(iii)** `$VALIDATE_ENTRY_CONTRACT` must equal the **hardcoded literal** `validate-entry/2`; comparing against a value the helper itself exports would make the clause vacuous.
+- **Any shortfall in the guard is UNEXAMINED and exits 2** (§11.5). A store is never reported clean by a validator that did not load.
+- **Blocking vs advisory is inherited, not re-decided.** `duplicate`, `contradiction`, `provenance` are **BLOCKING**. `dead_reference` and `cross_repo_reference` are **ADVISORY** — reported in their own labelled section **with the matched text as evidence**, never aggregated into the finding count and never exit-bearing, because both were demoted to advisory after six consecutive rounds of false refusals over free prose. An audit inherits that ambiguity exactly; it must not launder an advisory match into a verdict.
+- **The `--store` shape is part of the contract.** `validate_duplicate` / `validate_contradiction` require `--store` shaped as **one line per stored entry**. Handing them a rule file's raw JSON is one document split into lines, no line reaches the threshold, and the shape guard returns **rc 2 — `REFUSE_*_UNCOMPARABLE_SHAPE`, "could not decide"**. A caller that absorbs that rc 2 as rc 0 audits **every** rule as a silent false "clean", reintroducing one layer up the exact fail-open the validator exists to close. So the audit builds a one-line-per-rule comparison corpus (the `build_compare_corpus` discipline `add-orientation.sh` and `write-agent-memory.sh` already use), and **rc 2 from any shared check is surfaced as UNKNOWN, never absorbed as clean.**
+
+### §11.4 — The five store-wide checks (the questions a write-time gate structurally cannot ask)
+
+| Check | Condition | Why `add` cannot ask it |
+|---|---|---|
+| `no_mechanism` | a `must` rule whose `check` is `null` or whitespace-only | an enforcement claim with no mechanism is legal at write time (§8 skips it silently) |
+| `never_fires` | an `applies_to` glob set matching **zero** tracked repo paths | the paths it named may have existed the day it was written |
+| `dangling_supersedes` | a `supersedes` naming an id absent from the store, or its own id | §7 rejects only a self-reference at write time; the target can be retracted later |
+| `dead_rule` | a rule superseded by a **later** rule | supersession is created by a *subsequent* write, never by this rule's own |
+| `later_contradiction` | a rule contradicted by a rule added **after** it | the contradicting rule did not exist yet |
+
+Two further conditions are reported because the fail-safe reader swallows them **by design** (§2), which makes them invisible at read time: `supersession_cycle` (a mutual or n-hop cycle, fail-safe-ignored on every side) and `skipped_object` (an object dropped by per-object validation — a rule the author believes is standing and that no reader will ever emit).
+
+**Every finding carries its evidence** — the validator's own message, the offending glob, the supersedes edge — never a bare verdict. A finding a reader cannot check is not actionable.
+
+### §11.5 — Exit-code contract, and why it is deliberately not the reader's
+
+`0` clean · `1` findings · `2` could not examine. **UNKNOWN wins over a blocking finding**: "could not examine" is the stronger statement, and collapsing it into "found something" would let a caller that only distinguishes zero from non-zero treat an unexamined store as an examined one.
+
+`read-rules.sh` **always exits 0** (§4, and the Anti-Patterns below) because **a read must never break its caller** — it is a runtime enrichment emitter and fails **SAFE**. `audit-rules.sh` is a **correctness gate** whose entire product is a verdict, so it fails **CLOSED**: **an audit that cannot examine and exits 0 is worse than no audit**, because it manufactures a clean verdict nobody asked for. This is the bimodal split CLAUDE.md's §"Failure-Mode Invariants" states, applied to two files in the same substrate; the divergence is the contract, and "harmonizing" the audit onto the reader's always-exit-0 posture would be a fail-open regression, not a consistency fix. Could-not-examine covers a missing / unreadable / truncated / contract-skewed validator, an absent `jq`, an unlistable store dir, an unreadable rule file, an rc-2 verdict from any blocking shared check, an unobtainable repo path list, an unorderable `provenance.added` stamp, and a store that changed mid-run.
+
+### §11.6 — Small-N honesty belongs in the OUTPUT, not only in a doc
+
+The audit **must state the store size and frame a zero-finding result as a small-N result in its own output**, adjacent to the number, rather than leaving the caveat in a document nobody reads next to it. "Zero blocking findings over N rules" establishes that these checks found nothing to report in **these N rules** — it establishes nothing about rules not in the store, nothing about conditions none of these N rules can exhibit, and nothing about the two advisory checks, whose clean verdict is explicitly not proof of absence. A run that prints `0` without that framing is reporting a result it did not earn.
+
+---
+
 ## Anti-Patterns
 
 - **Executing a `check` in the reader (or any unattended path).** The reader emits `check` as data, period. Unattended execution is now gated in `rules-check.sh --no-cmd` (default-off valve; `--no-cmd` wins over `--confirm`) — and no advisory seam ever enables it.
@@ -241,6 +300,8 @@ A layered model — a company-base rule set composed with per-project overrides 
 - **Adding `.agent/` to `.gitignore`.** Rules are committed and must travel with the repo.
 - **Chasing a `supersedes` chain transitively, or looping on a cycle.** Supersession is single-hop only (§5) — a mutual or n-hop cycle is fail-safe-ignored on every side, never chased and never a hang.
 - **Adding a `--replacement` flag to `retract`, or a `--replacement`-less `supersede` verb.** `retract` has no replacement (§7.5); `--supersedes` (§7) is a flag on `add`, not a separate verb — this file has no `supersede` action.
+- **Absorbing an audit's `could not examine` as `clean`, or "harmonizing" `audit-rules.sh` onto the reader's always-exit-0 posture.** The reader fails SAFE because a read must never break its caller; the audit fails CLOSED because its whole product is a verdict (§11.5). An rc-2 `REFUSE_*_UNCOMPARABLE_SHAPE` from a shared check, or a validator that did not load, is UNKNOWN/UNEXAMINED and exits 2 — never a clean rule.
+- **Giving `/rules audit` a write flag, a schema member, a findings sidecar, or any path that runs a rule's `check`.** It proposes via EXISTING actions only (§11.1) and reads `check` as data (§11.2); `add-rule.sh` stays the sole writer and `rules-check.sh` the sole executor.
 - **Adding an in-store tombstone / `retracted: true` marker, or a provenance sidecar for retraction reasons.** Retraction REMOVES the object outright; the writer prints the reason to stdout and the commit is the durable record (§7.5) — a sidecar would violate the curation freeze (no new stores).
 
 ## Related Skills
@@ -262,10 +323,11 @@ A layered model — a company-base rule set composed with per-project overrides 
 - [ ] `/rules add --supersedes <id>` is an optional flag (not a separate verb), OMITS the member entirely when unsupplied, and rejects only a self-reference at write time (a dangling target is the reader's fail-safe-ignore concern, not the writer's).
 - [ ] `/rules retract` is mutually exclusive with add-only flags, requires `--target`+`--reason`, ALWAYS rejects `--replacement`, removes via temp-file + atomic `mv`, read-back verifies the id is gone, and PRINTS (never stores) the provenance reason.
 - [ ] `read-rules.sh` hides a rule named by a LIVE rule's `supersedes` — single-hop, non-transitive — and fail-safe-ignores (never crashes on, never over-hides for) a malformed/self-referential/dangling/cyclic `supersedes`.
+- [ ] `/rules audit` (§11) has no write mode and no write flag, executes no rule's `check` (it lints the value statically; `rules-check.sh` stays the sole executor), loads `validate-entry.sh` under the three-clause LOAD GUARD instead of reimplementing any of the five checks, recommends only EXISTING actions (`/rules add --supersedes`, `add-rule.sh --retract`), exits `0`/`1`/`2` with could-not-examine NEVER reported as clean, and states its small-N limit in its own output.
 - [ ] No secret values written into a rule object.
 
 ## Token Cost
 
-- Invocation: ~1,300 tokens (skill body)
+- Invocation: ~1,500 tokens (skill body)
 - Storage: inline (markdown only)
 - Context7: not required

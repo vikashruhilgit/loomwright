@@ -24,6 +24,12 @@
 #     --replacement.
 #   - BOTH files document single-hop, non-transitive supersession (the reader hides the named
 #     rule; it does not chase a chain).
+#
+# /rules audit additions — the read-only, propose-only store audit:
+#   - BOTH files document the `audit` verb and its engine `audit-rules.sh`.
+#   - BOTH files state the audit-vs-check distinction (`audit` is NOT `check`; the audit NEVER
+#     executes a rule's `check`, and rules-check.sh remains the sole executor) and the audit's
+#     read-only / propose-only posture. Boolean flag: audit_vs_check_ok.
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -130,6 +136,50 @@ for f in "$CMD" "$SKILL"; do
     && ok "[$base] single-hop non-transitive supersession documented" \
     || no "[$base] MISSING single-hop/non-transitive supersession documentation"
 done
+
+# ---- (j) `audit` vs `check` — the two verbs are opposites (audit NEVER executes) ---------
+# The names are similar and the boundary between them is a SECURITY one: `check` EXECUTES a
+# rule's `check` string behind a human confirmation gate (rules-check.sh, the sole executor),
+# while `audit` only ever reads that string as data. If the distinction stops being stated, the
+# next reader of either doc can widen the execution boundary by accident. So it is asserted in
+# BOTH docs, and the flag is ANDed across them — one silent file fails the assertion.
+#
+# EVERY pattern below is ANCHORED TO THE AUDIT ON THE SAME LINE, and that is the whole point.
+# Bare `read-only`, `propose-only` and `never execute` already appear 2-5 times each in BOTH
+# files describing the READER (§5/§9), so a file-level grep for them passes with §11 deleted —
+# i.e. it asserts nothing. A mutation control (strip every audit line from either doc) must turn
+# this block RED; if it does not, the pattern has drifted back onto pre-existing reader prose.
+audit_vs_check_ok=true
+for f in "$CMD" "$SKILL"; do
+  base="$(basename "$(dirname "$f")")/$(basename "$f")"
+
+  # the verb and its engine (neither string exists anywhere else in either doc)
+  has "$f" 'audit-rules\.sh' && has "$f" '`audit`|/rules audit' \
+    && ok "[$base] /rules audit documented (engine: audit-rules.sh)" \
+    || { no "[$base] MISSING /rules audit + audit-rules.sh documentation"; audit_vs_check_ok=false; }
+
+  # the distinction itself, stated as a distinction
+  has "$f" 'two verbs are opposites|`?audit`? is NOT `?check`?' \
+    && ok "[$base] audit-vs-check distinction stated (the two verbs are opposites)" \
+    || { no "[$base] MISSING audit-is-NOT-check distinction"; audit_vs_check_ok=false; }
+
+  # the audit side of it: same-line audit + a never-executes claim
+  has "$f" '(`?/?(rules )?audit`?|audit-rules\.sh).{0,220}(never execut|executes no|does not execute|reads? .{0,30}check.{0,30} as .{0,10}data)' \
+    && ok "[$base] audit never executes a rule's check (reads it as data)" \
+    || { no "[$base] MISSING audit-never-executes-a-check phrasing"; audit_vs_check_ok=false; }
+
+  # the check side of it: rules-check.sh named as the SOLE executor
+  has "$f" 'rules-check\.sh.{0,40}(is|stays|remains|—).{0,25}sole executor|sole executor.{0,40}rules-check\.sh' \
+    && ok "[$base] rules-check.sh named as the sole executor" \
+    || { no "[$base] MISSING rules-check.sh-is-the-sole-executor phrasing"; audit_vs_check_ok=false; }
+
+  # PROPOSE-ONLY: the audit recommends only actions that already exist, so no second write path
+  has "$f" '(`?/?(rules )?audit`?|audit-rules\.sh).{0,140}(read-only|propose-only)|(read-only|propose-only).{0,140}audit' \
+    && ok "[$base] audit read-only/propose-only posture documented" \
+    || { no "[$base] MISSING audit read-only/propose-only posture"; audit_vs_check_ok=false; }
+done
+$audit_vs_check_ok && ok "audit-vs-check distinction stated in BOTH docs (cannot silently drift back)" \
+                   || no "audit-vs-check distinction NOT stated in both docs (see the failures above)"
 
 # ============================================================================
 echo
