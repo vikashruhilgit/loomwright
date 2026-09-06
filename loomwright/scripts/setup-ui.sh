@@ -262,8 +262,8 @@ SERVE_LOG="serve.log"
 # where the cost of getting a path wrong is a deleted directory rather than a re-run.
 # The name is DERIVED FROM THE UI DIRECTORY, not fixed, and the difference is a correctness
 # bug rather than a nicety. A fixed name in the PARENT collides for any two `--ui-dir` values
-# that share one - `~/.claude/loomwright/ui` and `~/.claude/loomwright/ui-staging`, say, which
-# is exactly where a second install goes. Both absolute, both legitimate, one file: the second
+# that share one - `<parent>/ui` and `<parent>/ui-staging`, say, which is exactly where a second
+# install goes. Both absolute, both legitimate, one file: the second
 # `serve` overwrote the first's url, so `check --ui-dir ui` handed out the OTHER server's token
 # (a 403 the reader would debug as their own mistake), and `stop --ui-dir ui-staging` deleted
 # the shared file, after which `check --ui-dir ui` called a perfectly healthy server
