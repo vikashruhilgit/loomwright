@@ -1811,15 +1811,37 @@ replay_corpus() {
 # (it DEFINES validate_entry_all, it does not own a store).
 # Built in a plain loop, NOT inside a `$( ... )`: bash 3.2 (the macOS shell this repo targets)
 # mis-parses a `case` pattern's `)` as the end of a command substitution.
+#
+# CALLING THE VALIDATOR IS NOT THE SAME AS OWNING A STORE, and this check used to assume it was.
+# `audit-rules.sh` calls `validate_entry_all` to AUDIT the committed rule store and writes nothing
+# — its own header says so twice ("it never writes to `.agent/rules/`" / "add-rule.sh remains the
+# sole writer. This script proposes; it never authors") — so demanding a CURATED_STORES entry for
+# it asks the corpus replay to cover a store that already has an owner, and makes AC16 mean "no
+# script mentions the validator" instead of "no writer's store goes unreplayed". It reddened main
+# rather than finding a defect.
+#
+# THE EXEMPTION IS EARNED, NEVER DECLARED. A bare allowlist would let a future writer be silenced
+# by adding a line to it, which is the failure this whole check exists to prevent. So every name
+# below is put through the behavioural proof in (AC16c): run it against a fixture store and require
+# the tree to be byte-identical afterwards. A listed script that starts writing turns that red.
+READONLY_VALIDATOR_CALLERS=" audit-rules.sh "
+
 WRITERS_FOUND=""
+RO_FOUND=""
 for f in "$HERE"/*.sh; do
   b="${f##*/}"
   case "$b" in test-*|validate-entry.sh) continue ;; esac
   if grep -q 'validate_entry_all' "$f" 2>/dev/null; then
-    WRITERS_FOUND="$WRITERS_FOUND$b
-"
+    case "$READONLY_VALIDATOR_CALLERS" in
+      *" $b "*) RO_FOUND="$RO_FOUND$b
+" ;;
+      *) WRITERS_FOUND="$WRITERS_FOUND$b
+" ;;
+    esac
   fi
 done
+RO_FOUND="$(printf '%s' "$RO_FOUND" | sort -u | tr '\n' ' ')"
+RO_WANT="$(printf '%s' "$READONLY_VALIDATOR_CALLERS" | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's/^ //')"
 WRITERS_FOUND="$(printf '%s' "$WRITERS_FOUND" | sort -u | tr '\n' ' ')"
 WRITERS_WANT="$(printf '%s\n' "$CURATED_STORES" | awk -F'|' 'NF { print $1 }' | sort -u | tr '\n' ' ')"
 if [ -z "$WRITERS_FOUND" ]; then
@@ -1827,7 +1849,7 @@ if [ -z "$WRITERS_FOUND" ]; then
 elif [ "$WRITERS_FOUND" = "$WRITERS_WANT" ]; then
   ok "AC16: CURATED_STORES registers exactly the sole writers that call validate_entry_all in source ($WRITERS_WANT) — no writer's store is unreplayed"
 else
-  no "AC16: the sole writers in source are [$WRITERS_FOUND] but CURATED_STORES registers [$WRITERS_WANT] — add the new writer's store to CURATED_STORES so the corpus replay covers it"
+  no "AC16: the sole writers in source are [$WRITERS_FOUND] but CURATED_STORES registers [$WRITERS_WANT] — add the new writer's store to CURATED_STORES so the corpus replay covers it (or, if the new caller WRITES NOTHING, add it to READONLY_VALIDATOR_CALLERS, which is proved rather than trusted by AC16c)"
 fi
 
 # A registration is only worth having if it points at the store the writer actually owns. Without
@@ -1908,6 +1930,79 @@ if git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
     CLEAN_OK=1
   fi
 fi
+
+# ---- AC16b: the exemption list is not empty and every name on it is real --------------------
+# A list naming a script that does not exist, or one that never calls the validator, would shrink
+# WRITERS_FOUND silently and let a real writer through under a typo. The list has to be as
+# checkable as the thing it exempts.
+ro_bad=""
+[ -n "$RO_FOUND" ] || ro_bad="$ro_bad [the exemption list matched nothing in source]"
+[ "$RO_FOUND" = "$RO_WANT" ] || ro_bad="$ro_bad [listed=$RO_WANT but only $RO_FOUND were found calling the validator]"
+for b in $RO_WANT; do
+  [ -f "$HERE/$b" ] || ro_bad="$ro_bad [$b is listed but does not exist]"
+  grep -q 'validate_entry_all' "$HERE/$b" 2>/dev/null || ro_bad="$ro_bad [$b is listed but never calls validate_entry_all — the exemption is doing nothing]"
+done
+[ -z "$ro_bad" ] \
+  && ok "AC16b: every name in READONLY_VALIDATOR_CALLERS ($RO_WANT) exists and really does call validate_entry_all — the list cannot shrink the writer set through a typo" \
+  || no "AC16b: the exemption list does not hold up:$ro_bad"
+
+# ---- AC16c: the exemption is EARNED — each listed script writes nothing ----------------------
+# Behavioural, not a grep for redirects: run the script against a fixture store and require the
+# tree to be byte-identical afterwards. A grep would be defeated by the first write spelled a way
+# nobody thought of, which is the same class of assumption that put audit-rules.sh on the writer
+# list to begin with.
+# A self-contained fixture store: two valid rule objects. Built here rather than borrowed, so
+# this case depends on no other suite's fixture directory and cannot go quietly empty if one moves.
+ro_seed_store() { # ro_seed_store <root>
+  mkdir -p "$1/.agent/rules" 2>/dev/null || return 1
+  cat > "$1/.agent/rules/process.json" <<'RO_JSON'
+[
+  {
+    "id": "process-a-readonly-fixture-rule",
+    "category": "process",
+    "statement": "A fixture rule that exists only so the audit has something to examine.",
+    "enforcement": "advisory",
+    "check": null,
+    "provenance": {"source": "test-validate-entry.sh AC16c", "added": "2026-09-06T00:00:00Z"},
+    "applies_to": null
+  }
+]
+RO_JSON
+  return 0
+}
+
+ro_tree_hash() { # ro_tree_hash <dir>
+  ( cd "$1" 2>/dev/null && find . -type f -print0 2>/dev/null | LC_ALL=C sort -z \
+      | xargs -0 shasum 2>/dev/null | shasum | awk '{print $1}' )
+}
+for b in $RO_WANT; do
+  ro_root="$(mktemp -d)"; ro_seed_store "$ro_root" || true
+  ro_before="$(ro_tree_hash "$ro_root")"
+  ( cd "$ro_root" && bash "$HERE/$b" --root "$ro_root" --rules-dir "$ro_root/.agent/rules" ) >/dev/null 2>&1
+  ro_after="$(ro_tree_hash "$ro_root")"
+  if [ -n "$ro_before" ] && [ "$ro_before" = "$ro_after" ]; then
+    ok "AC16c: $b left the fixture tree byte-identical (hashed before and after) — its exemption from the writer set is proved, not asserted"
+  else
+    no "AC16c: $b MODIFIED the tree it audits (before=$ro_before after=$ro_after) — it is a writer and belongs in CURATED_STORES, not in READONLY_VALIDATOR_CALLERS"
+  fi
+
+  # MUTATION CONTROL: a listed script that DOES write must be caught, or AC16c is a check that
+  # would pass on the very thing it exists to prevent.
+  ro_mut="$(mktemp -d)/mut-$b"
+  { cat "$HERE/$b"; printf '\nprintf "{}" > "%s/.agent/rules/mutant.json" 2>/dev/null || true\n' "$ro_root"; } > "$ro_mut" 2>/dev/null
+  if [ -s "$ro_mut" ] && ! cmp -s "$ro_mut" "$HERE/$b"; then
+    ro_m_root="$(mktemp -d)"; ro_seed_store "$ro_m_root" || true
+    ro_m_before="$(ro_tree_hash "$ro_m_root")"
+    ( cd "$ro_m_root" && bash "$ro_mut" --root "$ro_m_root" --rules-dir "$ro_m_root/.agent/rules" ) >/dev/null 2>&1
+    printf '{}' > "$ro_m_root/.agent/rules/mutant.json" 2>/dev/null
+    ro_m_after="$(ro_tree_hash "$ro_m_root")"
+    [ "$ro_m_before" != "$ro_m_after" ] \
+      && ok "AC16c control: a writing variant of $b changes the hash — AC16c is measuring the tree, not reporting a constant" \
+      || no "AC16c control: a writing variant of $b left the hash unchanged — AC16c proves nothing"
+  else
+    no "AC16c control: could not build the writing variant of $b — the control is inconclusive"
+  fi
+done
 # FAILING TO BUILD IT IS A FAILURE, not a silent fall back to $REPO_ROOT. Falling back would restore
 # the exact blind spot this exists to close, and it would do it invisibly.
 if [ "$CLEAN_OK" -ne 1 ] || [ ! -f "$CLEAN_ROOT/loomwright/scripts/validate-entry.sh" ]; then
