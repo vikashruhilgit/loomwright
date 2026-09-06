@@ -6630,6 +6630,83 @@ fi
 
 rm -rf "$S_TMP" 2>/dev/null
 
+# --- (s12)/(s13) THE FOREGROUND SHUTDOWN PATH, WHICH IS THE ONE A HUMAN IS TOLD TO USE --------
+# (s8) covers `do_stop` — the path `/ui stop` and every agent takes. It is NOT the only way a
+# server ends: foreground is the engine's documented default and Ctrl-C is the sanctioned human
+# shutdown, and that path runs a different cleanup (the EXIT/INT/TERM trap). When the open-url
+# file was added only `do_stop` learned to delete it, so the human path left the file behind and
+# the next `check` called a clean shutdown "a server that did not stop cleanly" — the exact
+# sentence (s9) asserts, fired on a session where nothing went wrong.
+#
+# (s9) could not catch that: it PLANTS a leftover by hand, which tests the reporting and never
+# the producing. This pair drives the real path.
+#
+# SIGTERM, not SIGINT, and the reason is not cosmetic: a non-interactive shell sets SIGINT to
+# ignored for the async commands it starts, so `kill -INT` on a backgrounded serve is a no-op
+# and a case built on it would pass without the trap ever running. TERM reaches the SAME trap.
+S_FG="$(mktmp)"
+S_FG_UI="$S_FG/ui"
+S_FG_TOKEN="$S_FG/ui-serve.token"
+bash "$ENGINE" apply --ui-dir "$S_FG_UI" >/dev/null 2>&1
+s_fg_port="$(n_free_port)"
+case "$s_fg_port" in ''|*[!0-9]*) setup_fail "(s12) fixture: could not obtain a free port" ;; esac
+bash "$ENGINE" serve --registry "$S_FG/reg.json" --ui-dir "$S_FG_UI" --no-regen --port "$s_fg_port" >"$S_FG/out" 2>&1 &
+s_fg_pid=$!
+track_serve "$S_FG_UI"
+s_i=0
+while [ "$s_i" -lt 100 ] && [ ! -f "$S_FG_TOKEN" ]; do s_i=$((s_i + 1)); sleep 0.1; done
+s_fg_before=0; [ -f "$S_FG_TOKEN" ] && s_fg_before=1
+kill -TERM "$s_fg_pid" 2>/dev/null
+wait "$s_fg_pid" 2>/dev/null
+s_i=0
+while [ "$s_i" -lt 100 ] && [ -f "$S_FG_TOKEN" ]; do s_i=$((s_i + 1)); sleep 0.1; done
+n_wait_down "$s_fg_port" >/dev/null 2>&1
+s_fg_chk="$(bash "$ENGINE" check --registry "$S_FG/reg.json" --ui-dir "$S_FG_UI" 2>&1)"
+# ANTI-VACUITY FIRST: if the file never appeared, its absence afterwards proves nothing at all.
+if [ "$s_fg_before" != "1" ]; then
+  no "(s12) a foreground serve stopped by a signal removes its open-url file" \
+     "the file never appeared while the server ran, so this case could not observe its removal"
+elif [ ! -f "$S_FG_TOKEN" ] && ! in_str "$s_fg_chk" "did not stop cleanly"; then
+  ok "(s12) a FOREGROUND serve ended by a signal removes ui-serve.token through its own trap, and the next check reports a clean stop — the trap and do_stop clean up the same set of files, so the shutdown a human is told to use is not reported as a crash"
+else
+  no "(s12) a foreground serve stopped by a signal removes its open-url file" \
+     "file_present_after=$([ -f "$S_FG_TOKEN" ] && echo YES || echo no) :: $(printf '%s' "$s_fg_chk" | tr '\n' '|')"
+fi
+
+# --- (s13) MUTATION CONTROL: a trap that cleans only the pidfile IS caught --------------------
+# The state this file actually shipped in for one commit. Without this arm, (s12) passes for a
+# trap that removes everything AND for one that removes nothing, provided `stop` is never called.
+S_FG_MUT="$S_FG/engine-mut.sh"
+sed "s/serve_cleanup\" EXIT INT TERM/rm -f '\$UI_DIR\/serve.pid' 2>\/dev\/null\" EXIT INT TERM/" "$ENGINE" > "$S_FG_MUT"
+if ! grep -q "rm -f '\$UI_DIR/serve.pid' 2>/dev/null\" EXIT INT TERM" "$S_FG_MUT"; then
+  no "(s13) MUTATION CONTROL: a trap that cleans only the pidfile is caught" \
+     "the mutant engine could not be built — the trap line did not match, so this control never ran"
+else
+  S_FG2="$(mktmp)"
+  S_FG2_UI="$S_FG2/ui"
+  S_FG2_TOKEN="$S_FG2/ui-serve.token"
+  bash "$ENGINE" apply --ui-dir "$S_FG2_UI" >/dev/null 2>&1
+  s_fg2_port="$(n_free_port)"
+  bash "$S_FG_MUT" serve --registry "$S_FG2/reg.json" --ui-dir "$S_FG2_UI" --no-regen --port "$s_fg2_port" >"$S_FG2/out" 2>&1 &
+  s_fg2_pid=$!
+  track_serve "$S_FG2_UI"
+  s_i=0
+  while [ "$s_i" -lt 100 ] && [ ! -f "$S_FG2_TOKEN" ]; do s_i=$((s_i + 1)); sleep 0.1; done
+  s_fg2_before=0; [ -f "$S_FG2_TOKEN" ] && s_fg2_before=1
+  kill -TERM "$s_fg2_pid" 2>/dev/null
+  wait "$s_fg2_pid" 2>/dev/null
+  n_wait_down "$s_fg2_port" >/dev/null 2>&1
+  if [ "$s_fg2_before" = "1" ] && [ -f "$S_FG2_TOKEN" ]; then
+    ok "(s13) MUTATION CONTROL: a trap that removes ONLY the pidfile leaves ui-serve.token behind — so (s12) is measuring the trap's cleanup and would redden if the shared serve_cleanup were unwired again"
+  else
+    no "(s13) MUTATION CONTROL: a pidfile-only trap leaves the token file behind" \
+       "appeared=$s_fg2_before survived=$([ -f "$S_FG2_TOKEN" ] && echo yes || echo NO) — (s12) may be vacuous: it cannot tell a cleaning trap from a non-cleaning one"
+  fi
+  rm -rf "$S_FG2" 2>/dev/null
+fi
+rm -rf "$S_FG" 2>/dev/null
+
+
 # =============================================================================================
 # (t) THE PAGE-SIDE TOKEN LOGIC — sessionStorage, hashchange adoption, and the 403 drop
 # ---------------------------------------------------------------------------------------------

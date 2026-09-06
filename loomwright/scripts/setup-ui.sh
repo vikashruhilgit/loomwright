@@ -271,6 +271,30 @@ serve_token_path() {
   printf '%s/%s' "$parent" "$SERVE_TOKEN_NAME"
   return 0
 }
+
+# serve_cleanup — EVERY artefact a running serve owns, removed in ONE place.
+#
+# It exists because there are TWO ways a server ends and they used to clean up different sets of
+# files. `do_stop` is the path `/ui stop` and every agent takes. The other is the trap on
+# `EXIT`/`INT`/`TERM`, which is what runs for a human at a terminal — Ctrl-C being the engine's
+# own documented default for a human running it in their own shell. When the open-url file was
+# added only `do_stop` learned to delete it, so that shutdown left the file behind and the next
+# `check` reported it as "a leftover from a server that did not stop cleanly" — which is
+# precisely what had NOT happened.
+# One function called from both is the only shape in which those two paths cannot drift again:
+# a future artefact added here is added to both, and a future artefact added to one of them
+# alone is the same bug wearing a different filename.
+#
+# It is fail-safe by construction — no exit status of any `rm` reaches the caller — because it
+# is called from a trap, and a cleanup that can fail a shell on its way out is worse than a file
+# left on disk.
+serve_cleanup() {
+  local tf
+  rm -f "$UI_DIR/serve.pid" 2>/dev/null
+  tf="$(serve_token_path)" || tf=""
+  [ -n "$tf" ] && rm -f "$tf" 2>/dev/null
+  return 0
+}
 # The name of the CUSTOM request header the token travels in. Custom is the whole point: a
 # request carrying it can never be a CORS "simple request", so a hostile cross-origin page has
 # to win a preflight this server does not answer.
@@ -1823,7 +1847,7 @@ do_serve() {
   # bar, so it cannot leak through history, a bookmark or a shared screenshot either. Printed
   # on ONE line so it can be copied whole — and this is the ONLY place a human ever sees it.
   # THE URL IS BUILT ONCE, into a variable, because it now has TWO consumers - the line printed
-  # here and the copy `check` reprints from `serve.token`. Two spellings of it would be two
+  # here and the copy `check` reprints from `ui-serve.token`. Two spellings of it would be two
   # things to keep in step, and the one that drifted would hand out a url that does not work.
   local stale_hint open_url
   stale_hint=$((INTERVAL * 3))
@@ -1875,7 +1899,10 @@ do_serve() {
   fi
 
   # shellcheck disable=SC2064
-  trap "kill $srv $loop 2>/dev/null; rm -f '$UI_DIR/serve.pid' 2>/dev/null" EXIT INT TERM
+  # `$srv`/`$loop` are expanded NOW, while they are known; `serve_cleanup` is called at trap
+  # time and reads `$UI_DIR` then. It replaced an inline `rm` of the pidfile alone, which is how
+  # the open-url file came to survive the one shutdown a human is told to use.
+  trap "kill $srv $loop 2>/dev/null; serve_cleanup" EXIT INT TERM
   echo "  foreground: Ctrl-C to stop"
   wait "$srv" 2>/dev/null
   return 0
@@ -1904,13 +1931,11 @@ do_stop() {
       *) refused="$refused $pid(not-ours)" ;;
     esac
   done < "$pf"
-  rm -f "$pf" 2>/dev/null
-  # The URL dies with the server it names. Leaving it behind would let `check` hand out a token
-  # that is already dead - which the page reports as a 403 rather than as "no server", sending
-  # the reader to fix the wrong thing.
-  local tf_stop
-  tf_stop="$(serve_token_path)" || tf_stop=""
-  [ -n "$tf_stop" ] && rm -f "$tf_stop" 2>/dev/null
+  # The pidfile AND the url die with the server they name. Leaving the url behind would let
+  # `check` hand out a token that is already dead - which the page reports as a 403 rather than
+  # as "no server", sending the reader to fix the wrong thing. Shared with the foreground trap
+  # so the two shutdown paths cannot clean up different sets of files.
+  serve_cleanup
   echo "stop: $killed process(es) stopped"
   [ -n "$refused" ] && echo "  not killed:$refused (the pidfile named them but their command line is not this module's)"
   return 0
