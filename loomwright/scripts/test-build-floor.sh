@@ -2964,6 +2964,15 @@ JZB="$RZB/.supervisor/floor/floor.json"
   && [ "$(jq -r '.surfaces.sessions.detail.current.selection' "$JZB" 2>/dev/null)" = "newest_recorded" ] \
   && ok "(zb) with no plugin work recorded anywhere the newest session is still shown, labelled newest_recorded — the filter fails OPEN" \
   || no "(zb) fail-open broke: session=$(jq -r '.surfaces.sessions.detail.current.cc_session_id' "$JZB") selection=$(jq -r '.surfaces.sessions.detail.current.selection' "$JZB")"
+# THE SET-ASIDE COUNT NEEDS COVERAGE ON *THIS* BRANCH, not only on the plugin_run one. The first
+# version of this release computed it by subtraction, which is correct only where the shown
+# session is a member of plugin_sids — so on the fail-open branch it counted the shown session
+# itself and this one-session fixture reported "1 other session(s) … are not shown" with no other
+# session in existence. (za) asserts the field but only on the branch where the bug cannot appear,
+# which is precisely why it slipped through. Found in review by hand-tracing the filter.
+[ "$(jq -r '.surfaces.sessions.detail.current.sessions_not_plugin_work // 0' "$JZB" 2>/dev/null)" = "0" ] \
+  && ok "(zb) and NOTHING is reported as set aside — the only session there is is the one on screen" \
+  || no "(zb) sessions_not_plugin_work == $(jq -r '.surfaces.sessions.detail.current.sessions_not_plugin_work' "$JZB") on a single-session log — the shown session is counting itself"
 
 # --- (zc) MUTATION CONTROL: without the preference, the chat wins ---------------------------
 # (za) would pass on any projector that happened to pick `run`. This proves it is the preference

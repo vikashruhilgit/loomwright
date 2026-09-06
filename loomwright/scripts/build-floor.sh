@@ -404,8 +404,23 @@ else
     | ($all | map(select(has("ts"))) | sort_by(.ts | tostring) | last) as $newest_any
     | (if $newest_plugin == null then $newest_any else $newest_plugin end) as $newest
     | (if $newest_plugin == null then "newest_recorded" else "plugin_run" end) as $selection
-    | (($all | map(select(has("ts"))) | map(.sid) | unique | length)
-       - ($plugin_sids | length)) as $skipped
+    # COUNTED BY EXCLUSION, NEVER BY SUBTRACTION. Subtracting |plugin_sids| from the session
+    # count is right only on the `plugin_run` branch, where the shown session is itself a member
+    # of plugin_sids and so drops out. On the FAIL-OPEN branch the shown session is by
+    # construction NOT in plugin_sids — that is why the fallback fired — so it stayed in the
+    # subtrahend and counted ITSELF as one of the "other sessions set aside": a single-session
+    # log rendered "1 other session(s) … are not shown" with no other session in existence. And
+    # that branch is the common case on any log recorded before the identity hook, not an edge.
+    # Enumerate what is actually set aside instead: ts-bearing sessions that recorded no plugin
+    # work AND are not the one on screen.
+    # The sid is BOUND before either test. `($plugin_sids | index(.))` rebinds `.` to the array
+    # inside those parens, so the naive spelling asks whether the list contains ITSELF — which is
+    # always null, making every session look set-aside-able and the count collapse to 0.
+    | (($all | map(select(has("ts"))) | map(.sid) | unique)
+       | map(select(. as $s
+                    | (($plugin_sids | index($s)) == null)
+                      and ($newest == null or $s != $newest.sid)))
+       | length) as $skipped
     | if $newest == null then null
       else
         ($newest.sid) as $s
