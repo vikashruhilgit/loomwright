@@ -107,7 +107,16 @@
   <section aria-labelledby="rules-h">
     <h2 id="rules-h">Rules <span class="sub" id="rules-src"></span></h2>
     <p class="caption">Every rule in the committed <code>.agent/rules/</code> store, grouped by category and then by scope. Freshness is the store as it was read when this document was generated; the basis line below names exactly what was examined and what went unread.</p>
+    <!--
+      HOW A RULE GETS INTO THE STORE, stated on the page because the store is the one surface
+      here a reader can WRITE and this page is not the way to do it. `/rules` is the authoring
+      command; `add-rule.sh` is the sole writer it delegates to, and neither is reachable from
+      this origin - the four buttons above are the whole of what this page can write, and the
+      registry is the whole of what they touch.
+    -->
+    <p class="sub">Authoring is a command, never a control on this page: <code>/rules add</code> (or the sole writer it delegates to, <code>add-rule.sh --category &lt;c&gt; --statement "&lt;s&gt;" [--applies-to &lt;glob&gt;]&hellip; --confirm</code>, which writes nothing without <code>--confirm</code>). <code>/rules suggest</code> proposes rules from the repo, <code>/rules list</code> prints the reader&rsquo;s own output, and <code>/rules retract</code> removes one by id. Omitting <code>--applies-to</code> is what records a rule repo-wide.</p>
     <p class="sub" id="rules-basis"></p>
+    <p class="sub" id="rules-path-note"></p>
     <div id="rules-body"></div>
   </section>
 

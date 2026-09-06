@@ -2363,6 +2363,76 @@ else
   no "(j41) MUTATION CONTROL: could not build the fourth-state mutant - control inconclusive"
 fi
 
+# --- (j47) a scope heading's globs are COPY BUTTONS, and every claim the doc makes is checked -
+# The rules view now renders each `applies_to` glob as a control. Three claims ship with it, and
+# a claim no check backs is the defect class this repo has already paid for twice, so each one is
+# asserted here by its own literal rather than left to the prose in FLOOR_UI.md.
+#
+#   1. IT COPIES, IT DOES NOT LINK. No browser follows a `file:` URL from a document served over
+#      http, and it refuses SILENTLY - so an anchor would be a control that does nothing and says
+#      nothing. Serving the file instead would be a fifth endpoint, closed by decision. The scan
+#      below is for the SHAPE that would betray a link, not for the word: an `<a` built anywhere
+#      in this file, or a `file:` scheme in any of the three bundle files.
+#   2. THE CHIPS SPELL THE HEADING THEY REPLACE. `ruleScopeLabel` still decides what a heading
+#      says; the chips render only when they reproduce that exact string, so the four-state
+#      guarantee (j34) protects cannot be routed around by a second renderer.
+#   3. THE BASE IS NAMED, NEVER ASSUMED. floor.json carries no project root, so the absolute path
+#      is joined from the served index - and the note states which directory it joined against,
+#      because a project registered below its git root is where that join is wrong.
+j47_bad=""
+has_lit "$JS" "function renderScopeHeading" || j47_bad="$j47_bad [no renderScopeHeading]"
+has_lit "$JS" "b.className = 'scope-path'"  || j47_bad="$j47_bad [the glob is not rendered as a scope-path control]"
+has_lit "$JS" "(SCOPE_PREFIX + globs.join(', ')) !== label" \
+  || j47_bad="$j47_bad [the chips are not gated on spelling their own heading back]"
+has_lit "$JS" "joined against " || j47_bad="$j47_bad [the copy note does not name the base it joined against]"
+has_lit "$CSS" ".rules-scope .scope-path" || j47_bad="$j47_bad [the control carries no style of its own]"
+[ -z "$j47_bad" ] \
+  && ok "(j47) the scope-heading globs are copy CONTROLS: rendered by renderScopeHeading, gated on reproducing ruleScopeLabel's own heading text, and their note names the directory the absolute path was joined against" \
+  || no "(j47) the scope-heading globs are copy controls with a named base" "$j47_bad"
+
+# The link shape must be absent from the whole bundle, not merely unused in one function.
+j47_anchor="$(occ "$JS" "createElement[(]'a'[)]")"
+j47_file=$(( $(occ "$JS" 'file:/') + $(occ "$HTML" 'file:/') + $(occ "$CSS" 'file:/') ))
+[ "$j47_anchor" = "0" ] && [ "$j47_file" = "0" ] \
+  && ok "(j47) the bundle builds no anchor and names no file: scheme (anchors=$j47_anchor file-scheme=$j47_file) - the affordance a browser would refuse silently is absent by construction, not by intention" \
+  || no "(j47) the bundle reaches for a link it cannot honour" "createElement('a')=$j47_anchor file:=$j47_file"
+
+# MUTATION CONTROL for claim 2: drop the equality and the chips would render under a heading they
+# do not spell - which is how a malformed applies_to would acquire buttons (j34) says it must not.
+MUT_SCOPEBTN="$TMPROOT/mut-scopebtn.js"
+sed "s|if (!globs \|\| (SCOPE_PREFIX + globs.join(', ')) !== label) {|if (!globs) {|" "$JS" > "$MUT_SCOPEBTN" 2>/dev/null
+if mutant_ok "$JS" "$MUT_SCOPEBTN"; then
+  has_lit "$MUT_SCOPEBTN" "(SCOPE_PREFIX + globs.join(', ')) !== label" \
+    && no "(j48) MUTATION CONTROL: removing the heading-equality gate IS detected by (j47)" "the literal survived the mutation, so (j47) proves nothing" \
+    || ok "(j48) MUTATION CONTROL: removing the heading-equality gate IS detected by (j47) - the chips could then render under a heading they do not spell"
+fi
+
+# MUTATION CONTROL for the link scan: an anchor added anywhere in floor.js must be flagged, or the
+# scan above is a check that would pass on the very page it exists to prevent.
+MUT_ANCHOR="$TMPROOT/mut-anchor.js"
+{ cat "$JS"; printf "\n// var _a = document.createElement('a'); _a.href = 'file:/tmp/x';\n"; } > "$MUT_ANCHOR" 2>/dev/null
+if mutant_ok "$JS" "$MUT_ANCHOR"; then
+  m_anchor="$(occ "$MUT_ANCHOR" "createElement[(]'a'[)]")"
+  m_file="$(occ "$MUT_ANCHOR" 'file:/')"
+  [ "$m_anchor" -gt 0 ] && [ "$m_file" -gt 0 ] \
+    && ok "(j49) MUTATION CONTROL: an anchor carrying a file: href IS flagged by (j47)'s scan (anchors=$m_anchor file-scheme=$m_file)" \
+    || no "(j49) MUTATION CONTROL: the planted anchor was not flagged - (j47)'s link scan proves nothing" "anchors=$m_anchor file=$m_file"
+fi
+
+# --- (j50) the rules section states how a rule gets INTO the store ---------------------------
+# The one thing this view shows that the page itself cannot do. It is static markup rather than
+# projected data, so it adds no surface to floor.json - and it is asserted here because a section
+# that quietly loses its only writable-surface instruction reads exactly like one that never had
+# it. `--confirm` is named because the helper writes nothing without it, and omitting
+# `--applies-to` is what records a rule repo-wide, which is the middle heading on that view.
+j50_bad=""
+for lit in '/rules add' 'add-rule.sh' '--confirm' '--applies-to' 'repo-wide'; do
+  has_lit "$HTML" "$lit" || j50_bad="$j50_bad [$lit]"
+done
+[ -z "$j50_bad" ] \
+  && ok "(j50) the rules section names the authoring path (/rules add, add-rule.sh, --confirm) and says that omitting --applies-to is what records a rule repo-wide" \
+  || no "(j50) the rules section does not say how a rule gets into the store" "missing:$j50_bad"
+
 # --- (j42) the three curation-fault RENDER branches, driven by a UI fixture -------------------
 # (y)/(y2) in test-build-floor.sh pinned these three on the PROJECTOR side. The RENDER side was
 # still uncovered: floor.js has a branch for each of files_not_an_array, self_referential and
