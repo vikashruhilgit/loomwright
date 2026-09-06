@@ -836,6 +836,36 @@ else
     fi
   fi
 fi
+# --- A MISSING ROLE IS NOT THE SAME FACT AS AN UNIDENTIFIED THREAD ---------------------
+# The projector records `agent_scope` from the transcript path the hook payload itself
+# carried, so an untyped lane can still be POSITIVELY identified as the session's own
+# thread. Rendering that as "identity unknown" reported the page's question as a missing
+# answer. These checks hold the three-way split in place: typed -> role, untyped+main ->
+# "main thread", everything else -> "identity unknown" exactly as before.
+check_lit "$JS" "main thread" "(b28) floor.js names the session's own thread 'main thread' rather than leaving it unknown"
+n_scope="$(code_occ "$JS" "r\\.agent_scope === 'main'")"
+[ "$n_scope" = "1" ] \
+  && ok "(b29) the label is gated on the projected agent_scope, in exactly ONE place (occurrences=$n_scope)" \
+  || no "(b29) the label is gated on the projected agent_scope, in exactly ONE place" "occurrences=$n_scope"
+# The name assignment must consult mainThread. A file that merely CONTAINS the string
+# "main thread" somewhere would pass (b28) while still rendering every untyped lane
+# unknown, which is the defect this change exists to remove.
+name_asgn="$(awk '/data-role="name"/ && /textContent =/{f=1} f{print; if (/;/) exit}' "$JS")"
+if in_str "$name_asgn" "mainThread" && in_str "$name_asgn" "identity unknown"; then
+  ok "(b30) the lane name is a three-way choice — typed name / main thread / identity unknown"
+else
+  no "(b30) the lane name is a three-way choice — typed name / main thread / identity unknown" "assignment reads: ${name_asgn:-<not found>}"
+fi
+# MUTATION CONTROL for (b30): drop the mainThread arm and the assignment falls back to the
+# old two-way choice, which (b30) must then reject.
+MUT_LANE="$TMPROOT/mut-mainthread.js"
+sed "s/typed ? name : (mainThread ? 'main thread' : 'identity unknown');/typed ? name : 'identity unknown';/" "$JS" > "$MUT_LANE" 2>/dev/null
+if mutant_ok "$JS" "$MUT_LANE"; then
+  mut_asgn="$(awk '/data-role="name"/ && /textContent =/{f=1} f{print; if (/;/) exit}' "$MUT_LANE")"
+  in_str "$mut_asgn" "mainThread" \
+    && no "(b31) MUTATION CONTROL: removing the main-thread arm IS detected" "the mutant still names mainThread, so (b30) proves nothing" \
+    || ok "(b31) MUTATION CONTROL: removing the main-thread arm IS detected — (b30) can turn red"
+fi
 # ===========================================================================
 echo "(c) AC-motion-a11y-theme — floor.css"
 # ===========================================================================

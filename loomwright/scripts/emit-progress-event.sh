@@ -235,6 +235,36 @@ agent_id = payload.get("agent_id")
 if isinstance(agent_id, str) and agent_id:
     event["agent_id"] = agent_id
 
+# `agent_scope`: WHICH THREAD this payload describes - derived from the transcript
+# path the payload itself carries, never from the matcher and never from the mere
+# absence of `agent_type`. Claude Code writes a spawned subagent transcript to
+# `<session>/subagents/agent-<agent_id>.jsonl` and the transcript of the session
+# itself to `<cc_session_id>.jsonl`, so each basename is a POSITIVE
+# identification rather than an inference from what is missing. Measured on the
+# live log: every typed line reported a proxy byte count equal to a
+# `subagents/agent-<id>.jsonl` file on disk, while every untyped line of the
+# newest session reported the size of the session transcript itself - a session
+# for which no `subagents/` directory exists at all, so those lines were never
+# spawned agents.
+#
+# Recorded ONLY when a basename actually matches. A path matching neither
+# pattern, or no path at all, leaves the key OMITTED - the same refusal
+# `agent_type` above makes, for the same reason. UNTYPED and NOT-A-SUBAGENT are
+# different facts, and it is the second one that stops a reader calling the main
+# thread an unidentified agent.
+_apath = payload.get("agent_transcript_path")
+_tpath = payload.get("transcript_path")
+_scope = None
+if isinstance(_apath, str) and _apath:
+    if (isinstance(agent_id, str) and agent_id
+            and os.path.basename(_apath) == "agent-" + agent_id + ".jsonl"):
+        _scope = "subagent"
+elif (isinstance(_tpath, str) and _tpath and cc_session_id
+        and os.path.basename(_tpath) == cc_session_id + ".jsonl"):
+    _scope = "main"
+if _scope:
+    event["agent_scope"] = _scope
+
 branch = os.environ.get("SESSION_BRANCH", "")
 if branch:
     event["branch"] = branch

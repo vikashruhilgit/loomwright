@@ -485,12 +485,13 @@ The page shows five pipeline stages (Queue · Plan · Execute · Review · Shipp
 Queue 2   Plan   [Execute]   Review   Shipped 41
   worker ················•·····   17 events · last 4s
   code-reviewer ·····•··········    6 events · last 51s
+  main thread ······•·············  9 events · last 2m
   identity unknown ·•·············  2 events · no event for 12m   ← stalled
 ```
 
 > **Motion is evidence, never decoration.** There is exactly ONE timer on the page (a 2 s poll) and a lane's shuttle advances only when that lane's recorded `events` count changed between two renders. The single stated exemption is the pulse on a non-stalled lane — its ABSENCE is the stall signal, so it is state-driven even though a keyframe drives its frames.
 
-> **There is deliberately NO liveness and NO "currently running agent", and that absence is the honest answer rather than a gap.** No spawn event exists in any log, so a lane can only ever report events that were RECORDED — never that anything is running now. The page renders that sentence permanently under the lanes. Identity is partial for the same reason: a lane whose `agent_id` never appeared on a line carrying `agent_type` is drawn `identity unknown` rather than assigned a plausible role, and a roster row whose agent declares no `disallowedTools` reads `read-only unknown` rather than "not read-only".
+> **There is deliberately NO liveness and NO "currently running agent", and that absence is the honest answer rather than a gap.** No spawn event exists in any log, so a lane can only ever report events that were RECORDED — never that anything is running now. The page renders that sentence permanently under the lanes. Identity is partial for the same reason: a lane whose `agent_id` never appeared on a line carrying `agent_type` is never assigned a plausible role. It reads `main thread` when the emitters positively identified it as the session's own thread — they derive `agent_scope` from the transcript path the hook payload itself carries, so that is measured, not inferred from the missing type — and `identity unknown` otherwise. A roster row whose agent declares no `disallowedTools` reads `read-only unknown` rather than "not read-only".
 
 > **`floor.json` is local data.** It carries branch names, session ids and agent ids. `serve` binds `127.0.0.1` in the listener itself; there is no flag to change that and no code path that omits it. Since the page can now write, the bind is no longer the whole posture — the four mutating routes are additionally guarded by a per-run token in a custom header plus `Origin` and `Host` validation.
 

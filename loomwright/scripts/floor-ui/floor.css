@@ -83,6 +83,9 @@
  * treatment and words:
  *   stalled          -> dashed lane border + the text "no event for <age>"
  *   identity unknown -> dashed chip + the text "identity unknown"
+ *   main thread      -> plain chip + the name "main thread" - NOT the unknown treatment,
+ *                       because a lane the projector positively identified as the session's
+ *                       own thread is a known thing with no role, not an unknown one
  *   read-only agent  -> hollow dot + the text "read-only", in the roster AND in the lanes
  *   absent / stale / empty -> text banners, never an empty page
  */
