@@ -777,6 +777,60 @@ else
   no "AC14: the delimiter-collision fixture is missing - the guard is untested"
 fi
 
+echo "== AC15: 'classified entries in the ledger' counts CLASSIFIED entries, not every object =="
+# build-floor.sh includes class/flow_stage only CONDITIONALLY on type, so an entry can appear
+# with no class key at all. A raw `length` would print that total under a label claiming it is
+# classified -- three numbers in one block on two different bases. Every other committed
+# fixture is 100% classified, so this mismatch is structurally invisible without this fixture.
+UNC="$FIX/floor-unclassified.json"
+if [ -f "$UNC" ]; then
+  ok "the unclassified-entries fixture is committed"
+  u_raw="$(jq '[.surfaces.postmortem.detail.entries[]] | length' "$UNC" 2>/dev/null)"
+  u_cls="$(jq '[.surfaces.postmortem.detail.entries[] | select((.class? | type) == "string" and (.flow_stage? | type) == "string")] | length' "$UNC" 2>/dev/null)"
+  if [ "${u_raw:-0}" -gt "${u_cls:-0}" ]; then
+    ok "the fixture is DISCRIMINATING: $u_raw entries, only $u_cls classified - a raw count would differ"
+  else
+    no "the fixture has no unclassified entries ($u_raw/$u_cls) - AC15 would pass on a raw count too and proves nothing"
+  fi
+  UJ="$(mktmp)"; fresh_basis "$UNC" "$UJ/floor.json"
+  run_sut "$UJ/floor.json" "$UJ/out" "$UJ/req" >/dev/null 2>&1
+  UP="$UJ/out/convention_mismatch--worker.md"
+  if [ -f "$UP" ]; then
+    printed="$(grep -m1 'classified entries in the ledger' "$UP" 2>/dev/null | sed 's/.*: //')"
+    [ "$printed" = "$u_cls" ] \
+      && ok "AC15: the proposal prints the CLASSIFIED count ($printed), matching an independent recount" \
+      || no "AC15: the proposal prints '$printed' but only $u_cls of $u_raw entries are classified"
+  else
+    no "AC15: no proposal emitted from the unclassified fixture - cannot evaluate"
+  fi
+
+  # Mutation control: revert to the raw length and the printed number must become $u_raw.
+  MUT15="$ROOT/mutant-rawcount.sh"
+  awk '
+    /^total_entries="\$\(jq -r "$/ { print "total_entries=\"$(jq -r \"$ENTRIES_PATH | length\" \"$FLOOR\" 2>/dev/null)\""; skip=1; next }
+    skip && /^  \| length" "\$FLOOR" 2>\/dev\/null\)"$/ { skip=0; next }
+    !skip
+  ' "$SUT" > "$MUT15" 2>/dev/null
+  if [ -s "$MUT15" ] && ! cmp -s "$MUT15" "$SUT" && bash -n "$MUT15" 2>/dev/null; then
+    ok "built a syntactically valid mutant that counts every entry rather than the classified ones"
+    M15="$(mktmp)"
+    run_sut "$UJ/floor.json" "$M15/out" "$M15/req" "$MUT15" >/dev/null 2>&1
+    MP="$M15/out/convention_mismatch--worker.md"
+    if [ -f "$MP" ]; then
+      mprinted="$(grep -m1 'classified entries in the ledger' "$MP" 2>/dev/null | sed 's/.*: //')"
+      [ "$mprinted" = "$u_raw" ] \
+        && ok "mutation control: the raw-count mutant prints $mprinted (all entries), so AC15 goes red without the filter" \
+        || no "the mutant printed '$mprinted', not the raw $u_raw - the AC15 control is inconclusive"
+    else
+      no "the raw-count mutant emitted no proposal - the AC15 control is inconclusive"
+    fi
+  else
+    no "could not build a valid raw-count mutant - AC15 is uncontrolled"
+  fi
+else
+  no "AC15: the unclassified-entries fixture is missing - the label's basis is untested"
+fi
+
 echo
 echo "propose-work: $pass passed, $fail failed, $skip skipped"
 [ "$fail" -eq 0 ] || exit 1
