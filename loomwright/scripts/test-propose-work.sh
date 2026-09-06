@@ -702,6 +702,42 @@ grep -Fq 'dismissed durably' "$GO/convention_mismatch--worker.md" 2>/dev/null \
   && ok "AC12: the proposal's own acceptance criteria name the durable path" \
   || no "AC12: the proposal still tells the human to delete it with no mention of durability"
 
+echo "== AC13: /propose's documented interface matches the script's actual one =="
+# The command doc restates the script's env defaults. A restated value drifts silently, which
+# is the defect class this repo records most - so assert the doc against the code, not prose.
+CMD_DOC="$HERE/../commands/propose.md"
+if [ -f "$CMD_DOC" ]; then
+  ok "the /propose command file exists (the invocation seam is present)"
+  grep -Fq 'scripts/propose-work.sh' "$CMD_DOC" 2>/dev/null \
+    && ok "the command shells out to this script rather than restating its behaviour" \
+    || no "the command does not reference propose-work.sh - it documents something else"
+  ac13_fail=0
+  for pair in \
+    "PROPOSE_FLOOR_JSON|.supervisor/floor/floor.json" \
+    "PROPOSE_OUT_DIR|.supervisor/requirements/proposed" \
+    "PROPOSE_REQUIREMENTS_DIR|.supervisor/requirements" \
+    "PROPOSE_THRESHOLD|10" \
+    "PROPOSE_MAX_AGE_SECONDS|86400"; do
+    var="${pair%%|*}"; want="${pair##*|}"
+    grep -Fq "$var" "$CMD_DOC" 2>/dev/null || { ac13_fail=1; continue; }
+    grep -Fq "$want" "$CMD_DOC" 2>/dev/null || ac13_fail=1
+    grep -Fq "$var" "$SUT" 2>/dev/null || ac13_fail=1
+  done
+  [ "$ac13_fail" -eq 0 ] \
+    && ok "every env var and default the command documents is present in both the doc and the script" \
+    || no "the command doc's env table has drifted from the script's actual variables/defaults"
+  # Positive control: a default the script does NOT use must be absent, or the check above is
+  # satisfied by a doc that merely mentions plausible-looking strings.
+  grep -Fq 'PROPOSE_NOT_A_REAL_VAR' "$CMD_DOC" 2>/dev/null \
+    && no "positive control failed - the doc names a variable the script has no concept of" \
+    || ok "positive control: the doc names no variable the script does not define"
+  grep -Fq 'not a durable dismissal' "$CMD_DOC" 2>/dev/null \
+    && ok "the command documents that deletion is not a durable dismissal" \
+    || no "the command omits the delete-is-not-durable contract - the one thing the emitted files cannot teach"
+else
+  no "no /propose command file - propose-work.sh is wired to nothing and the loop still cannot propose"
+fi
+
 echo
 echo "propose-work: $pass passed, $fail failed, $skip skipped"
 [ "$fail" -eq 0 ] || exit 1

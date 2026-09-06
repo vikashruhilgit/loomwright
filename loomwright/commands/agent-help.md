@@ -1118,7 +1118,7 @@ bd close BD-XX
 loomwright/              # Nested plugin root
 ├── .claude-plugin/
 │   └── plugin.json                   # Plugin metadata
-├── commands/                         # Slash commands (22)
+├── commands/                         # Slash commands (23)
 │   ├── launch-pad.md                 # Supervisor readiness
 │   ├── supervisor.md                 # Parallel orchestrator (v4)
 │   ├── autonomous.md                 # Continuous autonomous loop, stacked PRs (v14)
