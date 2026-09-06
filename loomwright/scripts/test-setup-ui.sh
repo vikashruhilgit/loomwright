@@ -6629,3 +6629,147 @@ else
 fi
 
 rm -rf "$S_TMP" 2>/dev/null
+
+# =============================================================================================
+# (t) THE PAGE-SIDE TOKEN LOGIC — sessionStorage, hashchange adoption, and the 403 drop
+# ---------------------------------------------------------------------------------------------
+# WHY THIS GROUP EXISTS. The engine half of the token fix got (s1)-(s11); the page half shipped
+# with nothing, and the argument that produced (s) applies here verbatim — an assertion count
+# that does not move is a branch nobody exercised. These are STATIC assertions over floor.js,
+# which is this suite's established way of holding that file to account (see (a3)'s call-site
+# counts and (c13)'s renderLanes scoping): there is no headless browser here, and a predicate
+# scoped to ONE function body is a great deal more than nothing.
+#
+# EVERY CLAIM BELOW IS PAIRED WITH A MUTATION CONTROL, for the reason (s4) exists: a predicate
+# that cannot fail is not evidence. Each control mutates a COPY, and (t10) re-hashes the real
+# file afterwards so no mutant can survive into the bundle.
+T_TMP="$(mktmp)"
+T_JS="$T_TMP/floor.js"
+T_JS_SIG_BEFORE="$(csum "$JS")"
+
+# --- the three predicates, each scoped to the body that must carry the behaviour --------------
+t_fn_body() { awk -v pat="^  function $2" '$0 ~ pat{f=1} f{print} f&&/^  \}$/{exit}' "$1" 2>/dev/null; }
+t_hash_body() { awk "/addEventListener\('hashchange'/{f=1} f{print} f&&/^  \}\);\$/{exit}" "$1" 2>/dev/null; }
+
+# (A) a server 403 must DISCARD the token, or a stored one outlasting its run is replayed for ever
+t_drop_faults() {
+  local body bad=""
+  body="$(t_fn_body "$1" runAction)"
+  [ -n "$body" ] || { printf '%s' "[runAction not found — every claim here would be vacuous]"; return 0; }
+  in_str "$body" "res.status === 403" || bad="$bad [no 403 branch]"
+  in_str "$body" "dropToken();" || bad="$bad [a 403 does not discard the token, so a token that outlived its run is replayed on every click]"
+  printf '%s' "$bad"
+}
+# (B) a fragment appended to an ALREADY-OPEN page must be adopted — the inert-paste bug itself
+t_hash_faults() {
+  local body bad=""
+  body="$(t_hash_body "$1")"
+  [ -n "$body" ] || { printf '%s' "[no hashchange listener — pasting the printed url into the tab already showing this page is inert, which is the bug this fix exists for]"; return 0; }
+  in_str "$body" "fragmentToken()" || bad="$bad [the listener never reads the fragment]"
+  in_str "$body" "adoptToken(t)" || bad="$bad [the listener reads the fragment and never adopts it]"
+  printf '%s' "$bad"
+}
+# (C) the strip must not run until the token is held somewhere that survives the address bar
+t_order_faults() {
+  local body bad="" store_at stripe_at
+  body="$(t_fn_body "$1" adoptToken)"
+  [ -n "$body" ] || { printf '%s' "[adoptToken not found — every claim here would be vacuous]"; return 0; }
+  store_at="$(printf '%s\n' "$body" | grep -n 'storeToken(t);' | head -1 | cut -d: -f1)"
+  stripe_at="$(printf '%s\n' "$body" | grep -n 'replaceState' | head -1 | cut -d: -f1)"
+  [ -n "$store_at" ] || bad="$bad [adoptToken never stores the token]"
+  [ -n "$stripe_at" ] || bad="$bad [adoptToken never strips the fragment]"
+  if [ -n "$store_at" ] && [ -n "$stripe_at" ] && [ "$store_at" -ge "$stripe_at" ]; then
+    bad="$bad [the fragment is erased from the address bar BEFORE the token is stored — a failed store would then lose the only copy]"
+  fi
+  printf '%s' "$bad"
+}
+
+# --- (t1)/(t2) the 403 drop ------------------------------------------------------------------
+t_d="$(t_drop_faults "$JS")"
+[ -z "$t_d" ] \
+  && ok "(t1) a 403 from the guard DISCARDS the held token — required because sessionStorage can outlast the run that minted it, where a fragment never could, so without it the page replays a dead credential on every click" \
+  || no "(t1) a 403 discards the held token" "$t_d"
+
+cp "$JS" "$T_JS"
+sed 's/^          dropToken();$//' "$JS" > "$T_JS"
+t_d_mut="$(t_drop_faults "$T_JS")"
+[ -n "$t_d_mut" ] \
+  && ok "(t2) MUTATION CONTROL: a 403 branch that does NOT discard the token IS flagged — (t1) is reading the branch, not merely finding the word somewhere in the file" \
+  || no "(t2) MUTATION CONTROL: removing the drop is flagged" "the mutant passed (t1)'s predicate — it cannot fail, so it is not evidence"
+
+# --- (t3)/(t4) hashchange adoption ------------------------------------------------------------
+t_h="$(t_hash_faults "$JS")"
+[ -z "$t_h" ] \
+  && ok "(t3) a hashchange listener adopts a token appended to an ALREADY-OPEN page — changing only the fragment is a same-document navigation, so without this the paste reloads nothing, the script never re-runs, and the printed url is inert" \
+  || no "(t3) a hashchange listener adopts an appended token" "$t_h"
+
+sed "s/^    adoptToken(t);$/    var ignored = t;/" "$JS" > "$T_JS"
+t_h_mut="$(t_hash_faults "$T_JS")"
+[ -n "$t_h_mut" ] \
+  && ok "(t4) MUTATION CONTROL: a listener that READS the fragment and never adopts it IS flagged — the failure mode here is a listener that exists and does nothing, which a mere presence check would pass" \
+  || no "(t4) MUTATION CONTROL: a non-adopting listener is flagged" "the mutant passed (t3)'s predicate"
+
+# --- (t5)/(t6) store-before-strip ordering ----------------------------------------------------
+t_o="$(t_order_faults "$JS")"
+[ -z "$t_o" ] \
+  && ok "(t5) adoptToken stores the token BEFORE erasing the fragment from the address bar — the strip is irreversible, so doing it first would make a failed store lose the only copy in existence" \
+  || no "(t5) adoptToken stores before it strips" "$t_o"
+
+# The line is LIFTED out of its place and re-emitted AFTER the block that strips the address
+# bar — the first attempt at this re-emitted it BEFORE that block, which is the order the file
+# already has, so the "mutant" was byte-equivalent to the original and (t6) could not fail.
+awk '
+  /^  function adoptToken/{f=1}
+  f && /^    storeToken\(t\);$/ { held=$0; next }
+  { print }
+  f && held != "" && /^    \}$/ { print held; held=""; f=0 }
+' "$JS" > "$T_JS"
+t_o_mut="$(t_order_faults "$T_JS")"
+[ -n "$t_o_mut" ] \
+  && ok "(t6) MUTATION CONTROL: moving the store AFTER the strip IS flagged — an ordering claim that no case can break is a comment, not a test" \
+  || no "(t6) MUTATION CONTROL: strip-before-store is flagged" "the mutant passed (t5)'s predicate"
+
+# --- (t7) EVERY sessionStorage touch is guarded ------------------------------------------------
+# A browser in a private mode, or one set to refuse site data, THROWS on the property access
+# itself rather than returning null. An unguarded touch would take the READ path down with it —
+# the page would stop rendering, over a convenience.
+# COUNT THE ACCESS, NOT THE WORD. `sessionStorage` also appears in this file's own comments
+# explaining why the store exists, so counting the bare identifier scored 6 against 3 helpers
+# and failed a file that was correct — a test made vacuous-in-reverse by the prose beside it.
+t_ss_total="$(occ "$JS" 'window\\.sessionStorage')"
+t_ss_guarded=0
+for t_fn in storeToken storedToken dropToken; do
+  t_b="$(t_fn_body "$JS" "$t_fn")"
+  if in_str "$t_b" "sessionStorage" && in_str "$t_b" "try {" && in_str "$t_b" "catch (e)"; then
+    t_ss_guarded=$((t_ss_guarded + 1))
+  fi
+done
+if [ "$t_ss_guarded" = "3" ] && [ "$t_ss_total" = "3" ]; then
+  ok "(t7) all $t_ss_total sessionStorage touches live in the three helpers and every one is inside try/catch — an unguarded access throws outright in a private window and would take the page's READ path down with it"
+else
+  no "(t7) every sessionStorage touch is guarded" "occurrences=$t_ss_total guarded_helpers=$t_ss_guarded/3 (each helper must hold its own try/catch, and no touch may live outside them)"
+fi
+
+# --- (t8) the strip has exactly ONE call site --------------------------------------------------
+# The CALL, not the mentions: `replaceState` appears in a feature test (`&& window.history
+# .replaceState)`) and in a comment about hashchange, neither of which strips anything.
+t_rs="$(occ "$JS" 'replaceState\\(')"
+[ "$t_rs" = "1" ] \
+  && ok "(t8) replaceState has exactly one call site — the address-bar strip lives only inside adoptToken, so (t5)'s ordering claim covers every path that can erase a fragment" \
+  || no "(t8) replaceState has exactly one call site" "found $t_rs — a second strip would be a path (t5) does not govern"
+
+# --- (t9) the refusal names the recovery instead of blaming the reader -------------------------
+# The old wording said "rather than a bare address", which reads as an accusation of typing one,
+# and the commonest way to land there never involved typing anything.
+t_body_ra="$(t_fn_body "$JS" runAction)"
+if in_str "$t_body_ra" "holds no token" && in_str "$t_body_ra" "setup-ui.sh serve" && ! in_str "$t_body_ra" "rather than a bare address"; then
+  ok "(t9) the no-token refusal names where the token comes from and offers the tokenless command-line verbs, and no longer ends in 'rather than a bare address' — a bookmark, an omnibox completion and a restored session all produce that state with nothing typed"
+else
+  no "(t9) the no-token refusal names the recovery rather than blaming the reader" "$(printf '%s' "$t_body_ra" | grep -c 'holds no token') holds-no-token / serve-named=$(in_str "$t_body_ra" "setup-ui.sh serve" && echo yes || echo no) / blames=$(in_str "$t_body_ra" "rather than a bare address" && echo YES || echo no)"
+fi
+
+# --- (t10) the real page is untouched by the controls above ------------------------------------
+[ "$(csum "$JS")" = "$T_JS_SIG_BEFORE" ] \
+  && ok "(t10) every (t) mutation control ran against a COPY — floor.js is byte-identical (sha256) and no mutant was left in the bundle" \
+  || no "(t10) floor.js is byte-identical after the (t) controls" "sha256 changed"
+rm -rf "$T_TMP" 2>/dev/null

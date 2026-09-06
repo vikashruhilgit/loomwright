@@ -247,7 +247,19 @@ SERVE_LOG="serve.log"
 # reads it as the owning user and hands the bytes to whoever asked. Outside the served root the
 # only way to it is the filesystem, so it grants exactly the access reading the server's process
 # ENVIRONMENT already grants that same user, and no more. This is the same reason the project
-# registry is a sibling rather than a resident, and it tracks `--ui-dir` for the same reason too.
+# registry is a sibling rather than a resident.
+#
+# THE PARALLEL WITH THE REGISTRY ENDS AT "SIBLING", and the difference is worth stating rather
+# than leaving for someone to discover: the registry's default is anchored to `$LOOM_HOME` and
+# is moved only by `--registry`, whereas this path is derived from the RAW `--ui-dir` string,
+# unresolved. So a RELATIVE `--ui-dir` passed to `serve` from one working directory and to
+# `check`/`stop` from another names two different files, and the second run reports no token or
+# leaves the first one behind. That is not special to this file — `$UI_DIR/serve.pid` has the
+# identical property, and `check` would already have reported "not running" for the same reason
+# — so canonicalizing HERE alone would fix nothing reachable while making this one writer
+# disagree with the other two about what `--ui-dir` means. The module's convention is an
+# absolute `--ui-dir` (or none, taking the default); `resolved_ui_dir` exists for `remove`,
+# where the cost of getting a path wrong is a deleted directory rather than a re-run.
 SERVE_TOKEN_NAME="ui-serve.token"
 # Resolved as a function rather than frozen into a variable at startup, because `--ui-dir` is
 # parsed AFTER these declarations and a path computed too early would silently point at the

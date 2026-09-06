@@ -45,7 +45,7 @@ Installing and uninstalling the bundle are configuration, so `apply` and `remove
 
 | Flag | Applies to | Meaning |
 |---|---|---|
-| `--ui-dir <dir>` | all | where the bundle lives (default `~/.claude/loomwright/ui`). **It cannot redirect the registry** — the registry is a *sibling* of the ui directory, not a file in it. |
+| `--ui-dir <dir>` | all | where the bundle lives (default `~/.claude/loomwright/ui`). **It cannot redirect the registry** — the registry is a *sibling* of the ui directory, not a file in it. **Pass it absolute, or not at all.** The pidfile and the open-URL file are both derived from the raw string, so the same *relative* `--ui-dir` given to `serve` in one directory and to `check`/`stop` in another names two different locations — `check` then reports no server and `stop` leaves the first one running, with no error either time. |
 | `--registry <file>` | all | override the project registry (default `projects.json` beside the ui directory). The only way to redirect it. |
 | `--port <n>` | `serve` | default `7734`. A busy port is **reported and the server does not start**. |
 | `--interval <n>` | `serve` | seconds between regenerations of the selected project (default `2`, minimum `1`). |
