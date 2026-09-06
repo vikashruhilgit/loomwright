@@ -103,11 +103,31 @@ mkdir -p "$LOG_DIR" 2>/dev/null || true
 LOG_FILE="$LOG_DIR/${CC_SESSION_ID}.jsonl"
 
 # One identity per agent is enough, and PostToolUse can fire again for a retried
-# tool call. Skip when this exact line is already present. The scan is bounded to
-# the tail because an identity is written near the agent's own lines; a miss
-# costs a duplicate row that the projector's `first` already collapses.
-if [ -f "$LOG_FILE" ] && tail -200 "$LOG_FILE" 2>/dev/null | grep -qxF "$LINE"; then
-  exit 0
+# tool call. The scan is bounded to the tail because an identity is written near
+# the agent's own lines; a miss costs a duplicate row that the projector's `first`
+# already collapses.
+#
+# IT COMPARES THE IDENTITY, NOT THE LINE, and that distinction is the whole guard.
+# The first version of this was `grep -qxF "$LINE"` — byte-identity — which is
+# defeated by the line's own `recorded_at`: two firings a second apart produce two
+# different lines describing the SAME agent, and both were written. It passed on
+# macOS because three firings landed inside one second, and CI (Linux) failed it at
+# `expected 1, actual 2`. The identity of this row is (cc_session_id, agent_id,
+# agent_type); the timestamp is metadata about when it was noticed.
+#
+# Parsed per line rather than grepped for a substring, so field order and any future
+# additive field cannot silently break the match, and `fromjson? // empty` skips a
+# malformed neighbouring line instead of aborting the scan. Every failure here falls
+# through to the append: a duplicate identity row is harmless (the projector takes
+# the FIRST type it sees), a missing one is not.
+if [ -f "$LOG_FILE" ]; then
+  _dup="$(tail -200 "$LOG_FILE" 2>/dev/null | jq -R -r \
+    --arg id "$AGENT_ID" --arg t "$AGENT_TYPE" --arg s "$CC_SESSION_ID" '
+      (fromjson? // empty)
+      | select((.event? == "agent_identity") and (.agent_id? == $id)
+               and (.agent_type? == $t) and (.cc_session_id? == $s))
+      | "dup"' 2>/dev/null || true)"
+  case "$_dup" in *dup*) exit 0 ;; esac
 fi
 
 printf '%s\n' "$LINE" >> "$LOG_FILE" 2>/dev/null || true

@@ -69,10 +69,22 @@ for f in no-id no-type; do
   eq "$f: writes NOTHING (a half-identity is not written as a row to be interpreted)" "" "$(logline "$R")"
 done
 
-echo "== 4. idempotent across a retried tool call =="
+echo "== 4. idempotent across a retried tool call, ACROSS A SECOND BOUNDARY =="
+# The `sleep 1` is the assertion, not padding. The first version of this case fired
+# three times back-to-back, which on macOS all landed inside one wall-clock second —
+# so the emitter's original byte-identity guard matched and the case passed. On Linux
+# CI the same three firings straddled a second, `recorded_at` differed, the lines were
+# no longer byte-identical and TWO were written: expected 1, actual 2. Forcing the
+# straddle is what makes this case test the identity rather than the clock.
 R4="$(new_repo)"
-run "$R4" "$P1" >/dev/null; run "$R4" "$P1" >/dev/null; run "$R4" "$P1" >/dev/null
-eq "three firings of one payload leave ONE line" "1" "$(logline "$R4" | awk 'NF{n++} END{print n+0}')"
+run "$R4" "$P1" >/dev/null
+sleep 1
+run "$R4" "$P1" >/dev/null
+sleep 1
+run "$R4" "$P1" >/dev/null
+eq "three firings spanning >=2 seconds leave ONE line — the guard compares the identity, never the whole line" "1" "$(logline "$R4" | awk 'NF{n++} END{print n+0}')"
+eq "and the recorded_at values in the payloads really did differ across those firings (else this case is the old one again)" "1" \
+  "$(logline "$R4" | jq -r '.recorded_at' | sort -u | awk 'NF{n++} END{print n+0}')"
 
 echo "== 5. two different agents in one session are two different rows =="
 R5="$(new_repo)"
