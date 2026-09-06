@@ -238,12 +238,27 @@ hash_one() {
   else cksum "$1" 2>/dev/null
   fi
 }
+# store_fingerprint — the before/after comparison value. It folds in the file SET, and RE-ENUMERATES
+# that set on every call, because per-file content hashes over a list captured ONCE are blind in
+# exactly the direction that matters: a concurrent writer that ADDS a rule file mid-run adds a file
+# that was never in the list, so it is never hashed, every enumerated file is unchanged, and the two
+# fingerprints match — the run would then print "identical" over a store that grew underneath it.
+# Emitting the sorted path list alongside the hashes makes an ADD and a REMOVE trip the mismatch
+# branch too, so the reported guarantee is the one the code actually makes.
+# $FILES_LIST is deliberately NOT reused here: it is the set the CHECKS examined, and conflating it
+# with the set the fingerprint re-reads is what made the guarantee wider than the mechanism.
 store_fingerprint() {
-  local f
+  local f set_file="$WORK/fp-set"
+  LC_ALL=C find "$RULES_DIR" -maxdepth 1 -type f -name '*.json' 2>/dev/null \
+    | LC_ALL=C sort > "$set_file" 2>/dev/null || : > "$set_file"
+  [ -f "$set_file" ] || : > "$set_file"
+  printf 'set:\n'
+  cat "$set_file" 2>/dev/null
+  printf 'content:\n'
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     hash_one "$f"
-  done < "$FILES_LIST"
+  done < "$set_file"
 }
 FP_BEFORE="$(store_fingerprint)"
 
@@ -840,13 +855,16 @@ printf '\n'
 
 printf '## Store integrity\n\n'
 if [ "$FP_BEFORE" = "$FP_AFTER" ]; then
-  printf -- '- the store is BYTE-IDENTICAL to how this run found it (content fingerprint taken before the\n'
-  printf '  first check and after the last one, and compared). This script has no write path; the\n'
-  printf '  comparison is asserted from the run itself rather than inferred from that absence.\n'
+  printf -- '- the store is BYTE-IDENTICAL to how this run found it: the same set of `*.json` files, each\n'
+  printf '  with the same content. The fingerprint is the RE-ENUMERATED sorted path list PLUS a per-file\n'
+  printf '  content hash, taken before the first check and after the last one, and compared — so a file\n'
+  printf '  ADDED or REMOVED mid-run trips this too, not only an edit to a file already there. This\n'
+  printf '  script has no write path; the comparison is asserted from the run itself rather than\n'
+  printf '  inferred from that absence.\n'
 else
-  printf -- '- !! THE STORE CHANGED DURING THIS RUN. This script cannot write, so something else did —\n'
-  printf '  a concurrent writer, or an edit landed mid-run. Every finding above describes a store that\n'
-  printf '  no longer exists; re-run it.\n'
+  printf -- '- !! THE STORE CHANGED DURING THIS RUN — a `*.json` file was added, removed, or edited. This\n'
+  printf '  script cannot write, so something else did — a concurrent writer, or an edit landed mid-run.\n'
+  printf '  Every finding above describes a store that no longer exists; re-run it.\n'
 fi
 printf '\n'
 
