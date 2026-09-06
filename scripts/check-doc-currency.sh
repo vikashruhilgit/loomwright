@@ -175,6 +175,42 @@ run_legend_check() {
 }
 run_legend_check || fail=1
 
+# --- Every counted command is actually documented -------------------------------------------
+# A count claim can match the directory while the thing it counts is undocumented: bumping
+# "23 slash commands" is invisible to every pattern above if no `### /<cmd>` section was added.
+# That is the gap that shipped /propose in v15.57.0 with the count bumped and the command
+# absent from /agent-help's own Command Reference -- the file CLAUDE.md tells contributors to
+# use to VERIFY a new command. The postmortem ledger records this class (a new subcommand
+# shipped without its restatement across the enumerating surfaces) as a repeat self-heal miss,
+# so check the SUBJECT of the count, not only its magnitude.
+#
+# /agent-help is exempt: it is the Command Reference, and a section describing the file you
+# are reading is not what a user needs. Every other command must appear.
+help_md="$repo_root/loomwright/commands/agent-help.md"
+cmds_seen=0
+undocumented=""
+for cmd_file in "$repo_root"/loomwright/commands/*.md; do
+  # A non-matching glob expands to the literal pattern; without this the loop would report a
+  # bogus "*" as undocumented in any tree with no command files.
+  [ -e "$cmd_file" ] || continue
+  cmd="$(basename "$cmd_file" .md)"
+  [ "$cmd" = "agent-help" ] && continue
+  cmds_seen=$((cmds_seen + 1))
+  grep -qE "^### .*/${cmd} " "$help_md" 2>/dev/null || undocumented="$undocumented $cmd"
+done
+# Only demand the reference exist when there is something for it to document. A tree with no
+# commands (a fixture, a partial checkout) makes this vacuously true, and the count checks
+# above are what catch a commands/ directory that wrongly went empty.
+if [ "$cmds_seen" -gt 0 ]; then
+  if [ ! -r "$help_md" ]; then
+    echo "  DRIFT [command-documented] loomwright/commands/agent-help.md — unreadable, so the per-command check would be vacuous for $cmds_seen command(s)"
+    fail=1
+  elif [ -n "$undocumented" ]; then
+    echo "  DRIFT [command-documented] loomwright/commands/agent-help.md — counted but with no \`### /<cmd>\` section:$undocumented"
+    fail=1
+  fi
+fi
+
 if [ "$fail" -ne 0 ]; then
   echo "✗ doc-currency drift detected — update the offending lines to match the authoritative values above."
   exit 1

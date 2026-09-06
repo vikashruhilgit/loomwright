@@ -1,0 +1,265 @@
+{
+  "generated_at_epoch": 1788600000,
+  "repo_head": "0000000",
+  "schema_version": 1,
+  "surfaces": {
+    "postmortem": {
+      "basis": "non-blank lines in .supervisor/postmortem/results.jsonl that parse as a JSON object, one record per line",
+      "count": 18,
+      "detail": {
+        "categories_total": 27,
+        "class_basis": ".categories[].class",
+        "class_distribution": {
+          "execution_bug": 11,
+          "plan_gap": 4,
+          "quality_gap": 12
+        },
+        "entries": [
+          {
+            "class": "plan_gap",
+            "evidence": "plan omitted the release-surface obligation",
+            "flow_stage": "worker",
+            "index": 0,
+            "line": 2,
+            "round": 1,
+            "self_heal_miss": false
+          },
+          {
+            "class": "plan_gap",
+            "evidence": "plan had no positive control for a negative assertion",
+            "flow_stage": "worker",
+            "index": 0,
+            "line": 27,
+            "round": 1,
+            "self_heal_miss": false
+          },
+          {
+            "class": "quality_gap",
+            "evidence": "quality gap 02: assertion left vacuous by a shared-fixture default",
+            "flow_stage": "worker",
+            "index": 0,
+            "line": 11,
+            "round": 3,
+            "self_heal_miss": false
+          },
+          {
+            "class": "quality_gap",
+            "evidence": "quality gap 05: assertion left vacuous by a shared-fixture default",
+            "flow_stage": "worker",
+            "index": 1,
+            "line": 23,
+            "round": 3,
+            "self_heal_miss": false
+          },
+          {
+            "class": "quality_gap",
+            "evidence": "quality gap 08: assertion left vacuous by a shared-fixture default",
+            "flow_stage": "worker",
+            "index": 0,
+            "line": 35,
+            "round": 3,
+            "self_heal_miss": false
+          },
+          {
+            "class": "quality_gap",
+            "evidence": "quality gap 11: assertion left vacuous by a shared-fixture default",
+            "flow_stage": "worker",
+            "index": 1,
+            "line": 47,
+            "round": 3,
+            "self_heal_miss": false
+          },
+          {
+            "class": "execution_bug",
+            "flow_stage": "worker",
+            "index": 0,
+            "line": 102,
+            "round": 1,
+            "self_heal_miss": false
+          },
+          {
+            "class": "execution_bug",
+            "flow_stage": "worker",
+            "index": 0,
+            "line": 105,
+            "round": 1,
+            "self_heal_miss": false
+          },
+          {
+            "class": "execution_bug",
+            "flow_stage": "worker",
+            "index": 0,
+            "line": 108,
+            "round": 1,
+            "self_heal_miss": false
+          },
+          {
+            "class": "plan_gap",
+            "evidence": "plan named a directory that does not exist",
+            "flow_stage": "worker",
+            "index": 0,
+            "line": 8,
+            "round": 1,
+            "self_heal_miss": false
+          },
+          {
+            "class": "quality_gap",
+            "evidence": "quality gap 00: assertion left vacuous by a shared-fixture default",
+            "flow_stage": "worker",
+            "index": 0,
+            "line": 3,
+            "round": 1,
+            "self_heal_miss": false
+          },
+          {
+            "class": "quality_gap",
+            "evidence": "quality gap 03: assertion left vacuous by a shared-fixture default",
+            "flow_stage": "worker",
+            "index": 1,
+            "line": 15,
+            "round": 1,
+            "self_heal_miss": false
+          },
+          {
+            "class": "quality_gap",
+            "evidence": "quality gap 06: assertion left vacuous by a shared-fixture default",
+            "flow_stage": "worker",
+            "index": 0,
+            "line": 27,
+            "round": 1,
+            "self_heal_miss": false
+          },
+          {
+            "class": "quality_gap",
+            "evidence": "quality gap 09: assertion left vacuous by a shared-fixture default",
+            "flow_stage": "worker",
+            "index": 1,
+            "line": 39,
+            "round": 1,
+            "self_heal_miss": false
+          },
+          {
+            "class": "execution_bug",
+            "evidence": "execution bug 00: helper swallowed the flag it was passed",
+            "flow_stage": "worker",
+            "index": 0,
+            "line": 100,
+            "round": 1,
+            "self_heal_miss": false
+          },
+          {
+            "class": "execution_bug",
+            "flow_stage": "worker",
+            "index": 0,
+            "line": 103,
+            "round": 1,
+            "self_heal_miss": false
+          },
+          {
+            "class": "execution_bug",
+            "flow_stage": "worker",
+            "index": 0,
+            "line": 106,
+            "round": 1,
+            "self_heal_miss": false
+          },
+          {
+            "class": "execution_bug",
+            "flow_stage": "worker",
+            "index": 0,
+            "line": 109,
+            "round": 1,
+            "self_heal_miss": false
+          },
+          {
+            "class": "plan_gap",
+            "evidence": "plan left the threshold to implementation time",
+            "flow_stage": "worker",
+            "index": 1,
+            "line": 15,
+            "round": 2,
+            "self_heal_miss": false
+          },
+          {
+            "class": "quality_gap",
+            "evidence": "quality gap 01: assertion left vacuous by a shared-fixture default",
+            "flow_stage": "worker",
+            "index": 1,
+            "line": 7,
+            "round": 2,
+            "self_heal_miss": false
+          },
+          {
+            "class": "quality_gap",
+            "evidence": "quality gap 04: assertion left vacuous by a shared-fixture default",
+            "flow_stage": "worker",
+            "index": 0,
+            "line": 19,
+            "round": 2,
+            "self_heal_miss": false
+          },
+          {
+            "class": "quality_gap",
+            "evidence": "quality gap 07: assertion left vacuous by a shared-fixture default",
+            "flow_stage": "worker",
+            "index": 1,
+            "line": 31,
+            "round": 2,
+            "self_heal_miss": false
+          },
+          {
+            "class": "quality_gap",
+            "evidence": "quality gap 10: assertion left vacuous by a shared-fixture default",
+            "flow_stage": "worker",
+            "index": 0,
+            "line": 43,
+            "round": 2,
+            "self_heal_miss": false
+          },
+          {
+            "class": "execution_bug",
+            "evidence": "execution bug 01: helper swallowed the flag it was passed",
+            "flow_stage": "worker",
+            "index": 0,
+            "line": 101,
+            "round": 1,
+            "self_heal_miss": false
+          },
+          {
+            "class": "execution_bug",
+            "flow_stage": "worker",
+            "index": 0,
+            "line": 104,
+            "round": 1,
+            "self_heal_miss": false
+          },
+          {
+            "class": "execution_bug",
+            "flow_stage": "worker",
+            "index": 0,
+            "line": 107,
+            "round": 1,
+            "self_heal_miss": false
+          },
+          {
+            "class": "execution_bug",
+            "flow_stage": "worker",
+            "index": 0,
+            "line": 110,
+            "round": 1,
+            "self_heal_miss": false
+          }
+        ],
+        "flow_stage_basis": ".categories[].flow_stage",
+        "flow_stage_distribution": {
+          "worker": 27
+        },
+        "lines_malformed": 0,
+        "lines_without_categories": 0
+      },
+      "mtime_epoch": 1788599000,
+      "source": ".supervisor/postmortem/results.jsonl",
+      "status": "counted"
+    }
+  }
+}

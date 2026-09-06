@@ -160,6 +160,7 @@ Optional next: run `/setup` for a status dashboard and guided configuration of o
 | **Review-PR**         | `/review-pr <pr-url>`           | Standalone review→fix→re-review loop against an existing PR; auto-heals the diff, never auto-merges → REVIEW_HEAL_RESULT | Review/heal any open PR         |
 | **Setup** (command)   | `/setup [module]`               | Status dashboard + guided configuration for every optional capability — observability (local Langfuse + OTel collector), telemetry, notifications, webhook, Beads, MySQL MCP, memory in version control, `rules` (seed `.agent/rules/` with portable conventions), `statusline` (opt-in one-line run report; never overwrites a status line you already have), `ui` (The Floor — an opt-in local run view served on 127.0.0.1 only) | First install, enabling integrations |
 | **Rules** (command)   | `/rules [list\|suggest\|add\|retract\|audit\|check]` | House Rules substrate — committed `.agent/rules/` conventions store + fail-safe reader; list/suggest/add/retract/audit/check (`audit` re-validates the standing store read-only) | Capturing durable team conventions |
+| **Propose** (command) | `/propose`                      | Turn the churn ledger into evidence-carrying candidate work items under `.supervisor/requirements/proposed/` — proposes, never queues | Deciding what to work on next   |
 
 
 ### Internal Agents (5)
@@ -605,7 +606,7 @@ This prevents knowledge loss and helps agents learn from discoveries.
 To modify or extend agents:
 
 1. Agents are Markdown prompts in `loomwright/agents/` (14 files)
-2. Commands are in `loomwright/commands/` (22 commands)
+2. Commands are in `loomwright/commands/` (23 commands)
 3. Skills are in `loomwright/skills/` (41 skills, versioned with SKILLS_INDEX.md; 18 tech-stack skills live in the sibling `stackpack/` plugin)
 4. Hooks: per-agent in frontmatter (Worker, Execute Manager) + cross-cutting in `loomwright/hooks/hooks.json` (Code Reviewer, QA Executor, TaskCompleted)
 5. Docs: `loomwright/docs/RESULT_SCHEMAS.md`, `…/FAILURE_ESCALATION.md`, `…/ARCHITECTURE_CONTRACTS.md`, `…/ARCHITECTURE.md`
@@ -670,7 +671,7 @@ Claude Code caches plugin contents. After pulling new changes (e.g. a fresh `git
    /reload-plugins
    ```
    Run from the repo root so `./` resolves to your local checkout.
-3. Verify with `/skills` — should show all 41 skills under "Plugin skills". Use `/agent-help` to confirm all 22 slash commands are registered.
+3. Verify with `/skills` — should show all 41 skills under "Plugin skills". Use `/agent-help` to confirm all 23 slash commands are registered.
 
 **Previously installed via `claude --plugin-dir` (flat layout)?** Older install instructions told you to launch Claude with `--plugin-dir` pointing at the repo root. That no longer works — the plugin is now nested under `loomwright/`. Switch to the marketplace flow shown in **Quick Start → 1. Install the Plugin**.
 

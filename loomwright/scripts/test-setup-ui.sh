@@ -4221,7 +4221,7 @@ fi
 #
 # WHICH PHRASINGS ARE SWEPT, and one that is DELIBERATELY NOT, because getting this wrong in
 # either direction is silent. Only the CURRENT-STATE phrasings are swept. The bare form
-# `21 commands` is excluded because a per-release `Counts: 14 agents / N commands / N skills /
+# `22 commands` is excluded because a per-release `Counts: 14 agents / N commands / N skills /
 # N hooks` line describes THAT release, not the current state, and sweeping the bare form would
 # pressure the next author into rewriting frozen release history to appease a gate. That is the
 # historical convention CHANGELOG.md uses, and is why CHANGELOG.md is unscanned.
@@ -4230,7 +4230,7 @@ fi
 # a pointer to CHANGELOG.md, so no scanned surface states a historical count today. The
 # narrowing is retained as-is rather than silently tightened — sweeping the bare form is now
 # available as a deliberate change, not a side effect of a docs edit. The
-# parenthesised `(21 commands` IS swept, because that is the current-state form README uses
+# parenthesised `(22 commands` IS swept, because that is the current-state form README uses
 # in its live "Commands are in ..." pointer. (z14) is what keeps this narrowing honest: it
 # requires the current claim to actually be present, so a surface that simply stopped stating
 # a count cannot pass (z13) by having nothing to be stale about.
@@ -4239,17 +4239,17 @@ z_seen=0; z_stale=""
 for f in $Z_SURFACES; do
   [ -r "$f" ] || continue
   z_seen=$((z_seen + 1))
-  for pat in '21 slash commands' 'Slash commands (21)' '21 entry points' '(21 commands'; do
+  for pat in '22 slash commands' 'Slash commands (22)' '22 entry points' '(22 commands'; do
     if has_lit "$f" "$pat"; then z_stale="$z_stale [$(basename "$f"):$pat]"; fi
   done
 done
 if [ "$z_seen" -lt 5 ]; then
-  no "(z13) no stale '21 commands' residue on the release surfaces" \
+  no "(z13) no stale '22 commands' residue on the release surfaces" \
      "only $z_seen of 6 surfaces were readable from this suite, so the sweep would be near-vacuous"
 elif [ -z "$z_stale" ]; then
-  ok "(z13) no stale '21 commands' residue across $z_seen release surfaces"
+  ok "(z13) no stale '22 commands' residue across $z_seen release surfaces"
 else
-  no "(z13) no stale '21 commands' residue across the release surfaces" "still stale in:$z_stale"
+  no "(z13) no stale '22 commands' residue across the release surfaces" "still stale in:$z_stale"
 fi
 
 # --- (z14) ANTI-VACUITY for (z13) --------------------------------------------------------
@@ -4259,7 +4259,7 @@ fi
 z14_missing=""
 for f in "$REPO_ROOT/README.md" "$REPO_ROOT/CLAUDE.md" "$REPO_ROOT/.claude-plugin/README.md" "$HELP_MD"; do
   [ -r "$f" ] || { z14_missing="$z14_missing [unreadable:$(basename "$f")]"; continue; }
-  if has_re "$f" '22 slash commands|Slash commands \(22\)|22 entry points|\(22 commands'; then :; else
+  if has_re "$f" '23 slash commands|Slash commands \(23\)|23 entry points|\(23 commands'; then :; else
     z14_missing="$z14_missing [$(basename "$f")]"
   fi
 done
