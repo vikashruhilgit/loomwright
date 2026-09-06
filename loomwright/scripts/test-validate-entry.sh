@@ -1971,12 +1971,21 @@ RO_JSON
   return 0
 }
 
-ro_tree_hash() { # ro_tree_hash <dir>
+# Portable, for the reason audit-rules.sh's own `hash_one` already gives: `shasum` on macOS,
+# `sha256sum` on Linux CI. Hardcoding one reintroduces the single-tool assumption the neighbouring
+# script deliberately avoids, and a hash helper that silently produces nothing would make every
+# comparison below `"" = ""` — the vacuity this section exists to prevent.
+ro_hash_cmd=""
+for _c in shasum sha256sum cksum; do
+  command -v "$_c" >/dev/null 2>&1 && { ro_hash_cmd="$_c"; break; }
+done
+ro_tree_hash() { # ro_tree_hash <dir> -> a hash of every file's content, or empty
+  [ -n "$ro_hash_cmd" ] || return 0
   ( cd "$1" 2>/dev/null && find . -type f -print0 2>/dev/null | LC_ALL=C sort -z \
-      | xargs -0 shasum 2>/dev/null | shasum | awk '{print $1}' )
+      | xargs -0 "$ro_hash_cmd" 2>/dev/null | "$ro_hash_cmd" | awk '{print $1}' )
 }
 for b in $RO_WANT; do
-  ro_root="$(mktemp -d)"; ro_seed_store "$ro_root" || true
+  ro_root="$(mktemp -d "$TMP/ro.XXXXXX")"; ro_seed_store "$ro_root" || true
   ro_before="$(ro_tree_hash "$ro_root")"
   ( cd "$ro_root" && bash "$HERE/$b" --root "$ro_root" --rules-dir "$ro_root/.agent/rules" ) >/dev/null 2>&1
   ro_after="$(ro_tree_hash "$ro_root")"
@@ -1988,20 +1997,42 @@ for b in $RO_WANT; do
 
   # MUTATION CONTROL: a listed script that DOES write must be caught, or AC16c is a check that
   # would pass on the very thing it exists to prevent.
-  ro_mut="$(mktemp -d)/mut-$b"
-  { cat "$HERE/$b"; printf '\nprintf "{}" > "%s/.agent/rules/mutant.json" 2>/dev/null || true\n' "$ro_root"; } > "$ro_mut" 2>/dev/null
+  #
+  # THE FIRST VERSION OF THIS CONTROL WAS TAUTOLOGICAL THREE WAYS OVER, and it is worth naming all
+  # three because each alone is enough to make a green control meaningless — the exact class this
+  # whole section argues against. It (1) APPENDED the write to the end of the script, which is dead
+  # code: `audit-rules.sh` ends in an explicit `exit 0`, so the line could never execute; (2) baked
+  # the PREVIOUS fixture root into that write, so even had it run it would have written into a
+  # directory this control does not hash; and (3) performed the write ITSELF, unconditionally,
+  # immediately after running the mutant — which moves the hash whether or not the mutant does
+  # anything at all, or even exists. A future edit that broke `ro_tree_hash` entirely would still
+  # have printed `ok`. Found in review by static tracing; (1) is the reason (3) had been added.
+  #
+  # So: the write is INJECTED AFTER LINE 1 (before any exit can be reached), it targets the root
+  # this control actually hashes, the test writes nothing of its own — and the anti-vacuity
+  # assertion below requires the injected file to EXIST afterwards, which is the only direct
+  # evidence that the mutant's write really ran rather than the hash moving for some other reason.
+  ro_m_root="$(mktemp -d "$TMP/rom.XXXXXX")"; ro_seed_store "$ro_m_root" || true
+  ro_mut="$TMP/mut-$b"
+  awk -v w="printf '{}' > \"$ro_m_root/.agent/rules/mutant.json\" 2>/dev/null || true" \
+    'NR==1 { print; print w; next } { print }' "$HERE/$b" > "$ro_mut" 2>/dev/null
   if [ -s "$ro_mut" ] && ! cmp -s "$ro_mut" "$HERE/$b"; then
-    ro_m_root="$(mktemp -d)"; ro_seed_store "$ro_m_root" || true
     ro_m_before="$(ro_tree_hash "$ro_m_root")"
     ( cd "$ro_m_root" && bash "$ro_mut" --root "$ro_m_root" --rules-dir "$ro_m_root/.agent/rules" ) >/dev/null 2>&1
-    printf '{}' > "$ro_m_root/.agent/rules/mutant.json" 2>/dev/null
     ro_m_after="$(ro_tree_hash "$ro_m_root")"
-    [ "$ro_m_before" != "$ro_m_after" ] \
-      && ok "AC16c control: a writing variant of $b changes the hash — AC16c is measuring the tree, not reporting a constant" \
-      || no "AC16c control: a writing variant of $b left the hash unchanged — AC16c proves nothing"
+    if [ ! -f "$ro_m_root/.agent/rules/mutant.json" ]; then
+      no "AC16c control: the injected write never ran (no mutant.json) — the control did not exercise a writer, so it proves nothing about AC16c"
+    elif [ -z "$ro_m_before" ]; then
+      no "AC16c control: no usable hash command, so before/after are both empty and every comparison here is vacuous"
+    elif [ "$ro_m_before" != "$ro_m_after" ]; then
+      ok "AC16c control: a writing variant of $b ran its injected write AND moved the hash — AC16c is measuring the tree, not reporting a constant"
+    else
+      no "AC16c control: a writing variant of $b wrote a file and the hash did NOT move — ro_tree_hash cannot see a writer, so AC16c proves nothing"
+    fi
   else
     no "AC16c control: could not build the writing variant of $b — the control is inconclusive"
   fi
+  rm -rf "$ro_root" "$ro_m_root" "$ro_mut" 2>/dev/null || true
 done
 # FAILING TO BUILD IT IS A FAILURE, not a silent fall back to $REPO_ROOT. Falling back would restore
 # the exact blind spot this exists to close, and it would do it invisibly.
