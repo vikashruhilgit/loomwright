@@ -83,6 +83,13 @@
   }
   var STALL_SEC = qpInt('stall', 300, 1);
   var STALE_SEC = qpInt('stale', Math.round((POLL_MS / 1000) * 3), 1);
+  /* HOW OLD A LANE MAY BE AND STILL BE LISTED. A `cc_session_id` is not a unit of work — it
+   * survives `/clear` and it survives resume, so one id can persist for days and accumulate
+   * every agent that ever ran under it. Measured on a real project: one session's lanes spanned
+   * FOUR DAYS, three of them last recorded on Sep 2 sitting beside three from the last minute.
+   * Listing them together says "these are the current lanes" about work that ended days ago.
+   * A lane with NO recorded ts is NOT old — it is unknown — so it is never filtered out here. */
+  var LANE_SEC = qpInt('lane', 1800, 1);
 
   var el = function (id) { return document.getElementById(id); };
 
@@ -625,7 +632,15 @@
     for (i = 0; i < mids.length; i++) {
       var vid = 'st-' + mids[i];
       if (active === mids[i]) {
-        setCell(vid, { text: phase, title: 'state.detail.phase, as recorded in .supervisor/state.md' });
+        /* THE CELL NO LONGER REPEATS ITS OWN LABEL. `EXECUTE` in the cell headed `Execute` read
+         * as "Execute EXECUTE" — the value slot had nothing to say that the label had not
+         * already said. Where the recorded phase and the stage name coincide the cell carries a
+         * marker; where they differ (FINALIZE and SELF_HEAL both map to Review) the word is
+         * information and is kept. The phase is stated in full in the note below either way. */
+        setCell(vid, {
+          text: (String(phase).toUpperCase() === mids[i].toUpperCase()) ? '●' : phase,
+          title: 'state.detail.phase, as recorded in .supervisor/state.md'
+        });
       } else {
         setCell(vid, {
           text: '—',
@@ -650,10 +665,15 @@
         var rs = (state.detail && state.detail.run_status) ? (' · recorded run_status ' + state.detail.run_status) : '';
         /* The two shapes the stage cells cannot tell apart, said in words. Both are TEXT, set
          * through textContent like everything else on this page. */
+        /* WHOSE PHASE THIS IS. `state.md` is one repo-global file and it records the session
+         * that owns it, so a phase shown without that owner invites the reader to attach it to
+         * whatever session the lanes below happen to be. Name it. */
+        var owner = (state.detail && typeof state.detail.session_id === 'string' && state.detail.session_id)
+          ? (' · phase recorded by session ' + state.detail.session_id.slice(0, 8)) : '';
         var ph = unmapped
           ? (' · recorded phase ' + phase + ' — no pipeline stage corresponds to it')
           : (phase ? '' : ' · no phase is recorded');
-        note.textContent = age + br + rs + ph;
+        note.textContent = age + br + rs + owner + ph;
       }
     }
   }
@@ -1331,6 +1351,20 @@
     return out;
   }
 
+  /* Split the sorted rows into what is listed and what was dropped for age. Returned as a pair
+   * rather than filtered in place, because the count of omitted lanes has to be RENDERED: a lane
+   * that silently vanishes is indistinguishable from one that never existed, which is the same
+   * absent-vs-zero rule the count cells follow. */
+  function laneSplit(d, gen) {
+    var all = laneRows(d), keep = [], dropped = 0, i, ep, age;
+    for (i = 0; i < all.length; i++) {
+      ep = tsToEpoch(all[i] && all[i].last_ts);
+      age = (gen !== null && ep !== null) ? (gen - ep) : null;
+      if (age !== null && age > LANE_SEC) { dropped++; } else { keep.push(all[i]); }
+    }
+    return { rows: keep, dropped: dropped, total: all.length };
+  }
+
   function buildLane(id) {
     var li = document.createElement('li');
     li.className = 'lane';
@@ -1349,8 +1383,9 @@
   function renderLanes(d) {
     var host = el('lanes');
     if (!host) { return 0; }
-    var rows = laneRows(d), i, r, id, li;
     var gen = (typeof d.generated_at_epoch === 'number') ? d.generated_at_epoch : null;
+    var split = laneSplit(d, gen);
+    var rows = split.rows, i, r, id, li;
     var seen = {};
 
     for (i = 0; i < rows.length; i++) {
@@ -1437,7 +1472,9 @@
       if (stalled) {
         meta.textContent = evTxt + ' · no event for ' + fmtAge(age) + roSuffix;
       } else {
-        meta.textContent = evTxt + ' · last ' + (age === null ? 'unknown' : fmtAge(age)) + roSuffix;
+        meta.textContent = (ev === 0)
+          ? ('spawned, no events recorded yet' + roSuffix)
+          : evTxt + ' · last ' + (age === null ? 'unknown' : fmtAge(age)) + roSuffix;
       }
       meta.title = 'agent_id ' + id + (r.first_ts ? (' · first ' + r.first_ts) : '') + (r.last_ts ? (' · last ' + r.last_ts) : '');
 
@@ -1463,8 +1500,38 @@
     }
 
     var lc = el('lane-count');
-    if (lc) { lc.textContent = rows.length ? ('(' + rows.length + ' in the newest session)') : ''; }
+    if (lc) {
+      lc.textContent = split.total
+        ? ('(' + rows.length + ' of ' + split.total +
+           (split.dropped ? (' · ' + split.dropped + ' with no event for over ' + fmtAge(LANE_SEC) + ' not listed') : '') + ')')
+        : '';
+    }
     return rows.length;
+  }
+
+  /* THE SESSION THIS PAGE IS SHOWING, and why it is that one. Rendered from recorded fields
+   * only: the branch the session's own lines carried, its cc_session_id, and the projector's
+   * `selection`. `newest_recorded` is the FAIL-OPEN case — no session qualified as plugin work,
+   * so the newest recorded one is shown and the reader is TOLD, rather than being shown nothing.
+   * `sessions_not_plugin_work` is the count set aside, printed because a session silently
+   * excluded is indistinguishable from one that was never recorded. */
+  function renderSessionNote(d) {
+    var n = el('session-note');
+    if (!n) { return; }
+    var s = surfaceOf(d, 'sessions');
+    var cur = s && s.detail && s.detail.current;
+    if (!cur || typeof cur.cc_session_id !== 'string') { n.textContent = ''; return; }
+    var bits = ['showing session ' + cur.cc_session_id.slice(0, 8)];
+    if (typeof cur.branch === 'string' && cur.branch) { bits.push('branch ' + cur.branch); }
+    if (cur.selection === 'plugin_run') {
+      bits.push('chosen because it recorded plugin work, not because it is the most recent');
+    } else if (cur.selection === 'newest_recorded') {
+      bits.push('no session recorded plugin work, so this is simply the most recent one — it may be a Claude Code session you are working in directly');
+    }
+    if (typeof cur.sessions_not_plugin_work === 'number' && cur.sessions_not_plugin_work > 0) {
+      bits.push(cur.sessions_not_plugin_work + ' other session(s) recorded no plugin work and are not shown');
+    }
+    n.textContent = bits.join(' · ');
   }
 
   function renderRoster(d) {
@@ -1570,6 +1637,7 @@
       lastGen = gen;
       renderLanes.roster = rosterIndex(d);
       renderStages(d);
+      renderSessionNote(d);
       apply.lanes = renderLanes(d);
       renderRoster(d);
       renderRules(d);

@@ -2433,6 +2433,43 @@ done
   && ok "(j50) the rules section names the authoring path (/rules add, add-rule.sh, --confirm) and says that omitting --applies-to is what records a rule repo-wide" \
   || no "(j50) the rules section does not say how a rule gets into the store" "missing:$j50_bad"
 
+# --- (j51) the view says WHICH session it shows, and stops repeating a stage's own label ------
+# Four page-side claims from the same change, each by its own literal. They exist because the
+# page previously answered none of these questions and a reader could not tell a wrong session
+# from a broken run: (1) the session shown is named and the choice explained; (2) a lane too old
+# to be current is dropped WITH a count, never silently; (3) `EXECUTE` under a cell headed
+# `Execute` read as "Execute EXECUTE", so a coinciding phase renders as a marker while a
+# differing one (FINALIZE under Review) keeps the word; (4) a spawned agent with no events is a
+# STATE, not a gap, and says so rather than reading "0 events · last unknown".
+j51_bad=""
+has_lit "$JS" "function renderSessionNote" || j51_bad="$j51_bad [no renderSessionNote]"
+has_lit "$JS" "chosen because it recorded plugin work" || j51_bad="$j51_bad [the plugin-work choice is not explained on the page]"
+has_lit "$JS" "newest_recorded" || j51_bad="$j51_bad [the fail-open selection is not surfaced]"
+has_lit "$JS" "sessions_not_plugin_work" || j51_bad="$j51_bad [the set-aside count is not rendered]"
+has_lit "$JS" "var LANE_SEC = qpInt('lane', 1800, 1);" || j51_bad="$j51_bad [no lane recency window]"
+has_lit "$JS" "function laneSplit" || j51_bad="$j51_bad [lanes are not split into listed vs dropped]"
+has_lit "$JS" "not listed" || j51_bad="$j51_bad [dropped lanes are not counted on the page]"
+has_lit "$JS" "spawned, no events recorded yet" || j51_bad="$j51_bad [a 0-event lane still reads as a gap]"
+has_lit "$JS" "toUpperCase() === mids[i].toUpperCase()" || j51_bad="$j51_bad [the stage cell still repeats its own label]"
+has_lit "$JS" "phase recorded by session " || j51_bad="$j51_bad [the phase is shown without naming the session that owns state.md]"
+has_lit "$HTML" 'id="session-note"' || j51_bad="$j51_bad [no session-note element]"
+has_lit "$HTML" "belong to no session" || j51_bad="$j51_bad [the pipeline caption does not separate project-wide counts from the one run's phase]"
+[ -z "$j51_bad" ] \
+  && ok "(j51) the page names the session it shows and why, counts the lanes it dropped for age, marks a coinciding phase instead of repeating the stage label, names the phase's owning session, and calls a 0-event lane spawned rather than empty" \
+  || no "(j51) the session/lane/pipeline honesty surfaces are incomplete" "$j51_bad"
+
+# MUTATION CONTROL: put the phase word back in the cell unconditionally and (j51) must redden.
+MUT_J51="$TMPROOT/mut-stagelabel.js"
+# Mutated on an ASCII anchor: the marker character is multibyte and a sed pattern carrying it
+# silently matches nothing on some platforms — which would leave the mutant byte-identical and
+# the control reporting "inconclusive" rather than failing loudly.
+sed 's|String(phase).toUpperCase() === mids\[i\].toUpperCase()|false|' "$JS" > "$MUT_J51" 2>/dev/null
+if mutant_ok "$JS" "$MUT_J51"; then
+  has_lit "$MUT_J51" "toUpperCase() === mids[i].toUpperCase()" \
+    && no "(j52) MUTATION CONTROL: restoring the label-repeating cell IS detected by (j51)" "the literal survived the mutation, so (j51) proves nothing" \
+    || ok "(j52) MUTATION CONTROL: restoring the label-repeating cell IS detected by (j51) — the stutter cannot come back unnoticed"
+fi
+
 # --- (j42) the three curation-fault RENDER branches, driven by a UI fixture -------------------
 # (y)/(y2) in test-build-floor.sh pinned these three on the PROJECTOR side. The RENDER side was
 # still uncovered: floor.js has a branch for each of files_not_an_array, self_referential and

@@ -2923,6 +2923,67 @@ else
 fi
 
 
+# ============================================================================
+echo "== (za) the shown session is chosen by RECORDED PLUGIN WORK, not by recency =="
+# "Newest by ts" is only right when one thing runs. A person working directly in Claude Code
+# emits the same hook events as a Supervisor run and, being the thing they are typing into, is
+# almost always the newest — so the view kept landing on the operator's own chat while their
+# /automate run sat unseen. The fixture below is exactly that shape: the chat is NEWER.
+RZA="$(new_repo)"; mkdir -p "$RZA/.supervisor/logs" "$RZA/agents"
+{
+  printf '{"ts":"2026-09-06T12:30:00Z","event":"token_ledger","cc_session_id":"chat","agent_id":"achat"}\n'
+  printf '{"ts":"2026-09-06T12:00:00Z","event":"subtask_complete","cc_session_id":"run","agent_id":"aw1","branch":"feat/thing"}\n'
+  printf '{"event":"agent_identity","cc_session_id":"run","agent_id":"aw1","agent_type":"loomwright:loomwright:worker"}\n'
+} > "$RZA/.supervisor/logs/mix.jsonl"
+run_build "$RZA"
+JZA="$RZA/.supervisor/floor/floor.json"
+zaq() { jq -r "$1" "$JZA" 2>/dev/null; }
+[ "$(zaq '.surfaces.sessions.detail.current.cc_session_id')" = "run" ] \
+  && ok "(za) the OLDER session that recorded plugin work is shown, not the newer chat" \
+  || no "(za) shown session is $(zaq '.surfaces.sessions.detail.current.cc_session_id'), expected run"
+[ "$(zaq '.surfaces.sessions.detail.current.selection')" = "plugin_run" ] \
+  && ok "(za) selection names the rule that produced the row (plugin_run) rather than leaving the reader to guess" \
+  || no "(za) selection == $(zaq '.surfaces.sessions.detail.current.selection'), expected plugin_run"
+[ "$(zaq '.surfaces.sessions.detail.current.sessions_not_plugin_work')" = "1" ] \
+  && ok "(za) the session set aside is COUNTED — silently excluding one is indistinguishable from never recording it" \
+  || no "(za) sessions_not_plugin_work == $(zaq '.surfaces.sessions.detail.current.sessions_not_plugin_work'), expected 1"
+[ "$(zaq '.surfaces.sessions.detail.current.branch')" = "feat/thing" ] \
+  && ok "(za) the session carries the branch its own lines recorded, so it can be named on the page" \
+  || no "(za) branch == $(zaq '.surfaces.sessions.detail.current.branch'), expected feat/thing"
+
+# --- (zb) FAIL OPEN: with no qualifying session, show the newest and SAY so ------------------
+# Showing nothing would be worse than showing the operator's own session with a label. Every
+# session recorded before the identity hook existed lands here, so this is the common case on
+# historical logs rather than an edge.
+RZB="$(new_repo)"; mkdir -p "$RZB/.supervisor/logs" "$RZB/agents"
+printf '{"ts":"2026-09-06T12:30:00Z","event":"token_ledger","cc_session_id":"chat","agent_id":"achat"}\n' \
+  > "$RZB/.supervisor/logs/only.jsonl"
+run_build "$RZB"
+JZB="$RZB/.supervisor/floor/floor.json"
+[ "$(jq -r '.surfaces.sessions.detail.current.cc_session_id' "$JZB" 2>/dev/null)" = "chat" ] \
+  && [ "$(jq -r '.surfaces.sessions.detail.current.selection' "$JZB" 2>/dev/null)" = "newest_recorded" ] \
+  && ok "(zb) with no plugin work recorded anywhere the newest session is still shown, labelled newest_recorded — the filter fails OPEN" \
+  || no "(zb) fail-open broke: session=$(jq -r '.surfaces.sessions.detail.current.cc_session_id' "$JZB") selection=$(jq -r '.surfaces.sessions.detail.current.selection' "$JZB")"
+
+# --- (zc) MUTATION CONTROL: without the preference, the chat wins ---------------------------
+# (za) would pass on any projector that happened to pick `run`. This proves it is the preference
+# doing the work by removing it and requiring the newer chat back.
+MUT_ZA="$ROOT/mut-selection.sh"
+sed 's#    | (if $newest_plugin == null then $newest_any else $newest_plugin end) as $newest#    | $newest_any as $newest#' \
+  "$BUILD" > "$MUT_ZA" 2>/dev/null
+if [ -s "$MUT_ZA" ] && ! cmp -s "$MUT_ZA" "$BUILD"; then
+  RZC="$(new_repo)"; mkdir -p "$RZC/.supervisor/logs" "$RZC/agents"
+  cp "$RZA/.supervisor/logs/mix.jsonl" "$RZC/.supervisor/logs/mix.jsonl"
+  ( cd "$RZC" && FLOOR_AGENTS_DIR="$RZC/agents" bash "$MUT_ZA" >/dev/null 2>&1 )
+  zc="$(jq -r '.surfaces.sessions.detail.current.cc_session_id' "$RZC/.supervisor/floor/floor.json" 2>/dev/null)"
+  [ "$zc" = "chat" ] \
+    && ok "(zc) MUTATION CONTROL: with the preference removed the newer CHAT is shown again — (za) is measuring the preference, not a coincidence of the fixture" \
+    || no "(zc) MUTATION CONTROL: the unpreferring projector showed '$zc', expected chat — (za) proves nothing"
+else
+  no "(zc) MUTATION CONTROL: could not build the selection mutant - control inconclusive"
+fi
+
+
 echo
 echo "RESULT: $pass passed, $fail failed, $skip skipped"
 [ "$fail" -eq 0 ] || exit 1
