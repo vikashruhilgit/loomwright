@@ -22,6 +22,13 @@
 #      PROJECT ROOT that `serve` regenerates — and only ever by running `build-floor.sh` in
 #      that directory, never by writing that path itself. `serve --no-regen` makes even that
 #      write impossible. A project reaches this list only because a human ran `add`.
+#   2b. THE OPEN-URL FILE — `ui-serve.token` sitting BESIDE the ui directory, mode 0600, written
+#      by `serve` and deleted by `stop`. It holds the whole `open:` URL of the running server,
+#      because `serve` prints that URL exactly once and the token in it is otherwise
+#      unrecoverable: a reader who scrolled past it had no way back to the four buttons and no
+#      way to be told why. `check` reprints it. BESIDE and not inside, for the same reason the
+#      registry is: the handler serves the whole ui directory, so a file in there is a file
+#      anything on this loopback port can GET, and 0600 would not stop it.
 #   3. THE PROJECT REGISTRY — `projects.json` sitting BESIDE the ui directory (that is, in
 #      its parent), overridable with `--registry`. Only `add`, `forget` and a CONFIRMED `scan`
 #      write it; `check`, `list` and an unconfirmed `scan` only read it. Its being a SIBLING of
@@ -231,6 +238,27 @@ SLOW_FACTOR=5
 # plus one line for a request that could not be answered at all, and nothing a caller supplied:
 # `FloorServer.handle_error` is what keeps that second case to a line instead of a traceback.
 SERVE_LOG="serve.log"
+# The RUNNING server's `open:` URL, so `check` can hand back what `serve` printed once.
+#
+# IT IS A SIBLING OF THE UI DIRECTORY, NEVER A FILE IN IT, and that is the entire security
+# argument for this file existing at all. The handler serves the WHOLE ui directory - which is
+# why `GET /serve.log` returns the serve log, by design - so a token file placed in there would
+# be fetchable over HTTP by any local process, and its 0600 mode would mean nothing: the server
+# reads it as the owning user and hands the bytes to whoever asked. Outside the served root the
+# only way to it is the filesystem, so it grants exactly the access reading the server's process
+# ENVIRONMENT already grants that same user, and no more. This is the same reason the project
+# registry is a sibling rather than a resident, and it tracks `--ui-dir` for the same reason too.
+SERVE_TOKEN_NAME="ui-serve.token"
+# Resolved as a function rather than frozen into a variable at startup, because `--ui-dir` is
+# parsed AFTER these declarations and a path computed too early would silently point at the
+# default while every self-test ran inside its mktemp dir.
+serve_token_path() {
+  local parent
+  parent="$(dirname "$UI_DIR" 2>/dev/null)" || parent=""
+  [ -n "$parent" ] || return 1
+  printf '%s/%s' "$parent" "$SERVE_TOKEN_NAME"
+  return 0
+}
 # The name of the CUSTOM request header the token travels in. Custom is the whole point: a
 # request carrying it can never be a CORS "simple request", so a hostile cross-origin page has
 # to win a preflight this server does not answer.
@@ -882,7 +910,61 @@ do_scan() {
 do_check() {
   check_module
   echo
+  server_report
+  echo
   registry_report
+  return 0
+}
+
+# server_report — WHAT `serve` PRINTED ONCE, PRINTED AGAIN. Read-only, and the reason this
+# exists at all: the token is minted per run and printed on a single line, so a reader who
+# scrolled past it, closed the terminal, or came back the next day could not reach the four
+# buttons again and was never told why. `/ui` (which is `check`) is the command such a reader
+# actually runs, so this is where the answer belongs.
+#
+# IT REPORTS A URL ONLY WHEN A SERVER IS ACTUALLY UP, and proves that from the process table
+# rather than from the pidfile's existence: a pidfile outlives a crash, and a url whose server
+# is gone is worse than no url - the page accepts it, then reports a 403 the reader would go on
+# to debug as a token problem. The liveness test reuses `stop`'s rule verbatim, a pid whose
+# command line names one of ours, so the two verbs cannot disagree about what "running" means.
+server_report() {
+  echo "== server =="
+  local pf="$UI_DIR/serve.pid" tf pid cmd alive=0
+  tf="$(serve_token_path)" || tf=""
+  if [ -f "$pf" ]; then
+    while IFS= read -r pid; do
+      case "$pid" in ''|*[!0-9]*) continue ;; esac
+      cmd="$(ps -o command= -p "$pid" 2>/dev/null || true)"
+      case "$cmd" in *http.server*|*setup-ui.sh*) alive=$((alive + 1)) ;; esac
+    done < "$pf"
+  fi
+
+  if [ "$alive" -eq 0 ]; then
+    echo "server: not running"
+    # A url file with no server behind it is a leftover from a crash - `stop` deletes it. Say
+    # so rather than printing a dead url, and do NOT delete it here: `check` is read-only, and
+    # a read verb that quietly repairs state is a read verb you can no longer trust.
+    if [ -f "$tf" ]; then
+      echo "  note: $tf is present but no recorded server is alive — a leftover from a server that did not stop cleanly. The url in it is dead: its token died with its process. 'serve' overwrites it; 'stop' deletes it."
+    fi
+    echo "  start one with 'setup-ui.sh serve --detach' — it mints a fresh token and prints the url to open."
+    return 0
+  fi
+
+  echo "server: running ($alive process(es) recorded in $pf)"
+  if [ -f "$tf" ]; then
+    local url
+    url="$(head -n 1 "$tf" 2>/dev/null)"
+    if [ -n "$url" ]; then
+      echo "  open:     $url"
+      echo "            this is the line 'serve' printed, kept in $tf at mode 0600 so this command can hand it back. The #token is what the page's four buttons present; a bare address still reads everything."
+    else
+      echo "  open:     UNKNOWN — $tf is empty, so the url cannot be reprinted. The server is up and readable at a bare http://127.0.0.1:<port>/, but the four buttons will be refused until it is restarted."
+    fi
+  else
+    # `serve` from a build before this file existed, or a write that failed and said so.
+    echo "  open:     UNKNOWN — no $tf, so this run's token cannot be recovered. The server is up and readable at a bare http://127.0.0.1:<port>/, but the four buttons will be refused until it is restarted with 'setup-ui.sh stop' then 'serve'."
+  fi
   return 0
 }
 
@@ -1728,15 +1810,36 @@ do_serve() {
   # log, a proxy or a referrer header. The page reads it once and strips it from the address
   # bar, so it cannot leak through history, a bookmark or a shared screenshot either. Printed
   # on ONE line so it can be copied whole — and this is the ONLY place a human ever sees it.
-  local stale_hint
+  # THE URL IS BUILT ONCE, into a variable, because it now has TWO consumers - the line printed
+  # here and the copy `check` reprints from `serve.token`. Two spellings of it would be two
+  # things to keep in step, and the one that drifted would hand out a url that does not work.
+  local stale_hint open_url
   stale_hint=$((INTERVAL * 3))
   if [ "$stale_hint" -gt "$PAGE_STALE_DEFAULT" ]; then
-    echo "  open:     http://127.0.0.1:$PORT/?stale=$stale_hint#token=$UI_TOKEN"
+    open_url="http://127.0.0.1:$PORT/?stale=$stale_hint#token=$UI_TOKEN"
+    echo "  open:     $open_url"
     echo "            (--interval ${INTERVAL}s regenerates less often than the page's built-in ${PAGE_STALE_DEFAULT}s freshness threshold, which is 3x its own ${PAGE_POLL_SEC}s poll and cannot see this flag; without ?stale=$stale_hint the page would call a perfectly current file stale)"
   else
-    echo "  open:     http://127.0.0.1:$PORT/#token=$UI_TOKEN"
+    open_url="http://127.0.0.1:$PORT/#token=$UI_TOKEN"
+    echo "  open:     $open_url"
   fi
   echo "            open THAT url, not a bare one: the #token is this run's, it dies with this server, and without it the page can still read but the four buttons are refused"
+  echo "            'setup-ui.sh check' reprints this line while the server is up, so scrolling past it is not final"
+
+  # PERSIST THE URL FOR `check`, and create the file EMPTY-AND-0600 before a byte of it is a
+  # secret. `printf > file` would create it with the umask's permissions and only then fill it
+  # in, leaving a window in which the token is world-readable; `: >` then `chmod` closes that
+  # window before there is anything worth reading. A failure here is NOT fatal - the server is
+  # already up and the URL is already on screen - so it degrades to a note, per this file's
+  # every-branch-exits-0 contract.
+  local token_file
+  token_file="$(serve_token_path)" || token_file=""
+  if [ -n "$token_file" ] && : > "$token_file" 2>/dev/null && chmod 600 "$token_file" 2>/dev/null; then
+    printf '%s\n' "$open_url" > "$token_file" 2>/dev/null || true
+  else
+    [ -n "$token_file" ] && rm -f "$token_file" 2>/dev/null
+    echo "  note:     could not record the open url outside the served root, so 'check' will not be able to reprint it. Copy the line above now; nothing else is affected."
+  fi
 
   serve_http
   local srv="$SERVE_HTTP_PID"
@@ -1790,6 +1893,12 @@ do_stop() {
     esac
   done < "$pf"
   rm -f "$pf" 2>/dev/null
+  # The URL dies with the server it names. Leaving it behind would let `check` hand out a token
+  # that is already dead - which the page reports as a 403 rather than as "no server", sending
+  # the reader to fix the wrong thing.
+  local tf_stop
+  tf_stop="$(serve_token_path)" || tf_stop=""
+  [ -n "$tf_stop" ] && rm -f "$tf_stop" 2>/dev/null
   echo "stop: $killed process(es) stopped"
   [ -n "$refused" ] && echo "  not killed:$refused (the pidfile named them but their command line is not this module's)"
   return 0
