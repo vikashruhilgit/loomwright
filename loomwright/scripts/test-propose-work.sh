@@ -45,8 +45,10 @@
 #
 # Local traps this file deliberately avoids, each of which silently makes an assertion vacuous
 # while everything stays green:
-#   * `producer | grep -q` returns 141 under `pipefail` EVEN ON A MATCH - grep is only ever
-#     run directly against a FILE here, never as the right-hand side of a pipe.
+#   * `producer | grep -q` returns 141 under `pipefail` EVEN ON A MATCH - so `grep -q` is only
+#     ever run directly against a FILE here, never as the right-hand side of a pipe. (The one
+#     pipe into grep, the git-blindness probe below, uses `grep -c`, which drains stdin and so
+#     cannot SIGPIPE, and its status is discarded by the assignment anyway.)
 #   * `local x="$(...)"` discards the command's exit status - assignment and status check are
 #     always separate statements below.
 #   * `... || echo 0` APPENDS a second line rather than replacing - counts come from awk END.
@@ -622,6 +624,83 @@ $(cat "$LOGERR" 2>/dev/null)"
       fi ;;
   esac
 fi
+
+echo "== AC11: the unknowable note - the brief's MUST, with a mutation control =="
+UNK="$GO/convention_mismatch--unknowable.md"
+UNK_TEXT='the flow stage could not be attributed'
+if [ -f "$UNK" ]; then
+  ok "a proposal was emitted for the (convention_mismatch, unknowable) pair"
+  grep -Fq "$UNK_TEXT" "$UNK" 2>/dev/null \
+    && ok "the unknowable proposal names what the stage means" \
+    || no "the unknowable proposal does not name what 'unknowable' means - the brief requires it"
+  grep -Fq "$UNK_TEXT" "$GO/convention_mismatch--worker.md" 2>/dev/null \
+    && no "the note also appears on the worker-staged proposal - it is unconditional, so AC11 proves nothing" \
+    || ok "positive control: the note is absent from the worker-staged proposal, so it is genuinely conditional"
+else
+  no "no unknowable proposal was emitted - AC11 cannot be evaluated"
+fi
+
+MUT11="$ROOT/mutant-nounknowable.sh"
+sed "s/^    unknowable_note='.*'\$/    unknowable_note=''/" "$SUT" > "$MUT11" 2>/dev/null
+if [ -s "$MUT11" ] && ! cmp -s "$MUT11" "$SUT" && bash -n "$MUT11" 2>/dev/null; then
+  ok "built a syntactically valid mutant with the unknowable note emptied"
+  M11="$(mktmp)"
+  run_sut "$GJ" "$M11/out" "$M11/req" "$MUT11" >/dev/null 2>&1
+  if [ -f "$M11/out/convention_mismatch--unknowable.md" ]; then
+    grep -Fq "$UNK_TEXT" "$M11/out/convention_mismatch--unknowable.md" 2>/dev/null \
+      && no "the mutant still emitted the note - AC11 passes with the mechanism deleted and proves nothing" \
+      || ok "mutation control: emptying the note makes AC11's assertion fail, so it is not vacuous"
+  else
+    no "the mutant emitted no unknowable proposal - the AC11 control is inconclusive"
+  fi
+else
+  no "could not build a valid unknowable-note mutant - AC11 is uncontrolled"
+fi
+
+echo "== AC12: deleting a proposal is NOT a durable dismissal, and both surfaces say so =="
+# The behaviour claude-review surfaced: the evidence-set token is stable, so a deleted
+# proposal returns on the next run. Assert the behaviour, that the documented durable path
+# actually works, and that both surfaces say so - guidance that is wrong is worse than none.
+D="$(mktmp)"; DO="$D/out"; DR="$D/req"
+run_sut "$GJ" "$DO" "$DR" >/dev/null 2>&1
+TARGET="$DO/convention_mismatch--worker.md"
+if [ -f "$TARGET" ]; then
+  tok_before="$(grep -m1 '^evidence-set:' "$TARGET" 2>/dev/null)"
+  rm -f "$TARGET"
+  [ ! -f "$TARGET" ] \
+    && ok "AC12: the proposal was deleted, as a human following 'read it, decide, delete it' would" \
+    || no "AC12: could not delete the proposal"
+  run_sut "$GJ" "$DO" "$DR" >/dev/null 2>&1
+  if [ -f "$TARGET" ]; then
+    ok "AC12: it came back on the next run - deletion is not durable"
+    tok_after="$(grep -m1 '^evidence-set:' "$TARGET" 2>/dev/null)"
+    if [ -n "$tok_before" ] && [ "$tok_before" = "$tok_after" ]; then
+      ok "AC12: the evidence-set token is identical across the delete, so suppression could never have matched it"
+    else
+      no "AC12: the token changed across the delete ($tok_before -> $tok_after) - the documented rationale is wrong"
+    fi
+  else
+    no "AC12: it did NOT come back - the guidance we now emit about durable dismissal is false"
+  fi
+
+  # The durable path must actually work, or we are printing a dead end.
+  mkdir -p "$DR"
+  { printf '# dismissed\n\n## Status: done\n\n%s\n' "$tok_before"; } > "$DR/dismissed.md"
+  D2="$(mktmp)"
+  run_sut "$GJ" "$D2/out" "$DR" >/dev/null 2>&1
+  [ ! -f "$D2/out/convention_mismatch--worker.md" ] \
+    && ok "AC12: pasting the token into a '## Status: done' file DOES suppress it - the documented path works" \
+    || no "AC12: the documented durable-dismissal path did not suppress the candidate - we would be printing guidance that does not work"
+else
+  no "AC12: no worker proposal to delete - cannot evaluate"
+fi
+
+grep -Fq 'not a durable dismissal' "$GO/README.md" 2>/dev/null \
+  && ok "AC12: the emitted README warns that deletion is not durable" \
+  || no "AC12: the emitted README does not warn that deletion is not durable"
+grep -Fq 'dismissed durably' "$GO/convention_mismatch--worker.md" 2>/dev/null \
+  && ok "AC12: the proposal's own acceptance criteria name the durable path" \
+  || no "AC12: the proposal still tells the human to delete it with no mention of durability"
 
 echo
 echo "propose-work: $pass passed, $fail failed, $skip skipped"

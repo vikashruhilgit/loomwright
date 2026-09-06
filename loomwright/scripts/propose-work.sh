@@ -18,10 +18,13 @@
 #   * set -uo pipefail with NO set -e.
 #   * a `command -v jq` guard that SKIPS rather than fails.
 #   * exit 0 ALWAYS - an advisory reader must never break its caller.
-#   * READS EXACTLY ONE FILE: .supervisor/floor/floor.json. It is not a second parser. If a
-#     needed field is missing from floor.json the fix is a change to build-floor.sh in a
-#     separate PR - never a raw-surface read here.
-#   * WRITES ONLY under .supervisor/requirements/proposed/, through guarded_write().
+#   * READS EXACTLY ONE LEDGER SURFACE: .supervisor/floor/floor.json. It is not a second
+#     parser. If a needed field is missing from floor.json the fix is a change to
+#     build-floor.sh in a separate PR - never a raw-surface read here. (superseded_by()
+#     additionally reads requirement .md files for dedup only - to compare an evidence-set
+#     token against text already written, never as a data surface.)
+#   * WRITES ONLY FILES under .supervisor/requirements/proposed/, through guarded_write().
+#     mkdir -p additionally creates that directory's missing PARENTS, outside the guard.
 #
 # EVIDENCE-ONLY: absent evidence is OMITTED, never defaulted (build-floor.sh's rule). A
 # ledger entry that carries no `evidence` string is NOT citable, and a candidate that cannot
@@ -57,8 +60,14 @@ STALE_AFTER_SECONDS="${PROPOSE_MAX_AGE_SECONDS:-86400}"   # 24h
 MIN_CITATIONS=3          # a candidate citing fewer distinct entries is not written
 MAX_CITATIONS=5          # citation cap; the proposal states the cap and the pair total
 
-case "$PAIR_THRESHOLD" in ''|*[!0-9]*) PAIR_THRESHOLD=10 ;; esac
-case "$STALE_AFTER_SECONDS" in ''|*[!0-9]*) STALE_AFTER_SECONDS=86400 ;; esac
+case "$PAIR_THRESHOLD" in ''|*[!0-9]*)
+  echo "propose-work: PROPOSE_THRESHOLD='$PAIR_THRESHOLD' is not a number - ignoring it, using 10" >&2
+  PAIR_THRESHOLD=10 ;;
+esac
+case "$STALE_AFTER_SECONDS" in ''|*[!0-9]*)
+  echo "propose-work: PROPOSE_MAX_AGE_SECONDS='$STALE_AFTER_SECONDS' is not a number - ignoring it, using 86400" >&2
+  STALE_AFTER_SECONDS=86400 ;;
+esac
 
 GITROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$GITROOT" 2>/dev/null || true
@@ -154,6 +163,10 @@ guarded_write() {
       echo "propose-work: refusing to write '$name' - not a plain file name under $OUT_DIR" >&2
       cat >/dev/null; return 1 ;;
   esac
+  # Unreachable defence-in-depth: the case above already rejects any name containing "/",
+  # so dirname is always $OUT_DIR_ABS and this cannot fire. Kept deliberately so the guard
+  # still holds if that case is ever narrowed. Not load-bearing - do not cite it as the
+  # traversal defence; the case above is the defence.
   guard_parent="$(cd "$(dirname "$OUT_DIR_ABS/$name")" 2>/dev/null && pwd)"
   if [ "$guard_parent" != "$OUT_DIR_ABS" ]; then
     echo "propose-work: refusing to write '$name' - resolves outside $OUT_DIR_ABS" >&2
@@ -236,8 +249,17 @@ printf '%s\n' \
 '`.supervisor/requirements/proposed/` is deliberately NOT an `/automate --folder` target;' \
 'promotion is a human moving a file out of it.' \
 '' \
-'Reading a file here and deleting it is a complete and correct outcome. Nothing in this' \
-'directory is enqueued, dispatched, or started by anything.' \
+'Nothing in this directory is enqueued, dispatched, or started by anything.' \
+'' \
+'## Deleting a file here is not a durable dismissal' \
+'' \
+'Deleting a proposal silences it only until the next run, which recomputes the same' \
+'evidence set and writes the same file again. The cited coordinates are the earliest' \
+'entries for that pair, so the `evidence-set:` token is stable as the ledger grows.' \
+'' \
+'To dismiss a candidate permanently, paste its `evidence-set:` line into a requirement' \
+'file stamped `## Status: done` anywhere under `.supervisor/requirements/`. The next run' \
+'finds that token and suppresses the candidate, naming the file it found it in.' \
 | guarded_write "README.md" \
   || echo "propose-work: could not write the directory contract README - continuing" >&2
 
@@ -322,7 +344,10 @@ while IFS="$(printf '\t')" read -r cls fs n; do
     printf '\n## Acceptance criteria\n\n'
     printf -- '- [ ] Each cited entry has been read at its source line.\n'
     printf -- '- [ ] The pattern is named as one cause, several, or a mis-classification.\n'
-    printf -- '- [ ] Either a change lands, or this file is deleted with a one-line reason.\n'
+    printf -- '- [ ] Either a change lands, or this candidate is dismissed durably.\n'
+    printf -- '      Deleting this file only silences it until the next run recomputes the same\n'
+    printf -- '      evidence set. To dismiss it permanently, paste the `%s`\n' "$token"
+    printf -- '      line above into a requirement file stamped `## Status: done`.\n'
     printf '\n## Evidence\n\n'
     printf 'Every line below is a ledger entry read from `%s`\n' "$FLOOR"
     printf '(`generated_at_epoch: %s`). Nothing here is inferred.\n\n' "$gen_epoch"
