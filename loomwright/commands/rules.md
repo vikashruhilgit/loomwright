@@ -1,5 +1,5 @@
 ---
-description: Maintain the committed .agent/rules/ house-rules substrate — list / suggest / add / retract / check project conventions an implementer can read on the DO side, not only get caught on the REVIEW side. Advisory enforcement is wired (never-gating) at the worker / Phase 4.5 / SessionStart-nudge seams; `add` (with optional `--supersedes` and repeatable `--applies-to` path routing) and `retract` are both mechanized in add-rule.sh, `check` in rules-check.sh (unattended `check` execution gated via --no-cmd).
+description: Maintain the committed .agent/rules/ house-rules substrate — list / suggest / add / retract / check / audit project conventions an implementer can read on the DO side, not only get caught on the REVIEW side. Advisory enforcement is wired (never-gating) at the worker / Phase 4.5 / SessionStart-nudge seams; `add` (with optional `--supersedes` and repeatable `--applies-to` path routing) and `retract` are both mechanized in add-rule.sh, `check` in rules-check.sh (unattended `check` execution gated via --no-cmd), and `audit` in audit-rules.sh (read-only, re-validates the standing store over time).
 ---
 
 > **Reads code read-only on `list` / `suggest` / `check`; the write paths are `add` (append-only) and `retract` (curation/anti-rot, remove-only) — both write a single path-contained `*.json` under `.agent/rules/` on explicit confirmation, and both go through the sole-writer `add-rule.sh`.** `.agent/rules/` is the plugin's first **committed-convention** surface — version-controlled, travels with the repo (unlike the gitignored `.supervisor/` / `.claude/agent-memory/`). The protocol authority for every flow is `${CLAUDE_PLUGIN_ROOT}/skills/rules/SKILL.md` — read it at Step 0; when this command and that skill disagree, **the skill wins**.
@@ -22,6 +22,7 @@ Conventions a team agrees on tend to live in heads, in CLAUDE.md prose, or get r
 /rules add --applies-to G   # append a rule scoped to path-glob G (repeatable; omit ⇒ repo-wide)
 /rules retract              # remove an existing rule object by id (confirm-only)
 /rules check                # human-invoked: run `must` rules' checks after explicit confirmation
+/rules audit                # read-only: re-validate the standing rules store, propose fixes
 ```
 
 ## Subcommands
@@ -104,6 +105,29 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/add-rule.sh" \
 - Removes the object via temp-file + atomic `mv`; read-back verifies the file still parses as an array and no longer contains the target id.
 - **There is no in-store home for the retraction reason** (adding one would violate the curation freeze — see the job brief's Normative encoding contract), so the writer **PRINTS** a one-line provenance record (`retracted rule id=<id> from <file> — reason: <reason>`) to stdout; the commit that lands the removal is the durable record.
 
+### `audit` (§11 — READ-ONLY, PROPOSE-ONLY; re-validates the STANDING store)
+
+`audit` is a **thin caller** of the read-only engine `${CLAUDE_PLUGIN_ROOT}/scripts/audit-rules.sh`. It answers the question `add` cannot: `add` runs the five write-time checks **once, against the store as it stood that day**, and nothing re-validates a rule as the repo drifts underneath it — a scoped path gets renamed, the rule a `supersedes` names gets retracted, a later rule says the opposite. `audit` is the over-time half.
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/audit-rules.sh"                     # audit the committed store
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/audit-rules.sh" --rules-dir <dir>   # audit another store (read-only)
+```
+
+**`audit` is NOT `check` — the two verbs are opposites, and confusing them is a security question, not a naming one.** `check` **EXECUTES** `must` rules' `check` strings behind a human confirmation gate (`rules-check.sh` is the sole executor). `audit` **NEVER EXECUTES a `check`** — it reads the `check` value as **data** and **statically lints** it (is it null, is it whitespace-only), exactly as the reader does. `audit` examines the STORE for correctness; `check` runs the RULES against the repo. `audit` is safe for any unattended caller with zero code-execution risk; `check` is human-invoked only.
+
+The engine, per `audit-rules.sh`:
+
+1. **It has NO write mode and NO write flag** — not "dry-run by default", dry-run ONLY (`harvest-conventions.sh`'s posture: a read-only engine is strictly stronger than an opt-in write flag, because there is no flag that could be passed by accident). An unknown flag is **REFUSED**, never ignored. A run leaves the store **byte-identical**, and the engine asserts that from its own run with a content fingerprint taken before the first check and after the last.
+2. **It re-runs `validate-entry.sh`'s five shared checks and reimplements none of them**, loading the helper under the same three-clause LOAD GUARD `add-rule.sh` uses. `duplicate` / `contradiction` / `provenance` are **BLOCKING**; `dead_reference` / `cross_repo` are **ADVISORY** — reported with the matched text, never counted, never exit-bearing (they produced false positives in six consecutive review rounds over prose).
+3. **Five store-wide checks** the write-time gate structurally cannot ask: `no_mechanism` (a `must` rule whose `check` is null or whitespace-only), `never_fires` (an `applies_to` glob set matching zero tracked repo paths), `dangling_supersedes` (a `supersedes` naming an id absent from the store, or its own id), `dead_rule` (a rule superseded by a later rule), `later_contradiction` (a rule contradicted by a rule added AFTER it). Plus `supersession_cycle` and `skipped_object` — defects the fail-safe reader swallows by design.
+4. **Every finding carries its EVIDENCE** (the validator's own message, the offending glob, the supersedes edge) — never a bare verdict.
+5. **PROPOSE-ONLY: every recommendation names an EXISTING action** — `/rules add --supersedes <id>` or `add-rule.sh --retract --target <id> --reason <text>`. No new write path is introduced and the rule schema is unchanged; `add-rule.sh` stays the sole writer.
+6. **Could-not-examine is NEVER reported as clean.** A missing / unreadable / truncated / contract-skewed validator is `UNEXAMINED`; an rc-2 `REFUSE_*_UNCOMPARABLE_SHAPE` from a shared check is `UNKNOWN`; both **exit 2**. This is the opposite posture to `read-rules.sh` (which always exits 0 because a read must never break its caller) and it is deliberate: an audit that cannot examine and exits 0 is worse than no audit. Exit codes: `0` clean · `1` findings · `2` could not examine.
+7. **It states its own small-N limit.** With a store of a handful of rules, "0 findings" is a statement about a handful of rules; the engine prints the store size and says so **in its own output**, not only in this doc.
+
+The engine passes `--store` a **one-line-per-rule comparison corpus** (`build_compare_corpus`, the same discipline as `add-orientation.sh` / `write-agent-memory.sh`), because `validate_duplicate` / `validate_contradiction` require one line per stored entry — handing them raw JSON trips `REFUSE_*_UNCOMPARABLE_SHAPE` and, if that rc 2 were absorbed, would audit every rule as a silent false "clean". `scripts/test-audit-rules.sh` proves all of the above with mutation controls, and proves the no-execution invariant with a `check` that would create a canary file, asserting the canary never appears.
+
 ### `check` (§8 — HUMAN-invoked only)
 
 `check` is a **thin caller** of the sole-execution helper `${CLAUDE_PLUGIN_ROOT}/scripts/rules-check.sh` — it does **not** re-implement check execution in prose. The helper is the ONLY path in the whole slice that runs a rule's `check`, and it does so only behind an explicit confirmation gate:
@@ -134,4 +158,5 @@ A `check` value is **arbitrary shell authored by anyone who cloned or PR'd the r
 ## See Also
 - `skills/rules/SKILL.md` — the protocol authority (schema, validation, merge order, read/write/check contracts, trust boundary).
 - `scripts/read-rules.sh` — the fail-safe advisory reader (`set -uo pipefail`, always exits 0, READ-ONLY, never executes a `check`); its header docstring is the authority on `applies_to` path routing and the `case`-glob semantics.
+- `scripts/audit-rules.sh` — the read-only, propose-only store auditor (never executes a `check`; re-validates the standing store over time — see `audit` above).
 - `commands/setup.md` — the `/setup twin` bootstrap module was retired with the graphify tier (a deliberate omission, not an oversight — see `commands/setup.md`'s own note and `CHANGELOG.md`); cold-start convention seeding is `/setup rules`, and `/rules` maintains the committed conventions. Shares the check/report/offer/apply/verify confirmed-write discipline.
