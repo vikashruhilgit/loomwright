@@ -1,8 +1,8 @@
 ---
 name: rules
 description: Protocol authority for the /rules command and the committed .agent/rules/ house-rules substrate — the rule JSON schema + per-object fail-safe-skip validation, the `applies_to` path-routing read contract (bash `case` globs, fail-OPEN on every ambiguity and on a zero-arg call, resolved AFTER supersession), the scan-to-suggest spec, the advisory/must/no-op-when-absent reader contract (read-rules.sh), the /rules add path-contained atomic-append write discipline (mechanized in add-rule.sh, with an optional `--supersedes` flag), the /rules retract remove-only write discipline (also mechanized in add-rule.sh), the /rules check human-invoked+confirmed execution semantics (mechanized in rules-check.sh), the single-hop supersession read contract, the READ-ONLY/PROPOSE-ONLY `/rules audit` correctness audit over the standing store (mechanized in audit-rules.sh: no write mode, never executes a `check`, fails CLOSED on could-not-examine), and the check-is-arbitrary-shell trust boundary (unattended `check` execution is now GATED via rules-check.sh --no-cmd). Use when running /rules or modifying any part of the rules substrate.
-version: "1.4.0"
-lastUpdated: "2026-09-06"
+version: "1.3.0"
+lastUpdated: "2026-08-17"
 ---
 
 # Rules Skill
@@ -233,7 +233,7 @@ A layered model — a company-base rule set composed with per-project overrides 
 ### §11.1 — Posture: read-only and propose-only (there is no write mode to disable)
 
 - **No write mode and no write flag exist** — not "dry-run by default", dry-run **only**. A read-only engine is strictly stronger than an opt-in write flag: there is no flag that could be passed by accident, misread from a doc, or reached by a caller who copied an invocation without reading it. An **unknown flag is REFUSED, never ignored.**
-- **A run leaves the store byte-identical**, and the engine **asserts that from its own run** — a content fingerprint taken before the first check and compared after the last — rather than inferring it from the absence of a write path. A mismatch means a concurrent writer moved underneath the run, so every finding describes a store that no longer exists: that is a could-not-examine condition, not a finding (§11.5).
+- **A run leaves the store byte-identical**, and the engine **asserts that from its own run** — a fingerprint taken before the first check and compared after the last, covering the **re-enumerated `*.json` file SET as well as each file's content**, so a concurrent ADD or REMOVE trips it and not only an edit to an already-enumerated file — rather than inferring it from the absence of a write path. A mismatch means a concurrent writer moved underneath the run, so every finding describes a store that no longer exists: that is a could-not-examine condition, not a finding (§11.5).
 - **Every recommendation names an EXISTING action**: `/rules add --supersedes <id> …` (§7) to replace a rule with a corrected one, or `add-rule.sh --retract --target <id> --reason <text>` (§7.5) to remove one outright. **§11 introduces no new write path and no new action verb**; `add-rule.sh` remains the **sole writer** (§9.1). A recommendation naming an action that does not already exist is a defect in the audit, not a feature request for the writer.
 - **The schema stays frozen.** The audit adds no member to a rule object and writes no sidecar store — a "last audited" stamp or a findings file would be a new store, which the curation freeze forbids for the same reason §7.5 refuses a provenance sidecar. Its entire output is stdout.
 

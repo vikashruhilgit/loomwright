@@ -182,6 +182,62 @@ $audit_vs_check_ok && ok "audit-vs-check distinction stated in BOTH docs (cannot
                    || no "audit-vs-check distinction NOT stated in both docs (see the failures above)"
 
 # ============================================================================
+echo "== (h) THE VERB-LIST CLASS: every surface restating the /rules verbs names ALL of them =="
+# The defect this closes, twice over: `retract` shipped as a documented `### ` section of
+# commands/rules.md while four restatements still named the pre-retract set, and `audit` then did
+# the SAME thing -- documented in its own section and in SKILL.md, but missing from the frontmatter
+# description, the read-only/write callout and the Usage fence IN THAT SAME FILE. Asserting "audit
+# appears in X" would just leave verb #7 to drift identically, so the canonical set is DERIVED from
+# the authority (the `### `verb`` subcommand headings of commands/rules.md) and every known
+# restating surface is checked against it. Adding a seventh verb turns this red until swept.
+RULES_VERBS="$(grep -oE '^### `[a-z][a-z-]*`' "$CMD" 2>/dev/null | tr -d '#` ' | LC_ALL=C sort -u | tr '\n' ' ')"
+n_verbs="$(printf '%s\n' $RULES_VERBS | grep -c . 2>/dev/null)"
+n_verbs="${n_verbs//[^0-9]/}"; n_verbs="${n_verbs:-0}"
+if [ "$n_verbs" -ge 6 ]; then
+  ok "(h0) the canonical verb set is derived from commands/rules.md's own subcommand headings ($n_verbs: $RULES_VERBS)"
+else
+  no "(h0) DERIVED VERB SET IS $n_verbs -- every (h) assertion below would be vacuous, so this is the failure"
+fi
+
+# region_verbs <file> <anchor-ere> <after-lines> <label> [narrow-ere] -- the first region matching
+# <anchor-ere> must name every derived verb. Optional <narrow-ere> reduces the region to just the
+# enumeration itself, for surfaces whose line ALSO mentions a verb outside the list.
+#
+# Two bounds this deliberately gets right, both found by mutating it (each cost a vacuous pass):
+#   - word bounds are [^a-z-] classes, not \b: BSD grep on macOS and GNU grep on CI do not agree
+#     about \b, and a bound that silently matches nothing makes every assertion here vacuous.
+#   - the TRAILING bound excludes `-` so `audit-rules.sh` / `add-rule.sh` cannot satisfy "the list
+#     names `audit`/`add`". Without it, deleting `audit` from a verb list still passed, because the
+#     engine's filename sat on the same line.
+region_verbs() {
+  local f="$1" anchor="$2" after="$3" label="$4" narrow="${5:-}" region missing="" v
+  if [ ! -f "$f" ]; then no "$label -- MISSING file $f"; return; fi
+  region="$(grep -m1 -E -A "$after" -- "$anchor" "$f" 2>/dev/null)"
+  if [ -z "$region" ]; then no "$label -- no line matching /$anchor/ in $f (surface moved or was renamed)"; return; fi
+  if [ -n "$narrow" ]; then
+    region="$(printf '%s' "$region" | grep -m1 -oE -- "$narrow" 2>/dev/null)"
+    if [ -z "$region" ]; then no "$label -- the enumeration segment /$narrow/ is gone from $f"; return; fi
+  fi
+  for v in $RULES_VERBS; do
+    printf '%s' "$region" | grep -qE -- "(^|[^a-z-])$v([^a-z-]|$)" || missing="$missing $v"
+  done
+  if [ -z "$missing" ]; then ok "$label -- restates all $n_verbs verbs"
+  else no "$label -- restated verb list is STALE, missing:$missing ($f)"; fi
+}
+
+REPO_ROOT="$(cd "$PLUGIN_ROOT/.." && pwd)"
+region_verbs "$CMD"   '^description: Maintain the committed'        0 "(h1) commands/rules.md frontmatter description" 'substrate [^.]*project conventions' 
+region_verbs "$CMD"   '^> \*\*Reads code read-only on'              0 "(h2) commands/rules.md read-only/write callout"
+region_verbs "$CMD"   '^/rules list '                               8 "(h3) commands/rules.md Usage fence"
+region_verbs "$SKILL" 'Executing any .{0,3}/rules.{0,3} flow'       0 "(h4) skills/rules/SKILL.md When-to-Use verb list"
+region_verbs "$PLUGIN_ROOT/commands/agent-help.md" '^\*\*Purpose:\*\* Maintain the plugin.s first' 0 "(h5) agent-help.md /rules subcommand enumeration"
+region_verbs "$PLUGIN_ROOT/commands/agent-help.md" '^\*\*Usage:\*\* .?/rules list'                 0 "(h6) agent-help.md /rules usage line"
+region_verbs "$REPO_ROOT/README.md"                '\| \*\*Rules\*\* \(command\)'                  0 "(h7) README.md agent/command table row" '/rules \[[^]]*\]' 
+region_verbs "$REPO_ROOT/.claude-plugin/README.md" '^### /rules \['                                0 "(h8) .claude-plugin/README.md /rules heading"
+region_verbs "$REPO_ROOT/.claude-plugin/README.md" '^/rules list '                                 6 "(h9) .claude-plugin/README.md /rules usage fence"
+region_verbs "$REPO_ROOT/.agent/rules/README.md"   '^- .?/rules list'                              6 "(h10) .agent/rules/README.md verb bullets"
+
+# ============================================================================
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

@@ -75,4 +75,6 @@ This plugin's own repository ships **only this README (the schema + example)** �
 - `/rules list` — show the applicable rules (calls `read-rules.sh` with no path args, i.e. repo-wide).
 - `/rules suggest` — scan the repo and PROPOSE rules (human-confirmed, never auto-writes).
 - `/rules add` — author a rule (confirm-only, append-only, path-contained atomic write). `--applies-to <glob>` is repeatable and sets the routing scope; omit it for a repo-wide rule.
+- `/rules retract` — remove one existing rule object by id (confirm-only; curation/anti-rot).
+- `/rules audit` — re-validate the STANDING store (read-only, propose-only; no write mode, and it never runs a rule's `check`).
 - `/rules check` — run `must`-rule checks (human-invoked, confirmed only — never an unattended gate).

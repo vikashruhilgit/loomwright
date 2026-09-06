@@ -38,6 +38,9 @@
 #       yields UNCOMPARABLE_SHAPE and is reported UNKNOWN; and a mutant that absorbs rc 2 as clean
 #       goes green, proving the UNKNOWN assertion has a mechanism behind it.
 #   (m) every recommendation names an EXISTING action (`/rules add --supersedes` / `--retract`).
+#   (o) a CONCURRENT WRITER that ADDS or REMOVES a store file mid-run is DETECTED (the fingerprint
+#       covers the re-enumerated file SET, not only the content of a once-enumerated list), with the
+#       pre-fix once-enumerated fingerprint as the mutation control and a clean run as the converse.
 
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -602,6 +605,119 @@ if [ -d "$LIVE_ROOT/.agent/rules" ]; then
 else
   ok "(n1) no live .agent/rules store in this checkout — nothing to assert (not vacuous: the fixture cases above carry the coverage)"
 fi
+
+# ============================================================================
+echo "== (o) a CONCURRENT WRITER that adds/removes a store file mid-run is DETECTED =="
+# The defect this closes: the before/after fingerprint enumerated the store ONCE, then hashed that
+# fixed list twice. A writer that ADDED a rule file mid-run added a file that was never in the list,
+# so it was never hashed, every listed file was unchanged, and the run printed "the store is
+# BYTE-IDENTICAL to how this run found it" over a store that had grown underneath it. The guarantee
+# the code made was the narrower "no enumerated file changed content".
+# The seam: validate_duplicate is called per rule, i.e. strictly between FP_BEFORE and FP_AFTER, so a
+# validator wrapper is a real concurrent writer from the engine's point of view.
+
+# mk_cw_validator <outfile> <action-shell> — the REAL validator plus a shim that fires <action-shell>
+# once, on the first validate_duplicate call. The engine's LOAD GUARD still passes: all seven names
+# and the contract sentinel come from the real file, which is copied verbatim.
+mk_cw_validator() {
+  local out="$1" action="$2"
+  cat "$VALIDATOR" > "$out"
+  {
+    printf '\n# ---- test shim: a concurrent writer, fired mid-run ----\n'
+    printf '_cw_fired=0\n'
+    printf 'eval "$(declare -f validate_duplicate | sed "1s/^validate_duplicate/_cw_orig_validate_duplicate/")"\n'
+    printf 'validate_duplicate() {\n'
+    printf '  if [ "$_cw_fired" -eq 0 ]; then _cw_fired=1; %s; fi\n' "$action"
+    printf '  _cw_orig_validate_duplicate "$@"\n'
+    printf '}\n'
+  } >> "$out"
+}
+
+# The pre-fix engine: store_fingerprint hashing the ONCE-enumerated $FILES_LIST, with no file set in
+# the value. This is the mutation control for every assertion in this group — without it, "the add is
+# detected" could be passing for some unrelated reason.
+FIXED_FP_MUT="$MUT/fixed-fingerprint.sh"
+awk '
+  /^store_fingerprint\(\) \{$/ {
+    inf = 1
+    print "store_fingerprint() {"
+    print "  local f"
+    print "  while IFS= read -r f; do"
+    print "    [ -n \"$f\" ] || continue"
+    print "    hash_one \"$f\""
+    print "  done < \"$FILES_LIST\""
+    next
+  }
+  inf && /^\}$/ { inf = 0; print "}"; next }
+  inf { next }
+  { print }
+' "$ENGINE" > "$FIXED_FP_MUT"
+
+r="$(new_repo)"
+seed_store "$r" "process" '[
+ {"id":"p-one","category":"process","statement":"a gate names its own failure reason in review pr-138","enforcement":"advisory","check":null,"provenance":{"source":"pr-138","added":"'"$ISO_A"'"},"applies_to":null}
+]'
+CWVAL_ADD="$MUT/cw-add-validator.sh"
+mk_cw_validator "$CWVAL_ADD" "printf '%s\\n' '[{\"id\":\"cw-added\",\"category\":\"process\",\"statement\":\"this file appeared mid-run\",\"enforcement\":\"advisory\",\"check\":null,\"provenance\":{\"source\":\"concurrent\",\"added\":\"2026-01-01T00:00:00Z\"},\"applies_to\":null}]' > '$r/.agent/rules/zz-appeared.json'"
+
+rm -f "$r/.agent/rules/zz-appeared.json"
+run_audit "$r" "$ENGINE" "$CWVAL_ADD"
+if [ -f "$r/.agent/rules/zz-appeared.json" ]; then
+  ok "(o0) the shim really did add a store file mid-run (the scenario is not vacuous)"
+else
+  no "(o0) the shim never fired — every (o) assertion below would be vacuous"
+fi
+if printf '%s' "$OUT" | grep -q 'THE STORE CHANGED DURING THIS RUN'; then
+  ok "(o1) a rule file ADDED mid-run trips the store-integrity mismatch"
+else
+  no "(o1) A FILE ADDED MID-RUN WAS NOT DETECTED — the run reported the store unchanged"
+fi
+[ "$RC" -eq 2 ] && ok "(o2) the mid-run add exits 2 (could-not-examine), not 0/1" \
+                || no "(o2) the mid-run add exited $RC, not the could-not-examine code 2"
+
+# Mutation control: the pre-fix fixed-list fingerprint must MISS the same add.
+if mutant_ok "$FIXED_FP_MUT" "(o3)"; then
+  rm -f "$r/.agent/rules/zz-appeared.json"
+  run_audit "$r" "$FIXED_FP_MUT" "$CWVAL_ADD"
+  if printf '%s' "$OUT" | grep -q 'BYTE-IDENTICAL'; then
+    ok "(o3) the once-enumerated fingerprint MISSES the add (so (o1) has a mechanism, not a coincidence)"
+  else
+    no "(o3) the once-enumerated mutant also detected the add — (o1) proves nothing"
+  fi
+fi
+
+# REMOVE: already caught before the fix (the vanishing hash line), asserted so it stays caught.
+r2="$(new_repo)"
+seed_store "$r2" "process" '[
+ {"id":"p-one","category":"process","statement":"a gate names its own failure reason in review pr-138","enforcement":"advisory","check":null,"provenance":{"source":"pr-138","added":"'"$ISO_A"'"},"applies_to":null}
+]'
+seed_store "$r2" "zz-doomed" '[
+ {"id":"z-one","category":"zz-doomed","statement":"this file is removed by a concurrent writer mid-run","enforcement":"advisory","check":null,"provenance":{"source":"pr-138","added":"'"$ISO_A"'"},"applies_to":null}
+]'
+CWVAL_RM="$MUT/cw-rm-validator.sh"
+mk_cw_validator "$CWVAL_RM" "rm -f '$r2/.agent/rules/zz-doomed.json'"
+run_audit "$r2" "$ENGINE" "$CWVAL_RM"
+if [ ! -f "$r2/.agent/rules/zz-doomed.json" ] && printf '%s' "$OUT" | grep -q 'THE STORE CHANGED DURING THIS RUN'; then
+  ok "(o4) a rule file REMOVED mid-run trips the store-integrity mismatch"
+else
+  no "(o4) a file removed mid-run was not detected (shim fired: $([ -f "$r2/.agent/rules/zz-doomed.json" ] && echo no || echo yes))"
+fi
+[ "$RC" -eq 2 ] && ok "(o5) the mid-run remove exits 2" || no "(o5) the mid-run remove exited $RC, not 2"
+
+# A CLEAN run must still say BYTE-IDENTICAL and exit 0/1 — the new set-sensitivity must not make
+# every ordinary run look like it was written to.
+r3="$(new_repo)"
+seed_store "$r3" "process" '[
+ {"id":"p-one","category":"process","statement":"a gate names its own failure reason in review pr-138","enforcement":"advisory","check":null,"provenance":{"source":"pr-138","added":"'"$ISO_A"'"},"applies_to":null}
+]'
+fp="$(fingerprint "$r3")"
+run_audit "$r3"
+if printf '%s' "$OUT" | grep -q 'BYTE-IDENTICAL' && [ "$RC" -ne 2 ]; then
+  ok "(o6) an ordinary run with no concurrent writer still reports BYTE-IDENTICAL (exit $RC)"
+else
+  no "(o6) an ordinary run no longer reports byte-identity (exit $RC) — the fingerprint is unstable"
+fi
+byte_identical "$r3" "$fp" "(o7)"
 
 # ============================================================================
 echo

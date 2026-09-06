@@ -349,14 +349,16 @@ issue-body schema, exit-code table, and wrapper-vs-core architecture.
 
 ---
 
-### /rules [list | suggest | add | check]
+### /rules [list | suggest | add | retract | audit | check]
 
-House Rules substrate — committed `.agent/rules/` conventions store + fail-safe reader; list/suggest/add/check. Advisory and fail-safe (never gates, never executes a check; enforcement deferred to a later slice).
+House Rules substrate — committed `.agent/rules/` conventions store + fail-safe reader; list/suggest/add/retract/audit/check. Advisory and fail-safe (never gates; the reader and the `audit` engine both treat a rule's `check` as DATA and never execute it — `rules-check.sh` is the sole executor, human-confirmed).
 
 ```bash
 /rules list                # show committed House Rules
 /rules suggest             # propose candidate rules from the codebase
 /rules add                 # author a rule (confirm-only, append-only)
+/rules retract             # remove one existing rule by id (confirm-only)
+/rules audit               # re-validate the standing store (read-only; no write mode, never runs a check)
 /rules check               # human-invoked: display + run must-rule checks only after explicit confirmation
 ```
 
