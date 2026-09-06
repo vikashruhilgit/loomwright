@@ -2363,6 +2363,76 @@ else
   no "(j41) MUTATION CONTROL: could not build the fourth-state mutant - control inconclusive"
 fi
 
+# --- (j47) a scope heading's globs are COPY BUTTONS, and every claim the doc makes is checked -
+# The rules view now renders each `applies_to` glob as a control. Three claims ship with it, and
+# a claim no check backs is the defect class this repo has already paid for twice, so each one is
+# asserted here by its own literal rather than left to the prose in FLOOR_UI.md.
+#
+#   1. IT COPIES, IT DOES NOT LINK. No browser follows a `file:` URL from a document served over
+#      http, and it refuses SILENTLY - so an anchor would be a control that does nothing and says
+#      nothing. Serving the file instead would be a fifth endpoint, closed by decision. The scan
+#      below is for the SHAPE that would betray a link, not for the word: an `<a` built anywhere
+#      in this file, or a `file:` scheme in any of the three bundle files.
+#   2. THE CHIPS SPELL THE HEADING THEY REPLACE. `ruleScopeLabel` still decides what a heading
+#      says; the chips render only when they reproduce that exact string, so the four-state
+#      guarantee (j34) protects cannot be routed around by a second renderer.
+#   3. THE BASE IS NAMED, NEVER ASSUMED. floor.json carries no project root, so the absolute path
+#      is joined from the served index - and the note states which directory it joined against,
+#      because a project registered below its git root is where that join is wrong.
+j47_bad=""
+has_lit "$JS" "function renderScopeHeading" || j47_bad="$j47_bad [no renderScopeHeading]"
+has_lit "$JS" "b.className = 'scope-path'"  || j47_bad="$j47_bad [the glob is not rendered as a scope-path control]"
+has_lit "$JS" "(SCOPE_PREFIX + globs.join(', ')) !== label" \
+  || j47_bad="$j47_bad [the chips are not gated on spelling their own heading back]"
+has_lit "$JS" "joined against " || j47_bad="$j47_bad [the copy note does not name the base it joined against]"
+has_lit "$CSS" ".rules-scope .scope-path" || j47_bad="$j47_bad [the control carries no style of its own]"
+[ -z "$j47_bad" ] \
+  && ok "(j47) the scope-heading globs are copy CONTROLS: rendered by renderScopeHeading, gated on reproducing ruleScopeLabel's own heading text, and their note names the directory the absolute path was joined against" \
+  || no "(j47) the scope-heading globs are copy controls with a named base" "$j47_bad"
+
+# The link shape must be absent from the whole bundle, not merely unused in one function.
+j47_anchor="$(occ "$JS" "createElement[(]'a'[)]")"
+j47_file=$(( $(occ "$JS" 'file:/') + $(occ "$HTML" 'file:/') + $(occ "$CSS" 'file:/') ))
+[ "$j47_anchor" = "0" ] && [ "$j47_file" = "0" ] \
+  && ok "(j47) the bundle builds no anchor and names no file: scheme (anchors=$j47_anchor file-scheme=$j47_file) - the affordance a browser would refuse silently is absent by construction, not by intention" \
+  || no "(j47) the bundle reaches for a link it cannot honour" "createElement('a')=$j47_anchor file:=$j47_file"
+
+# MUTATION CONTROL for claim 2: drop the equality and the chips would render under a heading they
+# do not spell - which is how a malformed applies_to would acquire buttons (j34) says it must not.
+MUT_SCOPEBTN="$TMPROOT/mut-scopebtn.js"
+sed "s|if (!globs \|\| (SCOPE_PREFIX + globs.join(', ')) !== label) {|if (!globs) {|" "$JS" > "$MUT_SCOPEBTN" 2>/dev/null
+if mutant_ok "$JS" "$MUT_SCOPEBTN"; then
+  has_lit "$MUT_SCOPEBTN" "(SCOPE_PREFIX + globs.join(', ')) !== label" \
+    && no "(j48) MUTATION CONTROL: removing the heading-equality gate IS detected by (j47)" "the literal survived the mutation, so (j47) proves nothing" \
+    || ok "(j48) MUTATION CONTROL: removing the heading-equality gate IS detected by (j47) - the chips could then render under a heading they do not spell"
+fi
+
+# MUTATION CONTROL for the link scan: an anchor added anywhere in floor.js must be flagged, or the
+# scan above is a check that would pass on the very page it exists to prevent.
+MUT_ANCHOR="$TMPROOT/mut-anchor.js"
+{ cat "$JS"; printf "\n// var _a = document.createElement('a'); _a.href = 'file:/tmp/x';\n"; } > "$MUT_ANCHOR" 2>/dev/null
+if mutant_ok "$JS" "$MUT_ANCHOR"; then
+  m_anchor="$(occ "$MUT_ANCHOR" "createElement[(]'a'[)]")"
+  m_file="$(occ "$MUT_ANCHOR" 'file:/')"
+  [ "$m_anchor" -gt 0 ] && [ "$m_file" -gt 0 ] \
+    && ok "(j49) MUTATION CONTROL: an anchor carrying a file: href IS flagged by (j47)'s scan (anchors=$m_anchor file-scheme=$m_file)" \
+    || no "(j49) MUTATION CONTROL: the planted anchor was not flagged - (j47)'s link scan proves nothing" "anchors=$m_anchor file=$m_file"
+fi
+
+# --- (j50) the rules section states how a rule gets INTO the store ---------------------------
+# The one thing this view shows that the page itself cannot do. It is static markup rather than
+# projected data, so it adds no surface to floor.json - and it is asserted here because a section
+# that quietly loses its only writable-surface instruction reads exactly like one that never had
+# it. `--confirm` is named because the helper writes nothing without it, and omitting
+# `--applies-to` is what records a rule repo-wide, which is the middle heading on that view.
+j50_bad=""
+for lit in '/rules add' 'add-rule.sh' '--confirm' '--applies-to' 'repo-wide'; do
+  has_lit "$HTML" "$lit" || j50_bad="$j50_bad [$lit]"
+done
+[ -z "$j50_bad" ] \
+  && ok "(j50) the rules section names the authoring path (/rules add, add-rule.sh, --confirm) and says that omitting --applies-to is what records a rule repo-wide" \
+  || no "(j50) the rules section does not say how a rule gets into the store" "missing:$j50_bad"
+
 # --- (j42) the three curation-fault RENDER branches, driven by a UI fixture -------------------
 # (y)/(y2) in test-build-floor.sh pinned these three on the PROJECTOR side. The RENDER side was
 # still uncovered: floor.js has a branch for each of files_not_an_array, self_referential and
@@ -6448,3 +6518,550 @@ fi
   && ok "(q11) every a11y mutation control above ran against a COPY — index.html is byte-identical (sha256) and no mutant was left in the bundle directory" \
   || no "(q11) index.html is byte-identical after the (q) controls" "sha256 changed"
 rm -rf "$Q_TMP"
+
+# =============================================================================================
+# (s) THE OPEN-URL FILE — `ui-serve.token`, its LIFECYCLE and its UNREACHABILITY
+# ---------------------------------------------------------------------------------------------
+# WHY THIS GROUP EXISTS. `serve` prints its `open:` URL exactly once and the token in it is
+# minted per run, so for as long as that line was the only copy, a reader who scrolled past it
+# could not reach the four buttons again. `serve` therefore records the line, `check` reprints
+# it and `stop` deletes it — and the whole safety of that rests on ONE placement decision: the
+# file is a SIBLING of the ui directory, never a file inside it, because the handler serves the
+# WHOLE ui directory (which is exactly why `GET /serve.log` returns the serve log). A token file
+# one directory to the left is unreachable; the same bytes one directory to the right are a
+# credential this server hands to anything on the loopback port.
+#
+# THE ANTI-VACUITY PROBLEM THIS GROUP HAS TO SOLVE. A 404 is the answer this server gives for
+# any path it does not have, so "GET /ui-serve.token -> 404" is equally true of a correct fix, a
+# misspelled filename, and a server that is not running at all. (s3) is therefore paired with
+# (s4), which places a decoy of the SAME NAME INSIDE the served root and requires it to come
+# back 200: only the pair distinguishes "unreachable because it is a sibling" from "unreachable
+# because nothing by that name exists anywhere".
+S_TMP="$(mktmp)"
+S_UI="$S_TMP/ui"
+S_TOKEN_FILE="$S_TMP/ui-serve.token"          # the SIBLING path the engine must use
+S_REG="$S_TMP/reg.json"                       # rule B: never let an engine call reach the real registry
+S_INSIDE="$S_UI/ui-serve.token"               # the path it must NOT use
+bash "$ENGINE" apply --ui-dir "$S_UI" >/dev/null 2>&1
+
+s_port="$(n_free_port)"
+case "$s_port" in ''|*[!0-9]*) setup_fail "(s) fixture: could not obtain a free port" ;; esac
+s_out="$(bash "$ENGINE" serve --registry "$S_REG" --ui-dir "$S_UI" --no-regen --detach --port "$s_port" 2>&1)"; s_rc=$?
+track_serve "$S_UI"
+[ "$s_rc" -eq 0 ] || setup_fail "(s) fixture: serve exited $s_rc :: $s_out"
+n_wait_up "$s_port" || setup_fail "(s) fixture: the handler never answered a GET on 127.0.0.1:$s_port"
+# The `open:` line as SERVE printed it — the reference every reprint claim below is compared to.
+s_printed="$(printf '%s\n' "$s_out" | awk '/^  open: /{sub(/^  open: +/, ""); print; exit}')"
+[ -n "$s_printed" ] || setup_fail "(s) fixture: serve printed no 'open:' line :: $s_out"
+
+# --- (s1) the file is written, BESIDE the ui dir and not in it -------------------------------
+if [ -f "$S_TOKEN_FILE" ] && [ ! -e "$S_INSIDE" ]; then
+  ok "(s1) serve records the open url in ui-serve.token BESIDE the ui directory, and writes nothing by that name inside it"
+else
+  no "(s1) serve records the open url beside the ui directory" \
+     "sibling_exists=$([ -f "$S_TOKEN_FILE" ] && echo yes || echo NO) inside_exists=$([ -e "$S_INSIDE" ] && echo YES-LEAK || echo no)"
+fi
+
+# --- (s2) mode 0600, and the content is EXACTLY the line serve printed ------------------------
+s_mode="$(ls -l "$S_TOKEN_FILE" 2>/dev/null | awk '{print $1}')"
+s_stored="$(head -n 1 "$S_TOKEN_FILE" 2>/dev/null)"
+case "$s_mode" in
+  -rw-------*) s_mode_ok=1 ;;
+  *) s_mode_ok=0 ;;
+esac
+if [ "$s_mode_ok" = "1" ] && [ "$s_stored" = "$s_printed" ]; then
+  ok "(s2) ui-serve.token is mode 0600 and holds BYTE-FOR-BYTE the open url serve printed — a reprint that drifted from the printed line would hand out a url that does not work"
+else
+  no "(s2) ui-serve.token is 0600 and matches the printed url" "mode=$s_mode printed=$s_printed stored=$s_stored"
+fi
+
+# --- (s3) THE SECURITY CLAIM: no spelling of it is reachable over HTTP ------------------------
+# `/` is requested in the same breath and must be 200: without that arm every 404 below would
+# also be produced by a server that had simply stopped, and the whole case would pass with the
+# protection deleted.
+s_root_st="$(n_status "$(n_req "$s_port" GET / "" "" "" "" "")")"
+s_leaks=""
+for s_path in /ui-serve.token /serve.token /../ui-serve.token /%2e%2e/ui-serve.token; do
+  s_st="$(n_status "$(n_req "$s_port" GET "$s_path" "" "" "" "" "")")"
+  [ "$s_st" = "404" ] || s_leaks="$s_leaks [$s_path -> $s_st]"
+done
+if [ "$s_root_st" = "200" ] && [ -z "$s_leaks" ]; then
+  ok "(s3) the open-url file is unreachable over HTTP — /ui-serve.token, /serve.token and both traversal spellings all 404 while / answers 200, so the 404s are this server refusing rather than this server being down"
+else
+  no "(s3) the open-url file is unreachable over HTTP" "GET / -> $s_root_st (200 expected) leaks:${s_leaks:-none}"
+fi
+
+# --- (s4) MUTATION CONTROL for (s3): the SAME NAME inside the served root IS served -----------
+# This is the case that gives (s3) its meaning. If a file of this name inside UI_DIR also 404s,
+# then (s3) is measuring the filename and not the placement, and the sibling decision it exists
+# to protect could be reverted without either case noticing.
+printf 'decoy\n' > "$S_INSIDE" 2>/dev/null
+s_inside_st="$(n_status "$(n_req "$s_port" GET /ui-serve.token "" "" "" "" "")")"
+rm -f "$S_INSIDE" 2>/dev/null
+if [ "$s_inside_st" = "200" ]; then
+  ok "(s4) MUTATION CONTROL: a file of the SAME NAME placed INSIDE the ui directory is served (200) — so (s3)'s 404s measure the sibling PLACEMENT, not a filename nothing answers to, and moving this file into the ui dir would be caught here"
+else
+  no "(s4) MUTATION CONTROL: the same name inside the ui dir is served" \
+     "got $s_inside_st, expected 200 — (s3) may be vacuous: it cannot tell a sibling from a name that does not exist"
+fi
+rm -f "$S_INSIDE" 2>/dev/null
+
+# --- (s5) check REPRINTS it while the server is up --------------------------------------------
+s_chk="$(bash "$ENGINE" check --ui-dir "$S_UI" 2>&1)"
+s_chk_url="$(printf '%s\n' "$s_chk" | awk '/^  open: /{sub(/^  open: +/, ""); print; exit}')"
+if in_str "$s_chk" "server: running" && [ "$s_chk_url" = "$s_printed" ]; then
+  ok "(s5) check reports 'server: running' and reprints the open url identically to serve — which is the whole point of the file: the token is otherwise unrecoverable once the line scrolls away"
+else
+  no "(s5) check reprints the open url while the server is up" "printed=$s_printed reprinted=$s_chk_url"
+fi
+
+# --- (s6) a PRESENT-BUT-EMPTY file is reported as UNKNOWN, never as a blank url ----------------
+cp "$S_TOKEN_FILE" "$S_TMP/token.bak" 2>/dev/null
+: > "$S_TOKEN_FILE"
+s_chk_empty="$(bash "$ENGINE" check --ui-dir "$S_UI" 2>&1)"
+if in_str "$s_chk_empty" "server: running" && in_str "$s_chk_empty" "open:     UNKNOWN" && in_str "$s_chk_empty" "is empty"; then
+  ok "(s6) an EMPTY ui-serve.token is reported as 'open: UNKNOWN' naming the empty file — a blank 'open:' line would read as a url the reader failed to copy"
+else
+  no "(s6) an empty ui-serve.token reports UNKNOWN" "$(printf '%s' "$s_chk_empty" | tr '\n' '|')"
+fi
+
+# --- (s7) a MISSING file while running is a different message from an empty one ---------------
+rm -f "$S_TOKEN_FILE"
+s_chk_none="$(bash "$ENGINE" check --ui-dir "$S_UI" 2>&1)"
+if in_str "$s_chk_none" "server: running" && in_str "$s_chk_none" "open:     UNKNOWN" && in_str "$s_chk_none" "no " ; then
+  ok "(s7) a MISSING ui-serve.token while the server runs is also 'open: UNKNOWN' — the server is up and readable, and the four buttons stay refused until it is restarted"
+else
+  no "(s7) a missing ui-serve.token while running reports UNKNOWN" "$(printf '%s' "$s_chk_none" | tr '\n' '|')"
+fi
+cp "$S_TMP/token.bak" "$S_TOKEN_FILE" 2>/dev/null
+
+# --- (s8) stop DELETES it ---------------------------------------------------------------------
+bash "$ENGINE" stop --ui-dir "$S_UI" >/dev/null 2>&1
+n_wait_down "$s_port" >/dev/null 2>&1
+if [ ! -f "$S_TOKEN_FILE" ]; then
+  ok "(s8) stop deletes ui-serve.token — the url names a server that no longer exists and its token died with the process, so a surviving file would hand out a credential the guard answers with a 403"
+else
+  no "(s8) stop deletes ui-serve.token" "the file is still present after stop"
+fi
+
+# --- (s9) stopped, with a LEFTOVER file: the note fires and check does NOT delete it -----------
+# A crash leaves the file behind because only `stop` removes it. `check` is a READ verb: it must
+# name the leftover and leave it, since a read verb that quietly repairs state is a read verb
+# whose report can no longer be trusted.
+printf 'http://127.0.0.1:%s/#token=leftoverleftoverleftover\n' "$s_port" > "$S_TOKEN_FILE"
+chmod 600 "$S_TOKEN_FILE" 2>/dev/null
+s_chk_stale="$(bash "$ENGINE" check --ui-dir "$S_UI" 2>&1)"
+if in_str "$s_chk_stale" "server: not running" && in_str "$s_chk_stale" "did not stop cleanly" && [ -f "$S_TOKEN_FILE" ]; then
+  ok "(s9) with no server alive but a leftover ui-serve.token, check reports 'not running', NAMES the leftover as a server that did not stop cleanly, prints no url from it, and LEAVES THE FILE — check is read-only"
+else
+  no "(s9) a leftover ui-serve.token is named and preserved by check" \
+     "still_present=$([ -f "$S_TOKEN_FILE" ] && echo yes || echo NO-check-deleted-it) :: $(printf '%s' "$s_chk_stale" | tr '\n' '|')"
+fi
+# It must also not print the dead url as if it were usable.
+if in_str "$s_chk_stale" "leftoverleftoverleftover"; then
+  no "(s9b) check does not print a dead token" "the leftover url was printed for a server that is not running"
+else
+  ok "(s9b) check prints no url at all from a leftover file — a url whose server is gone is worse than none: the page accepts it and then reports a 403 the reader would debug as a token problem"
+fi
+
+# --- (s10) stopped with NO file: the plain branch, and no leftover note ------------------------
+rm -f "$S_TOKEN_FILE"
+s_chk_clean="$(bash "$ENGINE" check --ui-dir "$S_UI" 2>&1)"
+if in_str "$s_chk_clean" "server: not running" && ! in_str "$s_chk_clean" "did not stop cleanly"; then
+  ok "(s10) stopped with no leftover file, check reports 'server: not running' and raises no leftover note — the ordinary state after a clean stop"
+else
+  no "(s10) a clean stopped state raises no leftover note" "$(printf '%s' "$s_chk_clean" | tr '\n' '|')"
+fi
+
+# --- (s11) the DEGRADATION path: serve still starts when the file cannot be written ------------
+# The url is already on screen and the server is already up by the time this write is attempted,
+# so a failure here must be a note and never an abort — this file's every-branch-exits-0
+# contract. Made reachable by taking write permission off the PARENT, which is where the sibling
+# would go. Skipped rather than faked when running as a user permissions do not bind (root).
+if [ "$(id -u)" != "0" ]; then
+  S_RO="$(mktmp)"
+  S_RO_UI="$S_RO/ui"
+  bash "$ENGINE" apply --ui-dir "$S_RO_UI" >/dev/null 2>&1
+  s_ro_port="$(n_free_port)"
+  chmod 500 "$S_RO" 2>/dev/null
+  s_ro_out="$(bash "$ENGINE" serve --registry "$S_RO/reg.json" --ui-dir "$S_RO_UI" --no-regen --detach --port "$s_ro_port" 2>&1)"; s_ro_rc=$?
+  track_serve "$S_RO_UI"
+  chmod 700 "$S_RO" 2>/dev/null
+  if [ "$s_ro_rc" -eq 0 ] && in_str "$s_ro_out" "could not record the open url" && in_str "$s_ro_out" "serve: 127.0.0.1:$s_ro_port"; then
+    ok "(s11) when the open-url file cannot be written, serve STILL STARTS and says so in a note — the server is already up and the url is already printed, so aborting there would destroy a working server over a convenience"
+  else
+    no "(s11) an unwritable open-url path degrades to a note" "rc=$s_ro_rc :: $(printf '%s' "$s_ro_out" | tr '\n' '|')"
+  fi
+  bash "$ENGINE" stop --ui-dir "$S_RO_UI" >/dev/null 2>&1
+  rm -rf "$S_RO" 2>/dev/null
+else
+  ok "(s11) SKIPPED as root — file permissions do not bind uid 0, so the unwritable-parent branch cannot be reached honestly"
+fi
+
+rm -rf "$S_TMP" 2>/dev/null
+
+# --- (s14)/(s15) TWO UI DIRECTORIES THAT SHARE A PARENT -----------------------------------------
+# The open-url file lives in the PARENT of the ui directory, which is what keeps it out of the
+# served root. A FIXED name there collides for any two `--ui-dir` values that share that parent
+# — `.../ui` and `.../ui-staging`, both absolute, both legitimate, and exactly where a second
+# install goes. Measured before the fix: the second `serve` overwrote the first's url, so
+# `check --ui-dir ui` printed the OTHER server's port and token (a 403 the reader debugs as
+# their own mistake), and `stop --ui-dir ui-staging` deleted the shared file, after which
+# `check --ui-dir ui` called a still-running server unrecoverable.
+#
+# `serve.pid` never had this — it lives INSIDE its own UI_DIR — and the registry is meant to be
+# shared, so neither precedent transfers. The name is therefore derived from the ui directory's
+# own basename, which is the one thing that distinguishes two siblings.
+S_TWO="$(mktmp)"
+bash "$ENGINE" apply --ui-dir "$S_TWO/ui" >/dev/null 2>&1
+bash "$ENGINE" apply --ui-dir "$S_TWO/ui-staging" >/dev/null 2>&1
+s_pa="$(n_free_port)"; s_pb="$(n_free_port)"
+case "$s_pa$s_pb" in *[!0-9]*) setup_fail "(s14) fixture: could not obtain two free ports" ;; esac
+bash "$ENGINE" serve --registry "$S_TWO/rA.json" --ui-dir "$S_TWO/ui"         --no-regen --detach --port "$s_pa" >"$S_TWO/A" 2>&1
+track_serve "$S_TWO/ui"
+bash "$ENGINE" serve --registry "$S_TWO/rB.json" --ui-dir "$S_TWO/ui-staging" --no-regen --detach --port "$s_pb" >"$S_TWO/B" 2>&1
+track_serve "$S_TWO/ui-staging"
+n_wait_up "$s_pa" >/dev/null 2>&1
+n_wait_up "$s_pb" >/dev/null 2>&1
+
+# (s14) each names its OWN url — the wrong-token handout
+s_ua="$(bash "$ENGINE" check --registry "$S_TWO/rA.json" --ui-dir "$S_TWO/ui" 2>&1 | awk '/^  open: /{sub(/^  open: +/, ""); print; exit}')"
+s_ub="$(bash "$ENGINE" check --registry "$S_TWO/rB.json" --ui-dir "$S_TWO/ui-staging" 2>&1 | awk '/^  open: /{sub(/^  open: +/, ""); print; exit}')"
+s_a_ok=0; case "$s_ua" in *":$s_pa/"*) s_a_ok=1 ;; esac
+s_b_ok=0; case "$s_ub" in *":$s_pb/"*) s_b_ok=1 ;; esac
+if [ "$s_a_ok" = "1" ] && [ "$s_b_ok" = "1" ] && [ "$s_ua" != "$s_ub" ]; then
+  ok "(s14) two ui directories SHARING A PARENT each get their own open-url file: check names each server's own port and token, where a fixed filename handed back whichever serve ran last — a token the other server answers with a 403"
+else
+  no "(s14) two ui dirs sharing a parent each keep their own url" \
+     "A(port $s_pa)=$s_ua :: B(port $s_pb)=$s_ub"
+fi
+
+# (s15) stopping one must not blind the other — the destructive half of the same collision
+bash "$ENGINE" stop --ui-dir "$S_TWO/ui-staging" >/dev/null 2>&1
+n_wait_down "$s_pb" >/dev/null 2>&1
+s_ua2="$(bash "$ENGINE" check --registry "$S_TWO/rA.json" --ui-dir "$S_TWO/ui" 2>&1 | awk '/^  open: /{sub(/^  open: +/, ""); print; exit}')"
+if [ "$s_ua2" = "$s_ua" ]; then
+  ok "(s15) stopping the SIBLING install leaves this one's url intact — serve_cleanup deletes the file belonging to the ui dir it was given, and a shared file meant 'stop' on one server reported the other, still running, as unrecoverable"
+else
+  no "(s15) stopping a sibling install does not delete this one's url" "before=$s_ua after=$s_ua2"
+fi
+bash "$ENGINE" stop --ui-dir "$S_TWO/ui" >/dev/null 2>&1
+rm -rf "$S_TWO" 2>/dev/null
+
+
+# --- (s12)/(s13) THE FOREGROUND SHUTDOWN PATH, WHICH IS THE ONE A HUMAN IS TOLD TO USE --------
+# (s8) covers `do_stop` — the path `/ui stop` and every agent takes. It is NOT the only way a
+# server ends: foreground is the engine's documented default and Ctrl-C is the sanctioned human
+# shutdown, and that path runs a different cleanup (the EXIT/INT/TERM trap). When the open-url
+# file was added only `do_stop` learned to delete it, so the human path left the file behind and
+# the next `check` called a clean shutdown "a server that did not stop cleanly" — the exact
+# sentence (s9) asserts, fired on a session where nothing went wrong.
+#
+# (s9) could not catch that: it PLANTS a leftover by hand, which tests the reporting and never
+# the producing. This pair drives the real path.
+#
+# SIGTERM, not SIGINT, and the reason is not cosmetic: a non-interactive shell sets SIGINT to
+# ignored for the async commands it starts, so `kill -INT` on a backgrounded serve is a no-op
+# and a case built on it would pass without the trap ever running. TERM reaches the SAME trap.
+S_FG="$(mktmp)"
+S_FG_UI="$S_FG/ui"
+S_FG_TOKEN="$S_FG/ui-serve.token"
+bash "$ENGINE" apply --ui-dir "$S_FG_UI" >/dev/null 2>&1
+s_fg_port="$(n_free_port)"
+case "$s_fg_port" in ''|*[!0-9]*) setup_fail "(s12) fixture: could not obtain a free port" ;; esac
+bash "$ENGINE" serve --registry "$S_FG/reg.json" --ui-dir "$S_FG_UI" --no-regen --port "$s_fg_port" >"$S_FG/out" 2>&1 &
+s_fg_pid=$!
+track_serve "$S_FG_UI"
+s_i=0
+while [ "$s_i" -lt 100 ] && [ ! -f "$S_FG_TOKEN" ]; do s_i=$((s_i + 1)); sleep 0.1; done
+s_fg_before=0; [ -f "$S_FG_TOKEN" ] && s_fg_before=1
+kill -TERM "$s_fg_pid" 2>/dev/null
+wait "$s_fg_pid" 2>/dev/null
+s_i=0
+while [ "$s_i" -lt 100 ] && [ -f "$S_FG_TOKEN" ]; do s_i=$((s_i + 1)); sleep 0.1; done
+n_wait_down "$s_fg_port" >/dev/null 2>&1
+s_fg_chk="$(bash "$ENGINE" check --registry "$S_FG/reg.json" --ui-dir "$S_FG_UI" 2>&1)"
+# ANTI-VACUITY FIRST: if the file never appeared, its absence afterwards proves nothing at all.
+if [ "$s_fg_before" != "1" ]; then
+  no "(s12) a foreground serve stopped by a signal removes its open-url file" \
+     "the file never appeared while the server ran, so this case could not observe its removal"
+elif [ ! -f "$S_FG_TOKEN" ] && ! in_str "$s_fg_chk" "did not stop cleanly"; then
+  ok "(s12) a FOREGROUND serve ended by a signal removes ui-serve.token through its own trap, and the next check reports a clean stop — the trap and do_stop clean up the same set of files, so the shutdown a human is told to use is not reported as a crash"
+else
+  no "(s12) a foreground serve stopped by a signal removes its open-url file" \
+     "file_present_after=$([ -f "$S_FG_TOKEN" ] && echo YES || echo no) :: $(printf '%s' "$s_fg_chk" | tr '\n' '|')"
+fi
+
+# --- (s13) MUTATION CONTROL: a trap that cleans only the pidfile IS caught --------------------
+# The state this file actually shipped in for one commit. Without this arm, (s12) passes for a
+# trap that removes everything AND for one that removes nothing, provided `stop` is never called.
+S_FG_MUT="$S_FG/engine-mut.sh"
+sed "s/serve_cleanup\" EXIT INT TERM/rm -f '\$UI_DIR\/serve.pid' 2>\/dev\/null\" EXIT INT TERM/" "$ENGINE" > "$S_FG_MUT"
+if ! grep -q "rm -f '\$UI_DIR/serve.pid' 2>/dev/null\" EXIT INT TERM" "$S_FG_MUT"; then
+  no "(s13) MUTATION CONTROL: a trap that cleans only the pidfile is caught" \
+     "the mutant engine could not be built — the trap line did not match, so this control never ran"
+else
+  S_FG2="$(mktmp)"
+  S_FG2_UI="$S_FG2/ui"
+  S_FG2_TOKEN="$S_FG2/ui-serve.token"
+  bash "$ENGINE" apply --ui-dir "$S_FG2_UI" >/dev/null 2>&1
+  s_fg2_port="$(n_free_port)"
+  bash "$S_FG_MUT" serve --registry "$S_FG2/reg.json" --ui-dir "$S_FG2_UI" --no-regen --port "$s_fg2_port" >"$S_FG2/out" 2>&1 &
+  s_fg2_pid=$!
+  track_serve "$S_FG2_UI"
+  s_i=0
+  while [ "$s_i" -lt 100 ] && [ ! -f "$S_FG2_TOKEN" ]; do s_i=$((s_i + 1)); sleep 0.1; done
+  s_fg2_before=0; [ -f "$S_FG2_TOKEN" ] && s_fg2_before=1
+  kill -TERM "$s_fg2_pid" 2>/dev/null
+  wait "$s_fg2_pid" 2>/dev/null
+  n_wait_down "$s_fg2_port" >/dev/null 2>&1
+  if [ "$s_fg2_before" = "1" ] && [ -f "$S_FG2_TOKEN" ]; then
+    ok "(s13) MUTATION CONTROL: a trap that removes ONLY the pidfile leaves ui-serve.token behind — so (s12) is measuring the trap's cleanup and would redden if the shared serve_cleanup were unwired again"
+  else
+    no "(s13) MUTATION CONTROL: a pidfile-only trap leaves the token file behind" \
+       "appeared=$s_fg2_before survived=$([ -f "$S_FG2_TOKEN" ] && echo yes || echo NO) — (s12) may be vacuous: it cannot tell a cleaning trap from a non-cleaning one"
+  fi
+  rm -rf "$S_FG2" 2>/dev/null
+fi
+rm -rf "$S_FG" 2>/dev/null
+
+
+# --- (s16)/(s17) `stop` HONOURS THE REMEDY `check` NAMES, PIDFILE OR NO PIDFILE ----------------
+# `check`'s leftover note ends "'serve' overwrites it; 'stop' deletes it", and `commands/ui.md`
+# and FLOOR_UI.md repeat the claim. `do_stop` returned at its pidfile check BEFORE reaching the
+# cleanup, so in the very state the note describes — a leftover url whose pidfile is gone, which
+# is also how `check` reaches that arm — the remedy printed `stop: no-op` and left the file. A
+# claim no code backs is the defect this repo has already paid for; this pair backs it.
+S_LO="$(mktmp)"
+bash "$ENGINE" apply --ui-dir "$S_LO/ui" >/dev/null 2>&1
+printf 'http://127.0.0.1:9/#token=leftoverwithnopidfile\n' > "$S_LO/ui-serve.token"
+chmod 600 "$S_LO/ui-serve.token" 2>/dev/null
+s_lo_out="$(bash "$ENGINE" stop --ui-dir "$S_LO/ui" 2>&1)"
+if [ ! -f "$S_LO/ui-serve.token" ] && in_str "$s_lo_out" "stop: no-op" && in_str "$s_lo_out" "removed:"; then
+  ok "(s16) with a leftover open-url file and NO pidfile, stop deletes the file and SAYS it did — the state check's own note sends the reader to stop for, where stop used to return at the pidfile check and leave it"
+else
+  no "(s16) stop removes a leftover url when the pidfile is gone" \
+     "still_present=$([ -f "$S_LO/ui-serve.token" ] && echo YES || echo no) :: $(printf '%s' "$s_lo_out" | tr '\n' '|')"
+fi
+
+# The removal must be REPORTED, never silent, and must not appear when there was nothing to
+# remove — otherwise the line is noise and cannot be trusted to mean a deletion happened.
+s_lo_out2="$(bash "$ENGINE" stop --ui-dir "$S_LO/ui" 2>&1)"
+if in_str "$s_lo_out2" "stop: no-op" && ! in_str "$s_lo_out2" "removed:"; then
+  ok "(s17) a second stop, with nothing left to remove, is a plain no-op and prints no 'removed:' line — so that line always means a file was actually deleted"
+else
+  no "(s17) stop reports no removal when there was nothing to remove" "$(printf '%s' "$s_lo_out2" | tr '\n' '|')"
+fi
+rm -rf "$S_LO" 2>/dev/null
+
+
+# =============================================================================================
+# (t) THE PAGE-SIDE TOKEN LOGIC — sessionStorage, hashchange adoption, and the 403 drop
+# ---------------------------------------------------------------------------------------------
+# WHY THIS GROUP EXISTS. The engine half of the token fix got (s1)-(s11); the page half shipped
+# with nothing, and the argument that produced (s) applies here verbatim — an assertion count
+# that does not move is a branch nobody exercised. These are STATIC assertions over floor.js,
+# which is this suite's established way of holding that file to account (see (a3)'s call-site
+# counts and (c13)'s renderLanes scoping): there is no headless browser here, and a predicate
+# scoped to ONE function body is a great deal more than nothing.
+#
+# EVERY CLAIM BELOW IS PAIRED WITH A MUTATION CONTROL, for the reason (s4) exists: a predicate
+# that cannot fail is not evidence. Each control mutates a COPY, and (t10) re-hashes the real
+# file afterwards so no mutant can survive into the bundle.
+T_TMP="$(mktmp)"
+T_JS="$T_TMP/floor.js"
+T_JS_SIG_BEFORE="$(csum "$JS")"
+
+# --- the three predicates, each scoped to the body that must carry the behaviour --------------
+t_fn_body() { awk -v pat="^  function $2" '$0 ~ pat{f=1} f{print} f&&/^  \}$/{exit}' "$1" 2>/dev/null; }
+t_hash_body() { awk "/addEventListener\('hashchange'/{f=1} f{print} f&&/^  \}\);\$/{exit}" "$1" 2>/dev/null; }
+
+# (A) a server 403 must DISCARD the token, or a stored one outlasting its run is replayed for ever
+t_drop_faults() {
+  local body bad=""
+  body="$(t_fn_body "$1" runAction)"
+  [ -n "$body" ] || { printf '%s' "[runAction not found — every claim here would be vacuous]"; return 0; }
+  in_str "$body" "res.status === 403" || bad="$bad [no 403 branch]"
+  in_str "$body" "dropToken();" || bad="$bad [a 403 does not discard the token, so a token that outlived its run is replayed on every click]"
+  printf '%s' "$bad"
+}
+# (B) a fragment appended to an ALREADY-OPEN page must be adopted — the inert-paste bug itself
+t_hash_faults() {
+  local body bad=""
+  body="$(t_hash_body "$1")"
+  [ -n "$body" ] || { printf '%s' "[no hashchange listener — pasting the printed url into the tab already showing this page is inert, which is the bug this fix exists for]"; return 0; }
+  in_str "$body" "fragmentToken()" || bad="$bad [the listener never reads the fragment]"
+  in_str "$body" "adoptToken(t)" || bad="$bad [the listener reads the fragment and never adopts it]"
+  printf '%s' "$bad"
+}
+# (C) the strip must not run until the token is held somewhere that survives the address bar
+t_order_faults() {
+  local body bad="" store_at stripe_at
+  body="$(t_fn_body "$1" adoptToken)"
+  [ -n "$body" ] || { printf '%s' "[adoptToken not found — every claim here would be vacuous]"; return 0; }
+  store_at="$(printf '%s\n' "$body" | grep -n 'storeToken(t);' | head -1 | cut -d: -f1)"
+  stripe_at="$(printf '%s\n' "$body" | grep -n 'stripFragment();' | head -1 | cut -d: -f1)"
+  [ -n "$store_at" ] || bad="$bad [adoptToken never stores the token]"
+  [ -n "$stripe_at" ] || bad="$bad [adoptToken never strips the fragment]"
+  if [ -n "$store_at" ] && [ -n "$stripe_at" ] && [ "$store_at" -ge "$stripe_at" ]; then
+    bad="$bad [the fragment is erased from the address bar BEFORE the token is stored — a failed store would then lose the only copy]"
+  fi
+  printf '%s' "$bad"
+}
+
+# --- (t1)/(t2) the 403 drop ------------------------------------------------------------------
+t_d="$(t_drop_faults "$JS")"
+[ -z "$t_d" ] \
+  && ok "(t1) a 403 from the guard DISCARDS the held token — required because sessionStorage can outlast the run that minted it, where a fragment never could, so without it the page replays a dead credential on every click" \
+  || no "(t1) a 403 discards the held token" "$t_d"
+
+cp "$JS" "$T_JS"
+# INDENTATION-AGNOSTIC on purpose. This was pinned to ten leading spaces, and scoping the drop
+# to one refusal (t13) put it inside an `if` at twelve — so the mutation matched nothing, the
+# "mutant" still contained the call, and the control failed loudly rather than passing while
+# testing an unchanged file. Second time a refactor has disarmed a (t) control this way; the
+# lesson both times is that a mutation keyed on layout tests the layout.
+sed 's/^ *dropToken();$//' "$JS" > "$T_JS"
+t_d_mut="$(t_drop_faults "$T_JS")"
+[ -n "$t_d_mut" ] \
+  && ok "(t2) MUTATION CONTROL: a 403 branch that does NOT discard the token IS flagged — (t1) is reading the branch, not merely finding the word somewhere in the file" \
+  || no "(t2) MUTATION CONTROL: removing the drop is flagged" "the mutant passed (t1)'s predicate — it cannot fail, so it is not evidence"
+
+# --- (t3)/(t4) hashchange adoption ------------------------------------------------------------
+t_h="$(t_hash_faults "$JS")"
+[ -z "$t_h" ] \
+  && ok "(t3) a hashchange listener adopts a token appended to an ALREADY-OPEN page — changing only the fragment is a same-document navigation, so without this the paste reloads nothing, the script never re-runs, and the printed url is inert" \
+  || no "(t3) a hashchange listener adopts an appended token" "$t_h"
+
+sed "s/^    adoptToken(t);$/    var ignored = t;/" "$JS" > "$T_JS"
+t_h_mut="$(t_hash_faults "$T_JS")"
+[ -n "$t_h_mut" ] \
+  && ok "(t4) MUTATION CONTROL: a listener that READS the fragment and never adopts it IS flagged — the failure mode here is a listener that exists and does nothing, which a mere presence check would pass" \
+  || no "(t4) MUTATION CONTROL: a non-adopting listener is flagged" "the mutant passed (t3)'s predicate"
+
+# --- (t5)/(t6) store-before-strip ordering ----------------------------------------------------
+t_o="$(t_order_faults "$JS")"
+[ -z "$t_o" ] \
+  && ok "(t5) adoptToken stores the token BEFORE erasing the fragment from the address bar — the strip is irreversible, so doing it first would make a failed store lose the only copy in existence" \
+  || no "(t5) adoptToken stores before it strips" "$t_o"
+
+# The line is LIFTED out of its place and re-emitted AFTER the block that strips the address
+# bar — the first attempt at this re-emitted it BEFORE that block, which is the order the file
+# already has, so the "mutant" was byte-equivalent to the original and (t6) could not fail.
+awk '
+  /^  function adoptToken/{f=1}
+  f && /^    storeToken\(t\);$/ { held=$0; next }
+  { print }
+  f && held != "" && /^    stripFragment\(\);$/ { print held; held=""; f=0 }
+' "$JS" > "$T_JS"
+t_o_mut="$(t_order_faults "$T_JS")"
+[ -n "$t_o_mut" ] \
+  && ok "(t6) MUTATION CONTROL: moving the store AFTER the strip IS flagged — an ordering claim that no case can break is a comment, not a test" \
+  || no "(t6) MUTATION CONTROL: strip-before-store is flagged" "the mutant passed (t5)'s predicate"
+
+# --- (t7) EVERY sessionStorage touch is guarded ------------------------------------------------
+# A browser in a private mode, or one set to refuse site data, THROWS on the property access
+# itself rather than returning null. An unguarded touch would take the READ path down with it —
+# the page would stop rendering, over a convenience.
+# COUNT THE ACCESS, NOT THE WORD. `sessionStorage` also appears in this file's own comments
+# explaining why the store exists, so counting the bare identifier scored 6 against 3 helpers
+# and failed a file that was correct — a test made vacuous-in-reverse by the prose beside it.
+t_ss_total="$(occ "$JS" 'window\\.sessionStorage')"
+t_ss_guarded=0
+for t_fn in storeToken storedToken dropToken; do
+  t_b="$(t_fn_body "$JS" "$t_fn")"
+  if in_str "$t_b" "sessionStorage" && in_str "$t_b" "try {" && in_str "$t_b" "catch (e)"; then
+    t_ss_guarded=$((t_ss_guarded + 1))
+  fi
+done
+if [ "$t_ss_guarded" = "3" ] && [ "$t_ss_total" = "3" ]; then
+  ok "(t7) all $t_ss_total sessionStorage touches live in the three helpers and every one is inside try/catch — an unguarded access throws outright in a private window and would take the page's READ path down with it"
+else
+  no "(t7) every sessionStorage touch is guarded" "occurrences=$t_ss_total guarded_helpers=$t_ss_guarded/3 (each helper must hold its own try/catch, and no touch may live outside them)"
+fi
+
+# --- (t8) the strip has exactly ONE call site --------------------------------------------------
+# The CALL, not the mentions: `replaceState` appears in a feature test (`&& window.history
+# .replaceState)`) and in a comment about hashchange, neither of which strips anything.
+t_rs="$(occ "$JS" 'replaceState\\(')"
+[ "$t_rs" = "1" ] \
+  && ok "(t8) replaceState has exactly one call site — the address-bar strip lives only inside adoptToken, so (t5)'s ordering claim covers every path that can erase a fragment" \
+  || no "(t8) replaceState has exactly one call site" "found $t_rs — a second strip would be a path (t5) does not govern"
+
+# --- (t9) the refusal names the recovery instead of blaming the reader -------------------------
+# The old wording said "rather than a bare address", which reads as an accusation of typing one,
+# and the commonest way to land there never involved typing anything.
+t_body_ra="$(t_fn_body "$JS" runAction)"
+if in_str "$t_body_ra" "holds no token" && in_str "$t_body_ra" "setup-ui.sh serve" && ! in_str "$t_body_ra" "rather than a bare address"; then
+  ok "(t9) the no-token refusal names where the token comes from and offers the tokenless command-line verbs, and no longer ends in 'rather than a bare address' — a bookmark, an omnibox completion and a restored session all produce that state with nothing typed"
+else
+  no "(t9) the no-token refusal names the recovery rather than blaming the reader" "$(printf '%s' "$t_body_ra" | grep -c 'holds no token') holds-no-token / serve-named=$(in_str "$t_body_ra" "setup-ui.sh serve" && echo yes || echo no) / blames=$(in_str "$t_body_ra" "rather than a bare address" && echo YES || echo no)"
+fi
+
+# --- (t11)/(t12) the strip runs even when the token is one this page ALREADY holds -------------
+# The file's stated invariant is that the fragment leaves the address bar the moment it is read.
+# The listener's early return for an unchanged token skipped it: pasting the same url a second
+# time — a habit a reader acquires precisely because the first paste used to do nothing — left
+# the token sitting in the address bar, and from there in history, which is the one place this
+# whole design exists to keep it out of.
+t_restrip_faults() {
+  local body bad=""
+  body="$(t_hash_body "$1")"
+  [ -n "$body" ] || { printf '%s' "[no hashchange listener at all]"; return 0; }
+  in_str "$body" "t === floorToken) { stripFragment(); return; }" \
+    || bad="$bad [an ALREADY-HELD token returns without stripping, so re-pasting the url leaves it in the address bar and in history]"
+  printf '%s' "$bad"
+}
+t_rs2="$(t_restrip_faults "$JS")"
+[ -z "$t_rs2" ] \
+  && ok "(t11) a hashchange carrying a token this page ALREADY holds still strips the address bar — nothing to adopt and nothing to announce, but the fragment must not be left where history will take it" \
+  || no "(t11) an already-held token still strips the address bar" "$t_rs2"
+
+sed "s/if (t === floorToken) { stripFragment(); return; }/if (t === floorToken) { return; }/" "$JS" > "$T_JS"
+t_rs2_mut="$(t_restrip_faults "$T_JS")"
+[ -n "$t_rs2_mut" ] \
+  && ok "(t12) MUTATION CONTROL: an early return that skips the strip IS flagged — the shape this listener shipped in, and one every other (t) case passes happily" \
+  || no "(t12) MUTATION CONTROL: a strip-skipping early return is flagged" "the mutant passed (t11)'s predicate"
+
+# --- (t13)/(t14)/(t15) THE DROP IS SCOPED TO THE REFUSAL THAT IS ABOUT THE TOKEN --------------
+# The guard answers 403 for THREE reasons and names which in the body: the token, the `Origin`,
+# or the `Host`. Discarding on all three threw away a token that was very likely fine — an
+# extension or a proxy rewriting a header is not a stale credential — and then told the reader a
+# specific, wrong story about a previous run, sending them to re-paste a url that reproduces the
+# identical refusal. (t1) asserts only that SOME 403 path drops; these say which.
+t_scope_faults() {
+  local body bad=""
+  body="$(t_fn_body "$1" runAction)"
+  [ -n "$body" ] || { printf '%s' "[runAction not found]"; return 0; }
+  in_str "$body" "if (reason === TOKEN_REFUSAL) {" \
+    || bad="$bad [the drop is not conditioned on the refusal being about the token, so an Origin/Host refusal discards a token that is probably valid]"
+  printf '%s' "$bad"
+}
+t_sc="$(t_scope_faults "$JS")"
+[ -z "$t_sc" ] \
+  && ok "(t13) the token is discarded ONLY for the refusal that names the token — an Origin or Host refusal keeps it, because neither says anything about the credential and re-pasting the url would reproduce the same failure" \
+  || no "(t13) the drop is scoped to the token refusal" "$t_sc"
+
+sed "s/if (reason === TOKEN_REFUSAL) {/if (true) {/" "$JS" > "$T_JS"
+t_sc_mut="$(t_scope_faults "$T_JS")"
+[ -n "$t_sc_mut" ] \
+  && ok "(t14) MUTATION CONTROL: an unconditional drop on any 403 IS flagged — the shape this branch shipped in, and one (t1)/(t2) pass happily since a drop is still present" \
+  || no "(t14) MUTATION CONTROL: an unconditional 403 drop is flagged" "the mutant passed (t13)'s predicate"
+
+# (t15) CROSS-FILE PARITY. The client compares against a literal; the server owns the spelling.
+# Nothing else in this suite would notice them drifting apart, and the drift is silent in the
+# worst way — the comparison simply stops matching, so every 403 keeps the token and the stale
+# one is replayed for ever, which is (t1)'s failure wearing (t13)'s fix.
+t_js_reason="$(awk -F"'" '/var TOKEN_REFUSAL = /{print $2; exit}' "$JS")"
+t_sh_reason="$(awk -F'"' '/"token-missing-or-wrong": "no valid per-run token/{print $2; exit}' "$ENGINE")"
+if [ -n "$t_js_reason" ] && [ "$t_js_reason" = "$t_sh_reason" ]; then
+  ok "(t15) the page's TOKEN_REFUSAL literal ('$t_js_reason') is byte-identical to the reason the ENGINE emits — a rename on either side would silently stop the comparison matching, and every 403 would then keep a token the server has already rejected"
+else
+  no "(t15) the client's token-refusal literal matches the engine's" "page='$t_js_reason' engine='$t_sh_reason'"
+fi
+
+# --- (t10) the real page is untouched by the controls above ------------------------------------
+[ "$(csum "$JS")" = "$T_JS_SIG_BEFORE" ] \
+  && ok "(t10) every (t) mutation control ran against a COPY — floor.js is byte-identical (sha256) and no mutant was left in the bundle" \
+  || no "(t10) floor.js is byte-identical after the (t) controls" "sha256 changed"
+rm -rf "$T_TMP" 2>/dev/null
