@@ -470,7 +470,12 @@ LOG_FILE="$LOG_DIR/${SESSION_ID}.jsonl"
 # than both. So a lock that cannot be taken within the bounded wait is abandoned
 # and the append proceeds unguarded, and a lock older than a minute — far longer
 # than a healthy holder of this section can need — is broken rather than waited on.
-_lock="$LOG_DIR/.token-ledger.lock"
+# PER LOG FILE, not per logs DIRECTORY. The duplication this serialises is two
+# firings of ONE completion, which by construction target the same file; a
+# directory-wide lock would additionally serialise unrelated sessions against each
+# other for no correctness gain. The name cannot be mistaken for a log: every
+# consumer globs `logs/*.jsonl` on the exact extension, and this ends `.lock`.
+_lock="${LOG_FILE}.lock"
 _have_lock=""
 _tries=0
 while [ "$_tries" -lt 20 ]; do
@@ -490,7 +495,27 @@ while [ "$_tries" -lt 20 ]; do
   _tries=$((_tries + 1))
   sleep 0.05 2>/dev/null || true
 done
-[ -n "$_have_lock" ] && trap 'rmdir "$_lock" 2>/dev/null || true' EXIT
+# THE CLEANUP IS CHAINED ONTO THE ALWAYS-EXIT-0 TRAP, NEVER SUBSTITUTED FOR IT.
+# `trap` REPLACES the handler for a signal rather than composing with it, so a bare
+# cleanup trap here silently discards the `trap 'exit 0' EXIT` installed at the top
+# of this file — the mechanism that makes this script's stated invariant true.
+#
+# WHAT THAT COSTS, measured rather than argued, because the intuitive answer is
+# wrong in both directions. A SIGTERM is NOT the failure mode: bash re-raises the
+# signal after running the EXIT trap, so an interrupted run exits 143 with the
+# original trap, with a cleanup-only trap, and with no trap at all — all three
+# measured identical. The failure mode is the ORDINARY one this file's header names
+# as the reason the trap exists at all: `set -u` is on and `set -e` is off, so an
+# unbound variable anywhere below is a fatal non-zero exit. Measured on that path:
+# original trap 0, cleanup-only trap 1, chained trap 0. The `|| true` inside the
+# cleanup is not a substitute — it makes the trap BODY succeed, and the shell then
+# exits with the fatal status regardless.
+#
+# In production a non-zero here is currently invisible, because all three hooks.json
+# registrations append `|| true`. That is the caller's accident, not this script's
+# contract, and a contract that holds only because of an external wrapper is exactly
+# the fail-safe inversion CLAUDE.md's Failure-Mode Invariants section forbids.
+[ -n "$_have_lock" ] && trap 'rmdir "$_lock" 2>/dev/null || true; exit 0' EXIT
 
 # Adjacent byte-identity, unchanged in meaning — only now the read and the append
 # cannot be interleaved by a sibling firing. Byte-identity includes ts, agent_id

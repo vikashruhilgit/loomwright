@@ -967,6 +967,14 @@ lock older than a minute is broken rather than waited on — losing an advisory 
 line, or blocking a hook, are both worse than writing a duplicate one. `-mmin +1`
 in whole minutes, never a fraction: BSD find rejects `+0.16` and GNU find accepts
 it, which is how a guard stops firing on one platform with nobody noticing.
+The cleanup is **chained onto** the always-exit-0 trap (`…; exit 0`) rather than
+substituted for it, because `trap` replaces a handler instead of composing with it.
+The path that regresses is **not** a signal — bash re-raises after running the EXIT
+trap, so an interrupted run exits 143 with any trap or none, measured — it is the
+ordinary `set -u` fatal this file's own trap exists to absorb: original trap 0,
+cleanup-only 1, chained 0. Case 22 asserts it with a control that drops only the
+chain. The lock is scoped **per log file**, since the duplication it serialises is
+two firings of one completion.
 `test-token-ledger.sh` case 21 fires two invocations **concurrently** with the
 interleaving window injected rather than raced for, and its control neuters the lock
 alone and requires the duplicate back — case 19, which fires sequentially, passes

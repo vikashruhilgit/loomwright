@@ -1255,6 +1255,64 @@ else
 fi
 
 
+echo "== 22. the lock's cleanup trap must not displace the always-exit-0 trap =="
+# `trap` REPLACES a handler rather than composing with it, so the cleanup trap the
+# lock installs can silently discard the `trap 'exit 0' EXIT` at the top of the SUT
+# — the one mechanism that makes its "ALWAYS exits 0" invariant true. Raised by the
+# CI reviewer on PR #196.
+#
+# THE REVIEWER'S STATED FAILURE MODE IS NOT THE REAL ONE, and this case asserts the
+# real one. A signal is NOT it: bash re-raises after running the EXIT trap, so an
+# interrupted run exits 143 with the original trap, with a cleanup-only trap, and
+# with no trap at all — measured identical, so nothing regressed there and nothing
+# here would detect a change. What DOES regress is the ordinary path the header
+# names: `set -u` on, `set -e` off, so any unbound variable below is a fatal
+# non-zero. Measured: original trap 0, cleanup-only 1, chained 0.
+#
+# So the probe is an unbound variable spliced in AFTER the trap is installed, which
+# is the shape of every real `set -u` slip this trap exists to absorb.
+TRAP_DIR="$SANDBOX/trap-invariant"
+mkdir -p "$TRAP_DIR"
+TRAP_ANCHOR='[ -n "$_have_lock" ] && trap '"'"'rmdir "$_lock" 2>/dev/null || true; exit 0'"'"' EXIT'
+python3 - "$SUT" "$TRAP_DIR" "$TRAP_ANCHOR" <<'PYEOF' 2>/dev/null
+import io, sys
+src, out, anchor = sys.argv[1], sys.argv[2], sys.argv[3]
+s = io.open(src, encoding='utf-8').read()
+if s.count(anchor) == 1:
+    # Arm A: the shipped chained trap, plus a fatal set -u slip after it.
+    io.open(out + '/fatal-chained.sh', 'w').write(
+        s.replace(anchor, anchor + '\necho "$NOPE_UNBOUND_PROBE"', 1))
+    # Arm B: identical, except the trap no longer chains `exit 0`.
+    unchained = anchor.replace('|| true; exit 0', '|| true')
+    io.open(out + '/fatal-unchained.sh', 'w').write(
+        s.replace(anchor, unchained + '\necho "$NOPE_UNBOUND_PROBE"', 1))
+PYEOF
+
+TRAP_STAGED=1
+[ -s "$TRAP_DIR/fatal-chained.sh" ] && ! cmp -s "$TRAP_DIR/fatal-chained.sh" "$SUT" || TRAP_STAGED=0
+[ -s "$TRAP_DIR/fatal-unchained.sh" ] && ! cmp -s "$TRAP_DIR/fatal-unchained.sh" "$TRAP_DIR/fatal-chained.sh" || TRAP_STAGED=0
+if [ "$TRAP_STAGED" != "1" ]; then
+  no "case22 could not stage the trap variants — the invariant case proves nothing"
+else
+  trap_rc() { # trap_rc <script> <session-id> -> exit status
+    local script="$1" sid="$2" tp payload
+    tp="$SANDBOX/trap-${sid}.jsonl"; printf 'TTTTTTTT' > "$tp"
+    payload="$SANDBOX/trap-${sid}.json"
+    jq -n --arg tp "$tp" --arg sid "$sid" '{session_id: $sid, transcript_path: $tp}' > "$payload"
+    ( cd "$SANDBOX" && bash "$script" < "$payload" >/dev/null 2>&1 )
+    printf '%s' "$?"
+  }
+  assert_eq "case22a a fatal set -u slip AFTER the lock is taken still exits 0 — the cleanup is chained onto the always-exit-0 trap, not substituted for it" \
+    "0" "$(trap_rc "$TRAP_DIR/fatal-chained.sh" "fixture-trap-chained-001")"
+  TRAP_B_RC="$(trap_rc "$TRAP_DIR/fatal-unchained.sh" "fixture-trap-unchained-001")"
+  if [ "$TRAP_B_RC" = "0" ]; then
+    no "case22b MUTATION CONTROL: an unchained cleanup trap must break the invariant, but the run still exited 0 — case22a proves nothing"
+  else
+    ok "case22b MUTATION CONTROL: dropping the chained 'exit 0' and changing nothing else exits $TRAP_B_RC — the invariant rests on the chain, not on the '|| true' inside the cleanup"
+  fi
+fi
+
+
 echo ""
 echo "RESULT  pass=$PASS_COUNT  fail=$FAIL_COUNT"
 if [ "$FAIL_COUNT" -eq 0 ]; then
