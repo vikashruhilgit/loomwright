@@ -80,7 +80,7 @@
 
   <section aria-labelledby="stages-h">
     <h2 id="stages-h">Pipeline</h2>
-    <p class="caption">Where this run stands in the five-step pipeline, counted from the projection. A cell reading &mdash; means the projector could not count that surface, never that the count is zero. Freshness is the age of the <code>state.md</code> write, printed in the note under the row.</p>
+    <p class="caption">Two project-wide counts either side of one run's recorded phase &mdash; Queue and Shipped count files in <code>jobs/pending</code> and <code>jobs/done</code> and belong to no session, while Plan/Execute/Review mark the phase in <code>state.md</code>, a single repo-global file naming one owning session. Counted from the projection. A cell reading &mdash; means the projector could not count that surface, never that the count is zero. Freshness is the age of the <code>state.md</code> write, printed in the note under the row.</p>
     <ol class="stages" id="stages">
       <li class="stage" data-stage="queue"><span class="stage-name">Queue</span><span class="stage-val" id="st-queue">&mdash;</span></li>
       <li class="stage" data-stage="plan"><span class="stage-name">Plan</span><span class="stage-val" id="st-plan">&mdash;</span></li>
@@ -93,8 +93,16 @@
 
   <section aria-labelledby="lanes-h">
     <h2 id="lanes-h">Lanes <span class="sub" id="lane-count"></span></h2>
-    <p class="caption">One row per agent that appears in the newest recorded session, newest event first. The number is recorded log lines for that agent, not turns and not progress. Freshness is each lane&rsquo;s own last recorded event, measured against the moment this document was generated.</p>
+    <p class="caption">One row per agent that appears in the session shown above, newest event first &mdash; that session is chosen by recorded plugin work, not by being the most recent. The number is recorded log lines for that agent, not turns and not progress. Freshness is each lane&rsquo;s own last recorded event, measured against the moment this document was generated.</p>
     <ul class="lanes" id="lanes"></ul>
+    <!--
+      WHICH SESSION THIS IS, stated because the page previously did not say. A project's log
+      holds many sessions and only one is shown; when that choice landed on the operator's own
+      Claude Code chat rather than on their plugin run, nothing on the page revealed it and the
+      run looked broken. The projector now prefers a session that recorded plugin work, and this
+      line reports both the session shown and what was set aside to show it.
+    -->
+    <p class="sub" id="session-note"></p>
     <p class="note-permanent" id="liveness-note">liveness unavailable — a lane shows recorded events, never a running process</p>
   </section>
 
