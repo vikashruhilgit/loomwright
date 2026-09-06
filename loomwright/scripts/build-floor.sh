@@ -355,6 +355,31 @@ else
   # and `last_ts` span only the lines that carried one, and are omitted when none did.
   # `agent_type`, `agent_scope` and `branch` are additive fields present on only some events,
   # so they are taken from ANY line of that agent and omitted when no line carried them.
+  # WHICH SESSION IS SHOWN IS NOW A CHOICE, and it is made on recorded evidence rather than on
+  # recency alone. "Newest by ts" is only the right answer when one thing is running: a person
+  # working directly in Claude Code emits the same hook events as a Supervisor run, and — being
+  # the thing they are actively typing into — is almost always the newest. So the view kept
+  # landing on the operator's own chat while their `/automate` run sat unseen one row down in a
+  # list of 183 sessions.
+  #
+  # A session is PLUGIN WORK when it recorded an agent whose `agent_type` starts `loomwright:` —
+  # WITH the colon, matching the rule as documented rather than a prefix one character looser. The
+  # value only ever arrives from a Task spawn's `subagent_type`, so nothing observed today needs
+  # the tighter form; a filter that is broader than the sentence describing it is how the sentence
+  # stops being true without anything going red —
+  # or an `autonomous_session_start`. Both are positive identifications from lines the emitters
+  # already write — never an inference from what is absent. Measured on this repo when the rule
+  # was written: of six recent sessions, exactly one qualified.
+  #
+  # THIS ONLY BECAME POSSIBLE WITH THE IDENTITY HOOK. Before `PostToolUse[Task]` recorded a type
+  # per spawned agent, `agent_type` was absent on 976 of 1,040 agent ids, so there was nothing to
+  # filter on. Two consequences follow and both are reported rather than hidden: a session
+  # recorded BEFORE that hook cannot be classified and will not qualify, and a plugin run that
+  # has not spawned anything yet has recorded nothing to qualify WITH. `selection` says which
+  # rule produced the row, and it FAILS OPEN — with no qualifying session the newest recorded one
+  # is shown and `selection` reads `newest_recorded`, because showing nothing would be worse than
+  # showing the operator's own session with a label saying so.
+  #
   # `agent_scope` is what lets the reader tell the two REASONS for a missing `agent_type`
   # apart: `main` says the emitter positively identified the thread of the session itself
   # (its payload named the session transcript, not a `subagents/agent-<id>.jsonl` one), so
@@ -372,13 +397,43 @@ else
   # identified, with nothing else recorded for it.
   sess_current="$(printf '%s\n' "$classified" | awk -F'\t' '/^id\t/{print $3}' | jq -s -c '
     map(select(type == "object")) as $all
-    | ($all | map(select(has("ts"))) | sort_by(.ts | tostring) | last) as $newest
+    | ($all
+       | map(select(((.agent_type // "") | startswith("loomwright:"))
+                    or ((.event // "") == "autonomous_session_start"))
+             | .sid)
+       | unique) as $plugin_sids
+    | ($all | map(select(has("ts")))
+       | map(select(.sid as $s | ($plugin_sids | index($s)) != null))
+       | sort_by(.ts | tostring) | last) as $newest_plugin
+    | ($all | map(select(has("ts"))) | sort_by(.ts | tostring) | last) as $newest_any
+    | (if $newest_plugin == null then $newest_any else $newest_plugin end) as $newest
+    | (if $newest_plugin == null then "newest_recorded" else "plugin_run" end) as $selection
+    # COUNTED BY EXCLUSION, NEVER BY SUBTRACTION. Subtracting |plugin_sids| from the session
+    # count is right only on the `plugin_run` branch, where the shown session is itself a member
+    # of plugin_sids and so drops out. On the FAIL-OPEN branch the shown session is by
+    # construction NOT in plugin_sids — that is why the fallback fired — so it stayed in the
+    # subtrahend and counted ITSELF as one of the "other sessions set aside": a single-session
+    # log rendered "1 other session(s) … are not shown" with no other session in existence. And
+    # that branch is the common case on any log recorded before the identity hook, not an edge.
+    # Enumerate what is actually set aside instead: ts-bearing sessions that recorded no plugin
+    # work AND are not the one on screen.
+    # The sid is BOUND before either test. `($plugin_sids | index(.))` rebinds `.` to the array
+    # inside those parens, so the naive spelling asks whether the list contains ITSELF — which is
+    # always null, making every session look set-aside-able and the count collapse to 0.
+    | (($all | map(select(has("ts"))) | map(.sid) | unique)
+       | map(select(. as $s
+                    | (($plugin_sids | index($s)) == null)
+                      and ($newest == null or $s != $newest.sid)))
+       | length) as $skipped
     | if $newest == null then null
       else
         ($newest.sid) as $s
         | ($all | map(select(.sid == $s))) as $cur
         | ($cur | map(select(has("agent_id")))) as $ev
-        | {cc_session_id: $s, last_event_ts: $newest.ts}
+        | {cc_session_id: $s, last_event_ts: $newest.ts, selection: $selection}
+          + (if $skipped > 0 then {sessions_not_plugin_work: $skipped} else {} end)
+          + (($cur | map(select(has("branch")) | .branch) | last) as $br
+             | if $br == null then {} else {branch: $br} end)
           + (if ($ev | length) == 0 then {}
              else {agents: ($ev | group_by(.agent_id) | map(
                      (map(select(has("ts")) | .ts)) as $tss

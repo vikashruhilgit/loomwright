@@ -2433,6 +2433,78 @@ done
   && ok "(j50) the rules section names the authoring path (/rules add, add-rule.sh, --confirm) and says that omitting --applies-to is what records a rule repo-wide" \
   || no "(j50) the rules section does not say how a rule gets into the store" "missing:$j50_bad"
 
+# --- (j51) the view says WHICH session it shows, and stops repeating a stage's own label ------
+# Four page-side claims from the same change, each by its own literal. They exist because the
+# page previously answered none of these questions and a reader could not tell a wrong session
+# from a broken run: (1) the session shown is named and the choice explained; (2) a lane too old
+# to be current is dropped WITH a count, never silently; (3) `EXECUTE` under a cell headed
+# `Execute` read as "Execute EXECUTE", so a coinciding phase renders as a marker while a
+# differing one (FINALIZE under Review) keeps the word; (4) a spawned agent with no events is a
+# STATE, not a gap, and says so rather than reading "0 events · last unknown".
+j51_bad=""
+has_lit "$JS" "function renderSessionNote" || j51_bad="$j51_bad [no renderSessionNote]"
+has_lit "$JS" "chosen because it recorded plugin work" || j51_bad="$j51_bad [the plugin-work choice is not explained on the page]"
+has_lit "$JS" "newest_recorded" || j51_bad="$j51_bad [the fail-open selection is not surfaced]"
+has_lit "$JS" "sessions_not_plugin_work" || j51_bad="$j51_bad [the set-aside count is not rendered]"
+has_lit "$JS" "var LANE_SEC = qpInt('lane', 1800, 1);" || j51_bad="$j51_bad [no lane recency window]"
+has_lit "$JS" "function laneSplit" || j51_bad="$j51_bad [lanes are not split into listed vs dropped]"
+has_lit "$JS" "not listed" || j51_bad="$j51_bad [dropped lanes are not counted on the page]"
+has_lit "$JS" "spawned, no events recorded yet" || j51_bad="$j51_bad [a 0-event lane still reads as a gap]"
+has_lit "$JS" "toUpperCase() === mids[i].toUpperCase()" || j51_bad="$j51_bad [the stage cell still repeats its own label]"
+has_lit "$JS" "phase recorded by session " || j51_bad="$j51_bad [the phase is shown without naming the session that owns state.md]"
+has_lit "$HTML" 'id="session-note"' || j51_bad="$j51_bad [no session-note element]"
+has_lit "$HTML" "belong to no session" || j51_bad="$j51_bad [the pipeline caption does not separate project-wide counts from the one run's phase]"
+[ -z "$j51_bad" ] \
+  && ok "(j51) the page names the session it shows and why, counts the lanes it dropped for age, marks a coinciding phase instead of repeating the stage label, names the phase's owning session, and calls a 0-event lane spawned rather than empty" \
+  || no "(j51) the session/lane/pipeline honesty surfaces are incomplete" "$j51_bad"
+
+# MUTATION CONTROL: put the phase word back in the cell unconditionally and (j51) must redden.
+MUT_J51="$TMPROOT/mut-stagelabel.js"
+# Mutated on an ASCII anchor: the marker character is multibyte and a sed pattern carrying it
+# silently matches nothing on some platforms — which would leave the mutant byte-identical and
+# the control reporting "inconclusive" rather than failing loudly.
+sed 's|String(phase).toUpperCase() === mids\[i\].toUpperCase()|false|' "$JS" > "$MUT_J51" 2>/dev/null
+if mutant_ok "$JS" "$MUT_J51"; then
+  has_lit "$MUT_J51" "toUpperCase() === mids[i].toUpperCase()" \
+    && no "(j52) MUTATION CONTROL: restoring the label-repeating cell IS detected by (j51)" "the literal survived the mutation, so (j51) proves nothing" \
+    || ok "(j52) MUTATION CONTROL: restoring the label-repeating cell IS detected by (j51) — the stutter cannot come back unnoticed"
+fi
+
+# --- (j53) every query parameter the page reads is documented, counted not eyeballed ---------
+# Found in review, twice over: this PR added a third query parameter (`?lane=`) while FLOOR_UI.md's
+# table still listed two under a heading that said "both". The class is the one this repo names —
+# a restated copy drifting from its authority — and NOTHING mechanical could see it:
+# check-doc-currency.sh verifies version and count claims, not prose or table completeness, so CI
+# stayed green with the page reading a parameter no reader could look up.
+#
+# Tie the two together by COUNT rather than by asserting the current names, so the gate keeps
+# working for the fourth parameter nobody has written yet. `qpInt('` matches the call sites only,
+# never the function's own definition.
+j53_calls="$(grep -c "qpInt('" "$JS" 2>/dev/null || true)"
+j53_doc="$script_dir/../docs/FLOOR_UI.md"
+j53_rows="$(grep -cE '^\| `\?[a-z]+=' "$j53_doc" 2>/dev/null || true)"
+case "$j53_calls" in ''|*[!0-9]*) j53_calls=0 ;; esac
+case "$j53_rows"  in ''|*[!0-9]*) j53_rows=0 ;; esac
+if [ "$j53_calls" -eq 0 ]; then
+  no "(j53) no qpInt( call site found in floor.js — the parameter gate has no subject and is NOT passing"
+elif [ "$j53_calls" = "$j53_rows" ]; then
+  ok "(j53) floor.js reads $j53_calls query parameters and FLOOR_UI.md documents $j53_rows — a parameter the page honours cannot ship undocumented"
+else
+  no "(j53) floor.js reads $j53_calls query parameter(s) but FLOOR_UI.md's table documents $j53_rows" "add the missing row (or drop the stale one) — this is the drift that shipped ?lane= undocumented"
+fi
+
+# MUTATION CONTROL: a fourth parameter with no doc row must be caught, or (j53) is counting two
+# numbers that happen to agree rather than measuring the relationship between them.
+MUT_J53="$TMPROOT/mut-qp.js"
+{ cat "$JS"; printf "\n  var UNDOC_SEC = qpInt('undocumented', 1, 1);\n"; } > "$MUT_J53" 2>/dev/null
+if mutant_ok "$JS" "$MUT_J53"; then
+  m_j53="$(grep -c "qpInt('" "$MUT_J53" 2>/dev/null || true)"
+  case "$m_j53" in ''|*[!0-9]*) m_j53=0 ;; esac
+  [ "$m_j53" -gt "$j53_rows" ] \
+    && ok "(j54) MUTATION CONTROL: a fourth undocumented parameter pushes the call count to $m_j53 against $j53_rows documented rows — (j53) measures the relationship, not a coincidence" \
+    || no "(j54) MUTATION CONTROL: the planted parameter did not break the equality (calls=$m_j53 rows=$j53_rows) — (j53) proves nothing"
+fi
+
 # --- (j42) the three curation-fault RENDER branches, driven by a UI fixture -------------------
 # (y)/(y2) in test-build-floor.sh pinned these three on the PROJECTOR side. The RENDER side was
 # still uncovered: floor.js has a branch for each of files_not_an_array, self_referential and
