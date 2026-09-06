@@ -449,6 +449,78 @@ LOG_FILE="$LOG_DIR/${SESSION_ID}.jsonl"
 # direction is one-way and benign: one ADVISORY ledger line is silently lost;
 # nothing reads it for state or gating. Reading only the last line keeps this
 # O(1) on a large log, and every failure absorbs to the normal append path.
+# THE GUARD ABOVE WAS CHECK-THEN-ACT, AND THAT IS WHY IT DID NOT WORK. Measured in
+# the field on a log written by a build that HAD it: an /automate run produced 13
+# subagent completions, 26 token_ledger lines, and 13 adjacent byte-identical pairs
+# — the guard caught 0 of 13. On a lightly loaded session the same build produced 9
+# completions and 11 lines, catching most. That spread is the signature of a RACE,
+# not of a rule that is simply wrong: Claude Code runs the hooks matched to one
+# event CONCURRENTLY, so two firings both `tail -1` before either has appended,
+# both see no match, and both append. Under load they always overlap; when idle
+# they sometimes serialise by luck. A read-then-write guard cannot close that, so
+# the read and the write are made ONE critical section instead.
+#
+# `mkdir` is the primitive, for the reason the ui registry lock already documents:
+# `flock` is not on stock macOS, and `mkdir` is atomic on every POSIX filesystem —
+# exactly one of N racing callers creates it and the rest get EEXIST.
+#
+# EVERY FAILURE DIRECTION IS TOWARD THE APPEND, never toward silence or a hang.
+# This is an ALWAYS-EXIT-0 advisory emitter (see the header): losing a ledger line
+# is a worse outcome than writing a duplicate one, and blocking a hook is worse
+# than both. So a lock that cannot be taken within the bounded wait is abandoned
+# and the append proceeds unguarded, and a lock older than a minute — far longer
+# than a healthy holder of this section can need — is broken rather than waited on.
+# PER LOG FILE, not per logs DIRECTORY. The duplication this serialises is two
+# firings of ONE completion, which by construction target the same file; a
+# directory-wide lock would additionally serialise unrelated sessions against each
+# other for no correctness gain. The name cannot be mistaken for a log: every
+# consumer globs `logs/*.jsonl` on the exact extension, and this ends `.lock`.
+_lock="${LOG_FILE}.lock"
+_have_lock=""
+_tries=0
+while [ "$_tries" -lt 20 ]; do
+  if mkdir "$_lock" 2>/dev/null; then
+    _have_lock=1
+    break
+  fi
+  # A holder that died leaves the directory behind. WHOLE MINUTES, not a fraction:
+  # BSD find (macOS) and GNU find agree on `-mmin +1` and do not agree on `+0.16`,
+  # and a portability trap inside a fail-safe emitter is how a guard stops firing on
+  # one platform without anyone noticing. A critical section this short is never a
+  # live holder after a minute, and a stranded lock costs at most that minute of
+  # unguarded appends — today's behaviour, not worse.
+  if [ -n "$(find "$_lock" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
+    rmdir "$_lock" 2>/dev/null || true
+  fi
+  _tries=$((_tries + 1))
+  sleep 0.05 2>/dev/null || true
+done
+# THE CLEANUP IS CHAINED ONTO THE ALWAYS-EXIT-0 TRAP, NEVER SUBSTITUTED FOR IT.
+# `trap` REPLACES the handler for a signal rather than composing with it, so a bare
+# cleanup trap here silently discards the `trap 'exit 0' EXIT` installed at the top
+# of this file — the mechanism that makes this script's stated invariant true.
+#
+# WHAT THAT COSTS, measured rather than argued, because the intuitive answer is
+# wrong in both directions. A SIGTERM is NOT the failure mode: bash re-raises the
+# signal after running the EXIT trap, so an interrupted run exits 143 with the
+# original trap, with a cleanup-only trap, and with no trap at all — all three
+# measured identical. The failure mode is the ORDINARY one this file's header names
+# as the reason the trap exists at all: `set -u` is on and `set -e` is off, so an
+# unbound variable anywhere below is a fatal non-zero exit. Measured on that path:
+# original trap 0, cleanup-only trap 1, chained trap 0. The `|| true` inside the
+# cleanup is not a substitute — it makes the trap BODY succeed, and the shell then
+# exits with the fatal status regardless.
+#
+# In production a non-zero here is currently invisible, because all three hooks.json
+# registrations append `|| true`. That is the caller's accident, not this script's
+# contract, and a contract that holds only because of an external wrapper is exactly
+# the fail-safe inversion CLAUDE.md's Failure-Mode Invariants section forbids.
+[ -n "$_have_lock" ] && trap 'rmdir "$_lock" 2>/dev/null || true; exit 0' EXIT
+
+# Adjacent byte-identity, unchanged in meaning — only now the read and the append
+# cannot be interleaved by a sibling firing. Byte-identity includes ts, agent_id
+# and the transcript byte count together; the collision case and its one-way,
+# benign failure direction are as described above.
 if [ -f "$LOG_FILE" ]; then
   _last_line="$(tail -1 "$LOG_FILE" 2>/dev/null || true)"
   if [ -n "$_last_line" ] && [ "$_last_line" = "$LINE" ]; then

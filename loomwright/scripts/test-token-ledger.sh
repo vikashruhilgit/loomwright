@@ -1190,6 +1190,129 @@ assert_eq "case20f and the line carries no agent_id to have gated it" "false" \
   "$(printf '%s' "$LINE20F" | jq -r 'has("agent_id")')"
 
 
+echo "== 21. the duplicate guard under CONCURRENT firings, which is how it actually fires =="
+# Case 19 fires the guard SEQUENTIALLY and passes against a check-then-act guard,
+# which is exactly why the field defect was invisible to this suite for a release.
+# Claude Code runs the hooks matched to one event CONCURRENTLY, so two firings both
+# read the log before either appended to it. Measured on a real /automate log
+# written by a build that HAD the guard: 13 completions, 26 token_ledger lines, 13
+# adjacent byte-identical pairs, 0 of 13 suppressed — while an idle session on the
+# same build caught most. That spread is a race, and no sequential test can see it.
+#
+# THE WINDOW IS INJECTED RATHER THAN RACED FOR, so this case is deterministic rather
+# than flaky: a `sleep` is spliced between the guard's read and its append. The SAME
+# splice is applied to BOTH arms and the only difference between them is whether the
+# lock is taken, so a difference in the line count is attributable to the lock alone.
+#
+# THE LOG IS SEEDED FIRST, and that is load-bearing rather than tidiness. The guard
+# body sits inside `if [ -f "$LOG_FILE" ]`, so on a log that does not exist yet the
+# FIRST firing skips the whole block — window included — and appends immediately,
+# after which the second firing reads a file that already holds the line and
+# suppresses itself. The race then cannot occur and both arms return 1, which is a
+# green control that proves nothing. Measured: with no seed both arms returned 1;
+# with the seed, 2 and 3. A real log always has prior lines, so seeding is also the
+# honest shape.
+CONC_DIR="$SANDBOX/concurrency"
+mkdir -p "$CONC_DIR"
+
+# `#` as the delimiter, never `|`: the matched line ends in `|| true` and a `|`
+# delimiter makes that a syntax error the surrounding `2>/dev/null` would hide.
+sed 's#^  _last_line="$(tail -1 "$LOG_FILE" 2>/dev/null || true)"#&; sleep 0.3#' \
+  "$SUT" > "$CONC_DIR/widened-locked.sh" 2>/dev/null
+sed 's#^  if mkdir "$_lock" 2>/dev/null; then#  if false; then#' \
+  "$CONC_DIR/widened-locked.sh" > "$CONC_DIR/widened-unlocked.sh" 2>/dev/null
+
+# ANTI-VACUITY, and each variant is compared against ITS OWN INPUT rather than
+# against $SUT: widened-unlocked differs from $SUT by the splice alone, so a
+# comparison against $SUT would pass with the lock still perfectly intact — the
+# control would then be running the shipped code twice under two names.
+CONC_STAGED=1
+[ -s "$CONC_DIR/widened-locked.sh" ] && ! cmp -s "$CONC_DIR/widened-locked.sh" "$SUT" || CONC_STAGED=0
+[ -s "$CONC_DIR/widened-unlocked.sh" ] && ! cmp -s "$CONC_DIR/widened-unlocked.sh" "$CONC_DIR/widened-locked.sh" || CONC_STAGED=0
+for _v in widened-locked widened-unlocked; do
+  bash -n "$CONC_DIR/$_v.sh" 2>/dev/null || CONC_STAGED=0
+done
+if [ "$CONC_STAGED" != "1" ]; then
+  no "case21 could not stage the widened variants — the concurrency case proves nothing"
+else
+  conc_run() { # conc_run <script> <session-id> -> line count INCLUDING the seed line
+    local script="$1" sid="$2" tp payload
+    tp="$SANDBOX/conc-${sid}.jsonl"; printf 'CCCCCCCC' > "$tp"
+    payload="$SANDBOX/conc-${sid}.json"
+    jq -n --arg tp "$tp" --arg sid "$sid" '{session_id: $sid, transcript_path: $tp}' > "$payload"
+    mkdir -p "$SANDBOX/.supervisor/logs"
+    printf '%s\n' '{"event":"seed-so-the-guard-block-is-reached"}' > "$SANDBOX/.supervisor/logs/${sid}.jsonl"
+    wait_for_second_tick
+    ( cd "$SANDBOX" && bash "$script" < "$payload" >/dev/null 2>&1 ) &
+    ( cd "$SANDBOX" && bash "$script" < "$payload" >/dev/null 2>&1 ) &
+    wait
+    wc -l < "$SANDBOX/.supervisor/logs/${sid}.jsonl" 2>/dev/null | tr -d ' '
+  }
+  CONC_A="$(conc_run "$CONC_DIR/widened-locked.sh" "fixture-conc-locked-001")"
+  CONC_B="$(conc_run "$CONC_DIR/widened-unlocked.sh" "fixture-conc-unlocked-001")"
+  assert_eq "case21a two CONCURRENT firings of one completion append exactly ONE line (seed + 1 = 2) — the read and the append are one critical section" "2" "$CONC_A"
+  assert_eq "case21b MUTATION CONTROL: with the lock neutered and NOTHING else changed, the same two firings append TWO (seed + 2 = 3) — the check-then-act guard this replaced, failing the way it failed in the field" "3" "$CONC_B"
+fi
+
+
+echo "== 22. the lock's cleanup trap must not displace the always-exit-0 trap =="
+# `trap` REPLACES a handler rather than composing with it, so the cleanup trap the
+# lock installs can silently discard the `trap 'exit 0' EXIT` at the top of the SUT
+# — the one mechanism that makes its "ALWAYS exits 0" invariant true. Raised by the
+# CI reviewer on PR #196.
+#
+# THE REVIEWER'S STATED FAILURE MODE IS NOT THE REAL ONE, and this case asserts the
+# real one. A signal is NOT it: bash re-raises after running the EXIT trap, so an
+# interrupted run exits 143 with the original trap, with a cleanup-only trap, and
+# with no trap at all — measured identical, so nothing regressed there and nothing
+# here would detect a change. What DOES regress is the ordinary path the header
+# names: `set -u` on, `set -e` off, so any unbound variable below is a fatal
+# non-zero. Measured: original trap 0, cleanup-only 1, chained 0.
+#
+# So the probe is an unbound variable spliced in AFTER the trap is installed, which
+# is the shape of every real `set -u` slip this trap exists to absorb.
+TRAP_DIR="$SANDBOX/trap-invariant"
+mkdir -p "$TRAP_DIR"
+TRAP_ANCHOR='[ -n "$_have_lock" ] && trap '"'"'rmdir "$_lock" 2>/dev/null || true; exit 0'"'"' EXIT'
+python3 - "$SUT" "$TRAP_DIR" "$TRAP_ANCHOR" <<'PYEOF' 2>/dev/null
+import io, sys
+src, out, anchor = sys.argv[1], sys.argv[2], sys.argv[3]
+s = io.open(src, encoding='utf-8').read()
+if s.count(anchor) == 1:
+    # Arm A: the shipped chained trap, plus a fatal set -u slip after it.
+    io.open(out + '/fatal-chained.sh', 'w').write(
+        s.replace(anchor, anchor + '\necho "$NOPE_UNBOUND_PROBE"', 1))
+    # Arm B: identical, except the trap no longer chains `exit 0`.
+    unchained = anchor.replace('|| true; exit 0', '|| true')
+    io.open(out + '/fatal-unchained.sh', 'w').write(
+        s.replace(anchor, unchained + '\necho "$NOPE_UNBOUND_PROBE"', 1))
+PYEOF
+
+TRAP_STAGED=1
+[ -s "$TRAP_DIR/fatal-chained.sh" ] && ! cmp -s "$TRAP_DIR/fatal-chained.sh" "$SUT" || TRAP_STAGED=0
+[ -s "$TRAP_DIR/fatal-unchained.sh" ] && ! cmp -s "$TRAP_DIR/fatal-unchained.sh" "$TRAP_DIR/fatal-chained.sh" || TRAP_STAGED=0
+if [ "$TRAP_STAGED" != "1" ]; then
+  no "case22 could not stage the trap variants — the invariant case proves nothing"
+else
+  trap_rc() { # trap_rc <script> <session-id> -> exit status
+    local script="$1" sid="$2" tp payload
+    tp="$SANDBOX/trap-${sid}.jsonl"; printf 'TTTTTTTT' > "$tp"
+    payload="$SANDBOX/trap-${sid}.json"
+    jq -n --arg tp "$tp" --arg sid "$sid" '{session_id: $sid, transcript_path: $tp}' > "$payload"
+    ( cd "$SANDBOX" && bash "$script" < "$payload" >/dev/null 2>&1 )
+    printf '%s' "$?"
+  }
+  assert_eq "case22a a fatal set -u slip AFTER the lock is taken still exits 0 — the cleanup is chained onto the always-exit-0 trap, not substituted for it" \
+    "0" "$(trap_rc "$TRAP_DIR/fatal-chained.sh" "fixture-trap-chained-001")"
+  TRAP_B_RC="$(trap_rc "$TRAP_DIR/fatal-unchained.sh" "fixture-trap-unchained-001")"
+  if [ "$TRAP_B_RC" = "0" ]; then
+    no "case22b MUTATION CONTROL: an unchained cleanup trap must break the invariant, but the run still exited 0 — case22a proves nothing"
+  else
+    ok "case22b MUTATION CONTROL: dropping the chained 'exit 0' and changing nothing else exits $TRAP_B_RC — the invariant rests on the chain, not on the '|| true' inside the cleanup"
+  fi
+fi
+
+
 echo ""
 echo "RESULT  pass=$PASS_COUNT  fail=$FAIL_COUNT"
 if [ "$FAIL_COUNT" -eq 0 ]; then

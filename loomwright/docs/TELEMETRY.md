@@ -950,6 +950,36 @@ explicit anti-vacuity arm for exactly that mutation. **Retroactive nothing:**
 lines written before this field existed carry no scope and keep reading
 `identity unknown` on the Floor, which is honest rather than repaired.
 
+**The guard is a LOCKED critical section, because as a check-then-act it did not work.**
+Recorded here because the earlier text described a guard that was measured into
+existence and then never re-measured in the field. It read the log's last line and
+then appended as two separate steps, and Claude Code runs the hooks matched to one
+event **concurrently** — so two firings both read before either wrote, and both
+appended. Measured on a real `/automate` log written by a build that HAD the guard:
+**13** subagent completions, **26** `token_ledger` lines, **13** adjacent
+byte-identical pairs — **0 of 13 suppressed**. On an idle session the same build
+caught most of them. That spread is the signature of a race, not of a wrong rule.
+The read and the append are now one critical section, held by a `mkdir` lock beside
+the log (`mkdir` because `flock` is not on stock macOS, the same reason the ui
+registry lock gives). **Every failure direction is toward the append:** a lock not
+taken within the bounded wait is abandoned and the append proceeds unguarded, and a
+lock older than a minute is broken rather than waited on — losing an advisory ledger
+line, or blocking a hook, are both worse than writing a duplicate one. `-mmin +1`
+in whole minutes, never a fraction: BSD find rejects `+0.16` and GNU find accepts
+it, which is how a guard stops firing on one platform with nobody noticing.
+The cleanup is **chained onto** the always-exit-0 trap (`…; exit 0`) rather than
+substituted for it, because `trap` replaces a handler instead of composing with it.
+The path that regresses is **not** a signal — bash re-raises after running the EXIT
+trap, so an interrupted run exits 143 with any trap or none, measured — it is the
+ordinary `set -u` fatal this file's own trap exists to absorb: original trap 0,
+cleanup-only 1, chained 0. Case 22 asserts it with a control that drops only the
+chain. The lock is scoped **per log file**, since the duplication it serialises is
+two firings of one completion.
+`test-token-ledger.sh` case 21 fires two invocations **concurrently** with the
+interleaving window injected rather than raced for, and its control neuters the lock
+alone and requires the duplicate back — case 19, which fires sequentially, passes
+against the broken guard and is why this was invisible for a release.
+
 **Adjacent-duplicate guard (confirmed, not assumed).**
 `emit-token-ledger.sh` is registered under three `SubagentStop` matchers
 (`loomwright:code-reviewer`, `loomwright:qa-executor`,
