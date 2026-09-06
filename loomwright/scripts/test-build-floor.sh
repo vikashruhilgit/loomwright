@@ -2951,6 +2951,26 @@ zaq() { jq -r "$1" "$JZA" 2>/dev/null; }
   && ok "(za) the session carries the branch its own lines recorded, so it can be named on the page" \
   || no "(za) branch == $(zaq '.surfaces.sessions.detail.current.branch'), expected feat/thing"
 
+# --- (zd) the prefix is `loomwright:` WITH the colon, as documented -------------------------
+# Raised as a nit in review: the filter read `startswith("loomwright")` while every doc and
+# comment describing it says `loomwright:`. Nothing observed today can tell the two apart —
+# `agent_type` only ever arrives from a Task spawn's `subagent_type` — which is precisely why a
+# filter broader than the sentence describing it goes unnoticed until the sentence is simply
+# false. Asserted behaviourally rather than by grepping the source for a colon, so it is the
+# MATCH that is pinned and not the spelling.
+RZD="$(new_repo)"; mkdir -p "$RZD/.supervisor/logs" "$RZD/agents"
+{
+  printf '{"ts":"2026-09-06T12:30:00Z","event":"token_ledger","cc_session_id":"chat","agent_id":"achat"}\n'
+  printf '{"ts":"2026-09-06T12:00:00Z","event":"subtask_complete","cc_session_id":"nearly","agent_id":"anear"}\n'
+  printf '{"event":"agent_identity","cc_session_id":"nearly","agent_id":"anear","agent_type":"loomwrightish-not-ours"}\n'
+} > "$RZD/.supervisor/logs/near.jsonl"
+run_build "$RZD"
+JZD="$RZD/.supervisor/floor/floor.json"
+[ "$(jq -r '.surfaces.sessions.detail.current.selection' "$JZD" 2>/dev/null)" = "newest_recorded" ] \
+  && [ "$(jq -r '.surfaces.sessions.detail.current.cc_session_id' "$JZD" 2>/dev/null)" = "chat" ] \
+  && ok "(zd) an agent_type of 'loomwrightish-not-ours' does NOT qualify a session as plugin work — the prefix carries the colon the docs claim it does" \
+  || no "(zd) a colon-less near-miss prefix qualified as plugin work: selection=$(jq -r '.surfaces.sessions.detail.current.selection' "$JZD") session=$(jq -r '.surfaces.sessions.detail.current.cc_session_id' "$JZD")"
+
 # --- (zb) FAIL OPEN: with no qualifying session, show the newest and SAY so ------------------
 # Showing nothing would be worse than showing the operator's own session with a label. Every
 # session recorded before the identity hook existed lands here, so this is the common case on

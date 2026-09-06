@@ -362,7 +362,11 @@ else
   # landing on the operator's own chat while their `/automate` run sat unseen one row down in a
   # list of 183 sessions.
   #
-  # A session is PLUGIN WORK when it recorded an agent whose `agent_type` starts `loomwright:`,
+  # A session is PLUGIN WORK when it recorded an agent whose `agent_type` starts `loomwright:` —
+  # WITH the colon, matching the rule as documented rather than a prefix one character looser. The
+  # value only ever arrives from a Task spawn's `subagent_type`, so nothing observed today needs
+  # the tighter form; a filter that is broader than the sentence describing it is how the sentence
+  # stops being true without anything going red —
   # or an `autonomous_session_start`. Both are positive identifications from lines the emitters
   # already write — never an inference from what is absent. Measured on this repo when the rule
   # was written: of six recent sessions, exactly one qualified.
@@ -394,7 +398,7 @@ else
   sess_current="$(printf '%s\n' "$classified" | awk -F'\t' '/^id\t/{print $3}' | jq -s -c '
     map(select(type == "object")) as $all
     | ($all
-       | map(select(((.agent_type // "") | startswith("loomwright"))
+       | map(select(((.agent_type // "") | startswith("loomwright:"))
                     or ((.event // "") == "autonomous_session_start"))
              | .sid)
        | unique) as $plugin_sids
