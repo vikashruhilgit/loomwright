@@ -6448,3 +6448,184 @@ fi
   && ok "(q11) every a11y mutation control above ran against a COPY — index.html is byte-identical (sha256) and no mutant was left in the bundle directory" \
   || no "(q11) index.html is byte-identical after the (q) controls" "sha256 changed"
 rm -rf "$Q_TMP"
+
+# =============================================================================================
+# (s) THE OPEN-URL FILE — `ui-serve.token`, its LIFECYCLE and its UNREACHABILITY
+# ---------------------------------------------------------------------------------------------
+# WHY THIS GROUP EXISTS. `serve` prints its `open:` URL exactly once and the token in it is
+# minted per run, so for as long as that line was the only copy, a reader who scrolled past it
+# could not reach the four buttons again. `serve` therefore records the line, `check` reprints
+# it and `stop` deletes it — and the whole safety of that rests on ONE placement decision: the
+# file is a SIBLING of the ui directory, never a file inside it, because the handler serves the
+# WHOLE ui directory (which is exactly why `GET /serve.log` returns the serve log). A token file
+# one directory to the left is unreachable; the same bytes one directory to the right are a
+# credential this server hands to anything on the loopback port.
+#
+# THE ANTI-VACUITY PROBLEM THIS GROUP HAS TO SOLVE. A 404 is the answer this server gives for
+# any path it does not have, so "GET /ui-serve.token -> 404" is equally true of a correct fix, a
+# misspelled filename, and a server that is not running at all. (s3) is therefore paired with
+# (s4), which places a decoy of the SAME NAME INSIDE the served root and requires it to come
+# back 200: only the pair distinguishes "unreachable because it is a sibling" from "unreachable
+# because nothing by that name exists anywhere".
+S_TMP="$(mktmp)"
+S_UI="$S_TMP/ui"
+S_TOKEN_FILE="$S_TMP/ui-serve.token"          # the SIBLING path the engine must use
+S_REG="$S_TMP/reg.json"                       # rule B: never let an engine call reach the real registry
+S_INSIDE="$S_UI/ui-serve.token"               # the path it must NOT use
+bash "$ENGINE" apply --ui-dir "$S_UI" >/dev/null 2>&1
+
+s_port="$(n_free_port)"
+case "$s_port" in ''|*[!0-9]*) setup_fail "(s) fixture: could not obtain a free port" ;; esac
+s_out="$(bash "$ENGINE" serve --registry "$S_REG" --ui-dir "$S_UI" --no-regen --detach --port "$s_port" 2>&1)"; s_rc=$?
+track_serve "$S_UI"
+[ "$s_rc" -eq 0 ] || setup_fail "(s) fixture: serve exited $s_rc :: $s_out"
+n_wait_up "$s_port" || setup_fail "(s) fixture: the handler never answered a GET on 127.0.0.1:$s_port"
+# The `open:` line as SERVE printed it — the reference every reprint claim below is compared to.
+s_printed="$(printf '%s\n' "$s_out" | awk '/^  open: /{sub(/^  open: +/, ""); print; exit}')"
+[ -n "$s_printed" ] || setup_fail "(s) fixture: serve printed no 'open:' line :: $s_out"
+
+# --- (s1) the file is written, BESIDE the ui dir and not in it -------------------------------
+if [ -f "$S_TOKEN_FILE" ] && [ ! -e "$S_INSIDE" ]; then
+  ok "(s1) serve records the open url in ui-serve.token BESIDE the ui directory, and writes nothing by that name inside it"
+else
+  no "(s1) serve records the open url beside the ui directory" \
+     "sibling_exists=$([ -f "$S_TOKEN_FILE" ] && echo yes || echo NO) inside_exists=$([ -e "$S_INSIDE" ] && echo YES-LEAK || echo no)"
+fi
+
+# --- (s2) mode 0600, and the content is EXACTLY the line serve printed ------------------------
+s_mode="$(ls -l "$S_TOKEN_FILE" 2>/dev/null | awk '{print $1}')"
+s_stored="$(head -n 1 "$S_TOKEN_FILE" 2>/dev/null)"
+case "$s_mode" in
+  -rw-------*) s_mode_ok=1 ;;
+  *) s_mode_ok=0 ;;
+esac
+if [ "$s_mode_ok" = "1" ] && [ "$s_stored" = "$s_printed" ]; then
+  ok "(s2) ui-serve.token is mode 0600 and holds BYTE-FOR-BYTE the open url serve printed — a reprint that drifted from the printed line would hand out a url that does not work"
+else
+  no "(s2) ui-serve.token is 0600 and matches the printed url" "mode=$s_mode printed=$s_printed stored=$s_stored"
+fi
+
+# --- (s3) THE SECURITY CLAIM: no spelling of it is reachable over HTTP ------------------------
+# `/` is requested in the same breath and must be 200: without that arm every 404 below would
+# also be produced by a server that had simply stopped, and the whole case would pass with the
+# protection deleted.
+s_root_st="$(n_status "$(n_req "$s_port" GET / "" "" "" "" "")")"
+s_leaks=""
+for s_path in /ui-serve.token /serve.token /../ui-serve.token /%2e%2e/ui-serve.token; do
+  s_st="$(n_status "$(n_req "$s_port" GET "$s_path" "" "" "" "" "")")"
+  [ "$s_st" = "404" ] || s_leaks="$s_leaks [$s_path -> $s_st]"
+done
+if [ "$s_root_st" = "200" ] && [ -z "$s_leaks" ]; then
+  ok "(s3) the open-url file is unreachable over HTTP — /ui-serve.token, /serve.token and both traversal spellings all 404 while / answers 200, so the 404s are this server refusing rather than this server being down"
+else
+  no "(s3) the open-url file is unreachable over HTTP" "GET / -> $s_root_st (200 expected) leaks:${s_leaks:-none}"
+fi
+
+# --- (s4) MUTATION CONTROL for (s3): the SAME NAME inside the served root IS served -----------
+# This is the case that gives (s3) its meaning. If a file of this name inside UI_DIR also 404s,
+# then (s3) is measuring the filename and not the placement, and the sibling decision it exists
+# to protect could be reverted without either case noticing.
+printf 'decoy\n' > "$S_INSIDE" 2>/dev/null
+s_inside_st="$(n_status "$(n_req "$s_port" GET /ui-serve.token "" "" "" "" "")")"
+rm -f "$S_INSIDE" 2>/dev/null
+if [ "$s_inside_st" = "200" ]; then
+  ok "(s4) MUTATION CONTROL: a file of the SAME NAME placed INSIDE the ui directory is served (200) — so (s3)'s 404s measure the sibling PLACEMENT, not a filename nothing answers to, and moving this file into the ui dir would be caught here"
+else
+  no "(s4) MUTATION CONTROL: the same name inside the ui dir is served" \
+     "got $s_inside_st, expected 200 — (s3) may be vacuous: it cannot tell a sibling from a name that does not exist"
+fi
+rm -f "$S_INSIDE" 2>/dev/null
+
+# --- (s5) check REPRINTS it while the server is up --------------------------------------------
+s_chk="$(bash "$ENGINE" check --ui-dir "$S_UI" 2>&1)"
+s_chk_url="$(printf '%s\n' "$s_chk" | awk '/^  open: /{sub(/^  open: +/, ""); print; exit}')"
+if in_str "$s_chk" "server: running" && [ "$s_chk_url" = "$s_printed" ]; then
+  ok "(s5) check reports 'server: running' and reprints the open url identically to serve — which is the whole point of the file: the token is otherwise unrecoverable once the line scrolls away"
+else
+  no "(s5) check reprints the open url while the server is up" "printed=$s_printed reprinted=$s_chk_url"
+fi
+
+# --- (s6) a PRESENT-BUT-EMPTY file is reported as UNKNOWN, never as a blank url ----------------
+cp "$S_TOKEN_FILE" "$S_TMP/token.bak" 2>/dev/null
+: > "$S_TOKEN_FILE"
+s_chk_empty="$(bash "$ENGINE" check --ui-dir "$S_UI" 2>&1)"
+if in_str "$s_chk_empty" "server: running" && in_str "$s_chk_empty" "open:     UNKNOWN" && in_str "$s_chk_empty" "is empty"; then
+  ok "(s6) an EMPTY ui-serve.token is reported as 'open: UNKNOWN' naming the empty file — a blank 'open:' line would read as a url the reader failed to copy"
+else
+  no "(s6) an empty ui-serve.token reports UNKNOWN" "$(printf '%s' "$s_chk_empty" | tr '\n' '|')"
+fi
+
+# --- (s7) a MISSING file while running is a different message from an empty one ---------------
+rm -f "$S_TOKEN_FILE"
+s_chk_none="$(bash "$ENGINE" check --ui-dir "$S_UI" 2>&1)"
+if in_str "$s_chk_none" "server: running" && in_str "$s_chk_none" "open:     UNKNOWN" && in_str "$s_chk_none" "no " ; then
+  ok "(s7) a MISSING ui-serve.token while the server runs is also 'open: UNKNOWN' — the server is up and readable, and the four buttons stay refused until it is restarted"
+else
+  no "(s7) a missing ui-serve.token while running reports UNKNOWN" "$(printf '%s' "$s_chk_none" | tr '\n' '|')"
+fi
+cp "$S_TMP/token.bak" "$S_TOKEN_FILE" 2>/dev/null
+
+# --- (s8) stop DELETES it ---------------------------------------------------------------------
+bash "$ENGINE" stop --ui-dir "$S_UI" >/dev/null 2>&1
+n_wait_down "$s_port" >/dev/null 2>&1
+if [ ! -f "$S_TOKEN_FILE" ]; then
+  ok "(s8) stop deletes ui-serve.token — the url names a server that no longer exists and its token died with the process, so a surviving file would hand out a credential the guard answers with a 403"
+else
+  no "(s8) stop deletes ui-serve.token" "the file is still present after stop"
+fi
+
+# --- (s9) stopped, with a LEFTOVER file: the note fires and check does NOT delete it -----------
+# A crash leaves the file behind because only `stop` removes it. `check` is a READ verb: it must
+# name the leftover and leave it, since a read verb that quietly repairs state is a read verb
+# whose report can no longer be trusted.
+printf 'http://127.0.0.1:%s/#token=leftoverleftoverleftover\n' "$s_port" > "$S_TOKEN_FILE"
+chmod 600 "$S_TOKEN_FILE" 2>/dev/null
+s_chk_stale="$(bash "$ENGINE" check --ui-dir "$S_UI" 2>&1)"
+if in_str "$s_chk_stale" "server: not running" && in_str "$s_chk_stale" "did not stop cleanly" && [ -f "$S_TOKEN_FILE" ]; then
+  ok "(s9) with no server alive but a leftover ui-serve.token, check reports 'not running', NAMES the leftover as a server that did not stop cleanly, prints no url from it, and LEAVES THE FILE — check is read-only"
+else
+  no "(s9) a leftover ui-serve.token is named and preserved by check" \
+     "still_present=$([ -f "$S_TOKEN_FILE" ] && echo yes || echo NO-check-deleted-it) :: $(printf '%s' "$s_chk_stale" | tr '\n' '|')"
+fi
+# It must also not print the dead url as if it were usable.
+if in_str "$s_chk_stale" "leftoverleftoverleftover"; then
+  no "(s9b) check does not print a dead token" "the leftover url was printed for a server that is not running"
+else
+  ok "(s9b) check prints no url at all from a leftover file — a url whose server is gone is worse than none: the page accepts it and then reports a 403 the reader would debug as a token problem"
+fi
+
+# --- (s10) stopped with NO file: the plain branch, and no leftover note ------------------------
+rm -f "$S_TOKEN_FILE"
+s_chk_clean="$(bash "$ENGINE" check --ui-dir "$S_UI" 2>&1)"
+if in_str "$s_chk_clean" "server: not running" && ! in_str "$s_chk_clean" "did not stop cleanly"; then
+  ok "(s10) stopped with no leftover file, check reports 'server: not running' and raises no leftover note — the ordinary state after a clean stop"
+else
+  no "(s10) a clean stopped state raises no leftover note" "$(printf '%s' "$s_chk_clean" | tr '\n' '|')"
+fi
+
+# --- (s11) the DEGRADATION path: serve still starts when the file cannot be written ------------
+# The url is already on screen and the server is already up by the time this write is attempted,
+# so a failure here must be a note and never an abort — this file's every-branch-exits-0
+# contract. Made reachable by taking write permission off the PARENT, which is where the sibling
+# would go. Skipped rather than faked when running as a user permissions do not bind (root).
+if [ "$(id -u)" != "0" ]; then
+  S_RO="$(mktmp)"
+  S_RO_UI="$S_RO/ui"
+  bash "$ENGINE" apply --ui-dir "$S_RO_UI" >/dev/null 2>&1
+  s_ro_port="$(n_free_port)"
+  chmod 500 "$S_RO" 2>/dev/null
+  s_ro_out="$(bash "$ENGINE" serve --registry "$S_RO/reg.json" --ui-dir "$S_RO_UI" --no-regen --detach --port "$s_ro_port" 2>&1)"; s_ro_rc=$?
+  track_serve "$S_RO_UI"
+  chmod 700 "$S_RO" 2>/dev/null
+  if [ "$s_ro_rc" -eq 0 ] && in_str "$s_ro_out" "could not record the open url" && in_str "$s_ro_out" "serve: 127.0.0.1:$s_ro_port"; then
+    ok "(s11) when the open-url file cannot be written, serve STILL STARTS and says so in a note — the server is already up and the url is already printed, so aborting there would destroy a working server over a convenience"
+  else
+    no "(s11) an unwritable open-url path degrades to a note" "rc=$s_ro_rc :: $(printf '%s' "$s_ro_out" | tr '\n' '|')"
+  fi
+  bash "$ENGINE" stop --ui-dir "$S_RO_UI" >/dev/null 2>&1
+  rm -rf "$S_RO" 2>/dev/null
+else
+  ok "(s11) SKIPPED as root — file permissions do not bind uid 0, so the unwritable-parent branch cannot be reached honestly"
+fi
+
+rm -rf "$S_TMP" 2>/dev/null
