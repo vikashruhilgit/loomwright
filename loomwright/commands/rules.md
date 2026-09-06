@@ -1,5 +1,5 @@
 ---
-description: Maintain the committed .agent/rules/ house-rules substrate — list / suggest / add / retract / audit / check project conventions an implementer can read on the DO side, not only get caught on the REVIEW side. Advisory enforcement is wired (never-gating) at the worker / Phase 4.5 / SessionStart-nudge seams; `add` (with optional `--supersedes` and repeatable `--applies-to` path routing) and `retract` are both mechanized in add-rule.sh, `check` in rules-check.sh (unattended `check` execution gated via --no-cmd), and the read-only `audit` re-validates the STANDING store in audit-rules.sh.
+description: Maintain the committed .agent/rules/ house-rules substrate — list / suggest / add / retract / check / audit project conventions an implementer can read on the DO side, not only get caught on the REVIEW side. Advisory enforcement is wired (never-gating) at the worker / Phase 4.5 / SessionStart-nudge seams; `add` (with optional `--supersedes` and repeatable `--applies-to` path routing) and `retract` are both mechanized in add-rule.sh, `check` in rules-check.sh (unattended `check` execution gated via --no-cmd), and `audit` in audit-rules.sh (read-only, re-validates the standing store over time).
 ---
 
 > **Reads code read-only on `list` / `suggest` / `audit` / `check`; the write paths are `add` (append-only) and `retract` (curation/anti-rot, remove-only) — both write a single path-contained `*.json` under `.agent/rules/` on explicit confirmation, and both go through the sole-writer `add-rule.sh`.** `.agent/rules/` is the plugin's first **committed-convention** surface — version-controlled, travels with the repo (unlike the gitignored `.supervisor/` / `.claude/agent-memory/`). The protocol authority for every flow is `${CLAUDE_PLUGIN_ROOT}/skills/rules/SKILL.md` — read it at Step 0; when this command and that skill disagree, **the skill wins**.
@@ -21,8 +21,8 @@ Conventions a team agrees on tend to live in heads, in CLAUDE.md prose, or get r
 /rules add --supersedes X   # append a rule that supersedes (hides) an OLDER rule id X
 /rules add --applies-to G   # append a rule scoped to path-glob G (repeatable; omit ⇒ repo-wide)
 /rules retract              # remove an existing rule object by id (confirm-only)
-/rules audit                # re-validate the STANDING store: read-only, no write mode, never runs a `check`
 /rules check                # human-invoked: run `must` rules' checks after explicit confirmation
+/rules audit                # read-only: re-validate the standing rules store, propose fixes
 ```
 
 ## Subcommands
@@ -158,4 +158,5 @@ A `check` value is **arbitrary shell authored by anyone who cloned or PR'd the r
 ## See Also
 - `skills/rules/SKILL.md` — the protocol authority (schema, validation, merge order, read/write/check contracts, trust boundary).
 - `scripts/read-rules.sh` — the fail-safe advisory reader (`set -uo pipefail`, always exits 0, READ-ONLY, never executes a `check`); its header docstring is the authority on `applies_to` path routing and the `case`-glob semantics.
+- `scripts/audit-rules.sh` — the read-only, propose-only store auditor (never executes a `check`; re-validates the standing store over time — see `audit` above).
 - `commands/setup.md` — the `/setup twin` bootstrap module was retired with the graphify tier (a deliberate omission, not an oversight — see `commands/setup.md`'s own note and `CHANGELOG.md`); cold-start convention seeding is `/setup rules`, and `/rules` maintains the committed conventions. Shares the check/report/offer/apply/verify confirmed-write discipline.
