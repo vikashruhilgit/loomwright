@@ -117,6 +117,14 @@
   var pickerSig = null;
   var pickerTouched = false;
 
+  /* THE ABSOLUTE DIRECTORY OF THE DOCUMENT ON SCREEN, and the served index is the ONLY place
+   * this page can learn it: floor.json carries no root of its own. The rules view joins a
+   * repo-relative `applies_to` glob against it. It stays null whenever the index names no
+   * directory for the current selection, so that view says it does not know the base rather
+   * than inventing one. Set on every tick by renderProjectPicker, which runs before the floor
+   * is rendered in the same tick. */
+  var selectedPath = null;
+
   /* THE WRITE PATH'S THREE CONSTANTS, and all three are fixed strings in this file.
    * API_PREFIX is what makes the endpoint URLs a property of this code rather than of any
    * document it read: the same guarantee projectUrl already gives the read path. */
@@ -420,6 +428,7 @@
       }
       setSelectedSlug(null);
       pickerSig = null;
+      selectedPath = null;
       return;
     }
 
@@ -507,6 +516,22 @@
       host.appendChild(li);
     }
 
+    /* Recomputed every tick from the rows this render just drew, and AFTER the block above,
+     * because that block is where selectedSlug can still change (the first build's choice, and
+     * the follow-it branch when the viewed project leaves the registry). */
+    selectedPath = null;
+    if (selectedSlug === null || selectedSlug === '') {
+      if (typeof srv.selected_path === 'string' && srv.selected_path) { selectedPath = srv.selected_path; }
+    } else {
+      for (i = 0; i < rows.length; i++) {
+        if (rows[i] && String(rows[i].slug) === String(selectedSlug)
+            && typeof rows[i].path === 'string' && rows[i].path) {
+          selectedPath = rows[i].path;
+          break;
+        }
+      }
+    }
+
     if (note) {
       /* The cadence is READ from the served index, never assumed: this page cannot see
        * `--interval` and the slow factor is the engine's constant, not the page's. Stating
@@ -541,6 +566,10 @@
     shuttleStep = {};
     lastGen = null;
     apply.lanes = 0;
+    /* The rules view's copy note names an absolute path under the project that was on screen
+     * when it was written. Carrying it across a switch would leave one project's path standing
+     * under another project's rules - a statement about a document nobody is looking at. */
+    pathNote('');
   }
 
   function rosterIndex(d) {
@@ -687,6 +716,103 @@
       (Object.prototype.toString.call(v) === '[object String]' ? 'a bare string, not an array'
         : (('aeiou'.indexOf((typeof v).charAt(0)) >= 0 ? 'an ' : 'a ') + typeof v)) +
       ') — scope not interpretable';
+  }
+
+  /* THE GLOBS IN A SCOPE HEADING ARE COPYABLE, AND DELIBERATELY NOT LINKS.
+   *
+   * The obvious affordance for a path is an anchor, and this page cannot honour one: every
+   * current browser refuses to follow a `file:` URL from a document served over http, and it
+   * refuses SILENTLY - no navigation, no error the reader sees. A control that looks like it
+   * opens a file and does nothing is the same defect class as a count rendered `0` for a
+   * surface nobody read, so the control says what it actually does. Serving the file instead is
+   * not on the table either: that would be a fifth endpoint, and the four are closed by
+   * decision (docs/FLOOR_UI.md §"Why the guard exists").
+   *
+   * NO NEW TIMER. The note persists until the next click or a project switch; a "copied!" flash
+   * that cleared itself would be the second timer this file does not have.
+   *
+   * THE HEADING TEXT IS UNCHANGED. `ruleScopeLabel` still decides the grouping key and still
+   * decides what a heading says - the chips are only permitted when they spell that exact
+   * string back (the equality below), so a malformed or non-array `applies_to` keeps its own
+   * label and gains no clickable anything. */
+  var SCOPE_PREFIX = 'scoped to ';
+
+  /* The globs BEHIND a 'scoped to …' heading, or null when the value is not the shape that
+   * heading was built from. All-or-nothing on purpose: `join` stringifies a non-string element
+   * silently, and one chip carrying `[object Object]` is worse than a plain heading. */
+  function scopeGlobs(r) {
+    /* NO PRESENCE CHECK HERE, deliberately, and for two reasons. The tri-state that key
+     * presence decides belongs to `ruleScopeLabel`, which owns what a heading SAYS; this
+     * function asks only "is this the non-empty array of non-empty strings that heading was
+     * built from", and an absent key answers that with `undefined`, which is not an array.
+     * And a second presence check spelled the same way as the one above would let the suite's
+     * (j4) literal survive the mutant (j7) builds out of ruleScopeLabel's own guard - the
+     * assertion would then pass on THIS line while the guard it names had been removed. That
+     * is why the spelling is avoided here even in a comment: has_lit greps the file, not the
+     * code, so a comment quoting the literal keeps the mutant green just as well. */
+    var v = r && r.applies_to, out = [], i;
+    if (Object.prototype.toString.call(v) !== '[object Array]' || !v.length) { return null; }
+    for (i = 0; i < v.length; i++) {
+      if (Object.prototype.toString.call(v[i]) === '[object String]' && v[i]) { out.push(v[i]); }
+    }
+    return out.length === v.length ? out : null;
+  }
+
+  function pathNote(msg) {
+    var n = el('rules-path-note');
+    if (n) { n.textContent = msg; }
+  }
+
+  /* What a chip does when clicked. The absolute form is joined HERE, from the directory the
+   * served index names for the document on screen, and the note NAMES that base - so a project
+   * registered below its git root (which is where build-floor.sh runs, and where the glob is
+   * really rooted) shows the discrepancy instead of hiding it. With no base the rule's own
+   * recorded text is copied and the note says that is what happened. */
+  function copyScopePath(glob) {
+    var base = selectedPath;
+    var abs = base ? (base.replace(/\/+$/, '') + '/' + glob) : glob;
+    var isGlob = /[*?[]/.test(glob);
+    var kind = isGlob ? 'glob — it names a set of paths, not one file' : 'path';
+    var where = base
+      ? ' — joined against ' + base + ', the directory the served index names for the document on screen'
+      : ' — the served index names no directory for the document on screen, so this is the text the rule itself records';
+    var tail = where + ' (' + kind + ')';
+    /* `navigator.clipboard` exists on this origin because 127.0.0.1 is a secure context, but a
+     * page opened under some other hostname would not have it, and the API can refuse. Say so;
+     * the note carries the path either way, so it can still be selected by hand. */
+    if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') {
+      pathNote(abs + tail + '. This browser exposes no clipboard to this page, so nothing was copied — select it here and copy it by hand.');
+      return;
+    }
+    navigator.clipboard.writeText(abs).then(function () {
+      pathNote('copied ' + abs + tail + '.');
+    }, function (e) {
+      pathNote(abs + tail + '. The clipboard refused it (' + ((e && e.message) || 'no reason given') +
+        '), so nothing was copied — select it here and copy it by hand.');
+    });
+  }
+
+  function renderScopeHeading(label, sample) {
+    var h4 = document.createElement('h4');
+    h4.className = 'rules-scope';
+    var globs = scopeGlobs(sample);
+    /* The chips must spell the heading they replace, or the heading wins. */
+    if (!globs || (SCOPE_PREFIX + globs.join(', ')) !== label) {
+      h4.textContent = label;
+      return h4;
+    }
+    h4.appendChild(document.createTextNode(SCOPE_PREFIX));
+    for (var i = 0; i < globs.length; i++) {
+      if (i) { h4.appendChild(document.createTextNode(', ')); }
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'scope-path';
+      b.textContent = globs[i];
+      b.title = 'copy this path — a browser will not open a local file from a page served over http, so this copies it instead';
+      b.onclick = (function (g) { return function () { copyScopePath(g); }; }(globs[i]));
+      h4.appendChild(b);
+    }
+    return h4;
   }
 
   /* check gets the identical tri-state treatment for the identical reason. The string is
@@ -902,10 +1028,9 @@
       scopeOrder.sort();
 
       for (var si = 0; si < scopeOrder.length; si++) {
-        var h4 = document.createElement('h4');
-        h4.className = 'rules-scope';
-        h4.textContent = scopeOrder[si];
-        body.appendChild(h4);
+        /* The heading is built from the label AND from one rule that produced it: the label is
+         * what the reader reads, and the rule is where the individual globs are recorded. */
+        body.appendChild(renderScopeHeading(scopeOrder[si], byScope[scopeOrder[si]][0]));
 
         var ulR = document.createElement('ul');
         ulR.className = 'rules-list';

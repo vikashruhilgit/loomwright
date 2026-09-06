@@ -437,6 +437,22 @@ code { font-family: var(--mono); font-size: 0.85em; }
   color: var(--copper-deep);
 }
 .rules-scope { font-size: 0.85rem; margin: 0.7rem 0 0.35rem; color: var(--ink-dim); font-weight: 700; }
+/* A scope heading's globs are BUTTONS, not links - a browser will not follow a `file:` URL from
+ * a page served over http, so this page does not draw one. They are quiet enough not to compete
+ * with the cards under them and carry no transition, because nothing on this page eases and a
+ * control is not an exception. The focus ring is the document-wide `:focus-visible` rule. */
+.rules-scope .scope-path {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--copper-deep);
+  background: var(--sunk);
+  border: 1px solid var(--hair);
+  border-radius: var(--radius-inset);
+  padding: 0.05rem 0.32rem;
+  cursor: pointer;
+}
+.rules-scope .scope-path:hover { border-color: var(--cue); }
 .rules-list { list-style: none; margin: 0; padding: 0; }
 .rule-card {
   border: 1px solid var(--hair);
