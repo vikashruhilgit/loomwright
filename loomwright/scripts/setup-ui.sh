@@ -411,6 +411,28 @@ fi
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# THE VERSION OF THE BUNDLE THIS ENGINE WOULD SERVE, read from the plugin manifest beside it and
+# NEVER restated as a literal here. It exists because three separate incidents in one day were the
+# same thing — a page rendering bytes older than the code that had just been merged — and each took
+# a multi-step trace because NOTHING on the page said which build it was.
+#
+# COMPUTED ON DEMAND, NOT AT LOAD TIME, and that is not a style preference. The first version ran
+# at load and so spent a `jq` on EVERY invocation of this engine — `add`, `list`, `forget`, `check`
+# — for a value only the served index uses. It also broke `(o6)`, the registry-lock contention
+# case, which deliberately slows `jq` to widen the critical section: a load-time `jq` runs under
+# that same shim and shifts the timing the case measures. A cost paid by every caller for one
+# caller's benefit is worth moving even without that, and the test failure is what made it visible.
+# `command -v` rather than this file's own `have()` helper is no longer required here, but is kept
+# for the same reason it was needed at load time: it cannot depend on definition order.
+bundle_version() {
+  command -v jq >/dev/null 2>&1 || return 0
+  [ -r "$BUNDLE_DIR/../../.claude-plugin/plugin.json" ] || return 0
+  local v
+  v="$(jq -r '.version // empty' "$BUNDLE_DIR/../../.claude-plugin/plugin.json" 2>/dev/null || true)"
+  case "$v" in ''|*[!0-9.]*) return 0 ;; esac
+  printf '%s' "$v"
+}
+
 # drifted_files -> the names of bundle files whose installed copy differs from the plugin's,
 # INCLUDING files that are missing from the ui dir. Empty output means "already configured".
 drifted_files() {
@@ -1368,9 +1390,11 @@ EOF
       --arg regstate "$REG_STATE" \
       --arg regreason "$REG_REASON" \
       --arg regpath "$REG_PATH" \
+      --arg bundlever "$(bundle_version)" \
       '{schema_version: 1,
         generated_at_epoch: $gen,
-        module: {ui_dir: $uidir, bundle: $bundle, marker: $marker},
+        module: ({ui_dir: $uidir, bundle: $bundle, marker: $marker}
+                 + (if $bundlever == "" then {} else {bundle_version: $bundlever} end)),
         serve: ({interval_seconds: $interval, slow_cadence_ticks: $slow, regen: $regen,
                  selected_path: $selpath, selected_registered: $selreg}
                 + (if $selslug == "" then {} else {selected_slug: $selslug} end)),

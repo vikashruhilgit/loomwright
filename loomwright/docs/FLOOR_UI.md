@@ -66,7 +66,7 @@ The page shows, top to bottom:
 |---|---|---|
 | `?stall=<seconds>` | `300` | how old a lane's last event may get before that lane reads **stalled** |
 | `?stale=<seconds>` | `6` — `3 ×` the **page's own 2 s poll**, *not* `serve --interval` | how old `floor.json` itself may get before the page says so |
-| `?lane=<seconds>` | `1800` (30 min) | how old a lane's last event may get before that lane is **not listed at all** — the count of lanes dropped this way is printed in the Lanes heading, and a lane with NO recorded `ts` is unknown rather than old and is never dropped |
+| `?lane=<seconds>` | `1800` (30 min) | how old a lane's last event may get before that lane is **not listed at all** — the count of lanes dropped this way is printed in the Lanes heading, and a lane that has never emitted is aged from when its identity was recorded (`identified_at`) instead — a SECOND clock used for filtering ONLY and never for freshness, so no lane can report an event age it did not earn. Without it such a lane had no time of any kind and could never age out, while the lanes that did carry events aged out normally: one real run showed ten rows all reading zero with the four that had events filtered away. A lane with neither clock is still unknown rather than old, and is never dropped |
 
 `?stale=` exists for a specific reason worth stating: a **committed fixture's `generated_at_epoch` is always in the past**, so without it every fixture would render under the stale banner and nothing else about the page could be demonstrated. Raise it when loading `fixtures/floor-ui/*.json` by hand.
 

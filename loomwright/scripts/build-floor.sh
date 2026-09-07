@@ -323,7 +323,7 @@ else
           then "id\t" + $o.cc_session_id + "\t" +
                ({sid: $o.cc_session_id, ts: $o.ts, agent_id: $o.agent_id,
                  agent_type: $o.agent_type, agent_scope: $o.agent_scope,
-                 branch: $o.branch, event: $o.event}
+                 branch: $o.branch, event: $o.event, recorded_at: $o.recorded_at}
                 | with_entries(select(.value != null and .value != "")) | tojson)
         else "noid" end
     end
@@ -395,6 +395,15 @@ else
   # newest-session selection by construction rather than by a second filter here.
   # An agent seen ONLY on such a line renders `0 events`, which is the honest reading:
   # identified, with nothing else recorded for it.
+  #
+  # `identified_at` IS carried, from the identity line's own `recorded_at`, and it is NOT a
+  # substitute for `last_ts`. The two answer different questions and the page uses them for
+  # different things: `last_ts` is the lane's FRESHNESS and must only ever come from a real
+  # event, while `identified_at` says when the agent was first seen at all. Without it a lane
+  # that has never emitted has no time of any kind, so it can never age out — and the lanes that
+  # DO carry events age out normally, which means a long-running session converges to a list
+  # showing only the agents nothing is known about. That is the state a real run reached: ten
+  # rows, every one reading zero, while the four rows that had events had been filtered away.
   sess_current="$(printf '%s\n' "$classified" | awk -F'\t' '/^id\t/{print $3}' | jq -s -c '
     map(select(type == "object")) as $all
     | ($all
@@ -443,6 +452,9 @@ else
                           else {first_ts: ($tss | min), last_ts: ($tss | max)} end)
                        + ((map(select(has("agent_type")) | .agent_type) | first) as $t
                           | if $t == null then {} else {agent_type: $t} end)
+                       + ((map(select((.event // "") == "agent_identity")
+                                    | select(has("recorded_at")) | .recorded_at) | first) as $ia
+                          | if $ia == null then {} else {identified_at: $ia} end)
                        + ((map(select(has("agent_scope")) | .agent_scope) | first) as $sc
                           | if $sc == null then {} else {agent_scope: $sc} end)
                        + ((map(select(has("branch")) | .branch) | first) as $b
