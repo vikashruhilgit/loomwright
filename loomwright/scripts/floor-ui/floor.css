@@ -472,6 +472,17 @@ code { font-family: var(--mono); font-size: 0.85em; }
   color: var(--ink-dim);
 }
 .rule-correlation ul { margin: 0.2rem 0 0; padding-left: 1.1rem; }
+/* One subordinate line PER PATTERN under a collapsed correlation row - see the "ONE ROW PER
+ * LEDGER LINE" note in floor.js. Quieter and narrower than the row above it so the evidence
+ * stays the thing being read; monospace because every token in it is a path or a glob. It
+ * wraps rather than scrolls: a long path list is prose to skim, not a table to align. */
+.rule-correlation .corr-paths {
+  margin: 0.15rem 0 0;
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  color: var(--ink-dim);
+  overflow-wrap: anywhere;
+}
 .churn-dist {
   list-style: none;
   margin: 0 0 0.6rem;

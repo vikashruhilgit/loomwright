@@ -158,7 +158,17 @@
             "matched": [
               {
                 "line": 1,
+                "path": "CLAUDE.md",
+                "pattern": "CLAUDE.md"
+              },
+              {
+                "line": 1,
                 "path": "loomwright/scripts/build-floor.sh",
+                "pattern": "loomwright/scripts/*"
+              },
+              {
+                "line": 1,
+                "path": "loomwright/scripts/build-handoff.sh",
                 "pattern": "loomwright/scripts/*"
               },
               {
