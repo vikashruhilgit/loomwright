@@ -2544,10 +2544,32 @@ has_lit "$ENGINE" '--arg bundlever "$(bundle_version)"' \
   || no "(j58) the build-identity and lane-clock surfaces are incomplete" "$j58_bad"
 
 # The separation is the point: identified_at must NOT be readable as a lane's event age.
-[ "$(occ "$JS" 'last_ts = r.identified_at')" = "0" ] \
-  && [ "$(occ "$JS" 'identified_at.*fmtAge\(age\)')" = "0" ] \
+# grep, NOT occ(), and the difference is the whole assertion. occ() hands its pattern to awk as a
+# DYNAMIC regex: the `-v` assignment processes string escapes first, so a single-backslash `\(`
+# loses its backslash and the bare paren recompiles as a regex GROUP — the pattern then means
+# "fmtAge followed immediately by age", which never occurs. Measured on a control file that DOES
+# contain `identified_at ... fmtAge(age)`: the single-backslash form counts 0, the grep below
+# counts 1. This assertion was therefore green regardless of the invariant it names, in the same
+# release whose changelog documents finding exactly this in (j59). Raised in review from awk's
+# documented behaviour and the `replaceState\\(` precedent elsewhere in this file, and confirmed
+# by running it rather than accepted on the reasoning.
+j58_leak_assign="$(grep -cF 'last_ts = r.identified_at' "$JS")"
+j58_leak_render="$(grep -cE 'identified_at.*fmtAge\(age\)' "$JS")"
+[ "$j58_leak_assign" = "0" ] && [ "$j58_leak_render" = "0" ] \
   && ok "(j58) identified_at is never assigned into last_ts nor rendered as the lane's event age — a lane cannot report an age it did not earn" \
-  || no "(j58) identified_at leaks into the freshness path"
+  || no "(j58) identified_at leaks into the freshness path" "assign=$j58_leak_assign render=$j58_leak_render"
+
+# MUTATION CONTROL: plant the leak and require the check to see it. Without this the fix above is
+# still only a claim that the pattern works — which is what the broken form also looked like.
+MUT_J60="$TMPROOT/mut-agefromidentity.js"
+sed 's|var age = (gen !== null \&\& lastEp !== null) ? (gen - lastEp) : null;|var age = (gen !== null \&\& lastEp !== null) ? (gen - lastEp) : null; var _leak = r.identified_at + fmtAge(age);|' \
+  "$JS" > "$MUT_J60" 2>/dev/null
+if mutant_ok "$JS" "$MUT_J60"; then
+  m_j60="$(grep -cE 'identified_at.*fmtAge\(age\)' "$MUT_J60")"
+  [ "$m_j60" -gt 0 ] \
+    && ok "(j60) MUTATION CONTROL: a planted identified_at→fmtAge(age) leak IS counted ($m_j60) — (j58) can fail, which the awk form it replaced could not" \
+    || no "(j60) MUTATION CONTROL: the planted leak was not counted (got $m_j60) — (j58) still cannot fail"
+fi
 
 # MUTATION CONTROL: drop the identified_at arm of laneAge and (j58) must redden.
 MUT_J58="$TMPROOT/mut-laneage.js"

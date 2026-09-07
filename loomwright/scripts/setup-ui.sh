@@ -433,7 +433,6 @@ bundle_version() {
   printf '%s' "$v"
 }
 
-
 # drifted_files -> the names of bundle files whose installed copy differs from the plugin's,
 # INCLUDING files that are missing from the ui dir. Empty output means "already configured".
 drifted_files() {
