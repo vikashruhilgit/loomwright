@@ -1315,10 +1315,14 @@ fi
 
 echo "== 23. the guard still holds at the REAL matcher fan-out, not just at two =="
 # Case 21 fires TWO invocations because that was the fan-out when it was written. Registering a
-# lane emitter for every agent this plugin ships takes the SubagentStop emitter matchers from 4
-# to 14 — and an UNTYPED payload matches all of them at once, because a matcher only
+# lane emitter for every agent this plugin ships takes the matchers that run THIS script from 3
+# to 13 — and an UNTYPED payload matches all of them at once, because a matcher only
 # discriminates when the payload carries an `agent_type`. So one untyped completion now fans out
-# to fourteen concurrent invocations of this script against one file. The dedupe is supposed to
+# to THIRTEEN concurrent invocations of this script against one file. (A fourteenth SubagentStop
+# emitter exists — `worker`'s `emit-progress-event.sh` — but it is a different script appending a
+# different line, so it is not part of this fan-out. The count here is of THIS script's callers.)
+# FAN_N is 14 rather than 13 on purpose: one more than production can produce, because headroom
+# above the real figure is the safe direction for a control and an under-count is not. The dedupe is supposed to
 # collapse them to a single line; at two invocations that was never in doubt, at fourteen the
 # bounded lock wait (20 x 50ms) is a real budget that could be exhausted, and every invocation
 # that gives up appends UNGUARDED by design. Asserted rather than reasoned about, because the
