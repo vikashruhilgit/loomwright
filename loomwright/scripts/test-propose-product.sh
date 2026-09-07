@@ -40,6 +40,25 @@
 #            stray file must make the tree-hash comparison FAIL. Without this, a hash function that
 #            silently returned a constant would make every "wrote nothing" assertion above vacuous
 #            while printing "ok".
+#   (k-p)    THE WHOLE DOMAIN-SCAN CASCADE, branch by branch. new_repo() plants a README, and README
+#            is the FIRST branch, so from it every later branch is unreachable BY CONSTRUCTION —
+#            which is how they all went untested while the suite reported green. new_repo_bare()
+#            plus seed() reach them: (k) the --domain override, asserted against a repo whose README
+#            would otherwise win · (l) package.json · (m) composer.json · (n) pyproject.toml
+#            `[project]` and `[tool.poetry]` · (o) Cargo.toml `[package]` · (p) the directory-name
+#            placeholder. Each asserts the resolved `domain` VALUE **and** the `domain_source`
+#            label — the label is what stops a case from passing off another branch's output.
+#            Two of these are REGRESSIONS for defects the gap was hiding:
+#              (o2) a SINGLE-QUOTED TOML literal string — the strip handled only double quotes, so
+#                   `'A B2B invoicing API'` reached the committed field with its delimiters;
+#              (n1)/(o1) a `description` under an EARLIER table (`[tool.black]`, `[dependencies.foo]`)
+#                   beat the real `[project]`/`[package]` one, committing another package's blurb as
+#                   this project's identity.
+#            (o3) pins the deliberate consequence of the fix: a description found ONLY under an
+#            unrecognised table is DISCARDED, not used as a first-match fallback.
+#   (q)      every --competitor REJECTION path — embedded newline, missing `|`, empty name, empty
+#            url — each on the CONFIRM path, with the exit status PINNED (1, confirmed empirically)
+#            and a positive control proving a well-formed value gets through the same repo.
 #
 #   jq is a HARD dependency of the writer (unlike the reader, which skips fail-safe without it), so
 #   a host with no jq has no write path to exercise. The suite then reports a DEGRADED RUN and
@@ -103,11 +122,89 @@ new_repo() {
   printf '%s' "$r"
 }
 
+# new_repo_bare — a throwaway PRIMARY checkout carrying NO scannable description source at all: no
+# README.md, no package.json, no *.toml. new_repo() always plants a README, and README is the FIRST
+# branch of the domain cascade, so from new_repo() every LATER branch is unreachable by construction
+# — which is exactly how those branches went untested. This is the entry point for reaching them.
+new_repo_bare() {
+  local r; r="$(mktemp -d "$ROOT/repo.XXXXXX")"
+  (
+    cd "$r" || exit 1
+    git init -q
+    git config user.email t@t
+    git config user.name t
+    printf 'placeholder\n' > src.txt
+    git add -A
+    git commit -qm init
+  ) >/dev/null 2>&1
+  printf '%s' "$r"
+}
+
+# seed <repo> <filename> — write stdin into <repo>/<filename> and commit it.
+seed() {
+  local r="$1" f="$2"
+  cat > "$r/$f"
+  ( cd "$r" && git add -A && git commit -qm seed ) >/dev/null 2>&1
+}
+
 # run_writer <repo> [args...] → sets OUT (stdout+stderr) and RC. stdin is /dev/null so the writer's
 # interactive-TTY branch can never be taken — the no-TTY half of AC5 is part of the invocation.
 run_writer() {
   local repo="$1"; shift
   OUT="$( ( cd "$repo" && bash "$WRITER" "$@" ) </dev/null 2>&1 )"; RC=$?
+}
+
+# proposed_domain / proposed_source — the RESOLVED values out of the last dry run's PLANNED WRITE.
+# These read the writer's own printed proposal (the `object:` JSON and the `domain source:` label),
+# so a scan assertion is about the value that would be COMMITTED, not merely about exit 0.
+proposed_domain() {
+  printf '%s\n' "$OUT" | sed -n '/^  object: /,$p' | sed '1s/^  object: //' | jq -r '.domain' 2>/dev/null
+}
+proposed_source() {
+  printf '%s\n' "$OUT" | sed -n 's/^  domain source: //p'
+}
+
+# expect_scan <label> <repo> <expected domain> <expected source> [extra writer args...]
+# A DRY RUN (no --confirm) — nothing is written anywhere — asserting BOTH the resolved `domain`
+# value and the `domain_source` label. Asserting the label as well as the value is what stops a
+# case from passing because some OTHER branch of the cascade happened to produce the same string.
+expect_scan() {
+  local label="$1" repo="$2" want_dom="$3" want_src="$4"; shift 4
+  run_writer "$repo" "$@"
+  local got_dom got_src
+  got_dom="$(proposed_domain)"
+  got_src="$(proposed_source)"
+  [ "$RC" -eq 0 ] && ok "$label: the dry run exits 0" \
+                  || no "$label: the dry run exited $RC — output: $OUT"
+  [ "$got_dom" = "$want_dom" ] && ok "$label: domain = [$want_dom]" \
+                               || no "$label: domain was [$got_dom], expected [$want_dom]"
+  [ "$got_src" = "$want_src" ] && ok "$label: domain_source = [$want_src]" \
+                               || no "$label: domain_source was [$got_src], expected [$want_src]"
+}
+
+# expect_competitor_reject <label> <repo> <message needle> <--competitor value>
+# Runs the CONFIRM path — the one that could actually write — and pins the exit status, the reason,
+# and that the tree is untouched.
+expect_competitor_reject() {
+  local label="$1" repo="$2" needle="$3" comp="$4"
+  local before after
+  before="$(tree_hash "$repo")"
+  run_writer "$repo" --confirm --stance tool --competitor "$comp"
+  after="$(tree_hash "$repo")"
+  # Exit 1 is PINNED, not merely "non-zero", and was confirmed empirically against this writer
+  # rather than assumed: these are ARGUMENT rejections and belong to the header's documented
+  # `1 refused`, NOT to the `2 shape validation failed` class that (f)/(g) pin. A regression that
+  # renumbered one of them would sail past a `-ne 0` check.
+  [ "$RC" -eq 1 ] && ok "$label: refused with the documented status 1 (refused)" \
+                  || no "$label: expected exit 1 (refused), got $RC — output: $OUT"
+  case "$OUT" in
+    *"$needle"*) ok "$label: the refusal names the reason" ;;
+    *) no "$label: the refusal does not say [$needle] — output: $OUT" ;;
+  esac
+  [ "$before" = "$after" ] && ok "$label: the tree is byte-identical — nothing was written" \
+                           || no "$label: the refused run modified the tree"
+  [ ! -e "$repo/.agent/product.json" ] && ok "$label: no store was created" \
+                                       || no "$label: a store was created despite the refusal"
 }
 
 HAVE_JQ=1
@@ -350,6 +447,142 @@ rm -f "$r_i/.git"
 run_writer "$r_i"
 [ "$RC" -eq 0 ] && ok "(i) CONTROL: the same directory, as a real checkout, gets past the guard" \
                 || no "(i) CONTROL FAILED: the guard is not what refused the .git-file case (rc=$RC)"
+
+# ============================================================================
+echo "== (k) the --domain explicit override BEATS a live scan candidate =="
+# Deliberately run against a repo whose README WOULD produce a candidate: an override that only
+# worked when nothing else was found would be indistinguishable from the fallback.
+r_k="$(new_repo)"
+expect_scan "(k)" "$r_k" "a domain nothing in this repo could have produced" "--domain (explicit)" \
+  --domain "a domain nothing in this repo could have produced"
+
+# ============================================================================
+echo "== (l) scan_json_description — package.json .description =="
+r_l="$(new_repo_bare)"
+seed "$r_l" package.json <<'JSON'
+{ "name": "acme", "description": "A B2B invoicing API for finance teams" }
+JSON
+expect_scan "(l)" "$r_l" "A B2B invoicing API for finance teams" "package.json .description"
+
+# ============================================================================
+echo "== (m) scan_json_description — composer.json .description (the LAST cascade branch) =="
+r_m="$(new_repo_bare)"
+seed "$r_m" composer.json <<'JSON'
+{ "name": "acme/billing", "description": "A PHP billing engine" }
+JSON
+expect_scan "(m)" "$r_m" "A PHP billing engine" "composer.json .description"
+
+# ============================================================================
+echo "== (n) scan_toml_description — pyproject.toml, table-scoped =="
+# REGRESSION FOR DEFECT 2: a `description` under an EARLIER, unrelated table must not win. A
+# first-match-anywhere scan returns the tool's blurb here.
+r_n1="$(new_repo_bare)"
+seed "$r_n1" pyproject.toml <<'TOML'
+[tool.black]
+description = "WRONG - a formatter's own blurb"
+
+[project]
+name = "acme"
+description = "A PEP 621 packaged service"
+TOML
+expect_scan "(n1)" "$r_n1" "A PEP 621 packaged service" "pyproject.toml description"
+
+# `[tool.poetry]` is still common and is the documented second choice for pyproject.toml.
+r_n2="$(new_repo_bare)"
+seed "$r_n2" pyproject.toml <<'TOML'
+[tool.poetry]
+name = "acme"
+description = "A poetry-packaged service"
+TOML
+expect_scan "(n2)" "$r_n2" "A poetry-packaged service" "pyproject.toml description"
+
+# ============================================================================
+echo "== (o) scan_toml_description — Cargo.toml, table-scoped and quote-correct =="
+# REGRESSION FOR DEFECT 2, Cargo flavour: `[dependencies.foo]` sits ABOVE `[package]`.
+r_o1="$(new_repo_bare)"
+seed "$r_o1" Cargo.toml <<'TOML'
+[dependencies.foo]
+version = "1.0"
+description = "WRONG - a dependency blurb"
+
+[package]
+name = "acme"
+description = "RIGHT - the real project"
+TOML
+expect_scan "(o1)" "$r_o1" "RIGHT - the real project" "Cargo.toml description"
+
+# REGRESSION FOR DEFECT 1: TOML permits single-quoted LITERAL strings. Stripping only double quotes
+# left the delimiters in the committed `domain`.
+r_o2="$(new_repo_bare)"
+seed "$r_o2" Cargo.toml <<'TOML'
+[package]
+name = "acme"
+description = 'A B2B invoicing API'
+TOML
+expect_scan "(o2)" "$r_o2" "A B2B invoicing API" "Cargo.toml description"
+
+# The deliberate NO-FIRST-MATCH-FALLBACK decision, pinned: when the ONLY description in the file
+# belongs to an unrecognised table, the scan yields NOTHING and the cascade falls through to the
+# honest placeholder — rather than committing another package's blurb as this project's identity.
+r_o3="$(new_repo_bare)"
+seed "$r_o3" Cargo.toml <<'TOML'
+[dependencies.foo]
+description = "WRONG - a dependency blurb"
+TOML
+run_writer "$r_o3"
+dom_o3="$(proposed_domain)"
+case "$dom_o3" in
+  *"WRONG - a dependency blurb"*) no "(o3) a dependency's blurb was adopted as this project's domain: [$dom_o3]" ;;
+  *"SCAN FOUND NO DESCRIPTION"*)  ok "(o3) an unrecognised table's description is DISCARDED — the scan falls through to the placeholder" ;;
+  *) no "(o3) unexpected domain for an unrecognised-table-only manifest: [$dom_o3]" ;;
+esac
+
+# ============================================================================
+echo "== (p) the directory-name PLACEHOLDER fallback — nothing scannable at all =="
+r_p="$(new_repo_bare)"
+expect_scan "(p)" "$r_p" \
+  "$(basename "$r_p") — SCAN FOUND NO DESCRIPTION; replace this with what this project is, in the terms its own market uses" \
+  "repo directory name (nothing else found — this is a placeholder, not a finding)"
+case "$(proposed_domain)" in
+  *"SCAN FOUND NO DESCRIPTION"*) ok "(p) the placeholder SAYS it is a placeholder rather than posing as a finding" ;;
+  *) no "(p) the fallback value does not announce itself as unscanned" ;;
+esac
+
+# CONTAINMENT for the whole scan block: every case above is a dry run, so not one of them may have
+# created a store. Asserted once, over all of them, rather than trusting each case's exit code.
+scan_leak=""
+for d in "$r_k" "$r_l" "$r_m" "$r_n1" "$r_n2" "$r_o1" "$r_o2" "$r_o3" "$r_p"; do
+  [ -e "$d/.agent" ] && scan_leak="$scan_leak $d"
+done
+[ -z "$scan_leak" ] && ok "(k-p) every scan case stayed a DRY RUN — no .agent/ anywhere" \
+                    || no "(k-p) a scan case created .agent/:$scan_leak"
+
+# ============================================================================
+echo "== (q) every --competitor rejection path refuses, and writes nothing =="
+r_q="$(new_repo)"
+# An embedded newline is rejected at PARSE time, before the value is appended: the accumulator is
+# newline-terminated, so one flag would silently become two competitors.
+expect_competitor_reject "(q1) embedded newline" "$r_q" \
+  "may not contain newline characters" "$(printf 'Acme\nBad|https://acme.example')"
+expect_competitor_reject "(q2) missing | separator" "$r_q" \
+  'must be of the form' "AcmeNoSeparator"
+expect_competitor_reject "(q3) empty name" "$r_q" \
+  "has an empty name" "|https://acme.example"
+expect_competitor_reject "(q4) empty url" "$r_q" \
+  "has an empty url" "Acme|"
+# CONTROL: the same repo, with a WELL-FORMED competitor, must get all the way through — otherwise
+# the four refusals above could be coming from anything in that directory rather than from the
+# competitor validation.
+run_writer "$r_q" --confirm --stance tool --competitor "Stripe Billing|https://stripe.com/billing"
+[ "$RC" -eq 0 ] && [ -f "$r_q/.agent/product.json" ] \
+  && ok "(q) CONTROL: the same repo accepts a well-formed --competitor and writes the store" \
+  || no "(q) CONTROL FAILED: the competitor validation is not what refused q1-q4 (rc=$RC)"
+if [ -f "$r_q/.agent/product.json" ]; then
+  jq -e '.competitors == [{name: "Stripe Billing", url: "https://stripe.com/billing", last_fetched: null}]' \
+    "$r_q/.agent/product.json" >/dev/null 2>&1 \
+    && ok "(q) CONTROL: exactly the one accepted competitor was recorded — no rejected value leaked in" \
+    || no "(q) CONTROL: the competitors array is not exactly the one accepted entry"
+fi
 
 # ============================================================================
 echo "== (j) MUTATION CONTROL — the containment assertions must actually discriminate =="

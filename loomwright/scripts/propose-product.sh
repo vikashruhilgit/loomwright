@@ -32,10 +32,14 @@
 # ---------------------------------------------------------------------------------------------
 # WHAT IS SCANNED, AND WHAT IS NEVER GUESSED:
 #   `domain`      — scanned. First non-empty candidate from, in order: README.md's H1 + first
-#                   paragraph, `package.json` .description, `pyproject.toml` / `Cargo.toml`
-#                   description, `composer.json` .description. Falls back to the repo directory
-#                   name. Overridable with `--domain`. The proposal printout names WHICH source a
+#                   paragraph, `package.json` .description, `pyproject.toml` `[project]` (then
+#                   `[tool.poetry]`) description, `Cargo.toml` `[package]` description,
+#                   `composer.json` .description. Falls back to the repo directory name.
+#                   Overridable with `--domain`. The proposal printout names WHICH source a
 #                   candidate came from, so a human can see whether it is worth keeping.
+#                   The TOML scans are TABLE-SCOPED on purpose — a `description` under some other
+#                   table (a dependency's, a tool's) is another product's blurb, not this one's;
+#                   see scan_toml_description's own header for what it does and does not handle.
 #   `stance`      — NEVER scanned, NEVER guessed, and REQUIRED on the write path. `stance` decides
 #                   the DEFAULT ACTION on a discovered gap (read-product.sh's `STANCE_ACTIONS`
 #                   lookup), so a wrong guess here would tell a payments app to skip its missing
@@ -181,11 +185,70 @@ scan_json_description() {   # $1 = manifest filename
   printf '%s' "$v"
 }
 
-scan_toml_description() {   # $1 = manifest filename — `description = "..."`, first match only
-  local f="$GITROOT/$1" v=""
+# scan_toml_description <manifest filename> <table>... — the `description` belonging to one of the
+# NAMED tables, tried in the order given (`package` for Cargo.toml; `project` then `tool.poetry` for
+# pyproject.toml) — NOT the first `description` anywhere in the file.
+#
+# WHY TABLE-SCOPED, AND WHY NO FIRST-MATCH FALLBACK: a manifest routinely carries a `description`
+# that belongs to something ELSE — `[dependencies.foo]` in a Cargo.toml, some `[tool.*]` block in a
+# pyproject.toml — and such a table can sit ABOVE the real one. A first-match scan then writes a
+# dependency's blurb into the committed `domain` field as this project's identity, which is a
+# confident lie rather than a miss. So a description found ONLY under an UNRECOGNISED table is
+# DISCARDED: falling through to the next source, and ultimately to the honest "SCAN FOUND NO
+# DESCRIPTION" placeholder, is strictly better than attributing someone else's product to this repo.
+# The one exception is a description in the file's PREAMBLE — before any `[table]` header at all —
+# which cannot belong to another table, so it is used as a last resort.
+#
+# QUOTE HANDLING: strips a MATCHED pair of delimiters. TOML permits basic `"..."` AND literal
+# `'...'` strings; only double quotes were stripped before, so a single-quoted description carried
+# its quotes into the committed field. Whatever follows the closing delimiter (a trailing
+# `# comment`) is dropped. A LONE leading or trailing quote is NOT stripped — an unterminated value
+# is surfaced as written rather than silently reshaped into something that looks valid.
+#
+# WHAT THIS DELIBERATELY DOES NOT HANDLE (it is a scan feeding a human-reviewed proposal, not a TOML
+# parser): multi-line `"""`/`'''` strings — recognised and SKIPPED, so the scan falls through rather
+# than emitting a mangled fragment; backslash escapes inside a basic string (left literal); quoted or
+# dotted key names on the left of the `=`; and `[[array-of-table]]` headers, which are read as an
+# ordinary — and therefore unrecognised — table name.
+scan_toml_description() {
+  local f="$GITROOT/$1"; shift
   [ -f "$f" ] || return 1
-  v="$(grep -m1 -E '^[[:space:]]*description[[:space:]]*=' "$f" 2>/dev/null \
-        | sed -E 's/^[^=]*=[[:space:]]*//; s/^"//; s/"[[:space:]]*$//' || true)"
+  local v=""
+  v="$(awk -v targets="$*" '
+    function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
+    function value(line,   dq, sq, q, i) {
+      sub(/^[^=]*=[[:space:]]*/, "", line)
+      line = trim(line)
+      dq = "\""; sq = sprintf("%c", 39)
+      if (substr(line, 1, 3) == dq dq dq || substr(line, 1, 3) == sq sq sq) return ""
+      q = substr(line, 1, 1)
+      if (q == dq || q == sq) {
+        i = length(line)
+        while (i > 1 && substr(line, i, 1) != q) i--
+        if (i > 1) return substr(line, 2, i - 2)   # matched pair; any trailing comment dropped
+        return line                                # lone opening delimiter: left exactly as written
+      }
+      return line
+    }
+    BEGIN { n = split(targets, want, " "); section = "" }
+    /^[[:space:]]*\[/ {
+      hdr = $0
+      sub(/^[[:space:]]*\[+/, "", hdr)
+      sub(/\]+.*$/, "", hdr)
+      section = trim(hdr)
+      next
+    }
+    /^[[:space:]]*description[[:space:]]*=/ {
+      if (!(section in raw)) raw[section] = $0   # first description per table wins
+      next
+    }
+    END {
+      for (i = 1; i <= n; i++) {
+        if (want[i] in raw) { v = value(raw[want[i]]); if (v != "") { print v; exit } }
+      }
+      if ("" in raw) { v = value(raw[""]); if (v != "") print v }   # preamble, last resort
+    }
+  ' "$f" 2>/dev/null || true)"
   [ -n "$v" ] || return 1
   printf '%s' "$v"
 }
@@ -196,8 +259,8 @@ if [ -n "$domain_arg" ]; then
 else
   if   v="$(scan_readme)"                            && [ -n "$v" ]; then domain="$v"; domain_source="README.md"
   elif v="$(scan_json_description package.json)"     && [ -n "$v" ]; then domain="$v"; domain_source="package.json .description"
-  elif v="$(scan_toml_description pyproject.toml)"   && [ -n "$v" ]; then domain="$v"; domain_source="pyproject.toml description"
-  elif v="$(scan_toml_description Cargo.toml)"       && [ -n "$v" ]; then domain="$v"; domain_source="Cargo.toml description"
+  elif v="$(scan_toml_description pyproject.toml project tool.poetry)" && [ -n "$v" ]; then domain="$v"; domain_source="pyproject.toml description"
+  elif v="$(scan_toml_description Cargo.toml package)" && [ -n "$v" ]; then domain="$v"; domain_source="Cargo.toml description"
   elif v="$(scan_json_description composer.json)"    && [ -n "$v" ]; then domain="$v"; domain_source="composer.json .description"
   else
     domain="$(basename "$GITROOT") — SCAN FOUND NO DESCRIPTION; replace this with what this project is, in the terms its own market uses"
