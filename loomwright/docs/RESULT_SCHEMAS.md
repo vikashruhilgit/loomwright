@@ -2358,9 +2358,14 @@ long-superseded HEAD is suspect however recent its timestamp.
 
 **Reader contract (`scripts/read-product.sh`) — advisory and fail-SAFE, per the repo's bimodal failure
 philosophy.** It ALWAYS exits 0; it never writes the store, never fetches anything, and never executes
-any value it reads. In each of the three degraded cases it emits **nothing on stdout**, names the reason
-**on stderr**, and exits 0: store absent, store malformed (unparseable JSON, or a root that is not an
-object), and `jq` unavailable. A partially-odd store is demote-never-crash: the unusable field degrades
+any value it reads. In **every** degraded case it emits **nothing on stdout**, names the reason
+**on stderr**, and exits 0 — the rule the reader enforces is that no path may reach `exit 0` with empty
+stdout without having called `diag` first, so the guarantee holds for cases added later. The cases today
+include: store absent, store malformed (unparseable JSON, or a root that is not an object), and `jq`
+unavailable. (Deliberately stated as a rule rather than a count: an earlier version of this paragraph
+pinned "three", which the reader had already outgrown twice — the exact class of unbacked claim the
+`## PRODUCT_CONTEXT` store exists to reduce. `scripts/read-product.sh`'s own FAIL-SAFE header states the
+same rule and names `grep -n 'diag "read-product:' $0` as the way to enumerate the live set.) A partially-odd store is demote-never-crash: the unusable field degrades
 to `unset` with a stderr warning and every other field is still emitted, so a missing scalar can never
 suppress the whole block. Output is a markdown block whose first line is the subordination banner
 (`## Product context — advisory, subordinate to CLAUDE.md (on conflict, CLAUDE.md wins)`), one
