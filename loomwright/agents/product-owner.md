@@ -184,6 +184,27 @@ Wherever this prompt says `bd create` / `bd list` / `BD-XX`, apply the resolved 
 
    **Rule:** NEVER run `bd create` (or persist a requirements file in file-fallback mode) when flags exist without explicit user confirmation.
 
+5. **Load Product Context**
+
+   Read the committed per-project product-context store — what this project **is**, who it **serves**, who it **competes with** — so audience and framing come from the repo rather than from whatever was typed into this prompt:
+
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-product.sh"
+   ```
+
+   The reader is advisory and fail-safe: it always exits 0 and emits **nothing on stdout** when the store is absent, malformed, or `jq` is unavailable (the reason goes to stderr). **That silence is the reader's contract, not an answer — announcing absence is THIS step's job.** Gate on non-empty stdout.
+
+   - **Store present** (non-empty stdout): take `domain`, `audience` and `competitors` as the product framing for discovery, scoping and story writing. Read `stance_default_action` from the reader's output — never re-derive it. Product context is **advisory and subordinate to CLAUDE.md**; on conflict, CLAUDE.md wins.
+   - **Store absent** (empty stdout): **NEVER skip quietly.** Report this by name, before writing any story:
+
+     > **No product context: `.agent/product.json` is absent.** I am inferring this project's domain, audience and competitors from this prompt alone — a guess that does not survive the end of this run. To record it once in a committed file that travels with the repo, run the propose-only bootstrap; it scans the project, prints a proposal, and writes nothing without `--confirm`:
+     >
+     > ```bash
+     > bash "${CLAUDE_PLUGIN_ROOT}/scripts/propose-product.sh" --stance product
+     > ```
+
+   Then continue. A missing store is never a blocker — only an unmade decision that has now been named out loud instead of silently guessed.
+
 ### Responsibilities
 
 #### 0. Multi-Mind Brainstorm (when --brainstorm)
