@@ -2185,9 +2185,27 @@ cbasis="$(jq -r '.surfaces.rules.detail.correlations[0].basis // ""' "$JA" 2>/de
 printf '%s' "$cbasis" | grep -qF 'changed_paths' && printf '%s' "$cbasis" | grep -qi 'not evidence' \
   && ok "...and states its basis, including that a path overlap is not evidence of a violation" \
   || no "correlation basis is missing or does not disclaim: '$cbasis'"
-[ "$(cor "$JA" '.surfaces.rules.detail.correlations[0].matched | length')" = "3" ] \
-  && ok "three ledger paths overlap this rule's globs" \
+[ "$(cor "$JA" '.surfaces.rules.detail.correlations[0].matched | length')" = "5" ] \
+  && ok "five ledger paths overlap this rule's globs" \
   || no "matched length: $(cor "$JA" '.surfaces.rules.detail.correlations[0].matched | length')"
+# ONE LEDGER LINE, SEVERAL MATCHES - the shape `matched` is one entry per (line, path, pattern)
+# triple makes possible, and the shape the Floor's renderer collapses into a single row (see
+# "ONE ROW PER LEDGER LINE" in floor-ui/floor.js). Until the ledger fixture's first line was
+# given several matching paths, EVERY line in it matched exactly once, so nothing in either
+# suite exercised the multiplicity at all: the projector's own de-duplication of evidence into
+# `evidence_by_line` had no fixture that could tell a per-line serialisation from a per-match
+# one, and the renderer's regression back to a row per match would have gone unseen here too.
+# Asserted on BOTH axes, because either alone is satisfiable by the flat 1:1 shape.
+[ "$(cor "$JA" '[.surfaces.rules.detail.correlations[0].matched[] | select(.line == 1)] | length')" = "3" ] \
+  && ok "...and ONE of those ledger lines carries three of them - the multi-match shape the row collapse exists for" \
+  || no "ledger line 1 does not carry several matches: $(cor "$JA" '[.surfaces.rules.detail.correlations[0].matched[] | select(.line == 1)]')"
+[ "$(cor "$JA" '[.surfaces.rules.detail.correlations[0].matched[] | select(.line == 1) | .pattern] | unique | length')" = "2" ] \
+  && ok "...across TWO distinct globs, so a per-pattern grouping has more than one group to make" \
+  || no "ledger line 1's matches do not span two patterns: $(cor "$JA" '[.surfaces.rules.detail.correlations[0].matched[] | select(.line == 1) | .pattern] | unique')"
+# ...while the evidence stays stated ONCE for that line - the de-duplication is now falsifiable.
+[ "$(cor "$JA" '.surfaces.rules.detail.correlations[0].evidence_by_line | keys | length')" = "3" ] \
+  && ok "...and evidence is still keyed by LINE (3 lines), not re-serialised per match (5)" \
+  || no "evidence_by_line key count: $(cor "$JA" '.surfaces.rules.detail.correlations[0].evidence_by_line | keys')"
 # Evidence is carried ONCE PER CORRELATION keyed by line, not once per (rule, path) match: a
 # rule's globs typically match many paths on the same ledger line, and attaching the array to
 # every match re-serialised it (measured: 612 occurrences for 154 distinct strings). What

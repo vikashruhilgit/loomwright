@@ -2821,6 +2821,65 @@ n_corr_ev="$(jq -r '[.surfaces.rules.detail.correlations[].evidence_by_line // {
   && ok "(j31) floor-rules-churn-live exercises a correlation whose every matched line resolves to evidence ($n_corr correlation(s), $n_corr_ev evidence line(s), 0 unresolved)" \
   || no "(j31) floor-rules-churn-live: a matched line does not resolve to evidence" "corr=$n_corr evidence-lines=$n_corr_ev unresolved=$n_corr_unres"
 
+# --- (j55) ONE CORRELATION ROW PER LEDGER LINE, not one per match ------------------------------
+# `correlations[].matched` is one entry per (line, path, pattern) triple, but the ledger's
+# evidence is a property of the LINE - which is exactly why the projector hoisted it into
+# `evidence_by_line` keyed by line. The RENDERER did not follow: it looped `matched` and
+# re-joined the same evidence string onto every match, so a rule whose globs claimed many paths
+# on one line printed that line's evidence once per path. Measured on this repo's own store
+# before the fix: 347 rendered rows for 153 (rule, line) facts over 79 distinct lines, one line
+# rendered 19 times. The bytes were de-duplicated on the wire and the pixels never were.
+#
+# This is a STATIC half, the same kind as group (b): floor.js is not executed by this suite (CI
+# installs Node only AFTER the bash suite has run), so what is gated is the STRUCTURE of the
+# render - that the single row-creating `createElement('li')` sits in a loop bounded by the
+# LINE grouping and not by `matched`. (j56) is its mutation control. The honest limit: this
+# proves the loop is written over lines, not that the DOM it produces is one row per line.
+corr_block="$(awk "/var ulEv = document.createElement\('ul'\);/{f=1} f{print} f&&/corrDiv.appendChild\(ulEv\);/{exit}" "$JS")"
+# The li-creating loop is found by its BOUND rather than by a literal, so renaming the index
+# variable cannot silently disarm this.
+corr_gate() { # $1 = the block text -> prints "<li-count> <bound-of-enclosing-loop>"
+  printf '%s\n' "$1" | awk '
+    /for *\( *var [A-Za-z_$][A-Za-z0-9_$]* *= *0 *;/ { bound = $0; sub(/.*< */, "", bound); sub(/ *;.*/, "", bound) }
+    /document\.createElement\(.li.\)/ { n++; last = bound }
+    END { printf "%d %s\n", n+0, (n ? last : "<none>") }'
+}
+corr_shape="$(corr_gate "$corr_block")"
+[ "$corr_shape" = "1 lineOrder.length" ] \
+  && ok "(j55) floor.js creates exactly ONE correlation row element, in a loop bounded by the LINE grouping (lineOrder.length) - so a line whose globs claim many paths states its evidence once" \
+  || no "(j55) the correlation row loop is bounded by the line grouping" "got '<li> count + enclosing bound' = '$corr_shape', want '1 lineOrder.length'"
+# The grouping key must be the LINE. A grouping keyed on anything else would satisfy (j55)
+# while reproducing the duplication under a new variable name.
+in_str "$corr_block" "lineKey = String(mm.line);" \
+  && ok "(j55b) ...and the grouping key is the match's LINE, not its path or pattern" \
+  || no "(j55b) the correlation grouping key is the match's line" "no 'lineKey = String(mm.line);' in the correlation block"
+
+MUT_CORR="$TMPROOT/mut-corr.js"
+sed 's/gi < lineOrder\.length/gi < matched.length/' "$JS" > "$MUT_CORR" 2>/dev/null
+if mutant_ok "$JS" "$MUT_CORR"; then
+  mut_block="$(awk "/var ulEv = document.createElement\('ul'\);/{f=1} f{print} f&&/corrDiv.appendChild\(ulEv\);/{exit}" "$MUT_CORR")"
+  mut_shape="$(corr_gate "$mut_block")"
+  [ "$mut_shape" != "1 lineOrder.length" ] \
+    && ok "(j56) MUTATION CONTROL: reverting the row loop to one iteration per MATCH is caught (got '$mut_shape') - (j55) is measuring the bound, not a coincidence of the file" \
+    || no "(j56) MUTATION CONTROL FAILED: a per-match row loop still reads as per-line - (j55) proves nothing"
+fi
+[ "$(csum "$JS")" = "$JS_SIG_BEFORE" ] \
+  && ok "(j56b) floor.js is byte-identical after the (j56) mutation control" \
+  || no "(j56b) floor.js is byte-identical after the (j56) mutation control" "before='$JS_SIG_BEFORE' after='$(csum "$JS")'"
+
+# --- (j57) ...and the browser fixture actually EXERCISES that shape ----------------------------
+# A gate on a collapse is vacuous against a fixture in which nothing collapses. Every line in
+# this fixture matched exactly once until the ledger fixture's first line was given several
+# matching paths, so both the projector's per-line evidence serialisation and this renderer's
+# per-line row would have been indistinguishable from the per-match ones. Asserted on both
+# axes - several matches on ONE line, spanning MORE THAN ONE pattern - because either alone is
+# satisfiable by the flat 1:1 shape.
+rc_multi="$(jq -r '[.surfaces.rules.detail.correlations[].matched | group_by(.line)[] | select(length > 1)] | length' "$RC_LIVE" 2>/dev/null)"
+rc_multi_pats="$(jq -r '[.surfaces.rules.detail.correlations[].matched | group_by(.line)[] | select(length > 1) | (map(.pattern) | unique | length)] | max // 0' "$RC_LIVE" 2>/dev/null)"
+[ "${rc_multi:-0}" -ge 1 ] 2>/dev/null && [ "${rc_multi_pats:-0}" -ge 2 ] 2>/dev/null \
+  && ok "(j57) floor-rules-churn-live carries a ledger line with SEVERAL matches ($rc_multi such line(s)) spanning $rc_multi_pats distinct globs - the collapse (j55) gates has something to collapse" \
+  || no "(j57) floor-rules-churn-live exercises the multi-match line shape" "multi-match lines=$rc_multi max distinct patterns on one=$rc_multi_pats"
+
 # The RESULT summary and the exit status are emitted by `finish` from the EXIT trap (see its
 # definition above), so every assertion group below still runs and still counts.
 

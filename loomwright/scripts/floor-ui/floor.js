@@ -1123,10 +1123,34 @@
             corrDiv.appendChild(corrHead);
             var ulEv = document.createElement('ul');
             var matched = rc.matched || [];
-            for (var m = 0; m < matched.length; m++) {
-              var mm = matched[m] || {};
+            /* ONE ROW PER LEDGER LINE - not one per match. `matched` is one entry per
+             * (line, path, pattern) triple, but the evidence is a property of the LINE, so a rule
+             * whose globs match many paths on the same line re-printed the identical evidence
+             * string once per path. Measured on this repo's own store: 347 rendered rows for 153
+             * (rule, line) facts over 79 distinct ledger lines, with one line rendered 19 times.
+             *
+             * The projector already fixed the WIRE form of exactly this - it hoisted evidence out
+             * of `matched` into `evidence_by_line` keyed by line (build-floor.sh, "EVIDENCE IS
+             * CARRIED ONCE PER CORRELATION, KEYED BY LINE") - but this renderer kept re-joining it
+             * onto every match, so the bytes were de-duplicated and the pixels never were. That is
+             * the half this closes; the artefact's shape is untouched.
+             *
+             * NOTHING HERE IS ORDERED BY COUNT, the same order-by-key discipline the rest of this
+             * surface holds to. Lines come out in encounter order, which the projector sorts by
+             * [line, path, pattern] and so is ascending by line; the pattern groups inside a line
+             * are ordered by pattern KEY. */
+            var lineOrder = [], byLine = {}, m, mm, lineKey;
+            for (m = 0; m < matched.length; m++) {
+              mm = matched[m] || {};
+              lineKey = String(mm.line);
+              if (!Object.prototype.hasOwnProperty.call(byLine, lineKey)) {
+                byLine[lineKey] = []; lineOrder.push(lineKey);
+              }
+              byLine[lineKey].push(mm);
+            }
+            for (var gi = 0; gi < lineOrder.length; gi++) {
+              var group = byLine[lineOrder[gi]];
               var liEv = document.createElement('li');
-              var evTxt = 'line ' + mm.line + ' · ' + mm.path + ' matched ' + mm.pattern;
               /* Evidence is carried ONCE PER CORRELATION in `evidence_by_line`, keyed by line -
                * `matched[].line` is the key into it. This branch used to read `mm.evidence`, which
                * the projector stopped emitting when the evidence was hoisted to kill a ~4x
@@ -1134,12 +1158,49 @@
                * the current projector can produce and every correlation rendered as a label and a
                * basis with nothing under it - while three doc surfaces claimed the evidence was
                * shown. The `mm.evidence` fallback is kept for an artefact produced BEFORE the
-               * hoist, which schema_version 1 still makes legal. */
-              var evList = (mm.evidence && mm.evidence.length) ? mm.evidence
-                         : ((rc.evidence_by_line || {})[String(mm.line)] || []);
+               * hoist, which schema_version 1 still makes legal - and because a legacy artefact
+               * carries it per MATCH, the group is scanned for the first match that has any. */
+              var evList = null;
+              for (m = 0; m < group.length && evList === null; m++) {
+                if (group[m].evidence && group[m].evidence.length) { evList = group[m].evidence; }
+              }
+              if (evList === null) { evList = (rc.evidence_by_line || {})[lineOrder[gi]] || []; }
+
+              /* A line with exactly ONE match keeps the original single-row wording verbatim:
+               * there is no duplication to collapse there, and the path/pattern pair IS the row's
+               * content. Only a line that actually repeated gets the collapsed header. */
+              var evTxt = (group.length === 1)
+                ? 'line ' + group[0].line + ' · ' + group[0].path + ' matched ' + group[0].pattern
+                : 'line ' + group[0].line + ' · ' + group.length + ' matches';
               if (evList.length) { evTxt += ' — evidence: ' + evList.join('; '); }
               else { evTxt += ' — no evidence recorded for this line'; }
               liEv.textContent = evTxt;
+
+              /* The paths are NOT dropped - they move to one subordinate line PER PATTERN, so a
+               * reader can still check which glob claimed which path. Per pattern, not per path:
+               * a line's patterns are bounded by the rule's own applies_to (2 today), while its
+               * paths are bounded by the commit (19 on the worst line here). */
+              if (group.length > 1) {
+                var patOrder = [], byPat = {}, patKey;
+                for (m = 0; m < group.length; m++) {
+                  patKey = String(group[m].pattern);
+                  if (!Object.prototype.hasOwnProperty.call(byPat, patKey)) {
+                    byPat[patKey] = []; patOrder.push(patKey);
+                  }
+                  byPat[patKey].push(group[m].path);
+                }
+                patOrder.sort();
+                for (var p = 0; p < patOrder.length; p++) {
+                  var paths = byPat[patOrder[p]];
+                  var pathP = document.createElement('p');
+                  pathP.className = 'corr-paths';
+                  pathP.textContent = 'matched ' + patOrder[p] + ' → '
+                    + (paths.length === 1
+                        ? paths[0]
+                        : paths.length + ' paths: ' + paths.join(', '));
+                  liEv.appendChild(pathP);
+                }
+              }
               ulEv.appendChild(liEv);
             }
             corrDiv.appendChild(ulEv);
