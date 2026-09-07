@@ -14,6 +14,11 @@
 # Asserting only the message would leave the shape free to rot into something that is broken for
 # every marketplace install while the test stayed green.
 #
+# WHY THERE IS A THIRD, NEGATIVE HALF. Both of the above are PREFIX greps — they match a correct
+# invocation with anything appended to it. That is how a pre-filled `--stance product` shipped in
+# the offered bootstrap while every assertion here stayed green. (I) closes that hole by pinning the
+# WHOLE offered line, because `stance` is the one field the design refuses to guess.
+#
 # WHY THE SHAPE HALF IS LOAD-BEARING. `loomwright/scripts/...` is the DEVELOPER-side path — it
 # resolves only in a checkout of this repo. Anything invoked at RUNTIME from agent or command prose
 # must go through the plugin-root variable, which resolves on both a dev checkout and a marketplace
@@ -126,6 +131,39 @@ check_pair() {
     else
       _chk 0 "[$base] uses no developer-side loomwright/scripts/... path"
     fi
+
+    # (I) NEGATIVE — the OFFERED bootstrap command must carry NO ARGUMENTS, and above all no
+    #     pre-filled `--stance <value>`.
+    #
+    #     WHY THIS IS NOT A STYLE RULE. `stance` is the ONE field the design refuses to guess: it
+    #     decides the DEFAULT ACTION on a discovered gap (`product` => build-highest-priority,
+    #     `tool` => do-not-build-by-default) and no signal in a repo distinguishes the two, so a
+    #     fixed default would tell a payments app to skip its missing fraud checks. Worse, a
+    #     pre-filled in-enum value SUPPRESSES THE SCRIPT'S OWN SAFEGUARD: it sets `stance_ok=1`, so
+    #     propose-product.sh's dry-run `BLOCKED: --stance is REQUIRED ... and is never guessed`
+    #     branch never prints, and a user who pastes the offered line is handed a decision without
+    #     ever being told one was made. This repo is its own counter-example — Loomwright is a
+    #     `tool`, and a seam pre-filling `product` would hand it the wrong answer here.
+    #
+    #     WHY (D) CANNOT CATCH IT. (D) greps the invocation as a PREFIX, so it matches just as well
+    #     with any argument appended. Only an assertion on the WHOLE line discriminates, which is
+    #     what this does: strip the markdown blockquote/indent prefix and require what remains to be
+    #     EXACTLY $BOOTSTRAP_CALL.
+    local offers extra
+    offers="$(grep -F "$BOOTSTRAP_CALL" "$f" 2>/dev/null | sed -E 's/^[[:space:]>]*//')"
+    if [ -z "$offers" ]; then
+      # (D) has already failed; say so here rather than letting an empty set pass vacuously.
+      _chk 1 "[$base] no bootstrap invocation to check for a pre-filled --stance (see (D))"
+    else
+      # `grep -v` consumes all of its input, so there is no early-close SIGPIPE to confuse the
+      # status; `|| true` is safe because the emptiness of $extra IS the assertion.
+      extra="$(printf '%s\n' "$offers" | grep -vxF "$BOOTSTRAP_CALL" || true)"
+      if [ -n "$extra" ]; then
+        _chk 1 "[$base] the offered bootstrap carries ARGUMENTS — stance must not be pre-decided for the user: $extra"
+      else
+        _chk 0 "[$base] offers the bootstrap bare, with no pre-filled --stance value"
+      fi
+    fi
   done
 
   # (H) CROSS-FILE — agent and command must carry the SAME message, byte for byte. Agent↔command
@@ -223,6 +261,14 @@ mutate_and_expect_fail "commands/product-owner.md — runtime prefix replaced by
 # missing store without saying how to create it is the half-fix this seam exists to prevent.
 OFFER_DELETE='/scripts\/propose-product\.sh/d'
 mutate_and_expect_fail "agents/product-owner.md — bootstrap offer deleted" agent "$OFFER_DELETE"
+
+# M6/M7 — re-add a pre-filled `--stance product` to the offered command. This is the exact defect
+# (I) exists for, and the exact defect that (D)'s prefix grep waves through: the message, the shape
+# and the developer-path checks all still pass, so without (I) the suite would go green on a seam
+# that hands the user an unmade decision AND silences the script's own explanation of it.
+STANCE_PREFILL='s|(scripts/propose-product\.sh")$|\1 --stance product|'
+mutate_and_expect_fail "agents/product-owner.md — a concrete --stance value pre-filled into the offer" agent "$STANCE_PREFILL"
+mutate_and_expect_fail "commands/product-owner.md — a concrete --stance value pre-filled into the offer" cmd "$STANCE_PREFILL"
 
 echo
 echo "RESULT: $pass passed, $fail failed"

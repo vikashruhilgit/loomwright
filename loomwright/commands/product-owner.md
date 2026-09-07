@@ -365,8 +365,10 @@ Wherever this prompt says `bd create` / `bd list` / `BD-XX`, apply the resolved 
      > **No product context: `.agent/product.json` is absent.** I am inferring this project's domain, audience and competitors from this prompt alone — a guess that does not survive the end of this run. To record it once in a committed file that travels with the repo, run the propose-only bootstrap; it scans the project, prints a proposal, and writes nothing without `--confirm`:
      >
      > ```bash
-     > bash "${CLAUDE_PLUGIN_ROOT}/scripts/propose-product.sh" --stance product
+     > bash "${CLAUDE_PLUGIN_ROOT}/scripts/propose-product.sh"
      > ```
+     >
+     > Run it bare, exactly as written. The dry run then prints the one field the bootstrap will never guess for you: `--stance`, which decides the DEFAULT ACTION on a discovered gap — `product` means build the highest-priority one, `tool` means do not build by default. Nothing in a repo distinguishes the two, so pick it yourself and re-run with `--stance product` or `--stance tool`; the bootstrap refuses to write without it.
 
    Then continue. A missing store is never a blocker — only an unmade decision that has now been named out loud instead of silently guessed.
 

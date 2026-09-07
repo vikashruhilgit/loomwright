@@ -10,7 +10,7 @@
 # into the scratch dir. Static-only: no Docker, no network, no `gh`.
 # Exit 0 = all pass, 1 = any failure (auto-registered by ci.yml's `loomwright/scripts/test-*.sh` glob).
 #
-# Covers cases (a)–(k), mapped to the job's acceptance criteria:
+# Covers cases (a)–(l), mapped to the job's acceptance criteria:
 #   (a) AC2  absent store              → EMPTY stdout, reason named on stderr, exit 0
 #   (b) AC1  well-formed fixture       → TRACEABILITY: every emitted value is compared against the
 #                                        value jq reads back from the FIXTURE (never against a string
@@ -42,6 +42,9 @@
 #                                        `--store`, and a `--store` flag WINS over the env var
 #   (k)      pure-read                  → the fixture's bytes are unchanged after a run, and the reader
 #                                        creates no `.agent/` in the scratch repo
+#   (l) AC2  DASH-LEADING store path    → REGRESSION: the path is a FILENAME, never jq short options.
+#                                        A malformed one still names its reason on stderr (it used to
+#                                        be silent on BOTH streams); a well-formed one is still read
 
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -339,6 +342,36 @@ after="$(cksum < "$FIX")"
                          || no "(k) the reader MODIFIED the store"
 [ ! -e "$FAKE_REPO/.agent" ] && ok "(k) the reader created no .agent/ in the scratch repo" \
                              || no "(k) the reader created $FAKE_REPO/.agent — it must never write the store"
+
+# ============================================================================
+echo "== (l) AC2 a DASH-LEADING store path is a FILENAME, never jq options =="
+# REGRESSION. The store path used to be passed to jq as an OPERAND, so a path beginning with a dash
+# was consumed as SHORT OPTIONS. `-dash.json` contains `-h`, which makes jq print its usage to
+# STDOUT and exit 0: the render was non-empty (so the `[ ! -s ]` guard did not fire) but carried no
+# OUT/WARN/MALFORMED line, and the run ended SILENT ON BOTH STREAMS — the one thing the FAIL-SAFE
+# contract forbids ("names the reason ON STDERR"). A dash-leading value is reachable in the wild via
+# `--store`, `PRODUCT_STORE`, or a `--repo`/`PRODUCT_REPO_DIR` that `$STORE` is built from.
+# Both halves are asserted: a MALFORMED dash-leading store must be REPORTED (not swallowed), and a
+# WELL-FORMED one must actually be READ. The path must stay RELATIVE — an absolute path cannot begin
+# with a dash, so only a relative one exercises the option-parsing boundary.
+L_DIR="$(mktmp)"
+write_fixture "$L_DIR/-dash-bad.json" '{ this is not json'
+write_fixture "$L_DIR/-dash-ok.json"  "$FULL_JSON"
+L_ERR="$(mktmp)/err"
+
+outL1="$(cd "$L_DIR" && bash "$READER" --store "-dash-bad.json" --repo "$FAKE_REPO" 2>"$L_ERR")"; rcL1=$?
+[ "$rcL1" -eq 0 ] && ok "(l) a dash-leading MALFORMED store still exits 0" \
+                  || no "(l) expected exit 0 for a dash-leading store, got $rcL1"
+[ -z "$outL1" ] && ok "(l) a dash-leading MALFORMED store emits NOTHING on stdout" \
+                || no "(l) expected empty stdout; got: $outL1"
+[ -s "$L_ERR" ] && ok "(l) a dash-leading MALFORMED store NAMES ITS REASON on stderr (never silent on both streams)" \
+                || no "(l) SILENT ON BOTH STREAMS for a dash-leading store — the fail-safe contract is broken"
+
+outL2="$(cd "$L_DIR" && bash "$READER" --store "-dash-ok.json" --repo "$FAKE_REPO" 2>/dev/null)"
+case "$outL2" in
+  *"$BANNER"*) ok "(l) a dash-leading WELL-FORMED store is READ as a filename, not parsed as jq options" ;;
+  *) no "(l) a dash-leading well-formed store produced no advisory block — the path is still being taken as options: $outL2" ;;
+esac
 
 echo
 echo "RESULT: $pass passed, $fail failed"

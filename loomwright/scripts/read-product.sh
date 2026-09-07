@@ -267,7 +267,15 @@ JQ_PROG='
   | .[]
 '
 
-if ! jq -r "$JQ_PROG" "$STORE" > "$render" 2>/dev/null; then
+# The store is fed on STDIN, never as a jq operand. As an operand, a store path that BEGINS WITH A
+# DASH is consumed by jq as short options instead of a filename — and a value beginning with a dash
+# is reachable in the wild through `--store`, `PRODUCT_STORE`, or a `--repo`/`PRODUCT_REPO_DIR` that
+# `$STORE` is built from. `-h` in particular makes jq print its USAGE TO STDOUT and exit 0, which
+# produced a non-empty `$render` carrying no OUT/WARN/MALFORMED line: the run then said nothing on
+# stdout AND nothing on stderr, breaking the FAIL-SAFE contract above ("names the reason ON STDERR")
+# in the one case the contract exists for. A redirect is equally injection-safe — the path is never
+# interpreted by a shell and never reaches the jq program text.
+if ! jq -r "$JQ_PROG" < "$STORE" > "$render" 2>/dev/null; then
   diag "read-product: $STORE is not parseable JSON — emitting nothing (fail-safe)"
   exit 0
 fi
@@ -296,11 +304,22 @@ fi
 
 # 4b. Second pass — emit. OUT lines go to stdout (the advisory block, in jq's emission order); WARN
 #     lines name a degraded field on stderr. Machine consumers can gate on NON-EMPTY stdout.
+emitted=0
 while IFS= read -r line; do
   case "$line" in
-    OUT$'\t'*)  printf '%s\n' "${line#OUT$'\t'}" ;;
+    OUT$'\t'*)  printf '%s\n' "${line#OUT$'\t'}"; emitted=1 ;;
     WARN$'\t'*) diag "${line#WARN$'\t'}" ;;
   esac
 done < "$render"
+
+# 4c. Terminal belt. Every path that reaches here with NOTHING on stdout is a degraded case, and the
+#     FAIL-SAFE contract says a degraded case NAMES ITS REASON ON STDERR. The two `exit 0` guards
+#     above cover the reasons this script can name precisely; this catches the residue — a render
+#     that was non-empty (so the `[ ! -s ]` guard did not fire) yet carried no OUT line, i.e. output
+#     that did not come from JQ_PROG at all. Without it such a run is silent on BOTH streams, which
+#     is indistinguishable from "no product context needed" to every caller.
+if [ "$emitted" -eq 0 ]; then
+  diag "read-product: $STORE yielded no product-context output — emitting nothing (fail-safe)"
+fi
 
 exit 0

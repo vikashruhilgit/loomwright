@@ -272,8 +272,11 @@ r_f="$(new_repo)"
 before_f="$(tree_hash "$r_f")"
 run_writer "$r_f" --confirm
 after_f="$(tree_hash "$r_f")"
-[ "$RC" -ne 0 ] && ok "(f) refused with a non-zero status ($RC)" \
-                || no "(f) it did NOT refuse a stance-less confirmed write"
+# Exit 2 is PINNED, not merely "non-zero": propose-product.sh's header documents a distinct
+# `2 shape validation failed` (V1–V5), and a regression collapsing it into the generic `1 refused`
+# would sail past a `-ne 0` check. This path is V3 on the WRITE side.
+[ "$RC" -eq 2 ] && ok "(f) refused with the documented shape-validation status 2" \
+                || no "(f) expected exit 2 (shape validation failed), got $RC"
 case "$OUT" in
   *"never guessed"*) ok "(f) the refusal says stance is never guessed" ;;
   *) no "(f) the refusal does not explain why stance cannot be defaulted — output: $OUT" ;;
@@ -288,12 +291,12 @@ echo "== (g) an out-of-enum --stance is refused on EVERY path, including the dry
 r_g="$(new_repo)"
 before_g="$(tree_hash "$r_g")"
 run_writer "$r_g" --stance banana
-[ "$RC" -ne 0 ] && ok "(g) the DRY RUN refuses an out-of-enum stance (non-zero: $RC)" \
-                || no "(g) the dry run accepted an out-of-enum stance — a plan a confirmed run would reject"
+[ "$RC" -eq 2 ] && ok "(g) the DRY RUN refuses an out-of-enum stance with the documented status 2" \
+                || no "(g) expected exit 2 (shape validation failed) from the dry run, got $RC"
 run_writer "$r_g" --confirm --stance banana
 after_g="$(tree_hash "$r_g")"
-[ "$RC" -ne 0 ] && ok "(g) the CONFIRMED run refuses an out-of-enum stance (non-zero: $RC)" \
-                || no "(g) the confirmed run accepted an out-of-enum stance"
+[ "$RC" -eq 2 ] && ok "(g) the CONFIRMED run refuses an out-of-enum stance with the documented status 2" \
+                || no "(g) expected exit 2 (shape validation failed) from the confirmed run, got $RC"
 [ "$before_g" = "$after_g" ] && ok "(g) neither refused run wrote anything" \
                              || no "(g) a refused out-of-enum run modified the tree"
 
