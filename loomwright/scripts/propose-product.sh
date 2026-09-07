@@ -201,9 +201,22 @@ scan_json_description() {   # $1 = manifest filename
 #
 # QUOTE HANDLING: strips a MATCHED pair of delimiters. TOML permits basic `"..."` AND literal
 # `'...'` strings; only double quotes were stripped before, so a single-quoted description carried
-# its quotes into the committed field. Whatever follows the closing delimiter (a trailing
-# `# comment`) is dropped. A LONE leading or trailing quote is NOT stripped — an unterminated value
-# is surfaced as written rather than silently reshaped into something that looks valid.
+# its quotes into the committed field.
+#   The closing delimiter is found by scanning FORWARD from just after the opening one: the FIRST
+#   subsequent occurrence of the SAME quote character closes the string, which is what TOML itself
+#   says. The scan must NOT run backward from the end of the line — a trailing `# comment` that
+#   happens to contain a quote (`description = "An API" # uses "REST" style`) then matches instead
+#   of the real delimiter, and the returned value absorbs the real closing quote plus part of the
+#   comment. That defect shipped once here; case (o4) in test-propose-product.sh is its regression.
+#   Only text AFTER that real closing delimiter is dropped — in TOML nothing but a comment may
+#   legally follow, so dropping it is the correct reading (and it is dropped whether or not it
+#   actually starts with `#`; this is a scan, not a syntax checker).
+#   A line carrying NO further matching quote at all is an unterminated value: it is returned
+#   EXACTLY AS WRITTEN, opening delimiter included, rather than being silently reshaped into
+#   something that looks valid. HONEST LIMIT: a line like `description = "oops # a "quoted" word`
+#   is not that case — its string closes at the second quote by TOML's own rule, so the scan yields
+#   `oops # a ` and the rest is dropped. See case (o7) for the genuinely-unterminated form and (o8)
+#   for this one.
 #
 # WHAT THIS DELIBERATELY DOES NOT HANDLE (it is a scan feeding a human-reviewed proposal, not a TOML
 # parser): multi-line `"""`/`'''` strings — recognised and SKIPPED, so the scan falls through rather
@@ -223,10 +236,13 @@ scan_toml_description() {
       if (substr(line, 1, 3) == dq dq dq || substr(line, 1, 3) == sq sq sq) return ""
       q = substr(line, 1, 1)
       if (q == dq || q == sq) {
-        i = length(line)
-        while (i > 1 && substr(line, i, 1) != q) i--
-        if (i > 1) return substr(line, 2, i - 2)   # matched pair; any trailing comment dropped
-        return line                                # lone opening delimiter: left exactly as written
+        # FORWARD from just after the opening delimiter — the FIRST matching quote is the real
+        # closing one. Scanning BACKWARD from the end of the line instead matches a quote inside a
+        # trailing `# comment` and swallows the real delimiter plus part of that comment.
+        for (i = 2; i <= length(line); i++) {
+          if (substr(line, i, 1) == q) return substr(line, 2, i - 2)   # matched pair; the tail
+        }                                                              # (a comment) is dropped
+        return line                                # no closing delimiter: left exactly as written
       }
       return line
     }

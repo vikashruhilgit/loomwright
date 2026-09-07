@@ -56,6 +56,14 @@
 #                   this project's identity.
 #            (o3) pins the deliberate consequence of the fix: a description found ONLY under an
 #            unrecognised table is DISCARDED, not used as a first-match fallback.
+#              (o4)-(o8) are the REGRESSION for the defect the (o2) fix itself introduced: the
+#                   closing delimiter was found by scanning BACKWARD from the end of the line, so a
+#                   quote inside a trailing `# comment` matched instead of the real one and the
+#                   value swallowed the real closing quote plus part of the comment. (o5) is the
+#                   quote-free-comment CONTROL that passed throughout — the pair is what shows the
+#                   trigger is a quote INSIDE the comment. (o7) pins the unterminated value being
+#                   left exactly as written; (o8) pins the honest limit for a string that closes
+#                   mid-line.
 #   (q)      every --competitor REJECTION path — embedded newline, missing `|`, empty name, empty
 #            url — each on the CONFIRM path, with the exit status PINNED (1, confirmed empirically)
 #            and a positive control proving a well-formed value gets through the same repo.
@@ -537,6 +545,67 @@ case "$dom_o3" in
   *) no "(o3) unexpected domain for an unrecognised-table-only manifest: [$dom_o3]" ;;
 esac
 
+# REGRESSION FOR DEFECT 3 — introduced by the fix for DEFECT 1 and caught in review. The closing
+# delimiter was located by scanning BACKWARD from the end of the line for the same quote character.
+# A trailing `# comment` containing a quote therefore matched instead of the real delimiter, and the
+# value absorbed the real closing quote plus part of the comment. The fix scans FORWARD from just
+# after the opening delimiter, so the FIRST subsequent matching quote closes the string and only
+# what genuinely follows it is dropped. Each case below asserts the resolved `domain` VALUE and the
+# `domain_source` LABEL — not exit 0, which the defect never disturbed.
+r_o4="$(new_repo_bare)"
+seed "$r_o4" Cargo.toml <<'TOML'
+[package]
+name = "acme"
+description = "A B2B invoicing API" # uses "REST" style
+TOML
+expect_scan "(o4) trailing comment CONTAINING a quote" "$r_o4" \
+  "A B2B invoicing API" "Cargo.toml description"
+
+# The CONTROL for (o4): the same shape with a quote-free comment. It passed even with the backward
+# scan, which is precisely why the defect shipped — without this pairing, (o4) alone cannot show
+# that the trigger is a quote INSIDE the comment rather than the presence of a comment at all.
+r_o5="$(new_repo_bare)"
+seed "$r_o5" Cargo.toml <<'TOML'
+[package]
+name = "acme"
+description = "A plain API" # no quotes in this comment
+TOML
+expect_scan "(o5) CONTROL — trailing comment with NO quote" "$r_o5" \
+  "A plain API" "Cargo.toml description"
+
+# The single-quoted flavour of the same defect: an apostrophe in the comment is a literal-string
+# delimiter, so `it's` was matched as the close.
+r_o6="$(new_repo_bare)"
+seed "$r_o6" Cargo.toml <<'TOML'
+[package]
+description = 'A plain API' # it's fine
+TOML
+expect_scan "(o6) single-quoted, apostrophe in the comment" "$r_o6" \
+  "A plain API" "Cargo.toml description"
+
+# UNTERMINATED VALUE — no closing delimiter anywhere on the line. The header promises this is left
+# EXACTLY AS WRITTEN, opening delimiter included, rather than reshaped into something that looks
+# valid. The backward scan honoured that only when the line held no second quote of any kind.
+r_o7="$(new_repo_bare)"
+seed "$r_o7" Cargo.toml <<'TOML'
+[package]
+description = "oops # a lone opening quote
+TOML
+expect_scan "(o7) unterminated — left exactly as written" "$r_o7" \
+  '"oops # a lone opening quote' "Cargo.toml description"
+
+# The HONEST LIMIT, pinned so it is a decision rather than a surprise: a line whose string closes
+# MID-LINE and is followed by more text is not an unterminated value — TOML ends the string at that
+# second quote. So the scan yields the content up to it (trailing space and all) and drops the rest.
+# The backward scan returned `oops # a "quoted` here, which is neither reading.
+r_o8="$(new_repo_bare)"
+seed "$r_o8" Cargo.toml <<'TOML'
+[package]
+description = "oops # a "quoted" word
+TOML
+expect_scan "(o8) closes mid-line — content up to the first close" "$r_o8" \
+  'oops # a ' "Cargo.toml description"
+
 # ============================================================================
 echo "== (p) the directory-name PLACEHOLDER fallback — nothing scannable at all =="
 r_p="$(new_repo_bare)"
@@ -551,7 +620,7 @@ esac
 # CONTAINMENT for the whole scan block: every case above is a dry run, so not one of them may have
 # created a store. Asserted once, over all of them, rather than trusting each case's exit code.
 scan_leak=""
-for d in "$r_k" "$r_l" "$r_m" "$r_n1" "$r_n2" "$r_o1" "$r_o2" "$r_o3" "$r_p"; do
+for d in "$r_k" "$r_l" "$r_m" "$r_n1" "$r_n2" "$r_o1" "$r_o2" "$r_o3" "$r_o4" "$r_o5" "$r_o6" "$r_o7" "$r_o8" "$r_p"; do
   [ -e "$d/.agent" ] && scan_leak="$scan_leak $d"
 done
 [ -z "$scan_leak" ] && ok "(k-p) every scan case stayed a DRY RUN — no .agent/ anywhere" \
