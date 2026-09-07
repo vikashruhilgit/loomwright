@@ -167,12 +167,13 @@ When multiple memory layers carry relevant knowledge, resolve precedence **most-
 
 **A sole writer whose curated store is COMMITTED requires `--confirm`; a sole writer whose store is gitignored does not.** The test is mechanical and re-derivable, so nobody has to guess: run `git ls-files <store-path>` — a non-empty result means the store is tracked, and that writer must gate.
 
-Which side each of the six sole writers falls on:
+Which side each of the seven sole writers falls on:
 
 | Sole writer | Store | Tracked? | `--confirm` |
 |---|---|---|---|
 | `add-rule.sh` | `.agent/rules/` | yes | **required** |
 | `add-orientation.sh` | `.agent/orientation/` | yes | **required** |
+| `propose-product.sh` | `.agent/product.json` | yes | **required** |
 | `write-agent-memory.sh` | `.claude/agent-memory/` | yes | **required** |
 | `write-lessons.sh` | `.supervisor/memory/` | yes | **required** |
 | `write-project-memory.sh` | `.supervisor/memory/` | yes | **required** |
@@ -180,7 +181,9 @@ Which side each of the six sole writers falls on:
 
 `.supervisor/memory/` is committed despite living under `.supervisor/` — `.gitignore` carries a `!.supervisor/memory/` negation after the `.supervisor/*` ignore, so `LESSONS.md` and `PROJECT_MEMORY.md` are tracked files. `.supervisor/twin/` has no such negation and is genuinely gitignored; `write-system-contract.sh` having no gate is the deliberate other half of this rule, not an omission to be "fixed" for symmetry.
 
-**Validation is not a substitute for a confirm gate.** All six writers share `validate-entry.sh`, and it is easy to read "validated" as "gated" — for three of them that was false: one non-interactive invocation from the repo root appended a *validated* entry to a committed store with no human in the loop. Validation decides whether an entry is well-formed; the confirm gate decides whether a human asked for it to land in the repo's history. They answer different questions, so a store that is committed needs both.
+**`.agent/product.json` is the one row where the mechanical `git ls-files` test gives the WRONG answer, so do not run it there.** It returns empty in this repo and always will: the plugin deliberately ships no product-context store of its own — `propose-product.sh` creates one per project, in the *user's* repo, at runtime. Read literally, the test would answer "not tracked ⇒ no gate", which is the opposite of the truth. The correct derivation is by destination: the store lands in the **tracked `.agent/` tree** (no `.gitignore` entry covers it, exactly as for its `rules/` and `orientation/` siblings) and is **committed by design**, so it falls on the committed side and gates. The mechanical test is a shortcut for stores that already exist; where a writer's store is created downstream, ask where the write LANDS.
+
+**Validation is not a substitute for a confirm gate.** Six of the seven writers share `validate-entry.sh`, and it is easy to read "validated" as "gated" — for three of them that was false: one non-interactive invocation from the repo root appended a *validated* entry to a committed store with no human in the loop. Validation decides whether an entry is well-formed; the confirm gate decides whether a human asked for it to land in the repo's history. They answer different questions, so a store that is committed needs both. **`propose-product.sh` is the seventh, and it deliberately does NOT share the validator** — that is a documented exception, not an omission to be closed. `validate-entry.sh`'s three blocking checks (contradiction, duplicate, provenance) are all defined against an **append-only store of curated prose entries**; `.agent/product.json` is a **single structured object**, so there is no second entry for a new one to duplicate or to contradict and those checks have no referent here. Running them would be theatre. It validates **shape** instead — required keys present, `stance` in the two-value enum, and each `competitors[]` entry carrying `last_fetched` as a **present key** (jq `has()`, null permitted; a `//` default would silently accept a missing key, since null is also legal). The confirm gate is untouched and still required: only the validator is skipped, and the two answer different questions.
 
 ### Agent memory write permission
 
