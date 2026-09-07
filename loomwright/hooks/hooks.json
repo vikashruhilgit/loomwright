@@ -48,6 +48,10 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/validate-execute-result.py\" || true"
+          },
+          {
+            "type": "command",
+            "command": "payload=$(cat); printf '%s' \"$payload\" | bash \"${CLAUDE_PLUGIN_ROOT}/scripts/emit-token-ledger.sh\" || true"
           }
         ]
       },
@@ -74,6 +78,10 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/validate-plan-review-result.py\" || true"
+          },
+          {
+            "type": "command",
+            "command": "payload=$(cat); printf '%s' \"$payload\" | bash \"${CLAUDE_PLUGIN_ROOT}/scripts/emit-token-ledger.sh\" || true"
           }
         ]
       },
@@ -83,6 +91,73 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/validate-launch-pad-result.py\" || true"
+          },
+          {
+            "type": "command",
+            "command": "payload=$(cat); printf '%s' \"$payload\" | bash \"${CLAUDE_PLUGIN_ROOT}/scripts/emit-token-ledger.sh\" || true"
+          }
+        ]
+      },
+      {
+        "matcher": "loomwright:context-keeper",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "payload=$(cat); printf '%s' \"$payload\" | bash \"${CLAUDE_PLUGIN_ROOT}/scripts/emit-token-ledger.sh\" || true"
+          }
+        ]
+      },
+      {
+        "matcher": "loomwright:orchestrator",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "payload=$(cat); printf '%s' \"$payload\" | bash \"${CLAUDE_PLUGIN_ROOT}/scripts/emit-token-ledger.sh\" || true"
+          }
+        ]
+      },
+      {
+        "matcher": "loomwright:product-owner",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "payload=$(cat); printf '%s' \"$payload\" | bash \"${CLAUDE_PLUGIN_ROOT}/scripts/emit-token-ledger.sh\" || true"
+          }
+        ]
+      },
+      {
+        "matcher": "loomwright:qa-strategist",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "payload=$(cat); printf '%s' \"$payload\" | bash \"${CLAUDE_PLUGIN_ROOT}/scripts/emit-token-ledger.sh\" || true"
+          }
+        ]
+      },
+      {
+        "matcher": "loomwright:red-team-reviewer",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "payload=$(cat); printf '%s' \"$payload\" | bash \"${CLAUDE_PLUGIN_ROOT}/scripts/emit-token-ledger.sh\" || true"
+          }
+        ]
+      },
+      {
+        "matcher": "loomwright:review-pr-runner",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "payload=$(cat); printf '%s' \"$payload\" | bash \"${CLAUDE_PLUGIN_ROOT}/scripts/emit-token-ledger.sh\" || true"
+          }
+        ]
+      },
+      {
+        "matcher": "loomwright:rubric-grader",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "payload=$(cat); printf '%s' \"$payload\" | bash \"${CLAUDE_PLUGIN_ROOT}/scripts/emit-token-ledger.sh\" || true"
           }
         ]
       }

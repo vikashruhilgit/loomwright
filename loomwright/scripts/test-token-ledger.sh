@@ -1313,6 +1313,35 @@ else
 fi
 
 
+echo "== 23. the guard still holds at the REAL matcher fan-out, not just at two =="
+# Case 21 fires TWO invocations because that was the fan-out when it was written. Registering a
+# lane emitter for every agent this plugin ships takes the SubagentStop emitter matchers from 4
+# to 14 — and an UNTYPED payload matches all of them at once, because a matcher only
+# discriminates when the payload carries an `agent_type`. So one untyped completion now fans out
+# to fourteen concurrent invocations of this script against one file. The dedupe is supposed to
+# collapse them to a single line; at two invocations that was never in doubt, at fourteen the
+# bounded lock wait (20 x 50ms) is a real budget that could be exhausted, and every invocation
+# that gives up appends UNGUARDED by design. Asserted rather than reasoned about, because the
+# failure mode is a partial collapse — some duplicates, not all — which no smaller case can see.
+FAN_N=14
+FAN_SID="fixture-token-ledger-fanout-001"
+FAN_TP="$SANDBOX/fanout-transcript.jsonl"
+printf 'FFFFFFFF' > "$FAN_TP"
+FAN_PAYLOAD="$SANDBOX/fanout.json"
+jq -n --arg tp "$FAN_TP" --arg sid "$FAN_SID" '{session_id: $sid, transcript_path: $tp}' > "$FAN_PAYLOAD"
+mkdir -p "$SANDBOX/.supervisor/logs"
+printf '%s\n' '{"event":"seed-so-the-guard-block-is-reached"}' > "$SANDBOX/.supervisor/logs/${FAN_SID}.jsonl"
+wait_for_second_tick
+fan_i=0
+while [ "$fan_i" -lt "$FAN_N" ]; do
+  ( cd "$SANDBOX" && bash "$SUT" < "$FAN_PAYLOAD" >/dev/null 2>&1 ) &
+  fan_i=$((fan_i + 1))
+done
+wait
+FAN_LINES="$(wc -l < "$SANDBOX/.supervisor/logs/${FAN_SID}.jsonl" 2>/dev/null | tr -d ' ')"
+assert_eq "case23 $FAN_N concurrent firings of ONE completion still append exactly one line (seed + 1 = 2) — the lock budget survives the fan-out registering every agent creates" "2" "$FAN_LINES"
+
+
 echo ""
 echo "RESULT  pass=$PASS_COUNT  fail=$FAIL_COUNT"
 if [ "$FAIL_COUNT" -eq 0 ]; then
