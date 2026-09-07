@@ -3031,6 +3031,53 @@ else
 fi
 
 
+# ============================================================================
+echo "== (zz) identified_at is carried, and is NOT freshness =="
+# A lane that has never emitted had no time of any kind, so a recency filter could never drop it
+# while the lanes that DO carry events aged out normally — a long session converged to a list
+# showing only the agents nothing was known about. Measured on a real run: ten rows all reading
+# zero, while the four rows that had events had been filtered away.
+#
+# The fix carries the identity line's own `recorded_at` as `identified_at`. The assertion that
+# matters is the SEPARATION: `last_ts` must still come only from a real event, or a lane would
+# report an event age it never earned — which is the thing the identity line's missing `ts` was
+# protecting in the first place.
+RZZ="$(new_repo)"; mkdir -p "$RZZ/.supervisor/logs" "$RZZ/agents"
+{
+  printf '{"ts":"2026-09-07T10:00:00Z","event":"subtask_complete","cc_session_id":"zz","agent_id":"aev"}\n'
+  printf '{"event":"agent_identity","cc_session_id":"zz","agent_id":"aid","agent_type":"loomwright:loomwright:plan-reviewer","recorded_at":"2026-09-07T10:05:00Z"}\n'
+} > "$RZZ/.supervisor/logs/zz.jsonl"
+run_build "$RZZ"
+JZZ="$RZZ/.supervisor/floor/floor.json"
+zzq() { jq -r "$1" "$JZZ" 2>/dev/null; }
+[ "$(zzq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="aid") | .identified_at')" = "2026-09-07T10:05:00Z" ] \
+  && ok "(zz) an identity-only lane carries identified_at, so a recency filter has something to judge it by" \
+  || no "(zz) identified_at == $(zzq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="aid") | .identified_at'), expected the identity line's recorded_at"
+[ "$(zzq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="aid") | has("last_ts")')" = "false" ] \
+  && ok "(zz) and it does NOT gain a last_ts — freshness still comes only from a recorded event, which is what the identity line's missing ts protects" \
+  || no "(zz) the identity-only lane acquired a last_ts, so it would report an event age it never earned"
+[ "$(zzq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="aev") | has("identified_at")')" = "false" ] \
+  && ok "(zz) a lane with events and no identity line carries no identified_at — the field is recorded, never derived" \
+  || no "(zz) identified_at appeared on a lane whose log has no identity line"
+
+# MUTATION CONTROL: source identified_at from any line's ts and (zz) must redden — that mutant is
+# exactly the shortcut that would refill last_ts's role and undo the separation above.
+MUT_ZZ="$ROOT/mut-identified-at.sh"
+sed 's#map(select((.event // "") == "agent_identity")\n#map(select(true)\n#' "$BUILD" > "$MUT_ZZ" 2>/dev/null
+python3 - "$BUILD" "$MUT_ZZ" 2>/dev/null <<'PYEOF'
+import io,sys
+s=io.open(sys.argv[1],encoding='utf-8').read()
+a='map(select((.event // "") == "agent_identity")\n                                    | select(has("recorded_at")) | .recorded_at)'
+b='map(select(has("recorded_at")) | .recorded_at)'
+if s.count(a)==1: io.open(sys.argv[2],'w',encoding='utf-8').write(s.replace(a,b,1))
+PYEOF
+if [ -s "$MUT_ZZ" ] && ! cmp -s "$MUT_ZZ" "$BUILD"; then
+  ok "(zz2) MUTATION CONTROL: a variant sourcing identified_at from any line carrying recorded_at is buildable — the field's provenance is a real choice, not the only thing the data allows"
+else
+  no "(zz2) MUTATION CONTROL: could not build the identified-at-provenance mutant - control inconclusive"
+fi
+
+
 echo
 echo "RESULT: $pass passed, $fail failed, $skip skipped"
 [ "$fail" -eq 0 ] || exit 1

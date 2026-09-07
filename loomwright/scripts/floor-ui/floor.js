@@ -132,6 +132,13 @@
    * is rendered in the same tick. */
   var selectedPath = null;
 
+  /* WHICH BUILD IS RENDERING THIS PAGE. Read from the served index, never from the document being
+   * rendered: floor.json is written by the projector and says nothing about the bundle. It exists
+   * because three incidents in one day were the same thing — a page rendering bytes older than the
+   * code that had just been merged — and each cost a multi-step trace because the page did not say
+   * which build it was. Empty is a legitimate answer and renders as unknown, not as a version. */
+  var bundleVersion = null;
+
   /* THE WRITE PATH'S THREE CONSTANTS, and all three are fixed strings in this file.
    * API_PREFIX is what makes the endpoint URLs a property of this code rather than of any
    * document it read: the same guarantee projectUrl already gives the read path. */
@@ -460,6 +467,8 @@
     var rows = projectRows(idx);
     var srv = (idx.serve && Object.prototype.toString.call(idx.serve) === '[object Object]') ? idx.serve : {};
     if (regEl) { regEl.textContent = registryStateLabel(idx.registry); }
+    bundleVersion = (idx.module && typeof idx.module.bundle_version === 'string' && idx.module.bundle_version)
+      ? idx.module.bundle_version : null;
 
     /* The root option exists only when the directory this serve was launched in is NOT one of
      * the registered projects. When it IS registered, its slot document and the root
@@ -1416,11 +1425,29 @@
    * rather than filtered in place, because the count of omitted lanes has to be RENDERED: a lane
    * that silently vanishes is indistinguishable from one that never existed, which is the same
    * absent-vs-zero rule the count cells follow. */
+  /* WHICH CLOCK A LANE AGES BY, and the two are deliberately not the same clock.
+   * `last_ts` is FRESHNESS — it may only ever come from a real recorded event, which is why the
+   * identity line carries no `ts` at all. But a lane that has never emitted then had no time of
+   * ANY kind, so it could never age out, while the lanes that do carry events aged out normally.
+   * A long-running session therefore converged to a list showing only the agents nothing was
+   * known about: measured on a real run, ten rows all reading zero while the four rows that had
+   * events had been filtered away. The rule "unknown is not old" was right in isolation and
+   * wrong in combination with a recency filter.
+   * `identified_at` closes it WITHOUT touching freshness: it is used for the age filter only, so
+   * an agent spawned hours ago and never heard from since drops off the list, and no lane ever
+   * reports an event age it did not earn. */
+  function laneAge(r, gen) {
+    if (gen === null || !r) { return null; }
+    var ep = tsToEpoch(r.last_ts);
+    if (ep !== null) { return gen - ep; }
+    var ia = tsToEpoch(r.identified_at);
+    return (ia === null) ? null : (gen - ia);
+  }
+
   function laneSplit(d, gen) {
-    var all = laneRows(d), keep = [], dropped = 0, i, ep, age;
+    var all = laneRows(d), keep = [], dropped = 0, i, age;
     for (i = 0; i < all.length; i++) {
-      ep = tsToEpoch(all[i] && all[i].last_ts);
-      age = (gen !== null && ep !== null) ? (gen - ep) : null;
+      age = laneAge(all[i], gen);
       if (age !== null && age > LANE_SEC) { dropped++; } else { keep.push(all[i]); }
     }
     return { rows: keep, dropped: dropped, total: all.length };
@@ -1484,6 +1511,11 @@
        * not emit at all, so their lanes read "…yet" permanently. The emitters now cover every
        * agent this plugin ships; `general-purpose` still cannot, because it is not ours to
        * register a matcher for. So the honest sentence states what is recorded and stops. */
+      /* The spawn age is stated when it is recorded, and omitted when it is not — it is not an
+       * event age and never fills the same slot as one. A row that says only "spawned" is one
+       * whose identity line predates `recorded_at`. */
+      var spawnAge = (gen !== null && tsToEpoch(r.identified_at) !== null)
+        ? (gen - tsToEpoch(r.identified_at)) : null;
       var evRaw = r.events;
       var ev = (typeof evRaw === 'number') ? evRaw : null;
 
@@ -1541,7 +1573,8 @@
         meta.textContent = evTxt + ' · no event for ' + fmtAge(age) + roSuffix;
       } else {
         meta.textContent = (ev === 0)
-          ? ('spawned, no events recorded' + roSuffix)
+          ? ('spawned' + (spawnAge === null ? '' : (' ' + fmtAge(spawnAge) + ' ago')) +
+             ', no events recorded' + roSuffix)
           : evTxt + ' · last ' + (age === null ? 'unknown' : fmtAge(age)) + roSuffix;
       }
       meta.title = 'agent_id ' + id + (r.first_ts ? (' · first ' + r.first_ts) : '') + (r.last_ts ? (' · last ' + r.last_ts) : '');
@@ -1674,10 +1707,13 @@
     var age = (gen === null) ? null : (nowSec - gen);
 
     if (g) {
-      g.textContent = (gen === null)
+      /* Appended to whatever the generated line says, in every one of its branches, because the
+       * branch a reader most needs it in is the one where something looks wrong. */
+      var buildBit = ' · bundle ' + (bundleVersion === null ? 'version unknown' : ('v' + bundleVersion));
+      g.textContent = ((gen === null)
         ? 'floor.json records no generation time (the projector could not read the clock)'
         : ('floor.json generated ' + fmtAge(age) + ' ago · schema_version ' + (d.schema_version) +
-          (d.repo_head ? (' · HEAD ' + d.repo_head) : ''));
+          (d.repo_head ? (' · HEAD ' + d.repo_head) : ''))) + buildBit;
     }
 
     if (age !== null && age > STALE_SEC) {

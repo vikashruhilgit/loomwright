@@ -2449,7 +2449,10 @@ has_lit "$JS" "sessions_not_plugin_work" || j51_bad="$j51_bad [the set-aside cou
 has_lit "$JS" "var LANE_SEC = qpInt('lane', 1800, 1);" || j51_bad="$j51_bad [no lane recency window]"
 has_lit "$JS" "function laneSplit" || j51_bad="$j51_bad [lanes are not split into listed vs dropped]"
 has_lit "$JS" "not listed" || j51_bad="$j51_bad [dropped lanes are not counted on the page]"
-has_lit "$JS" "spawned, no events recorded" || j51_bad="$j51_bad [a 0-event lane still reads as a gap]"
+has_lit "$JS" ", no events recorded" || j51_bad="$j51_bad [a 0-event lane still reads as a gap]"
+# The phrase is no longer contiguous with "spawned": the lane now states HOW LONG AGO it was
+# spawned when that is recorded, so the assertion pins the invariant half of the sentence.
+has_lit "$JS" "'spawned'" || j51_bad="$j51_bad [the 0-event lane no longer says it was spawned]"
 # AND the word that used to follow it must be GONE. "…recorded" is a prefix of "…recorded yet", so
 # the assertion above alone would pass on the old wording; this is what pins the correction. "Yet"
 # promised events that are coming, and for an agent type with no SubagentStop emitter registered
@@ -2508,6 +2511,61 @@ if mutant_ok "$JS" "$MUT_J53"; then
   [ "$m_j53" -gt "$j53_rows" ] \
     && ok "(j54) MUTATION CONTROL: a fourth undocumented parameter pushes the call count to $m_j53 against $j53_rows documented rows — (j53) measures the relationship, not a coincidence" \
     || no "(j54) MUTATION CONTROL: the planted parameter did not break the equality (calls=$m_j53 rows=$j53_rows) — (j53) proves nothing"
+fi
+
+# --- (j58) the page says WHICH BUILD is rendering it, and ages a never-emitting lane ----------
+# Both halves come from the same day: three separate incidents where a page rendered bytes older
+# than the code that had just been merged (an un-updated plugin, a bundle applied from a stale
+# checkout, a stale ui directory), each costing a multi-step trace because NOTHING on the page
+# said which build it was. `serve` now publishes the bundle version into the index it already
+# writes — no new fetch, no stamped file, and an empty value renders as unknown rather than as a
+# version, because a page claiming a build it cannot prove is the failure this exists to end.
+#
+# The second half is the lane clock. `last_ts` is FRESHNESS and may only come from a real event,
+# so an identity-only lane had no time at all and could never age out — while the lanes that DID
+# carry events aged out normally, converging a long session to a list of only the rows nothing
+# was known about. `identified_at` is used for the age filter ONLY, never for freshness.
+j58_bad=""
+has_lit "$JS" "function laneAge" || j58_bad="$j58_bad [no laneAge — the two clocks are not separated]"
+has_lit "$JS" "tsToEpoch(r.identified_at)" || j58_bad="$j58_bad [identity-only lanes cannot age out]"
+has_lit "$JS" "bundleVersion" || j58_bad="$j58_bad [the page does not read a bundle version]"
+has_lit "$JS" "'version unknown'" || j58_bad="$j58_bad [an absent bundle version would render as a version]"
+has_lit "$JS" ", no events recorded" || j58_bad="$j58_bad [the 0-event wording is gone]"
+has_lit "$ENGINE" "bundle_version" || j58_bad="$j58_bad [serve does not publish the bundle version]"
+has_lit "$ENGINE" "bundle_version() {" || j58_bad="$j58_bad [no bundle_version probe]"
+# PINNED AS A CALL, NOT A LOAD-TIME ASSIGNMENT. The first version computed this at load and so
+# spent a `jq` on every invocation of the engine — add, list, forget, check — for a value only
+# the served index uses. It also reddened (o6), the lock-contention case, which deliberately
+# slows `jq`: a load-time probe runs under that shim and shifts the timing the case measures.
+has_lit "$ENGINE" '--arg bundlever "$(bundle_version)"' \
+  || j58_bad="$j58_bad [the version is not resolved at the index write, so it is paid for by callers that never serve]"
+[ -z "$j58_bad" ] \
+  && ok "(j58) the page reports which bundle is rendering it (unknown when the engine could not read one), and a lane that never emitted ages by identified_at while freshness still comes only from a real event" \
+  || no "(j58) the build-identity and lane-clock surfaces are incomplete" "$j58_bad"
+
+# The separation is the point: identified_at must NOT be readable as a lane's event age.
+[ "$(occ "$JS" 'last_ts = r.identified_at')" = "0" ] \
+  && [ "$(occ "$JS" 'identified_at.*fmtAge\(age\)')" = "0" ] \
+  && ok "(j58) identified_at is never assigned into last_ts nor rendered as the lane's event age — a lane cannot report an age it did not earn" \
+  || no "(j58) identified_at leaks into the freshness path"
+
+# MUTATION CONTROL: drop the identified_at arm of laneAge and (j58) must redden.
+MUT_J58="$TMPROOT/mut-laneage.js"
+sed 's|var ia = tsToEpoch(r.identified_at);|var ia = null;|' "$JS" > "$MUT_J58" 2>/dev/null
+# COUNTED, not merely absent: `tsToEpoch(r.identified_at)` appears three times — once in the age
+# arm and twice in the spawn-age line — so a check for the literal's disappearance passes on a
+# mutant that removed only the arm. The control asserts the count DROPPED, which is the property
+# that distinguishes "the arm is gone" from "the string still exists somewhere else".
+if mutant_ok "$JS" "$MUT_J58"; then
+  # grep -cF, not `occ`: occ() hands the pattern to awk as a DYNAMIC regex, where the string
+  # escape `\(` collapses to `(` and reopens as a group — so the pattern silently matched nothing
+  # and both counts read 0, which compares equal and reported the control as broken rather than
+  # the code. A fixed-string count has no such layer.
+  j59_before="$(grep -cF 'tsToEpoch(r.identified_at)' "$JS")"
+  j59_after="$(grep -cF 'tsToEpoch(r.identified_at)' "$MUT_J58")"
+  [ "$j59_after" -lt "$j59_before" ] \
+    && ok "(j59) MUTATION CONTROL: removing the identified_at age arm drops its occurrences $j59_before → $j59_after — a never-emitting lane would stop ageing out again, and the check counts rather than trusting the literal to vanish" \
+    || no "(j59) MUTATION CONTROL: the mutation did not reduce the identified_at arm (before=$j59_before after=$j59_after)" "(j58) proves nothing"
 fi
 
 # --- (j42) the three curation-fault RENDER branches, driven by a UI fixture -------------------
