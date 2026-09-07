@@ -2449,7 +2449,12 @@ has_lit "$JS" "sessions_not_plugin_work" || j51_bad="$j51_bad [the set-aside cou
 has_lit "$JS" "var LANE_SEC = qpInt('lane', 1800, 1);" || j51_bad="$j51_bad [no lane recency window]"
 has_lit "$JS" "function laneSplit" || j51_bad="$j51_bad [lanes are not split into listed vs dropped]"
 has_lit "$JS" "not listed" || j51_bad="$j51_bad [dropped lanes are not counted on the page]"
-has_lit "$JS" "spawned, no events recorded yet" || j51_bad="$j51_bad [a 0-event lane still reads as a gap]"
+has_lit "$JS" "spawned, no events recorded" || j51_bad="$j51_bad [a 0-event lane still reads as a gap]"
+# AND the word that used to follow it must be GONE. "…recorded" is a prefix of "…recorded yet", so
+# the assertion above alone would pass on the old wording; this is what pins the correction. "Yet"
+# promised events that are coming, and for an agent type with no SubagentStop emitter registered
+# they never were — measured at three of the five types on one real run before the emitters landed.
+has_lit "$JS" "no events recorded yet" && j51_bad="$j51_bad [the lane still says 'yet', promising events a type with no emitter will never record]"
 has_lit "$JS" "toUpperCase() === mids[i].toUpperCase()" || j51_bad="$j51_bad [the stage cell still repeats its own label]"
 has_lit "$JS" "phase recorded by session " || j51_bad="$j51_bad [the phase is shown without naming the session that owns state.md]"
 has_lit "$HTML" 'id="session-note"' || j51_bad="$j51_bad [no session-note element]"

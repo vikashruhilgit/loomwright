@@ -899,7 +899,10 @@ was single-prefix, while the payload vocabulary is doubled-prefix
 worker.
 
 `emit-token-ledger.sh` has had **no** env fallback for the same reason: it is
-registered under THREE `SubagentStop` matchers that only discriminate when the
+registered under one `SubagentStop` matcher per agent this plugin ships (`hooks.json`
+is the authority for how many; the number is deliberately not restated here, because the
+copy that was restated asserted three through the release that made it thirteen) — matchers
+that only discriminate when the
 payload already carries an `agent_type` (see the duplicate guard below: 94/94
 typed firings emitted 1 line, 4,376/4,376 untyped emitted 2, so more than one
 block runs for an untyped payload). Adopting the identity of whichever matcher
@@ -990,9 +993,16 @@ exactly 1 line, and **4,376/4,376** untyped firings emitted exactly 2 — the
 duplication is perfectly correlated with the absence of `agent_type`, and
 typed agents were never duplicated.
 
-**Open question — why 2 and not 3.** Three blocks are registered but only two
+**Open question — why 2 and not 3, ASKED OF A TOPOLOGY THAT NO LONGER EXISTS.**
+Everything in this subsection was measured when three blocks were registered;
+since v15.60.0 there are thirteen, so the ratio it investigates does not
+describe the current system and the question is not re-answered here — nobody
+has re-measured at thirteen. It is kept rather than deleted because the
+reasoning below is still the best account of how these blocks interact, and
+because the guard it belongs to never depended on the answer: it keys on
+byte-identity, not on a duplicate count. At three blocks, only two
 lines were measured per untyped firing, so exactly one block's emitter
-produces nothing. What is established from the repo: an emitter handed empty
+produced nothing. What is established from the repo: an emitter handed empty
 stdin writes no line and exits 0 (probed directly); both
 `validate-qa-result.py` and `validate-supervisor-result.py` read stdin to EOF
 via `result_block_parser.extract_payload()`, and each sits in the same matcher
@@ -1306,7 +1316,7 @@ No issue is created, no network call is made, the wrapper exits 0.
 
 The wrapper extracts `session_id` from the hook's stdin JSON payload
 (Claude Code provides this on every hook payload — see the existing
-`WorktreeCreate` block in `hooks.json:112` [pins: `"WorktreeCreate"`] for the stdin parsing
+`WorktreeCreate` block in `hooks.json:187` [pins: `"WorktreeCreate"`] for the stdin parsing
 pattern). The pending-notice marker is then a **per-session** flag file:
 
 ```

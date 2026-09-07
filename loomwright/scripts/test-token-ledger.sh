@@ -40,7 +40,7 @@
 #        17g a functionally-broken jq ⇒ exit 0 and ADOPT
 #  18. agent identity: agent_type comes from the PAYLOAD ONLY —
 #      18a a set LOOMWRIGHT_AGENT_TYPE is IGNORED (no env fallback: this emitter
-#          runs under three matchers, so a matcher-derived identity would be a
+#          runs under one matcher per shipped agent, so a matcher-derived identity would be a
 #          fabrication for exactly the untyped population)
 #      18b the payload value is emitted when present (control for 18a — the
 #          field is not simply always absent)
@@ -1311,6 +1311,39 @@ else
     ok "case22b MUTATION CONTROL: dropping the chained 'exit 0' and changing nothing else exits $TRAP_B_RC — the invariant rests on the chain, not on the '|| true' inside the cleanup"
   fi
 fi
+
+
+echo "== 23. the guard still holds at the REAL matcher fan-out, not just at two =="
+# Case 21 fires TWO invocations because that was the fan-out when it was written. Registering a
+# lane emitter for every agent this plugin ships takes the matchers that run THIS script from 3
+# to 13 — and an UNTYPED payload matches all of them at once, because a matcher only
+# discriminates when the payload carries an `agent_type`. So one untyped completion now fans out
+# to THIRTEEN concurrent invocations of this script against one file. (A fourteenth SubagentStop
+# emitter exists — `worker`'s `emit-progress-event.sh` — but it is a different script appending a
+# different line, so it is not part of this fan-out. The count here is of THIS script's callers.)
+# FAN_N is 14 rather than 13 on purpose: one more than production can produce, because headroom
+# above the real figure is the safe direction for a control and an under-count is not. The dedupe is supposed to
+# collapse them to a single line; at two invocations that was never in doubt, at fourteen the
+# bounded lock wait (20 x 50ms) is a real budget that could be exhausted, and every invocation
+# that gives up appends UNGUARDED by design. Asserted rather than reasoned about, because the
+# failure mode is a partial collapse — some duplicates, not all — which no smaller case can see.
+FAN_N=14
+FAN_SID="fixture-token-ledger-fanout-001"
+FAN_TP="$SANDBOX/fanout-transcript.jsonl"
+printf 'FFFFFFFF' > "$FAN_TP"
+FAN_PAYLOAD="$SANDBOX/fanout.json"
+jq -n --arg tp "$FAN_TP" --arg sid "$FAN_SID" '{session_id: $sid, transcript_path: $tp}' > "$FAN_PAYLOAD"
+mkdir -p "$SANDBOX/.supervisor/logs"
+printf '%s\n' '{"event":"seed-so-the-guard-block-is-reached"}' > "$SANDBOX/.supervisor/logs/${FAN_SID}.jsonl"
+wait_for_second_tick
+fan_i=0
+while [ "$fan_i" -lt "$FAN_N" ]; do
+  ( cd "$SANDBOX" && bash "$SUT" < "$FAN_PAYLOAD" >/dev/null 2>&1 ) &
+  fan_i=$((fan_i + 1))
+done
+wait
+FAN_LINES="$(wc -l < "$SANDBOX/.supervisor/logs/${FAN_SID}.jsonl" 2>/dev/null | tr -d ' ')"
+assert_eq "case23 $FAN_N concurrent firings of ONE completion still append exactly one line (seed + 1 = 2) — the lock budget survives the fan-out registering every agent creates" "2" "$FAN_LINES"
 
 
 echo ""

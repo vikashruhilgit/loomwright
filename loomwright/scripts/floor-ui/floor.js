@@ -1477,6 +1477,13 @@
       var age = (gen !== null && lastEp !== null) ? (gen - lastEp) : null;
       var stalled = (age !== null && age > STALL_SEC);
 
+      /* "NO EVENTS RECORDED", never "not yet". The first wording said `yet`, which promises
+       * events that are coming — and for an agent type with no SubagentStop emitter registered
+       * they never were. Measured on a real run before that gap was closed: of the five types on
+       * screen, three (plan-reviewer, rubric-grader and Claude Code's own general-purpose) could
+       * not emit at all, so their lanes read "…yet" permanently. The emitters now cover every
+       * agent this plugin ships; `general-purpose` still cannot, because it is not ours to
+       * register a matcher for. So the honest sentence states what is recorded and stops. */
       var evRaw = r.events;
       var ev = (typeof evRaw === 'number') ? evRaw : null;
 
@@ -1534,7 +1541,7 @@
         meta.textContent = evTxt + ' · no event for ' + fmtAge(age) + roSuffix;
       } else {
         meta.textContent = (ev === 0)
-          ? ('spawned, no events recorded yet' + roSuffix)
+          ? ('spawned, no events recorded' + roSuffix)
           : evTxt + ' · last ' + (age === null ? 'unknown' : fmtAge(age)) + roSuffix;
       }
       meta.title = 'agent_id ' + id + (r.first_ts ? (' · first ' + r.first_ts) : '') + (r.last_ts ? (' · last ' + r.last_ts) : '');
