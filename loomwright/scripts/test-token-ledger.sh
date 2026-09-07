@@ -40,7 +40,7 @@
 #        17g a functionally-broken jq ⇒ exit 0 and ADOPT
 #  18. agent identity: agent_type comes from the PAYLOAD ONLY —
 #      18a a set LOOMWRIGHT_AGENT_TYPE is IGNORED (no env fallback: this emitter
-#          runs under three matchers, so a matcher-derived identity would be a
+#          runs under one matcher per shipped agent, so a matcher-derived identity would be a
 #          fabrication for exactly the untyped population)
 #      18b the payload value is emitted when present (control for 18a — the
 #          field is not simply always absent)

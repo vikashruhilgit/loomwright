@@ -284,8 +284,10 @@ if cc_session_id:
 # string, never null, never invented. Same additive-if-present discipline as
 # orientation_source below. There is deliberately NO env fallback that would
 # inject the name of a matcher — byte-parallel with emit-progress-event.sh, which
-# omits one for the same reason: this emitter is registered under THREE
-# SubagentStop matchers that only discriminate when the payload ALREADY carries
+# omits one for the same reason: this emitter is registered under ONE SubagentStop
+# matcher PER AGENT this plugin ships — hooks.json is the authority for how many, and this
+# comment deliberately does not restate the number, because the last one sat here asserting
+# THREE for the release that made it thirteen. Those matchers only discriminate when the payload ALREADY carries
 # an `agent_type`, and the single `loomwright:worker` matcher of the other
 # emitter does not discriminate either (grouping untyped events by `agent_id` on the live
 # log gives a fixed 2 ledger : 1 subtask_complete in every bucket, so all four
@@ -423,8 +425,13 @@ mkdir -p "$LOG_DIR" 2>/dev/null || true
 LOG_FILE="$LOG_DIR/${SESSION_ID}.jsonl"
 
 # ---- Per-firing idempotency guard (confirmed duplicate mechanism) ------------
-# CONFIRMED, not assumed. hooks.json registers emit-token-ledger.sh under THREE
-# SubagentStop matchers (code-reviewer, qa-executor, supervisor-runner). They are
+# CONFIRMED, not assumed. hooks.json registers emit-token-ledger.sh under one SubagentStop
+# matcher per agent this plugin ships (that file is the authority for the count; a number
+# restated here is the copy that went stale last time). THE MEASUREMENTS BELOW
+# WERE TAKEN WHEN THERE WERE THREE (code-reviewer, qa-executor, supervisor-runner), before
+# v15.60.0, and are kept because they are what established the mechanism; the ratios they
+# report do NOT describe the current topology and must not be read as though they do. What
+# carries forward unchanged is the mechanism, not the arithmetic. They are
 # NOT mutually exclusive in practice: they only discriminate when the payload
 # actually carries an `agent_type`; when it does not, more than one matcher block
 # runs for a single subagent completion. Measured on the live 14,539-line log:
@@ -433,10 +440,15 @@ LOG_FILE="$LOG_DIR/${SESSION_ID}.jsonl"
 # i.e. the duplication is perfectly correlated with the absence of `agent_type`,
 # and real typed loomwright agents were never duplicated.
 #
-# Three blocks are registered but exactly TWO lines were measured per untyped
-# firing; why one block emits nothing is an OPEN QUESTION, recorded rather than
-# guessed in docs/TELEMETRY.md §"Adjacent-duplicate guard". The guard does not
-# depend on the answer: it keys on byte-identity, not on a duplicate count.
+# At three blocks, exactly TWO lines were measured per untyped firing; why one block
+# emitted nothing was an OPEN QUESTION, recorded rather than guessed in
+# docs/TELEMETRY.md §"Adjacent-duplicate guard". THAT QUESTION IS NOW ABOUT A SYSTEM THAT
+# NO LONGER EXISTS — it was keyed to a three-matcher topology and there are thirteen. It is
+# left recorded rather than deleted because the investigation it holds is still the best
+# account of how these blocks interact, and it is NOT re-answered here because nobody has
+# re-measured at thirteen. The guard never depended on the answer: it keys on byte-identity,
+# not on a duplicate count, which is why raising the fan-out needed no change to it —
+# asserted at the new fan-out by test-token-ledger.sh case 23 rather than assumed.
 #
 # The guard is minimal and consecutive-only: skip the append when the line is
 # byte-identical to the CURRENT last line of the log. Duplicate blocks fire
@@ -511,8 +523,8 @@ done
 # cleanup is not a substitute — it makes the trap BODY succeed, and the shell then
 # exits with the fatal status regardless.
 #
-# In production a non-zero here is currently invisible, because all three hooks.json
-# registrations append `|| true`. That is the caller's accident, not this script's
+# In production a non-zero here is currently invisible, because every hooks.json
+# registration appends `|| true`. That is the caller's accident, not this script's
 # contract, and a contract that holds only because of an external wrapper is exactly
 # the fail-safe inversion CLAUDE.md's Failure-Mode Invariants section forbids.
 [ -n "$_have_lock" ] && trap 'rmdir "$_lock" 2>/dev/null || true; exit 0' EXIT
