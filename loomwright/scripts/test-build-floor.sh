@@ -3060,19 +3060,41 @@ zzq() { jq -r "$1" "$JZZ" 2>/dev/null; }
   && ok "(zz) a lane with events and no identity line carries no identified_at — the field is recorded, never derived" \
   || no "(zz) identified_at appeared on a lane whose log has no identity line"
 
-# MUTATION CONTROL: source identified_at from any line's ts and (zz) must redden — that mutant is
-# exactly the shortcut that would refill last_ts's role and undo the separation above.
+# MUTATION CONTROL, and the first version of it was VACUOUS — it built a mutant and asserted only
+# that the file differed, never running it and never requiring (zz) to redden. A control that
+# cannot fail proves nothing, which is the class this whole suite exists to catch, so it is
+# recorded rather than quietly replaced. (Its dead `sed` was thrown away by the python block that
+# followed it and could not have matched anyway: `\n` in a line-at-a-time `s///` matches nothing.)
+#
+# The mutation is the one shortcut that would undo (zz)'s separation: source `identified_at` from
+# ANY line carrying `recorded_at` rather than from the identity line alone. Discriminating it needs
+# a fixture the earlier one did not have — an agent whose recorded_at sits on a NON-identity line —
+# because with recorded_at only ever on identity lines both variants agree and the control is green
+# for the wrong reason.
 MUT_ZZ="$ROOT/mut-identified-at.sh"
-sed 's#map(select((.event // "") == "agent_identity")\n#map(select(true)\n#' "$BUILD" > "$MUT_ZZ" 2>/dev/null
-python3 - "$BUILD" "$MUT_ZZ" 2>/dev/null <<'PYEOF'
-import io,sys
-s=io.open(sys.argv[1],encoding='utf-8').read()
-a='map(select((.event // "") == "agent_identity")\n                                    | select(has("recorded_at")) | .recorded_at)'
-b='map(select(has("recorded_at")) | .recorded_at)'
-if s.count(a)==1: io.open(sys.argv[2],'w',encoding='utf-8').write(s.replace(a,b,1))
+python3 - "$BUILD" "$MUT_ZZ" <<'PYEOF' 2>/dev/null
+import io, sys
+s = io.open(sys.argv[1], encoding='utf-8').read()
+a = ('map(select((.event // "") == "agent_identity")\n'
+     '                                    | select(has("recorded_at")) | .recorded_at)')
+b = 'map(select(has("recorded_at")) | .recorded_at)'
+if s.count(a) == 1:
+    io.open(sys.argv[2], 'w', encoding='utf-8').write(s.replace(a, b, 1))
 PYEOF
 if [ -s "$MUT_ZZ" ] && ! cmp -s "$MUT_ZZ" "$BUILD"; then
-  ok "(zz2) MUTATION CONTROL: a variant sourcing identified_at from any line carrying recorded_at is buildable — the field's provenance is a real choice, not the only thing the data allows"
+  RZZ2="$(new_repo)"; mkdir -p "$RZZ2/.supervisor/logs" "$RZZ2/agents"
+  # recorded_at on an EVENT line, and no identity line for this agent at all.
+  printf '{"ts":"2026-09-07T10:00:00Z","event":"subtask_complete","cc_session_id":"z2","agent_id":"aev","recorded_at":"2026-09-07T09:00:00Z"}\n' \
+    > "$RZZ2/.supervisor/logs/z2.jsonl"
+  run_build "$RZZ2"
+  zz2_real="$(jq -r '.surfaces.sessions.detail.current.agents[0] | has("identified_at")' "$RZZ2/.supervisor/floor/floor.json" 2>/dev/null)"
+  RZZ3="$(new_repo)"; mkdir -p "$RZZ3/.supervisor/logs" "$RZZ3/agents"
+  cp "$RZZ2/.supervisor/logs/z2.jsonl" "$RZZ3/.supervisor/logs/z2.jsonl"
+  ( cd "$RZZ3" && FLOOR_AGENTS_DIR="$RZZ3/agents" bash "$MUT_ZZ" >/dev/null 2>&1 )
+  zz2_mut="$(jq -r '.surfaces.sessions.detail.current.agents[0] | has("identified_at")' "$RZZ3/.supervisor/floor/floor.json" 2>/dev/null)"
+  [ "$zz2_real" = "false" ] && [ "$zz2_mut" = "true" ] \
+    && ok "(zz2) MUTATION CONTROL: a recorded_at on a NON-identity line is ignored by the projector (false) and picked up by the any-line mutant (true) — identified_at's provenance is enforced, not merely spelled" \
+    || no "(zz2) MUTATION CONTROL: real=$zz2_real mutant=$zz2_mut, expected false/true — the provenance guard is not doing the work (zz) credits it with"
 else
   no "(zz2) MUTATION CONTROL: could not build the identified-at-provenance mutant - control inconclusive"
 fi
