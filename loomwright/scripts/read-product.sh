@@ -47,14 +47,20 @@
 #   read-rules.sh's `check` field and was missed by both a review and a full-marks rubric.) A null
 #   `last_fetched` is NEVER rendered as a date and NEVER as "stale" — unknown is not old.
 #
-# FAIL-SAFE (hard requirement): ALWAYS exit 0 — a read must never break its caller. In each of the
-# three degraded cases the reader emits NOTHING ON STDOUT, names the reason ON STDERR, and exits 0:
-#   - store absent            -> stderr diagnostic, no stdout, exit 0
-#   - store malformed         -> stderr diagnostic, no stdout, exit 0   (unparseable JSON, or a root
-#                                that is not a JSON object)
-#   - jq unavailable          -> stderr diagnostic, no stdout, exit 0
+# FAIL-SAFE (hard requirement): ALWAYS exit 0 — a read must never break its caller. In EVERY degraded
+# case, with no exception, the reader emits NOTHING ON STDOUT, names the reason ON STDERR, and exits 0.
+# The cases are deliberately NOT enumerated here as a COUNT. An earlier version of this header pinned
+# "three", and the code had already outgrown it twice — once by a guard that was there and went
+# uncounted (the empty-render guard in §4), once by a guard added later (§4c's terminal belt). A number
+# in prose that no gate checks is exactly the "claim no check backs" defect this repo keeps
+# rediscovering, and re-pinning a bigger number would only postpone the same rot. So the invariant is
+# stated as a RULE instead: NO path may reach `exit 0` with an empty stdout without having called
+# `diag` first — every early-return guard below calls it on the line before its own `exit 0`, the
+# MALFORMED short-circuit calls it once per MALFORMED line before exiting, and §4c's terminal belt
+# catches whatever residue is left at the end. The live set is what
+# `grep -n 'diag "read-product:' $0` prints — read it from the code, never from a count kept by hand.
 # Note the family precedent is SPLIT on this (read-postmortem.sh writes to stderr at its jq guard but
-# is silent on an absent corpus); this reader deliberately names the reason in ALL THREE cases.
+# is silent on an absent corpus); this reader deliberately names the reason in EVERY case.
 # "Emits nothing" here always means ON STDOUT — never "no stderr". A partial/odd store (an unknown
 # stance, a non-array `competitors`, a missing scalar) is demote-never-crash: the unusable part
 # degrades to `unset` with a stderr warning and everything else is still emitted.
@@ -65,7 +71,11 @@
 # bootstrap. Do not "helpfully" move that message into this reader.
 #
 # INJECTION SAFETY (jq-only): untrusted store text (domain/audience/competitor names and urls) enters
-# jq ONLY because jq reads the store as a POSITIONAL FILE-PATH argument. It is NEVER string-
+# jq ONLY because jq READS THE STORE FROM ITS STDIN — the shell opens the file with a `< "$STORE"`
+# redirect (see §4's `jq -r "$JQ_PROG" < "$STORE"`), so the PATH is never interpreted by a shell and
+# never reaches the jq program text, and the CONTENT arrives as data on fd 0 rather than as an
+# argument. (The redirect is also why a store path beginning with a dash cannot be eaten as a jq
+# short option — the reasoning for that is at the call site itself.) Store text is NEVER string-
 # interpolated into a shell command or into a jq program, the jq program text is fixed, and no value
 # read from the store is ever executed, eval'd, sourced or bash -c'd. Tabs/newlines/CRs inside any
 # value are neutralized so a value can never break the reader's own line framing.

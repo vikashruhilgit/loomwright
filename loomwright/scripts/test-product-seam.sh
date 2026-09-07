@@ -19,6 +19,17 @@
 # the offered bootstrap while every assertion here stayed green. (I) closes that hole by pinning the
 # WHOLE offered line, because `stance` is the one field the design refuses to guess.
 #
+# WHY (I) IS NOT ENOUGH ON ITS OWN — AND WHY (H)/(J) EXIST IN THEIR CURRENT FORM. Fixing the
+# pre-filled-stance defect moved the stance DECISION off the offered command line and into the PROSE
+# of the same blockquote ("pick it yourself and re-run with `--stance product` or `--stance tool`").
+# (I) guards the line the defect happened to live on; it says nothing about the sentence that now
+# carries the decision. Two mutations proved that gap live: narrowing the prose to a single enum value
+# in BOTH mirrors re-introduces exactly the original defect (a seam that hands the user a stance
+# instead of naming it as their decision), and editing any non-message line of the blockquote in ONE
+# mirror drifts the pair — both used to stay green. So the guard is now on the DECISION, not on the
+# surface: (H) compares the ENTIRE offer blockquote byte-for-byte across the two mirrors, and (J)
+# positively requires BOTH enum values to be named in it. M8/M9 in PART 2 are those two mutations.
+#
 # WHY THE SHAPE HALF IS LOAD-BEARING. `loomwright/scripts/...` is the DEVELOPER-side path — it
 # resolves only in a checkout of this repo. Anything invoked at RUNTIME from agent or command prose
 # must go through the plugin-root variable, which resolves on both a dev checkout and a marketplace
@@ -67,10 +78,28 @@ ABSENT_MSG='**No product context: `.agent/product.json` is absent.**'
 NEVER_QUIET='NEVER skip quietly'
 DEV_READER_PATH='loomwright/scripts/read-product.sh'
 DEV_BOOTSTRAP_PATH='loomwright/scripts/propose-product.sh'
+# (J) — the TWO stance enum values the prose must hand back to the user as THEIR decision. Both must
+# be named; naming only one is the pre-filled-stance defect wearing prose instead of an argument.
+STANCE_ENUM_PRODUCT='`--stance product`'
+STANCE_ENUM_TOOL='`--stance tool`'
 
 pass=0; fail=0
 ok() { echo "  ok: $1"; pass=$((pass+1)); }
 no() { echo "  FAIL: $1"; fail=$((fail+1)); }
+
+# ---------------------------------------------------------------------------
+# offer_block <file> — print the WHOLE offer blockquote: the maximal run of consecutive markdown
+#   blockquote lines (`^[[:space:]]*>`) that contains $ABSENT_MSG. Located by CONTENT, never by line
+#   number, so an insertion anywhere above it cannot silently move the assertion off its subject.
+#   Prints nothing when no such run exists — callers treat empty as a FAILURE, never as a pass.
+# ---------------------------------------------------------------------------
+offer_block() {
+  awk -v msg="$ABSENT_MSG" '
+    /^[[:space:]]*>/ { buf = buf $0 "\n"; if (index($0, msg)) hit = 1; next }
+    { if (hit) { printf "%s", buf; exit } buf = ""; hit = 0 }
+    END { if (hit) printf "%s", buf }
+  ' "$1" 2>/dev/null
+}
 
 # ---------------------------------------------------------------------------
 # check_pair <agent_seam> <cmd_seam> <verbose 0|1>
@@ -149,11 +178,21 @@ check_pair() {
     #     with any argument appended. Only an assertion on the WHOLE line discriminates, which is
     #     what this does: strip the markdown blockquote/indent prefix and require what remains to be
     #     EXACTLY $BOOTSTRAP_CALL.
+    #
+    #     WHY THE SET IS RESTRICTED TO FENCED COMMAND LINES. The subject of this assertion is the
+    #     line the user is meant to PASTE, not every place the invocation is spelled. A legitimate
+    #     prose mention inside a sentence (`See \`bash ".../propose-product.sh"\` for the bootstrap.`)
+    #     is not a pre-filled stance, but an unrestricted grep hands it to the exact-match comparison
+    #     and the suite then fails with the WRONG DIAGNOSIS — accusing the seam of pre-deciding
+    #     stance when nothing of the kind happened. `^[[:space:]>]*bash ` keeps only lines that ARE
+    #     the command (fenced, optionally blockquoted/indented) and drops prose that merely quotes it;
+    #     M6/M7 below prove the restriction did not cost the assertion its discriminating power.
     local offers extra
-    offers="$(grep -F "$BOOTSTRAP_CALL" "$f" 2>/dev/null | sed -E 's/^[[:space:]>]*//')"
+    offers="$(grep -F "$BOOTSTRAP_CALL" "$f" 2>/dev/null | grep -E '^[[:space:]>]*bash ' | sed -E 's/^[[:space:]>]*//')"
     if [ -z "$offers" ]; then
-      # (D) has already failed; say so here rather than letting an empty set pass vacuously.
-      _chk 1 "[$base] no bootstrap invocation to check for a pre-filled --stance (see (D))"
+      # (D) matched somewhere, but nowhere as a runnable command line — or (D) failed outright.
+      # Either way this is a failure, not a vacuous pass over an empty set.
+      _chk 1 "[$base] no FENCED bootstrap command line to check for a pre-filled --stance (the invocation is absent, or appears only inside prose — see (D))"
     else
       # `grep -v` consumes all of its input, so there is no early-close SIGPIPE to confuse the
       # status; `|| true` is safe because the emptiness of $extra IS the assertion.
@@ -164,19 +203,55 @@ check_pair() {
         _chk 0 "[$base] offers the bootstrap bare, with no pre-filled --stance value"
       fi
     fi
+
+    # (J) POSITIVE — the offer blockquote must name BOTH stance enum values.
+    #
+    #     (I) is a NEGATIVE assertion: it forbids a stance on the offered command line. Satisfying it
+    #     is not the same as doing the right thing, and the fix for the original defect proved that —
+    #     the decision simply moved into the prose one line below, where nothing asserted it. Deleting
+    #     ` or \`--stance tool\`` from that sentence leaves (A)-(I) untouched and green while the seam
+    #     goes back to handing the user ONE stance instead of naming the choice as theirs.
+    #
+    #     So this pins the DECISION rather than the surface it currently sits on: whatever the prose
+    #     says, BOTH enum values must appear inside the offer blockquote. One without the other is a
+    #     pre-decided stance no matter which line it is written on. Scoped to the blockquote (not the
+    #     whole file) so the assertion's subject is the text the user is actually shown at the moment
+    #     of the decision. M8 is the mutation control for this.
+    local block
+    block="$(offer_block "$f")"
+    if [ -z "$block" ]; then
+      _chk 1 "[$base] no offer blockquote containing the absent-store message — cannot check the stance enum (see (E))"
+    elif printf '%s' "$block" | grep -qF -- "$STANCE_ENUM_PRODUCT" \
+      && printf '%s' "$block" | grep -qF -- "$STANCE_ENUM_TOOL"; then
+      _chk 0 "[$base] the offer names BOTH stance values ($STANCE_ENUM_PRODUCT and $STANCE_ENUM_TOOL) — the choice is left to the user"
+    else
+      _chk 1 "[$base] the offer does NOT name both stance values — one of $STANCE_ENUM_PRODUCT / $STANCE_ENUM_TOOL is missing, so a stance is being pre-decided in prose"
+    fi
   done
 
-  # (H) CROSS-FILE — agent and command must carry the SAME message, byte for byte. Agent↔command
-  #     mirror drift passes every other gate in this repo (check-command-sync.sh does not cover
-  #     prose), so the two copies are compared directly rather than each merely "containing
-  #     something about the store".
-  local a_line c_line
-  a_line="$(grep -F "$ABSENT_MSG" "$agent" 2>/dev/null | head -1)"
-  c_line="$(grep -F "$ABSENT_MSG" "$cmd" 2>/dev/null | head -1)"
-  if [ -n "$a_line" ] && [ "$a_line" = "$c_line" ]; then
-    _chk 0 "[cross-file] the absent-store message is byte-identical in both seams"
+  # (H) CROSS-FILE — agent and command must carry the SAME OFFER, byte for byte, over the WHOLE
+  #     blockquote. Agent↔command mirror drift passes every other gate in this repo
+  #     (check-command-sync.sh does not cover prose), so the two copies are compared directly rather
+  #     than each merely "containing something about the store".
+  #
+  #     WHY THE WHOLE BLOCK AND NOT JUST THE MESSAGE LINE. This used to compare only the
+  #     $ABSENT_MSG line. That covers the first line of a seven-line block: the offered command, the
+  #     "run it bare" instruction, the explanation of what `--stance` decides and the enumeration of
+  #     its two values were ALL free to drift between the mirrors with the suite green — and the
+  #     stance decision now lives in exactly that unasserted remainder. Comparing the whole block
+  #     means any divergence anywhere in the offer fails, whichever line it lands on.
+  #
+  #     Both blocks must also be NON-EMPTY: two files that each lack the offer entirely would compare
+  #     equal, and an "identical absence" is not a passing mirror.
+  local a_block c_block
+  a_block="$(offer_block "$agent")"
+  c_block="$(offer_block "$cmd")"
+  if [ -z "$a_block" ] || [ -z "$c_block" ]; then
+    _chk 1 "[cross-file] the offer blockquote is MISSING from at least one seam (agent empty: $([ -z "$a_block" ] && echo yes || echo no), command empty: $([ -z "$c_block" ] && echo yes || echo no))"
+  elif [ "$a_block" = "$c_block" ]; then
+    _chk 0 "[cross-file] the ENTIRE offer blockquote is byte-identical in both seams"
   else
-    _chk 1 "[cross-file] the absent-store message DIFFERS between agents/ and commands/ (mirror drift)"
+    _chk 1 "[cross-file] the offer blockquote DIFFERS between agents/ and commands/ (mirror drift somewhere in the offer, not necessarily the message line)"
   fi
 
   return "$rc"
@@ -213,26 +288,35 @@ mutate_and_expect_fail() {
   cp "$AGENT_SEAM" "$d/agent.md" || { no "[mutation] $label — could not copy the agent seam"; return; }
   cp "$CMD_SEAM"   "$d/cmd.md"   || { no "[mutation] $label — could not copy the command seam"; return; }
 
+  # `both` mutates the PAIR identically — the only way to exercise an assertion whose subject is the
+  # content itself rather than the agreement between the mirrors. A single-file mutation of the offer
+  # prose is always caught by (H) first, which would make (J) look guarded when it is not.
+  local targets origs i
   case "$which" in
-    agent) target="$d/agent.md"; orig="$AGENT_SEAM" ;;
-    cmd)   target="$d/cmd.md";   orig="$CMD_SEAM" ;;
+    agent) targets=("$d/agent.md");               origs=("$AGENT_SEAM") ;;
+    cmd)   targets=("$d/cmd.md");                 origs=("$CMD_SEAM") ;;
+    both)  targets=("$d/agent.md" "$d/cmd.md");   origs=("$AGENT_SEAM" "$CMD_SEAM") ;;
     *)     no "[mutation] $label — unknown target '$which'"; return ;;
   esac
 
-  sed -E "$sed_prog" "$target" > "$target.new" 2>/dev/null || {
-    no "[mutation] $label — sed failed to produce a mutant"; return; }
-  mv -f "$target.new" "$target"
+  for i in "${!targets[@]}"; do
+    target="${targets[$i]}"; orig="${origs[$i]}"
 
-  # GATE 1 — non-empty.
-  if [ ! -s "$target" ]; then
-    no "[mutation] $label — INVALID MUTANT: the mutated file is empty, so a failure would prove nothing"
-    return
-  fi
-  # GATE 2 — actually different from the committed original.
-  if cmp -s "$target" "$orig"; then
-    no "[mutation] $label — INVALID MUTANT: the mutated file is IDENTICAL to the original, so the mutation did not apply (this control would have been vacuous)"
-    return
-  fi
+    sed -E "$sed_prog" "$target" > "$target.new" 2>/dev/null || {
+      no "[mutation] $label — sed failed to produce a mutant ($(basename "$target"))"; return; }
+    mv -f "$target.new" "$target"
+
+    # GATE 1 — non-empty.
+    if [ ! -s "$target" ]; then
+      no "[mutation] $label — INVALID MUTANT ($(basename "$target")): the mutated file is empty, so a failure would prove nothing"
+      return
+    fi
+    # GATE 2 — actually different from the committed original.
+    if cmp -s "$target" "$orig"; then
+      no "[mutation] $label — INVALID MUTANT ($(basename "$target")): the mutated file is IDENTICAL to the original, so the mutation did not apply (this control would have been vacuous)"
+      return
+    fi
+  done
 
   if check_pair "$d/agent.md" "$d/cmd.md" 0; then
     no "[mutation] $label — the suite PASSED against the mutant; the assertions do not discriminate"
@@ -269,6 +353,22 @@ mutate_and_expect_fail "agents/product-owner.md — bootstrap offer deleted" age
 STANCE_PREFILL='s|(scripts/propose-product\.sh")$|\1 --stance product|'
 mutate_and_expect_fail "agents/product-owner.md — a concrete --stance value pre-filled into the offer" agent "$STANCE_PREFILL"
 mutate_and_expect_fail "commands/product-owner.md — a concrete --stance value pre-filled into the offer" cmd "$STANCE_PREFILL"
+
+# M8 — narrow the offer prose from BOTH stance values to just `--stance product`, in BOTH mirrors at
+# once. This is the original pre-filled-stance defect in its post-fix disguise: the offered command
+# line is still bare (so (I) is satisfied) and the mirrors still agree (so (H) is satisfied), yet the
+# seam once again hands the user a stance instead of naming it as their decision. It is mutated in
+# both files deliberately — a one-file version would be caught by (H) and would prove nothing about
+# (J). Only (J) discriminates here.
+STANCE_NARROW='s/ or `--stance tool`//'
+mutate_and_expect_fail "BOTH seams — the offer prose narrowed to a single stance value" both "$STANCE_NARROW"
+
+# M9 — drift ONE non-message line of the offer blockquote in ONE mirror. Nothing about the absent-
+# store message changes, so the old message-line-only form of (H) waved this through: the offered
+# command, the "run it bare" instruction and the whole stance explanation could diverge between agent
+# and command with the suite green. The whole-block form of (H) is what catches it.
+OFFER_LINE_DRIFT='s/Run it bare, exactly as written\./Run it bare./'
+mutate_and_expect_fail "agents/product-owner.md — a non-message line of the offer drifts from the mirror" agent "$OFFER_LINE_DRIFT"
 
 echo
 echo "RESULT: $pass passed, $fail failed"
