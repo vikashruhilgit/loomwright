@@ -1,0 +1,16 @@
+Bolt Knowledge - platform overview (stand-in for fetched source text; committed, never fetched
+over a network)
+
+Bolt Knowledge is a documentation and search platform for engineering organisations.
+
+Security and administration
+  - Two-factor authentication is required for every administrator, with an authenticator app
+    or a hardware key.
+  - Role-based access is enforced per space: roles and permissions are inherited by child
+    pages and can be overridden per document.
+  - A self-serve bulk export lets an administrator export to CSV or JSON at any time; the
+    data export runs without contacting support.
+  - Where a customer buys through the marketplace, cardholder data is held in a PCI-DSS
+    tokenized card vault operated by the payment processor, never by Bolt.
+
+Nothing else on this page is a capability claim.

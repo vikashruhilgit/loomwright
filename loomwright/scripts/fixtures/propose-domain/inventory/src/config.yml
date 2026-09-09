@@ -1,0 +1,9 @@
+service:
+  name: notes
+  port: 8080
+index:
+  batch: 200
+  refresh_seconds: 30
+storage:
+  driver: sqlite
+  path: ./var/notes.db
