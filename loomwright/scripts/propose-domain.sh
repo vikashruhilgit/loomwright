@@ -302,8 +302,22 @@ guarded_write() {
     cat >/dev/null; return 1
   fi
   # <<< END WRITE-PATH GUARD
-  { cat > "$OUT_DIR_ABS/$name"; } 2>/dev/null || {
+  # Write to a temp entry inside the output dir and `mv -f` it into place. `mv` REPLACES the
+  # directory entry rather than writing through whatever occupies it, which closes three things
+  # the `-L` test above cannot: a HARDLINK at a legal name (`[ -L ]` is false for one, and
+  # `cat >` truncates the shared inode - measured: a planted hardlink took 5856 bytes into a
+  # file outside the output dir with no refusal), the check-then-write TOCTOU race on the
+  # symlink path, and any future link type. The `-L` refusal is kept above because naming a
+  # planted symlink is more useful to a human than silently replacing it.
+  gw_tmp="$OUT_DIR_ABS/.tmp.propose-domain.$$"
+  { cat > "$gw_tmp"; } 2>/dev/null || {
+    rm -f "$gw_tmp" 2>/dev/null
     say "cannot write $OUT_DIR_ABS/$name - skipping this candidate"
+    return 1
+  }
+  mv -f "$gw_tmp" "$OUT_DIR_ABS/$name" 2>/dev/null || {
+    rm -f "$gw_tmp" 2>/dev/null
+    say "cannot move the staged candidate into place at $OUT_DIR_ABS/$name - skipping this candidate"
     return 1
   }
   return 0
@@ -428,13 +442,22 @@ classify_gap() {
     cg_in_scope=0
     cg_old_ifs="$IFS"
     IFS=','
-    for cg_t in $cg_scope_terms; do
-      [ -n "$cg_t" ] || continue
-      case "$(printf '%s' "$cg_text" | tr '[:upper:]' '[:lower:]')" in
-        *"$(printf '%s' "$cg_t" | tr '[:upper:]' '[:lower:]')"*) cg_in_scope=1 ;;
-      esac
-    done
     IFS="$cg_old_ifs"
+    # WORD BOUNDARIES, the same rule the inventory matcher uses - this was a bare substring
+    # glob and is the second instance of the defect that made a bare `sso` match "processor".
+    # Scope terms are short and generic (`card`, `payment`, `commerce`), so a substring match
+    # is not a near-miss but a routine wrong answer: a store whose domain reads "a flashcard-
+    # based spaced-repetition app" contains "flashcard", which substring-matches `card`, and
+    # card-data-vaulting is then classified TABLE-STAKES for an app with no payments at all.
+    # The file's own header, propose.md and the CHANGELOG all claim boundary matching; this is
+    # the place that did not do it.
+    terms_to_patterns "$cg_scope_terms" "$WORK/scope.pat"
+    printf '%s\n' "$cg_text" > "$WORK/scope.txt"
+    # grep -q runs DIRECTLY against a file, never as the right-hand side of a pipe, where it
+    # returns 141 under pipefail even on a match.
+    if [ -s "$WORK/scope.pat" ] && grep -q -I -i -E -f "$WORK/scope.pat" "$WORK/scope.txt" 2>/dev/null; then
+      cg_in_scope=1
+    fi
     if [ "$cg_in_scope" -eq 0 ]; then
       printf 'NOT-FOR-US'
       return 0
@@ -494,10 +517,18 @@ fi
 # the default cap, so a fixed 4000 would make the truncation arm unreachable here - and an
 # unreachable branch is exactly the "claim no check backs" defect this file keeps guarding against.
 SURFACE_FILE_CAP="${PROPOSE_DOMAIN_SURFACE_FILE_CAP:-4000}"
+# ONE named refusal covering every rejected value. The clamp used to be a silent `||` fallback,
+# so `0`, a negative, and a value large enough to overflow the arithmetic test were all replaced
+# with 4000 with no message - while the documented promise said an out-of-range value is NAMED.
+# A doc claiming behaviour the code does not have is the defect class this file keeps meeting.
 case "$SURFACE_FILE_CAP" in
-  ''|*[!0-9]*) say "ignoring non-numeric PROPOSE_DOMAIN_SURFACE_FILE_CAP - using 4000"; SURFACE_FILE_CAP=4000 ;;
+  ''|*[!0-9]*) SURFACE_FILE_CAP_BAD=1 ;;
+  *) if [ "$SURFACE_FILE_CAP" -ge 1 ] 2>/dev/null; then SURFACE_FILE_CAP_BAD=0; else SURFACE_FILE_CAP_BAD=1; fi ;;
 esac
-[ "$SURFACE_FILE_CAP" -ge 1 ] 2>/dev/null || SURFACE_FILE_CAP=4000
+if [ "$SURFACE_FILE_CAP_BAD" = "1" ]; then
+  say "ignoring unusable PROPOSE_DOMAIN_SURFACE_FILE_CAP '$SURFACE_FILE_CAP' (must be an integer >= 1) - using 4000"
+  SURFACE_FILE_CAP=4000
+fi
 # The product store is INPUT (a), not an inventory surface. It is a `.json` file inside the tree,
 # so without this exclusion its own competitor names and domain prose would sit in the code
 # surface and could "confirm" the very capability the store is being used to ask about.
@@ -861,9 +892,21 @@ while IFS='|' read -r slug title source_terms inv_terms scope_terms kind; do
     printf -- '  nor the store being asked about, nor the search terms of the searcher itself can\n'
     printf -- '  "confirm" a capability and make a real gap silently disappear\n'
     if [ "$code_truncated" = "1" ] || [ "$doc_truncated" = "1" ]; then
-      printf -- '- per-surface file cap: %s - **REACHED**: the code surface matched %s file(s) and only\n' "$SURFACE_FILE_CAP" "$n_code_total"
-      printf -- '  %s were searched (doc surface: %s matched, %s searched). A no-match on a truncated\n' "$n_code_files" "$n_doc_total" "$n_doc_files"
-      printf -- '  surface is reported `unverified`, never absent - the evidence may lie past the cap.\n'
+      # Name the surface(s) ACTUALLY truncated. Leading with the code surface unconditionally
+      # told a reader the code surface was cut short on a doc-only truncation, where every code
+      # file had in fact been searched. The numbers were true and the sentence was not, and an
+      # evidence narrative that misidentifies the incomplete surface undercuts the whole artefact.
+      if [ "$code_truncated" = "1" ] && [ "$doc_truncated" = "1" ]; then
+        cap_which="BOTH surfaces were truncated"
+      elif [ "$code_truncated" = "1" ]; then
+        cap_which="the CODE surface was truncated (every doc file was searched)"
+      else
+        cap_which="the DOC surface was truncated (every code file was searched)"
+      fi
+      printf -- '- per-surface file cap: %s - **REACHED**: %s.\n' "$SURFACE_FILE_CAP" "$cap_which"
+      printf -- '  code: %s matched, %s searched. docs: %s matched, %s searched.\n' "$n_code_total" "$n_code_files" "$n_doc_total" "$n_doc_files"
+      printf -- '  A no-match on a truncated surface is reported `unverified`, never absent - the\n'
+      printf -- '  evidence may lie past the cap.\n'
     else
       printf -- '- per-surface file cap: %s - not reached; every matching file was searched, so a\n' "$SURFACE_FILE_CAP"
       printf -- '  no-match here is a fact about the project rather than about the cap.\n'

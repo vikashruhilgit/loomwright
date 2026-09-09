@@ -1036,11 +1036,13 @@ mkdir -p "$A15/out" "$A15/req"
 reset_domain
 D_PROJ="$REPO_ROOT"; D_OUT="$A15/out"; D_REQ="$A15/req"; D_STORE="$FIX/product.json"
 run_domain >/dev/null 2>&1
-if grep -q 'not a gap' "$LOGERR" 2>/dev/null; then
-  ok "the live-repo run classified at least one capability as already present, so the exclusion has something to get wrong"
-else
-  ok "the live-repo run confirmed nothing (acceptable) - the exclusion assertions below still hold"
-fi
+# A real assertion, not a tautology: the earlier form called ok() in BOTH branches, so it could
+# never fail while still inflating the pass count. The exclusion assertions below are only
+# meaningful if the live run actually did its work.
+a15_emitted="$(count_domain "$A15/out")"
+[ "$a15_emitted" -ge 1 ] \
+  && ok "the live-repo run emitted $a15_emitted candidate(s), so the exclusion assertions run against a live run" \
+  || no "the live-repo run emitted nothing - the exclusion assertions below would be vacuous"
 a15_self="$(grep 'not a gap' "$LOGERR" 2>/dev/null | grep -cE 'test-propose-domain\.sh|fixtures/propose-domain/')"
 [ "$a15_self" -eq 0 ] \
   && ok "no capability is 'confirmed' by this basis's own self-test or fixture tree" \
@@ -1064,6 +1066,180 @@ m15="$(grep 'not a gap' "$LOGERR" 2>/dev/null | grep -cE 'test-propose-domain\.s
 [ "$m15" -gt 0 ] \
   && ok "MUTATION CONTROL: with only \$0 excluded, $m15 capability(ies) are confirmed by the searcher's own files - AC15 turns RED" \
   || no "the mutant confirmed nothing from its own artefacts - AC15's assertion would pass with the exclusion deleted"
+
+echo
+echo "== AC16: scope terms match on WORD BOUNDARIES, so a substring cannot force a classification =="
+# Second instance of the defect that made a bare `sso` match "processor". Scope terms are short
+# and generic (`card`, `payment`, `commerce`), so a substring match is not a near-miss but a
+# routine wrong answer - and it decides TABLE-STAKES/DIFFERENTIATOR vs NOT-FOR-US.
+A16="$(mktmp)"
+mkdir -p "$A16/out" "$A16/req"
+jq '.domain = "a flashcard-based spaced-repetition app for students"' "$FIX/product.json" > "$A16/store.json" 2>/dev/null
+[ -s "$A16/store.json" ] \
+  && ok "built a store whose domain CONTAINS a scope term as a substring only (flashcard vs card)" \
+  || no "could not build the substring-trap store - AC16 would be vacuous"
+reset_domain
+D_PROJ="$PROJ"; D_STORE="$A16/store.json"; D_OUT="$A16/out"; D_REQ="$A16/req"
+run_domain >/dev/null 2>&1
+a16_f="$A16/out/domain--card-data-vaulting.md"
+if [ -f "$a16_f" ]; then
+  ok "the payment-scoped expectation was emitted, so its classification is observable"
+  if grep -q '^- classification: NOT-FOR-US' "$a16_f" 2>/dev/null; then
+    ok "classified NOT-FOR-US - 'flashcard' did not satisfy the scope term 'card'"
+  else
+    no "classified $(grep -h '^- classification:' "$a16_f" | head -1) - a substring forced an in-scope verdict"
+  fi
+else
+  no "domain--card-data-vaulting.md was not emitted - AC16 cannot observe the classification"
+fi
+# POSITIVE CONTROL: a store that REALLY is in scope must still classify in-scope, or the
+# assertion above would pass simply because nothing is ever in scope.
+jq '.domain = "a card payment gateway for online merchants"' "$FIX/product.json" > "$A16/store2.json" 2>/dev/null
+reset_domain
+D_PROJ="$PROJ"; D_STORE="$A16/store2.json"; D_OUT="$A16/out2"; D_REQ="$A16/req2"
+mkdir -p "$D_OUT" "$D_REQ"
+run_domain >/dev/null 2>&1
+a16_f2="$A16/out2/domain--card-data-vaulting.md"
+if [ -f "$a16_f2" ] && ! grep -q '^- classification: NOT-FOR-US' "$a16_f2" 2>/dev/null; then
+  ok "POSITIVE CONTROL: a genuine payments domain still classifies in-scope, so the check is not simply always-NOT-FOR-US"
+else
+  no "a genuine payments domain was also NOT-FOR-US - the word-boundary check is over-tight"
+fi
+echo "-- MUTATION CONTROL: restore the bare-substring match and AC16 must go RED --"
+A16M="$MUTDIR/mut-a16.sh"
+awk '
+  /^    terms_to_patterns "\$cg_scope_terms"/ { print "    case \"$cg_text\" in *\"$cg_t\"*) cg_in_scope=1 ;; esac"; drop=1; next }
+  drop && /^    fi$/ { drop=0; next }
+  drop { next }
+  { print }
+' "$SUT" > "$A16M"
+if bash -n "$A16M" 2>/dev/null && ! grep -q 'scope.pat' "$A16M"; then
+  ok "built a syntactically valid mutant whose scope match is a bare substring again"
+else
+  no "could not build the substring mutant - this control would pass vacuously"
+fi
+reset_domain
+D_PROJ="$PROJ"; D_STORE="$A16/store.json"; D_OUT="$A16/mut"; D_REQ="$A16/mutreq"; D_SCRIPT="$A16M"
+mkdir -p "$D_OUT" "$D_REQ"
+run_domain >/dev/null 2>&1
+m16="$A16/mut/domain--card-data-vaulting.md"
+if [ -f "$m16" ] && ! grep -q '^- classification: NOT-FOR-US' "$m16" 2>/dev/null; then
+  ok "MUTATION CONTROL: with a bare substring match, 'flashcard' forces an in-scope verdict - AC16 turns RED"
+else
+  no "the substring mutant produced the same verdict - AC16's assertion would pass with the boundary matching deleted"
+fi
+
+echo
+echo "== AC17: a HARDLINK at a legal name cannot route the write outside the output dir =="
+# The `-L` test is false for a hardlink and `cat >` truncates the shared inode. Measured before
+# the fix: a planted hardlink took 5856 bytes into a file outside the output directory with no
+# refusal. The write now stages to a temp entry and `mv -f`s into place, which REPLACES the
+# directory entry instead of writing through it.
+A17="$(mktmp)"
+mkdir -p "$A17/out" "$A17/req" "$A17/elsewhere" "$A17/probe"
+A17_V="$A17/elsewhere/victim.md"
+printf 'original\n' > "$A17_V"
+a17_before="$(wc -c < "$A17_V" | tr -d ' ')"
+reset_domain
+D_PROJ="$PROJ"; D_OUT="$A17/probe"; D_REQ="$A17/req"
+run_domain >/dev/null 2>&1
+a17_name="$(find "$A17/probe" -name 'domain--*.md' -exec basename {} \; 2>/dev/null | head -1)"
+[ -n "$a17_name" ] && ok "learned a filename this run really emits ($a17_name), so the hardlink sits on a live write path" \
+  || no "could not learn an emitted filename - AC17 would plant a link nothing writes to"
+if ln "$A17_V" "$A17/out/$a17_name" 2>/dev/null; then
+  ok "planted a HARDLINK at that name, sharing an inode with a file outside the output dir"
+  reset_domain
+  D_PROJ="$PROJ"; D_OUT="$A17/out"; D_REQ="$A17/req"
+  run_domain; a17_rc=$?
+  [ "$a17_rc" -eq 0 ] && ok "the run still exits 0 on hostile input" || no "exit $a17_rc on a planted hardlink"
+  a17_after="$(wc -c < "$A17_V" | tr -d ' ')"
+  [ "$a17_after" = "$a17_before" ] \
+    && ok "the file outside the output dir is BYTE-UNCHANGED ($a17_after bytes) - the write replaced the entry rather than following it" \
+    || no "the write went through the hardlink: the outside file went $a17_before -> $a17_after bytes"
+  [ -s "$A17/out/$a17_name" ] \
+    && ok "and the candidate itself was still written inside the output dir - the fix does not simply drop the write" \
+    || no "nothing was written at $a17_name - the fix broke the ordinary write path"
+  # MUTATION CONTROL: restore the write-through and AC17 must go RED.
+  A17M="$MUTDIR/mut-a17.sh"
+  # Swap ONLY the mv line, keeping its `|| { ... }` block intact - a whole-block cut leaves a
+  # dangling `|| {` and produces a mutant that cannot parse, which reads as "control broken"
+  # rather than "assertion vacuous".
+  sed 's#^  mv -f "$gw_tmp" "$OUT_DIR_ABS/$name" 2>/dev/null || {#  { cat "$gw_tmp" > "$OUT_DIR_ABS/$name"; rm -f "$gw_tmp"; } 2>/dev/null || {#' "$SUT" > "$A17M"
+  if bash -n "$A17M" 2>/dev/null && ! grep -q '^  mv -f "\$gw_tmp"' "$A17M" && grep -q 'cat "\$gw_tmp" >' "$A17M"; then
+    ok "built a syntactically valid mutant that writes THROUGH the entry instead of replacing it"
+    printf 'original\n' > "$A17_V"
+    rm -f "$A17/out/$a17_name"
+    ln "$A17_V" "$A17/out/$a17_name" 2>/dev/null
+    reset_domain
+    D_PROJ="$PROJ"; D_OUT="$A17/out"; D_REQ="$A17/req"; D_SCRIPT="$A17M"
+    run_domain >/dev/null 2>&1
+    a17_mut="$(wc -c < "$A17_V" | tr -d ' ')"
+    [ "$a17_mut" != "$a17_before" ] \
+      && ok "MUTATION CONTROL: writing through the entry takes $a17_mut bytes into the outside file - AC17 turns RED" \
+      || no "the write-through mutant left the outside file unchanged - AC17's assertion would pass with the mechanism deleted"
+  else
+    no "could not build the write-through mutant - this control would pass vacuously"
+  fi
+else
+  skip=$((skip+1)); echo "  skip: this filesystem does not support hardlinks - AC17 not exercised"
+fi
+
+echo
+echo "== AC18: an unusable surface-file cap is NAMED and ignored, not silently clamped =="
+# propose.md promises an out-of-range value is "named and ignored". The clamp was a silent `||`
+# fallback, so 0, a negative and an overflow value were all replaced with 4000 with no message -
+# a documented promise the code did not keep, and there was no test over these branches at all.
+A18="$(mktmp)"
+mkdir -p "$A18/req"
+a18_case() { # a18_case <label> <value>
+  reset_domain
+  D_PROJ="$PROJ"; D_OUT="$A18/out.$1"; D_REQ="$A18/req"; D_CAP="$2"
+  mkdir -p "$D_OUT"
+  run_domain; a18_rc=$?
+  [ "$a18_rc" -eq 0 ] && ok "cap '$2' ($1): exits 0" || no "cap '$2' ($1): exit $a18_rc"
+  grep -Fq 'ignoring unusable PROPOSE_DOMAIN_SURFACE_FILE_CAP' "$LOGERR" 2>/dev/null \
+    && ok "cap '$2' ($1): the refusal is NAMED on stderr" \
+    || no "cap '$2' ($1): silently clamped - propose.md promises it is named"
+}
+a18_case zero 0
+a18_case negative -5
+a18_case nonnumeric abc
+a18_case overflow 99999999999999999999999
+# POSITIVE CONTROL: a legal value must NOT produce the refusal, or the assertion above would
+# fire on every run and measure nothing.
+reset_domain
+D_PROJ="$PROJ"; D_OUT="$A18/out.ok"; D_REQ="$A18/req"; D_CAP=3
+mkdir -p "$D_OUT"
+run_domain >/dev/null 2>&1
+grep -Fq 'ignoring unusable PROPOSE_DOMAIN_SURFACE_FILE_CAP' "$LOGERR" 2>/dev/null \
+  && no "a legal cap of 3 was also reported unusable - the check is not discriminating" \
+  || ok "POSITIVE CONTROL: a legal cap of 3 produces no refusal, so the message tracks the value"
+
+echo
+echo "== AC19: the cap line names the surface actually truncated =="
+# The REACHED line led with the code surface unconditionally, so a doc-only truncation told a
+# reader the code surface was cut short when every code file had been searched. The numbers were
+# true and the sentence was not.
+A19="$(mktmp)"
+mkdir -p "$A19/out" "$A19/req"
+reset_domain
+D_PROJ="$PROJ"; D_OUT="$A19/out"; D_REQ="$A19/req"; D_CAP=2
+run_domain >/dev/null 2>&1
+a19_f="$(find "$A19/out" -name 'domain--*.md' 2>/dev/null | head -1)"
+if [ -n "$a19_f" ]; then
+  a19_line="$(grep -h 'REACHED' "$a19_f" 2>/dev/null | head -1)"
+  a19_ncode="$(awk 'END{print NR+0}' "$PROJ/.code-count" 2>/dev/null)"
+  case "$a19_line" in
+    *"BOTH surfaces were truncated"*|*"the CODE surface was truncated"*|*"the DOC surface was truncated"*)
+      ok "the cap line names which surface was truncated: ${a19_line#*REACHED: }" ;;
+    *) no "the cap line does not name the truncated surface: $a19_line" ;;
+  esac
+  grep -q 'code: .* matched, .* searched. docs: .* matched, .* searched' "$a19_f" 2>/dev/null \
+    && ok "and it still reports both surfaces' matched-vs-searched counts" \
+    || no "the matched-vs-searched counts are missing from the cap line"
+else
+  no "no file emitted under a cap of 2 - AC19 cannot observe the cap line"
+fi
 
 echo
 echo "propose-domain: $pass passed, $fail failed, $skip skipped"
