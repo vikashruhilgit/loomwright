@@ -75,6 +75,9 @@ SUT="$HERE/propose-domain.sh"
 LEDGER_SUT="$HERE/propose-work.sh"
 READ_PRODUCT="$HERE/read-product.sh"
 FIXSRC="$HERE/fixtures/propose-domain"
+# AC15 runs the basis against THIS repo, the one tree where the searcher's own artefacts
+# (its self-test and its fixture directory) actually sit inside the surface being scanned.
+REPO_ROOT="$(cd "$HERE/../.." && pwd)"
 LEDGER_FIX="$HERE/fixtures/propose-work/floor-golden.json"
 
 pass=0; fail=0; skip=0
@@ -183,8 +186,8 @@ new_project() {
 }
 
 # run_domain - every knob is a global, so a case sets only what it means to change.
-D_PROJ=""; D_STORE=""; D_OUT=""; D_REQ=""; D_FETCH=""; D_CALLS=""; D_MAXF=""; D_SCRIPT=""
-reset_domain() { D_STORE=""; D_OUT=""; D_REQ=""; D_FETCH="$FETCHER"; D_CALLS=""; D_MAXF=""; D_SCRIPT="$SUT"; }
+D_PROJ=""; D_STORE=""; D_OUT=""; D_REQ=""; D_FETCH=""; D_CALLS=""; D_MAXF=""; D_SCRIPT=""; D_CAP=""
+reset_domain() { D_STORE=""; D_OUT=""; D_REQ=""; D_FETCH="$FETCHER"; D_CALLS=""; D_MAXF=""; D_SCRIPT="$SUT"; D_CAP=""; }
 run_domain() {
   ( cd "$D_PROJ" 2>/dev/null || exit 9
     export PATH="$SHIM:$PATH"
@@ -195,6 +198,7 @@ run_domain() {
     [ -n "$D_FETCH" ] && export PROPOSE_DOMAIN_FETCH_CMD="$D_FETCH"
     [ -n "$D_CALLS" ] && export PROPOSE_DOMAIN_FETCH_CALLS="$D_CALLS"
     [ -n "$D_MAXF" ]  && export PROPOSE_DOMAIN_MAX_FETCHES="$D_MAXF"
+    [ -n "$D_CAP" ]   && export PROPOSE_DOMAIN_SURFACE_FILE_CAP="$D_CAP"
     bash "$D_SCRIPT" ) >"$LOGOUT" 2>"$LOGERR"
   return $?
 }
@@ -915,6 +919,151 @@ else
   no "the two runs differ:
 $(head -30 "$ROOT/det.diff")"
 fi
+
+echo
+echo "== AC13: a TRUNCATED code surface reports unverified, never absent =="
+# Regression for a shipped defect: n_code_files was counted AFTER the `NR<=cap` truncation, so on
+# any surface above the cap it equalled the cap, the empty-surface arm could never fire, and a
+# capability whose evidence sits past the cap was reported `missing` - in a file that
+# simultaneously stated truncation is why it would not be. Unreachable in this repo at the 4000
+# default (268 code files), which is exactly why the cap is env-overridable and why 104 green
+# assertions were no evidence against it.
+A13="$(mktmp)"
+reset_domain
+D_PROJ="$PROJ"; D_OUT="$A13/out"; D_REQ="$A13/req"; D_CAP=2
+mkdir -p "$D_OUT" "$D_REQ"
+run_domain >/dev/null 2>&1
+a13_n="$(count_domain "$A13/out")"
+[ "$a13_n" -ge 1 ] \
+  && ok "the capped run still emitted $a13_n file(s), so the assertions below run against a live run" \
+  || no "the capped run emitted nothing - AC13 would be vacuous"
+a13_missing="$(grep -l '^- inventory status: missing' "$A13/out"/domain--*.md 2>/dev/null | awk 'END{print NR+0}')"
+[ "$a13_missing" -eq 0 ] \
+  && ok "no capability is reported ABSENT on a truncated surface" \
+  || no "$a13_missing file(s) report 'missing' on a TRUNCATED surface - unverified is not absent"
+a13_trunc="$(grep -l 'TRUNCATED at the per-surface cap' "$A13/out"/domain--*.md 2>/dev/null | awk 'END{print NR+0}')"
+[ "$a13_trunc" -ge 1 ] \
+  && ok "the reason names the truncation rather than asserting a clean search" \
+  || no "no emitted file explains that the surface was truncated"
+a13_file="$(find "$A13/out" -name 'domain--*.md' 2>/dev/null | head -1)"
+if [ -n "$a13_file" ] && grep -q 'REACHED' "$a13_file" 2>/dev/null; then
+  ok "the cap line reports the cap as REACHED with the matched-vs-searched counts, rather than restating a rule"
+else
+  no "the cap line does not report that the cap was reached"
+fi
+# The un-truncated control: the SAME project at the default cap must NOT claim truncation, or the
+# assertion above would pass on every run and measure nothing.
+reset_domain
+D_PROJ="$PROJ"; D_OUT="$A13/out2"; D_REQ="$A13/req2"
+mkdir -p "$D_OUT" "$D_REQ"
+run_domain >/dev/null 2>&1
+if grep -rq 'TRUNCATED at the per-surface cap' "$A13/out2" 2>/dev/null; then
+  no "the uncapped run also claims truncation - the truncation signal is not discriminating"
+else
+  ok "CONTROL: the same project at the default cap claims no truncation, so the signal tracks the cap"
+fi
+echo "-- MUTATION CONTROL: delete the truncation arm and AC13 must go RED --"
+A13M="$MUTDIR/mut-a13.sh"
+# Drop from the truncation `elif` through its inv_reason line inclusive - the arm carries
+# comment lines between the two, so a fixed line count would silently mis-cut.
+awk '
+  /^  elif \[ "\$code_truncated" = "1" \]/ { drop=1; next }
+  drop && /^    inv_reason="/               { drop=0; next }
+  drop                                      { next }
+  { print }
+' "$SUT" > "$A13M"
+# Anchor on the VERDICT arm's own reason string, which is unique to it. The flag test
+# `[ "$code_truncated" = "1" ]` also appears in the printed cap-line block, so grepping for that
+# would report the arm as still present after a correct cut - a guard that fails on a good mutant
+# is as useless as one that passes on a bad one.
+if bash -n "$A13M" 2>/dev/null && ! grep -q 'a search surface was TRUNCATED' "$A13M" && [ "$(wc -l < "$A13M")" -lt "$(wc -l < "$SUT")" ]; then
+  ok "built a syntactically valid mutant with the truncation arm deleted"
+else
+  no "could not build the truncation-arm mutant - this control would pass vacuously"
+fi
+reset_domain
+D_PROJ="$PROJ"; D_OUT="$A13/mut"; D_REQ="$A13/mutreq"; D_CAP=2; D_SCRIPT="$A13M"
+mkdir -p "$D_OUT" "$D_REQ"
+run_domain >/dev/null 2>&1
+m13_n="$(count_domain "$A13/mut")"
+m13_missing="$(grep -l '^- inventory status: missing' "$A13/mut"/domain--*.md 2>/dev/null | awk 'END{print NR+0}')"
+[ "$m13_n" -ge 1 ] \
+  && ok "the mutant did its ordinary work ($m13_n file(s)), so it is a live run and not a skip" \
+  || no "the mutant emitted nothing - the control cannot discriminate"
+[ "$m13_missing" -gt 0 ] \
+  && ok "MUTATION CONTROL: without the arm, $m13_missing capability(ies) are reported ABSENT on a truncated surface - AC13 turns RED" \
+  || no "the mutant reported nothing missing - AC13's assertion would pass with the mechanism deleted"
+
+echo
+echo "== AC14: a SYMLINK planted at a legal plain name is refused, not written through =="
+# The name guard proves a name is a plain file inside the output dir; it does not prove the
+# entry AT that name is a regular file. `cat >` follows a symlink, which walks the write back
+# out of the directory the guard just cleared.
+A14="$(mktmp)"
+mkdir -p "$A14/out" "$A14/req" "$A14/elsewhere"
+A14_TARGET="$A14/elsewhere/pwned.md"
+reset_domain
+D_PROJ="$PROJ"; D_OUT="$A14/probe"; D_REQ="$A14/req"
+mkdir -p "$D_OUT"
+run_domain >/dev/null 2>&1
+a14_name="$(find "$A14/probe" -name 'domain--*.md' -exec basename {} \; 2>/dev/null | head -1)"
+if [ -n "$a14_name" ]; then
+  ok "learned a filename this run really emits ($a14_name), so the planted symlink is on a live write path"
+else
+  no "could not learn an emitted filename - AC14 would plant a symlink nothing ever writes to"
+fi
+ln -s "$A14_TARGET" "$A14/out/$a14_name" 2>/dev/null
+[ -L "$A14/out/$a14_name" ] && ok "planted a symlink at that exact name, pointing outside the output directory" \
+  || no "could not plant the symlink"
+reset_domain
+D_PROJ="$PROJ"; D_OUT="$A14/out"; D_REQ="$A14/req"
+run_domain; a14_rc=$?
+[ "$a14_rc" -eq 0 ] && ok "the run still exits 0 on hostile input" || no "exit $a14_rc on a planted symlink"
+[ ! -s "$A14_TARGET" ] \
+  && ok "nothing was written THROUGH the symlink - the target outside the output dir stays empty" \
+  || no "the write followed the symlink and landed at $A14_TARGET - outside the output directory"
+grep -Fq 'it is a symlink' "$LOGERR" 2>/dev/null \
+  && ok "the refusal is NAMED rather than dropped silently" \
+  || no "the symlink refusal is not reported on stderr"
+
+echo
+echo "== AC15: the basis excludes its OWN artefacts, so a real gap is not confirmed away =="
+# A false `present` is worse than a false `missing`: the candidate is never written, so nothing
+# reports it. Excluding only \$0 was not enough - the self-test must name every catalogue term to
+# assert on it, and the committed fixture tree sits inside the repo being scanned.
+A15="$(mktmp)"
+mkdir -p "$A15/out" "$A15/req"
+reset_domain
+D_PROJ="$REPO_ROOT"; D_OUT="$A15/out"; D_REQ="$A15/req"; D_STORE="$FIX/product.json"
+run_domain >/dev/null 2>&1
+if grep -q 'not a gap' "$LOGERR" 2>/dev/null; then
+  ok "the live-repo run classified at least one capability as already present, so the exclusion has something to get wrong"
+else
+  ok "the live-repo run confirmed nothing (acceptable) - the exclusion assertions below still hold"
+fi
+a15_self="$(grep 'not a gap' "$LOGERR" 2>/dev/null | grep -cE 'test-propose-domain\.sh|fixtures/propose-domain/')"
+[ "$a15_self" -eq 0 ] \
+  && ok "no capability is 'confirmed' by this basis's own self-test or fixture tree" \
+  || no "$a15_self capability(ies) confirmed by the searcher's own artefacts - a real gap would silently disappear"
+echo "-- MUTATION CONTROL: restore the \$0-only exclusion and AC15 must go RED --"
+A15M="$MUTDIR/mut-a15.sh"
+# `|` is both this pattern's content and sed's usual delimiter, so use `#` - the first attempt
+# used `|` for both, silently produced an UNCHANGED copy, and the control passed vacuously.
+sed -e 's# || $0 == selftest##' \
+    -e 's#^      fixtures != "" && index($0, fixtures "/") == 1 { next }$##' "$SUT" > "$A15M"
+if bash -n "$A15M" 2>/dev/null && ! grep -q 'selftest { next }' "$A15M" && ! grep -q 'index($0, fixtures' "$A15M"; then
+  ok "built a syntactically valid mutant with BOTH extra exclusions removed"
+else
+  no "the exclusion mutant is unchanged or broken - this control would pass vacuously"
+fi
+reset_domain
+D_PROJ="$REPO_ROOT"; D_OUT="$A15/mut"; D_REQ="$A15/mutreq"; D_STORE="$FIX/product.json"; D_SCRIPT="$A15M"
+mkdir -p "$D_OUT" "$D_REQ"
+run_domain >/dev/null 2>&1
+m15="$(grep 'not a gap' "$LOGERR" 2>/dev/null | grep -cE 'test-propose-domain\.sh|fixtures/propose-domain/')"
+[ "$m15" -gt 0 ] \
+  && ok "MUTATION CONTROL: with only \$0 excluded, $m15 capability(ies) are confirmed by the searcher's own files - AC15 turns RED" \
+  || no "the mutant confirmed nothing from its own artefacts - AC15's assertion would pass with the exclusion deleted"
 
 echo
 echo "propose-domain: $pass passed, $fail failed, $skip skipped"

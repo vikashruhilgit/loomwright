@@ -293,6 +293,14 @@ guarded_write() {
     say "refusing to write '$name' - resolves outside $OUT_DIR_ABS"
     cat >/dev/null; return 1
   fi
+  # A legal plain name can still be a pre-existing SYMLINK planted in the output directory, and
+  # `cat >` FOLLOWS a symlink - which walks the write outside the directory the name guard just
+  # proved it was inside. Refuse rather than unlink: this basis never removes a file it did not
+  # write, and a symlink here is hostile input, not a stale artefact to tidy.
+  if [ -L "$OUT_DIR_ABS/$name" ]; then
+    say "refusing to write '$name' - it is a symlink, and writing through it would leave $OUT_DIR_ABS"
+    cat >/dev/null; return 1
+  fi
   # <<< END WRITE-PATH GUARD
   { cat > "$OUT_DIR_ABS/$name"; } 2>/dev/null || {
     say "cannot write $OUT_DIR_ABS/$name - skipping this candidate"
@@ -482,7 +490,14 @@ fi
 #     and the counts are REPORTED in every emitted file, because a truncated surface is exactly
 #     the case where "not found" must not be read as "absent".
 # ---------------------------------------------------------------------------
-SURFACE_FILE_CAP=4000
+# Env-overridable so the TRUNCATION case below is reachable in a test. This repo is far under
+# the default cap, so a fixed 4000 would make the truncation arm unreachable here - and an
+# unreachable branch is exactly the "claim no check backs" defect this file keeps guarding against.
+SURFACE_FILE_CAP="${PROPOSE_DOMAIN_SURFACE_FILE_CAP:-4000}"
+case "$SURFACE_FILE_CAP" in
+  ''|*[!0-9]*) say "ignoring non-numeric PROPOSE_DOMAIN_SURFACE_FILE_CAP - using 4000"; SURFACE_FILE_CAP=4000 ;;
+esac
+[ "$SURFACE_FILE_CAP" -ge 1 ] 2>/dev/null || SURFACE_FILE_CAP=4000
 # The product store is INPUT (a), not an inventory surface. It is a `.json` file inside the tree,
 # so without this exclusion its own competitor names and domain prose would sit in the code
 # surface and could "confirm" the very capability the store is being used to ask about.
@@ -493,6 +508,16 @@ STORE_ABS="$(cd "$(dirname "$STORE")" 2>/dev/null && pwd)/$(basename "$STORE")"
 # confirms every capability in the catalogue and every real gap silently disappears as "already
 # present". A tool must not measure itself.
 SELF_ABS="$SCRIPT_DIR/$(basename "$0")"
+# THE SEARCHER IS NOT THE SEARCHED, and excluding only $0 was not enough. Two more of this
+# basis's OWN artefacts sit inside any tree it scans and each one falsely CONFIRMS capabilities:
+#   * its self-test, which must name every catalogue term literally in order to assert on it;
+#   * its committed fixture tree, whose stand-in "project" files are not this project's code.
+# A false `present` is worse than a false `missing`: the candidate is never written at all, so
+# nothing reports it and the gap silently disappears. Measured on this repo: excluding only $0
+# left `single-sign-on` and `two-factor-authentication` confirmed by the self-test and
+# `usage-analytics` confirmed by a fixture, dropping 5 real candidates to 3.
+SELFTEST_ABS="$SCRIPT_DIR/test-$(basename "$0")"
+FIXTURES_ABS="$SCRIPT_DIR/fixtures/$(basename "$0" .sh)"
 CODE_GLOBS='*.sh *.py *.js *.jsx *.ts *.tsx *.go *.rb *.java *.kt *.rs *.php *.cs *.sql *.tf *.yml *.yaml *.json'
 DOC_GLOBS='*.md *.mdx *.rst *.adoc'
 
@@ -502,29 +527,41 @@ find "$ROOT" \
   -o -name '*.tsx' -o -name '*.go' -o -name '*.rb' -o -name '*.java' -o -name '*.kt' \
   -o -name '*.rs' -o -name '*.php' -o -name '*.cs' -o -name '*.sql' -o -name '*.tf' \
   -o -name '*.yml' -o -name '*.yaml' -o -name '*.json' \) -print 2>/dev/null \
-  | LC_ALL=C sort | awk -v store="$STORE_ABS" -v self="$SELF_ABS" -v out="$OUT_DIR_ABS/" -v req="$REQ_DIR_ABS/" '
-      $0 == store || $0 == self { next }
+  | LC_ALL=C sort | awk -v store="$STORE_ABS" -v self="$SELF_ABS" -v selftest="$SELFTEST_ABS" -v fixtures="$FIXTURES_ABS" -v out="$OUT_DIR_ABS/" -v req="$REQ_DIR_ABS/" '
+      $0 == store || $0 == self || $0 == selftest { next }
+      fixtures != "" && index($0, fixtures "/") == 1 { next }
       index($0, out) == 1 { next }
       req != "/" && index($0, req) == 1 { next }
       { base = $0; sub(/^.*\//, "", base) }
       base ~ /^domain--.*\.md$/ { next }
       { print }' \
-  | awk -v cap="$SURFACE_FILE_CAP" 'NR<=cap' > "$WORK/code.list"
+  > "$WORK/code.all"
+# Count BEFORE the cap is applied. Counting the truncated list would make n_code_files equal the
+# cap on every truncated surface, so the "empty surface" arm could never fire and a capability
+# whose evidence sits past the cap would be reported `missing` - in a file that simultaneously
+# states truncation is why it would not be. That defect shipped once; this ordering is the fix.
+n_code_total="$(awk 'END{print NR+0}' "$WORK/code.all")"
+awk -v cap="$SURFACE_FILE_CAP" 'NR<=cap' "$WORK/code.all" > "$WORK/code.list"
 
 find "$ROOT" \
   \( -name .git -o -name node_modules -o -name .supervisor -o -name vendor \) -prune -o \
   -type f \( -name '*.md' -o -name '*.mdx' -o -name '*.rst' -o -name '*.adoc' \) -print 2>/dev/null \
-  | LC_ALL=C sort | awk -v store="$STORE_ABS" -v self="$SELF_ABS" -v out="$OUT_DIR_ABS/" -v req="$REQ_DIR_ABS/" '
-      $0 == store || $0 == self { next }
+  | LC_ALL=C sort | awk -v store="$STORE_ABS" -v self="$SELF_ABS" -v selftest="$SELFTEST_ABS" -v fixtures="$FIXTURES_ABS" -v out="$OUT_DIR_ABS/" -v req="$REQ_DIR_ABS/" '
+      $0 == store || $0 == self || $0 == selftest { next }
+      fixtures != "" && index($0, fixtures "/") == 1 { next }
       index($0, out) == 1 { next }
       req != "/" && index($0, req) == 1 { next }
       { base = $0; sub(/^.*\//, "", base) }
       base ~ /^domain--.*\.md$/ { next }
       { print }' \
-  | awk -v cap="$SURFACE_FILE_CAP" 'NR<=cap' > "$WORK/doc.list"
+  > "$WORK/doc.all"
+n_doc_total="$(awk 'END{print NR+0}' "$WORK/doc.all")"
+awk -v cap="$SURFACE_FILE_CAP" 'NR<=cap' "$WORK/doc.all" > "$WORK/doc.list"
 
 n_code_files="$(awk 'END{print NR+0}' "$WORK/code.list")"
 n_doc_files="$(awk 'END{print NR+0}' "$WORK/doc.list")"
+code_truncated=0; [ "$n_code_total" -gt "$n_code_files" ] && code_truncated=1
+doc_truncated=0;  [ "$n_doc_total"  -gt "$n_doc_files"  ] && doc_truncated=1
 
 ORIENT_DIR="$ROOT/.agent/orientation"
 n_orient_files=0
@@ -724,6 +761,14 @@ while IFS='|' read -r slug title source_terms inv_terms scope_terms kind; do
   elif [ "$n_code_files" -eq 0 ]; then
     inv_status="unverified"
     inv_reason="the code surface was empty - zero files matched the code globs under the project root, so a no-match here is a fact about the search, not about the project"
+  elif [ "$code_truncated" = "1" ] || [ "$doc_truncated" = "1" ]; then
+    # EITHER surface, not just the code one. The doc surface feeds the documented-but-unconfirmed
+    # arm below, so a truncated doc surface can hide the very mention that would have made this
+    # `unverified` - and reporting `missing` off a half-read surface is the same defect one
+    # surface over. The printed cap line fires on either too; these two must agree or the file
+    # states a rule its own verdict did not follow.
+    inv_status="unverified"
+    inv_reason="a search surface was TRUNCATED at the per-surface cap of $SURFACE_FILE_CAP (code: $n_code_total matched, $n_code_files searched; docs: $n_doc_total matched, $n_doc_files searched), so a no-match may simply lie past the cap - the search was incomplete, which is a fact about the search and not about the project"
   elif [ -n "$doc_hits" ]; then
     inv_status="unverified"
     inv_reason="the terms appear in the doc surface but in no code file, so the inventory cannot confirm this either way - it is documented but unconfirmed, which is not the same as absent"
@@ -811,11 +856,18 @@ while IFS='|' read -r slug title source_terms inv_terms scope_terms kind; do
     printf -- '- orientation memos: %s file(s) under `.agent/orientation/` (inside the doc surface above)\n' "$n_orient_files"
     printf -- '- pruned from both surfaces: `.git`, `node_modules`, `vendor`, the whole `.supervisor/`\n'
     printf -- '  runtime tree, the output and requirements directories, every `domain--*.md` file\n'
-    printf -- '  wherever it sits, the product store, and `propose-domain.sh` itself - so that neither a\n'
-    printf -- '  candidate written by an earlier run, nor the store being asked about, nor the search\n'
-    printf -- '  terms of the searcher can "confirm" the capability this file says is missing\n'
-    printf -- '- per-surface file cap: %s (a truncated surface is why a no-match is reported as\n' "$SURFACE_FILE_CAP"
-    printf -- '  `unverified` rather than as absent)\n'
+    printf -- '  wherever it sits, the product store, and this basis'"'"'s OWN artefacts - the script, its\n'
+    printf -- '  self-test and its fixture tree - so that neither a candidate written by an earlier run,\n'
+    printf -- '  nor the store being asked about, nor the search terms of the searcher itself can\n'
+    printf -- '  "confirm" a capability and make a real gap silently disappear\n'
+    if [ "$code_truncated" = "1" ] || [ "$doc_truncated" = "1" ]; then
+      printf -- '- per-surface file cap: %s - **REACHED**: the code surface matched %s file(s) and only\n' "$SURFACE_FILE_CAP" "$n_code_total"
+      printf -- '  %s were searched (doc surface: %s matched, %s searched). A no-match on a truncated\n' "$n_code_files" "$n_doc_total" "$n_doc_files"
+      printf -- '  surface is reported `unverified`, never absent - the evidence may lie past the cap.\n'
+    else
+      printf -- '- per-surface file cap: %s - not reached; every matching file was searched, so a\n' "$SURFACE_FILE_CAP"
+      printf -- '  no-match here is a fact about the project rather than about the cap.\n'
+    fi
     printf -- '- exact terms used (matched case-insensitively, on word boundaries, never as bare substrings): '
     awk '{printf "%s`%s`", (c++?", ":""), $0} END{printf "\n"}' "$WORK/inv.pat.raw"
     if [ -n "$doc_hits" ]; then
