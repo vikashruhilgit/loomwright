@@ -1107,8 +1107,24 @@ else
 fi
 echo "-- MUTATION CONTROL: restore the bare-substring match and AC16 must go RED --"
 A16M="$MUTDIR/mut-a16.sh"
+# The mutant must be the ACTUAL pre-fix code - an `IFS=,` split plus the bare-substring case -
+# not a bare reference to a variable nothing sets. The first version of this control emitted
+# `case "$cg_text" in *"$cg_t"*)` while the same commit had deleted the `for cg_t in ...` loop,
+# so under `set -u` classify_gap died inside its command substitution, the emitted file carried
+# an EMPTY classification, and `! grep -q NOT-FOR-US` was satisfied for a reason unrelated to
+# substring matching. Any mutation that merely BROKE the function would have passed it.
 awk '
-  /^    terms_to_patterns "\$cg_scope_terms"/ { print "    case \"$cg_text\" in *\"$cg_t\"*) cg_in_scope=1 ;; esac"; drop=1; next }
+  /^    terms_to_patterns "\$cg_scope_terms" "\$WORK\/scope.pat"$/ {
+    print "    cg_old_ifs=\"$IFS\"; IFS=\x27,\x27";
+    print "    for cg_t in $cg_scope_terms; do";
+    print "      [ -n \"$cg_t\" ] || continue";
+    print "      case \"$(printf \x27%s\x27 \"$cg_text\" | tr \x27[:upper:]\x27 \x27[:lower:]\x27)\" in";
+    print "        *\"$(printf \x27%s\x27 \"$cg_t\" | tr \x27[:upper:]\x27 \x27[:lower:]\x27)\"*) cg_in_scope=1 ;;";
+    print "      esac";
+    print "    done";
+    print "    IFS=\"$cg_old_ifs\"";
+    drop=1; next
+  }
   drop && /^    fi$/ { drop=0; next }
   drop { next }
   { print }
@@ -1122,11 +1138,17 @@ reset_domain
 D_PROJ="$PROJ"; D_STORE="$A16/store.json"; D_OUT="$A16/mut"; D_REQ="$A16/mutreq"; D_SCRIPT="$A16M"
 mkdir -p "$D_OUT" "$D_REQ"
 run_domain >/dev/null 2>&1
+# A crashed mutant must never satisfy this control. `set -u` inside a command substitution kills
+# only the subshell, so a broken classify_gap yields an EMPTY classification and the run still
+# exits 0 - which an absence-of-NOT-FOR-US test would happily accept.
+grep -Fq 'unbound variable' "$LOGERR" 2>/dev/null \
+  && no "the substring mutant died on an unbound variable - it is not exercising substring matching" \
+  || ok "the mutant ran without an unbound-variable death, so it is exercising the match and not a crash"
 m16="$A16/mut/domain--card-data-vaulting.md"
-if [ -f "$m16" ] && ! grep -q '^- classification: NOT-FOR-US' "$m16" 2>/dev/null; then
-  ok "MUTATION CONTROL: with a bare substring match, 'flashcard' forces an in-scope verdict - AC16 turns RED"
+if [ -f "$m16" ] && grep -q '^- classification: TABLE-STAKES' "$m16" 2>/dev/null; then
+  ok "MUTATION CONTROL: with a bare substring match, 'flashcard' forces the IN-SCOPE value TABLE-STAKES - AC16 turns RED"
 else
-  no "the substring mutant produced the same verdict - AC16's assertion would pass with the boundary matching deleted"
+  no "the substring mutant did not produce TABLE-STAKES (got: $(grep -h '^- classification:' "$m16" 2>/dev/null || echo '<no file>')) - AC16's assertion would pass with the boundary matching deleted"
 fi
 
 echo
@@ -1164,7 +1186,10 @@ if ln "$A17_V" "$A17/out/$a17_name" 2>/dev/null; then
   # Swap ONLY the mv line, keeping its `|| { ... }` block intact - a whole-block cut leaves a
   # dangling `|| {` and produces a mutant that cannot parse, which reads as "control broken"
   # rather than "assertion vacuous".
-  sed 's#^  mv -f "$gw_tmp" "$OUT_DIR_ABS/$name" 2>/dev/null || {#  { cat "$gw_tmp" > "$OUT_DIR_ABS/$name"; rm -f "$gw_tmp"; } 2>/dev/null || {#' "$SUT" > "$A17M"
+  # Anchor on the mv VERB only, not the whole line: the line gained a `&& [ -f ... ]` belt in a
+  # later commit and a full-line pattern silently stopped matching, which reported the control as
+  # broken rather than as vacuous. Keep the trailing `|| {` block intact.
+  sed 's#^  mv -f "$gw_tmp" .*|| {#  { cat "$gw_tmp" > "$OUT_DIR_ABS/$name"; rm -f "$gw_tmp"; } 2>/dev/null || {#' "$SUT" > "$A17M"
   if bash -n "$A17M" 2>/dev/null && ! grep -q '^  mv -f "\$gw_tmp"' "$A17M" && grep -q 'cat "\$gw_tmp" >' "$A17M"; then
     ok "built a syntactically valid mutant that writes THROUGH the entry instead of replacing it"
     printf 'original\n' > "$A17_V"
@@ -1228,7 +1253,6 @@ run_domain >/dev/null 2>&1
 a19_f="$(find "$A19/out" -name 'domain--*.md' 2>/dev/null | head -1)"
 if [ -n "$a19_f" ]; then
   a19_line="$(grep -h 'REACHED' "$a19_f" 2>/dev/null | head -1)"
-  a19_ncode="$(awk 'END{print NR+0}' "$PROJ/.code-count" 2>/dev/null)"
   case "$a19_line" in
     *"BOTH surfaces were truncated"*|*"the CODE surface was truncated"*|*"the DOC surface was truncated"*)
       ok "the cap line names which surface was truncated: ${a19_line#*REACHED: }" ;;
@@ -1240,6 +1264,93 @@ if [ -n "$a19_f" ]; then
 else
   no "no file emitted under a cap of 2 - AC19 cannot observe the cap line"
 fi
+
+echo
+echo "== AC20: every scope term is a WHOLE WORD, so the boundary fix did not create under-matching =="
+# AC16 fixed over-matching (flashcard satisfying `card`). That fix broke the opposite direction:
+# the scope column had been authored for substring matching and carried the STEM `invoic`, which
+# no word-boundary pattern can ever match - so an invoicing product was told PCI vaulting and
+# multi-currency were NOT-FOR-US, never written, and nothing reported them. AC16's positive
+# control could not catch it: its domain ("a card payment gateway for online merchants") is made
+# entirely of whole words. This case exists because a fix in one direction is not a fixed class.
+A20="$(mktmp)"
+mkdir -p "$A20/req"
+a20_case() { # a20_case <label> <domain text> <expected: IN or OUT>
+  reset_domain
+  jq --arg d "$2" '.domain = $d' "$FIX/product.json" > "$A20/store.$1.json" 2>/dev/null
+  D_PROJ="$PROJ"; D_STORE="$A20/store.$1.json"; D_OUT="$A20/out.$1"; D_REQ="$A20/req"
+  mkdir -p "$D_OUT"
+  run_domain >/dev/null 2>&1
+  a20_f="$A20/out.$1/domain--card-data-vaulting.md"
+  a20_c="$(grep -h '^- classification: ' "$a20_f" 2>/dev/null | sed 's/^- classification: //')"
+  if [ "$3" = "IN" ]; then
+    case "$a20_c" in
+      NOT-FOR-US|'') no "domain '$2' should be IN scope but classified '${a20_c:-<none>}' - a scope term is unmatchable" ;;
+      *)             ok "domain '$2' is IN scope ($a20_c)" ;;
+    esac
+  else
+    [ "$a20_c" = "NOT-FOR-US" ] \
+      && ok "domain '$2' is OUT of scope (NOT-FOR-US)" \
+      || no "domain '$2' should be OUT of scope but classified '${a20_c:-<none>}'"
+  fi
+}
+a20_case invoicing "an invoicing platform for freelancers"   IN
+a20_case invoice   "an invoice platform for freelancers"     IN
+a20_case ecommerce "an ecommerce storefront builder"         IN
+a20_case hyphen    "an e-commerce storefront builder"        IN
+a20_case gateway   "a card payment gateway for merchants"    IN
+# The over-matching guard must SURVIVE the under-matching fix - both directions, one case.
+a20_case flashcard "a flashcard-based spaced-repetition app" OUT
+a20_case wildcard  "a wildcard DNS management console"       OUT
+# And the catalogue itself must carry no stem a boundary pattern can never match: every scope
+# term has to appear as a whole word somewhere, or it is a term that can never fire.
+a20_stems="$(awk -F'|' '/^[a-z-]+\|/ && $5 != "" { print $5 }' "$SUT" | tr ',' '\n' | sort -u | awk 'NF')"
+a20_bad=0
+while IFS= read -r a20_term; do
+  [ -n "$a20_term" ] || continue
+  case "$a20_term" in
+    invoic|comm|pay|bill|account|pric) a20_bad=$((a20_bad+1)); echo "     stem-shaped scope term: $a20_term" ;;
+  esac
+done <<EOF
+$a20_stems
+EOF
+[ "$a20_bad" -eq 0 ] \
+  && ok "no known stem-shaped term survives in the scope column ($(printf '%s\n' "$a20_stems" | awk 'END{print NR+0}') terms checked)" \
+  || no "$a20_bad stem-shaped scope term(s) remain - a word-boundary pattern can never match them"
+
+echo
+echo "== AC21: a DIRECTORY at a candidate name is refused, and the run does not overcount =="
+# The staged-write rewrite regressed this: `mv -f` into a DIRECTORY succeeds, moving the temp
+# inside it and returning 0, so the run counted a candidate it never wrote and abandoned a
+# PID-named temp in a tree this basis states it leaves nothing in. `cat >` used to fail and name
+# it; the refusal is explicit now rather than inherited from the write primitive.
+A21="$(mktmp)"
+mkdir -p "$A21/probe" "$A21/out" "$A21/req"
+reset_domain
+D_PROJ="$PROJ"; D_OUT="$A21/probe"; D_REQ="$A21/req"
+run_domain >/dev/null 2>&1
+a21_name="$(find "$A21/probe" -name 'domain--*.md' -exec basename {} \; 2>/dev/null | head -1)"
+a21_full="$(count_domain "$A21/probe")"
+[ -n "$a21_name" ] && [ "$a21_full" -ge 2 ] \
+  && ok "an unobstructed run emits $a21_full candidate(s); planting a directory at $a21_name" \
+  || no "could not learn a live filename and a baseline count - AC21 would be vacuous"
+mkdir -p "$A21/out/$a21_name"
+reset_domain
+D_PROJ="$PROJ"; D_OUT="$A21/out"; D_REQ="$A21/req"
+run_domain; a21_rc=$?
+[ "$a21_rc" -eq 0 ] && ok "the run still exits 0 with a directory in the way" || no "exit $a21_rc"
+grep -Fq "refusing to write '$a21_name'" "$LOGERR" 2>/dev/null \
+  && ok "the refusal is NAMED and names the offending candidate" \
+  || no "the directory was not refused by name - the run wrote through or skipped silently"
+a21_real="$(find "$A21/out" -maxdepth 1 -type f -name 'domain--*.md' 2>/dev/null | awk 'END{print NR+0}')"
+a21_claim="$(grep -o '[0-9]\{1,\} candidate(s) written' "$LOGERR" 2>/dev/null | tail -1 | awk '{print $1+0}')"
+[ -n "$a21_claim" ] && [ "$a21_claim" = "$a21_real" ] \
+  && ok "the run's own count ($a21_claim) matches the files actually on disk ($a21_real) - it does not overstate its output" \
+  || no "the run claims $a21_claim candidate(s) but $a21_real exist - the count is inflated by the obstructed write"
+a21_tmp="$(find "$A21/out" -name '.tmp.propose-domain.*' 2>/dev/null | awk 'END{print NR+0}')"
+[ "$a21_tmp" -eq 0 ] \
+  && ok "no staged temp entry survives anywhere under the output dir" \
+  || no "$a21_tmp staged temp entry(ies) survive - the write path leaks artefacts on the obstructed branch"
 
 echo
 echo "propose-domain: $pass passed, $fail failed, $skip skipped"

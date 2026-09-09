@@ -301,6 +301,15 @@ guarded_write() {
     say "refusing to write '$name' - it is a symlink, and writing through it would leave $OUT_DIR_ABS"
     cat >/dev/null; return 1
   fi
+  # A pre-existing entry that is not a REGULAR file. This matters specifically because the write
+  # below is `mv -f`: mv into a DIRECTORY succeeds, moving the temp entry inside it and returning
+  # 0, so the run counts a candidate it never wrote and abandons a PID-named temp in a tree this
+  # basis promises to leave nothing in. `cat >` used to fail on a directory and name it; the
+  # staged-write rewrite lost that for free, so the refusal is now explicit rather than inherited.
+  if [ -e "$OUT_DIR_ABS/$name" ] && [ ! -f "$OUT_DIR_ABS/$name" ]; then
+    say "refusing to write '$name' - something that is not a regular file already occupies that name"
+    cat >/dev/null; return 1
+  fi
   # <<< END WRITE-PATH GUARD
   # Write to a temp entry inside the output dir and `mv -f` it into place. `mv` REPLACES the
   # directory entry rather than writing through whatever occupies it, which closes three things
@@ -315,7 +324,7 @@ guarded_write() {
     say "cannot write $OUT_DIR_ABS/$name - skipping this candidate"
     return 1
   }
-  mv -f "$gw_tmp" "$OUT_DIR_ABS/$name" 2>/dev/null || {
+  mv -f "$gw_tmp" "$OUT_DIR_ABS/$name" 2>/dev/null && [ -f "$OUT_DIR_ABS/$name" ] || {
     rm -f "$gw_tmp" 2>/dev/null
     say "cannot move the staged candidate into place at $OUT_DIR_ABS/$name - skipping this candidate"
     return 1
@@ -440,9 +449,6 @@ classify_gap() {
   cg_text="$3"
   if [ -n "$cg_scope_terms" ]; then
     cg_in_scope=0
-    cg_old_ifs="$IFS"
-    IFS=','
-    IFS="$cg_old_ifs"
     # WORD BOUNDARIES, the same rule the inventory matcher uses - this was a bare substring
     # glob and is the second instance of the defect that made a bare `sso` match "processor".
     # Scope terms are short and generic (`card`, `payment`, `commerce`), so a substring match
@@ -635,6 +641,17 @@ search_surface() {
 # ---------------------------------------------------------------------------
 # 11. THE DOMAIN EXPECTATION CATALOGUE - the things this basis knows how to LOOK FOR.
 #
+# SCOPE-COLUMN RULE (learned the hard way): every scope term must be a WHOLE WORD, never a stem.
+# The scope column was originally authored against a substring match, so it carried the stem
+# `invoic` to cover invoice/invoicing at once. When classify_gap was corrected to match on word
+# boundaries - the right fix for a real over-matching bug - that stem became UNMATCHABLE: there
+# is no English word "invoic", so `(^|[^[:alnum:]])invoic([^[:alnum:]]|$)` fires on nothing.
+# The over-matching fix silently introduced under-matching, and an invoicing product was told
+# PCI vaulting and multi-currency were NOT-FOR-US - never written, so nothing reported them.
+# A false NOT-FOR-US is the same "silently disappears" class as a false `present`.
+# When adding a term here, spell every inflection you mean (invoice, invoices, invoicing) and
+# every spelling (commerce, ecommerce, e-commerce). AC20 asserts exactly this.
+#
 #     Fields, pipe-separated: slug|title|source terms|inventory terms|scope terms|kind
 #       source terms     matched against FETCHED source text; a hit is what makes an expectation
 #                        live in this domain at all (evidence class external/judgment).
@@ -654,8 +671,8 @@ read_catalogue() {
 api-rate-limiting|Per-client API rate limiting|rate limit,rate-limiting,rate limiting,throttling,quota per|rate limit,rate-limit,ratelimit,rate_limit,throttle,x-ratelimit||baseline
 audit-log|An append-only audit log of user-visible actions|audit log,audit trail,audit history,activity log|audit log,audit_log,auditlog,audit trail,audit-log||baseline
 bulk-data-export|Bulk data export a customer can run themselves|data export,bulk export,export to csv,export your data|data export,bulk export,export to csv,export-csv||edge
-card-data-vaulting|Cardholder-data vaulting and PCI scope reduction|pci,cardholder data,card vault,card tokenization,tokenized card|cardholder,card vault,pci-dss,pci dss,card tokenization|payment,payments,billing,invoic,checkout,commerce,card|baseline
-multi-currency|Multi-currency amounts and per-currency rounding|multi-currency,multiple currencies,currency support,foreign currency|multi-currency,multicurrency,currency code,currency_code,iso 4217|payment,payments,billing,invoic,pricing,commerce,accounting|baseline
+card-data-vaulting|Cardholder-data vaulting and PCI scope reduction|pci,cardholder data,card vault,card tokenization,tokenized card|cardholder,card vault,pci-dss,pci dss,card tokenization|payment,payments,billing,invoice,invoices,invoicing,checkout,commerce,ecommerce,e-commerce,card|baseline
+multi-currency|Multi-currency amounts and per-currency rounding|multi-currency,multiple currencies,currency support,foreign currency|multi-currency,multicurrency,currency code,currency_code,iso 4217|payment,payments,billing,invoice,invoices,invoicing,pricing,commerce,ecommerce,e-commerce,accounting|baseline
 role-based-access-control|Role-based access control over shared data|rbac,role-based access,roles and permissions,permission model|rbac,role-based access,permission model,permissions model,role_id||baseline
 single-sign-on|Single sign-on against a customer identity provider|sso,single sign-on,saml,openid connect,oidc|single sign-on,single-sign-on,saml,oidc,openid connect||baseline
 two-factor-authentication|Two-factor authentication on account login|two-factor,2fa,multi-factor,mfa,authenticator app|two-factor,two factor,2fa,multi-factor,mfa,totp||baseline
