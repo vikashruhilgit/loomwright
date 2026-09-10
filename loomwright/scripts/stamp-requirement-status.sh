@@ -105,6 +105,17 @@ if [ -z "$ROOT" ]; then
 fi
 [ -d "$ROOT" ] || { err "project root '$ROOT' is not a directory — nothing done (fail-safe)"; exit 0; }
 cd "$ROOT" 2>/dev/null || { err "cannot enter '$ROOT' — nothing done (fail-safe)"; exit 0; }
+# Re-read ROOT as an absolute PHYSICAL path now that we are inside it. $ROOT is
+# handed to brief_requirement_path as the containment root, and a RELATIVE
+# --project-root would otherwise be re-interpreted from in here — the helper's
+# `cd "$root"` would run from within that directory and fail, yielding code 6
+# ("unresolvable physically") for every brief, so the script would stamp nothing
+# and cheerfully report `0 stamped`. Neither hooks.json seam passes
+# --project-root and the tests use absolute mktemp paths, so this never bit; it
+# was a trap armed for the first relative caller. `pwd -P` also matches how the
+# helper resolves its own side of the comparison, so the two agree on a
+# symlinked root (macOS /tmp -> /private/tmp) rather than spuriously diverging.
+ROOT="$(pwd -P)"
 
 DONE_DIR=".supervisor/jobs/done"
 # The requirements prefix is NOT re-spelled here. It has one literal home,

@@ -206,6 +206,25 @@ grep -qE '^## Status: brief-shipped' "$SB/.supervisor/requirements/final-state/1
   || ok "lock is released on exit (no leak)"
 rm -rf "$SB"
 
+# ── a RELATIVE --project-root resolves like an absolute one ──────────────────
+#
+# $ROOT is handed to brief_requirement_path as the containment root AFTER this
+# script has cd'ed into it. Until the value was re-read as an absolute physical
+# path, a relative --project-root was re-interpreted from inside itself: the
+# helper's `cd "$root"` ran from within that directory and failed, so EVERY
+# brief refused with code 6 and the script reported `0 stamped` while stamping
+# nothing. Every other case in this file passes an absolute `mktemp -d` path,
+# which is exactly why the trap survived — this case is the one that arms it.
+SB="$(sandbox)"
+mkreq "$SB" ".supervisor/requirements/final-state/20-relroot.md"
+mkbrief "$SB" "relroot.md" ".supervisor/requirements/final-state/20-relroot.md"
+# Invoke from the PARENT with a relative path — the shape that used to fail.
+( cd "$(dirname "$SB")" && bash "$TARGET" --project-root "$(basename "$SB")" >/dev/null 2>&1 )
+grep -qE '^## Status: brief-shipped' "$SB/.supervisor/requirements/final-state/20-relroot.md" \
+  && ok "a RELATIVE --project-root stamps, exactly as an absolute one does" \
+  || no "a RELATIVE --project-root stamped nothing — \$ROOT is re-interpreted from inside itself"
+rm -rf "$SB"
+
 # ── 9. fail-safe: absent .supervisor exits 0 ─────────────────────────────────
 SB="$(mktemp -d)"
 bash "$TARGET" --project-root "$SB" >/dev/null 2>&1
