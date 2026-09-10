@@ -423,6 +423,57 @@ if gate_mutant "$bin" "AC-6 (containment)"; then
   esac
 fi
 
+# ═══ AC-6c — the guards resolve against the PASSED ROOT, never process cwd ════
+#
+# Regression pin for a PR-review finding. `-L`, `dirname` and `-f` once resolved
+# the pointer against process cwd while only the physical-prefix comparison used
+# the passed root, so a caller whose cwd differed from its root had its symlink
+# and existence checks inspect a DIFFERENT FILE from the one containment was
+# reasoning about. Guard (b) refused that divergence, so it never surfaced — but
+# "the next guard happens to catch it" is not a contract, and the docstring was
+# claiming a property the code did not have.
+#
+# The discriminator is a DECOY: root/ holds the real requirement, cwd/ holds a
+# same-relative-path decoy. Resolving against the root must yield the SAME
+# verdict from either cwd. Under the old behaviour the run from the decoy cwd
+# returned 7 instead of 0, so this case fails if the anchoring is reverted.
+# DELIBERATE EXCEPTION to this suite's assert-through-the-call-sites rule (see
+# the header). That rule exists so containment is never proven only in
+# isolation — but this property is structurally UNOBSERVABLE through either
+# call site: both keep cwd == root by construction (reconcile-jobs.sh passes its
+# own `pwd -P`; stamp-requirement-status.sh cd's to $ROOT first), which is
+# exactly the caller discipline under test. Sourcing is safe here because
+# brief-pointer.sh IS a sourceable library — unlike reconcile-jobs.sh, whose
+# top-level `exit 0` would end the suite green having asserted nothing (AC-6b).
+ac6c_root="$(mktemp -d)"; ac6c_cwd="$(mktemp -d)"
+mkdir -p "$ac6c_root/.supervisor/requirements/x" "$ac6c_cwd/.supervisor/requirements/x"
+printf 'real\n'  > "$ac6c_root/.supervisor/requirements/x/r.md"
+printf 'decoy\n' > "$ac6c_cwd/.supervisor/requirements/x/r.md"
+ac6c_ptr=".supervisor/requirements/x/r.md"
+
+( . "$HELPER" && cd "$ac6c_root" && brief_requirement_path "$ac6c_ptr" "$ac6c_root" >/dev/null 2>&1 ); ac6c_same=$?
+( . "$HELPER" && cd "$ac6c_cwd"  && brief_requirement_path "$ac6c_ptr" "$ac6c_root" >/dev/null 2>&1 ); ac6c_diff=$?
+
+# A 127 here means the function never loaded, which would make the comparison
+# below pass for the wrong reason — the vacuous-pass class this suite polices.
+[ "$ac6c_same" -ne 127 ] && [ "$ac6c_diff" -ne 127 ] \
+  || no "AC-6c harness broken: brief_requirement_path not in scope (rc 127) — the comparison would be vacuous"
+
+[ "$ac6c_same" -eq 0 ] \
+  && ok "AC-6c resolves from a cwd that IS the root (control)" \
+  || no "AC-6c control failed: rc=$ac6c_same from cwd == root"
+
+[ "$ac6c_diff" -eq "$ac6c_same" ] \
+  && ok "AC-6c same verdict from a cwd that is NOT the root — guards follow the passed root, not cwd" \
+  || no "AC-6c verdict depends on process cwd (rc=$ac6c_diff from a foreign cwd vs $ac6c_same from the root) — the guards resolved against cwd"
+
+# And the decoy must never be the file that satisfied the check.
+[ "$(cat "$ac6c_cwd/.supervisor/requirements/x/r.md")" = "decoy" ] \
+  && ok "AC-6c (control) the cwd decoy is untouched" \
+  || no "AC-6c (control) the cwd decoy was modified"
+
+rm -rf "$ac6c_root" "$ac6c_cwd"
+
 echo "---------------------------------------------------------------------------"
 echo "test-brief-pointer: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

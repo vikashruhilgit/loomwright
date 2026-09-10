@@ -133,6 +133,22 @@ brief_requirement_pointer() {
 #   subprocess on the SessionStart resume path, which is exactly what that
 #   script's offline-by-construction contract forbids.
 #
+#   EVERY guard resolves the pointer against <containment_root>, NOT against the
+#   process cwd, so the sentence above is true by construction rather than by
+#   caller discipline. An earlier revision resolved `-L`, `dirname` and `-f`
+#   against cwd and used <containment_root> only for the physical-prefix
+#   comparison — which meant that a caller whose cwd differed from the root it
+#   passed had its existence and symlink checks inspect a DIFFERENT FILE from
+#   the one the containment check was reasoning about. Guard (b) happened to
+#   refuse that divergence (a spurious refusal, never a bypass), so it was
+#   invisible; but "happens to be caught by the next guard" is not a contract,
+#   and the docstring was asserting a property the code did not have. Both
+#   shipped callers keep cwd == root, so this is byte-identical for them.
+#
+#   RETURNS the pointer exactly as given — repo-root-RELATIVE. The caller must
+#   interpret it against the SAME root it passed in (both shipped callers do,
+#   trivially, since their cwd is that root).
+#
 # RETURN CODES (0 = resolved; anything else = refused, and the caller must be
 # able to tell refusal apart from "resolved but unevidenced"):
 #   1 empty/absent pointer          5 symlinked final component
@@ -140,7 +156,7 @@ brief_requirement_pointer() {
 #   3 `..` segment                  7 physically outside the root
 #   4 outside the requirements dir  8 no such regular file
 brief_requirement_path() {
-  local ptr="${1:-}" root="${2:-}" req_dir root_p
+  local ptr="${1:-}" root="${2:-}" req_dir root_p abs
   [ -n "$ptr" ] || return 1
 
   case "$ptr" in /*) return 2 ;; esac
@@ -150,15 +166,22 @@ brief_requirement_path() {
     *) return 4 ;;
   esac
 
+  # Anchor the pointer to the ROOT WE WERE GIVEN, once, before any guard looks
+  # at the filesystem. Every check below then inspects the same file the
+  # containment comparison reasons about, whatever the process cwd happens to
+  # be. `${root:-.}` keeps the no-root call meaning "relative to cwd", which is
+  # what a bare `.` root has always meant.
+  abs="${root:-.}/$ptr"
+
   # >>> symlink-guard (AC-6 mutation target) >>>
   # (a) `-L` rejects a symlinked FINAL component.
-  if [ -L "$ptr" ]; then return 5; fi
+  if [ -L "$abs" ]; then return 5; fi
 
   # (b) physical resolution of the PARENT catches a symlinked DIRECTORY
   #     component, which (a) cannot see (e.g. `<prefix>/sub -> /etc`, then
   #     `sub/passwd`). Both sides use `pwd -P`, so a symlinked project root
   #     (on macOS `/tmp` -> `/private/tmp`, routinely) is not a spurious mismatch.
-  req_dir="$(cd "$(dirname "$ptr")" 2>/dev/null && pwd -P)"
+  req_dir="$(cd "$(dirname "$abs")" 2>/dev/null && pwd -P)"
   root_p="$(cd "${root:-.}" 2>/dev/null && pwd -P)"
   if [ -z "$req_dir" ] || [ -z "$root_p" ]; then return 6; fi
   case "$req_dir/" in
@@ -167,7 +190,11 @@ brief_requirement_path() {
   esac
   # <<< symlink-guard (AC-6 mutation target) <<<
 
-  [ -f "$ptr" ] || return 8
+  [ -f "$abs" ] || return 8
+  # Returned RELATIVE, as documented — the caller interprets it against the
+  # root it passed. Deliberately not `$abs`: both callers print this value in
+  # operator-facing evidence strings, where a repo-relative path is the useful
+  # form and an absolute sandbox path is noise.
   printf '%s' "$ptr"
 }
 
