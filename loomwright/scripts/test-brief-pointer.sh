@@ -474,6 +474,58 @@ ac6c_ptr=".supervisor/requirements/x/r.md"
 
 rm -rf "$ac6c_root" "$ac6c_cwd"
 
+# ═══ AC-6d — the two NON-GUARD refusal codes are pinned too (6 and 8) ════════
+#
+# AC-6 pins the five containment guards (codes 2/3/4/5/7). The function
+# documents eight codes; 6 ("cannot resolve physically" — the parent directory
+# does not exist) and 8 ("no such regular file" — well-formed, inside the
+# prefix, but the target was moved or deleted) had no dedicated case anywhere.
+#
+# The stamper suite's "missing requirement file is skipped, not fatal" case does
+# reach code 8, but asserts only `exit 0` — and EVERY refusal exits 0 by design,
+# so it stays green with the check removed. It pins the fail-safe CONSEQUENCE,
+# not the guard's identity. Code 8 is the realistic one in production: a
+# requirement renamed or deleted after its brief was written.
+#
+# Same labelled sourcing exception as AC-6c: these assert on the CODE, which is
+# the helper's contract surface — reconcile-jobs.sh collapses every refusal onto
+# one evidence string, so the codes are not distinguishable through it.
+ac6d="$(mktemp -d)"
+mkdir -p "$ac6d/.supervisor/requirements/x"
+printf 'real\n' > "$ac6d/.supervisor/requirements/x/r.md"
+
+( . "$HELPER" && brief_requirement_path ".supervisor/requirements/x/gone.md" "$ac6d" >/dev/null 2>&1 ); ac6d_8=$?
+( . "$HELPER" && brief_requirement_path ".supervisor/requirements/nodir/deep/r.md" "$ac6d" >/dev/null 2>&1 ); ac6d_6=$?
+( . "$HELPER" && brief_requirement_path ".supervisor/requirements/x/r.md" "$ac6d" >/dev/null 2>&1 ); ac6d_ok=$?
+
+[ "$ac6d_ok" -eq 0 ] \
+  && ok "AC-6d (control) an intact pointer under the same root still resolves" \
+  || no "AC-6d control failed: rc=$ac6d_ok for a file that exists — the other two codes prove nothing"
+
+[ "$ac6d_8" -eq 8 ] \
+  && ok "AC-6d a deleted/renamed requirement refuses with its own code 8, not a generic failure" \
+  || no "AC-6d expected code 8 for a missing requirement file, got $ac6d_8"
+
+[ "$ac6d_6" -eq 6 ] \
+  && ok "AC-6d an unresolvable parent directory refuses with its own code 6" \
+  || no "AC-6d expected code 6 for an unresolvable parent, got $ac6d_6"
+
+# The codes must be DISTINCT from each other and from the resolved case,
+# otherwise "its own code" is a claim the suite is not actually checking.
+[ "$ac6d_8" -ne "$ac6d_6" ] && [ "$ac6d_8" -ne "$ac6d_ok" ] && [ "$ac6d_6" -ne "$ac6d_ok" ] \
+  && ok "AC-6d the three outcomes are mutually distinguishable" \
+  || no "AC-6d outcomes collapse (ok=$ac6d_ok, missing=$ac6d_8, unresolvable=$ac6d_6)"
+
+# And each code must render a reason of its own, since that is what the stamper
+# surfaces to the operator.
+r8="$( . "$HELPER" && brief_requirement_reason 8 )"
+r6="$( . "$HELPER" && brief_requirement_reason 6 )"
+[ -n "$r8" ] && [ -n "$r6" ] && [ "$r8" != "$r6" ] \
+  && ok "AC-6d codes 6 and 8 render distinct operator-facing reasons" \
+  || no "AC-6d reasons missing or identical (6='$r6' 8='$r8')"
+
+rm -rf "$ac6d"
+
 echo "---------------------------------------------------------------------------"
 echo "test-brief-pointer: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
