@@ -1,0 +1,24 @@
+{
+  "domain": "a self-hosted team knowledge base and document search service for engineering teams",
+  "stance": "product",
+  "audience": "engineering teams of 20-200 who keep runbooks, design notes and postmortems in one searchable place; assumed, not evidence-backed",
+  "competitors": [
+    {
+      "name": "Acme Docs",
+      "url": "https://example.invalid/acme-docs",
+      "last_fetched": "2026-08-15T00:00:00Z"
+    },
+    {
+      "name": "Bolt Knowledge",
+      "url": "https://example.invalid/bolt-knowledge",
+      "last_fetched": "2019-01-01T00:00:00Z"
+    },
+    {
+      "name": "Cursive Wiki",
+      "url": "https://example.invalid/cursive-wiki",
+      "last_fetched": null
+    }
+  ],
+  "written_at": "2026-09-09T00:00:00Z",
+  "head_sha": "d5de845000000000000000000000000000000000"
+}

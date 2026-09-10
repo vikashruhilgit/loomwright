@@ -1,0 +1,15 @@
+Acme Docs - product page (stand-in for fetched source text; committed, never fetched over a network)
+
+Acme Docs is a hosted knowledge base for engineering teams.
+
+Platform
+  - The public API applies per-client rate limiting on every endpoint, with the remaining
+    budget returned on each response.
+  - Every space keeps an audit log of who read, edited, moved or deleted a page, retained
+    for one year.
+  - Single sign-on is standard on every plan: SAML and OpenID Connect against your own
+    identity provider, with just-in-time provisioning.
+  - Outbound webhooks fire on page publish, comment and archive events, with retries and a
+    replayable delivery history.
+
+Nothing else on this page is a capability claim.

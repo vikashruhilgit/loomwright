@@ -1,0 +1,15 @@
+Cursive Wiki - feature notes (stand-in for fetched source text; committed, never fetched over a
+network)
+
+Cursive Wiki is a wiki and search tool for internal engineering documentation.
+
+Insight
+  - A usage dashboard shows each team its own usage analytics: which pages are read, which
+    are stale, and which searches return nothing.
+
+Governance
+  - An audit log records every edit, move and deletion, and is exportable by an administrator.
+  - Access is federated: single sign-on against your own identity provider over SAML or
+    OpenID Connect, so account lifecycle stays with the directory that already owns it.
+
+Nothing else on this page is a capability claim.
