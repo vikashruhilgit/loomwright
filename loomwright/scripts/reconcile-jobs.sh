@@ -87,7 +87,6 @@ set -uo pipefail
 JOBS_IN=".supervisor/jobs/in-progress"
 JOBS_DONE=".supervisor/jobs/done"
 AUTOMATE_DIR=".supervisor/automate"
-REQ_ROOT=".supervisor/requirements"
 
 PORCELAIN=0
 REPAIR=0
@@ -126,29 +125,48 @@ requirement_status() {
   fi
 }
 
-# brief_source_requirement <brief> — the `- **Source requirement:** <path>`
-# pointer Launch Pad stamps under `## Environment`. Empty when absent (a direct
-# /supervisor run that never had one). Only the FIRST match is honoured.
-brief_source_requirement() {
-  sed -n 's/^- \*\*Source requirement:\*\*[[:space:]]*//p' "$1" 2>/dev/null | head -1
-}
+# THE SOURCE-REQUIREMENT POINTER IS PARSED IN EXACTLY ONE PLACE — brief-pointer.sh.
+#
+# This script used to strip the label and nothing else, so a pointer wrapped in
+# backticks (2 of the 3 real briefs measured 2026-09-10) failed the very first
+# containment guard and the brief was classified `unknown`; the sibling
+# reconciler carried a second, differently-wrong parse of the same field. Both
+# are gone: `brief_requirement_pointer` reads the field, `brief_requirement_path`
+# gates it, and this script GAINED the two symlink guards it previously lacked
+# rather than the shared rule losing them.
+#
+# The helper is found by a PLAIN SIBLING lookup — no harness-specific plugin-root
+# variable, because this file is held at allowance 0 by
+# scripts/check-vendor-coupling.sh (see the vendor-neutrality note at the end of
+# the header above) and that gate carries no `|| true`.
+#
+# ABSENT HELPER = SILENT SKIP, DELIBERATELY. There is no fail-CLOSED load guard
+# here. Without the helper this script performs no reclassification and no move,
+# i.e. no write at all, so skipping already IS the safe outcome — and this script
+# runs on EVERY SessionStart, where an error exit would wedge every new session.
+# See brief-pointer.sh's header, divergence 2.
+_bp_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo .)"
+# shellcheck source=brief-pointer.sh
+[ -r "$_bp_dir/brief-pointer.sh" ] && . "$_bp_dir/brief-pointer.sh"
+if ! command -v brief_requirement_path >/dev/null 2>&1; then
+  brief_requirement_pointer() { return 1; }
+  brief_requirement_path() { return 1; }
+fi
 
-# safe_requirement_path <path> — echo the path only when it resolves UNDER
-# .supervisor/requirements/ and exists. Mirrors completion-tail step 2.5's
-# traversal guard: a brief is a file we parse, so its fields are untrusted input.
-safe_requirement_path() {
-  local p="$1"
-  [ -n "$p" ] || return 1
-  case "$p" in
-    "$REQ_ROOT"/*) ;;
-    *) return 1 ;;
-  esac
-  case "$p" in
-    *..*) return 1 ;;
-  esac
-  [ -f "$p" ] || return 1
-  printf '%s' "$p"
-}
+# The containment root a relative pointer is interpreted against. This script
+# never `cd`s, so that is simply its cwd — resolved ONCE, physically, and handed
+# to brief_requirement_path explicitly. Deliberately NOT derived from the VCS
+# CLI: that would put a subprocess on the SessionStart resume path, which the
+# offline-by-construction contract above forbids.
+ROOT_P="$(pwd -P 2>/dev/null || pwd)"
+
+# Reporting-only mirror of the helper's containment root, for the evidence
+# string below. Derived rather than re-spelled so the prefix has ONE literal
+# home (brief-pointer.sh). It is empty only when the helper failed to load, and
+# the line that reads it is then unreachable: the stub pointer reader returns
+# nothing, so classify() lands on the "no source requirement pointer" arm.
+REQ_ROOT="${BRIEF_REQUIREMENT_PREFIX:-}"
+REQ_ROOT="${REQ_ROOT%/}"
 
 # automate_pr_for_requirement <requirement_path> — scan run files for a
 # `## Current` item line naming this requirement with `status: merged`, and echo
@@ -180,8 +198,8 @@ automate_pr_for_requirement() {
 # classify <brief> -> "STATE<TAB>EVIDENCE" on stdout
 classify() {
   local brief="$1" req raw_req pr
-  raw_req="$(brief_source_requirement "$brief")"
-  req="$(safe_requirement_path "$raw_req" || true)"
+  raw_req="$(brief_requirement_pointer "$brief" || true)"
+  req="$(brief_requirement_path "$raw_req" "$ROOT_P" || true)"
 
   if [ -n "$req" ]; then
     if pr="$(automate_pr_for_requirement "$req")"; then
@@ -246,7 +264,7 @@ repair() {
   # remove: asserting a cleaner result than a file we can already read supports.
   # Only the MESSAGE differs between the arms.
   local status_line="completed" esc_note="" req_for_status req_status
-  req_for_status="$(safe_requirement_path "$(brief_source_requirement "$brief")" || true)"
+  req_for_status="$(brief_requirement_path "$(brief_requirement_pointer "$brief" || true)" "$ROOT_P" || true)"
   if [ -n "$req_for_status" ]; then
     req_status="$(requirement_status "$req_for_status")"
     if [ "$req_status" = "done_with_escalation" ]; then
