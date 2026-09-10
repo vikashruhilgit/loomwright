@@ -162,9 +162,13 @@ ROOT_P="$(pwd -P 2>/dev/null || pwd)"
 
 # Reporting-only mirror of the helper's containment root, for the evidence
 # string below. Derived rather than re-spelled so the prefix has ONE literal
-# home (brief-pointer.sh). It is empty only when the helper failed to load, and
-# the line that reads it is then unreachable: the stub pointer reader returns
-# nothing, so classify() lands on the "no source requirement pointer" arm.
+# home (brief-pointer.sh). It is empty EXACTLY AND ONLY when the helper failed
+# to load, which makes it the discriminator classify() uses to report that
+# degraded state honestly — see the guard on its final arm. Without that guard
+# the stub reader returns nothing for every brief and classify() lands on the
+# "no source requirement pointer" arm, telling the operator that briefs which
+# demonstrably carry a pointer have none. A record misstating reality is the
+# exact failure this reconciler exists to correct; it must not emit one itself.
 REQ_ROOT="${BRIEF_REQUIREMENT_PREFIX:-}"
 REQ_ROOT="${REQ_ROOT%/}"
 
@@ -217,6 +221,13 @@ classify() {
 
   if [ -n "$raw_req" ]; then
     printf 'unknown\tsource requirement pointer %s did not resolve under %s/\n' "$raw_req" "$REQ_ROOT"
+    return 0
+  fi
+  # REQ_ROOT is empty exactly and only when brief-pointer.sh failed to load, in
+  # which case the stub reader returned nothing for reasons that have nothing to
+  # do with this brief. Say so, rather than reporting every brief as pointerless.
+  if [ -z "$REQ_ROOT" ]; then
+    printf 'unknown\tbrief-pointer extractor unavailable — pointer not read\n'
     return 0
   fi
   printf 'unknown\tno source requirement pointer on brief\n'

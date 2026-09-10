@@ -312,10 +312,17 @@ n_export="$(grep -vE '^[[:space:]]*#' "$HELPER" 2>/dev/null | grep -cF 'safe_req
 # Exclusions are by PATH, never by content: brief-pointer.sh is the one
 # sanctioned implementation and `test-*.sh` files carry fixture strings. A
 # content-based exclusion could hide a real second parser.
+#
+# The exclusions are ANCHORED TO THE PATH FIELD of grep's `path:line:content`
+# record. Unanchored, they would match anywhere in the record — so a real second
+# parser whose LINE CONTENT happened to contain `/brief-pointer.sh:` or
+# `/test-x.sh:` would be silently dropped from arm (b). That is precisely the
+# content-based exclusion the paragraph above forbids, so the claim has to be
+# enforced by the pattern, not just asserted in the comment.
 detect() {
   grep -rnF 'equirement:\*\*' "$1" 2>/dev/null \
-    | grep -vE '/brief-pointer\.sh:' \
-    | grep -vE '/test-[^/]*\.sh:' \
+    | grep -vE '^[^:]*/brief-pointer\.sh:' \
+    | grep -vE '^[^:]*/test-[^/:]*\.sh:' \
     || true
 }
 
