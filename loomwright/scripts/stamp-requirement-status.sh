@@ -48,7 +48,9 @@
 # directory — still land under `.supervisor/requirements/`. Anything else is skipped with a
 # message, never written. The last two checks are not redundant with the first three: those are
 # purely LEXICAL, and `-f` follows symlinks, so a link inside the prefix satisfied all of them
-# while writing to its target outside the root (reproduced; see the SYMLINK GUARD below).
+# while writing to its target outside the root (reproduced). Since v15.63.0 all of these guards
+# live in `brief_requirement_path` in the sibling `brief-pointer.sh`, so the OTHER lifecycle
+# reconciler runs the identical set — they were moved there, never re-derived or relaxed.
 #
 # USAGE
 #   stamp-requirement-status.sh [--project-root <dir>] [--dry-run]
@@ -60,6 +62,31 @@ set -uo pipefail   # `set -e` intentionally omitted — fail-safe, always exit 0
 
 say() { echo "stamp-requirement-status: $1"; }
 err() { echo "stamp-requirement-status: $1" >&2; }
+
+# THE SOURCE-REQUIREMENT POINTER IS PARSED IN EXACTLY ONE PLACE — brief-pointer.sh,
+# a plain sibling. This script used to carry its own two-step parse (a
+# case-insensitive capture, then a delimiter strip anchored at end-of-LINE) and
+# the sibling reconciler carried a third, weaker one. That end-of-line anchor is
+# why a pointer ending in a parenthetical annotation survived the strip, passed
+# containment, and then failed `-f`: such a line ends in `)`, not in a delimiter.
+# Every containment guard below now lives in brief_requirement_path — MOVED, not
+# re-derived, and the weaker consumer was raised to this guard set rather than
+# this one being averaged down to it.
+#
+# Resolved BEFORE the `cd "$ROOT"` below, because `$0` may be relative. A plain
+# sibling lookup, never a harness-specific plugin-root variable: this file sits
+# at allowance 0 under scripts/check-vendor-coupling.sh, a hard CI gate with no
+# `|| true`. Absent helper = silent skip — no stamp is already the safe outcome
+# for a fail-SAFE emitter; see brief-pointer.sh's header, divergence 2.
+_bp_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo .)"
+# shellcheck source=brief-pointer.sh
+[ -r "$_bp_dir/brief-pointer.sh" ] && . "$_bp_dir/brief-pointer.sh"
+if ! command -v brief_requirement_path >/dev/null 2>&1; then
+  err "shared brief-pointer extractor unavailable — nothing stamped (fail-safe)"
+  brief_requirement_pointer() { return 1; }
+  brief_requirement_path() { return 1; }
+  brief_requirement_reason() { printf 'shared brief-pointer extractor unavailable'; }
+fi
 
 ROOT=""
 DRY_RUN=0
@@ -78,9 +105,22 @@ if [ -z "$ROOT" ]; then
 fi
 [ -d "$ROOT" ] || { err "project root '$ROOT' is not a directory — nothing done (fail-safe)"; exit 0; }
 cd "$ROOT" 2>/dev/null || { err "cannot enter '$ROOT' — nothing done (fail-safe)"; exit 0; }
+# Re-read ROOT as an absolute PHYSICAL path now that we are inside it. $ROOT is
+# handed to brief_requirement_path as the containment root, and a RELATIVE
+# --project-root would otherwise be re-interpreted from in here — the helper's
+# `cd "$root"` would run from within that directory and fail, yielding code 6
+# ("unresolvable physically") for every brief, so the script would stamp nothing
+# and cheerfully report `0 stamped`. Neither hooks.json seam passes
+# --project-root and the tests use absolute mktemp paths, so this never bit; it
+# was a trap armed for the first relative caller. `pwd -P` also matches how the
+# helper resolves its own side of the comparison, so the two agree on a
+# symlinked root (macOS /tmp -> /private/tmp) rather than spuriously diverging.
+ROOT="$(pwd -P)"
 
 DONE_DIR=".supervisor/jobs/done"
-REQ_PREFIX=".supervisor/requirements/"
+# The requirements prefix is NOT re-spelled here. It has one literal home,
+# brief-pointer.sh's BRIEF_REQUIREMENT_PREFIX, and the containment guards and the
+# refusal messages both read it from there.
 
 if [ ! -d "$DONE_DIR" ]; then
   say "no $DONE_DIR — nothing to reconcile"
@@ -127,63 +167,35 @@ for brief in "$DONE_DIR"/*.md; do
   #   - **Source requirement:** .supervisor/requirements/<...>.md
   # Briefs from a literal-string goal carry no such line and are correctly skipped (measured:
   # 28 of 72 archived briefs carry it — the requirement-sourced subset).
-  raw="$(grep -m1 -iE '^[[:space:]]*-?[[:space:]]*\*\*Source requirement:\*\*' "$brief" 2>/dev/null)"
-  [ -n "$raw" ] || continue
-
-  # Strip everything through the label, then surrounding markdown/whitespace.
-  req="$(printf '%s' "$raw" | sed -E 's/.*\*\*[Ss]ource [Rr]equirement:\*\*[[:space:]]*//')"
-  req="$(printf '%s' "$req" | sed -E 's/^[`"'"'"' ]+//; s/[`"'"'"' ]+$//')"
+  req="$(brief_requirement_pointer "$brief" 2>/dev/null || true)"
   [ -n "$req" ] || continue
 
-  # --- containment checks (untrusted input) ---
-  case "$req" in
-    /*)      err "skip: absolute requirement path in $(basename "$brief") — '$req'"; SKIPPED=$((SKIPPED+1)); continue ;;
-    *..*)    err "skip: '..' segment in requirement path from $(basename "$brief") — '$req'"; SKIPPED=$((SKIPPED+1)); continue ;;
-    "$REQ_PREFIX"*) : ;;
-    *)       err "skip: requirement path outside $REQ_PREFIX in $(basename "$brief") — '$req'"; SKIPPED=$((SKIPPED+1)); continue ;;
-  esac
-
-  # SYMLINK GUARD — the lexical checks above are NOT sufficient on their own.
+  # --- containment (untrusted input) ---
   #
-  # All four are string tests, and `-f` FOLLOWS symlinks, so a symlink sitting inside
-  # `.supervisor/requirements/` passes every one of them and the append lands on the link's
-  # target anywhere on the filesystem. Reproduced before this guard: a sandbox link
-  # `.supervisor/requirements/link.md -> <root>/outside/victim.md` was reported "stamped" and
-  # `victim.md` — outside the containment root — was modified. The original test group covered
-  # traversal (`..`) and absolute paths but not symlinks, which is why it was 17/17 green: it
-  # tested the attacks that were thought of, not the class.
+  # These are the SAME five guards this script has always run — absolute path,
+  # `..` segment, outside the requirements prefix, symlinked final component
+  # (`-L`), symlinked directory component caught by physical `pwd -P` resolution
+  # of the parent — plus the `-f` existence check. They now live in
+  # brief_requirement_path so the sibling reconciler runs them too. The last two
+  # are NOT redundant with the first three: those are purely LEXICAL and `-f`
+  # FOLLOWS symlinks, so a link planted inside the prefix passed every lexical
+  # test while the append landed on its target outside the root (reproduced).
   #
-  # Two layers, because they catch different things:
-  #   (a) `-L` rejects a symlinked FINAL component.
-  #   (b) physical resolution of the PARENT catches a symlinked DIRECTORY component, which (a)
-  #       cannot see (e.g. `.supervisor/requirements/sub -> /etc`, then `sub/passwd`).
-  # Both sides of the comparison are resolved with `pwd -P` so a symlinked project root (on
-  # macOS `/tmp` -> `/private/tmp`, routinely) does not produce a spurious mismatch.
-  if [ -L "$req" ]; then
-    err "skip: requirement path is a symlink — '$req' (a requirement file is never legitimately one)"
+  # The refusal REASON is preserved per guard rather than collapsed onto one
+  # message — an operator needs to know which guard fired, and the sibling
+  # reconciler needs refusal to stay distinguishable from "resolved but
+  # unevidenced".
+  #
+  # $ROOT is the containment root and is passed explicitly: this script resolved
+  # a repo root and `cd`ed to it above, whereas the sibling reconciler has no
+  # root notion and passes its own cwd.
+  _resolved="$(brief_requirement_path "$req" "$ROOT")"; _rc=$?
+  if [ "$_rc" -ne 0 ]; then
+    err "skip: $(brief_requirement_reason "$_rc") in $(basename "$brief") — '$req'"
     SKIPPED=$((SKIPPED + 1))
     continue
   fi
-  _req_dir="$(cd "$(dirname "$req")" 2>/dev/null && pwd -P)"
-  _root_p="$(cd "$ROOT" 2>/dev/null && pwd -P)"
-  if [ -z "$_req_dir" ] || [ -z "$_root_p" ]; then
-    err "skip: cannot resolve requirement path physically — '$req'"
-    SKIPPED=$((SKIPPED + 1))
-    continue
-  fi
-  case "$_req_dir/" in
-    "$_root_p/.supervisor/requirements/"*) : ;;
-    *)
-      err "skip: '$req' physically resolves outside ${REQ_PREFIX} (${_req_dir}) — refusing to write"
-      SKIPPED=$((SKIPPED + 1))
-      continue ;;
-  esac
-
-  if [ ! -f "$req" ]; then
-    err "skip: requirement file not found — '$req' (referenced by $(basename "$brief"))"
-    SKIPPED=$((SKIPPED + 1))
-    continue
-  fi
+  req="$_resolved"
 
   # Idempotency: any existing `## Status` heading means this requirement is already closed out,
   # whether by a completion tail that DID fire or by a previous run of this script.
