@@ -16,8 +16,10 @@
 # is READ-ONLY toward the work it
 # drives — it never edits source repos, never runs git mutations of its own, and
 # (outside the explicitly-stubbed `gate-eval` MERGE branch) never calls
-# `gh pr merge`. UNCOUNTED by the doc-currency gate (it is a plain script, not an
-# agent/command/skill/hook).
+# `gh pr merge` — and `brief-repair`, whose only write is the brief lifecycle
+# move performed by `reconcile-jobs.sh --repair` under `.supervisor/jobs/`,
+# never a source-repo or git mutation. UNCOUNTED by the doc-currency gate (it is
+# a plain script, not an agent/command/skill/hook).
 #
 # Subcommands:
 #   config-suppress  <config_path> <backup_path>      # §7 backup byte-for-byte, set auto_review=false; malformed ⇒ abort
@@ -33,9 +35,10 @@
 #   reconcile-item   <pr_url> <belief>                  # §4 belief vs gh/git truth -> corrected state
 #   gate-eval        <pr_url> <ctx.json>                # §10 MERGE|PARK 5-condition fail-closed gate
 #   learning-emit    <ledger_path> <flags...>           # §6 step 3 fail-safe (always exit 0) engine-native ground-truth POSTMORTEM_RESULT line; idempotent on run_id+item+pr_url+source+completeness (a degraded emit never blocks a later complete one)
+#   brief-repair     <item> <pr_url>                    # §6 steps 1/5 fail-safe (always exit 0) evidence-positive brief lifecycle repair: `gh pr view` says MERGED (or a non-empty mergedAt) ⇒ sibling reconcile-jobs.sh --repair --evidence <item>=<pr_url>; prints ONE line for ## Progress
 #
 # Exit codes: 0 success; 1 generic failure; 2 abort (malformed pre-existing config, §7).
-# (learning-emit is the fail-SAFE exception: it ALWAYS exits 0 — never die/abort.)
+# (learning-emit and brief-repair are the fail-SAFE exceptions: they ALWAYS exit 0 — never die/abort.)
 
 set -euo pipefail
 
@@ -508,9 +511,9 @@ gate_eval() {
 #   --changed-files <n> --summary <text> [--plugin-version <v>] [--ts <iso>]
 #   [--branch <b>] [--source <s>]
 #
-# FAIL-SAFE: this is the ONE subcommand that must NEVER die/abort — it runs inside
-# the per-item loop as an advisory side-effect and a failure must NEVER gate the
-# engine. We `set +e` at the top (this lib is `set -euo pipefail`) so any failing
+# FAIL-SAFE: this is one of the two subcommands (with brief-repair) that must
+# NEVER die/abort — it runs inside the per-item loop as an advisory side-effect
+# and a failure must NEVER gate the engine. We `set +e` at the top (this lib is `set -euo pipefail`) so any failing
 # command (jq absent, unwritable ledger, bad JSON, missing arg) degrades to a
 # no-op / degraded line and returns 0 — same posture as dispatch-pr-postmortem.sh /
 # send-webhook.sh.
@@ -739,6 +742,119 @@ learning_emit() {
 }
 
 # --------------------------------------------------------------------------- #
+# §6 steps 1 & 5 — brief-repair (fail-SAFE, evidence-positive, ONE mover)
+# --------------------------------------------------------------------------- #
+
+# brief-repair <item> <pr_url>
+#
+# The engine-side seam for repairing a stranded brief on the strongest evidence
+# there is: the engine itself watched the PR merge (its --auto-merge gate merged
+# it at §6 step 5 SYNC, or RESUME reconcile found an item parked awaiting_merge
+# now merged at §6 step 1). It re-reads merge state from the forge (evidence-
+# POSITIVE: only `state == MERGED` or a non-empty `mergedAt` proceeds; every
+# failure to read is a skip, never a repair) and then hands the evidence to the
+# SIBLING `reconcile-jobs.sh --repair --porcelain --evidence <item>=<pr_url>`,
+# which stays the ONE mover — this helper moves nothing itself. The reconciler
+# scopes the repair to that key and refuses an ambiguous match (two in-progress
+# briefs with the same pointer), so this helper cannot attribute a PR to a
+# stranded earlier attempt.
+#
+# Prints EXACTLY one stdout line for the loop to `progress-append` verbatim:
+#   brief-repair: repaired <brief_path> → <done_path> (<pr_url>)
+#   brief-repair: skipped — <reason>
+# Each gate has its own reason so the Progress line says WHICH gate stopped it.
+#
+# FAIL-SAFE (same posture as learning-emit): `set +e` first; ALWAYS returns 0;
+# never die/abort; `set -u` stays on so every expansion carries a default.
+# Never reads or writes the run file, never touches ## Queue / ## Current, and
+# never calls `gh pr merge` (the sole executor stays gate-eval, §11).
+# The reconciler is found by the plain `dirname "$0"` sibling lookup the scripts
+# already use (this file is held at allowance 0 by check-vendor-coupling.sh).
+brief_repair() {
+  set +e   # FAIL-SAFE: always exit 0; never die/abort inside the per-item loop.
+
+  local item="${1:-}" pr_url="${2:-}"
+  if [ -z "$item" ] || [ -z "$pr_url" ]; then
+    echo "brief-repair: skipped — missing argument"; return 0
+  fi
+
+  # (a′) lexical gate — belt-and-braces: the reconciler would ignore a junk
+  # value anyway, but this keeps the forge call from ever being made for junk.
+  local malformed=0
+  case "$item" in
+    /*|*..*)                     malformed=1 ;;
+    .supervisor/requirements/?*) ;;
+    *)                           malformed=1 ;;
+  esac
+  # Built-in ERE match, not `printf | grep -q`: under pipefail a `grep -q` can
+  # fail via SIGPIPE even on a match (recorded trap).
+  [[ "$pr_url" =~ ^https?://[^[:space:]]+/pull/[0-9]+$ ]] || malformed=1
+  if [ "$malformed" -eq 1 ]; then
+    echo "brief-repair: skipped — malformed item or pr_url"; return 0
+  fi
+
+  # (b)–(e) evidence-positive forge read.
+  if ! command -v "$GH" >/dev/null 2>&1; then
+    echo "brief-repair: skipped — gh unavailable"; return 0
+  fi
+  local view state merged
+  view="$("$GH" pr view "$pr_url" --json state,mergedAt 2>/dev/null)"
+  if [ $? -ne 0 ]; then
+    echo "brief-repair: skipped — gh pr view failed"; return 0
+  fi
+  if ! printf '%s' "$view" | "$JQ" -e '.state' >/dev/null 2>&1; then
+    echo "brief-repair: skipped — gh output unparseable"; return 0
+  fi
+  state="$(printf '%s' "$view" | "$JQ" -r '.state // empty' 2>/dev/null)"
+  merged="$(printf '%s' "$view" | "$JQ" -r '.mergedAt // empty' 2>/dev/null)"
+  if [ "$state" != "MERGED" ] && [ -z "$merged" ]; then
+    echo "brief-repair: skipped — PR not merged (state=${state:-unknown})"; return 0
+  fi
+
+  # (f) the sibling reconciler — the ONE mover.
+  local recon
+  recon="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/reconcile-jobs.sh"
+  if [ ! -r "$recon" ]; then
+    echo "brief-repair: skipped — reconciler unavailable"; return 0
+  fi
+
+  # (g) run it; stderr (refusal reasons) is discarded — the rows are the trace.
+  local rows
+  rows="$(bash "$recon" --repair --porcelain --evidence "${item}=${pr_url}" 2>/dev/null)"
+
+  # (h) scan the rows in precedence order. Capture-then-test throughout: no
+  # `producer | grep -q` (SIGPIPE under pipefail can fail it even on a match).
+  local st path ev brief_hit="" amb_n="" refused=0
+  while IFS=$'\t' read -r st path ev; do
+    [ -n "${st:-}" ] || continue
+    case "$st" in
+      repaired)
+        case "${ev:-}" in *"$pr_url"*) [ -n "$brief_hit" ] || brief_hit="$path" ;; esac ;;
+      unknown)
+        case "${ev:-}" in
+          "ambiguous: "*" point at ${item} "*|"ambiguous: "*" point at ${item}")
+            [ -n "$amb_n" ] || amb_n="$(printf '%s' "$ev" | sed -n 's/^ambiguous: \([0-9][0-9]*\) .*/\1/p')" ;;
+        esac ;;
+      stranded_merged)
+        case "${ev:-}" in "automate engine supplied "*"$pr_url"*) refused=1 ;; esac ;;
+    esac
+  done <<EOF
+$rows
+EOF
+
+  if [ -n "$brief_hit" ]; then
+    echo "brief-repair: repaired ${brief_hit} → .supervisor/jobs/done/$(basename "$brief_hit") (${pr_url})"
+  elif [ -n "$amb_n" ]; then
+    echo "brief-repair: skipped — ambiguous match (${amb_n} briefs point at ${item})"
+  elif [ "$refused" -eq 1 ]; then
+    echo "brief-repair: skipped — reconciler refused the move (destination exists, ## Outcome present, or write failure — re-run reconcile-jobs.sh --repair --evidence <item>=<pr_url> by hand for the reason)"
+  else
+    echo "brief-repair: skipped — no in-progress brief matches ${item}"
+  fi
+  return 0
+}
+
+# --------------------------------------------------------------------------- #
 # dispatch
 # --------------------------------------------------------------------------- #
 
@@ -758,6 +874,7 @@ main() {
     reconcile-item)  reconcile_item "$@" ;;
     gate-eval)       gate_eval "$@" ;;
     learning-emit)   learning_emit "$@" ;;
+    brief-repair)    brief_repair "$@" ;;
     ""|-h|--help)
       grep -E '^#   [a-z]' "$0" | sed 's/^#   /  /'
       ;;

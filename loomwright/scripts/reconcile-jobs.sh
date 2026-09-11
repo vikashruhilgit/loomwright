@@ -55,12 +55,45 @@
 # * `unknown` means UNVERIFIED, not "fine" and not "stale". It is the honest
 #   answer when the disk cannot settle the question.
 #
+# ENGINE-SUPPLIED EVIDENCE (--evidence)
+# -------------------------------------
+# The one caller that DOES hold online evidence is the `/automate` engine: its
+# `--auto-merge` gate just merged the PR, or its RESUME reconcile just found an
+# item parked `awaiting_merge` now merged (skills/automate-loop/SKILL.md §6
+# steps 1 and 5, via `automate-helpers.sh brief-repair`). It hands that evidence
+# in with a repeatable `--evidence <requirement_path>=<pr_url>` argument, OFF by
+# default. This script still makes no forge call — it TRUSTS the caller's claim
+# and records it verbatim in the `## Outcome` so a reader can falsify it.
+# * The key is compared by EXACT string equality against the brief's extracted
+#   pointer token (what `brief_requirement_pointer` returns), never against the
+#   resolved path: this arm writes nothing keyed off the pointer, so the
+#   existence/containment guards that protect a requirement WRITE do not apply,
+#   and the seam keeps working in a checkout where the requirement file is
+#   absent (a git worktree). No normalisation: `./x` and `/abs/x` never match.
+# * Values are validated LEXICALLY only (key under `.supervisor/requirements/`,
+#   not absolute, no `..`; url `^https?://…/pull/<n>$`); a bad value — or a key
+#   already supplied (the first `--evidence` for a key wins) — is ignored with
+#   one stderr line and the script continues.
+# * `--evidence` SCOPES `--repair`: the moment ANY `--evidence` flag is parsed —
+#   accepted or rejected — only evidence-matched briefs are repaired; every
+#   other brief is classified and reported exactly as before and NOT moved.
+#   A rejected list therefore repairs NOTHING rather than falling back to the
+#   unscoped sweep. Without `--evidence`, `--repair` is unchanged.
+# * AMBIGUITY: a key matched by MORE than one in-progress brief (a stranded
+#   earlier attempt plus the one just merged) must not attribute the new PR to
+#   the old brief — every brief matching that key is reported `unknown` with an
+#   `ambiguous: …` evidence and nothing is moved for that key.
+#
 # CLASSIFICATION (offline, per brief in .supervisor/jobs/in-progress/)
 # --------------------------------------------------------------------
 #   stranded_merged  An automate run file records this brief's source requirement
 #                    as `status: merged` with a PR URL. Strong evidence: that
 #                    status is written only after the engine reconciled the merge
 #                    against `gh`/`git`. REPAIRABLE.
+#                    OR (--evidence) the automate engine supplied merge evidence
+#                    for this brief's pointer token: the engine verified the PR
+#                    merged against the forge; this reconciler stayed offline.
+#                    REPAIRABLE, and the only repair when --evidence is given.
 #   stranded_closed  The source requirement is already stamped done, but the
 #                    brief is still in `in-progress/`. That combination can only
 #                    mean a partially-executed completion tail (step 2.5 ran,
@@ -79,6 +112,9 @@
 #   reconcile-jobs.sh                 human-readable report (read-only)
 #   reconcile-jobs.sh --porcelain     STATE<TAB>BRIEF<TAB>EVIDENCE, one per line
 #   reconcile-jobs.sh --repair        repair every repairable brief, then report
+#   reconcile-jobs.sh --repair --evidence <requirement_path>=<pr_url> [--evidence …]
+#                                     engine-supplied evidence (repeatable, off by
+#                                     default); repair ONLY the matching brief(s)
 #
 # Deliberately vendor-neutral (CORE-classified): names no harness-specific
 # variable or path, so `scripts/check-vendor-coupling.sh` holds it at allowance 0.
@@ -89,15 +125,81 @@ JOBS_IN=".supervisor/jobs/in-progress"
 JOBS_DONE=".supervisor/jobs/done"
 AUTOMATE_DIR=".supervisor/automate"
 
+# evidence_index_for <pointer_token> — echo the index of the accepted --evidence
+# entry whose key equals the token EXACTLY (no normalisation). Return 1 if none.
+evidence_index_for() {
+  local tok="$1" i=0
+  [ -n "$tok" ] || return 1
+  while [ "$i" -lt "${#EV_KEYS[@]}" ]; do
+    if [ "${EV_KEYS[$i]}" = "$tok" ]; then printf '%s' "$i"; return 0; fi
+    i=$((i+1))
+  done
+  return 1
+}
+
 PORCELAIN=0
 REPAIR=0
-for arg in "$@"; do
+# EVIDENCE_MODE flips to 1 the moment ANY --evidence flag is PARSED — before its
+# value is validated. Scoping (see the main loop) keys on this, not on whether a
+# value was accepted: a supplied-but-rejected evidence list must repair NOTHING,
+# never fall back to the unscoped sweep. Accepted entries live in two parallel
+# indexed arrays (bash 3.2 has no associative arrays); EV_COUNT is filled once
+# the briefs are known (ambiguity gate).
+EVIDENCE_MODE=0
+EV_KEYS=()
+EV_URLS=()
+EV_COUNT=()
+while [ "$#" -gt 0 ]; do
+  arg="$1"
   case "$arg" in
     --porcelain) PORCELAIN=1 ;;
     --repair)    REPAIR=1 ;;
-    -h|--help)   sed -n '2,60p' "$0"; exit 0 ;;
+    --evidence)
+      EVIDENCE_MODE=1
+      shift
+      val="${1:-}"
+      key="${val%%=*}"
+      url="${val#*=}"
+      reason=""
+      case "$val" in
+        *=*) ;;
+        *) reason="no '=' separator" ;;
+      esac
+      if [ -z "$reason" ]; then
+        # The same three lexical guards brief_requirement_path runs first — spelled
+        # again because this key is a comparison key the ENGINE supplies, not a
+        # path anything writes to, so the filesystem guards do not apply.
+        case "$key" in
+          /*)                          reason="key is absolute" ;;
+          *..*)                        reason="key contains '..'" ;;
+          .supervisor/requirements/?*) ;;
+          *)                           reason="key is outside .supervisor/requirements/" ;;
+        esac
+      fi
+      if [ -z "$reason" ]; then
+        # Built-in ERE match, not `printf | grep -q` (SIGPIPE-under-pipefail trap).
+        [[ "$url" =~ ^https?://[^[:space:]]+/pull/[0-9]+$ ]] || reason="url is not a pull-request URL"
+      fi
+      if [ -z "$reason" ] && evidence_index_for "$key" >/dev/null; then
+        # A repeated key would otherwise append a second entry that
+        # evidence_index_for (first match wins) could never reach — silently
+        # dropping the later URL. Refuse it out loud instead.
+        reason="duplicate key (first --evidence for it wins)"
+      fi
+      if [ -n "$reason" ]; then
+        echo "reconcile-jobs: ignoring --evidence '$val' ($reason)" >&2
+      else
+        EV_KEYS[${#EV_KEYS[@]}]="$key"
+        EV_URLS[${#EV_URLS[@]}]="$url"
+      fi
+      ;;
+    # Print the whole header, including the USAGE block: everything after the
+    # shebang up to the `set` line. (The previous fixed line range stopped above
+    # USAGE once the header grew.)
+    -h|--help)   awk 'NR==1{next} /^set -uo pipefail/{exit} {print}' "$0"; exit 0 ;;
     *) echo "reconcile-jobs: unknown flag '$arg' (see --help)" >&2; exit 0 ;;
   esac
+  [ "$#" -gt 0 ] && shift
 done
 
 # is_done — mirrors automate-helpers.sh's matcher deliberately, including the
@@ -200,10 +302,34 @@ automate_pr_for_requirement() {
   return 1
 }
 
+
 # classify <brief> -> "STATE<TAB>EVIDENCE" on stdout
+#
+# The engine-evidence arm comes FIRST and is discriminated by its evidence
+# PREFIX (`automate engine supplied`), tested with a `case` in the main loop —
+# rather than a third TAB field — because the porcelain row format
+# STATE<TAB>BRIEF<TAB>EVIDENCE is parsed by session-resume.sh with a fixed
+# three-variable `read`, and a hidden column that has to be stripped before
+# printing is one more place for the two to drift apart. The prefix is already
+# what the `## Outcome` records, so the discriminator and the evidence are the
+# same string.
 classify() {
-  local brief="$1" req raw_req pr
+  local brief="$1" req raw_req pr ei
   raw_req="$(brief_requirement_pointer "$brief" || true)"
+
+  if ei="$(evidence_index_for "$raw_req")"; then
+    if [ "${EV_COUNT[$ei]:-0}" -gt 1 ]; then
+      printf 'unknown\tambiguous: %s in-progress briefs point at %s — not repaired\n' \
+        "${EV_COUNT[$ei]}" "$raw_req"
+      return 0
+    fi
+    # One parenthesised URL and only one: repair() extracts `- **PR:**` from
+    # the LAST `(http…)` group of this string (the sed is greedy) — so keep it the only one.
+    printf 'stranded_merged\tautomate engine supplied merge evidence for %s (%s) — the engine verified the PR merged against the forge; this reconciler stayed offline\n' \
+      "$raw_req" "${EV_URLS[$ei]}"
+    return 0
+  fi
+
   req="$(brief_requirement_path "$raw_req" "$ROOT_P" || true)"
 
   if [ -n "$req" ]; then
@@ -327,13 +453,45 @@ if [ "${#briefs[@]}" -eq 0 ]; then
   exit 0
 fi
 
+# Ambiguity gate: count, per accepted key, how many in-progress briefs carry
+# exactly that pointer token. classify() reports every brief of a key counted
+# >1 as `unknown` (ambiguous) so a new PR is never attributed to a stranded
+# earlier attempt at the same requirement.
+i=0
+while [ "$i" -lt "${#EV_KEYS[@]}" ]; do
+  EV_COUNT[$i]=0
+  i=$((i+1))
+done
+if [ "${#EV_KEYS[@]}" -gt 0 ]; then
+  for brief in "${briefs[@]}"; do
+    tok="$(brief_requirement_pointer "$brief" || true)"
+    if ei="$(evidence_index_for "$tok")"; then
+      EV_COUNT[$ei]=$(( ${EV_COUNT[$ei]} + 1 ))
+    fi
+  done
+fi
+
 n_repaired=0; n_repairable=0; n_unknown=0
 for brief in "${briefs[@]}"; do
   line="$(classify "$brief")"
   state="${line%%	*}"
   evidence="${line#*	}"
 
+  # --repair is SCOPED whenever EVIDENCE_MODE=1: only a verdict sourced from an
+  # engine evidence match (discriminated by its prefix, see classify()) is
+  # repaired; everything else is reported exactly as before and left in place.
+  repair_ok=0
   if [ "$REPAIR" -eq 1 ] && [ "$state" != "unknown" ]; then
+    if [ "$EVIDENCE_MODE" -eq 1 ]; then
+      case "$evidence" in
+        "automate engine supplied "*) repair_ok=1 ;;
+      esac
+    else
+      repair_ok=1
+    fi
+  fi
+
+  if [ "$repair_ok" -eq 1 ]; then
     if repair "$brief" "$state" "$evidence"; then
       n_repaired=$((n_repaired+1))
       [ "$PORCELAIN" -eq 1 ] && printf 'repaired\t%s\t%s\n' "$brief" "$evidence"
