@@ -16,8 +16,9 @@
 # fallback for an unexpanded path expression (`$(basename $(pwd))` — exact
 # `refs/heads/<branch>` match, no fallback for a literal absent path, and the
 # TAIL GUARD: a hit is accepted only when its porcelain path ends with the
-# expression's literal tail, so a failed add never pairs with the foreign
-# worktree that holds its branch; `branch` is null when the expression stays
+# expression's literal tail — a SUFFIX test, so a failed add is kept apart
+# from a foreign same-branch worktree unless that worktree's path happens to
+# end with the same suffix (a stated, advisory-only limit); `branch` is null when the expression stays
 # unresolved and no -b/-B was given), the tokenizer's re-join of a quoted path
 # with whitespace (literal, resolved_by path) and of chained `-C`, the
 # `.supervisor/` population gate (no line, no directory created in a repo the
