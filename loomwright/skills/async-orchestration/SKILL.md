@@ -129,8 +129,10 @@ git merge feature/BD-XXb --no-ff -m "merge: BD-XXb refresh endpoint"
 **Cleanup:**
 
 ```bash
-# Remove worktrees first, then branches
+# Salvage uncommitted content, then remove worktrees, then branches
+bash scripts/worktree-salvage.sh ../my-project-BD-XXa --reason "FINALIZE step 4"   # protocol form — prints a .supervisor/salvage/ path only when there was uncommitted content
 git worktree remove ../my-project-BD-XXa
+bash scripts/worktree-salvage.sh ../my-project-BD-XXc --reason "FINALIZE step 4"
 git worktree remove ../my-project-BD-XXc
 
 git branch -d feature/BD-XXa
@@ -571,10 +573,12 @@ Before completing async orchestration:
 
 4. **Cleanup worktrees** (ONLY after successful merge):
    ```bash
-   # Remove worktrees first, then branches
+   # Salvage uncommitted content, then remove the worktree, then the branch
+   bash scripts/worktree-salvage.sh ../{project}-{subtask_id} --reason "FINALIZE step 4"   # protocol form — the runtime-resolvable form is agents/supervisor.md §Phase 4 gates; prints a .supervisor/salvage/ path only when there was uncommitted content
    git worktree remove ../{project}-{subtask_id}
    git branch -d feature/{subtask_id}
    ```
+   Salvage before remove (v15.67.0): the salvage line runs as its own statement — never joined to the remove by `&&` (an absent script exits 127 and would otherwise skip the remove) — and always exits 0; a clean worktree prints nothing. The plain remove still refuses a dirty tree; if it refuses, report the refusal AND the salvage path the line above printed — do NOT reach for `--force` as a reflex, and never without the salvage line having run (the removals themselves are unchanged).
    Cleanup is verifiable (v15.66.0): the `PostToolUse (Bash)` observer records both the literal `../{project}-{subtask_id}` add above and this remove (a path token left unexpanded — `$(basename $(pwd))` — is recovered through the branch argument only when the resulting worktree's path ends with the literal suffix after the `$(…)`, so a failed add pairs with a foreign worktree only when that worktree's path ends with the same literal suffix — an advisory-only phantom row, never a removal; it is gated on `.supervisor/` existing, which it always does here), and `bash scripts/worktree-audit.sh report` (plugin-relative, read-only) lists any sibling recorded as created that git still shows — it reports, never removes.
 
 5. **Create commits** (inline, following `skills/commit/SKILL.md`):
@@ -770,7 +774,9 @@ Phase 4 (FINALIZE):
   git checkout feature/BD-XX-desc
   git merge feature/BD-XXa --no-ff
   git merge feature/BD-XXc --no-ff
+  bash scripts/worktree-salvage.sh ../{project}-BD-XXa --reason "FINALIZE step 4"
   git worktree remove ../{project}-BD-XXa
+  bash scripts/worktree-salvage.sh ../{project}-BD-XXc --reason "FINALIZE step 4"
   git worktree remove ../{project}-BD-XXc
   git branch -d feature/BD-XXa
   git branch -d feature/BD-XXc

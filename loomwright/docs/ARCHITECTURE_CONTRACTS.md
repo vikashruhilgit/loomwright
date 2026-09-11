@@ -404,6 +404,7 @@ Example: ../myapp-42-add-auth, branch feature/42-add-auth
 ```
 
 - Worktrees added through the Bash tool in a repo the plugin has run in (the observer is gated on `.supervisor/` already existing at the log root) are recorded by the `PostToolUse (Bash)` observer (`worktree-audit.sh record`, v15.66.0) into `.supervisor/logs/worktrees.log` and read back by the read-only `worktree-audit.sh report`, which lists recorded-but-never-removed worktrees `git worktree list` still shows (surfaced by `session-resume.sh`; a hand-run `worktree-audit.sh note removed <abs>` dismisses one you are keeping); the former `WorktreeCreate` hook aborted native worktree creation and is gone
+- `.supervisor/salvage/` (primary checkout) is owned by `worktree-salvage.sh` (v15.67.0): before every plugin-owned removal — the review drain's three `--force` sites in `dispatch-pr-review.sh` and FINALIZE step 4 — it writes `<basename>-<ts>/` there (`BASE_SHA`, `tracked.patch`, `modified/`, `untracked/`, `README.md`) only when the worktree held uncommitted content; gitignored runtime state is never captured; a salvage failure never blocks the removal; retention/pruning of that directory is reconciler-repair item 06's, not this bullet's
 - Sibling directory (not nested) prevents git issues
 - Branch matches worktree slug for traceability
 
