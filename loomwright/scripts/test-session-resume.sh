@@ -31,6 +31,12 @@
 #       (r); resume path unchanged (s); helpers reachable above the case —
 #       static + dynamic + mutant (t); offline + four fail-safe degradations
 #       (u); mutation control + ONE composed envelope (v).
+#   (w)–(y) The ORPHANED-WORKTREES advisory section (v15.66.0): a sibling
+#       worktree-audit.sh whose `report` prints one row ⇒ the section + row on
+#       startup AND resume (w); report empty / sibling absent ⇒ startup cmp-equal
+#       to the curation-only formula and no header on either arm, plus the
+#       local-only origin/main resume baseline and a mutant that appends the
+#       section unconditionally (x); header string deleted ⇒ (w) red (y).
 
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -1031,6 +1037,123 @@ test_stranded_mutation_control() {
     || ok "(v/left-empty) curation half empty (probe absent is fail-safe)"
 }
 test_stranded_mutation_control
+
+# ---------------------------------------------------------------------------
+echo "== (w) orphaned-worktrees section fires on startup AND resume when the sibling reports a row =="
+ORPHAN_HDR="### Orphaned worktrees (advisory)"
+ORPHAN_ROW_PATH="/tmp/example-project-BD-15a"
+# stub_auditor <dir> <rows|""> — a sibling worktree-audit.sh whose `report` prints
+# exactly the given rows (or nothing). Everything else is a no-op.
+stub_auditor() {
+  printf '#!/usr/bin/env bash\ncase "${1:-}" in report) printf %%s "%s" ;; esac\nexit 0\n' "$2" > "$1/worktree-audit.sh"
+}
+ORPHAN_ROW="$(printf 'orphan\t%s\tfeature/BD-15a\t2026-09-11T12:00:00Z\t00893aaf-4c1e-4f6b-9a2d-1b3c5d7e9f01\n' "$ORPHAN_ROW_PATH")"
+test_orphans_fire() {
+  local d r out ctx arm
+  d="$(mktmp)"; copy_hook_full "$d"; stub_auditor "$d" "$ORPHAN_ROW"
+  for arm in startup resume; do
+    r="$(new_repo)"; make_plugin_active "$r"
+    out="$(run_alt_hook_raw "$d/session-resume.sh" "$r" "$arm")"
+    [ "$(lastrc)" -eq 0 ] && ok "(w) $arm exits 0" || no "(w) $arm rc $(lastrc)"
+    [ "$(json_docs "$out")" = "1" ] && ok "(w) $arm: exactly ONE JSON document" || no "(w) $arm: $(json_docs "$out") documents"
+    ctx="$(ctx_of "$out")"
+    grep -qF -- "$ORPHAN_HDR" <<< "$ctx" && ok "(w) $arm carries the orphaned-worktrees header" || no "(w) $arm header missing: $ctx"
+    grep -qF -- "- $ORPHAN_ROW_PATH (branch: feature/BD-15a" <<< "$ctx" && ok "(w) $arm carries the row's path + branch" || no "(w) $arm row missing: $ctx"
+    grep -qF -- 'git worktree remove <path>' <<< "$ctx" && ok "(w) $arm carries the by-hand hint" || no "(w) $arm hint missing"
+    grep -qF -- 'nothing here removes anything' <<< "$ctx" && ok "(w) $arm says it removes nothing" || no "(w) $arm removal disclaimer missing"
+  done
+}
+test_orphans_fire
+
+# ---------------------------------------------------------------------------
+echo "== (x) empty report / sibling absent ⇒ byte-identical startup, no header on either arm =="
+test_orphans_silent() {
+  local d r out ctx expf gotf rcx variant
+  for variant in empty-report sibling-absent; do
+    d="$(mktmp)"; copy_hook_full "$d"
+    [ "$variant" = "empty-report" ] && stub_auditor "$d" ""
+    # STARTUP: cmp against the independent pre-change formula.
+    r="$(new_repo)"; make_plugin_active "$r"; make_curation_pending "$r"
+    expf="$ROOT/x-exp-$variant.json"; gotf="$ROOT/x-got-$variant.json"
+    expected_curation_only_envelope "$r" > "$expf"
+    # Run directly (not via the $(…)-capturing helper) so jq's trailing newline survives for cmp.
+    ( cd "$r" && printf '{"source":"startup"}' | bash "$d/session-resume.sh" 2>/dev/null ) > "$gotf"; rcx=$?
+    [ "$rcx" -eq 0 ] && ok "(x/$variant) startup exits 0" || no "(x/$variant) startup rc $rcx"
+    [ -s "$expf" ] && [ -s "$gotf" ] && ok "(x/$variant) both envelopes non-empty (a silent pair is not a match)" || no "(x/$variant) silent pair"
+    cmp -s "$expf" "$gotf" && ok "(x/$variant) startup is cmp-identical to expected_curation_only_envelope" \
+      || { no "(x/$variant) startup DIFFERS from the pre-change formula"; diff "$expf" "$gotf" | head -3; }
+    grep -qF -- "$ORPHAN_HDR" "$gotf" && no "(x/$variant) header present on startup" || ok "(x/$variant) no header on startup"
+    # RESUME: header absence.
+    r="$(new_repo)"; make_plugin_active "$r"; make_stranded_fixture "$r"
+    out="$(run_alt_hook_raw "$d/session-resume.sh" "$r" resume)"; ctx="$(ctx_of "$out")"
+    [ -n "$ctx" ] && ok "(x/$variant) resume emitted a non-empty envelope" || no "(x/$variant) resume silent"
+    grep -qF -- "$ORPHAN_HDR" <<< "$ctx" && no "(x/$variant) header present on resume" || ok "(x/$variant) no header on resume"
+  done
+
+  # (x-b') local-only captured baseline for RESUME: origin/main's hook + real
+  # siblings vs the current hook (real worktree-audit.sh, log absent ⇒ empty
+  # report) on two fresh, identical, brief-free repos. Self-skips on a shallow
+  # checkout — the (p-b') pattern.
+  local old="$ROOT/x-baseline"; mkdir -p "$old"
+  local giterr="$ROOT/x-baseline.giterr" oldout newout ro rn
+  if git -C "$SCRIPT_DIR/../.." show origin/main:loomwright/scripts/session-resume.sh > "$old/session-resume.sh" 2>"$giterr" \
+     && [ -s "$old/session-resume.sh" ]; then
+    cp "$SCRIPT_DIR/curation-status.sh" "$SCRIPT_DIR/reconcile-jobs.sh" "$SCRIPT_DIR/brief-pointer.sh" "$old/"
+    ro="$(new_repo)"; make_plugin_active "$ro"; make_curation_pending "$ro"
+    rn="$(new_repo)"; make_plugin_active "$rn"; make_curation_pending "$rn"
+    # The house-rules nudge is opted out on BOTH sides: it gates on the sibling
+    # read-rules.sh, which the baseline dir deliberately does not carry.
+    oldout="$(run_alt_hook_raw "$old/session-resume.sh" "$ro" resume LOOMWRIGHT_RULES_NUDGE=0)"
+    newout="$(run_alt_hook_raw "$HOOK" "$rn" resume LOOMWRIGHT_RULES_NUDGE=0)"
+    if [ -n "$oldout" ] && [ -n "$newout" ]; then
+      ok "(x-b') baseline and current both emitted on resume"
+      printf '%s' "$oldout" > "$ROOT/x-old.json"; printf '%s' "$newout" > "$ROOT/x-new.json"
+      cmp -s "$ROOT/x-old.json" "$ROOT/x-new.json" \
+        && ok "(x-b') resume with nothing orphaned is cmp-identical to the captured origin/main hook" \
+        || { no "(x-b') resume DIFFERS from the captured origin/main hook"; diff "$ROOT/x-old.json" "$ROOT/x-new.json" | head -3; }
+    else
+      no "(x-b') a silent pair: old=${#oldout} new=${#newout} bytes"
+    fi
+  else
+    echo "  skipped: origin/main unavailable ($(tr '\n' ' ' < "$giterr" | cut -c1-160))"
+  fi
+
+  # Mutant: the section is appended UNCONDITIONALLY (the report read replaced by
+  # a constant row) ⇒ the startup cmp AND both header-absence assertions go red.
+  d="$(mktmp)"; copy_hook_full "$d"; stub_auditor "$d" ""
+  local mut="$d/session-resume.sh"
+  sed -i.bak 's|rows="$(bash "$auditor" report 2>/dev/null \|\| true)"|rows="orphan	/mutant/wt	-	-	-"|' "$mut" && rm -f "$mut.bak"
+  if gate_mutant "$HOOK" "$mut" "(x-mutant)"; then
+    r="$(new_repo)"; make_plugin_active "$r"; make_curation_pending "$r"
+    expected_curation_only_envelope "$r" > "$ROOT/xm-exp.json"
+    ( cd "$r" && printf '{"source":"startup"}' | bash "$mut" 2>/dev/null ) > "$ROOT/xm-got.json"
+    cmp -s "$ROOT/xm-exp.json" "$ROOT/xm-got.json" && no "(x-mutant) startup cmp stayed GREEN on the unconditional mutant" \
+      || ok "(x-mutant) the unconditional mutant turns the startup cmp red"
+    grep -qF -- "$ORPHAN_HDR" "$ROOT/xm-got.json" && ok "(x-mutant) startup header-absence goes red on the mutant" || no "(x-mutant) mutant did not add the header on startup"
+    r="$(new_repo)"; make_plugin_active "$r"; make_stranded_fixture "$r"
+    ctx="$(ctx_of "$(run_alt_hook_raw "$mut" "$r" resume)")"
+    grep -qF -- "$ORPHAN_HDR" <<< "$ctx" && ok "(x-mutant) resume header-absence goes red on the mutant" || no "(x-mutant) mutant did not add the header on resume"
+  fi
+}
+test_orphans_silent
+
+# ---------------------------------------------------------------------------
+echo "== (y) mutation: the section header string deleted from the hook ⇒ (w) red =="
+test_orphans_header_mutant() {
+  local d mut r ctx
+  d="$(mktmp)"; copy_hook_full "$d"; stub_auditor "$d" "$ORPHAN_ROW"
+  mut="$d/session-resume.sh"
+  sed -i.bak 's|### Orphaned worktrees (advisory)\\n||' "$mut" && rm -f "$mut.bak"
+  if gate_mutant "$HOOK" "$mut" "(y)"; then
+    r="$(new_repo)"; make_plugin_active "$r"
+    ctx="$(ctx_of "$(run_alt_hook_raw "$mut" "$r" startup)")"
+    grep -qF -- "$ORPHAN_HDR" <<< "$ctx" && no "(y) header still present after deletion — the (w) assertion is not pinned to the hook" \
+      || ok "(y) header gone ⇒ (w)'s header assertion goes red (startup)"
+    grep -qF -- "- $ORPHAN_ROW_PATH" <<< "$ctx" && ok "(y) positive gate: the mutant still emits the row (merely the header was removed)" \
+      || no "(y) the mutant lost the row too — broken, not targeted"
+  fi
+}
+test_orphans_header_mutant
 
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

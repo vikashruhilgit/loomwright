@@ -631,6 +631,7 @@ To test locally, install via the marketplace flow shown in **Quick Start → 1. 
 
 **Orphaned worktrees after crash?**
 
+- Since v15.66.0, `scripts/worktree-audit.sh report` (plugin-relative) lists worktrees added through the Bash tool in a repo the plugin has run in that were recorded as created, never seen removed, and git still shows — also surfaced as `### Orphaned worktrees (advisory)` at session start; it reports, never removes (`scripts/worktree-audit.sh note removed <abs-path>` dismisses one you are keeping)
 - Run `git worktree list` to see all worktrees
 - Remove with: `git worktree remove ../project-{subtask_id}`
 

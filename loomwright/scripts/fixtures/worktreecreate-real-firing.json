@@ -1,0 +1,9 @@
+{
+  "session_id": "00893aaf-4c1e-4f6b-9a2d-1b3c5d7e9f01",
+  "transcript_path": "/Users/dev/projects/example/00893aaf.jsonl",
+  "cwd": "/Users/dev/example-project",
+  "scratchpad_dir": "/private/tmp/example/00893aaf/scratchpad",
+  "prompt_id": "5efa06e1-0000-4000-8000-000000000001",
+  "hook_event_name": "WorktreeCreate",
+  "name": "agent-a507601655020812f"
+}

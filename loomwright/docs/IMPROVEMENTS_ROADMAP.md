@@ -7,7 +7,7 @@
 > - **RESOLVED (11):** items 1, 2, 4, 6, 7, 8, 13, 14, 15, 16, 17
 > - **DEFERRED (6):** items 3, 5, 9, 10, 12, 18
 > - **SPIKED (1):** item 11 — quarantined SDK runner shipped in v15.8.0 (`loomwright/sdk-spike/` + opt-in `--sdk-runner` seam); graduation to a v16 runner gated on `docs/SPIKES/FABLE_PARITY_EVAL.md`'s pre-registered decision rule
-> - **OPEN (0):** none — item 6 (the last OPEN item) closed in v15.5.0: a `WorktreeRemove` hook now sits alongside `WorktreeCreate` in `loomwright/hooks/hooks.json`
+> - **OPEN (0):** none — item 6 (the last OPEN item) closed in v15.5.0 and was RE-OPENED AND CLOSED DIFFERENTLY in v15.66.0: both the `WorktreeCreate` and `WorktreeRemove` hooks were REMOVED from `loomwright/hooks/hooks.json` (the former had been aborting every native worktree creation); worktrees added through the Bash tool in a repo the plugin has run in are now recorded by the `PostToolUse (Bash)` observer `worktree-audit.sh record` and read back by `worktree-audit.sh report`
 >
 > (The 2026-07-05 review pass spoke of "19 items"; this document has 18 numbered items — the count discrepancy is noted, not a missing item. Items are globally numbered `### 1.`–`### 18.` under the `## P0`–`## P3` tier sections; there are no literal `P#-#` IDs.)
 >
@@ -172,7 +172,7 @@ initialPrompt: "Read .supervisor/state.md and git log --oneline -5 to determine 
 
 ### 6. Add WorktreeCreate/WorktreeRemove Hooks
 
-**[VERDICT: RESOLVED — closed in v15.5.0: a `WorktreeRemove` `type: "command"` hook now exists in `loomwright/hooks/hooks.json` mirroring the long-shipped `WorktreeCreate` (appends `WORKTREE_REMOVED` lines to `.supervisor/logs/worktrees.log`), so worktree cleanup is verifiable from the log instead of manual-only; the `WorktreeRemove` event is verified supported per the official Claude Code hooks docs]**
+**[VERDICT: RE-OPENED AND CLOSED DIFFERENTLY in v15.66.0 — the v15.5.0 RESOLVED verdict was wrong. Measured 2026-09-11 from a real `WorktreeCreate` firing: the payload carries only `session_id`, `transcript_path`, `cwd`, `scratchpad_dir`, `prompt_id`, `hook_event_name`, `name` (no `worktree_path`), and because a `WorktreeCreate` hook REPLACES the harness's own git behaviour and ours returned no path, every native worktree creation failed with `hook succeeded but returned no worktree path` — all 5 `WORKTREE_CREATED` lines ever written recorded creations that were aborted, and 0 `WORKTREE_REMOVED` lines ever fired. Both hooks were removed. The plugin is not a VCS provider, so it cannot observe the native population at all; the population it IS responsible for — worktrees added through the Bash tool in a repo the plugin has run in (Supervisor `../{project}-{subtask}` siblings, the review drain's `../{project}-review-{hash}`); the observer is gated on `.supervisor/` already existing — is now recorded by the `PostToolUse (Bash)` observer `worktree-audit.sh record` (+ a `note` entry for in-script creations) and read back by the read-only `worktree-audit.sh report`, surfaced by `session-resume.sh` — logging the one native field that exists on Remove would have produced an honest but unpairable half-record, so it was consciously not done]**
 
 **What's happening now:**
 The Supervisor creates worktrees for parallel workers, but there's no hook tracking when worktrees are created or cleaned up. If a crash happens between creation and cleanup, orphaned worktrees accumulate. CLAUDE.md already documents this as a "Common Pitfall" with manual `git worktree remove` as the fix.

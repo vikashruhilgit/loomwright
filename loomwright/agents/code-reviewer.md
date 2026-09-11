@@ -164,7 +164,7 @@ Run these checks **only when `review_mode = consistency_audit`**. Results map to
    - **agents:** `count(loomwright/agents/*.md)` (include both user-facing and internal agents).
    - **skills:** `count(loomwright/skills/*/SKILL.md)` (one per skill directory; `SKILLS_INDEX.md` and `SKILL_TEMPLATE.md` excluded).
    - **commands:** `count(loomwright/commands/*.md)`.
-   - **hooks:** total count of leaf hook entries across all event buckets in `loomwright/hooks/hooks.json` — i.e. sum of matcher-object entries inside `hooks.SubagentStop[]`, `hooks.Stop[]`, `hooks.TaskCompleted[]`, `hooks.WorktreeCreate[]`, `hooks.StopFailure[]`, etc. **NOT top-level event-bucket count.**
+   - **hooks:** total count of leaf hook entries across all event buckets in `loomwright/hooks/hooks.json` — i.e. leaf hook entries (`.hooks[][].hooks[]`, the basis `scripts/check-doc-currency.sh` uses — NOT the matcher-object count) inside `hooks.SubagentStop[]`, `hooks.Stop[]`, `hooks.TaskCompleted[]`, `hooks.StopFailure[]`, etc. **NOT top-level event-bucket count.**
    Drift kind: `count`.
 
 5. **Workflow consistency** (`workflow_alignment`). Behavior described in agent prompt must match `loomwright/commands/{name}.md` usage + `CLAUDE.md` role section + `loomwright/commands/agent-help.md` — for claims about *currently active* behavior only. Drift kind: `workflow`.

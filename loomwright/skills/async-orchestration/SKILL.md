@@ -96,9 +96,11 @@ git branch feature/BD-XXc
 
 ```bash
 # Create worktrees for parallel workers
-# Path: sibling directory with subtask suffix
-git worktree add ../$(basename $(pwd))-BD-XXa feature/BD-XXa
-git worktree add ../$(basename $(pwd))-BD-XXc feature/BD-XXc
+# Path: sibling directory with subtask suffix — write the LITERAL project name
+# (the form execute-manager.md uses), never `$(basename $(pwd))`: the worktree
+# audit observer parses the command string unexpanded (see its header, limit e)
+git worktree add ../{project}-BD-XXa feature/BD-XXa
+git worktree add ../{project}-BD-XXc feature/BD-XXc
 ```
 
 **Naming convention:** `{project-dir}-{subtask-id}`
@@ -573,6 +575,7 @@ Before completing async orchestration:
    git worktree remove ../{project}-{subtask_id}
    git branch -d feature/{subtask_id}
    ```
+   Cleanup is verifiable (v15.66.0): the `PostToolUse (Bash)` observer records both the literal `../{project}-{subtask_id}` add above and this remove (a path token left unexpanded — `$(basename $(pwd))` — is recovered through the branch argument only when the resulting worktree's path ends with the literal suffix after the `$(…)`, so a failed add pairs with a foreign worktree only when that worktree's path ends with the same literal suffix — an advisory-only phantom row, never a removal; it is gated on `.supervisor/` existing, which it always does here), and `bash scripts/worktree-audit.sh report` (plugin-relative, read-only) lists any sibling recorded as created that git still shows — it reports, never removes.
 
 5. **Create commits** (inline, following `skills/commit/SKILL.md`):
    - Stage all changes

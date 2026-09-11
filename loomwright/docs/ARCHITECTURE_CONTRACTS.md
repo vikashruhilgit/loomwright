@@ -192,7 +192,7 @@ Every agent (full standard in `AGENT_GUIDELINES.md`):
 ## Hook Performance Rules
 
 - **Prompt hooks:** Execution < 5 seconds, timeout 30 seconds. As of v15.17.0 only three remain (`SubagentStop[loomwright:code-reviewer]`, `Stop`, `TaskCompleted`) — reserve them for genuine judgement; a mechanical check (presence, type, enum membership, cross-field invariants) belongs in a `type: command` script.
-- **Command hooks:** the default (34 of 37 — the other three are the prompt hooks named above). Deterministic, zero model tokens. Every one is **exit-0-by-contract** — it signals via stdout JSON, never via exit status — which is what makes the `|| true` convention safe. A *blocking* gate must therefore never be written as a `type: command` hook carrying `|| true`.
+- **Command hooks:** the default (33 of 36 — the other three are the prompt hooks named above). Deterministic, zero model tokens. Every one is **exit-0-by-contract** — it signals via stdout JSON, never via exit status — which is what makes the `|| true` convention safe. A *blocking* gate must therefore never be written as a `type: command` hook carrying `|| true`.
 - **Agent-based hooks:** Execution < 30 seconds (future)
 - No network calls in prompt hooks
 - No long file parsing — validate structure, not semantics
@@ -403,7 +403,7 @@ Branch:  feature/{task_id}-{slug}
 Example: ../myapp-42-add-auth, branch feature/42-add-auth
 ```
 
-- WorktreeCreate hook (hooks.json, type: command) logs worktree creation to `.supervisor/logs/worktrees.log`
+- Worktrees added through the Bash tool in a repo the plugin has run in (the observer is gated on `.supervisor/` already existing at the log root) are recorded by the `PostToolUse (Bash)` observer (`worktree-audit.sh record`, v15.66.0) into `.supervisor/logs/worktrees.log` and read back by the read-only `worktree-audit.sh report`, which lists recorded-but-never-removed worktrees `git worktree list` still shows (surfaced by `session-resume.sh`; a hand-run `worktree-audit.sh note removed <abs>` dismisses one you are keeping); the former `WorktreeCreate` hook aborted native worktree creation and is gone
 - Sibling directory (not nested) prevents git issues
 - Branch matches worktree slug for traceability
 

@@ -184,26 +184,6 @@
         ]
       }
     ],
-    "WorktreeCreate": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "INPUT=$(cat) && mkdir -p .supervisor/logs && echo \"[$(date -u +%Y-%m-%dT%H:%M:%SZ)] WORKTREE_CREATED $INPUT\" >> .supervisor/logs/worktrees.log && echo \"$INPUT\" | python3 -c \"import sys,json; print(json.load(sys.stdin).get('worktree_path',''))\" 2>/dev/null || true"
-          }
-        ]
-      }
-    ],
-    "WorktreeRemove": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "INPUT=$(cat) && mkdir -p .supervisor/logs && echo \"[$(date -u +%Y-%m-%dT%H:%M:%SZ)] WORKTREE_REMOVED $INPUT\" >> .supervisor/logs/worktrees.log && echo \"$INPUT\" | python3 -c \"import sys,json; print(json.load(sys.stdin).get('worktree_path',''))\" 2>/dev/null || true"
-          }
-        ]
-      }
-    ],
     "StopFailure": [
       {
         "hooks": [
@@ -225,6 +205,10 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/reproject-state-on-terminal.sh\" || true"
+          },
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/worktree-audit.sh\" record || true"
           }
         ]
       },

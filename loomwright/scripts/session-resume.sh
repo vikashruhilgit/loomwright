@@ -12,16 +12,20 @@
 # Stays under SessionStart's documented 10,000-char additionalContext cap.
 #
 # When `source` is `startup` (fresh session) the hook runs ONLY its dedicated
-# `startup)` arm, which composes at most TWO advisory lines into ONE envelope:
-#   1. the curation-cadence nudge (curation_nudge_line, below), and
+# `startup)` arm, which composes at most THREE advisory blocks into ONE envelope:
+#   1. the curation-cadence nudge (curation_nudge_line, below),
 #   2. the stranded-brief line (stranded_briefs_startup_line, below): the
 #      offline sibling reconcile-jobs.sh --porcelain classifies every brief in
 #      .supervisor/jobs/in-progress/, and ONLY `stranded_*` states are reported
 #      — one `**Stranded brief:**` line each plus a `--repair` trailer. A fresh
 #      session is the one with no prior context, so it is exactly where a brief
 #      whose work already shipped must be surfaced (2026-09-05: a merged brief
-#      sat unnoticed for five days because every fresh session was silent).
-# When neither line has anything to say, startup emits NOTHING — byte-for-byte
+#      sat unnoticed for five days because every fresh session was silent), and
+#   3. the orphaned-worktrees section (orphaned_worktrees_block, below — also on
+#      resume/clear/compact): the sibling worktree-audit.sh `report` lists Bash-
+#      tool worktree adds in a plugin-run repo that were recorded, never seen
+#      removed, and git still lists. Empty report ⇒ no section.
+# When no block has anything to say, startup emits NOTHING — byte-for-byte
 # the pre-existing behaviour — so a fresh launch with no plugin work in flight
 # stays noise-free. Sections 1–5, the observability probe, the prior-session
 # header, the recovery hints and the house-rules nudge NEVER run on startup.
@@ -230,6 +234,31 @@ stranded_briefs_startup_line() {
   return 0
 }
 
+# orphaned_worktrees_block: the ADVISORY orphaned-worktree section (v15.66.0),
+# shared by the startup and resume arms. The sibling worktree-audit.sh `report`
+# folds .supervisor/logs/worktrees.log by path and prints ONE tab-separated row
+# per Bash-tool add in a plugin-run repo recorded, never seen removed, and git STILL
+# lists — `git worktree list` is the authority, the log is only an input. Absent
+# or unreadable sibling, or an empty report ⇒ NO output, so a repo with nothing
+# orphaned stays byte-identical to the pre-change envelope. Nothing here runs a
+# removal: the hint is a command for the human, never one this hook executes.
+orphaned_worktrees_block() {
+  [ -d ".supervisor" ] || return 0
+  local script_dir auditor rows body="" path branch ts sid tag
+  script_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo .)"
+  auditor="$script_dir/worktree-audit.sh"
+  [ -r "$auditor" ] || return 0
+  rows="$(bash "$auditor" report 2>/dev/null || true)"
+  [ -n "$rows" ] || return 0
+  while IFS=$'\t' read -r tag path branch ts sid; do
+    [ "${tag:-}" = "orphan" ] && [ -n "${path:-}" ] || continue
+    body="${body}- ${path} (branch: ${branch:--}, created: ${ts:--}, session: ${sid:--})"$'\n'
+  done <<< "$rows"
+  [ -n "$body" ] || return 0
+  printf '### Orphaned worktrees (advisory)\n%sInspect with \`git worktree list\`; remove by hand with \`git worktree remove <path>\`, or keep one and stop this advisory with the plugin'"'"'s \`scripts/worktree-audit.sh note removed <abs-path>\` run from this repo — nothing here removes anything.' "$body"
+  return 0
+}
+
 # startup_arm_emit: the `startup)` arm's whole body. Composes the curation line
 # and the stranded line into ONE SessionStart envelope — a second `jq -Rs` would
 # put TWO JSON objects on stdout, which is not a valid hook response. It emits
@@ -250,12 +279,14 @@ stranded_briefs_startup_line() {
 # (curation-status.sh's own `[ -d "$SUP_DIR" ]` is a separate, legitimate copy:
 # different process, and it resolves the root via the git toplevel.)
 startup_arm_emit() {
-  local curation="" stranded="" body="" nl
+  local curation="" stranded="" orphans="" body="" nl
   nl=$'\n'
   curation="$(curation_nudge_line)"
   stranded="$(stranded_briefs_startup_line)"
+  orphans="$(orphaned_worktrees_block)"
   body="$curation"
   [ -n "$stranded" ] && body="${body:+$body$nl}$stranded"
+  [ -n "$orphans" ] && body="${body:+$body$nl}$orphans"
   [ -n "$body" ] || return 0
   printf '%s' "$body" \
     | { iconv -c -f UTF-8 -t UTF-8 2>/dev/null || cat; } \
@@ -523,6 +554,11 @@ if compgen -G ".supervisor/jobs/in-progress/*.md" > /dev/null 2>&1; then
     fi
   fi
 fi
+
+# Section 1.5: orphaned worktrees (advisory, v15.66.0) — same helper as the
+# startup arm; silent unless the sibling reader prints a live orphan.
+ORPHANS_SR="$(orphaned_worktrees_block)"
+[ -n "$ORPHANS_SR" ] && append "$ORPHANS_SR"$'\n\n'
 
 # Section 2: recent failed jobs (last 5 by mtime) ----
 if compgen -G ".supervisor/jobs/failed/*.md" > /dev/null 2>&1; then

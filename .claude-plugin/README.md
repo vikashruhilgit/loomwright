@@ -440,7 +440,7 @@ loomwright/                            # Marketplace wrapper repo
     │   ├── telemetry.md, dreaming.md, autonomous.md, automate.md, capability-check.md, insights.md, obsidian.md, pr-postmortem.md
     │   └── setup.md, agent-help.md
     ├── hooks/
-    │   └── hooks.json                       # 37 quality gate hooks (centralized)
+    │   └── hooks.json                       # 36 quality gate hooks (centralized)
     ├── skills/                              # 41 focused skill modules
     │   ├── SKILLS_INDEX.md                  # Skill catalog with agent mapping
     │   └── [skill-name]/SKILL.md            # Individual skills
@@ -502,17 +502,17 @@ Agents with `memory: project` build knowledge across sessions:
 
 ### Quality Gate Hooks
 
-37 hooks centralized in `hooks.json` validate agent output and surface notifications:
+36 hooks centralized in `hooks.json` validate agent output and surface notifications:
 - **SubagentStop:** Worker, Execute Manager, Code Reviewer, Supervisor, QA Executor, Plan Reviewer — **1 prompt validator (Code Reviewer) + 5 `type: command` validator scripts** (`validate-worker-result.py`, `validate-execute-result.py`, `validate-supervisor-result.py`, `validate-qa-result.py`, `validate-plan-review-result.py`, all sharing `result_block_parser.py` and exit-0-by-contract; converted from prompt hooks in v15.17.0, Code Reviewer deliberately retained as a prompt because its cross-field + severity-cap logic is richer than presence-checking) + 3 `type: command` telemetry hooks on Code Reviewer, QA Executor, Supervisor + 1 `type: command` opt-in webhook hook (v12.2.0) + `launch-pad-runner` `LAUNCH_PAD_RESULT` validator (v14.2.0) + 1 `type: command` progress-event hook (`emit-progress-event.sh`, v15.16.0) on the Worker matcher + **10 `type: command` lane emitters** (`emit-token-ledger.sh`, v15.60.0) on `context-keeper`, `execute-manager`, `launch-pad-runner`, `orchestrator`, `plan-reviewer`, `product-owner`, `qa-strategist`, `red-team-reviewer`, `review-pr-runner` and `rubric-grader` — so every agent this plugin ships records a lane, because an agent with no emitter can never record an event
 - **PreToolUse (AskUserQuestion):** desktop banner + paused-event webhook (v14.1.0)
 - **Notification:** desktop banner on permission/idle/elicitation prompts, `auth_success` excluded (v14.1.0)
 - **SessionStart:** crash/compact recovery context via `session-resume.sh` (v14.2.0) + per-project OpenTelemetry resource-attribute labeling via `set-otel-resource-attrs.sh` — telemetry-gated, fail-safe (v14.47.0)
-- **PostToolUse (Bash):** PR-create backstop for the until-mergeable review drain — fires on `gh pr create`, session-scope gated, fail-safe (v14.34.0) + 1 `type: command` progress-state re-projection hook (`reproject-state-on-terminal.sh`, PR #116 review round, v15.16.0) that mechanically re-invokes `build-state.sh` once a `session_end` event lands in the session log — or, when a run has no log at all, once its run-creation seed is older than `LOOMWRIGHT_STALE_RUN_SECONDS`, the only path that reaches a run stranded before its first event
+- **PostToolUse (Bash):** PR-create backstop for the until-mergeable review drain — fires on `gh pr create`, session-scope gated, fail-safe (v14.34.0) + 1 `type: command` progress-state re-projection hook (`reproject-state-on-terminal.sh`, PR #116 review round, v15.16.0) that mechanically re-invokes `build-state.sh` once a `session_end` event lands in the session log — or, when a run has no log at all, once its run-creation seed is older than `LOOMWRIGHT_STALE_RUN_SECONDS`, the only path that reaches a run stranded before its first event + the worktree observer `worktree-audit.sh record` (v15.66.0) — the third entry on that matcher, recording the plugin's own `git worktree add/remove/prune` calls to `.supervisor/logs/worktrees.log` with a ground-truth `confirmed` from `git worktree list`; `worktree-audit.sh report` reads it back (read-only) and `session-resume.sh` surfaces orphans
 - **PostToolUse (Write|Edit):** run-owner seed via `seed-run-owner.sh` — records `.supervisor/logs/<run_id>.owner` (owning Claude Code session + start instant) the moment `.supervisor/state.md` is created, so a run's owner is knowable before the log's first line exists; write-once, decides nothing, fail-safe
 - **SessionEnd:** stranded-run close-out via `close-stranded-run.sh` (v15.49.0) — appends the missing `session_end` (`status: failed`) and re-projects `state.md` when a run ends without completing; scoped to `logout|prompt_input_exit|other` so `/clear` can never close a live run, and fail-safe/always-exits-0 like the other emitters
 - **Stop:** Code Reviewer (completeness gate)
 - **TaskCompleted:** Verify task genuinely done
-- **WorktreeCreate / WorktreeRemove / StopFailure:** Logging (`WorktreeRemove` added v15.5.0 — logs worktree cleanup to `.supervisor/logs/worktrees.log`)
+- **StopFailure:** failure logging to `.supervisor/logs/failures.log`. The `WorktreeCreate`/`WorktreeRemove` hooks were removed in v15.66.0 — a `WorktreeCreate` hook replaces the harness's git behaviour and ours returned no path, aborting every native worktree; the PostToolUse (Bash) observer above replaces them
 
 ---
 
