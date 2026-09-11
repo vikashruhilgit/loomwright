@@ -847,7 +847,7 @@ EOF
   elif [ -n "$amb_n" ]; then
     echo "brief-repair: skipped — ambiguous match (${amb_n} briefs point at ${item})"
   elif [ "$refused" -eq 1 ]; then
-    echo "brief-repair: skipped — reconciler refused the move (destination exists, ## Outcome present, or write failure — see reconcile-jobs.sh stderr)"
+    echo "brief-repair: skipped — reconciler refused the move (destination exists, ## Outcome present, or write failure — re-run reconcile-jobs.sh --repair --evidence <item>=<pr_url> by hand for the reason)"
   else
     echo "brief-repair: skipped — no in-progress brief matches ${item}"
   fi

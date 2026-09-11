@@ -481,7 +481,7 @@ case "$now" in *"a-merged.md"*"b-stamped.md"*"c-unknown.md"*) ok "18b (control) 
 #      porcelain byte-for-byte, everywhere. Update it ONLY with a deliberate
 #      porcelain change (and say so in the CHANGELOG).
 golden="$(printf 'stranded_merged\t.supervisor/jobs/in-progress/a-merged.md\tautomate run file records .supervisor/requirements/m.md merged (https://github.com/o/r/pull/1)\nstranded_closed\t.supervisor/jobs/in-progress/b-stamped.md\tsource requirement .supervisor/requirements/s.md is stamped done\nunknown\t.supervisor/jobs/in-progress/c-unknown.md\tsource requirement pointer .supervisor/requirements/u.md did not resolve under .supervisor/requirements/')"
-if [ "$now" = "$golden" ]; then ok "18c no --evidence ⇒ porcelain byte-identical to the frozen golden (runs in CI, unlike 18)"; else no "18c golden drift:\n$now\n--- vs golden ---\n$golden"; fi
+if [ "$now" = "$golden" ]; then ok "18c no --evidence ⇒ porcelain byte-identical to the frozen golden (runs in CI, unlike 18)"; else no "18c golden drift: now=[$now] golden=[$golden]"; fi
 # 18d. A repeated --evidence key is refused out loud (first wins), never silently
 #      appended where evidence_index_for could not reach it.
 r="$(ev_repo)"

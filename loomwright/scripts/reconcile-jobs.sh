@@ -71,8 +71,9 @@
 #   and the seam keeps working in a checkout where the requirement file is
 #   absent (a git worktree). No normalisation: `./x` and `/abs/x` never match.
 # * Values are validated LEXICALLY only (key under `.supervisor/requirements/`,
-#   not absolute, no `..`; url `^https?://…/pull/<n>$`); a bad value is ignored
-#   with one stderr line and the script continues.
+#   not absolute, no `..`; url `^https?://…/pull/<n>$`); a bad value — or a key
+#   already supplied (the first `--evidence` for a key wins) — is ignored with
+#   one stderr line and the script continues.
 # * `--evidence` SCOPES `--repair`: the moment ANY `--evidence` flag is parsed —
 #   accepted or rejected — only evidence-matched briefs are repaired; every
 #   other brief is classified and reported exactly as before and NOT moved.
