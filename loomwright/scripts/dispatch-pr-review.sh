@@ -293,6 +293,15 @@ REPO_TOPLEVEL="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 PROJECT_BASENAME="$(basename "${REPO_TOPLEVEL:-$PWD}")"
 PARENT_DIR="$(dirname "${REPO_TOPLEVEL:-$PWD}")"
 WT_PATH="$PARENT_DIR/${PROJECT_BASENAME}-review-${PR_HASH_SHORT}"
+# Salvage-before-removal (v15.67.0): every plugin-owned `git worktree remove --force`
+# below is preceded by a fail-SAFE capture of the worktree's uncommitted content
+# into the primary checkout's .supervisor/salvage/ (sibling script, resolved
+# ABSOLUTE once here because the detached wrapper cd's into the worktree). Resolved
+# ABOVE the pre-add cleanup on purpose: this script runs under `set -u`, so an
+# expansion before assignment would abort the dispatcher (no marker, re-dispatch
+# wedged) on the one path that site exists for. Every call is `|| true` and every
+# removal still runs regardless of what the salvage did.
+SALVAGE_BIN="$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)/worktree-salvage.sh"
 
 # ---- ① existing-marker-wins (AC4a, PINNED order — BEFORE lock/worktree) ------
 # If a durable marker already exists for this PR, a dispatch genuinely started —
@@ -449,6 +458,8 @@ git fetch origin "$HEAD_SHA" >/dev/null 2>&1 || git fetch origin >/dev/null 2>&1
 # hold the per-PR lock here, so clearing ONLY this hash-keyed path is safe (no other
 # dispatch for the same PR can own it). Prune drops any orphaned admin entry the
 # removed dir left behind. (The post-success prune below cannot pre-clean this.)
+# A stale dir here may hold a prior drain's half-applied fix — salvage it first.
+[ -d "$WT_PATH" ] && bash "$SALVAGE_BIN" "$WT_PATH" --dest "${REPO_TOPLEVEL:-$PWD}/.supervisor/salvage" --reason "dispatch pre-add cleanup" >/dev/null 2>&1 || true
 git worktree remove --force "$WT_PATH" >/dev/null 2>&1 || true
 rm -rf "$WT_PATH" 2>/dev/null || true
 git worktree prune >/dev/null 2>&1 || true
@@ -462,8 +473,9 @@ fi
 # observer only ever sees `bash …/dispatch-pr-review.sh …`, never the
 # `git worktree add` inside it, so this sibling is the drain's own entry. Fail-safe:
 # an absent sibling or any failure is a no-op. The `git worktree remove --force`
-# sites below stay unwired on purpose — the reader's ground-truth rule (a path git
-# no longer lists is not an orphan) already covers a removal the log never saw.
+# sites stay unwired FROM THE AUDIT LOG on purpose — the reader's ground-truth rule
+# (a path git no longer lists is not an orphan) already covers a removal the log
+# never saw. (They ARE wired to the salvage — see SALVAGE_BIN above.)
 bash "$(dirname "$0")/worktree-audit.sh" note created "$WT_PATH" 2>/dev/null || true
 
 # ---- ⑤ write the RUN_LOG header (non-empty, machine-greppable) --------------
@@ -488,6 +500,9 @@ if ! {
   printf '# ---- runner output follows ----\n'
 } > "$RUN_LOG_ABS" 2>/dev/null; then
   log "RUN_LOG header write failed ($RUN_LOG_ABS) — tearing down worktree+lock, skipping (no marker)"
+  # Clean by construction (created microseconds ago) — salvaged anyway so the
+  # invariant "every plugin-owned removal is preceded by a salvage" has no exception.
+  [ -d "$WT_PATH" ] && bash "$SALVAGE_BIN" "$WT_PATH" --dest "${REPO_TOPLEVEL:-$PWD}/.supervisor/salvage" --reason "dispatch header-write teardown" >/dev/null 2>&1 || true
   git worktree remove --force "$WT_PATH" >/dev/null 2>&1 || true
   rm -rf "$LOCK_DIR" 2>/dev/null || true
   exit 0
@@ -555,11 +570,16 @@ esac
 # quote was safe but a `$`/backtick/`"` in a path silently corrupted the worktree path
 # (failed cd -> leaked worktree) AFTER the marker was written — the exact silent-drop
 # class this change exists to remove. The trap captures the args into named vars FIRST
-# (a trap function sees its OWN empty positionals on EXIT, not the script's $1..$7).
+# (a trap function sees its OWN empty positionals on EXIT, not the script's $1..$8).
+# $8 is the absolute salvage script: the trap captures the worktree's uncommitted
+# content (a crashed/SIGTERMed runner's half-applied fix) BEFORE its --force. The
+# call is `|| true` and the rm -rf lines below run unconditionally — an absent or
+# failing salvage never wedges teardown.
 WRAPPER='
-_mg="$1"; _wt="$2"; _lock="$3"; _bin="$4"; _runner="$5"; _pr="$6"; _log="$7"
+_mg="$1"; _wt="$2"; _lock="$3"; _bin="$4"; _runner="$5"; _pr="$6"; _log="$7"; _salvage="$8"
 trap_cleanup() {
   cd "$_mg" 2>/dev/null || cd / 2>/dev/null || true
+  [ -n "$_salvage" ] && bash "$_salvage" "$_wt" --dest "$_mg/.supervisor/salvage" --reason "review-drain teardown" >/dev/null 2>&1 || true
   git -C "$_mg" worktree remove --force "$_wt" >/dev/null 2>&1 || true
   rm -rf "$_wt" 2>/dev/null || true
   rm -rf "$_lock" 2>/dev/null || true
@@ -568,7 +588,7 @@ trap trap_cleanup EXIT
 cd "$_wt" || exit 0
 "$_bin" -p --agent "$_runner" "$_pr" >>"$_log" 2>&1 </dev/null
 '
-( nohup bash -c "$WRAPPER" _ "$MAIN_GITDIR" "$WT_PATH" "$LOCK_DIR_ABS" "$CLAUDE_BIN" "$RUNNER" "$PR_URL" "$RUN_LOG_ABS" >/dev/null 2>&1 & ) >/dev/null 2>&1 || true
+( nohup bash -c "$WRAPPER" _ "$MAIN_GITDIR" "$WT_PATH" "$LOCK_DIR_ABS" "$CLAUDE_BIN" "$RUNNER" "$PR_URL" "$RUN_LOG_ABS" "$SALVAGE_BIN" >/dev/null 2>&1 & ) >/dev/null 2>&1 || true
 
 log "dispatched review-pr-runner for $PR_URL (worktree: $WT_PATH, log: $RUN_LOG)"
 exit 0
