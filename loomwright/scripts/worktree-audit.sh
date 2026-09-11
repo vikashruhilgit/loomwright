@@ -91,7 +91,13 @@
 #    "command":<matched fragment ≤200 chars>}
 #   `confirmed` is GROUND TRUTH AT RECORD TIME: `git worktree list --porcelain`
 #   is run and the path's presence (add) / absence (remove) is stored; any git
-#   failure stores null. `resolved_by` says how `path` was obtained: `"path"` =
+#   failure stores null. `branch` on a `created` line is, in precedence: (1)
+#   git's own `branch refs/heads/…` porcelain line for that path when present
+#   (the fallback's exact refs/heads hit is this case); else (2) the explicit
+#   `-b`/`-B` argument; else (3) null — NEVER a bare positional, which may be
+#   a branch name but equally `HEAD`, a SHA or a tag (`git worktree add
+#   --detach ../x HEAD` succeeds and lists no branch line: the worktree IS
+#   detached, and null is the truth). `resolved_by` says how `path` was obtained: `"path"` =
 #   parsed from the command / given to `note`; `"branch"` = the add arm's
 #   branch-keyed fallback (above); null on `pruned` lines, which have no path
 #   and never affect the fold.
@@ -378,7 +384,10 @@ handle_segment() {
       # expression is still open (`expr_open`) — `../$(basename $(pwd))-X` is one
       # expression, not `../$(basename` plus a stray `$(pwd))-X` positional.
       # `cands` = branch-keyed fallback candidates: the `-b` argument when given,
-      # else every positional after the path expression, in order.
+      # else every positional after the path expression, in order. A positional
+      # is ONLY ever a lookup key — never the recorded `branch` (see BRANCH
+      # PROVENANCE below): `git worktree add --detach ../x HEAD` succeeds with
+      # `HEAD` in that slot, and a SHA or a tag sits there just as legally.
       local -a cands
       local b_flag=0 resolved=path rawpath=""
       while [ "$i" -lt "$n" ]; do
@@ -394,7 +403,6 @@ handle_segment() {
           path="$(strip_quotes "$rawpath")"; pos=1; continue
         fi
         t="$(strip_quotes "$t")"
-        [ "$pos" -eq 1 ] && [ -z "$branch" ] && branch="$t"
         cands[${#cands[@]}]="$t"; pos=2
         i=$((i+1))
       done
@@ -421,11 +429,13 @@ handle_segment() {
             resolved=branch ;;
           esac
         fi
-        # An unexpanded path the fallback could not resolve has no trustworthy
-        # branch: a positional after it may be a SHA, a tag, or (`--detach`)
-        # nothing branch-shaped at all. Only an explicit -b/-B survives.
-        [ "$resolved" = path ] && [ "$b_flag" -eq 0 ] && branch=""
       fi
+      # BRANCH PROVENANCE, in precedence, for BOTH arms: (1) git's own
+      # `branch refs/heads/…` porcelain line for this path — PROBE_BRANCH on the
+      # literal arm, LOOKUP_BRANCH (an exact refs/heads hit) on the fallback;
+      # else (2) the explicit -b/-B argument; else (3) null. When git lists no
+      # branch line the worktree IS detached, so null is the truth — a bare
+      # positional (`HEAD`, a SHA, a tag) is never promoted to `branch`.
       [ -n "$PROBE_BRANCH" ] && branch="$PROBE_BRANCH"
       emit "$root" created "$path" "$branch" "$PROBE_CONFIRMED" "$sid" posttooluse_bash "$resolved" "$frag"
       return 0 ;;

@@ -19,12 +19,14 @@
 # expression's literal tail — a SUFFIX test, so a failed add is kept apart
 # from a foreign same-branch worktree unless that worktree's path happens to
 # end with the same suffix (a stated, advisory-only limit); `branch` is null when the expression stays
-# unresolved and no -b/-B was given), the tokenizer's re-join of a quoted path
+# unresolved and no -b/-B was given), BRANCH PROVENANCE on `add` (git's own
+# porcelain branch line, else -b/-B, else null — a literal `--detach … HEAD`
+# records null and never the positional; AC-3g), the tokenizer's re-join of a quoted path
 # with whitespace (literal, resolved_by path) and of chained `-C`, the
 # `.supervisor/` population gate (no line, no directory created in a repo the
 # plugin never ran in), the `note removed` direct dismissal and the out-loud
 # stderr refusal of a relative `note` path, and one gated mutant for each
-# mechanism (AC-10 (b)–(h)).
+# mechanism (AC-10 (b)–(i)).
 
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -308,8 +310,45 @@ run_record "$AUDIT" "$r" "git worktree add ../repo-again feature/held"
 l="$(last_line "$r")"
 [ "$(field "$l" '.path')" = "$(dirname "$r")/repo-again" ] && [ "$(field "$l" '.confirmed')" = "false" ] && [ "$(field "$l" '.resolved_by')" = "path" ] \
   && ok "AC-3f a literal absent path (failed add) stays confirmed:false with NO branch fallback" || no "AC-3f failed-add line: $l"
+[ "$(field "$l" '.branch')" = "null" ] && ok "AC-3f the failed literal add records branch null (git lists no branch for it; the positional is not promoted)" || no "AC-3f failed-add branch: $l"
 out="$(run_report "$AUDIT" "$r")"
 [ "$(rows "$out")" = "1" ] && printf '%s' "$out" | grep -q "repo-held" && ok "AC-3f report still lists only the real worktree (the failed add's path is not live)" || no "AC-3f report after failed add: $out"
+
+# ============================================================================
+echo "== AC-3g: branch provenance — porcelain, else -b/-B, else null; never a positional =="
+# `git worktree add --detach ../repo-x HEAD` SUCCEEDS (confirmed:true) and the
+# porcelain block has no `branch refs/heads/` line: the worktree IS detached.
+# The positional in the branch slot is `HEAD` — and may equally be a SHA or a
+# tag — so the recorded branch must be null, and `report` prints `-`.
+ac3g_detach() {  # <audit> <repo> → report; the log holds 1 line
+  run_record "$1" "$2" 'git worktree add --detach ../repo-x HEAD'
+  run_report "$1" "$2"
+}
+ac3g_positional() {  # <audit> <repo> — a positional branch that EXISTS (porcelain names it)
+  run_record "$1" "$2" 'git branch feature/y && git worktree add ../repo-y feature/y'
+}
+ac3g_bflag() {  # <audit> <repo> — the explicit -b form
+  run_record "$1" "$2" 'git worktree add -b feature/z ../repo-z'
+}
+r="$(new_repo)"; out="$(ac3g_detach "$AUDIT" "$r")"; l="$(last_line "$r")"
+[ "$(lastrc)" -eq 0 ] && [ "$(log_lines "$r")" = "1" ] && [ "$(field "$l" '.confirmed')" = "true" ] && [ "$(field "$l" '.resolved_by')" = "path" ] \
+  && ok "AC-3g(a) literal --detach … HEAD ⇒ one line, confirmed:true, resolved_by:path" || no "AC-3g(a) line: $l rc=$(lastrc)"
+[ "$(field "$l" '.branch')" = "null" ] && ok "AC-3g(a) …and branch null — HEAD in the positional slot is a commit-ish, not a branch" || no "AC-3g(a) branch: $l"
+[ "$(rows "$out")" = "1" ] && [ "$out" = "orphan	$(dirname "$r")/repo-x	-	$(field "$l" '.ts')	$(field "$l" '.session_id')" ] \
+  && ok "AC-3g(a) report prints the detached worktree as an orphan with '-' in the branch column" || no "AC-3g(a) report: [$out]"
+r="$(new_repo)"; ac3g_positional "$AUDIT" "$r"; l="$(last_line "$r")"
+[ "$(field "$l" '.branch')" = "feature/y" ] && [ "$(field "$l" '.confirmed')" = "true" ] \
+  && ok "AC-3g(b) POSITIVE CONTROL: a positional branch git lists ⇒ branch feature/y via the porcelain line" || no "AC-3g(b) line: $l"
+r="$(new_repo)"; ac3g_bflag "$AUDIT" "$r"; l="$(last_line "$r")"
+[ "$(field "$l" '.branch')" = "feature/z" ] && [ "$(field "$l" '.confirmed')" = "true" ] \
+  && ok "AC-3g(c) -b feature/z ⇒ branch feature/z" || no "AC-3g(c) line: $l"
+# the dispatcher's own shape: `note created` on a detached worktree, no branch
+# argument ⇒ branch null, and report shows `-` (the SessionStart advisory row)
+r="$(new_repo)"; wt="$(dirname "$r")/repo-review-deadbee"
+( cd "$r" && git worktree add --detach "$wt" HEAD && bash "$AUDIT" note created "$wt" ) >/dev/null 2>&1
+l="$(last_line "$r")"; out="$(run_report "$AUDIT" "$r")"
+[ "$(field "$l" '.branch')" = "null" ] && [ "$(field "$l" '.confirmed')" = "true" ] && printf '%s' "$out" | grep -q "^orphan	$wt	-	" \
+  && ok "AC-3g(d) note created on the drain's detached worktree ⇒ branch null, report row carries '-'" || no "AC-3g(d) line: $l report: [$out]"
 
 # ============================================================================
 echo "== AC-4: the Supervisor's documented worktree commands appear =="
@@ -598,6 +637,21 @@ if gate_mutant "$AUDIT" "$MH" "AC-10(h)"; then
     && ok "AC-10(h) the success control stays GREEN on the mutant (the red is the guard's alone)" || no "AC-10(h) success control went red: $l / $out"
   r="$(new_repo)"; out="$(ac3f "$MH" "$r")"
   [ "$(rows "$out")" = "1" ] && ok "AC-10(h) AC-3f's documented BD-XXa shape stays green on the mutant" || no "AC-10(h) BD-XXa went red"
+fi
+# (i) the bare-positional assignment is RESTORED (case 3 records the positional
+# instead of null): the exact line drain cycle 2 removed, re-inserted ahead of
+# the candidate push, so `HEAD` / a SHA / a tag in the branch slot lands in `branch`.
+d="$(mktmp)"; copy_with_siblings "$d"; MI="$d/worktree-audit.sh"
+sed -i.bak 's/cands\[\${#cands\[@\]}\]="\$t"; pos=2/[ "$pos" -eq 1 ] \&\& [ -z "$branch" ] \&\& branch="$t"; &/' "$MI" && rm -f "$MI.bak"
+if gate_mutant "$AUDIT" "$MI" "AC-10(i)"; then
+  grep -qF '[ "$pos" -eq 1 ] && [ -z "$branch" ] && branch="$t"' "$MI" && ok "AC-10(i) the mutant carries the restored positional assignment (sed matched)" || no "AC-10(i) sed did not land the assignment"
+  r="$(new_repo)"; out="$(ac3g_detach "$MI" "$r")"; l="$(last_line "$r")"
+  [ "$(field "$l" '.branch')" = "HEAD" ] && [ "$(field "$l" '.confirmed')" = "true" ] && printf '%s' "$out" | grep -q "	HEAD	" \
+    && ok "AC-10(i) mutant records branch:\"HEAD\" for the literal detached add and report prints HEAD ⇒ AC-3g(a) red" || no "AC-10(i) AC-3g(a) stayed green: $l / [$out]"
+  r="$(new_repo)"; ac3g_positional "$MI" "$r"; l="$(last_line "$r")"
+  [ "$(field "$l" '.branch')" = "feature/y" ] && ok "AC-10(i) AC-3g(b) (positional branch git lists) stays GREEN on the mutant" || no "AC-10(i) AC-3g(b) went red: $l"
+  r="$(new_repo)"; ac3g_bflag "$MI" "$r"; l="$(last_line "$r")"
+  [ "$(field "$l" '.branch')" = "feature/z" ] && ok "AC-10(i) AC-3g(c) (-b) stays GREEN on the mutant (the red is case 3's alone)" || no "AC-10(i) AC-3g(c) went red: $l"
 fi
 
 echo "RESULT: $pass passed, $fail failed"
