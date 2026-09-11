@@ -166,12 +166,14 @@ curation_nudge_line() {
 
 # stranded_briefs_startup_line: the stranded-brief line(s) for the startup arm,
 # on stdout, or nothing. Gate ORDER mirrors curation_nudge_line exactly:
-# permanent env opt-out, then the OWN cwd-relative plugin-active check (same
-# predicate, same TWO-RESOLUTION-RULES caveat as the curation marker above — the
-# marker here is cwd-relative for the same reason), then a cheap glob so the
-# common case (no in-progress briefs) costs nothing, then the 24h mtime-windowed
-# debounce marker, then the probe. The reconciler is resolved as a SIBLING via
-# `dirname "$0"` — the same idiom Section 1 uses. It is OFFLINE BY CONSTRUCTION
+# permanent env opt-out, then the OWN cwd-relative plugin-active check (the
+# marker below is cwd-relative to match that `[ -d ".supervisor" ]` gate; unlike
+# curation-status.sh, the reconciler is ITSELF cwd-relative by construction — a
+# bare relative jobs path, no cd, no root derived from the VCS CLI — so no second
+# resolution rule exists for this sibling), then a cheap glob so the common case
+# (no in-progress briefs) costs nothing, then the 24h debounce marker, then the
+# probe. The reconciler is resolved as a SIBLING via `dirname "$0"` — the same
+# idiom Section 1 uses. It is OFFLINE BY CONSTRUCTION
 # (never calls the forge CLI), so `unknown` here means "no disk evidence", and
 # unknown briefs are deliberately NOT reported on startup: a fresh session with
 # nothing classified stranded must stay byte-for-byte silent (see the header's
