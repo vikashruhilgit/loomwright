@@ -133,10 +133,15 @@
 #       `../repo-foreign` never pairs with it). A `remove` with such a path
 #       records the expression as written (its `confirmed` is meaningless for a
 #       path that never existed) and the live list decides whether the real
-#       worktree is still an orphan. Every one of these fails toward
-#       UNDER-report: `report` prints only paths git still lists, and the only
-#       path the fallback can ever write is one whose porcelain entry ends with
-#       a suffix this command literally named.
+#       worktree is still an orphan. These fail toward UNDER-report with ONE
+#       stated exception: the tail rule is a SUFFIX test, so a same-branch
+#       worktree whose path merely ends with the same literal suffix
+#       (`../other-mine` vs a failed `../$(basename $(pwd))-mine`) is still
+#       paired and can surface as a phantom advisory row — `report` prints only
+#       paths git still lists, nothing is ever removed, and the only path the
+#       fallback can ever write is one whose porcelain entry ends with a suffix
+#       this command literally named. Closing it at the root (evaluating
+#       `$(basename $(pwd))` against the payload cwd) is a follow-up, not done.
 #
 # Vendor-neutral by construction (CORE, allowance 0): no harness env var, no
 # harness-specific path, siblings resolved via `dirname "$0"`. bash 3.2-clean.
@@ -177,7 +182,10 @@ unexpanded() {
 # `../$(basename $(pwd))-mine` and `"../repo sp"` are each ONE path expression
 # rather than a path token plus stray positionals (which the branch fallback
 # would otherwise try as branch names). Counts are per character on a short
-# token, never on the whole command.
+# token, never on the whole command. An expression that never closes (an
+# unbalanced `(`, or an odd quote/backtick) swallows every remaining token of
+# the segment — branch argument and flags included — leaving no candidates and
+# a `confirmed:false` line: an under-report, never a phantom row.
 expr_open() {
   local s="$1" o c q
   o="${s//[^(]/}"; c="${s//[^)]/}"
