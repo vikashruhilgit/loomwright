@@ -32,20 +32,32 @@
 #                     a repo the plugin never touched is nobody's business: nothing
 #                     is written and `.supervisor/` is NEVER created here.
 #                     PATH PARSING is whitespace tokenization of the command
-#                     string plus one layer of matching quotes: the payload
-#                     carries the command UNEXPANDED. When the path token still
-#                     carries shell syntax (`$VAR`, `$(…)`, a backtick, `~`, an
-#                     unmatched quote) and git does not list it, the `add` arm
-#                     falls back to a BRANCH-keyed lookup — the `-b` argument /
-#                     the positional branch tokens are literal — and records the
-#                     `worktree <path>` of the porcelain block whose
-#                     `branch refs/heads/<branch>` line matches EXACTLY, with
-#                     `confirmed:true` and `resolved_by:"branch"`. A LITERAL path
-#                     git does not list is recorded as written with
+#                     string, the path expression RE-JOINED across tokens while
+#                     it is still open (unbalanced `(`, an odd `"`/`'`/backtick),
+#                     plus one layer of matching quotes — so `"../repo sp"` is
+#                     one literal path and `../$(basename $(pwd))-X` one
+#                     expression: the payload carries the command UNEXPANDED.
+#                     When the path expression still carries shell syntax
+#                     (`$VAR`, `${VAR}`, `$(…)`, a backtick, `~`, an unmatched
+#                     quote) and git does not list it, the `add` arm falls back
+#                     to a BRANCH-keyed lookup — the `-b` argument / the
+#                     positional branch tokens are literal — over the porcelain
+#                     block whose `branch refs/heads/<branch>` line matches
+#                     EXACTLY, and ACCEPTS the hit only when that block's
+#                     `worktree <path>` ends with the expression's non-empty
+#                     literal tail (`literal_tail`: what follows the last `)`,
+#                     `}`, backtick or `$NAME` — `-mine` for
+#                     `../$(basename $(pwd))-mine`). Accepted ⇒ `confirmed:true`,
+#                     `resolved_by:"branch"`, that path. Rejected (no hit, an
+#                     empty tail, or a hit whose path does not end with the
+#                     tail — a failed add whose branch is checked out in some
+#                     OTHER worktree) ⇒ the expression is recorded as written
+#                     with `confirmed:false`, `resolved_by:"path"`, and `branch`
+#                     null unless `-b`/`-B` gave one (a positional after an
+#                     unresolved expression may be a SHA or a tag). A LITERAL
+#                     path git does not list is recorded as written with
 #                     `confirmed:false` (the add failed, or resolved against a
-#                     `cd` the observer cannot see) and never falls back: pairing
-#                     a failed add with a pre-existing worktree on the same branch
-#                     would over-report.
+#                     `cd` the observer cannot see) and never falls back.
 #   note <created|removed> <abs_path> [branch]
 #                     direct entry for creations a script performs itself — the
 #                     Bash-tool observer only ever sees `bash …/some-script.sh`, so
@@ -109,15 +121,22 @@
 #   (d) Hooks come from the INSTALLED plugin: the fixed hook set only takes effect
 #       in sessions started after a reinstall.
 #   (e) The command string is parsed, never executed, so shell syntax the shell
-#       would have expanded is NOT: `$VAR`, `$(…)`, backticks, `~`, whitespace
-#       inside quotes, and a `cd` inside a subshell (`( cd sub && git worktree
-#       add ../x … )` resolves against the payload cwd, not `sub`). The `add`
-#       arm recovers the first three through the branch-keyed fallback when the
-#       branch argument is literal; a `remove` with such a path records the
-#       token as written (its `confirmed` is meaningless for a path that never
-#       existed) and the live list decides whether the real worktree is still
-#       an orphan — every one of these fails toward UNDER-report, never toward
-#       a phantom orphan, because `report` prints only paths git still lists.
+#       would have expanded is NOT: `$VAR`, `${VAR}`, `$(…)`, backticks, `~`,
+#       and a `cd` inside a subshell (`( cd sub && git worktree add ../x … )`
+#       resolves against the payload cwd, not `sub`). Whitespace inside
+#       matching quotes IS handled — the tokenizer re-joins the expression. The
+#       `add` arm recovers the expanded forms through the branch-keyed fallback
+#       ONLY when the branch argument is literal AND the porcelain hit's path
+#       ends with the expression's non-empty literal tail; a hit that fails the
+#       tail rule is dropped, and the line stays `confirmed:false` /
+#       `resolved_by:"path"` (test AC-3f: a failed add whose branch lives at
+#       `../repo-foreign` never pairs with it). A `remove` with such a path
+#       records the expression as written (its `confirmed` is meaningless for a
+#       path that never existed) and the live list decides whether the real
+#       worktree is still an orphan. Every one of these fails toward
+#       UNDER-report: `report` prints only paths git still lists, and the only
+#       path the fallback can ever write is one whose porcelain entry ends with
+#       a suffix this command literally named.
 #
 # Vendor-neutral by construction (CORE, allowance 0): no harness env var, no
 # harness-specific path, siblings resolved via `dirname "$0"`. bash 3.2-clean.
@@ -150,6 +169,44 @@ plugin_present() { [ -d "$1/.supervisor" ]; }
 unexpanded() {
   case "$1" in *'$'*|*'`'*|'~'*|*\"*|*\'*) return 0 ;; esac
   return 1
+}
+
+# expr_open <expr> — true while a whitespace-split path expression is still
+# OPEN: more `(` than `)`, or an odd number of `"`, `'` or backticks. The
+# tokenizer joins the following token onto the expression while this holds, so
+# `../$(basename $(pwd))-mine` and `"../repo sp"` are each ONE path expression
+# rather than a path token plus stray positionals (which the branch fallback
+# would otherwise try as branch names). Counts are per character on a short
+# token, never on the whole command.
+expr_open() {
+  local s="$1" o c q
+  o="${s//[^(]/}"; c="${s//[^)]/}"
+  [ "${#o}" -gt "${#c}" ] && return 0
+  q="${s//[^\"]/}";  [ $(( ${#q} % 2 )) -eq 1 ] && return 0
+  q="${s//[^\']/}";  [ $(( ${#q} % 2 )) -eq 1 ] && return 0
+  q="${s//[^\`]/}";  [ $(( ${#q} % 2 )) -eq 1 ] && return 0
+  return 1
+}
+
+# literal_tail <expr> — the part of an unexpanded path expression the shell
+# would have left AS WRITTEN: everything after the last `)`, `}` or backtick;
+# then, if a bare `$NAME` remains, everything after that name; a leading
+# `~[user]` is cut too. `../$(basename $(pwd))-mine` ⇒ `-mine`;
+# `${WT_ROOT}/repo-x` ⇒ `/repo-x`; `$PROJ-BD-1` ⇒ `-BD-1`; `~/wt/repo-x` ⇒
+# `/wt/repo-x`; `../$(basename $(pwd))` ⇒ EMPTY. The add arm's branch fallback
+# accepts a porcelain hit ONLY when its `worktree <path>` ends with a non-empty
+# tail — a failed add whose branch is checked out in some OTHER worktree cannot
+# be paired with that worktree, because that path does not end with this
+# command's literal suffix.
+literal_tail() {
+  local t="$1"
+  case "$t" in *[\)\}\`]*) t="${t##*[\)\}\`]}" ;; esac
+  case "$t" in *'$'*)
+    t="${t##*\$}"
+    while :; do case "$t" in [A-Za-z0-9_]*) t="${t#?}" ;; *) break ;; esac; done ;;
+  esac
+  case "$t" in '~'*) t="${t#\~}"; t="${t#"${t%%/*}"}" ;; esac
+  printf '%s' "$t"
 }
 
 # lexical_norm <path> — collapse `.`/`..`/`//` without touching the filesystem.
@@ -285,12 +342,13 @@ handle_segment() {
   done
   [ "$i" -lt "$n" ] || return 0
   i=$((i+1))
-  # optional -C <dir> (repeatable per git; last wins, resolved against cwd)
+  # optional -C <dir>, repeatable per git: each subsequent RELATIVE -C resolves
+  # against the preceding one (`git -C a -C b` ⇒ `a/b`), an absolute one resets.
   while [ "$i" -lt "$n" ] && [ "${toks[$i]}" = "-C" ]; do
     cdir="$(strip_quotes "${toks[$((i+1))]:-}")"
+    [ -n "$cdir" ] && base="$(abs_path "$base" "$cdir")"
     i=$((i+2))
   done
-  [ -n "$cdir" ] && base="$(abs_path "$cwd" "$cdir")"
   [ "$i" -lt "$n" ] && [ "${toks[$i]}" = "worktree" ] || return 0
   i=$((i+1))
   [ "$i" -lt "$n" ] || return 0
@@ -308,12 +366,13 @@ handle_segment() {
       emit "$root" pruned "" "" null "$sid" posttooluse_bash "" "$frag"
       return 0 ;;
     add)
+      # The path is the first positional, RE-JOINED across whitespace while the
+      # expression is still open (`expr_open`) — `../$(basename $(pwd))-X` is one
+      # expression, not `../$(basename` plus a stray `$(pwd))-X` positional.
       # `cands` = branch-keyed fallback candidates: the `-b` argument when given,
-      # else every positional token after the path, in order (the documented
-      # `git worktree add ../$(basename $(pwd))-X feature/X` shape tokenizes to
-      # THREE positionals and only the last one is the literal branch).
+      # else every positional after the path expression, in order.
       local -a cands
-      local b_flag=0 resolved=path
+      local b_flag=0 resolved=path rawpath=""
       while [ "$i" -lt "$n" ]; do
         t="${toks[$i]}"
         case "$t" in
@@ -321,28 +380,43 @@ handle_segment() {
           --reason|--orphan-branch) i=$((i+2)); continue ;;
           -*)           i=$((i+1)); continue ;;
         esac
-        t="$(strip_quotes "$t")"
-        if [ "$pos" -eq 0 ]; then path="$t"; pos=1
-        else
-          [ "$pos" -eq 1 ] && [ -z "$branch" ] && branch="$t"
-          cands[${#cands[@]}]="$t"; pos=2
+        if [ "$pos" -eq 0 ]; then
+          rawpath="$t"; i=$((i+1))
+          while [ "$i" -lt "$n" ] && expr_open "$rawpath"; do rawpath="$rawpath ${toks[$i]}"; i=$((i+1)); done
+          path="$(strip_quotes "$rawpath")"; pos=1; continue
         fi
+        t="$(strip_quotes "$t")"
+        [ "$pos" -eq 1 ] && [ -z "$branch" ] && branch="$t"
+        cands[${#cands[@]}]="$t"; pos=2
         i=$((i+1))
       done
       [ -n "$path" ] || return 0
-      local rawpath="$path"
+      rawpath="$path"
       path="$(abs_path "$base" "$path")"
       probe "$base" "$path" 1
       # Branch-keyed fallback: ONLY for a token the shell would have expanded
       # (a literal path git does not list means the add failed — pairing it
       # with a pre-existing worktree on the same branch would over-report).
+      # A hit is ACCEPTED only when its porcelain path ends with the
+      # expression's non-empty literal tail: `git worktree add
+      # ../$(basename $(pwd))-mine feature/held` fails when feature/held is
+      # already checked out at ../repo-foreign, and `repo-foreign` does not end
+      # with `-mine` — the hit is rejected and the line stays confirmed:false /
+      # resolved_by:"path", the honest under-report.
       if [ "$PROBE_CONFIRMED" = false ] && unexpanded "$rawpath"; then
+        local tail; tail="$(literal_tail "$rawpath")"
         if [ "$b_flag" -eq 1 ]; then branch_lookup "$base" "$branch"
         else branch_lookup "$base" ${cands[@]+"${cands[@]}"}; fi
-        if [ -n "$LOOKUP_PATH" ]; then
-          path="$LOOKUP_PATH"; branch="$LOOKUP_BRANCH"; PROBE_CONFIRMED=true; PROBE_BRANCH=""
-          resolved=branch
+        if [ -n "$LOOKUP_PATH" ] && [ -n "$tail" ]; then
+          case "$LOOKUP_PATH" in *"$tail")
+            path="$LOOKUP_PATH"; branch="$LOOKUP_BRANCH"; PROBE_CONFIRMED=true; PROBE_BRANCH=""
+            resolved=branch ;;
+          esac
         fi
+        # An unexpanded path the fallback could not resolve has no trustworthy
+        # branch: a positional after it may be a SHA, a tag, or (`--detach`)
+        # nothing branch-shaped at all. Only an explicit -b/-B survives.
+        [ "$resolved" = path ] && [ "$b_flag" -eq 0 ] && branch=""
       fi
       [ -n "$PROBE_BRANCH" ] && branch="$PROBE_BRANCH"
       emit "$root" created "$path" "$branch" "$PROBE_CONFIRMED" "$sid" posttooluse_bash "$resolved" "$frag"
@@ -351,6 +425,8 @@ handle_segment() {
       while [ "$i" -lt "$n" ]; do
         t="${toks[$i]}"
         case "$t" in -*) i=$((i+1)); continue ;; esac
+        i=$((i+1))
+        while [ "$i" -lt "$n" ] && expr_open "$t"; do t="$t ${toks[$i]}"; i=$((i+1)); done
         path="$(strip_quotes "$t")"; break
       done
       [ -n "$path" ] || return 0
@@ -381,14 +457,14 @@ record() {
   [ "$tool" = "Bash" ] || return 0
   cmd="$(printf '%s' "$payload" | jq -r '.tool_input.command // empty' 2>/dev/null)"
   [ -n "$cmd" ] || return 0
-  grep -qE 'git( -C [^ ]+)? worktree (add|remove|prune)' <<< "$cmd" || return 0
+  grep -qE 'git([[:space:]]+-C[[:space:]]+[^[:space:]]+)*[[:space:]]+worktree[[:space:]]+(add|remove|prune)' <<< "$cmd" || return 0
   cwd="$(printf '%s' "$payload" | jq -r '.cwd // empty' 2>/dev/null)"
   sid="$(printf '%s' "$payload" | jq -r '.session_id // empty' 2>/dev/null)"
   [ -n "$cwd" ] || cwd="$PWD"
   cwd="$(abs_path "$PWD" "$cwd")"
   while IFS= read -r seg; do
     [ -n "$seg" ] || continue
-    grep -qE 'git( -C [^ ]+)? worktree (add|remove|prune)' <<< "$seg" || continue
+    grep -qE 'git([[:space:]]+-C[[:space:]]+[^[:space:]]+)*[[:space:]]+worktree[[:space:]]+(add|remove|prune)' <<< "$seg" || continue
     handle_segment "$seg" "$cwd" "$sid"
   done <<< "$(printf '%s\n' "$cmd" | awk '{ gsub(/&&|[|][|]|;/, "\n"); print }')"
   return 0
@@ -399,7 +475,9 @@ note() {
   command -v jq >/dev/null 2>&1 || return 0
   local event="${1:-}" path="${2:-}" branch="${3:-}" root expect
   case "$event" in created) expect=1 ;; removed) expect=0 ;; *) return 0 ;; esac
-  case "$path" in /*) ;; *) return 0 ;; esac
+  # A relative path is refused, NOT silently: one line to stderr (never stdout —
+  # a hook envelope is built from stdout), nothing appended, still exit 0.
+  case "$path" in /*) ;; *) printf 'worktree-audit: note needs an absolute path (got '"'"'%s'"'"')\n' "$path" >&2; return 0 ;; esac
   path="$(abs_path "/" "$path")"
   root="$(log_root "$PWD")"
   plugin_present "$root" || return 0

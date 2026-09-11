@@ -255,7 +255,7 @@ orphaned_worktrees_block() {
     body="${body}- ${path} (branch: ${branch:--}, created: ${ts:--}, session: ${sid:--})"$'\n'
   done <<< "$rows"
   [ -n "$body" ] || return 0
-  printf '### Orphaned worktrees (advisory)\n%sInspect with \`git worktree list\`; remove by hand with \`git worktree remove <path>\`, or keep one and stop this advisory with the plugin'"'"'s \`scripts/worktree-audit.sh note removed <path>\` run from this repo — nothing here removes anything.' "$body"
+  printf '### Orphaned worktrees (advisory)\n%sInspect with \`git worktree list\`; remove by hand with \`git worktree remove <path>\`, or keep one and stop this advisory with the plugin'"'"'s \`scripts/worktree-audit.sh note removed <abs-path>\` run from this repo — nothing here removes anything.' "$body"
   return 0
 }
 

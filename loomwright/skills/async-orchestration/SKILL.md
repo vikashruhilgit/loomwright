@@ -575,7 +575,7 @@ Before completing async orchestration:
    git worktree remove ../{project}-{subtask_id}
    git branch -d feature/{subtask_id}
    ```
-   Cleanup is verifiable (v15.66.0): the `PostToolUse (Bash)` observer records both the literal `../{project}-{subtask_id}` add above and this remove (a path token left unexpanded — `$(basename $(pwd))` — is recovered through the branch argument; it is gated on `.supervisor/` existing, which it always does here), and `bash scripts/worktree-audit.sh report` (plugin-relative, read-only) lists any sibling recorded as created that git still shows — it reports, never removes.
+   Cleanup is verifiable (v15.66.0): the `PostToolUse (Bash)` observer records both the literal `../{project}-{subtask_id}` add above and this remove (a path token left unexpanded — `$(basename $(pwd))` — is recovered through the branch argument only when the resulting worktree's path ends with the literal suffix after the `$(…)`, so a failed add never pairs with a foreign worktree; it is gated on `.supervisor/` existing, which it always does here), and `bash scripts/worktree-audit.sh report` (plugin-relative, read-only) lists any sibling recorded as created that git still shows — it reports, never removes.
 
 5. **Create commits** (inline, following `skills/commit/SKILL.md`):
    - Stage all changes

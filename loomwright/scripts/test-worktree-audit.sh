@@ -13,11 +13,17 @@
 # Covers AC-1 … AC-10 of the v15.66.0 brief plus its Post-PASS notes (the
 # `removed`/`confirmed:false` fold rule, the 1-byte defect pin, the AC-7 live
 # sibling control) and the review-iteration additions: the branch-keyed
-# fallback for an unexpanded path token (`$(basename $(pwd))`, whitespace inside
-# quotes — exact `refs/heads/<branch>` match, no fallback for a literal absent
-# path), the `.supervisor/` population gate (no line, no directory created in a
-# repo the plugin never ran in), the `note removed` direct dismissal, and one
-# gated mutant for each of the three.
+# fallback for an unexpanded path expression (`$(basename $(pwd))` — exact
+# `refs/heads/<branch>` match, no fallback for a literal absent path, and the
+# TAIL GUARD: a hit is accepted only when its porcelain path ends with the
+# expression's literal tail, so a failed add never pairs with the foreign
+# worktree that holds its branch; `branch` is null when the expression stays
+# unresolved and no -b/-B was given), the tokenizer's re-join of a quoted path
+# with whitespace (literal, resolved_by path) and of chained `-C`, the
+# `.supervisor/` population gate (no line, no directory created in a repo the
+# plugin never ran in), the `note removed` direct dismissal and the out-loud
+# stderr refusal of a relative `note` path, and one gated mutant for each
+# mechanism (AC-10 (b)–(h)).
 
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -203,6 +209,19 @@ r="$(new_repo)"; parent="$(dirname "$r")"
 [ "$(jq -r '.branch' "$(log_of "$r")" | tr '\n' ' ')" = "feature/v1 feature/v2 " ] && ok "AC-3 variant branches from -b" || no "AC-3 variant branches wrong"
 [ "$(jq -r '.confirmed' "$(log_of "$r")" | sort -u)" = "true" ] && ok "AC-3 variant both confirmed" || no "AC-3 variant confirmed != true"
 [ "$(jq -r '.resolved_by' "$(log_of "$r")" | sort -u)" = "path" ] && ok "AC-3 variant: a literal path is resolved_by path (no fallback)" || no "AC-3 variant resolved_by: $(jq -r '.resolved_by' "$(log_of "$r")" | tr '\n' ' ')"
+# repeated -C, per git: each subsequent RELATIVE -C resolves against the
+# preceding one (`git -C <parent-basename> -C repo` from the GRANDPARENT lands
+# in <parent>/repo). Runs of spaces / a tab between tokens are accepted too.
+r="$(new_repo)"; parent="$(dirname "$r")"; gp="$(dirname "$parent")"; pb="$(basename "$parent")"
+cc_cmd="$(printf 'git  -C %s\t-C repo worktree add -b feature/cc ../repo-cc' "$pb")"
+( cd "$gp" && eval "$cc_cmd" ) >/dev/null 2>&1
+( cd "$gp" && payload "$cc_cmd" "$gp" | bash "$AUDIT" record ); rc=$?
+l="$(last_line "$r")"
+[ "$rc" -eq 0 ] && [ "$(log_lines "$r")" = "1" ] && ok "AC-3 chained -C: the line lands under <parent>/repo's log root, not the grandparent's" || no "AC-3 chained -C: rc=$rc lines=$(log_lines "$r") gp-log=$( [ -f "$gp/$LOG_REL" ] && echo present || echo absent )"
+[ "$(field "$l" '.path')" = "$parent/repo-cc" ] && [ "$(field "$l" '.confirmed')" = "true" ] && ok "AC-3 chained -C: ../repo-cc resolves against the CHAINED base ($parent), confirmed true" || no "AC-3 chained -C line: $l"
+PREFILTER='git([[:space:]]+-C[[:space:]]+[^[:space:]]+)*[[:space:]]+worktree[[:space:]]+(add|remove|prune)'
+[ "$(grep -cF -- "grep -qE '$PREFILTER'" "$AUDIT")" = "2" ] \
+  && ok "AC-3 chained -C: BOTH pre-filter regexes carry the repeatable-(-C) group (comment and regex agree)" || no "AC-3 chained -C: pre-filter regex count: $(grep -cF -- "grep -qE '$PREFILTER'" "$AUDIT")"
 
 # ============================================================================
 echo "== AC-3f: branch-keyed fallback for a path token the shell would have expanded =="
@@ -219,18 +238,66 @@ r="$(new_repo)"; out="$(ac3f "$AUDIT" "$r")"; l="$(last_line "$r")"
 [ "$(field "$l" '.confirmed')" = "true" ] && [ "$(field "$l" '.resolved_by')" = "branch" ] && [ "$(field "$l" '.branch')" = "feature/BD-XXa" ] \
   && ok "AC-3f confirmed:true, resolved_by:branch, branch feature/BD-XXa" || no "AC-3f line: $l"
 [ "$(rows "$out")" = "1" ] && printf '%s' "$out" | grep -q "^orphan	$(dirname "$r")/repo-BD-XXa	" && ok "AC-3f report lists the real worktree as an orphan" || no "AC-3f report: $out"
-# whitespace inside quotes: `"../repo sp"` tokenizes to `"../repo` + `sp"`
+# whitespace inside quotes: `"../repo sp"` whitespace-splits to `"../repo` +
+# `sp"`; the tokenizer RE-JOINS the expression while a quote is open, so the
+# path is literal and needs NO fallback (resolved_by path).
 r="$(new_repo)"
 run_record "$AUDIT" "$r" 'git worktree add "../repo sp" -b feature/sp'
 l="$(last_line "$r")"
-[ "$(field "$l" '.path')" = "$(dirname "$r")/repo sp" ] && [ "$(field "$l" '.resolved_by')" = "branch" ] && [ "$(field "$l" '.confirmed')" = "true" ] \
-  && ok "AC-3f a quoted path with whitespace is recovered via -b (resolved_by branch)" || no "AC-3f whitespace path: $l"
-# exactness: feature/sp AND feature/sp-2 both live — each add pairs with ITS OWN worktree
-run_record "$AUDIT" "$r" 'git worktree add "../repo sp2" -b feature/sp-2'
+[ "$(field "$l" '.path')" = "$(dirname "$r")/repo sp" ] && [ "$(field "$l" '.resolved_by')" = "path" ] && [ "$(field "$l" '.confirmed')" = "true" ] \
+  && ok "AC-3f a quoted path with whitespace is re-joined across tokens and resolved literally (resolved_by path)" || no "AC-3f whitespace path: $l"
+run_record "$AUDIT" "$r" 'git worktree remove "../repo sp"'
+l="$(last_line "$r")"; out="$(run_report "$AUDIT" "$r")"
+[ "$(field "$l" '.event')" = "removed" ] && [ "$(field "$l" '.path')" = "$(dirname "$r")/repo sp" ] && [ "$(rows "$out")" = "0" ] \
+  && ok "AC-3f the remove arm re-joins the same quoted path ⇒ the candidate is cleared" || no "AC-3f quoted remove: $l / $out"
+# exactness on the FALLBACK: feature/sp AND feature/sp-2 both live, both added
+# through an unexpanded expression — each add pairs with ITS OWN worktree
+r="$(new_repo)"
+run_record "$AUDIT" "$r" 'git worktree add ../$(basename $(pwd))-sp2 -b feature/sp-2'
+run_record "$AUDIT" "$r" 'git worktree add ../$(basename $(pwd))-sp -b feature/sp'
 l="$(last_line "$r")"
-[ "$(field "$l" '.path')" = "$(dirname "$r")/repo sp2" ] && [ "$(field "$l" '.branch')" = "feature/sp-2" ] \
-  && ok "AC-3f the fallback matches the WHOLE refs/heads line (feature/sp-2 does not pair with feature/sp's worktree)" || no "AC-3f prefix pairing: $l"
-[ "$(jq -r '.path' "$(log_of "$r")" | sort -u | wc -l | tr -d ' ')" = "2" ] && ok "AC-3f two distinct paths recorded for two prefix-sharing branches" || no "AC-3f paths collapsed: $(jq -r '.path' "$(log_of "$r")" | tr '\n' ' ')"
+[ "$(field "$l" '.path')" = "$(dirname "$r")/repo-sp" ] && [ "$(field "$l" '.branch')" = "feature/sp" ] && [ "$(field "$l" '.resolved_by')" = "branch" ] \
+  && ok "AC-3f the fallback matches the WHOLE refs/heads line (feature/sp does not pair with feature/sp-2's worktree)" || no "AC-3f prefix pairing: $l"
+[ "$(jq -r '.path' "$(log_of "$r")" | sort -u | wc -l | tr -d ' ')" = "2" ] && [ "$(jq -r '.resolved_by' "$(log_of "$r")" | sort -u)" = "branch" ] \
+  && ok "AC-3f two distinct paths recorded for two prefix-sharing branches, both via the fallback" || no "AC-3f paths collapsed: $(jq -r '.path' "$(log_of "$r")" | tr '\n' ' ')"
+# THE OVER-REPORT PROBE (review iteration 2): feature/held is already checked
+# out at ../repo-foreign, so `git worktree add ../$(basename $(pwd))-mine
+# feature/held` FAILS. The branch lookup DOES hit repo-foreign — the tail guard
+# must reject it, because `repo-foreign` does not end with the literal `-mine`.
+ac3f_guard() {  # <audit> <repo> → report; the log holds 2 lines (foreign add + failed add)
+  run_record "$1" "$2" 'git worktree add -b feature/held ../repo-foreign'
+  run_record "$1" "$2" 'git worktree add ../$(basename $(pwd))-mine feature/held'
+  run_report "$1" "$2"
+}
+ac3f_guard_ok() {  # <audit> <repo> → report; the SAME shape with the add SUCCEEDING
+  run_record "$1" "$2" 'git branch feature/ok && git worktree add ../$(basename $(pwd))-mine feature/ok'
+  run_report "$1" "$2"
+}
+r="$(new_repo)"; out="$(ac3f_guard "$AUDIT" "$r")"; l="$(last_line "$r")"
+[ "$(log_lines "$r")" = "2" ] && ok "AC-3f guard: the foreign add and the failed add both record (2 lines)" || no "AC-3f guard lines: $(log_lines "$r")"
+[ "$(field "$l" '.confirmed')" = "false" ] && [ "$(field "$l" '.resolved_by')" = "path" ] && [ "$(field "$l" '.path')" = "$(dirname "$r")/\$(basename \$(pwd))-mine" ] \
+  && ok "AC-3f guard: the failed add stays confirmed:false / resolved_by:path with the expression as written" || no "AC-3f guard line: $l"
+[ "$(grep -c '"confirmed":true' "$(log_of "$r")")" = "1" ] && ! grep -F "$(dirname "$r")/repo-foreign" "$(log_of "$r")" | grep -q '"resolved_by":"branch"' \
+  && ok "AC-3f guard: no confirmed:true / resolved_by:branch line names repo-foreign (the only confirmed line is its own literal add)" || no "AC-3f guard: repo-foreign was paired: $(cat "$(log_of "$r")")"
+[ "$(field "$l" '.branch')" = "null" ] && ok "AC-3f guard: the unresolved expression records branch null (no -b, positional not trusted)" || no "AC-3f guard branch: $l"
+[ "$(rows "$out")" = "1" ] && printf '%s' "$out" | grep -q "repo-foreign" && ok "AC-3f guard: report lists repo-foreign ONCE — from its own literal add, never from the failed add" || no "AC-3f guard report: $out"
+[ "$(printf '%s' "$out" | grep -c 'mine')" = "0" ] && ok "AC-3f guard: report prints 0 rows for the failed add's path" || no "AC-3f guard: a -mine row leaked: $out"
+r="$(new_repo)"; out="$(ac3f_guard_ok "$AUDIT" "$r")"; l="$(last_line "$r")"
+[ "$(field "$l" '.path')" = "$(dirname "$r")/repo-mine" ] && [ "$(field "$l" '.confirmed')" = "true" ] && [ "$(field "$l" '.resolved_by')" = "branch" ] && [ "$(field "$l" '.branch')" = "feature/ok" ] \
+  && ok "AC-3f guard POSITIVE CONTROL: the same shape with the add succeeding resolves via the fallback (repo-mine ends with -mine)" || no "AC-3f guard positive control: $l"
+[ "$(rows "$out")" = "1" ] && printf '%s' "$out" | grep -q "repo-mine" && ok "AC-3f guard positive control: report lists repo-mine" || no "AC-3f guard positive control report: $out"
+# branch is null when the expression is unexpanded and the fallback misses
+# (--detach + a commit-ish positional: nothing branch-shaped to trust)
+r="$(new_repo)"
+run_record "$AUDIT" "$r" 'git worktree add --detach ../$(basename $(pwd))-review-abc HEAD'
+l="$(last_line "$r")"
+[ "$(field "$l" '.branch')" = "null" ] && [ "$(field "$l" '.confirmed')" = "false" ] && [ "$(field "$l" '.resolved_by')" = "path" ] \
+  && ok "AC-3f --detach + unexpanded path + fallback miss ⇒ branch null (no shell fragment, no SHA recorded as a branch)" || no "AC-3f detach branch: $l"
+grep -q '"branch":"\$(pwd))' "$(log_of "$r")" && no "AC-3f a shell fragment reached the branch field" || ok "AC-3f no shell fragment in any branch field"
+run_record "$AUDIT" "$r" 'git worktree add -b feature/explicit ../$(basename $(pwd))'
+l="$(last_line "$r")"
+[ "$(field "$l" '.branch')" = "feature/explicit" ] && [ "$(field "$l" '.confirmed')" = "false" ] \
+  && ok "AC-3f an explicit -b survives an unresolved expression (empty tail ⇒ no hit accepted; branch kept from -b)" || no "AC-3f -b survival: $l"
 # a LITERAL path git does not list (the add FAILED: the branch is checked out
 # elsewhere) is recorded as written with confirmed:false — NO fallback, or a
 # failed add would pair with the pre-existing worktree and over-report.
@@ -391,8 +458,16 @@ record_only "$AUDIT" "$r" "git status && ls ../repo-worktree"
 # (vii) note with missing / relative path
 ( cd "$r" && bash "$AUDIT" note created ); rc=$?
 [ "$rc" -eq 0 ] && [ "$(log_lines "$r")" = "0" ] && ok "AC-8(vii) note with a missing path ⇒ nothing, rc 0" || no "AC-8(vii) missing: rc=$rc"
-( cd "$r" && bash "$AUDIT" note created ../repo-rel ); rc=$?
-[ "$rc" -eq 0 ] && [ "$(log_lines "$r")" = "0" ] && ok "AC-8(vii) note with a relative path ⇒ nothing, rc 0" || no "AC-8(vii) relative: rc=$rc"
+# a relative path is refused OUT LOUD: one exact line on stderr, NOTHING on
+# stdout (a hook envelope is built from stdout), nothing appended, still rc 0.
+n_out="$ROOT/note.out"; n_err="$ROOT/note.err"
+( cd "$r" && bash "$AUDIT" note created ../repo-rel >"$n_out" 2>"$n_err" ); rc=$?
+[ "$rc" -eq 0 ] && [ "$(log_lines "$r")" = "0" ] && ok "AC-8(vii) note with a relative path ⇒ nothing appended, rc 0" || no "AC-8(vii) relative: rc=$rc lines=$(log_lines "$r")"
+[ "$(cat "$n_err")" = "worktree-audit: note needs an absolute path (got '../repo-rel')" ] && ok "AC-8(vii) the refusal is ONE exact line on stderr" || no "AC-8(vii) stderr: [$(cat "$n_err")]"
+[ ! -s "$n_out" ] && ok "AC-8(vii) stdout stays EMPTY on the refusal" || no "AC-8(vii) stdout leaked: [$(cat "$n_out")]"
+( cd "$r" && bash "$AUDIT" note removed "$(dirname "$r")/repo-abs-nonexistent" >"$n_out" 2>"$n_err" ); rc=$?
+[ "$rc" -eq 0 ] && [ ! -s "$n_err" ] && [ "$(log_lines "$r")" = "1" ] && ok "AC-8(vii) control: an absolute path appends and prints nothing on stderr" || no "AC-8(vii) abs control: rc=$rc err=[$(cat "$n_err")] lines=$(log_lines "$r")"
+: > "$(log_of "$r")"
 ( cd "$r" && bash "$AUDIT" note exploded /abs/path ); rc=$?
 [ "$rc" -eq 0 ] && [ "$(log_lines "$r")" = "0" ] && ok "AC-8(vii) note with an unknown event ⇒ nothing, rc 0" || no "AC-8(vii) event: rc=$rc"
 # log root walk accepts a `.git` FILE (linked worktree) — record from inside a worktree
@@ -509,6 +584,19 @@ if gate_mutant "$AUDIT" "$MG" "AC-10(g)"; then
   [ "$(rows "$out")" = "1" ] && ok "AC-10(g) mutant keeps listing a dismissed worktree ⇒ AC-6(d) red" || no "AC-10(g) AC-6(d) stayed green: $out"
   r="$(new_repo)"; out="$(ac6c "$MG" "$r")"
   [ "$(rows "$out")" = "1" ] && ok "AC-10(g) AC-6(c) stays green on the mutant (an observed failed remove is still not a dismissal)" || no "AC-10(g) AC-6(c) went red"
+fi
+# (h) the fallback's tail guard is dropped (any branch hit is accepted)
+d="$(mktmp)"; copy_with_siblings "$d"; MH="$d/worktree-audit.sh"
+sed -i.bak 's/case "\$LOOKUP_PATH" in \*"\$tail")/case "$LOOKUP_PATH" in *)/' "$MH" && rm -f "$MH.bak"
+if gate_mutant "$AUDIT" "$MH" "AC-10(h)"; then
+  r="$(new_repo)"; out="$(ac3f_guard "$MH" "$r")"; l="$(last_line "$r")"
+  [ "$(field "$l" '.path')" = "$(dirname "$r")/repo-foreign" ] && [ "$(field "$l" '.confirmed')" = "true" ] && [ "$(field "$l" '.resolved_by')" = "branch" ] \
+    && ok "AC-10(h) mutant pairs the FAILED add with repo-foreign (confirmed:true, resolved_by:branch) ⇒ AC-3f guard red" || no "AC-10(h) AC-3f guard stayed green: $l"
+  r="$(new_repo)"; out="$(ac3f_guard_ok "$MH" "$r")"; l="$(last_line "$r")"
+  [ "$(field "$l" '.path')" = "$(dirname "$r")/repo-mine" ] && [ "$(field "$l" '.confirmed')" = "true" ] && [ "$(rows "$out")" = "1" ] \
+    && ok "AC-10(h) the success control stays GREEN on the mutant (the red is the guard's alone)" || no "AC-10(h) success control went red: $l / $out"
+  r="$(new_repo)"; out="$(ac3f "$MH" "$r")"
+  [ "$(rows "$out")" = "1" ] && ok "AC-10(h) AC-3f's documented BD-XXa shape stays green on the mutant" || no "AC-10(h) BD-XXa went red"
 fi
 
 echo "RESULT: $pass passed, $fail failed"
