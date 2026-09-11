@@ -10,6 +10,11 @@
 #     sentinel), which is exactly why only an executed assertion catches it.
 #   * session-resume.sh Section 1 asserting "Supervisor was mid-run" for a brief
 #     whose work already shipped (cases 12-14).
+#   * `--evidence <requirement_path>=<pr_url>` — engine-supplied merge evidence
+#     (cases 15-25): match, SCOPED repair against a live stranded_closed decoy,
+#     lexical validation with no fallback to the sweep, the no-evidence byte
+#     baseline against origin/main, idempotency, ambiguity, the offline
+#     invariant under a self-reporting gh stub, and two reconciler mutants.
 #
 # Runs everything inside ISOLATED temp dirs so the real .supervisor/ is never
 # touched. Exit 0 = all pass, 1 = any failure (auto-registered by ci.yml's
@@ -362,6 +367,192 @@ c="$(echo '{"source":"resume"}' | (cd "$r" && bash "$bin/session-resume.sh" 2>/d
      | python3 -c 'import sys,json;print(json.load(sys.stdin)["hookSpecificOutput"]["additionalContext"])' 2>/dev/null)"
 case "$c" in *"reconciler unavailable"*) ok "14 absent reconciler ⇒ neutral fallback heading" ;; *) no "14 fallback arm not reached (case would be vacuous)" ;; esac
 case "$c" in *"Supervisor was mid-run"*) no "14b fallback regressed to the old claim" ;; *) ok "14b (control) fallback never asserts mid-run" ;; esac
+
+# --- 15-25. --evidence: engine-supplied merge evidence (v15.65.0) -----------
+# The `/automate` engine hands the reconciler the merge it witnessed as
+# `--evidence <requirement_path>=<pr_url>`. These cases pin: the match (15), the
+# SCOPING of --repair to the matched key with a live stranded_closed decoy that
+# an unscoped --repair WOULD move (16, 17, 18), the ## Outcome fields (16c-16h),
+# lexical validation + no-fallback-to-the-sweep (17), the no-evidence byte
+# baseline against origin/main (18), no-match / idempotency / unknown-alongside
+# / ambiguity (19-22), --help (23), the offline invariant with a gh stub that
+# would prove itself called (24), and the two reconciler mutants (25).
+U="https://github.com/o/r/pull/7"
+K=".supervisor/requirements/r/03.md"
+# ev_repo — the AC-3/AC-10 fixture: enq.md (pointer K, requirement ABSENT — the
+# worktree shape) + other.md (pointer r/09.md, requirement stamped done ⇒
+# stranded_closed, the DECOY an unscoped --repair would move).
+ev_repo() {
+  local r; r="$(new_repo "$K")"
+  mv "$r/.supervisor/jobs/in-progress/brief.md" "$r/.supervisor/jobs/in-progress/enq.md"
+  printf '# other\n\n- **Source requirement:** .supervisor/requirements/r/09.md\n' \
+    > "$r/.supervisor/jobs/in-progress/other.md"
+  mkdir -p "$r/.supervisor/requirements/r"
+  printf '# r\n\n## Status: done\n' > "$r/.supervisor/requirements/r/09.md"
+  printf '%s' "$r"
+}
+
+# 15. evidence match ⇒ stranded_merged carrying the engine wording and (url).
+r="$(ev_repo)"
+out="$(cd "$r" && bash "$RECON" --porcelain --evidence "$K=$U" 2>/dev/null | grep 'enq.md')"
+case "$out" in stranded_merged*"automate engine supplied merge evidence for $K ($U)"*) ok "15 evidence match ⇒ stranded_merged with engine wording + (url)" ;; *) no "15 got: $out" ;; esac
+
+# 16. AC-3 (reconciler level): --repair --evidence moves ONLY enq.md.
+r="$(ev_repo)"
+other_before="$(mktmp)/other.md"; cp "$r/.supervisor/jobs/in-progress/other.md" "$other_before"
+out="$(cd "$r" && bash "$RECON" --repair --porcelain --evidence "$K=$U" 2>/dev/null)"
+if [ -f "$r/.supervisor/jobs/done/enq.md" ] && [ ! -e "$r/.supervisor/jobs/in-progress/enq.md" ]; then ok "16 enqueued brief moved to done/"; else no "16 enqueued brief not moved: $out"; fi
+if [ -f "$r/.supervisor/jobs/in-progress/other.md" ] && cmp -s "$other_before" "$r/.supervisor/jobs/in-progress/other.md"; then ok "16b decoy (stranded_closed) untouched under scoped --repair"; else no "16b decoy moved or changed"; fi
+case "$out" in *"repaired	.supervisor/jobs/in-progress/enq.md	automate engine supplied"*) ok "16b2 porcelain reports the repaired row with the engine evidence" ;; *) no "16b2 no repaired row: $out" ;; esac
+D="$r/.supervisor/jobs/done/enq.md"
+grep -qF -- '- **Status:** completed' "$D" && ok "16c Outcome Status completed (requirement absent ⇒ fallback)" || no "16c Status line missing"
+grep -qF -- "- **PR:** $U" "$D" && ok "16d Outcome PR line carries the url" || no "16d PR line wrong: $(grep -F 'PR:' "$D")"
+grep -qF -- '- **Reconciled:** lifecycle move completed by reconcile-jobs.sh' "$D" && ok "16e Outcome Reconciled line present" || no "16e Reconciled line missing"
+grep -qF -- "- **Evidence:** automate engine supplied merge evidence for $K ($U) — " "$D" && ok "16f Outcome Evidence line records the engine claim" || no "16f Evidence line wrong"
+grep -qF -- '- **Caveat:**' "$D" && ok "16g Outcome Caveat line present" || no "16g Caveat line missing"
+# 16h. completed_with_escalation when the requirement RESOLVES and is stamped so.
+r="$(ev_repo)"
+printf '# r\n\n## Status: done_with_escalation\n' > "$r/.supervisor/requirements/r/03.md"
+(cd "$r" && bash "$RECON" --repair --porcelain --evidence "$K=$U" >/dev/null 2>&1)
+grep -qF -- '- **Status:** completed_with_escalation' "$r/.supervisor/jobs/done/enq.md" 2>/dev/null \
+  && ok "16h escalated requirement stamp ⇒ completed_with_escalation" || no "16h escalation not mirrored"
+
+# 17. AC-10: every malformed value is IGNORED, and a rejected list never falls
+#     back to the unscoped sweep (the decoy stays).
+r0="$(ev_repo)"
+base_row="$(cd "$r0" && bash "$RECON" --porcelain 2>/dev/null | grep 'enq.md')"
+for v in "/abs/req.md=$U" ".supervisor/requirements/../x.md=$U" "docs/x.md=$U" \
+         "$K=not-a-url" "$K=https://github.com/o/r/issues/7"; do
+  r="$(ev_repo)"; ob="$(mktmp)/o.md"; cp "$r/.supervisor/jobs/in-progress/other.md" "$ob"
+  err="$(mktmp)/err"
+  out="$(cd "$r" && bash "$RECON" --repair --porcelain --evidence "$v" 2>"$err")"; rc=$?
+  row="$(printf '%s\n' "$out" | grep 'enq.md')"
+  if [ "$rc" -eq 0 ] && grep -q 'ignoring --evidence' "$err" && [ "$row" = "$base_row" ] \
+     && [ -f "$r/.supervisor/jobs/in-progress/enq.md" ] \
+     && [ -f "$r/.supervisor/jobs/in-progress/other.md" ] && cmp -s "$ob" "$r/.supervisor/jobs/in-progress/other.md"; then
+    ok "17 rejected '$v': stderr ignore line, row unchanged, nothing moved (sweep did not fire)"
+  else
+    no "17 '$v' rc=$rc err='$(cat "$err")' row='$row' enq=$([ -f "$r/.supervisor/jobs/in-progress/enq.md" ] && echo in || echo gone) other=$([ -f "$r/.supervisor/jobs/in-progress/other.md" ] && echo in || echo gone)"
+  fi
+done
+# 17f. (control) the decoy is LIVE: a bare --repair DOES move it.
+r="$(ev_repo)"
+(cd "$r" && bash "$RECON" --repair >/dev/null 2>&1)
+if [ -f "$r/.supervisor/jobs/done/other.md" ]; then ok "17f (control) bare --repair moves the stranded_closed decoy"; else no "17f decoy is not live — 16b/17 would be vacuous"; fi
+# 17g. an empty rejected list scopes too: --evidence with a bad value + --repair
+#      leaves even a run-file stranded_merged brief in place.
+r="$(new_repo ".supervisor/requirements/req.md")"
+echo "# req" > "$r/.supervisor/requirements/req.md"
+printf '## Current\n- item: .supervisor/requirements/req.md | status: merged | pr: https://github.com/o/r/pull/160 | branch: b\n' > "$r/.supervisor/automate/run.md"
+(cd "$r" && bash "$RECON" --repair --evidence "docs/x.md=$U" >/dev/null 2>&1)
+[ -f "$r/.supervisor/jobs/in-progress/brief.md" ] && ok "17g run-file stranded_merged brief NOT moved when evidence mode is on" || no "17g run-file brief moved under a rejected evidence list"
+
+# 18. AC-4 baseline: no --evidence ⇒ porcelain byte-identical to origin/main's
+#     reconciler on a 3-brief fixture (run-file merged / stamped / unknown).
+r="$(new_repo ".supervisor/requirements/m.md")"
+mv "$r/.supervisor/jobs/in-progress/brief.md" "$r/.supervisor/jobs/in-progress/a-merged.md"
+echo "# m" > "$r/.supervisor/requirements/m.md"
+printf '## Current\n- item: .supervisor/requirements/m.md | status: merged | pr: https://github.com/o/r/pull/1 | branch: b\n' > "$r/.supervisor/automate/run.md"
+printf -- '- **Source requirement:** .supervisor/requirements/s.md\n' > "$r/.supervisor/jobs/in-progress/b-stamped.md"
+printf '# s\n\n## Status: done\n' > "$r/.supervisor/requirements/s.md"
+printf -- '- **Source requirement:** .supervisor/requirements/u.md\n' > "$r/.supervisor/jobs/in-progress/c-unknown.md"
+bdir="$(mktmp)"; gerr="$(mktmp)/gerr"; now=""
+if git -C "$SCRIPT_DIR/../.." show origin/main:loomwright/scripts/reconcile-jobs.sh > "$bdir/reconcile-jobs.sh" 2>"$gerr"; then
+  cp "$SCRIPT_DIR/brief-pointer.sh" "$bdir/"
+  now="$(cd "$r" && bash "$RECON" --porcelain 2>/dev/null)"
+  then_="$(cd "$r" && bash "$bdir/reconcile-jobs.sh" --porcelain 2>/dev/null)"
+  if [ -n "$now" ] && [ -n "$then_" ]; then
+    if [ "$now" = "$then_" ]; then ok "18 no --evidence ⇒ porcelain byte-identical to origin/main (3-brief fixture)"; else no "18 baseline drift:\n$now\n--- vs ---\n$then_"; fi
+  else
+    no "18 an arm produced no rows (now=${#now} then=${#then_} bytes) — cmp would be vacuous"
+  fi
+else
+  echo "skipped: origin/main unavailable ($(tr '\n' ' ' < "$gerr"))"
+fi
+case "$now" in *"a-merged.md"*"b-stamped.md"*"c-unknown.md"*) ok "18b (control) the 3 rows are present" ;; *) no "18b fixture rows missing: $now" ;; esac
+
+# 19. evidence naming an item with NO matching brief ⇒ no move, exit 0.
+r="$(ev_repo)"
+out="$(cd "$r" && bash "$RECON" --repair --porcelain --evidence ".supervisor/requirements/r/99.md=$U" 2>/dev/null)"; rc=$?
+if [ "$rc" -eq 0 ] && [ -f "$r/.supervisor/jobs/in-progress/enq.md" ] && [ -f "$r/.supervisor/jobs/in-progress/other.md" ]; then ok "19 unmatched evidence ⇒ nothing moved, exit 0"; else no "19 rc=$rc out=$out"; fi
+
+# 20. AC-8 idempotent: a second identical run ⇒ no second ## Outcome, dest unchanged.
+r="$(ev_repo)"
+(cd "$r" && bash "$RECON" --repair --porcelain --evidence "$K=$U" >/dev/null 2>&1)
+snap="$(mktmp)/enq.md"; cp "$r/.supervisor/jobs/done/enq.md" "$snap"
+(cd "$r" && bash "$RECON" --repair --porcelain --evidence "$K=$U" >/dev/null 2>&1); rc=$?
+n_out="$(grep -c '^## Outcome' "$r/.supervisor/jobs/done/enq.md")"
+if [ "$rc" -eq 0 ] && cmp -s "$snap" "$r/.supervisor/jobs/done/enq.md" && [ "$n_out" = "1" ] && [ ! -e "$r/.supervisor/jobs/in-progress/enq.md" ]; then ok "20 second identical run: dest cmp-identical, one ## Outcome, source absent, rc 0"; else no "20 idempotency broken (rc=$rc outcomes=$n_out)"; fi
+
+# 21. AC-7: an unknown brief alongside stays unknown and unmoved.
+r="$(ev_repo)"
+printf -- '- **Source requirement:** .supervisor/requirements/r/05.md\n' > "$r/.supervisor/jobs/in-progress/u.md"
+out="$(cd "$r" && bash "$RECON" --repair --porcelain --evidence "$K=$U" 2>/dev/null | grep 'u.md')"
+case "$out" in unknown*) [ -f "$r/.supervisor/jobs/in-progress/u.md" ] && ok "21 unknown brief alongside: still unknown, still unmoved" || no "21 u.md moved" ;; *) no "21 u.md row not unknown: $out" ;; esac
+
+# 22. AC-5(viii) twin: two briefs with the SAME key ⇒ both unknown/ambiguous, nothing moved.
+r="$(ev_repo)"
+printf -- '- **Source requirement:** %s\n' "$K" > "$r/.supervisor/jobs/in-progress/enq2.md"
+out="$(cd "$r" && bash "$RECON" --repair --porcelain --evidence "$K=$U" 2>/dev/null)"
+n_amb="$(printf '%s\n' "$out" | grep -c "^unknown	.*	ambiguous: 2 in-progress briefs point at $K")"
+if [ "$n_amb" = "2" ] && [ -f "$r/.supervisor/jobs/in-progress/enq.md" ] && [ -f "$r/.supervisor/jobs/in-progress/enq2.md" ] && [ ! -e "$r/.supervisor/jobs/done/enq.md" ]; then ok "22 ambiguous key ⇒ two 'ambiguous: 2 …' unknown rows, nothing moved"; else no "22 ambiguity gate wrong (rows=$n_amb): $out"; fi
+
+# 23. --help shows the whole header including the --evidence USAGE line.
+h="$(bash "$RECON" --help 2>/dev/null)"
+case "$h" in *"--evidence <requirement_path>=<pr_url>"*) ok "23 --help output contains the --evidence usage" ;; *) no "23 --help stops above USAGE" ;; esac
+
+# 24. AC-4 offline invariant: a gh on PATH that would PROVE itself called.
+r="$(ev_repo)"; gbin="$(mktmp)"
+printf '#!/usr/bin/env bash\ntouch "%s/gh-called"\nexit 99\n' "$r" > "$gbin/gh"; chmod +x "$gbin/gh"
+rows="$(cd "$r" && env -u LOOMWRIGHT_GH_BIN PATH="$gbin:$PATH" bash "$RECON" --porcelain 2>/dev/null)"
+if [ ! -e "$r/gh-called" ] && [ -n "$rows" ]; then ok "24 reconcile-jobs.sh --porcelain never calls gh (rows non-empty: it ran)"; else no "24 gh-called=$([ -e "$r/gh-called" ] && echo yes || echo no) rows=${#rows}"; fi
+for src in resume startup; do
+  rm -f "$r/gh-called"
+  hout="$(echo "{\"source\":\"$src\"}" | (cd "$r" && env -u LOOMWRIGHT_GH_BIN PATH="$gbin:$PATH" bash "$HOOK" 2>/dev/null))"
+  if [ ! -e "$r/gh-called" ] && [ -n "$hout" ]; then ok "24b session-resume.sh source=$src never calls gh"; else no "24b source=$src gh-called=$([ -e "$r/gh-called" ] && echo yes || echo no)"; fi
+done
+
+# 25. AC-9(c)/(d) reconciler mutants. Post-PASS rule: each mutant sits beside an
+#     UNMODIFIED real brief-pointer.sh (the reconciler sources it by dirname
+#     "$0"; alone, every brief classifies unknown and the red is meaningless),
+#     and an UNMUTATED copy in the same layout must FIRST keep AC-3 green.
+mut_gate() {  # mut_gate <label> <original> <mutant>
+  if [ -s "$3" ] && ! cmp -s "$2" "$3" && bash -n "$3" 2>/dev/null; then return 0; fi
+  no "$1 mutant not gated (empty, identical, or bash -n failed)"; return 1
+}
+ac3_moves_enq() {  # ac3_moves_enq <reconciler> -> sets M_ENQ (1 moved) M_OTHER (1 untouched)
+  local rr; rr="$(ev_repo)"; local ob; ob="$(mktmp)/o.md"; cp "$rr/.supervisor/jobs/in-progress/other.md" "$ob"
+  (cd "$rr" && bash "$1" --repair --porcelain --evidence "$K=$U" >/dev/null 2>&1)
+  M_ENQ=0; M_OTHER=0
+  [ -f "$rr/.supervisor/jobs/done/enq.md" ] && [ ! -e "$rr/.supervisor/jobs/in-progress/enq.md" ] && M_ENQ=1
+  [ -f "$rr/.supervisor/jobs/in-progress/other.md" ] && cmp -s "$ob" "$rr/.supervisor/jobs/in-progress/other.md" && M_OTHER=1
+}
+ac10_decoy_stays() {  # ac10_decoy_stays <reconciler> -> sets M_DECOY (1 untouched under an all-rejected list)
+  local rr; rr="$(ev_repo)"
+  (cd "$rr" && bash "$1" --repair --porcelain --evidence "docs/x.md=$U" >/dev/null 2>&1)
+  M_DECOY=0; [ -f "$rr/.supervisor/jobs/in-progress/other.md" ] && M_DECOY=1
+}
+lay="$(mktmp)"; cp "$RECON" "$lay/reconcile-jobs.sh"; cp "$SCRIPT_DIR/brief-pointer.sh" "$lay/"
+ac3_moves_enq "$lay/reconcile-jobs.sh"; ac10_decoy_stays "$lay/reconcile-jobs.sh"
+if [ "$M_ENQ" = 1 ] && [ "$M_OTHER" = 1 ] && [ "$M_DECOY" = 1 ]; then
+  ok "25 (positive gate) unmutated copy beside real brief-pointer.sh keeps AC-3 + AC-10 green"
+  # (c) evidence-match arm in classify() removed.
+  mc="$(mktmp)"; cp "$SCRIPT_DIR/brief-pointer.sh" "$mc/"
+  awk '/^  if ei="\$\(evidence_index_for "\$raw_req"\)"; then$/{skip=1} skip && /^  fi$/{skip=0; next} !skip' "$RECON" > "$mc/reconcile-jobs.sh"
+  if mut_gate "25c" "$RECON" "$mc/reconcile-jobs.sh"; then
+    ac3_moves_enq "$mc/reconcile-jobs.sh"
+    if [ "$M_ENQ" = 0 ] && [ "$M_OTHER" = 1 ]; then ok "25c (mutant) classify() arm removed ⇒ enq NOT moved (red), decoy still untouched (green)"; else no "25c mutant not discriminated (enq=$M_ENQ other=$M_OTHER)"; fi
+  fi
+  # (d) EVIDENCE_MODE=1 MOVED from the flag-parse arm into the accepted-value arm.
+  md="$(mktmp)"; cp "$SCRIPT_DIR/brief-pointer.sh" "$md/"
+  awk '$0=="      EVIDENCE_MODE=1"{next} index($0,"EV_KEYS[${#EV_KEYS[@]}]=\"$key\""){print "        EVIDENCE_MODE=1"} {print}' "$RECON" > "$md/reconcile-jobs.sh"
+  if mut_gate "25d" "$RECON" "$md/reconcile-jobs.sh"; then
+    ac3_moves_enq "$md/reconcile-jobs.sh"; ac10_decoy_stays "$md/reconcile-jobs.sh"
+    if [ "$M_ENQ" = 1 ] && [ "$M_OTHER" = 1 ] && [ "$M_DECOY" = 0 ]; then ok "25d (mutant) scoping keyed on acceptance ⇒ decoy moves under a rejected list (red), AC-3 green"; else no "25d mutant not discriminated (enq=$M_ENQ other=$M_OTHER decoy=$M_DECOY)"; fi
+  fi
+else
+  no "25 positive gate failed (enq=$M_ENQ other=$M_OTHER decoy=$M_DECOY) — mutants not run"
+fi
 
 echo "---------------------------------------------------------------------------"
 echo "test-reconcile-jobs: $pass passed, $fail failed"
