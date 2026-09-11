@@ -39,9 +39,11 @@
 #      empty-string-only changed_paths classified DEGRADED.
 #   G. brief-repair (fail-SAFE evidence-positive engine seam, v15.65.0): MERGED ⇒
 #      the sibling reconcile-jobs.sh --repair --evidence moves the brief (AC-1/2/3/8),
-#      OPEN/CLOSED ⇒ skipped with the reconciler NOT invoked (AC-6), EIGHT separate
+#      OPEN/CLOSED ⇒ skipped with the reconciler NOT invoked (AC-6), TEN separate
 #      fail-safe groups each proving run file / ## Status / gate-eval decision /
-#      merge.log / brief unchanged (AC-5), the two SKILL §6 seam pins with per-line
+#      merge.log / brief unchanged (AC-5) — incl. the reconciler-REFUSED branch
+#      (a colliding done/ file) and the missing-argument guard with gh never
+#      asked — the two SKILL §6 seam pins with per-line
 #      mutants (AC-9a), and the invocation-removed helper mutant beside real siblings
 #      behind a positive gate (AC-9b).
 
@@ -1267,7 +1269,7 @@ for st in OPEN CLOSED; do
   rm -rf "$R"
 done
 
-# G6. AC-5 fail-safe — EIGHT separate groups. Each asserts: run file cmp-identical,
+# G6. AC-5 fail-safe — TEN separate groups. Each asserts: run file cmp-identical,
 #     ## Status line unchanged, gate-eval PARK decision unchanged before/after
 #     (STRUCTURAL control: gate-eval is a pure function of ctx.json, which the helper
 #     never reads — this proves the helper touched neither ctx.json nor the stub
@@ -1340,6 +1342,27 @@ g6_prep "$R"; g_run "$R" "$H" "$GK" "$GU"
 g6_check "(viii) ambiguous" "$R" "ambiguous match (2 briefs point at $GK)" b.md b2.md
 cmp -s "$R/b.before" "$R/.supervisor/jobs/in-progress/b.md" && cmp -s "$R/b2.before" "$R/.supervisor/jobs/in-progress/b2.md" \
   && ok "G6 AC-5 (viii) both same-key briefs cmp-identical" || no "G6 AC-5 (viii) a same-key brief changed"
+rm -rf "$R"
+# (ix) RECONCILER REFUSED: the key matches (MERGED stub, one brief) but a colliding
+#      .supervisor/jobs/done/b.md already exists, so repair() refuses and the row
+#      comes back `stranded_merged` with the engine prefix + url and no `repaired`
+#      row — the helper's refused=1 branch, the one reason nothing else here hits.
+R="$(g_repo)"; g_stub "$R"
+printf '# an earlier b\n' > "$R/.supervisor/jobs/done/b.md"
+cp "$R/.supervisor/jobs/in-progress/b.md" "$R/b.before"; cp "$R/.supervisor/jobs/done/b.md" "$R/done.before"
+g6_prep "$R"; g_run "$R" "$H" "$GK" "$GU"
+g6_check "(ix) reconciler refused (done/ collision)" "$R" "reconciler refused the move" b.md
+cmp -s "$R/b.before" "$R/.supervisor/jobs/in-progress/b.md" && cmp -s "$R/done.before" "$R/.supervisor/jobs/done/b.md" \
+  && ok "G6 AC-5 (ix) in-progress brief and the colliding done/ file both cmp-identical" || no "G6 AC-5 (ix) a brief changed under a refused move"
+rm -rf "$R"
+# (x) MISSING ARGUMENT: one arg ⇒ the guard fires BEFORE the forge read. The
+#     stub dir carries NO pr-view.json, so an asked `gh pr view` surfaces as
+#     'gh output unparseable' (the stub cats nothing and exits 0 — probed, not
+#     assumed) — the missing-argument reason proves gh was never asked.
+R="$(g_repo)"; g_stub "$R"; rm -f "$R/ghstub/pr-view.json"; g6_prep "$R"
+RUN_OUT="$(cd "$R" && GH_STUB_DIR="$R/ghstub" PATH="$R/bin:$PATH" bash "$H" brief-repair "$GK" 2>/dev/null)"; RUN_RC=$?
+g6_check "(x) missing argument" "$R" "missing argument" b.md
+[ "$RUN_OUT" = "brief-repair: skipped — missing argument" ] && ok "G6 AC-5 (x) reason is the missing-argument one, not 'gh output unparseable' (gh never asked)" || no "G6 AC-5 (x) unexpected reason: $RUN_OUT"
 rm -rf "$R"
 
 # G7. AC-9(a) static seam pins on the SKILL, with per-line mutants. The assertion

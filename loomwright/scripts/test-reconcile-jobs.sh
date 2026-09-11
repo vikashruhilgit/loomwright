@@ -12,7 +12,8 @@
 #     whose work already shipped (cases 12-14).
 #   * `--evidence <requirement_path>=<pr_url>` — engine-supplied merge evidence
 #     (cases 15-25): match, SCOPED repair against a live stranded_closed decoy,
-#     lexical validation with no fallback to the sweep, the no-evidence byte
+#     lexical validation (every rejection branch, incl. a value with no `=` and
+#     a trailing flag with no value) with no fallback to the sweep, the no-evidence byte
 #     baseline against origin/main, idempotency, ambiguity, the offline
 #     invariant under a self-reporting gh stub, and two reconciler mutants.
 #
@@ -373,7 +374,8 @@ case "$c" in *"Supervisor was mid-run"*) no "14b fallback regressed to the old c
 # `--evidence <requirement_path>=<pr_url>`. These cases pin: the match (15), the
 # SCOPING of --repair to the matched key with a live stranded_closed decoy that
 # an unscoped --repair WOULD move (16, 17, 18), the ## Outcome fields (16c-16h),
-# lexical validation + no-fallback-to-the-sweep (17), the no-evidence byte
+# lexical validation + no-fallback-to-the-sweep (17, incl. the no-`=` value and
+# the trailing valueless flag in 17e), the no-evidence byte
 # baseline against origin/main (18), no-match / idempotency / unknown-alongside
 # / ambiguity (19-22), --help (23), the offline invariant with a gh stub that
 # would prove itself called (24), and the two reconciler mutants (25).
@@ -422,7 +424,7 @@ grep -qF -- '- **Status:** completed_with_escalation' "$r/.supervisor/jobs/done/
 r0="$(ev_repo)"
 base_row="$(cd "$r0" && bash "$RECON" --porcelain 2>/dev/null | grep 'enq.md')"
 for v in "/abs/req.md=$U" ".supervisor/requirements/../x.md=$U" "docs/x.md=$U" \
-         "$K=not-a-url" "$K=https://github.com/o/r/issues/7"; do
+         "$K=not-a-url" "$K=https://github.com/o/r/issues/7" "justsomejunk"; do
   r="$(ev_repo)"; ob="$(mktmp)/o.md"; cp "$r/.supervisor/jobs/in-progress/other.md" "$ob"
   err="$(mktmp)/err"
   out="$(cd "$r" && bash "$RECON" --repair --porcelain --evidence "$v" 2>"$err")"; rc=$?
@@ -435,6 +437,21 @@ for v in "/abs/req.md=$U" ".supervisor/requirements/../x.md=$U" "docs/x.md=$U" \
     no "17 '$v' rc=$rc err='$(cat "$err")' row='$row' enq=$([ -f "$r/.supervisor/jobs/in-progress/enq.md" ] && echo in || echo gone) other=$([ -f "$r/.supervisor/jobs/in-progress/other.md" ] && echo in || echo gone)"
   fi
 done
+# 17e. --evidence as the TRAILING argument with no value at all: the parser
+#      shifts onto nothing, `val` defaults empty, and the no-'=' branch fires —
+#      exit 0, the ignore line on stderr, and (EVIDENCE_MODE is set) the decoy
+#      stays. Pins that a dangling flag can never fall through to the sweep.
+r="$(ev_repo)"; ob="$(mktmp)/o.md"; cp "$r/.supervisor/jobs/in-progress/other.md" "$ob"
+err="$(mktmp)/err"
+out="$(cd "$r" && bash "$RECON" --repair --porcelain --evidence 2>"$err")"; rc=$?
+row="$(printf '%s\n' "$out" | grep 'enq.md')"
+if [ "$rc" -eq 0 ] && grep -q 'ignoring --evidence' "$err" && [ "$row" = "$base_row" ] \
+   && [ -f "$r/.supervisor/jobs/in-progress/enq.md" ] \
+   && [ -f "$r/.supervisor/jobs/in-progress/other.md" ] && cmp -s "$ob" "$r/.supervisor/jobs/in-progress/other.md"; then
+  ok "17e trailing --evidence with no value: exit 0, stderr ignore line, row unchanged, nothing moved"
+else
+  no "17e trailing --evidence rc=$rc err='$(cat "$err")' row='$row' enq=$([ -f "$r/.supervisor/jobs/in-progress/enq.md" ] && echo in || echo gone) other=$([ -f "$r/.supervisor/jobs/in-progress/other.md" ] && echo in || echo gone)"
+fi
 # 17f. (control) the decoy is LIVE: a bare --repair DOES move it.
 r="$(ev_repo)"
 (cd "$r" && bash "$RECON" --repair >/dev/null 2>&1)
