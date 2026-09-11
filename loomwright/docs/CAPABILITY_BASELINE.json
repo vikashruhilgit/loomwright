@@ -8,7 +8,7 @@
       "SubagentStop",
       "Stop",
       "TaskCompleted",
-      "WorktreeCreate",
+      "PostToolUse",
       "StopFailure",
       "PreToolUse",
       "Notification",
@@ -41,7 +41,7 @@
     {"feature": "Remote Control", "why": "documented as the inbound reply leg for v14.1.0 notifications; not yet wired into any workflow"},
     {"feature": "PreCompact hook", "why": "considered for state-flush before compaction; SessionStart resume covers the recovery path for now"},
     {"feature": "Agent Teams (CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS)", "why": "documented as experimental/complementary; graduation criteria tracked in agent-teams skill, not met"},
-    {"feature": "isolation: worktree frontmatter", "why": "NO-GO (2026-06-06 empirical probe): native worktree isolation aborts because the plugin's WorktreeCreate hook returns no worktree path; adopting it would require removing/reworking that hook first — not a clean win, do not re-flag as an easy adoption"}
+    {"feature": "isolation: worktree frontmatter", "why": "NO-GO (2026-06-06 empirical probe): native worktree isolation aborted because the plugin's WorktreeCreate hook returned no worktree path. That blocking hook was REMOVED in v15.66.0 (measured 2026-09-11: the payload has no worktree_path and a WorktreeCreate hook replaces the harness git behaviour), so the probe's cause is gone — but adopting isolation: worktree is a SEPARATE decision (the plugin's worktree audit deliberately does not log the native population), not an automatic consequence; re-probe after reinstall before re-flagging"}
   ],
   "deps": {
     "vikashruhil-mysql-mcp": {"via": "uvx", "pin": "unpinned (--refresh)", "note": "read-only MySQL MCP server — since v15.6.0 it ships as the sibling mysql-mcp@atelier plugin, no longer bundled in loomwright"},

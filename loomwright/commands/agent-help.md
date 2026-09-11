@@ -1029,7 +1029,7 @@ The plugin centralizes its hooks in `hooks/hooks.json`, which automatically enfo
 | **Notification** | Claude Code signals attention (permission / idle / elicitation) | Desktop banner (v14.1.0) |
 | **PostToolUse (Bash)** | A Bash tool call completes (e.g. `gh pr create`) | Backstops the until-mergeable review drain on PR creation (`hook-dispatch-on-pr-create.sh`); session-scope gated, fail-safe (v14.34.0). PLUS a second entry (`reproject-state-on-terminal.sh`, PR #116 review round) that mechanically re-invokes `build-state.sh` once `session_end` lands in the session log |
 | **SessionStart** | Session resume / clear / compact | Injects bounded recovery context (`session-resume.sh`, v14.2.0); also maintains per-project OpenTelemetry resource attributes (`set-otel-resource-attrs.sh`, telemetry-gated, fail-safe, v14.47.0) |
-| **Stop / TaskCompleted / WorktreeCreate / WorktreeRemove / StopFailure** | Various | Completeness gate, task-done check, worktree create/remove + failure logging (`WorktreeRemove` added v15.5.0) |
+| **Stop / TaskCompleted / StopFailure** | Various | Completeness gate, task-done check, failure logging (the `WorktreeCreate`/`WorktreeRemove` hooks were removed in v15.66.0 — the plugin's own worktrees are recorded by the `PostToolUse (Bash)` observer `worktree-audit.sh` and read back by its `report`) |
 
 These hooks run automatically — no configuration needed. Most are `type: command` scripts that cost no model call; only three still use prompt-based validation (haiku model, 30s timeout): the `code-reviewer` SubagentStop validator, `Stop`, and `TaskCompleted`.
 

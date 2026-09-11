@@ -144,7 +144,7 @@ implements those tables verbatim.
 - `error-handling/` — fail-closed patterns and structured exit codes
   used by the wrapper/core split. The wrapper's "always exit 0, log
   the failure" pattern is the same shape as the
-  `WorktreeCreate`/`StopFailure` blocks already in `hooks.json`.
+  `StopFailure` block already in `hooks.json`.
 - `quality-checklist/` — gates the work in Subtasks #1-#5: privacy
   whitelist completeness, exit-code coverage, deterministic score
   function, hook non-blocking property, redacted stderr.
