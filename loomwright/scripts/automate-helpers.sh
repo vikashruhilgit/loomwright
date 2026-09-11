@@ -35,7 +35,7 @@
 #   reconcile-item   <pr_url> <belief>                  # §4 belief vs gh/git truth -> corrected state
 #   gate-eval        <pr_url> <ctx.json>                # §10 MERGE|PARK 5-condition fail-closed gate
 #   learning-emit    <ledger_path> <flags...>           # §6 step 3 fail-safe (always exit 0) engine-native ground-truth POSTMORTEM_RESULT line; idempotent on run_id+item+pr_url+source+completeness (a degraded emit never blocks a later complete one)
-#   brief-repair     <item> <pr_url>                    # §6 steps 1/5 fail-safe (always exit 0) evidence-positive brief lifecycle repair: `gh pr view` says MERGED ⇒ sibling reconcile-jobs.sh --repair --evidence <item>=<pr_url>; prints ONE line for ## Progress
+#   brief-repair     <item> <pr_url>                    # §6 steps 1/5 fail-safe (always exit 0) evidence-positive brief lifecycle repair: `gh pr view` says MERGED (or a non-empty mergedAt) ⇒ sibling reconcile-jobs.sh --repair --evidence <item>=<pr_url>; prints ONE line for ## Progress
 #
 # Exit codes: 0 success; 1 generic failure; 2 abort (malformed pre-existing config, §7).
 # (learning-emit and brief-repair are the fail-SAFE exceptions: they ALWAYS exit 0 — never die/abort.)
@@ -847,7 +847,7 @@ EOF
   elif [ -n "$amb_n" ]; then
     echo "brief-repair: skipped — ambiguous match (${amb_n} briefs point at ${item})"
   elif [ "$refused" -eq 1 ]; then
-    echo "brief-repair: skipped — reconciler refused the move (destination exists or brief already carries ## Outcome)"
+    echo "brief-repair: skipped — reconciler refused the move (destination exists, ## Outcome present, or write failure — see reconcile-jobs.sh stderr)"
   else
     echo "brief-repair: skipped — no in-progress brief matches ${item}"
   fi

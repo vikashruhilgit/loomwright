@@ -474,6 +474,22 @@ else
   echo "skipped: origin/main unavailable ($(tr '\n' ' ' < "$gerr"))"
 fi
 case "$now" in *"a-merged.md"*"b-stamped.md"*"c-unknown.md"*) ok "18b (control) the 3 rows are present" ;; *) no "18b fixture rows missing: $now" ;; esac
+# 18c. The CI-EFFECTIVE pin: the origin/main arm above is skipped on every
+#      pull_request checkout (fetch-depth 1 has no origin/main) and compares the
+#      file to itself on a push to main, so on its own it is a claim no CI check
+#      backs. This frozen golden literal is what actually holds the no-`--evidence`
+#      porcelain byte-for-byte, everywhere. Update it ONLY with a deliberate
+#      porcelain change (and say so in the CHANGELOG).
+golden="$(printf 'stranded_merged\t.supervisor/jobs/in-progress/a-merged.md\tautomate run file records .supervisor/requirements/m.md merged (https://github.com/o/r/pull/1)\nstranded_closed\t.supervisor/jobs/in-progress/b-stamped.md\tsource requirement .supervisor/requirements/s.md is stamped done\nunknown\t.supervisor/jobs/in-progress/c-unknown.md\tsource requirement pointer .supervisor/requirements/u.md did not resolve under .supervisor/requirements/')"
+if [ "$now" = "$golden" ]; then ok "18c no --evidence ⇒ porcelain byte-identical to the frozen golden (runs in CI, unlike 18)"; else no "18c golden drift:\n$now\n--- vs golden ---\n$golden"; fi
+# 18d. A repeated --evidence key is refused out loud (first wins), never silently
+#      appended where evidence_index_for could not reach it.
+r="$(ev_repo)"
+err="$(mktmp)/err"
+out="$(cd "$r" && bash "$RECON" --porcelain --evidence ".supervisor/requirements/r/03.md=$U" --evidence ".supervisor/requirements/r/03.md=https://github.com/o/r/pull/99" 2>"$err")"
+case "$out" in *"($U)"*) k1=1 ;; *) k1=0 ;; esac
+case "$out" in *"pull/99"*) k2=1 ;; *) k2=0 ;; esac
+if [ "$k1" -eq 1 ] && [ "$k2" -eq 0 ] && grep -q "duplicate key" "$err"; then ok "18d duplicate --evidence key: first wins, second refused on stderr, never silently dropped"; else no "18d duplicate key handling wrong (k1=$k1 k2=$k2 err='$(cat "$err")')"; fi
 
 # 19. evidence naming an item with NO matching brief ⇒ no move, exit 0.
 r="$(ev_repo)"

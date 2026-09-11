@@ -124,6 +124,18 @@ JOBS_IN=".supervisor/jobs/in-progress"
 JOBS_DONE=".supervisor/jobs/done"
 AUTOMATE_DIR=".supervisor/automate"
 
+# evidence_index_for <pointer_token> — echo the index of the accepted --evidence
+# entry whose key equals the token EXACTLY (no normalisation). Return 1 if none.
+evidence_index_for() {
+  local tok="$1" i=0
+  [ -n "$tok" ] || return 1
+  while [ "$i" -lt "${#EV_KEYS[@]}" ]; do
+    if [ "${EV_KEYS[$i]}" = "$tok" ]; then printf '%s' "$i"; return 0; fi
+    i=$((i+1))
+  done
+  return 1
+}
+
 PORCELAIN=0
 REPAIR=0
 # EVIDENCE_MODE flips to 1 the moment ANY --evidence flag is PARSED — before its
@@ -166,6 +178,12 @@ while [ "$#" -gt 0 ]; do
       if [ -z "$reason" ]; then
         # Built-in ERE match, not `printf | grep -q` (SIGPIPE-under-pipefail trap).
         [[ "$url" =~ ^https?://[^[:space:]]+/pull/[0-9]+$ ]] || reason="url is not a pull-request URL"
+      fi
+      if [ -z "$reason" ] && evidence_index_for "$key" >/dev/null; then
+        # A repeated key would otherwise append a second entry that
+        # evidence_index_for (first match wins) could never reach — silently
+        # dropping the later URL. Refuse it out loud instead.
+        reason="duplicate key (first --evidence for it wins)"
       fi
       if [ -n "$reason" ]; then
         echo "reconcile-jobs: ignoring --evidence '$val' ($reason)" >&2
@@ -283,17 +301,6 @@ automate_pr_for_requirement() {
   return 1
 }
 
-# evidence_index_for <pointer_token> — echo the index of the accepted --evidence
-# entry whose key equals the token EXACTLY (no normalisation). Return 1 if none.
-evidence_index_for() {
-  local tok="$1" i=0
-  [ -n "$tok" ] || return 1
-  while [ "$i" -lt "${#EV_KEYS[@]}" ]; do
-    if [ "${EV_KEYS[$i]}" = "$tok" ]; then printf '%s' "$i"; return 0; fi
-    i=$((i+1))
-  done
-  return 1
-}
 
 # classify <brief> -> "STATE<TAB>EVIDENCE" on stdout
 #
@@ -316,7 +323,7 @@ classify() {
       return 0
     fi
     # One parenthesised URL and only one: repair() extracts `- **PR:**` from
-    # the first `(http…)` group of this string.
+    # the LAST `(http…)` group of this string (the sed is greedy) — so keep it the only one.
     printf 'stranded_merged\tautomate engine supplied merge evidence for %s (%s) — the engine verified the PR merged against the forge; this reconciler stayed offline\n' \
       "$raw_req" "${EV_URLS[$ei]}"
     return 0
