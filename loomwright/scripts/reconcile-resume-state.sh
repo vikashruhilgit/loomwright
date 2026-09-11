@@ -15,7 +15,7 @@
 #   doing the work — subtask commits reachable from the feature branch. A worker cannot deliver a
 #   subtask without committing it, so unlike a log line the signal is not skippable.
 #
-#   Commit convention is mandated, not guessed: skills/async-orchestration/SKILL.md:557
+#   Commit convention is mandated, not guessed: skills/async-orchestration/SKILL.md:561
 #   [pins: `subtask: {subtask_a} — {title}`] specifies
 #   `subtask: {subtask_id} — {title}`. Merge commits observed in the wild add a `merge: ` prefix.
 #
@@ -78,9 +78,9 @@ SUBJECTS=$(git -C "$REPO_ROOT" log --format='%s' "$BRANCH" 2>/dev/null) \
 # squash merge or a rebased history, where ONLY the merge subject survives, completion was missed
 # and the resume proceeded — reproducing the very incident this gate exists to stop.
 #
-#   1. `subtask: {id} — {title}`   worker commit      (async-orchestration/SKILL.md:557
+#   1. `subtask: {id} — {title}`   worker commit      (async-orchestration/SKILL.md:561
 #                                                     [pins: `subtask: {subtask_a} — {title}`])
-#   2. `merge: {id} {title}`       mandated merge     (async-orchestration/SKILL.md:564-566
+#   2. `merge: {id} {title}`       mandated merge     (async-orchestration/SKILL.md:568-570
 #                                                     [pins: `merge: {subtask_a} {title}`])
 #   3. `merge: subtask {id} …`     observed in the wild (sup-2026-07-27-tree-and-find)
 #

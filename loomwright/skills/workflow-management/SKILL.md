@@ -215,7 +215,9 @@ Phase 4 (FINALIZE):
   git checkout feature/BD-XX-desc
   git merge feature/BD-XXa --no-ff
   git merge feature/BD-XXc --no-ff
+  bash scripts/worktree-salvage.sh ../{project}-BD-XXa --reason "FINALIZE step 4"
   git worktree remove ../{project}-BD-XXa
+  bash scripts/worktree-salvage.sh ../{project}-BD-XXc --reason "FINALIZE step 4"
   git worktree remove ../{project}-BD-XXc
   git branch -d feature/BD-XXa
   git branch -d feature/BD-XXc
