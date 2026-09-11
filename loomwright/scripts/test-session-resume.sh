@@ -21,6 +21,16 @@
 #   (d) Debounce ⇒ nudge suppressed on an immediate re-run (marker fresh).
 #   (e) .supervisor/-absent ⇒ no nudge (the bail is preserved, no crash).
 #   (f) The script ALWAYS exits 0 in every case (asserted throughout).
+#   (g) LOOMWRIGHT_RULES_NUDGE opt-out.
+#   (h)–(m) The curation-cadence nudge and its dedicated `startup)` arm.
+#   (n) System Twin store health reaches the resume digest (dark only).
+#   (o)–(v) The STRANDED-BRIEF line on the startup arm (v15.64.0): fires on
+#       startup via the offline reconciler (o); byte-identical when nothing is
+#       stranded, incl. a captured origin/main baseline (p); no .supervisor/ +
+#       opt-out + 24h debounce (q); the gate is NOT widened, asserted per item
+#       (r); resume path unchanged (s); helpers reachable above the case —
+#       static + dynamic + mutant (t); offline + four fail-safe degradations
+#       (u); mutation control + ONE composed envelope (v).
 
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -215,6 +225,39 @@ make_curation_pending() {
   echo '{"event":"session_end"}' > "$r/.supervisor/logs/s2.jsonl"
 }
 
+# Observability-probe tripwire fixture, shared by (i) and (r). VENDOR-COUPLING
+# RATCHET (load-bearing): this test file sits AT its manifest allowance for the
+# vendor tokens, and the three literals below are its ONLY occurrences — they
+# are defined here ONCE and reached through these accessors from every group.
+# Do NOT inline them again anywhere in this file.
+#
+# make_unreachable_telemetry_home <dir> — a HOME whose settings.json configures
+# telemetry against an unreachable endpoint: if observability_probe ran at all
+# it would curl, fire notify-desktop.sh, and stamp its own 24h marker.
+make_unreachable_telemetry_home() {
+  local h="$1"
+  mkdir -p "$h/.claude"
+  printf '%s' '{"env":{"CLAUDE_CODE_ENABLE_TELEMETRY":"1","OTEL_EXPORTER_OTLP_ENDPOINT":"http://127.0.0.1:9/v1/traces"}}' \
+    > "$h/.claude/settings.json"
+}
+# curl_shim_called_marker — the file the curl shim stamps when invoked.
+curl_shim_called_marker() { printf '%s' "$ROOT/startup-called-curl"; }
+# make_curl_shim — (re)creates the shim dir on stdout; clears the marker.
+make_curl_shim() {
+  local shim="$ROOT/shim-bin"; mkdir -p "$shim"
+  rm -f "$shim/curl"
+  cat > "$shim/curl" <<EOF
+#!/bin/sh
+: > "$(curl_shim_called_marker)"
+exit 0
+EOF
+  chmod +x "$shim/curl"
+  rm -f "$(curl_shim_called_marker)"
+  printf '%s' "$shim"
+}
+# obs_warned_marker <fakehome> — PRINTS the observability probe's debounce path.
+obs_warned_marker() { printf '%s/.claude/loomwright/observability/.last-warned' "$1"; }
+
 # ---------------------------------------------------------------------------
 echo "== (h) curation nudge FIRES on source=startup (and on resume) =="
 test_curation_nudge_fires_on_startup() {
@@ -266,19 +309,8 @@ test_startup_emits_nothing_else() {
   # A HOME whose settings.json configures telemetry against an unreachable
   # endpoint: if observability_probe ran at all it would curl, fire
   # notify-desktop.sh, and stamp its own 24h marker. All three are asserted absent.
-  fakehome="$ROOT/fakehome"; mkdir -p "$fakehome/.claude"
-  printf '%s' '{"env":{"CLAUDE_CODE_ENABLE_TELEMETRY":"1","OTEL_EXPORTER_OTLP_ENDPOINT":"http://127.0.0.1:9/v1/traces"}}' \
-    > "$fakehome/.claude/settings.json"
-
-  shim="$ROOT/shim-bin"; mkdir -p "$shim"
-  rm -f "$shim/curl"
-  cat > "$shim/curl" <<EOF
-#!/bin/sh
-: > "$ROOT/startup-called-curl"
-exit 0
-EOF
-  chmod +x "$shim/curl"
-  rm -f "$ROOT/startup-called-curl"
+  fakehome="$ROOT/fakehome"; make_unreachable_telemetry_home "$fakehome"
+  shim="$(make_curl_shim)"
 
   out="$( cd "$r" && printf '{"source":"startup"}' \
             | HOME="$fakehome" PATH="$shim:$PATH" bash "$HOOK" )"; rc=$?
@@ -300,10 +332,10 @@ EOF
   else
     ok "(i) absent: the house-rules nudge"
   fi
-  [ ! -e "$ROOT/startup-called-curl" ] \
+  [ ! -e "$(curl_shim_called_marker)" ] \
     && ok "(i) NO curl invocation on the startup path (observability probe never ran)" \
     || no "(i) startup invoked curl — a network call on every fresh session start"
-  [ ! -e "$fakehome/.claude/loomwright/observability/.last-warned" ] \
+  [ ! -e "$(obs_warned_marker "$fakehome")" ] \
     && ok "(i) NO observability marker written (the probe and its desktop notification never ran)" \
     || no "(i) the observability probe ran on the startup path"
 }
@@ -537,6 +569,468 @@ else
     ok "(n3) a repo with no twin store is untouched — the probe costs one glob and says nothing"
   fi
 fi
+
+echo
+# ============================================================================
+# Stranded-brief line on the STARTUP arm — groups (o)–(v) (v15.64.0).
+#
+# WHY: on 2026-09-05 a merged brief sat in .supervisor/jobs/in-progress/ for five
+# days because the reconciler fired only on resume|clear|compact — the session
+# WITH prior context — and every fresh session was silent. The startup arm now
+# composes the stranded line with the curation line into ONE envelope, and the
+# groups below pin each obligation the header's SEAM NOTE names.
+STRANDED_MARK="**Stranded brief:**"
+STRANDED_BRIEF_LINE="**Stranded brief:** .supervisor/jobs/in-progress/b.md"
+STRANDED_MARKER=".supervisor/.stranded-nudge-shown"
+SECTION1_STRANDED_HDR="### Stranded briefs — lifecycle move never ran (NOT resumable)"
+SECTION1_UNVERIFIED_HDR="### In-progress briefs (state UNVERIFIED — reconciler unavailable)"
+
+# make_stranded_fixture <repo> — requirement stamped done + a brief pointing at
+# it ⇒ reconcile-jobs.sh classifies `stranded_closed` (the same load-bearing
+# shape as test-reconcile-jobs.sh case 3; this one is additionally `git init`'d
+# by new_repo, which the reconciler does not need). $2 overrides the stamp so the
+# same shape yields `unknown` (pending) for the unknown-only fixture.
+make_stranded_fixture() {
+  local r="$1" stamp="${2:-done}"
+  mkdir -p "$r/.supervisor/requirements" "$r/.supervisor/jobs/in-progress"
+  printf '# req\n\n## Status: %s\n' "$stamp" > "$r/.supervisor/requirements/req.md"
+  printf '# Supervisor Job: b\n\n## Environment\n- **Source requirement:** .supervisor/requirements/req.md\n' \
+    > "$r/.supervisor/jobs/in-progress/b.md"
+}
+make_unknown_only_fixture() { make_stranded_fixture "$1" pending; }
+
+# Two copied-hook shapes, deliberately distinct:
+#   copy_hook_sparse <dir> — the hook ALONE. Every sibling absent (curation line
+#     empty, reconciler absent unless the group places its own stub). For the
+#     fail-safe groups.
+#   copy_hook_full <dir>   — the hook + the REAL siblings curation-status.sh,
+#     reconcile-jobs.sh AND brief-pointer.sh, so ONLY the hook body differs from
+#     production. For the MUTANT groups: reconcile-jobs.sh sources brief-pointer.sh
+#     from its own dirname and stubs the pointer readers to `return 1` when it is
+#     absent, so a reconciler copied alone classifies EVERY brief `unknown` — a
+#     red mutant would then be red for the wrong reason.
+copy_hook_sparse() { cp "$HOOK" "$1/session-resume.sh"; }
+copy_hook_full() {
+  copy_hook_sparse "$1"
+  cp "$SCRIPT_DIR/curation-status.sh" "$SCRIPT_DIR/reconcile-jobs.sh" "$SCRIPT_DIR/brief-pointer.sh" "$1/"
+}
+# run_alt_hook_raw <hook> <repo> <src> [env assignments...] — like run_hook_raw
+# but for a copied hook; stderr is captured to ERRFILE, rc to RCFILE.
+ERRFILE="$ROOT/.last-err"
+lasterr() { cat "$ERRFILE" 2>/dev/null; }
+run_alt_hook_raw() {
+  local hook="$1" repo="$2" src="$3" out rc
+  shift 3
+  out="$( cd "$repo" && printf '{"source":"%s"}' "$src" | env "$@" bash "$hook" 2>"$ERRFILE" )"
+  rc=$?
+  printf '%s' "$rc" > "$RCFILE"
+  printf '%s' "$out"
+}
+ctx_of() { printf '%s' "$1" | jq -r '.hookSpecificOutput.additionalContext // ""' 2>/dev/null || true; }
+json_docs() { printf '%s' "$1" | jq -s 'length' 2>/dev/null || printf '0'; }
+
+# gate_mutant <original> <mutant> <label> — every mutant is gated BEFORE its red
+# is trusted (lesson from PR #208): non-empty, byte-different, `bash -n` clean.
+# Returns 1 if any gate fails so the caller can skip the assertions that depend
+# on it rather than count a broken mutant as a targeted revert.
+gate_mutant() {
+  local orig="$1" mut="$2" label="$3" okk=1
+  [ -s "$mut" ] && ok "$label mutant is non-empty" || { no "$label mutant is EMPTY"; okk=0; }
+  if cmp -s "$orig" "$mut"; then no "$label mutant is byte-identical to the original"; okk=0
+  else ok "$label mutant is byte-different from the original"; fi
+  bash -n "$mut" 2>/dev/null && ok "$label mutant parses (bash -n)" || { no "$label mutant does not parse"; okk=0; }
+  [ "$okk" -eq 1 ]
+}
+
+# The pre-change arm's EXACT formula for a curation-only startup, computed
+# independently of the hook. Mirrors the hook's `line="$(…)"` capture (which
+# strips the trailing newline curation-status.sh prints) — piping the probe
+# straight into jq would keep that newline and cmp-FAIL against the UNCHANGED
+# hook. Run BEFORE the hook on the same repo (the probe stamps nothing; the hook
+# stamps the debounce marker on first emit).
+expected_curation_only_envelope() {
+  local r="$1"
+  ( cd "$r" && printf '%s' "$(bash "$SCRIPT_DIR/curation-status.sh" nudge 2>/dev/null)" \
+      | { iconv -c -f UTF-8 -t UTF-8 2>/dev/null || cat; } \
+      | jq -Rs '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:.}}' )
+}
+
+# ---------------------------------------------------------------------------
+echo "== (o) the stranded line FIRES on source=startup — ONE envelope, parsed field =="
+test_stranded_fires_on_startup() {
+  local r out rc ctx
+  r="$(new_repo)"; make_plugin_active "$r"; make_stranded_fixture "$r"
+  out="$(run_hook_raw "$r" startup)"; rc="$(lastrc)"
+  [ "$rc" -eq 0 ] && ok "(o) exits 0" || no "(o) expected exit 0, got $rc"
+  [ "$(json_docs "$out")" = "1" ] \
+    && ok "(o) stdout is exactly ONE JSON document (jq -s length == 1; jq -e alone accepts a stream)" \
+    || no "(o) stdout is not exactly one JSON document: $(json_docs "$out") — $out"
+  [ "$(printf '%s' "$out" | jq -r '.hookSpecificOutput.hookEventName // ""' 2>/dev/null)" = "SessionStart" ] \
+    && ok "(o) hookEventName == SessionStart" || no "(o) hookEventName missing/wrong"
+  ctx="$(ctx_of "$out")"
+  grep -qF -- "$STRANDED_BRIEF_LINE" <<< "$ctx" \
+    && ok "(o) additionalContext names the stranded brief" \
+    || no "(o) additionalContext lacks '$STRANDED_BRIEF_LINE': $ctx"
+  grep -qF -- "stamped" <<< "$ctx" \
+    && ok "(o) additionalContext carries the porcelain row's evidence ('stamped')" \
+    || no "(o) evidence substring 'stamped' missing: $ctx"
+  grep -qF -- "--repair" <<< "$ctx" \
+    && ok "(o) additionalContext carries the --repair trailer" \
+    || no "(o) --repair trailer missing: $ctx"
+  grep -qF -- "Not resumable" <<< "$ctx" \
+    && ok "(o) the trailer says NOT resumable (classification, never a completion claim)" \
+    || no "(o) 'Not resumable' wording missing: $ctx"
+}
+test_stranded_fires_on_startup
+
+# ---------------------------------------------------------------------------
+echo "== (p) byte-identical when nothing is stranded: (a) empty (b) curation-only cmp (c) unknown-only =="
+test_stranded_byte_identical_when_none() {
+  local ra rb rc1 outa outb outc expf gotf rcx
+  # (a) nothing pending at all ⇒ ZERO bytes.
+  ra="$(new_repo)"; make_plugin_active "$ra"
+  outa="$(run_hook_raw "$ra" startup)"; rcx="$(lastrc)"
+  [ "$rcx" -eq 0 ] && [ -z "$outa" ] && ok "(p-a) no briefs + no curation ⇒ zero bytes, rc 0" \
+    || no "(p-a) expected zero bytes rc 0, got rc=$rcx out=$outa"
+  [ ! -e "$ra/$STRANDED_MARKER" ] && ok "(p-a) no stranded marker written" || no "(p-a) stranded marker written on a silent run"
+
+  # (b) curation pending, no briefs ⇒ cmp-identical to the pre-change formula.
+  rb="$(new_repo)"; make_plugin_active "$rb"; make_curation_pending "$rb"
+  expf="$ROOT/p-expected.json"; gotf="$ROOT/p-got.json"
+  expected_curation_only_envelope "$rb" > "$expf"
+  ( cd "$rb" && printf '{"source":"startup"}' | bash "$HOOK" ) > "$gotf"; rcx=$?
+  [ "$rcx" -eq 0 ] && ok "(p-b) exits 0" || no "(p-b) expected exit 0, got $rcx"
+  [ -s "$expf" ] && [ -s "$gotf" ] && ok "(p-b) both the expected and the actual envelope are non-empty" \
+    || no "(p-b) a silent pair would be a false match: expected=$(wc -c < "$expf") got=$(wc -c < "$gotf")"
+  if cmp -s "$expf" "$gotf"; then ok "(p-b) curation-only startup is cmp-identical to the pre-change formula"
+  else no "(p-b) curation-only startup DIFFERS from the pre-change formula"; diff "$expf" "$gotf" | head -5; fi
+  [ ! -e "$rb/$STRANDED_MARKER" ] && ok "(p-b) no stranded marker written" || no "(p-b) stranded marker written with nothing stranded"
+
+  # (b') true captured baseline: origin/main's hook next to the real siblings,
+  # each hook on its OWN fresh curation-pending repo (the first emit stamps the
+  # curation marker, so a second run on the same repo is a false-green empty).
+  local old="$ROOT/baseline"; mkdir -p "$old"
+  local giterr="$ROOT/baseline.giterr" oldout newout ro rn
+  if git -C "$SCRIPT_DIR/../.." show origin/main:loomwright/scripts/session-resume.sh > "$old/session-resume.sh" 2>"$giterr" \
+     && [ -s "$old/session-resume.sh" ]; then
+    cp "$SCRIPT_DIR/curation-status.sh" "$SCRIPT_DIR/reconcile-jobs.sh" "$SCRIPT_DIR/brief-pointer.sh" "$old/"
+    ro="$(new_repo)"; make_plugin_active "$ro"; make_curation_pending "$ro"
+    rn="$(new_repo)"; make_plugin_active "$rn"; make_curation_pending "$rn"
+    oldout="$(run_alt_hook_raw "$old/session-resume.sh" "$ro" startup)"
+    newout="$(run_hook_raw "$rn" startup)"
+    if [ -n "$oldout" ] && [ -n "$newout" ]; then
+      ok "(p-b') baseline and current both emitted (a silent pair is not a match)"
+      printf '%s' "$oldout" > "$ROOT/p-old.json"; printf '%s' "$newout" > "$ROOT/p-new.json"
+      cmp -s "$ROOT/p-old.json" "$ROOT/p-new.json" \
+        && ok "(p-b') curation-only startup is cmp-identical to the captured origin/main hook" \
+        || no "(p-b') curation-only startup DIFFERS from the captured origin/main hook"
+    else
+      no "(p-b') a silent pair: old=${#oldout} new=${#newout} bytes"
+    fi
+  else
+    echo "  skipped: origin/main unavailable ($(tr '\n' ' ' < "$giterr" | cut -c1-160))"
+  fi
+
+  # (c) unknown-only: brief present, requirement NOT stamped ⇒ silent on startup.
+  rc1="$(new_repo)"; make_plugin_active "$rc1"; make_unknown_only_fixture "$rc1"
+  outc="$(run_hook_raw "$rc1" startup)"; rcx="$(lastrc)"
+  [ "$rcx" -eq 0 ] && [ -z "$outc" ] && ok "(p-c) unknown-only fixture ⇒ zero bytes on startup (unknown is NOT reported there)" \
+    || no "(p-c) unknown-only fixture should be silent on startup, got rc=$rcx out=$outc"
+  [ ! -e "$rc1/$STRANDED_MARKER" ] && ok "(p-c) no stranded marker written" || no "(p-c) stranded marker written for an unknown-only repo"
+}
+test_stranded_byte_identical_when_none
+
+# ---------------------------------------------------------------------------
+echo "== (q) no .supervisor/ ⇒ silent; LOOMWRIGHT_STRANDED_NUDGE opt-out; 24h debounce =="
+test_stranded_gate_optout_debounce() {
+  local r out rc optout r2 c1 c2 c3
+  # AC-3: the fixture FILES with no .supervisor/ directory around them.
+  r="$(new_repo)"
+  mkdir -p "$r/jobs/in-progress"
+  printf '# Supervisor Job: b\n\n- **Source requirement:** .supervisor/requirements/req.md\n' > "$r/jobs/in-progress/b.md"
+  rm -rf "$r/.supervisor"
+  out="$(run_hook_raw "$r" startup)"; rc="$(lastrc)"
+  [ "$rc" -eq 0 ] && [ -z "$out" ] && ok "(q) no .supervisor/ ⇒ zero bytes, rc 0 (the helper's OWN gate, above the shared bail)" \
+    || no "(q) expected silence with no .supervisor/, got rc=$rc out=$out"
+  [ ! -e "$r/.supervisor" ] && ok "(q) created no .supervisor/ of its own" || no "(q) created a .supervisor/"
+
+  # AC-9(a): opt-out values silence and stamp nothing.
+  r2="$(new_repo)"; make_plugin_active "$r2"; make_stranded_fixture "$r2"
+  for optout in 0 off false no; do
+    out="$( cd "$r2" && printf '{"source":"startup"}' | LOOMWRIGHT_STRANDED_NUDGE="$optout" bash "$HOOK" )"; rc=$?
+    [ "$rc" -eq 0 ] && [ -z "$out" ] && ok "(q) LOOMWRIGHT_STRANDED_NUDGE=$optout ⇒ silent, rc 0" \
+      || no "(q) opt-out=$optout should silence, got rc=$rc out=$out"
+    [ ! -e "$r2/$STRANDED_MARKER" ] && ok "(q) opt-out=$optout stamped no marker" || no "(q) opt-out=$optout stamped the marker"
+  done
+  # AC-9(b): control — first sighting is never suppressed; marker now exists.
+  c1="$(run_hook_ctx "$r2" startup)"
+  grep -qF -- "$STRANDED_MARK" <<< "$c1" \
+    && ok "(q) control — same repo emits the line without the opt-out (first sighting never suppressed)" \
+    || no "(q) control — repo should emit once the opt-out is removed: $c1"
+  [ -f "$r2/$STRANDED_MARKER" ] && ok "(q) marker $STRANDED_MARKER now exists" || no "(q) marker missing after an emit"
+  # AC-9(c): immediate second run is debounced.
+  c2="$(run_hook_raw "$r2" startup)"
+  [ -z "$c2" ] && ok "(q) immediate second run emits nothing (24h debounce)" || no "(q) second run should be debounced: $c2"
+  # AC-9(d): age the marker to a fixed past stamp ⇒ fires again, marker refreshed.
+  touch -t 202001010000 "$r2/$STRANDED_MARKER"
+  c3="$(run_hook_ctx "$r2" startup)"
+  grep -qF -- "$STRANDED_MARK" <<< "$c3" \
+    && ok "(q) after the marker is aged past 24h the line fires again" \
+    || no "(q) aged marker should re-enable the line: $c3"
+  [ -n "$(find "$r2/$STRANDED_MARKER" -mmin -1440 2>/dev/null)" ] \
+    && ok "(q) the marker was refreshed on re-emit" || no "(q) the marker was not refreshed"
+}
+test_stranded_gate_optout_debounce
+
+# ---------------------------------------------------------------------------
+echo "== (r) the gate is NOT widened — every other section asserted absent, one at a time =="
+# make_every_other_section_input <repo> — the stranded fixture PLUS every input
+# that makes each other section of the hook non-empty on resume.
+make_every_other_section_input() {
+  local r="$1"
+  make_stranded_fixture "$r"
+  mkdir -p "$r/.supervisor/jobs/failed" "$r/.supervisor/twin/contracts" "$r/.supervisor/logs" "$r/.supervisor/autonomous/run1"
+  echo "state tail" > "$r/.supervisor/state.md"
+  echo "brief" > "$r/.supervisor/jobs/failed/f.md"
+  echo "not a provenanced contract" > "$r/.supervisor/twin/contracts/x.md"
+  echo '{"event":"session_end"}' > "$r/.supervisor/logs/s1.jsonl"
+  echo '{"iteration":1}' > "$r/.supervisor/autonomous/run1/state.json"
+  rm -rf "$r/.agent/rules"
+}
+# assert_startup_absence_set <label> <ctx> — the per-item absence checks, shared
+# with the mutant run in (v) so the mutant is held to the same set.
+assert_startup_absence_set() {
+  local label="$1" ctx="$2" probe
+  for probe in "prior-session context" "$SECTION1_STRANDED_HDR" "In-progress briefs" "Recent failed briefs" \
+               "System Twin contract store" "Last 5 lines of .supervisor/state.md" "Last 3 entries from" \
+               "Active /autonomous sessions" "Recovery hints" "### House rules" "$NUDGE_LINE" "notify-desktop.sh"; do
+    if grep -qF -- "$probe" <<< "$ctx"; then no "$label startup output must NOT contain '$probe'"
+    else ok "$label absent: '$probe'"; fi
+  done
+}
+test_stranded_gate_not_widened() {
+  local r out rc ctx fakehome shim
+  r="$(new_repo)"; make_plugin_active "$r"; make_every_other_section_input "$r"
+  fakehome="$ROOT/fakehome-r"; make_unreachable_telemetry_home "$fakehome"
+  shim="$(make_curl_shim)"
+  out="$( cd "$r" && printf '{"source":"startup"}' | HOME="$fakehome" PATH="$shim:$PATH" bash "$HOOK" )"; rc=$?
+  [ "$rc" -eq 0 ] && ok "(r) exits 0" || no "(r) expected exit 0, got $rc"
+  ctx="$(ctx_of "$out")"
+  grep -qF -- "$STRANDED_MARK" <<< "$ctx" \
+    && ok "(r) control — the stranded line IS present, so the absence checks are not vacuous" \
+    || no "(r) control failed: no stranded line, the absence checks prove nothing: $out"
+  assert_startup_absence_set "(r)" "$ctx"
+  [ ! -e "$(curl_shim_called_marker)" ] && ok "(r) curl shim was NOT invoked (observability probe never ran)" \
+    || no "(r) curl was invoked on the startup path"
+  [ ! -e "$(obs_warned_marker "$fakehome")" ] && ok "(r) observability .last-warned marker does NOT exist under the fake HOME" \
+    || no "(r) the observability probe stamped its marker on startup"
+}
+test_stranded_gate_not_widened
+
+# ---------------------------------------------------------------------------
+echo "== (s) the resume path is UNCHANGED — Section 1 wording, never the startup wording =="
+test_stranded_resume_unchanged() {
+  local r ctx d out
+  r="$(new_repo)"; make_plugin_active "$r"; make_stranded_fixture "$r"
+  ctx="$(run_hook_ctx "$r" resume)"
+  grep -qF -- "$SECTION1_STRANDED_HDR" <<< "$ctx" \
+    && ok "(s) resume carries the Section-1 stranded header" || no "(s) Section-1 stranded header missing on resume: $ctx"
+  grep -qF -- "--repair" <<< "$ctx" && ok "(s) resume carries the --repair instruction" || no "(s) --repair missing on resume"
+  grep -qF -- "$STRANDED_MARK" <<< "$ctx" \
+    && no "(s) the startup wording leaked into the resume path" || ok "(s) the startup wording does NOT appear on resume"
+  # Sparse copy (no reconcile-jobs.sh) ⇒ resume falls back to the neutral header.
+  d="$(mktmp)"; copy_hook_sparse "$d"
+  r="$(new_repo)"; make_plugin_active "$r"; make_stranded_fixture "$r"
+  out="$(run_alt_hook_raw "$d/session-resume.sh" "$r" resume)"
+  grep -qF -- "$SECTION1_UNVERIFIED_HDR" <<< "$(ctx_of "$out")" \
+    && ok "(s) with the reconciler ABSENT, resume still emits the neutral UNVERIFIED fallback header" \
+    || no "(s) neutral fallback header missing with the reconciler absent: $out"
+}
+test_stranded_resume_unchanged
+
+# ---------------------------------------------------------------------------
+echo "== (t) helpers are reachable from the startup arm — static, dynamic, and a moved-definition mutant =="
+test_stranded_helper_reachable() {
+  local l_helper l_emit l_case r out rc err d mut
+  l_helper="$(awk '/^stranded_briefs_startup_line\(\) \{/ {print NR; exit}' "$HOOK")"
+  l_emit="$(awk '/^startup_arm_emit\(\) \{/ {print NR; exit}' "$HOOK")"
+  l_case="$(awk '/^case "\$SOURCE" in/ {print NR; exit}' "$HOOK")"
+  [ -n "$l_helper" ] && [ -n "$l_emit" ] && [ -n "$l_case" ] \
+    && ok "(t) static: found the two definitions and the case line ($l_helper / $l_emit / $l_case)" \
+    || no "(t) static: could not locate helper=$l_helper emit=$l_emit case=$l_case"
+  [ -n "$l_helper" ] && [ -n "$l_case" ] && [ "$l_helper" -lt "$l_case" ] \
+    && ok "(t) static: stranded_briefs_startup_line is defined ABOVE the case" || no "(t) static: helper defined below the case"
+  [ -n "$l_emit" ] && [ -n "$l_case" ] && [ "$l_emit" -lt "$l_case" ] \
+    && ok "(t) static: startup_arm_emit is defined ABOVE the case" || no "(t) static: composer defined below the case"
+
+  # Dynamic: a helper defined below the case prints `command not found` on stderr
+  # before the arm's `exit 0` swallows rc 127 — so stderr must be EMPTY.
+  r="$(new_repo)"; make_plugin_active "$r"; make_stranded_fixture "$r"
+  out="$(run_alt_hook_raw "$HOOK" "$r" startup)"; rc="$(lastrc)"; err="$(lasterr)"
+  [ "$rc" -eq 0 ] && ok "(t) dynamic: rc 0" || no "(t) dynamic: rc $rc"
+  [ -z "$err" ] && ok "(t) dynamic: stderr is EMPTY on the stranded fixture" || no "(t) dynamic: stderr not empty: $err"
+  grep -qF -- "$STRANDED_MARK" <<< "$(ctx_of "$out")" && ok "(t) dynamic: control — the line emitted" || no "(t) dynamic: control failed"
+
+  # Mutant: move the stranded_briefs_startup_line DEFINITION to after `esac`.
+  d="$(mktmp)"; copy_hook_full "$d"; mut="$d/session-resume.sh"
+  awk '
+    /^stranded_briefs_startup_line\(\) \{/ { inblk=1 }
+    inblk { buf = buf $0 "\n"; if ($0 ~ /^\}$/) { inblk=0 }; next }
+    { print }
+    /^esac$/ && !moved { printf "%s", buf; moved=1 }
+  ' "$HOOK" > "$mut"
+  if gate_mutant "$HOOK" "$mut" "(t)"; then
+    r="$(new_repo)"; make_plugin_active "$r"; make_stranded_fixture "$r"
+    out="$(run_alt_hook_raw "$mut" "$r" startup)"; rc="$(lastrc)"; err="$(lasterr)"
+    [ "$rc" -eq 0 ] && ok "(t) mutant: rc is STILL 0 (the exit 0 swallows rc 127 — which is exactly why stderr is the check)" \
+      || no "(t) mutant: rc $rc"
+    grep -q "command not found" <<< "$err" \
+      && ok "(t) mutant: stderr contains 'command not found' — the dynamic check goes RED for a below-the-case helper" \
+      || no "(t) mutant: expected 'command not found' on stderr, got: $err"
+    grep -qF -- "$STRANDED_MARK" <<< "$(ctx_of "$out")" \
+      && no "(t) mutant: the line was emitted from a below-the-case definition (mutant is not what it claims)" \
+      || ok "(t) mutant: no stranded line emitted"
+  fi
+}
+test_stranded_helper_reachable
+
+# ---------------------------------------------------------------------------
+echo "== (u) offline (gh never called) + four fail-safe reconciler degradations =="
+test_stranded_offline_and_failsafe() {
+  local r shim out rc d ctx
+  # AC-7: a gh stub that records any call and fails loudly.
+  shim="$ROOT/gh-shim"; mkdir -p "$shim"; rm -f "$ROOT/gh-called"
+  printf '#!/bin/sh\n: > "%s/gh-called"\nexit 99\n' "$ROOT" > "$shim/gh"; chmod +x "$shim/gh"
+  r="$(new_repo)"; make_plugin_active "$r"; make_stranded_fixture "$r"
+  out="$( cd "$r" && printf '{"source":"startup"}' | PATH="$shim:$PATH" bash "$HOOK" )"; rc=$?
+  [ "$rc" -eq 0 ] && ok "(u) exits 0 with a gh stub on PATH" || no "(u) rc $rc with gh stub"
+  grep -qF -- "$STRANDED_MARK" <<< "$(ctx_of "$out")" && ok "(u) control — the line emitted with gh stubbed" \
+    || no "(u) control failed with gh stubbed: $out"
+  [ ! -e "$ROOT/gh-called" ] && ok "(u) gh was NEVER called on the startup path (offline by construction)" \
+    || no "(u) the startup arm called gh"
+
+  # AC-8: sparse copies, one degradation each. Each must emit ZERO bytes, rc 0,
+  # and write no marker. curation-status.sh is absent in every sparse dir, so the
+  # curation half is empty there too — which is itself the fail-safe path.
+  failsafe_case() {
+    local label="$1" prep="$2" dd rr oo rcc
+    dd="$(mktmp)"; copy_hook_sparse "$dd"
+    eval "$prep"
+    rr="$(new_repo)"; make_plugin_active "$rr"; make_stranded_fixture "$rr"
+    oo="$(run_alt_hook_raw "$dd/session-resume.sh" "$rr" startup)"; rcc="$(lastrc)"
+    [ "$rcc" -eq 0 ] && ok "(u-$label) rc 0" || no "(u-$label) rc $rcc"
+    [ -z "$oo" ] && ok "(u-$label) zero bytes on stdout" || no "(u-$label) expected silence, got: $oo"
+    [ ! -e "$rr/$STRANDED_MARKER" ] && ok "(u-$label) no marker written" || no "(u-$label) marker written on a degraded run"
+  }
+  failsafe_case "i-absent" ':'
+  # (ii) present but chmod 000 — premise probe: if reads are still allowed
+  # (e.g. root), the case cannot be exercised here and is neither ok nor fail.
+  d="$(mktmp)"; printf '#!/bin/sh\nexit 0\n' > "$d/probe"; chmod 000 "$d/probe"
+  if [ -r "$d/probe" ]; then
+    echo "  skipped: chmod 000 does not deny reads here"
+  else
+    failsafe_case "ii-unreadable" 'printf "#!/bin/sh\nexit 0\n" > "$dd/reconcile-jobs.sh"; chmod 000 "$dd/reconcile-jobs.sh"'
+  fi
+  failsafe_case "iii-exit3-junk-stderr" 'printf "#!/bin/sh\necho junk-on-stderr >&2\nexit 3\n" > "$dd/reconcile-jobs.sh"; chmod +x "$dd/reconcile-jobs.sh"'
+  failsafe_case "iv-exit0-silent" 'printf "#!/bin/sh\nexit 0\n" > "$dd/reconcile-jobs.sh"; chmod +x "$dd/reconcile-jobs.sh"'
+}
+test_stranded_offline_and_failsafe
+
+# ---------------------------------------------------------------------------
+echo "== (v) mutation control (call removed ⇒ AC-1 red, everything else green) + ONE composed envelope =="
+test_stranded_mutation_control() {
+  local d mut r out ctx rc expf gotf
+  d="$(mktmp)"; copy_hook_full "$d"; mut="$d/session-resume.sh"
+  # The targeted revert: drop the CALL to stranded_briefs_startup_line inside
+  # startup_arm_emit. The composer initialises `stranded=""`, so the mutant is
+  # otherwise the pre-change arm.
+  grep -v '^  stranded="\$(stranded_briefs_startup_line)"$' "$HOOK" > "$mut"
+  if gate_mutant "$HOOK" "$mut" "(v)"; then
+    grep -q 'stranded="\$(stranded_briefs_startup_line)"' "$mut" \
+      && no "(v) the call line survived in the mutant" || ok "(v) the mutant no longer calls stranded_briefs_startup_line"
+    # POSITIVE gate: the mutant still emits the curation line — a merely broken
+    # hook cannot pass for a targeted revert.
+    r="$(new_repo)"; make_plugin_active "$r"; make_curation_pending "$r"
+    out="$(run_alt_hook_raw "$mut" "$r" startup)"
+    if grep -qF -- "$CURATION_MARK" <<< "$(ctx_of "$out")"; then
+      ok "(v) positive gate: the mutant still emits the curation line on the curation-pending fixture"
+      # AC-1 must go RED against the mutant.
+      r="$(new_repo)"; make_plugin_active "$r"; make_stranded_fixture "$r"
+      out="$(run_alt_hook_raw "$mut" "$r" startup)"; rc="$(lastrc)"
+      grep -qF -- "$STRANDED_MARK" <<< "$(ctx_of "$out")" \
+        && no "(v) AC-1 stayed GREEN against the mutant — the suite would pass with the feature removed" \
+        || ok "(v) AC-1 goes RED against the mutant (no stranded line)"
+      [ "$rc" -eq 0 ] && ok "(v) mutant rc 0" || no "(v) mutant rc $rc"
+      # ...while every other startup/resume invariant stays GREEN against it.
+      r="$(new_repo)"; make_plugin_active "$r"
+      out="$(run_alt_hook_raw "$mut" "$r" startup)"
+      [ -z "$out" ] && ok "(v) AC-2(a) green against the mutant" || no "(v) AC-2(a) red against the mutant: $out"
+      r="$(new_repo)"; make_plugin_active "$r"; make_curation_pending "$r"
+      expf="$ROOT/v-expected.json"; gotf="$ROOT/v-got.json"
+      expected_curation_only_envelope "$r" > "$expf"
+      ( cd "$r" && printf '{"source":"startup"}' | bash "$mut" 2>/dev/null ) > "$gotf"
+      [ -s "$expf" ] && [ -s "$gotf" ] && cmp -s "$expf" "$gotf" \
+        && ok "(v) AC-2(b) green against the mutant (cmp-identical to the formula)" || no "(v) AC-2(b) red against the mutant"
+      r="$(new_repo)"; make_plugin_active "$r"; make_unknown_only_fixture "$r"
+      out="$(run_alt_hook_raw "$mut" "$r" startup)"
+      [ -z "$out" ] && ok "(v) AC-2(c) green against the mutant" || no "(v) AC-2(c) red against the mutant: $out"
+      r="$(new_repo)"
+      out="$(run_alt_hook_raw "$mut" "$r" startup)"
+      [ -z "$out" ] && ok "(v) AC-3 green against the mutant" || no "(v) AC-3 red against the mutant: $out"
+      r="$(new_repo)"; make_plugin_active "$r"; make_every_other_section_input "$r"
+      out="$(run_alt_hook_raw "$mut" "$r" startup)"
+      assert_startup_absence_set "(v/AC-4)" "$(ctx_of "$out")"
+      r="$(new_repo)"; make_plugin_active "$r"; make_stranded_fixture "$r"
+      ctx="$(ctx_of "$(run_alt_hook_raw "$mut" "$r" resume)")"
+      grep -qF -- "$SECTION1_STRANDED_HDR" <<< "$ctx" \
+        && ok "(v) AC-5 green against the mutant (Section-1 stranded header on resume — real siblings present)" \
+        || no "(v) AC-5 red against the mutant: $ctx"
+      grep -qF -- "$SECTION1_UNVERIFIED_HDR" <<< "$ctx" \
+        && no "(v) AC-5: the mutant dir's reconciler classified UNVERIFIED — brief-pointer.sh missing from the mutant dir?" \
+        || ok "(v) AC-5: not the UNVERIFIED fallback (the mutant dir carries the real siblings)"
+    else
+      no "(v) positive gate failed: the mutant does not emit the curation line, so it is merely broken — not a targeted revert"
+    fi
+  fi
+
+  # AC-13: both halves compose into ONE envelope, curation first, one \n between.
+  r="$(new_repo)"; make_plugin_active "$r"; make_stranded_fixture "$r"; make_curation_pending "$r"
+  out="$(run_hook_raw "$r" startup)"; rc="$(lastrc)"
+  [ "$rc" -eq 0 ] && ok "(v/AC-13) exits 0" || no "(v/AC-13) rc $rc"
+  [ "$(json_docs "$out")" = "1" ] && ok "(v/AC-13) exactly ONE JSON document on stdout" \
+    || no "(v/AC-13) expected one JSON document, got $(json_docs "$out")"
+  ctx="$(ctx_of "$out")"
+  case "$ctx" in
+    "**Curation cadence:**"*) ok "(v/AC-13) additionalContext STARTS with the curation line" ;;
+    *) no "(v/AC-13) additionalContext does not start with the curation line: $(printf '%s' "$ctx" | head -c 80)" ;;
+  esac
+  # Exactly one \n between the halves: the char right before the stranded mark
+  # is a newline and the one before THAT is not.
+  local before="${ctx%%\*\*Stranded brief:\*\**}"
+  [ "${#before}" -lt "${#ctx}" ] && ok "(v/AC-13) the stranded line is present after the curation line" \
+    || no "(v/AC-13) stranded line missing from the composed envelope: $ctx"
+  case "$before" in
+    *$'\n\n') no "(v/AC-13) TWO newlines separate the halves (mis-join)" ;;
+    *$'\n')   ok "(v/AC-13) exactly ONE newline separates the curation line from the stranded line" ;;
+    *)        no "(v/AC-13) no newline between the halves: $(printf '%s' "$before" | tail -c 40)" ;;
+  esac
+
+  # Empty-LEFT-side composition: real reconciler, NO curation-status.sh ⇒ the
+  # envelope is the stranded line alone, with no leading separator.
+  d="$(mktmp)"; copy_hook_sparse "$d"; cp "$SCRIPT_DIR/reconcile-jobs.sh" "$SCRIPT_DIR/brief-pointer.sh" "$d/"
+  r="$(new_repo)"; make_plugin_active "$r"; make_stranded_fixture "$r"; make_curation_pending "$r"
+  out="$(run_alt_hook_raw "$d/session-resume.sh" "$r" startup)"
+  ctx="$(ctx_of "$out")"
+  [ "$(json_docs "$out")" = "1" ] && ok "(v/left-empty) one JSON document with the curation probe absent" \
+    || no "(v/left-empty) expected one JSON document: $out"
+  case "$ctx" in
+    "**Stranded brief:**"*) ok "(v/left-empty) additionalContext starts with the stranded line — no leading separator when the curation half is empty" ;;
+    *) no "(v/left-empty) unexpected leading bytes: $(printf '%s' "$ctx" | head -c 60)" ;;
+  esac
+  grep -qF -- "$CURATION_MARK" <<< "$ctx" && no "(v/left-empty) curation line present without its probe" \
+    || ok "(v/left-empty) curation half empty (probe absent is fail-safe)"
+}
+test_stranded_mutation_control
 
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
