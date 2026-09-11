@@ -9,6 +9,10 @@
 #   AC-2  untracked file (nested path) → untracked/<rel> byte-identical
 #   AC-3  BASE_SHA == HEAD; tracked.patch APPLIES on a fresh detached checkout at
 #         BASE_SHA and the result equals modified/; a staged new file round-trips
+#   AC-3b unborn HEAD (fresh `git init`, no commit, one untracked file): README
+#         `status: partial (BASE_SHA failed)` + `BASE_SHA: unknown`, no BASE_SHA
+#         file, the untracked file still captured, exit 0 — `git rev-parse HEAD`
+#         prints the literal `HEAD` there and must not be recorded as a base
 #   AC-4  clean worktree → no directory, no stdout, no stderr, exit 0 (dest absent
 #         stays absent; an existing dest gains no entry)
 #   AC-5  gitignored .supervisor/ content is not "uncommitted work": ignored-only
@@ -320,6 +324,21 @@ if [ "$S_RC" -eq 0 ] && [ "$BASE_OK" -eq 1 ] && [ "$APPLY_OK" -eq 1 ] && [ "$STA
   ok "AC-3: BASE_SHA == HEAD; patch applied on detached checkout == modified/; staged new file round-trips"
 else no "AC-3 (rc=$S_RC base=$BASE_OK apply=$APPLY_OK staged=$STAGED_OK dir='$DIR' err='$S_ERR')"; fi
 
+echo "== AC-3b. unborn HEAD: status partial (BASE_SHA failed), no BASE_SHA file, untracked file still captured =="
+UB_D="$(mktemp -d)"; UB_D="$(cd "$UB_D" && pwd -P)"
+mkdir -p "$UB_D/repo"
+( cd "$UB_D/repo" && git init -q && git config user.email t@t.t && git config user.name t ) >/dev/null 2>&1
+printf 'never committed\n' > "$UB_D/repo/orphan.txt"
+run_salvage "$SALVAGE" "$UB_D/repo" --dest "$UB_D/dest" --reason "AC-3b"
+DIR="$(first_salvage_dir "$UB_D/dest")"
+UB_STATUS=0; [ -n "$DIR" ] && grep -q '^status: partial (BASE_SHA failed)$' "$DIR/README.md" 2>/dev/null && UB_STATUS=1
+UB_BASE=0; [ -n "$DIR" ] && [ ! -e "$DIR/BASE_SHA" ] && grep -q '^BASE_SHA: unknown$' "$DIR/README.md" 2>/dev/null && UB_BASE=1
+UB_FILE=0; [ -n "$DIR" ] && cmp -s "$DIR/untracked/orphan.txt" "$UB_D/repo/orphan.txt" && UB_FILE=1
+if [ "$S_RC" -eq 0 ] && [ "$UB_STATUS" -eq 1 ] && [ "$UB_BASE" -eq 1 ] && [ "$UB_FILE" -eq 1 ]; then
+  ok "AC-3b: unborn HEAD ⇒ status: partial (BASE_SHA failed), BASE_SHA: unknown, no BASE_SHA file, untracked/orphan.txt captured, exit 0"
+else no "AC-3b (rc=$S_RC status=$UB_STATUS base=$UB_BASE file=$UB_FILE dir='$DIR' err='$S_ERR')"; fi
+rm -rf "$UB_D"
+
 echo "== AC-4. clean worktree ⇒ no directory, no stdout, no stderr, exit 0 =="
 if check_ac4 "$SALVAGE"; then ok "AC-4: clean tree — absent dest stays absent, existing dest gains no entry, silent, exit 0"
 else no "AC-4 (rc=$S_RC out='$S_OUT' err='$S_ERR')"; fi
@@ -486,6 +505,10 @@ for N in $SITES; do
   i=$((N-5))
   while [ "$i" -lt "$N" ]; do
     L="$(sed -n "${i}p" "$DISPATCH")"
+    # NON-COMMENT lines only: a commented-out call (leading `#`, with or without
+    # indentation) must not satisfy the seam. grep -E, not a `case` glob — bash 3.2
+    # has no extglob, and `" "*\#*` would also skip a code line with a trailing comment.
+    if printf '%s' "$L" | grep -qE '^[[:space:]]*#'; then i=$((i+1)); continue; fi
     case "$L" in
       *'bash "$'*'--reason "dispatch pre-add cleanup"'*)      FOUND_REASONS="$FOUND_REASONS pre-add" ;;
       *'bash "$'*'--reason "dispatch header-write teardown"'*) FOUND_REASONS="$FOUND_REASONS header-write" ;;
@@ -502,7 +525,9 @@ esac
 PROSE_OK=1; PROSE_MISS=""
 for F in "$ASYNC_SKILL" "$WORKFLOW_SKILL"; do
   for N in $(grep -n '^[[:space:]]*git worktree remove' "$F" | cut -d: -f1); do
-    if ! sed -n "$((N-1))p" "$F" | grep -q 'worktree-salvage.sh'; then PROSE_OK=0; PROSE_MISS="$PROSE_MISS $(basename "$(dirname "$F")"):$N"; fi
+    # The line directly above must be a NON-COMMENT salvage call (same rule as the
+    # dispatcher seam — a `# … worktree-salvage.sh …` comment does not satisfy it).
+    if ! sed -n "$((N-1))p" "$F" | grep -vE '^[[:space:]]*#' | grep -q 'worktree-salvage.sh'; then PROSE_OK=0; PROSE_MISS="$PROSE_MISS $(basename "$(dirname "$F")"):$N"; fi
   done
 done
 L_SALV="$(grep -n 'worktree-salvage.sh ../{project}-{subtask_id}' "$ASYNC_SKILL" | head -1 | cut -d: -f1)"

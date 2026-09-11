@@ -80,7 +80,7 @@ SUBJECTS=$(git -C "$REPO_ROOT" log --format='%s' "$BRANCH" 2>/dev/null) \
 #
 #   1. `subtask: {id} — {title}`   worker commit      (async-orchestration/SKILL.md:561
 #                                                     [pins: `subtask: {subtask_a} — {title}`])
-#   2. `merge: {id} {title}`       mandated merge     (async-orchestration/SKILL.md:564-566
+#   2. `merge: {id} {title}`       mandated merge     (async-orchestration/SKILL.md:568-570
 #                                                     [pins: `merge: {subtask_a} {title}`])
 #   3. `merge: subtask {id} …`     observed in the wild (sup-2026-07-27-tree-and-find)
 #

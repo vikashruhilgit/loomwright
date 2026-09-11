@@ -518,8 +518,8 @@ Before completing async orchestration:
 > `self-heal-advisory` Part 2 precedent). Zero behavior change: every gate, command
 > shape, bound, and grep-stable string keeps identical semantics. `agents/supervisor.md`
 > keeps the short Phase 4 stanza (entry/exit conditions, the mandatory 4-point pre-merge
-> safety gate, the merge-conflict STOP rule, the PR-base self-verify requirement, and the
-> phase Output block), the "Agents Spawned by Supervisor" table + Summary Extraction
+> safety gate, the merge-conflict STOP rule, the salvage-before-remove gate (v15.67.0), the
+> PR-base self-verify requirement, and the phase Output block), the "Agents Spawned by Supervisor" table + Summary Extraction
 > rules, and the worktree-ownership invariant (branches + worktrees are created by the
 > Execute Manager in Phase 3 Step 2a, never in Phase 2) — and points here for the
 > procedures. The Supervisor Reads this file at Phase 4 FINALIZE entry. As of the 4f

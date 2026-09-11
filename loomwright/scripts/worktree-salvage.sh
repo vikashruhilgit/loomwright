@@ -20,8 +20,10 @@
 #   --dest    destination directory. Default: `<primary>/.supervisor/salvage/`
 #             where <primary> is the parent of `git rev-parse --git-common-dir`
 #             — the PRIMARY checkout, never the worktree itself (it is about to
-#             be deleted). The dispatcher passes it explicitly so the EXIT trap
-#             never depends on git resolution from a possibly-broken worktree.
+#             be deleted). The dispatcher passes it explicitly — ITS OWN checkout's
+#             `.supervisor/salvage`, beside the per-PR marker, which is the
+#             dispatching checkout and not necessarily the primary — so the EXIT
+#             trap never depends on git resolution from a possibly-broken worktree.
 #   --reason  free text recorded in the README (the caller names its site:
 #             `dispatch pre-add cleanup`, `dispatch header-write teardown`,
 #             `review-drain teardown`, `FINALIZE step 4`).
@@ -47,7 +49,10 @@
 #   are uncommitted work in git's own terms.
 #
 # CAPTURE, in this order, best-effort per step, README LAST:
-#   BASE_SHA          `git rev-parse HEAD` + newline
+#   BASE_SHA          `git rev-parse HEAD` + newline — written ONLY when the
+#                     output is a hex SHA (an unborn HEAD makes git print the
+#                     literal `HEAD` with rc 128; that is `partial (BASE_SHA
+#                     failed)`, not a base)
 #   tracked.patch     `git diff --binary HEAD` (staged additions and binary edits
 #                     round-trip; an empty diff is an empty file — an
 #                     untracked-only salvage is legal)
@@ -77,7 +82,8 @@
 #   `worktree-audit.sh` refuses to create `.supervisor/` in a repo the plugin
 #   never touched because a log line is nobody's business. A salvage is someone's
 #   uncommitted work, and losing it is worse than a stray directory: this script
-#   creates `.supervisor/salvage/` in the primary checkout even where
+#   creates `.supervisor/salvage/` under its destination (the primary checkout by
+#   default; the dispatching checkout when the drain passes `--dest`) even where
 #   `.supervisor/` did not exist.
 #
 # HONEST LIMITS (limits, not claims):
@@ -87,7 +93,8 @@
 #       absent) is not captured — one stderr line, exit 0.
 #   (c) Retention / pruning of `.supervisor/salvage/` is NOT this script's job
 #       (reconciler-repair item 06).
-#   (d) The salvage directory is created in the primary checkout even where
+#   (d) The salvage directory is created under the destination — the primary
+#       checkout by default, the dispatching checkout for the drain — even where
 #       `.supervisor/` did not exist (the inverse of the audit log's population
 #       gate, above).
 #   (e) A `git worktree remove --force` typed by a human or an agent through the
@@ -181,11 +188,18 @@ mkdir "$SALVAGE_DIR" 2>/dev/null || fail "cannot create $SALVAGE_DIR"
 STATUS="complete"
 step_fail() { [ "$STATUS" = "complete" ] && STATUS="partial ($1 failed)"; }
 
-BASE="$(git -C "$WT_TOP" rev-parse HEAD 2>/dev/null)"
+# On an unborn HEAD `git rev-parse HEAD` prints the literal `HEAD` (rc 128) — a
+# non-empty string, so emptiness alone would record `BASE_SHA: HEAD` as complete.
+# The value must be a full hex SHA; anything else (empty, `HEAD`, an error echo)
+# is `unknown` and the README's status reads `partial (BASE_SHA failed)`.
+BASE="$(git -C "$WT_TOP" rev-parse HEAD 2>/dev/null)" || BASE=""
+case "$BASE" in
+  ''|*[!0-9a-f]*) BASE="" ;;
+esac
 if [ -n "$BASE" ] && printf '%s\n' "$BASE" > "$SALVAGE_DIR/BASE_SHA" 2>/dev/null; then
   :
 else
-  BASE="${BASE:-unknown}"; step_fail "BASE_SHA"
+  BASE="unknown"; step_fail "BASE_SHA"
 fi
 git -C "$WT_TOP" diff --binary HEAD > "$SALVAGE_DIR/tracked.patch" 2>/dev/null || step_fail "tracked.patch"
 
