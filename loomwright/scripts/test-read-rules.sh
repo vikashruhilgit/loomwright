@@ -655,7 +655,7 @@ echo "$errJ3" | grep -qF "malformed or empty applies_to on id=j-nonarray" \
   && ok "(j3) fail-open diagnostic IS emitted on stderr (observable, not silent)" \
   || no "(j3) fail-open diagnostic missing from stderr: $errJ3"
 
-# (j4) THE NO-ARG CALL — the exact shape rules_nudge() uses at scripts/session-resume.sh:423
+# (j4) THE NO-ARG CALL — the exact shape rules_nudge() uses at scripts/session-resume.sh:456
 # [pins: `bash "$reader"`] (zero positional args; the pin is verified by
 # test-citation-drift.sh, which re-derives the line from the file rather than trusting the
 # number). Zero touched paths is an ABSENCE OF SCOPE, not a negative match, so EVERY valid

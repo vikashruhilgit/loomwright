@@ -181,7 +181,7 @@ US=$'\037'
 #      malformed shapes additionally get a stderr+log diagnostic from the WARN channel; the predicate
 #      itself just says "applies".
 #   2. A ZERO-LENGTH touched-path set means "no scope supplied" — an absence of information, NOT a
-#      negative match. This is the no-arg call shape `rules_nudge()` uses at session-resume.sh:423
+#      negative match. This is the no-arg call shape `rules_nudge()` uses at session-resume.sh:456
 #      [pins: `bash "$reader"`].
 #      See the header docstring. That number is PINNED by test-citation-drift.sh, which re-derives
 #      the real call site from the `[pins: ...]` anchor above rather than trusting the number. The
