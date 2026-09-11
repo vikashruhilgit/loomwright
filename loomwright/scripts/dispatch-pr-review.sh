@@ -589,14 +589,24 @@ esac
 # content (a crashed/SIGTERMed runner's half-applied fix) BEFORE its --force. The
 # call is `|| true` and the rm -rf lines below run unconditionally — an absent or
 # failing salvage never wedges teardown. Its output (the salvage dir path, or the
-# one failure line; nothing when clean) is APPENDED to RUN_LOG ($7 — the file the
-# runner's own output already lands in), so a human reading the drain log finds the
-# path beside the run that produced it; a failed append is inside the same `|| true`.
+# one failure line; nothing when clean) is CAPTURED FIRST into a variable and only
+# THEN appended, labeled, to RUN_LOG ($7 — the file the runner's own output already
+# lands in), so a human reading the drain log finds the path beside the run that
+# produced it. The two-step shape is load-bearing, not style: bash does NOT execute
+# a simple command whose redirection fails, so a direct `bash "$_salvage" … >>"$_log"`
+# would silently SKIP the salvage (and the --force below would then destroy the
+# content) whenever RUN_LOG's directory is gone at trap time — e.g. a runner or a
+# concurrent cleanup that removed .supervisor/logs/. With the capture, an
+# unwritable log costs only the log line (its own `2>/dev/null || true`), never the
+# salvage. `</dev/null` on the capture keeps the trap's `$(…)` from ever waiting on
+# an inherited stdin (the salvage script has no interactive path; this pins it).
 WRAPPER='
 _mg="$1"; _wt="$2"; _lock="$3"; _bin="$4"; _runner="$5"; _pr="$6"; _log="$7"; _salvage="$8"
 trap_cleanup() {
   cd "$_mg" 2>/dev/null || cd / 2>/dev/null || true
-  [ -n "$_salvage" ] && bash "$_salvage" "$_wt" --dest "$_mg/.supervisor/salvage" --reason "review-drain teardown" >>"$_log" 2>&1 || true
+  _out=""
+  [ -n "$_salvage" ] && _out="$(bash "$_salvage" "$_wt" --dest "$_mg/.supervisor/salvage" --reason "review-drain teardown" 2>&1 </dev/null || true)"
+  [ -n "$_out" ] && printf "salvage (review-drain teardown): %s\n" "$_out" >>"$_log" 2>/dev/null || true
   git -C "$_mg" worktree remove --force "$_wt" >/dev/null 2>&1 || true
   rm -rf "$_wt" 2>/dev/null || true
   rm -rf "$_lock" 2>/dev/null || true

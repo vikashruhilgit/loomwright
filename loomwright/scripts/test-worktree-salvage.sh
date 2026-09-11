@@ -33,6 +33,10 @@
 #         pre-add cleanup` and the dispatch still completes (marker + stub ran) — the
 #         only assertion that distinguishes SALVAGE_BIN resolved ABOVE site 1 from
 #         one resolved below it under `set -u`
+#   AC-7c trap path with RUN_LOG's directory DELETED by the stub before it exits ⇒
+#         the salvage STILL runs (capture-then-append; a failed `>>"$_log"` on the
+#         call itself would make bash skip it), sibling + lock gone, marker present;
+#         in-suite mutant re-applies the pre-fix redirect form ⇒ AC-7c RED, AC-7 GREEN
 #   AC-8  README: literal BASE_SHA, "will NOT apply to current" + "main", the
 #         `git checkout -b salvage-` … `git apply tracked.patch` incantation, and
 #         modified/ mentioned at a lower line than tracked.patch
@@ -49,7 +53,8 @@
 #         dispatcher, each preceded within 5 lines by a non-comment `bash "$…` call
 #         carrying that site's `--reason "…"` literal; every `git worktree remove` in
 #         async-orchestration + workflow-management has a salvage line directly above;
-#         the FINALIZE step-4 salvage line sits above its remove.
+#         the FINALIZE step-4 salvage line sits above its remove; in-suite mutant
+#         comments out the trap's salvage call in a scratch copy ⇒ dispatcher seam RED
 #
 # Bash-3.2/BSD-safe: no `timeout`, no `${var//…}` on large strings, `"$@"` under
 # `set -u`. The Bash tool's shell is zsh — run this as `bash test-worktree-salvage.sh`.
@@ -126,11 +131,15 @@ first_salvage_dir() {
 # via LOOMWRIGHT_CLAUDE_BIN that (by default) DIRTIES its cwd before exiting.
 # ----------------------------------------------------------------------------
 
-# fresh_git_repo [--clean-stub] — sets FX_REPO, FX_BIN, FX_HEAD_SHA, FX_CLAUDE_LOG,
-# FX_EXP_HEAD (content the stub writes into head.txt), FX_EXP_NOTE (notes/new.md).
+# fresh_git_repo [--clean-stub|--logs-killing-stub] — sets FX_REPO, FX_BIN,
+# FX_HEAD_SHA, FX_CLAUDE_LOG, FX_EXP_HEAD (content the stub writes into head.txt),
+# FX_EXP_NOTE (notes/new.md). --logs-killing-stub = the dirtying stub that ALSO
+# deletes <repo>/.supervisor/logs (RUN_LOG's directory) before exiting, so the
+# wrapper's trap fires with an unwritable $_log (AC-7c).
 fresh_git_repo() {
-  local clean_stub=0
+  local clean_stub=0 kill_logs=0
   [ "${1:-}" = "--clean-stub" ] && clean_stub=1
+  [ "${1:-}" = "--logs-killing-stub" ] && kill_logs=1
   local d; d="$(mktemp -d)"; d="$(cd "$d" && pwd -P)"
   FX_REPO="$d/repo"
   FX_BIN="$d/bin"
@@ -166,6 +175,19 @@ GHEOF
     cat > "$FX_BIN/stub-claude" <<CLEOF
 #!/usr/bin/env bash
 printf 'cwd=%s args=%s\n' "\$(pwd)" "\$*" >> "$FX_CLAUDE_LOG"
+exit 0
+CLEOF
+  elif [ "$kill_logs" -eq 1 ]; then
+    # The DIRTYING stub that then removes RUN_LOG's directory: models a runner (or
+    # a concurrent cleanup) that deleted .supervisor/logs/ before the trap runs.
+    # The stub's own stdout is already an open fd on the log file, so its rm is
+    # not self-harm — only the trap's LATER `>>"$_log"` can fail.
+    cat > "$FX_BIN/stub-claude" <<CLEOF
+#!/usr/bin/env bash
+printf 'cwd=%s args=%s\n' "\$(pwd)" "\$*" >> "$FX_CLAUDE_LOG"
+cp "$FX_EXP_HEAD" head.txt
+mkdir -p notes && cp "$FX_EXP_NOTE" notes/new.md
+rm -rf "$FX_REPO/.supervisor/logs"
 exit 0
 CLEOF
   else
@@ -294,6 +316,55 @@ check_ac7b() {  # <dispatcher> — pre-add cleanup site with a pre-existing DIRT
   dir="$(salvage_dir_with_reason "$FX_REPO" "dispatch pre-add cleanup")" || return 1
   [ -f "$dir/modified/head.txt" ] && cmp -s "$dir/modified/head.txt" "$FX_EXP_HEAD" \
     && [ -f "$dir/untracked/notes/new.md" ] && cmp -s "$dir/untracked/notes/new.md" "$FX_EXP_NOTE"
+}
+
+check_ac7c() {  # <dispatcher> — trap path with RUN_LOG's directory DELETED before the trap
+  local disp="$1" wt dir h
+  fresh_git_repo --logs-killing-stub
+  run_real "$disp" "$FX_REPO" "$PR"
+  wt="$(expected_wt_path "$FX_REPO")"
+  h="$(pr_hash)"
+  wait_for_no_worktree "$FX_REPO" "$wt" || return 1
+  [ "$RUN_RC" -eq 0 ] || return 1
+  [ -f "$FX_REPO/.supervisor/review-dispatch/$h" ] || return 1
+  [ ! -d "$FX_REPO/.supervisor/review-dispatch/$h.lock" ] || return 1
+  grep -qF "cwd=$wt" "$FX_CLAUDE_LOG" 2>/dev/null || return 1
+  # The stub really removed the log dir (else the arm is not exercising the class).
+  [ ! -e "$FX_REPO/.supervisor/logs" ] || return 1
+  dir="$(salvage_dir_with_reason "$FX_REPO" "review-drain teardown")" || return 1
+  [ -f "$dir/modified/head.txt" ] && cmp -s "$dir/modified/head.txt" "$FX_EXP_HEAD" \
+    && [ -f "$dir/untracked/notes/new.md" ] && cmp -s "$dir/untracked/notes/new.md" "$FX_EXP_NOTE"
+}
+
+# dispatcher_seam_ok <dispatcher> — the AC-11 dispatcher half: every NON-COMMENT
+# `worktree remove --force` line has its own NON-COMMENT `bash "$…" … --reason "<site>"`
+# call within the 5 lines above it, and there are exactly 3 such sites. Sets N_SITES
+# and FOUND_REASONS for the report line; returns 0 when the seam holds.
+dispatcher_seam_ok() {
+  local disp="$1" SITES N i L
+  SITES="$(grep -n 'worktree remove --force' "$disp" | grep -v ':[[:space:]]*#' | cut -d: -f1)"
+  N_SITES="$(printf '%s\n' "$SITES" | grep -c . )"
+  FOUND_REASONS=""
+  for N in $SITES; do
+    i=$((N-5))
+    while [ "$i" -lt "$N" ]; do
+      L="$(sed -n "${i}p" "$disp")"
+      # NON-COMMENT lines only: a commented-out call (leading `#`, with or without
+      # indentation) must not satisfy the seam. grep -E, not a `case` glob — bash 3.2
+      # has no extglob, and `" "*\#*` would also skip a code line with a trailing comment.
+      if printf '%s' "$L" | grep -qE '^[[:space:]]*#'; then i=$((i+1)); continue; fi
+      case "$L" in
+        *'bash "$'*'--reason "dispatch pre-add cleanup"'*)      FOUND_REASONS="$FOUND_REASONS pre-add" ;;
+        *'bash "$'*'--reason "dispatch header-write teardown"'*) FOUND_REASONS="$FOUND_REASONS header-write" ;;
+        *'bash "$'*'--reason "review-drain teardown"'*)         FOUND_REASONS="$FOUND_REASONS trap" ;;
+      esac
+      i=$((i+1))
+    done
+  done
+  case "$FOUND_REASONS" in
+    *pre-add*header-write*trap*) [ "$N_SITES" -eq 3 ] && return 0 ;;
+  esac
+  return 1
 }
 
 # ============================================================================
@@ -427,6 +498,28 @@ echo "== AC-7b. pre-add cleanup site: pre-existing DIRTY sibling salvaged with r
 if check_ac7b "$DISPATCH"; then ok "AC-7b: stale dirty sibling salvaged (reason: dispatch pre-add cleanup), marker written, stub ran"
 else no "AC-7b: pre-add cleanup salvage missing or dispatch did not complete (repo=$FX_REPO)"; fi
 
+echo "== AC-7c. trap path with RUN_LOG's directory DELETED: salvage still runs (capture-then-append), sibling + lock gone, marker present =="
+if check_ac7c "$DISPATCH"; then ok "AC-7c: .supervisor/logs gone at trap time — salvage dir still holds both files; worktree removed, lock gone, marker present"
+else no "AC-7c: salvage skipped or teardown incomplete with RUN_LOG's directory absent (repo=$FX_REPO)"; fi
+# Mutation control for AC-7c: re-apply the pre-fix `… >>"$_log" 2>&1 || true` form
+# (a failed redirect makes bash SKIP the simple command) in a scratch copy and
+# assert the arm goes RED — otherwise the arm is not discriminating on the class.
+MUT7_DIR="$SCRATCH/mutant-ac7c"; mkdir -p "$MUT7_DIR"
+cp "$SALVAGE" "$MUT7_DIR/worktree-salvage.sh"; cp "$AUDIT" "$MUT7_DIR/worktree-audit.sh"
+awk -v old='  [ -n "$_salvage" ] && bash "$_salvage" "$_wt" --dest "$_mg/.supervisor/salvage" --reason "review-drain teardown" >>"$_log" 2>&1 || true' \
+  'index($0, "_out=\"$(bash \"$_salvage\"") > 0 { print old; next } { print }' "$DISPATCH" > "$MUT7_DIR/dispatch-pr-review.sh"
+MUT7="$MUT7_DIR/dispatch-pr-review.sh"
+MUT7_GATE=0
+if [ -s "$MUT7" ] && ! cmp -s "$MUT7" "$DISPATCH" && bash -n "$MUT7" 2>/dev/null \
+   && grep -qF -e '--reason "review-drain teardown" >>"$_log" 2>&1 || true' "$MUT7"; then MUT7_GATE=1; fi
+if [ "$MUT7_GATE" -eq 1 ]; then
+  ok "AC-7c mutant gate: pre-fix redirect form re-applied, non-empty, cmp-different, bash -n clean"
+  if check_ac7c "$MUT7"; then no "AC-7c survived the pre-fix redirect form (vacuous: arm does not discriminate)"; else ok "AC-7c RED against the pre-fix redirect form (salvage skipped when \$_log is unwritable)"; fi
+  if check_ac7 "$MUT7"; then ok "AC-7 GREEN against the AC-7c mutant (positive control: the mutant only breaks the unwritable-log path)"; else no "AC-7 went red against the AC-7c mutant — mutant broke more than the redirect, not discriminating"; fi
+else
+  no "AC-7c mutant gate: mutant not usable (empty, identical, syntax error, or old form not re-applied) — control skipped"
+fi
+
 echo "== AC-8. README is accurate =="
 fresh_wt; dirty_wt "$FX_WT"
 run_salvage "$SALVAGE" "$FX_WT" --dest "$FX_D/dest" --reason "AC-8"
@@ -498,29 +591,7 @@ else
 fi
 
 echo "== AC-11. static seams: 3 non-comment --force sites each preceded by its --reason call; every prose remove has a salvage line above =="
-SITES="$(grep -n 'worktree remove --force' "$DISPATCH" | grep -v ':[[:space:]]*#' | cut -d: -f1)"
-N_SITES="$(printf '%s\n' "$SITES" | grep -c . )"
-FOUND_REASONS=""
-for N in $SITES; do
-  i=$((N-5))
-  while [ "$i" -lt "$N" ]; do
-    L="$(sed -n "${i}p" "$DISPATCH")"
-    # NON-COMMENT lines only: a commented-out call (leading `#`, with or without
-    # indentation) must not satisfy the seam. grep -E, not a `case` glob — bash 3.2
-    # has no extglob, and `" "*\#*` would also skip a code line with a trailing comment.
-    if printf '%s' "$L" | grep -qE '^[[:space:]]*#'; then i=$((i+1)); continue; fi
-    case "$L" in
-      *'bash "$'*'--reason "dispatch pre-add cleanup"'*)      FOUND_REASONS="$FOUND_REASONS pre-add" ;;
-      *'bash "$'*'--reason "dispatch header-write teardown"'*) FOUND_REASONS="$FOUND_REASONS header-write" ;;
-      *'bash "$'*'--reason "review-drain teardown"'*)         FOUND_REASONS="$FOUND_REASONS trap" ;;
-    esac
-    i=$((i+1))
-  done
-done
-SEAM_OK=0
-case "$FOUND_REASONS" in
-  *pre-add*header-write*trap*) [ "$N_SITES" -eq 3 ] && SEAM_OK=1 ;;
-esac
+SEAM_OK=0; dispatcher_seam_ok "$DISPATCH" && SEAM_OK=1
 # every `git worktree remove` line in the two skills has a salvage line directly above
 PROSE_OK=1; PROSE_MISS=""
 for F in "$ASYNC_SKILL" "$WORKFLOW_SKILL"; do
@@ -536,6 +607,24 @@ FIN_OK=0; [ -n "$L_SALV" ] && [ -n "$L_RM" ] && [ "$L_SALV" -lt "$L_RM" ] && FIN
 if [ "$SEAM_OK" -eq 1 ] && [ "$PROSE_OK" -eq 1 ] && [ "$FIN_OK" -eq 1 ]; then
   ok "AC-11 seams: $N_SITES non-comment --force sites each preceded by its --reason call; every prose remove has a salvage line above; FINALIZE salvage (line $L_SALV) precedes remove (line $L_RM)"
 else no "AC-11 seams (sites=$N_SITES reasons='$FOUND_REASONS' prose_ok=$PROSE_OK missing='$PROSE_MISS' finalize_salvage=$L_SALV finalize_remove=$L_RM)"; fi
+# Mutation control for the comment-skip: comment out the trap's salvage call in a
+# scratch copy (siblings beside it) and assert the dispatcher seam goes RED. A seam
+# that still reports the commented line as a live call is not a seam.
+MUT11_DIR="$SCRATCH/mutant-ac11"; mkdir -p "$MUT11_DIR"
+cp "$SALVAGE" "$MUT11_DIR/worktree-salvage.sh"; cp "$AUDIT" "$MUT11_DIR/worktree-audit.sh"
+awk 'index($0, "--reason \"review-drain teardown\"") > 0 && $0 !~ /^[[:space:]]*#/ { print "#" $0; next } { print }' \
+  "$DISPATCH" > "$MUT11_DIR/dispatch-pr-review.sh"
+MUT11="$MUT11_DIR/dispatch-pr-review.sh"
+MUT11_GATE=0
+if [ -s "$MUT11" ] && ! cmp -s "$MUT11" "$DISPATCH" && bash -n "$MUT11" 2>/dev/null \
+   && [ "$(grep -c '^#.*--reason "review-drain teardown"' "$MUT11")" -eq 1 ]; then MUT11_GATE=1; fi
+if [ "$MUT11_GATE" -eq 1 ]; then
+  ok "AC-11 mutant gate: trap salvage line commented out in a scratch copy (exactly one), non-empty, cmp-different, bash -n clean"
+  if dispatcher_seam_ok "$MUT11"; then no "AC-11 seam survived the commented-out trap salvage (comment-skip vacuous; reasons='$FOUND_REASONS')"
+  else ok "AC-11 seam RED against the commented-out trap salvage (sites=$N_SITES reasons='$FOUND_REASONS')"; fi
+else
+  no "AC-11 mutant gate: mutant not usable (empty, identical, syntax error, or not exactly one line commented) — control skipped"
+fi
 
 echo
 echo "RESULT: $pass passed, $fail failed"
