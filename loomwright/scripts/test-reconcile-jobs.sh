@@ -456,10 +456,14 @@ printf '## Current\n- item: .supervisor/requirements/m.md | status: merged | pr:
 printf -- '- **Source requirement:** .supervisor/requirements/s.md\n' > "$r/.supervisor/jobs/in-progress/b-stamped.md"
 printf '# s\n\n## Status: done\n' > "$r/.supervisor/requirements/s.md"
 printf -- '- **Source requirement:** .supervisor/requirements/u.md\n' > "$r/.supervisor/jobs/in-progress/c-unknown.md"
-bdir="$(mktmp)"; gerr="$(mktmp)/gerr"; now=""
+bdir="$(mktmp)"; gerr="$(mktmp)/gerr"
+# `now` is computed OUTSIDE the baseline arm: the 18b control below asserts on
+# it, and on a fetch-depth-1 CI checkout the `git show origin/main:…` arm skips
+# — computing `now` inside that arm made 18b red for the wrong reason (CI run
+# 34591330419 on PR #210: "18b fixture rows missing" with an empty `$now`).
+now="$(cd "$r" && bash "$RECON" --porcelain 2>/dev/null)"
 if git -C "$SCRIPT_DIR/../.." show origin/main:loomwright/scripts/reconcile-jobs.sh > "$bdir/reconcile-jobs.sh" 2>"$gerr"; then
   cp "$SCRIPT_DIR/brief-pointer.sh" "$bdir/"
-  now="$(cd "$r" && bash "$RECON" --porcelain 2>/dev/null)"
   then_="$(cd "$r" && bash "$bdir/reconcile-jobs.sh" --porcelain 2>/dev/null)"
   if [ -n "$now" ] && [ -n "$then_" ]; then
     if [ "$now" = "$then_" ]; then ok "18 no --evidence ⇒ porcelain byte-identical to origin/main (3-brief fixture)"; else no "18 baseline drift:\n$now\n--- vs ---\n$then_"; fi
