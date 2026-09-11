@@ -228,7 +228,7 @@ For an external/existing endpoint, only the emit half runs (verify 2xx) — arbi
 
 Per-project OTel labeling is auto-maintained by `${CLAUDE_PLUGIN_ROOT}/scripts/set-otel-resource-attrs.sh`, fired two ways:
 
-- **SessionStart hook** (`hooks.json`) — runs on every session start, including `startup` (unlike `session-resume.sh`, which skips `startup`), so it gets its own sibling `SessionStart` entry.
+- **SessionStart hook** (`hooks.json`) — runs on every session start, including `startup` (unlike `session-resume.sh`, which runs only its dedicated startup arm on `startup`), so it gets its own sibling `SessionStart` entry.
 - **`/setup observability` init-tail** — invoked once at the END of a successful init (any telemetry-enabling backend: local / external / console) so the CURRENT repo is labeled immediately instead of waiting for the next session.
 
 Contract (do not vary):

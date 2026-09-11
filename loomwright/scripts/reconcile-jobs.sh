@@ -43,9 +43,10 @@
 # HONEST LIMITS (read before trusting a classification)
 # -----------------------------------------------------
 # * NO NETWORK, EVER. This script never calls `gh` and never resolves a PR over
-#   the wire. It runs from the SessionStart hook on every resume, where a network
-#   round-trip would be a latency and offline-correctness problem. Every verdict
-#   below is derived from files already on disk.
+#   the wire. It runs from the SessionStart hook on every resume/clear/compact
+#   AND, stranded-only, on every fresh startup, where a network round-trip would
+#   be a latency and offline-correctness problem. Every verdict below is derived
+#   from files already on disk.
 # * A stranded brief carries NO PR URL of its own — the `## Outcome` block that
 #   would carry one is precisely what did not get written. So evidence has to
 #   come from elsewhere, and for a plain `/supervisor` run started outside the

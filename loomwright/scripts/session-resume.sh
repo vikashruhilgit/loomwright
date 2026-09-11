@@ -11,9 +11,29 @@
 #   - last 3 entries from the most recent .supervisor/logs/*.jsonl
 # Stays under SessionStart's documented 10,000-char additionalContext cap.
 #
-# When `source` is `startup` (fresh session) → silent no-op. Startup context
-# injection would create noise on every Claude Code launch even when no plugin
-# work is in flight.
+# When `source` is `startup` (fresh session) the hook runs ONLY its dedicated
+# `startup)` arm, which composes at most TWO advisory lines into ONE envelope:
+#   1. the curation-cadence nudge (curation_nudge_line, below), and
+#   2. the stranded-brief line (stranded_briefs_startup_line, below): the
+#      offline sibling reconcile-jobs.sh --porcelain classifies every brief in
+#      .supervisor/jobs/in-progress/, and ONLY `stranded_*` states are reported
+#      — one `**Stranded brief:**` line each plus a `--repair` trailer. A fresh
+#      session is the one with no prior context, so it is exactly where a brief
+#      whose work already shipped must be surfaced (2026-09-05: a merged brief
+#      sat unnoticed for five days because every fresh session was silent).
+# When neither line has anything to say, startup emits NOTHING — byte-for-byte
+# the pre-existing behaviour — so a fresh launch with no plugin work in flight
+# stays noise-free. Sections 1–5, the observability probe, the prior-session
+# header, the recovery hints and the house-rules nudge NEVER run on startup.
+#
+# HONEST LIMIT of the startup line: this path is offline (no forge call, ever),
+# so a brief whose only evidence of shipping lives on the forge classifies
+# `unknown` and is NOT surfaced on startup at all — it still appears as
+# UNVERIFIED on resume/clear/compact (Section 1). The startup line is debounced
+# by a 24h marker (.supervisor/.stranded-nudge-shown), so a NEW strand that
+# appears within 24h of the previous nudge waits for the next window (the
+# resume path is undebounced and still lists it); LOOMWRIGHT_STRANDED_NUDGE=
+# 0|off|false|no silences it permanently.
 #
 # Also runs an observability health probe (observability_probe, ST3): when
 # telemetry is configured in ~/.claude/settings.json, a 1-second curl checks
@@ -46,22 +66,27 @@
 #
 #   SEAM NOTE (load-bearing, do not "simplify"): unlike the rules nudge, the
 #   curation nudge ALSO fires on `source=startup` — a fresh session is exactly
-#   when a cadence reminder matters most. It gets a DEDICATED `startup)` arm in
-#   the `case "$SOURCE"` below rather than a widened shared gate, because
-#   widening that gate would expose EVERY fresh session to the observability
-#   probe's `curl` and desktop notification, the prior-session header, Sections
-#   1–5, and the unconditional recovery hints. Because that arm `exit`s from
-#   inside the case — ABOVE the shared `[ ! -d ".supervisor" ]` bail and ABOVE
-#   the emit at the bottom — the startup arm must cover three things for itself:
+#   when a cadence reminder matters most — and so does the stranded-brief line.
+#   They get a DEDICATED `startup)` arm in the `case "$SOURCE"` below rather
+#   than a widened shared gate, because widening that gate would expose EVERY
+#   fresh session to the observability probe's `curl` and desktop notification,
+#   the prior-session header, Sections 1–5, and the unconditional recovery
+#   hints. Because that arm `exit`s from inside the case — ABOVE the shared
+#   `[ ! -d ".supervisor" ]` bail and ABOVE the emit at the bottom — EACH of the
+#   two helpers the arm composes must cover three things for itself:
 #   a `.supervisor/` presence check (or it would nudge in every repo the user
-#   opens — that check lives in `curation_nudge_line`, which BOTH call sites go
-#   through, so it is deliberately not repeated in
-#   `curation_nudge_startup_only`), its OWN `hookSpecificOutput` envelope (a bare
-#   printf is dropped or shown as raw JSON), and it must be DEFINED ABOVE the
-#   case (every other helper here is defined below it, which would make the call
-#   rc=127).
+#   opens — `curation_nudge_line` and `stranded_briefs_startup_line` each open
+#   with that identical cwd-relative predicate, so it is deliberately not
+#   repeated in `startup_arm_emit`), an OWN `hookSpecificOutput` envelope (a
+#   bare printf is dropped or shown as raw JSON — and TWO envelopes on stdout is
+#   not a valid hook response either, which is why `startup_arm_emit` composes
+#   both lines into ONE envelope instead of each helper emitting its own), and
+#   the helpers AND the composer must be DEFINED ABOVE the case (every other
+#   helper here is defined below it, which would make the call rc=127, silently
+#   swallowed by the arm's `exit 0`).
 #   The rules nudge's firing surface is UNCHANGED by this: it stays below the
-#   gate and still does NOT fire on startup.
+#   gate and still does NOT fire on startup. So does Section 1's full stranded /
+#   UNVERIFIED listing — the startup line is its bounded, stranded-only sibling.
 #
 # INVARIANT: ALWAYS exits 0. Hook output is JSON via stdout. Silent-pass
 # on any failure (no .supervisor/, no state, missing tools) so the session
@@ -82,12 +107,13 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 SOURCE="$(printf '%s' "$INPUT" | jq -r '.source // empty' 2>/dev/null || true)"
 
-# ---- Curation cadence nudge (DEFINED ABOVE THE CASE ON PURPOSE) -------------
-# These two functions must be defined here, above the `case "$SOURCE"` below,
-# because the `startup)` arm calls one of them and then exits from inside the
-# case. Every other helper in this file is defined *after* the case; a helper
-# defined there would be `command not found` (rc 127) at startup — swallowed by
-# the following `exit 0` and hidden by the `|| true` on the hook command.
+# ---- Startup-arm helpers (DEFINED ABOVE THE CASE ON PURPOSE) ----------------
+# These three functions must be defined here, above the `case "$SOURCE"` below,
+# because the `startup)` arm calls `startup_arm_emit` (which calls the other
+# two) and then exits from inside the case. Every other helper in this file is
+# defined *after* the case; a helper defined there would be `command not found`
+# (rc 127) at startup — swallowed by the following `exit 0` and hidden by the
+# `|| true` on the hook command.
 #
 # curation_nudge_line: returns the ONE advisory line on stdout, or nothing.
 # Fail-safe on every path — a missing/erroring probe means NO nudge (never fire
@@ -138,22 +164,100 @@ curation_nudge_line() {
   return 0
 }
 
-# curation_nudge_startup_only: the `startup)` arm's whole body. Emits its OWN
-# SessionStart envelope because it exits above the shared emit at the bottom of
-# this file — a bare `printf` of the line is NOT recognized by Claude Code (it is
-# dropped, or shown as raw JSON), so the `iconv -c` + `jq -Rs` chain is
-# duplicated here deliberately rather than shared.
+# stranded_briefs_startup_line: the stranded-brief line(s) for the startup arm,
+# on stdout, or nothing. Gate ORDER mirrors curation_nudge_line exactly:
+# permanent env opt-out, then the OWN cwd-relative plugin-active check (the
+# marker below is cwd-relative to match that `[ -d ".supervisor" ]` gate; unlike
+# curation-status.sh, the reconciler is ITSELF cwd-relative by construction — a
+# bare relative jobs path, no cd, no root derived from the VCS CLI — so no second
+# resolution rule exists for this sibling), then a cheap glob so the common case
+# (no in-progress briefs) costs nothing, then the 24h debounce marker, then the
+# probe. The reconciler is resolved as a SIBLING via `dirname "$0"` — the same
+# idiom Section 1 uses. It is OFFLINE BY CONSTRUCTION
+# (never calls the forge CLI), so `unknown` here means "no disk evidence", and
+# unknown briefs are deliberately NOT reported on startup: a fresh session with
+# nothing classified stranded must stay byte-for-byte silent (see the header's
+# HONEST LIMIT). Fail-safe on every path — an absent, unreadable, erroring or
+# silent reconciler means NO line. The marker is stamped ONLY when a line is
+# actually emitted, so a suppressed run does not burn the window.
+stranded_briefs_startup_line() {
+  case "${LOOMWRIGHT_STRANDED_NUDGE:-}" in 0|off|false|no) return 0 ;; esac
+
+  # OWN plugin-active check (see curation_nudge_line for why the shared bail
+  # below the case is never reached from the startup arm).
+  [ -d ".supervisor" ] || return 0
+
+  # The redirect is load-bearing: `compgen -G` PRINTS its matches, and this
+  # helper runs inside a `$(…)` capture — Section 1 spells it the same way.
+  compgen -G ".supervisor/jobs/in-progress/*.md" >/dev/null 2>&1 || return 0
+
+  local marker=".supervisor/.stranded-nudge-shown"
+  if [ -f "$marker" ] && [ -n "$(find "$marker" -mmin -1440 2>/dev/null)" ]; then
+    return 0
+  fi
+
+  local script_dir reconciler porcelain body="" st path ev
+  script_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo .)"
+  reconciler="$script_dir/reconcile-jobs.sh"
+  [ -r "$reconciler" ] || return 0
+
+  porcelain="$(bash "$reconciler" --porcelain 2>/dev/null || true)"
+  [ -n "$porcelain" ] || return 0
+
+  # STATE<TAB>BRIEF<TAB>EVIDENCE, one per line. Keep ONLY stranded_* states.
+  while IFS=$'\t' read -r st path ev; do
+    [ -n "${st:-}" ] || continue
+    case "$st" in
+      stranded_*) body="${body}**Stranded brief:** ${path} — evidence: ${ev}"$'\n' ;;
+      *) ;;
+    esac
+  done <<< "$porcelain"
+  [ -n "$body" ] || return 0
+
+  # The wording is deliberately DISTINCT from every Section-1 header so the
+  # startup-path tests can assert those headers absent by exact literal.
+  body="${body}Not resumable — the lifecycle move never ran. Finish it with: \`bash $reconciler --repair\`"
+
+  # Defensive cap, far inside the 10K additionalContext limit — same idiom as
+  # the main emit at the bottom of this file.
+  if [ "${#body}" -gt 2000 ]; then
+    body="$(printf '%s' "$body" | head -c 1968)"$'\n'"... [truncated — run the reconciler directly]"
+  fi
+
+  # Braced redirection: same load-bearing shape as the curation marker above.
+  { : > "$marker"; } 2>/dev/null || true
+  printf '%s' "$body"
+  return 0
+}
+
+# startup_arm_emit: the `startup)` arm's whole body. Composes the curation line
+# and the stranded line into ONE SessionStart envelope — a second `jq -Rs` would
+# put TWO JSON objects on stdout, which is not a valid hook response. It emits
+# its OWN envelope because it exits above the shared emit at the bottom of this
+# file: a bare `printf` of the line is NOT recognized by Claude Code (dropped,
+# or shown as raw JSON), so the `iconv -c` + `jq -Rs` chain is duplicated here
+# deliberately rather than shared.
 #
-# It deliberately does NOT repeat the `[ -d ".supervisor" ]` check: curation_nudge_line
-# opens with that identical predicate, in this same process, at this same cwd,
-# with no intervening state change — a second copy could only ever agree with the
-# first. (curation-status.sh's own `[ -d "$SUP_DIR" ]` is a THIRD copy and is
-# legitimate: different process, and it resolves the root via the git toplevel.)
-curation_nudge_startup_only() {
-  local line
-  line="$(curation_nudge_line)"
-  [ -n "$line" ] || return 0
-  printf '%s' "$line" \
+# JOIN RULE (bash 3.2-portable): the separator is inserted ONLY when both halves
+# are non-empty. When the stranded line is empty, `body` IS the curation line —
+# exactly — which is what keeps a nothing-stranded startup byte-identical to the
+# pre-existing arm; when the curation line is empty, `body` IS the stranded line
+# with no leading newline.
+#
+# It deliberately does NOT repeat the `[ -d ".supervisor" ]` check: BOTH helpers
+# open with that identical predicate, in this same process, at this same cwd,
+# with no intervening state change — a third copy could only ever agree.
+# (curation-status.sh's own `[ -d "$SUP_DIR" ]` is a separate, legitimate copy:
+# different process, and it resolves the root via the git toplevel.)
+startup_arm_emit() {
+  local curation="" stranded="" body="" nl
+  nl=$'\n'
+  curation="$(curation_nudge_line)"
+  stranded="$(stranded_briefs_startup_line)"
+  body="$curation"
+  [ -n "$stranded" ] && body="${body:+$body$nl}$stranded"
+  [ -n "$body" ] || return 0
+  printf '%s' "$body" \
     | { iconv -c -f UTF-8 -t UTF-8 2>/dev/null || cat; } \
     | jq -Rs '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: .}}' 2>/dev/null \
     || true
@@ -161,12 +265,13 @@ curation_nudge_startup_only() {
 }
 
 # Only fire the prior-state summary on resume / clear / compact. Startup is a
-# fresh session — it gets the curation nudge and NOTHING else (see the SEAM NOTE
-# in the header): no observability probe, no prior-session header, no sections,
-# no recovery hints, no house-rules nudge.
+# fresh session — it gets the curation nudge + the stranded-brief line in ONE
+# envelope and NOTHING else (see the SEAM NOTE in the header): no observability
+# probe, no prior-session header, no sections, no recovery hints, no house-rules
+# nudge.
 case "$SOURCE" in
   resume|clear|compact) ;;
-  startup) curation_nudge_startup_only; exit 0 ;;
+  startup) startup_arm_emit; exit 0 ;;
   *) exit 0 ;;
 esac
 
@@ -370,8 +475,9 @@ fi
 #
 # We now classify via the sibling reconcile-jobs.sh and report only what the
 # disk can evidence. That script is OFFLINE BY CONSTRUCTION (it never calls the
-# forge CLI) precisely because this hook runs on every resume, where a network
-# round-trip would be a latency and offline-correctness problem.
+# forge CLI) precisely because this hook runs it on every resume/clear/compact
+# AND, stranded-only, on every fresh startup, where a network round-trip would
+# be a latency and offline-correctness problem.
 #
 # Fail-safe: an absent, unreadable or silent reconciler falls back to a NEUTRAL
 # listing — never back to the old claim. Nothing here can fail the hook.
