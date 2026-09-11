@@ -55,6 +55,22 @@
 #         async-orchestration + workflow-management has a salvage line directly above;
 #         the FINALIZE step-4 salvage line sits above its remove; in-suite mutant
 #         comments out the trap's salvage call in a scratch copy ⇒ dispatcher seam RED
+#   AC-12 untracked NESTED REPOSITORY (`?? nested/` — an untracked dir reaches the
+#         stream only when git refuses to descend into it): copied verbatim to
+#         untracked/nested/ — file.txt cmp-identical, its own .git present, README
+#         "Nested repositories" item, `status: complete`; in-suite mutant re-applies
+#         the pre-fix silent `continue` ⇒ AC-12 RED, AC-1 GREEN (positive control)
+#   AC-13 MODIFIED SUBMODULE (real `git submodule add` of a local repo committed on
+#         BASE, then a commit inside it ⇒ ` M sub_mod`): NOT under modified/, the patch
+#         carries `Subproject commit`, README item names the submodule, `status:
+#         complete`
+#   AC-14 RENAME entries in the -z stream (`R  new\0old\0`): `git mv a.txt b.txt` +
+#         `git mv ab/sub/b.txt c.txt` FOLLOWED by a modified z.txt ⇒ modified/b.txt,
+#         modified/c.txt, modified/z.txt present; modified/a.txt absent; and NO phantom
+#         modified/sub/b.txt (the second origin is shaped so that, read as a record of
+#         its own, it names a real UNMODIFIED file — the only observable trace of an
+#         unconsumed origin field; z.txt alone does not discriminate); in-suite mutant
+#         drops the origin read ⇒ AC-14 RED (phantom appears), AC-1 GREEN
 #
 # Bash-3.2/BSD-safe: no `timeout`, no `${var//…}` on large strings, `"$@"` under
 # `set -u`. The Bash tool's shell is zsh — run this as `bash test-worktree-salvage.sh`.
@@ -334,6 +350,53 @@ check_ac7c() {  # <dispatcher> — trap path with RUN_LOG's directory DELETED be
   dir="$(salvage_dir_with_reason "$FX_REPO" "review-drain teardown")" || return 1
   [ -f "$dir/modified/head.txt" ] && cmp -s "$dir/modified/head.txt" "$FX_EXP_HEAD" \
     && [ -f "$dir/untracked/notes/new.md" ] && cmp -s "$dir/untracked/notes/new.md" "$FX_EXP_NOTE"
+}
+
+check_ac12() {  # <script> — untracked nested repository copied verbatim, .git included
+  local s="$1" dir
+  fresh_wt
+  ( cd "$FX_WT" && mkdir nested && cd nested && git init -q \
+      && git config user.email t@t.t && git config user.name t && git config commit.gpgsign false \
+      && printf 'inner\n' > file.txt && git add -A && git commit -qm inner ) >/dev/null 2>&1 || return 1
+  cp "$FX_WT/nested/file.txt" "$FX_D/exp-nested.txt"
+  # Pre-condition of the class: git lists the nested repo as ONE `?? nested/` entry.
+  ( cd "$FX_WT" && git status --porcelain=v1 -z --untracked-files=all | tr '\0' '\n' | grep -qx '?? nested/' ) || return 1
+  run_salvage "$s" "$FX_WT" --dest "$FX_D/dest" --reason "AC-12"
+  dir="$(first_salvage_dir "$FX_D/dest")"
+  [ "$S_RC" -eq 0 ] && [ -n "$dir" ] && [ -z "$S_ERR" ] \
+    && [ -f "$dir/untracked/nested/file.txt" ] && cmp -s "$dir/untracked/nested/file.txt" "$FX_D/exp-nested.txt" \
+    && [ -d "$dir/untracked/nested/.git" ] && [ -f "$dir/untracked/nested/.git/HEAD" ] \
+    && grep -q '^status: complete$' "$dir/README.md" \
+    && grep -q 'Nested repositories' "$dir/README.md" && grep -qF '`.git` included' "$dir/README.md"
+}
+
+check_ac14() {  # <script> — staged renames followed by a later modified file; no desync
+  local s="$1" dir
+  fresh_wt
+  # Two more tracked files committed in the worktree itself (detached commit is fine):
+  # z.txt (modified AFTER the renames in stream order) and ab/sub/b.txt, whose path
+  # read as a record of its own (X='a', Y='b', REL=`sub/b.txt`) names the fixture's
+  # real, UNMODIFIED sub/b.txt — a phantom modified/sub/b.txt is the observable
+  # trace of an unconsumed origin field.
+  ( cd "$FX_WT" && printf 'z\n' > z.txt && mkdir -p ab/sub && printf 'q\n' > ab/sub/b.txt \
+      && git add -A && git commit -qm more \
+      && git mv a.txt b.txt && git mv ab/sub/b.txt c.txt ) >/dev/null 2>&1 || return 1
+  printf 'zz\n' > "$FX_WT/z.txt"
+  cp "$FX_WT/z.txt" "$FX_D/exp-z.txt"; cp "$FX_WT/b.txt" "$FX_D/exp-b.txt"
+  # Pre-condition of the class: the stream really carries the two-field rename records
+  # and the modified z.txt sits AFTER them.
+  ( cd "$FX_WT" && git status --porcelain=v1 -z --untracked-files=all | tr '\0' '|' ) > "$SCRATCH/ac14-stream"
+  grep -qF 'R  b.txt|a.txt|R  c.txt|ab/sub/b.txt| M z.txt|' "$SCRATCH/ac14-stream" || return 1
+  run_salvage "$s" "$FX_WT" --dest "$FX_D/dest" --reason "AC-14"
+  dir="$(first_salvage_dir "$FX_D/dest")"
+  [ "$S_RC" -eq 0 ] && [ -n "$dir" ] \
+    && [ -f "$dir/modified/b.txt" ] && cmp -s "$dir/modified/b.txt" "$FX_D/exp-b.txt" \
+    && [ -f "$dir/modified/c.txt" ] \
+    && [ ! -e "$dir/modified/a.txt" ] && [ ! -e "$dir/modified/ab" ] \
+    && [ -f "$dir/modified/z.txt" ] && cmp -s "$dir/modified/z.txt" "$FX_D/exp-z.txt" \
+    && [ ! -e "$dir/modified/sub" ] \
+    && [ "$(find "$dir/modified" -type f | wc -l | tr -d ' ')" = "3" ] \
+    && grep -q '^status: complete$' "$dir/README.md"
 }
 
 # dispatcher_seam_ok <dispatcher> — the AC-11 dispatcher half: every NON-COMMENT
@@ -624,6 +687,72 @@ if [ "$MUT11_GATE" -eq 1 ]; then
   else ok "AC-11 seam RED against the commented-out trap salvage (sites=$N_SITES reasons='$FOUND_REASONS')"; fi
 else
   no "AC-11 mutant gate: mutant not usable (empty, identical, syntax error, or not exactly one line commented) — control skipped"
+fi
+
+echo "== AC-12. untracked nested repository ⇒ untracked/nested/ verbatim (.git included), README names it, status: complete =="
+if check_ac12 "$SALVAGE"; then ok "AC-12: untracked/nested/file.txt cmp-identical, .git/HEAD present, README 'Nested repositories' + '.git included', status: complete, silent"
+else no "AC-12 (rc=$S_RC out='$S_OUT' err='$S_ERR')"; fi
+# Mutation control: re-apply the pre-fix silent `continue` for an untracked directory
+# in a scratch copy and assert AC-12 goes RED while AC-1 stays GREEN.
+MUT12_DIR="$SCRATCH/mutant-ac12"; mkdir -p "$MUT12_DIR"
+cp "$DISPATCH" "$MUT12_DIR/dispatch-pr-review.sh"; cp "$AUDIT" "$MUT12_DIR/worktree-audit.sh"
+awk 'index($0, "IS_NESTED_REPO=1") > 0 && $0 !~ /^[[:space:]]*#/ { print "    continue"; next } { print }' \
+  "$SALVAGE" > "$MUT12_DIR/worktree-salvage.sh"
+MUT12="$MUT12_DIR/worktree-salvage.sh"
+MUT12_GATE=0
+if [ -s "$MUT12" ] && ! cmp -s "$MUT12" "$SALVAGE" && bash -n "$MUT12" 2>/dev/null \
+   && ! grep -q '^[^#]*IS_NESTED_REPO=1' "$MUT12"; then MUT12_GATE=1; fi
+if [ "$MUT12_GATE" -eq 1 ]; then
+  ok "AC-12 mutant gate: pre-fix silent continue re-applied, non-empty, cmp-different, bash -n clean"
+  if check_ac12 "$MUT12"; then no "AC-12 survived the silent-continue mutant (vacuous)"; else ok "AC-12 RED against the silent-continue mutant (nested repo dropped, status still complete)"; fi
+  if check_ac1 "$MUT12"; then ok "AC-1 GREEN against the AC-12 mutant (positive control: only the untracked-directory path is broken)"; else no "AC-1 went red against the AC-12 mutant — mutant broke more than the untracked-directory path"; fi
+else
+  no "AC-12 mutant gate: mutant not usable (empty, identical, syntax error, or line not replaced) — control skipped"
+fi
+
+echo "== AC-13. modified submodule ⇒ not under modified/, patch has Subproject commit, README item, status: complete =="
+SM_D="$(mktemp -d)"; SM_D="$(cd "$SM_D" && pwd -P)"
+( git init -q "$SM_D/subrepo" && cd "$SM_D/subrepo" \
+    && git config user.email t@t.t && git config user.name t && git config commit.gpgsign false \
+    && printf 's\n' > s.txt && git add -A && git commit -qm s ) >/dev/null 2>&1
+( git init -q "$SM_D/repo" && cd "$SM_D/repo" \
+    && git config user.email t@t.t && git config user.name t && git config commit.gpgsign false \
+    && printf '.supervisor/\n' > .gitignore && printf 'a\n' > a.txt && git add -A && git commit -qm base \
+    && git -c protocol.file.allow=always submodule add -q "$SM_D/subrepo" sub_mod && git commit -qm addsub \
+    && cd sub_mod && git config user.email t@t.t && git config user.name t && git config commit.gpgsign false \
+    && printf 't\n' > t.txt && git add -A && git commit -qm inner ) >/dev/null 2>&1
+SM_PRE=0; ( cd "$SM_D/repo" && git status --porcelain=v1 -z --untracked-files=all | tr '\0' '\n' | grep -qx ' M sub_mod' ) && SM_PRE=1
+run_salvage "$SALVAGE" "$SM_D/repo" --dest "$SM_D/dest" --reason "AC-13"
+DIR="$(first_salvage_dir "$SM_D/dest")"
+SM_NOT_COPIED=0; [ -n "$DIR" ] && [ ! -e "$DIR/modified/sub_mod" ] && SM_NOT_COPIED=1
+SM_PATCH=0; [ -n "$DIR" ] && grep -q '^+Subproject commit ' "$DIR/tracked.patch" 2>/dev/null && SM_PATCH=1
+SM_README=0; [ -n "$DIR" ] && grep -q 'submodule is a directory and is not copied' "$DIR/README.md" 2>/dev/null \
+  && grep -qF '`Subproject commit` line' "$DIR/README.md" && grep -q '^status: complete$' "$DIR/README.md" && SM_README=1
+if [ "$S_RC" -eq 0 ] && [ "$SM_PRE" -eq 1 ] && [ "$SM_NOT_COPIED" -eq 1 ] && [ "$SM_PATCH" -eq 1 ] && [ "$SM_README" -eq 1 ]; then
+  ok "AC-13: ' M sub_mod' in the stream; nothing under modified/sub_mod; tracked.patch carries '+Subproject commit'; README submodule item present; status: complete"
+else no "AC-13 (rc=$S_RC pre=$SM_PRE not_copied=$SM_NOT_COPIED patch=$SM_PATCH readme=$SM_README dir='$DIR' err='$S_ERR')"; fi
+rm -rf "$SM_D"
+
+echo "== AC-14. rename records in the -z stream: origin field consumed exactly once, later entries stay in register =="
+if check_ac14 "$SALVAGE"; then ok "AC-14: modified/b.txt + c.txt + z.txt (cmp) present, a.txt absent, no phantom sub/b.txt, exactly 3 files, status: complete"
+else no "AC-14 (rc=$S_RC out='$S_OUT' err='$S_ERR' stream='$(cat "$SCRATCH/ac14-stream" 2>/dev/null)')"; fi
+# Mutation control: drop the origin-field read in a scratch copy — the stream desyncs
+# by one record after each rename; the second rename's origin then lands on the
+# real, unmodified sub/b.txt as a phantom copy. AC-14 must go RED; AC-1 stays GREEN.
+MUT14_DIR="$SCRATCH/mutant-ac14"; mkdir -p "$MUT14_DIR"
+cp "$DISPATCH" "$MUT14_DIR/dispatch-pr-review.sh"; cp "$AUDIT" "$MUT14_DIR/worktree-audit.sh"
+awk 'index($0, "_ORIGIN || true ;;") > 0 && $0 !~ /^[[:space:]]*#/ { print "    R?|C?|?R|?C) : ;;"; next } { print }' \
+  "$SALVAGE" > "$MUT14_DIR/worktree-salvage.sh"
+MUT14="$MUT14_DIR/worktree-salvage.sh"
+MUT14_GATE=0
+if [ -s "$MUT14" ] && ! cmp -s "$MUT14" "$SALVAGE" && bash -n "$MUT14" 2>/dev/null \
+   && ! grep -q '^[^#]*_ORIGIN' "$MUT14"; then MUT14_GATE=1; fi
+if [ "$MUT14_GATE" -eq 1 ]; then
+  ok "AC-14 mutant gate: origin-field read dropped, non-empty, cmp-different, bash -n clean"
+  if check_ac14 "$MUT14"; then no "AC-14 survived the dropped-origin-read mutant (vacuous: arm does not discriminate)"; else ok "AC-14 RED against the dropped-origin-read mutant (phantom modified/sub/b.txt from the desynced stream)"; fi
+  if check_ac1 "$MUT14"; then ok "AC-1 GREEN against the AC-14 mutant (positive control: a stream without renames is unaffected)"; else no "AC-1 went red against the AC-14 mutant — mutant broke more than rename parsing"; fi
+else
+  no "AC-14 mutant gate: mutant not usable (empty, identical, syntax error, or line not replaced) — control skipped"
 fi
 
 echo

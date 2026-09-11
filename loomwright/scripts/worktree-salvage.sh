@@ -58,15 +58,31 @@
 #                     untracked-only salvage is legal)
 #   modified/<rel>    every non-`??` entry whose path still exists, VERBATIM
 #                     (deletions have nothing to copy — the patch carries them;
-#                     a submodule entry is a directory and is skipped here, it
-#                     appears in the patch as a `Subproject commit` line)
-#   untracked/<rel>   every `??` entry, verbatim, relative path preserved
+#                     a modified or newly added SUBMODULE is a directory with
+#                     nothing to copy verbatim and is the ONE directory entry
+#                     skipped here — it appears in the patch as a `Subproject
+#                     commit` line and the README says so in its own item)
+#   untracked/<rel>   every `??` entry, verbatim, relative path preserved. An
+#                     untracked DIRECTORY reaches the stream under
+#                     `--untracked-files=all` only as a NESTED REPOSITORY (git
+#                     never descends into one — a stray clone / `git init` a
+#                     worker left behind, listed as `?? nested/`); it is
+#                     uncommitted content and is copied verbatim, its own `.git`
+#                     included, and the README names it under "Nested
+#                     repositories". It is never silently dropped.
 #   README.md         worktree, branch, BASE_SHA, removed ts, reason, status,
 #                     recovery steps (modified/ first; the patch is against
 #                     BASE_SHA — that worktree's own HEAD — and will NOT apply to
 #                     current main), and what is deliberately not captured.
-#   If a step fails the salvage continues and the README's `status:` reads
+#   If a step fails (a `cp` of one entry included — `partial (untracked/<rel>
+#   failed)`) the salvage continues and the README's `status:` reads
 #   `partial (<step> failed)` instead of `complete`.
+#
+#   THE `-z` STREAM: a rename/copy entry (`R`/`C` in either column) carries ONE
+#   extra NUL-terminated field, the origin path, AFTER the new path. The parser
+#   consumes it exactly once per such entry; every later entry is still read in
+#   register (a parser that skipped it would read the origin path as a record of
+#   its own).
 #
 # DIRECTORY NAME  `<basename(wt)>-<YYYYMMDDTHHMMSSZ>`; on collision `-2`, `-3`,
 #   … up to a HARD CAP of 999 (this runs inside an EXIT trap — nothing here may
@@ -204,15 +220,22 @@ fi
 git -C "$WT_TOP" diff --binary HEAD > "$SALVAGE_DIR/tracked.patch" 2>/dev/null || step_fail "tracked.patch"
 
 SUBMODULE_SKIPPED=0
+NESTED_REPO_COPIED=0
 while IFS= read -r -d '' ENTRY; do
   X="${ENTRY:0:1}"
   Y="${ENTRY:1:1}"
   REL="${ENTRY:3}"
   # A rename/copy entry carries one extra NUL-terminated field: the ORIGIN path
-  # (with -z the order is `XY new\0old\0`). Consume it; REL is already the NEW path.
+  # (with -z the order is `XY new\0old\0`). Consume it EXACTLY ONCE; REL is already
+  # the NEW path. Skipping this read would feed the origin path into the next
+  # iteration as a record of its own (a desynced stream).
   case "$X$Y" in
     R?|C?|?R|?C) IFS= read -r -d '' _ORIGIN || true ;;
   esac
+  # git lists an untracked DIRECTORY with a trailing `/` (`?? nested/`); strip it so
+  # the copy lands at `untracked/nested`, not at a path cp may interpret as
+  # "contents of". A single suffix strip — not the O(n²) `${var//…}` form.
+  REL="${REL%/}"
   [ -n "$REL" ] || continue
   SRC="$WT_TOP/$REL"
   if [ "$X$Y" = "??" ]; then
@@ -220,15 +243,27 @@ while IFS= read -r -d '' ENTRY; do
   else
     SUB="modified"
   fi
+  IS_NESTED_REPO=0
   if [ -d "$SRC" ] && [ ! -L "$SRC" ]; then
-    # A submodule (or an untracked dir git listed as one) — nothing to copy verbatim.
-    [ "$SUB" = "modified" ] && SUBMODULE_SKIPPED=1
-    continue
+    if [ "$SUB" = "modified" ]; then
+      # A modified (or newly added) SUBMODULE — a directory with nothing to copy
+      # verbatim; the patch carries it as a `Subproject commit` line and the README
+      # says so. This is the ONLY skip of a directory entry.
+      SUBMODULE_SKIPPED=1
+      continue
+    fi
+    # An UNTRACKED directory reaches the stream under --untracked-files=all only
+    # when git refused to descend into it: a NESTED REPOSITORY (a stray clone or
+    # `git init` a worker left behind). It IS uncommitted content, so it is copied
+    # verbatim below like any other `??` entry — its own `.git` travels with it —
+    # and the README names it. Before this branch existed the entry was silently
+    # `continue`d past and the salvage still reported `status: complete`.
+    IS_NESTED_REPO=1
   fi
   [ -e "$SRC" ] || [ -L "$SRC" ] || continue   # deleted — the patch carries it
   DST="$SALVAGE_DIR/$SUB/$REL"
   if mkdir -p "$(dirname "$DST")" 2>/dev/null && cp -pR "$SRC" "$DST" 2>/dev/null; then
-    :
+    [ "$IS_NESTED_REPO" -eq 1 ] && NESTED_REPO_COPIED=1
   else
     step_fail "$SUB/$REL"
   fi
@@ -258,9 +293,16 @@ write_readme() {
   printf '3. `untracked/` holds files that were never added to git, copied verbatim with\n'
   printf '   their relative paths.\n'
   printf '4. Deleted tracked files have nothing to copy — they appear only in the patch.\n'
+  ITEM=5
   if [ "$SUBMODULE_SKIPPED" -eq 1 ]; then
-    printf '5. A modified submodule is a directory and is not copied into `modified/`; it\n'
-    printf '   appears in the patch as a `Subproject commit` line.\n'
+    printf '%s. A modified (or newly added) submodule is a directory and is not copied into\n' "$ITEM"
+    printf '   `modified/`; it appears in the patch as a `Subproject commit` line.\n'
+    ITEM=$((ITEM + 1))
+  fi
+  if [ "$NESTED_REPO_COPIED" -eq 1 ]; then
+    printf '%s. Nested repositories: an untracked directory that is itself a git repository\n' "$ITEM"
+    printf '   (a stray clone or `git init`) is copied verbatim under `untracked/`, its own\n'
+    printf '   `.git` included — nothing inside it was ever committed to this repository.\n'
   fi
   printf '\n## Not captured\n\n'
   printf 'Gitignored runtime state (`.supervisor/` logs, drain rounds, scratch) is per-checkout\n'
