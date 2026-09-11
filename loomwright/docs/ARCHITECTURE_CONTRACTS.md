@@ -403,7 +403,7 @@ Branch:  feature/{task_id}-{slug}
 Example: ../myapp-42-add-auth, branch feature/42-add-auth
 ```
 
-- The plugin's own worktrees are recorded by the `PostToolUse (Bash)` observer (`worktree-audit.sh record`, v15.66.0) into `.supervisor/logs/worktrees.log` and read back by the read-only `worktree-audit.sh report`, which lists recorded-but-never-removed worktrees `git worktree list` still shows (surfaced by `session-resume.sh`); the former `WorktreeCreate` hook aborted native worktree creation and is gone
+- Worktrees added through the Bash tool in a repo the plugin has run in (the observer is gated on `.supervisor/` already existing at the log root) are recorded by the `PostToolUse (Bash)` observer (`worktree-audit.sh record`, v15.66.0) into `.supervisor/logs/worktrees.log` and read back by the read-only `worktree-audit.sh report`, which lists recorded-but-never-removed worktrees `git worktree list` still shows (surfaced by `session-resume.sh`; a hand-run `worktree-audit.sh note removed <abs>` dismisses one you are keeping); the former `WorktreeCreate` hook aborted native worktree creation and is gone
 - Sibling directory (not nested) prevents git issues
 - Branch matches worktree slug for traceability
 

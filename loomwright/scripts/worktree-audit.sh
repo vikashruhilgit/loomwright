@@ -26,16 +26,43 @@
 #                     in the command (segments split on `&&`, `||`, `;`, newline)
 #                     it appends one JSON line. Non-Bash tools, commands without a
 #                     worktree verb, garbage stdin, jq absent ⇒ silent no-op.
+#                     POPULATION GATE: a line is appended ONLY when the log root
+#                     already holds a `.supervisor/` directory — the signal that
+#                     the plugin has run in that repo. A scratch worktree added in
+#                     a repo the plugin never touched is nobody's business: nothing
+#                     is written and `.supervisor/` is NEVER created here.
+#                     PATH PARSING is whitespace tokenization of the command
+#                     string plus one layer of matching quotes: the payload
+#                     carries the command UNEXPANDED. When the path token still
+#                     carries shell syntax (`$VAR`, `$(…)`, a backtick, `~`, an
+#                     unmatched quote) and git does not list it, the `add` arm
+#                     falls back to a BRANCH-keyed lookup — the `-b` argument /
+#                     the positional branch tokens are literal — and records the
+#                     `worktree <path>` of the porcelain block whose
+#                     `branch refs/heads/<branch>` line matches EXACTLY, with
+#                     `confirmed:true` and `resolved_by:"branch"`. A LITERAL path
+#                     git does not list is recorded as written with
+#                     `confirmed:false` (the add failed, or resolved against a
+#                     `cd` the observer cannot see) and never falls back: pairing
+#                     a failed add with a pre-existing worktree on the same branch
+#                     would over-report.
 #   note <created|removed> <abs_path> [branch]
 #                     direct entry for creations a script performs itself — the
 #                     Bash-tool observer only ever sees `bash …/some-script.sh`, so
 #                     dispatch-pr-review.sh calls this right after its own
 #                     `git worktree add --detach` succeeds. Same line shape,
-#                     `source: "direct"`.
+#                     `source: "direct"`, same population gate. It is also the
+#                     hand-run dismissal for a stale entry: `note removed
+#                     <abs_path>` from the repo appends a confirmed `removed`
+#                     line and the reader stops listing that path.
 #   report            read-only. Folds the log by absolute path (last event wins;
-#                     a `removed` clears a candidate ONLY when its `confirmed` is
-#                     true or null — a FAILED `git worktree remove` on a dirty tree
-#                     still fires PostToolUse and must not hide a live worktree),
+#                     an OBSERVED `removed` clears a candidate ONLY when its
+#                     `confirmed` is true or null — a FAILED `git worktree remove`
+#                     on a dirty tree still fires PostToolUse and must not hide a
+#                     live worktree; a `source:"direct"` `removed` — the `note`
+#                     entry, a deliberate statement rather than an observed
+#                     command that may have failed — clears it regardless, which
+#                     is what makes `note removed` the hand-run dismissal),
 #                     intersects the `created` survivors with
 #                     `git worktree list --porcelain` run from $PWD, and prints one
 #                     tab-separated `orphan\t<path>\t<branch|->\t<ts>\t<session|->`
@@ -48,10 +75,14 @@
 # string-interpolated — so a path or command can never break the log):
 #   {"ts","event":"created|removed|pruned","path":<abs>|null,"branch":<name>|null,
 #    "confirmed":true|false|null,"session_id":<id>|null,
-#    "source":"posttooluse_bash"|"direct","command":<matched fragment ≤200 chars>}
+#    "source":"posttooluse_bash"|"direct","resolved_by":"path"|"branch"|null,
+#    "command":<matched fragment ≤200 chars>}
 #   `confirmed` is GROUND TRUTH AT RECORD TIME: `git worktree list --porcelain`
 #   is run and the path's presence (add) / absence (remove) is stored; any git
-#   failure stores null. `pruned` lines have no path and never affect the fold.
+#   failure stores null. `resolved_by` says how `path` was obtained: `"path"` =
+#   parsed from the command / given to `note`; `"branch"` = the add arm's
+#   branch-keyed fallback (above); null on `pruned` lines, which have no path
+#   and never affect the fold.
 #
 # LOG LOCATION: `<log-root>/.supervisor/logs/worktrees.log`, where <log-root> is
 # found WITHOUT git — walk up from the git base (record: the `-C <dir>` when one
@@ -77,6 +108,16 @@
 #       the plugin to become a VCS provider again, which is exactly the defect.
 #   (d) Hooks come from the INSTALLED plugin: the fixed hook set only takes effect
 #       in sessions started after a reinstall.
+#   (e) The command string is parsed, never executed, so shell syntax the shell
+#       would have expanded is NOT: `$VAR`, `$(…)`, backticks, `~`, whitespace
+#       inside quotes, and a `cd` inside a subshell (`( cd sub && git worktree
+#       add ../x … )` resolves against the payload cwd, not `sub`). The `add`
+#       arm recovers the first three through the branch-keyed fallback when the
+#       branch argument is literal; a `remove` with such a path records the
+#       token as written (its `confirmed` is meaningless for a path that never
+#       existed) and the live list decides whether the real worktree is still
+#       an orphan — every one of these fails toward UNDER-report, never toward
+#       a phantom orphan, because `report` prints only paths git still lists.
 #
 # Vendor-neutral by construction (CORE, allowance 0): no harness env var, no
 # harness-specific path, siblings resolved via `dirname "$0"`. bash 3.2-clean.
@@ -97,6 +138,18 @@ log_root() {
     cur="$(dirname "$cur")"
   done
   printf '%s' "$d"
+}
+
+# plugin_present <root> — the population gate: the plugin has run in this repo
+# iff `<root>/.supervisor/` already exists. Checked by every writer BEFORE any
+# git call or line build; this script never creates `.supervisor/` itself.
+plugin_present() { [ -d "$1/.supervisor" ]; }
+
+# unexpanded <token> — true when the token cannot be a literal path because it
+# still carries shell syntax the payload never expanded.
+unexpanded() {
+  case "$1" in *'$'*|*'`'*|'~'*|*\"*|*\'*) return 0 ;; esac
+  return 1
 }
 
 # lexical_norm <path> — collapse `.`/`..`/`//` without touching the filesystem.
@@ -163,20 +216,53 @@ probe() {
   return 0
 }
 
-# emit <root> <event> <path|""> <branch|""> <confirmed> <session|""> <source> <command>
+# branch_lookup <git_dir> <candidate>… — the add arm's fallback. Sets
+# LOOKUP_PATH / LOOKUP_BRANCH to the porcelain block whose
+# `branch refs/heads/<candidate>` line matches the WHOLE line (a branch is
+# checked out in at most one worktree, and an exact match cannot pair
+# `feature/x` with `feature/x-2`). Candidates are tried in order; first hit wins.
+LOOKUP_PATH=""
+LOOKUP_BRANCH=""
+branch_lookup() {
+  local gdir="$1" live rc cand line cur=""
+  shift
+  LOOKUP_PATH=""; LOOKUP_BRANCH=""
+  command -v git >/dev/null 2>&1 || return 0
+  live="$(git -C "$gdir" worktree list --porcelain 2>/dev/null)"; rc=$?
+  [ "$rc" -eq 0 ] || return 0
+  for cand in "$@"; do
+    [ -n "$cand" ] || continue
+    cur=""
+    while IFS= read -r line; do
+      case "$line" in
+        "worktree "*) cur="${line#worktree }" ;;
+        "branch refs/heads/"*)
+          if [ "$line" = "branch refs/heads/$cand" ] && [ -n "$cur" ]; then
+            LOOKUP_PATH="$cur"; LOOKUP_BRANCH="$cand"; return 0
+          fi ;;
+      esac
+    done <<< "$live"
+  done
+  return 0
+}
+
+# emit <root> <event> <path|""> <branch|""> <confirmed> <session|""> <source> <resolved_by|""> <command>
 emit() {
-  local root="$1" event="$2" path="$3" branch="$4" confirmed="$5" sid="$6" src="$7" cmd="$8"
+  local root="$1" event="$2" path="$3" branch="$4" confirmed="$5" sid="$6" src="$7" res="$8" cmd="$9"
   local dir="$root/.supervisor/logs" line
+  plugin_present "$root" || return 0
   cmd="$(printf '%s' "$cmd" | head -c 200)"
   line="$(jq -nc --arg ts "$(now_ts)" --arg event "$event" --arg path "$path" \
     --arg branch "$branch" --argjson confirmed "$confirmed" --arg sid "$sid" \
-    --arg src "$src" --arg cmd "$cmd" \
+    --arg src "$src" --arg res "$res" --arg cmd "$cmd" \
     '{ts:$ts, event:$event,
       path:(if $path == "" then null else $path end),
       branch:(if $branch == "" then null else $branch end),
       confirmed:$confirmed,
       session_id:(if $sid == "" then null else $sid end),
-      source:$src, command:$cmd}' 2>/dev/null)"
+      source:$src,
+      resolved_by:(if $res == "" then null else $res end),
+      command:$cmd}' 2>/dev/null)"
   [ -n "$line" ] || return 0
   mkdir -p "$dir" 2>/dev/null || return 0
   printf '%s\n' "$line" >> "$dir/worktrees.log" 2>/dev/null || true
@@ -213,30 +299,53 @@ handle_segment() {
   # else the payload cwd — so a `git -C <repo> …` run from elsewhere still lands
   # in <repo>'s log, where `report` (run from the repo) will read it.
   local root; root="$(log_root "$base")"
+  # Population gate BEFORE the git probe: a repo the plugin never ran in gets
+  # no git call, no line, and no `.supervisor/` directory.
+  plugin_present "$root" || return 0
   local frag; frag="$(printf '%s' "$seg" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
   case "$verb" in
     prune)
-      emit "$root" pruned "" "" null "$sid" posttooluse_bash "$frag"
+      emit "$root" pruned "" "" null "$sid" posttooluse_bash "" "$frag"
       return 0 ;;
     add)
+      # `cands` = branch-keyed fallback candidates: the `-b` argument when given,
+      # else every positional token after the path, in order (the documented
+      # `git worktree add ../$(basename $(pwd))-X feature/X` shape tokenizes to
+      # THREE positionals and only the last one is the literal branch).
+      local -a cands
+      local b_flag=0 resolved=path
       while [ "$i" -lt "$n" ]; do
         t="${toks[$i]}"
         case "$t" in
-          -b|-B)        branch="$(strip_quotes "${toks[$((i+1))]:-}")"; i=$((i+2)); continue ;;
+          -b|-B)        branch="$(strip_quotes "${toks[$((i+1))]:-}")"; b_flag=1; i=$((i+2)); continue ;;
           --reason|--orphan-branch) i=$((i+2)); continue ;;
           -*)           i=$((i+1)); continue ;;
         esac
         t="$(strip_quotes "$t")"
         if [ "$pos" -eq 0 ]; then path="$t"; pos=1
-        elif [ "$pos" -eq 1 ]; then [ -n "$branch" ] || branch="$t"; pos=2
+        else
+          [ "$pos" -eq 1 ] && [ -z "$branch" ] && branch="$t"
+          cands[${#cands[@]}]="$t"; pos=2
         fi
         i=$((i+1))
       done
       [ -n "$path" ] || return 0
+      local rawpath="$path"
       path="$(abs_path "$base" "$path")"
       probe "$base" "$path" 1
+      # Branch-keyed fallback: ONLY for a token the shell would have expanded
+      # (a literal path git does not list means the add failed — pairing it
+      # with a pre-existing worktree on the same branch would over-report).
+      if [ "$PROBE_CONFIRMED" = false ] && unexpanded "$rawpath"; then
+        if [ "$b_flag" -eq 1 ]; then branch_lookup "$base" "$branch"
+        else branch_lookup "$base" ${cands[@]+"${cands[@]}"}; fi
+        if [ -n "$LOOKUP_PATH" ]; then
+          path="$LOOKUP_PATH"; branch="$LOOKUP_BRANCH"; PROBE_CONFIRMED=true; PROBE_BRANCH=""
+          resolved=branch
+        fi
+      fi
       [ -n "$PROBE_BRANCH" ] && branch="$PROBE_BRANCH"
-      emit "$root" created "$path" "$branch" "$PROBE_CONFIRMED" "$sid" posttooluse_bash "$frag"
+      emit "$root" created "$path" "$branch" "$PROBE_CONFIRMED" "$sid" posttooluse_bash "$resolved" "$frag"
       return 0 ;;
     remove)
       while [ "$i" -lt "$n" ]; do
@@ -247,7 +356,7 @@ handle_segment() {
       [ -n "$path" ] || return 0
       path="$(abs_path "$base" "$path")"
       probe "$base" "$path" 0
-      emit "$root" removed "$path" "" "$PROBE_CONFIRMED" "$sid" posttooluse_bash "$frag"
+      emit "$root" removed "$path" "" "$PROBE_CONFIRMED" "$sid" posttooluse_bash path "$frag"
       return 0 ;;
     *) return 0 ;;
   esac
@@ -263,12 +372,15 @@ record() {
   local payload tool cmd cwd sid seg
   payload="$(cat 2>/dev/null)"
   [ -n "$payload" ] || return 0
+  # Cheapest gate first: the 99.9% non-worktree path pays one `cat` and one
+  # substring test on the RAW payload — no jq, no git. Only a payload that
+  # mentions `worktree` at all is parsed.
+  case "$payload" in *worktree*) ;; *) return 0 ;; esac
   printf '%s' "$payload" | jq -e 'type == "object"' >/dev/null 2>&1 || return 0
   tool="$(printf '%s' "$payload" | jq -r '.tool_name // empty' 2>/dev/null)"
   [ "$tool" = "Bash" ] || return 0
   cmd="$(printf '%s' "$payload" | jq -r '.tool_input.command // empty' 2>/dev/null)"
   [ -n "$cmd" ] || return 0
-  # Cheapest gate first: the 99.9% non-worktree path pays one grep and no git.
   grep -qE 'git( -C [^ ]+)? worktree (add|remove|prune)' <<< "$cmd" || return 0
   cwd="$(printf '%s' "$payload" | jq -r '.cwd // empty' 2>/dev/null)"
   sid="$(printf '%s' "$payload" | jq -r '.session_id // empty' 2>/dev/null)"
@@ -290,9 +402,10 @@ note() {
   case "$path" in /*) ;; *) return 0 ;; esac
   path="$(abs_path "/" "$path")"
   root="$(log_root "$PWD")"
+  plugin_present "$root" || return 0
   probe "$PWD" "$path" "$expect"
   [ -n "$PROBE_BRANCH" ] && branch="$PROBE_BRANCH"
-  emit "$root" "$event" "$path" "$branch" "$PROBE_CONFIRMED" "" direct "note $event"
+  emit "$root" "$event" "$path" "$branch" "$PROBE_CONFIRMED" "" direct path "note $event"
   return 0
 }
 
@@ -305,12 +418,16 @@ report() {
   log="$root/.supervisor/logs/worktrees.log"
   [ -r "$log" ] || return 0
   # Fold in ONE jq pass: garbage / legacy / event-less lines vanish via fromjson?.
+  # A `removed` clears a candidate when it was CONFIRMED (true) or UNPROBEABLE
+  # (null), or when it is a DIRECT `note removed` (a deliberate statement — the
+  # hand-run dismissal); an observed `removed` with confirmed:false is a failed
+  # command and leaves the live list to decide.
   candidates="$(jq -n -R -r '
     [inputs | fromjson? | select(type == "object" and (.event | type) == "string")]
     | reduce .[] as $e ({};
         if ($e.path | type) != "string" then .
         elif $e.event == "created" then .[$e.path] = $e
-        elif $e.event == "removed" and ($e.confirmed == true or $e.confirmed == null) then .[$e.path] = $e
+        elif $e.event == "removed" and ($e.confirmed == true or $e.confirmed == null or $e.source == "direct") then .[$e.path] = $e
         else . end)
     | [.[] | select(.event == "created")]
     | .[] | [.path, (if (.branch|type) == "string" then .branch else "-" end),

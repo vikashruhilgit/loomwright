@@ -14,17 +14,17 @@
 # When `source` is `startup` (fresh session) the hook runs ONLY its dedicated
 # `startup)` arm, which composes at most THREE advisory blocks into ONE envelope:
 #   1. the curation-cadence nudge (curation_nudge_line, below),
-#   3. the orphaned-worktrees section (orphaned_worktrees_block, below — also
-#      appended on resume/clear/compact): the sibling worktree-audit.sh `report`
-#      lists worktrees the plugin created, never saw removed, and git still
-#      lists. Empty report ⇒ no section, and
 #   2. the stranded-brief line (stranded_briefs_startup_line, below): the
 #      offline sibling reconcile-jobs.sh --porcelain classifies every brief in
 #      .supervisor/jobs/in-progress/, and ONLY `stranded_*` states are reported
 #      — one `**Stranded brief:**` line each plus a `--repair` trailer. A fresh
 #      session is the one with no prior context, so it is exactly where a brief
 #      whose work already shipped must be surfaced (2026-09-05: a merged brief
-#      sat unnoticed for five days because every fresh session was silent).
+#      sat unnoticed for five days because every fresh session was silent), and
+#   3. the orphaned-worktrees section (orphaned_worktrees_block, below — also on
+#      resume/clear/compact): the sibling worktree-audit.sh `report` lists Bash-
+#      tool worktree adds in a plugin-run repo that were recorded, never seen
+#      removed, and git still lists. Empty report ⇒ no section.
 # When no block has anything to say, startup emits NOTHING — byte-for-byte
 # the pre-existing behaviour — so a fresh launch with no plugin work in flight
 # stays noise-free. Sections 1–5, the observability probe, the prior-session
@@ -237,7 +237,7 @@ stranded_briefs_startup_line() {
 # orphaned_worktrees_block: the ADVISORY orphaned-worktree section (v15.66.0),
 # shared by the startup and resume arms. The sibling worktree-audit.sh `report`
 # folds .supervisor/logs/worktrees.log by path and prints ONE tab-separated row
-# per worktree the plugin recorded as created, never saw removed, and git STILL
+# per Bash-tool add in a plugin-run repo recorded, never seen removed, and git STILL
 # lists — `git worktree list` is the authority, the log is only an input. Absent
 # or unreadable sibling, or an empty report ⇒ NO output, so a repo with nothing
 # orphaned stays byte-identical to the pre-change envelope. Nothing here runs a
@@ -255,7 +255,7 @@ orphaned_worktrees_block() {
     body="${body}- ${path} (branch: ${branch:--}, created: ${ts:--}, session: ${sid:--})"$'\n'
   done <<< "$rows"
   [ -n "$body" ] || return 0
-  printf '### Orphaned worktrees (advisory)\n%sInspect with \`git worktree list\`; remove by hand with \`git worktree remove <path>\` — nothing here removes anything.' "$body"
+  printf '### Orphaned worktrees (advisory)\n%sInspect with \`git worktree list\`; remove by hand with \`git worktree remove <path>\`, or keep one and stop this advisory with the plugin'"'"'s \`scripts/worktree-audit.sh note removed <path>\` run from this repo — nothing here removes anything.' "$body"
   return 0
 }
 

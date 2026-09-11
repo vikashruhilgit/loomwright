@@ -12,7 +12,12 @@
 #
 # Covers AC-1 … AC-10 of the v15.66.0 brief plus its Post-PASS notes (the
 # `removed`/`confirmed:false` fold rule, the 1-byte defect pin, the AC-7 live
-# sibling control).
+# sibling control) and the review-iteration additions: the branch-keyed
+# fallback for an unexpanded path token (`$(basename $(pwd))`, whitespace inside
+# quotes — exact `refs/heads/<branch>` match, no fallback for a literal absent
+# path), the `.supervisor/` population gate (no line, no directory created in a
+# repo the plugin never ran in), the `note removed` direct dismissal, and one
+# gated mutant for each of the three.
 
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -46,12 +51,16 @@ sha() {
 # new_repo — an isolated repo named `repo` inside its own parent dir, so the
 # documented `../<repo>-<sub>` sibling shape lands in a private parent. Prints
 # the CANONICAL path (pwd -P) so it compares byte-for-byte with git's porcelain.
+# Carries an EMPTY `.supervisor/` — the plugin-has-run-here signal the writers
+# gate on; `bare_repo` below is the same thing WITHOUT it.
 new_repo() {
   local p; p="$(mktmp)"
   ( cd "$p" && mkdir repo && cd repo && git init -q && git config user.email t@t \
-      && git config user.name t && echo init > f && git add f && git commit -qm init ) >/dev/null 2>&1
+      && git config user.name t && echo init > f && git add f && git commit -qm init \
+      && mkdir .supervisor ) >/dev/null 2>&1
   ( cd "$p/repo" && pwd -P )
 }
+bare_repo() { local r; r="$(new_repo)"; rmdir "$r/.supervisor"; printf '%s' "$r"; }
 LOG_REL=".supervisor/logs/worktrees.log"
 log_of() { printf '%s/%s' "$1" "$LOG_REL"; }
 log_lines() { [ -f "$(log_of "$1")" ] && wc -l < "$(log_of "$1")" | tr -d ' ' || printf '0'; }
@@ -188,11 +197,51 @@ printf '%s' "$out" | grep -q "^orphan	$(dirname "$r")/repo-s2	" && ok "AC-3 the 
 r="$(new_repo)"; parent="$(dirname "$r")"
 ( cd "$parent" && git -C repo worktree add -b feature/v1 ../repo-v1 && git -C "repo" worktree add -b feature/v2 '../repo-v2' ) >/dev/null 2>&1
 ( cd "$parent" && payload "git -C repo worktree add -b feature/v1 ../repo-v1 && git -C \"repo\" worktree add -b feature/v2 '../repo-v2'" "$parent" | bash "$AUDIT" record )
-[ "$(log_lines "$r")" = "2" ] && ok "AC-3 variant: -C prefix + quoted args ⇒ 2 lines under the repo's log root" || no "AC-3 variant lines: $(log_lines "$r")"
+[ "$(log_lines "$r")" = "2" ] && ok "AC-3 variant: -C prefix + one layer of matching quotes ⇒ 2 lines under the repo's log root" || no "AC-3 variant lines: $(log_lines "$r")"
 [ "$(jq -r '.path' "$(log_of "$r")" | sort | tr '\n' ' ')" = "$parent/repo-v1 $parent/repo-v2 " ] \
   && ok "AC-3 variant resolves the same absolute paths via -C" || no "AC-3 variant paths: $(jq -r '.path' "$(log_of "$r")" | tr '\n' ' ')"
 [ "$(jq -r '.branch' "$(log_of "$r")" | tr '\n' ' ')" = "feature/v1 feature/v2 " ] && ok "AC-3 variant branches from -b" || no "AC-3 variant branches wrong"
 [ "$(jq -r '.confirmed' "$(log_of "$r")" | sort -u)" = "true" ] && ok "AC-3 variant both confirmed" || no "AC-3 variant confirmed != true"
+[ "$(jq -r '.resolved_by' "$(log_of "$r")" | sort -u)" = "path" ] && ok "AC-3 variant: a literal path is resolved_by path (no fallback)" || no "AC-3 variant resolved_by: $(jq -r '.resolved_by' "$(log_of "$r")" | tr '\n' ' ')"
+
+# ============================================================================
+echo "== AC-3f: branch-keyed fallback for a path token the shell would have expanded =="
+# The async-orchestration skill documented `../$(basename $(pwd))-BD-XXa` for
+# years; the payload carries it UNEXPANDED, so whitespace tokenization yields
+# `../$(basename` as the path. The `-b` / positional branch is literal.
+ac3f() {  # <audit> <repo> → report  (the documented shape, executed for real)
+  run_record "$1" "$2" 'git branch feature/BD-XXa && git worktree add ../$(basename $(pwd))-BD-XXa feature/BD-XXa'
+  run_report "$1" "$2"
+}
+r="$(new_repo)"; out="$(ac3f "$AUDIT" "$r")"; l="$(last_line "$r")"
+[ "$(lastrc)" -eq 0 ] && [ "$(log_lines "$r")" = "1" ] && ok "AC-3f \$(basename \$(pwd)) shape ⇒ exactly one line, rc 0" || no "AC-3f lines=$(log_lines "$r") rc=$(lastrc)"
+[ "$(field "$l" '.path')" = "$(dirname "$r")/repo-BD-XXa" ] && ok "AC-3f path is the REAL worktree (../repo-BD-XXa), not ../\$(basename" || no "AC-3f path: $l"
+[ "$(field "$l" '.confirmed')" = "true" ] && [ "$(field "$l" '.resolved_by')" = "branch" ] && [ "$(field "$l" '.branch')" = "feature/BD-XXa" ] \
+  && ok "AC-3f confirmed:true, resolved_by:branch, branch feature/BD-XXa" || no "AC-3f line: $l"
+[ "$(rows "$out")" = "1" ] && printf '%s' "$out" | grep -q "^orphan	$(dirname "$r")/repo-BD-XXa	" && ok "AC-3f report lists the real worktree as an orphan" || no "AC-3f report: $out"
+# whitespace inside quotes: `"../repo sp"` tokenizes to `"../repo` + `sp"`
+r="$(new_repo)"
+run_record "$AUDIT" "$r" 'git worktree add "../repo sp" -b feature/sp'
+l="$(last_line "$r")"
+[ "$(field "$l" '.path')" = "$(dirname "$r")/repo sp" ] && [ "$(field "$l" '.resolved_by')" = "branch" ] && [ "$(field "$l" '.confirmed')" = "true" ] \
+  && ok "AC-3f a quoted path with whitespace is recovered via -b (resolved_by branch)" || no "AC-3f whitespace path: $l"
+# exactness: feature/sp AND feature/sp-2 both live — each add pairs with ITS OWN worktree
+run_record "$AUDIT" "$r" 'git worktree add "../repo sp2" -b feature/sp-2'
+l="$(last_line "$r")"
+[ "$(field "$l" '.path')" = "$(dirname "$r")/repo sp2" ] && [ "$(field "$l" '.branch')" = "feature/sp-2" ] \
+  && ok "AC-3f the fallback matches the WHOLE refs/heads line (feature/sp-2 does not pair with feature/sp's worktree)" || no "AC-3f prefix pairing: $l"
+[ "$(jq -r '.path' "$(log_of "$r")" | sort -u | wc -l | tr -d ' ')" = "2" ] && ok "AC-3f two distinct paths recorded for two prefix-sharing branches" || no "AC-3f paths collapsed: $(jq -r '.path' "$(log_of "$r")" | tr '\n' ' ')"
+# a LITERAL path git does not list (the add FAILED: the branch is checked out
+# elsewhere) is recorded as written with confirmed:false — NO fallback, or a
+# failed add would pair with the pre-existing worktree and over-report.
+r="$(new_repo)"
+run_record "$AUDIT" "$r" "git worktree add -b feature/held ../repo-held"
+run_record "$AUDIT" "$r" "git worktree add ../repo-again feature/held"
+l="$(last_line "$r")"
+[ "$(field "$l" '.path')" = "$(dirname "$r")/repo-again" ] && [ "$(field "$l" '.confirmed')" = "false" ] && [ "$(field "$l" '.resolved_by')" = "path" ] \
+  && ok "AC-3f a literal absent path (failed add) stays confirmed:false with NO branch fallback" || no "AC-3f failed-add line: $l"
+out="$(run_report "$AUDIT" "$r")"
+[ "$(rows "$out")" = "1" ] && printf '%s' "$out" | grep -q "repo-held" && ok "AC-3f report still lists only the real worktree (the failed add's path is not live)" || no "AC-3f report after failed add: $out"
 
 # ============================================================================
 echo "== AC-4: the Supervisor's documented worktree commands appear =="
@@ -264,6 +313,19 @@ ac6c() {  # <audit> <repo> → report
 r="$(new_repo)"; out="$(ac6c "$AUDIT" "$r")"; l="$(last_line "$r")"
 [ "$(field "$l" '.event')" = "removed" ] && [ "$(field "$l" '.confirmed')" = "false" ] && ok "AC-6(c) failed remove ⇒ removed line with confirmed: false" || no "AC-6(c) line: $l"
 [ "$(rows "$out")" = "1" ] && printf '%s' "$out" | grep -q "repo-d1" && ok "AC-6(c) report STILL prints the live worktree (unconfirmed removed never clears)" || no "AC-6(c) rows: $(rows "$out") — $out"
+# (d) the hand-run dismissal: a DIRECT `note removed <abs>` on a worktree that is
+# still live (confirmed:false, source:direct) clears the candidate — it is a
+# deliberate statement, not an observed command that may have failed like (c).
+ac6d() {  # <audit> <repo> → report
+  run_record "$1" "$2" "git worktree add -b feature/keep ../repo-keep"
+  ( cd "$2" && bash "$1" note removed "$(dirname "$2")/repo-keep" ) >/dev/null 2>&1
+  run_report "$1" "$2"
+}
+r="$(new_repo)"; out="$(ac6d "$AUDIT" "$r")"; l="$(last_line "$r")"
+[ "$(field "$l" '.event')" = "removed" ] && [ "$(field "$l" '.confirmed')" = "false" ] && [ "$(field "$l" '.source')" = "direct" ] \
+  && ok "AC-6(d) note removed on a live worktree ⇒ removed / confirmed:false / source:direct (the log tells the truth)" || no "AC-6(d) line: $l"
+[ "$(rows "$out")" = "0" ] && ok "AC-6(d) the direct dismissal clears the candidate ⇒ zero rows while the worktree stays live" || no "AC-6(d) rows: $(rows "$out") — $out"
+live_paths "$r" | grep -qF -- "$(dirname "$r")/repo-keep" && ok "AC-6(d) the dismissed worktree is still live (nothing was removed)" || no "AC-6(d) worktree vanished"
 
 # ============================================================================
 echo "== AC-7: ground truth wins (with a live sibling as self-control) =="
@@ -334,10 +396,33 @@ record_only "$AUDIT" "$r" "git status && ls ../repo-worktree"
 ( cd "$r" && bash "$AUDIT" note exploded /abs/path ); rc=$?
 [ "$rc" -eq 0 ] && [ "$(log_lines "$r")" = "0" ] && ok "AC-8(vii) note with an unknown event ⇒ nothing, rc 0" || no "AC-8(vii) event: rc=$rc"
 # log root walk accepts a `.git` FILE (linked worktree) — record from inside a worktree
-r="$(new_repo)"; ( cd "$r" && git worktree add -b feature/lw ../repo-lw ) >/dev/null 2>&1
+# (the worktree gets its own `.supervisor/`, as a plugin-run linked checkout has).
+r="$(new_repo)"; ( cd "$r" && git worktree add -b feature/lw ../repo-lw && mkdir ../repo-lw/.supervisor ) >/dev/null 2>&1
 [ -f "$(dirname "$r")/repo-lw/.git" ] && ok "AC-8 precondition: a linked worktree's .git is a FILE" || no "AC-8 precondition: .git is not a file"
 ( cd "$(dirname "$r")/repo-lw" && bash "$AUDIT" note created "$(dirname "$r")/repo-lw" ); rc=$?
 [ "$rc" -eq 0 ] && [ -f "$(dirname "$r")/repo-lw/$LOG_REL" ] && ok "AC-8 the log-root walk stops at a .git FILE (linked worktree) — no git needed" || no "AC-8 log root from a linked worktree: $(ls "$(dirname "$r")/repo-lw" 2>/dev/null)"
+
+# ============================================================================
+echo "== AC-8g: population gate — a repo the plugin never ran in is left alone =="
+ac8g() {  # <audit> <bare_repo> — record + note against a repo with NO .supervisor/
+  run_record "$1" "$2" "git worktree add -b feature/scratch ../repo-scratch"
+  ( cd "$2" && bash "$1" note created "$(dirname "$2")/repo-scratch" ) >/dev/null 2>&1
+}
+b="$(bare_repo)"
+[ ! -d "$b/.supervisor" ] && ok "AC-8g precondition: the bare repo has no .supervisor/" || no "AC-8g precondition failed"
+ac8g "$AUDIT" "$b"
+[ "$(lastrc)" -eq 0 ] && ok "AC-8g record exits 0 without .supervisor/" || no "AC-8g rc $(lastrc)"
+[ ! -e "$b/.supervisor" ] && ok "AC-8g no .supervisor/ was created (record AND note)" || no "AC-8g .supervisor/ appeared: $(ls -a "$b/.supervisor" 2>/dev/null | tr '\n' ' ')"
+[ "$(log_lines "$b")" = "0" ] && ok "AC-8g nothing appended without .supervisor/" || no "AC-8g lines: $(log_lines "$b")"
+live_paths "$b" | grep -q "repo-scratch" && ok "AC-8g control: the worktree itself WAS created (silence is the gate, not a failed add)" || no "AC-8g control: worktree missing"
+# positive control: the SAME commands in a repo WITH .supervisor/ append two lines
+r="$(new_repo)"; ac8g "$AUDIT" "$r"
+[ "$(log_lines "$r")" = "2" ] && ok "AC-8g POSITIVE CONTROL: with .supervisor/ present the same record + note append 2 lines" || no "AC-8g positive control lines: $(log_lines "$r")"
+# a `-C <dir>` add from OUTSIDE the repo is gated on the -C target's root, not $PWD
+b="$(bare_repo)"; parent="$(dirname "$b")"
+( cd "$parent" && git -C repo worktree add -b feature/c1 ../repo-c1 ) >/dev/null 2>&1
+( cd "$parent" && payload "git -C repo worktree add -b feature/c1 ../repo-c1" "$parent" | bash "$AUDIT" record ); rc=$?
+[ "$rc" -eq 0 ] && [ ! -e "$b/.supervisor" ] && [ ! -e "$parent/.supervisor" ] && ok "AC-8g git -C into a bare repo ⇒ nothing, and no .supervisor/ at either the repo or the cwd" || no "AC-8g -C bare: rc=$rc"
 
 # ============================================================================
 echo "== AC-9: report is read-only =="
@@ -389,7 +474,7 @@ if gate_mutant "$AUDIT" "$MC" "AC-10(c)"; then
 fi
 # (d) fold ignores `confirmed` on removed
 d="$(mktmp)"; copy_with_siblings "$d"; MD="$d/worktree-audit.sh"
-sed -i.bak 's/(\$e\.confirmed == true or \$e\.confirmed == null)/true/' "$MD" && rm -f "$MD.bak"
+sed -i.bak 's/(\$e\.confirmed == true or \$e\.confirmed == null or \$e\.source == "direct")/true/' "$MD" && rm -f "$MD.bak"
 if gate_mutant "$AUDIT" "$MD" "AC-10(d)"; then
   r="$(new_repo)"; out="$(ac6c "$MD" "$r")"
   [ "$(rows "$out")" = "0" ] && ok "AC-10(d) mutant hides the live worktree behind an unconfirmed removed ⇒ AC-6(c) red" || no "AC-10(d) AC-6(c) stayed green: $out"
@@ -397,6 +482,33 @@ if gate_mutant "$AUDIT" "$MD" "AC-10(d)"; then
   [ "$(rows "$out")" = "1" ] && ok "AC-10(d) AC-5 stays green on the mutant" || no "AC-10(d) AC-5 went red"
   r="$(new_repo)"; out="$(ac7 "$MD" "$r")"
   [ "$(rows "$out")" = "1" ] && printf '%s' "$out" | grep -q repo-g2 && ok "AC-10(d) AC-7 stays green on the mutant" || no "AC-10(d) AC-7 went red"
+fi
+# (e) the add arm's branch-keyed fallback is dropped
+d="$(mktmp)"; copy_with_siblings "$d"; ME="$d/worktree-audit.sh"
+sed -i.bak 's/if \[ "\$PROBE_CONFIRMED" = false \] && unexpanded "\$rawpath"; then/if false; then/' "$ME" && rm -f "$ME.bak"
+if gate_mutant "$AUDIT" "$ME" "AC-10(e)"; then
+  r="$(new_repo)"; out="$(ac3f "$ME" "$r")"; l="$(last_line "$r")"
+  [ "$(field "$l" '.confirmed')" = "false" ] && [ "$(rows "$out")" = "0" ] && ok "AC-10(e) mutant records ../\$(basename with confirmed:false and reports NO orphan ⇒ AC-3f red" || no "AC-10(e) AC-3f stayed green: $l / $out"
+  r="$(new_repo)"; out="$(ac5 "$ME" "$r")"
+  [ "$(rows "$out")" = "1" ] && ok "AC-10(e) AC-5 (literal path) stays green on the mutant" || no "AC-10(e) AC-5 went red"
+fi
+# (f) the .supervisor/ population gate is dropped
+d="$(mktmp)"; copy_with_siblings "$d"; MF="$d/worktree-audit.sh"
+sed -i.bak 's/^plugin_present() { \[ -d "\$1\/\.supervisor" \]; }$/plugin_present() { :; }/' "$MF" && rm -f "$MF.bak"
+if gate_mutant "$AUDIT" "$MF" "AC-10(f)"; then
+  b="$(bare_repo)"; ac8g "$MF" "$b"
+  [ -d "$b/.supervisor" ] && [ "$(log_lines "$b")" = "2" ] && ok "AC-10(f) mutant creates .supervisor/ and appends in a repo the plugin never ran in ⇒ AC-8g red" || no "AC-10(f) AC-8g stayed green: dir=$([ -d "$b/.supervisor" ] && echo yes || echo no) lines=$(log_lines "$b")"
+  r="$(new_repo)"; ac8g "$MF" "$r"
+  [ "$(log_lines "$r")" = "2" ] && ok "AC-10(f) the positive control stays green on the mutant (the red is the gate's alone)" || no "AC-10(f) positive control went red"
+fi
+# (g) the fold ignores `source == "direct"` on removed
+d="$(mktmp)"; copy_with_siblings "$d"; MG="$d/worktree-audit.sh"
+sed -i.bak 's/ or \$e\.source == "direct")/)/' "$MG" && rm -f "$MG.bak"
+if gate_mutant "$AUDIT" "$MG" "AC-10(g)"; then
+  r="$(new_repo)"; out="$(ac6d "$MG" "$r")"
+  [ "$(rows "$out")" = "1" ] && ok "AC-10(g) mutant keeps listing a dismissed worktree ⇒ AC-6(d) red" || no "AC-10(g) AC-6(d) stayed green: $out"
+  r="$(new_repo)"; out="$(ac6c "$MG" "$r")"
+  [ "$(rows "$out")" = "1" ] && ok "AC-10(g) AC-6(c) stays green on the mutant (an observed failed remove is still not a dismissal)" || no "AC-10(g) AC-6(c) went red"
 fi
 
 echo "RESULT: $pass passed, $fail failed"
