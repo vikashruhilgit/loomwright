@@ -475,8 +475,9 @@ fi
 #
 # We now classify via the sibling reconcile-jobs.sh and report only what the
 # disk can evidence. That script is OFFLINE BY CONSTRUCTION (it never calls the
-# forge CLI) precisely because this hook runs on every resume, where a network
-# round-trip would be a latency and offline-correctness problem.
+# forge CLI) precisely because this hook runs it on every resume/clear/compact
+# AND, stranded-only, on every fresh startup, where a network round-trip would
+# be a latency and offline-correctness problem.
 #
 # Fail-safe: an absent, unreadable or silent reconciler falls back to a NEUTRAL
 # listing — never back to the old claim. Nothing here can fail the hook.
