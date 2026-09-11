@@ -458,6 +458,13 @@ if ! git worktree add --detach "$WT_PATH" "$HEAD_SHA" >/dev/null 2>&1; then
   rm -rf "$LOCK_DIR" 2>/dev/null || true
   exit 0
 fi
+# Record the creation in the worktree audit log (v15.66.0): the PostToolUse
+# observer only ever sees `bash …/dispatch-pr-review.sh …`, never the
+# `git worktree add` inside it, so this sibling is the drain's own entry. Fail-safe:
+# an absent sibling or any failure is a no-op. The `git worktree remove --force`
+# sites below stay unwired on purpose — the reader's ground-truth rule (a path git
+# no longer lists is not an orphan) already covers a removal the log never saw.
+bash "$(dirname "$0")/worktree-audit.sh" note created "$WT_PATH" 2>/dev/null || true
 
 # ---- ⑤ write the RUN_LOG header (non-empty, machine-greppable) --------------
 # Written BEFORE the marker + launch so an in-flight drain is never an ambiguous
