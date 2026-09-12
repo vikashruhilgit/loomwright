@@ -38,6 +38,16 @@
 #          stages the file for real on its first ls-files probe and answers
 #          "not tracked" that once; the report lists it as would-remove, the
 #          deletion pass names it `keep (tracked at deletion time)`
+#   AC-1d  the same shim answers rc 128 at deletion time ⇒ that file is kept
+#          (`keep (git could not answer at deletion time, rc 128)`), its
+#          siblings still removed, the summary counting actual removals
+#   AC-1e  the shim renames the candidate away on its first probe ⇒ pass 2
+#          prints `skipped (not a regular file now)` and the moved file is
+#          untouched; AC-1f replaces it with a symlink ⇒ the same skip line,
+#          the link and its target untouched. (The `skipped (no longer
+#          matches <glob>)` arm is NOT testable: pass 2 re-matches the STORED
+#          basename string against the STORED row glob, both fixed within one
+#          run — no filesystem state can make it fire; noted, not faked.)
 #   AC-6   a novel directory (zzz-future/) keeps its aged file and is reported
 #          `unclassified — not swept`
 #   AC-7   fail-safe, one assertion per case: unreadable dir (both exhaust dirs
@@ -53,9 +63,10 @@
 #          green, the layering of guard ii across the two passes); (a3) only
 #          the deletion-time line removed lets the AC-1c becomes-tracked file
 #          fall; (a1+a2) rows + both lines — the only way the five tracked
-#          files can fall, which is the layering claim itself; (b) the two
-#          guard rows reclassified exhaust; (c) the pending-ids exclusion line
-#          removed
+#          files can fall, which is the layering claim itself; (a4) the
+#          deletion-time could-not-answer arm deleted so rc 128 falls through
+#          to rm ⇒ AC-1d red; (b) the two guard rows reclassified exhaust;
+#          (c) the pending-ids exclusion line removed
 #   AC-10  policy mirror: `retention-sweep.sh policy` and the
 #          ARCHITECTURE_CONTRACTS.md retention table name the same directory set
 #          with the same classes, both directions
@@ -302,14 +313,26 @@ printf '%s' "$OUT" | grep -qF 'keep (tracked by git): .supervisor/drain-rounds/t
 
 # ============================================================================
 echo "== AC-1c: a candidate that becomes TRACKED between the listing pass and the deletion pass survives =="
-# mk_git_shim <dir> <root> <rel> — a `git` on PATH that, on the FIRST
-# `ls-files --error-unmatch -- <rel>` probe, stages <rel> for real (through the
-# real git) and answers 1 ("not tracked") — so the file becomes tracked AFTER
-# the listing-time answer and BEFORE the deletion-time one. Every other call is
-# delegated to the real git untouched (the up-front probe, curation-status.sh).
+# mk_git_shim <dir> <root> <rel> [mode] — a `git` on PATH that, on the FIRST
+# `ls-files --error-unmatch -- <rel>` probe, performs one action on <rel> and
+# answers 1 ("not tracked") — so the change lands AFTER the listing-time answer
+# and BEFORE the deletion-time one. Every other call is delegated to the real
+# git untouched (the up-front probe, curation-status.sh). Modes:
+#   track   (default) stage <rel> for real through the real git
+#   rc128   change nothing; every LATER probe for <rel> answers 128
+#   rename  mv <rel> to <rel>.moved (the path is no longer a regular file)
+#   symlink mv <rel> to <rel>.moved and put a symlink to <root>/link-target
+#           in its place
 GIT_REAL="$(command -v git)"
 mk_git_shim() {
-  local d="$1" root="$2" rel="$3"
+  local d="$1" root="$2" rel="$3" mode="${4:-track}" first="" later=""
+  case "$mode" in
+    track)   first="\"$GIT_REAL\" -C \"$root\" add -f -- \"$rel\" >/dev/null 2>&1" ;;
+    rc128)   first=":"; later="exit 128" ;;
+    rename)  first="mv -f \"$root/$rel\" \"$root/$rel.moved\"" ;;
+    symlink) first="mv -f \"$root/$rel\" \"$root/$rel.moved\" && ln -s \"$root/link-target\" \"$root/$rel\"" ;;
+    *) echo "mk_git_shim: unknown mode $mode" >&2; return 1 ;;
+  esac
   mkdir -p "$d"
   cat > "$d/git" <<EOF
 #!/bin/sh
@@ -317,14 +340,17 @@ case "\$*" in
   *"ls-files --error-unmatch -- $rel"*)
     if [ ! -e "$d/.fired" ]; then
       : > "$d/.fired"
-      "$GIT_REAL" -C "$root" add -f -- "$rel" >/dev/null 2>&1
+      $first
       exit 1
-    fi ;;
+    fi
+    $later ;;
 esac
 exec "$GIT_REAL" "\$@"
 EOF
   chmod +x "$d/git"
 }
+# listed_in <dir> — how many `would remove:` lines the run listed for that dir.
+listed_in() { printf '%s\n' "$OUT" | grep -cF "would remove: .supervisor/$1/"; }
 BT_REL=".supervisor/drain-rounds/becomes-tracked.json"
 build_bt() {  # <root> — the aged fixture plus an aged, UNTRACKED becomes-tracked.json
   build_fixture "$1"
@@ -341,6 +367,41 @@ printf '%s' "$OUT" | grep -qF "would remove: $BT_REL" && ok "AC-1c the listing p
 [ -f "$F1C/$BT_REL" ] && [ "$(hash_of "$F1C/$BT_REL")" = "$h1c" ] && ok "AC-1c the file that became tracked between the passes SURVIVES with unchanged hash" || no "AC-1c becomes-tracked.json removed or changed — guard (ii) is not re-evaluated at deletion time"
 printf '%s' "$OUT" | grep -qF "keep (tracked at deletion time): $BT_REL" && ok "AC-1c the deletion pass names it 'keep (tracked at deletion time)'" || no "AC-1c deletion-time keep line missing"
 [ ! -e "$F1C/.supervisor/drain-rounds/aaa.json" ] && printf '%s' "$OUT" | grep -qF 'drain-rounds/: removed 2 file(s)' && ok "AC-1c control — the two untracked aged ledgers beside it WERE removed and the summary counts what was actually removed (2), not what was listed (3)" || no "AC-1c control: aaa.json survived or summary miscounts: $(printf '%s\n' "$OUT" | tail -3)"
+
+# ============================================================================
+echo "== AC-1d: git cannot answer at deletion time (rc 128) ⇒ that file is kept, per file =="
+F1D="$ROOT/f1d"; build_bt "$F1D"; SHIM1D="$ROOT/shim1d"; mk_git_shim "$SHIM1D" "$F1D" "$BT_REL" rc128
+h1d="$(hash_of "$F1D/$BT_REL")"
+OUT="$(cd "$F1D" && PATH="$SHIM1D:$PATH" bash "$RS" --project-root "$F1D" --delete --older-than 1 2>&1)"; RC=$?
+[ "$RC" -eq 0 ] && ok "AC-1d exits 0" || no "AC-1d rc=$RC"
+[ -e "$SHIM1D/.fired" ] && ok "AC-1d control — the shim fired" || no "AC-1d control: the shim never fired — the arm is vacuous"
+printf '%s' "$OUT" | grep -qF 'mode=DELETE' && printf '%s' "$OUT" | grep -qF "would remove: $BT_REL" && ok "AC-1d control — DELETE mode entered and the listing pass listed the file (rc 1 at listing time)" || no "AC-1d control: not DELETE or not listed: $(printf '%s\n' "$OUT" | sed -n 2,4p)"
+n1d="$(listed_in drain-rounds)"
+[ -f "$F1D/$BT_REL" ] && [ "$(hash_of "$F1D/$BT_REL")" = "$h1d" ] && ok "AC-1d the file git could not answer for at deletion time SURVIVES with unchanged hash" || no "AC-1d becomes-tracked.json removed or changed — rc 128 at deletion time fell through to rm"
+printf '%s' "$OUT" | grep -qF "keep (git could not answer at deletion time, rc 128): $BT_REL" && ok "AC-1d the keep line names the file AND the rc (128)" || no "AC-1d keep line missing: $(printf '%s\n' "$OUT" | grep -F 'deletion time' | head -3)"
+[ ! -e "$F1D/.supervisor/drain-rounds/aaa.json" ] && [ ! -e "$F1D/.supervisor/drain-rounds/bbb.json" ] && ok "AC-1d the sibling candidates beside it WERE removed (per file, never widened to a refusal)" || no "AC-1d siblings survived — the deletion-time rc widened into a refusal"
+[ "$n1d" -eq 3 ] && printf '%s' "$OUT" | grep -qF "drain-rounds/: removed $((n1d - 1)) file(s)" && ok "AC-1d summary counts actual removals: listed $n1d, removed $((n1d - 1))" || no "AC-1d summary miscounts (listed $n1d): $(printf '%s\n' "$OUT" | tail -3)"
+
+# ============================================================================
+echo "== AC-1e / AC-1f: candidate renamed away / replaced by a symlink between the passes ⇒ 'skipped (not a regular file now)' =="
+for arm in rename symlink; do
+  F1E="$ROOT/f1e-$arm"; build_bt "$F1E"; SHIM1E="$ROOT/shim1e-$arm"; mk_git_shim "$SHIM1E" "$F1E" "$BT_REL" "$arm"
+  printf 'link target\n' > "$F1E/link-target"; ht="$(hash_of "$F1E/link-target")"
+  h1e="$(hash_of "$F1E/$BT_REL")"
+  P1E="$(cd "$F1E" && pwd -P)/$BT_REL"   # the tool prints the pwd -P resolved absolute path
+  OUT="$(cd "$F1E" && PATH="$SHIM1E:$PATH" bash "$RS" --project-root "$F1E" --delete --older-than 1 2>&1)"; RC=$?
+  [ "$RC" -eq 0 ] && ok "AC-1e/$arm exits 0" || no "AC-1e/$arm rc=$RC"
+  [ -e "$SHIM1E/.fired" ] && printf '%s' "$OUT" | grep -qF "would remove: $BT_REL" && ok "AC-1e/$arm control — the shim fired and the listing pass listed the file" || no "AC-1e/$arm control: shim never fired or file not listed"
+  printf '%s' "$OUT" | grep -qF "skipped (not a regular file now): $P1E" && ok "AC-1e/$arm pass 2 prints 'skipped (not a regular file now)' for the path" || no "AC-1e/$arm skip line missing: $(printf '%s\n' "$OUT" | grep -F 'skipped' | head -3)"
+  [ -f "$F1E/$BT_REL.moved" ] && [ "$(hash_of "$F1E/$BT_REL.moved")" = "$h1e" ] && ok "AC-1e/$arm the moved-away file is untouched (unchanged hash)" || no "AC-1e/$arm the moved-away file is missing or changed"
+  if [ "$arm" = symlink ]; then
+    [ -L "$F1E/$BT_REL" ] && [ -f "$F1E/link-target" ] && [ "$(hash_of "$F1E/link-target")" = "$ht" ] && ok "AC-1f the symlink is still in place and its target is untouched (rm never followed the link)" || no "AC-1f symlink removed or its target changed"
+  else
+    [ ! -e "$F1E/$BT_REL" ] && ok "AC-1e the renamed path stays absent (nothing re-created it)" || no "AC-1e something exists at the renamed path"
+  fi
+  n1e="$(listed_in drain-rounds)"
+  [ "$n1e" -eq 3 ] && [ ! -e "$F1E/.supervisor/drain-rounds/aaa.json" ] && printf '%s' "$OUT" | grep -qF "drain-rounds/: removed $((n1e - 1)) file(s)" && ok "AC-1e/$arm siblings removed; summary counts actual removals: listed $n1e, removed $((n1e - 1))" || no "AC-1e/$arm siblings or summary wrong (listed $n1e): $(printf '%s\n' "$OUT" | tail -3)"
+done
 
 # ============================================================================
 echo "== AC-7: fail-safe — exit 0, nothing deleted, condition named =="
@@ -448,6 +509,13 @@ if mutant a3 '/# LS-FILES-GUARD-AT-DELETION$/d'; then
   OUT="$(cd "$FA3" && PATH="$SHIMA3:$PATH" bash "$MUT/a3.sh" --project-root "$FA3" --delete --older-than 1 2>&1)"; RC=$?
   [ -e "$SHIMA3/.fired" ] || no "AC-9 (a3) control: the shim never fired"
   [ ! -e "$FA3/$BT_REL" ] && ok "AC-9 (a3) RED as required: without the deletion-time guard the file that became tracked between the passes is deleted" || no "AC-9 (a3) mutant survived: becomes-tracked.json kept without the deletion-time guard"
+fi
+# (a4) the deletion-time could-not-answer arm deleted ⇒ rc 128 matches no case and falls through to rm ⇒ AC-1d red.
+if mutant a4 '/keep (git could not answer at deletion time/d'; then
+  FA4="$ROOT/fa4"; build_bt "$FA4"; SHIMA4="$ROOT/shima4"; mk_git_shim "$SHIMA4" "$FA4" "$BT_REL" rc128
+  OUT="$(cd "$FA4" && PATH="$SHIMA4:$PATH" bash "$MUT/a4.sh" --project-root "$FA4" --delete --older-than 1 2>&1)"; RC=$?
+  [ -e "$SHIMA4/.fired" ] || no "AC-9 (a4) control: the shim never fired"
+  [ ! -e "$FA4/$BT_REL" ] && ok "AC-9 (a4) RED as required: without the could-not-answer arm, rc 128 at deletion time falls through to rm and the file is deleted" || no "AC-9 (a4) mutant survived: becomes-tracked.json kept without the arm"
 fi
 # (a1+a2) rows reclassified + both guard lines down ⇒ AC-1 proper (the five hashes) red — the layering claim.
 if mutant a1a2 "s/^  row memory tracked - /  row memory exhaust '*' /" "s/^  row postmortem tracked - /  row postmortem exhaust '*' /" '/# LS-FILES-GUARD$/d' '/# LS-FILES-GUARD-AT-DELETION$/d'; then
