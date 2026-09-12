@@ -206,7 +206,7 @@ run_rs "$RS" "$F3" "$F3"
 [ "$RC" -eq 0 ] && ok "AC-3 default invocation exits 0" || no "AC-3 rc=$RC"
 printf '%s' "$OUT" | grep -qF 'would remove:' && ok "AC-3 control — the default report DOES list candidates (the fixture is aged past 90 days)" || no "AC-3 control: no candidates listed — the report-only assertion would be vacuous: $OUT"
 [ "$(listing "$F3")" = "$before" ] && ok "AC-3 default invocation leaves the full listing byte-identical" || no "AC-3 listing changed under the default invocation"
-printf '%s' "$OUT" | grep -qF 'nothing removed (report-only; pass --delete' && ok "AC-3 summary says nothing removed / pass --delete" || no "AC-3 summary line missing: $(printf '%s' "$OUT" | tail -1)"
+printf '%s' "$OUT" | grep -qF 'pass --delete to remove the files listed above' && ok "AC-3 summary says nothing removed / pass --delete" || no "AC-3 summary line missing: $(printf '%s' "$OUT" | tail -1)"
 [ "$(printf '%s\n' "$OUT" | head -1)" = 'retention-sweep: IRREVERSIBLE — .supervisor/ is gitignored and exists only in this checkout; nothing removed here can be recovered.' ] \
   && ok "AC-11 REPORT mode: the IRREVERSIBLE line is the FIRST line" || no "AC-11 REPORT first line: $(printf '%s\n' "$OUT" | head -1)"
 
