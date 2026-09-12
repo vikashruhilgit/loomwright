@@ -23,12 +23,17 @@
 #   (default)        REPORT: per directory, the class, the rule and the
 #                    consumers; for the two exhaust rows the files that WOULD be
 #                    removed (count, bytes, oldest/newest age). Removes nothing.
-#   --delete         perform exactly the removal the report lists.
+#   --delete         perform the removal the report lists — at most: every guard
+#                    below that can be re-evaluated per file IS re-evaluated at
+#                    deletion time, and a file the report listed but a re-check
+#                    rejects is printed as a keep, never removed.
 #   --older-than N   age threshold in whole days, default 90. Age is
 #                    `find -mtime +N` — strictly MORE than N whole 24-hour
 #                    periods, POSIX, no stat(1) flavor. N must match
-#                    ^[1-9][0-9]*$: `0`, a leading zero (`08` — bash arithmetic
-#                    would read it as octal) or a non-integer is rejected with a
+#                    ^[1-9][0-9]*$ and be at most 36500: `0`, a leading zero
+#                    (`08` — bash arithmetic would read it as octal), a
+#                    non-integer, or a value above 36500 (100 years — `find`
+#                    would silently yield no candidates) is rejected with a
 #                    one-line reason and the run falls back to REPORT.
 #   --project-root D taken verbatim (as stamp-requirement-status.sh does);
 #                    default = `git rev-parse --show-toplevel`, else $PWD. The
@@ -51,7 +56,14 @@
 #         repo — ⇒ "git could not answer" and --delete degrades to REPORT for
 #         the whole run. `git` absent ⇒ the same. "Could not answer" is never
 #         read as "nothing is tracked". A probe with a nonexistent path runs
-#         once up front so the degradation is decided before any rm.
+#         once up front so the degradation is decided before any rm. The
+#         per-file answer is taken when the candidate is listed AND AGAIN at
+#         deletion time — a file that becomes tracked between the two passes
+#         is kept (`keep (tracked at deletion time)`). At deletion time an rc
+#         other than 0/1 keeps THAT file (`keep (git could not answer at
+#         deletion time, rc N)`): removals already made cannot be taken back,
+#         so the whole-run degradation is decided before pass 2 and the
+#         deletion-time answer is per file, never widening.
 #   (iii) `jq` absent ⇒ the same degradation (curation-status.sh cannot answer
 #         the pending set without it, and this tool refuses rather than guess).
 #   (iv)  the file must still match the row's glob, be a regular file and not a
@@ -123,6 +135,9 @@ policy_rows() {
   row handoff consumed - '/handoff output; rebuilt by build-handoff.sh' 'never'
   row worker-summaries consumed - 'Execute Manager, /dreaming (N most recent), build-floor.sh, result_block_parser.py' 'never'
   row scratch consumed - 'spike outputs cited from memory/provenance; no runtime reader — retained as provenance' 'never'
+  row agent-memory-proposals consumed - 'surprise-only proposals written by agents under the AGENT_GUIDELINES proposal contract; /dreaming PROMOTE PENDING PROPOSAL (write-agent-memory.sh --proposal), harvest-conventions.sh corpus' 'never (a proposal leaves the queue only by /dreaming Accept or Reject)'
+  row orientation-proposals consumed - 'orientation memos proposed by the Supervisor Phase 4.5 completion tail (self-heal-advisory); /dreaming promotion via add-orientation.sh' 'never (a proposal leaves the queue only by /dreaming Accept or Reject)'
+  row capability consumed - '/capability-check --save reports; no runtime reader — retained as provenance' 'never'
   row logs 'consumed → partial exhaust' '*.jsonl,pr-postmortem-dispatch-*.log' 'curation-status.sh, build-insights.sh, build-floor.sh, build-handoff.sh, build-loop-evidence.sh, session-resume.sh, status-line.sh, telemetry' 'sweep ONLY *.jsonl older than threshold whose id is NOT in curation-status.sh pending-ids, and pr-postmortem-dispatch-*.log older than threshold; review-pr-dispatch-*.log is CONSUMED (build-insights.sh opt-out evidence) and kept; everything else untouched'
   row drain-rounds exhaust '*.json' 'drain-rounds.sh during a drain only (init resets at every drain start); build-floor.sh counts files' 'sweep *.json older than threshold'
   row . consumed - 'Supervisor/engine state and config (config.json, curation-state.json, notify-config.json, state.md) and the session-resume.sh dotfile markers' 'never (top-level entries are never listed as candidates)'
@@ -183,7 +198,16 @@ while [ $# -gt 0 ]; do
         case "$2" in
           ''|*[!0-9]*) note_arg "--older-than '$2' is not a positive integer — REPORT only, threshold stays $DEFAULT_DAYS" ;;
           0*)          note_arg "--older-than '$2' is rejected (zero, or a leading zero bash arithmetic would read as octal) — REPORT only, threshold stays $DEFAULT_DAYS" ;;
-          *)           DAYS="$2" ;;
+          *)
+            # Upper bound: above 36500 (100 years) `find -mtime +N` silently
+            # yields zero candidates — a run that looks clean and did nothing.
+            # Length first, so a value past bash's integer range cannot wrap
+            # negative and slip under the numeric test.
+            if [ "${#2}" -gt 5 ] || [ "$2" -gt 36500 ]; then
+              note_arg "--older-than '$2' is rejected (above 36500 days — find would silently yield no candidates) — REPORT only, threshold stays $DEFAULT_DAYS"
+            else
+              DAYS="$2"
+            fi ;;
         esac
         shift
       else
@@ -268,7 +292,6 @@ if [ -d "$SUP/logs" ]; then
 fi
 
 # ---- pass 1: classify, list, and check every candidate -----------------------
-total_files=0; total_bytes=0
 policy_rows | while IFS="$(printf '\t')" read -r dir class globs consumers rule; do
   if [ "$dir" = "." ]; then
     printf '.supervisor/ top-level entries: %s — %s [%s]\n' "$class" "$rule" "$consumers"
@@ -352,6 +375,16 @@ if [ "$MODE" = "DELETE" ]; then
       # Guard (iv), re-evaluated at deletion time.
       case "$base" in $glob) ;; *) printf '  skipped (no longer matches %s): %s\n' "$glob" "$path"; continue ;; esac
       if [ -L "$path" ] || [ ! -f "$path" ]; then printf '  skipped (not a regular file now): %s\n' "$path"; continue; fi
+      # Guard (ii), re-evaluated at deletion time — a file that became tracked
+      # after pass 1 listed it is kept, exactly as guard (iv) re-checks the glob.
+      rel=".supervisor/$dir/$base"
+      trc=1   # overwritten by the guard on the next line; 1 = "git said: not tracked"
+      trc="$(git_tracked_rc "$rel")"   # LS-FILES-GUARD-AT-DELETION
+      case "$trc" in
+        1) ;;
+        0) printf '  keep (tracked at deletion time): %s\n' "$rel"; continue ;;
+        *) printf '  keep (git could not answer at deletion time, rc %s): %s\n' "$trc" "$rel"; continue ;;
+      esac
       if rm -f -- "$path" 2>/dev/null; then
         rn=$((rn + 1)); rb=$((rb + bytes))
       else

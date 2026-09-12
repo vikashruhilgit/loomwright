@@ -15,8 +15,9 @@
 #   AC-3   report-only default: the full recursive listing (files AND dirs, a
 #          cksum per file) is byte-identical before/after — asserted against the
 #          filesystem, never against the tool's own claim
-#   AC-11  argument hygiene (0 / 08 / abc / missing value ⇒ REPORT + reason,
-#          nothing removed) and the IRREVERSIBLE line FIRST in both modes
+#   AC-11  argument hygiene (0 / 08 / abc / missing value / above 36500 ⇒ REPORT
+#          + reason, nothing removed; 36500 itself accepted) and the
+#          IRREVERSIBLE line FIRST in both modes
 #   AC-1   the five tracked files survive --delete --older-than 1, each hash
 #          asserted individually
 #   AC-2   aged review-dispatch/ and postmortem-dispatch/ markers survive
@@ -32,6 +33,11 @@
 #          differently-populated fixture with --project-root naming the first
 #          (the second fixture's listing must be byte-identical afterwards)
 #   AC-1b  an aged, committed, TRACKED file inside drain-rounds/ survives
+#   AC-1c  a candidate that becomes tracked BETWEEN the listing pass and the
+#          deletion pass survives — injected with a `git` shim on PATH that
+#          stages the file for real on its first ls-files probe and answers
+#          "not tracked" that once; the report lists it as would-remove, the
+#          deletion pass names it `keep (tracked at deletion time)`
 #   AC-6   a novel directory (zzz-future/) keeps its aged file and is reported
 #          `unclassified — not swept`
 #   AC-7   fail-safe, one assertion per case: unreadable dir (both exhaust dirs
@@ -41,10 +47,15 @@
 #   AC-8   hooks/hooks.json carries no retention-sweep reference
 #   AC-9   mutation controls, each a copy of the script with ONE identifiable
 #          edit, asserted RED: (a1) memory/ + postmortem/ reclassified exhaust;
-#          (a2) the ls-files guard line removed; (a1+a2) both — the only way the
-#          five tracked files can fall, which is the layering claim itself;
-#          (b) the two guard rows reclassified exhaust; (c) the pending-ids
-#          exclusion line removed
+#          (a2) BOTH ls-files guard lines removed (listing-time and
+#          deletion-time) — with only the listing-time line removed the
+#          deletion-time re-check still keeps the tracked file (asserted
+#          green, the layering of guard ii across the two passes); (a3) only
+#          the deletion-time line removed lets the AC-1c becomes-tracked file
+#          fall; (a1+a2) rows + both lines — the only way the five tracked
+#          files can fall, which is the layering claim itself; (b) the two
+#          guard rows reclassified exhaust; (c) the pending-ids exclusion line
+#          removed
 #   AC-10  policy mirror: `retention-sweep.sh policy` and the
 #          ARCHITECTURE_CONTRACTS.md retention table name the same directory set
 #          with the same classes, both directions
@@ -198,6 +209,18 @@ else
 fi
 run_rs "$RS" "$F3" "$F3" --older-than 30
 printf '%s' "$OUT" | grep -qF 'older-than=30 days' && ok "AC-11 a valid --older-than is honoured (30)" || no "AC-11 valid value not honoured: $(printf '%s\n' "$OUT" | sed -n 2p)"
+# Upper bound: above 36500 `find -mtime +N` silently yields nothing — a run that looks clean and did nothing.
+for big in 36501 999999999999 99999999999999999999999; do
+  run_rs "$RS" "$F3" "$F3" --delete --older-than "$big"
+  if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -qF "mode=REPORT" && printf '%s' "$OUT" | grep -qF -- "--older-than '$big' is rejected (above 36500 days" && printf '%s' "$OUT" | grep -qF "older-than=90 days" && [ "$(listing "$F3")" = "$before" ]; then
+    ok "AC-11 --older-than $big with --delete ⇒ exit 0, REPORT, reason names the bound, threshold stays 90, nothing removed"
+  else
+    no "AC-11 --older-than $big: rc=$RC / $(printf '%s\n' "$OUT" | sed -n 2,3p)"
+  fi
+done
+run_rs "$RS" "$F3" "$F3" --older-than 36500
+printf '%s' "$OUT" | grep -qF 'older-than=36500 days' && printf '%s' "$OUT" | grep -qF 'mode=REPORT' && ! printf '%s' "$OUT" | grep -qF 'is rejected' \
+  && ok "AC-11 --older-than 36500 (the bound itself) is accepted" || no "AC-11 36500 not accepted: $(printf '%s\n' "$OUT" | sed -n 2,3p)"
 
 # ============================================================================
 echo "== AC-1 / AC-2 / AC-4 / AC-5 / AC-6: --delete --older-than 1 on the aged fixture (cwd == root) =="
@@ -276,6 +299,48 @@ run_rs "$RS" "$F1B" "$F1B" --delete --older-than 1
   && ok "AC-1b tracked file inside an exhaust dir present with unchanged hash" || no "AC-1b tracked.json removed or changed"
 [ ! -e "$F1B/.supervisor/drain-rounds/aaa.json" ] && ok "AC-1b control — the untracked aged ledger beside it WAS removed" || no "AC-1b control: aaa.json survived (sweep vacuous)"
 printf '%s' "$OUT" | grep -qF 'keep (tracked by git): .supervisor/drain-rounds/tracked.json' && ok "AC-1b the report names the tracked keep" || no "AC-1b keep line missing"
+
+# ============================================================================
+echo "== AC-1c: a candidate that becomes TRACKED between the listing pass and the deletion pass survives =="
+# mk_git_shim <dir> <root> <rel> — a `git` on PATH that, on the FIRST
+# `ls-files --error-unmatch -- <rel>` probe, stages <rel> for real (through the
+# real git) and answers 1 ("not tracked") — so the file becomes tracked AFTER
+# the listing-time answer and BEFORE the deletion-time one. Every other call is
+# delegated to the real git untouched (the up-front probe, curation-status.sh).
+GIT_REAL="$(command -v git)"
+mk_git_shim() {
+  local d="$1" root="$2" rel="$3"
+  mkdir -p "$d"
+  cat > "$d/git" <<EOF
+#!/bin/sh
+case "\$*" in
+  *"ls-files --error-unmatch -- $rel"*)
+    if [ ! -e "$d/.fired" ]; then
+      : > "$d/.fired"
+      "$GIT_REAL" -C "$root" add -f -- "$rel" >/dev/null 2>&1
+      exit 1
+    fi ;;
+esac
+exec "$GIT_REAL" "\$@"
+EOF
+  chmod +x "$d/git"
+}
+BT_REL=".supervisor/drain-rounds/becomes-tracked.json"
+build_bt() {  # <root> — the aged fixture plus an aged, UNTRACKED becomes-tracked.json
+  build_fixture "$1"
+  printf '{"rounds":0,"max_rounds":5,"becomes":"tracked"}\n' > "$1/$BT_REL"; touch -t "$OLD" "$1/$BT_REL"
+}
+F1C="$ROOT/f1c"; build_bt "$F1C"; SHIM1C="$ROOT/shim1c"; mk_git_shim "$SHIM1C" "$F1C" "$BT_REL"
+h1c="$(hash_of "$F1C/$BT_REL")"
+[ "$("$GIT_REAL" -C "$F1C" ls-files --error-unmatch -- "$BT_REL" >/dev/null 2>&1; echo $?)" = "1" ] && ok "AC-1c control — before the run the file is NOT tracked (real git rc 1)" || no "AC-1c control: file already tracked before the run"
+OUT="$(cd "$F1C" && PATH="$SHIM1C:$PATH" bash "$RS" --project-root "$F1C" --delete --older-than 1 2>&1)"; RC=$?
+[ "$RC" -eq 0 ] && ok "AC-1c exits 0" || no "AC-1c rc=$RC"
+[ -e "$SHIM1C/.fired" ] && ok "AC-1c control — the shim fired (the listing-time probe for the file went through it)" || no "AC-1c control: the shim never fired — the arm is vacuous"
+[ "$("$GIT_REAL" -C "$F1C" ls-files --error-unmatch -- "$BT_REL" >/dev/null 2>&1; echo $?)" = "0" ] && ok "AC-1c control — after the run the file IS tracked (real git rc 0): it became tracked mid-run" || no "AC-1c control: file not tracked after the run"
+printf '%s' "$OUT" | grep -qF "would remove: $BT_REL" && ok "AC-1c the listing pass listed it as would-remove (git said not-tracked at listing time)" || no "AC-1c listing pass did not list the file: $(printf '%s\n' "$OUT" | grep -F drain-rounds | head -5)"
+[ -f "$F1C/$BT_REL" ] && [ "$(hash_of "$F1C/$BT_REL")" = "$h1c" ] && ok "AC-1c the file that became tracked between the passes SURVIVES with unchanged hash" || no "AC-1c becomes-tracked.json removed or changed — guard (ii) is not re-evaluated at deletion time"
+printf '%s' "$OUT" | grep -qF "keep (tracked at deletion time): $BT_REL" && ok "AC-1c the deletion pass names it 'keep (tracked at deletion time)'" || no "AC-1c deletion-time keep line missing"
+[ ! -e "$F1C/.supervisor/drain-rounds/aaa.json" ] && printf '%s' "$OUT" | grep -qF 'drain-rounds/: removed 2 file(s)' && ok "AC-1c control — the two untracked aged ledgers beside it WERE removed and the summary counts what was actually removed (2), not what was listed (3)" || no "AC-1c control: aaa.json survived or summary miscounts: $(printf '%s\n' "$OUT" | tail -3)"
 
 # ============================================================================
 echo "== AC-7: fail-safe — exit 0, nothing deleted, condition named =="
@@ -360,18 +425,36 @@ if mutant a1 "s/^  row memory tracked - /  row memory exhaust '*' /" "s/^  row p
   surv=0; for t in $TRACKED; do [ -f "$FA1/.supervisor/$t" ] && surv=$((surv+1)); done
   [ "$surv" -eq 5 ] && ok "AC-9 (a1) …while the five TRACKED files still survive — guard (ii) is independent of the row verdict" || no "AC-9 (a1) tracked files fell to a row edit alone ($surv/5 survive) — the ls-files guard is not live"
 fi
-# (a2) the ls-files guard line removed ⇒ AC-1b red.
-if mutant a2 '/# LS-FILES-GUARD$/d'; then
+# (a2-listing) ONLY the listing-time ls-files guard removed ⇒ the deletion-time
+# re-check still keeps the tracked file — asserted GREEN: guard (ii) is layered
+# across both passes, and this is the arm that proves the second layer is live
+# on its own (without it, removing the listing-time line alone deleted the file).
+if mutant a2listing '/# LS-FILES-GUARD$/d'; then
+  FA2L="$ROOT/fa2l"; build_fixture "$FA2L" tracked-in-drain-rounds
+  run_rs "$MUT/a2listing.sh" "$FA2L" "$FA2L" --delete --older-than 1
+  printf '%s' "$OUT" | grep -qF 'would remove: .supervisor/drain-rounds/tracked.json' && ok "AC-9 (a2-listing) control — with the listing-time guard gone the tracked file IS listed as would-remove" || no "AC-9 (a2-listing) control: tracked.json not listed — the listing-time edit did nothing"
+  [ -f "$FA2L/.supervisor/drain-rounds/tracked.json" ] && printf '%s' "$OUT" | grep -qF 'keep (tracked at deletion time): .supervisor/drain-rounds/tracked.json' \
+    && ok "AC-9 (a2-listing) with ONLY the listing-time guard removed, the deletion-time re-check still keeps the tracked file and names it" || no "AC-9 (a2-listing) tracked.json deleted or keep line missing — the deletion-time guard is not live on its own"
+fi
+# (a2) BOTH ls-files guard lines removed ⇒ AC-1b red.
+if mutant a2 '/# LS-FILES-GUARD$/d' '/# LS-FILES-GUARD-AT-DELETION$/d'; then
   FA2="$ROOT/fa2"; build_fixture "$FA2" tracked-in-drain-rounds
   run_rs "$MUT/a2.sh" "$FA2" "$FA2" --delete --older-than 1
-  [ ! -e "$FA2/.supervisor/drain-rounds/tracked.json" ] && ok "AC-9 (a2) RED as required: without the ls-files guard the tracked file inside drain-rounds/ is deleted" || no "AC-9 (a2) mutant survived: tracked.json kept without the guard"
+  [ ! -e "$FA2/.supervisor/drain-rounds/tracked.json" ] && ok "AC-9 (a2) RED as required: with BOTH ls-files guard lines removed the tracked file inside drain-rounds/ is deleted" || no "AC-9 (a2) mutant survived: tracked.json kept with both guard lines removed"
 fi
-# (a1+a2) both guards down ⇒ AC-1 proper (the five hashes) red — the layering claim.
-if mutant a1a2 "s/^  row memory tracked - /  row memory exhaust '*' /" "s/^  row postmortem tracked - /  row postmortem exhaust '*' /" '/# LS-FILES-GUARD$/d'; then
+# (a3) ONLY the deletion-time guard removed ⇒ AC-1c red (the becomes-tracked file falls).
+if mutant a3 '/# LS-FILES-GUARD-AT-DELETION$/d'; then
+  FA3="$ROOT/fa3"; build_bt "$FA3"; SHIMA3="$ROOT/shima3"; mk_git_shim "$SHIMA3" "$FA3" "$BT_REL"
+  OUT="$(cd "$FA3" && PATH="$SHIMA3:$PATH" bash "$MUT/a3.sh" --project-root "$FA3" --delete --older-than 1 2>&1)"; RC=$?
+  [ -e "$SHIMA3/.fired" ] || no "AC-9 (a3) control: the shim never fired"
+  [ ! -e "$FA3/$BT_REL" ] && ok "AC-9 (a3) RED as required: without the deletion-time guard the file that became tracked between the passes is deleted" || no "AC-9 (a3) mutant survived: becomes-tracked.json kept without the deletion-time guard"
+fi
+# (a1+a2) rows reclassified + both guard lines down ⇒ AC-1 proper (the five hashes) red — the layering claim.
+if mutant a1a2 "s/^  row memory tracked - /  row memory exhaust '*' /" "s/^  row postmortem tracked - /  row postmortem exhaust '*' /" '/# LS-FILES-GUARD$/d' '/# LS-FILES-GUARD-AT-DELETION$/d'; then
   FA12="$ROOT/fa12"; build_fixture "$FA12"
   run_rs "$MUT/a1a2.sh" "$FA12" "$FA12" --delete --older-than 1
   gone=0; for t in $TRACKED; do [ -e "$FA12/.supervisor/$t" ] || gone=$((gone+1)); done
-  [ "$gone" -eq 5 ] && ok "AC-9 (a1+a2) RED as required: only with BOTH guards removed do all five tracked files fall ($gone/5)" || no "AC-9 (a1+a2) mutant survived: $gone/5 tracked files deleted with both guards removed"
+  [ "$gone" -eq 5 ] && ok "AC-9 (a1+a2) RED as required: only with the rows reclassified AND both guard lines removed do all five tracked files fall ($gone/5)" || no "AC-9 (a1+a2) mutant survived: $gone/5 tracked files deleted with both guards removed"
 fi
 # (b) the two guard rows reclassified exhaust ⇒ AC-2 red.
 if mutant b "s/^  row review-dispatch guard - /  row review-dispatch exhaust '*' /" "s/^  row postmortem-dispatch guard - /  row postmortem-dispatch exhaust '*' /"; then
