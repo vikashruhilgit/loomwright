@@ -22,6 +22,14 @@
 #   (G) no hardcoded ceiling: init accepts ANY caller-supplied integer (3, 5,
 #       8, 1) — the script itself asserts nothing about which value is "the"
 #       default (that lives ONLY in review-heal/SKILL.md §"Step U4 — The bounded drain loop").
+#   (H) leading-zero octal rejection — and, since v15.68.0, every §H init runs
+#       through the cwd-isolated `run` helper. The original §H called `bash "$DR"
+#       init` from the SUITE'S cwd, and because drain-rounds.sh writes its ledger
+#       to `.supervisor/drain-rounds/` RELATIVE TO CWD, every run from a checkout
+#       left four `{"rounds":0,"max_rounds":<0|5|10|100>}` ledgers in that
+#       checkout's real `.supervisor/drain-rounds/` — 732 of the 737 files
+#       measured there on 2026-09-12 were exactly that. The end-of-suite LEAK
+#       PIN below makes any recurrence red.
 
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -33,6 +41,14 @@ no() { echo "  FAIL: $1"; fail=$((fail+1)); }
 
 ROOT="$(mktemp -d)"
 trap 'rm -rf "$ROOT" 2>/dev/null' EXIT
+
+# LEAK PIN, part 1 — record the suite's starting cwd and whether it already had
+# a `.supervisor/drain-rounds/` (a fresh CI checkout has none; a maintainer's
+# checkout does), and stamp a marker so "newer than suite start" is decidable
+# with `find -newer` (no stat flavor, no clock arithmetic).
+ORIG_PWD="$PWD"
+if [ -d "$ORIG_PWD/.supervisor/drain-rounds" ]; then PRE_EXISTS=1; else PRE_EXISTS=0; fi
+touch "$ROOT/.started"
 
 run() {  # run <cwd> <args...> -> sets OUT/RC
   local d="$1"; shift
@@ -161,8 +177,13 @@ done
 
 echo ""
 echo "== H. leading-zero octal rejection (regression: same class as build-context-digest.sh --max-chars 0089) =="
+# Every init below goes through `run "$D"` — cwd-isolated in a fresh fixture
+# dir — so the ledgers land in $ROOT/h/.supervisor/drain-rounds/, never in the
+# checkout the suite was launched from. The PR id is a plain string.
+D="$ROOT/h"; mkdir -p "$D"
 for badmax in 08 09 010 007; do
-  if bash "$DR" init "$ROOT/oct-$badmax" "$badmax" >/dev/null 2>&1; then
+  run "$D" init "oct-$badmax" "$badmax"
+  if [ "$RC" -eq 0 ]; then
     no "H max=$badmax: leading zero ACCEPTED (bash arithmetic would read it as octal)"
   else
     ok "H max=$badmax: leading zero rejected"
@@ -170,12 +191,32 @@ for badmax in 08 09 010 007; do
 done
 # plain 0 and normal integers must STILL be accepted -- the guard must not over-reject
 for okmax in 0 5 10 100; do
-  if bash "$DR" init "$ROOT/ok-$okmax" "$okmax" >/dev/null 2>&1; then
+  run "$D" init "ok-$okmax" "$okmax"
+  if [ "$RC" -eq 0 ]; then
     ok "H max=$okmax: accepted"
   else
     no "H max=$okmax: wrongly rejected"
   fi
 done
+
+echo "== LEAK PIN: the launch cwd's .supervisor/drain-rounds/ gained nothing during this run =="
+# Two arms, because drain-rounds.sh does `mkdir -p` on its ledger dir: on a
+# checkout that had NO such dir, a leak CREATES it; on one that had it, a leak
+# adds a file newer than the start marker. Neither arm is skippable.
+if [ "$PRE_EXISTS" -eq 0 ]; then
+  if [ -d "$ORIG_PWD/.supervisor/drain-rounds" ]; then
+    no "LEAK: $ORIG_PWD/.supervisor/drain-rounds/ did not exist at suite start and exists now — an init ran from the suite's cwd"
+  else
+    ok "leak pin (absent-dir arm): $ORIG_PWD/.supervisor/drain-rounds/ still absent"
+  fi
+else
+  LEAKED="$(find "$ORIG_PWD/.supervisor/drain-rounds" -type f -newer "$ROOT/.started" 2>/dev/null)"
+  if [ -n "$LEAKED" ]; then
+    no "LEAK: file(s) newer than suite start in $ORIG_PWD/.supervisor/drain-rounds/: $(printf '%s' "$LEAKED" | tr '\n' ' ')"
+  else
+    ok "leak pin (pre-existing-dir arm): no file in $ORIG_PWD/.supervisor/drain-rounds/ is newer than suite start"
+  fi
+fi
 
 echo "== SUMMARY: $pass passed, $fail failed =="
 [ "$fail" -eq 0 ] || exit 1

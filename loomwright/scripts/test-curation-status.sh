@@ -67,6 +67,12 @@
 #       forever), newest-first ordering, the N limit, noise-only exclusion,
 #       silence-when-drained, fail-open on an unreadable consumed record; plus
 #       `record`'s "newly consumed" delta being a real delta, not the named count
+#   (s) `pending-ids` — the UNION of the two pending sets (dreaming-only,
+#       insights-only, both ⇒ present once; neither ⇒ absent), `never` insights
+#       ⇒ every insights-signal log, and the three fail-CLOSED-toward-keep arms
+#       (garbage state ⇒ every id + a stderr note; unreadable logs dir ⇒ every
+#       id; unknown insights last-run ⇒ every id) — the keep-set
+#       retention-sweep.sh excludes from its session-log sweep
 
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -1286,6 +1292,88 @@ outR3="$(run "$RR" record dreaming s9 s1)"
 printf '%s' "$outR3" | grep -qF 'newly consumed: 1' \
   && ok "(r) one new id among two named ⇒ newly consumed: 1" \
   || no "(r) expected 'newly consumed: 1', got: $outR3"
+
+# ============================================================================
+echo "== (s) pending-ids: the union of both pending sets, failing CLOSED toward keep =="
+# WHY: retention-sweep.sh deletes an aged logs/*.jsonl only when its id is
+# ABSENT from this list. Every id missing here that one of the two counters
+# still counts is a log the sweep would delete and a number `status` would then
+# silently lower — so the list must be exactly the union, and must widen to
+# "everything" whenever either counter would answer `unknown`.
+RS_="$(new_repo)"; mkdir -p "$RS_/.supervisor/logs" "$RS_/.supervisor/insights"
+# d-only: dreaming signal (a plain event line), consumed by neither list, OLDER
+#         than the dashboard, and no session_end ⇒ dreaming-pending only
+# i-only: session_end, already consumed, NEWER than the dashboard ⇒ insights-pending only
+# both:   session_end, unconsumed, newer than the dashboard ⇒ both
+# neither: session_end, consumed, older than the dashboard ⇒ in no set
+# noise:  token_ledger/subtask_complete only, older ⇒ in no set (no signal for either)
+printf '{"event":"plan"}\n'         > "$RS_/.supervisor/logs/d-only.jsonl"
+printf '{"event":"session_end"}\n'  > "$RS_/.supervisor/logs/i-only.jsonl"
+printf '{"event":"session_end"}\n'  > "$RS_/.supervisor/logs/both.jsonl"
+printf '{"event":"session_end"}\n'  > "$RS_/.supervisor/logs/neither.jsonl"
+printf '{"event":"token_ledger"}\n{"event":"subtask_complete"}\n' > "$RS_/.supervisor/logs/noise.jsonl"
+printf '# dash\n' > "$RS_/.supervisor/insights/dashboard.md"
+touch -t 202601010000 "$RS_/.supervisor/logs/d-only.jsonl" "$RS_/.supervisor/logs/neither.jsonl" "$RS_/.supervisor/logs/noise.jsonl"
+touch -t 202603010000 "$RS_/.supervisor/insights/dashboard.md"
+touch -t 202604010000 "$RS_/.supervisor/logs/i-only.jsonl" "$RS_/.supervisor/logs/both.jsonl"
+printf '{"dreaming":{"last_run":"2026-05-01T00:00:00Z","consumed":{"logs":["i-only","neither","noise"]}}}' > "$RS_/.supervisor/curation-state.json"
+outS="$(run_out "$RS_" pending-ids)"
+[ "$(lastrc)" -eq 0 ] && ok "(s) pending-ids exits 0" || no "(s) pending-ids rc=$(lastrc)"
+[ "$(printf '%s\n' "$outS" | LC_ALL=C sort | tr '\n' ' ')" = "both d-only i-only " ] \
+  && ok "(s) union: dreaming-only + insights-only + both are present ONCE each; neither/noise absent" \
+  || no "(s) union wrong — expected 'both d-only i-only', got: $(printf '%s\n' "$outS" | LC_ALL=C sort | tr '\n' ' ')"
+# The union is exactly the counted set: status --json must count 2 + 2.
+outS2="$(run "$RS_" status --json)"
+[ "$(jget "$outS2" '.commands.dreaming.pending')" = "2" ] && [ "$(jget "$outS2" '.commands.insights.pending')" = "2" ] \
+  && ok "(s) …and status --json counts dreaming.pending=2 / insights.pending=2 over the same fixture" \
+  || no "(s) status counts do not match the union: dreaming=$(jget "$outS2" '.commands.dreaming.pending') insights=$(jget "$outS2" '.commands.insights.pending')"
+[ -z "$(run_err "$RS_" pending-ids)" ] && ok "(s) the examined path prints NO stderr note" || no "(s) unexpected stderr on the examined path: $(run_err "$RS_" pending-ids)"
+
+# `never` insights (no dashboard) ⇒ every insights-signal log joins, even the
+# consumed, older `neither`.
+rm -f "$RS_/.supervisor/insights/dashboard.md"
+outS3="$(run_out "$RS_" pending-ids)"
+[ "$(printf '%s\n' "$outS3" | LC_ALL=C sort | tr '\n' ' ')" = "both d-only i-only neither " ] \
+  && ok "(s) insights last_run=never ⇒ every session_end log is pending (neither joins; noise still absent)" \
+  || no "(s) never-arm wrong, got: $(printf '%s\n' "$outS3" | LC_ALL=C sort | tr '\n' ' ')"
+printf '# dash\n' > "$RS_/.supervisor/insights/dashboard.md"; touch -t 202603010000 "$RS_/.supervisor/insights/dashboard.md"
+
+# Garbage consumed record ⇒ EVERY id (fail closed toward keep) + ONE stderr note.
+printf '{"dreaming":' > "$RS_/.supervisor/curation-state.json"
+outS4="$(run_out "$RS_" pending-ids)"
+[ "$(lastrc)" -eq 0 ] && ok "(s) garbage state ⇒ exit 0" || no "(s) garbage state rc=$(lastrc)"
+[ "$(printf '%s\n' "$outS4" | LC_ALL=C sort | tr '\n' ' ')" = "both d-only i-only neither noise " ] \
+  && ok "(s) garbage state ⇒ EVERY *.jsonl id listed (noise included) — fail closed toward keep" \
+  || no "(s) garbage state did not list every id: $(printf '%s\n' "$outS4" | LC_ALL=C sort | tr '\n' ' ')"
+errS4="$(run_err "$RS_" pending-ids)"
+printf '%s' "$errS4" | grep -qF 'fail closed toward keep' && ok "(s) …with the explanatory note on STDERR" || no "(s) no stderr note for the garbage state: $errS4"
+printf '%s' "$outS4" | grep -qF 'fail closed' && no "(s) the note leaked onto STDOUT" || ok "(s) …and never on stdout (stdout stays a pure id list)"
+printf '{"dreaming":{"last_run":"2026-05-01T00:00:00Z","consumed":{"logs":["i-only","neither","noise"]}}}' > "$RS_/.supervisor/curation-state.json"
+
+# Unknown insights last-run (dashboard present but its mtime unreadable — a
+# dashboard whose stat fails) is hard to fixture portably; the reachable
+# `unknown` here is the stat-fallback path (c) already covers. The remaining
+# closed arm that IS fixturable: a logs dir that is listable but NOT enterable
+# (r without x) — the readability guard fails, the glob still enumerates.
+if [ "${EUID:-$(id -u)}" -eq 0 ]; then
+  skp "(s) not-fully-readable-logs-dir arm SKIPPED — running as uid 0, where mode bits do not block"
+else
+  chmod 444 "$RS_/.supervisor/logs"
+  outS5="$(run_out "$RS_" pending-ids)"; rcS5="$(lastrc)"; errS5="$(run_err "$RS_" pending-ids)"
+  chmod 755 "$RS_/.supervisor/logs"
+  [ "$rcS5" -eq 0 ] && ok "(s) not-fully-readable logs dir ⇒ exit 0" || no "(s) r-only logs dir rc=$rcS5"
+  [ "$(printf '%s\n' "$outS5" | LC_ALL=C sort | tr '\n' ' ')" = "both d-only i-only neither noise " ] \
+    && ok "(s) not-fully-readable logs dir ⇒ EVERY id listed (fail closed toward keep)" \
+    || no "(s) r-only logs dir did not list every id: $(printf '%s\n' "$outS5" | LC_ALL=C sort | tr '\n' ' ')"
+  printf '%s' "$errS5" | grep -qF 'not fully readable' && ok "(s) …naming the logs dir on stderr" || no "(s) stderr did not name the logs dir: $errS5"
+fi
+# Absent logs dir ⇒ silent, exit 0 (there is no corpus to keep).
+RSE="$(new_repo)"
+outSE="$(run_out "$RSE" pending-ids)"
+[ "$(lastrc)" -eq 0 ] && [ -z "$outSE" ] && ok "(s) absent logs dir ⇒ silent, exit 0" || no "(s) absent logs dir: rc=$(lastrc) out='$outSE'"
+# The dispatch arm and the usage line name the subcommand.
+outSH="$(run "$RSE" --help)"
+printf '%s' "$outSH" | grep -qF 'pending-ids' && ok "(s) --help names pending-ids" || no "(s) usage line lacks pending-ids: $outSH"
 
 echo
 if [ "$skip" -gt 0 ]; then
