@@ -18,6 +18,12 @@
 #   record dreaming   stamp /dreaming's last run (the ONLY legal record target)
 #   nudge             print the ONE advisory cadence line, or NOTHING at all
 #   unconsumed [N]    the session ids /dreaming should read NEXT, newest-first
+#   pending-ids       EVERY session id that currently counts toward EITHER
+#                     pending number (the dreaming set ∪ the insights
+#                     watermark set) — the keep-set scripts/retention-sweep.sh
+#                     excludes from its session-log sweep; fails CLOSED toward
+#                     keep (prints every id) whenever either count would be
+#                     `unknown`
 #
 # ONE STORED VALUE, TWO DERIVED (deliberate — a derived value cannot go stale):
 #   /dreaming       ⇐ .dreaming.last_run in .supervisor/curation-state.json  (STORED)
@@ -992,6 +998,86 @@ cmd_unconsumed() {
   return 0
 }
 
+# cmd_pending_ids — the UNION of session ids that currently count toward either
+# pending number, one per line: the /dreaming set (signal-carrying ∧ NOT in the
+# consumed set — count_unconsumed_dreaming's complement) ∪ the /insights
+# watermark set (session_end-carrying ∧ mtime strictly newer than the dashboard
+# mtime — count_logs_newer_than's set; `never` ⇒ every insights-signal log).
+# Built from the SAME predicates and helpers those two counters use, so it is
+# exactly the set of logs whose removal would lower a number `status` reports.
+#
+# WHO READS IT: scripts/retention-sweep.sh, which deletes `logs/*.jsonl` older
+# than its threshold ONLY when the id is absent from this list, so
+# `status --json` reports the same dreaming.pending and insights.pending before
+# and after a sweep. That is the consumer-honesty contract: retention may shrink
+# the corpus, it may not shrink the backlog.
+#
+# FAILS CLOSED TOWARD KEEP. Whenever either counter would answer `unknown` — the
+# consumed record exists but cannot be examined, the insights last-run is
+# unknown, or the logs dir is not fully readable — this prints EVERY `*.jsonl`
+# id it can enumerate, with ONE explanatory line on STDERR (stdout stays a pure
+# id list, as `unconsumed` does). Over-keeping costs disk; under-keeping is the
+# amnesia this subcommand exists to prevent. Likewise a log whose mtime is not a
+# uint — which count_logs_newer_than SKIPS at its is_uint check — is INCLUDED
+# here: an unorderable log cannot be proven consumed. Absent logs dir ⇒ nothing
+# (there is no corpus). ALWAYS exits 0.
+#
+# The `-gt` comparison is the same strict comparison count_logs_newer_than makes
+# (a log whose mtime EQUALS the dashboard mtime is not pending there, and is not
+# pending here), so the union is exactly the counted set, not a superset.
+cmd_pending_ids() {
+  local consumed consumed_rc=0 closed="" i_last i_epoch f id m
+  [ -d "$LOGS_DIR" ] || return 0
+  { [ -r "$LOGS_DIR" ] && [ -x "$LOGS_DIR" ]; } || closed="the logs dir is not fully readable"
+  # Declared first, assigned second, status tested on its own line — the
+  # `local x="$(...)"` trap count_unconsumed_dreaming documents.
+  consumed="$(consumed_log_ids)" || consumed_rc=1
+  [ "$consumed_rc" -eq 0 ] || closed="${closed:+$closed; }the consumed record exists but could not be read"
+  i_last="$(derive_insights_last_run)"
+  case "$i_last" in
+    never)   i_epoch="never" ;;
+    unknown) i_epoch="unknown"; closed="${closed:+$closed; }the /insights last-run is unknown" ;;
+    *)       i_epoch="$(iso_to_epoch "$i_last")"
+             is_uint "$i_epoch" || closed="${closed:+$closed; }the /insights last-run is unknown" ;;
+  esac
+  if [ -n "$closed" ]; then
+    printf 'curation-status: %s — listing EVERY session log as pending so a retention sweep keeps them all (fail closed toward keep).\n' "$closed" >&2
+    for f in "$LOGS_DIR"/*.jsonl; do
+      # An unexpanded glob comes back as the literal pattern; skip that one.
+      case "$f" in *'*'*) [ -e "$f" ] || continue ;; esac
+      printf '%s\n' "$(basename "$f" .jsonl)"
+    done
+    return 0
+  fi
+  for f in "$LOGS_DIR"/*.jsonl; do
+    [ -f "$f" ] || continue
+    id="$(basename "$f" .jsonl)"
+    # /dreaming half: signal-carrying and not yet consumed (exact whole-line
+    # match, the count_unconsumed_dreaming predicate).
+    if log_has_signal "$f" dreaming; then
+      if ! printf '%s\n' "$consumed" | grep -qxF -- "$id"; then
+        printf '%s\n' "$id"
+        continue
+      fi
+    fi
+    # /insights half: session_end-carrying and newer than the watermark.
+    log_has_signal "$f" insights || continue
+    if [ "$i_epoch" = "never" ]; then
+      printf '%s\n' "$id"
+      continue
+    fi
+    m="$(file_mtime "$f")"
+    if ! is_uint "$m"; then
+      printf '%s\n' "$id"
+      continue
+    fi
+    if [ "$m" -gt "$i_epoch" ]; then
+      printf '%s\n' "$id"
+    fi
+  done
+  return 0
+}
+
 # ---- Dispatch ---------------------------------------------------------------
 
 main() {
@@ -1005,11 +1091,12 @@ main() {
     record) cmd_record "$@" ;;
     nudge)  cmd_nudge ;;
     unconsumed) cmd_unconsumed "${1:-}" ;;
+    pending-ids) cmd_pending_ids ;;
     -h|--help|help)
-      printf 'usage: curation-status.sh [status [--json] | record dreaming [<session_id>...] | nudge | unconsumed [N]]\n'
+      printf 'usage: curation-status.sh [status [--json] | record dreaming [<session_id>...] | nudge | unconsumed [N] | pending-ids]\n'
       ;;
     *)
-      printf 'curation-status: unknown subcommand `%s` (expected status | record | nudge | unconsumed).\n' "$sub"
+      printf 'curation-status: unknown subcommand `%s` (expected status | record | nudge | unconsumed | pending-ids).\n' "$sub"
       ;;
   esac
   return 0
