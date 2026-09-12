@@ -1045,6 +1045,11 @@ cmd_pending_ids() {
     for f in "$LOGS_DIR"/*.jsonl; do
       # An unexpanded glob comes back as the literal pattern; skip that one.
       case "$f" in *'*'*) [ -e "$f" ] || continue ;; esac
+      # Parity with the open branch's `-f` — but ONLY where a stat is possible:
+      # in the listable-but-not-enterable arm (r without x) `-f` is false for
+      # every entry, and skipping there would drop every id — the under-keep
+      # this branch exists to prevent. Over-keep only.
+      if [ -x "$LOGS_DIR" ] && [ ! -f "$f" ]; then continue; fi
       printf '%s\n' "$(basename "$f" .jsonl)"
     done
     return 0

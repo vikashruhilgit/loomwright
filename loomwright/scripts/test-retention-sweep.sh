@@ -45,9 +45,14 @@
 #          prints `skipped (not a regular file now)` and the moved file is
 #          untouched; AC-1f replaces it with a symlink ⇒ the same skip line,
 #          the link and its target untouched. (A former `skipped (no longer
-#          matches <glob>)` arm was REMOVED as unreachable: pass 2 re-matched
-#          the STORED basename string against the STORED row glob, both fixed
-#          within one run — no filesystem state could make it fire.)
+#          matches <glob>)` arm was REMOVED: the candidate TSV row is
+#          name-safe by construction — pass 1 refuses tab/newline names, see
+#          AC-1g — so the arm was redundant.)
+#   AC-1g  a TAB in a candidate's basename would split the TSV row and make
+#          pass 2 act on the pre-tab prefix; pass 1 refuses it — `keep (unsafe
+#          name, not swept)`, the tab-named file AND its same-prefix untracked
+#          sibling survive, the summary excludes it. Gated mutant (a5) removes
+#          the guard ⇒ the sibling is deleted (RED as required)
 #   AC-6   a novel directory (zzz-future/) keeps its aged file and is reported
 #          `unclassified — not swept`
 #   AC-7   fail-safe, one assertion per case: unreadable dir (both exhaust dirs
@@ -65,7 +70,8 @@
 #          fall; (a1+a2) rows + both lines — the only way the five tracked
 #          files can fall, which is the layering claim itself; (a4) the
 #          deletion-time could-not-answer arm deleted so rc 128 falls through
-#          to rm ⇒ AC-1d red; (b) the two guard rows reclassified exhaust;
+#          to rm ⇒ AC-1d red; (a5) the unsafe-name guard removed ⇒ AC-1g's
+#          same-prefix sibling is deleted; (b) the two guard rows reclassified exhaust;
 #          (c) the pending-ids exclusion line removed
 #   AC-10  policy mirror: `retention-sweep.sh policy` and the
 #          ARCHITECTURE_CONTRACTS.md retention table name the same directory set
@@ -404,6 +410,31 @@ for arm in rename symlink; do
 done
 
 # ============================================================================
+echo "== AC-1g: a TAB-named candidate is refused at listing time; its same-prefix sibling is never touched =="
+# build_tab <root> — the aged fixture plus an aged ledger whose basename holds a
+# TAB, and an aged, untracked sibling named exactly the pre-tab prefix (it does
+# not match *.json, so it is never a legitimate candidate — the only way it can
+# fall is a truncated TSV row naming it).
+TAB_BASE="tab-named${TAB}x.json"; TAB_SIB="tab-named"
+build_tab() {
+  build_fixture "$1"
+  printf '{"rounds":0,"max_rounds":5}\n' > "$1/.supervisor/drain-rounds/$TAB_BASE"
+  printf 'sibling — must survive\n' > "$1/.supervisor/drain-rounds/$TAB_SIB"
+  touch -t "$OLD" "$1/.supervisor/drain-rounds/$TAB_BASE" "$1/.supervisor/drain-rounds/$TAB_SIB"
+}
+F1G="$ROOT/f1g"; build_tab "$F1G"
+[ -f "$F1G/.supervisor/drain-rounds/$TAB_BASE" ] && ok "AC-1g control — the filesystem accepted a tab in the basename" || no "AC-1g control: tab-named fixture not created"
+h1g_tab="$(hash_of "$F1G/.supervisor/drain-rounds/$TAB_BASE")"; h1g_sib="$(hash_of "$F1G/.supervisor/drain-rounds/$TAB_SIB")"
+run_rs "$RS" "$F1G" "$F1G" --delete --older-than 1
+[ "$RC" -eq 0 ] && ok "AC-1g exits 0" || no "AC-1g rc=$RC"
+printf '%s' "$OUT" | grep -qF "keep (unsafe name, not swept): .supervisor/drain-rounds/$TAB_BASE" && ok "AC-1g pass 1 prints 'keep (unsafe name, not swept)' for the tab-named file" || no "AC-1g keep line missing: $(printf '%s\n' "$OUT" | grep -F drain-rounds | head -4)"
+! printf '%s' "$OUT" | grep -qF "would remove: .supervisor/drain-rounds/$TAB_SIB" && ok "AC-1g the tab-named file is NOT listed as would-remove (no truncated row)" || no "AC-1g a would-remove line names the tab-named file or its prefix"
+[ -f "$F1G/.supervisor/drain-rounds/$TAB_BASE" ] && [ "$(hash_of "$F1G/.supervisor/drain-rounds/$TAB_BASE")" = "$h1g_tab" ] && ok "AC-1g the tab-named file survives with unchanged hash" || no "AC-1g tab-named file removed or changed"
+[ -f "$F1G/.supervisor/drain-rounds/$TAB_SIB" ] && [ "$(hash_of "$F1G/.supervisor/drain-rounds/$TAB_SIB")" = "$h1g_sib" ] && ok "AC-1g the same-prefix untracked sibling survives with unchanged hash" || no "AC-1g the same-prefix sibling was deleted — a truncated TSV row named it"
+[ ! -e "$F1G/.supervisor/drain-rounds/aaa.json" ] && [ "$(listed_in drain-rounds)" -eq 2 ] && printf '%s' "$OUT" | grep -qF 'drain-rounds/: removed 2 file(s)' && ok "AC-1g control — the two safe aged ledgers WERE removed; listed 2, removed 2 (the tab-named file is in neither count)" || no "AC-1g control: counts wrong (listed $(listed_in drain-rounds)): $(printf '%s\n' "$OUT" | tail -3)"
+! printf '%s' "$OUT" | grep -qiE 'syntax error|arithmetic' && ok "AC-1g no arithmetic error leaked from a corrupted bytes field" || no "AC-1g arithmetic error in output: $(printf '%s\n' "$OUT" | grep -iE 'syntax error|arithmetic' | head -2)"
+
+# ============================================================================
 echo "== AC-7: fail-safe — exit 0, nothing deleted, condition named =="
 # (i) unreadable exhaust dirs — chmod 000 does not block root, so skip visibly.
 if [ "${EUID:-$(id -u)}" -eq 0 ]; then
@@ -516,6 +547,14 @@ if mutant a4 '/keep (git could not answer at deletion time/d'; then
   OUT="$(cd "$FA4" && PATH="$SHIMA4:$PATH" bash "$MUT/a4.sh" --project-root "$FA4" --delete --older-than 1 2>&1)"; RC=$?
   [ -e "$SHIMA4/.fired" ] || no "AC-9 (a4) control: the shim never fired"
   [ ! -e "$FA4/$BT_REL" ] && ok "AC-9 (a4) RED as required: without the could-not-answer arm, rc 128 at deletion time falls through to rm and the file is deleted" || no "AC-9 (a4) mutant survived: becomes-tracked.json kept without the arm"
+fi
+# (a5) the unsafe-name guard removed ⇒ the tab-named row is enqueued split, pass 2 reads the
+# pre-tab prefix as the path and rm's the same-prefix sibling ⇒ AC-1g red.
+if mutant a5 '/# UNSAFE-NAME-GUARD$/d'; then
+  FA5="$ROOT/fa5"; build_tab "$FA5"
+  run_rs "$MUT/a5.sh" "$FA5" "$FA5" --delete --older-than 1
+  [ ! -e "$FA5/.supervisor/drain-rounds/$TAB_SIB" ] && ok "AC-9 (a5) RED as required: without the unsafe-name guard the same-prefix sibling of a tab-named candidate is deleted" || no "AC-9 (a5) mutant survived: the sibling was kept without the guard"
+  [ -f "$FA5/.supervisor/drain-rounds/$TAB_BASE" ] && ok "AC-9 (a5) …while the tab-named file itself is untouched (the truncated row never named it) — the damage is to a file the report never listed" || no "AC-9 (a5) the tab-named file was removed (unexpected: the row names its prefix, not it)"
 fi
 # (a1+a2) rows reclassified + both guard lines down ⇒ AC-1 proper (the five hashes) red — the layering claim.
 if mutant a1a2 "s/^  row memory tracked - /  row memory exhaust '*' /" "s/^  row postmortem tracked - /  row postmortem exhaust '*' /" '/# LS-FILES-GUARD$/d' '/# LS-FILES-GUARD-AT-DELETION$/d'; then

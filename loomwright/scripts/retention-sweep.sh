@@ -68,7 +68,10 @@
 #         the pending set without it, and this tool refuses rather than guess).
 #   (iv)  the file must be a regular file and not a symlink at deletion time
 #         (the glob is decided once, at listing time — a stored basename can
-#         never stop matching its stored glob, so it is not re-tested); candidates come ONLY from
+#         never stop matching its stored glob, so it is not re-tested; the
+#         candidate TSV row is name-safe by construction because pass 1
+#         refuses any basename holding a tab or newline with `keep (unsafe
+#         name, not swept)`, so a re-match arm was redundant); candidates come ONLY from
 #         `find <dir> -maxdepth 1 -type f -name <glob> -mtime +<days>` in
 #         exactly that argument order — no recursion, no `-L`.
 #   (v)   an unreadable directory or a failed rm is reported per file/dir and
@@ -145,6 +148,8 @@ policy_rows() {
 }
 
 # ---- helpers -----------------------------------------------------------------
+TAB="$(printf '\t')"
+NL="$(printf '\nx')"; NL="${NL%x}"   # a bare $(printf '\n') would strip the newline
 is_uint() { case "${1:-}" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }
 
 # file_bytes <path> — `wc -c` is POSIX; strip the BSD leading blanks.
@@ -322,6 +327,11 @@ policy_rows | while IFS="$(printf '\t')" read -r dir class globs consumers rule;
       [ -n "$path" ] || continue
       base="${path##*/}"
       rel=".supervisor/$dir/$base"
+      # Name safety: the candidate row is a TAB-separated line, so a basename
+      # holding a tab would truncate `path` in pass 2 to the pre-tab prefix
+      # (and a newline is already a line-splitter for find's output). Refuse
+      # both rather than enqueue a row that names a different file.
+      case "$base" in *"$TAB"*|*"$NL"*) printf '  keep (unsafe name, not swept): %s\n' "$rel"; continue ;; esac   # UNSAFE-NAME-GUARD
       if [ "$dir" = "logs" ] && [ "$glob" = "*.jsonl" ]; then
         id="${base%.jsonl}"
         if grep -qxF -- "$id" "$PENDING"; then printf '  keep (pending for /dreaming or /insights): %s\n' "$rel"; continue; fi   # PENDING-IDS-EXCLUSION
