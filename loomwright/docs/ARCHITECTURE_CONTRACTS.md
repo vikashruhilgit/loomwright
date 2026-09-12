@@ -220,12 +220,45 @@ Every agent (full standard in `AGENT_GUIDELINES.md`):
 | `.supervisor/jobs/in-progress/` | Supervisor (move from pending) | Supervisor (move to done/failed); `scripts/reconcile-jobs.sh --repair` (v15.39.0) as a **second, evidence-gated mover** — the completion tail's move is prompt-instructed, so an agent that dies before it strands the brief; the reconciler finishes only a `stranded_merged` / `stranded_closed` brief and never an `unknown` one; and `automate-helpers.sh brief-repair` (v15.65.0) as the **third mover**, which calls that same `--repair` with `--evidence` scoped to the engine's own item at `automate-loop` §6 RECONCILE / SYNC — evidence-positive (`gh pr view` says `MERGED`, or a non-empty `mergedAt`), fail-SAFE, ambiguity-refusing, and the only online repair path (runs outside the engine remain offline). It reads the brief's `- **Source requirement:**` pointer through the shared `scripts/brief-pointer.sh` extractor — bare, backtick/quote-wrapped, or followed by a whitespace-separated annotation, with any label case and with or without the leading `- ` — so a *styled* pointer no longer strands a brief; an annotation glued to the path with no whitespace stays unreadable by design |
 | `.supervisor/jobs/done/` | Supervisor (move from in-progress); `scripts/reconcile-jobs.sh --repair` (v15.39.0) | Read-only after move. `scripts/stamp-requirement-status.sh` READS this dir exclusively to close out the source requirement — which is why a brief stranded in `in-progress/` structurally blocks that reconciler too. It reads the pointer through the same shared `scripts/brief-pointer.sh` extractor and runs the same containment guards, so the two reconcilers cannot disagree about which requirement a brief names |
 | `.supervisor/jobs/failed/` | Supervisor (move from in-progress) | Read-only after move |
-| `.supervisor/logs/` | Supervisor, Execute Manager, Worker | Append-only JSONL. Also holds non-JSONL files written by hooks, none of them events: the dispatch transcripts, the telemetry logs/markers, and `<run_id>.owner` — the write-once run-owner seed (`scripts/seed-run-owner.sh`; see `docs/TELEMETRY.md` §"Run ownership"). Every consumer globs `*.jsonl` explicitly |
+| `.supervisor/logs/` | Supervisor, Execute Manager, Worker | Append-only JSONL. Also holds non-JSONL files written by hooks, none of them events: the dispatch transcripts, the telemetry logs/markers, and `<run_id>.owner` — the write-once run-owner seed (`scripts/seed-run-owner.sh`; see `docs/TELEMETRY.md` §"Run ownership"). Every consumer globs `*.jsonl` explicitly. Retention: see §"`.supervisor/` retention policy" below — the one directory with a *partial* exhaust rule |
 | `.supervisor/history/` | Supervisor (create) | Read-only after creation |
 | `.supervisor/worker-summaries/` | Worker (inline mode) | Execute Manager (read) |
 | `.worker-summary.md` (in worktree) | Worker (parallel mode) | Execute Manager (read) |
 | `.qa-summary.md` | QA Executor (write) | QA Strategist (read in audit mode) |
 | `.supervisor/twin/` | `scripts/write-system-contract.sh` (sole writer) | Readers via `scripts/read-system-contract.sh`; Context-Keeper is OUT of this path |
+
+---
+
+## `.supervisor/` retention policy
+
+One recorded verdict per directory (v15.68.0): **tracked** (committed; never touched), **guard** (durable by design; never aged out), **consumed** (an input to a named consumer; retained), **exhaust** (safe to age out). The verdict — not a file's age — decides its fate. `bash scripts/retention-sweep.sh` (plugin-relative; operator-invoked, never a hook) enforces exactly this table: **report-only by default**, deleting only under `--delete`, only files inside the two rows whose class carries `exhaust`, only older than `--older-than` (default 90 days, `find -mtime +N`), and only after the layered guards in its header (`git ls-files` says *not tracked*, `jq` and `git` present, the file still matches the row's glob at deletion time). A directory on disk with no row here is reported `unclassified — not swept`; the top-level entries are never listed as candidates. This table and the script's `policy` output are held equal in both directions by `test-retention-sweep.sh` (AC-10) — edit them together. Deletion is **irreversible**: `.supervisor/` is gitignored and exists in exactly one place, which the tool prints as its first line in both modes.
+
+| dir | class | consumers (what keeps it) | rule |
+|---|---|---|---|
+| `memory/` | tracked | 4 tracked files; `read-lessons.sh`, `read-project-memory.sh`, `/dreaming`, `build-vault.sh` | never |
+| `postmortem/` | tracked | `results.jsonl` tracked; `read-postmortem.sh`, `curate-postmortem.sh`, `curation-status.sh` | never |
+| `review-dispatch/` | guard | per-PR idempotency marker, `dispatch-pr-review.sh` | never (a PR-closed rule is a separate decision — out of scope) |
+| `postmortem-dispatch/` | guard | per-PR at-most-once marker, `dispatch-pr-postmortem.sh` | never |
+| `worktrees/` | consumed | no producer or reader in the plugin; a pre-sibling-worktree-era leftover of unknown provenance — retained (unknown provenance is not exhaust) | never |
+| `salvage/` | consumed | the operator restoring rescued work (`worktree-salvage.sh`) | never — explicitly out of scope |
+| `jobs/` | consumed | Supervisor lifecycle, `reconcile-jobs.sh`, `stamp-requirement-status.sh`, `automate-helpers.sh brief-repair`, `/dreaming`, floor/handoff | never |
+| `requirements/` | consumed | user-authored intake; `/automate`, `stamp-requirement-status.sh`, `brief-pointer.sh` | never |
+| `automate/` | consumed | `/automate` RESUME state, `reconcile-jobs.sh`, `build-floor.sh`, `build-handoff.sh` | never |
+| `autonomous/` | consumed | `session-resume.sh`, `build-handoff.sh`, `notify-desktop.sh`, `send-webhook.sh`, `hook-dispatch-on-pr-create.sh` | never |
+| `twin/` | consumed | `read-system-contract.sh` (provenance-gated), `/dreaming`, `build-insights.sh` | never |
+| `history/` | consumed | archive: `cp` copies of `state.md` at FINALIZE; no runtime reader — retained as provenance, read-only after creation | never |
+| `insights/` | consumed | `curation-status.sh` (`dashboard.md` mtime IS the `/insights` watermark — deleting it resets pending to "every signal log"), `build-floor.sh` | never |
+| `heal-signal/` | consumed | `build-insights.sh` confusion matrix, `build-loop-evidence.sh` | never |
+| `eval/` | consumed | `build-insights.sh`, `run-eval.sh` | never |
+| `floor/` | consumed | the Floor UI serves it; rebuilt by `build-floor.sh` | never |
+| `handoff/` | consumed | `/handoff` output; rebuilt by `build-handoff.sh` | never |
+| `worker-summaries/` | consumed | Execute Manager, `/dreaming` (N most recent), `build-floor.sh`, `result_block_parser.py` | never |
+| `scratch/` | consumed | spike outputs cited from memory/provenance; no runtime reader — retained as provenance | never |
+| `logs/` | consumed → partial exhaust | `curation-status.sh`, `build-insights.sh`, `build-floor.sh`, `build-handoff.sh`, `build-loop-evidence.sh`, `session-resume.sh`, `status-line.sh`, telemetry | sweep ONLY: (a) `*.jsonl` older than threshold whose id is NOT in `curation-status.sh pending-ids` — the union of every log `/dreaming`'s set complement or `/insights`' watermark still counts, so `status --json` reports the same backlog before and after; (b) `pr-postmortem-dispatch-*.log` older than threshold (the postmortem dispatch transcript — nothing reads it). **`review-pr-dispatch-*.log` is CONSUMED and kept:** `build-insights.sh` reads it as the durable opt-out evidence of its "Missing-drain reconciliation" section, and deleting one would flip that PR from `opted_out` to `unknown_or_opted_out`. Everything else (`failures.log`, `memory.log`, `notifications.log`, `worktrees.log`, `*.owner`, `.notify-debounce`, telemetry markers, anything unrecognised) untouched |
+| `drain-rounds/` | exhaust | `drain-rounds.sh` during a drain only (`init` resets at every drain start); `build-floor.sh` counts files | sweep `*.json` older than threshold |
+| `.` (top-level entries — EVERY non-directory entry directly under `.supervisor/`, dotfiles included: `config.json`, `curation-state.json`, `notify-config.json`, `state.md`, `.current-session`, `.current-session-id`, `.rules-nudge-shown`, `.curation-nudge-shown`, …) | consumed | Supervisor/engine state and config; the dotfiles are `session-resume.sh` markers | never (the tool never lists top-level files as candidates at all) |
+
+**The corpus is conditional once `--delete` has run.** `curation-state.json`'s `consumed.logs` keeps the ids of deleted logs as inert members (harmless: the set is only ever complemented against what is on disk), and totals that iterate the whole corpus — `/insights`, `build-loop-evidence.sh` — shrink to the retained window. The two *pending* numbers do not move; that is the property the sweep preserves and `test-retention-sweep.sh` AC-5 asserts against `curation-status.sh` directly.
 
 ---
 
