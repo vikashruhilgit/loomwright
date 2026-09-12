@@ -14,7 +14,9 @@
 # Groups (AC numbers are the job brief's):
 #   AC-3   report-only default: the full recursive listing (files AND dirs, a
 #          cksum per file) is byte-identical before/after — asserted against the
-#          filesystem, never against the tool's own claim
+#          filesystem, never against the tool's own claim; the fixture carries
+#          a tab-named ledger so the listing-time unsafe-name keep is asserted
+#          in REPORT mode too (DELETE mode: AC-1g)
 #   AC-11  argument hygiene (0 / 08 / abc / missing value / above 36500 ⇒ REPORT
 #          + reason, nothing removed; 36500 itself accepted) and the
 #          IRREVERSIBLE line FIRST in both modes
@@ -59,6 +61,12 @@
 #          ⇒ nothing deleted; one exhaust dir ⇒ never widens), garbage
 #          curation-state.json, PATH without jq, PATH without git, non-git
 #          --project-root (rc 128) — exit 0, nothing deleted, condition named
+#   AC-7r  the three root-resolution early exits — (a) --project-root is not a
+#          directory, (b) exists but cannot be entered (chmod 000; skipped
+#          visibly as root), (c) exists but holds no .supervisor/ — each with
+#          --delete and cwd = an ADJACENT populated fixture: exit 0, the exact
+#          message, and that fixture's listing byte-identical (a cwd fallback
+#          would have deleted from it)
 #   AC-8   hooks/hooks.json carries no retention-sweep reference
 #   AC-9   mutation controls, each a copy of the script with ONE identifiable
 #          edit, asserted RED: (a1) memory/ + postmortem/ reclassified exhaust;
@@ -176,6 +184,18 @@ build_fixture() {
        "$s/jobs/done/2026-01-01-x.md" "$s/config.json" "$s/state.md" "$s/.current-session"
 }
 
+# build_tab <root> — the aged fixture plus an aged ledger whose basename holds a
+# TAB, and an aged, untracked sibling named exactly the pre-tab prefix (it does
+# not match *.json, so it is never a legitimate candidate — the only way it can
+# fall is a truncated TSV row naming it).
+TAB_BASE="tab-named${TAB}x.json"; TAB_SIB="tab-named"
+build_tab() {
+  build_fixture "$1"
+  printf '{"rounds":0,"max_rounds":5}\n' > "$1/.supervisor/drain-rounds/$TAB_BASE"
+  printf 'sibling — must survive\n' > "$1/.supervisor/drain-rounds/$TAB_SIB"
+  touch -t "$OLD" "$1/.supervisor/drain-rounds/$TAB_BASE" "$1/.supervisor/drain-rounds/$TAB_SIB"
+}
+
 # listing <root> — full recursive listing of .supervisor/ (files AND dirs, a
 # cksum per regular file), sorted. A bare name list would miss an rmdir or a
 # truncation.
@@ -200,10 +220,12 @@ pending_pair() {  # <root> — "dreaming insights" pending numbers from status -
 
 # ============================================================================
 echo "== AC-3 / AC-11: report-only default, argument hygiene, IRREVERSIBLE first =="
-F3="$ROOT/f3"; build_fixture "$F3"
+F3="$ROOT/f3"; build_tab "$F3"
 before="$(listing "$F3")"
 run_rs "$RS" "$F3" "$F3"
 [ "$RC" -eq 0 ] && ok "AC-3 default invocation exits 0" || no "AC-3 rc=$RC"
+printf '%s' "$OUT" | grep -qF "keep (unsafe name, not swept): .supervisor/drain-rounds/$TAB_BASE" && ! printf '%s' "$OUT" | grep -qF "would remove: .supervisor/drain-rounds/$TAB_SIB" \
+  && ok "AC-3 REPORT mode refuses the tab-named candidate at listing time (keep line present, not listed as would-remove)" || no "AC-3 unsafe-name keep missing in REPORT mode: $(printf '%s\n' "$OUT" | grep -F drain-rounds | head -4)"
 printf '%s' "$OUT" | grep -qF 'would remove:' && ok "AC-3 control — the default report DOES list candidates (the fixture is aged past 90 days)" || no "AC-3 control: no candidates listed — the report-only assertion would be vacuous: $OUT"
 [ "$(listing "$F3")" = "$before" ] && ok "AC-3 default invocation leaves the full listing byte-identical" || no "AC-3 listing changed under the default invocation"
 printf '%s' "$OUT" | grep -qF 'pass --delete to remove the files listed above' && ok "AC-3 summary says nothing removed / pass --delete" || no "AC-3 summary line missing: $(printf '%s' "$OUT" | tail -1)"
@@ -411,17 +433,6 @@ done
 
 # ============================================================================
 echo "== AC-1g: a TAB-named candidate is refused at listing time; its same-prefix sibling is never touched =="
-# build_tab <root> — the aged fixture plus an aged ledger whose basename holds a
-# TAB, and an aged, untracked sibling named exactly the pre-tab prefix (it does
-# not match *.json, so it is never a legitimate candidate — the only way it can
-# fall is a truncated TSV row naming it).
-TAB_BASE="tab-named${TAB}x.json"; TAB_SIB="tab-named"
-build_tab() {
-  build_fixture "$1"
-  printf '{"rounds":0,"max_rounds":5}\n' > "$1/.supervisor/drain-rounds/$TAB_BASE"
-  printf 'sibling — must survive\n' > "$1/.supervisor/drain-rounds/$TAB_SIB"
-  touch -t "$OLD" "$1/.supervisor/drain-rounds/$TAB_BASE" "$1/.supervisor/drain-rounds/$TAB_SIB"
-}
 F1G="$ROOT/f1g"; build_tab "$F1G"
 [ -f "$F1G/.supervisor/drain-rounds/$TAB_BASE" ] && ok "AC-1g control — the filesystem accepted a tab in the basename" || no "AC-1g control: tab-named fixture not created"
 h1g_tab="$(hash_of "$F1G/.supervisor/drain-rounds/$TAB_BASE")"; h1g_sib="$(hash_of "$F1G/.supervisor/drain-rounds/$TAB_SIB")"
@@ -487,6 +498,37 @@ run_rs "$RS" "$F7G" "$F7G" --delete --older-than 1
 [ "$RC" -eq 0 ] && ok "AC-7 non-git --project-root ⇒ exit 0" || no "AC-7 non-git rc=$RC"
 printf '%s' "$OUT" | grep -qF 'git could not answer (rc 128)' && ok "AC-7 non-git root ⇒ 'git could not answer (rc 128)' named" || no "AC-7 rc-128 not named: $(printf '%s\n' "$OUT" | sed -n 2,5p)"
 [ "$(listing "$F7G")" = "$b7g" ] && ok "AC-7 non-git root ⇒ nothing deleted" || no "AC-7 non-git root deleted something"
+
+# ============================================================================
+echo "== AC-7r: root-resolution early exits — exit 0, exact message, the ADJACENT fixture untouched =="
+# cwd is a populated fixture and --delete is passed: if any early exit fell back
+# to the cwd (or acted on the wrong tree) the adjacent fixture would lose files.
+F7R="$ROOT/f7r"; build_fixture "$F7R"; b7r="$(listing "$F7R")"
+# (a) --project-root is not a directory
+BAD_A="$ROOT/does-not-exist"
+run_rs "$RS" "$F7R" "$BAD_A" --delete --older-than 1
+[ "$RC" -eq 0 ] && ok "AC-7r (a) nonexistent --project-root ⇒ exit 0" || no "AC-7r (a) rc=$RC"
+printf '%s\n' "$OUT" | grep -qxF "retention-sweep: project root $BAD_A is not a directory — nothing done." && ok "AC-7r (a) exact message names the path" || no "AC-7r (a) message: $(printf '%s\n' "$OUT" | sed -n 2p)"
+[ "$(listing "$F7R")" = "$b7r" ] && ok "AC-7r (a) the adjacent cwd fixture is byte-identical (no cwd fallback)" || no "AC-7r (a) the adjacent fixture changed"
+# (c) root exists but has no .supervisor/
+BAD_C="$ROOT/empty-root"; mkdir -p "$BAD_C"; BAD_C_P="$(cd "$BAD_C" && pwd -P)"
+run_rs "$RS" "$F7R" "$BAD_C" --delete --older-than 1
+[ "$RC" -eq 0 ] && ok "AC-7r (c) root without .supervisor/ ⇒ exit 0" || no "AC-7r (c) rc=$RC"
+printf '%s\n' "$OUT" | grep -qxF "retention-sweep: no .supervisor/ under $BAD_C_P — nothing to do." && ok "AC-7r (c) exact message names the resolved root" || no "AC-7r (c) message: $(printf '%s\n' "$OUT" | sed -n 2p)"
+[ "$(listing "$F7R")" = "$b7r" ] && [ -z "$(ls -A "$BAD_C")" ] && ok "AC-7r (c) the adjacent fixture is byte-identical and the empty root stays empty (nothing created)" || no "AC-7r (c) the adjacent fixture changed or the empty root gained an entry"
+# (b) root exists but cannot be entered
+if [ "${EUID:-$(id -u)}" -eq 0 ]; then
+  skp "AC-7r (b) skipped: running as root — chmod 000 does not block cd for uid 0, the arm would be vacuous"
+else
+  BAD_B="$ROOT/locked-root"; mkdir -p "$BAD_B"; chmod 000 "$BAD_B"
+  run_rs "$RS" "$F7R" "$BAD_B" --delete --older-than 1
+  rc7rb=$RC; out7rb="$OUT"; chmod 755 "$BAD_B"
+  [ "$rc7rb" -eq 0 ] && ok "AC-7r (b) unenterable --project-root ⇒ exit 0" || no "AC-7r (b) rc=$rc7rb"
+  printf '%s\n' "$out7rb" | grep -qxF "retention-sweep: cannot enter the project root — nothing done." && ok "AC-7r (b) exact message" || no "AC-7r (b) message: $(printf '%s\n' "$out7rb" | sed -n 2p)"
+  [ "$(listing "$F7R")" = "$b7r" ] && ok "AC-7r (b) the adjacent fixture is byte-identical" || no "AC-7r (b) the adjacent fixture changed"
+fi
+[ "$(printf '%s\n' "$OUT" | head -1)" = 'retention-sweep: IRREVERSIBLE — .supervisor/ is gitignored and exists only in this checkout; nothing removed here can be recovered.' ] \
+  && ok "AC-7r the IRREVERSIBLE line is still FIRST on an early-exit path" || no "AC-7r first line on early exit: $(printf '%s\n' "$OUT" | head -1)"
 
 # ============================================================================
 echo "== AC-8: no hook invokes the sweep =="
