@@ -66,8 +66,9 @@
 #         deletion-time answer is per file, never widening.
 #   (iii) `jq` absent ⇒ the same degradation (curation-status.sh cannot answer
 #         the pending set without it, and this tool refuses rather than guess).
-#   (iv)  the file must still match the row's glob, be a regular file and not a
-#         symlink at deletion time; candidates come ONLY from
+#   (iv)  the file must be a regular file and not a symlink at deletion time
+#         (the glob is decided once, at listing time — a stored basename can
+#         never stop matching its stored glob, so it is not re-tested); candidates come ONLY from
 #         `find <dir> -maxdepth 1 -type f -name <glob> -mtime +<days>` in
 #         exactly that argument order — no recursion, no `-L`.
 #   (v)   an unreadable directory or a failed rm is reported per file/dir and
@@ -372,11 +373,11 @@ if [ "$MODE" = "DELETE" ]; then
     while IFS="$(printf '\t')" read -r cdir glob path bytes; do
       [ "$cdir" = "$dir" ] || continue
       base="${path##*/}"
-      # Guard (iv), re-evaluated at deletion time.
-      case "$base" in $glob) ;; *) printf '  skipped (no longer matches %s): %s\n' "$glob" "$path"; continue ;; esac
+      # Guard (iv), re-evaluated at deletion time (regular-file + not-a-symlink;
+      # the glob was decided at listing time and cannot change for a stored name).
       if [ -L "$path" ] || [ ! -f "$path" ]; then printf '  skipped (not a regular file now): %s\n' "$path"; continue; fi
       # Guard (ii), re-evaluated at deletion time — a file that became tracked
-      # after pass 1 listed it is kept, exactly as guard (iv) re-checks the glob.
+      # after pass 1 listed it is kept, exactly as guard (iv) re-checks the file type.
       rel=".supervisor/$dir/$base"
       trc=1   # overwritten by the guard on the next line; 1 = "git said: not tracked"
       trc="$(git_tracked_rc "$rel")"   # LS-FILES-GUARD-AT-DELETION

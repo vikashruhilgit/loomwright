@@ -44,10 +44,10 @@
 #   AC-1e  the shim renames the candidate away on its first probe ⇒ pass 2
 #          prints `skipped (not a regular file now)` and the moved file is
 #          untouched; AC-1f replaces it with a symlink ⇒ the same skip line,
-#          the link and its target untouched. (The `skipped (no longer
-#          matches <glob>)` arm is NOT testable: pass 2 re-matches the STORED
-#          basename string against the STORED row glob, both fixed within one
-#          run — no filesystem state can make it fire; noted, not faked.)
+#          the link and its target untouched. (A former `skipped (no longer
+#          matches <glob>)` arm was REMOVED as unreachable: pass 2 re-matched
+#          the STORED basename string against the STORED row glob, both fixed
+#          within one run — no filesystem state could make it fire.)
 #   AC-6   a novel directory (zzz-future/) keeps its aged file and is reported
 #          `unclassified — not swept`
 #   AC-7   fail-safe, one assertion per case: unreadable dir (both exhaust dirs
