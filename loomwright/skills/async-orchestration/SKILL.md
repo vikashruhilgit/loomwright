@@ -413,7 +413,7 @@ BLOCKED subtasks declare `requires` against producing subtasks (see `skills/supe
 
 After dependency materialization and **before** spawning the worker, the Execute Manager runs a verification gate that proves each declared `requires` entry actually exists in the dependent worktree. The producer branch claimed to provide an item — this gate verifies the claim against disk.
 
-For each `requires` entry on the dependent subtask, run one check against `<worktree>/<path>`: the commands are the three rows `bash "${CLAUDE_PLUGIN_ROOT}/scripts/verify-provides.sh" --kind-table` prints (the ONE implementation; committed copy in `docs/RESULT_SCHEMAS.md` §WORKER_RESULT between the `kind-table:begin`/`end` markers) with `<root>` = the worktree. Not restated here — a copy drifts.
+For each `requires` entry on the dependent subtask, run one check against `<worktree>/<path>`: the commands are the three rows `scripts/verify-provides.sh --kind-table` prints (the ONE implementation; the Execute Manager's Step 2b carries the runtime invocation; committed copy in `docs/RESULT_SCHEMAS.md` §WORKER_RESULT between the `kind-table:begin`/`end` markers) with `<root>` = the worktree. Not restated here — a copy drifts.
 
 **Pass criterion:** ALL checks for ALL `requires` entries must PASS.
 
