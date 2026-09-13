@@ -47,8 +47,10 @@ never read) and side-effect-free outside the temp dir.
 ## `--live` mode (advisory diagnostic, not scored by the eval)
 
 `bash check.sh --live [--window N] [--max-lines N] [--streak N]` scans
-the enclosing repo's real history and exits 1 when a qualifying streak
-is found. Defaults: window 15, max-lines 6, streak 3. Non-numeric knob
+the real history of the repo at `$EVAL_PROJECT_ROOT` (the caller's project,
+exported by the runners — see the corpus README §"Project root"), falling
+back to the enclosing repo only when that is unset, and exits 1 when a
+qualifying streak is found. Defaults: window 15, max-lines 6, streak 3. Non-numeric knob
 values fail closed (exit 2).
 
 True-positive replay against this repo (as of `eedd3ac`): with the

@@ -227,7 +227,7 @@ for iteration in 1..max_iterations:
       # Handling has already been spent); absence is NOT a pass.
       worker_result = parse_worker_result(result)   # or ABSENT
 
-      # The gate's INPUT is the TREE, not the worker's claim (v15.70.0). Re-run the
+      # The gate's INPUT is the TREE, not the worker's claim (v15.71.0). Re-run the
       # ONE implementation of the three provides checks against the worktree the
       # worker wrote to — exactly ONE extra Bash call per subtask (+1 below).
       # brief_path = the SAME pointer you handed this worker at spawn: the
@@ -319,7 +319,7 @@ for iteration in 1..max_iterations:
         # `partial` with NO provides gap is the Step 1 carve-out (agents/worker.md
         # §"Status / outputs_gap invariant"): the worker could not read / act on its
         # spec. Disk cannot contradict an unread spec, so this is NOT a disk-wins
-        # cell — it keeps the pre-v15.70.0 stop (both consumers agree: status !=
+        # cell — it keeps the pre-v15.71.0 stop (both consumers agree: status !=
         # completed with no disk contradiction ⇒ stop).
         emit EXECUTE_CHECKPOINT (same shape as above) with
           missing_outputs: [{item: "provides: {subtask_id}", producing_subtask: subtask_id,

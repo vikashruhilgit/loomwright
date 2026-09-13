@@ -66,10 +66,15 @@ scan_repo() {
 
 # ---- live mode: scan the enclosing repo -----------------------------------
 if [ "$LIVE" -eq 1 ]; then
-  repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
-    echo "review-churn-canary: not inside a git repo" >&2
-    exit 1
-  }
+  # Same project-root precedence as the maintainer-side tasks: $EVAL_PROJECT_ROOT (the caller's
+  # project, exported by the runners), else the git repo enclosing this task dir.
+  repo_root="${EVAL_PROJECT_ROOT:-}"
+  if [ -z "$repo_root" ]; then
+    repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+      echo "review-churn-canary: EVAL_PROJECT_ROOT unset and not inside a git repo" >&2
+      exit 1
+    }
+  fi
   max="$(scan_repo "$repo_root")"
   if [ "$max" -ge "$STREAK" ]; then
     echo "✗ review-churn-canary [--live]: $max consecutive micro review-fix commits (<= $MAX_LINES lines each) in the last $WINDOW — the drain is churning on nits." >&2

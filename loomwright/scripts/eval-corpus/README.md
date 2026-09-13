@@ -44,7 +44,8 @@ the denominator `N` and masking a regression.
 
 1. Resolves the corpus dir: `$EVAL_CORPUS_DIR` if set, else `<script-dir>/eval-corpus`.
 2. Finds every immediate child directory containing a `check.sh`, in **sorted order**.
-3. Runs each executable `check.sh` (`cd` into the task dir first). Exit 0 → `pass`; non-0 → `fail`.
+3. Runs each executable `check.sh` (`cd` into the task dir first, `EVAL_PROJECT_ROOT` exported — see
+   §"Project root" below). Exit 0 → `pass`; non-0 → `fail`.
    A failing check is a normal **fail tally**, never a script crash. A present-but-non-executable
    `check.sh` is counted as a `fail` (with a stderr warning), not silently skipped.
 4. Tallies `M` passes out of `N` tasks and prints a per-task line plus a `Pass rate: M/N` line.
@@ -58,16 +59,46 @@ locales (not just filesystem enumeration order). Tasks are direct children of th
 (`find -mindepth 1 -maxdepth 1`), so sorting by full path is equivalent to sorting by `id` — the
 `per_task` array is ordered by `id`.
 
+### Project root (the corpus contract — what a check verifies)
+
+Both runners (`run-eval.sh`, `run-ground-truth.sh`) run every `check.sh` with **CWD = its task dir**
+(task-local relative paths keep working) and with **`EVAL_PROJECT_ROOT` exported** = the project the
+check must **verify**:
+
+| Precedence | Source |
+|---|---|
+| 1 | `--project <dir>` passed to the runner |
+| 2 | the git toplevel of the **caller's** CWD (`git rev-parse --show-toplevel` from where the runner was invoked) |
+| 3 | the caller's CWD itself (no git repo) |
+
+A `--project` naming a non-directory is a caller error: the runner emits its fail-safe `unverified`
+shape (0/0, empty per-task list) and exits 0 rather than scoring against some other directory.
+
+**A `check.sh` MUST resolve the repo it verifies from `$EVAL_PROJECT_ROOT`, never from its own
+location.** The precedence inside a check is: an explicit `--root <dir>` (where the task supports
+one) → `$EVAL_PROJECT_ROOT` → the git repo enclosing the task dir (a fallback for direct
+`bash check.sh` invocation on a dev checkout only). Why this is load-bearing: on a **marketplace
+install** the plugin — runner and corpus alike — lives under
+the plugin manager's install cache (`<cache>/<marketplace>/loomwright/<version>/scripts/`), which is
+**not inside any git repo**. A check that did `git rev-parse --show-toplevel` after the runner's `cd <task-dir>` failed
+there with "not inside a git repo" for **every** maintainer-side task, so a Phase 4.5 ground-truth
+run reported `advisory_failures` while the dev checkout's copy of the identical runner passed
+(observed 2026-09-13, PR #217). The runner is the only party that knows the caller's project; it
+passes it down. `test-run-ground-truth.sh` case (m) copies runner + corpus into a git-less temp dir
+and asserts a corpus task run from a git project CWD passes — the shape of the incident.
+
 ### Portability of the seed tasks (maintainer-side)
 
 The seed corpus tasks `doc-currency-green`, `version-consistent`, and `eval-selftest-green` are
-**dogfooded against this development repo**: their `check.sh` resolves the repo root via
-`git rev-parse --show-toplevel` and invokes repo-local scripts (`scripts/check-doc-currency.sh`,
-`scripts/validate-version.sh`, `loomwright/scripts/test-run-eval.sh`). They are therefore
-**maintainer-side checks** — they pass only when run inside this repo and would fail in a marketplace
-install under an arbitrary user project. `fixture-unit-test` is the only fully self-contained,
-location-independent task. Corpus *authors* are free to write either kind; the runner itself is
-location-independent (it scores whatever `check.sh` files it finds).
+**dogfooded against this development repo**: their `check.sh` invokes repo-local scripts under the
+project root (`scripts/check-doc-currency.sh`, `scripts/validate-version.sh`,
+`loomwright/scripts/test-run-eval.sh`). They are therefore **maintainer-side checks** — they pass
+only when the **project root is this repo** (whichever copy of the runner executes them — a
+marketplace-installed plugin dogfooding the loomwright checkout works) and fail, with an explicit
+"maintainer-side task; the project root must be the loomwright repo" message, under an arbitrary
+user project. `fixture-unit-test` is the only fully self-contained, location-independent task. Corpus
+*authors* are free to write either kind; the runner itself is location-independent (it scores whatever
+`check.sh` files it finds).
 
 Three regression tasks extend the corpus:
 
@@ -105,7 +136,7 @@ EVAL_RESULT: {"schema_version":1,"tasks_total":N,"tasks_passed":M,"pass_rate":"M
 | `tasks_passed`   | int    | `M` — number whose `check.sh` exited 0. |
 | `pass_rate`      | string | `"M/N"`. |
 | `per_task`       | array  | `[{"id":"<task-id>","status":"pass"\|"fail"}, ...]`, sorted by `id`. |
-| `commit`         | string | `git rev-parse --short HEAD`, or `"unknown"` outside a git repo. **Contextual.** |
+| `commit`         | string | `git rev-parse --short HEAD` **of the project root** (the project scored, not the runner's own checkout), or `"unknown"` when that is not a git repo. **Contextual.** |
 | `date`           | string | ISO 8601 UTC (`YYYY-MM-DDThh:mm:ssZ`). **Contextual.** |
 | `status`         | string | `"ok"` on a normal run; `"unverified"` on the fail-safe path. |
 

@@ -33,9 +33,10 @@ Fail if any agent has no template anchored on its block name, or if a
 required field is absent from the emit region while present elsewhere in
 the file. Deterministic and read-only.
 
-The eval-mode entry point takes no arguments (repo root resolved via
-`git rev-parse --show-toplevel`, which works from the runner's
-`cd <task-dir>` convention). `--root <dir>` points the check at a
+The eval-mode entry point takes no arguments (repo root = `$EVAL_PROJECT_ROOT`,
+the caller's project as exported by the runners — see the corpus README
+§"Project root" — falling back to `git rev-parse --show-toplevel` only when
+that is unset). `--root <dir>` beats both and points the check at a
 fixture tree — used by the mutation self-test (delete `heal_decision:`
 from a copied supervisor.md template; the check must FAIL).
 

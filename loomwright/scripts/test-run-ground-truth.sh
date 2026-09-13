@@ -4,20 +4,29 @@
 # never pollute the real .supervisor/ (the runner's ground-truth.json fallback resolves against the
 # git root of the CWD). Exit 0 = all pass, 1 = any failure. Prints "RESULT: N passed, M failed".
 #
-# Covers the five core AC cases plus the corpus dogfood and edge cases — 14 assertions (a–l, incl. e2 + l-env):
+# Covers the five core AC cases plus the corpus dogfood and edge cases — 19 assertions (a–m, incl. e2, l-env, m1–m5):
 #   (a) passing check (--check 'cmd: true')          => status "pass", 1/1, exit 0.
 #   (b) failing check (--check 'cmd: false')         => status "advisory_failures", per_check fail, exit 0.
 #   (c) no source (temp CWD, no ground-truth.json)   => status "skipped", 0/0, exit 0.
 #   (d) missing-jq simulation (GROUND_TRUTH_FORCE_NO_JQ=1) => status "unverified", exit 0.
 #   (e) qa-executor check                            => per_check unverified + deferred reason, ran false, exit 0.
 #   (e2) qa-executor coexisting with a passing cmd   => status "pass" (deferred never blocks).
-#   (f) corpus-task: version-consistent              => executes the real check, hard pass/fail, 1/1 total.
+#   (f) corpus-task: version-consistent              => executes the real check, hard pass/fail, 1/1 total
+#                                                       (run from the repo root — the project it verifies).
 #   (g) missing corpus-task                          => per_check fail, reason corpus_task_not_found, exit 0.
 #   (h) corpus-task with path traversal              => per_check fail, reason corpus_task_invalid_id, exit 0.
 #   (i) cmd: target with a leading dash              => target preserved verbatim (not bullet-stripped).
 #   (j) --brief heading match is exact               => sibling "## Executable Acceptance Notes" ignored.
 #   (k) empty cmd: target                            => fail (reason empty_cmd_target), not a false pass.
 #   (l) --no-cmd / GROUND_TRUTH_NO_CMD safety valve   => cmd skipped (unverified/cmd_disabled, no side effect), corpus-task still runs.
+#   (m) project root — the 2026-09-13 marketplace-install incident (runner + corpus copied OUTSIDE any
+#       git repo, as under the plugin manager's install cache): (m1) a corpus-task run from the repo-root CWD
+#       PASSES and `commit` is the PROJECT's HEAD; (m2) `--project <repo>` from a non-git CWD passes and
+#       a repo-root-relative `cmd:` runs from the project root; (m3) the in-repo runner from a non-git
+#       CWD with no --project FAILS the maintainer-side task (the check verifies the CALLER's project,
+#       never the runner's home — the mutation control for the check.sh precedence); (m4) `--project`
+#       naming a non-directory => unverified 0/0, exit 0; (m5) check.sh precedence unit: --root beats
+#       EVAL_PROJECT_ROOT beats the task-dir git root.
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -42,6 +51,11 @@ trap cleanup EXIT
 # A non-git temp dir (git rev-parse falls back to pwd; no .supervisor/twin/ground-truth.json here).
 CWD="$TMP/work"
 mkdir -p "$CWD"
+# The repo this suite lives in — the PROJECT the maintainer-side corpus tasks verify. Cases that run a
+# real corpus task use it as the CWD (the runner derives the project root from the caller's CWD); the
+# runner performs no writes and every such case passes an explicit --check, so the ground-truth.json
+# fallback can never fire there.
+REPO_ROOT="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null || true)"
 
 echo "== (a) passing check (cmd: true) => status pass, 1/1 =="
 oA="$( cd "$CWD" && bash "$RUN" --check 'cmd: true' 2>/dev/null )"; rcA=$?
@@ -119,7 +133,7 @@ else
 fi
 
 echo "== (f) corpus-task: version-consistent => executes real check, hard pass/fail, 1/1 total =="
-oF="$( cd "$CWD" && bash "$RUN" --check 'corpus-task: version-consistent' 2>/dev/null )"; rcF=$?
+oF="$( cd "$REPO_ROOT" && bash "$RUN" --check 'corpus-task: version-consistent' 2>/dev/null )"; rcF=$?
 jF="$(gt_json "$oF")"
 if [ "$rcF" -eq 0 ] && printf '%s' "$jF" | jq -e '
     .checks_total==1 and .per_check[0].kind=="corpus-task"
@@ -186,7 +200,7 @@ else
 fi
 
 echo "== (l) --no-cmd safety valve: cmd skipped (unverified/cmd_disabled), corpus-task still runs =="
-oL2="$( cd "$CWD" && bash "$RUN" --no-cmd --check 'cmd: true' --check 'corpus-task: version-consistent' 2>/dev/null )"; rcL2=$?
+oL2="$( cd "$REPO_ROOT" && bash "$RUN" --no-cmd --check 'cmd: true' --check 'corpus-task: version-consistent' 2>/dev/null )"; rcL2=$?
 jL2="$(gt_json "$oL2")"
 # cmd: not executed (unverified/cmd_disabled); corpus-task runs (pass) => overall pass, total 2, passed 1.
 if [ "$rcL2" -eq 0 ] && printf '%s' "$jL2" | jq -e '
@@ -220,6 +234,95 @@ if [ "$rcK" -eq 0 ] && printf '%s' "$jK" | jq -e '
   ok "empty cmd: target => fail (reason empty_cmd_target), not a false pass, exit 0"
 else
   no "(k) wrong (rc=$rcK): $jK"
+fi
+
+echo "== (m) project root: runner + corpus copied OUTSIDE any git repo (marketplace-install shape) =="
+# Regression for the 2026-09-13 incident: on a marketplace install $SCRIPT_DIR is
+# the plugin manager's install cache (<cache>/<marketplace>/loomwright/<version>/scripts) — not in any git repo — and every
+# maintainer-side check.sh resolved the repo from ITS OWN dir, so ground_truth reported
+# advisory_failures while the checkout's copy of the same runner passed. The runner must hand the
+# CALLER's project root to each check (EVAL_PROJECT_ROOT), and the checks must use it.
+FAKE="$TMP/plugin-cache/loomwright/9.9.9/scripts"
+mkdir -p "$FAKE"
+cp "$RUN" "$FAKE/run-ground-truth.sh"
+cp -R "$HERE/eval-corpus" "$FAKE/eval-corpus"
+FAKE_RUN="$FAKE/run-ground-truth.sh"
+if [ -z "$REPO_ROOT" ]; then
+  no "(m) precondition: this suite is not inside a git repo — cannot name the project to verify"
+elif git -C "$FAKE" rev-parse --show-toplevel >/dev/null 2>&1; then
+  no "(m) precondition: mktemp dir '$TMP' is INSIDE a git repo — cannot simulate a git-less plugin cache"
+else
+  # (m1) from the repo-root CWD, the copied runner must pass the maintainer-side task, and `commit`
+  # must be the PROJECT's HEAD (not "unknown" — the copy has no git of its own).
+  headShort="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  oM1="$( cd "$REPO_ROOT" && bash "$FAKE_RUN" --check 'corpus-task: version-consistent' 2>/dev/null )"; rcM1=$?
+  jM1="$(gt_json "$oM1")"
+  if [ "$rcM1" -eq 0 ] && printf '%s' "$jM1" | jq -e --arg c "$headShort" '
+      .status=="pass" and .checks_total==1 and .checks_passed==1
+      and .per_check[0].kind=="corpus-task" and .per_check[0].status=="pass"
+      and .commit==$c
+    ' >/dev/null 2>&1; then
+    ok "(m1) git-less runner copy + repo-root CWD: corpus-task passes, commit == project HEAD ($headShort)"
+  else
+    no "(m1) git-less runner copy from repo-root CWD did not pass (rc=$rcM1): $jM1"
+  fi
+
+  # (m2) --project <repo> from a NON-git CWD: corpus-task passes AND a repo-root-relative cmd: runs
+  # from the project root (not from the caller's CWD, where that file does not exist).
+  oM2="$( cd "$CWD" && bash "$FAKE_RUN" --project "$REPO_ROOT" \
+          --check 'corpus-task: version-consistent' \
+          --check 'cmd: test -f scripts/validate-version.sh' 2>/dev/null )"; rcM2=$?
+  jM2="$(gt_json "$oM2")"
+  if [ "$rcM2" -eq 0 ] && printf '%s' "$jM2" | jq -e '
+      .status=="pass" and .checks_total==2 and .checks_passed==2
+    ' >/dev/null 2>&1; then
+    ok "(m2) --project <repo> from a non-git CWD: corpus-task passes, cmd: runs from the project root"
+  else
+    no "(m2) --project path wrong (rc=$rcM2): $jM2"
+  fi
+
+  # (m3) MUTATION CONTROL: the IN-REPO runner from a non-git CWD with no --project must FAIL the
+  # maintainer-side task — the project root is the caller's CWD (no git, no gate scripts), and the
+  # check must NOT quietly fall back to the repo enclosing its own file. Before the fix this passed
+  # (the check found the runner's home repo), which is exactly the wrong-project report the incident
+  # was made of, seen from the other side.
+  oM3="$( cd "$CWD" && bash "$RUN" --check 'corpus-task: version-consistent' 2>/dev/null )"; rcM3=$?
+  jM3="$(gt_json "$oM3")"
+  if [ "$rcM3" -eq 0 ] && printf '%s' "$jM3" | jq -e '
+      .status=="advisory_failures" and .checks_total==1 and .per_check[0].status=="fail"
+    ' >/dev/null 2>&1; then
+    ok "(m3) in-repo runner, non-git CWD, no --project: maintainer-side task fails honestly (verifies the caller's project, not the runner's home)"
+  else
+    no "(m3) check fell back to the runner's own repo (rc=$rcM3): $jM3"
+  fi
+
+  # (m4) --project naming a non-directory: fail-safe unverified (0/0, ran false), exit 0 — never a
+  # run against some other directory, never a false pass.
+  oM4="$( cd "$CWD" && bash "$RUN" --project "$TMP/does-not-exist" --check 'cmd: true' 2>/dev/null )"; rcM4=$?
+  jM4="$(gt_json "$oM4")"
+  if [ "$rcM4" -eq 0 ] && printf '%s' "$jM4" | jq -e '
+      .status=="unverified" and .ran==false and .checks_total==0 and .pass_rate=="0/0" and (.per_check|length)==0
+    ' >/dev/null 2>&1; then
+    ok "(m4) --project <non-directory>: status unverified, ran false, 0/0, exit 0"
+  else
+    no "(m4) invalid --project wrong (rc=$rcM4): $jM4"
+  fi
+
+  # (m5) check.sh precedence unit (direct invocation, no runner): from the git-less COPY of the
+  # task dir, (i) no env + no flag fails with the "EVAL_PROJECT_ROOT unset" message; (ii) EVAL_PROJECT_ROOT
+  # pointing at the repo passes; (iii) for a --root-capable task, --root beats a bogus EVAL_PROJECT_ROOT.
+  vc_dir="$FAKE/eval-corpus/version-consistent"
+  pe_dir="$FAKE/eval-corpus/parity-emit-block"
+  m5_ok=1
+  ( cd "$vc_dir" && env -u EVAL_PROJECT_ROOT bash check.sh >/dev/null 2>"$TMP/m5i.err" ) && m5_ok=0
+  grep -q "EVAL_PROJECT_ROOT unset" "$TMP/m5i.err" 2>/dev/null || m5_ok=0
+  ( cd "$vc_dir" && EVAL_PROJECT_ROOT="$REPO_ROOT" bash check.sh >/dev/null 2>&1 ) || m5_ok=0
+  ( cd "$pe_dir" && EVAL_PROJECT_ROOT="$TMP/does-not-exist" bash check.sh --root "$REPO_ROOT" >/dev/null 2>&1 ) || m5_ok=0
+  if [ "$m5_ok" -eq 1 ]; then
+    ok "(m5) check.sh precedence: --root > EVAL_PROJECT_ROOT > task-dir git root (git-less copy fails loudly with neither)"
+  else
+    no "(m5) check.sh precedence wrong (see $TMP/m5i.err: $(head -c 200 "$TMP/m5i.err" 2>/dev/null))"
+  fi
 fi
 
 echo
