@@ -24,10 +24,14 @@
 #   "src/foo.ts:Bar, src/baz.ts"). When the brief cannot be read, the subtask is not in it, or it has
 #   no contract block at all:
 #   {"subtask_id":"<id>","status":"unverifiable","reason":"brief_unreadable"|"subtask_not_found"|"no_contracts","source":"verify-provides.sh"}
-#   plus the reason on stderr. A missing `jq` is a fourth reason, `jq_missing` — the ONE
-#   shell-templated object in this file (jq is by definition absent); it carries `subtask_id` only
-#   when the id matches ^[[:alnum:]_-]+$, otherwise the key is omitted (argv is caller text and must
-#   never reach the JSON unescaped). Every other object is built with `jq --arg`.
+#   plus the reason on stderr. A missing `jq` is a fourth reason, `jq_missing`, and a malformed
+#   invocation (`--root` with no value, or an empty `--root`) is a fifth, `bad_args` — the arg
+#   parser's own early exit keeps the contract rather than printing nothing. Both may be emitted
+#   before jq is known, so they share the ONE shell-templated object shape in this file (`bad_args`
+#   uses `jq --arg` when jq is present); it carries `subtask_id` only when the id matches
+#   ^[[:alnum:]_-]+$, otherwise the key is omitted (argv is caller text and must never reach the
+#   JSON unescaped). Every other object is built with `jq --arg`. `--kind-table` and `--help` are
+#   the two documented non-JSON modes (a human asked for text; no consumer passes them).
 #
 # Failure-mode split (CLAUDE.md §"Failure-Mode Invariants"): this script is a fail-SAFE EMITTER —
 # it always exits 0, never writes, never `cd`s into --root, never executes brief content (no eval /
@@ -35,7 +39,7 @@
 # cannot route, reaches the existing adjudication EXECUTE_CHECKPOINT (agents/execute-manager.md
 # §"v12 outputs_verified gate"; agents/supervisor.md Single-Agent / Sequential gates). Decision D1
 # (brief 2026-09-13-manager-reverifies-provides): `brief_unreadable` / `subtask_not_found` /
-# `jq_missing` ⇒ checkpoint on every path; `no_contracts` ⇒ checkpoint on the `job:` path unless the
+# `jq_missing` / `bad_args` ⇒ checkpoint on every path; `no_contracts` ⇒ checkpoint on the `job:` path unless the
 # brief's `## Environment` declares `legacy_brief: true`, and on legacy / no-brief runs the consumer
 # records `provides_unverifiable` and falls through to the worker's self-report (Plan Reviewer
 # Criterion 12's own opt-out, reused — not a new flag).
@@ -82,14 +86,12 @@ id=""
 root="."
 have_brief=0
 have_id=0
+bad_args=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --kind-table) print_kind_table; exit 0 ;;
     --root)
-      if [ $# -lt 2 ]; then
-        printf '%s: --root needs a directory argument\n' "$SELF" >&2
-        exit 0
-      fi
+      if [ $# -lt 2 ]; then bad_args="--root needs a directory argument"; break; fi
       root="$2"; shift 2 ;;
     --root=*) root="${1#--root=}"; shift ;;
     -h|--help)
@@ -103,21 +105,46 @@ while [ $# -gt 0 ]; do
       shift ;;
   esac
 done
+# An EMPTY --root ("" or --root=) is bad_args, not "/" — silently rooting every check at the
+# filesystem root would mint `missing` (or a false `present` for absolute paths) with no signal.
+[ -z "$bad_args" ] && [ -z "$root" ] && bad_args="--root must not be empty"
 root="${root%/}"
 [ -z "$root" ] && root="/"
 
 # ---------------------------------------------------------------------------
-# jq presence — the one shell-templated object. Builtins only past this point until jq is known.
+# The ONE shell-templated object shape (used only when jq may be absent). Builtins only.
+# ---------------------------------------------------------------------------
+emit_templated() {
+  # $1 = reason (a fixed literal from this file, never caller text). subtask_id is carried only when
+  # the id matches the allowlist — argv is caller text and must never reach the JSON unescaped.
+  case "$id" in
+    ''|*[![:alnum:]_-]*)
+      printf '{"status":"unverifiable","reason":"%s","source":"%s"}\n' "$1" "$SELF" ;;
+    *)
+      printf '{"subtask_id":"%s","status":"unverifiable","reason":"%s","source":"%s"}\n' "$id" "$1" "$SELF" ;;
+  esac
+  exit 0
+}
+
+# ---------------------------------------------------------------------------
+# bad_args — the arg parser's own early exit keeps the contract (ONE JSON object, exit 0).
+# ---------------------------------------------------------------------------
+if [ -n "$bad_args" ]; then
+  printf '%s: unverifiable — bad_args (%s)\n' "$SELF" "$bad_args" >&2
+  if command -v jq >/dev/null 2>&1; then
+    jq -n -c --arg id "$id" --arg s "$SELF" \
+      '{status: "unverifiable", reason: "bad_args", source: $s} + (if $id == "" then {} else {subtask_id: $id} end)'
+    exit 0
+  fi
+  emit_templated "bad_args"
+fi
+
+# ---------------------------------------------------------------------------
+# jq presence
 # ---------------------------------------------------------------------------
 if ! command -v jq >/dev/null 2>&1; then
   printf '%s: unverifiable — jq_missing (jq is required to build the result object)\n' "$SELF" >&2
-  case "$id" in
-    ''|*[![:alnum:]_-]*)
-      printf '{"status":"unverifiable","reason":"jq_missing","source":"%s"}\n' "$SELF" ;;
-    *)
-      printf '{"subtask_id":"%s","status":"unverifiable","reason":"jq_missing","source":"%s"}\n' "$id" "$SELF" ;;
-  esac
-  exit 0
+  emit_templated "jq_missing"
 fi
 
 emit_unverifiable() {

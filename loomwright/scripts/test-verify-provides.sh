@@ -10,8 +10,9 @@
 # gh/network/Docker. bash 3.2 / BSD userland safe.
 #
 # Covers (brief 2026-09-13-manager-reverifies-provides AC5/AC6/AC8/AC9):
-#   script  — per-kind present/missing; `provides: []`; the three `unverifiable` reasons (exit 0 +
-#             stderr reason each); two-item miss ⇒ outputs_gap exactly "a/b.ts:Sym, c/d.ts"; symbol
+#   script  — per-kind present/missing; `provides: []`; the `unverifiable` reasons incl. `bad_args` (dangling /
+#             empty --root; exit 0 + stderr reason each; no JSON-less exit 0 in the arg parser
+#             outside --kind-table / --help); two-item miss ⇒ outputs_gap exactly "a/b.ts:Sym, c/d.ts"; symbol
 #             on an absent file ⇒ missing with a grep check_run (exit 2); --kind-table; JSON validity
 #             via `jq -e .`; ERE specials ($ . ( [ and + * ? | { combined) match LITERALLY and a
 #             one-char mutation goes `missing`; type-boundary (typeFoo / Shapes do not match);
@@ -36,7 +37,8 @@
 #   (m)     — MUTATION CONTROLS: (1) delete the script-call line(s) from a COPY of execute-manager.md's
 #             poll-loop gate; (2) delete the carve-out clause from another COPY; (3) restate a kind-table
 #             row carrying GNU `\s`/`\b` inside a COPY of Step 2b (the pointer-vs-copy drift); (4) the same
-#             row inside a COPY of the async-orchestration skill's gate section. Each
+#             row inside a COPY of the async-orchestration skill's gate section; (5) restore the
+#             bare `exit 0` in a COPY of the script's --root branch (the parser-exit guard). Each
 #             mutant is gated on non-empty + differs-from-original; the seam assertion against it MUST
 #             fail — otherwise the assertion above is vacuous.
 #
@@ -290,7 +292,36 @@ run "$TMP/briefE.md" 1 --root "$ROOT"
 run
 [ "$RC" -eq 0 ] && [ "$(jq_get '.reason')" = "brief_unreadable" ] && ok "no args ⇒ brief_unreadable, exit 0" || no "no-args: rc=$RC $OUT"
 
+echo "--- script: bad_args (the arg parser's own early exit keeps the contract) ---"
+run "$TMP/briefA.md" 1 --root
+[ "$RC" -eq 0 ] && printf '%s' "$OUT" | jq -e . >/dev/null 2>&1 && [ "$(jq_get '.reason')" = "bad_args" ] && ok "--root as the last token ⇒ exit 0 + valid JSON + reason bad_args" || no "bad_args (dangling --root): rc=$RC $OUT"
+[ "$(jq_get '.subtask_id')" = "1" ] && ok "bad_args carries the already-parsed subtask_id" || no "bad_args subtask_id: $OUT"
+case "$ERR" in *bad_args*) ok "bad_args reason on stderr" ;; *) no "stderr lacks reason: $ERR" ;; esac
+run --root
+[ "$RC" -eq 0 ] && [ "$(jq_get '.reason')" = "bad_args" ] && [ "$(jq_get 'has("subtask_id")')" = "false" ] && ok "bare --root ⇒ bad_args with NO subtask_id key (nothing parsed yet)" || no "bad_args (bare --root): rc=$RC $OUT"
+run "$TMP/briefA.md" 1 --root ""
+[ "$RC" -eq 0 ] && [ "$(jq_get '.reason')" = "bad_args" ] && ok "--root '' ⇒ bad_args (never silently rooted at /)" || no "bad_args (empty --root): rc=$RC $OUT"
+run "$TMP/briefA.md" 1 --root=
+[ "$RC" -eq 0 ] && [ "$(jq_get '.reason')" = "bad_args" ] && ok "--root= ⇒ bad_args" || no "bad_args (--root=): rc=$RC $OUT"
+# the CLASS, not one branch: inside the arg-parse loop the only `exit 0`s are the two documented non-JSON modes
+parser_exits_ok() {   # exit 0 iff every `exit 0` inside $1's arg-parse loop sits under a --kind-table / --help case label
+  awk '/^while \[ \$# -gt 0 \]; do/ { on = 1 } /^done$/ { on = 0 }
+       on && /^[[:space:]]*(--kind-table|-h[|]--help)\)/ { allowed = 1 }
+       on && /exit 0/ && !allowed { bad = 1 }
+       on && /;;[[:space:]]*$/ { allowed = 0 }
+       END { exit bad }' "$1"
+}
+parser_exits_ok "$SCRIPT" && ok "arg parser: no JSON-less exit 0 outside --kind-table / --help" || no "arg parser still has a bare 'exit 0' outside the two documented non-JSON modes"
+# mutation control for that guard: re-introduce the original bare exit in the --root branch of a COPY
+MUTP="$TMP/verify-provides-bare-exit.sh"
+sed 's/^\(      if \[ \$# -lt 2 \]; then \)bad_args=.*$/\1exit 0; fi/' "$SCRIPT" > "$MUTP"
+if cmp -s "$MUTP" "$SCRIPT"; then no "bare-exit mutant identical to original — control invalid (--root branch shape changed?)"
+elif parser_exits_ok "$MUTP"; then no "MUTATION CONTROL: parser guard still passes with the bare exit 0 restored — guard is vacuous"
+else ok "MUTATION CONTROL: restoring the bare 'exit 0' in the --root branch makes the parser guard fail"; fi
+
 echo "--- script: jq-less path (jq off PATH) ---"
+NOJQ_OUT="$(PATH="$TMP/nojq" "$BASH" "$SCRIPT" "$TMP/briefA.md" 'ok-1_x' --root 2>/dev/null)"
+[ "$NOJQ_OUT" = '{"subtask_id":"ok-1_x","status":"unverifiable","reason":"bad_args","source":"verify-provides.sh"}' ] && ok "jq-less + dangling --root ⇒ templated bad_args object (same shape as jq_missing)" || no "jq-less bad_args: $NOJQ_OUT"
 NOJQ_OUT="$(PATH="$TMP/nojq" "$BASH" "$SCRIPT" "$TMP/briefA.md" 'a"b' --root "$ROOT" 2>"$TMP/stderr")"; NOJQ_RC=$?
 [ "$NOJQ_RC" -eq 0 ] && ok "jq-less: exit 0" || no "jq-less exit $NOJQ_RC"
 [ "$NOJQ_OUT" = '{"status":"unverifiable","reason":"jq_missing","source":"verify-provides.sh"}' ] && ok "jq-less + id containing '\"' ⇒ literal object with NO subtask_id key" || no "jq-less object: $NOJQ_OUT"
@@ -366,6 +397,7 @@ printf '%s\n' "$w55" | grep -q 'verify-provides\.sh.*--root \.' && no "worker St
 printf '%s\n' "$w55" | grep -qi 'worktree.*ABSOLUTE path on the Parallel path' && ok "worker Step 5.5 passes the worktree's absolute path on the Parallel path" || no "worker Step 5.5 lacks the Parallel-path worktree --root clause"
 grep -q 'present' "$WORKER" && grep -q 'missing' "$WORKER" && ok "worker.md keeps the present/missing enum tokens (check-contract-parity.sh)" || no "worker.md lost present/missing"
 printf '%s\n' "$w55" | grep -q 'brief_unreadable.*jq_missing' && printf '%s\n' "$w55" | grep -q 'name the reason in `summary`' && ok "worker Step 5.5 covers the field-less unverifiable reasons (brief_unreadable / jq_missing: empty fields, reason in summary)" || no "worker Step 5.5 lacks the brief_unreadable / jq_missing clause"
+printf '%s\n' "$w55" | grep -q 'subtask_not_found.*name it in `summary`' && ok "worker Step 5.5 distinguishes subtask_not_found (contracts present, anchor absent — named in summary) from no_contracts" || no "worker Step 5.5 conflates subtask_not_found with no_contracts"
 
 DOC_KT="$(awk '/<!-- kind-table:begin -->/ { on = 1; next } /<!-- kind-table:end -->/ { on = 0 } on { print }' "$SCHEMAS")"
 [ -n "$DOC_KT" ] && ok "RESULT_SCHEMAS.md has the kind-table marker block" || no "RESULT_SCHEMAS.md marker block missing/empty"

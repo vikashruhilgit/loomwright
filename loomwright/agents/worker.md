@@ -158,7 +158,7 @@ After the `.worker-summary.md` file has been written and BEFORE emitting the fin
    - `failed` for crash / unfixable error (unchanged from prior behavior).
    - Exception: the Step 1 brief-unreadable case returns `partial` with `outputs_gap: ""` (see the invariant carve-out below).
 
-If the subtask brief has no `provides:` list (the script says `no_contracts` / `subtask_not_found`), report `outputs_verified: []` and `outputs_gap: ""` as before, and use the prior `completed` / `failed` rules. For any other `unverifiable` reason (`brief_unreadable` / `jq_missing` — that JSON has no `outputs_verified` / `outputs_gap` fields), likewise report `outputs_verified: []` and `outputs_gap: ""`, name the reason in `summary`, and keep the prior status rules (incl. the Step 1 carve-out) — the consumer re-runs the same script and Decision D1 routes the reason to a checkpoint regardless of your report.
+If the brief has no contract block (the script says `no_contracts`), report `outputs_verified: []` and `outputs_gap: ""` as before, and use the prior `completed` / `failed` rules. If it HAS contracts but not your anchor (`subtask_not_found` — a wrong `subtask_id`), report the same empty fields AND name it in `summary` so the consumer's checkpoint has context. For any other `unverifiable` reason (`brief_unreadable` / `jq_missing` / `bad_args` — that JSON has no `outputs_verified` / `outputs_gap` fields), likewise report `outputs_verified: []` and `outputs_gap: ""`, name the reason in `summary`, and keep the prior status rules (incl. the Step 1 carve-out) — the consumer re-runs the same script and Decision D1 routes the reason to a checkpoint regardless of your report.
 
 ### Step 5.65: Record out-of-lane writes (lane gate — REPORT-ONLY, D6)
 

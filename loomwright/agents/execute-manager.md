@@ -240,7 +240,7 @@ for iteration in 1..max_iterations:
       tool_calls += 1
       if disk.status == "unverifiable":
         # Decision D1 routing (brief 2026-09-13-manager-reverifies-provides).
-        # brief_unreadable / subtask_not_found / jq_missing ⇒ CHECKPOINT on EVERY
+        # brief_unreadable / subtask_not_found / jq_missing / bad_args ⇒ CHECKPOINT on EVERY
         # path — a gate that cannot read its contract does not pass.
         # no_contracts ⇒ CHECKPOINT on the `job:` path UNLESS the brief's
         # `## Environment` declares `legacy_brief: true` (Plan Reviewer Criterion
