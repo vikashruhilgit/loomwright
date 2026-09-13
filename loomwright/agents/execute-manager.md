@@ -296,12 +296,12 @@ for iteration in 1..max_iterations:
           adjudication_required: true
           missing_outputs: [
             {item: "{kind} {path} {name?}", producing_subtask: subtask_id,
-             check_run: v.check_run}   # the script's command + exit-code string, e.g. "test -f <worktree>/src/x.ts (exit 1)"
+             check_run: v.check_run // "worker self-report (Step 5.5)"}   # the script's command + exit-code string, e.g. "test -f <worktree>/src/x.ts (exit 1)"; the fallback label only on the legacy/no-brief fall-through where disk IS the self-report
             for each missing entry v
           ]
           adjudication_options: ["A: Re-queue producer", "B: Insert remediation subtask",
                                  "C: Exit to Launch Pad", "D: Update consumer brief"]
-          reason: "verify-provides.sh: {disk.outputs_gap}"
+          reason: "{disk.source // 'worker self-report'}: {disk.outputs_gap}"
         # Do NOT mark this subtask complete. Do NOT continue with this subtask.
         # Supervisor will resolve adjudication and instruct next action.
         skip_to_next_iteration
