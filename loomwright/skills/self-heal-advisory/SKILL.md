@@ -227,10 +227,12 @@ if brief_path is set AND the file at brief_path is readable:
     # CAP (stated here ONCE — house rule: one authoritative place; step 1f, the prompt line, and
     # the seam test all refer to "the cap in Part 1" rather than restating the number):
     #   brief_conformance carries at most 25 bullets total — criteria FIRST, then rubric bullets
-    #   — and when anything is truncated it ends with the marker `(+N criteria omitted — see brief)`
-    #   where N counts ALL omitted bullets (criteria + rubric). Because criteria come first, rubric
-    #   bullets are the first to be dropped; with 40 criteria and any rubric, every rubric bullet is
-    #   omitted and N = (40 - cap) + len(rubric).
+    #   — and when anything is truncated it ends with the marker `(+N bullets omitted — see brief)`
+    #   where N counts ALL omitted bullets (criteria + rubric) — the marker says "bullets", not
+    #   "criteria", because in the common case the omitted bullets are rubric bullets only: criteria
+    #   come first, so rubric bullets are the first to be dropped (with 20 criteria and 8 rubric
+    #   bullets, 3 rubric bullets are omitted, no criterion is, and N = 3); with 40 criteria and
+    #   any rubric, every rubric bullet is omitted and N = (40 - cap) + len(rubric).
     brief_conformance = "criteria:" + the kept criteria bullets
                       + ("rubric (orientation only):" + the kept rubric bullets, when any survive the cap)
                       + (the omitted-marker, when anything was truncated)
