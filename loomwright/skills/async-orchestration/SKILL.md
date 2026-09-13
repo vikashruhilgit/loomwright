@@ -258,9 +258,9 @@ for iteration in 1..max_iterations:
       # SubagentStop hook) and projected by scripts/build-state.sh — it does
       # NOT populate `## Worker Results`, which the call above is for.
       #
-      # No reviewer is spawned here. If the worker's own outputs_verified gate
-      # passed (no outputs_gap — see agents/execute-manager.md Step 4 for the
-      # full gate pseudocode), the subtask is complete: no `record_review` call
+      # No reviewer is spawned here. If the on-disk outputs_verified gate passed
+      # (verify-provides.sh, no gap; read agents/execute-manager.md Step 4 for
+      # the gate pseudocode), the subtask is complete: no `record_review` call
       # exists to make (there is no reviewer decision to log), and there is no
       # separate reviewer-polling arm below. Newly-launchable subtasks are
       # checked in step 2 below regardless — dependency materialization

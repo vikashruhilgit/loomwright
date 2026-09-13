@@ -149,23 +149,16 @@ Write a compressed summary file to the worktree before outputting the final resu
 After the `.worker-summary.md` file has been written and BEFORE emitting the final `WORKER_RESULT` block, the Worker MUST verify the outputs it promised to deliver:
 
 1. **Re-read the subtask's `provides:` list** from the spawn brief.
-2. **For each `provides` entry**, run the same verification it would run on `requires` (entries have a `kind` of `file` | `symbol` | `type`, a `path`, and for `symbol`/`type` a `name`):
-
-   | `kind` | Verification command | PRESENT condition |
-   |--------|----------------------|-------------------|
-   | `file` | `test -f <path>` | exit 0 |
-   | `symbol` | `grep -nE '<escaped name>' <path>` | any match (exit 0) |
-   | `type` | `grep -nE '(type\|interface\|class\|enum)\s+<escaped name>\b' <path>` | any match (exit 0) |
-
-3. **Build `outputs_verified`** as an array of `{kind, path, name?, status: "present" | "missing"}` objects — one entry per `provides` item.
-4. **Build `outputs_gap`** as a comma-separated string naming the missing items (e.g., `"src/foo.ts:Bar, src/baz.ts"`), or the empty string if all `provides` items are present.
+2. Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/verify-provides.sh" <pinned brief path> <your subtask id> --root .` — the ONE implementation of the three checks (`--kind-table` prints them) — and copy its `outputs_verified` / `outputs_gap` into your result verbatim; the consumer re-runs the same script against your tree and disk wins.
+3. `outputs_verified` is an array of `{kind, path, name?, status: "present" | "missing"}` objects — one per `provides` item.
+4. `outputs_gap` is a comma-separated string naming the missing items (e.g., `"src/foo.ts:Bar, src/baz.ts"`), or the empty string if all are present.
 5. **Set the WORKER_RESULT `status` field** based on the verification outcome:
    - `completed` if `outputs_gap` is empty (all promised outputs present).
    - `partial` if `outputs_gap` is non-empty (worker did not deliver all promised outputs — implementation may otherwise be sane, but the contract was not fully met).
    - `failed` for crash / unfixable error (unchanged from prior behavior).
    - Exception: the Step 1 brief-unreadable case returns `partial` with `outputs_gap: ""` (see the invariant carve-out below).
 
-If the subtask brief has no `provides:` list, treat `outputs_verified` as `[]` and `outputs_gap` as `""` (empty), and use the prior `completed` / `failed` rules.
+If the subtask brief has no `provides:` list (the script says `no_contracts` / `subtask_not_found`), report `outputs_verified: []` and `outputs_gap: ""` as before, and use the prior `completed` / `failed` rules.
 
 ### Step 5.65: Record out-of-lane writes (lane gate — REPORT-ONLY, D6)
 

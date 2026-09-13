@@ -152,7 +152,7 @@ After Step 2a (or after worktree creation for unblocked subtasks), iterate over 
 | `symbol` | `grep -nE '<escaped name>' <worktree>/<path>` | any match (exit 0) |
 | `type` | `grep -nE '(type\|interface\|class\|enum)\s+<escaped name>\b' <worktree>/<path>` | any match (exit 0) |
 
-Record each check result (`PASS` | `FAIL`) along with the exact command run and its exit code.
+Record each check result (`PASS` | `FAIL`) along with the exact command run and its exit code. These are the same three commands `scripts/verify-provides.sh --kind-table` defines (the ONE implementation, which the poll-loop gate below runs against each worker's `provides:`); this pre-spawn `requires` walk is unchanged.
 
 **If ANY check FAILs:**
 - DO NOT spawn the worker.
@@ -228,14 +228,52 @@ for iteration in 1..max_iterations:
       # sole LLM gate. See agents/orchestrator.md §"Review Gate Policy" (also
       # cited in this file's Mission section, which is the single citation of
       # AGENT_GUIDELINES.md §"Review Counter-Pressure Rule" in this file). ---
-      # Parse WORKER_RESULT block from TaskOutput (or summary).
-      # If status=partial OR outputs_gap is non-empty, the worker self-reported
-      # incomplete delivery — escalate via adjudication CHECKPOINT. Do NOT mark
-      # this subtask complete on a partial worker.
-      worker_result = parse_worker_result(result)
-      if worker_result.status == "partial" OR (worker_result.outputs_gap exists AND worker_result.outputs_gap != ""):
-        # Build missing_outputs from outputs_verified entries with status: missing
-        missing = [v for v in worker_result.outputs_verified if v.status == "missing"]
+      # Parse WORKER_RESULT block from TaskOutput (or summary). It may be ABSENT
+      # (dead worker / turn-limit exit — after the crash retry-once in Error
+      # Handling has already been spent); absence is NOT a pass.
+      worker_result = parse_worker_result(result)   # or ABSENT
+
+      # The gate's INPUT is the TREE, not the worker's claim (v15.70.0). Re-run the
+      # ONE implementation of the three provides checks against the worktree the
+      # worker wrote to — exactly ONE extra Bash call per subtask (+1 below).
+      # brief_path = the SAME pointer you handed this worker at spawn: the
+      # in-progress brief on the `job:` path, or the `.supervisor/requirements/
+      # {slug}-plan.md` plan file in `/supervisor task:` no-brief mode.
+      disk = Bash(`bash "${CLAUDE_PLUGIN_ROOT}/scripts/verify-provides.sh" {brief_path} {subtask_id} --root {worktree_path}`)
+      tool_calls += 1
+      if disk.status == "unverifiable":
+        # Decision D1 routing (brief 2026-09-13-manager-reverifies-provides).
+        # brief_unreadable / subtask_not_found / jq_missing ⇒ CHECKPOINT on EVERY
+        # path — a gate that cannot read its contract does not pass.
+        # no_contracts ⇒ CHECKPOINT on the `job:` path UNLESS the brief's
+        # `## Environment` declares `legacy_brief: true` (Plan Reviewer Criterion
+        # 12's own opt-out, reused — not a new flag). On legacy_brief and in
+        # no-brief mode (plan file with no contract blocks, or criteria passed
+        # inline with no pointer file) record it and fall through to today's
+        # self-report gate — nothing new gates there (owner decision R1).
+        if disk.reason != "no_contracts" OR (brief_path is a `job:` brief AND brief lacks `legacy_brief: true`):
+          emit EXECUTE_CHECKPOINT (same shape as below) with
+            missing_outputs: [{item: "provides: {subtask_id}", producing_subtask: subtask_id,
+                               check_run: "verify-provides.sh {brief_path} {subtask_id} --root {worktree_path} → unverifiable/{disk.reason} (exit 0)"}]
+            reason: "verify-provides.sh: unverifiable ({disk.reason}) for {subtask_id}"
+          skip_to_next_iteration
+        Task(Context-Keeper, operation: record_decision, phase: EXECUTE,
+             decision: "provides_unverifiable: no_contracts — legacy/no-brief, worker self-report retained")
+        tool_calls += 1
+        disk = worker_result          # self-report retained; ABSENT here is the crash path (Error Handling)
+
+      # Disk wins. Record the disagreement (a /dreaming signal, not a second gate).
+      if worker_result is present:
+        for each item in disk.outputs_verified where worker_result.outputs_verified lacks it
+            OR reports a different status:
+          Task(Context-Keeper, operation: record_decision, phase: EXECUTE,
+               decision: "provides_mismatch: worker={worker status or absent} disk={disk status} — {path[:name]}")
+          tool_calls += 1
+      missing = [v for v in disk.outputs_verified if v.status == "missing"]
+      if missing is non-empty:
+        # regardless of the worker's `status` (completed / partial / failed) or of
+        # its outputs_gap — an item missing ON DISK escalates via the adjudication
+        # CHECKPOINT. Do NOT mark this subtask complete.
         emit EXECUTE_CHECKPOINT:
           schema_version: 1
           completed_so_far: [...]      # subtasks already done (may be empty)
@@ -247,15 +285,29 @@ for iteration in 1..max_iterations:
           adjudication_required: true
           missing_outputs: [
             {item: "{kind} {path} {name?}", producing_subtask: subtask_id,
-             check_run: "worker self-verification (Step 5.5)"}
-            for each missing entry
+             check_run: v.check_run}   # the script's command + exit-code string, e.g. "test -f <worktree>/src/x.ts (exit 1)"
+            for each missing entry v
           ]
           adjudication_options: ["A: Re-queue producer", "B: Insert remediation subtask",
                                  "C: Exit to Launch Pad", "D: Update consumer brief"]
-          reason: "Worker {subtask_id} reported outputs_gap: {worker_result.outputs_gap}"
+          reason: "verify-provides.sh: {disk.outputs_gap}"
         # Do NOT mark this subtask complete. Do NOT continue with this subtask.
         # Supervisor will resolve adjudication and instruct next action.
         skip_to_next_iteration
+      if worker_result is ABSENT:
+        # Every item present on disk but no WORKER_RESULT to read — never a silent
+        # no-op: record it, then continue to the tests/lint half of the gate with
+        # tests_run/tests_passed UNKNOWN (run the worktree's test/lint command via
+        # Bash yourself, +1, and forward its outcome in record_worker_result with
+        # error: "worker_result_absent").
+        Task(Context-Keeper, operation: record_decision, phase: EXECUTE,
+             decision: "worker_result_absent: disk verified {N}/{N} present")
+        tool_calls += 1
+      elif worker_result.status == "partial" OR worker_result.outputs_gap != "":
+        # Worker claims a gap the disk does not show — disk wins (provides_mismatch
+        # already recorded above): fall through to the tests/lint half; the worker's
+        # own status/error/tests still travel in record_worker_result unchanged.
+        pass
 
       # --- Lane-collision gate (D6, v15.20.0) — `out_of_lane` itself is a
       # REPORT-ONLY field (agents/worker.md §"Output Format") and never blocks a
@@ -431,7 +483,7 @@ for iteration in 1..max_iterations:
     pass
 ```
 
-**Tool call tracking:** Each Task, TaskOutput, Read, Bash, Grep, Glob call increments the `tool_calls` counter by 1. The counter is checked at the end of each iteration. The final count is reported in EXECUTE_RESULT or EXECUTE_CHECKPOINT.
+**Tool call tracking:** Each Task, TaskOutput, Read, Bash, Grep, Glob call increments the `tool_calls` counter by 1 — including the ONE `verify-provides.sh` Bash call the v12 gate runs per completed subtask (+1 Bash per subtask on the happy path; `record_decision` Tasks fire only on a mismatch / absent result). The counter is checked at the end of each iteration. The final count is reported in EXECUTE_RESULT or EXECUTE_CHECKPOINT.
 
 ### Step 5: Output Result
 
@@ -613,7 +665,7 @@ Only the `## Session` block (session_id/branch/status/phase) is derived — it i
 
 | Error | Action |
 |-------|--------|
-| `outputs_verified` gate gap (partial worker / non-empty `outputs_gap`) | Emit EXECUTE_CHECKPOINT with `adjudication_required: true` (Step 2b / poll-loop gate); do not mark the subtask complete |
+| `outputs_verified` gate gap (a `provides` item missing ON DISK per `verify-provides.sh` — regardless of the worker's `status` — or an unverifiable contract routed to checkpoint by D1) | Emit EXECUTE_CHECKPOINT with `adjudication_required: true` (Step 2b / poll-loop gate); do not mark the subtask complete |
 | Worker crash/timeout | Record error, retry once in same worktree, then escalate |
 | Worktree creation fails | Report in EXECUTE_RESULT, skip that subtask |
 | Tool budget 55+ | Output EXECUTE_CHECKPOINT immediately |
