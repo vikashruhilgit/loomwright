@@ -71,13 +71,18 @@ Skills are loaded on-demand to keep context small:
 
 ### 1. Installation
 
-```
-# From a checkout of this repo
-/plugin marketplace add /path/to/loomwright
-/plugin install loomwright@atelier
+Loomwright is a Claude Code plugin — it runs wherever Claude Code runs (the `claude` CLI, the VS Code / JetBrains / Cursor extension, the Claude Desktop Code tab). Prerequisites: Claude Code installed, a git repository to work in, and — only if you want it to open pull requests — `gh` authenticated (`gh auth status`).
+
+Two commands in a terminal (marketplace id `atelier`, plugin id `loomwright`):
+
+```bash
+claude plugin marketplace add vikashruhilgit/loomwright
+claude plugin install loomwright@atelier
 ```
 
-The repo is a marketplace wrapper (`/.claude-plugin/marketplace.json`) with the plugin nested at `loomwright/`. Once published to the official Anthropic marketplace, installation becomes a single `/plugin install` command without needing a local checkout.
+Inside a Claude Code session, type the same two commands with a `/plugin` prefix (`/plugin marketplace add vikashruhilgit/loomwright`, then `/plugin install loomwright@atelier`) — `/plugin` is a session command, not a shell command.
+
+Confirm with `claude plugin list`: you should see `loomwright@atelier` with `Status: ✔ enabled`. In an already-open session, `/reload-plugins` if the slash commands are missing. Developers working from a local checkout: see **Marketplace Setup → Local Dev/Testing** below.
 
 ### 2. Setup Your Project
 
@@ -518,6 +523,15 @@ Agents with `memory: project` build knowledge across sessions:
 
 ## Marketplace Setup
 
+### Install from GitHub (users)
+
+```bash
+claude plugin marketplace add vikashruhilgit/loomwright
+claude plugin install loomwright@atelier
+```
+
+The repo ships as a marketplace wrapper (`/.claude-plugin/marketplace.json`, marketplace id `atelier`) with the plugin nested at `loomwright/` (manifest: `loomwright/.claude-plugin/plugin.json`). The first command registers the marketplace, the second installs the plugin from it.
+
 ### Local Dev/Testing
 
 ```
@@ -525,11 +539,7 @@ Agents with `memory: project` build knowledge across sessions:
 /plugin install loomwright@atelier
 ```
 
-The repo ships as a marketplace wrapper (`/.claude-plugin/marketplace.json`) with the plugin nested at `loomwright/`. The first command registers the marketplace, the second installs the plugin from it.
-
-### Official Marketplace (Distribution)
-
-Once the plugin is accepted into the official Anthropic marketplace, users install with a single `/plugin install` command — no local checkout required. See `loomwright/.claude-plugin/plugin.json` for the plugin manifest and `.claude-plugin/marketplace.json` for the marketplace manifest.
+Same two steps against your checkout instead of GitHub. If `atelier` is already registered from GitHub, run `/plugin marketplace remove atelier` first so the id re-registers against your checkout.
 
 ---
 

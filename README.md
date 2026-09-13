@@ -12,20 +12,50 @@ A Claude Code plugin for AI agents to collaborate on software projects. 14 speci
 
 ## Quick Start
 
-### 1. Install the Plugin
+**Loomwright is a Claude Code plugin.** It runs wherever Claude Code runs — the `claude` CLI in a terminal, the Claude Code extension in VS Code / JetBrains / Cursor, or the Claude Desktop Code tab. It is not a standalone tool and not a Cursor-native plugin.
 
-**Local development (from a checkout of this repo):**
+**Prerequisites:** [Claude Code](https://code.claude.com/docs/en/quickstart) installed (`which claude` prints a path) · a git repository to work in · `gh` authenticated (`gh auth status`) — **optional**, needed only if you want Loomwright to open pull requests.
+
+**1. Install** — two commands in a terminal (marketplace id `atelier`, plugin id `loomwright`):
+
+```bash
+claude plugin marketplace add vikashruhilgit/loomwright
+claude plugin install loomwright@atelier
+```
+
+Already inside a Claude Code session? Type the same two commands with a `/plugin` prefix instead: `/plugin marketplace add vikashruhilgit/loomwright`, then `/plugin install loomwright@atelier`. (`/plugin` is a session command — it is not a shell command.)
+
+**2. Confirm it landed:**
+
+```bash
+claude plugin list
+```
+
+You should see `loomwright@atelier` with `Status: ✔ enabled`. In a session that was already open, type `/reload-plugins` if the slash commands are missing.
+
+**3. First command** — `cd` into a git repo, start `claude`, then:
 
 ```
-/plugin marketplace add /path/to/loomwright
-/plugin install loomwright@atelier
+/setup
 ```
 
-The repo is a marketplace wrapper (`/.claude-plugin/marketplace.json`) with the plugin nested at `loomwright/`. The first command registers the marketplace, the second installs the plugin from it.
+**Done when:** `/setup` prints a `## /setup — module status` table with one row per optional module. Nothing there is required — every module is opt-in, and `/agent-help` lists every command.
 
-Once published to the official Anthropic marketplace, installation becomes a single `/plugin install` command without needing a local checkout.
+**4. First real run:**
 
-### 2. Setup Your Project
+```
+/autonomous "what you want to accomplish"
+```
+
+Launch Pad asks a few discovery questions and saves a brief to `.supervisor/jobs/pending/`; Supervisor implements it in parallel git worktrees; the run ends with an `AUTONOMOUS_RUN` summary and a **pull request left open on your remote**. Loomwright never merges on its own.
+
+Everything below is detail: [Which command?](#which-command) · [Set up your project](#set-up-your-project) · [Troubleshooting](#troubleshooting) · [Developers (install from a local checkout)](#for-developers).
+
+---
+
+## After install
+
+### Set up your project
 
 ```bash
 cd /path/to/your-project
@@ -59,7 +89,7 @@ your-project/
 
 **Optional integrations in one place:** run `/setup` to configure optional integrations — observability (local Langfuse + OTel collector), telemetry, notifications, webhook, Beads, MySQL MCP, memory in version control, `rules` (seed `.agent/rules/` with portable conventions), `statusline` (an opt-in one-line run report — phase, branch, subtask progress, age of the last event), and `ui` (The Floor — an opt-in, loopback-only local page showing the current run's stages and one lane per agent, with a stalled lane visible without being looked for) — from a single status dashboard.
 
-### 3. (Optional) Enable MySQL MCP
+### Optional: MySQL MCP
 
 A read-only MySQL MCP server (schema inspection, query execution with impact analysis, multi-DB profile switching) ships as the sibling **mysql-mcp** plugin — it moved out of loomwright in v15.6.0. Install it first:
 
@@ -102,7 +132,7 @@ Then call `switch_database(host="prod.example.com")` at runtime to switch betwee
 
 ---
 
-### 4. Run Your First Command
+### Ways to run
 
 ```bash
 # Plan-first autonomous workflow
@@ -612,7 +642,14 @@ To modify or extend agents:
 5. Docs: `loomwright/docs/RESULT_SCHEMAS.md`, `…/FAILURE_ESCALATION.md`, `…/ARCHITECTURE_CONTRACTS.md`, `…/ARCHITECTURE.md`
 6. All agents follow standard output format (see AGENT_GUIDELINES.md)
 
-To test locally, install via the marketplace flow shown in **Quick Start → 1. Install the Plugin**, then run agents in a test project to verify changes. After pulling new changes, use the refresh flow under **Troubleshooting → Skills / agents / hooks not showing after plugin update**.
+**Install from a local checkout** (instead of the GitHub marketplace in **Quick Start**) so your edits load directly — the repo is a marketplace wrapper (`/.claude-plugin/marketplace.json`) with the plugin nested at `loomwright/`, so the first command registers your checkout as the `atelier` marketplace and the second installs the plugin from it:
+
+```
+/plugin marketplace add /path/to/loomwright
+/plugin install loomwright@atelier
+```
+
+If `atelier` is already registered from GitHub, run `/plugin marketplace remove atelier` first so the id re-registers against your checkout. Then run agents in a test project to verify changes. After pulling new changes, use the refresh flow under **Troubleshooting → Skills / agents / hooks not showing after plugin update**.
 
 ---
 
@@ -667,14 +704,14 @@ Claude Code caches plugin contents. After pulling new changes (e.g. a fresh `git
    ```
    /plugin uninstall loomwright
    /plugin marketplace remove atelier
-   /plugin marketplace add ./
+   /plugin marketplace add vikashruhilgit/loomwright
    /plugin install loomwright@atelier
    /reload-plugins
    ```
-   Run from the repo root so `./` resolves to your local checkout.
+   Developers on a local checkout: replace the `add` source with `./` and run from the repo root so it resolves to your checkout (see **For Developers**).
 3. Verify with `/skills` — should show all 41 skills under "Plugin skills". Use `/agent-help` to confirm all 23 slash commands are registered.
 
-**Previously installed via `claude --plugin-dir` (flat layout)?** Older install instructions told you to launch Claude with `--plugin-dir` pointing at the repo root. That no longer works — the plugin is now nested under `loomwright/`. Switch to the marketplace flow shown in **Quick Start → 1. Install the Plugin**.
+**Previously installed via `claude --plugin-dir` (flat layout)?** Older install instructions told you to launch Claude with `--plugin-dir` pointing at the repo root. That no longer works — the plugin is now nested under `loomwright/`. Switch to the marketplace flow shown in **Quick Start**.
 
 ---
 
