@@ -24,7 +24,9 @@
 #   E. auto-merge gate fail-CLOSED on EACH of the 6 conditions individually (incl.
 #      both arms of cond. 2 base/SHA, both blocking reviewDecision arms CHANGES_REQUESTED
 #      and REVIEW_REQUIRED of cond. 3, both arms of cond. 5 checks/rubric, and cond. 6
-#      high_risk on `true` / `null` / missing / a non-boolean string — plus
+#      high_risk on `true` / `null` / missing / a non-boolean string / the JSON STRING
+#      `"false"` (type-erasure guard: MERGE only on the JSON boolean; the same string-`"false"`
+#      guard on cond. 3 `unresolved_human_thread`) — plus
 #      `trust_unprotected: true` NOT overriding cond. 6), plus malformed-ctx
 #      (ctx_unreadable) and a merge-command failure (merge_command_failed); AND the
 #      all-pass MERGE case (`high_risk: false` + every other condition) fires
@@ -639,6 +641,15 @@ if [ "$RUN_OUT" = "PARK: unresolved_human_thread" ] && [ "$(merges)" -eq 0 ]; th
 else
   no "gate null-human-thread FAILED OPEN (out='$RUN_OUT' merges=$(merges))"
 fi
+# Blocker 3c'' — TYPE-ERASURE regression guard (PR #219 review): the JSON STRING "false" is NOT
+# the boolean false. A `tostring` read mapped both onto "false" and MERGED; the gate must read
+# `type == "boolean"` and PARK on any string.
+gate "$(pass_ctx | jq '.unresolved_human_thread="false"')"
+if [ "$RUN_OUT" = "PARK: unresolved_human_thread" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: JSON STRING \"false\" unresolved_human_thread ⇒ PARK (boolean false only — no type erasure)"
+else
+  no "gate string-false-human-thread FAILED OPEN (out='$RUN_OUT' merges=$(merges))"
+fi
 
 # Blocker bonus — drain not READY (ESCALATED).
 gate "$(pass_ctx | jq '.drain_result="ESCALATED"')"
@@ -740,7 +751,7 @@ else
 fi
 
 # Blocker 6 — high-risk diff (cond 6; owner decision R5: NO override). The gate reads
-# `high_risk` in the cond-3 has()/!= null/tostring shape and PARKs unless it is the explicit
+# `high_risk` in the cond-3 has()/type == "boolean" shape and PARKs unless it is the JSON boolean
 # `false`; the PARK line quotes the first 3 `risk_reasons` joined "; ".
 gate "$(pass_ctx | jq '.high_risk=true | .risk_reasons=["path: src/auth/x.ts matched *auth*","content: 2 changed line(s) matched *token*","size: changed_lines 512 > 400","path: skills/x/SKILL.md matched skills/"]')"
 if [ "$RUN_OUT" = "PARK: high_risk_diff (path: src/auth/x.ts matched *auth*; content: 2 changed line(s) matched *token*; size: changed_lines 512 > 400)" ] && [ "$(merges)" -eq 0 ]; then
@@ -765,6 +776,14 @@ if [ "$RUN_OUT" = "PARK: high_risk_diff (no risk_reasons recorded)" ] && [ "$(me
   ok "gate fail-closed: high_risk non-boolean string ⇒ PARK (non-array reasons read defensively), no merge"
 else
   no "gate high-risk-string wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+# TYPE-ERASURE regression guard (PR #219 review; brief AC1 "MERGE only on JSON false"): the JSON
+# STRING "false" — what a re-stringified passthrough would produce — must PARK, not merge.
+gate "$(pass_ctx | jq '.high_risk="false" | .risk_reasons=[]')"
+if [ "$RUN_OUT" = "PARK: high_risk_diff (no risk_reasons recorded)" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: JSON STRING \"false\" high_risk ⇒ PARK: high_risk_diff (boolean false only — no type erasure), no merge"
+else
+  no "gate string-false-high-risk FAILED OPEN (out='$RUN_OUT' merges=$(merges))"
 fi
 # --trust-unprotected is cond 4 ONLY — it must NOT override cond 6.
 gate "$(pass_ctx | jq '.protection_enforceable=false | .trust_unprotected=true | .high_risk=true | .risk_reasons=["path: billing/x.ts matched billing/**"]')"

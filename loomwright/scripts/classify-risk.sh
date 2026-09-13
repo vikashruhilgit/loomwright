@@ -61,8 +61,16 @@
 # nearly every PR is high-risk by construction — that is the owner's intent (R5), not a bug.
 #
 # Co-located static suite: test-classify-risk.sh.
+#
+# `set -f` (noglob) is LOAD-BEARING: the heuristic lists below are glob-SHAPED words (`*auth*`,
+# `*token*`, `migrations/`, ...) iterated by unquoted word-split, and without `-f` every one of them
+# pathname-expands against the CALLER'S cwd — an untracked `oauth2-proxy.yml` or a top-level
+# `payments/` in the project silently replaced the pattern with the filename and turned an honest
+# `true` into `false` (fail-OPEN — the gate cannot see it). No intentional pathname expansion exists
+# in this file; `case` patterns (the `.agent/risk.json` `paths[]` match) are unaffected by `-f`.
+# The suite's cwd-seeded case + its mutation control (delete the `-f`) keep this true.
 
-set -uo pipefail
+set -fuo pipefail
 
 SELF="classify-risk.sh"
 

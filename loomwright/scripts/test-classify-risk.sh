@@ -25,6 +25,12 @@
 #   H. mutation control (LESSONS fa32a308): delete the content-match branch from a COPY of the
 #      script (gated on non-empty + differs + `bash -n`) ⇒ the content-only case goes red while
 #      the path case stays green — the case tests the branch, not the harness
+#   I. cwd-independence (PR #219 review): the glob-SHAPED heuristic words (`*auth*`, `*token*`,
+#      `migrations/`, ...) are word-split unquoted, so without `set -f` they pathname-expand against
+#      the CALLER'S cwd. Run the auth diff from a cwd seeded with `oauth2-proxy.yml`, `tokens.css`,
+#      `migrations/`, `payments/` ⇒ still true with the `*auth*` reason, and `--kind-table` is
+#      byte-identical to the clean-cwd output; independent mutation control deletes the `-f` from a
+#      COPY (gated on non-empty + differs + `bash -n`) ⇒ the seeded-cwd case goes red
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -328,6 +334,53 @@ if [ -s "$MUT/classify-risk.sh" ] && ! cmp -s "$S" "$MUT/classify-risk.sh" && ba
     && ok "H2 (mutant) the path case stays green on the mutant" || no "H2 path case went red on the content mutant (out='$M_OUT')"
 else
   no "H1 mutant not gated (empty, identical, bash -n failed, or the branch was not removed)"
+fi
+
+# =============================================================================
+echo "== I. cwd-independence — glob-shaped heuristic words must not pathname-expand =="
+# The Phase 4.5 lens runs with the default --root . from the project root and the /automate loop
+# runs with cwd = the checkout, so any repo with a top-level oauth*/tokens*/payments/migrations
+# entry would otherwise silently narrow rule (a) to the literal filename (fail-OPEN).
+SEEDED="$TMP/seeded"; mkdir -p "$SEEDED/migrations" "$SEEDED/payments"
+: > "$SEEDED/oauth2-proxy.yml"; : > "$SEEDED/tokens.css"
+run_from() {  # run_from <cwd> <script> <args...> — sets OUT
+  local cwd="$1" script="$2"; shift 2
+  OUT="$(cd "$cwd" && bash "$script" "$@" 2>/dev/null)"
+}
+run_from "$SEEDED" "$S" main path-auth --root "$R"
+if [ "$(j '.high_risk')" = "true" ] && [ "$(j '.reasons|index(["path: src/auth/login.ts matched *auth*"])')" != "null" ]; then
+  ok "I1 auth diff from a cwd holding oauth2-proxy.yml/tokens.css/migrations//payments/ ⇒ still true with the *auth* reason"
+else
+  no "I1 seeded cwd changed the classification (out='$OUT')"
+fi
+run_from "$SEEDED" "$S" --kind-table; printf '%s\n' "$OUT" > "$TMP/table-seeded"
+run_from "$ELSEWHERE" "$S" --kind-table; printf '%s\n' "$OUT" > "$TMP/table-clean"
+if [ -s "$TMP/table-seeded" ] && cmp -s "$TMP/table-seeded" "$TMP/table-clean" && grep -q '`\*token\*`' "$TMP/table-seeded"; then
+  ok "I2 --kind-table from the seeded cwd is byte-identical to the clean-cwd table (row (a) still names *token*)"
+else
+  no "I2 --kind-table differs by cwd:"; diff "$TMP/table-clean" "$TMP/table-seeded" | head -5
+fi
+# Mutation control (independent of H): drop the -f from `set -fuo pipefail` in a COPY.
+MUTF="$TMP/mutf"; mkdir -p "$MUTF"
+sed 's/^set -fuo pipefail$/set -uo pipefail/' "$S" > "$MUTF/classify-risk.sh"
+if [ -s "$MUTF/classify-risk.sh" ] && ! cmp -s "$S" "$MUTF/classify-risk.sh" && bash -n "$MUTF/classify-risk.sh" 2>/dev/null \
+   && ! grep -q '^set -f' "$MUTF/classify-risk.sh"; then
+  run_from "$SEEDED" "$MUTF/classify-risk.sh" main path-auth --root "$R"
+  if [ "$(j '.high_risk')" = "false" ]; then
+    ok "I3 (mutant) without set -f the seeded cwd reads false — I1 is live, not vacuous"
+  else
+    no "I3 mutant not discriminated (out='$OUT')"
+  fi
+  run_from "$SEEDED" "$MUTF/classify-risk.sh" --kind-table
+  printf '%s\n' "$OUT" | cmp -s - "$TMP/table-clean" \
+    && no "I4 (mutant) --kind-table unchanged on the mutant — I2 is vacuous" \
+    || ok "I4 (mutant) --kind-table from the seeded cwd differs without set -f — I2 is live"
+  run_from "$ELSEWHERE" "$MUTF/classify-risk.sh" main path-auth --root "$R"
+  [ "$(j '.high_risk')" = "true" ] \
+    && ok "I5 (mutant) the clean-cwd path case stays green on the noglob mutant — the defect is cwd-shaped" \
+    || no "I5 clean-cwd case went red on the noglob mutant (out='$OUT')"
+else
+  no "I3 mutant not gated (empty, identical, bash -n failed, or set -f survived)"
 fi
 
 echo
