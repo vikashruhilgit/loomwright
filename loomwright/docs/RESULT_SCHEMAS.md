@@ -1019,14 +1019,18 @@ and `docs/SPIKES/SYSTEM_TWIN_ROADMAP.md` §4 (M2) for milestone status.
 
 The optional `## Executable Acceptance` section in a brief is a list of `- ` bullets, each either a
 raw shell command or a `<kind>: <target>` line where `kind ∈ {cmd, corpus-task, qa-executor}`:
-- `cmd: <shell>` (or a **bare** bullet with no recognized `kind:` prefix) — a shell command run in the
-  caller's CWD (Supervisor Phase 4.5 pins repo-root CWD); exit `0` = pass. An empty command (a bare
+- `cmd: <shell>` (or a **bare** bullet with no recognized `kind:` prefix) — a shell command run from
+  the **project root** (`--project <dir>` if the runner was given one, else the git toplevel of the
+  caller's CWD, else the caller's CWD; Supervisor Phase 4.5 pins repo-root CWD, so there the project
+  root IS the repo root); exit `0` = pass. An empty command (a bare
   `cmd:`) is a `fail` (reason `empty_cmd_target`), never a false pass. A command that itself starts
   with a dash MUST use the `cmd:` prefix (`cmd: -flag …`) — a *bare* leading-dash bullet would have its
   dash stripped as a bullet marker at ingestion.
-- `corpus-task: <id>` — runs `scripts/eval-corpus/<id>/check.sh` via `bash` from the task dir (like
-  `run-eval.sh`, though without run-eval's present-but-non-executable-`check.sh` fail guard — here the
-  check is always invoked through `bash`); exit `0` = pass. A missing task dir / `check.sh` is a `fail`
+- `corpus-task: <id>` — runs `scripts/eval-corpus/<id>/check.sh` via `bash` from the task dir with
+  `EVAL_PROJECT_ROOT` exported = the same project root (the check verifies the **caller's** project,
+  never the plugin's install dir — `scripts/eval-corpus/README.md` §"Project root"; like `run-eval.sh`,
+  though without run-eval's present-but-non-executable-`check.sh` fail guard — here the check is always
+  invoked through `bash`); exit `0` = pass. A missing task dir / `check.sh` is a `fail`
   (reason `corpus_task_not_found`), not a silent drop. The `<id>` is a single path segment (a `/` or
   `..` is rejected as `corpus_task_invalid_id`).
 - `qa-executor: <target>` — RECOGNIZED but DEFERRED to slice 1b (per-check `unverified`).

@@ -6,16 +6,23 @@
 # Deterministic and read-only.
 #
 # Usage: bash check.sh [--root <dir>]
-#   --root defaults to the enclosing git repo root (the runner cd's into this
-#   task dir, which lives inside the repo). The mutation self-test points it at
+#   --root defaults to $EVAL_PROJECT_ROOT (set by the runners to the caller's
+#   project), else the enclosing git repo root (the runner cd's into this task
+#   dir first). The mutation self-test points it at
 #   a fixture tree carrying scripts/check-contract-parity.sh + loomwright/agents/.
 set -uo pipefail
 
+# Project root precedence: explicit --root, else $EVAL_PROJECT_ROOT (exported by run-eval.sh /
+# run-ground-truth.sh = the CALLER's project), else the git repo enclosing this task dir. Never this
+# file's own location alone — on a marketplace install the corpus is outside any git repo
+# (eval-corpus/README.md §"Project root").
 if [ "${1:-}" = "--root" ]; then
   repo_root="${2:?--root requires a directory}"
+elif [ -n "${EVAL_PROJECT_ROOT:-}" ]; then
+  repo_root="$EVAL_PROJECT_ROOT"
 else
   repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
-    echo "parity-emit-block: not inside a git repo (and no --root given)" >&2
+    echo "parity-emit-block: not inside a git repo (and neither --root nor EVAL_PROJECT_ROOT given)" >&2
     exit 1
   }
 fi

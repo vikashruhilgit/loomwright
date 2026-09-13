@@ -13,7 +13,10 @@ breaks `/plugin install` and must be caught.
 
 ## How it's checked
 
-`check.sh` resolves the repo root (via `git rev-parse --show-toplevel`)
+`check.sh` resolves the repo root from `$EVAL_PROJECT_ROOT` (the caller's project,
+exported by `run-eval.sh` / `run-ground-truth.sh` — see the corpus README
+§"Project root"), falling back to `git rev-parse --show-toplevel` only when the
+variable is unset (direct invocation on a dev checkout),
 and runs the repo-root version-validation gate:
 
 ```
