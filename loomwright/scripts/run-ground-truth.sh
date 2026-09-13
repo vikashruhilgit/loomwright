@@ -48,7 +48,8 @@
 #                    (e.g. `- -flag ...`) must use the `cmd:` prefix (`cmd: -flag ...`) — at ingestion a
 #                    leading bullet `- `/`-` is stripped, so a bare leading-dash command would be mangled.
 #   - corpus-task: <task-id> -> resolve to $SCRIPT_DIR/eval-corpus/<task-id>/check.sh and run it via
-#                    `( cd "<task-dir>" && EVAL_PROJECT_ROOT=<project-root> bash check.sh >/dev/null 2>&1 )`
+#                    `( cd "<task-dir>" && bash check.sh >/dev/null 2>&1 )` with EVAL_PROJECT_ROOT
+#                    already exported once, up front, for every check
 #                    (like run-eval.sh, though without run-eval's present-but-non-executable-check.sh
 #                    fail guard — here the check is always invoked through `bash` regardless of the
 #                    executable bit); exit 0 = pass. Missing task dir / check.sh -> per_check fail,
