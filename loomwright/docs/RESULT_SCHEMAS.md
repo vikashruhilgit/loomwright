@@ -564,7 +564,7 @@ CODE_REVIEW_RESULT:
       category: enum [new, pre_existing, nit, drift]  # drift added in v3
       drift_kind: enum [version_authoritative, version_secondary, mirrored_prompt,
                         count, workflow, hooks_parity, wording]  # required when category=drift
-      file: string                     # file path
+      file: string                     # file path, or a sentinel: environment (environment-blocked run), brief (unaddressed acceptance criterion; omit line)
       line: integer                    # optional — line number
       description: string              # what's wrong
       suggestion: string               # optional — how to fix
