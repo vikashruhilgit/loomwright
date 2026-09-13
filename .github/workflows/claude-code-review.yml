@@ -21,7 +21,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # 0, not 1: a depth-1 shallow clone cannot resolve commits outside the PR
           # tip, so the reviewer cannot run `git cat-file -t <sha>` or
