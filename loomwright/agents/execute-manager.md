@@ -146,13 +146,7 @@ Track: subtask_id, worktree_path, branch_name (and, when applicable, dependent_b
 
 After Step 2a (or after worktree creation for unblocked subtasks), iterate over the subtask's own `requires` entries (NOT its `provides`) and verify each was actually materialized in the worktree. Each `requires` entry has a `kind` (`file` | `symbol` | `type`), a `path`, and (for `symbol`/`type`) a `name`.
 
-| `kind` | Verification command | PASS condition |
-|--------|----------------------|----------------|
-| `file` | `test -f <worktree>/<path>` | exit 0 |
-| `symbol` | `grep -nE '<escaped name>' <worktree>/<path>` | any match (exit 0) |
-| `type` | `grep -nE '(type\|interface\|class\|enum)\s+<escaped name>\b' <worktree>/<path>` | any match (exit 0) |
-
-Record each check result (`PASS` | `FAIL`) along with the exact command run and its exit code. These are the same three commands `scripts/verify-provides.sh --kind-table` defines (the ONE implementation, which the poll-loop gate below runs against each worker's `provides:`); this pre-spawn `requires` walk is unchanged.
+Run one check per `requires` entry against `<worktree>/<path>`. The commands are the three rows `bash "${CLAUDE_PLUGIN_ROOT}/scripts/verify-provides.sh" --kind-table` prints — the ONE implementation (the same checks the poll-loop gate below runs against each worker's `provides:`; the committed copy sits in `docs/RESULT_SCHEMAS.md` §WORKER_RESULT between the `kind-table:begin`/`end` markers) — with `<root>` = the worktree. The rows are deliberately NOT restated here (a restated copy drifts — the previous one carried GNU-only grep escapes that false-FAIL on BSD/macOS grep). Record each check result (`PASS` | `FAIL`) along with the exact command run and its exit code.
 
 **If ANY check FAILs:**
 - DO NOT spawn the worker.

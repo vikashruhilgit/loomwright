@@ -22,7 +22,9 @@
 #   seams   — EM §"v12 outputs_verified gate" cites verify-provides.sh + provides_mismatch +
 #             "regardless of the worker"; Supervisor Single-Agent step 3 AND Sequential gate cite
 #             verify-provides.sh with `--root .` (by anchor, never line number); worker Step 5.5 cites
-#             it; RESULT_SCHEMAS.md marker block == `--kind-table` byte-for-byte; orchestrator.md has
+#             it and covers the field-less `brief_unreadable` / `jq_missing` reasons; EM Step 2b cites
+#             `--kind-table` and restates NO table row / GNU-ism; RESULT_SCHEMAS.md marker block ==
+#             `--kind-table` byte-for-byte; orchestrator.md has
 #             0 hits of the retired "(worker self-verification, zero tokens)" parenthetical.
 #   routing — the EM gate names the two cells that are NOT disk-wins: `status: partial` with an
 #             EMPTY outputs_gap (the worker.md Step 1 carve-out — checkpoint, never a pass) and an
@@ -31,9 +33,10 @@
 #             the subtask_id shape (bare anchor token); worker Step 5.5 passes the worktree path on the
 #             Parallel path, not `--root .`; subtask_not_found lists the anchors seen on stderr.
 #   (m)     — MUTATION CONTROLS: (1) delete the script-call line(s) from a COPY of execute-manager.md's
-#             poll-loop gate; (2) delete the carve-out clause from another COPY. Each mutant is gated
-#             on non-empty + differs-from-original; the seam assertion against it MUST fail —
-#             otherwise the assertion above is vacuous.
+#             poll-loop gate; (2) delete the carve-out clause from another COPY; (3) restate a kind-table
+#             row carrying GNU `\s`/`\b` inside a COPY of Step 2b (the pointer-vs-copy drift). Each
+#             mutant is gated on non-empty + differs-from-original; the seam assertion against it MUST
+#             fail — otherwise the assertion above is vacuous.
 #
 # EXPLICIT LIMIT: this pins the script's behaviour and the WIRING (the prompts cite it where they say
 # they do). It cannot prove an Execute Manager actually runs the Bash call — that is prompt behaviour,
@@ -331,7 +334,15 @@ section "$EM" 'v12 outputs_verified gate' 'Lane-collision gate' | grep -q 'disk.
 section "$EM" 'v12 outputs_verified gate' 'Lane-collision gate' | grep -q 'bare token after `Subtask`' && ok "EM gate pins the subtask_id shape (bare anchor token)" || no "EM gate lacks the subtask_id shape clause"
 grep -q 'bare token the brief.s contract anchor names' "$SCRIPT" && ok "script header pins the subtask_id shape (bare anchor token)" || no "script header lacks the subtask_id shape clause"
 grep -q '^\*\*Tool call tracking:\*\*.*verify-provides\.sh' "$EM" && ok "EM tool-call tracking notes the +1 Bash per subtask" || no "EM tool-call tracking lacks the verify-provides.sh note"
-section "$EM" 'Step 2b — Pre-Spawn Verification Gate' 'CHECKPOINT format' | grep -q 'kind-table' && ok "EM Step 2b points at --kind-table" || no "EM Step 2b lacks the kind-table pointer"
+em_step2b_ok() {   # exit 0 iff Step 2b of $1 cites --kind-table AND restates neither a table row nor a GNU-ism
+  local s; s="$(section "$1" 'Step 2b — Pre-Spawn Verification Gate' 'CHECKPOINT format')"
+  [ -n "$s" ] || return 1
+  printf '%s\n' "$s" | grep -q -- '--kind-table' || return 1                # the pointer
+  printf '%s\n' "$s" | grep -q '\\s\|\\b' && return 1                       # no GNU-only \s / \b (BSD grep false-FAILs)
+  printf '%s\n' "$s" | grep -q '^| `symbol`\|^| `type`' && return 1         # no second copy of the kind-table rows
+  return 0
+}
+em_step2b_ok "$EM" && ok "EM Step 2b points at --kind-table and restates NO table row / GNU-ism" || no "EM Step 2b: missing pointer, restated table row, or \\s / \\b GNU-ism"
 
 sup_single="$(section "$SUP" '#### Single-Agent Path' '#### Sequential Path')"
 printf '%s\n' "$sup_single" | grep -q 'verify-provides\.sh.*--root \.' && ok "Supervisor Single-Agent step 3 cites verify-provides.sh with --root ." || no "Supervisor Single-Agent gate seam"
@@ -348,6 +359,7 @@ w55="$(section "$WORKER" 'verify own `provides:`' 'Step 5.65')"
 printf '%s\n' "$w55" | grep -q 'verify-provides\.sh.*--root \.' && no "worker Step 5.5 hard-codes --root . (wrong tree on the Parallel path: Bash cwd is the main checkout)" || ok "worker Step 5.5 does not hard-code --root ."
 printf '%s\n' "$w55" | grep -qi 'worktree.*ABSOLUTE path on the Parallel path' && ok "worker Step 5.5 passes the worktree's absolute path on the Parallel path" || no "worker Step 5.5 lacks the Parallel-path worktree --root clause"
 grep -q 'present' "$WORKER" && grep -q 'missing' "$WORKER" && ok "worker.md keeps the present/missing enum tokens (check-contract-parity.sh)" || no "worker.md lost present/missing"
+printf '%s\n' "$w55" | grep -q 'brief_unreadable.*jq_missing' && printf '%s\n' "$w55" | grep -q 'name the reason in `summary`' && ok "worker Step 5.5 covers the field-less unverifiable reasons (brief_unreadable / jq_missing: empty fields, reason in summary)" || no "worker Step 5.5 lacks the brief_unreadable / jq_missing clause"
 
 DOC_KT="$(awk '/<!-- kind-table:begin -->/ { on = 1; next } /<!-- kind-table:end -->/ { on = 0 } on { print }' "$SCHEMAS")"
 [ -n "$DOC_KT" ] && ok "RESULT_SCHEMAS.md has the kind-table marker block" || no "RESULT_SCHEMAS.md marker block missing/empty"
@@ -387,6 +399,24 @@ else
     ok "MUTATION CONTROL: deleting the carve-out clause from the poll-loop gate makes the routing assertion fail"
   fi
   em_gate_ok "$MUT2" && ok "carve-out mutant still passes the script-call seam (the two controls test different clauses)" || no "carve-out mutant broke the script-call seam — controls are not independent"
+fi
+# (3) restate ONE kind-table row (carrying the retired GNU \s/\b) inside a COPY of Step 2b — the drift the
+# pointer replaced; the Step 2b assertion MUST fail on it while the two poll-loop-gate seams still pass.
+MUT3="$TMP/em-mutant-step2b.md"
+ROW='| `type` | `grep -nE '"'"'(type\|interface\|class\|enum)\s+<escaped name>\b'"'"' <worktree>/<path>` | any match (exit 0) |'
+ROW="$ROW" awk '/Step 2b — Pre-Spawn Verification Gate/ { on = 1 } /CHECKPOINT format/ { on = 0 } on && /Record each check result/ { print ENVIRON["ROW"] } { print }' "$EM" > "$MUT3"
+if [ ! -s "$MUT3" ]; then
+  no "Step 2b mutant is empty — control invalid"
+elif cmp -s "$MUT3" "$EM"; then
+  no "Step 2b mutant identical to original — control invalid (no 'Record each check result' line inside Step 2b?)"
+else
+  ok "Step 2b mutant is non-empty and differs from the original"
+  if em_step2b_ok "$MUT3"; then
+    no "MUTATION CONTROL: EM Step 2b assertion still passes with a GNU-ism table row restated — assertion is vacuous"
+  else
+    ok "MUTATION CONTROL: restating a kind-table row (with \\s / \\b) inside Step 2b makes the Step 2b assertion fail"
+  fi
+  em_gate_ok "$MUT3" && em_routes_ok "$MUT3" && ok "Step 2b mutant still passes both poll-loop-gate seams (the three controls test different sections)" || no "Step 2b mutant broke a poll-loop-gate seam — controls are not independent"
 fi
 
 echo
