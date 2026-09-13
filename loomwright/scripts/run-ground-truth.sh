@@ -18,10 +18,11 @@
 #   - status "skipped"            — no check source resolved (no --check, no --brief Executable
 #                                   Acceptance section, no --checks-file/stdin, no
 #                                   .supervisor/twin/ground-truth.json). ran:false, 0/0, per_check [].
-#   - status "unverified"         — fail-safe tooling path: jq unavailable (ran:false, 0/0, []), OR
-#                                   the edge where checks resolved but NONE could actually be verified
-#                                   (zero passes AND zero fails AND >=1 deferred — honest: nothing
-#                                   was actually verified).
+#   - status "unverified"         — fail-safe tooling path: jq unavailable (ran:false, 0/0, []), an
+#                                   explicit `--project <dir>` that is not a directory (ran:false, 0/0,
+#                                   []), OR the edge where checks resolved but NONE could actually be
+#                                   verified (zero passes AND zero fails AND >=1 deferred — honest:
+#                                   nothing was actually verified).
 #   - status "advisory_failures"  — >=1 resolved check exited non-zero (a per_check fail present).
 #   - status "pass"               — >=1 check executed and passed, and ZERO checks failed (deferred
 #                                   qa-executor checks may coexist; they never block a pass).
@@ -38,19 +39,23 @@
 #
 # A check line is a `- `-stripped bullet that is EITHER a raw shell command OR `<kind>: <target>`
 # where kind in {cmd, corpus-task, qa-executor}. Per-kind execution:
-#   - cmd: <shell>   (or a bare line with no recognized kind:) -> run in the CALLER's CWD via
-#                    `bash -c '<shell>' >/dev/null 2>&1`; exit 0 = pass. (Supervisor Phase 4.5 pins
-#                    the repo-root CWD, so in that path it runs from the repo root.) An empty command
+#   - cmd: <shell>   (or a bare line with no recognized kind:) -> run in the PROJECT ROOT (see
+#                    "Project root" below) via `bash -c '<shell>' >/dev/null 2>&1`; exit 0 = pass.
+#                    (Supervisor Phase 4.5 pins the repo-root CWD, so in that path the project root
+#                    IS the repo root.) An empty command
 #                    (bare `cmd:`) is a malformed bullet -> per_check fail, reason "empty_cmd_target"
 #                    (never a false pass). NOTE: a bare bullet whose command itself starts with a dash
 #                    (e.g. `- -flag ...`) must use the `cmd:` prefix (`cmd: -flag ...`) — at ingestion a
 #                    leading bullet `- `/`-` is stripped, so a bare leading-dash command would be mangled.
 #   - corpus-task: <task-id> -> resolve to $SCRIPT_DIR/eval-corpus/<task-id>/check.sh and run it via
-#                    `( cd "<task-dir>" && bash check.sh >/dev/null 2>&1 )` (like run-eval.sh, though
-#                    without run-eval's present-but-non-executable-check.sh fail guard — here the check
-#                    is always invoked through `bash` regardless of the executable bit);
-#                    exit 0 = pass. Missing task dir / check.sh -> per_check fail, reason
-#                    "corpus_task_not_found" (a missing dogfood target is a real failure, not a drop).
+#                    `( cd "<task-dir>" && EVAL_PROJECT_ROOT=<project-root> bash check.sh >/dev/null 2>&1 )`
+#                    (like run-eval.sh, though without run-eval's present-but-non-executable-check.sh
+#                    fail guard — here the check is always invoked through `bash` regardless of the
+#                    executable bit); exit 0 = pass. Missing task dir / check.sh -> per_check fail,
+#                    reason "corpus_task_not_found" (a missing dogfood target is a real failure, not a
+#                    drop). The task dir is the CWD (task-local relative paths keep working); the
+#                    project the check must VERIFY arrives in $EVAL_PROJECT_ROOT — a check.sh must never
+#                    derive it from its own location (see "Project root" below).
 #   - qa-executor: <target> -> RECOGNIZED but DEFERRED to slice 1b. Does NOT spawn anything; records
 #                    per_check status "unverified", reason "qa_executor_dispatch_deferred_m2b_1b".
 #                    Counts toward checks_total but neither checks_passed nor a fail.
@@ -67,6 +72,19 @@
 # eval-corpus, but `cmd:` shell is intentionally unconstrained.
 # eval-corpus is resolved relative to $SCRIPT_DIR so `corpus-task:` works regardless of CWD.
 #
+# Project root (the ONE directory every check kind is evaluated against):
+#   PROJECT_ROOT = `--project <dir>` if given, else the git toplevel of the CALLER's CWD, else the
+#   caller's CWD itself. `cmd:` checks run from it, the `.supervisor/twin/ground-truth.json` fallback
+#   and the contextual `commit` field are read from it, and it is exported to every corpus-task
+#   check.sh as EVAL_PROJECT_ROOT (the corpus contract — eval-corpus/README.md §"Project root").
+#   WHY this is load-bearing: on a marketplace install $SCRIPT_DIR is
+#   ~/.claude/plugins/cache/<marketplace>/loomwright/<version>/scripts — NOT inside any git repo — so a
+#   check.sh that resolved the repo from ITS OWN directory (`git rev-parse --show-toplevel` after the
+#   runner's cd into the task dir) failed every maintainer-side dogfood task with "not inside a git
+#   repo" (observed 2026-09-13: Phase 4.5 ground_truth reported advisory_failures 2/4 while the
+#   checkout's copy of the same runner passed 4/4). The project being verified is the CALLER's, never
+#   the runner's home; the runner is the only party that knows the caller's CWD, so it passes it down.
+#
 # Test-only env hook: GROUND_TRUTH_FORCE_NO_JQ=1 forces the no-jq fail-safe branch (so the self-test
 # can deterministically exercise the "unverified" tooling path without a brittle PATH shim). It is a
 # TEST-ONLY hook and has no effect on normal operation.
@@ -78,6 +96,7 @@
 # prompt-level Plan Reviewer control lands (M2b slice 1b — see docs/SPIKES/SYSTEM_TWIN_ROADMAP.md §7).
 #
 # Usage:  run-ground-truth.sh [--check '<line>']... [--brief <path>] [--checks-file <path>] [--no-cmd]
+#                             [--project <dir>]
 # Exit:   always 0.
 
 set -uo pipefail
@@ -85,14 +104,11 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CORPUS="$SCRIPT_DIR/eval-corpus"
 
-# ---- contextual fields (NOT part of the determinism invariant) ------------
-COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
-DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
-
 # ---- argv parse -----------------------------------------------------------
 EXPLICIT_CHECKS=()   # collected from --check / --brief / --checks-file (in resolution order)
 BRIEF=""
 CHECKS_FILE=""
+PROJECT_ARG=""       # --project <dir>: explicit project root (else derived from the caller's CWD)
 # --no-cmd (or GROUND_TRUTH_NO_CMD=1): safety valve for unattended use. When set, cmd:/bare shell
 # checks are NOT executed (recorded per_check "unverified", reason "cmd_disabled"); corpus-task: and
 # qa-executor: are unaffected. The Supervisor passes this on the unattended/--non-interactive
@@ -110,9 +126,39 @@ while [ $# -gt 0 ]; do
     --checks-file)  CHECKS_FILE="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
     --checks-file=*) CHECKS_FILE="${1#--checks-file=}"; shift ;;
     --no-cmd)       NO_CMD=1; shift ;;
+    --project)      PROJECT_ARG="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
+    --project=*)    PROJECT_ARG="${1#--project=}"; shift ;;
     *) shift ;;
   esac
 done
+
+# ---- project root (the one directory every check kind is evaluated against) --
+# `--project <dir>` wins; else the git toplevel of the caller's CWD; else the caller's CWD itself.
+# Resolved ONCE, before any check runs, and exported to corpus-task checks as EVAL_PROJECT_ROOT.
+# An explicit --project that is not a directory is a caller configuration error: handled below (after
+# the emit helpers exist) as the fail-safe "unverified" tooling path — never a false pass.
+PROJECT_ROOT=""
+PROJECT_ARG_INVALID=0
+if [ -n "$PROJECT_ARG" ]; then
+  if [ -d "$PROJECT_ARG" ]; then
+    PROJECT_ROOT="$(cd "$PROJECT_ARG" && pwd -P)"
+  else
+    PROJECT_ARG_INVALID=1
+  fi
+else
+  PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)"
+fi
+export EVAL_PROJECT_ROOT="$PROJECT_ROOT"
+
+# ---- contextual fields (NOT part of the determinism invariant) ------------
+# `commit` describes the PROJECT being verified (not the runner's own checkout — they differ on a
+# marketplace install), so it is read from PROJECT_ROOT.
+if [ -n "$PROJECT_ROOT" ]; then
+  COMMIT="$(git -C "$PROJECT_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+else
+  COMMIT="unknown"
+fi
+DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
 
 # ---- emit helpers ---------------------------------------------------------
 # emit_no_jq_unverified: hand-built minimal JSON (only fixed/whitelisted values — injection-safe).
@@ -144,6 +190,16 @@ emit_jq() {
 if [ "${GROUND_TRUTH_FORCE_NO_JQ:-0}" = "1" ] || ! command -v jq >/dev/null 2>&1; then
   echo "run-ground-truth: no jq available — cannot build result, fail-safe no-op" >&2
   emit_no_jq_unverified
+  exit 0
+fi
+
+# ---- fail-safe: --project names a non-directory ---------------------------
+# A caller that names a project that does not exist has nothing verifiable; running the checks
+# against some OTHER directory (the CWD, the runner's home) would report on the wrong project. Emit
+# the same fail-safe "unverified" shape as the no-jq path (ran:false, 0/0, []) and exit 0.
+if [ "$PROJECT_ARG_INVALID" -eq 1 ]; then
+  echo "run-ground-truth: --project '$PROJECT_ARG' is not a directory — nothing verifiable (unverified)" >&2
+  emit_jq false "unverified" 0 0 "0/0" "[]"
   exit 0
 fi
 
@@ -216,8 +272,7 @@ fi
 
 # 2. Fallback: .supervisor/twin/ground-truth.json (only if nothing explicit resolved).
 if [ "${#CHECK_LINES[@]}" -eq 0 ]; then
-  GITROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-  GT_FILE="$GITROOT/.supervisor/twin/ground-truth.json"
+  GT_FILE="$PROJECT_ROOT/.supervisor/twin/ground-truth.json"
   if [ -f "$GT_FILE" ]; then
     # Tolerant: accept a top-level array of strings OR {checks:[...]}; sort for stable order.
     gt_lines="$(jq -r '
@@ -290,7 +345,9 @@ for line in "${CHECK_LINES[@]}"; do
         failures=$((failures+1))
         echo "  [FAIL] cmd: (empty command)"
         append_check "cmd" "$target" "fail" "empty_cmd_target"
-      elif bash -c "$target" >/dev/null 2>&1; then
+      elif ( cd "$PROJECT_ROOT" && bash -c "$target" >/dev/null 2>&1 ); then
+        # Run from PROJECT_ROOT (see header §"Project root") so a repo-root-relative command in a brief
+        # means the same thing whichever copy of this runner executes it.
         passed=$((passed+1))
         echo "  [PASS] cmd:$target"
         append_check "cmd" "$target" "pass"
@@ -321,6 +378,8 @@ for line in "${CHECK_LINES[@]}"; do
         echo "  [FAIL] corpus-task:$target (check.sh not found)"
         append_check "corpus-task" "$target" "fail" "corpus_task_not_found"
       elif ( cd "$task_dir" && bash "$check" >/dev/null 2>&1 ); then
+        # CWD = task dir (task-local relative paths keep working); the project to VERIFY reaches the
+        # check via the exported EVAL_PROJECT_ROOT (set once above), never via the check's location.
         passed=$((passed+1))
         echo "  [PASS] corpus-task:$target"
         append_check "corpus-task" "$target" "pass"

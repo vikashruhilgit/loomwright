@@ -14,7 +14,12 @@
 #      (included in tasks_total, with a stderr warning), never silently dropped.
 #   5. results.jsonl append — default-on appends the EVAL_RESULT (+ recorded_at) as one JSON line to
 #      $EVAL_RESULTS_FILE; a second run appends (not overwrites); --no-record suppresses entirely.
-# Cases 1-4 pass --no-record so they never touch the real .supervisor/eval/; case 5 redirects the
+#   6. project root — every check.sh receives EVAL_PROJECT_ROOT = the CALLER's project: (a) the git
+#      toplevel of the CWD (a hermetic fixture repo, NOT this checkout), (b) `--project <dir>` when
+#      given, (c) `--project <non-directory>` => status "unverified", 0/0, exit 0. Regression for the
+#      2026-09-13 marketplace-install incident (corpus outside any git repo; checks resolved the repo
+#      from their own dir).
+# Cases 1-4 and 6 pass --no-record so they never touch the real .supervisor/eval/; case 5 redirects the
 # history file into $TMP via $EVAL_RESULTS_FILE.
 
 set -uo pipefail
@@ -142,6 +147,52 @@ if [ ! -e "$RF2" ] && [ "$rcS" -eq 0 ]; then
   ok "--no-record suppresses the append (file not created) and exits 0"
 else
   no "--no-record suppression wrong (exists=$( [ -e "$RF2" ] && echo yes || echo no ), rc=$rcS)"
+fi
+
+echo "== 6. project root: EVAL_PROJECT_ROOT reaches check.sh (CWD git toplevel, --project, invalid) =="
+# A recording check: it PASSES iff EVAL_PROJECT_ROOT is set, and writes the value it saw so the test
+# can assert WHICH project it was told to verify.
+CORPUS_P="$TMP/corpus-p"
+mkdir -p "$CORPUS_P/probe"
+cat > "$CORPUS_P/probe/check.sh" <<'EOF'
+#!/usr/bin/env bash
+[ -n "${EVAL_PROJECT_ROOT:-}" ] || exit 1
+printf '%s' "$EVAL_PROJECT_ROOT" > "$(dirname "$0")/seen"
+exit 0
+EOF
+chmod +x "$CORPUS_P/probe/check.sh"
+# (a) A hermetic fixture git repo as the caller's CWD (a subdir of it, so the toplevel must be derived,
+# not just the CWD echoed). Pinned config so the init never reads the user's git config.
+FIX="$TMP/fixture-repo"
+mkdir -p "$FIX/sub"
+GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null git -C "$FIX" -c init.defaultBranch=main init -q
+FIX_P="$(cd "$FIX" && pwd -P)"
+rm -f "$CORPUS_P/probe/seen"
+oP1="$( cd "$FIX/sub" && EVAL_CORPUS_DIR="$CORPUS_P" bash "$RUN" --no-record 2>/dev/null )"; rcP1=$?
+seen1="$(cat "$CORPUS_P/probe/seen" 2>/dev/null || true)"
+if [ "$rcP1" -eq 0 ] && [ "$seen1" = "$FIX_P" ] \
+  && printf '%s' "$(eval_json "$oP1")" | jq -e '.tasks_total==1 and .tasks_passed==1 and .status=="ok"' >/dev/null 2>&1; then
+  ok "6a. CWD inside a git repo: check.sh saw EVAL_PROJECT_ROOT == that repo's toplevel (not this checkout, not the task dir)"
+else
+  no "6a. wrong (rc=$rcP1): seen='$seen1' expected='$FIX_P'"
+fi
+# (b) --project overrides the CWD-derived root (CWD = non-git $TMP; project = the fixture repo).
+rm -f "$CORPUS_P/probe/seen"
+oP2="$( cd "$TMP" && EVAL_CORPUS_DIR="$CORPUS_P" bash "$RUN" --no-record --project "$FIX" 2>/dev/null )"; rcP2=$?
+seen2="$(cat "$CORPUS_P/probe/seen" 2>/dev/null || true)"
+if [ "$rcP2" -eq 0 ] && [ "$seen2" = "$FIX_P" ]; then
+  ok "6b. --project <dir>: check.sh saw EVAL_PROJECT_ROOT == that dir"
+else
+  no "6b. wrong (rc=$rcP2): seen='$seen2' expected='$FIX_P'"
+fi
+# (c) --project naming a non-directory: fail-safe unverified, 0/0, exit 0; the check never runs.
+rm -f "$CORPUS_P/probe/seen"
+oP3="$( cd "$TMP" && EVAL_CORPUS_DIR="$CORPUS_P" bash "$RUN" --no-record --project "$TMP/does-not-exist" 2>/dev/null )"; rcP3=$?
+if [ "$rcP3" -eq 0 ] && [ ! -e "$CORPUS_P/probe/seen" ] \
+  && printf '%s' "$(eval_json "$oP3")" | jq -e '.status=="unverified" and .tasks_total==0 and .pass_rate=="0/0"' >/dev/null 2>&1; then
+  ok "6c. --project <non-directory>: status unverified, 0/0, check never ran, exit 0"
+else
+  no "6c. wrong (rc=$rcP3): $(eval_json "$oP3")"
 fi
 
 echo

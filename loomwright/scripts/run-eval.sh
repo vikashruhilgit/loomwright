@@ -35,9 +35,20 @@
 # it entirely; EVAL_RESULTS_FILE redirects the history file (used by the self-test). recorded_at,
 # commit, date legitimately vary and are NOT part of the determinism invariant.
 #
-# Usage:  run-eval.sh [--no-record]
+# Project root: every check.sh is run with CWD = its task dir (task-local relative paths keep working)
+# and with EVAL_PROJECT_ROOT exported = the project it must VERIFY: `--project <dir>` if given, else
+# the git toplevel of the CALLER's CWD, else the caller's CWD. A check.sh must never derive the
+# project from its own location — on a marketplace install this script and its corpus live under
+# ~/.claude/plugins/cache/..., outside any git repo, so a `git rev-parse --show-toplevel` from the task
+# dir fails there while the caller's project is perfectly resolvable (the run-ground-truth.sh
+# 2026-09-13 incident; contract in eval-corpus/README.md §"Project root"). The `commit` field and the
+# default results.jsonl location are read from the same root. A `--project` that is not a directory
+# is a caller error: emit the fail-safe "unverified" shape (0/0, per_task []) rather than scoring the
+# corpus against some other directory.
+#
+# Usage:  run-eval.sh [--no-record] [--project <dir>]
 # Env:    EVAL_CORPUS_DIR    — override the corpus dir (default: $SCRIPT_DIR/eval-corpus)
-#         EVAL_RESULTS_FILE  — override the history file (default: <gitroot>/.supervisor/eval/results.jsonl)
+#         EVAL_RESULTS_FILE  — override the history file (default: <project-root>/.supervisor/eval/results.jsonl)
 # Exit:   always 0.
 
 set -uo pipefail
@@ -47,24 +58,50 @@ CORPUS="${EVAL_CORPUS_DIR:-$SCRIPT_DIR/eval-corpus}"
 
 # ---- argv parse -----------------------------------------------------------
 RECORD=1
-for arg in "$@"; do
-  case "$arg" in
-    --no-record) RECORD=0 ;;
+PROJECT_ARG=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --no-record) RECORD=0; shift ;;
+    --project)   PROJECT_ARG="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
+    --project=*) PROJECT_ARG="${1#--project=}"; shift ;;
+    *) shift ;;
   esac
 done
 
+# ---- project root (what every check.sh verifies; see header) --------------
+# `--project <dir>` wins; else the caller's git toplevel; else the caller's CWD. Exported ONCE as
+# EVAL_PROJECT_ROOT before any task runs. RECORD_ROOT_OK gates the DEFAULT results.jsonl
+# location: recording into an arbitrary non-git CWD would litter it with .supervisor/, so absent an
+# explicit --project and a git root, default recording is skipped (as before this flag existed).
+PROJECT_ROOT=""
+RECORD_ROOT_OK=0
+PROJECT_ARG_INVALID=0
+if [ -n "$PROJECT_ARG" ]; then
+  if [ -d "$PROJECT_ARG" ]; then
+    PROJECT_ROOT="$(cd "$PROJECT_ARG" && pwd -P)"
+    RECORD_ROOT_OK=1   # explicit: the caller named the project, so recording there is wanted even if it is not a git repo
+  else
+    PROJECT_ARG_INVALID=1
+  fi
+else
+  PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+  if [ -n "$PROJECT_ROOT" ]; then
+    RECORD_ROOT_OK=1
+  else
+    PROJECT_ROOT="$(pwd -P)"
+  fi
+fi
+export EVAL_PROJECT_ROOT="$PROJECT_ROOT"
+
 # ---- results history file (best-effort persistence target) ----------------
-# Resolve once. Default to <gitroot>/.supervisor/eval/results.jsonl; guard an empty git root so we
-# never produce a path that begins with "/.supervisor/...".
+# Resolve once. Default to <project-root>/.supervisor/eval/results.jsonl; guard the no-git/no-flag
+# case so we never litter an arbitrary CWD (and never produce a path beginning with "/.supervisor/").
 if [ -n "${EVAL_RESULTS_FILE:-}" ]; then
   RESULTS_FILE="$EVAL_RESULTS_FILE"
+elif [ "$RECORD_ROOT_OK" -eq 1 ] && [ -n "$PROJECT_ROOT" ]; then
+  RESULTS_FILE="$PROJECT_ROOT/.supervisor/eval/results.jsonl"
 else
-  GIT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
-  if [ -n "$GIT_ROOT" ]; then
-    RESULTS_FILE="$GIT_ROOT/.supervisor/eval/results.jsonl"
-  else
-    RESULTS_FILE=""   # no git root — recording will be skipped (fail-safe)
-  fi
+  RESULTS_FILE=""   # no project root — recording will be skipped (fail-safe)
 fi
 
 # record_result <eval-result-json>: append the EVAL_RESULT object (no "EVAL_RESULT: " prefix) plus a
@@ -84,7 +121,13 @@ record_result() {
 }
 
 # ---- contextual fields (NOT part of the determinism invariant) ------------
-COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+# `commit` describes the PROJECT being scored (not this script's own checkout — they differ on a
+# marketplace install), so it is read from PROJECT_ROOT.
+if [ -n "$PROJECT_ROOT" ]; then
+  COMMIT="$(git -C "$PROJECT_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+else
+  COMMIT="unknown"
+fi
 DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
 
 # ---- emit helpers ---------------------------------------------------------
@@ -110,6 +153,13 @@ emit_unverified() {
 # Fail-safe: no jq available. Emit unverified.
 if ! command -v jq >/dev/null 2>&1; then
   echo "run-eval: no jq available — eval cannot build its result, fail-safe no-op" >&2
+  emit_unverified
+  exit 0
+fi
+
+# Fail-safe: --project names a non-directory. Emit unverified (never score against another dir).
+if [ "$PROJECT_ARG_INVALID" -eq 1 ]; then
+  echo "run-eval: --project '$PROJECT_ARG' is not a directory — fail-safe no-op" >&2
   emit_unverified
   exit 0
 fi
@@ -151,6 +201,7 @@ if [ -n "$task_dirs" ]; then
       status="fail"
       echo "  [FAIL] $task_id (check.sh not executable)"
     # Run the check. A non-zero exit is a normal "fail" tally — never let it abort this script.
+    # CWD = task dir; the project to VERIFY reaches the check via the exported EVAL_PROJECT_ROOT.
     elif ( cd "$dir" && bash "$check" >/dev/null 2>&1 ); then
       status="pass"
       passed=$((passed+1))
