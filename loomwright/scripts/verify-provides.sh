@@ -9,6 +9,12 @@
 #   verify-provides.sh <brief> <subtask-id> [--root <dir>]     # default --root .
 #   verify-provides.sh --kind-table                            # print the 3-row markdown check table
 #
+# <subtask-id> is the bare token the brief's contract anchor names — the `N` in `# Subtask N …` /
+# `### Subtask N …` / `subtask_N:` (`1`, `12`; on the Single-Agent Path the brief's single anchor,
+# `1`). It is NOT the state.md task_id, a Beads id or a slug: those return `subtask_not_found`,
+# which every consumer routes to a checkpoint (D1) — so the stderr line for that reason lists the
+# anchors the brief actually carries.
+#
 # Output (ONE JSON object on stdout, always exit 0):
 #   {"subtask_id":"<id>",
 #    "outputs_verified":[{"kind":..,"path":..,"name"?:..,"status":"present"|"missing","check_run":"<command> (exit N)"}],
@@ -134,8 +140,8 @@ if [ ! -f "$brief" ] || [ ! -r "$brief" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# ONE awk pass over the brief. Prints a first status line — FOUND / EMPTY / NOT_FOUND /
-# NO_CONTRACTS — then, for FOUND, one `kind<TAB>path<TAB>name` line per provides entry.
+# ONE awk pass over the brief. Prints a first status line — FOUND / EMPTY / NOT_FOUND<TAB><anchors
+# seen> / NO_CONTRACTS — then, for FOUND, one `kind<TAB>path<TAB>name` line per provides entry.
 # The id is passed as DATA (-v) and matched with index()/substr(), never interpolated into a regex.
 # ---------------------------------------------------------------------------
 parse_brief() {
@@ -148,17 +154,28 @@ parse_brief() {
       if (c ~ /[[:alnum:]]/) return 0
       return 1
     }
+    # note_anchor(line, pos): remember the ORIGINAL-case token an anchor names (for the
+    # subtask_not_found stderr line); the umbrella headings are not subtask anchors.
+    function note_anchor(line, pos,   o, l) {
+      o = substr(line, pos)
+      if (!match(o, /^[[:alnum:]_-]+/)) return
+      o = substr(o, RSTART, RLENGTH); l = tolower(o)
+      if (l == "contracts" || l == "structure" || (o in seen)) return
+      seen[o] = 1; anchors = (anchors == "" ? o : anchors ", " o)
+    }
     # anchor_kind(line): 0 = not an anchor; 1 = anchor for SOME subtask; 2 = anchor for OURS.
     # Forms: `# Subtask N …` (YAML comment) / `### Subtask N …` (heading) / `subtask_N:` (key).
-    function anchor_kind(line,   t, rest) {
+    function anchor_kind(line,   t, rest, pos) {
       t = tolower(line)
       if (match(t, /^[[:space:]]*#+[[:space:]]*subtask[[:space:]_-]*[[:alnum:]]/)) {
-        rest = substr(t, RSTART + RLENGTH - 1)
+        pos = RSTART + RLENGTH - 1; rest = substr(t, pos)
+        note_anchor(line, pos)
         return id_here(rest) ? 2 : 1
       }
       if (match(t, /^[[:space:]]*subtask[[:space:]_-]*[[:alnum:]]/)) {
-        rest = substr(t, RSTART + RLENGTH - 1)
+        pos = RSTART + RLENGTH - 1; rest = substr(t, pos)
         if (rest !~ /^[^:]*:/) return 0
+        note_anchor(line, pos)
         return id_here(rest) ? 2 : 1
       }
       return 0
@@ -177,7 +194,7 @@ parse_brief() {
       if (match(v, /[,}]/)) v = substr(v, 1, RSTART - 1)
       return trim(v)
     }
-    BEGIN { lwant = tolower(want); infence = 0; inside = 0; inprov = 0; found = 0; any = 0; n = 0; empty = 0 }
+    BEGIN { lwant = tolower(want); infence = 0; inside = 0; inprov = 0; found = 0; any = 0; n = 0; empty = 0; anchors = "" }
     {
       line = $0
       # Fence toggle. Closing the fence while inside our block ends the provides list.
@@ -222,7 +239,7 @@ parse_brief() {
       next
     }
     END {
-      if (!found) { print (any ? "NOT_FOUND" : "NO_CONTRACTS"); exit 0 }
+      if (!found) { print (any ? "NOT_FOUND\t" anchors : "NO_CONTRACTS"); exit 0 }
       if (n == 0) { print "EMPTY"; exit 0 }
       print "FOUND"
       for (i = 1; i <= n; i++) print out[i]
@@ -246,6 +263,7 @@ grep_literal() {
 
 TAB="$(printf '\t')"
 status=""
+anchors=""
 entries='[]'
 gap=""
 line_no=0
@@ -254,7 +272,8 @@ parse_ok=1
 while IFS= read -r line; do
   line_no=$((line_no + 1))
   if [ "$line_no" -eq 1 ]; then
-    status="$line"
+    status="${line%%"$TAB"*}"
+    anchors="${line#*"$TAB"}"; [ "$anchors" = "$line" ] && anchors=""
     continue
   fi
   kind="${line%%"$TAB"*}"
@@ -310,7 +329,10 @@ done < <(parse_brief "$id")
 
 case "$status" in
   NO_CONTRACTS) emit_unverifiable "no_contracts" ;;
-  NOT_FOUND)    emit_unverifiable "subtask_not_found" ;;
+  NOT_FOUND)
+    printf '%s: subtask %s not in brief — anchors found: %s\n' "$SELF" "$id" "${anchors:-(none)}" >&2
+    emit_unverifiable "subtask_not_found"
+    ;;
   EMPTY)
     printf '%s: subtask %s has an empty provides: list (nothing to verify)\n' "$SELF" "$id" >&2
     entries='[]'; gap=""

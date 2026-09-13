@@ -149,7 +149,7 @@ Write a compressed summary file to the worktree before outputting the final resu
 After the `.worker-summary.md` file has been written and BEFORE emitting the final `WORKER_RESULT` block, the Worker MUST verify the outputs it promised to deliver:
 
 1. **Re-read the subtask's `provides:` list** from the spawn brief.
-2. Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/verify-provides.sh" <pinned brief path> <your subtask id> --root .` — the ONE implementation of the three checks (`--kind-table` prints them) — and copy its `outputs_verified` / `outputs_gap` into your result verbatim; the consumer re-runs the same script against your tree and disk wins.
+2. Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/verify-provides.sh" <pinned brief path> <your subtask id> --root <tree>` — `<tree>` = your assigned worktree's ABSOLUTE path on the Parallel path (your Bash cwd is the MAIN checkout, not the worktree), `.` on the Single-Agent / Sequential paths (project root) — the ONE implementation of the three checks (`--kind-table` prints them); copy its `outputs_verified` / `outputs_gap` into your result verbatim; the consumer re-runs it against the same tree and disk wins.
 3. `outputs_verified` is an array of `{kind, path, name?, status: "present" | "missing"}` objects — one per `provides` item.
 4. `outputs_gap` is a comma-separated string naming the missing items (e.g., `"src/foo.ts:Bar, src/baz.ts"`), or the empty string if all are present.
 5. **Set the WORKER_RESULT `status` field** based on the verification outcome:

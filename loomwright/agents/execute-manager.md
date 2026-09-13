@@ -239,6 +239,9 @@ for iteration in 1..max_iterations:
       # brief_path = the SAME pointer you handed this worker at spawn: the
       # in-progress brief on the `job:` path, or the `.supervisor/requirements/
       # {slug}-plan.md` plan file in `/supervisor task:` no-brief mode.
+      # subtask_id = the bare token after `Subtask` in the brief's contract anchor
+      # (`1`, `12`) — NOT the state.md task_id / Beads id / slug: any other shape
+      # returns subtask_not_found and checkpoints every run (stderr lists the anchors).
       disk = Bash(`bash "${CLAUDE_PLUGIN_ROOT}/scripts/verify-provides.sh" {brief_path} {subtask_id} --root {worktree_path}`)
       tool_calls += 1
       if disk.status == "unverifiable":
@@ -257,10 +260,18 @@ for iteration in 1..max_iterations:
                                check_run: "verify-provides.sh {brief_path} {subtask_id} --root {worktree_path} → unverifiable/{disk.reason} (exit 0)"}]
             reason: "verify-provides.sh: unverifiable ({disk.reason}) for {subtask_id}"
           skip_to_next_iteration
+        if worker_result is ABSENT:
+          # No self-report to retain AND no disk verdict — the crash retry is already
+          # spent (Error Handling). Never record this as "disk verified": checkpoint.
+          emit EXECUTE_CHECKPOINT (same shape as below) with
+            missing_outputs: [{item: "provides: {subtask_id}", producing_subtask: subtask_id,
+                               check_run: "verify-provides.sh … → unverifiable/{disk.reason} (exit 0); WORKER_RESULT absent"}]
+            reason: "worker_result_absent and provides unverifiable ({disk.reason}) for {subtask_id}"
+          skip_to_next_iteration
         Task(Context-Keeper, operation: record_decision, phase: EXECUTE,
              decision: "provides_unverifiable: no_contracts — legacy/no-brief, worker self-report retained")
         tool_calls += 1
-        disk = worker_result          # self-report retained; ABSENT here is the crash path (Error Handling)
+        disk = worker_result          # self-report retained (present — ABSENT checkpointed above)
 
       # Disk wins. Record the disagreement (a /dreaming signal, not a second gate).
       if worker_result is present:
@@ -295,19 +306,32 @@ for iteration in 1..max_iterations:
         # Supervisor will resolve adjudication and instruct next action.
         skip_to_next_iteration
       if worker_result is ABSENT:
-        # Every item present on disk but no WORKER_RESULT to read — never a silent
-        # no-op: record it, then continue to the tests/lint half of the gate with
-        # tests_run/tests_passed UNKNOWN (run the worktree's test/lint command via
-        # Bash yourself, +1, and forward its outcome in record_worker_result with
-        # error: "worker_result_absent").
+        # Reachable ONLY with disk.source == "verify-provides.sh" (the unverifiable +
+        # ABSENT cell checkpointed above). Every item present on disk but no
+        # WORKER_RESULT to read — never a silent no-op: record it, then continue to
+        # the tests/lint half of the gate with tests_run/tests_passed UNKNOWN (run the
+        # worktree's test/lint command via Bash yourself, +1, and forward its outcome
+        # in record_worker_result with error: "worker_result_absent").
+        assert disk.source == "verify-provides.sh"
         Task(Context-Keeper, operation: record_decision, phase: EXECUTE,
              decision: "worker_result_absent: disk verified {N}/{N} present")
         tool_calls += 1
-      elif worker_result.status == "partial" OR worker_result.outputs_gap != "":
+      elif worker_result.outputs_gap != "":
         # Worker claims a gap the disk does not show — disk wins (provides_mismatch
         # already recorded above): fall through to the tests/lint half; the worker's
         # own status/error/tests still travel in record_worker_result unchanged.
         pass
+      elif worker_result.status == "partial":
+        # `partial` with NO provides gap is the Step 1 carve-out (agents/worker.md
+        # §"Status / outputs_gap invariant"): the worker could not read / act on its
+        # spec. Disk cannot contradict an unread spec, so this is NOT a disk-wins
+        # cell — it keeps the pre-v15.70.0 stop (both consumers agree: status !=
+        # completed with no disk contradiction ⇒ stop).
+        emit EXECUTE_CHECKPOINT (same shape as above) with
+          missing_outputs: [{item: "provides: {subtask_id}", producing_subtask: subtask_id,
+                             check_run: "WORKER_RESULT status=partial outputs_gap=\"\" (Step 1 carve-out; disk N/N present)"}]
+          reason: "partial with no provides gap — spec unreadable/insufficient per worker.md Step 1 carve-out: {worker_result.summary}"
+        skip_to_next_iteration
 
       # --- Lane-collision gate (D6, v15.20.0) — `out_of_lane` itself is a
       # REPORT-ONLY field (agents/worker.md §"Output Format") and never blocks a
@@ -665,7 +689,7 @@ Only the `## Session` block (session_id/branch/status/phase) is derived — it i
 
 | Error | Action |
 |-------|--------|
-| `outputs_verified` gate gap (a `provides` item missing ON DISK per `verify-provides.sh` — regardless of the worker's `status` — or an unverifiable contract routed to checkpoint by D1) | Emit EXECUTE_CHECKPOINT with `adjudication_required: true` (Step 2b / poll-loop gate); do not mark the subtask complete |
+| `outputs_verified` gate gap (a `provides` item missing ON DISK per `verify-provides.sh` — regardless of the worker's `status` — an unverifiable contract routed to checkpoint by D1 or paired with an ABSENT WORKER_RESULT, or a `partial` worker with an empty `outputs_gap` — the Step 1 carve-out) | Emit EXECUTE_CHECKPOINT with `adjudication_required: true` (Step 2b / poll-loop gate); do not mark the subtask complete |
 | Worker crash/timeout | Record error, retry once in same worktree, then escalate |
 | Worktree creation fails | Report in EXECUTE_RESULT, skip that subtask |
 | Tool budget 55+ | Output EXECUTE_CHECKPOINT immediately |

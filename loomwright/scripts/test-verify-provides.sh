@@ -24,9 +24,16 @@
 #             verify-provides.sh with `--root .` (by anchor, never line number); worker Step 5.5 cites
 #             it; RESULT_SCHEMAS.md marker block == `--kind-table` byte-for-byte; orchestrator.md has
 #             0 hits of the retired "(worker self-verification, zero tokens)" parenthetical.
-#   (m)     — MUTATION CONTROL: delete the script-call line(s) from a COPY of execute-manager.md's
-#             poll-loop gate; gate the mutant on non-empty + differs-from-original; the seam assertion
-#             against the mutant MUST fail — otherwise the assertion above is vacuous.
+#   routing — the EM gate names the two cells that are NOT disk-wins: `status: partial` with an
+#             EMPTY outputs_gap (the worker.md Step 1 carve-out — checkpoint, never a pass) and an
+#             ABSENT WORKER_RESULT on an unverifiable contract (checkpoint, never "disk verified");
+#             both Supervisor gates state the carve-out; all three consumers + the script header pin
+#             the subtask_id shape (bare anchor token); worker Step 5.5 passes the worktree path on the
+#             Parallel path, not `--root .`; subtask_not_found lists the anchors seen on stderr.
+#   (m)     — MUTATION CONTROLS: (1) delete the script-call line(s) from a COPY of execute-manager.md's
+#             poll-loop gate; (2) delete the carve-out clause from another COPY. Each mutant is gated
+#             on non-empty + differs-from-original; the seam assertion against it MUST fail —
+#             otherwise the assertion above is vacuous.
 #
 # EXPLICIT LIMIT: this pins the script's behaviour and the WIRING (the prompts cite it where they say
 # they do). It cannot prove an Execute Manager actually runs the Bash call — that is prompt behaviour,
@@ -232,6 +239,9 @@ run "$TMP/briefA.md" 1
 run "$TMP/briefA.md" 3 --root "$ROOT"
 [ "$RC" -eq 0 ] && [ "$(jq_get '.status')" = "unverifiable" ] && [ "$(jq_get '.reason')" = "subtask_not_found" ] && ok "unknown id ⇒ unverifiable/subtask_not_found, exit 0" || no "subtask_not_found: rc=$RC $OUT"
 case "$ERR" in *subtask_not_found*) ok "subtask_not_found reason on stderr" ;; *) no "stderr lacks reason: $ERR" ;; esac
+case "$ERR" in *"anchors found: 1, 12"*) ok "subtask_not_found lists the anchors the brief carries (1, 12) — the umbrella headings are not anchors" ;; *) no "subtask_not_found stderr lacks the anchor list: $ERR" ;; esac
+run "$TMP/briefA.md" 1-first --root "$ROOT"
+[ "$(jq_get '.reason')" = "subtask_not_found" ] && ok "a slug-shaped id (1-first) is NOT the anchor token ⇒ subtask_not_found (the shape the consumers must not pass)" || no "slug id: $OUT"
 
 echo "--- script: brief B (H2 heading, lowercase, subtask_N: keys, provides: []) ---"
 run "$TMP/briefB.md" 1 --root "$ROOT"
@@ -308,6 +318,18 @@ em_gate_ok() {   # exit 0 iff the poll-loop gate section of $1 cites the script 
 em_gate_ok "$EM" && ok "EM §v12 outputs_verified gate cites verify-provides.sh + provides_mismatch + 'regardless of the worker'" || no "EM poll-loop gate seam"
 section "$EM" 'v12 outputs_verified gate' 'Lane-collision gate' | grep -q 'worker_result_absent' && ok "EM gate handles the dead-worker case (worker_result_absent)" || no "EM gate lacks worker_result_absent"
 section "$EM" 'v12 outputs_verified gate' 'Lane-collision gate' | grep -q 'legacy_brief' && ok "EM gate carries D1 routing (legacy_brief)" || no "EM gate lacks D1 legacy_brief routing"
+em_routes_ok() {   # exit 0 iff the gate section of $1 routes BOTH non-disk-wins cells to a checkpoint
+  local s; s="$(section "$1" 'v12 outputs_verified gate' 'Lane-collision gate')"
+  [ -n "$s" ] || return 1
+  printf '%s\n' "$s" | grep -q 'partial with no provides gap' || return 1          # Step 1 carve-out ⇒ checkpoint
+  printf '%s\n' "$s" | grep -q 'Step 1 carve-out' || return 1
+  printf '%s\n' "$s" | grep -q 'worker_result_absent and provides unverifiable' || return 1   # ABSENT × unverifiable ⇒ checkpoint
+  return 0
+}
+em_routes_ok "$EM" && ok "EM gate routes 'partial with no provides gap' (Step 1 carve-out) AND ABSENT-on-unverifiable to a checkpoint" || no "EM gate routing seam (carve-out / absent-on-unverifiable)"
+section "$EM" 'v12 outputs_verified gate' 'Lane-collision gate' | grep -q 'disk.source == "verify-provides.sh"' && ok "EM 'worker_result_absent: disk verified' record is gated on disk.source == verify-provides.sh" || no "EM absent-record not gated on disk.source"
+section "$EM" 'v12 outputs_verified gate' 'Lane-collision gate' | grep -q 'bare token after `Subtask`' && ok "EM gate pins the subtask_id shape (bare anchor token)" || no "EM gate lacks the subtask_id shape clause"
+grep -q 'bare token the brief.s contract anchor names' "$SCRIPT" && ok "script header pins the subtask_id shape (bare anchor token)" || no "script header lacks the subtask_id shape clause"
 grep -q '^\*\*Tool call tracking:\*\*.*verify-provides\.sh' "$EM" && ok "EM tool-call tracking notes the +1 Bash per subtask" || no "EM tool-call tracking lacks the verify-provides.sh note"
 section "$EM" 'Step 2b — Pre-Spawn Verification Gate' 'CHECKPOINT format' | grep -q 'kind-table' && ok "EM Step 2b points at --kind-table" || no "EM Step 2b lacks the kind-table pointer"
 
@@ -316,8 +338,15 @@ printf '%s\n' "$sup_single" | grep -q 'verify-provides\.sh.*--root \.' && ok "Su
 sup_seq="$(section "$SUP" '#### Sequential Path' '#### Parallel Path')"
 printf '%s\n' "$sup_seq" | grep -q 'verify-provides\.sh.*--root \.' && ok "Supervisor Sequential gate cites verify-provides.sh with --root ." || no "Supervisor Sequential gate seam"
 printf '%s\n' "$sup_single" | grep -q 'pre-spawn' && no "Supervisor step 3 still calls the poll-loop gate 'pre-spawn'" || ok "Supervisor step 3 no longer mislabels the poll-loop gate as pre-spawn"
+printf '%s\n' "$sup_single" | grep -q 'Step 1 carve-out' && ok "Supervisor Single-Agent step 3 states the partial-with-empty-gap carve-out (retry/pause, not pass)" || no "Supervisor Single-Agent step 3 lacks the Step 1 carve-out clause"
+printf '%s\n' "$sup_seq" | grep -q 'Step 1 carve-out' && ok "Supervisor Sequential gate states the Step 1 carve-out" || no "Supervisor Sequential gate lacks the Step 1 carve-out clause"
+printf '%s\n' "$sup_single" | grep -q 'bare token after `Subtask`' && ok "Supervisor step 3 pins the subtask_id shape (bare anchor token)" || no "Supervisor step 3 lacks the subtask_id shape clause"
+printf '%s\n' "$sup_single" | grep -q 'never a pass' && ok "Supervisor step 3: absent WORKER_RESULT on an unverifiable contract is a pause, never a pass" || no "Supervisor step 3 lacks the absent-on-unverifiable clause"
 
 section "$WORKER" 'verify own `provides:`' 'Step 5.65' | grep -q 'verify-provides\.sh' && ok "worker Step 5.5 cites verify-provides.sh" || no "worker Step 5.5 seam"
+w55="$(section "$WORKER" 'verify own `provides:`' 'Step 5.65')"
+printf '%s\n' "$w55" | grep -q 'verify-provides\.sh.*--root \.' && no "worker Step 5.5 hard-codes --root . (wrong tree on the Parallel path: Bash cwd is the main checkout)" || ok "worker Step 5.5 does not hard-code --root ."
+printf '%s\n' "$w55" | grep -qi 'worktree.*ABSOLUTE path on the Parallel path' && ok "worker Step 5.5 passes the worktree's absolute path on the Parallel path" || no "worker Step 5.5 lacks the Parallel-path worktree --root clause"
 grep -q 'present' "$WORKER" && grep -q 'missing' "$WORKER" && ok "worker.md keeps the present/missing enum tokens (check-contract-parity.sh)" || no "worker.md lost present/missing"
 
 DOC_KT="$(awk '/<!-- kind-table:begin -->/ { on = 1; next } /<!-- kind-table:end -->/ { on = 0 } on { print }' "$SCHEMAS")"
@@ -343,6 +372,21 @@ else
   else
     ok "MUTATION CONTROL: deleting the script call from the poll-loop gate makes the seam assertion fail"
   fi
+fi
+MUT2="$TMP/em-mutant-carveout.md"
+awk '/v12 outputs_verified gate/ { on = 1 } /Lane-collision gate/ { on = 0 } on && /carve-out/ { next } { print }' "$EM" > "$MUT2"
+if [ ! -s "$MUT2" ]; then
+  no "carve-out mutant is empty — control invalid"
+elif cmp -s "$MUT2" "$EM"; then
+  no "carve-out mutant identical to original — control invalid (no carve-out line inside the gate section?)"
+else
+  ok "carve-out mutant is non-empty and differs from the original"
+  if em_routes_ok "$MUT2"; then
+    no "MUTATION CONTROL: EM routing assertion still passes with the carve-out clause deleted — assertion is vacuous"
+  else
+    ok "MUTATION CONTROL: deleting the carve-out clause from the poll-loop gate makes the routing assertion fail"
+  fi
+  em_gate_ok "$MUT2" && ok "carve-out mutant still passes the script-call seam (the two controls test different clauses)" || no "carve-out mutant broke the script-call seam — controls are not independent"
 fi
 
 echo
