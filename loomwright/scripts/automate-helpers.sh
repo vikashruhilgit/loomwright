@@ -33,7 +33,7 @@
 #   resolve-backlog  <backlog.md>                       # §2 dependency-ordered items honoring done/✅ markers
 #   resume-glob      <automate_dir>                     # §4 list *.md not "## Status: done"
 #   reconcile-item   <pr_url> <belief>                  # §4 belief vs gh/git truth -> corrected state
-#   gate-eval        <pr_url> <ctx.json>                # §10 MERGE|PARK 5-condition fail-closed gate
+#   gate-eval        <pr_url> <ctx.json>                # §10 MERGE|PARK 6-condition fail-closed gate (cond 6 = classify-risk.sh high_risk, NO override)
 #   learning-emit    <ledger_path> <flags...>           # §6 step 3 fail-safe (always exit 0) engine-native ground-truth POSTMORTEM_RESULT line; idempotent on run_id+item+pr_url+source+completeness (a degraded emit never blocks a later complete one)
 #   brief-repair     <item> <pr_url>                    # §6 steps 1/5 fail-safe (always exit 0) evidence-positive brief lifecycle repair: `gh pr view` says MERGED (or a non-empty mergedAt) ⇒ sibling reconcile-jobs.sh --repair --evidence <item>=<pr_url>; prints ONE line for ## Progress
 #
@@ -355,12 +355,12 @@ reconcile_item() {
 }
 
 # --------------------------------------------------------------------------- #
-# §10 — trusted auto-merge gate (5 conditions, fail CLOSED)
+# §10 — trusted auto-merge gate (6 conditions, fail CLOSED)
 # --------------------------------------------------------------------------- #
 
 # gate-eval <pr_url> <ctx.json>
-# Pure decision over a context JSON describing the 5 conditions. Prints "MERGE"
-# and EXECUTES `gh pr merge --squash <url>` ONLY when ALL 5 hold; otherwise prints
+# Pure decision over a context JSON describing the 6 conditions. Prints "MERGE"
+# and EXECUTES `gh pr merge --squash <url>` ONLY when ALL 6 hold; otherwise prints
 # "PARK: <reason>" and returns 0 (a PARK is a normal, expected outcome — fail
 # CLOSED, never crash). The `gh` calls behind each condition are pre-resolved into
 # ctx.json by the caller (the loop), which is exactly what the test stubs.
@@ -377,13 +377,23 @@ reconcile_item() {
 #     "review_decision": "APPROVED|CHANGES_REQUESTED|REVIEW_REQUIRED|none|unreadable",  # cond 3
 #        # "none" = reviews-not-required (the loop maps a successfully-read null here);
 #        # "unreadable" = the gh reviewDecision read failed. Bare null/absent ⇒ fail-closed PARK.
-#     "unresolved_human_thread": true|false,        # cond 3 — loop passes `false` ONLY on a
-#        # SUCCESSFULLY-read no-unresolved-human-thread result; an unresolved human thread OR an
-#        # unreadable/errored thread read ⇒ pass `true` (or omit) ⇒ fail-closed PARK (`!= "false"`).
+#     "unresolved_human_thread": true|false,        # cond 3 — loop passes JSON boolean `false` ONLY
+#        # on a SUCCESSFULLY-read no-unresolved-human-thread result; an unresolved human thread OR an
+#        # unreadable/errored thread read ⇒ pass `true` (or omit) ⇒ fail-closed PARK. Read with a
+#        # `type == "boolean"` guard: any string — including "false" — parks.
 #     "protection_enforceable": true|false,         # cond 4
 #     "trust_unprotected": true|false,              # cond 4 override
 #     "checks_green": true|false,                   # cond 5
-#     "rubric_satisfied": true|"na"|false           # cond 5 (na = no rubric ⇒ not a blocker)
+#     "rubric_satisfied": true|"na"|false,          # cond 5 (na = no rubric ⇒ not a blocker)
+#     "high_risk": true|false|null,                 # cond 6 — NO override: the loop re-runs
+#        # `classify-risk.sh main <ready_sha> --root <checkout>` at GATE time on the SHA being
+#        # judged and passes `.high_risk` straight through (a JSON boolean — never re-stringified);
+#        # `null` (unclassifiable), missing, or anything but the JSON boolean `false` — any string,
+#        # including "false" — ⇒ fail-closed PARK (the cond-3 `type == "boolean"` shape).
+#        # No flag, config key, or project file overrides it (owner decision R5; `--trust-unprotected`
+#        # is cond 4 only).
+#     "risk_reasons": ["path: ...", ...]            # cond 6 — the script's `.reasons`; the PARK line
+#        # quotes the first 3 (read defensively — absent/non-array ⇒ "no risk_reasons recorded").
 #   }
 gate_eval() {
   local url="$1" ctx="$2"
@@ -396,7 +406,11 @@ gate_eval() {
   # EVEN THOUGH it coerces a JSON `false` to "__MISSING__" — a coerced value is
   # never == "true", so it parks. NEVER add a condition written as `= "false"`:
   # the falsy-coercion would make it silently never fire (fail OPEN). Keep all new
-  # conditions in the affirmative `!= "true"` ⇒ PARK form.
+  # conditions in the affirmative `!= "true"` ⇒ PARK form. The ONE other sanctioned shape
+  # (cond 3 `unresolved_human_thread`, cond 6 `high_risk`) is a "park unless exactly the JSON
+  # boolean false" read: an explicit `has()` + `type == "boolean"` check WITHOUT `//` and
+  # WITHOUT `tostring` (which erases the type — the string "false" would read as the boolean),
+  # mapping anything else to __MISSING__ ⇒ PARK.
   # NB: a bash function definition is always global — there is no `local` function
   # scoping — so J() lives until gate_eval returns and the next call redefines it;
   # no `local J` (which would only declare an unused local var of that name).
@@ -462,9 +476,11 @@ gate_eval() {
   # Missing / null / unreadable / `true` ⇒ PARK: an unresolved human thread OR an
   # unreadable GraphQL thread read must NEVER merge (SKILL §10 cond 3, "Unreadable ⇒
   # do-not-merge"; CLAUDE.md bimodal fail-closed invariant). The prior `= "true"`
-  # form was a fail-OPEN polarity bug (a missing value merged).
+  # form was a fail-OPEN polarity bug (a missing value merged). The value must be the JSON
+  # BOOLEAN — `type == "boolean"`, not `tostring`, which mapped the string "false" (a
+  # re-stringified read) onto the boolean and merged (PR #219 review).
   local uht
-  uht="$("$JQ" -r 'if has("unresolved_human_thread") and (.unresolved_human_thread != null) then (.unresolved_human_thread|tostring) else "__MISSING__" end' "$ctx")"
+  uht="$("$JQ" -r 'if has("unresolved_human_thread") and ((.unresolved_human_thread|type) == "boolean") then (.unresolved_human_thread|tostring) else "__MISSING__" end' "$ctx")"
   if [ "$uht" != "false" ]; then
     echo "PARK: unresolved_human_thread"; return 0
   fi
@@ -485,7 +501,24 @@ gate_eval() {
     echo "PARK: rubric_unsatisfied"; return 0
   fi
 
-  # ALL 5 hold — the ONLY sanctioned `gh pr merge --squash` in the plugin (§11).
+  # Condition 6 — NOT a high-risk diff (SKILL §10 cond 6; owner decision R5: NO override).
+  # The loop re-classifies the SHA it is judging with `classify-risk.sh` at GATE time and
+  # passes `.high_risk` through. Read in EXACTLY the cond-3 `unresolved_human_thread` shape:
+  # WITHOUT the falsy-coercing `//`, an explicit has() + `type == "boolean"` check, and PARK
+  # unless the value is the JSON boolean `false` — so `true`, `null` (unclassifiable), a missing
+  # key, or ANY string (including "false" — `tostring` would have erased that distinction) all
+  # fail CLOSED. No `--trust-*` flag, config key, or `.agent/risk.json` key is consulted here:
+  # nothing overrides this condition by design.
+  local hr
+  hr="$("$JQ" -r 'if has("high_risk") and ((.high_risk|type) == "boolean") then (.high_risk|tostring) else "__MISSING__" end' "$ctx")"
+  if [ "$hr" != "false" ]; then
+    local rr
+    rr="$("$JQ" -r 'if has("risk_reasons") and ((.risk_reasons|type) == "array") then (.risk_reasons | map(tostring) | .[:3] | join("; ")) else "" end' "$ctx")"
+    [ -z "$rr" ] && rr="no risk_reasons recorded"
+    echo "PARK: high_risk_diff ($rr)"; return 0
+  fi
+
+  # ALL 6 hold — the ONLY sanctioned `gh pr merge --squash` in the plugin (§11).
   if "$GH" pr merge --squash "$url" >/dev/null 2>&1; then
     echo "MERGE"; return 0
   fi

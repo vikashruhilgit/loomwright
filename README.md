@@ -245,12 +245,12 @@ See `loomwright/skills/autonomous-loop/SKILL.md` for the full state machine and 
 /automate --backlog <_BACKLOG.md>          # backlog-doc source — dependency-ordered Queue
 /automate --limit N                        # cap PROCESSED items this run (default 5; full Queue still stored)
 /automate --resume [<run_id>]              # reconcile + continue a prior incomplete run
-/automate ... --auto-merge                 # opt-in, default-OFF, 5-condition fail-closed merge gate
+/automate ... --auto-merge                 # opt-in, default-OFF, 6-condition fail-closed merge gate (a high-risk diff always parks — no override)
 ```
 
 - **Single run file + smart resume:** on start it globs `.supervisor/automate/*.md` for runs not marked `## Status: done`, reconciles each in-flight item against ground truth (`gh`/`git`/`## Status:` stamps) before trusting a checkbox, then offers continue / start-fresh / archive. The run file is written atomically (temp + rename); `## Progress` is append-only.
 - **Single drain, single open PR:** `/automate` suppresses the default detached until-mergeable drain (`.supervisor/config.json {"auto_review": false}` around the inner `/autonomous` RUN phase, restored finally-style) and owns exactly ONE inline `/review-pr --until-mergeable` drain — no double-dispatch. While any item has an open unmerged PR (awaiting_merge or escalated) the loop will not pick a new item.
-- **Merge is opt-in and fail-closed:** default mode never merges (`READY` PRs are left open for a human). `--auto-merge` is the **only** place in the plugin that executes `gh pr merge --squash`, behind a 5-condition fail-closed gate; `review-heal` / Supervisor Phase 4.5 still never merge. `ESCALATED` never merges and parks the run.
+- **Merge is opt-in and fail-closed:** default mode never merges (`READY` PRs are left open for a human). `--auto-merge` is the **only** place in the plugin that executes `gh pr merge --squash`, behind a 6-condition fail-closed gate — the sixth re-classifies the PR head with `scripts/classify-risk.sh` and parks any high-risk or unclassifiable diff with no override (projects may only ADD surfaces via a committed `.agent/risk.json`); `review-heal` / Supervisor Phase 4.5 still never merge. `ESCALATED` never merges and parks the run.
 
 See `loomwright/commands/automate.md` and the `automate-loop` skill for the full state machine; the run-file layout is documented as `AUTOMATE_RUN` in `loomwright/docs/RESULT_SCHEMAS.md`.
 

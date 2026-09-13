@@ -802,14 +802,16 @@ Each basis is tuned by env vars read by its own script, all optional. Ledger bas
 /automate --backlog <_BACKLOG.md>                 # backlog-doc source — dependency-ordered Queue
 /automate --limit N                               # cap PROCESSED items this run (default 5; full Queue still stored)
 /automate --resume [<run_id>]                     # reconcile + continue a prior incomplete run
-/automate ... --auto-merge                        # opt-in, default-OFF, 5-condition fail-closed merge gate
+/automate ... --auto-merge                        # opt-in, default-OFF, 6-condition fail-closed merge gate
+/automate ... --trust-unprotected                 # with --auto-merge: allow merge onto an unprotected branch (condition 4 ONLY — never overrides condition 6, the high-risk park)
 ```
 
 **Parameters:**
 - `"<what>"` / `--folder <dir>` / `--backlog <doc>` — the source (choose one); bare `/automate` resumes, else asks
 - `--limit N` — cap PROCESSED items this run (default 5); the FULL resolved Queue is still materialized in the run file
 - `--resume [<run_id>]` — reconcile + continue a prior incomplete run (most-recent incomplete if id omitted)
-- `--auto-merge` — opt-in (default OFF) trusted auto-merge behind a 5-condition fail-closed gate; the **only** place in the plugin that executes `gh pr merge --squash`
+- `--auto-merge` — opt-in (default OFF) trusted auto-merge behind a 6-condition fail-closed gate; the **only** place in the plugin that executes `gh pr merge --squash`. Condition 6 re-classifies the PR head with `scripts/classify-risk.sh` and parks any high-risk or unclassifiable diff — nothing overrides it
+- `--trust-unprotected` — with `--auto-merge`: allow merge onto a branch without enforceable protection. Scoped to condition 4 ONLY; it does not override condition 6, and no flag, config key, or project file does
 - `--notify` / `--non-interactive-fallback` — passthrough to the inner `/autonomous`
 
 **When to Use:**
