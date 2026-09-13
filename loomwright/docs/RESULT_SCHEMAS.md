@@ -41,7 +41,7 @@ WORKER_RESULT:
 - When `status=completed`: at least one of `files_modified` or `files_created` must be non-empty (create-only subtasks are valid)
 - When `status=failed`: `error` must be present and non-empty
 - `summary` must be present and under 200 tokens
-- `outputs_verified` must be present (may be `[]` only when the brief promised no concrete outputs); each entry must have `kind`, `path`, `status`; entries with `kind ∈ {symbol, type}` must include `name`
+- `outputs_verified` must be present (may be `[]` only when the brief promised no concrete outputs); each entry must have `kind`, `path`, `status`; entries with `kind ∈ {symbol, type}` must include `name`; entries MAY carry the script's `check_run` string (command + exit code) — `validate-worker-result.py` checks only the required keys and ignores extra ones
 - `outputs_gap` must be present as a string; an empty string means all promised outputs were delivered
 - **Cross-field invariant (hook-enforced):** if `outputs_gap` is non-empty AND `status=completed`, the SubagentStop hook rejects with `outputs_gap non-empty must map to status: partial`. A worker that did not deliver all promised outputs has not completed.
 - **Runtime checks performed by the SubagentStop hook (not part of the schema, listed for transparency):** the hook also verifies that a `.worker-summary.md` file was written (or that the output records the literal `summary_file_write_failed` degradation marker — the worker prompt's best-effort path) and that no destructive commands (`rm -rf`, `git push`, `git reset --hard`, `DROP`, `TRUNCATE`) appear in the run output.
