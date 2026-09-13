@@ -398,8 +398,8 @@ ground_truth = { checked: false, status: "skipped", checks_total: 0, checks_pass
 NO_CMD_FLAG = (NON_INTERACTIVE == true) ? "--no-cmd" : ""
 # The runner derives the PROJECT ROOT every check is evaluated against from the caller's CWD (git
 # toplevel) and hands it to each corpus-task check.sh as EVAL_PROJECT_ROOT — this is why the pinned
-# repo-root CWD matters here: ${CLAUDE_PLUGIN_ROOT} is the plugin's install dir (outside any git repo
-# on a marketplace install), never the project. `--project <dir>` exists for callers that cannot pin CWD.
+# repo-root CWD matters here: the runner lives in the plugin's install dir (outside any git repo on a
+# marketplace install), never in the project. `--project <dir>` exists for callers that cannot pin CWD.
 gt = bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-ground-truth.sh --brief <brief_path> $NO_CMD_FLAG
 # Parse the single `GROUND_TRUTH_JSON: {...}` line. A parse miss → treat as
 # ground_truth.checked=false, status:"unverified" (mirror the benchmark "treat a parse miss as

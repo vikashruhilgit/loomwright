@@ -39,7 +39,7 @@
 # and with EVAL_PROJECT_ROOT exported = the project it must VERIFY: `--project <dir>` if given, else
 # the git toplevel of the CALLER's CWD, else the caller's CWD. A check.sh must never derive the
 # project from its own location — on a marketplace install this script and its corpus live under
-# ~/.claude/plugins/cache/..., outside any git repo, so a `git rev-parse --show-toplevel` from the task
+# the plugin manager's install cache, outside any git repo, so a `git rev-parse --show-toplevel` from the task
 # dir fails there while the caller's project is perfectly resolvable (the run-ground-truth.sh
 # 2026-09-13 incident; contract in eval-corpus/README.md §"Project root"). The `commit` field and the
 # default results.jsonl location are read from the same root. A `--project` that is not a directory

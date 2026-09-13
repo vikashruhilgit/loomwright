@@ -8,7 +8,7 @@ set -uo pipefail
 # Project root — the repo this check VERIFIES. Precedence: $EVAL_PROJECT_ROOT (exported by
 # run-eval.sh / run-ground-truth.sh = the CALLER's project), else the git repo enclosing this task
 # dir (direct `bash check.sh` on a dev checkout). NEVER derive it from this file's location alone: on
-# a marketplace install the corpus lives under ~/.claude/plugins/cache/..., outside any git repo, and
+# a marketplace install the corpus lives in the plugin manager's install cache, outside any git repo, and
 # the caller's project is the only thing worth verifying (eval-corpus/README.md §"Project root").
 repo_root="${EVAL_PROJECT_ROOT:-}"
 if [ -z "$repo_root" ]; then

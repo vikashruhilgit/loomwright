@@ -19,7 +19,10 @@ An agent copying the template would have been told its block was malformed.
 
 ## How it's checked
 
-`check.sh` parses the `MANIFEST` table out of the repo-root
+`check.sh` resolves the repo root as `--root <dir>` → `$EVAL_PROJECT_ROOT`
+(the caller's project, exported by the runners — see the corpus README
+§"Project root") → the enclosing git repo (direct invocation only), then
+parses the `MANIFEST` table out of the repo-root
 `scripts/check-contract-parity.sh` — the same single source of field truth
 `parity-emit-block` reuses, deliberately rather than adding another parallel
 table. For each `matcher|agent|block|fields` row it:

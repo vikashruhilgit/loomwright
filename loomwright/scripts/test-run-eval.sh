@@ -13,7 +13,9 @@
 #   4. non-executable check.sh — a present-but-not-executable check.sh is counted as a FAIL
 #      (included in tasks_total, with a stderr warning), never silently dropped.
 #   5. results.jsonl append — default-on appends the EVAL_RESULT (+ recorded_at) as one JSON line to
-#      $EVAL_RESULTS_FILE; a second run appends (not overwrites); --no-record suppresses entirely.
+#      $EVAL_RESULTS_FILE; a second run appends (not overwrites); --no-record suppresses entirely;
+#      an explicit --project <non-git dir> records to <project>/.supervisor/eval/results.jsonl by
+#      default, while a non-git CWD with no --project records nothing (control).
 #   6. project root — every check.sh receives EVAL_PROJECT_ROOT = the CALLER's project: (a) the git
 #      toplevel of the CWD (a hermetic fixture repo, NOT this checkout), (b) `--project <dir>` when
 #      given, (c) `--project <non-directory>` => status "unverified", 0/0, exit 0. Regression for the
@@ -147,6 +149,30 @@ if [ ! -e "$RF2" ] && [ "$rcS" -eq 0 ]; then
   ok "--no-record suppresses the append (file not created) and exits 0"
 else
   no "--no-record suppression wrong (exists=$( [ -e "$RF2" ] && echo yes || echo no ), rc=$rcS)"
+fi
+
+# d. Default recording target follows --project: an explicit --project that is NOT a git repo, with
+#    no --no-record and no EVAL_RESULTS_FILE, records to <project>/.supervisor/eval/results.jsonl —
+#    the caller named the project, so recording there is wanted. Mutation control: from the same
+#    non-git CWD WITHOUT --project nothing is written anywhere under it (no git root, no flag ⇒ the
+#    default target is skipped, exactly as before the flag existed).
+PROJ_NG="$TMP/project-nongit"
+mkdir -p "$PROJ_NG"
+( cd "$TMP" && EVAL_CORPUS_DIR="$CORPUS_A" env -u EVAL_RESULTS_FILE bash "$RUN" --project "$PROJ_NG" >/dev/null 2>&1 ); rcD=$?
+RFD="$PROJ_NG/.supervisor/eval/results.jsonl"
+if [ "$rcD" -eq 0 ] && [ -f "$RFD" ] && [ "$(wc -l < "$RFD" | tr -d ' ')" = "1" ] \
+  && tail -n1 "$RFD" | jq -e '.pass_rate=="2/3" and .status=="ok"' >/dev/null 2>&1; then
+  ok "--project <non-git dir> (default recording): 1 line at <project>/.supervisor/eval/results.jsonl"
+else
+  no "--project default recording wrong (rc=$rcD, exists=$( [ -f "$RFD" ] && echo yes || echo no ))"
+fi
+CWD_NG="$TMP/cwd-nongit"
+mkdir -p "$CWD_NG"
+( cd "$CWD_NG" && EVAL_CORPUS_DIR="$CORPUS_A" env -u EVAL_RESULTS_FILE bash "$RUN" >/dev/null 2>&1 ); rcD2=$?
+if [ "$rcD2" -eq 0 ] && [ ! -e "$CWD_NG/.supervisor" ]; then
+  ok "control: non-git CWD without --project records nothing under it (default target skipped)"
+else
+  no "control wrong (rc=$rcD2): $(find "$CWD_NG" -type f 2>/dev/null | head -3)"
 fi
 
 echo "== 6. project root: EVAL_PROJECT_ROOT reaches check.sh (CWD git toplevel, --project, invalid) =="

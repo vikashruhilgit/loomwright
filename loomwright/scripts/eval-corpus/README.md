@@ -79,8 +79,8 @@ location.** The precedence inside a check is: an explicit `--root <dir>` (where 
 one) → `$EVAL_PROJECT_ROOT` → the git repo enclosing the task dir (a fallback for direct
 `bash check.sh` invocation on a dev checkout only). Why this is load-bearing: on a **marketplace
 install** the plugin — runner and corpus alike — lives under
-`~/.claude/plugins/cache/<marketplace>/loomwright/<version>/scripts/`, which is **not inside any git
-repo**. A check that did `git rev-parse --show-toplevel` after the runner's `cd <task-dir>` failed
+the plugin manager's install cache (`<cache>/<marketplace>/loomwright/<version>/scripts/`), which is
+**not inside any git repo**. A check that did `git rev-parse --show-toplevel` after the runner's `cd <task-dir>` failed
 there with "not inside a git repo" for **every** maintainer-side task, so a Phase 4.5 ground-truth
 run reported `advisory_failures` while the dev checkout's copy of the identical runner passed
 (observed 2026-09-13, PR #217). The runner is the only party that knows the caller's project; it

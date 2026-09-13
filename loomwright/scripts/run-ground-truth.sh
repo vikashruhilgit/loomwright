@@ -78,7 +78,7 @@
 #   and the contextual `commit` field are read from it, and it is exported to every corpus-task
 #   check.sh as EVAL_PROJECT_ROOT (the corpus contract — eval-corpus/README.md §"Project root").
 #   WHY this is load-bearing: on a marketplace install $SCRIPT_DIR is
-#   ~/.claude/plugins/cache/<marketplace>/loomwright/<version>/scripts — NOT inside any git repo — so a
+#   the plugin manager's install cache (<cache>/<marketplace>/loomwright/<version>/scripts) — NOT inside any git repo — so a
 #   check.sh that resolved the repo from ITS OWN directory (`git rev-parse --show-toplevel` after the
 #   runner's cd into the task dir) failed every maintainer-side dogfood task with "not inside a git
 #   repo" (observed 2026-09-13: Phase 4.5 ground_truth reported advisory_failures 2/4 while the

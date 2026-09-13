@@ -20,7 +20,7 @@
 #   (k) empty cmd: target                            => fail (reason empty_cmd_target), not a false pass.
 #   (l) --no-cmd / GROUND_TRUTH_NO_CMD safety valve   => cmd skipped (unverified/cmd_disabled, no side effect), corpus-task still runs.
 #   (m) project root — the 2026-09-13 marketplace-install incident (runner + corpus copied OUTSIDE any
-#       git repo, as under ~/.claude/plugins/cache/): (m1) a corpus-task run from the repo-root CWD
+#       git repo, as under the plugin manager's install cache): (m1) a corpus-task run from the repo-root CWD
 #       PASSES and `commit` is the PROJECT's HEAD; (m2) `--project <repo>` from a non-git CWD passes and
 #       a repo-root-relative `cmd:` runs from the project root; (m3) the in-repo runner from a non-git
 #       CWD with no --project FAILS the maintainer-side task (the check verifies the CALLER's project,
@@ -238,7 +238,7 @@ fi
 
 echo "== (m) project root: runner + corpus copied OUTSIDE any git repo (marketplace-install shape) =="
 # Regression for the 2026-09-13 incident: on a marketplace install $SCRIPT_DIR is
-# ~/.claude/plugins/cache/<marketplace>/loomwright/<version>/scripts — not in any git repo — and every
+# the plugin manager's install cache (<cache>/<marketplace>/loomwright/<version>/scripts) — not in any git repo — and every
 # maintainer-side check.sh resolved the repo from ITS OWN dir, so ground_truth reported
 # advisory_failures while the checkout's copy of the same runner passed. The runner must hand the
 # CALLER's project root to each check (EVAL_PROJECT_ROOT), and the checks must use it.
@@ -271,7 +271,7 @@ else
   # from the project root (not from the caller's CWD, where that file does not exist).
   oM2="$( cd "$CWD" && bash "$FAKE_RUN" --project "$REPO_ROOT" \
           --check 'corpus-task: version-consistent' \
-          --check 'cmd: test -f loomwright/.claude-plugin/plugin.json' 2>/dev/null )"; rcM2=$?
+          --check 'cmd: test -f scripts/validate-version.sh' 2>/dev/null )"; rcM2=$?
   jM2="$(gt_json "$oM2")"
   if [ "$rcM2" -eq 0 ] && printf '%s' "$jM2" | jq -e '
       .status=="pass" and .checks_total==2 and .checks_passed==2
