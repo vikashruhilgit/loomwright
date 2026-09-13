@@ -14,12 +14,14 @@
 #   (a) the reviewer spawn prompt carries the BRIEF-CONFORMANCE ADVISORY line DIRECTLY AFTER the
 #       HOUSE-RULES ADVISORY line (anchored on the `**HOUSE-RULES ADVISORY (non-gating` prompt-line
 #       literal, NOT the bare token — Part 1 prose also mentions HOUSE-RULES), gated on non-empty
-#       `brief_conformance`, and carrying the three-way verdict + the `category: new` / HIGH mapping.
+#       `brief_conformance`, and carrying the three-way verdict + the `category: new` / HIGH mapping,
+#       the `{brief_path}` pointer for criteria past the cap, and the `file:` / sentinel `brief` convention.
 #   (b) the bounded cap is stated ONCE: the token `25 bullets` (a phrase, not a bare digit — an
 #       unrelated future `25` must not turn this red) appears exactly once in the skill, INSIDE the
 #       Part 1 `## Brief-conformance advisory` section; step 1f refers to "the cap in Part 1" and
 #       names all three skip conditions (no `brief_path` / no `## Acceptance Criteria` / zero bullets).
-#   (c) agents/code-reviewer.md names `not_addressed` with the HIGH / `category: new` mapping.
+#   (c) agents/code-reviewer.md names `not_addressed` with the HIGH / `category: new` mapping and
+#       mirrors the sentinel `brief` convention (one sentence, no second copy of the rules).
 #   (d) the Self-Heal Miss-Class Checklist names `brief_conformance`.
 #   (e) the DIFFERENT-LENS DIRECTIVE parenthetical class list names `brief_conformance`.
 #   (m) MUTATION CONTROL: delete the prompt line from a COPY of the skill; gate the mutant on
@@ -108,6 +110,19 @@ case "$line" in
   *'the cap in Part 1'*) ok "(a) prompt line refers to the cap in Part 1 (does not restate it)" ;;
   *) no "(a) prompt line does not refer to the cap in Part 1" ;;
 esac
+# The over-cap instruction ("read it if you need them") needs an operand: the brief pointer, in the
+# pointer-not-payload shape every other Supervisor spawn uses ({brief_path}).
+case "$line" in
+  *'{brief_path}'*) ok "(a) prompt line carries the {brief_path} pointer for criteria past the cap" ;;
+  *) no "(a) prompt line lacks the {brief_path} pointer — the over-cap 'read it' instruction has no operand" ;;
+esac
+# `file` is a required non-empty string in the SubagentStop validator (hooks.json); a not_addressed
+# criterion may target no file, so the line must state the `brief` sentinel ONCE (mirrored, not
+# restated, in agents/code-reviewer.md step 5a).
+case "$line" in
+  *'`file:`'*'sentinel `brief`'*) ok "(a) prompt line states the file: convention with the brief sentinel" ;;
+  *) no "(a) prompt line lacks the file: / sentinel brief convention" ;;
+esac
 
 # ---- (b) the cap stated ONCE, inside Part 1; step 1f references it + names the skip conditions ----
 cap_total="$(grep -c -- '25 bullets' "$SKILL" || true)"
@@ -161,6 +176,10 @@ if grep -qF 'cannot_determine' "$REVIEWER"; then
 else
   no "(c) agents/code-reviewer.md lacks cannot_determine"
 fi
+case "$rev_line" in
+  *'sentinel `brief`'*) ok "(c) agents/code-reviewer.md mirrors the brief sentinel for file:" ;;
+  *) no "(c) agents/code-reviewer.md not_addressed line does not mirror the sentinel brief convention" ;;
+esac
 
 # ---- (d) the miss-class checklist names brief_conformance --------------------------------------
 cl_hits="$(awk '
