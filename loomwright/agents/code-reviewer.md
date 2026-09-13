@@ -179,7 +179,7 @@ Run these checks **only when `review_mode = consistency_audit`**. Results map to
 
 The hook enforces these caps on `drift_kind ↔ severity` combinations — an issue violating a cap is rejected at Stop time.
 
-**Self-heal lens (Supervisor Phase 4.5 / `/review-pr`):** during a self-heal or standalone PR-heal review, ALSO apply the repo-agnostic **Self-Heal Miss-Class Checklist** in `skills/quality-checklist/SKILL.md` — validation parity (backend mirrors frontend), no numeric-falsy coercion, no positional args to options-object functions, branch coverage for new conditionals, count/version/restated-list drift, and cross-reference precision drift. It is repo-agnostic: it catches these classes on external app repos where the `consistency_audit` triggers above do not fire.
+**Self-heal lens (Supervisor Phase 4.5 / `/review-pr`):** during a self-heal or standalone PR-heal review, ALSO apply the repo-agnostic **Self-Heal Miss-Class Checklist** in `skills/quality-checklist/SKILL.md` — validation parity (backend mirrors frontend), no numeric-falsy coercion, no positional args to options-object functions, branch coverage for new conditionals, count/version/restated-list drift, cross-reference precision drift, and `brief_conformance` (a stated acceptance criterion with no corresponding change in the diff — checkable only in Supervisor Phase 4.5, where the spawn prompt carries the brief's criteria; see "Brief conformance" in the Review Process below). It is repo-agnostic: it catches these classes on external app repos where the `consistency_audit` triggers above do not fire.
 
 ---
 
@@ -388,6 +388,14 @@ Review implementation code against quality standards and provide a clear decisio
    **When behavior cannot be verified** — because verification would mutate the tree, write artifacts (snapshots, coverage, caches, temp DB state, generated files), or needs unavailable infra — report that behavior as **`unverified`** in your result summary. **`unverified` is NOT a pass** ("skipped/unverified ⇒ UNVERIFIED, not clean" — the plugin's standing invariant).
    - **Bind `unverified` to the verdict:** if the unverified behavior is **load-bearing** (central to the diff's correctness / security claim) AND static review cannot establish its safety, return **`NEEDS_HUMAN`** — or raise a `new` HIGH issue when the gap is simply "no test exists" that a fix worker can close — **never `PASS`**. (This is consistent with the fail-CLOSED-on-correctness principle — cf. the decision-matrix row "environment prevents a normal review → NEEDS_HUMAN"; `NEEDS_HUMAN` maps to `ESCALATED`, leaving the PR open for a human.)
    - A **non-load-bearing** unverified behavior (tangential, not central to the change's correctness) is reported as `unverified` but does NOT block PASS.
+
+5a. **Brief conformance (Supervisor Phase 4.5 only — when the spawn prompt carries a BRIEF-CONFORMANCE ADVISORY line)**
+
+   The Phase 4.5 spawn prompt (authoritative wording: `skills/self-heal-advisory/SKILL.md` Part 2 §"Review-and-fix loop"; the brief-parsing and bounding rules live in its Part 1 and are NOT restated here) may hand you the in-progress brief's acceptance criteria. When it does, reach a **three-way verdict per criterion** from the diff text only — you execute nothing:
+   - `addressed` — the integrated diff contains the change the criterion asks for. No output.
+   - `not_addressed` — the diff contains no corresponding change. Emit exactly ONE `category: new`, severity **HIGH** finding per such criterion, quoting the criterion verbatim in `description` and stating what is missing in `suggestion`. This is an ordinary finding: it enters the same FAIL/PASS decision and the same `new` + BLOCKING/HIGH fix floor as every other finding — no new gate, no new field.
+   - `cannot_determine` — the criterion cannot be established from the diff text (runtime-only behavior such as latency or throughput). NOT a finding: name these criteria in ONE summary line under `cannot_determine`.
+   Rubric bullets the line labels as orientation-only NEVER produce findings (they belong to the Rubric Grader). A standalone `/review-pr` review has no brief and never carries this line — the step simply does not apply there.
 
 6. **Flag Issues by Severity** (BLOCKING / HIGH / MEDIUM / LOW)
 
