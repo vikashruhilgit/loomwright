@@ -23,7 +23,8 @@
 #             "regardless of the worker"; Supervisor Single-Agent step 3 AND Sequential gate cite
 #             verify-provides.sh with `--root .` (by anchor, never line number); worker Step 5.5 cites
 #             it and covers the field-less `brief_unreadable` / `jq_missing` reasons; EM Step 2b cites
-#             `--kind-table` and restates NO table row / GNU-ism; RESULT_SCHEMAS.md marker block ==
+#             `--kind-table` and restates NO table row / GNU-ism, and so does the preloaded
+#             skills/async-orchestration/SKILL.md §Pre-Spawn Verification Gate; RESULT_SCHEMAS.md marker block ==
 #             `--kind-table` byte-for-byte; orchestrator.md has
 #             0 hits of the retired "(worker self-verification, zero tokens)" parenthetical.
 #   routing — the EM gate names the two cells that are NOT disk-wins: `status: partial` with an
@@ -34,7 +35,8 @@
 #             Parallel path, not `--root .`; subtask_not_found lists the anchors seen on stderr.
 #   (m)     — MUTATION CONTROLS: (1) delete the script-call line(s) from a COPY of execute-manager.md's
 #             poll-loop gate; (2) delete the carve-out clause from another COPY; (3) restate a kind-table
-#             row carrying GNU `\s`/`\b` inside a COPY of Step 2b (the pointer-vs-copy drift). Each
+#             row carrying GNU `\s`/`\b` inside a COPY of Step 2b (the pointer-vs-copy drift); (4) the same
+#             row inside a COPY of the async-orchestration skill's gate section. Each
 #             mutant is gated on non-empty + differs-from-original; the seam assertion against it MUST
 #             fail — otherwise the assertion above is vacuous.
 #
@@ -53,13 +55,14 @@ SUP="$PLUGIN_ROOT/agents/supervisor.md"
 WORKER="$PLUGIN_ROOT/agents/worker.md"
 ORCH="$PLUGIN_ROOT/agents/orchestrator.md"
 SCHEMAS="$PLUGIN_ROOT/docs/RESULT_SCHEMAS.md"
+ASYNC="$PLUGIN_ROOT/skills/async-orchestration/SKILL.md"
 FAILDOC="$PLUGIN_ROOT/docs/FAILURE_ESCALATION.md"
 
 pass=0; fail=0
 ok() { echo "  ok: $1"; pass=$((pass+1)); }
 no() { echo "  FAIL: $1"; fail=$((fail+1)); }
 
-for f in "$SCRIPT" "$EM" "$SUP" "$WORKER" "$ORCH" "$SCHEMAS" "$FAILDOC"; do
+for f in "$SCRIPT" "$EM" "$SUP" "$WORKER" "$ORCH" "$SCHEMAS" "$FAILDOC" "$ASYNC"; do
   [ -f "$f" ] || no "MISSING surface: $f"
 done
 if [ "$fail" -ne 0 ]; then
@@ -334,15 +337,18 @@ section "$EM" 'v12 outputs_verified gate' 'Lane-collision gate' | grep -q 'disk.
 section "$EM" 'v12 outputs_verified gate' 'Lane-collision gate' | grep -q 'bare token after `Subtask`' && ok "EM gate pins the subtask_id shape (bare anchor token)" || no "EM gate lacks the subtask_id shape clause"
 grep -q 'bare token the brief.s contract anchor names' "$SCRIPT" && ok "script header pins the subtask_id shape (bare anchor token)" || no "script header lacks the subtask_id shape clause"
 grep -q '^\*\*Tool call tracking:\*\*.*verify-provides\.sh' "$EM" && ok "EM tool-call tracking notes the +1 Bash per subtask" || no "EM tool-call tracking lacks the verify-provides.sh note"
-em_step2b_ok() {   # exit 0 iff Step 2b of $1 cites --kind-table AND restates neither a table row nor a GNU-ism
-  local s; s="$(section "$1" 'Step 2b — Pre-Spawn Verification Gate' 'CHECKPOINT format')"
+pointer_section_ok() {   # exit 0 iff section <from>..<to> of $1 cites --kind-table AND restates neither a table row nor a GNU-ism
+  local s; s="$(section "$1" "$2" "$3")"
   [ -n "$s" ] || return 1
   printf '%s\n' "$s" | grep -q -- '--kind-table' || return 1                # the pointer
   printf '%s\n' "$s" | grep -q '\\s\|\\b' && return 1                       # no GNU-only \s / \b (BSD grep false-FAILs)
   printf '%s\n' "$s" | grep -q '^| `symbol`\|^| `type`' && return 1         # no second copy of the kind-table rows
   return 0
 }
+em_step2b_ok()    { pointer_section_ok "$1" 'Step 2b — Pre-Spawn Verification Gate' 'CHECKPOINT format'; }
+skill_gate_ok()   { pointer_section_ok "$1" '^## Pre-Spawn Verification Gate' '^## Scope Expansion Adjudication'; }
 em_step2b_ok "$EM" && ok "EM Step 2b points at --kind-table and restates NO table row / GNU-ism" || no "EM Step 2b: missing pointer, restated table row, or \\s / \\b GNU-ism"
+skill_gate_ok "$ASYNC" && ok "async-orchestration §Pre-Spawn Verification Gate points at --kind-table and restates NO table row / GNU-ism" || no "async-orchestration §Pre-Spawn Verification Gate: missing pointer, restated table row, or \\s / \\b GNU-ism"
 
 sup_single="$(section "$SUP" '#### Single-Agent Path' '#### Sequential Path')"
 printf '%s\n' "$sup_single" | grep -q 'verify-provides\.sh.*--root \.' && ok "Supervisor Single-Agent step 3 cites verify-provides.sh with --root ." || no "Supervisor Single-Agent gate seam"
@@ -417,6 +423,23 @@ else
     ok "MUTATION CONTROL: restating a kind-table row (with \\s / \\b) inside Step 2b makes the Step 2b assertion fail"
   fi
   em_gate_ok "$MUT3" && em_routes_ok "$MUT3" && ok "Step 2b mutant still passes both poll-loop-gate seams (the three controls test different sections)" || no "Step 2b mutant broke a poll-loop-gate seam — controls are not independent"
+fi
+# (4) the same restated row inside a COPY of the preloaded skill's §Pre-Spawn Verification Gate (the third
+# copy of the table that drifted); its assertion MUST fail while the EM Step 2b assertion (a different file) still passes.
+MUT4="$TMP/async-mutant-gate.md"
+ROW="$ROW" awk '/^## Pre-Spawn Verification Gate/ { on = 1 } /^## Scope Expansion Adjudication/ { on = 0 } on && /^\*\*Pass criterion:\*\*/ { print ENVIRON["ROW"] } { print }' "$ASYNC" > "$MUT4"
+if [ ! -s "$MUT4" ]; then
+  no "skill-gate mutant is empty — control invalid"
+elif cmp -s "$MUT4" "$ASYNC"; then
+  no "skill-gate mutant identical to original — control invalid (no 'Pass criterion' line inside the section?)"
+else
+  ok "skill-gate mutant is non-empty and differs from the original"
+  if skill_gate_ok "$MUT4"; then
+    no "MUTATION CONTROL: async-orchestration gate assertion still passes with a GNU-ism table row restated — assertion is vacuous"
+  else
+    ok "MUTATION CONTROL: restating a kind-table row (with \\s / \\b) inside the skill's gate section makes its assertion fail"
+  fi
+  section "$MUT4" '^## Pre-Spawn Verification Gate' '^## Scope Expansion Adjudication' | grep -q -- '--kind-table' && ok "skill-gate mutant still carries the --kind-table pointer (it fails on the restated row, not on a broken section extraction)" || no "skill-gate mutant lost the pointer — the control is failing for the wrong reason"
 fi
 
 echo
