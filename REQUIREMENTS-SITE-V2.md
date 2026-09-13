@@ -84,8 +84,9 @@ and you get one PR per pass instead of five conflicting branches.
 **3 · You cannot walk away, and you also cannot trust auto-merge.**
 Babysit it, or let it merge garbage. Both feel stupid.
 → *Default: it parks a reviewed PR and tells you a human is required.* Auto-merge exists in exactly
-one place in the whole plugin, is off unless you pass `--auto-merge`, and fires only when all five
-trusted conditions hold. Anything false — or anything it cannot read — parks the PR and notifies.
+one place in the whole plugin, is off unless you pass `--auto-merge`, and fires only when all six
+trusted conditions hold — the sixth being that the diff is not high-risk, which nothing overrides.
+Anything false — or anything it cannot read — parks the PR and notifies.
 It does not silently ship.
 
 **4 · The mill forgets your house. Every run starts cold.**

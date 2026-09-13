@@ -203,10 +203,10 @@ Generic automation engine. Converts any source (a prompt via `/product-owner`, a
 /automate --backlog _BACKLOG.md                # backlog-doc source — dependency-ordered Queue
 /automate --limit 5                            # cap PROCESSED items this run (default 5)
 /automate --resume [<run_id>]                  # reconcile + continue a prior incomplete run
-/automate ... --auto-merge                     # opt-in, default-OFF, 5-condition fail-closed merge gate
+/automate ... --auto-merge                     # opt-in, default-OFF, 6-condition fail-closed merge gate (a high-risk diff always parks — no override)
 ```
 
-**Output:** one `.supervisor/automate/<run_id>.md` run file (Status/Source/Run Config/Queue/Current/append-only Progress) — the contract, dashboard, and resume state. Inline main-thread workflow; governed by the `automate-loop` skill. Default mode never merges (`--auto-merge` is the only place in the plugin that executes `gh pr merge --squash`, behind a 5-condition fail-closed gate).
+**Output:** one `.supervisor/automate/<run_id>.md` run file (Status/Source/Run Config/Queue/Current/append-only Progress) — the contract, dashboard, and resume state. Inline main-thread workflow; governed by the `automate-loop` skill. Default mode never merges (`--auto-merge` is the only place in the plugin that executes `gh pr merge --squash`, behind a 6-condition fail-closed gate — the sixth parks any high-risk diff with no override).
 
 ---
 

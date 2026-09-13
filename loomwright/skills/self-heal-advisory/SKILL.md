@@ -863,37 +863,32 @@ After the Code Reviewer loop has run (regardless of `heal_decision`), execute th
 Runs AFTER the Code Reviewer holistic pass has produced its decision (and alongside / independent of the System Twin advisory checks), and BEFORE the completion tail. It is a SINGLE pass that lives **OUTSIDE the bounded fix loop** — never a new heal iteration. It is itself opt-in (default-OFF; `--red-team` / `.red_team_high_risk`), mirroring the paired-flag precedent of `--auto-review` / `--no-auto-review` (a `--flag` / `--no-flag` toggle backed by a `.supervisor/config.json` key — note the auto-review *dispatch* is default-ON, only its flag-pairing shape is the precedent), and applies a second, adversarial lens to high-risk integrated diffs.
 
 ```
-# Guard: default path is a zero-behavior-change silent skip.
+# High-risk classification — UNCONDITIONAL (decision D1): one deterministic Bash call, no LLM,
+# runs on every Phase 4.5 that reaches this lens, BEFORE the RED_TEAM_ENABLED guard, so
+# SUPERVISOR_RESULT.risk_classification is present whether or not the spawn is enabled.
+# The heuristic lives in ONE place — scripts/classify-risk.sh (branches a/b/c + the add-only
+# .agent/risk.json project extension; `classify-risk.sh --kind-table` prints the rules, and
+# docs/RESULT_SCHEMAS.md §SUPERVISOR_RESULT carries the one committed copy). Do NOT restate
+# the pattern list here. The same script is condition 6 of the /automate trusted-merge gate,
+# which re-runs it on the SHA it judges — this value is advisory and never gates anything.
+rc = JSON of `classify-risk.sh "$BASE_BRANCH" HEAD`   # the plugin's scripts/classify-risk.sh, invoked like the sibling scripts in this Part
+     # fail-SAFE emitter, always exit 0: {"high_risk": true|false|null, "reasons": [...], ...}
+     # null = unclassifiable (bad ref / git or jq failure) — the safe direction for an
+     # ADVISORY lens is to run it, so null is treated like true below.
+high_risk = rc.high_risk                      # true | false | null
+risk_classification = {high_risk: rc.high_risk, reasons: rc.reasons}   # → SUPERVISOR_RESULT (additive, optional)
+record_decision(phase: SELF_HEAL, decision: "risk_classification: {true|false|null}",
+                rationale: "<rc.reasons joined '; ', or the unclassifiable reason>")
+
+# Guard: default path is a zero-behavior-change silent skip (the classification above still ran).
 if RED_TEAM_ENABLED != true:
     red_team_advisory = "disabled"
     # skip silently — no spawn, no PR comment, no note beyond the one-word record below.
 else:
-    # High-risk classification — repo-agnostic heuristic computed from the integrated diff.
-    diff_paths   = `git diff --name-only $BASE_BRANCH...HEAD`
-    diff_content = `git diff $BASE_BRANCH...HEAD`
-    changed_lines = added+removed line count of diff_content
-    changed_files = count(diff_paths)
-
-    high_risk = (
-        # (a) security / financial / migration surfaces (path OR content, case-insensitive)
-        any path/content matches (case-insensitive): *auth*, *authz*, *security*,
-          *crypto*, *secret*, *token*, *payment*, migrations/ , *migration*
-        # (b) workflow-automation / orchestration / cross-agent prompt surfaces —
-        #     the roadmap's "workflow automation, or broad cross-agent prompt changes".
-        #     In an agent-orchestration repo these prompt/automation contracts ARE the
-        #     high-impact surface, so a SMALL diff here can still be high-risk; on a plain
-        #     app repo these paths rarely appear, so this branch does not over-fire there.
-        OR any changed path matches: .github/workflows/ , hooks/ , agents/ , commands/ , skills/
-        OR any path/content matches (case-insensitive): workflow, automation, orchestration
-        # (c) sheer size
-        OR changed_lines > 400
-        OR changed_files > 15
-    )
-
-    if not high_risk:
+    if high_risk == false:
         red_team_advisory = "skipped_low_risk"
         # record a one-line note; do NOT spawn.
-    else:
+    else:   # true OR null — spawn
         # Spawn EXACTLY ONE advisory pass — single, outside the heal loop, never a heal iteration.
         try:
           rt = Task(
@@ -928,7 +923,7 @@ else:
 - Red-team findings **NEVER change `heal_decision`**, **NEVER directly drive the fix task**, **NEVER block the PR or run**, and introduce **NO new gate**. The Code Reviewer's `CODE_REVIEW_RESULT` remains the **SOLE gating signal**.
 - If the Code Reviewer INDEPENDENTLY also flags an issue the red-team raised as a `new` BLOCKING/HIGH, the EXISTING class-based fix path handles it — driven by `CODE_REVIEW_RESULT`, **not** by the red-team output. The red-team lens never feeds the fixer.
 - **FAIL-SAFE (mirrors the CLAUDE.md "side-effect emitters fail SAFE" invariant):** any red-team spawn error/timeout, or any `gh pr comment` failure, is a **logged one-line no-op** — record `red_team_advisory = "error"` and CONTINUE. It MUST NOT propagate to `SUPERVISOR_RESULT.status`, MUST NOT raise the completion-tail guard, and MUST NOT abort the run.
-- **Recording (no `schema_version` bump):** carry `red_team_advisory` (`ran` | `skipped_low_risk` | `disabled` | `error`) into `SUPERVISOR_RESULT.summary` and into the job's `## Outcome` block (e.g. `red_team_advisory: ran`). `disabled` covers BOTH "`RED_TEAM_ENABLED` was false" AND "the self-heal phase was bypassed (`--skip-self-heal` / resume-thrash) so the lens never ran" — the value is initialized to `"disabled"` at phase entry (step 2) so the Outcome line is never empty. This is an additive-optional note only — do NOT add a new required `SUPERVISOR_RESULT` field; `schema_version` stays `1`.
+- **Recording (no `schema_version` bump):** carry `red_team_advisory` (`ran` | `skipped_low_risk` | `disabled` | `error`) into `SUPERVISOR_RESULT.summary` and into the job's `## Outcome` block (e.g. `red_team_advisory: ran`). Also carry the classification itself as the additive optional `SUPERVISOR_RESULT.risk_classification: {high_risk, reasons}` object (`docs/RESULT_SCHEMAS.md` §SUPERVISOR_RESULT) — present whenever this lens ran (including `disabled`, since the classification precedes the guard); ABSENT on the Phase 4.5 bypass paths (`--skip-self-heal` / resume-thrash / base-mismatch cleanup), and absent ⇒ valid. `disabled` covers BOTH "`RED_TEAM_ENABLED` was false" AND "the self-heal phase was bypassed (`--skip-self-heal` / resume-thrash) so the lens never ran" — the value is initialized to `"disabled"` at phase entry (step 2) so the Outcome line is never empty. This is an additive-optional note only — do NOT add a new required `SUPERVISOR_RESULT` field; `schema_version` stays `1`.
 
 **Fix task crash handling:**
 - If the fix Task() returns an error or no FIX_RESULT block: pause the phase by emitting `SUPERVISOR_RESULT` with `status: checkpoint` (the schema has no `paused` status — `checkpoint` is the pause analogue) and exit with the resume command. Do NOT increment the resume counter now — the increment happens at Phase 4.5 entry of the next `--continue` run (on-entry step 3).

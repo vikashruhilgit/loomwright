@@ -21,11 +21,16 @@
 #   D. resume reconcile: belief pending but gh says merged ⇒ merged; belief checked
 #      but gh says open ⇒ awaiting_merge; gh unreadable ⇒ awaiting_merge (fail closed);
 #      gh CLOSED-unmerged ⇒ gone.
-#   E. auto-merge gate fail-CLOSED on EACH of the 5 conditions individually (incl.
+#   E. auto-merge gate fail-CLOSED on EACH of the 6 conditions individually (incl.
 #      both arms of cond. 2 base/SHA, both blocking reviewDecision arms CHANGES_REQUESTED
-#      and REVIEW_REQUIRED of cond. 3, and both arms of cond. 5 checks/rubric), plus
-#      malformed-ctx (ctx_unreadable) and a merge-command failure (merge_command_failed);
-#      AND the all-pass MERGE case fires `gh pr merge --squash` exactly once.
+#      and REVIEW_REQUIRED of cond. 3, both arms of cond. 5 checks/rubric, and cond. 6
+#      high_risk on `true` / `null` / missing / a non-boolean string — plus
+#      `trust_unprotected: true` NOT overriding cond. 6), plus malformed-ctx
+#      (ctx_unreadable) and a merge-command failure (merge_command_failed); AND the
+#      all-pass MERGE case (`high_risk: false` + every other condition) fires
+#      `gh pr merge --squash` exactly once; AND a mutation control (cond 6 deleted from a
+#      COPY of gate_eval, gated on non-empty + differs + `bash -n`) turns the cond-6 PARK
+#      cases red while the MERGE case stays green.
 #   F. learning-emit (engine-native ground-truth POSTMORTEM_RESULT line): happy path
 #      (fix_cycles>0 → one drain_churn entry, review_rounds==fix_cycles), the zero-rule
 #      (fix_cycles==0 non-escalated → categories:[] + review_rounds:0), zero-cycle
@@ -511,7 +516,8 @@ pass_ctx() {
   "ready_sha": "abc123", "head_sha": "abc123", "base": "main",
   "review_decision": "APPROVED", "unresolved_human_thread": false,
   "protection_enforceable": true, "trust_unprotected": false,
-  "checks_green": true, "rubric_satisfied": "na"
+  "checks_green": true, "rubric_satisfied": "na",
+  "high_risk": false, "risk_reasons": []
 }
 EOF
 }
@@ -733,7 +739,75 @@ else
   no "gate ctx-unreadable wrong (out='$RUN_OUT' merges=$(merges))"
 fi
 
-# Blocker — all 5 pass but `gh pr merge` itself fails ⇒ PARK: merge_command_failed.
+# Blocker 6 — high-risk diff (cond 6; owner decision R5: NO override). The gate reads
+# `high_risk` in the cond-3 has()/!= null/tostring shape and PARKs unless it is the explicit
+# `false`; the PARK line quotes the first 3 `risk_reasons` joined "; ".
+gate "$(pass_ctx | jq '.high_risk=true | .risk_reasons=["path: src/auth/x.ts matched *auth*","content: 2 changed line(s) matched *token*","size: changed_lines 512 > 400","path: skills/x/SKILL.md matched skills/"]')"
+if [ "$RUN_OUT" = "PARK: high_risk_diff (path: src/auth/x.ts matched *auth*; content: 2 changed line(s) matched *token*; size: changed_lines 512 > 400)" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: high_risk=true ⇒ PARK: high_risk_diff (first 3 reasons quoted), no merge"
+else
+  no "gate high-risk-true wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+gate "$(pass_ctx | jq '.high_risk=null | .risk_reasons=["unclassifiable: bad_ref"]')"
+if [ "$RUN_OUT" = "PARK: high_risk_diff (unclassifiable: bad_ref)" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: high_risk=null (unclassifiable) ⇒ PARK, no merge"
+else
+  no "gate high-risk-null wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+gate "$(pass_ctx | jq 'del(.high_risk) | del(.risk_reasons)')"
+if [ "$RUN_OUT" = "PARK: high_risk_diff (no risk_reasons recorded)" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: high_risk ABSENT ⇒ PARK (reasons absent ⇒ 'no risk_reasons recorded'), no merge"
+else
+  no "gate high-risk-absent wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+gate "$(pass_ctx | jq '.high_risk="yes" | .risk_reasons="not-an-array"')"
+if [ "$RUN_OUT" = "PARK: high_risk_diff (no risk_reasons recorded)" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: high_risk non-boolean string ⇒ PARK (non-array reasons read defensively), no merge"
+else
+  no "gate high-risk-string wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+# --trust-unprotected is cond 4 ONLY — it must NOT override cond 6.
+gate "$(pass_ctx | jq '.protection_enforceable=false | .trust_unprotected=true | .high_risk=true | .risk_reasons=["path: billing/x.ts matched billing/**"]')"
+if [ "$RUN_OUT" = "PARK: high_risk_diff (path: billing/x.ts matched billing/**)" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: trust_unprotected=true + high_risk=true ⇒ PARK (the override is scoped to cond 4), no merge"
+else
+  no "gate trust-unprotected-vs-high-risk wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+# Positive control: no cond-6 case above passes by accident — `high_risk: false` with every other
+# condition satisfied is the ONLY shape that merges (exactly once).
+gate "$(pass_ctx | jq '.risk_reasons=[]')"
+if [ "$RUN_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ]; then
+  ok "gate: high_risk=false + every other condition ⇒ MERGE exactly once"
+else
+  no "gate high-risk-false wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+# Mutation control (LESSONS fa32a308): delete cond 6 from a COPY of gate_eval — the block from
+# its `# Condition 6` comment through the `PARK: high_risk_diff` return — gated on non-empty +
+# differs + `bash -n`. The cond-6 PARK cases must go red (the mutant MERGES on high_risk=true)
+# while the all-pass MERGE case stays green, proving the cases test the condition, not the harness.
+MUT="$(mktemp -d)"
+awk '/^  # Condition 6 — NOT a high-risk diff/ {skip=1} skip && /^  fi$/ {skip=0; next} !skip {print}' "$H" > "$MUT/automate-helpers.sh"
+if [ -s "$MUT/automate-helpers.sh" ] && ! cmp -s "$H" "$MUT/automate-helpers.sh" && bash -n "$MUT/automate-helpers.sh" 2>/dev/null \
+   && ! grep -q 'high_risk_diff' "$MUT/automate-helpers.sh"; then
+  rm -f "$GH_STUB_DIR/merge.log"
+  pass_ctx | jq '.high_risk=true | .risk_reasons=["path: src/auth/x.ts matched *auth*"]' > "$WD/ctx.json"
+  MUT_OUT="$( env PATH="$BIN:$PATH" bash "$MUT/automate-helpers.sh" gate-eval "$PR" "$WD/ctx.json" 2>/dev/null )"
+  if [ "$MUT_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ]; then
+    ok "gate (mutant) cond 6 deleted ⇒ high_risk=true MERGES — the cond-6 PARK cases are live, not vacuous"
+  else
+    no "gate cond-6 mutant not discriminated (out='$MUT_OUT' merges=$(merges))"
+  fi
+  rm -f "$GH_STUB_DIR/merge.log"
+  pass_ctx > "$WD/ctx.json"
+  MUT_OUT="$( env PATH="$BIN:$PATH" bash "$MUT/automate-helpers.sh" gate-eval "$PR" "$WD/ctx.json" 2>/dev/null )"
+  [ "$MUT_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ] \
+    && ok "gate (mutant) all-pass MERGE case stays green on the mutant" || no "gate all-pass went red on the cond-6 mutant (out='$MUT_OUT')"
+else
+  no "gate cond-6 mutant not gated (empty, identical, bash -n failed, or the block was not removed)"
+fi
+rm -rf "$MUT"
+
+# Blocker — all 6 pass but `gh pr merge` itself fails ⇒ PARK: merge_command_failed.
 # The `merge-fail` stub marker makes the stubbed `gh pr merge` log the call THEN exit 1,
 # so the gate sees the merge command fail and parks (no SUCCESSFUL merge).
 touch "$GH_STUB_DIR/merge-fail"
