@@ -258,9 +258,9 @@ for iteration in 1..max_iterations:
       # SubagentStop hook) and projected by scripts/build-state.sh — it does
       # NOT populate `## Worker Results`, which the call above is for.
       #
-      # No reviewer is spawned here. If the worker's own outputs_verified gate
-      # passed (no outputs_gap — see agents/execute-manager.md Step 4 for the
-      # full gate pseudocode), the subtask is complete: no `record_review` call
+      # No reviewer is spawned here. If the on-disk outputs_verified gate passed
+      # (verify-provides.sh, no gap; read agents/execute-manager.md Step 4 for
+      # the gate pseudocode), the subtask is complete: no `record_review` call
       # exists to make (there is no reviewer decision to log), and there is no
       # separate reviewer-polling arm below. Newly-launchable subtasks are
       # checked in step 2 below regardless — dependency materialization
@@ -413,13 +413,7 @@ BLOCKED subtasks declare `requires` against producing subtasks (see `skills/supe
 
 After dependency materialization and **before** spawning the worker, the Execute Manager runs a verification gate that proves each declared `requires` entry actually exists in the dependent worktree. The producer branch claimed to provide an item — this gate verifies the claim against disk.
 
-For each `requires` entry on the dependent subtask:
-
-| `kind` | Verification check |
-|--------|-------------------|
-| `file` | `test -f <worktree>/<path>` — file existence |
-| `symbol` | `grep -nE '<escaped name>' <worktree>/<path>` — symbol/heading/frontmatter-key presence |
-| `type` | `grep -nE '(type\|interface\|class\|enum)\s+<escaped name>\b' <worktree>/<path>` — language-level type declaration |
+For each `requires` entry on the dependent subtask, run one check against `<worktree>/<path>`: the commands are the three rows `scripts/verify-provides.sh --kind-table` prints (the ONE implementation; the Execute Manager's Step 2b carries the runtime invocation; committed copy in `docs/RESULT_SCHEMAS.md` §WORKER_RESULT between the `kind-table:begin`/`end` markers) with `<root>` = the worktree. Not restated here — a copy drifts.
 
 **Pass criterion:** ALL checks for ALL `requires` entries must PASS.
 

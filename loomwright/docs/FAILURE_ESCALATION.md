@@ -163,7 +163,9 @@ Exits with error description and resume command
 
 ```
 Pre-spawn verification gate FAILs (Execute Manager Step 2b)
-    OR Worker emits WORKER_RESULT with non-empty outputs_gap
+    OR verify-provides.sh reports a `provides` item missing on disk (poll-loop gate, regardless of the worker's status)
+    OR the worker emits WORKER_RESULT `status: partial` with an EMPTY outputs_gap (worker.md Step 1 carve-out — disk cannot contradict an unread spec)
+    OR no WORKER_RESULT was emitted AND the contract is unverifiable (never recorded as disk-verified)
     ↓
 Execute Manager emits EXECUTE_CHECKPOINT with:
     - adjudication_required: true
@@ -234,6 +236,7 @@ User selects option → Supervisor applies it and resumes EXECUTE
 - `skills/async-orchestration/SKILL.md` §"Scope Expansion Adjudication"
 - `agents/supervisor.md` §"Adjudication Handling"
 - `agents/worker.md` Step 5.5 (`outputs_verified` / `outputs_gap` emission)
+- `scripts/verify-provides.sh` (the ONE implementation of the `file`/`symbol`/`type` checks; consumers re-run it on disk — disk wins over the worker's self-report)
 - `hooks/hooks.json` outputs_gap validation rule
 
 ---
