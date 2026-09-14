@@ -2431,14 +2431,15 @@ ordinary case, and the reader treats it as such.
 VERIFY_ENV:                        # the JSON root MUST be a single OBJECT (an array/scalar root is malformed)
   start: string|null               # REQUIRED KEY, NULLABLE VALUE — shell string that starts the app; null = already running
   base_url: string                 # required — where the app under test is reached; non_prod_assert.base_url_matches is evaluated AGAINST it
-  health: string                   # required — a path (relative to base_url) or a full URL that must answer 2xx
+  health: string                   # required — a path (relative to base_url) or a full URL that must answer 2xx (STATUS READ, not `curl -f`: a 3xx is NOT healthy)
   auth: object                     # required
     method: enum [none, storage_state]   # required
     storage_state_path: string|null      # REQUIRED non-empty when method is storage_state; null/absent otherwise
     probe_path: string|null              # optional — a route that answers 401/403/302 when logged out (the auth-probe target)
   non_prod_assert: object          # required — AT LEAST ONE usable member; every present member must be well-typed:
     base_url_matches: string       #   an ERE tested against base_url (non-empty)
-    env_var_equals: {name, value}  #   name non-empty string, value string — the executor compares $name to value
+    env_var_equals: {name, value}  #   name a POSIX identifier `[A-Za-z_][A-Za-z0-9_]*`, value string — the executor compares $name to value;
+                                   #   a well-typed member whose name is NOT an identifier is UNUSABLE, not mistyped (see below)
     cmd: string                    #   a shell string; exit 0 = pass
   seed: string|null                # REQUIRED KEY, NULLABLE VALUE — shell string that seeds the app; null = nothing to seed
   reset: string|null               # REQUIRED KEY, NULLABLE VALUE — shell string that resets state; null = nothing to reset
@@ -2476,7 +2477,16 @@ fixture is then accepted, so the check is proven load-bearing rather than assume
 **`non_prod_assert` fails CLOSED, and is never inferred.** The executor's `assert-non-prod` evaluates
 every usable member and passes only if **at least one** passes; a store whose `non_prod_assert` has no
 usable member is refused with `non_prod_assert_empty`, and one whose members all fail is refused with
-`non_prod_assert_failed`. Every other executor subcommand (`start`, `stop`, `seed`, `reset`,
+`non_prod_assert_failed`. **`env_var_equals.name` must be a POSIX identifier —
+`[A-Za-z_][A-Za-z0-9_]*` — and all three surfaces enforce the SAME rule** (the executor looks the
+variable up with `${!name}`, which can only ever fail for anything else): `propose-verify.sh` refuses
+`--non-prod env=NAME=VAL` with a non-identifier `NAME` at parse time (exit 1, nothing written, the
+message names the rule); the reader treats a well-typed member with a non-identifier `name` as an
+**unusable** member — named on stderr as `[env_var_name_invalid:<name>]` — that does not count toward
+"at least one usable", so the store is malformed (`non_prod_assert_empty`) only when **no usable member
+remains** and is still emitted when another member is usable; and the executor's own check fails the
+member closed if one ever reaches it. Without the parity, `env=NODE-ENV=development` passed proposal,
+`--confirm` and the reader, and failed closed only at the first run. Every other executor subcommand (`start`, `stop`, `seed`, `reset`,
 `auth-probe`) runs `assert-non-prod` first, **in the same invocation**, and refuses with the gate's own
 token (`non_prod_assert_failed` / `non_prod_assert_empty`) before touching anything; independently, the
 two `bash -c` sites refuse with `non_prod_not_asserted` if the gate did not pass in-process (the inner
@@ -2513,7 +2523,10 @@ stderr forwarded. It locates the reader as a **sibling script** — `read-verify
 to its own `dirname "${BASH_SOURCE[0]}"` — never through a harness-specific install path, so it stays a
 vendor-neutral core script. It applies `ready_timeout_s` (default 60, **wall-clock seconds** against a
 `date +%s` deadline — not a poll count, so a hanging health endpoint cannot stretch the wait) when polling
-`health` after `start`; on timeout it runs `stop` and exits non-zero with `health_timeout`. **Lifecycle
+`health` after `start`; on timeout it runs `stop` and exits non-zero with `health_timeout`. **Healthy
+means an HTTP 2xx and nothing else:** the poll reads the status code (`curl -w '%{http_code}'`, no `-f`,
+no `-L`) and accepts only `2xx` — `curl -f` fails only on 4xx/5xx, so under it a health route that
+302s to a login page would have reported `ready`; a redirect is observed, never followed. **Lifecycle
 verdicts are never vacuous:** a subcommand exits 0 only when the guarantee its name promises actually held
 in that invocation. `start` refuses with `already_started` while the pid recorded by a previous `start`
 is still alive (a stale record whose process is gone is cleared, never refused, so a re-start after a

@@ -25,7 +25,11 @@
 #                                      the same pair for start / reset / stop)
 #   (f) AC2  non_prod_assert with NO usable member → EMPTY stdout, reason token non_prod_assert_empty;
 #                                      a present-but-mistyped member alongside a usable one is ALSO
-#                                      malformed (a half-typed member must not silently vanish)
+#                                      malformed (a half-typed member must not silently vanish);
+#                                      env_var_equals.name must be a POSIX identifier — a non-
+#                                      identifier name is an UNUSABLE member [env_var_name_invalid:<n>]:
+#                                      alone ⇒ non_prod_assert_empty, beside a usable member ⇒ the
+#                                      store is still emitted (advisory on stderr)
 #   (g)      auth / ready_timeout_s shape → out-of-enum method, storage_state without a path, and a
 #                                      non-numeric timeout are each malformed
 #   (h)      jq unavailable          → EMPTY stdout, reason on stderr, exit 0 (PATH-stubbed; the
@@ -49,7 +53,9 @@
 #                                      positive control proving the same dir passes once `git init`ed
 #   (p7)     NO-CLOBBER              → a second --confirm run refuses, bytes intact
 #   (p8)     --non-prod value shapes → env=NAME=VAL → env_var_equals; cmd=… → cmd; malformed env=
-#                                      form rejected (exit 1)
+#                                      form rejected (exit 1); a NAME that is not a POSIX identifier
+#                                      (env=NODE-ENV=x, env=1ABC=x) is refused at parse time (exit 1,
+#                                      message names the rule, nothing written)
 #   (p9)     --non-prod one per kind → a second regex / env= / cmd= value is refused (exit 1) with
 #                                      nothing written, even with --confirm; one of each still accepted
 # Invariants:
@@ -338,6 +344,27 @@ jq '.non_prod_assert = {"cmd": "test -f .not-prod"}' "$FIX" > "$F_DIR/cmd.json"
 outF5="$(run_reader "$F_DIR/env.json")"; outF6="$(run_reader "$F_DIR/cmd.json")"
 [ -n "$outF5" ] && ok "(f) env_var_equals alone is a usable member" || no "(f) env_var_equals alone rejected: $(cat "$LAST_ERR")"
 [ -n "$outF6" ] && ok "(f) cmd alone is a usable member" || no "(f) cmd alone rejected: $(cat "$LAST_ERR")"
+# env_var_equals.name must be a POSIX identifier — the SAME rule the executor's `${!name}` lookup
+# and propose-verify.sh's parse-time refusal enforce. A well-typed member whose name is not an
+# identifier is UNUSABLE (not mistyped): alone it leaves no usable member ⇒ non_prod_assert_empty,
+# with the name called out; beside a usable regex the store is STILL EMITTED and the advisory is
+# still named on stderr (the rule must never demote a previously-valid two-member store).
+jq '.non_prod_assert = {"env_var_equals": {"name": "NODE-ENV", "value": "development"}}' "$FIX" > "$F_DIR/badname.json"
+outF7="$(run_reader "$F_DIR/badname.json")"; rcF7=$?
+[ "$rcF7" -eq 0 ] && [ -z "$outF7" ] && grep -qF "[env_var_name_invalid:NODE-ENV]" "$LAST_ERR" && grep -qF "[non_prod_assert_empty]" "$LAST_ERR" \
+  && ok "(f) env_var_equals.name 'NODE-ENV' as the ONLY member → empty stdout, [env_var_name_invalid:NODE-ENV] + [non_prod_assert_empty]" \
+  || no "(f) non-identifier name alone: rc=$rcF7 out=$outF7 err=$(cat "$LAST_ERR")"
+jq '.non_prod_assert = {"env_var_equals": {"name": "1ABC", "value": "x"}}' "$FIX" > "$F_DIR/digitname.json"
+outF8="$(run_reader "$F_DIR/digitname.json")"
+[ -z "$outF8" ] && grep -qF "[env_var_name_invalid:1ABC]" "$LAST_ERR" \
+  && ok "(f) a digit-leading name '1ABC' is likewise unusable" \
+  || no "(f) digit-leading name accepted: out=$outF8 err=$(cat "$LAST_ERR")"
+jq '.non_prod_assert = {"env_var_equals": {"name": "NODE-ENV", "value": "development"}, "base_url_matches": "^http://localhost"}' "$FIX" > "$F_DIR/badname-beside.json"
+outF9="$(run_reader "$F_DIR/badname-beside.json")"
+[ -n "$outF9" ] && printf '%s' "$outF9" | jq -e '.non_prod_assert.base_url_matches == "^http://localhost"' >/dev/null 2>&1 && grep -qF "[env_var_name_invalid:NODE-ENV]" "$LAST_ERR" && ! grep -qF "[non_prod_assert_empty]" "$LAST_ERR" \
+  && ok "(f) a non-identifier name BESIDE a usable regex: store still emitted, advisory [env_var_name_invalid:NODE-ENV] on stderr, NOT malformed" \
+  || no "(f) non-identifier beside usable: out=$outF9 err=$(cat "$LAST_ERR")"
+[ "$(printf '%s\n' "$outF9" | wc -l | tr -d ' ')" = "1" ] && ok "(f) the advisory never leaks onto stdout (exactly one stdout line)" || no "(f) stdout is not exactly one line: $outF9"
 
 # ============================================================================
 echo "== (g) auth / ready_timeout_s shape =="
@@ -530,7 +557,18 @@ run_writer "$r_p8" --non-prod 'env=NODE_ENV' --confirm
 [ "$RC" -eq 1 ] && ok "(p8) a malformed env= form (no =VAL) is rejected with exit 1" || no "(p8) expected exit 1, got $RC"
 run_writer "$r_p8" --non-prod '' --confirm
 [ "$RC" -eq 1 ] && ok "(p8) an empty --non-prod is rejected with exit 1" || no "(p8) expected exit 1, got $RC"
-[ "$before_p8" = "$(tree_hash "$r_p8")" ] && ok "(p8) neither rejected run wrote anything" || no "(p8) a rejected run modified the tree"
+# NAME must be a POSIX identifier — parity with the reader (unusable member) and the executor
+# (`${!name}` lookup): a bad name is refused HERE, at parse time, so it can never pass proposal,
+# --confirm and the reader only to fail closed at the first run.
+run_writer "$r_p8" --non-prod 'env=NODE-ENV=x' --confirm
+[ "$RC" -eq 1 ] && ok "(p8) env=NODE-ENV=x (hyphen in NAME) is refused with exit 1" || no "(p8) env=NODE-ENV=x: expected exit 1, got $RC — $OUT"
+case "$OUT" in *"must be a POSIX identifier: [A-Za-z_][A-Za-z0-9_]*"*) ok "(p8) the refusal names the rule (POSIX identifier)" ;; *) no "(p8) refusal does not name the identifier rule: $OUT" ;; esac
+run_writer "$r_p8" --non-prod 'env=1ABC=x' --confirm
+[ "$RC" -eq 1 ] && ok "(p8) env=1ABC=x (digit-leading NAME) is refused with exit 1" || no "(p8) env=1ABC=x: expected exit 1, got $RC — $OUT"
+run_writer "$r_p8" --non-prod 'env=NODE_ENV=x'
+[ "$RC" -eq 0 ] && printf '%s' "$(proposed_object)" | jq -e '.non_prod_assert.env_var_equals.name == "NODE_ENV"' >/dev/null 2>&1 \
+  && ok "(p8) CONTROL: env=NODE_ENV=x (an identifier) is still accepted" || no "(p8) CONTROL FAILED: rc=$RC — $OUT"
+[ "$before_p8" = "$(tree_hash "$r_p8")" ] && [ ! -e "$r_p8/.agent" ] && ok "(p8) none of the rejected runs wrote anything (tree byte-identical, no .agent/)" || no "(p8) a rejected run modified the tree"
 
 echo "== (p9) --non-prod is ONE PER KIND — a second value of a kind already given is refused, nothing written =="
 # The store holds one member per kind, so a silent last-wins overwrite would drop an assertion the
@@ -634,7 +672,9 @@ rm -f "$r_t/stray.txt"; printf 'edited\n' > "$r_t/src.txt"; h2="$(tree_hash "$r_
 #                             a start string exiting non-zero is [start_exited:<rc>] even with health
 #                             2xx elsewhere; exit 0 is a detached starter; a stale record does NOT
 #                             refuse a re-start [stale_pid_cleared]; stop with a dead recorded pid is
-#                             non-zero [not_running]; ready_timeout_s is wall-clock (hanging curl)
+#                             non-zero [not_running]; ready_timeout_s is wall-clock (hanging curl);
+#                             HEALTH IS 2xx ONLY: a PATH-stubbed curl printing `302` never yields
+#                             `ready` (health_timeout), one printing `200` does
 #   (AC9) refuse-before-run → every mutating subcommand refuses under a failing assertion and its
 #                             marker-touching string never runs; a pass in a PREVIOUS invocation
 #                             buys nothing; MUTATION CONTROL: delete the dispatch-level gate call
@@ -694,8 +734,9 @@ run_exec assert-non-prod --store "$FIX" --repo "$A_DIR" --state-dir "$A_STATE"
                   || no "(AC3) pass: rc=$RC_E err=$(cat "$LAST_ERR")"
 [ ! -e "$A_STATE" ] && ok "(AC3) a pass persists NOTHING (no state dir was created by assert-non-prod)" \
                     || no "(AC3) assert-non-prod created state at $A_STATE — a pass must not outlive its process"
-# env_var_equals — equal / different / unset / not-an-identifier (the reader only requires a
-# non-empty name; the executor must fail CLOSED on a name it cannot look up).
+# env_var_equals — equal / different / unset / not-an-identifier (the reader refuses a non-identifier
+# name as the ONLY member and forwards [env_var_name_invalid:<name>]; beside another member the
+# executor's OWN check must still fail CLOSED on a name it cannot look up — belt and suspenders).
 jq '.non_prod_assert = {"env_var_equals": {"name": "VERIFY_SEAM_ENV", "value": "development"}}' "$FIX" > "$A_DIR/env.json"
 VERIFY_SEAM_ENV=development run_exec assert-non-prod --store "$A_DIR/env.json" --repo "$A_DIR"
 [ "$RC_E" -eq 0 ] && ok "(AC3) env_var_equals: \$VERIFY_SEAM_ENV=development → exit 0" || no "(AC3) env equal: rc=$RC_E err=$(cat "$LAST_ERR")"
@@ -705,7 +746,14 @@ VERIFY_SEAM_ENV=production run_exec assert-non-prod --store "$A_DIR/env.json" --
 [ "$rc_unset" -ne 0 ] && has_token non_prod_assert_failed && ok "(AC3) env_var_equals: variable UNSET → non_prod_assert_failed (unset is not 'equal to anything')" || no "(AC3) env unset: rc=$rc_unset err=$(cat "$LAST_ERR")"
 jq '.non_prod_assert = {"env_var_equals": {"name": "NOT-A-NAME", "value": ""}}' "$FIX" > "$A_DIR/badname.json"
 run_exec assert-non-prod --store "$A_DIR/badname.json" --repo "$A_DIR"
-[ "$RC_E" -ne 0 ] && has_token non_prod_assert_failed && ok "(AC3) env_var_equals: an invalid identifier fails CLOSED" || no "(AC3) bad name: rc=$RC_E err=$(cat "$LAST_ERR")"
+[ "$RC_E" -eq 3 ] && has_token "env_var_name_invalid:NOT-A-NAME" && has_token non_prod_assert_empty && has_token verify_store_unreadable \
+  && ok "(AC3) env_var_equals: an invalid identifier as the ONLY member is refused by the READER (exit 3), tokens forwarded" \
+  || no "(AC3) bad name alone: rc=$RC_E err=$(cat "$LAST_ERR")"
+jq '.base_url = "https://app.example.com" | .non_prod_assert = {"env_var_equals": {"name": "NOT-A-NAME", "value": ""}, "base_url_matches": "^http://localhost"}' "$FIX" > "$A_DIR/badname-beside.json"
+run_exec assert-non-prod --store "$A_DIR/badname-beside.json" --repo "$A_DIR"
+[ "$RC_E" -eq 1 ] && has_token non_prod_assert_failed && grep -qF "(2 evaluated)" "$LAST_ERR" \
+  && ok "(AC3) env_var_equals: an invalid identifier BESIDE a failing regex reaches the executor and fails CLOSED (non_prod_assert_failed)" \
+  || no "(AC3) bad name beside: rc=$RC_E err=$(cat "$LAST_ERR")"
 # cmd — exit 0 = pass; runs in the --repo dir (a relative path resolves there, never in the cwd).
 jq '.non_prod_assert = {"cmd": "test -f .not-prod"}' "$FIX" > "$A_DIR/cmd.json"
 run_exec assert-non-prod --store "$A_DIR/cmd.json" --repo "$A_DIR"
@@ -865,6 +913,21 @@ PATH="$STUB:$PATH" run_exec start --store "$B_DIR/stubbed.json" --repo "$B_DIR" 
 [ "$RC_E" -ne 0 ] && has_token health_timeout && [ -e "$CURL_MARK" ] \
   && ok "(AC4) CONTROL: the PATH-stubbed curl IS what the health poll calls (marker set, health_timeout)" \
   || no "(AC4) CONTROL FAILED: rc=$RC_E marker=$([ -e "$CURL_MARK" ] && echo yes || echo no) err=$(cat "$LAST_ERR")"
+# HEALTH IS 2xx ONLY. The status code is READ (`-w '%{http_code}'`), never inferred from curl's
+# exit status: `curl -f` fails only on 4xx/5xx, so a health route that 302s to a login page would
+# have counted as healthy. A stub that prints `302` (exit 0, as curl without -f does) must time out;
+# the same stub printing `200` is the positive control that the poll still reaches `ready`.
+CODE_STUB="$(mktmp)"
+printf '#!/bin/sh\nprintf 302\nexit 0\n' > "$CODE_STUB/curl"; chmod +x "$CODE_STUB/curl"
+PATH="$CODE_STUB:$PATH" run_exec start --store "$B_DIR/stubbed.json" --repo "$B_DIR" --state-dir "$B_DIR/state-302"
+[ "$RC_E" -ne 0 ] && has_token health_timeout && [ "$OUT_E" != "ready" ] \
+  && ok "(AC4) a health endpoint answering 302 is NOT ready: health_timeout, no 'ready' (3xx never counts as 2xx)" \
+  || no "(AC4) 302 accepted as healthy: rc=$RC_E out=$OUT_E err=$(cat "$LAST_ERR")"
+printf '#!/bin/sh\nprintf 200\nexit 0\n' > "$CODE_STUB/curl"; chmod +x "$CODE_STUB/curl"
+PATH="$CODE_STUB:$PATH" run_exec start --store "$B_DIR/stubbed.json" --repo "$B_DIR" --state-dir "$B_DIR/state-200"
+[ "$RC_E" -eq 0 ] && [ "$OUT_E" = "ready" ] \
+  && ok "(AC4) CONTROL: the same stub printing 200 → exit 0, 'ready'" \
+  || no "(AC4) 200 CONTROL FAILED: rc=$RC_E out=$OUT_E err=$(cat "$LAST_ERR")"
 # ready_timeout_s is WALL-CLOCK, not an iteration count: with a curl that hangs 2s per call (the
 # --max-time shape) and ready_timeout_s=2, the poll must give up in ~2s — a per-iteration counter
 # would take 2×(2+1)=6s. Window 2..4 discriminates the two.

@@ -56,7 +56,9 @@
 #                 touches production. So without `--non-prod <regex|env=NAME=VAL|cmd=<shell>>` the
 #                 proposal is printed with a BLOCKED line and the script exits 1 — on EVERY path,
 #                 `--confirm` or not — and nothing is written. Repeatable, ONE PER KIND; each value
-#                 becomes one member:  `env=NAME=VAL` → env_var_equals {name, value};
+#                 becomes one member:  `env=NAME=VAL` → env_var_equals {name, value} (NAME must be
+#                 a POSIX identifier, `[A-Za-z_][A-Za-z0-9_]*` — the shape the reader and the
+#                 executor both enforce; anything else is REFUSED at parse time, exit 1);
 #                 `cmd=<shell>` → cmd;  anything else → base_url_matches (an ERE). A second value
 #                 of a kind already given is REFUSED at parse time (exit 1, nothing written) —
 #                 the store holds one member per kind, so a silent last-wins overwrite would drop
@@ -162,6 +164,14 @@ while [ "$#" -gt 0 ]; do
           case "$nv" in
             *=*) [ -n "${nv%%=*}" ] || die "rejected: --non-prod env=NAME=VAL has an empty NAME (got: $2)" ;;
             *)   die "rejected: --non-prod env= form must be env=NAME=VAL (got: $2)" ;;
+          esac
+          # NAME must be the identifier the executor can actually look up (`${!name}`) — the SAME
+          # shape the reader enforces (a non-identifier name is an UNUSABLE member there). Refusing
+          # here means a bad name can never pass proposal, --confirm and the reader only to fail
+          # closed at the first run.
+          case "${nv%%=*}" in
+            *[!A-Za-z0-9_]*|[0-9]*)
+              die "rejected: --non-prod env=NAME=VAL — NAME '${nv%%=*}' must be a POSIX identifier: [A-Za-z_][A-Za-z0-9_]* (got: $2). Nothing was written." ;;
           esac
           [ "$non_prod_have_env" -eq 0 ] || die "rejected: a second --non-prod env= value (got: $2) — one member per kind; a later value would silently replace the earlier one. Nothing was written."
           non_prod_have_env=1 ;;

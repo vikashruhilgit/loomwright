@@ -7,7 +7,9 @@
 # Usage:  verify-env.sh <subcommand> [--store <file>] [--repo <dir>] [--state-dir <dir>]
 #                                    [--ready-timeout-s <n> | --health-timeout <n>]
 #   assert-non-prod   evaluate `non_prod_assert`; exit 0 only if ≥1 usable member PASSES
-#   start             run `start` (if non-null) in the background, poll `health` until 2xx or the
+#   start             run `start` (if non-null) in the background, poll `health` until it answers
+#                     2xx — the STATUS CODE is read (`-w '%{http_code}'`, no `-f`, no `-L`), so a 3xx
+#                     (a health route redirecting to a login page) is NOT healthy — or until the
 #                     deadline (`ready_timeout_s` is WALL-CLOCK seconds, not an iteration count);
 #                     on timeout run `stop` and exit non-zero [health_timeout]. Refuses when the
 #                     pid recorded by a previous `start` is still alive [already_started] (a stale
@@ -279,6 +281,20 @@ probe_url() {
 # child) fails this as soon as bash has collected it — verified on bash 3.2.
 pid_alive() { kill -0 "$1" 2>/dev/null; }
 
+# health_2xx <url> — the ONE place the health verdict is decided: true only when the endpoint answers
+# an HTTP 2xx. The status code is READ (`-w '%{http_code}'`), never inferred from curl's exit status:
+# `curl -f` fails only on 4xx/5xx, so under `-f` a 302 (a health route bouncing to a login page)
+# would have counted as healthy. No `-L` either — a redirect is observed, not followed. A stubbed or
+# unreachable curl prints no code (or `000`) and is simply "not yet healthy".
+health_2xx() {
+  local code
+  code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 2 "$1" 2>/dev/null)" || code=""
+  case "$code" in
+    2[0-9][0-9]) return 0 ;;
+    *)           return 1 ;;
+  esac
+}
+
 do_stop() {
   local pidf="$STATE_DIR/pid" pid i
   if [ -n "$C_STOP" ]; then
@@ -376,14 +392,14 @@ do_start() {
     rm -f "$pidf" 2>/dev/null
   fi
   url="$(health_url)"
-  diag "polling $url for 2xx (ready_timeout_s=$READY_TIMEOUT_S, wall-clock)"
+  diag "polling $url for 2xx (status code read, 3xx is not healthy; ready_timeout_s=$READY_TIMEOUT_S, wall-clock)"
   started_at="$(date +%s)"
   deadline=$((started_at + READY_TIMEOUT_S))
   while :; do
     # The launched child is inspected BEFORE health is trusted: a 2xx served by some OTHER process
     # while our own start string has already died is not "ready", it is a start that failed.
     check_start_child
-    if curl -fsS -o /dev/null --max-time 2 "$url" 2>/dev/null; then
+    if health_2xx "$url"; then
       if [ -n "$child" ]; then
         # Grace re-check: a child that dies on bind does so a few ms AFTER launch, i.e. possibly
         # after this first 2xx (served by an instance we did not start). One second closes that

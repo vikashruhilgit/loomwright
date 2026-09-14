@@ -22,11 +22,16 @@
 #                                   logged out; the executor's auth-probe target)
 #   non_prod_assert  (object)       AT LEAST ONE USABLE MEMBER of: base_url_matches (non-empty string,
 #                                   an ERE tested against base_url) / env_var_equals ({name, value},
-#                                   both strings, name non-empty) / cmd (non-empty shell string; exit 0
-#                                   = pass). A member that is present but of the wrong type is
-#                                   MALFORMED (the executor fails CLOSED, so a half-typed member must
-#                                   not silently disappear). NO usable member ⇒ MALFORMED with the
-#                                   reason token `non_prod_assert_empty`.
+#                                   both strings; name a POSIX identifier `[A-Za-z_][A-Za-z0-9_]*`)
+#                                   / cmd (non-empty shell string; exit 0 = pass). A member that is
+#                                   present but of the wrong TYPE is MALFORMED (the executor fails
+#                                   CLOSED, so a half-typed member must not silently disappear). A
+#                                   well-typed env_var_equals whose `name` is NOT an identifier is an
+#                                   UNUSABLE member (the executor cannot look it up, so it can only
+#                                   ever fail): it is named on stderr `[env_var_name_invalid:<name>]`
+#                                   as an ADVISORY line and does not count as usable — the store is
+#                                   MALFORMED only if NO usable member remains. NO usable member ⇒
+#                                   MALFORMED with the reason token `non_prod_assert_empty`.
 #   seed             (string|null)  shell string that seeds the app; null = nothing to seed
 #   reset            (string|null)  shell string that resets state; null = nothing to reset
 #   stop             (string|null)  shell string that stops the app; null = executor kills the pid it
@@ -138,6 +143,8 @@ fi
 # 4. Validate + render in ONE jq pass. jq emits prefixed lines the shell partitions:
 #      OK\t<compact json>   -> stdout (exactly one line, only when NO MALFORMED line was produced)
 #      MALFORMED\t<reason>  -> stderr + log; NOTHING reaches stdout
+#      ADVISORY\t<reason>   -> stderr + log ONLY; the verdict is unaffected (an unusable-but-well-typed
+#                              member beside a usable one — the store is still emitted)
 # ---------------------------------------------------------------------------
 render="$(mktemp 2>/dev/null)" || {
   diag "read-verify: could not allocate a temp file — emitting nothing (fail-safe) [tempfile_unavailable]"
@@ -147,7 +154,14 @@ trap 'rm -f "$render" 2>/dev/null' EXIT
 
 JQ_PROG='
   def bad($msg; $tok): "MALFORMED\tread-verify: " + $msg + " — emitting nothing (fail-safe) [" + $tok + "]";
+  def advise($msg; $tok): "ADVISORY\tread-verify: " + $msg + " [" + $tok + "]";
   def nonempty_string: (type == "string") and (length > 0);
+  # posix_identifier — the shape the executor can look up via `${!name}`; the SAME rule
+  # propose-verify.sh enforces at parse time, so the three surfaces never disagree on a name.
+  def posix_identifier: (type == "string") and test("^[A-Za-z_][A-Za-z0-9_]*$");
+  # token_safe — a store-supplied string rendered inside a bracketed reason token: anything outside
+  # the token alphabet (a space, a bracket, a newline) becomes `?` so the line stays one line.
+  def token_safe: tostring | gsub("[^A-Za-z0-9_.:-]"; "?");
 
   # nullable_required($o; $k) — the has() presence check. An ABSENT key and an explicit null are
   # different facts; only the former is a defect. A `//` default here would collapse the two.
@@ -212,14 +226,22 @@ JQ_PROG='
       + ( if ($n | has("cmd")) and ($n.cmd | nonempty_string | not) then
             [ bad("`non_prod_assert.cmd` must be a non-empty shell string"; "type_invalid:non_prod_assert.cmd") ]
           else [] end )
-      + ( ( ( ($n | has("base_url_matches")) and ($n.base_url_matches | nonempty_string) )
-            or ( ($n | has("env_var_equals")) and (($n.env_var_equals | type) == "object")
-                 and ($n.env_var_equals | has("name")) and ($n.env_var_equals.name | nonempty_string)
-                 and ($n.env_var_equals | has("value")) and (($n.env_var_equals.value | type) == "string") )
-            or ( ($n | has("cmd")) and ($n.cmd | nonempty_string) ) ) as $usable
-          | if $usable then [] else
-              [ bad("`non_prod_assert` has NO usable member (need at least one of base_url_matches / env_var_equals / cmd) — the executor would fail CLOSED"; "non_prod_assert_empty") ]
-            end )
+      # env_well_typed: the member passes the TYPE check above. env_usable: well-typed AND `name`
+      # is an identifier the executor can look up. Well-typed-but-not-usable is ADVISORY, not
+      # MALFORMED — the store stands on its other members, and is refused only when none remains.
+      + ( ( ($n | has("env_var_equals")) and (($n.env_var_equals | type) == "object")
+            and ($n.env_var_equals | has("name")) and ($n.env_var_equals.name | nonempty_string)
+            and ($n.env_var_equals | has("value")) and (($n.env_var_equals.value | type) == "string") ) as $env_well_typed
+          | ( $env_well_typed and ($n.env_var_equals.name | posix_identifier) ) as $env_usable
+          | ( if $env_well_typed and ($env_usable | not) then
+                [ advise("`non_prod_assert.env_var_equals.name` " + ($n.env_var_equals.name | tojson) + " is not a POSIX identifier ([A-Za-z_][A-Za-z0-9_]*) — the executor cannot look it up, so this member is UNUSABLE and does not count"; "env_var_name_invalid:" + ($n.env_var_equals.name | token_safe)) ]
+              else [] end )
+          + ( ( ( ($n | has("base_url_matches")) and ($n.base_url_matches | nonempty_string) )
+                or $env_usable
+                or ( ($n | has("cmd")) and ($n.cmd | nonempty_string) ) ) as $usable
+              | if $usable then [] else
+                  [ bad("`non_prod_assert` has NO usable member (need at least one of base_url_matches / env_var_equals with an identifier name / cmd) — the executor would fail CLOSED"; "non_prod_assert_empty") ]
+                end ) )
     end;
 
   def check_optional($o):
@@ -240,8 +262,11 @@ JQ_PROG='
         + nullable_required($o; "reset")
         + nullable_required($o; "stop")
         + check_optional($o)
-      ) as $errs
-      | if ($errs | length) > 0 then $errs else [ "OK\t" + ($o | tojson) ] end
+      ) as $lines
+      # Only MALFORMED lines block the OK line; ADVISORY lines ride along with it (a store with an
+      # unusable env_var_equals beside a usable member is still emitted — and still says why).
+      | if ($lines | map(select(startswith("MALFORMED\t"))) | length) > 0 then $lines
+        else $lines + [ "OK\t" + ($o | tojson) ] end
     end
   | .[]
 '
@@ -258,10 +283,12 @@ if [ ! -s "$render" ]; then
   exit 0
 fi
 
-# 4a. MALFORMED short-circuit: report EVERY reason on stderr, emit NOTHING on stdout.
+# 4a. ADVISORY lines are named on stderr whatever the verdict (they never touch stdout); then the
+#     MALFORMED short-circuit: report EVERY reason on stderr, emit NOTHING on stdout.
 malformed=0
 while IFS= read -r line; do
   case "$line" in
+    ADVISORY$'\t'*)  diag "${line#ADVISORY$'\t'}" ;;
     MALFORMED$'\t'*) malformed=1 ;;
   esac
 done < "$render"
