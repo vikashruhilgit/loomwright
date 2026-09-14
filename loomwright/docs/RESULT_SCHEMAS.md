@@ -2821,9 +2821,11 @@ is recorded in `artifacts[]` RELATIVE to `<run_dir>/`: a `path` attachment (Play
 `trace` → `trace.zip`, `error-context` → `.md`) is COPIED under its basename (an index prefix on a name collision);
 a `body` attachment — base64 in the reporter, which is how the template's `testInfo.attach('page-body', {body:
 await page.content(), contentType: 'text/html'})` and `response-<status>` arrive — is DECODED to `<name>.<ext>` with
-the extension from `contentType` (`text/html` → `.html`, `text/plain` → `.txt`, `application/json` → `.json`,
-otherwise `.bin`). With `screenshot: 'on'` every ingested line therefore carries at least one `.png`; a FAIL from
-the template additionally carries the `page-body.html` the seam test's mutation control asserts on.
+the extension from `contentType`, matched by prefix in the order `walk_copy_attachments`'s `case` statement lists
+them: `text/html*` → `.html`, `text/markdown*` → `.md`, any other `text/*` → `.txt`, `application/json*` → `.json`,
+`image/png*` → `.png`, `application/zip*` → `.zip`, otherwise `.bin`. With `screenshot: 'on'` every ingested line
+therefore carries at least one `.png`; a FAIL from the template additionally carries the `page-body.html` the seam
+test's mutation control asserts on.
 
 **BLOCKED rules that need no browser.** Before any config is written, `walk` runs `npx --no-install playwright
 --version` from the repo; a non-zero status appends a `BLOCKED` / `ENVIRONMENT_ISSUE` / `playwright_unavailable`

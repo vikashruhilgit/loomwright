@@ -2475,6 +2475,21 @@ run_v "$V_QA" "$F"
 assert_fail "qa: [CONTROL] a '#' with no preceding whitespace is NOT a comment [rule 5]" \
   "(rule 5)"
 
+# A NEGATIVE count is an integer (as_int accepts a leading '-'), so the
+# non-integer reason above cannot catch it; rule 2's `value < 0` branch is the
+# only guard, and this case is what makes deleting that branch visible.
+mk qa-negative-count.md <<'EOF'
+QA_RESULT:
+  schema_version: 1
+  status: passed
+  tests_generated: 4
+  tests_passed: -1
+  coverage_estimate: 0.8
+  summary: tests_passed is a negative integer
+EOF
+run_v "$V_QA" "$F"
+assert_fail "qa: NEGATIVE count (tests_passed: -1) [rule 2]" "tests_passed must be a non-negative integer"
+
 # ── E2. qa-executor validator — the VERIFY_RESULT branch (`--verify` mode) ──
 # RULE SOURCE: docs/RESULT_SCHEMAS.md §VERIFY_RESULT. Same hook command as §E;
 # the §E cases above are UNCHANGED — this block only adds the second schema.
@@ -2632,6 +2647,21 @@ VERIFY_RESULT:
 EOF
 run_v "$V_QA" "$F"
 assert_fail "verify: CROSS-FIELD total != pass+fail+blocked+not_verifiable [rule V6]" "(rule V6)"
+
+# A NEGATIVE count parses as an integer, so rule V5's integer check passes it
+# and rule V6 is satisfied by construction (2+0-1+0 == 1): the ONLY defect is
+# the sign, and only the `value < 0` branch can report it.
+mk vr-negative-count.md <<'EOF'
+VERIFY_RESULT:
+  schema_version: 1
+  run_id: verify-20260914T100000Z-x
+  run_dir: .supervisor/verify/verify-20260914T100000Z-x
+  status: completed
+  counts: {pass: 2, fail: 0, blocked: -1, not_verifiable: 0, total: 1}
+  summary: blocked is a negative integer; total is consistent with it so V6 stays quiet
+EOF
+run_v "$V_QA" "$F"
+assert_fail "verify: NEGATIVE count (blocked: -1) [rule V5]" "counts.blocked must be a non-negative integer"
 
 mk vr-neither.md <<'EOF'
 Walked the app, everything looked fine, forgot to emit a block.
