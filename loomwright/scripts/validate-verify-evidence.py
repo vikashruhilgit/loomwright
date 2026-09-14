@@ -44,6 +44,8 @@ provokes every one of them and asserts nothing outside this set is emitted):
                              includes `ts` not `YYYY-MM-DDTHH:MM:SS[.fff]Z`,
                              `run_id` not starting with `verify-`, an
                              `artifacts[]` entry that is not a relative path
+                             (empty, absolute, `~`-anchored, or carrying a
+                             `..` segment that would escape `<run_dir>/`)
   unknown_event              `event` is a string outside the event enum
   unknown_verdict            `ac.verdict` is a string outside the verdict enum
   unknown_enum:<k>           any OTHER enum field holds a value outside its enum
@@ -165,6 +167,15 @@ def optional_str(rec, key):
         fail("bad_type:%s" % key)
 
 
+def is_relative_path(item):
+    """A path RELATIVE to <run_dir>/ that stays inside it: non-empty, not
+    absolute, not home-anchored, and no `..` segment anywhere (a leading
+    `../x` and an interior `a/../b` both escape the run dir)."""
+    if item == "" or item.startswith("/") or item.startswith("~"):
+        return False
+    return ".." not in item.split("/")
+
+
 def check_str_array(rec, key, relative_paths=False):
     v = rec[key]
     if not isinstance(v, list):
@@ -172,7 +183,7 @@ def check_str_array(rec, key, relative_paths=False):
     for item in v:
         if not is_str(item):
             fail("bad_type:%s" % key)
-        if relative_paths and (item == "" or item.startswith("/")):
+        if relative_paths and not is_relative_path(item):
             fail("bad_type:%s" % key)
 
 

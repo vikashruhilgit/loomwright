@@ -2612,7 +2612,7 @@ VERIFY_EVIDENCE:                       # one JSON object per line
     classification: enum [REAL_BUG, DISCOVERY_GAP, ENVIRONMENT_ISSUE]|null
                                        # REQUIRED when verdict is FAIL or BLOCKED; MUST be null/absent on PASS and NOT_VERIFIABLE
     steps: string[]                    # required — may be empty
-    artifacts: string[]                # required — may be empty; paths RELATIVE to <run_dir>/ (never absolute)
+    artifacts: string[]                # required — may be empty; paths RELATIVE to <run_dir>/ (never absolute or `~`-anchored; a `..` segment is rejected — the path must stay inside the run dir)
     reason: string                     # REQUIRED non-empty for every non-PASS verdict; optional on PASS
   issue:
     text: string                       # required
@@ -2665,7 +2665,7 @@ and `test-verify-evidence.sh` provokes every one and asserts both surfaces name 
 | `not_object` | parsed, but the root is not an object |
 | `schema_version_mismatch` | `schema_version` absent or not the integer `1` |
 | `missing_key:<k>` | a required key is absent — common keys, per-event keys, and the conditional ones: `env.reason` on `outcome: fail`, `pause`/`resume` `reason` (absent, null and `""` all report `missing_key:reason`) |
-| `bad_type:<k>` | a present key has the wrong type or shape — incl. `ts` not ISO-8601 UTC, `run_id` not starting with `verify-`, an `artifacts[]` entry that is empty or absolute |
+| `bad_type:<k>` | a present key has the wrong type or shape — incl. `ts` not ISO-8601 UTC, `run_id` not starting with `verify-`, an `artifacts[]` entry that is empty, absolute, `~`-anchored, or carries a `..` segment |
 | `unknown_event` | `event` outside its enum |
 | `unknown_verdict` | `ac.verdict` outside its enum |
 | `unknown_enum:<k>` | any OTHER enum field outside its enum (`ticket_kind`, `step`, `outcome`, `state`, `scope`, `classification`, `severity`, `status`) |

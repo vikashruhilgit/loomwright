@@ -25,6 +25,8 @@
 #         empty); pause/resume reason (absent, null, empty); ac steps / artifacts / ac_id
 #   (V5)  bad_type:<k> — ts non-string and non-ISO; run_id without the `verify-` prefix; steps not an
 #         array; artifacts entry non-string / absolute; env_contract_hash number; classification number
+#         (R2, drain round 1: artifacts entry `../x`, `a/../b`, `~/x` rejected on ac AND issue; a plain
+#         relative path and a `..`-containing file name such as `a..b/x..png` accepted)
 #   (V6)  unknown_event
 #   (V7)  unknown_verdict — lower-case `pass`, `MAYBE`
 #   (V8)  unknown_enum:<k> — ticket_kind, step, outcome, state, scope, severity, classification, status
@@ -455,6 +457,20 @@ run_v "$FD/frozen.jsonl"; rc=$?
   || no "(V18) frozen example block: rc=$rc size=$(wc -c < "$FD/frozen.jsonl") stdout=$(cat "$LAST_OUT")"
 
 # --- helper cases (Subtask 2 appends below this line) ---
+
+echo "== (R2) drain round 1 — an artifacts[] entry must stay INSIDE <run_dir>/: .. segments and ~ rejected, a plain relative path accepted =="
+# Schema: paths RELATIVE to <run_dir>/. Before this round only "" and a leading "/" were refused, so
+# "../../etc/passwd" validated — the bad_type:artifacts code is reused (the 12-code set is CLOSED).
+expect_reject "(R2) ac.artifacts leading ../x" bad_type:artifacts "$(mut "$L_AC_PASS" '.artifacts=["../x"]')"
+expect_reject "(R2) ac.artifacts interior a/../b" bad_type:artifacts "$(mut "$L_AC_PASS" '.artifacts=["a/../b"]')"
+expect_reject "(R2) ac.artifacts home-anchored ~/x" bad_type:artifacts "$(mut "$L_AC_PASS" '.artifacts=["~/x"]')"
+expect_accept "(R2) ac.artifacts plain relative screens/ac1.png" "$(mut "$L_AC_PASS" '.artifacts=["screens/ac1.png"]')"
+expect_reject "(R2) issue.artifacts leading ../x" bad_type:artifacts "$(mut "$L_ISSUE" '.artifacts=["../x"]')"
+expect_reject "(R2) issue.artifacts interior a/../b" bad_type:artifacts "$(mut "$L_ISSUE" '.artifacts=["a/../b"]')"
+expect_reject "(R2) issue.artifacts home-anchored ~/x" bad_type:artifacts "$(mut "$L_ISSUE" '.artifacts=["~/x"]')"
+expect_accept "(R2) issue.artifacts plain relative screens/ac1.png" "$(mut "$L_ISSUE" '.artifacts=["screens/ac1.png"]')"
+# A `..` that is only PART of a segment is a legal file name, not an escape — the check splits on "/".
+expect_accept "(R2) ac.artifacts segment containing dots but not equal to .. (a..b/x..png)" "$(mut "$L_AC_PASS" '.artifacts=["a..b/x..png"]')"
 
 # ============================================================================
 # Helper cases — verify-helpers.sh (the append-only writer + the derived summary). Every mutation
