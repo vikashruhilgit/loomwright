@@ -2475,6 +2475,226 @@ run_v "$V_QA" "$F"
 assert_fail "qa: [CONTROL] a '#' with no preceding whitespace is NOT a comment [rule 5]" \
   "(rule 5)"
 
+# ── E2. qa-executor validator — the VERIFY_RESULT branch (`--verify` mode) ──
+# RULE SOURCE: docs/RESULT_SCHEMAS.md §VERIFY_RESULT. Same hook command as §E;
+# the §E cases above are UNCHANGED — this block only adds the second schema.
+# The precedence rule is the load-bearing case: QA_RESULT wins whenever it is
+# PRESENT, so a payload carrying both blocks with VERIFY_RESULT LAST must still
+# be judged by the five QA_RESULT rules (a "last block wins" locator would
+# invert that — it is exactly what find_last_named_block does, so the
+# validator must not use it here).
+echo "== E2. validate-qa-result.py — VERIFY_RESULT branch (6 rules + precedence) =="
+
+mk vr-valid.md <<'EOF'
+## VERIFY_RESULT
+- schema_version: 1
+- run_id: verify-20260914T100000Z-01-login
+- run_dir: .supervisor/verify/verify-20260914T100000Z-01-login
+- ticket_path: .supervisor/requirements/example/01-login.md
+- status: completed
+- counts: {pass: 2, fail: 0, blocked: 0, not_verifiable: 1, total: 3}
+- artifacts_dir: .supervisor/verify/verify-20260914T100000Z-01-login/artifacts
+- summary: three ACs walked, two observed PASS, one not observable through the UI
+EOF
+run_v "$V_QA" "$F"
+assert_pass "verify: valid block (bullet form, flow-mapping counts)"
+
+mk vr-valid-yaml.md <<'EOF'
+VERIFY_RESULT:
+  schema_version: 1
+  run_id: verify-20260914T100000Z-01-login
+  run_dir: .supervisor/verify/verify-20260914T100000Z-01-login
+  status: aborted
+  counts:
+    pass: 0
+    fail: 0
+    blocked: 3
+    not_verifiable: 0
+    total: 3
+  summary: env start failed; every AC recorded BLOCKED and the run was aborted
+EOF
+run_v "$V_QA" "$F"
+assert_pass "verify: valid block (YAML form, block-mapping counts, status aborted) [rule V4]"
+
+mk vr-bad-status.md <<'EOF'
+VERIFY_RESULT:
+  schema_version: 1
+  run_id: verify-20260914T100000Z-x
+  run_dir: .supervisor/verify/verify-20260914T100000Z-x
+  status: passed
+  counts: {pass: 1, fail: 0, blocked: 0, not_verifiable: 0, total: 1}
+  summary: a QA_RESULT status on a VERIFY_RESULT block
+EOF
+run_v "$V_QA" "$F"
+assert_fail "verify: out-of-enum status (passed is QA_RESULT's enum, not this one) [rule V4]" "(rule V4)"
+
+mk vr-no-run-id.md <<'EOF'
+VERIFY_RESULT:
+  schema_version: 1
+  run_dir: .supervisor/verify/verify-20260914T100000Z-x
+  status: completed
+  counts: {pass: 1, fail: 0, blocked: 0, not_verifiable: 0, total: 1}
+  summary: run_id is absent
+EOF
+run_v "$V_QA" "$F"
+assert_fail "verify: MISSING run_id [rule V2]" "missing the run_id field"
+
+mk vr-null-run-id.md <<'EOF'
+VERIFY_RESULT:
+  schema_version: 1
+  run_id:
+  run_dir: .supervisor/verify/verify-20260914T100000Z-x
+  status: completed
+  counts: {pass: 1, fail: 0, blocked: 0, not_verifiable: 0, total: 1}
+  summary: run_id is EXPLICITLY null — a different reason from absent
+EOF
+run_v "$V_QA" "$F"
+assert_fail "verify: EXPLICIT-NULL run_id [rule V2]" "must be a non-empty string"
+
+mk vr-no-run-dir.md <<'EOF'
+VERIFY_RESULT:
+  schema_version: 1
+  run_id: verify-20260914T100000Z-x
+  status: completed
+  counts: {pass: 1, fail: 0, blocked: 0, not_verifiable: 0, total: 1}
+  summary: run_dir is absent
+EOF
+run_v "$V_QA" "$F"
+assert_fail "verify: MISSING run_dir [rule V2]" "missing the run_dir field"
+
+mk vr-sv.md <<'EOF'
+VERIFY_RESULT:
+  schema_version: 2
+  run_id: verify-20260914T100000Z-x
+  run_dir: .supervisor/verify/verify-20260914T100000Z-x
+  status: completed
+  counts: {pass: 1, fail: 0, blocked: 0, not_verifiable: 0, total: 1}
+  summary: wrong schema version
+EOF
+run_v "$V_QA" "$F"
+assert_fail "verify: schema_version != 1 [rule V1]" "(rule V1)"
+
+mk vr-no-summary.md <<'EOF'
+VERIFY_RESULT:
+  schema_version: 1
+  run_id: verify-20260914T100000Z-x
+  run_dir: .supervisor/verify/verify-20260914T100000Z-x
+  status: completed
+  counts: {pass: 1, fail: 0, blocked: 0, not_verifiable: 0, total: 1}
+EOF
+run_v "$V_QA" "$F"
+assert_fail "verify: MISSING summary [rule V3]" "(rule V3)"
+
+mk vr-non-int.md <<'EOF'
+VERIFY_RESULT:
+  schema_version: 1
+  run_id: verify-20260914T100000Z-x
+  run_dir: .supervisor/verify/verify-20260914T100000Z-x
+  status: completed
+  counts: {pass: two, fail: 0, blocked: 0, not_verifiable: 0, total: 2}
+  summary: a non-integer count
+EOF
+run_v "$V_QA" "$F"
+assert_fail "verify: NON-INTEGER count (pass: two) [rule V5]" "counts.pass must be an integer"
+
+mk vr-missing-count.md <<'EOF'
+VERIFY_RESULT:
+  schema_version: 1
+  run_id: verify-20260914T100000Z-x
+  run_dir: .supervisor/verify/verify-20260914T100000Z-x
+  status: completed
+  counts: {pass: 1, fail: 0, blocked: 0, total: 1}
+  summary: not_verifiable is absent from counts
+EOF
+run_v "$V_QA" "$F"
+assert_fail "verify: counts missing not_verifiable [rule V5]" "counts is missing not_verifiable"
+
+mk vr-counts-scalar.md <<'EOF'
+VERIFY_RESULT:
+  schema_version: 1
+  run_id: verify-20260914T100000Z-x
+  run_dir: .supervisor/verify/verify-20260914T100000Z-x
+  status: completed
+  counts: 3
+  summary: counts is a scalar, not a mapping
+EOF
+run_v "$V_QA" "$F"
+assert_fail "verify: counts not a mapping [rule V5]" "counts must be a mapping"
+
+mk vr-total-mismatch.md <<'EOF'
+VERIFY_RESULT:
+  schema_version: 1
+  run_id: verify-20260914T100000Z-x
+  run_dir: .supervisor/verify/verify-20260914T100000Z-x
+  status: completed
+  counts: {pass: 2, fail: 0, blocked: 0, not_verifiable: 1, total: 4}
+  summary: a hand-edited total — the row verify-run.sh finish printed would have said 3
+EOF
+run_v "$V_QA" "$F"
+assert_fail "verify: CROSS-FIELD total != pass+fail+blocked+not_verifiable [rule V6]" "(rule V6)"
+
+mk vr-neither.md <<'EOF'
+Walked the app, everything looked fine, forgot to emit a block.
+EOF
+run_v "$V_QA" "$F"
+assert_fail "verify: NEITHER block present -> the existing missing-QA_RESULT reason, unchanged" \
+  "missing QA_RESULT block"
+
+# --- precedence: QA_RESULT wins whenever PRESENT, even when VERIFY_RESULT is LAST ---
+# The VERIFY_RESULT block below is fully valid on its own; the QA_RESULT above
+# it is INVALID (rule 4). If the validator judged "whichever block is last",
+# this would pass. It must fail, by a QA_RESULT rule.
+mk vr-both-qa-first.md <<'EOF'
+QA_RESULT:
+  schema_version: 1
+  status: passed
+  tests_generated: 12
+  tests_passed: 12
+  summary: 12 tests run but coverage_estimate is absent
+
+VERIFY_RESULT:
+  schema_version: 1
+  run_id: verify-20260914T100000Z-x
+  run_dir: .supervisor/verify/verify-20260914T100000Z-x
+  status: completed
+  counts: {pass: 1, fail: 0, blocked: 0, not_verifiable: 0, total: 1}
+  summary: a valid VERIFY_RESULT that must NOT be the one judged
+EOF
+run_v "$V_QA" "$F"
+assert_fail "verify: [PRECEDENCE] both blocks, VERIFY_RESULT last -> QA_RESULT rules applied (its rule 4 fires)" \
+  "coverage_estimate must be present"
+
+# ...and the positive half: a VALID QA_RESULT beside an INVALID VERIFY_RESULT
+# (total mismatch) passes — the VERIFY_RESULT block is ignored entirely.
+mk vr-both-qa-valid.md <<'EOF'
+QA_RESULT:
+  schema_version: 1
+  status: passed
+  tests_generated: 4
+  tests_passed: 4
+  coverage_estimate: 0.8
+  summary: a conforming QA_RESULT
+
+VERIFY_RESULT:
+  schema_version: 1
+  run_id: verify-20260914T100000Z-x
+  run_dir: .supervisor/verify/verify-20260914T100000Z-x
+  status: completed
+  counts: {pass: 1, fail: 0, blocked: 0, not_verifiable: 0, total: 9}
+  summary: an INVALID VERIFY_RESULT (total mismatch) that is ignored because QA_RESULT is present
+EOF
+run_v "$V_QA" "$F"
+assert_pass "verify: [PRECEDENCE] valid QA_RESULT beside an invalid VERIFY_RESULT -> ok:true (VERIFY_RESULT ignored)"
+
+# The validator must locate blocks BY NAME. A locator that returns whichever
+# block is LAST (find_last_named_block, or load_block with a name tuple) would
+# have judged the VERIFY_RESULT in the two payloads above. Pin the mechanism:
+if grep -qE 'find_last_named_block\(|load_block\([[:space:]]*\(' "$V_QA"; then
+  no "verify: validate-qa-result.py must not use find_last_named_block / a load_block name tuple (they return the LAST block, inverting the precedence rule)"
+else
+  ok "verify: validate-qa-result.py locates each block by name (no last-block-wins locator)"
+fi
+
 # ── F. plan-reviewer validator ───────────────────────────────────────────────
 echo "== F. validate-plan-review-result.py — 6 rules =="
 

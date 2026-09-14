@@ -32,6 +32,28 @@ DELIBERATE STRENGTHENING BEYOND THE PROMPT (recorded, not accidental):
     for a reader to discover — R4 in the brief asks that the transcription not
     silently drift from the prompt in EITHER direction.
 
+VERIFY_RESULT BRANCH (the qa-executor `--verify` mode, added with `/verify`).
+RULE SOURCE: docs/RESULT_SCHEMAS.md §VERIFY_RESULT. The same hook command
+validates BOTH blocks; which rules apply is decided by NAME, not by position:
+
+  * `QA_RESULT` WINS WHENEVER IT IS PRESENT, regardless of where it sits — a
+    payload carrying both blocks is validated EXACTLY as today by the five
+    rules above (the VERIFY_RESULT block is ignored). Each block is located
+    with the single-name `find_last_block(text, <name>)`; the multi-name
+    `find_last_named_block` / a `load_block` name tuple both return whichever
+    block occurs LAST, which would invert this rule.
+  * else a `VERIFY_RESULT` block is accepted iff:
+      (V1) schema_version is the integer 1
+      (V2) run_id and run_dir are present, non-empty strings
+      (V3) summary is present and non-empty
+      (V4) status is one of [completed, aborted]
+      (V5) counts is a mapping whose pass / fail / blocked / not_verifiable /
+           total are all present integers
+      (V6) counts.total == pass + fail + blocked + not_verifiable
+    (`counts` is COPIED from `verify-run.sh finish`'s printed row — the agent
+    never tallies; V6 is what catches a hand-edited row.)
+  * else the existing `missing QA_RESULT block` reason, unchanged.
+
 INVARIANT: ALWAYS exits 0. Decision on stdout only — including when the shared
 module below cannot be imported (see the guard).
 """
@@ -43,11 +65,15 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
     from result_block_parser import (  # noqa: E402
+        NO_OUTPUT_REASON,
+        PAYLOAD_UNPARSEABLE,
         as_int,
         as_text,
         emit,
+        extract_payload,
+        find_last_block,
         is_empty_scalar,
-        load_block,
+        parse_block,
         present,
         run_validator,
     )
@@ -74,6 +100,10 @@ except BaseException as _import_exc:  # noqa: BLE001 — LAST LINE OF DEFENCE
     os._exit(0)
 
 BLOCK = "QA_RESULT"
+VERIFY_BLOCK = "VERIFY_RESULT"
+
+VERIFY_VALID_STATUS = ("completed", "aborted")
+VERIFY_COUNT_KEYS = ("pass", "fail", "blocked", "not_verifiable", "total")
 
 VALID_STATUS = (
     "passed",
@@ -91,8 +121,105 @@ MISSING_BLOCK = (
 )
 
 
+def locate_blocks():
+    """The stdin → text → block prologue, with the QA_RESULT-wins rule.
+
+    Mirrors `load_block`'s failure paths (unparseable stdin → ok:true; no agent
+    output → NO_OUTPUT_REASON; neither block → MISSING_BLOCK; a malformed body
+    → explicit parse failure) but locates EACH block BY NAME so precedence is
+    decided by presence, never by which block happens to occur last.
+    Returns (block_name, fields).
+    """
+    text, _payload = extract_payload()
+    if text is PAYLOAD_UNPARSEABLE:
+        emit(True)
+    if not text:
+        emit(False, NO_OUTPUT_REASON)
+
+    name = BLOCK
+    block = find_last_block(text, BLOCK)
+    if block is None:
+        name = VERIFY_BLOCK
+        block = find_last_block(text, VERIFY_BLOCK)
+    if block is None:
+        emit(False, MISSING_BLOCK)
+
+    fields, errors = parse_block(block)
+    if errors:
+        emit(
+            False,
+            "%s block could not be parsed (unsupported or malformed YAML): %s"
+            % (name, "; ".join(errors[:3])),
+        )
+    return name, fields
+
+
+def validate_verify(fields):
+    """The VERIFY_RESULT rules (V1)–(V6); see the module docstring."""
+    # ── (V1) schema_version equal to 1 ───────────────────────────────────────
+    if not present(fields, "schema_version"):
+        emit(False, "VERIFY_RESULT is missing the schema_version field (rule V1)")
+    schema_version, bad_sv = as_int(fields.get("schema_version"))
+    if schema_version != 1:
+        emit(
+            False,
+            "VERIFY_RESULT schema_version must be the integer 1; got %s (rule V1)"
+            % (bad_sv if schema_version is None else schema_version),
+        )
+
+    # ── (V2) run_id and run_dir present, non-empty strings ───────────────────
+    for key in ("run_id", "run_dir"):
+        if not present(fields, key):
+            emit(False, "VERIFY_RESULT is missing the %s field (rule V2)" % key)
+        value = fields.get(key)
+        if not isinstance(value, str) or is_empty_scalar(value):
+            emit(False, "VERIFY_RESULT %s must be a non-empty string; got %r (rule V2)" % (key, value))
+
+    # ── (V3) summary present ─────────────────────────────────────────────────
+    if not present(fields, "summary") or is_empty_scalar(fields.get("summary")):
+        emit(False, "VERIFY_RESULT summary field must be present and non-empty (rule V3)")
+
+    # ── (V4) status enum ─────────────────────────────────────────────────────
+    if not present(fields, "status"):
+        emit(False, "VERIFY_RESULT is missing the status field (rule V4)")
+    status = as_text(fields.get("status")).strip()
+    if status not in VERIFY_VALID_STATUS:
+        emit(False, "VERIFY_RESULT status must be one of [completed, aborted]; got %r (rule V4)" % status)
+
+    # ── (V5) counts: a mapping of five integers ──────────────────────────────
+    if not present(fields, "counts"):
+        emit(False, "VERIFY_RESULT is missing the counts field (rule V5)")
+    counts = fields.get("counts")
+    if not isinstance(counts, dict):
+        emit(False, "VERIFY_RESULT counts must be a mapping; got %r (rule V5)" % (counts,))
+    values = {}
+    for key in VERIFY_COUNT_KEYS:
+        if key not in counts:
+            emit(False, "VERIFY_RESULT counts is missing %s (rule V5)" % key)
+        value, bad = as_int(counts.get(key))
+        if value is None:
+            emit(False, "VERIFY_RESULT counts.%s must be an integer; got %s (rule V5)" % (key, bad))
+        if value < 0:
+            emit(False, "VERIFY_RESULT counts.%s must be a non-negative integer; got %d (rule V5)" % (key, value))
+        values[key] = value
+
+    # ── (V6) total == pass + fail + blocked + not_verifiable ─────────────────
+    expected = values["pass"] + values["fail"] + values["blocked"] + values["not_verifiable"]
+    if values["total"] != expected:
+        emit(
+            False,
+            "VERIFY_RESULT counts.total must equal pass+fail+blocked+not_verifiable "
+            "(%d); got %d — counts are COPIED from `verify-run.sh finish`, never tallied (rule V6)"
+            % (expected, values["total"]),
+        )
+
+    emit(True)
+
+
 def main():
-    _name, fields, _text, _payload = load_block(BLOCK, MISSING_BLOCK)
+    name, fields = locate_blocks()
+    if name == VERIFY_BLOCK:
+        validate_verify(fields)
 
     # ── (1) schema_version equal to 1 ────────────────────────────────────────
     if not present(fields, "schema_version"):
