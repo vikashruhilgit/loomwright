@@ -31,8 +31,10 @@
 #       `stance_default_action` has exactly one home (read-product.sh's jq `def STANCE_ACTIONS`).
 #       This script NEVER re-derives that mapping - it prints the value the reader emitted.
 #       Absent store => the absence is NAMED with the bootstrap offer, nothing is written, exit 0.
-#   (b) THE CAPABILITY INVENTORY - grep/glob over this project's own code and docs plus any
-#       `.agent/orientation/` memos. Class DERIVED. NO CODE GRAPH: the graphify tier was retired
+#   (b) THE CAPABILITY INVENTORY - grep over this project's own code and docs (enumerated by
+#       `git ls-files` inside a git work tree; the exclusions are documented where the surface
+#       is built, section 10) plus any `.agent/orientation/` memos. Class DERIVED. NO CODE
+#       GRAPH: the graphify tier was retired
 #       on measurement, and `graphify-out/`, `read-bridge.sh` and `brain_context` are not read,
 #       built or resurrected here.
 #   (c) THE DOMAIN EXPECTATION SET - fetched from the store's competitors[] through fetch_source.
@@ -128,7 +130,11 @@ say() { echo "$SELF: $1" >&2; }
 # ---------------------------------------------------------------------------
 # 1. Root, script directory, tooling.
 # ---------------------------------------------------------------------------
-GITROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+GITROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+# INVENTORY_MODE decides how the capability inventory below is ENUMERATED. Inside a git work
+# tree the surface is what git sees (`git ls-files`: tracked + untracked-unignored); only a
+# non-git directory falls back to a filesystem walk. See the inventory section for why.
+if [ -n "$GITROOT" ]; then INVENTORY_MODE=git; else GITROOT="$(pwd)"; INVENTORY_MODE=walk; fi
 cd "$GITROOT" 2>/dev/null || true
 ROOT="$(pwd)"
 
@@ -553,26 +559,101 @@ SELF_ABS="$SCRIPT_DIR/$(basename "$0")"
 # nothing reports it and the gap silently disappears. Measured on this repo: excluding only $0
 # left `single-sign-on` and `two-factor-authentication` confirmed by the self-test and
 # `usage-analytics` confirmed by a fixture, dropping 5 real candidates to 3.
-SELFTEST_ABS="$SCRIPT_DIR/test-$(basename "$0")"
-FIXTURES_ABS="$SCRIPT_DIR/fixtures/$(basename "$0" .sh)"
+#
+# AND THE EXCLUSION IS BY NAME, NOT BY EXACT PATH. The first fix excluded those three artefacts
+# by the absolute path of THIS copy, which held only until a SECOND copy of the plugin appeared
+# inside the scanned tree: a nested linked worktree under `<harness-dot-dir>/worktrees/<name>/`
+# (the per-session worktree a harness keeps under its own dot-directory at the repo root) carries
+# `loomwright/scripts/propose-domain.sh` and its fixture dir at a different absolute path, was
+# walked as project code, and confirmed the WHOLE catalogue
+# - measured 2026-09-14 on this repo: every candidate gone, `0 candidate(s) written`, with the
+# self-test green from a fresh worktree (no nested copy) and red from the main checkout. Three
+# layers now, each one live on its own (the self-test mutates them separately):
+#   1. ENUMERATION - inside a git work tree the surface is `git ls-files` (tracked + untracked-
+#      unignored), not a filesystem walk. What CI sees is what is searched; a gitignored tree
+#      (a harness dot-directory, `node_modules/`, a build dir) never enters the inventory, and
+#      git itself refuses to descend into a nested repository, which is what a linked worktree is.
+#   2. WORKTREE PATHS - any path under a linked worktree registered on this repo
+#      (`git worktree list --porcelain`) or under a `<dot-dir>/worktrees/` segment is dropped,
+#      so the enumeration's promise does not have to be trusted for the one shape that bit. The
+#      segment rule is written for ANY dot-directory, not one harness's name: the core stays
+#      vendor-neutral (the coupling ratchet counts harness tokens here) and a sibling harness
+#      that keeps its worktrees the same way is covered without an edit.
+#   3. OWN ARTEFACTS BY BASENAME - `propose-domain.sh`, `test-propose-domain.sh` and any
+#      `fixtures/propose-domain/` segment are dropped WHEREVER they sit, plus the same three
+#      derived from `$0` for a renamed copy. A vendored or duplicated copy of the searcher is
+#      still the searcher.
+SELF_STEM="$SELF"                      # the canonical name this file ships under
+SELF0_STEM="$(basename "$0" .sh)"      # the name it is actually running under (a copy, a mutant)
 CODE_GLOBS='*.sh *.py *.js *.jsx *.ts *.tsx *.go *.rb *.java *.kt *.rs *.php *.cs *.sql *.tf *.yml *.yaml *.json'
 DOC_GLOBS='*.md *.mdx *.rst *.adoc'
 
-find "$ROOT" \
-  \( -name .git -o -name node_modules -o -name .supervisor -o -name vendor \) -prune -o \
-  -type f \( -name '*.sh' -o -name '*.py' -o -name '*.js' -o -name '*.jsx' -o -name '*.ts' \
-  -o -name '*.tsx' -o -name '*.go' -o -name '*.rb' -o -name '*.java' -o -name '*.kt' \
-  -o -name '*.rs' -o -name '*.php' -o -name '*.cs' -o -name '*.sql' -o -name '*.tf' \
-  -o -name '*.yml' -o -name '*.yaml' -o -name '*.json' \) -print 2>/dev/null \
-  | LC_ALL=C sort | awk -v store="$STORE_ABS" -v self="$SELF_ABS" -v selftest="$SELFTEST_ABS" -v fixtures="$FIXTURES_ABS" -v out="$OUT_DIR_ABS/" -v req="$REQ_DIR_ABS/" '
-      $0 == store || $0 == self || $0 == selftest { next }
-      fixtures != "" && index($0, fixtures "/") == 1 { next }
+# Layer 2's input: every linked worktree of this repo whose path sits INSIDE the scanned root,
+# one absolute prefix (trailing slash) per line. Empty outside git, and empty when no worktree
+# is nested - both of which leave the filter with nothing to do, never with a wrong thing to do.
+# Gathered UNCONDITIONALLY, not behind INVENTORY_MODE: the first draft gated it on git mode, so
+# the one enumeration that needs it (the walk) ran with an empty list - a layer that is dead
+# exactly when it is needed. The self-test's forced-walk control is what caught that.
+git -C "$ROOT" worktree list --porcelain 2>/dev/null \
+  | sed -n 's/^worktree //p' \
+  | awk -v root="$ROOT" '$0 != root && index($0, root "/") == 1 { print $0 "/" }' \
+  > "$WORK/worktrees.list"
+
+# enumerate_root - every regular file under $ROOT the inventory may consider, one absolute path
+# per line, unsorted. Layer 1 lives here. The walk keeps the directory prunes it always had; a
+# worktree directory is not pruned here but dropped by layer 2 (a worktree implies git, so the
+# walk only ever meets one when the self-test forces it).
+enumerate_root() {
+  if [ "$INVENTORY_MODE" = "git" ]; then
+    git -C "$ROOT" ls-files -z --cached --others --exclude-standard 2>/dev/null \
+      | tr '\0' '\n' \
+      | awk -v root="$ROOT/" 'NF { print root $0 }'
+  else
+    find "$ROOT" \
+      \( -name .git -o -name node_modules -o -name .supervisor -o -name vendor \) -prune -o \
+      -type f -print 2>/dev/null
+  fi
+}
+
+# select_surface <ERE over the extension> - stdin: candidate paths; stdout: the ones that are
+# regular files (git lists symlinks, submodule gitlinks and index entries deleted from disk;
+# the walk already applied `-type f`, and a symlink pointing OUT of the tree must not become a
+# confirming source), sorted for a reproducible artefact.
+select_surface() {
+  grep -E "$1" 2>/dev/null | while IFS= read -r sf; do
+    [ -f "$sf" ] && [ ! -L "$sf" ] && printf '%s\n' "$sf"
+  done | LC_ALL=C sort
+}
+
+# filter_inventory - stdin: sorted absolute paths; stdout: the inventory after every exclusion.
+# ONE filter for both surfaces, each rule on its own line, because the self-test's mutation
+# controls delete rules by line and a rule that cannot be deleted alone cannot be shown live.
+# Segment rules run on the path RELATIVE to the root (`rel` below, with a leading slash), never
+# on the absolute path: the root itself may sit under a `vendor/` ancestor or - the case this
+# plugin's own sessions run in - under `<dot-dir>/worktrees/<name>/`, and an absolute-path segment
+# test would then drop every file in the project and report an empty surface.
+filter_inventory() {
+  awk -v root="$ROOT/" -v store="$STORE_ABS" -v self="$SELF_ABS" -v stem="$SELF_STEM" -v stem0="$SELF0_STEM" \
+      -v out="$OUT_DIR_ABS/" -v req="$REQ_DIR_ABS/" -v wtfile="$WORK/worktrees.list" '
+      BEGIN { nwt = 0; while ((getline l < wtfile) > 0) if (length(l)) wt[++nwt] = l; close(wtfile) }
+      $0 == store || $0 == self { next }
+      { rel = (index($0, root) == 1) ? "/" substr($0, length(root) + 1) : $0 }
+      rel ~ /\/(\.git|node_modules|vendor|\.supervisor)\// { next }
+      rel ~ /\/\.[^\/]+\/worktrees\// { next }
+      { for (i = 1; i <= nwt; i++) if (index($0, wt[i]) == 1) next }
       index($0, out) == 1 { next }
       req != "/" && index($0, req) == 1 { next }
       { base = $0; sub(/^.*\//, "", base) }
       base ~ /^domain--.*\.md$/ { next }
-      { print }' \
-  > "$WORK/code.all"
+      base == stem ".sh" || base == "test-" stem ".sh" { next }
+      base == stem0 ".sh" || base == "test-" stem0 ".sh" { next }
+      index(rel, "/fixtures/" stem "/") > 0 || index(rel, "/fixtures/" stem0 "/") > 0 { next }
+      { print }'
+}
+
+enumerate_root > "$WORK/root.all"
+select_surface '\.(sh|py|js|jsx|ts|tsx|go|rb|java|kt|rs|php|cs|sql|tf|yml|yaml|json)$' < "$WORK/root.all" \
+  | filter_inventory > "$WORK/code.all"
 # Count BEFORE the cap is applied. Counting the truncated list would make n_code_files equal the
 # cap on every truncated surface, so the "empty surface" arm could never fire and a capability
 # whose evidence sits past the cap would be reported `missing` - in a file that simultaneously
@@ -580,18 +661,8 @@ find "$ROOT" \
 n_code_total="$(awk 'END{print NR+0}' "$WORK/code.all")"
 awk -v cap="$SURFACE_FILE_CAP" 'NR<=cap' "$WORK/code.all" > "$WORK/code.list"
 
-find "$ROOT" \
-  \( -name .git -o -name node_modules -o -name .supervisor -o -name vendor \) -prune -o \
-  -type f \( -name '*.md' -o -name '*.mdx' -o -name '*.rst' -o -name '*.adoc' \) -print 2>/dev/null \
-  | LC_ALL=C sort | awk -v store="$STORE_ABS" -v self="$SELF_ABS" -v selftest="$SELFTEST_ABS" -v fixtures="$FIXTURES_ABS" -v out="$OUT_DIR_ABS/" -v req="$REQ_DIR_ABS/" '
-      $0 == store || $0 == self || $0 == selftest { next }
-      fixtures != "" && index($0, fixtures "/") == 1 { next }
-      index($0, out) == 1 { next }
-      req != "/" && index($0, req) == 1 { next }
-      { base = $0; sub(/^.*\//, "", base) }
-      base ~ /^domain--.*\.md$/ { next }
-      { print }' \
-  > "$WORK/doc.all"
+select_surface '\.(md|mdx|rst|adoc)$' < "$WORK/root.all" \
+  | filter_inventory > "$WORK/doc.all"
 n_doc_total="$(awk 'END{print NR+0}' "$WORK/doc.all")"
 awk -v cap="$SURFACE_FILE_CAP" 'NR<=cap' "$WORK/doc.all" > "$WORK/doc.list"
 
@@ -902,12 +973,21 @@ while IFS='|' read -r slug title source_terms inv_terms scope_terms kind; do
     printf -- '- code surface: %s file(s) matching `%s` under `%s`\n' "$n_code_files" "$CODE_GLOBS" "$ROOT"
     printf -- '- doc surface: %s file(s) matching `%s` under the same root\n' "$n_doc_files" "$DOC_GLOBS"
     printf -- '- orientation memos: %s file(s) under `.agent/orientation/` (inside the doc surface above)\n' "$n_orient_files"
+    if [ "$INVENTORY_MODE" = "git" ]; then
+      printf -- '- enumerated by `git ls-files` (tracked + untracked-unignored): what CI sees is what was\n'
+      printf -- '  searched; a gitignored tree and any nested repository (a linked worktree) never enter\n'
+    else
+      printf -- '- enumerated by a filesystem walk (the root is not a git work tree), so a gitignored\n'
+      printf -- '  tree a CI checkout would not see may sit inside these counts\n'
+    fi
     printf -- '- pruned from both surfaces: `.git`, `node_modules`, `vendor`, the whole `.supervisor/`\n'
-    printf -- '  runtime tree, the output and requirements directories, every `domain--*.md` file\n'
-    printf -- '  wherever it sits, the product store, and this basis'"'"'s OWN artefacts - the script, its\n'
-    printf -- '  self-test and its fixture tree - so that neither a candidate written by an earlier run,\n'
-    printf -- '  nor the store being asked about, nor the search terms of the searcher itself can\n'
-    printf -- '  "confirm" a capability and make a real gap silently disappear\n'
+    printf -- '  runtime tree, every linked worktree registered on this repo and any `<dot-dir>/worktrees/`\n'
+    printf -- '  path, the output and requirements directories, every `domain--*.md` file wherever it\n'
+    printf -- '  sits, the product store, and this basis'"'"'s OWN artefacts BY NAME wherever they sit -\n'
+    printf -- '  `propose-domain.sh`, its self-test and any `fixtures/propose-domain/` tree - so that\n'
+    printf -- '  neither a candidate written by an earlier run, nor the store being asked about, nor a\n'
+    printf -- '  second copy of the searcher and its own search terms can "confirm" a capability and\n'
+    printf -- '  make a real gap silently disappear\n'
     if [ "$code_truncated" = "1" ] || [ "$doc_truncated" = "1" ]; then
       # Name the surface(s) ACTUALLY truncated. Leading with the code surface unconditionally
       # told a reader the code surface was cut short on a doc-only truncation, where every code
