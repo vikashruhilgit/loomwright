@@ -77,6 +77,10 @@ READ_PRODUCT="$HERE/read-product.sh"
 FIXSRC="$HERE/fixtures/propose-domain"
 # AC15 runs the basis against THIS repo, the one tree where the searcher's own artefacts
 # (its self-test and its fixture directory) actually sit inside the surface being scanned.
+# AC22 plants SECOND copies of them, and linked worktrees, inside a throwaway project instead,
+# so it is green from any checkout - the main one, with its nested per-session worktree copies
+# of this plugin under the harness dot-directory, included (the shape that made AC15 red from
+# there on 2026-09-14).
 REPO_ROOT="$(cd "$HERE/../.." && pwd)"
 LEDGER_FIX="$HERE/fixtures/propose-work/floor-golden.json"
 
@@ -1049,14 +1053,19 @@ a15_self="$(grep 'not a gap' "$LOGERR" 2>/dev/null | grep -cE 'test-propose-doma
   || no "$a15_self capability(ies) confirmed by the searcher's own artefacts - a real gap would silently disappear"
 echo "-- MUTATION CONTROL: restore the \$0-only exclusion and AC15 must go RED --"
 A15M="$MUTDIR/mut-a15.sh"
-# `|` is both this pattern's content and sed's usual delimiter, so use `#` - the first attempt
-# used `|` for both, silently produced an UNCHANGED copy, and the control passed vacuously.
-sed -e 's# || $0 == selftest##' \
-    -e 's#^      fixtures != "" && index($0, fixtures "/") == 1 { next }$##' "$SUT" > "$A15M"
-if bash -n "$A15M" 2>/dev/null && ! grep -q 'selftest { next }' "$A15M" && ! grep -q 'index($0, fixtures' "$A15M"; then
-  ok "built a syntactically valid mutant with BOTH extra exclusions removed"
+# The own-artefact rules are the three BY-NAME lines of filter_inventory (self-test basename,
+# renamed-copy basename, fixture segment); deleting exactly those restores the $0-only exclusion.
+# A count of the deleted lines is asserted, because a sed that matched nothing produces an
+# UNCHANGED copy and a control that passes vacuously - which is how the first version of this
+# control behaved when its delimiter collided with the pattern.
+sed -e '/^      base == stem ".sh" || base == "test-" stem ".sh" { next }$/d' \
+    -e '/^      base == stem0 ".sh" || base == "test-" stem0 ".sh" { next }$/d' \
+    -e '/^      index(rel, "\/fixtures\/" stem "\/") > 0 || index(rel, "\/fixtures\/" stem0 "\/") > 0 { next }$/d' "$SUT" > "$A15M"
+a15_removed=$(( $(lines "$SUT") - $(lines "$A15M") ))
+if bash -n "$A15M" 2>/dev/null && [ "$a15_removed" -eq 3 ]; then
+  ok "built a syntactically valid mutant with all three by-name exclusions removed ($a15_removed lines)"
 else
-  no "the exclusion mutant is unchanged or broken - this control would pass vacuously"
+  no "the exclusion mutant is unchanged or broken ($a15_removed line(s) removed, expected 3) - this control would pass vacuously"
 fi
 reset_domain
 D_PROJ="$REPO_ROOT"; D_OUT="$A15/mut"; D_REQ="$A15/mutreq"; D_STORE="$FIX/product.json"; D_SCRIPT="$A15M"
@@ -1351,6 +1360,143 @@ a21_tmp="$(find "$A21/out" -name '.tmp.propose-domain.*' 2>/dev/null | awk 'END{
 [ "$a21_tmp" -eq 0 ] \
   && ok "no staged temp entry survives anywhere under the output dir" \
   || no "$a21_tmp staged temp entry(ies) survive - the write path leaks artefacts on the obstructed branch"
+
+echo
+echo "== AC22: a SECOND copy of the searcher, or a nested worktree, inside the scanned tree confirms nothing =="
+# The by-exact-path exclusion held until the plugin's own repo grew nested linked worktrees under
+# `<harness-dot-dir>/worktrees/<name>/`: each carries another propose-domain.sh + fixture dir at a different
+# absolute path, the walk scanned them as project code, and EVERY catalogue capability was
+# confirmed - `0 candidate(s) written`, measured 2026-09-14 on the main checkout while a fresh
+# worktree stayed green. Three planted shapes, one per layer of the fix, each mutated alone:
+#   P1  a vendored plain copy of the searcher's artefacts, NOT under any worktree path
+#       -> only the BY-NAME rule (layer 3) can drop it
+#   P2  a plain directory under `.harness/worktrees/x/` holding an sso file - not a repo, not
+#       ignored, so `git ls-files` DOES list it -> only the SEGMENT rule (layer 2) drops it.
+#       The dot-directory is deliberately NOT one harness's real name: the rule is written for
+#       any `<dot-dir>/worktrees/` segment, and this file is vendor-neutral core under the
+#       coupling ratchet, so the generic shape is what gets asserted.
+#   P3  a real linked worktree (`git worktree add`) holding a 2fa file -> `git ls-files` refuses
+#       to enter a nested repository (layer 1); under a forced filesystem walk only the
+#       registered-worktree prefix rule (layer 2) drops it
+A22="$(mktmp)"
+P22="$(new_project "$FIX/product.json")"
+mkdir -p "$P22/vendored/loomwright/scripts/fixtures" "$P22/.harness/worktrees/x/src" "$A22/out" "$A22/req"
+cp "$SUT" "$P22/vendored/loomwright/scripts/propose-domain.sh"
+cp "$0"   "$P22/vendored/loomwright/scripts/test-propose-domain.sh"
+cp -R "$FIXSRC" "$P22/vendored/loomwright/scripts/fixtures/propose-domain"
+printf 'def login():\n    return "single sign-on via saml"\n' > "$P22/.harness/worktrees/x/src/sso_login.py"
+( cd "$P22" && git worktree add -q --detach "$P22/wt/y" HEAD ) >/dev/null 2>&1
+mkdir -p "$P22/wt/y/src"
+printf 'def verify():\n    return "two-factor code (totp)"\n' > "$P22/wt/y/src/twofa.py"
+[ -f "$P22/vendored/loomwright/scripts/fixtures/propose-domain/product.json" ] \
+  && [ -f "$P22/.harness/worktrees/x/src/sso_login.py" ] && [ -f "$P22/wt/y/.git" ] && [ -f "$P22/wt/y/src/twofa.py" ] \
+  && ok "planted P1 (vendored copy), P2 (plain dir under .harness/worktrees/) and P3 (a real linked worktree at wt/y)" \
+  || no "could not plant all three shapes - AC22 is inconclusive"
+# The planted files must be findable by an unfiltered search, or a clean run proves nothing.
+a22_p2_raw="$(grep -l -i -E '(^|[^[:alnum:]])saml([^[:alnum:]]|$)' "$P22/.harness/worktrees/x/src/sso_login.py" 2>/dev/null | wc -l | tr -d ' ')"
+a22_p3_raw="$(grep -l -i -E '(^|[^[:alnum:]])two-factor([^[:alnum:]]|$)' "$P22/wt/y/src/twofa.py" 2>/dev/null | wc -l | tr -d ' ')"
+[ "$a22_p2_raw" -eq 1 ] && [ "$a22_p3_raw" -eq 1 ] \
+  && ok "the planted sso/2fa files match the catalogue's own word-bounded terms, so an exclusion is the only reason they can stay out" \
+  || no "the planted files do not match the catalogue terms - every exclusion assertion below would be vacuous"
+
+# a22_run <label> <script> <outdir> - runs against P22, prints the count of 'not a gap' lines
+# naming any planted path (the stderr message names the FIRST confirming file).
+a22_hits() { grep 'not a gap' "$LOGERR" 2>/dev/null | grep -cE "$1"; }
+reset_domain
+D_PROJ="$P22"; D_OUT="$A22/out"; D_REQ="$A22/req"
+run_domain >/dev/null 2>&1
+a22_emitted="$(count_domain "$A22/out")"
+[ "$a22_emitted" -ge 1 ] \
+  && ok "the run against the planted project emitted $a22_emitted candidate(s), so the exclusion assertions run against a live run" \
+  || no "the planted-project run emitted nothing - the assertions below would be vacuous"
+a22_any="$(a22_hits 'vendored/|\.harness/worktrees/|wt/y/')"
+[ "$a22_any" -eq 0 ] \
+  && ok "no capability is confirmed by the vendored copy, the .harness/worktrees/ directory, or the linked worktree" \
+  || no "$a22_any capability(ies) confirmed from a planted path - a second copy of the searcher confirms real gaps away"
+[ -f "$A22/out/domain--single-sign-on.md" ] && [ -f "$A22/out/domain--two-factor-authentication.md" ] \
+  && ok "single-sign-on and two-factor-authentication are still emitted as candidates - the planted sso/2fa files did not confirm them" \
+  || no "the planted sso/2fa files confirmed a real gap away (single-sign-on / two-factor-authentication candidate missing)"
+grep -Fq 'enumerated by `git ls-files`' "$A22/out/domain--single-sign-on.md" 2>/dev/null \
+  && ok "the emitted file states the surface was enumerated by git ls-files" \
+  || no "the emitted file does not state its enumeration source"
+grep -Fq 'linked worktree registered on this repo' "$A22/out/domain--single-sign-on.md" 2>/dev/null \
+  && ok "the emitted file states that linked worktrees are pruned" \
+  || no "the emitted file does not name the worktree exclusion it applies"
+
+# mk_mutant <name> <sed-expr>... - a mutant of the SUT beside the reader; asserts the sed CHANGED
+# something, so a pattern that silently matched nothing cannot make a control pass vacuously.
+mk_mutant() {
+  mm_name="$1"; shift
+  mm_out="$MUTDIR/$mm_name.sh"
+  sed "$@" "$SUT" > "$mm_out"
+  if bash -n "$mm_out" 2>/dev/null && ! cmp -s "$mm_out" "$SUT"; then
+    ok "built a syntactically valid, CHANGED mutant $mm_name"
+  else
+    no "mutant $mm_name is unchanged or broken - its control would pass vacuously"
+  fi
+  printf '%s\n' "$mm_out"
+}
+a22_mutant_run() {   # <script> <suffix>
+  reset_domain
+  D_PROJ="$P22"; D_OUT="$A22/$2"; D_REQ="$A22/$2.req"; D_SCRIPT="$1"
+  mkdir -p "$D_OUT" "$D_REQ"
+  run_domain >/dev/null 2>&1
+}
+WALK='s/then INVENTORY_MODE=git;/then INVENTORY_MODE=walk;/'
+DEL_SEGMENT='\#^      rel ~ /\\/\\.\[^\\/\]+\\/worktrees\\// { next }$#d'   # `#` delimiter: the pattern is full of slashes
+DEL_WTLIST='/^      { for (i = 1; i <= nwt; i++) if (index($0, wt\[i\]) == 1) next }$/d'
+DEL_BYNAME1='/^      base == stem ".sh" || base == "test-" stem ".sh" { next }$/d'
+DEL_BYNAME2='/^      base == stem0 ".sh" || base == "test-" stem0 ".sh" { next }$/d'
+DEL_FIXSEG='/^      index(rel, "\/fixtures\/" stem "\/") > 0 || index(rel, "\/fixtures\/" stem0 "\/") > 0 { next }$/d'
+
+echo "-- LAYER CONTROL: force the filesystem walk and every planted path must STILL stay out --"
+# This is the one control that must stay GREEN: it proves layers 2 and 3 are live on their own
+# and not dead code behind git's promise not to enter a nested repository.
+M22A="$(mk_mutant mut-a22-walk -e "$WALK" | tail -1)"
+grep -q 'INVENTORY_MODE=walk; else' "$M22A" && ok "the walk mutant really forces the filesystem walk" \
+  || no "the walk mutant does not force the walk - the layer control would prove nothing"
+a22_mutant_run "$M22A" walk
+[ "$(a22_hits 'vendored/|\.harness/worktrees/|wt/y/')" -eq 0 ] \
+  && ok "LAYER CONTROL: with git ls-files taken away, the path rules alone still keep all three planted shapes out" \
+  || no "with the walk forced, a planted path confirms a capability - the path rules are not live on their own"
+grep -Fq 'enumerated by a filesystem walk' "$A22/walk/domain--single-sign-on.md" 2>/dev/null \
+  && ok "the walk run's emitted file states the walk, so the enumeration claim is not a constant string" \
+  || no "the walk run's emitted file does not name the walk"
+
+echo "-- MUTATION CONTROL 1: delete the by-name rule and the VENDORED copy must confirm capabilities --"
+M22B="$(mk_mutant mut-a22-byname -e "$DEL_BYNAME1" -e "$DEL_BYNAME2" -e "$DEL_FIXSEG" | tail -1)"
+a22_mutant_run "$M22B" byname
+m22b="$(a22_hits 'vendored/')"; m22b_other="$(a22_hits '\.harness/worktrees/|wt/y/')"
+[ "$m22b" -gt 0 ] && [ "$m22b_other" -eq 0 ] \
+  && ok "MUTATION CONTROL 1: without the by-name rule, $m22b capability(ies) are confirmed by the vendored copy (and only by it) - AC22 turns RED" \
+  || no "the by-name mutant confirmed $m22b from vendored/ and $m22b_other from worktree paths - the by-name rule is not what keeps the vendored copy out"
+
+echo "-- MUTATION CONTROL 2: delete the <dot-dir>/worktrees segment rule and P2 must confirm single-sign-on --"
+M22C="$(mk_mutant mut-a22-segment -e "$DEL_SEGMENT" | tail -1)"
+a22_mutant_run "$M22C" segment
+m22c="$(a22_hits "'single-sign-on'.*\.harness/worktrees/x/src/sso_login\.py")"
+[ "$m22c" -eq 1 ] \
+  && ok "MUTATION CONTROL 2: without the segment rule, git ls-files lists the plain .harness/worktrees/x directory and its sso file confirms single-sign-on - AC22 turns RED" \
+  || no "the segment mutant did not confirm single-sign-on from .harness/worktrees/x (hits: $m22c) - the segment rule is not what keeps it out"
+
+echo "-- MUTATION CONTROL 3: force the walk AND delete the registered-worktree rule; P3 must confirm two-factor --"
+M22D="$(mk_mutant mut-a22-wtlist -e "$WALK" -e "$DEL_WTLIST" | tail -1)"
+a22_mutant_run "$M22D" wtlist
+m22d="$(a22_hits "'two-factor-authentication'.*wt/y/src/twofa\.py")"
+[ "$m22d" -eq 1 ] \
+  && ok "MUTATION CONTROL 3: with the walk forced and the worktree-prefix rule gone, the linked worktree's 2fa file confirms two-factor-authentication - AC22 turns RED" \
+  || no "the worktree-list mutant did not confirm two-factor from wt/y (hits: $m22d) - the registered-worktree rule is not what keeps a linked worktree out under the walk"
+
+echo "-- LAYER CONTROL: with BOTH worktree path rules deleted but git ls-files kept, the linked worktree stays out --"
+# Layer 1's own claim: git refuses to enter a nested repository. P2 (a plain directory) gets
+# through here, which is the control that the deletions took effect.
+M22E="$(mk_mutant mut-a22-gitonly -e "$DEL_SEGMENT" -e "$DEL_WTLIST" | tail -1)"
+a22_mutant_run "$M22E" gitonly
+m22e_wt="$(a22_hits 'wt/y/')"; m22e_p2="$(a22_hits '\.harness/worktrees/x/')"
+[ "$m22e_wt" -eq 0 ] && [ "$m22e_p2" -ge 1 ] \
+  && ok "LAYER CONTROL: git ls-files alone keeps the linked worktree out ($m22e_wt hits) while the plain directory gets through ($m22e_p2) - layer 1 is live and the deletions took effect" \
+  || no "git-only mutant: linked-worktree hits $m22e_wt (expected 0), plain-dir hits $m22e_p2 (expected >=1)"
+( cd "$P22" && git worktree remove --force "$P22/wt/y" ) >/dev/null 2>&1
 
 echo
 echo "propose-domain: $pass passed, $fail failed, $skip skipped"
