@@ -3,7 +3,7 @@
 > Strict contracts for all agent result blocks. Hooks validate against these schemas.
 > All schemas include a `schema_version` field for forward compatibility. Current versions: CODE_REVIEW_RESULT at `schema_version: 3` (review modes + consistency audit; v2 accepted for legacy); WORKER_RESULT at `schema_version: 2` (outputs_verified contract; v1 accepted for the v12.0.0 transition window); AUTONOMOUS_RUN at `schema_version: 2` (v14.0.0 status_reason extension; v1 accepted, no hook validation); LAUNCH_PAD_RESULT at `schema_version: 1` (added v14.2.0, validated by `scripts/validate-launch-pad-result.py`); REVIEW_HEAL_RESULT at `schema_version: 2` (v14.30.0 — `--until-mergeable` drain mode adds the `READY` decision + drain/postmortem fields; v1 still accepted for legacy artifacts / the default diff-only loop; added v14.16.0, no hook validator — runner is the main agent of its own session); EVAL_RESULT at `schema_version: 1` (added v14.17.0, the System Twin eval instrument emitted by `scripts/run-eval.sh`, no hook validator — standalone script); GROUND_TRUTH_JSON at `schema_version: 1` (added v14.19.0, the System Twin ground-truth instrument emitted by `scripts/run-ground-truth.sh`, no hook validator — standalone script; consumed advisory-only by Supervisor Phase 4.5); POSTMORTEM_RESULT at `schema_version: 1` (added v14.22.0, the advisory PR review-churn trend line appended by `/pr-postmortem` to `.supervisor/postmortem/results.jsonl`, no hook validator); GATE_VERDICT at `schema_version: 1` (Strategist↔Executor gate-audit handoff, no hook validator); RED_TEAM_RESULT at `schema_version: 1` (advisory audit tail, no hook validator); FLOOR_PROJECTION at `schema_version: 1` (added v15.43.0, the derived floor projection `.supervisor/floor/floor.json` emitted by `scripts/build-floor.sh`, no hook validator — standalone script, and not an agent-emitted result block; its required-key set is parsed back OUT of this file by `scripts/test-build-floor.sh`, so a doc/validator divergence fails CI); all others at `schema_version: 1`.
 
-> **Deliberate exception to the `schema_version` rule above:** `PRODUCT_CONTEXT` (`.agent/product.json`) carries **no** `schema_version` key, so the "all others at `schema_version: 1`" clause does not reach it. It is a per-project state file committed by the project it describes — not an agent result block and not an artifact this repo ships — so there is no producer/consumer pair inside the plugin for a version number to coordinate; its required-key set is documented in §PRODUCT_CONTEXT and enforced by the reader's own fail-safe degradation, never by a hook.
+> **Deliberate exception to the `schema_version` rule above:** `PRODUCT_CONTEXT` (`.agent/product.json`) and `VERIFY_ENV` (`.agent/verify.json`) carry **no** `schema_version` key, so the "all others at `schema_version: 1`" clause does not reach them. Each is a per-project state file committed by the project it describes — not an agent result block and not an artifact this repo ships — so there is no producer/consumer pair inside the plugin for a version number to coordinate; their required-key sets are documented in §PRODUCT_CONTEXT and §VERIFY_ENV and enforced by each reader's own fail-safe degradation, never by a hook.
 
 > **API-level enforcement:** When using the Claude API directly (outside Claude Code), enforce these schemas via `output_config.format` (JSON Schema mode) for guaranteed conformance — the model is constrained to produce schema-valid output before the response is returned. Plugin hook validation (the `SubagentStop` hooks defined in `hooks.json`) is the runtime fallback validator inside Claude Code, where `output_config` is not available to plugin agents. See `AGENT_GUIDELINES.md` §"Structured Outputs" and the Anthropic API reference for the exact field name in your SDK version.
 
@@ -2408,6 +2408,122 @@ store is missing precisely because it must not break or spam its callers. The se
 context is what must say, by name, that `.agent/product.json` is absent and offer the bootstrap — a
 read-path-only store with no one announcing its absence is how a previous store in this repo ended up
 orphaned and unused.
+
+---
+
+## VERIFY_ENV
+
+The on-disk shape of `.agent/verify.json`, the committed per-project **verification-environment
+contract**: how the app under test is started, health-checked, authenticated, seeded and reset, and how
+the plugin can prove the target is **not production**. Like `PRODUCT_CONTEXT` this is **not an
+agent-emitted result block** — it is a state file, documented here because three independent surfaces
+have to agree on it: the propose-only bootstrap that writes it (`scripts/propose-verify.sh`), the
+fail-safe advisory reader that validates and emits it (`scripts/read-verify.sh`), and the executor that
+runs it (`scripts/verify-env.sh`). The store is a sibling of `.agent/product.json`, is **committed**
+(no `.gitignore` entry covers `.agent/`), and travels with the repo, so a project declares its
+verification environment once instead of every `/verify` run re-guessing it.
+
+**Created per project, never by this repo.** Nothing in the plugin ships a `.agent/verify.json`; the
+bootstrap creates one in the *user's* project on explicit confirmation. A project with no store is the
+ordinary case, and the reader treats it as such.
+
+```yaml
+VERIFY_ENV:                        # the JSON root MUST be a single OBJECT (an array/scalar root is malformed)
+  start: string|null               # REQUIRED KEY, NULLABLE VALUE — shell string that starts the app; null = already running
+  base_url: string                 # required — where the app under test is reached; non_prod_assert.base_url_matches is evaluated AGAINST it
+  health: string                   # required — a path (relative to base_url) or a full URL that must answer 2xx
+  auth: object                     # required
+    method: enum [none, storage_state]   # required
+    storage_state_path: string|null      # REQUIRED non-empty when method is storage_state; null/absent otherwise
+    probe_path: string|null              # optional — a route that answers 401/302 when logged out (the auth-probe target)
+  non_prod_assert: object          # required — AT LEAST ONE usable member; every present member must be well-typed:
+    base_url_matches: string       #   an ERE tested against base_url (non-empty)
+    env_var_equals: {name, value}  #   name non-empty string, value string — the executor compares $name to value
+    cmd: string                    #   a shell string; exit 0 = pass
+  seed: string|null                # REQUIRED KEY, NULLABLE VALUE — shell string that seeds the app; null = nothing to seed
+  reset: string|null               # REQUIRED KEY, NULLABLE VALUE — shell string that resets state; null = nothing to reset
+  stop: string|null                # REQUIRED KEY, NULLABLE VALUE — shell string that stops the app; null = kill the pid recorded at start
+  ready_timeout_s: number          # optional — seconds the executor polls health after start; DEFAULT 60, applied by the EXECUTOR, never the reader
+  notes: any                       # optional — free-form, passed through untouched
+```
+
+**TRUST SURFACE — the shell-string members are executed, not inert data.** `start`, `stop`, `seed`,
+`reset` and `non_prod_assert.cmd` are arbitrary shell, committed by the project, and `verify-env.sh`
+runs them via `bash -c` with the caller's **full shell privileges** — they are trusted exactly like
+`package.json` scripts, no more and no less. Consequences that follow from that and are stated here so
+the schema cannot imply otherwise: the **executor is the only surface that runs them** (the reader and
+the bootstrap never do — the seam test plants `touch <marker>` in every shell-string member and asserts
+no marker appears after a read); never run `verify-env.sh` against a store you have not read; and
+whether an *unattended* lane may invoke the executor at all is a decision for that lane (`/verify`),
+not something this schema grants.
+
+**Nullable-required keys, and the two shapes are different facts.** `start`, `seed`, `reset` and `stop`
+are required keys whose value may legitimately be `null`, meaning *nothing to run here*. A key that is
+**absent** is a different fact — the author never decided — and the store is **malformed**. Consumers
+MUST assert **key presence** with jq `has("<key>")` and MUST NOT use `.<key> // <default>` — a `//`
+default silently collapses a legitimate `null` into the missing-key case, after which the two are
+indistinguishable (the defect that shipped once in `read-rules.sh`). `test-verify-seam.sh`'s mutation
+control deletes the `seed` presence check from a *copy* of the reader and asserts the missing-`seed`
+fixture is then accepted, so the check is proven load-bearing rather than assumed.
+
+| shape | reader verdict |
+|---|---|
+| key present, value `null` | valid — the executor skips that step |
+| key present, non-empty string | valid — the executor runs it (after the non-prod gate) |
+| key **absent** | **malformed** — `[required_key_missing:<key>]` on stderr, nothing on stdout |
+| key present, any other type | **malformed** — `[type_invalid:<key>]` |
+
+**`non_prod_assert` fails CLOSED, and is never inferred.** The executor's `assert-non-prod` evaluates
+every usable member and passes only if **at least one** passes; a store whose `non_prod_assert` has no
+usable member is refused with `non_prod_assert_empty`, and one whose members all fail is refused with
+`non_prod_assert_failed`. Every other executor subcommand (`start`, `stop`, `seed`, `reset`,
+`auth-probe`) runs `assert-non-prod` first, **in the same invocation**, and refuses with
+`non_prod_not_asserted` before touching anything. The bootstrap never guesses this member: no signal in
+a repo says what production looks like for a given project (a `.env` with `NODE_ENV=development` says
+nothing about where `base_url` points), so `propose-verify.sh` refuses to write without an explicit
+`--non-prod <regex|env=NAME=VAL|cmd=…>` — exit 1, on every path, `--confirm` or not. For the same
+reason it never defaults `base_url` (a guessed localhost placeholder would let `base_url_matches` pass
+against a URL the app is not at): with nothing scannable and no `--base-url` the dry run prints
+`BLOCKED` and the write refuses (exit 2).
+
+**Reader contract (`scripts/read-verify.sh`) — advisory and fail-SAFE, STRICT on shape.** It ALWAYS
+exits 0; it never writes the store, never fetches anything, and **never executes any value it reads**.
+On success it prints the validated contract as **one compact JSON object line** on stdout (machine
+consumers gate on non-empty stdout, then `jq` it). In **every** degraded case — store absent (stderr
+names the path), unparseable JSON, non-object root, any required key missing, any mistyped member,
+`non_prod_assert` with no usable member, `jq` unavailable — it emits **nothing on stdout**, names the
+reason **on stderr**, and exits 0. Unlike `read-product.sh` it does **not** demote-and-continue: this
+contract is input to an executor that will start, seed and reset a live app, so a partially-valid store
+is exactly what the non-prod gate exists to refuse — the reader fails SAFE on the read so the executor
+fails CLOSED on the run. Every malformed diagnostic ends with a stable, grep-able **reason token** in
+brackets (`[store_absent]`, `[required_key_missing:seed]`, `[type_invalid:auth.method]`,
+`[non_prod_assert_empty]`, …) so the executor forwards the reader's reason verbatim instead of inventing
+its own — in particular, `assert-non-prod` against `{"non_prod_assert": {}}` reports the reader's
+`non_prod_assert_empty`, not a generic *store unreadable*. The rule the reader enforces is that no path
+may reach `exit 0` with empty stdout without naming its reason; the live set is enumerated by
+`grep -n 'diag "read-verify:' scripts/read-verify.sh` plus the `MALFORMED` lines of its jq program —
+read it from the code, never from a count kept here.
+
+**Executor contract (`scripts/verify-env.sh`).** It **loads the contract through the reader and never
+re-parses the file** — empty reader stdout ⇒ `verify_store_unreadable` (non-zero), with the reader's
+stderr forwarded. It locates the reader as a **sibling script** — `read-verify.sh` resolved relative
+to its own `dirname "${BASH_SOURCE[0]}"` — never through a harness-specific install path, so it stays a
+vendor-neutral core script. It applies `ready_timeout_s` (default 60) when polling `health` after `start`; on timeout it runs
+`stop` and exits non-zero with `health_timeout`. It **never writes `.agent/verify.json`**.
+
+**Sole writer (`scripts/propose-verify.sh`) — propose-only, `--confirm`-gated.** It scans the project
+(`package.json` scripts, `playwright.config.*`, `.env*`, `docker-compose*`, `prisma/seed*`, `Makefile`)
+for candidates, prints the proposal with each candidate's source, validates the proposal's shape
+**through the reader** before the confirm gate (it can never write a file the reader would refuse), and
+writes only on `--confirm` (or an interactive TTY "y"): `mkdir -p .agent`, a same-directory temp file,
+one atomic move. The seam test greps `loomwright/scripts/*.sh` (excluding `test-*.sh`) for a move onto
+the literal store name and requires exactly one hit. It refuses from a non-primary checkout (top-level
+`.git` is a **file** ⇒ exit 3), never clobbers an existing store, and honours `--repo <dir>` so its tests
+write under a `mktemp -d` project and never under this repo's `.agent/`.
+
+**Absence is the CONSUMER's to announce, not the reader's.** The reader names the missing path on stderr
+and stays quiet on stdout. The seam that *needs* the contract — `/verify`, the executor — must say, by
+name, that `.agent/verify.json` is absent, name the bootstrap, and **stop before the app is touched**.
 
 ---
 
