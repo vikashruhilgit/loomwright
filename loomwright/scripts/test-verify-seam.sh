@@ -598,6 +598,274 @@ rm -f "$r_t/stray.txt"; printf 'edited\n' > "$r_t/src.txt"; h2="$(tree_hash "$r_
 # --- executor cases (Subtask 2 appends below this line) ---
 
 # ============================================================================
+# EXECUTOR CASES (verify-env.sh) — Subtask 2. Same containment rules: every fixture, state dir and
+# marker lives under $ROOT; the http.server fixture binds 127.0.0.1 on a port chosen free at run
+# time and is killed on exit whatever happens above.
+#   (AC3) assert-non-prod   → three arms (empty / failed / pass) + env_var_equals + cmd; nothing is
+#                             persisted; `{"non_prod_assert":{}}` forwards the READER's token
+#   (AC4) start             → never-2xx fixture: [health_timeout] after ready_timeout_s AND stop ran;
+#                             python3 -m http.server fixture: exit 0 + `ready`; stop kills the pid;
+#                             auth-probe against the live server; --ready-timeout-s overrides
+#   (AC9) refuse-before-run → every mutating subcommand refuses under a failing assertion and its
+#                             marker-touching string never runs; a pass in a PREVIOUS invocation
+#                             buys nothing; MUTATION CONTROL: delete the dispatch-level gate call
+#                             from a COPY ⇒ the inner [non_prod_not_asserted] check still refuses;
+#                             the reader is located as a SIBLING (a lone copy reports reader_missing)
+# ============================================================================
+EXEC="$HERE/verify-env.sh"
+if [ ! -f "$EXEC" ]; then
+  no "(exec) executor not found at $EXEC — every executor case below is unreachable"
+fi
+
+# run_exec <args...> — stdout → OUT_E, exit → RC_E, stderr → $LAST_ERR. Runs from a NEUTRAL cwd
+# (the executor takes --repo), stdin closed.
+run_exec() {
+  : > "$LAST_ERR"
+  OUT_E="$( ( cd "$ROOT" && bash "$EXEC" "$@" ) </dev/null 2>"$LAST_ERR" )"; RC_E=$?
+}
+# Reason-token presence, capture-then-test (never `| grep -q` under pipefail).
+has_token() { grep -qF "[$1]" "$LAST_ERR"; }
+
+SERVER_PID=""
+kill_server() { [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null; return 0; }
+trap 'kill_server; rm -rf "$ROOT" 2>/dev/null' EXIT
+
+free_port() {
+  python3 -c 'import socket
+s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()' 2>/dev/null
+}
+HAVE_PY=1; command -v python3 >/dev/null 2>&1 || HAVE_PY=0
+
+# ============================================================================
+echo "== (AC3) assert-non-prod =="
+A_DIR="$(mktmp)"; A_STATE="$A_DIR/state"
+# Arm 1 — EMPTY: the literal `{"non_prod_assert":{}}` from the AC, and the full fixture with the
+# member emptied. Both are refused by the READER; the executor must forward that token, not invent
+# `store unreadable` as the reason.
+printf '%s' '{"non_prod_assert":{}}' > "$A_DIR/literal.json"
+jq '.non_prod_assert = {}' "$FIX" > "$A_DIR/empty.json"
+for f in literal empty; do
+  run_exec assert-non-prod --store "$A_DIR/$f.json" --repo "$A_DIR" --state-dir "$A_STATE"
+  [ "$RC_E" -ne 0 ] && has_token non_prod_assert_empty \
+    && ok "(AC3) $f: assert-non-prod exits non-zero (rc=$RC_E) with reason non_prod_assert_empty" \
+    || no "(AC3) $f: rc=$RC_E err=$(cat "$LAST_ERR")"
+  grep -E '^verify-env:.*\[non_prod_assert_empty\]' "$LAST_ERR" >/dev/null \
+    && ok "(AC3) $f: the executor's OWN verdict line carries the reader's token (forwarded, not re-parsed)" \
+    || no "(AC3) $f: the executor's verdict line does not carry non_prod_assert_empty: $(grep '^verify-env:' "$LAST_ERR")"
+done
+# Arm 2 — FAILED: regex ^http://localhost vs base_url https://app.example.com.
+jq '.base_url = "https://app.example.com" | .non_prod_assert = {"base_url_matches": "^http://localhost"}' "$FIX" > "$A_DIR/failed.json"
+run_exec assert-non-prod --store "$A_DIR/failed.json" --repo "$A_DIR" --state-dir "$A_STATE"
+[ "$RC_E" -ne 0 ] && has_token non_prod_assert_failed \
+  && ok "(AC3) failed: ^http://localhost vs https://app.example.com → rc=$RC_E, reason non_prod_assert_failed" \
+  || no "(AC3) failed: rc=$RC_E err=$(cat "$LAST_ERR")"
+# Arm 3 — PASS: a matching regex.
+run_exec assert-non-prod --store "$FIX" --repo "$A_DIR" --state-dir "$A_STATE"
+[ "$RC_E" -eq 0 ] && ok "(AC3) pass: ^http://localhost matches http://localhost:3000 → exit 0" \
+                  || no "(AC3) pass: rc=$RC_E err=$(cat "$LAST_ERR")"
+[ ! -e "$A_STATE" ] && ok "(AC3) a pass persists NOTHING (no state dir was created by assert-non-prod)" \
+                    || no "(AC3) assert-non-prod created state at $A_STATE — a pass must not outlive its process"
+# env_var_equals — equal / different / unset / not-an-identifier (the reader only requires a
+# non-empty name; the executor must fail CLOSED on a name it cannot look up).
+jq '.non_prod_assert = {"env_var_equals": {"name": "VERIFY_SEAM_ENV", "value": "development"}}' "$FIX" > "$A_DIR/env.json"
+VERIFY_SEAM_ENV=development run_exec assert-non-prod --store "$A_DIR/env.json" --repo "$A_DIR"
+[ "$RC_E" -eq 0 ] && ok "(AC3) env_var_equals: \$VERIFY_SEAM_ENV=development → exit 0" || no "(AC3) env equal: rc=$RC_E err=$(cat "$LAST_ERR")"
+VERIFY_SEAM_ENV=production run_exec assert-non-prod --store "$A_DIR/env.json" --repo "$A_DIR"
+[ "$RC_E" -ne 0 ] && has_token non_prod_assert_failed && ok "(AC3) env_var_equals: \$VERIFY_SEAM_ENV=production → non_prod_assert_failed" || no "(AC3) env differ: rc=$RC_E err=$(cat "$LAST_ERR")"
+( unset VERIFY_SEAM_ENV; run_exec assert-non-prod --store "$A_DIR/env.json" --repo "$A_DIR"; exit "$RC_E" ); rc_unset=$?
+[ "$rc_unset" -ne 0 ] && has_token non_prod_assert_failed && ok "(AC3) env_var_equals: variable UNSET → non_prod_assert_failed (unset is not 'equal to anything')" || no "(AC3) env unset: rc=$rc_unset err=$(cat "$LAST_ERR")"
+jq '.non_prod_assert = {"env_var_equals": {"name": "NOT-A-NAME", "value": ""}}' "$FIX" > "$A_DIR/badname.json"
+run_exec assert-non-prod --store "$A_DIR/badname.json" --repo "$A_DIR"
+[ "$RC_E" -ne 0 ] && has_token non_prod_assert_failed && ok "(AC3) env_var_equals: an invalid identifier fails CLOSED" || no "(AC3) bad name: rc=$RC_E err=$(cat "$LAST_ERR")"
+# cmd — exit 0 = pass; runs in the --repo dir (a relative path resolves there, never in the cwd).
+jq '.non_prod_assert = {"cmd": "test -f .not-prod"}' "$FIX" > "$A_DIR/cmd.json"
+run_exec assert-non-prod --store "$A_DIR/cmd.json" --repo "$A_DIR"
+[ "$RC_E" -ne 0 ] && has_token non_prod_assert_failed && ok "(AC3) cmd: 'test -f .not-prod' with no such file → non_prod_assert_failed" || no "(AC3) cmd fail: rc=$RC_E err=$(cat "$LAST_ERR")"
+: > "$A_DIR/.not-prod"
+run_exec assert-non-prod --store "$A_DIR/cmd.json" --repo "$A_DIR"
+[ "$RC_E" -eq 0 ] && ok "(AC3) cmd: same string once .not-prod exists in the --repo dir → exit 0 (cmd runs in the repo dir)" || no "(AC3) cmd pass: rc=$RC_E err=$(cat "$LAST_ERR")"
+# ≥1 pass suffices: a failing regex beside a passing cmd passes.
+jq '.base_url = "https://app.example.com" | .non_prod_assert = {"base_url_matches": "^http://localhost", "cmd": "test -f .not-prod"}' "$FIX" > "$A_DIR/mixed.json"
+run_exec assert-non-prod --store "$A_DIR/mixed.json" --repo "$A_DIR"
+[ "$RC_E" -eq 0 ] && grep -q "1 of 2" "$LAST_ERR" && ok "(AC3) at least one passing member suffices (regex fails, cmd passes → exit 0, '1 of 2')" || no "(AC3) mixed: rc=$RC_E err=$(cat "$LAST_ERR")"
+# During assert-non-prod ONLY the cmd member runs — never start/stop/seed/reset.
+M_DIR="$(mktmp)"
+jq --arg s "touch $M_DIR/m-start" --arg t "touch $M_DIR/m-stop" --arg e "touch $M_DIR/m-seed" --arg r "touch $M_DIR/m-reset" --arg c "touch $M_DIR/m-cmd" \
+   '.start = $s | .stop = $t | .seed = $e | .reset = $r | .non_prod_assert = {"cmd": $c}' "$FIX" > "$M_DIR/verify.json"
+run_exec assert-non-prod --store "$M_DIR/verify.json" --repo "$M_DIR"
+[ "$RC_E" -eq 0 ] && [ -e "$M_DIR/m-cmd" ] && ok "(AC3) the cmd member IS executed by assert-non-prod (it is the assertion)" || no "(AC3) cmd member did not run: rc=$RC_E err=$(cat "$LAST_ERR")"
+[ ! -e "$M_DIR/m-start" ] && [ ! -e "$M_DIR/m-stop" ] && [ ! -e "$M_DIR/m-seed" ] && [ ! -e "$M_DIR/m-reset" ] \
+  && ok "(AC3) assert-non-prod ran NO step string (start/stop/seed/reset markers absent)" \
+  || no "(AC3) assert-non-prod executed a step string: $(ls "$M_DIR")"
+# Absent store: the executor announces the absence BY NAME, names the bootstrap, and stops (exit 3).
+run_exec assert-non-prod --store "$A_DIR/nope.json" --repo "$A_DIR"
+[ "$RC_E" -eq 3 ] && has_token store_absent && has_token verify_store_unreadable && grep -q "propose-verify.sh" "$LAST_ERR" \
+  && ok "(AC3) absent store → exit 3, [store_absent] forwarded, bootstrap named, nothing run" \
+  || no "(AC3) absent store: rc=$RC_E err=$(cat "$LAST_ERR")"
+# Usage failures are exit 2 and never reach the gate.
+run_exec --store "$FIX" --repo "$A_DIR"
+[ "$RC_E" -eq 2 ] && has_token usage && ok "(AC3) no subcommand → exit 2 [usage]" || no "(AC3) no subcommand: rc=$RC_E"
+run_exec start --store "$FIX" --repo "$A_DIR" --ready-timeout-s abc
+[ "$RC_E" -eq 2 ] && has_token usage && ok "(AC3) --ready-timeout-s abc → exit 2 [usage] (a malformed override is never silently the default)" || no "(AC3) bad timeout: rc=$RC_E err=$(cat "$LAST_ERR")"
+
+# ============================================================================
+echo "== (AC4) start: health_timeout runs stop; python3 -m http.server fixture passes =="
+B_DIR="$(mktmp)"
+if [ "$HAVE_PY" -eq 1 ]; then
+  # Never-2xx arm: health points at a port nobody listens on (chosen free, then NOT bound).
+  DEAD_PORT="$(free_port)"
+  jq --arg s "touch $B_DIR/started" --arg t "touch $B_DIR/stopped" --arg u "http://127.0.0.1:$DEAD_PORT" \
+     '.start = $s | .stop = $t | .base_url = $u | .health = "/healthz" | .non_prod_assert = {"base_url_matches": "^http://127"} | .ready_timeout_s = 2' \
+     "$FIX" > "$B_DIR/never.json"
+  t0="$(date +%s)"
+  run_exec start --store "$B_DIR/never.json" --repo "$B_DIR" --state-dir "$B_DIR/state-never"
+  t1="$(date +%s)"; elapsed=$((t1 - t0))
+  [ "$RC_E" -ne 0 ] && has_token health_timeout \
+    && ok "(AC4) never-2xx: start exits non-zero (rc=$RC_E) with reason health_timeout" \
+    || no "(AC4) never-2xx: rc=$RC_E err=$(cat "$LAST_ERR")"
+  [ -e "$B_DIR/started" ] && ok "(AC4) never-2xx: the start string DID run (the gate had passed)" || no "(AC4) never-2xx: start string never ran"
+  [ -e "$B_DIR/stopped" ] && ok "(AC4) never-2xx: stop RAN after the timeout (marker present)" || no "(AC4) never-2xx: stop did not run — marker absent"
+  [ "$elapsed" -ge 2 ] && [ "$elapsed" -le 15 ] && ok "(AC4) never-2xx: gave up after ready_timeout_s (elapsed ${elapsed}s, window 2..15)" \
+                                                 || no "(AC4) never-2xx: elapsed ${elapsed}s is outside the 2..15s window for ready_timeout_s=2"
+  # The flag overrides the store's ready_timeout_s (store says 30; flag says 1).
+  jq '.ready_timeout_s = 30' "$B_DIR/never.json" > "$B_DIR/never30.json"
+  t0="$(date +%s)"
+  run_exec start --store "$B_DIR/never30.json" --repo "$B_DIR" --state-dir "$B_DIR/state-never" --ready-timeout-s 1
+  t1="$(date +%s)"; elapsed=$((t1 - t0))
+  [ "$RC_E" -ne 0 ] && has_token health_timeout && [ "$elapsed" -le 10 ] \
+    && ok "(AC4) --ready-timeout-s 1 overrides the store's 30 (elapsed ${elapsed}s)" \
+    || no "(AC4) override: rc=$RC_E elapsed=${elapsed}s err=$(cat "$LAST_ERR")"
+
+  # Live arm: python3 -m http.server on a free port; health "/" is served by it.
+  LIVE_PORT="$(free_port)"
+  jq --arg s "python3 -m http.server $LIVE_PORT --bind 127.0.0.1" --arg u "http://127.0.0.1:$LIVE_PORT" \
+     '.start = $s | .stop = null | .base_url = $u | .health = "/" | .non_prod_assert = {"base_url_matches": "^http://127"} | .ready_timeout_s = 15
+      | .auth = {"method": "storage_state", "storage_state_path": "state.json", "probe_path": "/"}' \
+     "$FIX" > "$B_DIR/live.json"
+  printf '%s' '{"cookies":[{"name":"session","value":"abc123","domain":"127.0.0.1","path":"/"}],"origins":[]}' > "$B_DIR/state.json"
+  run_exec start --store "$B_DIR/live.json" --repo "$B_DIR" --state-dir "$B_DIR/state-live"
+  SERVER_PID="$(cat "$B_DIR/state-live/pid" 2>/dev/null)"
+  [ "$RC_E" -eq 0 ] && [ "$OUT_E" = "ready" ] \
+    && ok "(AC4) http.server fixture: start exits 0 within the timeout and prints 'ready'" \
+    || no "(AC4) http.server: rc=$RC_E out=$OUT_E err=$(cat "$LAST_ERR")"
+  case "$SERVER_PID" in
+    ''|*[!0-9]*) no "(AC4) http.server: no numeric pid recorded under --state-dir (got '$SERVER_PID')" ;;
+    *) kill -0 "$SERVER_PID" 2>/dev/null && ok "(AC4) http.server: recorded pid $SERVER_PID is alive" || no "(AC4) http.server: recorded pid $SERVER_PID is not running" ;;
+  esac
+  # auth-probe against the live server: cookies from the storage state, 2xx ⇒ authenticated.
+  run_exec auth-probe --store "$B_DIR/live.json" --repo "$B_DIR" --state-dir "$B_DIR/state-live"
+  [ "$RC_E" -eq 0 ] && [ "$OUT_E" = "authenticated" ] && ok "(AC4) auth-probe: 2xx with the storage-state cookie → 'authenticated'" \
+                                                       || no "(AC4) auth-probe live: rc=$RC_E out=$OUT_E err=$(cat "$LAST_ERR")"
+  jq '.auth.probe_path = "/definitely-not-here"' "$B_DIR/live.json" > "$B_DIR/live404.json"
+  run_exec auth-probe --store "$B_DIR/live404.json" --repo "$B_DIR"
+  [ "$RC_E" -ne 0 ] && has_token "auth_probe_unexpected:404" && ok "(AC4) auth-probe: a 404 is neither verdict → non-zero [auth_probe_unexpected:404]" \
+                                                             || no "(AC4) auth-probe 404: rc=$RC_E out=$OUT_E err=$(cat "$LAST_ERR")"
+  jq '.auth.storage_state_path = "missing-state.json"' "$B_DIR/live.json" > "$B_DIR/livenostate.json"
+  run_exec auth-probe --store "$B_DIR/livenostate.json" --repo "$B_DIR"
+  [ "$RC_E" -ne 0 ] && has_token storage_state_absent && ok "(AC4) auth-probe: a missing storage state file → [storage_state_absent]" \
+                                                       || no "(AC4) auth-probe no state: rc=$RC_E err=$(cat "$LAST_ERR")"
+  # stop with `stop: null` kills the recorded pid and clears the record.
+  run_exec stop --store "$B_DIR/live.json" --repo "$B_DIR" --state-dir "$B_DIR/state-live"
+  gone=0; i=0
+  while [ "$i" -lt 10 ]; do kill -0 "$SERVER_PID" 2>/dev/null || { gone=1; break; }; sleep 1; i=$((i+1)); done
+  [ "$RC_E" -eq 0 ] && [ "$gone" -eq 1 ] && ok "(AC4) stop (null) killed the recorded pid — server gone" || no "(AC4) stop: rc=$RC_E gone=$gone err=$(cat "$LAST_ERR")"
+  [ ! -e "$B_DIR/state-live/pid" ] && ok "(AC4) stop removed the pid record" || no "(AC4) pid record still present after stop"
+  [ "$gone" -eq 1 ] && SERVER_PID=""
+  run_exec stop --store "$B_DIR/live.json" --repo "$B_DIR" --state-dir "$B_DIR/state-live"
+  [ "$RC_E" -eq 0 ] && ok "(AC4) a second stop with nothing recorded is a no-op (exit 0)" || no "(AC4) second stop: rc=$RC_E err=$(cat "$LAST_ERR")"
+else
+  no "(AC4) python3 is unavailable — the http.server fixture and the free-port pick cannot run on this host"
+fi
+# `method: none` ⇒ `anonymous` with NO request: a PATH-stubbed curl that touches a marker must not fire.
+STUB="$(mktmp)"; CURL_MARK="$B_DIR/curl-called"
+printf '#!/bin/sh\ntouch "%s"\nexit 22\n' "$CURL_MARK" > "$STUB/curl"; chmod +x "$STUB/curl"
+PATH="$STUB:$PATH" run_exec auth-probe --store "$FIX" --repo "$B_DIR"
+[ "$RC_E" -eq 0 ] && [ "$OUT_E" = "anonymous" ] && [ ! -e "$CURL_MARK" ] \
+  && ok "(AC4) auth-probe with method none → 'anonymous' and curl was never invoked" \
+  || no "(AC4) method none: rc=$RC_E out=$OUT_E curl_called=$([ -e "$CURL_MARK" ] && echo yes || echo no)"
+# The stub is effective (control): with start null and a stubbed curl that always fails, health
+# polling must time out — proving the executor reaches curl BY NAME through PATH.
+jq '.start = null | .stop = null | .ready_timeout_s = 1' "$FIX" > "$B_DIR/stubbed.json"
+PATH="$STUB:$PATH" run_exec start --store "$B_DIR/stubbed.json" --repo "$B_DIR" --state-dir "$B_DIR/state-stub"
+[ "$RC_E" -ne 0 ] && has_token health_timeout && [ -e "$CURL_MARK" ] \
+  && ok "(AC4) CONTROL: the PATH-stubbed curl IS what the health poll calls (marker set, health_timeout)" \
+  || no "(AC4) CONTROL FAILED: rc=$RC_E marker=$([ -e "$CURL_MARK" ] && echo yes || echo no) err=$(cat "$LAST_ERR")"
+
+# ============================================================================
+echo "== (AC9) refuse-before-run =="
+C_DIR="$(mktmp)"
+# A store whose non_prod_assert FAILS and whose every step string touches a marker. For auth-probe
+# the "did it run" evidence is the PATH-stubbed curl marker.
+jq --arg s "touch $C_DIR/ran-start" --arg t "touch $C_DIR/ran-stop" --arg e "touch $C_DIR/ran-seed" --arg r "touch $C_DIR/ran-reset" \
+   '.base_url = "https://app.example.com" | .non_prod_assert = {"base_url_matches": "^http://localhost"}
+    | .start = $s | .stop = $t | .seed = $e | .reset = $r | .ready_timeout_s = 1
+    | .auth = {"method": "storage_state", "storage_state_path": "state.json", "probe_path": "/api/me"}' "$FIX" > "$C_DIR/prod.json"
+printf '%s' '{"cookies":[],"origins":[]}' > "$C_DIR/state.json"
+CURL_MARK9="$C_DIR/ran-curl"
+printf '#!/bin/sh\ntouch "%s"\nexit 0\n' "$CURL_MARK9" > "$STUB/curl"; chmod +x "$STUB/curl"
+for sub in start stop seed reset auth-probe; do
+  PATH="$STUB:$PATH" run_exec "$sub" --store "$C_DIR/prod.json" --repo "$C_DIR" --state-dir "$C_DIR/state"
+  [ "$RC_E" -ne 0 ] && has_token non_prod_assert_failed \
+    && ok "(AC9) $sub under a failing assertion refuses (rc=$RC_E) with reason non_prod_assert_failed" \
+    || no "(AC9) $sub: rc=$RC_E err=$(cat "$LAST_ERR")"
+done
+[ ! -e "$C_DIR/ran-start" ] && [ ! -e "$C_DIR/ran-stop" ] && [ ! -e "$C_DIR/ran-seed" ] && [ ! -e "$C_DIR/ran-reset" ] && [ ! -e "$CURL_MARK9" ] \
+  && ok "(AC9) NO step string ran and NO request was made under the failing assertion (all five markers absent)" \
+  || no "(AC9) SOMETHING RAN under a failing assertion: $(ls "$C_DIR" | grep '^ran-' | tr '\n' ' ')"
+[ ! -e "$C_DIR/state" ] && ok "(AC9) no state dir was created by a refused invocation" || no "(AC9) a refused invocation created state at $C_DIR/state"
+# A pass in a PREVIOUS invocation buys nothing: pass on the good store, then the failing store with
+# the same --state-dir must still refuse.
+run_exec assert-non-prod --store "$FIX" --repo "$C_DIR" --state-dir "$C_DIR/state"
+[ "$RC_E" -eq 0 ] || no "(AC9) precondition: the good store did not pass (rc=$RC_E)"
+run_exec seed --store "$C_DIR/prod.json" --repo "$C_DIR" --state-dir "$C_DIR/state"
+[ "$RC_E" -ne 0 ] && has_token non_prod_assert_failed && [ ! -e "$C_DIR/ran-seed" ] \
+  && ok "(AC9) a pass in a PREVIOUS invocation does not carry over — seed still refused, marker absent" \
+  || no "(AC9) carry-over: rc=$RC_E marker=$([ -e "$C_DIR/ran-seed" ] && echo present || echo absent)"
+# Positive control for the marker mechanism: the SAME store with a passing assertion runs seed.
+jq '.base_url = "http://localhost:3000"' "$C_DIR/prod.json" > "$C_DIR/nonprod.json"
+run_exec seed --store "$C_DIR/nonprod.json" --repo "$C_DIR" --state-dir "$C_DIR/state"
+[ "$RC_E" -eq 0 ] && [ -e "$C_DIR/ran-seed" ] && ok "(AC9) CONTROL: the same store with a passing assertion DOES run seed (marker present)" \
+                                              || no "(AC9) CONTROL FAILED: rc=$RC_E marker=$([ -e "$C_DIR/ran-seed" ] && echo present || echo absent) err=$(cat "$LAST_ERR")"
+rm -f "$C_DIR/ran-seed"
+
+# MUTATION CONTROL — delete the dispatch-level `gate_non_prod;` from the `seed)` and `start)` arms
+# of a COPY. The inner check at the bash -c sites must STILL refuse with non_prod_not_asserted and
+# run nothing, even against a store whose assertion WOULD pass. The copy sits beside a copy of the
+# reader because the executor locates the reader as a sibling.
+MUT="$(mktmp)"
+cp "$READER" "$MUT/read-verify.sh"
+sed -e '/^  seed)/s/gate_non_prod; //' -e '/^  start)/s/gate_non_prod; //' "$EXEC" > "$MUT/verify-env.sh"
+if [ -s "$MUT/verify-env.sh" ] && ! cmp -s "$EXEC" "$MUT/verify-env.sh" && bash -n "$MUT/verify-env.sh" 2>/dev/null \
+   && [ "$(grep -cE '^  (seed|start)\).*gate_non_prod' "$MUT/verify-env.sh")" -eq 0 ]; then
+  ok "(AC9) mutant is well-formed: non-empty, differs from the original, bash -n clean, seed/start arms carry no gate call"
+  : > "$LAST_ERR"
+  ( cd "$ROOT" && bash "$MUT/verify-env.sh" seed --store "$C_DIR/nonprod.json" --repo "$C_DIR" --state-dir "$C_DIR/state" ) </dev/null >/dev/null 2>"$LAST_ERR"; rc_m=$?
+  [ "$rc_m" -ne 0 ] && has_token non_prod_not_asserted && [ ! -e "$C_DIR/ran-seed" ] \
+    && ok "(AC9) MUTANT seed (gate call deleted): the inner check still refuses [non_prod_not_asserted], marker absent" \
+    || no "(AC9) MUTANT seed ran or misreported: rc=$rc_m marker=$([ -e "$C_DIR/ran-seed" ] && echo present || echo absent) err=$(cat "$LAST_ERR")"
+  : > "$LAST_ERR"
+  ( cd "$ROOT" && bash "$MUT/verify-env.sh" start --store "$C_DIR/nonprod.json" --repo "$C_DIR" --state-dir "$C_DIR/state" ) </dev/null >/dev/null 2>"$LAST_ERR"; rc_m=$?
+  [ "$rc_m" -ne 0 ] && has_token non_prod_not_asserted && [ ! -e "$C_DIR/ran-start" ] \
+    && ok "(AC9) MUTANT start (gate call deleted): the background-launch check still refuses, marker absent" \
+    || no "(AC9) MUTANT start ran or misreported: rc=$rc_m marker=$([ -e "$C_DIR/ran-start" ] && echo present || echo absent) err=$(cat "$LAST_ERR")"
+else
+  no "(AC9) MUTATION CONTROL could not be armed: the sed did not produce a distinct, parseable copy with the gate calls removed"
+fi
+# Sibling-locate: a LONE copy of the executor (no reader beside it) reports reader_missing (exit 3)
+# rather than reaching for any fixed install path.
+LONE="$(mktmp)"; cp "$EXEC" "$LONE/verify-env.sh"
+: > "$LAST_ERR"
+( cd "$ROOT" && bash "$LONE/verify-env.sh" assert-non-prod --store "$FIX" --repo "$C_DIR" ) </dev/null >/dev/null 2>"$LAST_ERR"; rc_l=$?
+[ "$rc_l" -eq 3 ] && has_token reader_missing \
+  && ok "(AC9) the executor locates the reader as a SIBLING — a lone copy exits 3 [reader_missing]" \
+  || no "(AC9) lone copy: rc=$rc_l err=$(cat "$LAST_ERR")"
+# The executor never writes the store (AC5 already counts the mv; this is the runtime half): the
+# fixture bytes are unchanged after every executor call above.
+[ "$(printf '%s' "$FULL_JSON" | cksum)" = "$(cksum < "$FIX")" ] \
+  && ok "(AC9) the canonical fixture is byte-identical after every executor call (the executor never writes the store)" \
+  || no "(AC9) the fixture changed under the executor"
+
+# ============================================================================
 finish_real_agent_check
 
 echo
