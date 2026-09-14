@@ -55,9 +55,12 @@
 #                 nothing about where `base_url` points), and a wrong guess here is a run that
 #                 touches production. So without `--non-prod <regex|env=NAME=VAL|cmd=<shell>>` the
 #                 proposal is printed with a BLOCKED line and the script exits 1 — on EVERY path,
-#                 `--confirm` or not — and nothing is written. Repeatable; each value becomes one
-#                 member:  `env=NAME=VAL` → env_var_equals {name, value};  `cmd=<shell>` → cmd;
-#                 anything else → base_url_matches (an ERE).
+#                 `--confirm` or not — and nothing is written. Repeatable, ONE PER KIND; each value
+#                 becomes one member:  `env=NAME=VAL` → env_var_equals {name, value};
+#                 `cmd=<shell>` → cmd;  anything else → base_url_matches (an ERE). A second value
+#                 of a kind already given is REFUSED at parse time (exit 1, nothing written) —
+#                 the store holds one member per kind, so a silent last-wins overwrite would drop
+#                 an assertion the caller believes is in force; combine regexes with `|`.
 #   `seed` / `reset` — scanned: package.json scripts `db:seed` / `db:reset` (→ `npm run <name>`)
 #                 → prisma/seed* present (→ `npx prisma db seed`, seed only) → Makefile target
 #                 `seed` / `reset`. Nothing found ⇒ null. Overridable with `--seed` / `--reset`.
@@ -130,6 +133,7 @@ non_prod_raw=""   # newline-TERMINATED accumulator; a newline inside a value is 
                   # time (it would split one flag into two members — same reasoning as
                   # propose-product.sh's --competitor).
 non_prod_count=0
+non_prod_have_re=0; non_prod_have_env=0; non_prod_have_cmd=0   # one member per kind (see header)
 confirm=0
 
 need() { [ "$#" -ge 2 ] || die "$1 requires a value"; }
@@ -158,9 +162,16 @@ while [ "$#" -gt 0 ]; do
           case "$nv" in
             *=*) [ -n "${nv%%=*}" ] || die "rejected: --non-prod env=NAME=VAL has an empty NAME (got: $2)" ;;
             *)   die "rejected: --non-prod env= form must be env=NAME=VAL (got: $2)" ;;
-          esac ;;
-        cmd=*)   [ -n "${2#cmd=}" ] || die "rejected: --non-prod cmd= has an empty command" ;;
-        *)       : ;;   # an ERE for base_url_matches
+          esac
+          [ "$non_prod_have_env" -eq 0 ] || die "rejected: a second --non-prod env= value (got: $2) — one member per kind; a later value would silently replace the earlier one. Nothing was written."
+          non_prod_have_env=1 ;;
+        cmd=*)
+          [ -n "${2#cmd=}" ] || die "rejected: --non-prod cmd= has an empty command"
+          [ "$non_prod_have_cmd" -eq 0 ] || die "rejected: a second --non-prod cmd= value (got: $2) — one member per kind; a later value would silently replace the earlier one. Nothing was written."
+          non_prod_have_cmd=1 ;;
+        *)   # an ERE for base_url_matches
+          [ "$non_prod_have_re" -eq 0 ] || die "rejected: a second --non-prod regex (got: $2) — one member per kind; combine regexes with \`|\`. Nothing was written."
+          non_prod_have_re=1 ;;
       esac
       non_prod_raw="${non_prod_raw}${2}"$'\n'; non_prod_count=$((non_prod_count+1)); shift 2 ;;
     --confirm)            confirm=1; shift ;;

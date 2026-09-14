@@ -50,6 +50,8 @@
 #   (p7)     NO-CLOBBER              → a second --confirm run refuses, bytes intact
 #   (p8)     --non-prod value shapes → env=NAME=VAL → env_var_equals; cmd=… → cmd; malformed env=
 #                                      form rejected (exit 1)
+#   (p9)     --non-prod one per kind → a second regex / env= / cmd= value is refused (exit 1) with
+#                                      nothing written, even with --confirm; one of each still accepted
 # Invariants:
 #   (S)  AC5 SOLE WRITER            → across loomwright/scripts/*.sh EXCLUDING test-*.sh, exactly ONE
 #                                      line moves a file onto the literal `verify.json`, and it is in
@@ -530,6 +532,28 @@ run_writer "$r_p8" --non-prod '' --confirm
 [ "$RC" -eq 1 ] && ok "(p8) an empty --non-prod is rejected with exit 1" || no "(p8) expected exit 1, got $RC"
 [ "$before_p8" = "$(tree_hash "$r_p8")" ] && ok "(p8) neither rejected run wrote anything" || no "(p8) a rejected run modified the tree"
 
+echo "== (p9) --non-prod is ONE PER KIND — a second value of a kind already given is refused, nothing written =="
+# The store holds one member per kind, so a silent last-wins overwrite would drop an assertion the
+# caller believes is in force. Each duplicate must exit 1 at parse time and leave the tree untouched,
+# even with --confirm.
+r_p9="$(new_repo)"; before_p9="$(tree_hash "$r_p9")"
+run_writer "$r_p9" --non-prod '^http://localhost' --non-prod '^http://127' --confirm
+[ "$RC" -eq 1 ] && ok "(p9) a second regex value is refused with exit 1" || no "(p9) second regex: expected exit 1, got $RC"
+case "$OUT" in *"one member per kind"*) ok "(p9) the refusal says one member per kind" ;; *) no "(p9) refusal text does not say one member per kind: $OUT" ;; esac
+case "$OUT" in *'combine regexes with `|`'*) ok "(p9) the refusal tells the caller to combine regexes with |" ;; *) no "(p9) refusal does not suggest combining with |: $OUT" ;; esac
+run_writer "$r_p9" --non-prod 'env=NODE_ENV=development' --non-prod 'env=APP_ENV=staging' --confirm
+[ "$RC" -eq 1 ] && ok "(p9) a second env= value is refused with exit 1" || no "(p9) second env=: expected exit 1, got $RC"
+run_writer "$r_p9" --non-prod 'cmd=test -f .a' --non-prod 'cmd=test -f .b' --confirm
+[ "$RC" -eq 1 ] && ok "(p9) a second cmd= value is refused with exit 1" || no "(p9) second cmd=: expected exit 1, got $RC"
+[ "$before_p9" = "$(tree_hash "$r_p9")" ] && [ ! -e "$r_p9/.agent" ] \
+  && ok "(p9) none of the three refused --confirm runs wrote anything (tree byte-identical, no .agent/)" \
+  || no "(p9) a refused duplicate-kind run modified the tree"
+# CONTROL: one of EACH kind (three distinct members) is still accepted — the guard is per kind, not per count.
+run_writer "$r_p9" --non-prod '^http://localhost|^http://127' --non-prod 'env=NODE_ENV=development' --non-prod 'cmd=test -f .a'
+[ "$RC" -eq 0 ] && printf '%s' "$(proposed_object)" | jq -e '.non_prod_assert | keys == ["base_url_matches","cmd","env_var_equals"]' >/dev/null 2>&1 \
+  && ok "(p9) CONTROL: one value of each kind (a |-combined regex included) is accepted with all three members" \
+  || no "(p9) CONTROL FAILED: rc=$RC out=$OUT"
+
 # ============================================================================
 echo "== (S) AC5 SOLE WRITER — exactly one move onto the literal verify.json in loomwright/scripts/*.sh =="
 # Capture-then-test: never `producer | grep -q` under pipefail (SIGPIPE can fail a matching pipe).
@@ -605,7 +629,12 @@ rm -f "$r_t/stray.txt"; printf 'edited\n' > "$r_t/src.txt"; h2="$(tree_hash "$r_
 #                             persisted; `{"non_prod_assert":{}}` forwards the READER's token
 #   (AC4) start             → never-2xx fixture: [health_timeout] after ready_timeout_s AND stop ran;
 #                             python3 -m http.server fixture: exit 0 + `ready`; stop kills the pid;
-#                             auth-probe against the live server; --ready-timeout-s overrides
+#                             auth-probe against the live server; --ready-timeout-s overrides;
+#                             LIFECYCLE: a second start refuses [already_started] and touches nothing;
+#                             a start string exiting non-zero is [start_exited:<rc>] even with health
+#                             2xx elsewhere; exit 0 is a detached starter; a stale record does NOT
+#                             refuse a re-start [stale_pid_cleared]; stop with a dead recorded pid is
+#                             non-zero [not_running]; ready_timeout_s is wall-clock (hanging curl)
 #   (AC9) refuse-before-run → every mutating subcommand refuses under a failing assertion and its
 #                             marker-touching string never runs; a pass in a PREVIOUS invocation
 #                             buys nothing; MUTATION CONTROL: delete the dispatch-level gate call
@@ -752,6 +781,31 @@ if [ "$HAVE_PY" -eq 1 ]; then
     ''|*[!0-9]*) no "(AC4) http.server: no numeric pid recorded under --state-dir (got '$SERVER_PID')" ;;
     *) kill -0 "$SERVER_PID" 2>/dev/null && ok "(AC4) http.server: recorded pid $SERVER_PID is alive" || no "(AC4) http.server: recorded pid $SERVER_PID is not running" ;;
   esac
+  # --- LIFECYCLE VERDICTS ARE NEVER VACUOUS (start/stop guarantees must actually hold) ---
+  # Replay hole: a second `start` while the recorded pid is alive must REFUSE [already_started] —
+  # not launch a second instance, not overwrite the record, and not print `ready` on the strength
+  # of health served by the first instance.
+  run_exec start --store "$B_DIR/live.json" --repo "$B_DIR" --state-dir "$B_DIR/state-live"
+  [ "$RC_E" -ne 0 ] && has_token already_started && [ "$OUT_E" != "ready" ] \
+    && ok "(AC4) a second start while the recorded pid is alive refuses (rc=$RC_E) [already_started], no 'ready'" \
+    || no "(AC4) second start: rc=$RC_E out=$OUT_E err=$(cat "$LAST_ERR")"
+  [ "$(cat "$B_DIR/state-live/pid" 2>/dev/null)" = "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null \
+    && ok "(AC4) the refused start left the pid record ($SERVER_PID) and the running server untouched" \
+    || no "(AC4) the refused start overwrote the record or killed the server (record='$(cat "$B_DIR/state-live/pid" 2>/dev/null)')"
+  # start_exited: a start string that dies non-zero while health is 2xx (served by the STILL-RUNNING
+  # live server) is a FAILED start — never `ready` — and its dead pid record is dropped.
+  jq --arg u "http://127.0.0.1:$LIVE_PORT" '.start = "exit 3" | .base_url = $u | .health = "/" | .ready_timeout_s = 5' "$B_DIR/live.json" > "$B_DIR/dies.json"
+  run_exec start --store "$B_DIR/dies.json" --repo "$B_DIR" --state-dir "$B_DIR/state-dies"
+  [ "$RC_E" -ne 0 ] && has_token "start_exited:3" && [ "$OUT_E" != "ready" ] && [ ! -e "$B_DIR/state-dies/pid" ] \
+    && ok "(AC4) a start string that exits 3 while health is 2xx elsewhere → non-zero [start_exited:3], no 'ready', record dropped" \
+    || no "(AC4) start_exited: rc=$RC_E out=$OUT_E pid_record=$([ -e "$B_DIR/state-dies/pid" ] && echo present || echo absent) err=$(cat "$LAST_ERR")"
+  # A start string that exits 0 is a DETACHED starter (docker compose up -d shape): health from the
+  # live server still counts, `ready` is printed, and the dead pid record is dropped rather than kept.
+  jq '.start = "true"' "$B_DIR/dies.json" > "$B_DIR/detached.json"
+  run_exec start --store "$B_DIR/detached.json" --repo "$B_DIR" --state-dir "$B_DIR/state-detached"
+  [ "$RC_E" -eq 0 ] && [ "$OUT_E" = "ready" ] && has_token start_detached && [ ! -e "$B_DIR/state-detached/pid" ] \
+    && ok "(AC4) a start string that exits 0 is a detached starter: 'ready' (health 2xx), [start_detached], no dead pid kept" \
+    || no "(AC4) detached: rc=$RC_E out=$OUT_E err=$(cat "$LAST_ERR")"
   # auth-probe against the live server: cookies from the storage state, 2xx ⇒ authenticated.
   run_exec auth-probe --store "$B_DIR/live.json" --repo "$B_DIR" --state-dir "$B_DIR/state-live"
   [ "$RC_E" -eq 0 ] && [ "$OUT_E" = "authenticated" ] && ok "(AC4) auth-probe: 2xx with the storage-state cookie → 'authenticated'" \
@@ -773,6 +827,27 @@ if [ "$HAVE_PY" -eq 1 ]; then
   [ "$gone" -eq 1 ] && SERVER_PID=""
   run_exec stop --store "$B_DIR/live.json" --repo "$B_DIR" --state-dir "$B_DIR/state-live"
   [ "$RC_E" -eq 0 ] && ok "(AC4) a second stop with nothing recorded is a no-op (exit 0)" || no "(AC4) second stop: rc=$RC_E err=$(cat "$LAST_ERR")"
+  # Legitimate re-start after stop / crash: a STALE record (its process is gone) must NOT trip the
+  # replay guard — it is cleared [stale_pid_cleared] and the start proceeds to `ready`.
+  ( exit 0 ) & STALE_PID=$!; wait "$STALE_PID" 2>/dev/null   # a reaped pid: certainly not running
+  mkdir -p "$B_DIR/state-live"; printf '%s\n' "$STALE_PID" > "$B_DIR/state-live/pid"
+  run_exec start --store "$B_DIR/live.json" --repo "$B_DIR" --state-dir "$B_DIR/state-live"
+  SERVER_PID="$(cat "$B_DIR/state-live/pid" 2>/dev/null)"
+  [ "$RC_E" -eq 0 ] && [ "$OUT_E" = "ready" ] && has_token stale_pid_cleared && [ -n "$SERVER_PID" ] && [ "$SERVER_PID" != "$STALE_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null \
+    && ok "(AC4) a stale pid record does NOT refuse a re-start: cleared [stale_pid_cleared], new server $SERVER_PID alive, 'ready'" \
+    || no "(AC4) stale-record re-start: rc=$RC_E out=$OUT_E pid=$SERVER_PID err=$(cat "$LAST_ERR")"
+  # stop when the recorded pid is NOT running (killed out from under us) stopped nothing → non-zero
+  # [not_running]; the dead record is cleared so the next stop is the contract's no-op again.
+  if [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null; then
+    i=0; while [ "$i" -lt 10 ] && kill -0 "$SERVER_PID" 2>/dev/null; do sleep 1; i=$((i+1)); done
+  fi
+  run_exec stop --store "$B_DIR/live.json" --repo "$B_DIR" --state-dir "$B_DIR/state-live"
+  [ "$RC_E" -ne 0 ] && has_token not_running && [ ! -e "$B_DIR/state-live/pid" ] \
+    && ok "(AC4) stop with a recorded pid that is not running → non-zero [not_running] (nothing was stopped), record cleared" \
+    || no "(AC4) stop not_running: rc=$RC_E pid_record=$([ -e "$B_DIR/state-live/pid" ] && echo present || echo absent) err=$(cat "$LAST_ERR")"
+  SERVER_PID=""
+  run_exec stop --store "$B_DIR/live.json" --repo "$B_DIR" --state-dir "$B_DIR/state-live"
+  [ "$RC_E" -eq 0 ] && ok "(AC4) after the cleared record, stop is the contract no-op again (idempotent, exit 0)" || no "(AC4) stop after clear: rc=$RC_E err=$(cat "$LAST_ERR")"
 else
   no "(AC4) python3 is unavailable — the http.server fixture and the free-port pick cannot run on this host"
 fi
@@ -790,6 +865,18 @@ PATH="$STUB:$PATH" run_exec start --store "$B_DIR/stubbed.json" --repo "$B_DIR" 
 [ "$RC_E" -ne 0 ] && has_token health_timeout && [ -e "$CURL_MARK" ] \
   && ok "(AC4) CONTROL: the PATH-stubbed curl IS what the health poll calls (marker set, health_timeout)" \
   || no "(AC4) CONTROL FAILED: rc=$RC_E marker=$([ -e "$CURL_MARK" ] && echo yes || echo no) err=$(cat "$LAST_ERR")"
+# ready_timeout_s is WALL-CLOCK, not an iteration count: with a curl that hangs 2s per call (the
+# --max-time shape) and ready_timeout_s=2, the poll must give up in ~2s — a per-iteration counter
+# would take 2×(2+1)=6s. Window 2..4 discriminates the two.
+HANG="$(mktmp)"
+printf '#!/bin/sh\nsleep 2\nexit 22\n' > "$HANG/curl"; chmod +x "$HANG/curl"
+jq '.ready_timeout_s = 2' "$B_DIR/stubbed.json" > "$B_DIR/hang.json"
+t0="$(date +%s)"
+PATH="$HANG:$PATH" run_exec start --store "$B_DIR/hang.json" --repo "$B_DIR" --state-dir "$B_DIR/state-hang"
+t1="$(date +%s)"; elapsed=$((t1 - t0))
+[ "$RC_E" -ne 0 ] && has_token health_timeout && [ "$elapsed" -ge 2 ] && [ "$elapsed" -le 4 ] \
+  && ok "(AC4) a hanging health endpoint honours ready_timeout_s as wall-clock (elapsed ${elapsed}s for 2s, window 2..4)" \
+  || no "(AC4) wall-clock timeout: rc=$RC_E elapsed=${elapsed}s (a per-iteration counter would take ~6s) err=$(cat "$LAST_ERR")"
 
 # ============================================================================
 echo "== (AC9) refuse-before-run =="

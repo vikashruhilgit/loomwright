@@ -2435,7 +2435,7 @@ VERIFY_ENV:                        # the JSON root MUST be a single OBJECT (an a
   auth: object                     # required
     method: enum [none, storage_state]   # required
     storage_state_path: string|null      # REQUIRED non-empty when method is storage_state; null/absent otherwise
-    probe_path: string|null              # optional — a route that answers 401/302 when logged out (the auth-probe target)
+    probe_path: string|null              # optional — a route that answers 401/403/302 when logged out (the auth-probe target)
   non_prod_assert: object          # required — AT LEAST ONE usable member; every present member must be well-typed:
     base_url_matches: string       #   an ERE tested against base_url (non-empty)
     env_var_equals: {name, value}  #   name non-empty string, value string — the executor compares $name to value
@@ -2477,8 +2477,11 @@ fixture is then accepted, so the check is proven load-bearing rather than assume
 every usable member and passes only if **at least one** passes; a store whose `non_prod_assert` has no
 usable member is refused with `non_prod_assert_empty`, and one whose members all fail is refused with
 `non_prod_assert_failed`. Every other executor subcommand (`start`, `stop`, `seed`, `reset`,
-`auth-probe`) runs `assert-non-prod` first, **in the same invocation**, and refuses with
-`non_prod_not_asserted` before touching anything. The bootstrap never guesses this member: no signal in
+`auth-probe`) runs `assert-non-prod` first, **in the same invocation**, and refuses with the gate's own
+token (`non_prod_assert_failed` / `non_prod_assert_empty`) before touching anything; independently, the
+two `bash -c` sites refuse with `non_prod_not_asserted` if the gate did not pass in-process (the inner
+belt the seam test's mutation control exercises by deleting the dispatch-level gate call from a copy).
+The bootstrap never guesses this member: no signal in
 a repo says what production looks like for a given project (a `.env` with `NODE_ENV=development` says
 nothing about where `base_url` points), so `propose-verify.sh` refuses to write without an explicit
 `--non-prod <regex|env=NAME=VAL|cmd=…>` — exit 1, on every path, `--confirm` or not. For the same
@@ -2508,8 +2511,19 @@ read it from the code, never from a count kept here.
 re-parses the file** — empty reader stdout ⇒ `verify_store_unreadable` (non-zero), with the reader's
 stderr forwarded. It locates the reader as a **sibling script** — `read-verify.sh` resolved relative
 to its own `dirname "${BASH_SOURCE[0]}"` — never through a harness-specific install path, so it stays a
-vendor-neutral core script. It applies `ready_timeout_s` (default 60) when polling `health` after `start`; on timeout it runs
-`stop` and exits non-zero with `health_timeout`. It **never writes `.agent/verify.json`**.
+vendor-neutral core script. It applies `ready_timeout_s` (default 60, **wall-clock seconds** against a
+`date +%s` deadline — not a poll count, so a hanging health endpoint cannot stretch the wait) when polling
+`health` after `start`; on timeout it runs `stop` and exits non-zero with `health_timeout`. **Lifecycle
+verdicts are never vacuous:** a subcommand exits 0 only when the guarantee its name promises actually held
+in that invocation. `start` refuses with `already_started` while the pid recorded by a previous `start`
+is still alive (a stale record whose process is gone is cleared, never refused, so a re-start after a
+crash works); a start string that exits non-zero before health answers is `start_exited:<rc>` (record
+dropped, `stop` run), while one that exits 0 is a detached starter (`docker compose up -d`) whose record
+is dropped and whose health is still polled. `stop` with `stop: null` kills the recorded pid and **waits
+for it to be gone** (SIGTERM, then SIGKILL); a recorded pid that was not running is `not_running`
+(non-zero — nothing was stopped; the dead record is cleared), one that survives both signals is
+`stop_failed`, and no record at all is the contract's no-op (exit 0). It **never writes
+`.agent/verify.json`**.
 
 **Sole writer (`scripts/propose-verify.sh`) — propose-only, `--confirm`-gated.** It scans the project
 (`package.json` scripts, `playwright.config.*`, `.env*`, `docker-compose*`, `prisma/seed*`, `Makefile`)

@@ -8,8 +8,18 @@
 #                                    [--ready-timeout-s <n> | --health-timeout <n>]
 #   assert-non-prod   evaluate `non_prod_assert`; exit 0 only if ≥1 usable member PASSES
 #   start             run `start` (if non-null) in the background, poll `health` until 2xx or the
-#                     timeout; on timeout run `stop` and exit non-zero [health_timeout]
-#   stop              run `stop` (if non-null), else kill the pid recorded by `start`
+#                     deadline (`ready_timeout_s` is WALL-CLOCK seconds, not an iteration count);
+#                     on timeout run `stop` and exit non-zero [health_timeout]. Refuses when the
+#                     pid recorded by a previous `start` is still alive [already_started] (a stale
+#                     record whose process is gone is cleared, never refused). A start string that
+#                     exits NON-zero before health is trusted (a 1s grace follows the first 2xx) is a
+#                     failure [start_exited:<rc>] — the pid record is dropped and `stop` runs; one
+#                     that exits 0 is a detached starter
+#                     (e.g. `docker compose up -d`): its pid record is dropped and polling continues
+#   stop              run `stop` (if non-null), else kill the pid recorded by `start` and WAIT for it
+#                     to exit (SIGTERM, then SIGKILL). A recorded pid that was not running is exit
+#                     non-zero [not_running] (nothing was stopped — the record is cleared); one that
+#                     survives both signals is [stop_failed]. No record at all is a contract no-op
 #   seed | reset      run the string (null ⇒ nothing to do, exit 0)
 #   auth-probe        GET `auth.probe_path` with the storage-state cookies; print
 #                     `authenticated` (2xx) or `anonymous` (401/403/302); `method: none` ⇒ print
@@ -43,8 +53,13 @@
 # NEVER WRITES `.agent/verify.json` (sole writer: propose-verify.sh). Its only writes are under the
 # state dir (default `<repo>/.supervisor/verify/env/`): the recorded pid and the start log.
 #
-# Portability: bash 3.2 / BSD userland — no `timeout`, no `setsid`, polling is `while`/`sleep 1`/
-# counter. `curl` is invoked by name so a test can PATH-stub it.
+# Portability: bash 3.2 / BSD userland — no `timeout`, no `setsid`, polling is `while`/`sleep 1`
+# against a `date +%s` deadline. `curl` is invoked by name so a test can PATH-stub it.
+#
+# LIFECYCLE VERDICTS ARE NEVER VACUOUS: a subcommand exits 0 only when the guarantee its name
+# promises actually held in THIS invocation — `start` only with the launched child alive (or a
+# detached starter) AND health 2xx; `stop` only when something recorded was actually stopped, or
+# nothing was recorded. "Recorded pid was not running" is a failure, not a success.
 #
 # Exit: 0 = ok | 1 = gate refusal / step failure / health_timeout / probe failure
 #       2 = usage | 3 = contract unreadable (reader empty, reader missing, jq missing)
@@ -260,8 +275,12 @@ probe_url() {
   esac
 }
 
+# pid_alive <pid> — true while the process exists (kill -0). A pid reaped by us (the launched
+# child) fails this as soon as bash has collected it — verified on bash 3.2.
+pid_alive() { kill -0 "$1" 2>/dev/null; }
+
 do_stop() {
-  local pidf="$STATE_DIR/pid" pid
+  local pidf="$STATE_DIR/pid" pid i
   if [ -n "$C_STOP" ]; then
     run_step stop "$C_STOP" || return 1
     rm -f "$pidf" 2>/dev/null
@@ -272,11 +291,27 @@ do_stop() {
     case "$pid" in
       ''|*[!0-9]*) diag "recorded pid file is not numeric — nothing killed [pid_unreadable]"; rm -f "$pidf"; return 1 ;;
     esac
-    if kill "$pid" 2>/dev/null; then
-      diag "stop is null — killed recorded pid $pid"
-    else
-      diag "stop is null — recorded pid $pid was not running"
+    if ! pid_alive "$pid"; then
+      # Nothing was stopped: the guarantee did not hold, so this is NOT a success. The dead record
+      # is cleared so the next start/stop is not confused by it (and so a reused pid is never killed).
+      diag "stop is null — recorded pid $pid was not running; nothing was stopped (stale record cleared) [not_running]"
+      rm -f "$pidf" 2>/dev/null
+      return 1
     fi
+    kill "$pid" 2>/dev/null
+    i=0
+    while [ "$i" -lt 5 ] && pid_alive "$pid"; do sleep 1; i=$((i+1)); done
+    if pid_alive "$pid"; then
+      diag "stop is null — pid $pid ignored SIGTERM for 5s, sending SIGKILL"
+      kill -9 "$pid" 2>/dev/null
+      i=0
+      while [ "$i" -lt 5 ] && pid_alive "$pid"; do sleep 1; i=$((i+1)); done
+    fi
+    if pid_alive "$pid"; then
+      diag "stop is null — recorded pid $pid is STILL running after SIGTERM and SIGKILL; record kept [stop_failed]"
+      return 1
+    fi
+    diag "stop is null — killed recorded pid $pid (confirmed gone)"
     rm -f "$pidf" 2>/dev/null
     return 0
   fi
@@ -284,33 +319,86 @@ do_stop() {
   return 0
 }
 
+# check_start_child — inspects the child launched by do_start (dynamic scope: reads/writes its
+# `child` and `pidf`). Alive ⇒ nothing. Exited NON-zero ⇒ the start failed [start_exited:<rc>]:
+# record dropped, `stop` run, exit 1. Exited 0 ⇒ a detached starter (`docker compose up -d`): the
+# record is dropped (a dead pid must never be kept — `stop` would kill whatever reused it) and
+# `child` is cleared so health polling continues without it.
+check_start_child() {
+  local crc
+  [ -n "$child" ] || return 0
+  pid_alive "$child" && return 0
+  wait "$child" 2>/dev/null; crc=$?
+  if [ "$crc" -ne 0 ]; then
+    diag "start exited $crc before health was trusted (see $STATE_DIR/start.log) — running stop [start_exited:$crc]"
+    rm -f "$pidf" 2>/dev/null
+    do_stop || diag "stop after start failure also failed"
+    exit 1
+  fi
+  diag "start exited 0 — treating it as a detached starter; its pid record is dropped (stop: null cannot kill what it did not keep) [start_detached]"
+  rm -f "$pidf" 2>/dev/null
+  child=""
+  return 0
+}
+
 do_start() {
-  local url i code
+  local url child="" deadline started_at now pidf="$STATE_DIR/pid" prev
   mkdir -p "$STATE_DIR" 2>/dev/null || { diag "cannot create state dir $STATE_DIR [state_dir_unwritable]"; exit 1; }
   if [ -n "$C_START" ]; then
     if [ "$NON_PROD_ASSERTED" -ne 1 ]; then
       diag "refusing to run 'start': non-prod was not asserted in this invocation [non_prod_not_asserted]"
       exit 1
     fi
+    # Replay guard: a second start while the recorded instance is alive would launch a second
+    # process (typically dying on bind), overwrite the record, and let health — served by the FIRST
+    # instance — report `ready`; the later `stop` would then miss the real server. Refuse instead.
+    # A stale record (process gone) is NOT a refusal: a legitimate re-start after a crash or an
+    # unclean exit must work, so the dead record is cleared and the start proceeds.
+    if [ -f "$pidf" ]; then
+      prev="$(cat "$pidf" 2>/dev/null)"
+      case "$prev" in
+        ''|*[!0-9]*) diag "recorded pid file is not numeric — clearing the unreadable record before start [stale_pid_cleared]"; rm -f "$pidf" 2>/dev/null ;;
+        *) if pid_alive "$prev"; then
+             diag "start refused: the app is already running as recorded pid $prev — run stop first [already_started]"
+             exit 1
+           fi
+           diag "recorded pid $prev is no longer running — clearing the stale record before start [stale_pid_cleared]"
+           rm -f "$pidf" 2>/dev/null ;;
+      esac
+    fi
     diag "running start in the background (log: $STATE_DIR/start.log)"
     # Detach stdio from ours so a caller capturing our stdout is not held open by the child.
     ( cd "$REPO_DIR" 2>/dev/null || exit 1; exec bash -c "$C_START" </dev/null >"$STATE_DIR/start.log" 2>&1 ) &
-    printf '%s\n' "$!" > "$STATE_DIR/pid"
+    child="$!"
+    printf '%s\n' "$child" > "$pidf"
   else
     diag "start is null — assuming the app is already running"
-    rm -f "$STATE_DIR/pid" 2>/dev/null
+    rm -f "$pidf" 2>/dev/null
   fi
   url="$(health_url)"
-  diag "polling $url for 2xx (ready_timeout_s=$READY_TIMEOUT_S)"
-  i=0
-  while [ "$i" -lt "$READY_TIMEOUT_S" ]; do
+  diag "polling $url for 2xx (ready_timeout_s=$READY_TIMEOUT_S, wall-clock)"
+  started_at="$(date +%s)"
+  deadline=$((started_at + READY_TIMEOUT_S))
+  while :; do
+    # The launched child is inspected BEFORE health is trusted: a 2xx served by some OTHER process
+    # while our own start string has already died is not "ready", it is a start that failed.
+    check_start_child
     if curl -fsS -o /dev/null --max-time 2 "$url" 2>/dev/null; then
-      diag "healthy after ${i}s"
+      if [ -n "$child" ]; then
+        # Grace re-check: a child that dies on bind does so a few ms AFTER launch, i.e. possibly
+        # after this first 2xx (served by an instance we did not start). One second closes that
+        # window; a child still alive after it is trusted.
+        sleep 1
+        check_start_child
+      fi
+      now="$(date +%s)"
+      diag "healthy after $((now - started_at))s"
       echo "ready"
       return 0
     fi
+    now="$(date +%s)"
+    [ "$now" -lt "$deadline" ] || break
     sleep 1
-    i=$((i+1))
   done
   diag "health never answered 2xx within ${READY_TIMEOUT_S}s — running stop [health_timeout]"
   do_stop || diag "stop after health timeout also failed"
