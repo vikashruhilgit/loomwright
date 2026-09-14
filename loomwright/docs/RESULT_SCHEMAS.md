@@ -2684,6 +2684,15 @@ the validator's own code verbatim (e.g. `non_pass_without_reason`), or `validato
 `python3` is absent, or `validator_error:<rc>` for any other non-zero exit. `evidence.jsonl` is
 byte-identical before and after a refusal.
 
+**Stored bytes are validated bytes.** `evidence-append` canonicalises the input to ONE compact JSON
+line (`jq -c`) *before* validation and writes exactly that line — `json.loads` accepts a pretty-printed
+record, and written verbatim it would be N physical lines for one fact (a wrong `derived_from:` count,
+and file-mode re-validation of the store fails at line 1). Input that is not exactly one JSON value is
+left raw so the validator's own `not_json` names it; `rejected.jsonl` always carries the raw input. A
+`summary-build` failure *after* a successful append is named on stderr and the exit status stays 0 —
+the fact IS stored, and an exit 1 there would be indistinguishable from a refusal (a caller retrying on
+it would replay the append and duplicate the fact).
+
 **Frozen example — one line per event.** These are format illustrations with fixed sample values
 (`ts`, `run_id`, the shas); per the `check-doc-currency.sh` header convention they are **not** current
 claims and MUST NOT be "fixed" on a version bump.

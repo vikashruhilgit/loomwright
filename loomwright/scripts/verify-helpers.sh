@@ -12,7 +12,7 @@
 #
 # Subcommands:
 #   run-id          <slug>                 # prints `verify-<YYYYMMDDTHHMMSSZ>-<slug>`; slug lower-cased, [^a-z0-9] runs collapsed to one `-`, edge dashes trimmed
-#   evidence-append <run_dir> <json|->     # validate-then-ONE-`>>`-write; refused input is wrapped into <run_dir>/rejected.jsonl (exit 1); regenerates summary.md
+#   evidence-append <run_dir> <json|->     # compact-to-one-line, validate, then ONE `>>` write; refused input is wrapped RAW into <run_dir>/rejected.jsonl (exit 1); regenerates summary.md (a derivation failure is named on stderr, exit stays 0 — the fact IS stored)
 #   summary-build   <run_dir>              # the ONLY reader of evidence.jsonl: derives <run_dir>/summary.md (atomic temp+mv) with a `derived_from:` trailer
 #
 # Exit codes: 0 success; 1 refused / generic failure; 2 usage.
@@ -59,18 +59,30 @@ run_id() {
 # exactly ONE line: the single `printf … >>` write (the shell's `>>` is O_APPEND, so two concurrent
 # appenders never interleave bytes and there is no read-modify-write window). Validator status is
 # captured as `$?` in the statement AFTER the substitution — `local x="$(…)"` or `if ! x=$(…)` would
-# lose it, and a lost status is exactly how an invalid fact would reach the store.
+# lose it, and a lost status is exactly how an invalid fact would reach the store. The record is
+# canonicalised to one compact line BEFORE validation, so the validated bytes ARE the stored bytes.
 evidence_append() {
-  local run_dir="${1:-}" input="${2:-}" json out rc reason ts
+  local run_dir="${1:-}" input="${2:-}" json line out rc reason ts
   { [ -n "$run_dir" ] && [ -n "$input" ]; } || usage "evidence-append <run_dir> <json|->"
   if [ "$input" = "-" ]; then json="$(cat)"; else json="$input"; fi
   [ -n "$json" ] || die "evidence-append: empty record"
   mkdir -p "$run_dir/artifacts" || die "evidence-append: cannot create $run_dir/artifacts"
-  out="$(python3 "$VALIDATOR" --line "$json" 2>/dev/null)"
+  # Canonicalise to ONE compact line BEFORE validating, so the bytes validated are the bytes stored.
+  # `json.loads` accepts a pretty-printed (multi-line) record, and writing that verbatim would put N
+  # physical lines in the store for one fact — breaking one-object-per-line, the `derived_from:` count
+  # and the store's own file-mode re-validation. `jq -cs` reduces exactly ONE JSON value to its
+  # compact form; anything else (not JSON, two concatenated values) is left RAW so the validator
+  # refuses it with its own reason and `rejected.jsonl` still carries the input verbatim.
+  line="$(printf '%s' "$json" | jq -cs 'if length == 1 then .[0] else error("not exactly one JSON value") end' 2>/dev/null)" || line="$json"
+  out="$(python3 "$VALIDATOR" --line "$line" 2>/dev/null)"
   rc=$?
   if [ "$rc" -eq 0 ]; then
-    printf '%s\n' "$json" >> "$run_dir/evidence.jsonl" || die "evidence-append: append failed"
-    summary_build "$run_dir" || diag "evidence-append: summary-build failed after a successful append (the record IS stored)"
+    printf '%s\n' "$line" >> "$run_dir/evidence.jsonl" || die "evidence-append: append failed"
+    # Derivation runs in a SUBSHELL: every failure inside summary_build is a `die` (exit 1), and in
+    # THIS process that would turn a successful append into exit 1 — indistinguishable from a refusal,
+    # so a caller retrying on rc 1 would replay the append and duplicate the fact. The fact is stored;
+    # the derivation failure is named on stderr and the exit status stays 0.
+    ( summary_build "$run_dir" ) || diag "evidence-append: summary-build failed after a successful append (the record IS stored; run summary-build on $run_dir to see why)"
     return 0
   fi
   case "$rc" in

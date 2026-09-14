@@ -768,6 +768,124 @@ echo "== (AC9) the helper locates its validator as a sibling (vendor-neutral cor
 n="$(grep -c 'validate-verify-evidence.py' "$HELPER")"
 [ "$n" -ge 1 ] && ok "(AC9) the validator is located as a sibling of the helper" || no "(AC9) the helper does not name the validator"
 
+# ----------------------------------------------------------------------------
+echo "== (R1) review iteration 1 — the post-validate path may neither corrupt nor misreport a stored fact =="
+# (R1a) a pretty-printed record (jq's DEFAULT output shape, no -c) is ONE physical line once stored.
+# `json.loads` tolerates inter-token newlines, so the validator alone would let N lines through for one fact.
+PRETTY="$(printf '%s' "$(AC AC1 PASS)" | jq .)"   # multi-line by construction
+n_in=$(( $(printf '%s\n' "$PRETTY" | wc -l) ))
+[ "$n_in" -gt 1 ] && ok "(R1a) positive control: the pretty-printed input spans $n_in physical lines" || no "(R1a) control invalid: pretty input is $n_in line(s)"
+D12="$(mktmp)"
+: > "$LAST_OUT"; : > "$LAST_ERR"
+printf '%s\n' "$PRETTY" | "$BASH_BIN" "$HELPER" evidence-append "$D12" - >"$LAST_OUT" 2>"$LAST_ERR"; rc=$?
+[ "$rc" -eq 0 ] && ok "(R1a) the pretty-printed record is accepted (rc 0)" || no "(R1a) rc=$rc stderr=$(cat "$LAST_ERR")"
+n=$(( $(wc -l < "$D12/evidence.jsonl") ))
+[ "$n" -eq 1 ] && ok "(R1a) evidence.jsonl holds exactly ONE physical line for the one fact" || no "(R1a) evidence.jsonl physical lines: $n (want 1)"
+python3 "$VALIDATOR" "$D12/evidence.jsonl" >"$LAST_OUT" 2>/dev/null; rc=$?
+[ "$rc" -eq 0 ] && ok "(R1a) the store re-validates in file mode (rc 0)" || no "(R1a) file-mode re-validation rc=$rc: $(cat "$LAST_OUT")"
+hits="$(grep -c '^derived_from: 1 lines, ' "$D12/summary.md")"
+[ "$hits" -eq 1 ] && ok "(R1a) trailer reports derived_from: 1 lines" || no "(R1a) trailer: $(tail -1 "$D12/summary.md")"
+stored="$(cat "$D12/evidence.jsonl")"
+[ "$stored" = "$(printf '%s' "$PRETTY" | jq -c .)" ] && ok "(R1a) the stored line is the compact form of the input" || no "(R1a) stored=$stored"
+jq -e -n --argjson a "$stored" --argjson b "$PRETTY" '$a == $b' >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "(R1a) compaction is value-preserving (stored == input as JSON)" || no "(R1a) stored value differs from the input"
+hits="$(grep -c 'PASS: 1 · FAIL: 0 · BLOCKED: 0 · NOT_VERIFIABLE: 0 · total: 1' "$D12/summary.md")"
+[ "$hits" -eq 1 ] && ok "(R1a) the derived counts row sees ONE fact, not N fragments" || no "(R1a) counts row missing/wrong in summary.md"
+# a trailing CR (CRLF producer) is whitespace to json.loads and would otherwise be stored inside the line
+D13="$(mktmp)"
+: > "$LAST_OUT"; : > "$LAST_ERR"
+printf '%s\r\n' "$(AC AC1 PASS)" | "$BASH_BIN" "$HELPER" evidence-append "$D13" - >"$LAST_OUT" 2>"$LAST_ERR"; rc=$?
+n_cr="$(tr -cd '\r' < "$D13/evidence.jsonl" | wc -c | tr -d ' ')"
+[ "$rc" -eq 0 ] && [ "$n_cr" -eq 0 ] && ok "(R1a) a CRLF-terminated record is stored with no CR byte (rc 0)" || no "(R1a) CRLF: rc=$rc CR bytes in store=$n_cr"
+
+# (R1b) the refusal path is untouched by compaction: the RAW (pretty) input round-trips into rejected.jsonl
+D14="$(mktmp)"
+BAD_PRETTY="$(printf '%s' "$(AC AC2 FAIL REAL_BUG)" | jq .)"   # FAIL without reason, pretty-printed
+: > "$LAST_OUT"; : > "$LAST_ERR"
+printf '%s\n' "$BAD_PRETTY" | "$BASH_BIN" "$HELPER" evidence-append "$D14" - >"$LAST_OUT" 2>"$LAST_ERR"; rc=$?
+[ "$rc" -eq 1 ] && ok "(R1b) a pretty-printed INVALID record is still refused (rc 1)" || no "(R1b) rc=$rc"
+got="$(jq -r '.line' "$D14/rejected.jsonl" 2>/dev/null)"
+[ "$got" = "$BAD_PRETTY" ] && ok "(R1b) rejected.jsonl .line carries the RAW pretty-printed input verbatim (not the compact form)" || no "(R1b) .line=$got"
+got="$(jq -r '.reason' "$D14/rejected.jsonl" 2>/dev/null)"
+[ "$got" = "non_pass_without_reason" ] && ok "(R1b) .reason is the validator's own code" || no "(R1b) .reason=$got"
+[ ! -f "$D14/evidence.jsonl" ] && ok "(R1b) nothing reached evidence.jsonl on the refusal" || no "(R1b) evidence.jsonl was created on a refusal"
+# two concatenated JSON values are NOT split into two facts — refused as not_json, the store untouched
+D15="$(mktmp)"
+TWO="$(AC AC1 PASS) $(AC AC2 PASS)"
+run_h evidence-append "$D15" "$TWO"; rc=$?
+got="$(jq -r '.reason' "$D15/rejected.jsonl" 2>/dev/null)"
+[ "$rc" -eq 1 ] && [ "$got" = "not_json" ] && [ ! -f "$D15/evidence.jsonl" ] && ok "(R1b) two concatenated JSON values are refused as one not_json input, never stored as two facts" || no "(R1b) concatenated: rc=$rc reason=$got store_exists=$([ -f "$D15/evidence.jsonl" ] && echo yes || echo no)"
+got="$(jq -r '.line' "$D15/rejected.jsonl" 2>/dev/null)"
+[ "$got" = "$TWO" ] && ok "(R1b) the concatenated raw input round-trips verbatim" || no "(R1b) .line=$got"
+
+# (R1c) a summary derivation failure after a SUCCESSFUL append exits 0 and names the failure — never a
+# fake refusal (a caller retrying on rc 1 would replay the append and duplicate the fact).
+D16="$(mktmp)"
+printf 'this is not json\n' > "$D16/evidence.jsonl"   # a corrupt store: jq -s cannot parse it
+GOOD="$(AC AC1 PASS)"
+run_h evidence-append "$D16" "$GOOD"; rc=$?
+[ "$rc" -eq 0 ] && ok "(R1c) a valid append onto a corrupt store exits 0 (the fact IS stored)" || no "(R1c) rc=$rc (want 0) stderr=$(cat "$LAST_ERR")"
+n=$(( $(wc -l < "$D16/evidence.jsonl") ))
+[ "$n" -eq 2 ] && ok "(R1c) the store grew by exactly one line" || no "(R1c) store lines: $n (want 2)"
+[ "$(tail -1 "$D16/evidence.jsonl")" = "$GOOD" ] && ok "(R1c) the appended fact is the last line, intact" || no "(R1c) last line=$(tail -1 "$D16/evidence.jsonl")"
+hits="$(grep -c 'summary-build failed after a successful append' "$LAST_ERR")"
+[ "$hits" -eq 1 ] && ok "(R1c) stderr names the derivation failure" || no "(R1c) stderr lacks the derivation-failure line: $(cat "$LAST_ERR")"
+hits="$(grep -c 'summary-build: jq could not derive' "$LAST_ERR")"
+[ "$hits" -eq 1 ] && ok "(R1c) stderr carries summary-build's own reason (jq could not derive)" || no "(R1c) stderr lacks summary-build's reason: $(cat "$LAST_ERR")"
+[ ! -f "$D16/summary.md" ] && ok "(R1c) no summary.md is written from a corrupt store" || no "(R1c) summary.md exists despite the derivation failure"
+[ ! -f "$D16/rejected.jsonl" ] && ok "(R1c) nothing was recorded as a refusal (the append succeeded)" || no "(R1c) rejected.jsonl exists after a successful append"
+# ...and a genuine WRITE failure is still fatal (rc 1, nothing stored) — the subshell guards derivation only
+D17="$(mktmp)"; mkdir -p "$D17/evidence.jsonl"   # the store path is a DIRECTORY: `>>` cannot open it
+run_h evidence-append "$D17" "$GOOD"; rc=$?
+hits="$(grep -c 'append failed' "$LAST_ERR")"
+[ "$rc" -eq 1 ] && [ "$hits" -eq 1 ] && ok "(R1c) a genuine write failure is still fatal (rc 1, 'append failed' on stderr)" || no "(R1c) write failure: rc=$rc stderr=$(cat "$LAST_ERR")"
+
+# Mutants d/e are RUN (control c is only grepped), and the helper locates its validator as a sibling
+# of $0 — so the mutant dir needs a copy of the validator or every append is refused as
+# `validator_error:2`, which would look like "the mutant exited 1" without exercising the defect.
+MUT_DIR="$ROOT/mut"; mkdir -p "$MUT_DIR"; cp "$VALIDATOR" "$MUT_DIR/validate-verify-evidence.py"
+# mutation control d — a COPY with the subshell removed: the same corrupt-store append must exit 1
+# (the defect this case exists to catch). Gated on copy-differs + bash -n + "the fact WAS stored"
+# (so a mutant refused for an unrelated reason cannot pass as the defect).
+MUT_D="$MUT_DIR/verify-helpers.mut-d.sh"
+awk '{ if (!done && index($0, "( summary_build \"$run_dir\" )")) { sub(/\( summary_build "\$run_dir" \)/, "summary_build \"$run_dir\""); done=1 } print }' "$HELPER" > "$MUT_D"
+if cmp -s "$HELPER" "$MUT_D"; then
+  unproven "(R1c) mutation control d"
+else
+  bash -n "$MUT_D" 2>/dev/null; rc=$?
+  if [ "$rc" -ne 0 ]; then
+    no "(R1c) mutation control d: the mutant does not parse (bash -n rc=$rc) — control invalid"
+  else
+    D18="$(mktmp)"; printf 'this is not json\n' > "$D18/evidence.jsonl"
+    "$BASH_BIN" "$MUT_D" evidence-append "$D18" "$GOOD" >/dev/null 2>"$LAST_ERR"; rc=$?
+    n=$(( $(wc -l < "$D18/evidence.jsonl") ))
+    [ ! -f "$D18/rejected.jsonl" ] && [ "$n" -eq 2 ] && ok "(R1c) mutation control d: positive control — the mutant DID store the fact (no refusal, store +1)" || no "(R1c) mutation control d: control invalid — refusal=$([ -f "$D18/rejected.jsonl" ] && jq -r .reason "$D18/rejected.jsonl") lines=$n"
+    hits="$(grep -c 'summary-build: jq could not derive' "$LAST_ERR")"
+    [ "$rc" -eq 1 ] && [ "$hits" -eq 1 ] \
+      && ok "(R1c) mutation control d: without the subshell the SAME successful append exits 1 — the case detects the defect" \
+      || no "(R1c) mutation control d: rc=$rc derive_msgs=$hits — the mutant did not reproduce the fake refusal"
+  fi
+fi
+# mutation control e — a COPY that skips compaction (line="$json"): the pretty input lands as N lines.
+MUT_E="$MUT_DIR/verify-helpers.mut-e.sh"
+awk '{ if (!done && index($0, "jq -cs ")) { print "  line=\"$json\""; done=1; next } print }' "$HELPER" > "$MUT_E"
+if cmp -s "$HELPER" "$MUT_E"; then
+  unproven "(R1a) mutation control e"
+else
+  bash -n "$MUT_E" 2>/dev/null; rc=$?
+  if [ "$rc" -ne 0 ]; then
+    no "(R1a) mutation control e: the mutant does not parse (bash -n rc=$rc) — control invalid"
+  else
+    D19="$(mktmp)"
+    printf '%s\n' "$PRETTY" | "$BASH_BIN" "$MUT_E" evidence-append "$D19" - >/dev/null 2>&1; rc=$?
+    [ "$rc" -eq 0 ] && [ ! -f "$D19/rejected.jsonl" ] && ok "(R1a) mutation control e: positive control — the mutant accepted the record (rc 0, no refusal)" || no "(R1a) mutation control e: control invalid — rc=$rc refusal=$([ -f "$D19/rejected.jsonl" ] && jq -r .reason "$D19/rejected.jsonl")"
+    n=$(( $(wc -l < "$D19/evidence.jsonl" 2>/dev/null) ))
+    [ "$rc" -eq 0 ] && [ "$n" -eq "$n_in" ] \
+      && ok "(R1a) mutation control e: without compaction the pretty record is stored as $n physical lines (rc 0) — the case detects the defect" \
+      || no "(R1a) mutation control e: rc=$rc lines=$n (expected $n_in) — the mutant did not reproduce the multi-line store"
+  fi
+fi
+
 # ============================================================================
 echo
 echo "RESULT: $pass passed, $fail failed"
