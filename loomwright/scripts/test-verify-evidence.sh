@@ -457,6 +457,318 @@ run_v "$FD/frozen.jsonl"; rc=$?
 # --- helper cases (Subtask 2 appends below this line) ---
 
 # ============================================================================
+# Helper cases — verify-helpers.sh (the append-only writer + the derived summary). Every mutation
+# control (a, b, c) is GATED on "the mutant differs from the original": an edit that matched nothing
+# is reported UNPROVEN and counted as a no() — the suite exits 1 on it, never treats an unproven
+# mutation as a pass. Fixtures live under mktmp(); statuses are `$?` in the statement after the call.
+# ============================================================================
+HELPER="$HERE/verify-helpers.sh"
+BASH_BIN="$(command -v bash)"
+if [ ! -f "$HELPER" ]; then
+  no "helper: required file not found at $HELPER"
+else
+  ok "helper: verify-helpers.sh present"
+fi
+bash -n "$HELPER" 2>"$LAST_ERR"; rc=$?
+[ "$rc" -eq 0 ] && ok "helper: bash -n parses verify-helpers.sh" || no "helper: bash -n rc=$rc: $(cat "$LAST_ERR")"
+
+# run_h <args...> — runs the helper; stdout/stderr into the fixed files; status = the helper's exit status.
+run_h() {
+  : > "$LAST_OUT"; : > "$LAST_ERR"
+  "$BASH_BIN" "$HELPER" "$@" >"$LAST_OUT" 2>"$LAST_ERR"
+}
+unproven() { no "UNPROVEN: $1 — the mutant is byte-identical to the original (the edit matched nothing)"; }
+counts_row() { grep -c -F "$1" "$2/summary.md"; }   # exact-literal count of a counts row (never `|| echo 0`)
+
+RID="verify-20260914T100000Z-t"
+# L <event fragment> — a full VERIFY_EVIDENCE line around the fixed common keys
+L() { printf '{"schema_version":1,"ts":"2026-09-14T10:00:00Z","run_id":"%s",%s}' "$RID" "$1"; }
+# AC <id> <verdict> [classification] [reason] — an `ac` line (classification/reason omitted when empty)
+AC() {
+  local id="$1" v="$2" cls="${3:-}" why="${4:-}" extra=""
+  [ -n "$cls" ] && extra="$extra,\"classification\":\"$cls\""
+  [ -n "$why" ] && extra="$extra,\"reason\":\"$why\""
+  L "\"event\":\"ac\",\"ac_id\":\"$id\",\"text\":\"t\",\"scope\":\"ticket\",\"verdict\":\"$v\"$extra,\"steps\":[],\"artifacts\":[]"
+}
+RUN_START="$(L '"event":"run_start","ticket_path":"x.md","ticket_kind":"brief","branch":"b","head_sha":"h","base_sha":"s","env_contract_hash":null')"
+ISSUE="$(L '"event":"issue","text":"console error","severity":"LOW"')"
+
+# ----------------------------------------------------------------------------
+echo "== (AC1) refusal: FAIL without reason → exit 1, rejected.jsonl wrapped, evidence.jsonl byte-identical =="
+D1="$(mktmp)"
+run_h evidence-append "$D1" "$(AC AC1 PASS)"; rc=$?
+[ "$rc" -eq 0 ] && [ -f "$D1/evidence.jsonl" ] && ok "(AC1) a valid PASS line appends (rc 0)" || no "(AC1) valid append rc=$rc stderr=$(cat "$LAST_ERR")"
+cp "$D1/evidence.jsonl" "$D1/before.jsonl"
+BAD="$(AC AC2 FAIL REAL_BUG)"   # verdict FAIL, classification present, NO reason
+run_h evidence-append "$D1" "$BAD"; rc=$?
+[ "$rc" -eq 1 ] && ok "(AC1) FAIL-without-reason → rc 1" || no "(AC1) refusal rc=$rc (want 1) stderr=$(cat "$LAST_ERR")"
+cmp -s "$D1/before.jsonl" "$D1/evidence.jsonl" && ok "(AC1) evidence.jsonl is byte-identical before and after the refusal" || no "(AC1) evidence.jsonl CHANGED on a refusal"
+n="$(grep -c . "$D1/rejected.jsonl" 2>/dev/null)"
+[ "$n" -eq 1 ] && ok "(AC1) rejected.jsonl holds exactly one wrapped line" || no "(AC1) rejected.jsonl lines: $n"
+jq -c . "$D1/rejected.jsonl" >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "(AC1) rejected.jsonl is valid JSONL" || no "(AC1) rejected.jsonl is not valid JSONL"
+got="$(jq -r '.line' "$D1/rejected.jsonl")"
+[ "$got" = "$BAD" ] && ok "(AC1) .line round-trips the raw input verbatim" || no "(AC1) .line=$got"
+got="$(jq -r '.reason' "$D1/rejected.jsonl")"
+[ "$got" = "non_pass_without_reason" ] && ok "(AC1/AC8) .reason carries the validator's own code (non_pass_without_reason)" || no "(AC1) .reason=$got"
+got="$(jq -r '.rejected_at' "$D1/rejected.jsonl")"
+case "$got" in [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) ok "(AC1) .rejected_at is ISO-8601 UTC" ;; *) no "(AC1) .rejected_at=$got" ;; esac
+hits="$(grep -c 'REFUSED (non_pass_without_reason)' "$LAST_ERR")"
+[ "$hits" -eq 1 ] && ok "(AC1) the reason is named on stderr" || no "(AC1) stderr lacks the reason: $(cat "$LAST_ERR")"
+# a NOT-JSON input is still recorded as valid JSONL (the wrapper is built with jq --arg)
+run_h evidence-append "$D1" 'not json {'; rc=$?
+jq -c . "$D1/rejected.jsonl" >/dev/null 2>&1; rc2=$?
+got="$(tail -1 "$D1/rejected.jsonl" | jq -r '.reason')"
+[ "$rc" -eq 1 ] && [ "$rc2" -eq 0 ] && [ "$got" = "not_json" ] && ok "(AC1) a non-JSON input is refused (not_json) and rejected.jsonl stays valid JSONL" || no "(AC1) non-JSON: rc=$rc jsonl_rc=$rc2 reason=$got"
+cmp -s "$D1/before.jsonl" "$D1/evidence.jsonl" && ok "(AC1) evidence.jsonl still byte-identical after a second refusal" || no "(AC1) evidence.jsonl changed on the second refusal"
+
+# ----------------------------------------------------------------------------
+echo "== (AC2) summary regenerated on every append; header line =="
+D2="$(mktmp)"
+run_h evidence-append "$D2" "$RUN_START"; rc=$?
+[ "$rc" -eq 0 ] && [ -f "$D2/summary.md" ] && ok "(AC2) summary.md exists after the first successful append" || no "(AC2) summary.md missing after append rc=$rc"
+run_h evidence-append "$D2" "$(AC AC1 PASS)"
+run_h evidence-append "$D2" "$(AC AC2 FAIL REAL_BUG "no error rendered")"; rc=$?
+[ "$rc" -eq 0 ] && ok "(AC2) two distinct ids appended (AC1 PASS, AC2 FAIL)" || no "(AC2) second ac append rc=$rc stderr=$(cat "$LAST_ERR")"
+line2="$(sed -n 2p "$D2/summary.md")"
+hits="$(printf '%s\n' "$line2" | grep -c -F 'DERIVED by `verify-helpers.sh summary-build`')"
+[ "$hits" -eq 1 ] && ok "(AC2) line 2 contains the literal DERIVED by \`verify-helpers.sh summary-build\`" || no "(AC2) line 2 lacks the DERIVED literal: $line2"
+hits="$(printf '%s\n' "$line2" | grep -c -F 'do not edit')"
+[ "$hits" -eq 1 ] && ok "(AC2) line 2 contains the literal 'do not edit'" || no "(AC2) line 2 lacks 'do not edit': $line2"
+case "$line2" in ">"*) ok "(AC2) line 2 is a blockquote" ;; *) no "(AC2) line 2 is not a blockquote: $line2" ;; esac
+hits="$(sed -n 1p "$D2/summary.md" | grep -c -F "# Verify run $RID — summary")"
+[ "$hits" -eq 1 ] && ok "(AC2) line 1 names the run_id" || no "(AC2) line 1: $(sed -n 1p "$D2/summary.md")"
+ROW_TRUE='PASS: 1 · FAIL: 1 · BLOCKED: 0 · NOT_VERIFIABLE: 0 · total: 2'
+ROW_LIE='PASS: 2 · FAIL: 0 · BLOCKED: 0 · NOT_VERIFIABLE: 0 · total: 2'
+hits="$(counts_row "$ROW_TRUE" "$D2")"
+[ "$hits" -eq 1 ] && ok "(AC2) counts row reads exactly: $ROW_TRUE" || no "(AC2) counts row hits=$hits: $(grep -n 'total:' "$D2/summary.md")"
+
+echo "== (AC2) mutation control a =="
+# Hand-edit the summary to claim 2 PASS / 0 FAIL over a store holding 1 PASS + 1 FAIL; gated on the
+# mutant differing from the original; a bare summary-build AND the next append both overwrite it.
+cp "$D2/summary.md" "$D2/summary.orig.md"
+sed "s/$ROW_TRUE/$ROW_LIE/" "$D2/summary.orig.md" > "$D2/summary.mut.md" && cp "$D2/summary.mut.md" "$D2/summary.md"
+if cmp -s "$D2/summary.orig.md" "$D2/summary.md"; then
+  unproven "(AC2) mutation control a"
+else
+  hits="$(counts_row "$ROW_LIE" "$D2")"
+  [ "$hits" -eq 1 ] && ok "(AC2) mutant summary now lies: $ROW_LIE" || no "(AC2) mutant does not carry the lie (hits=$hits)"
+  run_h summary-build "$D2"; rc=$?
+  hits="$(counts_row "$ROW_TRUE" "$D2")"; lies="$(counts_row "$ROW_LIE" "$D2")"
+  [ "$rc" -eq 0 ] && [ "$hits" -eq 1 ] && [ "$lies" -eq 0 ] \
+    && ok "(AC2) mutation control a: bare summary-build overwrote the hand-edit → $ROW_TRUE" \
+    || no "(AC2) mutation control a (summary-build): rc=$rc true=$hits lie=$lies"
+  # again via the append path
+  cp "$D2/summary.mut.md" "$D2/summary.md"
+  cmp -s "$D2/summary.orig.md" "$D2/summary.md" && unproven "(AC2) mutation control a (append path)"
+  run_h evidence-append "$D2" "$ISSUE"; rc=$?
+  hits="$(counts_row "$ROW_TRUE" "$D2")"; lies="$(counts_row "$ROW_LIE" "$D2")"
+  [ "$rc" -eq 0 ] && [ "$hits" -eq 1 ] && [ "$lies" -eq 0 ] \
+    && ok "(AC2) mutation control a: the next evidence-append overwrote the hand-edit → $ROW_TRUE" \
+    || no "(AC2) mutation control a (append): rc=$rc true=$hits lie=$lies"
+fi
+
+# ----------------------------------------------------------------------------
+echo "== (AC3) run_end cannot carry counts; 5-AC fixture counts; mutation control b =="
+D3="$(mktmp)"
+run_h evidence-append "$D3" "$RUN_START"
+cp "$D3/evidence.jsonl" "$D3/before.jsonl"
+run_h evidence-append "$D3" "$(L '"event":"run_end","status":"completed","counts":{"PASS":1}')"; rc=$?
+got="$(tail -1 "$D3/rejected.jsonl" 2>/dev/null | jq -r '.reason')"
+[ "$rc" -eq 1 ] && [ "$got" = "run_end_carries_counts" ] && ok "(AC3) run_end with top-level counts → rc 1, run_end_carries_counts" || no "(AC3) counts: rc=$rc reason=$got"
+run_h evidence-append "$D3" "$(L '"event":"run_end","status":"completed","meta":{"totals":{"FAIL":0}}')"; rc=$?
+got="$(tail -1 "$D3/rejected.jsonl" 2>/dev/null | jq -r '.reason')"
+[ "$rc" -eq 1 ] && [ "$got" = "run_end_carries_counts" ] && ok "(AC3) run_end with nested meta.totals → rc 1, run_end_carries_counts" || no "(AC3) nested totals: rc=$rc reason=$got"
+cmp -s "$D3/before.jsonl" "$D3/evidence.jsonl" && ok "(AC3) evidence.jsonl unchanged by both refusals" || no "(AC3) evidence.jsonl changed on a counts refusal"
+run_h evidence-append "$D3" "$(AC AC1 PASS)"
+run_h evidence-append "$D3" "$(AC AC2 PASS)"
+run_h evidence-append "$D3" "$(AC AC3 FAIL REAL_BUG "broken")"
+run_h evidence-append "$D3" "$(AC AC4 BLOCKED ENVIRONMENT_ISSUE "db down")"
+run_h evidence-append "$D3" "$(AC AC5 NOT_VERIFIABLE "" "no UI for it")"; rc=$?
+[ "$rc" -eq 0 ] && ok "(AC3) 5-AC fixture appended (2 PASS / 1 FAIL / 1 BLOCKED / 1 NOT_VERIFIABLE)" || no "(AC3) fixture append rc=$rc stderr=$(cat "$LAST_ERR")"
+ROW5='PASS: 2 · FAIL: 1 · BLOCKED: 1 · NOT_VERIFIABLE: 1 · total: 5'
+run_h summary-build "$D3"; rc=$?
+hits="$(counts_row "$ROW5" "$D3")"
+[ "$rc" -eq 0 ] && [ "$hits" -eq 1 ] && ok "(AC3) counts row reads exactly: $ROW5" || no "(AC3) counts row hits=$hits rc=$rc: $(grep -n 'total:' "$D3/summary.md")"
+# mutation control b — delete the FAIL line; gated on the store actually shrinking
+n_before=$(( $(wc -l < "$D3/evidence.jsonl") ))
+grep -v '"verdict":"FAIL"' "$D3/evidence.jsonl" > "$D3/evidence.mut.jsonl"
+n_after=$(( $(wc -l < "$D3/evidence.mut.jsonl") ))
+if [ "$n_after" -eq "$n_before" ]; then
+  unproven "(AC3) mutation control b"
+else
+  cp "$D3/evidence.mut.jsonl" "$D3/evidence.jsonl"
+  [ "$n_after" -eq $((n_before - 1)) ] && ok "(AC3) mutant store has exactly one line fewer ($n_before → $n_after)" || no "(AC3) mutant store lines $n_before → $n_after"
+  run_h summary-build "$D3"; rc=$?
+  ROW4='PASS: 2 · FAIL: 0 · BLOCKED: 1 · NOT_VERIFIABLE: 1 · total: 4'
+  hits="$(counts_row "$ROW4" "$D3")"; old="$(counts_row "$ROW5" "$D3")"
+  [ "$rc" -eq 0 ] && [ "$hits" -eq 1 ] && [ "$old" -eq 0 ] \
+    && ok "(AC3) mutation control b: deleting the FAIL line changes the summary to FAIL: 0 · total: 4" \
+    || no "(AC3) mutation control b: rc=$rc new=$hits old=$old: $(grep -n 'total:' "$D3/summary.md")"
+fi
+
+# ----------------------------------------------------------------------------
+echo "== (AC4) evidence_append() never reads the store; mutation control c =="
+extract_body() { awk '/^evidence_append\(\) \{/{on=1; next} on && /^\}/{exit} on{print}' "$1"; }
+hits="$(grep -c '^evidence_append() {$' "$HELPER")"
+[ "$hits" -eq 1 ] && ok "(AC4) the helper spells 'evidence_append() {' at column 0 exactly once" || no "(AC4) 'evidence_append() {' count: $hits"
+hits="$(grep -c '^summary_build() {$' "$HELPER")"
+[ "$hits" -eq 1 ] && ok "(AC4) summary_build() is a separate function (the reader)" || no "(AC4) 'summary_build() {' count: $hits"
+BODY="$ROOT/ea-body.txt"
+extract_body "$HELPER" > "$BODY"
+[ -s "$BODY" ] && ok "(AC4) positive control: the extracted function body is non-empty ($(grep -c . "$BODY") lines)" || no "(AC4) extracted body is EMPTY — the awk anchor matched nothing"
+n_all="$(grep -c 'evidence\.jsonl' "$BODY")"
+[ "$n_all" -eq 1 ] && ok "(AC4) positive control: exactly ONE body line names evidence.jsonl" || no "(AC4) body lines naming evidence.jsonl: $n_all (want 1)"
+n_w="$(grep 'evidence\.jsonl' "$BODY" | grep -c '>>')"
+[ "$n_w" -eq 1 ] && ok "(AC4) that one line is the >> append" || no "(AC4) evidence.jsonl lines carrying >>: $n_w"
+n_r="$(grep 'evidence\.jsonl' "$BODY" | grep -vc '>>')"
+[ "$n_r" -eq 0 ] && ok "(AC4) zero body lines name evidence.jsonl without >> (no read)" || no "(AC4) body lines naming evidence.jsonl WITHOUT >>: $n_r"
+n_tok="$(grep -cE '(^|[^a-z_])(cat|jq|grep|wc|tail|head|read|sed|awk)([^a-z_]|$)[^#]*evidence\.jsonl|<[^<]*evidence\.jsonl' "$BODY")"
+[ "$n_tok" -eq 0 ] && ok "(AC4) no read token (cat/</jq/grep/wc/tail/head/read) has evidence.jsonl as its operand" || no "(AC4) read tokens on evidence.jsonl: $n_tok"
+n_cmt="$(grep -c '^[[:space:]]*#.*evidence\.jsonl' "$BODY")"
+[ "$n_cmt" -eq 0 ] && ok "(AC4) no comment inside the body names evidence.jsonl" || no "(AC4) comments naming evidence.jsonl inside the body: $n_cmt"
+hits="$(grep -c 'mkdir -p' "$BODY")"
+[ "$hits" -ge 1 ] && ok "(AC4/AC7) the body creates the run dir (mkdir -p) before the write" || no "(AC4) no mkdir -p in the body"
+# mutation control c — a COPY with a read inserted after the mkdir -p; gated on copy-differs + bash -n
+MUT="$ROOT/verify-helpers.mut.sh"
+awk '{print} on && /mkdir -p/ && !done {print "  cat \"$run_dir/evidence.jsonl\""; done=1} /^evidence_append\(\) \{/{on=1} /^\}/{on=0}' "$HELPER" > "$MUT"
+if cmp -s "$HELPER" "$MUT"; then
+  unproven "(AC4) mutation control c"
+else
+  bash -n "$MUT" 2>/dev/null; rc=$?
+  if [ "$rc" -ne 0 ]; then
+    no "(AC4) mutation control c: the mutant does not parse (bash -n rc=$rc) — control invalid"
+  else
+    extract_body "$MUT" > "$ROOT/ea-body.mut.txt"
+    n_r="$(grep 'evidence\.jsonl' "$ROOT/ea-body.mut.txt" | grep -vc '>>')"
+    n_all="$(grep -c 'evidence\.jsonl' "$ROOT/ea-body.mut.txt")"
+    [ "$n_r" -eq 1 ] && [ "$n_all" -eq 2 ] \
+      && ok "(AC4) mutation control c: the no-read grep FAILS on the copy with a cat inserted (reads=$n_r, total=$n_all)" \
+      || no "(AC4) mutation control c: reads=$n_r total=$n_all — the grep did not catch the inserted read"
+  fi
+fi
+
+# ----------------------------------------------------------------------------
+echo "== (AC8) trailer: derived_from N == wc -l, sha256 == shasum, and one more line changes it =="
+trailer() { tail -1 "$1/summary.md"; }
+run_h summary-build "$D3"
+t="$(trailer "$D3")"
+n_wc=$(( $(wc -l < "$D3/evidence.jsonl") ))
+h_sha="$(shasum -a 256 "$D3/evidence.jsonl" | cut -d' ' -f1)"
+[ "$t" = "derived_from: $n_wc lines, sha256 $h_sha" ] && ok "(AC8) trailer is exactly 'derived_from: $n_wc lines, sha256 <shasum -a 256>'" || no "(AC8) trailer=$t want N=$n_wc sha=$h_sha"
+run_h evidence-append "$D3" "$ISSUE"; rc=$?
+t2="$(trailer "$D3")"
+n_wc2=$(( $(wc -l < "$D3/evidence.jsonl") ))
+h_sha2="$(shasum -a 256 "$D3/evidence.jsonl" | cut -d' ' -f1)"
+[ "$rc" -eq 0 ] && [ "$n_wc2" -eq $((n_wc + 1)) ] && [ "$h_sha2" != "$h_sha" ] && [ "$t2" = "derived_from: $n_wc2 lines, sha256 $h_sha2" ] \
+  && ok "(AC8) appending one more line bumps N ($n_wc → $n_wc2) and changes the hash" \
+  || no "(AC8) after append: rc=$rc trailer=$t2 N=$n_wc2 sha=$h_sha2 (old $h_sha)"
+[ "$t2" != "$t" ] && ok "(AC8) the trailer differs after the append" || no "(AC8) trailer unchanged after an append"
+
+echo "== (AC8) stdin round-trip: evidence-append <run_dir> - =="
+D8="$(mktmp)"
+LINE="$(AC AC9 PASS)"
+: > "$LAST_OUT"; : > "$LAST_ERR"
+printf '%s' "$LINE" | "$BASH_BIN" "$HELPER" evidence-append "$D8" - >"$LAST_OUT" 2>"$LAST_ERR"; rc=$?
+got="$(tail -1 "$D8/evidence.jsonl" 2>/dev/null)"
+[ "$rc" -eq 0 ] && [ "$got" = "$LINE" ] && ok "(AC8) a record piped on stdin (-) is appended verbatim" || no "(AC8) stdin: rc=$rc got=$got stderr=$(cat "$LAST_ERR")"
+n="$(grep -c . "$D8/evidence.jsonl")"
+[ "$n" -eq 1 ] && ok "(AC8) stdin append wrote exactly one line" || no "(AC8) stdin append lines: $n"
+
+echo "== (AC8) empty / absent store: summary-build yields the 0-lines trailer with the empty-input hash =="
+D9="$(mktmp)"
+run_h summary-build "$D9"; rc=$?
+t="$(trailer "$D9" 2>/dev/null)"
+EMPTY_SHA="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+[ "$rc" -eq 0 ] && [ "$t" = "derived_from: 0 lines, sha256 $EMPTY_SHA" ] && ok "(AC8) absent evidence.jsonl → 'derived_from: 0 lines, sha256 <sha256 of empty input>'" || no "(AC8) empty store: rc=$rc trailer=$t"
+hits="$(counts_row 'PASS: 0 · FAIL: 0 · BLOCKED: 0 · NOT_VERIFIABLE: 0 · total: 0' "$D9")"
+[ "$hits" -eq 1 ] && ok "(AC8) empty store counts row is all zeros" || no "(AC8) empty store counts row hits=$hits"
+line2="$(sed -n 2p "$D9/summary.md")"
+hits="$(printf '%s\n' "$line2" | grep -c -F 'do not edit')"
+[ "$hits" -eq 1 ] && ok "(AC8) empty store summary still carries the DERIVED header" || no "(AC8) empty store line 2: $line2"
+: > "$D9/evidence.jsonl"
+run_h summary-build "$D9"; rc=$?
+t="$(trailer "$D9")"
+[ "$rc" -eq 0 ] && [ "$t" = "derived_from: 0 lines, sha256 $EMPTY_SHA" ] && ok "(AC8) an EMPTY evidence.jsonl yields the same 0-lines trailer" || no "(AC8) empty file: rc=$rc trailer=$t"
+n="$(ls "$D9" | grep -c 'summary\.md\.tmp')"
+[ "$n" -eq 0 ] && ok "(AC8) run_dir holds no summary temp files" || no "(AC8) leftover temp files: $n"
+
+# ----------------------------------------------------------------------------
+echo "== (AC7) run-id shape + slug normalisation; run_dir auto-created with artifacts/ =="
+run_h run-id 'My Ticket!'; rc=$?
+got="$(cat "$LAST_OUT")"
+m="$(printf '%s\n' "$got" | grep -Ec '^verify-[0-9]{8}T[0-9]{6}Z-[a-z0-9-]+$')"
+if [ "$rc" -eq 0 ] && [ "$m" -eq 1 ]; then
+  ok "(AC7) run-id matches ^verify-[0-9]{8}T[0-9]{6}Z-[a-z0-9-]+$ ($got)"
+else
+  no "(AC7) run-id rc=$rc out=$got"
+fi
+case "$got" in *-my-ticket) ok "(AC7) slug 'My Ticket!' → 'my-ticket' (lower-cased, run collapsed, trailing - trimmed)" ;; *) no "(AC7) slug: $got" ;; esac
+n="$(grep -c . "$LAST_OUT")"
+[ "$n" -eq 1 ] && ok "(AC7) run-id prints exactly one line" || no "(AC7) run-id stdout lines: $n"
+run_h run-id '--Foo__Bar--'; got="$(cat "$LAST_OUT")"
+case "$got" in *-foo-bar) ok "(AC7) slug '--Foo__Bar--' → 'foo-bar'" ;; *) no "(AC7) slug: $got" ;; esac
+run_h run-id; rc=$?
+[ "$rc" -eq 2 ] && [ ! -s "$LAST_OUT" ] && ok "(AC7) run-id without a slug → rc 2, empty stdout" || no "(AC7) run-id no-arg rc=$rc"
+D7="$(mktmp)/nested/run"
+[ ! -d "$D7" ] && ok "(AC7) precondition: run_dir does not exist yet" || no "(AC7) precondition failed"
+run_h evidence-append "$D7" "$(AC AC1 PASS)"; rc=$?
+[ "$rc" -eq 0 ] && [ -d "$D7/artifacts" ] && [ -f "$D7/evidence.jsonl" ] && [ -f "$D7/summary.md" ] \
+  && ok "(AC7) evidence-append creates <run_dir>/ and <run_dir>/artifacts/ before the write" \
+  || no "(AC7) auto-create: rc=$rc artifacts=$([ -d "$D7/artifacts" ] && echo y || echo n)"
+run_h evidence-append; rc=$?
+[ "$rc" -eq 2 ] && ok "(AC7) evidence-append without args → rc 2 (usage)" || no "(AC7) usage rc=$rc"
+run_h bogus-subcommand; rc=$?
+[ "$rc" -eq 1 ] && ok "(AC7) unknown subcommand → rc 1" || no "(AC7) unknown subcommand rc=$rc"
+run_h --help; rc=$?
+n="$(grep -c -E '^  (run-id|evidence-append|summary-build) ' "$LAST_OUT")"
+[ "$rc" -eq 0 ] && [ "$n" -eq 3 ] && ok "(AC7) --help lists the three subcommands" || no "(AC7) --help rc=$rc listed=$n"
+
+# ----------------------------------------------------------------------------
+echo "== (AC8) latest-per-ac_id: AC1 PASS then AC1 FAIL → PASS: 0 · FAIL: 1 · total: 1 =="
+D10="$(mktmp)"
+run_h evidence-append "$D10" "$(AC AC1 PASS)"
+run_h evidence-append "$D10" "$(AC AC1 FAIL REAL_BUG "regressed on retry")"; rc=$?
+hits="$(counts_row 'PASS: 0 · FAIL: 1 · BLOCKED: 0 · NOT_VERIFIABLE: 0 · total: 1' "$D10")"
+[ "$rc" -eq 0 ] && [ "$hits" -eq 1 ] && ok "(AC8) the newest ac line per ac_id wins the count" || no "(AC8) latest-per-ac_id: rc=$rc hits=$hits: $(grep -n 'total:' "$D10/summary.md")"
+n="$(grep -c . "$D10/evidence.jsonl")"
+[ "$n" -eq 2 ] && ok "(AC8) both lines stay in the store as history (append-only)" || no "(AC8) store lines: $n"
+n="$(grep -c '^| AC1 |' "$D10/summary.md")"
+[ "$n" -eq 1 ] && ok "(AC8) the per-AC table shows AC1 once" || no "(AC8) AC1 table rows: $n"
+n="$(grep -c '^| AC1 | ticket | FAIL | REAL_BUG | regressed on retry |' "$D10/summary.md")"
+[ "$n" -eq 1 ] && ok "(AC8) …and that row is the FAIL (latest) line" || no "(AC8) AC1 row is not the FAIL line"
+
+# ----------------------------------------------------------------------------
+echo "== (AC8) python3 absent on PATH → refused (validator_unavailable), line in rejected.jsonl =="
+STUB="$ROOT/stub-bin"; mkdir -p "$STUB"
+for t in jq date mkdir mv cat cut dirname tr sed wc shasum sha256sum grep cp; do
+  p="$(command -v "$t" 2>/dev/null)" && [ -n "$p" ] && ln -s "$p" "$STUB/$t"
+done
+PATH="$STUB" "$BASH_BIN" -c 'command -v python3' >/dev/null 2>&1; rc=$?
+[ "$rc" -ne 0 ] && ok "(AC8) positive control: python3 is NOT resolvable on the stub PATH" || no "(AC8) stub PATH still resolves python3 — control invalid"
+PATH="$STUB" "$BASH_BIN" -c 'command -v jq' >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "(AC8) positive control: jq IS resolvable on the stub PATH" || no "(AC8) stub PATH lacks jq — control invalid"
+D11="$(mktmp)"
+GOOD="$(AC AC1 PASS)"
+: > "$LAST_OUT"; : > "$LAST_ERR"
+PATH="$STUB" "$BASH_BIN" "$HELPER" evidence-append "$D11" "$GOOD" >"$LAST_OUT" 2>"$LAST_ERR"; rc=$?
+got="$(jq -r '.reason' "$D11/rejected.jsonl" 2>/dev/null)"
+[ "$rc" -eq 1 ] && [ "$got" = "validator_unavailable" ] && ok "(AC8) a VALID line is refused when python3 is absent (rc 1, validator_unavailable)" || no "(AC8) python3-absent: rc=$rc reason=$got stderr=$(cat "$LAST_ERR")"
+[ ! -f "$D11/evidence.jsonl" ] && ok "(AC8) nothing reached evidence.jsonl without the validator" || no "(AC8) evidence.jsonl was written with the validator absent"
+got="$(jq -r '.line' "$D11/rejected.jsonl" 2>/dev/null)"
+[ "$got" = "$GOOD" ] && ok "(AC8) the refused (valid) line is preserved verbatim in rejected.jsonl" || no "(AC8) rejected .line=$got"
+# the same line appends fine with python3 back on PATH — the refusal was the missing validator, not the line
+run_h evidence-append "$D11" "$GOOD"; rc=$?
+[ "$rc" -eq 0 ] && [ -f "$D11/evidence.jsonl" ] && ok "(AC8) the same line appends once python3 is available again" || no "(AC8) re-append rc=$rc"
+
+# ----------------------------------------------------------------------------
+echo "== (AC9) the helper locates its validator as a sibling (vendor-neutral core) =="
+# The zero-vendor-token claim itself is owned by the root ratchet (scripts/check-vendor-coupling.sh),
+# which scans this file and the helper as core — spelling the tokens here would trip it.
+n="$(grep -c 'validate-verify-evidence.py' "$HELPER")"
+[ "$n" -ge 1 ] && ok "(AC9) the validator is located as a sibling of the helper" || no "(AC9) the helper does not name the validator"
+
+# ============================================================================
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
