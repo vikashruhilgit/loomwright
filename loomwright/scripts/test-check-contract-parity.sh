@@ -51,7 +51,7 @@ mk=lambda m,f:{"matcher":f"loomwright:{m}","hooks":[{"type":"prompt","prompt":pr
 h={"hooks":{"SubagentStop":[
   mk("worker",["schema_version","task_id","status","files_modified","summary","outputs_verified","outputs_gap","out_of_lane"]),
   mk("execute-manager",["schema_version","subtasks_completed","worktrees","merge_order","summary","completed_so_far","remaining","resume_context","reason","adjudication_required","missing_outputs","adjudication_options","adjudication_kind","colliding_lanes"]),
-  mk("qa-executor",["schema_version","tests_generated","tests_passed","summary","coverage_estimate"]),
+  mk("qa-executor",["schema_version","tests_generated","tests_passed","summary","coverage_estimate","run_id","run_dir","counts"]),
   mk("supervisor-runner",["schema_version","status","pr_url","heal_loop_ran","heal_iterations","heal_decision","heal_fixable_issues_fixed","heal_remaining_issues","error","summary"]),
   mk("plan-reviewer",["schema_version","decision","issues","severity","section","description","summary"]),
   mk("code-reviewer",["schema_version","decision","summary","severity","category","review_mode","audit_focus","trigger_paths_detected","scope_expanded","files_checked"]),
@@ -74,6 +74,7 @@ missing_outputs, adjudication_options, adjudication_kind, colliding_lanes.
 EOF
   cat >"$d/loomwright/agents/qa-executor.md" <<'EOF'
 QA_RESULT fields: schema_version, tests_generated, tests_passed, coverage_estimate, summary.
+VERIFY_RESULT fields (--verify mode): schema_version, run_id, run_dir, counts, summary.
 EOF
   cat >"$d/loomwright/agents/supervisor.md" <<'EOF'
 SUPERVISOR_RESULT: schema_version, status: completed | status: failed | status: checkpoint
@@ -214,7 +215,7 @@ write_hashstring_validator() { # $1 dir, $2 rel path, $3 comma-separated code fi
   } >"$d/loomwright/$rel"
 }
 
-QA_FIELDS='schema_version,tests_generated,tests_passed,summary,coverage_estimate'
+QA_FIELDS='schema_version,tests_generated,tests_passed,summary,coverage_estimate,run_id,run_dir,counts'
 VALIDATOR_CMD='python3 "${CLAUDE_PLUGIN_ROOT}/scripts/validate-qa-result.py" || true'
 DECOY_CMD='payload=$(cat); printf "%s" "$payload" | bash "${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry-core.sh" || true'
 
@@ -274,7 +275,7 @@ check "command-fallback resolves the validator source" 0 bash "$GUARD" --root "$
 #    fires pin-drift.
 make_fixture "$TMP/cmd-fallback-drift"
 write_validator "$TMP/cmd-fallback-drift" scripts/validate-qa-result.py \
-  'schema_version,tests_generated,tests_passed,summary'
+  'schema_version,tests_generated,tests_passed,summary,run_id,run_dir,counts'
 write_decoy "$TMP/cmd-fallback-drift" scripts/send-telemetry-core.sh "$QA_FIELDS"
 set_command_hooks "$TMP/cmd-fallback-drift" qa-executor "$VALIDATOR_CMD" "$DECOY_CMD"
 check "command-fallback pin-drift fails despite decoy sibling mentioning the field" 1 \
@@ -310,7 +311,7 @@ check "two validator command entries error (ambiguous rule source)" 1 \
 # 10. Field named ONLY in the MODULE docstring → pin-drift, not a pass.
 make_fixture "$TMP/cmd-fallback-prose-module"
 write_prose_validator "$TMP/cmd-fallback-prose-module" scripts/validate-qa-result.py \
-  'schema_version,tests_generated,tests_passed,summary' coverage_estimate module
+  'schema_version,tests_generated,tests_passed,summary,run_id,run_dir,counts' coverage_estimate module
 set_command_hooks "$TMP/cmd-fallback-prose-module" qa-executor "$VALIDATOR_CMD"
 check "field named only in the module docstring fails (prose is not a check)" 1 \
   bash "$GUARD" --root "$TMP/cmd-fallback-prose-module"
@@ -325,7 +326,7 @@ check "field named only in the module docstring fails (prose is not a check)" 1 
 #     indistinguishable to this suite.
 make_fixture "$TMP/cmd-fallback-prose-fn"
 write_prose_validator "$TMP/cmd-fallback-prose-fn" scripts/validate-qa-result.py \
-  'schema_version,tests_generated,tests_passed,summary' coverage_estimate function
+  'schema_version,tests_generated,tests_passed,summary,run_id,run_dir,counts' coverage_estimate function
 set_command_hooks "$TMP/cmd-fallback-prose-fn" qa-executor "$VALIDATOR_CMD"
 check "field named only in a function docstring fails (module-only strip is not enough)" 1 \
   bash "$GUARD" --root "$TMP/cmd-fallback-prose-fn"
@@ -341,7 +342,7 @@ check "field named only in a function docstring fails (module-only strip is not 
 #     rather than line-based — this case alone does not distinguish them.)
 make_fixture "$TMP/cmd-fallback-prose-comment"
 write_prose_validator "$TMP/cmd-fallback-prose-comment" scripts/validate-qa-result.py \
-  'schema_version,tests_generated,tests_passed,summary' coverage_estimate comment
+  'schema_version,tests_generated,tests_passed,summary,run_id,run_dir,counts' coverage_estimate comment
 set_command_hooks "$TMP/cmd-fallback-prose-comment" qa-executor "$VALIDATOR_CMD"
 check "field named only in a # comment fails (docstring strip alone is not enough)" 1 \
   bash "$GUARD" --root "$TMP/cmd-fallback-prose-comment"
@@ -355,7 +356,7 @@ check "field named only in a # comment fails (docstring strip alone is not enoug
 #     8b09b54 implementation AND passes a comment-strip-only variant of the fix.
 make_fixture "$TMP/cmd-fallback-prose-bare"
 write_prose_validator "$TMP/cmd-fallback-prose-bare" scripts/validate-qa-result.py \
-  'schema_version,tests_generated,tests_passed,summary' coverage_estimate bare
+  'schema_version,tests_generated,tests_passed,summary,run_id,run_dir,counts' coverage_estimate bare
 set_command_hooks "$TMP/cmd-fallback-prose-bare" qa-executor "$VALIDATOR_CMD"
 check "field named only in a bare string statement fails (body[0]-only strip is not enough)" 1 \
   bash "$GUARD" --root "$TMP/cmd-fallback-prose-bare"
@@ -374,7 +375,7 @@ check "field named only in a bare string statement fails (body[0]-only strip is 
 #     tokenize. Models validate-launch-pad-result.py's `startswith("#")` literal.
 make_fixture "$TMP/cmd-fallback-hash-in-string"
 write_hashstring_validator "$TMP/cmd-fallback-hash-in-string" scripts/validate-qa-result.py \
-  'schema_version,tests_generated,tests_passed,summary' coverage_estimate
+  'schema_version,tests_generated,tests_passed,summary,run_id,run_dir,counts' coverage_estimate
 set_command_hooks "$TMP/cmd-fallback-hash-in-string" qa-executor "$VALIDATOR_CMD"
 check "a \`#\` inside a string literal does not corrupt the source (tokenize, not a line strip)" 0 \
   bash "$GUARD" --root "$TMP/cmd-fallback-hash-in-string"
