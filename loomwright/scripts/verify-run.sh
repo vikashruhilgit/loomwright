@@ -19,15 +19,19 @@
 # Subcommands:
 #   acs       <ticket>                                              # print {"ticket_kind": …, "acs": [{"ac_id":"AC1","text":"…"}, …]}
 #   preflight <ticket> [--branch <name>] [--repo <dir>]             # contract read → run dir + run_start → assert-non-prod → env line; prints `run_dir=<path>` LAST
-#   walk      <run_dir>   (Subtask 2)                               # generate the per-run Playwright config, run the `[ACn]` specs, ingest the reporter into `ac` lines
+#   walk      <run_dir> [--repo <dir>] [--base-url <url>]           # generate the per-run Playwright config, run the `[ACn]` specs, ingest the reporter into `ac` lines
 #   verdict   <run_dir> <ac_id> <NOT_VERIFIABLE|BLOCKED> --reason <text> [--classification <c>]   # append one browser-less `ac` line
 #   finish    <run_dir> [--status completed|aborted]                # append run_end (NO counts), rebuild summary.md, print its counts row
 #
 # Exit codes: 0 ok · 1 refused / failed (non-prod assertion failed, append refused) · 2 usage / ticket
 # unresolved / a verdict that needs observation · 3 preflight stop (no contract at .agent/verify.json,
-# contract unreadable — nothing created, nothing called).
+# contract unreadable — nothing created, nothing called) / walk stop (the Playwright harness is not
+# resolvable from the target repo, or it produced no reporter file — every AC still without a verdict
+# gets a BLOCKED line first).
 # Dependencies: bash 3.2+, jq, git, python3 (through verify-helpers.sh's validator gate),
-# `shasum -a 256` or `sha256sum` (the run_start contract hash).
+# `shasum -a 256` or `sha256sum` (the run_start contract hash); `walk` additionally needs `npx` and a
+# `@playwright/test` resolvable FROM THE TARGET REPO (`npx --no-install playwright`) — the plugin never
+# installs it, the project under test owns its harness.
 
 set -uo pipefail
 
@@ -36,6 +40,10 @@ HELPERS="$HERE/verify-helpers.sh"
 READER="$HERE/read-verify.sh"
 EXECUTOR="$HERE/verify-env.sh"
 BOOTSTRAP="$HERE/propose-verify.sh"
+
+# The one scratch file a subcommand may hold (stderr captures); SCRIPT-LEVEL on purpose — the EXIT
+# trap that removes it fires after the function's locals are gone, and `set -u` would name it unbound.
+rerr=""
 
 diag()  { echo "verify-run: $*" >&2; }
 die()   { diag "$*"; exit 1; }
@@ -151,7 +159,7 @@ acs_cmd() {
 # diff.stat; (4) `assert-non-prod` — stdout and `$?` captured in two statements; fail ⇒ the `env`
 # fail line with the executor's own bracketed reason, exit 1, and `start` is NEVER called.
 preflight_cmd() {
-  local ticket="" branch="" repo_arg="" repo acs kind contract rerr tokens
+  local ticket="" branch="" repo_arg="" repo acs kind contract tokens
   local run_id run_dir base head_sha base_sha hash ts out rc reason
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -340,11 +348,253 @@ finish_cmd() {
   printf '%s\n' "$row"
 }
 
+# --------------------------------------------------------------------------- #
+# walk <run_dir> [--repo <dir>] [--base-url <url>]
+# --------------------------------------------------------------------------- #
+# The ONLY source of PASS and FAIL. (1) base_url from the flag, else the contract through the reader;
+# (2) `npx --no-install playwright --version` FROM THE REPO — non-zero ⇒ a BLOCKED
+# [playwright_unavailable] line for every AC still without a verdict, exit 3 (the app was reachable,
+# the harness was not); (3) no `<run_dir>/specs/*.spec.*` at all ⇒ BLOCKED [no_spec] for those ACs,
+# exit 0, no browser launched; (4) generate `<run_dir>/playwright.config.mjs` and run the specs with
+# the JSON reporter — the run's EXIT STATUS IS IGNORED, the reporter file is the oracle (stdout/stderr
+# kept beside it); (5) ingest: every spec whose title starts `[ACn]` becomes one `ac` line — the LAST
+# result of the test, mapped per docs/RESULT_SCHEMAS.md §VERIFY_RESULT "Specs and reporter ingest";
+# every attachment is copied (path) or decoded (base64 body — the template's `page-body`) into
+# `<run_dir>/artifacts/<ac_id>/` and recorded RELATIVE to the run dir; an AC with neither a spec nor
+# an existing `ac` line ⇒ BLOCKED [no_spec]. Every line goes through evidence-append.
+walk_cmd() {
+  local run_dir="" repo_arg="" base_url="" repo run_id rc contract nspec cfg pw_out pw_err
+  local u="walk <run_dir> [--repo <dir>] [--base-url <url>]"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --repo)     [ "$#" -ge 2 ] || usage "--repo needs a value";     repo_arg="$2"; shift 2 ;;
+      --base-url) [ "$#" -ge 2 ] || usage "--base-url needs a value"; base_url="$2"; shift 2 ;;
+      -*)         usage "$u (unknown flag $1)" ;;
+      *)          if [ -z "$run_dir" ]; then run_dir="$1"; shift; else usage "walk takes ONE run dir"; fi ;;
+    esac
+  done
+  [ -n "$run_dir" ] || usage "$u"
+  command -v jq >/dev/null 2>&1 || die "jq is required [jq_unavailable]"
+  [ -f "$HELPERS" ] || die "sibling verify-helpers.sh not found at $HELPERS"
+  [ -d "$run_dir" ] || { diag "run dir not found at $run_dir [run_dir_missing]"; exit 2; }
+  [ -f "$run_dir/acs.json" ] || { diag "no acs.json in $run_dir — run preflight first [acs_missing]"; exit 2; }
+  run_dir="$(cd "$run_dir" && pwd)"
+  repo="$(resolve_repo "$repo_arg")" || exit 2
+  run_id="$(run_id_of "$run_dir")"
+  rerr="$(mktemp "${TMPDIR:-/tmp}/verify-run.XXXXXX")" || die "mktemp failed"
+  trap 'rm -f "$rerr" 2>/dev/null' EXIT
+
+  # (1) base_url — the flag wins; else the contract THROUGH the reader (never re-parsed).
+  if [ -z "$base_url" ]; then
+    [ -f "$READER" ] || die "sibling read-verify.sh not found at $READER"
+    contract="$(bash "$READER" --repo "$repo" 2>"$rerr")"
+    [ -n "$contract" ] && base_url="$(printf '%s' "$contract" | jq -r '.base_url // empty' 2>/dev/null)"
+    if [ -z "$base_url" ]; then
+      cat "$rerr" >&2
+      diag "no base_url: pass --base-url or fix .agent/verify.json [base_url_unresolved]"
+      exit 2
+    fi
+  fi
+
+  # (2) the harness, resolved FROM THE REPO exactly as a user project would resolve it.
+  ( cd "$repo" && npx --no-install playwright --version ) >/dev/null 2>"$rerr"
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    diag "npx playwright is not resolvable from $repo (rc=$rc): $(head -1 "$rerr") [playwright_unavailable]"
+    walk_block_remaining "$run_dir" "$run_id" "playwright_unavailable" "ENVIRONMENT_ISSUE"
+    exit 3
+  fi
+
+  # (3) no specs at all ⇒ nothing to observe; say so per AC and stop WITHOUT launching a browser.
+  nspec=0
+  [ -d "$run_dir/specs" ] && nspec="$(find "$run_dir/specs" -type f \( -name '*.spec.ts' -o -name '*.spec.js' -o -name '*.spec.mjs' \) 2>/dev/null | grep -c .)"
+  if [ "$nspec" -eq 0 ]; then
+    diag "no *.spec.* under $run_dir/specs — every remaining AC is BLOCKED [no_spec]"
+    walk_block_remaining "$run_dir" "$run_id" "no_spec" "ENVIRONMENT_ISSUE"
+    exit 0
+  fi
+
+  # (4) the per-run config (paths JSON-quoted, never interpolated raw) and the run.
+  cfg="$run_dir/playwright.config.mjs"
+  {
+    echo "// generated by verify-run.sh walk — one config per run; the reporter file is the oracle."
+    echo "export default {"
+    echo "  testDir: $(jq -rn --arg v "$run_dir/specs" '$v | @json'),"
+    echo "  outputDir: $(jq -rn --arg v "$run_dir/test-results" '$v | @json'),"
+    echo "  reporter: [['json', { outputFile: $(jq -rn --arg v "$run_dir/report.json" '$v | @json') }]],"
+    echo "  workers: 1,"
+    echo "  retries: 0,"
+    echo "  timeout: 30000,"
+    echo "  use: { baseURL: $(jq -rn --arg v "$base_url" '$v | @json'), screenshot: 'on', trace: 'on', video: 'off' },"
+    echo "};"
+  } > "$cfg" || die "cannot write $cfg"
+  pw_out="$run_dir/playwright.stdout"; pw_err="$run_dir/playwright.stderr"
+  rm -f "$run_dir/report.json"
+  ( cd "$repo" && npx --no-install playwright test --config "$cfg" ) >"$pw_out" 2>"$pw_err"
+  rc=$?
+  diag "playwright test exited $rc (ignored — the reporter decides); output beside report.json"
+  if [ ! -s "$run_dir/report.json" ]; then
+    diag "playwright wrote no report at $run_dir/report.json: $(head -1 "$pw_err") [reporter_missing]"
+    walk_block_remaining "$run_dir" "$run_id" "reporter_missing: $(head -1 "$pw_err" | cut -c1-200)" "ENVIRONMENT_ISSUE"
+    exit 3
+  fi
+
+  # (5) ingest.
+  walk_ingest "$run_dir" "$run_id" || exit 1
+  walk_block_remaining "$run_dir" "$run_id" "no_spec" "ENVIRONMENT_ISSUE"
+  echo "report=$run_dir/report.json"
+  return 0
+}
+
+# walk_append_ac <run_dir> <run_id> <ac_id> <verdict> <class|""> <reason> <steps_json> <artifacts_json>
+# — text from acs.json by ac_id (an id the ticket does not have is named and skipped); one
+# evidence-append; the verdict echoed on stdout as `<ac_id> <verdict>`.
+walk_append_ac() {
+  local run_dir="$1" run_id="$2" ac_id="$3" verdict="$4" class="$5" reason="$6" steps="$7" arts="$8" text ts
+  text="$(jq -r --arg id "$ac_id" '.acs[] | select(.ac_id == $id) | .text' "$run_dir/acs.json" 2>/dev/null | head -1)"
+  if [ -z "$text" ]; then
+    diag "spec [$ac_id] names no acceptance criterion of this run (see $run_dir/acs.json) — skipped [ac_id_unknown]"
+    return 0
+  fi
+  ts="$(now_ts)"
+  jq -cn --arg ts "$ts" --arg run_id "$run_id" --arg ac_id "$ac_id" --arg text "$text" \
+     --arg verdict "$verdict" --arg reason "$reason" --arg class "$class" \
+     --argjson steps "$steps" --argjson arts "$arts" '
+    {schema_version: 1, ts: $ts, run_id: $run_id, event: "ac", ac_id: $ac_id, text: $text,
+     scope: "ticket", verdict: $verdict,
+     classification: (if $class == "" then null else $class end),
+     steps: $steps, artifacts: $arts}
+    + (if $reason == "" then {} else {reason: $reason} end)' \
+    | bash "$HELPERS" evidence-append "$run_dir" - >/dev/null \
+    || { diag "ac line for $ac_id was refused (see $run_dir/rejected.jsonl) [append_refused]"; return 1; }
+  echo "$ac_id $verdict"
+}
+
+# walk_block_remaining <run_dir> <run_id> <reason> <class> — a BLOCKED line for every ac_id in
+# acs.json (file order) that has NO `ac` line yet; ACs already decided (a NOT_VERIFIABLE recorded by
+# `verdict`, a PASS/FAIL just ingested) are left alone.
+walk_block_remaining() {
+  local run_dir="$1" run_id="$2" reason="$3" class="$4" done_ids id
+  done_ids="[]"
+  [ -f "$run_dir/evidence.jsonl" ] && done_ids="$(jq -cs '[.[] | select(.event == "ac") | .ac_id]' "$run_dir/evidence.jsonl" 2>/dev/null)"
+  [ -n "$done_ids" ] || done_ids="[]"
+  for id in $(jq -r --argjson done "$done_ids" '.acs[].ac_id | select(. as $i | ($done | index($i)) == null)' "$run_dir/acs.json"); do
+    walk_append_ac "$run_dir" "$run_id" "$id" "BLOCKED" "$class" "$reason" "[]" "[]" || return 1
+  done
+  return 0
+}
+
+# walk_ingest <run_dir> <run_id> — report.json → one `ac` line per `[ACn]` spec. Reporter → verdict
+# (the LAST result of the LAST test of the spec):
+#   passed                                        ⇒ PASS
+#   skipped                                       ⇒ BLOCKED ENVIRONMENT_ISSUE  spec_skipped
+#   no result at all                              ⇒ BLOCKED ENVIRONMENT_ISSUE  spec_not_run
+#   failed/timedOut/interrupted, message names a navigation/connection failure
+#     (net::ERR_, ECONNREFUSED, a page.goto timeout)⇒ BLOCKED ENVIRONMENT_ISSUE  <first error line>
+#   any other failed/timedOut/interrupted         ⇒ FAIL    REAL_BUG           <first error line>
+# `reason` is the FIRST line of errors[0].message with ANSI stripped (falls back to `spec_<status>`).
+walk_ingest() {
+  local run_dir="$1" run_id="$2" specs spec ac_id rstatus message steps verdict class reason arts n
+  specs="$(mktemp "${TMPDIR:-/tmp}/verify-walk.XXXXXX")" || die "mktemp failed"
+  jq -c '
+    [.. | objects | select(has("specs") and (.specs | type == "array")) | .specs[]]
+    | map(select((.title // "") | test("^\\[AC[0-9]+\\]")))
+    | map(. as $s | ($s.tests // [] | last) as $t | (($t.results // []) | last) as $r
+        | {ac_id: ($s.title | capture("^\\[(?<id>AC[0-9]+)\\]").id),
+           rstatus: ($r.status // "missing"),
+           message: ((($r.errors // [])[0].message // $r.error.message // "")
+                     | gsub("\u001b\\[[0-9;]*[A-Za-z]"; "") | (split("\n")[0] // "")
+                     | gsub("^[[:space:]]+|[[:space:]]+$"; "")),
+           steps: [($r.steps // [])[] | .title // empty],
+           attachments: [($r.attachments // [])[]
+                         | {name: (.name // "attachment"), contentType: (.contentType // ""),
+                            path: (.path // ""), body: (.body // "")}]})
+    | .[]' "$run_dir/report.json" > "$specs" 2>"$specs.err"
+  if [ $? -ne 0 ]; then
+    diag "report.json is not a Playwright JSON report: $(head -1 "$specs.err") [reporter_unreadable]"
+    rm -f "$specs" "$specs.err"; return 1
+  fi
+  n="$(grep -c . "$specs")"
+  diag "ingesting $n [ACn] spec result(s) from report.json"
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    ac_id="$(printf '%s' "$spec" | jq -r '.ac_id')"
+    rstatus="$(printf '%s' "$spec" | jq -r '.rstatus')"
+    message="$(printf '%s' "$spec" | jq -r '.message')"
+    steps="$(printf '%s' "$spec" | jq -c '.steps')"
+    case "$rstatus" in
+      passed)  verdict="PASS";    class="";                  reason="" ;;
+      skipped) verdict="BLOCKED"; class="ENVIRONMENT_ISSUE"; reason="spec_skipped" ;;
+      missing) verdict="BLOCKED"; class="ENVIRONMENT_ISSUE"; reason="spec_not_run" ;;
+      *)
+        [ -n "$message" ] || message="spec_$rstatus"
+        if printf '%s' "$message" | grep -qE 'net::ERR_|ECONNREFUSED|page\.goto.*[Tt]imeout|[Tt]imeout.*page\.goto'; then
+          verdict="BLOCKED"; class="ENVIRONMENT_ISSUE"
+        else
+          verdict="FAIL"; class="REAL_BUG"
+        fi
+        reason="$message" ;;
+    esac
+    arts="$(walk_copy_attachments "$run_dir" "$ac_id" "$spec")"
+    walk_append_ac "$run_dir" "$run_id" "$ac_id" "$verdict" "$class" "$reason" "$steps" "$arts" || { rm -f "$specs" "$specs.err"; return 1; }
+  done < "$specs"
+  rm -f "$specs" "$specs.err"
+  return 0
+}
+
+# walk_copy_attachments <run_dir> <ac_id> <spec_json> — every attachment into artifacts/<ac_id>/:
+# a `path` attachment is copied under its basename (an index prefix on collision); a `body`
+# attachment (base64 in the report — the template's page-body / response-<status>) is decoded to
+# `<name>.<ext>` by contentType. Prints the JSON array of RELATIVE paths (what the ac line records).
+walk_copy_attachments() {
+  local run_dir="$1" ac_id="$2" spec="$3" dest i name ctype path body ext file rel list
+  dest="$run_dir/artifacts/$ac_id"
+  mkdir -p "$dest" || die "cannot create $dest"
+  list="$(mktemp "${TMPDIR:-/tmp}/verify-arts.XXXXXX")" || die "mktemp failed"
+  printf '%s' "$spec" | jq -c '.attachments[]' > "$list.in"
+  i=0
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    i=$((i+1))
+    name="$(printf '%s' "$line" | jq -r '.name' | tr -d '\n' | tr -c 'A-Za-z0-9._-' '_')"
+    ctype="$(printf '%s' "$line" | jq -r '.contentType')"
+    path="$(printf '%s' "$line" | jq -r '.path')"
+    body="$(printf '%s' "$line" | jq -r '.body')"
+    if [ -n "$path" ]; then
+      [ -f "$path" ] || { diag "attachment '$name' of $ac_id names a missing file $path — skipped"; continue; }
+      file="$(basename "$path")"
+      [ -e "$dest/$file" ] && file="$i-$file"
+      cp "$path" "$dest/$file" 2>/dev/null || { diag "could not copy $path — skipped"; continue; }
+    elif [ -n "$body" ]; then
+      case "$ctype" in
+        text/html*)        ext="html" ;;
+        text/markdown*)    ext="md" ;;
+        text/*)            ext="txt" ;;
+        application/json*) ext="json" ;;
+        image/png*)        ext="png" ;;
+        application/zip*)  ext="zip" ;;
+        *)                 ext="bin" ;;
+      esac
+      file="$name.$ext"
+      [ -e "$dest/$file" ] && file="$i-$file"
+      printf '%s' "$body" | python3 -c 'import sys, base64; sys.stdout.buffer.write(base64.b64decode(sys.stdin.read()))' > "$dest/$file" 2>/dev/null \
+        || { diag "could not decode attachment '$name' of $ac_id — skipped"; rm -f "$dest/$file"; continue; }
+    else
+      continue
+    fi
+    rel="artifacts/$ac_id/$file"
+    printf '%s\n' "$rel" >> "$list"
+  done < "$list.in"
+  jq -R . "$list" | jq -sc .
+  rm -f "$list" "$list.in"
+}
+
 main() {
   local cmd="${1:-}"; shift || true
   case "$cmd" in
     acs)       acs_cmd "$@" ;;
     preflight) preflight_cmd "$@" ;;
+    walk)      walk_cmd "$@" ;;
     verdict)   verdict_cmd "$@" ;;
     finish)    finish_cmd "$@" ;;
     ""|-h|--help)

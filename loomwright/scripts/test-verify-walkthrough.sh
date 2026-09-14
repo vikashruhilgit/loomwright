@@ -13,8 +13,10 @@
 # to match the executor's on the two paths this seam depends on (`cmd: false` refuses with the same
 # bracketed token; `cmd: true` passes). Precedent: test-verify-seam.sh / test-verify-evidence.sh.
 #
-# Static-only (this half): no network, no `gh`, no Docker, no browser. Exit 0 = all pass, 1 = any
-# failure (auto-registered by ci.yml's `loomwright/scripts/test-*.sh` glob).
+# The first half is static: no network, no `gh`, no Docker, no browser. The browser arms (below the
+# Subtask 2 anchor) obtain `@playwright/test` + chromium into a persistent cache and drive the
+# fixture app for real — see their own header for the bimodal $CI install rule. Exit 0 = all pass,
+# 1 = any failure (auto-registered by ci.yml's `loomwright/scripts/test-*.sh` glob).
 #
 # Arms:
 #   (AC1)  absent contract       → stdout names the absence AND the bootstrap line (propose-verify.sh,
@@ -135,10 +137,11 @@ EOF
     && git -c user.email=t@example.invalid -c user.name=t commit -q -m init ) || { echo "  FAIL: fixture git init"; exit 1; }
 }
 
-# contract <T> <cmd> — write a well-formed .agent/verify.json whose non_prod_assert.cmd is <cmd>.
+# contract <T> <cmd> [<base_url>] — write a well-formed .agent/verify.json whose non_prod_assert.cmd
+# is <cmd> (base_url defaults to localhost:3000; the browser arms point it at the fixture app).
 contract() {
   mkdir -p "$1/repo/.agent"
-  jq -n --arg cmd "$2" '{start: null, base_url: "http://localhost:3000", health: "/",
+  jq -n --arg cmd "$2" --arg url "${3:-http://localhost:3000}" '{start: null, base_url: $url, health: "/",
     auth: {method: "none", storage_state_path: null, probe_path: null},
     non_prod_assert: {cmd: $cmd}, seed: null, reset: null, stop: null}' > "$1/repo/.agent/verify.json"
 }
@@ -359,7 +362,11 @@ writes="$(grep -cE '>>?[[:space:]]*"?\$[A-Za-z_{}]*/?evidence\.jsonl|evidence\.j
 [ "$writes" -eq 0 ] && ok "(S) verify-run.sh never redirects into evidence.jsonl (only evidence-append writes)" || no "(S) $writes direct evidence.jsonl write(s) in verify-run.sh"
 [ "$(grep -c 'evidence-append' "$RUNNER")" -ge 4 ] && ok "(S) every recorded line goes through verify-helpers.sh evidence-append" || no "(S) too few evidence-append call sites"
 [ "$(grep -cE 'Claude_Browser|computer-use|mcp__' "$RUNNER")" -eq 0 ] && ok "(S) no browser-harness product token in verify-run.sh (Playwright-from-Bash only)" || no "(S) a browser-harness product token appears in verify-run.sh"
-[ "$(grep -cE 'CLAUDE_PLUGIN_ROOT|\.claude/plugins' "$RUNNER")" -eq 0 ] && ok "(S) vendor-neutral: siblings located relative to the script" || no "(S) a harness install path appears in verify-run.sh"
+# Vendor-neutral core: no plugin-root variable of any vendor (`*_PLUGIN_ROOT`) and no harness install
+# path (`/plugins/`) — the pattern is generic on purpose, so this line itself carries no vendor token
+# for the root ratchet (scripts/check-vendor-coupling.sh) to count.
+[ "$(grep -cE '_PLUGIN_ROOT|/plugins/' "$RUNNER")" -eq 0 ] && grep -q '^HERE="\$(cd "\$(dirname "\$0")" && pwd)"$' "$RUNNER" \
+  && ok "(S) vendor-neutral: siblings located relative to the script, no plugin-root variable" || no "(S) a plugin-root variable / harness install path appears in verify-run.sh, or HERE is not dirname-relative"
 grep -q '^## VERIFY_RESULT$' "$HERE/../docs/RESULT_SCHEMAS.md" && ok "(S) docs/RESULT_SCHEMAS.md carries ## VERIFY_RESULT" || no "(S) ## VERIFY_RESULT missing from RESULT_SCHEMAS.md"
 n_evd="$(grep -n '^## VERIFY_EVIDENCE$' "$HERE/../docs/RESULT_SCHEMAS.md" | cut -d: -f1 | head -1)"
 n_res="$(grep -n '^## VERIFY_RESULT$' "$HERE/../docs/RESULT_SCHEMAS.md" | cut -d: -f1 | head -1)"
@@ -371,6 +378,320 @@ else
 fi
 
 # --- browser arms (Subtask 2 appends below this line) ---
+
+# ============================================================================
+# Browser arms (Subtask 2). They need `@playwright/test` + chromium, which this repo does NOT ship:
+# they are obtained ONCE into a persistent cache (idempotent — a present install is a no-op) and
+# the fixture repo's `node_modules` is SYMLINKED to it, so `npx --no-install playwright` resolves
+# from the repo exactly as it would in a user project. Acquisition failure is bimodal by design
+# (AC11): under $CI it is a HARD failure — `no()` with reason playwright_install_failed, never a
+# vacuous green — outside $CI the two browser arms SKIP with the printed reason and every other
+# arm still runs and decides the exit. The fixture app is verify-fixture-app.py (stdlib http.server)
+# on a free port, killed in the trap; `--broken` is the mutation control.
+#
+#   (AC11i) install rule      → this very suite re-run in a sandbox where npm cannot install: with
+#                                CI set it exits 1 naming playwright_install_failed; with CI unset it
+#                                prints SKIP (playwright_install_failed…) and exits 0 (all other arms
+#                                green) — the bimodal rule proven, not described
+#   (AC11)  harness absent    → `walk` with npx shadowed by a PATH stub exiting 127 ⇒ a BLOCKED
+#                                [playwright_unavailable] ENVIRONMENT_ISSUE line for EVERY AC, exit 3,
+#                                no config / report written, no executor call
+#   (AC3)   healthy app       → the two template specs PASS: EXACTLY two ac lines, each with a .png
+#                                artifact that EXISTS under <run_dir>/, counts row
+#                                PASS: 2 · FAIL: 0 · BLOCKED: 0 · NOT_VERIFIABLE: 0 · total: 2
+#   (AC4)   mutation control  → gate: the --broken server's /submit really differs from the healthy
+#                                one (else UNPROVEN = no()); then the SAME specs on a fresh run dir:
+#                                AC2 FAIL / REAL_BUG / non-empty ANSI-free reason / .html + .png
+#                                artifacts, AC1 still PASS, PASS: 1 · FAIL: 1 · … · total: 2
+#   (NS)    no_spec           → an AC with a spec and one decided by `verdict` are left alone; an AC
+#                                with neither ⇒ BLOCKED [no_spec]; a run with NO specs at all launches
+#                                no browser (no report.json) and BLOCKs every AC [no_spec], exit 0
+
+FIXTURE_APP="$HERE/verify-fixture-app.py"
+PW_CACHE="${LOOMWRIGHT_VERIFY_TEST_CACHE:-${TMPDIR:-/tmp}/loomwright-verify-walkthrough}"
+export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-$PW_CACHE/browsers}"
+PW_READY=0; PW_SKIP=""
+SERVER_PIDS=""
+kill_servers() { local p; for p in $SERVER_PIDS; do kill "$p" 2>/dev/null; wait "$p" 2>/dev/null; done; return 0; }
+trap 'kill_servers; rm -rf "$ROOT" 2>/dev/null' EXIT
+
+free_port() {
+  python3 -c 'import socket
+s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()' 2>/dev/null
+}
+
+# start_app <port> [--broken] — the fixture app in the background; waits (≤5s) for /health.
+start_app() {
+  local port="$1" flag="${2:-}" i=0
+  # shellcheck disable=SC2086
+  python3 "$FIXTURE_APP" --port "$port" $flag >/dev/null 2>&1 &
+  SERVER_PIDS="$SERVER_PIDS $!"
+  while [ "$i" -lt 50 ]; do
+    curl -sf "http://127.0.0.1:$port/health" >/dev/null 2>&1 && return 0
+    sleep 0.1; i=$((i+1))
+  done
+  return 1
+}
+
+# acquire_playwright — idempotent; sets PW_READY=1 or PW_SKIP=<reason>. The cache holds
+# node_modules/@playwright/test (npm i --prefix) and browsers/ (PLAYWRIGHT_BROWSERS_PATH);
+# `--with-deps` (apt, needs the runner's sudo) only under $CI.
+acquire_playwright() {
+  local log="$ROOT/pw-install.log" tool
+  for tool in node npm npx curl; do
+    command -v "$tool" >/dev/null 2>&1 || { PW_SKIP="$tool is not on PATH"; return 1; }
+  done
+  [ -f "$FIXTURE_APP" ] || { PW_SKIP="fixture app missing at $FIXTURE_APP"; return 1; }
+  mkdir -p "$PW_CACHE" 2>/dev/null || { PW_SKIP="cannot create $PW_CACHE"; return 1; }
+  if [ ! -d "$PW_CACHE/node_modules/@playwright/test" ]; then
+    npm i --prefix "$PW_CACHE" --no-audit --no-fund @playwright/test@1 >"$log" 2>&1 \
+      || { PW_SKIP="npm i @playwright/test@1 into $PW_CACHE failed: $(tail -1 "$log" 2>/dev/null)"; return 1; }
+  fi
+  [ -x "$PW_CACHE/node_modules/.bin/playwright" ] || { PW_SKIP="no playwright bin under $PW_CACHE/node_modules/.bin"; return 1; }
+  # shellcheck disable=SC2086 — ${CI:+--with-deps} is deliberately unquoted: empty ⇒ no argument
+  "$PW_CACHE/node_modules/.bin/playwright" install ${CI:+--with-deps} chromium >"$log" 2>&1 \
+    || { PW_SKIP="playwright install chromium into $PLAYWRIGHT_BROWSERS_PATH failed: $(tail -1 "$log" 2>/dev/null)"; return 1; }
+  PW_READY=1
+  return 0
+}
+
+# write_specs <dir> — the two agent-authored-style specs in EXACTLY the shape the skill's template
+# prescribes (title `[ACn] …`, role-based locators, the afterEach page-body attach on any unexpected
+# status, the non-2xx response attach), so the ingest contract is exercised end-to-end.
+write_specs() {
+  mkdir -p "$1"
+  cat > "$1/AC1.spec.ts" <<'SPEC'
+import { test, expect } from '@playwright/test';
+
+test.beforeEach(async ({ page }, testInfo) => {
+  page.on('response', async (response) => {
+    const status = response.status();
+    if (status < 200 || status >= 300) {
+      let body = '';
+      try { body = await response.text(); } catch (e) { body = ''; }
+      try { await testInfo.attach(`response-${status}`, { body, contentType: 'text/plain' }); } catch (e) { /* test already over */ }
+    }
+  });
+});
+
+test.afterEach(async ({ page }, testInfo) => {
+  if (testInfo.status !== testInfo.expectedStatus)
+    await testInfo.attach('page-body', { body: await page.content(), contentType: 'text/html' });
+});
+
+test('[AC1] Given the form page, when it loads, then a Value field and Submit button are visible', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByLabel('Value')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Submit' })).toBeVisible();
+});
+SPEC
+  cat > "$1/AC2.spec.ts" <<'SPEC'
+import { test, expect } from '@playwright/test';
+
+test.beforeEach(async ({ page }, testInfo) => {
+  page.on('response', async (response) => {
+    const status = response.status();
+    if (status < 200 || status >= 300) {
+      let body = '';
+      try { body = await response.text(); } catch (e) { body = ''; }
+      try { await testInfo.attach(`response-${status}`, { body, contentType: 'text/plain' }); } catch (e) { /* test already over */ }
+    }
+  });
+});
+
+test.afterEach(async ({ page }, testInfo) => {
+  if (testInfo.status !== testInfo.expectedStatus)
+    await testInfo.attach('page-body', { body: await page.content(), contentType: 'text/html' });
+});
+
+test('[AC2] Given the Value field, when hello is submitted, then the echo paragraph shows hello', async ({ page }) => {
+  await page.goto('/');
+  await page.getByLabel('Value').fill('hello');
+  await page.getByRole('button', { name: 'Submit' }).click();
+  await expect(page.locator('#echo')).toHaveText('hello');
+});
+SPEC
+}
+
+# stage_browser <T> <base_url> — stage() + a passing contract pointing at <base_url> + the
+# node_modules symlink into the cache; leaves a preflighted run dir in RD_B (2-AC brief ticket).
+stage_browser() {
+  local T="$1"
+  stage "$T"; contract "$T" true "$2"
+  ln -s "$PW_CACHE/node_modules" "$T/repo/node_modules"
+  run_bin "$T" preflight "$BRIEF" --repo .
+  RD_B="$(last_run_dir)"
+}
+ac_lines() { ev_field "$1" 'select(.event == "ac") | .ac_id' | grep -c .; }
+ac_get() { jq -r --arg id "$2" "select(.event == \"ac\" and .ac_id == \$id) | $3" "$1/evidence.jsonl" 2>/dev/null | tail -1; }   # <run_dir> <ac_id> <jq> — the LATEST line for that id
+ESC="$(printf '\033')"
+NL="$(printf '\nx')"; NL="${NL%x}"   # a bare $(printf '\n') is EMPTY (trailing newlines are stripped) — and *""* matches everything
+
+# ============================================================================
+echo "== (AC11i) the install rule is bimodal: CI ⇒ exit 1 playwright_install_failed; no CI ⇒ SKIP + exit 0 =="
+# The suite itself, re-run in a sandbox where nothing can be installed: an empty cache dir under
+# $ROOT and a PATH-first `npm` that fails. Guarded against recursion by LOOMWRIGHT_VERIFY_TEST_INNER.
+if [ -z "${LOOMWRIGHT_VERIFY_TEST_INNER:-}" ]; then
+  SB="$(mktmp)"; mkdir -p "$SB/bin" "$SB/cache"
+  printf '#!/bin/sh\necho "npm: sandboxed — install refused" >&2\nexit 1\n' > "$SB/bin/npm"; chmod +x "$SB/bin/npm"
+  ( cd "$SB" && env CI=1 LOOMWRIGHT_VERIFY_TEST_INNER=1 LOOMWRIGHT_VERIFY_TEST_CACHE="$SB/cache" PATH="$SB/bin:$PATH" \
+      bash "$HERE/test-verify-walkthrough.sh" ) > "$SB/ci.out" 2>&1
+  rc=$?
+  [ "$rc" -eq 1 ] && grep -qF 'FAIL: (AC11) playwright_install_failed' "$SB/ci.out" \
+    && ok "(AC11i) under CI an install failure is a HARD failure: exit 1, reason playwright_install_failed" \
+    || no "(AC11i) under CI: rc=$rc (expected 1); tail: $(tail -3 "$SB/ci.out")"
+  ! grep -qE '^  (ok|FAIL): \(AC3\)' "$SB/ci.out" && ok "(AC11i) under CI no browser arm ran on a failed install (no vacuous green)" || no "(AC11i) a browser arm ran without Playwright"
+  ( cd "$SB" && env -u CI LOOMWRIGHT_VERIFY_TEST_INNER=1 LOOMWRIGHT_VERIFY_TEST_CACHE="$SB/cache" PATH="$SB/bin:$PATH" \
+      bash "$HERE/test-verify-walkthrough.sh" ) > "$SB/local.out" 2>&1
+  rc=$?
+  [ "$rc" -eq 0 ] && grep -qF 'SKIP (playwright_install_failed' "$SB/local.out" \
+    && ok "(AC11i) outside CI the same failure prints SKIP (playwright_install_failed: …) and the other arms decide: exit 0" \
+    || no "(AC11i) outside CI: rc=$rc (expected 0); tail: $(tail -3 "$SB/local.out")"
+  grep -qE '^  ok: \(AC11\) .*playwright_unavailable' "$SB/local.out" && grep -qE '^  ok: \(FIN\)' "$SB/local.out" \
+    && ok "(AC11i) outside CI the non-browser arms (AC11 stub, FIN, …) still ran" || no "(AC11i) non-browser arms did not run in the SKIP mode"
+else
+  echo "  (inner run — the install-rule self-check is not recursed)"
+fi
+
+# ============================================================================
+echo "== (AC11) walk with npx unresolvable → BLOCKED playwright_unavailable for every AC, exit 3 =="
+T5="$(mktmp)"; stage "$T5"; contract "$T5" true
+mkdir -p "$T5/stubbin"; printf '#!/bin/sh\nexit 127\n' > "$T5/stubbin/npx"; chmod +x "$T5/stubbin/npx"
+run_bin "$T5" preflight "$REQ" --repo .
+RD5="$(last_run_dir)"
+[ -n "$RD5" ] && [ -d "$RD5" ] || no "(AC11) preflight fixture failed: $(cat "$LAST_ERR")"
+PATH="$T5/stubbin:$PATH" run_bin "$T5" walk "$RD5" --repo .
+rc=$?
+[ "$rc" -eq 3 ] && ok "(AC11) walk → exit 3" || no "(AC11) walk: rc=$rc (expected 3) err=$(cat "$LAST_ERR")"
+grep -qF '[playwright_unavailable]' "$LAST_ERR" && ok "(AC11) stderr names [playwright_unavailable]" || no "(AC11) stderr: $(cat "$LAST_ERR")"
+[ "$(ac_lines "$RD5")" -eq 3 ] && ok "(AC11) one ac line per AC (3)" || no "(AC11) $(ac_lines "$RD5") ac lines"
+[ "$(ev_field "$RD5" 'select(.event == "ac") | [.verdict, .classification, .reason] | join("|")' | sort -u)" = "BLOCKED|ENVIRONMENT_ISSUE|playwright_unavailable" ] \
+  && ok "(AC11) every line is BLOCKED / ENVIRONMENT_ISSUE / playwright_unavailable" || no "(AC11) lines: $(ev_field "$RD5" 'select(.event == "ac") | [.ac_id, .verdict, .classification, .reason] | join("|")')"
+[ "$(ev_field "$RD5" 'select(.event == "ac") | .ac_id' | tr '\n' ',')" = "AC1,AC2,AC3," ] && ok "(AC11) in acs.json order AC1,AC2,AC3" || no "(AC11) order: $(ev_field "$RD5" 'select(.event == "ac") | .ac_id' | tr '\n' ',')"
+[ ! -e "$RD5/playwright.config.mjs" ] && [ ! -e "$RD5/report.json" ] && ok "(AC11) no config and no report written — the harness was never reached" || no "(AC11) config/report written despite no harness"
+[ "$(calls_count "$T5")" -eq 1 ] && ok "(AC11) walk made no executor call (call log still the one assert-non-prod)" || no "(AC11) calls: $(cat "$T5/calls.log")"
+grep -q '^PASS: 0 · FAIL: 0 · BLOCKED: 3 · NOT_VERIFIABLE: 0 · total: 3$' "$RD5/summary.md" && ok "(AC11) counts row BLOCKED: 3 · total: 3" || no "(AC11) counts row: $(grep '^PASS: ' "$RD5/summary.md")"
+python3 "$T5/bin/validate-verify-evidence.py" "$RD5/evidence.jsonl" >/dev/null 2>&1 && ok "(AC11) the store re-validates" || no "(AC11) store invalid: $(python3 "$T5/bin/validate-verify-evidence.py" "$RD5/evidence.jsonl" 2>&1)"
+run_bin "$T5" walk "$T5/repo/.supervisor/verify/no-such-run" --repo .
+rc=$?
+[ "$rc" -eq 2 ] && grep -qF '[run_dir_missing]' "$LAST_ERR" && ok "(AC11) walk on a missing run dir → exit 2 [run_dir_missing]" || no "(AC11) missing run dir: rc=$rc"
+
+# ============================================================================
+echo "== (PW) obtain @playwright/test + chromium into the test cache (idempotent) =="
+if acquire_playwright; then
+  ok "(PW) @playwright/test $("$PW_CACHE/node_modules/.bin/playwright" --version 2>/dev/null | tr -d '\n') + chromium under $PW_CACHE"
+elif [ -n "${CI:-}" ]; then
+  no "(AC11) playwright_install_failed: $PW_SKIP"
+else
+  echo "  SKIP (playwright_install_failed: $PW_SKIP) — browser arms AC3 / AC4 / NS skipped; the other arms decide the exit"
+fi
+
+if [ "$PW_READY" -eq 1 ]; then
+  # ==========================================================================
+  echo "== (AC3) healthy app: both template specs PASS with .png artifacts, counts 2/0/0/0/2 =="
+  PORT_OK="$(free_port)"
+  if start_app "$PORT_OK"; then
+    T6="$(mktmp)"; stage_browser "$T6" "http://127.0.0.1:$PORT_OK"; RD6="$RD_B"
+    write_specs "$RD6/specs"
+    run_bin "$T6" walk "$RD6" --repo .
+    rc=$?
+    [ "$rc" -eq 0 ] && ok "(AC3) walk → exit 0" || no "(AC3) walk: rc=$rc err=$(cat "$LAST_ERR")"
+    [ -f "$RD6/playwright.config.mjs" ] && grep -qF "baseURL: \"http://127.0.0.1:$PORT_OK\"" "$RD6/playwright.config.mjs" \
+      && ok "(AC3) per-run playwright.config.mjs generated with the contract's base_url" || no "(AC3) config: $(cat "$RD6/playwright.config.mjs" 2>/dev/null)"
+    [ -s "$RD6/report.json" ] && jq -e '.stats' "$RD6/report.json" >/dev/null 2>&1 && ok "(AC3) report.json is the JSON reporter's output" || no "(AC3) no reporter output"
+    [ "$(ac_lines "$RD6")" -eq 2 ] && ok "(AC3) EXACTLY two ac lines" || no "(AC3) $(ac_lines "$RD6") ac lines: $(ev_field "$RD6" 'select(.event == "ac") | [.ac_id, .verdict, .reason] | join("|")')"
+    [ "$(ev_field "$RD6" 'select(.event == "ac") | [.ac_id, .verdict] | join("=")' | tr '\n' ',')" = "AC1=PASS,AC2=PASS," ] \
+      && ok "(AC3) AC1 PASS and AC2 PASS" || no "(AC3) verdicts: $(ev_field "$RD6" 'select(.event == "ac") | [.ac_id, .verdict, .reason] | join("|")')"
+    for id in AC1 AC2; do
+      png="$(ac_get "$RD6" "$id" '.artifacts | map(select(endswith(".png"))) | first // ""')"
+      [ -n "$png" ] && [ -f "$RD6/$png" ] && ok "(AC3) $id has a .png artifact that EXISTS under <run_dir>/ ($png)" || no "(AC3) $id .png artifact: '$png' (artifacts: $(ac_get "$RD6" "$id" '.artifacts | join(",")'))"
+      case "$png" in /*|../*|*/../*) no "(AC3) $id artifact path is not relative to <run_dir>/: $png" ;; *) ok "(AC3) $id artifact path is relative" ;; esac
+    done
+    [ "$(ac_get "$RD6" AC1 '.classification')" = "null" ] && ok "(AC3) a PASS carries a null classification" || no "(AC3) AC1 classification: $(ac_get "$RD6" AC1 '.classification')"
+    [ "$(ac_get "$RD6" AC1 '.text')" = "$(jq -r '.acs[0].text' "$RD6/acs.json")" ] && ok "(AC3) ac text taken from acs.json by ac_id" || no "(AC3) AC1 text: $(ac_get "$RD6" AC1 '.text')"
+    grep -q '^PASS: 2 · FAIL: 0 · BLOCKED: 0 · NOT_VERIFIABLE: 0 · total: 2$' "$RD6/summary.md" \
+      && ok "(AC3) counts row PASS: 2 · FAIL: 0 · BLOCKED: 0 · NOT_VERIFIABLE: 0 · total: 2" || no "(AC3) counts row: $(grep '^PASS: ' "$RD6/summary.md")"
+    [ "$(calls_count "$T6")" -eq 1 ] && ok "(AC3) walk made no executor call" || no "(AC3) calls: $(cat "$T6/calls.log")"
+    python3 "$T6/bin/validate-verify-evidence.py" "$RD6/evidence.jsonl" >/dev/null 2>&1 && ok "(AC3) the store re-validates" || no "(AC3) store invalid: $(python3 "$T6/bin/validate-verify-evidence.py" "$RD6/evidence.jsonl" 2>&1)"
+    run_bin "$T6" finish "$RD6"
+    rc=$?
+    [ "$rc" -eq 0 ] && [ "$(cat "$LAST_OUT")" = "PASS: 2 · FAIL: 0 · BLOCKED: 0 · NOT_VERIFIABLE: 0 · total: 2" ] && ok "(AC3) finish prints the same row (what VERIFY_RESULT.counts copies)" || no "(AC3) finish: rc=$rc out=$(cat "$LAST_OUT")"
+  else
+    no "(AC3) fixture app did not answer /health on port $PORT_OK"
+  fi
+
+  # ==========================================================================
+  echo "== (AC4) mutation control: broken form flips PASS to FAIL =="
+  PORT_BAD="$(free_port)"
+  if start_app "$PORT_BAD" --broken; then
+    healthy="$(curl -s -d v=hello "http://127.0.0.1:$PORT_OK/submit")"
+    broken="$(curl -s -d v=hello "http://127.0.0.1:$PORT_BAD/submit")"
+    gate=0
+    case "$healthy" in *'<p id="echo">hello</p>'*) gate=1 ;; esac
+    case "$broken" in *hello*) gate=0 ;; *'<p id="echo">wrong</p>'*) : ;; *) gate=0 ;; esac
+    if [ "$gate" -eq 1 ]; then
+      ok "(AC4) gate: healthy /submit echoes hello; --broken /submit renders wrong (the mutant differs)"
+      T7="$(mktmp)"; stage_browser "$T7" "http://127.0.0.1:$PORT_BAD"; RD7="$RD_B"
+      write_specs "$RD7/specs"
+      run_bin "$T7" walk "$RD7" --repo .
+      rc=$?
+      [ "$rc" -eq 0 ] && ok "(AC4) walk → exit 0 (the reporter is the oracle; a FAIL is a recorded fact, not a harness error)" || no "(AC4) walk: rc=$rc err=$(cat "$LAST_ERR")"
+      [ "$(ac_lines "$RD7")" -eq 2 ] && ok "(AC4) EXACTLY two ac lines" || no "(AC4) $(ac_lines "$RD7") ac lines"
+      [ "$(ac_get "$RD7" AC2 '.verdict')" = "FAIL" ] && ok "(AC4) AC2 verdict FAIL — observed, not claimed" || no "(AC4) AC2 verdict: $(ac_get "$RD7" AC2 '.verdict') reason: $(ac_get "$RD7" AC2 '.reason')"
+      [ "$(ac_get "$RD7" AC2 '.classification')" = "REAL_BUG" ] && ok "(AC4) AC2 classification REAL_BUG" || no "(AC4) AC2 classification: $(ac_get "$RD7" AC2 '.classification')"
+      reason="$(ac_get "$RD7" AC2 '.reason // ""')"
+      [ -n "$reason" ] && [ "$reason" != "null" ] && ok "(AC4) AC2 reason non-empty: $reason" || no "(AC4) AC2 reason empty"
+      case "$reason" in *"$ESC"*) no "(AC4) reason carries ANSI escapes" ;; *"$NL"*) no "(AC4) reason is more than one line" ;; *) ok "(AC4) reason is ONE ANSI-free line (the first line of Playwright's error)" ;; esac
+      case "$reason" in *toHaveText*) ok "(AC4) reason names the contradicted assertion (toHaveText)" ;; *) no "(AC4) reason does not name toHaveText: $reason" ;; esac
+      html="$(ac_get "$RD7" AC2 '.artifacts | map(select(endswith(".html"))) | first // ""')"
+      png="$(ac_get "$RD7" AC2 '.artifacts | map(select(endswith(".png"))) | first // ""')"
+      [ -n "$html" ] && [ -f "$RD7/$html" ] && ok "(AC4) AC2 has a page-body .html artifact that EXISTS ($html)" || no "(AC4) AC2 .html artifact: '$html' (artifacts: $(ac_get "$RD7" AC2 '.artifacts | join(",")'))"
+      [ -n "$html" ] && grep -qF '<p id="echo">wrong</p>' "$RD7/$html" 2>/dev/null && ok "(AC4) the .html artifact IS the broken page body (contains wrong)" || no "(AC4) .html artifact does not carry the broken echo"
+      [ -n "$png" ] && [ -f "$RD7/$png" ] && ok "(AC4) AC2 has a .png artifact that EXISTS ($png)" || no "(AC4) AC2 .png artifact: '$png'"
+      [ "$(ac_get "$RD7" AC1 '.verdict')" = "PASS" ] && ok "(AC4) AC1 stays PASS (the form still renders)" || no "(AC4) AC1 verdict: $(ac_get "$RD7" AC1 '.verdict')"
+      grep -q '^PASS: 1 · FAIL: 1 · BLOCKED: 0 · NOT_VERIFIABLE: 0 · total: 2$' "$RD7/summary.md" \
+        && ok "(AC4) counts row PASS: 1 · FAIL: 1 · BLOCKED: 0 · NOT_VERIFIABLE: 0 · total: 2" || no "(AC4) counts row: $(grep '^PASS: ' "$RD7/summary.md")"
+      python3 "$T7/bin/validate-verify-evidence.py" "$RD7/evidence.jsonl" >/dev/null 2>&1 && ok "(AC4) the store re-validates" || no "(AC4) store invalid: $(python3 "$T7/bin/validate-verify-evidence.py" "$RD7/evidence.jsonl" 2>&1)"
+    else
+      no "(AC4) UNPROVEN — the --broken server does not differ from the healthy one (healthy: $healthy / broken: $broken); the mutation control cannot prove anything"
+    fi
+  else
+    no "(AC4) --broken fixture app did not answer /health on port $PORT_BAD"
+  fi
+
+  # ==========================================================================
+  echo "== (NS) no_spec: decided ACs are left alone; an AC with neither spec nor verdict is BLOCKED no_spec =="
+  T8="$(mktmp)"; stage "$T8"; contract "$T8" true "http://127.0.0.1:$PORT_OK"
+  ln -s "$PW_CACHE/node_modules" "$T8/repo/node_modules"
+  run_bin "$T8" preflight "$REQ" --repo .
+  RD8="$(last_run_dir)"
+  write_specs "$RD8/specs"
+  run_bin "$T8" verdict "$RD8" AC3 NOT_VERIFIABLE --reason "load/concurrency claim not observable through the UI"
+  run_bin "$T8" walk "$RD8" --repo .
+  rc=$?
+  [ "$rc" -eq 0 ] && ok "(NS) walk → exit 0" || no "(NS) walk: rc=$rc err=$(cat "$LAST_ERR")"
+  [ "$(ac_get "$RD8" AC3 '.verdict')" = "NOT_VERIFIABLE" ] && [ "$(ev_field "$RD8" 'select(.event == "ac" and .ac_id == "AC3") | .verdict' | grep -c .)" -eq 1 ] \
+    && ok "(NS) an AC already decided by verdict (AC3 NOT_VERIFIABLE) is left alone — no no_spec line" || no "(NS) AC3 lines: $(ev_field "$RD8" 'select(.event == "ac" and .ac_id == "AC3") | .verdict' | tr '\n' ',')"
+  grep -q '^PASS: 2 · FAIL: 0 · BLOCKED: 0 · NOT_VERIFIABLE: 1 · total: 3$' "$RD8/summary.md" \
+    && ok "(NS) counts row PASS: 2 · FAIL: 0 · BLOCKED: 0 · NOT_VERIFIABLE: 1 · total: 3 (AC5's row over the AC3 fixture)" || no "(NS) counts row: $(grep '^PASS: ' "$RD8/summary.md")"
+  sleep 1
+  run_bin "$T8" preflight "$REQ" --repo .
+  RD9="$(last_run_dir)"
+  write_specs "$RD9/specs"
+  run_bin "$T8" walk "$RD9" --repo .
+  rc=$?
+  [ "$rc" -eq 0 ] && [ "$(ac_get "$RD9" AC3 '[.verdict, .classification, .reason] | join("|")')" = "BLOCKED|ENVIRONMENT_ISSUE|no_spec" ] \
+    && ok "(NS) an AC with neither a spec nor a verdict line → BLOCKED / ENVIRONMENT_ISSUE / no_spec" || no "(NS) rc=$rc AC3: $(ac_get "$RD9" AC3 '[.verdict, .classification, .reason] | join("|")')"
+  grep -q '^PASS: 2 · FAIL: 0 · BLOCKED: 1 · NOT_VERIFIABLE: 0 · total: 3$' "$RD9/summary.md" && ok "(NS) counts row PASS: 2 · BLOCKED: 1 · total: 3" || no "(NS) counts row: $(grep '^PASS: ' "$RD9/summary.md")"
+  sleep 1
+  run_bin "$T8" preflight "$REQ" --repo .
+  RD10="$(last_run_dir)"
+  run_bin "$T8" walk "$RD10" --repo .
+  rc=$?
+  [ "$rc" -eq 0 ] && [ "$(ev_field "$RD10" 'select(.event == "ac") | [.verdict, .reason] | join("|")' | sort -u)" = "BLOCKED|no_spec" ] && [ "$(ac_lines "$RD10")" -eq 3 ] \
+    && ok "(NS) a run with NO specs at all → every AC BLOCKED no_spec, exit 0" || no "(NS) no specs: rc=$rc lines: $(ev_field "$RD10" 'select(.event == "ac") | [.ac_id, .verdict, .reason] | join("|")' | tr '\n' ' ')"
+  [ ! -e "$RD10/report.json" ] && [ ! -e "$RD10/playwright.config.mjs" ] && ok "(NS) no browser launched for a spec-less run (no report.json, no config)" || no "(NS) a spec-less run produced a report/config"
+fi
 
 # --- prompt-surface arms (Subtask 3 appends below this line) ---
 

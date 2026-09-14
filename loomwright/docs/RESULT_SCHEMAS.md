@@ -2785,6 +2785,56 @@ VERIFY_RESULT:
 (The markdown bullet form `## VERIFY_RESULT` / `- key: value` is accepted equally by the parser; a nested
 `counts` in bullet form is written either as the flow mapping above or as plain indented `key: value` lines.)
 
+### Specs and reporter ingest
+
+How `verify-run.sh walk <run_dir> [--repo <dir>] [--base-url <url>]` turns the agent-authored specs into `ac` lines.
+The specs live at `<run_dir>/specs/<ac_id>.spec.ts` (one per AC; `skills/verify-walkthrough/SKILL.md` owns the
+derivation rules and the spec template). `walk` writes a per-run `<run_dir>/playwright.config.mjs` (`testDir`
+= the specs dir, `outputDir` = `<run_dir>/test-results`, `reporter: [['json', {outputFile: '<run_dir>/report.json'}]]`,
+`workers: 1`, `retries: 0`, `timeout: 30000`, `use: {baseURL, screenshot: 'on', trace: 'on', video: 'off'}` — `baseURL`
+is the `--base-url` flag, else the contract's `base_url` through `read-verify.sh`), runs `npx --no-install playwright
+test --config <that file>` FROM THE TARGET REPO (the project under test owns its Playwright install; the plugin never
+installs one), and then reads `report.json`. **The run's exit status is ignored — the reporter file is the oracle**
+(stdout / stderr are kept beside it as `playwright.stdout` / `playwright.stderr`).
+
+**Title convention.** A spec is ingested iff its title starts with `[ACn]` (`^\[(AC[0-9]+)\]`); the captured id
+must be an `ac_id` of `<run_dir>/acs.json` (a title naming an id the ticket does not have is named on stderr and
+skipped — `ac_id_unknown`). The LAST result of the LAST test under that title decides (`retries: 0`, so normally
+the only one). Two specs with the same `[ACn]` both append; the latest-per-`ac_id` rule of `summary-build` then
+makes the later file's verdict the counted one.
+
+**Reporter → verdict mapping** (the `status` of that last result; `classification` per the `ac` rules of
+§VERIFY_EVIDENCE):
+
+| reporter result | verdict | classification | `reason` |
+|---|---|---|---|
+| `passed` (test `expected`) | `PASS` | `null` | none |
+| `failed` / `timedOut` / `interrupted` whose first error line names a navigation or connection failure — `net::ERR_`, `ECONNREFUSED`, a `page.goto` timeout | `BLOCKED` | `ENVIRONMENT_ISSUE` | the first line of `errors[0].message`, ANSI-stripped |
+| any other `failed` / `timedOut` / `interrupted` | `FAIL` | `REAL_BUG` | the first line of `errors[0].message`, ANSI-stripped (`spec_<status>` if the reporter carried no message) |
+| `skipped` | `BLOCKED` | `ENVIRONMENT_ISSUE` | `spec_skipped` |
+| a spec with no result at all | `BLOCKED` | `ENVIRONMENT_ISSUE` | `spec_not_run` |
+
+`steps` is the result's `steps[].title` list (Playwright only reports `test.step()` steps there; it may be empty).
+
+**Attachment → artifact copy rule.** Every attachment of that result lands in `<run_dir>/artifacts/<ac_id>/` and
+is recorded in `artifacts[]` RELATIVE to `<run_dir>/`: a `path` attachment (Playwright's own `screenshot` → `.png`,
+`trace` → `trace.zip`, `error-context` → `.md`) is COPIED under its basename (an index prefix on a name collision);
+a `body` attachment — base64 in the reporter, which is how the template's `testInfo.attach('page-body', {body:
+await page.content(), contentType: 'text/html'})` and `response-<status>` arrive — is DECODED to `<name>.<ext>` with
+the extension from `contentType` (`text/html` → `.html`, `text/plain` → `.txt`, `application/json` → `.json`,
+otherwise `.bin`). With `screenshot: 'on'` every ingested line therefore carries at least one `.png`; a FAIL from
+the template additionally carries the `page-body.html` the seam test's mutation control asserts on.
+
+**BLOCKED rules that need no browser.** Before any config is written, `walk` runs `npx --no-install playwright
+--version` from the repo; a non-zero status appends a `BLOCKED` / `ENVIRONMENT_ISSUE` / `playwright_unavailable`
+line for every AC in `acs.json` that has NO `ac` line yet and exits **3** (the app was reachable; the harness was
+not). A missing reporter file after the run (`reporter_missing: <first stderr line>`) is handled the same way,
+exit 3. After ingest, every AC that still has neither a spec-derived line nor a `verdict`-recorded one gets
+`BLOCKED` / `ENVIRONMENT_ISSUE` / `no_spec`; a run dir with no `*.spec.*` at all takes that path for every
+undecided AC WITHOUT launching a browser (exit 0, no `report.json`). An AC already decided — a `NOT_VERIFIABLE`
+recorded through `verdict`, a `BLOCKED` from an earlier pass — is never overwritten by a `no_spec` line. Every line,
+in every branch, goes through `verify-helpers.sh evidence-append`; `walk` never opens `evidence.jsonl` itself.
+
 ---
 
 ## Validation Location
