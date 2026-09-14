@@ -696,6 +696,78 @@ fi
 # --- prompt-surface arms (Subtask 3 appends below this line) ---
 
 # ============================================================================
+# Prompt-surface arms (Subtask 3): the command / skill / agent files that CONSUME verify-run.sh.
+# These are grep pins on committed prose — the "claim no check backs" class: every rule the brief
+# states about the prompt surfaces has a literal assertion here, so deleting the carve-out sentence,
+# re-wording the Level-1 rule, or adding a harness-specific browser tool fails this suite.
+# ============================================================================
+echo "== (AC7a) Level-1 rule byte-identical + exactly one carve-out sentence =="
+PLUGIN_DIR="$(cd "$HERE/.." && pwd)"
+AGENT="$PLUGIN_DIR/agents/qa-executor.md"
+VERIFY_CMD="$PLUGIN_DIR/commands/verify.md"
+QA_CMD="$PLUGIN_DIR/commands/qa-executor.md"
+SKILL="$PLUGIN_DIR/skills/verify-walkthrough/SKILL.md"
+for f in "$AGENT" "$VERIFY_CMD" "$QA_CMD" "$SKILL"; do
+  [ -f "$f" ] && ok "(AC7) prompt surface present: ${f#"$PLUGIN_DIR"/}" || no "(AC7) prompt surface missing: $f"
+done
+L1_RULE='- **No destructive actions:** Never submit forms during discovery, never click delete/logout/payment buttons'
+n="$(grep -cF -- "$L1_RULE" "$AGENT")"
+[ "$n" -eq 1 ] && ok "(AC7a) the Level-1 rule line is present exactly once, byte-identical" || no "(AC7a) Level-1 rule literal count: $n (expected 1)"
+CARVE="mode's mutation carve-out is defined in \`skills/verify-walkthrough/SKILL.md\` and applies there only"
+n="$(grep -cF -- "$CARVE" "$AGENT")"
+[ "$n" -eq 1 ] && ok "(AC7a) exactly one carve-out sentence points at the skill" || no "(AC7a) carve-out sentence count: $n (expected 1)"
+# The sentence must FOLLOW the rule: the line after the rule carries it (continuation line).
+after="$(grep -nF -- "$L1_RULE" "$AGENT" | cut -d: -f1)"
+[ -n "$after" ] && sed -n "$((after+1))p" "$AGENT" | grep -qF -- "$CARVE" \
+  && ok "(AC7a) the carve-out sentence is the line immediately following the rule" || no "(AC7a) carve-out sentence does not immediately follow the rule"
+
+echo "== (AC7b) --verify branch: keeps Phase 2, skips every other phase with the fixed reason =="
+grep -qF -- '### VERIFY MODE (`--verify <run_dir>`)' "$AGENT" && ok "(AC7b) the provides symbol \`### VERIFY MODE (--verify <run_dir>)\` header exists (H3)" || no "(AC7b) VERIFY MODE H3 header missing"
+for ph in 1 3 3.6 4 5 6 7 8 9 10 11 12; do
+  grep -qF -- "⊘ Phase $ph SKIPPED. Reason: --verify mode" "$AGENT" && ok "(AC7b) Phase $ph skipped with the --verify reason" || no "(AC7b) Phase $ph skip line missing"
+done
+grep -qF -- "⊘ Phase 13 audit SKIPPED. Reason: --verify mode" "$AGENT" && ok "(AC7b) Phase 13's audit half skipped; EMIT half kept" || no "(AC7b) Phase 13 audit skip line missing"
+n="$(grep -cF -- '⊘ Phase 2 SKIPPED. Reason: --verify mode' "$AGENT")"
+[ "$n" -eq 0 ] && ok "(AC7b) Phase 2 is NOT skipped in --verify mode" || no "(AC7b) Phase 2 carries a --verify skip line"
+grep -qF -- 'verify-run.sh walk <run_dir>' "$AGENT" && ok "(AC7b) the branch shells out to verify-run.sh walk" || no "(AC7b) no verify-run.sh walk shell-out in the agent"
+grep -qF -- 'verify-run.sh finish <run_dir>' "$AGENT" && ok "(AC7b) the branch shells out to verify-run.sh finish" || no "(AC7b) no verify-run.sh finish shell-out in the agent"
+grep -qF -- 'VERIFY_RESULT:' "$AGENT" && grep -qF -- 'counts: {pass:' "$AGENT" \
+  && ok "(AC7b) VERIFY_RESULT emission template present with a counts object" || no "(AC7b) VERIFY_RESULT template missing"
+grep -qF -- 'skills/verify-walkthrough/SKILL.md' "$AGENT" && ok "(AC7b) the agent Reads the skill at mode entry" || no "(AC7b) agent never names the skill"
+# Read on demand, NOT preloaded: the frontmatter skills: list must not carry it (token budget, AC7d).
+fm="$(awk 'NR==1 && /^---$/ {c=1; next} c==1 && /^---$/ {exit} c==1 {print}' "$AGENT")"
+printf '%s\n' "$fm" | grep -q -- '- verify-walkthrough' \
+  && no "(AC7d) verify-walkthrough is PRELOADED in the agent frontmatter (budget breach risk)" || ok "(AC7d) verify-walkthrough is NOT in the frontmatter skills: list (Read on demand)"
+
+echo "== (AC7c) no harness-specific browser tool on any of the four verify surfaces =="
+for f in "$AGENT" "$VERIFY_CMD" "$SKILL" "$RUNNER"; do
+  n="$(grep -cE 'Claude_Browser|computer-use|mcp__' "$f")"
+  [ "$n" -eq 0 ] && ok "(AC7c) ${f#"$PLUGIN_DIR"/}: 0 harness-browser-tool mentions" || no "(AC7c) ${f#"$PLUGIN_DIR"/}: $n harness-browser-tool mentions"
+done
+
+echo "== (AC5-skill) derivation fixtures + the four verdicts =="
+grep -qF -- '### Derivation fixtures' "$SKILL" && ok "(AC5) the skill carries a \`### Derivation fixtures\` table" || no "(AC5) no \`### Derivation fixtures\` header in the skill"
+grep -F -- 'under 200 concurrent users' "$SKILL" | grep -qF -- 'NOT_VERIFIABLE' \
+  && ok "(AC5) the concurrency row (\`under 200 concurrent users\`) maps to NOT_VERIFIABLE on the same line" || no "(AC5) concurrency row missing or not NOT_VERIFIABLE"
+n="$(grep -cE '^\| Given .*\| (`?\[AC[0-9n]+\]`?|none) ' "$SKILL")"
+[ "$n" -ge 5 ] && ok "(AC5) ≥5 derivation-fixture rows ($n)" || no "(AC5) only $n derivation-fixture rows (need ≥5)"
+grep -qF -- 'pass_requires_observation' "$SKILL" && ok "(AC5) the skill states PASS comes only from walk's ingest" || no "(AC5) skill does not name pass_requires_observation"
+grep -qF -- 'test.afterEach' "$SKILL" && grep -qF -- "attach('page-body'" "$SKILL" \
+  && ok "(AC5) the spec template carries the afterEach page-body attach" || no "(AC5) spec template lacks the afterEach page-body attach"
+grep -qF -- 'Payment, logout and account-deletion actions stay forbidden everywhere' "$SKILL" \
+  && ok "(AC5) V7 carve-out keeps payment/logout/account-delete forbidden" || no "(AC5) carve-out's forbidden set missing"
+grep -qF -- 'version: "1.0.0"' "$SKILL" && ok "(AC5) skill frontmatter version pinned at 1.0.0" || no "(AC5) skill frontmatter version not 1.0.0"
+
+echo "== (AC10-command) /verify surface + commands/qa-executor.md sync =="
+grep -qF -- '/loomwright:verify' "$VERIFY_CMD" && ok "(cmd) commands/verify.md names the namespaced /loomwright:verify form" || no "(cmd) /loomwright:verify missing from commands/verify.md"
+grep -qF -- 'verify-run.sh" preflight' "$VERIFY_CMD" || grep -qF -- 'verify-run.sh preflight' "$VERIFY_CMD" \
+  && ok "(cmd) commands/verify.md shells out to verify-run.sh preflight" || no "(cmd) commands/verify.md does not shell to verify-run.sh preflight"
+grep -qF -- 'subagent_type: "loomwright:qa-executor"' "$VERIFY_CMD" && ok "(cmd) commands/verify.md spawns loomwright:qa-executor via Task" || no "(cmd) Task spawn of loomwright:qa-executor missing"
+grep -qF -- '--verify <run_dir>' "$VERIFY_CMD" && ok "(cmd) commands/verify.md passes --verify <run_dir> to the executor" || no "(cmd) --verify <run_dir> missing from commands/verify.md"
+grep -qF -- '--verify' "$QA_CMD" && ok "(cmd) commands/qa-executor.md mentions --verify" || no "(cmd) commands/qa-executor.md does not mention --verify"
+
+
+# ============================================================================
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

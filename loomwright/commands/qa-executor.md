@@ -26,6 +26,7 @@ The QA Executor agent has its own tools, budget tracking, and multi-phase Level 
 
 ```
 /qa-executor [--depth smoke|functional] [--url http://...] [--plan] [--scope feature:{name}] [--continue] [--skip-strategy] [--strict-discovery] [--auto-discover] [--rounds N] [--coverage PCT] [--auth-state ./auth.json]
+/qa-executor --verify <run_dir>          # VERIFY MODE — normally reached via /verify <ticket>, which mints <run_dir> first
 ```
 
 ## Parameters
@@ -41,6 +42,7 @@ The QA Executor agent has its own tools, budget tracking, and multi-phase Level 
 - **--rounds** — Max debate rounds (default: 1 at L1, cap: 3). Higher values only meaningful at L2+
 - **--coverage** — Target coverage percentage (default: risk-based — HIGH 85%, MEDIUM 70%, LOW 50%)
 - **--auth-state** — Path to pre-authenticated Playwright storageState file (for OAuth/SSO apps)
+- **--verify <run_dir>** — VERIFY MODE: walk ONE ticket's acceptance criteria through the running app using the run dir `verify-run.sh preflight` minted (`acs.json` + `evidence.jsonl` with the passing non-prod proof). Runs Phase 2 only, skips every other phase (`⊘ Phase {N} SKIPPED. Reason: --verify mode`), authors one `[ACn]` spec per verifiable AC, shells out to `verify-run.sh walk` / `finish`, and emits a `VERIFY_RESULT` block instead of QA_RESULT. Protocol: `skills/verify-walkthrough/SKILL.md`. Normally reached via `/verify <ticket>` (which runs `preflight` and spawns the executor); passing it by hand requires an existing `<run_dir>`.
 
 ## What This Does
 
@@ -55,6 +57,8 @@ The QA Executor agent has its own tools, budget tracking, and multi-phase Level 
 9. Tracks coverage (routes, APIs, interactions discovered vs tested)
 10. Reports bugs with failure classification (REAL_BUG vs DISCOVERY_GAP vs ENVIRONMENT_ISSUE)
 11. Emits MISSING_FUNCTIONALITY_REPORT + QA_RESULT
+
+**`--verify` mode** replaces steps 1–11 with: Playwright presence → `verify-env.sh start`/`seed`/`auth-probe` → spec authoring → `verify-run.sh walk` → `reset`/`stop` → `finish` → VERIFY_RESULT. It is normally reached via `/verify <ticket>`, not invoked directly — see `/verify`.
 
 ## Requirements
 
@@ -76,6 +80,7 @@ Budget zones: GREEN 0-60%, YELLOW 60-80%, ORANGE 80-92%, RED 92%+
 
 ## See Also
 
+- `/verify` — Walk a ticket's acceptance criteria through the running app (spawns this agent in `--verify` mode)
 - `/qa-strategist` — Plan risk-based test strategy independently
 - `/code-reviewer` — Review code changes
 - `/agent-help` — List all commands
