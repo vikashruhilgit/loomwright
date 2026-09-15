@@ -124,8 +124,8 @@ Each basis is tuned by environment variables, all optional.
 - `loomwright/scripts/propose-work.sh` — the ledger basis, guarded by `loomwright/scripts/test-propose-work.sh`.
 - `loomwright/scripts/propose-from-verify.sh` — the verify basis, guarded by `loomwright/scripts/test-propose-from-verify.sh`.
 - `loomwright/scripts/propose-domain.sh` — the domain basis, guarded by `loomwright/scripts/test-propose-domain.sh`.
-- `loomwright/scripts/propose-common.sh` — the shared blast-radius guard (`pc_guarded_write`) the verify basis sources; the ledger and domain bases keep their own reconciled inline copies (see that file's header for why).
+- `loomwright/scripts/propose-common.sh` — the shared blast-radius guard (`pc_guarded_write`) all three bases source; never copied inline.
 - `loomwright/scripts/read-product.sh` / `propose-product.sh` — the product store's reader and its propose-only bootstrap.
-- `/verify` — the run this basis reads from; auto-dispatches `--from-verify` at its own Report step on ≥1 FAIL.
+- `/verify` — the run this basis reads from; auto-dispatches `--from-verify` at its own Report step on ≥1 FAIL or ≥1 issue line.
 - `/insights` — the run scoreboard over the same session logs.
 - `/automate` — the engine that walks a *human-promoted* queue to reviewed PRs.

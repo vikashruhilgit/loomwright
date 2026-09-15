@@ -1198,6 +1198,20 @@ grep -qF -- '/verify --resume <run_id>' "$VERIFY_CMD" && ok "(AC4) the pause ins
 n="$(grep -cF -- 'pause_reason' "$VERIFY_CMD")"
 [ "$n" -ge 1 ] && ok "(AC4) commands/verify.md reads VERIFY_RESULT.pause_reason ($n mentions)" || no "(AC4) commands/verify.md never mentions pause_reason"
 
+echo "== (AC-propose) commands/verify.md step 5 auto-dispatch trigger fires on issue-only runs too =="
+# propose-from-verify.sh drafts every `issue` line unconditionally, regardless of any AC's
+# verdict, so a run with 0 FAILs and >=1 issue line WOULD still produce a draft - the step 5
+# trigger must not be FAIL-only, or it would silently never invoke the script for that run.
+grep -qF -- '.event == "issue"' "$VERIFY_CMD" \
+  && ok "(AC-propose) the auto-dispatch jq trigger also matches issue-only lines" \
+  || no "(AC-propose) the auto-dispatch jq trigger checks only FAIL ac lines - an issue-only run never auto-dispatches propose-from-verify.sh"
+grep -qF -- '.event == "ac" and .verdict == "FAIL"' "$VERIFY_CMD" \
+  && ok "(AC-propose) the trigger still matches FAIL ac lines (the issue-only fix did not drop the original arm)" \
+  || no "(AC-propose) the FAIL ac arm of the auto-dispatch trigger is missing from commands/verify.md"
+grep -qF -- 'propose-from-verify.sh" "$run_dir"' "$VERIFY_CMD" \
+  && ok "(AC-propose) the trigger still dispatches propose-from-verify.sh against \$run_dir" \
+  || no "(AC-propose) the propose-from-verify.sh dispatch line is missing from commands/verify.md"
+
 echo "== (AC8) agents/qa-executor.md auth-check/resume/pause wiring =="
 grep -qF -- 'verify-run.sh auth-check <run_dir> --repo <dir>' "$AGENT" && ok "(AC8) VERIFY MODE step shells out to verify-run.sh auth-check" || no "(AC8) auth-check shell-out missing from agents/qa-executor.md"
 n="$(grep -cF -- 'auth-probe: anonymous' "$AGENT")"

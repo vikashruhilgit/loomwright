@@ -76,10 +76,10 @@ Every deterministic step is a shell-out; the main thread never re-implements wha
 
    If the executor returned without a `VERIFY_RESULT` (turn limit, crash), print `summary.md` as-is and say the block is missing — the evidence lines already written are the checkpoint.
 
-   **Auto-dispatch `/propose --from-verify` on a `completed` / `aborted` run with ≥1 FAIL** (never on `paused` — the branch above already stopped before reaching this point for a paused run):
+   **Auto-dispatch `/propose --from-verify` on a `completed` / `aborted` run with ≥1 FAIL *or* ≥1 `issue` line** (never on `paused` — the branch above already stopped before reaching this point for a paused run): a run can find zero FAILs and still have carried standalone `issue` lines (propose-from-verify.sh drafts every `issue` line unconditionally, regardless of any AC's verdict), so the trigger must not be FAIL-only or an issue-only run silently never drafts what it otherwise would.
    ```bash
-   has_fail=$(jq -c 'select(.event == "ac" and .verdict == "FAIL")' "$run_dir/evidence.jsonl" | head -1)
-   [ -n "$has_fail" ] && bash "${CLAUDE_PLUGIN_ROOT}/scripts/propose-from-verify.sh" "$run_dir"
+   has_draftable=$(jq -c 'select((.event == "ac" and .verdict == "FAIL") or .event == "issue")' "$run_dir/evidence.jsonl" | head -1)
+   [ -n "$has_draftable" ] && bash "${CLAUDE_PLUGIN_ROOT}/scripts/propose-from-verify.sh" "$run_dir"
    ```
    This is exactly what `/propose --from-verify <run_id>` does (§`commands/propose.md`) — writing zero or more evidence-carrying drafts under `.supervisor/requirements/proposed/`, never enqueuing anything. `<run_dir>/summary.md`'s `## Proposals` section (derived, computed from `evidence.jsonl` alone) already states how many drafts were EXPECTED before this ever runs; print it alongside the counts row.
 
@@ -168,5 +168,5 @@ Where each verdict may come from — `PASS` / `FAIL` only from `walk`'s reporter
 - `/qa-executor` — the full discovery-driven L1 protocol (`--verify` is its narrow mode)
 - `${CLAUDE_PLUGIN_ROOT}/skills/verify-walkthrough/SKILL.md` — the protocol authority
 - `docs/RESULT_SCHEMAS.md` §VERIFY_ENV / §VERIFY_EVIDENCE / §VERIFY_RESULT — the three schemas a run touches
-- `/propose --from-verify <run_id>` (`${CLAUDE_PLUGIN_ROOT}/scripts/propose-from-verify.sh`) — turns this run's FAIL/issue lines into drafts; auto-dispatched at step 5 on ≥1 FAIL
+- `/propose --from-verify <run_id>` (`${CLAUDE_PLUGIN_ROOT}/scripts/propose-from-verify.sh`) — turns this run's FAIL/issue lines into drafts; auto-dispatched at step 5 on ≥1 FAIL or ≥1 issue line
 - `/agent-help` — list all commands
