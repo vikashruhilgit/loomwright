@@ -132,6 +132,28 @@ else
   no "verify-helpers.sh not found - AC2 cannot be evaluated"
 fi
 
+echo "== AC-supersede: a later PASS for the same ac_id must suppress a re-verified FAIL's draft =="
+# The script computes latest_by(.ac_id) BEFORE filtering (VERIFY_EVIDENCE's own "latest-per-ac_id"
+# rule) - a FAIL that was later re-verified as PASS must never still produce a draft from the
+# superseded FAIL line. Two ac lines for the SAME ac_id: first FAIL/REAL_BUG, then a later PASS.
+SUPERSEDE_RUN_ID="verify-20260915T000000Z-supersede"
+SUP_DIR="$(mktmp)/$SUPERSEDE_RUN_ID"
+mkdir -p "$SUP_DIR"
+cat > "$SUP_DIR/evidence.jsonl" << EOF
+{"schema_version":1,"ts":"2026-09-15T00:00:00Z","run_id":"$SUPERSEDE_RUN_ID","event":"run_start","ticket_path":".supervisor/requirements/example/01.md","ticket_kind":"requirement","branch":"feature/x","head_sha":"abc123","base_sha":"def456","env_contract_hash":null}
+{"schema_version":1,"ts":"2026-09-15T00:00:01Z","run_id":"$SUPERSEDE_RUN_ID","event":"ac","ac_id":"AC1","text":"AC1 text here","scope":"ticket","verdict":"FAIL","classification":"REAL_BUG","reason":"observed bug one","steps":[],"artifacts":["artifacts/AC1/a.png"]}
+{"schema_version":1,"ts":"2026-09-15T00:00:02Z","run_id":"$SUPERSEDE_RUN_ID","event":"ac","ac_id":"AC1","text":"AC1 text here","scope":"ticket","verdict":"PASS","classification":null,"reason":"resumed and verified for real","steps":[],"artifacts":["artifacts/AC1/pass.png"]}
+{"schema_version":1,"ts":"2026-09-15T00:00:03Z","run_id":"$SUPERSEDE_RUN_ID","event":"run_end","status":"completed"}
+EOF
+SUP_OUT="$(mktmp)/out-supersede"
+run_sut "$SUP_DIR" "$SUP_OUT"; rc_sup=$?
+[ "$rc_sup" -eq 0 ] && ok "AC-supersede: exit 0" || no "AC-supersede: exit $rc_sup"
+SUP_AC1_FILE="$(find "$SUP_OUT" -maxdepth 1 -name "verify-${SUPERSEDE_RUN_ID}-AC1-*.md" 2>/dev/null | head -1)"
+[ -z "$SUP_AC1_FILE" ] && ok "AC-supersede: no draft for AC1 - the later PASS supersedes the earlier FAIL" \
+  || no "AC-supersede: a draft was written for AC1 despite its later PASS - $SUP_AC1_FILE"
+[ "$(count_props "$SUP_OUT")" -eq 0 ] && ok "AC-supersede: zero drafts written for this run" \
+  || no "AC-supersede: expected zero drafts, got $(count_props "$SUP_OUT"): $(ls "$SUP_OUT" 2>/dev/null)"
+
 echo "== AC3/AC10: idempotency - re-running yields the same 3 files, no duplicates =="
 before="$(find "$OUT" -type f | LC_ALL=C sort)"
 run_sut "$RD" "$OUT"; rc2=$?
