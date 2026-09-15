@@ -423,6 +423,18 @@ rc=$?
   && ok "(I4-AC3) no pause line, no resume line" || no "(I4-AC3) pause/resume present: $(ev_field "$RD11" 'select(.event == "pause" or .event == "resume")')"
 
 # ============================================================================
+echo "== (I4-AC1u) auth-check: probe UNREACHABLE (nonzero rc, not just a wrong stdout string) -> same needs_auth/pause/exit-4 outcome =="
+sleep 1
+run_bin "$T10" preflight "$REQ" --repo .
+RD10u="$(last_run_dir)"
+: > "$T10/calls.log"
+STUB_AUTH=unreachable run_bin "$T10" auth-check "$RD10u" --repo .
+rc=$?
+[ "$rc" -eq 4 ] && ok "(I4-AC1u) auth-check: unreachable probe -> exit 4 (same as a wrong-stdout anonymous)" || no "(I4-AC1u) auth-check unreachable: rc=$rc err=$(cat "$LAST_ERR")"
+[ "$(ev_field "$RD10u" 'select(.event == "auth") | .state')" = "needs_auth" ] && ok "(I4-AC1u) a nonzero-rc probe still records auth/needs_auth, not a crash" || no "(I4-AC1u) auth line: $(ev_field "$RD10u" 'select(.event == "auth")')"
+[ "$(ev_field "$RD10u" 'select(.event == "pause") | .reason')" = "needs_auth" ] && ok "(I4-AC1u) pause/needs_auth line appended" || no "(I4-AC1u) pause line: $(ev_field "$RD10u" 'select(.event == "pause")')"
+
+# ============================================================================
 echo "== (I4-AC6) verify-helpers.sh first-unverdicted: first uncovered ac_id, empty when fully verdicted =="
 T11="$(mktmp)"; stage "$T11"; contract "$T11" true
 run_bin "$T11" preflight "$REQ" --repo .

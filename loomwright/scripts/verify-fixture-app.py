@@ -22,8 +22,8 @@ Routes:
   POST /login      any body ⇒ mints a session token, `Set-Cookie: session=<token>; Path=/`, 200
   GET  /probe      a valid `session` cookie ⇒ 200; missing / unknown / expired ⇒ 302 to `/login`
   GET  /protected  same auth check as `/probe` (302 when missing/unknown/expired) — but once
-                   `--auth-expire-after N` has been given and the Nth successful hit is reached, the
-                   session is marked EXPIRED and this AND EVERY LATER request presenting it gets 401
+                   `--auth-expire-after N` has been given and the Nth successful hit has been made,
+                   every request AFTER that (the N+1th onward) presenting that session gets 401
                    (not 302 — the app itself observed the session die, distinct from "no session")
   anything else    404
 
@@ -167,7 +167,7 @@ def main(argv):
                     help="mutation control: /submit renders `wrong` instead of the posted value")
     ap.add_argument("--auth-expire-after", type=int, default=None, metavar="N",
                     help="invalidate the session cookie after the Nth request to /protected "
-                         "(that request, and every later one presenting it, gets 401)")
+                         "(the Nth request still succeeds; every later one presenting it gets 401)")
     args = ap.parse_args(argv)
     server = HTTPServer((args.host, args.port), make_handler(args.broken, args.auth_expire_after))
     try:

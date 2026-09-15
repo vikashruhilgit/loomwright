@@ -55,7 +55,7 @@ Every deterministic step is a shell-out; the main thread never re-implements wha
 
 3. **Parse the run dir.** `run_dir=$(printf '%s\n' "$out" | tail -1 | sed -n 's/^run_dir=//p')` — `preflight` prints `run_dir=<path>` as its LAST stdout line. Empty ⇒ STOP with `run_dir_unparsed`.
 
-4. **Spawn the executor in `--verify` mode** (the ONLY child; it owns env start/seed/auth-probe/spec authoring/walk/reset/stop/finish):
+4. **Spawn the executor in `--verify` mode** (the ONLY child; it owns env start/seed/auth-check/spec authoring/walk/reset/stop/finish):
    ```
    Task(
      description: "Verify: <ticket basename> in <run_dir>",

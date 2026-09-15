@@ -148,7 +148,7 @@ Artifact paths are recorded RELATIVE to `<run_dir>/`; the store's validator reje
 
 - Reuse the QA Executor's **80-tool-call default**; `--verify` runs no discovery, so the budget is
   spent on spec authoring (about 2–3 calls per AC) plus the fixed shell-outs (`start`, `seed`,
-  `auth-probe`, `walk`, `reset`, `stop`, `finish`).
+  `auth-check`, `walk`, `reset`, `stop`, `finish`).
 - **The checkpoint IS the evidence already written.** A run that exhausts its budget or aborts mid-way
   still ends with `verify-run.sh finish <run_dir> --status aborted`: the `ac` lines recorded so far are
   counted, every AC without a line is left for the human to see as absent in `summary.md`, and
