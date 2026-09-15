@@ -32,7 +32,8 @@
 #                     comment created_at); the trailing "clean / recommend merge"
 #                     comment with no commits after it does NOT count; a vercel[bot]
 #                     "Deploy Preview" comment does NOT match the word-bounded review
-#                     marker (no phantom round, absent from review_comments); the
+#                     marker (review stem or "finding(s)"; no boundary inside
+#                     "preview" — no phantom round, absent from review_comments); the
 #                     narrow legacy is_review_fix regex does NOT match
 #                     "round-N"/"nit"/"reconcil" subjects; human chatter and
 #                     non-review bot comments count nowhere.

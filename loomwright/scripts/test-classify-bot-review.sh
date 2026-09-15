@@ -32,6 +32,19 @@
 #                  here. Case 7 also asserts a fast read emits NO false breadcrumb.
 #   9. slow / incomplete stdin -> a producer that dribbles a partial fragment and
 #                  never closes degrades to [] under the bounded read (no hang).
+#  10. PR #223 shape (REGRESSION, 2026-09-14) -> a claude[bot] issue comment opening
+#                  "Reviewed <sha>. … Two minor findings, both low severity: 1. … 2. …"
+#                  that NEVER contains the bare word "review" => IN. The fixture
+#                  self-checks that it really lacks `\breview\b`, so the case cannot
+#                  quietly turn into a re-run of case 1.
+#  11. MUTATION CONTROL for 10 -> a copy of the classifier with review_marker_re
+#                  reverted to the pre-fix `\breview\b` must classify the #223 body
+#                  OUT (proves the fixture exercises the widening, not something
+#                  else). Gated on "the mutant differs from the original" and on the
+#                  mutant carrying the exact old line; otherwise reported UNPROVEN.
+#  12. boundary negatives under the widened marker -> "Previewed the build",
+#                  "Deploy Preview", "Coverage: 92%" and a human "Reviewed …" all
+#                  stay OUT (no word boundary inside "preview"; author gate intact).
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -225,6 +238,76 @@ if [ "$B_TIMEDOUT" -eq 0 ] && [ "$B_RC" -eq 0 ] && printf '%s' "$(cat "$TMP/c9.o
   ok "slow/incomplete stdin: partial fragment degrades to [] under the bounded read, no hang"
 else
   no "(9) wrong (B_TIMEDOUT=$B_TIMEDOUT B_RC=$B_RC): $(head -c 120 "$TMP/c9.out")"
+fi
+
+# ---------------------------------------------------------------------------
+echo "== 10. PR #223 shape: 'Reviewed <sha>. … Two minor findings …' with NO bare 'review' word => classified IN =="
+# Verbatim opener + structure of the claude[bot] comment on
+# https://github.com/vikashruhilgit/loomwright/pull/223 (issuecomment 5668703118,
+# 2026-09-14) that the pre-fix `\breview\b` marker dropped. The body uses ONLY the
+# inflected "Reviewed" and the noun "findings" — never the bare lexeme.
+PR223_BODY='Reviewed 1d35b3f9fced6093b464b4c0bcb9e5e1665c497c. This is a large, carefully engineered PR (/verify, verify-run.sh, the VERIFY_RESULT schema/validator branch, the verify-walkthrough skill, and an unusually thorough seam test suite). I read verify-run.sh in full and verified the count/version bumps against the actual directories -- all consistent, no drift found.\n\nTwo minor findings, both low severity:\n\n1. Cross-reference precision drift -- attachment extension mapping (doc vs. implementation)\n- The doc lists four extension branches; the implementation has three more before the *) fallback.\n\n2. Missing branch coverage -- counts.* non-negative check in the new VERIFY_RESULT validator (rule V5)\n- No case supplies a negative count to hit the non-negative branch specifically.\n\nNothing else stood out as incorrect.'
+PR223="$(jq -cn --arg b "$PR223_BODY" '[{id: 5668703118, user: {login: "claude[bot]"}, html_url: "https://github.com/vikashruhilgit/loomwright/pull/223#issuecomment-5668703118", created_at: "2026-09-14T18:25:57Z", body: ($b | gsub("\\\\n"; "\n"))}]')"
+# Fixture self-check: it must NOT contain the bare word — otherwise this case is
+# just case 1 again and proves nothing about the widening.
+if printf '%s' "$PR223" | jq -e '.[0].body | test("\\breview\\b"; "i") | not' >/dev/null 2>&1; then
+  run_classify "$PR223"
+  if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | jq -e '
+      (type=="array") and (length==1)
+      and (.[0].id==5668703118)
+      and (.[0].user.login=="claude[bot]")
+      and (.[0].created_at=="2026-09-14T18:25:57Z")
+      and (.[0].body | startswith("Reviewed 1d35b3f"))
+    ' >/dev/null 2>&1; then
+    ok "PR #223 shape ('Reviewed <sha>' + 'findings', no bare 'review') classified IN with original object preserved"
+  else
+    no "(10) wrong (rc=$RUN_RC): $(printf '%s' "$RUN_OUT" | head -c 200)"
+  fi
+else
+  no "(10) fixture INVALID: body contains the bare word 'review' — the case would not exercise the widening"
+fi
+
+# ---------------------------------------------------------------------------
+echo "== 11. MUTATION CONTROL: classifier with review_marker_re reverted to pre-fix '\\breview\\b' => #223 body OUT =="
+# Build the mutant by rewriting ONLY the regex definition line back to the exact
+# pre-fix form. Both gates are load-bearing: (a) the mutant must DIFFER from the
+# original (a no-op sed would make this case vacuous — it would "pass" for the
+# wrong reason), and (b) the mutant must carry the exact old line (so we know the
+# rewrite landed where intended and nothing else moved). Either gate failing is
+# reported as UNPROVEN, which is a FAILURE, not a skip.
+MUTANT="$TMP/classify-mutant.sh"
+sed -e 's|^  def review_marker_re: .*$|  def review_marker_re: "\\\\breview\\\\b";|' "$CLASSIFY" > "$MUTANT"
+if cmp -s "$CLASSIFY" "$MUTANT"; then
+  no "(11) UNPROVEN: mutant is byte-identical to the original — the regex line was not rewritten"
+elif ! grep -qF 'def review_marker_re: "\\breview\\b";' "$MUTANT"; then
+  no "(11) UNPROVEN: mutant does not carry the exact pre-fix regex line: $(grep -n 'def review_marker_re' "$MUTANT")"
+else
+  MUT_OUT="$( printf '%s' "$PR223" | bash "$MUTANT" 2>/dev/null )"; MUT_RC=$?
+  ORIG_OUT="$( printf '%s' "$PR223" | bash "$CLASSIFY" 2>/dev/null )"
+  if [ "$MUT_RC" -eq 0 ] \
+     && printf '%s' "$MUT_OUT" | jq -e '(type=="array") and (length==0)' >/dev/null 2>&1 \
+     && printf '%s' "$ORIG_OUT" | jq -e '(type=="array") and (length==1)' >/dev/null 2>&1; then
+    ok "mutation control: pre-fix '\\breview\\b' drops the #223 body (OUT); widened marker keeps it (IN)"
+  else
+    no "(11) wrong: mutant rc=$MUT_RC out=$(printf '%s' "$MUT_OUT" | head -c 120) | original out=$(printf '%s' "$ORIG_OUT" | head -c 120)"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+echo "== 12. boundary negatives under the widened marker: preview/previewed/coverage/human-'Reviewed' all stay OUT =="
+# The stem alternation must not reintroduce the false positives the word boundary
+# was added to exclude, and the author gate must still drop a human "Reviewed …".
+NEG='[
+  {"id": 1201, "user": {"login": "vercel[bot]"},  "created_at": "2026-01-01T09:30:00Z", "body": "Deploy Preview for my-app ready!"},
+  {"id": 1202, "user": {"login": "netlify[bot]"}, "created_at": "2026-01-01T09:31:00Z", "body": "Previewed the build at https://example.test — previews are live."},
+  {"id": 1203, "user": {"login": "coverage[bot]"}, "created_at": "2026-01-01T09:00:00Z", "body": "Coverage: 92% (+0.3%)"},
+  {"id": 1204, "user": {"login": "alice"},        "created_at": "2026-01-01T11:00:00Z", "body": "Reviewed abc123. Two findings: 1. nit 2. nit"}
+]'
+run_classify "$NEG"
+if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | jq -e '(type=="array") and (length==0)' >/dev/null 2>&1; then
+  ok "preview / previewed / coverage bots and a human 'Reviewed …' all classified OUT under the widened marker"
+else
+  no "(12) wrong (rc=$RUN_RC): $RUN_OUT"
 fi
 
 echo

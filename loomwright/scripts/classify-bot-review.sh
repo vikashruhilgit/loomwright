@@ -52,9 +52,22 @@
 #   bot_author_re  — author login looks like a review bot: literal "claude" or
 #                    "claude[bot]", any "*[bot]" suffix, or a "github-actions"
 #                    prefix. Case-insensitive.
-#   review_marker_re — the RAW body carries a word-bounded "review" ANYWHERE
-#                    (Oniguruma \b), so "Deploy Preview"/"preview" can NEVER
-#                    match (no word boundary inside "preview"). Case-insensitive.
+#   review_marker_re — the RAW body carries, ANYWHERE, a word-bounded REVIEW STEM
+#                    ("review", "reviews", "reviewed", "reviewer(s)", "reviewing")
+#                    or "finding(s)" (Oniguruma \b). Case-insensitive. Widened from
+#                    the bare lexeme `\breview\b` after PR #223 (2026-09-14): the
+#                    claude[bot] issue comment opened "Reviewed <sha>. … Two minor
+#                    findings, both low severity: 1. … 2. …" and never used the bare
+#                    word, so a real finding was silently dropped by the
+#                    --until-mergeable drain — the exact #64 class the issue-comment
+#                    channel exists for. A marker that matches one inflection of a
+#                    word a reviewer conjugates freely is a false negative waiting to
+#                    happen; the stem closes the whole class, not one spelling. The
+#                    word boundary is still load-bearing: "Deploy Preview"/"preview"/
+#                    "previewed" can NEVER match (no boundary inside "preview").
+#                    False-positive posture is unchanged and deliberate — the drain's
+#                    validate-then-fix step dismisses an ungroundable candidate, so
+#                    a looser marker costs a validation, a tighter one loses a finding.
 #
 # These mirror the patterns previously inlined in pr-postmortem-gather.sh; that
 # script now pipes its fetched comments through this helper so the patterns are
@@ -111,7 +124,7 @@ esac
 OUTPUT="$(printf '%s' "$INPUT" | jq -c '
   # ---- SINGLE SOURCE OF TRUTH: bot-review classification regexes ----
   def bot_author_re: "^claude(\\[bot\\])?$|\\[bot\\]$|^github-actions";
-  def review_marker_re: "\\breview\\b";
+  def review_marker_re: "\\b(review(s|ed|er|ers|ing)?|findings?)\\b";
 
   if type=="array" then
     [ .[]?
