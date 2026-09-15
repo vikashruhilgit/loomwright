@@ -89,9 +89,21 @@ stage() {
      "$HERE/propose-verify.sh" "$T/bin/"
   # The executor STUB: tees "$*" to the call log; answers per STUB_NONPROD (pass|fail) with the real
   # executor's stdout line / bracketed stderr token so the runner's parsing is exercised for real.
+  # An `auth-probe` invocation is answered separately, per STUB_AUTH (authenticated|anonymous|
+  # unreachable, default anonymous) — additive, never reached by any pre-item-04 test (they only ever
+  # call assert-non-prod / start / stop through this stub).
   cat > "$T/bin/verify-env.sh" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${STUB_CALLS:?STUB_CALLS unset}"
+case "$1" in
+  auth-probe)
+    case "${STUB_AUTH:-anonymous}" in
+      authenticated) echo "authenticated"; exit 0 ;;
+      unreachable)   echo "verify-env: probe made no HTTP response [auth_probe_unreachable]" >&2; exit 1 ;;
+      *)             echo "anonymous"; exit 0 ;;
+    esac
+    ;;
+esac
 case "${STUB_NONPROD:-pass}" in
   fail) echo "verify-env: every non_prod_assert member failed (1 evaluated) — this target could be production; refusing [non_prod_assert_failed]" >&2; exit 1 ;;
   *)    echo "non-prod asserted"; exit 0 ;;
@@ -144,6 +156,17 @@ contract() {
   jq -n --arg cmd "$2" --arg url "${3:-http://localhost:3000}" '{start: null, base_url: $url, health: "/",
     auth: {method: "none", storage_state_path: null, probe_path: null},
     non_prod_assert: {cmd: $cmd}, seed: null, reset: null, stop: null}' > "$1/repo/.agent/verify.json"
+}
+
+# contract_auth <T> <method> [<storage_state_path>] [<probe_path>] — like contract() but with an
+# `auth.method: storage_state` object (item 04's auth-check arms); non_prod_assert.cmd is always
+# "true" since these arms drive the stub executor, never the real one.
+contract_auth() {
+  mkdir -p "$1/repo/.agent"
+  jq -n --arg method "$2" --arg ssp "${3:-ss.json}" --arg probe "${4:-/probe}" \
+    '{start: null, base_url: "http://localhost:3000", health: "/",
+      auth: {method: $method, storage_state_path: $ssp, probe_path: $probe},
+      non_prod_assert: {cmd: "true"}, seed: null, reset: null, stop: null}' > "$1/repo/.agent/verify.json"
 }
 
 # run_bin <T> <args…> — runs the STAGED runner (cwd = the fixture repo); stdout/stderr to fixed files;
@@ -351,6 +374,116 @@ run_bin "$T4" preflight "$REQ" --repo .; rcB=$?; RDB="$(last_run_dir)"
 [ "$(ev_lines "$RDA")" -eq 2 ] && [ "$(ev_lines "$RDB")" -eq 2 ] && ok "(RUN) each store holds exactly its own two lines (no merge)" || no "(RUN) A=$(ev_lines "$RDA") B=$(ev_lines "$RDB") lines"
 [ "$(calls_count "$T4")" -eq 2 ] && ok "(RUN) exactly one assert-non-prod call per preflight" || no "(RUN) calls: $(cat "$T4/calls.log")"
 
+# Item-04 auth-check / first-unverdicted arms below are tagged (I4-ACn) — item 03 already owns the
+# bare (AC1)/(AC2)/(AC3)/(AC6) tags above for ITS OWN acceptance criteria, and the sandboxed
+# (AC11i) self-check greps the literal substring `(AC3)` to prove no browser arm ran on a failed
+# install; a bare `(AC3)` tag here would be a false positive on that grep (and confusing regardless
+# of the grep) since these arms need no browser at all.
+# ============================================================================
+echo "== (I4-AC2) auth-check: auth.method none -> exit 0, ZERO executor calls, NO evidence line =="
+T9="$(mktmp)"; stage "$T9"; contract "$T9" true
+run_bin "$T9" preflight "$REQ" --repo .
+RD9="$(last_run_dir)"
+[ -n "$RD9" ] && [ -d "$RD9" ] || no "(I4-AC2) preflight fixture failed: $(cat "$LAST_ERR")"
+: > "$T9/calls.log"
+run_bin "$T9" auth-check "$RD9" --repo .
+rc=$?
+[ "$rc" -eq 0 ] && ok "(I4-AC2) auth-check: auth.method none -> exit 0" || no "(I4-AC2) auth-check method none: rc=$rc err=$(cat "$LAST_ERR")"
+[ "$(ev_field "$RD9" 'select(.event == "auth")' | grep -c .)" -eq 0 ] && ok "(I4-AC2) no auth evidence line appended for method none" || no "(I4-AC2) an auth line was appended: $(ev_field "$RD9" 'select(.event == "auth")')"
+[ "$(calls_count "$T9")" -eq 0 ] && ok "(I4-AC2) ZERO verify-env.sh calls of any kind for method none" || no "(I4-AC2) executor was called: $(cat "$T9/calls.log")"
+
+# ============================================================================
+echo "== (I4-AC1) auth-check: storage_state + anonymous probe -> auth/needs_auth + pause/needs_auth, exit 4, no ac line =="
+T10="$(mktmp)"; stage "$T10"; contract_auth "$T10" storage_state
+run_bin "$T10" preflight "$REQ" --repo .
+RD10="$(last_run_dir)"
+[ -n "$RD10" ] && [ -d "$RD10" ] || no "(I4-AC1) preflight fixture failed: $(cat "$LAST_ERR")"
+: > "$T10/calls.log"
+STUB_AUTH=anonymous run_bin "$T10" auth-check "$RD10" --repo .
+rc=$?
+[ "$rc" -eq 4 ] && ok "(I4-AC1) auth-check: needs_auth -> exit 4 (distinct from preflight's 1/2/3)" || no "(I4-AC1) auth-check needs_auth: rc=$rc err=$(cat "$LAST_ERR")"
+[ "$(ev_field "$RD10" 'select(.event == "auth") | .state')" = "needs_auth" ] && ok "(I4-AC1) exactly one auth/needs_auth line" || no "(I4-AC1) auth line: $(ev_field "$RD10" 'select(.event == "auth")')"
+[ "$(ev_field "$RD10" 'select(.event == "pause") | .reason')" = "needs_auth" ] && ok "(I4-AC1) exactly one pause/needs_auth line" || no "(I4-AC1) pause line: $(ev_field "$RD10" 'select(.event == "pause")')"
+[ "$(ev_field "$RD10" 'select(.event == "ac")' | grep -c .)" -eq 0 ] && ok "(I4-AC1) no ac line was written and no spec authored" || no "(I4-AC1) an ac line exists"
+grep -qF 'needs_auth' "$RD10/summary.md" && ok "(I4-AC1) summary.md rebuilt and names the pause" || no "(I4-AC1) summary.md: $(cat "$RD10/summary.md" 2>/dev/null)"
+grep -q '^auth-probe ' "$T10/calls.log" && ok "(I4-AC1) the call log shows the auth-probe call" || no "(I4-AC1) calls: $(cat "$T10/calls.log")"
+python3 "$T10/bin/validate-verify-evidence.py" "$RD10/evidence.jsonl" >/dev/null 2>&1 && ok "(I4-AC1) the store re-validates" || no "(I4-AC1) store invalid: $(python3 "$T10/bin/validate-verify-evidence.py" "$RD10/evidence.jsonl" 2>&1)"
+
+# ============================================================================
+echo "== (I4-AC3) auth-check: storage_state + authenticated probe -> one auth/authenticated line, exit 0, no pause/resume =="
+sleep 1
+run_bin "$T10" preflight "$REQ" --repo .
+RD11="$(last_run_dir)"
+: > "$T10/calls.log"
+STUB_AUTH=authenticated run_bin "$T10" auth-check "$RD11" --repo .
+rc=$?
+[ "$rc" -eq 0 ] && ok "(I4-AC3) auth-check: authenticated -> exit 0" || no "(I4-AC3) auth-check authenticated: rc=$rc err=$(cat "$LAST_ERR")"
+[ "$(ev_field "$RD11" 'select(.event == "auth") | .state')" = "authenticated" ] && ok "(I4-AC3) exactly one auth/authenticated line" || no "(I4-AC3) auth line: $(ev_field "$RD11" 'select(.event == "auth")')"
+[ "$(ev_field "$RD11" 'select(.event == "pause")' | grep -c .)" -eq 0 ] && [ "$(ev_field "$RD11" 'select(.event == "resume")' | grep -c .)" -eq 0 ] \
+  && ok "(I4-AC3) no pause line, no resume line" || no "(I4-AC3) pause/resume present: $(ev_field "$RD11" 'select(.event == "pause" or .event == "resume")')"
+
+# ============================================================================
+echo "== (I4-AC1u) auth-check: probe UNREACHABLE (nonzero rc, not just a wrong stdout string) -> same needs_auth/pause/exit-4 outcome =="
+sleep 1
+run_bin "$T10" preflight "$REQ" --repo .
+RD10u="$(last_run_dir)"
+: > "$T10/calls.log"
+STUB_AUTH=unreachable run_bin "$T10" auth-check "$RD10u" --repo .
+rc=$?
+[ "$rc" -eq 4 ] && ok "(I4-AC1u) auth-check: unreachable probe -> exit 4 (same as a wrong-stdout anonymous)" || no "(I4-AC1u) auth-check unreachable: rc=$rc err=$(cat "$LAST_ERR")"
+[ "$(ev_field "$RD10u" 'select(.event == "auth") | .state')" = "needs_auth" ] && ok "(I4-AC1u) a nonzero-rc probe still records auth/needs_auth, not a crash" || no "(I4-AC1u) auth line: $(ev_field "$RD10u" 'select(.event == "auth")')"
+[ "$(ev_field "$RD10u" 'select(.event == "pause") | .reason')" = "needs_auth" ] && ok "(I4-AC1u) pause/needs_auth line appended" || no "(I4-AC1u) pause line: $(ev_field "$RD10u" 'select(.event == "pause")')"
+
+# ============================================================================
+echo "== (I4-AC6) verify-helpers.sh first-unverdicted: first uncovered ac_id, empty when fully verdicted =="
+T11="$(mktmp)"; stage "$T11"; contract "$T11" true
+run_bin "$T11" preflight "$REQ" --repo .
+RD12="$(last_run_dir)"
+out="$(bash "$T11/bin/verify-helpers.sh" first-unverdicted "$RD12")"; rc=$?
+[ "$out" = "AC1" ] && [ "$rc" -eq 0 ] && ok "(I4-AC6) fresh run -> first-unverdicted prints AC1, exit 0" || no "(I4-AC6) fresh run: out='$out' rc=$rc"
+run_bin "$T11" verdict "$RD12" AC1 NOT_VERIFIABLE --reason x
+run_bin "$T11" verdict "$RD12" AC2 BLOCKED --reason y
+out="$(bash "$T11/bin/verify-helpers.sh" first-unverdicted "$RD12")"; rc=$?
+[ "$out" = "AC3" ] && [ "$rc" -eq 0 ] && ok "(I4-AC6) AC1+AC2 verdicted -> prints AC3, exit 0" || no "(I4-AC6) after 2: out='$out' rc=$rc"
+run_bin "$T11" verdict "$RD12" AC3 NOT_VERIFIABLE --reason z
+out="$(bash "$T11/bin/verify-helpers.sh" first-unverdicted "$RD12")"; rc=$?
+[ -z "$out" ] && [ "$rc" -eq 0 ] && ok "(I4-AC6) every ac_id verdicted -> prints NOTHING, exit 0 (not an error)" || no "(I4-AC6) fully covered: out='$out' rc=$rc"
+
+# ============================================================================
+echo "== (I4-FIX1u) first-unverdicted unit check (no browser): a FORCED pause-verdict reason does NOT count as verdicted =="
+# Same shape as the (I4-AC6) fixture above, but AC2's line carries one of the two FORCED-pause reasons
+# `walk_apply_expiry_override` writes — this is the exact story a real session-expiry pause leaves
+# behind, exercised here through the browser-less `verdict` subcommand for speed (no Playwright needed).
+T11b="$(mktmp)"; stage "$T11b"; contract "$T11b" true
+run_bin "$T11b" preflight "$REQ" --repo .
+RD12b="$(last_run_dir)"
+run_bin "$T11b" verdict "$RD12b" AC1 NOT_VERIFIABLE --reason x
+run_bin "$T11b" verdict "$RD12b" AC2 BLOCKED --reason session_expired
+run_bin "$T11b" verdict "$RD12b" AC3 BLOCKED --reason run_paused_session_expired
+out="$(bash "$T11b/bin/verify-helpers.sh" first-unverdicted "$RD12b")"; rc=$?
+[ "$out" = "AC2" ] && [ "$rc" -eq 0 ] \
+  && ok "(I4-FIX1u) AC1 genuinely verdicted, AC2/AC3 carry the two FORCED-pause reasons -> first-unverdicted reopens AC2 (the first FORCED one), NOT empty" \
+  || no "(I4-FIX1u) out='$out' rc=$rc (expected AC2)"
+run_bin "$T11b" verdict "$RD12b" AC2 NOT_VERIFIABLE --reason "resumed and verified for real"
+out="$(bash "$T11b/bin/verify-helpers.sh" first-unverdicted "$RD12b")"; rc=$?
+[ "$out" = "AC3" ] && [ "$rc" -eq 0 ] \
+  && ok "(I4-FIX1u) AC2 given a GENUINE verdict (latest wins) -> first-unverdicted advances to AC3 (still FORCED)" \
+  || no "(I4-FIX1u) after AC2 retry: out='$out' rc=$rc (expected AC3)"
+run_bin "$T11b" verdict "$RD12b" AC3 NOT_VERIFIABLE --reason "resumed and verified for real"
+out="$(bash "$T11b/bin/verify-helpers.sh" first-unverdicted "$RD12b")"; rc=$?
+[ -z "$out" ] && [ "$rc" -eq 0 ] \
+  && ok "(I4-FIX1u) every ac_id now GENUINELY verdicted -> prints NOTHING, exit 0" \
+  || no "(I4-FIX1u) fully covered: out='$out' rc=$rc"
+# A real BLOCKED for an UNRELATED reason must still count as done (AC6's original contract, unchanged).
+T11c="$(mktmp)"; stage "$T11c"; contract "$T11c" true
+run_bin "$T11c" preflight "$REQ" --repo .
+RD12c="$(last_run_dir)"
+run_bin "$T11c" verdict "$RD12c" AC1 BLOCKED --reason "spec_skipped"
+out="$(bash "$T11c/bin/verify-helpers.sh" first-unverdicted "$RD12c")"; rc=$?
+[ "$out" = "AC2" ] && [ "$rc" -eq 0 ] \
+  && ok "(I4-FIX1u) a REAL BLOCKED for an unrelated reason (spec_skipped) still counts as done -> advances past AC1 to AC2" \
+  || no "(I4-FIX1u) unrelated BLOCKED: out='$out' rc=$rc (expected AC2)"
+
 # ============================================================================
 echo "== (S) static shape of verify-run.sh =="
 bash -n "$RUNNER" 2>"$LAST_ERR" && ok "(S) bash -n" || no "(S) bash -n: $(cat "$LAST_ERR")"
@@ -524,6 +657,52 @@ test('[AC2] Given the Value field, when hello is submitted, then the echo paragr
   await page.getByLabel('Value').fill('hello');
   await page.getByRole('button', { name: 'Submit' }).click();
   await expect(page.locator('#echo')).toHaveText('hello');
+});
+SPEC
+}
+
+# write_expiry_specs <dir> — item 04's AC5 mutation control: AC1 (harmless nav, unrelated to auth),
+# AC2 (logs in then hits /protected TWICE — the 2nd hit is the one that observes the 401 once
+# --auth-expire-after 1 is in effect; the spec's OWN assertion still PASSES despite it, per AC5's
+# "the override must win over a spec that happens to still succeed"), AC3 (harmless nav, runs clean
+# — AC5 requires the override fire on AC3 "even though AC3's spec ... ran clean").
+write_expiry_specs() {
+  mkdir -p "$1"
+  cat > "$1/AC1.spec.ts" <<'SPEC'
+import { test, expect } from '@playwright/test';
+
+test('[AC1] Given the form page, when it loads, then a Value field is visible', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByLabel('Value')).toBeVisible();
+});
+SPEC
+  cat > "$1/AC2.spec.ts" <<'SPEC'
+import { test, expect } from '@playwright/test';
+
+test.beforeEach(async ({ page }, testInfo) => {
+  page.on('response', async (response) => {
+    const status = response.status();
+    if (status < 200 || status >= 300) {
+      let body = '';
+      try { body = await response.text(); } catch (e) { body = ''; }
+      try { await testInfo.attach(`response-${status}`, { body, contentType: 'text/plain' }); } catch (e) { /* test already over */ }
+    }
+  });
+});
+
+test('[AC2] Given a session that dies mid-walk, when /protected is hit past the expiry threshold, then the app itself answers 401 (this assertion still passes)', async ({ page }) => {
+  await page.request.post('/login', { form: { x: '1' } });
+  await page.goto('/protected');
+  await page.goto('/protected');
+  await expect(page).toHaveURL(/\/protected$/);
+});
+SPEC
+  cat > "$1/AC3.spec.ts" <<'SPEC'
+import { test, expect } from '@playwright/test';
+
+test('[AC3] Given the form page, when it loads again, then it is still visible (unrelated to auth)', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByLabel('Value')).toBeVisible();
 });
 SPEC
 }
@@ -724,6 +903,130 @@ if [ "$PW_READY" -eq 1 ]; then
   fi
 
   # ==========================================================================
+  echo "== (I4-AC5) mutation control: a real 401 mid-walk forces BLOCKED onto that AC and every later one =="
+  PORT_HEALTHY="$(free_port)"
+  PORT_EXPIRE="$(free_port)"
+  if start_app "$PORT_HEALTHY" && start_app "$PORT_EXPIRE" "--auth-expire-after 1"; then
+    # Positive gate (AC5's own mutation-control requirement): prove --auth-expire-after really
+    # differs from the healthy fixture BEFORE trusting any override result — a stub `walk` that
+    # always pauses must not be able to pass this arm.
+    curl -s -c "$ROOT/i4ac5-h.txt" -d 'x=1' "http://127.0.0.1:$PORT_HEALTHY/login" >/dev/null
+    curl -s -c "$ROOT/i4ac5-e.txt" -d 'x=1' "http://127.0.0.1:$PORT_EXPIRE/login" >/dev/null
+    h1="$(curl -s -o /dev/null -w '%{http_code}' -b "$ROOT/i4ac5-h.txt" "http://127.0.0.1:$PORT_HEALTHY/protected")"
+    h2="$(curl -s -o /dev/null -w '%{http_code}' -b "$ROOT/i4ac5-h.txt" "http://127.0.0.1:$PORT_HEALTHY/protected")"
+    e1="$(curl -s -o /dev/null -w '%{http_code}' -b "$ROOT/i4ac5-e.txt" "http://127.0.0.1:$PORT_EXPIRE/protected")"
+    e2="$(curl -s -o /dev/null -w '%{http_code}' -b "$ROOT/i4ac5-e.txt" "http://127.0.0.1:$PORT_EXPIRE/protected")"
+    if [ "$h1" = "200" ] && [ "$h2" = "200" ] && [ "$e1" = "200" ] && [ "$e2" = "401" ]; then
+      ok "(I4-AC5) gate: --auth-expire-after 1 really produces a 401 on request 2 while the healthy fixture stays 200 (the signal genuinely differs)"
+
+      T12="$(mktmp)"; stage "$T12"; contract "$T12" true "http://127.0.0.1:$PORT_HEALTHY"
+      ln -s "$PW_CACHE/node_modules" "$T12/repo/node_modules"
+      run_bin "$T12" preflight "$REQ" --repo .
+      RD13="$(last_run_dir)"
+      write_expiry_specs "$RD13/specs"
+      run_bin "$T12" walk "$RD13" --repo .
+      rc=$?
+      [ "$rc" -eq 0 ] && ok "(I4-AC5) POSITIVE control (never-expiring fixture): walk -> exit 0 (never 5)" || no "(I4-AC5) positive control: rc=$rc err=$(cat "$LAST_ERR")"
+      [ "$(ev_field "$RD13" 'select(.event == "ac") | [.ac_id, .verdict] | join("=")' | tr '\n' ',')" = "AC1=PASS,AC2=PASS,AC3=PASS," ] \
+        && ok "(I4-AC5) POSITIVE control: AC1/AC2/AC3 all show their REAL verdicts (PASS) — no override fired" \
+        || no "(I4-AC5) positive control verdicts: $(ev_field "$RD13" 'select(.event == "ac") | [.ac_id, .verdict, .reason] | join("|")')"
+      [ "$(ev_field "$RD13" 'select(.event == "auth")' | grep -c .)" -eq 0 ] && [ "$(ev_field "$RD13" 'select(.event == "pause")' | grep -c .)" -eq 0 ] \
+        && ok "(I4-AC5) POSITIVE control: no auth/expired line, no pause line" \
+        || no "(I4-AC5) positive control unexpectedly carries an auth/pause line"
+
+      T13="$(mktmp)"; stage "$T13"; contract "$T13" true "http://127.0.0.1:$PORT_EXPIRE"
+      ln -s "$PW_CACHE/node_modules" "$T13/repo/node_modules"
+      run_bin "$T13" preflight "$REQ" --repo .
+      RD14="$(last_run_dir)"
+      write_expiry_specs "$RD14/specs"
+      run_bin "$T13" walk "$RD14" --repo .
+      rc=$?
+      [ "$rc" -eq 5 ] && ok "(I4-AC5) NEGATIVE (expiring fixture): walk -> exit 5, distinct from the normal 0" || no "(I4-AC5) negative: rc=$rc err=$(cat "$LAST_ERR")"
+      [ "$(ac_get "$RD14" AC1 '.verdict')" = "PASS" ] && ok "(I4-AC5) AC1 (ordinal < N) keeps its REAL verdict, untouched" || no "(I4-AC5) AC1: $(ac_get "$RD14" AC1 '.verdict')"
+      v2="$(ac_get "$RD14" AC2 '[.verdict, .classification, .reason] | join("|")')"
+      [ "$v2" = "BLOCKED|ENVIRONMENT_ISSUE|session_expired" ] \
+        && ok "(I4-AC5) AC2 (the ordinal that saw the 401) forced BLOCKED/ENVIRONMENT_ISSUE/session_expired REGARDLESS of its own passing assertion" \
+        || no "(I4-AC5) AC2: $v2"
+      v3="$(ac_get "$RD14" AC3 '[.verdict, .classification, .reason] | join("|")')"
+      [ "$v3" = "BLOCKED|ENVIRONMENT_ISSUE|run_paused_session_expired" ] \
+        && ok "(I4-AC5) AC3 (ordinal > N) forced BLOCKED/ENVIRONMENT_ISSUE/run_paused_session_expired even though its own spec ran clean" \
+        || no "(I4-AC5) AC3: $v3"
+      [ "$(ev_field "$RD14" 'select(.event == "auth") | .state' | grep -c .)" -eq 1 ] && [ "$(ev_field "$RD14" 'select(.event == "auth") | .state')" = "expired" ] \
+        && ok "(I4-AC5) exactly ONE auth/expired line (not one per forced AC)" \
+        || no "(I4-AC5) auth lines: $(ev_field "$RD14" 'select(.event == "auth")')"
+      [ "$(ev_field "$RD14" 'select(.event == "pause") | .reason' | grep -c .)" -eq 1 ] && [ "$(ev_field "$RD14" 'select(.event == "pause") | .reason')" = "session_expired" ] \
+        && ok "(I4-AC5) exactly ONE pause/session_expired line (not one per forced AC)" \
+        || no "(I4-AC5) pause lines: $(ev_field "$RD14" 'select(.event == "pause")')"
+      python3 "$T13/bin/validate-verify-evidence.py" "$RD14/evidence.jsonl" >/dev/null 2>&1 \
+        && ok "(I4-AC5) the store re-validates" || no "(I4-AC5) store invalid: $(python3 "$T13/bin/validate-verify-evidence.py" "$RD14/evidence.jsonl" 2>&1)"
+
+      # ------------------------------------------------------------------------
+      echo "== (I4-FIX1) resume round-trip: first-unverdicted reopens the forced pause-verdicts; a second walk with a healthy session overwrites them with real verdicts =="
+      # RD14 is the NEGATIVE arm above: AC1=PASS (real, untouched), AC2=BLOCKED/session_expired
+      # (forced, the min ordinal), AC3=BLOCKED/run_paused_session_expired (forced), walk exited 5.
+      # This is the item-04 review-fix regression: WITHOUT the fix, every ac_id already carries an
+      # `ac` line at this point, so first-unverdicted would print NOTHING and the resumed run would
+      # have no ACs left to re-author specs for — a permanently stranded pause.
+      out="$(bash "$T13/bin/verify-helpers.sh" first-unverdicted "$RD14")"; rc=$?
+      [ "$out" = "AC2" ] && [ "$rc" -eq 0 ] \
+        && ok "(I4-FIX1) after the forced session-expiry pause, first-unverdicted reopens AC2 (the min forced ordinal) — NOT empty" \
+        || no "(I4-FIX1) first-unverdicted after pause: out='$out' rc=$rc (expected AC2)"
+      # Simulate the human sign-in: author fresh specs for ONLY the reopened set (AC2, AC3) against
+      # the NEVER-EXPIRING healthy fixture — AC1 is NOT re-authored, mirroring the real resume flow's
+      # first-unverdicted-scoped spec set (agents/qa-executor.md step 6).
+      rm -f "$RD14/specs/AC1.spec.ts"
+      cat > "$RD14/specs/AC2.spec.ts" <<'SPEC'
+import { test, expect } from '@playwright/test';
+
+test('[AC2] Given a session that dies mid-walk, when /protected is hit past the expiry threshold, then the app itself answers 401 (this assertion still passes)', async ({ page }) => {
+  await page.request.post('/login', { form: { x: '1' } });
+  await page.goto('/protected');
+  await expect(page).toHaveURL(/\/protected$/);
+});
+SPEC
+      cat > "$RD14/specs/AC3.spec.ts" <<'SPEC'
+import { test, expect } from '@playwright/test';
+
+test('[AC3] Given the form page, when it loads again, then it is still visible (unrelated to auth)', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByLabel('Value')).toBeVisible();
+});
+SPEC
+      run_bin "$T13" walk "$RD14" --repo . --base-url "http://127.0.0.1:$PORT_HEALTHY"
+      rc=$?
+      [ "$rc" -eq 0 ] && ok "(I4-FIX1) resumed walk against the healthy session -> exit 0 (no new expiry)" || no "(I4-FIX1) resumed walk: rc=$rc err=$(cat "$LAST_ERR")"
+      [ "$(ac_get "$RD14" AC2 '.verdict')" = "PASS" ] \
+        && ok "(I4-FIX1) AC2's forced BLOCKED/session_expired is overwritten by a real PASS (latest-per-ac_id wins)" \
+        || no "(I4-FIX1) AC2 latest verdict: $(ac_get "$RD14" AC2 '[.verdict,.classification,.reason] | join("|")')"
+      [ "$(ac_get "$RD14" AC3 '.verdict')" = "PASS" ] \
+        && ok "(I4-FIX1) AC3's forced BLOCKED/run_paused_session_expired is overwritten by a real PASS" \
+        || no "(I4-FIX1) AC3 latest verdict: $(ac_get "$RD14" AC3 '[.verdict,.classification,.reason] | join("|")')"
+      [ "$(ac_get "$RD14" AC1 '.verdict')" = "PASS" ] \
+        && ok "(I4-FIX1) AC1 (never reopened, never re-authored) still shows its original real PASS" \
+        || no "(I4-FIX1) AC1 verdict: $(ac_get "$RD14" AC1 '.verdict')"
+      # AC2's own spec assertion PASSES despite the 401 (AC5's own requirement — "the override must
+      # win over a spec that happens to still succeed"), so the first walk already left AC2 with TWO
+      # lines (the real ingest PASS, THEN the forced BLOCKED/session_expired override); the resumed
+      # walk appends a THIRD — the real PASS that finally supersedes the forced one.
+      [ "$(ev_field "$RD14" 'select(.event == "ac" and .ac_id == "AC2") | .verdict' | grep -c .)" -eq 3 ] \
+        && ok "(I4-FIX1) evidence.jsonl is append-only: AC2 now carries THREE ac lines (real PASS, forced BLOCKED, real PASS again) — history preserved, latest wins" \
+        || no "(I4-FIX1) AC2 ac-line count: $(ev_field "$RD14" 'select(.event == "ac" and .ac_id == "AC2") | .verdict' | grep -c .)"
+      out="$(bash "$T13/bin/verify-helpers.sh" first-unverdicted "$RD14")"; rc=$?
+      [ -z "$out" ] && [ "$rc" -eq 0 ] \
+        && ok "(I4-FIX1) after the real retry verdicts land, first-unverdicted is empty again — fully (genuinely) verdicted" \
+        || no "(I4-FIX1) first-unverdicted after retry: out='$out' rc=$rc"
+      grep -q '^PASS: 3 · FAIL: 0 · BLOCKED: 0 · NOT_VERIFIABLE: 0 · total: 3$' "$RD14/summary.md" \
+        && ok "(I4-FIX1) counts row now shows all 3 real PASSes (the forced pause verdicts no longer count)" || no "(I4-FIX1) counts row: $(grep '^PASS: ' "$RD14/summary.md")"
+      python3 "$T13/bin/validate-verify-evidence.py" "$RD14/evidence.jsonl" >/dev/null 2>&1 \
+        && ok "(I4-FIX1) the store re-validates after the resume round-trip" || no "(I4-FIX1) store invalid: $(python3 "$T13/bin/validate-verify-evidence.py" "$RD14/evidence.jsonl" 2>&1)"
+    else
+      no "(I4-AC5) UNPROVEN — --auth-expire-after did not produce the expected 200/200/200/401 pattern (healthy: $h1/$h2, expiring: $e1/$e2); the mutation control cannot prove anything"
+    fi
+  else
+    no "(I4-AC5) fixture app(s) did not answer /health on ports $PORT_HEALTHY / $PORT_EXPIRE"
+  fi
+
+  # ==========================================================================
   echo "== (NS) no_spec: decided ACs are left alone; an AC with neither spec nor verdict is BLOCKED no_spec =="
   T8="$(mktmp)"; stage "$T8"; contract "$T8" true "http://127.0.0.1:$PORT_OK"
   ln -s "$PW_CACHE/node_modules" "$T8/repo/node_modules"
@@ -820,7 +1123,7 @@ grep -qF -- 'test.afterEach' "$SKILL" && grep -qF -- "attach('page-body'" "$SKIL
   && ok "(AC5) the spec template carries the afterEach page-body attach" || no "(AC5) spec template lacks the afterEach page-body attach"
 grep -qF -- 'Payment, logout and account-deletion actions stay forbidden everywhere' "$SKILL" \
   && ok "(AC5) V7 carve-out keeps payment/logout/account-delete forbidden" || no "(AC5) carve-out's forbidden set missing"
-grep -qF -- 'version: "1.0.0"' "$SKILL" && ok "(AC5) skill frontmatter version pinned at 1.0.0" || no "(AC5) skill frontmatter version not 1.0.0"
+grep -qF -- 'version: "1.1.0"' "$SKILL" && ok "(AC5) skill frontmatter version pinned at 1.1.0 (item 04 bump)" || no "(AC5) skill frontmatter version not 1.1.0"
 
 echo "== (AC10-command) /verify surface + commands/qa-executor.md sync =="
 grep -qF -- '/loomwright:verify' "$VERIFY_CMD" && ok "(cmd) commands/verify.md names the namespaced /loomwright:verify form" || no "(cmd) /loomwright:verify missing from commands/verify.md"
@@ -830,6 +1133,44 @@ grep -qF -- 'subagent_type: "loomwright:qa-executor"' "$VERIFY_CMD" && ok "(cmd)
 grep -qF -- '--verify <run_dir>' "$VERIFY_CMD" && ok "(cmd) commands/verify.md passes --verify <run_dir> to the executor" || no "(cmd) --verify <run_dir> missing from commands/verify.md"
 grep -qF -- '--verify' "$QA_CMD" && ok "(cmd) commands/qa-executor.md mentions --verify" || no "(cmd) commands/qa-executor.md does not mention --verify"
 
+# ============================================================================
+# Item 04 Subtask 2 arms: auth pause/resume on the prompt surfaces (AC4, AC8, AC10).
+# ============================================================================
+echo "== (AC10-resume) commands/verify.md --resume flow =="
+grep -qF -- '/verify --resume <run_id>' "$VERIFY_CMD" && ok "(AC10) --resume <run_id> is documented in Usage" || no "(AC10) --resume <run_id> missing from Usage"
+grep -qF -- '--resume <run_id>' "$VERIFY_CMD" && ok "(AC10) --resume <run_id> appears in the Parameters table" || no "(AC10) --resume <run_id> missing from Parameters"
+grep -qF -- 'auth-check' "$VERIFY_CMD" && ok "(AC10) commands/verify.md shells out to verify-run.sh auth-check" || no "(AC10) auth-check missing from commands/verify.md"
+grep -qF -- 'event: resume, reason: "human_signed_in"' "$VERIFY_CMD" || grep -qF -- 'event: "resume", reason: "human_signed_in"' "$VERIFY_CMD" \
+  && ok "(AC10) commands/verify.md appends the resume/human_signed_in evidence line" || no "(AC10) resume/human_signed_in jq object missing from commands/verify.md"
+grep -qF -- 'never silently start' "$VERIFY_CMD" || grep -qF -- 'never silently starting a fresh run' "$VERIFY_CMD" \
+  && ok "(AC10) --resume errors rather than silently starting a fresh run under the same id" || no "(AC10) missing dir / no-silent-start guard not documented"
+grep -qF -- 'git -C <dir> check-ignore -q' "$VERIFY_CMD" && ok "(AC10) the one-shot storage-state gitignore warning shells to git check-ignore" || no "(AC10) git check-ignore warning missing from commands/verify.md"
+grep -qF -- 'run_end") | .status' "$VERIFY_CMD" && ok "(I4-FIX1) --resume guards against a run dir that already finished (reads the run_end status before proceeding)" || no "(I4-FIX1) the already-finished-run guard is missing from commands/verify.md's resume flow"
+grep -qF -- 'nothing paused to resume' "$VERIFY_CMD" && ok "(I4-FIX1) the guard names the reason: nothing paused to resume" || no "(I4-FIX1) 'nothing paused to resume' missing from commands/verify.md"
+
+echo "== (AC4-pause) commands/verify.md pause instruction =="
+grep -qF -- 'npx playwright codegen --save-storage=' "$VERIFY_CMD" && ok "(AC4) the pause instruction names the codegen --save-storage= form" || no "(AC4) codegen instruction missing from commands/verify.md"
+grep -qF -- 'sign in, close the window' "$VERIFY_CMD" && ok "(AC4) the pause instruction includes 'sign in, close the window'" || no "(AC4) sign-in line missing from commands/verify.md"
+grep -qF -- '/verify --resume <run_id>' "$VERIFY_CMD" && ok "(AC4) the pause instruction names /verify --resume <run_id>" || no "(AC4) resume line missing from the pause instruction"
+n="$(grep -cF -- 'pause_reason' "$VERIFY_CMD")"
+[ "$n" -ge 1 ] && ok "(AC4) commands/verify.md reads VERIFY_RESULT.pause_reason ($n mentions)" || no "(AC4) commands/verify.md never mentions pause_reason"
+
+echo "== (AC8) agents/qa-executor.md auth-check/resume/pause wiring =="
+grep -qF -- 'verify-run.sh auth-check <run_dir> --repo <dir>' "$AGENT" && ok "(AC8) VERIFY MODE step shells out to verify-run.sh auth-check" || no "(AC8) auth-check shell-out missing from agents/qa-executor.md"
+n="$(grep -cF -- 'auth-probe: anonymous' "$AGENT")"
+[ "$n" -eq 0 ] && ok "(AC8) the old auth-probe: anonymous per-AC fallback is fully removed" || no "(AC8) auth-probe: anonymous still present ($n mentions) — should be unreachable"
+grep -qF -- 'RESUME DETECTION' "$AGENT" && ok "(AC8) the agent documents resume-detection before start/seed" || no "(AC8) RESUME DETECTION guard missing"
+grep -qF -- 'first-unverdicted' "$AGENT" && ok "(AC8) the agent scopes resumed spec-authoring to first-unverdicted's remaining set" || no "(AC8) first-unverdicted not referenced in agents/qa-executor.md"
+grep -qF -- 'Exit 5' "$AGENT" && ok "(AC8) the agent branches on walk's exit 5 (session_expired)" || no "(AC8) walk exit-5 branch missing from agents/qa-executor.md"
+grep -qF -- 'pause_reason: needs_auth' "$AGENT" && grep -qF -- 'pause_reason: session_expired' "$AGENT" \
+  && ok "(AC8) both pause_reason values (needs_auth, session_expired) appear in the VERIFY_RESULT wiring" || no "(AC8) one or both pause_reason values missing from agents/qa-executor.md"
+grep -qF -- 'status: paused' "$AGENT" && ok "(AC8) the agent's VERIFY_RESULT template documents status: paused" || no "(AC8) status: paused missing from the VERIFY_RESULT template"
+
+echo "== (skill) verify-walkthrough documents pause/resume, forward-reference resolved =="
+n="$(grep -cF -- 'item 04 adds the pause-for-auth' "$SKILL")"
+[ "$n" -eq 0 ] && ok "(skill) the item-04 forward-reference is resolved (0 remaining mentions)" || no "(skill) forward-reference still present ($n mentions)"
+grep -qF -- '## 8. Auth pause and resume' "$SKILL" && ok "(skill) a dedicated pause/resume section exists" || no "(skill) no pause/resume section in the skill"
+grep -qF -- 'response-40' "$SKILL" && ok "(skill) the skill documents the response-40[13] expiry signal" || no "(skill) expiry signal not documented in the skill"
 
 # ============================================================================
 echo

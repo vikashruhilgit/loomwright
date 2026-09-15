@@ -51,7 +51,7 @@ mk=lambda m,f:{"matcher":f"loomwright:{m}","hooks":[{"type":"prompt","prompt":pr
 h={"hooks":{"SubagentStop":[
   mk("worker",["schema_version","task_id","status","files_modified","summary","outputs_verified","outputs_gap","out_of_lane"]),
   mk("execute-manager",["schema_version","subtasks_completed","worktrees","merge_order","summary","completed_so_far","remaining","resume_context","reason","adjudication_required","missing_outputs","adjudication_options","adjudication_kind","colliding_lanes"]),
-  mk("qa-executor",["schema_version","tests_generated","tests_passed","summary","coverage_estimate","run_id","run_dir","counts"]),
+  mk("qa-executor",["schema_version","tests_generated","tests_passed","summary","coverage_estimate","run_id","run_dir","counts","pause_reason"]),
   mk("supervisor-runner",["schema_version","status","pr_url","heal_loop_ran","heal_iterations","heal_decision","heal_fixable_issues_fixed","heal_remaining_issues","error","summary"]),
   mk("plan-reviewer",["schema_version","decision","issues","severity","section","description","summary"]),
   mk("code-reviewer",["schema_version","decision","summary","severity","category","review_mode","audit_focus","trigger_paths_detected","scope_expanded","files_checked"]),
@@ -74,7 +74,7 @@ missing_outputs, adjudication_options, adjudication_kind, colliding_lanes.
 EOF
   cat >"$d/loomwright/agents/qa-executor.md" <<'EOF'
 QA_RESULT fields: schema_version, tests_generated, tests_passed, coverage_estimate, summary.
-VERIFY_RESULT fields (--verify mode): schema_version, run_id, run_dir, counts, summary.
+VERIFY_RESULT fields (--verify mode): schema_version, run_id, run_dir, counts, summary, pause_reason.
 EOF
   cat >"$d/loomwright/agents/supervisor.md" <<'EOF'
 SUPERVISOR_RESULT: schema_version, status: completed | status: failed | status: checkpoint
@@ -215,7 +215,7 @@ write_hashstring_validator() { # $1 dir, $2 rel path, $3 comma-separated code fi
   } >"$d/loomwright/$rel"
 }
 
-QA_FIELDS='schema_version,tests_generated,tests_passed,summary,coverage_estimate,run_id,run_dir,counts'
+QA_FIELDS='schema_version,tests_generated,tests_passed,summary,coverage_estimate,run_id,run_dir,counts,pause_reason'
 VALIDATOR_CMD='python3 "${CLAUDE_PLUGIN_ROOT}/scripts/validate-qa-result.py" || true'
 DECOY_CMD='payload=$(cat); printf "%s" "$payload" | bash "${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry-core.sh" || true'
 
@@ -375,7 +375,7 @@ check "field named only in a bare string statement fails (body[0]-only strip is 
 #     tokenize. Models validate-launch-pad-result.py's `startswith("#")` literal.
 make_fixture "$TMP/cmd-fallback-hash-in-string"
 write_hashstring_validator "$TMP/cmd-fallback-hash-in-string" scripts/validate-qa-result.py \
-  'schema_version,tests_generated,tests_passed,summary,run_id,run_dir,counts' coverage_estimate
+  'schema_version,tests_generated,tests_passed,summary,run_id,run_dir,counts,pause_reason' coverage_estimate
 set_command_hooks "$TMP/cmd-fallback-hash-in-string" qa-executor "$VALIDATOR_CMD"
 check "a \`#\` inside a string literal does not corrupt the source (tokenize, not a line strip)" 0 \
   bash "$GUARD" --root "$TMP/cmd-fallback-hash-in-string"

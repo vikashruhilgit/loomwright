@@ -71,7 +71,7 @@ Comprehensive index of all skills available in the Loomwright plugin.
 | QA Gates | `qa-gates/` | QA Executor (preload), QA Strategist (preload) | ~1,400 | 1.0.0 | 2026-06-10 |
 | QA Test Patterns | `qa-test-patterns/` | QA Executor (preload) | ~1,800 | 1.0.0 | 2026-06-10 |
 | QA Orchestration | `qa-orchestration/` | QA Executor (reference) | ~900 | 1.0.0 | 2026-03 |
-| Verify Walkthrough | `verify-walkthrough/` | QA Executor (reference — Read on demand in `--verify` mode), `/verify` (reference) | ~2,000 | 1.0.0 | 2026-09-14 |
+| Verify Walkthrough | `verify-walkthrough/` | QA Executor (reference — Read on demand in `--verify` mode), `/verify` (reference) | ~2,400 | 1.1.0 | 2026-09-15 |
 
 ---
 

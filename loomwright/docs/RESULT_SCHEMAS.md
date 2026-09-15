@@ -1881,6 +1881,7 @@ All result schemas include a `schema_version` field. This enables forward compat
 
 ### Version History
 
+- **VERIFY_RESULT additive `paused` status + `pause_reason`** (2026-09-15, item 04 Subtask 1): Added `paused` to the `status` enum (alongside the existing `completed`/`aborted`) and a new REQUIRED-KEY, NULLABLE-VALUE `pause_reason: needs_auth | session_expired | null` field, emitted when `verify-run.sh auth-check` (exit 4) or `verify-run.sh walk` (exit 5) stops a run for a human sign-in or a mid-run session expiry. `validate-qa-result.py`'s VERIFY_RESULT branch gains rule V7 enforcing the pairing (`paused` ⇔ non-null recognized reason; `completed`/`aborted` ⇔ null) in both directions. **No `schema_version` bump** — `paused` is an additive enum value and `pause_reason` is additive (a pre-item-04 producer that never emits `paused` also never emits a non-null `pause_reason`, so its blocks keep validating unchanged under V7's null-iff-non-paused half). Additive — all other schemas unchanged.
 - **VERIFY_RESULT (schema_version 1)** (2026-09-14): New `## VERIFY_RESULT` result block emitted by the QA Executor's `--verify <run_dir>` mode (the executor half of `/verify <ticket>`). Fields `schema_version`, `run_id`, `run_dir`, `ticket_path`, `status: completed | aborted`, `counts: {pass, fail, blocked, not_verifiable, total}` (COPIED verbatim from the counts row `verify-run.sh finish` prints out of the derived `summary.md` — the agent never tallies), `artifacts_dir`, `summary`, `notes`. Hook-validated by the EXISTING `SubagentStop (qa-executor)` command (`validate-qa-result.py`, hook string byte-unchanged) through a new `VERIFY_RESULT` branch (rules V1–V6); precedence is by NAME — `QA_RESULT` wins whenever present, regardless of position; the five `QA_RESULT` rules are unchanged. Additive — all other schemas unchanged.
 - **VERIFY_EVIDENCE (schema_version 1)** (2026-09-14): New `## VERIFY_EVIDENCE` JSONL state-file schema for `.supervisor/verify/<run_id>/evidence.jsonl` — no hook validator; CLI gate `validate-verify-evidence.py` consumed by `verify-helpers.sh evidence-append`. One `event`-discriminated record shape (`run_start, env, auth, ac, issue, pause, resume, run_end`) with a closed twelve-code reason set; the validator's EXIT STATUS is the decision (0 valid · 1 invalid · 2 usage), a deliberate documented deviation from the always-exit-0 hook-emitter siblings. `test-emit-block-parses.sh` and `result_block_parser.py` need no change (a JSONL line, not an emitted result block). Additive — all other schemas unchanged.
 - **SUPERVISOR_RESULT additive `risk_classification` + the `risk-table` committed copy** (v15.72.0): One additive, OPTIONAL nested object `{high_risk: true|false|null, reasons: string[]}` recording `scripts/classify-risk.sh "$BASE_BRANCH" HEAD` at Phase 4.5 (run unconditionally before the red-team lens's `RED_TEAM_ENABLED` guard — D1; absent on the bypass paths). Advisory only; `schema_version` stays 1. The same script is condition 6 of the `/automate` trusted-merge gate (re-run on the judged SHA, NO override — R5), so the gate's `ctx.json` gains `high_risk` + `risk_reasons` (see `automate-helpers.sh gate-eval`). The heuristic table between `<!-- risk-table:begin/end -->` is generated from `--kind-table` and byte-compared by `test-classify-risk.sh`. A FLAT `session_end` projection (`risk_high` / `risk_reasons_count`) was deliberately NOT added: `build-insights.sh` projects a fixed field list and consumes neither — documenting a flat field with no reader would be a claim no check backs; add both together when a consumer exists.
@@ -2636,6 +2637,21 @@ environment fix). Every `ac` line stays in the file as history — the store is 
 summary counts **only the newest `ac` line per `ac_id`** (`group_by(.ac_id) | map(last)` over the
 file's input order). Two lines for `AC1`, PASS then FAIL, therefore count as one FAIL and zero PASS.
 
+**A FORCED pause-verdict is not "already verdicted" — `verify-helpers.sh first-unverdicted`'s
+resume-eligibility rule.** `verify-run.sh walk`'s AC5 expiry override (`walk_apply_expiry_override`)
+writes `ac` lines with `reason: session_expired` (the AC that actually hit the 401/403) or
+`reason: run_paused_session_expired` (every later AC, forced regardless of its own spec result) — and
+these two reasons are the ONLY place either string is ever written by that override. `first-unverdicted`
+(the resume-position derivation AC6 relies on) computes its done-set over the LATEST `ac` line per
+`ac_id` (the same latest-per-`ac_id` rule above) and treats an `ac_id` whose latest line carries one of
+these two reasons as **NOT yet genuinely verdicted** — it re-enters the "still needs a spec" set on
+resume. Every other verdict (a real PASS/FAIL, a BLOCKED for any other reason, NOT_VERIFIABLE) still
+counts as done: a genuinely-decided AC is never re-run on resume, only the ones the expiry override
+itself forced. Without this exclusion `first-unverdicted` would report "nothing left" for every AC from
+the pause point onward the moment a session expires (existence-based, not reason-aware), permanently
+stranding the resume — the store's append-only "latest wins" semantics are exactly what let the later,
+genuine verdict from the retried `walk` supersede the forced one once the human signs back in.
+
 **Three invariants the validator enforces so the summary cannot lie the old way:** a `run_end` line
 **cannot carry totals** (any `counts`/`totals` key at any depth is `run_end_carries_counts`); a
 **non-PASS verdict cannot omit its reason** (`non_pass_without_reason`); and a **FAIL/BLOCKED cannot
@@ -2727,7 +2743,8 @@ VERIFY_RESULT:
   run_id: string                       # required, non-empty — the run's id as minted by `verify-run.sh preflight` (`verify-<YYYYMMDDTHHMMSSZ>-<slug>`)
   run_dir: string                      # required, non-empty — `.supervisor/verify/<run_id>` (the store this block summarises)
   ticket_path: string                  # the requirement / brief that was verified
-  status: enum [completed, aborted]    # required — the same value `verify-run.sh finish --status` recorded on the run_end line
+  status: enum [completed, aborted, paused]   # required — `paused` when the run stopped for a human sign-in (item 04); otherwise the same value `verify-run.sh finish --status` recorded on the run_end line
+  pause_reason: enum [needs_auth, session_expired]|null   # nullable — non-null and one of the two enum values IFF status is `paused`; `null` (or ABSENT — treated identically) IFF status is `completed`|`aborted` (hook rule V7)
   counts:                              # required — COPIED VERBATIM from the counts row `verify-run.sh finish` prints; the agent NEVER tallies
     pass: integer
     fail: integer
@@ -2738,6 +2755,8 @@ VERIFY_RESULT:
   summary: string                      # required, non-empty — one paragraph: what was walked, what PASSed, what could not be observed and why
   notes: string                        # optional — anything the human should read next (e.g. which NOT_VERIFIABLE needs a non-UI check)
 ```
+
+**`paused` is not a completion state.** A `status: paused` block is emitted by the qa-executor's VERIFY MODE the moment `verify-run.sh auth-check` exits `4` (a fresh run needing a human sign-in, `pause_reason: needs_auth`) or `verify-run.sh walk` exits `5` (a session that died mid-run, `pause_reason: session_expired`) — in BOTH cases `counts` still carries whatever the store had accumulated so far (a paused run never calls `finish`, so `counts` is the LAST derived `summary.md` row, not a fresh tally) and `artifacts_dir` / `summary` still describe the run through the point of the pause. A `/verify --resume <run_id>` that completes normally emits a second, ordinary `status: completed` block for the same `run_id` — `pause_reason` is never carried forward onto it.
 
 **`counts` is derived, never written.** `verify-run.sh finish <run_dir>` appends the `run_end` line, rebuilds
 `summary.md` through `verify-helpers.sh summary-build` (the store's ONLY reader), and prints that file's counts
@@ -2760,9 +2779,10 @@ A `PASS` is therefore never a claim — it is always the reporter's `expected` s
 | V1 | `schema_version` is the integer `1` |
 | V2 | `run_id` and `run_dir` are present, non-empty strings |
 | V3 | `summary` is present and non-empty |
-| V4 | `status` ∈ `{completed, aborted}` |
+| V4 | `status` ∈ `{completed, aborted, paused}` |
 | V5 | `counts` is a mapping whose `pass` / `fail` / `blocked` / `not_verifiable` / `total` are all present non-negative integers |
 | V6 | `counts.total == pass + fail + blocked + not_verifiable` |
+| V7 | `pause_reason` must be non-null and one of `needs_auth`/`session_expired` IFF `status == paused`; it must be `null` IFF `status` is `completed`/`aborted` — either direction of mismatch (`paused` + null, non-`paused` + non-null, or `paused` + an unrecognized string) is rejected. An ABSENT key is treated identically to an explicit `null` (the `classification` null/absent convention of §VERIFY_EVIDENCE), so a pre-item-04 emitter that never sends the key keeps validating unchanged for every non-`paused` status |
 | neither | no `QA_RESULT` and no `VERIFY_RESULT` block ⇒ the existing `missing QA_RESULT block` reason, unchanged |
 
 The validator keeps its ALWAYS-exit-0 invariant (decision on stdout, `{"ok": true|false, "reason": …}`); the

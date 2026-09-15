@@ -11,9 +11,10 @@
 # the lines by `summary-build` on every append; a total can only be computed, never written.
 #
 # Subcommands:
-#   run-id          <slug>                 # prints `verify-<YYYYMMDDTHHMMSSZ>-<slug>`; slug lower-cased, [^a-z0-9] runs collapsed to one `-`, edge dashes trimmed
-#   evidence-append <run_dir> <json|->     # compact-to-one-line, validate, then ONE `>>` write; refused input is wrapped RAW into <run_dir>/rejected.jsonl (exit 1); regenerates summary.md (a derivation failure is named on stderr, exit stays 0 — the fact IS stored)
-#   summary-build   <run_dir>              # the ONLY reader of evidence.jsonl: derives <run_dir>/summary.md (atomic temp+mv) with a `derived_from:` trailer
+#   run-id             <slug>              # prints `verify-<YYYYMMDDTHHMMSSZ>-<slug>`; slug lower-cased, [^a-z0-9] runs collapsed to one `-`, edge dashes trimmed
+#   evidence-append    <run_dir> <json|->  # compact-to-one-line, validate, then ONE `>>` write; refused input is wrapped RAW into <run_dir>/rejected.jsonl (exit 1); regenerates summary.md (a derivation failure is named on stderr, exit stays 0 — the fact IS stored)
+#   summary-build      <run_dir>           # the ONLY reader of evidence.jsonl: derives <run_dir>/summary.md (atomic temp+mv) with a `derived_from:` trailer
+#   first-unverdicted  <run_dir>           # prints the first `ac_id` (acs.json order) not yet GENUINELY verdicted — a FORCED pause-verdict (latest ac line reason session_expired / run_paused_session_expired) does NOT count, so it re-opens on resume; else nothing; exit 0 either way ("fully verdicted" is not an error)
 #
 # Exit codes: 0 success; 1 refused / generic failure; 2 usage.
 # Dependencies: bash 3.2+, jq, python3 (the validator; absent ⇒ every append is REFUSED as
@@ -188,12 +189,50 @@ summary_build() {
   mv -f "$tmp" "$run_dir/summary.md" || die "summary-build: cannot move $tmp into place"
 }
 
+# --------------------------------------------------------------------------- #
+# first-unverdicted <run_dir>
+# --------------------------------------------------------------------------- #
+# AC6 (`/verify --resume`'s resume-position derivation) + the item-04 FIX for the session-expiry
+# resume path. Reads `<run_dir>/acs.json` for the ORDERED `ac_id` list, and `evidence.jsonl` for the
+# done-set: the `ac_id`s whose LATEST `{event:ac}` line (input order — the same `latest_by` idiom
+# `summary_build` / `walk_block_remaining` already use, never timestamp) is a GENUINE verdict. A
+# FORCED pause-verdict — `reason` is `session_expired` or `run_paused_session_expired`, the two
+# reasons `verify-run.sh walk`'s AC5 expiry override (and ONLY that override — `walk_apply_expiry_
+# override`) ever writes — does NOT count as "already verdicted": without this exclusion, EVERY
+# ac_id from the pause point onward already carries a forced line the moment a session expires, this
+# function would report "nothing left" (empty stdout), and a resumed run would have no defined set of
+# ACs to re-author specs for, permanently stranding the pause. Every other verdict — a real PASS /
+# FAIL / a BLOCKED for any OTHER reason / NOT_VERIFIABLE — still counts as done, per AC6's original
+# contract: a genuinely-decided AC is never re-run on resume, only the forced ones re-open. Prints the
+# first `ac_id` from the ordered list NOT in the done-set; prints NOTHING when every `ac_id` is
+# genuinely covered — a distinct, documented "nothing left" signal, never a nonzero exit, since full
+# coverage is a normal state, not an error.
+first_unverdicted() {
+  local run_dir="${1:-}" done_ids
+  [ -n "$run_dir" ] || usage "first-unverdicted <run_dir>"
+  [ -f "$run_dir/acs.json" ] || die "first-unverdicted: no acs.json in $run_dir — run preflight first [acs_missing]"
+  done_ids="[]"
+  if [ -f "$run_dir/evidence.jsonl" ]; then
+    done_ids="$(jq -cs '
+      def latest_by(f): group_by(f) | map(max_by(._i)) | sort_by(._i);
+      (to_entries | map(.value + {_i: .key})) as $L
+      | ([$L[] | select(.event == "ac")] | latest_by(.ac_id)) as $latest
+      | [$latest[] | select(((.reason // "") as $r | $r != "session_expired" and $r != "run_paused_session_expired")) | .ac_id]
+    ' "$run_dir/evidence.jsonl" 2>/dev/null)"
+  fi
+  [ -n "$done_ids" ] || done_ids="[]"
+  jq -r --argjson done "$done_ids" \
+    '[.acs[].ac_id | select(. as $i | ($done | index($i)) == null)] | first // empty' \
+    "$run_dir/acs.json"
+}
+
 main() {
   local cmd="${1:-}"; shift || true
   case "$cmd" in
-    run-id)          run_id "$@" ;;
-    evidence-append) evidence_append "$@" ;;
-    summary-build)   summary_build "$@" ;;
+    run-id)             run_id "$@" ;;
+    evidence-append)    evidence_append "$@" ;;
+    summary-build)      summary_build "$@" ;;
+    first-unverdicted)  first_unverdicted "$@" ;;
     ""|-h|--help)
       grep -E '^#   [a-z]' "$0" | sed 's/^#   /  /'
       ;;
