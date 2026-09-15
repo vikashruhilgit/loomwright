@@ -1,7 +1,7 @@
 # Result Schemas
 
 > Strict contracts for all agent result blocks. Hooks validate against these schemas.
-> All schemas include a `schema_version` field for forward compatibility. Current versions: CODE_REVIEW_RESULT at `schema_version: 3` (review modes + consistency audit; v2 accepted for legacy); WORKER_RESULT at `schema_version: 2` (outputs_verified contract; v1 accepted for the v12.0.0 transition window); AUTONOMOUS_RUN at `schema_version: 2` (v14.0.0 status_reason extension; v1 accepted, no hook validation); LAUNCH_PAD_RESULT at `schema_version: 1` (added v14.2.0, validated by `scripts/validate-launch-pad-result.py`); REVIEW_HEAL_RESULT at `schema_version: 2` (v14.30.0 — `--until-mergeable` drain mode adds the `READY` decision + drain/postmortem fields; v1 still accepted for legacy artifacts / the default diff-only loop; added v14.16.0, no hook validator — runner is the main agent of its own session); EVAL_RESULT at `schema_version: 1` (added v14.17.0, the System Twin eval instrument emitted by `scripts/run-eval.sh`, no hook validator — standalone script); GROUND_TRUTH_JSON at `schema_version: 1` (added v14.19.0, the System Twin ground-truth instrument emitted by `scripts/run-ground-truth.sh`, no hook validator — standalone script; consumed advisory-only by Supervisor Phase 4.5); POSTMORTEM_RESULT at `schema_version: 1` (added v14.22.0, the advisory PR review-churn trend line appended by `/pr-postmortem` to `.supervisor/postmortem/results.jsonl`, no hook validator); GATE_VERDICT at `schema_version: 1` (Strategist↔Executor gate-audit handoff, no hook validator); RED_TEAM_RESULT at `schema_version: 1` (advisory audit tail, no hook validator); FLOOR_PROJECTION at `schema_version: 1` (added v15.43.0, the derived floor projection `.supervisor/floor/floor.json` emitted by `scripts/build-floor.sh`, no hook validator — standalone script, and not an agent-emitted result block; its required-key set is parsed back OUT of this file by `scripts/test-build-floor.sh`, so a doc/validator divergence fails CI); VERIFY_EVIDENCE at `schema_version: 1` (JSONL state-file line; CLI-gated, no hook validator — `scripts/validate-verify-evidence.py`'s exit status is the gate consumed by `verify-helpers.sh evidence-append`, and it is not an agent-emitted result block); all others at `schema_version: 1`.
+> All schemas include a `schema_version` field for forward compatibility. Current versions: CODE_REVIEW_RESULT at `schema_version: 3` (review modes + consistency audit; v2 accepted for legacy); WORKER_RESULT at `schema_version: 2` (outputs_verified contract; v1 accepted for the v12.0.0 transition window); AUTONOMOUS_RUN at `schema_version: 2` (v14.0.0 status_reason extension; v1 accepted, no hook validation); LAUNCH_PAD_RESULT at `schema_version: 1` (added v14.2.0, validated by `scripts/validate-launch-pad-result.py`); REVIEW_HEAL_RESULT at `schema_version: 2` (v14.30.0 — `--until-mergeable` drain mode adds the `READY` decision + drain/postmortem fields; v1 still accepted for legacy artifacts / the default diff-only loop; added v14.16.0, no hook validator — runner is the main agent of its own session); EVAL_RESULT at `schema_version: 1` (added v14.17.0, the System Twin eval instrument emitted by `scripts/run-eval.sh`, no hook validator — standalone script); GROUND_TRUTH_JSON at `schema_version: 1` (added v14.19.0, the System Twin ground-truth instrument emitted by `scripts/run-ground-truth.sh`, no hook validator — standalone script; consumed advisory-only by Supervisor Phase 4.5); POSTMORTEM_RESULT at `schema_version: 1` (added v14.22.0, the advisory PR review-churn trend line appended by `/pr-postmortem` to `.supervisor/postmortem/results.jsonl`, no hook validator); GATE_VERDICT at `schema_version: 1` (Strategist↔Executor gate-audit handoff, no hook validator); RED_TEAM_RESULT at `schema_version: 1` (advisory audit tail, no hook validator); FLOOR_PROJECTION at `schema_version: 1` (added v15.43.0, the derived floor projection `.supervisor/floor/floor.json` emitted by `scripts/build-floor.sh`, no hook validator — standalone script, and not an agent-emitted result block; its required-key set is parsed back OUT of this file by `scripts/test-build-floor.sh`, so a doc/validator divergence fails CI); VERIFY_EVIDENCE at `schema_version: 1` (JSONL state-file line; CLI-gated, no hook validator — `scripts/validate-verify-evidence.py`'s exit status is the gate consumed by `verify-helpers.sh evidence-append`, and it is not an agent-emitted result block); VERIFY_RESULT at `schema_version: 1` (the qa-executor `--verify` mode's result block, added with `/verify`; hook-validated by the SAME `scripts/validate-qa-result.py` command as QA_RESULT — `QA_RESULT` wins whenever present; `counts` copied verbatim from `verify-run.sh finish`, never tallied); all others at `schema_version: 1`.
 
 > **Deliberate exception to the `schema_version` rule above:** `PRODUCT_CONTEXT` (`.agent/product.json`) and `VERIFY_ENV` (`.agent/verify.json`) carry **no** `schema_version` key, so the "all others at `schema_version: 1`" clause does not reach them. Each is a per-project state file committed by the project it describes — not an agent result block and not an artifact this repo ships — so there is no producer/consumer pair inside the plugin for a version number to coordinate; their required-key sets are documented in §PRODUCT_CONTEXT and §VERIFY_ENV and enforced by each reader's own fail-safe degradation, never by a hook.
 
@@ -1880,6 +1880,7 @@ All result schemas include a `schema_version` field. This enables forward compat
 
 ### Version History
 
+- **VERIFY_RESULT (schema_version 1)** (2026-09-14): New `## VERIFY_RESULT` result block emitted by the QA Executor's `--verify <run_dir>` mode (the executor half of `/verify <ticket>`). Fields `schema_version`, `run_id`, `run_dir`, `ticket_path`, `status: completed | aborted`, `counts: {pass, fail, blocked, not_verifiable, total}` (COPIED verbatim from the counts row `verify-run.sh finish` prints out of the derived `summary.md` — the agent never tallies), `artifacts_dir`, `summary`, `notes`. Hook-validated by the EXISTING `SubagentStop (qa-executor)` command (`validate-qa-result.py`, hook string byte-unchanged) through a new `VERIFY_RESULT` branch (rules V1–V6); precedence is by NAME — `QA_RESULT` wins whenever present, regardless of position; the five `QA_RESULT` rules are unchanged. Additive — all other schemas unchanged.
 - **VERIFY_EVIDENCE (schema_version 1)** (2026-09-14): New `## VERIFY_EVIDENCE` JSONL state-file schema for `.supervisor/verify/<run_id>/evidence.jsonl` — no hook validator; CLI gate `validate-verify-evidence.py` consumed by `verify-helpers.sh evidence-append`. One `event`-discriminated record shape (`run_start, env, auth, ac, issue, pause, resume, run_end`) with a closed twelve-code reason set; the validator's EXIT STATUS is the decision (0 valid · 1 invalid · 2 usage), a deliberate documented deviation from the always-exit-0 hook-emitter siblings. `test-emit-block-parses.sh` and `result_block_parser.py` need no change (a JSONL line, not an emitted result block). Additive — all other schemas unchanged.
 - **SUPERVISOR_RESULT additive `risk_classification` + the `risk-table` committed copy** (v15.72.0): One additive, OPTIONAL nested object `{high_risk: true|false|null, reasons: string[]}` recording `scripts/classify-risk.sh "$BASE_BRANCH" HEAD` at Phase 4.5 (run unconditionally before the red-team lens's `RED_TEAM_ENABLED` guard — D1; absent on the bypass paths). Advisory only; `schema_version` stays 1. The same script is condition 6 of the `/automate` trusted-merge gate (re-run on the judged SHA, NO override — R5), so the gate's `ctx.json` gains `high_risk` + `risk_reasons` (see `automate-helpers.sh gate-eval`). The heuristic table between `<!-- risk-table:begin/end -->` is generated from `--kind-table` and byte-compared by `test-classify-risk.sh`. A FLAT `session_end` projection (`risk_high` / `risk_reasons_count`) was deliberately NOT added: `build-insights.sh` projects a fixed field list and consumes neither — documenting a flat field with no reader would be a claim no check backs; add both together when a consumer exists.
 - **FLOOR_PROJECTION additive `sessions.detail.current.agents[].identified_at`** (2026-09-07): One additive, OPTIONAL per-agent field: the `recorded_at` of that agent's `agent_identity` line, taken from THAT line only. It exists because `last_ts` is FRESHNESS and may come only from a real recorded event — which is why an identity line deliberately carries no `ts` — so a lane that had never emitted had no time of any kind and a recency filter could never drop it, while the lanes that did carry events aged out normally. A long session therefore converged to a list of only the rows nothing was known about: measured on a real run, ten rows all reading zero while the four rows with events had been filtered away. **It is a second clock for AGEING, never a substitute for `last_ts`**, and a consumer must not read it as an event time; the page uses it for the lane filter only and never renders it as an event age. **No `schema_version` bump** — optional and additive, so a consumer written against the previous projection reads these payloads unchanged. Absent evidence stays a missing key: an agent with no identity line carries no `identified_at`, never a default.
@@ -2710,6 +2711,132 @@ claims and MUST NOT be "fixed" on a version bump.
 {"schema_version":1,"ts":"2026-09-14T10:06:00Z","run_id":"verify-20260914T100000Z-example","event":"run_end","status":"completed"}
 ```
 
+## VERIFY_RESULT
+
+The result block the QA Executor emits in **`--verify <run_dir>` mode** (reached through `/verify <ticket>`):
+one block per verify run, summarising the run whose facts live in `.supervisor/verify/<run_id>/evidence.jsonl`
+(§VERIFY_EVIDENCE). Unlike `VERIFY_EVIDENCE` this **is** an agent-emitted result block and **is hook-validated**:
+the existing `SubagentStop (qa-executor)` command hook (`scripts/validate-qa-result.py`, hook command string
+unchanged) accepts EITHER a `QA_RESULT` or a `VERIFY_RESULT` block — see the precedence rule below.
+**Advisory only:** a `VERIFY_RESULT` never changes a `heal_decision`, never blocks a PR, never merges.
+
+```yaml
+VERIFY_RESULT:
+  schema_version: 1
+  run_id: string                       # required, non-empty — the run's id as minted by `verify-run.sh preflight` (`verify-<YYYYMMDDTHHMMSSZ>-<slug>`)
+  run_dir: string                      # required, non-empty — `.supervisor/verify/<run_id>` (the store this block summarises)
+  ticket_path: string                  # the requirement / brief that was verified
+  status: enum [completed, aborted]    # required — the same value `verify-run.sh finish --status` recorded on the run_end line
+  counts:                              # required — COPIED VERBATIM from the counts row `verify-run.sh finish` prints; the agent NEVER tallies
+    pass: integer
+    fail: integer
+    blocked: integer
+    not_verifiable: integer
+    total: integer                     # MUST equal pass + fail + blocked + not_verifiable (hook rule V6)
+  artifacts_dir: string                # `<run_dir>/artifacts/` — screenshots / traces / response bodies, one subdir per ac_id
+  summary: string                      # required, non-empty — one paragraph: what was walked, what PASSed, what could not be observed and why
+  notes: string                        # optional — anything the human should read next (e.g. which NOT_VERIFIABLE needs a non-UI check)
+```
+
+**`counts` is derived, never written.** `verify-run.sh finish <run_dir>` appends the `run_end` line, rebuilds
+`summary.md` through `verify-helpers.sh summary-build` (the store's ONLY reader), and prints that file's counts
+row — `PASS: 2 · FAIL: 0 · BLOCKED: 0 · NOT_VERIFIABLE: 1 · total: 3`. The agent copies those five numbers into
+`counts` and nothing else: the latest-per-`ac_id` rule, the `run_end`-carries-no-counts rule and the four-verdict
+enum are all enforced upstream by the evidence validator, so a `VERIFY_RESULT` can only restate a total the store
+computed. The hook's `total == pass + fail + blocked + not_verifiable` check exists to catch a hand-edited row.
+
+**Where each verdict comes from.** `PASS` and `FAIL` are emitted ONLY by `verify-run.sh walk`'s ingest of the
+Playwright reporter (an observed Then, or an observed contradiction — `FAIL` always carries `classification`,
+`reason` and an artifact); `verify-run.sh verdict … NOT_VERIFIABLE|BLOCKED` records the two browser-less verdicts
+and REFUSES `PASS` / `FAIL` as an argument (`pass_requires_observation` / `fail_requires_observation`, exit 2).
+A `PASS` is therefore never a claim — it is always the reporter's `expected` status for an `[ACn]` spec.
+
+**Validation (hook-validated, `scripts/validate-qa-result.py`, the SAME command as `QA_RESULT`):**
+
+| rule | check |
+|---|---|
+| precedence | **`QA_RESULT` wins whenever it is present, regardless of position** — each block is located BY NAME (`find_last_block(text, 'QA_RESULT')` / `find_last_block(text, 'VERIFY_RESULT')`), never "whichever block occurs last"; a payload with a `QA_RESULT` block is validated exactly by the five `QA_RESULT` rules, and a `VERIFY_RESULT` block beside it is ignored |
+| V1 | `schema_version` is the integer `1` |
+| V2 | `run_id` and `run_dir` are present, non-empty strings |
+| V3 | `summary` is present and non-empty |
+| V4 | `status` ∈ `{completed, aborted}` |
+| V5 | `counts` is a mapping whose `pass` / `fail` / `blocked` / `not_verifiable` / `total` are all present non-negative integers |
+| V6 | `counts.total == pass + fail + blocked + not_verifiable` |
+| neither | no `QA_RESULT` and no `VERIFY_RESULT` block ⇒ the existing `missing QA_RESULT block` reason, unchanged |
+
+The validator keeps its ALWAYS-exit-0 invariant (decision on stdout, `{"ok": true|false, "reason": …}`); the
+`hooks/hooks.json` command string is byte-unchanged. `scripts/test-result-validators.sh` §E2 provokes every rule.
+
+**Frozen example** (fixed sample values per the `check-doc-currency.sh` header convention — not a current claim;
+do not "fix" on a version bump):
+
+```yaml
+VERIFY_RESULT:
+  schema_version: 1
+  run_id: verify-20260914T100000Z-01-login
+  run_dir: .supervisor/verify/verify-20260914T100000Z-01-login
+  ticket_path: .supervisor/requirements/example/01-login.md
+  status: completed
+  counts: {pass: 2, fail: 0, blocked: 0, not_verifiable: 1, total: 3}
+  artifacts_dir: .supervisor/verify/verify-20260914T100000Z-01-login/artifacts
+  summary: Walked 3 acceptance criteria against http://localhost:3000 on feature/login. AC1 (login form renders) and AC2 (dashboard after valid credentials) PASS with screenshots at the Then; AC3 (no double-booking under 200 concurrent users) is NOT_VERIFIABLE — a load claim not observable through the UI.
+  notes: AC3 needs a load-test harness, not a browser walkthrough.
+```
+(The markdown bullet form `## VERIFY_RESULT` / `- key: value` is accepted equally by the parser; a nested
+`counts` in bullet form is written either as the flow mapping above or as plain indented `key: value` lines.)
+
+### Specs and reporter ingest
+
+How `verify-run.sh walk <run_dir> [--repo <dir>] [--base-url <url>]` turns the agent-authored specs into `ac` lines.
+The specs live at `<run_dir>/specs/<ac_id>.spec.ts` (one per AC; `skills/verify-walkthrough/SKILL.md` owns the
+derivation rules and the spec template). `walk` writes a per-run `<run_dir>/playwright.config.mjs` (`testDir`
+= the specs dir, `outputDir` = `<run_dir>/test-results`, `reporter: [['json', {outputFile: '<run_dir>/report.json'}]]`,
+`workers: 1`, `retries: 0`, `timeout: 30000`, `use: {baseURL, screenshot: 'on', trace: 'on', video: 'off'}` — `baseURL`
+is the `--base-url` flag, else the contract's `base_url` through `read-verify.sh`), runs `npx --no-install playwright
+test --config <that file>` FROM THE TARGET REPO (the project under test owns its Playwright install; the plugin never
+installs one), and then reads `report.json`. **The run's exit status is ignored — the reporter file is the oracle**
+(stdout / stderr are kept beside it as `playwright.stdout` / `playwright.stderr`).
+
+**Title convention.** A spec is ingested iff its title starts with `[ACn]` (`^\[(AC[0-9]+)\]`); the captured id
+must be an `ac_id` of `<run_dir>/acs.json` (a title naming an id the ticket does not have is named on stderr and
+skipped — `ac_id_unknown`). The LAST result of the LAST test under that title decides (`retries: 0`, so normally
+the only one). Two specs with the same `[ACn]` both append; the latest-per-`ac_id` rule of `summary-build` then
+makes the later file's verdict the counted one.
+
+**Reporter → verdict mapping** (the `status` of that last result; `classification` per the `ac` rules of
+§VERIFY_EVIDENCE):
+
+| reporter result | verdict | classification | `reason` |
+|---|---|---|---|
+| `passed` (test `expected`) | `PASS` | `null` | none |
+| `failed` / `timedOut` / `interrupted` whose first error line names a navigation or connection failure — `net::ERR_`, `ECONNREFUSED`, a `page.goto` timeout | `BLOCKED` | `ENVIRONMENT_ISSUE` | the first line of `errors[0].message`, ANSI-stripped |
+| any other `failed` / `timedOut` / `interrupted` | `FAIL` | `REAL_BUG` | the first line of `errors[0].message`, ANSI-stripped (`spec_<status>` if the reporter carried no message) |
+| `skipped` | `BLOCKED` | `ENVIRONMENT_ISSUE` | `spec_skipped` |
+| a spec with no result at all | `BLOCKED` | `ENVIRONMENT_ISSUE` | `spec_not_run` |
+
+`steps` is the result's `steps[].title` list (Playwright only reports `test.step()` steps there; it may be empty).
+
+**Attachment → artifact copy rule.** Every attachment of that result lands in `<run_dir>/artifacts/<ac_id>/` and
+is recorded in `artifacts[]` RELATIVE to `<run_dir>/`: a `path` attachment (Playwright's own `screenshot` → `.png`,
+`trace` → `trace.zip`, `error-context` → `.md`) is COPIED under its basename (an index prefix on a name collision);
+a `body` attachment — base64 in the reporter, which is how the template's `testInfo.attach('page-body', {body:
+await page.content(), contentType: 'text/html'})` and `response-<status>` arrive — is DECODED to `<name>.<ext>` with
+the extension from `contentType`, matched by prefix in the order `walk_copy_attachments`'s `case` statement lists
+them: `text/html*` → `.html`, `text/markdown*` → `.md`, any other `text/*` → `.txt`, `application/json*` → `.json`,
+`image/png*` → `.png`, `application/zip*` → `.zip`, otherwise `.bin`. With `screenshot: 'on'` every ingested line
+therefore carries at least one `.png`; a FAIL from the template additionally carries the `page-body.html` the seam
+test's mutation control asserts on.
+
+**BLOCKED rules that need no browser.** Before any config is written, `walk` runs `npx --no-install playwright
+--version` from the repo; a non-zero status appends a `BLOCKED` / `ENVIRONMENT_ISSUE` / `playwright_unavailable`
+line for every AC in `acs.json` that has NO `ac` line yet and exits **3** (the app was reachable; the harness was
+not). A missing reporter file after the run (`reporter_missing: <first stderr line>`) is handled the same way,
+exit 3. After ingest, every AC that still has neither a spec-derived line nor a `verdict`-recorded one gets
+`BLOCKED` / `ENVIRONMENT_ISSUE` / `no_spec`; a run dir with no `*.spec.*` at all takes that path for every
+undecided AC WITHOUT launching a browser (exit 0, no `report.json`). An AC already decided — a `NOT_VERIFIABLE`
+recorded through `verdict`, a `BLOCKED` from an earlier pass — is never overwritten by a `no_spec` line. Every line,
+in every branch, goes through `verify-helpers.sh evidence-append`; `walk` never opens `evidence.jsonl` itself.
+
 ---
 
 ## Validation Location
@@ -2718,3 +2845,4 @@ Schema validation occurs in the **hook execution layer**:
 - Per-agent `SubagentStop` hooks (in agent frontmatter) validate Worker and Execute Manager results
 - Cross-cutting `SubagentStop` hooks (in `hooks.json`) validate Code Reviewer and QA Executor results
 - Validation is never duplicated in Supervisor or plugin runtime
+- The `SubagentStop (qa-executor)` command hook — `scripts/validate-qa-result.py` — validates a `QA_RESULT` block (default mode) OR a `VERIFY_RESULT` block (`--verify` mode; §VERIFY_RESULT), `QA_RESULT` winning whenever both are present; one hook command, two block schemas

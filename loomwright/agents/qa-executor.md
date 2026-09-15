@@ -53,6 +53,7 @@ Find bugs before users do. Discover application structure, generate strict Playw
 
 - Target URL (from playwright.config.ts, .env, or user-provided)
 - Optional flags: `--depth`, `--rounds`, `--coverage`, `--skip-strategy`, `--strict-discovery`, `--auto-discover`, `--plan`, `--scope`, `--continue`, `--auth-state`
+- `--verify <run_dir>` — VERIFY MODE (reached via `/verify <ticket>`): the run dir `verify-run.sh preflight` minted (`acs.json`, `evidence.jsonl` with `run_start` + the passing `non_prod_assert` env line); see `### VERIFY MODE` below
 - Project source code (routes, controllers, schemas)
 - Playwright configuration
 
@@ -64,6 +65,7 @@ Find bugs before users do. Discover application structure, generate strict Playw
 - .qa-summary.md (max 200 tokens)
 - MISSING_FUNCTIONALITY_REPORT block
 - QA_RESULT block
+- VERIFY_RESULT block (`--verify` mode ONLY — instead of QA_RESULT; schema `docs/RESULT_SCHEMAS.md` §VERIFY_RESULT)
 
 ### Critical Rules
 
@@ -72,6 +74,7 @@ Find bugs before users do. Discover application structure, generate strict Playw
   a minimal request-only config in Phase 3.6 (see Phase 3 expansion below).
 - **App must be running:** Verify base URL responds before crawling
 - **No destructive actions:** Never submit forms during discovery, never click delete/logout/payment buttons
+  The `--verify` mode's mutation carve-out is defined in `skills/verify-walkthrough/SKILL.md` and applies there only.
 - **No production testing:** Never run tests against production environments
 - **Budget tracking:** 80 (default), 110 (--scope/--continue), 60 (--plan). Auto-split scopes > 40 tests.
 - **Always emit QA_RESULT:** Even on failure, timeout, or skip — always output structured result
@@ -141,6 +144,97 @@ NON-SKIPPABLE phases run even in ORANGE zone. Only RED (92%+) skips them.
 
 **SKIPPABLE only in YELLOW+ budget zone:**
 Phase 4 (Infrastructure), Phase 6 (Pre-existing triage), Phase C (Screenshots).
+
+---
+
+### VERIFY MODE (`--verify <run_dir>`)
+
+The narrow mode behind `/verify <ticket>`: walk ONE ticket's acceptance criteria through the running
+app and record one evidenced verdict per criterion. No discovery, no strategy, no generation, no
+audit — the ticket's ACs are the test plan and `verify-run.sh` is the harness. Protocol authority:
+`skills/verify-walkthrough/SKILL.md` — **`Read("${CLAUDE_PLUGIN_ROOT}/skills/verify-walkthrough/SKILL.md")`
+at mode entry** (deliberately NOT preloaded — the `preflight-sync` pattern; the frontmatter `skills:`
+list is unchanged). Advisory only: the run changes no `heal_decision`, blocks no PR, merges nothing.
+
+**Phase map in `--verify` mode.** The NON-SKIPPABLE list in PHASE TRACKING does not apply here; the
+mode runs Phase 2 and the EMIT half of Phase 13 and nothing else. Output the skip checkpoint for EVERY
+other phase, in order, with this exact reason:
+```
+⊘ Phase 1 SKIPPED. Reason: --verify mode.      (session planning — the ACs are the plan)
+✓ Phase 2 complete.                             (environment setup — Playwright presence ONLY; the install step is `npx --no-install playwright --version` from the repo — never install)
+⊘ Phase 3 SKIPPED. Reason: --verify mode.      (DETECT URL — `base_url` is the contract's, through `read-verify.sh`; never detected, never asked)
+⊘ Phase 3.6 SKIPPED. Reason: --verify mode.    (config fallback — `walk` generates the per-run config)
+⊘ Phase 4 SKIPPED. Reason: --verify mode.      (infrastructure discovery)
+⊘ Phase 5 SKIPPED. Reason: --verify mode.      (discovery)
+⊘ Phase 6 SKIPPED. Reason: --verify mode.      (pre-existing triage)
+⊘ Phase 7 SKIPPED. Reason: --verify mode.      (strategy)
+⊘ Phase 8 SKIPPED. Reason: --verify mode.      (generate — spec authoring below replaces it)
+⊘ Phase 9 SKIPPED. Reason: --verify mode.      (gap analysis)
+⊘ Phase 10 SKIPPED. Reason: --verify mode.     (dry-run)
+⊘ Phase 11 SKIPPED. Reason: --verify mode.     (strategist gate audit)
+⊘ Phase 12 SKIPPED. Reason: --verify mode.     (EXECUTE — `walk` replaces it)
+⊘ Phase 13 audit SKIPPED. Reason: --verify mode.  (13's strategist audit half; its EMIT half emits VERIFY_RESULT)
+```
+
+**Steps** (every shell-out is `bash "${CLAUDE_PLUGIN_ROOT}/scripts/<name>"`; `run_id` is the
+`run_start` line's `run_id` in `<run_dir>/evidence.jsonl`; every recorded line goes through
+`verify-helpers.sh evidence-append <run_dir> -` with a jq-built object — never a hand-written string,
+never a direct write to `evidence.jsonl`):
+
+```
+1. Read the skill (above). Read <run_dir>/acs.json (the ACs, keyed by ordinal ac_id) and the
+   run_start line (ticket_path, branch, run_id). Do NOT re-read the ticket.
+2. Phase 2 — Playwright presence: `npx --no-install playwright --version` from the repo.
+   Absent ⇒ do not install; continue (walk records BLOCKED / playwright_unavailable per AC and exits 3).
+3. `verify-env.sh start` → capture stdout and $? in two statements → append
+   {event: env, step: start, outcome: pass|fail, reason?}.
+   On fail: `verify-run.sh verdict <run_dir> <ac_id> BLOCKED --reason "start failed: <reason>"` for
+   EVERY ac_id, then `verify-run.sh finish <run_dir> --status aborted`, then EMIT (step 11). No walk.
+4. `verify-env.sh seed` when the contract declares it (null ⇒ exit 0, nothing ran) → env line
+   {step: seed, outcome: pass|fail|skipped}.
+5. `verify-env.sh auth-probe` → append {event: auth, state: authenticated|anonymous}.
+6. Author ONE spec per verifiable AC at <run_dir>/specs/<ac_id>.spec.ts per the skill §2 —
+   title `[<ac_id>] <AC text>`, role-based locators, strict Then, follow-up read after any
+   mutation, the verbatim afterEach page-body attach + non-2xx response attach. Mutating Whens are
+   allowed ONLY under the skill's §4 carve-out (non_prod_assert passed IN THIS RUN — the env line
+   is the proof); payment / logout / account-delete stay forbidden.
+7. For every AC that is NOT observable through the app (skill §3 / §7 — load, concurrency,
+   internal-only effects, forbidden interactions): `verify-run.sh verdict <run_dir> <ac_id>
+   NOT_VERIFIABLE --reason "<why it is unobservable>"`. For an AC whose When needs a session the
+   probe did not find (`anonymous`): `verdict … BLOCKED --reason "auth-probe: anonymous"`.
+   Every ac_id now has EITHER a spec OR a verdict line.
+8. `verify-run.sh walk <run_dir>` — generates the per-run config, runs the specs, ingests the
+   reporter into `ac` lines (PASS / FAIL / BLOCKED). Exit 3 = harness unavailable / no reporter:
+   the BLOCKED lines are already recorded — continue to 9.
+9. `verify-env.sh reset` when declared → env line {step: reset, …}; then `verify-env.sh stop` →
+   env line {step: stop, outcome: pass|fail}.
+10. `verify-run.sh finish <run_dir> [--status aborted]` — appends run_end, rebuilds summary.md,
+    and PRINTS the counts row. `--status aborted` when step 3 failed, walk exited 3, or the budget
+    hit RED before every AC had a line; otherwise completed.
+11. EMIT VERIFY_RESULT (below). `counts` is the printed row of step 10, COPIED — never tallied.
+```
+
+**VERIFY_RESULT emission** (the SubagentStop hook validates this block through the same
+`validate-qa-result.py` command as QA_RESULT — `QA_RESULT` wins whenever present, so do NOT emit a
+QA_RESULT in this mode; `counts.total` must equal `pass + fail + blocked + not_verifiable`, which it
+does by construction when copied):
+
+```
+VERIFY_RESULT:
+  schema_version: 1
+  run_id: <run_start.run_id>
+  run_dir: <run_dir>
+  ticket_path: <run_start.ticket_path>
+  status: completed        # or  status: aborted  — the same value finish --status recorded
+  counts: {pass: <n>, fail: <n>, blocked: <n>, not_verifiable: <n>, total: <n>}   # from finish's printed row
+  artifacts_dir: <run_dir>/artifacts
+  summary: "<one paragraph: what was walked, what PASSed, what could not be observed and why>"
+  notes: "<what the human should read next — e.g. which NOT_VERIFIABLE needs a non-UI check>"
+```
+
+**Never in this mode:** `page.goto` to a URL that is not under the contract's `base_url`; a `PASS`
+typed by hand (`verify-run.sh verdict … PASS` is refused — `pass_requires_observation`); a QA_RESULT
+block; spawning the QA Strategist; asking the user for the URL.
 
 ---
 
@@ -740,6 +834,8 @@ Split scopes are added to plan.json. Original scope marked "split".
 | Strategist crash/timeout | strategist_verdict: timeout, status: needs_human |
 | Tool budget exceeded | Emit partial QA_RESULT, notes: "budget_exceeded" |
 | Gate audit failed after retry | status: needs_human, gate_failures: [list] |
+| Playwright unavailable in `--verify` | `walk` records BLOCKED / ENVIRONMENT_ISSUE / `playwright_unavailable` per remaining AC (exit 3); `finish --status aborted`; emit VERIFY_RESULT — never install, never QA_RESULT |
+| `verify-env.sh start` failed in `--verify` | `verdict … BLOCKED` per AC, `finish --status aborted`, emit VERIFY_RESULT |
 
 ---
 
@@ -773,7 +869,7 @@ Split scopes are added to plan.json. Original scope marked "split".
 
 ## Integration Notes
 
-- Invoked via `/qa-executor` command (MUST be spawned as subagent via Task tool)
+- Invoked via `/qa-executor` command (MUST be spawned as subagent via Task tool); also via `/verify <ticket>`, which spawns it with `--verify <run_dir>` (VERIFY MODE — Phase 2 + emit only, `skills/verify-walkthrough/SKILL.md` Read at mode entry)
 - Memory: stores flaky patterns, common failures, successful templates across sessions
 - Skills: qa-strategy (risk framework), qa-test-patterns (generation rules), qa-gates (quality gates), playwright-e2e (test authoring), quality-checklist (general gates)
 - Spawns QA Strategist twice: Phase 11 (gate audit) + Phase 13 (results audit)

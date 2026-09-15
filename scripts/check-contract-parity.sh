@@ -354,6 +354,7 @@ worker|worker.md|WORKER_RESULT|schema_version,task_id,status,files_modified,summ
 execute-manager|execute-manager.md|EXECUTE_RESULT|schema_version,subtasks_completed,worktrees,merge_order,summary
 execute-manager|execute-manager.md|EXECUTE_CHECKPOINT|completed_so_far,remaining,resume_context,reason,adjudication_required,missing_outputs,adjudication_options,adjudication_kind,colliding_lanes
 qa-executor|qa-executor.md|QA_RESULT|schema_version,tests_generated,tests_passed,summary,coverage_estimate
+qa-executor|qa-executor.md|VERIFY_RESULT|schema_version,run_id,run_dir,summary,counts
 supervisor-runner|supervisor.md|SUPERVISOR_RESULT|schema_version,status,pr_url,heal_loop_ran,heal_iterations,heal_decision,heal_fixable_issues_fixed,heal_remaining_issues,error,summary
 plan-reviewer|plan-reviewer.md|PLAN_REVIEW_RESULT|schema_version,decision,issues,severity,section,description,summary
 code-reviewer|code-reviewer.md|CODE_REVIEW_RESULT|schema_version,decision,summary,severity,category,review_mode,audit_focus,trigger_paths_detected,scope_expanded,files_checked
@@ -402,7 +403,7 @@ ENUMS="
 agents/supervisor.md|status|completed,completed_with_escalation,failed,checkpoint,enum,pass,advisory_failures,unverified,skipped,running
 agents/supervisor.md|heal_decision|PASS,ESCALATED,null,enum
 agents/worker.md|status|completed,failed,partial,present,missing,pending,enum
-agents/qa-executor.md|status|passed,failed,partial,skipped,needs_human,plan_created,all_scopes_completed,enum
+agents/qa-executor.md|status|passed,failed,partial,skipped,needs_human,plan_created,all_scopes_completed,enum,completed,aborted
 agents/execute-manager.md|status|completed,failed,in_progress,pending,running,missing,checkpoint,enum
 agents/code-reviewer.md|decision|PASS,FAIL,NEEDS_HUMAN,enum
 agents/plan-reviewer.md|decision|PASS,FAIL,NEEDS_HUMAN,enum

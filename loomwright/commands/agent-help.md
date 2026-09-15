@@ -600,6 +600,34 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 
 ---
 
+### 🔎 /verify — Walk a ticket through the running app
+
+**Purpose:** Verify ONE ticket against the RUNNING app — no other surface does this (`## Executable Acceptance` is `cmd:` / `corpus-task:` only, `/qa-executor` crawls the whole app from discovery and forbids form submission, Phase 4.5 / CI review read the diff). Reads the ticket's acceptance criteria, refuses to touch anything not proven non-prod, starts the app from the committed `.agent/verify.json` contract, walks each AC with Playwright, and appends exactly one of four verdicts per AC — `PASS` / `FAIL` / `BLOCKED` / `NOT_VERIFIABLE` — with evidence. `PASS` is recorded ONLY when the Then was observed; `NOT_VERIFIABLE` says so when it cannot be.
+
+> **Advisory only** — a verify run changes no `heal_decision`, blocks no PR, and merges nothing. Its outputs are `<run_dir>/summary.md` (derived from `evidence.jsonl`, never hand-edited) and the executor's `VERIFY_RESULT` block.
+
+**Usage:**
+```bash
+/verify <ticket-path>                        # a requirement (.supervisor/requirements/…) or a brief (.supervisor/jobs/…)
+/verify <ticket-path> --branch <name>        # verify that branch's HEAD (default: the current branch)
+/verify <ticket-path> --cheap                # run the executor on Sonnet (docs/ARCHITECTURE_CONTRACTS.md §"Cost Profiles")
+
+# Headless (claude -p) — use the NAMESPACED form; bare /verify is "Unknown command" under detached claude -p:
+claude -p "/loomwright:verify .supervisor/requirements/checkout/01-coupon.md"
+```
+
+**What it does:**
+1. Reads the protocol authority `skills/verify-walkthrough/SKILL.md` (AC extraction, AC → spec derivation, the four verdicts, the V7 mutation carve-out, evidence-per-AC, budget)
+2. Shells out to `scripts/verify-run.sh preflight` — contract read → non-prod proof (`non_prod_assert` must PASS in THIS run, no override) → run dir minted; exit `3` (no `.agent/verify.json` — prints the `propose-verify.sh --non-prod … --confirm` bootstrap line), `1` (`non_prod_assert_failed`), and `2` (`ticket_unresolved` / usage) all STOP, fail CLOSED, nothing started
+3. Spawns the QA Executor in `--verify <run_dir>` mode as the ONLY child — it owns env start / seed / auth-probe / spec authoring / `verify-run.sh walk` / reset / stop / `finish`; the main thread never runs the walkthrough itself
+4. Reports `<run_dir>/summary.md` (the counts row `PASS: n · FAIL: n · BLOCKED: n · NOT_VERIFIABLE: n · total: n` and the per-AC table) plus the `VERIFY_RESULT` `summary` field; a missing block (turn limit, crash) is named, and the evidence lines already written are the checkpoint
+
+**Requirements:** a committed `.agent/verify.json`; `@playwright/test` resolvable from the target repo (`npx --no-install playwright`) — when it is not, every remaining AC is recorded `BLOCKED` / `playwright_unavailable` and the run finishes `aborted`, the plugin never installs it; `jq`, `git`, `python3`, `node`/`npx`.
+
+**Learn More:** see `loomwright/commands/verify.md` for the surface, `loomwright/skills/verify-walkthrough/SKILL.md` for the protocol, and `docs/RESULT_SCHEMAS.md` §VERIFY_ENV / §VERIFY_EVIDENCE / §VERIFY_RESULT for the three schemas a run touches.
+
+---
+
 ### 💤 /dreaming — Reflect on Past Sessions (Read-Only Until You Accept)
 
 **Purpose:** Run target agents in reflection mode over recent session logs to **propose** memory and `CLAUDE.md` updates, and to **harvest recorded `convention_mismatch` findings into proposed `.agent/rules/` entries**. Read-only on code, agent memory and `CLAUDE.md` while it gathers and proposes; every write is per-item human-gated. **It is not read-only on the *remote*:** an accepted rule proposal can reach a branch, a push and a `gh pr create` — but only through a **second, separate** per-item **Pre-push confirmation**. `/dreaming` never merges.
@@ -1150,7 +1178,7 @@ bd close BD-XX
 loomwright/              # Nested plugin root
 ├── .claude-plugin/
 │   └── plugin.json                   # Plugin metadata
-├── commands/                         # Slash commands (23)
+├── commands/                         # Slash commands (24)
 │   ├── launch-pad.md                 # Supervisor readiness
 │   ├── supervisor.md                 # Parallel orchestrator (v4)
 │   ├── autonomous.md                 # Continuous autonomous loop, stacked PRs (v14)
@@ -1162,6 +1190,7 @@ loomwright/              # Nested plugin root
 │   ├── review-pr.md                  # Standalone PR review-and-heal loop (never auto-merges)
 │   ├── qa-strategist.md              # Risk-based QA strategy
 │   ├── qa-executor.md                # Automated QA testing
+│   ├── verify.md                     # Walk a ticket through the running app (advisory)
 │   ├── dreaming.md                   # Read-only reflection over session logs (proposes memory + CLAUDE.md updates)
 │   ├── capability-check.md           # Read-only scan for new Claude Code capabilities vs tracked baseline
 │   ├── insights.md                   # Local Obsidian-friendly insights dashboard from session logs
@@ -1195,7 +1224,7 @@ loomwright/              # Nested plugin root
 │   ├── ARCHITECTURE.md
 │   ├── QA_SYSTEM_BLUEPRINT.md
 │   └── SPIKES/                       # Capability spike investigations + deferral records
-└── skills/                           # Skill files (41 skills; 18 tech-stack skills moved to stackpack@atelier)
+└── skills/                           # Skill files (42 skills; 18 tech-stack skills moved to stackpack@atelier)
     ├── SKILLS_INDEX.md               # Skill catalog with agent mapping
     ├── supervisor-readiness/         # Pre-flight checklist & brief template
     ├── agent-teams/                  # Agent Teams patterns (experimental)
