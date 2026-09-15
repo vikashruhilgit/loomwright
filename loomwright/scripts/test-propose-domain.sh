@@ -74,6 +74,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 SUT="$HERE/propose-domain.sh"
 LEDGER_SUT="$HERE/propose-work.sh"
 READ_PRODUCT="$HERE/read-product.sh"
+COMMON="$HERE/propose-common.sh"
 FIXSRC="$HERE/fixtures/propose-domain"
 # AC15 runs the basis against THIS repo, the one tree where the searcher's own artefacts
 # (its self-test and its fixture directory) actually sit inside the surface being scanned.
@@ -96,7 +97,7 @@ if ! command -v jq >/dev/null 2>&1; then
   echo "       Only propose-domain.sh may skip on a missing jq; this file may not."
   exit 1
 fi
-for f in "$SUT" "$LEDGER_SUT" "$READ_PRODUCT" "$LEDGER_FIX" \
+for f in "$SUT" "$LEDGER_SUT" "$READ_PRODUCT" "$COMMON" "$LEDGER_FIX" \
          "$FIXSRC/product.json" "$FIXSRC/product-tool.json" "$FIXSRC/fetch-stub.sh" \
          "$FIXSRC/source-acme.txt" "$FIXSRC/source-bolt.txt" "$FIXSRC/source-cursive.txt" \
          "$FIXSRC/README.md" "$FIXSRC/inventory/src/search_service.py"; do
@@ -125,6 +126,14 @@ cp "$READ_PRODUCT" "$MUTDIR/read-product.sh" 2>/dev/null
 [ -f "$MUTDIR/read-product.sh" ] \
   && ok "staged read-product.sh beside the mutants, so a mutant runs the same reader the real script does" \
   || no "could not stage the reader beside the mutants - every mutation control would skip and pass vacuously"
+# Same reasoning for propose-common.sh: propose-domain.sh now SOURCES its blast-radius guard
+# from that sibling instead of defining it inline, so any mutant dropped in $MUTDIR without a
+# copy beside it would hit the "sibling not found" skip path before it ever exercised the
+# behaviour a mutation control means to test.
+cp "$COMMON" "$MUTDIR/propose-common.sh" 2>/dev/null
+[ -f "$MUTDIR/propose-common.sh" ] \
+  && ok "staged propose-common.sh beside the mutants, so a mutant sources the same guard the real script does" \
+  || no "could not stage propose-common.sh beside the mutants - every mutation control would skip and pass vacuously"
 cp -R "$FIXSRC/." "$FIX/" 2>/dev/null
 chmod +x "$FIX/fetch-stub.sh" 2>/dev/null
 [ -x "$FIX/fetch-stub.sh" ] && ok "the committed fetch stub is staged executable outside the repo root" \
@@ -189,9 +198,12 @@ new_project() {
   ( cd "$np" && pwd -P )
 }
 
-# run_domain - every knob is a global, so a case sets only what it means to change.
-D_PROJ=""; D_STORE=""; D_OUT=""; D_REQ=""; D_FETCH=""; D_CALLS=""; D_MAXF=""; D_SCRIPT=""; D_CAP=""
-reset_domain() { D_STORE=""; D_OUT=""; D_REQ=""; D_FETCH="$FETCHER"; D_CALLS=""; D_MAXF=""; D_SCRIPT="$SUT"; D_CAP=""; }
+# run_domain - every knob is a global, so a case sets only what it means to change. D_COMMON
+# overrides PROPOSE_COMMON_SH (propose-common.sh's own test-only knob) - unset by default, so
+# every ordinary run and every non-guard mutant sources the intact $MUTDIR/propose-common.sh
+# resolved off $D_SCRIPT's own directory; only the AC10 guard mutation control sets it.
+D_PROJ=""; D_STORE=""; D_OUT=""; D_REQ=""; D_FETCH=""; D_CALLS=""; D_MAXF=""; D_SCRIPT=""; D_CAP=""; D_COMMON=""
+reset_domain() { D_STORE=""; D_OUT=""; D_REQ=""; D_FETCH="$FETCHER"; D_CALLS=""; D_MAXF=""; D_SCRIPT="$SUT"; D_CAP=""; D_COMMON=""; }
 run_domain() {
   ( cd "$D_PROJ" 2>/dev/null || exit 9
     export PATH="$SHIM:$PATH"
@@ -203,6 +215,7 @@ run_domain() {
     [ -n "$D_CALLS" ] && export PROPOSE_DOMAIN_FETCH_CALLS="$D_CALLS"
     [ -n "$D_MAXF" ]  && export PROPOSE_DOMAIN_MAX_FETCHES="$D_MAXF"
     [ -n "$D_CAP" ]   && export PROPOSE_DOMAIN_SURFACE_FILE_CAP="$D_CAP"
+    [ -n "$D_COMMON" ] && export PROPOSE_COMMON_SH="$D_COMMON"
     bash "$D_SCRIPT" ) >"$LOGOUT" 2>"$LOGERR"
   return $?
 }
@@ -817,16 +830,21 @@ $(diff <(printf '%s\n' "$b2") <(printf '%s\n' "$a2"))"
     || no "hostile input: the candidate was skipped without naming why:
 $(cat "$LOGERR" 2>/dev/null)"
 
-  MUT10="$MUTDIR/mutant-noguard.sh"
-  sed '/>>> WRITE-PATH GUARD/,/<<< END WRITE-PATH GUARD/d' "$HOST10" > "$MUT10" 2>/dev/null
-  if [ -s "$MUT10" ] && ! cmp -s "$MUT10" "$HOST10" && bash -n "$MUT10" 2>/dev/null; then
-    ok "built a syntactically valid mutant with the write-path guard deleted"
+  # The guard lives in propose-common.sh now (sourced, not copied), so the mutant is a COPY of
+  # propose-common.sh with the guard block sed-deleted, and the UNMODIFIED hostile-slug variant
+  # ($HOST10) is pointed at it via PROPOSE_COMMON_SH (D_COMMON, run_domain's own override) -
+  # propose-common.sh's own header documents this override; no mutant copy of the caller script
+  # itself is needed.
+  MUT_COMMON10="$MUTDIR/mutant-noguard-common.sh"
+  sed '/>>> WRITE-PATH GUARD/,/<<< END WRITE-PATH GUARD/d' "$COMMON" > "$MUT_COMMON10" 2>/dev/null
+  if [ -s "$MUT_COMMON10" ] && ! cmp -s "$MUT_COMMON10" "$COMMON" && bash -n "$MUT_COMMON10" 2>/dev/null; then
+    ok "built a syntactically valid mutant propose-common.sh with the write-path guard deleted"
     RK3="$(new_project "$FIX/product.json")"
     mkdir -p "$RK3/.supervisor/requirements/proposed"
     ln -s "$RK3" "$RK3/.supervisor/requirements/proposed/domain--x" 2>/dev/null
     b3="$(hash_set "$RK3")"
     reset_domain
-    D_PROJ="$RK3"; D_SCRIPT="$MUT10"
+    D_PROJ="$RK3"; D_SCRIPT="$HOST10"; D_COMMON="$MUT_COMMON10"
     run_domain; mrc=$?
     a3="$(hash_set "$RK3")"
     m10="$(count_domain "$RK3/.supervisor/requirements/proposed")"
@@ -1190,22 +1208,26 @@ if ln "$A17_V" "$A17/out/$a17_name" 2>/dev/null; then
   [ -s "$A17/out/$a17_name" ] \
     && ok "and the candidate itself was still written inside the output dir - the fix does not simply drop the write" \
     || no "nothing was written at $a17_name - the fix broke the ordinary write path"
-  # MUTATION CONTROL: restore the write-through and AC17 must go RED.
-  A17M="$MUTDIR/mut-a17.sh"
+  # MUTATION CONTROL: restore the write-through and AC17 must go RED. The `mv -f` line this
+  # control mutates lives in propose-common.sh now (pc_guarded_write, sourced) rather than in
+  # propose-domain.sh's own text, so the mutant is a COPY of propose-common.sh with that ONE
+  # line swapped, and the UNMODIFIED propose-domain.sh is pointed at it via PROPOSE_COMMON_SH
+  # (D_COMMON) - not a mutant copy of propose-domain.sh itself.
+  A17M="$MUTDIR/mut-a17-common.sh"
   # Swap ONLY the mv line, keeping its `|| { ... }` block intact - a whole-block cut leaves a
   # dangling `|| {` and produces a mutant that cannot parse, which reads as "control broken"
   # rather than "assertion vacuous".
   # Anchor on the mv VERB only, not the whole line: the line gained a `&& [ -f ... ]` belt in a
   # later commit and a full-line pattern silently stopped matching, which reported the control as
   # broken rather than as vacuous. Keep the trailing `|| {` block intact.
-  sed 's#^  mv -f "$gw_tmp" .*|| {#  { cat "$gw_tmp" > "$OUT_DIR_ABS/$name"; rm -f "$gw_tmp"; } 2>/dev/null || {#' "$SUT" > "$A17M"
-  if bash -n "$A17M" 2>/dev/null && ! grep -q '^  mv -f "\$gw_tmp"' "$A17M" && grep -q 'cat "\$gw_tmp" >' "$A17M"; then
+  sed 's#^  mv -f "$pc_tmp" .*|| {#  { cat "$pc_tmp" > "$pc_out_dir_abs/$pc_name"; rm -f "$pc_tmp"; } 2>/dev/null || {#' "$COMMON" > "$A17M"
+  if bash -n "$A17M" 2>/dev/null && ! grep -q '^  mv -f "\$pc_tmp"' "$A17M" && grep -q 'cat "\$pc_tmp" >' "$A17M"; then
     ok "built a syntactically valid mutant that writes THROUGH the entry instead of replacing it"
     printf 'original\n' > "$A17_V"
     rm -f "$A17/out/$a17_name"
     ln "$A17_V" "$A17/out/$a17_name" 2>/dev/null
     reset_domain
-    D_PROJ="$PROJ"; D_OUT="$A17/out"; D_REQ="$A17/req"; D_SCRIPT="$A17M"
+    D_PROJ="$PROJ"; D_OUT="$A17/out"; D_REQ="$A17/req"; D_COMMON="$A17M"
     run_domain >/dev/null 2>&1
     a17_mut="$(wc -c < "$A17_V" | tr -d ' ')"
     [ "$a17_mut" != "$a17_before" ] \

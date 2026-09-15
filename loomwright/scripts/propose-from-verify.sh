@@ -18,7 +18,9 @@
 # READS EXACTLY ONE SURFACE: `<run_dir>/evidence.jsonl`. Not `summary.md` (a derived, lossier
 # view), not `acs.json`, not the ticket file itself. WRITES ONLY under the output directory,
 # through the shared `pc_guarded_write()` in `propose-common.sh` (sourced, never copied inline -
-# see that file's header for why it is NOT sourced by `propose-work.sh` / `propose-domain.sh`).
+# `propose-work.sh` and `propose-domain.sh` source the same file; see propose-common.sh's own
+# header for how each caller's mutation control stays live against a guard that no longer lives
+# in its own file text).
 #
 # ONE DRAFT PER QUALIFYING LINE:
 #   * a `FAIL` `ac` line whose `classification` is `REAL_BUG` - taking the LATEST line per `ac_id`
@@ -86,7 +88,10 @@ if [ ! -f "$EVIDENCE" ]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
-COMMON="$SCRIPT_DIR/propose-common.sh"
+# PROPOSE_COMMON_SH overrides the sibling path - a test-only knob (see propose-common.sh's own
+# header) that lets a mutation control point this script's sourcing at a mutated COPY of
+# propose-common.sh without touching this script's own text. Unset in every real run.
+COMMON="${PROPOSE_COMMON_SH:-$SCRIPT_DIR/propose-common.sh}"
 if [ ! -f "$COMMON" ]; then
   say "sibling propose-common.sh not found at $COMMON - skipping, nothing proposed"
   exit 0

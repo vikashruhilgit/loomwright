@@ -151,6 +151,17 @@ if [ ! -f "$READ_PRODUCT" ]; then
   exit 0
 fi
 
+# PROPOSE_COMMON_SH overrides the sibling path - a test-only knob (see propose-common.sh's own
+# header) that lets a mutation control point this script's sourcing at a mutated COPY of
+# propose-common.sh without touching this script's own text. Unset in every real run.
+COMMON="${PROPOSE_COMMON_SH:-$SCRIPT_DIR/propose-common.sh}"
+if [ ! -f "$COMMON" ]; then
+  say "sibling propose-common.sh not found at $COMMON - skipping, nothing proposed"
+  exit 0
+fi
+# shellcheck disable=SC1090
+. "$COMMON"
+
 # ---------------------------------------------------------------------------
 # 2. Env knobs. Every numeric knob is validated; a non-numeric value is NAMED and ignored rather
 #    than allowed to empty an arithmetic expression under `set -u`.
@@ -276,66 +287,17 @@ LC_ALL=C sort "$WORK/competitors.tsv" > "$WORK/competitors.sorted.tsv"
 n_competitors="$(awk 'END{print NR+0}' "$WORK/competitors.sorted.tsv")"
 
 # ---------------------------------------------------------------------------
-# 6. guarded_write <plain-file-name> - the SINGLE enforcement point for the blast radius,
-#    copied in shape from propose-work.sh's guard. Content arrives on stdin.
+# 6. guarded_write <plain-file-name> - the SINGLE enforcement point for the blast radius.
 #
-#    Deliberately the ONLY sanitisation in this script: a second, redundant check elsewhere
-#    would make this guard's mutation control vacuous - a self-test could delete the guard and
-#    nothing would escape, so the test would stay green with the mechanism removed.
+#    A thin wrapper over `pc_guarded_write()`, sourced from propose-common.sh above - the ONE
+#    canonical guard shared by every `/propose` basis (see that file's header). Content
+#    arrives on stdin and is forwarded unchanged. Deliberately the ONLY sanitisation in this
+#    script: a second, redundant check elsewhere would make the guard's mutation control
+#    vacuous - a self-test could delete the guard and nothing would escape, so the test would
+#    stay green with the mechanism removed.
 # ---------------------------------------------------------------------------
 guarded_write() {
-  name="$1"
-  # >>> WRITE-PATH GUARD (a self-test's mutation control deletes this marked block)
-  case "$name" in
-    ''|.|..|.*|*/*|*'\'*)
-      say "refusing to write '$name' - not a plain file name under $OUT_DIR"
-      cat >/dev/null; return 1 ;;
-  esac
-  # Unreachable defence-in-depth: the case above already rejects any name containing "/", so
-  # dirname is always $OUT_DIR_ABS and this cannot fire. Kept so the guard still holds if that
-  # case is ever narrowed. Not load-bearing - the case above is the traversal defence.
-  guard_parent="$(cd "$(dirname "$OUT_DIR_ABS/$name")" 2>/dev/null && pwd)"
-  if [ "$guard_parent" != "$OUT_DIR_ABS" ]; then
-    say "refusing to write '$name' - resolves outside $OUT_DIR_ABS"
-    cat >/dev/null; return 1
-  fi
-  # A legal plain name can still be a pre-existing SYMLINK planted in the output directory, and
-  # `cat >` FOLLOWS a symlink - which walks the write outside the directory the name guard just
-  # proved it was inside. Refuse rather than unlink: this basis never removes a file it did not
-  # write, and a symlink here is hostile input, not a stale artefact to tidy.
-  if [ -L "$OUT_DIR_ABS/$name" ]; then
-    say "refusing to write '$name' - it is a symlink, and writing through it would leave $OUT_DIR_ABS"
-    cat >/dev/null; return 1
-  fi
-  # A pre-existing entry that is not a REGULAR file. This matters specifically because the write
-  # below is `mv -f`: mv into a DIRECTORY succeeds, moving the temp entry inside it and returning
-  # 0, so the run counts a candidate it never wrote and abandons a PID-named temp in a tree this
-  # basis promises to leave nothing in. `cat >` used to fail on a directory and name it; the
-  # staged-write rewrite lost that for free, so the refusal is now explicit rather than inherited.
-  if [ -e "$OUT_DIR_ABS/$name" ] && [ ! -f "$OUT_DIR_ABS/$name" ]; then
-    say "refusing to write '$name' - something that is not a regular file already occupies that name"
-    cat >/dev/null; return 1
-  fi
-  # <<< END WRITE-PATH GUARD
-  # Write to a temp entry inside the output dir and `mv -f` it into place. `mv` REPLACES the
-  # directory entry rather than writing through whatever occupies it, which closes three things
-  # the `-L` test above cannot: a HARDLINK at a legal name (`[ -L ]` is false for one, and
-  # `cat >` truncates the shared inode - measured: a planted hardlink took 5856 bytes into a
-  # file outside the output dir with no refusal), the check-then-write TOCTOU race on the
-  # symlink path, and any future link type. The `-L` refusal is kept above because naming a
-  # planted symlink is more useful to a human than silently replacing it.
-  gw_tmp="$OUT_DIR_ABS/.tmp.propose-domain.$$"
-  { cat > "$gw_tmp"; } 2>/dev/null || {
-    rm -f "$gw_tmp" 2>/dev/null
-    say "cannot write $OUT_DIR_ABS/$name - skipping this candidate"
-    return 1
-  }
-  mv -f "$gw_tmp" "$OUT_DIR_ABS/$name" 2>/dev/null && [ -f "$OUT_DIR_ABS/$name" ] || {
-    rm -f "$gw_tmp" 2>/dev/null
-    say "cannot move the staged candidate into place at $OUT_DIR_ABS/$name - skipping this candidate"
-    return 1
-  }
-  return 0
+  pc_guarded_write "$OUT_DIR_ABS" "$SELF" "$1"
 }
 
 # ---------------------------------------------------------------------------

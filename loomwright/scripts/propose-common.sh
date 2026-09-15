@@ -3,38 +3,34 @@
 # SOURCED, never executed directly (it defines functions and returns; it has no main).
 #
 # WHY THIS FILE EXISTS. `propose-work.sh` (the ledger basis) and `propose-domain.sh` (the domain
-# basis) each shipped their OWN inline `guarded_write()`, and by the time a third basis
+# basis) each ORIGINALLY shipped their OWN inline `guarded_write()`, and by the time a third basis
 # (`propose-from-verify.sh`) needed the same guard, the two originals had already drifted:
 # `propose-domain.sh`'s copy additionally refused a pre-existing symlink or non-regular-file
 # occupant and staged the write through a temp file + `mv -f` (closing a hostile-hardlink and a
-# check-then-write TOCTOU window that `propose-work.sh`'s plain `cat >` copy did not). This file
-# is the RECONCILED, canonical version - the hardened one - so a THIRD caller never has to choose
-# which drifted copy to trust or write a fourth one of its own.
+# check-then-write TOCTOU window that `propose-work.sh`'s plain `cat >` copy did not).
 #
-# guarded_write() BELOW IS THAT CANONICAL VERSION, and `propose-from-verify.sh` sources this file
-# and calls it directly - "never copied a third time" for any NEW basis from here on.
+# pc_guarded_write() BELOW IS THE RECONCILED, CANONICAL VERSION - the hardened one - and ALL
+# THREE bases (`propose-work.sh`, `propose-domain.sh`, `propose-from-verify.sh`) now SOURCE this
+# file and call it directly. There is exactly ONE copy of this guard in the whole repo; "never
+# copied a third time" holds for every caller, including the two pre-existing ones, not only for
+# a new one.
 #
-# `propose-work.sh` and `propose-domain.sh` themselves are DELIBERATELY NOT switched to source
-# this file. Each one's own self-test (`test-propose-work.sh` AC8, `test-propose-domain.sh` AC10)
-# proves its blast-radius guard is load-bearing with a MUTATION CONTROL that `sed`-deletes the
-# marked `>>> WRITE-PATH GUARD ... <<< END WRITE-PATH GUARD` block DIRECTLY OUT OF THAT SCRIPT'S
-# OWN FILE TEXT and asserts the guard's absence actually lets a hostile write escape. If either
-# script sourced this file instead of defining the function inline, that guard block would no
-# longer exist in the script's own text - the mutation control's `sed` would delete nothing, the
-# "mutant" would be byte-identical to the original, and the control would report "could not build
-# a valid mutant" instead of proving the guard is load-bearing. Sourcing would not soften the
-# guard - the guard would still run, unchanged, from this file - but it would SILENTLY DISABLE the
-# test that proves it, turning a real safety net into an unfalsifiable green. That is the exact
-# "claim no check backs" defect class this repo keeps meeting, so this file deliberately keeps
-# `propose-work.sh` and `propose-domain.sh`'s own inline copies in place, RECONCILED to be
-# byte-for-byte the same guard behaviour as this canonical version (both now carry the hardened
-# symlink / non-regular-file / staged-write checks propose-domain.sh originated), rather than
-# deleting them. The two inline copies and this file are meant to be changed together; a future
-# edit to guarded_write's behaviour must land in all three, and a manual diff (or a future
-# test-propose-common.sh) is how that lockstep gets checked - there is no automated byte-diff gate
-# today, which is the one honest gap in "never copied a third time" as applied to the two
-# PRE-EXISTING copies (only the third-and-later caller is structurally prevented from drifting, by
-# sourcing this file instead of writing its own).
+# HOW THE MUTATION CONTROL STAYS LIVE ACROSS A SOURCED GUARD. Each caller's own self-test
+# (`test-propose-work.sh` AC8, `test-propose-domain.sh` AC10, `test-propose-common.sh`) proves the
+# guard is load-bearing with a MUTATION CONTROL - but the guard block no longer lives in the
+# caller's own file text, so a `sed` against the CALLER would delete nothing and build a
+# byte-identical, uncontrolled "mutant". Every mutation control therefore mutates a COPY of THIS
+# FILE instead: it `sed`-deletes the guard function's marked comment-delimited block (see that
+# block's own opening and closing comment lines, just below, for the exact marker text a `sed`
+# range targets - not spelled out again here so this prose paragraph itself can never become a
+# second, false match for that same `sed` range) out of a copy of `propose-common.sh`, and points
+# the UNMODIFIED caller script's sourcing at that mutant copy through `PROPOSE_COMMON_SH` - each
+# of the three callers resolves its sibling as
+# `"${PROPOSE_COMMON_SH:-$SCRIPT_DIR/propose-common.sh}"`, so the env var overrides the
+# `SCRIPT_DIR`-relative default without touching the caller's own file text at all. That override
+# is a TEST-ONLY knob, always unset in a real run, and is the "or an overridable source path"
+# half of the same technique `test-propose-from-verify.sh`'s own AC12 evidence-section mutant
+# already used (there, a scratch-dir copy) before this guard was extracted into this file.
 #
 # CONTRACT (identical to every basis that uses it, restated in every emitted proposal file too):
 #   the output directory (normally `.supervisor/requirements/proposed/`) is deliberately NOT an
