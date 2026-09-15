@@ -88,7 +88,7 @@ Every deterministic step is a shell-out; the main thread never re-implements wha
 
 A separate entry point — no ticket path, no preflight, no new run dir:
 
-1. `run_dir=.supervisor/verify/<run_id>`. `[ -d "$run_dir" ]` or **STOP** with an error naming the missing dir — never silently start a fresh run under that id.
+1. `run_dir=.supervisor/verify/<run_id>`. `[ -d "$run_dir" ]` or **STOP** with an error naming the missing dir — never silently start a fresh run under that id. Then guard against resuming a run that already finished (never merely paused): `jq -r 'select(.event=="run_end") | .status' "$run_dir/evidence.jsonl" 2>/dev/null | tail -1` — a non-empty result means a `finish` line was already appended (`completed` or `aborted`) and there is nothing paused to resume; print an error naming the run's already-`<status>` state and **STOP** rather than proceeding into `auth-check` on a finished run (a finished run has no ambiguity to resolve, and re-entering `auth-check` on it would silently re-probe a run nobody paused).
 2. Run in ONE Bash call, capturing stdout and the exit status in two statements:
    ```bash
    out=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/verify-run.sh" auth-check "$run_dir" --repo <dir>); rc=$?

@@ -602,7 +602,7 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 
 ### 🔎 /verify — Walk a ticket through the running app
 
-**Purpose:** Verify ONE ticket against the RUNNING app — no other surface does this (`## Executable Acceptance` is `cmd:` / `corpus-task:` only, `/qa-executor` crawls the whole app from discovery and forbids form submission, Phase 4.5 / CI review read the diff). Reads the ticket's acceptance criteria, refuses to touch anything not proven non-prod, starts the app from the committed `.agent/verify.json` contract, walks each AC with Playwright, and appends exactly one of four verdicts per AC — `PASS` / `FAIL` / `BLOCKED` / `NOT_VERIFIABLE` — with evidence. `PASS` is recorded ONLY when the Then was observed; `NOT_VERIFIABLE` says so when it cannot be.
+**Purpose:** Verify ONE ticket against the RUNNING app — no other surface does this (`## Executable Acceptance` is `cmd:` / `corpus-task:` only, `/qa-executor` crawls the whole app from discovery and forbids form submission, Phase 4.5 / CI review read the diff). Reads the ticket's acceptance criteria, refuses to touch anything not proven non-prod, starts the app from the committed `.agent/verify.json` contract, walks each AC with Playwright, and appends exactly one of four verdicts per AC — `PASS` / `FAIL` / `BLOCKED` / `NOT_VERIFIABLE` — with evidence. `PASS` is recorded ONLY when the Then was observed; `NOT_VERIFIABLE` says so when it cannot be. When the app needs an authenticated session it does not have (or one dies mid-run), the run PAUSES rather than recording a false verdict — see "Auth pause / resume" below.
 
 > **Advisory only** — a verify run changes no `heal_decision`, blocks no PR, and merges nothing. Its outputs are `<run_dir>/summary.md` (derived from `evidence.jsonl`, never hand-edited) and the executor's `VERIFY_RESULT` block.
 
@@ -611,6 +611,7 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 /verify <ticket-path>                        # a requirement (.supervisor/requirements/…) or a brief (.supervisor/jobs/…)
 /verify <ticket-path> --branch <name>        # verify that branch's HEAD (default: the current branch)
 /verify <ticket-path> --cheap                # run the executor on Sonnet (docs/ARCHITECTURE_CONTRACTS.md §"Cost Profiles")
+/verify --resume <run_id>                    # resume a run that paused for a human sign-in (needs_auth / session_expired)
 
 # Headless (claude -p) — use the NAMESPACED form; bare /verify is "Unknown command" under detached claude -p:
 claude -p "/loomwright:verify .supervisor/requirements/checkout/01-coupon.md"
@@ -619,8 +620,10 @@ claude -p "/loomwright:verify .supervisor/requirements/checkout/01-coupon.md"
 **What it does:**
 1. Reads the protocol authority `skills/verify-walkthrough/SKILL.md` (AC extraction, AC → spec derivation, the four verdicts, the V7 mutation carve-out, evidence-per-AC, budget)
 2. Shells out to `scripts/verify-run.sh preflight` — contract read → non-prod proof (`non_prod_assert` must PASS in THIS run, no override) → run dir minted; exit `3` (no `.agent/verify.json` — prints the `propose-verify.sh --non-prod … --confirm` bootstrap line), `1` (`non_prod_assert_failed`), and `2` (`ticket_unresolved` / usage) all STOP, fail CLOSED, nothing started
-3. Spawns the QA Executor in `--verify <run_dir>` mode as the ONLY child — it owns env start / seed / auth-probe / spec authoring / `verify-run.sh walk` / reset / stop / `finish`; the main thread never runs the walkthrough itself
-4. Reports `<run_dir>/summary.md` (the counts row `PASS: n · FAIL: n · BLOCKED: n · NOT_VERIFIABLE: n · total: n` and the per-AC table) plus the `VERIFY_RESULT` `summary` field; a missing block (turn limit, crash) is named, and the evidence lines already written are the checkpoint
+3. Spawns the QA Executor in `--verify <run_dir>` mode as the ONLY child — it owns env start / seed / **auth-check** (`scripts/verify-run.sh auth-check`, not a direct probe — `auth.method: none` makes zero executor calls) / spec authoring / `verify-run.sh walk` / reset / stop / `finish`; the main thread never runs the walkthrough itself
+4. Reports `<run_dir>/summary.md` (the counts row `PASS: n · FAIL: n · BLOCKED: n · NOT_VERIFIABLE: n · total: n` and the per-AC table) plus the `VERIFY_RESULT` `summary` field; a missing block (turn limit, crash) is named, and the evidence lines already written are the checkpoint — UNLESS the run paused (below), in which case no counts/summary are printed as if it finished
+
+**Auth pause / resume.** A run that needs a sign-in it does not have (`auth-check` exit `4`), or whose session dies mid-walk (a real 401/403 observed on an authenticated route forces `walk` to exit `5`), STOPS with `VERIFY_RESULT.status: paused` and a `pause_reason` (`needs_auth` | `session_expired`) instead of a false BLOCKED/completed verdict. The command prints exactly ONE instruction: `npx playwright codegen --save-storage=<path> <base_url>`, then `sign in, close the window`, then `/verify --resume <run_id>` — the plugin never opens a browser and never echoes anything read from the storage-state file, only its path. `/verify --resume <run_id>` errors on a missing run dir (never silently starts a fresh run under that id) and on a run dir that already finished (`completed`/`aborted` — nothing paused to resume); otherwise it re-probes auth and, on success, continues at the first AC with no GENUINE verdict yet — the ACs a session-expiry pause force-BLOCKED are re-opened for a fresh spec run, never permanently stranded, while a real PASS/FAIL/BLOCKED from before the pause is never re-run.
 
 **Requirements:** a committed `.agent/verify.json`; `@playwright/test` resolvable from the target repo (`npx --no-install playwright`) — when it is not, every remaining AC is recorded `BLOCKED` / `playwright_unavailable` and the run finishes `aborted`, the plugin never installs it; `jq`, `git`, `python3`, `node`/`npx`.
 

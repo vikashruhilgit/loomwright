@@ -2637,6 +2637,21 @@ environment fix). Every `ac` line stays in the file as history — the store is 
 summary counts **only the newest `ac` line per `ac_id`** (`group_by(.ac_id) | map(last)` over the
 file's input order). Two lines for `AC1`, PASS then FAIL, therefore count as one FAIL and zero PASS.
 
+**A FORCED pause-verdict is not "already verdicted" — `verify-helpers.sh first-unverdicted`'s
+resume-eligibility rule.** `verify-run.sh walk`'s AC5 expiry override (`walk_apply_expiry_override`)
+writes `ac` lines with `reason: session_expired` (the AC that actually hit the 401/403) or
+`reason: run_paused_session_expired` (every later AC, forced regardless of its own spec result) — and
+these two reasons are the ONLY place either string is ever written by that override. `first-unverdicted`
+(the resume-position derivation AC6 relies on) computes its done-set over the LATEST `ac` line per
+`ac_id` (the same latest-per-`ac_id` rule above) and treats an `ac_id` whose latest line carries one of
+these two reasons as **NOT yet genuinely verdicted** — it re-enters the "still needs a spec" set on
+resume. Every other verdict (a real PASS/FAIL, a BLOCKED for any other reason, NOT_VERIFIABLE) still
+counts as done: a genuinely-decided AC is never re-run on resume, only the ones the expiry override
+itself forced. Without this exclusion `first-unverdicted` would report "nothing left" for every AC from
+the pause point onward the moment a session expires (existence-based, not reason-aware), permanently
+stranding the resume — the store's append-only "latest wins" semantics are exactly what let the later,
+genuine verdict from the retried `walk` supersede the forced one once the human signs back in.
+
 **Three invariants the validator enforces so the summary cannot lie the old way:** a `run_end` line
 **cannot carry totals** (any `counts`/`totals` key at any depth is `run_end_carries_counts`); a
 **non-PASS verdict cannot omit its reason** (`non_pass_without_reason`); and a **FAIL/BLOCKED cannot

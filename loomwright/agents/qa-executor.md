@@ -205,8 +205,12 @@ never a direct write to `evidence.jsonl`):
    already appended the `auth`/`pause` lines and rebuilt `summary.md`.
 6. AC SET for this pass: on a fresh run, every ac_id in acs.json; on a `resumed` run, ONLY the
    still-unverdicted ones — `verify-helpers.sh first-unverdicted <run_dir>` prints the first, then
-   take every `acs.json` ac_id from that point on in file order (never re-verdict one that already
-   has an `ac` line). Author ONE spec per verifiable AC in that set at
+   take every `acs.json` ac_id from that point on in file order. `first-unverdicted` treats a FORCED
+   pause-verdict (an `ac` line whose `reason` is `session_expired` or `run_paused_session_expired` —
+   the two reasons ONLY step 8's expiry override ever writes) as NOT yet genuinely verdicted, so a
+   run resumed after a step-8 session-expiry pause re-opens exactly those AC ids for a fresh spec;
+   never re-verdict one whose latest `ac` line is a REAL verdict (PASS/FAIL/any other BLOCKED/
+   NOT_VERIFIABLE). Author ONE spec per verifiable AC in that set at
    <run_dir>/specs/<ac_id>.spec.ts per the skill §2 — title `[<ac_id>] <AC text>`, role-based
    locators, strict Then, follow-up read after any mutation, the verbatim afterEach page-body
    attach + non-2xx response attach. Mutating Whens are allowed ONLY under the skill's §4 carve-out
