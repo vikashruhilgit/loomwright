@@ -75,10 +75,13 @@
 #     (APPROVED / bare LGTM) are NOT rounds of back-and-forth. A BOT-review issue
 #     COMMENT counts as a round only when ALL of: (a) the author looks like a review
 #     bot (login "claude", "github-actions", or any "*[bot]"); (b) its RAW body
-#     carries a review MARKER — a word-bounded "review" ANYWHERE in the body
-#     (originally a heading-anchored marker; widened because bot review
-#     comments open with "## Overview" and mention review only in running text),
-#     still word-bounded so "Deploy Preview" can never match; (c) at least one commit lands
+#     carries a review MARKER — a word-bounded review STEM ("review", "reviewed",
+#     "reviewer(s)", "reviewing", "reviews") or "finding(s)" ANYWHERE in the body
+#     (originally a heading-anchored bare "review"; widened once because bot review
+#     comments open with "## Overview" and mention review only in running text, and
+#     again after PR #223 whose bot comment opened "Reviewed <sha>. … Two minor
+#     findings" and never used the bare word), still word-bounded so
+#     "Deploy Preview"/"previewed" can never match; (c) at least one commit lands
 #     AFTER the comment — comment `created_at` (REST, snake_case) vs commit
 #     `committedDate` (gh pr view, camelCase), both ISO-8601 UTC so plain lexicographic
 #     string comparison is correct. Anchoring keeps terminal "clean — recommend merge"
