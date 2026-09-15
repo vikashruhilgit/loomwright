@@ -1016,7 +1016,7 @@ grep -qF -- 'test.afterEach' "$SKILL" && grep -qF -- "attach('page-body'" "$SKIL
   && ok "(AC5) the spec template carries the afterEach page-body attach" || no "(AC5) spec template lacks the afterEach page-body attach"
 grep -qF -- 'Payment, logout and account-deletion actions stay forbidden everywhere' "$SKILL" \
   && ok "(AC5) V7 carve-out keeps payment/logout/account-delete forbidden" || no "(AC5) carve-out's forbidden set missing"
-grep -qF -- 'version: "1.0.0"' "$SKILL" && ok "(AC5) skill frontmatter version pinned at 1.0.0" || no "(AC5) skill frontmatter version not 1.0.0"
+grep -qF -- 'version: "1.1.0"' "$SKILL" && ok "(AC5) skill frontmatter version pinned at 1.1.0 (item 04 bump)" || no "(AC5) skill frontmatter version not 1.1.0"
 
 echo "== (AC10-command) /verify surface + commands/qa-executor.md sync =="
 grep -qF -- '/loomwright:verify' "$VERIFY_CMD" && ok "(cmd) commands/verify.md names the namespaced /loomwright:verify form" || no "(cmd) /loomwright:verify missing from commands/verify.md"
@@ -1026,6 +1026,42 @@ grep -qF -- 'subagent_type: "loomwright:qa-executor"' "$VERIFY_CMD" && ok "(cmd)
 grep -qF -- '--verify <run_dir>' "$VERIFY_CMD" && ok "(cmd) commands/verify.md passes --verify <run_dir> to the executor" || no "(cmd) --verify <run_dir> missing from commands/verify.md"
 grep -qF -- '--verify' "$QA_CMD" && ok "(cmd) commands/qa-executor.md mentions --verify" || no "(cmd) commands/qa-executor.md does not mention --verify"
 
+# ============================================================================
+# Item 04 Subtask 2 arms: auth pause/resume on the prompt surfaces (AC4, AC8, AC10).
+# ============================================================================
+echo "== (AC10-resume) commands/verify.md --resume flow =="
+grep -qF -- '/verify --resume <run_id>' "$VERIFY_CMD" && ok "(AC10) --resume <run_id> is documented in Usage" || no "(AC10) --resume <run_id> missing from Usage"
+grep -qF -- '--resume <run_id>' "$VERIFY_CMD" && ok "(AC10) --resume <run_id> appears in the Parameters table" || no "(AC10) --resume <run_id> missing from Parameters"
+grep -qF -- 'auth-check' "$VERIFY_CMD" && ok "(AC10) commands/verify.md shells out to verify-run.sh auth-check" || no "(AC10) auth-check missing from commands/verify.md"
+grep -qF -- 'event: resume, reason: "human_signed_in"' "$VERIFY_CMD" || grep -qF -- 'event: "resume", reason: "human_signed_in"' "$VERIFY_CMD" \
+  && ok "(AC10) commands/verify.md appends the resume/human_signed_in evidence line" || no "(AC10) resume/human_signed_in jq object missing from commands/verify.md"
+grep -qF -- 'never silently start' "$VERIFY_CMD" || grep -qF -- 'never silently starting a fresh run' "$VERIFY_CMD" \
+  && ok "(AC10) --resume errors rather than silently starting a fresh run under the same id" || no "(AC10) missing dir / no-silent-start guard not documented"
+grep -qF -- 'git -C <dir> check-ignore -q' "$VERIFY_CMD" && ok "(AC10) the one-shot storage-state gitignore warning shells to git check-ignore" || no "(AC10) git check-ignore warning missing from commands/verify.md"
+
+echo "== (AC4-pause) commands/verify.md pause instruction =="
+grep -qF -- 'npx playwright codegen --save-storage=' "$VERIFY_CMD" && ok "(AC4) the pause instruction names the codegen --save-storage= form" || no "(AC4) codegen instruction missing from commands/verify.md"
+grep -qF -- 'sign in, close the window' "$VERIFY_CMD" && ok "(AC4) the pause instruction includes 'sign in, close the window'" || no "(AC4) sign-in line missing from commands/verify.md"
+grep -qF -- '/verify --resume <run_id>' "$VERIFY_CMD" && ok "(AC4) the pause instruction names /verify --resume <run_id>" || no "(AC4) resume line missing from the pause instruction"
+n="$(grep -cF -- 'pause_reason' "$VERIFY_CMD")"
+[ "$n" -ge 1 ] && ok "(AC4) commands/verify.md reads VERIFY_RESULT.pause_reason ($n mentions)" || no "(AC4) commands/verify.md never mentions pause_reason"
+
+echo "== (AC8) agents/qa-executor.md auth-check/resume/pause wiring =="
+grep -qF -- 'verify-run.sh auth-check <run_dir> --repo <dir>' "$AGENT" && ok "(AC8) VERIFY MODE step shells out to verify-run.sh auth-check" || no "(AC8) auth-check shell-out missing from agents/qa-executor.md"
+n="$(grep -cF -- 'auth-probe: anonymous' "$AGENT")"
+[ "$n" -eq 0 ] && ok "(AC8) the old auth-probe: anonymous per-AC fallback is fully removed" || no "(AC8) auth-probe: anonymous still present ($n mentions) — should be unreachable"
+grep -qF -- 'RESUME DETECTION' "$AGENT" && ok "(AC8) the agent documents resume-detection before start/seed" || no "(AC8) RESUME DETECTION guard missing"
+grep -qF -- 'first-unverdicted' "$AGENT" && ok "(AC8) the agent scopes resumed spec-authoring to first-unverdicted's remaining set" || no "(AC8) first-unverdicted not referenced in agents/qa-executor.md"
+grep -qF -- 'Exit 5' "$AGENT" && ok "(AC8) the agent branches on walk's exit 5 (session_expired)" || no "(AC8) walk exit-5 branch missing from agents/qa-executor.md"
+grep -qF -- 'pause_reason: needs_auth' "$AGENT" && grep -qF -- 'pause_reason: session_expired' "$AGENT" \
+  && ok "(AC8) both pause_reason values (needs_auth, session_expired) appear in the VERIFY_RESULT wiring" || no "(AC8) one or both pause_reason values missing from agents/qa-executor.md"
+grep -qF -- 'status: paused' "$AGENT" && ok "(AC8) the agent's VERIFY_RESULT template documents status: paused" || no "(AC8) status: paused missing from the VERIFY_RESULT template"
+
+echo "== (skill) verify-walkthrough documents pause/resume, forward-reference resolved =="
+n="$(grep -cF -- 'item 04 adds the pause-for-auth' "$SKILL")"
+[ "$n" -eq 0 ] && ok "(skill) the item-04 forward-reference is resolved (0 remaining mentions)" || no "(skill) forward-reference still present ($n mentions)"
+grep -qF -- '## 8. Auth pause and resume' "$SKILL" && ok "(skill) a dedicated pause/resume section exists" || no "(skill) no pause/resume section in the skill"
+grep -qF -- 'response-40' "$SKILL" && ok "(skill) the skill documents the response-40[13] expiry signal" || no "(skill) expiry signal not documented in the skill"
 
 # ============================================================================
 echo

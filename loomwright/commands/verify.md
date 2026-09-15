@@ -20,6 +20,7 @@ No other surface verifies a ticket against the running app: `## Executable Accep
 /verify <ticket-path>                        # a requirement (.supervisor/requirements/…) or a brief (.supervisor/jobs/…)
 /verify <ticket-path> --branch <name>        # verify that branch's HEAD (default: the current branch)
 /verify <ticket-path> --cheap                # run the executor on Sonnet (see docs/ARCHITECTURE_CONTRACTS.md §"Cost Profiles")
+/verify --resume <run_id>                    # resume a run that paused for a human sign-in (needs_auth / session_expired)
 
 # Headless (claude -p) — use the NAMESPACED form; bare /verify is "Unknown command" under detached claude -p:
 claude -p "/loomwright:verify .supervisor/requirements/checkout/01-coupon.md"
@@ -29,9 +30,10 @@ claude -p "/loomwright:verify .supervisor/requirements/checkout/01-coupon.md"
 
 | Parameter | Required | Description |
 |---|---|---|
-| `<ticket-path>` | Yes | Path to the ticket. Under `.supervisor/requirements/` it is read as a `requirement`; under `.supervisor/jobs/` as a `brief`. Any other path exits 2 (`ticket_unresolved`). |
+| `<ticket-path>` | Yes (unless `--resume`) | Path to the ticket. Under `.supervisor/requirements/` it is read as a `requirement`; under `.supervisor/jobs/` as a `brief`. Any other path exits 2 (`ticket_unresolved`). |
 | `--branch <name>` | No | Branch whose HEAD is recorded on the `run_start` line and diffed against the base for `<run_dir>/diff.stat`. Default: `git branch --show-current`. |
 | `--cheap` | No | Forwarded to the executor spawn as `model: "sonnet"` guidance per `docs/ARCHITECTURE_CONTRACTS.md` §"Cost Profiles". Default (`inherit`) unchanged when absent. |
+| `--resume <run_id>` | No (mutually exclusive with `<ticket-path>`) | Resumes the paused run at `.supervisor/verify/<run_id>` — see "Resume flow" below. Errors, never silently starting a new run, when that dir does not exist. |
 
 ## Main-thread steps
 
@@ -64,13 +66,49 @@ Every deterministic step is a shell-out; the main thread never re-implements wha
    ```
    **DO NOT** run the walkthrough protocol yourself. **DO NOT** call `verify-env.sh start` from the main thread — the executor starts what it stops.
 
-5. **Report.** On return, do NOT re-run `verify-run.sh finish` (the executor ran it; `run_end` is already the last line). Print `<run_dir>/summary.md` (the counts row `PASS: n · FAIL: n · BLOCKED: n · NOT_VERIFIABLE: n · total: n` and the per-AC table) and the `VERIFY_RESULT` block's `summary` field. If the executor returned without a `VERIFY_RESULT` (turn limit, crash), print `summary.md` as-is and say the block is missing — the evidence lines already written are the checkpoint.
+5. **Report.** On return, do NOT re-run `verify-run.sh finish` (the executor ran it, UNLESS the run paused — see below; `run_end` is already the last line when it did run). Read the `VERIFY_RESULT` block's `status` / `pause_reason`:
+   | `status` | action |
+   |---|---|
+   | `paused` | The run stopped for a human sign-in — no spec was authored/walked/finished beyond the point of the pause. Print the pause instruction (below) and **STOP**. Do NOT print `summary.md`'s counts row as if the run finished. |
+   | `completed` / `aborted` | Print `<run_dir>/summary.md` (the counts row `PASS: n · FAIL: n · BLOCKED: n · NOT_VERIFIABLE: n · total: n` and the per-AC table) and the `VERIFY_RESULT` block's `summary` field. |
+
+   If the executor returned without a `VERIFY_RESULT` (turn limit, crash), print `summary.md` as-is and say the block is missing — the evidence lines already written are the checkpoint.
+
+   **Pause instruction (`status: paused`, either `pause_reason`).** Read the real `storage_state_path` / `base_url` from `bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-verify.sh" --repo <dir>` (never hard-coded) and print exactly:
+   ```
+   npx playwright codegen --save-storage=<storage_state_path> <base_url>
+   sign in, close the window
+   /verify --resume <run_id>
+   ```
+   The plugin process never opens a browser itself and never echoes anything read from the storage-state file — only its path.
+
+   **Storage-state gitignore warning (fresh runs only, once).** Immediately before printing the pause instruction for a run reached via `<ticket-path>` (never on a `--resume` invocation's own report — this check is one-shot, on the FIRST pause): when the contract's `auth.method` is `storage_state`, run `git -C <dir> check-ignore -q <storage_state_path>`; a non-zero exit (the path is NOT ignored) prints ONE warning naming the path (it contains session cookies). A zero exit (already ignored) prints nothing.
+
+## Resume flow (`--resume <run_id>`)
+
+A separate entry point — no ticket path, no preflight, no new run dir:
+
+1. `run_dir=.supervisor/verify/<run_id>`. `[ -d "$run_dir" ]` or **STOP** with an error naming the missing dir — never silently start a fresh run under that id.
+2. Run in ONE Bash call, capturing stdout and the exit status in two statements:
+   ```bash
+   out=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/verify-run.sh" auth-check "$run_dir" --repo <dir>); rc=$?
+   ```
+3. `rc == 4` ⇒ print the SAME pause instruction as step 5 above, verbatim (no new run dir, no `resume` line appended) and **STOP**.
+4. `rc == 0` ⇒ append `{event: resume, reason: human_signed_in}`:
+   ```bash
+   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+   jq -cn --arg ts "$ts" --arg run_id "<run_id>" \
+     '{schema_version: 1, ts: $ts, run_id: $run_id, event: "resume", reason: "human_signed_in"}' \
+     | bash "${CLAUDE_PLUGIN_ROOT}/scripts/verify-helpers.sh" evidence-append "$run_dir" -
+   ```
+   then spawn the executor exactly as step 4 above (`--verify <run_dir>`; no special resume flag on the agent boundary — the executor detects resume from the run dir's own contents, see `agents/qa-executor.md`). Derive `Ticket:` / `Branch:` for the Task prompt from the `run_start` line already in `evidence.jsonl` (`jq -r 'select(.event=="run_start") | .ticket_path'` / `.branch`), never re-asked.
+5. Continue at step 5 (Report) above — this time WITHOUT the one-shot gitignore check (already done on the first pause).
 
 ## What it records
 
 | file | writer | content |
 |---|---|---|
-| `<run_dir>/evidence.jsonl` | `verify-helpers.sh evidence-append` only | `run_start`, `env` (`non_prod_assert`, `start`, `seed`, `reset`, `stop`), `auth`, one `ac` per criterion, `run_end` |
+| `<run_dir>/evidence.jsonl` | `verify-helpers.sh evidence-append` only | `run_start`, `env` (`non_prod_assert`, `start`, `seed`, `reset`, `stop`), `auth` (incl. `needs_auth`/`expired`), `pause`/`resume` (needs_auth / session_expired), one `ac` per criterion, `run_end` |
 | `<run_dir>/acs.json`, `diff.stat` | `verify-run.sh preflight` | the extracted ACs; the branch-vs-base diff summary (advisory) |
 | `<run_dir>/specs/<ac_id>.spec.ts` | the executor | one `[ACn]`-titled spec per verifiable AC (template in the skill) |
 | `<run_dir>/artifacts/<ac_id>/` | `verify-run.sh walk` | screenshots, traces, non-2xx bodies, page body on failure |

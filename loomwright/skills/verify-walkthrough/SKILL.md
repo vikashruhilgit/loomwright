@@ -1,8 +1,8 @@
 ---
 name: verify-walkthrough
 description: Protocol authority for `/verify <ticket>` and the QA Executor's `--verify <run_dir>` mode — AC extraction, AC → Playwright spec derivation, the four observation-derived verdicts (PASS / FAIL / BLOCKED / NOT_VERIFIABLE), the V7 mutation carve-out, evidence-per-AC, and budget. Read on demand at mode entry, deliberately not preloaded.
-version: "1.0.0"
-lastUpdated: "2026-09-14"
+version: "1.1.0"
+lastUpdated: "2026-09-15"
 ---
 
 # Verify Walkthrough Protocol (`/verify` + qa-executor `--verify` mode)
@@ -168,11 +168,45 @@ Worked examples of the judgement in §2–§3 — the seam test pins the concurr
 | Given the form page, when `hello` is submitted, then the page echoes `hello` | `[AC2]` spec: fill, submit, `expect(locator('#echo')).toHaveText('hello')` on the follow-up page | `PASS` / `FAIL` by observation (the mutation control flips it to `FAIL` + `REAL_BUG` when the app renders `wrong`) | a form-echo Then — the carve-out permits the submit once `non_prod_assert` passed |
 | Given 200 bookings, when submitted under 200 concurrent users, then no double-booking occurs | none | `NOT_VERIFIABLE` — `verdict … NOT_VERIFIABLE --reason "load/concurrency claim not observable through the UI"` | a concurrency / load claim has no single-browser observation; never a PASS on a one-user proxy |
 | Given a saved order, when it is confirmed, then the audit table gains a row | none | `NOT_VERIFIABLE` — reason `internal-only effect; no UI surface shows the audit row` | the effect is not observable through the app; a database check is not a walkthrough |
-| Given a signed-in admin, when they open `/admin/users`, then the user list renders | `[ACn]` spec ONLY when `auth-probe` prints `authenticated` | `BLOCKED` / `ENVIRONMENT_ISSUE` — reason `auth-probe: anonymous` when the probe says `anonymous` (item 04 adds the pause-for-auth) | the When cannot be reached without a session; a redirect to login is not a FAIL of the AC |
+| Given a signed-in admin, when they open `/admin/users`, then the user list renders | `[ACn]` spec, authored once `verify-run.sh auth-check` confirms an authenticated session (exit 0) | `PASS`/`FAIL` by observation like any other AC — a run with no session PAUSES the WHOLE run first (`status: paused, pause_reason: needs_auth`; §8 below), never a per-AC BLOCKED anonymous | authentication is gated at the RUN level before spec authoring, not per AC — a login redirect is never observed as a FAIL of one criterion |
 | Given a cart, when checkout is paid, then the receipt page shows the order number | none | `NOT_VERIFIABLE` — reason `forbidden interaction (payment/logout/account-delete)` | payment stays forbidden everywhere (§4) |
 | Given the dashboard, when the browser is offline, then a cached page renders within 100 ms | `[ACn]` spec for the offline render only | `PASS` / `FAIL` by observation on the render; the `100 ms` claim named in `notes` | the timing bound is not a reliable single-run observation; the observable half is still asserted |
 
 ---
+
+## 8. Auth pause and resume
+
+A run never continues on an anonymous or expired session; it PAUSES instead — a named,
+resumable stop, never a silent BLOCKED-forever or an anonymous continue.
+
+- **Needs auth (before any spec is authored).** `verify-run.sh auth-check <run_dir> --repo <dir>`
+  runs right after `seed`. `auth.method: none` ⇒ no-op (no evidence line, no probe call at all —
+  an app with no auth concept has nothing to check). Otherwise it probes the target: authenticated
+  ⇒ one `{event:auth, state:authenticated}` line, continue to spec authoring; anything else
+  (no/invalid storage state, unreachable probe) ⇒ `{event:auth, state:needs_auth}` then
+  `verify-run.sh pause <run_dir> --reason needs_auth` — the run stops with NO spec authored, NO
+  `walk`, NO `finish`; the agent emits `VERIFY_RESULT` `status: paused, pause_reason: needs_auth`.
+- **Session expired (mid-walk).** `walk`'s per-spec ingest additionally scans attachments for a
+  `response-40[13]` signal; on a hit it takes the MINIMUM affected AC ordinal `N` (parsed from each
+  spec's `[ACn]` title, never file-discovery order), forces `AC<N>` to `BLOCKED` /
+  `ENVIRONMENT_ISSUE` / `session_expired` (overriding whatever the spec itself reported) and every
+  `AC<k>` with `k > N` to `BLOCKED` / `ENVIRONMENT_ISSUE` / `run_paused_session_expired` — ACs
+  before `N` keep their real verdict. Exactly one `{event:auth, state:expired}` line and one
+  `pause --reason session_expired` line are appended (not one pair per forced AC); `walk` exits `5`
+  instead of its normal `0`/`3`. The agent skips `finish` and emits `VERIFY_RESULT`
+  `status: paused, pause_reason: session_expired`.
+- **`pause` is written in exactly ONE place** — `verify-run.sh pause <run_dir> --reason
+  <needs_auth|session_expired>` — called by both paths above, never constructed inline.
+- **Resume.** `/verify --resume <run_id>` re-runs `auth-check`; a second `needs_auth` re-prints the
+  same sign-in instruction (no new run dir, no `resume` line); success appends
+  `{event:resume, reason:human_signed_in}` and re-spawns the executor at the SAME run dir. The
+  executor detects the resume from the store itself (a prior passing `env:{step:start}` line) and
+  derives its position from `verify-helpers.sh first-unverdicted <run_dir>` — never re-verdicting an
+  `ac_id` that already has a line, never re-running `start`/`seed`.
+- **The plugin never types, stores, or logs a credential.** It only ever reads the storage-state
+  file a human's own `playwright codegen --save-storage=…` run wrote; `commands/verify.md` is the
+  only surface that ever prints the sign-in instruction (the executor is a subagent with no
+  `AskUserQuestion`).
 
 ## Checklist before `finish`
 
@@ -182,3 +216,4 @@ Worked examples of the judgement in §2–§3 — the seam test pins the concurr
 - [ ] no spec performs a payment / logout / account-delete action
 - [ ] `seed` ran before and `reset` after the walk when the contract declares them
 - [ ] `VERIFY_RESULT.counts` is the printed counts row, copied — never tallied
+- [ ] a paused run (`needs_auth` or `session_expired`) never calls `finish`; `counts` comes from `summary.md`'s current row instead

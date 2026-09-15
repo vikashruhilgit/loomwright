@@ -184,34 +184,56 @@ never a direct write to `evidence.jsonl`):
 ```
 1. Read the skill (above). Read <run_dir>/acs.json (the ACs, keyed by ordinal ac_id) and the
    run_start line (ticket_path, branch, run_id). Do NOT re-read the ticket.
+   RESUME DETECTION: `resumed=true` iff evidence.jsonl already carries a line
+   {event: env, step: start, outcome: pass} (jq `select(.event=="env" and .step=="start" and
+   .outcome=="pass")`) — existence, any prior line. A missing/malformed evidence.jsonl (jq parse
+   failure) defaults `resumed=false` — the SAFE default, since skipping start/seed on a false
+   positive would leave a step that never actually ran silently un-run.
 2. Phase 2 — Playwright presence: `npx --no-install playwright --version` from the repo.
    Absent ⇒ do not install; continue (walk records BLOCKED / playwright_unavailable per AC and exits 3).
-3. `verify-env.sh start` → capture stdout and $? in two statements → append
+3. SKIP when `resumed`. `verify-env.sh start` → capture stdout and $? in two statements → append
    {event: env, step: start, outcome: pass|fail, reason?}.
    On fail: `verify-run.sh verdict <run_dir> <ac_id> BLOCKED --reason "start failed: <reason>"` for
    EVERY ac_id, then `verify-run.sh finish <run_dir> --status aborted`, then EMIT (step 11). No walk.
-4. `verify-env.sh seed` when the contract declares it (null ⇒ exit 0, nothing ran) → env line
-   {step: seed, outcome: pass|fail|skipped}.
-5. `verify-env.sh auth-probe` → append {event: auth, state: authenticated|anonymous}.
-6. Author ONE spec per verifiable AC at <run_dir>/specs/<ac_id>.spec.ts per the skill §2 —
-   title `[<ac_id>] <AC text>`, role-based locators, strict Then, follow-up read after any
-   mutation, the verbatim afterEach page-body attach + non-2xx response attach. Mutating Whens are
-   allowed ONLY under the skill's §4 carve-out (non_prod_assert passed IN THIS RUN — the env line
-   is the proof); payment / logout / account-delete stay forbidden.
-7. For every AC that is NOT observable through the app (skill §3 / §7 — load, concurrency,
-   internal-only effects, forbidden interactions): `verify-run.sh verdict <run_dir> <ac_id>
-   NOT_VERIFIABLE --reason "<why it is unobservable>"`. For an AC whose When needs a session the
-   probe did not find (`anonymous`): `verdict … BLOCKED --reason "auth-probe: anonymous"`.
-   Every ac_id now has EITHER a spec OR a verdict line.
+4. SKIP when `resumed`. `verify-env.sh seed` when the contract declares it (null ⇒ exit 0, nothing
+   ran) → env line {step: seed, outcome: pass|fail|skipped}.
+5. `verify-run.sh auth-check <run_dir> --repo <dir>` → capture stdout and $? in two statements.
+   rc 0 ⇒ continue to 6 (spec authoring). rc 4 ⇒ the run needs a human sign-in: do NOT author any
+   spec, do NOT call `walk`, do NOT call `finish`. Run `verify-env.sh stop` → env line {step: stop,
+   outcome: pass|fail} (the app was started at step 3, this run or a prior one) for cleanup, then
+   go straight to EMIT (11) with `status: paused, pause_reason: needs_auth` — `auth-check` itself
+   already appended the `auth`/`pause` lines and rebuilt `summary.md`.
+6. AC SET for this pass: on a fresh run, every ac_id in acs.json; on a `resumed` run, ONLY the
+   still-unverdicted ones — `verify-helpers.sh first-unverdicted <run_dir>` prints the first, then
+   take every `acs.json` ac_id from that point on in file order (never re-verdict one that already
+   has an `ac` line). Author ONE spec per verifiable AC in that set at
+   <run_dir>/specs/<ac_id>.spec.ts per the skill §2 — title `[<ac_id>] <AC text>`, role-based
+   locators, strict Then, follow-up read after any mutation, the verbatim afterEach page-body
+   attach + non-2xx response attach. Mutating Whens are allowed ONLY under the skill's §4 carve-out
+   (non_prod_assert passed IN THIS RUN — the env line is the proof); payment / logout /
+   account-delete stay forbidden.
+7. For every AC in that same set that is NOT observable through the app (skill §3 / §7 — load,
+   concurrency, internal-only effects, forbidden interactions): `verify-run.sh verdict <run_dir>
+   <ac_id> NOT_VERIFIABLE --reason "<why it is unobservable>"`. (The old anonymous-probe BLOCKED
+   fallback is gone — an unauthenticated run pauses the WHOLE run at step 5, before any AC is ever
+   verdicted individually.) Every ac_id in the set now has EITHER a spec OR a verdict line.
 8. `verify-run.sh walk <run_dir>` — generates the per-run config, runs the specs, ingests the
    reporter into `ac` lines (PASS / FAIL / BLOCKED). Exit 3 = harness unavailable / no reporter:
-   the BLOCKED lines are already recorded — continue to 9.
+   the BLOCKED lines are already recorded — continue to 9. Exit 5 = a session expired mid-walk (a
+   real 401/403 forced BLOCKED/ENVIRONMENT_ISSUE onto the affected AC and every later one; `walk`
+   already appended `{event:auth,state:expired}` and the `pause --reason session_expired` line and
+   rebuilt `summary.md`) — continue to 9, then SKIP `finish` (10) and go straight to EMIT (11) with
+   `status: paused, pause_reason: session_expired`.
 9. `verify-env.sh reset` when declared → env line {step: reset, …}; then `verify-env.sh stop` →
-   env line {step: stop, outcome: pass|fail}.
-10. `verify-run.sh finish <run_dir> [--status aborted]` — appends run_end, rebuilds summary.md,
-    and PRINTS the counts row. `--status aborted` when step 3 failed, walk exited 3, or the budget
-    hit RED before every AC had a line; otherwise completed.
-11. EMIT VERIFY_RESULT (below). `counts` is the printed row of step 10, COPIED — never tallied.
+   env line {step: stop, outcome: pass|fail}. Runs on every path that reaches it (normal completion
+   AND a step-8 exit-5 pause) since the app was started at step 3.
+10. SKIP when this is a step-5 or step-8 pause (11 reads `summary.md`'s current row instead).
+    Otherwise: `verify-run.sh finish <run_dir> [--status aborted]` — appends run_end, rebuilds
+    summary.md, and PRINTS the counts row. `--status aborted` when step 3 failed, walk exited 3, or
+    the budget hit RED before every AC had a line; otherwise completed.
+11. EMIT VERIFY_RESULT (below). `counts` is finish's printed row (step 10) when finish ran, COPIED
+    — never tallied; on a step-5/step-8 pause (no finish call) read the same row directly from
+    `<run_dir>/summary.md` instead (already current — `auth-check`/`walk` rebuilt it before pausing).
 ```
 
 **VERIFY_RESULT emission** (the SubagentStop hook validates this block through the same
@@ -225,8 +247,10 @@ VERIFY_RESULT:
   run_id: <run_start.run_id>
   run_dir: <run_dir>
   ticket_path: <run_start.ticket_path>
-  status: completed        # or  status: aborted  — the same value finish --status recorded
-  counts: {pass: <n>, fail: <n>, blocked: <n>, not_verifiable: <n>, total: <n>}   # from finish's printed row
+  status: completed        # or aborted, or paused — the value finish --status recorded, or (on a
+                            # step-5/step-8 pause, no finish call) paused
+  pause_reason: null        # needs_auth | session_expired IFF status is paused; null otherwise (never omit the key)
+  counts: {pass: <n>, fail: <n>, blocked: <n>, not_verifiable: <n>, total: <n>}   # finish's printed row, or summary.md's current row on a pause
   artifacts_dir: <run_dir>/artifacts
   summary: "<one paragraph: what was walked, what PASSed, what could not be observed and why>"
   notes: "<what the human should read next — e.g. which NOT_VERIFIABLE needs a non-UI check>"
@@ -836,6 +860,8 @@ Split scopes are added to plan.json. Original scope marked "split".
 | Gate audit failed after retry | status: needs_human, gate_failures: [list] |
 | Playwright unavailable in `--verify` | `walk` records BLOCKED / ENVIRONMENT_ISSUE / `playwright_unavailable` per remaining AC (exit 3); `finish --status aborted`; emit VERIFY_RESULT — never install, never QA_RESULT |
 | `verify-env.sh start` failed in `--verify` | `verdict … BLOCKED` per AC, `finish --status aborted`, emit VERIFY_RESULT |
+| `auth-check` exit 4 in `--verify` (needs a human sign-in) | No spec authored, no `walk`, no `finish`; run `verify-env.sh stop` for cleanup; emit VERIFY_RESULT `status: paused, pause_reason: needs_auth` — never a per-AC BLOCKED |
+| `walk` exit 5 in `--verify` (session expired mid-walk) | The affected AC + every later one already forced to BLOCKED/ENVIRONMENT_ISSUE/session_expired by `walk` itself; run `reset`/`stop`, skip `finish`; emit VERIFY_RESULT `status: paused, pause_reason: session_expired` |
 
 ---
 
@@ -869,7 +895,8 @@ Split scopes are added to plan.json. Original scope marked "split".
 
 ## Integration Notes
 
-- Invoked via `/qa-executor` command (MUST be spawned as subagent via Task tool); also via `/verify <ticket>`, which spawns it with `--verify <run_dir>` (VERIFY MODE — Phase 2 + emit only, `skills/verify-walkthrough/SKILL.md` Read at mode entry)
+- Invoked via `/qa-executor` command (MUST be spawned as subagent via Task tool); also via `/verify <ticket>` and `/verify --resume <run_id>`, both of which spawn it with `--verify <run_dir>` (VERIFY MODE — Phase 2 + emit only, `skills/verify-walkthrough/SKILL.md` Read at mode entry); a resumed invocation is detected from the run dir's own evidence (a prior passing `env:{step:start}` line), never from a flag on the Task boundary
+- VERIFY MODE step 5 (`verify-run.sh auth-check`) can pause the whole run before any spec is authored (`status: paused, pause_reason: needs_auth`); step 8's `walk` can pause it mid-walk (`pause_reason: session_expired`) — in both cases `commands/verify.md` is the ONLY surface that ever prints the human-facing sign-in instruction (the executor is a subagent with no `AskUserQuestion`)
 - Memory: stores flaky patterns, common failures, successful templates across sessions
 - Skills: qa-strategy (risk framework), qa-test-patterns (generation rules), qa-gates (quality gates), playwright-e2e (test authoring), quality-checklist (general gates)
 - Spawns QA Strategist twice: Phase 11 (gate audit) + Phase 13 (results audit)
