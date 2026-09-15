@@ -181,9 +181,39 @@ guarded_write() {
     echo "propose-work: refusing to write '$name' - resolves outside $OUT_DIR_ABS" >&2
     cat >/dev/null; return 1
   fi
+  # A legal plain name can still be a pre-existing SYMLINK planted in the output directory, and
+  # `cat >` FOLLOWS a symlink - which walks the write outside the directory the name guard just
+  # proved it was inside. Refuse rather than unlink: this basis never removes a file it did not
+  # write, and a symlink here is hostile input, not a stale artefact to tidy. (Reconciled from
+  # propose-domain.sh's own guard, which had drifted ahead of this one - see propose-common.sh's
+  # header for why this basis keeps its own inline copy of the reconciled guard rather than
+  # sourcing that file.)
+  if [ -L "$OUT_DIR_ABS/$name" ]; then
+    echo "propose-work: refusing to write '$name' - it is a symlink, and writing through it would leave $OUT_DIR_ABS" >&2
+    cat >/dev/null; return 1
+  fi
+  # A pre-existing entry that is not a REGULAR file. This matters specifically because the write
+  # below is `mv -f`: mv into a DIRECTORY succeeds, moving the temp entry inside it and returning
+  # 0, so the run would count a candidate it never wrote and abandon a PID-named temp in a tree
+  # this basis promises to leave nothing extra in.
+  if [ -e "$OUT_DIR_ABS/$name" ] && [ ! -f "$OUT_DIR_ABS/$name" ]; then
+    echo "propose-work: refusing to write '$name' - something that is not a regular file already occupies that name" >&2
+    cat >/dev/null; return 1
+  fi
   # <<< END WRITE-PATH GUARD
-  { cat > "$OUT_DIR_ABS/$name"; } 2>/dev/null || {
+  # Write to a temp entry inside the output dir and `mv -f` it into place. `mv` REPLACES the
+  # directory entry rather than writing through whatever occupies it, which closes a hostile
+  # HARDLINK at a legal name (`[ -L ]` is false for one, and `cat >` would truncate the shared
+  # inode) and the check-then-write TOCTOU race on the symlink path above.
+  gw_tmp="$OUT_DIR_ABS/.tmp.propose-work.$$"
+  { cat > "$gw_tmp"; } 2>/dev/null || {
+    rm -f "$gw_tmp" 2>/dev/null
     echo "propose-work: cannot write $OUT_DIR_ABS/$name - skipping this candidate" >&2
+    return 1
+  }
+  mv -f "$gw_tmp" "$OUT_DIR_ABS/$name" 2>/dev/null && [ -f "$OUT_DIR_ABS/$name" ] || {
+    rm -f "$gw_tmp" 2>/dev/null
+    echo "propose-work: cannot move the staged candidate into place at $OUT_DIR_ABS/$name - skipping this candidate" >&2
     return 1
   }
   return 0

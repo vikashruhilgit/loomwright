@@ -1774,6 +1774,44 @@ loop saw fit to forward.
 - `scripts/send-webhook.sh` — the implementation (both event-type paths
   live in the same script).
 
+### `/verify --notify` gate events (v-next)
+
+A SEPARATE, ADDITIVE closed set — the pre-existing table above (`phase6_save` /
+`rubric` / `no_rubric` / `adjudication`, autonomous-loop's own gates) is
+UNCHANGED by this addition. `/verify --notify` fires the same
+`send-webhook.sh --event-type gate` seam, with its own three `gate_type`
+values, dispatched from `scripts/verify-helpers.sh`'s `evidence_append`
+(the `VERIFY_EVIDENCE` store's sole writer — see §VERIFY_EVIDENCE in
+`docs/RESULT_SCHEMAS.md`), never from `commands/verify.md`'s main thread:
+
+| `gate_type`          | Firing site                                                              | When                                                                                          | Fires at most |
+|-----------------------|---------------------------------------------------------------------------|------------------------------------------------------------------------------------------------|---------------|
+| `verify_needs_auth`   | `verify-helpers.sh evidence_append`, on a `pause` line with `reason: needs_auth` | The run paused for a human sign-in. Also fires `notify-desktop.sh` (a synthetic `Notification`-shaped payload, never `PreToolUse[AskUserQuestion]` — `/verify` never calls that tool). | once per run |
+| `verify_first_fail`   | `verify-helpers.sh evidence_append`, on the first `ac` line with `verdict: FAIL` | The first FAIL of the run was just recorded — any classification, not only `REAL_BUG`.        | once per run |
+| `verify_run_end`      | `verify-helpers.sh evidence_append`, on the `run_end` line                | The run finished (`completed` or `aborted` — a `paused` run never reaches a `run_end` line).  | once per run |
+
+Enablement is a **filesystem marker**, not an env var: `<run_dir>/.notify-enabled`,
+created by `verify-run.sh preflight --notify` or `verify-run.sh notify-enable
+<run_dir>` (the `--resume --notify` path, which never calls `preflight`). This
+is a deliberate departure from autonomous-loop's env-var-resolved
+`LOOMWRIGHT_WEBHOOK_URL` gate: `/verify`'s VERIFY MODE runs its per-AC recording
+inside a Task-spawned qa-executor subagent — a separate process with no shared
+shell state with the `/verify` main thread that parsed `--notify` — while a
+file under the run dir both processes already read is visible regardless of
+which one is running. `--context` folds in `run_id`, `ticket`, and the derived
+counts row (`PASS: n · FAIL: n · BLOCKED: n · NOT_VERIFIABLE: n · total: n`)
+already computed by `verify-helpers.sh summary_build` — never a fresh tally.
+No change to `send-webhook.sh` itself, its payload schema, or the
+pre-existing four-value table above; `--notify` on `/verify` is a passthrough
+flag, never persisted (same convention as `/automate --notify` — re-pass it
+on `--resume` to keep notifying a resumed run). `LOOMWRIGHT_WEBHOOK_URL`
+unset ⇒ the existing gate-path no-op (line 1 of this file's gate behaviour):
+exit 0, the run completes unaffected.
+
+**Cross-references:** `commands/verify.md` §"Notify", `scripts/verify-helpers.sh`
+(`verify_notify_dispatch` / `verify_notify_once`), `scripts/verify-run.sh`
+(`preflight --notify`, `notify-enable`).
+
 ---
 
 ## Future work (out of scope for this PR)

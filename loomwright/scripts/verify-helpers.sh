@@ -84,6 +84,7 @@ evidence_append() {
     # so a caller retrying on rc 1 would replay the append and duplicate the fact. The fact is stored;
     # the derivation failure is named on stderr and the exit status stays 0.
     ( summary_build "$run_dir" ) || diag "evidence-append: summary-build failed after a successful append (the record IS stored; run summary-build on $run_dir to see why)"
+    verify_notify_dispatch "$run_dir" "$line" || true
     return 0
   fi
   case "$rc" in
@@ -167,6 +168,23 @@ summary_build() {
         ($issues[] | "- [\(.severity | show)] \(.text | show)\(if .route == null then "" else " (route: \(.route | esc))" end)")
       end),
       "",
+      "## Proposals",
+      # Evidence-driven, never a filesystem scan of .supervisor/requirements/proposed/: whether a
+      # draft is EXPECTED is fully determined by which ac/issue lines qualify (FAIL+REAL_BUG acs,
+      # every issue line - the same rule propose-from-verify.sh applies), so this regenerates
+      # correctly on every append with no dependency on propose-from-verify.sh having run yet.
+      # This is what makes a BLOCKED/NOT_VERIFIABLE-only run state "no draft was written" truthfully
+      # (AC2 of the verify-fail-sink-and-notify job) without this script ever touching proposed/.
+      (([$acs[] | select(.verdict == "FAIL" and .classification == "REAL_BUG")]) as $draftable_acs
+       | (($draftable_acs | length) + ($issues | length)) as $n_expected_drafts
+       | if $n_expected_drafts == 0 then
+           "_no draft is expected — only BLOCKED / NOT_VERIFIABLE verdicts (or FAIL lines classified DISCOVERY_GAP / ENVIRONMENT_ISSUE) were recorded; `/propose --from-verify` writes nothing for this run_"
+         else
+           "\($n_expected_drafts) draft(s) expected under `.supervisor/requirements/proposed/` (`verify-\($run_id)-*`) — run `/propose --from-verify \($run_id)` to write them:",
+           ($draftable_acs[] | "- FAIL \(.ac_id | show): \(.text | show)"),
+           ($issues[] | "- issue: \(.text | show)")
+         end),
+      "",
       "## Pauses / resumes",
       (if ($pr | length) == 0 then "_none_" else ($pr[] | "- \(.ts | show) \(.event): \(.reason | show)") end),
       "",
@@ -224,6 +242,105 @@ first_unverdicted() {
   jq -r --argjson done "$done_ids" \
     '[.acs[].ac_id | select(. as $i | ($done | index($i)) == null)] | first // empty' \
     "$run_dir/acs.json"
+}
+
+# --------------------------------------------------------------------------- #
+# Notify - three named events (needs_auth pause, first FAIL, run_end), all wired from
+# evidence_append (the STORE's sole writer), never from commands/verify.md's main-thread Report
+# step and never from a re-implementation inside verify-run.sh. Two reasons this lives here:
+#   1. evidence_append is the ONE place every evidence line - however it got minted, by
+#      preflight_cmd, auth_check_cmd/pause_cmd, verdict_cmd, walk_append_ac, or finish_cmd - passes
+#      through before it is durably stored. Hooking any one of those call sites individually would
+#      mean re-deriving "is this a pause/needs_auth line, an ac/FAIL line, a run_end line" in
+#      several places; hooking the sole writer means once.
+#   2. `/verify`'s VERIFY MODE runs its walk/auth-check/finish calls inside a Task-spawned
+#      qa-executor subagent (see commands/verify.md, agents/qa-executor.md) - a SEPARATE process
+#      with no shared shell state with the `/verify` main thread that parsed `--notify`. An env
+#      var exported in the main thread's Bash call would not reliably reach that subagent's own
+#      Bash calls. A FILESYSTEM marker under the run dir crosses that boundary for free: both the
+#      main thread and the executor read/write the same `<run_dir>/`, regardless of which process
+#      is running. `verify-run.sh preflight --notify` and `verify-run.sh notify-enable <run_dir>`
+#      are the two places that CREATE `<run_dir>/.notify-enabled`; this file only ever READS it.
+#
+# Each of the three events is guarded by its OWN once-only marker file so a resumed or retried run
+# can never re-fire an event that already fired for this run_dir.
+# --------------------------------------------------------------------------- #
+
+# verify_notify_enabled <run_dir> - true iff this run opted into --notify.
+verify_notify_enabled() { [ -f "$1/.notify-enabled" ]; }
+
+# verify_notify_once <run_dir> <once_marker_basename> <gate_type> <context> [desktop_message]
+# Fires `send-webhook.sh --event-type gate` at most once per <once_marker_basename> under
+# <run_dir>, and - only when a fifth argument is given - a synthetic Notification-shaped payload
+# into `notify-desktop.sh` for an OS-native banner. Both wrappers are already fail-SAFE (always
+# exit 0 per their own headers; docs/RESULT_SCHEMAS.md and docs/TELEMETRY.md describe their
+# contracts, unchanged here) - this function additionally never lets either call's status escape,
+# since a notify failure must never fail the evidence append it rides in on.
+#
+# The desktop banner is fired as a `Notification`-shaped payload (not `PreToolUse[AskUserQuestion]`
+# - `/verify` never calls AskUserQuestion) with an UNRECOGNISED `notification_type`, which
+# `notify-desktop.sh` maps to its generic "Claude Code" title and, more importantly, is EXEMPT from
+# that script's `LOOMWRIGHT_NOTIFY_SCOPE=plugin` scope gate (that gate only inspects
+# `PreToolUse` events - see notify-desktop.sh's dispatch). Using the `PreToolUse[AskUserQuestion]`
+# shape instead would route through `is_plugin_context()`, whose transcript-marker regex does not
+# list `/verify` among the recognised slash commands, and would silently swallow the banner on a
+# standalone `/verify` invocation outside a Supervisor/autonomous session - exactly the case this
+# notification exists for.
+verify_notify_once() {
+  local run_dir="$1" marker="$2" gate_type="$3" context="$4" desktop_msg="${5:-}"
+  verify_notify_enabled "$run_dir" || return 0
+  [ -e "$run_dir/$marker" ] && return 0
+  : > "$run_dir/$marker" 2>/dev/null
+  local sender="$HERE/send-webhook.sh"
+  if [ -f "$sender" ]; then
+    bash "$sender" --event-type gate --gate-type "$gate_type" --context "$context" >/dev/null 2>&1 || true
+  fi
+  if [ -n "$desktop_msg" ]; then
+    local notifier="$HERE/notify-desktop.sh"
+    if [ -f "$notifier" ] && command -v jq >/dev/null 2>&1; then
+      jq -cn --arg m "$desktop_msg" \
+        '{hook_event_name: "Notification", notification_type: "verify_needs_auth", message: $m}' 2>/dev/null \
+        | bash "$notifier" >/dev/null 2>&1 || true
+    fi
+  fi
+  return 0
+}
+
+# verify_notify_dispatch <run_dir> <line> - inspects the JUST-APPENDED compact JSON <line> and
+# fires AT MOST ONE of the three named events, best-effort. Always returns 0 - never allowed to
+# turn a successful append into a failure.
+verify_notify_dispatch() {
+  local run_dir="$1" line="$2" event reason verdict run_id ticket status counts_row
+  verify_notify_enabled "$run_dir" || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  event="$(printf '%s' "$line" | jq -r '.event // empty' 2>/dev/null)"
+  [ -n "$event" ] || return 0
+  run_id="$(printf '%s' "$line" | jq -r '.run_id // empty' 2>/dev/null)"
+  ticket=""
+  [ -f "$run_dir/evidence.jsonl" ] && ticket="$(jq -r 'select(.event == "run_start") | .ticket_path' "$run_dir/evidence.jsonl" 2>/dev/null | head -1)"
+  counts_row="$(grep '^PASS: ' "$run_dir/summary.md" 2>/dev/null | head -1)"
+  case "$event" in
+    pause)
+      reason="$(printf '%s' "$line" | jq -r '.reason // empty' 2>/dev/null)"
+      [ "$reason" = "needs_auth" ] || return 0
+      verify_notify_once "$run_dir" ".notified-needs_auth" "verify_needs_auth" \
+        "run_id=$run_id ticket=$ticket reason=needs_auth - /verify is paused for a human sign-in; resume with /verify --resume $run_id" \
+        "/verify run $run_id needs a human sign-in (ticket: $ticket)"
+      ;;
+    ac)
+      verdict="$(printf '%s' "$line" | jq -r '.verdict // empty' 2>/dev/null)"
+      [ "$verdict" = "FAIL" ] || return 0
+      verify_notify_once "$run_dir" ".notified-first_fail" "verify_first_fail" \
+        "run_id=$run_id ticket=$ticket first FAIL recorded; ${counts_row:-counts unavailable yet}"
+      ;;
+    run_end)
+      status="$(printf '%s' "$line" | jq -r '.status // empty' 2>/dev/null)"
+      verify_notify_once "$run_dir" ".notified-run_end" "verify_run_end" \
+        "run_id=$run_id ticket=$ticket status=$status; ${counts_row:-counts unavailable}"
+      ;;
+    *) return 0 ;;
+  esac
+  return 0
 }
 
 main() {
