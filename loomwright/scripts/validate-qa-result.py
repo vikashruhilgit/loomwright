@@ -46,10 +46,13 @@ validates BOTH blocks; which rules apply is decided by NAME, not by position:
       (V1) schema_version is the integer 1
       (V2) run_id and run_dir are present, non-empty strings
       (V3) summary is present and non-empty
-      (V4) status is one of [completed, aborted]
+      (V4) status is one of [completed, aborted, paused]
       (V5) counts is a mapping whose pass / fail / blocked / not_verifiable /
            total are all present integers
       (V6) counts.total == pass + fail + blocked + not_verifiable
+      (V7) pause_reason is a REQUIRED KEY / NULLABLE VALUE: non-null and one
+           of [needs_auth, session_expired] iff status == paused; null iff
+           status is completed/aborted (either direction of mismatch fails)
     (`counts` is COPIED from `verify-run.sh finish`'s printed row — the agent
     never tallies; V6 is what catches a hand-edited row.)
   * else the existing `missing QA_RESULT block` reason, unchanged.
@@ -102,8 +105,9 @@ except BaseException as _import_exc:  # noqa: BLE001 — LAST LINE OF DEFENCE
 BLOCK = "QA_RESULT"
 VERIFY_BLOCK = "VERIFY_RESULT"
 
-VERIFY_VALID_STATUS = ("completed", "aborted")
+VERIFY_VALID_STATUS = ("completed", "aborted", "paused")
 VERIFY_COUNT_KEYS = ("pass", "fail", "blocked", "not_verifiable", "total")
+VERIFY_PAUSE_REASONS = ("needs_auth", "session_expired")
 
 VALID_STATUS = (
     "passed",
@@ -184,7 +188,7 @@ def validate_verify(fields):
         emit(False, "VERIFY_RESULT is missing the status field (rule V4)")
     status = as_text(fields.get("status")).strip()
     if status not in VERIFY_VALID_STATUS:
-        emit(False, "VERIFY_RESULT status must be one of [completed, aborted]; got %r (rule V4)" % status)
+        emit(False, "VERIFY_RESULT status must be one of [completed, aborted, paused]; got %r (rule V4)" % status)
 
     # ── (V5) counts: a mapping of five integers ──────────────────────────────
     if not present(fields, "counts"):
@@ -212,6 +216,30 @@ def validate_verify(fields):
             "(%d); got %d — counts are COPIED from `verify-run.sh finish`, never tallied (rule V6)"
             % (expected, values["total"]),
         )
+
+    # ── (V7) pause_reason paired with status, in BOTH directions ─────────────
+    # Absent and explicit-null are treated identically here (the `classification`
+    # null/absent convention already used by §VERIFY_EVIDENCE) so a pre-item-04
+    # emitter that never sends the key at all keeps validating unchanged for every
+    # non-paused status — only a `paused` status ever requires a real value.
+    pause_reason_empty = is_empty_scalar(fields.get("pause_reason"))
+    if status == "paused":
+        if pause_reason_empty:
+            emit(False, "VERIFY_RESULT pause_reason must be non-null when status is paused (rule V7)")
+        pause_reason = as_text(fields.get("pause_reason")).strip()
+        if pause_reason not in VERIFY_PAUSE_REASONS:
+            emit(
+                False,
+                "VERIFY_RESULT pause_reason must be one of [needs_auth, session_expired] "
+                "when status is paused; got %r (rule V7)" % pause_reason,
+            )
+    else:
+        if not pause_reason_empty:
+            emit(
+                False,
+                "VERIFY_RESULT pause_reason must be null when status is %r; got %r (rule V7)"
+                % (status, fields.get("pause_reason")),
+            )
 
     emit(True)
 

@@ -11,9 +11,10 @@
 # the lines by `summary-build` on every append; a total can only be computed, never written.
 #
 # Subcommands:
-#   run-id          <slug>                 # prints `verify-<YYYYMMDDTHHMMSSZ>-<slug>`; slug lower-cased, [^a-z0-9] runs collapsed to one `-`, edge dashes trimmed
-#   evidence-append <run_dir> <json|->     # compact-to-one-line, validate, then ONE `>>` write; refused input is wrapped RAW into <run_dir>/rejected.jsonl (exit 1); regenerates summary.md (a derivation failure is named on stderr, exit stays 0 — the fact IS stored)
-#   summary-build   <run_dir>              # the ONLY reader of evidence.jsonl: derives <run_dir>/summary.md (atomic temp+mv) with a `derived_from:` trailer
+#   run-id             <slug>              # prints `verify-<YYYYMMDDTHHMMSSZ>-<slug>`; slug lower-cased, [^a-z0-9] runs collapsed to one `-`, edge dashes trimmed
+#   evidence-append    <run_dir> <json|->  # compact-to-one-line, validate, then ONE `>>` write; refused input is wrapped RAW into <run_dir>/rejected.jsonl (exit 1); regenerates summary.md (a derivation failure is named on stderr, exit stays 0 — the fact IS stored)
+#   summary-build      <run_dir>           # the ONLY reader of evidence.jsonl: derives <run_dir>/summary.md (atomic temp+mv) with a `derived_from:` trailer
+#   first-unverdicted  <run_dir>           # prints the first `ac_id` (acs.json order) with NO `ac` line yet, else nothing; exit 0 either way ("fully verdicted" is not an error)
 #
 # Exit codes: 0 success; 1 refused / generic failure; 2 usage.
 # Dependencies: bash 3.2+, jq, python3 (the validator; absent ⇒ every append is REFUSED as
@@ -188,12 +189,35 @@ summary_build() {
   mv -f "$tmp" "$run_dir/summary.md" || die "summary-build: cannot move $tmp into place"
 }
 
+# --------------------------------------------------------------------------- #
+# first-unverdicted <run_dir>
+# --------------------------------------------------------------------------- #
+# AC6 (`/verify --resume`'s resume-position derivation). Reads `<run_dir>/acs.json` for the ORDERED
+# `ac_id` list, and `evidence.jsonl` for the SET of `ac_id`s carrying at least one `{event:ac}` line
+# (EXISTENCE, not "latest" — any prior line, of any verdict, means that AC already ran). Prints the
+# first `ac_id` from the ordered list NOT in that set; prints NOTHING when every `ac_id` is covered —
+# a distinct, documented "nothing left" signal, never a nonzero exit, since full coverage is a normal
+# state, not an error. Mirrors the `latest_by` / done-set idiom already used by `summary_build` /
+# `walk_block_remaining` (this file / verify-run.sh).
+first_unverdicted() {
+  local run_dir="${1:-}" done_ids
+  [ -n "$run_dir" ] || usage "first-unverdicted <run_dir>"
+  [ -f "$run_dir/acs.json" ] || die "first-unverdicted: no acs.json in $run_dir — run preflight first [acs_missing]"
+  done_ids="[]"
+  [ -f "$run_dir/evidence.jsonl" ] && done_ids="$(jq -cs '[.[] | select(.event == "ac") | .ac_id]' "$run_dir/evidence.jsonl" 2>/dev/null)"
+  [ -n "$done_ids" ] || done_ids="[]"
+  jq -r --argjson done "$done_ids" \
+    '[.acs[].ac_id | select(. as $i | ($done | index($i)) == null)] | first // empty' \
+    "$run_dir/acs.json"
+}
+
 main() {
   local cmd="${1:-}"; shift || true
   case "$cmd" in
-    run-id)          run_id "$@" ;;
-    evidence-append) evidence_append "$@" ;;
-    summary-build)   summary_build "$@" ;;
+    run-id)             run_id "$@" ;;
+    evidence-append)    evidence_append "$@" ;;
+    summary-build)      summary_build "$@" ;;
+    first-unverdicted)  first_unverdicted "$@" ;;
     ""|-h|--help)
       grep -E '^#   [a-z]' "$0" | sed 's/^#   /  /'
       ;;

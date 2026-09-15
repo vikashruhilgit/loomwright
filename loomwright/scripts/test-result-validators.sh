@@ -2725,6 +2725,92 @@ else
   ok "verify: validate-qa-result.py locates each block by name (no last-block-wins locator)"
 fi
 
+# --- item 04 (auth pause/resume): `paused` status + `pause_reason` pairing (rule V7) ---
+# RULE SOURCE: docs/RESULT_SCHEMAS.md §VERIFY_RESULT, hook rule V7. Absent and
+# explicit-null are the SAME state for pause_reason (the classification
+# null/absent convention), so a pre-item-04 emitter that never sends the key
+# (every §E2 case ABOVE this point) keeps validating unchanged — proven by the
+# fact none of them were touched to add the field.
+mk vr-paused-needs-auth.md <<'EOF'
+VERIFY_RESULT:
+  schema_version: 1
+  run_id: verify-20260915T090000Z-01-login
+  run_dir: .supervisor/verify/verify-20260915T090000Z-01-login
+  status: paused
+  pause_reason: needs_auth
+  counts: {pass: 0, fail: 0, blocked: 0, not_verifiable: 0, total: 0}
+  summary: paused before authoring any spec — the target requires a session and none was found
+EOF
+run_v "$V_QA" "$F"
+assert_pass "verify: [ITEM-04] valid paused status with pause_reason needs_auth [rule V4, V7]"
+
+mk vr-paused-session-expired.md <<'EOF'
+VERIFY_RESULT:
+  schema_version: 1
+  run_id: verify-20260915T090000Z-01-login
+  run_dir: .supervisor/verify/verify-20260915T090000Z-01-login
+  status: paused
+  pause_reason: session_expired
+  counts: {pass: 1, fail: 0, blocked: 2, not_verifiable: 0, total: 3}
+  summary: AC2's session died mid-walk; AC2 and AC3 were forced BLOCKED and the run paused
+EOF
+run_v "$V_QA" "$F"
+assert_pass "verify: [ITEM-04] valid paused status with pause_reason session_expired [rule V4, V7]"
+
+mk vr-paused-null-reason.md <<'EOF'
+VERIFY_RESULT:
+  schema_version: 1
+  run_id: verify-20260915T090000Z-x
+  run_dir: .supervisor/verify/verify-20260915T090000Z-x
+  status: paused
+  pause_reason:
+  counts: {pass: 0, fail: 0, blocked: 0, not_verifiable: 0, total: 0}
+  summary: paused but pause_reason is EXPLICITLY null
+EOF
+run_v "$V_QA" "$F"
+assert_fail "verify: [ITEM-04] status paused with NULL pause_reason [rule V7]" \
+  "pause_reason must be non-null when status is paused"
+
+mk vr-paused-unknown-reason.md <<'EOF'
+VERIFY_RESULT:
+  schema_version: 1
+  run_id: verify-20260915T090000Z-x
+  run_dir: .supervisor/verify/verify-20260915T090000Z-x
+  status: paused
+  pause_reason: bogus_reason
+  counts: {pass: 0, fail: 0, blocked: 0, not_verifiable: 0, total: 0}
+  summary: paused with an unrecognized pause_reason string
+EOF
+run_v "$V_QA" "$F"
+assert_fail "verify: [ITEM-04] status paused with an UNRECOGNIZED pause_reason [rule V7]" \
+  "pause_reason must be one of [needs_auth, session_expired]"
+
+mk vr-completed-nonnull-reason.md <<'EOF'
+VERIFY_RESULT:
+  schema_version: 1
+  run_id: verify-20260915T090000Z-x
+  run_dir: .supervisor/verify/verify-20260915T090000Z-x
+  status: completed
+  pause_reason: needs_auth
+  counts: {pass: 1, fail: 0, blocked: 0, not_verifiable: 0, total: 1}
+  summary: a completed run carrying a leftover non-null pause_reason
+EOF
+run_v "$V_QA" "$F"
+assert_fail "verify: [ITEM-04] status completed with a NON-NULL pause_reason [rule V7]" \
+  "pause_reason must be null when status is"
+
+mk vr-completed-no-reason-key.md <<'EOF'
+VERIFY_RESULT:
+  schema_version: 1
+  run_id: verify-20260915T090000Z-x
+  run_dir: .supervisor/verify/verify-20260915T090000Z-x
+  status: completed
+  counts: {pass: 1, fail: 0, blocked: 0, not_verifiable: 0, total: 1}
+  summary: a completed run with pause_reason OMITTED entirely (pre-item-04 shape)
+EOF
+run_v "$V_QA" "$F"
+assert_pass "verify: [ITEM-04] status completed with pause_reason ABSENT (backward-compatible, same as null) [rule V7]"
+
 # ── F. plan-reviewer validator ───────────────────────────────────────────────
 echo "== F. validate-plan-review-result.py — 6 rules =="
 

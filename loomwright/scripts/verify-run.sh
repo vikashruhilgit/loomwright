@@ -17,17 +17,22 @@
 # `walk` (an observation), never from a hand-typed argument (`pass_requires_observation`).
 #
 # Subcommands:
-#   acs       <ticket>                                              # print {"ticket_kind": …, "acs": [{"ac_id":"AC1","text":"…"}, …]}
-#   preflight <ticket> [--branch <name>] [--repo <dir>]             # contract read → run dir + run_start → assert-non-prod → env line; prints `run_dir=<path>` LAST
-#   walk      <run_dir> [--repo <dir>] [--base-url <url>]           # generate the per-run Playwright config, run the `[ACn]` specs, ingest the reporter into `ac` lines
-#   verdict   <run_dir> <ac_id> <NOT_VERIFIABLE|BLOCKED> --reason <text> [--classification <c>]   # append one browser-less `ac` line
-#   finish    <run_dir> [--status completed|aborted]                # append run_end (NO counts), rebuild summary.md, print its counts row
+#   acs        <ticket>                                              # print {"ticket_kind": …, "acs": [{"ac_id":"AC1","text":"…"}, …]}
+#   preflight  <ticket> [--branch <name>] [--repo <dir>]             # contract read → run dir + run_start → assert-non-prod → env line; prints `run_dir=<path>` LAST
+#   auth-check <run_dir> [--repo <dir>]                              # auth.method none ⇒ no-op exit 0; else probe — authenticated ⇒ one `auth` line exit 0; else `auth`+`pause` lines, exit 4
+#   pause      <run_dir> --reason <needs_auth|session_expired>       # append ONE `pause` line (the only place a pause line is ever written) + rebuild summary.md
+#   walk       <run_dir> [--repo <dir>] [--base-url <url>]           # generate the per-run Playwright config, run the `[ACn]` specs, ingest the reporter into `ac` lines
+#   verdict    <run_dir> <ac_id> <NOT_VERIFIABLE|BLOCKED> --reason <text> [--classification <c>]   # append one browser-less `ac` line
+#   finish     <run_dir> [--status completed|aborted]                # append run_end (NO counts), rebuild summary.md, print its counts row
 #
 # Exit codes: 0 ok · 1 refused / failed (non-prod assertion failed, append refused) · 2 usage / ticket
 # unresolved / a verdict that needs observation · 3 preflight stop (no contract at .agent/verify.json,
 # contract unreadable — nothing created, nothing called) / walk stop (the Playwright harness is not
 # resolvable from the target repo, or it produced no reporter file — every AC still without a verdict
-# gets a BLOCKED line first).
+# gets a BLOCKED line first) · 4 auth-check: the run needs a human sign-in (a `pause --reason needs_auth`
+# line was appended; the caller prints the codegen instruction and stops) · 5 walk: a session expired
+# mid-run (a real 401/403 observed on an authenticated route forced BLOCKED/ENVIRONMENT_ISSUE onto that
+# AC and every later one, and a `pause --reason session_expired` line was appended).
 # Dependencies: bash 3.2+, jq, git, python3 (through verify-helpers.sh's validator gate),
 # `shasum -a 256` or `sha256sum` (the run_start contract hash); `walk` additionally needs `npx` and a
 # `@playwright/test` resolvable FROM THE TARGET REPO (`npx --no-install playwright`) — the plugin never
@@ -44,6 +49,11 @@ BOOTSTRAP="$HERE/propose-verify.sh"
 # The one scratch file a subcommand may hold (stderr captures); SCRIPT-LEVEL on purpose — the EXIT
 # trap that removes it fires after the function's locals are gone, and `set -u` would name it unbound.
 rerr=""
+
+# Set by `walk_ingest` (via `walk_apply_expiry_override`) when AC5's expiry override fired; read by
+# `walk_cmd` AFTER the function returns to decide its exit code. SCRIPT-LEVEL for the same reason as
+# `rerr` above — a function-local would not survive the call boundary.
+walk_session_expired=0
 
 diag()  { echo "verify-run: $*" >&2; }
 die()   { diag "$*"; exit 1; }
@@ -270,6 +280,101 @@ run_id_of() {
 }
 
 # --------------------------------------------------------------------------- #
+# pause <run_dir> --reason <needs_auth|session_expired>
+# --------------------------------------------------------------------------- #
+# The ONE place a `pause` evidence line is ever written — `auth-check` (AC1) and `walk`'s expiry
+# override (AC5) both call THIS function rather than constructing the line themselves. Appends
+# {event:pause, reason:<reason>}, rebuilds summary.md for visibility, exits 0.
+pause_cmd() {
+  local run_dir="${1:-}" reason="" run_id ts
+  local u="pause <run_dir> --reason <needs_auth|session_expired>"
+  [ -n "$run_dir" ] || usage "$u"
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --reason) [ "$#" -ge 2 ] || usage "--reason needs a value"; reason="$2"; shift 2 ;;
+      *)        usage "$u (unknown argument $1)" ;;
+    esac
+  done
+  case "$reason" in
+    needs_auth|session_expired) ;;
+    *) usage "$u (got --reason '$reason')" ;;
+  esac
+  [ -d "$run_dir" ] || { diag "run dir not found at $run_dir [run_dir_missing]"; exit 2; }
+  run_dir="$(cd "$run_dir" && pwd)"
+  run_id="$(run_id_of "$run_dir")"
+  ts="$(now_ts)"
+  jq -cn --arg ts "$ts" --arg run_id "$run_id" --arg reason "$reason" \
+    '{schema_version: 1, ts: $ts, run_id: $run_id, event: "pause", reason: $reason}' \
+    | bash "$HELPERS" evidence-append "$run_dir" - >/dev/null || die "pause line was refused (see $run_dir/rejected.jsonl)"
+  bash "$HELPERS" summary-build "$run_dir" || die "summary-build failed for $run_dir"
+  return 0
+}
+
+# --------------------------------------------------------------------------- #
+# auth-check <run_dir> [--repo <dir>]
+# --------------------------------------------------------------------------- #
+# Step 5 of VERIFY MODE: decides whether the run can proceed to spec authoring or must pause for a
+# human sign-in. `auth.method: none` (AC2) is a deliberate BEHAVIOR CHANGE from today's unconditional
+# `verify-env.sh auth-probe` call — it makes ZERO executor calls and appends NO evidence line at all,
+# since an app with no auth concept has nothing to probe and `do_auth_probe`'s own `method: none`
+# branch would otherwise record a spurious `auth: anonymous` line. Else the REAL executor call decides:
+# stdout `authenticated` AND rc 0 ⇒ one `{event:auth, state:authenticated}` line, exit 0 (AC3); anything
+# else (stdout `anonymous`, or any nonzero rc — `storage_state_absent` / unreachable / unexpected code)
+# ⇒ `{event:auth, state:needs_auth}` then `pause --reason needs_auth`, exit 4 (AC1).
+auth_check_cmd() {
+  local run_dir="" repo_arg="" repo contract method out rc run_id ts
+  local u="auth-check <run_dir> [--repo <dir>]"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --repo) [ "$#" -ge 2 ] || usage "--repo needs a value"; repo_arg="$2"; shift 2 ;;
+      -*)     usage "$u (unknown flag $1)" ;;
+      *)      if [ -z "$run_dir" ]; then run_dir="$1"; shift; else usage "auth-check takes ONE run dir"; fi ;;
+    esac
+  done
+  [ -n "$run_dir" ] || usage "$u"
+  command -v jq >/dev/null 2>&1 || die "jq is required [jq_unavailable]"
+  [ -f "$HELPERS" ] || die "sibling verify-helpers.sh not found at $HELPERS"
+  [ -f "$READER" ]  || die "sibling read-verify.sh not found at $READER"
+  [ -d "$run_dir" ] || { diag "run dir not found at $run_dir [run_dir_missing]"; exit 2; }
+  run_dir="$(cd "$run_dir" && pwd)"
+  repo="$(resolve_repo "$repo_arg")" || exit 2
+  run_id="$(run_id_of "$run_dir")"
+
+  rerr="$(mktemp "${TMPDIR:-/tmp}/verify-run.XXXXXX")" || die "mktemp failed"
+  trap 'rm -f "$rerr" 2>/dev/null' EXIT
+  contract="$(bash "$READER" --repo "$repo" 2>"$rerr")"
+  if [ -z "$contract" ]; then
+    # `preflight` already proved the contract exists before this run dir was ever minted; an empty
+    # read here is a defensive fallback, not a fresh refusal — treat it as `auth.method: none`-
+    # equivalent and never crash the run over it.
+    diag "read-verify.sh returned no contract for auth-check — defaulting to auth.method:none-equivalent (no evidence line, no executor call) [contract_unreadable_defaulting_none]"
+    exit 0
+  fi
+  method="$(printf '%s' "$contract" | jq -r '.auth.method')"
+  if [ "$method" = "none" ]; then
+    diag "auth.method is none — no evidence line, no verify-env.sh call [auth_method_none]"
+    exit 0
+  fi
+
+  out="$(bash "$EXECUTOR" auth-probe --repo "$repo" 2>"$rerr")"
+  rc=$?
+  cat "$rerr" >&2
+  ts="$(now_ts)"
+  if [ "$out" = "authenticated" ] && [ "$rc" -eq 0 ]; then
+    jq -cn --arg ts "$ts" --arg run_id "$run_id" \
+      '{schema_version: 1, ts: $ts, run_id: $run_id, event: "auth", state: "authenticated"}' \
+      | bash "$HELPERS" evidence-append "$run_dir" - >/dev/null || die "auth authenticated line was refused"
+    exit 0
+  fi
+  jq -cn --arg ts "$ts" --arg run_id "$run_id" \
+    '{schema_version: 1, ts: $ts, run_id: $run_id, event: "auth", state: "needs_auth"}' \
+    | bash "$HELPERS" evidence-append "$run_dir" - >/dev/null || die "auth needs_auth line was refused"
+  pause_cmd "$run_dir" --reason needs_auth || die "pause (needs_auth) failed for $run_dir"
+  exit 4
+}
+
+# --------------------------------------------------------------------------- #
 # verdict <run_dir> <ac_id> <NOT_VERIFIABLE|BLOCKED> --reason <text> [--classification <c>]
 # --------------------------------------------------------------------------- #
 # The browser-less verdicts. `text` comes from <run_dir>/acs.json by ac_id (an unknown id is refused —
@@ -440,9 +545,14 @@ walk_cmd() {
   fi
 
   # (5) ingest.
+  walk_session_expired=0
   walk_ingest "$run_dir" "$run_id" || exit 1
   walk_block_remaining "$run_dir" "$run_id" "no_spec" "ENVIRONMENT_ISSUE"
   echo "report=$run_dir/report.json"
+  # AC5: a genuine mid-run session expiry (a repeated response-40[13] signal) was detected and forced
+  # onto the affected ACs by walk_ingest — a distinct exit code from the normal 0, so the caller (the
+  # qa-executor's VERIFY MODE) can branch to a pause instead of `finish`.
+  [ "$walk_session_expired" -eq 1 ] && exit 5
   return 0
 }
 
@@ -493,8 +603,39 @@ walk_block_remaining() {
 #     (net::ERR_, ECONNREFUSED, a page.goto timeout)⇒ BLOCKED ENVIRONMENT_ISSUE  <first error line>
 #   any other failed/timedOut/interrupted         ⇒ FAIL    REAL_BUG           <first error line>
 # `reason` is the FIRST line of errors[0].message with ANSI stripped (falls back to `spec_<status>`).
+# walk_apply_expiry_override <run_dir> <run_id> <min_ordinal> — AC5. `min_ordinal` is the SMALLEST
+# AC ORDINAL (the integer parsed from `[ACn]`, never file/report order) among the specs whose ingested
+# attachments carried a `response-40[13]` signal. Forces `AC<min_ordinal>` to
+# BLOCKED/ENVIRONMENT_ISSUE/session_expired — discarding whatever the normal ingest just recorded for
+# it (the append-only store makes THIS new line the latest-per-ac_id winner) — and forces every
+# `AC<k>` with `k > min_ordinal` (from acs.json's OWN ac_id list, so an AC with no spec at all is
+# included) to BLOCKED/ENVIRONMENT_ISSUE/run_paused_session_expired, regardless of any Playwright
+# result of its own. ACs with a smaller ordinal are untouched. Appends exactly ONE `{event:auth,
+# state:expired}` line and calls `pause_cmd … --reason session_expired` exactly ONCE, never per AC.
+walk_apply_expiry_override() {
+  local run_dir="$1" run_id="$2" min_n="$3" id num ts
+  for id in $(jq -r '.acs[].ac_id' "$run_dir/acs.json" 2>/dev/null); do
+    num="${id#AC}"
+    case "$num" in ''|*[!0-9]*) continue ;; esac
+    if [ "$num" -eq "$min_n" ]; then
+      walk_append_ac "$run_dir" "$run_id" "$id" "BLOCKED" "ENVIRONMENT_ISSUE" "session_expired" "[]" "[]" \
+        || return 1
+    elif [ "$num" -gt "$min_n" ]; then
+      walk_append_ac "$run_dir" "$run_id" "$id" "BLOCKED" "ENVIRONMENT_ISSUE" "run_paused_session_expired" "[]" "[]" \
+        || return 1
+    fi
+  done
+  ts="$(now_ts)"
+  jq -cn --arg ts "$ts" --arg run_id "$run_id" \
+    '{schema_version: 1, ts: $ts, run_id: $run_id, event: "auth", state: "expired"}' \
+    | bash "$HELPERS" evidence-append "$run_dir" - >/dev/null || die "auth expired line was refused"
+  pause_cmd "$run_dir" --reason session_expired || die "pause (session_expired) failed for $run_dir"
+  return 0
+}
+
 walk_ingest() {
   local run_dir="$1" run_id="$2" specs spec ac_id rstatus message steps verdict class reason arts n
+  local has_expiry min_n num
   specs="$(mktemp "${TMPDIR:-/tmp}/verify-walk.XXXXXX")" || die "mktemp failed"
   jq -c '
     [.. | objects | select(has("specs") and (.specs | type == "array")) | .specs[]]
@@ -537,8 +678,21 @@ walk_ingest() {
     esac
     arts="$(walk_copy_attachments "$run_dir" "$ac_id" "$spec")"
     walk_append_ac "$run_dir" "$run_id" "$ac_id" "$verdict" "$class" "$reason" "$steps" "$arts" || { rm -f "$specs" "$specs.err"; return 1; }
+    # AC5: a `response-40[13]` attachment on THIS spec's result signals a session that died mid-test
+    # (distinct from the anonymous-redirect 302 the app also emits). Collect the AC ORDINAL — never
+    # this loop's own file/report order — for the override pass below.
+    has_expiry="$(printf '%s' "$spec" | jq -r '[(.attachments // [])[].name // ""] | any(test("^response-40[13]"))' 2>/dev/null)"
+    if [ "$has_expiry" = "true" ]; then
+      num="${ac_id#AC}"
+      case "$num" in ''|*[!0-9]*) ;; *) printf '%s\n' "$num" >> "$specs.expiry" ;; esac
+    fi
   done < "$specs"
-  rm -f "$specs" "$specs.err"
+  if [ -s "$specs.expiry" ]; then
+    min_n="$(sort -n "$specs.expiry" | head -1)"
+    walk_apply_expiry_override "$run_dir" "$run_id" "$min_n" || { rm -f "$specs" "$specs.err" "$specs.expiry"; return 1; }
+    walk_session_expired=1
+  fi
+  rm -f "$specs" "$specs.err" "$specs.expiry"
   return 0
 }
 
@@ -592,11 +746,13 @@ walk_copy_attachments() {
 main() {
   local cmd="${1:-}"; shift || true
   case "$cmd" in
-    acs)       acs_cmd "$@" ;;
-    preflight) preflight_cmd "$@" ;;
-    walk)      walk_cmd "$@" ;;
-    verdict)   verdict_cmd "$@" ;;
-    finish)    finish_cmd "$@" ;;
+    acs)        acs_cmd "$@" ;;
+    auth-check) auth_check_cmd "$@" ;;
+    preflight)  preflight_cmd "$@" ;;
+    walk)       walk_cmd "$@" ;;
+    verdict)    verdict_cmd "$@" ;;
+    finish)     finish_cmd "$@" ;;
+    pause)      pause_cmd "$@" ;;
     ""|-h|--help)
       grep -E '^#   [a-z]' "$0" | sed 's/^#   /  /'
       ;;
