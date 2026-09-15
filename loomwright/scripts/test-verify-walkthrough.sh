@@ -410,6 +410,13 @@ fi
 FIXTURE_APP="$HERE/verify-fixture-app.py"
 PW_CACHE="${LOOMWRIGHT_VERIFY_TEST_CACHE:-${TMPDIR:-/tmp}/loomwright-verify-walkthrough}"
 export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-$PW_CACHE/browsers}"
+# PW_TEST_VERSION — the ONE pin for @playwright/test (and therefore for the chromium build it
+# downloads). An exact version, never a range: `.github/workflows/ci.yml` derives its
+# actions/cache key from THIS line (a `sed` anchored on `^PW_TEST_VERSION=<x.y.z>$`), so a range would give
+# the cache nothing to key on and a hit would silently freeze whatever resolved first. Keep the
+# assignment on its own line, exactly `PW_TEST_VERSION=<x.y.z>` — the workflow fails CLOSED if
+# it cannot read it. Bumping this pin is the only way the CI cache turns over.
+PW_TEST_VERSION=1.63.0
 PW_READY=0; PW_SKIP=""
 SERVER_PIDS=""
 kill_servers() { local p; for p in $SERVER_PIDS; do kill "$p" 2>/dev/null; wait "$p" 2>/dev/null; done; return 0; }
@@ -443,9 +450,14 @@ acquire_playwright() {
   done
   [ -f "$FIXTURE_APP" ] || { PW_SKIP="fixture app missing at $FIXTURE_APP"; return 1; }
   mkdir -p "$PW_CACHE" 2>/dev/null || { PW_SKIP="cannot create $PW_CACHE"; return 1; }
-  if [ ! -d "$PW_CACHE/node_modules/@playwright/test" ]; then
-    npm i --prefix "$PW_CACHE" --no-audit --no-fund @playwright/test@1 >"$log" 2>&1 \
-      || { PW_SKIP="npm i @playwright/test@1 into $PW_CACHE failed: $(tail -1 "$log" 2>/dev/null)"; return 1; }
+  # Reinstall on a version MISMATCH, not merely on absence: a cache dir left by an older pin
+  # (a dev's /tmp, or a stale CI cache) must not keep satisfying the guard forever.
+  local have=""
+  [ -f "$PW_CACHE/node_modules/@playwright/test/package.json" ] \
+    && have="$(node -p "require('$PW_CACHE/node_modules/@playwright/test/package.json').version" 2>/dev/null || true)"
+  if [ "$have" != "$PW_TEST_VERSION" ]; then
+    npm i --prefix "$PW_CACHE" --no-audit --no-fund "@playwright/test@$PW_TEST_VERSION" >"$log" 2>&1 \
+      || { PW_SKIP="npm i @playwright/test@$PW_TEST_VERSION into $PW_CACHE failed: $(tail -1 "$log" 2>/dev/null)"; return 1; }
   fi
   [ -x "$PW_CACHE/node_modules/.bin/playwright" ] || { PW_SKIP="no playwright bin under $PW_CACHE/node_modules/.bin"; return 1; }
   # shellcheck disable=SC2086 — ${CI:+--with-deps} is deliberately unquoted: empty ⇒ no argument

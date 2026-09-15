@@ -9,6 +9,12 @@ on:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    env:
+      # test-verify-walkthrough.sh's Playwright cache (its LOOMWRIGHT_VERIFY_TEST_CACHE
+      # override) — defined ONCE here so the actions/cache step below and the self-test
+      # step that fills it cannot disagree about the path. (`runner.temp` is not
+      # available in job-level env, hence the literal.)
+      LOOMWRIGHT_VERIFY_TEST_CACHE: /tmp/loomwright-verify-walkthrough
 
     steps:
       - name: Checkout repository
@@ -52,6 +58,31 @@ jobs:
         run: |
           bash scripts/test-check-shared-prefix.sh
           bash scripts/check-shared-prefix.sh
+
+      # test-verify-walkthrough.sh installs @playwright/test + a chromium build (~150 MB from
+      # the Playwright CDN) into $LOOMWRIGHT_VERIFY_TEST_CACHE, and under CI=1 an install
+      # failure is a HARD red (its AC11i arm) — so every run of the required `ci` check
+      # carried a fresh download and a network dependency it did not need (measured on
+      # PR #223: ~24 s of the step, and the one part of the suite that can fail on a CDN
+      # hiccup). Restore that cache instead. The key is DERIVED from the script's own
+      # PW_TEST_VERSION pin — the single source of truth — so bumping the pin is the only
+      # thing that turns the cache over. Deliberately NO restore-keys: a near-miss cache
+      # would just be re-downloaded over by the script's version-mismatch guard, saving
+      # nothing. Fails CLOSED when the pin line cannot be read (an empty key would cache
+      # nothing, silently — the same "gate that passes vacuously" this file forbids elsewhere).
+      - name: Resolve the @playwright/test pin (test-verify-walkthrough.sh cache key)
+        id: pw-pin
+        run: |
+          set -euo pipefail
+          pin="$(sed -n 's/^PW_TEST_VERSION=\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$/\1/p' loomwright/scripts/test-verify-walkthrough.sh)"
+          [ -n "$pin" ] || { echo "cannot read a PW_TEST_VERSION=<x.y.z> line from loomwright/scripts/test-verify-walkthrough.sh — the Playwright cache key would be empty" >&2; exit 1; }
+          echo "version=$pin" >> "$GITHUB_OUTPUT"
+
+      - name: Cache @playwright/test + chromium for test-verify-walkthrough.sh
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.LOOMWRIGHT_VERIFY_TEST_CACHE }}
+          key: verify-walkthrough-pw-${{ runner.os }}-${{ steps.pw-pin.outputs.version }}
 
       - name: Run full deterministic self-test suite (hard gate)
         env:

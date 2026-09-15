@@ -2,8 +2,8 @@
 name: review-heal
 description: Shared loop contract for the standalone PR review-and-heal workflow (`/review-pr <pr-url>` + `loomwright:review-pr-runner`). Single source of truth for the bounded review→fix→re-review loop, PR-URL→branch resolution, the REVIEW_HEAL_RESULT block, and the pinned canonical names consumed by the dispatcher script, the runner agent, and the autonomous EVALUATE step. Use when implementing or invoking standalone PR review-and-heal.
 allowed-tools: [Read, Write, Edit, Bash, Task]
-version: "1.6.0"
-lastUpdated: "2026-08-04"
+version: "1.7.0"
+lastUpdated: "2026-09-15"
 ---
 
 # Review-Heal Skill
@@ -34,7 +34,7 @@ These names are **coined here**. Treat this section as authoritative; all other 
 | Drain bound | **`--max-rounds N`** (default 5) | Hard ceiling on drain rounds (§"Until-Mergeable Mode"), **mechanized** by `scripts/drain-rounds.sh` (`init`/`bump`/`check`/`read`) — the SAME ledger call on the SAME §U4 path both entry senses run, never a private per-path counter (AC1/AC2). |
 | Severity floor | **`--severity-floor <BLOCKING\|HIGH\|MEDIUM\|LOW>`** (default `HIGH`) | **Termination-only** — see §"Termination-only severity floor (`sub_floor_converged`)". Does NOT gate whether a finding is fixed (Validate-Then-Fix, §U3.5, is unchanged); gates only whether a round whose entire fixed yield was below this severity starts another round. |
 | Required-check fallback | **`--required-checks all-non-neutral`** | Opt-in fallback when branch-protection metadata is unreadable (default = fail closed → `ESCALATED`). |
-| Scoped check-wait bound | **`--check-wait-timeout N`** (seconds) | Bounded wait for the **scoped set** (required + review-producing checks) to settle (§"Wait-For-Settled-Checks"). Only applies under `--until-mergeable`; **default 600** (10 min), polled every **15s**. Forwarded from the dispatcher via `LOOMWRIGHT_CHECK_WAIT_TIMEOUT`. |
+| Scoped check-wait bound | **`--check-wait-timeout N`** (seconds) | Bounded wait for the **scoped set** (required + review-producing checks) to settle (§"Wait-For-Settled-Checks"). Only applies under `--until-mergeable`; **default 1200** (20 min — sized in §"Wait-For-Settled-Checks" against the measured `ci` duration), polled every **15s**. Forwarded from the dispatcher via `LOOMWRIGHT_CHECK_WAIT_TIMEOUT`. |
 | Review-producing check selector | **`--review-check-pattern <glob>`** (default `*review*`/`claude*`) | Globs that mark a check as "review-producing" (in addition to required checks), widening the scoped wait/scan set (§"All-Channel Read", §"Wait-For-Settled-Checks"). Combinable with the `notify-config` include/exclude list. Forwarded from the dispatcher via `LOOMWRIGHT_REVIEW_CHECK_PATTERN`. |
 | Supervisor-layer enable | **`auto_until_mergeable`** (config, Supervisor layer) | Default-ON/opt-out semantics for whether Supervisor's auto-dispatch threads `--until-mergeable`. **Owned by the Supervisor/dispatcher subtask**, referenced here (§"Until-Mergeable Dispatch Signal"); the drain loop itself only sees the resolved env-var signal. |
 | READY decision | **`READY`** | Drain terminal state — required checks green AND review-producing checks settled AND no unresolved **validated** bot findings across ALL channels (§"READY redefinition" is the single source of truth). Merge-identical to `PASS`/`ESCALATED` (**never merges**). Emitted ONLY under `--until-mergeable`. |
@@ -323,7 +323,7 @@ gh api repos/<owner>/<repo>/branches/<base>/protection/required_status_checks
 **Bounded wait:**
 
 ```
-deadline = now + check_wait_timeout          # --check-wait-timeout N (seconds); DEFAULT 600 (10 min)
+deadline = now + check_wait_timeout          # --check-wait-timeout N (seconds); DEFAULT 1200 (20 min) — sizing note below
 poll_interval = 15                           # seconds between scoped-set polls (DEFAULT)
 while now < deadline AND rounds < max_rounds:
   scoped = [c in rollup if is_required(c) or is_review_producing(c)]   # NEVER the whole rollup
@@ -335,6 +335,7 @@ while now < deadline AND rounds < max_rounds:
 
 - **AC3 hard constraint — optional checks never block/escalate by themselves.** An **unrelated optional** check (deploy / preview / security scanner that emits no review feedback and is neither required nor review-producing) that is perpetually `QUEUED`/`IN_PROGRESS` is **outside the wait set**: it MUST NEVER, by itself, block READY or force escalation. The wait observes ONLY the scoped set.
 - **Re-scan after settle:** once the scoped set settles, the round **re-scans ALL channels (U1)** before deciding — this is what lets a review comment that lands *after* `ci` went green (e.g. #64's `claude-review` posting ~5 min later) be seen rather than missed.
+- **Default sizing — 1200 s, measured, not guessed (this is the ONE place the number is justified; the flag table above and `commands/review-pr.md` mirror it).** The bound starts the moment a fix is pushed (the confirming pass below binds to the pushed SHA), so it must absorb GitHub's queue latency PLUS the whole required `ci` job, not just its tail. Measured on this repo's own `ci`: PR #222's job ran 574 s (already within 26 s of the former 600 s default), and PR #223's two runs took 720 s and 740 s — a fix pushed at 18:38:30 had `ci` settle at 18:50:36, 726 s later, so the 600 s bound elapsed with the required check still `IN_PROGRESS` and the drain escalated a PR that went green two minutes after it gave up. 1200 s is ≥1.6× the slowest measured run and ≥2× the pre-#223 baseline, and it also exceeds the ~15 min at which GitHub cancels a job that was never assigned a runner, so a queued-out check resolves to a terminal state INSIDE the bound instead of an `UNREADABLE` escalation. The honest cost: a genuinely stuck scoped check now delays a round by 20 min instead of 10 — `--max-rounds` remains the outer ceiling. Re-measure before the next change; if `ci` grows past ~900 s, raise the bound in this note first.
 - **AC4 fail-safe (fail-CLOSED).** If the bounded wait elapses (`now >= deadline`) with a **required OR review-producing** check still in flight → exit `decision: ESCALATED`, surfacing exactly which scoped check(s) were still pending. An **unrelated optional** check still pending at the bound does **NOT** force escalation (AC3 dominates). `--max-rounds` remains the hard outer ceiling; the per-round wait never exceeds the round budget.
 
 ### Step U3 — Bot-vs-human thread classification (AC15)
