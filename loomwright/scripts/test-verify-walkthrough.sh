@@ -410,6 +410,16 @@ fi
 FIXTURE_APP="$HERE/verify-fixture-app.py"
 PW_CACHE="${LOOMWRIGHT_VERIFY_TEST_CACHE:-${TMPDIR:-/tmp}/loomwright-verify-walkthrough}"
 export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-$PW_CACHE/browsers}"
+# PW_TEST_VERSION — the ONE pin for @playwright/test (and therefore for the chromium build it
+# downloads). An exact version, never a range: `read-playwright-pin.sh` (the ONE reader of this
+# line, anchored on `^PW_TEST_VERSION=<x.y.z>$`) feeds `.github/workflows/ci.yml`'s actions/cache
+# key, so a range would give the cache nothing to key on and a hit would silently freeze whatever
+# resolved first. Keep the assignment on its own line, exactly `PW_TEST_VERSION=<x.y.z>`, and only
+# ONCE — the reader fails CLOSED (exit 1, empty stdout) on a range, a quoted value, a trailing
+# comment, a missing line or a duplicate line (test-read-playwright-pin.sh commits each of those
+# mutations; the (PWv) arm below ties the reader's output to this variable). Bumping this pin is
+# the only way the CI cache turns over.
+PW_TEST_VERSION=1.63.0
 PW_READY=0; PW_SKIP=""
 SERVER_PIDS=""
 kill_servers() { local p; for p in $SERVER_PIDS; do kill "$p" 2>/dev/null; wait "$p" 2>/dev/null; done; return 0; }
@@ -443,9 +453,14 @@ acquire_playwright() {
   done
   [ -f "$FIXTURE_APP" ] || { PW_SKIP="fixture app missing at $FIXTURE_APP"; return 1; }
   mkdir -p "$PW_CACHE" 2>/dev/null || { PW_SKIP="cannot create $PW_CACHE"; return 1; }
-  if [ ! -d "$PW_CACHE/node_modules/@playwright/test" ]; then
-    npm i --prefix "$PW_CACHE" --no-audit --no-fund @playwright/test@1 >"$log" 2>&1 \
-      || { PW_SKIP="npm i @playwright/test@1 into $PW_CACHE failed: $(tail -1 "$log" 2>/dev/null)"; return 1; }
+  # Reinstall on a version MISMATCH, not merely on absence: a cache dir left by an older pin
+  # (a dev's /tmp, or a stale CI cache) must not keep satisfying the guard forever.
+  local have=""
+  [ -f "$PW_CACHE/node_modules/@playwright/test/package.json" ] \
+    && have="$(node -p "require('$PW_CACHE/node_modules/@playwright/test/package.json').version" 2>/dev/null || true)"
+  if [ "$have" != "$PW_TEST_VERSION" ]; then
+    npm i --prefix "$PW_CACHE" --no-audit --no-fund "@playwright/test@$PW_TEST_VERSION" >"$log" 2>&1 \
+      || { PW_SKIP="npm i @playwright/test@$PW_TEST_VERSION into $PW_CACHE failed: $(tail -1 "$log" 2>/dev/null)"; return 1; }
   fi
   [ -x "$PW_CACHE/node_modules/.bin/playwright" ] || { PW_SKIP="no playwright bin under $PW_CACHE/node_modules/.bin"; return 1; }
   # shellcheck disable=SC2086 — ${CI:+--with-deps} is deliberately unquoted: empty ⇒ no argument
@@ -575,6 +590,55 @@ python3 "$T5/bin/validate-verify-evidence.py" "$RD5/evidence.jsonl" >/dev/null 2
 run_bin "$T5" walk "$T5/repo/.supervisor/verify/no-such-run" --repo .
 rc=$?
 [ "$rc" -eq 2 ] && grep -qF '[run_dir_missing]' "$LAST_ERR" && ok "(AC11) walk on a missing run dir → exit 2 [run_dir_missing]" || no "(AC11) missing run dir: rc=$rc"
+
+# ============================================================================
+echo "== (PWv) acquire_playwright reinstalls on a version MISMATCH or on absence, never on a match (stub npm — nothing is downloaded) =="
+# The guard under test is the `have != PW_TEST_VERSION` branch: a matching package.json must NOT
+# trigger `npm i` (the CI cache hit is then free), while a stale or absent one MUST. Every case runs
+# in a SUBSHELL with its own fresh cache dir under $ROOT and a PATH-first `npm` stub that appends its
+# argv to a log and exits 1, so the real $PW_CACHE, PW_READY and PW_SKIP are untouched and no case can
+# reach the network. Each case is expected to RETURN 1 (there is never a playwright bin to find) — the
+# assertions are on the npm log and on WHICH refusal PW_SKIP carries, which proves the guard was
+# passed (match) or taken (mismatch / absent) rather than short-circuited by an earlier check.
+PWV_BIN="$(mktmp)"; PWV_LOG="$PWV_BIN/npm.log"
+cat > "$PWV_BIN/npm" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "$PWV_LOG"
+exit 1
+EOF
+chmod +x "$PWV_BIN/npm"
+# pwv_case <label> <package.json version | ""(absent)> — leaves the npm argv log in $PWV_LOG and
+# the subshell's PW_SKIP in $PWV_SKIP.
+pwv_case() {
+  local label="$1" ver="$2" c
+  c="$(mktmp)"; : > "$PWV_LOG"
+  if [ -n "$ver" ]; then
+    mkdir -p "$c/node_modules/@playwright/test"
+    printf '{"version":"%s"}\n' "$ver" > "$c/node_modules/@playwright/test/package.json"
+  fi
+  # The return code is deliberately not asserted (always 1 here — no bin); the subshell exits 0 so
+  # the caller's flow is decided by the log + PW_SKIP assertions, never by the expected refusal.
+  ( PW_CACHE="$c"; PATH="$PWV_BIN:$PATH"; acquire_playwright; printf '%s\n' "$PW_SKIP" > "$c/skip.txt"; exit 0 )
+  PWV_SKIP="$(cat "$c/skip.txt")"
+  [ ! -e "$c/node_modules/.bin/playwright" ] || no "($label) a playwright bin appeared in the fresh cache — the stub did not hold"
+}
+pwv_case PWv-match "$PW_TEST_VERSION"
+[ ! -s "$PWV_LOG" ] && ok "(PWv-match) package.json at $PW_TEST_VERSION ⇒ npm NOT invoked (no reinstall on a matching version)" \
+  || no "(PWv-match) npm was invoked on a matching version: $(cat "$PWV_LOG")"
+case "$PWV_SKIP" in "no playwright bin"*) ok "(PWv-match) PW_SKIP starts with \`no playwright bin\` — the version guard was PASSED, not short-circuited" ;;
+  *) no "(PWv-match) PW_SKIP='$PWV_SKIP' (expected the no-playwright-bin refusal)" ;; esac
+for pwv in "PWv-mismatch:0.0.0" "PWv-absent:"; do
+  pwv_label="${pwv%%:*}"; pwv_ver="${pwv#*:}"
+  pwv_case "$pwv_label" "$pwv_ver"
+  [ "$(wc -l < "$PWV_LOG" | tr -d ' ')" -eq 1 ] && ok "($pwv_label) npm invoked EXACTLY once" || no "($pwv_label) npm log has $(wc -l < "$PWV_LOG" | tr -d ' ') lines: $(cat "$PWV_LOG")"
+  grep -qF -- "@playwright/test@$PW_TEST_VERSION" "$PWV_LOG" && ok "($pwv_label) the install names @playwright/test@$PW_TEST_VERSION (the exact pin, not a range)" \
+    || no "($pwv_label) npm argv: $(cat "$PWV_LOG")"
+  case "$PWV_SKIP" in "npm i @playwright/test@$PW_TEST_VERSION"*) ok "($pwv_label) PW_SKIP starts with \`npm i @playwright/test@$PW_TEST_VERSION\` — the reinstall branch was taken" ;;
+    *) no "($pwv_label) PW_SKIP='$PWV_SKIP' (expected the npm-failed refusal)" ;; esac
+done
+[ "$PW_READY" -eq 0 ] && [ -z "$PW_SKIP" ] && ok "(PWv) the outer PW_READY / PW_SKIP are untouched by the subshell cases" || no "(PWv) outer state leaked: PW_READY=$PW_READY PW_SKIP='$PW_SKIP'"
+[ "$(bash "$HERE/read-playwright-pin.sh" 2>/dev/null)" = "$PW_TEST_VERSION" ] && ok "(PWv) read-playwright-pin.sh prints exactly \$PW_TEST_VERSION ($PW_TEST_VERSION) — the CI cache key and this pin are one value" \
+  || no "(PWv) read-playwright-pin.sh printed '$(bash "$HERE/read-playwright-pin.sh" 2>&1)' vs PW_TEST_VERSION=$PW_TEST_VERSION"
 
 # ============================================================================
 echo "== (PW) obtain @playwright/test + chromium into the test cache (idempotent) =="
