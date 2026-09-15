@@ -68,14 +68,19 @@ jobs:
       # PW_TEST_VERSION pin — the single source of truth — so bumping the pin is the only
       # thing that turns the cache over. Deliberately NO restore-keys: a near-miss cache
       # would just be re-downloaded over by the script's version-mismatch guard, saving
-      # nothing. Fails CLOSED when the pin line cannot be read (an empty key would cache
-      # nothing, silently — the same "gate that passes vacuously" this file forbids elsewhere).
+      # nothing. The derivation is mechanized in loomwright/scripts/read-playwright-pin.sh
+      # (NOT an inline sed here — the same code the committed test exercises) and fails
+      # CLOSED when the pin line cannot be read exactly once as `x.y.z` (an empty key would
+      # cache nothing, silently — the same "gate that passes vacuously" this file forbids
+      # elsewhere). Its pin-line mutations (range / quoted / trailing comment / missing /
+      # duplicated) are committed arms of test-read-playwright-pin.sh, which the self-test
+      # loop below auto-includes; no `|| true` on the call, under `set -e` a non-zero exit
+      # stops the step before an empty version can be written.
       - name: Resolve the @playwright/test pin (test-verify-walkthrough.sh cache key)
         id: pw-pin
         run: |
           set -euo pipefail
-          pin="$(sed -n 's/^PW_TEST_VERSION=\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$/\1/p' loomwright/scripts/test-verify-walkthrough.sh)"
-          [ -n "$pin" ] || { echo "cannot read a PW_TEST_VERSION=<x.y.z> line from loomwright/scripts/test-verify-walkthrough.sh — the Playwright cache key would be empty" >&2; exit 1; }
+          pin="$(bash loomwright/scripts/read-playwright-pin.sh)"
           echo "version=$pin" >> "$GITHUB_OUTPUT"
 
       - name: Cache @playwright/test + chromium for test-verify-walkthrough.sh
