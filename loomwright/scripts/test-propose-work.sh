@@ -59,6 +59,7 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SUT="$HERE/propose-work.sh"
+COMMON="$HERE/propose-common.sh"
 FIX="$HERE/fixtures/propose-work"
 GOLD="$FIX/floor-golden.json"
 GOLD_PERM="$FIX/floor-golden-permuted.json"
@@ -79,7 +80,7 @@ if ! command -v jq >/dev/null 2>&1; then
   echo "       may skip on a missing jq; this file may not."
   exit 1
 fi
-for f in "$SUT" "$GOLD" "$GOLD_PERM" "$BELOW" "$STALE" "$MALFORMED" "$DONE_FIX"; do
+for f in "$SUT" "$COMMON" "$GOLD" "$GOLD_PERM" "$BELOW" "$STALE" "$MALFORMED" "$DONE_FIX"; do
   [ -f "$f" ] || { echo "FATAL: required fixture or script missing: $f"; exit 1; }
 done
 
@@ -101,10 +102,18 @@ fresh_basis() {
 }
 
 # run_sut <floor> <outdir> <reqdir> [script] [cwd]
+#
+# Every mutant script this file builds (other than the AC8 guard mutant, which mutates
+# propose-common.sh itself and passes its OWN override) is a `sed`-modified COPY of $SUT placed
+# outside $HERE, so its `$0`-relative sibling lookup would miss propose-common.sh entirely.
+# PROPOSE_COMMON_SH is exported here, pointing at the REAL, unmutated file, so every mutant this
+# helper runs still sources a working (intact-guard) propose-common.sh unless a caller sets its
+# own PROPOSE_COMMON_SH first (the AC8 guard mutant does this itself, directly, not through
+# run_sut).
 run_sut() {
   rs_scr="${4:-$SUT}"; rs_cwd="${5:-$ROOT}"
   ( cd "$rs_cwd" && PROPOSE_FLOOR_JSON="$1" PROPOSE_OUT_DIR="$2" PROPOSE_REQUIREMENTS_DIR="$3" \
-      bash "$rs_scr" ) >"$LOGOUT" 2>"$LOGERR"
+      PROPOSE_COMMON_SH="$COMMON" bash "$rs_scr" ) >"$LOGOUT" 2>"$LOGERR"
   return $?
 }
 
@@ -338,8 +347,10 @@ fi
 echo "== AC6: jq absent / basis missing / basis malformed - named reason, exit 0, in each =="
 NOJQ="$ROOT/nojq"; mkdir -p "$NOJQ"
 # Everything the script can reach BEFORE its jq guard stays on PATH - otherwise the arm would
-# measure a missing shell (exit 127) instead of a missing jq.
-for b in bash git date pwd; do
+# measure a missing shell (exit 127) instead of a missing jq. `dirname` is now one of those:
+# propose-work.sh resolves its propose-common.sh sibling off $0 (via `dirname`) before it ever
+# reaches the jq check.
+for b in bash git date pwd dirname; do
   bp="$(command -v "$b" 2>/dev/null)"
   [ -n "$bp" ] && ln -sf "$bp" "$NOJQ/$b" 2>/dev/null
 done
@@ -523,14 +534,18 @@ a2="$(hash_set "$RK2")"
 $(diff <(printf '%s\n' "$b2") <(printf '%s\n' "$a2"))"
 grep -Fq "refusing to write" "$LOGERR" 2>/dev/null \
   && ok "traversal fixture: the refusal is named" || no "traversal fixture: the refusal is not named"
-# Then: the same fixture against the guard-deleted mutant must plant a real stray write.
-MUT8="$ROOT/mutant-noguard.sh"
-sed '/>>> WRITE-PATH GUARD/,/<<< END WRITE-PATH GUARD/d' "$SUT" > "$MUT8"
-if [ -s "$MUT8" ] && ! cmp -s "$MUT8" "$SUT" && bash -n "$MUT8" 2>/dev/null; then
-  ok "built a syntactically valid mutant with the write-path guard deleted"
+# Then: the same fixture against the guard-deleted mutant must plant a real stray write. The
+# guard lives in propose-common.sh now (sourced, not copied), so the mutant is a COPY of
+# propose-common.sh with the guard block sed-deleted, and the UNMODIFIED propose-work.sh is
+# pointed at it via PROPOSE_COMMON_SH (propose-common.sh's own header documents this override) -
+# no mutant copy of propose-work.sh itself is needed.
+MUT_COMMON8="$ROOT/mutant-noguard-common.sh"
+sed '/>>> WRITE-PATH GUARD/,/<<< END WRITE-PATH GUARD/d' "$COMMON" > "$MUT_COMMON8"
+if [ -s "$MUT_COMMON8" ] && ! cmp -s "$MUT_COMMON8" "$COMMON" && bash -n "$MUT_COMMON8" 2>/dev/null; then
+  ok "built a syntactically valid mutant propose-common.sh with the write-path guard deleted"
   RK3="$(new_repo)"
   b3="$(hash_set "$RK3")"
-  ( cd "$RK3" && PROPOSE_FLOOR_JSON="$TRAV" bash "$MUT8" ) >"$LOGOUT" 2>"$LOGERR"; mrc=$?
+  ( cd "$RK3" && PROPOSE_FLOOR_JSON="$TRAV" PROPOSE_COMMON_SH="$MUT_COMMON8" bash "$SUT" ) >"$LOGOUT" 2>"$LOGERR"; mrc=$?
   a3="$(hash_set "$RK3")"
   if [ "$b3" != "$a3" ]; then
     ok "MUTATION CONTROL: without the guard a write lands OUTSIDE the output dir (mutant rc=$mrc) - AC8 turns RED"

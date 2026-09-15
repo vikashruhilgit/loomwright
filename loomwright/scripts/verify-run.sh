@@ -18,9 +18,10 @@
 #
 # Subcommands:
 #   acs        <ticket>                                              # print {"ticket_kind": …, "acs": [{"ac_id":"AC1","text":"…"}, …]}
-#   preflight  <ticket> [--branch <name>] [--repo <dir>]             # contract read → run dir + run_start → assert-non-prod → env line; prints `run_dir=<path>` LAST
+#   preflight  <ticket> [--branch <name>] [--repo <dir>] [--notify]  # contract read → run dir + run_start → assert-non-prod → env line; `--notify` touches <run_dir>/.notify-enabled (read by verify-helpers.sh's notify dispatch); prints `run_dir=<path>` LAST
 #   auth-check <run_dir> [--repo <dir>]                              # auth.method none ⇒ no-op exit 0; else probe — authenticated ⇒ one `auth` line exit 0; else `auth`+`pause` lines, exit 4
 #   pause      <run_dir> --reason <needs_auth|session_expired>       # append ONE `pause` line (the only place a pause line is ever written) + rebuild summary.md
+#   notify-enable <run_dir>                                          # touch <run_dir>/.notify-enabled — the ONLY other place that marker is created (besides preflight --notify); used by the `--resume --notify` path, which never calls preflight
 #   walk       <run_dir> [--repo <dir>] [--base-url <url>]           # generate the per-run Playwright config, run the `[ACn]` specs, ingest the reporter into `ac` lines
 #   verdict    <run_dir> <ac_id> <NOT_VERIFIABLE|BLOCKED> --reason <text> [--classification <c>]   # append one browser-less `ac` line
 #   finish     <run_dir> [--status completed|aborted]                # append run_end (NO counts), rebuild summary.md, print its counts row
@@ -169,17 +170,18 @@ acs_cmd() {
 # diff.stat; (4) `assert-non-prod` — stdout and `$?` captured in two statements; fail ⇒ the `env`
 # fail line with the executor's own bracketed reason, exit 1, and `start` is NEVER called.
 preflight_cmd() {
-  local ticket="" branch="" repo_arg="" repo acs kind contract tokens
+  local ticket="" branch="" repo_arg="" notify=0 repo acs kind contract tokens
   local run_id run_dir base head_sha base_sha hash ts out rc reason
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --branch) [ "$#" -ge 2 ] || usage "--branch needs a value"; branch="$2"; shift 2 ;;
       --repo)   [ "$#" -ge 2 ] || usage "--repo needs a value";   repo_arg="$2"; shift 2 ;;
-      -*)       usage "preflight <ticket> [--branch <name>] [--repo <dir>] (unknown flag $1)" ;;
+      --notify) notify=1; shift ;;
+      -*)       usage "preflight <ticket> [--branch <name>] [--repo <dir>] [--notify] (unknown flag $1)" ;;
       *)        if [ -z "$ticket" ]; then ticket="$1"; shift; else usage "preflight takes ONE ticket"; fi ;;
     esac
   done
-  [ -n "$ticket" ] || usage "preflight <ticket> [--branch <name>] [--repo <dir>]"
+  [ -n "$ticket" ] || usage "preflight <ticket> [--branch <name>] [--repo <dir>] [--notify]"
   command -v jq >/dev/null 2>&1 || die "jq is required [jq_unavailable]"
   [ -f "$HELPERS" ] || die "sibling verify-helpers.sh not found at $HELPERS"
   [ -f "$READER" ]  || die "sibling read-verify.sh not found at $READER"
@@ -219,6 +221,11 @@ preflight_cmd() {
     [ -e "$run_dir" ] && die "run dir already exists at $run_dir — refusing to append into another run [run_dir_exists]"
   fi
   mkdir -p "$run_dir" || die "cannot create $run_dir"
+  # `--notify` enablement is a FILESYSTEM marker, not an env var — see verify-helpers.sh's Notify
+  # section header for why (the qa-executor's VERIFY MODE runs in a separate Task-spawned process
+  # with no shared shell state with this main-thread invocation). Best-effort: a failed `touch`
+  # degrades to no notifications, never to a preflight failure.
+  [ "$notify" -eq 1 ] && { : > "$run_dir/.notify-enabled" 2>/dev/null || diag "could not create $run_dir/.notify-enabled — notifications will not fire for this run"; }
   if [ -z "$branch" ]; then
     branch="$(git -C "$repo" branch --show-current 2>/dev/null)"
     [ -n "$branch" ] || branch="HEAD"
@@ -308,6 +315,23 @@ pause_cmd() {
     '{schema_version: 1, ts: $ts, run_id: $run_id, event: "pause", reason: $reason}' \
     | bash "$HELPERS" evidence-append "$run_dir" - >/dev/null || die "pause line was refused (see $run_dir/rejected.jsonl)"
   bash "$HELPERS" summary-build "$run_dir" || die "summary-build failed for $run_dir"
+  return 0
+}
+
+# --------------------------------------------------------------------------- #
+# notify-enable <run_dir>
+# --------------------------------------------------------------------------- #
+# The ONLY other place `<run_dir>/.notify-enabled` is created (besides `preflight --notify`).
+# Exists for `/verify --resume <run_id> --notify` — the resume flow never calls `preflight` (a
+# fresh run dir is never minted for a resume), so there is no other point where a `--notify` passed
+# on that invocation could reach the marker verify-helpers.sh's notify dispatch reads. Idempotent —
+# touching an already-enabled run is a no-op, not an error.
+notify_enable_cmd() {
+  local run_dir="${1:-}"
+  [ -n "$run_dir" ] || usage "notify-enable <run_dir>"
+  [ -d "$run_dir" ] || { diag "run dir not found at $run_dir [run_dir_missing]"; exit 2; }
+  run_dir="$(cd "$run_dir" && pwd)"
+  : > "$run_dir/.notify-enabled" || die "could not create $run_dir/.notify-enabled"
   return 0
 }
 
@@ -749,6 +773,7 @@ main() {
     acs)        acs_cmd "$@" ;;
     auth-check) auth_check_cmd "$@" ;;
     preflight)  preflight_cmd "$@" ;;
+    notify-enable) notify_enable_cmd "$@" ;;
     walk)       walk_cmd "$@" ;;
     verdict)    verdict_cmd "$@" ;;
     finish)     finish_cmd "$@" ;;
