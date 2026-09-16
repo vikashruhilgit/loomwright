@@ -1126,17 +1126,17 @@ queue_reconcile_item_cmd() {
   case "$last_event" in
     run_end)
       jq -cn --arg old "$old_sha" --arg new "$new_sha" \
-        '{status:"done", pause_reason:null, resume_ac_id:null, old_sha:$old, new_sha:$new}'
+        '{status:"done", pause_reason:null, resume_ac_id:null, old_sha:(if $old=="" then null else $old end), new_sha:(if $new=="" then null else $new end)}'
       ;;
     pause)
       last_reason="$(jq -rs '.[-1].reason // empty' "$evid" 2>/dev/null)"
       jq -cn --arg r "$last_reason" --arg old "$old_sha" --arg new "$new_sha" \
-        '{status:"paused", pause_reason:(if $r=="" then null else $r end), resume_ac_id:null, old_sha:$old, new_sha:$new}'
+        '{status:"paused", pause_reason:(if $r=="" then null else $r end), resume_ac_id:null, old_sha:(if $old=="" then null else $old end), new_sha:(if $new=="" then null else $new end)}'
       ;;
     *)
       resume_ac="$(bash "$HELPERS" first-unverdicted "$run_dir" 2>/dev/null)"
       jq -cn --arg ac "$resume_ac" --arg old "$old_sha" --arg new "$new_sha" \
-        '{status:"crashed", pause_reason:null, resume_ac_id:(if $ac=="" then null else $ac end), old_sha:$old, new_sha:$new}'
+        '{status:"crashed", pause_reason:null, resume_ac_id:(if $ac=="" then null else $ac end), old_sha:(if $old=="" then null else $old end), new_sha:(if $new=="" then null else $new end)}'
       ;;
   esac
 }

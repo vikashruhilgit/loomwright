@@ -40,11 +40,19 @@
 #       (D) report a non-"stale" status, proving (D) is not passing vacuously.
 #   (N) never shares state with /automate — `find .supervisor/automate .supervisor/state.md
 #       -newer <marker>` is empty after a full item-processing sequence (arm B's).
-#   (G) queue-reconcile-item paused + not_started branches — driven directly against a hand-built
-#       run dir (mirrors (C)/(D)/(F)): a run dir whose evidence.jsonl's LAST line is a `pause`
-#       (written via the real `pause` subcommand, reason `session_expired`) reconciles to
-#       `{status:"paused", pause_reason:"session_expired"}`; a run dir with NO evidence.jsonl at
-#       all (never preflighted) reconciles to `{status:"not_started", pause_reason:null}`.
+#   (G) queue-reconcile-item paused + not_started + done branches, and old_sha/new_sha null
+#       coalescing — driven directly against a hand-built run dir (mirrors (C)/(D)/(F)): a run dir
+#       whose evidence.jsonl's LAST line is a `pause` (written via the real `pause` subcommand,
+#       reason `session_expired`) reconciles to `{status:"paused", pause_reason:"session_expired"}`;
+#       a run dir with NO evidence.jsonl at all (never preflighted) reconciles to
+#       `{status:"not_started", pause_reason:null}`; arm (C)'s already-finished item 1 run dir
+#       (RD1C/TC, whose evidence.jsonl ends in `run_end`) reconciles to `{status:"done"}` — proving
+#       the `done` branch, which no other arm exercises. A reconcile against a branch name that
+#       doesn't resolve (git rev-parse fails silently to "") on the paused run dir above asserts
+#       `new_sha` comes back JSON null, not the empty string, for the `done`/`paused`/`crashed`
+#       branches' old_sha/new_sha null-coalescing (the `stale`/`not_started` branches are unaffected
+#       — `stale` only fires when both SHAs are already known non-empty, and `not_started` always
+#       emits literal nulls).
 #   (S) static shape — `bash -n` on both changed scripts; `--help` lists the four queue-*
 #       subcommands (verify-helpers.sh) and queue-reconcile-item (verify-run.sh).
 
@@ -391,6 +399,21 @@ status="$(printf '%s' "$rc_json" | jq -r .status)"
 reason="$(printf '%s' "$rc_json" | jq -r .pause_reason)"
 [ "$status" = "not_started" ] && ok "(G) reconcile reports status=not_started for a run dir with no evidence.jsonl" || no "(G) status='$status' ($rc_json)"
 [ "$reason" = "null" ] && ok "(G) reconcile reports pause_reason=null for not_started" || no "(G) pause_reason='$reason' ($rc_json)"
+
+# (G) done branch: reuses arm (C)'s item 1 run dir (RD1C/TC), which was already driven through
+# finish_item there — its evidence.jsonl's last line is `run_end`, so no new fixture is built.
+rc_json="$(reconcile "$TC" "$RD1C")"
+status="$(printf '%s' "$rc_json" | jq -r .status)"
+[ "$status" = "done" ] && ok "(G) reconcile reports status=done for a finished (run_end) run dir" || no "(G) status='$status' ($rc_json)"
+
+# (G) old_sha/new_sha null-coalesced: reconciling against a branch name that doesn't resolve
+# (git rev-parse fails silently to "") must still emit JSON null, not "", per the queue-reconcile-item
+# docstring / docs/RESULT_SCHEMAS.md contract. Reuses RD1G (paused) from just above.
+rc_json="$(reconcile "$TG" "$RD1G" "no-such-branch-xyz")"
+status="$(printf '%s' "$rc_json" | jq -r .status)"
+new_sha_raw="$(printf '%s' "$rc_json" | jq -r '.new_sha')"
+[ "$status" = "paused" ] && ok "(G) reconcile still reports status=paused when --branch can't be resolved" || no "(G) status='$status' ($rc_json)"
+[ "$new_sha_raw" = "null" ] && ok "(G) reconcile null-coalesces new_sha to null (not empty string) when git rev-parse fails" || no "(G) new_sha='$new_sha_raw' ($rc_json) — should be null"
 
 # ============================================================================
 echo "== (S) static shape: bash -n, --help lists the new subcommands =="
