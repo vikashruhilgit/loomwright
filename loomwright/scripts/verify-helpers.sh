@@ -176,14 +176,11 @@ summary_build() {
     | ([$L[] | select(.event == "auth")] | last) as $auth
     | ([$L[] | select(.event == "ac")] | latest_by(.ac_id)) as $all_acs
     | ([$L[] | select(.event == "ac" and .scope == "ticket")] | latest_by(.ac_id)) as $acs
-    | ([$L[] | select(.event == "ac" and .scope == "impact")] | latest_by(.ac_id)) as $impact_acs
-    | ([$L[] | select(.event == "impact_surfaces")] | last) as $impact_ev
     | [$L[] | select(.event == "issue")] as $issues
     | [$L[] | select(.event == "pause" or .event == "resume")] as $pr
     | ([$L[] | select(.event == "run_end")] | last) as $re
     | ([$L[] | select(.event == "ac" or .event == "issue") | (.artifacts // [])[] | tostring] | unique) as $arts
     | def cnt(v): [$acs[] | select(.verdict == v)] | length;
-    def icnt(v): [$impact_acs[] | select(.verdict == v)] | length;
     [
       "# Verify run \($run_id) — summary",
       "> DERIVED by `verify-helpers.sh summary-build` from evidence.jsonl on every append — do not edit; edits are overwritten.",

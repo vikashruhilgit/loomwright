@@ -1,8 +1,8 @@
 ---
 name: verify-walkthrough
 description: Protocol authority for `/verify <ticket>` and the QA Executor's `--verify <run_dir>` mode — AC extraction, AC → Playwright spec derivation, the four observation-derived verdicts (PASS / FAIL / BLOCKED / NOT_VERIFIABLE), the V7 mutation carve-out, evidence-per-AC, and budget. Read on demand at mode entry, deliberately not preloaded.
-version: "1.1.0"
-lastUpdated: "2026-09-15"
+version: "1.2.0"
+lastUpdated: "2026-09-16"
 ---
 
 # Verify Walkthrough Protocol (`/verify` + qa-executor `--verify` mode)

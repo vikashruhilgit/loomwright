@@ -1166,7 +1166,7 @@ grep -qF -- 'test.afterEach' "$SKILL" && grep -qF -- "attach('page-body'" "$SKIL
   && ok "(AC5) the spec template carries the afterEach page-body attach" || no "(AC5) spec template lacks the afterEach page-body attach"
 grep -qF -- 'Payment, logout and account-deletion actions stay forbidden everywhere' "$SKILL" \
   && ok "(AC5) V7 carve-out keeps payment/logout/account-delete forbidden" || no "(AC5) carve-out's forbidden set missing"
-grep -qF -- 'version: "1.1.0"' "$SKILL" && ok "(AC5) skill frontmatter version pinned at 1.1.0 (item 04 bump)" || no "(AC5) skill frontmatter version not 1.1.0"
+grep -qF -- 'version: "1.2.0"' "$SKILL" && ok "(AC5) skill frontmatter version pinned at 1.2.0 (item 06 bump)" || no "(AC5) skill frontmatter version not 1.2.0"
 
 echo "== (AC10-command) /verify surface + commands/qa-executor.md sync =="
 grep -qF -- '/loomwright:verify' "$VERIFY_CMD" && ok "(cmd) commands/verify.md names the namespaced /loomwright:verify form" || no "(cmd) /loomwright:verify missing from commands/verify.md"

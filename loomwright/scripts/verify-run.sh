@@ -589,6 +589,13 @@ impact_record_surfaces_cmd() {
     | ($s + (reduce ($brief[]?) as $b ({}; . + {($b): ($s[$b] // [])}))) as $merged
     | {surfaces: $merged, unmapped: $u, files: $files, brief_surfaces: $brief, limit: $limit}' 2>/dev/null)"
   [ -n "$merged" ] || die "impact record-surfaces: could not build the merged record (malformed input JSON?)"
+  # Mechanical completeness check — never trust the agent's classification alone:
+  # every file in the recomputed diff list ($files) must be covered by either a
+  # surface bucket or unmapped. A gap here means a file was silently dropped by
+  # the classifier (neither named nor listed as unmapped), which would violate
+  # AC1 ("every changed file with either a surface or unmapped, never guessed").
+  uncovered="$(printf '%s' "$merged" | jq -c '(.files - (([.surfaces[]?] | add // []) + .unmapped))')"
+  [ "$uncovered" = "[]" ] || die "impact record-surfaces: file(s) neither classified to a surface nor listed as unmapped: $uncovered"
   printf '%s\n' "$merged" | jq -c --arg ts "$ts" --arg run_id "$run_id" \
     '{schema_version: 1, ts: $ts, run_id: $run_id, event: "impact_surfaces"} + .' \
     | bash "$HELPERS" evidence-append "$run_dir" - >/dev/null || die "impact_surfaces line was refused (see $run_dir/rejected.jsonl)"

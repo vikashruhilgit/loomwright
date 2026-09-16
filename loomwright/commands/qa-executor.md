@@ -58,7 +58,7 @@ The QA Executor agent has its own tools, budget tracking, and multi-phase Level 
 10. Reports bugs with failure classification (REAL_BUG vs DISCOVERY_GAP vs ENVIRONMENT_ISSUE)
 11. Emits MISSING_FUNCTIONALITY_REPORT + QA_RESULT
 
-**`--verify` mode** replaces steps 1–11 with: Playwright presence → `verify-env.sh start`/`seed`/`auth-probe` → spec authoring → `verify-run.sh walk` → `reset`/`stop` → `finish` → VERIFY_RESULT. It is normally reached via `/verify <ticket>`, not invoked directly — see `/verify`.
+**`--verify` mode** replaces steps 1–11 with: Playwright presence → `verify-env.sh start`/`seed`/`auth-check` → spec authoring → `verify-run.sh walk` → Impact Pass (item 06, advisory `scope: impact` surfaces — see `agents/qa-executor.md`'s VERIFY MODE) → `reset`/`stop` → `finish` → VERIFY_RESULT. It is normally reached via `/verify <ticket>`, not invoked directly — see `/verify`.
 
 ## Requirements
 
