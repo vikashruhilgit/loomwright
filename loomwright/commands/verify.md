@@ -22,6 +22,8 @@ No other surface verifies a ticket against the running app: `## Executable Accep
 /verify <ticket-path> --cheap                # run the executor on Sonnet (see docs/ARCHITECTURE_CONTRACTS.md §"Cost Profiles")
 /verify --resume <run_id>                    # resume a run that paused for a human sign-in (needs_auth / session_expired)
 /verify <ticket-path> --notify               # POST gate-event webhooks + a desktop banner at needs_auth (see "Notify" below)
+/verify <ticket-path> --impact-limit <N>     # bound the impact pass's prior-AC regression to N re-runs (default 10; see "Impact pass" below)
+/verify <ticket-path> --no-impact             # skip the impact pass entirely — ticket ACs only, same as before item 06
 
 # Headless (claude -p) — use the NAMESPACED form; bare /verify is "Unknown command" under detached claude -p:
 claude -p "/loomwright:verify .supervisor/requirements/checkout/01-coupon.md"
@@ -36,6 +38,8 @@ claude -p "/loomwright:verify .supervisor/requirements/checkout/01-coupon.md"
 | `--cheap` | No | Forwarded to the executor spawn as `model: "sonnet"` guidance per `docs/ARCHITECTURE_CONTRACTS.md` §"Cost Profiles". Default (`inherit`) unchanged when absent. |
 | `--resume <run_id>` | No (mutually exclusive with `<ticket-path>`) | Resumes the paused run at `.supervisor/verify/<run_id>` — see "Resume flow" below. Errors, never silently starting a new run, when that dir does not exist. |
 | `--notify` | No | Passthrough flag, never persisted (same convention as `/automate --notify`) — re-pass it on `--resume` to keep notifying a resumed run. Fires `send-webhook.sh --event-type gate` at exactly three events (`needs_auth` pause, first `FAIL`, `run_end`) plus a `notify-desktop.sh` banner at `needs_auth`. See "Notify" below. |
+| `--impact-limit <N>` | No | Passthrough flag, never persisted (same convention as `--notify`) — re-pass it on `--resume` to keep the same bound. Forwarded to the executor's impact-pass step (item 06) as the `verify-run.sh impact prior-acs --impact-limit N` / `impact record-surfaces --impact-limit N` bound — up to N prior-run PASS `ac` lines whose `surfaces` intersect this run's are re-run. Default: 10. Never affects the ticket's own ACs or counts. |
+| `--no-impact` | No | Passthrough flag, never persisted (same convention as `--notify`) — re-pass it on `--resume` to keep skipping the impact pass; omitting it on a later `--resume` re-enables the impact pass with default settings. Forwarded to the executor; skips the whole impact pass (no `impact_surfaces` event, no impact-scope `ac` lines). The ticket's own PASS/FAIL/BLOCKED/NOT_VERIFIABLE counts in `summary.md` are byte-identical with or without this flag — `summary_build` counts `scope: ticket` lines only, regardless. |
 
 ## Main-thread steps
 
@@ -61,7 +65,7 @@ Every deterministic step is a shell-out; the main thread never re-implements wha
    ```
    Task(
      description: "Verify: <ticket basename> in <run_dir>",
-     prompt: "--verify <run_dir>\nTicket: <ticket-path>\nBranch: <name or current>\n<--cheap passthrough note when given>",
+     prompt: "--verify <run_dir>\nTicket: <ticket-path>\nBranch: <name or current>\n<--cheap passthrough note when given>\nImpact-limit: <N, default 10>\n<No-impact: true, only when --no-impact was passed>",
      subagent_type: "loomwright:qa-executor"
      [, model: "sonnet"   # ONLY when --cheap was passed]
    )
@@ -111,7 +115,7 @@ A separate entry point — no ticket path, no preflight, no new run dir:
      '{schema_version: 1, ts: $ts, run_id: $run_id, event: "resume", reason: "human_signed_in"}' \
      | bash "${CLAUDE_PLUGIN_ROOT}/scripts/verify-helpers.sh" evidence-append "$run_dir" -
    ```
-   then spawn the executor exactly as step 4 above (`--verify <run_dir>`; no special resume flag on the agent boundary — the executor detects resume from the run dir's own contents, see `agents/qa-executor.md`). Derive `Ticket:` / `Branch:` for the Task prompt from the `run_start` line already in `evidence.jsonl` (`jq -r 'select(.event=="run_start") | .ticket_path'` / `.branch`), never re-asked.
+   then spawn the executor exactly as step 4 above (`--verify <run_dir>`; no special resume flag on the agent boundary — the executor detects resume from the run dir's own contents, see `agents/qa-executor.md`). Derive `Ticket:` / `Branch:` for the Task prompt from the `run_start` line already in `evidence.jsonl` (`jq -r 'select(.event=="run_start") | .ticket_path'` / `.branch`), never re-asked. `--impact-limit`/`--no-impact` are passthrough flags like `--notify` — never persisted on `run_start` — so re-pass them on THIS `--resume` invocation to keep the same impact-pass bound/opt-out; omitting them reverts the resumed run to the impact-pass default (`--impact-limit 10`, impact pass enabled).
 5. Continue at step 5 (Report) above — this time WITHOUT the one-shot gitignore check (already done on the first pause).
 
 ## What it records

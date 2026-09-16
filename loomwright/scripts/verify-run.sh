@@ -25,6 +25,20 @@
 #   walk       <run_dir> [--repo <dir>] [--base-url <url>]           # generate the per-run Playwright config, run the `[ACn]` specs, ingest the reporter into `ac` lines
 #   verdict    <run_dir> <ac_id> <NOT_VERIFIABLE|BLOCKED> --reason <text> [--classification <c>]   # append one browser-less `ac` line
 #   finish     <run_dir> [--status completed|aborted]                # append run_end (NO counts), rebuild summary.md, print its counts row
+#   impact diff            <run_dir> [--repo <dir>]                                 # mechanical: git diff --name-only base_sha...head_sha (from run_start) -> a JSON array of changed files
+#   impact brief-surfaces  <run_dir> [--repo <dir>]                                 # best-effort: subsystem names from a matching .supervisor/jobs/done/ brief's Blast-Radius section - NEVER fails, [] when absent/omitted
+#   impact record-surfaces <run_dir> <json|-> [--repo <dir>] [--impact-limit N] [--no-impact]
+#                                                                                    # agent supplies {"surfaces":{"<name>":[file,...]},"unmapped":[file,...]}; recomputes `files` and
+#                                                                                    # `brief_surfaces` itself and appends ONE impact_surfaces evidence line; --no-impact short-circuits
+#                                                                                    # to a no-op (exit 0, nothing appended) - the whole impact pass skipped
+#   impact prior-acs       <run_dir> [--repo <dir>] [--impact-limit N]              # mechanical: scans sibling .supervisor/verify/*/evidence.jsonl for latest-per-ac_id PASS lines whose
+#                                                                                    # `surfaces` intersects this run's impact_surfaces, most-recent-first, bounded by the limit; a JSON array;
+#                                                                                    # zero prior runs (fresh clone/worktree/CI) silently prints [], never fails
+#   walk       <run_dir> [--repo <dir>] [--base-url <url>] [--scope ticket|impact] [--specs-dir <dir>] [--manifest <path>] [--report-name <name>]
+#                                                                                    # generates the per-run config, runs the specs, ingests the reporter into `ac` lines (PASS/FAIL/BLOCKED);
+#                                                                                    # --scope impact + --manifest <path> (array of {id, text, source, surfaces}) re-runs impact-scope specs
+#                                                                                    # (prior-AC regression / smoke checks) instead of the ticket's own acs.json entries - every default is
+#                                                                                    # backward-compatible with a plain ticket-scope walk
 #
 # Exit codes: 0 ok · 1 refused / failed (non-prod assertion failed, append refused) · 2 usage / ticket
 # unresolved / a verdict that needs observation · 3 preflight stop (no contract at .agent/verify.json,
@@ -446,6 +460,209 @@ verdict_cmd() {
 }
 
 # --------------------------------------------------------------------------- #
+# impact <diff|brief-surfaces|record-surfaces|prior-acs> ...
+# --------------------------------------------------------------------------- #
+# The mechanical half of the impact pass (item 06) - the diff->surfaces CLASSIFICATION itself is
+# agent-judgment work done by qa-executor's VERIFY MODE (reusing Phase 4 APP TOPOLOGY DETECTION
+# prose, see Risk Assessment of the owning brief); this script owns only the raw facts: the diff
+# listing, the brief's Blast-Radius text (when populated), recording the one `impact_surfaces`
+# evidence line, and the bounded prior-AC scan across sibling run dirs.
+
+# run_start_field <run_dir> <field> - the run_start line's <field>, empty when absent/unreadable.
+run_start_field() {
+  local run_dir="$1" field="$2"
+  [ -f "$run_dir/evidence.jsonl" ] || { printf ''; return 0; }
+  jq -r --arg f "$field" 'select(.event == "run_start") | .[$f] // empty' "$run_dir/evidence.jsonl" 2>/dev/null | head -1
+}
+
+# impact_diff_cmd <run_dir> [--repo <dir>] - git diff --name-only base_sha...head_sha from the run's
+# own run_start line; prints a JSON array (possibly empty) - NEVER fails on an unresolvable diff, an
+# empty array is printed instead (same fail-safe-advisory convention as preflight's own diff.stat).
+impact_diff_cmd() {
+  local run_dir="" repo_arg="" repo base head files
+  local u="impact diff <run_dir> [--repo <dir>]"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --repo) [ "$#" -ge 2 ] || usage "--repo needs a value"; repo_arg="$2"; shift 2 ;;
+      -*)     usage "$u (unknown flag $1)" ;;
+      *)      if [ -z "$run_dir" ]; then run_dir="$1"; shift; else usage "impact diff takes ONE run dir"; fi ;;
+    esac
+  done
+  [ -n "$run_dir" ] || usage "$u"
+  [ -d "$run_dir" ] || { diag "run dir not found at $run_dir [run_dir_missing]"; exit 2; }
+  run_dir="$(cd "$run_dir" && pwd)"
+  repo="$(resolve_repo "$repo_arg")" || exit 2
+  base="$(run_start_field "$run_dir" base_sha)"
+  head="$(run_start_field "$run_dir" head_sha)"
+  files="[]"
+  if [ -n "$base" ] && [ -n "$head" ]; then
+    files="$(git -C "$repo" diff --name-only "$base...$head" 2>/dev/null | jq -R . 2>/dev/null | jq -sc . 2>/dev/null)"
+    [ -n "$files" ] || files="[]"
+  fi
+  printf '%s\n' "$files"
+}
+
+# impact_brief_surfaces_cmd <run_dir> [--repo <dir>] - best-effort, NEVER fails: finds a
+# .supervisor/jobs/done/*.md brief whose `**Source requirement:**` line names this run's ticket_path
+# (the header back-reference), extracts the `- ` bullets under a Blast-Radius/Blast Radius heading
+# (case-insensitive) up to the next `## `/`### ` header, and prints them as a JSON array of
+# subsystem-name strings. No matching brief, or an omitted/absent section -> `[]`.
+impact_brief_surfaces_cmd() {
+  local run_dir="" repo_arg="" repo ticket brief names
+  local u="impact brief-surfaces <run_dir> [--repo <dir>]"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --repo) [ "$#" -ge 2 ] || usage "--repo needs a value"; repo_arg="$2"; shift 2 ;;
+      -*)     usage "$u (unknown flag $1)" ;;
+      *)      if [ -z "$run_dir" ]; then run_dir="$1"; shift; else usage "impact brief-surfaces takes ONE run dir"; fi ;;
+    esac
+  done
+  [ -n "$run_dir" ] || usage "$u"
+  [ -d "$run_dir" ] || { diag "run dir not found at $run_dir [run_dir_missing]"; exit 2; }
+  run_dir="$(cd "$run_dir" && pwd)"
+  repo="$(resolve_repo "$repo_arg")" || exit 2
+  ticket="$(run_start_field "$run_dir" ticket_path)"
+  names="[]"
+  if [ -n "$ticket" ] && [ -d "$repo/.supervisor/jobs/done" ]; then
+    brief="$(grep -rlF -- "**Source requirement:** $ticket" "$repo/.supervisor/jobs/done" 2>/dev/null | head -1)"
+    if [ -n "$brief" ] && [ -f "$brief" ]; then
+      names="$(awk '
+        function flush() { if (cur != "") print cur; cur = "" }
+        BEGIN { on = 0 }
+        /^##+ / {
+          if (on) { flush(); on = 0; exit }
+          h = tolower($0); sub(/^##+[ \t]+/, "", h); gsub(/[ \t\r]+$/, "", h)
+          if (h ~ /blast.radius/) { on = 1 }
+          next
+        }
+        on && /^- / { flush(); cur = substr($0, 3); next }
+        on && /^[ \t]+[^ \t]/ && cur != "" { line = $0; sub(/^[ \t]+/, "", line); cur = cur " " line; next }
+        on && /^[ \t\r]*$/ { next }
+        on { flush() }
+        END { flush() }
+      ' "$brief" 2>/dev/null | tr -d '\r' | sed -E 's/^[[:space:]]*//; s/[[:space:]]+$//' | grep -v '^[[:space:]]*$' \
+        | jq -R . 2>/dev/null | jq -sc . 2>/dev/null)"
+      [ -n "$names" ] || names="[]"
+    fi
+  fi
+  printf '%s\n' "$names"
+}
+
+# impact_record_surfaces_cmd <run_dir> <json|-> [--repo <dir>] [--impact-limit N] [--no-impact]
+# The agent supplies its own classification (surfaces -> files, unmapped); this recomputes `files`
+# (the mechanical diff listing) and `brief_surfaces` (best-effort) ITSELF rather than trusting the
+# agent's copy, merges the brief-sourced names into `surfaces` (each an empty file list unless the
+# agent's own classification already named files for it), and appends ONE `impact_surfaces` line.
+# `--no-impact` is a pure no-op: exit 0, nothing read, nothing appended - the whole pass skipped.
+impact_record_surfaces_cmd() {
+  local run_dir="" input="" repo_arg="" limit=10 no_impact=0 repo json files brief_names ts run_id merged uncovered
+  local u="impact record-surfaces <run_dir> <json|-> [--repo <dir>] [--impact-limit N] [--no-impact]"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --repo)          [ "$#" -ge 2 ] || usage "--repo needs a value";          repo_arg="$2"; shift 2 ;;
+      --impact-limit)  [ "$#" -ge 2 ] || usage "--impact-limit needs a value";  limit="$2";    shift 2 ;;
+      --no-impact)     no_impact=1; shift ;;
+      -)               if [ -z "$run_dir" ]; then run_dir="$1"; shift; else input="$1"; shift; fi ;;
+      -*)              usage "$u (unknown flag $1)" ;;
+      *)
+        if [ -z "$run_dir" ]; then run_dir="$1"; shift;
+        elif [ -z "$input" ]; then input="$1"; shift;
+        else usage "impact record-surfaces takes ONE run dir and ONE json argument"; fi ;;
+    esac
+  done
+  [ -n "$run_dir" ] || usage "$u"
+  if [ "$no_impact" -eq 1 ]; then return 0; fi
+  [ -n "$input" ] || usage "$u"
+  case "$limit" in ''|*[!0-9]*) usage "--impact-limit must be a non-negative integer, got '$limit'" ;; esac
+  if [ "$input" = "-" ]; then json="$(cat)"; else json="$input"; fi
+  [ -n "$json" ] || die "impact record-surfaces: empty record"
+  [ -d "$run_dir" ] || { diag "run dir not found at $run_dir [run_dir_missing]"; exit 2; }
+  run_dir="$(cd "$run_dir" && pwd)"
+  repo="$(resolve_repo "$repo_arg")" || exit 2
+  run_id="$(run_id_of "$run_dir")"
+  files="$(impact_diff_cmd "$run_dir" --repo "$repo")"
+  brief_names="$(impact_brief_surfaces_cmd "$run_dir" --repo "$repo")"
+  ts="$(now_ts)"
+  merged="$(printf '%s' "$json" | jq -c --argjson files "$files" --argjson brief "$brief_names" --argjson limit "$limit" '
+    (.surfaces // {}) as $s
+    | (.unmapped // []) as $u
+    | ($s + (reduce ($brief[]?) as $b ({}; . + {($b): ($s[$b] // [])}))) as $merged
+    | {surfaces: $merged, unmapped: $u, files: $files, brief_surfaces: $brief, limit: $limit}' 2>/dev/null)"
+  [ -n "$merged" ] || die "impact record-surfaces: could not build the merged record (malformed input JSON?)"
+  # Mechanical completeness check — never trust the agent's classification alone:
+  # every file in the recomputed diff list ($files) must be covered by either a
+  # surface bucket or unmapped. A gap here means a file was silently dropped by
+  # the classifier (neither named nor listed as unmapped), which would violate
+  # AC1 ("every changed file with either a surface or unmapped, never guessed").
+  # Self-heal, don't fail: this pass is advisory/best-effort (SKILL.md §9,
+  # RESULT_SCHEMAS.md) and must never block the ticket's own verify score, so a
+  # classification gap folds into `unmapped` (deduped) instead of dying — the
+  # invariant is never-silently-dropped, not never-imperfectly-classified.
+  uncovered="$(printf '%s' "$merged" | jq -c '(.files - (([.surfaces[]?] | add // []) + .unmapped))')"
+  if [ "$uncovered" != "[]" ]; then
+    merged="$(printf '%s' "$merged" | jq -c --argjson uncovered "$uncovered" '.unmapped = ((.unmapped + $uncovered) | unique)')"
+  fi
+  printf '%s\n' "$merged" | jq -c --arg ts "$ts" --arg run_id "$run_id" \
+    '{schema_version: 1, ts: $ts, run_id: $run_id, event: "impact_surfaces"} + .' \
+    | bash "$HELPERS" evidence-append "$run_dir" - >/dev/null || die "impact_surfaces line was refused (see $run_dir/rejected.jsonl)"
+}
+
+# impact_prior_acs_cmd <run_dir> [--repo <dir>] [--impact-limit N] - reads this run's OWN
+# impact_surfaces line for its surface-name set, scans every SIBLING run dir's evidence.jsonl (never
+# this run itself) for the latest-per-ac_id line whose verdict is PASS and whose (optional) `surfaces`
+# intersects that set, sorts the matches most-recent-first by run_id (timestamp-prefixed, so a lexical
+# sort is a chronological sort), and bounds them to the limit (the flag wins over the value already
+# recorded on the impact_surfaces line, which wins over the default of 10). Zero prior runs (a fresh
+# clone/worktree/CI, where .supervisor/verify/ never existed) prints `[]` and never fails.
+impact_prior_acs_cmd() {
+  local run_dir="" repo_arg="" limit="" self_id surfaces_json limit_from_line verify_root d evid rid candidates rc
+  local u="impact prior-acs <run_dir> [--repo <dir>] [--impact-limit N]"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --repo)         [ "$#" -ge 2 ] || usage "--repo needs a value";         repo_arg="$2"; shift 2 ;;
+      --impact-limit) [ "$#" -ge 2 ] || usage "--impact-limit needs a value"; limit="$2";    shift 2 ;;
+      -*)             usage "$u (unknown flag $1)" ;;
+      *)              if [ -z "$run_dir" ]; then run_dir="$1"; shift; else usage "impact prior-acs takes ONE run dir"; fi ;;
+    esac
+  done
+  [ -n "$run_dir" ] || usage "$u"
+  [ -d "$run_dir" ] || { diag "run dir not found at $run_dir [run_dir_missing]"; exit 2; }
+  run_dir="$(cd "$run_dir" && pwd)"
+  : "${repo_arg:-}"   # --repo accepted for CLI-shape parity; the scan is local to .supervisor/verify/
+  self_id="$(run_id_of "$run_dir")"
+  surfaces_json="$([ -f "$run_dir/evidence.jsonl" ] && jq -c 'select(.event == "impact_surfaces") | [.surfaces | keys[]]' "$run_dir/evidence.jsonl" 2>/dev/null | tail -1)"
+  [ -n "$surfaces_json" ] || surfaces_json="[]"
+  limit_from_line="$([ -f "$run_dir/evidence.jsonl" ] && jq -r 'select(.event == "impact_surfaces") | .limit // empty' "$run_dir/evidence.jsonl" 2>/dev/null | tail -1)"
+  [ -n "$limit" ] || limit="${limit_from_line:-10}"
+  case "$limit" in ''|*[!0-9]*) usage "--impact-limit must be a non-negative integer, got '$limit'" ;; esac
+  verify_root="$(cd "$run_dir/.." && pwd)"
+  candidates="$(mktemp "${TMPDIR:-/tmp}/verify-impact.XXXXXX")" || die "mktemp failed"
+  : > "$candidates"
+  for d in "$verify_root"/*/; do
+    [ -d "$d" ] || continue
+    d="${d%/}"
+    rid="$(basename "$d")"
+    [ "$rid" = "$self_id" ] && continue
+    evid="$d/evidence.jsonl"
+    [ -f "$evid" ] || continue
+    jq -sc --argjson want "$surfaces_json" --arg rid "$rid" '
+      def latest_by(f): group_by(f) | map(max_by(._i)) | sort_by(._i);
+      (to_entries | map(.value + {_i: .key})) as $L
+      | ([$L[] | select(.event == "ac")] | latest_by([.ac_id, .scope])) as $latest
+      | $latest[]
+      | select(.verdict == "PASS" and ((.surfaces // []) | length) > 0)
+      | select((.surfaces // []) as $s | ($s | map(. as $one | ($want | index($one)) != null) | any))
+      | {run_id: $rid, ac_id: .ac_id, text: .text, surfaces: (.surfaces // [])}
+    ' "$evid" 2>/dev/null >> "$candidates"
+  done
+  jq -sc --argjson limit "$limit" 'sort_by(.run_id) | reverse | .[0:$limit]' "$candidates" 2>/dev/null
+  rc=$?
+  rm -f "$candidates"
+  if [ "$rc" -ne 0 ]; then printf '[]\n'; fi
+  return 0
+}
+
+# --------------------------------------------------------------------------- #
 # finish <run_dir> [--status completed|aborted]
 # --------------------------------------------------------------------------- #
 # Appends `run_end` (status only — the validator rejects any counts key on it), rebuilds summary.md,
@@ -478,42 +695,67 @@ finish_cmd() {
 }
 
 # --------------------------------------------------------------------------- #
-# walk <run_dir> [--repo <dir>] [--base-url <url>]
+# walk <run_dir> [--repo <dir>] [--base-url <url>] [--scope ticket|impact] [--specs-dir <dir>] [--manifest <path>] [--report-name <name>]
 # --------------------------------------------------------------------------- #
 # The ONLY source of PASS and FAIL. (1) base_url from the flag, else the contract through the reader;
-# (2) `npx --no-install playwright --version` FROM THE REPO — non-zero ⇒ a BLOCKED
+# (2) `npx --no-install playwright --version` FROM THE REPO - non-zero => a BLOCKED
 # [playwright_unavailable] line for every AC still without a verdict, exit 3 (the app was reachable,
-# the harness was not); (3) no `<run_dir>/specs/*.spec.*` at all ⇒ BLOCKED [no_spec] for those ACs,
-# exit 0, no browser launched; (4) generate `<run_dir>/playwright.config.mjs` and run the specs with
-# the JSON reporter — the run's EXIT STATUS IS IGNORED, the reporter file is the oracle (stdout/stderr
-# kept beside it); (5) ingest: every spec whose title starts `[ACn]` becomes one `ac` line — the LAST
-# result of the test, mapped per docs/RESULT_SCHEMAS.md §VERIFY_RESULT "Specs and reporter ingest";
-# every attachment is copied (path) or decoded (base64 body — the template's `page-body`) into
-# `<run_dir>/artifacts/<ac_id>/` and recorded RELATIVE to the run dir; an AC with neither a spec nor
-# an existing `ac` line ⇒ BLOCKED [no_spec]. Every line goes through evidence-append.
+# the harness was not); (3) no `<run_dir>/<specs_dir>/*.spec.*` at all => BLOCKED [no_spec] for those
+# ACs, exit 0, no browser launched; (4) generate `<run_dir>/playwright.config.mjs` and run the specs
+# with the JSON reporter - the run's EXIT STATUS IS IGNORED, the reporter file is the oracle
+# (stdout/stderr kept beside it); (5) ingest: every spec whose title starts `[<id>]` becomes one `ac`
+# line - the LAST result of the test, mapped per docs/RESULT_SCHEMAS.md SECTION VERIFY_RESULT "Specs
+# and reporter ingest"; every attachment is copied (path) or decoded (base64 body - the template's
+# `page-body`) into `<run_dir>/artifacts/<id>/` and recorded RELATIVE to the run dir; an id with
+# neither a spec nor an existing `ac` line => BLOCKED [no_spec]. Every line goes through
+# evidence-append.
+#
+# `--scope impact` + `--manifest <path>` (item 06, the impact pass): the manifest is a JSON array of
+# `{id, text, source, surfaces}` objects (prior-AC regression / smoke-check specs authored by the
+# qa-executor's VERIFY MODE step) - `text`/`source`/`surfaces` come from the manifest instead of
+# acs.json, ids that never get a real spec are BLOCKED [no_spec] exactly as an unauthored ticket AC
+# is, and the AC5 session-expiry override (a ticket-only, auth-flow concept) never runs on this path.
+# Every other default (`--scope ticket`, `--specs-dir specs`, no `--manifest`, `report.json`) is
+# byte-for-byte the pre-item-06 behavior.
 walk_cmd() {
-  local run_dir="" repo_arg="" base_url="" repo run_id rc contract nspec cfg pw_out pw_err
-  local u="walk <run_dir> [--repo <dir>] [--base-url <url>]"
+  local run_dir="" repo_arg="" base_url="" scope="ticket" specs_dir="specs" manifest="" report_name=""
+  local repo run_id rc contract nspec cfg pw_out pw_err
+  local u="walk <run_dir> [--repo <dir>] [--base-url <url>] [--scope ticket|impact] [--specs-dir <dir>] [--manifest <path>] [--report-name <name>]"
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --repo)     [ "$#" -ge 2 ] || usage "--repo needs a value";     repo_arg="$2"; shift 2 ;;
-      --base-url) [ "$#" -ge 2 ] || usage "--base-url needs a value"; base_url="$2"; shift 2 ;;
-      -*)         usage "$u (unknown flag $1)" ;;
-      *)          if [ -z "$run_dir" ]; then run_dir="$1"; shift; else usage "walk takes ONE run dir"; fi ;;
+      --repo)        [ "$#" -ge 2 ] || usage "--repo needs a value";        repo_arg="$2";    shift 2 ;;
+      --base-url)    [ "$#" -ge 2 ] || usage "--base-url needs a value";    base_url="$2";    shift 2 ;;
+      --scope)       [ "$#" -ge 2 ] || usage "--scope needs a value";       scope="$2";       shift 2 ;;
+      --specs-dir)   [ "$#" -ge 2 ] || usage "--specs-dir needs a value";   specs_dir="$2";   shift 2 ;;
+      --manifest)    [ "$#" -ge 2 ] || usage "--manifest needs a value";    manifest="$2";    shift 2 ;;
+      --report-name) [ "$#" -ge 2 ] || usage "--report-name needs a value"; report_name="$2"; shift 2 ;;
+      -*)            usage "$u (unknown flag $1)" ;;
+      *)             if [ -z "$run_dir" ]; then run_dir="$1"; shift; else usage "walk takes ONE run dir"; fi ;;
     esac
   done
   [ -n "$run_dir" ] || usage "$u"
+  case "$scope" in
+    ticket|impact) ;;
+    *) usage "$u (--scope must be ticket or impact, got '$scope')" ;;
+  esac
+  if [ -z "$report_name" ]; then
+    if [ "$scope" = "impact" ]; then report_name="impact-report.json"; else report_name="report.json"; fi
+  fi
   command -v jq >/dev/null 2>&1 || die "jq is required [jq_unavailable]"
   [ -f "$HELPERS" ] || die "sibling verify-helpers.sh not found at $HELPERS"
   [ -d "$run_dir" ] || { diag "run dir not found at $run_dir [run_dir_missing]"; exit 2; }
-  [ -f "$run_dir/acs.json" ] || { diag "no acs.json in $run_dir — run preflight first [acs_missing]"; exit 2; }
+  if [ "$scope" = "ticket" ]; then
+    [ -f "$run_dir/acs.json" ] || { diag "no acs.json in $run_dir - run preflight first [acs_missing]"; exit 2; }
+  else
+    [ -n "$manifest" ] && [ -f "$manifest" ] || { diag "impact-scope walk needs --manifest <path> naming the specs to run [manifest_missing]"; exit 2; }
+  fi
   run_dir="$(cd "$run_dir" && pwd)"
   repo="$(resolve_repo "$repo_arg")" || exit 2
   run_id="$(run_id_of "$run_dir")"
   rerr="$(mktemp "${TMPDIR:-/tmp}/verify-run.XXXXXX")" || die "mktemp failed"
   trap 'rm -f "$rerr" 2>/dev/null' EXIT
 
-  # (1) base_url — the flag wins; else the contract THROUGH the reader (never re-parsed).
+  # (1) base_url - the flag wins; else the contract THROUGH the reader (never re-parsed).
   if [ -z "$base_url" ]; then
     [ -f "$READER" ] || die "sibling read-verify.sh not found at $READER"
     contract="$(bash "$READER" --repo "$repo" 2>"$rerr")"
@@ -530,27 +772,27 @@ walk_cmd() {
   rc=$?
   if [ "$rc" -ne 0 ]; then
     diag "npx playwright is not resolvable from $repo (rc=$rc): $(head -1 "$rerr") [playwright_unavailable]"
-    walk_block_remaining "$run_dir" "$run_id" "playwright_unavailable" "ENVIRONMENT_ISSUE"
+    walk_block_remaining "$run_dir" "$run_id" "playwright_unavailable" "ENVIRONMENT_ISSUE" "$scope" "$manifest"
     exit 3
   fi
 
-  # (3) no specs at all ⇒ nothing to observe; say so per AC and stop WITHOUT launching a browser.
+  # (3) no specs at all => nothing to observe; say so per id and stop WITHOUT launching a browser.
   nspec=0
-  [ -d "$run_dir/specs" ] && nspec="$(find "$run_dir/specs" -type f \( -name '*.spec.ts' -o -name '*.spec.js' -o -name '*.spec.mjs' \) 2>/dev/null | grep -c .)"
+  [ -d "$run_dir/$specs_dir" ] && nspec="$(find "$run_dir/$specs_dir" -type f \( -name '*.spec.ts' -o -name '*.spec.js' -o -name '*.spec.mjs' \) 2>/dev/null | grep -c .)"
   if [ "$nspec" -eq 0 ]; then
-    diag "no *.spec.* under $run_dir/specs — every remaining AC is BLOCKED [no_spec]"
-    walk_block_remaining "$run_dir" "$run_id" "no_spec" "ENVIRONMENT_ISSUE"
+    diag "no *.spec.* under $run_dir/$specs_dir - every remaining id is BLOCKED [no_spec]"
+    walk_block_remaining "$run_dir" "$run_id" "no_spec" "ENVIRONMENT_ISSUE" "$scope" "$manifest"
     exit 0
   fi
 
   # (4) the per-run config (paths JSON-quoted, never interpolated raw) and the run.
   cfg="$run_dir/playwright.config.mjs"
   {
-    echo "// generated by verify-run.sh walk — one config per run; the reporter file is the oracle."
+    echo "// generated by verify-run.sh walk - one config per run; the reporter file is the oracle."
     echo "export default {"
-    echo "  testDir: $(jq -rn --arg v "$run_dir/specs" '$v | @json'),"
+    echo "  testDir: $(jq -rn --arg v "$run_dir/$specs_dir" '$v | @json'),"
     echo "  outputDir: $(jq -rn --arg v "$run_dir/test-results" '$v | @json'),"
-    echo "  reporter: [['json', { outputFile: $(jq -rn --arg v "$run_dir/report.json" '$v | @json') }]],"
+    echo "  reporter: [['json', { outputFile: $(jq -rn --arg v "$run_dir/$report_name" '$v | @json') }]],"
     echo "  workers: 1,"
     echo "  retries: 0,"
     echo "  timeout: 30000,"
@@ -558,84 +800,107 @@ walk_cmd() {
     echo "};"
   } > "$cfg" || die "cannot write $cfg"
   pw_out="$run_dir/playwright.stdout"; pw_err="$run_dir/playwright.stderr"
-  rm -f "$run_dir/report.json"
+  rm -f "$run_dir/$report_name"
   ( cd "$repo" && npx --no-install playwright test --config "$cfg" ) >"$pw_out" 2>"$pw_err"
   rc=$?
-  diag "playwright test exited $rc (ignored — the reporter decides); output beside report.json"
-  if [ ! -s "$run_dir/report.json" ]; then
-    diag "playwright wrote no report at $run_dir/report.json: $(head -1 "$pw_err") [reporter_missing]"
-    walk_block_remaining "$run_dir" "$run_id" "reporter_missing: $(head -1 "$pw_err" | cut -c1-200)" "ENVIRONMENT_ISSUE"
+  diag "playwright test exited $rc (ignored - the reporter decides); output beside $report_name"
+  if [ ! -s "$run_dir/$report_name" ]; then
+    diag "playwright wrote no report at $run_dir/$report_name: $(head -1 "$pw_err") [reporter_missing]"
+    walk_block_remaining "$run_dir" "$run_id" "reporter_missing: $(head -1 "$pw_err" | cut -c1-200)" "ENVIRONMENT_ISSUE" "$scope" "$manifest"
     exit 3
   fi
 
   # (5) ingest.
   walk_session_expired=0
-  walk_ingest "$run_dir" "$run_id" || exit 1
-  walk_block_remaining "$run_dir" "$run_id" "no_spec" "ENVIRONMENT_ISSUE"
-  echo "report=$run_dir/report.json"
+  walk_ingest "$run_dir" "$run_id" "$run_dir/$report_name" "$scope" "$manifest" || exit 1
+  walk_block_remaining "$run_dir" "$run_id" "no_spec" "ENVIRONMENT_ISSUE" "$scope" "$manifest"
+  echo "report=$run_dir/$report_name"
   # AC5: a genuine mid-run session expiry (a repeated response-40[13] signal) was detected and forced
-  # onto the affected ACs by walk_ingest — a distinct exit code from the normal 0, so the caller (the
-  # qa-executor's VERIFY MODE) can branch to a pause instead of `finish`.
-  [ "$walk_session_expired" -eq 1 ] && exit 5
+  # onto the affected ACs by walk_ingest - a distinct exit code from the normal 0, so the caller (the
+  # qa-executor's VERIFY MODE) can branch to a pause instead of `finish`. Ticket-scope only.
+  [ "$scope" = "ticket" ] && [ "$walk_session_expired" -eq 1 ] && exit 5
   return 0
 }
 
-# walk_append_ac <run_dir> <run_id> <ac_id> <verdict> <class|""> <reason> <steps_json> <artifacts_json>
-# — text from acs.json by ac_id (an id the ticket does not have is named and skipped); one
-# evidence-append; the verdict echoed on stdout as `<ac_id> <verdict>`.
+# walk_append_ac <run_dir> <run_id> <ac_id> <verdict> <class|""> <reason> <steps_json> <artifacts_json> [<scope=ticket>] [<manifest>]
+# - text (and, for an impact-scope manifest entry, `source`/`surfaces`) from acs.json by ac_id, or
+# from the manifest by id when one is given (an id neither names is skipped); one evidence-append;
+# the verdict echoed on stdout as `<ac_id> <verdict>`.
 walk_append_ac() {
-  local run_dir="$1" run_id="$2" ac_id="$3" verdict="$4" class="$5" reason="$6" steps="$7" arts="$8" text ts
-  text="$(jq -r --arg id "$ac_id" '.acs[] | select(.ac_id == $id) | .text' "$run_dir/acs.json" 2>/dev/null | head -1)"
+  local run_dir="$1" run_id="$2" ac_id="$3" verdict="$4" class="$5" reason="$6" steps="$7" arts="$8"
+  local scope="${9:-ticket}" manifest="${10:-}" text source surfaces_json extra_json ts
+  if [ -n "$manifest" ] && [ -f "$manifest" ]; then
+    text="$(jq -r --arg id "$ac_id" '.[] | select(.id == $id) | .text' "$manifest" 2>/dev/null | head -1)"
+    source="$(jq -r --arg id "$ac_id" '.[] | select(.id == $id) | .source // empty' "$manifest" 2>/dev/null | head -1)"
+    surfaces_json="$(jq -c --arg id "$ac_id" '[.[] | select(.id == $id)][0].surfaces // empty' "$manifest" 2>/dev/null)"
+    case "$surfaces_json" in ""|null) surfaces_json="" ;; esac
+  else
+    text="$(jq -r --arg id "$ac_id" '.acs[] | select(.ac_id == $id) | .text' "$run_dir/acs.json" 2>/dev/null | head -1)"
+    source=""; surfaces_json=""
+  fi
   if [ -z "$text" ]; then
-    diag "spec [$ac_id] names no acceptance criterion of this run (see $run_dir/acs.json) — skipped [ac_id_unknown]"
+    diag "spec [$ac_id] names no acceptance criterion of this run (scope=$scope; see $run_dir/acs.json or the manifest) - skipped [ac_id_unknown]"
     return 0
   fi
   ts="$(now_ts)"
+  extra_json="{}"
+  [ -n "$source" ] && extra_json="$(printf '%s' "$extra_json" | jq -c --arg s "$source" '. + {source: $s}')"
+  [ -n "$surfaces_json" ] && extra_json="$(printf '%s' "$extra_json" | jq -c --argjson sf "$surfaces_json" '. + {surfaces: $sf}')"
   jq -cn --arg ts "$ts" --arg run_id "$run_id" --arg ac_id "$ac_id" --arg text "$text" \
-     --arg verdict "$verdict" --arg reason "$reason" --arg class "$class" \
-     --argjson steps "$steps" --argjson arts "$arts" '
+     --arg verdict "$verdict" --arg reason "$reason" --arg class "$class" --arg scope "$scope" \
+     --argjson steps "$steps" --argjson arts "$arts" --argjson extra "$extra_json" '
     {schema_version: 1, ts: $ts, run_id: $run_id, event: "ac", ac_id: $ac_id, text: $text,
-     scope: "ticket", verdict: $verdict,
+     scope: $scope, verdict: $verdict,
      classification: (if $class == "" then null else $class end),
      steps: $steps, artifacts: $arts}
-    + (if $reason == "" then {} else {reason: $reason} end)' \
+    + (if $reason == "" then {} else {reason: $reason} end)
+    + $extra' \
     | bash "$HELPERS" evidence-append "$run_dir" - >/dev/null \
     || { diag "ac line for $ac_id was refused (see $run_dir/rejected.jsonl) [append_refused]"; return 1; }
   echo "$ac_id $verdict"
 }
 
-# walk_block_remaining <run_dir> <run_id> <reason> <class> — a BLOCKED line for every ac_id in
-# acs.json (file order) that has NO `ac` line yet; ACs already decided (a NOT_VERIFIABLE recorded by
-# `verdict`, a PASS/FAIL just ingested) are left alone.
+# walk_block_remaining <run_dir> <run_id> <reason> <class> [<scope=ticket>] [<manifest>] - a BLOCKED
+# line for every id (acs.json's ac_id list, or the manifest's id list when one is given) that has NO
+# `ac` line YET IN THIS SCOPE (a ticket id and an impact id of the same string are tracked
+# independently, per item 06's scope split); ids already decided are left alone.
 walk_block_remaining() {
-  local run_dir="$1" run_id="$2" reason="$3" class="$4" done_ids id
+  local run_dir="$1" run_id="$2" reason="$3" class="$4" scope="${5:-ticket}" manifest="${6:-}" done_ids ids id
   done_ids="[]"
-  [ -f "$run_dir/evidence.jsonl" ] && done_ids="$(jq -cs '[.[] | select(.event == "ac") | .ac_id]' "$run_dir/evidence.jsonl" 2>/dev/null)"
+  [ -f "$run_dir/evidence.jsonl" ] && done_ids="$(jq -cs --arg scope "$scope" '[.[] | select(.event == "ac" and .scope == $scope) | .ac_id]' "$run_dir/evidence.jsonl" 2>/dev/null)"
   [ -n "$done_ids" ] || done_ids="[]"
-  for id in $(jq -r --argjson done "$done_ids" '.acs[].ac_id | select(. as $i | ($done | index($i)) == null)' "$run_dir/acs.json"); do
-    walk_append_ac "$run_dir" "$run_id" "$id" "BLOCKED" "$class" "$reason" "[]" "[]" || return 1
+  if [ -n "$manifest" ] && [ -f "$manifest" ]; then
+    ids="$(jq -r --argjson done "$done_ids" '.[].id | select(. as $i | ($done | index($i)) == null)' "$manifest" 2>/dev/null)"
+  else
+    ids="$(jq -r --argjson done "$done_ids" '.acs[].ac_id | select(. as $i | ($done | index($i)) == null)' "$run_dir/acs.json" 2>/dev/null)"
+  fi
+  for id in $ids; do
+    walk_append_ac "$run_dir" "$run_id" "$id" "BLOCKED" "$class" "$reason" "[]" "[]" "$scope" "$manifest" || return 1
   done
   return 0
 }
 
-# walk_ingest <run_dir> <run_id> — report.json → one `ac` line per `[ACn]` spec. Reporter → verdict
-# (the LAST result of the LAST test of the spec):
-#   passed                                        ⇒ PASS
-#   skipped                                       ⇒ BLOCKED ENVIRONMENT_ISSUE  spec_skipped
-#   no result at all                              ⇒ BLOCKED ENVIRONMENT_ISSUE  spec_not_run
+# walk_ingest <run_dir> <run_id> [<report_path>] [<scope=ticket>] [<manifest>] - report_path (default
+# <run_dir>/report.json) -> one `ac` line per `[<id>]` spec. Reporter -> verdict (the LAST result of
+# the LAST test of the spec):
+#   passed                                        => PASS
+#   skipped                                       => BLOCKED ENVIRONMENT_ISSUE  spec_skipped
+#   no result at all                              => BLOCKED ENVIRONMENT_ISSUE  spec_not_run
 #   failed/timedOut/interrupted, message names a navigation/connection failure
-#     (net::ERR_, ECONNREFUSED, a page.goto timeout)⇒ BLOCKED ENVIRONMENT_ISSUE  <first error line>
-#   any other failed/timedOut/interrupted         ⇒ FAIL    REAL_BUG           <first error line>
+#     (net::ERR_, ECONNREFUSED, a page.goto timeout)=> BLOCKED ENVIRONMENT_ISSUE  <first error line>
+#   any other failed/timedOut/interrupted         => FAIL    REAL_BUG           <first error line>
 # `reason` is the FIRST line of errors[0].message with ANSI stripped (falls back to `spec_<status>`).
-# walk_apply_expiry_override <run_dir> <run_id> <min_ordinal> — AC5. `min_ordinal` is the SMALLEST
+# The AC5 session-expiry override (below) is a ticket-only, auth-flow concept and never runs when
+# scope is `impact`.
+# walk_apply_expiry_override <run_dir> <run_id> <min_ordinal> - AC5. `min_ordinal` is the SMALLEST
 # AC ORDINAL (the integer parsed from `[ACn]`, never file/report order) among the specs whose ingested
 # attachments carried a `response-40[13]` signal. Forces `AC<min_ordinal>` to
-# BLOCKED/ENVIRONMENT_ISSUE/session_expired — discarding whatever the normal ingest just recorded for
-# it (the append-only store makes THIS new line the latest-per-ac_id winner) — and forces every
+# BLOCKED/ENVIRONMENT_ISSUE/session_expired - discarding whatever the normal ingest just recorded for
+# it (the append-only store makes THIS new line the latest-per-ac_id winner) - and forces every
 # `AC<k>` with `k > min_ordinal` (from acs.json's OWN ac_id list, so an AC with no spec at all is
 # included) to BLOCKED/ENVIRONMENT_ISSUE/run_paused_session_expired, regardless of any Playwright
 # result of its own. ACs with a smaller ordinal are untouched. Appends exactly ONE `{event:auth,
-# state:expired}` line and calls `pause_cmd … --reason session_expired` exactly ONCE, never per AC.
+# state:expired}` line and calls `pause_cmd ... --reason session_expired` exactly ONCE, never per AC.
 walk_apply_expiry_override() {
   local run_dir="$1" run_id="$2" min_n="$3" id num ts
   for id in $(jq -r '.acs[].ac_id' "$run_dir/acs.json" 2>/dev/null); do
@@ -658,14 +923,15 @@ walk_apply_expiry_override() {
 }
 
 walk_ingest() {
-  local run_dir="$1" run_id="$2" specs spec ac_id rstatus message steps verdict class reason arts n
+  local run_dir="$1" run_id="$2" report_path="${3:-$run_dir/report.json}" scope="${4:-ticket}" manifest="${5:-}"
+  local specs spec ac_id rstatus message steps verdict class reason arts n
   local has_expiry min_n num
   specs="$(mktemp "${TMPDIR:-/tmp}/verify-walk.XXXXXX")" || die "mktemp failed"
   jq -c '
     [.. | objects | select(has("specs") and (.specs | type == "array")) | .specs[]]
-    | map(select((.title // "") | test("^\\[AC[0-9]+\\]")))
+    | map(select((.title // "") | test("^\\[[A-Za-z0-9_-]+\\]")))
     | map(. as $s | ($s.tests // [] | last) as $t | (($t.results // []) | last) as $r
-        | {ac_id: ($s.title | capture("^\\[(?<id>AC[0-9]+)\\]").id),
+        | {ac_id: ($s.title | capture("^\\[(?<id>[A-Za-z0-9_-]+)\\]").id),
            rstatus: ($r.status // "missing"),
            message: ((($r.errors // [])[0].message // $r.error.message // "")
                      | gsub("\u001b\\[[0-9;]*[A-Za-z]"; "") | (split("\n")[0] // "")
@@ -674,13 +940,13 @@ walk_ingest() {
            attachments: [($r.attachments // [])[]
                          | {name: (.name // "attachment"), contentType: (.contentType // ""),
                             path: (.path // ""), body: (.body // "")}]})
-    | .[]' "$run_dir/report.json" > "$specs" 2>"$specs.err"
+    | .[]' "$report_path" > "$specs" 2>"$specs.err"
   if [ $? -ne 0 ]; then
-    diag "report.json is not a Playwright JSON report: $(head -1 "$specs.err") [reporter_unreadable]"
+    diag "$report_path is not a Playwright JSON report: $(head -1 "$specs.err") [reporter_unreadable]"
     rm -f "$specs" "$specs.err"; return 1
   fi
   n="$(grep -c . "$specs")"
-  diag "ingesting $n [ACn] spec result(s) from report.json"
+  diag "ingesting $n [id] spec result(s) from $report_path (scope=$scope)"
   while IFS= read -r spec; do
     [ -n "$spec" ] || continue
     ac_id="$(printf '%s' "$spec" | jq -r '.ac_id')"
@@ -701,17 +967,19 @@ walk_ingest() {
         reason="$message" ;;
     esac
     arts="$(walk_copy_attachments "$run_dir" "$ac_id" "$spec")"
-    walk_append_ac "$run_dir" "$run_id" "$ac_id" "$verdict" "$class" "$reason" "$steps" "$arts" || { rm -f "$specs" "$specs.err"; return 1; }
-    # AC5: a `response-40[13]` attachment on THIS spec's result signals a session that died mid-test
-    # (distinct from the anonymous-redirect 302 the app also emits). Collect the AC ORDINAL — never
-    # this loop's own file/report order — for the override pass below.
-    has_expiry="$(printf '%s' "$spec" | jq -r '[(.attachments // [])[].name // ""] | any(test("^response-40[13]"))' 2>/dev/null)"
-    if [ "$has_expiry" = "true" ]; then
-      num="${ac_id#AC}"
-      case "$num" in ''|*[!0-9]*) ;; *) printf '%s\n' "$num" >> "$specs.expiry" ;; esac
+    walk_append_ac "$run_dir" "$run_id" "$ac_id" "$verdict" "$class" "$reason" "$steps" "$arts" "$scope" "$manifest" || { rm -f "$specs" "$specs.err"; return 1; }
+    if [ "$scope" = "ticket" ]; then
+      # AC5: a `response-40[13]` attachment on THIS spec's result signals a session that died
+      # mid-test (distinct from the anonymous-redirect 302 the app also emits). Collect the AC
+      # ORDINAL - never this loop's own file/report order - for the override pass below.
+      has_expiry="$(printf '%s' "$spec" | jq -r '[(.attachments // [])[].name // ""] | any(test("^response-40[13]"))' 2>/dev/null)"
+      if [ "$has_expiry" = "true" ]; then
+        num="${ac_id#AC}"
+        case "$num" in ''|*[!0-9]*) ;; *) printf '%s\n' "$num" >> "$specs.expiry" ;; esac
+      fi
     fi
   done < "$specs"
-  if [ -s "$specs.expiry" ]; then
+  if [ "$scope" = "ticket" ] && [ -s "$specs.expiry" ]; then
     min_n="$(sort -n "$specs.expiry" | head -1)"
     walk_apply_expiry_override "$run_dir" "$run_id" "$min_n" || { rm -f "$specs" "$specs.err" "$specs.expiry"; return 1; }
     walk_session_expired=1
@@ -767,6 +1035,21 @@ walk_copy_attachments() {
   rm -f "$list" "$list.in"
 }
 
+# impact_cmd <diff|brief-surfaces|record-surfaces|prior-acs> ... - dispatches `impact <sub>` to the
+# matching impact_*_cmd function (named for the "impact_cmd" provides symbol; mirrors the walk_cmd /
+# verdict_cmd / finish_cmd naming convention already used by every other top-level subcommand here).
+impact_cmd() {
+  local isub="${1:-}"
+  shift || true
+  case "$isub" in
+    diff)            impact_diff_cmd "$@" ;;
+    brief-surfaces)  impact_brief_surfaces_cmd "$@" ;;
+    record-surfaces) impact_record_surfaces_cmd "$@" ;;
+    prior-acs)       impact_prior_acs_cmd "$@" ;;
+    *) die "unknown impact subcommand: $isub (try impact diff|brief-surfaces|record-surfaces|prior-acs)" ;;
+  esac
+}
+
 main() {
   local cmd="${1:-}"; shift || true
   case "$cmd" in
@@ -778,6 +1061,7 @@ main() {
     verdict)    verdict_cmd "$@" ;;
     finish)     finish_cmd "$@" ;;
     pause)      pause_cmd "$@" ;;
+    impact)     impact_cmd "$@" ;;
     ""|-h|--help)
       grep -E '^#   [a-z]' "$0" | sed 's/^#   /  /'
       ;;

@@ -75,7 +75,7 @@ import sys
 
 SCHEMA_VERSION = 1
 
-EVENTS = ("run_start", "env", "auth", "ac", "issue", "pause", "resume", "run_end")
+EVENTS = ("run_start", "env", "auth", "ac", "issue", "pause", "resume", "run_end", "impact_surfaces")
 TICKET_KINDS = ("requirement", "brief")
 ENV_STEPS = ("non_prod_assert", "start", "health", "seed", "reset", "stop")
 ENV_OUTCOMES = ("pass", "fail", "skipped")
@@ -243,6 +243,8 @@ def check_ac(rec):
     check_str_array(rec, "steps")
     require(rec, "artifacts")
     check_str_array(rec, "artifacts", relative_paths=True)
+    if "surfaces" in rec and rec["surfaces"] is not None:
+        check_str_array(rec, "surfaces")
     optional_str(rec, "reason")
     if verdict != "PASS" and not is_nonempty_str(rec.get("reason")):
         fail("non_pass_without_reason")
@@ -276,6 +278,30 @@ def check_run_end(rec):
     require_enum(rec, "status", RUN_END_STATUSES)
 
 
+def check_impact_surfaces(rec):
+    """One line per run, item 06: the diff->surfaces classification the impact pass records.
+    `surfaces` maps a surface name to the files (from the diff) classified into it - an empty
+    mapping is legal (nothing classified yet); `unmapped` names diff files no surface claimed;
+    `brief_surfaces` names subsystems sourced from a done brief's Blast-Radius section (may be
+    empty - the common case, per the owning brief's Risk Assessment); `limit` is the
+    --impact-limit bound the prior-AC regression pass used."""
+    require(rec, "files")
+    check_str_array(rec, "files")
+    surfaces = require(rec, "surfaces")
+    if not isinstance(surfaces, dict):
+        fail("bad_type:surfaces")
+    for k, v in surfaces.items():
+        if not is_str(k) or not isinstance(v, list) or not all(is_str(x) for x in v):
+            fail("bad_type:surfaces")
+    require(rec, "unmapped")
+    check_str_array(rec, "unmapped")
+    require(rec, "brief_surfaces")
+    check_str_array(rec, "brief_surfaces")
+    limit = require(rec, "limit")
+    if not is_int(limit) or limit < 0:
+        fail("bad_type:limit")
+
+
 EVENT_CHECKS = {
     "run_start": check_run_start,
     "env": check_env,
@@ -285,6 +311,7 @@ EVENT_CHECKS = {
     "pause": check_pause_resume,
     "resume": check_pause_resume,
     "run_end": check_run_end,
+    "impact_surfaces": check_impact_surfaces,
 }
 
 

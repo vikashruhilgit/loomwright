@@ -1,8 +1,8 @@
 ---
 name: verify-walkthrough
 description: Protocol authority for `/verify <ticket>` and the QA Executor's `--verify <run_dir>` mode — AC extraction, AC → Playwright spec derivation, the four observation-derived verdicts (PASS / FAIL / BLOCKED / NOT_VERIFIABLE), the V7 mutation carve-out, evidence-per-AC, and budget. Read on demand at mode entry, deliberately not preloaded.
-version: "1.1.0"
-lastUpdated: "2026-09-15"
+version: "1.2.0"
+lastUpdated: "2026-09-16"
 ---
 
 # Verify Walkthrough Protocol (`/verify` + qa-executor `--verify` mode)
@@ -208,6 +208,63 @@ resumable stop, never a silent BLOCKED-forever or an anonymous continue.
   only surface that ever prints the sign-in instruction (the executor is a subagent with no
   `AskUserQuestion`).
 
+## 9. Impact pass
+
+**What it is.** In addition to the ticket's own ACs (`scope: "ticket"`), `/verify` runs a bounded,
+advisory "impact pass" (`scope: "impact"`) that surfaces what ELSE the diff plausibly affects — an
+impact FAIL/PASS/BLOCKED/NOT_VERIFIABLE is recorded exactly like a ticket one, EXCEPT it is counted
+in a completely SEPARATE table and counts line (`summary-build` filters the ticket
+PASS/FAIL/BLOCKED/NOT_VERIFIABLE row to `scope: "ticket"` only) — an impact-scope verdict NEVER
+inflates or deflates the ticket's own score. This is the load-bearing invariant of this section.
+
+**Three sources feed the surface classification itself, each best-effort:**
+
+1. **The diff itself (mechanical).** `verify-run.sh impact diff <run_dir> --repo <dir>` prints the
+   changed-file list (`git diff --name-only base_sha...head_sha`, from the `run_start` line already
+   in `evidence.jsonl`) — pure fact, no judgment.
+2. **Classification (agent judgment).** Each changed file is classified into a surface name by
+   reusing `agents/qa-executor.md` Phase 4 "APP TOPOLOGY DETECTION" as instructed guidance — there is
+   no shared script for this, it is agent-prose work. A file that cannot be classified goes to
+   `unmapped`; it is NEVER guessed at. `verify-run.sh impact record-surfaces <run_dir> <json> --repo
+   <dir> --impact-limit N` then appends ONE `impact_surfaces` evidence line recording `files`,
+   `surfaces` (name → files), `unmapped`, `brief_surfaces`, and `limit`.
+3. **The brief's File Impact Map (best-effort).** `verify-run.sh impact brief-surfaces <run_dir>
+   --repo <dir>` finds a `.supervisor/jobs/done/*.md` brief whose header names this ticket as its
+   Source requirement and extracts its Blast-Radius subsystem names — commonly empty (real briefs
+   rarely populate this section today); an absent/omitted section contributes nothing and never
+   fails the run.
+
+**Two more passes build on that classification once it's recorded, also best-effort:**
+
+4. **Prior-run regression (bounded).** `verify-run.sh impact prior-acs <run_dir> --repo <dir>
+   --impact-limit N` (default 10) finds up to N PASS `ac` lines from OTHER runs under
+   `.supervisor/verify/` whose (optional) `surfaces` field intersects this run's, most-recent-first,
+   and re-runs them — recorded `scope: "impact", source: "prior_ac:<run_id>/<ac_id>"`. `.supervisor/
+   verify/` is fully gitignored, so a fresh clone/worktree/CI has zero prior runs: this source
+   silently contributes zero, never a failure.
+5. **Shallow smoke checks.** Every surface from step 2 with ZERO matched prior ACs gets exactly one
+   smoke spec (navigate, assert 2xx + no console/network 5xx, one primary form submission with seed
+   values when the surface is a form) — recorded `scope: "impact", source: "smoke"`, same four-verdict
+   taxonomy as a ticket AC.
+
+**Execution.** Author `<run_dir>/impact-manifest.json` (a JSON array of `{id, text, source,
+surfaces}`) and one `[<id>]`-titled spec per entry at `<run_dir>/impact-specs/<id>.spec.ts` (same
+conventions as §2: role-based locators, follow-up read after a mutation, the afterEach page-body +
+non-2xx response attaches), then `verify-run.sh walk <run_dir> --repo <dir> --scope impact
+--specs-dir impact-specs --manifest <run_dir>/impact-manifest.json [--base-url <url>]` — the SAME
+ingest machinery as a ticket walk, tagging `scope: "impact"` instead of `scope: "ticket"`. The AC5
+session-expiry override (§8) is a ticket-only, auth-flow concept and never fires on an impact-scope
+walk.
+
+**`--no-impact` skips the whole pass** — no `impact_surfaces` event, no impact-scope `ac` lines. The
+ticket's own PASS/FAIL/BLOCKED/NOT_VERIFIABLE counts in `summary.md` are byte-identical with or
+without it, by construction: `summary-build` counts `scope: "ticket"` lines only, regardless of
+whether the impact pass ran.
+
+**The bound is stated, not implied.** `summary.md`'s `## Impact pass` section always states
+`"impact pass: N surfaces from diff, M from brief, K prior ACs (limit L)"` — even when N/M/K are all
+zero — so a reader never has to infer coverage from silence.
+
 ## Checklist before `finish`
 
 - [ ] every `ac_id` in `acs.json` has EITHER a `[ACn]` spec under `<run_dir>/specs/` OR a `verdict … NOT_VERIFIABLE|BLOCKED` line — none is left to `no_spec` by accident
@@ -217,3 +274,4 @@ resumable stop, never a silent BLOCKED-forever or an anonymous continue.
 - [ ] `seed` ran before and `reset` after the walk when the contract declares them
 - [ ] `VERIFY_RESULT.counts` is the printed counts row, copied — never tallied
 - [ ] a paused run (`needs_auth` or `session_expired`) never calls `finish`; `counts` comes from `summary.md`'s current row instead
+- [ ] the impact pass (§9), if it ran, recorded every verdict `scope: "impact"` — never `scope: "ticket"` — so the ticket's own PASS/FAIL/BLOCKED/NOT_VERIFIABLE counts are unchanged by it

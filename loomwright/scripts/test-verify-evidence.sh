@@ -903,6 +903,94 @@ else
 fi
 
 # ============================================================================
+# (I06) item 06 "impact pass": the new `impact_surfaces` event + the new optional `ac.surfaces` field.
+# ============================================================================
+echo "== (I06) impact_surfaces event: valid line accepted, per-key rejects, ac.surfaces optional =="
+L_IMPACT="{$COMMON,\"event\":\"impact_surfaces\",\"files\":[\"shared/component.js\",\"README.md\"],\"surfaces\":{\"home\":[\"shared/component.js\"],\"echo\":[\"shared/component.js\"]},\"unmapped\":[\"README.md\"],\"brief_surfaces\":[],\"limit\":10}"
+expect_accept "(I06) impact_surfaces: a well-formed line" "$L_IMPACT"
+expect_accept "(I06) impact_surfaces: empty files/surfaces/unmapped/brief_surfaces, limit 0" "$(mut "$L_IMPACT" '.files=[] | .surfaces={} | .unmapped=[] | .brief_surfaces=[] | .limit=0')"
+expect_reject "(I06) impact_surfaces: files absent" missing_key:files "$(mut "$L_IMPACT" 'del(.files)')"
+expect_reject "(I06) impact_surfaces: files not an array" bad_type:files "$(mut "$L_IMPACT" '.files="x"')"
+expect_reject "(I06) impact_surfaces: surfaces absent" missing_key:surfaces "$(mut "$L_IMPACT" 'del(.surfaces)')"
+expect_reject "(I06) impact_surfaces: surfaces not an object" bad_type:surfaces "$(mut "$L_IMPACT" '.surfaces=[]')"
+expect_reject "(I06) impact_surfaces: surfaces value not an array" bad_type:surfaces "$(mut "$L_IMPACT" '.surfaces={"home":"x"}')"
+expect_reject "(I06) impact_surfaces: surfaces value holds a non-string" bad_type:surfaces "$(mut "$L_IMPACT" '.surfaces={"home":[1]}')"
+expect_reject "(I06) impact_surfaces: unmapped absent" missing_key:unmapped "$(mut "$L_IMPACT" 'del(.unmapped)')"
+expect_reject "(I06) impact_surfaces: unmapped not an array" bad_type:unmapped "$(mut "$L_IMPACT" '.unmapped=1')"
+expect_reject "(I06) impact_surfaces: brief_surfaces absent" missing_key:brief_surfaces "$(mut "$L_IMPACT" 'del(.brief_surfaces)')"
+expect_reject "(I06) impact_surfaces: brief_surfaces holds a non-string" bad_type:brief_surfaces "$(mut "$L_IMPACT" '.brief_surfaces=[1]')"
+expect_reject "(I06) impact_surfaces: limit absent" missing_key:limit "$(mut "$L_IMPACT" 'del(.limit)')"
+expect_reject "(I06) impact_surfaces: limit is a string" bad_type:limit "$(mut "$L_IMPACT" '.limit="10"')"
+expect_reject "(I06) impact_surfaces: limit is negative" bad_type:limit "$(mut "$L_IMPACT" '.limit=-1')"
+expect_accept "(I06) forward-compat: an additive key on impact_surfaces is tolerated" "$(mut "$L_IMPACT" '.note="extra"')"
+
+echo "== (I06) ac.surfaces: optional, additive, backward compatible =="
+expect_accept "(I06) ac PASS carrying surfaces" "$(mut "$L_AC_PASS" '.surfaces=["home","echo"]')"
+expect_accept "(I06) ac PASS with surfaces explicitly null (treated as absent)" "$(mut "$L_AC_PASS" '.surfaces=null')"
+expect_accept "(I06) ac FAIL carrying surfaces alongside scope impact" "$(mut "$L_AC_FAIL" '.scope="impact" | .surfaces=["echo"] | .source="prior_ac:verify-x/AC2"')"
+expect_reject "(I06) ac.surfaces not an array" bad_type:surfaces "$(mut "$L_AC_PASS" '.surfaces="home"')"
+expect_reject "(I06) ac.surfaces holds a non-string" bad_type:surfaces "$(mut "$L_AC_PASS" '.surfaces=[1]')"
+expect_accept "(I06) pre-item-06 ac line with no surfaces key at all still validates" "$L_AC_PASS"
+
+echo "== (I06) validator docstring/EVENTS enum name the new event =="
+hits="$(grep -c 'impact_surfaces' "$VALIDATOR")"
+[ "$hits" -ge 2 ] && ok "(I06) validate-verify-evidence.py names impact_surfaces (EVENTS + a check function)" || no "(I06) validator mentions of impact_surfaces: $hits"
+hits="$(grep -c 'check_impact_surfaces' "$VALIDATOR")"
+[ "$hits" -ge 2 ] && ok "(I06) a dedicated check_impact_surfaces function is defined and registered" || no "(I06) check_impact_surfaces mentions: $hits"
+
+echo "== (I06) docs/RESULT_SCHEMAS.md documents the new event and the new ac field =="
+hits="$(grep -c 'impact_surfaces' "$SECTION")"
+[ "$hits" -ge 1 ] && ok "(I06) the VERIFY_EVIDENCE schema section names impact_surfaces" || no "(I06) schema section impact_surfaces mentions: $hits"
+hits="$(grep -c 'surfaces: string\[\]' "$SECTION")"
+[ "$hits" -ge 1 ] && ok "(I06) the schema section documents the optional ac.surfaces field" || no "(I06) schema section ac.surfaces mentions: $hits"
+
+# ----------------------------------------------------------------------------
+echo "== (I06-helper) impact_summary_render + summary_build's scope-filtered ticket counts =="
+hits="$(grep -c '^impact_summary_render() {$' "$HELPER")"
+[ "$hits" -eq 1 ] && ok "(I06-helper) verify-helpers.sh defines impact_summary_render() exactly once" || no "(I06-helper) impact_summary_render() count: $hits"
+
+D20="$(mktmp)"
+run_h evidence-append "$D20" "$RUN_START"
+run_h evidence-append "$D20" "$(AC AC1 PASS)"
+IMPACT_LINE="$(L '"event":"ac","ac_id":"impact-1","text":"impact check","scope":"impact","verdict":"FAIL","classification":"REAL_BUG","reason":"broke","steps":[],"artifacts":[],"source":"smoke"')"
+run_h evidence-append "$D20" "$IMPACT_LINE"; rc=$?
+[ "$rc" -eq 0 ] && ok "(I06-helper) an impact-scope FAIL line appends cleanly" || no "(I06-helper) impact FAIL append: rc=$rc stderr=$(cat "$LAST_ERR")"
+hits="$(counts_row 'PASS: 1 · FAIL: 0 · BLOCKED: 0 · NOT_VERIFIABLE: 0 · total: 1' "$D20")"
+[ "$hits" -eq 1 ] && ok "(I06-helper) the TICKET counts row is unaffected by the impact-scope FAIL: still PASS:1 total:1" || no "(I06-helper) ticket row: $(grep '^PASS: ' "$D20/summary.md")"
+hits="$(grep -c '^## Impact pass$' "$D20/summary.md")"
+[ "$hits" -eq 1 ] && ok "(I06-helper) summary.md carries a separate ## Impact pass section" || no "(I06-helper) ## Impact pass section count: $hits"
+hits="$(grep -c 'impact — PASS: 0 · FAIL: 1 · BLOCKED: 0 · NOT_VERIFIABLE: 0 · total: 1' "$D20/summary.md")"
+[ "$hits" -eq 1 ] && ok "(I06-helper) the impact counts row is separate and correct: impact — PASS:0 FAIL:1 total:1" || no "(I06-helper) impact row: $(grep '^impact —' "$D20/summary.md")"
+
+echo "== (I06-helper) mutation control: reverting the scope filter re-inflates the ticket row (the invariant this fix protects) =="
+MUT_SCOPE_DIR="$ROOT/mut-scope"; mkdir -p "$MUT_SCOPE_DIR"; cp "$VALIDATOR" "$MUT_SCOPE_DIR/validate-verify-evidence.py"
+MUT_SB="$MUT_SCOPE_DIR/verify-helpers.mut-scope.sh"
+sed 's/select(\.event == "ac" and \.scope == "ticket")/select(.event == "ac")/' "$HELPER" > "$MUT_SB"
+if cmp -s "$HELPER" "$MUT_SB"; then
+  unproven "(I06-helper) mutation control: scope filter"
+else
+  bash -n "$MUT_SB" 2>/dev/null; rc=$?
+  if [ "$rc" -ne 0 ]; then
+    no "(I06-helper) mutation control: scope filter — the mutant does not parse (bash -n rc=$rc)"
+  else
+    D21="$(mktmp)"
+    "$BASH_BIN" "$MUT_SB" evidence-append "$D21" "$RUN_START" >/dev/null 2>&1
+    "$BASH_BIN" "$MUT_SB" evidence-append "$D21" "$(AC AC1 PASS)" >/dev/null 2>&1
+    "$BASH_BIN" "$MUT_SB" evidence-append "$D21" "$IMPACT_LINE" >/dev/null 2>&1
+    hits="$(counts_row 'PASS: 1 · FAIL: 1 · BLOCKED: 0 · NOT_VERIFIABLE: 0 · total: 2' "$D21")"
+    [ "$hits" -eq 1 ] \
+      && ok "(I06-helper) mutation control: WITHOUT the scope filter the ticket row wrongly absorbs the impact FAIL (FAIL:1 total:2) — the case detects the defect" \
+      || no "(I06-helper) mutation control: scope filter — mutant row: $(grep '^PASS: ' "$D21/summary.md" 2>/dev/null)"
+  fi
+fi
+
+D22="$(mktmp)"
+run_h evidence-append "$D22" "$RUN_START"
+run_h evidence-append "$D22" "$(AC AC1 PASS)"
+hits="$(grep -c '_impact pass not run for this run' "$D22/summary.md")"
+[ "$hits" -eq 1 ] && ok "(I06-helper) with no impact_surfaces line at all, the Impact pass section says so advisorily (never a failure)" || no "(I06-helper) no-impact-pass placeholder missing: $(sed -n '/## Impact pass/,/## Issues/p' "$D22/summary.md")"
+
+# ============================================================================
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
