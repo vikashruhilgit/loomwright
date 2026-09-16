@@ -19,14 +19,14 @@
 - [fa32a308] A mutation control is evidence only if the mutant is VALID. Two mechanisms have produced silently-invalid mutants here: perl -0pi -e interpolates $VAR inside the pattern even under \Q...\E (the mutation no-ops), and a sed delimiter colliding with the target line (| vs ||) yields an EMPTY mutant. Both pass every fail-open assertion. Gate every mutant on non-empty + differs-from-original + bash -n before trusting the run.  <!-- last_verified=2026-09-01T05:59:31Z confidence=high supersedes=4abc6112 -->
 
 ## verification
-- [be1ecb0a] A `heal_decision: PASS` with no `ground_truth_status` and no `contract_conformance_status: pass` is UNVERIFIED on two axes; do not credit it as reviewer-clean.  <!-- last_verified=2026-06-17T20:13:20Z confidence=medium -->
+- [be1ecb0a] A `heal_decision: PASS` with no `ground_truth_status` and no `contract_conformance_status: pass` is UNVERIFIED on two axes; do not credit it as reviewer-clean.  <!-- last_verified=2026-09-16T04:27:03Z confidence=medium -->
 - [2d56232f] The System Twin read path is provenance-gated and fails DARK: a contract whose content_hash has no chain-valid 'add' entry in .supervisor/twin/.provenance.jsonl is dropped to .supervisor/logs/twin.log while the store on disk still looks populated. Measured 2026-09-01: 21 contracts present, 21 dropped, 0 emitted. Verify read-system-contract.sh prints a non-empty body before crediting any twin signal.  <!-- last_verified=2026-09-01T05:30:08Z confidence=high -->
 
 ## jq-safety
-- [f0d8d600] When `false` is a meaningful, distinct config intent from `absent` (opt-out flags), never read it with `jq '.field // empty'`; use `if has("field") then .field else empty end`.  <!-- last_verified=2026-06-17T20:13:20Z confidence=medium -->
+- [f0d8d600] When `false` is a meaningful, distinct config intent from `absent` (opt-out flags), never read it with `jq '.field // empty'`; use `if has("field") then .field else empty end`.  <!-- last_verified=2026-09-16T04:27:03Z confidence=medium -->
 
 ## planning
-- [16ffd26d] Run companion version-bumping briefs strictly sequentially and read the live `plugin.json` version at execution; a hard-coded target in a brief authored against a stale snapshot silently regresses the bump.  <!-- last_verified=2026-06-17T20:13:20Z confidence=medium -->
+- [16ffd26d] Run companion version-bumping briefs strictly sequentially and read the live `plugin.json` version at execution; a hard-coded target in a brief authored against a stale snapshot silently regresses the bump.  <!-- last_verified=2026-09-16T04:27:03Z confidence=medium -->
 
 ## release-mechanics
 - [a642885b] A version bump touches ~8 doc surfaces in lockstep (both manifests, CHANGELOG paragraph, CLAUDE.md banner rotation keeping only the 2 most recent, README dated banner ADD, plugin.json annotations, agent-help, marketplace description in-place). Missing any one is the single most common self-heal-miss churn class on plugin-self PRs — enumerate and diff all 8 before Phase 4.5 PASS.  <!-- last_verified=2026-07-20T08:22:01Z confidence=high -->
