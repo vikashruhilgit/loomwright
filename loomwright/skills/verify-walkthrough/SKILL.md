@@ -217,7 +217,7 @@ in a completely SEPARATE table and counts line (`summary-build` filters the tick
 PASS/FAIL/BLOCKED/NOT_VERIFIABLE row to `scope: "ticket"` only) — an impact-scope verdict NEVER
 inflates or deflates the ticket's own score. This is the load-bearing invariant of this section.
 
-**Three sources, each best-effort:**
+**Three sources feed the surface classification itself, each best-effort:**
 
 1. **The diff itself (mechanical).** `verify-run.sh impact diff <run_dir> --repo <dir>` prints the
    changed-file list (`git diff --name-only base_sha...head_sha`, from the `run_start` line already
@@ -233,6 +233,9 @@ inflates or deflates the ticket's own score. This is the load-bearing invariant 
    Source requirement and extracts its Blast-Radius subsystem names — commonly empty (real briefs
    rarely populate this section today); an absent/omitted section contributes nothing and never
    fails the run.
+
+**Two more passes build on that classification once it's recorded, also best-effort:**
+
 4. **Prior-run regression (bounded).** `verify-run.sh impact prior-acs <run_dir> --repo <dir>
    --impact-limit N` (default 10) finds up to N PASS `ac` lines from OTHER runs under
    `.supervisor/verify/` whose (optional) `surfaces` field intersects this run's, most-recent-first,

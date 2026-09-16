@@ -555,7 +555,7 @@ impact_brief_surfaces_cmd() {
 # agent's own classification already named files for it), and appends ONE `impact_surfaces` line.
 # `--no-impact` is a pure no-op: exit 0, nothing read, nothing appended - the whole pass skipped.
 impact_record_surfaces_cmd() {
-  local run_dir="" input="" repo_arg="" limit=10 no_impact=0 repo json ticket files brief_names ts run_id merged
+  local run_dir="" input="" repo_arg="" limit=10 no_impact=0 repo json files brief_names ts run_id merged uncovered
   local u="impact record-surfaces <run_dir> <json|-> [--repo <dir>] [--impact-limit N] [--no-impact]"
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -594,8 +594,14 @@ impact_record_surfaces_cmd() {
   # surface bucket or unmapped. A gap here means a file was silently dropped by
   # the classifier (neither named nor listed as unmapped), which would violate
   # AC1 ("every changed file with either a surface or unmapped, never guessed").
+  # Self-heal, don't fail: this pass is advisory/best-effort (SKILL.md §9,
+  # RESULT_SCHEMAS.md) and must never block the ticket's own verify score, so a
+  # classification gap folds into `unmapped` (deduped) instead of dying — the
+  # invariant is never-silently-dropped, not never-imperfectly-classified.
   uncovered="$(printf '%s' "$merged" | jq -c '(.files - (([.surfaces[]?] | add // []) + .unmapped))')"
-  [ "$uncovered" = "[]" ] || die "impact record-surfaces: file(s) neither classified to a surface nor listed as unmapped: $uncovered"
+  if [ "$uncovered" != "[]" ]; then
+    merged="$(printf '%s' "$merged" | jq -c --argjson uncovered "$uncovered" '.unmapped = ((.unmapped + $uncovered) | unique)')"
+  fi
   printf '%s\n' "$merged" | jq -c --arg ts "$ts" --arg run_id "$run_id" \
     '{schema_version: 1, ts: $ts, run_id: $run_id, event: "impact_surfaces"} + .' \
     | bash "$HELPERS" evidence-append "$run_dir" - >/dev/null || die "impact_surfaces line was refused (see $run_dir/rejected.jsonl)"
@@ -642,7 +648,7 @@ impact_prior_acs_cmd() {
     jq -sc --argjson want "$surfaces_json" --arg rid "$rid" '
       def latest_by(f): group_by(f) | map(max_by(._i)) | sort_by(._i);
       (to_entries | map(.value + {_i: .key})) as $L
-      | ([$L[] | select(.event == "ac")] | latest_by(.ac_id)) as $latest
+      | ([$L[] | select(.event == "ac")] | latest_by([.ac_id, .scope])) as $latest
       | $latest[]
       | select(.verdict == "PASS" and ((.surfaces // []) | length) > 0)
       | select((.surfaces // []) as $s | ($s | map(. as $one | ($want | index($one)) != null) | any))

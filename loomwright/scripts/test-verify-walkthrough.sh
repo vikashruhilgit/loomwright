@@ -1294,6 +1294,33 @@ last="$(tail -1 "$RDI1/evidence.jsonl")"
 [ "$(printf '%s' "$last" | jq -r '.limit')" = "7" ] && ok "(I06-record) limit is recorded from --impact-limit" || no "(I06-record) limit: $(printf '%s' "$last" | jq -r '.limit')"
 python3 "$HERE/validate-verify-evidence.py" "$RDI1/evidence.jsonl" >/dev/null 2>&1 && ok "(I06-record) the store re-validates in file mode" || no "(I06-record) store invalid"
 
+echo "== (I06-record) completeness self-heal: a diffed file left out of both surfaces and unmapped folds into unmapped, no crash =="
+TI4="$(mktmp)"
+mkdir -p "$TI4/repo/shared" "$TI4/repo/.supervisor/verify/runD"
+( cd "$TI4/repo" && git init -q && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m base )
+printf 'orig\n' > "$TI4/repo/shared/a.js"
+printf 'orig\n' > "$TI4/repo/shared/b.js"
+( cd "$TI4/repo" && git add -A && git -c user.email=t@t -c user.name=t commit -q -m first )
+D_BASE="$(cd "$TI4/repo" && git rev-parse HEAD)"
+printf 'changed\n' > "$TI4/repo/shared/a.js"
+printf 'changed\n' > "$TI4/repo/shared/b.js"
+( cd "$TI4/repo" && git add -A && git -c user.email=t@t -c user.name=t commit -q -m second )
+D_HEAD="$(cd "$TI4/repo" && git rev-parse HEAD)"
+RDI4="$TI4/repo/.supervisor/verify/runD"
+jq -cn --arg base "$D_BASE" --arg head "$D_HEAD" \
+  '{schema_version:1, ts:"2026-09-16T00:00:00Z", run_id:"verify-20260916T000000Z-rund", event:"run_start",
+    ticket_path:"x.md", ticket_kind:"brief", branch:"b", head_sha:$head, base_sha:$base, env_contract_hash:null}' \
+  > "$RDI4/evidence.jsonl"
+rec_out="$(printf '%s' '{"surfaces":{"home":["shared/a.js"]},"unmapped":[]}' \
+  | bash "$RUNNER" impact record-surfaces "$RDI4" - --repo "$TI4/repo" --impact-limit 7)"
+rc=$?
+[ "$rc" -eq 0 ] && ok "(I06-record) completeness gap self-heals instead of crashing (exit 0, never dies)" || no "(I06-record) rc=$rc"
+last4="$(tail -1 "$RDI4/evidence.jsonl")"
+[ "$(printf '%s' "$last4" | jq -c '.unmapped')" = '["shared/b.js"]' ] \
+  && ok "(I06-record) the uncovered file (shared/b.js) folds into unmapped, not silently dropped" \
+  || no "(I06-record) unmapped: $(printf '%s' "$last4" | jq -c '.unmapped')"
+python3 "$HERE/validate-verify-evidence.py" "$RDI4/evidence.jsonl" >/dev/null 2>&1 && ok "(I06-record) the completeness-healed store re-validates" || no "(I06-record) store invalid after self-heal"
+
 echo "== (I06-record) --no-impact: pure no-op, nothing appended =="
 before_lines="$(wc -l < "$RDI1/evidence.jsonl" | tr -d ' ')"
 bash "$RUNNER" impact record-surfaces "$RDI1" '{}' --repo "$TI1/repo" --no-impact
@@ -1331,6 +1358,22 @@ limited_out="$(bash "$RUNNER" impact prior-acs "$RDI1" --repo "$TI1/repo" --impa
 n2="$(printf '%s' "$limited_out" | jq 'length')"
 [ "$n2" -eq 1 ] && [ "$(printf '%s' "$limited_out" | jq -r '.[0].run_id')" = "verify-20260201T000000Z-priornew" ] \
   && ok "(I06-prior) --impact-limit 1 keeps exactly the one most-recent match" || no "(I06-prior) n2=$n2 out=$limited_out"
+
+echo "== (I06-prior) same-run ticket/impact scope collision on ac_id: ticket-scope PASS survives a scope-blind latest_by =="
+mkdir -p "$TI1/repo/.supervisor/verify/verify-20260301T000000Z-priorcollide"
+RDICOL="$TI1/repo/.supervisor/verify/verify-20260301T000000Z-priorcollide"
+{
+  jq -cn '{schema_version:1, ts:"2026-03-01T00:00:00Z", run_id:"verify-20260301T000000Z-priorcollide", event:"ac",
+    ac_id:"AC2", text:"home works (ticket scope)", scope:"ticket", verdict:"PASS", classification:null, steps:[], artifacts:[], surfaces:["home"]}'
+  jq -cn '{schema_version:1, ts:"2026-03-01T00:00:01Z", run_id:"verify-20260301T000000Z-priorcollide", event:"ac",
+    ac_id:"AC2", text:"unrelated impact-scope ac reusing the same id string (a ticket id and an impact id of the same string are tracked independently)", scope:"impact", verdict:"FAIL", classification:null, steps:[], artifacts:[], surfaces:["unrelated-surface"]}'
+} > "$RDICOL/evidence.jsonl"
+collide_out="$(bash "$RUNNER" impact prior-acs "$RDI1" --repo "$TI1/repo" --impact-limit 10)"
+collide_ac2="$(printf '%s' "$collide_out" | jq -c '[.[] | select(.run_id == "verify-20260301T000000Z-priorcollide" and .ac_id == "AC2")]')"
+n3="$(printf '%s' "$collide_ac2" | jq 'length')"
+[ "$n3" -eq 1 ] && [ "$(printf '%s' "$collide_ac2" | jq -r '.[0].surfaces[0]')" = "home" ] \
+  && ok "(I06-prior) the ticket-scope PASS/AC2 line still surfaces as a prior candidate (latest_by is scope-partitioned, not just ac_id)" \
+  || no "(I06-prior) collide_ac2=$collide_ac2 (a scope-blind latest_by would let the later impact-scope FAIL line silently win and drop this)"
 
 # ============================================================================
 echo "== (I06-browser) two routes sharing a component: impact_surfaces maps both, a seeded prior PASS ac for route B is re-run, README.md unmapped, --impact-limit 1 re-runs exactly one, mutation control flips route B to FAIL while the ticket score is unchanged =="
