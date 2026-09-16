@@ -1,7 +1,7 @@
 ---
 name: verify-walkthrough
 description: Protocol authority for `/verify <ticket>` and the QA Executor's `--verify <run_dir>` mode — AC extraction, AC → Playwright spec derivation, the four observation-derived verdicts (PASS / FAIL / BLOCKED / NOT_VERIFIABLE), the V7 mutation carve-out, evidence-per-AC, and budget. Read on demand at mode entry, deliberately not preloaded.
-version: "1.2.0"
+version: "1.3.0"
 lastUpdated: "2026-09-16"
 ---
 
@@ -264,6 +264,143 @@ whether the impact pass ran.
 **The bound is stated, not implied.** `summary.md`'s `## Impact pass` section always states
 `"impact pass: N surfaces from diff, M from brief, K prior ACs (limit L)"` — even when N/M/K are all
 zero — so a reader never has to infer coverage from silence.
+
+## 10. Multi-ticket queue (`/verify --folder <dir>`)
+
+**What it is.** §1–§9 above walk ONE ticket. This section is the protocol AUTHORITY for walking a
+FOLDER of tickets through those same steps, one ticket at a time, under ONE queue run file —
+`skills/automate-loop/SKILL.md` §3–4's single-run-file + reconcile discipline, adapted for `/verify`'s
+own truth source (`evidence.jsonl` + `git rev-parse`, never `gh`). `commands/verify.md` documents only
+the *surface* (`--folder`/`--limit`/`--resume` flags) and does not restate the protocol coined here.
+
+### Intake — reuse, never re-implement
+
+`--folder <dir>` resolves via `automate-helpers.sh resolve-folder <dir>` **verbatim** — the exact same
+non-recursive `*.md` scan, `## Status: done` skip, and `LC_ALL=C sort` order that `/automate --folder`
+uses. No second folder-scanning implementation exists anywhere in the plugin. `--backlog` is Phase 2
+(not built here).
+
+### The queue file (`.supervisor/verify/queue-<UTC ts>-<slug>.md`)
+
+**Single-file principle**, exactly as `AUTOMATE_RUN` (`docs/RESULT_SCHEMAS.md` §VERIFY_QUEUE carries
+the full layout). One markdown file per queue run holds the Source, the resolved Queue, the current
+item, and an append-only Progress log — no manifest, no registry, no second dashboard file. **Written
+ONLY through `verify-helpers.sh queue-write` (atomic temp+rename, line-count guarded — an empty or
+shorter rewrite is REFUSED, never silently applied) and `queue-progress-append` (append-only) /
+`queue-checkoff`** — never a direct file write from anywhere else, agent-authored or scripted.
+
+```md
+# Verify Queue: <title>
+## Status: running          # running | paused | done   (done only when every Queue item is checked off)
+## Source
+- folder <dir>
+## Run Config
+- limit: 5 | impact_limit: 10
+## Queue                    # `- [ ] <ticket>` queued (no run_id minted yet) · `- [ ] <ticket> -> <run_id>` picked, in flight ·
+                             # `- [x] <ticket> -> <run_id>  verdict: PASS:n FAIL:n BLOCKED:n NOT_VERIFIABLE:n total:n` done ·
+                             # `- [x] <ticket> -> <run_id>  # stale: head moved <old>-><new>` excluded, a FRESH `- [ ] <ticket>` is re-queued
+## Current
+- item: <ticket path or null> | run_id: <run_id or null> | status: running|paused|done|null
+- pause_reason: needs_auth|env_failed|limit_reached|resume_ambiguous|null
+## Progress                 # APPEND-ONLY (never rewritten)
+- <ts> picked <ticket> -> run_id <run_id>
+- <ts> <ticket> run_end status=completed PASS:n FAIL:n BLOCKED:n NOT_VERIFIABLE:n
+```
+
+`--notify` / `--cheap` are passthrough flags, exactly like `/automate`'s — **not** persisted in
+`## Run Config`, re-pass them on every `--resume`. `limit` / `impact_limit` ARE persisted (set once at
+queue creation) so they do not need re-passing.
+
+### The per-item loop
+
+For each `- [ ]` Queue item, top-down:
+
+1. **PICK.** The next unchecked, non-stale item. If it has no `-> <run_id>` suffix yet, run the normal
+   single-ticket **preflight** (`verify-run.sh preflight <ticket> [--branch <name>]`, §"Main-thread
+   steps" step 2 of `commands/verify.md`) to mint a fresh run dir + `run_id`, then record it on the
+   Queue line via `queue-write` (a full guarded rewrite, since this is not an append). If it already
+   carries a `run_id` (a resumed "crashed" item — see Reconcile below), skip preflight and reuse that
+   run dir.
+2. **RUN.** Drive the SAME steps §1–§9 above already define for one ticket — auth-check, spec
+   authoring, `walk`, the impact pass — exactly as a single `/verify <ticket>` invocation would. A
+   `needs_auth` pause here pauses the WHOLE QUEUE (next step), never just skips to the next item.
+3. **On pause (`needs_auth`/`session_expired`).** The queue file is written `## Status: paused` with
+   the SAME `pause_reason`; **every later Queue item is left untouched** (never picked, never
+   preflighted). `--resume` after sign-in continues at the SAME item — it never re-runs an AC that
+   already has an evidence line (§8's `first-unverdicted` already guarantees this for the single-ticket
+   case; the queue loop inherits it unchanged).
+4. **On `run_end`.** Derive the verdict counts from the counts row `verify-run.sh finish` PRINTS
+   (`summary-build`'s derivation) — **never tallied by this loop, exactly like `VERIFY_RESULT.counts`**
+   (§3 above). `queue-checkoff <queue_path> "<ticket> -> <run_id>" "verdict: PASS:n FAIL:n BLOCKED:n
+   NOT_VERIFIABLE:n total:n"`, then `queue-progress-append` ONE line recording the outcome.
+5. **NEXT.** Pick the next unchecked item. Increment the processed-items counter for `--limit`.
+
+### `--limit N` — caps PROCESSED items, not Queue size (mirrors `automate-loop` §2)
+
+The Queue always holds the FULL resolved folder list. `--limit N` (default 5) caps how many items are
+**completed** THIS invocation. After N items are processed with items still unchecked ⇒ `## Status:
+paused`, `pause_reason: limit_reached`. Raising `limit` or `--resume` continues.
+
+### Reconcile on every start (bare `/verify --folder`, and every `--resume`)
+
+Glob `.supervisor/verify/queue-*.md` for files NOT marked `## Status: done`. For the `## Current` item
+(if any), call `verify-run.sh queue-reconcile-item <run_dir> --branch <branch> --repo <dir>` — the
+belief-vs-truth check that lives in `verify-run.sh`, not `verify-helpers.sh`, because it needs
+`git rev-parse` / `--repo`, which the evidence-store script deliberately does not have. It reads TWO
+independent truths, `git` FIRST (a stale run is never resumed no matter how it stopped):
+
+- **`git rev-parse <branch>` vs the run dir's OWN `run_start.head_sha`.** A MOVED head marks the item
+  `- [x] <ticket> -> <run_id>  # stale: head moved <old>-><new>` via `queue-checkoff`, and a FRESH
+  `- [ ] <ticket>` (no `run_id` — a brand-new run dir will be minted on its next PICK) is inserted into
+  `## Queue` via `queue-write`. **The stale run dir is NEVER reused and NEVER deleted** — its verdict
+  counts must never appear in the new item's summary, since they describe a different `head_sha`.
+- **`evidence.jsonl`'s LAST line**, when the head has NOT moved: `run_end` ⇒ the item is `done` even if
+  the queue checkbox is still unchecked (a crash between `finish` and check-off never re-runs it —
+  `queue-checkoff` it now); `pause` ⇒ still `paused` (the SAME `pause_reason`, queue stays paused);
+  anything else (or an in-flight item with an evidence.jsonl that has no `run_end`/`pause` as its last
+  line at all) ⇒ **crashed mid-AC** — resume at `resume_ac_id` (from `verify-helpers.sh
+  first-unverdicted`, the ONE implementation of "what AC is next", never re-derived by the reconcile
+  logic itself).
+- **Before resuming an AUTHENTICATED item**, the queue loop calls the SAME `verify-run.sh auth-check`
+  subcommand the single-ticket resume flow already uses (§8 above) — there is no second auth-probe
+  implementation for queue mode.
+
+**Two incomplete queue files and no explicit `--resume <run_id>`** ⇒ `AskUserQuestion` asking which to
+resume; under `--non-interactive-fallback` this fails CLOSED with `pause_reason: resume_ambiguous`
+(`## Status: paused`) — the exact convention `automate-loop` §4 uses for its own ambiguous resume.
+
+### `--resume <run_id>` — probe-then-fallback dispatch (NOT a new flag)
+
+`--resume` is overloaded across two shapes that share one flag name:
+
+1. **Probe:** does `<run_id>` resolve to `.supervisor/verify/queue-<run_id>.md` (i.e. is `<run_id>` a
+   queue file's own basename, minus `.md`, matching `queue-*`)? If so, this is a **queue-mode resume**
+   — run the Reconcile above scoped to that one queue file, then continue the per-item loop.
+2. **Fallback:** otherwise, this is the **existing single-ticket resume** — `.supervisor/verify/
+   <run_id>/` is treated as a run dir exactly as `commands/verify.md`'s "Resume flow" section already
+   documents, byte-for-byte unchanged. Queue mode never touches this path, and single-ticket resume
+   never touches a queue file.
+
+This is a dispatch RULE on the existing flag, not a new flag — `--resume` still takes exactly one
+optional `<run_id>` argument in both shapes.
+
+### Never shares state with `/automate` (invariant)
+
+A verify queue reads and writes **`.supervisor/verify/` only**. It NEVER reads or writes
+`.supervisor/automate/`, `.supervisor/config.json`, or `.supervisor/state.md` — a verify pause
+(`needs_auth`/`session_expired`/`env_failed`/`limit_reached`/`resume_ambiguous`) is not an automate
+pause (`awaiting_merge`/`escalated`/`limit_reached`/`resume_ambiguous`), and the two engines' Queue
+enums are deliberately NOT unified. Running a verify queue inside an `/automate` tick (if ever wired)
+is an explicit Phase 2 question — **this item forbids it by omission**: no code path here reads
+`/automate`'s run file or config, and none should be added without a new decision record. The test
+suite's `find .supervisor/automate .supervisor/state.md -newer <marker>` check (`test-verify-queue.sh`)
+is the mechanical, mutation-testable proof of this invariant.
+
+### Sequential, one item at a time (non-goal, explicit)
+
+No parallel items — one app instance, one browser, sequential, exactly like the single-ticket walk
+this section wraps. No auto-merge, no PR interaction, no `/automate` integration anywhere in this
+protocol, no cross-project queues.
 
 ## Checklist before `finish`
 
