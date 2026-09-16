@@ -2959,7 +2959,10 @@ directories by `run_id`, it never duplicates their contents.
 
 On every start (bare `/verify --folder`, and every `--resume`), the `## Current` item is reconciled
 against ground truth BEFORE trusting its checkbox — via `bash scripts/verify-run.sh
-queue-reconcile-item <run_dir> --branch <name> --repo <dir>`, which prints one compact JSON object:
+queue-reconcile-item <run_dir> --branch <name> --repo <dir>`, which prints one compact JSON object.
+`<name>` is `run_start_field <run_dir> branch` — the SAME derivation the single-ticket Resume flow
+already uses (`jq -r 'select(.event=="run_start") | .branch'`) — never the CLI's/repo's current
+checked-out branch, since a queue's items may have been verified against different branches over time:
 
 ```json
 {"status": "stale|done|paused|crashed|not_started", "pause_reason": "<string>|null", "resume_ac_id": "<AC id>|null", "old_sha": "<sha>|null", "new_sha": "<sha>|null"}

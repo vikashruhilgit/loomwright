@@ -145,8 +145,11 @@ template, or the reconcile algorithm.** Read that section before implementing or
    incomplete queues and no explicit `--resume` ⇒ `AskUserQuestion` (or fail closed with
    `pause_reason: resume_ambiguous` under `--non-interactive-fallback`). For the `## Current` item of
    the targeted queue, call `bash "${CLAUDE_PLUGIN_ROOT}/scripts/verify-run.sh" queue-reconcile-item
-   <run_dir> --branch <name> --repo <dir>` and act on its `status` (`stale` / `done` / `paused` /
-   `crashed` / `not_started`) exactly as the SKILL §10 Reconcile subsection specifies.
+   <run_dir> --branch <name> --repo <dir>` — `<name>` is `run_start_field <run_dir> branch` (the SAME
+   derivation the single-ticket Resume flow above already uses via `jq -r 'select(.event=="run_start")
+   | .branch'`; NEVER the CLI's/repo's current checked-out branch, which may have drifted between queue
+   items) — and act on its `status` (`stale` / `done` / `paused` / `crashed` / `not_started`) exactly as
+   the SKILL §10 Reconcile subsection specifies.
 3. **Intake (fresh queue only).** `bash "${CLAUDE_PLUGIN_ROOT}/scripts/automate-helpers.sh"
    resolve-folder <dir>` — the SAME resolver `/automate --folder` uses, verbatim. Write the queue file
    via `verify-helpers.sh queue-write` using the template in SKILL §10; show the full resolved Queue to

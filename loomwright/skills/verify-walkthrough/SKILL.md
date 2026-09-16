@@ -346,8 +346,11 @@ paused`, `pause_reason: limit_reached`. Raising `limit` or `--resume` continues.
 Glob `.supervisor/verify/queue-*.md` for files NOT marked `## Status: done`. For the `## Current` item
 (if any), call `verify-run.sh queue-reconcile-item <run_dir> --branch <branch> --repo <dir>` — the
 belief-vs-truth check that lives in `verify-run.sh`, not `verify-helpers.sh`, because it needs
-`git rev-parse` / `--repo`, which the evidence-store script deliberately does not have. It reads TWO
-independent truths, `git` FIRST (a stale run is never resumed no matter how it stopped):
+`git rev-parse` / `--repo`, which the evidence-store script deliberately does not have. `<branch>` is
+`run_start_field <run_dir> branch` — the item's OWN recorded branch from ITS run dir's `run_start` line,
+the SAME derivation the single-ticket Resume flow (§8) already uses — NEVER the queue loop's or the
+repo's current checked-out branch, which the item's run was not necessarily verified against. It reads
+TWO independent truths, `git` FIRST (a stale run is never resumed no matter how it stopped):
 
 - **`git rev-parse <branch>` vs the run dir's OWN `run_start.head_sha`.** A MOVED head marks the item
   `- [x] <ticket> -> <run_id>  # stale: head moved <old>-><new>` via `queue-checkoff`, and a FRESH
