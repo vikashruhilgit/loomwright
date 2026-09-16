@@ -39,6 +39,13 @@
 #                                                                                    # --scope impact + --manifest <path> (array of {id, text, source, surfaces}) re-runs impact-scope specs
 #                                                                                    # (prior-AC regression / smoke checks) instead of the ticket's own acs.json entries - every default is
 #                                                                                    # backward-compatible with a plain ticket-scope walk
+#   queue-reconcile-item <run_dir> --branch <name> [--repo <dir>]                   # item 07: reconciles ONE `/verify --folder` queue item's run dir against ground
+#                                                                                    # truth — belief (the queue checkbox) is never trusted without this. Lives HERE
+#                                                                                    # (not verify-helpers.sh) because it needs `git rev-parse` / --repo, which that
+#                                                                                    # script deliberately does not have. Prints ONE compact JSON object and (bar
+#                                                                                    # usage/missing-dir errors) ALWAYS exits 0 — this is an advisory read, never a
+#                                                                                    # gate: {"status":"stale|done|paused|crashed|not_started","pause_reason":str|null,
+#                                                                                    # "resume_ac_id":str|null,"old_sha":str|null,"new_sha":str|null}
 #
 # Exit codes: 0 ok · 1 refused / failed (non-prod assertion failed, append refused) · 2 usage / ticket
 # unresolved / a verdict that needs observation · 3 preflight stop (no contract at .agent/verify.json,
@@ -1050,6 +1057,90 @@ impact_cmd() {
   esac
 }
 
+
+# --------------------------------------------------------------------------- #
+# queue-reconcile-item <run_dir> --branch <name> [--repo <dir>]
+# --------------------------------------------------------------------------- #
+# Item 07 (`/verify --folder <dir>` multi-ticket queue) — reconciles ONE queue
+# item's run dir against ground truth on every queue start (bare `/verify
+# --folder`, or `--resume`), per the source requirement's Scope §3. The queue
+# file is BELIEF; this is TRUTH. Two independent checks:
+#   (a) evidence.jsonl's LAST line: `run_end` => "done" (the item is finished
+#       even if the queue checkbox is still unchecked — a crash between finish
+#       and check-off must not re-run it); `pause` => "paused" (its `reason`
+#       echoed as `pause_reason`); anything else, OR no evidence.jsonl at all
+#       for an already-picked item => "crashed" mid-AC — `resume_ac_id` comes
+#       from `verify-helpers.sh first-unverdicted`, never re-derived here (one
+#       implementation of "what's the next unverdicted AC").
+#   (b) `git rev-parse <branch>` vs the `run_start` line's OWN `head_sha`. A
+#       MOVED head makes this run dir's verdicts untrustworthy no matter how it
+#       stopped, so it is checked FIRST and short-circuits (a) — a stale run is
+#       never resumed, only re-queued fresh.
+# (c) "verify-env.sh auth-probe before resuming an authenticated item" (the
+# source requirement's third belief-vs-truth check) is deliberately NOT done
+# here: the caller (the `/verify --folder` queue loop in commands/verify.md)
+# already calls THIS script's own `auth-check` subcommand before resuming an
+# item exactly as the single-ticket resume flow does — re-probing here would
+# be a second, divergent implementation of the same auth-check.
+#
+# Never mutates the queue file, evidence store, or run dir — a pure read. Bar
+# usage errors and a missing run dir (exit 2), this ALWAYS exits 0: it is an
+# advisory read for the loop to act on, never a gate of its own.
+queue_reconcile_item_cmd() {
+  local run_dir="" branch="" repo_arg="" repo
+  local u="queue-reconcile-item <run_dir> --branch <name> [--repo <dir>]"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --branch) [ "$#" -ge 2 ] || usage "--branch needs a value"; branch="$2"; shift 2 ;;
+      --repo)   [ "$#" -ge 2 ] || usage "--repo needs a value";   repo_arg="$2"; shift 2 ;;
+      -*)       usage "$u (unknown flag $1)" ;;
+      *)        if [ -z "$run_dir" ]; then run_dir="$1"; shift; else usage "queue-reconcile-item takes ONE run dir"; fi ;;
+    esac
+  done
+  [ -n "$run_dir" ] || usage "$u"
+  [ -n "$branch" ]  || usage "$u (--branch is required)"
+  command -v jq >/dev/null 2>&1 || die "jq is required [jq_unavailable]"
+  [ -f "$HELPERS" ] || die "sibling verify-helpers.sh not found at $HELPERS"
+  [ -d "$run_dir" ] || { diag "run dir not found at $run_dir [run_dir_missing]"; exit 2; }
+  run_dir="$(cd "$run_dir" && pwd)"
+  repo="$(resolve_repo "$repo_arg")" || exit 2
+
+  local evid="$run_dir/evidence.jsonl" old_sha new_sha
+  old_sha="$(run_start_field "$run_dir" head_sha)"
+  new_sha="$(git -C "$repo" rev-parse --verify -q "$branch^{commit}" 2>/dev/null)"
+
+  # (b) STALE check first — a moved head overrides any (a) status.
+  if [ -n "$old_sha" ] && [ -n "$new_sha" ] && [ "$old_sha" != "$new_sha" ]; then
+    jq -cn --arg old "$old_sha" --arg new "$new_sha" \
+      '{status:"stale", pause_reason:null, resume_ac_id:null, old_sha:$old, new_sha:$new}'
+    return 0
+  fi
+
+  # (a) evidence-derived status.
+  if [ ! -f "$evid" ]; then
+    jq -cn '{status:"not_started", pause_reason:null, resume_ac_id:null, old_sha:null, new_sha:null}'
+    return 0
+  fi
+  local last_event last_reason resume_ac
+  last_event="$(jq -rs 'if length==0 then "" else (.[-1].event // "") end' "$evid" 2>/dev/null)"
+  case "$last_event" in
+    run_end)
+      jq -cn --arg old "$old_sha" --arg new "$new_sha" \
+        '{status:"done", pause_reason:null, resume_ac_id:null, old_sha:(if $old=="" then null else $old end), new_sha:(if $new=="" then null else $new end)}'
+      ;;
+    pause)
+      last_reason="$(jq -rs '.[-1].reason // empty' "$evid" 2>/dev/null)"
+      jq -cn --arg r "$last_reason" --arg old "$old_sha" --arg new "$new_sha" \
+        '{status:"paused", pause_reason:(if $r=="" then null else $r end), resume_ac_id:null, old_sha:(if $old=="" then null else $old end), new_sha:(if $new=="" then null else $new end)}'
+      ;;
+    *)
+      resume_ac="$(bash "$HELPERS" first-unverdicted "$run_dir" 2>/dev/null)"
+      jq -cn --arg ac "$resume_ac" --arg old "$old_sha" --arg new "$new_sha" \
+        '{status:"crashed", pause_reason:null, resume_ac_id:(if $ac=="" then null else $ac end), old_sha:(if $old=="" then null else $old end), new_sha:(if $new=="" then null else $new end)}'
+      ;;
+  esac
+}
+
 main() {
   local cmd="${1:-}"; shift || true
   case "$cmd" in
@@ -1062,6 +1153,7 @@ main() {
     finish)     finish_cmd "$@" ;;
     pause)      pause_cmd "$@" ;;
     impact)     impact_cmd "$@" ;;
+    queue-reconcile-item) queue_reconcile_item_cmd "$@" ;;
     ""|-h|--help)
       grep -E '^#   [a-z]' "$0" | sed 's/^#   /  /'
       ;;

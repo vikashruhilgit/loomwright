@@ -17,6 +17,19 @@
 #   first-unverdicted  <run_dir>           # prints the first `ac_id` (acs.json order) not yet GENUINELY verdicted — a FORCED pause-verdict (latest ac line reason session_expired / run_paused_session_expired) does NOT count, so it re-opens on resume; else nothing; exit 0 either way ("fully verdicted" is not an error)
 #   impact-summary-render <run_dir>        # item 06: renders the "## Impact pass" section (separate table + counts from the ticket ones) — called by summary-build on every append, also directly testable
 #
+# Item 07 (`/verify --folder <dir>` multi-ticket queue) subcommands — the ONLY sanctioned writer of
+# `.supervisor/verify/queue-*.md`; protocol authority: `skills/verify-walkthrough/SKILL.md` §"Multi-
+# ticket queue", schema: `docs/RESULT_SCHEMAS.md` §VERIFY_QUEUE. Modelled on `automate-helpers.sh`'s
+# §3 run-file primitives (`runfile-write` / `progress-append` / `queue-checkoff` / `remaining`) with
+# ONE addition `queue-write` carries that automate's `runfile-write` does not: a LINE-COUNT GUARD
+# before every rewrite (memory: `runfile-write-accepts-empty-stdin` — a piped rewrite that errors can
+# atomically empty a run file). `verify-run.sh`'s `queue-reconcile-item` (git/evidence access lives
+# there, not here) calls these four for every mutation; nothing else ever writes the queue file.
+#   queue-write            <queue_path>  (content on stdin)  # atomic temp+rename; REFUSES (exit 1, file byte-unchanged) when the existing file is non-empty and the new content has FEWER lines
+#   queue-progress-append  <queue_path> <line>                # append-only ## Progress — same shape as automate-helpers.sh progress-append
+#   queue-checkoff         <queue_path> <item> [suffix]        # flip "- [ ] <item>" -> "- [x] <item>  <suffix>" (suffix printed verbatim, e.g. "verdict: PASS:1 ..." or "# stale: head moved a->b"); idempotent on an already-checked item
+#   queue-remaining        <queue_path>                        # COMPUTED count of "- [ ]" Queue lines only
+#
 # Exit codes: 0 success; 1 refused / generic failure; 2 usage.
 # Dependencies: bash 3.2+, jq, python3 (the validator; absent ⇒ every append is REFUSED as
 # `validator_unavailable`, never let through), `shasum -a 256` or `sha256sum` (trailer hash).
@@ -394,6 +407,111 @@ verify_notify_dispatch() {
   return 0
 }
 
+
+# --------------------------------------------------------------------------- #
+# Item 07 — multi-ticket queue writers (`.supervisor/verify/queue-*.md`)
+# --------------------------------------------------------------------------- #
+
+# queue-write <queue_path>   (content on stdin)
+# Atomic temp+rename write, GUARDED against silently shrinking the ONLY copy of
+# queue resume state: stdin is captured to a temp file FIRST (byte-exact — no
+# subshell strips a trailing newline), and if <queue_path> already exists and is
+# non-empty, the write is REFUSED (exit 1, nothing touched, <queue_path> stays
+# byte-unchanged) when the new content has FEWER lines than the existing file —
+# an empty or truncated rewrite (a crashed generator, a pipeline that errored
+# mid-stream) must never overwrite a longer file (memory:
+# runfile-write-accepts-empty-stdin). A same-or-more-lines rewrite (the normal
+# case — flipping ## Status, editing ## Current, inserting a re-queued item)
+# proceeds exactly like automate-helpers.sh's runfile-write.
+queue_write() {
+  local out="${1:-}" dir tmp old_n new_n
+  [ -n "$out" ] || usage "queue-write <queue_path>"
+  dir="$(dirname "$out")"
+  mkdir -p "$dir" || die "queue-write: cannot create $dir"
+  tmp="$(mktemp "${out}.XXXXXX")" || die "queue-write: mktemp failed"
+  cat > "$tmp"
+  if [ -f "$out" ] && [ -s "$out" ]; then
+    old_n=$(( $(wc -l < "$out") ))
+    new_n=$(( $(wc -l < "$tmp") ))
+    if [ "$new_n" -lt "$old_n" ]; then
+      diag "queue-write: refusing to shrink $out ($old_n -> $new_n lines) — write NOT applied [queue_write_shrink_refused]"
+      rm -f "$tmp"
+      return 1
+    fi
+  fi
+  mv -f "$tmp" "$out"
+}
+
+# queue-progress-append <queue_path> <line>
+# Appends ONE line under "## Progress" WITHOUT rewriting any existing line —
+# byte-for-byte the same awk idiom as automate-helpers.sh's progress-append
+# (ENVIRON, never awk -v, so a backslash in the line is never mangled), applied
+# to the queue file's own "## Progress" section.
+queue_progress_append() {
+  local out="${1:-}" line="${2:-}"
+  { [ -n "$out" ] && [ -n "$line" ]; } || usage "queue-progress-append <queue_path> <line>"
+  [ -f "$out" ] || die "queue-progress-append: queue file not found: $out"
+  local tmp; tmp="$(mktemp "${out}.XXXXXX")"
+  VH_NEWLINE="- $line" awk '
+    BEGIN { in_prog=0; appended=0; seen_prog=0; newline=ENVIRON["VH_NEWLINE"] }
+    /^## Progress/ { print; in_prog=1; seen_prog=1; next }
+    /^## / {
+      if (in_prog && !appended) { print newline; appended=1; in_prog=0 }
+      print; next
+    }
+    { print }
+    END {
+      if (!appended) {
+        if (!seen_prog) print "## Progress"
+        print newline
+      }
+    }
+  ' "$out" > "$tmp"
+  mv -f "$tmp" "$out"
+}
+
+# queue-checkoff <queue_path> <item> [suffix]
+# Flips "- [ ] <item>" -> "- [x] <item>" (or, with a suffix, "- [x] <item>  <suffix>",
+# printed VERBATIM — e.g. "verdict: PASS:1 FAIL:0 BLOCKED:0 NOT_VERIFIABLE:0 total:1"
+# or "# stale: head moved <old>-><new>"). <item> must match the queue line's
+# payload EXACTLY (everything after "- [ ] "). Atomic write; idempotent on an
+# already-checked item (no "- [ ] <item>" line left to match, so the file is
+# rewritten byte-identical).
+queue_checkoff() {
+  local out="${1:-}" item="${2:-}" suffix="${3:-}"
+  { [ -n "$out" ] && [ -n "$item" ]; } || usage "queue-checkoff <queue_path> <item> [suffix]"
+  [ -f "$out" ] || die "queue-checkoff: queue file not found: $out"
+  local tmp; tmp="$(mktemp "${out}.XXXXXX")"
+  VH_ITEM="$item" VH_SUFFIX="$suffix" awk '
+    BEGIN { item=ENVIRON["VH_ITEM"]; suffix=ENVIRON["VH_SUFFIX"] }
+    {
+      line=$0
+      if (line ~ /^- \[ \] /) {
+        payload=substr(line, 7)
+        if (payload == item) {
+          if (suffix != "")
+            print "- [x] " item "  " suffix
+          else
+            print "- [x] " item
+          next
+        }
+      }
+      print line
+    }
+  ' "$out" > "$tmp"
+  mv -f "$tmp" "$out"
+}
+
+# queue-remaining <queue_path>
+# COMPUTED count of unchecked "- [ ]" Queue lines only (never a stored field) —
+# same convention as automate-helpers.sh's remaining.
+queue_remaining() {
+  local out="${1:-}"
+  [ -n "$out" ] || usage "queue-remaining <queue_path>"
+  [ -f "$out" ] || die "queue-remaining: queue file not found: $out"
+  grep -c '^- \[ \] ' "$out" || true
+}
+
 main() {
   local cmd="${1:-}"; shift || true
   case "$cmd" in
@@ -402,6 +520,10 @@ main() {
     summary-build)      summary_build "$@" ;;
     first-unverdicted)  first_unverdicted "$@" ;;
     impact-summary-render) impact_summary_render "$@" ;;
+    queue-write)            queue_write "$@" ;;
+    queue-progress-append)  queue_progress_append "$@" ;;
+    queue-checkoff)         queue_checkoff "$@" ;;
+    queue-remaining)        queue_remaining "$@" ;;
     ""|-h|--help)
       grep -E '^#   [a-z]' "$0" | sed 's/^#   /  /'
       ;;

@@ -20,10 +20,12 @@ No other surface verifies a ticket against the running app: `## Executable Accep
 /verify <ticket-path>                        # a requirement (.supervisor/requirements/…) or a brief (.supervisor/jobs/…)
 /verify <ticket-path> --branch <name>        # verify that branch's HEAD (default: the current branch)
 /verify <ticket-path> --cheap                # run the executor on Sonnet (see docs/ARCHITECTURE_CONTRACTS.md §"Cost Profiles")
-/verify --resume <run_id>                    # resume a run that paused for a human sign-in (needs_auth / session_expired)
+/verify --resume <run_id>                    # resume a paused run — PROBES for a queue file first, falls back to a single-ticket run dir (see "Resume flow" below)
 /verify <ticket-path> --notify               # POST gate-event webhooks + a desktop banner at needs_auth (see "Notify" below)
 /verify <ticket-path> --impact-limit <N>     # bound the impact pass's prior-AC regression to N re-runs (default 10; see "Impact pass" below)
 /verify <ticket-path> --no-impact             # skip the impact pass entirely — ticket ACs only, same as before item 06
+/verify --folder <dir>                       # QUEUE MODE — walk every not-done ticket in <dir> through its own single-ticket run (see "Queue mode" below)
+/verify --folder <dir> --limit <N>           # cap PROCESSED items this invocation, not Queue size (default 5; automate-loop §2 semantics)
 
 # Headless (claude -p) — use the NAMESPACED form; bare /verify is "Unknown command" under detached claude -p:
 claude -p "/loomwright:verify .supervisor/requirements/checkout/01-coupon.md"
@@ -40,6 +42,8 @@ claude -p "/loomwright:verify .supervisor/requirements/checkout/01-coupon.md"
 | `--notify` | No | Passthrough flag, never persisted (same convention as `/automate --notify`) — re-pass it on `--resume` to keep notifying a resumed run. Fires `send-webhook.sh --event-type gate` at exactly three events (`needs_auth` pause, first `FAIL`, `run_end`) plus a `notify-desktop.sh` banner at `needs_auth`. See "Notify" below. |
 | `--impact-limit <N>` | No | Passthrough flag, never persisted (same convention as `--notify`) — re-pass it on `--resume` to keep the same bound. Forwarded to the executor's impact-pass step (item 06) as the `verify-run.sh impact prior-acs --impact-limit N` / `impact record-surfaces --impact-limit N` bound — up to N prior-run PASS `ac` lines whose `surfaces` intersect this run's are re-run. Default: 10. Never affects the ticket's own ACs or counts. |
 | `--no-impact` | No | Passthrough flag, never persisted (same convention as `--notify`) — re-pass it on `--resume` to keep skipping the impact pass; omitting it on a later `--resume` re-enables the impact pass with default settings. Forwarded to the executor; skips the whole impact pass (no `impact_surfaces` event, no impact-scope `ac` lines). The ticket's own PASS/FAIL/BLOCKED/NOT_VERIFIABLE counts in `summary.md` are byte-identical with or without this flag — `summary_build` counts `scope: ticket` lines only, regardless. |
+| `--folder <dir>` | No (mutually exclusive with `<ticket-path>`) | **Queue mode.** Walks every not-done `.md` in `<dir>` through its own single-ticket `/verify` run under one queue file — protocol authority: `${CLAUDE_PLUGIN_ROOT}/skills/verify-walkthrough/SKILL.md` §10 "Multi-ticket queue". See "Queue mode" below. |
+| `--limit <N>` | No (queue mode only) | Caps **PROCESSED** items this invocation, **NOT** Queue size — the queue file's `## Queue` always holds the FULL resolved folder list. Default: 5. After N processed with items unchecked ⇒ `## Status: paused`, `pause_reason: limit_reached`. |
 
 ## Main-thread steps
 
@@ -99,7 +103,18 @@ Every deterministic step is a shell-out; the main thread never re-implements wha
 
 ## Resume flow (`--resume <run_id>`)
 
-A separate entry point — no ticket path, no preflight, no new run dir:
+A separate entry point — no ticket path, no preflight, no new run dir. **`--resume` is overloaded
+across two shapes sharing one flag name — probe FIRST, fall back SECOND** (never a new flag; protocol
+authority: `${CLAUDE_PLUGIN_ROOT}/skills/verify-walkthrough/SKILL.md` §10 "`--resume <run_id>` —
+probe-then-fallback dispatch"):
+
+1. **Probe.** Does `.supervisor/verify/queue-<run_id>.md` exist (i.e. `<run_id>` is a queue file's own
+   basename, minus `.md`)? If so this is a **queue-mode resume** — go to "Queue mode" below and
+   reconcile that one queue file.
+2. **Fallback.** Otherwise this is the single-ticket resume documented in the rest of this section,
+   unchanged — `.supervisor/verify/<run_id>/` is a run dir.
+
+### Single-ticket resume
 
 1. `run_dir=.supervisor/verify/<run_id>`. `[ -d "$run_dir" ]` or **STOP** with an error naming the missing dir — never silently start a fresh run under that id. Then guard against resuming a run that already finished (never merely paused): `jq -r 'select(.event=="run_end") | .status' "$run_dir/evidence.jsonl" 2>/dev/null | tail -1` — a non-empty result means a `finish` line was already appended (`completed` or `aborted`) and there is nothing paused to resume; print an error naming the run's already-`<status>` state and **STOP** rather than proceeding into `auth-check` on a finished run (a finished run has no ambiguity to resolve, and re-entering `auth-check` on it would silently re-probe a run nobody paused).
    If `--notify` was passed to THIS `--resume` invocation, run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/verify-run.sh" notify-enable "$run_dir"` here — `--notify` is a passthrough flag, never persisted (§Parameters), so it must be re-passed on every `--resume` to keep notifying; `preflight` (the only other creator of the marker) is never called on a resume.
@@ -117,6 +132,38 @@ A separate entry point — no ticket path, no preflight, no new run dir:
    ```
    then spawn the executor exactly as step 4 above (`--verify <run_dir>`; no special resume flag on the agent boundary — the executor detects resume from the run dir's own contents, see `agents/qa-executor.md`). Derive `Ticket:` / `Branch:` for the Task prompt from the `run_start` line already in `evidence.jsonl` (`jq -r 'select(.event=="run_start") | .ticket_path'` / `.branch`), never re-asked. `--impact-limit`/`--no-impact` are passthrough flags like `--notify` — never persisted on `run_start` — so re-pass them on THIS `--resume` invocation to keep the same impact-pass bound/opt-out; omitting them reverts the resumed run to the impact-pass default (`--impact-limit 10`, impact pass enabled).
 5. Continue at step 5 (Report) above — this time WITHOUT the one-shot gitignore check (already done on the first pause).
+
+## Queue mode (`--folder <dir>`)
+
+**Protocol authority: `${CLAUDE_PLUGIN_ROOT}/skills/verify-walkthrough/SKILL.md` §10 "Multi-ticket
+queue" — this section documents the surface only and does not restate the loop, the queue-file
+template, or the reconcile algorithm.** Read that section before implementing or invoking `--folder`.
+
+1. **Read the protocol.** `Read("${CLAUDE_PLUGIN_ROOT}/skills/verify-walkthrough/SKILL.md")` §10, in
+   addition to the §1–§9 protocol the single-ticket flow already reads.
+2. **Reconcile first.** Glob `.supervisor/verify/queue-*.md` for files not `## Status: done`. Two
+   incomplete queues and no explicit `--resume` ⇒ `AskUserQuestion` (or fail closed with
+   `pause_reason: resume_ambiguous` under `--non-interactive-fallback`). For the `## Current` item of
+   the targeted queue, call `bash "${CLAUDE_PLUGIN_ROOT}/scripts/verify-run.sh" queue-reconcile-item
+   <run_dir> --branch <name> --repo <dir>` — `<name>` is `run_start_field <run_dir> branch` (the SAME
+   derivation the single-ticket Resume flow above already uses via `jq -r 'select(.event=="run_start")
+   | .branch'`; NEVER the CLI's/repo's current checked-out branch, which may have drifted between queue
+   items) — and act on its `status` (`stale` / `done` / `paused` / `crashed` / `not_started`) exactly as
+   the SKILL §10 Reconcile subsection specifies.
+3. **Intake (fresh queue only).** `bash "${CLAUDE_PLUGIN_ROOT}/scripts/automate-helpers.sh"
+   resolve-folder <dir>` — the SAME resolver `/automate --folder` uses, verbatim. Write the queue file
+   via `verify-helpers.sh queue-write` using the template in SKILL §10; show the full resolved Queue to
+   the user before processing (same confirmation convention as `automate-loop` §2), skipped under
+   `--non-interactive-fallback`.
+4. **Per-item loop.** For each `- [ ]` item: PICK (preflight if unminted, `queue-write` the `run_id`
+   onto the line) → RUN (the SAME steps 1–5 above, one ticket at a time) → on `run_end`, `queue-checkoff`
+   with the derived counts + `queue-progress-append`; on a pause, stop the WHOLE queue (`## Status:
+   paused`, later items untouched). `--limit N` caps processed items (§Parameters above).
+5. **Report.** Same per-item Report rules as step 5 above, plus the queue counts (`remaining` via
+   `verify-helpers.sh queue-remaining <queue_path>`) and the queue file path.
+
+**Never shares state with `/automate`.** `.supervisor/verify/` only — never `.supervisor/automate/`,
+`.supervisor/config.json`, `.supervisor/state.md` (SKILL §10 invariant).
 
 ## What it records
 
