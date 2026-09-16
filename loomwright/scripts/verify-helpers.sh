@@ -15,6 +15,7 @@
 #   evidence-append    <run_dir> <json|->  # compact-to-one-line, validate, then ONE `>>` write; refused input is wrapped RAW into <run_dir>/rejected.jsonl (exit 1); regenerates summary.md (a derivation failure is named on stderr, exit stays 0 — the fact IS stored)
 #   summary-build      <run_dir>           # the ONLY reader of evidence.jsonl: derives <run_dir>/summary.md (atomic temp+mv) with a `derived_from:` trailer
 #   first-unverdicted  <run_dir>           # prints the first `ac_id` (acs.json order) not yet GENUINELY verdicted — a FORCED pause-verdict (latest ac line reason session_expired / run_paused_session_expired) does NOT count, so it re-opens on resume; else nothing; exit 0 either way ("fully verdicted" is not an error)
+#   impact-summary-render <run_dir>        # item 06: renders the "## Impact pass" section (separate table + counts from the ticket ones) — called by summary-build on every append, also directly testable
 #
 # Exit codes: 0 success; 1 refused / generic failure; 2 usage.
 # Dependencies: bash 3.2+, jq, python3 (the validator; absent ⇒ every append is REFUSED as
@@ -102,6 +103,52 @@ evidence_append() {
 }
 
 # --------------------------------------------------------------------------- #
+# impact-summary-render <run_dir>
+# --------------------------------------------------------------------------- #
+# Renders item 06's "## Impact pass" section of summary.md - a SEPARATE table and a SEPARATE
+# PASS/FAIL/BLOCKED/NOT_VERIFIABLE counts line from the ticket ones above it; an impact-scope verdict
+# never contributes to the ticket row `summary_build` computes. Called by `summary_build` on every
+# append (never by an agent directly) but reads evidence.jsonl independently so it can be exercised
+# and tested standalone. `$impact_ev == null` (the impact pass never ran for this run - `--no-impact`,
+# or the run has not reached it yet) prints one advisory line and nothing else.
+impact_summary_render() {
+  local run_dir="${1:-}" src
+  [ -n "$run_dir" ] || usage "impact-summary-render <run_dir>"
+  src="$run_dir/evidence.jsonl"
+  [ -f "$src" ] || src=/dev/null
+  jq -rs '
+    def esc: tostring | gsub("\\|"; "\\|") | gsub("\n"; " ");
+    def show: if . == null then "—" else esc end;
+    def latest_by(f): group_by(f) | map(max_by(._i)) | sort_by(._i);
+    (to_entries | map(.value + {_i: .key})) as $L
+    | ([$L[] | select(.event == "ac" and .scope == "impact")] | latest_by(.ac_id)) as $impact_acs
+    | ([$L[] | select(.event == "impact_surfaces")] | last) as $impact_ev
+    | def icnt(v): [$impact_acs[] | select(.verdict == v)] | length;
+    if $impact_ev == null and ($impact_acs | length) == 0 then
+      "## Impact pass\n_impact pass not run for this run (--no-impact, or the pass has not reached this run yet)_"
+    else
+      (($impact_ev.surfaces // {}) | to_entries | map(select((.value // []) | length > 0)) | length) as $n_diff
+      | (($impact_ev.brief_surfaces // []) | length) as $n_brief
+      | ([$impact_acs[] | select(((.source // "") | test("^prior_ac:")))] | length) as $n_prior
+      | ($impact_ev.limit // 0) as $lim
+      | ([
+          "## Impact pass",
+          "impact pass: \($n_diff) surfaces from diff, \($n_brief) from brief, \($n_prior) prior ACs (limit \($lim))",
+          ""
+        ]
+        + (if ($impact_acs | length) == 0 then ["_no impact-scope verdicts recorded_"] else
+            ["| id | verdict | classification | source | reason |", "|---|---|---|---|---|"]
+            + [$impact_acs[] | "| \(.ac_id | show) | \(.verdict | show) | \(.classification | show) | \(if .source == null then "—" else (.source | esc) end) | \(.reason | show) |"]
+          end)
+        + [""]
+        + ["impact — PASS: \(icnt("PASS")) · FAIL: \(icnt("FAIL")) · BLOCKED: \(icnt("BLOCKED")) · NOT_VERIFIABLE: \(icnt("NOT_VERIFIABLE")) · total: \($impact_acs | length)"]
+        + (if (($impact_ev.unmapped // []) | length) == 0 then [] else ["- unmapped: \(($impact_ev.unmapped // []) | join(", "))"] end)
+        | join("\n"))
+    end
+  ' "$src"
+}
+
+# --------------------------------------------------------------------------- #
 # summary-build <run_dir>
 # --------------------------------------------------------------------------- #
 # The ONLY reader of evidence.jsonl and the ONLY writer of summary.md. `jq -s` over the file (absent
@@ -116,7 +163,8 @@ summary_build() {
   src="$run_dir/evidence.jsonl"
   [ -f "$src" ] || src=/dev/null
   tmp="$run_dir/summary.md.tmp.$$"
-  body="$(jq -rs '
+  impact_section="$(impact_summary_render "$run_dir")"
+  body="$(jq -rs --arg impact_section "$impact_section" '
     def esc: tostring | gsub("\\|"; "\\|") | gsub("\n"; " ");
     def show: if . == null then "—" else esc end;
     def listish: if (. == null) or (. == []) then "—" else (map(tostring) | join(", ") | esc) end;
@@ -126,12 +174,16 @@ summary_build() {
     | (if $rs != null then $rs.run_id elif ($L | length) > 0 then $L[-1].run_id else "(none)" end) as $run_id
     | ([$L[] | select(.event == "env")] | latest_by(.step)) as $env
     | ([$L[] | select(.event == "auth")] | last) as $auth
-    | ([$L[] | select(.event == "ac")] | latest_by(.ac_id)) as $acs
+    | ([$L[] | select(.event == "ac")] | latest_by(.ac_id)) as $all_acs
+    | ([$L[] | select(.event == "ac" and .scope == "ticket")] | latest_by(.ac_id)) as $acs
+    | ([$L[] | select(.event == "ac" and .scope == "impact")] | latest_by(.ac_id)) as $impact_acs
+    | ([$L[] | select(.event == "impact_surfaces")] | last) as $impact_ev
     | [$L[] | select(.event == "issue")] as $issues
     | [$L[] | select(.event == "pause" or .event == "resume")] as $pr
     | ([$L[] | select(.event == "run_end")] | last) as $re
     | ([$L[] | select(.event == "ac" or .event == "issue") | (.artifacts // [])[] | tostring] | unique) as $arts
     | def cnt(v): [$acs[] | select(.verdict == v)] | length;
+    def icnt(v): [$impact_acs[] | select(.verdict == v)] | length;
     [
       "# Verify run \($run_id) — summary",
       "> DERIVED by `verify-helpers.sh summary-build` from evidence.jsonl on every append — do not edit; edits are overwritten.",
@@ -154,14 +206,16 @@ summary_build() {
       "## Auth",
       (if $auth == null then "_no auth line_" else "- state: \($auth.state | show)" end),
       "",
-      "## Acceptance criteria (latest line per ac_id)",
-      (if ($acs | length) == 0 then "_no ac lines_" else
+      "## Acceptance criteria (ticket scope only, latest line per ac_id)",
+      (if ($acs | length) == 0 then "_no ticket-scope ac lines_" else
         "| ac_id | scope | verdict | classification | reason | artifacts |",
         "|---|---|---|---|---|---|",
         ($acs[] | "| \(.ac_id | show) | \(.scope | show) | \(.verdict | show) | \(.classification | show) | \(.reason | show) | \(.artifacts | listish) |")
       end),
       "",
       "PASS: \(cnt("PASS")) · FAIL: \(cnt("FAIL")) · BLOCKED: \(cnt("BLOCKED")) · NOT_VERIFIABLE: \(cnt("NOT_VERIFIABLE")) · total: \($acs | length)",
+      "",
+      $impact_section,
       "",
       "## Issues",
       (if ($issues | length) == 0 then "_none_" else
@@ -175,7 +229,7 @@ summary_build() {
       # correctly on every append with no dependency on propose-from-verify.sh having run yet.
       # This is what makes a BLOCKED/NOT_VERIFIABLE-only run state "no draft was written" truthfully
       # (AC2 of the verify-fail-sink-and-notify job) without this script ever touching proposed/.
-      (([$acs[] | select(.verdict == "FAIL" and .classification == "REAL_BUG")]) as $draftable_acs
+      (([$all_acs[] | select(.verdict == "FAIL" and .classification == "REAL_BUG")]) as $draftable_acs
        | (($draftable_acs | length) + ($issues | length)) as $n_expected_drafts
        | if $n_expected_drafts == 0 then
            "_no draft is expected — only BLOCKED / NOT_VERIFIABLE verdicts (or FAIL lines classified DISCOVERY_GAP / ENVIRONMENT_ISSUE) were recorded; `/propose --from-verify` writes nothing for this run_"
@@ -350,6 +404,7 @@ main() {
     evidence-append)    evidence_append "$@" ;;
     summary-build)      summary_build "$@" ;;
     first-unverdicted)  first_unverdicted "$@" ;;
+    impact-summary-render) impact_summary_render "$@" ;;
     ""|-h|--help)
       grep -E '^#   [a-z]' "$0" | sed 's/^#   /  /'
       ;;

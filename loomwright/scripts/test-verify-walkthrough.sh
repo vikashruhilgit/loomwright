@@ -1229,6 +1229,237 @@ n="$(grep -cF -- 'item 04 adds the pause-for-auth' "$SKILL")"
 grep -qF -- '## 8. Auth pause and resume' "$SKILL" && ok "(skill) a dedicated pause/resume section exists" || no "(skill) no pause/resume section in the skill"
 grep -qF -- 'response-40' "$SKILL" && ok "(skill) the skill documents the response-40[13] expiry signal" || no "(skill) expiry signal not documented in the skill"
 
+
+# ============================================================================
+# Item 06 "impact pass" arms (mechanical: diff / brief-surfaces / record-surfaces / prior-acs;
+# browser: the two-routes-sharing-a-component fixture + mutation control). Tag: (I06-*).
+# ============================================================================
+echo "== (I06-diff) impact diff: mechanical git diff --name-only base_sha...head_sha =="
+TI1="$(mktmp)"
+mkdir -p "$TI1/repo/shared" "$TI1/repo/.supervisor/verify/runA"
+( cd "$TI1/repo" && git init -q \
+  && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m base )
+printf 'orig\n' > "$TI1/repo/shared/component.js"
+printf 'readme\n' > "$TI1/repo/README.md"
+( cd "$TI1/repo" && git add -A && git -c user.email=t@t -c user.name=t commit -q -m first )
+BASE_SHA="$(cd "$TI1/repo" && git rev-parse HEAD)"
+printf 'changed\n' > "$TI1/repo/shared/component.js"
+( cd "$TI1/repo" && git add -A && git -c user.email=t@t -c user.name=t commit -q -m second )
+HEAD_SHA="$(cd "$TI1/repo" && git rev-parse HEAD)"
+RDI1="$TI1/repo/.supervisor/verify/runA"
+jq -cn --arg base "$BASE_SHA" --arg head "$HEAD_SHA" \
+  '{schema_version:1, ts:"2026-09-16T00:00:00Z", run_id:"verify-20260916T000000Z-runa", event:"run_start",
+    ticket_path:"x.md", ticket_kind:"brief", branch:"b", head_sha:$head, base_sha:$base, env_contract_hash:null}' \
+  > "$RDI1/evidence.jsonl"
+diff_out="$(bash "$RUNNER" impact diff "$RDI1" --repo "$TI1/repo")"
+echo "$diff_out" | jq -e '. == ["shared/component.js"]' >/dev/null 2>&1 \
+  && ok "(I06-diff) impact diff prints exactly the mechanically-changed file" \
+  || no "(I06-diff) impact diff: $diff_out"
+
+echo "== (I06-brief) impact brief-surfaces: no matching brief -> [] (never fails) =="
+brief_out="$(bash "$RUNNER" impact brief-surfaces "$RDI1" --repo "$TI1/repo")"
+[ "$brief_out" = "[]" ] && ok "(I06-brief) no matching .supervisor/jobs/done/ brief -> []" || no "(I06-brief) brief_out=$brief_out"
+
+echo "== (I06-brief) impact brief-surfaces: a matching brief with a populated Blast-Radius section =="
+mkdir -p "$TI1/repo/.supervisor/jobs/done"
+cat > "$TI1/repo/.supervisor/jobs/done/2026-09-01-done-one.md" <<EOF
+# Supervisor Job: done one
+
+## Environment
+- **Source requirement:** x.md
+
+## Risk Assessment
+
+### Blast-Radius
+- auth-service
+- billing-worker
+EOF
+brief_out="$(bash "$RUNNER" impact brief-surfaces "$RDI1" --repo "$TI1/repo")"
+echo "$brief_out" | jq -e '. == ["auth-service", "billing-worker"]' >/dev/null 2>&1 \
+  && ok "(I06-brief) a matching brief's Blast-Radius bullets are extracted verbatim" \
+  || no "(I06-brief) brief_out=$brief_out"
+rm -f "$TI1/repo/.supervisor/jobs/done/2026-09-01-done-one.md"
+
+echo "== (I06-record) impact record-surfaces: merges agent classification + mechanical diff + brief names =="
+rec_out="$(printf '%s' '{"surfaces":{"home":["shared/component.js"],"echo":["shared/component.js"]},"unmapped":["README.md"]}' \
+  | bash "$RUNNER" impact record-surfaces "$RDI1" - --repo "$TI1/repo" --impact-limit 7)"
+rc=$?
+[ "$rc" -eq 0 ] && ok "(I06-record) record-surfaces exits 0" || no "(I06-record) rc=$rc"
+last="$(tail -1 "$RDI1/evidence.jsonl")"
+[ "$(printf '%s' "$last" | jq -r '.event')" = "impact_surfaces" ] && ok "(I06-record) exactly one impact_surfaces event appended" || no "(I06-record) last line: $last"
+[ "$(printf '%s' "$last" | jq -c '.files')" = '["shared/component.js"]' ] && ok "(I06-record) files is the mechanical diff listing, not the agent's own claim" || no "(I06-record) files: $(printf '%s' "$last" | jq -c '.files')"
+[ "$(printf '%s' "$last" | jq -r '.surfaces.home[0]')" = "shared/component.js" ] && [ "$(printf '%s' "$last" | jq -r '.surfaces.echo[0]')" = "shared/component.js" ] \
+  && ok "(I06-record) both routes (home, echo) map to the shared component" || no "(I06-record) surfaces: $(printf '%s' "$last" | jq -c '.surfaces')"
+[ "$(printf '%s' "$last" | jq -c '.unmapped')" = '["README.md"]' ] && ok "(I06-record) README.md lands in unmapped, never guessed" || no "(I06-record) unmapped: $(printf '%s' "$last" | jq -c '.unmapped')"
+[ "$(printf '%s' "$last" | jq -r '.limit')" = "7" ] && ok "(I06-record) limit is recorded from --impact-limit" || no "(I06-record) limit: $(printf '%s' "$last" | jq -r '.limit')"
+python3 "$HERE/validate-verify-evidence.py" "$RDI1/evidence.jsonl" >/dev/null 2>&1 && ok "(I06-record) the store re-validates in file mode" || no "(I06-record) store invalid"
+
+echo "== (I06-record) --no-impact: pure no-op, nothing appended =="
+before_lines="$(wc -l < "$RDI1/evidence.jsonl" | tr -d ' ')"
+bash "$RUNNER" impact record-surfaces "$RDI1" '{}' --repo "$TI1/repo" --no-impact
+rc=$?
+after_lines="$(wc -l < "$RDI1/evidence.jsonl" | tr -d ' ')"
+[ "$rc" -eq 0 ] && [ "$before_lines" -eq "$after_lines" ] && ok "(I06-record) --no-impact exits 0 and appends nothing" || no "(I06-record) --no-impact: rc=$rc before=$before_lines after=$after_lines"
+
+echo "== (I06-prior) impact prior-acs: zero prior runs -> [] silently (fresh clone/worktree/CI) =="
+TI2="$(mktmp)"
+mkdir -p "$TI2/repo/.supervisor/verify/solo"
+( cd "$TI2/repo" && git init -q && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m base )
+RDI2="$TI2/repo/.supervisor/verify/solo"
+jq -cn '{schema_version:1, ts:"2026-09-16T00:00:00Z", run_id:"verify-20260916T000000Z-solo", event:"run_start",
+  ticket_path:"x.md", ticket_kind:"brief", branch:"b", head_sha:"h", base_sha:"h", env_contract_hash:null}
+' > "$RDI2/evidence.jsonl"
+printf '{}' | bash "$RUNNER" impact record-surfaces "$RDI2" - --repo "$TI2/repo" --impact-limit 10 >/dev/null
+prior_out="$(bash "$RUNNER" impact prior-acs "$RDI2" --repo "$TI2/repo" --impact-limit 10)"
+[ "$prior_out" = "[]" ] && ok "(I06-prior) no sibling run dirs exist -> [] (never a failure)" || no "(I06-prior) prior_out=$prior_out"
+
+echo "== (I06-prior) impact prior-acs: bounded most-recent-first, --impact-limit 1 keeps exactly one =="
+mkdir -p "$TI1/repo/.supervisor/verify/verify-20260101T000000Z-priorold"
+mkdir -p "$TI1/repo/.supervisor/verify/verify-20260201T000000Z-priornew"
+jq -cn '{schema_version:1, ts:"2026-01-01T00:00:00Z", run_id:"verify-20260101T000000Z-priorold", event:"ac",
+  ac_id:"AC1", text:"home works (old)", scope:"ticket", verdict:"PASS", classification:null, steps:[], artifacts:[], surfaces:["home"]}
+' > "$TI1/repo/.supervisor/verify/verify-20260101T000000Z-priorold/evidence.jsonl"
+jq -cn '{schema_version:1, ts:"2026-02-01T00:00:00Z", run_id:"verify-20260201T000000Z-priornew", event:"ac",
+  ac_id:"AC2", text:"echo works (new)", scope:"ticket", verdict:"PASS", classification:null, steps:[], artifacts:[], surfaces:["echo"]}
+' > "$TI1/repo/.supervisor/verify/verify-20260201T000000Z-priornew/evidence.jsonl"
+prior_out="$(bash "$RUNNER" impact prior-acs "$RDI1" --repo "$TI1/repo" --impact-limit 10)"
+n="$(printf '%s' "$prior_out" | jq 'length')"
+[ "$n" -eq 2 ] && ok "(I06-prior) both sibling PASS acs (home, echo) match on impact_surfaces, unbounded" || no "(I06-prior) n=$n out=$prior_out"
+first_rid="$(printf '%s' "$prior_out" | jq -r '.[0].run_id')"
+[ "$first_rid" = "verify-20260201T000000Z-priornew" ] && ok "(I06-prior) most-recent-first ordering (the newer prior run sorts first)" || no "(I06-prior) first_rid=$first_rid"
+limited_out="$(bash "$RUNNER" impact prior-acs "$RDI1" --repo "$TI1/repo" --impact-limit 1)"
+n2="$(printf '%s' "$limited_out" | jq 'length')"
+[ "$n2" -eq 1 ] && [ "$(printf '%s' "$limited_out" | jq -r '.[0].run_id')" = "verify-20260201T000000Z-priornew" ] \
+  && ok "(I06-prior) --impact-limit 1 keeps exactly the one most-recent match" || no "(I06-prior) n2=$n2 out=$limited_out"
+
+# ============================================================================
+echo "== (I06-browser) two routes sharing a component: impact_surfaces maps both, a seeded prior PASS ac for route B is re-run, README.md unmapped, --impact-limit 1 re-runs exactly one, mutation control flips route B to FAIL while the ticket score is unchanged =="
+if [ "$PW_READY" -eq 1 ]; then
+  PORT_I="$(free_port)"
+  if start_app "$PORT_I"; then
+    TI3="$(mktmp)"
+    mkdir -p "$TI3/repo/shared"
+    ( cd "$TI3/repo" && git init -q && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m base )
+    printf 'orig\n' > "$TI3/repo/shared/component.js"; printf 'readme\n' > "$TI3/repo/README.md"
+    ( cd "$TI3/repo" && git add -A && git -c user.email=t@t -c user.name=t commit -q -m first )
+    IBASE="$(cd "$TI3/repo" && git rev-parse HEAD)"
+    printf 'changed\n' > "$TI3/repo/shared/component.js"
+    ( cd "$TI3/repo" && git add -A && git -c user.email=t@t -c user.name=t commit -q -m second )
+    IHEAD="$(cd "$TI3/repo" && git rev-parse HEAD)"
+    ln -s "$PW_CACHE/node_modules" "$TI3/repo/node_modules"
+    RDI3="$TI3/repo/.supervisor/verify/verify-20260916T010000Z-impactrun"
+    mkdir -p "$RDI3"
+    jq -cn --arg base "$IBASE" --arg head "$IHEAD" '{schema_version:1, ts:"2026-09-16T01:00:00Z",
+      run_id:"verify-20260916T010000Z-impactrun", event:"run_start", ticket_path:"x.md", ticket_kind:"brief",
+      branch:"b", head_sha:$head, base_sha:$base, env_contract_hash:null}' > "$RDI3/evidence.jsonl"
+    jq -cn '{schema_version:1, ts:"2026-09-16T01:00:01Z", run_id:"verify-20260916T010000Z-impactrun", event:"ac",
+      ac_id:"AC1", text:"ticket AC unaffected by the impact pass", scope:"ticket", verdict:"PASS",
+      classification:null, steps:[], artifacts:[]}' | bash "$HERE/verify-helpers.sh" evidence-append "$RDI3" - >/dev/null
+    mkdir -p "$TI3/repo/.supervisor/verify/verify-20260101T020000Z-priorroute"
+    jq -cn '{schema_version:1, ts:"2026-01-01T02:00:00Z", run_id:"verify-20260101T020000Z-priorroute",
+      event:"ac", ac_id:"AC2", text:"route B (echo) works", scope:"ticket", verdict:"PASS", classification:null,
+      steps:[], artifacts:[], surfaces:["routeB"]}' > "$TI3/repo/.supervisor/verify/verify-20260101T020000Z-priorroute/evidence.jsonl"
+    printf '{"surfaces":{"routeA":["shared/component.js"],"routeB":["shared/component.js"]},"unmapped":["README.md"]}' \
+      | bash "$RUNNER" impact record-surfaces "$RDI3" - --repo "$TI3/repo" --impact-limit 10 >/dev/null
+    ise="$(jq -c 'select(.event=="impact_surfaces")' "$RDI3/evidence.jsonl" | tail -1)"
+    [ "$(printf '%s' "$ise" | jq -r '.surfaces.routeA[0]')" = "shared/component.js" ] && [ "$(printf '%s' "$ise" | jq -r '.surfaces.routeB[0]')" = "shared/component.js" ] \
+      && ok "(I06-browser) impact_surfaces names both routeA and routeB from the shared component" || no "(I06-browser) surfaces: $(printf '%s' "$ise" | jq -c '.surfaces')"
+    [ "$(printf '%s' "$ise" | jq -c '.unmapped')" = '["README.md"]' ] && ok "(I06-browser) README.md lands in unmapped" || no "(I06-browser) unmapped: $(printf '%s' "$ise" | jq -c '.unmapped')"
+    matched="$(bash "$RUNNER" impact prior-acs "$RDI3" --repo "$TI3/repo" --impact-limit 1)"
+    n="$(printf '%s' "$matched" | jq 'length')"
+    [ "$n" -eq 1 ] && [ "$(printf '%s' "$matched" | jq -r '.[0].ac_id')" = "AC2" ] \
+      && ok "(I06-browser) --impact-limit 1 re-runs exactly the one seeded prior PASS ac for route B" || no "(I06-browser) matched=$matched"
+    mkdir -p "$RDI3/impact-specs"
+    cat > "$RDI3/impact-specs/prior-routeb.spec.ts" <<'SPECI'
+import { test, expect } from '@playwright/test';
+test('[prior-routeb] Given the Value field, when hello is submitted, then the echo shows hello', async ({ page }) => {
+  await page.goto('/');
+  await page.getByLabel('Value').fill('hello');
+  await page.getByRole('button', { name: 'Submit' }).click();
+  await expect(page.locator('#echo')).toHaveText('hello');
+});
+SPECI
+    jq -n '[{id:"prior-routeb", text:"route B (echo) re-run", source:"prior_ac:verify-20260101T020000Z-priorroute/AC2", surfaces:["routeB"]}]' > "$RDI3/impact-manifest.json"
+    : > "$LAST_OUT"; : > "$LAST_ERR"
+    ( cd "$TI3/repo" && bash "$RUNNER" walk "$RDI3" --repo . --base-url "http://127.0.0.1:$PORT_I" --scope impact --specs-dir impact-specs --manifest "$RDI3/impact-manifest.json" ) >"$LAST_OUT" 2>"$LAST_ERR"
+    rc=$?
+    [ "$rc" -eq 0 ] && ok "(I06-browser) impact walk (healthy app) → exit 0" || no "(I06-browser) impact walk healthy: rc=$rc err=$(cat "$LAST_ERR")"
+    last="$(jq -c 'select(.event=="ac" and .ac_id=="prior-routeb")' "$RDI3/evidence.jsonl" | tail -1)"
+    [ "$(printf '%s' "$last" | jq -r '[.verdict,.scope,.source] | join("|")')" = "PASS|impact|prior_ac:verify-20260101T020000Z-priorroute/AC2" ] \
+      && ok "(I06-browser) route B re-run recorded scope:impact verdict:PASS source:prior_ac:<run_id>/<ac_id>" \
+      || no "(I06-browser) route B ac line: $last"
+    grep -q '^PASS: 1 · FAIL: 0 · BLOCKED: 0 · NOT_VERIFIABLE: 0 · total: 1$' "$RDI3/summary.md" \
+      && ok "(I06-browser) the ticket's own counts row is unaffected: still PASS:1 total:1" || no "(I06-browser) ticket row: $(grep '^PASS: ' "$RDI3/summary.md")"
+
+    echo "-- mutation control: break route B (echo), re-run on a FRESH run dir, verdict flips FAIL, ticket unaffected --"
+    kill_servers
+    PORT_BROKEN="$(free_port)"
+    if start_app "$PORT_BROKEN" --broken; then
+      RDI4="$TI3/repo/.supervisor/verify/verify-20260916T020000Z-impactbroken"
+      mkdir -p "$RDI4/impact-specs"
+      cp "$RDI3/impact-specs/prior-routeb.spec.ts" "$RDI4/impact-specs/prior-routeb.spec.ts"
+      cp "$RDI3/impact-manifest.json" "$RDI4/impact-manifest.json"
+      jq -cn --arg base "$IBASE" --arg head "$IHEAD" '{schema_version:1, ts:"2026-09-16T02:00:00Z",
+        run_id:"verify-20260916T020000Z-impactbroken", event:"run_start", ticket_path:"x.md", ticket_kind:"brief",
+        branch:"b", head_sha:$head, base_sha:$base, env_contract_hash:null}' > "$RDI4/evidence.jsonl"
+      jq -cn '{schema_version:1, ts:"2026-09-16T02:00:01Z", run_id:"verify-20260916T020000Z-impactbroken",
+        event:"ac", ac_id:"AC1", text:"ticket AC unaffected by the impact pass", scope:"ticket", verdict:"PASS",
+        classification:null, steps:[], artifacts:[]}' | bash "$HERE/verify-helpers.sh" evidence-append "$RDI4" - >/dev/null
+      before_ticket_row="$(grep '^PASS: ' "$RDI4/summary.md")"
+      : > "$LAST_OUT"; : > "$LAST_ERR"
+      ( cd "$TI3/repo" && bash "$RUNNER" walk "$RDI4" --repo . --base-url "http://127.0.0.1:$PORT_BROKEN" --scope impact --specs-dir impact-specs --manifest "$RDI4/impact-manifest.json" ) >"$LAST_OUT" 2>"$LAST_ERR"
+      last="$(jq -c 'select(.event=="ac" and .ac_id=="prior-routeb")' "$RDI4/evidence.jsonl" | tail -1)"
+      [ "$(printf '%s' "$last" | jq -r '[.verdict,.classification,.scope] | join("|")')" = "FAIL|REAL_BUG|impact" ] \
+        && ok "(I06-mutation) route B broken → the impact-scope verdict flips to FAIL/REAL_BUG (observed, not claimed)" \
+        || no "(I06-mutation) route B (broken) ac line: $last"
+      after_ticket_row="$(grep '^PASS: ' "$RDI4/summary.md")"
+      [ "$after_ticket_row" = "$before_ticket_row" ] && [ "$after_ticket_row" = "PASS: 1 · FAIL: 0 · BLOCKED: 0 · NOT_VERIFIABLE: 0 · total: 1" ] \
+        && ok "(I06-mutation) the ticket's own counts row is BYTE-IDENTICAL before/after the impact-scope FAIL ($after_ticket_row)" \
+        || no "(I06-mutation) ticket row before='$before_ticket_row' after='$after_ticket_row'"
+    else
+      no "(I06-mutation) could not start the --broken fixture app"
+    fi
+  else
+    no "(I06-browser) could not start the healthy fixture app"
+  fi
+else
+  echo "  SKIP (I06-browser / I06-mutation) — playwright unavailable ($PW_SKIP); mechanical (I06-*) arms above still decide the exit"
+fi
+
+# ============================================================================
+echo "== (I06-noimpact) --no-impact: ticket counts in summary.md are byte-identical with/without the impact pass =="
+TI5="$(mktmp)"
+mkdir -p "$TI5/repo/.supervisor/verify/withimpact" "$TI5/repo/.supervisor/verify/noimpact"
+( cd "$TI5/repo" && git init -q && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m base )
+for rd_name in withimpact noimpact; do
+  RD="$TI5/repo/.supervisor/verify/$rd_name"
+  jq -cn --arg rid "verify-20260916T000000Z-$rd_name" '{schema_version:1, ts:"2026-09-16T00:00:00Z", run_id:$rid,
+    event:"run_start", ticket_path:"x.md", ticket_kind:"brief", branch:"b", head_sha:"h", base_sha:"h", env_contract_hash:null}
+  ' > "$RD/evidence.jsonl"
+  jq -cn --arg rid "verify-20260916T000000Z-$rd_name" '{schema_version:1, ts:"2026-09-16T00:00:01Z", run_id:$rid,
+    event:"ac", ac_id:"AC1", text:"t", scope:"ticket", verdict:"PASS", classification:null, steps:[], artifacts:[]}
+  ' | bash "$HERE/verify-helpers.sh" evidence-append "$RD" - >/dev/null
+done
+bash "$RUNNER" impact record-surfaces "$TI5/repo/.supervisor/verify/noimpact" '{}' --repo "$TI5/repo" --no-impact
+printf '{"surfaces":{"home":[]},"unmapped":[]}' | bash "$RUNNER" impact record-surfaces "$TI5/repo/.supervisor/verify/withimpact" - --repo "$TI5/repo" --impact-limit 10 >/dev/null
+jq -cn '{schema_version:1, ts:"2026-09-16T00:00:02Z", run_id:"verify-20260916T000000Z-withimpact", event:"ac",
+  ac_id:"smoke-home", text:"home smoke", scope:"impact", verdict:"FAIL", classification:"REAL_BUG",
+  reason:"broke", steps:[], artifacts:[], source:"smoke"}' \
+  | bash "$HERE/verify-helpers.sh" evidence-append "$TI5/repo/.supervisor/verify/withimpact" - >/dev/null
+row_no="$(grep '^PASS: ' "$TI5/repo/.supervisor/verify/noimpact/summary.md")"
+row_with="$(grep '^PASS: ' "$TI5/repo/.supervisor/verify/withimpact/summary.md")"
+[ "$row_no" = "$row_with" ] && [ "$row_no" = "PASS: 1 · FAIL: 0 · BLOCKED: 0 · NOT_VERIFIABLE: 0 · total: 1" ] \
+  && ok "(I06-noimpact) ticket PASS/FAIL/BLOCKED/NOT_VERIFIABLE row is byte-identical with/without the impact pass ($row_no)" \
+  || no "(I06-noimpact) no-impact row='$row_no' with-impact row='$row_with'"
+
+echo "== (I06-docs) skill §9 + qa-executor Impact Pass step + verify.md flags are present =="
+grep -qF -- '## 9. Impact pass' "$SKILL" && ok "(I06-docs) skill has a ## 9. Impact pass section" || no "(I06-docs) skill missing ## 9. Impact pass"
+grep -qF -- "ticket's own PASS/FAIL/BLOCKED/NOT_VERIFIABLE counts are unchanged by it" "$SKILL" \
+  && ok "(I06-docs) the checklist asserts the ticket-score-isolation invariant" || no "(I06-docs) checklist bullet missing"
+grep -qF -- '**Impact Pass**' "$AGENT" && ok "(I06-docs) qa-executor.md names the Impact Pass step" || no "(I06-docs) Impact Pass step missing from qa-executor.md"
+grep -qF -- '--impact-limit' "$VERIFY_CMD" && grep -qF -- '--no-impact' "$VERIFY_CMD" \
+  && ok "(I06-docs) commands/verify.md documents --impact-limit and --no-impact" || no "(I06-docs) impact flags missing from commands/verify.md"
+
 # ============================================================================
 echo
 echo "RESULT: $pass passed, $fail failed"

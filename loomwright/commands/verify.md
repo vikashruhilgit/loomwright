@@ -22,6 +22,8 @@ No other surface verifies a ticket against the running app: `## Executable Accep
 /verify <ticket-path> --cheap                # run the executor on Sonnet (see docs/ARCHITECTURE_CONTRACTS.md §"Cost Profiles")
 /verify --resume <run_id>                    # resume a run that paused for a human sign-in (needs_auth / session_expired)
 /verify <ticket-path> --notify               # POST gate-event webhooks + a desktop banner at needs_auth (see "Notify" below)
+/verify <ticket-path> --impact-limit <N>     # bound the impact pass's prior-AC regression to N re-runs (default 10; see "Impact pass" below)
+/verify <ticket-path> --no-impact             # skip the impact pass entirely — ticket ACs only, same as before item 06
 
 # Headless (claude -p) — use the NAMESPACED form; bare /verify is "Unknown command" under detached claude -p:
 claude -p "/loomwright:verify .supervisor/requirements/checkout/01-coupon.md"
@@ -36,6 +38,8 @@ claude -p "/loomwright:verify .supervisor/requirements/checkout/01-coupon.md"
 | `--cheap` | No | Forwarded to the executor spawn as `model: "sonnet"` guidance per `docs/ARCHITECTURE_CONTRACTS.md` §"Cost Profiles". Default (`inherit`) unchanged when absent. |
 | `--resume <run_id>` | No (mutually exclusive with `<ticket-path>`) | Resumes the paused run at `.supervisor/verify/<run_id>` — see "Resume flow" below. Errors, never silently starting a new run, when that dir does not exist. |
 | `--notify` | No | Passthrough flag, never persisted (same convention as `/automate --notify`) — re-pass it on `--resume` to keep notifying a resumed run. Fires `send-webhook.sh --event-type gate` at exactly three events (`needs_auth` pause, first `FAIL`, `run_end`) plus a `notify-desktop.sh` banner at `needs_auth`. See "Notify" below. |
+| `--impact-limit <N>` | No | Forwarded to the executor's impact-pass step (item 06) as the `verify-run.sh impact prior-acs --impact-limit N` / `impact record-surfaces --impact-limit N` bound — up to N prior-run PASS `ac` lines whose `surfaces` intersect this run's are re-run. Default: 10. Never affects the ticket's own ACs or counts. |
+| `--no-impact` | No | Forwarded to the executor; skips the whole impact pass (no `impact_surfaces` event, no impact-scope `ac` lines). The ticket's own PASS/FAIL/BLOCKED/NOT_VERIFIABLE counts in `summary.md` are byte-identical with or without this flag — `summary_build` counts `scope: ticket` lines only, regardless. |
 
 ## Main-thread steps
 
@@ -61,7 +65,7 @@ Every deterministic step is a shell-out; the main thread never re-implements wha
    ```
    Task(
      description: "Verify: <ticket basename> in <run_dir>",
-     prompt: "--verify <run_dir>\nTicket: <ticket-path>\nBranch: <name or current>\n<--cheap passthrough note when given>",
+     prompt: "--verify <run_dir>\nTicket: <ticket-path>\nBranch: <name or current>\n<--cheap passthrough note when given>\nImpact-limit: <N, default 10>\n<No-impact: true, only when --no-impact was passed>",
      subagent_type: "loomwright:qa-executor"
      [, model: "sonnet"   # ONLY when --cheap was passed]
    )

@@ -1881,6 +1881,7 @@ All result schemas include a `schema_version` field. This enables forward compat
 
 ### Version History
 
+- **VERIFY_EVIDENCE additive `impact_surfaces` event + `ac.surfaces`** (2026-09-16, item 06 "impact pass"): New `impact_surfaces` event value (files, surfaces, unmapped, brief_surfaces, limit — one line per run, appended by `verify-run.sh impact record-surfaces`) and a new OPTIONAL `surfaces: string[]` field on `ac` lines (matched against a later run's `impact_surfaces` for bounded prior-AC regression). `validate-verify-evidence.py`'s `EVENTS` enum and a new `check_impact_surfaces` validator function cover the event; `check_ac` tolerates the new optional field. `verify-helpers.sh summary_build` now filters its ticket PASS/FAIL/BLOCKED/NOT_VERIFIABLE row to `ac` lines with `scope: "ticket"` ONLY (previously scope-blind) and renders a SEPARATE `## Impact pass` table/counts line (via the new `impact_summary_render` function) from `scope: "impact"` lines — an impact-scope verdict never changes the ticket's own score. **No `schema_version` bump** — both additions are additive (a pre-item-06 line never carries `impact_surfaces` as its `event` and never carries `ac.surfaces`, so nothing pre-existing changes shape). Additive — all other schemas unchanged.
 - **VERIFY_RESULT additive `paused` status + `pause_reason`** (2026-09-15, item 04 Subtask 1): Added `paused` to the `status` enum (alongside the existing `completed`/`aborted`) and a new REQUIRED-KEY, NULLABLE-VALUE `pause_reason: needs_auth | session_expired | null` field, emitted when `verify-run.sh auth-check` (exit 4) or `verify-run.sh walk` (exit 5) stops a run for a human sign-in or a mid-run session expiry. `validate-qa-result.py`'s VERIFY_RESULT branch gains rule V7 enforcing the pairing (`paused` ⇔ non-null recognized reason; `completed`/`aborted` ⇔ null) in both directions. **No `schema_version` bump** — `paused` is an additive enum value and `pause_reason` is additive (a pre-item-04 producer that never emits `paused` also never emits a non-null `pause_reason`, so its blocks keep validating unchanged under V7's null-iff-non-paused half). Additive — all other schemas unchanged.
 - **VERIFY_RESULT (schema_version 1)** (2026-09-14): New `## VERIFY_RESULT` result block emitted by the QA Executor's `--verify <run_dir>` mode (the executor half of `/verify <ticket>`). Fields `schema_version`, `run_id`, `run_dir`, `ticket_path`, `status: completed | aborted`, `counts: {pass, fail, blocked, not_verifiable, total}` (COPIED verbatim from the counts row `verify-run.sh finish` prints out of the derived `summary.md` — the agent never tallies), `artifacts_dir`, `summary`, `notes`. Hook-validated by the EXISTING `SubagentStop (qa-executor)` command (`validate-qa-result.py`, hook string byte-unchanged) through a new `VERIFY_RESULT` branch (rules V1–V6); precedence is by NAME — `QA_RESULT` wins whenever present, regardless of position; the five `QA_RESULT` rules are unchanged. Additive — all other schemas unchanged.
 - **VERIFY_EVIDENCE (schema_version 1)** (2026-09-14): New `## VERIFY_EVIDENCE` JSONL state-file schema for `.supervisor/verify/<run_id>/evidence.jsonl` — no hook validator; CLI gate `validate-verify-evidence.py` consumed by `verify-helpers.sh evidence-append`. One `event`-discriminated record shape (`run_start, env, auth, ac, issue, pause, resume, run_end`) with a closed twelve-code reason set; the validator's EXIT STATUS is the decision (0 valid · 1 invalid · 2 usage), a deliberate documented deviation from the always-exit-0 hook-emitter siblings. `test-emit-block-parses.sh` and `result_block_parser.py` need no change (a JSONL line, not an emitted result block). Additive — all other schemas unchanged.
@@ -2593,7 +2594,7 @@ VERIFY_EVIDENCE:                       # one JSON object per line
   schema_version: 1                    # integer, required — always 1 (a JSON `true` is NOT 1)
   ts: string                           # required — ISO-8601 UTC, `YYYY-MM-DDTHH:MM:SS[.fff]Z`
   run_id: string                       # required — `verify-<YYYYMMDDTHHMMSSZ>-<slug>` as minted by `verify-helpers.sh run-id`; must start with `verify-`
-  event: enum [run_start, env, auth, ac, issue, pause, resume, run_end]   # required
+  event: enum [run_start, env, auth, ac, issue, pause, resume, run_end, impact_surfaces]   # required
 
   # --- per-event required keys -------------------------------------------------
   run_start:
@@ -2619,6 +2620,7 @@ VERIFY_EVIDENCE:                       # one JSON object per line
     steps: string[]                    # required — may be empty
     artifacts: string[]                # required — may be empty; paths RELATIVE to <run_dir>/ (never absolute or `~`-anchored; a `..` segment is rejected — the path must stay inside the run dir)
     reason: string                     # REQUIRED non-empty for every non-PASS verdict; optional on PASS
+    surfaces: string[]                 # OPTIONAL (item 06, additive) — surface names this AC exercises, matched against a LATER run's `impact_surfaces` for prior-AC regression; absent on every pre-item-06 line
   issue:
     text: string                       # required
     severity: enum [BLOCKING, HIGH, MEDIUM, LOW]                     # required
@@ -2632,6 +2634,12 @@ VERIFY_EVIDENCE:                       # one JSON object per line
     status: enum [completed, aborted]  # required
     # NO `counts` / `totals` key at ANY depth — the validator rejects the line (`run_end_carries_counts`).
     # Counts exist only in the derived summary.
+  impact_surfaces:                     # item 06 — ONE line per run, the diff→surfaces classification the impact pass recorded
+    files: string[]                    # required — the mechanical `git diff --name-only base_sha...head_sha` file listing; may be empty
+    surfaces: object                   # required — {<surface name>: [file, ...]}; may be `{}` (nothing classified yet); values are the files (from `files`, or a brief-sourced name with no files) mapped into it
+    unmapped: string[]                 # required — `files` entries no surface claimed; may be empty
+    brief_surfaces: string[]           # required — subsystem names sourced from a done brief Blast-Radius section; may be empty (the common case — real briefs rarely populate this section)
+    limit: integer                     # required, >= 0 — the --impact-limit bound the prior-AC regression pass used (default 10)
 ```
 
 **Latest-per-`ac_id` rule.** A run may re-verify an AC (resume after a pause, a retry after an

@@ -228,6 +228,37 @@ never a direct write to `evidence.jsonl`):
    already appended `{event:auth,state:expired}` and the `pause --reason session_expired` line and
    rebuilt `summary.md`) — continue to 9, then SKIP `finish` (10) and go straight to EMIT (11) with
    `status: paused, pause_reason: session_expired`.
+8.5. **Impact Pass** (item 06). SKIP entirely — no shell-out, no evidence line — when `--no-impact` was
+     passed on the Task prompt, OR this is a step-5/step-8 pause (never authored on a paused run).
+     Advisory, `scope: impact` only: never touches the ticket's own PASS/FAIL/BLOCKED/NOT_VERIFIABLE
+     counts (`summary_build` counts `scope: ticket` lines only).
+     a. `verify-run.sh impact diff <run_dir> --repo <dir>` → the mechanical changed-file listing
+        (`git diff --name-only base_sha...head_sha`, from the run_start line already in evidence.jsonl).
+     b. CLASSIFY each changed file into a surface name, reusing Phase 4 "APP TOPOLOGY DETECTION"
+        below as instructed guidance (route/page/controller/resolver heuristics) — a file that
+        cannot be classified goes to `unmapped`, NEVER guessed. Also fetch `verify-run.sh impact
+        brief-surfaces <run_dir> --repo <dir>` (best-effort; commonly `[]` — see the owning brief's
+        Risk Assessment).
+     c. `verify-run.sh impact record-surfaces <run_dir> <json> --repo <dir> --impact-limit <N>` (N =
+        the `--impact-limit` passed on the Task prompt, default 10) with
+        `{"surfaces": {<name>: [files...], ...}, "unmapped": [...]}` from (b) — appends ONE
+        `impact_surfaces` evidence line.
+     d. `verify-run.sh impact prior-acs <run_dir> --repo <dir> --impact-limit <N>` — up to N prior
+        PASS `ac` lines (any run, any scope, carrying `surfaces`) that intersect this run's surfaces,
+        most-recent-first. For every surface from (b) with ZERO matched prior ACs, plan exactly one
+        shallow smoke check (navigate, assert 2xx + no console/network 5xx, one primary form
+        submission with seed values when the surface is a form).
+     e. Author `<run_dir>/impact-manifest.json` — a JSON array of `{id, text, source, surfaces}`
+        (`id` unique per entry; `source` is `prior_ac:<run_id>/<ac_id>` for a (d) match, `smoke` for a
+        smoke check) — and one `[<id>]`-titled spec per entry at
+        `<run_dir>/impact-specs/<id>.spec.ts`, the same conventions as step 6 (role-based locators,
+        follow-up read after any mutation, the afterEach page-body + non-2xx response attaches). The
+        V7 mutation carve-out and the forbidden payment/logout/account-delete set apply identically.
+     f. `verify-run.sh walk <run_dir> --repo <dir> --scope impact --specs-dir impact-specs --manifest
+        <run_dir>/impact-manifest.json [--base-url <url>]` — records every impact-scope verdict the
+        same PASS/FAIL/BLOCKED way step 8 does for the ticket (exit 3 = harness/no-report, handled the
+        same way); it NEVER produces a step-5-style pause (the AC5 session-expiry override is
+        ticket-only and never runs on an impact-scope walk).
 9. `verify-env.sh reset` when declared → env line {step: reset, …}; then `verify-env.sh stop` →
    env line {step: stop, outcome: pass|fail}. Runs on every path that reaches it (normal completion
    AND a step-8 exit-5 pause) since the app was started at step 3.
