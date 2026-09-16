@@ -2906,7 +2906,7 @@ directories by `run_id`, it never duplicates their contents.
                              # `- [x] <ticket> -> <run_id>  # stale: head moved <old>-><new>` excluded, a FRESH `- [ ] <ticket>` is re-queued
 ## Current
 - item: <ticket path or null> | run_id: <run_id or null> | status: running|paused|done|null
-- pause_reason: needs_auth|env_failed|limit_reached|resume_ambiguous|null
+- pause_reason: needs_auth|session_expired|limit_reached|resume_ambiguous|null
 ## Progress                 # APPEND-ONLY (never rewritten)
 - <ts> picked <ticket> -> run_id <run_id>
 - <ts> <ticket> run_end status=completed PASS:n FAIL:n BLOCKED:n NOT_VERIFIABLE:n
@@ -2929,7 +2929,7 @@ directories by `run_id`, it never duplicates their contents.
 | Value | Meaning |
 |---|---|
 | `running` | The loop is actively processing (or this is the freshly-created queue). |
-| `paused` | Stopped with **work remaining** — always paired with a `pause_reason` in `## Current` (`needs_auth` \| `env_failed` \| `limit_reached` \| `resume_ambiguous`). |
+| `paused` | Stopped with **work remaining** — always paired with a `pause_reason` in `## Current` (`needs_auth` \| `session_expired` \| `limit_reached` \| `resume_ambiguous`). |
 | `done` | Set **only** when every `## Queue` item is checked off (no `- [ ]` items remain) — `remaining` is **COMPUTED**, via `verify-helpers.sh queue-remaining`, never a persisted field. |
 
 ### `## Queue` checklist convention
@@ -2953,7 +2953,7 @@ directories by `run_id`, it never duplicates their contents.
 | `item` | ticket path \| `null` | The in-flight item's ticket path. |
 | `run_id` | string \| `null` | The in-flight item's OWN single-ticket `run_id` — `.supervisor/verify/<run_id>/` is the store this item's evidence lives in. |
 | `status` (item-level) | `running` \| `paused` \| `done` \| `null` | The state of the in-flight item. Distinct from the queue-level `## Status` enum above. |
-| `pause_reason` | `needs_auth` \| `env_failed` \| `limit_reached` \| `resume_ambiguous` \| `null` | Non-null whenever `## Status: paused`; `null` while `running`/`done`. **Deliberately a DIFFERENT enum from `AUTOMATE_RUN`'s `pause_reason`** (`awaiting_merge`/`escalated`/`limit_reached`/`resume_ambiguous`) — a verify pause is not an automate pause; the two engines' enums are never unified (see "Never shares state with `/automate`" below). |
+| `pause_reason` | `needs_auth` \| `session_expired` \| `limit_reached` \| `resume_ambiguous` \| `null` | Non-null whenever `## Status: paused`; `null` while `running`/`done`. **Deliberately a DIFFERENT enum from `AUTOMATE_RUN`'s `pause_reason`** (`awaiting_merge`/`escalated`/`limit_reached`/`resume_ambiguous`) — a verify pause is not an automate pause; the two engines' enums are never unified (see "Never shares state with `/automate`" below). |
 
 ### Reconcile (belief vs truth — `verify-run.sh queue-reconcile-item`)
 

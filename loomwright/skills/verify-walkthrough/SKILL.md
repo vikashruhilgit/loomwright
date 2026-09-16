@@ -301,7 +301,7 @@ shorter rewrite is REFUSED, never silently applied) and `queue-progress-append` 
                              # `- [x] <ticket> -> <run_id>  # stale: head moved <old>-><new>` excluded, a FRESH `- [ ] <ticket>` is re-queued
 ## Current
 - item: <ticket path or null> | run_id: <run_id or null> | status: running|paused|done|null
-- pause_reason: needs_auth|env_failed|limit_reached|resume_ambiguous|null
+- pause_reason: needs_auth|session_expired|limit_reached|resume_ambiguous|null
 ## Progress                 # APPEND-ONLY (never rewritten)
 - <ts> picked <ticket> -> run_id <run_id>
 - <ts> <ticket> run_end status=completed PASS:n FAIL:n BLOCKED:n NOT_VERIFIABLE:n
@@ -391,7 +391,7 @@ optional `<run_id>` argument in both shapes.
 
 A verify queue reads and writes **`.supervisor/verify/` only**. It NEVER reads or writes
 `.supervisor/automate/`, `.supervisor/config.json`, or `.supervisor/state.md` — a verify pause
-(`needs_auth`/`session_expired`/`env_failed`/`limit_reached`/`resume_ambiguous`) is not an automate
+(`needs_auth`/`session_expired`/`limit_reached`/`resume_ambiguous`) is not an automate
 pause (`awaiting_merge`/`escalated`/`limit_reached`/`resume_ambiguous`), and the two engines' Queue
 enums are deliberately NOT unified. Running a verify queue inside an `/automate` tick (if ever wired)
 is an explicit Phase 2 question — **this item forbids it by omission**: no code path here reads

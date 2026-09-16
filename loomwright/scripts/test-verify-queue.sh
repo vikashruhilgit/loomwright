@@ -40,6 +40,11 @@
 #       (D) report a non-"stale" status, proving (D) is not passing vacuously.
 #   (N) never shares state with /automate — `find .supervisor/automate .supervisor/state.md
 #       -newer <marker>` is empty after a full item-processing sequence (arm B's).
+#   (G) queue-reconcile-item paused + not_started branches — driven directly against a hand-built
+#       run dir (mirrors (C)/(D)/(F)): a run dir whose evidence.jsonl's LAST line is a `pause`
+#       (written via the real `pause` subcommand, reason `session_expired`) reconciles to
+#       `{status:"paused", pause_reason:"session_expired"}`; a run dir with NO evidence.jsonl at
+#       all (never preflighted) reconciles to `{status:"not_started", pause_reason:null}`.
 #   (S) static shape — `bash -n` on both changed scripts; `--help` lists the four queue-*
 #       subcommands (verify-helpers.sh) and queue-reconcile-item (verify-run.sh).
 
@@ -361,6 +366,31 @@ chmod +x "$MUTANT"
 mutant_json="$( cd "$TD/repo" && bash "$MUTANT" queue-reconcile-item "$RD1D" --branch main --repo . )"
 mutant_status="$(printf '%s' "$mutant_json" | jq -r .status)"
 [ "$mutant_status" != "stale" ] && ok "(F) mutant fails to detect the moved head (status='$mutant_status') — (D) is not vacuous" || no "(F) mutant still reported stale — the comparison was not actually neutralized"
+
+# ============================================================================
+echo "== (G) queue-reconcile-item: paused (evidence-derived) and not_started branches =="
+TG="$(mktmp)"; stage "$TG"; contract "$TG"
+
+RD1G="$(run_bin "$TG" preflight "$FOLDER/01-a.md" --repo . && last_run_dir)"
+[ -n "$RD1G" ] && [ -d "$RD1G" ] || no "(G) preflight item1 failed: $(cat "$LAST_ERR")"
+
+run_bin "$TG" pause "$RD1G" --reason session_expired
+prc=$?
+[ "$prc" -eq 0 ] || no "(G) pause subcommand failed rc=$prc: $(cat "$LAST_ERR")"
+
+rc_json="$(reconcile "$TG" "$RD1G")"
+status="$(printf '%s' "$rc_json" | jq -r .status)"
+reason="$(printf '%s' "$rc_json" | jq -r .pause_reason)"
+[ "$status" = "paused" ] && ok "(G) reconcile reports status=paused for an evidence-derived pause" || no "(G) status='$status' ($rc_json)"
+[ "$reason" = "session_expired" ] && ok "(G) reconcile echoes pause_reason=session_expired" || no "(G) pause_reason='$reason' ($rc_json)"
+
+NOTSTARTED="$TG/repo/.supervisor/verify/queue-test-not-started"
+mkdir -p "$NOTSTARTED"
+rc_json="$(reconcile "$TG" "$NOTSTARTED")"
+status="$(printf '%s' "$rc_json" | jq -r .status)"
+reason="$(printf '%s' "$rc_json" | jq -r .pause_reason)"
+[ "$status" = "not_started" ] && ok "(G) reconcile reports status=not_started for a run dir with no evidence.jsonl" || no "(G) status='$status' ($rc_json)"
+[ "$reason" = "null" ] && ok "(G) reconcile reports pause_reason=null for not_started" || no "(G) pause_reason='$reason' ($rc_json)"
 
 # ============================================================================
 echo "== (S) static shape: bash -n, --help lists the new subcommands =="
