@@ -21,6 +21,7 @@ No other surface verifies a ticket against the running app: `## Executable Accep
 /verify <ticket-path> --branch <name>        # verify that branch's HEAD (default: the current branch)
 /verify <ticket-path> --cheap                # run the executor on Sonnet (see docs/ARCHITECTURE_CONTRACTS.md §"Cost Profiles")
 /verify --resume <run_id>                    # resume a run that paused for a human sign-in (needs_auth / session_expired)
+/verify <ticket-path> --notify               # POST gate-event webhooks + a desktop banner at needs_auth (see "Notify" below)
 
 # Headless (claude -p) — use the NAMESPACED form; bare /verify is "Unknown command" under detached claude -p:
 claude -p "/loomwright:verify .supervisor/requirements/checkout/01-coupon.md"
@@ -34,6 +35,7 @@ claude -p "/loomwright:verify .supervisor/requirements/checkout/01-coupon.md"
 | `--branch <name>` | No | Branch whose HEAD is recorded on the `run_start` line and diffed against the base for `<run_dir>/diff.stat`. Default: `git branch --show-current`. |
 | `--cheap` | No | Forwarded to the executor spawn as `model: "sonnet"` guidance per `docs/ARCHITECTURE_CONTRACTS.md` §"Cost Profiles". Default (`inherit`) unchanged when absent. |
 | `--resume <run_id>` | No (mutually exclusive with `<ticket-path>`) | Resumes the paused run at `.supervisor/verify/<run_id>` — see "Resume flow" below. Errors, never silently starting a new run, when that dir does not exist. |
+| `--notify` | No | Passthrough flag, never persisted (same convention as `/automate --notify`) — re-pass it on `--resume` to keep notifying a resumed run. Fires `send-webhook.sh --event-type gate` at exactly three events (`needs_auth` pause, first `FAIL`, `run_end`) plus a `notify-desktop.sh` banner at `needs_auth`. See "Notify" below. |
 
 ## Main-thread steps
 
@@ -41,9 +43,9 @@ Every deterministic step is a shell-out; the main thread never re-implements wha
 
 1. **Read the protocol.** `Read("${CLAUDE_PLUGIN_ROOT}/skills/verify-walkthrough/SKILL.md")` — the four verdicts and the carve-out are needed to read the result, not just to produce it.
 
-2. **Preflight (contract → non-prod proof → run dir).** Run in ONE Bash call and capture stdout and the exit status in two statements:
+2. **Preflight (contract → non-prod proof → run dir).** Run in ONE Bash call and capture stdout and the exit status in two statements — append `--notify` when the `/verify` invocation carries it (creates `<run_dir>/.notify-enabled`, read by `verify-helpers.sh`'s notify dispatch — see "Notify" below):
    ```bash
-   out=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/verify-run.sh" preflight <ticket-path> [--branch <name>]); rc=$?
+   out=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/verify-run.sh" preflight <ticket-path> [--branch <name>] [--notify]); rc=$?
    ```
    Then branch on `rc`:
    | `rc` | meaning | action |
@@ -74,6 +76,13 @@ Every deterministic step is a shell-out; the main thread never re-implements wha
 
    If the executor returned without a `VERIFY_RESULT` (turn limit, crash), print `summary.md` as-is and say the block is missing — the evidence lines already written are the checkpoint.
 
+   **Auto-dispatch `/propose --from-verify` on a `completed` / `aborted` run with ≥1 FAIL *or* ≥1 `issue` line** (never on `paused` — the branch above already stopped before reaching this point for a paused run): a run can find zero FAILs and still have carried standalone `issue` lines (propose-from-verify.sh drafts every `issue` line unconditionally, regardless of any AC's verdict), so the trigger must not be FAIL-only or an issue-only run silently never drafts what it otherwise would.
+   ```bash
+   has_draftable=$(jq -c 'select((.event == "ac" and .verdict == "FAIL") or .event == "issue")' "$run_dir/evidence.jsonl" | head -1)
+   [ -n "$has_draftable" ] && bash "${CLAUDE_PLUGIN_ROOT}/scripts/propose-from-verify.sh" "$run_dir"
+   ```
+   This is exactly what `/propose --from-verify <run_id>` does (§`commands/propose.md`) — writing zero or more evidence-carrying drafts under `.supervisor/requirements/proposed/`, never enqueuing anything. `<run_dir>/summary.md`'s `## Proposals` section (derived, computed from `evidence.jsonl` alone) already states how many drafts were EXPECTED before this ever runs; print it alongside the counts row.
+
    **Pause instruction (`status: paused`, either `pause_reason`).** Read the real `storage_state_path` / `base_url` from `bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-verify.sh" --repo <dir>` (never hard-coded) and print exactly:
    ```
    npx playwright codegen --save-storage=<storage_state_path> <base_url>
@@ -89,6 +98,7 @@ Every deterministic step is a shell-out; the main thread never re-implements wha
 A separate entry point — no ticket path, no preflight, no new run dir:
 
 1. `run_dir=.supervisor/verify/<run_id>`. `[ -d "$run_dir" ]` or **STOP** with an error naming the missing dir — never silently start a fresh run under that id. Then guard against resuming a run that already finished (never merely paused): `jq -r 'select(.event=="run_end") | .status' "$run_dir/evidence.jsonl" 2>/dev/null | tail -1` — a non-empty result means a `finish` line was already appended (`completed` or `aborted`) and there is nothing paused to resume; print an error naming the run's already-`<status>` state and **STOP** rather than proceeding into `auth-check` on a finished run (a finished run has no ambiguity to resolve, and re-entering `auth-check` on it would silently re-probe a run nobody paused).
+   If `--notify` was passed to THIS `--resume` invocation, run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/verify-run.sh" notify-enable "$run_dir"` here — `--notify` is a passthrough flag, never persisted (§Parameters), so it must be re-passed on every `--resume` to keep notifying; `preflight` (the only other creator of the marker) is never called on a resume.
 2. Run in ONE Bash call, capturing stdout and the exit status in two statements:
    ```bash
    out=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/verify-run.sh" auth-check "$run_dir" --repo <dir>); rc=$?
@@ -112,7 +122,37 @@ A separate entry point — no ticket path, no preflight, no new run dir:
 | `<run_dir>/acs.json`, `diff.stat` | `verify-run.sh preflight` | the extracted ACs; the branch-vs-base diff summary (advisory) |
 | `<run_dir>/specs/<ac_id>.spec.ts` | the executor | one `[ACn]`-titled spec per verifiable AC (template in the skill) |
 | `<run_dir>/artifacts/<ac_id>/` | `verify-run.sh walk` | screenshots, traces, non-2xx bodies, page body on failure |
-| `<run_dir>/summary.md` | `verify-helpers.sh summary-build` | DERIVED — never hand-edited |
+| `<run_dir>/summary.md` | `verify-helpers.sh summary-build` | DERIVED — never hand-edited; includes a `## Proposals` section stating how many drafts `/propose --from-verify` would write, computed from `evidence.jsonl` alone |
+| `<run_dir>/.notify-enabled` | `verify-run.sh preflight --notify` / `verify-run.sh notify-enable` | marker only (empty file) — presence gates the three notify events below; absence is a silent no-op |
+| `.supervisor/requirements/proposed/verify-<run_id>-*.md` | `propose-from-verify.sh` (auto-dispatched by step 5, or `/propose --from-verify <run_id>`) | one evidence-carrying draft per FAIL `ac` line classified `REAL_BUG` and per `issue` line — never enqueued |
+
+## Notify (`--notify`)
+
+Fires at exactly **three** named events, each guarded to fire **at most once per run** (a resumed
+or retried run cannot re-fire an event that already fired): the `needs_auth` pause, the first
+`FAIL` `ac` line recorded, and `run_end`. `session_expired` pauses do **not** notify — only
+`needs_auth` does, because that is the one that needs a human right now.
+
+Because the first-FAIL and `needs_auth` events must fire from **inside** the per-AC recording
+path (the qa-executor's VERIFY MODE runs `walk` / `auth-check` in a **separate Task-spawned
+process** with no shared shell state with this command's main thread), enablement is a
+**filesystem marker** — `<run_dir>/.notify-enabled` — not an environment variable: both the main
+thread and the executor read the same run dir regardless of process. `verify-helpers.sh`'s
+`evidence-append` is the sole writer of `evidence.jsonl` and is where all three events are
+actually dispatched from (`verify_notify_dispatch`); this command layer only ever creates or
+propagates the marker, never the notification itself.
+
+Each event posts via `${CLAUDE_PLUGIN_ROOT}/scripts/send-webhook.sh --event-type gate --gate-type
+<verify_needs_auth|verify_first_fail|verify_run_end> --context "<run_id, ticket, and derived
+counts>"` — fail-SAFE, always exits 0; `LOOMWRIGHT_WEBHOOK_URL` unset is a silent no-op and the run
+completes unaffected (AC9 — `/verify` has no INIT gate of its own to warn from, unlike
+`/autonomous --notify`). The `needs_auth` event additionally fires
+`${CLAUDE_PLUGIN_ROOT}/scripts/notify-desktop.sh` with a synthetic `Notification`-shaped payload
+(never `PreToolUse[AskUserQuestion]` — `/verify` never calls that tool) so the OS banner fires on a
+standalone `/verify` session too, not only inside a Supervisor/autonomous context. No change to
+`send-webhook.sh`'s payload schema; the three `gate_type` values are documented as their own
+closed set in `docs/TELEMETRY.md` §"Webhook Notifications" without altering the pre-existing
+`phase6_save`/`rubric`/`no_rubric`/`adjudication` table.
 
 Where each verdict may come from — `PASS` / `FAIL` only from `walk`'s reporter ingest, `NOT_VERIFIABLE` / `BLOCKED` from `verify-run.sh verdict` — is documented in `docs/RESULT_SCHEMAS.md` §VERIFY_RESULT; `verify-run.sh verdict … PASS` is refused (`pass_requires_observation`).
 
@@ -128,4 +168,5 @@ Where each verdict may come from — `PASS` / `FAIL` only from `walk`'s reporter
 - `/qa-executor` — the full discovery-driven L1 protocol (`--verify` is its narrow mode)
 - `${CLAUDE_PLUGIN_ROOT}/skills/verify-walkthrough/SKILL.md` — the protocol authority
 - `docs/RESULT_SCHEMAS.md` §VERIFY_ENV / §VERIFY_EVIDENCE / §VERIFY_RESULT — the three schemas a run touches
+- `/propose --from-verify <run_id>` (`${CLAUDE_PLUGIN_ROOT}/scripts/propose-from-verify.sh`) — turns this run's FAIL/issue lines into drafts; auto-dispatched at step 5 on ≥1 FAIL or ≥1 issue line
 - `/agent-help` — list all commands

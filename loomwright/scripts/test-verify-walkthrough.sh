@@ -45,6 +45,10 @@
 #   (S)    static shape          → `bash -n`; --help lists the subcommands; verify-run.sh never writes
 #                                  evidence.jsonl itself (only through evidence-append); no browser-
 #                                  harness product token (`grep -cE 'Claude_Browser|computer-use|mcp__'` = 0)
+#   (NOTIFY) --notify / notify-enable → `preflight --notify` creates `<run_dir>/.notify-enabled`,
+#                                  plain `preflight` does NOT; `notify-enable <run_dir>` creates the
+#                                  marker on an existing run (idempotent) and refuses a missing/invalid
+#                                  run dir with exit 2 [run_dir_missing]; --help lists notify-enable
 
 set -uo pipefail
 
@@ -374,6 +378,45 @@ run_bin "$T4" preflight "$REQ" --repo .; rcB=$?; RDB="$(last_run_dir)"
 [ "$(ev_lines "$RDA")" -eq 2 ] && [ "$(ev_lines "$RDB")" -eq 2 ] && ok "(RUN) each store holds exactly its own two lines (no merge)" || no "(RUN) A=$(ev_lines "$RDA") B=$(ev_lines "$RDB") lines"
 [ "$(calls_count "$T4")" -eq 2 ] && ok "(RUN) exactly one assert-non-prod call per preflight" || no "(RUN) calls: $(cat "$T4/calls.log")"
 
+# ============================================================================
+echo "== (NOTIFY) preflight --notify / notify-enable: .notify-enabled marker =="
+TN="$(mktmp)"; stage "$TN"; contract "$TN" true
+run_bin "$TN" preflight "$REQ" --repo . --notify
+rc=$?
+RDN="$(last_run_dir)"
+[ "$rc" -eq 0 ] && [ -n "$RDN" ] && [ -f "$RDN/.notify-enabled" ] \
+  && ok "(NOTIFY) preflight --notify creates <run_dir>/.notify-enabled" \
+  || no "(NOTIFY) preflight --notify: rc=$rc RDN=$RDN exists=$([ -f "$RDN/.notify-enabled" ] && echo yes || echo no)"
+
+sleep 1   # run-id is second-resolution; keep the plain-preflight control in its own run dir
+run_bin "$TN" preflight "$REQ" --repo .
+rc=$?
+RDNB="$(last_run_dir)"
+[ "$rc" -eq 0 ] && [ -n "$RDNB" ] && [ ! -f "$RDNB/.notify-enabled" ] \
+  && ok "(NOTIFY) plain preflight (no --notify) does NOT create .notify-enabled" \
+  || no "(NOTIFY) plain preflight: rc=$rc RDNB=$RDNB exists=$([ -f "$RDNB/.notify-enabled" ] && echo yes || echo no)"
+
+run_bin "$TN" notify-enable "$RDNB"
+rc=$?
+[ "$rc" -eq 0 ] && [ -f "$RDNB/.notify-enabled" ] \
+  && ok "(NOTIFY) notify-enable <run_dir> creates the marker on an existing run dir" \
+  || no "(NOTIFY) notify-enable on existing run dir: rc=$rc exists=$([ -f "$RDNB/.notify-enabled" ] && echo yes || echo no)"
+
+run_bin "$TN" notify-enable "$RDNB"
+rc=$?
+[ "$rc" -eq 0 ] && ok "(NOTIFY) notify-enable is idempotent — touching an already-enabled run is a no-op" \
+  || no "(NOTIFY) notify-enable re-run: rc=$rc"
+
+run_bin "$TN" notify-enable "$TN/repo/.supervisor/verify/no-such-run"
+rc=$?
+[ "$rc" -eq 2 ] && grep -qF '[run_dir_missing]' "$LAST_ERR" \
+  && ok "(NOTIFY) notify-enable on a missing run dir → exit 2 [run_dir_missing]" \
+  || no "(NOTIFY) notify-enable missing run dir: rc=$rc err=$(cat "$LAST_ERR")"
+
+run_bin "$TN" notify-enable
+rc=$?
+[ "$rc" -eq 2 ] && ok "(NOTIFY) notify-enable with no run_dir → usage exit 2" || no "(NOTIFY) notify-enable no-arg: rc=$rc err=$(cat "$LAST_ERR")"
+
 # Item-04 auth-check / first-unverdicted arms below are tagged (I4-ACn) — item 03 already owns the
 # bare (AC1)/(AC2)/(AC3)/(AC6) tags above for ITS OWN acceptance criteria, and the sandboxed
 # (AC11i) self-check greps the literal substring `(AC3)` to prove no browser arm ran on a failed
@@ -488,7 +531,7 @@ out="$(bash "$T11c/bin/verify-helpers.sh" first-unverdicted "$RD12c")"; rc=$?
 echo "== (S) static shape of verify-run.sh =="
 bash -n "$RUNNER" 2>"$LAST_ERR" && ok "(S) bash -n" || no "(S) bash -n: $(cat "$LAST_ERR")"
 bash "$RUNNER" --help > "$LAST_OUT" 2>&1
-for sub in acs preflight walk verdict finish; do
+for sub in acs preflight walk verdict finish notify-enable; do
   grep -qE "^  $sub " "$LAST_OUT" && ok "(S) --help lists $sub" || no "(S) --help does not list $sub"
 done
 writes="$(grep -cE '>>?[[:space:]]*"?\$[A-Za-z_{}]*/?evidence\.jsonl|evidence\.jsonl"?[[:space:]]*<' "$RUNNER")"
@@ -1154,6 +1197,20 @@ grep -qF -- 'sign in, close the window' "$VERIFY_CMD" && ok "(AC4) the pause ins
 grep -qF -- '/verify --resume <run_id>' "$VERIFY_CMD" && ok "(AC4) the pause instruction names /verify --resume <run_id>" || no "(AC4) resume line missing from the pause instruction"
 n="$(grep -cF -- 'pause_reason' "$VERIFY_CMD")"
 [ "$n" -ge 1 ] && ok "(AC4) commands/verify.md reads VERIFY_RESULT.pause_reason ($n mentions)" || no "(AC4) commands/verify.md never mentions pause_reason"
+
+echo "== (AC-propose) commands/verify.md step 5 auto-dispatch trigger fires on issue-only runs too =="
+# propose-from-verify.sh drafts every `issue` line unconditionally, regardless of any AC's
+# verdict, so a run with 0 FAILs and >=1 issue line WOULD still produce a draft - the step 5
+# trigger must not be FAIL-only, or it would silently never invoke the script for that run.
+grep -qF -- '.event == "issue"' "$VERIFY_CMD" \
+  && ok "(AC-propose) the auto-dispatch jq trigger also matches issue-only lines" \
+  || no "(AC-propose) the auto-dispatch jq trigger checks only FAIL ac lines - an issue-only run never auto-dispatches propose-from-verify.sh"
+grep -qF -- '.event == "ac" and .verdict == "FAIL"' "$VERIFY_CMD" \
+  && ok "(AC-propose) the trigger still matches FAIL ac lines (the issue-only fix did not drop the original arm)" \
+  || no "(AC-propose) the FAIL ac arm of the auto-dispatch trigger is missing from commands/verify.md"
+grep -qF -- 'propose-from-verify.sh" "$run_dir"' "$VERIFY_CMD" \
+  && ok "(AC-propose) the trigger still dispatches propose-from-verify.sh against \$run_dir" \
+  || no "(AC-propose) the propose-from-verify.sh dispatch line is missing from commands/verify.md"
 
 echo "== (AC8) agents/qa-executor.md auth-check/resume/pause wiring =="
 grep -qF -- 'verify-run.sh auth-check <run_dir> --repo <dir>' "$AGENT" && ok "(AC8) VERIFY MODE step shells out to verify-run.sh auth-check" || no "(AC8) auth-check shell-out missing from agents/qa-executor.md"

@@ -2579,6 +2579,8 @@ written.
 | `evidence.jsonl` | `verify-helpers.sh evidence-append` — ONE `>>` write per validated line, never read-modify-write | one fact per line, this schema |
 | `rejected.jsonl` | `evidence-append` | every refused input, wrapped (shape below) — valid JSONL even when the input was not |
 | `artifacts/<ac_id>/` | the walkthrough executor (item 03) | Playwright screenshots / traces / response bodies, referenced from `ac.artifacts[]` by path relative to `<run_dir>/` |
+| `.notify-enabled` | `verify-run.sh preflight --notify` / `verify-run.sh notify-enable` | presence-only marker — cross-process signal telling the Task-spawned executor that `--notify` was passed (the flag itself is parsed by the `/verify` main thread, a separate process) |
+| `.notified-needs_auth` / `.notified-first_fail` / `.notified-run_end` | `verify-helpers.sh evidence-append`'s `verify_notify_once` | presence-only, one per named event — guards each of the three `--notify` events (§ below) to fire at most once per run |
 | `summary.md` | `verify-helpers.sh summary-build` — regenerated on EVERY append, atomic temp + `mv` | **DERIVED** from the lines; never hand-edited (an edit is overwritten on the next append) |
 | `run.md` | item 07 (named here so the layout is complete; not created by the store) | the run's narrative report |
 
