@@ -153,6 +153,34 @@ Exits with error description and resume command
 - State is always written to `.supervisor/state.md` before exit
 - Job file moved to `failed/` on unrecoverable errors
 
+### Children-unsettled FINALIZE gate (v15.80.0)
+
+```
+Phase 4 FINALIZE pre-merge safety gate, Point 5 (children settled)
+    ↓
+scripts/check-children-settled.sh --all finds ≥1 agent_identity row
+with NO matching terminal row (subtask_complete / token_ledger /
+agent_lifecycle: failed) for that agent_id
+    ↓
+Interactive session → AskUserQuestion (proceed anyway / investigate / abort)
+    OR
+--non-interactive / CI / stdin-not-a-TTY → FAIL CLOSED:
+    SUPERVISOR_RESULT.status: failed
+    SUPERVISOR_RESULT.error: "children_unsettled: {unsettled_agent_ids}"
+    ↓
+Do NOT merge. Job stays in-progress/ (or moves to failed/, same as any
+other pre-merge safety-gate failure above).
+```
+
+**Escape hatch:** `--skip-children-check` short-circuits this ONE checklist point as a deliberate choice — `Context-Keeper(operation: record_decision, phase: FINALIZE, decision: "user_skipped_children_check")`, and the run summary carries `children_check: skipped`. Per CLAUDE.md §"Failure-Mode Invariants", a fail-closed gate needs an explicit escape; there is no silent-proceed path.
+
+**A session with zero `agent_identity` rows** (pre-2026-09-07 logs, or a session that never spawned a Task) reports `children_check: no_identity_rows` and PASSES — nothing to check, never a false `settled`.
+
+**Rules:**
+- Same fail-closed shape as `preflight_overlap_detected` (above, Phase 1.5) — interactive soft-gate, non-interactive hard-fail, one named escape-hatch flag.
+- This is the SECOND, independent completion condition alongside `verify-provides.sh`'s disk check (see `docs/RESULT_SCHEMAS.md` §"Completion authority join") — the per-subtask analogue (`provides_present_agent_unsettled`) is a transient retry state, NOT an escalation; only the per-SESSION aggregate at FINALIZE escalates.
+- Full join semantics, script usage, and the `ended_without_result` resume-surfacing convention: `docs/RESULT_SCHEMAS.md` §"Completion authority join" and `skills/async-orchestration/SKILL.md` §"Phase 4 FINALIZE procedure" step 1 Point 5.
+
 ---
 
 ## Inter-Subtask Gap / Scope Expansion

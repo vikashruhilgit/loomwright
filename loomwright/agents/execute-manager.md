@@ -427,6 +427,65 @@ for iteration in 1..max_iterations:
         # (see record_worker_result below) but never blocks completion — a
         # legitimate cross-cutting edit with no live sibling claim is not an error.
 
+      # --- Terminal-lifecycle-event join (completion authority, v15.80.0) — a
+      # SECOND, INDEPENDENT condition alongside the outputs_verified disk gate
+      # above; do NOT fold into it or reuse its record_decision strings.
+      # (.supervisor/requirements/orca-derived/02-completion-authority.md).
+      # `provides` present ON DISK (the gate above) proves the files exist; it
+      # says NOTHING about whether the agent that was supposed to write them
+      # ever actually terminated — a partial/interrupted run, a stale artifact,
+      # or a still-running worker whose files land early would otherwise be
+      # marked complete regardless. Reached ONLY when the code above did NOT
+      # already `skip_to_next_iteration` (missing on disk, unverifiable-and-
+      # unroutable, or the Step 1 partial-carve-out) — i.e. disk already says
+      # N/N present for {subtask_id}.
+      settle = Bash(`bash "${CLAUDE_PLUGIN_ROOT}/scripts/check-children-settled.sh" --log {session_log_path} --agent-id {worker_id}`)
+      tool_calls += 1
+      # {session_log_path} = `.supervisor/logs/{session_id}.jsonl` at the main
+      # checkout (`git worktree list --porcelain` first entry — the SAME file
+      # `emit-progress-event.sh`/`emit-agent-identity.sh` write to), using the
+      # session_id already recorded in this run's state file. {worker_id} is
+      # the SAME Task-returned id already tracked for this worker (the value
+      # `emit-agent-identity.sh` captured as `agent_id` on this worker's spawn).
+      # (Naming note: the source requirement, orca-derived/02-completion-
+      # authority.md, drafted this mechanism under the working name
+      # `outputs_verified_contradicted`; the decision string this gate actually
+      # records below is `provides_present_agent_unsettled`, kept distinct from
+      # `provides_mismatch` per that requirement's own corrected problem
+      # statement — see docs/RESULT_SCHEMAS.md §"Completion authority join".)
+      if settle.status == "unsettled":
+        # NOT an error, NOT an escalation — the expected transient state for a
+        # worker whose files land before its final result message does. Do NOT
+        # mark this subtask complete; do NOT call record_worker_result yet.
+        # Re-poll: this worker is left tracked as running so the NEXT iteration
+        # re-checks both the disk gate and this join.
+        Task(Context-Keeper, operation: record_decision, phase: EXECUTE,
+             decision: "provides_present_agent_unsettled: provides N/N present on disk, no terminal lifecycle row yet for agent_id={worker_id} ({subtask_id})")
+        tool_calls += 1
+        skip_to_next_iteration
+      elif settle.status == "unverifiable":
+        # `jq_missing` / `bad_args` — the join itself could not run. Fail
+        # CLOSED the same way an unroutable verify-provides.sh `unverifiable`
+        # does: do not silently treat an unrun check as a pass.
+        emit EXECUTE_CHECKPOINT (same shape as the disk gate above) with
+          missing_outputs: [{item: "terminal_lifecycle_event: {worker_id}", producing_subtask: subtask_id,
+                             check_run: "check-children-settled.sh --agent-id {worker_id} → unverifiable/{settle.reason} (exit 0)"}]
+          reason: "check-children-settled.sh: unverifiable ({settle.reason}) for agent_id={worker_id} ({subtask_id})"
+        skip_to_next_iteration
+      # settle.status == "settled" (provides on disk present AND a terminal row
+      # exists) → BOTH conditions now hold; proceed exactly as pre-this-change.
+      if settle.ended_without_result == true:
+        # This worker's terminal row was a `subtask_complete` with
+        # `result_block_present: false` or an `agent_lifecycle: failed` row —
+        # log it with the agent_id VISIBLE so an operator can SendMessage it to
+        # resume (memory `subagents-hit-turn-limit-resume-via-sendmessage`)
+        # instead of re-running the subtask cold. Record-only: this item only
+        # SURFACES the id, it does not implement the resume, and it does NOT
+        # block completion — record_worker_result below still runs unchanged.
+        Task(Context-Keeper, operation: record_decision, phase: EXECUTE,
+             decision: "ended_without_result: agent_id={worker_id} settled via a no-result terminal row ({subtask_id}) — resumable via SendMessage")
+        tool_calls += 1
+
       # Record worker result (direct call — de-batched, one call per event;
       # the retired batching wrapper is gone, this call is not).
       Task(
