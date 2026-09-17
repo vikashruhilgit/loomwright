@@ -30,6 +30,12 @@
 #   18. heartbeat: debounce key is per-agent_id, not per-invocation-context —
 #       two DIFFERENT agent_ids are not debounced against each other
 #   19. unwritable log dir -> exit 0, no log
+#   20. heartbeat: Task-matcher PostToolUse shape (real committed fixture,
+#       posttooluse-task-1.json — NO top-level agent_id) derives its debounce
+#       key from nested `.tool_response.agentId`, not "main"
+#   21. heartbeat: two DIFFERENT real agents (one Bash/Write/Edit-shaped
+#       top-level agent_id, one Task-shaped tool_response.agentId) are NOT
+#       collapsed into the same shared debounce bucket
 #
 # EXIT: 0 on full pass, 1 on any failed assertion.
 
@@ -338,6 +344,49 @@ if [ -f "$REPO19/.supervisor/logs/sid-case19.jsonl" ]; then
   no "case19 unexpectedly wrote a log despite unwritable dir"
 else
   ok "case19 no log written (unwritable log dir)"
+fi
+
+echo "== 20. heartbeat: Task-matcher fixture shape derives debounce key from tool_response.agentId =="
+FIXTURE_TASK="$SCRIPT_DIR/progress-event-fixtures/spawn-probe-2026-09-02/posttooluse-task-1.json"
+REPO20="$(init_repo)"
+if [ ! -f "$FIXTURE_TASK" ]; then
+  no "case20 fixture file not found: $FIXTURE_TASK"
+else
+  OUT20="$(run_lifecycle "$REPO20" "$FIXTURE_TASK" heartbeat)"
+  assert_eq "case20 exit 0" "0" "$(get_rc "$OUT20")"
+  DEBOUNCE_FILE20="$REPO20/.supervisor/logs/.lifecycle-heartbeat-debounce-a665151ef7efc0b49"
+  if [ -f "$DEBOUNCE_FILE20" ]; then
+    ok "case20 debounce key derived from nested tool_response.agentId (a665151ef7efc0b49)"
+  else
+    no "case20 debounce marker not keyed by tool_response.agentId (expected $DEBOUNCE_FILE20)"
+  fi
+  MAIN_DEBOUNCE20="$REPO20/.supervisor/logs/.lifecycle-heartbeat-debounce-main"
+  if [ -f "$MAIN_DEBOUNCE20" ]; then
+    no "case20 debounce key incorrectly fell back to shared 'main' bucket despite tool_response.agentId being present (no top-level agent_id on this fixture)"
+  else
+    ok "case20 did not fall back to the shared 'main' bucket"
+  fi
+fi
+
+echo "== 21. heartbeat: two DIFFERENT real Task-spawned agents are not collapsed into one shared 'main' debounce bucket =="
+REPO21="$(init_repo)"
+if [ ! -f "$FIXTURE_TASK" ]; then
+  no "case21 fixture file not found: $FIXTURE_TASK"
+else
+  P21_OTHER="$PAYLOAD_DIR/p21-other.json"
+  # A SECOND Task-matcher PostToolUse shape (same session, different real
+  # spawned agent) — no top-level agent_id, per this matcher's actual shape.
+  # This is the reviewer-reproduced bug: BEFORE the fix, both this payload and
+  # the committed fixture fall back to the shared "main" key (neither has a
+  # top-level agent_id) and collide into ONE debounce bucket even though they
+  # are two genuinely different agents. AFTER the fix, each derives its own
+  # key from its own nested tool_response.agentId.
+  jq -n '{session_id:"fixture-spawn-probe-session-0001", hook_event_name:"PostToolUse", tool_name:"Agent", tool_response:{agentId:"b21-different-real-agent", status:"completed"}}' > "$P21_OTHER"
+  run_lifecycle "$REPO21" "$FIXTURE_TASK" heartbeat >/dev/null
+  run_lifecycle "$REPO21" "$P21_OTHER" heartbeat >/dev/null
+  LOG21="$REPO21/.supervisor/logs/fixture-spawn-probe-session-0001.jsonl"
+  LINES21="$( [ -f "$LOG21" ] && wc -l < "$LOG21" | tr -d '[:space:]' || echo 0)"
+  assert_eq "case21 two different real Task-spawned agents each yield their own heartbeat line (not collapsed into one shared 'main' bucket)" "2" "$LINES21"
 fi
 
 echo "== real repo .supervisor/logs untouched =="

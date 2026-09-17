@@ -174,7 +174,25 @@ REALBASH="$(command -v bash)"
 PAYLOAD_DIR="$(mktemp -d)"
 CLEANUP_DIRS=("$PAYLOAD_DIR")
 CLEANUP_WORKTREES=()  # "repo_root|worktree_path" pairs
+CLEANUP_RENAMES=()  # "current_path|restore_to_path|backup_path" triples — a
+                     # test that renames a REAL tracked file to simulate a
+                     # failure registers the pending restore here so an
+                     # interrupt (INT/TERM) mid-test still restores the file,
+                     # same as CLEANUP_DIRS/CLEANUP_WORKTREES. Processed BEFORE
+                     # CLEANUP_DIRS so a backup_path living under a
+                     # CLEANUP_DIRS-managed scratch dir is still available.
 cleanup() {
+  local rn
+  for rn in "${CLEANUP_RENAMES[@]:-}"; do
+    [ -n "$rn" ] || continue
+    local cur="${rn%%|*}" rest="${rn#*|}"
+    local dest="${rest%%|*}" backup="${rest#*|}"
+    if [ -f "$cur" ]; then
+      mv "$cur" "$dest" 2>/dev/null || true
+    elif [ ! -f "$dest" ] && [ -n "$backup" ] && [ -f "$backup" ]; then
+      cp "$backup" "$dest" 2>/dev/null || true
+    fi
+  done
   local wt
   for wt in "${CLEANUP_WORKTREES[@]:-}"; do
     [ -n "$wt" ] || continue
@@ -1538,15 +1556,24 @@ assert_eq "case41c result_block_present key ABSENT (no last_assistant_message at
 # temporarily rename result_block_parser.py so the import fails.
 RBP="$SCRIPT_DIR/result_block_parser.py"
 RBP_BAK="$PAYLOAD_DIR/result_block_parser.py.bak"
+RBP_HIDDEN="$RBP.hidden-for-test"
 if [ -f "$RBP" ]; then
   cp "$RBP" "$RBP_BAK"
-  mv "$RBP" "$RBP.hidden-for-test"
+  mv "$RBP" "$RBP_HIDDEN"
+  # Register the pending restore in the shared cleanup() trap BEFORE doing
+  # anything else — if this process is interrupted (INT/TERM) anywhere between
+  # here and the `mv` back below, EXIT still fires cleanup(), which restores
+  # the tracked file from $RBP_HIDDEN (or, if that itself is gone, from the
+  # $RBP_BAK safety copy). Without this, an interrupt mid-test left the
+  # tracked file permanently renamed AND deleted the one fallback (CLEANUP_DIRS
+  # removes $PAYLOAD_DIR, which held $RBP_BAK, on the very same trap).
+  CLEANUP_RENAMES+=("$RBP_HIDDEN|$RBP|$RBP_BAK")
   REPO41D="$(init_repo "feature/case41d")"
   P41D="$PAYLOAD_DIR/p41d.json"
   jq -n '{session_id:"sid-case41d", agent_id:"a41d", agent_type:"loomwright:worker",
           last_assistant_message:"no fence here either"}' > "$P41D"
   OUT41D="$(run_emitter "$REPO41D" "$P41D")"
-  mv "$RBP.hidden-for-test" "$RBP"
+  mv "$RBP_HIDDEN" "$RBP"
   assert_eq "case41d(mutation) exit 0 even with detection module missing" "0" "$(get_rc "$OUT41D")"
   LINE41D="$(tail -1 "$REPO41D/.supervisor/logs/sid-case41d.jsonl" 2>/dev/null)"
   assert_eq "case41d(mutation) result_block_present key OMITTED when detection unavailable (never guessed false)" \

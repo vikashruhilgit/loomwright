@@ -119,7 +119,15 @@ esac
 # beyond the jq probe below, and the bound must hold even when the run cannot
 # be resolved at all.
 if [ "$LIFECYCLE_SUBCOMMAND" = "heartbeat" ]; then
-  AGENT_ID_RAW="$(printf '%s' "$INPUT" | jq -r '.agent_id // empty' 2>/dev/null || true)"
+  # This ONE code path serves three different PostToolUse matchers
+  # (Bash|Write|Edit fire inside a subagent's OWN tool call and carry the
+  # correct id at top-level `.agent_id`; Task fires on the SPAWN action
+  # completing and carries the newly-spawned child's id only at nested
+  # `.tool_response.agentId` — see emit-agent-identity.sh, registered on the
+  # same Task matcher, for the identical precedent). Try the Task shape
+  # first, then fall back to the top-level field, so all three matchers
+  # derive the correct debounce key through one shared jq call.
+  AGENT_ID_RAW="$(printf '%s' "$INPUT" | jq -r 'if (.tool_response.agentId | type) == "string" then .tool_response.agentId elif (.agent_id | type) == "string" then .agent_id else empty end' 2>/dev/null || true)"
   AGENT_ID_KEY="$(printf '%s' "$AGENT_ID_RAW" | tr -cd 'A-Za-z0-9_-' || true)"
   [ -n "$AGENT_ID_KEY" ] || AGENT_ID_KEY="main"
 

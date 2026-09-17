@@ -963,13 +963,17 @@ key: whether that text contains a `WORKER_RESULT` fence, using the exact same de
 a string, or whose fence-scan raises for any reason (e.g. `result_block_parser.py` unavailable), OMITS
 the key entirely (a detection-FAILED case, never a guessed `false`); only an actual scan may assert
 `false`. A reader derives `ended_without_result` from `result_block_present: false` on a
-`subtask_complete` (worker) or `token_ledger` (other roles) row, and `unknown` — **never** either
-terminal state — when the key is absent (pre-v15.79.0 lines, or no `last_assistant_message` in the
-payload at all).
+`subtask_complete` (worker) row, and `unknown` — **never** either terminal state — when the key is
+absent (pre-v15.79.0 lines, or no `last_assistant_message` in the payload at all). The equivalent
+derivation over a `token_ledger` (other roles) row is a **forward-reference to unshipped emitter
+work, not current behavior**: this change wires `result_block_present` into
+`emit-progress-event.sh`'s `subtask_complete` path only — `emit-token-ledger.sh` was NOT touched and
+never writes this field, so no `token_ledger` row can support this derivation yet.
 
 **Reader-derived states (NOT written here — documented for completeness, not implemented by this
 schema section):** `stalled` = the newest `working` row for an `agent_id` is older than a reader's own
-staleness threshold; `ended_without_result` = a terminal row (`subtask_complete`/`token_ledger`) for
+staleness threshold; `ended_without_result` = a terminal row (`subtask_complete` today; `token_ledger`
+once `emit-token-ledger.sh` gains the same field — see the forward-reference note above) for
 that `agent_id` whose `result_block_present` is `false` (absent ⇒ `unknown`, never either terminal
 state). Spawn time for either derivation comes from the EXISTING `agent_identity.recorded_at` field
 (that row deliberately carries no `ts` — see `emit-agent-identity.sh`'s header note). Building
