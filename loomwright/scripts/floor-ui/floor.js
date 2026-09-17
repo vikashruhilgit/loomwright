@@ -1468,6 +1468,57 @@
     return li;
   }
 
+  /* GROUPING BY DERIVED lifecycle.state - AC2/AC3 of the floor-attention-and-feed item. Four
+   * visible groups plus a fifth, explicit `unknown` label; `unknown` and `quiet` read almost
+   * identically to a glance ("nothing recent") and are DELIBERATELY never folded into one
+   * another - a lane with NO lifecycle evidence (no `lifecycle` key at all) is a different
+   * fact from a lane whose lifecycle went stale, and this is the single most important
+   * invariant the source brief names. Every heading states its own derivation rule in words
+   * (mirroring this file's "state the rule where it's shown" convention), so the grouping is
+   * legible without reading a comment.
+   */
+  var LANE_GROUP_ORDER = ['needs-you', 'working', 'done', 'quiet', 'unknown'];
+  var LANE_GROUP_LABEL = {
+    'needs-you': 'Needs you — last recorded lifecycle state is waiting or failed',
+    'working': 'Working — last recorded lifecycle state is working (a heartbeat or a fresh event)',
+    'done': 'Done — a terminal event recorded a result (result_block_present: true)',
+    'quiet': 'Quiet — a lifecycle was recorded for this lane at some point, but nothing recent maps to waiting, working, failed or done',
+    'unknown': 'Unknown — no lifecycle row was ever recorded for this lane at all (this is NOT the same fact as Quiet, and is never shown as Quiet)'
+  };
+
+  /* A row with no `lifecycle` object, or one whose `state` is not a string, is `unknown` by
+   * construction - never guessed into `quiet`. A `state` value outside the five this
+   * projection ever writes is ALSO `unknown` rather than silently dropped, so a future,
+   * unrecognized value fails visibly instead of vanishing into whichever group happens to
+   * come last. */
+  function laneGroup(r) {
+    var lc = r && r.lifecycle;
+    if (!lc || typeof lc !== 'object' || typeof lc.state !== 'string') { return 'unknown'; }
+    if (lc.state === 'waiting' || lc.state === 'failed') { return 'needs-you'; }
+    if (lc.state === 'working') { return 'working'; }
+    if (lc.state === 'done') { return 'done'; }
+    if (lc.state === 'quiet') { return 'quiet'; }
+    return 'unknown';
+  }
+
+  var groupHeaderEls = {};
+  /* Real heading semantics, mirroring how `.rules-category` builds its own sub-headings
+   * (search this file for `.rules-category`): an actual `<h3>` carries the label text, so a
+   * screen reader can navigate between lane groups by heading exactly as it already can between
+   * rule categories. It is nested inside the `<li>` rather than appended as a sibling because
+   * `#lanes` is a `<ul>` - an `<h3>` may not be a direct child of a list, but a list item may
+   * contain one. The `<li>` keeps its class (and so its border/margin layout); the heading's own
+   * typography is set on the nested `h3` selector in floor.css. */
+  function buildGroupHeader(g) {
+    var li = document.createElement('li');
+    li.className = 'lane-group-header';
+    li.setAttribute('data-group', g);
+    var h3 = document.createElement('h3');
+    h3.textContent = LANE_GROUP_LABEL[g] || g;
+    li.appendChild(h3);
+    return li;
+  }
+
   function renderLanes(d) {
     var host = el('lanes');
     if (!host) { return 0; }
@@ -1475,10 +1526,33 @@
     var split = laneSplit(d, gen);
     var rows = split.rows, i, r, id, li;
     var seen = {};
+    var seenGroups = {};
 
+    /* Bucket the ALREADY-SORTED rows by derived group, preserving within-group order (the
+     * existing freshness sort from laneSplit) - grouping never re-sorts. The fallback id for
+     * an untyped row is still computed from the row's position in the FLAT, ungrouped list, so
+     * it is identical to what it was before grouping existed and stays stable across renders. */
+    var buckets = {}, gi;
+    for (gi = 0; gi < LANE_GROUP_ORDER.length; gi++) { buckets[LANE_GROUP_ORDER[gi]] = []; }
     for (i = 0; i < rows.length; i++) {
       r = rows[i] || {};
       id = String(r.agent_id || ('row-' + i));
+      buckets[laneGroup(r)].push({ r: r, id: id });
+    }
+
+    for (gi = 0; gi < LANE_GROUP_ORDER.length; gi++) {
+      var g = LANE_GROUP_ORDER[gi];
+      var grows = buckets[g];
+      /* EMPTY GROUPS ARE OMITTED FROM THE DOM ENTIRELY - never a header with zero rows. */
+      if (!grows.length) { continue; }
+      seenGroups[g] = true;
+      var gh = groupHeaderEls[g];
+      if (!gh) { gh = buildGroupHeader(g); groupHeaderEls[g] = gh; }
+      host.appendChild(gh);
+
+    for (var gj = 0; gj < grows.length; gj++) {
+      r = grows[gj].r;
+      id = grows[gj].id;
       seen[id] = true;
 
       li = laneEls[id];
@@ -1592,11 +1666,20 @@
       li.querySelector('[data-role="shuttle"]').style.transform =
         'translateX(' + (shuttleStep[id] * 82 / 5) + '%)';
     }
+    }
 
     for (var k in laneEls) {
       if (Object.prototype.hasOwnProperty.call(laneEls, k) && !seen[k]) {
         if (laneEls[k].parentNode) { laneEls[k].parentNode.removeChild(laneEls[k]); }
         delete laneEls[k];
+      }
+    }
+    /* A group with zero rows this render is removed the same way a vanished lane is - never
+     * left behind as a header with nothing under it. */
+    for (var gk in groupHeaderEls) {
+      if (Object.prototype.hasOwnProperty.call(groupHeaderEls, gk) && !seenGroups[gk]) {
+        if (groupHeaderEls[gk].parentNode) { groupHeaderEls[gk].parentNode.removeChild(groupHeaderEls[gk]); }
+        delete groupHeaderEls[gk];
       }
     }
 
@@ -1634,6 +1717,117 @@
     }
     n.textContent = bits.join(' · ');
   }
+
+  /* THE FEED'S UNREAD STATE, persisted with THE SAME sessionStorage-wrapped-in-try/catch,
+   * per-tab pattern this file already uses for the page token (TOKEN_STORE_KEY above) -
+   * deliberately not a second, inconsistent mechanism. `feedSeenTs` is the newest feed-item
+   * `ts` (epoch seconds) the viewer has marked read; every feed row NEWER than it is unread.
+   * `null` means "nothing has ever been marked read in this tab", which is why a brand-new tab
+   * - a fresh sessionStorage, per the browser's own per-tab lifetime - reads every row as
+   * unread: the same "empty is a legitimate state, not an error" reasoning the token already
+   * documents. A RELOAD of this same tab keeps the stored value, so unread survives it. */
+  var FEED_SEEN_KEY = 'loomwright.floor.feed.lastSeenTs';
+  function storedFeedSeenTs() {
+    var raw;
+    try { raw = window.sessionStorage.getItem(FEED_SEEN_KEY); } catch (e) { return null; }
+    var n = raw === null ? NaN : parseInt(raw, 10);
+    return isFinite(n) ? n : null;
+  }
+  function storeFeedSeenTs(v) {
+    try { window.sessionStorage.setItem(FEED_SEEN_KEY, String(v)); } catch (e) { /* memory-only, as before */ }
+  }
+  var feedSeenTs = storedFeedSeenTs();
+  /* The data the LAST render used, held only so the "mark read" click below can re-render
+   * without a second fetch - no new timer, no new network call, matching this file's one-poll
+   * discipline. */
+  var lastFeedData = null;
+
+  /* The seven feed-worthy event types this page will show a label for, and nothing else -
+   * `token_ledger` is never in this list (the projector already excludes it from `feed[]`
+   * entirely; this is a second, redundant refusal in case a future projector ever changes
+   * that, so the page itself never renders a `token_ledger` row even if handed one). */
+  var FEED_EVENT_LABEL = {
+    subtask_complete: 'worker ended',
+    agent_lifecycle: 'lifecycle',
+    worker_checkpoint: 'checkpoint',
+    pr_created: 'PR created',
+    self_heal_iteration: 'self-heal iteration',
+    review_heal_done: 'review-heal done',
+    autonomous_done: 'autonomous run done'
+  };
+
+  function feedRowLabel(row) {
+    var base = FEED_EVENT_LABEL[row.event] || String(row.event || 'event');
+    if (row.event === 'agent_lifecycle' && typeof row.state === 'string') {
+      base += ' — ' + row.state + (row.reason ? (' (' + row.reason + ')') : '');
+    }
+    return base;
+  }
+
+  function renderFeed(d) {
+    lastFeedData = d;
+    var host = el('feed');
+    if (!host) { return; }
+    var s = surfaceOf(d, 'sessions');
+    var cur = s && s.detail && s.detail.current;
+    var rows = (cur && Object.prototype.toString.call(cur.feed) === '[object Array]') ? cur.feed : [];
+    host.innerHTML = '';
+    var unread = 0;
+    if (!rows.length) {
+      var p = document.createElement('li');
+      p.className = 'empty';
+      p.textContent = 'no feed events recorded for this session (token_ledger is deliberately excluded)';
+      host.appendChild(p);
+    }
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i] || {};
+      if (row.event === 'token_ledger') { continue; } /* belt-and-suspenders - see above */
+      var ep = tsToEpoch(row.ts);
+      var isUnread = (ep !== null) && (feedSeenTs === null || ep > feedSeenTs);
+      if (isUnread) { unread++; }
+      var li = document.createElement('li');
+      li.className = 'feed-item' + (isUnread ? ' unread' : '');
+      var head = document.createElement('div');
+      head.className = 'feed-head';
+      head.textContent = feedRowLabel(row) +
+        (row.agent_id ? (' · agent ' + row.agent_id) : '') +
+        (ep !== null ? (' · ' + fmtAge(Math.floor(Date.now() / 1000) - ep) + ' ago') : '');
+      li.appendChild(head);
+      if (typeof row.preview === 'string' && row.preview) {
+        var pv = document.createElement('div');
+        pv.className = 'feed-preview';
+        pv.textContent = row.preview;
+        li.appendChild(pv);
+      }
+      host.appendChild(li);
+    }
+    var fc = el('feed-count');
+    if (fc) { fc.textContent = rows.length ? ('(' + unread + ' unread of ' + rows.length + ')') : ''; }
+  }
+
+  /* THE ONE WAY feedSeenTs CHANGES: an explicit click, never a timer and never an automatic
+   * mark-as-read on render (which would clear "unread" before a reader had any chance to see
+   * it, defeating the whole point). Re-renders from the ALREADY-HELD data - no new fetch. */
+  (function () {
+    var btn = el('btn-feed-mark-read');
+    if (!btn) { return; }
+    btn.onclick = function () {
+      if (!lastFeedData) { return; }
+      var s = surfaceOf(lastFeedData, 'sessions');
+      var cur = s && s.detail && s.detail.current;
+      var rows = (cur && Object.prototype.toString.call(cur.feed) === '[object Array]') ? cur.feed : [];
+      var maxEp = feedSeenTs;
+      for (var i = 0; i < rows.length; i++) {
+        var ep = tsToEpoch(rows[i] && rows[i].ts);
+        if (ep !== null && (maxEp === null || ep > maxEp)) { maxEp = ep; }
+      }
+      if (maxEp !== null) {
+        feedSeenTs = maxEp;
+        storeFeedSeenTs(maxEp);
+        renderFeed(lastFeedData);
+      }
+    };
+  }());
 
   function renderRoster(d) {
     var host = el('roster');
@@ -1743,6 +1937,7 @@
       renderStages(d);
       renderSessionNote(d);
       apply.lanes = renderLanes(d);
+      renderFeed(d);
       renderRoster(d);
       renderRules(d);
       renderChurn(d);
