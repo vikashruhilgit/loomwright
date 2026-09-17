@@ -174,7 +174,25 @@ REALBASH="$(command -v bash)"
 PAYLOAD_DIR="$(mktemp -d)"
 CLEANUP_DIRS=("$PAYLOAD_DIR")
 CLEANUP_WORKTREES=()  # "repo_root|worktree_path" pairs
+CLEANUP_RENAMES=()  # "current_path|restore_to_path|backup_path" triples — a
+                     # test that renames a REAL tracked file to simulate a
+                     # failure registers the pending restore here so an
+                     # interrupt (INT/TERM) mid-test still restores the file,
+                     # same as CLEANUP_DIRS/CLEANUP_WORKTREES. Processed BEFORE
+                     # CLEANUP_DIRS so a backup_path living under a
+                     # CLEANUP_DIRS-managed scratch dir is still available.
 cleanup() {
+  local rn
+  for rn in "${CLEANUP_RENAMES[@]:-}"; do
+    [ -n "$rn" ] || continue
+    local cur="${rn%%|*}" rest="${rn#*|}"
+    local dest="${rest%%|*}" backup="${rest#*|}"
+    if [ -f "$cur" ]; then
+      mv "$cur" "$dest" 2>/dev/null || true
+    elif [ ! -f "$dest" ] && [ -n "$backup" ] && [ -f "$backup" ]; then
+      cp "$backup" "$dest" 2>/dev/null || true
+    fi
+  done
   local wt
   for wt in "${CLEANUP_WORKTREES[@]:-}"; do
     [ -n "$wt" ] || continue
@@ -1495,6 +1513,74 @@ assert_eq "case40f session-named transcript with NO agent_id still ⇒ main (age
   "$(printf '%s' "$LINE40F" | jq -r '.agent_scope // empty')"
 assert_eq "case40f and the line carries no agent_id to have gated it" "false" \
   "$(printf '%s' "$LINE40F" | jq -r 'has("agent_id")')"
+
+echo "== 41. result_block_present (v15.79.0) — presence, absence, and OMISSION-when-key-absent =="
+# 41a: last_assistant_message present WITH a WORKER_RESULT fence -> true.
+REPO41A="$(init_repo "feature/case41a")"
+P41A="$PAYLOAD_DIR/p41a.json"
+jq -n '{session_id:"sid-case41a", agent_id:"a41a", agent_type:"loomwright:worker",
+        last_assistant_message:"## WORKER_RESULT\n- status: completed\n"}' > "$P41A"
+OUT41A="$(run_emitter "$REPO41A" "$P41A")"
+assert_eq "case41a exit 0" "0" "$(get_rc "$OUT41A")"
+LINE41A="$(tail -1 "$REPO41A/.supervisor/logs/sid-case41a.jsonl" 2>/dev/null)"
+assert_eq "case41a result_block_present true" "true" "$(printf '%s' "$LINE41A" | jq -r '.result_block_present')"
+
+# 41b: last_assistant_message present WITHOUT a WORKER_RESULT fence -> false.
+REPO41B="$(init_repo "feature/case41b")"
+P41B="$PAYLOAD_DIR/p41b.json"
+jq -n '{session_id:"sid-case41b", agent_id:"a41b", agent_type:"loomwright:worker",
+        last_assistant_message:"just some prose, no result block here"}' > "$P41B"
+OUT41B="$(run_emitter "$REPO41B" "$P41B")"
+assert_eq "case41b exit 0" "0" "$(get_rc "$OUT41B")"
+LINE41B="$(tail -1 "$REPO41B/.supervisor/logs/sid-case41b.jsonl" 2>/dev/null)"
+assert_eq "case41b result_block_present false (no fence, but key present)" "false" \
+  "$(printf '%s' "$LINE41B" | jq -r '.result_block_present')"
+
+# 41c: last_assistant_message key ABSENT entirely -> result_block_present key
+# OMITTED (never a guessed false — this is the "unknown" derivation case).
+REPO41C="$(init_repo "feature/case41c")"
+P41C="$PAYLOAD_DIR/p41c.json"
+jq -n '{session_id:"sid-case41c", agent_id:"a41c", agent_type:"loomwright:worker"}' > "$P41C"
+OUT41C="$(run_emitter "$REPO41C" "$P41C")"
+assert_eq "case41c exit 0" "0" "$(get_rc "$OUT41C")"
+LINE41C="$(tail -1 "$REPO41C/.supervisor/logs/sid-case41c.jsonl" 2>/dev/null)"
+assert_eq "case41c result_block_present key ABSENT (no last_assistant_message at all)" "false" \
+  "$(printf '%s' "$LINE41C" | jq -r 'has("result_block_present")')"
+
+# 41d MUTATION CONTROL: with the fence-detection import short-circuited (module
+# unresolvable), a fixture that legitimately has NO WORKER_RESULT fence must
+# NOT read as clean/omitted — it must OMIT the key just like 41c (a
+# detection-failed case is not a "false" verdict either), proving the
+# detection path is actually exercised rather than vacuously true. Simulated
+# by pointing EMIT_PROGRESS_SCRIPT_DIR-equivalent import at a broken copy:
+# temporarily rename result_block_parser.py so the import fails.
+RBP="$SCRIPT_DIR/result_block_parser.py"
+RBP_BAK="$PAYLOAD_DIR/result_block_parser.py.bak"
+RBP_HIDDEN="$RBP.hidden-for-test"
+if [ -f "$RBP" ]; then
+  cp "$RBP" "$RBP_BAK"
+  mv "$RBP" "$RBP_HIDDEN"
+  # Register the pending restore in the shared cleanup() trap BEFORE doing
+  # anything else — if this process is interrupted (INT/TERM) anywhere between
+  # here and the `mv` back below, EXIT still fires cleanup(), which restores
+  # the tracked file from $RBP_HIDDEN (or, if that itself is gone, from the
+  # $RBP_BAK safety copy). Without this, an interrupt mid-test left the
+  # tracked file permanently renamed AND deleted the one fallback (CLEANUP_DIRS
+  # removes $PAYLOAD_DIR, which held $RBP_BAK, on the very same trap).
+  CLEANUP_RENAMES+=("$RBP_HIDDEN|$RBP|$RBP_BAK")
+  REPO41D="$(init_repo "feature/case41d")"
+  P41D="$PAYLOAD_DIR/p41d.json"
+  jq -n '{session_id:"sid-case41d", agent_id:"a41d", agent_type:"loomwright:worker",
+          last_assistant_message:"no fence here either"}' > "$P41D"
+  OUT41D="$(run_emitter "$REPO41D" "$P41D")"
+  mv "$RBP_HIDDEN" "$RBP"
+  assert_eq "case41d(mutation) exit 0 even with detection module missing" "0" "$(get_rc "$OUT41D")"
+  LINE41D="$(tail -1 "$REPO41D/.supervisor/logs/sid-case41d.jsonl" 2>/dev/null)"
+  assert_eq "case41d(mutation) result_block_present key OMITTED when detection unavailable (never guessed false)" \
+    "false" "$(printf '%s' "$LINE41D" | jq -r 'has("result_block_present")')"
+else
+  no "case41d(mutation) result_block_parser.py not found at expected path — cannot mutate"
+fi
 
 echo "== real repo .supervisor/logs untouched =="
 assert_eq "real logs snapshot unchanged" "$REAL_BEFORE" "$(snapshot_real)"

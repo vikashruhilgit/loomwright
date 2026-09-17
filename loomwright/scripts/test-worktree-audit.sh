@@ -156,9 +156,9 @@ check_payload_reads "$d/empty.sh" && no "AC-1 an empty extraction PASSED (vacuou
 echo "== AC-2: no empty-string extraction =="
 [ "$(jq '.hooks | has("WorktreeCreate") or has("WorktreeRemove")' "$HOOKS_JSON")" = "false" ] \
   && ok "AC-2 hooks.json has neither WorktreeCreate nor WorktreeRemove" || no "AC-2 a destructive worktree hook survives in hooks.json"
-[ "$(jq '[.hooks[][].hooks[]] | length' "$HOOKS_JSON")" = "36" ] && ok "AC-2 leaf hook count is 36" || no "AC-2 leaf hook count != 36"
+[ "$(jq '[.hooks[][].hooks[]] | length' "$HOOKS_JSON")" = "39" ] && ok "AC-2 leaf hook count is 39" || no "AC-2 leaf hook count != 39"
 [ "$(jq '[.hooks.PostToolUse[] | select(.matcher == "Bash")] | length' "$HOOKS_JSON")" = "1" ] && ok "AC-2 exactly ONE PostToolUse Bash matcher-object" || no "AC-2 Bash matcher-object count != 1"
-[ "$(jq -r '.hooks.PostToolUse[] | select(.matcher == "Bash") | .hooks | length' "$HOOKS_JSON")" = "3" ] && ok "AC-2 the Bash matcher carries three leaves" || no "AC-2 Bash matcher leaf count != 3"
+[ "$(jq -r '.hooks.PostToolUse[] | select(.matcher == "Bash") | .hooks | length' "$HOOKS_JSON")" = "4" ] && ok "AC-2 the Bash matcher carries four leaves" || no "AC-2 Bash matcher leaf count != 4"
 jq -r '.hooks.PostToolUse[] | select(.matcher == "Bash") | .hooks[].command' "$HOOKS_JSON" | grep -q 'worktree-audit.sh" record || true' \
   && ok "AC-2 the third leaf runs worktree-audit.sh record with || true" || no "AC-2 observer leaf missing/unshaped"
 

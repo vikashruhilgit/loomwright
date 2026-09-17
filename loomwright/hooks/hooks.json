@@ -189,7 +189,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "mkdir -p .supervisor/logs && echo \"[$(date -u +%Y-%m-%dT%H:%M:%SZ)] STOP_FAILURE $(cat)\" >> .supervisor/logs/failures.log || true"
+            "command": "payload=$(cat); mkdir -p .supervisor/logs && echo \"[$(date -u +%Y-%m-%dT%H:%M:%SZ)] STOP_FAILURE $payload\" >> .supervisor/logs/failures.log || true; printf '%s' \"$payload\" | bash \"${CLAUDE_PLUGIN_ROOT}/scripts/emit-lifecycle.sh\" failed || true"
           }
         ]
       }
@@ -209,6 +209,10 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/worktree-audit.sh\" record || true"
+          },
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/emit-lifecycle.sh\" heartbeat || true"
           }
         ]
       },
@@ -218,6 +222,10 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/seed-run-owner.sh\" || true"
+          },
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/emit-lifecycle.sh\" heartbeat || true"
           }
         ]
       },
@@ -227,6 +235,10 @@
           {
             "type": "command",
             "command": "payload=$(cat); printf '%s' \"$payload\" | bash \"${CLAUDE_PLUGIN_ROOT}/scripts/emit-agent-identity.sh\" || true"
+          },
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/emit-lifecycle.sh\" heartbeat || true"
           }
         ]
       }
@@ -237,7 +249,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/notify-desktop.sh\" || true"
+            "command": "payload=$(cat); printf '%s' \"$payload\" | bash \"${CLAUDE_PLUGIN_ROOT}/scripts/notify-desktop.sh\" || true; printf '%s' \"$payload\" | bash \"${CLAUDE_PLUGIN_ROOT}/scripts/emit-lifecycle.sh\" waiting ask_user || true"
           },
           {
             "type": "command",
@@ -252,7 +264,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/notify-desktop.sh\" || true"
+            "command": "payload=$(cat); printf '%s' \"$payload\" | bash \"${CLAUDE_PLUGIN_ROOT}/scripts/notify-desktop.sh\" || true; printf '%s' \"$payload\" | bash \"${CLAUDE_PLUGIN_ROOT}/scripts/emit-lifecycle.sh\" waiting || true"
           }
         ]
       }
