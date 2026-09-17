@@ -886,6 +886,99 @@ anywhere; never rename or restructure the existing flat fields above.
 
 ---
 
+## `agent_lifecycle` JSONL event records (waiting / working / failed)
+
+> **Not a result-block schema** — like the `session_end` hard-signal fields above, this is a JSONL
+> event shape, not something an agent emits as a structured result block. Added v15.79.0 —
+> `.supervisor/requirements/orca-derived/01-agent-lifecycle-ledger.md` — to close the gap between
+> "what an agent PRODUCED" (`WORKER_RESULT`, `subtask_complete`, `token_ledger`) and "what state it
+> is IN". Emitted fail-SAFE by `scripts/emit-lifecycle.sh` into the SAME per-session log
+> `.supervisor/logs/{session_id}.jsonl` that `emit-progress-event.sh`/`emit-agent-identity.sh` write
+> to — same two-source session-id resolution, same worktree-safe anchoring, same run-ownership gate.
+
+Three states, one per `emit-lifecycle.sh` subcommand:
+
+```jsonl
+{"event":"agent_lifecycle","state":"waiting","session_id":"<id>","cc_session_id":"<id>","agent_id":"agent-fixture-full","agent_scope":"subagent","agent_type":"loomwright:worker","reason":"ask_user","branch":"main","ts":"2026-09-17T00:00:00Z"}
+{"event":"agent_lifecycle","state":"working","session_id":"<id>","cc_session_id":"<id>","agent_id":"agent-fixture-full","agent_scope":"subagent","branch":"main","ts":"2026-09-17T00:00:00Z"}
+{"event":"agent_lifecycle","state":"failed","session_id":"<id>","cc_session_id":"<id>","agent_id":"agent-fixture-full","agent_scope":"subagent","reason":"rate_limit","branch":"main","ts":"2026-09-17T00:00:00Z"}
+```
+
+> **Illustrative field values above are frozen, not current claims** — same convention as the
+> `session_end`/`POSTMORTEM_RESULT` blocks elsewhere in this file (see that section's own note).
+> `check-doc-currency.sh` deliberately does not scan these; do not "fix" them on a future release.
+
+**Common fields (all three states):**
+- `event` — always the literal string `"agent_lifecycle"`.
+- `state` — one of `waiting` / `working` / `failed`. This is the ONLY vocabulary this file writes;
+  `stalled` and `ended_without_result` are NEVER written by any emitter — they are DERIVED by a
+  reader (`build-floor.sh` / `build-state.sh`) from these rows plus `agent_identity.recorded_at` and
+  `subtask_complete.result_block_present` (below), never by a writer. A future writer emitting either
+  derived name directly would be a regression of this section's own design.
+- `session_id` — the log-file join key (prefers the active plugin session id from `.supervisor/state.md`
+  when `status: running`/`checkpoint`, else the Claude Code `session_id`) — identical resolution to
+  every other emitter in this family.
+- `cc_session_id` — the Claude Code session UUID, additive, present whenever the payload carried one.
+- `agent_id` / `agent_type` — **PAYLOAD ONLY, else the key is OMITTED ENTIRELY** — never invented, never
+  an empty string, never null. Same discipline as `emit-agent-identity.sh` / `emit-progress-event.sh`.
+- `agent_scope` — `"subagent"` when the payload carries `agent_id`; **OMITTED** (never guessed) on
+  `waiting` and `working` when `agent_id` is absent — there is no grounded main-thread fallback for
+  those two seams. `failed` is the ONE state with a grounded fallback (see below).
+- `branch` / `ts` — additive, identical semantics to every other emitter in this family (omitted when
+  the branch/timestamp cannot be resolved).
+
+**`waiting`-specific:** `reason` is one of `ask_user` (hardcoded by the `PreToolUse[AskUserQuestion]`
+hook wiring — see `docs/HOOKS.md`) or whatever the `Notification` hook payload's own subtype field
+resolves to (`.notification_type` tried first, then `.type`, else the literal string `"unknown"` —
+never crashes, never invents a value it did not actually read). Whether `agent_id` is ever present on
+the `Notification` seam for a subagent is **UNVERIFIED** (no live sample observed —
+`.supervisor/requirements/orca-derived/01-agent-lifecycle-ledger.md` `## §0 Probe Results`); the
+`PreToolUse[AskUserQuestion]` seam's `agent_id` presence for a subagent IS documented (Claude Code
+hooks reference) and empirically expected.
+
+**`working`-specific (heartbeat):** no additional fields beyond the common set above. Debounced PER
+DERIVED `agent_id` (never per matcher block) — at most one `working` line per
+`LOOMWRIGHT_LIFECYCLE_HEARTBEAT_DEBOUNCE`-second window (default 60 seconds; a non-integer override
+falls back to the default rather than tripping `set -u` arithmetic — same override-env-var convention
+as `LOOMWRIGHT_STALE_RUN_SECONDS` in `build-state.sh`) regardless of which of the three registered
+`PostToolUse` matchers (`Bash` / `Write|Edit` / `Task`) fired the call.
+
+**`failed`-specific:** `reason` is the payload's own top-level `error` string, copied **VERBATIM** —
+never parsed or derived from message text. Observed real values in this repo's own
+`.supervisor/logs/failures.log`: `rate_limit`, `server_error`, `authentication_failed`,
+`model_not_found`; `reason: "unknown"` when the payload carries no `error` key at all. `agent_scope`
+is the ONE lifecycle field with a grounded main-thread fallback here: `"subagent"` when `agent_id` is
+present (empirically confirmed on 17 of 37 real captures in this repo's own `failures.log`), else
+`"main"` — a corrected assumption from the source requirement's original text, which had wrongly
+assumed every `StopFailure` was main-thread-only. This is an ADDITIVE emitter on the existing
+`StopFailure` hook — the raw `.supervisor/logs/failures.log` append (`STOP_FAILURE $(cat)`) stays
+byte-identical; `emit-lifecycle.sh failed` is a second consumer of the same re-fanned payload, never a
+replacement.
+
+**`result_block_present` (additive, on `subtask_complete` — added v15.79.0):** `emit-progress-event.sh`
+gains one boolean field, present only when the SubagentStop payload carries a `last_assistant_message`
+key: whether that text contains a `WORKER_RESULT` fence, using the exact same detection
+`validate-worker-result.py` runs (`result_block_parser.find_last_block`) rather than a second regex.
+**PRESENCE, not truthiness, decides the key** — a `last_assistant_message` key that is present but not
+a string, or whose fence-scan raises for any reason (e.g. `result_block_parser.py` unavailable), OMITS
+the key entirely (a detection-FAILED case, never a guessed `false`); only an actual scan may assert
+`false`. A reader derives `ended_without_result` from `result_block_present: false` on a
+`subtask_complete` (worker) or `token_ledger` (other roles) row, and `unknown` — **never** either
+terminal state — when the key is absent (pre-v15.79.0 lines, or no `last_assistant_message` in the
+payload at all).
+
+**Reader-derived states (NOT written here — documented for completeness, not implemented by this
+schema section):** `stalled` = the newest `working` row for an `agent_id` is older than a reader's own
+staleness threshold; `ended_without_result` = a terminal row (`subtask_complete`/`token_ledger`) for
+that `agent_id` whose `result_block_present` is `false` (absent ⇒ `unknown`, never either terminal
+state). Spawn time for either derivation comes from the EXISTING `agent_identity.recorded_at` field
+(that row deliberately carries no `ts` — see `emit-agent-identity.sh`'s header note). Building
+`build-floor.sh`/`build-state.sh` support for these two derived names is explicitly OUT OF SCOPE for
+this schema section and the emitters above — a documentation/schema-completeness note, not a
+forward-reference to unshipped code.
+
+---
+
 ## EVAL_RESULT (System Twin eval harness)
 
 Emitted by `scripts/run-eval.sh` — the System Twin **eval instrument** (M2a). It is a

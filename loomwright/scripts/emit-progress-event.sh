@@ -183,11 +183,21 @@ if [ -n "$PLUGIN_SESSION_ID" ]; then
   fi
 fi
 
-export UTC_TS PLUGIN_SESSION_ID SESSION_BRANCH="$session_branch"
+# SCRIPT_DIR resolved here (not only later, at projector-invocation time) so
+# the inline python below can import result_block_parser.py for the
+# `result_block_present` detection (v15.79.0 — same fence-presence check
+# validate-worker-result.py uses, reused rather than reinvented).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
+
+export UTC_TS PLUGIN_SESSION_ID SESSION_BRANCH="$session_branch" EMIT_PROGRESS_SCRIPT_DIR="${SCRIPT_DIR:-}"
 
 # ---- Build one JSONL line (or empty → no-op) ---------------------------------
 OUT="$(printf '%s' "$INPUT" | python3 -c '
 import json, os, sys
+
+_script_dir = os.environ.get("EMIT_PROGRESS_SCRIPT_DIR", "")
+if _script_dir and _script_dir not in sys.path:
+    sys.path.insert(0, _script_dir)
 
 def sanitise_session_id(raw):
     if not isinstance(raw, str):
@@ -265,6 +275,27 @@ elif (isinstance(_tpath, str) and _tpath and cc_session_id
 if _scope:
     event["agent_scope"] = _scope
 
+# `result_block_present` (v15.79.0, additive): whether `last_assistant_message`
+# — WHEN THE KEY IS PRESENT — contains a WORKER_RESULT fence. Reuses the exact
+# detection validate-worker-result.py runs (`result_block_parser.find_last_block`)
+# rather than reinventing a regex, so the two never drift. PRESENCE, not
+# absence, decides the key: a `last_assistant_message` key that is present but
+# not a string, or whose fence-scan raises for any reason (e.g.
+# result_block_parser.py unavailable), OMITS the key entirely — this is a
+# detection-failed case, not a "no fence" verdict, and the two must not read
+# the same. Only an ACTUAL scan (module imported, string present) may assert
+# `false`; every other path leaves the key OMITTED, deriving to `unknown` at
+# read time (never a guessed boolean, per the omit-when-absent rule in
+# docs/RESULT_SCHEMAS.md `## agent_lifecycle`).
+if "last_assistant_message" in payload:
+    _lam = payload.get("last_assistant_message")
+    if isinstance(_lam, str):
+        try:
+            from result_block_parser import find_last_block as _find_last_block
+            event["result_block_present"] = _find_last_block(_lam, "WORKER_RESULT") is not None
+        except Exception:
+            pass  # detection unavailable -> key OMITTED, never a guessed False
+
 branch = os.environ.get("SESSION_BRANCH", "")
 if branch:
     event["branch"] = branch
@@ -306,7 +337,8 @@ printf '%s\n' "$LINE" >> "$LOG_FILE" 2>/dev/null || exit 0
 
 # ---- Invoke the projector (best-effort — never affects this emitter's own
 # always-exit-0 contract; the projector has the identical contract itself) ----
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
+# SCRIPT_DIR was already resolved above (needed earlier for the python
+# result_block_parser import) — reused here rather than recomputed.
 if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/build-state.sh" ]; then
   bash "$SCRIPT_DIR/build-state.sh" "$SESSION_ID" "$main_root" || true
 fi
