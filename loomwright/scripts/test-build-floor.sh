@@ -3174,8 +3174,8 @@ zzzq() { jq -r "$1" "$JZZZ" 2>/dev/null; }
 
 [ "$(zzzq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="aq") | .lifecycle.state')" = "quiet" ] \
   && [ "$(zzzq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="aq") | .lifecycle.ended_without_result')" = "true" ] \
-  && [ "$(zzzq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="aq") | .lifecycle.since_epoch')" = "$Q_TS" ] \
-  && ok "(zzz) aq (40 minutes stale, unconfirmed result) derives lifecycle.state=quiet, ended_without_result:true, since_epoch pinned to its own ts" \
+  && [ "$(zzzq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="aq") | .lifecycle.since_ts')" = "$Q_TS" ] \
+  && ok "(zzz) aq (40 minutes stale, unconfirmed result) derives lifecycle.state=quiet, ended_without_result:true, since_ts pinned to its own ts" \
   || no "(zzz) aq lifecycle" "$(zzzq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="aq") | .lifecycle')"
 
 # THE SINGLE MOST IMPORTANT INVARIANT THIS ITEM NAMES: `au` has an agent_identity line and

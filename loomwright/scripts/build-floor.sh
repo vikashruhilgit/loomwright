@@ -515,19 +515,19 @@ else
                         else null end) as $ewr
                      | (if $winner != null and $winner.kind == "lc" then
                           {state: $winner.row.state}
-                          + (if ($winner.row | has("ts")) then {since_epoch: $winner.row.ts} else {} end)
+                          + (if ($winner.row | has("ts")) then {since_ts: $winner.row.ts} else {} end)
                           + (if ($winner.row | has("reason")) then {reason: $winner.row.reason} else {} end)
                         elif $winner != null and $winner.kind == "term"
                              and $winner.row.result_block_present == true then
                           {state: "done"}
-                          + (if ($winner.row | has("ts")) then {since_epoch: $winner.row.ts} else {} end)
+                          + (if ($winner.row | has("ts")) then {since_ts: $winner.row.ts} else {} end)
                         elif $winner != null then
                           # a terminal row exists and IS the most recent recognized row, but it
                           # is not a confirmed `result_block_present:true` - the coarse state
                           # falls to `quiet` (stopped, unconfirmed) while `ended_without_result`
                           # above carries the finer tri-state truth for that same row
                           {state: "quiet"}
-                          + (if ($winner.row | has("ts")) then {since_epoch: $winner.row.ts} else {} end)
+                          + (if ($winner.row | has("ts")) then {since_ts: $winner.row.ts} else {} end)
                         elif (($lc | length) > 0) or (($term | length) > 0) then
                           # a recognized row exists but none of them carries a ts to compete on -
                           # "a lifecycle WAS recorded at some point", never a default zero
@@ -539,7 +539,7 @@ else
                           # above, which excludes it for the identical reason). A spawn alone is
                           # not evidence of ANY of the five recognized states - presuming
                           # `working` from it would be exactly the guess this derivation exists
-                          # to refuse. `since_epoch`/`state` are BOTH omitted: no `lifecycle`
+                          # to refuse. `since_ts`/`state` are BOTH omitted: no `lifecycle`
                           # object at all, which is what keeps `unknown` a genuinely distinct,
                           # never-collapsed-into-`quiet` fact downstream.
                           null
