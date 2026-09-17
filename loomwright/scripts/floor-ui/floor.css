@@ -260,6 +260,11 @@ code { font-family: var(--mono); font-size: 0.85em; }
   font-size: 0.9rem;
   max-width: 68ch;
 }
+/* Same visual treatment as `.caption`, deliberately a DIFFERENT class so the section-caption
+ * count `test-setup-ui.sh` group (q) asserts (one `<p class="caption">` per `<section>`) never
+ * counts the Feed sub-view's own editorial line, which lives inside the Lanes section rather
+ * than a section of its own — see the comment beside it in index.html. */
+.sub-caption { margin: 0 0 0.9rem; padding-left: 0.85rem; border-left: 2px solid var(--hair); color: var(--ink-dim); font-size: 0.9rem; max-width: 68ch; }
 
 .banner {
   width: calc(100% - 3rem);
@@ -423,6 +428,66 @@ code { font-family: var(--mono); font-size: 0.85em; }
 }
 .lane.stalled .lane-meta { color: var(--warn-ink); }
 .lane.stalled .shuttle { background: var(--warn-line); }
+
+/* ---- lane group headers ----
+ * Four visible groups (Needs you / Working / Done / Quiet) plus the explicit `unknown` label,
+ * all rendered as headers INSIDE the existing `.lanes` list rather than as separate sections -
+ * the same mono/uppercase/tracked treatment `.rules-category` already uses below, reused
+ * rather than reinvented. No colour is the only signal here: the text IS the derivation rule
+ * (floor.js writes the group's own rule into this element's text), so the heading reads
+ * correctly with no colour at all. */
+.lane-group-header {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  margin: 1.1rem 0 0.5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--copper-deep);
+  border-bottom: 1px solid var(--hair);
+  padding-bottom: 0.3rem;
+}
+.lane-group-header:first-child { margin-top: 0; }
+
+/* ---- feed ----
+ * Same square-card vocabulary as `.lane`, deliberately calmer: no dot, no shuttle, no motion -
+ * a feed item is a single recorded fact, not a lane whose freshness needs tracking. `unread` is
+ * marked TWO ways at once (the left rule AND the literal word, via the `::before` content
+ * below) so the state never depends on colour alone, mirroring the stalled-lane and read-only
+ * conventions elsewhere on this page. */
+.feed { list-style: none; margin: 0; padding: 0; }
+.feed-item {
+  border: 1px solid var(--hair);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  padding: 0.55rem 0.75rem;
+  margin-bottom: 0.45rem;
+}
+.feed-item.unread {
+  border-left: 3px solid var(--cue);
+  background: var(--warn-bg);
+}
+.feed-item.unread .feed-head::before {
+  content: "unread \00b7 ";
+  color: var(--warn-ink);
+  font-weight: 700;
+}
+.feed-head { font-family: var(--mono); font-size: 0.8rem; color: var(--ink-dim); }
+.feed-preview { margin-top: 0.3rem; font-size: 0.9rem; color: var(--ink); }
+#btn-feed-mark-read {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.5rem 0.85rem;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+}
+#btn-feed-mark-read:hover { border-color: var(--cue); color: var(--copper-deep); }
 
 /* ---- rules browser + churn view ----
  * No colour-only signal here either: a rule card's shape (border + labelled text) carries

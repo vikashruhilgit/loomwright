@@ -3128,6 +3128,136 @@ grep -qF "last cp for aone" "$JZY" 2>/dev/null \
   && ok "(zzy) anti-vacuity: the checkpoint text actually reached the projected artefact" \
   || no "(zzy) anti-vacuity FAILED: the checkpoint text never appears in floor.json at all"
 
+# ============================================================================
+echo "== (zzz) lifecycle: five-lane scenario - waiting/working/done/quiet/unknown =="
+# Exactly the fixture the floor-attention-and-feed item's own AC5 names: one `waiting` lane,
+# one heartbeat-fresh (`working`) lane, one `done` lane, one 40-minutes-quiet lane, and one lane
+# with NO lifecycle evidence at all (`agent_identity` only). generated_at_epoch is pinned so
+# "40 minutes quiet" is a real, checkable gap rather than a relative claim.
+NOW_EP=1758100000   # 2026-09-17T09:26:40Z, arbitrary but fixed
+Q_TS_EP=$((NOW_EP - 2400))   # 40 minutes earlier
+Q_TS="2026-09-17T08:46:40Z"
+RZZZ="$(new_repo)"; mkdir -p "$RZZZ/.supervisor/logs" "$RZZZ/agents"
+{
+  # waiting
+  printf '{"event":"agent_identity","cc_session_id":"zzz","agent_id":"aw","agent_type":"loomwright:loomwright:worker","recorded_at":"2026-09-17T09:00:00Z"}\n'
+  printf '{"event":"agent_lifecycle","state":"waiting","reason":"ask_user","ts":"2026-09-17T09:20:00Z","cc_session_id":"zzz","agent_id":"aw"}\n'
+  # working
+  printf '{"event":"agent_identity","cc_session_id":"zzz","agent_id":"ak","agent_type":"loomwright:loomwright:worker","recorded_at":"2026-09-17T09:00:00Z"}\n'
+  printf '{"event":"agent_lifecycle","state":"working","ts":"2026-09-17T09:25:00Z","cc_session_id":"zzz","agent_id":"ak"}\n'
+  # done
+  printf '{"event":"agent_identity","cc_session_id":"zzz","agent_id":"ad","agent_type":"loomwright:loomwright:worker","recorded_at":"2026-09-17T09:00:00Z"}\n'
+  printf '{"ts":"2026-09-17T09:24:00Z","event":"subtask_complete","cc_session_id":"zzz","agent_id":"ad","result_block_present":true}\n'
+  # 40-minutes-quiet: a terminal row, unconfirmed result, well before NOW_EP
+  printf '{"event":"agent_identity","cc_session_id":"zzz","agent_id":"aq","agent_type":"loomwright:loomwright:worker","recorded_at":"2026-09-17T08:40:00Z"}\n'
+  printf '{"ts":"%s","event":"subtask_complete","cc_session_id":"zzz","agent_id":"aq","result_block_present":false}\n' "$Q_TS"
+  # unknown: identity only, nothing else ever recorded
+  printf '{"event":"agent_identity","cc_session_id":"zzz","agent_id":"au","agent_type":"loomwright:loomwright:worker","recorded_at":"2026-09-17T08:00:00Z"}\n'
+} > "$RZZZ/.supervisor/logs/zzz.jsonl"
+( cd "$RZZZ" && FLOOR_AGENTS_DIR="$RZZZ/agents" FLOOR_SOURCE_DATE_EPOCH="$NOW_EP" bash "$BUILD" >/dev/null 2>&1 )
+JZZZ="$RZZZ/.supervisor/floor/floor.json"
+zzzq() { jq -r "$1" "$JZZZ" 2>/dev/null; }
+
+[ "$(zzzq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="aw") | .lifecycle.state')" = "waiting" ] \
+  && [ "$(zzzq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="aw") | .lifecycle.reason')" = "ask_user" ] \
+  && ok "(zzz) aw derives lifecycle.state=waiting with its reason carried through" \
+  || no "(zzz) aw lifecycle" "$(zzzq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="aw") | .lifecycle')"
+
+[ "$(zzzq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="ak") | .lifecycle.state')" = "working" ] \
+  && ok "(zzz) ak derives lifecycle.state=working from its heartbeat" \
+  || no "(zzz) ak lifecycle.state != working"
+
+[ "$(zzzq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="ad") | .lifecycle.state')" = "done" ] \
+  && [ "$(zzzq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="ad") | .lifecycle.ended_without_result')" = "false" ] \
+  && ok "(zzz) ad derives lifecycle.state=done with ended_without_result:false from result_block_present:true" \
+  || no "(zzz) ad lifecycle" "$(zzzq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="ad") | .lifecycle')"
+
+[ "$(zzzq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="aq") | .lifecycle.state')" = "quiet" ] \
+  && [ "$(zzzq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="aq") | .lifecycle.ended_without_result')" = "true" ] \
+  && [ "$(zzzq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="aq") | .lifecycle.since_epoch')" = "$Q_TS" ] \
+  && ok "(zzz) aq (40 minutes stale, unconfirmed result) derives lifecycle.state=quiet, ended_without_result:true, since_epoch pinned to its own ts" \
+  || no "(zzz) aq lifecycle" "$(zzzq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="aq") | .lifecycle')"
+
+# THE SINGLE MOST IMPORTANT INVARIANT THIS ITEM NAMES: `au` has an agent_identity line and
+# NOTHING else recognized - it must carry NO `lifecycle` key at all, never a default `quiet`.
+[ "$(zzzq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="au") | has("lifecycle")')" = "false" ] \
+  && ok "(zzz) au (identity only, zero lifecycle-relevant rows) carries NO lifecycle key - unknown is never defaulted to quiet" \
+  || no "(zzz) au unexpectedly carries a lifecycle key: $(zzzq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="au") | .lifecycle')"
+
+# --- (zzz-mut) MUTATION CONTROL: prove the unknown-vs-quiet distinction is enforced, not merely
+# spelled. Flip the one branch that produces "no lifecycle-relevant row at all" from `null` to a
+# defaulted `{state: "quiet"}` - the EXACT bug this item's Risk Assessment names by name - and
+# confirm THIS SAME fixture then reads au as quiet instead of unknown, so the real assertion
+# above is proven to actually discriminate the two rather than passing for an unrelated reason.
+MUT_ZZZ="$ROOT/mut-unknown-collapses-quiet.sh"
+python3 - "$BUILD" "$MUT_ZZZ" <<'PYEOF' 2>/dev/null
+import io, sys
+s = io.open(sys.argv[1], encoding='utf-8').read()
+a = ('# never-collapsed-into-`quiet` fact downstream.\n'
+     '                          null\n'
+     '                        end) as $lc_state')
+b = ('# never-collapsed-into-`quiet` fact downstream.\n'
+     '                          {state: "quiet"}\n'
+     '                        end) as $lc_state')
+if s.count(a) == 1:
+    io.open(sys.argv[2], 'w', encoding='utf-8').write(s.replace(a, b, 1))
+PYEOF
+if [ -s "$MUT_ZZZ" ] && ! cmp -s "$MUT_ZZZ" "$BUILD"; then
+  RZZZM="$(new_repo)"; mkdir -p "$RZZZM/.supervisor/logs" "$RZZZM/agents"
+  cp "$RZZZ/.supervisor/logs/zzz.jsonl" "$RZZZM/.supervisor/logs/zzz.jsonl"
+  ( cd "$RZZZM" && FLOOR_AGENTS_DIR="$RZZZM/agents" FLOOR_SOURCE_DATE_EPOCH="$NOW_EP" bash "$MUT_ZZZ" >/dev/null 2>&1 )
+  zzzm_state="$(jq -r '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="au") | .lifecycle.state // "ABSENT"' \
+    "$RZZZM/.supervisor/floor/floor.json" 2>/dev/null)"
+  [ "$zzzm_state" = "quiet" ] \
+    && ok "(zzz-mut) MUTATION CONTROL: collapsing the no-evidence branch into a defaulted quiet DOES flip au from unknown to quiet on this exact fixture - the real assertion above is discriminating, not vacuous" \
+    || no "(zzz-mut) MUTATION CONTROL: expected the mutant to read au as quiet, got '$zzzm_state' - the control did not exercise the branch it claims to"
+else
+  no "(zzz-mut) MUTATION CONTROL: could not build the unknown-collapses-into-quiet mutant - control inconclusive"
+fi
+
+# ============================================================================
+echo "== (zzf) feed: seven event types, token_ledger/heartbeat excluded, newest-first, preview only from worker_checkpoint =="
+RZZF="$(new_repo)"; mkdir -p "$RZZF/.supervisor/logs" "$RZZF/agents"
+{
+  printf '{"ts":"2026-09-17T09:00:00Z","event":"subtask_complete","cc_session_id":"zzf","agent_id":"a1","result_block_present":true}\n'
+  printf '{"event":"agent_lifecycle","state":"waiting","reason":"ask_user","ts":"2026-09-17T09:01:00Z","cc_session_id":"zzf","agent_id":"a1"}\n'
+  printf '{"event":"agent_lifecycle","state":"working","ts":"2026-09-17T09:01:30Z","cc_session_id":"zzf","agent_id":"a1"}\n'
+  printf '{"ts":"2026-09-17T09:02:00Z","event":"worker_checkpoint","text":"hit a blocker","cc_session_id":"zzf","agent_id":"a1"}\n'
+  printf '{"ts":"2026-09-17T09:03:00Z","event":"pr_created","cc_session_id":"zzf"}\n'
+  printf '{"ts":"2026-09-17T09:04:00Z","event":"self_heal_iteration","cc_session_id":"zzf"}\n'
+  printf '{"ts":"2026-09-17T09:05:00Z","event":"review_heal_done","cc_session_id":"zzf"}\n'
+  printf '{"ts":"2026-09-17T09:06:00Z","event":"autonomous_done","cc_session_id":"zzf"}\n'
+  printf '{"ts":"2026-09-17T09:07:00Z","event":"token_ledger","cc_session_id":"zzf","agent_id":"a1"}\n'
+} > "$RZZF/.supervisor/logs/zzf.jsonl"
+run_build "$RZZF"
+JZZF="$RZZF/.supervisor/floor/floor.json"
+zzfq() { jq -r "$1" "$JZZF" 2>/dev/null; }
+
+[ "$(zzfq '.surfaces.sessions.detail.current.feed | length')" = "7" ] \
+  && ok "(zzf) feed carries exactly 7 rows - token_ledger and the working heartbeat are both excluded from 9 candidate lines" \
+  || no "(zzf) feed length == $(zzfq '.surfaces.sessions.detail.current.feed | length'), expected 7"
+
+[ "$(zzfq '.surfaces.sessions.detail.current.feed | map(select(.event=="token_ledger")) | length')" = "0" ] \
+  && ok "(zzf) token_ledger never appears in feed[]" \
+  || no "(zzf) a token_ledger row leaked into feed[]"
+
+[ "$(zzfq '.surfaces.sessions.detail.current.feed | map(select(.event=="agent_lifecycle" and .state=="working")) | length')" = "0" ] \
+  && ok "(zzf) an agent_lifecycle:working heartbeat never appears in feed[] (only waiting/failed do)" \
+  || no "(zzf) a working heartbeat leaked into feed[]"
+
+[ "$(zzfq '.surfaces.sessions.detail.current.feed[0].event')" = "autonomous_done" ] \
+  && [ "$(zzfq '.surfaces.sessions.detail.current.feed[-1].event')" = "subtask_complete" ] \
+  && ok "(zzf) feed is strictly newest-ts-first" \
+  || no "(zzf) feed order: first=$(zzfq '.surfaces.sessions.detail.current.feed[0].event') last=$(zzfq '.surfaces.sessions.detail.current.feed[-1].event')"
+
+[ "$(zzfq '.surfaces.sessions.detail.current.feed | map(select(.event=="worker_checkpoint")) | .[0].preview')" = "hit a blocker" ] \
+  && ok "(zzf) worker_checkpoint's own text becomes the feed row's preview" \
+  || no "(zzf) worker_checkpoint preview missing or wrong"
+
+[ "$(zzfq '.surfaces.sessions.detail.current.feed | map(select(.event=="pr_created")) | .[0] | has("preview")')" = "false" ] \
+  && ok "(zzf) pr_created (and every other type today) carries NO preview key - never fabricated" \
+  || no "(zzf) pr_created unexpectedly carries a preview key"
+
 echo
 echo "RESULT: $pass passed, $fail failed, $skip skipped"
 [ "$fail" -eq 0 ] || exit 1

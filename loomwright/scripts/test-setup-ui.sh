@@ -919,7 +919,7 @@ if has_lit "$JS" "read-only unknown"; then
 else
   no "(c10) an OMITTED read_only renders as 'read-only unknown'"
 fi
-if has_lit "$HTML" "liveness unavailable — a lane shows recorded events, never a running process"; then
+if has_lit "$HTML" "state is inferred from the last recorded hook event; a lane can read"; then
   ok "(c11) the permanent liveness note is rendered on every load"
 else
   no "(c11) the permanent liveness note is rendered on every load"
@@ -7182,18 +7182,24 @@ t_o_mut="$(t_order_faults "$T_JS")"
 # COUNT THE ACCESS, NOT THE WORD. `sessionStorage` also appears in this file's own comments
 # explaining why the store exists, so counting the bare identifier scored 6 against 3 helpers
 # and failed a file that was correct — a test made vacuous-in-reverse by the prose beside it.
+# The floor-attention-and-feed item added a SECOND pair of touches (storedFeedSeenTs/
+# storeFeedSeenTs, for the feed's per-tab unread state) reusing this SAME wrapped pattern
+# rather than inventing a new one — the helper list and the expected counts below grew from
+# 3/3 to 5/5 to cover them, the loop body itself is unchanged.
 t_ss_total="$(occ "$JS" 'window\\.sessionStorage')"
 t_ss_guarded=0
-for t_fn in storeToken storedToken dropToken; do
+t_ss_helpers="storeToken storedToken dropToken storedFeedSeenTs storeFeedSeenTs"
+t_ss_nhelpers=5
+for t_fn in $t_ss_helpers; do
   t_b="$(t_fn_body "$JS" "$t_fn")"
   if in_str "$t_b" "sessionStorage" && in_str "$t_b" "try {" && in_str "$t_b" "catch (e)"; then
     t_ss_guarded=$((t_ss_guarded + 1))
   fi
 done
-if [ "$t_ss_guarded" = "3" ] && [ "$t_ss_total" = "3" ]; then
-  ok "(t7) all $t_ss_total sessionStorage touches live in the three helpers and every one is inside try/catch — an unguarded access throws outright in a private window and would take the page's READ path down with it"
+if [ "$t_ss_guarded" = "$t_ss_nhelpers" ] && [ "$t_ss_total" = "$t_ss_nhelpers" ]; then
+  ok "(t7) all $t_ss_total sessionStorage touches live in the $t_ss_nhelpers helpers and every one is inside try/catch — an unguarded access throws outright in a private window and would take the page's READ path down with it"
 else
-  no "(t7) every sessionStorage touch is guarded" "occurrences=$t_ss_total guarded_helpers=$t_ss_guarded/3 (each helper must hold its own try/catch, and no touch may live outside them)"
+  no "(t7) every sessionStorage touch is guarded" "occurrences=$t_ss_total guarded_helpers=$t_ss_guarded/$t_ss_nhelpers (each helper must hold its own try/catch, and no touch may live outside them)"
 fi
 
 # --- (t8) the strip has exactly ONE call site --------------------------------------------------

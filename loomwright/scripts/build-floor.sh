@@ -324,7 +324,17 @@ else
                ({sid: $o.cc_session_id, ts: $o.ts, agent_id: $o.agent_id,
                  agent_type: $o.agent_type, agent_scope: $o.agent_scope,
                  branch: $o.branch, event: $o.event, recorded_at: $o.recorded_at,
-                 text: $o.text}
+                 text: $o.text,
+                 # Three fields added for the lifecycle/feed derivation below (AC1/AC4 of the
+                 # floor-attention-and-feed item): state/reason are agent_lifecycles own
+                 # fields, result_block_present is subtask_completes own field. Additive to this
+                 # existing allowlist - every other reader of `classified` (the session counts,
+                 # the plugin-work filter) ignores keys it does not ask for, so this costs them
+                 # nothing. `with_entries` below strips null/"" but NOT `false`, which is
+                 # load-bearing: result_block_present:false must survive to derive
+                 # ended_without_result:true.
+                 state: $o.state, reason: $o.reason,
+                 result_block_present: $o.result_block_present}
                 | with_entries(select(.value != null and .value != "")) | tojson)
         else "noid" end
     end
@@ -460,6 +470,86 @@ else
              else {agents: ($ev | group_by(.agent_id) | map(
                      (map(select(has("ts")) | .ts)) as $tss
                      | .[0].agent_id as $aid
+                     | (($cur_idx | map(select(.value.agent_id == $aid)) | map(.key)) as $idxs
+                        | if ($idxs | length) == 0 then null
+                          else
+                            ($idxs | min) as $lo | ($idxs | max) as $hi
+                            | (($cp_idx | map(select(.key >= $lo and .key <= $hi)) | last) as $lastcp
+                               | if ($lastcp == null) or ($lastcp.value.text == null) then null
+                                 else $lastcp.value.text end)
+                          end) as $lastcp_text
+                     # ---------------------------------------------------------------------
+                     # `lifecycle` (additive, per orca-derived item 05 AC1 / item 01 section 4s
+                     # derivation contract): the READER derives state from the MOST RECENT
+                     # RECOGNIZED lifecycle-relevant row for this agent_id - never written by
+                     # any emitter. Recognized rows are (a) `agent_lifecycle` rows whose
+                     # `state` is one of the three the emitter ever writes (waiting/working/
+                     # failed - a defensive allowlist, not just `has("state")`), and (b)
+                     # terminal rows (`subtask_complete` for workers, `token_ledger` for every
+                     # other role). Only ts-bearing rows compete for "most recent" - an
+                     # untimed row cannot be ordered, though its mere existence still counts
+                     # toward "a lifecycle WAS recorded" below.
+                     | (map(select((.event // "") == "agent_lifecycle"
+                                   and ((.state // "") == "waiting"
+                                        or (.state // "") == "working"
+                                        or (.state // "") == "failed")))) as $lc
+                     | (map(select((.event // "") == "subtask_complete"
+                                   or (.event // "") == "token_ledger"))) as $term
+                     | ($lc | map(select(has("ts"))) | sort_by(.ts) | last) as $lc_latest
+                     | ($term | map(select(has("ts"))) | sort_by(.ts) | last) as $term_latest
+                     | (if $lc_latest == null and $term_latest == null then null
+                        elif $lc_latest == null then {kind: "term", row: $term_latest}
+                        elif $term_latest == null then {kind: "lc", row: $lc_latest}
+                        elif ($lc_latest.ts >= $term_latest.ts) then {kind: "lc", row: $lc_latest}
+                        else {kind: "term", row: $term_latest} end) as $winner
+                     # ended_without_result is a SEPARATE tri-state, computed from the most
+                     # recent TERMINAL row regardless of which row won the state race above
+                     # (item 01 SS4: false only ever CONVERTS a fully evidenced result;
+                     # unknown/absent stays a missing key, never guessed).
+                     | ((($term | map(select(has("ts"))) | sort_by(.ts) | last))
+                        // ($term | last)) as $term_any
+                     | (if $term_any == null or (($term_any | has("result_block_present")) | not)
+                          then null
+                        elif $term_any.result_block_present == true then false
+                        elif $term_any.result_block_present == false then true
+                        else null end) as $ewr
+                     | (if $winner != null and $winner.kind == "lc" then
+                          {state: $winner.row.state}
+                          + (if ($winner.row | has("ts")) then {since_epoch: $winner.row.ts} else {} end)
+                          + (if ($winner.row | has("reason")) then {reason: $winner.row.reason} else {} end)
+                        elif $winner != null and $winner.kind == "term"
+                             and $winner.row.result_block_present == true then
+                          {state: "done"}
+                          + (if ($winner.row | has("ts")) then {since_epoch: $winner.row.ts} else {} end)
+                        elif $winner != null then
+                          # a terminal row exists and IS the most recent recognized row, but it
+                          # is not a confirmed `result_block_present:true` - the coarse state
+                          # falls to `quiet` (stopped, unconfirmed) while `ended_without_result`
+                          # above carries the finer tri-state truth for that same row
+                          {state: "quiet"}
+                          + (if ($winner.row | has("ts")) then {since_epoch: $winner.row.ts} else {} end)
+                        elif (($lc | length) > 0) or (($term | length) > 0) then
+                          # a recognized row exists but none of them carries a ts to compete on -
+                          # "a lifecycle WAS recorded at some point", never a default zero
+                          {state: "quiet"}
+                        else
+                          # NO agent_lifecycle/terminal row at all - only (at most) an
+                          # `agent_identity` spawn line, which this codebase already treats as
+                          # "a fact ABOUT an agent, not an event OF one" (see the `events` count
+                          # above, which excludes it for the identical reason). A spawn alone is
+                          # not evidence of ANY of the five recognized states - presuming
+                          # `working` from it would be exactly the guess this derivation exists
+                          # to refuse. `since_epoch`/`state` are BOTH omitted: no `lifecycle`
+                          # object at all, which is what keeps `unknown` a genuinely distinct,
+                          # never-collapsed-into-`quiet` fact downstream.
+                          null
+                        end) as $lc_state
+                     | (if $lc_state == null then {}
+                        else {lifecycle:
+                          ($lc_state
+                           + (if $ewr == null then {} else {ended_without_result: $ewr} end)
+                           + (if $lastcp_text == null then {} else {last_checkpoint: $lastcp_text} end))}
+                        end) as $lifecycle_field
                      | {agent_id: $aid,
                           events: (map(select((.event // "") != "agent_identity")) | length)}
                        + (if ($tss | length) == 0 then {}
@@ -473,16 +563,45 @@ else
                           | if $sc == null then {} else {agent_scope: $sc} end)
                        + ((map(select(has("branch")) | .branch) | first) as $b
                           | if $b == null then {} else {branch: $b} end)
-                       + (($cur_idx | map(select(.value.agent_id == $aid)) | map(.key)) as $idxs
-                          | if ($idxs | length) == 0 then {}
-                            else
-                              ($idxs | min) as $lo | ($idxs | max) as $hi
-                              | (($cp_idx | map(select(.key >= $lo and .key <= $hi)) | last) as $lastcp
-                                 | if ($lastcp == null) or ($lastcp.value.text == null) then {}
-                                   else {last_checkpoint: $lastcp.value.text} end)
-                            end)
+                       + (if $lastcp_text == null then {} else {last_checkpoint: $lastcp_text} end)
+                       + $lifecycle_field
                    ) | sort_by(.agent_id))}
              end)
+          # ---------------------------------------------------------------------------
+          # `feed` (additive): every raw session-log line whose `event` is one of the seven
+          # feed-worthy types, newest first by `ts` - an untimed row is excluded, because a
+          # feed is time-ordered ONLY and an unrankable row cannot honestly be placed in it.
+          # `agent_lifecycle` is feed-worthy ONLY for `waiting`/`failed` - the `working`
+          # heartbeat is deliberately excluded (it already drives lane freshness and would
+          # drown the feed the same way `token_ledger` would, which is why `token_ledger`
+          # itself is NEVER in this list - it is folded into `lifecycle` above instead).
+          # `preview` is sourced from the classified records own `text` field, which today
+          # is populated ONLY by `worker_checkpoint` lines (checkpoint.sh own `text`) -
+          # no other feed event type persists a textual preview to the session log at all
+          # (emit-progress-event.sh reads `last_assistant_message` only to DERIVE
+          # `result_block_present`; it never stores the message itself). `preview` is
+          # therefore OMITTED, never fabricated, for every other event type - an honest gap
+          # named here rather than papered over with a placeholder string.
+          + (($cur
+              | map(select(
+                  ((.event // "") as $fe
+                   | (($fe == "subtask_complete") or
+                      ($fe == "agent_lifecycle" and ((.state // "") == "waiting" or (.state // "") == "failed")) or
+                      ($fe == "worker_checkpoint") or
+                      ($fe == "pr_created") or
+                      ($fe == "self_heal_iteration") or
+                      ($fe == "review_heal_done") or
+                      ($fe == "autonomous_done"))
+                   and has("ts"))))
+              | sort_by(.ts) | reverse
+              | map({event: .event, ts: .ts}
+                    + (if has("agent_id") then {agent_id: .agent_id} else {} end)
+                    + (if has("agent_type") then {agent_type: .agent_type} else {} end)
+                    + (if .event == "agent_lifecycle" and has("state") then {state: .state} else {} end)
+                    + (if .event == "agent_lifecycle" and has("reason") then {reason: .reason} else {} end)
+                    + (if has("text") and ((.text // "") != "") then {preview: .text} else {} end))
+             ) as $feed_rows
+             | if ($feed_rows | length) == 0 then {} else {feed: $feed_rows} end)
       end' 2>/dev/null)"
   case "$sess_current" in ''|'null') sess_current="null" ;; esac
   if [ "$sess_current" = "null" ]; then

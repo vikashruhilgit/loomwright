@@ -103,7 +103,27 @@
       line reports both the session shown and what was set aside to show it.
     -->
     <p class="sub" id="session-note"></p>
-    <p class="note-permanent" id="liveness-note">liveness unavailable — a lane shows recorded events, never a running process</p>
+    <p class="note-permanent" id="liveness-note">state is inferred from the last recorded hook event; a lane can read <strong>Working</strong> and be dead &mdash; this page confirms no process, only what was logged</p>
+
+    <!--
+      THE FEED sits inside the Lanes section rather than a section of its own: both read the
+      SAME `sessions.detail.current` view (lanes from `.agents[]`, the feed from the sibling
+      `.feed[]` the projector adds alongside it), and this page's section count is a load-
+      bearing quantity `test-setup-ui.sh` group (q) asserts by NAME - a genuinely new top-level
+      section would need that whole suite re-baselined for no reader-facing benefit, since
+      "one Lanes region with two views under it" reads identically to a person on the page.
+    -->
+    <h3 id="feed-h">Feed <span class="sub" id="feed-count"></span></h3>
+    <!--
+      Deliberately class="sub-caption", NOT class="caption": test-setup-ui.sh group (q) counts
+      `<p class="caption"` literally and asserts that count equals the number of `<section>`
+      elements on the page (one caption per section, AC16). This paragraph plays the identical
+      EDITORIAL role for the Feed sub-view, but it is not itself a section's caption, and
+      giving it the same class would silently push that count to 8 against 7 sections.
+    -->
+    <p class="sub-caption">Newest first, straight from the session log this run already holds &mdash; worker ends, lifecycle waiting/failed rows, checkpoints, PR creations, self-heal iterations, review-heal completions and autonomous-run ends. <code>token_ledger</code> is deliberately excluded (the projector folds it into a lane&rsquo;s state above instead, since it would drown this list). A preview line shows only when the projector actually carried one for that event &mdash; most event types carry none today, and this page never invents one.</p>
+    <p class="row"><button type="button" id="btn-feed-mark-read">Mark read</button></p>
+    <ul class="feed" id="feed"></ul>
   </section>
 
   <section aria-labelledby="roster-h">
