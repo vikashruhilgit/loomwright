@@ -236,6 +236,25 @@ if [ -s "$index" ]; then
         why="$goal"
         tried=""
         [ -n "$heal" ] && tried="self-heal $heal$( [ -n "$heal_it" ] && printf ' (%s)' "$heal_it" )"
+        # worker_checkpoint lines (advisory, read-only) — ONLY the ACTIVE in-progress job can
+        # be joined to the running session's log: .supervisor/state.md's session_id is the
+        # SAME session_id worker_checkpoint lines (via checkpoint.sh) and
+        # emit-progress-event.sh/emit-agent-identity.sh already write to. A done/pending/
+        # failed job has no such live association, so this is deliberately scoped to
+        # lc == "in-progress" rather than guessed for every job. Missing state.md / session_id
+        # / log file is a silent skip (read-only, never fabricated — AC4/verify-consumer-
+        # contract-before-for-free).
+        if [ "$lc" = "in-progress" ] && [ -f ".supervisor/state.md" ]; then
+          cp_sess_id="$(sed -nE 's/^- session_id:[[:space:]]*//p' .supervisor/state.md 2>/dev/null | head -1)"
+          if [ -n "$cp_sess_id" ] && [ -f ".supervisor/logs/$cp_sess_id.jsonl" ]; then
+            cp_lines="$(jq -r 'select(.event? == "worker_checkpoint") | "\(.kind): \(.text)"' ".supervisor/logs/$cp_sess_id.jsonl" 2>/dev/null \
+              | awk 'BEGIN{ORS="; "} {print}' | sed -E 's/; $//')"
+            if [ -n "$cp_lines" ]; then
+              cp_note="checkpoints (session $cp_sess_id): $cp_lines"
+              if [ -n "$tried" ]; then tried="$tried; $cp_note"; else tried="$cp_note"; fi
+            fi
+          fi
+        fi
         state="lifecycle: $lc$( [ -n "$summary" ] && printf ' · %s' "$summary" )"
         extra=""
         [ -n "$pr" ] && extra="- **PR:** $pr"

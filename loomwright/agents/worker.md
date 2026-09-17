@@ -51,6 +51,7 @@ Implement a single subtask in an isolated git worktree. Operate independently, f
 - **Acceptance criteria:** A bounded (≤200-char) summary PLUS a pinned main-checkout absolute brief path — Read your subtask's section of that brief for the full criteria — or, on the **Single-Agent Path** (one worker, no fan-out), the FULL `## Acceptance Criteria` list, since there is no per-subtask split (the brief is gitignored and exists only in the main checkout, not in your worktree)
 - **Lane declaration:** (optional — present when the brief has a Subtask Contracts block) your OWN subtask's `lanes:` list verbatim from the brief — the path globs you are expected to modify/create. Used by Step 5.65 below to populate `out_of_lane`. When absent (pre-lane-declaration brief, or a job with no contract block), treat your lane as unconstrained: skip the lane check and emit `out_of_lane: []`
 - **Context digest pointer:** (optional) a pointer to the per-job `CONTEXT_DIGEST` artifact — path + ≤200-char summary + "Read only the sections you need". On the parallel path (you are in a worktree) the path is the MAIN-CHECKOUT ABSOLUTE path, because gitignored `.supervisor/` artifacts do not exist inside your worktree; on the Single-Agent/Sequential path the path is repo-relative, because your worktree path IS the project root. Advisory context only — if the file is absent, proceed without it
+- **Session-log pointer:** the path to `.supervisor/logs/{session_id}.jsonl` (MAIN-CHECKOUT ABSOLUTE on the parallel path; repo-relative on the Single-Agent/Sequential path — same worktree-reality split as the Context digest pointer above), for use as `checkpoint.sh`'s first argument if you choose to emit an advisory checkpoint (see Step 4 item 5 below). Optional input; absent it, simply skip checkpoints
 - **Worktree path:** Absolute path to the git worktree (or project root for inline execution)
 - **Skill references:** Relevant SKILL.md files for guidance
 - **Retry context:** (optional) Previous review issues to address on retry
@@ -103,6 +104,7 @@ Implement a single subtask in an isolated git worktree. Operate independently, f
 2. Follow existing patterns and conventions
 3. Follow referenced skill files for guidance
 4. Ensure type safety and proper error handling
+5. **Optional advisory checkpoints:** at any of five moments — you confirm a hypothesis, refute one, hit a blocker, transition from investigating to fixing, or finish a slice — you MAY emit a `worker_checkpoint` event: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/checkpoint.sh" <session_log_path> <hypothesis_confirmed|hypothesis_refuted|blocker|transition|slice_done> "<short action, first line ≤200 chars>" [paths...]`, where `<session_log_path>` is the session-log pointer from your spawn prompt. Never required, never gates anything — emitting zero checkpoints is not penalized and does not affect `outputs_verified`/`heal_decision`/any other gate.
 
 ### Step 5: Verify
 

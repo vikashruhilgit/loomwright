@@ -282,7 +282,7 @@ Zero change to the default path when the flag is absent (byte-identical behavior
 
 The default path below `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold". One worker executes ALL acceptance criteria in a single context; **no per-subtask Code Reviewer is spawned** — the Phase 4.5 holistic Code Reviewer (below) is the single review of the integrated result.
 
-1. Spawn ONE implementation worker (blocking, in project root) — the prompt passes ALL acceptance criteria, not one subtask's row (spawn shape: `skills/async-orchestration/SKILL.md` §"Subagent Spawn Contracts" → Single-Agent Worker)
+1. Spawn ONE implementation worker (blocking, in project root) — the prompt passes ALL acceptance criteria, not one subtask's row (spawn shape: `skills/async-orchestration/SKILL.md` §"Subagent Spawn Contracts" → Single-Agent Worker; that inherited Sequential-path Worker template also carries the session-log pointer the worker may use with `checkpoint.sh` — see `agents/worker.md`, no separate template lives here)
    - When `cost_profile=cheap`: include `model: "sonnet"` in the Task call
 2. Record result via Context-Keeper — **including the worker's `out_of_lane` field**, so the
    lane report reaches `state.md`'s `## Worker Results` instead of being silently dropped.
