@@ -36,6 +36,10 @@
 #   21. heartbeat: two DIFFERENT real agents (one Bash/Write/Edit-shaped
 #       top-level agent_id, one Task-shaped tool_response.agentId) are NOT
 #       collapsed into the same shared debounce bucket
+#   22. heartbeat: Task-matcher fixture EMITTED ROW carries agent_id/
+#       agent_scope sourced from nested tool_response.agentId (not just the
+#       debounce marker filename, which case 20 already covers) — reproduces
+#       the reviewer-found row-content bug on PR #231
 #
 # EXIT: 0 on full pass, 1 on any failed assertion.
 
@@ -387,6 +391,24 @@ else
   LOG21="$REPO21/.supervisor/logs/fixture-spawn-probe-session-0001.jsonl"
   LINES21="$( [ -f "$LOG21" ] && wc -l < "$LOG21" | tr -d '[:space:]' || echo 0)"
   assert_eq "case21 two different real Task-spawned agents each yield their own heartbeat line (not collapsed into one shared 'main' bucket)" "2" "$LINES21"
+fi
+
+echo "== 22. heartbeat: Task-matcher fixture EMITTED ROW carries agent_id/agent_scope =="
+REPO22="$(init_repo)"
+if [ ! -f "$FIXTURE_TASK" ]; then
+  no "case22 fixture file not found: $FIXTURE_TASK"
+else
+  OUT22="$(run_lifecycle "$REPO22" "$FIXTURE_TASK" heartbeat)"
+  assert_eq "case22 exit 0" "0" "$(get_rc "$OUT22")"
+  LOG22="$REPO22/.supervisor/logs/fixture-spawn-probe-session-0001.jsonl"
+  if [ -f "$LOG22" ]; then
+    ok "case22 log written"
+  else
+    no "case22 log missing"
+  fi
+  LINE22="$(head -1 "$LOG22" 2>/dev/null)"
+  assert_eq "case22 agent_id sourced from nested tool_response.agentId" "a665151ef7efc0b49" "$(printf '%s' "$LINE22" | jq -r '.agent_id')"
+  assert_eq "case22 agent_scope subagent" "subagent" "$(printf '%s' "$LINE22" | jq -r '.agent_scope')"
 fi
 
 echo "== real repo .supervisor/logs untouched =="

@@ -127,6 +127,16 @@ if [ "$LIFECYCLE_SUBCOMMAND" = "heartbeat" ]; then
   # same Task matcher, for the identical precedent). Try the Task shape
   # first, then fall back to the top-level field, so all three matchers
   # derive the correct debounce key through one shared jq call.
+  #
+  # AGENT_ID_RAW is ALSO the value exported below for the python event
+  # builder to source `agent_id` from on this subcommand (see the export
+  # line and the python block's `PAYLOAD ONLY` comment) — it is read once
+  # here and never re-derived, so the debounce key and the emitted row's
+  # agent_id cannot drift apart. It is exported RAW (pre-sanitisation,
+  # pre-"main"-default) so the emitted value matches emit-agent-identity.sh's
+  # own un-sanitised `AGENT_ID` byte-for-byte; the tr -cd sanitisation below
+  # and the "main" default are debounce-FILENAME concerns only and must not
+  # leak into the emitted row (never invent an agent_id — see header note).
   AGENT_ID_RAW="$(printf '%s' "$INPUT" | jq -r 'if (.tool_response.agentId | type) == "string" then .tool_response.agentId elif (.agent_id | type) == "string" then .agent_id else empty end' 2>/dev/null || true)"
   AGENT_ID_KEY="$(printf '%s' "$AGENT_ID_RAW" | tr -cd 'A-Za-z0-9_-' || true)"
   [ -n "$AGENT_ID_KEY" ] || AGENT_ID_KEY="main"
@@ -196,7 +206,7 @@ if [ -n "$PLUGIN_SESSION_ID" ]; then
   fi
 fi
 
-export UTC_TS PLUGIN_SESSION_ID SESSION_BRANCH="$session_branch" LIFECYCLE_SUBCOMMAND LIFECYCLE_EXTRA_ARG
+export UTC_TS PLUGIN_SESSION_ID SESSION_BRANCH="$session_branch" LIFECYCLE_SUBCOMMAND LIFECYCLE_EXTRA_ARG AGENT_ID_RAW="${AGENT_ID_RAW:-}"
 
 # ---- Build one JSONL line (or empty -> no-op) --------------------------------
 OUT="$(printf '%s' "$INPUT" | python3 -c '
@@ -239,7 +249,21 @@ if cc_session_id:
 
 # `agent_id`/`agent_type`: PAYLOAD ONLY, else OMITTED ENTIRELY — never
 # invented, byte-parallel with emit-progress-event.sh / emit-agent-identity.sh.
-agent_id = payload.get("agent_id")
+#
+# EXCEPTION: `heartbeat` sources agent_id from the bash-derived AGENT_ID_RAW
+# env var instead of payload.get("agent_id") directly. That subcommand fires
+# on THREE PostToolUse matchers (Bash|Write|Edit|Task) and the Task shape
+# carries the id only at nested `.tool_response.agentId` — bash already
+# resolved the Task-vs-top-level fallback once (the same jq call that keys
+# the heartbeat debounce marker; see that comment) and this reuses it
+# verbatim rather than re-deriving it here, which would risk the debounce
+# key and the emitted row disagreeing on which agent this is. `waiting`/
+# `failed` never fire on the Task matcher, so they keep reading the
+# top-level payload field directly.
+if subcommand == "heartbeat":
+    agent_id = os.environ.get("AGENT_ID_RAW", "")
+else:
+    agent_id = payload.get("agent_id")
 has_agent_id = isinstance(agent_id, str) and bool(agent_id)
 if has_agent_id:
     event["agent_id"] = agent_id
