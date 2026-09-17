@@ -69,8 +69,13 @@
 #
 # No-op (exit 0, writes nothing) when: empty stdin, malformed JSON, unknown/
 # missing subcommand, missing python3/jq, main worktree unresolvable, a
-# mismatched worktree cross-check, unwritable log dir, or unresolvable session
-# id — the identical failure-mode contract as emit-progress-event.sh.
+# mismatched worktree cross-check, unwritable log dir, unresolvable session
+# id, or the resolved main worktree lacking a pre-existing `.supervisor/`
+# (the `plugin_present()` gate — see worktree-audit.sh for the shared
+# convention: never CREATE `.supervisor/`, only write into it once it already
+# exists) — the identical failure-mode contract as emit-progress-event.sh,
+# plus this last one which is unique to emit-lifecycle.sh's generic-matcher
+# wiring.
 
 set -u
 # Intentionally NO `set -e` — every failure mode must absorb to exit 0.
@@ -106,6 +111,17 @@ top="$(git -C "$main_root" rev-parse --path-format=absolute --show-toplevel 2>/d
 session_branch="$(git -C "$main_root" branch --show-current 2>/dev/null || true)"
 LOG_DIR="$main_root/.supervisor/logs"
 STATE_MD="$main_root/.supervisor/state.md"
+
+# plugin_present <root> — the population gate: the plugin has run in this repo
+# iff `<root>/.supervisor/` already exists. Byte-parallel with
+# worktree-audit.sh's identically-named gate (same file family, same
+# convention) — checked BEFORE any `mkdir -p "$LOG_DIR"` call site (the
+# heartbeat debounce marker below, and the shared write path at the bottom)
+# and before the debounce marker file is touched, so a repo where
+# Loomwright/Supervisor has never run is left completely untouched by all
+# three subcommands (waiting/heartbeat/failed) on all six hook wirings.
+plugin_present() { [ -d "$1/.supervisor" ]; }
+plugin_present "$main_root" || exit 0
 
 # Prefer a real UTC ISO timestamp; omit ts entirely when date fails.
 UTC_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
@@ -281,7 +297,7 @@ if subcommand == "waiting":
     else:
         # Notification seam: read the subtype defensively (UNVERIFIED whether
         # agent_id is ever present here for a subagent — see the source
-        # requirement''s Probe Results). Try candidate field names in order;
+        # requirement'\''s Probe Results). Try candidate field names in order;
         # never crash, never invent a value not actually read.
         for key in ("notification_type", "type"):
             value = payload.get(key)

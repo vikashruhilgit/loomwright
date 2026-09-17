@@ -40,6 +40,10 @@
 #       agent_scope sourced from nested tool_response.agentId (not just the
 #       debounce marker filename, which case 20 already covers) — reproduces
 #       the reviewer-found row-content bug on PR #231
+#   23. AC-8g-style population gate: a plain repo with NO pre-existing
+#       `.supervisor/` gets NOTHING written (no dir, no debounce marker, no
+#       log file) for all three subcommands (waiting/heartbeat/failed) — the
+#       claude-review round-4 finding on PR #231 (plugin_present() gate)
 #
 # EXIT: 0 on full pass, 1 on any failed assertion.
 
@@ -92,8 +96,14 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# init_repo [branch] [with_supervisor:0|1] — with_supervisor=1 pre-creates an
+# EMPTY `.supervisor/` dir so the plugin_present() gate (see emit-lifecycle.sh
+# and worktree-audit.sh's identically-named gate) is satisfied — a repo where
+# Loomwright has "already run" for the purposes of this suite. Omitted/0
+# leaves the repo bare, the AC-8g-style negative-assertion shape (case 23).
 init_repo() {
   local branch="${1:-feature/lifecycle-test}"
+  local with_supervisor="${2:-0}"
   local d; d="$(mktemp -d)"
   d="$(cd "$d" && pwd -P)"
   CLEANUP_DIRS+=("$d")
@@ -104,6 +114,9 @@ init_repo() {
       && git add seed.txt \
       && git commit -qm init \
       && git branch -M "$branch" ) >/dev/null 2>&1
+  if [ "$with_supervisor" = "1" ]; then
+    mkdir -p "$d/.supervisor"
+  fi
   printf '%s' "$d"
 }
 
@@ -215,7 +228,7 @@ else
 fi
 
 echo "== 8. waiting: PreToolUse[AskUserQuestion] literal reason, agent_id present =="
-REPO8="$(init_repo)"
+REPO8="$(init_repo "" 1)"
 P8="$PAYLOAD_DIR/p8.json"
 jq -n '{session_id:"sid-case8", agent_id:"a8", agent_type:"loomwright:worker"}' > "$P8"
 OUT8="$(run_lifecycle "$REPO8" "$P8" waiting ask_user)"
@@ -228,9 +241,10 @@ assert_eq "case8 state" "waiting" "$(printf '%s' "$LINE8" | jq -r '.state')"
 assert_eq "case8 reason" "ask_user" "$(printf '%s' "$LINE8" | jq -r '.reason')"
 assert_eq "case8 agent_id" "a8" "$(printf '%s' "$LINE8" | jq -r '.agent_id')"
 assert_eq "case8 agent_scope" "subagent" "$(printf '%s' "$LINE8" | jq -r '.agent_scope')"
+assert_eq "case8 agent_type" "loomwright:worker" "$(printf '%s' "$LINE8" | jq -r '.agent_type')"
 
 echo "== 9. waiting: Notification seam, no agent_id -> agent_scope key ABSENT =="
-REPO9="$(init_repo)"
+REPO9="$(init_repo "" 1)"
 P9="$PAYLOAD_DIR/p9.json"
 jq -n '{session_id:"sid-case9", notification_type:"permission_prompt"}' > "$P9"
 OUT9="$(run_lifecycle "$REPO9" "$P9" waiting)"
@@ -241,7 +255,7 @@ assert_eq "case9 agent_scope key ABSENT (never guessed)" "false" "$(printf '%s' 
 assert_eq "case9 agent_id key ABSENT" "false" "$(printf '%s' "$LINE9" | jq -r 'has("agent_id")')"
 
 echo "== 10. waiting: Notification seam reads notification_type field =="
-REPO10="$(init_repo)"
+REPO10="$(init_repo "" 1)"
 P10="$PAYLOAD_DIR/p10.json"
 jq -n '{session_id:"sid-case10", notification_type:"idle_prompt", type:"should-not-win"}' > "$P10"
 OUT10="$(run_lifecycle "$REPO10" "$P10" waiting)"
@@ -250,7 +264,7 @@ LINE10="$(head -1 "$REPO10/.supervisor/logs/sid-case10.jsonl" 2>/dev/null)"
 assert_eq "case10 notification_type wins over type" "idle_prompt" "$(printf '%s' "$LINE10" | jq -r '.reason')"
 
 echo "== 11. waiting: Notification seam falls back to unknown =="
-REPO11="$(init_repo)"
+REPO11="$(init_repo "" 1)"
 P11="$PAYLOAD_DIR/p11.json"
 jq -n '{session_id:"sid-case11"}' > "$P11"
 OUT11="$(run_lifecycle "$REPO11" "$P11" waiting)"
@@ -260,7 +274,7 @@ assert_eq "case11 reason falls back to unknown" "unknown" "$(printf '%s' "$LINE1
 
 echo "== 12. failed: reason copied verbatim across all 5 real error values =="
 for err in rate_limit server_error authentication_failed model_not_found unknown; do
-  REPOX="$(init_repo)"
+  REPOX="$(init_repo "" 1)"
   PX="$PAYLOAD_DIR/p-err-$err.json"
   jq -n --arg e "$err" '{session_id: ("sid-err-" + $e), agent_id:"aerr", error: $e}' > "$PX"
   OUTX="$(run_lifecycle "$REPOX" "$PX" failed)"
@@ -270,7 +284,7 @@ for err in rate_limit server_error authentication_failed model_not_found unknown
 done
 
 echo "== 13. failed: missing error key -> reason: unknown =="
-REPO13="$(init_repo)"
+REPO13="$(init_repo "" 1)"
 P13="$PAYLOAD_DIR/p13.json"
 jq -n '{session_id:"sid-case13", agent_id:"a13"}' > "$P13"
 OUT13="$(run_lifecycle "$REPO13" "$P13" failed)"
@@ -279,7 +293,7 @@ LINE13="$(head -1 "$REPO13/.supervisor/logs/sid-case13.jsonl" 2>/dev/null)"
 assert_eq "case13 reason unknown (no error key)" "unknown" "$(printf '%s' "$LINE13" | jq -r '.reason')"
 
 echo "== 14. failed: agent_id present -> agent_scope subagent =="
-REPO14="$(init_repo)"
+REPO14="$(init_repo "" 1)"
 P14="$PAYLOAD_DIR/p14.json"
 jq -n '{session_id:"sid-case14", agent_id:"a14", error:"rate_limit"}' > "$P14"
 OUT14="$(run_lifecycle "$REPO14" "$P14" failed)"
@@ -288,7 +302,7 @@ LINE14="$(head -1 "$REPO14/.supervisor/logs/sid-case14.jsonl" 2>/dev/null)"
 assert_eq "case14 agent_scope subagent" "subagent" "$(printf '%s' "$LINE14" | jq -r '.agent_scope')"
 
 echo "== 15. failed: agent_id absent -> agent_scope main (the one grounded fallback) =="
-REPO15="$(init_repo)"
+REPO15="$(init_repo "" 1)"
 P15="$PAYLOAD_DIR/p15.json"
 jq -n '{session_id:"sid-case15", error:"server_error"}' > "$P15"
 OUT15="$(run_lifecycle "$REPO15" "$P15" failed)"
@@ -297,7 +311,7 @@ LINE15="$(head -1 "$REPO15/.supervisor/logs/sid-case15.jsonl" 2>/dev/null)"
 assert_eq "case15 agent_scope main (grounded fallback, unlike waiting/heartbeat)" "main" "$(printf '%s' "$LINE15" | jq -r '.agent_scope')"
 
 echo "== 16. heartbeat: debounce bound — N rapid calls yield exactly 1 line =="
-REPO16="$(init_repo)"
+REPO16="$(init_repo "" 1)"
 P16="$PAYLOAD_DIR/p16.json"
 jq -n '{session_id:"sid-case16", agent_id:"a16"}' > "$P16"
 i=1
@@ -324,7 +338,7 @@ else
 fi
 
 echo "== 18. heartbeat: debounce key is per-agent_id, not global =="
-REPO18="$(init_repo)"
+REPO18="$(init_repo "" 1)"
 P18A="$PAYLOAD_DIR/p18a.json"; P18B="$PAYLOAD_DIR/p18b.json"
 jq -n '{session_id:"sid-case18", agent_id:"a18-first"}' > "$P18A"
 jq -n '{session_id:"sid-case18", agent_id:"a18-second"}' > "$P18B"
@@ -352,7 +366,7 @@ fi
 
 echo "== 20. heartbeat: Task-matcher fixture shape derives debounce key from tool_response.agentId =="
 FIXTURE_TASK="$SCRIPT_DIR/progress-event-fixtures/spawn-probe-2026-09-02/posttooluse-task-1.json"
-REPO20="$(init_repo)"
+REPO20="$(init_repo "" 1)"
 if [ ! -f "$FIXTURE_TASK" ]; then
   no "case20 fixture file not found: $FIXTURE_TASK"
 else
@@ -373,7 +387,7 @@ else
 fi
 
 echo "== 21. heartbeat: two DIFFERENT real Task-spawned agents are not collapsed into one shared 'main' debounce bucket =="
-REPO21="$(init_repo)"
+REPO21="$(init_repo "" 1)"
 if [ ! -f "$FIXTURE_TASK" ]; then
   no "case21 fixture file not found: $FIXTURE_TASK"
 else
@@ -394,7 +408,7 @@ else
 fi
 
 echo "== 22. heartbeat: Task-matcher fixture EMITTED ROW carries agent_id/agent_scope =="
-REPO22="$(init_repo)"
+REPO22="$(init_repo "" 1)"
 if [ ! -f "$FIXTURE_TASK" ]; then
   no "case22 fixture file not found: $FIXTURE_TASK"
 else
@@ -410,6 +424,36 @@ else
   assert_eq "case22 agent_id sourced from nested tool_response.agentId" "a665151ef7efc0b49" "$(printf '%s' "$LINE22" | jq -r '.agent_id')"
   assert_eq "case22 agent_scope subagent" "subagent" "$(printf '%s' "$LINE22" | jq -r '.agent_scope')"
 fi
+
+echo "== 23. population gate: a plain repo with NO .supervisor/ gets NOTHING written (waiting/heartbeat/failed) =="
+REPO23="$(init_repo)"
+[ ! -d "$REPO23/.supervisor" ] && ok "case23 precondition: repo has no .supervisor/" || no "case23 precondition failed"
+
+P23W="$PAYLOAD_DIR/p23-waiting.json"
+jq -n '{session_id:"sid-case23-waiting", agent_id:"a23"}' > "$P23W"
+OUT23W="$(run_lifecycle "$REPO23" "$P23W" waiting ask_user)"
+assert_eq "case23 waiting exits 0 without .supervisor/" "0" "$(get_rc "$OUT23W")"
+[ ! -e "$REPO23/.supervisor" ] && ok "case23 waiting created no .supervisor/" || no "case23 waiting created .supervisor/: $(find "$REPO23/.supervisor" 2>/dev/null | tr '\n' ' ')"
+
+P23H="$PAYLOAD_DIR/p23-heartbeat.json"
+jq -n '{session_id:"sid-case23-heartbeat", agent_id:"a23"}' > "$P23H"
+OUT23H="$(run_lifecycle "$REPO23" "$P23H" heartbeat)"
+assert_eq "case23 heartbeat exits 0 without .supervisor/" "0" "$(get_rc "$OUT23H")"
+[ ! -e "$REPO23/.supervisor" ] && ok "case23 heartbeat created no .supervisor/ (nor a debounce marker)" || no "case23 heartbeat created .supervisor/: $(find "$REPO23/.supervisor" 2>/dev/null | tr '\n' ' ')"
+
+P23F="$PAYLOAD_DIR/p23-failed.json"
+jq -n '{session_id:"sid-case23-failed", agent_id:"a23", error:"rate_limit"}' > "$P23F"
+OUT23F="$(run_lifecycle "$REPO23" "$P23F" failed)"
+assert_eq "case23 failed exits 0 without .supervisor/" "0" "$(get_rc "$OUT23F")"
+[ ! -e "$REPO23/.supervisor" ] && ok "case23 failed created no .supervisor/" || no "case23 failed created .supervisor/: $(find "$REPO23/.supervisor" 2>/dev/null | tr '\n' ' ')"
+
+# POSITIVE CONTROL: the identical waiting payload against a repo where
+# .supervisor/ already exists DOES write a line — proves silence above is the
+# gate, not some other unrelated breakage.
+REPO23B="$(init_repo "" 1)"
+OUT23B="$(run_lifecycle "$REPO23B" "$P23W" waiting ask_user)"
+assert_eq "case23 POSITIVE CONTROL exits 0" "0" "$(get_rc "$OUT23B")"
+[ -f "$REPO23B/.supervisor/logs/sid-case23-waiting.jsonl" ] && ok "case23 POSITIVE CONTROL: with .supervisor/ present, a line IS written" || no "case23 POSITIVE CONTROL: log missing despite pre-existing .supervisor/"
 
 echo "== real repo .supervisor/logs untouched =="
 assert_eq "real logs snapshot unchanged" "$REAL_BEFORE" "$(snapshot_real)"
