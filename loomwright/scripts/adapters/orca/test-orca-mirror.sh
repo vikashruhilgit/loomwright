@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # test-orca-mirror.sh — stub-backed self-tests for orca-mirror.sh. `orca` is NOT
-# installed on this dev machine (2026-09-17), so every case runs against a STUB
+# installed on this dev machine (2026-09-11), so every case runs against a STUB
 # `orca` placed on PATH that records its own argv (as one JSON array per line,
 # via jq -n --args, so embedded newlines/quotes in an arg — e.g. a composed
 # multi-line comment — never corrupt the log) and returns canned/controllable
@@ -12,7 +12,7 @@
 #   C. probe-once-per-run: N invocations sharing one cache file -> exactly 1
 #      `orca status` call; MUTATION CONTROL proves this is load-bearing (a
 #      broken cache-read forces N calls)
-#   D. phase_transition argv mapping (default in-progress, self_heal/review -> in-review)
+#   D. phase_transition argv mapping (default in-progress, to=SELF_HEAL -> in-review)
 #   E. pr_created argv mapping (in-review workspace-status + comment containing the URL)
 #   F. worker_checkpoint argv mapping (worktree set --comment "<text>")
 #   G. session_end argv mapping (completed/completed_with_escalation -> completed, else todo)
@@ -155,15 +155,23 @@ fi
 
 echo ""
 echo "==== D: phase_transition mapping ===="
+# Real on-disk shape uses the "type" key (not "event") and the target phase
+# lives in "to" (not "phase") — see orca-mirror.sh's EVENT TYPE KEY comment
+# and the fixture cited there.
 LOG_D1="$TMP/argv-d1.jsonl"
 ORCA_STUB_LOG="$LOG_D1" LOOMWRIGHT_ORCA_STATUS_CACHE="$TMP/cache-d1" \
-  run_mirror '{"event":"phase_transition","phase":"PLAN"}' >/dev/null 2>&1
+  run_mirror '{"type":"phase_transition","from":"EXECUTE","to":"PLAN"}' >/dev/null 2>&1
 assert_eq "D1 default phase -> in-progress" "1" "$(argv_matches "$LOG_D1" '.[0]=="--workspace-status" and .[1]=="in-progress"')"
 
 LOG_D2="$TMP/argv-d2.jsonl"
 ORCA_STUB_LOG="$LOG_D2" LOOMWRIGHT_ORCA_STATUS_CACHE="$TMP/cache-d2" \
-  run_mirror '{"event":"phase_transition","phase":"SELF_HEAL"}' >/dev/null 2>&1
+  run_mirror '{"type":"phase_transition","from":"FINALIZE","to":"SELF_HEAL"}' >/dev/null 2>&1
 assert_eq "D2 SELF_HEAL phase -> in-review" "1" "$(argv_matches "$LOG_D2" '.[0]=="--workspace-status" and .[1]=="in-review"')"
+
+LOG_D3="$TMP/argv-d3.jsonl"
+ORCA_STUB_LOG="$LOG_D3" LOOMWRIGHT_ORCA_STATUS_CACHE="$TMP/cache-d3" \
+  run_mirror '{"event":"phase_transition","phase":"SELF_HEAL"}' >/dev/null 2>&1
+assert_eq "D3 legacy {event,phase} shape does not match .type -> falls to in-progress default (proves the key/field fix is load-bearing)" "1" "$(argv_matches "$LOG_D3" '.[0]=="--workspace-status" and .[1]=="in-progress"')"
 
 echo ""
 echo "==== E: pr_created mapping ===="

@@ -4,7 +4,7 @@
 # tool — https://onorca.dev), ONLY when `orca` happens to be installed and
 # configured. Never a dependency, never touches core (agents/skills/commands),
 # never breaks anything when `orca` is absent — which it is on this dev
-# machine as of 2026-09-17 (source requirement
+# machine as of 2026-09-11 (source requirement
 # .supervisor/requirements/orca-derived/06-orca-adapter.md). See
 # loomwright/docs/ARCHITECTURE_CONTRACTS.md §"Portability" for the core/adapter
 # rule this file implements.
@@ -66,17 +66,30 @@
 #   EFFICIENCY cache, not a correctness gate, so that is an accepted,
 #   documented limitation, not a bug.
 #
-# EVENT MAPPING (four recognized `event` values; anything else is a silent
+# EVENT MAPPING (four recognized event types; anything else is a silent
 # no-op). See also loomwright/docs/ARCHITECTURE_CONTRACTS.md §"Portability".
 #
-#   phase_transition {event, phase}
-#     phase in {self_heal, review} (case-insensitive)  -> orca --workspace-status in-review
-#     anything else (incl. absent/unrecognized)         -> orca --workspace-status in-progress
+# EVENT TYPE KEY: `pr_created` / `worker_checkpoint` / `session_end` lines are
+# written with an `"event":` key (cross-checked against build-floor.sh,
+# test-build-floor.sh, and test-curation-status.sh fixtures). `phase_transition`
+# is the ONE outlier: docs/TELEMETRY.md (search "phase_transition events")
+# documents it as agent-written with a `"type":"phase_transition"` key, not
+# `"event"` — confirmed by a real fixture line from this repo's own history
+# (pre-v15.16.0 `skills/state-management/SKILL.md`):
+# `{"ts":"2026-03-09T14:30:00Z","type":"phase_transition","from":"INIT","to":"ACQUIRE","task_id":"user-auth"}`
+# — the target phase lives in `to`, not `phase`. So the event-type dispatch
+# key below is read as `.event // .type`, which resolves either convention
+# without a per-event special case.
+#
+#   phase_transition {type, from, to}
+#     to == SELF_HEAL (case-insensitive)                -> orca --workspace-status in-review
+#     anything else (incl. absent/unrecognized)          -> orca --workspace-status in-progress
 #     Orca's model is two-state (in-progress/in-review); this plugin's own
 #     lifecycle has more phases than that (ACQUIRE, PRE_FLIGHT_SYNC, PLAN,
-#     EXECUTE, FINALIZE, SELF_HEAL, LOOP — agents/supervisor.md's 7 phases), so
-#     this is a DELIBERATE, documented many-to-two collapse: only the
-#     review/heal phase reads as "in review" to Orca; every other phase
+#     EXECUTE, FINALIZE, SELF_HEAL, LOOP — agents/supervisor.md's current 7
+#     phases; there is no `review` phase in the live prompt), so this is a
+#     DELIBERATE, documented many-to-two collapse: only the SELF_HEAL
+#     (review/heal) phase reads as "in review" to Orca; every other phase
 #     defaults to "in-progress" — showing active work as in-progress is less
 #     misleading than prematurely marking it ready for review.
 #
@@ -232,15 +245,22 @@ post_comment_appending() {
 }
 
 # ---- dispatch on event type ---------------------------------------------------
-EVENT_TYPE="$(printf '%s' "$EVENT_JSON" | "$JQ" -r '.event // empty' 2>/dev/null)"
+# `.event` covers pr_created/worker_checkpoint/session_end; `.type` covers
+# phase_transition (see EVENT TYPE KEY above) — the fallback resolves both
+# on-disk key conventions without a per-event special case.
+EVENT_TYPE="$(printf '%s' "$EVENT_JSON" | "$JQ" -r '.event // .type // empty' 2>/dev/null)"
 
 case "$EVENT_TYPE" in
   phase_transition)
-    phase="$(printf '%s' "$EVENT_JSON" | "$JQ" -r '.phase // empty' 2>/dev/null)"
+    # Real shape has no `phase` field — the target phase is `to` (see fixture
+    # cited in EVENT TYPE KEY above). Only SELF_HEAL (the one phase that
+    # actually exists in agents/supervisor.md and represents review/heal work)
+    # maps to in-review; every other/unrecognized value is in-progress.
+    phase="$(printf '%s' "$EVENT_JSON" | "$JQ" -r '.to // empty' 2>/dev/null)"
     phase_lc="$(printf '%s' "$phase" | tr '[:upper:]' '[:lower:]')"
     case "$phase_lc" in
-      self_heal|review) set_workspace_status "in-review" ;;
-      *)                set_workspace_status "in-progress" ;;
+      self_heal) set_workspace_status "in-review" ;;
+      *)         set_workspace_status "in-progress" ;;
     esac
     ;;
   pr_created)
