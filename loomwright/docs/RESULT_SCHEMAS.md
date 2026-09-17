@@ -1995,8 +1995,8 @@ The on-disk layout of the `/automate` engine's run file, `.supervisor/automate/<
 - [x] <... merged ...>
 - [x] <... path ...>  # skipped: <reason>     # checked-off so "next unchecked" never re-picks it; reason also in ## Progress
 ## Current
-- item: <path> | status: running|awaiting_merge|escalated|failed|done | pr: <url> | branch: <name>
-- pause_reason: awaiting_merge|escalated|limit_reached|resume_ambiguous|null
+- item: <path> | status: running|awaiting_merge|escalated|failed|rate_limit|done | pr: <url> | branch: <name>
+- pause_reason: awaiting_merge|escalated|limit_reached|resume_ambiguous|rate_limit|null
 - owned_drain_started: <ts> | owned_drain_result: READY|ESCALATED | suppressed_default_dispatch: true
 ## Progress                 # APPEND-ONLY (never rewritten)
 - <ts> picked <item>
@@ -2021,7 +2021,7 @@ The on-disk layout of the `/automate` engine's run file, `.supervisor/automate/<
 | Value | Meaning |
 |---|---|
 | `running` | The loop is actively processing (or this is the freshly-created run). |
-| `paused` | Stopped with **work remaining** — always paired with a `pause_reason` in `## Current` (`awaiting_merge` \| `escalated` \| `limit_reached` \| `resume_ambiguous`). |
+| `paused` | Stopped with **work remaining** — always paired with a `pause_reason` in `## Current` (`awaiting_merge` \| `escalated` \| `limit_reached` \| `resume_ambiguous` \| `rate_limit`). |
 | `done` | Set **only** when the Queue is **fully resolved** (no `- [ ]` items remain), i.e. `remaining: 0`. (`remaining` is **COMPUTED/REPORTED** — the count of `- [ ]` Queue items, derived by `automate-helpers.sh remaining` — **not a persisted run-file field**; there is no `remaining:` line stored in the template.) |
 
 ### `## Queue` checklist convention
@@ -2035,8 +2035,8 @@ The on-disk layout of the `/automate` engine's run file, `.supervisor/automate/<
 
 | Field | Values | Notes |
 |---|---|---|
-| `status` (item-level) | `running` \| `awaiting_merge` \| `escalated` \| `failed` \| `done` | The state of the in-flight item. Distinct from the run-level `## Status` enum above. |
-| `pause_reason` | `awaiting_merge` \| `escalated` \| `limit_reached` \| `resume_ambiguous` \| `null` | Non-null whenever `## Status: paused`; `null` while `running`/`done`. |
+| `status` (item-level) | `running` \| `awaiting_merge` \| `escalated` \| `failed` \| `rate_limit` \| `done` | The state of the in-flight item. Distinct from the run-level `## Status` enum above. `rate_limit` mirrors `pause_reason` exactly the way `awaiting_merge`/`escalated` already do — never a separate `parked` placeholder. |
+| `pause_reason` | `awaiting_merge` \| `escalated` \| `limit_reached` \| `resume_ambiguous` \| `rate_limit` \| `null` | Non-null whenever `## Status: paused`; `null` while `running`/`done`. `rate_limit`: the loop's own `agent_lifecycle: failed` row (main-scope, `reason: rate_limit`) fired during RUN, before a PR existed — see `skills/automate-loop/SKILL.md` §6 "Rate-limit park". |
 | `pr` / `branch` | string / `null` | The in-flight item's PR URL and feature branch. |
 | `owned_drain_started` | `<ts>` | Timestamp the engine's single OWNED inline `/review-pr --until-mergeable` drain started. |
 | `owned_drain_result` | `READY` \| `ESCALATED` | The drain's terminal `REVIEW_HEAL_RESULT.decision`, read synchronously. `READY` is "ready, left open for a human" — the drain **never merges**. |
@@ -2045,10 +2045,11 @@ The on-disk layout of the `/automate` engine's run file, `.supervisor/automate/<
 ### Item lifecycle
 
 ```
-queued (- [ ]) → running → pr-open → awaiting_merge → merged (- [x]) | escalated (parks) | failed | skipped
+queued (- [ ]) → running → rate_limit (parks, no PR yet) | pr-open → awaiting_merge → merged (- [x]) | escalated (parks) | failed | skipped
 ```
 
 - `escalated` **parks** the run (`## Status: paused`, `pause_reason: escalated`) and never opens a second PR (single-open-PR invariant — `skills/automate-loop/SKILL.md` §8/§9).
+- `rate_limit` **parks** the run (`## Status: paused`, `pause_reason: rate_limit`) BEFORE a PR ever exists — RUN itself failed on a rate-limit `StopFailure` (`skills/automate-loop/SKILL.md` §6 "Rate-limit park"). It resumes through the SAME RESUME reconcile as `awaiting_merge`/`escalated` (§4) — no second park vocabulary, no second reconcile path.
 - `skipped`/`abandoned` items are written `- [x] <path>  # skipped|abandoned: <reason>` (above) so they are never re-picked and do not block `done`.
 
 ### Crash-safety contract
@@ -2082,6 +2083,7 @@ All result schemas include a `schema_version` field. This enables forward compat
 
 ### Version History
 
+- **AUTOMATE_RUN additive `rate_limit` value** (2026-09-17, `.supervisor/requirements/orca-derived/04-rate-limit-park.md`): Added `rate_limit` as a fifth value to the EXISTING `pause_reason` enum (`awaiting_merge|escalated|limit_reached|resume_ambiguous|rate_limit|null`) and to the item-level `status` enum (`running|awaiting_merge|escalated|failed|rate_limit|done`), in both the `## Current` template comment block AND the fields table (this doc has a documented history of exactly this kind of two-listing drift within one section — both listings, plus the item-lifecycle diagram, were updated together). `/automate`'s §6 RUN step (`skills/automate-loop/SKILL.md` §6 "Rate-limit park") now checks the loop's own `.supervisor/logs/{session_id}.jsonl` for a main-scope `agent_lifecycle: failed` row with `reason: rate_limit` (or `reason: unknown` plus a `429` substring in the sibling `failures.log` `last_assistant_message`, recorded as a SEPARATE, never-promoted `reason_hint: rate_limit` field) post-dating the item's "picked" line, and parks — item-level `status` mirrors `pause_reason` exactly as `awaiting_merge`/`escalated` already do, never a new `parked` placeholder — instead of retrying into the same wall or DRAINing a PR that never existed. Every other classified `StopFailure` reason (`server_error`/`authentication_failed`/`model_not_found`, or `unknown` with no `429` hint) is UNCHANGED. Resuming a `rate_limit` park round-trips through the EXISTING RESUME reconcile (§4) exactly as `awaiting_merge` does — no second reconcile code path, no second park vocabulary; since a `rate_limit` park has no PR (`pr: null`), reconcile is simply a no-op for that item and the loop falls straight through to re-picking it and retrying RUN. **No `schema_version` bump** — purely an additive enum value on an already-open, non-hook-validated markdown state-file contract; a pre-item-04 reader that has never seen `rate_limit` still validates every other value unchanged. Additive — all other schemas unchanged.
 - **VERIFY_QUEUE (new markdown state-file schema)** (2026-09-16, item 07 "multi-ticket queue and resume"): New `## VERIFY_QUEUE` section documenting `.supervisor/verify/queue-<UTC ts>-<slug>.md`, the `/verify --folder <dir>` queue engine's run file — mirrors `AUTOMATE_RUN`'s framing (a markdown state-file contract, NOT hook-validated) adapted for `/verify`'s own truth source (`evidence.jsonl` + `git rev-parse`, never `gh`). New `verify-helpers.sh` subcommands `queue-write` (atomic, LINE-COUNT GUARDED — refuses to shrink the file, a guard `automate-helpers.sh runfile-write` does not carry), `queue-progress-append`, `queue-checkoff`, `queue-remaining`; new `verify-run.sh queue-reconcile-item` (git/evidence belief-vs-truth read, pure, always advisory). `--resume <run_id>` gains a probe-then-fallback DISPATCH RULE (not a new flag): a queue file match wins, else the existing single-ticket resume is unchanged. No `schema_version` bump on any existing schema — purely additive new surfaces. Additive — all other schemas unchanged.
 - **VERIFY_EVIDENCE additive `impact_surfaces` event + `ac.surfaces`** (2026-09-16, item 06 "impact pass"): New `impact_surfaces` event value (files, surfaces, unmapped, brief_surfaces, limit — one line per run, appended by `verify-run.sh impact record-surfaces`) and a new OPTIONAL `surfaces: string[]` field on `ac` lines (matched against a later run's `impact_surfaces` for bounded prior-AC regression). `validate-verify-evidence.py`'s `EVENTS` enum and a new `check_impact_surfaces` validator function cover the event; `check_ac` tolerates the new optional field. `verify-helpers.sh summary_build` now filters its ticket PASS/FAIL/BLOCKED/NOT_VERIFIABLE row to `ac` lines with `scope: "ticket"` ONLY (previously scope-blind) and renders a SEPARATE `## Impact pass` table/counts line (via the new `impact_summary_render` function) from `scope: "impact"` lines — an impact-scope verdict never changes the ticket's own score. **No `schema_version` bump** — both additions are additive (a pre-item-06 line never carries `impact_surfaces` as its `event` and never carries `ac.surfaces`, so nothing pre-existing changes shape). Additive — all other schemas unchanged.
 - **VERIFY_RESULT additive `paused` status + `pause_reason`** (2026-09-15, item 04 Subtask 1): Added `paused` to the `status` enum (alongside the existing `completed`/`aborted`) and a new REQUIRED-KEY, NULLABLE-VALUE `pause_reason: needs_auth | session_expired | null` field, emitted when `verify-run.sh auth-check` (exit 4) or `verify-run.sh walk` (exit 5) stops a run for a human sign-in or a mid-run session expiry. `validate-qa-result.py`'s VERIFY_RESULT branch gains rule V7 enforcing the pairing (`paused` ⇔ non-null recognized reason; `completed`/`aborted` ⇔ null) in both directions. **No `schema_version` bump** — `paused` is an additive enum value and `pause_reason` is additive (a pre-item-04 producer that never emits `paused` also never emits a non-null `pause_reason`, so its blocks keep validating unchanged under V7's null-iff-non-paused half). Additive — all other schemas unchanged.

@@ -2,8 +2,8 @@
 name: automate-loop
 description: Protocol authority for `/automate` — the generic automation engine that converts ANY source (a prompt via /product-owner, a requirements folder, or a backlog-doc) into a FULL Queue with a per-run processing cap inside ONE markdown run file (`.supervisor/automate/<run_id>.md` — the contract, dashboard, and resume state), then drives each Queue item through the per-item loop (`/autonomous --single-iteration` → owned inline `/review-pr --until-mergeable` → trusted-merge-or-park → pull main → check off + append `## Progress`). Smart resume = glob `*.md` for not-done + reconcile-vs-ground-truth. Use when implementing or invoking `/automate`.
 allowed-tools: [Read, Write, Edit, Bash, Task, AskUserQuestion]
-version: "1.3.0"
-lastUpdated: "2026-08-04"
+version: "1.4.0"
+lastUpdated: "2026-09-17"
 ---
 
 # Automate Loop Skill
@@ -119,8 +119,8 @@ Exactly **one** source is resolved per run. Resolution produces the **FULL** ord
 - [x] <... merged ...>
 - [x] <... path ...>  # skipped: <reason>     # checked-off so "next unchecked" never re-picks it; reason also in ## Progress
 ## Current
-- item: <path> | status: running|awaiting_merge|escalated|failed|done | pr: <url> | branch: <name>
-- pause_reason: awaiting_merge|escalated|limit_reached|resume_ambiguous|null
+- item: <path> | status: running|awaiting_merge|escalated|failed|rate_limit|done | pr: <url> | branch: <name>
+- pause_reason: awaiting_merge|escalated|limit_reached|resume_ambiguous|rate_limit|null
 - owned_drain_started: <ts> | owned_drain_result: READY|ESCALATED | suppressed_default_dispatch: true (`READY`'s `termination_reason` — `converged` or `sub_floor_converged`, mechanized bound via `scripts/drain-rounds.sh` — is read straight through from `REVIEW_HEAL_RESULT`; `sub_floor_converged` is NOT merge-eligible, §10 cond 1)
 ## Progress                 # APPEND-ONLY (never rewritten)
 - <ts> picked <item>
@@ -131,13 +131,13 @@ Exactly **one** source is resolved per run. Resolution produces the **FULL** ord
 ### Item lifecycle
 
 ```
-queued (- [ ]) → running → pr-open → awaiting_merge → merged (- [x]) | escalated (parks) | failed | skipped
+queued (- [ ]) → running → rate_limit (parks, no PR yet) | pr-open → awaiting_merge → merged (- [x]) | escalated (parks) | failed | skipped
 ```
 
 ### `## Status` semantics
 
 - **`running`** — the loop is actively processing (or is the freshly-created run).
-- **`paused`** — stopped with work remaining; always paired with a `pause_reason` (`awaiting_merge` | `escalated` | `limit_reached` | `resume_ambiguous`).
+- **`paused`** — stopped with work remaining; always paired with a `pause_reason` (`awaiting_merge` | `escalated` | `limit_reached` | `resume_ambiguous` | `rate_limit`).
 - **`done`** — set **only** when the Queue is **fully resolved** (no `- [ ]` items remain), i.e. `remaining: 0`. `remaining` is **COMPUTED/REPORTED** (the count of `- [ ]` Queue items, via `automate-helpers.sh remaining`) — it is **NOT a persisted run-file field**; the template stores no `remaining:` line.
 
 ### Crash-safety contract (HIGH-risk mitigation — run-file is the ONLY copy of resume state)
@@ -164,12 +164,14 @@ queued (- [ ]) → running → pr-open → awaiting_merge → merged (- [x]) | e
    - **PR closed-unmerged or vanished?** a `CLOSED` (never-merged) or otherwise gone PR ⇒ the item is `gone` — neither merged nor live. Treat it like an `escalated` park requiring human resolution (§9): the run stays paused until the human re-opens/redoes the work or marks the item `skipped`/`abandoned` in `## Queue` (§5). Never silently re-pick or auto-check a `gone` item.
    - **Branch landed?** `git log origin/main --oneline` / `git branch --contains <sha>` — verify the branch actually reached `main` (never assert "merged" from memory).
    - **Requirement stamped?** the requirement file's `## Status: done` stamp.
+   - **No PR yet (`pr: null`, `pause_reason: rate_limit`)?** RUN failed before a PR ever existed (see "Rate-limit park" under §6 below), so there is nothing for `gh` to reconcile — this item is left exactly as parked (still `- [ ]`, still the `## Current` in-flight item) and falls straight through to step 4/6 below: resuming just re-picks it and retries RUN.
    - Reconcile each item, then rewrite `## Queue` checkboxes + `## Current` atomically (§3) so belief matches truth.
 3. **RECONCILE also restores a crash-stranded config backup** (§7) — if `## Run Config`'s `config_backup` sidecar still exists on disk, the prior tick died with `.auto_review` suppressed; restore it (or delete `config.json` if originally absent) before proceeding.
 4. **If an incomplete run exists**, `AskUserQuestion`: **continue / start new / archive**.
    - `--resume [<run_id>]` targets one explicitly; with the id omitted it targets the **most-recent incomplete** run.
    - Under **`--non-interactive-fallback`**, an **ambiguous** resume (more than one incomplete run and no explicit id) **fails closed**. In `AUTOMATE_RUN` this is persisted as **`pause_reason: resume_ambiguous`** in `## Current` (the run file has no `status_reason` field — that identifier belongs to the inner `/autonomous` layer's `AUTONOMOUS_RUN`, which surfaces it as `status_reason: "resume_ambiguous_non_interactive"` when the loop forwards the fallback).
 5. **Re-pass non-persisted passthrough flags.** `## Run Config` does NOT store `--notify` / `--non-interactive-fallback` / `--cheap` (§11) — a resume or `/loop` tick that omits them silently reverts to defaults. This matters most for **`--cheap`**: omitting it reverts the remaining queue to the full-cost profile with cumulative dollar impact, so re-pass `--cheap` on **every** `/automate --resume` invocation and `/loop` tick of a cheap run.
+6. **Resuming a `rate_limit` park.** This round-trips through the EXACT SAME RESUME flow above — no second reconcile code path, no second park vocabulary. The only difference from resuming `awaiting_merge` is *what* step 2 finds: an `awaiting_merge` item has a `pr` to reconcile against `gh`; a `rate_limit` item has `pr: null` and nothing to check (the "No PR yet" bullet above), so reconcile is a no-op for it. Either way, `continue` (step 4) re-enters the per-item loop at §6 step 1 RECONCILE and proceeds from there — for a `rate_limit` item that means falling straight through to §6 step 2 RUN, retrying the SAME item (the rate-limit window has presumably passed by the time a human or `/loop` resumes).
 
 ---
 
@@ -193,18 +195,26 @@ An item the human (or the loop) abandons is written in `## Queue` as:
 For each `- [ ]` Queue item (top-down, single-open-PR invariant permitting — §8):
 
 1. **RECONCILE** — re-check ground truth for any in-flight item before picking (§4); never pick a new item while one has an open unmerged PR (§8). When `reconcile-item` returns `merged` for an item previously parked `awaiting_merge` (or `escalated`), the loop calls `automate-helpers.sh brief-repair <item> <pr_url>` BEFORE picking the next item and appends its one output line to `## Progress` — advisory, fail-SAFE, its result never changes the reconcile verdict (see "Brief-repair at RECONCILE and SYNC" below).
-2. **RUN** — set `.supervisor/config.json {"auto_review": false}` (the suppress contract, §7) **then** run `/autonomous --single-iteration --requirement <path>`, appending `--cheap` when it was passed to `/automate` (pure passthrough, v15.2.0+ — the engine never interprets the flag itself and does NOT store it in `## Run Config`; the inner `/autonomous` forwards it on to `/supervisor`, §11). The suppress MUST wrap the RUN phase: both default dispatches fire *during* `/autonomous` (Supervisor step 5.5 + the `PostToolUse[Bash]` `gh pr create` hook), so toggling at DRAIN is too late. Capture the emitted `SUPERVISOR_RESULT` (status, `pr_url`, `branch`, `rubric_score`, `heal_decision`). **Restore `.auto_review` in a finally-style cleanup immediately after `/autonomous` returns *or fails* — i.e. BEFORE the owned DRAIN below** (§7). The owned drain is inline and NOT gated by `.auto_review`, so restoring before it both keeps the suppression window tight and is safe.
+2. **RUN** — set `.supervisor/config.json {"auto_review": false}` (the suppress contract, §7) **then** run `/autonomous --single-iteration --requirement <path>`, appending `--cheap` when it was passed to `/automate` (pure passthrough, v15.2.0+ — the engine never interprets the flag itself and does NOT store it in `## Run Config`; the inner `/autonomous` forwards it on to `/supervisor`, §11). The suppress MUST wrap the RUN phase: both default dispatches fire *during* `/autonomous` (Supervisor step 5.5 + the `PostToolUse[Bash]` `gh pr create` hook), so toggling at DRAIN is too late. Capture the emitted `SUPERVISOR_RESULT` (status, `pr_url`, `branch`, `rubric_score`, `heal_decision`). **Restore `.auto_review` in a finally-style cleanup immediately after `/autonomous` returns *or fails* — i.e. BEFORE the owned DRAIN below** (§7). The owned drain is inline and NOT gated by `.auto_review`, so restoring before it both keeps the suppression window tight and is safe. **Then, before proceeding to step 3 DRAIN, check for a rate-limit park** — see "Rate-limit park" below; a parked item stops the run right here and never reaches DRAIN/GATE.
 3. **DRAIN** — own **exactly ONE** inline `/review-pr --until-mergeable --no-auto-postmortem` on the PR (§7). Read its terminal `REVIEW_HEAL_RESULT` synchronously; record `owned_drain_started` / `owned_drain_result` / `suppressed_default_dispatch: true` in `## Current`. **Then, at the END of DRAIN (BEFORE step 4 GATE), emit the engine-native learning line** — see "Learning-emit at end-of-DRAIN" below. This runs for EVERY item that produced a PR (merged OR parked); emitting here (not at step 6 CHECK OFF) covers parked items, which stop at the GATE and never reach CHECK OFF.
 4. **GATE** — apply the per-mode decision (§9): safe mode parks `awaiting_merge`; `--auto-merge` runs the 6-condition trusted-merge gate (§10) — which includes RE-CLASSIFYING the fetched PR head with `classify-risk.sh main <ready_sha> --root <checkout>` for condition 6 (never the Supervisor's Phase 4.5 value). `ESCALATED` always parks (§9).
 5. **SYNC** — after a successful merge (auto-merge mode), `git checkout main && git pull` so the next item branches off **fresh `main`** (no stale-base / PR-tower). After `gate-eval` printed `MERGE`, call `automate-helpers.sh brief-repair <item> <pr_url>` (before the `git pull`; order is immaterial, the brief is gitignored) and append its line to `## Progress`.
 6. **CHECK OFF + PROGRESS** — mark the item `- [x]` in `## Queue` and **append** a `## Progress` line, via **one atomic write** (§3). Report `remaining: N` (count of `- [ ]` items).
+
+### Rate-limit park (end of RUN, before DRAIN)
+
+Immediately after step 2 RUN captures `SUPERVISOR_RESULT` and restores `.auto_review`, and **before** proceeding to step 3 DRAIN, the loop checks its own session's JSONL log — `.supervisor/logs/{session_id}.jsonl`, the SAME file `scripts/emit-lifecycle.sh` appends to (`docs/RESULT_SCHEMAS.md` §"`agent_lifecycle` JSONL event records") — for an `agent_lifecycle` row with `state: "failed"`, `agent_scope: "main"` (no `agent_id` — for `/automate` the main thread IS this loop, so a main-scope failure is the loop's own turn dying, matching the source requirement's honest limit that every observed rate-limit `StopFailure` in this repo has been main-thread), and `reason: "rate_limit"`, timestamped AFTER this item's own `## Progress` "picked" line (never a stale hit carried over from an earlier item in the same run file). **No new script is needed for this read** — the loop reads its own session log directly, exactly the way it already reads its own `## Progress` lines; there is no PR yet at this point for a `gh`-keyed helper like `reconcile-item` to key on.
+
+- **Classified hit (`reason: "rate_limit"`):** park immediately, following the EXISTING park shape exactly (never a new `status: parked` placeholder) — `## Current` gets `status: rate_limit` AND `pause_reason: rate_limit` (item-level `status` mirrors `pause_reason`, the same way `awaiting_merge`/`escalated` already do), `## Status: paused`, one `## Progress` line naming the rate-limit fact (e.g. `<ts> rate-limited — parking, resume once the window clears`), and the run **STOPS (exit 0)**. It does NOT proceed to DRAIN/GATE and does NOT retry RUN into the same wall.
+- **Unknown hit with a `429` hint (fallback, `reason: "unknown"`):** the `agent_lifecycle` row itself carries no message text, so before falling through to today's unchanged handling, check the sibling `STOP_FAILURE` line in `.supervisor/logs/failures.log` for the SAME session (matched by `session_id`, the line closest-preceding the `agent_lifecycle` row's own `ts`) and read its `last_assistant_message` field for a `429` substring. A hit there records a SEPARATE `reason_hint: rate_limit` line in `## Current` — additive, **never** written into `reason` (the `agent_lifecycle` row stays `"unknown"`, untouched) and **never** promoted into `status`/`pause_reason` as if it were a classified certainty — **and** the item still parks the SAME way a classified `rate_limit` would (`status: rate_limit`, `pause_reason: rate_limit`, same `## Progress`/stop behavior above): a hint is enough to stop retrying into a wall, not enough to relabel the underlying fact as certain.
+- **Every other classified reason — UNCHANGED.** `server_error` / `authentication_failed` / `model_not_found`, or `unknown` with no `429` hint, take today's existing failure/error path exactly as before (whatever `SUPERVISOR_RESULT`'s own failure status already drives, and the `/autonomous` correctness gates that bubble up per §11). This item adds exactly ONE new branch; it does not restructure any other reason's handling.
 
 ### Termination (two exits)
 
 - **Queue fully resolved** (no `- [ ]` left) ⇒ `## Status: done`, `remaining: 0`, the `/loop` driver stops.
 - **`limit` items processed** with the queue NOT empty ⇒ `## Status: paused`, `pause_reason: limit_reached`, `remaining: <unchecked count>`, loop stops.
 
-(A park on `awaiting_merge` or `escalated` — §8/§9 — also stops the loop with the corresponding `pause_reason`.)
+(A park on `awaiting_merge`, `escalated` — §8/§9 — or `rate_limit` — the "Rate-limit park" subsection above — also stops the loop with the corresponding `pause_reason`.)
 
 All `/autonomous` correctness gates still bubble up (NO-GO, Plan Review FAIL×3, adjudication, rubric gate); `--notify`, `--non-interactive-fallback`, and `--cheap` pass through to the inner `/autonomous` (§11).
 
@@ -391,6 +401,8 @@ The engine is designed to be driven continuously by Claude's `/loop`. Use the **
 - **Leaving a partial `config.json` on restore.** Restore byte-for-byte OR delete-if-originally-absent; a stray empty `config.json` shadows the legacy `notify-config.json` (§7).
 - **Overwriting a malformed pre-existing `config.json`.** Abort the tick instead — never clobber a hand-edited config (§7).
 - **Picking a new item while a PR is open.** Single-open-PR invariant — `awaiting_merge` and `escalated` both block PICK (§8).
+- **Retrying RUN into a rate-limit wall, or misreporting it as a dead worker.** A `reason: "rate_limit"` (or an `"unknown"` reason with a `429` hint) on the loop's OWN `agent_lifecycle: failed` row parks the item (`status`/`pause_reason: rate_limit`) and stops — it never re-invokes `/autonomous` for the same item in the same tick (§6 "Rate-limit park").
+- **Promoting a `429` text hint into the classified `reason`.** The string-table fallback only ever writes a SEPARATE `reason_hint: rate_limit` field; the underlying `agent_lifecycle` row's `reason` stays whatever was actually classified (§6 "Rate-limit park").
 - **Merging on bare `READY`.** `READY` ignores `REVIEW_REQUIRED`, human threads and diff risk; `--auto-merge` must pass ALL 6 conditions of the trusted gate (§10) — fail CLOSED otherwise.
 - **Reusing the Supervisor's `risk_classification` at the gate, or inventing an override for condition 6.** The loop re-runs `classify-risk.sh` on the SHA it judges (§10 cond 6); `--trust-unprotected` is cond 4 only; `.agent/risk.json` has no `exclude` key and no flag/config key lowers a classification.
 - **Inventing a `gh pr view --json reviewThreads` flag.** Unresolved threads + author type are GraphQL-only (§10 cond. 3; `review-heal/SKILL.md` §"Step U1 — All-Channel Read").
@@ -405,7 +417,7 @@ The engine is designed to be driven continuously by Claude's `/loop`. Use the **
 
 - `skills/autonomous-loop/SKILL.md` — the `/autonomous` inner loop the per-item RUN step drives `--single-iteration`; its Rubric Grader feeds §10 condition 5, and EVALUATE short-circuit is why we read `rubric_score` from `SUPERVISOR_RESULT`.
 - `skills/review-heal/SKILL.md` — the authority for the OWNED `/review-pr --until-mergeable` drain (§7), the READY semantics (§9), the GraphQL review-thread query and bot-vs-human classification (§10 cond. 3), and the env-var dispatch signal contract (`LOOMWRIGHT_UNTIL_MERGEABLE` etc.).
-- `skills/state-management/SKILL.md` — `.supervisor/` state-file conventions (atomic writes, append-only logs).
+- `skills/state-management/SKILL.md` — `.supervisor/` state-file conventions (atomic writes, append-only logs); the `.supervisor/logs/{session_id}.jsonl` per-session log shape the "Rate-limit park" subsection above reads directly.
 - `commands/automate.md` — the user-facing `/automate` command body that references this skill at Step 0.
 - `docs/RESULT_SCHEMAS.md` §"AUTOMATE_RUN" — the run-file layout documented as a markdown state-file contract (NOT a hook-validated emitted result block).
 
@@ -424,3 +436,4 @@ The engine is designed to be driven continuously by Claude's `/loop`. Use the **
 - `READY`/`PASS` from `review-heal`/`review-pr`/Supervisor Phase 4.5 NEVER merge; the ONLY executed `gh pr merge --squash` is the §10 gate implemented in `automate-helpers.sh gate-eval`.
 - All `/autonomous` correctness gates bubble up; `--notify` / `--non-interactive-fallback` / `--cheap` pass through to the inner `/autonomous` (`--cheap` is passthrough-only — never interpreted by the engine, never stored in `## Run Config`).
 - Termination: Queue fully resolved ⇒ `## Status: done` / `remaining: 0`; `limit` reached ⇒ `## Status: paused` / `pause_reason: limit_reached` / `remaining: <unchecked>`.
+- Rate-limit park: a main-scope `agent_lifecycle: failed` row with `reason: rate_limit` (or `reason: unknown` plus a `429` hint, recorded separately as `reason_hint`, never promoted into `reason`) — found in the loop's own session log, post-dating this item's "picked" line — parks the item (`status`/`pause_reason: rate_limit`) and stops BEFORE DRAIN/GATE without retrying; every other classified reason is unchanged (§6 "Rate-limit park"). Resuming it round-trips through the SAME RESUME reconcile as `awaiting_merge` (§4) — no second park vocabulary, no second reconcile path.
