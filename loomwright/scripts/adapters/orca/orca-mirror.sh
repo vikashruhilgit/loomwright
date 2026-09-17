@@ -93,13 +93,23 @@
 #     defaults to "in-progress" — showing active work as in-progress is less
 #     misleading than prematurely marking it ready for review.
 #
-#   pr_created {event, pr_url}
+#   pr_created {event, url}
 #     -> orca --workspace-status in-review
-#     -> a read-before-write comment post containing pr_url (see COMMENT
-#        PRESERVATION below); skipped entirely if pr_url is absent/empty.
-#     `pr_url` (not a bespoke `url`) matches this repo's own existing
-#     convention for PR-URL fields (SUPERVISOR_RESULT.pr_url,
-#     docs/RESULT_SCHEMAS.md).
+#     -> a read-before-write comment post containing the PR URL (see COMMENT
+#        PRESERVATION below); skipped entirely if the URL is absent/empty.
+#     The PR-URL field is read as `.url // .pr_url`, matching the real
+#     session-log `pr_created` event's own convention — NOT
+#     SUPERVISOR_RESULT.pr_url (docs/RESULT_SCHEMAS.md), a different,
+#     top-level Supervisor result schema this event is not. Confirmed by two
+#     independent fixtures that both spell the key `url`:
+#     test-curation-status.sh's live `pr_created` fixture
+#     (`{"event":"pr_created","url":"x"}`) and the pre-v15.16.0
+#     `state-management/SKILL.md` fixture (recoverable via `git show
+#     a799b33:loomwright/skills/state-management/SKILL.md`, the same fixture
+#     cited above for the phase_transition shape fix):
+#     `{"ts":"2026-03-09T14:33:00Z","type":"pr_created","task_id":"user-auth","pr_number":42,"url":"https://github.com/org/repo/pull/42"}`.
+#     `pr_url` is kept as a fallback only, for forward-compat with a future
+#     writer that adopts the SUPERVISOR_RESULT spelling.
 #
 #   worker_checkpoint {event, kind, text, cc_session_id?, paths?}
 #     (checkpoint.sh's own shape — loomwright/scripts/checkpoint.sh, item 03)
@@ -264,7 +274,10 @@ case "$EVENT_TYPE" in
     esac
     ;;
   pr_created)
-    pr_url="$(printf '%s' "$EVENT_JSON" | "$JQ" -r '.pr_url // empty' 2>/dev/null)"
+    # Real on-disk shape spells the URL field `url` (see EVENT TYPE KEY
+    # above and the fixtures cited there); `pr_url` is a forward-compat
+    # fallback only, mirroring the `.event // .type` dispatch-key fallback.
+    pr_url="$(printf '%s' "$EVENT_JSON" | "$JQ" -r '.url // .pr_url // empty' 2>/dev/null)"
     set_workspace_status "in-review"
     if [ -n "$pr_url" ]; then
       post_comment_appending "PR created: $pr_url"

@@ -13,7 +13,8 @@
 #      `orca status` call; MUTATION CONTROL proves this is load-bearing (a
 #      broken cache-read forces N calls)
 #   D. phase_transition argv mapping (default in-progress, to=SELF_HEAL -> in-review)
-#   E. pr_created argv mapping (in-review workspace-status + comment containing the URL)
+#   E. pr_created argv mapping (in-review workspace-status + comment containing the URL;
+#      real `url` key is primary, legacy `pr_url` key still works as a fallback)
 #   F. worker_checkpoint argv mapping (worktree set --comment "<text>")
 #   G. session_end argv mapping (completed/completed_with_escalation -> completed, else todo)
 #   H. comment preservation: a seeded existing comment survives alongside new content
@@ -175,13 +176,21 @@ assert_eq "D3 legacy {event,phase} shape does not match .type -> falls to in-pro
 
 echo ""
 echo "==== E: pr_created mapping ===="
+# Real on-disk shape spells the URL field "url" (see orca-mirror.sh's EVENT
+# TYPE KEY comment and the test-curation-status.sh / SKILL.md fixtures cited
+# there) — this is the PRIMARY case.
 LOG_E="$TMP/argv-e.jsonl"
 ORCA_STUB_LOG="$LOG_E" LOOMWRIGHT_ORCA_STATUS_CACHE="$TMP/cache-e" \
-  run_mirror '{"event":"pr_created","pr_url":"https://github.com/org/repo/pull/42"}' >/dev/null 2>&1
+  run_mirror '{"event":"pr_created","url":"https://github.com/org/repo/pull/42"}' >/dev/null 2>&1
 assert_eq "E workspace-status in-review" "1" "$(argv_matches "$LOG_E" '.[0]=="--workspace-status" and .[1]=="in-review"')"
 assert_eq "E comment set contains the PR URL" "1" "$(argv_matches "$LOG_E" '.[0]=="worktree" and .[1]=="set" and (.[3] | contains("https://github.com/org/repo/pull/42"))')"
 # read-before-write: the `worktree current` read must appear in the log too.
 assert_eq "E read-before-write: worktree current was called" "1" "$(argv_matches "$LOG_E" '.[0]=="worktree" and .[1]=="current"')"
+
+LOG_E2="$TMP/argv-e2.jsonl"
+ORCA_STUB_LOG="$LOG_E2" LOOMWRIGHT_ORCA_STATUS_CACHE="$TMP/cache-e2" \
+  run_mirror '{"event":"pr_created","pr_url":"https://github.com/org/repo/pull/99"}' >/dev/null 2>&1
+assert_eq "E2 legacy pr_url-only shape still resolves via fallback (proves the .url // .pr_url fix is load-bearing)" "1" "$(argv_matches "$LOG_E2" '.[0]=="worktree" and .[1]=="set" and (.[3] | contains("https://github.com/org/repo/pull/99"))')"
 
 echo ""
 echo "==== F: worker_checkpoint mapping ===="
