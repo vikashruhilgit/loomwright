@@ -1502,11 +1502,20 @@
   }
 
   var groupHeaderEls = {};
+  /* Real heading semantics, mirroring how `.rules-category` builds its own sub-headings
+   * (search this file for `.rules-category`): an actual `<h3>` carries the label text, so a
+   * screen reader can navigate between lane groups by heading exactly as it already can between
+   * rule categories. It is nested inside the `<li>` rather than appended as a sibling because
+   * `#lanes` is a `<ul>` - an `<h3>` may not be a direct child of a list, but a list item may
+   * contain one. The `<li>` keeps its class (and so its border/margin layout); the heading's own
+   * typography is set on the nested `h3` selector in floor.css. */
   function buildGroupHeader(g) {
     var li = document.createElement('li');
     li.className = 'lane-group-header';
     li.setAttribute('data-group', g);
-    li.textContent = LANE_GROUP_LABEL[g] || g;
+    var h3 = document.createElement('h3');
+    h3.textContent = LANE_GROUP_LABEL[g] || g;
+    li.appendChild(h3);
     return li;
   }
 

@@ -435,18 +435,25 @@ code { font-family: var(--mono); font-size: 0.85em; }
  * the same mono/uppercase/tracked treatment `.rules-category` already uses below, reused
  * rather than reinvented. No colour is the only signal here: the text IS the derivation rule
  * (floor.js writes the group's own rule into this element's text), so the heading reads
- * correctly with no colour at all. */
+ * correctly with no colour at all. The label text itself lives on a nested `<h3>` (real heading
+ * semantics, same reasoning as `.rules-category`) rather than directly on the `<li>` - `#lanes`
+ * is a `<ul>`, so the `<li>` still carries the layout (spacing/rule) and the `<h3>` selector
+ * below resets the browser default heading margin/weight and carries the typography instead. */
 .lane-group-header {
-  font-family: var(--mono);
-  font-size: 0.68rem;
   margin: 1.1rem 0 0.5rem;
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
-  color: var(--copper-deep);
   border-bottom: 1px solid var(--hair);
   padding-bottom: 0.3rem;
 }
 .lane-group-header:first-child { margin-top: 0; }
+.lane-group-header h3 {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--copper-deep);
+}
 
 /* ---- feed ----
  * Same square-card vocabulary as `.lane`, deliberately calmer: no dot, no shuttle, no motion -
