@@ -323,7 +323,8 @@ else
           then "id\t" + $o.cc_session_id + "\t" +
                ({sid: $o.cc_session_id, ts: $o.ts, agent_id: $o.agent_id,
                  agent_type: $o.agent_type, agent_scope: $o.agent_scope,
-                 branch: $o.branch, event: $o.event, recorded_at: $o.recorded_at}
+                 branch: $o.branch, event: $o.event, recorded_at: $o.recorded_at,
+                 text: $o.text}
                 | with_entries(select(.value != null and .value != "")) | tojson)
         else "noid" end
     end
@@ -439,6 +440,18 @@ else
         ($newest.sid) as $s
         | ($all | map(select(.sid == $s))) as $cur
         | ($cur | map(select(has("agent_id")))) as $ev
+        # worker_checkpoint lines carry NO agent_id (checkpoint.sh is invoked directly by
+        # the worker, which has no way to learn its own harness-assigned agent_id -- unlike
+        # the hook-triggered emitters above, whose payload IS the hook process own knowledge
+        # of it). To still carry "the last checkpoint per lane" (AC6, additive, never
+        # rendered here), each checkpoint line is attributed to whichever agent OWN
+        # index-window in $cur it falls inside: that agent first agent_id-bearing line
+        # through its last. Exact on the Single-Agent/Sequential paths (one worker active
+        # at a time, so no other lane window overlaps); best-effort under true Parallel-path
+        # interleaving, where two windows could overlap -- a heuristic, stated as such
+        # rather than fabricated as a certainty (never claim more than the join can prove).
+        | ($cur | to_entries) as $cur_idx
+        | ($cur_idx | map(select(.value.event? == "worker_checkpoint"))) as $cp_idx
         | {cc_session_id: $s, last_event_ts: $newest.ts, selection: $selection}
           + (if $skipped > 0 then {sessions_not_plugin_work: $skipped} else {} end)
           + (($cur | map(select(has("branch")) | .branch) | last) as $br
@@ -446,7 +459,8 @@ else
           + (if ($ev | length) == 0 then {}
              else {agents: ($ev | group_by(.agent_id) | map(
                      (map(select(has("ts")) | .ts)) as $tss
-                     | {agent_id: .[0].agent_id,
+                     | .[0].agent_id as $aid
+                     | {agent_id: $aid,
                           events: (map(select((.event // "") != "agent_identity")) | length)}
                        + (if ($tss | length) == 0 then {}
                           else {first_ts: ($tss | min), last_ts: ($tss | max)} end)
@@ -459,6 +473,14 @@ else
                           | if $sc == null then {} else {agent_scope: $sc} end)
                        + ((map(select(has("branch")) | .branch) | first) as $b
                           | if $b == null then {} else {branch: $b} end)
+                       + (($cur_idx | map(select(.value.agent_id == $aid)) | map(.key)) as $idxs
+                          | if ($idxs | length) == 0 then {}
+                            else
+                              ($idxs | min) as $lo | ($idxs | max) as $hi
+                              | (($cp_idx | map(select(.key >= $lo and .key <= $hi)) | last) as $lastcp
+                                 | if ($lastcp == null) or ($lastcp.value.text == null) then {}
+                                   else {last_checkpoint: $lastcp.value.text} end)
+                            end)
                    ) | sort_by(.agent_id))}
              end)
       end' 2>/dev/null)"

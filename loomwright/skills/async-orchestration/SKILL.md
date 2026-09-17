@@ -732,6 +732,7 @@ Task(
     Title: {title}
     Brief: {brief_path} — read only your subtask's sections (## Task, ## Acceptance Criteria, your row of ## Subtask Structure, your subtask's `lanes:`). Gitignored `.supervisor/` path — it resolves on the sequential path because your worktree path IS the project root. When no brief file exists (`/supervisor task:` no-brief mode), point at `.supervisor/requirements/{slug}-plan.md` (Beads-absent) or `bd show {id}` (Beads) instead, or pass the criteria inline — a documented exception, see docs/POINTER_AUDIT.md.
     Context digest: {context_digest_path} — repo-relative (`.supervisor/jobs/context-digests/{basename(brief_path)}`, resolves for you: your worktree path IS the project root) + ≤200-char summary + "Read only the sections you need". Advisory only — proceed without it if the file does not exist.
+    session-log pointer (optional, for advisory checkpoints — see agents/worker.md): {session_log_path} — repo-relative `.supervisor/logs/{session_id}.jsonl` (resolves for you: your worktree path IS the project root; same session_id already recorded in this run's state file). Pass this as `checkpoint.sh`'s first argument if you choose to emit a worker_checkpoint event. Never required — proceed without it if you don't need it.
     Acceptance-criteria summary (≤200 chars): {bounded summary}
     Worktree path: {project_root}
     Provides (verbatim from the brief's Subtask Contracts): {provides YAML}

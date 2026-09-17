@@ -3099,6 +3099,34 @@ else
   no "(zz2) MUTATION CONTROL: could not build the identified-at-provenance mutant - control inconclusive"
 fi
 
+# ============================================================================
+echo "== (zzy) last_checkpoint: additively carried per lane, by file-position window, never rendered =="
+# worker_checkpoint lines carry NO agent_id (checkpoint.sh cannot learn its own harness-assigned
+# agent_id — see docs/RESULT_SCHEMAS.md §worker_checkpoint), so attribution is by file-position
+# window: a checkpoint line is joined to whichever agent's own index range (its first agent_id-
+# bearing line through its last) contains it. One lane gets TWO checkpoints (last one should win);
+# a second lane gets NONE (must carry no last_checkpoint key at all — never a default).
+RZY="$(new_repo)"; mkdir -p "$RZY/.supervisor/logs" "$RZY/agents"
+{
+  printf '{"event":"agent_identity","cc_session_id":"zy","agent_id":"aone","agent_type":"loomwright:loomwright:worker","recorded_at":"2026-09-17T10:00:00Z"}\n'
+  printf '{"event":"worker_checkpoint","kind":"hypothesis_confirmed","text":"first cp for aone","cc_session_id":"zy"}\n'
+  printf '{"event":"worker_checkpoint","kind":"slice_done","text":"last cp for aone","cc_session_id":"zy"}\n'
+  printf '{"ts":"2026-09-17T10:00:05Z","event":"subtask_complete","cc_session_id":"zy","agent_id":"aone"}\n'
+  printf '{"event":"agent_identity","cc_session_id":"zy","agent_id":"atwo","agent_type":"loomwright:loomwright:worker","recorded_at":"2026-09-17T10:01:00Z"}\n'
+  printf '{"ts":"2026-09-17T10:01:05Z","event":"subtask_complete","cc_session_id":"zy","agent_id":"atwo"}\n'
+} > "$RZY/.supervisor/logs/zy.jsonl"
+run_build "$RZY"
+JZY="$RZY/.supervisor/floor/floor.json"
+zyq() { jq -r "$1" "$JZY" 2>/dev/null; }
+[ "$(zyq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="aone") | .last_checkpoint')" = "last cp for aone" ] \
+  && ok "(zzy) the LAST checkpoint in aone's window wins, not the first" \
+  || no "(zzy) last_checkpoint == $(zyq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="aone") | .last_checkpoint'), expected 'last cp for aone'"
+[ "$(zyq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="atwo") | has("last_checkpoint")')" = "false" ] \
+  && ok "(zzy) a lane with no checkpoint in its window carries NO last_checkpoint key — never a default" \
+  || no "(zzy) atwo unexpectedly carries a last_checkpoint key"
+grep -qF "last cp for aone" "$JZY" 2>/dev/null \
+  && ok "(zzy) anti-vacuity: the checkpoint text actually reached the projected artefact" \
+  || no "(zzy) anti-vacuity FAILED: the checkpoint text never appears in floor.json at all"
 
 echo
 echo "RESULT: $pass passed, $fail failed, $skip skipped"

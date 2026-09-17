@@ -24,6 +24,8 @@
 #   (j) abbreviated-SHA freshness — a recorded short SHA that prefixes HEAD renders `fresh`, not
 #       `hint` (prefix-tolerant compare; finding #2)
 #   (k) real automate run-file — a /automate run-file's Status / Source / PR facets render (finding #3)
+#   (q) worker_checkpoint — an in-progress job's checkpoints render under Tried/rejected with the
+#       session id as provenance; scoped to the in-progress job only; absent state/log is a silent skip
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -481,6 +483,50 @@ HANDOFF_MD="$(dirname "$HERE")/commands/handoff.md"
 [ -f "$HANDOFF_MD" ] && ok "commands/handoff.md exists" || no "commands/handoff.md missing at $HANDOFF_MD"
 grep -qF -- "--publish" "$HANDOFF_MD" 2>/dev/null \
   && ok "commands/handoff.md documents the --publish flag" || no "commands/handoff.md does NOT mention --publish (mirror drift)"
+
+# ============================================================================
+echo "== (q) worker_checkpoint: an in-progress job's checkpoints render under Tried/rejected =="
+RQ="$(new_repo)"
+JOBQ="$(seed_job "$RQ" in-progress "checkpoint-feature")"
+mkdir -p "$RQ/.supervisor/logs"
+printf -- '- session_id: sess-q\n- status: running\n- phase: EXECUTE\n- branch: feature/q\n' > "$RQ/.supervisor/state.md"
+LOGQ="$RQ/.supervisor/logs/sess-q.jsonl"
+{
+  printf '%s\n' '{"event":"agent_identity","cc_session_id":"sess-q","agent_id":"aw1","agent_type":"loomwright:loomwright:worker"}'
+  printf '%s\n' '{"event":"worker_checkpoint","kind":"hypothesis_confirmed","text":"reproduced the bug"}'
+  printf '%s\n' '{"event":"worker_checkpoint","kind":"blocker","text":"flaky test env"}'
+  printf '%s\n' '{"event":"worker_checkpoint","kind":"slice_done","text":"shipped the fix"}'
+  printf '%s\n' '{"event":"session_end","status":"completed"}'
+} > "$LOGQ"
+outQ="$(run_build "$RQ")"; rcQ=$?
+DIGQ="$RQ/.supervisor/handoff/digest.md"
+[ "$rcQ" -eq 0 ] && ok "(q) exits 0" || no "(q) expected exit 0, got $rcQ"
+grep -qF "reproduced the bug" "$DIGQ" 2>/dev/null && ok "(q) hypothesis_confirmed checkpoint text present" || no "(q) hypothesis_confirmed text missing"
+grep -qF "flaky test env" "$DIGQ" 2>/dev/null && ok "(q) blocker checkpoint text present" || no "(q) blocker text missing"
+grep -qF "shipped the fix" "$DIGQ" 2>/dev/null && ok "(q) slice_done checkpoint text present" || no "(q) slice_done text missing"
+grep -qF "session sess-q" "$DIGQ" 2>/dev/null && ok "(q) session id present as provenance" || no "(q) session id provenance missing"
+grep -qF "Tried / rejected" "$DIGQ" 2>/dev/null && ok "(q) rendered under the Tried / rejected facet label" || no "(q) Tried / rejected label missing"
+
+# A done job (not in-progress) must NOT pick up the active session's checkpoints — the
+# association is deliberately scoped to the in-progress job only (see build-handoff.sh
+# comment above the read).
+RQ2="$(new_repo)"
+seed_job "$RQ2" done "unrelated-done-job" >/dev/null
+mkdir -p "$RQ2/.supervisor/logs"
+printf -- '- session_id: sess-q2\n- status: completed\n- phase: FINALIZE\n' > "$RQ2/.supervisor/state.md"
+printf '%s\n' '{"event":"worker_checkpoint","kind":"slice_done","text":"should not attach to a done job"}' > "$RQ2/.supervisor/logs/sess-q2.jsonl"
+run_build "$RQ2" >/dev/null
+DIGQ2="$RQ2/.supervisor/handoff/digest.md"
+grep -qF "should not attach to a done job" "$DIGQ2" 2>/dev/null \
+  && no "(q) a done job incorrectly picked up the active session's checkpoints" \
+  || ok "(q) a done job does NOT pick up the active session's checkpoints (scoped to in-progress only)"
+
+# Absent state.md / session log is a silent skip — no crash, digest still produced.
+RQ3="$(new_repo)"
+seed_job "$RQ3" in-progress "no-session-job" >/dev/null
+outQ3="$(run_build "$RQ3")"; rcQ3=$?
+[ "$rcQ3" -eq 0 ] && ok "(q) no state.md/session log → still exits 0" || no "(q) expected exit 0, got $rcQ3"
+[ -f "$RQ3/.supervisor/handoff/digest.md" ] && ok "(q) digest still produced with no session to join" || no "(q) digest missing"
 
 echo
 echo "RESULT: $pass passed, $fail failed"
