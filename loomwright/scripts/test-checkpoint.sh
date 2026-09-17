@@ -16,6 +16,9 @@
 #       path (kind/text shifted into its slot) must write NOTHING anywhere — not even to
 #       a file incidentally named after one of the shifted-in values
 #   (h) missing kind / missing text → no-op
+#   (i) cc_session_id derived from the ledger basename
+#   (j) text longer than 200 chars is truncated to exactly 200 chars (checkpoint.sh's
+#       defensive safety-net branch, not a validation gate)
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -136,6 +139,19 @@ bash "$CP" "$ledger" transition "moving from investigate to fix"
 jq -e '.cc_session_id == "sess-abc123"' "$ledger" >/dev/null 2>&1 \
   && ok "cc_session_id derived correctly from the ledger filename" \
   || no "cc_session_id missing/incorrect: $(cat "$ledger")"
+
+# ============================================================================
+echo "== (j) text longer than 200 chars is truncated to exactly 200 chars =="
+d="$(mktemp -d "$ROOT/d.XXXXXX")"
+ledger="$d/session.jsonl"
+long_text="$(printf 'x%.0s' $(seq 1 250))"
+[ "${#long_text}" -eq 250 ] || no "test setup bug: long_text is ${#long_text} chars, expected 250"
+bash "$CP" "$ledger" blocker "$long_text"
+emitted_len="$(jq -r '.text | length' "$ledger" 2>/dev/null)"
+[ "$emitted_len" = "200" ] && ok "text truncated to exactly 200 chars (was 250)" || no "expected emitted text length 200, got $emitted_len: $(cat "$ledger")"
+jq -e --arg expected "${long_text:0:200}" '.text == $expected' "$ledger" >/dev/null 2>&1 \
+  && ok "truncated text is the first 200 chars of the original" \
+  || no "truncated text does not match the expected prefix: $(cat "$ledger")"
 
 echo
 echo "RESULT: $pass passed, $fail failed"
