@@ -535,8 +535,22 @@ Before completing async orchestration:
      2. All Code Reviewer decisions = PASS (no FAIL/NEEDS_HUMAN in merge set) — **N/A at every threshold**: no per-subtask reviewer runs on the Single-Agent Path, the above-threshold parallel path, or the Sequential Path, so this item produces zero reviewer decisions to check. The deterministic `outputs_verified` + tests/lint (plus the worker's own LSP diagnostics) gate and Phase 4.5's integrated review replace it, so treat this item as vacuously satisfied (mirrors Plan Reviewer Criterion 6's vacuous pass)
      3. No orphaned worktrees (all accounted for in EXECUTE_RESULT)
      4. Feature branch exists and is ahead of base
+     5. Every spawned child settled (completion authority, v15.80.0) — see below
    If ANY fail → abort merge, log reason, move job to failed/ (if job file used)
    ```
+
+   **Point 5 in full — children settled:** run
+   ```bash
+   bash scripts/check-children-settled.sh --log .supervisor/logs/{session_id}.jsonl --all
+   ```
+   (protocol form — the runtime-resolvable form lives in `agents/supervisor.md` §"Phase 4 FINALIZE" Gates Point 5, same convention as `worktree-salvage.sh` above)
+   (`{session_id}` = the session_id already recorded in this run's `.supervisor/state.md` `## Session` block — the SAME per-session log `emit-progress-event.sh` / `emit-agent-identity.sh` / `emit-lifecycle.sh` write to.) The script joins every `agent_identity` row this session ever wrote against a terminal lifecycle row (`subtask_complete` / `token_ledger` / `agent_lifecycle: failed`) for that same `agent_id` — see `scripts/check-children-settled.sh`'s own header for the exact three-way join; it is the ONE implementation, cited here rather than restated, and is the SAME script + join the per-subtask completion gates in `agents/execute-manager.md` §"v12 outputs_verified gate" and `agents/supervisor.md`'s Single-Agent Path step 3b / Sequential Path use (a per-agent-id check there, `--agent-id <id>` instead of `--all`).
+   - `status: "no_identity_rows"` — zero `agent_identity` rows in this session (pre-2026-09-07 logs, or a session that never spawned a Task): PASSES, reported `children_check: no_identity_rows` — **never** `settled` (nothing to check is not evidence of settlement).
+   - `status: "settled"` — every `agent_identity` row has a matching terminal row: PASSES, reported `children_check: settled`.
+   - `status: "unsettled"` — `unsettled_agent_ids[]` names at least one `agent_identity` row with NO matching terminal row: FAILS this point. Interactively, `AskUserQuestion` (proceed anyway / investigate / abort). Under `--non-interactive` / CI / stdin-not-a-TTY, **fail CLOSED**: `SUPERVISOR_RESULT.status: failed` with `error: "children_unsettled: {unsettled_agent_ids}"` — same shape as the Phase 1.5 `preflight_overlap_detected` fail-closed path (`agents/supervisor.md` §"Phase 1.5: PRE-FLIGHT SYNC").
+   - `status: "unverifiable"` (`jq_missing`) — treated the same as `unsettled`: an unrun check is never a silent pass.
+   - **`--skip-children-check`** (escape hatch, mirrors `--skip-preflight-sync`): short-circuits this ONE point as a deliberate choice, recorded via `Context-Keeper(operation: record_decision, phase: FINALIZE, decision: "user_skipped_children_check")`; the run summary carries `children_check: skipped`.
+   - `ended_without_result_ids[]` (agents whose terminal row was a `subtask_complete` with `result_block_present: false`, or an `agent_lifecycle: failed` row) are surfaced alongside `unsettled_agent_ids[]` in the same message/log line so an operator can `SendMessage` either kind of child's `agent_id` to resume it (memory `subagents-hit-turn-limit-resume-via-sendmessage`) instead of re-running the subtask cold — this point only surfaces the ids, it does not implement the resume.
 
    ```bash
    # Verify all worktree paths exist
