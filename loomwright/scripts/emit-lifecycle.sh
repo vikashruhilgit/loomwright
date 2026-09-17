@@ -76,6 +76,24 @@
 # exists) — the identical failure-mode contract as emit-progress-event.sh,
 # plus this last one which is unique to emit-lifecycle.sh's generic-matcher
 # wiring.
+#
+# KNOWN LIMITATION — shared "main" heartbeat-debounce bucket
+# ------------------------------------------------------------
+# The heartbeat debounce marker's filename key (`AGENT_ID_KEY`, see the
+# heartbeat block below) falls back to the literal `"main"` whenever no
+# `agent_id` is resolvable from the payload. That fallback bucket is NOT
+# scoped by `session_id`/`cc_session_id` — it is shared across every
+# concurrent non-subagent session/tab anchored to the same main worktree, not
+# just within one session. So two separate main-thread Claude Code sessions
+# in the same repo can suppress each other's heartbeat debounce windows (up
+# to `LOOMWRIGHT_LIFECYCLE_HEARTBEAT_DEBOUNCE` seconds) even though each
+# writes its own, separate session JSONL log. This is harmless today — no
+# reader consumes `agent_lifecycle` heartbeat rows yet (see the `stalled`/
+# `ended_without_result` note above; that's future reader work, item 05 in
+# this project's backlog) — but it should be revisited (e.g. keying the
+# debounce filename by session id too, not just the derived agent id) if/when
+# a reader starts deriving `stalled` from heartbeat recency across concurrent
+# sessions.
 
 set -u
 # Intentionally NO `set -e` — every failure mode must absorb to exit 0.
