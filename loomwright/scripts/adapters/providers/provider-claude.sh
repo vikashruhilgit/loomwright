@@ -13,8 +13,9 @@
 # below tells lens-run.sh this provider relies on `cd`-into-worktree (cwd) for
 # workspace scoping instead of an explicit flag — the "or that provider's
 # equivalent flag" allowance the source requirement's Scope 2 anticipates.
-# lens-run.sh ALWAYS runs the subprocess with cwd = the throwaway worktree
-# regardless of provider, so this is satisfied unconditionally, not skipped.
+# lens-run.sh ALWAYS runs the subprocess with cwd = the throwaway sandbox
+# clone regardless of provider, so this is satisfied unconditionally, not
+# skipped.
 #
 # OUTPUT ENVELOPE — a real `claude -p --output-format json` response wraps the
 # agent's final text reply in a top-level `.result` string field. Since
@@ -39,7 +40,7 @@ PROVIDER_HOME_SCRUB=1
 #   MODEL           provider-qualified model string, or "" if none given
 #   PROMPT_CONTENT  the fully composed prompt (role + prompt file + diff +
 #                   output contract) as a single string
-#   WORKSPACE_DIR   absolute path to the throwaway detached worktree (unused
+#   WORKSPACE_DIR   absolute path to the throwaway sandbox clone (unused
 #                   here — this provider relies on cwd, not a flag)
 # Output: sets the global array PROVIDER_ARGV to the full argv AFTER the
 # binary name. PROMPT_CONTENT MUST be the LAST element (lens-run.sh's test

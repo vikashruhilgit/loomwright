@@ -16,8 +16,9 @@
 # INVOCATION (assumed): codex exec --json [--model <model>] "<composed prompt>"
 # No workspace-equivalent flag is assumed to exist (none is documented
 # anywhere this adapter could consult) — PROVIDER_WORKSPACE_FLAG=0, relying on
-# lens-run.sh's unconditional cwd=worktree for workspace scoping instead of
-# guessing a possibly-wrong flag name that could error out a real invocation.
+# lens-run.sh's unconditional cwd=sandbox-clone for workspace scoping instead
+# of guessing a possibly-wrong flag name that could error out a real
+# invocation.
 #
 # OUTPUT ENVELOPE (assumed): guessed to follow the same
 # object-with-a-top-level-text-field convention the other providers use; if

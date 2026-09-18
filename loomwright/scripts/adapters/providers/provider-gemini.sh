@@ -14,8 +14,8 @@
 #
 # INVOCATION (assumed): gemini -p "<composed prompt>" [--model <model>]
 # No workspace-equivalent flag is assumed to exist — PROVIDER_WORKSPACE_FLAG=0,
-# relying on lens-run.sh's unconditional cwd=worktree for workspace scoping
-# instead of guessing a possibly-wrong flag name.
+# relying on lens-run.sh's unconditional cwd=sandbox-clone for workspace
+# scoping instead of guessing a possibly-wrong flag name.
 #
 # OUTPUT ENVELOPE (assumed): guessed to follow the same
 # object-with-a-top-level-text-field convention the other providers use,

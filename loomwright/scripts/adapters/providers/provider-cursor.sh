@@ -18,7 +18,7 @@
 # implies is DEFERRED — unauthenticated, see the source requirement file. Not
 # passing -f is the conservative choice: it leaves cursor-agent's own
 # possible command-deny behavior as an UNVERIFIED extra layer, never relied
-# upon as "enforced" (the throwaway-worktree-plus-mutation-check in
+# upon as "enforced" (the throwaway-isolated-clone-plus-mutation-check in
 # lens-run.sh is the one CONFIRMED lever — see its header and
 # docs/ARCHITECTURE_CONTRACTS.md §"Portability").
 #
