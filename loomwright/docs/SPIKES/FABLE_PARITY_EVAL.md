@@ -513,6 +513,7 @@ release-dependent verdicts — do not build it speculatively.
 | tree-and-find | 3 (SDK runner + multi-voter) | **ABORTED — could not execute** | n/a (never reached Phase 4.5) | n/a | out 18,130 · cache-create 92,811 · cache-read 2,324,039 · $2.62 (LP 6.97 + Supervisor 2.62 = **$9.59** spent to establish non-viability) | Phase 3 abort, 32 turns, 4m31s. Two independent blockers: brief parser drops all dependency edges (non-numeric ids + comment-style keys) ⇒ 2 and 3 spawned concurrently onto the same file; and no dependency materialization ⇒ dependents cannot compile. **Verdict: SDK runner CUT.** `--multi-voter-heal` never ran — remains unmeasured, NOT cut. |
 | tree-and-find | 2 (Loomwright default) | drain `ESCALATED` — structurally unreachable `READY` on an unprotected base (predicted by §Recording protocol); drain `fix_cycles` 0; Phase 4.5 `heal_iterations` 0 + 1 out-of-loop review-driven fix commit `3dda850` | 0 | 0 | out 90,473 · cache-create 526,110 · cache-read 15,191,782 · **$61.76** (LP 7.68 + Supervisor 43.63 + resume 10.45) — see METRIC DEFECT note: token columns under-count sub-agents, cost is the valid comparator | PR [#58](https://github.com/vikashruhilgit/ntfs-tool/pull/58), head `3dda850`, 1,656 ins / 10 files. `heal_decision: PASS`, `rubric_score: 6/6`. Reviewer PASS — 0 BLOCKING, 0 HIGH, 4 MEDIUM/new, 6 LOW/new. Ran as 3 sessions (Launch Pad → Supervisor → `--resume`); the middle one stalled mid-FINALIZE and was recovered by explicit re-invocation, not re-run. Two earlier prompt-design attempts discarded (see void-runs note). |
 | tree-and-find | 1 (bare) | N/A (no drain — branch never pushed, no reviewer in loop) | - | 0 | out 82,290 · cache-create 172,468 · cache-read 11,830,096 · in 176 · $9.70 | commit `4406708`, 98 turns, 41m04s. 1,838 ins / 12 files (impl 759, tests 1,027). Tests green: NTFSCore 286 (2 skipped, 0 fail), ntfsctl 35 (0 fail). Reviewer PASS — 0 BLOCKING, 0 HIGH, 2 MEDIUM/new, 3 LOW/new, 1 LOW/pre-existing. Baseline cleanliness VERIFIED by session-start-time (transcript born 20:05:27 vs `settings.json` disable 19:54:36). |
+| provider-lens (this repo, loomwright/loomwright) | multi-voter-only baseline (Loomwright default + `--multi-voter-heal` alone, NO `--sdk-runner`) | N/A — `ESCALATED`, never reached READY | 1 | n/a — PR held open unmerged on a BLOCKING finding, not measurable yet | subagent proxy (transcript-bytes `token_proxy_kind`, not a billed-token count): 184,924 · 57 tool_uses · 64m45s wall | 2026-09-18. PR [#239](https://github.com/vikashruhilgit/loomwright/pull/239), branch `feature/provider-lens-review-adapter`. **This IS the isolating run the note below asked for** — arm 2's configuration (Loomwright default) plus `--multi-voter-heal` alone, no SDK runner. Primary `code-reviewer`: FAIL (2 HIGH/new). Voter `red-team-reviewer`: FAIL (1 BLOCKING + 3 HIGH/new, an empirically-reproduced git-internals exfiltration bypass in the sandbox mechanism the PR itself adds). `multi_voter: findings_raised=4 findings_refuted=0 findings_fixed=0` — no refute-check pass this cycle (tool-budget exhausted recovering from an unrelated worker/EXECUTE incident; recorded honestly, not fabricated as 0/0/0-clean). `heal_decision: ESCALATED`, no auto-fix attempted — the BLOCKING finding needs a human remediation-approach decision, not an unsupervised fix. **Mechanism signal (separate from the adapter code's own defects):** the multi-voter loop itself now has one real, non-trivial execution — both lenses independently produced distinct, verifiable findings on the same diff, proving the vote+refute machinery is reachable and functions end-to-end; this is the primary thing this row measures, since `review_rounds_to_READY`/`post_merge_defects` are structurally unobtainable from an unmerged, ESCALATED run. |
 
 > **Arm 2 (tree-and-find) — NOT COMPLETED, no row. Blocked by a structural incompatibility
 > between Supervisor and headless `claude -p`.** Recorded here because the blocker is a finding,
@@ -660,11 +661,19 @@ Per §Scope item 5 of the originating requirement, a CUT verdict becomes a follo
 `sdk-spike/` and the `--sdk-runner` seam (`SUPERVISOR_RESULT`, `supervisor-config`, the flag row in
 `commands/supervisor.md`). **Not performed here** — this item is verdicts-only.
 
-> **`--multi-voter-heal` remains UNMEASURED.** It never ran, because arm 3 aborted in Phase 3 before
-> Phase 4.5. The decision rule is explicitly **per-layer** ("a layer that does not move its metric is
-> removed"), so the SDK runner's structural failure must NOT be recorded as a verdict against
-> multi-voter heal. Isolating it needs one additive run — arm 2's configuration plus
-> `--multi-voter-heal` alone. Recorded as pending, not inferred.
+> **`--multi-voter-heal` is no longer UNMEASURED — updated 2026-09-18.** It never ran under this eval's
+> tree-and-find corpus, because arm 3 aborted in Phase 3 before Phase 4.5, and the decision rule is
+> explicitly **per-layer** ("a layer that does not move its metric is removed"), so the SDK runner's
+> structural failure must NOT be recorded as a verdict against multi-voter heal. The additive
+> isolating run this note asked for (arm 2's configuration plus `--multi-voter-heal` alone, no SDK
+> runner) has now happened — see the `provider-lens` Results row above, PR #239. It is **one data
+> point, not yet a per-layer verdict**: `heal_iterations: 1`, `ESCALATED` (not `PASS`), unmerged, so
+> `review_rounds_to_READY`/`post_merge_defects` remain unobtainable from it — the decision rule's
+> ≥3-requirements bar for KEEP/CUT (§Per-layer verdict) is untouched. What it DOES establish: the
+> mechanism is reachable and functions (two independent lenses produced real, distinct findings and
+> a genuine refute-eligible finding set on the same diff) — that was previously unknown, since 0
+> `multi_voter` lines existed in any session log before this run. Still pending: ≥2 more isolating
+> runs, ideally reaching `PASS`/merged at least once, before any KEEP/CUT call on this layer.
 
 ### Preliminary reading — tree-and-find, arms 1 vs 2 (n=1 requirement; NOT a verdict)
 
