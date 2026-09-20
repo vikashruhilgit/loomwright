@@ -20,13 +20,21 @@
 #      the run never got as far as creating the sandbox clone)
 #   B. stub mutates the sandbox tree -> lens_mutated_tree, result discarded,
 #      sandbox removed after, AND the PARENT repo's own `origin` remote is
-#      still present afterward (proves the git-clone-based isolation fix)
+#      still present afterward (proves the isolated-sandbox fix)
 #   C. stub produces unparseable garbage -> lens_unparseable
 #   D. stub produces well-formed JSON -> normalized issues[] matches
 #      RESULT_SCHEMAS.md's exact fields (severity/category/file/line/
 #      description/suggestion), including severity upcasing
 #   E. scrubbed-env: GH_TOKEN is set in the test's OWN env, and must be
 #      absent from the env the stub CLI actually observes
+#   F. git remote remove origin fails -> fail-closed (CLI never runs)
+#   G. stub mutates .git internals only (hook + remote; porcelain empty)
+#      -> lens_mutated_tree (the reproduced porcelain-blind bypass)
+#   H. hung CLI + LOOMWRIGHT_LENS_CLI_TIMEOUT=1 -> lens_unparseable,
+#      process group killed, no leftover children
+#   I. invalid --provider NAME (slash / `..`) -> provider_unavailable,
+#      no source of a path outside $SCRIPT_DIR
+#   J. missing provider-<name>.sh -> provider_unavailable
 #
 # Exit 0 = all pass, 1 = any failure.
 
@@ -135,20 +143,69 @@ printf '{"issues":[]}\n'
 STUB
 chmod +x "$STUB_E_DIR/$STUB_CLI_NAME"
 
+# F: real git, except `remote remove origin` fails. CLI must never run.
+STUB_F_DIR="$TMP/stub-f"; mkdir -p "$STUB_F_DIR"
+CLI_RAN_F="$TMP/cli-ran-f.txt"
+REAL_GIT="$(command -v git)"
+cat > "$STUB_F_DIR/$STUB_CLI_NAME" <<STUB
+#!/usr/bin/env bash
+printf 'ran\n' > "$CLI_RAN_F"
+printf '{"issues":[]}\n'
+STUB
+chmod +x "$STUB_F_DIR/$STUB_CLI_NAME"
+cat > "$STUB_F_DIR/git" <<STUB
+#!/usr/bin/env bash
+case " \$* " in
+  *" remote remove origin "*) exit 1 ;;
+esac
+exec "$REAL_GIT" "\$@"
+STUB
+chmod +x "$STUB_F_DIR/git"
+
+# G: mutates .git internals only (hook + new remote). Working tree stays
+# clean so `git status --porcelain` is empty — the reproduced bypass.
+STUB_G_DIR="$TMP/stub-g"; mkdir -p "$STUB_G_DIR"
+PORCELAIN_G="$TMP/porcelain-g.txt"
+cat > "$STUB_G_DIR/$STUB_CLI_NAME" <<STUB
+#!/usr/bin/env bash
+mkdir -p .git/hooks
+printf '#!/bin/sh\\nexit 0\\n' > .git/hooks/pre-push
+chmod +x .git/hooks/pre-push
+git remote add attacker https://attacker.example/loot.git
+git status --porcelain > "$PORCELAIN_G" 2>/dev/null
+printf '%s\\n' '{"issues":[{"severity":"HIGH","category":"new","file":"src/foo.py","line":1,"description":"must be discarded","suggestion":null}]}'
+STUB
+chmod +x "$STUB_G_DIR/$STUB_CLI_NAME"
+
+# H: hangs (leader + child) so the process-group timeout can be proven.
+STUB_H_DIR="$TMP/stub-h"; mkdir -p "$STUB_H_DIR"
+PIDS_H="$TMP/pids-h"
+cat > "$STUB_H_DIR/$STUB_CLI_NAME" <<STUB
+#!/usr/bin/env bash
+sleep 120 &
+printf '%s\\n' "\$!" > "$PIDS_H.child"
+printf '%s\\n' "\$\$" > "$PIDS_H.self"
+sleep 120
+STUB
+chmod +x "$STUB_H_DIR/$STUB_CLI_NAME"
+
 # ---- runner -----------------------------------------------------------------
-# run_lens <stub-bin-dir-or-empty> <out-file> -- invokes lens-run.sh from
-# inside REPO_ROOT (so its own `git rev-parse --show-toplevel`/HEAD resolve
-# to this checkout) with the fixed diff/prompt inputs and the teststub
-# provider. Additional env var prefixes on the CALL (e.g.
+# run_lens [as run_lens_named] <provider> <stub-bin-dir-or-empty> <out-file>
+# invokes lens-run.sh from inside REPO_ROOT (so its own
+# `git rev-parse --show-toplevel`/HEAD resolve to this checkout) with the
+# fixed diff/prompt inputs. Additional env var prefixes on the CALL (e.g.
 # `FOO=bar run_lens ...`) are honored the same way test-orca-mirror.sh's
 # run_mirror honors them.
-run_lens() {
-  local stubdir="$1" outfile="$2"
+run_lens_named() {
+  local provider="$1" stubdir="$2" outfile="$3"
   local use_path="$PATH"
   [ -n "$stubdir" ] && use_path="$stubdir:$PATH"
   ( cd "$REPO_ROOT" && PATH="$use_path" "$BASH_BIN" "$LENS" \
-      --provider teststub --role review \
+      --provider "$provider" --role review \
       --diff "$DIFF_FILE" --prompt "$PROMPT_FILE" --out "$outfile" )
+}
+run_lens() {
+  run_lens_named teststub "$1" "$2"
 }
 
 echo "==== A: provider absent from PATH -> provider_unavailable, no subprocess attempted ===="
@@ -216,6 +273,91 @@ if [ -s "$ENV_DUMP_FILE" ]; then
 else
   no "E stub CLI never ran / never wrote its env dump — cannot verify the scrub"
 fi
+
+echo ""
+echo "==== F: git remote remove origin fails -> fail-closed, CLI never runs, parent origin intact ===="
+ORIGIN_BEFORE_F="$(git -C "$REPO_ROOT" remote -v)"
+OUT_F="$TMP/out-f.json"
+DEBUG_F="$TMP/debug-wt-f.txt"
+RC_F=0
+LOOMWRIGHT_LENS_DEBUG_WT_PATH_FILE="$DEBUG_F" run_lens "$STUB_F_DIR" "$OUT_F" || RC_F=$?
+assert_eq "F rc=0" "0" "$RC_F"
+assert_eq "F lens_status=lens_unparseable (isolation setup failed closed)" "lens_unparseable" "$(jq -r '.lens_status' "$OUT_F" 2>/dev/null)"
+assert_true "F notes name the origin-remove failure" "$( jq -r '.notes // empty' "$OUT_F" 2>/dev/null | grep -q 'remote remove origin failed' && echo 1 || echo 0 )"
+assert_eq "F provider CLI never ran" "0" "$( [ -f "$CLI_RAN_F" ] && echo 1 || echo 0 )"
+if [ -s "$DEBUG_F" ]; then
+  SANDBOX_F="$(cat "$DEBUG_F")"
+  assert_eq "F sandbox removed after the failed isolate" "0" "$( [ -e "$SANDBOX_F" ] && echo 1 || echo 0 )"
+else
+  no "F sandbox-debug hatch did not record a path — isolate never reached checkout"
+fi
+ORIGIN_AFTER_F="$(git -C "$REPO_ROOT" remote -v)"
+assert_eq "F PARENT repo origin unchanged" "$ORIGIN_BEFORE_F" "$ORIGIN_AFTER_F"
+
+echo ""
+echo "==== G: .git internals mutation (hook + remote) with empty porcelain -> lens_mutated_tree ===="
+ORIGIN_BEFORE_G="$(git -C "$REPO_ROOT" remote -v)"
+OUT_G="$TMP/out-g.json"
+RC_G=0
+run_lens "$STUB_G_DIR" "$OUT_G" || RC_G=$?
+assert_eq "G rc=0" "0" "$RC_G"
+assert_eq "G lens_status=lens_mutated_tree" "lens_mutated_tree" "$(jq -r '.lens_status' "$OUT_G" 2>/dev/null)"
+assert_eq "G issues discarded (empty array)" "[]" "$(jq -c '.issues' "$OUT_G" 2>/dev/null)"
+if [ -f "$PORCELAIN_G" ]; then
+  assert_eq "G working-tree porcelain was empty (the bypass git status alone would have missed)" "" "$(cat "$PORCELAIN_G")"
+else
+  no "G stub never wrote a porcelain dump — cannot prove the porcelain-empty case"
+fi
+ORIGIN_AFTER_G="$(git -C "$REPO_ROOT" remote -v)"
+assert_eq "G PARENT repo origin unchanged" "$ORIGIN_BEFORE_G" "$ORIGIN_AFTER_G"
+
+echo ""
+echo "==== H: hung CLI times out, process group killed, no leftover children ===="
+OUT_H="$TMP/out-h.json"
+RC_H=0
+START_H="$(date +%s)"
+LOOMWRIGHT_LENS_CLI_TIMEOUT=1 run_lens "$STUB_H_DIR" "$OUT_H" || RC_H=$?
+END_H="$(date +%s)"
+ELAPSED_H=$((END_H - START_H))
+assert_eq "H rc=0" "0" "$RC_H"
+assert_eq "H lens_status=lens_unparseable" "lens_unparseable" "$(jq -r '.lens_status' "$OUT_H" 2>/dev/null)"
+assert_true "H notes name the timeout" "$( jq -r '.notes // empty' "$OUT_H" 2>/dev/null | grep -q 'timed out' && echo 1 || echo 0 )"
+assert_true "H finished well inside the hung-sleep (elapsed=${ELAPSED_H}s, bound ~1s+kill)" "$( [ "$ELAPSED_H" -lt 20 ] && echo 1 || echo 0 )"
+H_SELF="$(cat "$PIDS_H.self" 2>/dev/null || true)"
+H_CHILD="$(cat "$PIDS_H.child" 2>/dev/null || true)"
+if [ -n "$H_SELF" ]; then
+  assert_eq "H CLI leader is not still running" "0" "$( kill -0 "$H_SELF" 2>/dev/null && echo 1 || echo 0 )"
+else
+  no "H CLI never wrote its pid — timeout path may not have reached exec"
+fi
+if [ -n "$H_CHILD" ]; then
+  assert_eq "H CLI child is not still running (process-group kill)" "0" "$( kill -0 "$H_CHILD" 2>/dev/null && echo 1 || echo 0 )"
+else
+  no "H CLI never wrote a child pid — cannot prove process-group kill"
+fi
+assert_eq "H no leftover stub CLI processes" "0" "$( pgrep -f "$STUB_CLI_NAME" >/dev/null 2>&1 && echo 1 || echo 0 )"
+
+echo ""
+echo "==== I: invalid --provider NAME (slash / ..) -> provider_unavailable, no source-escape ===="
+OUT_I="$TMP/out-i.json"
+RC_I=0
+DEBUG_I="$TMP/debug-wt-i.txt"
+LOOMWRIGHT_LENS_DEBUG_WT_PATH_FILE="$DEBUG_I" run_lens_named '../evil' "" "$OUT_I" || RC_I=$?
+assert_eq "I rc=0" "0" "$RC_I"
+assert_eq "I lens_status=provider_unavailable" "provider_unavailable" "$(jq -r '.lens_status' "$OUT_I" 2>/dev/null)"
+assert_true "I notes name the invalid provider name" "$( jq -r '.notes // empty' "$OUT_I" 2>/dev/null | grep -q 'invalid provider name' && echo 1 || echo 0 )"
+assert_eq "I no sandbox created (rejected before isolate)" "0" "$( [ -f "$DEBUG_I" ] && echo 1 || echo 0 )"
+
+echo ""
+echo "==== J: missing provider-<name>.sh -> provider_unavailable ===="
+OUT_J="$TMP/out-j.json"
+RC_J=0
+DEBUG_J="$TMP/debug-wt-j.txt"
+LOOMWRIGHT_LENS_DEBUG_WT_PATH_FILE="$DEBUG_J" run_lens_named 'nosuchprovider' "" "$OUT_J" || RC_J=$?
+assert_eq "J rc=0" "0" "$RC_J"
+assert_eq "J lens_status=provider_unavailable" "provider_unavailable" "$(jq -r '.lens_status' "$OUT_J" 2>/dev/null)"
+assert_true "J notes name the missing provider-table entry" "$( jq -r '.notes // empty' "$OUT_J" 2>/dev/null | grep -q 'no provider-table entry' && echo 1 || echo 0 )"
+assert_eq "J no sandbox created (rejected before isolate)" "0" "$( [ -f "$DEBUG_J" ] && echo 1 || echo 0 )"
 
 echo ""
 echo "RESULT: $pass passed, $fail failed"

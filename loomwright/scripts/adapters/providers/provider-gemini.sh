@@ -12,7 +12,9 @@
 # on this machine — this command template and parser are never run for real
 # here.
 #
-# INVOCATION (assumed): gemini -p "<composed prompt>" [--model <model>]
+# INVOCATION (assumed): gemini -p [--model <model>] "<composed prompt>"
+# (PROMPT_CONTENT is last, matching lens-run.sh's provider_build_argv contract;
+# `--model` is appended before the prompt when a model is set.)
 # No workspace-equivalent flag is assumed to exist — PROVIDER_WORKSPACE_FLAG=0,
 # relying on lens-run.sh's unconditional cwd=sandbox-clone for workspace
 # scoping instead of guessing a possibly-wrong flag name.
