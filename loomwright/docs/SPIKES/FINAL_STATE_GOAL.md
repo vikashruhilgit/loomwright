@@ -41,6 +41,43 @@ that activates above a stated bound; default to the cheap path below it.
 | D10 | **Centralized user identity: parked** ("maybe later"). Recorded so it isn't re-proposed as urgent. | No work now. |
 | D11 | **Eval honesty is non-negotiable.** Abort rows stay; re-runs are second rows; no metric added after first run without a loud amendment; cost (not `wall_tokens`) is the comparator for multi-agent arms; `exit 0` is not a completion signal — poll branch/PR. | Fix 5/6 rules. |
 
+### D4 note (2026-09-20) — provider-lens step-class adoption (item 08)
+
+Per this file's own rule (cite new evidence, amend/append, never silently rewrite), recorded during
+`.supervisor/requirements/orca-derived/operator-run/08-multi-model-steps.md`. This is an ADDITION to D4
+("Two review lenses, not four+ passes"), not a change to it — a **third model family** as an input to one
+of the two existing lenses is a different axis than lens *count*.
+
+**Decision: no step class adopts a non-Claude family by default yet.** The provider-lens mechanism
+(item 07, PR #239) is reachable and functional (`FABLE_PARITY_EVAL.md` "provider-lens" rows), but:
+- The **review role** (the only role wired to anything, via `--multi-voter-heal --voter-provider`) has
+  exactly one same-family isolating run (`ESCALATED`, unmerged, n=1) and, as of this item, one **ad hoc**
+  cross-family data point run outside the loop (not a live Phase 4.5 run) — neither clears D11/07's own
+  ≥3-requirements bar for a KEEP/CUT verdict on the layer. **`critique`/`grade` role extension (08's own
+  scope item 1) is NOT done in this item** — its own AC gated that extension on "07's review-role measured
+  positive," and it has not: mechanism-reachable ≠ outcome-positive.
+- The cross-family data point itself cuts both ways: it caught two real, previously-missed defects in
+  the shipped adapter (the `${CLAUDE_PLUGIN_ROOT}` wiring bug, now fixed; the `--commit` fetch-injection
+  gap, not yet fixed) — concrete support for "different agents, different blind spots" — **and** it made
+  one confident-sounding claim ("empirically succeeds") that independent verification did not corroborate.
+  A lens that finds real bugs AND overclaims in the same pass is not yet a lens you can point at a gate
+  unsupervised; a human read the output here. `pr-postmortem`/self-heal already treat every voter finding
+  as advisory-only (never decides `heal_decision`), which is the correct posture for exactly this reason.
+- Getting a real (non-ad-hoc) cross-family result via the shipped adapter also requires deciding whether
+  to drop TWO of `lens-run.sh`'s isolation barriers together (`PROVIDER_HOME_SCRUB` breaks `cursor-agent`
+  auth; not passing `-f` means deny-by-default — now confirmed real, not hypothetical — blocks it entirely)
+  — a security-posture change, not an eval-config change. Not decided here; see item 07's "Post-merge
+  findings" for the specifics.
+
+**What DID ship from this item:** `lens-compare.sh` (agreement/only-A/only-B reporting over two lenses on
+the same diff) — an on-demand, non-gating tool, wired into nothing, adopted by no step class. Compare mode
+existing does not imply a default; it exists so a human (or a future eval) can run the comparison cheaply
+without re-deriving the agree/disagree logic each time.
+
+**Revisit when:** either (a) the review-role layer clears D11's ≥3-requirements bar under `--multi-voter-heal`
+(≥2 more real isolating runs, per `FABLE_PARITY_EVAL.md`'s own note), or (b) someone deliberately decides
+the isolation-barrier tradeoff above and ships a working, authenticated cursor-provider default — not before.
+
 ### D9 amendment (2026-08-17) — split by regenerability
 
 Amended per this file's own rule (cite new evidence, amend, never silently rewrite), during the
