@@ -75,4 +75,4 @@ body). No new hook. No removal of the repo-relative files (they become requests)
   `docs/TELEMETRY.md`; `--dry-run` prints `TARGET_REPO=` and `WOULD_EXIT=`.
 - `send-webhook.sh:2-8` URL resolution order (env, then config file).
 - `commands/telemetry.md` lines 30, 49, 92, 110.
-- `.supervisor/` tracked files in this repo: `git ls-files .supervisor | wc -l` → 5.
+- `.supervisor/` tracked files in this repo: `git ls-files .supervisor | wc -l` → **5 at authoring (2026-09-21, pre-#243: `memory/` + `postmortem/results.jsonl`) and 276 on `main` after PR #243 committed the trail the same day.** Re-run before implementing; the number only goes up, and every added file is a repo-controlled input to whatever reads `.supervisor/` — the exact vector this item closes.

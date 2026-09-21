@@ -56,7 +56,7 @@ pulls `main` after the previous merge (the engine already does this — no stack
   frontmatter — silently IGNORED for plugin agents per CLAUDE.md "Hook gotcha"; only the CLI flag counts).
 - `send-telemetry-core.sh:43` `CONSENT_FILE="${PWD}/.supervisor/telemetry-consent.json"`; `commands/telemetry.md`
   lines 30/49/92/110 write/read the same path; `send-webhook.sh:106-107` reads `.supervisor/config.json` then
-  `.supervisor/notify-config.json`. `.supervisor/` is committable (this repo tracks 5 files under it; the
+  `.supervisor/notify-config.json`. `.supervisor/` is committable (this repo tracked 5 files under it when this was written on 2026-09-21 — `memory/` + the postmortem ledger — and **276 after PR #243 merged the same day** and committed the requirements/briefs/run-file trail; the surface grew ~55×, which strengthens this finding rather than weakening it; the
   `/setup memory` module un-ignores more).
 - `automate-helpers.sh` `gate_eval` (lines 361–524) is "a pure decision over a context JSON" and the ONLY executor
   of `gh pr merge --squash`; `test-automate-helpers.sh` stubs `$GH`/`$JQ` via `LOOMWRIGHT_GH_BIN`/`LOOMWRIGHT_JQ_BIN`.
