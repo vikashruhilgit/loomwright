@@ -9,6 +9,16 @@
 # variants are synthesized in-harness so each one reads next to the rule it
 # falsifies.
 #
+# WIRE SHAPE vs VERDICT SHORTHAND. Every validator prints the DOCUMENTED
+# Stop/SubagentStop decision shape for a `type: command` hook:
+#   pass -> `{}`                                   (no decision = allow)
+#   fail -> `{"decision": "block", "reason": "…"}` (reason fed back, agent continues)
+# The `{"ok": true|false}` shape the validators printed until 2026-09-21 is a
+# `type: prompt` hook's RESPONSE schema and was a silent no-op from a command
+# hook (probe fixture: fixtures/subagentstop-decision-shape-probe.json;
+# section K below pins the shape). Throughout THIS file the shorthand
+# `ok:true` / `ok:false` still names the VERDICT (pass / fail), never the bytes.
+#
 # FALSIFY, DO NOT CONFIRM (AC-4). Per schema the suite covers, at minimum:
 #   * a valid block                     -> ok:true
 #   * a MISSING block                   -> ok:false  (a real finding)
@@ -191,10 +201,22 @@ run_v_cwd() {
   LAST_RC=$?
 }
 
+# json_ok — "true" when the output is a PASS (a JSON object with NO `decision`
+# key), "false" when it is a BLOCK (`decision == "block"`), "PARSE_ERROR" for
+# anything else. Section K pins the exact bytes so this helper cannot go
+# vacuous the way the `.ok` reader it replaced did.
 json_ok() {
   printf '%s' "$LAST_OUT" | python3 -c 'import json,sys
 try:
-    print("true" if json.load(sys.stdin).get("ok") is True else "false")
+    o = json.load(sys.stdin)
+    if not isinstance(o, dict):
+        print("PARSE_ERROR")
+    elif "decision" not in o:
+        print("true")
+    elif o["decision"] == "block":
+        print("false")
+    else:
+        print("PARSE_ERROR")
 except Exception:
     print("PARSE_ERROR")'
 }
@@ -207,7 +229,7 @@ except Exception:
     print("")'
 }
 
-# assert_pass <label> — the last run decided ok:true and exited 0.
+# assert_pass <label> — the last run decided ok:true (printed `{}`) and exited 0.
 assert_pass() {
   local label="$1"
   if [ "$LAST_RC" != "0" ]; then
@@ -221,7 +243,7 @@ assert_pass() {
   fi
 }
 
-# assert_fail <label> [reason-substring] — ok:false, exit 0, reason matches.
+# assert_fail <label> [reason-substring] — ok:false (`decision: block`), exit 0, reason matches.
 assert_fail() {
   local label="$1" needle="${2:-}" reason
   if [ "$LAST_RC" != "0" ]; then
@@ -3193,6 +3215,88 @@ mk worker-r9-nonstring-item.md <<'EOF'
 EOF
 run_v "$V_WORKER" "$F"
 assert_pass "worker: rule 9 — a bare 123 in out_of_lane is ACCEPTED (the markdown carrier stringifies every scalar; the isinstance guard is unreachable here by construction)"
+
+echo "== K. documented SubagentStop decision shape — exact bytes, every validator =="
+# WHY THIS EXISTS. Until 2026-09-21 every validator printed `{"ok": true}` /
+# `{"ok": false, "reason": …}` and every assertion above read `.ok` — so the
+# suite was green while, at runtime, a `type: command` SubagentStop hook that
+# prints that shape blocks NOTHING: `ok` is the response schema of a
+# `type: prompt` hook, and the runtime recorded the real firing as
+# `hook_success` with no decision and let the subagent stop
+# (fixtures/subagentstop-decision-shape-probe.json, probe A). The documented
+# command-hook shape — `{"decision": "block", "reason": …}` — DID block in the
+# same probe (probe B: `hook_blocking_error`, reason fed back as the next
+# instruction). This section pins the bytes so the helpers above cannot go
+# vacuous again: a pass is EXACTLY `{}` and a block is EXACTLY the two keys
+# `decision` + `reason`, `decision == "block"`, and NO `ok` key on either.
+#
+# MUTATION CONTROL: revert emit() to the `ok` shape and every assertion below
+# fails (a `{"ok": true}` pass is not `{}`; a block has no `decision`).
+mk k-missing-block.md <<'EOF'
+No result block of any kind in this text.
+EOF
+K_PROBE="$F"
+
+k_exact_pass() {   # <label> — stdout is exactly `{}`
+  local label="$1"
+  if [ "$LAST_RC" = "0" ] && [ "$(printf '%s' "$LAST_OUT" | tr -d '[:space:]')" = "{}" ]; then
+    ok "$label"
+  else
+    no "$label  expected exactly {} ; got: $LAST_OUT"
+  fi
+}
+k_exact_block() {  # <label> — keys == {decision, reason}, decision == "block", reason non-empty
+  local label="$1" verdict
+  verdict="$(printf '%s' "$LAST_OUT" | python3 -c 'import json,sys
+try:
+    o = json.load(sys.stdin)
+    print("ok" if isinstance(o, dict) and set(o) == {"decision", "reason"}
+          and o["decision"] == "block" and isinstance(o["reason"], str) and o["reason"]
+          else "shape:" + json.dumps(o))
+except Exception as e:
+    print("PARSE_ERROR:" + str(e))')"
+  if [ "$LAST_RC" = "0" ] && [ "$verdict" = "ok" ]; then
+    ok "$label"
+  else
+    no "$label  expected {decision:block, reason:<non-empty>} and nothing else; got: $LAST_OUT ($verdict)"
+  fi
+}
+
+# (a) block: the discriminating probe (no block at all) must produce the block shape.
+for v in $V_WORKER $V_EXECUTE $V_SUPERVISOR $V_QA $V_PLAN; do
+  run_v "$v" "$K_PROBE"
+  k_exact_block "$(basename "$v"): missing block -> {decision: block, reason: …} and NO ok key"
+done
+# launch-pad has its own self-contained emit(); --raw mode, same contract.
+LAST_OUT="$(python3 "$SCRIPT_DIR/validate-launch-pad-result.py" --raw < "$K_PROBE" 2>/dev/null)"; LAST_RC=$?
+k_exact_block "validate-launch-pad-result.py: missing block -> {decision: block, reason: …} and NO ok key"
+
+# (b) pass: a valid block must produce EXACTLY `{}` — no `ok`, no `decision`.
+run_v "$V_WORKER" "$FIXDIR/worker-valid-bullet.md" "$SANDBOX_JWT"
+k_exact_pass "validate-worker-result.py: valid block -> exactly {}"
+run_v "$V_EXECUTE" "$FIXDIR/execute-result-valid.md"
+k_exact_pass "validate-execute-result.py: valid block -> exactly {}"
+run_v "$V_SUPERVISOR" "$FIXDIR/supervisor-valid.md"
+k_exact_pass "validate-supervisor-result.py: valid block -> exactly {}"
+run_v "$V_QA" "$FIXDIR/qa-result-valid.md"
+k_exact_pass "validate-qa-result.py: valid block -> exactly {}"
+run_v "$V_PLAN" "$FIXDIR/plan-review-valid.md"
+k_exact_pass "validate-plan-review-result.py: valid block -> exactly {}"
+
+# (c) the fail-SAFE paths (unparseable payload; shared module absent) must ALSO be
+# exactly `{}` — two coexisting pass shapes would be the drift this section exists to catch.
+LAST_OUT="$(printf 'not json' | python3 "$V_WORKER" 2>/dev/null)"; LAST_RC=$?
+k_exact_pass "validate-worker-result.py: unparseable payload (fail-safe) -> exactly {}"
+run_v "$NOMOD/$(basename "$V_WORKER")" "$K_PROBE"
+k_exact_pass "validate-worker-result.py: shared module ABSENT (import guard) -> exactly {}"
+
+# (d) the committed real-shaped payload fixture still yields a well-formed decision object.
+LAST_OUT="$(python3 "$V_WORKER" < "$FIXDIR/subagentstop-payload.json" 2>/dev/null)"; LAST_RC=$?
+if [ "$LAST_RC" = "0" ] && [ "$(json_ok)" != "PARSE_ERROR" ]; then
+  ok "validate-worker-result.py: committed SubagentStop payload fixture -> a well-formed decision object"
+else
+  no "validate-worker-result.py: committed SubagentStop payload fixture -> got: $LAST_OUT"
+fi
 
 echo "RESULT  pass=$PASS_COUNT  fail=$FAIL_COUNT"
 if [ "$FAIL_COUNT" -eq 0 ]; then

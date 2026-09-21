@@ -52,12 +52,12 @@ except BaseException as _import_exc:  # noqa: BLE001 — LAST LINE OF DEFENCE
     try:
         sys.stderr.write(
             "validate-execute-result: result_block_parser unavailable, failing "
-            "safe (ok:true): %s: %s\n" % (type(_import_exc).__name__, _import_exc)
+            "safe (pass, `{}`): %s: %s\n" % (type(_import_exc).__name__, _import_exc)
         )
     except BaseException:
         pass
     try:
-        sys.stdout.write(_json.dumps({"ok": True}) + "\n")
+        sys.stdout.write(_json.dumps({}) + "\n")  # pass: no decision
         sys.stdout.flush()
     except BaseException:
         pass

@@ -95,19 +95,19 @@ except BaseException as _import_exc:  # noqa: BLE001 — LAST LINE OF DEFENCE
     # fail. The shared-module design introduced it, so the shared-module design
     # guards it. Catch BaseException deliberately — nothing may escape.
     #
-    # Fail SAFE, byte-identically to emit(True): we cannot validate, and we must
+    # Fail SAFE, byte-identically to emit(True) (`{}` — no decision): we cannot validate, and we must
     # not break the agent loop.
     import json as _json
 
     try:
         sys.stderr.write(
             "validate-worker-result: result_block_parser unavailable, failing "
-            "safe (ok:true): %s: %s\n" % (type(_import_exc).__name__, _import_exc)
+            "safe (pass, `{}`): %s: %s\n" % (type(_import_exc).__name__, _import_exc)
         )
     except BaseException:
         pass
     try:
-        sys.stdout.write(_json.dumps({"ok": True}) + "\n")
+        sys.stdout.write(_json.dumps({}) + "\n")  # pass: no decision
         sys.stdout.flush()
     except BaseException:
         pass

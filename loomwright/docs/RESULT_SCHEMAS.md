@@ -3001,7 +3001,7 @@ A `PASS` is therefore never a claim — it is always the reporter's `expected` s
 | V7 | `pause_reason` must be non-null and one of `needs_auth`/`session_expired` IFF `status == paused`; it must be `null` IFF `status` is `completed`/`aborted` — either direction of mismatch (`paused` + null, non-`paused` + non-null, or `paused` + an unrecognized string) is rejected. An ABSENT key is treated identically to an explicit `null` (the `classification` null/absent convention of §VERIFY_EVIDENCE), so a pre-item-04 emitter that never sends the key keeps validating unchanged for every non-`paused` status |
 | neither | no `QA_RESULT` and no `VERIFY_RESULT` block ⇒ the existing `missing QA_RESULT block` reason, unchanged |
 
-The validator keeps its ALWAYS-exit-0 invariant (decision on stdout, `{"ok": true|false, "reason": …}`); the
+The validator keeps its ALWAYS-exit-0 invariant (decision on stdout, in the documented command-hook shape — `{}` allow / `{"decision": "block", "reason": …}` block, per `result_block_parser.emit`); the
 `hooks/hooks.json` command string is byte-unchanged. `scripts/test-result-validators.sh` §E2 provokes every rule.
 
 **Frozen example** (fixed sample values per the `check-doc-currency.sh` header convention — not a current claim;

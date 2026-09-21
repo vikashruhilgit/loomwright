@@ -1,0 +1,41 @@
+{
+  "_what": "Two real SubagentStop firings, captured 2026-09-21 on Claude Code v2.1.278 (desktop app, macOS) by spawning a real `loomwright:worker` via the Task tool with an instruction to emit a deliberately malformed WORKER_RESULT (outputs_gap omitted) and stop. Records are the `attachment` entries the runtime wrote into the subagent's own transcript (agent_transcript_path), values sanitized. This is the evidence behind result_block_parser.emit()'s wire shape: `{\"ok\": …}` from a `type: command` hook is NOT a decision; `{\"decision\": \"block\", \"reason\": …}` is.",
+  "_how_to_reproduce": "Add a temporary SubagentStop command hook matching `loomwright:worker` in .claude/settings.local.json that records stdin and emits the shape under test; spawn the worker with the probe prompt; read `<session>/subagents/agent-<id>.jsonl` for `attachment.type` in {hook_success, hook_blocking_error}. Restore settings.local.json afterwards.",
+  "payload_keys_observed": ["agent_id", "agent_transcript_path", "agent_type", "background_tasks", "cwd", "effort", "hook_event_name", "last_assistant_message", "permission_mode", "prompt_id", "scratchpad_dir", "session_crons", "session_id", "stop_hook_active", "transcript_path"],
+  "agent_type_observed": "loomwright:loomwright:worker",
+  "_agent_type_note": "The runtime reports the plugin-doubled prefix in the payload. hooks.json's matcher is the single-prefix `loomwright:worker`; it matched (the plugin hook below fired), so matching is substring/regex, not exact.",
+  "probe_a_ok_shape_is_ignored": {
+    "validator_stdout": "{\"ok\": false, \"reason\": \"WORKER_RESULT schema_version>=2 requires outputs_verified (array) and outputs_gap (string) fields\"}\n",
+    "runtime_recorded": {
+      "type": "hook_success",
+      "hookName": "SubagentStop",
+      "hookEvent": "SubagentStop",
+      "content": "",
+      "stderr": "",
+      "exitCode": 0,
+      "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/validate-worker-result.py\" || true",
+      "durationMs": 30
+    },
+    "stop_hook_active_on_firing": false,
+    "firings": 1,
+    "subagent_outcome": "stopped; Task tool returned the malformed block as the final result; no feedback reached the agent; 0 tool uses; 2841 ms",
+    "verdict": "NOT BLOCKED. Not even a `hook error` notice — unknown keys are tolerated and the object carries no decision."
+  },
+  "probe_b_decision_block_shape_blocks": {
+    "hook_stdout": "{\"decision\": \"block\", \"reason\": \"PROBE_B_BLOCK: documented decision shape from a type:command SubagentStop hook\"}\n",
+    "runtime_recorded": [
+      {"type": "hook_blocking_error", "hookName": "SubagentStop"},
+      {"type": "user_turn_injected", "content": "Stop hook feedback:\nPROBE_B_BLOCK: documented decision shape from a type:command SubagentStop hook"}
+    ],
+    "stop_hook_active_on_firings": [false, true],
+    "firings": 2,
+    "subagent_outcome": "continued; replied `HOOK_FEEDBACK_RECEIVED: Stop hook feedback: PROBE_B_BLOCK …` as instructed; second SubagentStop fired with stop_hook_active=true and was allowed; 6428 ms",
+    "verdict": "BLOCKED. The reason was fed back to the subagent as its next instruction, exactly as the hooks reference documents for Stop/SubagentStop decision control."
+  },
+  "docs_cited": {
+    "url": "https://code.claude.com/docs/en/hooks",
+    "stop_decision_control": "`decision`: \"block\" prevents Claude from stopping. Omit to allow Claude to stop. `reason`: Required when decision is \"block\". Tells Claude why it should continue.",
+    "exit_code_0": "For events that use the standard decision model, exit 0 with a parsed object that fails schema validation is a non-blocking error: the action proceeds.",
+    "prompt_hook_response_schema": "{\"ok\": true|false, \"reason\": …, \"impossible\": …} — the schema a `type: prompt` / `type: agent` hook's MODEL must answer with; not a command-hook output field."
+  }
+}

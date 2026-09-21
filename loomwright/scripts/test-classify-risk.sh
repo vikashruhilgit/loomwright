@@ -295,8 +295,10 @@ SUPERVISOR_RESULT:
 EOF
 python3 -c 'import json,sys
 sys.stdout.write(json.dumps({"session_id":"test-classify-risk","hook_event_name":"SubagentStop","agent_type":"test","last_assistant_message":open(sys.argv[1]).read()}))' "$TMP/block.md" > "$TMP/payload.json"
+# A validator PASS is `{}` — the documented SubagentStop shape carries no `decision` on allow
+# (`{"decision":"block",…}` on reject); see result_block_parser.emit.
 VOUT="$(cd "$ELSEWHERE" && python3 "$VALIDATOR" < "$TMP/payload.json" 2>/dev/null)"; VRC=$?
-if [ "$VRC" -eq 0 ] && printf '%s' "$VOUT" | jq -e '.ok == true' >/dev/null 2>&1; then
+if [ "$VRC" -eq 0 ] && printf '%s' "$VOUT" | jq -e 'type == "object" and (has("decision") | not)' >/dev/null 2>&1; then
   ok "F1 a SUPERVISOR_RESULT carrying risk_classification {high_risk:false, reasons:[]} validates (additive, schema_version 1)"
 else
   no "F1 validator rejected the nested object (rc=$VRC out='$VOUT')"
@@ -305,7 +307,7 @@ sed -e 's/high_risk: false/high_risk: null/' -e 's/reasons: \[\]/reasons: ["uncl
 python3 -c 'import json,sys
 sys.stdout.write(json.dumps({"session_id":"test-classify-risk","hook_event_name":"SubagentStop","agent_type":"test","last_assistant_message":open(sys.argv[1]).read()}))' "$TMP/block2.md" > "$TMP/payload2.json"
 VOUT="$(cd "$ELSEWHERE" && python3 "$VALIDATOR" < "$TMP/payload2.json" 2>/dev/null)"; VRC=$?
-[ "$VRC" -eq 0 ] && printf '%s' "$VOUT" | jq -e '.ok == true' >/dev/null 2>&1 \
+[ "$VRC" -eq 0 ] && printf '%s' "$VOUT" | jq -e 'type == "object" and (has("decision") | not)' >/dev/null 2>&1 \
   && ok "F2 high_risk: null + an unclassifiable reason also validates" || no "F2 validator rejected null form (out='$VOUT')"
 
 # =============================================================================

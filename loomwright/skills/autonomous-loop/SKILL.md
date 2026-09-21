@@ -202,11 +202,12 @@ has_rubric() {   # exit 0 = real (non-empty) rubric present; exit 1 = absent/emp
    - **Validate the block before trusting it (closes the inline-path validation gap):** the SubagentStop hook on `launch-pad-runner` validates the block only when Launch Pad runs as an agent-owned session (`claude --agent loomwright:launch-pad-runner`). For the inline slash-command path that `/autonomous` actually invokes, run the validator from this skill so schema violations are caught on every invocation:
      ```bash
      # Extract the block text, then pipe it to the validator in --raw mode.
-     # Emits {"ok": true} or {"ok": false, "reason": "..."}.
+     # Emits {} (well-formed) or {"decision": "block", "reason": "..."} (malformed) —
+     # the documented command-hook decision shape (see result_block_parser.emit).
      printf '%s' "$BLOCK_TEXT" | python3 "${CLAUDE_PLUGIN_ROOT}/scripts/validate-launch-pad-result.py" --raw
      ```
-     - `ok: true` → block well-formed; continue with the per-status branch below.
-     - `ok: false` → malformed. Record `policy_decisions[].decision = "launch_pad_result_malformed"` with `reason` from the validator. Fall through to the `ls`-diff fallback. Do NOT abort the loop — the fallback is functionally equivalent for the common single-session case.
+     - `{}` (no `decision` key) → block well-formed; continue with the per-status branch below.
+     - `decision: block` → malformed. Record `policy_decisions[].decision = "launch_pad_result_malformed"` with `reason` from the validator. Fall through to the `ls`-diff fallback. Do NOT abort the loop — the fallback is functionally equivalent for the common single-session case.
    - **If the block is present AND validates** (the v14.2.0+ path):
      - `status: saved` → set `current_brief_path = LAUNCH_PAD_RESULT.saved_brief_path`. Verify the file exists (`test -f`); if not, treat as malformed and fall through to the fallback.
      - `status: discarded` → `status: aborted, status_reason: "user_discarded_at_phase_6"`. Exit.

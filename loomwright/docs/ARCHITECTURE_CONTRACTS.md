@@ -192,7 +192,7 @@ Every agent (full standard in `AGENT_GUIDELINES.md`):
 ## Hook Performance Rules
 
 - **Prompt hooks:** Execution < 5 seconds, timeout 30 seconds. As of v15.17.0 only three remain (`SubagentStop[loomwright:code-reviewer]`, `Stop`, `TaskCompleted`) — reserve them for genuine judgement; a mechanical check (presence, type, enum membership, cross-field invariants) belongs in a `type: command` script.
-- **Command hooks:** the default (33 of 36 — the other three are the prompt hooks named above). Deterministic, zero model tokens. Every one is **exit-0-by-contract** — it signals via stdout JSON, never via exit status — which is what makes the `|| true` convention safe. A *blocking* gate must therefore never be written as a `type: command` hook carrying `|| true`.
+- **Command hooks:** the default (33 of 36 — the other three are the prompt hooks named above). Deterministic, zero model tokens. Every one is **exit-0-by-contract** — it signals via stdout JSON, never via exit status — which is what makes the `|| true` convention safe. The validators' stdout JSON is the documented command-hook decision (`{}` allow / `{"decision": "block", "reason": …}` block), NOT the prompt-hook `{"ok": …}` response schema — the latter is ignored by the runtime when a command hook prints it (probed 2026-09-21; `HOOKS.md` §"Command-validator decision shape"). A *blocking* gate must therefore never be written as a `type: command` hook carrying `|| true`.
 - **Agent-based hooks:** Execution < 30 seconds (future)
 - No network calls in prompt hooks
 - No long file parsing — validate structure, not semantics
