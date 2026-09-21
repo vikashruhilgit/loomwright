@@ -459,6 +459,16 @@ for iteration in 1..max_iterations:
         # mark this subtask complete; do NOT call record_worker_result yet.
         # Re-poll: this worker is left tracked as running so the NEXT iteration
         # re-checks both the disk gate and this join.
+        # `settle.rejected_stops > 0` (v15.83.0) names a second cause of the same
+        # verdict: the worker DID stop, but validate-worker-result.py rejected
+        # its WORKER_RESULT (`decision: block`) and the runtime told it to
+        # continue — the `subtask_complete` row it left is `rejected: true` and
+        # is NOT terminal (docs/RESULT_SCHEMAS.md §"Completion authority join").
+        # Same handling: re-poll. If the verdict never clears within
+        # max_iterations, the worker was forced to stop at the runtime's
+        # continuation cap with a still-malformed result — the checkpoint that
+        # follows should carry rejected_stops so the operator resumes it via
+        # SendMessage with the validator's reason instead of re-running cold.
         Task(Context-Keeper, operation: record_decision, phase: EXECUTE,
              decision: "provides_present_agent_unsettled: provides N/N present on disk, no terminal lifecycle row yet for agent_id={worker_id} ({subtask_id})")
         tool_calls += 1

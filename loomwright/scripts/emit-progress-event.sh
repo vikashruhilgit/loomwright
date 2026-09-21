@@ -71,6 +71,42 @@
 # `$PWD` fallback ONLY for byte-identical backward compatibility with its
 # proven 785-event history — see that file's own anchoring comment).
 #
+# REJECTED STOPS ARE NOT TERMINAL (v15.83.0 — `rejected`, `stop_hook_active`)
+# ---------------------------------------------------------------------------
+# This emitter is wired on the SAME `loomwright:worker` SubagentStop matcher as
+# `validate-worker-result.py`. Since that validator prints the documented
+# command-hook decision shape (`{"decision":"block","reason":…}` on a malformed
+# WORKER_RESULT — CHANGELOG v15.82.0, docs/HOOKS.md §"Command-validator
+# decision shape"), a rejected stop makes the runtime feed the reason back to
+# the worker, which CONTINUES and stops AGAIN (SubagentStop re-fires with
+# `stop_hook_active: true`). This emitter fires on EVERY one of those firings
+# and cannot see its sibling's stdout — so, unqualified, the FIRST firing left
+# a `subtask_complete` row that check-children-settled.sh read as terminal
+# while the worker was still running (the completion-authority join reported
+# it settled before its accepted result existed).
+#
+# Fix: re-run the SAME validator on the SAME payload bytes (a subprocess of the
+# real `validate-worker-result.py` next to this script — never a restated copy
+# of its rules, which would drift) and record its decision as an additive
+# boolean `rejected`: `true` iff it printed `decision: "block"`, `false` iff it
+# printed a parseable decision that does not block (`{}`, or the legacy
+# `{"ok": …}` shape — the legacy shape never blocked the runtime, so a stop it
+# was printed on IS terminal and `false` is the true answer). The key is
+# OMITTED (never guessed) when the validator is absent, times out, or prints
+# unparseable output — a reader derives `unknown`, and consumers treat an
+# absent key exactly as a pre-v15.83.0 row (terminal), because a missing
+# sibling validator cannot have blocked anything either. `stop_hook_active` is
+# copied from the payload when present and boolean (PAYLOAD ONLY, else
+# omitted) so a reader can tell a first stop from a post-rejection retry; it
+# is NOT the rejection signal — the rejected first firing carries `false`.
+#
+# Consumers (check-children-settled.sh, build-floor.sh) skip a row with
+# `rejected: true` entirely: it is not a terminal row. A worker the runtime
+# forced to stop at its consecutive-continuation cap leaves ONLY rejected rows
+# and therefore stays `unsettled` — fail CLOSED toward "not done", bounded by
+# each consumer's own existing retry/pause bounds (see docs/RESULT_SCHEMAS.md
+# §"Completion authority join").
+#
 # No-op (exit 0) when: empty stdin, missing python3/jq, main worktree
 # unresolvable, unwritable log dir, malformed payload, unresolvable session
 # id, not-a-git-repo.
@@ -193,7 +229,7 @@ export UTC_TS PLUGIN_SESSION_ID SESSION_BRANCH="$session_branch" EMIT_PROGRESS_S
 
 # ---- Build one JSONL line (or empty → no-op) ---------------------------------
 OUT="$(printf '%s' "$INPUT" | python3 -c '
-import json, os, sys
+import json, os, subprocess, sys
 
 _script_dir = os.environ.get("EMIT_PROGRESS_SCRIPT_DIR", "")
 if _script_dir and _script_dir not in sys.path:
@@ -205,7 +241,8 @@ def sanitise_session_id(raw):
     return "".join(c for c in raw if c.isalnum() or c in ("-", "_"))
 
 try:
-    payload = json.loads(sys.stdin.read())
+    raw_input = sys.stdin.read()
+    payload = json.loads(raw_input)
 except Exception:
     sys.exit(0)
 
@@ -295,6 +332,41 @@ if "last_assistant_message" in payload:
             event["result_block_present"] = _find_last_block(_lam, "WORKER_RESULT") is not None
         except Exception:
             pass  # detection unavailable -> key OMITTED, never a guessed False
+
+# `stop_hook_active` (v15.83.0, additive): PAYLOAD ONLY, copied when present
+# and boolean, else the key is OMITTED. `true` marks a re-fire after a sibling
+# hook blocked the previous stop. It is a reader aid, NOT the rejection signal
+# (see the header): the firing that got rejected carries `false`.
+_sha = payload.get("stop_hook_active")
+if isinstance(_sha, bool):
+    event["stop_hook_active"] = _sha
+
+# `rejected` (v15.83.0, additive): the decision of the sibling validator on THIS
+# payload, re-derived by running the real validate-worker-result.py on the
+# same bytes (same cwd, same module, same rules — never a restated copy).
+# `true`  iff it printed `{"decision": "block", …}` (the runtime made the
+#         worker continue; this row is NOT terminal),
+# `false` iff it printed a parseable JSON object with no block decision
+#         (`{}` — or the legacy `{"ok": …}` shape, which never blocked),
+# OMITTED when the validator is absent, cannot run, times out, or prints
+#         anything that is not a JSON object — never a guessed boolean.
+if _script_dir:
+    _validator = os.path.join(_script_dir, "validate-worker-result.py")
+    if os.path.isfile(_validator):
+        try:
+            _proc = subprocess.run(
+                [sys.executable, _validator],
+                input=raw_input,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                universal_newlines=True,
+                timeout=30,
+            )
+            _verdict = json.loads(_proc.stdout)
+            if isinstance(_verdict, dict):
+                event["rejected"] = _verdict.get("decision") == "block"
+        except Exception:
+            pass  # validator unavailable/unparseable -> key OMITTED
 
 branch = os.environ.get("SESSION_BRANCH", "")
 if branch:
