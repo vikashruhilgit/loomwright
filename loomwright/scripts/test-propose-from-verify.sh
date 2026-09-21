@@ -225,6 +225,104 @@ else
   no "verify-helpers.sh not found - AC11 cannot be evaluated"
 fi
 
+echo "== AC8-notify: a needs_auth pause fires BOTH send-webhook.sh and notify-desktop.sh =="
+# verify-helpers.sh resolves BOTH siblings the same way (dirname-of-$0, never a PATH lookup), so
+# staging fake copies of send-webhook.sh AND notify-desktop.sh beside a copy of verify-helpers.sh
+# reaches both call sites verify_notify_once fires for a needs_auth pause.
+STUBDIR2="$(mktmp)"
+WCALLLOG="$STUBDIR2/webhook-calls.log"; : > "$WCALLLOG"
+DCALLLOG="$STUBDIR2/desktop-calls.log"; : > "$DCALLLOG"
+cat > "$STUBDIR2/send-webhook.sh" << STUBEOF2
+#!/usr/bin/env bash
+echo "\$@" >> "$WCALLLOG"
+exit 0
+STUBEOF2
+chmod +x "$STUBDIR2/send-webhook.sh"
+cat > "$STUBDIR2/notify-desktop.sh" << STUBEOF2
+#!/usr/bin/env bash
+cat >> "$DCALLLOG"
+exit 0
+STUBEOF2
+chmod +x "$STUBDIR2/notify-desktop.sh"
+ln -sf "$HERE/validate-verify-evidence.py" "$STUBDIR2/validate-verify-evidence.py"
+cp "$HERE/verify-helpers.sh" "$STUBDIR2/verify-helpers.sh"
+
+if [ -f "$STUBDIR2/verify-helpers.sh" ]; then
+  RD6="$(mktmp)/rd6"; mkdir -p "$RD6"
+  : > "$RD6/.notify-enabled"
+  TS="2026-09-15T00:00:00Z"
+  jq -cn --arg ts "$TS" '{schema_version:1, ts:$ts, run_id:"verify-needsauth", event:"run_start", ticket_path:"t.md", ticket_kind:"requirement", branch:"b", head_sha:"h", base_sha:"d", env_contract_hash:null}' \
+    | bash "$STUBDIR2/verify-helpers.sh" evidence-append "$RD6" - >/dev/null 2>&1
+  jq -cn --arg ts "$TS" '{schema_version:1, ts:$ts, run_id:"verify-needsauth", event:"pause", reason:"needs_auth"}' \
+    | bash "$STUBDIR2/verify-helpers.sh" evidence-append "$RD6" - >/dev/null 2>&1
+  rc_a8n=$?
+  [ "$rc_a8n" -eq 0 ] && ok "AC8-notify: appending the needs_auth pause line still exits 0" || no "AC8-notify: exit $rc_a8n"
+  wcalls="$(awk 'END{print NR+0}' "$WCALLLOG")"
+  dcalls="$(awk 'END{print NR+0}' "$DCALLLOG")"
+  [ "$wcalls" -eq 1 ] && ok "AC8-notify: send-webhook.sh was invoked exactly once for the needs_auth pause" \
+    || no "AC8-notify: send-webhook.sh invoked $wcalls time(s), expected exactly 1"
+  grep -Fq 'verify_needs_auth' "$WCALLLOG" 2>/dev/null && ok "AC8-notify: the webhook call carries the verify_needs_auth gate-type" \
+    || no "AC8-notify: the webhook call does not name --gate-type verify_needs_auth: $(cat "$WCALLLOG")"
+  [ "$dcalls" -eq 1 ] && ok "AC8-notify: notify-desktop.sh was ALSO invoked exactly once for the needs_auth pause" \
+    || no "AC8-notify: notify-desktop.sh invoked $dcalls time(s), expected exactly 1"
+  grep -Fq 'verify_needs_auth' "$DCALLLOG" 2>/dev/null && ok "AC8-notify: the desktop payload carries notification_type verify_needs_auth" \
+    || no "AC8-notify: the desktop payload does not name verify_needs_auth: $(cat "$DCALLLOG")"
+else
+  no "verify-helpers.sh not found - AC8-notify cannot be evaluated"
+fi
+
+echo "== AC9: LOOMWRIGHT_WEBHOOK_URL unset -> exit 0, no webhook call, the run is unaffected =="
+# Real send-webhook.sh and notify-desktop.sh (symlinked, not faked) beside a copy of
+# verify-helpers.sh, so this exercises the ACTUAL fail-safe no-op path rather than a stub that
+# assumes it. A curl/wget/nc-denying shim on PATH proves zero network calls were attempted -
+# "no webhook call" is observed, not merely inferred from send-webhook.sh's own header comment.
+# Run from a FRESH cwd with no .supervisor/config.json or .supervisor/notify-config.json, so
+# send-webhook.sh's repo-local-config fallback (its "URL must come from the legacy file" arm)
+# cannot accidentally supply a URL the unset env var was meant to withhold.
+STUBDIR3="$(mktmp)"
+ln -sf "$HERE/send-webhook.sh" "$STUBDIR3/send-webhook.sh"
+ln -sf "$HERE/notify-desktop.sh" "$STUBDIR3/notify-desktop.sh"
+ln -sf "$HERE/validate-verify-evidence.py" "$STUBDIR3/validate-verify-evidence.py"
+cp "$HERE/verify-helpers.sh" "$STUBDIR3/verify-helpers.sh"
+
+NETSHIM="$(mktmp)"
+NETLOG="$NETSHIM/network-attempts.txt"; : > "$NETLOG"
+for tool in curl wget nc ncat; do
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'printf "%%s %%s\\n" "%s" "$*" >> "%s"\n' "$tool" "$NETLOG"
+    printf 'exit 1\n'
+  } > "$NETSHIM/$tool"
+  chmod +x "$NETSHIM/$tool"
+done
+CWD9="$(mktmp)"   # a bare directory - no .supervisor/ of any kind
+
+if [ -f "$STUBDIR3/verify-helpers.sh" ]; then
+  RD7="$(mktmp)/rd7"; mkdir -p "$RD7"
+  : > "$RD7/.notify-enabled"
+  TS="2026-09-15T00:00:00Z"
+  ( cd "$CWD9" && unset LOOMWRIGHT_WEBHOOK_URL
+    jq -cn --arg ts "$TS" '{schema_version:1, ts:$ts, run_id:"verify-nourl", event:"run_start", ticket_path:"t.md", ticket_kind:"requirement", branch:"b", head_sha:"h", base_sha:"d", env_contract_hash:null}' \
+      | PATH="$NETSHIM:$PATH" bash "$STUBDIR3/verify-helpers.sh" evidence-append "$RD7" - ) >/dev/null 2>&1
+  rc_a9a=$?
+  ( cd "$CWD9" && unset LOOMWRIGHT_WEBHOOK_URL
+    jq -cn --arg ts "$TS" '{schema_version:1, ts:$ts, run_id:"verify-nourl", event:"pause", reason:"needs_auth"}' \
+      | PATH="$NETSHIM:$PATH" bash "$STUBDIR3/verify-helpers.sh" evidence-append "$RD7" - ) >/dev/null 2>&1
+  rc_a9b=$?
+  [ "$rc_a9a" -eq 0 ] && [ "$rc_a9b" -eq 0 ] && ok "AC9: evidence-append still exits 0 with LOOMWRIGHT_WEBHOOK_URL unset" \
+    || no "AC9: rc_a9a=$rc_a9a rc_a9b=$rc_a9b (expected both 0)"
+  n_net="$(awk 'END{print NR+0}' "$NETLOG")"
+  [ "$n_net" -eq 0 ] && ok "AC9: zero network calls were attempted (no curl/wget/nc invocation) - the webhook call is a true no-op" \
+    || no "AC9: $n_net network attempt(s) were made: $(cat "$NETLOG")"
+  n_ev="$(awk 'END{print NR+0}' "$RD7/evidence.jsonl" 2>/dev/null)"
+  [ "$n_ev" -eq 2 ] && ok "AC9: the run is unaffected - both evidence lines (run_start + pause) were still appended" \
+    || no "AC9: expected 2 evidence.jsonl lines, got $n_ev"
+  grep -q '"event":"pause"' "$RD7/evidence.jsonl" 2>/dev/null && ok "AC9: the pause/needs_auth line itself is present and intact" \
+    || no "AC9: the pause line is missing from evidence.jsonl"
+else
+  no "verify-helpers.sh not found - AC9 cannot be evaluated"
+fi
+
 echo "-- MUTATION CONTROL (AC12): stripping ## Evidence from the writer must fail the suite's own assertions --"
 MUT="$ROOT/mutant-noevidence.sh"
 ln -sf "$COMMON" "$ROOT/propose-common.sh"
