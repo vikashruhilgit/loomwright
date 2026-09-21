@@ -41,6 +41,11 @@
 #   (o) a CONCURRENT WRITER that ADDS or REMOVES a store file mid-run is DETECTED (the fingerprint
 #       covers the re-enumerated file SET, not only the content of a once-enumerated list), with the
 #       pre-fix once-enumerated fingerprint as the mutation control and a clean run as the converse.
+#
+# Local trap: `set -uo pipefail` is on. `producer | grep -q` SIGPIPEs the producer on the first
+# match (GNU grep: "write error: Broken pipe", exit 2), so the pipeline fails EVEN ON A MATCH —
+# (b6) shipped that flake against `validate_dead_reference`. Large-producer matches are captured
+# first and grepped via here-string; `grep -c` is also safe because it drains stdin.
 
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -191,9 +196,12 @@ else
 fi
 
 # Static half 5 — the engine reimplements none of the five checks: it CALLS all five by name.
+# Capture once. `code_only | grep -q` under pipefail SIGPIPEs the producer on the first match,
+# so a CALL is recorded as a miss. Here-string grep is one command; no pipeline.
+ENGINE_CODE="$(code_only)"
 missing_calls=""
 for fn in validate_duplicate validate_contradiction validate_provenance validate_dead_reference validate_cross_repo_reference; do
-  code_only | grep -q "^ *$fn --entry" || missing_calls="$missing_calls $fn"
+  grep -q "^ *$fn --entry" <<< "$ENGINE_CODE" || missing_calls="$missing_calls $fn"
 done
 if [ -z "$missing_calls" ]; then
   ok "(b6) all FIVE shared checks are CALLED from validate-entry.sh (none reimplemented)"
