@@ -600,6 +600,17 @@ esac
 # unwritable log costs only the log line (its own `2>/dev/null || true`), never the
 # salvage. `</dev/null` on the capture keeps the trap's `$(…)` from ever waiting on
 # an inherited stdin (the salvage script has no interactive path; this pins it).
+# ORDER INSIDE THE TRAP IS LOAD-BEARING (do NOT reorder): salvage -> worktree
+# removal -> `rm -rf "$_lock"` LAST. The lock covers the worktree's whole lifetime:
+# a re-armed dispatcher for the same PR (a hand-deleted marker — PITFALLS.md says
+# deleting one re-arms re-dispatch) must not win the lock and run its pre-add
+# cleanup + `worktree add` at this deterministic path while this trap's
+# `rm -rf "$_wt"` is still pending — that would silently delete the new sibling.
+# Consequence for anything observing teardown (tests, operators): the lock dir's
+# disappearance is the "teardown complete" signal; the worktree vanishing is an
+# intermediate state (git unlinks it before this shell forks the two rm's), so
+# "worktree gone, lock still present" is a legitimate window of a few forks —
+# sync on the lock (test-worktree-salvage.sh AC-7c/AC-7d pin both facts).
 WRAPPER='
 _mg="$1"; _wt="$2"; _lock="$3"; _bin="$4"; _runner="$5"; _pr="$6"; _log="$7"; _salvage="$8"
 trap_cleanup() {

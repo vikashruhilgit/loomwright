@@ -170,14 +170,35 @@ run_real() {
   RUN_RC=$?
 }
 
+# worktree_gone <repo> <wt_path> — the sibling is gone from disk AND the admin list.
+worktree_gone() {
+  local repo="$1" wt="$2"
+  [ ! -d "$wt" ] && ! ( cd "$repo" && git worktree list 2>/dev/null | grep -qF "$wt" )
+}
+
 # wait_for_no_worktree <repo> <wt_path> — poll until the detached wrapper's trap
-# removes the sibling worktree (or timeout). Returns 0 if removed.
+# removes the sibling worktree (or timeout). Returns 0 if removed. This is an
+# INTERMEDIATE state of the trap (git unlinks dir + admin entry; the wrapper then
+# still forks `rm -rf "$_wt"` and `rm -rf "$_lock"`) — fine for cases that only
+# need the worktree gone; a case that also asserts on the lock syncs with
+# wait_for_teardown below, or it reads the lock inside that window (the CI-only
+# `lock_present` flake in test-worktree-salvage.sh AC-7c, run 35596258321).
 wait_for_no_worktree() {
   local repo="$1" wt="$2" i
   for i in $(seq 1 50); do
-    if [ ! -d "$wt" ] && ! ( cd "$repo" && git worktree list 2>/dev/null | grep -qF "$wt" ); then
-      return 0
-    fi
+    worktree_gone "$repo" "$wt" && return 0
+    sleep 0.2
+  done
+  return 1
+}
+
+# wait_for_teardown <repo> <wt_path> <lock_dir> — poll until the trap's TERMINAL
+# action has happened: lock dir gone (released LAST by design — it covers the
+# worktree's whole lifetime) AND worktree gone. Returns 0 if both within 10s.
+wait_for_teardown() {
+  local repo="$1" wt="$2" lock="$3" i
+  for i in $(seq 1 50); do
+    if [ ! -d "$lock" ] && worktree_gone "$repo" "$wt"; then return 0; fi
     sleep 0.2
   done
   return 1
@@ -456,10 +477,12 @@ WT="$(expected_wt_path "$FX_REPO")"
 H="$(pr_hash)"
 # Marker must exist immediately (written before launch).
 MARKER_OK=0; [ -f "$FX_REPO/.supervisor/review-dispatch/$H" ] && MARKER_OK=1
-# Wait for the detached wrapper's trap to clean up.
-REMOVED_OK=0; wait_for_no_worktree "$FX_REPO" "$WT" && REMOVED_OK=1
-# Lock dir gone after cleanup.
-LOCK_GONE=0; [ ! -d "$FX_REPO/.supervisor/review-dispatch/$H.lock" ] && LOCK_GONE=1
+# Wait for the detached wrapper's trap to finish (its LAST action is the lock
+# release), then assert worktree-gone and lock-gone independently.
+LOCK="$FX_REPO/.supervisor/review-dispatch/$H.lock"
+wait_for_teardown "$FX_REPO" "$WT" "$LOCK" || true
+REMOVED_OK=0; worktree_gone "$FX_REPO" "$WT" && REMOVED_OK=1
+LOCK_GONE=0; [ ! -d "$LOCK" ] && LOCK_GONE=1
 # Header present + non-empty.
 HDR="$(cat "$FX_REPO"/.supervisor/logs/review-pr-dispatch-*.log 2>/dev/null || true)"
 HDR_OK=0; printf '%s' "$HDR" | grep -q 'DISPATCHED' && HDR_OK=1

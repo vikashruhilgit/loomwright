@@ -36,7 +36,15 @@
 #   AC-7c trap path with RUN_LOG's directory DELETED by the stub before it exits ⇒
 #         the salvage STILL runs (capture-then-append; a failed `>>"$_log"` on the
 #         call itself would make bash skip it), sibling + lock gone, marker present;
-#         in-suite mutant re-applies the pre-fix redirect form ⇒ AC-7c RED, AC-7 GREEN
+#         in-suite mutant re-applies the pre-fix redirect form ⇒ AC-7c RED, AC-7 GREEN;
+#         the arm syncs on the trap's TERMINAL action (lock dir gone), not on the
+#         worktree — a second in-suite mutant deletes the trap's `rm -rf "$_lock"` ⇒
+#         AC-7c RED with reason=lock_present
+#   AC-7d AC-7c with the teardown window WIDENED: a `rm` stub on the wrapper's PATH
+#         stalls 2s on `*.lock` ⇒ after the worktree is gone the lock is STILL present
+#         (pre-condition — pins "lock released LAST"), then the lock-synced AC-7c
+#         assertions all hold. Deterministic form of the CI-only `lock_present` flake
+#         (run 35596258321) that the pre-fix worktree sync point produced
 #   AC-8  README: literal BASE_SHA, "will NOT apply to current" + "main", the
 #         `git checkout -b salvage-` … `git apply tracked.patch` incantation, and
 #         modified/ mentioned at a lower line than tracked.patch
@@ -236,12 +244,38 @@ run_real() {
   RUN_RC=$?
 }
 
+# worktree_gone <repo> <wt> — the sibling is gone from disk AND from the admin list.
+worktree_gone() {
+  local repo="$1" wt="$2"
+  [ ! -d "$wt" ] && ! ( cd "$repo" && git worktree list 2>/dev/null | grep -qF "$wt" )
+}
+
+# wait_for_no_worktree <repo> <wt> — poll until the sibling worktree is gone (or
+# 10s). Returns 0 if gone. This is an INTERMEDIATE state of the detached trap:
+# `git worktree remove --force` unlinks the dir, then the admin entry, and the
+# wrapper still has to fork `rm -rf "$_wt"` and `rm -rf "$_lock"` after git returns.
+# Use it only when nothing later in the arm asserts on the lock.
 wait_for_no_worktree() {
   local repo="$1" wt="$2" i
   for i in $(seq 1 50); do
-    if [ ! -d "$wt" ] && ! ( cd "$repo" && git worktree list 2>/dev/null | grep -qF "$wt" ); then
-      return 0
-    fi
+    worktree_gone "$repo" "$wt" && return 0
+    sleep 0.2
+  done
+  return 1
+}
+
+# wait_for_teardown <repo> <wt> <lock_dir> — poll until the trap's TERMINAL action
+# has happened: the lock dir is gone (released LAST, deliberately — it covers the
+# worktree's whole lifetime, see the dispatcher's wrapper comment) AND the sibling
+# is gone. Any arm that asserts "lock gone" must sync here, not on the worktree:
+# syncing on the worktree and then reading the lock observes a window of a few
+# forks (deterministically widened by AC-7d) — that is the CI-only
+# `AC-7c … reason=lock_present` flake (run 35596258321). Returns 0 when both are
+# gone within 10s; a trap that never releases the lock times out ⇒ 1.
+wait_for_teardown() {
+  local repo="$1" wt="$2" lock="$3" i
+  for i in $(seq 1 50); do
+    if [ ! -d "$lock" ] && worktree_gone "$repo" "$wt"; then return 0; fi
     sleep 0.2
   done
   return 1
@@ -343,15 +377,12 @@ check_ac7b() {  # <dispatcher> — pre-add cleanup site with a pre-existing DIRT
     && [ -f "$dir/untracked/notes/new.md" ] && cmp -s "$dir/untracked/notes/new.md" "$FX_EXP_NOTE"
 }
 
-check_ac7c() {  # <dispatcher> — trap path with RUN_LOG's directory DELETED before the trap
-  local disp="$1" wt dir h
-  AC7C_FAIL=""
-  fresh_git_repo --logs-killing-stub
-  run_real "$disp" "$FX_REPO" "$PR"
-  wt="$(expected_wt_path "$FX_REPO")"
-  h="$(pr_hash)"
-  if ! wait_for_no_worktree "$FX_REPO" "$wt"; then AC7C_FAIL="wait_wt"; return 1; fi
+# assert_ac7c_state <wt> <hash> — the post-teardown assertions shared by AC-7c and
+# AC-7d (sets AC7C_FAIL on the first miss). Caller has already synced on the trap.
+assert_ac7c_state() {
+  local wt="$1" h="$2" dir
   if [ "$RUN_RC" -ne 0 ]; then AC7C_FAIL="run_rc=$RUN_RC"; return 1; fi
+  if ! worktree_gone "$FX_REPO" "$wt"; then AC7C_FAIL="wt_present"; return 1; fi
   if [ ! -f "$FX_REPO/.supervisor/review-dispatch/$h" ]; then AC7C_FAIL="no_marker"; return 1; fi
   if [ -d "$FX_REPO/.supervisor/review-dispatch/$h.lock" ]; then AC7C_FAIL="lock_present"; return 1; fi
   if ! grep -qF "cwd=$wt" "$FX_CLAUDE_LOG" 2>/dev/null; then AC7C_FAIL="stub_not_run"; return 1; fi
@@ -361,6 +392,49 @@ check_ac7c() {  # <dispatcher> — trap path with RUN_LOG's directory DELETED be
   if [ ! -f "$dir/modified/head.txt" ] || ! cmp -s "$dir/modified/head.txt" "$FX_EXP_HEAD"; then AC7C_FAIL="head_mismatch"; return 1; fi
   if [ ! -f "$dir/untracked/notes/new.md" ] || ! cmp -s "$dir/untracked/notes/new.md" "$FX_EXP_NOTE"; then AC7C_FAIL="note_mismatch"; return 1; fi
   return 0
+}
+
+check_ac7c() {  # <dispatcher> — trap path with RUN_LOG's directory DELETED before the trap
+  local disp="$1" wt h lock
+  AC7C_FAIL=""
+  fresh_git_repo --logs-killing-stub
+  run_real "$disp" "$FX_REPO" "$PR"
+  wt="$(expected_wt_path "$FX_REPO")"
+  h="$(pr_hash)"
+  lock="$FX_REPO/.supervisor/review-dispatch/$h.lock"
+  # Sync on the trap's TERMINAL action (lock release), never on the worktree alone.
+  if ! wait_for_teardown "$FX_REPO" "$wt" "$lock"; then
+    if worktree_gone "$FX_REPO" "$wt"; then AC7C_FAIL="lock_present"; else AC7C_FAIL="wait_wt"; fi
+    return 1
+  fi
+  assert_ac7c_state "$wt" "$h"
+}
+
+check_ac7d() {  # <dispatcher> — AC-7c under a deterministically WIDENED teardown window
+  # A `rm` stub first on the wrapper's PATH stalls 2s when asked to remove a `*.lock`
+  # (the trap calls `rm` unqualified and inherits FX_BIN:$PATH). git has already
+  # unlinked the worktree + admin entry by then, so the pre-fix sync point (worktree
+  # gone) returns while the lock is still present — the CI flake, made certain.
+  # Pre-condition of the class: that window IS observed (else the arm is not
+  # exercising it — e.g. a trap reordered to release the lock before the worktree,
+  # which is the invariant this arm also pins). Then the real sync + full assertions.
+  local disp="$1" wt h lock
+  AC7C_FAIL=""
+  fresh_git_repo --logs-killing-stub
+  cat > "$FX_BIN/rm" <<'RMEOF'
+#!/usr/bin/env bash
+case " $* " in *.lock*) sleep 2 ;; esac
+exec /bin/rm "$@"
+RMEOF
+  chmod +x "$FX_BIN/rm"
+  run_real "$disp" "$FX_REPO" "$PR"
+  wt="$(expected_wt_path "$FX_REPO")"
+  h="$(pr_hash)"
+  lock="$FX_REPO/.supervisor/review-dispatch/$h.lock"
+  if ! wait_for_no_worktree "$FX_REPO" "$wt"; then AC7C_FAIL="wait_wt"; return 1; fi
+  if [ ! -d "$lock" ]; then AC7C_FAIL="window_not_observed"; return 1; fi
+  if ! wait_for_teardown "$FX_REPO" "$wt" "$lock"; then AC7C_FAIL="lock_present"; return 1; fi
+  assert_ac7c_state "$wt" "$h"
 }
 
 check_ac12() {  # <script> — untracked nested repository copied verbatim, .git included
@@ -541,9 +615,11 @@ fresh_git_repo
 : > "$FX_REPO/.supervisor/salvage"
 run_real "$DISPATCH" "$FX_REPO" "$PR"
 WT="$(expected_wt_path "$FX_REPO")"; H="$(pr_hash)"
-REMOVED=0; wait_for_no_worktree "$FX_REPO" "$WT" && REMOVED=1
+LOCK="$FX_REPO/.supervisor/review-dispatch/$H.lock"
+wait_for_teardown "$FX_REPO" "$WT" "$LOCK" || true
+REMOVED=0; worktree_gone "$FX_REPO" "$WT" && REMOVED=1
 MARKER=0; [ -f "$FX_REPO/.supervisor/review-dispatch/$H" ] && MARKER=1
-LOCK_GONE=0; [ ! -d "$FX_REPO/.supervisor/review-dispatch/$H.lock" ] && LOCK_GONE=1
+LOCK_GONE=0; [ ! -d "$LOCK" ] && LOCK_GONE=1
 NO_SALV=0; [ -f "$FX_REPO/.supervisor/salvage" ] && [ ! -d "$FX_REPO/.supervisor/salvage" ] && NO_SALV=1
 RAN=0; grep -qF "cwd=$WT" "$FX_CLAUDE_LOG" 2>/dev/null && RAN=1
 if [ "$RUN_RC" -eq 0 ] && [ "$REMOVED" -eq 1 ] && [ "$MARKER" -eq 1 ] && [ "$LOCK_GONE" -eq 1 ] && [ "$NO_SALV" -eq 1 ] && [ "$RAN" -eq 1 ]; then
@@ -556,9 +632,11 @@ cp "$DISPATCH" "$NOTOOL/dispatch-pr-review.sh"; cp "$AUDIT" "$NOTOOL/worktree-au
 fresh_git_repo
 run_real "$NOTOOL/dispatch-pr-review.sh" "$FX_REPO" "$PR"
 WT="$(expected_wt_path "$FX_REPO")"; H="$(pr_hash)"
-REMOVED=0; wait_for_no_worktree "$FX_REPO" "$WT" && REMOVED=1
+LOCK="$FX_REPO/.supervisor/review-dispatch/$H.lock"
+wait_for_teardown "$FX_REPO" "$WT" "$LOCK" || true
+REMOVED=0; worktree_gone "$FX_REPO" "$WT" && REMOVED=1
 MARKER=0; [ -f "$FX_REPO/.supervisor/review-dispatch/$H" ] && MARKER=1
-LOCK_GONE=0; [ ! -d "$FX_REPO/.supervisor/review-dispatch/$H.lock" ] && LOCK_GONE=1
+LOCK_GONE=0; [ ! -d "$LOCK" ] && LOCK_GONE=1
 NO_SALV=0; [ ! -e "$FX_REPO/.supervisor/salvage" ] && NO_SALV=1
 if [ "$RUN_RC" -eq 0 ] && [ "$REMOVED" -eq 1 ] && [ "$MARKER" -eq 1 ] && [ "$LOCK_GONE" -eq 1 ] && [ "$NO_SALV" -eq 1 ]; then
   ok "AC-6(d): no worktree-salvage.sh sibling (127 inside || true) — dispatched, marker present, trap removed, lock gone"
@@ -592,6 +670,30 @@ if [ "$MUT7_GATE" -eq 1 ]; then
   if check_ac7 "$MUT7"; then ok "AC-7 GREEN against the AC-7c mutant (positive control: the mutant only breaks the unwritable-log path)"; else no "AC-7 went red against the AC-7c mutant — mutant broke more than the redirect, not discriminating"; fi
 else
   no "AC-7c mutant gate: mutant not usable (empty, identical, syntax error, or old form not re-applied) — control skipped"
+fi
+
+echo "== AC-7d. teardown window WIDENED (rm stalls on *.lock): worktree gone while lock pending, AC-7c still holds =="
+if check_ac7d "$DISPATCH"; then ok "AC-7d: lock observed present after the worktree vanished (window real, lock released LAST); synced on the lock — salvage, marker, lock all correct"
+else no "AC-7d: widened teardown window (repo=$FX_REPO reason=${AC7C_FAIL:-unknown})"; fi
+# Mutation control for the lock assertion: a trap that never releases the lock must
+# turn AC-7c RED with reason=lock_present (the sync point times out, ~10s) — else the
+# lock half of the arm is vacuous. Scratch copy with the trap's `rm -rf "$_lock"`
+# line deleted, gated non-empty + cmp-different + bash -n + line really gone.
+MUT7L_DIR="$SCRATCH/mutant-ac7c-lock"; mkdir -p "$MUT7L_DIR"
+cp "$SALVAGE" "$MUT7L_DIR/worktree-salvage.sh"; cp "$AUDIT" "$MUT7L_DIR/worktree-audit.sh"
+# Whole-line match (-x): the dispatcher's comments also spell `rm -rf "$_lock"`.
+grep -vxF '  rm -rf "$_lock" 2>/dev/null || true' "$DISPATCH" > "$MUT7L_DIR/dispatch-pr-review.sh"
+MUT7L="$MUT7L_DIR/dispatch-pr-review.sh"
+if [ -s "$MUT7L" ] && ! cmp -s "$MUT7L" "$DISPATCH" && bash -n "$MUT7L" 2>/dev/null \
+   && ! grep -qxF '  rm -rf "$_lock" 2>/dev/null || true' "$MUT7L"; then
+  ok "AC-7c lock-mutant gate: trap's lock release deleted, non-empty, cmp-different, bash -n clean"
+  if check_ac7c "$MUT7L"; then no "AC-7c survived a trap that never releases the lock (vacuous: lock half does not discriminate)"
+  elif [ "${AC7C_FAIL:-}" = "lock_present" ]; then ok "AC-7c RED with reason=lock_present against the lock-keeping trap"
+  else no "AC-7c RED against the lock-keeping trap but for the wrong reason (${AC7C_FAIL:-unknown}) — arm not isolating the lock"; fi
+  # The stranded lock must not leak past the suite: the fixture dir is temp, but be explicit.
+  rm -rf "$FX_REPO/.supervisor/review-dispatch/$(pr_hash).lock" 2>/dev/null || true
+else
+  no "AC-7c lock-mutant gate: mutant not usable (empty, identical, syntax error, or line still present) — control skipped"
 fi
 
 echo "== AC-8. README is accurate =="
