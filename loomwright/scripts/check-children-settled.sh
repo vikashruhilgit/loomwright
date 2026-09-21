@@ -28,8 +28,13 @@
 #   check-children-settled.sh --log <path> --all             # per-session aggregate (FINALIZE gate)
 #
 # Output (ONE JSON object on stdout, always exit 0):
-#   single-agent: {"agent_id":"<id>","status":"settled"|"unsettled","ended_without_result":true|false,"source":"check-children-settled.sh"}
-#   --all:        {"status":"settled"|"unsettled"|"no_identity_rows","unsettled_agent_ids":[...],"ended_without_result_ids":[...],"source":"check-children-settled.sh"}
+#   single-agent: {"agent_id":"<id>","status":"settled"|"unsettled","ended_without_result":true|false,"rejected_stops":N,"source":"check-children-settled.sh"}
+#   --all:        {"status":"settled"|"unsettled"|"no_identity_rows","unsettled_agent_ids":[...],"ended_without_result_ids":[...],"rejected_stop_ids":[...],"source":"check-children-settled.sh"}
+#   `rejected_stops` / `rejected_stop_ids` (additive, v15.83.0) are DIAGNOSTIC ONLY — the count of
+#   `subtask_complete` rows carrying `rejected: true` for that agent_id / the identity-row ids with at
+#   least one such row — so an `unsettled` verdict caused by a validator-rejected stop is readable
+#   from the join output instead of only from the subagent transcript. Consumers decide on `status`
+#   alone; these never change the verdict.
 #   A missing/unreadable `--log` in `--all` mode is the documented `no_identity_rows` case (a session
 #   that never wrote a log trivially has zero `agent_identity` rows) — never `unverifiable`, never a
 #   false `settled`. The SAME condition in single-agent mode is `unsettled` (no evidence of settlement
@@ -39,7 +44,12 @@
 #   routed by the consumer the same way verify-provides.sh's `unverifiable` is (never a silent pass).
 #
 # A "terminal row" for an agent_id is exactly one of:
-#   - {"event":"subtask_complete", "agent_id":"<id>", ...}   (worker role terminal event)
+#   - {"event":"subtask_complete", "agent_id":"<id>", ...}   (worker role terminal event) — EXCEPT a
+#     row carrying `rejected: true` (v15.83.0): that firing's WORKER_RESULT was rejected by the
+#     sibling `validate-worker-result.py` (`decision: block`), so the runtime made the worker
+#     CONTINUE — it is still running and will stop again. Such a row is skipped entirely (it neither
+#     settles the agent nor decides `ended_without_result`); an absent or `false` `rejected` key is
+#     terminal, exactly as every pre-v15.83.0 row was (see emit-progress-event.sh's header).
 #   - {"event":"token_ledger", "agent_id":"<id>", ...}       (non-worker roles' terminal event; this
 #     event carries no `result_block_present` field yet — see docs/RESULT_SCHEMAS.md §agent_lifecycle
 #     "forward-reference" note — so presence alone settles it)
@@ -53,8 +63,13 @@
 # surfaces the id (via `ended_without_result` / `ended_without_result_ids`).
 #
 # HONEST LIMITS: a malformed JSONL line is skipped (`fromjson? // empty`), never aborts the scan. Only
-# the FIRST matching terminal row (file order) decides `ended_without_result` for a given agent_id — a
-# worker settles once. `--agent-id` performs no allowlist validation beyond what `jq --arg` already
+# the FIRST matching NON-REJECTED terminal row (file order) decides `ended_without_result` for a given
+# agent_id — a worker settles once. A worker whose every stop was rejected (the runtime forces the stop
+# at its consecutive-continuation cap — 8 on Claude Code v2.1.278) leaves ONLY rejected rows and stays
+# `unsettled`: fail CLOSED toward "not done" (its result IS malformed), surfaced via `rejected_stops`,
+# and bounded by each consumer's own existing re-poll / bounded-retry-then-pause / `--skip-children-
+# check` path — this script cannot tell "rejected, retrying" from "rejected at the cap" and does not
+# guess. `--agent-id` performs no allowlist validation beyond what `jq --arg` already
 # escapes safely; an id with no matching row is simply reported `unsettled`, never an error. Pure
 # jq/POSIX-sh — no GNU/BSD-grep dependency (unlike verify-provides.sh, this join is JSONL filtering,
 # not a file-content grep), bash 3.2 / BSD userland safe.
@@ -111,7 +126,7 @@ if [ ! -f "$log" ] || [ ! -r "$log" ]; then
     # case (a session that never wrote a log has nothing to check), never `unverifiable`, never a
     # false `settled`.
     jq -n -c --arg s "$SELF" \
-      '{status: "no_identity_rows", unsettled_agent_ids: [], ended_without_result_ids: [], source: $s}'
+      '{status: "no_identity_rows", unsettled_agent_ids: [], ended_without_result_ids: [], rejected_stop_ids: [], source: $s}'
     exit 0
   fi
   # Single-agent mode: no log ⇒ no evidence of settlement ⇒ unsettled (fail closed toward "not done").
@@ -121,14 +136,16 @@ if [ ! -f "$log" ] || [ ! -r "$log" ]; then
 fi
 
 # terminal_for <agent_id> — prints "0" or "1" (ended_without_result) for the FIRST terminal row
-# matching <agent_id>, or nothing when no terminal row exists for it. `head -1` on a jq pipe under
+# matching <agent_id>, or nothing when no terminal row exists for it. A `subtask_complete` row with
+# `rejected == true` is NOT a terminal row and never matches (header: "REJECTED STOPS ARE NOT
+# TERMINAL"). `head -1` on a jq pipe under
 # `pipefail` can raise SIGPIPE(141) in $?, which is harmless here: this script has no `set -e`, and
 # every caller inspects the CAPTURED VALUE (`[ -n "$ewr" ]`), never the exit code of the substitution.
 terminal_for() {
   jq -R -r --arg id "$1" '
     (fromjson? // empty) as $l
     | select(
-        ($l.event == "subtask_complete" and $l.agent_id == $id) or
+        ($l.event == "subtask_complete" and $l.agent_id == $id and ($l.rejected? == true | not)) or
         ($l.event == "token_ledger" and $l.agent_id == $id) or
         ($l.event == "agent_lifecycle" and $l.state == "failed" and $l.agent_id == $id)
       )
@@ -138,15 +155,32 @@ terminal_for() {
   ' "$log" 2>/dev/null | head -1
 }
 
+# rejected_stops_for <agent_id> — prints the count of `subtask_complete` rows with `rejected: true`
+# for <agent_id> (diagnostic only — see the header). Always prints a number; a log with no such row
+# prints 0.
+rejected_stops_for() {
+  local n
+  n="$(jq -R -r --arg id "$1" '
+    (fromjson? // empty) as $l
+    | select($l.event == "subtask_complete" and $l.agent_id == $id and $l.rejected? == true)
+    | 1
+  ' "$log" 2>/dev/null | wc -l | tr -d '[:space:]')"
+  case "$n" in
+    ''|*[!0-9]*) n=0 ;;
+  esac
+  printf '%s' "$n"
+}
+
 if [ "$mode" = "agent" ]; then
   ewr="$(terminal_for "$agent_id")"
+  rej="$(rejected_stops_for "$agent_id")"
   if [ -n "$ewr" ]; then
     if [ "$ewr" = "1" ]; then ewr_bool=true; else ewr_bool=false; fi
-    jq -n -c --arg id "$agent_id" --argjson ewr "$ewr_bool" --arg s "$SELF" \
-      '{agent_id: $id, status: "settled", ended_without_result: $ewr, source: $s}'
+    jq -n -c --arg id "$agent_id" --argjson ewr "$ewr_bool" --argjson rej "$rej" --arg s "$SELF" \
+      '{agent_id: $id, status: "settled", ended_without_result: $ewr, rejected_stops: $rej, source: $s}'
   else
-    jq -n -c --arg id "$agent_id" --arg s "$SELF" \
-      '{agent_id: $id, status: "unsettled", ended_without_result: false, source: $s}'
+    jq -n -c --arg id "$agent_id" --argjson rej "$rej" --arg s "$SELF" \
+      '{agent_id: $id, status: "unsettled", ended_without_result: false, rejected_stops: $rej, source: $s}'
   fi
   exit 0
 fi
@@ -156,12 +190,13 @@ ids="$(jq -R -r '(fromjson? // empty) | select(.event == "agent_identity" and (.
 
 if [ -z "$ids" ]; then
   jq -n -c --arg s "$SELF" \
-    '{status: "no_identity_rows", unsettled_agent_ids: [], ended_without_result_ids: [], source: $s}'
+    '{status: "no_identity_rows", unsettled_agent_ids: [], ended_without_result_ids: [], rejected_stop_ids: [], source: $s}'
   exit 0
 fi
 
 unsettled='[]'
 ewr_ids='[]'
+rej_ids='[]'
 while IFS= read -r id; do
   [ -n "$id" ] || continue
   ewr="$(terminal_for "$id")"
@@ -170,12 +205,15 @@ while IFS= read -r id; do
   elif [ "$ewr" = "1" ]; then
     ewr_ids="$(jq -c --arg id "$id" '. + [$id]' <<<"$ewr_ids")"
   fi
+  if [ "$(rejected_stops_for "$id")" != "0" ]; then
+    rej_ids="$(jq -c --arg id "$id" '. + [$id]' <<<"$rej_ids")"
+  fi
 done <<EOF
 $ids
 EOF
 
 if [ "$unsettled" = "[]" ]; then status="settled"; else status="unsettled"; fi
 
-jq -n -c --argjson u "$unsettled" --argjson e "$ewr_ids" --arg st "$status" --arg s "$SELF" \
-  '{status: $st, unsettled_agent_ids: $u, ended_without_result_ids: $e, source: $s}'
+jq -n -c --argjson u "$unsettled" --argjson e "$ewr_ids" --argjson r "$rej_ids" --arg st "$status" --arg s "$SELF" \
+  '{status: $st, unsettled_agent_ids: $u, ended_without_result_ids: $e, rejected_stop_ids: $r, source: $s}'
 exit 0

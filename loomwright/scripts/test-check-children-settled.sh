@@ -28,6 +28,13 @@
 #   (m)     — MUTATION CONTROL: deleting the agent_lifecycle:failed branch from a COPY of the script's
 #             `terminal_for` jq filter must turn a failed-only fixture from settled to unsettled —
 #             otherwise the three-way OR is vacuous.
+#   rejected — (v15.83.0) a `subtask_complete` row with `rejected: true` is NOT terminal: a
+#             rejected-then-accepted worker settles on the ACCEPTED row only (and the rejected row's
+#             `result_block_present: false` never decides `ended_without_result`); a rejected-only
+#             worker stays `unsettled`; `rejected_stops` / `rejected_stop_ids` count/name them; a
+#             `rejected: false` or absent key is terminal exactly as before.
+#   (m2)    — MUTATION CONTROL: deleting the `rejected` guard from a COPY of `terminal_for` must
+#             flip the rejected-only worker to settled — otherwise the guard is vacuous.
 #
 # EXPLICIT LIMIT: this pins the script's behaviour and the WIRING (the prompts cite it where they say
 # they do). It cannot prove an Execute Manager / Supervisor actually runs the Bash call at runtime.
@@ -103,11 +110,16 @@ cat > "$LOG" <<'JSONL'
 {"event":"agent_identity","session_id":"s1","cc_session_id":"s1","agent_id":"reviewer-ledger","agent_type":"loomwright:code-reviewer"}
 {"event":"agent_identity","session_id":"s1","cc_session_id":"s1","agent_id":"worker-failed","agent_type":"loomwright:worker"}
 {"event":"agent_identity","session_id":"s1","cc_session_id":"s1","agent_id":"worker-unsettled","agent_type":"loomwright:worker"}
+{"event":"agent_identity","session_id":"s1","cc_session_id":"s1","agent_id":"worker-rejected-then-accepted","agent_type":"loomwright:worker"}
+{"event":"agent_identity","session_id":"s1","cc_session_id":"s1","agent_id":"worker-rejected-only","agent_type":"loomwright:worker"}
 this is not json at all
-{"event":"subtask_complete","agent_id":"worker-clean","result_block_present":true}
+{"event":"subtask_complete","agent_id":"worker-clean","result_block_present":true,"rejected":false}
 {"event":"subtask_complete","agent_id":"worker-noresult","result_block_present":false}
 {"event":"token_ledger","agent_id":"reviewer-ledger"}
 {"event":"agent_lifecycle","state":"failed","agent_id":"worker-failed","reason":"rate_limit"}
+{"event":"subtask_complete","agent_id":"worker-rejected-then-accepted","result_block_present":false,"rejected":true,"stop_hook_active":false}
+{"event":"subtask_complete","agent_id":"worker-rejected-only","result_block_present":true,"rejected":true,"stop_hook_active":false}
+{"event":"subtask_complete","agent_id":"worker-rejected-then-accepted","result_block_present":true,"rejected":false,"stop_hook_active":true}
 JSONL
 
 out="$(bash "$SCRIPT" --log "$LOG" --agent-id worker-clean 2>/dev/null)"
@@ -141,6 +153,36 @@ out="$(bash "$SCRIPT" --log "$LOG" --agent-id no-such-agent 2>/dev/null)"
   || no "no-such-agent -> expected unsettled, got: $out"
 
 # ---------------------------------------------------------------------------
+# 3r) rejected stops are NOT terminal (v15.83.0) — the probe-B sequence: a first
+#     stop the sibling validator blocked (`rejected: true`, `stop_hook_active:
+#     false`) followed by the accepted retry (`rejected: false`, `stop_hook_active:
+#     true`). The rejected row here deliberately carries `result_block_present:
+#     false` so a regression that merely skips it for SETTLEDNESS but still lets
+#     it decide ended_without_result would read `true` and fail.
+# ---------------------------------------------------------------------------
+out="$(bash "$SCRIPT" --log "$LOG" --agent-id worker-rejected-then-accepted 2>/dev/null)"
+[ "$(get "$out" .status)" = "settled" ] && [ "$(get "$out" .ended_without_result)" = "false" ] \
+  && [ "$(get "$out" .rejected_stops)" = "1" ] \
+  && ok "rejected then accepted -> settled on the ACCEPTED row, ended_without_result:false (the rejected row's result_block_present:false is ignored), rejected_stops:1" \
+  || no "worker-rejected-then-accepted -> expected settled/false/rejected_stops:1, got: $out"
+
+out="$(bash "$SCRIPT" --log "$LOG" --agent-id worker-rejected-only 2>/dev/null)"
+[ "$(get "$out" .status)" = "unsettled" ] && [ "$(get "$out" .ended_without_result)" = "false" ] \
+  && [ "$(get "$out" .rejected_stops)" = "1" ] \
+  && ok "rejected only (worker still running, or forced to stop at the runtime cap) -> unsettled, rejected_stops:1 — never settled" \
+  || no "worker-rejected-only -> expected unsettled/rejected_stops:1, got: $out"
+
+out="$(bash "$SCRIPT" --log "$LOG" --agent-id worker-clean 2>/dev/null)"
+[ "$(get "$out" .rejected_stops)" = "0" ] \
+  && ok "an explicit rejected:false row is terminal and counts 0 rejected_stops" \
+  || no "worker-clean rejected_stops -> expected 0, got: $out"
+
+out="$(bash "$SCRIPT" --log "$LOG" --agent-id worker-noresult 2>/dev/null)"
+[ "$(get "$out" .status)" = "settled" ] && [ "$(get "$out" .rejected_stops)" = "0" ] \
+  && ok "a pre-v15.83.0 row (no rejected key at all) is terminal exactly as before, rejected_stops:0" \
+  || no "worker-noresult (no rejected key) -> expected settled/rejected_stops:0, got: $out"
+
+# ---------------------------------------------------------------------------
 # 4) --all aggregate over the same fixture
 # ---------------------------------------------------------------------------
 out="$(bash "$SCRIPT" --log "$LOG" --all 2>/dev/null)"
@@ -149,13 +191,17 @@ echo "$out" | jq -e . >/dev/null 2>&1 && ok "--all output is valid JSON" || no "
   && ok "--all with worker-unsettled present -> aggregate status unsettled" \
   || no "--all aggregate -> expected unsettled, got: $out"
 unsettled_ids="$(get "$out" '.unsettled_agent_ids | sort | join(",")')"
-[ "$unsettled_ids" = "worker-unsettled" ] \
-  && ok "--all unsettled_agent_ids names exactly worker-unsettled" \
-  || no "--all unsettled_agent_ids -> expected [worker-unsettled], got: $unsettled_ids"
+[ "$unsettled_ids" = "worker-rejected-only,worker-unsettled" ] \
+  && ok "--all unsettled_agent_ids names exactly worker-rejected-only + worker-unsettled (the rejected-then-accepted worker is settled)" \
+  || no "--all unsettled_agent_ids -> expected [worker-rejected-only,worker-unsettled], got: $unsettled_ids"
 ewr_ids="$(get "$out" '.ended_without_result_ids | sort | join(",")')"
 [ "$ewr_ids" = "worker-failed,worker-noresult" ] \
-  && ok "--all ended_without_result_ids names worker-failed + worker-noresult" \
+  && ok "--all ended_without_result_ids names worker-failed + worker-noresult (a rejected row's result_block_present:false never contributes)" \
   || no "--all ended_without_result_ids -> expected worker-failed,worker-noresult, got: $ewr_ids"
+rej_ids="$(get "$out" '.rejected_stop_ids | sort | join(",")')"
+[ "$rej_ids" = "worker-rejected-only,worker-rejected-then-accepted" ] \
+  && ok "--all rejected_stop_ids names every identity with >=1 rejected row, settled or not (diagnostic, never the verdict)" \
+  || no "--all rejected_stop_ids -> expected worker-rejected-only,worker-rejected-then-accepted, got: $rej_ids"
 
 # ---------------------------------------------------------------------------
 # 5) all-settled fixture -> --all reports settled (never no_identity_rows)
@@ -169,8 +215,9 @@ out="$(bash "$SCRIPT" --log "$LOG2" --all 2>/dev/null)"
 [ "$(get "$out" .status)" = "settled" ] \
   && [ "$(get "$out" '.unsettled_agent_ids | length')" = "0" ] \
   && [ "$(get "$out" '.ended_without_result_ids | length')" = "0" ] \
+  && [ "$(get "$out" '.rejected_stop_ids | length')" = "0" ] \
   && ok "all-settled fixture -> --all reports settled with empty arrays" \
-  || no "all-settled fixture -> expected settled/[]/[], got: $out"
+  || no "all-settled fixture -> expected settled/[]/[]/[], got: $out"
 
 # ---------------------------------------------------------------------------
 # 6) empty log (no lines at all) -> no_identity_rows
@@ -179,7 +226,8 @@ LOG3="$TMP/empty.jsonl"
 : > "$LOG3"
 out="$(bash "$SCRIPT" --log "$LOG3" --all 2>/dev/null)"
 [ "$(get "$out" .status)" = "no_identity_rows" ] \
-  && ok "empty (but existing) log -> no_identity_rows" \
+  && [ "$(get "$out" '.rejected_stop_ids | length')" = "0" ] \
+  && ok "empty (but existing) log -> no_identity_rows (rejected_stop_ids present and empty)" \
   || no "empty log -> expected no_identity_rows, got: $out"
 
 # ---------------------------------------------------------------------------
@@ -214,6 +262,19 @@ grep -q "check-children-settled.sh" "$SCHEMAS" && grep -q "provides_present_agen
   && ok "RESULT_SCHEMAS.md documents the script + both new decision/error strings" \
   || no "RESULT_SCHEMAS.md missing the script cite or one of the new strings"
 
+grep -q "rejected_stops" "$SCHEMAS" && grep -q "rejected_stop_ids" "$SCHEMAS" \
+  && grep -q '`rejected`' "$SCHEMAS" \
+  && ok "RESULT_SCHEMAS.md documents the rejected row field + rejected_stops / rejected_stop_ids (v15.83.0)" \
+  || no "RESULT_SCHEMAS.md missing rejected / rejected_stops / rejected_stop_ids"
+
+grep -q "rejected_stops" "$EM" \
+  && ok "execute-manager.md's unsettled branch names rejected_stops (a validator-rejected stop is a documented cause of unsettled)" \
+  || no "execute-manager.md does not mention rejected_stops"
+
+grep -q "rejected_stop_ids" "$ASYNC" \
+  && ok "async-orchestration SKILL.md Point 5 names rejected_stop_ids" \
+  || no "async-orchestration SKILL.md does not mention rejected_stop_ids"
+
 grep -q "children_unsettled" "$FAILDOC" && grep -q -- "--skip-children-check" "$FAILDOC" \
   && ok "FAILURE_ESCALATION.md documents the children-unsettled gate + escape hatch" \
   || no "FAILURE_ESCALATION.md missing children_unsettled or --skip-children-check"
@@ -230,6 +291,27 @@ if [ "$(get "$mut_out" .status)" != "settled" ]; then
   ok "mutation control: removing the agent_lifecycle:failed branch flips worker-failed to non-settled"
 else
   no "mutation control: mutant still reports worker-failed as settled — the OR branch is vacuous"
+fi
+
+# ---------------------------------------------------------------------------
+# 9) MUTATION CONTROL (m2) — deleting the `rejected` guard from a COPY of
+#    `terminal_for` must flip worker-rejected-only from unsettled to settled;
+#    otherwise the guard that keeps a rejected stop non-terminal is vacuous.
+#    The sed targets the ONE line carrying the guard; the control is inconclusive
+#    (and FAILS) if the copy is byte-identical to the script.
+# ---------------------------------------------------------------------------
+MUT2="$TMP/mutant-rejected.sh"
+sed 's/ and (\$l\.rejected? == true | not))/)/' "$SCRIPT" > "$MUT2"
+chmod +x "$MUT2"
+if cmp -s "$MUT2" "$SCRIPT"; then
+  no "mutation control (rejected): could not build the mutant — the guard line was not found, control inconclusive"
+else
+  mut_out="$(bash "$MUT2" --log "$LOG" --agent-id worker-rejected-only 2>/dev/null)"
+  if [ "$(get "$mut_out" .status)" = "settled" ]; then
+    ok "mutation control (rejected): removing the rejected guard flips worker-rejected-only to settled — the guard is load-bearing"
+  else
+    no "mutation control (rejected): mutant still reports worker-rejected-only as $(get "$mut_out" .status) — the guard is vacuous or the mutant missed it"
+  fi
 fi
 
 echo

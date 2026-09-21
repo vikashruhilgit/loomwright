@@ -332,9 +332,12 @@ else
                  # the plugin-work filter) ignores keys it does not ask for, so this costs them
                  # nothing. `with_entries` below strips null/"" but NOT `false`, which is
                  # load-bearing: result_block_present:false must survive to derive
-                 # ended_without_result:true.
+                 # ended_without_result:true. `rejected` (v15.83.0) is subtask_completes
+                 # own field too: a rejected stop is NOT a terminal row (the worker was
+                 # told to continue), so the lifecycle derivation below must see it.
                  state: $o.state, reason: $o.reason,
-                 result_block_present: $o.result_block_present}
+                 result_block_present: $o.result_block_present,
+                 rejected: $o.rejected}
                 | with_entries(select(.value != null and .value != "")) | tojson)
         else "noid" end
     end
@@ -488,12 +491,18 @@ else
                      # terminal rows (`subtask_complete` for workers, `token_ledger` for every
                      # other role). Only ts-bearing rows compete for "most recent" - an
                      # untimed row cannot be ordered, though its mere existence still counts
-                     # toward "a lifecycle WAS recorded" below.
+                     # toward "a lifecycle WAS recorded" below. A `subtask_complete` with
+                     # `rejected: true` (v15.83.0) is EXCLUDED from the terminal set: the
+                     # sibling validator blocked that stop and the worker continued, so it
+                     # can never read as `done` (nor decide ended_without_result) - the same
+                     # rule check-children-settled.sh applies. It is not evidence of any
+                     # recognized state either, so it does not count toward "recorded".
                      | (map(select((.event // "") == "agent_lifecycle"
                                    and ((.state // "") == "waiting"
                                         or (.state // "") == "working"
                                         or (.state // "") == "failed")))) as $lc
-                     | (map(select((.event // "") == "subtask_complete"
+                     | (map(select(((.event // "") == "subtask_complete"
+                                    and ((.rejected? == true) | not))
                                    or (.event // "") == "token_ledger"))) as $term
                      | ($lc | map(select(has("ts"))) | sort_by(.ts) | last) as $lc_latest
                      | ($term | map(select(has("ts"))) | sort_by(.ts) | last) as $term_latest

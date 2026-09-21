@@ -3153,6 +3153,16 @@ RZZZ="$(new_repo)"; mkdir -p "$RZZZ/.supervisor/logs" "$RZZZ/agents"
   printf '{"ts":"%s","event":"subtask_complete","cc_session_id":"zzz","agent_id":"aq","result_block_present":false}\n' "$Q_TS"
   # unknown: identity only, nothing else ever recorded
   printf '{"event":"agent_identity","cc_session_id":"zzz","agent_id":"au","agent_type":"loomwright:loomwright:worker","recorded_at":"2026-09-17T08:00:00Z"}\n'
+  # rejected stop (v15.83.0): a NEWER subtask_complete the sibling validator blocked (`rejected:
+  # true`, fence present) AFTER a working heartbeat - the worker was told to continue, so the
+  # row is not terminal: state stays `working` from the heartbeat, never `done`.
+  printf '{"event":"agent_identity","cc_session_id":"zzz","agent_id":"ar","agent_type":"loomwright:loomwright:worker","recorded_at":"2026-09-17T09:00:00Z"}\n'
+  printf '{"event":"agent_lifecycle","state":"working","ts":"2026-09-17T09:21:00Z","cc_session_id":"zzz","agent_id":"ar"}\n'
+  printf '{"ts":"2026-09-17T09:23:00Z","event":"subtask_complete","cc_session_id":"zzz","agent_id":"ar","result_block_present":true,"rejected":true,"stop_hook_active":false}\n'
+  # rejected-only (v15.83.0): ONLY a rejected stop, no heartbeat - no recognized evidence at
+  # all, so NO lifecycle key (unknown), never `done`, never a defaulted `quiet`.
+  printf '{"event":"agent_identity","cc_session_id":"zzz","agent_id":"ao","agent_type":"loomwright:loomwright:worker","recorded_at":"2026-09-17T09:00:00Z"}\n'
+  printf '{"ts":"2026-09-17T09:23:00Z","event":"subtask_complete","cc_session_id":"zzz","agent_id":"ao","result_block_present":true,"rejected":true}\n'
 } > "$RZZZ/.supervisor/logs/zzz.jsonl"
 ( cd "$RZZZ" && FLOOR_AGENTS_DIR="$RZZZ/agents" FLOOR_SOURCE_DATE_EPOCH="$NOW_EP" bash "$BUILD" >/dev/null 2>&1 )
 JZZZ="$RZZZ/.supervisor/floor/floor.json"
@@ -3183,6 +3193,41 @@ zzzq() { jq -r "$1" "$JZZZ" 2>/dev/null; }
 [ "$(zzzq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="au") | has("lifecycle")')" = "false" ] \
   && ok "(zzz) au (identity only, zero lifecycle-relevant rows) carries NO lifecycle key - unknown is never defaulted to quiet" \
   || no "(zzz) au unexpectedly carries a lifecycle key: $(zzzq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="au") | .lifecycle')"
+
+[ "$(zzzq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="ar") | .lifecycle.state')" = "working" ] \
+  && [ "$(zzzq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="ar") | .lifecycle | has("ended_without_result")')" = "false" ] \
+  && ok "(zzz) ar: a newer subtask_complete with rejected:true is NOT terminal - state stays working from the heartbeat, no ended_without_result derived from the rejected row" \
+  || no "(zzz) ar lifecycle" "$(zzzq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="ar") | .lifecycle')"
+
+[ "$(zzzq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="ao") | has("lifecycle")')" = "false" ] \
+  && ok "(zzz) ao: a rejected-only lane carries NO lifecycle key (unknown) - a rejected stop is neither done nor quiet" \
+  || no "(zzz) ao unexpectedly carries a lifecycle key: $(zzzq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="ao") | .lifecycle')"
+
+# --- (zzz-rej-mut) MUTATION CONTROL: drop the `rejected` guard from the terminal-row filter and
+# this SAME fixture must read ar as `done` (its rejected row is the newest ts-bearing row) - proving
+# the guard, not the fixture shape, is what keeps a rejected stop from reading as done.
+MUT_ZZR="$ROOT/mut-rejected-guard-dropped.sh"
+python3 - "$BUILD" "$MUT_ZZR" <<'PYEOF2' 2>/dev/null
+import io, sys
+s = io.open(sys.argv[1], encoding='utf-8').read()
+a = ('| (map(select(((.event // "") == "subtask_complete"\n'
+     '                                    and ((.rejected? == true) | not))\n')
+b = ('| (map(select(((.event // "") == "subtask_complete")\n')
+if s.count(a) == 1:
+    io.open(sys.argv[2], 'w', encoding='utf-8').write(s.replace(a, b, 1))
+PYEOF2
+if [ -s "$MUT_ZZR" ] && ! cmp -s "$MUT_ZZR" "$BUILD" && bash -n "$MUT_ZZR" 2>/dev/null; then
+  RZZR="$(new_repo)"; mkdir -p "$RZZR/.supervisor/logs" "$RZZR/agents"
+  cp "$RZZZ/.supervisor/logs/zzz.jsonl" "$RZZR/.supervisor/logs/zzz.jsonl"
+  ( cd "$RZZR" && FLOOR_AGENTS_DIR="$RZZR/agents" FLOOR_SOURCE_DATE_EPOCH="$NOW_EP" bash "$MUT_ZZR" >/dev/null 2>&1 )
+  zzr_state="$(jq -r '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="ar") | .lifecycle.state // "ABSENT"' \
+    "$RZZR/.supervisor/floor/floor.json" 2>/dev/null)"
+  [ "$zzr_state" = "done" ] \
+    && ok "(zzz-rej-mut) MUTATION CONTROL: dropping the rejected guard DOES flip ar from working to done on this exact fixture - the guard is load-bearing" \
+    || no "(zzz-rej-mut) MUTATION CONTROL: expected the mutant to read ar as done, got '$zzr_state' - the control did not exercise the guard it claims to"
+else
+  no "(zzz-rej-mut) MUTATION CONTROL: could not build the rejected-guard-dropped mutant - control inconclusive"
+fi
 
 # --- (zzz-mut) MUTATION CONTROL: prove the unknown-vs-quiet distinction is enforced, not merely
 # spelled. Flip the one branch that produces "no lifecycle-relevant row at all" from `null` to a

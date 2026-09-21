@@ -746,11 +746,12 @@ if printf '%s' "$LINE23" | jq -e 'has("result_block")' >/dev/null 2>&1; then
 else
   ok "case23 no result_block field (AC-2)"
 fi
-# The extra real-world fields (cwd, permission_mode, effort, stop_hook_active,
-# background_tasks, session_crons, transcript_path) are NOT documented as
-# copied fields — assert they are genuinely ignored, not just coincidentally
-# passed through raw.
-for undocumented in cwd permission_mode effort stop_hook_active background_tasks session_crons transcript_path; do
+# The extra real-world fields (cwd, permission_mode, effort, background_tasks,
+# session_crons, transcript_path) are NOT documented as copied fields — assert
+# they are genuinely ignored, not just coincidentally passed through raw.
+# (`stop_hook_active` LEFT this list in v15.83.0: it is now a documented
+# copied field — section 42 pins its copy/omit rules.)
+for undocumented in cwd permission_mode effort background_tasks session_crons transcript_path; do
   if printf '%s' "$LINE23" | jq -e --arg k "$undocumented" 'has($k)' >/dev/null 2>&1; then
     no "case23 unexpectedly copied undocumented field: $undocumented"
   else
@@ -1581,6 +1582,144 @@ if [ -f "$RBP" ]; then
 else
   no "case41d(mutation) result_block_parser.py not found at expected path — cannot mutate"
 fi
+
+echo "== 42. rejected / stop_hook_active (v15.83.0) — a validator-rejected stop is recorded, never guessed =="
+# The emitter re-runs the REAL sibling validator (validate-worker-result.py, next
+# to it on disk) on the same payload bytes and records `rejected: true` iff that
+# validator printed `{"decision": "block", …}`. Two fixtures: MALFORMED (a fence
+# with only `status`, missing every other required field — rule 1) and VALID (a
+# schema_version 2 block that satisfies rules 1-9 incl. rule 3's tier-5 summary
+# evidence). 42a pins the malformed verdict to WHATEVER THE REAL VALIDATOR
+# CURRENTLY PRINTS — `rejected` must equal (its stdout `.decision == "block"`) —
+# so this case is true both before and after the validator's own decision-shape
+# change (CHANGELOG v15.82.0: `{"ok": …}` → `{}` / `{"decision": "block"}`); the
+# legacy shape never blocked the runtime, so `false` is the correct value on it.
+# 42e/42f/42g then substitute a STUB validator to prove the value is derived from
+# the validator's actual stdout (mutation control), not hard-coded.
+VALIDATOR="$SCRIPT_DIR/validate-worker-result.py"
+LAM_MALFORMED="## WORKER_RESULT\n- status: completed\n"
+LAM_VALID="Wrote .worker-summary.md\n\n## WORKER_RESULT\n- schema_version: 2\n- task_id: T-42\n- status: completed\n- files_modified: [src/a.py]\n- summary: did the thing\n- outputs_verified: []\n- outputs_gap: \"\"\n"
+
+# 42a: MALFORMED fixture, real validator, stop_hook_active:false (a FIRST stop).
+REPO42A="$(init_repo "feature/case42a")"
+P42A="$PAYLOAD_DIR/p42a.json"
+jq -n --arg lam "$LAM_MALFORMED" '{session_id:"sid-case42a", agent_id:"a42a", agent_type:"loomwright:worker",
+        stop_hook_active:false, last_assistant_message:($lam | gsub("\\\\n"; "\n"))}' > "$P42A"
+REAL42A="$(cd "$REPO42A" && python3 "$VALIDATOR" < "$P42A" 2>/dev/null | jq -r 'if .decision == "block" then "true" else "false" end' 2>/dev/null)"
+OUT42A="$(run_emitter "$REPO42A" "$P42A")"
+assert_eq "case42a exit 0" "0" "$(get_rc "$OUT42A")"
+LINE42A="$(tail -1 "$REPO42A/.supervisor/logs/sid-case42a.jsonl" 2>/dev/null)"
+assert_eq "case42a rejected key PRESENT (real validator ran and printed a JSON object)" "true" \
+  "$(printf '%s' "$LINE42A" | jq -r 'has("rejected")')"
+assert_eq "case42a rejected == (real validator stdout .decision == \"block\") on the MALFORMED fixture (currently: $REAL42A)" \
+  "$REAL42A" "$(printf '%s' "$LINE42A" | jq -r '.rejected')"
+assert_eq "case42a stop_hook_active:false copied verbatim (a rejected FIRST stop carries false — it is not the rejection signal)" \
+  "false" "$(printf '%s' "$LINE42A" | jq -r '.stop_hook_active')"
+assert_eq "case42a result_block_present still true (a malformed fence is still a fence)" \
+  "true" "$(printf '%s' "$LINE42A" | jq -r '.result_block_present')"
+
+# 42b: VALID fixture, real validator, stop_hook_active:true (the accepted RETRY).
+REPO42B="$(init_repo "feature/case42b")"
+P42B="$PAYLOAD_DIR/p42b.json"
+jq -n --arg lam "$LAM_VALID" '{session_id:"sid-case42b", agent_id:"a42b", agent_type:"loomwright:worker",
+        stop_hook_active:true, last_assistant_message:($lam | gsub("\\\\n"; "\n"))}' > "$P42B"
+OUT42B="$(run_emitter "$REPO42B" "$P42B")"
+assert_eq "case42b exit 0" "0" "$(get_rc "$OUT42B")"
+LINE42B="$(tail -1 "$REPO42B/.supervisor/logs/sid-case42b.jsonl" 2>/dev/null)"
+assert_eq "case42b VALID block -> rejected:false (the accepted retry is the terminal row)" \
+  "false" "$(printf '%s' "$LINE42B" | jq -r '.rejected')"
+assert_eq "case42b stop_hook_active:true copied verbatim" "true" "$(printf '%s' "$LINE42B" | jq -r '.stop_hook_active')"
+
+# 42c: stop_hook_active ABSENT -> key omitted; NON-BOOLEAN -> key omitted (payload
+# only, never coerced).
+REPO42C="$(init_repo "feature/case42c")"
+P42C1="$PAYLOAD_DIR/p42c1.json"; P42C2="$PAYLOAD_DIR/p42c2.json"
+jq -n --arg lam "$LAM_VALID" '{session_id:"sid-case42c", agent_id:"a42c1", agent_type:"loomwright:worker",
+        last_assistant_message:($lam | gsub("\\\\n"; "\n"))}' > "$P42C1"
+jq -n --arg lam "$LAM_VALID" '{session_id:"sid-case42c", agent_id:"a42c2", agent_type:"loomwright:worker",
+        stop_hook_active:"yes", last_assistant_message:($lam | gsub("\\\\n"; "\n"))}' > "$P42C2"
+run_emitter "$REPO42C" "$P42C1" >/dev/null
+OUT42C="$(run_emitter "$REPO42C" "$P42C2")"
+assert_eq "case42c exit 0" "0" "$(get_rc "$OUT42C")"
+assert_eq "case42c stop_hook_active ABSENT from payload -> key OMITTED" "false" \
+  "$(sed -n 1p "$REPO42C/.supervisor/logs/sid-case42c.jsonl" | jq -r 'has("stop_hook_active")')"
+assert_eq "case42c stop_hook_active non-boolean in payload -> key OMITTED (never coerced)" "false" \
+  "$(sed -n 2p "$REPO42C/.supervisor/logs/sid-case42c.jsonl" | jq -r 'has("stop_hook_active")')"
+
+# 42d/42e/42f/42g share one rename dance on the REAL validator (same discipline as
+# 41d: registered in CLEANUP_RENAMES first so an interrupt still restores it).
+VAL_BAK="$PAYLOAD_DIR/validate-worker-result.py.bak"
+VAL_HIDDEN="$VALIDATOR.hidden-for-test"
+if [ -f "$VALIDATOR" ]; then
+  cp "$VALIDATOR" "$VAL_BAK"
+  mv "$VALIDATOR" "$VAL_HIDDEN"
+  CLEANUP_RENAMES+=("$VAL_HIDDEN|$VALIDATOR|$VAL_BAK")
+
+  # 42d: validator ABSENT -> rejected key OMITTED (a missing sibling cannot have
+  # blocked anything; the reader derives unknown, consumers treat it as terminal
+  # exactly like a pre-v15.83.0 row), still exit 0, row still written.
+  REPO42D="$(init_repo "feature/case42d")"
+  P42D="$PAYLOAD_DIR/p42d.json"
+  jq -n --arg lam "$LAM_MALFORMED" '{session_id:"sid-case42d", agent_id:"a42d", agent_type:"loomwright:worker",
+          last_assistant_message:($lam | gsub("\\\\n"; "\n"))}' > "$P42D"
+  OUT42D="$(run_emitter "$REPO42D" "$P42D")"
+  assert_eq "case42d exit 0 with the validator missing" "0" "$(get_rc "$OUT42D")"
+  LINE42D="$(tail -1 "$REPO42D/.supervisor/logs/sid-case42d.jsonl" 2>/dev/null)"
+  assert_eq "case42d row still written (event)" "subtask_complete" "$(printf '%s' "$LINE42D" | jq -r '.event')"
+  assert_eq "case42d rejected key OMITTED when the validator is absent (never a guessed boolean)" "false" \
+    "$(printf '%s' "$LINE42D" | jq -r 'has("rejected")')"
+
+  # 42e MUTATION CONTROL: a STUB validator that ALWAYS prints the block decision
+  # must make the VALID fixture read rejected:true — proving the value comes from
+  # the validator's stdout and not from the emitter's own reading of the block.
+  printf '%s\n' '#!/usr/bin/env python3' 'import sys; sys.stdin.read()' \
+    'print("{\"decision\": \"block\", \"reason\": \"stub: always block\"}")' > "$VALIDATOR"
+  REPO42E="$(init_repo "feature/case42e")"
+  OUT42E="$(run_emitter "$REPO42E" "$P42B")"
+  assert_eq "case42e(mutation) exit 0" "0" "$(get_rc "$OUT42E")"
+  LINE42E="$(tail -1 "$REPO42E/.supervisor/logs/sid-case42b.jsonl" 2>/dev/null)"
+  assert_eq "case42e(mutation) stub validator printing decision:block flips the VALID fixture to rejected:true — the field is derived from the validator's stdout" \
+    "true" "$(printf '%s' "$LINE42E" | jq -r '.rejected')"
+
+  # 42f: a stub printing the LEGACY prompt-hook response shape ({"ok": false}) is
+  # NOT a block decision — the runtime never blocked on it, so the stop IS terminal
+  # and rejected must be false (the two-dialect rule, docs/HOOKS.md).
+  printf '%s\n' '#!/usr/bin/env python3' 'import sys; sys.stdin.read()' \
+    'print("{\"ok\": false, \"reason\": \"stub: legacy shape\"}")' > "$VALIDATOR"
+  REPO42F="$(init_repo "feature/case42f")"
+  OUT42F="$(run_emitter "$REPO42F" "$P42A")"
+  assert_eq "case42f exit 0" "0" "$(get_rc "$OUT42F")"
+  LINE42F="$(tail -1 "$REPO42F/.supervisor/logs/sid-case42a.jsonl" 2>/dev/null)"
+  assert_eq "case42f legacy {\"ok\": false} is not a block decision -> rejected:false (that shape never blocked the runtime)" \
+    "false" "$(printf '%s' "$LINE42F" | jq -r '.rejected')"
+
+  # 42g: a stub printing NOT-JSON -> rejected key OMITTED (unparseable is not a
+  # verdict), exit 0, row still written.
+  printf '%s\n' '#!/usr/bin/env python3' 'import sys; sys.stdin.read()' 'print("not json at all")' > "$VALIDATOR"
+  REPO42G="$(init_repo "feature/case42g")"
+  OUT42G="$(run_emitter "$REPO42G" "$P42A")"
+  assert_eq "case42g exit 0" "0" "$(get_rc "$OUT42G")"
+  LINE42G="$(tail -1 "$REPO42G/.supervisor/logs/sid-case42a.jsonl" 2>/dev/null)"
+  assert_eq "case42g row still written" "subtask_complete" "$(printf '%s' "$LINE42G" | jq -r '.event')"
+  assert_eq "case42g unparseable validator stdout -> rejected key OMITTED" "false" \
+    "$(printf '%s' "$LINE42G" | jq -r 'has("rejected")')"
+
+  rm -f "$VALIDATOR"
+  mv "$VAL_HIDDEN" "$VALIDATOR"
+  assert_eq "case42 real validator restored byte-identical" "" "$(cmp "$VALIDATOR" "$VAL_BAK" 2>&1 || echo DIFFERS)"
+else
+  no "case42d-g validate-worker-result.py not found at expected path — cannot exercise the validator seam"
+fi
+
+# 42h: hooks.json wires the validator and this emitter on the SAME matcher — the
+# premise of re-running the validator here. If either moves, the re-derived
+# decision no longer mirrors what the runtime saw.
+HOOKS_JSON="$SCRIPT_DIR/../hooks/hooks.json"
+SAME_MATCHER="$(jq -r '.hooks.SubagentStop[] | select(.matcher == "loomwright:worker") | [.hooks[].command] | join("\n")' "$HOOKS_JSON" 2>/dev/null)"
+case "$SAME_MATCHER" in
+  *validate-worker-result.py*emit-progress-event.sh*) ok "case42h hooks.json runs validate-worker-result.py and emit-progress-event.sh on the same loomwright:worker SubagentStop matcher" ;;
+  *) no "case42h hooks.json no longer wires validate-worker-result.py + emit-progress-event.sh together on loomwright:worker — the re-derived decision would not mirror the runtime's" ;;
+esac
 
 echo "== real repo .supervisor/logs untouched =="
 assert_eq "real logs snapshot unchanged" "$REAL_BEFORE" "$(snapshot_real)"
