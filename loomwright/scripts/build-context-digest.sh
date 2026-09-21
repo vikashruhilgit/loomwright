@@ -213,7 +213,7 @@ fi
 # The fix is a WHOLE-FILE parity pre-pass, deliberately NOT a per-line heuristic. The obvious
 # heuristic — "an ATX heading at column 0 proves the fence was never closed" — was tried and
 # REGRESSED the primary case: real briefs carry `# Subtask 1 — ...` at column 0 INSIDE the
-# contract YAML fence (measured in 2026-06-17-review-pr-until-mergeable.md:74), which is exactly
+# contract YAML fence (measured in 2026-06-17-review-pr-until-mergeable.md:74 [pins: `# Subtask 1 — review-heal loop`]), which is exactly
 # the line fence-awareness exists to protect, and treating it as a heading truncated the whole
 # Cross-lane contracts section. Counting instead lets us neutralize ONLY the final unmatched
 # opener, leaving every well-formed brief byte-identical.

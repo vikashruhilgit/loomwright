@@ -1069,9 +1069,9 @@ else
     d="$(mkgate)"
     mem "$d" apply >/dev/null 2>&1
     assert_committable "$d" "$P_LEDGER" "(l2) precondition: the ledger is committable while clean"
-    printf '{"schema_version": 1, "ts": "2026-08-04T14:06:03Z", "repo": "otherco/othersvc", "number": 124}\n' >> "$d/$P_LEDGER"
-    n_grep="$(grep -cF '"repo":"otherco/othersvc"' "$d/$P_LEDGER" 2>/dev/null || true)"; [ -n "$n_grep" ] || n_grep=0
-    n_jq="$(jq -s 'map(select(.repo == "otherco/othersvc")) | length' "$d/$P_LEDGER" 2>/dev/null)"
+    printf '{"schema_version": 1, "ts": "2026-08-04T14:06:03Z", "repo": "otherhub/otherrepo", "number": 124}\n' >> "$d/$P_LEDGER"
+    n_grep="$(grep -cF '"repo":"otherhub/otherrepo"' "$d/$P_LEDGER" 2>/dev/null || true)"; [ -n "$n_grep" ] || n_grep=0
+    n_jq="$(jq -s 'map(select(.repo == "otherhub/otherrepo")) | length' "$d/$P_LEDGER" 2>/dev/null)"
     if [ "${n_grep:-0}" -eq 0 ] && [ "$n_jq" = "1" ]; then
       ok "(l2) THE EVASION IS REAL: a compact-form grep sees 0 spaced-form foreign records where jq sees 1 — this is why every ledger assertion here is jq"
     else
@@ -1081,10 +1081,10 @@ else
     [ "$rc" -eq 0 ] && ok "(l2) apply STILL EXITS 0 on the refusal path (fail-closed in the WRITE dimension, never in the exit status)" || no "(l2) apply exited $rc on the refusal path — the FAIL-SAFE CONTRACT is broken"
     assert_ignored     "$d" "$P_LEDGER" "(l2) the gate REFUSED: the ledger is IGNORED again, so the spaced-form foreign record cannot be published"
     assert_committable "$d" "$P_MEM"    "(l2) the two memory stores stay APPLIED while only the ledger is withheld"
-    hasF 'otherco/othersvc' "$out" && ok "(l2) the refusal NAMES the offending slug" || no "(l2) the refusal does not name the offending slug"
+    hasF 'otherhub/otherrepo' "$out" && ok "(l2) the refusal NAMES the offending slug" || no "(l2) the refusal does not name the offending slug"
     # ...and removing the record makes the gate PASS again — red↔green both proven, so the gate keys
     # on the record and not on some incidental property of the fixture.
-    jq -c 'select(.repo != "otherco/othersvc")' "$d/$P_LEDGER" > "$d/ledger.clean" 2>/dev/null && mv "$d/ledger.clean" "$d/$P_LEDGER"
+    jq -c 'select(.repo != "otherhub/otherrepo")' "$d/$P_LEDGER" > "$d/ledger.clean" 2>/dev/null && mv "$d/ledger.clean" "$d/$P_LEDGER"
     out2="$(mem "$d" apply 2>&1)"
     assert_committable "$d" "$P_LEDGER" "(l2) removing the foreign record makes the gate PASS again and re-emits the negation"
     has '^Memory readiness: configured' "$out2" && ok "(l2) the verdict returns to 'configured' once the ledger is clean" || no "(l2) the verdict did not return to 'configured'"
@@ -1205,13 +1205,13 @@ if [ -z "$JQ" ]; then
   ok "(m) jq unavailable — the gated-verdict group is skipped (pass)"
 else
   Mg="$(mkgate)"
-  printf '{"repo":"otherco/othersvc","number":7}\n' >> "$Mg/$P_LEDGER"
+  printf '{"repo":"otherhub/otherrepo","number":7}\n' >> "$Mg/$P_LEDGER"
   out_m="$(mem "$Mg" apply 2>&1)"; rc_m=$?
   [ "$rc_m" -eq 0 ] && ok "(m) apply exits 0 on the gated path" || no "(m) apply exited $rc_m on the gated path"
   has '^Memory readiness: gated' "$out_m" && ok "(m) the verdict is the THIRD class 'gated'" || no "(m) the verdict is not 'gated' (got: $(grep '^Memory readiness:' <<< "$out_m" | head -n1))"
   has '^Memory readiness: not configured' "$out_m" && no "(m) a CORRECT refusal reported as 'not configured' — the destructive mis-classification this class exists to prevent" || ok "(m) the refusal is NOT reported as 'not configured'"
   hasi 'comment out the rule named above' "$out_m" && no "(m) THE DESTRUCTIVE UNDER-INCLUSION COPY was printed for a gated repo — it points at this module's own '.supervisor/*' line" || ok "(m) the misleading under-inclusion copy is NOT printed on the gated path"
-  hasF 'otherco/othersvc' "$out_m" && ok "(m) the gated warning NAMES the offending slug" || no "(m) the gated warning names no slug"
+  hasF 'otherhub/otherrepo' "$out_m" && ok "(m) the gated warning NAMES the offending slug" || no "(m) the gated warning names no slug"
   hasF 'filter-ledger' "$out_m" && ok "(m) the gated warning gives the filter-ledger remedy" || no "(m) the gated warning omits the filter-ledger remedy"
   hasF 'repo_allowlist' "$out_m" && ok "(m) the gated warning also offers the extend-the-allowlist remedy" || no "(m) the gated warning omits the allowlist remedy"
   hasi 'does NOT un-track' "$out_m" && ok "(m) the gated warning states the honest limit: withholding does NOT un-track an already-committed ledger" || no "(m) the gated warning omits the already-committed honest limit"
@@ -1517,10 +1517,10 @@ LEDGER
   g="$(mkgate)"
   mem "$g" apply >/dev/null 2>&1
   assert_committable "$g" "$P_LEDGER" "(p/neg) precondition: the fixture's ledger is committable while clean, so the withholding below is a real state change"
-  printf '{"schema_version": 1, "repo": "otherco/othersvc", "number": 124}\n' >> "$g/$P_LEDGER"
+  printf '{"schema_version": 1, "repo": "otherhub/otherrepo", "number": 124}\n' >> "$g/$P_LEDGER"
   out_g="$(mem "$g" apply 2>&1)"
   assert_ignored "$g" "$P_LEDGER" "(p/neg) with a FOREIGN record present, apply still WITHHOLDS the ledger negation — the publication gate is intact"
-  hasF 'otherco/othersvc' "$out_g" && ok "(p/neg) the withholding NAMES the offending slug" || no "(p/neg) the refusal does not name the offending slug"
+  hasF 'otherhub/otherrepo' "$out_g" && ok "(p/neg) the withholding NAMES the offending slug" || no "(p/neg) the refusal does not name the offending slug"
   assert_committable "$g" "$P_MEM" "(p/neg) and only the ledger is withheld — the memory stores stay applied"
 }
 one_allowlist_two_consumers
@@ -1531,13 +1531,62 @@ if [ "$CFG_LIVE_EXISTED" -eq 1 ]; then
 else
   [ ! -f "$CFG_LIVE" ] && ok "(p) R0: the plugin repo had no .supervisor/config.json before the group and still has none" || no "(p) R0 VIOLATED: the suite CREATED a live .supervisor/config.json"
 fi
-if [ -f "$CFG_LIVE" ] && grep -qE 'otherco|fixture-org' "$CFG_LIVE" 2>/dev/null; then
+if [ -f "$CFG_LIVE" ] && grep -qE 'otherhub|fixture-org' "$CFG_LIVE" 2>/dev/null; then
   no "(p) R0 VIOLATED: a FOREIGN fixture slug reached the live allowlist — apply would now publish another repo's churn analysis"
 else
-  ok "(p) R0: no foreign fixture slug (otherco / fixture-org) is present in the live allowlist"
+  ok "(p) R0: no foreign fixture slug (otherhub / fixture-org) is present in the live allowlist"
 fi
 
 # ============================================================================
+echo "== (t) the judgement TRAIL (v15.84.0): requirements + jobs/done|failed + automate/*.md are committable; in-flight, sidecars and nested .supervisor/ stay ignored =="
+# WHY: 2026-09-21 — 144 requirement files, 116 done briefs and every /automate run file existed on
+# exactly one laptop, while the repo's stated thesis is a Twin that ACCUMULATES judgement. The
+# block gains the trail; this group pins each path both ways and proves the `!` lines are dead
+# without the `.supervisor/*` line above them (the same silent-failure class as group (a)).
+P_REQ=".supervisor/requirements/queue/01-item.md"
+P_REQ_NESTED=".supervisor/requirements/queue/.supervisor/logs/telemetry.log"
+P_DONE=".supervisor/jobs/done/2026-01-01-brief.md"
+P_FAILED=".supervisor/jobs/failed/2026-01-01-brief.md"
+P_INPROG=".supervisor/jobs/in-progress/2026-01-01-brief.md"
+P_PENDING=".supervisor/jobs/pending/2026-01-01-brief.md"
+P_RUN=".supervisor/automate/automate-2026-01-01-000000.md"
+P_RUN_SIDECAR=".supervisor/automate/automate-2026-01-01-000000.config-backup.json"
+Tt="$(newgit https://github.com/acme/widget.git)"
+seed_stores "$Tt"
+printf '.supervisor/\n' > "$Tt/.gitignore"
+out_t="$(mem "$Tt" apply 2>&1)"; rc_t=$?
+[ "$rc_t" -eq 0 ] && ok "(t) apply exits 0" || no "(t) apply non-zero ($rc_t): $out_t"
+# INTENDED — one assertion per path.
+assert_committable "$Tt" "$P_REQ"    "(t) after apply $P_REQ is committable"
+assert_committable "$Tt" ".supervisor/requirements/queue/operator-run/08-item.md" "(t) a requirement in a nested subfolder is committable (directory re-include is recursive)"
+assert_committable "$Tt" "$P_DONE"   "(t) after apply $P_DONE is committable"
+assert_committable "$Tt" "$P_FAILED" "(t) after apply $P_FAILED is committable"
+assert_committable "$Tt" "$P_RUN"    "(t) after apply $P_RUN is committable"
+# UNINTENDED — one assertion per path, never a bulk claim.
+assert_ignored "$Tt" "$P_INPROG"      "(t) $P_INPROG stays ignored (in-flight state)"
+assert_ignored "$Tt" "$P_PENDING"     "(t) $P_PENDING stays ignored (in-flight state)"
+assert_ignored "$Tt" "$P_RUN_SIDECAR" "(t) $P_RUN_SIDECAR stays ignored (transient sidecar)"
+assert_ignored "$Tt" "$P_REQ_NESTED"  "(t) $P_REQ_NESTED stays ignored (hook junk nested in a requirements folder)"
+assert_ignored "$Tt" ".supervisor/state.md" "(t) .supervisor/state.md stays ignored (live run state)"
+assert_ignored "$Tt" "$P_LOGS"        "(t) $P_LOGS stays ignored"
+# The probes in the script itself must agree with these assertions, or `check` would report a
+# configured repo as partial/not-configured.
+chk_t="$(mem "$Tt" check 2>/dev/null)"
+has '^Memory readiness: configured' "$chk_t" && ok "(t) check verdict = configured with the trail lines in place" || no "(t) check verdict after trail apply: $(grep '^Memory readiness' <<< "$chk_t")"
+# Negative control 1: the `!` lines are DEAD without `.supervisor/*` above them.
+Tn="$(newgit)"; seed_stores "$Tn"
+printf '.supervisor/\n!.supervisor/requirements/\n!.supervisor/jobs/\n.supervisor/jobs/*\n!.supervisor/jobs/done/\n' > "$Tn/.gitignore"
+assert_ignored "$Tn" "$P_REQ"  "(t-neg1) bare '.supervisor/' + '!.supervisor/requirements/' STILL ignores $P_REQ — the negation is dead, as the block comment claims"
+assert_ignored "$Tn" "$P_DONE" "(t-neg1) same for $P_DONE"
+# Negative control 2 (mutant): drop the nested-.supervisor exclude from the block ⇒ the junk
+# becomes committable — proving (t)'s nested assertion holds the line, not the seed layout.
+Tm="$(mkfix)"; sed '/^\.supervisor\/requirements\/\*\*\/\.supervisor\/$/d' "$MEM" > "$Tm/setup-memory.sh"
+if cmp -s "$MEM" "$Tm/setup-memory.sh"; then no "(t-mut) mutant sed changed nothing"; else
+  Tx="$(newgit https://github.com/acme/widget.git)"; seed_stores "$Tx"; printf '.supervisor/\n' > "$Tx/.gitignore"
+  bash "$Tm/setup-memory.sh" --root "$Tx" apply >/dev/null 2>&1
+  if ignored "$Tx" "$P_REQ_NESTED"; then no "(t-mut) mutant without the nested exclude still ignores $P_REQ_NESTED — the assertion is vacuous"; else ok "(t-mut) without the nested exclude line the hook junk WOULD be committed — the line is load-bearing"; fi
+fi
+
 echo "== (k) the suite never touched the plugin repo's own .gitignore =="
 PLUGIN_GI_SUM_AFTER="$(sum "$PLUGIN_GI")"
 [ "$PLUGIN_GI_SUM_BEFORE" = "$PLUGIN_GI_SUM_AFTER" ] && ok "(k) $PLUGIN_GI is byte-identical before and after the whole suite" || no "(k) THE SUITE MUTATED THE PLUGIN REPO'S OWN .gitignore"
