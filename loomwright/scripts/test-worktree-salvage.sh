@@ -150,8 +150,8 @@ first_salvage_dir() {
 # fresh_git_repo [--clean-stub|--logs-killing-stub] — sets FX_REPO, FX_BIN,
 # FX_HEAD_SHA, FX_CLAUDE_LOG, FX_EXP_HEAD (content the stub writes into head.txt),
 # FX_EXP_NOTE (notes/new.md). --logs-killing-stub = the dirtying stub that ALSO
-# deletes <repo>/.supervisor/logs (RUN_LOG's directory) before exiting, so the
-# wrapper's trap fires with an unwritable $_log (AC-7c).
+# renames <repo>/.supervisor/logs away (RUN_LOG's directory) before exiting, so
+# the wrapper's trap fires with an unwritable $_log (AC-7c).
 fresh_git_repo() {
   local clean_stub=0 kill_logs=0
   [ "${1:-}" = "--clean-stub" ] && clean_stub=1
@@ -196,14 +196,23 @@ CLEOF
   elif [ "$kill_logs" -eq 1 ]; then
     # The DIRTYING stub that then removes RUN_LOG's directory: models a runner (or
     # a concurrent cleanup) that deleted .supervisor/logs/ before the trap runs.
-    # The stub's own stdout is already an open fd on the log file, so its rm is
-    # not self-harm — only the trap's LATER `>>"$_log"` can fail.
+    # Close our stdout/stderr (the wrapper redirected them onto the drain log) and
+    # RENAME logs/ away rather than `rm -rf`. `rm -rf` of a directory that still
+    # contains the wrapper's open drain-log fd is EBUSY on some CI filesystems,
+    # which left .supervisor/logs in place and made AC-7c's "directory absent"
+    # check flake (PRs #235 and #240, same salvage code that is green on other
+    # runs). `mv` makes the path gone while the open fd follows the inode; the
+    # trap's capture-then-append still salvages, and a later `>>"$_log"` against
+    # the old path fails — the class under test. Fall back to `rm -rf` if `mv`
+    # cannot (dest exists).
     cat > "$FX_BIN/stub-claude" <<CLEOF
 #!/usr/bin/env bash
 printf 'cwd=%s args=%s\n' "\$(pwd)" "\$*" >> "$FX_CLAUDE_LOG"
 cp "$FX_EXP_HEAD" head.txt
 mkdir -p notes && cp "$FX_EXP_NOTE" notes/new.md
-rm -rf "$FX_REPO/.supervisor/logs"
+exec >/dev/null 2>&1
+mv "$FX_REPO/.supervisor/logs" "$FX_REPO/.supervisor/logs.gone" 2>/dev/null \
+  || rm -rf "$FX_REPO/.supervisor/logs"
 exit 0
 CLEOF
   else
@@ -336,20 +345,22 @@ check_ac7b() {  # <dispatcher> — pre-add cleanup site with a pre-existing DIRT
 
 check_ac7c() {  # <dispatcher> — trap path with RUN_LOG's directory DELETED before the trap
   local disp="$1" wt dir h
+  AC7C_FAIL=""
   fresh_git_repo --logs-killing-stub
   run_real "$disp" "$FX_REPO" "$PR"
   wt="$(expected_wt_path "$FX_REPO")"
   h="$(pr_hash)"
-  wait_for_no_worktree "$FX_REPO" "$wt" || return 1
-  [ "$RUN_RC" -eq 0 ] || return 1
-  [ -f "$FX_REPO/.supervisor/review-dispatch/$h" ] || return 1
-  [ ! -d "$FX_REPO/.supervisor/review-dispatch/$h.lock" ] || return 1
-  grep -qF "cwd=$wt" "$FX_CLAUDE_LOG" 2>/dev/null || return 1
+  if ! wait_for_no_worktree "$FX_REPO" "$wt"; then AC7C_FAIL="wait_wt"; return 1; fi
+  if [ "$RUN_RC" -ne 0 ]; then AC7C_FAIL="run_rc=$RUN_RC"; return 1; fi
+  if [ ! -f "$FX_REPO/.supervisor/review-dispatch/$h" ]; then AC7C_FAIL="no_marker"; return 1; fi
+  if [ -d "$FX_REPO/.supervisor/review-dispatch/$h.lock" ]; then AC7C_FAIL="lock_present"; return 1; fi
+  if ! grep -qF "cwd=$wt" "$FX_CLAUDE_LOG" 2>/dev/null; then AC7C_FAIL="stub_not_run"; return 1; fi
   # The stub really removed the log dir (else the arm is not exercising the class).
-  [ ! -e "$FX_REPO/.supervisor/logs" ] || return 1
-  dir="$(salvage_dir_with_reason "$FX_REPO" "review-drain teardown")" || return 1
-  [ -f "$dir/modified/head.txt" ] && cmp -s "$dir/modified/head.txt" "$FX_EXP_HEAD" \
-    && [ -f "$dir/untracked/notes/new.md" ] && cmp -s "$dir/untracked/notes/new.md" "$FX_EXP_NOTE"
+  if [ -e "$FX_REPO/.supervisor/logs" ]; then AC7C_FAIL="logs_present"; return 1; fi
+  dir="$(salvage_dir_with_reason "$FX_REPO" "review-drain teardown")" || { AC7C_FAIL="no_salvage"; return 1; }
+  if [ ! -f "$dir/modified/head.txt" ] || ! cmp -s "$dir/modified/head.txt" "$FX_EXP_HEAD"; then AC7C_FAIL="head_mismatch"; return 1; fi
+  if [ ! -f "$dir/untracked/notes/new.md" ] || ! cmp -s "$dir/untracked/notes/new.md" "$FX_EXP_NOTE"; then AC7C_FAIL="note_mismatch"; return 1; fi
+  return 0
 }
 
 check_ac12() {  # <script> — untracked nested repository copied verbatim, .git included
@@ -563,7 +574,7 @@ else no "AC-7b: pre-add cleanup salvage missing or dispatch did not complete (re
 
 echo "== AC-7c. trap path with RUN_LOG's directory DELETED: salvage still runs (capture-then-append), sibling + lock gone, marker present =="
 if check_ac7c "$DISPATCH"; then ok "AC-7c: .supervisor/logs gone at trap time — salvage dir still holds both files; worktree removed, lock gone, marker present"
-else no "AC-7c: salvage skipped or teardown incomplete with RUN_LOG's directory absent (repo=$FX_REPO)"; fi
+else no "AC-7c: salvage skipped or teardown incomplete with RUN_LOG's directory absent (repo=$FX_REPO reason=${AC7C_FAIL:-unknown})"; fi
 # Mutation control for AC-7c: re-apply the pre-fix `… >>"$_log" 2>&1 || true` form
 # (a failed redirect makes bash SKIP the simple command) in a scratch copy and
 # assert the arm goes RED — otherwise the arm is not discriminating on the class.
