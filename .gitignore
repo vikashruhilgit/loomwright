@@ -57,6 +57,10 @@ temp/
 # is loomwright/scripts/test-no-junk-tracked-files.sh, this is the belt-and-braces backstop.
 /--run-id
 /--*
+
+# impeccable design-detector: share the reviewable config, never the cache or per-dev overrides
+.impeccable/hook.cache.json
+.impeccable/config.local.json
 # >>> loomwright /setup memory BEGIN — committable Twin stores (managed block) >>>
 # Negate CONTENTS, not the directory. Git cannot re-include a file whose parent directory is
 # excluded, so the naive form
@@ -66,10 +70,14 @@ temp/
 # and leaves the directory itself traversable, so the `!` lines can re-include.
 #
 # Committed on purpose: the Twin's accumulated judgment (agent memory + distilled lessons),
-# including their dot-prefixed provenance sidecars, and — when the repo-allowlist gate passes — the
-# findings ledger `.supervisor/postmortem/results.jsonl`. Everything else under these three
-# directories stays ignored: worktree checkouts, machine-local settings, session logs, job briefs,
-# automate run-files, and every other file under `.supervisor/postmortem/`.
+# including their dot-prefixed provenance sidecars; the judgement TRAIL — what was asked
+# (`.supervisor/requirements/`), what shipped or did not (`.supervisor/jobs/done/`, `jobs/failed/`)
+# and how each automation run went (`.supervisor/automate/*.md`); and — when the repo-allowlist
+# gate passes — the findings ledger `.supervisor/postmortem/results.jsonl`. Everything else under
+# these directories stays ignored: worktree checkouts, machine-local settings, session logs,
+# in-flight briefs (`jobs/pending/`, `jobs/in-progress/`), automate sidecars (`*.config-backup.json`),
+# the `.supervisor/` trees hook emitters leave INSIDE a requirements folder when a command ran with
+# its cwd there, and every other file under `.supervisor/postmortem/`.
 #
 # Managed by `/setup memory`. Edit via that command (`/setup memory remove` reverts it);
 # hand-edits inside these sentinels are overwritten on the next apply.
@@ -77,6 +85,18 @@ temp/
 !.claude/agent-memory/
 .supervisor/*
 !.supervisor/memory/
+# The judgement trail. Same re-include-the-directory / re-exclude-its-contents / re-include-the-
+# wanted-children shape as the ledger below; each `!<dir>/` line is dead without the `.supervisor/*`
+# line above it, and pinned as such in test-setup-memory.sh group (t).
+!.supervisor/requirements/
+.supervisor/requirements/**/.supervisor/
+!.supervisor/jobs/
+.supervisor/jobs/*
+!.supervisor/jobs/done/
+!.supervisor/jobs/failed/
+!.supervisor/automate/
+.supervisor/automate/*
+!.supervisor/automate/*.md
 # The findings ledger, un-ignored only because every record's `.repo` is inside this repo's
 # allowlist (`setup-memory.sh allowlist`). THREE lines, in THIS ORDER, and AFTER `.supervisor/*`:
 # the first re-includes the DIRECTORY so git will descend into it, the second re-excludes its
@@ -88,7 +108,3 @@ temp/
 .supervisor/postmortem/*
 !.supervisor/postmortem/results.jsonl
 # <<< loomwright /setup memory END <<<
-
-# impeccable design-detector: share the reviewable config, never the cache or per-dev overrides
-.impeccable/hook.cache.json
-.impeccable/config.local.json

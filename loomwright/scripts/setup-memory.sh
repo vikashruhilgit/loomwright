@@ -182,7 +182,11 @@ CFG="$repo/.supervisor/config.json"
 INTENDED_PATHS='.claude/agent-memory/loomwright:supervisor/MEMORY.md
 .claude/agent-memory/loomwright:supervisor/.provenance.jsonl
 .supervisor/memory/LESSONS.md
-.supervisor/memory/.lessons-provenance.jsonl'
+.supervisor/memory/.lessons-provenance.jsonl
+.supervisor/requirements/queue/01-item.md
+.supervisor/jobs/done/2026-01-01-brief.md
+.supervisor/jobs/failed/2026-01-01-brief.md
+.supervisor/automate/automate-2026-01-01-000000.md'
 
 # The THIRD store, held separately from INTENDED_PATHS on purpose: its membership in the probed
 # intended set is CONDITIONAL on the ledger gate passing. Folding it into INTENDED_PATHS would make
@@ -192,10 +196,16 @@ INTENDED_PATHS='.claude/agent-memory/loomwright:supervisor/MEMORY.md
 # `gated` verdict class in render_report() / warn_if_not_configured().
 LEDGER_INTENDED_PATH='.supervisor/postmortem/results.jsonl'
 
-# UNINTENDED: must stay ignored (worktree checkouts, machine-local settings, session logs).
+# UNINTENDED: must stay ignored (worktree checkouts, machine-local settings, session logs,
+# in-flight briefs, automate sidecars, and the nested `.supervisor/` a hook leaves inside a
+# requirements folder — the trail re-includes are siblings of every one of these).
 UNINTENDED_PATHS='.claude/worktrees/busy-darwin/README.md
 .claude/settings.local.json
-.supervisor/logs/session.jsonl'
+.supervisor/logs/session.jsonl
+.supervisor/jobs/in-progress/2026-01-01-brief.md
+.supervisor/jobs/pending/2026-01-01-brief.md
+.supervisor/automate/automate-2026-01-01-000000.config-backup.json
+.supervisor/requirements/queue/.supervisor/logs/telemetry.log'
 
 # ---- primitive probes (REAL commands only — never assert an unprobed state) --
 
@@ -416,10 +426,14 @@ managed_block() {
 # and leaves the directory itself traversable, so the `!` lines can re-include.
 #
 # Committed on purpose: the Twin's accumulated judgment (agent memory + distilled lessons),
-# including their dot-prefixed provenance sidecars, and — when the repo-allowlist gate passes — the
-# findings ledger `.supervisor/postmortem/results.jsonl`. Everything else under these three
-# directories stays ignored: worktree checkouts, machine-local settings, session logs, job briefs,
-# automate run-files, and every other file under `.supervisor/postmortem/`.
+# including their dot-prefixed provenance sidecars; the judgement TRAIL — what was asked
+# (`.supervisor/requirements/`), what shipped or did not (`.supervisor/jobs/done/`, `jobs/failed/`)
+# and how each automation run went (`.supervisor/automate/*.md`); and — when the repo-allowlist
+# gate passes — the findings ledger `.supervisor/postmortem/results.jsonl`. Everything else under
+# these directories stays ignored: worktree checkouts, machine-local settings, session logs,
+# in-flight briefs (`jobs/pending/`, `jobs/in-progress/`), automate sidecars (`*.config-backup.json`),
+# the `.supervisor/` trees hook emitters leave INSIDE a requirements folder when a command ran with
+# its cwd there, and every other file under `.supervisor/postmortem/`.
 #
 # Managed by `/setup memory`. Edit via that command (`/setup memory remove` reverts it);
 # hand-edits inside these sentinels are overwritten on the next apply.
@@ -427,6 +441,18 @@ managed_block() {
 !.claude/agent-memory/
 .supervisor/*
 !.supervisor/memory/
+# The judgement trail. Same re-include-the-directory / re-exclude-its-contents / re-include-the-
+# wanted-children shape as the ledger below; each `!<dir>/` line is dead without the `.supervisor/*`
+# line above it, and pinned as such in test-setup-memory.sh group (t).
+!.supervisor/requirements/
+.supervisor/requirements/**/.supervisor/
+!.supervisor/jobs/
+.supervisor/jobs/*
+!.supervisor/jobs/done/
+!.supervisor/jobs/failed/
+!.supervisor/automate/
+.supervisor/automate/*
+!.supervisor/automate/*.md
 BLOCK
   if ledger_negation_in_block; then
     cat <<'LEDGERBLOCK'
@@ -933,6 +959,11 @@ What becomes VERSION-CONTROLLED if you apply this:
                                  .provenance.jsonl sidecars)
   · .supervisor/memory/**     — distilled LESSONS.md / PROJECT_MEMORY.md + their
                                  .lessons-provenance.jsonl sidecars
+  · .supervisor/requirements/** — the intake: every requirement file a queue was built from
+  · .supervisor/jobs/done/**, .supervisor/jobs/failed/** — every brief that reached a terminal
+                                 state (pending/ and in-progress/ stay ignored: in-flight state)
+  · .supervisor/automate/*.md — one run file per /automate run (queue, per-item outcome,
+                                 park reasons); the *.config-backup.json sidecars stay ignored
   · .supervisor/postmortem/results.jsonl — the findings ledger (PR-churn analysis), and ONLY this
                                  one file; everything else under .supervisor/postmortem/ stays
                                  ignored. GATED: it is un-ignored only while every record's
@@ -959,10 +990,19 @@ Read this before saying yes:
     between. Run `setup-memory.sh filter-ledger --ledger .supervisor/postmortem/results.jsonl`
     before you commit. The gate is not complete coverage, and it does not look at finding TEXT —
     only at each record's `.repo` field.
+  · THE TRAIL IS PROSE, AND PROSE IS NOT GATED. Requirement files and briefs are written by
+    people and agents about THIS repo, but they quote whatever was on screen: another repo's
+    name and PR numbers, a login line from a CLI, an absolute path with your username. The
+    allowlist gate reads the ledger's `.repo` field and nothing else — it does not read a brief.
+    Skim `.supervisor/requirements/` and `.supervisor/jobs/done/` before the first commit of a
+    PUBLIC repo; `grep -rEn "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[a-z]{2,}" .supervisor/requirements
+    .supervisor/jobs` finds the e-mail case.
 What stays IGNORED (unchanged): .claude/worktrees/, .claude/settings.local.json,
-.supervisor/logs/, every file under .supervisor/postmortem/ OTHER than results.jsonl, and
-everything else under .claude/ and .supervisor/ — the third store is that ONE FILE, not a
-directory, so nothing else in .supervisor/postmortem/ is included by it.
+.supervisor/logs/, .supervisor/jobs/pending/ and in-progress/, .supervisor/automate/*.config-backup.json,
+any `.supervisor/` tree nested inside a requirements folder, every file under
+.supervisor/postmortem/ OTHER than results.jsonl, and everything else under .claude/ and
+.supervisor/ — the third store is that ONE FILE, not a directory, so nothing else in
+.supervisor/postmortem/ is included by it.
 DISCLOSURE
 }
 
@@ -1371,7 +1411,7 @@ do_apply() {
   warn_if_not_configured
   echo
   echo "Next: the stores are only UN-IGNORED — nothing is committed yet. Review with"
-  echo "  git status --short .claude/agent-memory .supervisor/memory $LEDGER_INTENDED_PATH"
+  echo "  git status --short .claude/agent-memory .supervisor/memory .supervisor/requirements .supervisor/jobs .supervisor/automate $LEDGER_INTENDED_PATH"
   echo "and commit deliberately. This helper never runs git add / git rm / git commit."
   exit 0
 }

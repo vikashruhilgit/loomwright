@@ -52,7 +52,7 @@ export CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT"
 OURS="vikashruhilgit/loomwright"
 # A deliberately FOREIGN slug, used only inside this suite's own environment. Never written to any
 # config, never added to the live allowlist.
-FOREIGN="otherco/othersvc"
+FOREIGN="otherhub/otherrepo"
 
 pass=0; fail=0
 ok() { echo "  ok: $1"; pass=$((pass+1)); }
@@ -739,9 +739,9 @@ fi
 
 echo "== 6. cross-repo (ADVISORY): AC3 reports foreign, AC4 stays silent on our own =="
 export LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS"
-advisory "ADVISORY_CROSS_REPO" "AC3: 'OTHERSVC #146' is REPORTED — a repo-shaped token NOT in the allowlist" \
-  "$VE" cross-repo --entry "the same defect was fixed in OTHERSVC #146 last week"
-reason "othersvc" "the cross-repo advisory still names the repository it found"
+advisory "ADVISORY_CROSS_REPO" "AC3: 'OTHERREPO #146' is REPORTED — a repo-shaped token NOT in the allowlist" \
+  "$VE" cross-repo --entry "the same defect was fixed in OTHERREPO #146 last week"
+reason "otherrepo" "the cross-repo advisory still names the repository it found"
 if grep -qF "REFUSE_CROSS_REPO" "$TMP/err.txt" 2>/dev/null; then
   no "the cross-repo advisory still carries a REFUSE_ token — a warning and a refusal must not be greppable as the same thing"
 else
@@ -782,12 +782,12 @@ done
 # A bare `owner/repo` is THE canonical foreign-repo citation, so the four markers below are what
 # stop the false-positive fix from opening a bigger hole than it closed. Each marker gets its own
 # assertion AND its own mutation control in section 11.
-advisory "ADVISORY_CROSS_REPO" "a foreign slug after a cue word ('landed in otherco/othersvc') is still REPORTED" \
+advisory "ADVISORY_CROSS_REPO" "a foreign slug after a cue word ('landed in otherhub/otherrepo') is still REPORTED" \
   "$VE" cross-repo --entry "the same defect landed in $FOREIGN last week"
-advisory "ADVISORY_CROSS_REPO" "marker (2), trailing: 'the otherco/othersvc repo' is REPORTED — the cue can follow the slug" \
+advisory "ADVISORY_CROSS_REPO" "marker (2), trailing: 'the otherhub/otherrepo repo' is REPORTED — the cue can follow the slug" \
   "$VE" cross-repo --entry "the $FOREIGN repo has the same bug"
-advisory "ADVISORY_CROSS_REPO" "marker (3): a KNOWN owner is recognised — 'vikashruhilgit/othersvc' is not in the allowlist and is REPORTED" \
-  "$VE" cross-repo --entry "vikashruhilgit/othersvc has the same bug"
+advisory "ADVISORY_CROSS_REPO" "marker (3): a KNOWN owner is recognised — 'vikashruhilgit/otherrepo' is not in the allowlist and is REPORTED" \
+  "$VE" cross-repo --entry "vikashruhilgit/otherrepo has the same bug"
 # STATED LOST CATCH, narrowing (vi): a hyphenated owner is NO LONGER slug-only structure. Traded for
 # the live entry `ground-truth/conformance`; see the COVERAGE BOUND note in validate-entry.sh. Pinned
 # as an assertion so the loss is visible in the suite rather than inferred from an absent test.
@@ -848,8 +848,8 @@ quiet "the extension guard covers the NAME half of a 'NAME #123' citation too �
 # suffix is past the bound, and a cued slug with no dot at all is unaffected either way.
 advisory "ADVISORY_CROSS_REPO" "extension-guard control: a cued foreign slug with NO extension is still REPORTED" \
   "$VE" cross-repo --entry "the same defect landed in $FOREIGN last week"
-advisory "ADVISORY_CROSS_REPO" "extension-guard control: the bound stops at 5 — a cued 'otherco/othersvc.github' is still REPORTED" \
-  "$VE" cross-repo --entry "the same defect landed in otherco/othersvc.github last week"
+advisory "ADVISORY_CROSS_REPO" "extension-guard control: the bound stops at 5 — a cued 'otherhub/otherrepo.github' is still REPORTED" \
+  "$VE" cross-repo --entry "the same defect landed in otherhub/otherrepo.github last week"
 
 echo "== 6c. IN-REPO DIRECTORY PATHS are not owner/repo slugs =="
 # The second false-positive class, found by review after the marker fix shipped. An extensionless
@@ -916,21 +916,21 @@ quiet "STATED BOUND, other side: the same 'phase2/Notes' still needs a real tree
   "$VE" cross-repo --entry "the phase2/Notes folder holds frozen records" --root "$TMP/phase2root"
 
 echo "== 7. cross-repo blind spot (AC4) — stated, not hidden =="
-quiet "prose naming a repo in an unrecognised shape passes UNDETECTED ('the othersvc repository')" \
-  "$VE" cross-repo --entry "the othersvc repository has the same bug"
-quiet "a plain lowercase 'othersvc #146' is also unrecognised (the deliberate under-recognition)" \
-  "$VE" cross-repo --entry "landed in othersvc #146"
+quiet "prose naming a repo in an unrecognised shape passes UNDETECTED ('the otherrepo repository')" \
+  "$VE" cross-repo --entry "the otherrepo repository has the same bug"
+quiet "a plain lowercase 'otherrepo #146' is also unrecognised (the deliberate under-recognition)" \
+  "$VE" cross-repo --entry "landed in otherrepo #146"
 # THE RESIDUAL BOUND, pinned so it is a stated limitation rather than an unnoticed hole: an
 # all-lowercase `word/word` with no cue beside it, no known owner and no slug structure cannot be
-# told apart FROM THE TEXT ALONE from an English pair — `otherco/othersvc` and `budget/zone` are the same
+# told apart FROM THE TEXT ALONE from an English pair — `otherhub/otherrepo` and `budget/zone` are the same
 # shape. Refusing that shape would refuse six live curated entries, so it is a deliberate miss.
-quiet "RESIDUAL BOUND: a bare all-lowercase 'otherco/othersvc' with no marker passes undetected — the same shape as 'budget/zone'" \
+quiet "RESIDUAL BOUND: a bare all-lowercase 'otherhub/otherrepo' with no marker passes undetected — the same shape as 'budget/zone'" \
   "$VE" cross-repo --entry "$FOREIGN has the same bug"
 quiet "RESIDUAL BOUND control: the English pair it cannot be distinguished from passes for the SAME reason" \
   "$VE" cross-repo --entry "budget/zone has the same bug"
 grep -qF "RESIDUAL BOUND" "$VE" && ok "validate-entry.sh states the residual bound in its header, not just in this test" \
   || no "validate-entry.sh header does not state the residual bound"
-vrc "$VE" cross-repo --entry "the same defect was fixed in OTHERSVC #146"
+vrc "$VE" cross-repo --entry "the same defect was fixed in OTHERREPO #146"
 if grep -qF "invisible to it" "$TMP/err.txt" && grep -qF "not proof" "$TMP/err.txt"; then
   ok "the refusal message states the coverage bound instead of claiming complete coverage"
 else
@@ -1047,7 +1047,7 @@ else
       --entry "the guard landed in LOOMWRIGHT #146"
     r2=$MADV
     LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" mut_run "$TMP/mut-membership.sh" cross-repo \
-      --entry "the same defect was fixed in OTHERSVC #146"
+      --entry "the same defect was fixed in OTHERREPO #146"
     r3=$MADV
     [ "$r1" -eq 1 ] && [ "$r2" -eq 1 ] \
       && ok "AC4b(i): inverting the membership test turns AC4 RED (our OWN slug and short name are both advised as foreign)" \
@@ -1057,13 +1057,13 @@ else
   fi
 fi
 
-# (ii) AC4b: a FIXTURE allowlist that ADDS otherco/othersvc must make AC3's entry PASS — proving the
+# (ii) AC4b: a FIXTURE allowlist that ADDS otherhub/otherrepo must make AC3's entry PASS — proving the
 # check reads the list rather than pattern-matching a hardcoded token. Supplied via the env var in
 # this test's own environment; the live config is never touched.
 LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS,$FOREIGN" mut_run "$VE" cross-repo \
-  --entry "the same defect was fixed in OTHERSVC #146"
-[ "$MADV" -eq 0 ] && ok "AC4b(ii): adding otherco/othersvc to a FIXTURE allowlist silences 'OTHERSVC #146' — the check reads the list" \
-  || no "AC4b(ii): 'OTHERSVC #146' was still advised even with otherco/othersvc allowlisted — the token is hardcoded"
+  --entry "the same defect was fixed in OTHERREPO #146"
+[ "$MADV" -eq 0 ] && ok "AC4b(ii): adding otherhub/otherrepo to a FIXTURE allowlist silences 'OTHERREPO #146' — the check reads the list" \
+  || no "AC4b(ii): 'OTHERREPO #146' was still advised even with otherhub/otherrepo allowlisted — the token is hardcoded"
 
 # (iii) R3: delete the unresolvable-allowlist REPORT => the condition becomes a silent pass, which
 # is the advisory form of the fail-open this control has always been aimed at. The mutation target
@@ -1173,10 +1173,10 @@ if mutated_differs mut-all.sh "aggregate call site"; then
   # the check at all. A validate_entry_all that sourced five checks and ran four would now be
   # completely silent about it, which is a stronger reason to keep this control than before.
   LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" mut_run "$TMP/mut-all.sh" all \
-    --entry "the same defect was fixed in OTHERSVC #146, source pr-138" --store "$STORE" --source "pr-138" --root "$REPO_ROOT"
+    --entry "the same defect was fixed in OTHERREPO #146, source pr-138" --store "$STORE" --source "pr-138" --root "$REPO_ROOT"
   m=$MADV; mrc=$MRC
   LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" mut_run "$VE" all \
-    --entry "the same defect was fixed in OTHERSVC #146, source pr-138" --store "$STORE" --source "pr-138" --root "$REPO_ROOT"
+    --entry "the same defect was fixed in OTHERREPO #146, source pr-138" --store "$STORE" --source "pr-138" --root "$REPO_ROOT"
   b=$MADV
   { [ "$b" -eq 1 ] && [ "$m" -eq 0 ]; } \
     && ok "deleting the cross-repo call from validate_entry_all silences its advisory — the call site is tested, not just the source line" \
@@ -1260,8 +1260,8 @@ awk '{ if (index($0, "a KNOWN repo owner")) { print "                *\") never-
   "$VE" > "$TMP/mut-owner.sh"
 if mutated_differs mut-owner.sh "known-owner marker"; then
   LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" mut_run "$TMP/mut-owner.sh" cross-repo \
-    --entry "vikashruhilgit/othersvc has the same bug"
-  [ "$MADV" -eq 0 ] && ok "marker (3): disabling the known-owner test stops 'vikashruhilgit/othersvc' being recognised — the owner set is what marks it" \
+    --entry "vikashruhilgit/otherrepo has the same bug"
+  [ "$MADV" -eq 0 ] && ok "marker (3): disabling the known-owner test stops 'vikashruhilgit/otherrepo' being recognised — the owner set is what marks it" \
     || no "marker (3): the known-owner mutant still refused — recognition is coming from somewhere else"
 fi
 
@@ -1280,13 +1280,13 @@ if mutated_differs mut-struct.sh "slug-only structure marker"; then
     || no "marker (4): the structure mutant did not discriminate (digit rc=$r1, CamelCase rc=$r2)"
 fi
 
-# (xvii) Marker (2), TRAILING CUE: remove it => 'the otherco/othersvc repo' stops being recognised.
+# (xvii) Marker (2), TRAILING CUE: remove it => 'the otherhub/otherrepo repo' stops being recognised.
 awk '{ if (index($0, "_VE_SLUG_TRAILING_CUE_WORDS=")) { print "_VE_SLUG_TRAILING_CUE_WORDS=\" \""; next } print }' \
   "$VE" > "$TMP/mut-trail.sh"
 if mutated_differs mut-trail.sh "trailing cue marker"; then
   LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" mut_run "$TMP/mut-trail.sh" cross-repo \
     --entry "the $FOREIGN repo has the same bug"
-  [ "$MADV" -eq 0 ] && ok "marker (2): emptying the trailing cue list stops 'the otherco/othersvc repo' being recognised" \
+  [ "$MADV" -eq 0 ] && ok "marker (2): emptying the trailing cue list stops 'the otherhub/otherrepo repo' being recognised" \
     || no "marker (2): the trailing-cue mutant still refused"
   LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" mut_run "$TMP/mut-trail.sh" cross-repo \
     --entry "the same defect landed in $FOREIGN last week"
@@ -2221,7 +2221,7 @@ if [ -f "$LIVE_CFG" ]; then LIVE_CFG_AFTER="$(cksum < "$LIVE_CFG")"; else LIVE_C
   && ok "the live .supervisor/config.json is byte-unchanged by this suite" \
   || no "this suite MODIFIED the live .supervisor/config.json"
 if [ -f "$LIVE_CFG" ] && command -v jq >/dev/null 2>&1; then
-  if jq -e '((.setup_memory.repo_allowlist // [])[] | select(test("^otherco/"; "i")))' "$LIVE_CFG" >/dev/null 2>&1; then
+  if jq -e '((.setup_memory.repo_allowlist // [])[] | select(test("^otherhub/"; "i")))' "$LIVE_CFG" >/dev/null 2>&1; then
     no "a FOREIGN slug is present in the live allowlist — the publication gate is compromised"
   else
     ok "no foreign slug is present in the live allowlist"
@@ -2251,7 +2251,7 @@ advisory "ADVISORY_DEAD_REFERENCE" "AGGREGATE: an entry violating ONLY dead-refe
   "$VE" all --entry "the retry helper now lives at loomwright/scripts/no-such-helper-xyz.sh, see #146" \
   --store "$SEPSTORE" --source "$SEP_OK" --root "$REPO_ROOT"
 LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" advisory "ADVISORY_CROSS_REPO" "AGGREGATE: an entry violating ONLY cross-repo exits 0 AND prints the advisory" \
-  "$VE" all --entry "the same defect was fixed in OTHERSVC #146" \
+  "$VE" all --entry "the same defect was fixed in OTHERREPO #146" \
   --store "$SEPSTORE" --source "$SEP_OK" --root "$REPO_ROOT"
 # ...and BOTH at once still exit 0, with both findings named. A writer must not learn about one
 # advisory and lose the other because the first one returned.

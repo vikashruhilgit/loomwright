@@ -5,7 +5,7 @@
 # WHY THIS EXISTS: `vikashruhilgit/loomwright` is a PUBLIC repo. Committing `.claude/agent-memory/`
 # and `.supervisor/memory/` publishes the Twin's accumulated judgment irreversibly — a push cannot
 # be taken back, and `/setup memory remove` explicitly does NOT unpublish
-# (setup-memory.sh:949 [pins: `Removal does NOT unpublish`]).
+# (setup-memory.sh:980 [pins: `Removal does NOT unpublish`]).
 # One memory entry cited a private work repo before this migration. This is the regression net that
 # stops it coming back.
 #
@@ -105,7 +105,7 @@ trap 'rm -rf "$TMPD"' EXIT
 # the very slug the sweep exists to keep out. The tracked list therefore carries the neutral
 # placeholder pair used by the fixtures below. A maintainer who needs the sweep to catch a specific
 # real foreign org should extend this list in their own checkout (and NOT commit it).
-DENY_TERMS='otherco|othersvc'
+DENY_TERMS='otherhub|otherrepo'
 
 # -----------------------------------------------------------------------------
 # assert_no_foreign_terms <label> <file> [file...]
@@ -203,6 +203,15 @@ assert_ignored() {
 EXPLICIT_SIDECARS='.supervisor/memory/.provenance.jsonl
 .supervisor/memory/.lessons-provenance.jsonl'
 
+# HONEST LIMIT (v15.84.0): the judgement TRAIL (`.supervisor/requirements`, `jobs/done`,
+# `jobs/failed`, `automate/*.md`) is committed too since v15.84.0, and is deliberately NOT in this
+# sweep. DENY_TERMS is the neutral placeholder pair (the real org was redacted from this public
+# repo), and the trail is prose that DISCUSSES that placeholder — the 2026-08-10 privacy scrub is
+# narrated in an automate run file — so a placeholder sweep over it is red by construction, and
+# a real one cannot live in a tracked file. What protected the first commit of the trail
+# (2026-09-21) was a hand grep: 27 mentions of the redacted org and one pasted work e-mail, both
+# redacted before staging. `print_consent_disclosure()` in setup-memory.sh tells every later
+# operator to do the same; nothing mechanical does it for them.
 EXPLICIT_STORE_ROOTS='.claude/agent-memory
 .supervisor/memory'
 
@@ -300,20 +309,20 @@ else
 fi
 
 # Inject the EXACT historical shape: uppercase, no slash, a space before the '#'.
-printf 'Across 8 recent session_end records (OTHERSVC #146/#129/#133/#139 + this repo #24) …\n' >> "$CONTAM_FIXTURE"
+printf 'Across 8 recent session_end records (OTHERREPO #146/#129/#133/#139 + this repo #24) …\n' >> "$CONTAM_FIXTURE"
 if assert_no_foreign_terms "post-injection" "$CONTAM_FIXTURE" >/dev/null 2>&1; then
-  no "negative control DID NOT FIRE: a re-added 'OTHERSVC #146' citation swept clean. This guard cannot fail and is therefore not a guard."
+  no "negative control DID NOT FIRE: a re-added 'OTHERREPO #146' citation swept clean. This guard cannot fail and is therefore not a guard."
 else
-  ok "negative control: a re-added 'OTHERSVC #146' citation makes the sweep FAIL (red)"
+  ok "negative control: a re-added 'OTHERREPO #146' citation makes the sweep FAIL (red)"
 fi
 
 # And a second foreign shape — the org name, lowercase, slash-joined.
 FOREIGN_FIXTURE="$TMPD/foreign-org.md"
-printf 'a record attributed to otherco/othersvc slipped in\n' > "$FOREIGN_FIXTURE"
+printf 'a record attributed to otherhub/otherrepo slipped in\n' > "$FOREIGN_FIXTURE"
 if assert_no_foreign_terms "foreign org shape" "$FOREIGN_FIXTURE" >/dev/null 2>&1; then
-  no "negative control DID NOT FIRE for the 'otherco/othersvc' org shape."
+  no "negative control DID NOT FIRE for the 'otherhub/otherrepo' org shape."
 else
-  ok "negative control: a 'otherco/othersvc' org citation makes the sweep FAIL (red)"
+  ok "negative control: a 'otherhub/otherrepo' org citation makes the sweep FAIL (red)"
 fi
 
 # Remove the injected line — the sweep must go green again (proves it keys on the citation, not
@@ -340,7 +349,7 @@ fi
 # filters it behind an explicit consent surface" — THIS IS THAT LATER ITEM. The ledger is now the
 # THIRD managed store: `setup-memory.sh apply` un-ignores it, but only behind a fail-closed gate that
 # refuses while any record's `.repo` sits outside the repo allowlist (`gated` verdict, offending
-# slugs named, exit still 0). The 7 `otherco/othersvc` records that made the deferral necessary were
+# slugs named, exit still 0). The 7 `otherhub/otherrepo` records that made the deferral necessary were
 # filtered out of the committed ledger in the same change, and `test-setup-memory.sh` groups (l)/(m)
 # pin the gate itself. The consent surface is `print_consent_disclosure()`, relayed verbatim by
 # `commands/setup.md`.
@@ -356,6 +365,10 @@ done <<'EOF'
 .supervisor/memory/.provenance.jsonl
 .supervisor/memory/.lessons-provenance.jsonl
 .supervisor/postmortem/results.jsonl
+.supervisor/requirements/twin-loop/00-overview.md
+.supervisor/jobs/done/2026-09-03-example-feature.md
+.supervisor/jobs/failed/2026-08-20-relocate-qa-agents-commands-skills.md
+.supervisor/automate/automate-2026-09-17-030524.md
 EOF
 
 # THE COMMITTED LEDGER CARRIES ZERO FOREIGN RECORDS — asserted with jq, NEVER grep. This ledger
@@ -415,12 +428,12 @@ vikashruhilgit/ai-agent-manager'
   # (never the real ledger), because a census that can only ever pass is not a census.
   LEDGER_FIXTURE="$TMPD/ledger-contaminated.jsonl"
   cp "$REPO_ROOT/$LEDGER_PATH" "$LEDGER_FIXTURE"
-  printf '{"schema_version": 1, "repo": "otherco/othersvc", "number": 999}\n' >> "$LEDGER_FIXTURE"
+  printf '{"schema_version": 1, "repo": "otherhub/otherrepo", "number": 999}\n' >> "$LEDGER_FIXTURE"
   INJ="$(jq -r --argjson allow "$ALLOW_JSON" \
     '((.repo // "") | tostring) as $r | select(($allow | index($r)) == null) | $r' \
     "$LEDGER_FIXTURE" 2>/dev/null | sort -u | tr '\n' ' ')"
   case "$INJ" in
-    *otherco/othersvc*) ok "negative control: a SPACED-FORM 'otherco/othersvc' record injected into a copy makes the census FAIL (red↔green both proven)" ;;
+    *otherhub/otherrepo*) ok "negative control: a SPACED-FORM 'otherhub/otherrepo' record injected into a copy makes the census FAIL (red↔green both proven)" ;;
     *)            no "negative control DID NOT FIRE: an injected spaced-form foreign record swept clean. This census cannot fail and is therefore not a census." ;;
   esac
 fi
@@ -439,8 +452,10 @@ done <<'EOF'
 .claude/settings.local.json
 .supervisor/logs/session.jsonl
 .supervisor/jobs/pending/some-brief.md
+.supervisor/jobs/in-progress/some-brief.md
 .supervisor/automate/some-run.json
-.supervisor/requirements/twin-loop/some-item.md
+.supervisor/automate/automate-2026-01-01-000000.config-backup.json
+.supervisor/requirements/twin-loop/.supervisor/logs/telemetry.log
 .supervisor/postmortem/some-other-artifact.json
 EOF
 

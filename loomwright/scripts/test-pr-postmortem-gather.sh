@@ -46,7 +46,7 @@
 #                     element-level): hostile elements degrade to non-matches, the
 #                     well-formed bot comments still produce the same anchored
 #                     review_rounds as 3d, exit 0.
-#   3g. bot-comment-shape PR (OTHERSVC #146) -> 0 review objects, claude-bot comments headed
+#   3g. bot-comment-shape PR (OTHERREPO #146) -> 0 review objects, claude-bot comments headed
 #                     "## Overview" (NO review heading — the widened word-bounded
 #                     anywhere-in-body marker must match their running text), commit
 #                     headlines using the EXPLICIT anchored forms "PR #42 review — …" /
@@ -56,7 +56,7 @@
 #                     Preview" comment stay non-matching (word-bounded, re-pinned
 #                     against the widened marker); the trailing all-clear bot comment
 #                     with no later push does not anchor a 4th round.
-#   3h. OTHERSVC #139 shape -> "address code review findings …" commit headlines (the
+#   3h. OTHERREPO #139 shape -> "address code review findings …" commit headlines (the
 #                     intervening "code" broke the old "address(es)? review"
 #                     adjacency requirement) must flag is_review_fix via the widened
 #                     "address(es)? (code )?review" alternative => review_rounds==2
@@ -256,8 +256,8 @@ FIX
 # the EXPLICIT "PR #N review — …" / "review #N — …" headline forms the narrow regex
 # omitted. The "deploy preview #2" subject is the word-boundary negative control for
 # the new "review #N" alternation ("preview #2" contains "review #2" as a substring).
-FIX_OTHERSVCSHAPE="$TMP/fixture-othersvcshape.json"
-cat > "$FIX_OTHERSVCSHAPE" <<'FIX'
+FIX_OTHERREPOSHAPE="$TMP/fixture-otherreposhape.json"
+cat > "$FIX_OTHERREPOSHAPE" <<'FIX'
 {
   "number": 42,
   "title": "Auto-emit taxMappings on E-Invoice provisioning",
@@ -283,8 +283,8 @@ FIX
 # the running text. Anchoring: c1/c2/c3 each have a commit landing after => 3 rounds;
 # the trailing all-clear c4 (15:00, no commit after) must NOT count. vercel[bot]
 # "Deploy Preview" re-pins the word-boundary guarantee against the widened marker.
-FIX_OTHERSVCSHAPE_COMMENTS="$TMP/fixture-othersvcshape-comments.json"
-cat > "$FIX_OTHERSVCSHAPE_COMMENTS" <<'FIX'
+FIX_OTHERREPOSHAPE_COMMENTS="$TMP/fixture-otherreposhape-comments.json"
+cat > "$FIX_OTHERREPOSHAPE_COMMENTS" <<'FIX'
 [
   {"user": {"login": "vercel[bot]"}, "created_at": "2026-01-01T09:00:00Z", "body": "Deploy Preview for my-app ready!"},
   {"user": {"login": "claude[bot]"}, "created_at": "2026-01-01T10:00:00Z", "body": "## Overview\n\nThe fix premise is accurate; addresses issues raised in prior review rounds."},
@@ -294,15 +294,15 @@ cat > "$FIX_OTHERSVCSHAPE_COMMENTS" <<'FIX'
 ]
 FIX
 
-# OTHERSVC #139-shape fixture (3h): "address code review findings …" headlines (verified
+# OTHERREPO #139-shape fixture (3h): "address code review findings …" headlines (verified
 # live 2026-06-12) — the old first alternative required "address(es)? review"
 # ADJACENCY, so the intervening word "code" left both explicit fix commits uncounted
 # and review_rounds stuck at 1 (the single formal churn review). The widened
 # "address(es)? (code )?review" must match both; "findings" ALONE stays rejected —
 # "add audit findings export" is a verified false-positive of the REJECTED broadened
 # churn-word class and is the in-fixture negative control.
-FIX_OTHERSVC139="$TMP/fixture-othersvc139.json"
-cat > "$FIX_OTHERSVC139" <<'FIX'
+FIX_OTHERREPO139="$TMP/fixture-otherrepo139.json"
+cat > "$FIX_OTHERREPO139" <<'FIX'
 {
   "number": 42,
   "title": "Favorite reports",
@@ -357,9 +357,9 @@ FIX
 #   human     — human PR: utf-8/sha-256 commit tokens, approval-only review (3b).
 #   taskid    — subject-leading "bd-15a:" task-id prefix, plain body (3c).
 #   botreview — PR #47 shape: zero review objects, committedDate-stamped commits (3d/3e).
-#   othersvcshape  — OTHERSVC #146 shape: zero review objects, "PR #N review"/"review #N"
+#   otherreposhape  — OTHERREPO #146 shape: zero review objects, "PR #N review"/"review #N"
 #               fix headlines, "## Overview"-headed bot comments (3g).
-#   othersvc139    — OTHERSVC #139 shape: "address code review findings" fix headlines,
+#   otherrepo139    — OTHERREPO #139 shape: "address code review findings" fix headlines,
 #               one formal churn review, no bot comments (3h).
 #   inject    — title/body/review carrying quotes, backslashes, and a newline.
 #   fail      — `pr view` exits 1 (simulates private/not-found/unauthenticated).
@@ -367,7 +367,7 @@ FIX
 # pins the exact endpoint path — any other api path exits 1, exercising degrade):
 #   empty (default) — emit "[]" (no issue comments).
 #   comments        — cat the REST-shaped bot-review comments fixture (3d).
-#   othersvccomments     — cat the "## Overview"-headed bot comments fixture (3g).
+#   otherrepocomments     — cat the "## Overview"-headed bot comments fixture (3g).
 #   hostile         — cat the hostile-typed comments fixture (3f): VALID array,
 #                     non-string user.login/body/created_at elements.
 #   bigcomments     — cat the ~100KB multibyte comments fixture (3j): the production
@@ -398,14 +398,14 @@ make_gh_stub() {
     human)     fixture="$FIX_HUMAN" ;;
     taskid)    fixture="$FIX_TASKID" ;;
     botreview) fixture="$FIX_BOTREVIEW" ;;
-    othersvcshape)  fixture="$FIX_OTHERSVCSHAPE" ;;
-    othersvc139)    fixture="$FIX_OTHERSVC139" ;;
+    otherreposhape)  fixture="$FIX_OTHERREPOSHAPE" ;;
+    otherrepo139)    fixture="$FIX_OTHERREPO139" ;;
     inject)    fixture="$FIX_INJECT" ;;
     fail)      fixture="" ;;
   esac
   case "$api_mode" in
     comments)    api_fixture="$FIX_BOTREVIEW_COMMENTS" ;;
-    othersvccomments) api_fixture="$FIX_OTHERSVCSHAPE_COMMENTS" ;;
+    otherrepocomments) api_fixture="$FIX_OTHERREPOSHAPE_COMMENTS" ;;
     hostile)     api_fixture="$FIX_BOTREVIEW_COMMENTS_HOSTILE" ;;
     bigcomments) api_fixture="$FIX_BIGCOMMENTS" ;;
   esac
@@ -606,8 +606,8 @@ else
   no "(3f) wrong (rc=$RUN_RC): $RUN_OUT"
 fi
 
-echo "== 3g. bot-comment-shape PR (OTHERSVC #146) => explicit 'PR #N review'/'review #N' headlines + Overview-headed bot comments both count 3 =="
-make_gh_stub othersvcshape othersvccomments
+echo "== 3g. bot-comment-shape PR (OTHERREPO #146) => explicit 'PR #N review'/'review #N' headlines + Overview-headed bot comments both count 3 =="
+make_gh_stub otherreposhape otherrepocomments
 run_gather "$PR_URL"
 # Both v14.23.1-missed signals must now independently land on 3: the three explicit
 # "PR #42 review — …" / "review #2/#3 — …" headlines match the two new anchored
@@ -634,12 +634,12 @@ else
   no "(3g) wrong (rc=$RUN_RC): $RUN_OUT"
 fi
 
-echo "== 3h. OTHERSVC #139 shape => 'address code review' headlines count; 'findings' alone stays rejected =="
-make_gh_stub othersvc139
+echo "== 3h. OTHERREPO #139 shape => 'address code review' headlines count; 'findings' alone stays rejected =="
+make_gh_stub otherrepo139
 run_gather "$PR_URL"
 # Pre-widening, the intervening "code" broke the "address(es)? review" adjacency:
 # both explicit fix commits read is_review_fix:false and review_rounds fell back to
-# the single formal churn review — the live OTHERSVC #139 undercount of 1 (verified
+# the single formal churn review — the live OTHERREPO #139 undercount of 1 (verified
 # 2026-06-12, true ≈3). The widened "address(es)? (code )?review" must flag both
 # (=> 2 fix commits, review_rounds == MAX(2, 1, 0) == 2, source fix_commits); the
 # "add audit findings export" subject — a verified false-positive of the REJECTED
@@ -652,7 +652,7 @@ if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | jq -e '
     and (.review_rounds == 2)
     and (.review_rounds_source == "fix_commits")
   ' >/dev/null 2>&1; then
-  ok "OTHERSVC #139 shape: both 'address code review findings' commits flagged, review_rounds==2 (source fix_commits, was 1 via formal_reviews), 'findings' alone still rejected"
+  ok "OTHERREPO #139 shape: both 'address code review findings' commits flagged, review_rounds==2 (source fix_commits, was 1 via formal_reviews), 'findings' alone still rejected"
 else
   no "(3h) wrong (rc=$RUN_RC): $RUN_OUT"
 fi
