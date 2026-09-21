@@ -123,7 +123,7 @@
 # citation marker, not merely a suggestive shape:
 #   · an `owner/repo` slug that is MARKED as a repository citation, by ANY ONE of four markers:
 #       (1) structure — `github.com/owner/repo`, `owner/repo#123`, `owner/repo@sha`, `owner/repo.git`
-#       (2) a neighbouring repo cue word — `landed in otherco/othersvc`, `the otherco/othersvc repo`
+#       (2) a neighbouring repo cue word — `landed in otherhub/otherrepo`, `the otherhub/otherrepo repo`
 #       (3) a KNOWN owner — the owner half appears in the resolved allowlist or in the postmortem
 #           ledger's `.repo` values, i.e. it is an owner this system has actually seen
 #       (4) slug-only structure — a DIGIT anywhere, or an INTERNAL capital (CamelCase) in either
@@ -210,14 +210,14 @@
 #
 # THE RESIDUAL BOUND, stated because it is real and must not be sold as complete coverage: an
 # all-lowercase `word/word` carrying NONE of the four markers — no cue word beside it, an owner this
-# system has never seen, no hyphen, digit or CamelCase — is a DELIBERATE MISS. `otherco/othersvc` standing
+# system has never seen, no hyphen, digit or CamelCase — is a DELIBERATE MISS. `otherhub/otherrepo` standing
 # alone in a sentence is indistinguishable FROM THE TEXT ALONE from `budget/zone`; they are the same
 # shape, and the only thing that could separate them is knowledge of which owners exist, which is
 # precisely what marker (3) contributes and precisely what is unavailable for an owner nobody here
 # has ever recorded. (Measured, not assumed: the committed ledger holds two `.repo` values, both
 # ours.) Choosing to refuse that shape would refuse `budget/zone` too — six live curated entries.
-# So `landed in otherco/othersvc`, `the otherco/othersvc repo` and `otherco/othersvc#12` are recognised while a bare
-# `otherco/othersvc` is not; prose naming a repo in any other shape ("the othersvc repository") is likewise
+# So `landed in otherhub/otherrepo`, `the otherhub/otherrepo repo` and `otherhub/otherrepo#12` are recognised while a bare
+# `otherhub/otherrepo` is not; prose naming a repo in any other shape ("the otherrepo repository") is likewise
 # invisible. Under-recognition is the deliberate trade, and it is the reversal of this file's usual
 # bias: a missed foreign reference is a documented gap, a false refusal blocks a legitimate write
 # and destroys the only thing that makes the check worth running — that a human trusts it.
@@ -287,12 +287,12 @@ _VE_SLUG_STOPLIST=" and/or input/output read/write pass/fail yes/no true/false o
 # widens recognition, which is the direction that produces false refusals, so a word belongs here
 # only if prose that uses it to mean something other than "the repository named next" is implausible.
 _VE_SLUG_CUE_WORDS=" in from into repo repos repository repositories github org fork forks upstream remote clone mirror "
-# Words that may immediately FOLLOW a slug and mark it the same way ("the otherco/othersvc repo"). Kept
+# Words that may immediately FOLLOW a slug and mark it the same way ("the otherhub/otherrepo repo"). Kept
 # separate and even shorter: a trailing word only names the thing when it names a repository.
 _VE_SLUG_TRAILING_CUE_WORDS=" repo repos repository repositories fork upstream remote mirror "
 
 # Words that precede a `#123` citation without naming a repository. `PR #146` must not be read as a
-# repo named `pr`; `OTHERSVC #146` must be. Documented bound: a repository actually named `pr`, `issue`,
+# repo named `pr`; `OTHERREPO #146` must be. Documented bound: a repository actually named `pr`, `issue`,
 # `run` ... is invisible to the short-name recogniser.
 _VE_NOT_REPO_WORDS=" pr prs issue issues ticket tickets bug bugs item items run runs job jobs line lines col cols no number num commit commits release releases build builds step steps case cases test tests round rounds phase v version "
 
@@ -1449,7 +1449,7 @@ _ve_emit_slug_token() {
 # A `NAME #123` candidate counts only when NAME is IDENTIFIER-SHAPED — ALL-CAPS, or containing a
 # hyphen, underscore or digit. The shape alone is ambiguous: "fixed in #146" has it too, and
 # reading `in` as a repository would refuse ordinary prose, which is far worse than missing a
-# reference. So `OTHERSVC #146` is recognised and a plain lowercase `word #123` is NOT — including a
+# reference. So `OTHERREPO #146` is recognised and a plain lowercase `word #123` is NOT — including a
 # lowercase FOREIGN one. That is under-recognition: the documented, deliberate failure direction,
 # stated in every refusal message and pinned by its own test.
 #
@@ -1516,7 +1516,7 @@ EOF
     lower="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')"
     case "$_VE_NOT_REPO_WORDS" in *" $lower "*) continue ;; esac
     if [ "${#name}" -ge 2 ] && [ "$name" = "$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]')" ]; then
-      printf 'short:%s\n' "$lower"          # ALL-CAPS: OTHERSVC #146
+      printf 'short:%s\n' "$lower"          # ALL-CAPS: OTHERREPO #146
     else
       case "$name" in
         *[-_0-9]*) printf 'short:%s\n' "$lower" ;;   # identifier-shaped: ai-agent-manager #12

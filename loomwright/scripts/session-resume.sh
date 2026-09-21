@@ -37,7 +37,11 @@
 # by a 24h marker (.supervisor/.stranded-nudge-shown), so a NEW strand that
 # appears within 24h of the previous nudge waits for the next window (the
 # resume path is undebounced and still lists it); LOOMWRIGHT_STRANDED_NUDGE=
-# 0|off|false|no silences it permanently.
+# 0|off|false|no silences it permanently. Both the debounce and the opt-out
+# gate the ADVISORY only: the mechanical `--repair-merged` move (v15.84.0)
+# runs on every startup AND every resume/clear/compact regardless, and a
+# `repaired` row is always reported — there is no switch that leaves a proven
+# merge stranded, on either arm.
 #
 # Also runs an observability health probe (observability_probe, ST3): when
 # telemetry is configured in ~/.claude/settings.json, a 1-second curl checks
@@ -185,7 +189,14 @@ curation_nudge_line() {
 # silent reconciler means NO line. The marker is stamped ONLY when a line is
 # actually emitted, so a suppressed run does not burn the window.
 stranded_briefs_startup_line() {
-  case "${LOOMWRIGHT_STRANDED_NUDGE:-}" in 0|off|false|no) return 0 ;; esac
+  # The env opt-out silences the ADVISORY (the stranded lines + --repair
+  # trailer) and nothing else: the mechanical --repair-merged below still runs
+  # and its `repaired` rows are still reported, exactly as on resume/clear/
+  # compact, where no opt-out exists. Before this the opt-out returned here and
+  # skipped the repair on startup only, leaving the two arms inconsistent (PR
+  # #243 review, finding 4).
+  local nudge_off=0
+  case "${LOOMWRIGHT_STRANDED_NUDGE:-}" in 0|off|false|no) nudge_off=1 ;; esac
 
   # OWN plugin-active check (see curation_nudge_line for why the shared bail
   # below the case is never reached from the startup arm).
@@ -195,32 +206,46 @@ stranded_briefs_startup_line() {
   # helper runs inside a `$(…)` capture — Section 1 spells it the same way.
   compgen -G ".supervisor/jobs/in-progress/*.md" >/dev/null 2>&1 || return 0
 
-  local marker=".supervisor/.stranded-nudge-shown"
-  if [ -f "$marker" ] && [ -n "$(find "$marker" -mmin -1440 2>/dev/null)" ]; then
-    return 0
-  fi
-
-  local script_dir reconciler porcelain body="" st path ev
+  local script_dir reconciler porcelain body="" repaired="" st path ev
   script_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo .)"
   reconciler="$script_dir/reconcile-jobs.sh"
   [ -r "$reconciler" ] || return 0
 
-  porcelain="$(bash "$reconciler" --porcelain 2>/dev/null || true)"
+  # THE MECHANICAL HALF (v15.84.0). `--repair-merged` finishes the lifecycle
+  # move for every brief whose MERGE the disk proves — an engine-verified run
+  # file, or a merge commit on the local base ref naming the brief's slug — and
+  # only those. It runs BEFORE the debounce gate on purpose: the move is the
+  # work-done cleanup the completion tail failed to make, not a nudge, so a
+  # fresh session within the 24h window must still perform it. A brief the
+  # disk can only stamp `stranded_closed` (done stamp, PR not determinable) is
+  # reported below exactly as before and left for a human `--repair`.
+  porcelain="$(bash "$reconciler" --repair-merged --porcelain 2>/dev/null || true)"
   [ -n "$porcelain" ] || return 0
 
-  # STATE<TAB>BRIEF<TAB>EVIDENCE, one per line. Keep ONLY stranded_* states.
+  # STATE<TAB>BRIEF<TAB>EVIDENCE, one per line. `repaired` rows are events and
+  # are always reported; stranded_* rows are the advisory that the marker
+  # debounces; every other state stays silent on startup.
   while IFS=$'\t' read -r st path ev; do
     [ -n "${st:-}" ] || continue
     case "$st" in
+      repaired)   repaired="${repaired}**Repaired brief:** ${path} → .supervisor/jobs/done/ (moved mechanically at SessionStart) — evidence: ${ev}"$'\n' ;;
       stranded_*) body="${body}**Stranded brief:** ${path} — evidence: ${ev}"$'\n' ;;
       *) ;;
     esac
   done <<< "$porcelain"
-  [ -n "$body" ] || return 0
+
+  local marker=".supervisor/.stranded-nudge-shown"
+  if [ -n "$body" ] && [ "$nudge_off" -eq 1 ]; then
+    body=""
+  elif [ -n "$body" ] && [ -f "$marker" ] && [ -n "$(find "$marker" -mmin -1440 2>/dev/null)" ]; then
+    body=""
+  fi
+  [ -n "$body$repaired" ] || return 0
 
   # The wording is deliberately DISTINCT from every Section-1 header so the
   # startup-path tests can assert those headers absent by exact literal.
-  body="${body}Not resumable — the lifecycle move never ran. Finish it with: \`bash $reconciler --repair\`"
+  [ -n "$body" ] && body="${body}Not resumable — the lifecycle move never ran. Finish it with: \`bash $reconciler --repair\`"
+  body="${repaired}${body}"
 
   # Defensive cap, far inside the 10K additionalContext limit — same idiom as
   # the main emit at the bottom of this file.
@@ -229,7 +254,9 @@ stranded_briefs_startup_line() {
   fi
 
   # Braced redirection: same load-bearing shape as the curation marker above.
-  { : > "$marker"; } 2>/dev/null || true
+  # Stamped only when an ADVISORY line went out; a repaired-only emission does
+  # not burn the window (nothing is left to nudge about).
+  case "$body" in *"**Stranded brief:**"*) { : > "$marker"; } 2>/dev/null || true ;; esac
   printf '%s' "$body"
   return 0
 }
@@ -517,7 +544,9 @@ if compgen -G ".supervisor/jobs/in-progress/*.md" > /dev/null 2>&1; then
   SR_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo .)"
   RECONCILER="$SR_DIR/reconcile-jobs.sh"
   PORCELAIN=""
-  [ -r "$RECONCILER" ] && PORCELAIN="$(bash "$RECONCILER" --porcelain 2>/dev/null || true)"
+  # Same mechanical half as the startup arm: a merge the disk proves is moved
+  # now, and reported as such; everything else is classified and reported.
+  [ -r "$RECONCILER" ] && PORCELAIN="$(bash "$RECONCILER" --repair-merged --porcelain 2>/dev/null || true)"
 
   if [ -z "$PORCELAIN" ]; then
     append "### In-progress briefs (state UNVERIFIED — reconciler unavailable)"$'\n'
@@ -530,14 +559,22 @@ if compgen -G ".supervisor/jobs/in-progress/*.md" > /dev/null 2>&1; then
   else
     STRANDED=""
     UNKNOWN=""
+    REPAIRED=""
     while IFS=$'\t' read -r st path ev; do
       [ -n "${st:-}" ] || continue
       case "$st" in
-        unknown) UNKNOWN="${UNKNOWN}- ${path}"$'\n' ;;
-        *)       STRANDED="${STRANDED}- ${path}"$'\n'"  - evidence: ${ev}"$'\n' ;;
+        unknown)  UNKNOWN="${UNKNOWN}- ${path}"$'\n' ;;
+        repaired) REPAIRED="${REPAIRED}- ${path} → .supervisor/jobs/done/"$'\n'"  - evidence: ${ev}"$'\n' ;;
+        *)        STRANDED="${STRANDED}- ${path}"$'\n'"  - evidence: ${ev}"$'\n' ;;
       esac
     done <<< "$PORCELAIN"
 
+    if [ -n "$REPAIRED" ]; then
+      append "### Repaired briefs — lifecycle move completed mechanically at SessionStart"$'\n'
+      append "The disk proved these merged (run file or merge commit on the local base ref); reconcile-jobs.sh --repair-merged moved them. Nothing to resume."$'\n'
+      append "$REPAIRED"
+      append $'\n'
+    fi
     if [ -n "$STRANDED" ]; then
       append "### Stranded briefs — lifecycle move never ran (NOT resumable)"$'\n'
       append "These briefs sit in in-progress/ but the disk says their work already completed."$'\n'

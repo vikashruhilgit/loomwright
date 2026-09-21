@@ -345,10 +345,20 @@ echo "# req" > "$r/.supervisor/requirements/req.md"
 printf '## Current\n- item: .supervisor/requirements/req.md | status: merged | pr: https://github.com/o/r/pull/160 | branch: b\n' \
   > "$r/.supervisor/automate/run.md"
 c="$(ctx "$r")"
-case "$c" in *"Stranded briefs"*) ok "12 stranded brief reported under a Stranded heading" ;; *) no "12 no Stranded heading emitted" ;; esac
+# v15.84.0: a stranded_merged brief is no longer merely REPORTED by the hook — the hook runs
+# `--repair-merged` and moves it, so the Section-1 heading is "Repaired", not "Stranded".
+case "$c" in *"Repaired briefs"*) ok "12 stranded_merged brief reported under the Repaired heading (moved by the hook)" ;; *) no "12 no Repaired heading emitted: $c" ;; esac
+[ -f "$r/.supervisor/jobs/done/brief.md" ] && ok "12a the hook moved it to done/" || no "12a the hook reported but did not move"
 case "$c" in *"Supervisor was mid-run"*) no "12b (control) the old mid-run claim is still emitted" ;; *) ok "12b (control) the old mid-run claim is gone" ;; esac
 case "$c" in *"--continue"*) no "12c a resume was offered for a stranded brief" ;; *) ok "12c no resume offered for a stranded brief" ;; esac
-case "$c" in *"reconcile-jobs.sh --repair"*) ok "12d the repair command is surfaced" ;; *) no "12d no repair command surfaced" ;; esac
+case "$c" in *"Stranded briefs"*) no "12d a moved brief was ALSO listed stranded" ;; *) ok "12d no Stranded heading once the move is done" ;; esac
+# 12e: the ADVISORY contract still holds for stranded_closed (done stamp, no merge evidence).
+r="$(new_repo ".supervisor/requirements/req.md")"
+printf '# req\n\n## Status: done\n' > "$r/.supervisor/requirements/req.md"
+c="$(ctx "$r")"
+case "$c" in *"Stranded briefs"*) ok "12e stranded_closed still reported under the Stranded heading" ;; *) no "12e Stranded heading lost for stranded_closed: $c" ;; esac
+case "$c" in *"reconcile-jobs.sh --repair"*) ok "12f and the repair command is surfaced for it" ;; *) no "12f no repair command surfaced" ;; esac
+[ -f "$r/.supervisor/jobs/in-progress/brief.md" ] && ok "12g stranded_closed was NOT moved by the hook" || no "12g the hook moved a stranded_closed brief"
 
 # 13. an unverifiable brief keeps a resume hint, but is labelled UNVERIFIED.
 r="$(new_repo "")"
@@ -590,6 +600,170 @@ if [ "$M_ENQ" = 1 ] && [ "$M_OTHER" = 1 ] && [ "$M_DECOY" = 1 ]; then
 else
   no "25 positive gate failed (enq=$M_ENQ other=$M_OTHER decoy=$M_DECOY) — mutants not run"
 fi
+
+# --- 30. vcs arm: a merge commit on the LOCAL base ref names the brief's slug --
+# The three real strands this arm was written for (2026-09-21): briefs from a
+# plain /supervisor run, PRs #177/#181/#185 merged 2026-09-04..05, no engine
+# evidence, 16 days in in-progress/. Every fixture below is a real git repo with
+# a refs/remotes/origin/main ref and NO network — the arm may only read what a
+# pull already left on disk.
+export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+# git_repo <dir> — init, one base commit, remote origin (GitHub ssh shape).
+git_repo() {
+  ( cd "$1" && git init -q -b main . && git commit -q --allow-empty -m base \
+    && git remote add origin git@github.com:o/r.git ) >/dev/null 2>&1
+}
+# merge_pr <dir> <pr> <branch> <date> — a --no-ff merge commit with the exact
+# GitHub subject shape, committed at <date>, then origin/main := HEAD.
+merge_pr() {
+  ( cd "$1" && git checkout -q -b "$3" main && git commit -q --allow-empty -m "w" \
+    && git checkout -q main \
+    && GIT_AUTHOR_DATE="$4" GIT_COMMITTER_DATE="$4" \
+       git merge -q --no-ff -m "Merge pull request #$2 from o/$3" "$3" \
+    && git update-ref refs/remotes/origin/main HEAD ) >/dev/null 2>&1
+}
+# dated_brief <dir> <YYYY-MM-DD-slug> — a pointer-less in-progress brief.
+dated_brief() {
+  printf '# Supervisor Job: %s\n\n## Environment\n' "$2" > "$1/.supervisor/jobs/in-progress/$2.md"
+}
+
+r="$(new_repo)"; rm -f "$r/.supervisor/jobs/in-progress/brief.md"; git_repo "$r"
+dated_brief "$r" "2026-09-03-example-feature"
+merge_pr "$r" 42 "feature/example-feature" "2026-09-04T10:22:06Z"
+out="$(cd "$r" && bash "$RECON" --porcelain 2>/dev/null)"
+case "$out" in stranded_merged*"[Merge pull request #42 from o/feature/example-feature]"*"(https://github.com/o/r/pull/42)") ok "30 slug-matched merge on origin/main ⇒ stranded_merged with subject + PR URL" ;; *) no "30 got: $out" ;; esac
+case "$out" in *"no fetch, no forge call"*) ok "30b evidence states the offline rule" ;; *) no "30b evidence lacks the offline statement: $out" ;; esac
+(cd "$r" && bash "$RECON" --repair-merged >/dev/null 2>&1)
+b="$r/.supervisor/jobs/done/2026-09-03-example-feature.md"
+if [ -f "$b" ] && grep -q '^- \*\*PR:\*\* https://github.com/o/r/pull/42$' "$b" && grep -q 'vcs merge commit' "$b"; then
+  ok "30c --repair-merged moved it to done/ with the PR line and the vcs evidence"
+else
+  no "30c repair-merged did not produce the expected done/ brief"
+fi
+
+# 30d: date floor — a merge committed BEFORE the brief's date is not this brief's.
+r="$(new_repo)"; rm -f "$r/.supervisor/jobs/in-progress/brief.md"; git_repo "$r"
+dated_brief "$r" "2026-09-10-example-feature"
+merge_pr "$r" 42 "feature/example-feature" "2026-09-04T10:22:06Z"
+out="$(cd "$r" && bash "$RECON" --porcelain 2>/dev/null)"
+case "$out" in unknown*) ok "30d a merge older than the brief is ignored (date floor)" ;; *) no "30d date floor missing: $out" ;; esac
+
+# 30e: a PR number a done/ brief already claims is not re-attributed.
+r="$(new_repo)"; rm -f "$r/.supervisor/jobs/in-progress/brief.md"; git_repo "$r"
+dated_brief "$r" "2026-09-03-example-feature"
+merge_pr "$r" 42 "feature/example-feature" "2026-09-04T10:22:06Z"
+printf '# old\n\n## Outcome\n- **PR:** https://github.com/o/r/pull/42\n' > "$r/.supervisor/jobs/done/2026-08-01-example-feature.md"
+out="$(cd "$r" && bash "$RECON" --porcelain 2>/dev/null)"
+case "$out" in unknown*) ok "30e a PR already recorded by a done/ brief is not claimed twice" ;; *) no "30e double attribution: $out" ;; esac
+# (control) a done/ brief claiming a DIFFERENT number does not block.
+printf '# old\n\n## Outcome\n- **PR:** https://github.com/o/r/pull/420\n' > "$r/.supervisor/jobs/done/2026-08-01-example-feature.md"
+out="$(cd "$r" && bash "$RECON" --porcelain 2>/dev/null)"
+case "$out" in stranded_merged*) ok "30e2 (control) #420 in done/ does not mask #42 (number anchored)" ;; *) no "30e2 anchoring bug: $out" ;; esac
+
+# 30f: two in-progress briefs share the slug ⇒ both ambiguous, neither moved.
+r="$(new_repo)"; rm -f "$r/.supervisor/jobs/in-progress/brief.md"; git_repo "$r"
+dated_brief "$r" "2026-09-03-example-feature"; dated_brief "$r" "2026-09-05-example-feature"
+merge_pr "$r" 42 "feature/example-feature" "2026-09-06T10:22:06Z"
+out="$(cd "$r" && bash "$RECON" --repair-merged --porcelain 2>/dev/null)"
+n_amb="$(printf '%s\n' "$out" | grep -c 'ambiguous')"
+[ "$n_amb" -eq 2 ] && [ -z "$(ls "$r/.supervisor/jobs/done" 2>/dev/null)" ] \
+  && ok "30f two in-progress briefs with one slug ⇒ both 'ambiguous', nothing moved" \
+  || no "30f ambiguity guard failed (amb=$n_amb, done=$(ls "$r/.supervisor/jobs/done" 2>/dev/null | tr '\n' ' '))"
+
+# 30g: two candidate merges for one brief ⇒ ambiguous.
+r="$(new_repo)"; rm -f "$r/.supervisor/jobs/in-progress/brief.md"; git_repo "$r"
+dated_brief "$r" "2026-09-03-example-feature"
+merge_pr "$r" 42 "feature/example-feature" "2026-09-04T10:22:06Z"
+merge_pr "$r" 57 "fix/example-feature" "2026-09-08T10:22:06Z"
+out="$(cd "$r" && bash "$RECON" --porcelain 2>/dev/null)"
+case "$out" in unknown*ambiguous*) ok "30g two merges naming the slug ⇒ ambiguous, not the newest" ;; *) no "30g picked one of two: $out" ;; esac
+
+# 30h: suffix anchoring — slug 'widget' must not match `…/example-widget`;
+# a branch with NO type prefix (`from o/widget`) must.
+r="$(new_repo)"; rm -f "$r/.supervisor/jobs/in-progress/brief.md"; git_repo "$r"
+dated_brief "$r" "2026-09-03-widget"
+merge_pr "$r" 42 "feature/example-widget" "2026-09-04T10:22:06Z"
+out="$(cd "$r" && bash "$RECON" --porcelain 2>/dev/null)"
+case "$out" in unknown*) ok "30h slug 'widget' does not match branch 'example-widget'" ;; *) no "30h substring match: $out" ;; esac
+merge_pr "$r" 43 "widget" "2026-09-05T10:22:06Z"
+out="$(cd "$r" && bash "$RECON" --porcelain 2>/dev/null)"
+case "$out" in stranded_merged*"pull/43"*) ok "30h2 a prefix-less branch 'o/widget' matches" ;; *) no "30h2 prefix-less branch missed: $out" ;; esac
+
+# 30i: no date prefix on the filename ⇒ the arm stays silent (unknown).
+r="$(new_repo)"; rm -f "$r/.supervisor/jobs/in-progress/brief.md"; git_repo "$r"
+dated_brief "$r" "example-feature"
+merge_pr "$r" 42 "feature/example-feature" "2026-09-04T10:22:06Z"
+out="$(cd "$r" && bash "$RECON" --porcelain 2>/dev/null)"
+case "$out" in unknown*) ok "30i undated filename ⇒ no vcs attribution" ;; *) no "30i undated brief attributed: $out" ;; esac
+
+# 30j: --repair-merged is SCOPED — stranded_closed stays; --repair moves both.
+r="$(new_repo ".supervisor/requirements/req.md")"; git_repo "$r"
+printf '# req\n\n## Status: done\n' > "$r/.supervisor/requirements/req.md"
+dated_brief "$r" "2026-09-03-example-feature"
+merge_pr "$r" 42 "feature/example-feature" "2026-09-04T10:22:06Z"
+(cd "$r" && bash "$RECON" --repair-merged >/dev/null 2>&1)
+if [ -f "$r/.supervisor/jobs/done/2026-09-03-example-feature.md" ] && [ -f "$r/.supervisor/jobs/in-progress/brief.md" ]; then
+  ok "30j --repair-merged moved the merged brief and left the closed-only one"
+else
+  no "30j scoping wrong (done: $(ls "$r/.supervisor/jobs/done" | tr '\n' ' '); in-progress: $(ls "$r/.supervisor/jobs/in-progress" | tr '\n' ' '))"
+fi
+(cd "$r" && bash "$RECON" --repair >/dev/null 2>&1)
+[ -f "$r/.supervisor/jobs/done/brief.md" ] && ok "30j2 plain --repair still moves stranded_closed" || no "30j2 --repair no longer moves stranded_closed"
+
+# 30k: no origin ref at all ⇒ silent; the run-file arm is unaffected.
+r="$(new_repo ".supervisor/requirements/req.md")"; echo "# req" > "$r/.supervisor/requirements/req.md"
+( cd "$r" && git init -q -b main . && git commit -q --allow-empty -m base ) >/dev/null 2>&1
+dated_brief "$r" "2026-09-03-example-feature"
+out="$(cd "$r" && bash "$RECON" --porcelain 2>/dev/null)"
+case "$out" in *"2026-09-03-example-feature.md"*) case "$(printf '%s\n' "$out" | grep example-feature)" in unknown*) ok "30k git repo with no origin ref ⇒ unknown, no crash" ;; *) no "30k: $out" ;; esac ;; *) no "30k brief missing from output: $out" ;; esac
+
+# 30m: (mutant) with the arm's regex anchor removed, 30h's substring case turns
+# green — proving 30h is what holds the anchor, not a coincidence of fixtures.
+md="$(mktmp)"; cp "$SCRIPT_DIR/brief-pointer.sh" "$md/" 2>/dev/null || true
+sed 's|)?${slug}\\$"|)?${slug}"|' "$RECON" > "$md/reconcile-jobs.sh"
+if ! cmp -s "$RECON" "$md/reconcile-jobs.sh"; then
+  r="$(new_repo)"; rm -f "$r/.supervisor/jobs/in-progress/brief.md"; git_repo "$r"
+  dated_brief "$r" "2026-09-03-widget"
+  merge_pr "$r" 42 "feature/widget-extra" "2026-09-04T10:22:06Z"
+  out_real="$(cd "$r" && bash "$RECON" --porcelain 2>/dev/null)"
+  out_mut="$(cd "$r" && bash "$md/reconcile-jobs.sh" --porcelain 2>/dev/null)"
+  case "$out_real" in unknown*) case "$out_mut" in stranded_merged*) ok "30m (mutant) dropping the \$ anchor lets 'widget' claim 'widget-extra' — the anchor is load-bearing" ;; *) no "30m mutant not discriminated: $out_mut" ;; esac ;; *) no "30m real script matched a superstring: $out_real" ;; esac
+else
+  no "30m mutant sed did not change the file"
+fi
+
+# --- 30n. PR #243 review: an AMBIGUOUS vcs answer must not outrank a definitive
+# done stamp. Two merges share the slug (ambiguous) AND the source requirement is
+# stamped done ⇒ stranded_closed, not unknown. Control: same two merges with an
+# UNSTAMPED requirement ⇒ the ambiguous verdict is still what gets reported.
+r="$(new_repo ".supervisor/requirements/req.md")"; rm -f "$r/.supervisor/jobs/in-progress/brief.md"; git_repo "$r"
+printf '# req\n\n## Status: done\n' > "$r/.supervisor/requirements/req.md"
+printf '# Supervisor Job: x\n\n## Environment\n- **Source requirement:** .supervisor/requirements/req.md\n' > "$r/.supervisor/jobs/in-progress/2026-09-03-example-feature.md"
+merge_pr "$r" 42 "feature/example-feature" "2026-09-04T10:22:06Z"
+merge_pr "$r" 57 "fix/example-feature" "2026-09-08T10:22:06Z"
+out="$(cd "$r" && bash "$RECON" --porcelain 2>/dev/null)"
+case "$out" in stranded_closed*"stamped done"*) ok "30n ambiguous vcs + done-stamped requirement ⇒ stranded_closed (the stamp wins)" ;; *) no "30n ambiguity masked the done stamp: $out" ;; esac
+printf '# req\n' > "$r/.supervisor/requirements/req.md"
+out="$(cd "$r" && bash "$RECON" --porcelain 2>/dev/null)"
+case "$out" in unknown*ambiguous*) ok "30n2 (control) ambiguous vcs + UNSTAMPED requirement ⇒ still reported ambiguous" ;; *) no "30n2 ambiguous verdict lost: $out" ;; esac
+# A CONFIRMED vcs match still outranks the stamp (it carries the PR number).
+r="$(new_repo ".supervisor/requirements/req.md")"; rm -f "$r/.supervisor/jobs/in-progress/brief.md"; git_repo "$r"
+printf '# req\n\n## Status: done\n' > "$r/.supervisor/requirements/req.md"
+printf '# Supervisor Job: x\n\n## Environment\n- **Source requirement:** .supervisor/requirements/req.md\n' > "$r/.supervisor/jobs/in-progress/2026-09-03-example-feature.md"
+merge_pr "$r" 42 "feature/example-feature" "2026-09-04T10:22:06Z"
+out="$(cd "$r" && bash "$RECON" --porcelain 2>/dev/null)"
+case "$out" in stranded_merged*"pull/42"*) ok "30n3 (control) a CONFIRMED vcs match still outranks the stamp — it names the PR" ;; *) no "30n3 confirmed match lost to the stamp: $out" ;; esac
+
+# --- 30p. PR #243 review, finding 5: the base-ref probe is cached in a GLOBAL,
+# which only works when the function is called directly. A `$(vcs_base_ref)`
+# call site would silently discard the cache (subshell) — assert none exists.
+if grep -v "^[[:space:]]*#" "$RECON" | grep -q '\$(vcs_base_ref)'; then
+  no "30p a \$(vcs_base_ref) subshell call site exists — the VCS_BASE_REF cache cannot persist through it"
+else
+  ok "30p no \$(vcs_base_ref) subshell call — callers read the VCS_BASE_REF global"
+fi
+grep -q 'VCS_BASE_REF_PROBED=1' "$RECON" && ok "30p2 the probe is marked done after the first call (a failed probe is cached too)" || no "30p2 probe-once marker missing"
+unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
 
 echo "---------------------------------------------------------------------------"
 echo "test-reconcile-jobs: $pass passed, $fail failed"
