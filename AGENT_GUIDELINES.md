@@ -432,7 +432,7 @@ All validation hooks are centralized in `hooks.json` since v10.0.0. Claude Code 
 
 Most hooks are `type: "command"` — deterministic scripts that cost no model call. As of v15.17.0 only **three** use prompt-based validation (fast haiku model, 30s timeout): the `code-reviewer` `SubagentStop` validator, `Stop`, and `TaskCompleted`. Everything else — the five result-block validators (`validate-{worker,execute,supervisor,qa,plan-review}-result.py`, converted from prompts in v15.17.0), `validate-launch-pad-result.py`, the `PostToolUse[Bash]` worktree observer (`worktree-audit.sh record`, v15.66.0 — replaced the removed `WorktreeCreate`/`WorktreeRemove` hooks), StopFailure, telemetry, webhook, notification, session-resume, OTel labeling, the PR-create drain backstop, and the progress-state hooks — runs as a command. All hooks validate against result schemas defined in `loomwright/docs/RESULT_SCHEMAS.md`.
 
-> **`|| true` convention:** every `type: command` hook string carries `|| true`. That is safe **only** because all of them are exit-0-by-contract emitters/validators that signal via stdout JSON. A future *blocking* gate (one that signals by exiting non-zero) must NOT carry `|| true` — it would be silently neutered.
+> **`|| true` convention:** every `type: command` hook string carries `|| true`. That is safe **only** because all of them are exit-0-by-contract emitters/validators that signal via stdout JSON — in the documented command-hook decision shape (`{}` allow, `{"decision": "block", "reason": …}` block), never the prompt-hook `{"ok": …}` schema, which a command hook prints to no effect. A future *blocking* gate (one that signals by exiting non-zero) must NOT carry `|| true` — it would be silently neutered.
 
 ### Shared Preamble (All Agents)
 

@@ -8,9 +8,14 @@ parsing of the four-field block, robust against the five YAML null spellings
 routinely confuses with the bareword null.
 
 INVARIANT: ALWAYS exits 0. Hook output must never break the agent loop.
-Validation outcome is communicated via stdout JSON only:
-    {"ok": true}                  — passes
-    {"ok": false, "reason": "..."} — fails
+Validation outcome is communicated via stdout JSON only, in the DOCUMENTED
+Stop/SubagentStop decision shape for a `type: command` hook (see
+result_block_parser.emit — the `{"ok": ...}` shape this script used to print
+is a `type: prompt` hook's response schema and is a no-op from a command hook,
+probed 2026-09-21):
+    {}                                      — passes (no decision = allow)
+    {"decision": "block", "reason": "..."}  — fails; the reason is fed back to
+                                              the subagent, which continues
 
 Schema authoritative in docs/RESULT_SCHEMAS.md §"LAUNCH_PAD_RESULT".
 
@@ -42,8 +47,9 @@ ALLOWED_KEYS = {"schema_version", "status", "saved_brief_path", "summary"}
 
 def emit(ok, reason=""):
     """Print decision JSON and exit 0. Single exit point."""
-    out = {"ok": bool(ok)}
+    out = {}
     if not ok:
+        out["decision"] = "block"
         out["reason"] = reason
     sys.stdout.write(json.dumps(out) + "\n")
     sys.exit(0)
@@ -161,7 +167,7 @@ def _last_assistant_text_from_transcript(path):
     """Best-effort extraction of the LAST assistant message's text from a Claude
     Code transcript JSONL. The transcript schema is not formally documented, so
     we defensively pull `text` parts from the last assistant-role entry. Returns
-    "" on any read/parse failure (the caller then emits a clear ok:false)."""
+    "" on any read/parse failure (the caller then emits a clear block with a reason)."""
     last_text = ""
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:

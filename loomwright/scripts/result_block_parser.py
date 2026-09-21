@@ -73,14 +73,37 @@ import sys
 def emit(ok, reason=""):
     """Print the decision JSON and exit 0. SINGLE EXIT POINT for every validator.
 
-    {"ok": true}                   — passes
-    {"ok": false, "reason": "..."} — fails
+    {}                                        — passes (no decision = allow)
+    {"decision": "block", "reason": "..."}    — fails (the subagent is told
+                                                `reason` and continues)
+
+    This is the DOCUMENTED Stop/SubagentStop decision shape for a
+    `type: command` hook (Claude Code hooks reference, "Stop decision
+    control": `decision` — `"block"` prevents Claude from stopping, omit to
+    allow; `reason` — required when blocking). The previous shape,
+    `{"ok": true|false, "reason": ...}`, is the RESPONSE SCHEMA OF A
+    `type: prompt` HOOK — what the haiku model answers — and a command hook
+    that prints it is silently a no-op: probed 2026-09-21 on Claude Code
+    v2.1.278 with a real `loomwright:worker` SubagentStop — the runtime
+    recorded the validator as `hook_success` with `{"ok": false, ...}` on
+    stdout and NO decision, and the subagent stopped; the same probe with
+    `{"decision": "block", ...}` recorded `hook_blocking_error` and fed the
+    reason back as the subagent's next instruction
+    (fixture: scripts/fixtures/subagentstop-decision-shape-probe.json).
+
+    Throughout this module and the validators' comments, the shorthand
+    `ok:true` / `ok:false` still names the VERDICT (pass / fail); the wire
+    shape is the one above.
 
     The exit code is ALWAYS 0: these run as `type: command` hooks under
     `|| true`, and the decision is communicated on stdout, never via status.
+    The runtime bounds a block-and-retry loop at 8 consecutive continuations
+    (`stop_hook_active: true` on every retry's payload); this emitter does
+    not add a second cap.
     """
-    out = {"ok": bool(ok)}
+    out = {}
     if not ok:
+        out["decision"] = "block"
         out["reason"] = reason
     try:
         sys.stdout.write(json.dumps(out) + "\n")
@@ -98,7 +121,7 @@ def run_validator(fn):
     before emit), and `|| true` masks it — the hook silently validates nothing."
     A crash inside the validator is indistinguishable, from the agent loop's
     point of view, from malformed hook plumbing: we cannot validate, so we
-    fail SAFE with ok:true and leave a diagnostic on stderr (visible in hook
+    fail SAFE with a pass (`{}`) and leave a diagnostic on stderr (visible in hook
     logs) rather than inventing a verdict.
     """
     try:
@@ -108,7 +131,7 @@ def run_validator(fn):
     except BaseException as exc:  # deliberate: nothing may escape this frame
         try:
             sys.stderr.write(
-                "result_block_parser: validator crashed, failing safe (ok:true): "
+                "result_block_parser: validator crashed, failing safe (pass, `{}`): "
                 "%s: %s\n" % (type(exc).__name__, exc)
             )
         except BaseException:
