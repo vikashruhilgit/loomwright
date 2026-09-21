@@ -356,7 +356,7 @@ assert_advisory "(d4) dead reference [ADVISORY]" "ADVISORY_DEAD_REFERENCE" \
 # setup-memory.sh's precedence is exactly that hook.
 sum_d5="$(store_sum "$SD")"
 OUT="$(LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="acme/widget" bash "$WRITER" "$AGENT" cross_repo \
-        "the rollout in otherco/othersvc repo is described in PR #146" "$BD1" --repo "$RD" --store "$SD" --confirm < /dev/null 2>&1)"; RC=$?
+        "the rollout in otherhub/otherrepo repo is described in PR #146" "$BD1" --repo "$RD" --store "$SD" --confirm < /dev/null 2>&1)"; RC=$?
 [ "$RC" -eq 0 ] && ok "(d5) cross-repo [ADVISORY] exits 0 — it does not block the write" || no "(d5) cross-repo exited $RC, expected 0 — $OUT"
 grep -qF "ADVISORY_CROSS_REPO" <<< "$OUT" && ok "(d5) cross-repo REPORTS its finding (ADVISORY_CROSS_REPO)" || no "(d5) cross-repo did not report its finding — $OUT"
 [ "$(store_sum "$SD")" != "$sum_d5" ] && ok "(d5) cross-repo WROTE the entry — the foreign citation is warned about, not refused" || no "(d5) cross-repo left the store unchanged, so it blocked after all"
@@ -367,10 +367,10 @@ grep -qF "ADVISORY_CROSS_REPO" <<< "$OUT" && ok "(d5) cross-repo REPORTS its fin
 # The TEXT differs from the case above, deliberately: that case now WRITES (an advisory does not
 # block), so re-submitting the same words would be refused by the DUPLICATE check and this half
 # would be measuring duplicate instead of cross-repo. Same foreign slug, different sentence.
-OUT="$(LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="acme/widget:otherco/othersvc" bash "$WRITER" "$AGENT" cross_repo_allowed \
-        "deployment cadence for the otherco/othersvc repo appears in issue #147 alongside its owners" "$BD1" --repo "$RD" --store "$SD" --confirm < /dev/null 2>&1)"; RC=$?
+OUT="$(LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="acme/widget:otherhub/otherrepo" bash "$WRITER" "$AGENT" cross_repo_allowed \
+        "deployment cadence for the otherhub/otherrepo repo appears in issue #147 alongside its owners" "$BD1" --repo "$RD" --store "$SD" --confirm < /dev/null 2>&1)"; RC=$?
 { [ "$RC" -eq 0 ] && ! grep -qF "ADVISORY_CROSS_REPO" <<< "$OUT"; } \
-  && ok "(d5) the SAME entry draws NO cross-repo finding once 'otherco/othersvc' is in the allowlist — the check reads the list, it does not match a hardcoded token" \
+  && ok "(d5) the SAME entry draws NO cross-repo finding once 'otherhub/otherrepo' is in the allowlist — the check reads the list, it does not match a hardcoded token" \
   || no "(d5) the entry was still reported with the slug allowlisted (rc=$RC) — $OUT"
 
 # ---------------------------------------------------------------------------

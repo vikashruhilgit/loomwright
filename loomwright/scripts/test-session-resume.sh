@@ -1155,6 +1155,102 @@ test_orphans_header_mutant() {
 }
 test_orphans_header_mutant
 
+# ============================================================================
+# The MECHANICAL half (v15.84.0) — groups (z1)–(z4). A brief whose merge the
+# disk PROVES is moved to done/ by the hook itself (`--repair-merged`), on both
+# arms, and reported as `**Repaired brief:**` / a "### Repaired briefs" section.
+# A brief the disk can only stamp stranded_closed keeps the advisory path above
+# byte-for-byte (groups (o)–(v) are the regression fence for that).
+echo
+echo "== (z1) startup: a merge commit on origin/main naming the brief's slug ⇒ moved + reported =="
+# make_merged_fixture <repo> — a dated, pointer-less brief + a --no-ff merge commit
+# with GitHub's subject shape on refs/remotes/origin/main, dated after the brief.
+make_merged_fixture() {
+  local r="$1"
+  mkdir -p "$r/.supervisor/jobs/in-progress" "$r/.supervisor/jobs/done"
+  printf '# Supervisor Job: m\n\n## Environment\n' > "$r/.supervisor/jobs/in-progress/2026-09-03-example-feature.md"
+  ( cd "$r" && git remote add origin git@github.com:o/r.git \
+    && git checkout -q -b feature/example-feature master 2>/dev/null || git checkout -q -b feature/example-feature main ) >/dev/null 2>&1
+  ( cd "$r" && git commit -q --allow-empty -m w && git checkout -q - \
+    && GIT_AUTHOR_DATE=2026-09-04T10:00:00Z GIT_COMMITTER_DATE=2026-09-04T10:00:00Z \
+       git merge -q --no-ff -m "Merge pull request #42 from o/feature/example-feature" feature/example-feature \
+    && git update-ref refs/remotes/origin/main HEAD ) >/dev/null 2>&1
+}
+test_repaired_on_startup() {
+  local r ctx
+  r="$(new_repo)"; make_plugin_active "$r"; make_merged_fixture "$r"
+  ctx="$(run_hook_ctx "$r" startup)"
+  [ "$(lastrc)" -eq 0 ] && ok "(z1) exits 0" || no "(z1) rc=$(lastrc)"
+  [ -f "$r/.supervisor/jobs/done/2026-09-03-example-feature.md" ] && [ ! -f "$r/.supervisor/jobs/in-progress/2026-09-03-example-feature.md" ] \
+    && ok "(z1) the brief was MOVED to done/ by the hook" || no "(z1) brief not moved (done: $(ls "$r/.supervisor/jobs/done" | tr '\n' ' '))"
+  grep -qF -- "**Repaired brief:** .supervisor/jobs/in-progress/2026-09-03-example-feature.md" <<< "$ctx" \
+    && ok "(z1) additionalContext reports the repair by the brief's original path" || no "(z1) repaired line missing: $ctx"
+  grep -qF -- "pull/42" <<< "$ctx" && ok "(z1) and carries the PR URL from the merge evidence" || no "(z1) PR URL missing: $ctx"
+  grep -qF -- "$STRANDED_MARK" <<< "$ctx" && no "(z1) a repaired brief was ALSO reported stranded" || ok "(z1) no stranded line for a repaired brief"
+  grep -qF -- "Not resumable" <<< "$ctx" && no "(z1) the --repair trailer appeared with nothing left to repair" || ok "(z1) no --repair trailer when nothing is left stranded"
+  [ -f "$r/$STRANDED_MARKER" ] && no "(z1) a repaired-only emission burned the 24h nudge window" || ok "(z1) repaired-only emission does not stamp the debounce marker"
+  # Idempotent: a second startup with nothing left in in-progress/ is silent.
+  ctx="$(run_hook_ctx "$r" startup)"
+  [ -z "$ctx" ] && ok "(z1) second startup is byte-for-byte silent (nothing left to move)" || no "(z1) second startup not silent: $ctx"
+}
+test_repaired_on_startup
+
+echo "== (z2) startup: the repair is NOT debounced — a fresh marker suppresses only the advisory =="
+test_repair_ignores_debounce() {
+  local r ctx
+  r="$(new_repo)"; make_plugin_active "$r"; make_merged_fixture "$r"; make_stranded_fixture "$r"
+  : > "$r/$STRANDED_MARKER"   # fresh marker: the stranded_closed advisory is inside its window
+  ctx="$(run_hook_ctx "$r" startup)"
+  [ -f "$r/.supervisor/jobs/done/2026-09-03-example-feature.md" ] \
+    && ok "(z2) merged brief moved despite the fresh nudge marker" || no "(z2) debounce blocked the mechanical move"
+  [ -f "$r/.supervisor/jobs/in-progress/b.md" ] && ok "(z2) stranded_closed brief left in place (advisory-only state)" || no "(z2) --repair-merged moved a stranded_closed brief"
+  grep -qF -- "**Repaired brief:**" <<< "$ctx" && ok "(z2) repaired line reported" || no "(z2) repaired line missing: $ctx"
+  grep -qF -- "$STRANDED_MARK" <<< "$ctx" && no "(z2) debounced advisory leaked" || ok "(z2) the debounced stranded advisory stayed suppressed"
+}
+test_repair_ignores_debounce
+
+echo "== (z3) resume: the Section-1 'Repaired briefs' header, and the stranded header still for stranded_closed =="
+test_repaired_on_resume() {
+  local r ctx
+  r="$(new_repo)"; make_plugin_active "$r"; make_merged_fixture "$r"; make_stranded_fixture "$r"
+  ctx="$(run_hook_ctx "$r" resume)"
+  grep -qF -- "### Repaired briefs — lifecycle move completed mechanically at SessionStart" <<< "$ctx" \
+    && ok "(z3) resume emits the Repaired-briefs header" || no "(z3) header missing: $(head -c 400 <<< "$ctx")"
+  grep -qF -- "2026-09-03-example-feature.md → .supervisor/jobs/done/" <<< "$ctx" && ok "(z3) names the moved brief" || no "(z3) moved brief not named"
+  grep -qF -- "$SECTION1_STRANDED_HDR" <<< "$ctx" && ok "(z3) stranded_closed still gets the advisory header on the same resume" || no "(z3) stranded header lost: $ctx"
+  [ -f "$r/.supervisor/jobs/done/2026-09-03-example-feature.md" ] && ok "(z3) moved on disk" || no "(z3) not moved on disk"
+}
+test_repaired_on_resume
+
+echo "== (z5) LOOMWRIGHT_STRANDED_NUDGE=0 silences the advisory only — the mechanical repair still runs on startup =="
+test_optout_still_repairs() {
+  local r ctx
+  r="$(new_repo)"; make_plugin_active "$r"; make_merged_fixture "$r"; make_stranded_fixture "$r"
+  ctx="$( cd "$r" && printf '{"source":"startup"}' | LOOMWRIGHT_STRANDED_NUDGE=0 bash "$HOOK" | jq -r '.hookSpecificOutput.additionalContext // ""' 2>/dev/null )"
+  [ -f "$r/.supervisor/jobs/done/2026-09-03-example-feature.md" ] \
+    && ok "(z5) merged brief moved with the nudge opted out" || no "(z5) the opt-out suppressed the mechanical move"
+  grep -qF -- "**Repaired brief:**" <<< "$ctx" && ok "(z5) repaired line still reported" || no "(z5) repaired line missing under opt-out: $ctx"
+  grep -qF -- "$STRANDED_MARK" <<< "$ctx" && no "(z5) the advisory leaked past the opt-out" || ok "(z5) the stranded_closed advisory stayed silenced"
+  [ -f "$r/.supervisor/jobs/in-progress/b.md" ] && ok "(z5) stranded_closed still not moved" || no "(z5) opt-out path moved a stranded_closed brief"
+}
+test_optout_still_repairs
+
+echo "== (z4) mutation: --repair-merged dropped from the hook ⇒ (z1) red, (o) still green =="
+test_repair_mutation() {
+  local md r ctx
+  md="$(mktmp)"; copy_hook_full "$md" 2>/dev/null || cp "$HOOK" "$md/session-resume.sh"
+  cp "$SCRIPT_DIR/reconcile-jobs.sh" "$SCRIPT_DIR/brief-pointer.sh" "$md/" 2>/dev/null || true
+  sed 's/ --repair-merged --porcelain/ --porcelain/g' "$HOOK" > "$md/session-resume.sh"
+  if cmp -s "$HOOK" "$md/session-resume.sh"; then no "(z4) mutant sed changed nothing"; return; fi
+  r="$(new_repo)"; make_plugin_active "$r"; make_merged_fixture "$r"
+  ctx="$( cd "$r" && printf '{"source":"startup"}' | bash "$md/session-resume.sh" | jq -r '.hookSpecificOutput.additionalContext // ""' 2>/dev/null )"
+  [ -f "$r/.supervisor/jobs/in-progress/2026-09-03-example-feature.md" ] \
+    && ok "(z4) mutant (report-only) leaves the merged brief in in-progress/ — the flag is what moves it" \
+    || no "(z4) mutant moved the brief; the assertion is vacuous"
+  grep -qF -- "$STRANDED_MARK" <<< "$ctx" && ok "(z4) mutant still REPORTS it stranded (the classification arm is intact)" || no "(z4) mutant lost the stranded line too: $ctx"
+}
+test_repair_mutation
+
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
 exit 0

@@ -94,6 +94,27 @@
 #                    for this brief's pointer token: the engine verified the PR
 #                    merged against the forge; this reconciler stayed offline.
 #                    REPAIRABLE, and the only repair when --evidence is given.
+#                    OR (vcs) the LOCAL remote-tracking base ref carries exactly
+#                    one merge commit `Merge pull request #N from <owner>/…/<slug>`
+#                    dated on/after the brief, where <slug> is the brief's
+#                    filename minus its `YYYY-MM-DD-` date prefix, and #N is not
+#                    already claimed by a `done/` brief's `- **PR:** … /pull/N`
+#                    line. This is the arm that covers a plain `/supervisor` or
+#                    `/autonomous` run — the engine never held evidence for
+#                    those, so before it they stranded permanently (measured
+#                    2026-09-21: three briefs from PRs #177/#181/#185, merged
+#                    2026-09-04..05, still in in-progress/ 16 days later).
+#                    Reads git's on-disk refs only — NO fetch, NO forge call —
+#                    so it sees a merge exactly when the operator has pulled.
+#                    Off outside a git repo, when the base ref is missing, when
+#                    the filename carries no date, when the slug matches zero or
+#                    more than one merge, or when two in-progress briefs share
+#                    the slug (reported `unknown … ambiguous`). Attribution is by
+#                    NAME, so the `## Outcome` records the commit SHA, subject
+#                    and rule for a reader to falsify. REPAIRABLE. Measured
+#                    recall on this repo's own done/ corpus: 23 of the 40 most
+#                    recent briefs match their merge subject exactly; the rest
+#                    stay `unknown`, never guessed.
 #   stranded_closed  The source requirement is already stamped done, but the
 #                    brief is still in `in-progress/`. That combination can only
 #                    mean a partially-executed completion tail (step 2.5 ran,
@@ -112,6 +133,10 @@
 #   reconcile-jobs.sh                 human-readable report (read-only)
 #   reconcile-jobs.sh --porcelain     STATE<TAB>BRIEF<TAB>EVIDENCE, one per line
 #   reconcile-jobs.sh --repair        repair every repairable brief, then report
+#   reconcile-jobs.sh --repair-merged repair ONLY `stranded_merged` briefs (a merge
+#                                     proven on disk); `stranded_closed` is reported
+#                                     and left for --repair. This is the arm the
+#                                     SessionStart hook runs mechanically.
 #   reconcile-jobs.sh --repair --evidence <requirement_path>=<pr_url> [--evidence …]
 #                                     engine-supplied evidence (repeatable, off by
 #                                     default); repair ONLY the matching brief(s)
@@ -139,6 +164,7 @@ evidence_index_for() {
 
 PORCELAIN=0
 REPAIR=0
+REPAIR_MERGED_ONLY=0
 # EVIDENCE_MODE flips to 1 the moment ANY --evidence flag is PARSED — before its
 # value is validated. Scoping (see the main loop) keys on this, not on whether a
 # value was accepted: a supplied-but-rejected evidence list must repair NOTHING,
@@ -154,6 +180,7 @@ while [ "$#" -gt 0 ]; do
   case "$arg" in
     --porcelain) PORCELAIN=1 ;;
     --repair)    REPAIR=1 ;;
+    --repair-merged) REPAIR=1; REPAIR_MERGED_ONLY=1 ;;
     --evidence)
       EVIDENCE_MODE=1
       shift
@@ -303,6 +330,138 @@ automate_pr_for_requirement() {
 }
 
 
+# vcs_merge_for_brief <brief> — echo "<sha>\t<pr_number>\t<subject>" for the ONE
+# merge commit on the local base ref that names this brief's slug, or return 1
+# (no evidence). Return 2 with "<count>" on stdout when the evidence is
+# ambiguous (several merges, or several in-progress briefs share the slug) —
+# the caller reports that as `unknown`, never as a repair.
+#
+# Every failure mode is a silent `return 1`: not a git repo, no remote-tracking
+# base ref, filename without a date prefix, a slug with characters outside
+# [a-z0-9-] (it is interpolated into an ERE — refuse rather than escape), git
+# absent. Nothing here fetches; the ref is whatever the last pull left on disk.
+# vcs_base_ref — resolve the remote-tracking base ref ONCE into the global
+# VCS_BASE_REF and return 0; return 1 when there is none. Callers invoke it
+# directly and read the global — NOT `$(vcs_base_ref)`: a command substitution
+# runs in a subshell, so an assignment made there never reaches the caller and
+# the probes re-run for every brief (PR #243 review, finding 5).
+#
+# RECALL LIMIT, stated: the ref is origin/HEAD when the clone recorded it, else
+# origin/main, else origin/development. A repo whose PRs merge into a branch
+# other than the remote's default (e.g. default `main`, PRs into
+# `development`) is not seen by this arm — those briefs stay `unknown`.
+# Squash merges are seen only if the squash subject keeps the
+# `Merge pull request #N from …` shape (GitHub's default squash subject does
+# NOT), which is the same limit.
+VCS_BASE_REF=""
+VCS_BASE_REF_PROBED=0
+vcs_base_ref() {
+  if [ "$VCS_BASE_REF_PROBED" -eq 1 ]; then [ -n "$VCS_BASE_REF" ]; return; fi
+  VCS_BASE_REF_PROBED=1
+  command -v git >/dev/null 2>&1 || return 1
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
+  local ref
+  # origin/HEAD names the remote's default branch when the clone recorded it;
+  # otherwise fall back through the two bases this plugin's projects use.
+  # NOTE: on an unset origin/HEAD, `rev-parse --abbrev-ref` exits 128 AND
+  # echoes the literal `origin/HEAD` to stdout — so the name it returns is
+  # verified before it is trusted, or the fallback below would never run.
+  ref="$(git rev-parse --abbrev-ref origin/HEAD 2>/dev/null || true)"
+  case "$ref" in
+    origin/HEAD|"") ref="" ;;
+    origin/?*) git rev-parse -q --verify "$ref" >/dev/null 2>&1 || ref="" ;;
+    *) ref="" ;;
+  esac
+  if [ -z "$ref" ]; then
+    for ref in origin/main origin/development; do
+      git rev-parse -q --verify "$ref" >/dev/null 2>&1 && break
+      ref=""
+    done
+  fi
+  [ -n "$ref" ] || return 1
+  git rev-parse -q --verify "$ref" >/dev/null 2>&1 || return 1
+  VCS_BASE_REF="$ref"
+  return 0
+}
+
+vcs_merge_for_brief() {
+  local brief="$1" base slug since ref re line sha subj n=0 hit="" others=0 f
+  base="$(basename "$brief" .md)"
+  case "$base" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-?*) since="${base:0:10}"; slug="${base:11}" ;;
+    *) return 1 ;;
+  esac
+  case "$slug" in *[!a-z0-9-]*) return 1 ;; esac
+  vcs_base_ref || return 1
+  ref="$VCS_BASE_REF"
+
+  # Two in-progress briefs with the same slug cannot both own one merge.
+  for f in "$JOBS_IN"/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-"$slug".md; do
+    [ -f "$f" ] && others=$((others+1))
+  done
+  if [ "$others" -gt 1 ]; then printf '%s' "$others"; return 2; fi
+
+  re="^Merge pull request #([0-9]+) from [^/[:space:]]+/([^[:space:]]+/)?${slug}\$"
+  # Read the whole log first, then match: no `git | grep -q` (SIGPIPE under
+  # pipefail). --since is the committer-date floor: a merge older than the brief
+  # cannot be this brief's.
+  while IFS=$'\t' read -r sha subj; do
+    [ -n "${sha:-}" ] || continue
+    [[ "$subj" =~ $re ]] || continue
+    # A PR number a done/ brief already records as its own is not ours.
+    if grep -rqsE -- "^- \*\*PR:\*\* .*/pull/${BASH_REMATCH[1]}([^0-9]|\$)" "$JOBS_DONE" 2>/dev/null; then
+      continue
+    fi
+    n=$((n+1)); hit="${sha}"$'\t'"${BASH_REMATCH[1]}"$'\t'"${subj}"
+  done <<EOF
+$(git log --merges --first-parent --since="$since" --format='%H%x09%s' "$ref" 2>/dev/null)
+EOF
+  if [ "$n" -gt 1 ]; then printf '%s' "$n"; return 2; fi
+  [ "$n" -eq 1 ] || return 1
+  printf '%s' "$hit"
+  return 0
+}
+
+# vcs_pr_url <pr_number> — https URL for the PR when origin is a GitHub-shaped
+# remote (ssh or https); empty otherwise. Best-effort: repair() falls back to
+# "not determinable offline" for the `- **PR:**` line when this is empty, and the
+# evidence text still carries `#N` and the commit SHA either way.
+vcs_pr_url() {
+  local n="$1" url
+  url="$(git remote get-url origin 2>/dev/null || true)"
+  case "$url" in
+    git@github.com:*) url="https://github.com/${url#git@github.com:}" ;;
+    ssh://git@github.com/*) url="https://github.com/${url#ssh://git@github.com/}" ;;
+    https://github.com/*) ;;
+    *) return 0 ;;
+  esac
+  url="${url%.git}"; url="${url%/}"
+  printf '%s/pull/%s' "$url" "$n"
+}
+
+# vcs_evidence_line <brief> — echo "stranded_merged<TAB>evidence" or
+# "unknown<TAB>ambiguous…" on stdout; return 1 when the arm has nothing to say.
+vcs_evidence_line() {
+  local brief="$1" out rc sha n subj url ref
+  out="$(vcs_merge_for_brief "$brief")"; rc=$?
+  case "$rc" in
+    2) printf 'unknown\tambiguous: %s candidates share this brief'"'"'s branch slug on the base ref or in in-progress/ — not repaired\n' "$out"; return 0 ;;
+    0) ;;
+    *) return 1 ;;
+  esac
+  IFS=$'\t' read -r sha n subj <<< "$out"
+  vcs_base_ref || return 1
+  ref="$VCS_BASE_REF"
+  url="$(vcs_pr_url "$n")"
+  # One parenthesised URL and only one, LAST — repair() extracts `- **PR:**`
+  # from the last `(http…)` group. Keep the SHA and subject in plain brackets.
+  printf 'stranded_merged\tvcs merge commit %s on %s — subject [%s] — attributed by branch-slug match, committed on/after the brief date; git refs on disk only, no fetch, no forge call' \
+    "${sha:0:7}" "$ref" "$subj"
+  if [ -n "$url" ]; then printf ' (%s)\n' "$url"; else printf ' — PR #%s\n' "$n"; fi
+  return 0
+}
+
+
 # classify <brief> -> "STATE<TAB>EVIDENCE" on stdout
 #
 # The engine-evidence arm comes FIRST and is discriminated by its evidence
@@ -337,15 +496,34 @@ classify() {
       printf 'stranded_merged\tautomate run file records %s merged (%s)\n' "$req" "$pr"
       return 0
     fi
+    # The vcs arm sits BETWEEN the engine's run file (which names the PR from
+    # the forge) and the done stamp (which cannot name a PR at all): it is the
+    # strongest offline evidence that still yields a PR number. ONLY a
+    # confirmed match short-circuits. An AMBIGUOUS vcs answer yields no PR
+    # number, so it must not outrank a definitive done stamp — PR #243 review:
+    # a done-stamped requirement whose slug collides with two merges was
+    # reported `unknown` instead of `stranded_closed`. The ambiguous line is
+    # held and emitted only when the stamp cannot settle it either.
+    local vcs_line=""
+    if vcs_line="$(vcs_evidence_line "$brief")"; then
+      case "$vcs_line" in stranded_merged*) printf '%s\n' "$vcs_line"; return 0 ;; esac
+    else
+      vcs_line=""
+    fi
     if is_done "$req"; then
       printf 'stranded_closed\tsource requirement %s is stamped %s\n' \
         "$req" "$(requirement_status "$req")"
       return 0
     fi
+    if [ -n "$vcs_line" ]; then printf '%s\n' "$vcs_line"; return 0; fi
     printf 'unknown\tsource requirement %s carries no done stamp and no merged run file\n' "$req"
     return 0
   fi
 
+  # No resolvable requirement pointer: the vcs arm needs none — it keys on the
+  # brief's own filename — so it still gets to answer before the pointer arms
+  # explain why they could not.
+  if vcs_evidence_line "$brief"; then return 0; fi
   if [ -n "$raw_req" ]; then
     printf 'unknown\tsource requirement pointer %s did not resolve under %s/\n' "$raw_req" "$REQ_ROOT"
     return 0
@@ -482,7 +660,9 @@ for brief in "${briefs[@]}"; do
   # repaired; everything else is reported exactly as before and left in place.
   repair_ok=0
   if [ "$REPAIR" -eq 1 ] && [ "$state" != "unknown" ]; then
-    if [ "$EVIDENCE_MODE" -eq 1 ]; then
+    if [ "$REPAIR_MERGED_ONLY" -eq 1 ] && [ "$state" != "stranded_merged" ]; then
+      : # --repair-merged: a done stamp alone is reported, never moved here
+    elif [ "$EVIDENCE_MODE" -eq 1 ]; then
       case "$evidence" in
         "automate engine supplied "*) repair_ok=1 ;;
       esac
@@ -517,6 +697,8 @@ if [ "$PORCELAIN" -eq 0 ]; then
   echo "reconcile-jobs: ${n_repaired} repaired, ${n_repairable} repairable, ${n_unknown} unknown."
   [ "$n_repairable" -gt 0 ] && [ "$REPAIR" -eq 0 ] && \
     echo "  Run with --repair to finish the lifecycle move for the repairable ones."
+  [ "$n_repairable" -gt 0 ] && [ "$REPAIR_MERGED_ONLY" -eq 1 ] && \
+    echo "  --repair-merged left the stranded_closed ones in place; run --repair to move those too."
   [ "$n_unknown" -gt 0 ] && \
     echo "  'unknown' means UNVERIFIED offline, not stale — check those by hand before acting."
 fi
