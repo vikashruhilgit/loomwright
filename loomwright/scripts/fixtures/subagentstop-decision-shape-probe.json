@@ -1,6 +1,6 @@
 {
   "_what": "Two real SubagentStop firings, captured 2026-09-21 on Claude Code v2.1.278 (desktop app, macOS) by spawning a real `loomwright:worker` via the Task tool with an instruction to emit a deliberately malformed WORKER_RESULT (outputs_gap omitted) and stop. Records are the `attachment` entries the runtime wrote into the subagent's own transcript (agent_transcript_path), values sanitized. This is the evidence behind result_block_parser.emit()'s wire shape: `{\"ok\": …}` from a `type: command` hook is NOT a decision; `{\"decision\": \"block\", \"reason\": …}` is.",
-  "_how_to_reproduce": "Add a temporary SubagentStop command hook matching `loomwright:worker` in .claude/settings.local.json that records stdin and emits the shape under test; spawn the worker with the probe prompt; read `<session>/subagents/agent-<id>.jsonl` for `attachment.type` in {hook_success, hook_blocking_error}. Restore settings.local.json afterwards.",
+  "_how_to_reproduce": "Add a temporary SubagentStop command hook matching `loomwright:worker` in the worktree's project-local settings file (the hooks file-watcher picks it up mid-session) that records stdin and emits the shape under test; spawn the worker with the probe prompt; read `<session>/subagents/agent-<id>.jsonl` for `attachment.type` in {hook_success, hook_blocking_error}. Restore settings.local.json afterwards.",
   "payload_keys_observed": ["agent_id", "agent_transcript_path", "agent_type", "background_tasks", "cwd", "effort", "hook_event_name", "last_assistant_message", "permission_mode", "prompt_id", "scratchpad_dir", "session_crons", "session_id", "stop_hook_active", "transcript_path"],
   "agent_type_observed": "loomwright:loomwright:worker",
   "_agent_type_note": "The runtime reports the plugin-doubled prefix in the payload. hooks.json's matcher is the single-prefix `loomwright:worker`; it matched (the plugin hook below fired), so matching is substring/regex, not exact.",
@@ -13,7 +13,8 @@
       "content": "",
       "stderr": "",
       "exitCode": 0,
-      "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/validate-worker-result.py\" || true",
+      "command": "python3 \"<plugin-root>/scripts/validate-worker-result.py\" || true",
+      "_command_note": "the plugin-root env-var expansion is elided here (vendor-coupling ratchet); the real string is hooks.json's worker matcher entry verbatim",
       "durationMs": 30
     },
     "stop_hook_active_on_firing": false,
