@@ -17,7 +17,7 @@ Protocol authority for `/setup` (see `${CLAUDE_PLUGIN_ROOT}/commands/setup.md` f
 
 ## When NOT to Use
 
-- Telemetry consent — `/telemetry` owns `.supervisor/telemetry-consent.json`; `/setup telemetry` only delegates. See `telemetry/`.
+- Telemetry consent — `/telemetry` owns the user-scope `~/.claude/loomwright/egress.json` entry for this repo's slug; `/setup telemetry` only delegates. See `telemetry/`.
 - Per-run observability *analysis* — `/insights` reads logs; this skill only wires up emission backends.
 - Anything that emits spans from the plugin itself. **The plugin emits NO spans** — Claude Code's native OTel telemetry is the only emitter; this skill configures destinations.
 
@@ -42,7 +42,7 @@ Every module implements five phases, in order, every invocation:
 | Module | Depth (v1) | check probes | apply writes |
 |---|---|---|---|
 | `observability` | FULL init / status / remove | `~/.claude/settings.json` env block; `~/.claude/loomwright/observability/` copy; `docker inspect` health; current-repo `<project>/.claude/settings.local.json` label | asset copy + `.env` + `docker compose` + settings merge + per-project label (init-tail + remove `del`, see Pattern 7) |
-| `telemetry` | delegate | `.supervisor/telemetry-consent.json` | nothing — `/telemetry` owns it |
+| `telemetry` | delegate | `~/.claude/loomwright/egress.json` (user scope) | nothing — `/telemetry` owns it |
 | `notifications` | status + guidance | none (always-on hooks) | nothing |
 | `webhook` | status + guidance | `LOOMWRIGHT_WEBHOOK_URL` set? | nothing (guidance only) |
 | `beads` | status + guidance | `command -v bd`; `.beads/` dir | nothing (guidance only) |
@@ -265,7 +265,7 @@ The `remove` subflow best-effort strips the CURRENT repo's label (`jq 'del(.env.
 
 ## Related Skills
 
-- `telemetry/` — the OTHER telemetry (GitHub-issues run summaries); `/setup telemetry` delegates there. Disjoint write paths: this skill never touches `.supervisor/telemetry-consent.json`.
+- `telemetry/` — the OTHER telemetry (GitHub-issues run summaries); `/setup telemetry` delegates there. Disjoint write paths: this skill never touches the user-scope `~/.claude/loomwright/egress.json` telemetry entry.
 - `docker/` — container patterns behind the compose stack (healthchecks, pinned images).
 - `error-handling/` — the fail-closed abort pattern used by the merge recipe.
 - `quality-checklist/` — gates for reviewing changes to this skill or the command.
