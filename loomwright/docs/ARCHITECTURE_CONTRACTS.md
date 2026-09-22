@@ -615,6 +615,70 @@ Default model routing for plugin-invoked **async analysis** spawns — backward-
 
 ---
 
+## Token ceiling
+
+(red-team-hardening/06.) An opt-in, fail-CLOSED spend ceiling for `/automate`, `/autonomous`, and `/supervisor` — sibling capability to Cost Profiles above (Cost Profiles changes WHICH model a role runs on; Token ceiling bounds HOW MUCH is spent before the run parks). Motivated by a real incident: a single `/automate` item's Launch Pad + Supervisor + N workers + reviewers + rubric + up to 5 drain rounds tripped the Claude subscription weekly cap (2026-09-15, memory `claude-review-red-has-three-distinct-causes`).
+
+### Ledger reader — `scripts/read-token-ledger.sh`
+
+```
+read-token-ledger.sh --session <session_id> [--root <checkout>]
+read-token-ledger.sh --run-id  <automate_run_id | run-file path> [--root <checkout>]
+```
+
+Sums `token_ledger` JSONL events (`emit-token-ledger.sh`'s SubagentStop emissions, `.supervisor/logs/<session_id>.jsonl`) and prints exactly one line:
+
+```
+INPUT=<n> OUTPUT=<n> CACHE_READ=<n> CACHE_CREATE=<n> TOTAL=<n> EVENTS=<n> [LEDGER_UNREADABLE=1]
+```
+
+- **Fail-safe, always exit 0.** A missing/unreadable session log, jq absence, or a run file naming zero sessions all print all-zero sums plus `LEDGER_UNREADABLE=1` — never a hard error, never a crash.
+- **`--run-id`** resolves the SET of session ids from the run file's `## Progress` `session_id <id> (<item>)` lines (`automate-loop/SKILL.md` §6 step 2) and sums the union. A session named but with no log file on disk contributes 0 WITHOUT flagging `LEDGER_UNREADABLE` (partial-sum, not a hard failure) — see the honest limits below.
+- **Malformed / non-`token_ledger` lines are silently skipped**, never counted, never a crash.
+
+**Proxy-line honest limit (do not "fix" by inventing a token count):** a `token_ledger` line written when the SubagentStop payload carried no real usage fields is `proxy: true` (transcript-byte count, no `input_tokens`/etc. — see `emit-token-ledger.sh`'s `usage_present()`). The reader counts a proxy line in `EVENTS` but its missing usage fields contribute exactly 0 to `INPUT`/`OUTPUT`/`CACHE_READ`/`CACHE_CREATE`/`TOTAL` — this means "no real usage was ever recorded for that firing", NOT "0 tokens were spent". **There is no dollar or token estimate derived from transcript bytes anywhere in this feature — the plugin has no price table and must not invent one** (Non-goal, per the source requirement).
+
+**Scope honest limit:** the ledger counts only what a SubagentStop hook actually saw. It does **not** include the main thread's own tokens, and it does **not** include any CI-side (`claude-review` GitHub Action) spend.
+
+### Ceiling check — `automate-helpers.sh ceiling-check`
+
+`ceiling-check <runfile> <max_tokens> [--root <checkout>]` is the `/automate`-specific PICK-time consumer: it shells out to `read-token-ledger.sh --run-id <runfile>`, compares TOTAL against `<max_tokens>`, and always exits 0 with one of:
+
+```
+OK total=<n> max=<n>
+PARK: token_ceiling total=<n> max=<n>
+PARK: ledger_unreadable
+```
+
+`/autonomous` EVALUATE and `/supervisor`'s Phase 3 per-subtask loop call `read-token-ledger.sh --session <session_id>` directly (their own single session, not a multi-session run file) and compare inline — they do not go through `ceiling-check`, which is `automate-helpers.sh`-specific.
+
+### `--max-tokens N` — three enforcement points
+
+| Entry point | Parsed at | Checked at | Breach outcome |
+|---|---|---|---|
+| `/automate --max-tokens N` | start; PERSISTED in `## Run Config` (`max_tokens: N`) — unlike `--cheap`/`--notify`, so a bare `--resume` still enforces it | PICK, before RECONCILE picks a new item (`automate-loop/SKILL.md` §6 step 1) | `## Status: paused`, `pause_reason: token_ceiling` |
+| `/autonomous --max-tokens N` | INIT; persisted into `state.json` | EVALUATE, before each iteration (after the chained review-and-heal step, before Signal 1/2) | `status: aborted`, `status_reason: "token_ceiling_reached"` |
+| `/supervisor --max-tokens N` | Phase 0 INIT; recorded as a Phase Flag | Sequential Path's per-subtask loop, before spawning each subtask's worker (Parallel Path's Execute Manager poll loop is NOT yet wired — honest limit, not yet extended to that path) | `status: aborted`, `status_reason: "token_ceiling_reached"` |
+
+**Forwarding chain:** `/automate` → `/autonomous` (RUN step) → `/supervisor` (EXECUTE step 1), the same three-hop chain `--cheap` already uses, now carrying a 4th forwarded flag. Absent everywhere ⇒ byte-identical behavior (fully opt-in — no ceiling check, no `## Run Config`/`state.json` field written).
+
+### Run lock — `scripts/run-lock.sh`
+
+```
+run-lock.sh acquire --owner <label> [--session-id <id>] [--root <checkout>] [--force-unlock]
+run-lock.sh release --owner <label> | --session-id <id> [--root <checkout>] [--force-unlock]
+run-lock.sh status  [--root <checkout>]
+```
+
+Makes single-run-per-repo **structural**, not merely documented (`automate-loop/SKILL.md` §11 used to read "assumed constraint, not enforced" — no longer). Lock is `.supervisor/run.lock` (a directory — `mkdir` atomicity, no `flock` dependency), with a `meta` TSV file (`pid`, `owner`, `session_id`, `ts` — NOT JSON, matching `dispatch-pr-review.sh`'s `write_lock_meta` convention). Reclaim requires BOTH the recorded pid dead AND age ≥ 1800s (mirrors `dispatch-pr-review.sh`'s `acquire_lock` TTL contract exactly — a dead pid alone, or a fresh lock alone, both refuse).
+
+- **Held lock ⇒ fail CLOSED.** `acquire` on a held, non-reclaimable lock prints `run_lock_held owner=<label> pid=<pid> age=<s>` and exits non-zero — the caller PARKS, never proceeds silently.
+- **Acquired at:** `/automate` PICK (`automate:<run_id>`), `/supervisor` Phase 0 INIT (`supervisor:<session_id>`), `/autonomous` INIT (`autonomous:<session_id>`). **Released at:** the corresponding completion tail / item-completion / abort exit.
+- **`--force-unlock`** is a human-only escape hatch — breaks the lock unconditionally and prints what it broke. `session-resume.sh` surfaces a held lock under a `### Stale run lock` heading so a human can decide whether to break it. `close-stranded-run.sh` releases a lock whose recorded `session_id` equals the SessionEnd's ending session (crash-recovery — a stranded session's lock does not wait out the full 1800s TTL when the emitter can positively identify it).
+- **Honest limit (Non-goal, explicit):** this lock protects only entry points that actually RUN `run-lock.sh` — `/automate`, `/autonomous`, `/supervisor`. It does **not** protect against an IDE-hosted agent, or any other process, that edits the checkout without going through one of those entry points.
+
+---
+
 ## Color Legend (Status Line)
 
 > **Generated — do not hand-edit.** The table below is emitted by
