@@ -1314,11 +1314,47 @@ back to `.supervisor/twin/ground-truth.json` when the brief has no such section)
 **Authoring convention (trust boundary).** A **machine-authored** brief (Launch Pad, especially under
 `/autonomous`) MUST emit `corpus-task:` bullets ONLY — never `cmd:`/bare shell (`agents/launch-pad.md`
 Phase 5; `skills/supervisor-readiness/SKILL.md` §"`## Executable Acceptance`"). `cmd:` bullets are
-reserved for human authorship. Plan Reviewer **Criterion 14** (`agents/plan-reviewer.md`) surfaces any
-`cmd:`/bare bullet that appears in a brief as a LOW `executable_acceptance` issue (advisory today;
-escalates at M3). On the unattended/`--non-interactive` path Supervisor passes `run-ground-truth.sh
---no-cmd`, so a `cmd:` bullet there is skipped (`unverified`, reason `cmd_disabled`) and never runs.
-See `docs/SPIKES/SYSTEM_TWIN_ROADMAP.md §7`.
+reserved for human authorship. On the unattended/`--non-interactive` path Supervisor passes
+`run-ground-truth.sh --no-cmd`, so a `cmd:` bullet there is skipped (`unverified`, reason
+`cmd_disabled`) and never runs regardless of anything below — `--no-cmd` always wins.
+
+**Content-keyed stamp gate (red-team-hardening item 05, "cmd: valve by provenance" — supersedes the
+prior M3-forward-note framing; this is now the shipped behavior, not a future milestone).** On every
+OTHER path (any run where `--no-cmd` is not passed — including a default, interactive `/autonomous`
+run, where `NON_INTERACTIVE == false`; see `skills/autonomous-loop/SKILL.md`), a `--brief`-sourced
+`cmd:`/bare bullet executes ONLY when the brief's `## Configuration` section carries a line
+`- **Executable Acceptance Approved:** sha256:<hash>` whose `<hash>` equals
+`scripts/exec-acceptance-hash.sh <brief>`'s CURRENT output — a `sha256:<hex>` of the
+whitespace-normalized, newline-joined list of `cmd:`/bare bullets ONLY (`corpus-task:`/`qa-executor:`
+excluded), or the literal `none` when that filtered list is empty. Both `exec-acceptance-hash.sh` (the
+human-facing/authoring side) and `scripts/run-ground-truth.sh` (the enforcement side) source ONE
+shared definition — `scripts/exec-acceptance-lib.sh` — so the classification/hash rule cannot silently
+diverge between the two.
+
+- **Absent or STALE stamp** (the hash no longer matches — e.g. a bullet was edited/added/removed after
+  the stamp line was written): the bullet is recorded `per_check {status: "unverified", reason:
+  "cmd_unapproved"}` and executes NOTHING. `cmd_unapproved` is distinct from `--no-cmd`'s
+  `cmd_disabled` reason.
+- **This gate applies ONLY to bullets sourced from `--brief`'s `## Executable Acceptance` section.** An
+  explicit `--check '<line>'` or `--checks-file <path>` bullet (including a `cmd:` one) is COMPLETELY
+  unaffected, even in a mixed invocation that also passes an unstamped `--brief` in the same run —
+  `run-ground-truth.sh` tracks per-line source provenance (`--check` | `--brief` | `--checks-file` |
+  the `.supervisor/twin/ground-truth.json` fallback) precisely so the two never cross-contaminate.
+- **`--no-cmd` always wins** over a valid stamp — the stamp only ever ENABLES execution on a path that
+  isn't already disabled by the safety valve; it never overrides `--no-cmd`.
+- A machine-authored brief never carries the stamp by construction (Launch Pad only ever emits
+  `corpus-task:` bullets per the authoring convention above), so any `cmd:`/bare bullet that slips into
+  one is unapproved by default.
+
+Plan Reviewer **Criterion 14** (`agents/plan-reviewer.md`) surfaces any `cmd:`/bare bullet that appears
+in a brief as an `executable_acceptance` issue, and escalates the review `decision` to **NEEDS_HUMAN**
+(a dedicated Decision Matrix row) when no well-formed stamp is present — Plan Reviewer is structurally
+read-only (no `Bash`) so it checks stamp-line *presence/well-formedness* only; the actual hash-content
+match is enforced by `run-ground-truth.sh` at Phase 4.5 execution time, independently. Launch Pad's
+Phase 6 resolves a Criterion 14 NEEDS_HUMAN via `approve-and-stamp` / `strip-cmd-bullets` / `discard`
+on the interactive path, or an automatic strip (never a silent pass-through) on the non-interactive
+path — see `agents/launch-pad.md` Phase 6 action 2a and the `LAUNCH_PAD_RESULT`
+`cmd_bullets_stripped_non_interactive` field below. See `docs/SPIKES/SYSTEM_TWIN_ROADMAP.md §7`.
 
 ---
 
@@ -2290,6 +2326,7 @@ LAUNCH_PAD_RESULT:
   status: enum [saved, discarded, blocked, aborted]  # required
   saved_brief_path: string | null      # required field; null unless status=saved
   summary: string                      # required — one-line outcome (≤ 200 chars recommended)
+  cmd_bullets_stripped_non_interactive: true  # OPTIONAL, additive (v15.90.0+, red-team-hardening item 05) — see below
 ```
 
 **Validation rules (schema_version: 1):**
@@ -2299,8 +2336,11 @@ LAUNCH_PAD_RESULT:
   - When `status: saved` → MUST be a non-empty string matching `.supervisor/jobs/pending/*.md`, and the file MUST exist on disk at emission time.
   - When `status ∈ {discarded, blocked, aborted}` → MUST be the literal YAML `null` (not the string `"null"`, not empty).
 - `summary` must be a non-empty string.
+- `cmd_bullets_stripped_non_interactive` (OPTIONAL, additive — no `schema_version` bump; `scripts/validate-launch-pad-result.py` accepts it as a fifth allowed key alongside the original four): when PRESENT, MUST be the YAML boolean `true` (lowercase) — any other value (including the string `"true"`, `"True"`, or `false`) is rejected. When ABSENT, treated as `false` — Launch Pad's Phase 6 action 2a OMITS the field entirely rather than emitting `false` explicitly (keeps the common case's YAML unchanged; see `agents/launch-pad.md` Phase 7 action 4).
 
 **Status semantics:** `saved` (Phase 6 save completed, file on disk) · `discarded` (user chose Discard, no file) · `blocked` (Phase 1 BLOCKER or Plan Review FAIL × 3 without override; save never offered) · `aborted` (user aborted mid-flight; no clean Phase 6 outcome).
+
+**`cmd_bullets_stripped_non_interactive` (v15.90.0+, red-team-hardening item 05 — "cmd: valve by provenance").** `true` when Launch Pad's Phase 6 action 2a auto-stripped ≥1 unstamped/stale `cmd:`/bare Executable Acceptance bullet from the brief during a **non-interactive** run (`--non-interactive`/`--non-interactive-fallback`) because Plan Reviewer Criterion 14 escalated to NEEDS_HUMAN and there was no human to ask `approve-and-stamp`/`strip-cmd-bullets`/`discard`. This is the non-interactive path's fail-safe: it NEVER silently proceeds with an unreviewed executable brief — it strips rather than keeps. Consumers (e.g. `/autonomous` PLAN phase, a postmortem reader) can use this as an auditable signal that a brief's Executable Acceptance section was machine-modified after Plan Review's first pass.
 
 **Emission cadence:** emitted **once per Launch Pad invocation**, immediately after Phase 6 (whether or not a file was written). The SubagentStop hook (`scripts/validate-launch-pad-result.py`) validates the block in the agent-owned (`-runner`) path; for the inline slash-command path the autonomous-loop skill reads the last emitted block from the transcript and runs the same validator in `--raw` mode, mirroring the `SUPERVISOR_RESULT` pattern.
 

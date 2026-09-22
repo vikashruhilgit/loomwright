@@ -47,6 +47,11 @@
 #                    (never a false pass). NOTE: a bare bullet whose command itself starts with a dash
 #                    (e.g. `- -flag ...`) must use the `cmd:` prefix (`cmd: -flag ...`) — at ingestion a
 #                    leading bullet `- `/`-` is stripped, so a bare leading-dash command would be mangled.
+#                    CONTENT-KEYED STAMP GATE (--brief-sourced lines ONLY — see "Content-keyed
+#                    stamp gate" below): a --brief-sourced cmd:/bare bullet additionally requires a
+#                    valid ## Configuration stamp to execute; absent/stale -> per_check unverified,
+#                    reason "cmd_unapproved" (never executed). --check/--checks-file-sourced cmd:
+#                    bullets are NEVER subject to this gate, regardless of --brief's stamp state.
 #   - corpus-task: <task-id> -> resolve to $SCRIPT_DIR/eval-corpus/<task-id>/check.sh and run it via
 #                    `( cd "<task-dir>" && bash check.sh >/dev/null 2>&1 )` with EVAL_PROJECT_ROOT
 #                    already exported once, up front, for every check
@@ -68,7 +73,10 @@
 # "no writes / no network" property is therefore a property of well-behaved, TRUSTED checks, not an
 # enforced guarantee. Because Phase 4.5 runs this automatically and unattended (including under
 # /autonomous, where the brief's `## Executable Acceptance` section is machine-authored by Launch
-# Pad), `cmd:` bullets are a trust-sensitive surface and should be reviewed at Plan Review.
+# Pad), `cmd:` bullets are a trust-sensitive surface — a --brief-sourced one now additionally
+# requires the content-keyed stamp below to execute at all (enforced HERE, not merely reviewed at
+# Plan Review); a --check/--checks-file-sourced one is a human typing the command directly into
+# this invocation and is unaffected by the stamp gate.
 # corpus-task ids are constrained to a single path segment (no `/`/`..`) so they cannot escape
 # eval-corpus, but `cmd:` shell is intentionally unconstrained.
 # eval-corpus is resolved relative to $SCRIPT_DIR so `corpus-task:` works regardless of CWD.
@@ -92,9 +100,21 @@
 #
 # Safety valve: --no-cmd (or GROUND_TRUTH_NO_CMD=1) skips cmd:/bare shell checks entirely (recorded
 # per_check "unverified", reason "cmd_disabled" — never executed); corpus-task:/qa-executor: are
-# unaffected. Supervisor passes this on the unattended/--non-interactive (/autonomous) path so a
-# machine-authored cmd: bullet never runs arbitrary shell with no human in the loop, until the
-# prompt-level Plan Reviewer control lands (M2b slice 1b — see docs/SPIKES/SYSTEM_TWIN_ROADMAP.md §7).
+# unaffected. --no-cmd ALWAYS wins, regardless of source or stamp (see below) — it is checked first.
+#
+# Content-keyed stamp gate (red-team-hardening item 05, "cmd: valve by provenance" — supersedes the
+# NON_INTERACTIVE-only mitigation this section used to describe): a `cmd:`/bare bullet sourced from
+# `--brief`'s `## Executable Acceptance` section executes ONLY when the brief's `## Configuration`
+# section carries a line `- **Executable Acceptance Approved:** sha256:<hash>` whose `<hash>` equals
+# `scripts/exec-acceptance-hash.sh <brief>`'s CURRENT output (both this runner and that script share
+# one classification/hash definition — `exec-acceptance-lib.sh` — so they cannot silently diverge).
+# An absent OR stale (edited-since-stamped) stamp records the bullet as unverified, reason
+# "cmd_unapproved" (a NEW reason, distinct from --no-cmd's "cmd_disabled"), and executes NOTHING.
+# This gate applies ONLY to bullets sourced from --brief; an explicit --check/--checks-file bullet
+# runs exactly as it always has, stamped or not — see the per-line source-provenance tracking below
+# (CHECK_SOURCES). Machine-authored briefs (Launch Pad, /autonomous) never carry the stamp by
+# construction, so their cmd:/bare bullets (an authoring-convention violation in the first place —
+# see docs/RESULT_SCHEMAS.md §"`## Executable Acceptance`") are unapproved by default.
 #
 # Usage:  run-ground-truth.sh [--check '<line>']... [--brief <path>] [--checks-file <path>] [--no-cmd]
 #                             [--project <dir>]
@@ -105,6 +125,9 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CORPUS="$SCRIPT_DIR/eval-corpus"
 
+# shellcheck source=exec-acceptance-lib.sh
+. "$SCRIPT_DIR/exec-acceptance-lib.sh"
+
 # ---- argv parse -----------------------------------------------------------
 EXPLICIT_CHECKS=()   # collected from --check / --brief / --checks-file (in resolution order)
 BRIEF=""
@@ -112,9 +135,8 @@ CHECKS_FILE=""
 PROJECT_ARG=""       # --project <dir>: explicit project root (else derived from the caller's CWD)
 # --no-cmd (or GROUND_TRUTH_NO_CMD=1): safety valve for unattended use. When set, cmd:/bare shell
 # checks are NOT executed (recorded per_check "unverified", reason "cmd_disabled"); corpus-task: and
-# qa-executor: are unaffected. The Supervisor passes this on the unattended/--non-interactive
-# (/autonomous) path so a machine-authored cmd: bullet never runs arbitrary shell with no human in
-# the loop, until the prompt-level Plan Reviewer control lands (M2b slice 1b — see SYSTEM_TWIN_ROADMAP §7).
+# qa-executor: are unaffected. --no-cmd ALWAYS wins over the content-keyed stamp gate below — it is
+# checked first in the execution loop, regardless of a bullet's source or stamp validity.
 NO_CMD=0
 [ "${GROUND_TRUTH_NO_CMD:-0}" = "1" ] && NO_CMD=1
 
@@ -206,68 +228,46 @@ fi
 
 # ---- resolve check lines (priority order) ---------------------------------
 # CHECK_LINES is the ordered list of resolved bullet strings (already `- `-stripped, trimmed).
+# CHECK_SOURCES is a PARALLEL array (same index) recording where each line came from —
+# "check" (1a --check) | "brief" (1b --brief) | "checks_file" (1c --checks-file/stdin) |
+# "fallback" (2, .supervisor/twin/ground-truth.json). This is the per-line source-provenance
+# tracking the content-keyed stamp gate needs: the gate below applies ONLY to kind=="cmd" lines
+# whose source is exactly "brief" — an explicit --check/--checks-file cmd: bullet is NEVER gated,
+# even in a mixed invocation that also passes an unstamped --brief. `trim`/`strip_bullet` are
+# defined in the sourced exec-acceptance-lib.sh (shared with exec-acceptance-hash.sh).
 CHECK_LINES=()
+CHECK_SOURCES=()
 
-# trim leading/trailing whitespace only (no bullet-marker removal — safe for targets like `-x foo`).
-trim() {
-  local s="$1"
-  s="${s#"${s%%[![:space:]]*}"}"   # ltrim
-  s="${s%"${s##*[![:space:]]}"}"   # rtrim
-  printf '%s' "$s"
-}
-
-# strip a leading `- ` (or `-`) bullet marker and surrounding whitespace.
-# Only used at line ingestion (add_line) — NOT for `<kind>: <target>` target extraction, where a
-# leading dash in the target (e.g. `cmd: -x foo`) is meaningful and must be preserved.
-strip_bullet() {
-  local line="$1"
-  line="${line#"${line%%[![:space:]]*}"}"   # ltrim
-  line="${line#- }"
-  line="${line#-}"
-  line="${line#"${line%%[![:space:]]*}"}"   # ltrim again (after marker)
-  line="${line%"${line##*[![:space:]]}"}"   # rtrim
-  printf '%s' "$line"
-}
-
-add_line() {  # add a raw bullet line if non-empty after stripping
+add_line() {  # add_line <raw-line> <source-tag> — add a raw bullet line if non-empty after stripping
   local s; s="$(strip_bullet "$1")"
-  [ -n "$s" ] && CHECK_LINES+=("$s")
+  if [ -n "$s" ]; then
+    CHECK_LINES+=("$s")
+    CHECK_SOURCES+=("${2:-unknown}")
+  fi
 }
 
 # 1a. Explicit --check args (highest priority, in order).
 if [ "${#EXPLICIT_CHECKS[@]}" -gt 0 ]; then
   for c in "${EXPLICIT_CHECKS[@]}"; do
-    add_line "$c"
+    add_line "$c" "check"
   done
 fi
 
-# 1b. --brief: extract the `## Executable Acceptance` section's leading-`-` bullets.
+# 1b. --brief: extract the `## Executable Acceptance` section's leading-`-` bullets (shared
+# extraction logic — exec-acceptance-lib.sh's extract_brief_section_bullets — identical heading
+# match and bullet collection rule exec-acceptance-hash.sh uses to compute the stamp).
 if [ -n "$BRIEF" ] && [ -f "$BRIEF" ]; then
-  in_section=0
-  while IFS= read -r raw || [ -n "$raw" ]; do
-    # Match the heading EXACTLY (allowing only trailing whitespace) so a sibling heading like
-    # "## Executable Acceptance Notes" does NOT open the section.
-    heading="$(trim "$raw")"
-    case "$heading" in
-      "## Executable Acceptance") in_section=1; continue ;;
-      "## "*) [ "$in_section" -eq 1 ] && in_section=0 ;;
-    esac
-    if [ "$in_section" -eq 1 ]; then
-      # only collect leading-`-` bullet lines (ignore blank lines / prose)
-      trimmed="${raw#"${raw%%[![:space:]]*}"}"
-      case "$trimmed" in
-        -*) add_line "$raw" ;;
-      esac
-    fi
-  done < "$BRIEF"
+  while IFS= read -r s; do
+    [ -n "$s" ] && { CHECK_LINES+=("$s"); CHECK_SOURCES+=("brief"); }
+  done < <(extract_brief_section_bullets "$BRIEF")
 fi
 
 # 1c. --checks-file (or stdin via "-"): one bullet per line.
 if [ -n "$CHECKS_FILE" ]; then
   if [ "$CHECKS_FILE" = "-" ]; then
-    while IFS= read -r raw || [ -n "$raw" ]; do add_line "$raw"; done
+    while IFS= read -r raw || [ -n "$raw" ]; do add_line "$raw" "checks_file"; done
   elif [ -f "$CHECKS_FILE" ]; then
-    while IFS= read -r raw || [ -n "$raw" ]; do add_line "$raw"; done < "$CHECKS_FILE"
+    while IFS= read -r raw || [ -n "$raw" ]; do add_line "$raw" "checks_file"; done < "$CHECKS_FILE"
   fi
 fi
 
@@ -281,7 +281,7 @@ if [ "${#CHECK_LINES[@]}" -eq 0 ]; then
         | map(select(type=="string")) | .[]
       ' "$GT_FILE" 2>/dev/null | LC_ALL=C sort)"
     if [ -n "$gt_lines" ]; then
-      while IFS= read -r raw; do add_line "$raw"; done <<EOF
+      while IFS= read -r raw; do add_line "$raw" "fallback"; done <<EOF
 $gt_lines
 EOF
     fi
@@ -294,6 +294,30 @@ if [ "${#CHECK_LINES[@]}" -eq 0 ]; then
   emit_jq false "skipped" 0 0 "0/0" "[]"
   exit 0
 fi
+
+# ---- content-keyed stamp gate (--brief-sourced cmd:/bare bullets only) ----------------------
+# BRIEF_HASH_VALID=1 iff: a --brief was given, its Executable Acceptance section has >=1 cmd:/bare
+# bullet (exec_acceptance_hash != "none"), AND the brief's ## Configuration section carries a
+# stamp line whose hash matches that CURRENT hash exactly. A missing OR stale (post-stamp edit)
+# stamp leaves this 0 — the gate below then records every brief-sourced cmd:/bare bullet
+# "unverified"/"cmd_unapproved" and executes none of them. Computed ONCE, before the loop, from
+# the SAME shared exec_acceptance_hash() exec-acceptance-hash.sh uses — see exec-acceptance-lib.sh.
+# This is the LOAD-BEARING hash-comparison — the BLOCKING mutation control in
+# test-run-ground-truth.sh splices this exact block out and replaces it with an unconditional
+# BRIEF_HASH_VALID=1 to prove the stale-stamp test case genuinely depends on this comparison
+# (see red-team-hardening item 05 AC7).
+# MUTATION_CONTROL_BEGIN: exec-acceptance-stamp-gate
+BRIEF_HASH_VALID=0
+if [ -n "$BRIEF" ] && [ -f "$BRIEF" ]; then
+  BRIEF_CURRENT_HASH="$(exec_acceptance_hash "$BRIEF" 2>/dev/null || printf 'none\n')"
+  if [ "$BRIEF_CURRENT_HASH" != "none" ]; then
+    BRIEF_STAMP="$(extract_configuration_stamp "$BRIEF")"
+    if [ -n "$BRIEF_STAMP" ] && [ "$BRIEF_STAMP" = "$BRIEF_CURRENT_HASH" ]; then
+      BRIEF_HASH_VALID=1
+    fi
+  fi
+fi
+# MUTATION_CONTROL_END: exec-acceptance-stamp-gate
 
 # ---- execute each resolved check ------------------------------------------
 total=0
@@ -316,19 +340,21 @@ append_check() {
   fi
 }
 
-for line in "${CHECK_LINES[@]}"; do
+for idx in "${!CHECK_LINES[@]}"; do
+  line="${CHECK_LINES[$idx]}"
+  line_source="${CHECK_SOURCES[$idx]}"
   total=$((total+1))
 
-  # Classify: <kind>: <target> where kind in {cmd, corpus-task, qa-executor}; else bare shell cmd.
-  kind=""
+  # Classify via the shared classify_kind() (exec-acceptance-lib.sh) — IDENTICAL rule
+  # exec-acceptance-hash.sh uses, by construction (one sourced definition, not two copies).
+  kind="$(classify_kind "$line")"
   target=""
   # Use trim (whitespace only) — NOT strip_bullet — so a target with a leading dash (e.g.
   # `cmd: -x foo`) keeps its dash. The line was already bullet-stripped at ingestion (add_line).
-  case "$line" in
-    cmd:*)          kind="cmd";          target="$(trim "${line#cmd:}")" ;;
-    corpus-task:*)  kind="corpus-task";  target="$(trim "${line#corpus-task:}")" ;;
-    qa-executor:*)  kind="qa-executor";  target="$(trim "${line#qa-executor:}")" ;;
-    *)              kind="cmd";          target="$line" ;;   # bare line -> treat as shell cmd
+  case "$kind" in
+    cmd)          target="$(trim "${line#cmd:}")" ;;
+    corpus-task)  target="$(trim "${line#corpus-task:}")" ;;
+    qa-executor)  target="$(trim "${line#qa-executor:}")" ;;
   esac
 
   case "$kind" in
@@ -336,9 +362,18 @@ for line in "${CHECK_LINES[@]}"; do
       if [ "$NO_CMD" -eq 1 ]; then
         # Safety valve (--no-cmd / GROUND_TRUTH_NO_CMD=1): do NOT execute arbitrary shell. Record
         # as unverified (like a deferral) — counts toward checks_total, never a pass or a fail.
+        # This ALWAYS wins, regardless of source or stamp validity — checked first.
         deferred=$((deferred+1))
         echo "  [SKIP] cmd:$target (cmd execution disabled via --no-cmd)"
         append_check "cmd" "$target" "unverified" "cmd_disabled"
+      elif [ "$line_source" = "brief" ] && [ "$BRIEF_HASH_VALID" -ne 1 ]; then
+        # Content-keyed stamp gate: this bullet came from --brief's Executable Acceptance section
+        # and the brief carries no valid (matching, non-stale) stamp — do NOT execute. Applies
+        # ONLY to line_source=="brief" lines; a --check/--checks-file cmd: bullet is NEVER gated
+        # here, even in a mixed invocation alongside an unstamped --brief.
+        deferred=$((deferred+1))
+        echo "  [SKIP] cmd:$target (unapproved — brief Executable Acceptance stamp missing or stale)"
+        append_check "cmd" "$target" "unverified" "cmd_unapproved"
       elif [ -z "$target" ]; then
         # An empty command (a bare `cmd:` or `cmd:` + whitespace bullet) is a malformed declaration,
         # NOT a check. `bash -c ""` exits 0, so without this guard it would be a false PASS that

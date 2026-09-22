@@ -512,7 +512,7 @@ Subtask 2 (independent)
    - **PASS:** Proceed to Phase 6 (save enabled)
    - **FAIL (attempt < 3):** Fix issues identified in the review, re-assemble affected brief sections, re-spawn reviewer
    - **FAIL (attempt = 3):** Present all unresolved issues to user. Offer: "Refine offline" (exit, `status: blocked` — fix and start a new session) or "Discard". Do NOT save; the 3-spawn cap is never reset within a session.
-   - **NEEDS_HUMAN:** Present issues to user. Offer: "Override and save" (user takes responsibility) or "Refine further" or "Discard"
+   - **NEEDS_HUMAN:** Proceed to Phase 6, which branches on WHY: a Criterion 14 `executable_acceptance` escalation goes through action 2a (`approve-and-stamp` / `strip-cmd-bullets` / `discard`, interactive; auto-strip, non-interactive); any other reason uses the generic "Override and save" / "Refine further" / "Discard" prompt (or aborts `needs_human_non_interactive` when non-interactive)
 
 **Retry loop:**
 
@@ -528,13 +528,30 @@ loop:
     → proceed to Phase 6 (save enabled)
 
   if result.decision == NEEDS_HUMAN:
-    → present issues to user via AskUserQuestion
-    → options: "Override and save" | "Refine further" | "Discard"
-    → if override: proceed to Phase 6 with user-acknowledged warnings
-    → if refine: loop back to relevant phase, then re-review
-      (re-review consumes an attempt; if attempt >= max_attempts the only
-       remaining options are "Override and save" or "Discard" — no further spawns)
-    → if discard: exit
+    if any(issue.category == "executable_acceptance" for issue in result.issues):
+      # Phase 6 action 2a — ALWAYS resolved without a generic 3-option prompt.
+      if non_interactive:
+        → auto-strip flagged cmd:/bare bullets, record cmd_bullets_stripped_non_interactive=true
+        → RE-RUN Phase 5 step 9 MATERIALIZE, re-review (consumes an attempt), loop
+      else:
+        → AskUserQuestion quoting flagged bullets verbatim
+        → options: "approve-and-stamp" | "strip-cmd-bullets" | "discard"
+        → approve-and-stamp: write the Configuration stamp (exec-acceptance-hash.sh),
+          RE-RUN MATERIALIZE, re-review (consumes an attempt), loop
+        → strip-cmd-bullets: remove flagged bullets, RE-RUN MATERIALIZE,
+          re-review (consumes an attempt), loop
+        → discard: exit (status: discarded)
+    else:
+      # Generic NEEDS_HUMAN (no executable_acceptance issue involved).
+      if non_interactive:
+        → abort: status: aborted, status_reason: "needs_human_non_interactive"
+      → present issues to user via AskUserQuestion
+      → options: "Override and save" | "Refine further" | "Discard"
+      → if override: proceed to Phase 6 with user-acknowledged warnings
+      → if refine: loop back to relevant phase, then re-review
+        (re-review consumes an attempt; if attempt >= max_attempts the only
+         remaining options are "Override and save" or "Discard" — no further spawns)
+      → if discard: exit
 
   if result.decision == FAIL:
     if attempt >= max_attempts:
@@ -599,10 +616,26 @@ Check all 16 review criteria. Output a PLAN_REVIEW_RESULT block.",
 **Actions:**
 
 1. Present the assembled brief from Phase 5 with Plan Review status
-2. If Plan Review returned NEEDS_HUMAN: use `AskUserQuestion` with 3 options:
+2. If Plan Review returned NEEDS_HUMAN, **first check whether the escalation is (at least in part) a Criterion 14 `executable_acceptance` issue** (`PLAN_REVIEW_RESULT.issues[].category == "executable_acceptance"` — the unstamped/stale `cmd:`/bare Executable Acceptance bullet gate, `agents/plan-reviewer.md` Criterion 14). This case is handled by action **2a** below, on BOTH the interactive and non-interactive path, in place of the generic 3-option prompt. If NEEDS_HUMAN fired for other reasons only (no `executable_acceptance` issue present), use the generic 3-option `AskUserQuestion` unchanged:
    - **"Override and save"** — User acknowledges warnings and takes responsibility. Write brief to `.supervisor/jobs/pending/{date}-{slug}.md` with `## Plan Review: NEEDS_HUMAN (user override)` section
    - **"Refine further"** — Loop back to fix issues, **re-run Phase 5 step 9 MATERIALIZE** (rewrites the scratch file + rebuilds the digest from the revised text), then re-run Plan Review
    - **"Discard"** — Cancel without saving
+
+   **Non-interactive fallback for the generic (non-`executable_acceptance`) NEEDS_HUMAN case:** when `--non-interactive`/`--non-interactive-fallback` is set, there is no human to ask and none of the three options above can be safely auto-picked (silently overriding is unsafe; silently discarding degrades the run) — abort cleanly instead of calling `AskUserQuestion`: `status: aborted, status_reason: "needs_human_non_interactive"`. This never fires for the executable_acceptance case, which action 2a always resolves without a human.
+
+2a. **Executable Acceptance `cmd:`/bare-bullet NEEDS_HUMAN (Criterion 14, red-team-hardening item 05).** The flagged bullets are the `executable_acceptance` issue's `description` (verbatim, already required by Criterion 14) — quote them exactly, do not paraphrase or summarize them away.
+
+   - **Interactive (no `--non-interactive`/`--non-interactive-fallback`):** use `AskUserQuestion`, quoting every flagged bullet verbatim in the question text, with exactly three options:
+     - **`approve-and-stamp`** — compute the current stamp and write it into the brief's `## Configuration` section (append `- **Executable Acceptance Approved:** {stamp}` — create the `## Configuration` section if the brief has none), using `Edit`/`Write`:
+       ```bash
+       bash "${CLAUDE_PLUGIN_ROOT}/scripts/exec-acceptance-hash.sh" <scratch-brief-path>
+       ```
+       then **re-run Phase 5 step 9 MATERIALIZE** (rewrites the scratch file + digest from the now-stamped text) and **re-run Plan Review** (consumes an attempt from the shared 3-spawn cap). Proceed per the fresh result (a valid stamp makes Criterion 14 LOW/visibility-only, so this normally now PASSes).
+     - **`strip-cmd-bullets`** — remove every flagged `cmd:`/bare bullet from the brief's `## Executable Acceptance` section (keep any `corpus-task:`/`qa-executor:` bullets untouched), **re-run Phase 5 step 9 MATERIALIZE**, then **re-run Plan Review** (consumes an attempt). Proceed per the fresh result.
+     - **`discard`** — Cancel without saving (`status: discarded`).
+   - **Non-interactive (`--non-interactive`/`--non-interactive-fallback` set):** never call `AskUserQuestion` and never proceed with an unreviewed executable brief — automatically strip every flagged `cmd:`/bare bullet from `## Executable Acceptance` (same removal as `strip-cmd-bullets` above; `corpus-task:`/`qa-executor:` bullets are untouched), **re-run Phase 5 step 9 MATERIALIZE**, then **re-run Plan Review** (consumes an attempt). Record `cmd_bullets_stripped_non_interactive = true` in session memory for Phase 7. If the fresh Plan Review result is PASS (or NEEDS_HUMAN for unrelated reasons only — see action 2's non-interactive fallback), proceed accordingly; it can never be NEEDS_HUMAN for `executable_acceptance` again in the same run, since the flagged bullets no longer exist.
+   - **Idempotency / cap exhaustion:** both branches consume an attempt from the shared 3-spawn Plan Review cap (same rule as every other post-PASS/post-NEEDS_HUMAN mutation in this phase). If the cap is exhausted, fall through to the existing FAIL×3 handling (action 4) rather than looping again.
+
 3. If Plan Review returned PASS: use `AskUserQuestion` with 4 options:
    - **"Save and exit"** — Write brief to `.supervisor/jobs/pending/{date}-{slug}.md`, output `/supervisor job: {path}` command
    - **"Refine further"** — Ask clarifying questions, update sections, **re-run Phase 5 step 9 MATERIALIZE**, then **re-run Plan Review before save** (consumes an attempt from the shared 3-spawn cap; the PASS is void once the brief is mutated)
@@ -631,7 +664,8 @@ Check all 16 review criteria. Output a PLAN_REVIEW_RESULT block.",
 **Save rules:**
 - If environment has BLOCKERS from Phase 1: output fix instructions, don't offer save
 - If Plan Review did not pass (FAIL after 3 attempts): don't offer save, only "Refine offline" (exit, status: blocked) or "Discard"
-- If Plan Review returned NEEDS_HUMAN: offer "Override and save" (user takes responsibility), "Refine further", or "Discard"
+- If Plan Review returned NEEDS_HUMAN for a non-`executable_acceptance` reason: offer "Override and save" (user takes responsibility), "Refine further", or "Discard" — non-interactively, abort with `status_reason: "needs_human_non_interactive"` instead (action 2)
+- If Plan Review returned NEEDS_HUMAN for a Criterion 14 `executable_acceptance` reason (action 2a): interactively offer `approve-and-stamp` / `strip-cmd-bullets` / `discard`; non-interactively, auto-strip the flagged bullets and re-review — never proceed with an unreviewed executable brief
 - Slug derived from goal (lowercase, hyphens, max 40 chars)
 - Date in ISO format (YYYY-MM-DD)
 
@@ -674,7 +708,9 @@ Check all 16 review criteria. Output a PLAN_REVIEW_RESULT block.",
 
 3. Compose `summary`: a single line, ≤ 200 characters, describing the outcome and the key fact (Plan Review attempts, BLOCKER reason, etc.).
 
-4. Emit the YAML block verbatim as the **last** structured output of the run. Consumers read the **last** `LAUNCH_PAD_RESULT` block in the transcript when Launch Pad runs inline via the `/launch-pad` slash command; the SubagentStop hook validates the same block when Launch Pad runs via `claude --agent loomwright:launch-pad-runner`.
+4. **Compute the additive `cmd_bullets_stripped_non_interactive` field (v15.90.0+, OPTIONAL — see `docs/RESULT_SCHEMAS.md` §"LAUNCH_PAD_RESULT"):** `true` when Phase 6 action 2a's non-interactive auto-strip branch actually removed ≥1 `cmd:`/bare bullet during this run; **omit the field entirely** (never emit `false`) in every other case — including the interactive path, a run with no Executable Acceptance section at all, and a stamped/already-clean brief. This mirrors the field's own "absent/false when nothing was stripped" contract; omitting rather than emitting `false` keeps the common case's YAML unchanged.
+
+5. Emit the YAML block verbatim as the **last** structured output of the run. Consumers read the **last** `LAUNCH_PAD_RESULT` block in the transcript when Launch Pad runs inline via the `/launch-pad` slash command; the SubagentStop hook validates the same block when Launch Pad runs via `claude --agent loomwright:launch-pad-runner`.
 
 **Emission format (verbatim, including the leading fenced block):**
 
@@ -687,6 +723,7 @@ LAUNCH_PAD_RESULT:
   status: {saved | discarded | blocked | aborted}
   saved_brief_path: {.supervisor/jobs/pending/{date}-{slug}.md | null}
   summary: {one-line outcome, ≤ 200 chars}
+  cmd_bullets_stripped_non_interactive: true  # OPTIONAL, additive — OMIT entirely unless action 2a's non-interactive auto-strip actually fired this run
 ```
 ````
 
@@ -710,7 +747,18 @@ LAUNCH_PAD_RESULT:
   summary: Phase 1 surfaced BLOCKER — required tool `bd` not installed; save not offered.
 ```
 
-**Constraint reminder:** the YAML must conform to the validation rules in `docs/RESULT_SCHEMAS.md` §"LAUNCH_PAD_RESULT". In particular, when `status: saved`, `saved_brief_path` MUST be a non-empty string and the file MUST exist on disk; when status is anything else, `saved_brief_path` MUST be the literal `null`. Do not invent additional fields — v1 is exactly four fields and the schema is purposely tight (see RESULT_SCHEMAS.md note on the CODE_REVIEW_RESULT v3 cautionary tale).
+**Example (saved, non-interactive auto-strip fired):**
+
+```yaml
+LAUNCH_PAD_RESULT:
+  schema_version: 1
+  status: saved
+  saved_brief_path: .supervisor/jobs/pending/2026-09-22-add-cache-warmup.md
+  summary: Non-interactive run auto-stripped 1 unstamped cmd: bullet (Criterion 14); re-reviewed PASS; saved.
+  cmd_bullets_stripped_non_interactive: true
+```
+
+**Constraint reminder:** the YAML must conform to the validation rules in `docs/RESULT_SCHEMAS.md` §"LAUNCH_PAD_RESULT". In particular, when `status: saved`, `saved_brief_path` MUST be a non-empty string and the file MUST exist on disk; when status is anything else, `saved_brief_path` MUST be the literal `null`. The core schema stays a tight four fields (see RESULT_SCHEMAS.md note on the CODE_REVIEW_RESULT v3 cautionary tale) — `cmd_bullets_stripped_non_interactive` is the ONE additive exception, documented and validated explicitly; do not invent any other field.
 
 ---
 
@@ -736,6 +784,7 @@ Minimal subagent overhead (up to 3 Plan Reviewer spawns total per session). No s
 | `--discovery` | false | Force full product discovery even if goal seems clear |
 | `--skip-validation` | false | Skip environment validation (Phase 1) for speed |
 | `--project` | auto-detect | Explicit project path |
+| `--non-interactive` / `--non-interactive-fallback` | false | No human to ask — currently wired for exactly one gate: Phase 6's Executable Acceptance `cmd:`/bare-bullet NEEDS_HUMAN escalation auto-strips the flagged bullets instead of calling `AskUserQuestion` (see Phase 6 action 2). Does NOT (yet) change any other interactive gate (Phase 2.5 NO-GO, Plan Review FAIL×3, the generic NEEDS_HUMAN prompt) — those still call `AskUserQuestion` regardless of this flag. Accepted as either spelling so a caller forwarding `/autonomous`'s own `--non-interactive-fallback` flag name does not need to translate it. |
 
 ---
 
