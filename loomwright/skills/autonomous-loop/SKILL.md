@@ -2,8 +2,8 @@
 name: autonomous-loop
 description: Outer-loop protocol for `/autonomous` — v14 continuous (multi-iteration default with stacked branches), single-iteration opt-in, EVALUATE PR-base verification + Signal-1 stacked rubric gate + no-rubric gate, --notify gate webhooks via send-webhook.sh, CI / non-TTY fail-closed protection, and the AUTONOMOUS_RUN summary format. Use when implementing or invoking the `/autonomous` command.
 allowed-tools: [Read, Write, Bash, Grep, Task, AskUserQuestion]
-version: "1.4.0"
-lastUpdated: "2026-07-06"
+version: "1.5.0"
+lastUpdated: "2026-09-22"
 ---
 
 # Autonomous Loop Skill
@@ -119,6 +119,8 @@ exit
 If `--allow-multi-iteration` is the only mode-flag passed: log one-line warning `"DEPRECATED: --allow-multi-iteration is the default in v14.0.0; flag is a no-op."` to stderr, proceed in multi-iter mode.
 
 **`--cheap` cost-profile flag (v15.2.0+):** INIT parses `--cheap` and carries it as run state for the whole invocation (e.g., `cheap=true` in memory; it is NOT persisted to state.json). The flag changes nothing at INIT or PLAN — its only effect is that EXECUTE step 1 appends `--cheap` to **every** inlined `/supervisor job:` invocation (see EXECUTE step 1 §"Auto-forwarded flags"). Valid in both single- and multi-iteration mode, stacked or non-stacked; it has no flag-conflict rules and is NOT gated on `--non-interactive-fallback`. Supervisor's existing cost-profile engine is reused unchanged — for semantics and the Haiku-session caveat see `docs/ARCHITECTURE_CONTRACTS.md` §"Cost Profiles" (single source of truth; not restated here).
+
+**`--max-tokens N` token ceiling (red-team-hardening/06):** INIT parses `--max-tokens N` and, UNLIKE `--cheap`, PERSISTS it into `state.json` (`max_tokens: N`) — so EVALUATE can re-read the ceiling without re-parsing argv. INIT also acquires `.supervisor/run.lock` (`scripts/run-lock.sh acquire --owner autonomous:<session_id>`, mirroring Supervisor's own Phase 0 lock-acquire stanza) — a lock already held by another run aborts INIT immediately with `status: aborted`, `status_reason: "run_lock_held"`, printing the `run_lock_held owner=<label> pid=<pid> age=<s>` line rather than proceeding; the lock is released at the loop's own completion tail or any abort exit. Before EACH iteration — in EVALUATE, immediately after the chained review-and-heal step and before the Signal 1/2 checks — the loop sums its own session's ledger via `scripts/read-token-ledger.sh --session <session_id>` and compares TOTAL against the persisted `max_tokens`; a breach OR a `LEDGER_UNREADABLE=1` reader answer ⇒ `status: aborted`, `status_reason: "token_ceiling_reached"` — the loop stops rather than start another iteration over budget (never a silent continue). EXECUTE step 1 also appends `--max-tokens N` to **every** inlined `/supervisor job:` invocation (see §"Auto-forwarded flags" below), so Supervisor's own Phase 3 poll loop enforces the SAME ceiling against its own session's ledger. Absent ⇒ byte-identical behavior (opt-in). **Honest limit:** the ledger counts only what a SubagentStop hook saw — never the main thread's own tokens, never CI-side spend; no dollar conversion (the plugin has no price table). See `docs/ARCHITECTURE_CONTRACTS.md` §"Token ceiling" (single source of truth; not restated here).
 
 ### INIT step 1+ — requirement intake
 
@@ -292,13 +294,22 @@ has_rubric() {   # exit 0 = real (non-empty) rubric present; exit 1 = absent/emp
 
    This forward is NOT gated on `--non-interactive-fallback` (that gate governs only the `--non-interactive` forward) and never varies per iteration — if the flag was present at INIT, every iteration's `/supervisor` invocation carries it exactly once. Supervisor's cost-profile engine (INIT parse → `cost_profile=cheap` → Sonnet overrides on execution-shaped spawns) is reused unchanged; for the profile table and the Haiku-session caveat see `docs/ARCHITECTURE_CONTRACTS.md` §"Cost Profiles" (single source — not restated here).
 
-   **Auto-forwarded flags (the complete forward set):** the loop forwards exactly three flags to the inlined `/supervisor` invocation, each under its own condition:
+   **`--max-tokens N` token-ceiling forward (red-team-hardening/06):** when `--max-tokens N` was passed to `/autonomous` at INIT (persisted into `state.json`, see INIT step 0 above), append `--max-tokens N` to the inlined `/supervisor job:` invocation — **unconditionally-when-present, in every iteration**, the same forwarding rule as `--cheap`:
+
+   ```text
+   /supervisor job: <current_brief_path> [--base-branch "$expected_base"] [--non-interactive] [--cheap] [--max-tokens N]
+   ```
+
+   This forward is also NOT gated on `--non-interactive-fallback`. Supervisor's own Phase 3 poll loop then enforces the SAME ceiling N against its own session's ledger (`docs/ARCHITECTURE_CONTRACTS.md` §"Token ceiling") — this is a belt-and-suspenders layering, not a duplicate check: the outer `/autonomous` EVALUATE gate bounds spend ACROSS iterations, while the forwarded `--max-tokens` bounds the inner Supervisor session's own spend within one iteration.
+
+   **Auto-forwarded flags (the complete forward set):** the loop forwards exactly four flags to the inlined `/supervisor` invocation, each under its own condition:
 
    | Flag | Forwarded when |
    |---|---|
    | `--base-branch "$expected_base"` | stacked multi-iter run AND `iteration > 1` (`--no-stacked-branches` NOT active) |
    | `--non-interactive` | `--non-interactive-fallback` was passed at INIT |
    | `--cheap` | `--cheap` was passed to `/autonomous` at INIT (unconditional-when-present, every iteration) |
+   | `--max-tokens N` | `--max-tokens N` was passed to `/autonomous` at INIT (unconditional-when-present, every iteration, red-team-hardening/06) |
 
    No other flag is forwarded — `--skip-preflight-sync` in particular is NOT passed through (see §"Phase 1.5 pre-flight gate" below). (This subsection supersedes the earlier "forwards ONLY `--non-interactive`" phrasing — the loop has always also conditionally forwarded `--base-branch`, and v15.2.0 adds `--cheap`.)
 
@@ -733,7 +744,7 @@ Not a re-planning signal — this is the catch-all branch when neither Signal 1 
 Supervisor's Phase 1.5 PRE-FLIGHT SYNC gate runs *after* task acquisition (Phase 1 ACQUIRE) and *before* Phase 2 PLAN spawns the Orchestrator or any worker. It fetches remote state, inspects recent `origin/$BASE_BRANCH` commits and open PRs, and classifies the requested work as `CLEAR | OVERLAP | SUPERSEDED`. The autonomous loop interacts with that gate only through `SUPERVISOR_RESULT`:
 
 - **CI fail-closed behavior.** When the inlined `/supervisor` invocation runs under `--non-interactive` (auto-forwarded by the loop's `--non-interactive-fallback` policy — see EXECUTE step 1, "Auto-forwarded flags") or a non-TTY session, an `OVERLAP` or `SUPERSEDED` pre-flight classification cannot be escalated interactively. Supervisor therefore fails closed: it aborts with `SUPERVISOR_RESULT.status: failed` and `error`/`status_reason` = `preflight_overlap_detected`, rather than silently spending tokens on decomposition and execution. The loop maps that outcome to `terminate` (see the Default-termination table row above) and surfaces it as `AUTONOMOUS_RUN.status_reason: "preflight_overlap_detected"`. This is a terminal outcome — the loop does **not** re-iterate, because the overlap is a precondition violation the user must resolve (revise scope, or re-run with Supervisor's `--skip-preflight-sync` escape hatch), not a quality signal the next iteration could improve on.
-  - **Flag-forwarding note:** the loop's complete forward set is `--base-branch` (stacked multi-iter, iter > 1), `--non-interactive` (under `--non-interactive-fallback`), and `--cheap` (when passed at INIT — forwarded, v15.2.0+); see EXECUTE step 1 §"Auto-forwarded flags". It does **not** forward `--skip-preflight-sync`. The Phase 1.5 gate therefore runs in **every** autonomous iteration. To deliberately skip it, run `/supervisor --skip-preflight-sync` manually for a one-off requirement.
+  - **Flag-forwarding note:** the loop's complete forward set is `--base-branch` (stacked multi-iter, iter > 1), `--non-interactive` (under `--non-interactive-fallback`), `--cheap` (when passed at INIT — forwarded, v15.2.0+), and `--max-tokens N` (when passed at INIT — forwarded, red-team-hardening/06); see EXECUTE step 1 §"Auto-forwarded flags". It does **not** forward `--skip-preflight-sync`. The Phase 1.5 gate therefore runs in **every** autonomous iteration. To deliberately skip it, run `/supervisor --skip-preflight-sync` manually for a one-off requirement.
 
 - **Complements — does NOT double-fire with — EVALUATE PR-base verification + stacked `--base-branch` passthrough.** The Phase 1.5 pre-flight gate and the loop's existing EVALUATE PR-base verification (see "EVALUATE PR-base verification") cover **different failure modes at different points in the lifecycle** and never overlap:
   - The **pre-flight gate** verifies *work overlap before* decomposition/execution — it inspects whether the requested *work* intersects recent commits / open PRs on `$BASE_BRANCH` (same-file overlap or an already-merged equivalent), and fires *between Phase 1 and Phase 2*, before any worker is spawned.
@@ -824,7 +835,7 @@ Same fields as summary.md, structured as JSON. v1 writes it for two purposes: (a
 ## Cross-References
 
 - `${CLAUDE_PLUGIN_ROOT}/commands/launch-pad.md` — inline workflow Step 0 loads at runtime
-- `${CLAUDE_PLUGIN_ROOT}/commands/supervisor.md` — inline workflow Step 0 loads at runtime; v14 `--base-branch` + `--non-interactive` flags and the v15.2 `--cheap` cost-profile forward surface here
+- `${CLAUDE_PLUGIN_ROOT}/commands/supervisor.md` — inline workflow Step 0 loads at runtime; v14 `--base-branch` + `--non-interactive` flags, the v15.2 `--cheap` cost-profile forward, and the red-team-hardening/06 `--max-tokens` ceiling forward surface here
 - `${CLAUDE_PLUGIN_ROOT}/skills/autonomous-loop/SKILL.md` — this skill; Step 0 loads at runtime
 - `${CLAUDE_PLUGIN_ROOT}/skills/review-heal/SKILL.md` — authority for the chained EVALUATE review-heal step (entry sense (b): Task-spawned step with fresh isolated context, NOT a nested `claude` process; emits `REVIEW_HEAL_RESULT`)
 - `${CLAUDE_PLUGIN_ROOT}/scripts/send-webhook.sh` — `--event-type gate` path used by every gate-firing site when `--notify` is set

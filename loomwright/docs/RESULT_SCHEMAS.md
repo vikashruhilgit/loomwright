@@ -2078,16 +2078,18 @@ The on-disk layout of the `/automate` engine's run file, `.supervisor/automate/<
 ## Run Config
 - mode: safe|auto-merge | limit: 5 | trust_unprotected: false
 - auto_review_original: <true|false|absent> | config_backup: <run_id>.config-backup.json
+- max_tokens: <N|absent>          # red-team-hardening/06 — ONLY present when --max-tokens was passed; PERSISTED (unlike --cheap/--notify) so a bare --resume still enforces it
 ## Queue                    # `- [ ]` queued · `- [x]` done (merged) · `- [x] … # skipped|abandoned:` excluded; order = processing order
 - [ ] <requirement path or generated file>
 - [x] <... merged ...>
 - [x] <... path ...>  # skipped: <reason>     # checked-off so "next unchecked" never re-picks it; reason also in ## Progress
 ## Current
 - item: <path> | status: running|awaiting_merge|escalated|failed|rate_limit|drain_died|done | pr: <url> | branch: <name>
-- pause_reason: awaiting_merge|escalated|limit_reached|resume_ambiguous|rate_limit|drain_died|null
+- pause_reason: awaiting_merge|escalated|limit_reached|resume_ambiguous|rate_limit|drain_died|token_ceiling|run_lock_held|null
 - owned_drain_started: <ts> | owned_drain_result: READY|ESCALATED|died | suppressed_default_dispatch: true
 ## Progress                 # APPEND-ONLY (never rewritten)
 - <ts> picked <item>
+- <ts> session_id <id> (<item>)     # red-team-hardening/06 — read-token-ledger.sh --run-id sums every session_id line in this file
 - <ts> ran /autonomous → PR <url>
 - <ts> drain READY → awaiting_merge
 ```
@@ -2099,7 +2101,7 @@ The on-disk layout of the `/automate` engine's run file, `.supervisor/automate/<
 | `# Automate Run: <title>` | yes | The run title (H1). |
 | `## Status` | yes | The run-level status — the `/loop` stop signal. Enum below. |
 | `## Source` | yes | The single resolved source for this run — the user's prompt text, `folder <dir>`, or `backlog <_BACKLOG.md>`. Exactly one source is resolved per run (`skills/automate-loop/SKILL.md` §2). |
-| `## Run Config` | yes | `mode` (`safe` \| `auto-merge`), `limit` (PROCESSED-item cap, **default 5** — caps completed items this run, never Queue size), `trust_unprotected` (allows auto-merge onto a branch without enforceable protection — **condition 4 only**; nothing overrides condition 6, the `classify-risk.sh` high-risk park), `auto_review_original` (the original `.auto_review` value captured before the suppress window — `true`/`false`/`absent`), `config_backup` (path of the transient byte-for-byte config-backup sidecar). The single-drain config-toggle contract is the skill's domain (`skills/automate-loop/SKILL.md` §7). |
+| `## Run Config` | yes | `mode` (`safe` \| `auto-merge`), `limit` (PROCESSED-item cap, **default 5** — caps completed items this run, never Queue size), `trust_unprotected` (allows auto-merge onto a branch without enforceable protection — **condition 4 only**; nothing overrides condition 6, the `classify-risk.sh` high-risk park), `auto_review_original` (the original `.auto_review` value captured before the suppress window — `true`/`false`/`absent`), `config_backup` (path of the transient byte-for-byte config-backup sidecar), `max_tokens` (optional, red-team-hardening/06 — the `--max-tokens N` ceiling, present ONLY when passed; unlike `--cheap`/`--notify` this one IS persisted so a bare `--resume` still enforces it). The single-drain config-toggle contract is the skill's domain (`skills/automate-loop/SKILL.md` §7); the ceiling contract is §6 step 1 / §11. |
 | `## Queue` | yes | The **FULL** resolved item list, in **processing order** (top-down). Checklist convention below. |
 | `## Current` | yes | The in-flight item, its item-level status, `pause_reason`, and the owned-drain observability fields. Enums below. |
 | `## Progress` | yes | **APPEND-ONLY** event log — one timestamped line per event; never rewritten. |
@@ -2109,7 +2111,7 @@ The on-disk layout of the `/automate` engine's run file, `.supervisor/automate/<
 | Value | Meaning |
 |---|---|
 | `running` | The loop is actively processing (or this is the freshly-created run). |
-| `paused` | Stopped with **work remaining** — always paired with a `pause_reason` in `## Current` (`awaiting_merge` \| `escalated` \| `limit_reached` \| `resume_ambiguous` \| `rate_limit` \| `drain_died`). |
+| `paused` | Stopped with **work remaining** — always paired with a `pause_reason` in `## Current` (`awaiting_merge` \| `escalated` \| `limit_reached` \| `resume_ambiguous` \| `rate_limit` \| `drain_died` \| `token_ceiling` \| `run_lock_held`). |
 | `done` | Set **only** when the Queue is **fully resolved** (no `- [ ]` items remain), i.e. `remaining: 0`. (`remaining` is **COMPUTED/REPORTED** — the count of `- [ ]` Queue items, derived by `automate-helpers.sh remaining` — **not a persisted run-file field**; there is no `remaining:` line stored in the template.) |
 
 ### `## Queue` checklist convention
@@ -2124,7 +2126,7 @@ The on-disk layout of the `/automate` engine's run file, `.supervisor/automate/<
 | Field | Values | Notes |
 |---|---|---|
 | `status` (item-level) | `running` \| `awaiting_merge` \| `escalated` \| `failed` \| `rate_limit` \| `drain_died` \| `done` | The state of the in-flight item. Distinct from the run-level `## Status` enum above. `rate_limit`/`drain_died` mirror `pause_reason` exactly the way `awaiting_merge`/`escalated` already do — never a separate `parked` placeholder. |
-| `pause_reason` | `awaiting_merge` \| `escalated` \| `limit_reached` \| `resume_ambiguous` \| `rate_limit` \| `drain_died` \| `null` | Non-null whenever `## Status: paused`; `null` while `running`/`done`. `rate_limit`: the loop's own `agent_lifecycle: failed` row (main-scope, `reason: rate_limit`) fired during RUN, before a PR existed — see `skills/automate-loop/SKILL.md` §6 "Rate-limit park". `drain_died`: RECONCILE (§4) found a `.supervisor/review-dispatch/*.died` marker for this item's PR — a DETACHED `dispatch-pr-review.sh` drain exited without ever producing a `REVIEW_HEAL_RESULT` — see `skills/automate-loop/SKILL.md` §4. |
+| `pause_reason` | `awaiting_merge` \| `escalated` \| `limit_reached` \| `resume_ambiguous` \| `rate_limit` \| `drain_died` \| `token_ceiling` \| `run_lock_held` \| `null` | Non-null whenever `## Status: paused`; `null` while `running`/`done`. `rate_limit`: the loop's own `agent_lifecycle: failed` row (main-scope, `reason: rate_limit`) fired during RUN, before a PR existed — see `skills/automate-loop/SKILL.md` §6 "Rate-limit park". `drain_died`: RECONCILE (§4) found a `.supervisor/review-dispatch/*.died` marker for this item's PR — a DETACHED `dispatch-pr-review.sh` drain exited without ever producing a `REVIEW_HEAL_RESULT` — see `skills/automate-loop/SKILL.md` §4. `token_ceiling` (red-team-hardening/06): PICK-time `automate-helpers.sh ceiling-check` found the run's summed ledger over `## Run Config`'s `max_tokens`, or the reader answered `LEDGER_UNREADABLE=1` (fail CLOSED) — see §6 step 1. `run_lock_held`: PICK-time `run-lock.sh acquire` found `.supervisor/run.lock` held by another run/process — see §6 step 1 / §11. Both new values are RUN-level-only parks fired BEFORE an item is picked, so — like `limit_reached`/`resume_ambiguous` — they have no item-level `status` counterpart in the enum above. |
 | `pr` / `branch` | string / `null` | The in-flight item's PR URL and feature branch. |
 | `owned_drain_started` | `<ts>` | Timestamp the engine's single OWNED inline `/review-pr --until-mergeable` drain started. |
 | `owned_drain_result` | `READY` \| `ESCALATED` \| `died` | The drain's terminal `REVIEW_HEAL_RESULT.decision`, read synchronously. `READY` is "ready, left open for a human" — the drain **never merges**. `died` is not a `REVIEW_HEAL_RESULT` decision at all — it records a DETACHED drain's `.died` marker found at RECONCILE (see `pause_reason: drain_died` above), never this engine's own inline drain (which cannot die silently — it runs in this same turn). |

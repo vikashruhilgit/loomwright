@@ -29,6 +29,7 @@
 #   progress-append  <runfile_path> <line>             # §3 append-only ## Progress (never rewrites prior lines)
 #   queue-checkoff   <runfile_path> <item> [reason] [mark]  # §3/§5 flip - [ ] -> - [x] (optional "# <skipped|abandoned>: reason"; mark default skipped)
 #   remaining        <runfile_path>                     # §3 count of "- [ ]" lines only
+#   ceiling-check    <runfile_path> <max_tokens> [--root <checkout>]  # §6 PICK-time token-ceiling check via read-token-ledger.sh --run-id; prints OK/PARK, always exits 0
 #   resolve-folder   <dir>                              # §2 list *.md not "## Status: done"
 #   resolve-backlog  <backlog.md>                       # §2 dependency-ordered items honoring done/✅ markers
 #   resume-glob      <automate_dir>                     # §4 list *.md not "## Status: done"
@@ -229,6 +230,57 @@ remaining() {
   local out="$1"
   [ -f "$out" ] || die "run file not found: $out"
   grep -c '^- \[ \] ' "$out" || true
+}
+
+# ceiling-check <runfile_path> <max_tokens> [--root <checkout>]
+# §6 step 1 PICK-time token ceiling. Sums the run's ledger via
+# `read-token-ledger.sh --run-id <runfile>` (§1.5) and compares its TOTAL
+# against <max_tokens>. Always prints exactly ONE line and returns 0 (a PARK
+# is a normal, expected outcome here — same fail-CLOSED-but-never-crash
+# convention gate_eval already uses, never a shell failure the caller has to
+# special-case):
+#   "OK total=<n> max=<n>"                          — under the ceiling, proceed
+#   "PARK: token_ceiling total=<n> max=<n>"          — at or over the ceiling
+#   "PARK: ledger_unreadable"                        — reader could not sum anything
+# This is the load-bearing seam mutation-control targets (test-automate-helpers.sh
+# §"ceiling-check"): a ledger reader that always reports 0 real tokens must
+# never let this print "OK" when the true spend is over <max_tokens>.
+ceiling_check() {
+  local out="$1" max="$2" root=""
+  shift 2 2>/dev/null || true
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --root) root="${2:-.}"; shift 2 2>/dev/null || shift ;;
+      *) shift ;;
+    esac
+  done
+  [ -f "$out" ] || die "run file not found: $out"
+  case "$max" in
+    ''|*[!0-9]*) die "ceiling-check: max_tokens must be a non-negative integer (got '$max')" ;;
+  esac
+  local reader="$(dirname "$0")/read-token-ledger.sh"
+  local args=(--run-id "$out")
+  [ -n "$root" ] && args+=(--root "$root")
+  local ledger_out=""
+  if [ -x "$reader" ] || [ -f "$reader" ]; then
+    ledger_out="$(bash "$reader" "${args[@]}" 2>/dev/null || true)"
+  fi
+  if [ -z "$ledger_out" ] || printf '%s' "$ledger_out" | grep -q 'LEDGER_UNREADABLE=1'; then
+    echo "PARK: ledger_unreadable"
+    return 0
+  fi
+  local total
+  total="$(printf '%s' "$ledger_out" | grep -oE 'TOTAL=[0-9]+' | head -1 | cut -d= -f2)"
+  if [ -z "$total" ]; then
+    echo "PARK: ledger_unreadable"
+    return 0
+  fi
+  if [ "$total" -gt "$max" ]; then
+    echo "PARK: token_ceiling total=${total} max=${max}"
+    return 0
+  fi
+  echo "OK total=${total} max=${max}"
+  return 0
 }
 
 # --------------------------------------------------------------------------- #
@@ -1433,6 +1485,7 @@ main() {
     progress-append) progress_append "$@" ;;
     queue-checkoff)  queue_checkoff "$@" ;;
     remaining)       remaining "$@" ;;
+    ceiling-check)   ceiling_check "$@" ;;
     resolve-folder)  resolve_folder "$@" ;;
     resolve-backlog) resolve_backlog "$@" ;;
     resume-glob)     resume_glob "$@" ;;

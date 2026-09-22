@@ -317,4 +317,16 @@ if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/build-state.sh" ]; then
   bash "$SCRIPT_DIR/build-state.sh" "$PLUGIN_SESSION_ID" "$main_root" || true
 fi
 
+# ---- Release a stranded run.lock (red-team-hardening/06) --------------------
+# Best-effort, same always-exit-0 discipline as everything above: a run that
+# ended WITHOUT completing may have also left `.supervisor/run.lock` held (the
+# lock is acquired at automate PICK / Supervisor Phase 0 INIT / /autonomous
+# INIT and normally released at the completion tail — a stranded session never
+# reaches that tail). `run-lock.sh release --session-id <id>` is a no-op unless
+# the lock's recorded `session_id` EQUALS this ending session, so it can never
+# steal a DIFFERENT session's live lock.
+if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/run-lock.sh" ]; then
+  bash "$SCRIPT_DIR/run-lock.sh" release --session-id "$PLUGIN_SESSION_ID" --root "$main_root" >/dev/null 2>&1 || true
+fi
+
 exit 0

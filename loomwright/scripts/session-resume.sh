@@ -743,6 +743,31 @@ if compgen -G ".supervisor/autonomous/*/state.json" > /dev/null 2>&1; then
   fi
 fi
 
+# Section 5b: stale run lock (red-team-hardening/06 — run-lock.sh) ----
+if [ -d ".supervisor/run.lock" ]; then
+  LOCK_META=".supervisor/run.lock/meta"
+  LK_OWNER="$(awk -F'\t' '$1=="owner"{print $2; exit}' "$LOCK_META" 2>/dev/null)"
+  LK_PID="$(awk -F'\t' '$1=="pid"{print $2; exit}' "$LOCK_META" 2>/dev/null)"
+  LK_TS="$(awk -F'\t' '$1=="ts"{print $2; exit}' "$LOCK_META" 2>/dev/null)"
+  LK_SESSION="$(awk -F'\t' '$1=="session_id"{print $2; exit}' "$LOCK_META" 2>/dev/null)"
+  LK_NOW="$(date +%s 2>/dev/null || echo 0)"
+  LK_AGE=-1
+  if [ -n "$LK_TS" ] && [ "$LK_TS" -ge 0 ] 2>/dev/null; then
+    LK_AGE=$((LK_NOW - LK_TS))
+  fi
+  LK_ALIVE="unknown"
+  if [ -n "$LK_PID" ]; then
+    if kill -0 "$LK_PID" 2>/dev/null; then LK_ALIVE="alive"; else LK_ALIVE="dead"; fi
+  fi
+  append "### Stale run lock"$'\n'
+  append "\`.supervisor/run.lock\` is held: owner=${LK_OWNER:-?} pid=${LK_PID:-?} (${LK_ALIVE}) session_id=${LK_SESSION:-?} age=${LK_AGE}s"$'\n'
+  if [ "$LK_ALIVE" = "dead" ] && [ "$LK_AGE" -ge 1800 ] 2>/dev/null; then
+    append "This lock is reclaimable (dead pid, age >= 1800s) — the next \`run-lock.sh acquire\` (automate PICK / Supervisor Phase 0 INIT / /autonomous INIT) reclaims it automatically, no manual action needed."$'\n\n'
+  else
+    append "If no /automate, /autonomous, or /supervisor run is actually active, a human may break it: run the plugin's run-lock.sh with \`acquire --owner human:session-resume --force-unlock\` (prints what it broke)."$'\n\n'
+  fi
+fi
+
 # Section 6: recovery hints ----
 append "### Recovery hints"$'\n'
 append "- Read \`.supervisor/state.md\` for full context."$'\n'
