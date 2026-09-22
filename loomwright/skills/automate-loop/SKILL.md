@@ -120,9 +120,9 @@ Exactly **one** source is resolved per run. Resolution produces the **FULL** ord
 - [x] <... merged ...>
 - [x] <... path ...>  # skipped: <reason>     # checked-off so "next unchecked" never re-picks it; reason also in ## Progress
 ## Current
-- item: <path> | status: running|awaiting_merge|escalated|failed|rate_limit|done | pr: <url> | branch: <name>
-- pause_reason: awaiting_merge|escalated|limit_reached|resume_ambiguous|rate_limit|null
-- owned_drain_started: <ts> | owned_drain_result: READY|ESCALATED | suppressed_default_dispatch: true (`READY`'s `termination_reason` — `converged` or `sub_floor_converged`, mechanized bound via `scripts/drain-rounds.sh` — is read straight through from `REVIEW_HEAL_RESULT`; `sub_floor_converged` is NOT merge-eligible, §10 cond 1)
+- item: <path> | status: running|awaiting_merge|escalated|failed|rate_limit|drain_died|done | pr: <url> | branch: <name>
+- pause_reason: awaiting_merge|escalated|limit_reached|resume_ambiguous|rate_limit|drain_died|null
+- owned_drain_started: <ts> | owned_drain_result: READY|ESCALATED|died | suppressed_default_dispatch: true (`READY`'s `termination_reason` — `converged` or `sub_floor_converged`, mechanized bound via `scripts/drain-rounds.sh` — is read straight through from `REVIEW_HEAL_RESULT`; `sub_floor_converged` is NOT merge-eligible, §10 cond 1. `died` — red-team-hardening item 04 — is NOT a `REVIEW_HEAL_RESULT` decision at all; it means a DETACHED `dispatch-pr-review.sh` drain for this item's PR exited without ever producing one, discovered via a `.supervisor/review-dispatch/<hash>.died` marker at RECONCILE, §4 — see that section for the full contract)
 ## Progress                 # APPEND-ONLY (never rewritten)
 - <ts> picked <item>
 - <ts> ran /autonomous → PR <url>
@@ -138,7 +138,7 @@ queued (- [ ]) → running → rate_limit (parks, no PR yet) | pr-open → await
 ### `## Status` semantics
 
 - **`running`** — the loop is actively processing (or is the freshly-created run).
-- **`paused`** — stopped with work remaining; always paired with a `pause_reason` (`awaiting_merge` | `escalated` | `limit_reached` | `resume_ambiguous` | `rate_limit`).
+- **`paused`** — stopped with work remaining; always paired with a `pause_reason` (`awaiting_merge` | `escalated` | `limit_reached` | `resume_ambiguous` | `rate_limit` | `drain_died`).
 - **`done`** — set **only** when the Queue is **fully resolved** (no `- [ ]` items remain), i.e. `remaining: 0`. `remaining` is **COMPUTED/REPORTED** (the count of `- [ ]` Queue items, via `automate-helpers.sh remaining`) — it is **NOT a persisted run-file field**; the template stores no `remaining:` line.
 
 ### Crash-safety contract (HIGH-risk mitigation — run-file is the ONLY copy of resume state)
@@ -166,6 +166,7 @@ queued (- [ ]) → running → rate_limit (parks, no PR yet) | pr-open → await
    - **Branch landed?** `git log origin/main --oneline` / `git branch --contains <sha>` — verify the branch actually reached `main` (never assert "merged" from memory).
    - **Requirement stamped?** the requirement file's `## Status: done` stamp.
    - **No PR yet (`pr: null`, `pause_reason: rate_limit`)?** RUN failed before a PR ever existed (see "Rate-limit park" under §6 below), so there is nothing for `gh` to reconcile — this item is left exactly as parked (still `- [ ]`, still the `## Current` in-flight item) and falls straight through to step 4/6 below: resuming just re-picks it and retries RUN.
+   - **A DETACHED drain died for this item's PR (`drain_died`, red-team-hardening item 04)?** Check `.supervisor/review-dispatch/*.died` for a marker whose `pr_url` field equals this item's `## Current` `pr:` URL. This is a SEPARATE fact from the `owned_drain_result` this loop's OWN inline `/review-pr --until-mergeable` drain records (§7, §6 step 3) — a `.died` marker only ever comes from the DETACHED `dispatch-pr-review.sh` dispatcher (Supervisor's step 5.5 or the `PostToolUse[Bash]` hook backstop), which this engine's owned drain never goes through. If a matching `.died` marker exists, treat it as `owned_drain_result: died` in `## Current` and `## Status: paused` / `pause_reason: drain_died` — **explicitly NEVER `awaiting_merge`**, because a died drain never reached a `READY`/`ESCALATED` verdict to park on in the normal sense; there is no `REVIEW_HEAL_RESULT` to trust either way, and the PR's true readiness is simply unknown. This check runs BEFORE the merged/open/closed reconcile above would otherwise re-pick or resume the item as if a normal drain outcome existed.
    - Reconcile each item, then rewrite `## Queue` checkboxes + `## Current` atomically (§3) so belief matches truth.
 3. **RECONCILE also restores a crash-stranded config backup** (§7) — if `## Run Config`'s `config_backup` sidecar still exists on disk, the prior tick died with `.auto_review` suppressed; restore it (or delete `config.json` if originally absent) before proceeding.
 4. **If an incomplete run exists**, `AskUserQuestion`: **continue / start new / archive**.
@@ -216,7 +217,7 @@ Immediately after step 2 RUN captures `SUPERVISOR_RESULT` and restores `.auto_re
 - **Queue fully resolved** (no `- [ ]` left) ⇒ `## Status: done`, `remaining: 0`, the `/loop` driver stops.
 - **`limit` items processed** with the queue NOT empty ⇒ `## Status: paused`, `pause_reason: limit_reached`, `remaining: <unchecked count>`, loop stops.
 
-(A park on `awaiting_merge`, `escalated` — §8/§9 — or `rate_limit` — the "Rate-limit park" subsection above — also stops the loop with the corresponding `pause_reason`.)
+(A park on `awaiting_merge`, `escalated` — §8/§9 — or `rate_limit` — the "Rate-limit park" subsection above — or `drain_died` — §4 RECONCILE, a DETACHED drain that exited without a result, red-team-hardening item 04 — also stops the loop with the corresponding `pause_reason`.)
 
 All `/autonomous` correctness gates still bubble up (NO-GO, Plan Review FAIL×3, adjudication, rubric gate); `--notify`, `--non-interactive-fallback`, and `--cheap` pass through to the inner `/autonomous` (§11).
 

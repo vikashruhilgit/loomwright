@@ -696,6 +696,39 @@ else
 fi
 
 echo
+echo "== (i) died drains (red-team-hardening item 04): ⚠ drain died cell =="
+R_I1="$TMPROOT/i1-no-death"; mkdir -p "$R_I1/.supervisor" || setup_fail "mkdir i1"
+run "$R_I1"
+if has "$out" "⚠ drain died"; then
+  no "(i1) no .died marker at all — the cell must NOT appear" "$out"
+else
+  ok "(i1) no .died marker -> no ⚠ drain died cell"
+fi
+
+R_I2="$TMPROOT/i2-death"; mkdir -p "$R_I2/.supervisor/review-dispatch" || setup_fail "mkdir i2"
+printf 'ts\t20260101T000000Z\npr_url\thttps://github.com/acme/widgets/pull/1\nexit_code\t0\nlast_log_line\tx\nattempt\t1\n' \
+  > "$R_I2/.supervisor/review-dispatch/hash1.died"
+run "$R_I2"
+if has "$out" "⚠ drain died"; then
+  ok "(i2) a .died marker present -> ⚠ drain died cell rendered ($out)"
+else
+  no "(i2) a .died marker present but the cell is MISSING" "$out"
+fi
+[ "$rc" -eq 0 ] && ok "(i2) exit 0" || no "(i2) expected exit 0, got $rc"
+
+R_I3="$TMPROOT/i3-death-with-state"
+mkstate "$R_I3" "EXECUTE" "feature/x" "sess1" 2 4
+mkdir -p "$R_I3/.supervisor/review-dispatch" || setup_fail "mkdir i3"
+printf 'ts\t20260101T000000Z\npr_url\thttps://github.com/acme/widgets/pull/1\nexit_code\t0\nlast_log_line\tx\nattempt\t1\n' \
+  > "$R_I3/.supervisor/review-dispatch/hash1.died"
+run "$R_I3"
+if has "$out" "EXECUTE" && has "$out" "2/4" && has "$out" "⚠ drain died"; then
+  ok "(i3) died cell coexists with a normal state.md render ($out)"
+else
+  no "(i3) died cell did not coexist correctly with the normal render" "$out"
+fi
+
+echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
 exit 0

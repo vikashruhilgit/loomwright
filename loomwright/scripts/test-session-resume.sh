@@ -1304,6 +1304,58 @@ test_repair_mutation() {
 }
 test_repair_mutation
 
+echo "== (z6) died drains (red-team-hardening item 04): two .died fixtures ⇒ heading + BOTH PR URLs, bounded to 5, inside MAX_CHARS =="
+test_died_drains() {
+  local r ctx
+  r="$(new_repo)"; make_plugin_active "$r"
+  mkdir -p "$r/.supervisor/review-dispatch"
+  printf 'ts\t20260101T000000Z\npr_url\thttps://github.com/acme/widgets/pull/1\nexit_code\t0\nlast_log_line\tsome output\nattempt\t1\n' \
+    > "$r/.supervisor/review-dispatch/hash1.died"
+  # Slightly newer mtime so ordering is deterministic (ls -t newest-first).
+  sleep 1 2>/dev/null || true
+  printf 'ts\t20260101T000100Z\npr_url\thttps://github.com/acme/widgets/pull/2\nexit_code\t1\nlast_log_line\tother output\nattempt\t2\n' \
+    > "$r/.supervisor/review-dispatch/hash2.died"
+  ctx="$(run_hook_ctx "$r" resume)"; local rc; rc="$(lastrc)"
+  [ "$rc" -eq 0 ] && ok "(z6) exits 0" || no "(z6) expected exit 0, got $rc"
+  grep -qF -- "Drains that died without a result" <<< "$ctx" \
+    && ok "(z6) heading present" || no "(z6) heading missing: $ctx"
+  grep -qF -- "https://github.com/acme/widgets/pull/1" <<< "$ctx" \
+    && ok "(z6) PR #1 URL listed" || no "(z6) PR #1 URL missing: $ctx"
+  grep -qF -- "https://github.com/acme/widgets/pull/2" <<< "$ctx" \
+    && ok "(z6) PR #2 URL listed" || no "(z6) PR #2 URL missing: $ctx"
+  local nbytes; nbytes="${#ctx}"
+  [ "$nbytes" -le 8000 ] && ok "(z6) additionalContext stays within the 8 KB cap ($nbytes bytes)" \
+    || no "(z6) additionalContext EXCEEDED the 8 KB cap ($nbytes bytes)"
+}
+test_died_drains
+
+echo "== (z7) died drains bounded to 5 entries even when more markers exist =="
+test_died_drains_bounded() {
+  local r ctx i
+  r="$(new_repo)"; make_plugin_active "$r"
+  mkdir -p "$r/.supervisor/review-dispatch"
+  for i in 1 2 3 4 5 6 7; do
+    printf 'ts\t2026010%dT000000Z\npr_url\thttps://github.com/acme/widgets/pull/%d\nexit_code\t0\nlast_log_line\tx\nattempt\t1\n' "$i" "$i" \
+      > "$r/.supervisor/review-dispatch/hash$i.died"
+  done
+  ctx="$(run_hook_ctx "$r" resume)"
+  local count; count="$(grep -cF -- 'github.com/acme/widgets/pull/' <<< "$ctx" || true)"
+  [ "$count" -le 5 ] && ok "(z7) at most 5 died-drain PR URLs listed (got $count)" \
+    || no "(z7) more than 5 died-drain PR URLs listed (got $count) — bound not honoured"
+}
+test_died_drains_bounded
+
+echo "== (z8) no .died markers ⇒ no heading, no header leaked =="
+test_no_died_drains() {
+  local r ctx
+  r="$(new_repo)"; make_plugin_active "$r"
+  ctx="$(run_hook_ctx "$r" resume)"
+  grep -qF -- "Drains that died without a result" <<< "$ctx" \
+    && no "(z8) heading present with no .died markers at all" \
+    || ok "(z8) no heading when nothing died"
+}
+test_no_died_drains
+
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
 exit 0

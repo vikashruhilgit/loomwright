@@ -416,6 +416,7 @@ if [ -z "$PR_HASH" ]; then
   PR_HASH="$(printf '%s' "$PR_URL" | tr -c 'A-Za-z0-9' '-' )"
 fi
 MARKER="$DISPATCH_DIR/$PR_HASH"
+DIED_MARKER="$MARKER.died"
 LOCK_DIR="$DISPATCH_DIR/$PR_HASH.lock"
 LOCK_META="$LOCK_DIR/meta"
 LOCK_TTL_SECONDS=1800   # conservative stale-lock TTL (30 min) — see AC4a-(i) reclaim
@@ -446,14 +447,44 @@ WT_PATH="$PARENT_DIR/${PROJECT_BASENAME}-review-${PR_HASH_SHORT}"
 # (dispatcher stderr, the same channel every other dispatcher message uses; silent
 # when clean), the trap appends it to RUN_LOG (the wrapper's own log positional).
 SALVAGE_BIN="$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)/worktree-salvage.sh"
+# Death-detection notification siblings (red-team-hardening item 04) — resolved
+# ABSOLUTE for the same reason as SALVAGE_BIN: the wrapper `cd`'s into the
+# worktree before the trap ever fires. Both are best-effort, fail-safe, and
+# ALWAYS exit 0 — a missing/failing notify call never blocks the trap.
+NOTIFY_BIN="$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)/notify-desktop.sh"
+WEBHOOK_BIN="$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)/send-webhook.sh"
 
 # ---- ① existing-marker-wins (AC4a, PINNED order — BEFORE lock/worktree) ------
 # If a durable marker already exists for this PR, a dispatch genuinely started —
 # never launch again. This preserves today's double-dispatch protection and must
 # come BEFORE taking any lock or creating any worktree.
+#
+# BOUNDED RE-DISPATCH ON DEATH (red-team-hardening item 04). A marker alone no
+# longer means "never re-dispatch" — a `<hash>.died` marker beside it (written
+# by the wrapper trap below when the runner exited without ever printing a
+# terminal REVIEW_HEAL_RESULT) means the prior dispatch silently DIED, not
+# completed. `<hash>` + `<hash>.died` together are treated as "not dispatched"
+# for EXACTLY ONE automatic re-dispatch (attempt 1). If a SECOND death occurs
+# for the same PR, the trap writes `<hash>.died` with `attempt=2`, and THAT is
+# what this guard checks below to refuse a third dispatch — bounded, never an
+# unbounded retry loop. A `.died` marker with no readable `attempt` field is
+# treated as attempt 1 (the trap's default first-death shape).
 if [ -e "$MARKER" ]; then
-  log "PR already dispatched this run (marker exists: $MARKER) — skipping re-dispatch"
-  exit 0
+  if [ -e "$DIED_MARKER" ]; then
+    DIED_ATTEMPT="$(awk -F'\t' '$1=="attempt"{print $2; exit}' "$DIED_MARKER" 2>/dev/null || true)"
+    case "$DIED_ATTEMPT" in
+      ''|1)
+        log "prior drain for this PR DIED (attempt=${DIED_ATTEMPT:-1}, marker: $DIED_MARKER) — allowing ONE automatic re-dispatch"
+        ;;
+      *)
+        log "prior drain for this PR DIED twice (attempt=$DIED_ATTEMPT, marker: $DIED_MARKER) — re-dispatch exhausted, skipping"
+        exit 0
+        ;;
+    esac
+  else
+    log "PR already dispatched this run (marker exists: $MARKER) — skipping re-dispatch"
+    exit 0
+  fi
 fi
 
 # ---- Dry-run short-circuit (TEST-ONLY exception — claude-independent) ---------
@@ -660,6 +691,12 @@ case "$RUN_LOG" in
   /*) RUN_LOG_ABS="$RUN_LOG" ;;
   *)  RUN_LOG_ABS="$MAIN_GITDIR/$RUN_LOG" ;;
 esac
+# MARKER_ABS — same absolute-path requirement as RUN_LOG_ABS (the wrapper
+# `cd`'s into the worktree before the trap runs death detection against it).
+case "$MARKER" in
+  /*) MARKER_ABS="$MARKER" ;;
+  *)  MARKER_ABS="$MAIN_GITDIR/$MARKER" ;;
+esac
 if ! {
   printf 'DISPATCHED\tts=%s\turl=%s\tuntil_mergeable=%s\trunner=%s\tregime=%s\n' "$TIMESTAMP" "$PR_URL" "$UNTIL_MERGEABLE" "$RUNNER" "$REGIME_LABEL"
   printf '# marker: %s\n' "$MARKER"
@@ -784,10 +821,14 @@ esac
 # AC — this is the REAL production invocation, not merely the diagnostic).
 # ALLOWED_TOOLS_REAL is built with the ACTUAL resolved HEAD_REF (known since
 # step ④), never the DRY_RUN preview's "HEAD_REF" placeholder.
+# ${12}/${13}/${14} — death detection (red-team-hardening item 04): the
+# ABSOLUTE durable marker path, and the notify-desktop.sh / send-webhook.sh
+# sibling scripts. See "DEATH DETECTION" inside the trap below.
 ALLOWED_TOOLS_REAL="$(build_allowed_tools "${HEAD_REF:-HEAD_REF}")"
 WRAPPER='
-_mg="$1"; _wt="$2"; _lock="$3"; _bin="$4"; _runner="$5"; _pr="$6"; _log="$7"; _salvage="$8"; _pmode="$9"; _atools="${10}"; _dtools="${11}"
+_mg="$1"; _wt="$2"; _lock="$3"; _bin="$4"; _runner="$5"; _pr="$6"; _log="$7"; _salvage="$8"; _pmode="$9"; _atools="${10}"; _dtools="${11}"; _marker="${12}"; _notify="${13}"; _webhook="${14}"
 trap_cleanup() {
+  _rc="$_exit_code"
   cd "$_mg" 2>/dev/null || cd / 2>/dev/null || true
   _out=""
   [ -n "$_salvage" ] && _out="$(bash "$_salvage" "$_wt" --dest "$_mg/.supervisor/salvage" --reason "review-drain teardown" 2>&1 </dev/null || true)"
@@ -795,12 +836,63 @@ trap_cleanup() {
   git -C "$_mg" worktree remove --force "$_wt" >/dev/null 2>&1 || true
   rm -rf "$_wt" 2>/dev/null || true
   rm -rf "$_lock" 2>/dev/null || true
+
+  # ---- DEATH DETECTION (red-team-hardening item 04) --------------------
+  # After the runner process has exited (and worktree/lock teardown above —
+  # ordering with the salvage->removal->lock-last triad is unaffected, since
+  # this reads only $_log / writes only the marker, neither of which the
+  # teardown above touches), decide whether the runner ever produced a
+  # terminal REVIEW_HEAL_RESULT block. Absent ⇒ the drain died mid-run (e.g.
+  # a scoped-check wait the model backgrounded and then ended its turn on —
+  # under `claude -p`, turn-end IS process exit) — record it via a `.died`
+  # marker so no downstream consumer (session-resume.sh, automate-loop
+  # RECONCILE, the postmortem gather) mistakes a died drain for a completed
+  # one. This grep is the SOLE mechanism deciding DIED vs completed — see
+  # test-dispatch-pr-review.sh'"'"'s BLOCKING mutation control, which deletes
+  # this exact check and proves the `.died`-marker assertion goes false.
+  if grep -q "REVIEW_HEAL_RESULT" "$_log" 2>/dev/null; then
+    # A real result was produced this run — clear any stale `.died` marker
+    # from a prior attempt so a LATER re-dispatch is not mistaken for still
+    # being in a died state (the marker is removed ONLY by a dispatch that
+    # reaches a result).
+    rm -f "$_marker.died" 2>/dev/null || true
+  else
+    _died="$_marker.died"
+    _attempt=1
+    if [ -e "$_died" ]; then
+      _prior="$(awk -F"\t" "\$1==\"attempt\"{print \$2; exit}" "$_died" 2>/dev/null || true)"
+      case "$_prior" in
+        ""|1) _attempt=2 ;;
+        *)    _attempt="$_prior" ;;
+      esac
+    fi
+    _ts="$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || echo unknown)"
+    _last_line="$(tail -n 1 "$_log" 2>/dev/null || true)"
+    {
+      printf "ts\t%s\n" "$_ts"
+      printf "pr_url\t%s\n" "$_pr"
+      printf "exit_code\t%s\n" "${_rc:-unknown}"
+      printf "last_log_line\t%s\n" "$_last_line"
+      printf "attempt\t%s\n" "$_attempt"
+    } > "$_died" 2>/dev/null || true
+    printf "DRAIN_DIED\tts=%s\turl=%s\texit_code=%s\tattempt=%s\n" "$_ts" "$_pr" "${_rc:-unknown}" "$_attempt" >>"$_log" 2>/dev/null || true
+    # Best-effort notifications — fail-safe, NEVER block or fail the trap.
+    if [ -n "$_notify" ] && [ -x "$_notify" ]; then
+      printf "{\"hook_event_name\":\"Notification\",\"notification_type\":\"drain_died\",\"message\":\"review drain died without a result: %s\"}" "$_pr" \
+        | bash "$_notify" >/dev/null 2>&1 </dev/null || true
+    fi
+    if [ -n "$_webhook" ] && [ -x "$_webhook" ]; then
+      bash "$_webhook" --event-type gate --gate-type drain_died --context "$_pr" >/dev/null 2>&1 </dev/null || true
+    fi
+  fi
 }
 trap trap_cleanup EXIT
 cd "$_wt" || exit 0
 "$_bin" -p --permission-mode "$_pmode" --allowedTools "$_atools" --disallowedTools "$_dtools" --agent "$_runner" "$_pr" >>"$_log" 2>&1 </dev/null
+_exit_code=$?
+exit "$_exit_code"
 '
-( nohup bash -c "$WRAPPER" _ "$MAIN_GITDIR" "$WT_PATH" "$LOCK_DIR_ABS" "$CLAUDE_BIN" "$RUNNER" "$PR_URL" "$RUN_LOG_ABS" "$SALVAGE_BIN" "$PERMISSION_MODE" "$ALLOWED_TOOLS_REAL" "$DISALLOWED_TOOLS" >/dev/null 2>&1 & ) >/dev/null 2>&1 || true
+( nohup bash -c "$WRAPPER" _ "$MAIN_GITDIR" "$WT_PATH" "$LOCK_DIR_ABS" "$CLAUDE_BIN" "$RUNNER" "$PR_URL" "$RUN_LOG_ABS" "$SALVAGE_BIN" "$PERMISSION_MODE" "$ALLOWED_TOOLS_REAL" "$DISALLOWED_TOOLS" "$MARKER_ABS" "$NOTIFY_BIN" "$WEBHOOK_BIN" >/dev/null 2>&1 & ) >/dev/null 2>&1 || true
 
 log "dispatched review-pr-runner for $PR_URL (worktree: $WT_PATH, log: $RUN_LOG)"
 exit 0

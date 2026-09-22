@@ -342,18 +342,23 @@ gh api repos/<owner>/<repo>/branches/<base>/protection/required_status_checks
 
 **Include/exclude policy (explicit):** the effective review-producing predicate is `(required) OR (name/app matches --review-check-pattern OR notify-config `review_check_include`) AND NOT (name/app matches notify-config `review_check_exclude`)`. The **exclude list wins** over the include/pattern match (so an operator can carve out a noisy non-review check that happens to match `*review*`). Required checks are NEVER excluded by this policy — they are gated by §U2 regardless.
 
-**Bounded wait:**
+**Bounded wait — MECHANIZED via `scripts/wait-for-checks.sh` (red-team-hardening item 04).** This scoped wait is a single **foreground, blocking** script call, never model-executed `sleep` pseudocode — see "Never run this wait in the background" below.
 
 ```
-deadline = now + check_wait_timeout          # --check-wait-timeout N (seconds); DEFAULT 1200 (20 min) — sizing note below
-poll_interval = 15                           # seconds between scoped-set polls (DEFAULT)
-while now < deadline AND rounds < max_rounds:
-  scoped = [c in rollup if is_required(c) or is_review_producing(c)]   # NEVER the whole rollup
-  in_flight = [c in scoped if c.status in (QUEUED, IN_PROGRESS) or c.state is pending]
-  if in_flight == []:
-     break                                    # scoped set settled — proceed to re-scan ALL channels (U1)
-  sleep(poll_interval); re-read statusCheckRollup
+wait-for-checks.sh <pr-url> --sha <current-sha> --bound <check_wait_timeout> \
+    --interval 15 --review-check-pattern <pattern>
+# prints exactly ONE final line:
+#   SETTLED sha=<sha> required=<green|red|unknown> review_producing=<settled|elapsed>
+#   ELAPSED sha=<sha> required=<green|red|pending|unknown> review_producing=<settled|elapsed> pending=<...>
+if result contains "required=unknown":
+   escalate                                 # §U2 fail-CLOSED: unreadable required-check metadata is
+                                             # NEVER treated as green, even on a "SETTLED" line
+elif result starts with "SETTLED":
+   break                                    # scoped set settled — proceed to re-scan ALL channels (U1)
+# else ("ELAPSED") — fall through to AC4's fail-CLOSED escalation below
 ```
+
+> **Never run this wait in the background and never end the turn while waiting — under `claude -p` ending the turn ends the process and the drain dies with no result.** `wait-for-checks.sh` is foreground and blocking by design (it never backgrounds itself); the model must invoke it as an ordinary, awaited Bash call and read its one final line before continuing — never dispatch it, "check back later," or end the turn "while it runs."
 
 - **AC3 hard constraint — optional checks never block/escalate by themselves.** An **unrelated optional** check (deploy / preview / security scanner that emits no review feedback and is neither required nor review-producing) that is perpetually `QUEUED`/`IN_PROGRESS` is **outside the wait set**: it MUST NEVER, by itself, block READY or force escalation. The wait observes ONLY the scoped set.
 - **Re-scan after settle:** once the scoped set settles, the round **re-scans ALL channels (U1)** before deciding — this is what lets a review comment that lands *after* `ci` went green (e.g. #64's `claude-review` posting ~5 min later) be seen rather than missed.
@@ -577,35 +582,31 @@ iterations = rounds        # the back-compat v1 analogue — same value as `roun
 
 **WHERE the check sits (mandatory shape — split the skipped work, never skip the whole round).** A `sub_floor_converged` termination still runs the **confirming required-check pass** against the **pushed** SHA; it skips ONLY the expensive all-channel bot-finding re-scan + validate pass (§U4's `read_all_channels()`/`classify_all_channels()` re-scan and the §U3.5 Validate-Then-Fix pass that follows it). Wiring the check at the *bottom* of a round (after `push_fix_to_pr()`, as in the pseudocode above) — rather than declining the fix up front — is what keeps this compatible with reading B and with the earned-fallback gate (AC12, which the pseudocode re-evaluates FOR the skipped round rather than bypassing it).
 
-**`confirming_required_check_pass(pushed_sha, required)` (AC11, R1 — SHA-BINDING IS LOAD-BEARING):**
+**`confirming_required_check_pass(pushed_sha, required)` (AC11, R1 — SHA-BINDING IS LOAD-BEARING) — MECHANIZED via `scripts/wait-for-checks.sh --required-only` (red-team-hardening item 04):**
 
 ```
-deadline = now + check_wait_timeout       # same bound as §U2.5's Wait-For-Settled-Checks
-poll_interval = 15
-while now < deadline:
-  view = gh pr view <pr-url> --json headRefOid,statusCheckRollup
-  if view.headRefOid != pushed_sha:
-    sleep(poll_interval); continue         # rollup describes a DIFFERENT commit — not settled for OUR SHA yet
-  scoped_required = [c in view.statusCheckRollup if is_required(c)]
-  # NOTE: this is a COUNT check, not an identity filter. `gh`'s statusCheckRollup has NO per-check
-  # SHA field — the whole rollup already corresponds to pushed_sha, because the headRefOid guard
-  # above returned/looped otherwise. So `materialized` is just "how many of the required contexts
-  # have appeared in this SHA's rollup yet", distinguishing NOT-YET-CREATED (GitHub has not
-  # materialised the check run) from CREATED-BUT-PENDING (which the in_flight test below catches).
-  # Do not go looking for a per-check SHA field to filter on; there isn't one.
-  materialized = [c in rollup_for_pushed_sha if is_required(c)]   # count vs len(required), see note
-  if len(materialized) < len(required):
-    sleep(poll_interval); continue         # a required check has NOT YET been re-created for pushed_sha —
-                                            # NOT-settled, NEVER treated as green (this is the race R1 names:
-                                            # an absent entry is indistinguishable from "not yet queued" and
-                                            # falling through would silently read the PRIOR commit's SUCCESS)
-  in_flight = [c in scoped_required if c.status in (QUEUED, IN_PROGRESS) or c.state is pending]
-  if in_flight != []:
-    sleep(poll_interval); continue
-  failing = [c for c in scoped_required if c.state not in GREEN_STATES]
-  return { result: "RED" if failing != [] else "GREEN", failing_names: {c.name for c in failing} }
-return { result: "UNREADABLE", failing_names: {} }   # bound elapsed with the SHA never fully settled — Hole 1's fail-safe
+wait-for-checks.sh <pr-url> --sha <pushed_sha> --bound <check_wait_timeout> \
+    --interval 15 --required-only
+# NOTE: --required-only scopes the wait to required checks ONLY (no
+# review-producing checks) — this pass never waits on anything else.
+# The script itself implements the sha-binding (a rollup for a DIFFERENT
+# commit than pushed_sha is NEVER treated as settled) and the
+# materialization guard (a required context absent from pushed_sha's rollup
+# entirely — NOT-YET-CREATED — is NOT-settled, distinguished from
+# CREATED-BUT-PENDING; an absent entry is never silently read as the PRIOR
+# commit's SUCCESS — this is the exact race R1 names).
+result = parse(wait-for-checks.sh output)
+if result starts with "SETTLED":
+  # result.required == "unknown" (unreadable branch-protection metadata,
+  # PR #251 review finding 2) intentionally falls into the else branch here —
+  # anything other than exactly "green" is RED, which degrades to ESCALATED
+  # below, never READY.
+  return { result: ("GREEN" if result.required == "green" else "RED"), failing_names: <from result> }
+else:  # "ELAPSED" — bound elapsed with pushed_sha never fully settled
+  return { result: "UNREADABLE", failing_names: {} }   # Hole 1's fail-safe
 ```
+
+> **Never run this wait in the background and never end the turn while waiting — under `claude -p` ending the turn ends the process and the drain dies with no result.** Same discipline as §U2.5's call above: this is a single foreground, blocking `wait-for-checks.sh` invocation, never a backgrounded poll the model "checks back on" later.
 
 `READY` (`sub_floor_converged`) only when this returns `GREEN` for the exact `pushed_sha`. `RED`, `UNREADABLE`, or a `headRefOid` mismatch that never resolves within the bound all degrade to `ESCALATED` — never `READY` on a red or unknown SHA. This mirrors the `ready_sha` vs `head_sha` check in `automate-helpers.sh`'s `gate-eval` condition 2 (specified at `automate-loop/SKILL.md` §10 condition 2) — the drain simply never adopted SHA-binding before this change (`headRefOid` appeared zero times in this skill).
 
@@ -767,6 +768,7 @@ The tail's exit status is **ignored** — the dispatcher always exits 0 and the 
 
 ## Anti-Patterns
 
+- **`background_wait` — backgrounding the scoped check-wait (red-team-hardening item 04).** Never run `wait-for-checks.sh` in the background, poll it asynchronously, or end the turn "while it runs" — under `claude -p` (a headless, non-interactive session) ending the turn IS process exit, and the drain dies mid-wait with no `REVIEW_HEAL_RESULT` ever produced. `wait-for-checks.sh` is foreground and blocking by construction (see §U2.5 and §"Termination-only severity floor"); the model must invoke it as an ordinary awaited Bash call and read its one final line before continuing.
 - **Force-pushing the PR branch.** Never `git push --force` — clobbers concurrent author commits. Regular push only (same-repo via explicit refspec `git push origin HEAD:<head_ref>`).
 - **Pushing to `origin` for a fork/cross-repo PR.** The head ref is NOT on `origin`, so `git push origin HEAD:<head_ref>` updates the wrong ref or fails. Degrade to review-only `ESCALATED` instead (see "Fork-aware push").
 - **The detached drain checking out the PR head in the inline working tree.** The detached dispatched drain runs inside the dispatcher-created sibling worktree — it must NOT `git checkout "$HEAD_REF"` in the inline session's checkout (that is the exact same-tree collision this isolation removes). Worktree creation + removal are owned by the dispatcher's trap-wrapper, never a runner prompt step.
