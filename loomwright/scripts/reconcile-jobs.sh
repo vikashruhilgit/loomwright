@@ -140,6 +140,16 @@
 #   reconcile-jobs.sh --repair --evidence <requirement_path>=<pr_url> [--evidence …]
 #                                     engine-supplied evidence (repeatable, off by
 #                                     default); repair ONLY the matching brief(s)
+#   reconcile-jobs.sh --print-base-ref
+#                                     print `vcs_base_ref`'s resolved remote-tracking
+#                                     base ref (origin/HEAD, else origin/main, else
+#                                     origin/development) and exit — nothing else in
+#                                     this script runs. The sanctioned REUSE seam for
+#                                     a sibling that needs the same base-ref
+#                                     resolution (worktree-audit.sh's merged column,
+#                                     queue-hygiene/01) without re-deriving the
+#                                     fallback ladder. Exit 1 and prints nothing when
+#                                     no base ref resolves.
 #
 # Deliberately vendor-neutral (CORE-classified): names no harness-specific
 # variable or path, so `scripts/check-vendor-coupling.sh` holds it at allowance 0.
@@ -165,6 +175,7 @@ evidence_index_for() {
 PORCELAIN=0
 REPAIR=0
 REPAIR_MERGED_ONLY=0
+PRINT_BASE_REF=0
 # EVIDENCE_MODE flips to 1 the moment ANY --evidence flag is PARSED — before its
 # value is validated. Scoping (see the main loop) keys on this, not on whether a
 # value was accepted: a supplied-but-rejected evidence list must repair NOTHING,
@@ -181,6 +192,7 @@ while [ "$#" -gt 0 ]; do
     --porcelain) PORCELAIN=1 ;;
     --repair)    REPAIR=1 ;;
     --repair-merged) REPAIR=1; REPAIR_MERGED_ONLY=1 ;;
+    --print-base-ref) PRINT_BASE_REF=1 ;;
     --evidence)
       EVIDENCE_MODE=1
       shift
@@ -383,6 +395,15 @@ vcs_base_ref() {
   VCS_BASE_REF="$ref"
   return 0
 }
+
+# --print-base-ref is a standalone REUSE seam: resolve and print vcs_base_ref's
+# result, then exit — nothing else below (the in-progress/ scan, --repair, the
+# report loop) runs. Placed here, right after vcs_base_ref is defined, so no
+# other function this flag doesn't need has to load first.
+if [ "$PRINT_BASE_REF" -eq 1 ]; then
+  if vcs_base_ref; then printf '%s\n' "$VCS_BASE_REF"; exit 0; fi
+  exit 1
+fi
 
 vcs_merge_for_brief() {
   local brief="$1" base slug since ref re line sha subj n=0 hit="" others=0 f

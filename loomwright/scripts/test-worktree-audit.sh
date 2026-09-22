@@ -654,6 +654,73 @@ if gate_mutant "$AUDIT" "$MI" "AC-10(i)"; then
   [ "$(field "$l" '.branch')" = "feature/z" ] && ok "AC-10(i) AC-3g(c) (-b) stays GREEN on the mutant (the red is case 3's alone)" || no "AC-10(i) AC-3g(c) went red: $l"
 fi
 
+# ============================================================================
+echo "== queue-hygiene/01: merged / salvage columns (additive to report) =="
+# `report`'s new columns lean on the sibling reconcile-jobs.sh's --print-base-ref
+# seam (found the SAME dirname "$0" way as every other sibling lookup in this
+# file family). It sits right beside worktree-audit.sh on disk, so real siblings
+# rather than copy_with_siblings are used here on purpose — that helper only
+# copies worktree-audit.sh itself, and a copy WITHOUT reconcile-jobs.sh is
+# exactly the "sibling absent" degrade case exercised separately below.
+
+# rows_of <report_out> <path> — the ONE orphan row for <path>, tab-preserved.
+row_of() { printf '%s\n' "$1" | awk -F'\t' -v p="$2" '$1=="orphan" && $2==p'; }
+col() { printf '%s' "$1" | awk -F'\t' -v n="$2" '{print $n}'; }
+
+qh_repo() {
+  local r; r="$(new_repo)"
+  ( cd "$r" && git remote add origin https://github.com/acme/widgets.git 2>/dev/null
+    git -C "$r" update-ref refs/remotes/origin/main HEAD ) >/dev/null 2>&1
+  printf '%s' "$r"
+}
+
+R="$(qh_repo)"
+W1="$(dirname "$R")/wt-merged-clean"; W2="$(dirname "$R")/wt-merged-dirty"; W3="$(dirname "$R")/wt-unmerged"
+( cd "$R" && git worktree add -q -b b1 "$W1" HEAD \
+    && git worktree add -q -b b2 "$W2" HEAD \
+    && git worktree add -q -b b3 "$W3" HEAD ) >/dev/null 2>&1
+echo dirty > "$W2/dirty.txt"
+( cd "$W3" && echo extra > e.txt && git add e.txt && git commit -qm extra ) >/dev/null 2>&1
+( cd "$R" && bash "$AUDIT" note created "$W1" b1 ) >/dev/null 2>&1
+( cd "$R" && bash "$AUDIT" note created "$W2" b2 ) >/dev/null 2>&1
+( cd "$R" && bash "$AUDIT" note created "$W3" b3 ) >/dev/null 2>&1
+out="$( cd "$R" && bash "$AUDIT" report )"
+
+r1="$(row_of "$out" "$W1")"; r2="$(row_of "$out" "$W2")"; r3="$(row_of "$out" "$W3")"
+if [ "$(col "$r1" 6)" = "merged" ] && [ -z "$(col "$r1" 7)" ]; then
+  ok "AC-6 clean merged worktree: row prints 'merged' only (no salvage suffix)"
+else
+  no "AC-6 clean merged row wrong: [$r1]"
+fi
+if [ "$(col "$r2" 6)" = "merged" ] && [ "$(col "$r2" 7)" = "salvage: 1 files" ]; then
+  ok "AC-6 merged worktree with one uncommitted file: row prints 'merged' AND 'salvage: 1 files'"
+else
+  no "AC-6 dirty merged row wrong: [$r2]"
+fi
+if [ "$(col "$r3" 6)" != "merged" ]; then
+  ok "AC-6 falsify: a HEAD that is NOT an ancestor of origin/main never prints 'merged'"
+else
+  no "AC-6 falsify case wrongly printed merged: [$r3]"
+fi
+( cd "$R" && git worktree remove --force "$W1" 2>/dev/null; git worktree remove --force "$W2" 2>/dev/null; git worktree remove --force "$W3" 2>/dev/null ) >/dev/null 2>&1
+
+# AC-9 regression: a plain orphan (no origin remote ⇒ no base ref resolves)
+# prints the EXACT pre-existing 5-field row shape (orphan,path,branch,ts,sid)
+# — the new columns are never forced onto a row this feature cannot classify.
+R2="$(new_repo)"
+W4="$(dirname "$R2")/wt-plain"
+( cd "$R2" && git worktree add -q -b b4 "$W4" HEAD ) >/dev/null 2>&1
+( cd "$R2" && bash "$AUDIT" note created "$W4" b4 ) >/dev/null 2>&1
+out2="$( cd "$R2" && bash "$AUDIT" report )"
+r4="$(row_of "$out2" "$W4")"
+nfields="$(printf '%s' "$r4" | awk -F'\t' '{print NF}')"
+if [ "$nfields" = "5" ] && [ "$(col "$r4" 5)" = "-" ]; then
+  ok "AC-9 regression: no resolvable base ref ⇒ row stays the pre-existing 5-field shape (session field last), no merged/salvage suffix forced on"
+else
+  no "AC-9 regression: row shape changed for an unclassifiable worktree: [$r4] (fields=$nfields)"
+fi
+( cd "$R2" && git worktree remove --force "$W4" 2>/dev/null ) >/dev/null 2>&1
+
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
 exit 0
