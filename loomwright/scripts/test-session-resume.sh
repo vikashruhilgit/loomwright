@@ -1155,6 +1155,59 @@ test_orphans_header_mutant() {
 }
 test_orphans_header_mutant
 
+# ---------------------------------------------------------------------------
+echo "== (w2) any_salvage branch: a salvage-carrying row swaps the by-hand wording for the worktree-salvage.sh pointer (queue-hygiene/01 AC-7) =="
+# ORPHAN_SALVAGE_ROW mirrors worktree-audit.sh's real 7-field shape: the extra
+# `merged` + `salvage: N files` fields are ADDITIVE past the original 5.
+SALVAGE_MARK="salvage: 3 files"
+ORPHAN_SALVAGE_ROW="$(printf 'orphan\t%s\tfeature/BD-15a\t2026-09-11T12:00:00Z\t00893aaf-4c1e-4f6b-9a2d-1b3c5d7e9f01\tmerged\t%s\n' "$ORPHAN_ROW_PATH" "$SALVAGE_MARK")"
+test_orphans_salvage_fires() {
+  local d r out ctx arm
+  d="$(mktmp)"; copy_hook_full "$d"; stub_auditor "$d" "$ORPHAN_SALVAGE_ROW"
+  for arm in startup resume; do
+    r="$(new_repo)"; make_plugin_active "$r"
+    out="$(run_alt_hook_raw "$d/session-resume.sh" "$r" "$arm")"
+    [ "$(lastrc)" -eq 0 ] && ok "(w2) $arm exits 0" || no "(w2) $arm rc $(lastrc)"
+    ctx="$(ctx_of "$out")"
+    grep -qF -- "$ORPHAN_HDR" <<< "$ctx" && ok "(w2) $arm carries the orphaned-worktrees header" || no "(w2) $arm header missing: $ctx"
+    grep -qF -- "- $ORPHAN_ROW_PATH (branch: feature/BD-15a" <<< "$ctx" && ok "(w2) $arm carries the row's path + branch" || no "(w2) $arm row missing: $ctx"
+    grep -qF -- "$SALVAGE_MARK" <<< "$ctx" && ok "(w2) $arm row carries the salvage count" || no "(w2) $arm salvage count missing: $ctx"
+    # (a) AC-7: no "remove by hand" removal instruction anywhere once ANY row
+    # in the report carries salvage bytes.
+    grep -qF -- "remove by hand" <<< "$ctx" && no "(w2) $arm STILL carries the by-hand removal instruction (AC-7 violation)" \
+      || ok "(w2) $arm drops the by-hand removal instruction when salvage is present"
+    # (b) the worktree-salvage.sh pointer/guidance DOES appear instead.
+    grep -qF -- "worktree-salvage.sh" <<< "$ctx" && ok "(w2) $arm points at worktree-salvage.sh" || no "(w2) $arm missing the worktree-salvage.sh pointer"
+    grep -qF -- 'nothing here removes anything' <<< "$ctx" && ok "(w2) $arm still says it removes nothing" || no "(w2) $arm removal disclaimer missing"
+  done
+}
+test_orphans_salvage_fires
+
+echo "== (w3) regression: a merged-but-salvage-free row keeps the original by-hand wording byte-for-byte =="
+# MERGED_CLEAN_ROW carries the additive `merged` field but no `salvage` field
+# at all — any_salvage must stay 0, so the trailer sentence is untouched.
+MERGED_CLEAN_ROW="$(printf 'orphan\t%s\tfeature/BD-15a\t2026-09-11T12:00:00Z\t00893aaf-4c1e-4f6b-9a2d-1b3c5d7e9f01\tmerged\n' "$ORPHAN_ROW_PATH")"
+test_orphans_merged_clean_regression() {
+  local d dplain r ctx ctxplain trailer trailerplain
+  d="$(mktmp)"; copy_hook_full "$d"; stub_auditor "$d" "$MERGED_CLEAN_ROW"
+  dplain="$(mktmp)"; copy_hook_full "$dplain"; stub_auditor "$dplain" "$ORPHAN_ROW"
+  r="$(new_repo)"; make_plugin_active "$r"
+  ctx="$(ctx_of "$(run_alt_hook_raw "$d/session-resume.sh" "$r" startup)")"
+  r="$(new_repo)"; make_plugin_active "$r"
+  ctxplain="$(ctx_of "$(run_alt_hook_raw "$dplain/session-resume.sh" "$r" startup)")"
+  # Compare only the trailing sentence (the last line) — the row line itself
+  # legitimately differs by the ", merged" tail, which is not under test here.
+  trailer="${ctx##*$'\n'}"
+  trailerplain="${ctxplain##*$'\n'}"
+  [ "$trailer" = "$trailerplain" ] && ok "(w3) merged-but-clean trailer wording is byte-for-byte identical to the plain-orphan trailer" \
+    || no "(w3) trailer wording DIFFERS: merged-clean=[$trailer] plain=[$trailerplain]"
+  grep -qF -- "remove by hand" <<< "$ctx" && ok "(w3) merged-but-clean row still gets the original by-hand instruction" \
+    || no "(w3) by-hand instruction missing on a merged-but-clean row"
+  grep -qF -- "worktree-salvage.sh" <<< "$ctx" && no "(w3) merged-but-clean row wrongly points at worktree-salvage.sh" \
+    || ok "(w3) no worktree-salvage.sh pointer on a merged-but-clean row"
+}
+test_orphans_merged_clean_regression
+
 # ============================================================================
 # The MECHANICAL half (v15.84.0) — groups (z1)–(z4). A brief whose merge the
 # disk PROVES is moved to done/ by the hook itself (`--repair-merged`), on both

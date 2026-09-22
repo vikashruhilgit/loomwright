@@ -2,6 +2,8 @@
 
 ## Status: pending
 
+> **Cross-queue amendment (2026-09-22).** Sequenced by `.supervisor/requirements/_BACKLOG-hardening-sequence-2026-09-22.md` AFTER `red-team-hardening/01` (which rewrites the `dispatch-pr-review.sh` launch line this item pre-arms — re-read that line, do not apply the §"Dispatcher pre-arm" edit from memory) and AFTER `six-phase-loop-gaps/01`; `harness-port/01` follows and adds its own worker prose. §7 budget: `5876/5905 — 29 headroom` is the `05823bf` figure; re-measure and raise from the LIVE number with one raise-log row naming this item.
+
 > **Rev 4 (2026-09-21, after third red-team).** Rev 3's lifecycle had two disarm paths left, both verified:
 > (a) `arm` overwrote a marker carrying a different `session_id`, and the one Bash shape the guard allowed
 > (`guard-arm.sh arm <word>`) reads that id from the Bash env — `CLAUDE_CODE_SESSION_ID=dead bash …/guard-arm.sh

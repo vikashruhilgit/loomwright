@@ -505,6 +505,42 @@ note() {
   return 0
 }
 
+# _wta_base_ref — the sibling reconcile-jobs.sh's `vcs_base_ref` resolution
+# (origin/HEAD, else origin/main, else origin/development), REUSED via its
+# `--print-base-ref` seam rather than re-derived here (queue-hygiene/01: one
+# fallback ladder, one home). Empty on any failure (sibling missing, no git,
+# no resolvable base) — the `merged`/`salvage` columns then simply never
+# appear, which is the same fail-toward-under-report posture as the rest of
+# this file.
+_wta_base_ref() {
+  local d; d="$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo .)"
+  [ -r "$d/reconcile-jobs.sh" ] || return 0
+  bash "$d/reconcile-jobs.sh" --print-base-ref 2>/dev/null
+  return 0
+}
+
+# _wta_salvage_count <worktree_path> <base_ref> — distinct file count across
+# (a) uncommitted delta (`git status --porcelain=v1 --untracked-files=all`,
+# the SAME detection worktree-salvage.sh uses — not copied, a fresh one-line
+# call, since that script's job is capture, not counting) and (b) unpushed
+# delta (files touched by commits on HEAD not yet on this worktree's upstream,
+# or on <base_ref> when the worktree carries no upstream — a just-created
+# Supervisor/review-drain sibling usually has none). The union, not the sum:
+# a file dirty AND part of an unpushed commit counts once.
+_wta_salvage_count() {
+  local wt="$1" base="$2" uncommitted upstream range unpushed n
+  uncommitted="$(git -C "$wt" status --porcelain=v1 --untracked-files=all 2>/dev/null | awk '{print substr($0,4)}')"
+  upstream="$(git -C "$wt" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)"
+  range=""
+  if [ -n "$upstream" ]; then range="${upstream}..HEAD"
+  elif [ -n "$base" ]; then range="${base}..HEAD"
+  fi
+  unpushed=""
+  [ -n "$range" ] && unpushed="$(git -C "$wt" diff --name-only "$range" 2>/dev/null)"
+  n="$(printf '%s\n%s\n' "$uncommitted" "$unpushed" | sed '/^$/d' | LC_ALL=C sort -u | wc -l | tr -d ' ')"
+  printf '%s' "${n:-0}"
+}
+
 # ---- report -----------------------------------------------------------------
 report() {
   command -v jq >/dev/null 2>&1 || return 0
@@ -533,6 +569,14 @@ report() {
   [ -n "$candidates" ] || return 0
   live="$(git worktree list --porcelain 2>/dev/null)"; rc=$?
   [ "$rc" -eq 0 ] || return 0
+  # queue-hygiene/01: resolved ONCE, not per row — every worktree shares the
+  # same object database and remote-tracking refs, so the base ref a primary
+  # checkout resolves is representative for every linked worktree too. Empty
+  # ⇒ the `merged`/`salvage` columns are additive-omitted for every row below
+  # (ADDITIVE, NEVER a re-derivation): an existing row whose merge status
+  # can't be determined stays byte-identical to the pre-this-feature format,
+  # which is exactly what the regression AC (queue-hygiene/01 AC-9) requires.
+  local base_ref; base_ref="$(_wta_base_ref)"
   # The live-list intersection: a candidate git no longer lists is NOT an orphan.
   while IFS=$'\t' read -r path branch ts sid; do
     [ -n "$path" ] || continue
@@ -541,7 +585,24 @@ report() {
       [ "$line" = "worktree $path" ] && { cur=1; break; }
     done <<< "$live"
     [ "$cur" -eq 1 ] || continue
-    printf 'orphan\t%s\t%s\t%s\t%s\n' "$path" "$branch" "$ts" "$sid"
+    # merged / salvage — ADDITIVE suffix only. A row this can't classify (no
+    # base ref, unreadable worktree HEAD) prints EXACTLY the pre-existing
+    # 4-field row; only a CONFIRMED ancestor ever gains the 5th/6th field.
+    local suffix="" merged=0 headsha
+    if [ -n "$base_ref" ]; then
+      headsha="$(git -C "$path" rev-parse HEAD 2>/dev/null)"
+      if [ -n "$headsha" ] && git merge-base --is-ancestor "$headsha" "$base_ref" 2>/dev/null; then
+        merged=1
+      fi
+    fi
+    if [ "$merged" -eq 1 ]; then
+      suffix="$(printf '\tmerged')"
+      local n; n="$(_wta_salvage_count "$path" "$base_ref")"
+      if [ -n "$n" ] && [ "$n" -gt 0 ] 2>/dev/null; then
+        suffix="${suffix}$(printf '\tsalvage: %s files' "$n")"
+      fi
+    fi
+    printf 'orphan\t%s\t%s\t%s\t%s%s\n' "$path" "$branch" "$ts" "$sid" "$suffix"
   done <<< "$candidates"
   return 0
 }

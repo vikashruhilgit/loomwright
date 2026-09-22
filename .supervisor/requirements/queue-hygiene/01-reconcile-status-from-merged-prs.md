@@ -56,6 +56,9 @@ work stops being re-enqueued and dropped tracks stop looking pending.
    under `--apply`. `brief-shipped` files are LISTED with job + PR and never promoted — AC
    verification stays a human act. `/automate --resume` RECONCILE (§4) runs the dry-run pass and
    appends one `## Progress` line naming any file it would stamp, before PICK.
+5. **Release surfaces (same convention as every other queued item):** one CHANGELOG paragraph; version bump
+   in `plugin.json` + `marketplace.json` + CHANGELOG only (descriptions updated IN PLACE — anti-rebloat rule);
+   counts unchanged.
 
 ## Non-goals
 - No change to `is_done()` semantics (absent status still means pending — write the status,

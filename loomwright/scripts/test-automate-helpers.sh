@@ -1514,6 +1514,167 @@ else
 fi
 rm -rf "$R" "$lay"
 
+# =============================================================================
+echo "== H. reconcile-status (queue-hygiene/01: dry-run-default requirement Status reconciler) =="
+
+# rs_key <s> — the stub's filename-safe key (mirrors the stub script's own key()).
+rs_key() { printf '%s' "$1" | tr -c 'A-Za-z0-9' '_'; }
+
+# rs_stub_bin <dir> — a gh stub keyed on `pr list --search <term>` and
+# `pr view <url>`, reading canned JSON from $GH_STUB_DIR/list-<key>.json /
+# view-<key>.json (absent list ⇒ "[]", absent view ⇒ exit 1). Dedicated to
+# this section (not make_stub_bin) because reconcile-status's evidence-lookup
+# needs TWO gh verbs discriminated by argument, not one fixed response file.
+rs_stub_bin() {
+  local bin="$1"
+  mkdir -p "$bin"
+  cat > "$bin/gh" <<'STUB'
+#!/usr/bin/env bash
+set -u
+key() { printf '%s' "$1" | tr -c 'A-Za-z0-9' '_'; }
+if [ "${1:-}" = "pr" ] && [ "${2:-}" = "list" ]; then
+  shift 2; term=""
+  while [ "$#" -gt 0 ]; do case "$1" in --search) term="${2:-}"; shift 2 ;; *) shift ;; esac; done
+  f="$GH_STUB_DIR/list-$(key "$term").json"
+  [ -f "$f" ] && cat "$f" || printf '[]'
+  exit 0
+fi
+if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then
+  url="${3:-}"
+  f="$GH_STUB_DIR/view-$(key "$url").json"
+  [ -f "$f" ] && cat "$f" || exit 1
+  exit 0
+fi
+exit 0
+STUB
+  chmod +x "$bin/gh"
+}
+
+# rs_repo — fixture root per AC-1/2/3/5/9: (a) done, (b) pending+merged+cited,
+# (c) pending+open, (d) operator-run/, (e) 00-index. Returns "<repo>\t<rel_b>".
+RS_URL="https://github.com/acme/widgets/pull/42"
+rs_repo() {
+  local r rq relb
+  r="$(mktemp -d)"
+  mkdir -p "$r/.supervisor/requirements/qh/operator-run" "$r/.supervisor/jobs/done" "$r/.supervisor/automate" "$r/bin" "$r/ghstub"
+  rq="$r/.supervisor/requirements/qh"
+  printf '# a\n\n## Status: done (PR #1, merge abcdef1)\n' > "$rq/01-a-done.md"
+  relb=".supervisor/requirements/qh/02-b-merged.md"
+  printf '# b\n\nSome prose.\n\n## Status: pending\n' > "$r/$relb"
+  printf '# c\n\n## Status: pending\n' > "$rq/03-c-open.md"
+  printf '# d\n\n## Status: pending\n' > "$rq/operator-run/04-d.md"
+  printf '# index\n' > "$rq/00-index.md"
+  rs_stub_bin "$r/bin"
+  jq -n --arg url "$RS_URL" '[{url:$url}]' > "$r/ghstub/list-$(rs_key "$relb").json"
+  jq -n --arg rel "$relb" --arg url "$RS_URL" \
+    '{state:"MERGED",mergedAt:"2026-09-01T00:00:00Z",number:42,body:("Ships "+$rel),mergeCommit:{oid:"abcdef1234567890"},headRefName:"feature/b"}' \
+    > "$r/ghstub/view-$(rs_key "$RS_URL").json"
+  printf '[]' > "$r/ghstub/list-$(rs_key ".supervisor/requirements/qh/03-c-open.md").json"
+  printf '%s\t%s' "$r" "$relb"
+}
+rs_run() {
+  # rs_run <repo> <args...> — RUN_OUT / RUN_RC set.
+  local r="$1"; shift
+  RUN_OUT="$(GH_STUB_DIR="$r/ghstub" PATH="$r/bin:$PATH" LOOMWRIGHT_GH_BIN=gh bash "$H" reconcile-status "$@" 2>/dev/null)"; RUN_RC=$?
+}
+
+# H1. AC-1: dry run over the 5-file fixture prints exactly ONE plan line (b), writes nothing.
+IFS=$'\t' read -r R RELB <<<"$(rs_repo)"
+BEFORE="$(cd "$R" && find .supervisor/requirements -type f -exec sh -c 'echo "$1" $(cksum < "$1")' _ {} \; | sort)"
+rs_run "$R" "$R/.supervisor/requirements/qh"
+nplan="$(printf '%s\n' "$RUN_OUT" | grep -c '^plan	')"
+AFTER="$(cd "$R" && find .supervisor/requirements -type f -exec sh -c 'echo "$1" $(cksum < "$1")' _ {} \; | sort)"
+if [ "$nplan" = "1" ] && printf '%s\n' "$RUN_OUT" | grep -qF "plan	$RELB	done (PR #42, merge abcdef1)" && [ "$BEFORE" = "$AFTER" ]; then
+  ok "H1 AC-1: dry run prints exactly one plan line for (b), root untouched (diff -r equivalent)"
+else
+  no "H1 AC-1 wrong (nplan=$nplan out='$RUN_OUT' unchanged=$([ "$BEFORE" = "$AFTER" ] && echo y || echo n))"
+fi
+rm -rf "$R"
+
+# H2. AC-2: --apply stamps (b) ONLY — §6 shape byte-for-byte, stale trailing
+#     '## Status: pending' removed, is_done() true for (b) only.
+IFS=$'\t' read -r R RELB <<<"$(rs_repo)"
+rs_run "$R" "$R/.supervisor/requirements/qh" --apply
+B="$R/$RELB"
+if grep -qF '## Status: done (PR #42, merge abcdef1)' "$B" \
+   && grep -qE '^- \*\*Completed:\*\* [0-9]{4}-' "$B" \
+   && grep -qF -- '- **PR:** '"$RS_URL" "$B" \
+   && ! grep -qE '^## Status:[[:space:]]*pending[[:space:]]*$' "$B"; then
+  ok "H2 AC-2: (b) stamped byte-shape 'done (PR #n, merge sha7)' + Completed/Brief/PR, stale pending line removed"
+else
+  no "H2 AC-2 stamp shape wrong: $(cat "$B")"
+fi
+if grep -qE '^## Status:[[:space:]]*done\b' "$B" && ! grep -qE '^## Status:[[:space:]]*done\b' "$R/.supervisor/requirements/qh/03-c-open.md"; then
+  ok "H2 is_done()-shape true for (b) only (c stays pending)"
+else
+  no "H2 (c) unexpectedly stamped"
+fi
+rm -rf "$R"
+
+# H3. AC-3 mutation control: delete the path citation from (b)'s PR-body fixture ⇒ no plan line, no stamp.
+IFS=$'\t' read -r R RELB <<<"$(rs_repo)"
+jq -n --arg url "$RS_URL" '{state:"MERGED",mergedAt:"2026-09-01T00:00:00Z",number:42,body:"unrelated prose, no path here",mergeCommit:{oid:"abcdef1234567890"},headRefName:"feature/b"}' \
+  > "$R/ghstub/view-$(rs_key "$RS_URL").json"
+rs_run "$R" "$R/.supervisor/requirements/qh"
+DRY_OUT="$RUN_OUT"
+rs_run "$R" "$R/.supervisor/requirements/qh" --apply
+if [ -z "$DRY_OUT" ] && ! grep -qE '^## Status:[[:space:]]*done\b' "$R/$RELB"; then
+  ok "H3 AC-3 mutation control: citation deleted ⇒ no plan line, no stamp"
+else
+  no "H3 mutation control failed (dry='$DRY_OUT' apply_status=$(grep '^## Status' "$R/$RELB"))"
+fi
+rm -rf "$R"
+
+# H4. AC-4: a run-file `# abandoned:` Queue row stamps done_with_escalation;
+#     a row without the marker stamps nothing.
+R="$(mktemp -d)"
+mkdir -p "$R/.supervisor/requirements/qh" "$R/.supervisor/automate" "$R/.supervisor/jobs/done" "$R/bin" "$R/ghstub"
+rs_stub_bin "$R/bin"
+printf '# ab\n\n## Status: pending\n' > "$R/.supervisor/requirements/qh/05-abandoned.md"
+printf '# nope\n\n## Status: pending\n' > "$R/.supervisor/requirements/qh/06-not-abandoned.md"
+ABROW='- [x] .supervisor/requirements/qh/05-abandoned.md  # abandoned: owner dropped track 2026-09-01'
+{
+  printf '# run\n## Status: running\n## Queue\n'
+  printf '%s\n' "$ABROW"
+  printf -- '- [x] .supervisor/requirements/qh/06-not-abandoned.md  # skipped: unrelated\n'
+  printf '## Progress\n'
+} > "$R/.supervisor/automate/run1.md"
+rs_run "$R" "$R/.supervisor/requirements/qh" --apply
+if grep -qF -- "## Status: done_with_escalation — ABANDONED ($ABROW)" "$R/.supervisor/requirements/qh/05-abandoned.md" \
+   && ! grep -qE '^## Status:[[:space:]]*done' "$R/.supervisor/requirements/qh/06-not-abandoned.md"; then
+  ok "H4 AC-4: abandoned row stamps done_with_escalation verbatim; unmark row stamps nothing"
+else
+  no "H4 AC-4 wrong (ab=$(grep '^## Status' "$R/.supervisor/requirements/qh/05-abandoned.md") not=$(grep '^## Status' "$R/.supervisor/requirements/qh/06-not-abandoned.md" 2>/dev/null || echo none))"
+fi
+rm -rf "$R"
+
+# H5. AC-5: never downgrades an existing done file — re-run leaves (a) byte-unchanged.
+IFS=$'\t' read -r R RELB <<<"$(rs_repo)"
+A="$R/.supervisor/requirements/qh/01-a-done.md"
+BEFORE_A="$(cksum < "$A")"
+rs_run "$R" "$R/.supervisor/requirements/qh" --apply
+AFTER_A="$(cksum < "$A")"
+if [ "$BEFORE_A" = "$AFTER_A" ]; then
+  ok "H5 AC-5: an already-done file is byte-unchanged after a --apply pass"
+else
+  no "H5 AC-5: done file (a) was modified"
+fi
+rm -rf "$R"
+
+# H6. brief-shipped is LISTED (info row), never promoted, on EITHER dry-run or --apply.
+R="$(mktemp -d)"
+mkdir -p "$R/.supervisor/requirements/qh" "$R/.supervisor/jobs/done" "$R/.supervisor/automate" "$R/bin" "$R/ghstub"
+rs_stub_bin "$R/bin"
+printf '# shipped\n\n## Status: brief-shipped\n\nJob done, ACs unverified.\n' > "$R/.supervisor/requirements/qh/07-shipped.md"
+rs_run "$R" "$R/.supervisor/requirements/qh" --apply
+if printf '%s\n' "$RUN_OUT" | grep -qE '^info	.*07-shipped\.md	brief-shipped	' \
+   && grep -qE '^## Status:[[:space:]]*brief-shipped[[:space:]]*$' "$R/.supervisor/requirements/qh/07-shipped.md"; then
+  ok "H6 brief-shipped: listed as an 'info' row, file untouched (never promoted) even under --apply"
+else
+  no "H6 brief-shipped wrong (out='$RUN_OUT')"
+fi
+rm -rf "$R"
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

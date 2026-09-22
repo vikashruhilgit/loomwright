@@ -271,18 +271,39 @@ stranded_briefs_startup_line() {
 # removal: the hint is a command for the human, never one this hook executes.
 orphaned_worktrees_block() {
   [ -d ".supervisor" ] || return 0
-  local script_dir auditor rows body="" path branch ts sid tag
+  local script_dir auditor rows body="" path branch ts sid tag merged salvage any_salvage=0
   script_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo .)"
   auditor="$script_dir/worktree-audit.sh"
   [ -r "$auditor" ] || return 0
   rows="$(bash "$auditor" report 2>/dev/null || true)"
   [ -n "$rows" ] || return 0
-  while IFS=$'\t' read -r tag path branch ts sid; do
+  # queue-hygiene/01: `report` now appends up to TWO more tab fields —
+  # `merged` and `salvage: N files` — ADDITIVE at the end of the row. Reading
+  # them into two MORE named `read` variables is what keeps this additive: an
+  # old-shape row (exactly 5 fields) simply leaves merged/salvage empty, so
+  # the line below is byte-identical to the pre-queue-hygiene/01 output for
+  # every worktree this feature does not classify.
+  while IFS=$'\t' read -r tag path branch ts sid merged salvage; do
     [ "${tag:-}" = "orphan" ] && [ -n "${path:-}" ] || continue
-    body="${body}- ${path} (branch: ${branch:--}, created: ${ts:--}, session: ${sid:--})"$'\n'
+    local tail=""
+    [ "${merged:-}" = "merged" ] && tail="${tail}, merged"
+    if [ -n "${salvage:-}" ]; then
+      tail="${tail}, ${salvage}"
+      any_salvage=1
+    fi
+    body="${body}- ${path} (branch: ${branch:--}, created: ${ts:--}, session: ${sid:--}${tail})"$'\n'
   done <<< "$rows"
   [ -n "$body" ] || return 0
-  printf '### Orphaned worktrees (advisory)\n%sInspect with \`git worktree list\`; remove by hand with \`git worktree remove <path>\`, or keep one and stop this advisory with the plugin'"'"'s \`scripts/worktree-audit.sh note removed <abs-path>\` run from this repo — nothing here removes anything.' "$body"
+  # A `salvage: N files` row holds uncommitted-or-unpushed bytes `main` never
+  # got — removal advice for THAT worktree is wrong, so when ANY row carries
+  # salvage the whole trailer drops the "remove by hand" instruction and
+  # points at worktree-salvage.sh instead (queue-hygiene/01 AC-7). A report
+  # with no salvage row keeps the original wording byte-for-byte.
+  if [ "$any_salvage" -eq 1 ]; then
+    printf '### Orphaned worktrees (advisory)\n%sInspect with \`git worktree list\`. A row carrying \`salvage: N files\` holds uncommitted or unpushed content — rescue it FIRST with \`bash scripts/worktree-salvage.sh <path>\` before any removal; a clean `merged` row may be removed with \`git worktree remove <path>\`. Keep one and stop this advisory with the plugin'"'"'s \`scripts/worktree-audit.sh note removed <abs-path>\` run from this repo — nothing here removes anything.' "$body"
+  else
+    printf '### Orphaned worktrees (advisory)\n%sInspect with \`git worktree list\`; remove by hand with \`git worktree remove <path>\`, or keep one and stop this advisory with the plugin'"'"'s \`scripts/worktree-audit.sh note removed <abs-path>\` run from this repo — nothing here removes anything.' "$body"
+  fi
   return 0
 }
 
