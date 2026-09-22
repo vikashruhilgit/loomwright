@@ -1066,8 +1066,8 @@ read these codes to decide what happened.
 | 0    | `sent`                | Issue successfully created via `gh issue create`. One line appended to `telemetry-sent.log`. |
 | 1    | `generic_error`       | Unexpected failure (e.g. `gh` not authed, network error, malformed JSON from `gh`). Logged with redacted stderr. |
 | 2    | `privacy_blocked`     | Privacy whitelist matched the prospective issue body or stderr; nothing was sent. Logged with the matched pattern's name only — never the matched content. |
-| 3    | `no_consent`          | `.supervisor/telemetry-consent.json` is missing, set to `prompt`, or set to `no`. Wrapper rate-limits the user-facing notice to once per session. |
-| 4    | `no_repo_configured`  | Neither `LOOMWRIGHT_TELEMETRY_REPO` nor consent-file `telemetry_repo` is set. Wrapper logs `telemetry_repo_unset` once per session. |
+| 3    | `no_consent`          | The user-scope `~/.claude/loomwright/egress.json` entry for this repo's slug is missing or set to `"no"` (v15.87.0 — a repo-relative `.supervisor/telemetry-consent.json` can no longer grant this on its own; see §"Consent flow"). Wrapper rate-limits the user-facing notice to once per session. |
+| 4    | `no_repo_configured`  | Neither `LOOMWRIGHT_TELEMETRY_REPO` nor the user-scope entry's `telemetry_repo` is set. Wrapper logs `telemetry_repo_unset` once per session. |
 | 5    | `filter_skipped`      | Interest filter, schema mismatch (`unknown_payload_skipped`), or dedup window suppressed the send. Not an error. |
 
 The wrapper's behaviour is invariant of the core exit code: log the code,
@@ -1270,35 +1270,111 @@ labels in the target repo don't fail the send.
 
 ---
 
-## Consent flow (no-prompt-in-hook)
+## Consent flow (no-prompt-in-hook, USER-SCOPED — v15.87.0)
 
 A `type: command` hook **cannot** drive an interactive prompt. Therefore
 the hook never asks the user anything. First-run UX is mediated entirely
 by the user invoking `/telemetry enable`. This is the only design that is
 actually runnable with Claude Code hooks.
 
-### Consent file schema (`.supervisor/telemetry-consent.json`)
+**red-team-hardening item 02 (FATAL, reproduced 2026-09-21).** Consent used
+to be read directly from a repo-relative `.supervisor/telemetry-consent.json`
+— a file a cloned/attacker-controlled repo can plant. A scratch repo
+containing only `.supervisor/telemetry-consent.json` =
+`{"telemetry":"always_allow","telemetry_repo":"attacker/sink"}` piped into
+`send-telemetry-core.sh --dry-run` resolved `TARGET_REPO=attacker/sink` with
+`WOULD_EXIT=0` — a cloned repo granted its own consent and chose its own
+destination for the user's `gh` identity to post to. Consent and the target
+repo are now facts about the **USER**, stored in
+`~/.claude/loomwright/egress.json` and keyed by this repo's **slug**
+(normalized `git remote get-url origin`, else `local:<toplevel-basename>`,
+computed by `${CLAUDE_PLUGIN_ROOT}/scripts/resolve-egress-config.sh` — the
+same script `send-webhook.sh` uses for its own destination, see §"Webhook
+Notifications" below). A repo-relative `.supervisor/telemetry-consent.json`
+can still exist and is still read, but ONLY as an informational **request**
+— its `telemetry` key is not even consulted by the resolver, and its
+`telemetry_repo` value is honoured only when it byte-matches the user-scope
+entry for this repo's slug.
+
+### User-scope schema (`~/.claude/loomwright/egress.json`)
 
 ```json
 {
-  "telemetry": "always_allow" | "no" | "prompt",
-  "telemetry_repo": "<owner>/<repo>"
+  "schema_version": 1,
+  "repos": {
+    "<owner>/<repo-or-local:name>": {
+      "telemetry": "always_allow" | "no",
+      "telemetry_repo": "<owner>/<repo>",
+      "webhook_url": "https://...",
+      "webhook_url_sha256": "<hex>"
+    }
+  }
 }
 ```
 
-Both fields are required when present, with these semantics:
+One entry per repo slug, so consent for `vikashruhilgit/loomwright` and
+consent for some other clone of the same URL under a different local path
+are the SAME entry (keyed by the normalized remote, not the filesystem
+path), while an unrelated local-only repo gets its own `local:<name>` entry.
+`webhook_url_sha256` is written alongside `webhook_url` for tamper-evidence
+(so a quick `grep` can confirm a value without exposing the raw URL); the
+resolver does not trust the stored hash — it always **recomputes**
+`WEBHOOK_URL_SHA256` from the resolved `webhook_url` at resolve time.
 
 | `telemetry` value | Behaviour                                                                                              |
 |-------------------|--------------------------------------------------------------------------------------------------------|
 | `always_allow`    | Send (subject to interest filter, dedup, privacy, target-repo resolution).                             |
 | `no`              | Never send. One `denied — skipped` line per session (rate-limited).                                    |
-| `prompt`          | Treated as uninitialised (see below). The hook still does not prompt; the user must run `/telemetry enable`. |
+| *(no entry for this slug)* | Treated as uninitialised (see below). The hook still does not prompt; the user must run `/telemetry enable`. There is no separate `"prompt"` value in the new schema — an absent entry IS the uninitialised state. |
 
-If the file does not exist, behaviour is identical to `prompt`.
+An unreadable or malformed `~/.claude/loomwright/egress.json`, or no entry
+for this repo's slug, resolves every value to empty — **fail CLOSED, never
+a fabricated default.** The pre-fix schema's distinct `parse_error` state
+label is gone with it: the core now sees the same `state=missing` for "file
+absent" and "file malformed" alike, since the resolver never surfaces
+*why* a value is empty, only that it is.
 
-`telemetry_repo` is optional inside the file. The env var
-`LOOMWRIGHT_TELEMETRY_REPO` overrides it (see Target repo
-resolution below).
+### `resolve-egress-config.sh` — the resolver
+
+`${CLAUDE_PLUGIN_ROOT}/scripts/resolve-egress-config.sh` is the SOLE place
+that reads `~/.claude/loomwright/egress.json` — both `send-telemetry-core.sh`
+and `send-webhook.sh` call it, so the security boundary is enforced once,
+not duplicated per emitter. Fail-safe (always exits 0), it prints
+`KEY=VALUE` lines:
+
+| Key | Source | Notes |
+|---|---|---|
+| `REPO_SLUG` | `git remote get-url origin` (normalized `owner/repo`), else `local:<toplevel-basename>`, else empty (not a git repo) | The `.repos` key used for every other lookup below |
+| `TELEMETRY` | user-scope entry ONLY | `always_allow` \| `no` \| empty — NEVER influenced by any repo-relative file |
+| `TELEMETRY_REPO` | user-scope entry, overridden by `LOOMWRIGHT_TELEMETRY_REPO` | env wins when set — see precedence table below |
+| `WEBHOOK_URL` | user-scope entry, overridden by `LOOMWRIGHT_WEBHOOK_URL` | env wins when set |
+| `WEBHOOK_URL_SHA256` | recomputed from the resolved `WEBHOOK_URL` above | empty when `WEBHOOK_URL` is empty |
+| `REPO_REQUESTED_TELEMETRY_REPO` | repo-relative `.supervisor/telemetry-consent.json` -> `telemetry_repo` | **informational only** — never fed into `TELEMETRY`/`TELEMETRY_REPO` |
+| `REPO_REQUESTED_WEBHOOK_URL` | repo-relative `.supervisor/config.json` (legacy `.supervisor/notify-config.json` fallback — same precedence `send-webhook.sh` has always used) -> `webhook_url` | **informational only** — never fed into `WEBHOOK_URL` |
+
+**Precedence (highest wins):**
+
+| Value | 1st | 2nd | Never honoured alone |
+|---|---|---|---|
+| Telemetry consent decision | user-scope `telemetry` | *(no env override exists — consent can only ever come from the user-scope file)* | repo-relative `telemetry` key (not even read by the resolver) |
+| Target repo | `LOOMWRIGHT_TELEMETRY_REPO` (env) | user-scope `telemetry_repo` | repo-relative `telemetry_repo` (informational `REPO_REQUESTED_TELEMETRY_REPO` only) |
+| Webhook URL | `LOOMWRIGHT_WEBHOOK_URL` (env) | user-scope `webhook_url` | repo-relative `webhook_url` (informational `REPO_REQUESTED_WEBHOOK_URL` only) |
+
+The env vars override the VALUE (which repo, which URL) but can never grant
+consent by themselves — `TELEMETRY` has no env override at all, by design.
+
+**"Refused, not silenced" — the visible-refusal contract.** Each emitter
+compares its own `REPO_REQUESTED_*` field against the resolved value it
+actually used; when they differ (including "no user-scope entry at all",
+which makes every comparison a mismatch), it logs the refusal to stderr
+rather than silently substituting or silently proceeding:
+
+- `send-telemetry-core.sh` -> `repo_consent_ignored slug=<slug>`
+- `send-webhook.sh` -> `repo_webhook_ignored slug=<slug>`
+
+Both lines are purely diagnostic — they never change the exit code by
+themselves. The exit code is decided entirely by the RESOLVED (user-scope +
+env) values, exactly as before this change.
 
 ### Uninitialised state — pending notice
 
@@ -1341,21 +1417,31 @@ older markers.
 
 ### `/telemetry enable` — sole first-run path
 
-Subtask #3 implements the slash command. The handler:
+The slash command (`commands/telemetry.md`) handler:
 
 1. Asks the user which repo should receive telemetry (suggesting the
    maintainer repo `vikashruhilgit/loomwright` as the canonical
    community-shared signal target, but accepting any `owner/repo`).
-2. Writes:
+2. Resolves this repo's slug via `resolve-egress-config.sh` and writes,
+   backup-first + jq-deep-merge + abort-on-any-parse-failure (never a
+   partial write):
    ```json
-   { "telemetry": "always_allow", "telemetry_repo": "<chosen>" }
+   { "schema_version": 1, "repos": { "<slug>": { "telemetry": "always_allow", "telemetry_repo": "<chosen>" } } }
    ```
-   to `.supervisor/telemetry-consent.json`.
-3. Confirms by printing the resolved target.
+   to `~/.claude/loomwright/egress.json` — **never** to any repo-relative
+   file.
+3. Confirms by printing the resolved target + repo slug.
 
-`/telemetry disable` writes `{"telemetry": "no"}`. `/telemetry status` reports
-the resolved state. `/telemetry test` runs `send-telemetry-core.sh --dry-run`
-against either the latest matching log payload or a built-in fixture.
+`/telemetry disable` writes `"telemetry": "no"` under the same procedure
+(leaving `telemetry_repo` untouched). `/telemetry status` reports the
+resolved state (via the resolver) plus, when a repo-relative
+`.supervisor/telemetry-consent.json` requests a repo but no user-scope entry
+exists yet for this slug, offers a **human-confirmed one-time import** —
+`AskUserQuestion`, never automatic. **Hooks and every other code path NEVER
+auto-import** a repo-relative request; that is the exact vulnerability this
+whole model closes, and relaxing it into an automatic import would recreate
+it. `/telemetry test` runs `send-telemetry-core.sh --dry-run` against either
+the latest matching log payload or a built-in fixture.
 
 ---
 
@@ -1365,18 +1451,26 @@ The plugin runs in arbitrary user projects whose `origin` is the user's
 own app repo. Defaulting telemetry to `origin` would post issues into the
 user's repo — wrong on every axis (privacy, signal vs noise, support
 burden). Therefore **telemetry is disabled by default until explicitly
-configured**, and there is no `origin` fallback.
+configured**, and there is no `origin` fallback for the TARGET repo (the
+repo's OWN origin remote IS used, however, to derive the SLUG that keys the
+user-scope lookup — a different, narrower use of `git remote`, see
+§"Consent flow" above).
 
-Resolution precedence (first non-empty wins):
+Resolution precedence (first non-empty wins — computed by
+`resolve-egress-config.sh`, shared by both emitters):
 
 1. Environment variable `LOOMWRIGHT_TELEMETRY_REPO` (must match
    shape `owner/repo`).
-2. `.supervisor/telemetry-consent.json` -> `telemetry_repo` field.
+2. `~/.claude/loomwright/egress.json` -> `.repos.<slug>.telemetry_repo`
+   field (v15.87.0 — moved from the repo-relative
+   `.supervisor/telemetry-consent.json`, which is now read only as an
+   informational request; see §"Consent flow" above).
 3. Unset -> core exits `4` (`no_repo_configured`); wrapper logs
    `telemetry_repo_unset — set LOOMWRIGHT_TELEMETRY_REPO or run /telemetry enable to choose target` (rate-limited per session).
 
-There is **no automatic fallback to `git remote`**. Subtask #2b must NOT
-introduce one.
+There is **no automatic fallback to the repo's OWN `git remote` as the
+telemetry TARGET** (only as the slug that keys the lookup, an entirely
+different use). No code path may reintroduce that fallback.
 
 ---
 
@@ -1555,7 +1649,7 @@ disable, `unset LOOMWRIGHT_WEBHOOK_URL`.
 { "event": "paused", "question": "<first question text>", "timestamp": "..." }
 ```
 
-**File-config fallback.** When `LOOMWRIGHT_WEBHOOK_URL` is unset, the script falls back to `.supervisor/config.json` → `.webhook_url` (legacy `.supervisor/notify-config.json` is still read as a fallback; the new path wins when both exist). This fixes the common failure where a URL exported only in `~/.zshrc` never reaches the non-interactive (bash) hook subprocess. The env var wins when both are present.
+**File-config fallback (v15.87.0 — now user-scoped).** When `LOOMWRIGHT_WEBHOOK_URL` is unset, the script resolves the destination via `resolve-egress-config.sh` from the user-scope `~/.claude/loomwright/egress.json` entry for this repo's slug — this fixes the common failure where a URL exported only in `~/.zshrc` never reaches the non-interactive (bash) hook subprocess, without repeating red-team-hardening item 02's mistake of letting a repo-relative file grant the destination on its own. A repo-relative `.supervisor/config.json` → `.webhook_url` (legacy `.supervisor/notify-config.json` still read as a fallback, new path wins when both exist — same file precedence as before) is still read, but only as an informational *request*: `send-webhook.sh` logs `repo_webhook_ignored slug=<slug>` and proceeds using the resolved (user-scope/env) value whenever the two differ, including when there is no user-scope entry at all. The env var wins when both are present. `/setup webhook` writes the user-scope entry and may still mirror `webhook_url` into `.supervisor/config.json` for the local run-view UI — that mirror is documented as inert on its own for this resolution.
 
 **ntfy-aware payload.** When the resolved URL matches `*ntfy.sh/*` (or `LOOMWRIGHT_WEBHOOK_FORMAT=ntfy` is set for self-hosted instances), the `paused` event sends a **plain-text body** plus `Title` / `Priority` / `Tags` headers instead of JSON — so an ntfy phone push is readable rather than a raw JSON blob. All other endpoints (Slack/Discord/custom) receive JSON.
 
@@ -1911,8 +2005,8 @@ the linked section above for the source-of-truth definitions.
 | 0    | sent                | Issue posted to GitHub via `gh issue create`. URL appended to `.supervisor/logs/telemetry-sent.log`. | Log primary line `CORE_EXIT=0`. Exit 0.                                                                                                   |
 | 1    | generic_error       | Unexpected error (malformed args, JSON parse failure inside repo handling, `gh` CLI failure).     | Log primary line with redacted stderr. Exit 0.                                                                                            |
 | 2    | privacy_blocked     | Privacy whitelist matched; issue NOT posted; structured `PRIVACY_BLOCKED pattern=<label>` on stderr (NEVER the matched content). | Log primary line. Exit 0.                                                                                                                 |
-| 3    | no_consent          | `.supervisor/telemetry-consent.json` missing or `{"telemetry":"prompt"}`/absent.                  | Log primary line; if per-session pending flag is new, set `PENDING_FLAG_NEW=true` and touch the flag (rate-limits the user-facing notice). Exit 0. |
-| 4    | no_repo_configured  | Neither `LOOMWRIGHT_TELEMETRY_REPO` env var nor consent-file `telemetry_repo` is set.       | Log primary line; if the per-session repo-unset flag is new, append a SECOND `telemetry_repo_unset` line with the user-facing remediation hint. Exit 0. |
+| 3    | no_consent          | The user-scope `~/.claude/loomwright/egress.json` entry for this repo's slug is missing or `"no"` (v15.87.0; a repo-relative `.supervisor/telemetry-consent.json` request alone cannot satisfy this — see §"Consent flow"). | Log primary line; if per-session pending flag is new, set `PENDING_FLAG_NEW=true` and touch the flag (rate-limits the user-facing notice). Exit 0. |
+| 4    | no_repo_configured  | Neither `LOOMWRIGHT_TELEMETRY_REPO` env var nor the user-scope entry's `telemetry_repo` is set.       | Log primary line; if the per-session repo-unset flag is new, append a SECOND `telemetry_repo_unset` line with the user-facing remediation hint. Exit 0. |
 | 5    | filter_skipped      | Healthy run (score >= 5 AND status in success set), or unknown payload schema.                    | Log primary line `CORE_EXIT=5`. Exit 0.                                                                                                   |
 
 The wrapper's primary log line shape is:
@@ -1940,7 +2034,8 @@ The design therefore disables telemetry **by default** until the user
 explicitly configures a target repo via one of two paths: setting the
 `LOOMWRIGHT_TELEMETRY_REPO` environment variable, or running
 `/telemetry enable` (which prompts interactively for the target repo
-and writes it to `.supervisor/telemetry-consent.json`). When neither is
+and writes it to the user-scope `~/.claude/loomwright/egress.json`,
+v15.87.0 — never a repo-relative file). When neither is
 set, the core exits with code `4` (`no_repo_configured`) and the
 wrapper logs a single per-session reminder. This decision is also
 recorded in the brief at §3 line 70.

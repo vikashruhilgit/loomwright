@@ -16,10 +16,16 @@
 #      privacy-blocked events always log even on healthy/successful runs.
 #   6. Build prospective body (redacted) + final body privacy scan (defence
 #      in depth — exit 2 again on hit).
-#   7. Read consent (.supervisor/telemetry-consent.json):
+#   7. Read consent via resolve-egress-config.sh (USER-SCOPE ONLY —
+#      ~/.claude/loomwright/egress.json, keyed by repo slug; red-team-hardening
+#      item 02 — a repo-relative .supervisor/telemetry-consent.json can at most
+#      REQUEST, never grant, see docs/TELEMETRY.md §"Consent flow"):
 #        - "no" exact         -> exit 3, stderr "denied — skipped"
 #        - missing/prompt/etc -> exit 3, stderr "consent_uninitialised state=..."
-#   8. Resolve target repo (env -> consent file -> exit 4)
+#        - repo-requested telemetry_repo != resolved value -> stderr
+#          "repo_consent_ignored slug=<slug>" (informational, does not change
+#          the exit code by itself)
+#   8. Resolve target repo (env -> user-scope entry -> exit 4)
 #   9. Interest filter (skip if score >= 5 AND status in success set, exit 5)
 #  10. Dedup check (sha256 of task_id::score_bucket::primary_error within 6h, exit 5)
 #  11. Dry-run branch (print and exit 0 with WOULD_EXIT marker)
@@ -40,7 +46,6 @@ set -o pipefail
 
 # ---- Resolve paths -----------------------------------------------------------
 LOG_DIR="${PWD}/.supervisor/logs"
-CONSENT_FILE="${PWD}/.supervisor/telemetry-consent.json"
 SENT_LOG="$LOG_DIR/telemetry-sent.log"
 mkdir -p "$LOG_DIR" 2>/dev/null || true
 
@@ -819,39 +824,40 @@ if [ "$EXIT_CODE" != "0" ]; then
   exit "$EXIT_CODE"
 fi
 
-# ---- Read consent ------------------------------------------------------------
-# Missing / prompt / no -> exit 3.
+# ---- Resolve consent + target repo (USER-SCOPE ONLY) --------------------------
+# red-team-hardening item 02: a repo-relative telemetry-consent.json can only
+# ever REQUEST a target repo — it can never grant consent or choose a
+# destination on its own. See resolve-egress-config.sh and
+# docs/TELEMETRY.md §"Consent flow".
+# MUTATION_CONTROL_BEGIN: resolve-egress-config-integration
 CONSENT_DECISION="missing"
 TELEMETRY_REPO_FROM_CONSENT=""
+EGRESS_REPO_SLUG=""
+EGRESS_REPO_REQUESTED_TELEMETRY_REPO=""
 
-if [ -r "$CONSENT_FILE" ]; then
-  CONSENT_OUT="$(python3 - "$CONSENT_FILE" <<'PY' 2>/dev/null
-import json, sys
-try:
-    with open(sys.argv[1], "r") as f:
-        d = json.load(f)
-    t = d.get("telemetry", "prompt")
-    r = d.get("telemetry_repo", "")
-    if not isinstance(t, str):
-        t = "prompt"
-    if not isinstance(r, str):
-        r = ""
-    sys.stdout.write("CONSENT=%s\n" % t)
-    sys.stdout.write("REPO=%s\n" % r)
-except Exception as e:
-    sys.stdout.write("CONSENT=parse_error\n")
-    sys.stdout.write("REPO=\n")
-PY
-)"
-  while IFS='=' read -r ck cv; do
-    case "$ck" in
-      CONSENT) CONSENT_DECISION="$cv" ;;
-      REPO) TELEMETRY_REPO_FROM_CONSENT="$cv" ;;
+RESOLVER_SCRIPT="${CORE_SELF_DIR}/resolve-egress-config.sh"
+if [ -n "$CORE_SELF_DIR" ] && [ -f "$RESOLVER_SCRIPT" ]; then
+  RESOLVER_OUT="$(bash "$RESOLVER_SCRIPT" 2>/dev/null || true)"
+  while IFS='=' read -r rk rv; do
+    case "$rk" in
+      REPO_SLUG) EGRESS_REPO_SLUG="$rv" ;;
+      TELEMETRY) [ -n "$rv" ] && CONSENT_DECISION="$rv" ;;
+      TELEMETRY_REPO) TELEMETRY_REPO_FROM_CONSENT="$rv" ;;
+      REPO_REQUESTED_TELEMETRY_REPO) EGRESS_REPO_REQUESTED_TELEMETRY_REPO="$rv" ;;
     esac
   done <<EOF
-$CONSENT_OUT
+$RESOLVER_OUT
 EOF
 fi
+
+# A repo-relative request that does not byte-match the user-scope entry for
+# this slug (including "no user-scope entry at all" — the planted-file
+# reproduction) is ignored; TELEMETRY_REPO_FROM_CONSENT above never contains
+# the repo's own value in that case, this line only makes the refusal visible.
+if [ -n "$EGRESS_REPO_REQUESTED_TELEMETRY_REPO" ] && [ "$EGRESS_REPO_REQUESTED_TELEMETRY_REPO" != "$TELEMETRY_REPO_FROM_CONSENT" ]; then
+  printf 'repo_consent_ignored slug=%s\n' "$EGRESS_REPO_SLUG" >&2
+fi
+# MUTATION_CONTROL_END: resolve-egress-config-integration
 
 case "$CONSENT_DECISION" in
   always_allow)

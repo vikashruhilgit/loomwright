@@ -14,11 +14,13 @@
 #     fails loudly (exit 97) and appends to a marker file; the harness asserts the marker
 #     never appears AND that live-path invocations always short-circuit (exit 2/3/4/5)
 #     before the gh step. Would-send paths use --dry-run + WOULD_EXIT assertions only.
-#   - Sandbox isolation: the core resolves .supervisor/telemetry-consent.json and
-#     .supervisor/logs/ from $PWD (send-telemetry-core.sh:42-44
+#   - Sandbox isolation: the core resolves .supervisor/logs/ from $PWD
+#     (send-telemetry-core.sh:48-50
 #     [pins: `LOG_DIR="${PWD}/.supervisor/logs"`]), so every invocation
 #     runs with CWD inside a mktemp sandbox. The real repo .supervisor/ is snapshotted
-#     before and asserted byte-identical after.
+#     before and asserted byte-identical after. Consent + target-repo now resolve
+#     via resolve-egress-config.sh (USER-SCOPE, v15.87.0) — see the SB_HOME/SB_EGRESS
+#     fixture setup below, not a repo-relative read.
 #   - Fixtures are generated at runtime (python3, into the sandbox) following the
 #     test-telemetry.sh transcript-fallback precedent — deliberately NOT committed into
 #     telemetry-fixtures/*.json, whose flat glob is auto-discovered by test-telemetry.sh's
@@ -74,6 +76,34 @@ GH_MARKER="$SANDBOX/gh-invoked.marker"
 SB_CONSENT="$SANDBOX/.supervisor/telemetry-consent.json"
 SB_SENT_LOG="$SANDBOX/.supervisor/logs/telemetry-sent.log"
 mkdir -p "$FIXDIR" "$SHIM_DIR"
+
+# ---- v15.87.0 (red-team-hardening item 02): consent now resolves through the
+# USER-SCOPE ~/.claude/loomwright/egress.json, keyed by repo slug — a
+# repo-relative .supervisor/telemetry-consent.json can only ever REQUEST.
+# The sandbox needs to be a git repo (so resolve-egress-config.sh can derive a
+# stable slug) with its own isolated $HOME fixture (so this harness never
+# reads/writes the real operator's egress.json — see test-session-probe.sh for
+# the same $HOME-fixture isolation pattern this repo already established).
+SB_SLUG="sandbox-owner/sandbox-repo"
+SB_HOME="$SANDBOX/home"
+SB_EGRESS="$SB_HOME/.claude/loomwright/egress.json"
+mkdir -p "$SB_HOME/.claude/loomwright"
+git -C "$SANDBOX" init -q 2>/dev/null || { echo "FATAL  git init failed in sandbox" >&2; exit 1; }
+git -C "$SANDBOX" remote add origin "https://github.com/${SB_SLUG}.git" 2>/dev/null || true
+
+# user_scope_none            -> no user-scope file at all (unset consent)
+# user_scope_write <fragment> -> writes {"schema_version":1,"repos":{SB_SLUG:<fragment>}}
+# user_scope_write_raw <text> -> writes literal bytes (for the malformed-file case)
+user_scope_none() { rm -f "$SB_EGRESS"; }
+user_scope_write() {
+  python3 -c '
+import json, sys
+frag = json.loads(sys.argv[1])
+doc = {"schema_version": 1, "repos": {sys.argv[2]: frag}}
+open(sys.argv[3], "w").write(json.dumps(doc))
+' "$1" "$SB_SLUG" "$SB_EGRESS"
+}
+user_scope_write_raw() { printf '%s' "$1" > "$SB_EGRESS"; }
 
 # ---- gh shim: fails loudly if ANY core invocation ever reaches the gh step ----
 {
@@ -134,14 +164,16 @@ extract_would_exit() {
   printf '%s' "$1" | grep -E '^WOULD_EXIT=' | tail -1 | cut -d= -f2 | tr -d '[:space:]'
 }
 
-# ---- Core invocation helper (always sandbox-CWD + gh shim) --------------------
+# ---- Core invocation helper (always sandbox-CWD + isolated $HOME + gh shim) ---
 # Usage: out="$(run_core <fixture> [--dry-run])"; rc=$?
 run_core() {
   local fixture="$1"; shift
-  ( cd "$SANDBOX" && PATH="$SHIM_DIR:$PATH" bash "$CORE" "$@" < "$fixture" 2>&1 )
+  ( cd "$SANDBOX" && HOME="$SB_HOME" PATH="$SHIM_DIR:$PATH" bash "$CORE" "$@" < "$fixture" 2>&1 )
 }
 
-# ---- Consent-state setters (sandbox-scoped) -----------------------------------
+# ---- Repo-relative REQUEST file setters (sandbox-scoped) — v15.87.0: these no
+# longer grant consent by themselves, they only ever REQUEST a target repo;
+# see user_scope_write above for the source of truth. -----------------------
 consent_none()  { rm -f "$SB_CONSENT"; }
 consent_write() { mkdir -p "$(dirname "$SB_CONSENT")"; printf '%s\n' "$1" > "$SB_CONSENT"; }
 
@@ -281,6 +313,7 @@ fi
 # the real exit code must be 2 with a PRIVACY_BLOCKED stderr line naming the label.
 echo ""
 echo "==== Group 1: privacy true-positives (9 labels, exit 2 + label) ===="
+user_scope_none
 consent_none
 LABELS_SEEN=0
 while IFS="$(printf '\t')" read -r label secret; do
@@ -296,6 +329,7 @@ assert_eq "privacy_label_count" "9" "$LABELS_SEEN"
 # ---- Group 2: privacy true-negatives — near-misses must NOT exit 2 ------------
 echo ""
 echo "==== Group 2: privacy true-negatives (near-misses pass the scan) ===="
+user_scope_none
 consent_none
 out="$(run_core "$FIXDIR/negatives.json")"
 rc=$?
@@ -310,7 +344,8 @@ assert_match "negatives_reached_consent" "consent_uninitialised" "$out"
 # proves the counterfactual: same shape without the secret IS interest-skipped (5).
 echo ""
 echo "==== Group 3: ordering guarantee (secret+healthy => 2, clean twin => 5) ===="
-consent_write '{"telemetry": "always_allow", "telemetry_repo": "example/repo"}'
+consent_none
+user_scope_write '{"telemetry": "always_allow", "telemetry_repo": "example/repo"}'
 out="$(run_core "$FIXDIR/order-healthy-secret.json")"
 rc=$?
 assert_eq "ordering_secret_exit=2" "2" "$rc"
@@ -324,51 +359,55 @@ assert_match "ordering_clean_twin_interest_filter" "filter_skipped reason=intere
 
 # ---- Group 4: consent matrix ---------------------------------------------------
 echo ""
-echo "==== Group 4: consent matrix ===="
-# (a) consent file absent -> exit 3, uninitialised state=missing.
+echo "==== Group 4: consent matrix (v15.87.0: user-scope egress.json is now the ===="
+echo "====           SOLE source of the consent decision) ===="
 consent_none
+# (a) user-scope entry absent -> exit 3, uninitialised state=missing.
+user_scope_none
 out="$(run_core "$FIXDIR/consent-escalated.json")"
 rc=$?
 assert_eq "consent_absent_exit=3" "3" "$rc"
 assert_match "consent_absent_marker" "consent_uninitialised state=missing" "$out"
 
 # (b) explicit opt-out -> exit 3 with the distinct denied marker.
-consent_write '{"telemetry": "no"}'
+user_scope_write '{"telemetry": "no"}'
 out="$(run_core "$FIXDIR/consent-escalated.json")"
 rc=$?
 assert_eq "consent_no_exit=3" "3" "$rc"
 assert_match "consent_no_denied_marker" "denied — skipped" "$out"
 assert_not_match "consent_no_not_uninitialised" "consent_uninitialised" "$out"
 
-# (c) malformed JSON -> FAIL-CLOSED. Verified against the code first
-#     (send-telemetry-core.sh:841-843 [pins: `CONSENT=parse_error`] emits it on any parse
-#     exception; :873-884 routes parse_error into the uninitialised exit-3 arm).
-consent_write '{not valid json'
+# (c) malformed user-scope JSON -> FAIL-CLOSED. resolve-egress-config.sh
+#     leaves every value empty on any jq -e parse failure (see its own
+#     comments), so the core sees the same "missing" state as an absent file
+#     — never a distinct parse_error label (that distinction lived in the
+#     pre-fix direct JSON read and is gone with it).
+user_scope_write_raw '{not valid json'
 out="$(run_core "$FIXDIR/consent-escalated.json")"
 rc=$?
 assert_eq "consent_malformed_fails_closed_exit=3" "3" "$rc"
-assert_match "consent_malformed_state" "consent_uninitialised state=parse_error" "$out"
+assert_match "consent_malformed_state" "consent_uninitialised state=missing" "$out"
 
 # (d) always_allow without any repo -> exit 4 (env override unset at top).
-consent_write '{"telemetry": "always_allow"}'
+user_scope_write '{"telemetry": "always_allow"}'
 out="$(run_core "$FIXDIR/consent-escalated.json")"
 rc=$?
 assert_eq "consent_allow_no_repo_exit=4" "4" "$rc"
 assert_match "consent_allow_no_repo_marker" "no_repo_configured" "$out"
 
 # (d2) always_allow + malformed repo (non-empty, no slash) -> exit 1.
-#      Verified against the code first (send-telemetry-core.sh:903-906
-#      [pins: `Validate repo format owner/repo`]: repo
-#      failing the ^owner/repo$ grep emits 'invalid_repo_format repo=<value>'
-#      to stderr and exits 1 — even under --dry-run; no gh reach).
-consent_write '{"telemetry": "always_allow", "telemetry_repo": "invalidformat"}'
+#      Verified against the code first (send-telemetry-core.sh's "Validate
+#      repo format owner/repo" block): repo failing the ^owner/repo$ grep
+#      emits 'invalid_repo_format repo=<value>' to stderr and exits 1 — even
+#      under --dry-run; no gh reach).
+user_scope_write '{"telemetry": "always_allow", "telemetry_repo": "invalidformat"}'
 out="$(run_core "$FIXDIR/consent-escalated.json" --dry-run)"
 rc=$?
 assert_eq "consent_invalid_repo_format_exit=1" "1" "$rc"
 assert_match "consent_invalid_repo_format_marker" "invalid_repo_format repo=invalidformat" "$out"
 
 # (e) always_allow + telemetry_repo + --dry-run -> would-send (WOULD_EXIT=0).
-consent_write '{"telemetry": "always_allow", "telemetry_repo": "example/repo"}'
+user_scope_write '{"telemetry": "always_allow", "telemetry_repo": "example/repo"}'
 out="$(run_core "$FIXDIR/consent-escalated.json" --dry-run)"
 rc=$?
 assert_eq "would_send_dry_run_rc=0" "0" "$rc"
@@ -377,9 +416,11 @@ assert_match "would_send_target_repo" "TARGET_REPO=example/repo" "$out"
 assert_match "would_send_body_present" "BODY_BEGIN" "$out"
 assert_not_match "would_send_no_gh_line" "gh issue create" "$out"
 
-# (f) env var wins over consent-file repo resolution (documented precedence).
-consent_write '{"telemetry": "always_allow"}'
-out="$( ( cd "$SANDBOX" && PATH="$SHIM_DIR:$PATH" LOOMWRIGHT_TELEMETRY_REPO="env-owner/env-repo" bash "$CORE" --dry-run < "$FIXDIR/consent-escalated.json" 2>&1 ) )"
+# (f) env var wins over the user-scope entry's own repo value (AC4 —
+#     documented precedence; the env var never bypasses consent itself, it
+#     only overrides which repo receives the send).
+user_scope_write '{"telemetry": "always_allow", "telemetry_repo": "user-scope-owner/user-scope-repo"}'
+out="$( ( cd "$SANDBOX" && HOME="$SB_HOME" PATH="$SHIM_DIR:$PATH" LOOMWRIGHT_TELEMETRY_REPO="env-owner/env-repo" bash "$CORE" --dry-run < "$FIXDIR/consent-escalated.json" 2>&1 ) )"
 rc=$?
 assert_eq "env_repo_dry_run_rc=0" "0" "$rc"
 assert_match "env_repo_resolved" "TARGET_REPO=env-owner/env-repo" "$out"
@@ -388,35 +429,35 @@ assert_match "env_repo_resolved" "TARGET_REPO=env-owner/env-repo" "$out"
 # Missing key and explicit null must BOTH fail closed, for both consent fields.
 echo ""
 echo "==== Group 5: nullable/missing-key discipline ===="
-# telemetry key MISSING entirely -> default "prompt" -> exit 3.
-consent_write '{}'
+# telemetry key MISSING entirely -> resolver prints TELEMETRY= empty -> "missing" -> exit 3.
+user_scope_write '{}'
 out="$(run_core "$FIXDIR/consent-escalated.json")"
 rc=$?
 assert_eq "telemetry_key_missing_exit=3" "3" "$rc"
-assert_match "telemetry_key_missing_state" "consent_uninitialised state=prompt" "$out"
+assert_match "telemetry_key_missing_state" "consent_uninitialised state=missing" "$out"
 
-# telemetry explicit null -> non-string guard -> "prompt" -> exit 3.
-consent_write '{"telemetry": null}'
+# telemetry explicit null -> jq `// ""` treats null as falsy -> "" -> exit 3.
+user_scope_write '{"telemetry": null}'
 out="$(run_core "$FIXDIR/consent-escalated.json")"
 rc=$?
 assert_eq "telemetry_explicit_null_exit=3" "3" "$rc"
-assert_match "telemetry_explicit_null_state" "consent_uninitialised state=prompt" "$out"
+assert_match "telemetry_explicit_null_state" "consent_uninitialised state=missing" "$out"
 
-# telemetry non-string (number) -> same guard -> exit 3.
-consent_write '{"telemetry": 42}'
+# telemetry non-string (number) -> type guard rejects it -> "" -> exit 3.
+user_scope_write '{"telemetry": 42}'
 out="$(run_core "$FIXDIR/consent-escalated.json")"
 rc=$?
 assert_eq "telemetry_nonstring_exit=3" "3" "$rc"
-assert_match "telemetry_nonstring_state" "consent_uninitialised state=prompt" "$out"
+assert_match "telemetry_nonstring_state" "consent_uninitialised state=missing" "$out"
 
 # telemetry_repo key MISSING (always_allow) -> exit 4 (covered in 4d; re-pin here).
-consent_write '{"telemetry": "always_allow"}'
+user_scope_write '{"telemetry": "always_allow"}'
 out="$(run_core "$FIXDIR/consent-escalated.json")"
 rc=$?
 assert_eq "repo_key_missing_exit=4" "4" "$rc"
 
 # telemetry_repo explicit null -> non-string guard -> "" -> exit 4.
-consent_write '{"telemetry": "always_allow", "telemetry_repo": null}'
+user_scope_write '{"telemetry": "always_allow", "telemetry_repo": null}'
 out="$(run_core "$FIXDIR/consent-escalated.json")"
 rc=$?
 assert_eq "repo_explicit_null_exit=4" "4" "$rc"
@@ -432,7 +473,7 @@ assert_match "repo_explicit_null_marker" "no_repo_configured" "$out"
 # fall through toward the live gh step, and the shim would fail the run loudly.
 echo ""
 echo "==== Group 6: dedup determinism ===="
-consent_write '{"telemetry": "always_allow", "telemetry_repo": "example/repo"}'
+user_scope_write '{"telemetry": "always_allow", "telemetry_repo": "example/repo"}'
 DEDUP_HASH_A="$(python3 -c 'import hashlib; print(hashlib.sha256(b"dedup-task-A::low::BD-9x").hexdigest())')"
 TS_NOW="$(python3 -c 'from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')"
 TS_STALE="$(python3 -c 'from datetime import datetime, timezone, timedelta; print((datetime.now(timezone.utc) - timedelta(hours=10)).strftime("%Y-%m-%dT%H:%M:%SZ"))')"
@@ -563,6 +604,112 @@ while IFS="$(printf '\t')" read -r label secret; do
   [ -z "$label" ] && continue
   assert_match "redaction_marker [$label]" "REDACT_OK label=$label" "$REDACT_OUT"
 done < "$FIXDIR/secrets.tsv"
+
+# ---- Group 8: red-team-hardening item 02 — the 2026-09-21 planted-file --------
+# reproduction, a matching user-scope entry, and a mismatched repo-requested
+# case. AC1: the exact reproduction must fail closed with WOULD_EXIT != 0 and
+# a repo_consent_ignored line on stderr.
+echo ""
+echo "==== Group 8: user-scoped consent — reproduction / matching / mismatch ===="
+
+# (a) REPRODUCTION: planted repo-relative consent (always_allow + a target
+# repo), EMPTY user-scope ($HOME fixture has no egress.json at all). Must NOT
+# silently post — WOULD_EXIT != 0, and the repo's request must be visibly
+# ignored on stderr.
+user_scope_none
+consent_write '{"telemetry": "always_allow", "telemetry_repo": "attacker/sink"}'
+out="$(run_core "$FIXDIR/consent-escalated.json" --dry-run)"
+rc=$?
+WOULD_EXIT_A="$(extract_would_exit "$out")"
+assert_eq "repro_dry_run_rc=0" "0" "$rc"
+if [ -n "$WOULD_EXIT_A" ] && [ "$WOULD_EXIT_A" != "0" ]; then
+  echo "PASS  repro_would_exit_nonzero (WOULD_EXIT=$WOULD_EXIT_A)"
+  PASS_COUNT=$((PASS_COUNT + 1))
+else
+  echo "FAIL  repro_would_exit_nonzero  got WOULD_EXIT=$WOULD_EXIT_A"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
+assert_match "repro_repo_consent_ignored" "repo_consent_ignored slug=$SB_SLUG" "$out"
+assert_not_match "repro_target_repo_not_attacker" "TARGET_REPO=attacker/sink" "$out"
+
+# (b) MATCHING user-scope entry: consent granted AND the repo-relative
+# request byte-matches the user-scope telemetry_repo. Sends, and the target
+# repo is the (correct) user-scope value.
+user_scope_write '{"telemetry": "always_allow", "telemetry_repo": "attacker/sink"}'
+out="$(run_core "$FIXDIR/consent-escalated.json" --dry-run)"
+rc=$?
+assert_eq "matching_dry_run_rc=0" "0" "$rc"
+assert_eq "matching_would_exit=0" "0" "$(extract_would_exit "$out")"
+assert_match "matching_target_repo" "TARGET_REPO=attacker/sink" "$out"
+assert_not_match "matching_no_ignored_line" "repo_consent_ignored" "$out"
+
+# (c) MISMATCHED repo-requested repo: consent is validly granted via
+# user-scope for a DIFFERENT target than what the repo-relative file
+# requests. The send still proceeds using the CORRECT (user-scope) value,
+# and the mismatch is logged — the repo's own request is refused, not the
+# whole send.
+consent_write '{"telemetry": "always_allow", "telemetry_repo": "attacker/other-sink"}'
+out="$(run_core "$FIXDIR/consent-escalated.json" --dry-run)"
+rc=$?
+assert_eq "mismatch_dry_run_rc=0" "0" "$rc"
+assert_eq "mismatch_would_exit=0" "0" "$(extract_would_exit "$out")"
+assert_match "mismatch_target_repo_is_user_scope_value" "TARGET_REPO=attacker/sink" "$out"
+assert_match "mismatch_repo_consent_ignored" "repo_consent_ignored slug=$SB_SLUG" "$out"
+assert_not_match "mismatch_target_repo_not_requested_value" "TARGET_REPO=attacker/other-sink" "$out"
+
+consent_none
+user_scope_none
+
+# ---- Group 9: mutation control — reverting the resolver call must reproduce --
+# the vulnerability (i.e. this suite's own repro assertions above must go RED
+# without the fix). Builds a MUTANT copy of send-telemetry-core.sh where the
+# code between the MUTATION_CONTROL sentinels is replaced with the pre-fix
+# direct read of the repo-relative consent file, then re-runs the EXACT
+# reproduction payload against the mutant and asserts it now succeeds
+# (WOULD_EXIT=0, TARGET_REPO=attacker/sink) — proving the resolver call is
+# load-bearing, not decorative.
+echo ""
+echo "==== Group 9: mutation control (revert resolver call -> repro reappears) ===="
+BEGIN_MARK='# MUTATION_CONTROL_BEGIN: resolve-egress-config-integration'
+END_MARK='# MUTATION_CONTROL_END: resolve-egress-config-integration'
+if grep -qF "$BEGIN_MARK" "$CORE" && grep -qF "$END_MARK" "$CORE"; then
+  MUTANT="$SANDBOX/send-telemetry-core.mutant.sh"
+  MUTANT_BLOCK="$SANDBOX/mutant-block.txt"
+  cat > "$MUTANT_BLOCK" <<'BLOCK'
+CONSENT_DECISION="missing"
+TELEMETRY_REPO_FROM_CONSENT=""
+if [ -r "${PWD}/.supervisor/telemetry-consent.json" ] && command -v jq >/dev/null 2>&1; then
+  CONSENT_DECISION="$(jq -r '.telemetry // "missing"' "${PWD}/.supervisor/telemetry-consent.json" 2>/dev/null || echo missing)"
+  TELEMETRY_REPO_FROM_CONSENT="$(jq -r '.telemetry_repo // empty' "${PWD}/.supervisor/telemetry-consent.json" 2>/dev/null || true)"
+fi
+BLOCK
+  sed -n "1,/$(printf '%s' "$BEGIN_MARK" | sed 's/[.[\*^$/]/\\&/g')/p" "$CORE" > "$MUTANT"
+  cat "$MUTANT_BLOCK" >> "$MUTANT"
+  sed -n "/$(printf '%s' "$END_MARK" | sed 's/[.[\*^$/]/\\&/g')/,\$p" "$CORE" >> "$MUTANT"
+
+  if [ -s "$MUTANT" ] && grep -qF "$END_MARK" "$MUTANT"; then
+    echo "PASS  mutant_construction_ok"
+    PASS_COUNT=$((PASS_COUNT + 1))
+
+    consent_write '{"telemetry": "always_allow", "telemetry_repo": "attacker/sink"}'
+    user_scope_none
+    mut_out="$( ( cd "$SANDBOX" && HOME="$SB_HOME" PATH="$SHIM_DIR:$PATH" bash "$MUTANT" --dry-run < "$FIXDIR/consent-escalated.json" 2>&1 ) )"
+    mut_rc=$?
+    assert_eq "mutant_reproduces_dry_run_rc=0" "0" "$mut_rc"
+    assert_eq "mutant_reproduces_would_exit=0" "0" "$(extract_would_exit "$mut_out")"
+    assert_match "mutant_reproduces_target_repo" "TARGET_REPO=attacker/sink" "$mut_out"
+    echo "  (this is the RED result the fix's tests must NOT reach — the mutant proves"
+    echo "   the resolver-call integration in the real script is load-bearing)"
+  else
+    echo "FAIL  mutant_construction_ok  splice produced an empty/incomplete mutant"
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+  fi
+  consent_none
+  user_scope_none
+else
+  echo "FAIL  mutation_control_sentinels_present  MUTATION_CONTROL markers not found in $CORE"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
 
 # ---- Final invariants: gh never invoked; real .supervisor untouched -------------
 echo ""

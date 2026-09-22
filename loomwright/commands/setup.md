@@ -15,7 +15,7 @@ description: Umbrella setup command — status dashboard plus guided configurati
 /setup ui                   # Install and serve The Floor, a local loopback-only view of the run: check | apply | serve | stop | remove
 /setup telemetry            # DELEGATES to /telemetry (no consent logic duplicated here)
 /setup notifications        # Status + guidance (notification hooks are always-on)
-/setup webhook              # Status + guidance (LOOMWRIGHT_WEBHOOK_URL)
+/setup webhook              # Status + guided write of the user-scope webhook URL (LOOMWRIGHT_WEBHOOK_URL still wins when set)
 /setup beads                # Status + guidance (bd CLI + .beads/)
 /setup mysql-mcp            # Status + guidance (DB_* env for the read-only MySQL MCP — separate mysql-mcp@atelier plugin)
 ```
@@ -80,7 +80,7 @@ Run ONE real check per module (never guess; every cell of the dashboard is deriv
    - Status cell: `configured — local stack N/7 healthy (collector liveness-only)` | `configured — local stack booting (M/7 healthy, K starting)` | `configured — external endpoint` | `configured — console debug` | `partial — env block present, stack down/missing` | `not configured`.
 2. **telemetry** — read `.supervisor/telemetry-consent.json` (user-project root). `always_allow` + repo → `enabled (target=<owner/repo>)`; `no` → `disabled`; absent/malformed → `unset`.
 3. **notifications** — always-on via plugin hooks (desktop banners at human-decision gates); status cell is `active (built-in hooks)`. No check command needed — note that the webhook variant additionally requires the webhook module below.
-4. **webhook** — `[ -n "${LOOMWRIGHT_WEBHOOK_URL:-}" ]`. Status: `set` / `not set`. NEVER print the URL value (it may embed a token) — print only `set (host: <hostname-only>)`.
+4. **webhook** — run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-egress-config.sh"` and read its `WEBHOOK_URL=` line (this is the SAME resolution `send-webhook.sh` uses — env var, else the user-scope `~/.claude/loomwright/egress.json` entry for this repo's slug; v15.87.0, red-team-hardening item 02). Status: `set (host: <hostname-only>, source: env var|user-scope config)` / `not set`. NEVER print the URL value itself (it may embed a token) — print only the hostname and which source resolved it.
 5. **beads** — `command -v bd >/dev/null 2>&1` and `[ -d .beads ]`. Status: `ready` / `bd installed, repo not initialised` / `not installed`. Note: only Orchestrator/Product Owner use Beads — optional.
 6. **mysql-mcp** — check `DB_HOST`, `DB_USER`, `DB_PASS`, `DB_NAME` env vars are non-empty (`DB_PORT` optional). Status: `configured` / `missing: <names of unset vars>`. NEVER print values — names only.
 7. **memory** — run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-memory.sh" check` and read the `Memory readiness:` verdict plus the per-path `intended` / `unintended` ignore-status cells and the `allowlist:` line. The helper is fail-safe (always exits 0) and READ-ONLY on this path — it writes nothing. Derive a compact status cell: `configured` → `stores committable`; `gated (...)` → `memory stores committable, findings ledger WITHHELD` plus the offending slugs from the helper's own parenthetical (a **third** outcome — never collapse it into `configured` or `not configured`); `not configured` → `stores ignored (not in version control)`; `partial (...)` and `unknown (...)` → surface the helper's own parenthetical verbatim (`unknown` means the ignore status could not be probed at all — never restate it as a configured/partial claim); if the `.gitignore:` cell reads `absent` or `unparseable: …`, say so instead (e.g. `.gitignore unparseable — apply would abort`). Never guess — every cell comes from that one probe.
@@ -117,7 +117,7 @@ Then use `AskUserQuestion`. **`AskUserQuestion` accepts at most 4 options**, so 
 - `options` (exactly these, in order; append each module's current status to its description):
   1. **Claude Code surfaces (observability · status line · the floor)** — the modules that write under your Claude Code config directory; selecting it asks ONE nested question (below) to pick which.
   2. **Repo knowledge stores (memory in version control · portable rule seeds)** — the two per-repo apply flows; selecting it asks ONE nested question (below) to pick which.
-  3. **Other integrations (telemetry · webhook · Beads · MySQL MCP)** — print status + setup guidance / delegation for these (telemetry delegates to `/telemetry`; webhook · Beads · MySQL MCP are guidance-only; `notifications` is always-on and needs no action).
+  3. **Other integrations (telemetry · webhook · Beads · MySQL MCP)** — print status + setup guidance / delegation for these (telemetry delegates to `/telemetry`; webhook offers a guided write of the user-scope URL, see its own module below; Beads · MySQL MCP are guidance-only; `notifications` is always-on and needs no action).
   4. **Nothing — just checking** — stop with the summary line.
 
 **How to render the status on a BUNDLED option** (options 1, 2 and 3 each fold several modules behind one label, so "the module's status" is ambiguous): append the per-module statuses joined by ` · `, each prefixed with its module name — `observability: <status> · statusline: <status> · ui: <status>` for option 1, `memory: <status> · rules: <status>` for option 2, and `telemetry: <status> · webhook: <status> · beads: <status> · mysql-mcp: <status>` for option 3. Never collapse them into one aggregate word, and never pick one module's status to stand for the bundle. Option 4 is no-module and takes none. Truncate from the right if the description exceeds the option-description limit — drop whole `name: status` pairs, never a status string mid-word.
@@ -573,7 +573,28 @@ Status + guidance only. Report: desktop notifications fire via always-on plugin 
 
 ## Module: webhook
 
-Status + guidance only. Report whether `LOOMWRIGHT_WEBHOOK_URL` is set (never print the full URL). Guidance: export it in the shell profile (user choice of Slack/Discord/custom receiver); consumed by `send-webhook.sh` on supervisor completion and decision gates, and by `/autonomous --notify`. This command does NOT edit shell profiles.
+**v15.87.0 (red-team-hardening item 02) — the webhook destination is now USER-scoped**, resolved by `${CLAUDE_PLUGIN_ROOT}/scripts/resolve-egress-config.sh` from `LOOMWRIGHT_WEBHOOK_URL` (env, highest precedence, still the right choice for a one-off/CI shell) or `~/.claude/loomwright/egress.json` (persists across shells without needing an export). This module writes the LATTER.
+
+### Check
+Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-egress-config.sh"` and read its `WEBHOOK_URL=` line — this is the SAME resolution `send-webhook.sh` itself performs, never guess or recompute it. Never print the URL value (it may embed a token) — print only whether it is `set (host: <hostname-only>, source: env var|user-scope config)` or `not set`.
+
+### Report
+If `LOOMWRIGHT_WEBHOOK_URL` is set, note that the env var is currently winning and any user-scope value written here will not take effect until it is unset. If a repo-relative `.supervisor/config.json`/`.supervisor/notify-config.json` carries a `webhook_url` that does not match the resolved value, note it is present but NOT honoured (informational request only, per resolve-egress-config.sh) — never imply it is in effect.
+
+### Offer
+If not configured (or the user wants to change it), ask via `AskUserQuestion` whether to write a webhook URL now: `question`: "Set a webhook URL for this repo? (Slack/Discord/ntfy/custom — paste the full URL)", `header`: "Webhook URL", `multiSelect`: false, free-text entry (no suggested options — this is credential-shaped input, never guess a default). Validate the answer starts with `https://` or `http://`; on any other shape, print an error and write nothing.
+
+### Apply
+Resolve `REPO_SLUG` via the SAME resolver output as Check, then write `~/.claude/loomwright/egress.json` with the identical backup-first, jq-deep-merge, abort-on-parse-failure procedure `/telemetry enable` uses (see `${CLAUDE_PLUGIN_ROOT}/commands/telemetry.md` §"If subcommand == `enable`" step 5 for the exact recipe — reuse it verbatim, substituting the jq filter's target fields):
+```bash
+jq --arg slug "$REPO_SLUG" --arg url "<answer>" --arg sha "$(printf '%s' "<answer>" | shasum -a 256 | awk '{print $1}')" \
+  '.schema_version = 1 | .repos[$slug].webhook_url = $url | .repos[$slug].webhook_url_sha256 = $sha'
+```
+This is a SEPARATE write from `/telemetry enable`'s (different keys, same file, same procedure) — never overwrite the sibling `telemetry`/`telemetry_repo` keys already present for this slug; the jq filter above touches only `webhook_url`/`webhook_url_sha256`.
+
+**May still mirror into `<project>/.supervisor/config.json`'s `.webhook_url`** for the local run-view UI (The Floor) to read without invoking the resolver — this mirror is now INERT on its own for `send-webhook.sh`'s own resolution (it is read back only as an informational *request*, per `resolve-egress-config.sh`); document that explicitly in the confirmation message so a user does not assume editing `.supervisor/config.json` by hand changes where the webhook fires.
+
+This command does NOT edit shell profiles — the env var path is unchanged (`export LOOMWRIGHT_WEBHOOK_URL=...` by hand, still highest precedence).
 
 ## Module: beads
 
@@ -590,6 +611,7 @@ Status + guidance only. Report which of `DB_HOST`, `DB_USER`, `DB_PASS`, `DB_NAM
 - The ONLY files this command's OWN logic may write:
   - `$OBS_DIR/*` (the copied stack + generated `.env`),
   - `$HOME/.claude/settings.json` — user-scope env, via the merge recipe, backup-first,
+  - **webhook** (`/setup webhook`) — `$HOME/.claude/loomwright/egress.json`, via the SAME backup-first / jq-deep-merge / abort-on-parse-failure procedure `/telemetry enable` uses (v15.87.0), touching only that slug's `webhook_url`/`webhook_url_sha256` keys — never the sibling `telemetry`/`telemetry_repo` keys a prior `/telemetry enable` wrote for the same slug. May additionally mirror into `<project>/.supervisor/config.json`'s `.webhook_url` for the local run-view UI — documented as inert on its own for `send-webhook.sh`'s resolution, which reads that path only as an informational request,
   - `<project>/.claude/settings.local.json` — project-scope, gitignored-by-convention; sanctioned for the `remove` subflow's `jq 'del(.env.OTEL_RESOURCE_ATTRIBUTES)'` (backup-first, like the user-scope merge) and — via the invoked `set-otel-resource-attrs.sh` script — the init-tail per-project label. The script write uses parse-gate (`jq empty`, no clobber on unparseable) + atomic tmp-file-`mv` + idempotent skip-if-unchanged; it does NOT back up (the merge is single-key and idempotent, so there is nothing destructive to roll back), and
   - **memory** (`/setup memory`) — **a `.gitignore` write class no other module has, so it gets its own line:** (a) `<project>/.gitignore`, rewritten ONLY via `setup-memory.sh apply` / `remove`, and ONLY after an explicit consent-bearing confirm. The write is backup-first (a timestamped `<project>/.gitignore.backup.<ts>` sibling, pid-suffixed on a same-second collision so one backup can never overwrite another), atomic (tmp-file + `mv`), confined to a sentinel-delimited managed block plus the commenting-out of pre-existing directory-shaped `.claude/` / `.supervisor/` excludes — including the recursive `**` family (`.claude/**`, `**/.claude/`, `**/.claude/**`), but never the `X/*` working form — and **idempotent by byte-comparison** — apply computes the file it would write and does nothing when it already matches. It **ABORTS without any write and without a backup** on an absent, non-regular, symlinked, NUL-containing, conflict-marked, or sentinel-unbalanced `.gitignore` — never a partial write, never a blind repair; and (b) `<project>/.supervisor/config.json` key `.setup_memory.repo_allowlist` — a jq merge that is parse-gated (`jq empty`), backup-first, atomic, preserves every unrelated key, stores a JSON **array**, and never overwrites an existing non-empty one. The memory module touches NO `~/.claude/settings.json` and nothing under `~/.claude/`, and it **NEVER runs `git add`, `git rm`, `git commit` or any other history-touching git command** — un-ignoring is not committing, and un-committing is the user's own `git rm --cached`.
 
