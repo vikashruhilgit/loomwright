@@ -2,6 +2,8 @@
 
 ## Status: pending
 
+> **Cross-queue amendment (2026-09-22).** Sequenced by `.supervisor/requirements/_BACKLOG-hardening-sequence-2026-09-22.md`: this item lands BEFORE `six-phase-loop-gaps/02` and BEFORE `harness-port/01` (which adds `not_verified[]` to WORKER_RESULT, its own validator rule and its own worker budget raise). Therefore: (a) the validator rule number is **the next after the live last rule** in `scripts/validate-worker-result.py` at implementation time — "rule 10" below is the `05823bf` number, not authoritative, and `harness-port/01` will take the number after yours; (b) `worker 5876/5905, 29 headroom` is the `05823bf` measurement — re-run `bash scripts/check-token-budget.sh` and raise from the LIVE number (measured + ~10%), one raise-log row naming this item; item 02 and `harness-port/01` each re-measure and add their own row. Re-verify every premise against `main` before starting.
+
 > **Rev 2 (2026-09-21, after red-team).** Changes from rev 1: (a) Phase 4.5 fixers are not workers — their
 > `FIX_RESULT` never reaches `## Worker Results` — so the field is added to `FIX_RESULT` too and the advisory
 > reads both, or item 02 §9's reviewer clause DoSes the heal loop; (b) the validator accepts any non-empty

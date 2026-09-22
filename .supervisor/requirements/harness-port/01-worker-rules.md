@@ -2,6 +2,8 @@
 
 ## Status: pending
 
+> **Cross-queue amendment (2026-09-22).** This item is sequenced by `.supervisor/requirements/_BACKLOG-hardening-sequence-2026-09-22.md` AFTER `six-phase-loop-gaps/01` and `/02`, which ALSO add `agents/worker.md` prose, an optional WORKER_RESULT list (`deviations`), a `validate-worker-result.py` rule and a worker budget raise. Therefore: (a) the validator rule number is **the next after the live last rule** in `scripts/validate-worker-result.py` at implementation time — "rule (10)" below is the number as of `05823bf`, not authoritative; (b) `worker 5876/5905, 29 headroom` is the `05823bf` measurement — re-run `bash scripts/check-token-budget.sh` and raise from the LIVE number (measured + ~10%), one raise-log row naming this item; (c) H1 "one worker.md PR, one budget raise" holds WITHIN this folder only — the two sibling-queue raises are legitimate and precede this one. Re-verify every "Verified premises" row against `main` before starting.
+
 ## Problem
 `loomwright/agents/worker.md` has no instruction to (a) name what it could not verify, (b) refrain from stamping
 its own follow-up work as ready for a queue, or (c) treat shared local services as read-only when running in
