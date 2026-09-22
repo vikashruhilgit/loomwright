@@ -628,6 +628,31 @@ if compgen -G ".supervisor/jobs/failed/*.md" > /dev/null 2>&1; then
   append $'\n'
 fi
 
+# Section 2a: drains that died without a result (red-team-hardening item 04) ----
+#
+# A `.supervisor/review-dispatch/<hash>.died` marker means a detached review
+# drain (dispatch-pr-review.sh's wrapper trap) exited WITHOUT ever printing a
+# terminal REVIEW_HEAL_RESULT block — e.g. a scoped-check wait the model
+# backgrounded and then ended its turn on (under `claude -p`, turn-end IS
+# process exit). The marker is NOT a decision (it is not READY/ESCALATED) —
+# it means no decision was ever produced. Bounded to 5 entries, same
+# newest-first convention as Section 2 above, and stays inside MAX_CHARS.
+if compgen -G ".supervisor/review-dispatch/*.died" > /dev/null 2>&1; then
+  append "### Drains that died without a result (last 5)"$'\n'
+  append "A detached review drain exited without ever producing REVIEW_HEAL_RESULT — not a decision, a silent death."$'\n'
+  for f in $(ls -t .supervisor/review-dispatch/*.died 2>/dev/null | head -5); do
+    died_pr="$(awk -F'\t' '$1=="pr_url"{print $2; exit}' "$f" 2>/dev/null || true)"
+    died_attempt="$(awk -F'\t' '$1=="attempt"{print $2; exit}' "$f" 2>/dev/null || true)"
+    if [ -n "$died_pr" ]; then
+      append "- $died_pr (attempt ${died_attempt:-1}) — marker: $f"$'\n'
+    else
+      append "- $f (pr_url unreadable)"$'\n'
+    fi
+  done
+  append "Re-run \`/review-pr --until-mergeable <pr-url>\` to retry manually, or see \`docs/PITFALLS.md\`."$'\n'
+  append $'\n'
+fi
+
 # Section 2.5: System Twin contract-store health ----
 #
 # WHY THIS IS A RESUME SECTION AND NOT JUST A LOG LINE (incident of 2026-09-01). The read gate

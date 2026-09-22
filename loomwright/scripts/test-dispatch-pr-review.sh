@@ -164,6 +164,11 @@ GHEOF
   # (NO_CLAUDE / claude log empty) below depends on the probe staying silent
   # in that log. The fake help text advertises exactly the flags the
   # dispatcher's ②b check greps for, so the happy-path fixture stays pinnable.
+  # DEFAULT SHAPE prints a terminal REVIEW_HEAL_RESULT line to its OWN stdout
+  # (captured by the wrapper's RUN_LOG redirect, `$_log`) so every EXISTING
+  # "real launch" case below is a COMPLETED drain, never a died one, by
+  # default — death-detection cases (§ "death detection") override this file
+  # with stub_claude_no_result() below.
   cat > "$FX_BIN/stub-claude" <<CLEOF
 #!/usr/bin/env bash
 if [ "\$1" = "--help" ]; then
@@ -173,10 +178,33 @@ if [ "\$1" = "--help" ]; then
   exit 0
 fi
 printf 'cwd=%s args=%s fork=%s\n' "\$(pwd)" "\$*" "\${LOOMWRIGHT_PR_IS_FORK:-unset}" >> "$FX_CLAUDE_LOG"
+printf '## REVIEW_HEAL_RESULT\n- schema_version: 1\n- decision: PASS\n'
 exit 0
 CLEOF
   chmod +x "$FX_BIN/stub-claude"
   printf '%s' "$FX_REPO"
+}
+
+# stub_claude_no_result <bin_dir> — overwrite stub-claude so it exits WITHOUT
+# ever printing a REVIEW_HEAL_RESULT block (a drain that died mid-run — e.g.
+# a backgrounded wait the model ended its turn on under `claude -p`). Still
+# logs cwd/args to FX_CLAUDE_LOG (unaffected — only its OWN stdout, the part
+# the wrapper's RUN_LOG redirect captures, differs from the default fixture).
+stub_claude_no_result() {
+  local bin="$1"
+  cat > "$bin/stub-claude" <<CLEOF
+#!/usr/bin/env bash
+if [ "\$1" = "--help" ]; then
+  printf -- '--permission-mode <mode> (choices: "acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan")\n'
+  printf -- '--allowedTools, --allowed-tools <tools...>\n'
+  printf -- '--disallowedTools, --disallowed-tools <tools...>\n'
+  exit 0
+fi
+printf 'cwd=%s args=%s fork=%s\n' "\$(pwd)" "\$*" "\${LOOMWRIGHT_PR_IS_FORK:-unset}" >> "$FX_CLAUDE_LOG"
+printf 'partial output, then the process just... stops (simulated background-wait death)\n'
+exit 0
+CLEOF
+  chmod +x "$bin/stub-claude"
 }
 
 # run_real <repo> <args...> — run the dispatcher for real (NOT dry-run) from the
@@ -1051,6 +1079,118 @@ else
   no "regime probe DRY_RUN acceptEdits-refused wrong — acceptEdits must be treated as permissive, not fallen-through (line='$LINE' marker='$MARKER_CONTENT')"
 fi
 rm -rf "$WD" "$RUN_HOME"; unset RUN_HOME
+
+echo "== 37. (death detection) real launch with NO REVIEW_HEAL_RESULT => .died marker (ts/pr_url/exit_code/last_log_line/attempt), DRAIN_DIED in log, marker still exists =="
+fresh_git_repo >/dev/null
+stub_claude_no_result "$FX_BIN"
+run_real "$FX_REPO" "$PR"
+RC37=$RUN_RC
+WT="$(expected_wt_path "$FX_REPO")"
+H="$(pr_hash)"
+LOCK="$FX_REPO/.supervisor/review-dispatch/$H.lock"
+wait_for_teardown "$FX_REPO" "$WT" "$LOCK" || true
+DIED="$FX_REPO/.supervisor/review-dispatch/$H.died"
+D_TS="$(awk -F'\t' '$1=="ts"{print $2; exit}' "$DIED" 2>/dev/null || true)"
+D_PR="$(awk -F'\t' '$1=="pr_url"{print $2; exit}' "$DIED" 2>/dev/null || true)"
+D_EC="$(awk -F'\t' '$1=="exit_code"{print $2; exit}' "$DIED" 2>/dev/null || true)"
+D_LAST="$(awk -F'\t' '$1=="last_log_line"{print $2; exit}' "$DIED" 2>/dev/null || true)"
+D_ATT="$(awk -F'\t' '$1=="attempt"{print $2; exit}' "$DIED" 2>/dev/null || true)"
+HDR="$(cat "$FX_REPO"/.supervisor/logs/review-pr-dispatch-*.log 2>/dev/null || true)"
+DRAIN_DIED_OK=0; printf '%s' "$HDR" | grep -q '^DRAIN_DIED' && DRAIN_DIED_OK=1
+MARKER_STILL_THERE=0; [ -f "$FX_REPO/.supervisor/review-dispatch/$H" ] && MARKER_STILL_THERE=1
+if [ "$RC37" -eq 0 ] && [ -f "$DIED" ] && [ -n "$D_TS" ] && [ "$D_PR" = "$PR" ] \
+   && [ -n "$D_EC" ] && [ -n "$D_LAST" ] && [ "$D_ATT" = "1" ] \
+   && [ "$DRAIN_DIED_OK" -eq 1 ] && [ "$MARKER_STILL_THERE" -eq 1 ]; then
+  ok "death detection: .died written with all 4 fields + attempt=1, DRAIN_DIED in log, durable marker untouched"
+else
+  no "death detection wrong (rc=$RC37 died_exists=$([ -f "$DIED" ] && echo 1 || echo 0) ts='$D_TS' pr='$D_PR' ec='$D_EC' last='$D_LAST' attempt='$D_ATT' drain_died=$DRAIN_DIED_OK marker=$MARKER_STILL_THERE)"
+fi
+rm -rf "$(dirname "$FX_REPO")"
+
+echo "== 38. (death detection) real launch that DOES print REVIEW_HEAL_RESULT => NO .died marker written =="
+fresh_git_repo >/dev/null
+run_real "$FX_REPO" "$PR"
+RC38=$RUN_RC
+WT="$(expected_wt_path "$FX_REPO")"
+H="$(pr_hash)"
+LOCK="$FX_REPO/.supervisor/review-dispatch/$H.lock"
+wait_for_teardown "$FX_REPO" "$WT" "$LOCK" || true
+DIED="$FX_REPO/.supervisor/review-dispatch/$H.died"
+if [ "$RC38" -eq 0 ] && [ ! -e "$DIED" ]; then
+  ok "no .died marker written when the runner produced a real REVIEW_HEAL_RESULT"
+else
+  no "unexpected .died marker for a completed drain (rc=$RC38 died_exists=$([ -e "$DIED" ] && echo 1 || echo 0))"
+fi
+rm -rf "$(dirname "$FX_REPO")"
+
+echo "== 39/40/41. (bounded re-dispatch) exactly ONE automatic re-dispatch after a death; a SECOND death writes attempt=2; a THIRD dispatch is refused (bounded, never unbounded) =="
+fresh_git_repo >/dev/null
+stub_claude_no_result "$FX_BIN"
+H="$(pr_hash)"
+DIED="$FX_REPO/.supervisor/review-dispatch/$H.died"
+WT="$(expected_wt_path "$FX_REPO")"
+LOCK="$FX_REPO/.supervisor/review-dispatch/$H.lock"
+
+# Attempt 1: dispatch dies -> .died written with attempt=1 (first death, default).
+run_real "$FX_REPO" "$PR"; RC_A1=$RUN_RC
+wait_for_teardown "$FX_REPO" "$WT" "$LOCK" || true
+ATTEMPT1="$(awk -F'\t' '$1=="attempt"{print $2; exit}' "$DIED" 2>/dev/null || true)"
+CALLS_AFTER_1="$(wc -l < "$FX_CLAUDE_LOG" 2>/dev/null | tr -d ' ' || echo 0)"
+
+# Attempt 2 (the ONE automatic re-dispatch, since marker+died-attempt=1 count as
+# "not dispatched"): dies again -> .died OVERWRITTEN with attempt=2.
+run_real "$FX_REPO" "$PR"; RC_A2=$RUN_RC
+wait_for_teardown "$FX_REPO" "$WT" "$LOCK" || true
+ATTEMPT2="$(awk -F'\t' '$1=="attempt"{print $2; exit}' "$DIED" 2>/dev/null || true)"
+CALLS_AFTER_2="$(wc -l < "$FX_CLAUDE_LOG" 2>/dev/null | tr -d ' ' || echo 0)"
+
+# Attempt 3: marker + died-attempt=2 now count as GENUINELY dispatched/exhausted
+# -> refused, NO third claude launch (bounded, never unbounded).
+run_real "$FX_REPO" "$PR"; RC_A3=$RUN_RC
+CALLS_AFTER_3="$(wc -l < "$FX_CLAUDE_LOG" 2>/dev/null | tr -d ' ' || echo 0)"
+
+if [ "$RC_A1" -eq 0 ] && [ "$RC_A2" -eq 0 ] && [ "$RC_A3" -eq 0 ] \
+   && [ "$ATTEMPT1" = "1" ] && [ "$ATTEMPT2" = "2" ] \
+   && [ "$CALLS_AFTER_2" -gt "$CALLS_AFTER_1" ] \
+   && [ "$CALLS_AFTER_3" -eq "$CALLS_AFTER_2" ]; then
+  ok "bounded re-dispatch: 1st death attempt=1, exactly ONE automatic re-dispatch ran (2nd death attempt=2), 3rd dispatch refused (no 3rd launch) — bounded, never unbounded"
+else
+  no "bounded re-dispatch wrong (rc1=$RC_A1 rc2=$RC_A2 rc3=$RC_A3 attempt1='$ATTEMPT1' attempt2='$ATTEMPT2' calls1=$CALLS_AFTER_1 calls2=$CALLS_AFTER_2 calls3=$CALLS_AFTER_3)"
+fi
+rm -rf "$(dirname "$FX_REPO")"
+
+echo "== 42. MUTATION CONTROL (BLOCKING): deleting the trap's REVIEW_HEAL_RESULT grep => the .died-marker assertion for the no-result case now FAILS =="
+MUT42="$(mktemp -d)/dispatch-mutant-death.sh"
+# Neutralize the ONE condition that gates death-detection: force the trap to
+# ALWAYS take the "a result was produced" branch, regardless of what (if
+# anything) the runner ever printed to $_log. If death detection is genuinely
+# driven by this grep (not merely asserted in a comment), the mutant must
+# NEVER write a .died marker even for the no-result stub — proving the
+# .died-marker assertion in case 37 above is load-bearing, not vacuous.
+sed 's#grep -q "REVIEW_HEAL_RESULT" "$_log" 2>/dev/null#true#' "$DISPATCH" > "$MUT42"
+chmod +x "$MUT42"
+if cmp -s "$MUT42" "$DISPATCH"; then
+  no "MUTATION CONTROL (BLOCKING): could not build the mutant — the trap grep line was not found, control inconclusive"
+elif ! bash -n "$MUT42" 2>/dev/null; then
+  no "MUTATION CONTROL (BLOCKING): the mutant does not parse — cannot discriminate anything"
+else
+  fresh_git_repo >/dev/null
+  stub_claude_no_result "$FX_BIN"
+  H="$(pr_hash)"
+  DIED="$FX_REPO/.supervisor/review-dispatch/$H.died"
+  WT="$(expected_wt_path "$FX_REPO")"
+  LOCK="$FX_REPO/.supervisor/review-dispatch/$H.lock"
+  ( cd "$FX_REPO" && PATH="$FX_BIN:$PATH" HOME="$FX_REPO/.fakehome" \
+      LOOMWRIGHT_CLAUDE_BIN="$FX_BIN/stub-claude" bash "$MUT42" "$PR" >/dev/null 2>&1 )
+  wait_for_teardown "$FX_REPO" "$WT" "$LOCK" || true
+  if [ ! -e "$DIED" ]; then
+    ok "MUTATION CONTROL (BLOCKING) CONFIRMED: with the trap grep neutralized, the no-result case no longer writes .died (assertion 37 flips to FAIL against the mutant) — death detection IS driven by that grep, not merely asserted"
+  else
+    no "MUTATION CONTROL (BLOCKING) REFUTED: the mutant STILL wrote a .died marker for the no-result case — death detection may not actually be driven by the grep (or the mutation did not take effect at runtime)"
+  fi
+  rm -rf "$(dirname "$FX_REPO")"
+fi
+rm -rf "$(dirname "$MUT42")"
 
 echo
 echo "RESULT: $pass passed, $fail failed"

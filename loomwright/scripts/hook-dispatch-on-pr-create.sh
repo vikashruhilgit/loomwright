@@ -270,6 +270,18 @@ fi
 # The dispatcher owns opt-out (AC4), per-PR idempotency (AC5), default-ON
 # gating, the detached launch, and the until-mergeable signal. Do NOT
 # reimplement any of that here.
+#
+# BOUNDED RE-DISPATCH AFTER A DEATH (red-team-hardening item 04) is likewise
+# owned entirely by dispatch-pr-review.sh's own marker+`.died` check (its ①
+# existing-marker-wins guard) — this hook does not special-case a died drain
+# either. If a PRIOR dispatch for this PR died without a REVIEW_HEAL_RESULT
+# (a `<hash>.died` marker exists beside `<hash>`), the dispatcher itself
+# treats that pair as "not dispatched" and proceeds for exactly ONE automatic
+# re-dispatch; a second death (`.died` attempt=2) makes the dispatcher refuse
+# a third. This call site needs no changes to get that behavior — whichever
+# producer calls the dispatcher again (this hook on a later `gh pr create`-
+# shaped Bash call, or Supervisor's own step 5.5 completion tail) inherits
+# the SAME bounded guard, never a private re-dispatch counter here.
 bash "$DISPATCHER" --pr-url "$PR_URL" || true
 
 exit 0

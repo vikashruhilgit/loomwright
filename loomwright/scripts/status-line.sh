@@ -7,12 +7,16 @@
 # that answer "what is it doing and is it moving" and nothing else.
 #
 # OUTPUT (fields are omitted, never guessed, when their source is absent):
-#   Loomwright · EXECUTE · feature/status-line · 3/4 · 2m ago
+#   Loomwright · EXECUTE · feature/status-line · 3/4 · 2m ago · ⚠ drain died
 #     phase     — `- phase:` from state.md
 #     branch    — `- branch:` from state.md, falling back to a read-only `git rev-parse`
 #     N/M       — finished subtask rows / total rows in state.md's `## Subtasks` table
 #                 (both table shapes that exist on disk are read — see "subtask progress" below)
 #     age       — how long ago the newest session-log line was written
+#     ⚠ drain died — present ONLY when a `.supervisor/review-dispatch/*.died` marker exists
+#                 (a detached review drain — dispatch-pr-review.sh — exited without ever
+#                 producing a REVIEW_HEAL_RESULT; red-team-hardening item 04). This cell reports
+#                 PRESENCE only, never which PR — see session-resume.sh for the per-PR listing.
 #   With no state file at all: `Loomwright · no run state`
 #
 # WHAT IS DELIBERATELY ABSENT — a live-role field.
@@ -211,6 +215,18 @@ if [ -n "$LOGFILE" ] && [ -s "$LOGFILE" ]; then
   fi
 fi
 
+# ---- died drains (red-team-hardening item 04) ------------------------------
+# A `.supervisor/review-dispatch/<hash>.died` marker means a DETACHED review
+# drain (dispatch-pr-review.sh's wrapper trap) exited without ever producing a
+# terminal REVIEW_HEAL_RESULT — not a decision, a silent death. Cheap by
+# construction (one glob, `compgen` never lists/opens a file), and — like the
+# rest of this script — never guessed: presence is a fact this cell reports,
+# it does not try to correlate WHICH PR against state.md.
+DIED_CELL=""
+if compgen -G "$ROOT/.supervisor/review-dispatch/"'*.died' > /dev/null 2>&1; then
+  DIED_CELL="⚠ drain died"
+fi
+
 # ---- render -----------------------------------------------------------------
 SEP=" · "
 line="Loomwright"
@@ -231,6 +247,7 @@ fi
 add "$BRANCH"
 [ "$TOTAL" -gt 0 ] && add "$DONE/$TOTAL"
 add "$AGE"
+add "$DIED_CELL"
 
 # Degraded case 2: the state file exists but nothing in it parsed (unreadable/unexpected shape)
 # and no other field resolved. Never print a bare prefix.
