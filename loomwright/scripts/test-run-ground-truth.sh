@@ -445,6 +445,13 @@ fi
 BEGIN_MARK='# MUTATION_CONTROL_BEGIN: exec-acceptance-stamp-gate'
 END_MARK='# MUTATION_CONTROL_END: exec-acceptance-stamp-gate'
 if grep -qF "$BEGIN_MARK" "$RUN" && grep -qF "$END_MARK" "$RUN"; then
+  # Snapshot $RUN BEFORE any mutant construction. `diff -q "$RUN" "$HERE/run-ground-truth.sh"`
+  # would be tautological (both are the SAME literal path, RUN is never reassigned — caught in
+  # PR #252 review round 1) since it compares the file to itself and can never fail regardless of
+  # what the mutation-control code below does. Comparing against this PRE-construction snapshot
+  # instead gives the "the real script was never touched" assertion something it could actually fail.
+  RUN_SNAPSHOT="$TMP/run-ground-truth.pre-mutation-snapshot.sh"
+  cp "$RUN" "$RUN_SNAPSHOT"
   MUTANT="$TMP/run-ground-truth.mutant.sh"
   MUTANT_BLOCK="$TMP/stamp-gate-mutant-block.txt"
   printf 'BRIEF_HASH_VALID=1\n' > "$MUTANT_BLOCK"
@@ -470,8 +477,10 @@ if grep -qF "$BEGIN_MARK" "$RUN" && grep -qF "$END_MARK" "$RUN"; then
     else
       no "(n7) mutant did NOT reproduce the pre-fix vulnerability (sentinel not created) — mutation may not have neutered the gate"
     fi
-    # Original script is untouched — the mutant ran from a COPY, never in place.
-    if diff -q "$RUN" "$HERE/run-ground-truth.sh" >/dev/null 2>&1; then
+    # Original script is untouched — the mutant ran from a COPY, never in place. Compared against
+    # the PRE-construction snapshot taken above, NOT against "$RUN" itself (that self-comparison
+    # is always true and proves nothing — see the note at the snapshot's creation).
+    if diff -q "$RUN_SNAPSHOT" "$RUN" >/dev/null 2>&1; then
       ok "(n7) the real run-ground-truth.sh is byte-identical after the mutation control (mutant ran from a copy)"
     else
       no "(n7) run-ground-truth.sh was modified by the mutation control — should never happen"

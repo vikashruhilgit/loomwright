@@ -1210,10 +1210,12 @@ by Launch Pad), `cmd:` bullets are a trust-sensitive surface to review at Plan R
 ids are constrained to a single path segment so they cannot escape `eval-corpus`. **Safety valve:**
 `--no-cmd` (or `GROUND_TRUTH_NO_CMD=1`) skips `cmd:`/bare checks entirely (recorded `unverified`,
 reason `cmd_disabled` — never executed); `corpus-task:`/`qa-executor:` are unaffected. Supervisor
-Phase 4.5 passes `--no-cmd` on the unattended/`--non-interactive` (`/autonomous`) path so a
-machine-authored `cmd:` bullet never runs arbitrary shell with no human in the loop — the interim
-guard until the prompt-level Plan Reviewer control lands (M2b slice 1b; see
-`docs/SPIKES/SYSTEM_TWIN_ROADMAP.md` §7). It is consumed by
+Phase 4.5 passes `--no-cmd` only when `NON_INTERACTIVE == true` (set by `--non-interactive-fallback`,
+NOT by `/autonomous` alone — a default interactive `/autonomous "goal"` run leaves it unset). On every
+OTHER path, a `cmd:`/bare bullet sourced from a brief is gated by the **content-keyed stamp gate**
+described under §"`## Executable Acceptance` (brief convention)" below (red-team-hardening item 05,
+"cmd: valve by provenance", v15.90.0) — this supersedes the prior framing that `--no-cmd` alone was
+the only control on the unattended path; see that subsection for the full contract. It is consumed by
 Supervisor Phase 4.5, which maps it onto the
 `SUPERVISOR_RESULT.ground_truth` object and the flat `ground_truth_*` `session_end` fields (advisory
 only — NEVER changes `heal_decision`, NEVER blocks the PR).
@@ -1267,7 +1269,10 @@ GROUND_TRUTH_JSON: {
   - `reason` — optional short string. Known values: `corpus_task_not_found` (missing task dir /
     `check.sh` — a missing dogfood target is a real `fail`), `corpus_task_invalid_id`, `empty_cmd_target`
     (a bare `cmd:` with no command), `cmd_disabled` (a `cmd:`/bare check skipped under `--no-cmd` /
-    `GROUND_TRUTH_NO_CMD=1`), and `qa_executor_dispatch_deferred_m2b_1b` (the deferred `qa-executor` kind).
+    `GROUND_TRUTH_NO_CMD=1`), `cmd_unapproved` (red-team-hardening item 05, v15.90.0 — a `--brief`-sourced
+    `cmd:`/bare bullet whose `## Configuration` stamp is absent or stale against the CURRENT bullet
+    list; see §"`## Executable Acceptance`" below), and `qa_executor_dispatch_deferred_m2b_1b` (the
+    deferred `qa-executor` kind).
 - `commit` — short commit SHA at run time, or `"unknown"`. **Contextual — NOT part of any determinism
   invariant.**
 - `date` — ISO 8601 UTC timestamp at run time, or `"unknown"`. **Contextual.**
