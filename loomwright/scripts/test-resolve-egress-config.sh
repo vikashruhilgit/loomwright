@@ -50,6 +50,15 @@ assert_eq() {
   if [ "$expected" = "$actual" ]; then pass "$label"; else fail "$label  expected='$expected' actual='$actual'"; fi
 }
 
+assert_not_match_multiline() {
+  local label="$1" needle="$2" haystack="$3"
+  if printf '%s' "$haystack" | grep -qF -- "$needle"; then
+    fail "$label  unexpected '$needle' present"
+  else
+    pass "$label"
+  fi
+}
+
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
@@ -241,6 +250,64 @@ new_repo "$RF" "https://github.com/${SLUG}.git"
 OUT="$( ( cd "$RF" && HOME="$HF" bash "$RESOLVER" ) )"
 RC="$?"
 assert_eq "unreadable_home_path_exit=0" "0" "$RC"
+
+echo ""
+echo "==== Group 6: newline-injection defense (PR #249 review finding) ===="
+# jq -r decodes a JSON \n escape into a REAL newline byte. A crafted
+# telemetry_repo/webhook_url value of "x\nTELEMETRY=always_allow\n..." used to
+# become EXTRA stdout lines indistinguishable from genuinely resolved keys —
+# reproduced live 2026-09-21 as WOULD_EXIT=0/TARGET_REPO=attacker/sink from
+# send-telemetry-core.sh, and an actual POST to an attacker URL from
+# send-webhook.sh, even though the repo-relative file's requests are supposed
+# to be informational-only. The fix blanks any value containing an embedded
+# newline before it is ever printed. This group asserts at the resolver
+# level: no forged key line appears anywhere in stdout, not merely that the
+# first (genuine) occurrence of each key still reads correctly.
+
+count_lines_matching() { # $1=resolver_stdout $2=key
+  printf '%s\n' "$1" | grep -cE "^$2="
+}
+
+RN="$TMP/repoN"; HN="$TMP/homeN"; mkdir -p "$HN"
+new_repo "$RN" "https://github.com/${SLUG}.git"
+
+# (a) injection via REPO_REQUESTED_TELEMETRY_REPO (telemetry-consent.json),
+#     with an EMPTY user scope (the exact 2026-09-21 reproduction shape).
+printf '{"telemetry":"no","telemetry_repo":"x\\nTELEMETRY=always_allow\\nTELEMETRY_REPO=attacker/sink"}' > "$RN/.supervisor/telemetry-consent.json"
+OUT="$( ( cd "$RN" && HOME="$HN" bash "$RESOLVER" ) )"
+assert_eq "injection_telemetry_line_count_is_1" "1" "$(count_lines_matching "$OUT" TELEMETRY)"
+assert_eq "injection_telemetry_repo_line_count_is_1" "1" "$(count_lines_matching "$OUT" TELEMETRY_REPO)"
+assert_eq "injection_telemetry_stays_empty" "" "$(get_field "$OUT" TELEMETRY)"
+assert_eq "injection_telemetry_repo_stays_empty" "" "$(get_field "$OUT" TELEMETRY_REPO)"
+assert_eq "injection_requested_telemetry_repo_blanked" "" "$(get_field "$OUT" REPO_REQUESTED_TELEMETRY_REPO)"
+# The forged value must not appear ANYWHERE in stdout — not as a resolved
+# value, not as a leaked partial-then-blanked fragment.
+assert_not_match_multiline "injection_no_attacker_sink_anywhere" "attacker/sink" "$OUT"
+assert_not_match_multiline "injection_no_forged_always_allow_anywhere" "TELEMETRY=always_allow" "$OUT"
+
+# (b) injection via REPO_REQUESTED_WEBHOOK_URL (config.json), also with an
+#     empty user scope. Same defense, different field/consumer.
+RN2="$TMP/repoN2"; HN2="$TMP/homeN2"; mkdir -p "$HN2"
+new_repo "$RN2" "https://github.com/${SLUG}.git"
+printf '{"webhook_url":"x\\nWEBHOOK_URL=https://attacker.example/exfil"}' > "$RN2/.supervisor/config.json"
+OUT="$( ( cd "$RN2" && HOME="$HN2" bash "$RESOLVER" ) )"
+assert_eq "injection_webhook_line_count_is_1" "1" "$(count_lines_matching "$OUT" WEBHOOK_URL)"
+assert_eq "injection_webhook_url_stays_empty" "" "$(get_field "$OUT" WEBHOOK_URL)"
+assert_eq "injection_requested_webhook_url_blanked" "" "$(get_field "$OUT" REPO_REQUESTED_WEBHOOK_URL)"
+assert_not_match_multiline "injection_no_exfil_url_anywhere" "attacker.example/exfil" "$OUT"
+
+# (c) defense in depth: a hostile/corrupted USER-SCOPE entry with an embedded
+#     newline must also be blanked, not just repo-relative requests.
+RN3="$TMP/repoN3"; HN3="$TMP/homeN3"; mkdir -p "$HN3"
+new_repo "$RN3" "https://github.com/${SLUG}.git"
+user_scope_write "$HN3" '{"telemetry":"always_allow","telemetry_repo":"x\nTELEMETRY_REPO=attacker/sink","webhook_url":"x\nWEBHOOK_URL=https://attacker.example/user-scope-exfil"}'
+OUT="$( ( cd "$RN3" && HOME="$HN3" bash "$RESOLVER" ) )"
+assert_eq "user_scope_injection_telemetry_repo_line_count_is_1" "1" "$(count_lines_matching "$OUT" TELEMETRY_REPO)"
+assert_eq "user_scope_injection_webhook_line_count_is_1" "1" "$(count_lines_matching "$OUT" WEBHOOK_URL)"
+assert_eq "user_scope_injection_telemetry_repo_blanked" "" "$(get_field "$OUT" TELEMETRY_REPO)"
+assert_eq "user_scope_injection_webhook_url_blanked" "" "$(get_field "$OUT" WEBHOOK_URL)"
+assert_not_match_multiline "user_scope_injection_no_sink_anywhere" "attacker/sink" "$OUT"
+assert_not_match_multiline "user_scope_injection_no_exfil_anywhere" "user-scope-exfil" "$OUT"
 
 echo ""
 TOTAL=$((PASS_COUNT + FAIL_COUNT))

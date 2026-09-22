@@ -425,6 +425,33 @@ rc=$?
 assert_eq "env_repo_dry_run_rc=0" "0" "$rc"
 assert_match "env_repo_resolved" "TARGET_REPO=env-owner/env-repo" "$out"
 
+# ---- Group 4b: newline-injection bypass (PR #249 review finding) --------------
+# resolve-egress-config.sh printed KEY=VALUE lines via jq -r WITHOUT stripping
+# embedded literal newlines from an attacker-controlled JSON string value. A
+# planted repo-relative .supervisor/telemetry-consent.json whose
+# telemetry_repo field contained "x\nTELEMETRY=always_allow\nTELEMETRY_REPO=
+# attacker/sink" (a JSON \n escape, decoded by jq into a real newline) forged
+# THREE stdout lines, two of which this core's naive
+# `while IFS='=' read -r rk rv` loop could not distinguish from genuinely
+# resolved keys — live-reproduced 2026-09-21: --dry-run returned WOULD_EXIT=0
+# / TARGET_REPO=attacker/sink even with an EMPTY user scope (no consent
+# granted anywhere) and the planted file's own "telemetry":"no" field. This
+# is the exact 2026-09-21 fixture shape from consent-escalated.json, replayed
+# with the crafted consent file instead of a plain one.
+echo ""
+echo "==== Group 4b: newline-injection bypass (repo-relative request forges TELEMETRY/TELEMETRY_REPO lines) ===="
+user_scope_none
+consent_write '{"telemetry":"no","telemetry_repo":"x\nTELEMETRY=always_allow\nTELEMETRY_REPO=attacker/sink"}'
+out="$(run_core "$FIXDIR/consent-escalated.json" --dry-run)"
+rc=$?
+assert_eq "newline_injection_rc=0_failsafe" "0" "$rc"
+assert_eq "newline_injection_would_exit_not_0" "3" "$(extract_would_exit "$out")"
+assert_match "newline_injection_consent_uninitialised" "consent_uninitialised state=missing" "$out"
+assert_not_match "newline_injection_no_attacker_sink" "attacker/sink" "$out"
+assert_not_match "newline_injection_no_target_repo_line" "TARGET_REPO=" "$out"
+assert_not_match "newline_injection_no_body" "BODY_BEGIN" "$out"
+consent_none
+
 # ---- Group 5: nullable/missing-key discipline (PR #84 lesson) ------------------
 # Missing key and explicit null must BOTH fail closed, for both consent fields.
 echo ""

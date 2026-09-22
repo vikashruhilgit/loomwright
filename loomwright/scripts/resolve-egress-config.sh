@@ -137,6 +137,34 @@ if [ -n "$REPO_SLUG" ] && [ -n "${HOME:-}" ] && [ -r "$USER_SCOPE_FILE" ] && com
 fi
 # Any jq failure above leaves the three vars at their initial "" default.
 
+# ---- Newline-injection defense (applies to EVERY printed value below) -----
+# `jq -r` decodes a JSON `\n` escape into a REAL newline byte in the string
+# it returns — it does not strip it. Every value below is printed as a
+# `KEY=VALUE` line that BOTH emitters (send-telemetry-core.sh,
+# send-webhook.sh) parse with a naive `while IFS='=' read -r rk rv` loop over
+# this script's raw stdout. An attacker-controlled JSON string value (from
+# either a repo-relative file OR — defense in depth — a corrupted/hostile
+# user-scope file) containing an embedded newline followed by
+# "REAL_KEY=forged_value" therefore becomes an EXTRA stdout line
+# indistinguishable from a genuinely resolved key, letting a single
+# REPO_REQUESTED_* value forge TELEMETRY=always_allow /
+# TELEMETRY_REPO=<attacker repo> / WEBHOOK_URL=<attacker url> lines that the
+# naive consumer loop overwrites its real (possibly empty/fail-closed) values
+# with. Reproduced live 2026-09-21 against send-telemetry-core.sh --dry-run
+# (WOULD_EXIT=0 / TARGET_REPO=attacker/sink despite an EMPTY user scope) and
+# send-webhook.sh (an actual POST to an attacker URL). Fix: blank (never
+# truncate-at-newline — that would still leak a forged suffix) any value that
+# contains an embedded newline, before it is ever printed. `case` is used,
+# not `${var//pattern/repl}`, per this repo's documented bash 3.2 O(n²)
+# pattern-substitution trap on attacker-sized strings.
+strip_if_newline() {
+  local v="$1"
+  case "$v" in
+    *$'\n'*) printf '' ;;
+    *) printf '%s' "$v" ;;
+  esac
+}
+
 # ---- Process-env overrides (highest precedence for the REPO / URL VALUES
 #      only — NEVER for the TELEMETRY consent decision itself; there is no
 #      env var that can grant consent). -------------------------------------
@@ -146,6 +174,15 @@ fi
 if [ -n "${LOOMWRIGHT_WEBHOOK_URL:-}" ]; then
   WEBHOOK_URL="$LOOMWRIGHT_WEBHOOK_URL"
 fi
+
+# Sanitize every value sourced so far (user-scope file AND env overrides)
+# BEFORE it is used for anything further — in particular before the sha256
+# below, so WEBHOOK_URL_SHA256 always matches the WEBHOOK_URL that actually
+# gets printed, never the pre-sanitized original.
+REPO_SLUG="$(strip_if_newline "$REPO_SLUG")"
+TELEMETRY="$(strip_if_newline "$TELEMETRY")"
+TELEMETRY_REPO="$(strip_if_newline "$TELEMETRY_REPO")"
+WEBHOOK_URL="$(strip_if_newline "$WEBHOOK_URL")"
 
 if [ -n "$WEBHOOK_URL" ]; then
   WEBHOOK_URL_SHA256="$(sha256_hex "$WEBHOOK_URL")"
@@ -174,6 +211,13 @@ for _cfg in "${PWD}/.supervisor/config.json" "${PWD}/.supervisor/notify-config.j
     break
   fi
 done
+
+# Same newline-injection defense as above, applied to the informational
+# REPO_REQUESTED_* fields — these are the attacker's actual entry point
+# (a repo-relative file this script's own header says is untrusted), so this
+# is the sanitization that closes the live-reproduced vulnerability.
+REPO_REQUESTED_TELEMETRY_REPO="$(strip_if_newline "$REPO_REQUESTED_TELEMETRY_REPO")"
+REPO_REQUESTED_WEBHOOK_URL="$(strip_if_newline "$REPO_REQUESTED_WEBHOOK_URL")"
 
 printf 'REPO_SLUG=%s\n' "$REPO_SLUG"
 printf 'TELEMETRY=%s\n' "$TELEMETRY"
