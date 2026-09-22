@@ -37,6 +37,14 @@
 #       to the curation-only formula and no header on either arm, plus the
 #       local-only origin/main resume baseline and a mutant that appends the
 #       section unconditionally (x); header string deleted ⇒ (w) red (y).
+#   (z9)-(z12) Section 5b, the STALE RUN LOCK advisory (red-team-hardening/06,
+#       PR #253 review — previously untested): a `.supervisor/run.lock/meta`
+#       fixture is written directly (never via run-lock.sh) covering the
+#       reclaimable branch (dead pid, age >= 1800s) (z9), the possibly-live
+#       branch via a genuinely alive pid ($$) with an old ts, proving liveness
+#       gates the TTL the same way test-run-lock.sh case 11 does (z10), the
+#       dead-pid-but-young-age non-reclaimable edge (z11), and no lock dir ⇒
+#       no section at all (z12).
 
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -1355,6 +1363,91 @@ test_no_died_drains() {
     || ok "(z8) no heading when nothing died"
 }
 test_no_died_drains
+
+echo "== (z9) stale run lock (PR #253 review, Section 5b): reclaimable dead-pid+old lock ⇒ heading + reclaimable wording =="
+# seed_run_lock <repo> <owner> <pid> <ts> <session_id> — writes a `.supervisor/run.lock/meta`
+# fixture directly (same tab-separated shape run-lock.sh's write_meta emits), never invoking
+# run-lock.sh itself — Section 5b only ever READS this file.
+seed_run_lock() {
+  local repo="$1" owner="$2" pid="$3" ts="$4" sid="$5"
+  mkdir -p "$repo/.supervisor/run.lock"
+  { printf 'pid\t%s\n' "$pid"
+    printf 'owner\t%s\n' "$owner"
+    printf 'session_id\t%s\n' "$sid"
+    printf 'ts\t%s\n' "$ts"
+  } > "$repo/.supervisor/run.lock/meta"
+}
+test_stale_lock_reclaimable() {
+  local r ctx now
+  r="$(new_repo)"; make_plugin_active "$r"
+  now="$(date +%s 2>/dev/null || echo 0)"
+  # Dead pid (999999, essentially guaranteed unused) + age 2000s (>= the 1800s TTL).
+  seed_run_lock "$r" "automate:stale-run" 999999 "$((now - 2000))" "sess-dead-old"
+  ctx="$(run_hook_ctx "$r" resume)"; local rc; rc="$(lastrc)"
+  [ "$rc" -eq 0 ] && ok "(z9) exits 0" || no "(z9) expected exit 0, got $rc"
+  grep -qF -- "### Stale run lock" <<< "$ctx" \
+    && ok "(z9) heading present" || no "(z9) heading missing: $ctx"
+  grep -qF -- "owner=automate:stale-run" <<< "$ctx" \
+    && ok "(z9) owner surfaced in the meta line" || no "(z9) owner missing: $ctx"
+  grep -qF -- "session_id=sess-dead-old" <<< "$ctx" \
+    && ok "(z9) session_id surfaced in the meta line" || no "(z9) session_id missing: $ctx"
+  grep -qF -- "This lock is reclaimable" <<< "$ctx" \
+    && ok "(z9) reclaimable branch wording present (dead pid, age >= 1800s)" \
+    || no "(z9) expected reclaimable wording, got: $ctx"
+  grep -qF -- "a human may break it" <<< "$ctx" \
+    && no "(z9) non-reclaimable wording should NOT also appear" \
+    || ok "(z9) non-reclaimable wording correctly absent"
+}
+test_stale_lock_reclaimable
+
+echo "== (z10) stale run lock: possibly-live lock (live pid) ⇒ heading + human-break wording, NOT reclaimable =="
+test_stale_lock_live() {
+  local r ctx now
+  r="$(new_repo)"; make_plugin_active "$r"
+  now="$(date +%s 2>/dev/null || echo 0)"
+  # This test script's own pid ($$) is guaranteed alive for the duration of this
+  # process — an old ts (age >= 1800s) still must NOT be treated as reclaimable
+  # because pid liveness gates the TTL (mirrors test-run-lock.sh case 11).
+  seed_run_lock "$r" "supervisor:live-run" "$$" "$((now - 2000))" "sess-live-old"
+  ctx="$(run_hook_ctx "$r" resume)"; local rc; rc="$(lastrc)"
+  [ "$rc" -eq 0 ] && ok "(z10) exits 0" || no "(z10) expected exit 0, got $rc"
+  grep -qF -- "### Stale run lock" <<< "$ctx" \
+    && ok "(z10) heading present" || no "(z10) heading missing: $ctx"
+  grep -qF -- "This lock is reclaimable" <<< "$ctx" \
+    && no "(z10) reclaimable wording should NOT appear for a live pid" \
+    || ok "(z10) reclaimable wording correctly absent (pid alive)"
+  grep -qF -- "a human may break it" <<< "$ctx" \
+    && ok "(z10) human-break wording present (possibly-live branch)" \
+    || no "(z10) expected human-break wording, got: $ctx"
+}
+test_stale_lock_live
+
+echo "== (z11) stale run lock: dead pid but YOUNG age (< 1800s) ⇒ still non-reclaimable branch =="
+test_stale_lock_young() {
+  local r ctx now
+  r="$(new_repo)"; make_plugin_active "$r"
+  now="$(date +%s 2>/dev/null || echo 0)"
+  seed_run_lock "$r" "autonomous:young-run" 999999 "$((now - 10))" "sess-dead-young"
+  ctx="$(run_hook_ctx "$r" resume)"
+  grep -qF -- "This lock is reclaimable" <<< "$ctx" \
+    && no "(z11) reclaimable wording should NOT appear for a young (< 1800s) lock" \
+    || ok "(z11) reclaimable wording correctly absent (age < TTL)"
+  grep -qF -- "a human may break it" <<< "$ctx" \
+    && ok "(z11) human-break wording present (young-age non-reclaimable branch)" \
+    || no "(z11) expected human-break wording, got: $ctx"
+}
+test_stale_lock_young
+
+echo "== (z12) no run.lock directory ⇒ no Stale run lock section at all =="
+test_no_stale_lock() {
+  local r ctx
+  r="$(new_repo)"; make_plugin_active "$r"
+  ctx="$(run_hook_ctx "$r" resume)"
+  grep -qF -- "### Stale run lock" <<< "$ctx" \
+    && no "(z12) heading present with no .supervisor/run.lock at all" \
+    || ok "(z12) no heading when unlocked"
+}
+test_no_stale_lock
 
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

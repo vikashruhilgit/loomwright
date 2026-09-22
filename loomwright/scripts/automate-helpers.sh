@@ -240,7 +240,7 @@ remaining() {
 # convention gate_eval already uses, never a shell failure the caller has to
 # special-case):
 #   "OK total=<n> max=<n>"                          — under the ceiling, proceed
-#   "PARK: token_ceiling total=<n> max=<n>"          — at or over the ceiling
+#   "PARK: token_ceiling total=<n> max=<n>"          — strictly exceeding the ceiling (total > max; exactly at max is OK)
 #   "PARK: ledger_unreadable"                        — reader could not sum anything
 # This is the load-bearing seam mutation-control targets (test-automate-helpers.sh
 # §"ceiling-check"): a ledger reader that always reports 0 real tokens must

@@ -25,6 +25,17 @@
 #  15. mutating the RECLAIM guard (`[ "$pid_alive" -eq 0 ]`) to always treat the
 #      pid as alive makes a genuinely-reclaimable stale lock (dead pid, old ts)
 #      NEVER reclaim -- proving the pid-liveness check in test 9 is load-bearing.
+#  --- Static prose seam (PR #253 review) ---
+#  16. all THREE lock-acquire prose call sites (agents/supervisor.md,
+#      skills/supervisor-config/SKILL.md, skills/autonomous-loop/SKILL.md) --
+#      like /automate PICK's own acquire call in skills/automate-loop/SKILL.md --
+#      pass `--session-id` on their `run-lock.sh acquire` invocation line, so the
+#      lock's meta `session_id` field is actually populated for crash recovery
+#      (`close-stranded-run.sh` releases by matching `session_id`, not `owner`).
+#      A caller whose acquire line omits `--session-id` leaves that field empty
+#      and its lock is un-reclaimable by that path -- this is a grep on the
+#      committed prose, not an execution trace (markdown, not code; mirrors the
+#      static PART 1 convention in test-rules-seams.sh).
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -222,6 +233,42 @@ else
   no "mutation control: could not build the mutant (sed did not apply or bash -n failed) -- control inconclusive"
 fi
 rm -rf "$MUTDIR"
+
+echo "== 16. STATIC: prose lock-acquire call sites all pass --session-id =="
+PLUGIN_ROOT="$(cd "$HERE/.." && pwd)"
+check_acquire_has_session_id() {
+  # check_acquire_has_session_id <label> <file> -- greps every line in <file>
+  # containing the CONTIGUOUS phrase "run-lock.sh acquire --owner" (an actual
+  # acquire-invocation shape, not merely a line that separately mentions both
+  # "acquire" and "--owner" -- e.g. a `release --owner ...` line that also
+  # name-drops "run-lock.sh acquire" in prose must NOT count), and asserts
+  # EACH such line also contains "--session-id" (the crash-recovery-matching
+  # flag). A file with no such line at all is a setup failure (the seam moved
+  # or vanished), not a pass -- so this also asserts at least one line was found.
+  local label="$1" file="$2" line hits=0 all_ok=1
+  if [ ! -f "$file" ]; then
+    no "$label: file not found: $file"
+    return
+  fi
+  while IFS= read -r line; do
+    hits=$((hits+1))
+    case "$line" in
+      *--session-id*) : ;;
+      *) all_ok=0 ;;
+    esac
+  done < <(grep -F 'run-lock.sh acquire --owner' "$file")
+  if [ "$hits" -eq 0 ]; then
+    no "$label: no 'run-lock.sh acquire ... --owner' line found in $file -- seam moved or vanished"
+  elif [ "$all_ok" -eq 1 ]; then
+    ok "$label: all $hits acquire line(s) in $file carry --session-id"
+  else
+    no "$label: at least one acquire line in $file is missing --session-id"
+  fi
+}
+check_acquire_has_session_id "Supervisor Phase 0 (agents/supervisor.md)" "$PLUGIN_ROOT/agents/supervisor.md"
+check_acquire_has_session_id "supervisor-config SKILL step 0" "$PLUGIN_ROOT/skills/supervisor-config/SKILL.md"
+check_acquire_has_session_id "autonomous-loop SKILL INIT" "$PLUGIN_ROOT/skills/autonomous-loop/SKILL.md"
+check_acquire_has_session_id "automate-loop SKILL PICK (reference shape)" "$PLUGIN_ROOT/skills/automate-loop/SKILL.md"
 
 echo
 echo "RESULT: $pass passed, $fail failed"
