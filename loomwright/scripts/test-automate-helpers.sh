@@ -1913,11 +1913,17 @@ if bash -n "$MUTDIR/read-token-ledger.sh" 2>/dev/null && ! diff -q "$MUTDIR/read
 {"event":"token_ledger","session_id":"ckE","input_tokens":900,"output_tokens":900,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}
 EOF
   RF="$(ck_runfile "$R" ckE)"
-  # Baseline (real reader): this fixture is genuinely over the 1000 ceiling -> PARK.
+  # No real-reader baseline runs inside THIS case: $MUTDIR/automate-helpers.sh
+  # is a plain copy of the real script, but it is co-located in $MUTDIR with
+  # the mutant read-token-ledger.sh, so `$(dirname "$0")/read-token-ledger.sh`
+  # resolves to the MUTANT reader, not the real one, for this very invocation
+  # -- BASE_OUT below is already the mutant's output. The expected real-reader
+  # outcome for this fixture (genuinely over the 1000 ceiling -> PARK) is
+  # established separately by case I2's pattern, not re-run here. The
+  # assertion in THIS case only checks that the mutant instead prints OK.
   BASE_OUT="$(bash "$MUTDIR/automate-helpers.sh" ceiling-check "$RF" 1000 --root "$R" 2>&1)"
-  # Mutant: same fixture, but ceiling-check now shells out to the always-0 reader
-  # (co-located in $MUTDIR so `$(dirname "$0")/read-token-ledger.sh` resolves to
-  # the mutant, not the real script).
+  # Mutant output (same co-located resolution as above, restated for clarity
+  # at the point of use).
   MUT_OUT="$BASE_OUT"
   rm -rf "$R"
   if printf '%s' "$MUT_OUT" | grep -q '^OK'; then
