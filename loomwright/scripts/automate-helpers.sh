@@ -462,8 +462,8 @@ _ge_pr_parts() {
 #           so a reviewDecision-specific failure parks on its OWN named reason,
 #           `review_decision_unreadable`, rather than being masked by cond 2's `head_sha_moved`
 #           firing first on a combined-call failure) — null ⇒ "none", unreadable ⇒ "unreadable" —
-#           PLUS the review-threads GraphQL query — VERBATIM from review-heal/SKILL.md §U1(b) (do not
-#           re-derive it) — to compute the unresolved-human-thread blocker: any unresolved thread
+#           PLUS the review-threads GraphQL query — adapted from review-heal/SKILL.md §U1(b) (same
+#           query minus the unused `body` field) — to compute the unresolved-human-thread blocker: any unresolved thread
 #           whose first-comment actor is NOT in the trusted-actor set
 #           (`${HOME}/.claude/loomwright/trusted-actors.json`, red-team-hardening item 01 — same
 #           fail-CLOSED "absent file ⇒ nobody trusted" resolution as `wrap-external-text.sh`, no
@@ -600,9 +600,10 @@ gate_eval() {
     *)                                    echo "PARK: review_decision_unreadable"; return 0 ;;
   esac
 
-  # Review-threads GraphQL query — VERBATIM from review-heal/SKILL.md §U1(b) (never
-  # re-derived). `hasNextPage` (truncated >100 threads) or any read error ⇒ fail
-  # CLOSED (treated as an unresolved blocking thread).
+  # Review-threads GraphQL query — adapted from review-heal/SKILL.md §U1(b) (same
+  # query minus the unused `body` field this gate never reads). `hasNextPage`
+  # (truncated >100 threads) or any read error ⇒ fail CLOSED (treated as an
+  # unresolved blocking thread).
   local parts owner repo number
   parts="$(_ge_pr_parts "$url")"
   IFS=$'\t' read -r owner repo number <<GEPARTS
