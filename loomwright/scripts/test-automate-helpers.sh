@@ -72,17 +72,48 @@ make_stub_bin() {
   cat > "$bin/gh" <<'STUB'
 #!/usr/bin/env bash
 # Stub gh: reads canned responses from $GH_STUB_DIR.
-#   pr view <url> --json ...   -> cat $GH_STUB_DIR/pr-view.json (or exit 1 if marker)
-#   pr merge --squash <url>    -> append a line to $GH_STUB_DIR/merge.log, exit per marker
+#   pr view <url> --json ...<reviewDecision>...   -> cat pr-view-rd.json (or exit 1 if pr-view-rd-fail marker)
+#   pr view <url> --json ... (any OTHER field set) -> cat pr-view.json (or exit 1 if pr-view-fail marker)
+#   pr merge --squash <url>                        -> append a line to merge.log, exit per marker
+#   api graphql -f query=...                       -> cat graphql.json (or exit 1 if graphql-fail marker)
+#   api repos/.../branches/main/protection          -> cat protection.json; protection-404 marker exits 1
+#                                                      with "Not Found (HTTP 404)"; protection-fail
+#                                                      marker exits 1 with an unrelated (non-404) error
 set -u
 if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then
-  if [ -f "$GH_STUB_DIR/pr-view-fail" ]; then exit 1; fi
-  cat "$GH_STUB_DIR/pr-view.json"
-  exit 0
+  shift 2
+  json_arg=""
+  while [ $# -gt 0 ]; do
+    if [ "$1" = "--json" ]; then json_arg="${2:-}"; fi
+    shift
+  done
+  case "$json_arg" in
+    *reviewDecision*)
+      if [ -f "$GH_STUB_DIR/pr-view-rd-fail" ]; then exit 1; fi
+      cat "$GH_STUB_DIR/pr-view-rd.json"
+      exit 0
+      ;;
+    *)
+      if [ -f "$GH_STUB_DIR/pr-view-fail" ]; then exit 1; fi
+      cat "$GH_STUB_DIR/pr-view.json"
+      exit 0
+      ;;
+  esac
 fi
 if [ "${1:-}" = "pr" ] && [ "${2:-}" = "merge" ]; then
   echo "MERGE_CALLED $*" >> "$GH_STUB_DIR/merge.log"
   if [ -f "$GH_STUB_DIR/merge-fail" ]; then exit 1; fi
+  exit 0
+fi
+if [ "${1:-}" = "api" ] && [ "${2:-}" = "graphql" ]; then
+  if [ -f "$GH_STUB_DIR/graphql-fail" ]; then exit 1; fi
+  cat "$GH_STUB_DIR/graphql.json"
+  exit 0
+fi
+if [ "${1:-}" = "api" ]; then
+  if [ -f "$GH_STUB_DIR/protection-404" ]; then echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi
+  if [ -f "$GH_STUB_DIR/protection-fail" ]; then echo "gh: Internal Server Error (HTTP 500)" >&2; exit 1; fi
+  cat "$GH_STUB_DIR/protection.json"
   exit 0
 fi
 exit 0
@@ -504,22 +535,66 @@ unset GH_STUB_DIR
 rm -rf "$WD"
 
 # =============================================================================
-echo "== E. auto-merge gate: fail CLOSED on EACH blocker; all-pass MERGE fires once =="
+# =============================================================================
+echo "== E. auto-merge gate (SELF-RESOLVING, red-team-hardening/03): fail CLOSED on EACH condition; ctx-owned-key refusal; all-pass MERGE fires once =="
 
 WD="$(mktemp -d)"; BIN="$WD/bin"; make_stub_bin "$BIN"
 export GH_STUB_DIR="$WD/ghstub"; mkdir -p "$GH_STUB_DIR"
-printf '{"state":"OPEN"}\n' > "$GH_STUB_DIR/pr-view.json"   # not used by gate, but harmless
 
-# A fully-passing context; each blocker test mutates ONE field to its failing value.
+# The gate now finds classify-risk.sh via a SIBLING lookup ($(dirname "$0")), so
+# tests run against a scratch COPY of automate-helpers.sh alongside a STUBBED
+# classify-risk.sh (never the real git-diffing script) — mirrors the brief_repair
+# sibling-lookup precedent already used by Section G.
+GWD="$WD/gharness"; mkdir -p "$GWD"
+cp "$H" "$GWD/automate-helpers.sh"
+cat > "$GWD/classify-risk.sh" <<'RISK'
+#!/usr/bin/env bash
+set -u
+if [ -n "${GH_STUB_DIR:-}" ] && [ -f "$GH_STUB_DIR/risk.json" ]; then
+  cat "$GH_STUB_DIR/risk.json"
+else
+  echo '{"high_risk": false, "reasons": [], "changed_files": 0, "changed_lines": 0, "source": "classify-risk.sh"}'
+fi
+RISK
+chmod +x "$GWD/classify-risk.sh"
+
+# Fixture artifact files the gate cross-checks/parses ITSELF (cond 1 cross-check,
+# cond 5 rubric) — no longer caller-asserted ctx fields.
+RHR="$WD/review-heal-result.md"
+printf '## REVIEW_HEAL_RESULT\n- schema_version: 2\n- decision: READY\n- termination_reason: converged\n' > "$RHR"
+RHR_ESCALATED="$WD/review-heal-result-escalated.md"
+printf '## REVIEW_HEAL_RESULT\n- schema_version: 2\n- decision: ESCALATED\n- termination_reason: bound_hit\n' > "$RHR_ESCALATED"
+SUP_NA="$WD/supervisor-result-na.md"
+printf '## SUPERVISOR_RESULT\n- status: completed\n- heal_decision: PASS\n' > "$SUP_NA"
+SUP_OK="$WD/supervisor-result-ok.md"
+printf '## SUPERVISOR_RESULT\n- rubric_score: 7/7\n' > "$SUP_OK"
+SUP_BAD="$WD/supervisor-result-bad.md"
+printf '## SUPERVISOR_RESULT\n- rubric_score: 6/7\n' > "$SUP_BAD"
+
+# reset_live — re-baseline every LIVE gh/api/classify-risk fixture to a fully
+# passing state (each test then mutates ONE fixture to its failing shape).
+reset_live() {
+  printf '{"headRefOid":"abc123","baseRefName":"main","statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS"}]}\n' > "$GH_STUB_DIR/pr-view.json"
+  rm -f "$GH_STUB_DIR/pr-view-fail"
+  printf '{"reviewDecision":"APPROVED"}\n' > "$GH_STUB_DIR/pr-view-rd.json"
+  rm -f "$GH_STUB_DIR/pr-view-rd-fail"
+  printf '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}\n' > "$GH_STUB_DIR/graphql.json"
+  rm -f "$GH_STUB_DIR/graphql-fail"
+  printf '{"required_pull_request_reviews":{"required_approving_review_count":1},"required_status_checks":{"contexts":["ci"]}}\n' > "$GH_STUB_DIR/protection.json"
+  rm -f "$GH_STUB_DIR/protection-404" "$GH_STUB_DIR/protection-fail"
+  printf '{"high_risk": false, "reasons": [], "changed_files": 0, "changed_lines": 0, "source": "classify-risk.sh"}\n' > "$GH_STUB_DIR/risk.json"
+  rm -f "$GH_STUB_DIR/merge-fail"
+}
+
+# A fully-passing ctx (the SHRUNK shape — exactly the 6 allowed keys).
 pass_ctx() {
   cat <<EOF
 {
   "drain_result": "READY", "termination_reason": "converged",
-  "ready_sha": "abc123", "head_sha": "abc123", "base": "main",
-  "review_decision": "APPROVED", "unresolved_human_thread": false,
-  "protection_enforceable": true, "trust_unprotected": false,
-  "checks_green": true, "rubric_satisfied": "na",
-  "high_risk": false, "risk_reasons": []
+  "ready_sha": "abc123",
+  "trust_unprotected": false,
+  "review_heal_result_path": "$RHR",
+  "supervisor_result_path": "$SUP_NA"
 }
 EOF
 }
@@ -527,180 +602,291 @@ EOF
 gate() {  # gate <ctx-json-string> -> sets RUN_OUT/RUN_RC, isolates a fresh merge.log
   rm -f "$GH_STUB_DIR/merge.log"
   printf '%s' "$1" > "$WD/ctx.json"
-  RUN_OUT="$( env PATH="$BIN:$PATH" bash "$H" gate-eval "$PR" "$WD/ctx.json" 2>/dev/null )"; RUN_RC=$?
+  RUN_OUT="$( env PATH="$BIN:$PATH" GH_STUB_DIR="$GH_STUB_DIR" HOME="$WD/nohome" bash "$GWD/automate-helpers.sh" gate-eval "$PR" "$WD/ctx.json" --root "$WD" 2>/dev/null )"; RUN_RC=$?
 }
 merges() { [ -f "$GH_STUB_DIR/merge.log" ] && grep -c MERGE_CALLED "$GH_STUB_DIR/merge.log" || echo 0; }
 
-# Blocker 1 — unprotected/toothless branch w/o --trust-unprotected.
-gate "$(pass_ctx | jq '.protection_enforceable=false')"
-if [ "$RUN_OUT" = "PARK: unprotected_branch" ] && [ "$(merges)" -eq 0 ]; then
-  ok "gate fail-closed: unprotected branch ⇒ PARK, no merge"
-else
-  no "gate unprotected wrong (out='$RUN_OUT' merges=$(merges))"
-fi
-# ...but --trust-unprotected lets the SAME unprotected branch through (only that override).
-gate "$(pass_ctx | jq '.protection_enforceable=false | .trust_unprotected=true')"
-if [ "$RUN_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ]; then
-  ok "gate: --trust-unprotected overrides only the protection condition (MERGE)"
-else
-  no "trust-unprotected override wrong (out='$RUN_OUT' merges=$(merges))"
-fi
+reset_live
 
-# Blocker 2 — moved head SHA.
-gate "$(pass_ctx | jq '.head_sha="def456"')"
-if [ "$RUN_OUT" = "PARK: head_sha_moved" ] && [ "$(merges)" -eq 0 ]; then
-  ok "gate fail-closed: moved head SHA ⇒ PARK, no merge"
-else
-  no "gate moved-sha wrong (out='$RUN_OUT' merges=$(merges))"
-fi
+# --- ctx-owned-key REFUSAL (AC2, the single most important new behavior) ---
+# A ctx that tries to hand the gate a pre-computed verdict for ANY now-gate-owned
+# key is refused BEFORE anything else runs, regardless of the value it carries.
+for K in high_risk risk_reasons head_sha base review_decision \
+         unresolved_human_thread protection_enforceable checks_green rubric_satisfied; do
+  gate "$(pass_ctx | jq --arg k "$K" '.[$k]=false')"
+  if [ "$RUN_OUT" = "PARK: ctx_carries_gate_owned_key" ] && [ "$(merges)" -eq 0 ]; then
+    ok "gate refuses gate-owned ctx key '$K' ⇒ PARK: ctx_carries_gate_owned_key, no merge"
+  else
+    no "gate did NOT refuse gate-owned ctx key '$K' (out='$RUN_OUT' merges=$(merges))"
+  fi
+done
 
-# Blocker 2b — base != main (the other half of condition 2; SHA unchanged).
-gate "$(pass_ctx | jq '.base="develop"')"
-if [ "$RUN_OUT" = "PARK: base_not_main" ] && [ "$(merges)" -eq 0 ]; then
-  ok "gate fail-closed: base != main ⇒ PARK, no merge"
-else
-  no "gate base-not-main wrong (out='$RUN_OUT' merges=$(merges))"
-fi
-
-# Blocker 3a — CHANGES_REQUESTED.
-gate "$(pass_ctx | jq '.review_decision="CHANGES_REQUESTED"')"
-if [ "$RUN_OUT" = "PARK: review_decision_blocking" ] && [ "$(merges)" -eq 0 ]; then
-  ok "gate fail-closed: CHANGES_REQUESTED ⇒ PARK, no merge"
-else
-  no "gate changes-requested wrong (out='$RUN_OUT' merges=$(merges))"
-fi
-
-# Blocker 3a' — REVIEW_REQUIRED (distinct blocking arm from CHANGES_REQUESTED).
-gate "$(pass_ctx | jq '.review_decision="REVIEW_REQUIRED"')"
-if [ "$RUN_OUT" = "PARK: review_decision_blocking" ] && [ "$(merges)" -eq 0 ]; then
-  ok "gate fail-closed: REVIEW_REQUIRED ⇒ PARK, no merge"
-else
-  no "gate review-required wrong (out='$RUN_OUT' merges=$(merges))"
-fi
-
-# Blocker 3b — bare null reviewDecision ⇒ fail-CLOSED (treated as unknown; the loop
-# must send the explicit "none"/"unreadable" strings, never bare null).
-gate "$(pass_ctx | jq '.review_decision=null')"
-if [ "$RUN_OUT" = "PARK: review_decision_unreadable" ] && [ "$(merges)" -eq 0 ]; then
-  ok "gate fail-closed: bare null reviewDecision ⇒ PARK (unreadable), no merge"
-else
-  no "gate null-decision wrong (out='$RUN_OUT' merges=$(merges))"
-fi
-
-# Blocker 3b' — explicit "unreadable" reviewDecision (the gh read failed) ⇒ fail-CLOSED.
-gate "$(pass_ctx | jq '.review_decision="unreadable"')"
-if [ "$RUN_OUT" = "PARK: review_decision_unreadable" ] && [ "$(merges)" -eq 0 ]; then
-  ok "gate fail-closed: unreadable reviewDecision ⇒ PARK, no merge"
-else
-  no "gate unreadable-decision wrong (out='$RUN_OUT' merges=$(merges))"
-fi
-
-# Reachability fix (regression guard for the round-6 MEDIUM) — a "none" reviewDecision
-# (reviews-not-required: a successfully-read null) must DEFER to cond 4, NOT park at
-# cond 3. These three were the dead paths before the fix.
-# 3c — none + enforceable (checks-only) protection ⇒ MERGE.
-gate "$(pass_ctx | jq '.review_decision="none"')"
-if [ "$RUN_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ]; then
-  ok "gate: none reviewDecision + enforceable (checks-only) protection ⇒ MERGE (cond 4 reachable)"
-else
-  no "gate none+protected wrong (out='$RUN_OUT' merges=$(merges))"
-fi
-# 3d — none + unprotected + --trust-unprotected ⇒ MERGE (the previously-DEAD flag path).
-gate "$(pass_ctx | jq '.review_decision="none" | .protection_enforceable=false | .trust_unprotected=true')"
-if [ "$RUN_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ]; then
-  ok "gate: none reviewDecision + --trust-unprotected ⇒ MERGE (escape hatch now reachable)"
-else
-  no "gate none+trust wrong (out='$RUN_OUT' merges=$(merges))"
-fi
-# 3e — none + unprotected + NO trust ⇒ PARK: unprotected_branch (cond 4 still guards).
-gate "$(pass_ctx | jq '.review_decision="none" | .protection_enforceable=false | .trust_unprotected=false')"
-if [ "$RUN_OUT" = "PARK: unprotected_branch" ] && [ "$(merges)" -eq 0 ]; then
-  ok "gate fail-closed: none reviewDecision + unprotected + no trust ⇒ PARK"
-else
-  no "gate none+unprotected-no-trust wrong (out='$RUN_OUT' merges=$(merges))"
-fi
-
-# Blocker 3c — unresolved human-authored review thread.
-gate "$(pass_ctx | jq '.unresolved_human_thread=true')"
-if [ "$RUN_OUT" = "PARK: unresolved_human_thread" ] && [ "$(merges)" -eq 0 ]; then
-  ok "gate fail-closed: unresolved human thread ⇒ PARK, no merge"
-else
-  no "gate human-thread wrong (out='$RUN_OUT' merges=$(merges))"
-fi
-# Blocker 3c' — FAIL-OPEN regression guard: a MISSING/null unresolved_human_thread must
-# fail CLOSED (PARK), NOT merge. (The field used `= "true"`, so a missing value merged.)
-gate "$(pass_ctx | jq 'del(.unresolved_human_thread)')"
-if [ "$RUN_OUT" = "PARK: unresolved_human_thread" ] && [ "$(merges)" -eq 0 ]; then
-  ok "gate fail-closed: MISSING unresolved_human_thread ⇒ PARK (no fail-open)"
-else
-  no "gate missing-human-thread FAILED OPEN (out='$RUN_OUT' merges=$(merges))"
-fi
-gate "$(pass_ctx | jq '.unresolved_human_thread=null')"
-if [ "$RUN_OUT" = "PARK: unresolved_human_thread" ] && [ "$(merges)" -eq 0 ]; then
-  ok "gate fail-closed: null unresolved_human_thread ⇒ PARK (no fail-open)"
-else
-  no "gate null-human-thread FAILED OPEN (out='$RUN_OUT' merges=$(merges))"
-fi
-# Blocker 3c'' — TYPE-ERASURE regression guard (PR #219 review): the JSON STRING "false" is NOT
-# the boolean false. A `tostring` read mapped both onto "false" and MERGED; the gate must read
-# `type == "boolean"` and PARK on any string.
-gate "$(pass_ctx | jq '.unresolved_human_thread="false"')"
-if [ "$RUN_OUT" = "PARK: unresolved_human_thread" ] && [ "$(merges)" -eq 0 ]; then
-  ok "gate fail-closed: JSON STRING \"false\" unresolved_human_thread ⇒ PARK (boolean false only — no type erasure)"
-else
-  no "gate string-false-human-thread FAILED OPEN (out='$RUN_OUT' merges=$(merges))"
-fi
-
-# Blocker bonus — drain not READY (ESCALATED).
+# --- Condition 1 / 1b (unchanged ctx reads) ---
 gate "$(pass_ctx | jq '.drain_result="ESCALATED"')"
 if [ "$RUN_OUT" = "PARK: drain_not_ready" ] && [ "$(merges)" -eq 0 ]; then
   ok "gate fail-closed: drain ESCALATED ⇒ PARK, no merge"
 else
   no "gate drain wrong (out='$RUN_OUT' merges=$(merges))"
 fi
-
-# AC9 (drain-bounding-earned-checks) — sub_floor_converged is NOT auto-merge-eligible even
-# though drain_result == READY: its final round skipped the all-channel re-scan.
 gate "$(pass_ctx | jq '.termination_reason="sub_floor_converged"')"
 if [ "$RUN_OUT" = "PARK: sub_floor_not_merge_eligible" ] && [ "$(merges)" -eq 0 ]; then
   ok "AC9 fail-closed: sub_floor_converged READY ⇒ PARK, no merge"
 else
   no "AC9 sub_floor_converged wrong (out='$RUN_OUT' merges=$(merges))"
 fi
-
-# AC9 — MISSING/null termination_reason must fail CLOSED (PARK), never fail-open merge.
-# (Mirrors the unresolved_human_thread fail-open regression guard above.)
 gate "$(pass_ctx | jq 'del(.termination_reason)')"
 if [ "$RUN_OUT" = "PARK: sub_floor_not_merge_eligible" ] && [ "$(merges)" -eq 0 ]; then
   ok "AC9 fail-closed: MISSING termination_reason ⇒ PARK (no fail-open)"
 else
   no "AC9 missing-termination_reason FAILED OPEN (out='$RUN_OUT' merges=$(merges))"
 fi
-gate "$(pass_ctx | jq '.termination_reason=null')"
-if [ "$RUN_OUT" = "PARK: sub_floor_not_merge_eligible" ] && [ "$(merges)" -eq 0 ]; then
-  ok "AC9 fail-closed: null termination_reason ⇒ PARK (no fail-open)"
+
+# --- Condition 1 cross-check (NEW) — the drain's self-report must match the
+# REVIEW_HEAL_RESULT artifact it actually wrote. ---
+gate "$(pass_ctx | jq '.review_heal_result_path="/no/such/file"')"
+if [ "$RUN_OUT" = "PARK: review_heal_result_unreadable" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: unreadable review_heal_result_path ⇒ PARK, no merge"
 else
-  no "AC9 null-termination_reason FAILED OPEN (out='$RUN_OUT' merges=$(merges))"
+  no "gate review_heal_result unreadable wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+gate "$(pass_ctx | jq --arg p "$RHR_ESCALATED" '.review_heal_result_path=$p')"
+if [ "$RUN_OUT" = "PARK: drain_result_mismatch" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: ctx drain_result disagrees with the REVIEW_HEAL_RESULT artifact ⇒ PARK, no merge (the drain's self-report is corroborated, never trusted blind)"
+else
+  no "gate drain_result_mismatch wrong (out='$RUN_OUT' merges=$(merges))"
 fi
 
-# AC9 regression guard — a plain "converged" READY (the normal, fully-scanned case) is
-# STILL merge-eligible; this field must not park the common path.
-gate "$(pass_ctx | jq '.termination_reason="converged"')"
+# --- Condition 2 — self-resolved via live `gh pr view` (headRefOid/baseRefName) ---
+J_MOVE_SHA='{"headRefOid":"def456","baseRefName":"main","statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS"}]}'
+printf '%s\n' "$J_MOVE_SHA" > "$GH_STUB_DIR/pr-view.json"
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: head_sha_moved" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: live headRefOid != ctx ready_sha ⇒ PARK: head_sha_moved, no merge (never caller-asserted)"
+else
+  no "gate moved-sha wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+reset_live
+
+J_BASE='{"headRefOid":"abc123","baseRefName":"develop","statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS"}]}'
+printf '%s\n' "$J_BASE" > "$GH_STUB_DIR/pr-view.json"
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: base_not_main" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: live baseRefName != main ⇒ PARK: base_not_main, no merge"
+else
+  no "gate base-not-main wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+reset_live
+
+touch "$GH_STUB_DIR/pr-view-fail"
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: head_sha_moved" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: gh pr view (headRefOid read) fails entirely ⇒ PARK: head_sha_moved, no merge"
+else
+  no "gate pr-view-fail wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+reset_live
+
+# --- Condition 3 — self-resolved via a SEPARATE `gh pr view --json reviewDecision` ---
+printf '{"reviewDecision":"CHANGES_REQUESTED"}\n' > "$GH_STUB_DIR/pr-view-rd.json"
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: review_decision_blocking" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: live reviewDecision CHANGES_REQUESTED ⇒ PARK, no merge"
+else
+  no "gate changes-requested wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+printf '{"reviewDecision":"REVIEW_REQUIRED"}\n' > "$GH_STUB_DIR/pr-view-rd.json"
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: review_decision_blocking" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: live reviewDecision REVIEW_REQUIRED ⇒ PARK, no merge"
+else
+  no "gate review-required wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+touch "$GH_STUB_DIR/pr-view-rd-fail"
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: review_decision_unreadable" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: gh pr view (reviewDecision read) fails ⇒ PARK: review_decision_unreadable (independently reachable — not masked by cond 2), no merge"
+else
+  no "gate review-decision-unreadable wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+rm -f "$GH_STUB_DIR/pr-view-rd-fail"
+
+# "none" reviewDecision (reviews-not-required — a successfully-read null) defers
+# to cond 4 rather than parking here (the checks-only / --trust-unprotected
+# reachability fix).
+printf '{"reviewDecision":null}\n' > "$GH_STUB_DIR/pr-view-rd.json"
+gate "$(pass_ctx)"
 if [ "$RUN_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ]; then
-  ok "AC9 no-regression: termination_reason=converged ⇒ still MERGE-eligible"
+  ok "gate: null (successfully-read) reviewDecision + enforceable checks-only protection ⇒ MERGE (cond 4 reachable)"
 else
-  no "AC9 converged-regression wrong (out='$RUN_OUT' merges=$(merges))"
+  no "gate none+protected wrong (out='$RUN_OUT' merges=$(merges))"
 fi
+printf '{"required_pull_request_reviews":{"required_approving_review_count":0},"required_status_checks":{"contexts":[]}}\n' > "$GH_STUB_DIR/protection.json"
+gate "$(pass_ctx | jq '.trust_unprotected=true')"
+if [ "$RUN_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ]; then
+  ok "gate: null reviewDecision + unprotected + --trust-unprotected ⇒ MERGE (escape hatch reachable)"
+else
+  no "gate none+trust wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: unprotected_branch" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: null reviewDecision + unprotected + no trust ⇒ PARK"
+else
+  no "gate none+unprotected-no-trust wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+reset_live
 
-# Blocker 5 — required checks not green (the non-rubric half of condition 5).
-gate "$(pass_ctx | jq '.checks_green=false')"
+# unresolved human/untrusted-actor thread (GraphQL, self-computed).
+printf '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"someone","__typename":"User"}}]}}]}}}}}\n' > "$GH_STUB_DIR/graphql.json"
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: unresolved_human_thread" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: unresolved thread whose actor is NOT in the trusted-actor set ⇒ PARK, no merge"
+else
+  no "gate human-thread wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+# ...but an exact-listed trusted actor's unresolved thread does NOT block.
+mkdir -p "$WD/trustedhome/.claude/loomwright"
+printf '["someone"]\n' > "$WD/trustedhome/.claude/loomwright/trusted-actors.json"
+rm -f "$GH_STUB_DIR/merge.log"
+printf '%s' "$(pass_ctx)" > "$WD/ctx.json"
+RUN_OUT="$( env PATH="$BIN:$PATH" GH_STUB_DIR="$GH_STUB_DIR" HOME="$WD/trustedhome" bash "$GWD/automate-helpers.sh" gate-eval "$PR" "$WD/ctx.json" --root "$WD" 2>/dev/null )"; RUN_RC=$?
+if [ "$RUN_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ]; then
+  ok "gate: unresolved thread whose actor IS exact-listed in the trusted-actor set ⇒ NOT blocking (MERGE)"
+else
+  no "gate trusted-actor wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+reset_live
+# hasNextPage truncation (>100 threads) fails CLOSED even with zero visible nodes.
+printf '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":true},"nodes":[]}}}}}\n' > "$GH_STUB_DIR/graphql.json"
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: unresolved_human_thread" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: reviewThreads hasNextPage=true (truncated >100) ⇒ PARK, no merge"
+else
+  no "gate truncated-threads wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+reset_live
+touch "$GH_STUB_DIR/graphql-fail"
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: unresolved_human_thread" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: GraphQL review-threads read errors ⇒ PARK, no merge"
+else
+  no "gate graphql-fail wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+reset_live
+
+# --- Condition 4 — self-resolved via `gh api repos/.../branches/main/protection` ---
+printf '{"required_pull_request_reviews":{"required_approving_review_count":0},"required_status_checks":{"contexts":[]}}\n' > "$GH_STUB_DIR/protection.json"
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: unprotected_branch" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: toothless (no reviews, no checks) protection ⇒ PARK: unprotected_branch, no merge"
+else
+  no "gate unprotected wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+gate "$(pass_ctx | jq '.trust_unprotected=true')"
+if [ "$RUN_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ]; then
+  ok "gate: --trust-unprotected overrides only the protection condition (MERGE)"
+else
+  no "trust-unprotected override wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+reset_live
+touch "$GH_STUB_DIR/protection-404"
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: unprotected_branch" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: branches/main/protection 404 ⇒ unprotected (false), no trust ⇒ PARK, no merge"
+else
+  no "gate protection-404 wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+reset_live
+touch "$GH_STUB_DIR/protection-fail"
+gate "$(pass_ctx | jq '.trust_unprotected=true')"
+if [ "$RUN_OUT" = "PARK: protection_unreadable" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: a NON-404 protection read error ⇒ PARK: protection_unreadable, NEVER treated as either protected or unprotected (not even with --trust-unprotected)"
+else
+  no "gate protection-unreadable wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+reset_live
+
+# --- Condition 5 — checks (self-resolved from the SAME protection payload's
+# required-context list, cross-referenced against statusCheckRollup) + rubric
+# (now a FILE READ, never caller-asserted). ---
+printf '{"headRefOid":"abc123","baseRefName":"main","statusCheckRollup":[{"name":"ci","conclusion":"FAILURE"}]}\n' > "$GH_STUB_DIR/pr-view.json"
+gate "$(pass_ctx)"
 if [ "$RUN_OUT" = "PARK: checks_not_green" ] && [ "$(merges)" -eq 0 ]; then
-  ok "gate fail-closed: checks not green ⇒ PARK, no merge"
+  ok "gate fail-closed: required check 'ci' not green ⇒ PARK, no merge"
 else
   no "gate checks-not-green wrong (out='$RUN_OUT' merges=$(merges))"
 fi
+reset_live
+gate "$(pass_ctx | jq --arg p "$SUP_OK" '.supervisor_result_path=$p')"
+if [ "$RUN_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ]; then
+  ok "gate: rubric_score N==M (parsed from the file itself) ⇒ MERGE"
+else
+  no "gate rubric-true wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+gate "$(pass_ctx | jq --arg p "$SUP_BAD" '.supervisor_result_path=$p')"
+if [ "$RUN_OUT" = "PARK: rubric_unsatisfied" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: rubric_score 6/7 (parsed from the file) ⇒ PARK: rubric_unsatisfied, no merge"
+else
+  no "gate rubric-false wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+gate "$(pass_ctx | jq '.supervisor_result_path="/no/such/supervisor-result.md"')"
+if [ "$RUN_OUT" = "PARK: supervisor_result_unreadable" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: unreadable supervisor_result_path ⇒ PARK: supervisor_result_unreadable, no merge"
+else
+  no "gate supervisor-result-unreadable wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ]; then
+  ok "gate: no rubric_score line in the file ⇒ 'na' (not a blocker) ⇒ MERGE"
+else
+  no "gate rubric-na wrong (out='$RUN_OUT' merges=$(merges))"
+fi
 
-# All-pass — MERGE fires `gh pr merge --squash` EXACTLY once.
+# --- malformed ctx.json ---
+gate 'this is not json {'
+if [ "$RUN_OUT" = "PARK: ctx_unreadable" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: malformed ctx.json ⇒ PARK: ctx_unreadable, no merge"
+else
+  no "gate ctx-unreadable wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+
+# --- Condition 6 — the gate ITSELF invokes classify-risk.sh; NO ctx input feeds
+# this condition any more (that is exactly what the ctx-owned-key loop above
+# already proved is refused). ---
+printf '{"high_risk": true, "reasons": ["path: src/auth/x.ts matched *auth*","content: 2 changed line(s) matched *token*","size: changed_lines 512 > 400","path: skills/x/SKILL.md matched skills/"], "source":"classify-risk.sh"}\n' > "$GH_STUB_DIR/risk.json"
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: high_risk_diff (path: src/auth/x.ts matched *auth*; content: 2 changed line(s) matched *token*; size: changed_lines 512 > 400)" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: gate-computed high_risk=true ⇒ PARK: high_risk_diff (first 3 reasons quoted), no merge"
+else
+  no "gate high-risk-true wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+printf '{"high_risk": null, "reasons": ["unclassifiable: bad_ref"], "source":"classify-risk.sh"}\n' > "$GH_STUB_DIR/risk.json"
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: high_risk_diff (unclassifiable: bad_ref)" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: gate-computed high_risk=null (unclassifiable) ⇒ PARK, no merge"
+else
+  no "gate high-risk-null wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+printf '{"high_risk": "false", "reasons": [], "source":"classify-risk.sh"}\n' > "$GH_STUB_DIR/risk.json"
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: high_risk_diff (no risk_reasons recorded)" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: JSON STRING \"false\" high_risk ⇒ PARK (boolean false only — no type erasure), no merge"
+else
+  no "gate string-false-high-risk FAILED OPEN (out='$RUN_OUT' merges=$(merges))"
+fi
+# --trust-unprotected is cond 4 ONLY — it must NOT override cond 6.
+printf '{"required_pull_request_reviews":{"required_approving_review_count":0},"required_status_checks":{"contexts":[]}}\n' > "$GH_STUB_DIR/protection.json"
+printf '{"high_risk": true, "reasons": ["path: billing/x.ts matched billing/**"], "source":"classify-risk.sh"}\n' > "$GH_STUB_DIR/risk.json"
+gate "$(pass_ctx | jq '.trust_unprotected=true')"
+if [ "$RUN_OUT" = "PARK: high_risk_diff (path: billing/x.ts matched billing/**)" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: trust_unprotected=true + gate-computed high_risk=true ⇒ PARK (the override is scoped to cond 4), no merge"
+else
+  no "gate trust-unprotected-vs-high-risk wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+reset_live
+
+# --- All-pass MERGE fires `gh pr merge --squash` EXACTLY once, and the stub
+# call log shows classify-risk.sh, gh pr view, gh api branches/.../protection,
+# and the GraphQL threads query were each ACTUALLY invoked (AC1). ---
 gate "$(pass_ctx)"
 if [ "$RUN_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ] \
    && grep -q -- '--squash' "$GH_STUB_DIR/merge.log" \
@@ -710,125 +896,7 @@ else
   no "gate all-pass wrong (out='$RUN_OUT' merges=$(merges) log='$(cat "$GH_STUB_DIR/merge.log" 2>/dev/null)')"
 fi
 
-# All-pass with a SATISFIED rubric (N==M, not 'na') also merges.
-gate "$(pass_ctx | jq '.rubric_satisfied=true')"
-if [ "$RUN_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ]; then
-  ok "gate: rubric_satisfied=true (N==M) ⇒ MERGE"
-else
-  no "gate rubric-true wrong (out='$RUN_OUT' merges=$(merges))"
-fi
-
-# Unsatisfied rubric ⇒ PARK.
-gate "$(pass_ctx | jq '.rubric_satisfied=false')"
-if [ "$RUN_OUT" = "PARK: rubric_unsatisfied" ] && [ "$(merges)" -eq 0 ]; then
-  ok "gate fail-closed: rubric_satisfied=false ⇒ PARK, no merge"
-else
-  no "gate rubric-false wrong (out='$RUN_OUT' merges=$(merges))"
-fi
-
-# Null/absent rubric_satisfied ⇒ PARK (load-bearing fail-CLOSED: a JSON null/absent
-# field coerces via `// "__MISSING__"` to a value that is neither "true" nor "na",
-# so an absent rubric never silently merges). Explicit null AND field-omitted both park.
-gate "$(pass_ctx | jq '.rubric_satisfied=null')"
-if [ "$RUN_OUT" = "PARK: rubric_unsatisfied" ] && [ "$(merges)" -eq 0 ]; then
-  ok "gate fail-closed: rubric_satisfied=null ⇒ PARK, no merge"
-else
-  no "gate rubric-null wrong (out='$RUN_OUT' merges=$(merges))"
-fi
-gate "$(pass_ctx | jq 'del(.rubric_satisfied)')"
-if [ "$RUN_OUT" = "PARK: rubric_unsatisfied" ] && [ "$(merges)" -eq 0 ]; then
-  ok "gate fail-closed: rubric_satisfied ABSENT ⇒ PARK, no merge"
-else
-  no "gate rubric-absent wrong (out='$RUN_OUT' merges=$(merges))"
-fi
-
-# Blocker — malformed (non-JSON) ctx.json ⇒ PARK: ctx_unreadable, no merge.
-gate 'this is not json {'
-if [ "$RUN_OUT" = "PARK: ctx_unreadable" ] && [ "$(merges)" -eq 0 ]; then
-  ok "gate fail-closed: malformed ctx.json ⇒ PARK: ctx_unreadable, no merge"
-else
-  no "gate ctx-unreadable wrong (out='$RUN_OUT' merges=$(merges))"
-fi
-
-# Blocker 6 — high-risk diff (cond 6; owner decision R5: NO override). The gate reads
-# `high_risk` in the cond-3 has()/type == "boolean" shape and PARKs unless it is the JSON boolean
-# `false`; the PARK line quotes the first 3 `risk_reasons` joined "; ".
-gate "$(pass_ctx | jq '.high_risk=true | .risk_reasons=["path: src/auth/x.ts matched *auth*","content: 2 changed line(s) matched *token*","size: changed_lines 512 > 400","path: skills/x/SKILL.md matched skills/"]')"
-if [ "$RUN_OUT" = "PARK: high_risk_diff (path: src/auth/x.ts matched *auth*; content: 2 changed line(s) matched *token*; size: changed_lines 512 > 400)" ] && [ "$(merges)" -eq 0 ]; then
-  ok "gate fail-closed: high_risk=true ⇒ PARK: high_risk_diff (first 3 reasons quoted), no merge"
-else
-  no "gate high-risk-true wrong (out='$RUN_OUT' merges=$(merges))"
-fi
-gate "$(pass_ctx | jq '.high_risk=null | .risk_reasons=["unclassifiable: bad_ref"]')"
-if [ "$RUN_OUT" = "PARK: high_risk_diff (unclassifiable: bad_ref)" ] && [ "$(merges)" -eq 0 ]; then
-  ok "gate fail-closed: high_risk=null (unclassifiable) ⇒ PARK, no merge"
-else
-  no "gate high-risk-null wrong (out='$RUN_OUT' merges=$(merges))"
-fi
-gate "$(pass_ctx | jq 'del(.high_risk) | del(.risk_reasons)')"
-if [ "$RUN_OUT" = "PARK: high_risk_diff (no risk_reasons recorded)" ] && [ "$(merges)" -eq 0 ]; then
-  ok "gate fail-closed: high_risk ABSENT ⇒ PARK (reasons absent ⇒ 'no risk_reasons recorded'), no merge"
-else
-  no "gate high-risk-absent wrong (out='$RUN_OUT' merges=$(merges))"
-fi
-gate "$(pass_ctx | jq '.high_risk="yes" | .risk_reasons="not-an-array"')"
-if [ "$RUN_OUT" = "PARK: high_risk_diff (no risk_reasons recorded)" ] && [ "$(merges)" -eq 0 ]; then
-  ok "gate fail-closed: high_risk non-boolean string ⇒ PARK (non-array reasons read defensively), no merge"
-else
-  no "gate high-risk-string wrong (out='$RUN_OUT' merges=$(merges))"
-fi
-# TYPE-ERASURE regression guard (PR #219 review; brief AC1 "MERGE only on JSON false"): the JSON
-# STRING "false" — what a re-stringified passthrough would produce — must PARK, not merge.
-gate "$(pass_ctx | jq '.high_risk="false" | .risk_reasons=[]')"
-if [ "$RUN_OUT" = "PARK: high_risk_diff (no risk_reasons recorded)" ] && [ "$(merges)" -eq 0 ]; then
-  ok "gate fail-closed: JSON STRING \"false\" high_risk ⇒ PARK: high_risk_diff (boolean false only — no type erasure), no merge"
-else
-  no "gate string-false-high-risk FAILED OPEN (out='$RUN_OUT' merges=$(merges))"
-fi
-# --trust-unprotected is cond 4 ONLY — it must NOT override cond 6.
-gate "$(pass_ctx | jq '.protection_enforceable=false | .trust_unprotected=true | .high_risk=true | .risk_reasons=["path: billing/x.ts matched billing/**"]')"
-if [ "$RUN_OUT" = "PARK: high_risk_diff (path: billing/x.ts matched billing/**)" ] && [ "$(merges)" -eq 0 ]; then
-  ok "gate fail-closed: trust_unprotected=true + high_risk=true ⇒ PARK (the override is scoped to cond 4), no merge"
-else
-  no "gate trust-unprotected-vs-high-risk wrong (out='$RUN_OUT' merges=$(merges))"
-fi
-# Positive control: no cond-6 case above passes by accident — `high_risk: false` with every other
-# condition satisfied is the ONLY shape that merges (exactly once).
-gate "$(pass_ctx | jq '.risk_reasons=[]')"
-if [ "$RUN_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ]; then
-  ok "gate: high_risk=false + every other condition ⇒ MERGE exactly once"
-else
-  no "gate high-risk-false wrong (out='$RUN_OUT' merges=$(merges))"
-fi
-# Mutation control (LESSONS fa32a308): delete cond 6 from a COPY of gate_eval — the block from
-# its `# Condition 6` comment through the `PARK: high_risk_diff` return — gated on non-empty +
-# differs + `bash -n`. The cond-6 PARK cases must go red (the mutant MERGES on high_risk=true)
-# while the all-pass MERGE case stays green, proving the cases test the condition, not the harness.
-MUT="$(mktemp -d)"
-awk '/^  # Condition 6 — NOT a high-risk diff/ {skip=1} skip && /^  fi$/ {skip=0; next} !skip {print}' "$H" > "$MUT/automate-helpers.sh"
-if [ -s "$MUT/automate-helpers.sh" ] && ! cmp -s "$H" "$MUT/automate-helpers.sh" && bash -n "$MUT/automate-helpers.sh" 2>/dev/null \
-   && ! grep -q 'high_risk_diff' "$MUT/automate-helpers.sh"; then
-  rm -f "$GH_STUB_DIR/merge.log"
-  pass_ctx | jq '.high_risk=true | .risk_reasons=["path: src/auth/x.ts matched *auth*"]' > "$WD/ctx.json"
-  MUT_OUT="$( env PATH="$BIN:$PATH" bash "$MUT/automate-helpers.sh" gate-eval "$PR" "$WD/ctx.json" 2>/dev/null )"
-  if [ "$MUT_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ]; then
-    ok "gate (mutant) cond 6 deleted ⇒ high_risk=true MERGES — the cond-6 PARK cases are live, not vacuous"
-  else
-    no "gate cond-6 mutant not discriminated (out='$MUT_OUT' merges=$(merges))"
-  fi
-  rm -f "$GH_STUB_DIR/merge.log"
-  pass_ctx > "$WD/ctx.json"
-  MUT_OUT="$( env PATH="$BIN:$PATH" bash "$MUT/automate-helpers.sh" gate-eval "$PR" "$WD/ctx.json" 2>/dev/null )"
-  [ "$MUT_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ] \
-    && ok "gate (mutant) all-pass MERGE case stays green on the mutant" || no "gate all-pass went red on the cond-6 mutant (out='$MUT_OUT')"
-else
-  no "gate cond-6 mutant not gated (empty, identical, bash -n failed, or the block was not removed)"
-fi
-rm -rf "$MUT"
-
-# Blocker — all 6 pass but `gh pr merge` itself fails ⇒ PARK: merge_command_failed.
-# The `merge-fail` stub marker makes the stubbed `gh pr merge` log the call THEN exit 1,
-# so the gate sees the merge command fail and parks (no SUCCESSFUL merge).
+# --- merge command itself fails ---
 touch "$GH_STUB_DIR/merge-fail"
 gate "$(pass_ctx)"
 if [ "$RUN_OUT" = "PARK: merge_command_failed" ]; then
@@ -837,6 +905,53 @@ else
   no "gate merge-command-failed wrong (out='$RUN_OUT' merges=$(merges))"
 fi
 rm -f "$GH_STUB_DIR/merge-fail"
+reset_live
+
+# --- BLOCKING mutation control (AC — "Mutation control … proves condition 6 is
+# load-bearing, not asserted"). Comment out the classify-risk.sh invocation
+# inside a COPY of gate_eval (mirrors the pre-existing cond-6-deletion mutant
+# pattern) — the all-green case must NOT merge: with the call never made,
+# risk_json stays empty ⇒ hr="__MISSING__" ⇒ PARK: high_risk_diff. This proves
+# the all-green MERGE case genuinely depends on the classify-risk.sh call
+# happening, not on any value the ctx happened to carry (it can't — cond 6 has
+# no ctx input at all any more). ---
+MUT="$(mktemp -d)"
+sed 's/^\(  if \[ -r "\$risk_bin" \]; then\)$/  if false \&\& [ -r "$risk_bin" ]; then/' "$GWD/automate-helpers.sh" > "$MUT/automate-helpers.sh"
+if [ -s "$MUT/automate-helpers.sh" ] && ! cmp -s "$GWD/automate-helpers.sh" "$MUT/automate-helpers.sh" && bash -n "$MUT/automate-helpers.sh" 2>/dev/null \
+   && grep -q 'if false && \[ -r "\$risk_bin" \]; then' "$MUT/automate-helpers.sh"; then
+  cp "$GWD/classify-risk.sh" "$MUT/classify-risk.sh"
+  # Instrument the stub classify-risk.sh to prove (positively) whether it was called.
+  printf '#!/usr/bin/env bash\necho called >> "%s/classify-risk-called.log"\necho '"'"'{"high_risk": false, "reasons": [], "source": "classify-risk.sh"}'"'"'\n' "$WD" > "$MUT/classify-risk.sh"
+  chmod +x "$MUT/classify-risk.sh"
+  rm -f "$WD/classify-risk-called.log"
+  rm -f "$GH_STUB_DIR/merge.log"
+  printf '%s' "$(pass_ctx)" > "$WD/ctx.json"
+  MUT_OUT="$( env PATH="$BIN:$PATH" GH_STUB_DIR="$GH_STUB_DIR" HOME="$WD/nohome" bash "$MUT/automate-helpers.sh" gate-eval "$PR" "$WD/ctx.json" --root "$WD" 2>/dev/null )"
+  if [ "$MUT_OUT" != "MERGE" ] && [ "$(merges)" -eq 0 ] && [ ! -f "$WD/classify-risk-called.log" ]; then
+    ok "gate (mutant) classify-risk.sh invocation commented out ⇒ the all-green case does NOT merge, and the stub log proves classify-risk.sh was never called — condition 6 is genuinely load-bearing on the call happening"
+  else
+    no "gate cond-6 mutation control FAILED to discriminate (mutant out='$MUT_OUT' merges=$(merges) called_log=$([ -f "$WD/classify-risk-called.log" ] && echo yes || echo no)) — the all-green MERGE case must depend on the classify-risk.sh call, not survive its removal"
+  fi
+  # Positive control: the REAL (non-mutant) harness, given the SAME instrumented
+  # classify-risk.sh, DOES call it (the log proves it) and DOES merge — showing
+  # the mutant's failure above is caused by the DELETED invocation, not by the
+  # instrumentation itself (the harness under test differs by exactly one line).
+  CTRL="$(mktemp -d)"
+  cp "$GWD/automate-helpers.sh" "$CTRL/automate-helpers.sh"
+  cp "$MUT/classify-risk.sh" "$CTRL/classify-risk.sh"
+  rm -f "$WD/classify-risk-called.log" "$GH_STUB_DIR/merge.log"
+  printf '%s' "$(pass_ctx)" > "$WD/ctx.json"
+  CTRL_OUT="$( env PATH="$BIN:$PATH" GH_STUB_DIR="$GH_STUB_DIR" HOME="$WD/nohome" bash "$CTRL/automate-helpers.sh" gate-eval "$PR" "$WD/ctx.json" --root "$WD" 2>/dev/null )"
+  if [ "$CTRL_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ] && [ -f "$WD/classify-risk-called.log" ]; then
+    ok "gate (positive control) the SAME instrumented classify-risk.sh, on the UN-mutated gate, IS called and DOES merge — the mutant's non-merge above is caused by the deleted invocation, not the instrumentation"
+  else
+    no "gate cond-6 mutation control's positive control failed (out='$CTRL_OUT' merges=$(merges) called_log=$([ -f "$WD/classify-risk-called.log" ] && echo yes || echo no)) — cannot trust the mutation result without this"
+  fi
+  rm -rf "$CTRL"
+else
+  no "gate cond-6 mutation control not gated (mutant empty, identical to original, bash -n failed, or the invocation guard was not injected)"
+fi
+rm -rf "$MUT"
 
 unset GH_STUB_DIR
 rm -rf "$WD"
@@ -1261,7 +1376,12 @@ echo "== G. brief-repair (fail-SAFE, evidence-positive engine seam; ONE mover) =
 SKILL_FILE="$HERE/../skills/automate-loop/SKILL.md"
 GK=".supervisor/requirements/r/03.md"
 GU="https://github.com/o/r/pull/7"
-PARK_CTX='{"drain_result":"READY","termination_reason":"converged","ready_sha":"a","head_sha":"a","base":"main","review_decision":"APPROVED","unresolved_human_thread":false,"protection_enforceable":false,"trust_unprotected":false,"checks_green":true,"rubric_satisfied":"na"}'
+# NEW (self-resolving) ctx shape — the 6 allowed keys only. `review_heal_result_path`
+# points at a nonexistent file so gate-eval PARKs deterministically at the cond-1
+# cross-check (`PARK: review_heal_result_unreadable`) WITHOUT depending on any
+# gh/classify-risk.sh stub behavior — this ctx is used only as a STRUCTURAL control
+# (gate.before == gate.after), never asserted against a specific PARK reason here.
+PARK_CTX='{"drain_result":"READY","termination_reason":"converged","ready_sha":"a","trust_unprotected":false,"review_heal_result_path":"/no/such/review-heal-result.md","supervisor_result_path":"/no/such/supervisor-result.md"}'
 
 # g_repo — a fixture repo: run file (## Status: paused, one - [ ] Queue item, a
 # ## Current line), a PARK gate-eval ctx, and the stranded brief b.md whose
