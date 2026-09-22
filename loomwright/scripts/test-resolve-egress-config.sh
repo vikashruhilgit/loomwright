@@ -117,8 +117,9 @@ assert_eq "malformed_origin_falls_back_to_local_prefix" "local:$(basename "$R3")
 
 R4="$TMP/notgit"; H4="$TMP/home4"; mkdir -p "$R4" "$H4"
 OUT="$( ( cd "$R4" && HOME="$H4" bash "$RESOLVER" ) )"
+RC="$?"
 assert_eq "not_a_git_repo_slug_empty" "" "$(get_field "$OUT" REPO_SLUG)"
-assert_eq "not_a_git_repo_rc=0" "0" "$?"
+assert_eq "not_a_git_repo_rc=0" "0" "$RC"
 
 echo ""
 echo "==== Group 2: user-scope is the SOLE source of TELEMETRY/TELEMETRY_REPO/WEBHOOK_URL ===="
@@ -128,10 +129,10 @@ new_repo "$RG" "https://github.com/${SLUG}.git"
 
 # (a) no user-scope file at all -> everything empty.
 OUT="$( ( cd "$RG" && HOME="$HG" bash "$RESOLVER" ) )"
+RC="$?"
 assert_eq "no_user_scope_telemetry_empty" "" "$(get_field "$OUT" TELEMETRY)"
 assert_eq "no_user_scope_telemetry_repo_empty" "" "$(get_field "$OUT" TELEMETRY_REPO)"
 assert_eq "no_user_scope_webhook_empty" "" "$(get_field "$OUT" WEBHOOK_URL)"
-RC="$?"
 assert_eq "no_user_scope_exit=0" "0" "$RC"
 
 # (b) matching entry -> values come through verbatim.

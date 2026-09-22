@@ -1316,6 +1316,28 @@ One entry per repo slug, so consent for `vikashruhilgit/loomwright` and
 consent for some other clone of the same URL under a different local path
 are the SAME entry (keyed by the normalized remote, not the filesystem
 path), while an unrelated local-only repo gets its own `local:<name>` entry.
+
+**HONEST LIMIT: the `local:<toplevel-basename>` slug for a no-origin repo is
+a bare directory-name collision key, not a scoped identity.** It carries no
+path and no content hash. Consequence: if the user once ran
+`/telemetry enable` (or `/setup webhook`) inside some local-only project
+named e.g. `scratch`, ANY OTHER unrelated local-only repo later checked out
+under a directory also named `scratch` inherits that same `local:scratch`
+entry — telemetry/webhook fire against it without a fresh consent prompt,
+purely because the two unrelated repos happen to share a `basename`. This
+does **not** reopen red-team-hardening item 02's FATAL: the destination
+itself still comes only from the user-scope entry, never from anything the
+repo controls, so a hostile repo still cannot choose where its own telemetry
+goes. It IS a real, accepted privacy/consent-scoping gap this user-scoped
+architecture introduces (the old repo-relative design had no such collision,
+since consent lived inside the checkout itself). Accepted as a limitation
+rather than fixed here because a stronger key (the toplevel absolute path,
+or a first-commit hash) is a bigger design change than this PR's scope — a
+future hardening pass MAY strengthen the no-origin key if the collision
+proves to matter in practice; until then, a user who works in multiple
+same-named local-only repos should expect them to share one consent/webhook
+entry.
+
 `webhook_url_sha256` is written alongside `webhook_url` for tamper-evidence
 (so a quick `grep` can confirm a value without exposing the raw URL); the
 resolver does not trust the stored hash — it always **recomputes**
