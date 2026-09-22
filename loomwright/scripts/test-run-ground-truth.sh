@@ -27,10 +27,23 @@
 #       never the runner's home — the mutation control for the check.sh precedence); (m4) `--project`
 #       naming a non-directory => unverified 0/0, exit 0; (m5) check.sh precedence unit: --root beats
 #       EVAL_PROJECT_ROOT beats the task-dir git root.
+#   (n) content-keyed Executable Acceptance stamp gate (red-team-hardening item 05 — see
+#       exec-acceptance-hash.sh / exec-acceptance-lib.sh): (n1) a VALID stamp -> cmd: executes
+#       exactly as today (happy path, AC2); (n2) an ABSENT stamp -> unverified/cmd_unapproved, no
+#       execution (sentinel never created, AC3); (n3) a STALE stamp (bullet edited after stamping)
+#       -> same cmd_unapproved, no execution (AC4); (n4) --no-cmd wins over a VALID stamp ->
+#       cmd_disabled, not cmd_unapproved (AC5); (n5) --check-only (no --brief at all) is completely
+#       unaffected by the gate (AC6a); (n6) a MIXED --brief (unstamped) + --check invocation gates
+#       only the --brief-sourced bullet, the --check-sourced one still executes in the SAME run
+#       (AC6b); (n7) BLOCKING mutation control — splice out the MUTATION_CONTROL-bracketed
+#       hash-comparison block in run-ground-truth.sh, replace it with an unconditional
+#       BRIEF_HASH_VALID=1, confirm the (n3) stale-stamp case then WRONGLY executes against the
+#       mutant, proving the real gate is load-bearing (AC7).
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 RUN="$HERE/run-ground-truth.sh"
+HASH="$HERE/exec-acceptance-hash.sh"
 
 pass=0; fail=0
 ok() { echo "  ok: $1"; pass=$((pass+1)); }
@@ -188,6 +201,10 @@ fi
 echo "== (j) --brief heading match is exact ('## Executable Acceptance Notes' must NOT open section) =="
 BRF="$TMP/brief-notes.md"
 printf '## Executable Acceptance Notes\n- cmd: false\n\n## Executable Acceptance\n- cmd: true\n' > "$BRF"
+# Stamp the brief (content-keyed gate, AC2) so the real section's cmd: bullet still executes —
+# this case is about heading-match exactness, not the stamp gate itself (covered separately below).
+jSTAMP="$(bash "$HASH" "$BRF")"
+printf '\n## Configuration\n- **Executable Acceptance Approved:** %s\n' "$jSTAMP" >> "$BRF"
 oJ="$( cd "$CWD" && bash "$RUN" --brief "$BRF" 2>/dev/null )"; rcJ=$?
 jJ="$(gt_json "$oJ")"
 # Only the real heading's `cmd: true` (pass) is collected; the "Notes" heading's `cmd: false` is ignored.
@@ -245,6 +262,7 @@ echo "== (m) project root: runner + corpus copied OUTSIDE any git repo (marketpl
 FAKE="$TMP/plugin-cache/loomwright/9.9.9/scripts"
 mkdir -p "$FAKE"
 cp "$RUN" "$FAKE/run-ground-truth.sh"
+cp "$HERE/exec-acceptance-lib.sh" "$FAKE/exec-acceptance-lib.sh"
 cp -R "$HERE/eval-corpus" "$FAKE/eval-corpus"
 FAKE_RUN="$FAKE/run-ground-truth.sh"
 if [ -z "$REPO_ROOT" ]; then
@@ -323,6 +341,155 @@ else
   else
     no "(m5) check.sh precedence wrong (see $TMP/m5i.err: $(head -c 200 "$TMP/m5i.err" 2>/dev/null))"
   fi
+fi
+
+echo
+echo "== (n) content-keyed Executable Acceptance stamp gate (red-team-hardening item 05) =="
+
+# (n1) VALID stamp -> cmd: executes exactly as today (happy path, AC2).
+N_BRIEF="$TMP/n-brief.md"
+printf '## Executable Acceptance\n- cmd: true\n' > "$N_BRIEF"
+N_HASH="$(bash "$HASH" "$N_BRIEF")"
+printf '\n## Configuration\n- **Executable Acceptance Approved:** %s\n' "$N_HASH" >> "$N_BRIEF"
+oN1="$( cd "$CWD" && bash "$RUN" --brief "$N_BRIEF" 2>/dev/null )"; rcN1=$?
+jN1="$(gt_json "$oN1")"
+if [ "$rcN1" -eq 0 ] && printf '%s' "$jN1" | jq -e '
+    .status=="pass" and .checks_total==1 and .checks_passed==1
+    and .per_check[0].status=="pass"
+  ' >/dev/null 2>&1; then
+  ok "(n1) VALID stamp: cmd: executes exactly as today (status pass)"
+else
+  no "(n1) wrong (rc=$rcN1): $jN1"
+fi
+
+# (n2) ABSENT stamp -> unverified/cmd_unapproved, no execution (sentinel never created, AC3).
+N2_BRIEF="$TMP/n2-brief.md"
+N2_SENTINEL="$TMP/n2-sentinel.$$"
+rm -f "$N2_SENTINEL"
+printf "## Executable Acceptance\n- cmd: touch '%s'\n" "$N2_SENTINEL" > "$N2_BRIEF"
+oN2="$( cd "$CWD" && bash "$RUN" --brief "$N2_BRIEF" 2>/dev/null )"; rcN2=$?
+jN2="$(gt_json "$oN2")"
+if [ "$rcN2" -eq 0 ] && [ ! -e "$N2_SENTINEL" ] && printf '%s' "$jN2" | jq -e '
+    .checks_total==1 and .checks_passed==0
+    and .per_check[0].status=="unverified" and .per_check[0].reason=="cmd_unapproved"
+  ' >/dev/null 2>&1; then
+  ok "(n2) ABSENT stamp: unverified/cmd_unapproved, no execution (sentinel never created)"
+else
+  no "(n2) wrong (rc=$rcN2, sentinel exists=$( [ -e "$N2_SENTINEL" ] && echo yes || echo no )): $jN2"
+fi
+
+# (n3) STALE stamp (bullet edited after the stamp line was written) -> same cmd_unapproved, no
+# execution (AC4). Stamp is computed for `cmd: true` but the bullet now reads `cmd: false` — the
+# EXACT scenario the (n7) mutation control below re-uses.
+N3_BRIEF="$TMP/n3-brief.md"
+printf '## Executable Acceptance\n- cmd: true\n' > "$N3_BRIEF"
+N3_HASH="$(bash "$HASH" "$N3_BRIEF")"
+printf '\n## Configuration\n- **Executable Acceptance Approved:** %s\n' "$N3_HASH" >> "$N3_BRIEF"
+# Now edit the bullet (stamp becomes stale) — sed-free, portable rewrite via printf.
+printf '## Executable Acceptance\n- cmd: false\n\n## Configuration\n- **Executable Acceptance Approved:** %s\n' "$N3_HASH" > "$N3_BRIEF"
+oN3="$( cd "$CWD" && bash "$RUN" --brief "$N3_BRIEF" 2>/dev/null )"; rcN3=$?
+jN3="$(gt_json "$oN3")"
+if [ "$rcN3" -eq 0 ] && printf '%s' "$jN3" | jq -e '
+    .checks_total==1 and .checks_passed==0
+    and .per_check[0].status=="unverified" and .per_check[0].reason=="cmd_unapproved"
+  ' >/dev/null 2>&1; then
+  ok "(n3) STALE stamp (edited-after-stamp): unverified/cmd_unapproved, no execution"
+else
+  no "(n3) wrong (rc=$rcN3): $jN3"
+fi
+
+# (n4) --no-cmd wins over a VALID stamp -> cmd_disabled, not cmd_unapproved (AC5).
+oN4="$( cd "$CWD" && bash "$RUN" --no-cmd --brief "$N_BRIEF" 2>/dev/null )"; rcN4=$?
+jN4="$(gt_json "$oN4")"
+if [ "$rcN4" -eq 0 ] && printf '%s' "$jN4" | jq -e '
+    .per_check[0].status=="unverified" and .per_check[0].reason=="cmd_disabled"
+  ' >/dev/null 2>&1; then
+  ok "(n4) --no-cmd wins over a VALID stamp (reason cmd_disabled, never cmd_unapproved)"
+else
+  no "(n4) wrong (rc=$rcN4): $jN4"
+fi
+
+# (n5) --check-only (no --brief at all) is completely unaffected by the gate (AC6a).
+oN5="$( cd "$CWD" && bash "$RUN" --check 'cmd: true' 2>/dev/null )"; rcN5=$?
+jN5="$(gt_json "$oN5")"
+if [ "$rcN5" -eq 0 ] && printf '%s' "$jN5" | jq -e '
+    .status=="pass" and .per_check[0].status=="pass"
+  ' >/dev/null 2>&1; then
+  ok "(n5) --check-only (no --brief): completely unaffected by the stamp gate"
+else
+  no "(n5) wrong (rc=$rcN5): $jN5"
+fi
+
+# (n6) MIXED invocation: an UNSTAMPED --brief cmd: bullet is gated, a --check-sourced cmd: bullet
+# in the SAME run still executes normally (AC6b) — the per-line source-provenance requirement.
+N6_BRIEF="$TMP/n6-brief.md"
+printf '## Executable Acceptance\n- cmd: false\n' > "$N6_BRIEF"
+N6_SENTINEL="$TMP/n6-sentinel.$$"
+rm -f "$N6_SENTINEL"
+oN6="$( cd "$CWD" && bash "$RUN" --brief "$N6_BRIEF" --check "cmd: touch '$N6_SENTINEL'" 2>/dev/null )"; rcN6=$?
+jN6="$(gt_json "$oN6")"
+if [ "$rcN6" -eq 0 ] && [ -e "$N6_SENTINEL" ] && printf '%s' "$jN6" | jq -e '
+    .checks_total==2
+    and ((.per_check[] | select(.target=="false")) | .status=="unverified" and .reason=="cmd_unapproved")
+    and ((.per_check[] | select(.target | contains("touch"))) | .status=="pass")
+  ' >/dev/null 2>&1; then
+  ok "(n6) MIXED --brief (unstamped) + --check: brief bullet gated, check bullet still executes"
+else
+  no "(n6) wrong (rc=$rcN6, sentinel exists=$( [ -e "$N6_SENTINEL" ] && echo yes || echo no )): $jN6"
+fi
+
+# (n7) BLOCKING MUTATION CONTROL (AC7): splice out the MUTATION_CONTROL-bracketed hash-comparison
+# block, replace it with an unconditional BRIEF_HASH_VALID=1, and re-run the (n3) STALE-stamp case
+# against the mutant. The mutant must WRONGLY execute the stale bullet — proving the real gate
+# (not merely asserted in prose) is what makes (n3) pass above.
+BEGIN_MARK='# MUTATION_CONTROL_BEGIN: exec-acceptance-stamp-gate'
+END_MARK='# MUTATION_CONTROL_END: exec-acceptance-stamp-gate'
+if grep -qF "$BEGIN_MARK" "$RUN" && grep -qF "$END_MARK" "$RUN"; then
+  # Snapshot $RUN BEFORE any mutant construction. `diff -q "$RUN" "$HERE/run-ground-truth.sh"`
+  # would be tautological (both are the SAME literal path, RUN is never reassigned — caught in
+  # PR #252 review round 1) since it compares the file to itself and can never fail regardless of
+  # what the mutation-control code below does. Comparing against this PRE-construction snapshot
+  # instead gives the "the real script was never touched" assertion something it could actually fail.
+  RUN_SNAPSHOT="$TMP/run-ground-truth.pre-mutation-snapshot.sh"
+  cp "$RUN" "$RUN_SNAPSHOT"
+  MUTANT="$TMP/run-ground-truth.mutant.sh"
+  MUTANT_BLOCK="$TMP/stamp-gate-mutant-block.txt"
+  printf 'BRIEF_HASH_VALID=1\n' > "$MUTANT_BLOCK"
+  sed -n "1,/$(printf '%s' "$BEGIN_MARK" | sed 's/[.[\*^$/]/\\&/g')/p" "$RUN" > "$MUTANT"
+  cat "$MUTANT_BLOCK" >> "$MUTANT"
+  sed -n "/$(printf '%s' "$END_MARK" | sed 's/[.[\*^$/]/\\&/g')/,\$p" "$RUN" >> "$MUTANT"
+  # The mutant sources exec-acceptance-lib.sh relative to ITS OWN dirname — copy it alongside so
+  # the mutant is self-contained (mirrors the (m) test's FAKE-dir copy for the same reason).
+  cp "$HERE/exec-acceptance-lib.sh" "$TMP/exec-acceptance-lib.sh"
+
+  if [ -s "$MUTANT" ] && grep -qF "$END_MARK" "$MUTANT"; then
+    ok "(n7) mutant_construction_ok"
+    N7_SENTINEL="$TMP/n7-sentinel.$$"
+    rm -f "$N7_SENTINEL"
+    N7_BRIEF="$TMP/n7-brief.md"
+    # (n3)'s stale scenario: stamp was computed for `cmd: true`, bullet now reads a side-effecting
+    # command whose target does NOT match the stamped hash — genuinely stale under the real gate.
+    printf "## Executable Acceptance\n- cmd: touch '%s'\n\n## Configuration\n- **Executable Acceptance Approved:** %s\n" \
+      "$N7_SENTINEL" "$N3_HASH" > "$N7_BRIEF"
+    ( cd "$CWD" && bash "$MUTANT" --brief "$N7_BRIEF" >/dev/null 2>&1 )
+    if [ -e "$N7_SENTINEL" ]; then
+      ok "(n7) mutant WRONGLY executes the stale-stamp bullet (sentinel created) — the real gate is load-bearing"
+    else
+      no "(n7) mutant did NOT reproduce the pre-fix vulnerability (sentinel not created) — mutation may not have neutered the gate"
+    fi
+    # Original script is untouched — the mutant ran from a COPY, never in place. Compared against
+    # the PRE-construction snapshot taken above, NOT against "$RUN" itself (that self-comparison
+    # is always true and proves nothing — see the note at the snapshot's creation).
+    if diff -q "$RUN_SNAPSHOT" "$RUN" >/dev/null 2>&1; then
+      ok "(n7) the real run-ground-truth.sh is byte-identical after the mutation control (mutant ran from a copy)"
+    else
+      no "(n7) run-ground-truth.sh was modified by the mutation control — should never happen"
+    fi
+  else
+    no "(n7) mutant_construction_ok  splice produced an empty/incomplete mutant"
+  fi
+else
+  no "(n7) mutation_control_sentinels_present  MUTATION_CONTROL markers not found in $RUN"
 fi
 
 echo

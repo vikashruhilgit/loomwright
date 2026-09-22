@@ -34,6 +34,7 @@ The Launch Pad agent prepares raw goals for autonomous Supervisor execution. It 
 | `--discovery` | No | Force full product discovery even if goal seems clear |
 | `--skip-validation` | No | Skip environment validation (Phase 1) for speed |
 | `--project` | No | Explicit project path (overrides auto-detect) |
+| `--non-interactive` / `--non-interactive-fallback` | No | No human to ask — forwarded from `/autonomous`'s own `--non-interactive-fallback` flag (accepts either spelling). Gates two Phase 6 NEEDS_HUMAN behaviors: a Criterion 14 `executable_acceptance` escalation auto-strips the flagged `cmd:`/bare bullets instead of asking; any other NEEDS_HUMAN reason aborts (`status_reason: "needs_human_non_interactive"`) instead of asking. See `agents/launch-pad.md` §"7-Phase Workflow" Phase 5.5/Phase 6 for the full contract. |
 
 ## What This Does
 

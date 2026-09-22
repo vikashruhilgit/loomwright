@@ -388,13 +388,23 @@ After the Code Reviewer loop has run (regardless of `heal_decision`), execute th
 # falling back to .supervisor/twin/ground-truth.json when the brief has no such section.
 ground_truth = { checked: false, status: "skipped", checks_total: 0, checks_passed: 0, findings: [] }
 
-# SAFETY VALVE (unattended/autonomous path): when NON_INTERACTIVE == true — i.e. this run was driven
-# by /autonomous, where the brief's `## Executable Acceptance` section is MACHINE-AUTHORED by Launch
-# Pad — pass --no-cmd so a `cmd:` bullet can NEVER run arbitrary shell with no human in the loop.
-# --no-cmd skips cmd:/bare checks (recorded unverified/"cmd_disabled"); corpus-task: checks still run.
-# This is the interim guard until the prompt-level Plan Reviewer control lands (M2b slice 1b — see
-# docs/SPIKES/SYSTEM_TWIN_ROADMAP.md §7). In an interactive `/supervisor` run (human at Plan Review),
-# cmd: bullets run normally.
+# SAFETY VALVE (--no-cmd — CORRECTED, red-team-hardening item 05: the prior comment here falsely
+# equated NON_INTERACTIVE == true with any /autonomous-originated run. That premise was false:
+# /autonomous forwards --non-interactive to this inlined /supervisor invocation ONLY when the
+# OUTER /autonomous call itself was given --non-interactive-fallback (skills/autonomous-loop/
+# SKILL.md) — a default, interactive `/autonomous "goal"` run has NON_INTERACTIVE == false, so
+# NO_CMD_FLAG is empty and a `cmd:`/bare bullet runs exactly as it would under a plain interactive
+# `/supervisor`. --no-cmd skips cmd:/bare checks entirely (recorded unverified/"cmd_disabled");
+# corpus-task:/qa-executor: checks are unaffected either way.
+#
+# The REAL guard on every OTHER path (interactive /supervisor, interactive /autonomous, and the
+# --no-cmd-less non-interactive edge above) is the content-keyed stamp gate `run-ground-truth.sh`
+# itself now enforces via `scripts/exec-acceptance-hash.sh` / `scripts/exec-acceptance-lib.sh`: a
+# --brief-sourced `cmd:`/bare bullet executes ONLY when the brief's `## Configuration` section
+# carries a stamp whose hash matches the CURRENT bullet list exactly (absent/stale -> unverified,
+# reason "cmd_unapproved", never executed) — see `docs/RESULT_SCHEMAS.md` §"`## Executable
+# Acceptance`" and `agents/plan-reviewer.md` Criterion 14 (which escalates an unstamped bullet to
+# NEEDS_HUMAN at brief-save time, before Phase 4.5 ever runs this script).
 NO_CMD_FLAG = (NON_INTERACTIVE == true) ? "--no-cmd" : ""
 # The runner derives the PROJECT ROOT every check is evaluated against from the caller's CWD (git
 # toplevel) and hands it to each corpus-task check.sh as EVAL_PROJECT_ROOT — this is why the pinned

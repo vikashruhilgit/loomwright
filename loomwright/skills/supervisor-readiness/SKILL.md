@@ -191,14 +191,33 @@ A list of project-declared **executable acceptance checks** the run must satisfy
 
 - `corpus-task: <id>` — runs `scripts/eval-corpus/<id>/check.sh` (sandbox-constrained: `<id>` is a single path segment that cannot escape `eval-corpus/`). **The only kind a machine-authored brief may emit.** `<id>` references a **plugin-bundled** corpus task (resolved against the plugin's own `scripts/eval-corpus/`, e.g. `version-consistent`), NOT a path in the user's project — so outside this plugin's own repo a machine-authored brief will usually omit this section entirely (no matching bundled id exists).
 - `qa-executor: <target>` — recognized but DEFERRED to M2b slice 1b (records `unverified`; spawns nothing).
-- `cmd: <shell>` (or a bare bullet) — an arbitrary shell command run as `bash -c` with **full shell privileges**.
+- `cmd: <shell>` (or a bare bullet) — an arbitrary shell command run as `bash -c` with **full shell privileges** — but ONLY when the content-keyed stamp below is present and current; see "Content-keyed stamp gate" for the enforcement rule.
 
 **Authoring rule (machine-authored-brief convention — trust boundary):**
 
 - A **machine-authored** brief (Launch Pad, especially under `/autonomous`, where no human reviews the brief at Plan Review) **MUST NOT emit `cmd:` / bare-shell bullets.** Emit only `corpus-task:` bullets when executable acceptance can be derived at all.
 - `cmd:` bullets are reserved for **human authorship**, where the person editing the requirement/brief is the trust anchor and reviews the command themselves.
-- Rationale: on the unattended/`--non-interactive` path Supervisor passes `run-ground-truth.sh --no-cmd`, so a machine-authored `cmd:` bullet would be skipped (`unverified`, reason `cmd_disabled`) and never run — it is both dead-on-arrival there and a latent risk if that valve ever regressed. Plan Reviewer **Criterion 14** surfaces any `cmd:` bullet that appears in a brief (LOW/advisory today; escalates at M3).
+- Rationale: on the unattended/`--non-interactive` path Supervisor passes `run-ground-truth.sh --no-cmd`, so a machine-authored `cmd:` bullet would be skipped (`unverified`, reason `cmd_disabled`) and never run regardless of anything below. On every OTHER path (including a default, interactive `/autonomous` run) the content-keyed stamp gate below is what stops it — see that section. Plan Reviewer **Criterion 14** surfaces any `cmd:` bullet that appears in a brief and escalates to **NEEDS_HUMAN** when no valid stamp is present (this is now the shipped behavior, not a forward milestone).
 - See `scripts/run-ground-truth.sh`, `docs/RESULT_SCHEMAS.md` §"`## Executable Acceptance`", and `docs/SPIKES/SYSTEM_TWIN_ROADMAP.md §7`.
+
+**Content-keyed stamp gate (red-team-hardening item 05 — "cmd: valve by provenance"):**
+
+A `cmd:`/bare bullet in this section executes at Phase 4.5 ONLY when the brief's `## Configuration` section carries a matching stamp:
+
+```markdown
+## Configuration
+- **Workers:** 1
+- **Executable Acceptance Approved:** sha256:3f9a2b… (64 hex chars)
+```
+
+The stamp is computed by `scripts/exec-acceptance-hash.sh <brief-path>`, which prints `sha256:<hex>` of the whitespace-normalized, newline-joined list of `cmd:`/bare bullets ONLY (`corpus-task:`/`qa-executor:` excluded), or `none` when that filtered list is empty. `run-ground-truth.sh` recomputes the SAME hash on every run (both scripts source one shared definition, `scripts/exec-acceptance-lib.sh`, so they cannot silently diverge) and compares it against the stamp:
+
+- **Missing or stale stamp** (a bullet was added/edited/removed after the stamp line was written, so the hashes no longer match) → the bullet is recorded `unverified`, reason `cmd_unapproved`, and does NOT execute.
+- **Matching stamp** → the bullet executes exactly as documented above.
+- **This gate applies ONLY to bullets sourced from this section** — it has no effect on `run-ground-truth.sh`'s `--check`/`--checks-file` CLI flags (a separate, human-typed invocation path).
+- **`--no-cmd` always wins** — it disables `cmd:`/bare execution unconditionally, regardless of stamp validity.
+
+To stamp a brief by hand: run `bash scripts/exec-acceptance-hash.sh <brief-path>`, review the bullets it covers, and paste the printed `sha256:<hex>` value into the `## Configuration` line above. Launch Pad's Phase 6 does this for you interactively (`approve-and-stamp`) when Plan Reviewer's Criterion 14 flags an unstamped bullet — see `agents/launch-pad.md` Phase 6 action 2a.
 
 **Example (machine-authored — `corpus-task:` only):**
 

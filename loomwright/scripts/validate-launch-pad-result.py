@@ -42,7 +42,17 @@ import sys
 
 
 VALID_STATUS = {"saved", "discarded", "blocked", "aborted"}
-ALLOWED_KEYS = {"schema_version", "status", "saved_brief_path", "summary"}
+# `cmd_bullets_stripped_non_interactive` (v15.90.0+, red-team-hardening item 05, additive — no
+# schema_version bump) is the ONE sanctioned exception to LAUNCH_PAD_RESULT's tight four-field
+# discipline (see RESULT_SCHEMAS.md's CODE_REVIEW_RESULT v3 cautionary tale note): Launch Pad
+# Phase 6 action 2a's non-interactive auto-strip signal. OPTIONAL — absent is the common case.
+ALLOWED_KEYS = {
+    "schema_version",
+    "status",
+    "saved_brief_path",
+    "summary",
+    "cmd_bullets_stripped_non_interactive",
+}
 
 
 def emit(ok, reason=""):
@@ -275,11 +285,14 @@ def main():
 
     fields, extra_keys = parse_block(block)
 
-    # Reject extra top-level keys (the explicit four-field discipline cap)
+    # Reject extra top-level keys (the closed-key-set discipline cap — the four core v1 fields
+    # plus the one sanctioned additive exception, cmd_bullets_stripped_non_interactive)
     if extra_keys:
         emit(
             False,
-            "LAUNCH_PAD_RESULT v1 accepts exactly four fields; got extra key(s): "
+            "LAUNCH_PAD_RESULT v1 accepts only "
+            + ", ".join(sorted(ALLOWED_KEYS))
+            + "; got extra key(s): "
             + ", ".join(sorted(extra_keys)),
         )
         return
@@ -348,6 +361,20 @@ def main():
                 "status=" + status + " requires saved_brief_path to be the YAML "
                 "literal null (NOT the string 'null', NOT empty-quoted, NOT a "
                 "path); got non-null value " + repr(fields.get("saved_brief_path")),
+            )
+            return
+
+    # cmd_bullets_stripped_non_interactive (v15.90.0+, additive, OPTIONAL): when present, must be
+    # the YAML boolean `true` (lowercase) — Launch Pad Phase 7 is instructed to OMIT the field
+    # entirely rather than emit `false`, so any other spelling (including "false" or capitalized
+    # variants) is treated as malformed input, not a legitimate alternate value.
+    if "cmd_bullets_stripped_non_interactive" in fields:
+        cbsni = fields["cmd_bullets_stripped_non_interactive"].strip()
+        if cbsni != "true":
+            emit(
+                False,
+                "cmd_bullets_stripped_non_interactive, when present, must be the "
+                "YAML boolean true (lowercase); got " + repr(cbsni),
             )
             return
 

@@ -498,9 +498,9 @@ A CI ratchet on **spawn-time prompt inventory**. Each agent's effective weight i
 | `code-reviewer`     | 25131 | 22846¹ | 5 |
 | `context-keeper`    | 3818  | 3471¹ | 0 |
 | `execute-manager`   | 38646 | 35132¹ | 3 |
-| `launch-pad`        | 40254 | 36594¹ | 7 |
+| `launch-pad`        | 41923 | 38111¹ | 7 |
 | `orchestrator`      | 9558  | 8924¹ | 1 |
-| `plan-reviewer`     | 9180  | 6392  | 0 |
+| `plan-reviewer`     | 10046 | 6392  | 0 |
 | `product-owner`     | 14405 | 13095¹ | 3 |
 | `qa-executor`       | 48165 | 43786¹ | 5 |
 | `qa-strategist`     | 23488 | 21352¹ | 3 |
@@ -533,6 +533,8 @@ A CI ratchet on **spawn-time prompt inventory**. Each agent's effective weight i
 > **Raise log (drain-bounding-earned-checks, v15.22.0):** `review-pr` 27955 → 31453 — the preloaded `review-heal` skill's §U4 loop body grew the mechanized shared drain bound (`scripts/drain-rounds.sh` ledger calls replacing the prose-only `rounds`/`while rounds < max_rounds` counter, AC1/AC2) plus the termination-only severity floor (`--severity-floor`, the `sub_floor_converged` terminal state, the SHA-bound confirming required-check pass and its full pseudocode, AC9/AC11/AC12/AC13) — a real new contract, not bloat; measured 25413 → 28593 mid-PR, then 28875 on the end-of-PR live re-measure after syncing `agents/review-pr.md`'s outcome-model restatements (+3462 total), breaching by 638 at the mid-PR figure; the table cell above carries the end-of-PR value. Restored the same ~10% authoring margin per the raise rule.
 >
 > **Raise log (red-team-hardening/02, v15.87.0):** `review-pr` 31453 → 34614 — the preloaded `review-heal` skill gained a one-line update describing the new user-scoped consent/egress resolver (consistency edit alongside the item's docs sweep), breaching by 14 proxy tokens. Restored the same ~10% margin per the raise rule; measured set to the live end-of-PR figure (31467, 3147 headroom).
+
+> **Raise log (red-team-hardening/05, v15.90.0, cmd-valve-by-provenance):** `launch-pad` 40254 → 41923 — Phase 6 action 2a (the `executable_acceptance` NEEDS_HUMAN handling: interactive `approve-and-stamp`/`strip-cmd-bullets`/`discard` quoting flagged bullets verbatim, non-interactive auto-strip, the new `--non-interactive`/`--non-interactive-fallback` Parameters-table row, and the additive `cmd_bullets_stripped_non_interactive` LAUNCH_PAD_RESULT field) moved measured 36594 → 38111 (2143 headroom before this raise, not yet breaching); restored to measured + ~10% per the initial-budget convention. `plan-reviewer` 9180 → 10046 — Criterion 14 rewritten to check the brief's `## Configuration` stamp presence/well-formedness and force NEEDS_HUMAN on an unstamped/stale bullet (the "M3 graduation" forward note retired, since this is now shipped behavior); current re-measure 9132 (48 proxy tokens of headroom before this raise) + ~10% per the initial-budget convention — the `measured` cell/field stays the frozen v15.10.0 baseline (6392) per this row's established convention. Full reasoning in each agent's `note` in `prompt-token-budgets.json`.
 
 Self-test: `bash scripts/test-check-token-budget.sh` (offline; pass / breach / missing-preloaded-skill / no-budget / frontmatter-bounded-parsing / empty-agents-dir / inline-flow-style-skills / orphaned-budget / live-repo cases). Wired into CI alongside the other repo-root validators. Skills counted are **frontmatter-preloaded only** — command docs and on-demand skills are not spawn-time weight and are out of scope. The gate also fails CLOSED on an unsupported inline/flow-style `skills:` list (would silently under-count) and on an orphaned budget entry (a budget key with no matching agent `.md`).
 
