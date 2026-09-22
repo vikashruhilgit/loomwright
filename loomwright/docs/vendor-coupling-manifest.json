@@ -113,6 +113,7 @@
     "loomwright/scripts/test-set-otel-resource-attrs.sh": 34,
     "loomwright/scripts/test-setup-memory.sh": 103,
     "loomwright/scripts/test-setup-statusline.sh": 2,
+    "loomwright/scripts/test-telemetry.sh": 3,
     "loomwright/scripts/test-validate-entry.sh": 12,
     "loomwright/scripts/test-webhook.sh": 4,
     "loomwright/scripts/test-write-agent-memory.sh": 32,
