@@ -29,8 +29,8 @@ This slash command is the SOLE first-run consent path. The hook itself never pro
 ## When to Use
 
 - **`/telemetry status`** — Inspect current consent + target repo + last-sent timestamp + retained pending-notice markers (~24h window) without changing anything.
-- **`/telemetry enable`** — First-time setup or change of target repo. Writes `.supervisor/telemetry-consent.json`.
-- **`/telemetry disable`** — Stop telemetry without uninstalling the plugin. Writes `{"telemetry":"no"}`.
+- **`/telemetry enable`** — First-time setup or change of target repo. Writes the user-scope `~/.claude/loomwright/egress.json` entry for this repo's slug.
+- **`/telemetry disable`** — Stop telemetry without uninstalling the plugin. Writes `{"telemetry":"no"}` into the same user-scope entry.
 - **`/telemetry test`** — Verify the core script renders a sane issue body for the most recent (or fixture) payload. NEVER calls `gh`.
 
 ---
