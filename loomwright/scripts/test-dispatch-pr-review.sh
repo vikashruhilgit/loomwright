@@ -50,6 +50,9 @@
 #  23. G1 stale-lock RECLAIM: pid-dead + no-marker + past-TTL => proceeds, marker written.
 #  24. G1 marker wins over a stale lock: marker present => short-circuit before lock.
 #  25. G1/G2 READ-ONLY toward the inline checkout: working tree+index+HEAD unchanged.
+#  36. regime probe: defaultMode 'acceptEdits' also classifies as permissive
+#      (PR #248 review finding #1 — acceptEdits auto-approves file edits without
+#      prompting and was missing from the permissive case, a fail-open gap).
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -70,10 +73,15 @@ fresh_repo() {
 }
 
 # run_dispatch <workdir> <args...> — run the dispatcher in DRY_RUN mode from
-# inside <workdir>. Captures stdout in RUN_OUT, rc in RUN_RC.
+# inside <workdir>. Captures stdout in RUN_OUT, rc in RUN_RC. HOME is ISOLATED
+# to a per-workdir dir that does NOT exist unless a test populates it — the
+# regime probe (permissions.defaultMode) must never read the real operator's
+# ~/.claude/settings.json. A test that wants to exercise the regime probe sets
+# RUN_HOME to a fixture dir before calling; unset (the default) after.
 run_dispatch() {
   local wd="$1"; shift
-  RUN_OUT="$( cd "$wd" && LOOMWRIGHT_REVIEW_DISPATCH_DRY_RUN=1 bash "$DISPATCH" "$@" 2>/dev/null )"
+  local h="${RUN_HOME:-$wd/.fakehome}"
+  RUN_OUT="$( cd "$wd" && HOME="$h" LOOMWRIGHT_REVIEW_DISPATCH_DRY_RUN=1 bash "$DISPATCH" "$@" 2>/dev/null )"
   RUN_RC=$?
 }
 
@@ -150,9 +158,21 @@ GHEOF
   chmod +x "$FX_BIN/gh"
 
   # Stub claude: record the cwd it was launched in + its args, then exit 0.
+  # `--help` is special-cased and answered WITHOUT logging to FX_CLAUDE_LOG —
+  # it is the dispatcher's step-②b permission-regime-pinnable PROBE, not a
+  # real launch, and every existing "claude never really launched" assertion
+  # (NO_CLAUDE / claude log empty) below depends on the probe staying silent
+  # in that log. The fake help text advertises exactly the flags the
+  # dispatcher's ②b check greps for, so the happy-path fixture stays pinnable.
   cat > "$FX_BIN/stub-claude" <<CLEOF
 #!/usr/bin/env bash
-printf 'cwd=%s args=%s\n' "\$(pwd)" "\$*" >> "$FX_CLAUDE_LOG"
+if [ "\$1" = "--help" ]; then
+  printf -- '--permission-mode <mode> (choices: "acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan")\n'
+  printf -- '--allowedTools, --allowed-tools <tools...>\n'
+  printf -- '--disallowedTools, --disallowed-tools <tools...>\n'
+  exit 0
+fi
+printf 'cwd=%s args=%s fork=%s\n' "\$(pwd)" "\$*" "\${LOOMWRIGHT_PR_IS_FORK:-unset}" >> "$FX_CLAUDE_LOG"
 exit 0
 CLEOF
   chmod +x "$FX_BIN/stub-claude"
@@ -162,9 +182,12 @@ CLEOF
 # run_real <repo> <args...> — run the dispatcher for real (NOT dry-run) from the
 # repo, with the stub bin on PATH and LOOMWRIGHT_CLAUDE_BIN -> stub-claude.
 # Captures rc in RUN_RC. Stub git fetch failures are tolerated (no origin remote).
+# HOME is ISOLATED (see run_dispatch) — RUN_HOME overrides for regime-probe tests.
 run_real() {
   local repo="$1"; shift
+  local h="${RUN_HOME:-$repo/.fakehome}"
   ( cd "$repo" && PATH="$FX_BIN:$PATH" \
+      HOME="$h" \
       LOOMWRIGHT_CLAUDE_BIN="$FX_BIN/stub-claude" \
       bash "$DISPATCH" "$@" >/dev/null 2>&1 )
   RUN_RC=$?
@@ -788,7 +811,13 @@ exit 0
 GHEOF
 cat > "$FX_BIN/stub-claude" <<CLEOF
 #!/usr/bin/env bash
-printf 'cwd=%s args=%s\n' "\$(pwd)" "\$*" >> "$FX_CLAUDE_LOG"
+if [ "\$1" = "--help" ]; then
+  printf -- '--permission-mode <mode> (choices: "acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan")\n'
+  printf -- '--allowedTools, --allowed-tools <tools...>\n'
+  printf -- '--disallowedTools, --disallowed-tools <tools...>\n'
+  exit 0
+fi
+printf 'cwd=%s args=%s fork=%s\n' "\$(pwd)" "\$*" "\${LOOMWRIGHT_PR_IS_FORK:-unset}" >> "$FX_CLAUDE_LOG"
 exit 0
 CLEOF
 chmod +x "$FX_BIN/gh" "$FX_BIN/stub-claude"
@@ -807,6 +836,221 @@ else
   no "fork-not-local wrong (rc=$RC27 present_before=$PRESENT_BEFORE marker=$MARKER_OK ran=$RAN_OK removed=$REMOVED_OK)"
 fi
 rm -rf "$fork_root"
+
+# =============================================================================
+# Permission pin + regime probe (red-team-hardening item 01, decisions R1/R2)
+# =============================================================================
+
+echo "== 28. DRY_RUN permission pin (AC1): --permission-mode + full --allowedTools + --disallowedTools =="
+WD="$(fresh_repo)"
+run_dispatch "$WD" "$PR"
+LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
+if [ "$RUN_RC" -eq 0 ] \
+   && printf '%s' "$LINE" | grep -q -- '--permission-mode dontAsk' \
+   && printf '%s' "$LINE" | grep -q -- 'Read,Grep,Glob,Task' \
+   && printf '%s' "$LINE" | grep -q -- 'Bash(git fetch:\*)' \
+   && printf '%s' "$LINE" | grep -q -- 'Bash(git checkout:\*)' \
+   && printf '%s' "$LINE" | grep -q -- 'Bash(git add:\*)' \
+   && printf '%s' "$LINE" | grep -q -- 'Bash(git commit:\*)' \
+   && printf '%s' "$LINE" | grep -q -- 'Bash(git push origin' \
+   && printf '%s' "$LINE" | grep -q -- 'Bash(gh pr view:\*)' \
+   && printf '%s' "$LINE" | grep -q -- 'Bash(gh pr diff:\*)' \
+   && printf '%s' "$LINE" | grep -q -- 'Bash(gh pr comment:\*)' \
+   && printf '%s' "$LINE" | grep -q -- 'Bash(gh api repos/\*:\*)' \
+   && printf '%s' "$LINE" | grep -q -- 'Bash(gh api graphql:\*)' \
+   && printf '%s' "$LINE" | grep -q -- '--disallowedTools WebFetch,WebSearch'; then
+  ok "DRY_RUN permission pin: --permission-mode dontAsk + full allowedTools list + disallowedTools present"
+else
+  no "DRY_RUN permission pin wrong (line='$LINE')"
+fi
+rm -rf "$WD"
+
+echo "== 29. (BLOCKING — Real-path binding) real stubbed launch args= carries the SAME pinned flags, not just the DRY_RUN diagnostic =="
+fresh_git_repo >/dev/null
+run_real "$FX_REPO" "$PR"
+RC29=$RUN_RC
+ARGS_LINE="$(grep -F "cwd=$(expected_wt_path "$FX_REPO")" "$FX_CLAUDE_LOG" 2>/dev/null || true)"
+if [ "$RC29" -eq 0 ] \
+   && printf '%s' "$ARGS_LINE" | grep -q -- '--permission-mode dontAsk' \
+   && printf '%s' "$ARGS_LINE" | grep -q -- 'Read,Grep,Glob,Task' \
+   && printf '%s' "$ARGS_LINE" | grep -q -- 'Bash(git push origin' \
+   && printf '%s' "$ARGS_LINE" | grep -q -- 'Bash(gh api graphql:\*)' \
+   && printf '%s' "$ARGS_LINE" | grep -q -- '--disallowedTools WebFetch,WebSearch' \
+   && printf '%s' "$ARGS_LINE" | grep -q -- '--agent loomwright:review-pr-runner'; then
+  ok "real-path binding: captured args= carries --permission-mode/--allowedTools/--disallowedTools (not just DRY_RUN_DISPATCH) (args='$ARGS_LINE')"
+else
+  no "real-path binding wrong — the REAL WRAPPER invocation must carry the pinned flags too (rc=$RC29 args='$ARGS_LINE')"
+fi
+WT="$(expected_wt_path "$FX_REPO")"; wait_for_no_worktree "$FX_REPO" "$WT" || true
+rm -rf "$(dirname "$FX_REPO")"
+
+# permissive_home [mode] — build an isolated HOME with ~/.claude/settings.json
+# resolving permissions.defaultMode to [mode] (default "auto" — the
+# owner-machine live-evidence value from the requirement; also seeded with
+# "acceptEdits" by the PR #248 review finding #1 regression test — acceptEdits
+# auto-approves file edits without prompting and must classify permissive the
+# same as auto/bypassPermissions). Echoes the HOME path.
+permissive_home() {
+  local mode="${1:-auto}"
+  local h; h="$(mktemp -d)"
+  mkdir -p "$h/.claude"
+  printf '{"permissions":{"defaultMode":"%s"}}\n' "$mode" > "$h/.claude/settings.json"
+  printf '%s' "$h"
+}
+
+# malformed_home — an isolated HOME whose ~/.claude/settings.json is invalid
+# JSON — the "unreadable" (malformed) fail-CLOSED case. Echoes the HOME path.
+malformed_home() {
+  local h; h="$(mktemp -d)"
+  mkdir -p "$h/.claude"
+  printf '{not valid json' > "$h/.claude/settings.json"
+  printf '%s' "$h"
+}
+
+echo "== 30. regime probe (DRY_RUN): permissive defaultMode + no opt-out => LOOMWRIGHT_PR_IS_FORK=1 + marker regime=permissive_refused =="
+WD="$(fresh_repo)"
+RUN_HOME="$(permissive_home)"
+run_dispatch "$WD" "$PR"
+LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
+MARKER_CONTENT="$(cat "$WD/.supervisor/review-dispatch/$(pr_hash)" 2>/dev/null || true)"
+if [ "$RUN_RC" -eq 0 ] \
+   && printf '%s' "$LINE" | grep -q -- 'LOOMWRIGHT_PR_IS_FORK=1' \
+   && printf '%s' "$MARKER_CONTENT" | grep -q 'regime=permissive_refused'; then
+  ok "regime probe DRY_RUN permissive-refused: LOOMWRIGHT_PR_IS_FORK=1 + marker regime=permissive_refused (line='$LINE')"
+else
+  no "regime probe DRY_RUN permissive-refused wrong (line='$LINE' marker='$MARKER_CONTENT')"
+fi
+rm -rf "$WD" "$RUN_HOME"; unset RUN_HOME
+
+echo "== 31. regime probe (DRY_RUN): permissive defaultMode + LOOMWRIGHT_DRAIN_ALLOW_PERMISSIVE=1 opt-out => dispatches normally =="
+WD="$(fresh_repo)"
+RUN_HOME="$(permissive_home)"
+RUN_OUT="$( cd "$WD" && HOME="$RUN_HOME" LOOMWRIGHT_REVIEW_DISPATCH_DRY_RUN=1 LOOMWRIGHT_DRAIN_ALLOW_PERMISSIVE=1 bash "$DISPATCH" "$PR" 2>/dev/null )"
+RUN_RC=$?
+LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
+MARKER_CONTENT="$(cat "$WD/.supervisor/review-dispatch/$(pr_hash)" 2>/dev/null || true)"
+if [ "$RUN_RC" -eq 0 ] \
+   && ! printf '%s' "$LINE" | grep -q -- 'LOOMWRIGHT_PR_IS_FORK' \
+   && ! printf '%s' "$MARKER_CONTENT" | grep -q 'permissive_refused'; then
+  ok "regime probe DRY_RUN opt-out: dispatches normally, no forced fork-degrade, marker not permissive_refused (line='$LINE')"
+else
+  no "regime probe DRY_RUN opt-out wrong (line='$LINE' marker='$MARKER_CONTENT')"
+fi
+rm -rf "$WD" "$RUN_HOME"; unset RUN_HOME
+
+echo "== 32. regime probe: unreadable (malformed JSON) settings => treated as permissive => refused (fail CLOSED) =="
+WD="$(fresh_repo)"
+RUN_HOME="$(malformed_home)"
+run_dispatch "$WD" "$PR"
+LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
+MARKER_CONTENT="$(cat "$WD/.supervisor/review-dispatch/$(pr_hash)" 2>/dev/null || true)"
+if [ "$RUN_RC" -eq 0 ] \
+   && printf '%s' "$LINE" | grep -q -- 'LOOMWRIGHT_PR_IS_FORK=1' \
+   && printf '%s' "$MARKER_CONTENT" | grep -q 'regime=permissive_refused'; then
+  ok "regime probe malformed-JSON: treated as unreadable => permissive => refused (never assumed safe)"
+else
+  no "regime probe malformed-JSON wrong (line='$LINE' marker='$MARKER_CONTENT') — unreadable settings must fail CLOSED"
+fi
+rm -rf "$WD" "$RUN_HOME"; unset RUN_HOME
+
+echo "== 33. regime probe (REAL path): permissive settings propagate LOOMWRIGHT_PR_IS_FORK=1 into the actual launch env =="
+fresh_git_repo >/dev/null
+RUN_HOME="$(permissive_home)"
+run_real "$FX_REPO" "$PR"
+RC33=$RUN_RC
+WT="$(expected_wt_path "$FX_REPO")"
+ARGS_LINE="$(grep -F "cwd=$WT" "$FX_CLAUDE_LOG" 2>/dev/null || true)"
+H="$(pr_hash)"
+MARKER_CONTENT="$(cat "$FX_REPO/.supervisor/review-dispatch/$H" 2>/dev/null || true)"
+if [ "$RC33" -eq 0 ] \
+   && printf '%s' "$ARGS_LINE" | grep -q 'fork=1' \
+   && printf '%s' "$MARKER_CONTENT" | grep -q 'regime=permissive_refused'; then
+  ok "regime probe REAL permissive-refused: launched env carries fork=1, marker regime=permissive_refused"
+else
+  no "regime probe REAL permissive-refused wrong (rc=$RC33 args='$ARGS_LINE' marker='$MARKER_CONTENT')"
+fi
+wait_for_no_worktree "$FX_REPO" "$WT" || true
+rm -rf "$(dirname "$FX_REPO")" "$RUN_HOME"; unset RUN_HOME
+
+echo "== 34. (AC — PERMISSION_REGIME_UNPINNABLE) claude build whose --help lacks --permission-mode => exit 0, NO marker, no real launch =="
+fresh_git_repo >/dev/null
+# Overwrite stub-claude so --help answers WITHOUT --permission-mode/dontAsk — simulates
+# an incompatible/older claude build. The dispatcher must refuse rather than guess.
+cat > "$FX_BIN/stub-claude" <<'CLEOF'
+#!/usr/bin/env bash
+if [ "$1" = "--help" ]; then
+  printf -- '--some-other-flag <x>\n'
+  exit 0
+fi
+printf 'cwd=%s args=%s\n' "$(pwd)" "$*" >> "$FX_CLAUDE_LOG_PATH"
+exit 0
+CLEOF
+# Substitute the log path (avoids re-deriving the CLEOF-quoting dance above).
+sed -i.bak "s#FX_CLAUDE_LOG_PATH#$FX_CLAUDE_LOG#" "$FX_BIN/stub-claude" && rm -f "$FX_BIN/stub-claude.bak"
+chmod +x "$FX_BIN/stub-claude"
+run_real "$FX_REPO" "$PR"
+RC34=$RUN_RC
+H="$(pr_hash)"
+NO_MARKER=0; [ ! -e "$FX_REPO/.supervisor/review-dispatch/$H" ] && NO_MARKER=1
+NO_LOCK=0; [ ! -d "$FX_REPO/.supervisor/review-dispatch/$H.lock" ] && NO_LOCK=1
+NO_REAL_LAUNCH=0; [ ! -s "$FX_CLAUDE_LOG" ] && NO_REAL_LAUNCH=1
+if [ "$RC34" -eq 0 ] && [ "$NO_MARKER" -eq 1 ] && [ "$NO_LOCK" -eq 1 ] && [ "$NO_REAL_LAUNCH" -eq 1 ]; then
+  ok "PERMISSION_REGIME_UNPINNABLE: exit 0, no marker, no lock, no real launch (probe ran, refused to dispatch)"
+else
+  no "PERMISSION_REGIME_UNPINNABLE wrong (rc=$RC34 no_marker=$NO_MARKER no_lock=$NO_LOCK no_real_launch=$NO_REAL_LAUNCH)"
+fi
+rm -rf "$(dirname "$FX_REPO")"
+
+echo "== 35. MUTATION CONTROL: deleting the regime-probe guard flips BOTH the DRY_RUN and REAL permissive-refused assertions =="
+MUT="$(mktemp -d)/dispatch-mutant.sh"
+# Neutralize the ONE condition that gates REGIME_REFUSED — force it permanently
+# false, so a permissive/unreadable regime is never refused regardless of input.
+sed 's/if \[ "\$PERMISSIVE" -eq 1 \]/if [ "0" -eq 1 ]/' "$DISPATCH" > "$MUT"
+chmod +x "$MUT"
+if cmp -s "$MUT" "$DISPATCH"; then
+  no "mutation control: could not build the mutant — the guard line was not found, control inconclusive"
+else
+  # DRY_RUN half.
+  WD="$(fresh_repo)"
+  RUN_HOME="$(permissive_home)"
+  MUT_OUT="$( cd "$WD" && HOME="$RUN_HOME" LOOMWRIGHT_REVIEW_DISPATCH_DRY_RUN=1 bash "$MUT" "$PR" 2>/dev/null )"
+  MUT_LINE="$(printf '%s' "$MUT_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
+  DRY_FLIPPED=0
+  printf '%s' "$MUT_LINE" | grep -q -- 'LOOMWRIGHT_PR_IS_FORK' || DRY_FLIPPED=1
+  rm -rf "$WD"
+  # Real-path half.
+  fresh_git_repo >/dev/null
+  ( cd "$FX_REPO" && PATH="$FX_BIN:$PATH" HOME="$RUN_HOME" LOOMWRIGHT_CLAUDE_BIN="$FX_BIN/stub-claude" bash "$MUT" "$PR" >/dev/null 2>&1 )
+  WT="$(expected_wt_path "$FX_REPO")"
+  wait_for_no_worktree "$FX_REPO" "$WT" || true
+  H="$(pr_hash)"
+  REAL_MARKER="$(cat "$FX_REPO/.supervisor/review-dispatch/$H" 2>/dev/null || true)"
+  REAL_FLIPPED=0
+  printf '%s' "$REAL_MARKER" | grep -q 'permissive_refused' || REAL_FLIPPED=1
+  rm -rf "$(dirname "$FX_REPO")" "$RUN_HOME"
+  if [ "$DRY_FLIPPED" -eq 1 ] && [ "$REAL_FLIPPED" -eq 1 ]; then
+    ok "mutation control: removing the regime-probe guard flips BOTH dry-run and real-path permissive-refused to non-refused — the guard is load-bearing"
+  else
+    no "mutation control: mutant still refused (dry_flipped=$DRY_FLIPPED real_flipped=$REAL_FLIPPED) — the guard may be vacuous or the mutant missed it"
+  fi
+fi
+rm -rf "$(dirname "$MUT")"
+unset RUN_HOME
+
+echo "== 36. regime probe (DRY_RUN): acceptEdits defaultMode => LOOMWRIGHT_PR_IS_FORK=1 + marker regime=permissive_refused (PR #248 finding #1) =="
+WD="$(fresh_repo)"
+RUN_HOME="$(permissive_home acceptEdits)"
+run_dispatch "$WD" "$PR"
+LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
+MARKER_CONTENT="$(cat "$WD/.supervisor/review-dispatch/$(pr_hash)" 2>/dev/null || true)"
+if [ "$RUN_RC" -eq 0 ] \
+   && printf '%s' "$LINE" | grep -q -- 'LOOMWRIGHT_PR_IS_FORK=1' \
+   && printf '%s' "$MARKER_CONTENT" | grep -q 'regime=permissive_refused'; then
+  ok "regime probe DRY_RUN acceptEdits-refused: LOOMWRIGHT_PR_IS_FORK=1 + marker regime=permissive_refused (line='$LINE')"
+else
+  no "regime probe DRY_RUN acceptEdits-refused wrong — acceptEdits must be treated as permissive, not fallen-through (line='$LINE' marker='$MARKER_CONTENT')"
+fi
+rm -rf "$WD" "$RUN_HOME"; unset RUN_HOME
 
 echo
 echo "RESULT: $pass passed, $fail failed"

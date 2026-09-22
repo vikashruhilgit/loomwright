@@ -53,8 +53,10 @@
 #       written ONLY AFTER the worktree + RUN_LOG header succeed (never before), so
 #       the marker NEVER lies: marker present <=> a dispatch genuinely started.
 #   PINNED fail-safe order (do NOT reorder): (1) existing-marker-wins exit 0 ->
-#   (2) verify claude launchable (else exit 0, NO marker) -> (3) atomic lock ->
-#   (4) sibling worktree -> (5) RUN_LOG header -> (6) marker -> (7) launch wrapper.
+#   (2) verify claude launchable (else exit 0, NO marker) -> (2b) verify a headless
+#   allowlist-honouring permission regime is pinnable (else exit 0, NO marker,
+#   `PERMISSION_REGIME_UNPINNABLE`) -> (3) atomic lock -> (4) sibling worktree ->
+#   (5) RUN_LOG header -> (6) marker -> (7) launch wrapper.
 #   A given PR is dispatched AT MOST ONCE (re-dispatch on a --continue re-run is
 #   blocked by guard (1)). /review-pr NEVER creates a PR, so no review->review
 #   recursion.
@@ -91,14 +93,46 @@
 #   it) rather than exit. `-p` runs the prompt non-interactively, makes permission
 #   handling deterministic (auto-deny instead of a blocking prompt), and exits.
 #
-#   PERMISSIONS — deliberately NO --permission-mode / --dangerously-skip-permissions
-#   (consistent with dispatch-pr-postmortem.sh). The detached run relies on the
-#   project's EXISTING permission settings — best-effort posture. A fire-and-forget,
-#   unattended dispatcher must NOT silently grant itself bypass-all-permissions
-#   authority to run arbitrary edits + `git push`; that is a security decision the
-#   user opts into via their own project settings. Consequence: in a locked-down
-#   project the runner's fixes/pushes may be auto-denied under `-p` (review-only,
-#   best-effort) — but it still exits cleanly and never hangs the dispatcher.
+#   PERMISSIONS — pinned, never inherited (red-team-hardening item 01, decisions R1/R2).
+#   Both `claude` invocation sites (the DRY_RUN_DISPATCH diagnostic printf below, and
+#   the real launch inside the WRAPPER heredoc) read the SAME shared constants/function
+#   — `PERMISSION_MODE` ("dontAsk" — verified against a real `claude --help` run this
+#   session, CLI 2.1.278: "dontAsk - Don't prompt for permissions, deny if not
+#   pre-approved" — the one headless mode that honours an explicit --allowedTools
+#   allowlist without ever auto-approving beyond it, unlike `auto`/`acceptEdits`/
+#   `bypassPermissions`),
+#   `DISALLOWED_TOOLS` ("WebFetch,WebSearch"), and `build_allowed_tools()` (Read, Grep,
+#   Glob, Task, the scoped `Bash(git fetch|checkout|add|commit|push origin <head-ref>:*)`
+#   entries — NEVER a bare `git push` — `Bash(gh pr view|diff|comment:*)`,
+#   `Bash(gh api repos/*|graphql:*)`, plus any test/lint runner double-declared in BOTH
+#   `.supervisor/config.json .drain_allowed_commands[]` (repo scope) AND the user-scope
+#   `~/.claude/loomwright/drain-allowlist.json` for this repo slug — a repo-only entry
+#   is ignored with one log line, decision R2: an opt-in never lives in a file the repo
+#   alone can write). If this `claude` build's `--help` no longer advertises a headless
+#   allowlist-honouring mode (`--permission-mode` / `dontAsk` / `--allowedTools` /
+#   `--disallowedTools` all present), the dispatcher exits 0 printing
+#   `PERMISSION_REGIME_UNPINNABLE` and does NOT dispatch (decision R1 — refuse, don't
+#   guess; checked only on the real, claude-present path — DRY_RUN stays
+#   claude-independent by design).
+#
+#   REGIME PROBE (decision R1/R2 — refuse under a permissive AMBIENT default, in
+#   addition to the pin above). Before dispatch, resolve the effective
+#   `permissions.defaultMode` the way Claude Code does: project LOCAL settings
+#   (`.claude/settings.local.json`) > project SHARED settings (`.claude/settings.json`)
+#   > user settings (`~/.claude/settings.json`) — the first tier that DEFINES a
+#   non-null `defaultMode` wins. If it resolves to a bypass/auto-approve mode (`auto`,
+#   `acceptEdits`, `bypassPermissions`) — or ANY tier's file exists but is unreadable (permission
+#   denied) or malformed JSON, which is ALWAYS treated as permissive, fail CLOSED,
+#   never assumed safe — the dispatcher still dispatches (fail-and-forget invariant is
+#   preserved) but degrades to review-only via the SAME `LOOMWRIGHT_PR_IS_FORK=1`
+#   semantics a fork PR gets, and records `regime=permissive_refused` in the durable
+#   marker. The one opt-out, `LOOMWRIGHT_DRAIN_ALLOW_PERMISSIVE=1`, must be set in the
+#   DISPATCHER'S OWN process env — it is documented in HOOKS.md and
+#   ARCHITECTURE_CONTRACTS.md but is NEVER written into any prompt file, any log line
+#   the model reads, or any `.supervisor/` file (decision R2), so the model itself can
+#   never discover or recommend the escape hatch. No settings file at any tier (a
+#   fresh sandbox) resolves to "unset", which is NOT permissive — the built-in
+#   interactive default is a prompt mode, not an auto-approve one.
 #
 # USAGE
 #   dispatch-pr-review.sh <pr-url> [--no-auto-review|--auto-review] \
@@ -207,6 +241,111 @@ if [ -z "$PR_URL" ]; then
   log "no PR URL supplied — nothing to dispatch"
   exit 0
 fi
+
+# ---- Pinned permission regime (red-team-hardening item 01, decisions R1/R2) --
+# PERMISSION_MODE / DISALLOWED_TOOLS are STATIC constants; ALLOWED_TOOLS is built
+# by ONE shared function (build_allowed_tools) so BOTH invocation sites — the
+# DRY_RUN_DISPATCH diagnostic printf below and the real launch inside the WRAPPER
+# heredoc further down — read the identical construction. Never two
+# independently-typed strings (see header PERMISSIONS section).
+PERMISSION_MODE="dontAsk"
+DISALLOWED_TOOLS="WebFetch,WebSearch"
+
+# drain_allowed_commands_extra — doubly-declared test/lint runners (decision R2).
+# Repo-scope `.drain_allowed_commands[]` in $CONFIG_FILE is honored ONLY for the
+# commands that ALSO appear in the user-scope allowlist
+# ~/.claude/loomwright/drain-allowlist.json under this repo's "<owner>/<repo>"
+# slug (parsed from $PR_URL). A repo-only command is ignored with one log line —
+# an opt-in never lives in a file the repo alone can write. Prints a leading
+# comma-prefixed ",Bash(cmd:*),..." fragment, or nothing.
+drain_allowed_commands_extra() {
+  command -v jq >/dev/null 2>&1 || { printf ''; return 0; }
+  [ -r "$CONFIG_FILE" ] || { printf ''; return 0; }
+  local repo_cmds
+  repo_cmds="$(jq -c '.drain_allowed_commands // []' "$CONFIG_FILE" 2>/dev/null || echo '[]')"
+  case "$repo_cmds" in ''|'[]'|'null') printf ''; return 0 ;; esac
+  local user_file="${HOME:-}/.claude/loomwright/drain-allowlist.json"
+  if [ ! -r "$user_file" ]; then
+    log "drain_allowed_commands present in $CONFIG_FILE but no readable user-scope $user_file — ignoring repo-only entries"
+    printf ''
+    return 0
+  fi
+  local slug user_cmds allowed ignored
+  slug="$(printf '%s' "$PR_URL" | sed -n 's#.*github\.com/\([^/]*/[^/]*\)/pull/.*#\1#p')"
+  user_cmds="$(jq -c --arg slug "$slug" '(.[$slug] // [])' "$user_file" 2>/dev/null || echo '[]')"
+  allowed="$(jq -r -n --argjson repo "$repo_cmds" --argjson user "$user_cmds" \
+    '($repo - ($repo - $user)) | map("Bash(" + . + ":*)") | join(",")' 2>/dev/null || true)"
+  ignored="$(jq -c -n --argjson repo "$repo_cmds" --argjson user "$user_cmds" \
+    '($repo - ($repo - $user)) as $ok | [ $repo[] | select( ([.] | inside($ok)) | not ) ]' 2>/dev/null || echo '[]')"
+  if [ "$ignored" != "[]" ] && [ -n "$ignored" ]; then
+    log "repo-only drain_allowed_commands ignored (not in user-scope drain-allowlist.json for $slug): $ignored"
+  fi
+  [ -n "$allowed" ] && printf ',%s' "$allowed"
+  return 0
+}
+
+# build_allowed_tools <head_ref> — the single shared construction for the
+# heal loop's exact tool needs. $1 is the resolved PR head ref for the scoped
+# push entry, or the literal placeholder token "HEAD_REF" when not yet resolved
+# (the DRY_RUN preview runs BEFORE step ④ resolves it — never a bare `git push`
+# either way, only a not-yet-substituted token in the preview).
+build_allowed_tools() {
+  local href="${1:-HEAD_REF}"
+  printf 'Read,Grep,Glob,Task,Bash(git fetch:*),Bash(git checkout:*),Bash(git add:*),Bash(git commit:*),Bash(git push origin %s:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh api repos/*:*),Bash(gh api graphql:*)%s' \
+    "$href" "$(drain_allowed_commands_extra)"
+}
+
+# ---- Regime probe (decision R1 — refuse under a permissive ambient default) --
+# Resolve permissions.defaultMode the way Claude Code does: project LOCAL
+# settings > project SHARED settings > user settings — first tier that DEFINES
+# a non-null defaultMode wins; a tier that exists but sets no defaultMode falls
+# through. Missing jq, or a tier whose file exists but is unreadable/malformed,
+# is treated as unreadable => permissive => refused (fail CLOSED).
+REGIME_MODE=""
+REGIME_UNREADABLE=0
+if ! command -v jq >/dev/null 2>&1; then
+  REGIME_UNREADABLE=1
+else
+  for _settings_f in ".claude/settings.local.json" ".claude/settings.json" "${HOME:-}/.claude/settings.json"; do
+    [ -n "$_settings_f" ] || continue
+    if [ -e "$_settings_f" ]; then
+      if [ ! -r "$_settings_f" ]; then
+        REGIME_UNREADABLE=1
+        break
+      fi
+      _settings_raw="$(cat "$_settings_f" 2>/dev/null || true)"
+      if ! printf '%s' "$_settings_raw" | jq -e . >/dev/null 2>&1; then
+        REGIME_UNREADABLE=1
+        break
+      fi
+      _mode="$(printf '%s' "$_settings_raw" | jq -r '.permissions.defaultMode // empty' 2>/dev/null || true)"
+      if [ -n "$_mode" ]; then
+        REGIME_MODE="$_mode"
+        break
+      fi
+    fi
+  done
+fi
+
+PERMISSIVE=0
+case "$REGIME_MODE" in
+  auto|acceptEdits|bypassPermissions) PERMISSIVE=1 ;;
+esac
+[ "$REGIME_UNREADABLE" -eq 1 ] && PERMISSIVE=1
+
+REGIME_REFUSED=0
+REGIME_LABEL="pinned"
+if [ "$PERMISSIVE" -eq 1 ] && [ "${LOOMWRIGHT_DRAIN_ALLOW_PERMISSIVE:-}" != "1" ]; then
+  REGIME_REFUSED=1
+  REGIME_LABEL="permissive_refused"
+  log "permission regime resolved permissive (mode='${REGIME_MODE:-<unreadable>}') — degrading to review-only (LOOMWRIGHT_PR_IS_FORK=1)"
+fi
+
+# Timestamp/pid resolved early (needed by both the DRY_RUN marker write below
+# and the real RUN_LOG/marker writes further down).
+DISPATCH_PID="$$"
+NOW_EPOCH="$(date -u +%s 2>/dev/null || echo 0)"
+TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || echo unknown)"
 
 # ---- Resolve enable signal (DEFAULT ON — AC7) -------------------------------
 # The review drain now dispatches BY DEFAULT after PR creation. It is suppressed
@@ -333,8 +472,15 @@ if [ -n "$DRY_RUN" ]; then
     [ -n "$CHECK_WAIT_TIMEOUT" ] && ENV_PREFIX="${ENV_PREFIX}LOOMWRIGHT_CHECK_WAIT_TIMEOUT=${CHECK_WAIT_TIMEOUT} "
     [ -n "$REVIEW_CHECK_PATTERN" ] && ENV_PREFIX="${ENV_PREFIX}LOOMWRIGHT_REVIEW_CHECK_PATTERN=${REVIEW_CHECK_PATTERN} "
   fi
-  printf 'DRY_RUN_DISPATCH: %snohup %s -p --agent %s %s\n' "$ENV_PREFIX" "$CLAUDE_BIN" "$RUNNER" "$PR_URL"
-  printf '%s\n' "$PR_URL" > "$MARKER" 2>/dev/null || true
+  # Regime probe degrade (decision R1): a permissive/unreadable ambient default
+  # with no opt-out set degrades exactly like a fork PR — LOOMWRIGHT_PR_IS_FORK=1.
+  if [ "$REGIME_REFUSED" -eq 1 ]; then
+    ENV_PREFIX="${ENV_PREFIX}LOOMWRIGHT_PR_IS_FORK=1 "
+  fi
+  DRY_ALLOWED_TOOLS="$(build_allowed_tools "")"
+  printf 'DRY_RUN_DISPATCH: %snohup %s -p --permission-mode %s --allowedTools %s --disallowedTools %s --agent %s %s\n' \
+    "$ENV_PREFIX" "$CLAUDE_BIN" "$PERMISSION_MODE" "$DRY_ALLOWED_TOOLS" "$DISALLOWED_TOOLS" "$RUNNER" "$PR_URL"
+  printf 'ts=%s\turl=%s\tregime=%s\n' "$TIMESTAMP" "$PR_URL" "$REGIME_LABEL" > "$MARKER" 2>/dev/null || true
   exit 0
 fi
 
@@ -347,14 +493,27 @@ if ! command -v "$CLAUDE_BIN" >/dev/null 2>&1; then
   exit 0
 fi
 
+# ---- ②b verify a headless allowlist-honouring permission regime is pinnable --
+# (decision R1 — refuse, don't guess.) Confirms THIS claude build's `--help` still
+# advertises `--permission-mode` with the `dontAsk` choice plus `--allowedTools` /
+# `--disallowedTools`. Runs only now that claude is confirmed present; DRY_RUN never
+# reaches here (stays claude-independent by design — see header PERMISSIONS section).
+HELP_OUT="$("$CLAUDE_BIN" --help 2>/dev/null || true)"
+if ! printf '%s' "$HELP_OUT" | grep -q -- '--permission-mode' \
+   || ! printf '%s' "$HELP_OUT" | grep -q 'dontAsk' \
+   || ! printf '%s' "$HELP_OUT" | grep -q -- '--allowedTools' \
+   || ! printf '%s' "$HELP_OUT" | grep -q -- '--disallowedTools'; then
+  log "PERMISSION_REGIME_UNPINNABLE — '$CLAUDE_BIN --help' does not advertise a headless allowlist-honouring --permission-mode; refusing to dispatch (no marker)"
+  exit 0
+fi
+
 # ---- ③ atomic per-PR lock BEFORE worktree creation (AC4a-i) -----------------
 # `mkdir` is atomic: it fails if a concurrent dispatch (step 5.5 vs the PostToolUse
 # hook) already holds the lock. The winner records metadata in the lock dir. The
 # loser exits 0. Stale-lock reclaim (pid-dead + no-marker + past-TTL) closes the
 # crash-between-mkdir-and-marker wedge.
-DISPATCH_PID="$$"
-NOW_EPOCH="$(date -u +%s 2>/dev/null || echo 0)"
-TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || echo unknown)"
+# (DISPATCH_PID / NOW_EPOCH / TIMESTAMP were already resolved earlier — needed
+# by the DRY_RUN marker write above too.)
 RUN_LOG="$LOG_DIR/review-pr-dispatch-$TIMESTAMP-$PR_HASH.log"
 
 write_lock_meta() {
@@ -502,7 +661,7 @@ case "$RUN_LOG" in
   *)  RUN_LOG_ABS="$MAIN_GITDIR/$RUN_LOG" ;;
 esac
 if ! {
-  printf 'DISPATCHED\tts=%s\turl=%s\tuntil_mergeable=%s\trunner=%s\n' "$TIMESTAMP" "$PR_URL" "$UNTIL_MERGEABLE" "$RUNNER"
+  printf 'DISPATCHED\tts=%s\turl=%s\tuntil_mergeable=%s\trunner=%s\tregime=%s\n' "$TIMESTAMP" "$PR_URL" "$UNTIL_MERGEABLE" "$RUNNER" "$REGIME_LABEL"
   printf '# marker: %s\n' "$MARKER"
   printf '# worktree: %s (isolated sibling, detached HEAD @ %s)\n' "$WT_PATH" "$HEAD_SHA"
   printf '# detached `claude -p` buffers stdout until exit — an otherwise-empty body below this\n'
@@ -526,7 +685,7 @@ fi
 # Lock = "someone is dispatching"; marker = "a dispatch genuinely started". The
 # marker is written ONLY now (worktree + header both succeeded) but still BEFORE
 # the launch, so a marker can never claim a dispatch that did not actually start.
-printf '%s\t%s\n' "$TIMESTAMP" "$PR_URL" > "$MARKER" 2>/dev/null || true
+printf 'ts=%s\turl=%s\tregime=%s\n' "$TIMESTAMP" "$PR_URL" "$REGIME_LABEL" > "$MARKER" 2>/dev/null || true
 
 # ---- Thread the until-mergeable + fork env-var signal into the wrapper -------
 # Default ON: export LOOMWRIGHT_UNTIL_MERGEABLE=1 unless opted out. The runner
@@ -546,9 +705,17 @@ fi
 # (ESCALATED + posted comment) for a fork PR whose head is NOT on origin — a
 # `git push origin HEAD:<ref>` would update the wrong ref or fail. Same-repo PRs
 # push via explicit refspec; the runner reads the head ref for that refspec.
-if [ "$IS_FORK" = "true" ]; then
+# A permissive/unreadable ambient permission regime (decision R1, REGIME_REFUSED
+# above) degrades the runner the SAME way — LOOMWRIGHT_PR_IS_FORK=1 — even for a
+# same-repo PR, so the drain never pushes under a regime it could not establish
+# as safe.
+if [ "$IS_FORK" = "true" ] || [ "$REGIME_REFUSED" -eq 1 ]; then
   export LOOMWRIGHT_PR_IS_FORK=1
-  log "fork/cross-repo PR — runner degrades to review-only (no push to origin)"
+  if [ "$IS_FORK" = "true" ]; then
+    log "fork/cross-repo PR — runner degrades to review-only (no push to origin)"
+  else
+    log "permission regime permissive_refused — runner degrades to review-only (LOOMWRIGHT_PR_IS_FORK=1)"
+  fi
 else
   export LOOMWRIGHT_PR_IS_FORK=0
 fi
@@ -611,8 +778,15 @@ esac
 # intermediate state (git unlinks it before this shell forks the two rm's), so
 # "worktree gone, lock still present" is a legitimate window of a few forks —
 # sync on the lock (test-worktree-salvage.sh AC-7c/AC-7d pin both facts).
+# $9/${10}/${11} carry the PINNED permission regime — the SAME PERMISSION_MODE /
+# DISALLOWED_TOOLS constants and build_allowed_tools() function the DRY_RUN
+# diagnostic printf above reads (header PERMISSIONS section; "Real-path binding"
+# AC — this is the REAL production invocation, not merely the diagnostic).
+# ALLOWED_TOOLS_REAL is built with the ACTUAL resolved HEAD_REF (known since
+# step ④), never the DRY_RUN preview's "HEAD_REF" placeholder.
+ALLOWED_TOOLS_REAL="$(build_allowed_tools "${HEAD_REF:-HEAD_REF}")"
 WRAPPER='
-_mg="$1"; _wt="$2"; _lock="$3"; _bin="$4"; _runner="$5"; _pr="$6"; _log="$7"; _salvage="$8"
+_mg="$1"; _wt="$2"; _lock="$3"; _bin="$4"; _runner="$5"; _pr="$6"; _log="$7"; _salvage="$8"; _pmode="$9"; _atools="${10}"; _dtools="${11}"
 trap_cleanup() {
   cd "$_mg" 2>/dev/null || cd / 2>/dev/null || true
   _out=""
@@ -624,9 +798,9 @@ trap_cleanup() {
 }
 trap trap_cleanup EXIT
 cd "$_wt" || exit 0
-"$_bin" -p --agent "$_runner" "$_pr" >>"$_log" 2>&1 </dev/null
+"$_bin" -p --permission-mode "$_pmode" --allowedTools "$_atools" --disallowedTools "$_dtools" --agent "$_runner" "$_pr" >>"$_log" 2>&1 </dev/null
 '
-( nohup bash -c "$WRAPPER" _ "$MAIN_GITDIR" "$WT_PATH" "$LOCK_DIR_ABS" "$CLAUDE_BIN" "$RUNNER" "$PR_URL" "$RUN_LOG_ABS" "$SALVAGE_BIN" >/dev/null 2>&1 & ) >/dev/null 2>&1 || true
+( nohup bash -c "$WRAPPER" _ "$MAIN_GITDIR" "$WT_PATH" "$LOCK_DIR_ABS" "$CLAUDE_BIN" "$RUNNER" "$PR_URL" "$RUN_LOG_ABS" "$SALVAGE_BIN" "$PERMISSION_MODE" "$ALLOWED_TOOLS_REAL" "$DISALLOWED_TOOLS" >/dev/null 2>&1 & ) >/dev/null 2>&1 || true
 
 log "dispatched review-pr-runner for $PR_URL (worktree: $WT_PATH, log: $RUN_LOG)"
 exit 0

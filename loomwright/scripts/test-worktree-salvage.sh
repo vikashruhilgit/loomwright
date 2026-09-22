@@ -153,6 +153,14 @@ first_salvage_dir() {
 # Real-dispatcher harness (copied in shape from test-dispatch-pr-review.sh, not
 # sourced): isolated git repo, stub gh answering `pr view`, stub claude pointed at
 # via LOOMWRIGHT_CLAUDE_BIN that (by default) DIRTIES its cwd before exiting.
+# Every stub-claude variant special-cases `--help` (answered WITHOUT logging to
+# FX_CLAUDE_LOG) so the dispatcher's step-②b permission-regime-pinnable PROBE
+# sees the same flags a real `claude --help` advertises — without it the probe
+# fails closed (PERMISSION_REGIME_UNPINNABLE, no marker, dispatch never reached)
+# against every "REAL dispatcher" case here, same fix as test-dispatch-pr-review.sh.
+# HOME is also isolated per run (never the real developer/CI-runner $HOME) so the
+# regime probe's user-scope settings-file tier (under HOME) reads a controlled,
+# absent file instead of whatever the invoking machine happens to have.
 # ----------------------------------------------------------------------------
 
 # fresh_git_repo [--clean-stub|--logs-killing-stub] — sets FX_REPO, FX_BIN,
@@ -198,6 +206,12 @@ GHEOF
   if [ "$clean_stub" -eq 1 ]; then
     cat > "$FX_BIN/stub-claude" <<CLEOF
 #!/usr/bin/env bash
+if [ "\$1" = "--help" ]; then
+  printf -- '--permission-mode <mode> (choices: "acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan")\n'
+  printf -- '--allowedTools, --allowed-tools <tools...>\n'
+  printf -- '--disallowedTools, --disallowed-tools <tools...>\n'
+  exit 0
+fi
 printf 'cwd=%s args=%s\n' "\$(pwd)" "\$*" >> "$FX_CLAUDE_LOG"
 exit 0
 CLEOF
@@ -215,6 +229,12 @@ CLEOF
     # cannot (dest exists).
     cat > "$FX_BIN/stub-claude" <<CLEOF
 #!/usr/bin/env bash
+if [ "\$1" = "--help" ]; then
+  printf -- '--permission-mode <mode> (choices: "acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan")\n'
+  printf -- '--allowedTools, --allowed-tools <tools...>\n'
+  printf -- '--disallowedTools, --disallowed-tools <tools...>\n'
+  exit 0
+fi
 printf 'cwd=%s args=%s\n' "\$(pwd)" "\$*" >> "$FX_CLAUDE_LOG"
 cp "$FX_EXP_HEAD" head.txt
 mkdir -p notes && cp "$FX_EXP_NOTE" notes/new.md
@@ -227,6 +247,12 @@ CLEOF
     # The DIRTYING stub: one modified tracked file + one untracked file in its cwd.
     cat > "$FX_BIN/stub-claude" <<CLEOF
 #!/usr/bin/env bash
+if [ "\$1" = "--help" ]; then
+  printf -- '--permission-mode <mode> (choices: "acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan")\n'
+  printf -- '--allowedTools, --allowed-tools <tools...>\n'
+  printf -- '--disallowedTools, --disallowed-tools <tools...>\n'
+  exit 0
+fi
 printf 'cwd=%s args=%s\n' "\$(pwd)" "\$*" >> "$FX_CLAUDE_LOG"
 cp "$FX_EXP_HEAD" head.txt
 mkdir -p notes && cp "$FX_EXP_NOTE" notes/new.md
@@ -237,9 +263,16 @@ CLEOF
 }
 
 # run_real <dispatcher> <repo> <args...> — run a dispatcher for real from the repo.
+# HOME is isolated to a per-repo, always-empty dir — never the invoking machine's
+# real $HOME — so the dispatcher's regime probe sees no user-scope settings-file
+# tier at all (absent, not unreadable) regardless of what the developer or CI
+# runner happens to have configured there (same isolation as run_real() in
+# test-dispatch-pr-review.sh).
 run_real() {
   local disp="$1" repo="$2"; shift 2
-  ( cd "$repo" && PATH="$FX_BIN:$PATH" LOOMWRIGHT_CLAUDE_BIN="$FX_BIN/stub-claude" \
+  local fakehome="$repo/.fakehome"
+  mkdir -p "$fakehome"
+  ( cd "$repo" && PATH="$FX_BIN:$PATH" HOME="$fakehome" LOOMWRIGHT_CLAUDE_BIN="$FX_BIN/stub-claude" \
       bash "$disp" "$@" >/dev/null 2>&1 )
   RUN_RC=$?
 }

@@ -72,13 +72,66 @@
 # These mirror the patterns previously inlined in pr-postmortem-gather.sh; that
 # script now pipes its fetched comments through this helper so the patterns are
 # not duplicated.
+#
+# ACTOR ALLOWLIST (--trusted-actors <file>, red-team-hardening item 01, decision
+# R2): OPTIONAL. When passed, the file is expected to be a JSON array of EXACT
+# GitHub logins (user-scope, e.g. `~/.claude/loomwright/trusted-actors.json` —
+# resolving that default path is the CALLER's job, not this script's). When the
+# resolved file is present, readable, and a valid JSON array, `bot_author_re`
+# is NOT consulted at all — author classification becomes an EXACT match
+# against that list (the `review_marker_re` body-content gate still applies,
+# unchanged, as an AND condition). When --trusted-actors is passed but the file
+# is missing/unreadable/not-an-array, this script falls back to the built-in
+# `bot_author_re` (unchanged pre-existing behavior) and logs ONE line to
+# stderr: `classify-bot-review: actor_allowlist_absent`. When --trusted-actors
+# is NOT passed at all, behavior is 100% unchanged (existing callers keep
+# working exactly as before — no log line, no opt-in).
 
 set -euo pipefail
+
+TRUSTED_ACTORS_FILE=""
+TRUSTED_ACTORS_GIVEN=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --trusted-actors)
+      TRUSTED_ACTORS_FILE="${2:-}"
+      TRUSTED_ACTORS_GIVEN=1
+      shift
+      if [ $# -gt 0 ]; then shift; fi
+      ;;
+    --trusted-actors=*)
+      TRUSTED_ACTORS_FILE="${1#--trusted-actors=}"
+      TRUSTED_ACTORS_GIVEN=1
+      shift
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
 
 # jq absent → fail-safe empty array, exit 0 (never crash a caller).
 if ! command -v jq >/dev/null 2>&1; then
   printf '[]\n'
   exit 0
+fi
+
+# Resolve the actor-allowlist mode. USE_TRUSTED_ACTORS=1 => exact-match mode
+# (bot_author_re not consulted); =0 => existing bot_author_re path (either
+# --trusted-actors was never passed, or its file is unusable — logged once).
+USE_TRUSTED_ACTORS=0
+TRUSTED_ACTORS_JSON='[]'
+if [ "$TRUSTED_ACTORS_GIVEN" -eq 1 ]; then
+  if [ -n "$TRUSTED_ACTORS_FILE" ] && [ -r "$TRUSTED_ACTORS_FILE" ]; then
+    _ta="$(jq -c '.' "$TRUSTED_ACTORS_FILE" 2>/dev/null || true)"
+    if [ -n "$_ta" ] && printf '%s' "$_ta" | jq -e 'type=="array"' >/dev/null 2>&1; then
+      TRUSTED_ACTORS_JSON="$_ta"
+      USE_TRUSTED_ACTORS=1
+    fi
+  fi
+  if [ "$USE_TRUSTED_ACTORS" -eq 0 ]; then
+    printf 'classify-bot-review: actor_allowlist_absent (falling back to bot_author_re)\n' >&2
+  fi
 fi
 
 # Read all of stdin, but with a BOUNDED wait so a missing or never-closing stdin
@@ -121,15 +174,32 @@ esac
 # guard degrades non-array (and, via the outer 2>/dev/null fallback, invalid)
 # JSON to []. Every per-element field access is strings-guarded so hostile-typed
 # elements degrade to non-matches rather than aborting the program.
-OUTPUT="$(printf '%s' "$INPUT" | jq -c '
+OUTPUT="$(printf '%s' "$INPUT" | jq -c \
+  --argjson use_trusted "$( [ "$USE_TRUSTED_ACTORS" -eq 1 ] && echo true || echo false )" \
+  --argjson trusted_actors "$TRUSTED_ACTORS_JSON" '
   # ---- SINGLE SOURCE OF TRUTH: bot-review classification regexes ----
   def bot_author_re: "^claude(\\[bot\\])?$|\\[bot\\]$|^github-actions";
   def review_marker_re: "\\b(review(s|ed|er|ers|ing)?|findings?)\\b";
+  # Author gate: EXACT match against $trusted_actors when --trusted-actors
+  # resolved a usable file ($use_trusted); otherwise the unchanged regex.
+  # NOTE: the $login parameter is $-PREFIXED deliberately (jq VALUE-binding
+  # semantics, jq 1.6+) -- a plain def author_ok(login): binds login as a
+  # FILTER (call-by-name), so ($trusted_actors | index(login)) would silently
+  # re-invoke that filter with . = $trusted_actors at the point of use (the
+  # login extraction would then see an ARRAY, not the original comment
+  # object, and always resolve to empty -- reproduced live: author_ok
+  # returned false for an exact-listed login until this was fixed).
+  def author_ok($login):
+    if $use_trusted then
+      (($trusted_actors | index($login)) != null)
+    else
+      ($login | test(bot_author_re; "i"))
+    end;
 
   if type=="array" then
     [ .[]?
       | select(
-          ((((.user.login)? | strings) // "") | test(bot_author_re; "i"))
+          author_ok((((.user.login)? | strings) // ""))
           and (((((.body)? | strings) // "") | gsub("[[:space:]]+"; "")) != "")
           and ((((.body)? | strings) // "") | test(review_marker_re; "i"))
         ) ]
