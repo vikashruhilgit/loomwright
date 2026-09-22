@@ -348,9 +348,12 @@ gh api repos/<owner>/<repo>/branches/<base>/protection/required_status_checks
 wait-for-checks.sh <pr-url> --sha <current-sha> --bound <check_wait_timeout> \
     --interval 15 --review-check-pattern <pattern>
 # prints exactly ONE final line:
-#   SETTLED sha=<sha> required=<green|red> review_producing=<settled|elapsed>
-#   ELAPSED sha=<sha> required=<green|red|pending> review_producing=<settled|elapsed> pending=<...>
-if result starts with "SETTLED":
+#   SETTLED sha=<sha> required=<green|red|unknown> review_producing=<settled|elapsed>
+#   ELAPSED sha=<sha> required=<green|red|pending|unknown> review_producing=<settled|elapsed> pending=<...>
+if result contains "required=unknown":
+   escalate                                 # §U2 fail-CLOSED: unreadable required-check metadata is
+                                             # NEVER treated as green, even on a "SETTLED" line
+elif result starts with "SETTLED":
    break                                    # scoped set settled — proceed to re-scan ALL channels (U1)
 # else ("ELAPSED") — fall through to AC4's fail-CLOSED escalation below
 ```
@@ -594,6 +597,10 @@ wait-for-checks.sh <pr-url> --sha <pushed_sha> --bound <check_wait_timeout> \
 # commit's SUCCESS — this is the exact race R1 names).
 result = parse(wait-for-checks.sh output)
 if result starts with "SETTLED":
+  # result.required == "unknown" (unreadable branch-protection metadata,
+  # PR #251 review finding 2) intentionally falls into the else branch here —
+  # anything other than exactly "green" is RED, which degrades to ESCALATED
+  # below, never READY.
   return { result: ("GREEN" if result.required == "green" else "RED"), failing_names: <from result> }
 else:  # "ELAPSED" — bound elapsed with pushed_sha never fully settled
   return { result: "UNREADABLE", failing_names: {} }   # Hole 1's fail-safe

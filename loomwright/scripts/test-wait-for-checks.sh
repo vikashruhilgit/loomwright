@@ -19,6 +19,10 @@
 #   6. --required-only scope: a review-producing check left pending is IGNORED
 #      (only required checks are waited on).
 #   7. always exits 0, even on a bad/missing gh (degrades to ELAPSED).
+#   8. bad usage (missing --sha/--bound) => ELAPSED, never a non-zero exit.
+#   9/10. (PR #251 review finding 2) a branch-protection read that fails with
+#      a non-404 error => required=unknown, NEVER a vacuous green; a genuine
+#      404 (real unprotected branch) => required=green (verified empty).
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -276,6 +280,62 @@ if [ "$RC8" -eq 0 ] && printf '%s' "$OUT8" | grep -q '^ELAPSED'; then
 else
   no "bad usage wrong (rc=$RC8 out='$OUT8')"
 fi
+
+# ----------------------------------------------------------------------------
+# Case 9/10 (PR #251 review finding 2): an unreadable branch-protection read
+# must NEVER be silently reported as required=green — that is the exact
+# vacuous-success hole this whole item exists to close. A genuinely
+# unprotected branch (real 404 "Branch not protected") is the ONE case that
+# is a VERIFIED empty required set and stays required=green; anything else
+# (403/5xx/garbage) must surface required=unknown so the caller's fail-CLOSED
+# rule (review-heal/SKILL.md §U2) can escalate instead of proceeding blind.
+# ----------------------------------------------------------------------------
+write_protection_failure_stub() {
+  local dir="$1" errline="$2"
+  cat > "$dir/gh" <<EOF
+#!/usr/bin/env bash
+case "\$*" in
+  *baseRefName*)
+    printf '{"baseRefName":"main"}\n'
+    exit 0
+    ;;
+  *headRefOid*)
+    printf '{"headRefOid":"$SHA","statusCheckRollup":[]}\n'
+    exit 0
+    ;;
+esac
+if [ "\$1" = "api" ]; then
+  echo "$errline" >&2
+  exit 1
+fi
+exit 0
+EOF
+  chmod +x "$dir/gh"
+}
+
+echo "== 9. branch-protection read fails with a non-404 error (403) => required=unknown, NEVER green =="
+D9="$(fresh_stub_dir)"
+write_protection_failure_stub "$D9" "gh: Resource not accessible by integration (HTTP 403)"
+OUT9="$(GH="$D9/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 10 --interval 1 --required-only)"
+RC9=$?
+if [ "$RC9" -eq 0 ] && printf '%s' "$OUT9" | grep -qE '^SETTLED sha=deadbeef00 required=unknown'; then
+  ok "protection 403: required=unknown, not green ($OUT9)"
+else
+  no "protection 403 wrong (rc=$RC9 out='$OUT9') -- must never claim required=green on an unreadable read"
+fi
+rm -rf "$D9"
+
+echo "== 10. branch-protection read fails with a genuine 404 (unprotected branch) => required=green (verified empty, NOT unknown) =="
+D10="$(fresh_stub_dir)"
+write_protection_failure_stub "$D10" "gh: Branch not protected (HTTP 404)"
+OUT10="$(GH="$D10/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 10 --interval 1 --required-only)"
+RC10=$?
+if [ "$RC10" -eq 0 ] && printf '%s' "$OUT10" | grep -qE '^SETTLED sha=deadbeef00 required=green'; then
+  ok "genuinely unprotected (404): required=green, not unknown ($OUT10)"
+else
+  no "genuinely unprotected (404) wrong (rc=$RC10 out='$OUT10') -- a verified-empty required set must not be punished as unknown"
+fi
+rm -rf "$D10"
 
 echo
 echo "RESULT: $pass passed, $fail failed"

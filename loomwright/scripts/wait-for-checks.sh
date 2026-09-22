@@ -59,11 +59,16 @@
 #     read degrades to an ELAPSED-shaped line, never a non-zero exit the
 #     caller would have to special-case.
 #   - Prints EXACTLY ONE final line to stdout:
-#       SETTLED sha=<sha> required=<green|red> review_producing=<settled|elapsed>
-#       ELAPSED sha=<sha> required=<green|red|pending> review_producing=<settled|elapsed> pending=<comma-list|none>
+#       SETTLED sha=<sha> required=<green|red|unknown> review_producing=<settled|elapsed>
+#       ELAPSED sha=<sha> required=<green|red|pending|unknown> review_producing=<settled|elapsed> pending=<comma-list|none>
 #     The caller (the model, per the skill prose) is responsible for turning
 #     this line into a READY/ESCALATED decision — this script only reports
 #     scoped-settlement fact, it never decides drain readiness itself.
+#     `required=unknown` means the branch-protection read that would name the
+#     required contexts FAILED for a reason other than a verified "genuinely
+#     unprotected" 404 (403/5xx/network/garbage) — per skills/review-heal/
+#     SKILL.md §U2's fail-CLOSED rule, the caller MUST treat `unknown`
+#     exactly like an unresolved/in-flight check, never like `green`.
 #
 # GH STUB SEAM (tests)
 #   The `gh` binary is invoked via "${GH:-gh}" throughout — a test exports
@@ -179,21 +184,41 @@ review_pattern_match() {
   return 1
 }
 
-# ---- Required-check discovery (§U2, fail-closed spirit — an unreadable read
-# here degrades required_contexts_json to [], which makes `required=green`
-# vacuously true; the caller (the SKILL prose's fail-CLOSED rule) is what
-# turns an unverifiable required set into ESCALATED, not this script) --------
+# ---- Required-check discovery (§U2, fail-CLOSED — PR #251 review finding 2)
+# A protection read that fails MUST be distinguished from a branch that is
+# genuinely unprotected: only a real 404 ("Branch not protected") is a
+# VERIFIED empty required set. Any other failure (403/5xx/network/garbage —
+# a realistic case for a PR-review bot token lacking admin-level branch-read
+# access) sets protection_unknown=1, which forces the `required=` field to
+# `unknown` in this script's own output below — never a vacuous `green` — so
+# the caller can apply §U2's existing fail-CLOSED rule ("required-check
+# metadata unavailable ⇒ MUST NOT claim READY ⇒ ESCALATED") off THIS script's
+# line alone, without depending on a later re-scan to catch the gap.
 required_contexts_json="[]"
+protection_unknown=0
 if [ -n "$OWNER" ] && [ -n "$REPO" ]; then
   _base="$("$GH_BIN" pr view "$PR_URL" --json baseRefName 2>/dev/null || true)"
   BASE_REF="$(printf '%s' "$_base" | "$JQ_BIN" -r '.baseRefName // empty' 2>/dev/null || true)"
   [ -n "$BASE_REF" ] || BASE_REF="main"
-  _prot="$("$GH_BIN" api "repos/$OWNER/$REPO/branches/$BASE_REF/protection" 2>/dev/null || true)"
-  if [ -n "$_prot" ] && printf '%s' "$_prot" | "$JQ_BIN" -e . >/dev/null 2>&1; then
+  # Single call, stdout+stderr merged: on success stdout is the JSON body; on
+  # failure gh writes its error (including "HTTP 404"/"Branch not protected"
+  # for a genuinely unprotected branch) to stderr and stdout is empty, so the
+  # merged capture carries whichever one actually happened.
+  _prot="$("$GH_BIN" api "repos/$OWNER/$REPO/branches/$BASE_REF/protection" 2>&1)"
+  _prot_rc=$?
+  if [ "$_prot_rc" -eq 0 ] && printf '%s' "$_prot" | "$JQ_BIN" -e . >/dev/null 2>&1; then
     required_contexts_json="$(printf '%s' "$_prot" | "$JQ_BIN" -c '
       ((.required_status_checks.contexts // []) + ((.required_status_checks.checks // []) | map(.context))) | unique
     ' 2>/dev/null || echo '[]')"
     [ -n "$required_contexts_json" ] || required_contexts_json="[]"
+  else
+    case "$_prot" in
+      *"Branch not protected"*|*"HTTP 404"*)
+        required_contexts_json="[]" ;;  # verified: genuinely no protection
+      *)
+        protection_unknown=1
+        required_contexts_json="[]" ;;  # unreadable — NOT verified empty
+    esac
   fi
 fi
 
@@ -279,6 +304,7 @@ EOF_ROWS
   if [ "$required_settled" -eq 1 ] && [ "$rp_settled" -eq 1 ]; then
     _req_field="red"
     [ "$required_green" -eq 1 ] && _req_field="green"
+    [ "$protection_unknown" -eq 1 ] && _req_field="unknown"
     printf 'SETTLED sha=%s required=%s review_producing=settled\n' "$SHA" "$_req_field"
     exit 0
   fi
@@ -289,6 +315,7 @@ EOF_ROWS
       _req_field="red"
       [ "$required_green" -eq 1 ] && _req_field="green"
     fi
+    [ "$protection_unknown" -eq 1 ] && _req_field="unknown"
     _rp_field="elapsed"
     [ "$rp_settled" -eq 1 ] && _rp_field="settled"
     [ -n "$pending_names" ] || pending_names="none"
