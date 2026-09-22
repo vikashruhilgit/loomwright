@@ -310,6 +310,64 @@ else
   no "(12) wrong (rc=$RUN_RC): $RUN_OUT"
 fi
 
+# =============================================================================
+# --trusted-actors (red-team-hardening item 01, decision R2)
+# =============================================================================
+
+echo "== 13. --trusted-actors: exact-listed login classified IN, bot_author_re NOT consulted =="
+printf '["realbot"]' > "$TMP/trusted.json"
+IN13='[{"id": 1301, "user": {"login": "realbot"}, "body": "This is a review finding: MEDIUM issue"}]'
+OUT13="$( printf '%s' "$IN13" | bash "$CLASSIFY" --trusted-actors "$TMP/trusted.json" 2>/dev/null )"; RC13=$?
+if [ "$RC13" -eq 0 ] && printf '%s' "$OUT13" | jq -e '(type=="array") and (length==1) and (.[0].user.login=="realbot")' >/dev/null 2>&1; then
+  ok "--trusted-actors exact match: non-bot-looking but exact-listed login classified IN"
+else
+  no "(13) wrong (rc=$RC13): $OUT13"
+fi
+
+echo "== 14. --trusted-actors: a bot_author_re-matching login NOT on the list is classified OUT =="
+IN14='[{"id": 1401, "user": {"login": "claude[bot]"}, "body": "This is a review finding: MEDIUM issue"}]'
+OUT14="$( printf '%s' "$IN14" | bash "$CLASSIFY" --trusted-actors "$TMP/trusted.json" 2>/dev/null )"; RC14=$?
+if [ "$RC14" -eq 0 ] && printf '%s' "$OUT14" | jq -e '(type=="array") and (length==0)' >/dev/null 2>&1; then
+  ok "--trusted-actors exact-match mode: bot_author_re match alone is insufficient when the list is present"
+else
+  no "(14) wrong (rc=$RC14): $OUT14"
+fi
+
+echo "== 15. --trusted-actors with a MISSING file: falls back to bot_author_re + logs actor_allowlist_absent once =="
+OUT15="$( printf '%s' "$IN14" | bash "$CLASSIFY" --trusted-actors "$TMP/does-not-exist.json" 2>"$TMP/stderr15.log" )"; RC15=$?
+ERRTXT15="$(cat "$TMP/stderr15.log")"
+if [ "$RC15" -eq 0 ] \
+   && printf '%s' "$OUT15" | jq -e '(type=="array") and (length==1)' >/dev/null 2>&1 \
+   && printf '%s' "$ERRTXT15" | grep -q 'actor_allowlist_absent' \
+   && [ "$(printf '%s' "$ERRTXT15" | grep -c 'actor_allowlist_absent')" -eq 1 ]; then
+  ok "--trusted-actors missing file: falls back to bot_author_re (claude[bot] IN), logs actor_allowlist_absent exactly once"
+else
+  no "(15) wrong (rc=$RC15 out=$OUT15 err='$ERRTXT15')"
+fi
+
+echo "== 16. --trusted-actors NEVER passed: behavior 100% unchanged, no log line =="
+OUT16="$( printf '%s' "$IN14" | bash "$CLASSIFY" 2>"$TMP/stderr16.log" )"; RC16=$?
+ERRTXT16="$(cat "$TMP/stderr16.log")"
+if [ "$RC16" -eq 0 ] \
+   && printf '%s' "$OUT16" | jq -e '(type=="array") and (length==1)' >/dev/null 2>&1 \
+   && [ -z "$ERRTXT16" ]; then
+  ok "no --trusted-actors flag: unchanged bot_author_re behavior, no actor_allowlist_absent log (not opted in)"
+else
+  no "(16) wrong (rc=$RC16 out=$OUT16 err='$ERRTXT16')"
+fi
+
+echo "== 17. --trusted-actors with an unreadable/malformed-JSON file: treated like missing (falls back) =="
+printf 'not valid json' > "$TMP/malformed.json"
+OUT17="$( printf '%s' "$IN14" | bash "$CLASSIFY" --trusted-actors "$TMP/malformed.json" 2>"$TMP/stderr17.log" )"; RC17=$?
+ERRTXT17="$(cat "$TMP/stderr17.log")"
+if [ "$RC17" -eq 0 ] \
+   && printf '%s' "$OUT17" | jq -e '(type=="array") and (length==1)' >/dev/null 2>&1 \
+   && printf '%s' "$ERRTXT17" | grep -q 'actor_allowlist_absent'; then
+  ok "--trusted-actors malformed JSON: treated as absent, falls back to bot_author_re, logged"
+else
+  no "(17) wrong (rc=$RC17 out=$OUT17 err='$ERRTXT17')"
+fi
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
