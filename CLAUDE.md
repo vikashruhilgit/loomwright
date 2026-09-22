@@ -100,7 +100,7 @@ Full hook table (trigger, location, validation, one row per hook) relocated to `
 
 **Disabled by default.** Opt in via `/telemetry enable` (interactive) or `LOOMWRIGHT_TELEMETRY_REPO=owner/repo`; `/telemetry status|disable|test` manage it. Hooks **never** prompt — consent flows only through `/telemetry`.
 
-Two invariants worth knowing here: it **fails CLOSED on privacy** (any whitelist match aborts the post, core exits `2`), and there is **no origin-remote fallback** — the plugin runs in arbitrary user projects whose origin is the wrong place for telemetry.
+Two invariants worth knowing here: it **fails CLOSED on privacy** (any whitelist match aborts the post, core exits `2`), and there is **no origin-remote fallback** — the plugin runs in arbitrary user projects whose origin is the wrong place for telemetry. **Consent — and the webhook destination — are user-scoped, keyed by repo** (`~/.claude/loomwright/egress.json`, v15.87.0): a repo-relative file can at most *request*, never grant, so a cloned/attacker-controlled repo can no longer choose its own consent or destination.
 
 Full design (wrapper-vs-core architecture, scoring rubric, privacy whitelist, exit-code table 0..5): `loomwright/docs/TELEMETRY.md`.
 

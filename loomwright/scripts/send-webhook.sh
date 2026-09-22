@@ -38,8 +38,11 @@
 #     hook_event_name=PreToolUse + tool_name=AskUserQuestion (requires
 #     tool_input.questions). Scope-gated via LOOMWRIGHT_NOTIFY_SCOPE
 #     (plugin default / all). Webhook URL resolves from LOOMWRIGHT_WEBHOOK_URL
-#     or, if unset, the .supervisor/config.json (legacy
-#     .supervisor/notify-config.json still read as a fallback) `.webhook_url` fallback.
+#     or, if unset, the user-scope ~/.claude/loomwright/egress.json entry for
+#     this repo's slug via resolve-egress-config.sh (v15.87.0 — a
+#     repo-relative .supervisor/config.json/notify-config.json `.webhook_url`
+#     is still read but only as an informational REQUEST, never a grant; see
+#     docs/TELEMETRY.md §"Webhook Notifications").
 #       ntfy.sh URLs (or LOOMWRIGHT_WEBHOOK_FORMAT=ntfy) → plain-text body
 #         + Title/Priority/Tags headers
 #       other URLs → {event:"paused", question, timestamp}
@@ -63,7 +66,8 @@
 #
 # ----------------------------------------------------------------------------
 # Behaviour (supervisor_result path — unchanged from v13.0.1):
-#   1. If LOOMWRIGHT_WEBHOOK_URL is unset/empty → exit 0 (silent no-op).
+#   1. If no webhook URL resolves (LOOMWRIGHT_WEBHOOK_URL, else the user-scope
+#      egress.json entry — v15.87.0) → exit 0 (silent no-op).
 #   2. Read SubagentStop JSON payload from stdin.
 #   3. Use `jq -r // empty` to defensively extract SUPERVISOR_RESULT fields
 #      (status, pr_url, summary). On parse failure → log to stderr, exit 0.
@@ -73,7 +77,7 @@
 #   6. ALWAYS exit 0 regardless of curl outcome (fire-and-forget).
 #
 # Behaviour (gate path — new in v14.0.0):
-#   1. If LOOMWRIGHT_WEBHOOK_URL is unset/empty → exit 0 (silent no-op).
+#   1. If no webhook URL resolves (same resolution as above) → exit 0 (silent no-op).
 #   2. Parse remaining CLI flags. Missing --gate-type is treated as a no-op
 #      (log to stderr, exit 0).
 #   3. If jq not on PATH → log to stderr, exit 0 (jq is required for safe
@@ -92,22 +96,66 @@ set -u
 # Intentionally NO `set -e` — wrapper must absorb every child failure.
 # pipefail is also OFF for the same reason.
 
-# ---- Resolve webhook URL (env var, then repo-local config file) -------------
+# ---- Resolve webhook URL (env var, then USER-SCOPE egress config) -----------
 # v14.1.0 (red-team §2.1): env-var inheritance is fragile. A URL exported only in
 # ~/.zshrc does NOT reach a non-interactive hook subprocess unless the shell that
-# launched `claude` already had it exported — GUI/IDE launches and login shells
-# that source .zprofile/.zshenv silently miss it. Fall back to a repo-local
-# config file so notification config survives regardless of launch context.
-# The env var wins when both are set.
-WEBHOOK_URL="${LOOMWRIGHT_WEBHOOK_URL:-}"
-# Back-compatible config path: prefer the new .supervisor/config.json, fall back
-# to the legacy .supervisor/notify-config.json (new path wins when both exist).
-# Resolution is file-level, not a key merge: a partial config.json shadows the legacy file entirely, so migrate the whole file.
-CONFIG_FILE=".supervisor/config.json"
-[ -r "$CONFIG_FILE" ] || CONFIG_FILE=".supervisor/notify-config.json"
-if [ -z "$WEBHOOK_URL" ] && [ -r "$CONFIG_FILE" ] && command -v jq >/dev/null 2>&1; then
-  WEBHOOK_URL="$(jq -r '.webhook_url // empty' "$CONFIG_FILE" 2>/dev/null || true)"
+# launched `claude` already had it exported. red-team-hardening item 02
+# (FATAL, reproduced 2026-09-21): a repo-relative `.supervisor/config.json` ->
+# `.webhook_url` could choose its OWN egress destination — the fallback below
+# used to read that file directly. It now goes through
+# resolve-egress-config.sh: the destination is a fact about the USER, stored
+# in ~/.claude/loomwright/egress.json, keyed by repo slug. A repo-relative
+# config.json (legacy notify-config.json fallback, same precedence as before)
+# is still read, but only as an informational REQUEST — see
+# docs/TELEMETRY.md §"Webhook Notifications". The env var wins when both are
+# set.
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
+
+sha256_hex() {
+  local s="${1:-}"
+  if command -v shasum >/dev/null 2>&1; then
+    printf '%s' "$s" | shasum -a 256 2>/dev/null | awk '{print $1}'
+  elif command -v sha256sum >/dev/null 2>&1; then
+    printf '%s' "$s" | sha256sum 2>/dev/null | awk '{print $1}'
+  elif command -v openssl >/dev/null 2>&1; then
+    printf '%s' "$s" | openssl dgst -sha256 2>/dev/null | awk '{print $NF}'
+  else
+    printf ''
+  fi
+}
+
+# MUTATION_CONTROL_BEGIN: resolve-egress-config-integration
+WEBHOOK_URL=""
+WEBHOOK_URL_SHA256=""
+EGRESS_REPO_SLUG=""
+EGRESS_REPO_REQUESTED_WEBHOOK_URL=""
+RESOLVER_SCRIPT="${SELF_DIR}/resolve-egress-config.sh"
+if [ -n "$SELF_DIR" ] && [ -f "$RESOLVER_SCRIPT" ]; then
+  RESOLVER_OUT="$(bash "$RESOLVER_SCRIPT" 2>/dev/null || true)"
+  while IFS='=' read -r rk rv; do
+    case "$rk" in
+      REPO_SLUG) EGRESS_REPO_SLUG="$rv" ;;
+      WEBHOOK_URL) WEBHOOK_URL="$rv" ;;
+      WEBHOOK_URL_SHA256) WEBHOOK_URL_SHA256="$rv" ;;
+      REPO_REQUESTED_WEBHOOK_URL) EGRESS_REPO_REQUESTED_WEBHOOK_URL="$rv" ;;
+    esac
+  done <<EOF
+$RESOLVER_OUT
+EOF
 fi
+
+# A repo-relative request whose sha256 does not match the resolved
+# WEBHOOK_URL (including "no user-scope entry at all") is ignored; WEBHOOK_URL
+# above never contains the repo's own value in that case, this line only
+# makes the refusal visible.
+if [ -n "$EGRESS_REPO_REQUESTED_WEBHOOK_URL" ]; then
+  _req_sha256="$(sha256_hex "$EGRESS_REPO_REQUESTED_WEBHOOK_URL")"
+  if [ "$_req_sha256" != "$WEBHOOK_URL_SHA256" ]; then
+    printf 'repo_webhook_ignored slug=%s\n' "$EGRESS_REPO_SLUG" >&2
+  fi
+fi
+# MUTATION_CONTROL_END: resolve-egress-config-integration
+
 if [ -z "$WEBHOOK_URL" ]; then
   exit 0
 fi

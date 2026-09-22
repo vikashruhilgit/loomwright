@@ -791,7 +791,7 @@ The tail's exit status is **ignored** — the dispatcher always exits 0 and the 
 
 - `skills/autonomous-loop/SKILL.md` — the `/autonomous` outer loop; its EVALUATE step is entry sense (b) for review-heal.
 - `skills/state-management/SKILL.md` — `.supervisor/` state-file conventions.
-- The run-behavior config `.supervisor/config.json` (where `auto_review` and `webhook_url` live; legacy `.supervisor/notify-config.json` is still read as a fallback, new path wins when both exist) is documented in the dispatch scripts (`scripts/dispatch-pr-review.sh`, `scripts/send-webhook.sh`) and `commands/supervisor.md`.
+- The run-behavior config `.supervisor/config.json` (where `auto_review` lives, and where a `webhook_url` may be MIRRORED for the local run-view UI — v15.87.0: the authoritative webhook destination is now the user-scope `~/.claude/loomwright/egress.json`, this file's own `webhook_url` is read only as an informational request; legacy `.supervisor/notify-config.json` is still read as a fallback for that informational read, new path wins when both exist) is documented in the dispatch scripts (`scripts/dispatch-pr-review.sh`, `scripts/send-webhook.sh`) and `commands/supervisor.md`.
 - Supervisor Phase 4.5 (`agents/supervisor.md`) — the in-Supervisor review→fix→re-review machinery this loop is extracted from.
 
 ## Quality Gates

@@ -54,11 +54,17 @@ SCRIPT_PATH="${BASH_SOURCE[0]}"
 SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 CORE="$SCRIPT_DIR/send-telemetry-core.sh"
+RESOLVER="$SCRIPT_DIR/resolve-egress-config.sh"
 FIXTURES_DIR="$SCRIPT_DIR/telemetry-fixtures"
 GOLDENS_DIR="$FIXTURES_DIR/golden"
-CONSENT_FILE="$REPO_ROOT/.supervisor/telemetry-consent.json"
-CONSENT_BACKUP=""
 WRITE_GOLDENS="${WRITE_GOLDENS:-0}"
+
+# The env override for the target repo/webhook must not leak into the
+# consent-matrix assertions (allow_no_repo must resolve exit=4, not
+# env-resolved) — same hermeticity guard test-send-telemetry-core.sh and
+# test-resolve-egress-config.sh use.
+unset LOOMWRIGHT_TELEMETRY_REPO 2>/dev/null || true
+unset LOOMWRIGHT_WEBHOOK_URL 2>/dev/null || true
 
 mkdir -p "$GOLDENS_DIR" 2>/dev/null || true
 
@@ -67,46 +73,64 @@ if [ ! -x "$CORE" ]; then
   exit 1
 fi
 
+if [ ! -f "$RESOLVER" ]; then
+  echo "FATAL  resolve-egress-config.sh not found: $RESOLVER" >&2
+  exit 1
+fi
+
 if [ ! -d "$FIXTURES_DIR" ]; then
   echo "FATAL  fixtures dir not found: $FIXTURES_DIR" >&2
   exit 1
 fi
 
-# ---- Backup + restore consent file via trap ---------------------------------
-backup_consent() {
-  if [ -f "$CONSENT_FILE" ]; then
-    CONSENT_BACKUP="$(mktemp)"
-    cp "$CONSENT_FILE" "$CONSENT_BACKUP"
-  fi
+# ---- User-scope egress isolation (v15.87.0: consent + target-repo now -------
+#      resolve EXCLUSIVELY through ~/.claude/loomwright/egress.json, keyed by
+#      repo slug — red-team-hardening item 02). A repo-relative
+#      .supervisor/telemetry-consent.json can now only ever REQUEST a target
+#      repo (informational, never a grant), so this harness's original
+#      approach of writing that repo-relative file directly to drive the
+#      none/allow_no_repo/allow_with_repo matrix no longer has any effect on
+#      consent — every fixture would resolve to "consent uninitialised"
+#      (WOULD_EXIT=3) regardless of state, which was the CI regression this
+#      fix addresses. Fixture setup below now writes the user-scope file
+#      instead, under an isolated $HOME (mirroring test-send-telemetry-core.sh
+#      / test-resolve-egress-config.sh's SB_HOME pattern — this harness must
+#      never read/write the real operator's egress.json).
+SB_HOME="$(mktemp -d 2>/dev/null)" || { echo "FATAL  mktemp failed" >&2; exit 1; }
+SB_EGRESS="$SB_HOME/.claude/loomwright/egress.json"
+mkdir -p "$SB_HOME/.claude/loomwright"
+trap 'rm -rf "$SB_HOME" 2>/dev/null || true' EXIT INT TERM
+
+# REPO_SLUG derivation depends only on `git remote get-url origin` under
+# $REPO_ROOT (never on $HOME) — safe to resolve once, up front, with the
+# ambient environment. This is a READ only; nothing is written to the real
+# operator's egress.json by this call.
+SLUG="$( (cd "$REPO_ROOT" && bash "$RESOLVER") | sed -nE 's/^REPO_SLUG=(.*)$/\1/p' )"
+if [ -z "$SLUG" ]; then
+  echo "FATAL  could not resolve REPO_SLUG for $REPO_ROOT (resolve-egress-config.sh printed none — is it a git repo?)" >&2
+  exit 1
+fi
+
+# ---- Consent-state setters (user-scope egress.json, keyed by $SLUG) ---------
+user_scope_write() { # $1 = JSON fragment for repos.$SLUG
+  python3 -c '
+import json, sys
+frag = json.loads(sys.argv[1])
+doc = {"schema_version": 1, "repos": {sys.argv[2]: frag}}
+open(sys.argv[3], "w").write(json.dumps(doc))
+' "$1" "$SLUG" "$SB_EGRESS"
 }
 
-restore_consent() {
-  if [ -n "$CONSENT_BACKUP" ] && [ -f "$CONSENT_BACKUP" ]; then
-    cp "$CONSENT_BACKUP" "$CONSENT_FILE"
-    rm -f "$CONSENT_BACKUP"
-  else
-    # No pre-existing file — make sure we leave none behind.
-    rm -f "$CONSENT_FILE"
-  fi
-}
-
-trap 'restore_consent' EXIT INT TERM
-
-backup_consent
-
-# ---- Consent-state setters ---------------------------------------------------
 set_state_none() {
-  rm -f "$CONSENT_FILE"
+  rm -f "$SB_EGRESS"
 }
 
 set_state_allow_no_repo() {
-  mkdir -p "$(dirname "$CONSENT_FILE")"
-  printf '%s\n' '{"telemetry": "always_allow"}' > "$CONSENT_FILE"
+  user_scope_write '{"telemetry": "always_allow"}'
 }
 
 set_state_allow_with_repo() {
-  mkdir -p "$(dirname "$CONSENT_FILE")"
-  printf '%s\n' '{"telemetry": "always_allow", "telemetry_repo": "example/repo"}' > "$CONSENT_FILE"
+  user_scope_write '{"telemetry": "always_allow", "telemetry_repo": "example/repo"}'
 }
 
 # ---- Counters ---------------------------------------------------------------
@@ -174,9 +198,12 @@ normalise_for_golden() {
 }
 
 run_core_dry_run() {
-  # Stdin = fixture JSON; stdout+stderr captured.
+  # Stdin = fixture JSON; stdout+stderr captured. Isolated $HOME (SB_HOME) so
+  # consent/target-repo resolve from our fixture egress.json, never the real
+  # operator's; $PWD pinned to $REPO_ROOT so REPO_SLUG resolution inside the
+  # core matches the $SLUG this harness wrote the fixture under.
   local fixture="$1"
-  bash "$CORE" --dry-run < "$fixture" 2>&1
+  ( cd "$REPO_ROOT" && HOME="$SB_HOME" bash "$CORE" --dry-run < "$fixture" 2>&1 )
 }
 
 # Expected-WOULD_EXIT matrix (post heal-iter-1 reorder).
@@ -399,12 +426,11 @@ fi
 echo ""
 echo "==== Consent-denied marker (denied — skipped) ===="
 DENIED_TMP="$(mktemp)"
-mkdir -p "$(dirname "$CONSENT_FILE")"
-printf '%s\n' '{"telemetry": "no"}' > "$CONSENT_FILE"
+user_scope_write '{"telemetry": "no"}'
 out_denied="$(run_core_dry_run "$FIXTURES_DIR/supervisor-escalated.json" 2>"$DENIED_TMP" || true)"
 # run_core_dry_run already merges stderr into stdout, so we re-run capturing
 # stderr separately for assertions.
-out_denied_full="$(bash "$CORE" --dry-run < "$FIXTURES_DIR/supervisor-escalated.json" 2>&1 || true)"
+out_denied_full="$( ( cd "$REPO_ROOT" && HOME="$SB_HOME" bash "$CORE" --dry-run < "$FIXTURES_DIR/supervisor-escalated.json" 2>&1 || true ) )"
 we_denied="$(extract_would_exit "$out_denied_full")"
 assert_eq "consent_no_exit (supervisor-escalated:no)" "3" "$we_denied"
 assert_match "denied_skipped_marker (supervisor-escalated:no)" "denied — skipped" "$out_denied_full"
@@ -496,7 +522,7 @@ out_ver="$(run_core_dry_run "$FIXTURES_DIR/supervisor-escalated.json")"
 assert_match "plugin_version_key_present (supervisor-escalated:allow_with_repo)" '"plugin_version": "' "$out_ver"
 assert_not_match "plugin_version_resolved_not_unknown (manifest readable)" '"plugin_version": "unknown"' "$out_ver"
 # Unreadable manifest → "unknown" fallback; rc and WOULD_EXIT unchanged.
-out_nover="$(LOOMWRIGHT_PLUGIN_MANIFEST="/nonexistent/plugin.json" bash "$CORE" --dry-run < "$FIXTURES_DIR/supervisor-escalated.json" 2>&1)"
+out_nover="$( ( cd "$REPO_ROOT" && HOME="$SB_HOME" LOOMWRIGHT_PLUGIN_MANIFEST="/nonexistent/plugin.json" bash "$CORE" --dry-run < "$FIXTURES_DIR/supervisor-escalated.json" 2>&1 ) )"
 rc_nover=$?
 assert_eq "plugin_version_absent_rc=0" "0" "$rc_nover"
 assert_match "plugin_version_falls_back_to_unknown (manifest unreadable)" '"plugin_version": "unknown"' "$out_nover"

@@ -27,9 +27,13 @@ Full design: `loomwright/docs/TELEMETRY.md`.
 ## When NOT to Use
 
 - The project has not opted in. Telemetry is disabled by default and
-  must never be silently enabled. If `.supervisor/telemetry-consent.json`
-  is absent or set to `prompt`, the hook does nothing except drop a
-  rate-limited `telemetry pending` notice.
+  must never be silently enabled. Consent lives in the USER-SCOPE
+  `~/.claude/loomwright/egress.json`, keyed by repo slug (v15.87.0,
+  red-team-hardening item 02) — if there is no entry for this repo's
+  slug, the hook does nothing except drop a rate-limited
+  `telemetry pending` notice. A repo-relative
+  `.supervisor/telemetry-consent.json` can at most *request* consent —
+  it can never grant it on its own; see "Target repo" below.
 - The user wants to send arbitrary data. Only the three result blocks
   (`SUPERVISOR_RESULT`, `CODE_REVIEW_RESULT`, `QA_RESULT`) are
   recognised; everything else is `unknown_payload_skipped` (exit 5).
@@ -44,12 +48,14 @@ Full design: `loomwright/docs/TELEMETRY.md`.
 1. Run `/telemetry enable`. The slash command asks which repo should
    receive issues (suggesting `vikashruhilgit/loomwright`, but
    accepting any `owner/repo`).
-2. The command writes:
+2. The command resolves this repo's slug and writes (backup-first,
+   jq-deep-merge, abort-on-parse-failure):
    ```json
-   { "telemetry": "always_allow", "telemetry_repo": "<chosen>" }
+   { "schema_version": 1, "repos": { "<slug>": { "telemetry": "always_allow", "telemetry_repo": "<chosen>" } } }
    ```
-   to `.supervisor/telemetry-consent.json` (gitignored via the existing
-   `.supervisor/` rule).
+   to the USER-SCOPE `~/.claude/loomwright/egress.json` — **never** to
+   any repo-relative file (v15.87.0, red-team-hardening item 02: a
+   repo-relative consent file could formerly grant its own consent).
 3. From the next qualifying agent run, the `SubagentStop` hook invokes
    `${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry.sh` with the result
    payload on stdin (`${CLAUDE_PLUGIN_ROOT}` is the Claude Code variable
@@ -101,16 +107,27 @@ appends both to `.supervisor/logs/telemetry.log`, and returns `0`.
 
 ## Target repo
 
-Resolution precedence (first non-empty wins):
+Resolution precedence (first non-empty wins — computed by
+`${CLAUDE_PLUGIN_ROOT}/scripts/resolve-egress-config.sh`):
 
 1. `LOOMWRIGHT_TELEMETRY_REPO` env var (shape `owner/repo`).
-2. `.supervisor/telemetry-consent.json` -> `telemetry_repo` field.
+2. USER-SCOPE `~/.claude/loomwright/egress.json` -> `.repos.<slug>.telemetry_repo`
+   field (v15.87.0 — moved from the repo-relative
+   `.supervisor/telemetry-consent.json`, which is now read only as an
+   informational request).
 3. Unset -> core exits `4`; wrapper logs `telemetry_repo_unset` once
    per session.
 
-There is no automatic fallback to `git remote get-url origin`. The
-plugin runs in arbitrary user projects whose `origin` is the user's
-own app — silently posting telemetry there would be a privacy and
+A repo-relative `.supervisor/telemetry-consent.json`'s `telemetry_repo`
+value is still read, but only as `REPO_REQUESTED_TELEMETRY_REPO` —
+honoured (used) ONLY when it byte-matches the user-scope value; on a
+mismatch (including "no user-scope entry at all") the core logs
+`repo_consent_ignored slug=<slug>` and proceeds with the resolved
+(user-scope/env) value. There is no automatic fallback to the repo's
+OWN `git remote get-url origin` as the telemetry TARGET (it is used only
+to derive the SLUG that keys the user-scope lookup — a narrower, distinct
+use). The plugin runs in arbitrary user projects whose `origin` is the
+user's own app — silently posting telemetry there would be a privacy and
 support disaster.
 
 ## Determinism
@@ -123,9 +140,16 @@ implements those tables verbatim.
 
 ## Anti-patterns
 
-- Reading `gh remote get-url origin` to pick the target repo. Never.
+- Reading `gh remote get-url origin` to pick the TARGET repo. Never.
   Telemetry must be opt-in to a chosen repo, never silently to the
-  host project.
+  host project. (The origin remote IS read to derive the repo SLUG
+  that keys the user-scope lookup — a different, narrower use; see
+  "Target repo" above.)
+- Trusting a repo-relative file to grant consent or choose a
+  destination. Only `~/.claude/loomwright/egress.json` (user scope)
+  can grant; a repo-relative file can at most request, and only a
+  human-confirmed `/telemetry status` import — never a hook, never any
+  other automatic path — may promote a request into that file.
 - Prompting the user from inside the hook. `type: command` hooks
   cannot drive interactive prompts. The slash command
   `/telemetry enable` is the SOLE first-run consent path.
@@ -162,6 +186,11 @@ implements those tables verbatim.
 - [ ] Dedup hash uses only `{task_id, score_bucket, primary_error}`
       and is computed identically on every host.
 - [ ] No silent `origin` fallback for the target repo.
+- [ ] No code path lets a repo-relative file grant consent or choose a
+      destination on its own — only `~/.claude/loomwright/egress.json`
+      (user scope) can grant; a repo-relative file's values pass
+      through `resolve-egress-config.sh`'s `REPO_REQUESTED_*` fields
+      and are never assigned to `TELEMETRY`/`TELEMETRY_REPO`/`WEBHOOK_URL`.
 - [ ] Stderr is run through the privacy whitelist before being
       appended to `telemetry.log`.
 

@@ -17,7 +17,7 @@ Protocol authority for `/setup` (see `${CLAUDE_PLUGIN_ROOT}/commands/setup.md` f
 
 ## When NOT to Use
 
-- Telemetry consent — `/telemetry` owns `.supervisor/telemetry-consent.json`; `/setup telemetry` only delegates. See `telemetry/`.
+- Telemetry consent — `/telemetry` owns the user-scope `~/.claude/loomwright/egress.json` entry for this repo's slug; `/setup telemetry` only delegates. See `telemetry/`.
 - Per-run observability *analysis* — `/insights` reads logs; this skill only wires up emission backends.
 - Anything that emits spans from the plugin itself. **The plugin emits NO spans** — Claude Code's native OTel telemetry is the only emitter; this skill configures destinations.
 
@@ -42,9 +42,9 @@ Every module implements five phases, in order, every invocation:
 | Module | Depth (v1) | check probes | apply writes |
 |---|---|---|---|
 | `observability` | FULL init / status / remove | `~/.claude/settings.json` env block; `~/.claude/loomwright/observability/` copy; `docker inspect` health; current-repo `<project>/.claude/settings.local.json` label | asset copy + `.env` + `docker compose` + settings merge + per-project label (init-tail + remove `del`, see Pattern 7) |
-| `telemetry` | delegate | `.supervisor/telemetry-consent.json` | nothing — `/telemetry` owns it |
+| `telemetry` | delegate | `~/.claude/loomwright/egress.json` (user scope) | nothing — `/telemetry` owns it |
 | `notifications` | status + guidance | none (always-on hooks) | nothing |
-| `webhook` | status + guidance | `LOOMWRIGHT_WEBHOOK_URL` set? | nothing (guidance only) |
+| `webhook` | guided write | `resolve-egress-config.sh`'s `WEBHOOK_URL=` (user scope) | `~/.claude/loomwright/egress.json`'s `webhook_url`/`webhook_url_sha256` keys (backup-first, `AskUserQuestion`-confirmed) |
 | `beads` | status + guidance | `command -v bd`; `.beads/` dir | nothing (guidance only) |
 | `mysql-mcp` | status + guidance | `DB_HOST`/`DB_USER`/`DB_PASS`/`DB_NAME` set? | nothing (guidance only) |
 | `memory` | FULL status / apply / **remove** (remove is REQUIRED here — un-committing is a real user need) | `setup-memory.sh check`: per-path `git check-ignore` for the intended stores + the must-stay-ignored set; the findings-ledger gate (every record's `.repo` vs the allowlist, jq); `.gitignore` parse gate; managed-block presence; `git ls-files` tracked counts; resolved repo allowlist + its source | `<project>/.gitignore` sentinel-managed block (backup-first, atomic, byte-compare idempotent, ABORTS on an unparseable file) + `<project>/.supervisor/config.json .setup_memory.repo_allowlist` (jq merge, array-shaped). The block un-ignores THREE stores — the two memory stores unconditionally, and `.supervisor/postmortem/results.jsonl` only while the gate passes. NEVER `git add`/`rm`/`commit`; nothing under `~/.claude/` |
@@ -265,7 +265,7 @@ The `remove` subflow best-effort strips the CURRENT repo's label (`jq 'del(.env.
 
 ## Related Skills
 
-- `telemetry/` — the OTHER telemetry (GitHub-issues run summaries); `/setup telemetry` delegates there. Disjoint write paths: this skill never touches `.supervisor/telemetry-consent.json`.
+- `telemetry/` — the OTHER telemetry (GitHub-issues run summaries); `/setup telemetry` delegates there. Disjoint write paths: this skill never touches the user-scope `~/.claude/loomwright/egress.json` telemetry entry.
 - `docker/` — container patterns behind the compose stack (healthchecks, pinned images).
 - `error-handling/` — the fail-closed abort pattern used by the merge recipe.
 - `quality-checklist/` — gates for reviewing changes to this skill or the command.
