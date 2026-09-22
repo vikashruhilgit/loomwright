@@ -356,165 +356,388 @@ reconcile_item() {
 }
 
 # --------------------------------------------------------------------------- #
-# §10 — trusted auto-merge gate (6 conditions, fail CLOSED)
+# §10 — trusted auto-merge gate (6 conditions, fail CLOSED, SELF-RESOLVING)
 # --------------------------------------------------------------------------- #
 
-# gate-eval <pr_url> <ctx.json>
-# Pure decision over a context JSON describing the 6 conditions. Prints "MERGE"
-# and EXECUTES `gh pr merge --squash <url>` ONLY when ALL 6 hold; otherwise prints
+# _ge_result_field <file> <field> — bounded grep/awk extraction of one scalar
+# field's value from the LAST `REVIEW_HEAL_RESULT` block in <file> (markdown
+# `## REVIEW_HEAL_RESULT` / `- field: value` bullet form, OR YAML
+# `REVIEW_HEAL_RESULT:` / `  field: value` form — "last block wins", mirroring
+# result_block_parser.py's own convention). result_block_parser.py exposes NO
+# CLI (it is a library; its `__main__` guard prints a usage notice and exits 0
+# — checked before writing this), so this is the bounded grep/awk fallback the
+# brief sanctions. Prints the trimmed scalar (surrounding double-quotes
+# stripped), or nothing when the field/file/block is absent.
+_ge_result_field() {
+  local file="$1" field="$2"
+  [ -f "$file" ] || return 0
+  awk -v field="$field" '
+    BEGIN { in_block = 0; val = "" }
+    /^##[ \t]*REVIEW_HEAL_RESULT[ \t]*$/ { in_block = 1; val = ""; next }
+    /^REVIEW_HEAL_RESULT:[ \t]*$/        { in_block = 1; val = ""; next }
+    in_block && /^##[ \t]/                        { in_block = 0 }
+    in_block && /^[A-Za-z_][A-Za-z0-9_]*:[ \t]*$/  { in_block = 0 }
+    in_block {
+      line = $0
+      sub(/^[ \t]*-[ \t]*/, "", line)
+      sub(/^[ \t]+/, "", line)
+      if (line ~ ("^" field "[ \t]*:")) {
+        sub(("^" field "[ \t]*:[ \t]*"), "", line)
+        sub(/[ \t]+#.*$/, "", line)
+        gsub(/^"/, "", line)
+        gsub(/"$/, "", line)
+        val = line
+      }
+    }
+    END { print val }
+  ' "$file"
+}
+
+# _ge_pr_parts <pr_url> — "owner\trepo\tnumber" parsed from a
+# https://github.com/<owner>/<repo>/pull/<n> URL, or three empty fields when
+# the URL does not match (the caller's subsequent gh/api calls then target a
+# malformed path and fail closed on their own — no separate error path needed).
+_ge_pr_parts() {
+  local url="$1" rest ownerrepo number owner repo
+  case "$url" in
+    *github.com/*/*/pull/*)
+      rest="${url#*github.com/}"
+      ownerrepo="${rest%%/pull/*}"
+      number="${rest#*/pull/}"
+      number="${number%%[!0-9]*}"
+      owner="${ownerrepo%%/*}"
+      repo="${ownerrepo#*/}"
+      printf '%s\t%s\t%s\n' "$owner" "$repo" "$number"
+      ;;
+    *)
+      printf '\t\t\n'
+      ;;
+  esac
+}
+
+# gate-eval <pr_url> <ctx.json> [--root <checkout>]
+# SELF-RESOLVING decision over the six conditions (red-team-hardening item 03):
+# the gate re-derives every condition it can from LIVE ground truth (`gh`,
+# GraphQL, `classify-risk.sh`, and two artifact-file reads) instead of trusting
+# a model-authored value — a caller can no longer hand the gate a fabricated
+# verdict for any of conditions 2 through 6. Prints "MERGE" and EXECUTES
+# `gh pr merge --squash <url>` ONLY when ALL 6 hold; otherwise prints
 # "PARK: <reason>" and returns 0 (a PARK is a normal, expected outcome — fail
-# CLOSED, never crash). The `gh` calls behind each condition are pre-resolved into
-# ctx.json by the caller (the loop), which is exactly what the test stubs.
+# CLOSED, never crash).
 #
-# ctx.json shape (all fields read defensively; any missing/null ⇒ that condition
-# fails closed):
+# ctx.json shape — SHRUNK to exactly what only the drain/caller can know (every
+# other former key is now GATE-OWNED and REFUSED if present — see below):
 #   {
-#     "drain_result": "READY|ESCALATED",          # cond 1
+#     "drain_result": "READY|ESCALATED",           # cond 1 — the owned drain's terminal decision
 #     "termination_reason": "converged|bound_hit|sub_floor_converged",  # cond 1b
 #        # A "sub_floor_converged" drain skipped its final all-channel re-scan, so it is NOT
 #        # merge-eligible. Read with an explicit has()/!= null check: missing/null ⇒ PARK.
-#     "ready_sha": "<sha>", "head_sha": "<sha>",   # cond 2
-#     "base": "main",                               # cond 2
-#     "review_decision": "APPROVED|CHANGES_REQUESTED|REVIEW_REQUIRED|none|unreadable",  # cond 3
-#        # "none" = reviews-not-required (the loop maps a successfully-read null here);
-#        # "unreadable" = the gh reviewDecision read failed. Bare null/absent ⇒ fail-closed PARK.
-#     "unresolved_human_thread": true|false,        # cond 3 — loop passes JSON boolean `false` ONLY
-#        # on a SUCCESSFULLY-read no-unresolved-human-thread result; an unresolved human thread OR an
-#        # unreadable/errored thread read ⇒ pass `true` (or omit) ⇒ fail-closed PARK. Read with a
-#        # `type == "boolean"` guard: any string — including "false" — parks.
-#     "protection_enforceable": true|false,         # cond 4
-#     "trust_unprotected": true|false,              # cond 4 override
-#     "checks_green": true|false,                   # cond 5
-#     "rubric_satisfied": true|"na"|false,          # cond 5 (na = no rubric ⇒ not a blocker)
-#     "high_risk": true|false|null,                 # cond 6 — NO override: the loop re-runs
-#        # `classify-risk.sh main <ready_sha> --root <checkout>` at GATE time on the SHA being
-#        # judged and passes `.high_risk` straight through (a JSON boolean — never re-stringified);
-#        # `null` (unclassifiable), missing, or anything but the JSON boolean `false` — any string,
-#        # including "false" — ⇒ fail-closed PARK (the cond-3 `type == "boolean"` shape).
-#        # No flag, config key, or project file overrides it (owner decision R5; `--trust-unprotected`
-#        # is cond 4 only).
-#     "risk_reasons": ["path: ...", ...]            # cond 6 — the script's `.reasons`; the PARK line
-#        # quotes the first 3 (read defensively — absent/non-array ⇒ "no risk_reasons recorded").
+#     "ready_sha": "<sha>",                         # cond 2 — the drain's claim, cross-checked
+#        # against the LIVE `gh pr view --json headRefOid` (never trusted alone).
+#     "trust_unprotected": true|false,              # cond 4 override — a legitimate operator flag,
+#        # NOT a fact the gate can observe, so it stays a ctx input.
+#     "review_heal_result_path": "<path>",          # cond 1/1b cross-check — a file containing the
+#        # verbatim REVIEW_HEAL_RESULT block the owned drain emitted; drain_result/termination_reason
+#        # above MUST match the block's own decision/termination_reason, or the gate PARKs — the
+#        # drain's self-report is corroborated against the artifact it actually wrote, never trusted blind.
+#     "supervisor_result_path": "<path>"            # cond 5 rubric — a file containing a
+#        # `rubric_score: N/M` line (the Supervisor Phase 4.5 SUPERVISOR_RESULT record). The gate
+#        # parses it itself; N==M ⇒ satisfied, no such line ⇒ "na" (not a blocker), unreadable file ⇒ PARK.
 #   }
+#
+# GATE-OWNED KEYS — REFUSED, NEVER TRUSTED. The ctx keys below now name
+# conditions the gate computes itself. If ANY of them is present in ctx.json --
+# REGARDLESS of the value it carries — the gate PARKs with
+# `ctx_carries_gate_owned_key` BEFORE evaluating anything else: `high_risk`,
+# `risk_reasons`, `head_sha`, `base`, `review_decision`,
+# `unresolved_human_thread`, `protection_enforceable`, `checks_green`,
+# `rubric_satisfied`. A caller attempting to hand the gate a pre-computed
+# verdict for a gate-owned condition is refused, never silently accepted.
+#
+# Self-resolution per condition (all fail CLOSED — any read failure ⇒ PARK):
+#   cond 2  `gh pr view <url> --json headRefOid,baseRefName,statusCheckRollup` (this combined
+#           call also feeds cond 5's checks — mirrors review-heal/SKILL.md §U1(a)'s own combined
+#           read). Live `headRefOid` must equal ctx's `ready_sha`; live `baseRefName` must be `main`.
+#   cond 3  a SEPARATE `gh pr view <url> --json reviewDecision` call (kept apart from cond 2's read
+#           so a reviewDecision-specific failure parks on its OWN named reason,
+#           `review_decision_unreadable`, rather than being masked by cond 2's `head_sha_moved`
+#           firing first on a combined-call failure) — null ⇒ "none", unreadable ⇒ "unreadable" —
+#           PLUS the review-threads GraphQL query — VERBATIM from review-heal/SKILL.md §U1(b) (do not
+#           re-derive it) — to compute the unresolved-human-thread blocker: any unresolved thread
+#           whose first-comment actor is NOT in the trusted-actor set
+#           (`${HOME}/.claude/loomwright/trusted-actors.json`, red-team-hardening item 01 — same
+#           fail-CLOSED "absent file ⇒ nobody trusted" resolution as `wrap-external-text.sh`, no
+#           `bot_author_re` fallback here) blocks; `hasNextPage` (truncated >100 threads) blocks;
+#           any GraphQL read error blocks.
+#   cond 4  `gh api repos/<owner>/<repo>/branches/main/protection` — a 404 ⇒ unprotected (false);
+#           ANY OTHER error ⇒ `protection_unreadable` (PARK). `trust_unprotected` stays a ctx input
+#           (an operator flag, not an observable fact).
+#   cond 5  required-check greenness from the SAME protection payload's required-context list
+#           (review-heal/SKILL.md §U2's discovery recipe) cross-referenced against the combined
+#           call's `statusCheckRollup`. Rubric satisfaction is now a FILE READ: ctx's
+#           `supervisor_result_path` is parsed for a `rubric_score: N/M` line by THIS gate (never
+#           asserted by a caller) — N==M ⇒ satisfied, absent line ⇒ "na" (not a blocker), unreadable
+#           file ⇒ PARK.
+#   cond 6  the gate ITSELF invokes `"$(dirname "$0")/classify-risk.sh" main <live head_sha>
+#           --root <root>` and reads `.high_risk`/`.reasons` from its own output — no ctx input of
+#           any kind feeds this condition any more. NO override of any kind (owner decision R5):
+#           not `--trust-unprotected` (cond 4 only), not a config key, not an exclude list.
+#
+# Every PARK reason from the pre-self-resolving gate is preserved verbatim:
+# ctx_unreadable, drain_not_ready, sub_floor_not_merge_eligible, head_sha_moved,
+# base_not_main, review_decision_blocking, review_decision_unreadable,
+# unresolved_human_thread, unprotected_branch, checks_not_green,
+# rubric_unsatisfied, high_risk_diff, merge_command_failed. New reasons added by
+# self-resolution: ctx_carries_gate_owned_key, review_heal_result_unreadable,
+# drain_result_mismatch, protection_unreadable, supervisor_result_unreadable.
 gate_eval() {
   local url="$1" ctx="$2"
+  shift 2 2>/dev/null || true
+  local root="."
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --root) root="${2:-.}"; shift 2 2>/dev/null || shift ;;
+      *)      shift ;;
+    esac
+  done
+
   [ -f "$ctx" ] || die "ctx not found: $ctx"
   if ! "$JQ" -e . "$ctx" >/dev/null 2>&1; then
     echo "PARK: ctx_unreadable"; return 0
   fi
-  # FAIL-CLOSED CONVENTION (do not break): every condition below tests `!= "true"`
-  # (or an affirmative-string match), so this jq `// "__MISSING__"` default is safe
-  # EVEN THOUGH it coerces a JSON `false` to "__MISSING__" — a coerced value is
-  # never == "true", so it parks. NEVER add a condition written as `= "false"`:
-  # the falsy-coercion would make it silently never fire (fail OPEN). Keep all new
-  # conditions in the affirmative `!= "true"` ⇒ PARK form. The ONE other sanctioned shape
-  # (cond 3 `unresolved_human_thread`, cond 6 `high_risk`) is a "park unless exactly the JSON
-  # boolean false" read: an explicit `has()` + `type == "boolean"` check WITHOUT `//` and
-  # WITHOUT `tostring` (which erases the type — the string "false" would read as the boolean),
-  # mapping anything else to __MISSING__ ⇒ PARK.
+
+  # GATE-OWNED KEY REFUSAL — checked FIRST, before any other read. A ctx that
+  # still tries to hand the gate a pre-computed verdict for a now-gate-owned
+  # condition is refused outright, regardless of the value it carries.
+  local _ge_k
+  for _ge_k in high_risk risk_reasons head_sha base review_decision \
+               unresolved_human_thread protection_enforceable checks_green rubric_satisfied; do
+    if "$JQ" -e --arg k "$_ge_k" 'has($k)' "$ctx" >/dev/null 2>&1; then
+      echo "PARK: ctx_carries_gate_owned_key"; return 0
+    fi
+  done
+
   # NB: a bash function definition is always global — there is no `local` function
   # scoping — so J() lives until gate_eval returns and the next call redefines it;
   # no `local J` (which would only declare an unused local var of that name).
   J() { "$JQ" -r "$1 // \"__MISSING__\"" "$ctx"; }
 
   # Condition 1 — owned drain == READY.
-  if [ "$(J '.drain_result')" != "READY" ]; then
+  local drain_result; drain_result="$(J '.drain_result')"
+  if [ "$drain_result" != "READY" ]; then
     echo "PARK: drain_not_ready"; return 0
   fi
 
   # Condition 1b — a `sub_floor_converged` READY is NOT auto-merge-eligible (AC9,
-  # drain-bounding-earned-checks): its final round skipped the all-channel bot-finding
-  # re-scan (skills/review-heal/SKILL.md §"Termination-only severity floor"), so it must
-  # PARK like any other non-fully-scanned READY. Read WITHOUT the falsy-coercing `//`
-  # (same trap as config_orig / the cond-3 unresolved_human_thread read below) —
-  # an explicit has()/!=null check so a legitimate string value is never coerced away.
-  # Missing / null / unreadable ⇒ PARK (fail CLOSED) — mirrors the unresolved_human_thread
-  # precedent exactly: a past-due REVIEW_HEAL_RESULT that never learned this field must
-  # never silently merge just because the key is absent.
+  # drain-bounding-earned-checks). Read WITHOUT the falsy-coercing `//` — an
+  # explicit has()/!=null check so a legitimate string value is never coerced away.
   local tr
   tr="$("$JQ" -r 'if has("termination_reason") and (.termination_reason != null) then .termination_reason else "__MISSING__" end' "$ctx")"
   if [ "$tr" = "__MISSING__" ] || [ "$tr" = "sub_floor_converged" ]; then
     echo "PARK: sub_floor_not_merge_eligible"; return 0
   fi
 
-  # Condition 2 — head SHA unchanged AND base == main.
-  local ready_sha head_sha base
-  ready_sha="$(J '.ready_sha')"; head_sha="$(J '.head_sha')"; base="$(J '.base')"
-  if [ "$ready_sha" = "__MISSING__" ] || [ "$head_sha" = "__MISSING__" ] || [ "$ready_sha" != "$head_sha" ]; then
+  # Condition 1 cross-check — the drain's OWN self-report (drain_result /
+  # termination_reason above) must match the REVIEW_HEAL_RESULT artifact it
+  # actually wrote, never be trusted as a bare assertion.
+  local rhrp; rhrp="$(J '.review_heal_result_path')"
+  if [ "$rhrp" = "__MISSING__" ] || [ ! -f "$rhrp" ]; then
+    echo "PARK: review_heal_result_unreadable"; return 0
+  fi
+  local art_decision art_tr
+  art_decision="$(_ge_result_field "$rhrp" "decision")"
+  art_tr="$(_ge_result_field "$rhrp" "termination_reason")"
+  if [ -z "$art_decision" ] || [ "$art_decision" != "$drain_result" ] \
+     || [ -z "$art_tr" ] || [ "$art_tr" != "$tr" ]; then
+    echo "PARK: drain_result_mismatch"; return 0
+  fi
+
+  # ---- `gh pr view` read #1 feeds conditions 2 (headRefOid/baseRefName) and
+  # 5 (statusCheckRollup) — a combined multi-field read (mirrors review-heal/
+  # SKILL.md §U1(a)'s own combined read). A total read failure fails EVERY
+  # dependent field closed (empty/unreadable defaults below), never partially
+  # trusted. `cmd || rc=$?` (not `x="$(cmd)"; rc=$?`) — under `set -e` a plain
+  # (non-`local`) assignment whose RHS command substitution fails ABORTS THE
+  # SCRIPT before the next statement ever runs (the exit-status-lost-across-
+  # subshells trap, but in the OPPOSITE direction: here the failure is very
+  # much seen, just fatally). Folding the failure into an `||` list keeps it a
+  # normal, inspectable value.
+  local pv pv_rc=0
+  pv="$("$GH" pr view "$url" --json headRefOid,baseRefName,statusCheckRollup 2>/dev/null)" || pv_rc=$?
+  local pv_ok=0
+  printf '%s' "$pv" | "$JQ" -e . >/dev/null 2>&1 && [ "$pv_rc" -eq 0 ] && pv_ok=1
+  local live_head="" live_base="" rollup_json="[]"
+  if [ "$pv_ok" -eq 1 ]; then
+    live_head="$(printf '%s' "$pv" | "$JQ" -r '.headRefOid // empty')"
+    live_base="$(printf '%s' "$pv" | "$JQ" -r '.baseRefName // empty')"
+    rollup_json="$(printf '%s' "$pv" | "$JQ" -c '.statusCheckRollup // []')"
+  fi
+
+  # ---- `gh pr view` read #2 feeds condition 3's reviewDecision — kept as its
+  # OWN call (not folded into read #1) so a reviewDecision-specific read
+  # failure PARKs on its own named reason (`review_decision_unreadable`)
+  # rather than being masked by cond 2's `head_sha_moved`, which would fire
+  # first on a combined-call failure and make this reason unreachable.
+  local pv2 pv2_rc=0 rd="unreadable"
+  pv2="$("$GH" pr view "$url" --json reviewDecision 2>/dev/null)" || pv2_rc=$?
+  if [ "$pv2_rc" -eq 0 ] && printf '%s' "$pv2" | "$JQ" -e . >/dev/null 2>&1; then
+    rd="$(printf '%s' "$pv2" | "$JQ" -r 'if has("reviewDecision") and (.reviewDecision != null) then .reviewDecision else "none" end')"
+  fi
+
+  # Condition 2 — live head SHA matches the drain's `ready_sha` claim, AND base == main.
+  local ready_sha; ready_sha="$(J '.ready_sha')"
+  if [ "$ready_sha" = "__MISSING__" ] || [ -z "$live_head" ] || [ "$ready_sha" != "$live_head" ]; then
     echo "PARK: head_sha_moved"; return 0
   fi
-  if [ "$base" != "main" ]; then
+  if [ "$live_base" != "main" ]; then
     echo "PARK: base_not_main"; return 0
   fi
 
-  # Condition 3 — reviewDecision not blocking AND no unresolved human thread.
-  #   CHANGES_REQUESTED / REVIEW_REQUIRED        → PARK (a review is required or negative).
-  #   APPROVED, or "none" (reviews-not-required, i.e. a SUCCESSFULLY-read null
-  #     reviewDecision — the branch does not require approving reviews)
-  #                                              → NOT a cond-3 blocker. Whether an
-  #     unprotected / checks-only branch may actually merge is cond 4's call
-  #     (protection_enforceable OR --trust-unprotected). This is the fix that makes
-  #     --trust-unprotected and the checks-only-protection arm of cond 4 REACHABLE —
-  #     previously a null reviewDecision parked here before cond 4 ever ran.
-  #   anything else (unreadable / __MISSING__ / null / "" / unrecognized)
-  #                                              → PARK (fail-CLOSED; reviewDecision is unknown).
-  # LOAD-BEARING LOOP CONTRACT (mirrors the rubric "na" rule, §10 cond 5): the loop MUST
-  # map a successfully-read null reviewDecision to the literal string "none" (NEVER bare
-  # JSON null/absent, which J() coerces to __MISSING__ → fail-closed PARK), and pass
-  # "unreadable" only when the `gh pr view --json reviewDecision` read actually failed.
-  # So "reviews-not-required" merges (subject to cond 4) while a genuinely-unknown
-  # reviewDecision still fails closed.
-  local rd; rd="$(J '.review_decision')"
+  # Condition 3 — reviewDecision not blocking AND no unresolved human/untrusted thread.
   case "$rd" in
     CHANGES_REQUESTED|REVIEW_REQUIRED)   echo "PARK: review_decision_blocking"; return 0 ;;
-    APPROVED|none)                       : ;;   # acceptable — defer protection judgment to cond 4
-    *)                                   echo "PARK: review_decision_unreadable"; return 0 ;;
+    APPROVED|none)                       : ;;   # acceptable -- defer protection judgment to cond 4
+    *)                                    echo "PARK: review_decision_unreadable"; return 0 ;;
   esac
-  # FAIL-CLOSED — PARK unless the loop EXPLICITLY passed a readable, non-null `false`.
-  # Read WITHOUT the falsy-coercing `//` (J() would map a legitimate `false` to
-  # __MISSING__ — the same trap config_orig avoids), using an explicit has()/null
-  # check so we can distinguish a real `false` (proceed) from missing/null (PARK).
-  # Missing / null / unreadable / `true` ⇒ PARK: an unresolved human thread OR an
-  # unreadable GraphQL thread read must NEVER merge (SKILL §10 cond 3, "Unreadable ⇒
-  # do-not-merge"; CLAUDE.md bimodal fail-closed invariant). The prior `= "true"`
-  # form was a fail-OPEN polarity bug (a missing value merged). The value must be the JSON
-  # BOOLEAN — `type == "boolean"`, not `tostring`, which mapped the string "false" (a
-  # re-stringified read) onto the boolean and merged (PR #219 review).
-  local uht
-  uht="$("$JQ" -r 'if has("unresolved_human_thread") and ((.unresolved_human_thread|type) == "boolean") then (.unresolved_human_thread|tostring) else "__MISSING__" end' "$ctx")"
+
+  # Review-threads GraphQL query — VERBATIM from review-heal/SKILL.md §U1(b) (never
+  # re-derived). `hasNextPage` (truncated >100 threads) or any read error ⇒ fail
+  # CLOSED (treated as an unresolved blocking thread).
+  local parts owner repo number
+  parts="$(_ge_pr_parts "$url")"
+  IFS=$'\t' read -r owner repo number <<GEPARTS
+$parts
+GEPARTS
+  local gql gql_rc=0
+  gql="$("$GH" api graphql -f query='
+  query($owner:String!,$repo:String!,$number:Int!){
+    repository(owner:$owner,name:$repo){
+      pullRequest(number:$number){
+        reviewThreads(first:100){
+          pageInfo{ hasNextPage }
+          nodes{ isResolved comments(first:1){ nodes{ author{ login __typename } } } }
+        }
+      }
+    }
+  }' -F owner="$owner" -F repo="$repo" -F number="$number" 2>/dev/null)" || gql_rc=$?
+
+  local uht="true"
+  if [ "$gql_rc" -eq 0 ] && printf '%s' "$gql" | "$JQ" -e '.data.repository.pullRequest.reviewThreads' >/dev/null 2>&1; then
+    # Explicit == false check (NOT the falsy-coercing `//`, which would map a
+    # genuine `false` to the "true" default and silently defeat the truncation
+    # guard — the same trap `config_orig`/`unresolved_human_thread` avoid).
+    local hasNext; hasNext="$(printf '%s' "$gql" | "$JQ" -r 'if .data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage == false then "false" else "true" end')"
+    if [ "$hasNext" = "false" ]; then
+      # Trusted-actor set (red-team-hardening item 01) — same fail-CLOSED resolution
+      # as wrap-external-text.sh: absent/unreadable/malformed file ⇒ EMPTY set =>
+      # every actor is "not in the trusted set" ⇒ blocking. No bot_author_re fallback here.
+      local trusted_file trusted_json='[]'
+      trusted_file="${HOME:-}/.claude/loomwright/trusted-actors.json"
+      if [ -n "$trusted_file" ] && [ -r "$trusted_file" ]; then
+        local _t; _t="$("$JQ" -c '.' "$trusted_file" 2>/dev/null || true)"
+        if [ -n "$_t" ] && printf '%s' "$_t" | "$JQ" -e 'type=="array"' >/dev/null 2>&1; then
+          trusted_json="$_t"
+        fi
+      fi
+      local blocking
+      blocking="$(printf '%s' "$gql" | "$JQ" -r --argjson trusted "$trusted_json" '
+        [ .data.repository.pullRequest.reviewThreads.nodes[]?
+          | select(.isResolved == false)
+          | (.comments.nodes[0].author.login // "") as $login
+          | select( ($trusted | index($login)) == null )
+        ] | length > 0
+      ' 2>/dev/null)"
+      [ "$blocking" = "false" ] && uht="false"
+    fi
+  fi
   if [ "$uht" != "false" ]; then
     echo "PARK: unresolved_human_thread"; return 0
   fi
 
-  # Condition 4 — enforceable branch protection OR --trust-unprotected.
-  local prot trust
-  prot="$(J '.protection_enforceable')"; trust="$(J '.trust_unprotected')"
-  if [ "$prot" != "true" ] && [ "$trust" != "true" ]; then
+  # Condition 4 — enforceable branch protection OR --trust-unprotected. A 404
+  # means genuinely unprotected (false); ANY OTHER error is unreadable ⇒ PARK
+  # (never silently treated as either protected or unprotected).
+  local prot_raw prot_rc=0 protection_enforceable="false" required_contexts_json="[]"
+  prot_raw="$("$GH" api "repos/$owner/$repo/branches/main/protection" 2>&1)" || prot_rc=$?
+  if [ "$prot_rc" -ne 0 ]; then
+    case "$prot_raw" in
+      *"404"*|*"Not Found"*) protection_enforceable="false" ;;
+      *)                     echo "PARK: protection_unreadable"; return 0 ;;
+    esac
+  else
+    if printf '%s' "$prot_raw" | "$JQ" -e . >/dev/null 2>&1; then
+      protection_enforceable="$(printf '%s' "$prot_raw" | "$JQ" -r '
+        ( ((.required_pull_request_reviews.required_approving_review_count // 0) >= 1)
+          or (((.required_status_checks.contexts // []) | length) > 0)
+          or (((.required_status_checks.checks // []) | length) > 0) )
+      ' 2>/dev/null)"
+      required_contexts_json="$(printf '%s' "$prot_raw" | "$JQ" -c '
+        ( (.required_status_checks.contexts // []) + ((.required_status_checks.checks // []) | map(.context)) ) | unique
+      ' 2>/dev/null)"
+      [ -n "$required_contexts_json" ] || required_contexts_json="[]"
+    else
+      echo "PARK: protection_unreadable"; return 0
+    fi
+  fi
+  local trust; trust="$(J '.trust_unprotected')"
+  if [ "$protection_enforceable" != "true" ] && [ "$trust" != "true" ]; then
     echo "PARK: unprotected_branch"; return 0
   fi
 
-  # Condition 5 — required checks green AND rubric satisfied (na = not a blocker).
-  if [ "$(J '.checks_green')" != "true" ]; then
+  # Condition 5 — required checks green (discovery recipe: review-heal/SKILL.md §U2,
+  # here sourced from the SAME branch-protection payload cond 4 already fetched)
+  # AND rubric satisfied (na = not a blocker, now a FILE read — never caller-asserted).
+  local checks_green
+  checks_green="$(printf '%s' "$rollup_json" | "$JQ" -r --argjson req "$required_contexts_json" '
+    . as $rollup
+    | ( ($req | length) == 0 ) or
+      ( all($req[]; . as $name
+          | ( $rollup | map(select((.name // .context // "") == $name))
+              | any( ( ((.conclusion // "") | ascii_downcase) as $c
+                       | ((.state // "") | ascii_downcase) as $s
+                       | ($c == "success" or $c == "neutral" or $s == "success") ) ) )
+        ) )
+  ' 2>/dev/null)"
+  if [ "$checks_green" != "true" ]; then
     echo "PARK: checks_not_green"; return 0
   fi
-  local rub; rub="$(J '.rubric_satisfied')"
+
+  local srp; srp="$(J '.supervisor_result_path')"
+  if [ "$srp" = "__MISSING__" ] || [ ! -f "$srp" ]; then
+    echo "PARK: supervisor_result_unreadable"; return 0
+  fi
+  local rubric_line rub
+  rubric_line="$(grep -m1 -E 'rubric_score:[[:space:]]*[0-9]+/[0-9]+' "$srp" 2>/dev/null || true)"
+  if [ -z "$rubric_line" ]; then
+    rub="na"
+  else
+    local rub_n rub_m
+    rub_n="$(printf '%s' "$rubric_line" | sed -E 's/.*rubric_score:[[:space:]]*([0-9]+)\/([0-9]+).*/\1/')"
+    rub_m="$(printf '%s' "$rubric_line" | sed -E 's/.*rubric_score:[[:space:]]*([0-9]+)\/([0-9]+).*/\2/')"
+    if [ -n "$rub_n" ] && [ "$rub_n" = "$rub_m" ]; then rub="true"; else rub="false"; fi
+  fi
   if [ "$rub" != "true" ] && [ "$rub" != "na" ]; then
     echo "PARK: rubric_unsatisfied"; return 0
   fi
 
-  # Condition 6 — NOT a high-risk diff (SKILL §10 cond 6; owner decision R5: NO override).
-  # The loop re-classifies the SHA it is judging with `classify-risk.sh` at GATE time and
-  # passes `.high_risk` through. Read in EXACTLY the cond-3 `unresolved_human_thread` shape:
-  # WITHOUT the falsy-coercing `//`, an explicit has() + `type == "boolean"` check, and PARK
-  # unless the value is the JSON boolean `false` — so `true`, `null` (unclassifiable), a missing
-  # key, or ANY string (including "false" — `tostring` would have erased that distinction) all
-  # fail CLOSED. No `--trust-*` flag, config key, or `.agent/risk.json` key is consulted here:
-  # nothing overrides this condition by design.
-  local hr
-  hr="$("$JQ" -r 'if has("high_risk") and ((.high_risk|type) == "boolean") then (.high_risk|tostring) else "__MISSING__" end' "$ctx")"
+  # Condition 6 — NOT a high-risk diff (owner decision R5: NO override, of ANY kind).
+  # The gate ITSELF invokes classify-risk.sh on the live head SHA it just confirmed
+  # in cond 2 — no ctx input feeds this condition any more. Read in EXACTLY the
+  # cond-3 `unresolved_human_thread` shape: an explicit has() + `type == "boolean"`
+  # check, PARK unless the value is the JSON boolean `false`.
+  local risk_bin; risk_bin="$(dirname "$0")/classify-risk.sh"
+  local risk_json=""
+  if [ -r "$risk_bin" ]; then
+    risk_json="$(bash "$risk_bin" main "$live_head" --root "$root" 2>/dev/null)"
+  fi
+  local hr rr
+  if [ -n "$risk_json" ] && printf '%s' "$risk_json" | "$JQ" -e . >/dev/null 2>&1; then
+    hr="$(printf '%s' "$risk_json" | "$JQ" -r 'if has("high_risk") and ((.high_risk|type) == "boolean") then (.high_risk|tostring) else "__MISSING__" end')"
+    rr="$(printf '%s' "$risk_json" | "$JQ" -r 'if has("reasons") and ((.reasons|type) == "array") then (.reasons | map(tostring) | .[:3] | join("; ")) else "" end')"
+  else
+    hr="__MISSING__"; rr=""
+  fi
   if [ "$hr" != "false" ]; then
-    local rr
-    rr="$("$JQ" -r 'if has("risk_reasons") and ((.risk_reasons|type) == "array") then (.risk_reasons | map(tostring) | .[:3] | join("; ")) else "" end' "$ctx")"
     [ -z "$rr" ] && rr="no risk_reasons recorded"
     echo "PARK: high_risk_diff ($rr)"; return 0
   fi
