@@ -50,6 +50,9 @@
 #  23. G1 stale-lock RECLAIM: pid-dead + no-marker + past-TTL => proceeds, marker written.
 #  24. G1 marker wins over a stale lock: marker present => short-circuit before lock.
 #  25. G1/G2 READ-ONLY toward the inline checkout: working tree+index+HEAD unchanged.
+#  36. regime probe: defaultMode 'acceptEdits' also classifies as permissive
+#      (PR #248 review finding #1 — acceptEdits auto-approves file edits without
+#      prompting and was missing from the permissive case, a fail-open gap).
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -881,13 +884,17 @@ fi
 WT="$(expected_wt_path "$FX_REPO")"; wait_for_no_worktree "$FX_REPO" "$WT" || true
 rm -rf "$(dirname "$FX_REPO")"
 
-# permissive_home <label> — build an isolated HOME with ~/.claude/settings.json
-# resolving permissions.defaultMode to "auto" (the owner-machine live-evidence
-# value from the requirement). Echoes the HOME path.
+# permissive_home [mode] — build an isolated HOME with ~/.claude/settings.json
+# resolving permissions.defaultMode to [mode] (default "auto" — the
+# owner-machine live-evidence value from the requirement; also seeded with
+# "acceptEdits" by the PR #248 review finding #1 regression test — acceptEdits
+# auto-approves file edits without prompting and must classify permissive the
+# same as auto/bypassPermissions). Echoes the HOME path.
 permissive_home() {
+  local mode="${1:-auto}"
   local h; h="$(mktemp -d)"
   mkdir -p "$h/.claude"
-  printf '{"permissions":{"defaultMode":"auto"}}\n' > "$h/.claude/settings.json"
+  printf '{"permissions":{"defaultMode":"%s"}}\n' "$mode" > "$h/.claude/settings.json"
   printf '%s' "$h"
 }
 
@@ -1029,6 +1036,21 @@ else
 fi
 rm -rf "$(dirname "$MUT")"
 unset RUN_HOME
+
+echo "== 36. regime probe (DRY_RUN): acceptEdits defaultMode => LOOMWRIGHT_PR_IS_FORK=1 + marker regime=permissive_refused (PR #248 finding #1) =="
+WD="$(fresh_repo)"
+RUN_HOME="$(permissive_home acceptEdits)"
+run_dispatch "$WD" "$PR"
+LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
+MARKER_CONTENT="$(cat "$WD/.supervisor/review-dispatch/$(pr_hash)" 2>/dev/null || true)"
+if [ "$RUN_RC" -eq 0 ] \
+   && printf '%s' "$LINE" | grep -q -- 'LOOMWRIGHT_PR_IS_FORK=1' \
+   && printf '%s' "$MARKER_CONTENT" | grep -q 'regime=permissive_refused'; then
+  ok "regime probe DRY_RUN acceptEdits-refused: LOOMWRIGHT_PR_IS_FORK=1 + marker regime=permissive_refused (line='$LINE')"
+else
+  no "regime probe DRY_RUN acceptEdits-refused wrong — acceptEdits must be treated as permissive, not fallen-through (line='$LINE' marker='$MARKER_CONTENT')"
+fi
+rm -rf "$WD" "$RUN_HOME"; unset RUN_HOME
 
 echo
 echo "RESULT: $pass passed, $fail failed"

@@ -99,7 +99,8 @@
 #   — `PERMISSION_MODE` ("dontAsk" — verified against a real `claude --help` run this
 #   session, CLI 2.1.278: "dontAsk - Don't prompt for permissions, deny if not
 #   pre-approved" — the one headless mode that honours an explicit --allowedTools
-#   allowlist without ever auto-approving beyond it, unlike `auto`/`bypassPermissions`),
+#   allowlist without ever auto-approving beyond it, unlike `auto`/`acceptEdits`/
+#   `bypassPermissions`),
 #   `DISALLOWED_TOOLS` ("WebFetch,WebSearch"), and `build_allowed_tools()` (Read, Grep,
 #   Glob, Task, the scoped `Bash(git fetch|checkout|add|commit|push origin <head-ref>:*)`
 #   entries — NEVER a bare `git push` — `Bash(gh pr view|diff|comment:*)`,
@@ -120,7 +121,7 @@
 #   (`.claude/settings.local.json`) > project SHARED settings (`.claude/settings.json`)
 #   > user settings (`~/.claude/settings.json`) — the first tier that DEFINES a
 #   non-null `defaultMode` wins. If it resolves to a bypass/auto-approve mode (`auto`,
-#   `bypassPermissions`) — or ANY tier's file exists but is unreadable (permission
+#   `acceptEdits`, `bypassPermissions`) — or ANY tier's file exists but is unreadable (permission
 #   denied) or malformed JSON, which is ALWAYS treated as permissive, fail CLOSED,
 #   never assumed safe — the dispatcher still dispatches (fail-and-forget invariant is
 #   preserved) but degrades to review-only via the SAME `LOOMWRIGHT_PR_IS_FORK=1`
@@ -328,7 +329,7 @@ fi
 
 PERMISSIVE=0
 case "$REGIME_MODE" in
-  auto|bypassPermissions) PERMISSIVE=1 ;;
+  auto|acceptEdits|bypassPermissions) PERMISSIVE=1 ;;
 esac
 [ "$REGIME_UNREADABLE" -eq 1 ] && PERMISSIVE=1
 

@@ -26,7 +26,8 @@
 #                   — there is nothing to wrap):
 #
 #                     <<<EXTERNAL_TEXT channel=<c> actor=<login> trusted=<yes|no>>>>
-#                     <body text, verbatim>
+#                     <body text, verbatim except delimiter-forgery defanging —
+#                      see DELIMITER DEFENSE below>
 #                     <<<END_EXTERNAL_TEXT>>>
 #
 #                   `channel` is the --channel value (required; defaults to
@@ -63,6 +64,23 @@
 #              login/body values does not abort the program — every field
 #              access is `strings`-guarded so a hostile element degrades to an
 #              empty/absent extraction rather than a jq crash.
+#
+#   DELIMITER DEFENSE (PR #248 review finding #2): before a body is embedded
+#              between the real markers, any LITERAL occurrence of the
+#              envelope delimiter sequences `<<<EXTERNAL_TEXT` or
+#              `<<<END_EXTERNAL_TEXT>>>` INSIDE the body is defanged — a
+#              zero-width space (U+200B) is inserted immediately after the
+#              `<<<` of either sequence. This stops a PR comment body that
+#              contains a literal `<<<END_EXTERNAL_TEXT>>>` followed by a
+#              fabricated `<<<EXTERNAL_TEXT channel=... actor=<other>
+#              trusted=yes>>>` from forging a second, attacker-controlled
+#              envelope with attribution the model would read as ground
+#              truth — the fake markers no longer byte-match the real ones,
+#              so only the boundaries THIS SCRIPT emits (the true start line
+#              and the true `<<<END_EXTERNAL_TEXT>>>` line) survive as exact
+#              matches. The rest of the body text is left intact and
+#              readable — this narrows what a forged marker can claim to be,
+#              it does not remove or rewrite the attacker's words.
 # ============================================================================
 #
 # WHY THIS EXISTS (decision R4): untrusted-text handling is prose + mechanism,
@@ -71,6 +89,11 @@
 # See docs/HOOKS.md for the explicit non-goal: this is a TRIPWIRE + NARROWING,
 # not a sandboxing/isolation claim, and it does not attempt to sanitize
 # hidden-character tricks beyond the envelope itself (an honest limit).
+# HONEST LIMIT (delimiter defense, PR #248 finding #2): the defanging above
+# closes the exact-literal-delimiter forgery case; it is still a narrowing/
+# tripwire, not a cryptographic guarantee — a sufficiently creative Unicode
+# look-alike or homoglyph of the marker text is not defended against, only
+# the literal ASCII delimiter strings this script itself emits.
 
 set -u
 
@@ -134,6 +157,18 @@ printf '%s' "$INPUT" | jq -r \
   --arg channel "$CHANNEL" \
   --argjson trusted "$TRUSTED_JSON" '
   def s(v): (v? | strings) // "";
+  # defang(body) — decision R4 follow-up (PR #248 review finding #2): neutralize
+  # any LITERAL occurrence of the envelope delimiter sequences inside untrusted
+  # body text, so a forged "<<<END_EXTERNAL_TEXT>>>" + fake re-opening
+  # "<<<EXTERNAL_TEXT ...>>>" embedded in a comment cannot fabricate a second,
+  # attacker-controlled envelope (with its own actor/trusted/channel) that the
+  # model would read as ground truth. Inserts a zero-width space (U+200B)
+  # immediately after the "<<<" of either sequence — invisible to a human/model
+  # reading the text, but it breaks an EXACT string match against the real
+  # boundary markers this script itself emits below, so only the true,
+  # script-generated start/end markers survive intact. Narrowing/tripwire, not
+  # a cryptographic guarantee — see the header INTERFACE note + docs/HOOKS.md.
+  def defang(body): body | gsub("<<<(?<tag>EXTERNAL_TEXT|END_EXTERNAL_TEXT>>>)"; "<<<\u200b\(.tag)");
   if type=="array" then
     [ .[]?
       | ( (s(.user.login)) as $ul
@@ -149,8 +184,9 @@ printf '%s' "$INPUT" | jq -r \
             elif ($m != "") then $m
             elif ($ti != "") then $ti
             else "" end
-        ) as $body
-      | select($body != "")
+        ) as $body_raw
+      | select($body_raw != "")
+      | defang($body_raw) as $body
       | ( ($trusted | index($actor)) != null ) as $is_trusted
       | "<<<EXTERNAL_TEXT channel=" + $channel + " actor=" + $actor + " trusted=" + (if $is_trusted then "yes" else "no" end) + ">>>\n" + $body + "\n<<<END_EXTERNAL_TEXT>>>"
     ] | join("\n\n")
