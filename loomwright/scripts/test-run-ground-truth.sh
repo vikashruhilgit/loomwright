@@ -460,7 +460,6 @@ if grep -qF "$BEGIN_MARK" "$RUN" && grep -qF "$END_MARK" "$RUN"; then
     N7_SENTINEL="$TMP/n7-sentinel.$$"
     rm -f "$N7_SENTINEL"
     N7_BRIEF="$TMP/n7-brief.md"
-    N7_HASH="$(bash "$HASH" "$N3_BRIEF" 2>/dev/null || true)"
     # (n3)'s stale scenario: stamp was computed for `cmd: true`, bullet now reads a side-effecting
     # command whose target does NOT match the stamped hash — genuinely stale under the real gate.
     printf "## Executable Acceptance\n- cmd: touch '%s'\n\n## Configuration\n- **Executable Acceptance Approved:** %s\n" \

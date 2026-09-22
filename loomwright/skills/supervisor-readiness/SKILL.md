@@ -207,7 +207,7 @@ A `cmd:`/bare bullet in this section executes at Phase 4.5 ONLY when the brief's
 ```markdown
 ## Configuration
 - **Workers:** 1
-- **Executable Acceptance Approved:** sha256:3f9a2b…（64 hex chars）
+- **Executable Acceptance Approved:** sha256:3f9a2b… (64 hex chars)
 ```
 
 The stamp is computed by `scripts/exec-acceptance-hash.sh <brief-path>`, which prints `sha256:<hex>` of the whitespace-normalized, newline-joined list of `cmd:`/bare bullets ONLY (`corpus-task:`/`qa-executor:` excluded), or `none` when that filtered list is empty. `run-ground-truth.sh` recomputes the SAME hash on every run (both scripts source one shared definition, `scripts/exec-acceptance-lib.sh`, so they cannot silently diverge) and compares it against the stamp:
