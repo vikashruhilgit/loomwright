@@ -71,6 +71,27 @@ same treatment as rule (9), NOT sourced from any hooks.json prompt string:
       a consumer convention, not a validation rule — this script does not
       check for one.
 
+ADDITIONAL RULE (11), added post-hoc for the worker honest-limits item
+(`.supervisor/requirements/harness-port/01-worker-rules.md`) — same treatment
+as rules (9)/(10), NOT sourced from any hooks.json prompt string:
+
+  (11) not_verified shape — OPTIONAL and ADDITIVE at schema_version 2.
+      Omitting the field is accepted at ANY schema_version, same as rules 9
+      and 10. WHEN PRESENT, it must be a list of dicts, each with non-empty
+      string `surface` and non-empty string `reason`. A present-but-malformed
+      value (null, non-array, non-dict item, or an item missing/blank
+      `surface`/`reason`) is rejected while absence is still accepted — same
+      validated-but-optional shape as rules 9/10, and for the same reason:
+      leaving it unvalidated would let malformed data slip past
+      scripts/check-contract-parity.sh's pin while the block still "looked"
+      valid. not_verified is REPORT-ONLY: its presence, absence, or contents
+      NEVER affect any other rule in this file, and it never substitutes for
+      or is derived from outputs_gap (rule 8's cross-field invariant is
+      unaffected). By worker-prompt convention (agents/worker.md §Step 5.75)
+      an empty list is never emitted (absence is used instead), but this
+      script does not reject `not_verified: []` — the emission convention is
+      enforced by prompt instruction, not by this validator.
+
 DELIBERATE NON-ADDITIONS / NARROWINGS (recorded, not accidental):
   * The prompt does NOT constrain WORKER_RESULT.status to an enum, so neither
     does this script (R4: transcribe, do not silently strengthen).
@@ -169,6 +190,10 @@ REASON_OUT_OF_LANE_SHAPE = (
 REASON_DEVIATIONS_SHAPE = (
     "deviations, when present, must be an array of at most 12 non-empty "
     "strings, each at most 200 characters (optional additive field, rule 10)"
+)
+REASON_NOT_VERIFIED_SHAPE = (
+    "not_verified, when present, must be an array of dicts each with "
+    "non-empty string surface and reason (optional additive field, rule 11)"
 )
 
 MISSING_BLOCK = (
@@ -372,6 +397,27 @@ def main():
                 emit(False, REASON_DEVIATIONS_SHAPE)
             if len(item) > 200:
                 emit(False, REASON_DEVIATIONS_SHAPE)
+
+    # ── (11) not_verified shape — OPTIONAL, ADDITIVE, schema_version stays 2 ─
+    # PRESENCE-GATED, not required: absence is always accepted, at any
+    # schema_version, same treatment as rules 9/10. When present, every entry
+    # must be a dict with non-empty string `surface` and `reason`. By
+    # worker-prompt convention (agents/worker.md §Step 5.75) an empty list is
+    # never emitted — absence is used instead — but this script does not
+    # reject `not_verified: []`; that emission convention is enforced by
+    # prompt instruction, not by this validator.
+    if present(fields, "not_verified"):
+        not_verified = fields.get("not_verified")
+        if not_verified is None:
+            emit(False, REASON_NOT_VERIFIED_SHAPE)
+        if not isinstance(not_verified, list):
+            emit(False, REASON_NOT_VERIFIED_SHAPE)
+        for item in not_verified:
+            if not isinstance(item, dict):
+                emit(False, REASON_NOT_VERIFIED_SHAPE)
+            for required in ("surface", "reason"):
+                if required not in item or is_empty_scalar(item.get(required)):
+                    emit(False, REASON_NOT_VERIFIED_SHAPE)
 
     emit(True)
 
