@@ -144,7 +144,18 @@ cmd_arm() {
       --session-id)
         saw_flag=1
         sid="${2:-}"
-        shift 2
+        # A trailing `--session-id` with no value leaves only 1 arg —
+        # `shift 2` would fail, and since this script runs under only
+        # `set -u` (not `set -e`), that failure is silently swallowed,
+        # $1 is never consumed, and the while loop spins forever on the
+        # same token (PR #258 round-11 review finding, live-reproduced
+        # as an unbounded hang). Not attacker-reachable — the Bash
+        # matcher denies any tool-issued `guard-arm.sh arm ...
+        # --session-id` outright, and the one real direct caller always
+        # supplies a generated UUID — but a malformed direct invocation
+        # should fail fast, not hang. sid stays empty either way, which
+        # valid_session_id already rejects below.
+        if [ "$#" -ge 2 ]; then shift 2; else shift; fi
         ;;
       *)
         [ -n "$by" ] || by="$1"

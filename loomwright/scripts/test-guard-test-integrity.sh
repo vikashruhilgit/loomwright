@@ -5,7 +5,7 @@
 # (`.supervisor/requirements/six-phase-loop-gaps/02-test-integrity-guard.md`):
 # every Bash pattern + its negation twin, every Write|Edit basename + allow
 # case, the 6 gate cases, the guard-arm.sh subcommand cases, the concurrency
-# case, the sentinel checks, and all 24 named mutation controls.
+# case, the sentinel checks, and all 25 named mutation controls.
 #
 # Runs entirely in temp dirs (mktemp -d), never touches the real
 # `.supervisor/`. Exit 0 = all pass, 1 = any failure (auto-registered by
@@ -342,6 +342,27 @@ after2="$(cat "$ARM_D/.supervisor/guard/sess-arm-1.json")"
 
 CLAUDE_PROJECT_DIR="$ARM_D" bash "$ARM" arm dispatcher --session-id uuid-disp-1 >/dev/null 2>&1
 [ -e "$ARM_D/.supervisor/guard/uuid-disp-1.json" ] && ok "arm dispatcher --session-id X writes X.json" || no "arm dispatcher --session-id X writes X.json"
+
+# PR #258 review round-11 finding: a trailing `--session-id` with no
+# value left only 1 positional arg, `shift 2` failed, and — since this
+# script runs under `set -u` only, not `set -e` — the failure was
+# silently swallowed, $1 was never consumed, and the flag-parsing loop
+# spun forever on the same token. No portable `timeout` on macOS
+# (CLAUDE.md), so bound the wait manually: background the call, poll
+# briefly, and kill-and-fail if it's still alive.
+( CLAUDE_PROJECT_DIR="$ARM_D" bash "$ARM" arm foo --session-id >/dev/null 2>&1 ) &
+trailing_flag_pid=$!
+trailing_flag_hung=0
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  kill -0 "$trailing_flag_pid" 2>/dev/null || break
+  sleep 0.3
+done
+if kill -0 "$trailing_flag_pid" 2>/dev/null; then
+  trailing_flag_hung=1
+  kill -9 "$trailing_flag_pid" 2>/dev/null
+fi
+wait "$trailing_flag_pid" 2>/dev/null
+[ "$trailing_flag_hung" -eq 0 ] && ok "arm foo --session-id (no value) — fails fast, does not hang" || no "arm foo --session-id (no value) — hung (unbounded-shift regression)"
 
 afp_match="$(printf '%s' "$(jq -n '{session_id:"sess-afp-1", tool_input:{subagent_type:"loomwright:loomwright:worker"}}')" | CLAUDE_PROJECT_DIR="$ARM_D" bash "$ARM" arm-from-payload >/dev/null 2>&1; echo $?)"
 [ -e "$ARM_D/.supervisor/guard/sess-afp-1.json" ] && ok "arm-from-payload arms on namespaced :worker subagent_type" || no "arm-from-payload arms on namespaced :worker subagent_type"
@@ -1076,6 +1097,43 @@ if [ -s "$MUT_H" ] && ! cmp -s "$ARM" "$MUT_H" && bash -n "$MUT_H" 2>/dev/null; 
   rm -rf "$MUT_H_D"
 else
   no "(h) mutation control: could not construct mutant"
+fi
+
+# (y) revert the bounded shift back to unconditional `shift 2` -> a
+#     trailing `--session-id` with no value re-opens the unbounded hang
+#     (PR #258 round-11 review finding)
+MUT_Y="$MUT_D/guard-arm-mut-y.sh"
+cp "$ARM" "$MUT_Y"
+python3 - "$MUT_Y" <<'PYEOF' 2>/dev/null || true
+import sys
+p = sys.argv[1]
+with open(p) as f:
+    c = f.read()
+old = '        if [ "$#" -ge 2 ]; then shift 2; else shift; fi\n'
+new = '        shift 2\n'
+assert old in c, "anchor not found for mutation (y)"
+c = c.replace(old, new, 1)
+with open(p, 'w') as f:
+    f.write(c)
+PYEOF
+if [ -s "$MUT_Y" ] && ! cmp -s "$ARM" "$MUT_Y" && bash -n "$MUT_Y" 2>/dev/null; then
+  MUT_Y_D="$(mktemp -d)"
+  ( CLAUDE_PROJECT_DIR="$MUT_Y_D" bash "$MUT_Y" arm foo --session-id >/dev/null 2>&1 ) &
+  mut_y_pid=$!
+  mut_y_hung=0
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    kill -0 "$mut_y_pid" 2>/dev/null || break
+    sleep 0.3
+  done
+  if kill -0 "$mut_y_pid" 2>/dev/null; then
+    mut_y_hung=1
+    kill -9 "$mut_y_pid" 2>/dev/null
+  fi
+  wait "$mut_y_pid" 2>/dev/null
+  [ "$mut_y_hung" -eq 1 ] && ok "(y) mutation control: reverting to unconditional shift 2 re-opens the trailing-flag hang" || no "(y) mutation control did not break the case (still exited promptly)"
+  rm -rf "$MUT_Y_D"
+else
+  no "(y) mutation control: could not construct mutant"
 fi
 
 rm -f /tmp/.guard-test-stderr.$$
