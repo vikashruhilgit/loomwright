@@ -599,15 +599,34 @@ evaluate_one_simple_command() {
   exec_base="$(basename_of "$exec_word")"
 
   # ---- guard-arm.sh invocation rule (structural: exec is guard-arm.sh, or
-  #      the word after bash/sh/source is a guard-arm.sh path — a bare
-  #      `exec` prefix is already resolved past above) ------------------
+  #      the FIRST NON-FLAG word after bash/sh/source/. is a guard-arm.sh
+  #      path — a bare `exec` prefix is already resolved past above) -----
   local ga_idx=-1
   case "$exec_base" in
     guard-arm.sh) ga_idx=$idx ;;
     bash|sh|source|.)
-      local next="${words[$((idx + 1))]:-}"
+      # A fixed words[idx+1] read (the original form) missed an
+      # interpreter flag between bash/sh and the script path — any
+      # flag (`-x`, `-c`, `--norc`, ...) made basename_of(next) resolve
+      # to the FLAG, not guard-arm.sh, so ga_idx stayed -1 and the
+      # entire block below — the ONLY place any guard-arm.sh-specific
+      # rule lives, including the --session-id arbitrary-arm deny — was
+      # skipped outright. `bash -x guard-arm.sh disarm-session` was a
+      # full self-disarm from one Bash tool call (claude-review finding
+      # on PR #258, confirmed live before fixing). Walk past any number
+      # of leading `-`-prefixed flags to find the real script-path
+      # candidate, same idiom as the git global-option walk above.
+      local gnext_idx=$((idx + 1)) gw
+      while [ "$gnext_idx" -lt "${#words[@]}" ]; do
+        gw="${words[$gnext_idx]}"
+        case "$gw" in
+          -*) gnext_idx=$((gnext_idx + 1)); continue ;;
+          *) break ;;
+        esac
+      done
+      local next="${words[$gnext_idx]:-}"
       case "$(basename_of "$next")" in
-        guard-arm.sh) ga_idx=$((idx + 1)) ;;
+        guard-arm.sh) ga_idx=$gnext_idx ;;
       esac
       ;;
   esac

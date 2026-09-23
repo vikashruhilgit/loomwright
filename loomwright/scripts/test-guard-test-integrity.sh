@@ -5,7 +5,7 @@
 # (`.supervisor/requirements/six-phase-loop-gaps/02-test-integrity-guard.md`):
 # every Bash pattern + its negation twin, every Write|Edit basename + allow
 # case, the 6 gate cases, the guard-arm.sh subcommand cases, the concurrency
-# case, the sentinel checks, and all 25 named mutation controls.
+# case, the sentinel checks, and all 26 named mutation controls.
 #
 # Runs entirely in temp dirs (mktemp -d), never touches the real
 # `.supervisor/`. Exit 0 = all pass, 1 = any failure (auto-registered by
@@ -120,6 +120,19 @@ assert_rc "rm .supervisor/guard/<sid>.json — deny"                 "$(bash_rc 
 assert_rc "bash guard-arm.sh disarm-session — deny"                "$(bash_rc "$D" "$SID" "bash $ARM disarm-session")" 2
 assert_rc "bash guard-arm.sh arm-from-payload — deny"              "$(bash_rc "$D" "$SID" "bash $ARM arm-from-payload")" 2
 assert_rc "bash guard-arm.sh arm supervisor — allow"               "$(bash_rc "$D" "$SID" "bash $ARM arm supervisor")" 0
+# claude-review finding on PR #258 (HIGH, independent bot review): a fixed
+# words[idx+1] read for the guard-arm.sh script-path argument missed any
+# interpreter flag between bash/sh/source and the path (`-x`, `-c`,
+# `--norc`, ...) — the flag made basename_of(next) resolve to the FLAG,
+# not guard-arm.sh, so the entire guard-arm.sh-specific rule block
+# (including the --session-id arbitrary-arm deny) was skipped outright.
+# `bash -x guard-arm.sh disarm-session` was a full self-disarm from one
+# Bash tool call.
+assert_rc "bash -x guard-arm.sh disarm-session — deny (interpreter-flag bypass)" "$(bash_rc "$D" "$SID" "bash -x $ARM disarm-session")" 2
+assert_rc "bash -c guard-arm.sh disarm-session — deny (interpreter-flag bypass)" "$(bash_rc "$D" "$SID" "bash -c $ARM disarm-session")" 2
+assert_rc "sh -x guard-arm.sh disarm-session — deny (interpreter-flag bypass)" "$(bash_rc "$D" "$SID" "sh -x $ARM disarm-session")" 2
+assert_rc "bash -x guard-arm.sh arm x --session-id arbitrary-id — deny (flag + arbitrary-session arm)" "$(bash_rc "$D" "$SID" "bash -x $ARM arm x --session-id arbitrary-id")" 2
+assert_rc "bash -x guard-arm.sh arm supervisor — allow (flag, harmless subcommand)" "$(bash_rc "$D" "$SID" "bash -x $ARM arm supervisor")" 0
 # PR #258 review finding: an `arm` invocation is only "harmless by construction"
 # when it can only name the CALLER's own session id — a --session-id flag lets
 # a tool call arm an ARBITRARY other session, which is the real capability
@@ -547,6 +560,35 @@ MUT_I="$MUT_D/mut-i.sh"
 if make_mutant "$MUT_I" perl -0pi -e 's/    local w2\n    for w2 in "\$\{words\[\@\]:\$\(\(ga_idx \+ 2\)\)\}"; do\n      case "\$w2" in\n        --session-id\|--session-id=\*\)\n          deny_variant bash "internal control script invocation"\n          ;;\n      esac\n    done\n//'; then
   rc="$(mut_rc "$MUT_I" "$D" "$SID" "bash $ARM arm x --session-id arbitrary-id")"
   [ "$rc" != "2" ] && ok "(i) mutation control: dropping the --session-id scan re-opens the arbitrary-session-arm bypass" || no "(i) mutation control did not break the case (still rc=2)"
+fi
+
+# (z) revert the interpreter-flag walk back to a fixed words[idx+1] read
+#     for the guard-arm.sh script-path argument -> `bash -x guard-arm.sh
+#     disarm-session` re-opens as a full self-disarm (claude-review
+#     finding on PR #258, independent bot review)
+MUT_Z="$MUT_D/mut-z.sh"
+python3 - "$GUARD" "$MUT_Z" <<'PYEOF' 2>/dev/null || true
+import sys, re
+src, dst = sys.argv[1], sys.argv[2]
+with open(src) as f:
+    c = f.read()
+pat = re.compile(
+    r'      local gnext_idx=\$\(\(idx \+ 1\)\) gw\n'
+    r'.*?\n'
+    r'      local next="\$\{words\[\$gnext_idx\]:-\}"\n',
+    re.S)
+m = pat.search(c)
+assert m, "interpreter-flag walk not found for mutation (z)"
+c = c[:m.start()] + '      local next="${words[$((idx + 1))]:-}"\n' + c[m.end():]
+c = c.replace('guard-arm.sh) ga_idx=$gnext_idx ;;', 'guard-arm.sh) ga_idx=$((idx + 1)) ;;', 1)
+with open(dst, 'w') as f:
+    f.write(c)
+PYEOF
+if [ -s "$MUT_Z" ] && ! cmp -s "$GUARD" "$MUT_Z" && bash -n "$MUT_Z" 2>/dev/null; then
+  rc="$(mut_rc "$MUT_Z" "$D" "$SID" "bash -x $ARM disarm-session")"
+  [ "$rc" != "2" ] && ok "(z) mutation control: reverting to a fixed-index guard-arm.sh path read re-opens the interpreter-flag self-disarm bypass" || no "(z) mutation control did not break the case (still rc=2)"
+else
+  no "(z) mutation control: could not construct mutant"
 fi
 
 # (j) narrow the pre-commit/lefthook uninstall scan back to the single word
