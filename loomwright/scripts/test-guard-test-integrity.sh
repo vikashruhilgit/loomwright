@@ -5,7 +5,7 @@
 # (`.supervisor/requirements/six-phase-loop-gaps/02-test-integrity-guard.md`):
 # every Bash pattern + its negation twin, every Write|Edit basename + allow
 # case, the 6 gate cases, the guard-arm.sh subcommand cases, the concurrency
-# case, the sentinel checks, and all 17 named mutation controls.
+# case, the sentinel checks, and all 18 named mutation controls.
 #
 # Runs entirely in temp dirs (mktemp -d), never touches the real
 # `.supervisor/`. Exit 0 = all pass, 1 = any failure (auto-registered by
@@ -179,6 +179,25 @@ assert_rc "ln -s realfile.txt /tmp/dest — allow (ordinary symlink, no protecte
 # operator) was mis-tokenized as a pipe by split_simple_commands, hiding
 # the write target from the redirect-target check entirely.
 assert_rc "echo x >|jest.config.js — deny (clobber-redirect mis-tokenized as pipe)" "$(bash_rc "$D" "$SID" 'echo x >|jest.config.js')" 2
+# PR #258 review round-6 finding: the write-verb/redirect-target checks
+# only tested is_protected_basename + `.supervisor/guard`, never the
+# `.husky/`, `.git/hooks/`, `.claude/settings*.json` directory-suffix set
+# the Write|Edit matcher already enforces for the same paths — plain
+# commands, no shell-grammar trick, and the settings.json gap in
+# particular is a PERSISTENT cross-session disarm route the spec
+# explicitly says the guard exists to close.
+assert_rc "rm .husky/pre-commit — deny (.husky has zero Bash-matcher coverage)" "$(bash_rc "$D" "$SID" 'rm .husky/pre-commit')" 2
+assert_rc "echo x > .husky/pre-commit — deny (.husky write via redirect)" "$(bash_rc "$D" "$SID" 'echo x > .husky/pre-commit')" 2
+assert_rc "tee .husky/pre-commit — deny (.husky write via tee)" "$(bash_rc "$D" "$SID" 'tee .husky/pre-commit')" 2
+assert_rc "rm -rf .husky — deny (bare directory arg, no trailing slash in the substring)" "$(bash_rc "$D" "$SID" 'rm -rf .husky')" 2
+assert_rc "chmod -x .husky/pre-commit — deny (permission-only disable of a live hook)" "$(bash_rc "$D" "$SID" 'chmod -x .husky/pre-commit')" 2
+assert_rc "echo x > .git/hooks/pre-commit — deny (.git/hooks protected only against rm/chmod/mv before this fix)" "$(bash_rc "$D" "$SID" 'echo x > .git/hooks/pre-commit')" 2
+assert_rc "cp src.txt .git/hooks/pre-commit — deny (.git/hooks overwrite via cp)" "$(bash_rc "$D" "$SID" 'cp src.txt .git/hooks/pre-commit')" 2
+assert_rc "echo x > .claude/settings.json — deny (persistent cross-session disarm route)" "$(bash_rc "$D" "$SID" 'echo x > .claude/settings.json')" 2
+assert_rc "cp x .claude/settings.local.json — deny (settings.local.json via cp)" "$(bash_rc "$D" "$SID" 'cp x .claude/settings.local.json')" 2
+assert_rc "ln -sf /dev/null .husky/pre-commit — deny (ln's link-name check now shares the directory-suffix set)" "$(bash_rc "$D" "$SID" 'ln -sf /dev/null .husky/pre-commit')" 2
+assert_rc "rm -rf /tmp/scratch-dir — allow (ordinary directory removal, no protected suffix)" "$(bash_rc "$D" "$SID" 'rm -rf /tmp/scratch-dir')" 0
+assert_rc "echo x > .claude/README.md — allow (.claude dir, non-settings file)" "$(bash_rc "$D" "$SID" 'echo x > .claude/README.md')" 0
 assert_rc "cat guard-arm.sh — allow"                                "$(bash_rc "$D" "$SID" "cat $ARM")" 0
 assert_rc "sed -n 1,40p guard-arm.sh — allow"                       "$(bash_rc "$D" "$SID" "sed -n 1,40p $ARM")" 0
 assert_rc "shellcheck guard-arm.sh — allow (tool absence is not the point)" "$(bash_rc "$D" "$SID" "shellcheck $ARM")" 0
@@ -677,6 +696,39 @@ if [ -s "$MUT_Q" ] && ! cmp -s "$GUARD" "$MUT_Q" && bash -n "$MUT_Q" 2>/dev/null
   [ "$rc" != "2" ] && ok "(q) mutation control: reverting the >| clobber-redirect handling re-opens the mis-tokenized-as-pipe bypass" || no "(q) mutation control did not break the case (still rc=2)"
 else
   no "(q) mutation control: could not construct mutant"
+fi
+
+# (r) narrow is_protected_path_arg back to is_protected_basename +
+#     .supervisor/guard only (drop the .husky/.git/hooks/settings.json
+#     directory-suffix set) -> the write-verb/redirect-target checks lose
+#     Bash-matcher parity with the Write|Edit matcher again, re-opening
+#     `echo x > .husky/pre-commit` (PR #258 round-6 review finding)
+MUT_R="$MUT_D/mut-r.sh"
+python3 - "$GUARD" "$MUT_R" <<'PYEOF' 2>/dev/null || true
+import sys, re
+src, dst = sys.argv[1], sys.argv[2]
+with open(src) as f:
+    c = f.read()
+pat = re.compile(
+    r'  case "\$w" in\n'
+    r'    \*\.supervisor/guard\*\) return 0 ;;\n'
+    r'.*?\n'
+    r'  esac\n',
+    re.S)
+m = pat.search(c)
+assert m, "is_protected_path_arg directory-suffix case block not found for mutation (r)"
+new = ('  case "$w" in\n'
+       '    *.supervisor/guard*) return 0 ;;\n'
+       '  esac\n')
+c = c[:m.start()] + new + c[m.end():]
+with open(dst, 'w') as f:
+    f.write(c)
+PYEOF
+if [ -s "$MUT_R" ] && ! cmp -s "$GUARD" "$MUT_R" && bash -n "$MUT_R" 2>/dev/null; then
+  rc="$(mut_rc "$MUT_R" "$D" "$SID" 'echo x > .husky/pre-commit')"
+  [ "$rc" != "2" ] && ok "(r) mutation control: dropping the directory-suffix set from is_protected_path_arg re-opens the .husky/.git-hooks/settings.json Bash-matcher gap" || no "(r) mutation control did not break the case (still rc=2)"
+else
+  no "(r) mutation control: could not construct mutant"
 fi
 
 # (e) delete the empty-id check in arm -> the unset-env case fails (writes a

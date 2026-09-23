@@ -180,6 +180,39 @@ basename_of() {
 }
 
 # ---------------------------------------------------------------------------
+# Shared protected-path test for a single Bash-matcher WORD argument (a raw
+# command-line token, not a Write|Edit `file_path`). Mirrors
+# evaluate_write_edit's directory-suffix set (`.husky/`, `.git/hooks/`,
+# `.claude/settings.json`/`settings.local.json`) plus the existing
+# `.supervisor/guard` + is_protected_basename checks (PR #258 round-6
+# review finding: the write-verb and redirect-target checks below only
+# tested is_protected_basename + `.supervisor/guard`, so `echo x >
+# .husky/pre-commit`, `tee .git/hooks/pre-commit`, and `cp x
+# .claude/settings.json` were all allowed outright — no shell-grammar
+# trick needed. The settings.json gap in particular is a PERSISTENT
+# cross-session disarm route: the source requirement's own stated reason
+# for protecting that path is closing "the next launch route" — an armed
+# agent writing the opt-out into settings.json's `env` block for a LATER
+# `claude -p` process to honor, which the Write|Edit matcher already
+# closes but the Bash matcher did not). ------------------------------------
+is_protected_path_arg() {
+  local w="$1"
+  case "$w" in
+    *.supervisor/guard*) return 0 ;;
+    # No required trailing "/" after .husky (unlike evaluate_write_edit's
+    # `*/.husky/*`, which only ever sees a FILE path): the Bash matcher
+    # also sees bare directory arguments like `rm -rf .husky`, which
+    # contain no "/" after the dir name at all and would otherwise slip
+    # past a `*.husky/*` substring test (PR #258 round-6 review finding,
+    # live-demonstrated). Mirrors the pre-existing `.git/hooks*` style.
+    *.husky*) return 0 ;;
+    *.git/hooks*) return 0 ;;
+    *.claude/settings.json|*.claude/settings.local.json) return 0 ;;
+  esac
+  is_protected_basename "$(basename_of "$w")"
+}
+
+# ---------------------------------------------------------------------------
 # env's own short-flag CLUSTER forms: a run of boolean flags (0/i/v in any
 # combination/order — BSD env's own usage string groups them as `[-0iv]`,
 # and GNU env supports the same bundling) optionally followed by ONE
@@ -637,20 +670,28 @@ evaluate_one_simple_command() {
       ;;
   esac
 
-  # ---- rm/chmod/mv with an argument containing .git/hooks ----------------
+  # ---- rm/chmod/mv with an argument under a git-hook directory -----------
+  # `.husky/` is equally in scope: Husky v9+ (the current default
+  # `npx husky init` output) sets `core.hooksPath=.husky`, so
+  # `.husky/pre-commit` IS the live git hook, not a convenience file next
+  # to one — a `chmod -x` there disables the hook exactly like one under
+  # `.git/hooks` would (PR #258 round-6 review finding). `chmod` stays a
+  # dedicated case here (not folded into is_protected_path_arg below)
+  # because a permission change doesn't rewrite CONTENT, so it's only a
+  # meaningful "disable" for an executable-bit-sensitive hook path, not
+  # for a protected basename or settings.json in general.
   case "$exec_base" in
     rm|chmod|mv)
       local w6
       for w6 in "${words[@]:$((idx + 1))}"; do
         case "$w6" in
-          *.git/hooks*) deny_variant bash "git-hook directory write" ;;
+          *.git/hooks*|*.husky*) deny_variant bash "git-hook directory write" ;;
         esac
       done
       ;;
   esac
 
-  # ---- write verbs whose simple command names a protected basename or
-  #      contains .supervisor/guard ----------------------------------------
+  # ---- write verbs whose simple command names a protected path -----------
   local is_write_verb=0
   case "$exec_base" in
     tee|mv|cp|rm|truncate|install) is_write_verb=1 ;;
@@ -669,10 +710,7 @@ evaluate_one_simple_command() {
       case "$w8" in
         -*) continue ;;
       esac
-      case "$w8" in
-        *.supervisor/guard*) deny_variant bash "protected configuration write" ;;
-      esac
-      if is_protected_basename "$(basename_of "$w8")"; then
+      if is_protected_path_arg "$w8"; then
         deny_variant bash "protected configuration write"
       fi
     done
@@ -686,8 +724,6 @@ evaluate_one_simple_command() {
   #      share a protected basename (PR #258 round-5 review finding; the
   #      round-4 fix that first added `ln` reused the all-argument scan
   #      verbatim without checking ln's own read-vs-write argument shape).
-  #      A hook path as the LINK NAME is equally a "git-hook directory
-  #      write", so both checks live in this one last-arg-only block. -----
   if [ "$exec_base" = "ln" ]; then
     local w9 link_name=""
     for w9 in "${words[@]:$((idx + 1))}"; do
@@ -696,11 +732,7 @@ evaluate_one_simple_command() {
       esac
       link_name="$w9"
     done
-    case "$link_name" in
-      *.git/hooks*) deny_variant bash "git-hook directory write" ;;
-      *.supervisor/guard*) deny_variant bash "protected configuration write" ;;
-    esac
-    if is_protected_basename "$(basename_of "$link_name")"; then
+    if is_protected_path_arg "$link_name"; then
       deny_variant bash "protected configuration write"
     fi
   fi
@@ -711,10 +743,7 @@ evaluate_one_simple_command() {
     case "${words[$wi]}" in
       '>'|'>>'|'>|')
         local target="${words[$((wi + 1))]:-}"
-        case "$target" in
-          *.supervisor/guard*) deny_variant bash "protected configuration write" ;;
-        esac
-        if is_protected_basename "$(basename_of "$target")"; then
+        if is_protected_path_arg "$target"; then
           deny_variant bash "protected configuration write"
         fi
         ;;
