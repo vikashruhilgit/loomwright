@@ -1192,6 +1192,61 @@ else
 fi
 rm -rf "$(dirname "$MUT42")"
 
+echo "== 43. (guard pre-arm, six-phase-loop-gaps/02) DRY_RUN names the guard uuid TWICE: --session-id flag + a DRY_RUN_GUARD_ARM line, same value =="
+WD="$(fresh_repo)"
+run_dispatch "$WD" "$PR"
+SID_FLAG="$(printf '%s' "$RUN_OUT" | grep -o -- '--session-id [^ ]*' | head -1 | awk '{print $2}')"
+SID_GUARD_LINE="$(printf '%s' "$RUN_OUT" | grep '^DRY_RUN_GUARD_ARM:' | awk '{print $2}')"
+if [ -n "$SID_FLAG" ] && [ "$SID_FLAG" = "$SID_GUARD_LINE" ]; then
+  ok "DRY_RUN names the guard uuid twice, identically (--session-id $SID_FLAG == DRY_RUN_GUARD_ARM $SID_GUARD_LINE)"
+else
+  no "DRY_RUN guard-uuid mismatch (--session-id='$SID_FLAG' DRY_RUN_GUARD_ARM='$SID_GUARD_LINE')"
+fi
+rm -rf "$WD"
+
+echo "== 44. (guard pre-arm) real launch: <worktree>/.supervisor/guard/<uuid>.json exists BEFORE the launch, named by the SAME uuid passed via --session-id =="
+fresh_git_repo >/dev/null
+# A slow stub (captures args, sleeps briefly before exiting) gives this test a
+# reliable window to inspect the sibling worktree BEFORE the trap's teardown
+# removes it — the guard marker lives inside the worktree and is gone once
+# teardown completes, unlike the durable `.supervisor/review-dispatch/` marker.
+cat > "$FX_BIN/stub-claude" <<CLEOF
+#!/usr/bin/env bash
+if [ "\$1" = "--help" ]; then
+  printf -- '--permission-mode <mode> (choices: "acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan")\n'
+  printf -- '--allowedTools, --allowed-tools <tools...>\n'
+  printf -- '--disallowedTools, --disallowed-tools <tools...>\n'
+  exit 0
+fi
+printf 'cwd=%s args=%s\n' "\$(pwd)" "\$*" >> "$FX_CLAUDE_LOG"
+sleep 1.5
+printf 'REVIEW_HEAL_RESULT\n'
+exit 0
+CLEOF
+chmod +x "$FX_BIN/stub-claude"
+run_real "$FX_REPO" "$PR"
+WT="$(expected_wt_path "$FX_REPO")"
+GUARD_SID=""
+GUARD_FILE_FOUND=0
+for _i in $(seq 1 20); do
+  if [ -d "$WT/.supervisor/guard" ]; then
+    GUARD_SID="$(ls "$WT/.supervisor/guard" 2>/dev/null | sed 's/\.json$//' | head -1)"
+    [ -n "$GUARD_SID" ] && [ -f "$WT/.supervisor/guard/$GUARD_SID.json" ] && GUARD_FILE_FOUND=1 && break
+  fi
+  sleep 0.1
+done
+CAPTURED_ARGS="$(cat "$FX_CLAUDE_LOG" 2>/dev/null || true)"
+ARG_SID="$(printf '%s' "$CAPTURED_ARGS" | grep -o -- '--session-id [^ ]*' | head -1 | awk '{print $2}')"
+H="$(pr_hash)"
+LOCK="$FX_REPO/.supervisor/review-dispatch/$H.lock"
+wait_for_teardown "$FX_REPO" "$WT" "$LOCK" || true
+if [ "$GUARD_FILE_FOUND" -eq 1 ] && [ -n "$ARG_SID" ] && [ "$GUARD_SID" = "$ARG_SID" ]; then
+  ok "real launch: guard marker <worktree>/.supervisor/guard/$GUARD_SID.json existed pre-teardown, matches --session-id $ARG_SID passed to claude"
+else
+  no "real launch guard pre-arm wrong (guard_sid='$GUARD_SID' found=$GUARD_FILE_FOUND arg_sid='$ARG_SID' args='$CAPTURED_ARGS')"
+fi
+rm -rf "$(dirname "$FX_REPO")"
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

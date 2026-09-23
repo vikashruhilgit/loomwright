@@ -901,6 +901,28 @@ else
   no "AC-14 mutant gate: mutant not usable (empty, identical, syntax error, or line not replaced) — control skipped"
 fi
 
+echo "== AC-15. (six-phase-loop-gaps/02) .supervisor/guard/ marker files never appear under untracked/ =="
+# Verify-first per the source requirement's own File Impact Map: worktree-salvage.sh's
+# `git status --porcelain=v1 -z --untracked-files=all` call (line ~170) carries NO
+# `--ignored` flag, so gitignored paths never reach the untracked scan at all — no
+# path-denylist needed. `.gitignore:86` (`.supervisor/*`) covers `.supervisor/guard/`
+# with no negating `!.supervisor/guard/` line anywhere. This test PINS that fact as a
+# regression guard; it is expected to pass with ZERO code change to worktree-salvage.sh.
+fresh_wt ac15
+dirty_wt "$FX_WT"
+mkdir -p "$FX_WT/.supervisor/guard"
+printf '{"session_id":"sess-ac15","armed_at":"2026-09-23T00:00:00Z","by":"test"}\n' > "$FX_WT/.supervisor/guard/sess-ac15.json"
+DEST="$FX_D/salvage-ac15"
+run_salvage "$SALVAGE" "$FX_WT" --dest "$DEST" --reason "AC-15 guard exclusion"
+SDIR="$(first_salvage_dir "$DEST")"
+if [ "$S_RC" -eq 0 ] && [ -n "$SDIR" ] && [ -f "$SDIR/untracked/new/dir/f.txt" ] \
+   && ! find "$SDIR" -iname '*guard*' 2>/dev/null | grep -q . \
+   && ! find "$SDIR/untracked" -path '*.supervisor*' 2>/dev/null | grep -q .; then
+  ok "AC-15: real untracked file salvaged, .supervisor/guard/ never appears anywhere under the salvage dir"
+else
+  no "AC-15 (rc=$S_RC sdir='$SDIR' f_txt=$([ -f "$SDIR/untracked/new/dir/f.txt" ] && echo present || echo absent) guard_hits='$(find "$SDIR" -iname '*guard*' 2>/dev/null)')"
+fi
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

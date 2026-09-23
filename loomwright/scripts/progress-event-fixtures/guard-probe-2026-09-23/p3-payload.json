@@ -1,0 +1,17 @@
+{
+  "session_id": "ae2cd91c-652a-47be-8e26-272598131884",
+  "transcript_path": "/Users/vikashruhil/.claude/projects/-private-tmp-guard-probe-63549/ae2cd91c-652a-47be-8e26-272598131884.jsonl",
+  "cwd": "/private/tmp/guard-probe-63549",
+  "prompt_id": "beb3014b-ec68-45c2-ab56-c2daf6227b2c",
+  "permission_mode": "bypassPermissions",
+  "effort": {
+    "level": "high"
+  },
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "echo p3done",
+    "description": "Print p3done"
+  },
+  "tool_use_id": "toolu_01SGmQoi1DkXRPiqssDiWMxV"
+}

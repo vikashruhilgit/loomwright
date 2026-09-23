@@ -117,6 +117,8 @@ Before the loop runs, resolve the PR's head and get the working tree onto it. **
 
 Mirrors Supervisor Phase 4.5 semantics exactly. **Default bound is 3 iterations** (the `--heal-iterations` analogue).
 
+**Arm the test-integrity guard (six-phase-loop-gaps/02) before the loop begins:** run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/guard-arm.sh" arm review-heal`. This covers both the inline `/review-pr` entry point AND the `/automate` owned drain — the latter is already covered by the Supervisor's own marker from the SAME session (nothing disarms between the Supervisor's RUN phase and this DRAIN), so this call is idempotent no-op in that case. Record `record_decision("guard_armed: ok")` on exit 0, or `record_decision("guard_armed: failed: <stderr>")` on any non-zero exit — on `failed` the loop proceeds visibly unguarded; surface `guard: unarmed` in the completion tail's outcome line. Never block loop entry on this — a failed arm is logged, not fatal.
+
 ```
 heal_iterations = 0
 issues_fixed = 0

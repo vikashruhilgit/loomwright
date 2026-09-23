@@ -24,7 +24,7 @@
 # lock dir is scoped to a per-PR hash (a different namespace: one dispatch
 # lock per PR vs. one run lock per REPO). The mkdir-atomicity + TSV-meta +
 # pid-liveness + TTL-reclaim SHAPE is mirrored deliberately (see the
-# `write_lock_meta`/`acquire_lock` pair in dispatch-pr-review.sh:550
+# `write_lock_meta`/`acquire_lock` pair in dispatch-pr-review.sh:580
 # [pins: `write_lock_meta`]) so both locks fail exactly the same way
 # under a crashed holder.
 #

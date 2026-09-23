@@ -1385,6 +1385,14 @@ _DESTRUCTIVE_PATTERNS = (
     ("rm -rf", re.compile(_CMD_START + r"(?:sudo[ \t]+)?rm[ \t]+-[a-zA-Z]*[fF][a-zA-Z]*[rR]\b", re.M)),
     ("git push", re.compile(_CMD_START + r"git[ \t]+(?:-[^ \t]+[ \t]+)*push\b", re.M)),
     ("git reset --hard", re.compile(_CMD_START + r"git[ \t]+(?:-[^ \t]+[ \t]+)*reset[ \t]+--hard\b", re.M)),
+    # `git clean` with `x`/`X` in its flag cluster deletes ignored files —
+    # including the test-integrity guard's own markers AND state.md (see
+    # `.supervisor/requirements/six-phase-loop-gaps/02-test-integrity-guard.md`
+    # Scope item 6). Mirrors guard-test-integrity.sh's own runtime pattern
+    # (same intent, different layer: this is the post-hoc SubagentStop net,
+    # that is the pre-action PreToolUse deny — "the post-hoc net should catch
+    # what the pre-action net is for").
+    ("git clean", re.compile(_CMD_START + r"git[ \t]+(?:-[^ \t]+[ \t]+)*clean\b(?:[ \t]+-[a-zA-Z]+)*?[ \t]+-[a-zA-Z]*[xX][a-zA-Z]*\b", re.M)),
     ("DROP", re.compile(r"\bDROP[ \t]+(?:TABLE|DATABASE|SCHEMA|VIEW|INDEX|COLUMN|CONSTRAINT|TYPE)\b")),
     ("TRUNCATE", re.compile(r"\bTRUNCATE[ \t]+(?:TABLE[ \t]|[A-Za-z_])")),
 )
