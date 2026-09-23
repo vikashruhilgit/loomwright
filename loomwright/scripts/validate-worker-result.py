@@ -48,6 +48,29 @@ see the RULE SOURCE note above):
       never substitutes for or is derived from outputs_gap (rule 8's
       cross-field invariant is unaffected).
 
+ADDITIONAL RULE (10), added post-hoc for the worker-deviations item
+(`.supervisor/requirements/six-phase-loop-gaps/01-worker-deviations.md`) —
+same treatment as rule (9), NOT sourced from any hooks.json prompt string:
+
+  (10) deviations shape — OPTIONAL and ADDITIVE at schema_version 2. Omitting
+      the field is accepted at ANY schema_version, same as rule 9. WHEN
+      PRESENT, it must be a list of AT MOST 12 non-empty strings, each AT MOST
+      200 characters. Unlike rule 9's out_of_lane (path strings, no length or
+      count cap), deviations carries its own bound because it rides in a
+      ~200-token summary read (Execute Manager) and a capped Phase 4.5
+      advisory. A present-but-malformed value (null, non-array, empty-string
+      entry, over-count, or over-length entry) is rejected while absence is
+      still accepted — same validated-but-optional shape as rule 9, and for
+      the same reason: leaving it unvalidated would let malformed data slip
+      past scripts/check-contract-parity.sh's pin while the block still
+      "looked" valid. deviations is REPORT-ONLY: its presence, absence, or
+      contents NEVER affect any other rule in this file, and it never
+      substitutes for or is derived from outputs_gap (rule 8's cross-field
+      invariant is unaffected). By convention each entry is prefixed
+      plan:/edge:/open:/test: (unprefixed reads as other:), but the prefix is
+      a consumer convention, not a validation rule — this script does not
+      check for one.
+
 DELIBERATE NON-ADDITIONS / NARROWINGS (recorded, not accidental):
   * The prompt does NOT constrain WORKER_RESULT.status to an enum, so neither
     does this script (R4: transcribe, do not silently strengthen).
@@ -142,6 +165,10 @@ REASON_GAP_STATUS = (
 REASON_OUT_OF_LANE_SHAPE = (
     "out_of_lane, when present, must be an array of non-empty path strings "
     "(optional additive field, D6, rule 9)"
+)
+REASON_DEVIATIONS_SHAPE = (
+    "deviations, when present, must be an array of at most 12 non-empty "
+    "strings, each at most 200 characters (optional additive field, rule 10)"
 )
 
 MISSING_BLOCK = (
@@ -324,6 +351,27 @@ def main():
         for item in out_of_lane:
             if not isinstance(item, str) or is_empty_scalar(item):
                 emit(False, REASON_OUT_OF_LANE_SHAPE)
+
+    # ── (10) deviations shape — OPTIONAL, ADDITIVE, schema_version stays 2 ───
+    # PRESENCE-GATED, not required: absence is always accepted, at any
+    # schema_version, same treatment as rule 9. When present, every entry
+    # must be a non-empty string and the list carries its own bound (at most
+    # 12 entries, each at most 200 characters) that rule 9's out_of_lane does
+    # not have. `deviations: []` (nothing to report) is explicitly legal and
+    # the loop below simply does not iterate.
+    if present(fields, "deviations"):
+        deviations = fields.get("deviations")
+        if deviations is None:
+            emit(False, REASON_DEVIATIONS_SHAPE)
+        if not isinstance(deviations, list):
+            emit(False, REASON_DEVIATIONS_SHAPE)
+        if len(deviations) > 12:
+            emit(False, REASON_DEVIATIONS_SHAPE)
+        for item in deviations:
+            if not isinstance(item, str) or is_empty_scalar(item):
+                emit(False, REASON_DEVIATIONS_SHAPE)
+            if len(item) > 200:
+                emit(False, REASON_DEVIATIONS_SHAPE)
 
     emit(True)
 

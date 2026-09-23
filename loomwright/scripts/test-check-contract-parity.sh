@@ -49,7 +49,7 @@ import json,sys
 def prompt(fields): return "Verify block contains " + ", ".join(fields) + " fields."
 mk=lambda m,f:{"matcher":f"loomwright:{m}","hooks":[{"type":"prompt","prompt":prompt(f),"timeout":30}]}
 h={"hooks":{"SubagentStop":[
-  mk("worker",["schema_version","task_id","status","files_modified","summary","outputs_verified","outputs_gap","out_of_lane"]),
+  mk("worker",["schema_version","task_id","status","files_modified","summary","outputs_verified","outputs_gap","out_of_lane","deviations"]),
   mk("execute-manager",["schema_version","subtasks_completed","worktrees","merge_order","summary","completed_so_far","remaining","resume_context","reason","adjudication_required","missing_outputs","adjudication_options","adjudication_kind","colliding_lanes"]),
   mk("qa-executor",["schema_version","tests_generated","tests_passed","summary","coverage_estimate","run_id","run_dir","counts","pause_reason"]),
   mk("supervisor-runner",["schema_version","status","pr_url","heal_loop_ran","heal_iterations","heal_decision","heal_fixable_issues_fixed","heal_remaining_issues","error","summary"]),
@@ -62,7 +62,8 @@ PY
   cat >"$d/loomwright/agents/worker.md" <<'EOF'
 Emit WORKER_RESULT: schema_version, task_id, status: completed, files_modified,
 summary, outputs_verified (status: present / status: missing), outputs_gap,
-out_of_lane (optional, additive at schema_version 2 — report-only).
+out_of_lane (optional, additive at schema_version 2 — report-only),
+deviations (optional, additive at schema_version 2 — report-only).
 Other statuses: status: failed, status: partial.
 EOF
   cat >"$d/loomwright/agents/execute-manager.md" <<'EOF'
@@ -385,6 +386,57 @@ check "a \`#\` inside a string literal does not corrupt the source (tokenize, no
 #    committed tree), so an agent edit that trips the gate fails here too —
 #    a double signal with the CI step, by design.
 check "real repo tree passes" 0 bash "$GUARD" --root "$REPO_ROOT"
+
+# ── 15. One-off negation check: WORKER_RESULT MANIFEST row vs RESULT_SCHEMAS.md pairing ──
+# check-contract-parity.sh has NO runtime read of docs/RESULT_SCHEMAS.md — its two checks
+# (field presence, enum literals) derive their field list from hooks.json + the validator
+# source + the agent prompt only (see the header comment above). So this is a STANDALONE
+# pin, not a third Check inside the guard itself: it exists to demonstrate, for the
+# worker-deviations item's acceptance criteria, that "the MANIFEST row omits `deviations`
+# while RESULT_SCHEMAS.md still documents it" is a REAL, catchable divergence rather than a
+# silent no-op — the two files are meant to move together even though nothing mechanically
+# forces it today.
+RESULT_SCHEMAS="$REPO_ROOT/loomwright/docs/RESULT_SCHEMAS.md"
+# No separate existence pre-check here: a missing RESULT_SCHEMAS.md makes the
+# grep below fail on its own, which the counted check at line ~403 already
+# treats as a real FAIL (an uncounted pre-check here previously printed a
+# misleading "FAIL" that never incremented total/pass — PR #257 review nit).
+MANIFEST_ROW_RE='^worker\|worker\.md\|WORKER_RESULT\|.*,deviations$'
+
+total=$((total+1))
+if grep -qE "$MANIFEST_ROW_RE" "$GUARD" && grep -q 'deviations: string\[\]' "$RESULT_SCHEMAS"; then
+  echo "ok    WORKER_RESULT MANIFEST row carries deviations AND RESULT_SCHEMAS.md documents it (paired)"
+  pass=$((pass+1))
+else
+  echo "FAIL  WORKER_RESULT MANIFEST row / RESULT_SCHEMAS.md deviations pairing missing"
+fi
+
+# MUTATION: revert a COPY's MANIFEST row to omit deviations (RESULT_SCHEMAS.md — the real,
+# untouched file — still lists it). Confirms the mutant actually mutated (control) and that
+# the divergence it creates is one the pairing check above can detect.
+REVERTED="$TMP/check-contract-parity-reverted.sh"
+sed -E "s/${MANIFEST_ROW_RE}/worker|worker.md|WORKER_RESULT|schema_version,task_id,status,files_modified,summary,outputs_verified,outputs_gap,out_of_lane/" \
+  "$GUARD" > "$REVERTED"
+
+total=$((total+1))
+if [ -s "$REVERTED" ] && ! cmp -s "$GUARD" "$REVERTED"; then
+  echo "ok    negation mutant is non-empty and differs from the original (a valid mutant)"
+  pass=$((pass+1))
+else
+  echo "FAIL  negation mutant invalid (empty, or identical to the original) — cannot be trusted"
+fi
+
+total=$((total+1))
+if grep -qE "$MANIFEST_ROW_RE" "$REVERTED"; then
+  echo "FAIL  negation check: reverted copy still carries deviations in its MANIFEST row — the mutant did not mutate what it claims"
+else
+  if grep -q 'deviations: string\[\]' "$RESULT_SCHEMAS"; then
+    echo "ok    negation check: reverted MANIFEST row omits deviations while RESULT_SCHEMAS.md still documents it — a real, catchable mismatch"
+    pass=$((pass+1))
+  else
+    echo "FAIL  negation check: RESULT_SCHEMAS.md no longer documents deviations — cannot demonstrate the divergence"
+  fi
+fi
 
 echo "----"
 echo "test-check-contract-parity: $pass/$total passed"

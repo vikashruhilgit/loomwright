@@ -184,6 +184,23 @@ CRITICAL constraints:
 
 > **Where candidates go (current scope):** proposed candidates surface in your `WORKER_RESULT` block for a human — or a future P4 reflection pass — to promote at the repo root via `write-project-memory.sh`. There is **no automatic Supervisor collection/promotion step yet** (deferred to P4); emitting them here is the v1 deliverable, not a dead end.
 
+### Step 5.7: Optional — record deviations from plan
+
+OPTIONALLY populate the additive `deviations` field on WORKER_RESULT with short, bounded strings recording where THIS run departed from the brief — up to 12 entries, each up to 200 characters; longer stories belong in `.worker-summary.md` prose, not here. Four kinds, by convention prefixed:
+- `plan:` — you did something other than the subtask literally said, and why. Example: `plan: skipped migration down-direction — brief did not ask; flagged open`.
+- `edge:` — an edge case the brief never named and how you handled it. Example: `edge: empty CSV upload — treated as 0 rows, not an error`.
+- `open:` — a decision the brief left open and which way you went. Example: `open: retry backoff — chose exponential, brief did not specify`.
+- `test:` — a failing test's diagnosis (`test: <name> — <code wrong | assertion wrong | env>: <why>`). Example: `test: audit-log format — assertion wrong: asserted the pre-change format`.
+
+An entry without one of these prefixes is read as `other:` by consumers and is **never rejected** for lacking a prefix — the prefix is a convention, not a gate.
+
+CRITICAL constraints:
+- **`deviations` is THIS run's transient story — the opposite of `memory_candidates`, which is a durable, cross-run codebase fact.** Never cross-post between the two fields: a deviation about what you did this run does not belong in `memory_candidates`, and a durable structural fact does not belong in `deviations`.
+- **Never put secrets, credentials, tokens, or PII in `deviations`** — same rule as `memory_candidates`.
+- **REPORT-ONLY** — `deviations` never influences `status`, `outputs_gap`, or any other WORKER_RESULT rule. It is fed to the Phase 4.5 code-reviewer lens as an advisory only (`skills/self-heal-advisory/SKILL.md` step 1g) — never to you or a fixer as an instruction on a later iteration.
+- **Omit the field entirely when there is nothing to report** (the common case).
+- **Also echo any `deviations` into your `.worker-summary.md`** (the summary file you already write) under a dedicated `## deviations` heading, **one `- ` bullet per entry, verbatim** — byte-for-byte the same echo rule `memory_candidates` gets above. Omit the heading entirely when you have no entries. This changes nothing about the WORKER_RESULT schema (stays v2).
+
 ### Step 6: Output Result
 
 Produce the structured WORKER_RESULT block (see Output Format below).
@@ -211,6 +228,7 @@ Produce the structured WORKER_RESULT block (see Output Format below).
 - outputs_gap: "{comma-separated missing items, or empty string if all present}"
 - out_of_lane: ["<path you touched outside your own declared lane>", ...]   # array of plain STRINGS (not objects, unlike outputs_verified); `[]` when none   # OPTIONAL, additive at schema_version 2 (D6) — REPORT-ONLY, see Step 5.65; NEVER affects status or outputs_gap; omit the field entirely (or emit `[]`) when your subtask has no `lanes:` declaration or every touched path is in-lane
 - memory_candidates: ["<one-line durable fact>", ...]   # OPTIONAL array of strings — omit the field entirely if no candidates
+- deviations: ["plan: …", "edge: …", …]   # OPTIONAL array of strings, at most 12 entries each at most 200 chars — see Step 5.7; plan:/edge:/open:/test: convention, unprefixed reads as other:, never rejected; REPORT-ONLY, fed to the Phase 4.5 review lens only
 - error: none | {brief error description}
 - summary: {1-2 sentence implementation summary, max 200 tokens}
 ```
@@ -221,6 +239,7 @@ Produce the structured WORKER_RESULT block (see Output Format below).
 - `status: failed` ⇒ crash / unfixable error; `outputs_verified` and `outputs_gap` should still be populated best-effort.
 - **Carve-out (brief unreadable / insufficient spec, per Step 1):** a worker that could not read its pinned brief returns `status: partial` with `outputs_gap: ""` — the failed read is recorded in `summary`, and `outputs_gap` stays reserved for missing `provides:` items. Consumers must not infer `outputs_gap != ""` from `partial` alone.
 - **`out_of_lane` is a SEPARATE, REPORT-ONLY field and is NOT part of this invariant.** It never influences `status` and is never written into `outputs_gap`. A `status: completed` result can carry a non-empty `out_of_lane`, and a `status: partial` result can carry an empty `out_of_lane` — the two fields vary independently. Lane collision escalation (when an out-of-lane path lands in a sibling's declared lane and the two subtasks are not sequentially ordered) is decided and surfaced by the CONSUMER of this result — Execute Manager's poll loop on the PARALLEL path — through the existing adjudication surface (on the sequential path the Supervisor records the report only; with serial execution there is no concurrent sibling to collide with) — never by the worker flipping its own `status`.
+- **`deviations` is ALSO a SEPARATE, REPORT-ONLY field, same independence as `out_of_lane`** — never part of this invariant, never influences `status` or `outputs_gap`. It carries THIS run's plan drift (Step 5.7) and is fed to the Phase 4.5 review lens as an advisory only (`skills/self-heal-advisory/SKILL.md` step 1g) — a deviation that contradicts a stated acceptance criterion surfaces as an ordinary reviewer finding, never as a change to your own `status`.
 
 **v1 backward compatibility:** Older artifacts emitted `schema_version: 1` and omitted `outputs_verified` + `outputs_gap`. Consumers should accept v1 blocks (treating the two new fields as `[]` and `""` respectively) for legacy logs only — new emissions MUST be v2.
 
