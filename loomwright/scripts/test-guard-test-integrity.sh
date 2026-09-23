@@ -74,6 +74,14 @@ SID="sess-A"
 assert_rc "git commit -m x — allow"                              "$(bash_rc "$D" "$SID" 'git commit -m x')" 0
 assert_rc "git commit -n -m x — deny"                             "$(bash_rc "$D" "$SID" 'git commit -n -m x')" 2
 assert_rc "git commit -qm x --no-veri — deny"                     "$(bash_rc "$D" "$SID" 'git commit -qm x --no-veri')" 2
+# Self-audit finding (PR #258, after the round-2 review pattern): git
+# accepts GLOBAL options before the subcommand, so a fixed words[idx+1]
+# read for the subcommand missed every subcommand-scoped check whenever
+# any global flag came first.
+assert_rc "git --no-optional-locks commit -n -m x — deny (global-flag-before-subcmd bypass)" "$(bash_rc "$D" "$SID" 'git --no-optional-locks commit -n -m x')" 2
+assert_rc "git -C . commit -n -m x — deny (value-taking global flag)" "$(bash_rc "$D" "$SID" 'git -C . commit -n -m x')" 2
+assert_rc "git --no-pager clean -fdx — deny (global-flag-before-clean)" "$(bash_rc "$D" "$SID" 'git --no-pager clean -fdx')" 2
+assert_rc "git -C . status — allow (global flag, non-scoped subcmd)" "$(bash_rc "$D" "$SID" 'git -C . status')" 0
 assert_rc "git push -n — allow"                                   "$(bash_rc "$D" "$SID" 'git push -n')" 0
 assert_rc "git push --no-verify — deny"                           "$(bash_rc "$D" "$SID" 'git push --no-verify')" 2
 assert_rc "HUSKY=0 git commit -m x — deny"                        "$(bash_rc "$D" "$SID" 'HUSKY=0 git commit -m x')" 2
@@ -415,6 +423,33 @@ if [ -s "$MUT_K" ] && ! cmp -s "$GUARD" "$MUT_K" && bash -n "$MUT_K" 2>/dev/null
   [ "$rc" != "2" ] && ok "(k) mutation control: narrowing the env-anchor scan to one word re-opens the stacked-assignment bypass" || no "(k) mutation control did not break the case (still rc=2)"
 else
   no "(k) mutation control: could not construct mutant"
+fi
+
+# (l) revert the git subcommand-detection to a fixed words[idx+1] read ->
+#     a global flag before the subcommand re-opens the bypass (self-audit
+#     finding after the round-2 review pattern)
+MUT_L="$MUT_D/mut-l.sh"
+python3 - "$GUARD" "$MUT_L" <<'PYEOF' 2>/dev/null || true
+import sys, re
+src, dst = sys.argv[1], sys.argv[2]
+with open(src) as f:
+    c = f.read()
+# Replace the whole subcommand-detection walk with the old fixed-index read,
+# and put back the old idx+2 slice in the three downstream loops.
+old_walk = re.search(
+    r'    local subcmd="" subcmd_idx=\$\(\(idx \+ 1\)\)\n.*?\n    done\n',
+    c, re.S)
+assert old_walk, "subcommand walk anchor not found for mutation (l)"
+c = c[:old_walk.start()] + '    local subcmd="${words[$((idx + 1))]:-}"\n' + c[old_walk.end():]
+c = c.replace('${words[@]:$((subcmd_idx + 1))}', '${words[@]:$((idx + 2))}')
+with open(dst, 'w') as f:
+    f.write(c)
+PYEOF
+if [ -s "$MUT_L" ] && ! cmp -s "$GUARD" "$MUT_L" && bash -n "$MUT_L" 2>/dev/null; then
+  rc="$(mut_rc "$MUT_L" "$D" "$SID" 'git --no-optional-locks commit -n -m x')"
+  [ "$rc" != "2" ] && ok "(l) mutation control: reverting to a fixed-index subcommand read re-opens the global-flag-before-subcmd bypass" || no "(l) mutation control did not break the case (still rc=2)"
+else
+  no "(l) mutation control: could not construct mutant"
 fi
 
 # (e) delete the empty-id check in arm -> the unset-env case fails (writes a

@@ -419,10 +419,37 @@ evaluate_one_simple_command() {
           ;;
       esac
     done
-    local subcmd="${words[$((idx + 1))]:-}"
+    # Find the actual git subcommand, skipping past git's own GLOBAL
+    # options — which may legitimately precede it (`git -c x=y commit -n`,
+    # `git --no-pager clean -fdx`, `git -C . commit -n`). A fixed
+    # words[idx+1] read missed the subcommand whenever ANY global flag came
+    # first, silently skipping every subcommand-scoped check below
+    # (self-audit follow-up to the PR #258 round-2 pre-commit/lefthook and
+    # env-anchor findings — same "checks one adjacent word" bug class).
+    local subcmd="" subcmd_idx=$((idx + 1))
+    while [ "$subcmd_idx" -lt "${#words[@]}" ]; do
+      local gw="${words[$subcmd_idx]}"
+      case "$gw" in
+        -c|-C)
+          # value-taking short global options: skip the flag AND its value
+          subcmd_idx=$((subcmd_idx + 2))
+          continue
+          ;;
+        --*=*|-*)
+          # any other flag (long --flag[=value], or a bare short flag) —
+          # skip just this one token
+          subcmd_idx=$((subcmd_idx + 1))
+          continue
+          ;;
+        *)
+          subcmd="$gw"
+          break
+          ;;
+      esac
+    done
     if [ "$subcmd" = "commit" ]; then
       local w2
-      for w2 in "${words[@]:$((idx + 2))}"; do
+      for w2 in "${words[@]:$((subcmd_idx + 1))}"; do
         case "$w2" in
           -[a-zA-Z]*)
             case "$w2" in
@@ -435,7 +462,7 @@ evaluate_one_simple_command() {
     fi
     if [ "$subcmd" = "clean" ]; then
       local w3
-      for w3 in "${words[@]:$((idx + 2))}"; do
+      for w3 in "${words[@]:$((subcmd_idx + 1))}"; do
         case "$w3" in
           -[a-zA-Z]*)
             case "$w3" in
@@ -449,7 +476,7 @@ evaluate_one_simple_command() {
     if [ "$subcmd" = "config" ]; then
       local has_hookspath=0 has_read_flag=0 has_value=0 argc=0
       local w4
-      for w4 in "${words[@]:$((idx + 2))}"; do
+      for w4 in "${words[@]:$((subcmd_idx + 1))}"; do
         case "$w4" in
           core.hooksPath) has_hookspath=1 ;;
           --get|--get-all|--list|-l) has_read_flag=1 ;;
