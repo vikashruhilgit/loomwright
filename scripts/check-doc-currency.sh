@@ -175,6 +175,36 @@ run_legend_check() {
 }
 run_legend_check || fail=1
 
+# --- mysql-mcp: exact-version pin, no --refresh (red-team-hardening item 07) -----------------
+# The FILES/authoritative-version scan above is scoped to the loomwright plugin only — it does
+# not scan mysql-mcp's own launch config. Without this check, a `--refresh` reintroduced into
+# mysql-mcp/.mcp.json (which forces `uvx` to re-resolve the latest PyPI release into a
+# credentialed process on every session start) or a version pin silently stripped back to a
+# floating `--from vikashruhil-mysql-mcp` would pass every other gate in this file.
+run_mysql_mcp_pin_check() {
+  local mcp_json="$repo_root/mysql-mcp/.mcp.json" args pinned
+  # Skip (not a drift) when the file is absent — mirrors the FILES-loop convention above
+  # (`[ -f "$f" ] || continue`); a tree that doesn't model the mysql-mcp sibling plugin at all
+  # (e.g. this gate's own test fixtures) has nothing for this assertion to check.
+  [ -f "$mcp_json" ] || return 0
+  args="$(jq -r '.mcpServers.mysql.args[]?' "$mcp_json" 2>/dev/null)"
+  if [ -z "$args" ]; then
+    echo "  DRIFT [mysql-mcp-pin] mysql-mcp/.mcp.json — could not read .mcpServers.mysql.args"
+    return 1
+  fi
+  if printf '%s\n' "$args" | grep -qx -- '--refresh'; then
+    echo "  DRIFT [mysql-mcp-pin] mysql-mcp/.mcp.json — --refresh present (forces an unpinned re-resolve into a credentialed process on every launch)"
+    return 1
+  fi
+  pinned="$(printf '%s\n' "$args" | grep -E '^vikashruhil-mysql-mcp==')"
+  if [ -z "$pinned" ]; then
+    echo "  DRIFT [mysql-mcp-pin] mysql-mcp/.mcp.json — vikashruhil-mysql-mcp is not pinned to an exact \`==\` version"
+    return 1
+  fi
+  return 0
+}
+run_mysql_mcp_pin_check || fail=1
+
 # --- Every counted command is actually documented -------------------------------------------
 # A count claim can match the directory while the thing it counts is undocumented: bumping
 # "23 slash commands" is invisible to every pattern above if no `### /<cmd>` section was added.

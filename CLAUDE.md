@@ -29,7 +29,7 @@ The repo is a **marketplace wrapper** containing three sibling plugins (loomwrig
 - Skills: `loomwright/skills/` (42 skills, see `SKILLS_INDEX.md`)
 - Hooks: `loomwright/hooks/hooks.json`
 - Docs: `loomwright/docs/`
-- Sibling plugins: `stackpack/` (18 tech-stack reference skills, v1.0.0) and `mysql-mcp/` (read-only MySQL MCP server `vikashruhil-mysql-mcp`, v1.0.0)
+- Sibling plugins: `stackpack/` (18 tech-stack reference skills, v1.0.0) and `mysql-mcp/` (read-only MySQL MCP server `vikashruhil-mysql-mcp`, v1.0.1, pinned to `==1.0.1`)
 
 > **Repo path vs. runtime path:** `loomwright/...` is the developer-side path (this repo on disk). Anything invoked by hooks, skills, or agents at *runtime* must reference `${CLAUDE_PLUGIN_ROOT}/...` — that's the canonical Claude Code variable that resolves to the plugin install dir on both dev checkouts and marketplace installs. Never use `loomwright/...` paths from the user-project root; they only resolve for the plugin maintainer.
 

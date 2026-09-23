@@ -90,8 +90,8 @@
     {
       "name": "mysql-mcp",
       "source": "./mysql-mcp",
-      "description": "Mysql-mcp v1.0.0 \u2014 the read-only MySQL MCP server (vikashruhil-mysql-mcp via uvx) spun out of Loomwright. Resolves DB_HOST/DB_USER/DB_PASS/DB_NAME(/DB_PORT) from the environment. No agents/commands/skills/hooks.",
-      "version": "1.0.0",
+      "description": "Mysql-mcp v1.0.1 \u2014 the read-only MySQL MCP server (vikashruhil-mysql-mcp via uvx) spun out of Loomwright, pinned to `==1.0.1`. Resolves DB_HOST/DB_USER/DB_PASS/DB_NAME(/DB_PORT) from the environment. No agents/commands/skills/hooks.",
+      "version": "1.0.1",
       "author": {
         "name": "vikash ruhil"
       },
