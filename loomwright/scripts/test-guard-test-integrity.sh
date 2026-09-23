@@ -5,7 +5,7 @@
 # (`.supervisor/requirements/six-phase-loop-gaps/02-test-integrity-guard.md`):
 # every Bash pattern + its negation twin, every Write|Edit basename + allow
 # case, the 6 gate cases, the guard-arm.sh subcommand cases, the concurrency
-# case, the sentinel checks, and all 19 named mutation controls.
+# case, the sentinel checks, and all 21 named mutation controls.
 #
 # Runs entirely in temp dirs (mktemp -d), never touches the real
 # `.supervisor/`. Exit 0 = all pass, 1 = any failure (auto-registered by
@@ -245,6 +245,26 @@ assert_rc "Edit .github/workflows/ci.yml — allow by default"        "$(edit_rc
 gextra_rc="$(LOOMWRIGHT_GUARD_EXTRA_GLOBS='.github/workflows/*' bash -c "printf '%s' \"\$(jq -n --arg sid '$SID' '{session_id:\$sid, tool_name:\"Edit\", tool_input:{file_path:\".github/workflows/ci.yml\"}}}')\" 2>/dev/null" 2>/dev/null || true)"
 gextra_rc="$(printf '%s' "$(jq -n --arg sid "$SID" '{session_id:$sid, tool_name:"Edit", tool_input:{file_path:".github/workflows/ci.yml"}}')" | CLAUDE_PROJECT_DIR="$D" LOOMWRIGHT_GUARD_EXTRA_GLOBS='.github/workflows/*' bash "$GUARD" >/dev/null 2>&1; echo $?)"
 assert_rc "Edit .github/workflows/ci.yml — deny under LOOMWRIGHT_GUARD_EXTRA_GLOBS" "$gextra_rc" 2
+# PR #258 review round-8 finding (HIGH): `for glob in $extra` is
+# unquoted, so bash pathname-expands each colon-split token against the
+# GUARD PROCESS's own CWD in addition to field-splitting it — no `set -f`
+# anywhere in the script. The case above coincidentally targets ci.yml, a
+# file this repo's own .github/workflows/ already contains, which is one
+# of the literal filenames ".github/workflows/*" expands to when the test
+# runs from the repo root — masking the bug. A file that does NOT already
+# exist on disk is the real regression case: it fails the resulting
+# literal `case` comparison and was silently ALLOWED (the opposite of the
+# admin's intent), non-deterministically depending on the process's CWD
+# contents at the moment the hook fires.
+gextra_new_rc="$(printf '%s' "$(jq -n --arg sid "$SID" '{session_id:$sid, tool_name:"Edit", tool_input:{file_path:".github/workflows/new-workflow-not-on-disk.yml"}}')" | CLAUDE_PROJECT_DIR="$D" LOOMWRIGHT_GUARD_EXTRA_GLOBS='.github/workflows/*' bash "$GUARD" >/dev/null 2>&1; echo $?)"
+assert_rc "Edit .github/workflows/new-workflow-not-on-disk.yml — deny under EXTRA_GLOBS (CWD-independent, PR #258 round-8)" "$gextra_new_rc" 2
+# PR #258 review round-8 finding (MEDIUM): the conftest.py branch above
+# unconditionally returned on BOTH the deny and non-toplevel-allow path,
+# so it never reached is_protected_basename/EXTRA_GLOBS for that one
+# basename — an admin extending protection to non-toplevel conftest.py
+# files via LOOMWRIGHT_GUARD_EXTRA_GLOBS was silently ignored.
+gextra_conftest_rc="$(printf '%s' "$(jq -n --arg sid "$SID" --arg fp "$CONFTEST_D/sub/conftest.py" '{session_id:$sid, tool_name:"Edit", tool_input:{file_path:$fp}}')" | CLAUDE_PROJECT_DIR="$CONFTEST_D" LOOMWRIGHT_GUARD_EXTRA_GLOBS='conftest.py' bash "$GUARD" >/dev/null 2>&1; echo $?)"
+assert_rc "Edit <non-toplevel>/conftest.py — deny under EXTRA_GLOBS=conftest.py (PR #258 round-8, was dead code)" "$gextra_conftest_rc" 2
 
 # ---------------------------------------------------------------------------
 # Gate cases
@@ -387,6 +407,14 @@ mut_rc() {
   local mutant="$1" d="$2" sid="$3" cmd="$4"
   printf '%s' "$(jq -n --arg sid "$sid" --arg cmd "$cmd" '{session_id:$sid, tool_name:"Bash", tool_input:{command:$cmd}}')" \
     | CLAUDE_PROJECT_DIR="$d" bash "$mutant" >/dev/null 2>&1
+  echo $?
+}
+
+# mut_edit_rc <mutant> <guard_dir> <session_id> <file_path> [extra_globs_env]
+mut_edit_rc() {
+  local mutant="$1" d="$2" sid="$3" fp="$4" extra="${5:-}"
+  printf '%s' "$(jq -n --arg sid "$sid" --arg fp "$fp" '{session_id:$sid, tool_name:"Edit", tool_input:{file_path:$fp}}')" \
+    | CLAUDE_PROJECT_DIR="$d" LOOMWRIGHT_GUARD_EXTRA_GLOBS="$extra" bash "$mutant" >/dev/null 2>&1
   echo $?
 }
 
@@ -777,6 +805,63 @@ if [ -s "$MUT_S" ] && ! cmp -s "$GUARD" "$MUT_S" && bash -n "$MUT_S" 2>/dev/null
   [ "$rc" != "2" ] && ok "(s) mutation control: dropping the is_toplevel_conftest fallback re-opens the Bash-matcher conftest.py gap" || no "(s) mutation control did not break the case (still rc=2)"
 else
   no "(s) mutation control: could not construct mutant"
+fi
+
+# (t) drop `set -f`/`set +f` from the EXTRA_GLOBS loop -> a glob pattern
+#     matching pre-existing files in the guard PROCESS's own CWD silently
+#     expands to that literal filename list, and a brand-new file matching
+#     the same intended pattern is then silently ALLOWED (PR #258 round-8
+#     review finding — CWD-dependent, non-deterministic under the exact
+#     documented worked example)
+MUT_T="$MUT_D/mut-t.sh"
+python3 - "$GUARD" "$MUT_T" <<'PYEOF' 2>/dev/null || true
+import sys
+src, dst = sys.argv[1], sys.argv[2]
+with open(src) as f:
+    c = f.read()
+assert "    set -f\n    for glob in $extra; do\n" in c, "set -f line not found for mutation (t)"
+c = c.replace("    set -f\n    for glob in $extra; do\n", "    for glob in $extra; do\n", 1)
+assert "    done\n    set +f\n    IFS=\"$saved_ifs\"\n" in c, "set +f line not found for mutation (t)"
+c = c.replace("    done\n    set +f\n    IFS=\"$saved_ifs\"\n", "    done\n    IFS=\"$saved_ifs\"\n", 1)
+with open(dst, 'w') as f:
+    f.write(c)
+PYEOF
+MUT_T_CWD="$(mktemp -d)"
+mkdir -p "$MUT_T_CWD/.github/workflows"
+printf 'x\n' > "$MUT_T_CWD/.github/workflows/existing.yml"
+if [ -s "$MUT_T" ] && ! cmp -s "$GUARD" "$MUT_T" && bash -n "$MUT_T" 2>/dev/null; then
+  rc="$(cd "$MUT_T_CWD" && mut_edit_rc "$MUT_T" "$D" "$SID" ".github/workflows/new-workflow.yml" '.github/workflows/*')"
+  [ "$rc" != "2" ] && ok "(t) mutation control: dropping set -f re-opens the CWD-dependent EXTRA_GLOBS expansion bypass" || no "(t) mutation control did not break the case (still rc=2)"
+else
+  no "(t) mutation control: could not construct mutant"
+fi
+rm -rf "$MUT_T_CWD"
+
+# (u) revert the conftest.py branch to its unconditional `return 0` ->
+#     LOOMWRIGHT_GUARD_EXTRA_GLOBS becomes dead code for that one
+#     basename again (PR #258 round-8 review finding)
+MUT_U="$MUT_D/mut-u.sh"
+python3 - "$GUARD" "$MUT_U" <<'PYEOF' 2>/dev/null || true
+import sys, re
+src, dst = sys.argv[1], sys.argv[2]
+with open(src) as f:
+    c = f.read()
+pat = re.compile(
+    r'(    # A failed toplevel lookup or a non-toplevel conftest\.py means\n'
+    r'.*?)\n'
+    r'  fi\n',
+    re.S)
+m = pat.search(c)
+assert m, "conftest.py fallthrough comment block not found for mutation (u)"
+c = c[:m.start()] + m.group(1) + '\n    return 0\n  fi\n' + c[m.end():]
+with open(dst, 'w') as f:
+    f.write(c)
+PYEOF
+if [ -s "$MUT_U" ] && ! cmp -s "$GUARD" "$MUT_U" && bash -n "$MUT_U" 2>/dev/null; then
+  rc="$(mut_edit_rc "$MUT_U" "$CONFTEST_D" "$SID" "$CONFTEST_D/sub/conftest.py" 'conftest.py')"
+  [ "$rc" != "2" ] && ok "(u) mutation control: restoring the unconditional conftest.py return re-opens the EXTRA_GLOBS dead-code bug" || no "(u) mutation control did not break the case (still rc=2)"
+else
+  no "(u) mutation control: could not construct mutant"
 fi
 
 # (e) delete the empty-id check in arm -> the unset-env case fails (writes a

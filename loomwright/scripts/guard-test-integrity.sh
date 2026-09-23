@@ -808,8 +808,15 @@ evaluate_write_edit() {
         deny_variant edit "protected configuration path"
       fi
     fi
-    # a failed toplevel lookup (new directory) means "not toplevel -> allow"
-    return 0
+    # A failed toplevel lookup or a non-toplevel conftest.py means
+    # "allow" for THIS rule specifically — deny_variant above already
+    # exits on the deny path (deny() calls `exit 2`), so nothing below
+    # is reached there. No early `return 0` here (PR #258 round-8 review
+    # finding): an unconditional return made LOOMWRIGHT_GUARD_EXTRA_GLOBS
+    # dead code for the one basename "conftest.py" — an admin extending
+    # protection to non-toplevel conftest.py files via that env var was
+    # silently ignored. Fall through so is_protected_basename (a no-op
+    # for this basename, harmlessly) and EXTRA_GLOBS still both run.
   fi
 
   if is_protected_basename "$base"; then
@@ -817,11 +824,26 @@ evaluate_write_edit() {
   fi
 
   # LOOMWRIGHT_GUARD_EXTRA_GLOBS — colon-separated, next-launch semantics
-  # (process-env, same as the opt-out).
+  # (process-env, same as the opt-out). `set -f` for the duration of the
+  # split+match: `for glob in $extra` is intentionally unquoted (colon
+  # splitting needs word splitting to happen), but bash ALSO performs
+  # pathname expansion on an unquoted for-loop word, and there is no
+  # `set -f` anywhere else in this script. Without it, a glob-shaped
+  # pattern that happens to match files already present in the guard
+  # PROCESS's own CWD (an ordinary, likely case — e.g. the documented
+  # worked example `.github/workflows/*` run from a repo that already
+  # has workflow files) silently expands to the literal list of
+  # pre-existing filenames instead of staying a wildcard; a brand-new
+  # file matching the intended pattern then fails the resulting literal
+  # `case` comparison and is silently ALLOWED — the opposite of the
+  # admin's intent, and non-deterministic (same payload+env, different
+  # CWD contents, opposite verdict). Live-verified before this fix (PR
+  # #258 round-8 review finding).
   local extra="${LOOMWRIGHT_GUARD_EXTRA_GLOBS:-}"
   if [ -n "$extra" ]; then
     local saved_ifs="$IFS" glob
     IFS=':'
+    set -f
     for glob in $extra; do
       IFS="$saved_ifs"
       [ -n "$glob" ] || continue
@@ -832,6 +854,7 @@ evaluate_write_edit() {
         $glob) deny_variant edit "protected configuration path" ;;
       esac
     done
+    set +f
     IFS="$saved_ifs"
   fi
 
