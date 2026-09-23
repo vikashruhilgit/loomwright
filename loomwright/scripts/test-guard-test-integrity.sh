@@ -78,7 +78,18 @@ assert_rc "git push -n — allow"                                   "$(bash_rc "
 assert_rc "git push --no-verify — deny"                           "$(bash_rc "$D" "$SID" 'git push --no-verify')" 2
 assert_rc "HUSKY=0 git commit -m x — deny"                        "$(bash_rc "$D" "$SID" 'HUSKY=0 git commit -m x')" 2
 assert_rc "export HUSKY=0; git commit -m x — deny"                "$(bash_rc "$D" "$SID" 'export HUSKY=0; git commit -m x')" 2
+# PR #258 round-2 review finding: a second stacked leading VAR=val
+# assignment was invisible to a words[0]/words[1]-only anchor check.
+assert_rc "A=1 HUSKY=0 npm test — deny (stacked assignment bypass)" "$(bash_rc "$D" "$SID" 'A=1 HUSKY=0 npm test')" 2
+assert_rc "A=1 B=2 SKIP=lint git commit -m x — deny (2 stacked)"   "$(bash_rc "$D" "$SID" 'A=1 B=2 SKIP=lint git commit -m x')" 2
 assert_rc "CI_SKIP=1 npm test — allow"                             "$(bash_rc "$D" "$SID" 'CI_SKIP=1 npm test')" 0
+assert_rc "A=1 CI_SKIP=1 npm test — allow (stacked, none match)"   "$(bash_rc "$D" "$SID" 'A=1 CI_SKIP=1 npm test')" 0
+# PR #258 round-2 review finding: lefthook's real CLI accepts global flags
+# BEFORE the subcommand, so a words[idx+1]-only uninstall check missed it.
+assert_rc "lefthook uninstall — deny"                              "$(bash_rc "$D" "$SID" 'lefthook uninstall')" 2
+assert_rc "lefthook --no-colors uninstall — deny (flag-before bypass)" "$(bash_rc "$D" "$SID" 'lefthook --no-colors uninstall')" 2
+assert_rc "pre-commit uninstall — deny"                            "$(bash_rc "$D" "$SID" 'pre-commit uninstall')" 2
+assert_rc "pre-commit --color=never uninstall — deny (flag-before bypass)" "$(bash_rc "$D" "$SID" 'pre-commit --color=never uninstall')" 2
 assert_rc "git -c core.hooksPath=/dev/null commit — deny"          "$(bash_rc "$D" "$SID" 'git -c core.hooksPath=/dev/null commit')" 2
 assert_rc "git config --get core.hooksPath — allow"                "$(bash_rc "$D" "$SID" 'git config --get core.hooksPath')" 0
 assert_rc "git config core.hooksPath /dev/null — deny"             "$(bash_rc "$D" "$SID" 'git config core.hooksPath /dev/null')" 2
@@ -318,6 +329,92 @@ MUT_I="$MUT_D/mut-i.sh"
 if make_mutant "$MUT_I" perl -0pi -e 's/    local w2\n    for w2 in "\$\{words\[\@\]:\$\(\(ga_idx \+ 2\)\)\}"; do\n      case "\$w2" in\n        --session-id\|--session-id=\*\)\n          deny_variant bash "internal control script invocation"\n          ;;\n      esac\n    done\n//'; then
   rc="$(mut_rc "$MUT_I" "$D" "$SID" "bash $ARM arm x --session-id arbitrary-id")"
   [ "$rc" != "2" ] && ok "(i) mutation control: dropping the --session-id scan re-opens the arbitrary-session-arm bypass" || no "(i) mutation control did not break the case (still rc=2)"
+fi
+
+# (j) narrow the pre-commit/lefthook uninstall scan back to the single word
+#     immediately after the executable -> the flag-before-uninstall bypass
+#     reopens (PR #258 round-2 review finding)
+MUT_J="$MUT_D/mut-j.sh"
+python3 - "$GUARD" "$MUT_J" <<'PYEOF' 2>/dev/null || true
+import sys
+src, dst = sys.argv[1], sys.argv[2]
+with open(src) as f:
+    c = f.read()
+old = '''    pre-commit|lefthook)
+      local w7
+      for w7 in "${words[@]:$((idx + 1))}"; do
+        [ "$w7" = "uninstall" ] && deny_variant bash "git-hook manager uninstall"
+      done
+      ;;
+'''
+new = '''    pre-commit|lefthook)
+      local w7="${words[$((idx + 1))]:-}"
+      [ "$w7" = "uninstall" ] && deny_variant bash "git-hook manager uninstall"
+      ;;
+'''
+assert old in c, "anchor not found for mutation (j)"
+c = c.replace(old, new, 1)
+with open(dst, 'w') as f:
+    f.write(c)
+PYEOF
+if [ -s "$MUT_J" ] && ! cmp -s "$GUARD" "$MUT_J" && bash -n "$MUT_J" 2>/dev/null; then
+  rc="$(mut_rc "$MUT_J" "$D" "$SID" 'lefthook --no-colors uninstall')"
+  [ "$rc" != "2" ] && ok "(j) mutation control: narrowing the uninstall scan to one word re-opens the flag-before-uninstall bypass" || no "(j) mutation control did not break the case (still rc=2)"
+else
+  no "(j) mutation control: could not construct mutant"
+fi
+
+# (k) narrow the env-var anchor scan back to words[0]/words[1] only -> the
+#     stacked-assignment bypass reopens (PR #258 round-2 review finding)
+MUT_K="$MUT_D/mut-k.sh"
+python3 - "$GUARD" "$MUT_K" <<'PYEOF' 2>/dev/null || true
+import sys
+src, dst = sys.argv[1], sys.argv[2]
+with open(src) as f:
+    c = f.read()
+old = '''  local anchor_i=0
+  if [ "${words[0]:-}" = "export" ] || [ "${words[0]:-}" = "env" ]; then
+    anchor_i=1
+  fi
+  while [ "$anchor_i" -lt "${#words[@]}" ]; do
+    local at="${words[$anchor_i]}"
+    case "$at" in
+      HUSKY=*|HUSKY_SKIP_HOOKS=*|SKIP=*|PRE_COMMIT_ALLOW_NO_CONFIG=*|GIT_CONFIG_PARAMETERS=*)
+        deny_variant bash "commit/push-hook bypass env"
+        ;;
+    esac
+    case "$at" in
+      [A-Za-z_]*=*)
+        local av="${at%%=*}"
+        case "$av" in
+          *[!A-Za-z0-9_]*|"") break ;;
+          *) anchor_i=$((anchor_i + 1)); continue ;;
+        esac
+        ;;
+      *) break ;;
+    esac
+  done
+'''
+new = '''  local anchor_tok="${words[0]}"
+  if [ "$anchor_tok" = "export" ] || [ "$anchor_tok" = "env" ]; then
+    if [ "${#words[@]}" -gt 1 ]; then anchor_tok="${words[1]}"; else anchor_tok=""; fi
+  fi
+  case "$anchor_tok" in
+    HUSKY=*|HUSKY_SKIP_HOOKS=*|SKIP=*|PRE_COMMIT_ALLOW_NO_CONFIG=*|GIT_CONFIG_PARAMETERS=*)
+      deny_variant bash "commit/push-hook bypass env"
+      ;;
+  esac
+'''
+assert old in c, "anchor not found for mutation (k)"
+c = c.replace(old, new, 1)
+with open(dst, 'w') as f:
+    f.write(c)
+PYEOF
+if [ -s "$MUT_K" ] && ! cmp -s "$GUARD" "$MUT_K" && bash -n "$MUT_K" 2>/dev/null; then
+  rc="$(mut_rc "$MUT_K" "$D" "$SID" 'A=1 HUSKY=0 npm test')"
+  [ "$rc" != "2" ] && ok "(k) mutation control: narrowing the env-anchor scan to one word re-opens the stacked-assignment bypass" || no "(k) mutation control did not break the case (still rc=2)"
+else
+  no "(k) mutation control: could not construct mutant"
 fi
 
 # (e) delete the empty-id check in arm -> the unset-env case fails (writes a

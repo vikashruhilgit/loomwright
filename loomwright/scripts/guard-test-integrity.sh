@@ -309,19 +309,34 @@ evaluate_one_simple_command() {
   [ "${#words[@]}" -gt 0 ] || return 0
 
   # ---- env-var anchor check (checked FIRST, independent of invoked exec) --
-  local anchor_idx=0 anchor_tok="${words[0]}"
-  if [ "$anchor_tok" = "export" ] || [ "$anchor_tok" = "env" ]; then
-    if [ "${#words[@]}" -gt 1 ]; then
-      anchor_tok="${words[1]}"
-    else
-      anchor_tok=""
-    fi
+  # Walk ALL leading VAR=val assignments (past an optional leading
+  # export/env keyword), not just the first one — ordinary shell syntax
+  # allows stacking any number of leading assignments (e.g.
+  # `A=1 HUSKY=0 npm test`), and a single-token check would miss every
+  # assignment after the first (PR #258 round-2 review finding). Mirrors
+  # the assignment-walking loop below that locates exec_word.
+  local anchor_i=0
+  if [ "${words[0]:-}" = "export" ] || [ "${words[0]:-}" = "env" ]; then
+    anchor_i=1
   fi
-  case "$anchor_tok" in
-    HUSKY=*|HUSKY_SKIP_HOOKS=*|SKIP=*|PRE_COMMIT_ALLOW_NO_CONFIG=*|GIT_CONFIG_PARAMETERS=*)
-      deny_variant bash "commit/push-hook bypass env"
-      ;;
-  esac
+  while [ "$anchor_i" -lt "${#words[@]}" ]; do
+    local at="${words[$anchor_i]}"
+    case "$at" in
+      HUSKY=*|HUSKY_SKIP_HOOKS=*|SKIP=*|PRE_COMMIT_ALLOW_NO_CONFIG=*|GIT_CONFIG_PARAMETERS=*)
+        deny_variant bash "commit/push-hook bypass env"
+        ;;
+    esac
+    case "$at" in
+      [A-Za-z_]*=*)
+        local av="${at%%=*}"
+        case "$av" in
+          *[!A-Za-z0-9_]*|"") break ;;
+          *) anchor_i=$((anchor_i + 1)); continue ;;
+        esac
+        ;;
+      *) break ;;
+    esac
+  done
 
   # ---- find invoked executable: skip leading VAR=val assignments and
   #      export/env keyword tokens -----------------------------------------
@@ -459,14 +474,18 @@ evaluate_one_simple_command() {
   fi
 
   # ---- pre-commit / lefthook uninstall ------------------------------------
+  # Scan ALL remaining words for a bare "uninstall" token, not just the one
+  # immediately after the executable — both tools' real CLIs (lefthook's
+  # urfave/cli grammar in particular: `lefthook [global options] command
+  # [command options]`) legitimately accept flags BEFORE the subcommand, so
+  # `lefthook --no-colors uninstall` is a real invocation a next-word-only
+  # check would miss entirely (PR #258 round-2 review finding).
   case "$exec_base" in
-    pre-commit)
-      local a1="${words[$((idx + 1))]:-}"
-      [ "$a1" = "uninstall" ] && deny_variant bash "git-hook manager uninstall"
-      ;;
-    lefthook)
-      local a2="${words[$((idx + 1))]:-}"
-      [ "$a2" = "uninstall" ] && deny_variant bash "git-hook manager uninstall"
+    pre-commit|lefthook)
+      local w7
+      for w7 in "${words[@]:$((idx + 1))}"; do
+        [ "$w7" = "uninstall" ] && deny_variant bash "git-hook manager uninstall"
+      done
       ;;
   esac
 
