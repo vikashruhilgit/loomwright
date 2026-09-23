@@ -5,7 +5,7 @@
 # (`.supervisor/requirements/six-phase-loop-gaps/02-test-integrity-guard.md`):
 # every Bash pattern + its negation twin, every Write|Edit basename + allow
 # case, the 6 gate cases, the guard-arm.sh subcommand cases, the concurrency
-# case, the sentinel checks, and all 18 named mutation controls.
+# case, the sentinel checks, and all 19 named mutation controls.
 #
 # Runs entirely in temp dirs (mktemp -d), never touches the real
 # `.supervisor/`. Exit 0 = all pass, 1 = any failure (auto-registered by
@@ -219,6 +219,26 @@ assert_rc "Edit package.json — allow"                               "$(edit_rc
 assert_rc "Edit docs/jest.config.md — allow"                        "$(edit_rc "$D" "$SID" Edit "docs/jest.config.md")" 0
 assert_rc "Write new/dir/file.ts — allow"                           "$(edit_rc "$D" "$SID" Write "new/dir/file.ts")" 0
 assert_rc "Write new/dir/conftest.py — allow (not a git toplevel)"  "$(edit_rc "$D" "$SID" Write "new/dir/conftest.py")" 0
+# PR #258 review round-7 finding (MEDIUM): the case above never exercises
+# the toplevel-DENY branch — new_guarded_dir() never runs `git init`, so
+# `git -C "$dirpart" rev-parse --show-toplevel` fails for every fixture
+# dir and the deny branch was correct-by-inspection but had zero direct
+# test evidence. Dedicated git-initialized fixture for the toplevel case.
+CONFTEST_D="$(mktemp -d)"
+mkdir -p "$CONFTEST_D/.supervisor/guard" "$CONFTEST_D/sub"
+printf '{\n  "session_id": "%s",\n  "armed_at": "%s",\n  "by": "test"\n}\n' "$SID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$CONFTEST_D/.supervisor/guard/$SID.json"
+git -C "$CONFTEST_D" init -q
+assert_rc "Edit <toplevel>/conftest.py — deny (git toplevel)" "$(edit_rc "$CONFTEST_D" "$SID" Edit "$CONFTEST_D/conftest.py")" 2
+assert_rc "Edit <toplevel>/sub/conftest.py — allow (not toplevel)" "$(edit_rc "$CONFTEST_D" "$SID" Edit "$CONFTEST_D/sub/conftest.py")" 0
+# PR #258 review round-7 finding (HIGH): conftest.py's toplevel rule
+# existed only in evaluate_write_edit — the Bash matcher's write-verb/
+# redirect/ln checks had no equivalent, so a plain `echo x > conftest.py`
+# / `tee conftest.py` / `cp x conftest.py` at repo root bypassed the
+# guard entirely while the identical Edit call was denied.
+assert_rc "echo x > <toplevel>/conftest.py — deny (Bash-matcher parity)" "$(bash_rc "$CONFTEST_D" "$SID" "echo x > $CONFTEST_D/conftest.py")" 2
+assert_rc "tee <toplevel>/conftest.py — deny (Bash-matcher parity)" "$(bash_rc "$CONFTEST_D" "$SID" "tee $CONFTEST_D/conftest.py")" 2
+assert_rc "cp fixture.py <toplevel>/conftest.py — deny (Bash-matcher parity)" "$(bash_rc "$CONFTEST_D" "$SID" "cp fixture.py $CONFTEST_D/conftest.py")" 2
+assert_rc "echo x > <toplevel>/sub/conftest.py — allow (not toplevel)" "$(bash_rc "$CONFTEST_D" "$SID" "echo x > $CONFTEST_D/sub/conftest.py")" 0
 assert_rc "Edit .vscode/settings.json — allow"                      "$(edit_rc "$D" "$SID" Edit ".vscode/settings.json")" 0
 assert_rc "Edit config/settings.json — allow"                       "$(edit_rc "$D" "$SID" Edit "config/settings.json")" 0
 assert_rc "Edit .github/workflows/ci.yml — allow by default"        "$(edit_rc "$D" "$SID" Edit ".github/workflows/ci.yml")" 0
@@ -731,6 +751,34 @@ else
   no "(r) mutation control: could not construct mutant"
 fi
 
+# (s) drop the is_toplevel_conftest fallback from is_protected_path_arg ->
+#     conftest.py's toplevel rule re-opens for the Bash matcher (PR #258
+#     round-7 review finding: the Write|Edit matcher's toplevel rule had
+#     no Bash-matcher equivalent at all)
+MUT_S="$MUT_D/mut-s.sh"
+python3 - "$GUARD" "$MUT_S" <<'PYEOF' 2>/dev/null || true
+import sys, re
+src, dst = sys.argv[1], sys.argv[2]
+with open(src) as f:
+    c = f.read()
+old = ('  if is_protected_basename "$(basename_of "$w")"; then\n'
+       '    return 0\n'
+       '  fi\n'
+       '  is_toplevel_conftest "$w"\n'
+       '}\n')
+assert old in c, "is_protected_path_arg tail not found for mutation (s)"
+new = '  is_protected_basename "$(basename_of "$w")"\n}\n'
+c = c.replace(old, new, 1)
+with open(dst, 'w') as f:
+    f.write(c)
+PYEOF
+if [ -s "$MUT_S" ] && ! cmp -s "$GUARD" "$MUT_S" && bash -n "$MUT_S" 2>/dev/null; then
+  rc="$(mut_rc "$MUT_S" "$CONFTEST_D" "$SID" "echo x > $CONFTEST_D/conftest.py")"
+  [ "$rc" != "2" ] && ok "(s) mutation control: dropping the is_toplevel_conftest fallback re-opens the Bash-matcher conftest.py gap" || no "(s) mutation control did not break the case (still rc=2)"
+else
+  no "(s) mutation control: could not construct mutant"
+fi
+
 # (e) delete the empty-id check in arm -> the unset-env case fails (writes a
 #     file instead of exit 3)
 MUT_E="$MUT_D/guard-arm-mut-e.sh"
@@ -842,7 +890,7 @@ else
 fi
 
 rm -f /tmp/.guard-test-stderr.$$
-rm -rf "$D" "$EMPTY_D" "$FOREIGN_D" "$ARM_D" "$PRUNE_D" "$CONC_D" "$MUT_D"
+rm -rf "$D" "$EMPTY_D" "$FOREIGN_D" "$ARM_D" "$PRUNE_D" "$CONC_D" "$MUT_D" "$CONFTEST_D"
 
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

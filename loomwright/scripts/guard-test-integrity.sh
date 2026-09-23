@@ -209,7 +209,31 @@ is_protected_path_arg() {
     *.git/hooks*) return 0 ;;
     *.claude/settings.json|*.claude/settings.local.json) return 0 ;;
   esac
-  is_protected_basename "$(basename_of "$w")"
+  if is_protected_basename "$(basename_of "$w")"; then
+    return 0
+  fi
+  is_toplevel_conftest "$w"
+}
+
+# conftest.py is protected only when it sits at the git toplevel (an
+# explicit spec-listed test-tampering vector — a non-toplevel conftest.py
+# is an ordinary test fixture, allowed by design). evaluate_write_edit
+# had this check; the Bash matcher's write-verb/redirect/ln checks did
+# not, so `echo x > conftest.py` / `tee conftest.py` / `cp x conftest.py`
+# at repo root all bypassed the guard while the identical Edit call was
+# denied (PR #258 round-7 review finding — the same bug class round 6
+# just fixed, on the one protected path round 6's directory-suffix
+# extension didn't enumerate). A failed toplevel lookup (new/non-git
+# directory) means "not toplevel -> allow", same as evaluate_write_edit.
+is_toplevel_conftest() {
+  local w="$1"
+  [ "$(basename_of "$w")" = "conftest.py" ] || return 1
+  local dirpart top dirpart_abs
+  dirpart="$(dirname "$w")"
+  top="$(git -C "$dirpart" rev-parse --show-toplevel 2>/dev/null || true)"
+  [ -n "$top" ] || return 1
+  dirpart_abs="$(cd "$dirpart" 2>/dev/null && pwd -P || true)"
+  [ -n "$dirpart_abs" ] && [ "$dirpart_abs" = "$top" ]
 }
 
 # ---------------------------------------------------------------------------
