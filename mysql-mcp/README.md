@@ -32,7 +32,8 @@ To bump the pinned version:
 1. Verify the new release on PyPI first: `curl -s https://pypi.org/pypi/vikashruhil-mysql-mcp/json | python3 -c "import json,sys;print(json.load(sys.stdin)['info']['version'])"` — never pin a version you have not looked up.
 2. Edit `mysql-mcp/.mcp.json`'s `args` to the new `==<version>`.
 3. Bump the version in `mysql-mcp/.claude-plugin/plugin.json` and the mirrored `mysql-mcp` entry in the repo root's `.claude-plugin/marketplace.json` (the two must stay in lockstep) — including the `pinned to` clause in `plugin.json`'s `description`.
-4. This plugin has no `CHANGELOG.md` of its own; the diff in `.mcp.json` + the two version bumps above IS the changelog-equivalent record — there is no additional file to update.
+4. Also update the two loomwright-side restatements that name this pin — `CLAUDE.md`'s sibling-plugins bullet (`... mysql-mcp/ (... vX.Y.Z, pinned to \`==X.Y.Z\`)`) and `loomwright/docs/CAPABILITY_BASELINE.json`'s `deps.vikashruhil-mysql-mcp.pin` field — neither is covered by `check-doc-currency.sh`'s automated checks, so they only stay accurate if bumped by hand alongside the steps above.
+5. This plugin has no `CHANGELOG.md` of its own; the diff in `.mcp.json` + the two version bumps above IS the changelog-equivalent record — there is no additional file to update.
 
 ## Honest limits
 
