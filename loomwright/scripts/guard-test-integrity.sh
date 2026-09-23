@@ -338,13 +338,23 @@ evaluate_one_simple_command() {
     esac
   done
 
-  # ---- find invoked executable: skip leading VAR=val assignments and
-  #      export/env keyword tokens -----------------------------------------
+  # ---- find invoked executable: skip leading VAR=val assignments,
+  #      export/env keyword tokens, and command/builtin/exec — the
+  #      standard shell-grammar ways to invoke a program while bypassing
+  #      an alias/function of the same name. Without this, `command git
+  #      ...`, `exec rm ...`, or `builtin ...` resolve exec_base to
+  #      "command"/"exec"/"builtin" and silently skip EVERY
+  #      exec_base-keyed check below — not just one pattern, the entire
+  #      dispatch mechanism (PR #258 review round 3 finding; the widest
+  #      instance yet of the recurring "only inspects the adjacent word"
+  #      bug class). A leading backslash on the executable token itself
+  #      (`\git`, the standard per-token alias-bypass escape) is stripped
+  #      the same way, after the loop. ---------------------------------
   local idx=0
   while [ "$idx" -lt "${#words[@]}" ]; do
     local t="${words[$idx]}"
     case "$t" in
-      export|env) idx=$((idx + 1)); continue ;;
+      export|env|command|builtin|exec) idx=$((idx + 1)); continue ;;
       *=*)
         case "$t" in
           [A-Za-z_]*=*)
@@ -363,15 +373,19 @@ evaluate_one_simple_command() {
     esac
   done
   local exec_word="${words[$idx]:-}"
+  case "$exec_word" in
+    '\'?*) exec_word="${exec_word#\\}" ;;
+  esac
   local exec_base
   exec_base="$(basename_of "$exec_word")"
 
   # ---- guard-arm.sh invocation rule (structural: exec is guard-arm.sh, or
-  #      the word after bash/sh/source/./exec is a guard-arm.sh path) ------
+  #      the word after bash/sh/source is a guard-arm.sh path — a bare
+  #      `exec` prefix is already resolved past above) ------------------
   local ga_idx=-1
   case "$exec_base" in
     guard-arm.sh) ga_idx=$idx ;;
-    bash|sh|source|.|exec)
+    bash|sh|source|.)
       local next="${words[$((idx + 1))]:-}"
       case "$(basename_of "$next")" in
         guard-arm.sh) ga_idx=$((idx + 1)) ;;

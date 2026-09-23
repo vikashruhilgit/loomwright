@@ -5,7 +5,7 @@
 # (`.supervisor/requirements/six-phase-loop-gaps/02-test-integrity-guard.md`):
 # every Bash pattern + its negation twin, every Write|Edit basename + allow
 # case, the 6 gate cases, the guard-arm.sh subcommand cases, the concurrency
-# case, the sentinel checks, and all 8 named mutation controls.
+# case, the sentinel checks, and all 13 named mutation controls.
 #
 # Runs entirely in temp dirs (mktemp -d), never touches the real
 # `.supervisor/`. Exit 0 = all pass, 1 = any failure (auto-registered by
@@ -120,6 +120,20 @@ assert_rc "bash guard-arm.sh arm supervisor — allow"               "$(bash_rc 
 # as a subprocess, never through a tool call this matcher sees).
 assert_rc "bash guard-arm.sh arm x --session-id <arbitrary-id> — deny (arbitrary-session arm)" "$(bash_rc "$D" "$SID" "bash $ARM arm x --session-id arbitrary-id")" 2
 assert_rc "bash guard-arm.sh arm x --session-id=<arbitrary-id> — deny (= form)" "$(bash_rc "$D" "$SID" "bash $ARM arm x --session-id=arbitrary-id")" 2
+# PR #258 review round-3 finding: the executable-word walk only recognized
+# export/env as transparent prefix keywords, so `command`/`exec`/a leading
+# `\` on the executable token — the standard shell ways to invoke a program
+# while bypassing an alias/function of the same name — resolved exec_base
+# to "command"/"exec"/"\git" and silently skipped EVERY exec_base-keyed
+# check below, not just one pattern (the widest instance of this bug class
+# found so far, since it defeats the whole dispatch mechanism at once).
+assert_rc "command git commit -n -m x — deny (command-prefix bypass)" "$(bash_rc "$D" "$SID" 'command git commit -n -m x')" 2
+assert_rc "exec git commit -n -m x — deny (exec-prefix bypass)"    "$(bash_rc "$D" "$SID" 'exec git commit -n -m x')" 2
+assert_rc '\git commit -n -m x — deny (backslash-escape bypass)'   "$(bash_rc "$D" "$SID" '\git commit -n -m x')" 2
+assert_rc "command pre-commit uninstall — deny (command-prefix bypass)" "$(bash_rc "$D" "$SID" 'command pre-commit uninstall')" 2
+assert_rc "exec rm .supervisor/guard/<sid>.json — deny (exec-prefix self-disarm bypass)" "$(bash_rc "$D" "$SID" "exec rm .supervisor/guard/$SID.json")" 2
+assert_rc "command bash guard-arm.sh arm x --session-id <id> — deny (command-prefix arbitrary-session arm)" "$(bash_rc "$D" "$SID" "command bash $ARM arm x --session-id arbitrary-id")" 2
+assert_rc "command echo hi — allow (non-scoped exec_base, command-prefixed)" "$(bash_rc "$D" "$SID" 'command echo hi')" 0
 assert_rc "cat guard-arm.sh — allow"                                "$(bash_rc "$D" "$SID" "cat $ARM")" 0
 assert_rc "sed -n 1,40p guard-arm.sh — allow"                       "$(bash_rc "$D" "$SID" "sed -n 1,40p $ARM")" 0
 assert_rc "shellcheck guard-arm.sh — allow (tool absence is not the point)" "$(bash_rc "$D" "$SID" "shellcheck $ARM")" 0
@@ -450,6 +464,41 @@ if [ -s "$MUT_L" ] && ! cmp -s "$GUARD" "$MUT_L" && bash -n "$MUT_L" 2>/dev/null
   [ "$rc" != "2" ] && ok "(l) mutation control: reverting to a fixed-index subcommand read re-opens the global-flag-before-subcmd bypass" || no "(l) mutation control did not break the case (still rc=2)"
 else
   no "(l) mutation control: could not construct mutant"
+fi
+
+# (m) revert the exec-word walk to only recognize export/env, and drop the
+#     backslash-strip -> command/exec-prefix and backslash-escape bypasses
+#     re-open (round-3 review finding, the widest instance of the "only
+#     inspects the adjacent word" bug class — it defeats every
+#     exec_base-keyed check at once, not just one pattern)
+MUT_M="$MUT_D/mut-m.sh"
+python3 - "$GUARD" "$MUT_M" <<'PYEOF' 2>/dev/null || true
+import sys, re
+src, dst = sys.argv[1], sys.argv[2]
+with open(src) as f:
+    c = f.read()
+assert 'export|env|command|builtin|exec) idx=$((idx + 1)); continue ;;' in c, \
+    "exec-word skip-keyword line not found for mutation (m)"
+c = c.replace(
+    'export|env|command|builtin|exec) idx=$((idx + 1)); continue ;;',
+    'export|env) idx=$((idx + 1)); continue ;;')
+backslash_strip = re.search(
+    r'  local exec_word="\$\{words\[\$idx\]:-\}"\n'
+    r'  case "\$exec_word" in\n'
+    r'.*?\n'
+    r'  esac\n'
+    r'  local exec_base\n',
+    c, re.S)
+assert backslash_strip, "backslash-strip block not found for mutation (m)"
+c = c[:backslash_strip.start()] + '  local exec_word="${words[$idx]:-}"\n  local exec_base\n' + c[backslash_strip.end():]
+with open(dst, 'w') as f:
+    f.write(c)
+PYEOF
+if [ -s "$MUT_M" ] && ! cmp -s "$GUARD" "$MUT_M" && bash -n "$MUT_M" 2>/dev/null; then
+  rc="$(mut_rc "$MUT_M" "$D" "$SID" 'command git commit -n -m x')"
+  [ "$rc" != "2" ] && ok "(m) mutation control: narrowing the exec-word walk back to export/env re-opens the command/exec/backslash-prefix bypass" || no "(m) mutation control did not break the case (still rc=2)"
+else
+  no "(m) mutation control: could not construct mutant"
 fi
 
 # (e) delete the empty-id check in arm -> the unset-env case fails (writes a
