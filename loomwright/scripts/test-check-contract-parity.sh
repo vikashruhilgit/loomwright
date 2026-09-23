@@ -397,7 +397,10 @@ check "real repo tree passes" 0 bash "$GUARD" --root "$REPO_ROOT"
 # silent no-op — the two files are meant to move together even though nothing mechanically
 # forces it today.
 RESULT_SCHEMAS="$REPO_ROOT/loomwright/docs/RESULT_SCHEMAS.md"
-[ -f "$RESULT_SCHEMAS" ] || { echo "FAIL  RESULT_SCHEMAS.md not found at $RESULT_SCHEMAS" >&2; }
+# No separate existence pre-check here: a missing RESULT_SCHEMAS.md makes the
+# grep below fail on its own, which the counted check at line ~403 already
+# treats as a real FAIL (an uncounted pre-check here previously printed a
+# misleading "FAIL" that never incremented total/pass — PR #257 review nit).
 MANIFEST_ROW_RE='^worker\|worker\.md\|WORKER_RESULT\|.*,deviations$'
 
 total=$((total+1))
