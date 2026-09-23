@@ -220,6 +220,11 @@ tokenize_words() {
         buf=""
         if [ "${s:$((i + 1)):1}" = '>' ]; then
           out+=(">>"); i=$((i + 1))
+        elif [ "${s:$((i + 1)):1}" = '|' ]; then
+          # `>|` — the clobber-override redirect operator (PR #258
+          # round-4 review finding); matched as its own token, same as
+          # `>>`, so the redirect-target check below recognizes it.
+          out+=(">|"); i=$((i + 1))
         else
           out+=(">")
         fi
@@ -272,7 +277,15 @@ split_simple_commands() {
         fi
         ;;
       '|')
-        if [ "${s:$((i + 1)):1}" = '|' ]; then
+        if [ "${buf: -1}" = '>' ]; then
+          # `>|` is bash's clobber-override redirect operator (forces the
+          # write even under `set -o noclobber`), not a pipe — treating
+          # this `|` as a pipe boundary here splits "cmd >" and "target"
+          # into two unrelated simple commands, hiding the write target
+          # from the redirect-target check entirely (PR #258 round-4
+          # review finding: `echo x >|jest.config.js` went undetected).
+          buf+="$c"
+        elif [ "${s:$((i + 1)):1}" = '|' ]; then
           out+=("$buf"); buf=""; i=$((i + 1))
         else
           out+=("$buf"); buf=""
@@ -314,13 +327,37 @@ evaluate_one_simple_command() {
   # allows stacking any number of leading assignments (e.g.
   # `A=1 HUSKY=0 npm test`), and a single-token check would miss every
   # assignment after the first (PR #258 round-2 review finding). Mirrors
-  # the assignment-walking loop below that locates exec_word.
+  # the assignment-walking loop below that locates exec_word — including
+  # its backslash-strip and env-flag walk (PR #258 round-4 review
+  # finding: `\env HUSKY=0 git commit -m x` and `env -i HUSKY=0 git
+  # commit -m x` both reached this check unstripped/unwalked and slipped
+  # past the anchor undetected).
   local anchor_i=0
-  if [ "${words[0]:-}" = "export" ] || [ "${words[0]:-}" = "env" ]; then
+  local w0="${words[0]:-}"
+  case "$w0" in
+    '\'?*) w0="${w0#\\}" ;;
+  esac
+  local anchor_after_env=0
+  if [ "$w0" = "export" ]; then
     anchor_i=1
+  elif [ "$w0" = "env" ]; then
+    anchor_i=1
+    anchor_after_env=1
   fi
   while [ "$anchor_i" -lt "${#words[@]}" ]; do
     local at="${words[$anchor_i]}"
+    case "$at" in
+      '\'?*) at="${at#\\}" ;;
+    esac
+    if [ "$anchor_after_env" -eq 1 ]; then
+      case "$at" in
+        -u|-P|-S|-C)
+          anchor_i=$((anchor_i + 2)); continue ;;
+        --unset=*|--split-string=*|--chdir=*|-i|-0|-v|--ignore-environment|--null|--debug)
+          anchor_i=$((anchor_i + 1)); continue ;;
+        *) anchor_after_env=0 ;;
+      esac
+    fi
     case "$at" in
       HUSKY=*|HUSKY_SKIP_HOOKS=*|SKIP=*|PRE_COMMIT_ALLOW_NO_CONFIG=*|GIT_CONFIG_PARAMETERS=*)
         deny_variant bash "commit/push-hook bypass env"
@@ -347,14 +384,35 @@ evaluate_one_simple_command() {
   #      exec_base-keyed check below — not just one pattern, the entire
   #      dispatch mechanism (PR #258 review round 3 finding; the widest
   #      instance yet of the recurring "only inspects the adjacent word"
-  #      bug class). A leading backslash on the executable token itself
-  #      (`\git`, the standard per-token alias-bypass escape) is stripped
-  #      the same way, after the loop. ---------------------------------
+  #      bug class). A leading backslash on ANY of these keyword tokens
+  #      themselves (`\env`, `\exec`, ...) — the standard per-token
+  #      alias-bypass escape — is stripped before matching, and `env`'s
+  #      own flags/values (`env -i git ...`, `env -u FOO git ...`) are
+  #      walked past the same way git's global options are (PR #258
+  #      round-4 review finding: both forms previously resolved
+  #      exec_base to the escaped keyword or the flag/value token
+  #      itself, again defeating every downstream check at once —
+  #      `\exec rm <guard marker>` was a full session self-disarm).
+  #      ------------------------------------------------------------
   local idx=0
+  local after_env=0
   while [ "$idx" -lt "${#words[@]}" ]; do
     local t="${words[$idx]}"
     case "$t" in
-      export|env|command|builtin|exec) idx=$((idx + 1)); continue ;;
+      '\'?*) t="${t#\\}" ;;
+    esac
+    if [ "$after_env" -eq 1 ]; then
+      case "$t" in
+        -u|-P|-S|-C)
+          idx=$((idx + 2)); continue ;;
+        --unset=*|--split-string=*|--chdir=*|-i|-0|-v|--ignore-environment|--null|--debug)
+          idx=$((idx + 1)); continue ;;
+        *) after_env=0 ;;
+      esac
+    fi
+    case "$t" in
+      export|command|builtin|exec) idx=$((idx + 1)); continue ;;
+      env) after_env=1; idx=$((idx + 1)); continue ;;
       *=*)
         case "$t" in
           [A-Za-z_]*=*)
@@ -530,9 +588,11 @@ evaluate_one_simple_command() {
       ;;
   esac
 
-  # ---- rm/chmod/mv with an argument containing .git/hooks ----------------
+  # ---- rm/chmod/mv/ln with an argument containing .git/hooks -------------
+  # `ln`/`ln -s` clobbering a hook path is functionally equivalent to
+  # `mv`/`cp` overwriting it (PR #258 round-4 review finding).
   case "$exec_base" in
-    rm|chmod|mv)
+    rm|chmod|mv|ln)
       local w6
       for w6 in "${words[@]:$((idx + 1))}"; do
         case "$w6" in
@@ -544,9 +604,11 @@ evaluate_one_simple_command() {
 
   # ---- write verbs whose simple command names a protected basename or
   #      contains .supervisor/guard ----------------------------------------
+  # `ln`/`ln -s TARGET LINK_NAME` symlink-clobbers a protected path exactly
+  # like `cp`/`mv` would (PR #258 round-4 review finding).
   local is_write_verb=0
   case "$exec_base" in
-    tee|mv|cp|rm|truncate|install) is_write_verb=1 ;;
+    tee|mv|cp|rm|truncate|install|ln) is_write_verb=1 ;;
     sed)
       local w7
       for w7 in "${words[@]:$((idx + 1))}"; do
@@ -571,11 +633,11 @@ evaluate_one_simple_command() {
     done
   fi
 
-  # ---- `>` / `>>` redirect target -----------------------------------------
+  # ---- `>` / `>>` / `>|` redirect target -----------------------------------
   local wi
   for ((wi = 0; wi < ${#words[@]}; wi++)); do
     case "${words[$wi]}" in
-      '>'|'>>')
+      '>'|'>>'|'>|')
         local target="${words[$((wi + 1))]:-}"
         case "$target" in
           *.supervisor/guard*) deny_variant bash "protected configuration write" ;;

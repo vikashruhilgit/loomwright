@@ -5,7 +5,7 @@
 # (`.supervisor/requirements/six-phase-loop-gaps/02-test-integrity-guard.md`):
 # every Bash pattern + its negation twin, every Write|Edit basename + allow
 # case, the 6 gate cases, the guard-arm.sh subcommand cases, the concurrency
-# case, the sentinel checks, and all 13 named mutation controls.
+# case, the sentinel checks, and all 17 named mutation controls.
 #
 # Runs entirely in temp dirs (mktemp -d), never touches the real
 # `.supervisor/`. Exit 0 = all pass, 1 = any failure (auto-registered by
@@ -134,6 +134,33 @@ assert_rc "command pre-commit uninstall — deny (command-prefix bypass)" "$(bas
 assert_rc "exec rm .supervisor/guard/<sid>.json — deny (exec-prefix self-disarm bypass)" "$(bash_rc "$D" "$SID" "exec rm .supervisor/guard/$SID.json")" 2
 assert_rc "command bash guard-arm.sh arm x --session-id <id> — deny (command-prefix arbitrary-session arm)" "$(bash_rc "$D" "$SID" "command bash $ARM arm x --session-id arbitrary-id")" 2
 assert_rc "command echo hi — allow (non-scoped exec_base, command-prefixed)" "$(bash_rc "$D" "$SID" 'command echo hi')" 0
+# PR #258 review round-4 finding: the round-3 fix only stripped a leading
+# backslash from the FINAL resolved exec_word, not from command/env/
+# builtin/exec/export THEMSELVES, so `\env`/`\command`/`\exec`/`\builtin`/
+# `\export` still resolved exec_base to the escaped keyword and skipped
+# every downstream check — `\exec rm <guard marker>` was a full session
+# self-disarm, the worst outcome in the whole matrix.
+assert_rc '\env git commit -n -m x — deny (backslash-escaped env)' "$(bash_rc "$D" "$SID" '\env git commit -n -m x')" 2
+assert_rc '\command git commit -n -m x — deny (backslash-escaped command)' "$(bash_rc "$D" "$SID" '\command git commit -n -m x')" 2
+assert_rc '\exec rm <guard marker> — deny (backslash-escaped exec, self-disarm)' "$(bash_rc "$D" "$SID" "\\exec rm .supervisor/guard/$SID.json")" 2
+assert_rc '\builtin exec rm <guard marker> — deny (stacked backslash-escapes)' "$(bash_rc "$D" "$SID" "\\builtin exec rm .supervisor/guard/$SID.json")" 2
+assert_rc '\export HUSKY=1; git commit -m x — deny (backslash-escaped export, anchor check)' "$(bash_rc "$D" "$SID" '\export HUSKY=1; git commit -m x')" 2
+# PR #258 review round-4 finding: `env`'s own flags/values (which real env
+# CLIs legitimately accept before the wrapped command) were not walked
+# past, so `env -i git ...` / `env -u FOO git ...` resolved exec_base to
+# the flag/value token itself instead of the wrapped command.
+assert_rc "env -i git commit -n -m x — deny (env flag before wrapped command)" "$(bash_rc "$D" "$SID" 'env -i git commit -n -m x')" 2
+assert_rc "env -u FOO git commit -n -m x — deny (env value-taking flag)" "$(bash_rc "$D" "$SID" 'env -u FOO git commit -n -m x')" 2
+assert_rc "env -i HUSKY=0 git commit -m x — deny (env flag before anchor-checked assignment)" "$(bash_rc "$D" "$SID" 'env -i HUSKY=0 git commit -m x')" 2
+assert_rc "env FOO=1 npm test — allow (plain env-wrapped assignment, unaffected)" "$(bash_rc "$D" "$SID" 'env FOO=1 npm test')" 0
+# PR #258 review round-4 finding: `ln`/`ln -s` clobbering a protected path
+# or a git hook was not in the write-verb/`.git/hooks` verb lists at all.
+assert_rc "ln -sf /dev/null jest.config.js — deny (symlink-clobber write-verb gap)" "$(bash_rc "$D" "$SID" 'ln -sf /dev/null jest.config.js')" 2
+assert_rc "ln -s /dev/null <git-hooks-path> — deny (symlink into .git/hooks)" "$(bash_rc "$D" "$SID" "ln -s /dev/null .git/hooks/pre-commit")" 2
+# PR #258 review round-4 finding: `>|` (bash's clobber-override redirect
+# operator) was mis-tokenized as a pipe by split_simple_commands, hiding
+# the write target from the redirect-target check entirely.
+assert_rc "echo x >|jest.config.js — deny (clobber-redirect mis-tokenized as pipe)" "$(bash_rc "$D" "$SID" 'echo x >|jest.config.js')" 2
 assert_rc "cat guard-arm.sh — allow"                                "$(bash_rc "$D" "$SID" "cat $ARM")" 0
 assert_rc "sed -n 1,40p guard-arm.sh — allow"                       "$(bash_rc "$D" "$SID" "sed -n 1,40p $ARM")" 0
 assert_rc "shellcheck guard-arm.sh — allow (tool absence is not the point)" "$(bash_rc "$D" "$SID" "shellcheck $ARM")" 0
@@ -390,33 +417,14 @@ fi
 #     stacked-assignment bypass reopens (PR #258 round-2 review finding)
 MUT_K="$MUT_D/mut-k.sh"
 python3 - "$GUARD" "$MUT_K" <<'PYEOF' 2>/dev/null || true
-import sys
+import sys, re
 src, dst = sys.argv[1], sys.argv[2]
 with open(src) as f:
     c = f.read()
-old = '''  local anchor_i=0
-  if [ "${words[0]:-}" = "export" ] || [ "${words[0]:-}" = "env" ]; then
-    anchor_i=1
-  fi
-  while [ "$anchor_i" -lt "${#words[@]}" ]; do
-    local at="${words[$anchor_i]}"
-    case "$at" in
-      HUSKY=*|HUSKY_SKIP_HOOKS=*|SKIP=*|PRE_COMMIT_ALLOW_NO_CONFIG=*|GIT_CONFIG_PARAMETERS=*)
-        deny_variant bash "commit/push-hook bypass env"
-        ;;
-    esac
-    case "$at" in
-      [A-Za-z_]*=*)
-        local av="${at%%=*}"
-        case "$av" in
-          *[!A-Za-z0-9_]*|"") break ;;
-          *) anchor_i=$((anchor_i + 1)); continue ;;
-        esac
-        ;;
-      *) break ;;
-    esac
-  done
-'''
+old_block = re.search(
+    r'  local anchor_i=0\n  local w0=.*?\n  done\n',
+    c, re.S)
+assert old_block, "anchor block not found for mutation (k)"
 new = '''  local anchor_tok="${words[0]}"
   if [ "$anchor_tok" = "export" ] || [ "$anchor_tok" = "env" ]; then
     if [ "${#words[@]}" -gt 1 ]; then anchor_tok="${words[1]}"; else anchor_tok=""; fi
@@ -427,8 +435,7 @@ new = '''  local anchor_tok="${words[0]}"
       ;;
   esac
 '''
-assert old in c, "anchor not found for mutation (k)"
-c = c.replace(old, new, 1)
+c = c[:old_block.start()] + new + c[old_block.end():]
 with open(dst, 'w') as f:
     f.write(c)
 PYEOF
@@ -477,11 +484,35 @@ import sys, re
 src, dst = sys.argv[1], sys.argv[2]
 with open(src) as f:
     c = f.read()
-assert 'export|env|command|builtin|exec) idx=$((idx + 1)); continue ;;' in c, \
-    "exec-word skip-keyword line not found for mutation (m)"
-c = c.replace(
-    'export|env|command|builtin|exec) idx=$((idx + 1)); continue ;;',
-    'export|env) idx=$((idx + 1)); continue ;;')
+old_block = re.search(
+    r'  local idx=0\n  local after_env=0\n  while \[ "\$idx" -lt.*?\n  done\n',
+    c, re.S)
+assert old_block, "exec-word walk block not found for mutation (m)"
+new = '''  local idx=0
+  while [ "$idx" -lt "${#words[@]}" ]; do
+    local t="${words[$idx]}"
+    case "$t" in
+      export|env) idx=$((idx + 1)); continue ;;
+      *=*)
+        case "$t" in
+          [A-Za-z_]*=*)
+            local var_part="${t%%=*}"
+            case "$var_part" in
+              *[!A-Za-z0-9_]*) break ;;
+              "") break ;;
+              *) idx=$((idx + 1)); continue ;;
+            esac
+            ;;
+          *) break ;;
+        esac
+        ;;
+      *) break ;;
+    esac
+  done
+'''
+c = c[:old_block.start()] + new + c[old_block.end():]
+assert 'local exec_word="${words[$idx]:-}"\n  case "$exec_word" in\n' in c, \
+    "backslash-strip block not found for mutation (m)"
 backslash_strip = re.search(
     r'  local exec_word="\$\{words\[\$idx\]:-\}"\n'
     r'  case "\$exec_word" in\n'
@@ -499,6 +530,115 @@ if [ -s "$MUT_M" ] && ! cmp -s "$GUARD" "$MUT_M" && bash -n "$MUT_M" 2>/dev/null
   [ "$rc" != "2" ] && ok "(m) mutation control: narrowing the exec-word walk back to export/env re-opens the command/exec/backslash-prefix bypass" || no "(m) mutation control did not break the case (still rc=2)"
 else
   no "(m) mutation control: could not construct mutant"
+fi
+
+# (n) drop the backslash-strip on the exec-word loop's keyword token itself
+#     -> a backslash-escaped keyword (`\exec`, `\env`, ...) re-opens the
+#     full-guard bypass, including a full session self-disarm via
+#     `\exec rm <guard marker>` (PR #258 round-4 review finding)
+MUT_N="$MUT_D/mut-n.sh"
+python3 - "$GUARD" "$MUT_N" <<'PYEOF' 2>/dev/null || true
+import sys, re
+src, dst = sys.argv[1], sys.argv[2]
+with open(src) as f:
+    c = f.read()
+pat = re.compile(
+    r'(    local t="\$\{words\[\$idx\]\}"\n)'
+    r'    case "\$t" in\n'
+    r'.*?\n'
+    r'    esac\n'
+    r'(    if \[ "\$after_env" -eq 1 \]; then\n)')
+m = pat.search(c)
+assert m, "exec-word-loop backslash-strip block not found for mutation (n)"
+c = c[:m.start()] + m.group(1) + m.group(2) + c[m.end():]
+with open(dst, 'w') as f:
+    f.write(c)
+PYEOF
+if [ -s "$MUT_N" ] && ! cmp -s "$GUARD" "$MUT_N" && bash -n "$MUT_N" 2>/dev/null; then
+  rc="$(mut_rc "$MUT_N" "$D" "$SID" "\\exec rm .supervisor/guard/$SID.json")"
+  [ "$rc" != "2" ] && ok "(n) mutation control: dropping the exec-word-loop backslash-strip re-opens the backslash-escaped-keyword self-disarm bypass" || no "(n) mutation control did not break the case (still rc=2)"
+else
+  no "(n) mutation control: could not construct mutant"
+fi
+
+# (o) drop the env-flag walk (after_env block) -> `env -i git ...` /
+#     `env -u FOO git ...` re-open, resolving exec_base to the flag/value
+#     token instead of the wrapped command (PR #258 round-4 review finding)
+MUT_O="$MUT_D/mut-o.sh"
+python3 - "$GUARD" "$MUT_O" <<'PYEOF' 2>/dev/null || true
+import sys, re
+src, dst = sys.argv[1], sys.argv[2]
+with open(src) as f:
+    c = f.read()
+pat = re.compile(
+    r'    if \[ "\$after_env" -eq 1 \]; then\n'
+    r'.*?\n'
+    r'    fi\n',
+    re.S)
+m = pat.search(c)
+assert m, "after_env block not found for mutation (o)"
+c = c[:m.start()] + c[m.end():]
+with open(dst, 'w') as f:
+    f.write(c)
+PYEOF
+if [ -s "$MUT_O" ] && ! cmp -s "$GUARD" "$MUT_O" && bash -n "$MUT_O" 2>/dev/null; then
+  rc="$(mut_rc "$MUT_O" "$D" "$SID" 'env -i git commit -n -m x')"
+  [ "$rc" != "2" ] && ok "(o) mutation control: dropping the env-flag walk re-opens the env-flag-before-wrapped-command bypass" || no "(o) mutation control did not break the case (still rc=2)"
+else
+  no "(o) mutation control: could not construct mutant"
+fi
+
+# (p) drop `ln` from the write-verb allowlist -> a symlink-clobber of a
+#     protected basename re-opens (PR #258 round-4 review finding)
+MUT_P="$MUT_D/mut-p.sh"
+if make_mutant "$MUT_P" perl -pi -e 's/tee\|mv\|cp\|rm\|truncate\|install\|ln\) is_write_verb=1/tee|mv|cp|rm|truncate|install) is_write_verb=1/'; then
+  rc="$(mut_rc "$MUT_P" "$D" "$SID" 'ln -sf /dev/null jest.config.js')"
+  [ "$rc" != "2" ] && ok "(p) mutation control: dropping ln from the write-verb allowlist re-opens the symlink-clobber bypass" || no "(p) mutation control did not break the case (still rc=2)"
+else
+  no "(p) mutation control: could not construct mutant"
+fi
+
+# (q) revert the `>|` clobber-redirect handling in both the simple-command
+#     splitter and the tokenizer -> `echo x >|jest.config.js` re-opens,
+#     mis-tokenized as an unrelated pipe segment that hides the write
+#     target from the redirect-target check (PR #258 round-4 review finding)
+MUT_Q="$MUT_D/mut-q.sh"
+python3 - "$GUARD" "$MUT_Q" <<'PYEOF' 2>/dev/null || true
+import sys, re
+src, dst = sys.argv[1], sys.argv[2]
+with open(src) as f:
+    c = f.read()
+split_old = re.search(
+    r"      '\|'\)\n"
+    r'        if \[ "\$\{buf: -1\}" = .>. \]; then\n'
+    r'.*?\n'
+    r"        elif \[ \"\$\{s:\$\(\(i \+ 1\)\):1\}\" = '\|' \]; then\n",
+    c, re.S)
+assert split_old, "split_simple_commands >| branch not found for mutation (q)"
+split_new = ("      '|')\n"
+             "        if [ \"${s:$((i + 1)):1}\" = '|' ]; then\n")
+c = c[:split_old.start()] + split_new + c[split_old.end():]
+tok_old = re.search(
+    r"        if \[ \"\$\{s:\$\(\(i \+ 1\)\):1\}\" = '>' \]; then\n"
+    r'          out\+=\(">>"\); i=\$\(\(i \+ 1\)\)\n'
+    r"        elif \[ \"\$\{s:\$\(\(i \+ 1\)\):1\}\" = '\|' \]; then\n"
+    r'.*?\n'
+    r'          out\+=\(">\|"\); i=\$\(\(i \+ 1\)\)\n'
+    r'        else\n',
+    c, re.S)
+assert tok_old, "tokenize_words >| branch not found for mutation (q)"
+tok_new = ('        if [ "${s:$((i + 1)):1}" = \'>\' ]; then\n'
+           '          out+=(">>"); i=$((i + 1))\n'
+           '        else\n')
+c = c[:tok_old.start()] + tok_new + c[tok_old.end():]
+with open(dst, 'w') as f:
+    f.write(c)
+PYEOF
+if [ -s "$MUT_Q" ] && ! cmp -s "$GUARD" "$MUT_Q" && bash -n "$MUT_Q" 2>/dev/null; then
+  rc="$(mut_rc "$MUT_Q" "$D" "$SID" 'echo x >|jest.config.js')"
+  [ "$rc" != "2" ] && ok "(q) mutation control: reverting the >| clobber-redirect handling re-opens the mis-tokenized-as-pipe bypass" || no "(q) mutation control did not break the case (still rc=2)"
+else
+  no "(q) mutation control: could not construct mutant"
 fi
 
 # (e) delete the empty-id check in arm -> the unset-env case fails (writes a
