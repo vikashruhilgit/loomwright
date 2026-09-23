@@ -108,6 +108,7 @@ _The Phase 1.5 PRE-FLIGHT SYNC outcome is recorded here as an ordinary Decisions
 - tests: pass/fail ({count})
 - review: --/PASS/FAIL/NEEDS_HUMAN
 - out_of_lane: [{paths}]   # empty when none; REPORT-ONLY (v15.20.0, D6)
+- deviations: [{entries}]   # empty when none; REPORT-ONLY (worker-deviations item) — read by skills/self-heal-advisory/SKILL.md step 1g
 
 ## Error Log
 | # | Phase | Error | Retry | Resolution |

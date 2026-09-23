@@ -285,8 +285,10 @@ The default path below `skills/supervisor-readiness/SKILL.md` §"Decomposition T
 
 1. Spawn ONE implementation worker (blocking, in project root) — the prompt passes ALL acceptance criteria, not one subtask's row (spawn shape: `skills/async-orchestration/SKILL.md` §"Subagent Spawn Contracts" → Single-Agent Worker; that inherited Sequential-path Worker template also carries the session-log pointer the worker may use with `checkpoint.sh` — see `agents/worker.md`, no separate template lives here)
    - When `cost_profile=cheap`: include `model: "sonnet"` in the Task call
-2. Record result via Context-Keeper — **including the worker's `out_of_lane` field**, so the
-   lane report reaches `state.md`'s `## Worker Results` instead of being silently dropped.
+2. Record result via Context-Keeper — **including the worker's `out_of_lane` and `deviations`
+   fields**, so the lane report and any recorded plan drift reach `state.md`'s `## Worker
+   Results` instead of being silently dropped. `deviations` is read back later by Phase 4.5's
+   step 1g (`skills/self-heal-advisory/SKILL.md`) as an advisory to the review lens only.
    The Single-Agent worker inherits the Sequential-path spawn template, which DOES paste
    `lanes:`, so it emits the field. **Recording only — escalation is vacuous here**: with
    exactly one subtask there is no sibling lane to collide with, so there is nothing the
@@ -308,9 +310,11 @@ The default path below `skills/supervisor-readiness/SKILL.md` §"Decomposition T
    - **Per-iteration token-ceiling check (red-team-hardening/06 — when `MAX_TOKENS` was set at Phase 0 INIT), BEFORE spawning this subtask's worker:** sum this session's ledger via `scripts/read-token-ledger.sh --session {session_id}` and compare TOTAL against `MAX_TOKENS`. A breach OR a `LEDGER_UNREADABLE=1` reader answer ⇒ stop the loop here (do not spawn this or any further subtask), emit `SUPERVISOR_RESULT` with `status: failed`, `error: "token_ceiling_reached"`, and proceed to Phase 4.5's completion tail so the run-lock is still released. Skipped entirely when `MAX_TOKENS` is unset (opt-in, byte-identical otherwise). **Scope note:** this check is implemented on the Sequential Path's own per-subtask loop; the Parallel Path's poll loop (delegated to Execute Manager, below) does not yet re-check the ledger per worker-spawn — an honest limit, not yet extended to that path.
    - Spawn implementation worker (blocking, in project root)
      - When `cost_profile=cheap`: include `model: "sonnet"` in the Task call
-   - Record result via Context-Keeper — **including the worker's `out_of_lane` field**, so the
-     lane report reaches `state.md`'s `## Worker Results` instead of being silently dropped
-     (the Sequential spawn template DOES paste `lanes:`, so these workers do emit it).
+   - Record result via Context-Keeper — **including the worker's `out_of_lane` and `deviations`
+     fields**, so the lane report and any recorded plan drift reach `state.md`'s `## Worker
+     Results` instead of being silently dropped (the Sequential spawn template DOES paste
+     `lanes:`, so these workers do emit `out_of_lane`; `deviations` is unconditional). Phase
+     4.5's step 1g reads `deviations` back as an advisory to the review lens only.
    - **Lane reports on this path are RECORD-ONLY — no collision escalation, by construction.**
      The divergent-interface hazard the lane gate exists to catch is two subtasks writing the
      same file *without being able to see each other*. This path executes subtasks strictly

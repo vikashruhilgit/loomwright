@@ -252,6 +252,75 @@ findings (they stay the Rubric Grader's lane, R1). The standalone `/review-pr` d
 
 ---
 
+## Deviations advisory (worker- and fixer-recorded plan drift)
+
+The FOURTH pre-review enrichment — a **sibling** of the prior-churn, house-rules, and
+brief-conformance advisories above. It runs at the SAME point (**Phase 4.5 entry, BEFORE the
+first Code Reviewer spawn**) and enriches the SAME reviewer prompt, but **also runs again on
+EVERY LATER iteration of the review-and-fix loop** (Part 2 §"Review-and-fix loop" below), unlike
+the three siblings above which compute once at entry — fixer-recorded entries arrive one
+iteration at a time, so a step that only ran once at entry would never see them. Where
+`brief_conformance` tells the reviewer what was asked for, this one tells the reviewer **where
+the implementing agents said they departed from it**: workers record `deviations` on their
+`WORKER_RESULT` (`docs/RESULT_SCHEMAS.md` §WORKER_RESULT) and Phase 4.5 fix tasks record it on
+their `FIX_RESULT` (§FIX_RESULT) — both optional, additive, bounded (≤12 entries, ≤200 chars
+each), by convention prefixed `plan:`/`edge:`/`open:`/`test:` (unprefixed reads as `other:`).
+
+> **HARD ADVISORY CONTRACT — `deviations_advisory` is advisory input to the REVIEW lens ONLY.**
+> Exactly like `prior_churn` and `house_rules`, it **NEVER changes `heal_decision`**, **NEVER
+> introduces a new gate or a new schema field** (R1), **NEVER drives the fix task or worker via
+> this seam** (fed to the Code Reviewer prompt only — never back to a worker or a fixer as an
+> instruction), and **NEVER gates or blocks the PR on its own**. **Like `brief_conformance` and
+> unlike `prior_churn`/`house_rules` (R2):** the reviewer's response to a deviation IS ordinary
+> `category: new` findings — one per deviation that contradicts a stated acceptance criterion or
+> an `## Outcomes Rubric` bullet (quoting both) — through the existing `CODE_REVIEW_RESULT` gate
+> and fix selection. **A deviation that is merely unexpected is NOT a finding** — the question is
+> "does this break a stated criterion?", not "would I have done it differently?". It is
+> **subordinate to CLAUDE.md — on any conflict, CLAUDE.md wins.** It is **fail-safe**: every skip
+> condition below yields EMPTY output and the phase proceeds with no enrichment (the reviewer
+> prompt simply omits the DEVIATIONS ADVISORY line) — never thread a "no deviations found"
+> sentinel string into the reviewer prompt.
+
+```
+# Two sources, unioned:
+#   (1) `state.md`'s `## Worker Results` — every subtask's `- deviations: [...]` bullet,
+#       prefixed by that subtask's id (worker deviations survive worktree removal here).
+#   (2) `fixer_deviations` — a per-run, in-memory list maintained by the review-and-fix loop
+#       (Part 2 below): on EACH iteration, append that iteration's FIX_RESULT.deviations
+#       entries, each prefixed `fix-<iteration>` (fixers bypass Context-Keeper entirely — see
+#       Part 2 §5b of the source requirement — so this list is the ONLY durable carriage for
+#       fixer-recorded deviations; record each append via `record_decision` in `## Decisions
+#       Log` so the list survives a resume/compaction, per the invariant below).
+
+deviations_advisory = ""   # advisory summary; empty string on every skip condition
+
+# SKIP CONDITIONS — silent on each, `record_decision` below still runs:
+#   1. no `state.md` (no state file for this run yet);
+#   2. `state.md` has no `## Worker Results` section;
+#   3. zero entries across BOTH sources (no worker deviations AND no fixer_deviations).
+if state.md is readable AND ## Worker Results section exists:
+  entries = every "{subtask_id}: {entry text}" pair from every subtask's `deviations` bullet
+          + every "fix-{iteration}: {entry text}" pair from fixer_deviations
+  if entries is non-empty:
+    # CAP: the SAME cap Part 1's brief-conformance advisory uses (see "the cap in Part 1"
+    # above) — bounded, with a VISIBLE omitted-count marker on truncation (item 02 §9 exempts
+    # truncated advisories from its reviewer clause, so the marker MUST be visible to the
+    # reviewer, not merely logged).
+    deviations_advisory = "deviations:" + the kept entries
+                        + (the omitted-count marker "(+N deviations omitted — see state.md)", when truncated)
+
+record_decision(phase: SELF_HEAL, decision: "deviations_advisory: {non-empty | empty}", rationale: "advisory pre-review enrichment (worker- and fixer-recorded plan drift) — heal_decision unchanged; findings it yields are ordinary category:new findings through the existing gate; NEVER fed to workers/fixers as an instruction")
+```
+
+`deviations_advisory` is threaded into the `code-reviewer` Task prompt as the **DEVIATIONS
+ADVISORY** line (exact wording in Part 2 §"Review-and-fix loop" below, placed directly after the
+**BRIEF-CONFORMANCE ADVISORY** line, included only when non-empty). It is NOT emitted as a
+SUPERVISOR_RESULT field and does NOT bump any `schema_version` — additive prose enrichment of the
+reviewer prompt only. It runs on **every** Phase 4.5 iteration (not only the first), because
+`fixer_deviations` grows one entry-set at a time as the loop fixes issues.
+
+---
+
 ## Post-review advisory checks
 
 Run all three after the Code Reviewer loop has completed (regardless of
@@ -611,6 +680,7 @@ always execute.
 1c. **Prior-churn advisory (pre-review enrichment — ADVISORY ONLY, fail-safe):** run the **"Prior-churn advisory (pre-review enrichment)"** step from Part 1 of this skill (read at step 1a) to compute the `prior_churn` summary BEFORE the review-and-fix loop. It computes the integrated diff's touched files (`git diff --name-only "$BASE_BRANCH"...HEAD`, defaulting to `origin/main` when `BASE_BRANCH==main` — the SAME DIFF-SCOPE OVERRIDE the reviewer uses) and runs `bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-postmortem.sh" <touched files...>` passing the paths as **command-line ARGUMENTS** (never stdin — an args-bearing call can never block). Capture its bounded markdown as the advisory `prior_churn` summary; **skip silently on empty output** (the reader always exits 0, so `prior_churn` simply stays empty and the reviewer prompt omits the enrichment line). This is **strictly advisory / fail-safe / non-gating** — `prior_churn` NEVER changes `heal_decision`, NEVER drives the fix task (the corpus is fed to the REVIEW lens ONLY, never to workers/fixers), and NEVER gates or blocks the PR. It is threaded into the `code-reviewer` Task prompt in the review-and-fix loop below as advisory context.
 1e. **House-rules advisory (committed convention enrichment — pre-review enrichment, ADVISORY ONLY, fail-safe):** run the **"House-rules advisory (committed convention enrichment)"** step from Part 1 of this skill (read at step 1a) to compute the `house_rules` summary BEFORE the review-and-fix loop, as a sibling to step 1c. On the SAME integrated-diff touched-file scope (`git diff --name-only "$BASE_BRANCH"...HEAD`, defaulting to `origin/main` when `BASE_BRANCH==main` — the SAME DIFF-SCOPE OVERRIDE the reviewer uses), run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-rules.sh" <touched files...>` passing the paths as **command-line ARGUMENTS** (never stdin — an args-bearing call can never block). Capture its bounded advisory markdown as the `house_rules` summary; **skip silently on empty output** (the reader always exits 0, so `house_rules` simply stays empty and the reviewer prompt omits the enrichment line). **Run this step UNCONDITIONALLY like step 1c — do NOT gate it on any "if a rules store is detected" conditional.** `read-rules.sh` self-gates on `.agent/rules/*.json` (exactly as `read-postmortem.sh` self-gates on its corpus), so no detection wrapper is needed or wanted. **Call-shape NOTE:** the diff scope is a REAL filter — `read-rules.sh` routes on each rule's `applies_to`, so passing the integrated-diff paths is what scopes `house_rules` to the change under review. A rule with `applies_to: null` / no such key stays repo-wide; every ambiguous shape, and an empty path set, fail OPEN to repo-wide, so a degraded diff can never silently suppress the house rules. Pass them as args, never stdin (the no-hang shape). This is **strictly advisory / fail-safe / non-gating** — `house_rules` NEVER changes `heal_decision`, NEVER drives the fix task (the rules text is fed to the REVIEW lens ONLY via this seam, never to workers/fixers as a gate), and NEVER gates or blocks the PR. It is **subordinate to CLAUDE.md — on any conflict, CLAUDE.md wins.** This seam calls the READER ONLY — it NEVER pipes/evals/sources/`bash -c`s the reader output; each rule's `check` is surfaced as DATA (text) only, NEVER executed. Do NOT bump any `schema_version`. It is threaded into the `code-reviewer` Task prompt in the review-and-fix loop below as advisory context (the **HOUSE-RULES ADVISORY** line, included only when `house_rules` is non-empty).
 1f. **Brief-conformance advisory (acceptance-criteria enrichment — pre-review enrichment, ADVISORY ONLY, fail-safe):** run the **"Brief-conformance advisory (acceptance-criteria enrichment)"** step from Part 1 of this skill (read at step 1a) to compute the `brief_conformance` summary BEFORE the review-and-fix loop, as a sibling to steps 1c and 1e. Source is the in-progress brief at `brief_path` (the SAME path `run-ground-truth.sh --brief` and `parse_rubric` use) — parse its `## Acceptance Criteria` bullets (checkbox prefix stripped) plus its `## Outcomes Rubric` bullets when present, per the parse rule in Part 1, bounded by **the cap in Part 1** (criteria first, then rubric bullets; the omitted-count marker is appended on truncation and counts every omitted bullet — do NOT restate the number here). **Skip silently — `brief_conformance` stays EMPTY and the reviewer prompt omits the line — on any of the three skip conditions in Part 1: (1) no `brief_path` (a direct `/supervisor task:` invocation with no brief — the same back-compat case the completion tail handles for a job file absent from `.supervisor/jobs/in-progress/`; this step must not error on the missing path), (2) no `## Acceptance Criteria` section in the brief, (3) zero bullets parse.** Record `record_decision(phase: SELF_HEAL, decision: "brief_conformance: {non-empty | empty}", …)` on every path. This is **strictly advisory / fail-safe / non-gating** — `brief_conformance` itself NEVER changes `heal_decision` and adds NO new gate and NO new schema field (R1); NEVER drives the fix task via this seam (the criteria text is fed to the REVIEW lens ONLY, never to workers/fixers — fixers receive only the resulting ordinary findings, as they do every other finding); and NEVER gates or blocks the PR on its own. **Unlike steps 1c and 1e, the reviewer's response to this enrichment IS ordinary `category: new` / HIGH findings (R2)** — one per acceptance criterion the integrated diff does not address, quoting the criterion verbatim — and those pass through the existing `CODE_REVIEW_RESULT` gate and the existing `category=new + severity>=HIGH` fix selection exactly like any other finding. It is **subordinate to CLAUDE.md — on any conflict, CLAUDE.md wins.** Do NOT bump any `schema_version`. It is threaded into the `code-reviewer` Task prompt in the review-and-fix loop below (the **BRIEF-CONFORMANCE ADVISORY** line, placed directly after the HOUSE-RULES ADVISORY line, included only when `brief_conformance` is non-empty).
+1g. **Deviations advisory (worker- and fixer-recorded plan drift — pre-review enrichment, ADVISORY ONLY, fail-safe):** run the **"Deviations advisory (worker- and fixer-recorded plan drift)"** step from Part 1 of this skill (read at step 1a) to compute the `deviations_advisory` summary, as a sibling to steps 1c/1e/1f. Collect every `deviations` entry from `state.md`'s `## Worker Results` (prefixed by `subtask_id`) plus the per-run `fixer_deviations` list (appended from each iteration's `FIX_RESULT.deviations`, prefixed `fix-<iteration>`) — bound to **the same cap Part 1 uses for `brief_conformance`**, with a **VISIBLE** omitted-count marker on truncation (item 02 §9 exempts truncated advisories from its reviewer clause, so the marker must be visible to the reviewer, not merely logged). **Skip silently — `deviations_advisory` stays EMPTY and the reviewer prompt omits the line — on any of the three skip conditions in Part 1: (1) no `state.md`, (2) no `## Worker Results` section, (3) zero entries across both sources.** Record `record_decision(phase: SELF_HEAL, decision: "deviations_advisory: {non-empty | empty}", …)` on every path — including every append to `fixer_deviations` itself (Part 1's carriage note), so the list survives a resume/compaction. **UNLIKE steps 1c/1e/1f, this step RUNS ON EVERY ITERATION of the review-and-fix loop below, not only the first** — `fixer_deviations` grows one entry-set at a time as the loop fixes issues, so a first-iteration-only computation would never see later iterations' fixer entries. Contract, stated verbatim: `deviations_advisory` is fed to the REVIEW lens only, NEVER to workers/fixers as an instruction; it NEVER changes `heal_decision`, adds NO new gate and NO new schema field; **like step 1f and unlike 1c/1e, the reviewer's response IS ordinary findings** — one `category: new` finding per deviation that contradicts a stated acceptance criterion or an `## Outcomes Rubric` bullet (quoting both); a deviation that is merely unexpected is not a finding. It is **subordinate to CLAUDE.md — on any conflict, CLAUDE.md wins.** Do NOT bump any `schema_version`. It is threaded into the `code-reviewer` Task prompt in the review-and-fix loop below (the **DEVIATIONS ADVISORY** line, placed directly after the BRIEF-CONFORMANCE ADVISORY line, included only when `deviations_advisory` is non-empty).
 2. **Initialize invariant tracking:**
    - `skip_self_heal_requested` — set from INIT-parsed flags (true iff `--skip-self-heal` was passed on the command line). Set once here, never mutated.
    - `phase45_review_invoked` — initialize to `false`. Flip to `true` only when the `code-reviewer` Task call below actually executes (first iteration of the review-and-fix loop).
@@ -691,7 +761,7 @@ while heal_iterations < max_heal_iterations:
 
              **DIFFERENT-LENS DIRECTIVE (non-stacked / BASE_BRANCH == \"main\" only — v14.21.0 self-heal hardening):** when BASE_BRANCH == \"main\" (the DIFF-SCOPE OVERRIDE above does NOT apply), this is the holistic post-PR review whose blind spots motivated this directive — a plain re-run of the same diff-scoped reviewer rubber-stamps its own blind spots on repeated iterations of this same review. Apply a DIFFERENT lens, not the same one again:
                1. **Run `consistency_audit` mode when self-repo trigger paths match.** If the integrated diff touches any of the `consistency_audit` trigger surfaces defined in `agents/code-reviewer.md`'s **Trigger rule** table (the single authoritative review-trigger taxonomy — do NOT restate the list here; a restated copy is exactly the cross-file drift this phase exists to catch), you MUST run in `review_mode: consistency_audit` (exhaustive cross-file analysis: every count, version string, mirrored prompt, and cross-reference), NOT a plain `diff_review`.
-               2. **ALWAYS apply the Self-Heal Miss-Class Checklist regardless of repo.** On EVERY non-stacked heal review — plugin-self OR any external repo where the consistency_audit triggers do not fire — additionally apply the repo-agnostic \"Self-Heal Miss-Class Checklist\" in `skills/quality-checklist/SKILL.md` (backend/API validation mirrors every frontend-schema rule; no `||`/falsy coercion on numeric fields; no positional args to options-object functions; missing branch test coverage; count/version/restated-list drift; cross-reference precision drift; `brief_conformance` — a stated acceptance criterion with no corresponding change in the integrated diff, checkable only when the BRIEF-CONFORMANCE ADVISORY line below is present). These are the classes that today only surface in 3–6 rounds of post-PR review; catch them here.
+               2. **ALWAYS apply the Self-Heal Miss-Class Checklist regardless of repo.** On EVERY non-stacked heal review — plugin-self OR any external repo where the consistency_audit triggers do not fire — additionally apply the repo-agnostic \"Self-Heal Miss-Class Checklist\" in `skills/quality-checklist/SKILL.md` (backend/API validation mirrors every frontend-schema rule; no `||`/falsy coercion on numeric fields; no positional args to options-object functions; missing branch test coverage; count/version/restated-list drift; cross-reference precision drift; `brief_conformance` — a stated acceptance criterion with no corresponding change in the integrated diff, checkable only when the BRIEF-CONFORMANCE ADVISORY line below is present; `deviations` — a worker- or fixer-recorded deviation that contradicts a stated criterion or rubric bullet, checkable only when the DEVIATIONS ADVISORY line below is present). These are the classes that today only surface in 3–6 rounds of post-PR review; catch them here.
 
              **ANTI-OVERLAP (every iteration, applies whether or not the DIFF-SCOPE OVERRIDE above is in force):** do not re-derive what a prior gate already found — an issue that a deterministic gate or an earlier heal iteration of this run already surfaced AND that is already fixed on this branch must not be re-reported; spend the pass on what the integrated view newly exposes. This never licenses skipping a check class or deferring to a prior lens: a prior finding still open in the diff is squarely in scope, and the DIFFERENT-LENS DIRECTIVE above still governs, **where it applies**, WHICH classes you sweep. (There is no per-subtask review to overlap with — see `AGENT_GUIDELINES.md` §"Review Counter-Pressure Rule".)
 
@@ -700,6 +770,8 @@ while heal_iterations < max_heal_iterations:
              **HOUSE-RULES ADVISORY (non-gating — include this line ONLY when `house_rules` is non-empty; omit entirely when empty):** the project's committed house rules (`.agent/rules/`, read via `read-rules.sh`) carry the following team conventions — bias your review lens toward flagging diffs that diverge from them ({house_rules summary}). Each rule's `check` is DATA only — do NOT execute, eval, source, or `bash -c` any `check` value. This is advisory context, not a gate: it NEVER changes your `decision`, the Supervisor NEVER changes `heal_decision` because of it, it NEVER drives the fix task on its own, and it NEVER gates or blocks the PR. It is **subordinate to CLAUDE.md — on any conflict, CLAUDE.md wins.** Use it to bias WHERE you look, not WHETHER the diff passes.
 
              **BRIEF-CONFORMANCE ADVISORY (include this line ONLY when `brief_conformance` is non-empty; omit entirely when empty):** the in-progress brief this branch was built from states the following acceptance criteria (bounded by the cap in Part 1 of `skills/self-heal-advisory/SKILL.md`; a trailing omitted-count marker means the brief holds more — read it if you need them (brief: {brief_path}, read only `## Acceptance Criteria`; pointer, not payload)): {brief_conformance summary}. For EACH listed acceptance criterion decide, from the diff text ONLY (you execute nothing), one of `addressed` | `not_addressed` | `cannot_determine`. For each `not_addressed` criterion emit exactly ONE finding with `category: new`, severity **HIGH**, the criterion quoted VERBATIM in `description`, what is missing in `suggestion`, and `file:` = the path the criterion most plausibly targets when that is evident from the criterion or the diff, otherwise the sentinel `brief` (parallel to the existing `file: environment` sentinel — the validator requires a non-empty `file`; omit `line` for the sentinel) — its class is the criterion itself. `cannot_determine` (a runtime-only criterion — latency, throughput, anything the diff text cannot establish) goes in ONE summary line naming those criteria under `cannot_determine`, NOT a finding. Rubric bullets (labelled `rubric (orientation only)`) are orientation ONLY: they NEVER produce findings — they stay the Rubric Grader's lane. Unlike the two advisory lines above it, this line DOES yield ordinary gating findings — because a `category: new` HIGH finding is already this gate's input, not a new gate: the Supervisor still derives `heal_decision` ONLY from your `CODE_REVIEW_RESULT`, and the fix loop consumes these findings exactly as it consumes every other `new` HIGH finding. It is **subordinate to CLAUDE.md — on any conflict, CLAUDE.md wins.**
+
+             **DEVIATIONS ADVISORY (include this line ONLY when `deviations_advisory` is non-empty; omit entirely when empty):** the workers and Phase 4.5 fix tasks that built this branch recorded the following departures from plan, prefixed by subtask id or `fix-<iteration>` (bounded by the same cap as the BRIEF-CONFORMANCE ADVISORY above; a trailing omitted-count marker means more were recorded — see `state.md`'s `## Worker Results`): {deviations_advisory summary}. Each entry is by convention prefixed `plan:`/`edge:`/`open:`/`test:` (an unprefixed entry reads as `other:`). For each deviation, decide whether it contradicts a stated acceptance criterion or an `## Outcomes Rubric` bullet from the in-progress brief — a MERELY unexpected deviation (would you have done it differently) is NOT a finding. For each deviation that DOES contradict one, emit exactly ONE finding with `category: new`, quoting BOTH the deviation and the contradicted criterion/rubric bullet in `description`. Like the BRIEF-CONFORMANCE ADVISORY line above (and unlike PRIOR-CHURN / HOUSE-RULES), this line DOES yield ordinary gating findings through the existing `CODE_REVIEW_RESULT` gate and fix selection — never a new gate. It is fed to you, the REVIEW lens, ONLY — never to a worker or fixer as an instruction on a later iteration. It is **subordinate to CLAUDE.md — on any conflict, CLAUDE.md wins.**
 
              BASE_BRANCH={BASE_BRANCH value or \"main\"}
 
@@ -754,7 +826,7 @@ while heal_iterations < max_heal_iterations:
              5. Do NOT address findings outside the listed classes. (You MUST fix other instances of the SAME class per step 1a; you must NOT chase unrelated findings.)
              6. Do NOT fix pre_existing issues or nits.
 
-             Emit FIX_RESULT block: schema_version: 1, issues_addressed, files_modified, commit_sha, summary — and the `summary` MUST include an observable `self_review:` clause from step 3a naming the downstream-regression risk classes you checked (persistence / state / lifecycle / idempotency / concurrency) and the result (`self_review: clean` or `self_review: fixed-in-pass — <what>`). A FIX_RESULT whose summary has NO `self_review:` clause is an incomplete fix.",
+             Emit FIX_RESULT block: schema_version: 1, issues_addressed, files_modified, commit_sha, summary, deviations — and the `summary` MUST include an observable `self_review:` clause from step 3a naming the downstream-regression risk classes you checked (persistence / state / lifecycle / idempotency / concurrency) and the result (`self_review: clean` or `self_review: fixed-in-pass — <what>`). A FIX_RESULT whose summary has NO `self_review:` clause is an incomplete fix. `deviations` is OPTIONAL elsewhere but **CONDITIONAL-MANDATORY**: a FIX_RESULT whose diff edits a test assertion carries no `test:` entry is incomplete — add one (`test: <name> — <code wrong | assertion wrong | env>: <why>`) before emitting. Same shape as `WORKER_RESULT.deviations` (≤12 entries, ≤200 chars each, `plan:`/`edge:`/`open:`/`test:` convention, unprefixed reads as `other:`, never rejected — no validator hook enforces this for FIX_RESULT, it is prompt-contract only).",
     model: "sonnet"   # ONLY when cost_profile=cheap; omit entirely when cost_profile=default
   )
   # Parse FIX_RESULT; increment heal_fixable_issues_fixed by FIX_RESULT.issues_addressed
@@ -763,6 +835,18 @@ while heal_iterations < max_heal_iterations:
   # concurrency). If absent, treat the fix as INCOMPLETE — re-prompt the SAME fix worker once to perform
   # and report the pre-push self-review, or surface it for the next re-review. A missing note must never
   # silently pass as a finished fix. (Best-effort, observable; never --force, never merge.)
+
+  # fixer_deviations carriage (worker-deviations item, Part 1 §"Deviations advisory"): FIX_RESULT
+  # bypasses Context-Keeper entirely (fixers are not workers — their result never reaches
+  # `record_worker_result` / `## Worker Results`), so this per-run in-memory list is the ONLY
+  # durable carriage for fixer-recorded deviations. Append each of THIS iteration's
+  # FIX_RESULT.deviations entries, prefixed `fix-{heal_iterations+1}:`, when non-empty; record the
+  # append via `record_decision(phase: SELF_HEAL, decision: "fixer_deviations: appended {n} from fix-{heal_iterations+1}", …)`
+  # so the list survives a resume/compaction. Step 1g (on-entry actions, re-run every iteration)
+  # reads this list alongside `## Worker Results` on the NEXT review spawn.
+  if FIX_RESULT.deviations is non-empty:
+    fixer_deviations += [f"fix-{heal_iterations+1}: {entry}" for entry in FIX_RESULT.deviations]
+    record_decision(phase: SELF_HEAL, decision: f"fixer_deviations: appended {len(FIX_RESULT.deviations)} from fix-{heal_iterations+1}", rationale: "carriage for step 1g's Deviations advisory — FIX_RESULT bypasses Context-Keeper")
 
   git push  # update PR (regular push, NEVER --force)
   record_decision(phase: SELF_HEAL, decision: "fix iteration {heal_iterations+1}", rationale: FIX_RESULT.summary)

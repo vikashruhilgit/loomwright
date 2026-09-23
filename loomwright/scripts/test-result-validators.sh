@@ -3216,6 +3216,181 @@ EOF
 run_v "$V_WORKER" "$F"
 assert_pass "worker: rule 9 — a bare 123 in out_of_lane is ACCEPTED (the markdown carrier stringifies every scalar; the isinstance guard is unreachable here by construction)"
 
+echo ""
+# ---------------------------------------------------------------------------
+# rule 10 — deviations (worker-deviations item, six-phase-loop-gaps/01). Optional +
+# additive at schema_version 2, same treatment as rule 9's out_of_lane, but with its
+# OWN bound: at most 12 entries, each at most 200 chars. ABSENCE must pass; when
+# PRESENT it must be an array of at most 12 non-empty strings each at most 200 chars.
+# The rule must never touch status/outputs_gap. A four-prefix (plan:/edge:/open:/test:)
+# or unprefixed entry is ACCEPTED either way — the prefix is a consumer convention,
+# not a validation rule.
+# ---------------------------------------------------------------------------
+mk worker-r10-absent.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- summary: deviations absent entirely — optional/additive, must still validate
+EOF
+run_v "$V_WORKER" "$F"
+assert_pass "worker: rule 10 — deviations ABSENT is accepted (optional/additive, no schema bump)"
+
+mk worker-r10-empty.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- deviations: []
+- summary: explicit empty list — nothing to report
+EOF
+run_v "$V_WORKER" "$F"
+assert_pass "worker: rule 10 — deviations [] is accepted (presence-gated not truthiness-gated)"
+
+mk worker-r10-prefixed.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- deviations: ["plan: skipped migration down-direction — brief did not ask; flagged open", "edge: empty CSV upload — treated as 0 rows, not an error", "open: retry backoff — chose exponential, brief did not specify", "test: audit-log format — assertion wrong: asserted the pre-change format"]
+- summary: four correctly-prefixed entries — one per kind
+EOF
+run_v "$V_WORKER" "$F"
+assert_pass "worker: rule 10 — four prefixed entries (plan:/edge:/open:/test:) are accepted"
+
+mk worker-r10-unprefixed.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- deviations: ["skipped the migration"]
+- summary: an unprefixed entry — read as other: by consumers, never rejected for lacking a prefix
+EOF
+run_v "$V_WORKER" "$F"
+assert_pass "worker: rule 10 — an unprefixed entry is accepted (no prefix requirement, only a convention)"
+
+mk worker-r10-null.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- deviations: null
+- summary: explicit null is PRESENT with a None value — rejected, unlike an omitted key
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: rule 10 — explicit deviations: null is rejected (present-with-None, not absent)" "rule 10"
+
+mk worker-r10-nonlist.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- deviations: "plan: x"
+- summary: present but a bare string, not an array
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: rule 10 — deviations present-but-NOT-a-list is rejected" "rule 10"
+
+mk worker-r10-emptystring.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- deviations: [""]
+- summary: present list containing an empty-string entry
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: rule 10 — deviations with an empty-string entry is rejected" "rule 10"
+
+mk worker-r10-overcount.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- deviations: ["plan: 1", "plan: 2", "plan: 3", "plan: 4", "plan: 5", "plan: 6", "plan: 7", "plan: 8", "plan: 9", "plan: 10", "plan: 11", "plan: 12", "plan: 13"]
+- summary: 13 entries — one over the 12-entry cap
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: rule 10 — 13 entries exceeds the 12-entry cap, rejected" "rule 10"
+
+# 201-char entry (mutation-control target below): 195 'x' chars + a "test: " prefix (6 chars) = 201.
+LONG_201="test: $(python3 -c 'print("x" * 195)')"
+mk worker-r10-overlength.md <<EOF
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- deviations: ["$LONG_201"]
+- summary: a 201-character entry — one over the 200-char cap
+EOF
+R10_OVERLENGTH_FILE="$F"
+run_v "$V_WORKER" "$F"
+assert_fail "worker: rule 10 — a 201-char entry exceeds the 200-char cap, rejected" "rule 10"
+
+# MUTATION CONTROL: delete the length check from a COPY of the validator; the 201-char
+# case above must FLIP to accepted, proving the check is load-bearing (not vacuous).
+V_WORKER_NOLEN="$TMPROOT/validate-worker-result-nolen.py"
+mkdir -p "$(dirname "$V_WORKER_NOLEN")"
+cp "$V_WORKER" "$V_WORKER_NOLEN"
+# copy result_block_parser.py alongside it (validate-worker-result.py imports it via
+# sys.path.insert(0, dirname(__file__)) — the sibling module must be reachable)
+cp "$(dirname "$V_WORKER")/result_block_parser.py" "$(dirname "$V_WORKER_NOLEN")/result_block_parser.py"
+python3 - "$V_WORKER_NOLEN" <<'PY'
+import re, sys
+p = sys.argv[1]
+src = open(p, encoding="utf-8").read()
+mutated = src.replace(
+    '            if len(item) > 200:\n                emit(False, REASON_DEVIATIONS_SHAPE)\n',
+    '',
+    1,
+)
+assert mutated != src, "mutation target not found — validator source shape changed"
+open(p, "w", encoding="utf-8").write(mutated)
+PY
+if [ -s "$V_WORKER_NOLEN" ] && ! cmp -s "$V_WORKER" "$V_WORKER_NOLEN"; then
+  ok "worker: rule 10 mutation control — mutant validator is non-empty and differs from the original"
+else
+  no "worker: rule 10 mutation control — mutant invalid (empty or identical), cannot be trusted"
+fi
+run_v "$V_WORKER_NOLEN" "$R10_OVERLENGTH_FILE"
+assert_pass "worker: rule 10 mutation control — with the length check deleted, the 201-char case FLIPS to accepted (the check is load-bearing, not vacuous)"
+
 echo "== K. documented SubagentStop decision shape — exact bytes, every validator =="
 # WHY THIS EXISTS. Until 2026-09-21 every validator printed `{"ok": true}` /
 # `{"ok": false, "reason": …}` and every assertion above read `.ok` — so the

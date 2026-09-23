@@ -497,12 +497,16 @@ for iteration in 1..max_iterations:
         tool_calls += 1
 
       # Record worker result (direct call — de-batched, one call per event;
-      # the retired batching wrapper is gone, this call is not).
+      # the retired batching wrapper is gone, this call is not). Forwards the
+      # worker's `out_of_lane` AND `deviations` fields unconditionally — both are
+      # REPORT-ONLY and land in `## Worker Results`; `deviations` is later read by
+      # Phase 4.5's step 1g (skills/self-heal-advisory/SKILL.md) as an advisory to
+      # the review lens only.
       Task(
         Context-Keeper,
         operation: record_worker_result,
         worker_id: {worker_id}, subtask_id: {subtask_id},
-        result: {files_modified, lines_added, lines_removed, tests_run, tests_passed, status, error, out_of_lane},
+        result: {files_modified, lines_added, lines_removed, tests_run, tests_passed, status, error, out_of_lane, deviations},
         state_file: {state_file_path}
       )
       tool_calls += 1
