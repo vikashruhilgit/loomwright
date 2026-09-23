@@ -153,10 +153,28 @@ assert_rc "env -i git commit -n -m x — deny (env flag before wrapped command)"
 assert_rc "env -u FOO git commit -n -m x — deny (env value-taking flag)" "$(bash_rc "$D" "$SID" 'env -u FOO git commit -n -m x')" 2
 assert_rc "env -i HUSKY=0 git commit -m x — deny (env flag before anchor-checked assignment)" "$(bash_rc "$D" "$SID" 'env -i HUSKY=0 git commit -m x')" 2
 assert_rc "env FOO=1 npm test — allow (plain env-wrapped assignment, unaffected)" "$(bash_rc "$D" "$SID" 'env FOO=1 npm test')" 0
+# PR #258 review round-5 finding: real BSD/GNU env supports BUNDLING its
+# own boolean short flags into one token (`-iv`, `-i0`, ...) and bundling
+# a trailing value-taking flag letter with them (`-iu FOO` = -i then -u
+# FOO) — the round-4 fix only matched single unbundled flags, so a
+# bundled cluster fell through unmatched and defeated exec_base
+# resolution again, up to a full self-disarm via `env -iv rm <marker>`.
+assert_rc "env -iv git commit -n -m x — deny (bundled boolean env flags)" "$(bash_rc "$D" "$SID" 'env -iv git commit -n -m x')" 2
+assert_rc "env -vi git commit -n -m x — deny (bundled boolean env flags, reordered)" "$(bash_rc "$D" "$SID" 'env -vi git commit -n -m x')" 2
+assert_rc "env -0iv HUSKY=0 npm test — deny (3-flag bundle before anchor-checked assignment)" "$(bash_rc "$D" "$SID" 'env -0iv HUSKY=0 npm test')" 2
+assert_rc "env -iu FOO git commit -n -m x — deny (bundled boolean + value-taking flag)" "$(bash_rc "$D" "$SID" 'env -iu FOO git commit -n -m x')" 2
+assert_rc "env -iv rm <guard marker> — deny (bundled-flag self-disarm)" "$(bash_rc "$D" "$SID" "env -iv rm .supervisor/guard/$SID.json")" 2
 # PR #258 review round-4 finding: `ln`/`ln -s` clobbering a protected path
 # or a git hook was not in the write-verb/`.git/hooks` verb lists at all.
 assert_rc "ln -sf /dev/null jest.config.js — deny (symlink-clobber write-verb gap)" "$(bash_rc "$D" "$SID" 'ln -sf /dev/null jest.config.js')" 2
 assert_rc "ln -s /dev/null <git-hooks-path> — deny (symlink into .git/hooks)" "$(bash_rc "$D" "$SID" "ln -s /dev/null .git/hooks/pre-commit")" 2
+# PR #258 review round-5 finding: the round-4 `ln` check scanned ALL
+# non-flag arguments, not just the LINK NAME actually being created —
+# `ln` only READS its TARGET argument, so this false-denied a legitimate
+# `ln -s realfile.txt /tmp/dest` whenever realfile.txt shared a protected
+# basename.
+assert_rc "ln -s jest.config.js /tmp/backup-jest-config — allow (protected basename is the READ target, not the link name)" "$(bash_rc "$D" "$SID" 'ln -s jest.config.js /tmp/backup-jest-config')" 0
+assert_rc "ln -s realfile.txt /tmp/dest — allow (ordinary symlink, no protected basename anywhere)" "$(bash_rc "$D" "$SID" 'ln -s realfile.txt /tmp/dest')" 0
 # PR #258 review round-4 finding: `>|` (bash's clobber-override redirect
 # operator) was mis-tokenized as a pipe by split_simple_commands, hiding
 # the write target from the redirect-target check entirely.
@@ -588,12 +606,32 @@ else
   no "(o) mutation control: could not construct mutant"
 fi
 
-# (p) drop `ln` from the write-verb allowlist -> a symlink-clobber of a
-#     protected basename re-opens (PR #258 round-4 review finding)
+# (p) drop the dedicated `ln` last-arg-only block entirely -> a
+#     symlink-clobber of a protected basename re-opens (PR #258 round-4
+#     finding first added ln coverage; round-5 review then found its
+#     original all-argument-scan form false-denied `ln -s realfile.txt
+#     /tmp/dest` and moved it to this dedicated last-arg-only block)
 MUT_P="$MUT_D/mut-p.sh"
-if make_mutant "$MUT_P" perl -pi -e 's/tee\|mv\|cp\|rm\|truncate\|install\|ln\) is_write_verb=1/tee|mv|cp|rm|truncate|install) is_write_verb=1/'; then
+python3 - "$GUARD" "$MUT_P" <<'PYEOF' 2>/dev/null || true
+import sys, re
+src, dst = sys.argv[1], sys.argv[2]
+with open(src) as f:
+    c = f.read()
+pat = re.compile(
+    r'  # ---- ln: symlink-clobber.*?\n'
+    r'  if \[ "\$exec_base" = "ln" \]; then\n'
+    r'.*?\n'
+    r'  fi\n',
+    re.S)
+m = pat.search(c)
+assert m, "ln last-arg block not found for mutation (p)"
+c = c[:m.start()] + c[m.end():]
+with open(dst, 'w') as f:
+    f.write(c)
+PYEOF
+if [ -s "$MUT_P" ] && ! cmp -s "$GUARD" "$MUT_P" && bash -n "$MUT_P" 2>/dev/null; then
   rc="$(mut_rc "$MUT_P" "$D" "$SID" 'ln -sf /dev/null jest.config.js')"
-  [ "$rc" != "2" ] && ok "(p) mutation control: dropping ln from the write-verb allowlist re-opens the symlink-clobber bypass" || no "(p) mutation control did not break the case (still rc=2)"
+  [ "$rc" != "2" ] && ok "(p) mutation control: dropping the ln last-arg-only block re-opens the symlink-clobber bypass" || no "(p) mutation control did not break the case (still rc=2)"
 else
   no "(p) mutation control: could not construct mutant"
 fi

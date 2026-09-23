@@ -179,6 +179,45 @@ basename_of() {
   printf '%s\n' "${1##*/}"
 }
 
+# ---------------------------------------------------------------------------
+# env's own short-flag CLUSTER forms: a run of boolean flags (0/i/v in any
+# combination/order — BSD env's own usage string groups them as `[-0iv]`,
+# and GNU env supports the same bundling) optionally followed by ONE
+# value-taking flag letter (u/C/P/S) whose value is the NEXT word — real
+# getopt-style bundling both BSD and GNU env support (verified live:
+# `env -iv FOO=bar /usr/bin/env` and `env -iu FOO true` both real,
+# succeeding invocations on this platform). PR #258 round-5 review
+# finding: the round-4 env-flag walk only matched SINGLE unbundled flags
+# (`-i`, `-u`), so `env -iv ...` / `env -iu FOO ...` fell through
+# unmatched and defeated exec_base resolution exactly like round-4's
+# unbundled-flag gap — up to and including a full session self-disarm via
+# `env -iv rm <guard marker>`. Sets EFC_TAKES_VALUE=1 when the cluster
+# ends in a value-taking letter (caller must then also skip the next
+# word); an attached value on the SAME token (`-uFOO`) is not covered —
+# it is rejected here (returns 1) rather than mis-consumed. -------------
+env_flag_cluster_consume() {
+  local w="$1" rest c
+  EFC_TAKES_VALUE=0
+  case "$w" in
+    -?*) rest="${w#-}" ;;
+    *) return 1 ;;
+  esac
+  while [ -n "$rest" ]; do
+    c="${rest:0:1}"
+    rest="${rest:1}"
+    case "$c" in
+      0|i|v) : ;;
+      u|C|P|S)
+        [ -n "$rest" ] && return 1  # attached-value form, not covered
+        EFC_TAKES_VALUE=1
+        return 0
+        ;;
+      *) return 1 ;;
+    esac
+  done
+  return 0
+}
+
 # ===========================================================================
 # Word tokenizer (bash 3.2 safe): splits a simple-command string into
 # whitespace-delimited words, quote-aware (single/double quotes consumed and
@@ -350,10 +389,15 @@ evaluate_one_simple_command() {
       '\'?*) at="${at#\\}" ;;
     esac
     if [ "$anchor_after_env" -eq 1 ]; then
+      if env_flag_cluster_consume "$at"; then
+        if [ "$EFC_TAKES_VALUE" -eq 1 ]; then
+          anchor_i=$((anchor_i + 2)); continue
+        else
+          anchor_i=$((anchor_i + 1)); continue
+        fi
+      fi
       case "$at" in
-        -u|-P|-S|-C)
-          anchor_i=$((anchor_i + 2)); continue ;;
-        --unset=*|--split-string=*|--chdir=*|-i|-0|-v|--ignore-environment|--null|--debug)
+        --unset=*|--split-string=*|--chdir=*|--ignore-environment|--null|--debug)
           anchor_i=$((anchor_i + 1)); continue ;;
         *) anchor_after_env=0 ;;
       esac
@@ -402,10 +446,15 @@ evaluate_one_simple_command() {
       '\'?*) t="${t#\\}" ;;
     esac
     if [ "$after_env" -eq 1 ]; then
+      if env_flag_cluster_consume "$t"; then
+        if [ "$EFC_TAKES_VALUE" -eq 1 ]; then
+          idx=$((idx + 2)); continue
+        else
+          idx=$((idx + 1)); continue
+        fi
+      fi
       case "$t" in
-        -u|-P|-S|-C)
-          idx=$((idx + 2)); continue ;;
-        --unset=*|--split-string=*|--chdir=*|-i|-0|-v|--ignore-environment|--null|--debug)
+        --unset=*|--split-string=*|--chdir=*|--ignore-environment|--null|--debug)
           idx=$((idx + 1)); continue ;;
         *) after_env=0 ;;
       esac
@@ -588,11 +637,9 @@ evaluate_one_simple_command() {
       ;;
   esac
 
-  # ---- rm/chmod/mv/ln with an argument containing .git/hooks -------------
-  # `ln`/`ln -s` clobbering a hook path is functionally equivalent to
-  # `mv`/`cp` overwriting it (PR #258 round-4 review finding).
+  # ---- rm/chmod/mv with an argument containing .git/hooks ----------------
   case "$exec_base" in
-    rm|chmod|mv|ln)
+    rm|chmod|mv)
       local w6
       for w6 in "${words[@]:$((idx + 1))}"; do
         case "$w6" in
@@ -604,11 +651,9 @@ evaluate_one_simple_command() {
 
   # ---- write verbs whose simple command names a protected basename or
   #      contains .supervisor/guard ----------------------------------------
-  # `ln`/`ln -s TARGET LINK_NAME` symlink-clobbers a protected path exactly
-  # like `cp`/`mv` would (PR #258 round-4 review finding).
   local is_write_verb=0
   case "$exec_base" in
-    tee|mv|cp|rm|truncate|install|ln) is_write_verb=1 ;;
+    tee|mv|cp|rm|truncate|install) is_write_verb=1 ;;
     sed)
       local w7
       for w7 in "${words[@]:$((idx + 1))}"; do
@@ -631,6 +676,33 @@ evaluate_one_simple_command() {
         deny_variant bash "protected configuration write"
       fi
     done
+  fi
+
+  # ---- ln: symlink-clobber of the LINK NAME (the last non-flag argument
+  #      in the `ln [-s] TARGET LINK_NAME` form), not every argument. `ln`
+  #      only READS its TARGET argument(s) — treating them the same as the
+  #      write verbs' all-argument scan above false-denies a legitimate
+  #      `ln -s realfile.txt /tmp/dest` whenever realfile.txt happens to
+  #      share a protected basename (PR #258 round-5 review finding; the
+  #      round-4 fix that first added `ln` reused the all-argument scan
+  #      verbatim without checking ln's own read-vs-write argument shape).
+  #      A hook path as the LINK NAME is equally a "git-hook directory
+  #      write", so both checks live in this one last-arg-only block. -----
+  if [ "$exec_base" = "ln" ]; then
+    local w9 link_name=""
+    for w9 in "${words[@]:$((idx + 1))}"; do
+      case "$w9" in
+        -*) continue ;;
+      esac
+      link_name="$w9"
+    done
+    case "$link_name" in
+      *.git/hooks*) deny_variant bash "git-hook directory write" ;;
+      *.supervisor/guard*) deny_variant bash "protected configuration write" ;;
+    esac
+    if is_protected_basename "$(basename_of "$link_name")"; then
+      deny_variant bash "protected configuration write"
+    fi
   fi
 
   # ---- `>` / `>>` / `>|` redirect target -----------------------------------
