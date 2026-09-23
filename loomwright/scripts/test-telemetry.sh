@@ -503,7 +503,15 @@ for variant in payload-agent-tp payload-shared-tp; do
   we_tr="$(extract_would_exit "$out_tr")"
   assert_eq "transcript_fallback would_exit ($variant)" "0" "$we_tr"
   assert_not_match "transcript_fallback schema_detected ($variant)" "no_known_result_block" "$out_tr"
-  assert_match "transcript_fallback body_from_transcript ($variant)" "recovered from the transcript JSONL fallback" "$out_tr"
+  # red-team-hardening item 08, Fix 3: raw_data.result_block is no longer in
+  # the default body (field-selection, not the whole redacted text), so the
+  # summary sentence itself is no longer anywhere in the output. Assert on
+  # the fixture's unique task_id instead — it is parsed OUT of the transcript
+  # text into "## Task Summary" regardless of whether result_block is
+  # embedded, so this still proves the fallback actually read (and
+  # correctly parsed) THIS fixture's transcript content, not merely that the
+  # run reached WOULD_EXIT=0 for some other reason.
+  assert_match "transcript_fallback body_from_transcript ($variant)" "fixture-transcript-fallback-task-0021" "$out_tr"
 done
 
 rm -rf "$TRANSCRIPT_TMPDIR" 2>/dev/null || true

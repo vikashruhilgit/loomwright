@@ -156,6 +156,45 @@ check_count '[0-9]+ reusable skills' "$SKILLS" "skill-count"
 check_count '[0-9]+ focused skill'   "$SKILLS" "skill-count"
 check_count 'and [0-9]+ skills'      "$SKILLS" "skill-count"
 
+# --- Description card: length + single-version-token gate (red-team-hardening
+#     item 08, Fix 4). CLAUDE.md's own "description is a summary, not a
+#     changelog" rule had no mechanical enforcement until now: plugin.json's
+#     description accreted to 3,131 chars of release narrative before this
+#     check existed. 600 is a wider ceiling than the ~400-char card this PR
+#     ships (a soft-fail buffer, not the target — the target is the AC's
+#     <=400), so the gate does not force a re-edit on every small addition
+#     while still catching the accretion pattern early. More than one
+#     vX.Y.Z-shaped token is the same "restate history in the card"
+#     anti-pattern a single token already flags. -----------------------------
+run_description_length_check() {
+  local rc=0
+  local plugin_desc marketplace_desc plugin_len marketplace_len plugin_vtoks marketplace_vtoks
+  plugin_desc="$(jq -r '.description // ""' "$PLUGIN_JSON" 2>/dev/null)"
+  marketplace_desc="$(jq -r '[.plugins[]? | select(.name == "loomwright") | .description] | first // ""' .claude-plugin/marketplace.json 2>/dev/null)"
+  plugin_len=${#plugin_desc}
+  marketplace_len=${#marketplace_desc}
+  plugin_vtoks="$(printf '%s' "$plugin_desc" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | wc -l | tr -d ' ')"
+  marketplace_vtoks="$(printf '%s' "$marketplace_desc" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | wc -l | tr -d ' ')"
+  if [ "$plugin_len" -gt 600 ]; then
+    echo "  DRIFT [description-length] $PLUGIN_JSON — description is $plugin_len chars, exceeds 600"
+    rc=1
+  fi
+  if [ "$marketplace_len" -gt 600 ]; then
+    echo "  DRIFT [description-length] .claude-plugin/marketplace.json (loomwright) — description is $marketplace_len chars, exceeds 600"
+    rc=1
+  fi
+  if [ "$plugin_vtoks" -gt 1 ]; then
+    echo "  DRIFT [description-version-tokens] $PLUGIN_JSON — description contains $plugin_vtoks vX.Y.Z-shaped tokens, expected at most 1"
+    rc=1
+  fi
+  if [ "$marketplace_vtoks" -gt 1 ]; then
+    echo "  DRIFT [description-version-tokens] .claude-plugin/marketplace.json (loomwright) — description contains $marketplace_vtoks vX.Y.Z-shaped tokens, expected at most 1"
+    rc=1
+  fi
+  return $rc
+}
+run_description_length_check || fail=1
+
 # --- Color legend (generated table vs agent frontmatter) ---
 # The legend in ARCHITECTURE_CONTRACTS.md is GENERATED OUTPUT, so its currency is checked by
 # re-running the generator rather than by a prose pattern: gen-color-legend.sh --check compares

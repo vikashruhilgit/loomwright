@@ -14,7 +14,7 @@ A Claude Code plugin for AI agents to collaborate on software projects. 14 speci
 
 **Loomwright is a Claude Code plugin.** It runs wherever Claude Code runs — the `claude` CLI in a terminal, the Claude Code extension in VS Code / JetBrains / Cursor, or the Claude Desktop Code tab. It is not a standalone tool and not a Cursor-native plugin.
 
-**Prerequisites:** [Claude Code](https://code.claude.com/docs/en/quickstart) installed (`which claude` prints a path) · a git repository to work in · `gh` authenticated (`gh auth status`) — **optional**, needed only if you want Loomwright to open pull requests.
+**Prerequisites:** [Claude Code](https://code.claude.com/docs/en/quickstart) installed (`which claude` prints a path), recommended release 2026-09-21 or later (the plugin manifest has no version-floor field to enforce this mechanically — see `docs/ARCHITECTURE_CONTRACTS.md` §"Minimum Claude Code CLI version") · a git repository to work in · `gh` authenticated (`gh auth status`) — **optional**, needed only if you want Loomwright to open pull requests.
 
 **1. Install** — two commands in a terminal (marketplace id `atelier`, plugin id `loomwright`):
 

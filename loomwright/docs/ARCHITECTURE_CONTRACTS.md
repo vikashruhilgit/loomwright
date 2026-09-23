@@ -5,6 +5,14 @@
 
 ---
 
+## Minimum Claude Code CLI version
+
+**No manifest field exists for this (verified, red-team-hardening item 08):** `claude plugin validate --strict` on a probe manifest confirmed `minClaudeCodeVersion`, `engines`, and `requiresVersion` are all `"Unknown field … Claude Code ignores it at load time"` — the plugin-manifest schema (`name`/`version`/`description`/`author`/`license`/`keywords`) has no field the runtime enforces a floor against, so a manifest-level gate is not possible today. This is documented here (and in `README.md`'s Prerequisites) instead of inventing one.
+
+**Practical floor:** Loomwright depends on hook payload fields the CLI does not document as stable (`agent_transcript_path`, `last_assistant_message`, `stop_hook_active`, `agent_id`, `agent_type` — see `docs/PITFALLS.md` and the `SubagentStop payload shape` memory lesson) and on the command-hook decision shape (`{"decision":"block","reason":"…"}` on Stop/SubagentStop/PostToolUse/UserPromptSubmit, `hookSpecificOutput.permissionDecision` on PreToolUse) probed live against **Claude Code v2.1.278** on 2026-09-21 (fixture: `loomwright/scripts/fixtures/subagentstop-decision-shape-probe.json`). That is the last version this plugin's hook contracts were empirically re-verified against, not a hard-enforced minimum — an older CLI may still work if its hook payload shape happens to match; there is no mechanism to detect a mismatch other than a hook silently no-op'ing (`loomwright/scripts/test-hook-payload-contract.sh` catches an upstream field RENAME once fixtures are re-recorded, not an old CLI missing a field it never had). **Recommendation: run a Claude Code release from 2026-09-21 or later.**
+
+---
+
 ## Agent Capability Matrix
 
 | Agent | Spawn | Write | Bash | Review | Tests | State | Model |

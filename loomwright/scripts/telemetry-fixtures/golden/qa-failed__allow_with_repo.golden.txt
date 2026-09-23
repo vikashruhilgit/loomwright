@@ -25,17 +25,24 @@ BODY_BEGIN
 ```json
 {
   "agent_type": "qa-executor",
+  "issues": {
+    "blocking": 0,
+    "high": 0,
+    "low": 0,
+    "medium": 0,
+    "unspecified": 1
+  },
   "plugin_version": "<NORMALISED>",
   "primary_error": "",
   "redacted": true,
-  "result_block": "## QA_RESULT\n- schema_version: 1\n- task_id: fixture-qa-failed-task-0003\n- tests_generated: 12\n- tests_passed: 4\n- tests_failed: 8\n- coverage_estimate: 0.42\n- pre_existing_tests: 0\n- infrastructure_available: false\n- self_check_gates_passed: 3\n- summary: Eight of twelve generated Playwright tests failed against the local fixture app; coverage below threshold and two self-check gates failed.\n",
   "schema": "QA_RESULT",
   "schema_version": 1,
   "score": 1,
   "score_bucket": "low",
   "score_float": 1.0,
   "status": "qa",
-  "task_id": "fixture-qa-failed-task-0003"
+  "task_id": "fixture-qa-failed-task-0003",
+  "tools": []
 }
 ```BODY_END
 WOULD_EXIT=0

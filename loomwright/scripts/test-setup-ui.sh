@@ -4993,6 +4993,39 @@ done
   && ok "(n11) AC5: 127.0.0.1, localhost and [::1] are each accepted with and without the :$nport suffix — all six spellings, so (n10) is refusing foreign names rather than refusing everything" \
   || no "(n11) AC5: the six loopback Host spellings are accepted" "$n_bad"
 
+# --- (n11a) AC5-GET: a GET/HEAD carrying a forged Host is refused, same shape as the POST case --
+# do_POST's Host check runs through `_guard`. do_GET/do_HEAD are a SEPARATE override
+# (SimpleHTTPRequestHandler answers reads directly unless intercepted) — so this is a distinct
+# code path from (n10) above and needs its own positive/negative pair, not a re-assertion of it.
+n_bad=""
+for nmethod in GET HEAD; do
+  for nhost in "evil.example.com" "evil.example.com:$nport"; do
+    n_res="$(n_req "$nport" "$nmethod" /index.json "" "" "$nhost" "" "")"
+    [ "$(n_status "$n_res")" = "403" ] || n_bad="$n_bad [$nmethod Host=$nhost: status $(n_status "$n_res")]"
+    if [ "$nmethod" = "GET" ]; then
+      case "$(n_body "$n_res")" in *host-not-loopback*) ;; *) n_bad="$n_bad [$nmethod Host=$nhost: refusal does not name the Host part]" ;; esac
+    fi
+  done
+done
+[ -z "$n_bad" ] \
+  && ok "(n11a) AC5-GET: a GET and a HEAD to a static route, each carrying a forged Host, are refused 403 host-not-loopback — the DNS-rebinding read path is closed, not just the write path" \
+  || no "(n11a) AC5-GET: a forged-Host GET/HEAD is refused" "$n_bad"
+
+# --- (n11b) AC5-GET: a GET/HEAD with a loopback Host still reads normally, unchanged ------------
+n_bad=""
+for nhost in "127.0.0.1:$nport" "localhost:$nport" "[::1]:$nport"; do
+  n_res="$(n_req "$nport" GET /index.json "" "" "$nhost" "" "")"
+  [ "$(n_status "$n_res")" = "200" ] || n_bad="$n_bad [GET Host=$nhost: status $(n_status "$n_res")]"
+  n_res_h="$(n_req "$nport" HEAD /index.json "" "" "$nhost" "" "")"
+  [ "$(n_status "$n_res_h")" = "200" ] || n_bad="$n_bad [HEAD Host=$nhost: status $(n_status "$n_res_h")]"
+done
+# A GET with NO Host header at all is what n_wait_up has been sending this whole fixture
+# (host="") and it has been succeeding since (n) started — so that spelling is covered by
+# every prior GET in this file rather than repeated here.
+[ -z "$n_bad" ] \
+  && ok "(n11b) AC5-GET: GET and HEAD on a loopback Host still read /index.json normally (200) — the new check discriminates rather than refusing every read" \
+  || no "(n11b) AC5-GET: a loopback-Host GET/HEAD still succeeds" "$n_bad"
+
 # --- (n12) AC7: untrusted paths are refused with a NAMED reason and register nothing -------
 ln -sfn /etc "$NHOME/escape-link" 2>/dev/null
 printf 'x\n' > "$NHOME/not-a-directory" 2>/dev/null

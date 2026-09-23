@@ -9,6 +9,7 @@ description: Manage opt-in GitHub Issues telemetry — status, enable, disable, 
 ```
 /telemetry status              # Report current consent + target repo + last-sent + retained pending markers
 /telemetry enable              # Interactively configure target repo and write always_allow consent
+/telemetry enable --include-result-block  # Same, plus opt back INTO the full result_block field
 /telemetry disable             # Write {"telemetry":"no"} consent (silently disables future sends)
 /telemetry test                # Dry-run the core script against latest payload or bundled fixture
 ```
@@ -17,6 +18,7 @@ description: Manage opt-in GitHub Issues telemetry — status, enable, disable, 
 
 - **subcommand** (required): one of `status`, `enable`, `disable`, `test`.
   - If omitted or unrecognised, print this usage block and exit.
+- **`--include-result-block`** (optional, `enable` only): opt back into shipping the redacted `result_block` field inside the `raw_data` JSON. Default (no flag) is field-selection only — `raw_data` never carries `result_block`, only structured fields (`schema`, `score`/`score_bucket`, `status`, `primary_error` truncated to 200 chars, `issues` per-severity counts, `tools`). See red-team-hardening item 08.
 
 ## What This Does
 
@@ -47,7 +49,7 @@ You are handling the `/telemetry` slash command. The user passed arguments after
 
 ## If subcommand == `status`
 
-1. **Run the resolver** (Bash): `bash "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-egress-config.sh"`. Parse its `KEY=VALUE` output — this is the single source of truth for the resolved consent + target repo (`TELEMETRY=`, `TELEMETRY_REPO=`, `REPO_SLUG=`, `REPO_REQUESTED_TELEMETRY_REPO=`).
+1. **Run the resolver** (Bash): `bash "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-egress-config.sh"`. Parse its `KEY=VALUE` output — this is the single source of truth for the resolved consent + target repo (`TELEMETRY=`, `TELEMETRY_REPO=`, `REPO_SLUG=`, `REPO_REQUESTED_TELEMETRY_REPO=`, `INCLUDE_RESULT_BLOCK=`).
 2. **Env var:** `LOOMWRIGHT_TELEMETRY_REPO` — report whether it is set (never print the raw resolver env precedence logic to the user, just the outcome).
 3. **Honoured flag:** compare `REPO_REQUESTED_TELEMETRY_REPO` (if non-empty) to `TELEMETRY_REPO` — `honoured: yes` when they are byte-identical, `honoured: no` when they differ or the repo-relative request is present but there is no user-scope entry at all.
 4. **Migration offer (one-time, human-confirmed):** if a repo-relative `.supervisor/telemetry-consent.json` exists (i.e. `REPO_REQUESTED_TELEMETRY_REPO` is non-empty, or the file parses with a `telemetry` key) AND `TELEMETRY=` from the resolver is empty (no user-scope entry for this repo's slug yet), offer to import it: use `AskUserQuestion` — `question`: "Found a repo-relative telemetry-consent.json requesting `<value>`, but no user-scope consent is set for this repo yet. Import it into your user-scope config now?", `header`: "Import request", `multiSelect`: false, `options`: `Yes, import` / `No, leave unset`. **This import ONLY happens here, human-confirmed inside `/telemetry status` — hooks and every other code path NEVER auto-import** (this is the exact vulnerability class this feature closes; auto-importing would silently recreate it). If the user picks "Yes, import", run the SAME write procedure as `enable` below using the repo-relative file's `telemetry_repo` value (still validated against the `owner/repo` regex), then re-run the resolver and continue the status report with the fresh values.
@@ -72,6 +74,7 @@ Print the report in this exact shape (use code fences for clarity):
 - Resolved target repo: <owner/repo or (none)>
 - Source: <env var | user-scope config | unset (telemetry disabled)>
 - Repo-relative request: <owner/repo or (none)> — honoured: <yes | no | n/a>
+- Include result_block in raw payload: <yes | no>
 - Pending-notice session markers retained ~24h: <N>
 - Last sent: <ISO timestamp or never>
 ```
@@ -80,6 +83,7 @@ Then a 1-line summary, e.g. `Telemetry: enabled, target=vikashruhilgit/loomwrigh
 
 ## If subcommand == `enable`
 
+0. Check whether `--include-result-block` was passed as a second argument. If so, this run also opts back into the full `result_block` field (record this as `INCLUDE_RESULT_BLOCK=true` for step 5 below); if not, `INCLUDE_RESULT_BLOCK=false` (or simply omit the key — absent means false).
 1. Use AskUserQuestion to collect the target repo. Suggest `vikashruhilgit/loomwright` as the canonical maintainer repo for community-shared signal, but accept any `owner/repo` value. Example question:
    - `question`: "Which GitHub repo should receive telemetry issues? (owner/repo format)"
    - `header`: "Target repo"
@@ -102,11 +106,11 @@ Then a 1-line summary, e.g. `Telemetry: enabled, target=vikashruhilgit/loomwrigh
    TMP="$(mktemp)"
    BASE='{"schema_version":1,"repos":{}}'
    [ -f "$EGRESS" ] && BASE="$(cat "$EGRESS")"
-   printf '%s' "$BASE" | jq --arg slug "$REPO_SLUG" --arg repo "<answer>" \
-     '.schema_version = 1 | .repos[$slug].telemetry = "always_allow" | .repos[$slug].telemetry_repo = $repo' \
+   printf '%s' "$BASE" | jq --arg slug "$REPO_SLUG" --arg repo "<answer>" --argjson incl <INCLUDE_RESULT_BLOCK> \
+     '.schema_version = 1 | .repos[$slug].telemetry = "always_allow" | .repos[$slug].telemetry_repo = $repo | .repos[$slug].include_result_block = $incl' \
      > "$TMP" && mv "$TMP" "$EGRESS"
    ```
-   Run this via Bash with `<answer>` and `$REPO_SLUG` substituted for real values (never shell-interpolate the repo string directly into the jq filter — pass it as a `--arg`, exactly as shown, so a hostile repo name can never break out of the JSON). If the `jq -e .` parse check fails, STOP — print the abort message verbatim and do NOT write anything, not even a backup-less partial file. This is the same discipline `setup-memory.sh` and the `/setup` modules already use for their own `.supervisor/config.json`/`~/.claude/settings.json` writes (backup-first, parse-gated, abort-without-partial-write).
+   Run this via Bash with `<answer>`, `$REPO_SLUG` and `<INCLUDE_RESULT_BLOCK>` (the literal `true` or `false` from step 0, passed via `--argjson` so it lands as a real JSON boolean, never a string) substituted for real values (never shell-interpolate the repo string directly into the jq filter — pass it as a `--arg`, exactly as shown, so a hostile repo name can never break out of the JSON). If the `jq -e .` parse check fails, STOP — print the abort message verbatim and do NOT write anything, not even a backup-less partial file. This is the same discipline `setup-memory.sh` and the `/setup` modules already use for their own `.supervisor/config.json`/`~/.claude/settings.json` writes (backup-first, parse-gated, abort-without-partial-write).
 6. **Do NOT** write `.supervisor/telemetry-consent.json` anymore — that file is now read-only input (a repo-relative *request*), never this command's output target. If a stale repo-relative consent file exists from before this change, leave it alone (it is now inert on its own).
 7. Print confirmation:
    ```
@@ -115,9 +119,10 @@ Then a 1-line summary, e.g. `Telemetry: enabled, target=vikashruhilgit/loomwrigh
    Telemetry consent: always_allow
    Target repo: <answer>
    Repo slug: <REPO_SLUG>
+   Include result_block in raw payload: <yes | no>
    User-scope config: ~/.claude/loomwright/egress.json (backup written)
    ```
-   Followed by 1-line summary: `Telemetry: enabled, target=<answer> (user-scope config). Future qualifying agent runs will post issues.`
+   Followed by 1-line summary: `Telemetry: enabled, target=<answer> (user-scope config). Future qualifying agent runs will post issues.` (append `, raw_data will include result_block.` when `--include-result-block` was passed).
 
 ## If subcommand == `disable`
 
@@ -181,6 +186,7 @@ $ /telemetry status
 - Resolved target repo: (none)
 - Source: unset (telemetry disabled)
 - Repo-relative request: (none) — honoured: n/a
+- Include result_block in raw payload: no
 - Pending-notice session markers retained ~24h: 0
 - Last sent: never
 
@@ -204,6 +210,7 @@ user-scope consent is set for this repo yet.
 - Resolved target repo: some/repo
 - Source: user-scope config
 - Repo-relative request: some/repo — honoured: yes
+- Include result_block in raw payload: no
 - Pending-notice session markers retained ~24h: 0
 - Last sent: never
 
@@ -222,6 +229,7 @@ $ /telemetry enable
 Telemetry consent: always_allow
 Target repo: vikashruhilgit/loomwright
 Repo slug: vikashruhilgit/loomwright
+Include result_block in raw payload: no
 User-scope config: ~/.claude/loomwright/egress.json (backup written)
 
 Telemetry: enabled, target=vikashruhilgit/loomwright (user-scope config). Future qualifying agent runs will post issues.

@@ -25,17 +25,24 @@ BODY_BEGIN
 ```json
 {
   "agent_type": "code-reviewer",
+  "issues": {
+    "blocking": 0,
+    "high": 1,
+    "low": 0,
+    "medium": 0,
+    "unspecified": 0
+  },
   "plugin_version": "<NORMALISED>",
   "primary_error": "Password compared with double-equals instead of timing-safe equals",
   "redacted": true,
-  "result_block": "CODE_REVIEW_RESULT:\n  schema_version: 3\n  review_mode: diff_review\n  audit_focus: []\n  trigger_paths_detected: []\n  scope_expanded: []\n  files_checked:\n    - src/auth/login.ts\n  decision: FAIL\n  issues:\n    - severity: HIGH\n      category: new\n      file: src/auth/login.ts\n      line: 42\n      description: Password compared with double-equals instead of timing-safe equals\n      suggestion: Use crypto.timingSafeEqual()\n  summary: 1 HIGH new issue blocks PASS.\n",
   "schema": "CODE_REVIEW_RESULT",
   "schema_version": 1,
   "score": 2,
   "score_bucket": "low",
   "score_float": 1.5,
   "status": "fail",
-  "task_id": "fixture-sess-code-review-fail-0005"
+  "task_id": "fixture-sess-code-review-fail-0005",
+  "tools": []
 }
 ```BODY_END
 WOULD_EXIT=0

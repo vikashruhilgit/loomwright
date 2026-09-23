@@ -45,6 +45,10 @@
 #  12. boundary negatives under the widened marker -> "Previewed the build",
 #                  "Deploy Preview", "Coverage: 92%" and a human "Reviewed …" all
 #                  stay OUT (no word boundary inside "preview"; author gate intact).
+#  18-22. bot_author_re tightening (red-team-hardening item 08, Fix 2) -> 'claude'
+#                  (human, no [bot] suffix) and 'github-actions-fan' (bare-prefix
+#                  match only) are OUT; 'claude[bot]', 'github-actions[bot]' and
+#                  'anything[bot]' (generic [bot]-suffix login) all stay IN.
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -366,6 +370,55 @@ if [ "$RC17" -eq 0 ] \
   ok "--trusted-actors malformed JSON: treated as absent, falls back to bot_author_re, logged"
 else
   no "(17) wrong (rc=$RC17 out=$OUT17 err='$ERRTXT17')"
+fi
+
+# =============================================================================
+# bot_author_re tightening (red-team-hardening item 08, Fix 2) — exact-login form
+# =============================================================================
+
+echo "== 18. tightened bot_author_re: 'claude' (human, no [bot] suffix) is classified OUT =="
+IN18A='[{"id": 1801, "user": {"login": "claude"}, "body": "This is a review finding: MEDIUM issue"}]'
+OUT18A="$( printf '%s' "$IN18A" | bash "$CLASSIFY" 2>/dev/null )"; RC18A=$?
+if [ "$RC18A" -eq 0 ] && printf '%s' "$OUT18A" | jq -e '(type=="array") and (length==0)' >/dev/null 2>&1; then
+  ok "bare login 'claude' (no [bot] suffix) classified OUT — no longer trusted as a human-typo bot"
+else
+  no "(18a) wrong (rc=$RC18A): $OUT18A"
+fi
+
+echo "== 19. tightened bot_author_re: 'github-actions-fan' (prefix match only) is classified OUT =="
+IN18B='[{"id": 1802, "user": {"login": "github-actions-fan"}, "body": "This is a review finding: MEDIUM issue"}]'
+OUT18B="$( printf '%s' "$IN18B" | bash "$CLASSIFY" 2>/dev/null )"; RC18B=$?
+if [ "$RC18B" -eq 0 ] && printf '%s' "$OUT18B" | jq -e '(type=="array") and (length==0)' >/dev/null 2>&1; then
+  ok "'github-actions-fan' (merely starts with github-actions) classified OUT — bare-prefix alternative dropped"
+else
+  no "(19) wrong (rc=$RC18B): $OUT18B"
+fi
+
+echo "== 20. tightened bot_author_re: 'claude[bot]' is still classified IN =="
+IN18C='[{"id": 1803, "user": {"login": "claude[bot]"}, "body": "This is a review finding: MEDIUM issue"}]'
+OUT18C="$( printf '%s' "$IN18C" | bash "$CLASSIFY" 2>/dev/null )"; RC18C=$?
+if [ "$RC18C" -eq 0 ] && printf '%s' "$OUT18C" | jq -e '(type=="array") and (length==1) and (.[0].user.login=="claude[bot]")' >/dev/null 2>&1; then
+  ok "'claude[bot]' still classified IN under the tightened regex"
+else
+  no "(20) wrong (rc=$RC18C): $OUT18C"
+fi
+
+echo "== 21. tightened bot_author_re: 'github-actions[bot]' is still classified IN =="
+IN18D='[{"id": 1804, "user": {"login": "github-actions[bot]"}, "body": "This is a review finding: MEDIUM issue"}]'
+OUT18D="$( printf '%s' "$IN18D" | bash "$CLASSIFY" 2>/dev/null )"; RC18D=$?
+if [ "$RC18D" -eq 0 ] && printf '%s' "$OUT18D" | jq -e '(type=="array") and (length==1) and (.[0].user.login=="github-actions[bot]")' >/dev/null 2>&1; then
+  ok "'github-actions[bot]' still classified IN under the tightened regex"
+else
+  no "(21) wrong (rc=$RC18D): $OUT18D"
+fi
+
+echo "== 22. tightened bot_author_re: any other login ending in [bot] ('anything[bot]') is still classified IN =="
+IN18E='[{"id": 1805, "user": {"login": "anything[bot]"}, "body": "This is a review finding: MEDIUM issue"}]'
+OUT18E="$( printf '%s' "$IN18E" | bash "$CLASSIFY" 2>/dev/null )"; RC18E=$?
+if [ "$RC18E" -eq 0 ] && printf '%s' "$OUT18E" | jq -e '(type=="array") and (length==1) and (.[0].user.login=="anything[bot]")' >/dev/null 2>&1; then
+  ok "'anything[bot]' (generic [bot]-suffix login) still classified IN under the tightened regex"
+else
+  no "(22) wrong (rc=$RC18E): $OUT18E"
 fi
 
 echo

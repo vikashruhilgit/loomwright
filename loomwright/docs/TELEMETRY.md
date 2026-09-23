@@ -1306,7 +1306,8 @@ entry for this repo's slug.
       "telemetry": "always_allow" | "no",
       "telemetry_repo": "<owner>/<repo>",
       "webhook_url": "https://...",
-      "webhook_url_sha256": "<hex>"
+      "webhook_url_sha256": "<hex>",
+      "include_result_block": true
     }
   }
 }
@@ -1497,6 +1498,22 @@ different use). No code path may reintroduce that fallback.
 ---
 
 ## Privacy whitelist (lives in core)
+
+**The body's privacy comes from FIELD SELECTION, not this regex list (red-team-
+hardening item 08, Fix 3).** `raw_data` ships only structured, already-
+summarized fields by default — `schema`, `score`/`score_bucket`, `status`,
+`primary_error` (truncated to 200 chars), an `issues` object counted per
+severity, and `tools`. It never carries the free-text `result_block`, because
+file paths, finding descriptions and subtask names are exactly the kind of
+sensitive content a fixed regex allowlist cannot enumerate — a regex deny-list
+is a secret *scanner*, not a privacy *boundary*. The deny-list below is a
+**secondary tripwire** on whatever text IS included (the rendered body plus
+this dict), scanned below, not the mechanism that decides what goes in. A
+user-scope `include_result_block: true` consent key (set only via
+`/telemetry enable --include-result-block`, surfaced by `/telemetry status`)
+opts back into shipping the redacted `result_block` field — see
+`resolve-egress-config.sh`'s `INCLUDE_RESULT_BLOCK` output and
+`send-telemetry-core.sh`'s `LOOMWRIGHT_INCLUDE_RESULT_BLOCK` env var.
 
 The whitelist is enforced inside `send-telemetry-core.sh`. The wrapper
 does no payload inspection — it cannot, because it must always exit 0
