@@ -2,7 +2,7 @@
   "mcpServers": {
     "mysql": {
       "command": "uvx",
-      "args": ["--from", "vikashruhil-mysql-mcp", "--refresh", "mysql-mcp"],
+      "args": ["--from", "vikashruhil-mysql-mcp==1.0.1", "mysql-mcp"],
       "env": {
         "DB_HOST": "${DB_HOST}",
         "DB_USER": "${DB_USER}",
