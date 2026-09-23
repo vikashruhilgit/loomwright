@@ -3391,6 +3391,185 @@ fi
 run_v "$V_WORKER_NOLEN" "$R10_OVERLENGTH_FILE"
 assert_pass "worker: rule 10 mutation control — with the length check deleted, the 201-char case FLIPS to accepted (the check is load-bearing, not vacuous)"
 
+echo ""
+# ---------------------------------------------------------------------------
+# rule 11 — not_verified (harness-port/01-worker-rules). Optional + additive at
+# schema_version 2, same treatment as rules 9/10's out_of_lane/deviations, but
+# entries are dicts (not bare strings): each needs a non-empty `surface` and a
+# non-empty `reason`. ABSENCE must pass; when PRESENT it must be an array of
+# such dicts. The rule must never touch status/outputs_gap.
+# ---------------------------------------------------------------------------
+mk worker-r11-absent.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- summary: not_verified absent entirely — optional/additive, must still validate
+EOF
+run_v "$V_WORKER" "$F"
+assert_pass "worker: rule 11 — not_verified ABSENT is accepted (optional/additive, no schema bump)"
+
+mk worker-r11-empty.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- not_verified: []
+- summary: explicit empty list — nothing unverified (prompt convention prefers omitting the field, but the validator does not reject [])
+EOF
+run_v "$V_WORKER" "$F"
+assert_pass "worker: rule 11 — not_verified [] is accepted (presence-gated not truthiness-gated)"
+
+mk worker-r11-valid.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- not_verified: [{surface: "/settings route", reason: "no local runtime"}, {surface: "CLI --dry-run path", reason: "needs a write to a shared service"}]
+- summary: two valid entries, each with non-empty surface and reason
+EOF
+run_v "$V_WORKER" "$F"
+assert_pass "worker: rule 11 — two well-formed {surface, reason} entries are accepted"
+
+mk worker-r11-null.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- not_verified: null
+- summary: explicit null is PRESENT with a None value — rejected, unlike an omitted key
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: rule 11 — explicit not_verified: null is rejected (present-with-None, not absent)" "rule 11"
+
+mk worker-r11-nonlist.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- not_verified: "no local runtime"
+- summary: present but a bare string, not an array
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: rule 11 — not_verified present-but-NOT-a-list is rejected" "rule 11"
+
+mk worker-r11-missing-reason.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- not_verified: [{surface: "/settings route"}]
+- summary: an entry missing the required reason key
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: rule 11 — an entry missing reason is rejected" "rule 11"
+
+R11_MALFORMED_FILE="$F"
+mk worker-r11-blank-surface.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- not_verified: [{surface: "", reason: "no local runtime"}]
+- summary: an entry with a blank surface
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: rule 11 — an entry with an empty-string surface is rejected" "rule 11"
+
+# claude-review finding on PR #259: rule 11 originally checked only
+# is_empty_scalar(), never isinstance(..., str), unlike the isinstance-guarded
+# rules 9/10 immediately above (added for consistency with them; see
+# `isinstance(value, str)` in the (11) block). Added, but — same honest
+# unreachability this file already documents for rule 9's OWN isinstance guard
+# a few lines up ("Non-string-LOOKING element... the isinstance guard is
+# unreachable here by construction") — verified live: `load_block` sources
+# `not_verified` from this SAME markdown-block carrier via `parse_scalar`,
+# which normalizes every bare scalar (including inside a flow-style `{...}`
+# dict) to a Python str; `{surface: 42, reason: true}` parses to
+# `{'surface': '42', 'reason': 'true'}`, both already valid non-empty strings.
+# The isinstance(str) check is therefore defensive-only on THIS carrier, not a
+# closable live gap — asserted PASS deliberately, matching rule 9's own
+# precedent, not `assert_fail` (which would encode a promise this text-only
+# carrier cannot keep).
+mk worker-r11-nonstring-values.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- not_verified: [{surface: 42, reason: true}]
+- summary: surface/reason LOOK non-string but normalize to strings "42"/"true" on this carrier
+EOF
+run_v "$V_WORKER" "$F"
+assert_pass "worker: rule 11 — a bare 42/true in surface/reason is ACCEPTED (the markdown carrier stringifies every scalar; the isinstance guard is unreachable here by construction, same as rule 9's)"
+
+# MUTATION CONTROL: delete the required-key loop from a COPY of the validator; the
+# missing-reason case above must FLIP to accepted, proving the check is load-bearing.
+V_WORKER_NOKEY="$TMPROOT/validate-worker-result-nokey.py"
+mkdir -p "$(dirname "$V_WORKER_NOKEY")"
+cp "$V_WORKER" "$V_WORKER_NOKEY"
+cp "$(dirname "$V_WORKER")/result_block_parser.py" "$(dirname "$V_WORKER_NOKEY")/result_block_parser.py"
+python3 - "$V_WORKER_NOKEY" <<'PY'
+import re, sys
+p = sys.argv[1]
+src = open(p, encoding="utf-8").read()
+mutated = src.replace(
+    '            for required in ("surface", "reason"):\n'
+    '                value = item.get(required)\n'
+    '                if required not in item or not isinstance(value, str) or is_empty_scalar(value):\n'
+    '                    emit(False, REASON_NOT_VERIFIED_SHAPE)\n',
+    '',
+    1,
+)
+assert mutated != src, "mutation target not found — validator source shape changed"
+open(p, "w", encoding="utf-8").write(mutated)
+PY
+if [ -s "$V_WORKER_NOKEY" ] && ! cmp -s "$V_WORKER" "$V_WORKER_NOKEY"; then
+  ok "worker: rule 11 mutation control — mutant validator is non-empty and differs from the original"
+else
+  no "worker: rule 11 mutation control — mutant invalid (empty or identical), cannot be trusted"
+fi
+run_v "$V_WORKER_NOKEY" "$R11_MALFORMED_FILE"
+assert_pass "worker: rule 11 mutation control — with the required-key check deleted, the missing-reason case FLIPS to accepted (the check is load-bearing, not vacuous)"
+
+# NOT a second mutation control: the isinstance(str) guard added for
+# consistency with rules 9/10 is unreachable on this text-only carrier (see
+# the assert_pass above and rule 9's own identical precedent) — reverting it
+# produces the SAME "accepted" result either way, which would make a mutation
+# control here vacuously pass without proving anything real. Recording that
+# reasoning here rather than constructing a control that cannot fail.
+
 echo "== K. documented SubagentStop decision shape — exact bytes, every validator =="
 # WHY THIS EXISTS. Until 2026-09-21 every validator printed `{"ok": true}` /
 # `{"ok": false, "reason": …}` and every assertion above read `.ok` — so the

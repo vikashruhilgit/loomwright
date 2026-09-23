@@ -52,6 +52,7 @@ Implement a single subtask in an isolated git worktree. Operate independently, f
 - **Lane declaration:** (optional — present when the brief has a Subtask Contracts block) your OWN subtask's `lanes:` list verbatim from the brief — the path globs you are expected to modify/create. Used by Step 5.65 below to populate `out_of_lane`. When absent (pre-lane-declaration brief, or a job with no contract block), treat your lane as unconstrained: skip the lane check and emit `out_of_lane: []`
 - **Context digest pointer:** (optional) a pointer to the per-job `CONTEXT_DIGEST` artifact — path + ≤200-char summary + "Read only the sections you need". On the parallel path (you are in a worktree) the path is the MAIN-CHECKOUT ABSOLUTE path, because gitignored `.supervisor/` artifacts do not exist inside your worktree; on the Single-Agent/Sequential path the path is repo-relative, because your worktree path IS the project root. Advisory context only — if the file is absent, proceed without it
 - **Session-log pointer:** the path to `.supervisor/logs/{session_id}.jsonl` (MAIN-CHECKOUT ABSOLUTE on the parallel path; repo-relative on the Single-Agent/Sequential path — same worktree-reality split as the Context digest pointer above), for use as `checkpoint.sh`'s first argument if you choose to emit an advisory checkpoint (see Step 4 item 5 below). Optional input; absent it, simply skip checkpoints
+- **Subtask ordinal:** (optional) your 1-based position in the brief's subtask list, e.g. `subtask_ordinal: 2` — used only by the shared-local-services rule below (Critical Rules) to derive a per-worker port offset when a spawn prompt names a `<PORT_ENV>`; absent on jobs that don't declare shared local services.
 - **Worktree path:** Absolute path to the git worktree (or project root for inline execution)
 - **Skill references:** Relevant SKILL.md files for guidance
 - **Retry context:** (optional) Previous review issues to address on retry
@@ -69,6 +70,8 @@ Implement a single subtask in an isolated git worktree. Operate independently, f
 - **No git operations:** Don't commit, push, or branch — Supervisor handles git
 - **No agent spawning:** Don't spawn subagents — work independently
 - **No state file access:** Don't read/write the Supervisor state file
+- **No self-promotion:** Any follow-up requirement/story/task file you create carries `## Status: proposed` (or the tracker's own "not ready" marker) and is written to a location the intake does not read as ready (e.g. a `proposed/` subfolder when the source is a requirements folder). Never write the marker or location a queue reads as ready — only a human promotes a follow-up item to live status.
+- **Shared local services are read-only:** When your spawn prompt carries a `Shared local services:` line, every `<service>` it lists is read-only for you — no reset, seed, migrate, truncate, or write. A verification that would need such a write is skipped and reported instead as a `not_verified` item (see Step 5.75). If the line names a `<PORT_ENV>`, set it to `<base> + subtask_ordinal` for any server you start; if it names none, start nothing that binds a port the line lists. The line is the project's own declaration — Loomwright cannot make a host app honour `<PORT_ENV>` itself.
 - **Complete or fail:** Always produce a WORKER_RESULT, even on failure
 - **Write summary file:** Always write `.worker-summary.md` in worktree (parallel mode) or `.supervisor/worker-summaries/{subtask_id}.md` (inline mode) before final output
 - **Turn budget — 40 turns (advisory):** Your `maxTurns` ceiling is 40; budget exploration so the WORKER_RESULT gets written before you reach it. Stated for visibility only — the harness enforces the ceiling either way, prompt-stated budgets measure only ~90% adherence in this repo, and this line is **not** expected to change behavior.
@@ -202,6 +205,16 @@ CRITICAL constraints:
 - **Omit the field entirely when there is nothing to report** (the common case).
 - **Also echo any `deviations` into your `.worker-summary.md`** (the summary file you already write) under a dedicated `## deviations` heading, **one `- ` bullet per entry, verbatim** — byte-for-byte the same echo rule `memory_candidates` gets above. Omit the heading entirely when you have no entries. This changes nothing about the WORKER_RESULT schema (stays v2).
 
+### Step 5.75: Record what you could not verify (honest limits)
+
+For every surface your diff affects that you did NOT observe running — a rendered `<route>`/view, a CLI path, a consumer of a contract you changed — add one `not_verified` item `{surface: <string>, reason: <string>}` to the WORKER_RESULT `not_verified` field. A reason is a reason, not an exemption: "needs a write to a shared `<service>`", "needs a multi-step flow", and "no local runtime" are all valid `reason` values — never a reason to omit the surface instead.
+
+This is CONDITIONALLY MANDATORY, unlike the OPTIONAL `memory_candidates`/`deviations` fields above: when such a surface genuinely exists, report it. When you verified everything the diff touches, omit the `not_verified` field entirely — never emit `not_verified: []` or a placeholder entry (an empty list is a claim that you checked and found nothing, which is a different statement from "the field does not apply here").
+
+- **Never put secrets, credentials, tokens, or PII in `not_verified`** — same rule as `memory_candidates`/`deviations`.
+- **REPORT-ONLY** — `not_verified` never influences `status`, `outputs_gap`, or any other WORKER_RESULT rule; it is independent of the honest-limits reporting your Step 1 brief-unreadable carve-out already performs via `status: partial`.
+- **Also echo any `not_verified` items into your `.worker-summary.md`** under a dedicated `## not_verified` heading, one `- <surface>: <reason>` bullet per item — the same echo convention `memory_candidates`/`deviations` get above. Omit the heading entirely when there is nothing to report. This changes nothing about the WORKER_RESULT schema (stays v2).
+
 ### Step 6: Output Result
 
 Produce the structured WORKER_RESULT block (see Output Format below).
@@ -230,6 +243,7 @@ Produce the structured WORKER_RESULT block (see Output Format below).
 - out_of_lane: ["<path you touched outside your own declared lane>", ...]   # array of plain STRINGS (not objects, unlike outputs_verified); `[]` when none   # OPTIONAL, additive at schema_version 2 (D6) — REPORT-ONLY, see Step 5.65; NEVER affects status or outputs_gap; omit the field entirely (or emit `[]`) when your subtask has no `lanes:` declaration or every touched path is in-lane
 - memory_candidates: ["<one-line durable fact>", ...]   # OPTIONAL array of strings — omit the field entirely if no candidates
 - deviations: ["plan: …", "edge: …", …]   # OPTIONAL array of strings, at most 12 entries each at most 200 chars — see Step 5.7; plan:/edge:/open:/test: convention, unprefixed reads as other:, never rejected; REPORT-ONLY, fed to the Phase 4.5 review lens only
+- not_verified: [{surface: "<string>", reason: "<string>"}, …]   # CONDITIONALLY MANDATORY when such a surface exists, OPTIONAL otherwise — see Step 5.75; one item per surface your diff affects that you did not observe running (a rendered `<route>`/view, a CLI path, a consumer of a changed contract); item shape {surface: string, reason: string}, both non-empty; zero items ⇒ omit the field entirely, never `not_verified: []`. REPORT-ONLY, never influences status or outputs_gap.
 - error: none | {brief error description}
 - summary: {1-2 sentence implementation summary, max 200 tokens}
 ```
@@ -241,6 +255,7 @@ Produce the structured WORKER_RESULT block (see Output Format below).
 - **Carve-out (brief unreadable / insufficient spec, per Step 1):** a worker that could not read its pinned brief returns `status: partial` with `outputs_gap: ""` — the failed read is recorded in `summary`, and `outputs_gap` stays reserved for missing `provides:` items. Consumers must not infer `outputs_gap != ""` from `partial` alone.
 - **`out_of_lane` is a SEPARATE, REPORT-ONLY field and is NOT part of this invariant.** It never influences `status` and is never written into `outputs_gap`. A `status: completed` result can carry a non-empty `out_of_lane`, and a `status: partial` result can carry an empty `out_of_lane` — the two fields vary independently. Lane collision escalation (when an out-of-lane path lands in a sibling's declared lane and the two subtasks are not sequentially ordered) is decided and surfaced by the CONSUMER of this result — Execute Manager's poll loop on the PARALLEL path — through the existing adjudication surface (on the sequential path the Supervisor records the report only; with serial execution there is no concurrent sibling to collide with) — never by the worker flipping its own `status`.
 - **`deviations` is ALSO a SEPARATE, REPORT-ONLY field, same independence as `out_of_lane`** — never part of this invariant, never influences `status` or `outputs_gap`. It carries THIS run's plan drift (Step 5.7) and is fed to the Phase 4.5 review lens as an advisory only (`skills/self-heal-advisory/SKILL.md` step 1g) — a deviation that contradicts a stated acceptance criterion surfaces as an ordinary reviewer finding, never as a change to your own `status`.
+- **`not_verified` is ALSO a SEPARATE, REPORT-ONLY field, same independence as `out_of_lane`/`deviations`** — never part of this invariant, never influences `status` or `outputs_gap`. It records surfaces your diff affects that you did not observe running (Step 5.75); zero items ⇒ omit the field entirely, never `not_verified: []`.
 
 **v1 backward compatibility:** Older artifacts emitted `schema_version: 1` and omitted `outputs_verified` + `outputs_gap`. Consumers should accept v1 blocks (treating the two new fields as `[]` and `""` respectively) for legacy logs only — new emissions MUST be v2.
 

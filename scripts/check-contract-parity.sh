@@ -351,7 +351,7 @@ PY
 #   conditional adjudication fields are now pinned together. Verified to have teeth: renaming
 #   `adjudication_kind` in execute-manager.md fails this gate with a field-presence error.
 MANIFEST="
-worker|worker.md|WORKER_RESULT|schema_version,task_id,status,files_modified,summary,outputs_verified,outputs_gap,out_of_lane,deviations
+worker|worker.md|WORKER_RESULT|schema_version,task_id,status,files_modified,summary,outputs_verified,outputs_gap,out_of_lane,deviations,not_verified
 execute-manager|execute-manager.md|EXECUTE_RESULT|schema_version,subtasks_completed,worktrees,merge_order,summary
 execute-manager|execute-manager.md|EXECUTE_CHECKPOINT|completed_so_far,remaining,resume_context,reason,adjudication_required,missing_outputs,adjudication_options,adjudication_kind,colliding_lanes
 qa-executor|qa-executor.md|QA_RESULT|schema_version,tests_generated,tests_passed,summary,coverage_estimate

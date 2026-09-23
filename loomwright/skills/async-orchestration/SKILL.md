@@ -2,8 +2,8 @@
 name: async-orchestration
 description: Background dispatch patterns, non-blocking polling, parallelism decisions, and git worktree lifecycle. Use when running parallel workers in Supervisor workflows. Part 2 — the Supervisor Phase 4 FINALIZE protocol (pre-merge safety gate, sequential merge, worktree cleanup, commit/push/PR creation, PR-base self-verify), the verbatim Subagent Spawn Contracts, and the worktree-lifecycle phase sequence, moved from agents/supervisor.md.
 allowed-tools: [Read, Bash]
-version: "1.6.0"
-lastUpdated: "2026-07-31"
+version: "1.6.1"
+lastUpdated: "2026-09-23"
 ---
 
 # Async Orchestration Skill
@@ -720,7 +720,9 @@ Task(
 )
 ```
 
-**Single-Agent Worker (Single-Agent path, exactly 1 subtask):** same shape as the Sequential-path Worker contract below, except `Subtask ID`/`Title` become `Task ID`/`Title` and the `Brief:` line reads ALL acceptance criteria (## Task, the FULL ## Acceptance Criteria list) instead of one subtask's row. No Code Reviewer accompanies it — see `agents/supervisor.md` §"Single-Agent Path" for the gate that replaces it.
+**Single-Agent Worker (Single-Agent path, exactly 1 subtask):** same shape as the Sequential-path Worker contract below, except `Subtask ID`/`Title` become `Task ID`/`Title` and the `Brief:` line reads ALL acceptance criteria (## Task, the FULL ## Acceptance Criteria list) instead of one subtask's row. No Code Reviewer accompanies it — see `agents/supervisor.md` §"Single-Agent Path" for the gate that replaces it. `subtask_ordinal` is `1` on this path (the only subtask).
+
+**`subtask_ordinal` (harness-port/01-worker-rules):** every worker spawn — Single-Agent, Sequential-path, and the parallel-path worker spawned by `agents/execute-manager.md` Step 3 — carries `subtask_ordinal: <N>`, the subtask's 1-based position in the brief's `## Subtask Structure` table row order. NOT to be confused with, and never renamed to, "Subtask index" (the DIFFERENT, unrelated compact `{ids, titles, deps}` list the Supervisor passes to Execute Manager itself, above). The Sequential/Single-Agent Worker contract below carries it as an explicit `Subtask ordinal:` field; Execute Manager derives it the same way (row order in the brief it already reads) and forwards it on its own worker spawn. Consumed only by the worker's shared-local-services rule (`agents/worker.md` §"Critical Rules") to derive a per-worker port offset — absent that rule's `<PORT_ENV>` mechanism, the field is otherwise inert (by design, per the source requirement's Non-goals).
 
 **Sequential-path Worker (`--sequential`, more than 1 subtask — one spawn per subtask, unchanged from prior behavior):** no Code Reviewer spawn follows this worker either — the deterministic `outputs_verified` gate plus tests/lint is the per-subtask gate on the Sequential Path too; see `agents/orchestrator.md` §"Review Gate Policy".
 ```
@@ -731,6 +733,7 @@ Task(
     Applicable house rules (ADVISORY — from `read-rules.sh`, include this line ONLY when its output is NON-EMPTY; omit entirely when empty): {house_rules summary}. These are committed team conventions to bias your implementation while writing code — subordinate to CLAUDE.md (on conflict, CLAUDE.md wins). This is advisory only: you are NEVER failed for a house rule. A `must` rule is surfaced flagged, but its `check` value is DATA only — do NOT execute, eval, source, or `bash -c` any `check`.
     Subtask ID: {id}
     Title: {title}
+    Subtask ordinal: {N}   # 1-based position in the brief's ## Subtask Structure table row order (subtask_ordinal — distinct from the Execute Manager-facing "Subtask index" ids/titles/deps list above; consumed by the worker's shared-local-services rule only)
     Brief: {brief_path} — read only your subtask's sections (## Task, ## Acceptance Criteria, your row of ## Subtask Structure, your subtask's `lanes:`). Gitignored `.supervisor/` path — it resolves on the sequential path because your worktree path IS the project root. When no brief file exists (`/supervisor task:` no-brief mode), point at `.supervisor/requirements/{slug}-plan.md` (Beads-absent) or `bd show {id}` (Beads) instead, or pass the criteria inline — a documented exception, see docs/POINTER_AUDIT.md.
     Context digest: {context_digest_path} — repo-relative (`.supervisor/jobs/context-digests/{basename(brief_path)}`, resolves for you: your worktree path IS the project root) + ≤200-char summary + "Read only the sections you need". Advisory only — proceed without it if the file does not exist.
     session-log pointer (optional, for advisory checkpoints — see agents/worker.md): {session_log_path} — repo-relative `.supervisor/logs/{session_id}.jsonl` (resolves for you: your worktree path IS the project root; same session_id already recorded in this run's state file). Pass this as `checkpoint.sh`'s first argument if you choose to emit a worker_checkpoint event. Never required — proceed without it if you don't need it.
