@@ -100,6 +100,27 @@ if [ -z "$INPUT" ]; then
   exit 5
 fi
 
+# ---- Early consent read: INCLUDE_RESULT_BLOCK only ---------------------------
+# This is a NON-GATING read — it does not decide whether the send proceeds
+# (that is step 7 below, unchanged, at its documented pipeline position). It
+# only tells stage 1 whether to restore `result_block` into raw_data while
+# building the body, which has to happen before the body-privacy scan that
+# stage 1 itself performs. Calling the resolver a second time at step 7 for
+# the actual consent decision is deliberate — it keeps this read isolated
+# from (and unable to influence) the documented privacy-before-consent order.
+EARLY_INCLUDE_RESULT_BLOCK=""
+if [ -n "$CORE_SELF_DIR" ] && [ -f "${CORE_SELF_DIR}/resolve-egress-config.sh" ]; then
+  EARLY_RESOLVER_OUT="$(bash "${CORE_SELF_DIR}/resolve-egress-config.sh" 2>/dev/null || true)"
+  while IFS='=' read -r erk erv; do
+    case "$erk" in
+      INCLUDE_RESULT_BLOCK) EARLY_INCLUDE_RESULT_BLOCK="$erv" ;;
+    esac
+  done <<EOF
+$EARLY_RESOLVER_OUT
+EOF
+fi
+export LOOMWRIGHT_INCLUDE_RESULT_BLOCK="$EARLY_INCLUDE_RESULT_BLOCK"
+
 # ---- Stage 1: parse JSON, detect schema, compute score, build payload --------
 #
 # Single python invocation that returns a `key=value` line-protocol on stdout
@@ -651,6 +672,21 @@ if m:
 # Sub-scores — none extracted in v1; section will be omitted.
 agent_scores = []  # placeholder; left empty for v1.
 
+# Issues per severity — a STRUCTURED count for raw_data, distinct from the
+# `issues` list above (which is the human-readable markdown-body lines).
+# CODE_REVIEW_RESULT issue lines carry a "[SEVERITY] " prefix (built above at
+# the `issues.append("[%s] %s" % (sev, line))` call); other schemas' issue
+# lines carry no severity concept at all, so they count as "unspecified"
+# rather than being silently dropped from the total.
+issue_severity_rx = re.compile(r"^\[(BLOCKING|HIGH|MEDIUM|LOW)\]\s")
+issues_by_severity = {"blocking": 0, "high": 0, "medium": 0, "low": 0, "unspecified": 0}
+for _issue_line in issues:
+    _sev_m = issue_severity_rx.match(_issue_line)
+    if _sev_m:
+        issues_by_severity[_sev_m.group(1).lower()] += 1
+    else:
+        issues_by_severity["unspecified"] += 1
+
 # ---- Compute labels --------------------------------------------------------
 labels = ["telemetry"]
 labels.append("score:" + bucket)
@@ -659,8 +695,12 @@ if weak_label:
     labels.append(weak_label)
 
 # ---- Build redacted JSON payload (Raw Data section) ------------------------
-# Only fields safe to embed; we include the post-redaction result_block so
-# secrets inside the markdown can never leak into the issue body.
+# PRIVACY IS FIELD SELECTION, NOT REGEX MATCHING (red-team-hardening item 08,
+# Fix 3): `raw_data` ships only structured, already-summarized fields by
+# default — never the free-text result_block, which can carry file paths,
+# finding descriptions and subtask names no fixed regex allowlist can
+# enumerate. PRIVACY_PATTERNS below stays as a SECONDARY tripwire on whatever
+# text IS included (the body + this dict), not the privacy boundary itself.
 def redact_text(text):
     out = text
     for rx, label in PRIVACY_PATTERNS:
@@ -672,6 +712,11 @@ redacted_block = redact_text(result_block)
 # plugin manifest relative to this script ("unknown" when unreadable). Purely
 # additive to the redacted payload; schema_version stays 1.
 plugin_version = os.environ.get("LOOMWRIGHT_PLUGIN_VERSION", "") or "unknown"
+# TRUNCATED HERE ONLY, at this dict-literal call site — `primary_error` the
+# shared variable is left untouched, because it also feeds the dedup-hash
+# input (sha256 6h-window gate) and a separate PRIMARY_ERROR emit line below;
+# an in-place reassignment would silently make two distinct long errors
+# sharing a 200-char prefix dedupe as one AND truncate that emit channel too.
 raw_data = {
     "schema_version": 1,
     "task_id": task_id,
@@ -681,11 +726,18 @@ raw_data = {
     "score_float": round(score_f, 2),
     "score_bucket": bucket,
     "status": status,
-    "primary_error": primary_error,
+    "primary_error": primary_error[:200],
+    "issues": issues_by_severity,
+    "tools": tools,
     "redacted": True,
-    "result_block": redacted_block,
     "plugin_version": plugin_version,
 }
+# Opt-in escape hatch — user-scope `include_result_block: true` only, set via
+# `/telemetry enable --include-result-block` (never a repo-relative file: the
+# same user-scope-only discipline red-team-hardening item 02 established for
+# consent/target-repo/webhook-url). Default is absent -> field selection only.
+if os.environ.get("LOOMWRIGHT_INCLUDE_RESULT_BLOCK", "") == "true":
+    raw_data["result_block"] = redacted_block
 raw_data_json = json.dumps(raw_data, indent=2, sort_keys=True)
 
 # ---- Format issue body -----------------------------------------------------

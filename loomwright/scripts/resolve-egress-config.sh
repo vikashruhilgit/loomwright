@@ -38,6 +38,12 @@
 #                                     when WEBHOOK_URL is empty). Callers use this to
 #                                     compare a repo-requested URL without needing to
 #                                     re-derive it themselves.
+#   INCLUDE_RESULT_BLOCK            - "true" | "" (empty means false/unset) — USER-SCOPE
+#                                     ONLY, set via `/telemetry enable --include-result-block`.
+#                                     When "true", send-telemetry-core.sh restores the
+#                                     redacted result_block field into raw_data; the
+#                                     default (empty) is field-selection only. Red-team-
+#                                     hardening item 08.
 #   REPO_REQUESTED_TELEMETRY_REPO  - informational only, from
 #                                     .supervisor/telemetry-consent.json's
 #                                     telemetry_repo field. NEVER fed into TELEMETRY
@@ -73,6 +79,7 @@ TELEMETRY=""
 TELEMETRY_REPO=""
 WEBHOOK_URL=""
 WEBHOOK_URL_SHA256=""
+INCLUDE_RESULT_BLOCK=""
 REPO_REQUESTED_TELEMETRY_REPO=""
 REPO_REQUESTED_WEBHOOK_URL=""
 
@@ -133,6 +140,9 @@ if [ -n "$REPO_SLUG" ] && [ -n "${HOME:-}" ] && [ -r "$USER_SCOPE_FILE" ] && com
     WEBHOOK_URL="$(jq -r --arg s "$REPO_SLUG" \
       '(.repos[$s].webhook_url // "") | if type == "string" then . else "" end' \
       "$USER_SCOPE_FILE" 2>/dev/null || true)"
+    INCLUDE_RESULT_BLOCK="$(jq -r --arg s "$REPO_SLUG" \
+      '(.repos[$s].include_result_block // false) | if type == "boolean" and . then "true" else "" end' \
+      "$USER_SCOPE_FILE" 2>/dev/null || true)"
   fi
 fi
 # Any jq failure above leaves the three vars at their initial "" default.
@@ -183,6 +193,7 @@ REPO_SLUG="$(strip_if_newline "$REPO_SLUG")"
 TELEMETRY="$(strip_if_newline "$TELEMETRY")"
 TELEMETRY_REPO="$(strip_if_newline "$TELEMETRY_REPO")"
 WEBHOOK_URL="$(strip_if_newline "$WEBHOOK_URL")"
+INCLUDE_RESULT_BLOCK="$(strip_if_newline "$INCLUDE_RESULT_BLOCK")"
 
 if [ -n "$WEBHOOK_URL" ]; then
   WEBHOOK_URL_SHA256="$(sha256_hex "$WEBHOOK_URL")"
@@ -224,6 +235,7 @@ printf 'TELEMETRY=%s\n' "$TELEMETRY"
 printf 'TELEMETRY_REPO=%s\n' "$TELEMETRY_REPO"
 printf 'WEBHOOK_URL=%s\n' "$WEBHOOK_URL"
 printf 'WEBHOOK_URL_SHA256=%s\n' "$WEBHOOK_URL_SHA256"
+printf 'INCLUDE_RESULT_BLOCK=%s\n' "$INCLUDE_RESULT_BLOCK"
 printf 'REPO_REQUESTED_TELEMETRY_REPO=%s\n' "$REPO_REQUESTED_TELEMETRY_REPO"
 printf 'REPO_REQUESTED_WEBHOOK_URL=%s\n' "$REPO_REQUESTED_WEBHOOK_URL"
 

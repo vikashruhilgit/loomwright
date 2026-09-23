@@ -274,6 +274,22 @@ write("dedup-b.json", block(
     "dedup-task-A", "failed",
     ["- subtasks_failed: [BD-7z]",
      "- summary: dedup determinism fixture B"]))
+
+# Group 10 (Fix 3, red-team-hardening item 08): a primary_error long enough to
+# exercise the raw_data truncation-at-the-dict-literal-only contract. Both
+# fixtures share the SAME 220-char prefix (so raw_data's truncated-to-200
+# field is byte-identical between them) and differ only in a tail AFTER char
+# 220 — so the FULL (untruncated) primary_error must still be what feeds the
+# dedup hash, or these two would collide.
+LONG_PREFIX = "X" * 220
+write("longerr-a.json", block(
+    "longerr-task", "failed",
+    ["- subtasks_failed: [%sTAILAAAA]" % LONG_PREFIX,
+     "- summary: long primary_error fixture A"]))
+write("longerr-b.json", block(
+    "longerr-task", "failed",
+    ["- subtasks_failed: [%sTAILBBBB]" % LONG_PREFIX,
+     "- summary: long primary_error fixture B"]))
 PY
 if [ ! -f "$FIXDIR/secrets.tsv" ]; then
   echo "FATAL  fixture generation failed" >&2
@@ -530,6 +546,97 @@ assert_eq "dedup_stale_entry_rc=0" "0" "$rc"
 assert_eq "dedup_stale_entry_would_exit=0" "0" "$(extract_would_exit "$out")"
 assert_not_match "dedup_stale_entry_no_hit" "dedup_hit" "$out"
 rm -f "$SB_SENT_LOG"
+
+# ---- Group 10: raw_data body — field selection, not result_block (Fix 3) -------
+# red-team-hardening item 08: raw_data ships structured fields, never the free-
+# text result_block, unless the user-scope include_result_block:true escape
+# hatch is set.
+echo ""
+echo "==== Group 10: raw_data field selection (red-team-hardening item 08, Fix 3) ===="
+user_scope_write '{"telemetry": "always_allow", "telemetry_repo": "example/repo"}'
+
+# (a) default body: no result_block key, but issues/tools/primary_error present.
+out="$(run_core "$FIXDIR/consent-escalated.json" --dry-run)"
+rc=$?
+assert_eq "raw_data_default_rc=0" "0" "$rc"
+assert_not_match "raw_data_default_no_result_block" '"result_block"' "$out"
+assert_match "raw_data_default_has_issues" '"issues": {' "$out"
+assert_match "raw_data_default_has_tools" '"tools": [' "$out"
+assert_match "raw_data_default_has_primary_error" '"primary_error"' "$out"
+
+# (b) with include_result_block:true -> result_block reappears.
+user_scope_write '{"telemetry": "always_allow", "telemetry_repo": "example/repo", "include_result_block": true}'
+out="$(run_core "$FIXDIR/consent-escalated.json" --dry-run)"
+rc=$?
+assert_eq "raw_data_opt_in_rc=0" "0" "$rc"
+assert_match "raw_data_opt_in_has_result_block" '"result_block"' "$out"
+
+# (c) with include_result_block:false (explicit) -> same as default, absent.
+user_scope_write '{"telemetry": "always_allow", "telemetry_repo": "example/repo", "include_result_block": false}'
+out="$(run_core "$FIXDIR/consent-escalated.json" --dry-run)"
+rc=$?
+assert_eq "raw_data_explicit_false_rc=0" "0" "$rc"
+assert_not_match "raw_data_explicit_false_no_result_block" '"result_block"' "$out"
+
+# (d) primary_error truncation lives ONLY at the raw_data dict-literal call
+# site — the shared `primary_error` variable that also feeds the dedup hash
+# (hash_input = "task_id::bucket::primary_error", same contract Group 6
+# pins) must stay UNTRUNCATED. longerr-a.json / longerr-b.json share an
+# IDENTICAL 220-char prefix and differ only after it, so a hash computed on
+# the TRUNCATED-to-200 string would be IDENTICAL for both — this seeds the
+# sent-log with the hash computed on the FULL (untruncated) string and
+# proves the runtime's own hash matches it, the same "seed + expect dedup_hit"
+# technique Group 6 already established.
+user_scope_write '{"telemetry": "always_allow", "telemetry_repo": "example/repo"}'
+FULL_PE_A="$(python3 -c 'print("X" * 220 + "TAILAAAA")')"
+FULL_PE_B="$(python3 -c 'print("X" * 220 + "TAILBBBB")')"
+# task_id=longerr-task, status=failed (base 2.0) minus 0.5 for one failed
+# subtask => score 1.5 => bucket "low" — same arithmetic Group 6 documents.
+DEDUP_HASH_LONG_A="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(("longerr-task::low::" + sys.argv[1]).encode("utf-8")).hexdigest())' "$FULL_PE_A")"
+DEDUP_HASH_LONG_B="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(("longerr-task::low::" + sys.argv[1]).encode("utf-8")).hexdigest())' "$FULL_PE_B")"
+if [ "$DEDUP_HASH_LONG_A" = "$DEDUP_HASH_LONG_B" ]; then
+  echo "FAIL  longerr_fixture_precondition: the two full-length hashes collided — fixture construction is broken, this case proves nothing"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+else
+  echo "PASS  longerr_fixture_precondition: full-length hashes differ as expected"
+  PASS_COUNT=$((PASS_COUNT + 1))
+fi
+
+mkdir -p "$(dirname "$SB_SENT_LOG")"
+printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+  "$TS_NOW" "$DEDUP_HASH_LONG_A" "longerr-task" "2" "low" "https://example.invalid/issues/2" > "$SB_SENT_LOG"
+# Seeded with the FULL-string hash for fixture A: if the runtime hashed the
+# SAME full string, this dedupes (exit 5). If it had instead truncated
+# primary_error in place before hashing, the runtime's own hash would differ
+# from this seed and the request would wrongly proceed toward a live send.
+out_a="$(run_core "$FIXDIR/longerr-a.json")"
+rc_a=$?
+assert_eq "longerr_a_dedupes_on_full_hash_exit=5" "5" "$rc_a"
+assert_match "longerr_a_dedup_hit_marker" "dedup_hit hash=$DEDUP_HASH_LONG_A" "$out_a"
+
+# Fixture B, same seeded log (still keyed to A's full hash) -> NOT deduped,
+# because B's full-length primary_error genuinely differs after char 220.
+out_b="$(run_core "$FIXDIR/longerr-b.json" --dry-run)"
+rc_b=$?
+assert_eq "longerr_b_not_deduped_rc=0" "0" "$rc_b"
+assert_eq "longerr_b_not_deduped_would_exit=0" "0" "$(extract_would_exit "$out_b")"
+assert_not_match "longerr_b_no_dedup_hit" "dedup_hit" "$out_b"
+rm -f "$SB_SENT_LOG"
+
+# The raw_data field itself must be truncated to <= 200 chars in the body.
+out_a_dry="$(run_core "$FIXDIR/longerr-a.json" --dry-run)"
+PE_LEN_A="$(printf '%s' "$out_a_dry" | python3 -c '
+import sys, re
+m = re.search(r"\"primary_error\": \"([^\"]*)\"", sys.stdin.read())
+print(len(m.group(1)) if m else -1)
+')"
+if [ "$PE_LEN_A" -le 200 ] && [ "$PE_LEN_A" -ge 0 ]; then
+  echo "PASS  longerr_a_primary_error_truncated_to_200 (len=$PE_LEN_A)"
+  PASS_COUNT=$((PASS_COUNT + 1))
+else
+  echo "FAIL  longerr_a_primary_error_truncated_to_200 len=$PE_LEN_A"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
 
 # ---- Group 7: redaction visibility ([REDACTED:<label>] markers) ----------------
 # A secret-bearing payload exits 2 before the body ever prints, so the ONLY way to

@@ -49,9 +49,11 @@
 # ============================================================================
 #
 # CLASSIFICATION REGEXES (the single source of truth — defined ONLY here):
-#   bot_author_re  — author login looks like a review bot: literal "claude" or
-#                    "claude[bot]", any "*[bot]" suffix, or a "github-actions"
-#                    prefix. Case-insensitive.
+#   bot_author_re  — author login looks like a review bot: an EXACT match on
+#                    "claude[bot]", "github-actions[bot]", or "dependabot[bot]",
+#                    or any login ending in "[bot]". A bare "claude" (human) or
+#                    a "github-actions"-prefixed non-bot login is NOT matched
+#                    (tightened red-team-hardening item 08). Case-insensitive.
 #   review_marker_re — the RAW body carries, ANYWHERE, a word-bounded REVIEW STEM
 #                    ("review", "reviews", "reviewed", "reviewer(s)", "reviewing")
 #                    or "finding(s)" (Oniguruma \b). Case-insensitive. Widened from
@@ -178,7 +180,11 @@ OUTPUT="$(printf '%s' "$INPUT" | jq -c \
   --argjson use_trusted "$( [ "$USE_TRUSTED_ACTORS" -eq 1 ] && echo true || echo false )" \
   --argjson trusted_actors "$TRUSTED_ACTORS_JSON" '
   # ---- SINGLE SOURCE OF TRUTH: bot-review classification regexes ----
-  def bot_author_re: "^claude(\\[bot\\])?$|\\[bot\\]$|^github-actions";
+  # EXACT-login match for the three known bot accounts, plus any login ending in
+  # `[bot]` (GitHub App convention). Deliberately NOT "^claude$" (a human could
+  # register that literal login) and NOT "^github-actions" as a bare prefix (that
+  # matched "github-actions-fan", not just the real actor) — tightened 2026-09-23.
+  def bot_author_re: "^(claude\\[bot\\]|github-actions\\[bot\\]|dependabot\\[bot\\])$|\\[bot\\]$";
   def review_marker_re: "\\b(review(s|ed|er|ers|ing)?|findings?)\\b";
   # Author gate: EXACT match against $trusted_actors when --trusted-actors
   # resolved a usable file ($use_trusted); otherwise the unchanged regex.

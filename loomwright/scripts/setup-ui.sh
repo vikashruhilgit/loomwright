@@ -1034,7 +1034,7 @@ server_report() {
     url="$(head -n 1 "$tf" 2>/dev/null)"
     if [ -n "$url" ]; then
       echo "  open:     $url"
-      echo "            this is the line 'serve' printed, kept in $tf at mode 0600 so this command can hand it back. The #token is what the page's four buttons present; a bare address still reads everything."
+      echo "            this is the line 'serve' printed, kept in $tf at mode 0600 so this command can hand it back. The #token is what the page's four buttons present; a bare *loopback* address reads everything, a rebound name does not."
     else
       echo "  open:     UNKNOWN — $tf is empty, so the url cannot be reprinted. The server is up and readable at a bare http://127.0.0.1:<port>/, but the four buttons will be refused until it is restarted."
     fi
@@ -1699,6 +1699,31 @@ class FloorHandler(SimpleHTTPRequestHandler):
         audit("POST /api/%s -> 200 %s" % (action, "ran" if good else "engine-failed"))
         self._send_json(200, {"ok": good, "reason": "ran" if good else "engine-failed",
                               "report": out})
+
+    def _refuse_read(self, method, why, code=403):
+        # SAME REFUSAL SHAPE AS `_refuse`, for the read paths `_guard` never covers: GET/HEAD
+        # are answered by `SimpleHTTPRequestHandler` directly unless overridden below, so
+        # without this the Host check that gates every POST route gated no read at all.
+        audit("%s %s -> %d %s" % (method, self.path, code, why))
+        self._send_json(code, {"ok": False, "reason": why,
+                               "report": "refused (" + why + "): "
+                                         + REFUSALS.get(why, "no further detail")})
+
+    def do_GET(self):
+        # DNS REBINDING TARGETS EXACTLY THIS PATH: a page loaded over an attacker-controlled
+        # name that later resolves to 127.0.0.1 can issue a same-origin GET with no Host check
+        # at all unless one is added here — `index.json`, `serve.log`, and the served UI would
+        # all be readable through it. Checked FIRST, before any bytes are served.
+        if not _host_ok(self.headers.get("Host")):
+            self._refuse_read("GET", "host-not-loopback")
+            return
+        SimpleHTTPRequestHandler.do_GET(self)
+
+    def do_HEAD(self):
+        if not _host_ok(self.headers.get("Host")):
+            self._refuse_read("HEAD", "host-not-loopback")
+            return
+        SimpleHTTPRequestHandler.do_HEAD(self)
 
     def do_POST(self):
         route = self.path.split("?", 1)[0]

@@ -134,6 +134,10 @@ assert_eq "no_user_scope_telemetry_empty" "" "$(get_field "$OUT" TELEMETRY)"
 assert_eq "no_user_scope_telemetry_repo_empty" "" "$(get_field "$OUT" TELEMETRY_REPO)"
 assert_eq "no_user_scope_webhook_empty" "" "$(get_field "$OUT" WEBHOOK_URL)"
 assert_eq "no_user_scope_exit=0" "0" "$RC"
+# (red-team-hardening item 08, Fix 3) INCLUDE_RESULT_BLOCK defaults empty too —
+# asserted HERE, reusing this exact "no file at all" state, rather than a
+# fresh rm -f later that would add another literal egress-path occurrence.
+assert_eq "no_user_scope_include_result_block_empty" "" "$(get_field "$OUT" INCLUDE_RESULT_BLOCK)"
 
 # (b) matching entry -> values come through verbatim.
 user_scope_write "$HG" '{"telemetry":"always_allow","telemetry_repo":"example/repo","webhook_url":"https://example.invalid/hook"}'
@@ -183,6 +187,32 @@ OUT="$( ( cd "$RG" && HOME="$HG" bash "$RESOLVER" ) )"
 assert_eq "nonstring_telemetry_empty" "" "$(get_field "$OUT" TELEMETRY)"
 assert_eq "null_telemetry_repo_empty" "" "$(get_field "$OUT" TELEMETRY_REPO)"
 assert_eq "array_webhook_url_empty" "" "$(get_field "$OUT" WEBHOOK_URL)"
+
+echo ""
+echo "==== Group 2b: INCLUDE_RESULT_BLOCK (red-team-hardening item 08, Fix 3) ===="
+# (a) "no file at all -> empty" is asserted above, in Group 2(a), reusing that
+# exact state rather than re-deleting the file here (see the comment there).
+
+# (b) explicit true -> "true".
+user_scope_write "$HG" '{"telemetry":"always_allow","telemetry_repo":"example/repo","include_result_block":true}'
+OUT="$( ( cd "$RG" && HOME="$HG" bash "$RESOLVER" ) )"
+assert_eq "include_result_block_true" "true" "$(get_field "$OUT" INCLUDE_RESULT_BLOCK)"
+
+# (c) explicit false -> empty (never the string "false").
+user_scope_write "$HG" '{"telemetry":"always_allow","telemetry_repo":"example/repo","include_result_block":false}'
+OUT="$( ( cd "$RG" && HOME="$HG" bash "$RESOLVER" ) )"
+assert_eq "include_result_block_false_is_empty" "" "$(get_field "$OUT" INCLUDE_RESULT_BLOCK)"
+
+# (d) key absent entirely -> empty (nullable-but-required-field lesson: absence
+#     must degrade the same as an explicit false, never crash or default true).
+user_scope_write "$HG" '{"telemetry":"always_allow","telemetry_repo":"example/repo"}'
+OUT="$( ( cd "$RG" && HOME="$HG" bash "$RESOLVER" ) )"
+assert_eq "include_result_block_absent_key_is_empty" "" "$(get_field "$OUT" INCLUDE_RESULT_BLOCK)"
+
+# (e) non-boolean type (string "true") -> empty, never truthy on a string.
+user_scope_write "$HG" '{"telemetry":"always_allow","telemetry_repo":"example/repo","include_result_block":"true"}'
+OUT="$( ( cd "$RG" && HOME="$HG" bash "$RESOLVER" ) )"
+assert_eq "include_result_block_nonboolean_string_is_empty" "" "$(get_field "$OUT" INCLUDE_RESULT_BLOCK)"
 
 echo ""
 echo "==== Group 3: repo-relative REQUESTS are informational only ===="
