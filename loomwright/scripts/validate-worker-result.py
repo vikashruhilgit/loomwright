@@ -416,7 +416,8 @@ def main():
             if not isinstance(item, dict):
                 emit(False, REASON_NOT_VERIFIED_SHAPE)
             for required in ("surface", "reason"):
-                if required not in item or is_empty_scalar(item.get(required)):
+                value = item.get(required)
+                if required not in item or not isinstance(value, str) or is_empty_scalar(value):
                     emit(False, REASON_NOT_VERIFIED_SHAPE)
 
     emit(True)

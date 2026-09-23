@@ -3504,6 +3504,36 @@ EOF
 run_v "$V_WORKER" "$F"
 assert_fail "worker: rule 11 — an entry with an empty-string surface is rejected" "rule 11"
 
+# claude-review finding on PR #259: rule 11 originally checked only
+# is_empty_scalar(), never isinstance(..., str), unlike the isinstance-guarded
+# rules 9/10 immediately above (added for consistency with them; see
+# `isinstance(value, str)` in the (11) block). Added, but — same honest
+# unreachability this file already documents for rule 9's OWN isinstance guard
+# a few lines up ("Non-string-LOOKING element... the isinstance guard is
+# unreachable here by construction") — verified live: `load_block` sources
+# `not_verified` from this SAME markdown-block carrier via `parse_scalar`,
+# which normalizes every bare scalar (including inside a flow-style `{...}`
+# dict) to a Python str; `{surface: 42, reason: true}` parses to
+# `{'surface': '42', 'reason': 'true'}`, both already valid non-empty strings.
+# The isinstance(str) check is therefore defensive-only on THIS carrier, not a
+# closable live gap — asserted PASS deliberately, matching rule 9's own
+# precedent, not `assert_fail` (which would encode a promise this text-only
+# carrier cannot keep).
+mk worker-r11-nonstring-values.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- not_verified: [{surface: 42, reason: true}]
+- summary: surface/reason LOOK non-string but normalize to strings "42"/"true" on this carrier
+EOF
+run_v "$V_WORKER" "$F"
+assert_pass "worker: rule 11 — a bare 42/true in surface/reason is ACCEPTED (the markdown carrier stringifies every scalar; the isinstance guard is unreachable here by construction, same as rule 9's)"
+
 # MUTATION CONTROL: delete the required-key loop from a COPY of the validator; the
 # missing-reason case above must FLIP to accepted, proving the check is load-bearing.
 V_WORKER_NOKEY="$TMPROOT/validate-worker-result-nokey.py"
@@ -3516,7 +3546,8 @@ p = sys.argv[1]
 src = open(p, encoding="utf-8").read()
 mutated = src.replace(
     '            for required in ("surface", "reason"):\n'
-    '                if required not in item or is_empty_scalar(item.get(required)):\n'
+    '                value = item.get(required)\n'
+    '                if required not in item or not isinstance(value, str) or is_empty_scalar(value):\n'
     '                    emit(False, REASON_NOT_VERIFIED_SHAPE)\n',
     '',
     1,
@@ -3531,6 +3562,13 @@ else
 fi
 run_v "$V_WORKER_NOKEY" "$R11_MALFORMED_FILE"
 assert_pass "worker: rule 11 mutation control — with the required-key check deleted, the missing-reason case FLIPS to accepted (the check is load-bearing, not vacuous)"
+
+# NOT a second mutation control: the isinstance(str) guard added for
+# consistency with rules 9/10 is unreachable on this text-only carrier (see
+# the assert_pass above and rule 9's own identical precedent) — reverting it
+# produces the SAME "accepted" result either way, which would make a mutation
+# control here vacuously pass without proving anything real. Recording that
+# reasoning here rather than constructing a control that cannot fail.
 
 echo "== K. documented SubagentStop decision shape — exact bytes, every validator =="
 # WHY THIS EXISTS. Until 2026-09-21 every validator printed `{"ok": true}` /
