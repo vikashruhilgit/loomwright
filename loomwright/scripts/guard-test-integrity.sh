@@ -255,6 +255,7 @@ is_toplevel_conftest() {
 env_flag_cluster_consume() {
   local w="$1" rest c
   EFC_TAKES_VALUE=0
+  EFC_IS_SPLIT_STRING=0
   case "$w" in
     -?*) rest="${w#-}" ;;
     *) return 1 ;;
@@ -264,9 +265,26 @@ env_flag_cluster_consume() {
     rest="${rest:1}"
     case "$c" in
       0|i|v) : ;;
-      u|C|P|S)
+      u|C|P)
         [ -n "$rest" ] && return 1  # attached-value form, not covered
         EFC_TAKES_VALUE=1
+        return 0
+        ;;
+      S)
+        # -S/--split-string's value is not a plain path/name like
+        # -u/-C/-P's — it is a WHOLE embedded command line that env
+        # itself re-splits and execs (`env -S "HUSKY=0 git commit -m
+        # x"` really runs `HUSKY=0 git commit -m x`, verified live on
+        # this platform). "Skip the value word" (what -u/-C/-P correctly
+        # do) would silently smuggle an unparsed command past every
+        # exec_base-keyed check at once — the same self-disarm-capable
+        # bug class rounds 3-5 already closed for `\exec`/`command`/
+        # bundled flags. EFC_IS_SPLIT_STRING tells the caller to deny
+        # outright instead of skip-and-continue (PR #258 round-9 review
+        # finding).
+        [ -n "$rest" ] && return 1  # attached-value form, not covered
+        EFC_TAKES_VALUE=1
+        EFC_IS_SPLIT_STRING=1
         return 0
         ;;
       *) return 1 ;;
@@ -447,14 +465,17 @@ evaluate_one_simple_command() {
     esac
     if [ "$anchor_after_env" -eq 1 ]; then
       if env_flag_cluster_consume "$at"; then
-        if [ "$EFC_TAKES_VALUE" -eq 1 ]; then
+        if [ "$EFC_IS_SPLIT_STRING" -eq 1 ]; then
+          deny_variant bash "env split-string wrapped command"
+        elif [ "$EFC_TAKES_VALUE" -eq 1 ]; then
           anchor_i=$((anchor_i + 2)); continue
         else
           anchor_i=$((anchor_i + 1)); continue
         fi
       fi
       case "$at" in
-        --unset=*|--split-string=*|--chdir=*|--ignore-environment|--null|--debug)
+        --split-string=*) deny_variant bash "env split-string wrapped command" ;;
+        --unset=*|--chdir=*|--ignore-environment|--null|--debug)
           anchor_i=$((anchor_i + 1)); continue ;;
         *) anchor_after_env=0 ;;
       esac
@@ -504,14 +525,17 @@ evaluate_one_simple_command() {
     esac
     if [ "$after_env" -eq 1 ]; then
       if env_flag_cluster_consume "$t"; then
-        if [ "$EFC_TAKES_VALUE" -eq 1 ]; then
+        if [ "$EFC_IS_SPLIT_STRING" -eq 1 ]; then
+          deny_variant bash "env split-string wrapped command"
+        elif [ "$EFC_TAKES_VALUE" -eq 1 ]; then
           idx=$((idx + 2)); continue
         else
           idx=$((idx + 1)); continue
         fi
       fi
       case "$t" in
-        --unset=*|--split-string=*|--chdir=*|--ignore-environment|--null|--debug)
+        --split-string=*) deny_variant bash "env split-string wrapped command" ;;
+        --unset=*|--chdir=*|--ignore-environment|--null|--debug)
           idx=$((idx + 1)); continue ;;
         *) after_env=0 ;;
       esac

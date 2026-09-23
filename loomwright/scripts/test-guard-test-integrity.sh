@@ -5,7 +5,7 @@
 # (`.supervisor/requirements/six-phase-loop-gaps/02-test-integrity-guard.md`):
 # every Bash pattern + its negation twin, every Write|Edit basename + allow
 # case, the 6 gate cases, the guard-arm.sh subcommand cases, the concurrency
-# case, the sentinel checks, and all 21 named mutation controls.
+# case, the sentinel checks, and all 22 named mutation controls.
 #
 # Runs entirely in temp dirs (mktemp -d), never touches the real
 # `.supervisor/`. Exit 0 = all pass, 1 = any failure (auto-registered by
@@ -164,6 +164,18 @@ assert_rc "env -vi git commit -n -m x — deny (bundled boolean env flags, reord
 assert_rc "env -0iv HUSKY=0 npm test — deny (3-flag bundle before anchor-checked assignment)" "$(bash_rc "$D" "$SID" 'env -0iv HUSKY=0 npm test')" 2
 assert_rc "env -iu FOO git commit -n -m x — deny (bundled boolean + value-taking flag)" "$(bash_rc "$D" "$SID" 'env -iu FOO git commit -n -m x')" 2
 assert_rc "env -iv rm <guard marker> — deny (bundled-flag self-disarm)" "$(bash_rc "$D" "$SID" "env -iv rm .supervisor/guard/$SID.json")" 2
+# PR #258 review round-9 finding (HIGH): env's -S/--split-string value is
+# not a plain path/name like -u/-C/-P's — it is a WHOLE embedded command
+# line that env itself re-splits and execs (`env -S "HUSKY=0 git commit
+# -m x"` really runs that command, verified live on this platform).
+# "Skip the value word" (correct for -u/-C/-P) would smuggle an unparsed
+# command past every exec_base-keyed check at once, so -S/--split-string
+# denies outright instead.
+assert_rc 'env -S "HUSKY=0 git commit -m x" — deny (split-string smuggled command)' "$(bash_rc "$D" "$SID" 'env -S "HUSKY=0 git commit -m x"')" 2
+assert_rc 'env --split-string="HUSKY=0 git commit -n -m x" — deny (long-form split-string)' "$(bash_rc "$D" "$SID" 'env --split-string="HUSKY=0 git commit -n -m x"')" 2
+assert_rc 'env -iS "HUSKY=0 git commit -m x" — deny (bundled prefix + split-string)' "$(bash_rc "$D" "$SID" 'env -iS "HUSKY=0 git commit -m x"')" 2
+assert_rc 'env -S "rm <guard marker>" — deny (split-string self-disarm)' "$(bash_rc "$D" "$SID" "env -S \"rm .supervisor/guard/$SID.json\"")" 2
+assert_rc "env -C /tmp git commit -n -m x — allow-form regression: -C still a plain value-taking flag, still denies via git -n" "$(bash_rc "$D" "$SID" 'env -C /tmp git commit -n -m x')" 2
 # PR #258 review round-4 finding: `ln`/`ln -s` clobbering a protected path
 # or a git hook was not in the write-verb/`.git/hooks` verb lists at all.
 assert_rc "ln -sf /dev/null jest.config.js — deny (symlink-clobber write-verb gap)" "$(bash_rc "$D" "$SID" 'ln -sf /dev/null jest.config.js')" 2
@@ -862,6 +874,35 @@ if [ -s "$MUT_U" ] && ! cmp -s "$GUARD" "$MUT_U" && bash -n "$MUT_U" 2>/dev/null
   [ "$rc" != "2" ] && ok "(u) mutation control: restoring the unconditional conftest.py return re-opens the EXTRA_GLOBS dead-code bug" || no "(u) mutation control did not break the case (still rc=2)"
 else
   no "(u) mutation control: could not construct mutant"
+fi
+
+# (v) drop the EFC_IS_SPLIT_STRING=1 assignment in env_flag_cluster_consume
+#     -> -S/--split-string is treated like -u/-C/-P (skip the value word
+#     instead of denying), re-opening the embedded-command smuggling
+#     bypass (PR #258 round-9 review finding)
+MUT_V="$MUT_D/mut-v.sh"
+python3 - "$GUARD" "$MUT_V" <<'PYEOF' 2>/dev/null || true
+import sys
+src, dst = sys.argv[1], sys.argv[2]
+with open(src) as f:
+    c = f.read()
+old = ('        [ -n "$rest" ] && return 1  # attached-value form, not covered\n'
+       '        EFC_TAKES_VALUE=1\n'
+       '        EFC_IS_SPLIT_STRING=1\n'
+       '        return 0\n')
+assert old in c, "EFC_IS_SPLIT_STRING assignment not found for mutation (v)"
+new = ('        [ -n "$rest" ] && return 1  # attached-value form, not covered\n'
+       '        EFC_TAKES_VALUE=1\n'
+       '        return 0\n')
+c = c.replace(old, new, 1)
+with open(dst, 'w') as f:
+    f.write(c)
+PYEOF
+if [ -s "$MUT_V" ] && ! cmp -s "$GUARD" "$MUT_V" && bash -n "$MUT_V" 2>/dev/null; then
+  rc="$(mut_rc "$MUT_V" "$D" "$SID" 'env -S "HUSKY=0 git commit -m x"')"
+  [ "$rc" != "2" ] && ok "(v) mutation control: dropping EFC_IS_SPLIT_STRING re-opens the env -S embedded-command smuggling bypass" || no "(v) mutation control did not break the case (still rc=2)"
+else
+  no "(v) mutation control: could not construct mutant"
 fi
 
 # (e) delete the empty-id check in arm -> the unset-env case fails (writes a
