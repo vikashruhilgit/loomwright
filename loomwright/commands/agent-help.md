@@ -756,7 +756,7 @@ Each basis is tuned by env vars read by its own script, all optional. Ledger bas
 
 **Purpose:** Manage the plugin's opt-in telemetry, which is **disabled by default** and posts anonymised run outcomes as GitHub Issues to a repo you name. Consent flows only through this command — hooks **never** prompt. It fails **CLOSED on privacy**: any privacy-whitelist match aborts the post (core exits `2`), and there is **no origin-remote fallback**, because the plugin runs in arbitrary user projects whose origin is the wrong place to send telemetry.
 
-**Usage:** `/telemetry status` · `/telemetry enable` · `/telemetry disable` · `/telemetry test`
+**Usage:** `/telemetry status` · `/telemetry enable` · `/telemetry enable --include-result-block` · `/telemetry disable` · `/telemetry test`
 
 **Learn More:** see `loomwright/commands/telemetry.md` and `loomwright/docs/TELEMETRY.md` for the wrapper-vs-core architecture, the scoring rubric, the privacy whitelist, and the exit-code table (0..5)
 
