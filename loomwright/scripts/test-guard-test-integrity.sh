@@ -45,7 +45,14 @@ bash_rc() {
   payload="$(jq -n --arg sid "$sid" --arg cmd "$cmd" --arg at "$at" \
     'if $at == "" then {session_id:$sid, tool_name:"Bash", tool_input:{command:$cmd}}
      else {session_id:$sid, agent_type:$at, tool_name:"Bash", tool_input:{command:$cmd}} end')"
-  printf '%s' "$payload" | CLAUDE_PROJECT_DIR="$d" bash "$GUARD" >/dev/null 2>/tmp/.guard-test-stderr.$$
+  # A here-string (bash backs it with a temp file, never a pipe) instead of
+  # `printf | bash`: the guard's own fast-allow paths (guard dir absent,
+  # LOOMWRIGHT_ALLOW_GATE_CONFIG_EDITS=1) exit BEFORE ever reading stdin,
+  # and a pipe writer racing a reader that never reads is a genuine SIGPIPE
+  # hazard — passed reliably on macOS locally across 11 review rounds, but
+  # failed non-deterministically on Linux CI (PR #258, CI run on 6b48b1f:
+  # "printf: write error: Broken pipe"). A here-string has no such race.
+  CLAUDE_PROJECT_DIR="$d" bash "$GUARD" <<<"$payload" >/dev/null 2>/tmp/.guard-test-stderr.$$
   echo $?
 }
 
@@ -56,7 +63,8 @@ edit_rc() {
   local d="$1" sid="$2" tool="$3" fp="$4"
   local payload
   payload="$(jq -n --arg sid "$sid" --arg tool "$tool" --arg fp "$fp" '{session_id:$sid, tool_name:$tool, tool_input:{file_path:$fp}}')"
-  printf '%s' "$payload" | CLAUDE_PROJECT_DIR="$d" bash "$GUARD" >/dev/null 2>/tmp/.guard-test-stderr.$$
+  # here-string, not a pipe -- see bash_rc's comment for why.
+  CLAUDE_PROJECT_DIR="$d" bash "$GUARD" <<<"$payload" >/dev/null 2>/tmp/.guard-test-stderr.$$
   echo $?
 }
 
@@ -275,8 +283,7 @@ assert_rc "echo x > <toplevel>/sub/conftest.py — allow (not toplevel)" "$(bash
 assert_rc "Edit .vscode/settings.json — allow"                      "$(edit_rc "$D" "$SID" Edit ".vscode/settings.json")" 0
 assert_rc "Edit config/settings.json — allow"                       "$(edit_rc "$D" "$SID" Edit "config/settings.json")" 0
 assert_rc "Edit .github/workflows/ci.yml — allow by default"        "$(edit_rc "$D" "$SID" Edit ".github/workflows/ci.yml")" 0
-gextra_rc="$(LOOMWRIGHT_GUARD_EXTRA_GLOBS='.github/workflows/*' bash -c "printf '%s' \"\$(jq -n --arg sid '$SID' '{session_id:\$sid, tool_name:\"Edit\", tool_input:{file_path:\".github/workflows/ci.yml\"}}}')\" 2>/dev/null" 2>/dev/null || true)"
-gextra_rc="$(printf '%s' "$(jq -n --arg sid "$SID" '{session_id:$sid, tool_name:"Edit", tool_input:{file_path:".github/workflows/ci.yml"}}')" | CLAUDE_PROJECT_DIR="$D" LOOMWRIGHT_GUARD_EXTRA_GLOBS='.github/workflows/*' bash "$GUARD" >/dev/null 2>&1; echo $?)"
+gextra_rc="$(CLAUDE_PROJECT_DIR="$D" LOOMWRIGHT_GUARD_EXTRA_GLOBS='.github/workflows/*' bash "$GUARD" <<<"$(jq -n --arg sid "$SID" '{session_id:$sid, tool_name:"Edit", tool_input:{file_path:".github/workflows/ci.yml"}}')" >/dev/null 2>&1; echo $?)"
 assert_rc "Edit .github/workflows/ci.yml — deny under LOOMWRIGHT_GUARD_EXTRA_GLOBS" "$gextra_rc" 2
 # PR #258 review round-8 finding (HIGH): `for glob in $extra` is
 # unquoted, so bash pathname-expands each colon-split token against the
@@ -289,14 +296,14 @@ assert_rc "Edit .github/workflows/ci.yml — deny under LOOMWRIGHT_GUARD_EXTRA_G
 # literal `case` comparison and was silently ALLOWED (the opposite of the
 # admin's intent), non-deterministically depending on the process's CWD
 # contents at the moment the hook fires.
-gextra_new_rc="$(printf '%s' "$(jq -n --arg sid "$SID" '{session_id:$sid, tool_name:"Edit", tool_input:{file_path:".github/workflows/new-workflow-not-on-disk.yml"}}')" | CLAUDE_PROJECT_DIR="$D" LOOMWRIGHT_GUARD_EXTRA_GLOBS='.github/workflows/*' bash "$GUARD" >/dev/null 2>&1; echo $?)"
+gextra_new_rc="$(CLAUDE_PROJECT_DIR="$D" LOOMWRIGHT_GUARD_EXTRA_GLOBS='.github/workflows/*' bash "$GUARD" <<<"$(jq -n --arg sid "$SID" '{session_id:$sid, tool_name:"Edit", tool_input:{file_path:".github/workflows/new-workflow-not-on-disk.yml"}}')" >/dev/null 2>&1; echo $?)"
 assert_rc "Edit .github/workflows/new-workflow-not-on-disk.yml — deny under EXTRA_GLOBS (CWD-independent, PR #258 round-8)" "$gextra_new_rc" 2
 # PR #258 review round-8 finding (MEDIUM): the conftest.py branch above
 # unconditionally returned on BOTH the deny and non-toplevel-allow path,
 # so it never reached is_protected_basename/EXTRA_GLOBS for that one
 # basename — an admin extending protection to non-toplevel conftest.py
 # files via LOOMWRIGHT_GUARD_EXTRA_GLOBS was silently ignored.
-gextra_conftest_rc="$(printf '%s' "$(jq -n --arg sid "$SID" --arg fp "$CONFTEST_D/sub/conftest.py" '{session_id:$sid, tool_name:"Edit", tool_input:{file_path:$fp}}')" | CLAUDE_PROJECT_DIR="$CONFTEST_D" LOOMWRIGHT_GUARD_EXTRA_GLOBS='conftest.py' bash "$GUARD" >/dev/null 2>&1; echo $?)"
+gextra_conftest_rc="$(CLAUDE_PROJECT_DIR="$CONFTEST_D" LOOMWRIGHT_GUARD_EXTRA_GLOBS='conftest.py' bash "$GUARD" <<<"$(jq -n --arg sid "$SID" --arg fp "$CONFTEST_D/sub/conftest.py" '{session_id:$sid, tool_name:"Edit", tool_input:{file_path:$fp}}')" >/dev/null 2>&1; echo $?)"
 assert_rc "Edit <non-toplevel>/conftest.py — deny under EXTRA_GLOBS=conftest.py (PR #258 round-8, was dead code)" "$gextra_conftest_rc" 2
 
 # ---------------------------------------------------------------------------
@@ -309,14 +316,34 @@ FOREIGN_D="$(mktemp -d)"; mkdir -p "$FOREIGN_D/.supervisor/guard"
 echo '{"session_id":"other","armed_at":"2026-09-23T00:00:00Z","by":"test"}' > "$FOREIGN_D/.supervisor/guard/other.json"
 assert_rc "guard/ holds only a foreign-id file — allow"            "$(bash_rc "$FOREIGN_D" "$SID" 'git commit -n -m x')" 0
 
-optout_rc="$(printf '%s' "$(jq -n --arg sid "$SID" --arg cmd 'git commit -n -m x' '{session_id:$sid, tool_name:"Bash", tool_input:{command:$cmd}}')" | CLAUDE_PROJECT_DIR="$D" LOOMWRIGHT_ALLOW_GATE_CONFIG_EDITS=1 bash "$GUARD" >/dev/null 2>&1; echo $?)"
+# here-string, not a pipe -- see bash_rc's comment for why (this exercises
+# the SAME fast-allow-without-reading-stdin path).
+optout_rc="$(CLAUDE_PROJECT_DIR="$D" LOOMWRIGHT_ALLOW_GATE_CONFIG_EDITS=1 bash "$GUARD" <<<"$(jq -n --arg sid "$SID" --arg cmd 'git commit -n -m x' '{session_id:$sid, tool_name:"Bash", tool_input:{command:$cmd}}')" >/dev/null 2>&1; echo $?)"
 assert_rc "env opt-out — allow"                                    "$optout_rc" 0
 
-nojq_deny_rc="$(printf '%s' "$(jq -n --arg sid "$SID" '{session_id:$sid, tool_name:"Bash", tool_input:{command:"echo hi"}}')" | env -i PATH=/bin CLAUDE_PROJECT_DIR="$D" bash "$GUARD" >/dev/null 2>&1; echo $?)"
+# `PATH=/bin` does NOT reliably hide jq: on Debian/Ubuntu's merged-usr
+# layout (e.g. GitHub Actions' ubuntu-latest runners), `/bin` is a symlink
+# to `/usr/bin`, where jq ships pre-installed -- so `PATH=/bin` finds it
+# anyway, defeating the "no jq" simulation entirely (PR #258 CI run on
+# 6b48b1f: this test wanted rc=2, got rc=0 — jq was silently found). A
+# freshly created, guaranteed-empty directory hides it on every platform;
+# the guard's own jq-missing path never needs any external binary before
+# `command -v jq` runs, so an empty PATH is sufficient.
+NOJQ_PATH_D="$(mktemp -d)"
+# `env -i PATH="$NOJQ_PATH_D" ... bash ...` resolves "bash" itself via
+# THIS new PATH (env execvp's the command using the environment it was
+# just given) — an empty directory would make even `bash` unresolvable
+# (rc=127), not just jq. Symlink in only bash; `cat` (also called
+# unconditionally early in the guard) is deliberately left absent too —
+# harmless here, since both tests below exit (fast-allow, or
+# jq-missing-deny) before PAYLOAD's content is ever used.
+ln -s "$(command -v bash)" "$NOJQ_PATH_D/bash"
+nojq_deny_rc="$(env -i PATH="$NOJQ_PATH_D" CLAUDE_PROJECT_DIR="$D" bash "$GUARD" <<<"$(jq -n --arg sid "$SID" '{session_id:$sid, tool_name:"Bash", tool_input:{command:"echo hi"}}')" >/dev/null 2>&1; echo $?)"
 assert_rc "no jq + own-id file present — guard_unavailable deny"   "$nojq_deny_rc" 2
 
-nojq_allow_rc="$(printf '%s' "$(jq -n '{session_id:"x", tool_name:"Bash", tool_input:{command:"echo hi"}}')" | env -i PATH=/bin CLAUDE_PROJECT_DIR="$EMPTY_D" bash "$GUARD" >/dev/null 2>&1; echo $?)"
+nojq_allow_rc="$(env -i PATH="$NOJQ_PATH_D" CLAUDE_PROJECT_DIR="$EMPTY_D" bash "$GUARD" <<<"$(jq -n '{session_id:"x", tool_name:"Bash", tool_input:{command:"echo hi"}}')" >/dev/null 2>&1; echo $?)"
 assert_rc "no jq + empty guard/ — allow"                           "$nojq_allow_rc" 0
+rm -rf "$NOJQ_PATH_D"
 
 # ---------------------------------------------------------------------------
 # guard-arm.sh subcommand cases
@@ -364,16 +391,16 @@ fi
 wait "$trailing_flag_pid" 2>/dev/null
 [ "$trailing_flag_hung" -eq 0 ] && ok "arm foo --session-id (no value) — fails fast, does not hang" || no "arm foo --session-id (no value) — hung (unbounded-shift regression)"
 
-afp_match="$(printf '%s' "$(jq -n '{session_id:"sess-afp-1", tool_input:{subagent_type:"loomwright:loomwright:worker"}}')" | CLAUDE_PROJECT_DIR="$ARM_D" bash "$ARM" arm-from-payload >/dev/null 2>&1; echo $?)"
+afp_match="$(CLAUDE_PROJECT_DIR="$ARM_D" bash "$ARM" arm-from-payload <<<"$(jq -n '{session_id:"sess-afp-1", tool_input:{subagent_type:"loomwright:loomwright:worker"}}')" >/dev/null 2>&1; echo $?)"
 [ -e "$ARM_D/.supervisor/guard/sess-afp-1.json" ] && ok "arm-from-payload arms on namespaced :worker subagent_type" || no "arm-from-payload arms on namespaced :worker subagent_type"
 
-printf '%s' "$(jq -n '{session_id:"sess-afp-2", tool_input:{subagent_type:"general-purpose"}}')" | CLAUDE_PROJECT_DIR="$ARM_D" bash "$ARM" arm-from-payload >/dev/null 2>&1
+CLAUDE_PROJECT_DIR="$ARM_D" bash "$ARM" arm-from-payload <<<"$(jq -n '{session_id:"sess-afp-2", tool_input:{subagent_type:"general-purpose"}}')" >/dev/null 2>&1
 [ ! -e "$ARM_D/.supervisor/guard/sess-afp-2.json" ] && ok "arm-from-payload does not arm on general-purpose" || no "arm-from-payload does not arm on general-purpose"
 
-printf '%s' "$(jq -n '{session_id:"sess-afp-3", tool_input:{subagent_type:"my-worker"}}')" | CLAUDE_PROJECT_DIR="$ARM_D" bash "$ARM" arm-from-payload >/dev/null 2>&1
+CLAUDE_PROJECT_DIR="$ARM_D" bash "$ARM" arm-from-payload <<<"$(jq -n '{session_id:"sess-afp-3", tool_input:{subagent_type:"my-worker"}}')" >/dev/null 2>&1
 [ ! -e "$ARM_D/.supervisor/guard/sess-afp-3.json" ] && ok "arm-from-payload does not arm on unnamespaced my-worker" || no "arm-from-payload does not arm on unnamespaced my-worker"
 
-printf '%s' "$(jq -n '{session_id:"sess-arm-1"}')" | CLAUDE_PROJECT_DIR="$ARM_D" bash "$ARM" disarm-session >/dev/null 2>&1
+CLAUDE_PROJECT_DIR="$ARM_D" bash "$ARM" disarm-session <<<"$(jq -n '{session_id:"sess-arm-1"}')" >/dev/null 2>&1
 [ ! -e "$ARM_D/.supervisor/guard/sess-arm-1.json" ] && [ -e "$ARM_D/.supervisor/guard/sess-arm-2.json" ] && ok "disarm-session removes only the payload's own id" || no "disarm-session removes only the payload's own id"
 
 # prune: 8-day-old file removed, 6-day-old file kept
@@ -459,16 +486,19 @@ make_mutant() {
 
 mut_rc() {
   local mutant="$1" d="$2" sid="$3" cmd="$4"
-  printf '%s' "$(jq -n --arg sid "$sid" --arg cmd "$cmd" '{session_id:$sid, tool_name:"Bash", tool_input:{command:$cmd}}')" \
-    | CLAUDE_PROJECT_DIR="$d" bash "$mutant" >/dev/null 2>&1
+  # here-string, not a pipe -- see bash_rc's comment for why.
+  CLAUDE_PROJECT_DIR="$d" bash "$mutant" \
+    <<<"$(jq -n --arg sid "$sid" --arg cmd "$cmd" '{session_id:$sid, tool_name:"Bash", tool_input:{command:$cmd}}')" \
+    >/dev/null 2>&1
   echo $?
 }
 
 # mut_edit_rc <mutant> <guard_dir> <session_id> <file_path> [extra_globs_env]
 mut_edit_rc() {
   local mutant="$1" d="$2" sid="$3" fp="$4" extra="${5:-}"
-  printf '%s' "$(jq -n --arg sid "$sid" --arg fp "$fp" '{session_id:$sid, tool_name:"Edit", tool_input:{file_path:$fp}}')" \
-    | CLAUDE_PROJECT_DIR="$d" LOOMWRIGHT_GUARD_EXTRA_GLOBS="$extra" bash "$mutant" >/dev/null 2>&1
+  CLAUDE_PROJECT_DIR="$d" LOOMWRIGHT_GUARD_EXTRA_GLOBS="$extra" bash "$mutant" \
+    <<<"$(jq -n --arg sid "$sid" --arg fp "$fp" '{session_id:$sid, tool_name:"Edit", tool_input:{file_path:$fp}}')" \
+    >/dev/null 2>&1
   echo $?
 }
 
@@ -1088,7 +1118,7 @@ with open(p, 'w') as f:
 PYEOF
 if [ -s "$MUT_H" ] && ! cmp -s "$ARM" "$MUT_H" && bash -n "$MUT_H" 2>/dev/null; then
   MUT_H_D="$(mktemp -d)"
-  printf '%s' "$(jq -n '{session_id:"sess-h", tool_input:{subagent_type:"my-worker"}}')" | CLAUDE_PROJECT_DIR="$MUT_H_D" bash "$MUT_H" arm-from-payload >/dev/null 2>&1
+  CLAUDE_PROJECT_DIR="$MUT_H_D" bash "$MUT_H" arm-from-payload <<<"$(jq -n '{session_id:"sess-h", tool_input:{subagent_type:"my-worker"}}')" >/dev/null 2>&1
   if [ -e "$MUT_H_D/.supervisor/guard/sess-h.json" ]; then
     ok "(h) mutation control: dropping the namespace-colon requirement arms on unnamespaced my-worker"
   else

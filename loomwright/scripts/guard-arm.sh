@@ -97,7 +97,19 @@ prune() {
   cutoff=$(( now - PRUNE_AGE_SECONDS ))
   for f in "$GUARD_DIR"/*.json; do
     [ -e "$f" ] || continue
-    mtime="$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null || true)"
+    # GNU `-c %Y` tried FIRST, not BSD `-f %m`: on Linux, `stat -f %m`
+    # does NOT cleanly fail (which is what a `||` fallback needs) — it
+    # succeeds with garbage, because `-f` switches GNU stat into
+    # filesystem-status mode where `%m` is not a valid directive for
+    # file mtime. That garbage previously always passed straight through
+    # to the numeric-validation guard below as a non-numeric value,
+    # silently skipping every file's prune check on Linux (never
+    # pruning, never crashing) — confirmed by CI failing "arm prunes an
+    # 8-day-old marker" on every run while passing locally on macOS,
+    # where BSD stat has no `-c` and `-f %m` is the correct, only form.
+    # Trying `-c %Y` first means it wins cleanly on Linux and correctly
+    # fails (nonzero exit, clean fallback) on macOS. (PR #258.)
+    mtime="$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || true)"
     case "$mtime" in ''|*[!0-9]*) continue ;; esac
     if [ "$mtime" -lt "$cutoff" ]; then
       rm -f "$f" 2>/dev/null || true
