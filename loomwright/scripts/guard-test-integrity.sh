@@ -266,24 +266,36 @@ env_flag_cluster_consume() {
     case "$c" in
       0|i|v) : ;;
       u|C|P)
-        [ -n "$rest" ] && return 1  # attached-value form, not covered
-        EFC_TAKES_VALUE=1
+        # getopt-standard short-option value attachment: `-uFOO` means
+        # `-u FOO` in ONE token, same as `-C/tmp`/`-Pdir` (real env
+        # genuinely accepts this form, verified live). Previously this
+        # returned 1 ("not covered") whenever a value was attached,
+        # which — since the caller's fallback on a non-match is to treat
+        # the FLAG TOKEN ITSELF as exec_word — misresolved exec_base to
+        # the flag token, bypassing every downstream check, up to a full
+        # self-disarm (`env -uFOO rm <guard marker>`; PR #258 round-10
+        # review finding, the attached-value sibling of round-9's
+        # separated-value `-S` fix). An attached value has nothing
+        # SEPARATE left to skip, so EFC_TAKES_VALUE stays 0 either way;
+        # what changed is that this case no longer `return 1`s on it.
+        if [ -n "$rest" ]; then EFC_TAKES_VALUE=0; else EFC_TAKES_VALUE=1; fi
         return 0
         ;;
       S)
-        # -S/--split-string's value is not a plain path/name like
-        # -u/-C/-P's — it is a WHOLE embedded command line that env
-        # itself re-splits and execs (`env -S "HUSKY=0 git commit -m
-        # x"` really runs `HUSKY=0 git commit -m x`, verified live on
-        # this platform). "Skip the value word" (what -u/-C/-P correctly
-        # do) would silently smuggle an unparsed command past every
-        # exec_base-keyed check at once — the same self-disarm-capable
-        # bug class rounds 3-5 already closed for `\exec`/`command`/
-        # bundled flags. EFC_IS_SPLIT_STRING tells the caller to deny
-        # outright instead of skip-and-continue (PR #258 round-9 review
-        # finding).
-        [ -n "$rest" ] && return 1  # attached-value form, not covered
-        EFC_TAKES_VALUE=1
+        # -S/--split-string's value (attached `-Scmd` or separated `-S
+        # cmd`) is not a plain path/name like -u/-C/-P's — it is a WHOLE
+        # embedded command line that env itself re-splits and execs
+        # (`env -S "HUSKY=0 git commit -m x"` really runs `HUSKY=0 git
+        # commit -m x`, verified live on this platform). "Skip the value"
+        # (what -u/-C/-P correctly do) would silently smuggle an unparsed
+        # command past every exec_base-keyed check at once — the same
+        # self-disarm-capable bug class rounds 3-5 already closed for
+        # `\exec`/`command`/bundled flags. EFC_IS_SPLIT_STRING tells the
+        # caller to deny outright regardless of which form this is (PR
+        # #258 round-9 finding for the separated form; round-10 extended
+        # the same deny to the attached form, which round 9 had left
+        # falling through unrecognized exactly like -u/-C/-P's gap).
+        if [ -n "$rest" ]; then EFC_TAKES_VALUE=0; else EFC_TAKES_VALUE=1; fi
         EFC_IS_SPLIT_STRING=1
         return 0
         ;;
@@ -482,6 +494,25 @@ evaluate_one_simple_command() {
     fi
     case "$at" in
       HUSKY=*|HUSKY_SKIP_HOOKS=*|SKIP=*|PRE_COMMIT_ALLOW_NO_CONFIG=*|GIT_CONFIG_PARAMETERS=*)
+        deny_variant bash "commit/push-hook bypass env"
+        ;;
+      GIT_CONFIG_COUNT=*|GIT_CONFIG_KEY_*|GIT_CONFIG_VALUE_*)
+        # git >=2.31's env-var-only config channel (GIT_CONFIG_COUNT=<n>
+        # + GIT_CONFIG_KEY_<i>=<key> + GIT_CONFIG_VALUE_<i>=<value>) is
+        # functionally identical to `-c key=value` — including
+        # `-c core.hooksPath=...`, already denied above — for setting
+        # ANY git config from the command line. Live-verified against a
+        # REAL executable git hook: `GIT_CONFIG_COUNT=1
+        # GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null
+        # git commit -m x` genuinely skips the hook and commits (PR #258
+        # round-10 review finding). Correlating a specific KEY_i/VALUE_i
+        # pair across separate tokens to check for core.hooksPath
+        # specifically would need extra cross-token bookkeeping this
+        # scan doesn't otherwise do; deny the whole env-var family
+        # outright instead — the same blanket-deny-on-presence treatment
+        # GIT_CONFIG_PARAMETERS already gets above, for the identical
+        # reason (its own value is a shell-quoted key=value list this
+        # scan doesn't parse either).
         deny_variant bash "commit/push-hook bypass env"
         ;;
     esac

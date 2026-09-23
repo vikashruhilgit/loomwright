@@ -5,7 +5,7 @@
 # (`.supervisor/requirements/six-phase-loop-gaps/02-test-integrity-guard.md`):
 # every Bash pattern + its negation twin, every Write|Edit basename + allow
 # case, the 6 gate cases, the guard-arm.sh subcommand cases, the concurrency
-# case, the sentinel checks, and all 22 named mutation controls.
+# case, the sentinel checks, and all 24 named mutation controls.
 #
 # Runs entirely in temp dirs (mktemp -d), never touches the real
 # `.supervisor/`. Exit 0 = all pass, 1 = any failure (auto-registered by
@@ -176,6 +176,27 @@ assert_rc 'env --split-string="HUSKY=0 git commit -n -m x" — deny (long-form s
 assert_rc 'env -iS "HUSKY=0 git commit -m x" — deny (bundled prefix + split-string)' "$(bash_rc "$D" "$SID" 'env -iS "HUSKY=0 git commit -m x"')" 2
 assert_rc 'env -S "rm <guard marker>" — deny (split-string self-disarm)' "$(bash_rc "$D" "$SID" "env -S \"rm .supervisor/guard/$SID.json\"")" 2
 assert_rc "env -C /tmp git commit -n -m x — allow-form regression: -C still a plain value-taking flag, still denies via git -n" "$(bash_rc "$D" "$SID" 'env -C /tmp git commit -n -m x')" 2
+# PR #258 review round-10 finding (HIGH): the attached-value sibling of
+# round-9's -S fix. env genuinely accepts a value glued to its flag
+# letter (`-uFOO` == `-u FOO`, `-C/tmp` == `-C /tmp`) — the round-5/9
+# code returned 1 ("not covered") on this form, and the caller's
+# fallback on a non-match is to treat the FLAG TOKEN ITSELF as
+# exec_word, bypassing every downstream check at once (incl. a full
+# self-disarm via `env -uFOO rm <marker>`, and `-Scmd` never denying the
+# smuggled command at all despite round 9's fix for the separated form).
+assert_rc "env -Srm <guard marker> — deny (attached split-string self-disarm)" "$(bash_rc "$D" "$SID" "env -Srm .supervisor/guard/$SID.json")" 2
+assert_rc "env -uFOO rm <guard marker> — deny (attached-value self-disarm)" "$(bash_rc "$D" "$SID" "env -uFOO rm .supervisor/guard/$SID.json")" 2
+assert_rc "env -uFOO git commit -n -m x — deny (attached-value -u)" "$(bash_rc "$D" "$SID" 'env -uFOO git commit -n -m x')" 2
+assert_rc "env -C/tmp git commit -n -m x — deny (attached-value -C, no space)" "$(bash_rc "$D" "$SID" 'env -C/tmp git commit -n -m x')" 2
+assert_rc "env -iuFOO rm <guard marker> — deny (bundled boolean + attached-value)" "$(bash_rc "$D" "$SID" "env -iuFOO rm .supervisor/guard/$SID.json")" 2
+# PR #258 review round-10 finding (HIGH): git >=2.31's env-var-only
+# config channel (GIT_CONFIG_COUNT=<n> + GIT_CONFIG_KEY_<i>=<key> +
+# GIT_CONFIG_VALUE_<i>=<value>) is functionally identical to `-c
+# key=value`, including `-c core.hooksPath=...` (already denied above) —
+# live-verified against a REAL executable git hook that this genuinely
+# skips it and commits.
+assert_rc "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null git commit -m x — deny (env-var-only hooksPath override)" "$(bash_rc "$D" "$SID" 'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null git commit -m x')" 2
+assert_rc "GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null GIT_CONFIG_COUNT=1 git commit -m x — deny (reordered assignments)" "$(bash_rc "$D" "$SID" 'GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null GIT_CONFIG_COUNT=1 git commit -m x')" 2
 # PR #258 review round-4 finding: `ln`/`ln -s` clobbering a protected path
 # or a git hook was not in the write-verb/`.git/hooks` verb lists at all.
 assert_rc "ln -sf /dev/null jest.config.js — deny (symlink-clobber write-verb gap)" "$(bash_rc "$D" "$SID" 'ln -sf /dev/null jest.config.js')" 2
@@ -886,13 +907,11 @@ import sys
 src, dst = sys.argv[1], sys.argv[2]
 with open(src) as f:
     c = f.read()
-old = ('        [ -n "$rest" ] && return 1  # attached-value form, not covered\n'
-       '        EFC_TAKES_VALUE=1\n'
+old = ('        if [ -n "$rest" ]; then EFC_TAKES_VALUE=0; else EFC_TAKES_VALUE=1; fi\n'
        '        EFC_IS_SPLIT_STRING=1\n'
        '        return 0\n')
 assert old in c, "EFC_IS_SPLIT_STRING assignment not found for mutation (v)"
-new = ('        [ -n "$rest" ] && return 1  # attached-value form, not covered\n'
-       '        EFC_TAKES_VALUE=1\n'
+new = ('        if [ -n "$rest" ]; then EFC_TAKES_VALUE=0; else EFC_TAKES_VALUE=1; fi\n'
        '        return 0\n')
 c = c.replace(old, new, 1)
 with open(dst, 'w') as f:
@@ -903,6 +922,50 @@ if [ -s "$MUT_V" ] && ! cmp -s "$GUARD" "$MUT_V" && bash -n "$MUT_V" 2>/dev/null
   [ "$rc" != "2" ] && ok "(v) mutation control: dropping EFC_IS_SPLIT_STRING re-opens the env -S embedded-command smuggling bypass" || no "(v) mutation control did not break the case (still rc=2)"
 else
   no "(v) mutation control: could not construct mutant"
+fi
+
+# (w) revert the u|C|P attached-value handling back to `return 1` ->
+#     `env -uFOO rm <marker>` re-opens (the attached-value sibling of
+#     mutation (v), PR #258 round-10 review finding)
+MUT_W="$MUT_D/mut-w.sh"
+python3 - "$GUARD" "$MUT_W" <<'PYEOF' 2>/dev/null || true
+import sys
+src, dst = sys.argv[1], sys.argv[2]
+with open(src) as f:
+    c = f.read()
+import re
+old_pat = (r'      u\|C\|P\)\n'
+           r'.*?\n'
+           r'        if \[ -n "\$rest" \]; then EFC_TAKES_VALUE=0; else EFC_TAKES_VALUE=1; fi\n'
+           r'        return 0\n'
+           r'        ;;\n')
+m = re.search(old_pat, c, re.S)
+assert m, "u|C|P case arm not found for mutation (w)"
+new = ('      u|C|P)\n'
+       '        [ -n "$rest" ] && return 1  # attached-value form, not covered\n'
+       '        EFC_TAKES_VALUE=1\n'
+       '        return 0\n'
+       '        ;;\n')
+c = c[:m.start()] + new + c[m.end():]
+with open(dst, 'w') as f:
+    f.write(c)
+PYEOF
+if [ -s "$MUT_W" ] && ! cmp -s "$GUARD" "$MUT_W" && bash -n "$MUT_W" 2>/dev/null; then
+  rc="$(mut_rc "$MUT_W" "$D" "$SID" "env -uFOO rm .supervisor/guard/$SID.json")"
+  [ "$rc" != "2" ] && ok "(w) mutation control: reverting the u|C|P attached-value handling re-opens the attached-flag self-disarm bypass" || no "(w) mutation control did not break the case (still rc=2)"
+else
+  no "(w) mutation control: could not construct mutant"
+fi
+
+# (x) drop the GIT_CONFIG_COUNT/KEY_/VALUE_ deny case -> git's env-var-only
+#     config channel re-opens as an undetected core.hooksPath override
+#     (PR #258 round-10 review finding, live-verified against a real hook)
+MUT_X="$MUT_D/mut-x.sh"
+if make_mutant "$MUT_X" perl -0pi -e 's/      GIT_CONFIG_COUNT=\*\|GIT_CONFIG_KEY_\*\|GIT_CONFIG_VALUE_\*\)\n(?:.*\n)*?        deny_variant bash "commit\/push-hook bypass env"\n        ;;\n//'; then
+  rc="$(mut_rc "$MUT_X" "$D" "$SID" 'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null git commit -m x')"
+  [ "$rc" != "2" ] && ok "(x) mutation control: dropping the GIT_CONFIG_COUNT deny case re-opens the env-var-only hooksPath override" || no "(x) mutation control did not break the case (still rc=2)"
+else
+  no "(x) mutation control: could not construct mutant"
 fi
 
 # (e) delete the empty-id check in arm -> the unset-env case fails (writes a
