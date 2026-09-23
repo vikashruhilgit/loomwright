@@ -453,6 +453,31 @@ SALVAGE_BIN="$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)/worktree-salvage.sh"
 # ALWAYS exit 0 — a missing/failing notify call never blocks the trap.
 NOTIFY_BIN="$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)/notify-desktop.sh"
 WEBHOOK_BIN="$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)/send-webhook.sh"
+# Test-integrity guard pre-arm (six-phase-loop-gaps/02): the detached runner is
+# launched with `claude --agent`, never spawned by a `Task`, so the
+# PreToolUse[Agent|Task] hook backstop can never fire for it — this script is
+# the ONE caller allowed to pass an explicit --session-id to guard-arm.sh
+# (`arm dispatcher --session-id <uuid>`), because it is a plugin script that
+# owns the launch, not a prompt step. See guard-arm.sh's own header.
+GUARD_ARM_BIN="$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)/guard-arm.sh"
+
+# generate_uuid — portable v4-shaped uuid: uuidgen when present (macOS/most
+# Linux), else python3, else /dev/urandom via od (no external dependency
+# assumed beyond bash + od, both present wherever this script already runs).
+generate_uuid() {
+  if command -v uuidgen >/dev/null 2>&1; then
+    uuidgen | tr '[:upper:]' '[:lower:]'
+    return 0
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import uuid; print(uuid.uuid4())'
+    return 0
+  fi
+  od -An -N16 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n' | awk '{
+    printf "%s-%s-4%s-%s%s-%s\n", substr($0,1,8), substr($0,9,4), substr($0,14,3), \
+      substr($0,17,1), substr($0,18,3), substr($0,21,12)
+  }'
+}
 
 # ---- ① existing-marker-wins (AC4a, PINNED order — BEFORE lock/worktree) ------
 # If a durable marker already exists for this PR, a dispatch genuinely started —
@@ -487,6 +512,10 @@ if [ -e "$MARKER" ]; then
   fi
 fi
 
+# Guard session id — generated ONCE here so both the DRY_RUN preview and the
+# real launch below use the SAME uuid (dispatcher pre-arm, six-phase-loop-gaps/02).
+GUARD_SESSION_ID="$(generate_uuid)"
+
 # ---- Dry-run short-circuit (TEST-ONLY exception — claude-independent) ---------
 # In dry-run the claude process is never launched (no lock/worktree taken), so its
 # presence on PATH is irrelevant. Emit the would-be command + write the marker (so
@@ -509,8 +538,9 @@ if [ -n "$DRY_RUN" ]; then
     ENV_PREFIX="${ENV_PREFIX}LOOMWRIGHT_PR_IS_FORK=1 "
   fi
   DRY_ALLOWED_TOOLS="$(build_allowed_tools "")"
-  printf 'DRY_RUN_DISPATCH: %snohup %s -p --permission-mode %s --allowedTools %s --disallowedTools %s --agent %s %s\n' \
-    "$ENV_PREFIX" "$CLAUDE_BIN" "$PERMISSION_MODE" "$DRY_ALLOWED_TOOLS" "$DISALLOWED_TOOLS" "$RUNNER" "$PR_URL"
+  printf 'DRY_RUN_DISPATCH: %snohup %s -p --permission-mode %s --allowedTools %s --disallowedTools %s --agent %s --session-id %s %s\n' \
+    "$ENV_PREFIX" "$CLAUDE_BIN" "$PERMISSION_MODE" "$DRY_ALLOWED_TOOLS" "$DISALLOWED_TOOLS" "$RUNNER" "$GUARD_SESSION_ID" "$PR_URL"
+  printf 'DRY_RUN_GUARD_ARM: %s\n' "$GUARD_SESSION_ID"
   printf 'ts=%s\turl=%s\tregime=%s\n' "$TIMESTAMP" "$PR_URL" "$REGIME_LABEL" > "$MARKER" 2>/dev/null || true
   exit 0
 fi
@@ -826,7 +856,7 @@ esac
 # sibling scripts. See "DEATH DETECTION" inside the trap below.
 ALLOWED_TOOLS_REAL="$(build_allowed_tools "${HEAD_REF:-HEAD_REF}")"
 WRAPPER='
-_mg="$1"; _wt="$2"; _lock="$3"; _bin="$4"; _runner="$5"; _pr="$6"; _log="$7"; _salvage="$8"; _pmode="$9"; _atools="${10}"; _dtools="${11}"; _marker="${12}"; _notify="${13}"; _webhook="${14}"
+_mg="$1"; _wt="$2"; _lock="$3"; _bin="$4"; _runner="$5"; _pr="$6"; _log="$7"; _salvage="$8"; _pmode="$9"; _atools="${10}"; _dtools="${11}"; _marker="${12}"; _notify="${13}"; _webhook="${14}"; _sid="${15}"
 trap_cleanup() {
   _rc="$_exit_code"
   cd "$_mg" 2>/dev/null || cd / 2>/dev/null || true
@@ -888,11 +918,20 @@ trap_cleanup() {
 }
 trap trap_cleanup EXIT
 cd "$_wt" || exit 0
-"$_bin" -p --permission-mode "$_pmode" --allowedTools "$_atools" --disallowedTools "$_dtools" --agent "$_runner" "$_pr" >>"$_log" 2>&1 </dev/null
+"$_bin" -p --permission-mode "$_pmode" --allowedTools "$_atools" --disallowedTools "$_dtools" --agent "$_runner" --session-id "$_sid" "$_pr" >>"$_log" 2>&1 </dev/null
 _exit_code=$?
 exit "$_exit_code"
 '
-( nohup bash -c "$WRAPPER" _ "$MAIN_GITDIR" "$WT_PATH" "$LOCK_DIR_ABS" "$CLAUDE_BIN" "$RUNNER" "$PR_URL" "$RUN_LOG_ABS" "$SALVAGE_BIN" "$PERMISSION_MODE" "$ALLOWED_TOOLS_REAL" "$DISALLOWED_TOOLS" "$MARKER_ABS" "$NOTIFY_BIN" "$WEBHOOK_BIN" >/dev/null 2>&1 & ) >/dev/null 2>&1 || true
+# Guard pre-arm (six-phase-loop-gaps/02): write the marker in the SIBLING
+# worktree BEFORE the launch — `guard-arm.sh` resolves `.supervisor/guard/`
+# under `${CLAUDE_PROJECT_DIR:-$PWD}`, so CLAUDE_PROJECT_DIR is pinned to
+# $WT_PATH here (the dispatcher's own process env, not the eventual `claude
+# -p` process's). The runner's own review-heal-entry `arm` call then finds
+# its own file already present and no-ops. Best-effort: a failed pre-arm
+# still launches (the runner logs `guard_armed: failed` itself at loop
+# entry) — this dispatcher never blocks a review drain on the guard.
+CLAUDE_PROJECT_DIR="$WT_PATH" bash "$GUARD_ARM_BIN" arm dispatcher --session-id "$GUARD_SESSION_ID" >/dev/null 2>&1 || true
+( nohup bash -c "$WRAPPER" _ "$MAIN_GITDIR" "$WT_PATH" "$LOCK_DIR_ABS" "$CLAUDE_BIN" "$RUNNER" "$PR_URL" "$RUN_LOG_ABS" "$SALVAGE_BIN" "$PERMISSION_MODE" "$ALLOWED_TOOLS_REAL" "$DISALLOWED_TOOLS" "$MARKER_ABS" "$NOTIFY_BIN" "$WEBHOOK_BIN" "$GUARD_SESSION_ID" >/dev/null 2>&1 & ) >/dev/null 2>&1 || true
 
 log "dispatched review-pr-runner for $PR_URL (worktree: $WT_PATH, log: $RUN_LOG)"
 exit 0

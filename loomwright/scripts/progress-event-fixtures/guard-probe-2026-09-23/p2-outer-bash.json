@@ -1,0 +1,17 @@
+{
+  "session_id": "b3d5245f-ddd4-4455-ab01-d82a558e5174",
+  "transcript_path": "/Users/vikashruhil/.claude/projects/-private-tmp-guard-probe-63549/b3d5245f-ddd4-4455-ab01-d82a558e5174.jsonl",
+  "cwd": "/private/tmp/guard-probe-63549",
+  "prompt_id": "ded353a7-f40f-4c4d-af3f-c7079cf810ef",
+  "permission_mode": "bypassPermissions",
+  "effort": {
+    "level": "high"
+  },
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "echo outer-main-thread > outer.txt",
+    "description": "Write outer-main-thread to outer.txt"
+  },
+  "tool_use_id": "toolu_01TQ8Pbqyd3oynAg67BwEieB"
+}

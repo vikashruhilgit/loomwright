@@ -1,0 +1,17 @@
+{
+  "session_id": "12345678-1234-4234-8234-1234567890ab",
+  "transcript_path": "/Users/vikashruhil/.claude/projects/-private-tmp-guard-probe-63549/12345678-1234-4234-8234-1234567890ab.jsonl",
+  "cwd": "/private/tmp/guard-probe-63549",
+  "prompt_id": "6733e072-fcda-4f70-bf31-1f99043d4844",
+  "permission_mode": "bypassPermissions",
+  "effort": {
+    "level": "high"
+  },
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "printf '%s' \"$CLAUDE_CODE_SESSION_ID\" > envid2.txt",
+    "description": "Write session ID to envid2.txt"
+  },
+  "tool_use_id": "toolu_01NwGzk4LHGnaufXRFxjU7TT"
+}

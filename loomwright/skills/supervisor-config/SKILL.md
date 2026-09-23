@@ -106,6 +106,8 @@ Supervisor prompt.
      - Pre-populate: task details, acceptance criteria, subtask hints, parallelism analysis, skill references
      - Jump to the Supervisor's Phase 1 with enriched context — planning phases are pre-answered by the brief, freeing budget for Phase 3 execution
 
+7. **Arm the test-integrity guard (six-phase-loop-gaps/02):** run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/guard-arm.sh" arm supervisor`. This is one of the plugin's two prompt-step arm points (the other is `review-heal/SKILL.md`'s loop entry) — the `PreToolUse[Agent|Task]` hook backstop covers most spawns even if this step is skipped (a prompt step skipped is the plugin's own documented failure mode, see `skills/self-heal-advisory/SKILL.md` "Hook backstop"), but arming here as early as INIT closes the window before the first spawn. Record `record_decision("guard_armed: ok")` on exit 0, or `record_decision("guard_armed: failed: <stderr>")` on any non-zero exit — on `failed` the run proceeds visibly unguarded; surface `guard: unarmed` in the completion tail's outcome line. Never block INIT on this — a failed arm is logged, not fatal.
+
 **Output:**
 ```markdown
 ## SUPERVISOR v4: Starting Parallel Workflow

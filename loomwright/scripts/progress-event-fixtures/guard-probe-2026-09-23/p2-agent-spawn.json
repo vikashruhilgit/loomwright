@@ -1,0 +1,19 @@
+{
+  "session_id": "b3d5245f-ddd4-4455-ab01-d82a558e5174",
+  "transcript_path": "/Users/vikashruhil/.claude/projects/-private-tmp-guard-probe-63549/b3d5245f-ddd4-4455-ab01-d82a558e5174.jsonl",
+  "cwd": "/private/tmp/guard-probe-63549",
+  "prompt_id": "ded353a7-f40f-4c4d-af3f-c7079cf810ef",
+  "permission_mode": "bypassPermissions",
+  "effort": {
+    "level": "high"
+  },
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Agent",
+  "tool_input": {
+    "description": "Write inner-subagent to file",
+    "prompt": "Run this bash command: echo inner-subagent > inner.txt, then stop.",
+    "subagent_type": "general-purpose",
+    "run_in_background": false
+  },
+  "tool_use_id": "toolu_01RUaDdDmzWB3vcrq1SZ1BbZ"
+}
