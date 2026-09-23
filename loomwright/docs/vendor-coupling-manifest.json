@@ -85,7 +85,7 @@
     "loomwright/scripts/emit-progress-event.sh": 1,
     "loomwright/scripts/fixtures/posttooluse-gh-pr-create.json": 1,
     "loomwright/scripts/guard-arm.sh": 6,
-    "loomwright/scripts/guard-test-integrity.sh": 4,
+    "loomwright/scripts/guard-test-integrity.sh": 5,
     "loomwright/scripts/harvest-conventions.sh": 1,
     "loomwright/scripts/notify-click-target.sh": 1,
     "loomwright/scripts/notify-desktop.sh": 3,

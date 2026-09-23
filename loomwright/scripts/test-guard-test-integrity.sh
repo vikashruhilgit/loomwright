@@ -93,6 +93,14 @@ assert_rc "rm .supervisor/guard/<sid>.json — deny"                 "$(bash_rc 
 assert_rc "bash guard-arm.sh disarm-session — deny"                "$(bash_rc "$D" "$SID" "bash $ARM disarm-session")" 2
 assert_rc "bash guard-arm.sh arm-from-payload — deny"              "$(bash_rc "$D" "$SID" "bash $ARM arm-from-payload")" 2
 assert_rc "bash guard-arm.sh arm supervisor — allow"               "$(bash_rc "$D" "$SID" "bash $ARM arm supervisor")" 0
+# PR #258 review finding: an `arm` invocation is only "harmless by construction"
+# when it can only name the CALLER's own session id — a --session-id flag lets
+# a tool call arm an ARBITRARY other session, which is the real capability
+# --session-id exists to grant, so it must be denied from a tool call (the
+# only legitimate caller, dispatch-pr-review.sh, invokes guard-arm.sh directly
+# as a subprocess, never through a tool call this matcher sees).
+assert_rc "bash guard-arm.sh arm x --session-id <arbitrary-id> — deny (arbitrary-session arm)" "$(bash_rc "$D" "$SID" "bash $ARM arm x --session-id arbitrary-id")" 2
+assert_rc "bash guard-arm.sh arm x --session-id=<arbitrary-id> — deny (= form)" "$(bash_rc "$D" "$SID" "bash $ARM arm x --session-id=arbitrary-id")" 2
 assert_rc "cat guard-arm.sh — allow"                                "$(bash_rc "$D" "$SID" "cat $ARM")" 0
 assert_rc "sed -n 1,40p guard-arm.sh — allow"                       "$(bash_rc "$D" "$SID" "sed -n 1,40p $ARM")" 0
 assert_rc "shellcheck guard-arm.sh — allow (tool absence is not the point)" "$(bash_rc "$D" "$SID" "shellcheck $ARM")" 0
@@ -301,6 +309,15 @@ MUT_D2="$MUT_D/mut-d.sh"
 if make_mutant "$MUT_D2" perl -pi -e 's/--no-ver\[a-z\]\*\|--no-verify\)/--no-verify)/g'; then
   rc="$(mut_rc "$MUT_D2" "$D" "$SID" 'git commit -qm x --no-veri')"
   [ "$rc" != "2" ] && ok "(d) mutation control: exact --no-verify match misses --no-veri" || no "(d) mutation control did not break the --no-veri case (rc=$rc)"
+fi
+
+# (i) drop the --session-id scan from the `arm` exemption -> a tool call can
+#     arm an ARBITRARY other session again (PR #258 review finding — closes
+#     the demonstrated bypass, proving the new check is load-bearing)
+MUT_I="$MUT_D/mut-i.sh"
+if make_mutant "$MUT_I" perl -0pi -e 's/    local w2\n    for w2 in "\$\{words\[\@\]:\$\(\(ga_idx \+ 2\)\)\}"; do\n      case "\$w2" in\n        --session-id\|--session-id=\*\)\n          deny_variant bash "internal control script invocation"\n          ;;\n      esac\n    done\n//'; then
+  rc="$(mut_rc "$MUT_I" "$D" "$SID" "bash $ARM arm x --session-id arbitrary-id")"
+  [ "$rc" != "2" ] && ok "(i) mutation control: dropping the --session-id scan re-opens the arbitrary-session-arm bypass" || no "(i) mutation control did not break the case (still rc=2)"
 fi
 
 # (e) delete the empty-id check in arm -> the unset-env case fails (writes a

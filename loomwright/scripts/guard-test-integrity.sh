@@ -368,9 +368,25 @@ evaluate_one_simple_command() {
     if [ "$next_word" != "arm" ]; then
       deny_variant bash "internal control script invocation"
     fi
-    # subcommand IS exactly "arm" -> allowed, fall through to other checks
-    # (an `arm` invocation from a tool call is harmless by construction — see
-    # guard-arm.sh's own header). No further Bash-matcher checks apply to
+    # subcommand IS exactly "arm" -> normally allowed (harmless by
+    # construction — see guard-arm.sh's own header) EXCEPT when a
+    # --session-id token follows: that flag lets the caller name an
+    # ARBITRARY session id instead of the tool call's own
+    # CLAUDE_CODE_SESSION_ID, arming a session the calling agent does not
+    # own. The only legitimate caller of --session-id is
+    # dispatch-pr-review.sh, which invokes guard-arm.sh directly as a
+    # subprocess, never through a tool call this matcher ever sees — so
+    # denying it here costs no legitimate use (PR #258 review finding).
+    local w2
+    for w2 in "${words[@]:$((ga_idx + 2))}"; do
+      case "$w2" in
+        --session-id|--session-id=*)
+          deny_variant bash "internal control script invocation"
+          ;;
+      esac
+    done
+    # subcommand is a bare "arm" with no --session-id -> allowed, fall
+    # through to other checks. No further Bash-matcher checks apply to
     # this simple command since it is fully accounted for.
     return 0
   fi
