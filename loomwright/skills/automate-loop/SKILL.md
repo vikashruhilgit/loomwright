@@ -58,8 +58,8 @@ so **the tested code IS the executed code** (one implementation, guarded by `scr
 | `progress-append` | §3 | Append-only `## Progress` line (never rewrites a prior line). |
 | `queue-checkoff` | §3 | Flip `- [ ]` → `- [x]` (optional `# skipped:`/`# abandoned: <reason>` form via the `mark` arg, default `skipped`, §5). |
 | `remaining` | §3 | Count of `- [ ]` Queue items (COMPUTED — not a stored run-file field). |
-| `resolve-folder` | §2 | List `*.md` in a folder not stamped `## Status: done`. |
-| `resolve-backlog` | §2 | Dependency-ordered items honoring `done`/✅ markers (dir-scan fallback). |
+| `resolve-folder` | §2 | List `*.md` in a folder not stamped `## Status: done` and not `## Status: proposed\|parked` (harness-port/02). |
+| `resolve-backlog` | §2 | Dependency-ordered items honoring `done`/✅ markers; dir-scan fallback also skips `## Status: proposed\|parked` (harness-port/02) — a checklist line naming a file directly is unaffected (by design). |
 | `resume-glob` | §4 | List run files not stamped `## Status: done`. |
 | `reconcile-item` | §4 | Reconcile one item's belief vs `gh` ground truth ⇒ `merged`/`awaiting_merge`/`gone`. |
 | `gate-eval` | §10 | The 6-condition fail-CLOSED trusted auto-merge gate — the **only** executor of `gh pr merge --squash`. **SELF-RESOLVING (red-team-hardening item 03):** the gate re-derives conditions 2–6 itself from live `gh`/GraphQL/`scripts/classify-risk.sh` reads and two artifact-file reads — the loop passes only what it alone knows (`drain_result`, `termination_reason`, `ready_sha`, `trust_unprotected`, `review_heal_result_path`, `supervisor_result_path`). A ctx carrying any gate-owned key (`high_risk`, `risk_reasons`, `head_sha`, `base`, `review_decision`, `unresolved_human_thread`, `protection_enforceable`, `checks_green`, `rubric_satisfied`) is refused (`PARK: ctx_carries_gate_owned_key`), never trusted. Condition 6 (`high_risk`) is computed by the gate itself via `scripts/classify-risk.sh`; nothing overrides it. |
