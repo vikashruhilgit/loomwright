@@ -24,8 +24,9 @@ pass=0; fail=0
 ok() { echo "  ok: $1"; pass=$((pass+1)); }
 no() { echo "  FAIL: $1"; fail=$((fail+1)); }
 
-# a `|` that is not half of `||`, then `grep` with a flag cluster containing q
-RE='(^[[:space:]]*|[^|])\|[[:space:]]*grep[[:space:]]+-[A-Za-z]*q'
+# a `|` that is not half of `||`, then `grep` with q in ANY of its leading flag tokens — `-q`, `-qF`,
+# and split forms like `-F -q` / `-v -q` alike (a first-token-only match missed the split forms)
+RE='(^[[:space:]]*|[^|])\|[[:space:]]*grep([[:space:]]+-[A-Za-z]+)*[[:space:]]+-[A-Za-z]*q'
 
 # scan <file...> — prints file:line:text for each violation
 scan() {
@@ -44,6 +45,8 @@ echo "== detector controls (fixtures are assembled at runtime so this file never
 P='|'
 { echo 'set -uo pipefail'; printf '%s %s grep -q y && echo hit\n' 'printf "%s" "$x"' "$P"; } > "$T/bad-inline.sh"
 { echo 'set -uo pipefail'; printf '%s \\\n  %s grep -qF y\n' 'some_fn "$x"' "$P"; } > "$T/bad-continued.sh"
+{ echo 'set -uo pipefail'; printf '%s %s grep -F -q y\n' 'printf "%s" "$x"' "$P"; } > "$T/bad-split.sh"
+{ echo 'set -uo pipefail'; printf '%s %s grep -F -i y\n' 'printf "%s" "$x"' "$P"; } > "$T/good-noq.sh"
 { echo 'set -uo pipefail'; echo 'grep -q y < <(printf "%s" "$x") && echo hit'; } > "$T/good-procsub.sh"
 { echo 'set -uo pipefail'; printf 'a %s%s grep -q y "$f"\n' "$P" "$P"; } > "$T/good-or.sh"
 { echo 'set -uo pipefail'; printf '# %s %s grep -q y\n' 'printf "%s" "$x"' "$P"; } > "$T/good-comment.sh"
@@ -53,6 +56,10 @@ P='|'
   || no "detector missed an inline producer piped into grep -q — the gate below would be vacuous"
 [ -n "$(scan "$T/bad-continued.sh")" ] && ok "a backslash-continued pipe into grep -qF on its own line IS flagged" \
   || no "detector missed a continued-line pipe into grep -qF"
+[ -n "$(scan "$T/bad-split.sh")" ] && ok "a split flag form (grep -F -q) IS flagged" \
+  || no "detector missed a split flag form — q in a later flag token slips past"
+[ -z "$(scan "$T/good-noq.sh")" ] && ok "a pipe into grep with NO q flag (reads to EOF) is NOT flagged" \
+  || no "detector flags a grep that never exits early"
 [ -z "$(scan "$T/good-procsub.sh")" ] && ok "'grep -q PAT < <(producer)' (the fix) is NOT flagged" \
   || no "detector flags the sanctioned process-substitution form"
 [ -z "$(scan "$T/good-or.sh")" ] && ok "'a || grep -q' is NOT flagged (|| is not a pipe)" \
