@@ -109,6 +109,7 @@ _The Phase 1.5 PRE-FLIGHT SYNC outcome is recorded here as an ordinary Decisions
 - review: --/PASS/FAIL/NEEDS_HUMAN
 - out_of_lane: [{paths}]   # empty when none; REPORT-ONLY (v15.20.0, D6)
 - deviations: [{entries}]   # empty when none; REPORT-ONLY (worker-deviations item) — read by skills/self-heal-advisory/SKILL.md step 1g
+- not_verified: {n}   # OMITTED ENTIRELY (no line, not even `not_verified: 0`) when n=0 or absent — UNLIKE out_of_lane/deviations above, which always show `[]`; present ONLY when n>0, as a count with the items as an indented sub-list directly under it (`  - {surface} — {reason}`, one per line). REPORT-ONLY (harness-port/04) — aggregated into the FINALIZE PR body's optional `## Not verified` section (skills/async-orchestration/SKILL.md Part 2) and the done brief's completion tail (skills/self-heal-advisory/SKILL.md step 2)
 
 ## Error Log
 | # | Phase | Error | Retry | Resolution |

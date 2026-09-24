@@ -148,6 +148,36 @@ EOF
 ## Goal
 - Given nothing, when nothing, then nothing.
 EOF
+  # harness-port/04 fixtures: a done brief carrying a `## Not verified` section (two bullets, the
+  # documented `- **<surface>** — <reason> (subtask <id>)` shape), and a requirement carrying the
+  # SAME section — the latter proves `not_verified` is ALWAYS `[]` for ticket_kind requirement
+  # regardless of section presence (a requirement file has no completion tail to have written it).
+  cat > "$T/repo/.supervisor/jobs/done/2026-09-14-echo-form-nv.md" <<'EOF'
+# Supervisor Job: echo form (not_verified fixture)
+
+## Task
+Ship it.
+
+## Acceptance Criteria
+- [ ] AC1 Given the form page, when it loads, then the field is visible.
+- [x] AC2: Given `hello`, when submitted, then the echo shows `hello`.
+
+## Not verified
+- **CLI dispatcher** — never exercised the fallback path (subtask 1)
+- **admin panel route** — no browser session available (subtask 2)
+
+## Outcomes Rubric
+- something
+EOF
+  cat > "$T/repo/.supervisor/requirements/verify-walkthrough/98-not-verified-on-requirement.md" <<'EOF'
+# 98 — not_verified on a requirement (must be ignored)
+
+## Acceptance Criteria
+- Given the form page, when it loads, then the field is visible.
+
+## Not verified
+- **CLI dispatcher** — never exercised the fallback path (subtask 1)
+EOF
   printf '# fixture\n' > "$T/repo/README.md"
   ( cd "$T/repo" && git init -q && git add -A >/dev/null 2>&1 \
     && git -c user.email=t@example.invalid -c user.name=t commit -q -m init ) || { echo "  FAIL: fixture git init"; exit 1; }
@@ -291,6 +321,48 @@ run_bin "$T1" preflight .supervisor/requirements/verify-walkthrough/99-no-header
 rc=$?
 [ "$rc" -eq 2 ] && [ ! -e "$T1/repo/.supervisor/verify" ] && [ "$(calls_count "$T1")" -eq 0 ] \
   && ok "(AC6) preflight on an unresolvable ticket → exit 2, nothing created, nothing called" || no "(AC6) preflight unresolvable: rc=$rc"
+
+# ============================================================================
+echo "== (NV) acs → not_verified key (harness-port/04) =="
+# A brief carrying a `## Not verified` section: two NV objects, correct id/text/source/surfaces
+# shape, and the trailing `(subtask <id>)` annotation dropped from `text`. The pre-existing `acs`
+# array/key stays byte-unchanged (same 2 entries as the plain BRIEF fixture above).
+run_bin "$T1" acs .supervisor/jobs/done/2026-09-14-echo-form-nv.md
+rc=$?
+n="$(jq -r '.acs | length' "$LAST_OUT" 2>/dev/null)"
+nvn="$(jq -r '.not_verified | length' "$LAST_OUT" 2>/dev/null)"
+[ "$rc" -eq 0 ] && [ "$n" = "2" ] && [ "$nvn" = "2" ] && ok "(NV) brief with a Not-verified section: acs unchanged (2), not_verified has 2 entries" \
+  || no "(NV) rc=$rc n=$n nvn=$nvn out=$(cat "$LAST_OUT")"
+[ "$(jq -r '[.not_verified[].id] | join(",")' "$LAST_OUT")" = "NV1,NV2" ] && ok "(NV) ids are NV1,NV2 in file order" \
+  || no "(NV) ids: $(jq -r '[.not_verified[].id] | join(",")' "$LAST_OUT")"
+[ "$(jq -r '.not_verified[0].text' "$LAST_OUT")" = "CLI dispatcher — never exercised the fallback path" ] \
+  && ok "(NV) text drops the trailing (subtask <id>) annotation" || no "(NV) NV1 text: $(jq -r '.not_verified[0].text' "$LAST_OUT")"
+[ "$(jq -r '.not_verified[1].text' "$LAST_OUT")" = "admin panel route — no browser session available" ] \
+  && ok "(NV) second bullet parsed correctly" || no "(NV) NV2 text: $(jq -r '.not_verified[1].text' "$LAST_OUT")"
+[ "$(jq -r '[.not_verified[].source] | unique | join(",")' "$LAST_OUT")" = "not_verified" ] && ok "(NV) source is the literal string not_verified on every entry" \
+  || no "(NV) source: $(jq -r '[.not_verified[].source] | join(",")' "$LAST_OUT")"
+[ "$(jq -r '[.not_verified[].surfaces] | map(length) | add' "$LAST_OUT")" = "0" ] && ok "(NV) surfaces is [] on every entry" \
+  || no "(NV) surfaces: $(jq -c '[.not_verified[].surfaces]' "$LAST_OUT")"
+
+# The plain BRIEF fixture (no `## Not verified` section) → not_verified is [], acs untouched.
+run_bin "$T1" acs "$BRIEF"
+rc=$?
+[ "$rc" -eq 0 ] && [ "$(jq -r '.not_verified | length' "$LAST_OUT")" = "0" ] && ok "(NV) brief with no Not-verified section -> not_verified: []" \
+  || no "(NV) no-section brief: rc=$rc out=$(cat "$LAST_OUT")"
+
+# A requirement ticket, even one carrying a `## Not verified` section, ALWAYS gets not_verified: []
+# — a requirement file has no completion tail that could have written the section.
+run_bin "$T1" acs .supervisor/requirements/verify-walkthrough/98-not-verified-on-requirement.md
+rc=$?
+[ "$rc" -eq 0 ] && [ "$(jq -r '.ticket_kind' "$LAST_OUT")" = "requirement" ] && [ "$(jq -r '.not_verified | length' "$LAST_OUT")" = "0" ] \
+  && ok "(NV) ticket_kind requirement -> not_verified: [] even when the section is present" \
+  || no "(NV) requirement-with-section: rc=$rc out=$(cat "$LAST_OUT")"
+
+# The plain REQ fixture (no section, requirement kind) → also [].
+run_bin "$T1" acs "$REQ"
+rc=$?
+[ "$rc" -eq 0 ] && [ "$(jq -r '.not_verified | length' "$LAST_OUT")" = "0" ] && ok "(NV) plain requirement -> not_verified: []" \
+  || no "(NV) plain requirement: rc=$rc out=$(cat "$LAST_OUT")"
 
 # ============================================================================
 echo "== (AC5s) verdict → NOT_VERIFIABLE appended; PASS/FAIL refused; PASS count unaffected =="
@@ -1495,6 +1567,38 @@ row_with="$(grep '^PASS: ' "$TI5/repo/.supervisor/verify/withimpact/summary.md")
   && ok "(I06-noimpact) ticket PASS/FAIL/BLOCKED/NOT_VERIFIABLE row is byte-identical with/without the impact pass ($row_no)" \
   || no "(I06-noimpact) no-impact row='$row_no' with-impact row='$row_with'"
 
+# ============================================================================
+echo "== (NV-summary) an NV1 not_verified-sourced impact row never changes the ticket's own counts line (harness-port/04) =="
+# Same shape as (I06-noimpact) above, but the extra impact-scope row is source:"not_verified" (an
+# NV1 id, exactly what qa-executor's Phase 8.5 step d2 merges verbatim from acs.json) rather than
+# source:"smoke" — proving the summary-build scope:"ticket" filter excludes THIS source too, not
+# just the ones already covered above.
+TI6="$(mktmp)"
+mkdir -p "$TI6/repo/.supervisor/verify/ticketonly" "$TI6/repo/.supervisor/verify/withnv"
+( cd "$TI6/repo" && git init -q && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m base )
+for rd_name in ticketonly withnv; do
+  RD="$TI6/repo/.supervisor/verify/$rd_name"
+  jq -cn --arg rid "verify-20260916T030000Z-$rd_name" '{schema_version:1, ts:"2026-09-16T03:00:00Z", run_id:$rid,
+    event:"run_start", ticket_path:"x.md", ticket_kind:"brief", branch:"b", head_sha:"h", base_sha:"h", env_contract_hash:null}
+  ' > "$RD/evidence.jsonl"
+  jq -cn --arg rid "verify-20260916T030000Z-$rd_name" '{schema_version:1, ts:"2026-09-16T03:00:01Z", run_id:$rid,
+    event:"ac", ac_id:"AC1", text:"t", scope:"ticket", verdict:"PASS", classification:null, steps:[], artifacts:[]}
+  ' | bash "$HERE/verify-helpers.sh" evidence-append "$RD" - >/dev/null
+done
+jq -cn '{schema_version:1, ts:"2026-09-16T03:00:02Z", run_id:"verify-20260916T030000Z-withnv", event:"ac",
+  ac_id:"NV1", text:"CLI dispatcher — never exercised the fallback path", scope:"impact", verdict:"FAIL",
+  classification:"REAL_BUG", reason:"broke", steps:[], artifacts:[], source:"not_verified"}' \
+  | bash "$HERE/verify-helpers.sh" evidence-append "$TI6/repo/.supervisor/verify/withnv" - >/dev/null
+row_ticketonly="$(grep '^PASS: ' "$TI6/repo/.supervisor/verify/ticketonly/summary.md")"
+row_withnv="$(grep '^PASS: ' "$TI6/repo/.supervisor/verify/withnv/summary.md")"
+[ "$row_ticketonly" = "$row_withnv" ] && [ "$row_ticketonly" = "PASS: 1 · FAIL: 0 · BLOCKED: 0 · NOT_VERIFIABLE: 0 · total: 1" ] \
+  && ok "(NV-summary) ticket counts line is byte-identical with/without the NV1 impact row ($row_ticketonly)" \
+  || no "(NV-summary) ticket-only row='$row_ticketonly' with-nv row='$row_withnv'"
+nv_line="$(jq -c 'select(.event=="ac" and .ac_id=="NV1")' "$TI6/repo/.supervisor/verify/withnv/evidence.jsonl" | tail -1)"
+[ "$(printf '%s' "$nv_line" | jq -r '[.scope,.source] | join("|")')" = "impact|not_verified" ] \
+  && ok "(NV-summary) the NV1 row itself is recorded scope:impact source:not_verified (present in evidence, excluded from the ticket score)" \
+  || no "(NV-summary) NV1 line: $nv_line"
+
 echo "== (I06-docs) skill §9 + qa-executor Impact Pass step + verify.md flags are present =="
 grep -qF -- '## 9. Impact pass' "$SKILL" && ok "(I06-docs) skill has a ## 9. Impact pass section" || no "(I06-docs) skill missing ## 9. Impact pass"
 grep -qF -- "ticket's own PASS/FAIL/BLOCKED/NOT_VERIFIABLE counts are unchanged by it" "$SKILL" \
@@ -1502,6 +1606,17 @@ grep -qF -- "ticket's own PASS/FAIL/BLOCKED/NOT_VERIFIABLE counts are unchanged 
 grep -qF -- '**Impact Pass**' "$AGENT" && ok "(I06-docs) qa-executor.md names the Impact Pass step" || no "(I06-docs) Impact Pass step missing from qa-executor.md"
 grep -qF -- '--impact-limit' "$VERIFY_CMD" && grep -qF -- '--no-impact' "$VERIFY_CMD" \
   && ok "(I06-docs) commands/verify.md documents --impact-limit and --no-impact" || no "(I06-docs) impact flags missing from commands/verify.md"
+
+echo "== (NV-docs) skill §9 item 6 + qa-executor step d2 document not_verified as a source (harness-port/04) =="
+grep -qF -- 'source: "not_verified"' "$SKILL" && ok "(NV-docs) skill §9 names source: \"not_verified\"" || no "(NV-docs) skill §9 missing source: \"not_verified\""
+item6="$(awk '/^6\. \*\*`not_verified`/{flag=1} flag{print; if (/^\*\*Execution\.\*\*/) exit}' "$SKILL")"
+[ -n "$item6" ] && ok "(NV-docs) skill §9 item 6 (not_verified) section exists" || no "(NV-docs) skill §9 item 6 (not_verified) section MISSING"
+case "$item6" in
+  *'NEVER inflates or deflates the ticket score'*) ok "(NV-docs) item 6 carries the ticket-score-isolation invariant" ;;
+  *) no "(NV-docs) item 6 does not carry the ticket-score-isolation invariant" ;;
+esac
+grep -qE '^ *d2\.' "$AGENT" && grep -qF -- 'not_verified' "$AGENT" \
+  && ok "(NV-docs) qa-executor.md names step d2 and not_verified" || no "(NV-docs) qa-executor.md missing step d2 / not_verified wiring"
 
 # ============================================================================
 echo
