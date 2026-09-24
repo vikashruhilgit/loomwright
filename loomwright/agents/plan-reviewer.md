@@ -178,6 +178,8 @@ Check ALL criteria in order. For each, note whether it passes or has issues. Cri
 
 **Note:** The `## Feasibility` section (Launch Pad v10.3+) is **optional** — its absence is not BLOCKING and is not evaluated here. See Criterion 11.
 
+**Note:** The `Shared local services` line (within `## Environment`) is **optional** — its absence is not BLOCKING and is not evaluated here.
+
 **Note (single-subtask briefs):** `Subtask Structure` and `Parallelism Analysis` remain required even with only one subtask — accept the reduced single-subtask form (one-row table; `single-agent (no fan-out)` with `Recommended workers: 1`, per `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold") as satisfying this criterion.
 
 ### 10. Configuration
