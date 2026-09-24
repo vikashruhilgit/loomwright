@@ -68,7 +68,7 @@
 # exercise runs against a `mktemp -d` + `git init` fixture through `setup-memory.sh --root`, with
 # `trap … EXIT` cleanup (pattern from test-no-junk-tracked-files.sh:62-71 [pins: `TMPD="$(mktemp -d)"`]).
 # This matters because
-# CI hard-globs it (loomwright/scripts/run-self-tests.sh:38 [pins: `tests=(loomwright/scripts/test-*.sh`]), so an unisolated
+# CI hard-globs it (loomwright/scripts/run-self-tests.sh:40 [pins: `tests=(loomwright/scripts/test-*.sh`]), so an unisolated
 # test would rewrite the real `.gitignore` and litter a backup on every CI run. The containment is
 # asserted, not assumed — see group (F).
 #

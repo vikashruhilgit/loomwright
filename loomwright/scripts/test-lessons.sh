@@ -672,7 +672,16 @@ if [ -f "$real_lessons" ]; then
   # echo would append a SECOND line and make the -eq comparison below throw. (Same for the piped
   # form, which additionally needs the `|| true` because `set -o pipefail` is on.)
   file_n="$(grep -c '^- \[' "$real_lessons" 2>/dev/null || true)"
-  read_n="$(cd "$REAL_REPO" && bash "$READ" 2>/dev/null | grep -c '^- \[' || true)"
+  # The reader runs over a COPY of the real store in a throwaway git repo, never in the checkout:
+  # read-lessons.sh cds to its git root and `mkdir -p .supervisor/logs` (and appends memory.log on
+  # any DROPPED line), so reading in place left an empty .supervisor/logs in the real repo — which
+  # test-progress-state.sh's "real logs snapshot unchanged" guard caught once the suite ran
+  # concurrently (run-self-tests.sh). The reader only reads .supervisor/memory/, so the copy is the
+  # same input.
+  RRDIR="$(mktemp -d)"
+  ( cd "$RRDIR" && git init -q && mkdir -p .supervisor && cp -R "$REAL_REPO/.supervisor/memory" .supervisor/ ) >/dev/null 2>&1
+  read_n="$(cd "$RRDIR" && bash "$READ" 2>/dev/null | grep -c '^- \[' || true)"
+  rm -rf "$RRDIR"
   file_n="${file_n:-0}"; read_n="${read_n:-0}"
   if [ "$file_n" -eq "$read_n" ]; then
     ok "real LESSONS.md: all $file_n entries are readable (no unbacked/retracted-but-lingering lines)"

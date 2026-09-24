@@ -384,7 +384,19 @@ cleanup_files() {
 # below it would be dead code that silently never ran — a test group that cannot fail is worse
 # than no test group. SETUP_BROKEN keeps `exit 2` (fixture broken) distinct from `exit 1`
 # (assertions ran, something misbehaved), which the trap would otherwise flatten to 0.
+# SUITE_PID — the shell that owns TMPROOT. See the guard at the top of finish().
+SUITE_PID=$$
 finish() {
+  # OWNER GUARD. A `cmd & pid=$!; kill "$pid"` can land its TERM in the window between fork()
+  # and exec(), while the child is still a copy of THIS shell carrying THIS trap. That child then
+  # ran finish -> cleanup_files -> `rm -r "$TMPROOT"`, wiping the running suite's fixtures out from
+  # under it: (k28g) failed on Linux (where the parent usually runs first after fork) with its
+  # $K28/ui gone and TMPROOT holding one entry instead of ~56. Only the suite's own shell may tear
+  # down; a forked copy just exits. `$$` cannot tell them apart (a subshell keeps the parent's),
+  # hence BASHPID — with an exec'd `sh` reporting its parent for bash 3.2, which lacks it.
+  local self="${BASHPID:-}"
+  [ -n "$self" ] || self="$(exec sh -c 'echo "$PPID"')"
+  [ "$self" = "$SUITE_PID" ] || exit 0
   cleanup_files
   [ "$SETUP_BROKEN" -eq 1 ] && exit 2
   # (p1) — THE LEAK ASSERTION, and it lives here because its subject is what survived the
@@ -3517,6 +3529,15 @@ done
   || no "(k28g) ANTI-VACUITY: a live serve of ours is reported" \
        "live_serve_pids returned '$k28_out', wanted '$k28_ours' — the detector never fires, so the live-serve exemption could never be granted"
 kill "$k28_ours" 2>/dev/null; wait "$k28_ours" 2>/dev/null
+
+# (k28h) the OWNER GUARD on finish(). A subshell is exactly the forked copy of this shell that a
+# kill landing between fork() and exec() runs the trap in; it must exit WITHOUT tearing down.
+# Without the guard this arm wipes TMPROOT itself — loudly, not silently.
+k28_sentinel="$(mktmp)" || setup_fail "(k28h) fixture: mktemp under $TMPROOT failed"
+( finish ) >/dev/null 2>&1
+[ -d "$TMPROOT" ] && [ -d "$k28_sentinel" ] \
+  && ok "(k28h) finish() run in a forked copy of the suite shell exits without deleting TMPROOT — a TERM caught before exec() cannot wipe the running suite's fixtures" \
+  || no "(k28h) finish() in a forked copy leaves TMPROOT alone" "TMPROOT or its sentinel is gone: the owner guard at the top of finish() is missing or wrong"
 
 k_real_reg_after="ABSENT"
 [ -f "$REAL_LOOM_HOME/projects.json" ] && k_real_reg_after="$(csum "$REAL_LOOM_HOME/projects.json")"
