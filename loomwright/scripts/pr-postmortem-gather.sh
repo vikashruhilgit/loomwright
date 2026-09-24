@@ -243,6 +243,18 @@ printf '%s' "$BOT_REVIEW_JSON" | jq -e 'type=="array"' >/dev/null 2>&1 || BOT_RE
 # fail-SAFE toward EXCLUDING (never toward accepting unauthenticated matches): on any
 # resolution failure OPERATOR_LOGIN stays empty, which the jq filter below treats as
 # "match nothing" — dismissed_findings degrades to [], never to "accept any author".
+#
+# Honest limit (PR #264 review, design note): this assumes the identity running THIS
+# gather (`gh api user`) is the SAME identity that posted the marker comment. That
+# holds for the common case (one operator's `gh` session runs both the heal loop and
+# a later `/pr-postmortem` on the same machine) but not necessarily for a marker
+# posted by a detached `dispatch-pr-review.sh` process under a different authenticated
+# identity than whoever runs `/pr-postmortem` afterward — that legitimate dismissal
+# would be silently excluded, same as a spoofed one. Deliberately NOT generalized to
+# an allowlist file (`classify-bot-review.sh --trusted-actors`) here: doing so would
+# widen the accepted-author set past "the identity that can currently prove itself via
+# `gh api user`", which is a stronger, simpler guarantee for the common single-operator
+# case this script targets. Revisit if/when the plugin's deployment topology needs it.
 OPERATOR_LOGIN="$("$GH_BIN" api user --jq '.login' 2>/dev/null)" || OPERATOR_LOGIN=""
 
 # ---- build the normalized object (SINGLE jq invocation) --------------------
