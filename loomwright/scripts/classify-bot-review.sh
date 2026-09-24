@@ -23,7 +23,10 @@
 #                   review_marker_re (both case-insensitive). Each retained
 #                   element is passed through UNCHANGED (the full original object),
 #                   so {id, user.login, body, html_url, created_at} survive when
-#                   present.
+#                   present. BEFORE this author/marker test runs, any element
+#                   whose `.body` starts with the active --skip-marker prefix
+#                   (default ON, see below) is dropped unconditionally — it can
+#                   never be classified IN no matter what its author or content is.
 #
 #   FAIL-SAFE: empty input, missing/blank stdin, non-array input, invalid JSON,
 #              or a missing jq all degrade to `[]` on stdout and exit 0. This
@@ -75,6 +78,30 @@
 # script now pipes its fetched comments through this helper so the patterns are
 # not duplicated.
 #
+# SELF-SKIP MARKER (--skip-marker '<prefix>', dismissed-findings-01, MUST,
+# mechanized): a body-PREFIX filter, DEFAULT ON with the built-in prefix
+# "<!-- loomwright:", applied BEFORE author/marker classification. Any comment
+# whose `.body` starts with the active prefix is dropped from consideration
+# entirely — it can never be classified IN, regardless of author or content.
+# Without this, the --until-mergeable drain's own `<!-- loomwright:dismissed
+# round=<n> -->` marker comment (skills/review-heal/SKILL.md, posted under the
+# operator's `gh` login) would be re-classified as a HUMAN-authored review
+# finding by classify(issue_comments) on the NEXT round and surface forever.
+# Plumbing mirrors --trusted-actors: parse (bare/`=` forms), a hardcoded
+# default, and a one-line stderr note ONLY when the filter actually changes
+# behavior (i.e. drops >=1 element) — never a note on a no-op run, and never a
+# note merely because the flag was passed.
+#   --skip-marker '<prefix>'  — override the prefix (opt-in override).
+#   --skip-marker ''          — explicitly DISABLE the filter (empty prefix is
+#                                never a real marker; treated as "no filter",
+#                                never as "match everything"). This is the
+#                                mutation-control lever proving the filter is
+#                                load-bearing (test-classify-bot-review.sh).
+#   flag never passed          — filter stays ON at the built-in default
+#                                "<!-- loomwright:" (this is the DEFAULT-ON
+#                                behavior the AC requires; unlike
+#                                --trusted-actors, which defaults OFF).
+#
 # ACTOR ALLOWLIST (--trusted-actors <file>, red-team-hardening item 01, decision
 # R2): OPTIONAL. When passed, the file is expected to be a JSON array of EXACT
 # GitHub logins (user-scope, e.g. `~/.claude/loomwright/trusted-actors.json` —
@@ -93,6 +120,12 @@ set -euo pipefail
 
 TRUSTED_ACTORS_FILE=""
 TRUSTED_ACTORS_GIVEN=0
+# SKIP_MARKER_PREFIX default-ON at the built-in marker (dismissed-findings-01).
+# SKIP_MARKER_GIVEN distinguishes "flag never passed" (stays at the default)
+# from "flag passed with an explicit value" (including an EXPLICIT empty
+# string, which disables the filter — see the header doc above).
+SKIP_MARKER_PREFIX="<!-- loomwright:"
+SKIP_MARKER_GIVEN=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --trusted-actors)
@@ -104,6 +137,17 @@ while [ $# -gt 0 ]; do
     --trusted-actors=*)
       TRUSTED_ACTORS_FILE="${1#--trusted-actors=}"
       TRUSTED_ACTORS_GIVEN=1
+      shift
+      ;;
+    --skip-marker)
+      SKIP_MARKER_PREFIX="${2:-}"
+      SKIP_MARKER_GIVEN=1
+      shift
+      if [ $# -gt 0 ]; then shift; fi
+      ;;
+    --skip-marker=*)
+      SKIP_MARKER_PREFIX="${1#--skip-marker=}"
+      SKIP_MARKER_GIVEN=1
       shift
       ;;
     *)
@@ -172,13 +216,26 @@ case "$INPUT" in
   *) printf '[]\n'; exit 0 ;;     # empty or whitespace-only → []
 esac
 
+# Resolve skip-marker mode: an EXPLICIT empty --skip-marker value disables the
+# filter (never means "match everything"); the built-in default or any
+# non-empty override enables it.
+if [ -n "$SKIP_MARKER_PREFIX" ]; then
+  USE_SKIP_MARKER=1
+else
+  USE_SKIP_MARKER=0
+fi
+
 # The whole filter runs inside ONE jq program. A leading `if type=="array"`
 # guard degrades non-array (and, via the outer 2>/dev/null fallback, invalid)
 # JSON to []. Every per-element field access is strings-guarded so hostile-typed
-# elements degrade to non-matches rather than aborting the program.
-OUTPUT="$(printf '%s' "$INPUT" | jq -c \
+# elements degrade to non-matches rather than aborting the program. Emits
+# {dropped, out} so the caller can log a one-line stderr note ONLY when the
+# skip-marker filter actually changed behavior (dropped >= 1).
+RAW_RESULT="$(printf '%s' "$INPUT" | jq -c \
   --argjson use_trusted "$( [ "$USE_TRUSTED_ACTORS" -eq 1 ] && echo true || echo false )" \
-  --argjson trusted_actors "$TRUSTED_ACTORS_JSON" '
+  --argjson trusted_actors "$TRUSTED_ACTORS_JSON" \
+  --argjson use_skip_marker "$( [ "$USE_SKIP_MARKER" -eq 1 ] && echo true || echo false )" \
+  --arg skip_marker_prefix "$SKIP_MARKER_PREFIX" '
   # ---- SINGLE SOURCE OF TRUTH: bot-review classification regexes ----
   # EXACT-login match for the three known bot accounts, plus any login ending in
   # `[bot]` (GitHub App convention). Deliberately NOT "^claude$" (a human could
@@ -201,24 +258,50 @@ OUTPUT="$(printf '%s' "$INPUT" | jq -c \
     else
       ($login | test(bot_author_re; "i"))
     end;
+  # Self-skip gate (dismissed-findings-01, MUST): drop a comment whose body
+  # starts with the active marker prefix BEFORE the author/marker test runs —
+  # this element can never be classified IN, regardless of author or content.
+  def marker_skip($body):
+    if $use_skip_marker then ($body | startswith($skip_marker_prefix)) else false end;
 
   if type=="array" then
-    [ .[]?
-      | select(
-          author_ok((((.user.login)? | strings) // ""))
-          and (((((.body)? | strings) // "") | gsub("[[:space:]]+"; "")) != "")
-          and ((((.body)? | strings) // "") | test(review_marker_re; "i"))
-        ) ]
+    ([ .[]? | select(marker_skip((((.body)? | strings) // ""))) ] | length) as $dropped
+    | { dropped: $dropped,
+        out: [ .[]?
+          | select(
+              (marker_skip((((.body)? | strings) // "")) | not)
+              and author_ok((((.user.login)? | strings) // ""))
+              and (((((.body)? | strings) // "") | gsub("[[:space:]]+"; "")) != "")
+              and ((((.body)? | strings) // "") | test(review_marker_re; "i"))
+            ) ] }
   else
-    []
+    { dropped: 0, out: [] }
   end
 ' 2>/dev/null || true)"
 
 # Defensive: empty / non-JSON jq output → [].
-if [ -z "$OUTPUT" ] || ! printf '%s' "$OUTPUT" | jq -e . >/dev/null 2>&1; then
+if [ -z "$RAW_RESULT" ] || ! printf '%s' "$RAW_RESULT" | jq -e . >/dev/null 2>&1; then
   printf '[]\n'
   exit 0
 fi
+
+OUTPUT="$(printf '%s' "$RAW_RESULT" | jq -c '.out' 2>/dev/null || echo '[]')"
+DROPPED="$(printf '%s' "$RAW_RESULT" | jq -r '.dropped // 0' 2>/dev/null || echo 0)"
+
+# Defensive (belt-and-braces): OUTPUT must itself be a valid array.
+if [ -z "$OUTPUT" ] || ! printf '%s' "$OUTPUT" | jq -e '(type=="array")' >/dev/null 2>&1; then
+  printf '[]\n'
+  exit 0
+fi
+
+# One-line stderr note ONLY when the skip-marker filter actually changed
+# behavior this run (dropped >= 1) — mirrors the --trusted-actors precedent of
+# never logging on a no-op path.
+case "$DROPPED" in
+  ''|*[!0-9]*) : ;;   # non-numeric (defensive) -> no note
+  0) : ;;
+  *) printf 'classify-bot-review: skip_marker_filtered %s\n' "$DROPPED" >&2 ;;
+esac
 
 printf '%s\n' "$OUTPUT"
 exit 0

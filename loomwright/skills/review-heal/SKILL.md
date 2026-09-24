@@ -57,7 +57,7 @@ These names are **coined here**. Treat this section as authoritative; all other 
 - notified: <bool>                  # true if a NEEDS_HUMAN notification was attempted
 ```
 
-Under `--until-mergeable` the block stays **`schema_version: 2`** (adds `decision: READY` plus the ADDITIVE/OPTIONAL drain fields — e.g. `channels_scanned`, `findings_validated`, `findings_dismissed`, `checks_waited`, `termination_reason` (`converged` | `bound_hit` | `sub_floor_converged`, AC6), `severity_floor`, `sub_floor_fixed[]`, and — red-team-hardening item 01 — `rejected_instruction_like` (int; count of envelope bodies rejected as instruction-like, §"Untrusted-Text Envelope")). These new fields are additive only; the **authoritative schema text lives in `docs/RESULT_SCHEMAS.md`** — there is **no schema_version bump beyond 2**, and no `gh pr merge` field/path ever exists (never-auto-merge invariant).
+Under `--until-mergeable` the block stays **`schema_version: 2`** (adds `decision: READY` plus the ADDITIVE/OPTIONAL drain fields — e.g. `channels_scanned`, `findings_validated`, `findings_dismissed`, `checks_waited`, `termination_reason` (`converged` | `bound_hit` | `sub_floor_converged`, AC6), `severity_floor`, `sub_floor_fixed[]`, `rejected_instruction_like` (int; count of envelope bodies rejected as instruction-like, §"Untrusted-Text Envelope", red-team-hardening item 01), and `dismissed` (the itemised `{finding, reason, source}` list, dismissed-findings-01, §"Dismissed-findings marker comment")). These new fields are additive only; the **authoritative schema text lives in `docs/RESULT_SCHEMAS.md`** — there is **no schema_version bump beyond 2**, and no `gh pr merge` field/path ever exists (never-auto-merge invariant).
 
 **Decision enum is exactly `PASS | ESCALATED`** — there is no `FAIL` in the *result* block. A reviewer `FAIL` is an internal loop signal that drives a fix iteration; it only becomes a terminal outcome as `ESCALATED` (when the loop exhausts or the reviewer escalates).
 
@@ -279,11 +279,13 @@ gh api repos/<owner>/<repo>/check-runs/<id>/annotations   # annotation `message`
 
 **Classify the comment/review/thread channels via the shared helper — do NOT re-implement the regexes.** Pipe each of those channels' real `{user.login, body}` items through **`loomwright/scripts/classify-bot-review.sh --trusted-actors ~/.claude/loomwright/trusted-actors.json`** (stdin = JSON array of comment-like objects, stdout = only the classified review findings, original objects passed through; empty/invalid → `[]`, exit 0). When that user-scope file resolves (exact logins), `trusted=yes` in the envelope below requires an EXACT match — `bot_author_re` is not consulted; a repo-scope `notify-config` include entry counts only when the SAME login is ALSO user-scope-listed (decision R2). When the file is absent, the classifier falls back to `bot_author_re` (unchanged) and logs `actor_allowlist_absent` once per round. The classifier owns `bot_author_re` / `review_marker_re` as its single source of truth — this skill **never** redefines them. Check-output candidate findings (above) are unioned in separately. The readiness decision is computed over that combined **UNION**.
 
+**Self-skip is DEFAULT ON in the classifier — no extra caller flag needed (dismissed-findings-01).** `classify-bot-review.sh` drops any comment whose body starts with `<!-- loomwright:` BEFORE the author/marker test, at a built-in default that is active whether or not `--skip-marker` is passed. This is what keeps `classify(issue_comments)` below from re-classifying THIS round's own **Dismissed-findings marker comment** (posted at the end of a prior round with ≥1 dismissal — see "Dismissed-findings marker comment" under §U3.5 below) as a HUMAN-authored review finding on the next round. `--trusted-actors` and the marker self-skip are independent flags and compose freely — this call site passes `--trusted-actors` only; the marker filter applies regardless.
+
 ```
 bot_findings = (
     classify(reviews ∪ latestReviews bodies)             # via scripts/classify-bot-review.sh --trusted-actors <file>
   ∪ classify(reviewThreads first-comment bodies)        # only unresolved threads feed the blocker set
-  ∪ classify(issue_comments)
+  ∪ classify(issue_comments)                            # self-skip DEFAULT ON here drops the drain's own marker comment (above)
   ∪ review_producing_check_outputs                       # §"Untrusted-Text Envelope"-gated checks w/ non-empty output text — NOT through the comment classifier; validate-then-fix gates false positives
 )   # each classify(...) == `<channel-json-array> | bash scripts/classify-bot-review.sh --trusted-actors <file>`
 ```
@@ -385,9 +387,30 @@ For each finding in the classified `bot_findings` UNION (§U1), apply this three
 1. **Validate (evidence-citing — mitigates R4, no rubber-stamping).** The finding is **confirmed** ONLY when it (a) maps to a **concrete current-branch location** (file + line/region that still exists in the checked-out head state) AND (b) is **actionable** (describes a change that can be made). Validation must **cite the evidence** (the grounding location); a finding that **cannot be grounded** on the current branch is **dismissed, not fixed** — never rubber-stamp a finding into a fix without grounding it.
 2. **Confirmed + auto-fixable → FIX regardless of stated severity.** Dispatch the existing fix-worker model: `Task(general-purpose)` with tool allowlist **Read / Write / Edit / Bash / Glob / Grep — NO Task**, told to address ONLY the validated findings; then **fork-aware push** (same-repo: explicit refspec, **REGULAR push, NEVER `--force`**; fork: no push → degrade to ESCALATED — see "Fork-aware push"); then **re-scan ALL channels** (U1). A confirmed MEDIUM/LOW is fixed exactly like a confirmed HIGH — there is no severity floor.
 3. **Confirmed but NOT auto-fixable (needs human judgment) → BLOCKS READY.** It is surfaced/escalated (counted in `remaining_issues`); it does not get a blind fix.
-4. **Validated as stale / invalid / already-addressed → DISMISSED.** Recorded as dismissed (`findings_dismissed`); does **NOT** block READY and is **not** fixed.
+4. **Validated as stale / invalid / already-addressed → DISMISSED.** Recorded as dismissed (`findings_dismissed`, the count; `dismissed`, the itemised `{finding, reason, source}` list — dismissed-findings-01, `docs/RESULT_SCHEMAS.md` §REVIEW_HEAL_RESULT); does **NOT** block READY and is **not** fixed.
 
 `findings_validated` counts findings confirmed (cases 2+3); `findings_dismissed` counts case 4. Only **case-3 (confirmed-but-not-auto-fixable)** findings remain as READY-blockers after a round — case-2 findings are fixed (and may recur, governed by the Anti-Churn Guardrail), case-4 findings are gone.
+
+### Dismissed-findings marker comment (dismissed-findings-01)
+
+> **This subsection is the SINGLE SOURCE OF TRUTH for the marker-comment format.** `skills/self-heal-advisory/SKILL.md` posts the SAME shape from Phase 4.5's `heal_dismissed` accumulator (its own `source` values differ — `code_reviewer | red_team | voter:<provider>` — but the comment format is byte-identical) and cross-references this subsection rather than restating it. `scripts/pr-postmortem-gather.sh` parses ONLY this exact shape.
+
+**Why a PR comment, not just the result block.** `REVIEW_HEAL_RESULT` is never persisted anywhere `/pr-postmortem` can read it later (`dispatch-pr-review.sh`'s per-PR marker holds only a URL + timestamp) — a result-block-only field has no durable transport across the process boundary between "this drain run" and "a later postmortem". The PR comment IS the durable transport.
+
+**When:** at most once per round, ONLY when that round's Step U3.5 (main pass + the conditional earned-fallback pass) produced **≥1 NEW** dismissal (`len(dismissed_this_round) >= 1`, computed against the `dismissed_before_round` snapshot taken at round entry — see §U4's pseudocode). A round with zero new dismissals posts nothing.
+
+**Format (fixed, script-parseable — do NOT freelance the shape):**
+
+```
+<!-- loomwright:dismissed round=<n> -->
+- **<finding>** — <reason> (<source>)
+- **<finding>** — <reason> (<source>)
+...
+```
+
+One `gh pr comment --body "..."` call per qualifying round; the body's FIRST line is the marker (`<!-- loomwright:dismissed round=<n> -->`, `<n>` = `round_number`, this run's plain in-memory round counter — see §U4), followed by exactly one `- **<finding>** — <reason> (<source>)` bullet per item in `dismissed_this_round`, in order. Never a second comment for the same round; never an edit of an earlier round's comment (append-only, one comment per qualifying round — mirrors the Non-goals in the source requirement this item shipped from).
+
+**Self-skip on the NEXT round (MUST — mechanized, not prose-only).** This marker comment is posted under the operator's own `gh` login, which `classify(issue_comments)` (§U1) would otherwise classify as a HUMAN-authored review finding on every LATER round — an infinite self-referential loop. `scripts/classify-bot-review.sh` closes this with a `--skip-marker` prefix filter, **DEFAULT ON** at the exact prefix used here (`<!-- loomwright:`), applied BEFORE the author/marker test — see §U1's `classify(issue_comments)` note above and the script's own header doc. No caller flag is required for this to work; it fires on every classifier invocation unless explicitly disabled via `--skip-marker ''`.
 
 ### Step U4 — The bounded drain loop
 
@@ -401,7 +424,8 @@ churn_rounds = 0                    # consecutive rounds whose fingerprint set d
 fingerprints_prev = {}              # see "Anti-Churn Guardrail"
 repeat_check_failure = false        # a required check that was fixed re-failed (postmortem input; AC13)
 unresolved_bot_feedback = false     # bot finding (any channel) still open after >=1 fix (postmortem input)
-dismissed = []                      # findings validated as stale/invalid/already-addressed (additive result field)
+dismissed = []                      # ITEMISED {finding, reason, source} list (dismissed-findings-01) — findings validated as
+                                     # stale/invalid/already-addressed; findings_dismissed (below) is derived as len(dismissed)
 channels_scanned = []               # which channels were read this run (additive result field)
 checks_waited = []                  # scoped checks the loop waited on to settle (additive result field)
 sub_floor_fixed = []                # findings FIXED (never declined) in a sub_floor_converged terminal round (additive result field)
@@ -410,6 +434,12 @@ termination_reason = null           # converged | bound_hit | sub_floor_converge
 checks_ever_fixed = {}              # required-check names this drain has attempted to fix — AC13 input for the confirming pass
 fallback_review_ran = false         # run-scoped (AC3); the earned fallback fires at MOST once per drain run —
                                      # this flag is what the mechanized bound cannot re-trigger it through
+round_number = 0                    # this run's own round ordinal (dismissed-findings-01) — incremented once
+                                     # per loop iteration that reaches Step U3.5; used ONLY to number the
+                                     # dismissed-findings marker comment ("round=<n>"), distinct from the
+                                     # ledger-authoritative `rounds` read at emit time (same value in practice,
+                                     # since both count "how many times this loop reached U3.5", but this one
+                                     # is a plain in-memory counter, not the mechanized bound)
 
 drain-rounds.sh init <pr_url> <max_rounds>   # MECHANIZED — same ledger call BOTH entry paths make; never a private counter (AC1/AC2)
 
@@ -431,11 +461,20 @@ loop:
   # exactly one spawn per drain run via `fallback_review_ran`.
 
   required_failing = [c for c in required if c.state not in GREEN_STATES]
+  round_number += 1                       # this round's ordinal (dismissed-findings-01) — see the marker-comment note below
+  dismissed_before_round = len(dismissed) # snapshot BEFORE Step U3.5 runs, so the marker posts only THIS round's yield
 
   # Step U3.5 — Validate-Then-Fix EVERY bot finding (any stated severity); no severity floor AT FIX TIME —
   # reading B, "PINNED SEMANTICS": a finding is NEVER declined a fix on severity grounds.
   validated      = [f for f in bot_findings if validate(f) == CONFIRMED]   # evidence-cited, grounded on current branch
-  dismissed     += [f for f in bot_findings if validate(f) == STALE_OR_INVALID]
+  # dismissed-findings-01: itemise, don't just tally. `finding` = a short description of f (the
+  # actionable text/summary the classifier/check-output surfaced); `reason` = the free-text
+  # validation-failure basis (stale | invalid | already-addressed — validate()'s own basis for the
+  # STALE_OR_INVALID verdict, NOT a closed enum on this side); `source` = the channel f came from
+  # (reviews | reviewThreads | issue_comments | check_outputs — §"All-Channel Read"'s own channel
+  # set, already known at classification time since f carries its originating channel).
+  dismissed     += [ {finding: describe(f), reason: validate_reason(f), source: channel_of(f)}
+                      for f in bot_findings if validate(f) == STALE_OR_INVALID ]
   auto_fixable   = [f for f in validated if is_auto_fixable(f)]
   needs_human    = [f for f in validated if not is_auto_fixable(f)]        # confirmed but not auto-fixable → blocks READY
 
@@ -458,7 +497,9 @@ loop:
       # validated MEDIUM/LOW is fixed exactly like a HIGH):
       fallback_findings = [i for i in fallback_review.issues if i.category == "new"]
       validated    += [f for f in fallback_findings if validate(f) == CONFIRMED]
-      dismissed    += [f for f in fallback_findings if validate(f) == STALE_OR_INVALID]
+      # source is always "code_reviewer" here — the fallback IS the code-reviewer lens (dismissed-findings-01).
+      dismissed    += [ {finding: describe(f), reason: validate_reason(f), source: "code_reviewer"}
+                         for f in fallback_findings if validate(f) == STALE_OR_INVALID ]
       auto_fixable  = [f for f in validated if is_auto_fixable(f)]        # RE-DERIVE from the now-larger
       needs_human   = [f for f in validated if not is_auto_fixable(f)]   # `validated` — not appended to the stale lists
       # A PASS result (no `new` issues) leaves fallback_findings == [] so auto_fixable/needs_human are
@@ -469,6 +510,16 @@ loop:
       # not-auto-fixable finding populates needs_human, so the READY test below fails and the round falls
       # into the "needs_human != [] and auto_fixable == []" branch → decision = ESCALATED — it blocks
       # READY instead of being silently discarded.
+
+  # Dismissed-findings marker comment (dismissed-findings-01) — ONE post per round, ONLY when this
+  # round produced >=1 NEW dismissal. Placed here so it fires exactly once regardless of which
+  # outcome branch the round takes next (READY / ESCALATED-needs_human / sub_floor_converged /
+  # normal fix-dispatch fallthrough) — every one of those branches is reached AFTER both the main
+  # U3.5 pass and the conditional earned-fallback pass above, so `dismissed` already holds this
+  # round's full yield here. See "Dismissed-findings marker comment" below for the exact format.
+  dismissed_this_round = dismissed[dismissed_before_round:]
+  if len(dismissed_this_round) >= 1:
+    post_dismissed_marker_comment(round_number, dismissed_this_round)   # ONE gh pr comment; never edits/replaces an earlier round's comment
 
   # READY ⇔ required green AND scoped review-producing checks settled (already true here) AND
   #         no unresolved VALIDATED bot findings remain across ALL channels (fallback findings included).
@@ -806,7 +857,7 @@ The tail's exit status is **ignored** — the dispatcher always exits 0 and the 
 - PR-branch pushes are **fork-aware**: same-repo via explicit refspec `git push origin HEAD:<head_ref>` (regular, never `--force`); fork/cross-repo degrades to review-only `ESCALATED` (§"Fork-aware push").
 - **`PASS`, `ESCALATED`, and — under `--until-mergeable` only — `READY` are the terminal `decision` values** (`READY` covers both `termination_reason: converged` and `sub_floor_converged`); no auto-merge in any of them.
 - NEEDS_HUMAN / exhaustion posts findings to the PR and fires best-effort notifications (never blocks the loop).
-- `REVIEW_HEAL_RESULT` emitted with all seven fields at `schema_version: 1` (default loop); `schema_version: 2` with `decision: READY` plus additive/optional drain fields (`channels_scanned`, `findings_validated`, `findings_dismissed`, `checks_waited`, `termination_reason`, `severity_floor`, `sub_floor_fixed`, `rejected_instruction_like`) under `--until-mergeable` (authoritative schema in `docs/RESULT_SCHEMAS.md`; no bump beyond 2).
+- `REVIEW_HEAL_RESULT` emitted with all seven fields at `schema_version: 1` (default loop); `schema_version: 2` with `decision: READY` plus additive/optional drain fields (`channels_scanned`, `findings_validated`, `findings_dismissed`, `checks_waited`, `termination_reason`, `severity_floor`, `sub_floor_fixed`, `rejected_instruction_like`, `dismissed`) under `--until-mergeable` (authoritative schema in `docs/RESULT_SCHEMAS.md`; no bump beyond 2).
 - **`--until-mergeable` absent ⇒ default loop byte-for-byte unchanged** (AC7) — the all-channel scan, scoped check-wait, validate-then-fix, anti-churn, and postmortem-tail logic are strictly opt-in.
 - Under `--until-mergeable`: ALL channels read each round — `gh pr view --json statusCheckRollup,reviews,latestReviews,…` PLUS `gh api graphql` review-threads PLUS `gh api .../issues/<n>/comments` (these comment/review/thread channels classified through `scripts/classify-bot-review.sh`, no re-implemented regexes) PLUS review-producing check-run output/annotations (gated by §U2.5's review-producing classification, NOT the comment author/marker regex); the scoped wait (§U2.5) settles required + review-producing checks before each READY test (optional checks excluded); every bot finding is validate-then-fixed (no severity floor **at fix time** — `--severity-floor` is termination-only, see above); **READY ⇔ required green AND scoped review-producing settled AND no unresolved validated bot findings across ALL channels** (§"READY redefinition"); fails CLOSED to `ESCALATED` on any unknown gated channel or an elapsed scoped wait; bounded by `--max-rounds` (default 5, **mechanized** via `scripts/drain-rounds.sh`, AC1/AC2); **never auto-merges — no `gh pr merge` anywhere — and never waits on a human (AC8)**.
 - Postmortem Dispatch Tail runs AFTER the decision is emitted, is churn-gated (default threshold 2), opt-out via `--no-auto-postmortem`, and can never alter `REVIEW_HEAL_RESULT.decision` (`dispatch-pr-postmortem.sh` always exits 0).

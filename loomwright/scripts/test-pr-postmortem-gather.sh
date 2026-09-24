@@ -81,6 +81,14 @@
 #   5. unavailable (stub gh fails / PR inaccessible) -> {"status":"unavailable",...}, exit 0.
 #   6. bad input   -> {"status":"unavailable","reason":"bad_input"}, exit 0.
 #   7. missing gh  -> {"status":"unavailable","reason":"gh_unavailable"}, exit 0.
+#   8. dismissed_findings (dismissed-findings-01) -> one well-formed
+#                     `<!-- loomwright:dismissed round=<n> -->` marker comment (read off
+#                     the RAW issue-comments fetch, never through classify-bot-review.sh)
+#                     parses to length-1 dismissed_findings with all 4 fields correct.
+#   9. dismissed_findings malformed -> a marker-prefixed body with no `round=` header
+#                     yields [] for that comment, fail-safe, no crash.
+#  10. dismissed_findings absent -> the plain happy-path fixture (no marker comments)
+#                     yields dismissed_findings == [].
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -391,6 +399,27 @@ jq -cn '
              + ([range(0;25)] | map("\($emdash) review finding lorem ipsum \($bot) ") | add)) } ]' \
   > "$FIX_BIGCOMMENTS"
 
+# dismissed_findings fixtures (dismissed-findings-01): REST-shaped issue comments
+# whose body is (or starts as) a `<!-- loomwright:dismissed round=<n> -->` marker
+# comment posted by the drain/self-heal — NEVER served through the bot-review
+# classifier (classify-bot-review.sh's --skip-marker filter drops these by
+# default), but read independently here off the raw comments fetch.
+FIX_DISMISSED_MARKER="$TMP/fixture-dismissed-marker.json"
+cat > "$FIX_DISMISSED_MARKER" <<'FIX'
+[
+  {"user": {"login": "vikashruhilgit"}, "created_at": "2026-01-01T12:00:00Z", "body": "<!-- loomwright:dismissed round=2 -->\n- **missing: null check** — already fixed in a prior round (reviewThreads)"}
+]
+FIX
+
+# Malformed marker-prefixed body (no round= header) => zero items for THIS
+# comment, fail-safe, never a crash.
+FIX_DISMISSED_MALFORMED="$TMP/fixture-dismissed-malformed.json"
+cat > "$FIX_DISMISSED_MALFORMED" <<'FIX'
+[
+  {"user": {"login": "vikashruhilgit"}, "created_at": "2026-01-01T12:00:00Z", "body": "<!-- loomwright:dismissed -->\n- not a well-formed bullet line at all"}
+]
+FIX
+
 make_gh_stub() {
   local mode="$1" api_mode="${2:-empty}" fixture="" api_fixture=""
   case "$mode" in
@@ -408,6 +437,8 @@ make_gh_stub() {
     otherrepocomments) api_fixture="$FIX_OTHERREPOSHAPE_COMMENTS" ;;
     hostile)     api_fixture="$FIX_BOTREVIEW_COMMENTS_HOSTILE" ;;
     bigcomments) api_fixture="$FIX_BIGCOMMENTS" ;;
+    dismissedmarker)    api_fixture="$FIX_DISMISSED_MARKER" ;;
+    dismissedmalformed) api_fixture="$FIX_DISMISSED_MALFORMED" ;;
   esac
   cat > "$BIN/gh" <<STUB
 #!/usr/bin/env bash
@@ -759,6 +790,43 @@ if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | jq -e '
   ok "missing gh => status unavailable, reason gh_unavailable, exit 0"
 else
   no "(7) wrong (rc=$RUN_RC): $RUN_OUT"
+fi
+
+echo "== 8. dismissed_findings: one well-formed marker comment => length 1 with the right 4 fields =="
+make_gh_stub ok dismissedmarker
+run_gather "$PR_URL"
+if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | jq -e '
+    (has("status") | not)
+    and (.dismissed_findings | length == 1)
+    and (.dismissed_findings[0].round == 2)
+    and (.dismissed_findings[0].finding == "missing: null check")
+    and (.dismissed_findings[0].reason == "already fixed in a prior round")
+    and (.dismissed_findings[0].source == "reviewThreads")
+  ' >/dev/null 2>&1; then
+  ok "one marker comment => dismissed_findings length 1, fields {round,finding,reason,source} all correct"
+else
+  no "(8) wrong (rc=$RUN_RC): $RUN_OUT"
+fi
+
+echo "== 9. dismissed_findings: malformed/hand-edited marker-prefixed body => [] for that comment (fail-safe, no crash) =="
+make_gh_stub ok dismissedmalformed
+run_gather "$PR_URL"
+if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | jq -e '
+    (has("status") | not)
+    and (.dismissed_findings == [])
+  ' >/dev/null 2>&1; then
+  ok "malformed marker-prefixed comment (no round= header) => dismissed_findings [], no crash, success shape preserved"
+else
+  no "(9) wrong (rc=$RUN_RC): $RUN_OUT"
+fi
+
+echo "== 10. dismissed_findings: no marker comments present => [] (happy-path fixture 1 has none) =="
+make_gh_stub ok
+run_gather "$PR_URL"
+if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | jq -e '.dismissed_findings == []' >/dev/null 2>&1; then
+  ok "no marker comments => dismissed_findings []"
+else
+  no "(10) wrong (rc=$RUN_RC): $RUN_OUT"
 fi
 
 echo

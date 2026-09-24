@@ -41,6 +41,14 @@ Each review round is assigned **exactly ONE** class. Definitions are crisp so ca
 
 Set `self_heal_miss: true` when the round is something **Supervisor Phase 4.5 self-heal should have caught but didn't** — i.e. the finding falls in the repo-agnostic Self-Heal Miss-Class Checklist (`skills/quality-checklist/SKILL.md`): backend-mirrors-frontend validation parity, `||`/falsy coercion on numeric fields, positional args to options-object functions, missing branch coverage, count/version/restated-list drift, cross-reference precision drift. These rounds are the highest-signal entries for hardening self-heal. Default `false` when unsure.
 
+### Optional `dismissed_then_raised` flag (boolean, per round — dismissed-findings-01)
+
+**Not a 7th root-cause class.** `categories[]`'s `class` field has NO closed JSON-schema enum in `docs/RESULT_SCHEMAS.md` §POSTMORTEM_RESULT — the 6 classes above are narrative-documented here, in this skill, not enum-validated — so this signal is an ADDITIVE PER-ROUND BOOLEAN, mirroring `self_heal_miss` exactly, never a new string value for `class`.
+
+Set `dismissed_then_raised: true` when a finding the drain or Phase 4.5 self-heal **dismissed** on an earlier round (`gather.dismissed_findings[]`, populated by `pr-postmortem-gather.sh` from the `<!-- loomwright:dismissed round=<n> -->` marker comments — see Step 2 below) later reappears, in substance, in a **HUMAN-authored** review comment or thread on this same PR (`review_comments[]` entries whose author does not look like a review bot). The match is a **normalised substring match**: lowercase both texts, collapse internal whitespace, and check whether the dismissed finding's text (or a clearly-recognizable core phrase of it) appears inside the human comment's text — an exact-string requirement would miss trivial rephrasing; a bare keyword match would over-trigger, so use judgment on borderline cases and prefer `false` when the match is not clearly the SAME finding. Default `false` when `gather.dismissed_findings` is empty or no human comment references any dismissed item.
+
+When `dismissed_then_raised: true`, attribute `flow_stage: self_heal` (a dismissal a human later re-raised is exactly the class of signal `self_heal` already covers below — the automated loop's own validate-then-fix judgment was wrong, whether that judgment ran in the drain or in Phase 4.5). This is its own root-cause signal distinct from `self_heal_miss`: `self_heal_miss` flags a finding self-heal *never saw*; `dismissed_then_raised` flags a finding self-heal *saw, judged stale/invalid/already-addressed, and was wrong about* — a sharper, higher-confidence miss because the loop's own reasoning is on record (`gather.dismissed_findings[].reason`) and demonstrably contradicted by the later human comment.
+
 ### Flow-stage attribution (per round)
 
 Attribute each round to the stage of the agent flow where the root cause was introduced:
@@ -65,8 +73,10 @@ GATHERED="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-postmortem-gather.sh" "<input
 ```
 The script emits exactly ONE JSON object on stdout and always exits 0. Two shapes:
 
-- **Success** (NO `status` field): `{ repo, number, title, agent_generated_guess, additions, deletions, changed_files, commits:[{headline,is_review_fix}], review_rounds, review_rounds_source, review_comments:[{author,snippet}], ci_checks:[{name,state}] }`.
+- **Success** (NO `status` field): `{ repo, number, title, agent_generated_guess, additions, deletions, changed_files, commits:[{headline,is_review_fix}], review_rounds, review_rounds_source, review_comments:[{author,snippet}], ci_checks:[{name,state}], dismissed_findings:[{round,finding,reason,source}] }`.
 - **Unavailable**: `{"status":"unavailable","reason":"<slug>"}` (slugs: `jq_unavailable`, `gh_unavailable`, `bad_input`, `pr_inaccessible`, `normalize_failed`).
+
+**`dismissed_findings` (dismissed-findings-01, additive):** the itemised `<!-- loomwright:dismissed round=<n> -->` marker comments the `--until-mergeable` drain and Phase 4.5 self-heal post on the analyzed PR (`skills/review-heal/SKILL.md` §"Dismissed-findings marker comment") — `[]` when the PR carries none. Consumed by the `dismissed_then_raised` signal above; NOT itself a review round and never counted toward `review_rounds`.
 
 **`review_rounds` counts three signals** (MAX of the three): review-fix commit headlines (the narrow phrase set — whose `address(es)? review` alternative accepts an optional intervening "code" since v14.23.3, covering "address code review findings …" headlines the adjacency requirement missed on a private downstream repo — plus the two explicit anchored forms `pr #N review` / `review #N` — word-bounded, so "preview #2" never matches), formal churn-review submissions, and **bot-authored issue-comment review rounds** — a comment whose author looks like a review bot (login `claude`, `github-actions*`, or any `*[bot]`) and whose body carries a review marker (a word-bounded review STEM — "review", "reviewed", "reviewer(s)", "reviewing", "reviews" — or "finding(s)" ANYWHERE in the body; widened in v14.23.2 from the heading-anchored form because bot comments in that shape open with `## Overview` and mention review only in running text, and widened again in v15.76.1 from the bare lexeme after a PR #223 bot comment opening "Reviewed <sha>. … Two minor findings" was dropped; still word-bounded so "Deploy Preview"/"previewed" never match), followed by at least one later push (comment `created_at` vs commit `committedDate`). The third signal covers repos whose review feedback arrives as CI-workflow comments (e.g. `claude[bot]` from a claude-review workflow) instead of GitHub review objects — the mode that previously reported `review_rounds: 0` despite real churn. `review_rounds_source` names the dominant signal (`fix_commits` | `formal_reviews` | `bot_comments` | `none`; ties resolve in that order). The issue-comments fetch is fail-safe and bounded to a single `?per_page=100` page: if it errors, the gather degrades to the two legacy signals, and hostile-typed comment fields degrade element-locally — never an unavailable emit, never a non-zero exit. Known bounded over-count: an all-clear closer ("recommend merge") followed by any later commit (housekeeping, version bump, rebase) books one phantom bot round — accepted noise for a trend-only signal (`review_rounds` is a MAX); a phrasing-based negative anchor on closers was considered and rejected as brittle.
 
@@ -84,6 +94,7 @@ This is Invariant 4: clear one-liner, graceful exit, NO partial trend write.
 For each review round / review-fix signal (driven by `review_rounds`, the `review_comments[]` bodies, and the `is_review_fix` commits), the main thread assigns:
 - exactly one **class** from the 6 above,
 - the optional **`self_heal_miss`** boolean,
+- the optional **`dismissed_then_raised`** boolean (dismissed-findings-01),
 - a **`flow_stage`** from the 4 above,
 - a short **evidence snippet** (the review-comment snippet or review-fix commit headline that justifies the call).
 
@@ -93,6 +104,7 @@ Categorization heuristics (reproducible, evidence-first):
 - **`review_comments[]` is a superset of the rounds — never derive the round count from it.** The gather script intentionally includes approval-bodied reviews (e.g. an `APPROVED` "LGTM after fix") AND review-shaped bot issue comments (including a final all-clear comment with no follow-up push, which is correctly not a round) in `review_comments[]` as context, but only `review_rounds` counts as rounds. Categorize exactly `review_rounds` rounds; treat surplus comment snippets (approvals, follow-up acknowledgements, post-final-push bot comments) as evidence/context only.
 - When `review_rounds_source` is `bot_comments`, the per-round evidence usually lives in the bot-comment snippets (`review_comments[]` entries from a review-bot author — login `claude`, `github-actions*`, or any `*[bot]`) — read those first, then fall back to commit headlines.
 - Apply the Self-Heal Miss-Class Checklist to set `self_heal_miss` (and thereby lean `flow_stage: self_heal`) where the evidence matches one of its classes.
+- **`dismissed_then_raised` (dismissed-findings-01):** when `gather.dismissed_findings` is non-empty, before finalizing each round check whether its evidence (the `review_comments[]` snippet, restricted to HUMAN-authored entries — i.e. NOT a review-bot login) contains, via normalised substring match (see the flag's own definition above), the text of any `dismissed_findings[]` item. When it does, set `dismissed_then_raised: true` and `flow_stage: self_heal` on that round — the class assignment (one of the 6 above) is UNCHANGED, still driven by the finding's own language exactly as every other round; only the flow-stage attribution is forced to `self_heal`, because a re-raised dismissal means the loop's own validate-then-fix judgment (not the underlying code defect's nature) is what needs fixing.
 
 ### Step 4 — Print the categorized root-cause report
 Human-readable, to stdout. Include:
@@ -146,7 +158,7 @@ exit 0
 ```
 
 Where the main thread builds, before the snippet:
-- `CATEGORIES_JSON` — a JSON array of per-round objects `[{round, class, self_heal_miss, flow_stage, evidence}]`, itself jq-built (`jq -cn` with `--arg`/`--argjson`) so no untrusted PR text is string-interpolated.
+- `CATEGORIES_JSON` — a JSON array of per-round objects `[{round, class, self_heal_miss, dismissed_then_raised, flow_stage, evidence}]`, itself jq-built (`jq -cn` with `--arg`/`--argjson`) so no untrusted PR text is string-interpolated. `dismissed_then_raised` (dismissed-findings-01) is additive here exactly like `self_heal_miss` — `false` on every round where the check did not trigger, never omitted.
 - `SELF_HEAL_MISSES` — integer count of rounds with `self_heal_miss: true`.
 - `FLOW_STAGES_JSON` — object tallying rounds per stage, e.g. `{"launch_pad":1,"worker":2,"self_heal":0,"unknowable":0}`.
 - `SUMMARY` — the one-line root-cause narrative (plain string, passed via `--arg`).
@@ -170,7 +182,7 @@ One JSON object per line in `.supervisor/postmortem/results.jsonl`:
 | `agent_generated_guess` | bool | best-effort agent-PR heuristic (from gather) |
 | `review_rounds` | int | from gather |
 | `additions` / `deletions` / `changed_files` | int | size (from gather) |
-| `categories` | array | per-round `[{round, class, self_heal_miss, flow_stage, evidence}]` |
+| `categories` | array | per-round `[{round, class, self_heal_miss, dismissed_then_raised, flow_stage, evidence}]` — `dismissed_then_raised` is **additive** (dismissed-findings-01); absent in pre-dismissed-findings-01 lines, which remain valid — `schema_version` stays `1` |
 | `self_heal_misses` | int | count of rounds flagged `self_heal_miss` |
 | `flow_stages` | object | tally per stage `{launch_pad, worker, self_heal, unknowable}` |
 | `summary` | string | one-line root-cause narrative |

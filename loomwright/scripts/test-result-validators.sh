@@ -382,6 +382,22 @@ check("flow sequence of mappings parses",
 check("flow seq-of-mappings entry 0", seq and seq[0].get("path") == "a.ts")
 check("flow seq-of-mappings entry 1 name", seq and seq[1].get("name") == "Bar")
 
+# --- REVIEW_HEAL_RESULT.dismissed: a flow-map item with ": " INSIDE a quoted
+# string value must not be mis-split by the flow-map parser (dismissed-findings-01).
+fields, errors = R.parse_block(
+    'REVIEW_HEAL_RESULT:\n  dismissed: [{finding: "missing: null check", '
+    'reason: "already fixed in a prior round", source: "reviewThreads"}]'
+)
+dismissed = fields.get("dismissed")
+check("dismissed: flow-map with a quoted ': ' inside a value parses without error",
+      errors == [] and isinstance(dismissed, list) and len(dismissed) == 1)
+check("dismissed: finding field survives the embedded ': ' verbatim",
+      dismissed and dismissed[0].get("finding") == "missing: null check")
+check("dismissed: reason field parses",
+      dismissed and dismissed[0].get("reason") == "already fixed in a prior round")
+check("dismissed: source field parses",
+      dismissed and dismissed[0].get("source") == "reviewThreads")
+
 # --- nested block mapping ----------------------------------------------------
 fields, errors = R.parse_block(
     "X_RESULT:\n  resume_context:\n    tool_calls_used: 58\n"
@@ -2238,6 +2254,31 @@ cat_mk sup-rubric-absent.md sup-ran-base <<'EOF'
 EOF
 run_v "$V_SUPERVISOR" "$F"
 assert_pass "supervisor: ABSENT rubric_score accepted (rule 13 forbids rejecting on absence)"
+
+# --- heal_dismissed (dismissed-findings-01, additive, non-enumerated) --------
+# Purely additive, NOT enumerated by the validator (same precedent as
+# risk_classification / branch_base / pr_state) — a block validates identically
+# WITH or WITHOUT it.
+cat_mk sup-heal-dismissed-present.md sup-ran-base <<'EOF'
+  heal_iterations: 1
+  heal_decision: ESCALATED
+  heal_fixable_issues_fixed: 2
+  heal_remaining_issues: 1
+  summary: two findings dismissed this run
+  heal_dismissed: [{finding: "stale TODO comment", reason: "pre_existing", source: "code_reviewer"}, {finding: "missing test for edge case", reason: "below_severity_floor", source: "code_reviewer"}]
+EOF
+run_v "$V_SUPERVISOR" "$F"
+assert_pass "supervisor: heal_dismissed PRESENT (itemised list) validates [dismissed-findings-01]"
+
+cat_mk sup-heal-dismissed-absent.md sup-ran-base <<'EOF'
+  heal_iterations: 1
+  heal_decision: PASS
+  heal_fixable_issues_fixed: 0
+  heal_remaining_issues: 0
+  summary: zero findings dismissed this run, heal_dismissed key omitted entirely
+EOF
+run_v "$V_SUPERVISOR" "$F"
+assert_pass "supervisor: heal_dismissed ABSENT (empty ⇒ absent) validates identically [dismissed-findings-01]"
 
 # --- FINDING 3 (validator level): an internal blank line must not truncate ---
 # SUPERVISOR_RESULT carries ~20 fields including nested blocks, so this is the

@@ -49,6 +49,14 @@
 #                  (human, no [bot] suffix) and 'github-actions-fan' (bare-prefix
 #                  match only) are OUT; 'claude[bot]', 'github-actions[bot]' and
 #                  'anything[bot]' (generic [bot]-suffix login) all stay IN.
+#  23-26. --skip-marker (dismissed-findings-01, MUST) -> a marker-prefixed body
+#                  that would otherwise classify IN (bot author + review marker)
+#                  is dropped by the DEFAULT-ON filter, with a one-line stderr
+#                  note. MUTATION CONTROL: --skip-marker '' (explicitly disabled)
+#                  classifies the identical fixture IN, proving the filter is
+#                  load-bearing. A custom --skip-marker <prefix> overrides the
+#                  built-in default. An unmarked body is unaffected (no
+#                  false-positive drop, no stderr note when dropped==0).
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -419,6 +427,64 @@ if [ "$RC18E" -eq 0 ] && printf '%s' "$OUT18E" | jq -e '(type=="array") and (len
   ok "'anything[bot]' (generic [bot]-suffix login) still classified IN under the tightened regex"
 else
   no "(22) wrong (rc=$RC18E): $OUT18E"
+fi
+
+# =============================================================================
+# --skip-marker (dismissed-findings-01, MUST) — self-skip filter for the
+# drain's own <!-- loomwright:dismissed round=<n> --> marker comment.
+# =============================================================================
+
+echo "== 23. --skip-marker DEFAULT ON: a marker-prefixed body that would otherwise classify IN is dropped =="
+# A claude[bot]-authored, review-marked body that ALSO starts with the drain's
+# marker prefix. Without the filter this classifies IN on every earlier case's
+# logic; WITH the default-on filter it must be dropped BEFORE that test runs.
+MARK23='[{"id": 2301, "user": {"login": "claude[bot]"}, "body": "<!-- loomwright:dismissed round=1 -->\n- **X** — stale (reviewThreads)\n\nThis is a review comment."}]'
+OUT23="$(printf '%s' "$MARK23" | bash "$CLASSIFY" 2>"$TMP/stderr23.log")"; RC23=$?
+ERRTXT23="$(cat "$TMP/stderr23.log")"
+if [ "$RC23" -eq 0 ] \
+   && printf '%s' "$OUT23" | jq -e '(type=="array") and (length==0)' >/dev/null 2>&1 \
+   && grep -q 'skip_marker_filtered 1' < <(printf '%s' "$ERRTXT23"); then
+  ok "default-ON --skip-marker drops a marker-prefixed bot-authored review body that would otherwise classify IN; one-line stderr note logged"
+else
+  no "(23) wrong (rc=$RC23 out=$OUT23 err='$ERRTXT23')"
+fi
+
+echo "== 24. MUTATION CONTROL for 23: --skip-marker '' (explicitly disabled) classifies the SAME marker-prefixed body IN =="
+# Proves the filter in case 23 is load-bearing, not a coincidence of some other
+# gate: with the filter off, the identical fixture is classified IN.
+OUT24="$(printf '%s' "$MARK23" | bash "$CLASSIFY" --skip-marker '' 2>"$TMP/stderr24.log")"; RC24=$?
+ERRTXT24="$(cat "$TMP/stderr24.log")"
+if [ "$RC24" -eq 0 ] \
+   && printf '%s' "$OUT24" | jq -e '(type=="array") and (length==1) and (.[0].id==2301)' >/dev/null 2>&1 \
+   && [ -z "$ERRTXT24" ]; then
+  ok "mutation control: --skip-marker '' (explicitly disabled) classifies the same marker-prefixed body IN — proves case 23's filter is load-bearing"
+else
+  no "(24) wrong (rc=$RC24 out=$OUT24 err='$ERRTXT24')"
+fi
+
+echo "== 25. --skip-marker with a custom prefix overrides the built-in default =="
+# A body prefixed with a DIFFERENT marker string is dropped only when that
+# exact prefix is passed; the built-in default does not apply to it.
+CUSTOM25='[{"id": 2501, "user": {"login": "claude[bot]"}, "body": "<<<CUSTOM-MARKER>>> review finding here."}]'
+OUT25_DEFAULT="$(printf '%s' "$CUSTOM25" | bash "$CLASSIFY" 2>/dev/null)"
+OUT25_CUSTOM="$(printf '%s' "$CUSTOM25" | bash "$CLASSIFY" --skip-marker '<<<CUSTOM-MARKER>>>' 2>/dev/null)"
+if printf '%s' "$OUT25_DEFAULT" | jq -e '(type=="array") and (length==1)' >/dev/null 2>&1 \
+   && printf '%s' "$OUT25_CUSTOM" | jq -e '(type=="array") and (length==0)' >/dev/null 2>&1; then
+  ok "--skip-marker <custom prefix>: the built-in default does not drop a differently-prefixed body; the custom override does"
+else
+  no "(25) wrong: default_out=$OUT25_DEFAULT custom_out=$OUT25_CUSTOM"
+fi
+
+echo "== 26. --skip-marker DEFAULT ON: a body that does NOT start with the prefix is unaffected (no false-positive drop, no stderr note) =="
+UNMARKED26='[{"id": 2601, "user": {"login": "claude[bot]"}, "body": "This is an ordinary review finding with no marker prefix."}]'
+OUT26="$(printf '%s' "$UNMARKED26" | bash "$CLASSIFY" 2>"$TMP/stderr26.log")"; RC26=$?
+ERRTXT26="$(cat "$TMP/stderr26.log")"
+if [ "$RC26" -eq 0 ] \
+   && printf '%s' "$OUT26" | jq -e '(type=="array") and (length==1) and (.[0].id==2601)' >/dev/null 2>&1 \
+   && [ -z "$ERRTXT26" ]; then
+  ok "default-ON --skip-marker: an unmarked body is classified normally, no false-positive drop, no stderr note (dropped=0 stays silent)"
+else
+  no "(26) wrong (rc=$RC26 out=$OUT26 err='$ERRTXT26')"
 fi
 
 echo

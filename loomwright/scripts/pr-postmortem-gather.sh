@@ -17,11 +17,24 @@
 #     "review_comments": [{"author": "...", "snippet": "..."}],
 #     "ci_checks": [{"name": "...", "state": "SUCCESS"}],
 #     "pr_url": "https://github.com/owner/repo/pull/42", "branch": "feature/x",
-#     "changed_paths": ["src/a.ts", "src/b.ts"]
+#     "changed_paths": ["src/a.ts", "src/b.ts"],
+#     "dismissed_findings": [{"round": 1, "finding": "...", "reason": "...", "source": "..."}]
 #   }
-# The trailing three keys are PROVENANCE enrichment (Learning Loop Phase 4 — additive,
-# advisory, fail-safe): pr_url/branch from the PR JSON, changed_paths from .files[].path
-# (`// null` and `(.files // [])` so absent/empty input never errors the jq build).
+# The trailing three provenance keys are PROVENANCE enrichment (Learning Loop Phase 4 —
+# additive, advisory, fail-safe): pr_url/branch from the PR JSON, changed_paths from
+# .files[].path (`// null` and `(.files // [])` so absent/empty input never errors the jq build).
+#
+# dismissed_findings (dismissed-findings-01, additive, fail-safe): extracted from the SAME
+# issue-comments fetch used for bot review rounds (below) — any comment whose RAW body
+# starts with the marker prefix `<!-- loomwright:dismissed round=<n> -->` (posted once per
+# round by the --until-mergeable drain / Phase 4.5 self-heal, skills/review-heal/SKILL.md /
+# skills/self-heal-advisory/SKILL.md) is parsed for its `- **<finding>** — <reason> (<source>)`
+# bullet lines. These marker comments are DELIBERATELY excluded from `bot_review_comments`
+# above (classify-bot-review.sh's --skip-marker default-ON filter drops them before
+# classification), so this extraction reads the RAW $COMMENTS_JSON directly, not the
+# classified $BOT_REVIEW_JSON. Fail-safe per comment: a marker-prefixed body whose header
+# line does not parse (malformed round=, hand-edited) contributes ZERO items for that
+# comment — never a crash, never a partial/garbled item. `[]` when no marker comments exist.
 #
 # On ANY failure (gh/jq missing or unauthenticated, PR private/not-found/inaccessible,
 # unparseable input) it emits a jq-built unavailable object and exits 0:
@@ -228,8 +241,26 @@ OUTPUT="$(printf '%s' "$PR_JSON" | jq -c \
   --arg repo "$REPO" \
   --argjson number "$NUMBER" \
   --argjson bot_review_comments "$BOT_REVIEW_JSON" \
+  --argjson raw_comments "$COMMENTS_JSON" \
   '
+  # ---- dismissed_findings: parse <!-- loomwright:dismissed round=<n> --> marker
+  # comments out of the RAW (unclassified) issue-comments fetch (see header doc).
+  # Fail-safe per comment: a marker-prefixed body whose header does not parse
+  # contributes ZERO items; a bullet line that does not match the fixed shape is
+  # skipped, never crashes the single jq invocation.
+  ($raw_comments // []) as $rc
+  | [ $rc[]?
+      | (((.body)? | strings) // "") as $b
+      | select($b | startswith("<!-- loomwright:dismissed "))
+      | select($b | test("^<!-- loomwright:dismissed round=[0-9]+ -->"))
+      | ($b | capture("^<!-- loomwright:dismissed round=(?<round>[0-9]+) -->").round | tonumber) as $round
+      | ($b | split("\n"))[]
+      | select(test("^- \\*\\*.+\\*\\* — .+ \\([^()]+\\)\\s*$"))
+      | capture("^- \\*\\*(?<finding>.+?)\\*\\* — (?<reason>.+?) \\((?<source>[^()]+)\\)\\s*$")
+      | {round: $round, finding, reason, source}
+    ] as $dismissed_findings
   # ---- heuristic regexes (case-insensitive) ----
+  |
   # NB: do NOT embed \uXXXX surrogate escapes in these regex strings — the jq regex
   # engine treats \u literally. The 🤖 robot-emoji marker is matched as a literal
   # below via a plain substring `contains`, not via a regex escape.
@@ -349,7 +380,10 @@ OUTPUT="$(printf '%s' "$PR_JSON" | jq -c \
       # JSON omits these keys (old gh, --json mismatch). Advisory only — never gates.
       pr_url: (.url // null),
       branch: (.headRefName // null),
-      changed_paths: ([(.files // [])[].path])
+      changed_paths: ([(.files // [])[].path]),
+      # ---- dismissed-findings-01 (additive, fail-safe) ----
+      # [] when no marker comments exist. Each item: {round, finding, reason, source}.
+      dismissed_findings: $dismissed_findings
     }
   ' 2>/dev/null)" || emit_unavailable "normalize_failed"
 
