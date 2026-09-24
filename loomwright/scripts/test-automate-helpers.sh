@@ -505,6 +505,80 @@ run_h bash "$H" resolve-backlog "$WD/missing/_BACKLOG.md"
 if [ "$RUN_RC" -eq 0 ]; then ok "resolve-backlog absent: falls back gracefully (exit 0)"; else no "resolve-backlog absent should not crash (rc=$RUN_RC)"; fi
 rm -rf "$WD"
 
+# C2. not-ready stamp (## Status: proposed|parked, harness-port/02) is a real
+#     skip for resolve-folder AND resolve-backlog's dir-fallback path
+#     (resolve_backlog_dir), alongside a "done" file and a "done_with_escalation"
+#     file, with only the unstamped file surviving. resume-glob's run-file
+#     vocabulary (running|paused|done) must stay untouched (negative control).
+WD="$(mktemp -d)"; DIR="$WD/reqs"; mkdir -p "$DIR"
+printf '# proposed\n## Status: proposed\n'             > "$DIR/01-proposed.md"
+printf '# parked\n## Status: parked\n'                 > "$DIR/02-parked.md"
+printf '# done\n## Status: done\n'                     > "$DIR/03-done.md"
+printf '# done-esc\n## Status: done_with_escalation\n' > "$DIR/04-done-esc.md"
+printf '# ready\n'                                      > "$DIR/05-ready.md"
+
+run_h bash "$H" resolve-folder "$DIR"
+if [ "$RUN_OUT" = "$DIR/05-ready.md" ]; then
+  ok "resolve-folder: proposed/parked/done/done_with_escalation all skipped; only the unstamped file is listed"
+else
+  no "resolve-folder not-ready wrong:\n$RUN_OUT"
+fi
+
+# Same fixture dir, via resolve-backlog's dir-fallback path (backlog doc missing).
+run_h bash "$H" resolve-backlog "$DIR/_MISSING_BACKLOG.md"
+if [ "$RUN_OUT" = "$DIR/05-ready.md" ]; then
+  ok "resolve-backlog (dir fallback): proposed/parked/done/done_with_escalation all skipped; only the unstamped file is listed"
+else
+  no "resolve-backlog dir-fallback not-ready wrong:\n$RUN_OUT"
+fi
+
+# Negative control: resume-glob's run-file vocabulary (running|paused|done) is
+# NOT widened by is_not_ready — a "## Status: paused" run file is STILL listed
+# (proves is_done itself was never touched to match proposed/parked, decision H2).
+AUT2="$WD/automate2"; mkdir -p "$AUT2"
+printf '# paused-run\n## Status: paused\n' > "$AUT2/paused.md"
+run_h bash "$H" resume-glob "$AUT2"
+if [ "$RUN_OUT" = "$AUT2/paused.md" ]; then
+  ok "resume-glob: '## Status: paused' run file STILL listed (is_done was not widened to match proposed/parked)"
+else
+  no "resume-glob negative control wrong:\n$RUN_OUT"
+fi
+
+# Mutation control (AC — "is_not_ready mutated to return 1 unconditionally ⇒
+# proposed/parked assertions FAIL"). Mirrors the gate cond-6 (~line 919) /
+# I7 ceiling-check (~line 1905) sed-based CODE-mutation pattern — build a
+# mutant COPY of automate-helpers.sh via sed, confirm it's non-empty, differs
+# from the original, and still parses (bash -n) — NOT the H2/H3 fixture-value
+# mutation pattern (~line 1724), which mutates a fixture, not the script.
+MUT="$(mktemp -d)"
+sed 's/^is_not_ready() { grep -qE .*$/is_not_ready() { return 1; }/' "$H" > "$MUT/automate-helpers.sh"
+if [ -s "$MUT/automate-helpers.sh" ] && ! cmp -s "$H" "$MUT/automate-helpers.sh" && bash -n "$MUT/automate-helpers.sh" 2>/dev/null \
+   && grep -qF 'is_not_ready() { return 1; }' "$MUT/automate-helpers.sh"; then
+  MUT_FOLDER_OUT="$(bash "$MUT/automate-helpers.sh" resolve-folder "$DIR" 2>/dev/null)"
+  MUT_BACKLOG_OUT="$(bash "$MUT/automate-helpers.sh" resolve-backlog "$DIR/_MISSING_BACKLOG.md" 2>/dev/null)"
+  EXPECTED_MUT="$DIR/01-proposed.md
+$DIR/02-parked.md
+$DIR/05-ready.md"
+  if [ "$MUT_FOLDER_OUT" = "$EXPECTED_MUT" ] && [ "$MUT_BACKLOG_OUT" = "$EXPECTED_MUT" ]; then
+    ok "mutation control: is_not_ready forced to always-false ⇒ proposed/parked leak back into BOTH resolve-folder and resolve-backlog (dir-fallback) output — proves the check is load-bearing, not vacuous"
+  else
+    no "mutation control did NOT discriminate (folder='$MUT_FOLDER_OUT' backlog='$MUT_BACKLOG_OUT' expected='$EXPECTED_MUT')"
+  fi
+  # Positive control: the SAME (unmutated) script, on the SAME fixture, excludes
+  # proposed/parked — showing the mutant's leak above is caused by the deleted
+  # check, not by some other difference between the two invocations.
+  CTRL_FOLDER_OUT="$(bash "$H" resolve-folder "$DIR" 2>/dev/null)"
+  if [ "$CTRL_FOLDER_OUT" = "$DIR/05-ready.md" ]; then
+    ok "mutation control positive control: the unmutated script, same fixture, still excludes proposed/parked (only 05-ready.md)"
+  else
+    no "mutation control positive control failed (out='$CTRL_FOLDER_OUT') — cannot trust the mutation result without this"
+  fi
+else
+  no "mutation control not gated (mutant empty, identical to original, bash -n failed, or the is_not_ready override was not injected)"
+fi
+rm -rf "$MUT"
+rm -rf "$WD"
+
 # =============================================================================
 echo "== D. resume reconcile (run-file BELIEF vs gh TRUTH) =="
 
