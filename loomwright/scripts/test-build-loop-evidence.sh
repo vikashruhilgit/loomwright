@@ -101,13 +101,13 @@ EOF
 echo "== (1) funnel table renders against the full fixture =="
 run_builder --state-dir "$SD_A"
 if [ "$RC" -eq 0 ] \
-   && printf '%s\n' "$OUT" | grep -Fq "| run | version | landed | clean | durable | cheap |" \
-   && printf '%s\n' "$OUT" | grep -Fq "fixture-run"; then
+   && grep -Fq "| run | version | landed | clean | durable | cheap |" < <(printf '%s\n' "$OUT") \
+   && grep -Fq "fixture-run" < <(printf '%s\n' "$OUT"); then
   ok "funnel table header + fixture run row rendered (rc=0)"
 else
   no "funnel table did not render (rc=$RC)"
 fi
-if printf '%s\n' "$OUT" | grep -Fq "## Data quality"; then
+if grep -Fq "## Data quality" < <(printf '%s\n' "$OUT"); then
   ok "Data quality section present"
 else
   no "Data quality section missing"
@@ -116,13 +116,13 @@ fi
 # ============================================================================
 echo "== (2) FALSE-ZERO RULE: 0 review rounds + 3 drain-cycle commits => NOT clean =="
 row="$(printf '%s\n' "$OUT" | grep -F "| fixture-run |" | head -1)"
-if printf '%s\n' "$row" | grep -Fq "drain_cycle_commits" \
-   && printf '%s\n' "$row" | grep -Eq '\| no \([^)]*drain_cycle_commits[^)]*\) \|'; then
+if grep -Fq "drain_cycle_commits" < <(printf '%s\n' "$row") \
+   && grep -Eq '\| no \([^)]*drain_cycle_commits[^)]*\) \|' < <(printf '%s\n' "$row"); then
   ok "fixture PR classified NOT clean via drain_cycle_commits despite 0 GitHub rounds"
 else
   no "false-zero rule failed — row: $row"
 fi
-if printf '%s\n' "$row" | grep -Fq "| yes |"; then
+if grep -Fq "| yes |" < <(printf '%s\n' "$row"); then
   ok "fixture PR classified landed=yes (merge commit found)"
 else
   no "fixture PR not detected as landed — row: $row"
@@ -137,12 +137,12 @@ cat > "$SD_B/logs/solo.jsonl" <<'EOF'
 {"ts":"2026-06-10T11:00:00Z","event":"session_end","task_id":"solo-run","status":"completed","pr_url":"https://github.com/acme/widgets/pull/9","heal_decision":"PASS","heal_iterations":0,"plugin_version":"14.30.0"}
 EOF
 run_builder --state-dir "$SD_B"
-if [ "$RC" -eq 0 ] && printf '%s\n' "$OUT" | grep -Fq "insufficient_data"; then
+if [ "$RC" -eq 0 ] && grep -Fq "insufficient_data" < <(printf '%s\n' "$OUT"); then
   ok "missing postmortem => insufficient_data label present, rc=0"
 else
   no "missing postmortem handling wrong (rc=$RC)"
 fi
-if printf '%s\n' "$OUT" | grep -q "postmortem/results.jsonl absent"; then
+if grep -q "postmortem/results.jsonl absent" < <(printf '%s\n' "$OUT"); then
   ok "Data quality names the absent postmortem file"
 else
   no "Data quality does not mention absent postmortem"
@@ -152,8 +152,8 @@ fi
 echo "== (4) --state-dir at a NONEXISTENT dir => graceful labeled output, exit 0 =="
 run_builder --state-dir "$ROOT/does/not/exist"
 if [ "$RC" -eq 0 ] \
-   && printf '%s\n' "$OUT" | grep -Fq "insufficient_data" \
-   && printf '%s\n' "$OUT" | grep -Fq "state dir not found"; then
+   && grep -Fq "insufficient_data" < <(printf '%s\n' "$OUT") \
+   && grep -Fq "state dir not found" < <(printf '%s\n' "$OUT"); then
   ok "nonexistent state dir => labeled output, rc=0"
 else
   no "nonexistent state dir not handled gracefully (rc=$RC)"
@@ -167,12 +167,12 @@ if [ "$RC" -eq 0 ] && [ -n "$OUT" ] && printf '%s\n' "$OUT" | jq empty >/dev/nul
 else
   no "--jsonl output does not parse (rc=$RC)"
 fi
-if printf '%s\n' "$OUT" | jq -r 'select(.type=="run") | .run' 2>/dev/null | grep -Fq "fixture-run"; then
+if grep -Fq "fixture-run" < <(printf '%s\n' "$OUT" | jq -r 'select(.type=="run") | .run' 2>/dev/null); then
   ok "--jsonl carries a type:run line for the fixture run"
 else
   no "--jsonl missing the type:run line"
 fi
-if printf '%s\n' "$OUT" | jq -r 'select(.type=="run") | .clean' 2>/dev/null | grep -Fq "drain_cycle_commits"; then
+if grep -Fq "drain_cycle_commits" < <(printf '%s\n' "$OUT" | jq -r 'select(.type=="run") | .clean' 2>/dev/null); then
   ok "--jsonl run line preserves the false-zero NOT-clean classification"
 else
   no "--jsonl run line lost the NOT-clean classification"
@@ -189,12 +189,12 @@ cat > "$SD_D/logs/strfield.jsonl" <<'EOF'
 {"ts":"2026-07-06T11:00:00Z","event":"session_end","task_id":"strfield-run","status":"completed","pr_url":"https://github.com/acme/widgets/pull/21","heal_iterations":0,"plugin_version":"15.4.0"}
 EOF
 run_builder --state-dir "$SD_D"
-if [ "$RC" -eq 0 ] && printf '%s\n' "$OUT" | grep -Fq "strfield-run"; then
+if [ "$RC" -eq 0 ] && grep -Fq "strfield-run" < <(printf '%s\n' "$OUT"); then
   ok "session_end run renders despite string-typed usage field (rc=0)"
 else
   no "string-typed usage field aborted the file's runs (rc=$RC)"
 fi
-if printf '%s\n' "$OUT" | grep -Fq "real:500t"; then
+if grep -Fq "real:500t" < <(printf '%s\n' "$OUT"); then
   ok "numeric usage field still counted (real:500t), string field degraded to 0"
 else
   no "expected real:500t (string field->0, numeric field kept) not found"
@@ -212,12 +212,12 @@ cat > "$SD_E/logs/bad-usage.jsonl" <<'EOF'
 EOF
 run_builder --state-dir "$SD_E"
 if [ "$RC" -eq 0 ] \
-   && printf '%s\n' "$OUT" | grep -Fq "log file bad-usage.jsonl unparseable"; then
+   && grep -Fq "log file bad-usage.jsonl unparseable" < <(printf '%s\n' "$OUT"); then
   ok "abort is LABELED (log file bad-usage.jsonl unparseable ... runs omitted), rc=0"
 else
   no "unparseable file not labeled in Data quality (rc=$RC)"
 fi
-if ! printf '%s\n' "$OUT" | grep -Fq "ghost-run"; then
+if ! grep -Fq "ghost-run" < <(printf '%s\n' "$OUT"); then
   ok "unparseable file's runs omitted from the funnel (ghost-run absent)"
 else
   no "ghost-run rendered despite the extraction abort"
@@ -236,19 +236,19 @@ cat > "$SD_F/logs/two-runs.jsonl" <<'EOF'
 EOF
 run_builder --state-dir "$SD_F"
 if [ "$RC" -eq 0 ] \
-   && printf '%s\n' "$OUT" | grep -Fq "run-one" \
-   && printf '%s\n' "$OUT" | grep -Fq "run-two"; then
+   && grep -Fq "run-one" < <(printf '%s\n' "$OUT") \
+   && grep -Fq "run-two" < <(printf '%s\n' "$OUT"); then
   ok "both runs of the 2-run file render (rc=0)"
 else
   no "2-run fixture rows missing (rc=$RC)"
 fi
-if printf '%s\n' "$OUT" | grep -Fq "proxy:50000B" \
-   && ! printf '%s\n' "$OUT" | grep -Fq "proxy:100000B"; then
+if grep -Fq "proxy:50000B" < <(printf '%s\n' "$OUT") \
+   && ! grep -Fq "proxy:100000B" < <(printf '%s\n' "$OUT"); then
   ok "era total counts the file's 50000B exactly once (no 2x inflation)"
 else
   no "era token total inflated or missing — expected proxy:50000B, not proxy:100000B"
 fi
-if printf '%s\n' "$OUT" | grep -Fq "era totals count each file's sum exactly ONCE"; then
+if grep -Fq "era totals count each file's sum exactly ONCE" < <(printf '%s\n' "$OUT"); then
   ok "Data quality note explains the once-per-file attribution"
 else
   no "once-per-file attribution note missing from Data quality"
@@ -299,13 +299,13 @@ echo "== (9) durable=no: follow-up fix commit <14d touching the same file =="
 run_builder --state-dir "$SD_G"
 row11="$(printf '%s\n' "$OUT" | grep -F "| g-eleven |" | head -1)"
 if [ "$RC" -eq 0 ] \
-   && printf '%s\n' "$row11" | grep -Fq "no (follow-up fix " \
-   && printf '%s\n' "$row11" | grep -Fq "touched same files <14d)"; then
+   && grep -Fq "no (follow-up fix " < <(printf '%s\n' "$row11") \
+   && grep -Fq "touched same files <14d)" < <(printf '%s\n' "$row11"); then
   ok "PR #11 durable=no (follow-up fix ... touched same files <14d), rc=0"
 else
   no "durable=no branch not taken — row: $row11 (rc=$RC)"
 fi
-if printf '%s\n' "$OUT" | grep -Fq "durable is a file-overlap heuristic and is SENSITIVE to hot shared files"; then
+if grep -Fq "durable is a file-overlap heuristic and is SENSITIVE to hot shared files" < <(printf '%s\n' "$OUT"); then
   ok "hot-file-sensitivity dq_once note present alongside durable=no"
 else
   no "hot-file-sensitivity Data-quality note missing"
@@ -314,12 +314,12 @@ fi
 # ============================================================================
 echo "== (10) squash-merge landing: landed=yes, drain-cycle signal labeled unavailable =="
 row12="$(printf '%s\n' "$OUT" | grep -F "| g-twelve |" | head -1)"
-if printf '%s\n' "$row12" | grep -Fq "| yes | yes | yes |"; then
+if grep -Fq "| yes | yes | yes |" < <(printf '%s\n' "$row12"); then
   ok "squash-landed PR #12: landed=yes, clean=yes, durable=yes (no file overlap with the fix)"
 else
   no "squash-merge row wrong — row: $row12"
 fi
-if printf '%s\n' "$OUT" | grep -Fq "squash-merged PRs collapse branch history — drain-cycle commit signal unavailable there (clean relies on fix_cycles/heal_iterations for those)"; then
+if grep -Fq "squash-merged PRs collapse branch history — drain-cycle commit signal unavailable there (clean relies on fix_cycles/heal_iterations for those)" < <(printf '%s\n' "$OUT"); then
   ok "squash drain-cycle degradation LABELED under Data quality (exact builder string)"
 else
   no "squash-merge Data-quality note missing"
@@ -328,8 +328,8 @@ fi
 # ============================================================================
 echo "== (11) landed edges: not-in-history and no-pr_url =="
 row99="$(printf '%s\n' "$OUT" | grep -F "| g-ghost |" | head -1)"
-if printf '%s\n' "$row99" | grep -Fq "| no(not_in_history) |" \
-   && printf '%s\n' "$row99" | grep -Fq "| - |"; then
+if grep -Fq "| no(not_in_history) |" < <(printf '%s\n' "$row99") \
+   && grep -Fq "| - |" < <(printf '%s\n' "$row99"); then
   ok "PR #99 with no landing commit => landed=no(not_in_history), durable '-'"
 else
   no "not-in-history branch wrong — row: $row99"
@@ -365,7 +365,7 @@ if [ "$(printf '%s\n' "$OUT" | jq -r 'select(.type=="run" and .run=="era-datefal
 else
   no "date-fallback era branch wrong"
 fi
-if printf '%s\n' "$OUT" | jq -r 'select(.type=="data_quality") | .notes[]' 2>/dev/null | grep -Fq "bucketed by ship-date fallback (labeled date_fallback)"; then
+if grep -Fq "bucketed by ship-date fallback (labeled date_fallback)" < <(printf '%s\n' "$OUT" | jq -r 'select(.type=="data_quality") | .notes[]' 2>/dev/null); then
   ok "date-fallback dq_once note present"
 else
   no "date-fallback Data-quality note missing"
@@ -376,7 +376,7 @@ if [ "$(printf '%s\n' "$OUT" | jq -r 'select(.type=="run" and .run=="era-unknown
 else
   no "unknown era branch wrong"
 fi
-if printf '%s\n' "$OUT" | jq -r 'select(.type=="data_quality") | .notes[]' 2>/dev/null | grep -Fq "lack BOTH plugin_version and a parseable ts — era bucket unknown"; then
+if grep -Fq "lack BOTH plugin_version and a parseable ts — era bucket unknown" < <(printf '%s\n' "$OUT" | jq -r 'select(.type=="data_quality") | .notes[]' 2>/dev/null); then
   ok "unknown-era dq_once note present"
 else
   no "unknown-era Data-quality note missing"

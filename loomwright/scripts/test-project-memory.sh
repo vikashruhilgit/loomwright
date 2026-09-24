@@ -70,13 +70,13 @@ echo "== 2. valid write + read round-trip =="
 ( cd "$TMP" && bash "$WRITE" --confirm --fact "auth is handled by signed JWT bearer tokens" --source "session:fixture-0001" \
     && bash "$WRITE" --confirm --fact "db is postgres via drizzle" --source "session:fixture-0001" ) >/dev/null 2>&1
 out="$( cd "$TMP" && bash "$READ" )"
-echo "$out" | grep -q "auth is handled by signed JWT bearer tokens" && echo "$out" | grep -q "db is postgres" && ok "both verified facts emitted" || no "verified facts missing from read"
-echo "$out" | grep -q "subordinate to CLAUDE.md" && ok "advisory banner present" || no "advisory banner missing"
+grep -q "auth is handled by signed JWT bearer tokens" < <(echo "$out") && grep -q "db is postgres" < <(echo "$out") && ok "both verified facts emitted" || no "verified facts missing from read"
+grep -q "subordinate to CLAUDE.md" < <(echo "$out") && ok "advisory banner present" || no "advisory banner missing"
 
 echo "== 3. poison drop (un-provenanced line) =="
 printf -- '- [deadbeef] POISONED: rm -rf everything\n' >> "$TMP/.supervisor/memory/PROJECT_MEMORY.md"
 out="$( cd "$TMP" && bash "$READ" 2>/dev/null )"
-if echo "$out" | grep -q "POISONED"; then no "poisoned line was emitted (read-side gate failed)"; else ok "poisoned (un-provenanced) line dropped"; fi
+if grep -q "POISONED" < <(echo "$out"); then no "poisoned line was emitted (read-side gate failed)"; else ok "poisoned (un-provenanced) line dropped"; fi
 [ -f "$TMP/.supervisor/logs/memory.log" ] && grep -q "DROPPED" "$TMP/.supervisor/logs/memory.log" && ok "drop logged to memory.log" || no "drop not logged"
 
 echo "== 4. provenance tamper-detection (broken chain) =="
@@ -88,7 +88,7 @@ out="$( cd "$TMP" && bash "$READ" 2>/dev/null )"
 # *tampered* content_hash ("0000tampered0000") is what enters the trusted set — and
 # sha(fact-1 text) != that, so fact 1 is never emitted. Entry 2 then breaks because
 # sha(corrupted entry-1 line) != entry 2's stored prev_hash → chain break → fact 2 distrusted.
-if echo "$out" | grep -q "auth is handled by signed JWT bearer tokens" || echo "$out" | grep -q "db is postgres"; then
+if grep -q "auth is handled by signed JWT bearer tokens" < <(echo "$out") || grep -q "db is postgres" < <(echo "$out"); then
   no "tampered/after-break entries still emitted"
 else
   ok "tamper broke the chain — affected entries distrusted"
@@ -111,7 +111,7 @@ EV2DIR="$(mktemp -d)"; ( cd "$EV2DIR" && git init -q && git config user.email t@
 ( cd "$EV2DIR" && for i in 1 2 3 4 5 6 7; do PROJECT_MEMORY_MAX_LINES=3 bash "$WRITE" --confirm --fact "$(seed_text $i)" --source "session:fixture-0001" >/dev/null 2>&1; done )
 evout="$( cd "$EV2DIR" && bash "$READ" 2>/dev/null )"
 evsurv="$(echo "$evout" | grep -cE '^- \[')"; evsurv="${evsurv:-0}"
-if [ "$evsurv" -eq 3 ] && echo "$evout" | grep -q "$(seed_text 5)" && echo "$evout" | grep -q "$(seed_text 7)"; then
+if [ "$evsurv" -eq 3 ] && grep -q "$(seed_text 5)" < <(echo "$evout") && grep -q "$(seed_text 7)" < <(echo "$evout"); then
   ok "post-eviction survivors verify and read back (chain intact across evictions)"
 else
   no "post-eviction survivors dropped by reader (have $evsurv verified, want 3 — eviction broke the hash chain)"
@@ -177,8 +177,8 @@ stray="$(ls -1a "$RDIR/.supervisor/memory/" 2>/dev/null | grep -c -e '^\.mtmp\.'
 [ "$stray" -eq 0 ] && ok "aborted supersede left no .mtmp/.ptmp temp files" || no "aborted supersede left $stray temp file(s) behind"
 aout="$( cd "$RDIR" && bash "$READ" 2>/dev/null )"
 acnt2="$(echo "$aout" | grep -cE '^- \[')"; acnt2="${acnt2:-0}"
-if [ "$acnt2" -eq 2 ] && echo "$aout" | grep -q "the sky is green" && echo "$aout" | grep -q "keep me" \
-   && ! echo "$aout" | grep -q "orphan replacement fact"; then
+if [ "$acnt2" -eq 2 ] && grep -q "the sky is green" < <(echo "$aout") && grep -q "keep me" < <(echo "$aout") \
+   && ! grep -q "orphan replacement fact" < <(echo "$aout"); then
   ok "reader still returns exactly the pre-existing entries after the aborted supersede"
 else
   no "reader state changed by the aborted supersede (have $acnt2 verified, want the original 2)"
@@ -193,14 +193,14 @@ fi
 #     and reported as the misleading "no memory entry with id".
 short="$( cd "$RDIR" && bash "$WRITE" --retract a --source "session:fixture-0001" 2>&1 )"
 rc=$?
-if [ "$rc" -eq 2 ] && echo "$short" | grep -q "exactly 8 lowercase hex chars"; then
+if [ "$rc" -eq 2 ] && grep -q "exactly 8 lowercase hex chars" < <(echo "$short"); then
   ok "too-short retract id rejected with a length-specific message"
 else
   no "too-short retract id not rejected at validation (exit $rc): $short"
 fi
 long="$( cd "$RDIR" && bash "$WRITE" --retract deadbeef0 --source "session:fixture-0001" 2>&1 )"
 rc=$?
-if [ "$rc" -eq 2 ] && echo "$long" | grep -q "exactly 8 lowercase hex chars"; then
+if [ "$rc" -eq 2 ] && grep -q "exactly 8 lowercase hex chars" < <(echo "$long"); then
   ok "too-long retract id rejected with a length-specific message"
 else
   no "too-long retract id not rejected at validation (exit $rc): $long"
@@ -209,9 +209,9 @@ fi
 # 8e. supersede: corrected fact in, wrong fact out, unrelated fact untouched — one atomic call
 ( cd "$RDIR" && bash "$WRITE" --confirm --fact "the sky is blue" --supersedes "$wid" --source "session:fixture-0001" ) >/dev/null 2>&1
 rout="$( cd "$RDIR" && bash "$READ" 2>/dev/null )"
-echo "$rout" | grep -q "the sky is blue" && ok "superseding fact emitted" || no "superseding fact missing"
-echo "$rout" | grep -q "the sky is green" && no "retracted fact still emitted" || ok "retracted fact gone"
-echo "$rout" | grep -q "keep me"          && ok "unrelated fact survives supersede" || no "unrelated fact lost"
+grep -q "the sky is blue" < <(echo "$rout") && ok "superseding fact emitted" || no "superseding fact missing"
+grep -q "the sky is green" < <(echo "$rout") && no "retracted fact still emitted" || ok "retracted fact gone"
+grep -q "keep me" < <(echo "$rout")          && ok "unrelated fact survives supersede" || no "unrelated fact lost"
 rcnt="$(echo "$rout" | grep -cE '^- \[')"; rcnt="${rcnt:-0}"
 [ "$rcnt" -eq 2 ] && ok "count correct after supersede (2 verified)" || no "wrong count after supersede (have $rcnt, want 2)"
 
@@ -221,7 +221,7 @@ rcnt="$(echo "$rout" | grep -cE '^- \[')"; rcnt="${rcnt:-0}"
 # closes this. Without it, this assertion fails.
 printf -- '- [%s] the sky is green\n' "$wid" >> "$RDIR/.supervisor/memory/PROJECT_MEMORY.md"
 rout2="$( cd "$RDIR" && bash "$READ" 2>/dev/null )"
-if echo "$rout2" | grep -q "the sky is green"; then
+if grep -q "the sky is green" < <(echo "$rout2"); then
   no "re-appended RETRACTED fact was emitted as verified (read-side retract not honored)"
 else
   ok "re-appended retracted fact still dropped (retract revokes trust on the read side)"
@@ -232,7 +232,7 @@ fi
 sed -i.bak "/the sky is green/d" "$RDIR/.supervisor/memory/PROJECT_MEMORY.md" && rm -f "$RDIR/.supervisor/memory/PROJECT_MEMORY.md.bak"
 ( cd "$RDIR" && bash "$WRITE" --confirm --fact "the sky is green" --source "session:fixture-0001" ) >/dev/null 2>&1
 rout3="$( cd "$RDIR" && bash "$READ" 2>/dev/null )"
-echo "$rout3" | grep -q "the sky is green" && ok "re-adding a retracted fact re-trusts it" || no "re-add after retract did not re-trust"
+grep -q "the sky is green" < <(echo "$rout3") && ok "re-adding a retracted fact re-trusts it" || no "re-add after retract did not re-trust"
 rm -rf "$RDIR"
 
 # 8h. --supersedes with NO replacement --fact is an INDISTINGUISHABLE SYNONYM for a plain retraction,
@@ -261,10 +261,10 @@ w_mem_b="$(cat "$WMEM")"; w_prov_b="$(cat "$WPROV")"
 werr="$( cd "$WDIR" && bash "$WRITE" --supersedes "$sid" --source "session:fixture-0001" 2>&1 >/dev/null )"
 rc=$?
 [ "$rc" -eq 2 ] && ok "--supersedes without --fact fails closed (exit 2)" || no "--supersedes without --fact did not fail closed (exit $rc)"
-echo "$werr" | grep -qF -- "--supersedes [$sid] requires a replacement --fact" \
+grep -qF -- "--supersedes [$sid] requires a replacement --fact" < <(echo "$werr") \
   && ok "--supersedes without --fact names the missing replacement (and the id it carried)" \
   || no "--supersedes without --fact gave the wrong error: '$werr'"
-echo "$werr" | grep -qF -- "indistinguishable synonym for retract" && echo "$werr" | grep -qF -- "use --retract" \
+grep -qF -- "indistinguishable synonym for retract" < <(echo "$werr") && grep -qF -- "use --retract" < <(echo "$werr") \
   && ok "--supersedes abort explains the synonymy and points at --retract" \
   || no "--supersedes abort message missing the rationale/--retract pointer: '$werr'"
 [ "$w_mem_b" = "$(cat "$WMEM")" ] && ok "aborted bare --supersedes left PROJECT_MEMORY.md byte-identical" || no "aborted bare --supersedes mutated PROJECT_MEMORY.md"
@@ -280,7 +280,7 @@ stray="$(ls -1a "$WDIR/.supervisor/memory/" 2>/dev/null | grep -c -e '^\.mtmp\.'
 # (b) the --supersedes=<id> equals-form arm must follow the identical rule.
 weq="$( cd "$WDIR" && bash "$WRITE" --supersedes="$eid" --source "session:fixture-0001" 2>&1 >/dev/null )"
 rc=$?
-if [ "$rc" -eq 2 ] && echo "$weq" | grep -qF -- "--supersedes [$eid] requires a replacement --fact"; then
+if [ "$rc" -eq 2 ] && grep -qF -- "--supersedes [$eid] requires a replacement --fact" < <(echo "$weq"); then
   ok "--supersedes=<id> equals-form without --fact fails closed the same way (exit 2)"
 else
   no "--supersedes=<id> equals-form did not fail closed (exit $rc): '$weq'"
@@ -295,15 +295,15 @@ grep -qxF -- "- [$eid] supersede me bare equals form" "$WMEM" \
 #     still exits 0" and THEN aborted exit 2 at the lookup — a message false on its own path.
 wunk="$( cd "$WDIR" && bash "$WRITE" --supersedes deadbeef --source "session:fixture-0001" 2>&1 >/dev/null )"
 rc=$?
-if [ "$rc" -eq 2 ] && echo "$wunk" | grep -qF -- "--supersedes [deadbeef] requires a replacement --fact" \
-   && ! echo "$wunk" | grep -qF -- "no memory entry with id"; then
+if [ "$rc" -eq 2 ] && grep -qF -- "--supersedes [deadbeef] requires a replacement --fact" < <(echo "$wunk") \
+   && ! grep -qF -- "no memory entry with id" < <(echo "$wunk"); then
   ok "--supersedes <unknown-id> without --fact reports the missing replacement, not the unknown id"
 else
   no "--supersedes <unknown-id> without --fact reported the wrong error (exit $rc): '$wunk'"
 fi
 #     The precise contradiction: the old warning asserted "this is a plain retraction" on a call
 #     that then exited 2 having retracted nothing. No surviving message on this path may claim it.
-echo "$wunk" | grep -qiF -- "is a plain retraction" \
+grep -qiF -- "is a plain retraction" < <(echo "$wunk") \
   && no "abort message still claims a plain retraction happened on a call that exits 2 having retracted nothing" \
   || ok "no message on the exit-2 path claims a retraction took place (self-contradiction gone)"
 
@@ -326,7 +326,7 @@ grep -qF -- "- [$tid] retract me bare" "$WMEM" \
 rc=$?
 [ "$rc" -eq 0 ] && ok "--fact <corrected> --supersedes <id> still exits 0 (happy path not intercepted)" || no "the supported supersede shape regressed (exit $rc)"
 wout="$( cd "$WDIR" && bash "$READ" 2>/dev/null )"
-if echo "$wout" | grep -qF "supersede me bare, corrected" && ! echo "$wout" | grep -qxF -- "- [$sid] supersede me bare"; then
+if grep -qF "supersede me bare, corrected" < <(echo "$wout") && ! grep -qxF -- "- [$sid] supersede me bare" < <(echo "$wout"); then
   ok "--fact <corrected> --supersedes <id> still corrects end-to-end (replacement in, target out)"
 else
   no "the supported supersede shape no longer corrects end-to-end"
@@ -353,10 +353,10 @@ bcnt="$(grep -cF -- "sky is blue" "$SDIR/.supervisor/memory/PROJECT_MEMORY.md" 2
 acnt="$(grep -c '"action":"add"' "$SDIR/.supervisor/memory/.provenance.jsonl" 2>/dev/null)"; acnt="${acnt:-0}"
 [ "$acnt" -eq 2 ] && ok "no spurious 'add' provenance entry for the deduped half (2 adds)" || no "spurious/missing add provenance (have $acnt, want 2)"
 sout="$( cd "$SDIR" && bash "$READ" 2>/dev/null )"
-echo "$sout" | grep -q "sky is green" && no "retraction did not land on the colliding supersede" || ok "retraction still landed despite the skipped add"
+grep -q "sky is green" < <(echo "$sout") && no "retraction did not land on the colliding supersede" || ok "retraction still landed despite the skipped add"
 # Chain must survive the skipped `add` — append_prov links off the CURRENT tail, so the retract
 # entry chains to whatever preceded it. A reader that emits the survivor proves the chain is valid.
-echo "$sout" | grep -q "sky is blue" && ok "survivor reads back verified (hash chain intact across a skipped add)" || no "survivor dropped by reader (skipped add broke the chain)"
+grep -q "sky is blue" < <(echo "$sout") && ok "survivor reads back verified (hash chain intact across a skipped add)" || no "survivor dropped by reader (skipped add broke the chain)"
 
 # 9b. no-op supersede (replacement byte-identical to the target): must FAIL CLOSED with state
 #     untouched — the fact survives in the file AND in the reader, and no false "retracted".
@@ -366,16 +366,16 @@ prov_before="$(cat "$SDIR/.supervisor/memory/.provenance.jsonl")"
 noop="$( cd "$SDIR" && bash "$WRITE" --fact "alpha fact" --supersedes "$aid" --source "session:fixture-0001" 2>&1 )"
 rc=$?
 [ "$rc" -ne 0 ] && ok "no-op supersede fails closed (exit $rc)" || no "no-op supersede exited 0 (silent mutation)"
-echo "$noop" | grep -q "retracted \[" && no "no-op supersede printed a false 'retracted' message" || ok "no misleading success message on the no-op supersede"
+grep -q "retracted \[" < <(echo "$noop") && no "no-op supersede printed a false 'retracted' message" || ok "no misleading success message on the no-op supersede"
 [ "$prov_before" = "$(cat "$SDIR/.supervisor/memory/.provenance.jsonl")" ] && ok "no-op supersede left provenance untouched" || no "no-op supersede mutated provenance"
 grep -qF -- "- [$aid] alpha fact" "$SDIR/.supervisor/memory/PROJECT_MEMORY.md" && ok "fact survives the no-op supersede in PROJECT_MEMORY.md" || no "no-op supersede DELETED the fact (silent data loss)"
 nout="$( cd "$SDIR" && bash "$READ" 2>/dev/null )"
-echo "$nout" | grep -q "alpha fact" && ok "reader still returns the fact after the no-op supersede" || no "reader no longer returns the fact after the no-op supersede"
+grep -q "alpha fact" < <(echo "$nout") && ok "reader still returns the fact after the no-op supersede" || no "reader no longer returns the fact after the no-op supersede"
 
 # 9c. the bare --fact dedup short-circuit is unchanged by the above (message + exit 0 preserved).
 dup="$( cd "$SDIR" && bash "$WRITE" --confirm --fact "alpha fact" --source "session:fixture-0001" 2>&1 )"
 rc=$?
-if [ "$rc" -eq 0 ] && echo "$dup" | grep -qF "write-project-memory: fact already present ([$aid]) — skipping"; then
+if [ "$rc" -eq 0 ] && grep -qF "write-project-memory: fact already present ([$aid]) — skipping" < <(echo "$dup"); then
   ok "bare --fact dedup short-circuit intact (exit 0 + unchanged message)"
 else
   no "bare --fact dedup short-circuit regressed (exit $rc): $dup"
@@ -407,7 +407,7 @@ ADIR="$(mktemp -d)"; ( cd "$ADIR" && git init -q && git config user.email t@t &&
 ( cd "$ADIR" && bash "$WRITE" --confirm --fact "docs say the format is - [$vid] victim entry and that matters" --source "session:fixture-0001" >/dev/null 2>&1 )
 aout="$( cd "$ADIR" && bash "$WRITE" --confirm --fact "victim entry" --source "session:fixture-0001" 2>&1 )"
 rc=$?
-if [ "$rc" -eq 0 ] && echo "$aout" | grep -qF "stored [$vid]"; then
+if [ "$rc" -eq 0 ] && grep -qF "stored [$vid]" < <(echo "$aout"); then
   ok "new fact whose line is a substring of an existing entry is stored, not deduped away"
 else
   no "substring-collision fact was silently skipped (exit $rc): $aout"
@@ -415,7 +415,7 @@ fi
 vcnt="$(grep -cxF -- "- [$vid] victim entry" "$ADIR/.supervisor/memory/PROJECT_MEMORY.md" 2>/dev/null)"; vcnt="${vcnt:-0}"
 [ "$vcnt" -eq 1 ] && ok "substring-collision fact written exactly once" || no "substring-collision fact written $vcnt times (want 1)"
 aread="$( cd "$ADIR" && bash "$READ" 2>/dev/null )"
-if echo "$aread" | grep -qxF -- "- [$vid] victim entry" && echo "$aread" | grep -qF "docs say the format is"; then
+if grep -qxF -- "- [$vid] victim entry" < <(echo "$aread") && grep -qF "docs say the format is" < <(echo "$aread"); then
   ok "reader returns BOTH the decoy and the substring-collision fact (provenance written for each)"
 else
   no "reader does not return both collision entries"
@@ -430,7 +430,7 @@ CDIR="$(mktemp -d)"; ( cd "$CDIR" && git init -q && git config user.email t@t &&
 ( cd "$CDIR" && bash "$WRITE" --confirm --fact "see - [$vid] for details" --source "session:fixture-0001" >/dev/null 2>&1 \
                && bash "$WRITE" --confirm --fact "victim entry" --source "session:fixture-0001" >/dev/null 2>&1 )
 decoy_first=0
-head -n2 "$CDIR/.supervisor/memory/PROJECT_MEMORY.md" | tail -n1 | grep -qF "see - [$vid] for details" && decoy_first=1
+grep -qF "see - [$vid] for details" < <(head -n2 "$CDIR/.supervisor/memory/PROJECT_MEMORY.md" | tail -n1) && decoy_first=1
 [ "$decoy_first" -eq 1 ] && ok "collision fixture ordered decoy BEFORE the real target (the -m1 hazard)" || no "collision fixture ordering wrong — 10b would not exercise the -m1 path"
 ( cd "$CDIR" && bash "$WRITE" --confirm --retract "$vid" --source "session:fixture-0001" ) >/dev/null 2>&1
 rc=$?
@@ -442,7 +442,7 @@ grep -qF -- "see - [$vid] for details" "$CDIR/.supervisor/memory/PROJECT_MEMORY.
   && ok "the decoy entry is left intact by the retract" \
   || no "retract deleted the DECOY instead of the target (wrong line removed)"
 cread="$( cd "$CDIR" && bash "$READ" 2>/dev/null )"
-if echo "$cread" | grep -qF "see - [$vid] for details" && ! echo "$cread" | grep -qxF -- "- [$vid] victim entry"; then
+if grep -qF "see - [$vid] for details" < <(echo "$cread") && ! grep -qxF -- "- [$vid] victim entry" < <(echo "$cread"); then
   ok "reader agrees with the file: decoy verified, retracted target gone (state and provenance match)"
 else
   no "reader disagrees with the file after the collision retract"
@@ -477,7 +477,7 @@ grep -qF -- "- [$mid_b] mixed flag beta" "$MDIR/.supervisor/memory/PROJECT_MEMOR
 # naming the id the --supersedes spelling actually carried, with [$mid_a] left in place.
 merr2="$( cd "$MDIR" && bash "$WRITE" --retract "$mid_b" --supersedes "$mid_a" --source "session:fixture-0001" 2>&1 >/dev/null )"
 rc=$?
-if [ "$rc" -eq 2 ] && echo "$merr2" | grep -qF -- "--supersedes [$mid_a] requires a replacement --fact"; then
+if [ "$rc" -eq 2 ] && grep -qF -- "--supersedes [$mid_a] requires a replacement --fact" < <(echo "$merr2"); then
   ok "--retract <b> --supersedes <a> aborts exit 2 naming [$mid_a] (the id the last spelling carried)"
 else
   no "--retract <b> --supersedes <a> did not abort correctly (exit $rc): '$merr2'"
@@ -503,7 +503,7 @@ grep -qF -- "- [$mid_c] mixed flag gamma" "$MDIR/.supervisor/memory/PROJECT_MEMO
   || ok "--supersedes=<a> --retract=<c> retracted [$mid_c] (last VALUE wins, unchanged)"
 merr4="$( cd "$MDIR" && bash "$WRITE" --retract="$mid_d" --supersedes=deadbeef --source "session:fixture-0001" 2>&1 >/dev/null )"
 rc=$?
-if [ "$rc" -eq 2 ] && echo "$merr4" | grep -qF -- "--supersedes [deadbeef] requires a replacement --fact"; then
+if [ "$rc" -eq 2 ] && grep -qF -- "--supersedes [deadbeef] requires a replacement --fact" < <(echo "$merr4"); then
   ok "--retract=<d> --supersedes=<unknown> equals-form aborts exit 2 (the --supersedes= arm sets the spelling; shape before state)"
 else
   no "equals-form --supersedes= did not set the spelling / abort (exit $rc): '$merr4'"
@@ -522,7 +522,7 @@ PDIR="$(mktemp -d)"; ( cd "$PDIR" && git init -q && git config user.email t@t &&
 pid="$(sed -nE 's/^- \[([^]]+)\] exactly identical fact$/\1/p' "$PDIR/.supervisor/memory/PROJECT_MEMORY.md")"
 pdup="$( cd "$PDIR" && bash "$WRITE" --confirm --fact "exactly identical fact" --source "session:fixture-0001" 2>&1 )"
 rc=$?
-if [ "$rc" -eq 0 ] && echo "$pdup" | grep -qF "write-project-memory: fact already present ([$pid]) — skipping"; then
+if [ "$rc" -eq 0 ] && grep -qF "write-project-memory: fact already present ([$pid]) — skipping" < <(echo "$pdup"); then
   ok "an actually-identical fact is still deduped with the unchanged message + exit 0"
 else
   no "anchoring broke ordinary dedup (exit $rc): $pdup"

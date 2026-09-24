@@ -103,7 +103,7 @@ fi
 echo "== 4. --session: missing file -> all-zero + LEDGER_UNREADABLE=1, rc=0 =="
 D4="$(fresh_root)"
 run_sut --session nope --root "$D4"
-if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | grep -q 'LEDGER_UNREADABLE=1' \
+if [ "$RUN_RC" -eq 0 ] && grep -q 'LEDGER_UNREADABLE=1' < <(printf '%s' "$RUN_OUT") \
    && [ "$(field "$RUN_OUT" TOTAL)" = "0" ] && [ "$(field "$RUN_OUT" EVENTS)" = "0" ]; then
   ok "missing session file fail-safe: $RUN_OUT"
 else
@@ -117,7 +117,7 @@ chmod 000 "$D5/.supervisor/logs/s5.jsonl"
 run_sut --session s5 --root "$D5"
 if [ "$(id -u)" = "0" ]; then
   echo "  skip: running as root, chmod 000 has no effect"
-elif [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | grep -q 'LEDGER_UNREADABLE=1'; then
+elif [ "$RUN_RC" -eq 0 ] && grep -q 'LEDGER_UNREADABLE=1' < <(printf '%s' "$RUN_OUT"); then
   ok "unreadable session file fail-safe: $RUN_OUT"
 else
   no "unreadable session file did not fail safe: $RUN_OUT (rc=$RUN_RC)"
@@ -169,7 +169,7 @@ fi
 echo "== 8. --run-id: missing run file -> all-zero + LEDGER_UNREADABLE=1 =="
 D8="$(fresh_root)"
 run_sut --run-id nope --root "$D8"
-if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | grep -q 'LEDGER_UNREADABLE=1'; then
+if [ "$RUN_RC" -eq 0 ] && grep -q 'LEDGER_UNREADABLE=1' < <(printf '%s' "$RUN_OUT"); then
   ok "missing run file fail-safe: $RUN_OUT"
 else
   no "missing run file did not fail safe: $RUN_OUT (rc=$RUN_RC)"
@@ -183,7 +183,7 @@ cat > "$D9/.supervisor/automate/run9.md" <<'EOF'
 - ts picked item1
 EOF
 run_sut --run-id run9 --root "$D9"
-if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | grep -q 'LEDGER_UNREADABLE=1'; then
+if [ "$RUN_RC" -eq 0 ] && grep -q 'LEDGER_UNREADABLE=1' < <(printf '%s' "$RUN_OUT"); then
   ok "no session_id lines fail-safe: $RUN_OUT"
 else
   no "no session_id lines did not fail safe: $RUN_OUT (rc=$RUN_RC)"
@@ -201,7 +201,7 @@ cat > "$D10/.supervisor/automate/run10.md" <<'EOF'
 - ts session_id sPresent (item2)
 EOF
 run_sut --run-id run10 --root "$D10"
-if [ "$RUN_RC" -eq 0 ] && [ "$(field "$RUN_OUT" INPUT)" = "77" ] && ! printf '%s' "$RUN_OUT" | grep -q 'LEDGER_UNREADABLE'; then
+if [ "$RUN_RC" -eq 0 ] && [ "$(field "$RUN_OUT" INPUT)" = "77" ] && ! grep -q 'LEDGER_UNREADABLE' < <(printf '%s' "$RUN_OUT"); then
   ok "partial resolution sums the present session, no false-unreadable flag: $RUN_OUT"
 else
   no "partial resolution wrong: $RUN_OUT"
@@ -244,7 +244,7 @@ cat > "$D13/.supervisor/logs/s13.jsonl" <<'EOF'
 EOF
 NO_JQ_OUT="$(LOOMWRIGHT_JQ_BIN=/nonexistent/jq bash "$SUT" --session s13 --root "$D13" 2>/dev/null)"
 NO_JQ_RC=$?
-if [ "$NO_JQ_RC" -eq 0 ] && printf '%s' "$NO_JQ_OUT" | grep -q 'LEDGER_UNREADABLE=1'; then
+if [ "$NO_JQ_RC" -eq 0 ] && grep -q 'LEDGER_UNREADABLE=1' < <(printf '%s' "$NO_JQ_OUT"); then
   ok "missing jq fail-safe: $NO_JQ_OUT"
 else
   no "missing jq did not fail safe: $NO_JQ_OUT (rc=$NO_JQ_RC)"

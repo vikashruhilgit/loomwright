@@ -2292,7 +2292,7 @@ for fn in validate_dead_reference validate_cross_repo_reference; do
   BODY="$(awk -v f="^$fn\\\\(\\\\) \\\\{$" '$0 ~ f {inf=1} inf {print} inf && /^}$/ {exit}' "$VE")"
   if [ -z "$BODY" ]; then
     no "STATIC: could not extract the body of $fn — this assertion cannot run"
-  elif printf '%s\n' "$BODY" | grep -qE '(_ve_refuse|_ve_unexaminable|return [12])'; then
+  elif grep -qE '(_ve_refuse|_ve_unexaminable|return [12])' < <(printf '%s\n' "$BODY"); then
     no "STATIC: $fn contains a blocking path (_ve_refuse / _ve_unexaminable / return 1 / return 2) — it is an ADVISORY check and must return 0 on every path"
   else
     ok "STATIC: $fn contains no refusal emitter and no non-zero return — every path in it reports and returns 0"
@@ -2303,7 +2303,7 @@ for fn in validate_duplicate validate_contradiction validate_provenance; do
   BODY="$(awk -v f="^$fn\\\\(\\\\) \\\\{$" '$0 ~ f {inf=1} inf {print} inf && /^}$/ {exit}' "$VE")"
   if [ -z "$BODY" ]; then
     no "STATIC: could not extract the body of $fn — this assertion cannot run"
-  elif printf '%s\n' "$BODY" | grep -qE '(_ve_refuse|_ve_unexaminable)'; then
+  elif grep -qE '(_ve_refuse|_ve_unexaminable)' < <(printf '%s\n' "$BODY"); then
     ok "STATIC: $fn still calls a refusal emitter — it is a BLOCKING check and was not demoted with the other two"
   else
     no "STATIC: $fn no longer refuses anything — a blocking check was demoted, which is not what this change did"

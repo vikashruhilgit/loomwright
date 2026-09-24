@@ -154,7 +154,7 @@ assert_eq() {
 assert_match() {
   # Pass when haystack contains needle.
   local label="$1" needle="$2" haystack="$3"
-  if printf '%s' "$haystack" | grep -qF -- "$needle"; then
+  if grep -qF -- "$needle" < <(printf '%s' "$haystack"); then
     echo "PASS  $label"
     PASS_COUNT=$((PASS_COUNT + 1))
   else
@@ -167,7 +167,7 @@ assert_match() {
 
 assert_not_match() {
   local label="$1" needle="$2" haystack="$3"
-  if ! printf '%s' "$haystack" | grep -qF -- "$needle"; then
+  if ! grep -qF -- "$needle" < <(printf '%s' "$haystack"); then
     echo "PASS  $label"
     PASS_COUNT=$((PASS_COUNT + 1))
   else

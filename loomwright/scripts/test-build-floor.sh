@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# run-self-tests: serial
+# ^ run alone, after the concurrent batch (run-self-tests.sh): case (x) is a calibrated wall-clock runtime ratio; under a loaded concurrent run it measured 183-222 units against its 180 bound.
 # test-build-floor.sh - self-tests for build-floor.sh, the read-only floor projector.
 #
 # HERMETIC BY CONSTRUCTION, and that is the load-bearing property of this file.
@@ -383,7 +385,7 @@ dir_entries="$(ls -1 "$RA/.supervisor/logs" | awk 'NF{n++} END{print n+0}')"
 [ "$(scount "$JA" logs)" = "$EXP_LOGS" ] && [ "$EXP_LOGS" != "$EXP_LOG_DIR_ENTRIES" ] \
   && ok "logs counts the *.jsonl glob ($EXP_LOGS), not directory entries ($EXP_LOG_DIR_ENTRIES)" \
   || no "logs count did not discriminate glob from directory entries"
-jq -r '.surfaces.logs.basis' "$JA" 2>/dev/null | grep -qF '*.jsonl' \
+grep -qF '*.jsonl' < <(jq -r '.surfaces.logs.basis' "$JA" 2>/dev/null) \
   && ok "logs basis names the *.jsonl glob that produced the number" \
   || no "logs basis does not name its glob"
 
@@ -567,7 +569,7 @@ JD="$RD/.supervisor/floor/floor.json"
 [ "$(scount "$JD" drain_rounds)" = "ABSENT" ] \
   && ok "drain_rounds count key is OMITTED (never 0)" \
   || no "drain_rounds emitted a count of $(scount "$JD" drain_rounds) - a fabricated default"
-sreason "$JD" drain_rounds | grep -qF ".supervisor/drain-rounds" \
+grep -qF ".supervisor/drain-rounds" < <(sreason "$JD" drain_rounds) \
   && ok "reason names the missing directory" || no "reason does not name the missing directory"
 jq -e '.notes | length > 0' "$JD" >/dev/null 2>&1 \
   && ok "the omission is surfaced in notes[]" || no "notes[] is empty despite an omitted surface"
@@ -601,7 +603,7 @@ JF="$RF/.supervisor/floor/floor.json"
 [ "$(scount "$JF" drain_rounds)" = "ABSENT" ] \
   && ok "drain_rounds count key is OMITTED under unverified" \
   || no "drain_rounds emitted a count of $(scount "$JF" drain_rounds) it cannot prove"
-sreason "$JF" drain_rounds | grep -qF "round-3.json" \
+grep -qF "round-3.json" < <(sreason "$JF" drain_rounds) \
   && ok "reason names the offending document by path" \
   || no "reason does not name the offender: $(sreason "$JF" drain_rounds)"
 [ "$(sstatus "$JF" sessions)" = "unverified" ] \
@@ -667,7 +669,7 @@ else
     [ "$cnt" = "ABSENT" ] \
       && ok "$label: count key is OMITTED (never a zero it did not measure)" \
       || no "$label: emitted count $cnt for an input it could not read - a fabricated zero"
-    printf '%s' "$rsn" | grep -qF "$want" \
+    grep -qF "$want" < <(printf '%s' "$rsn") \
       && ok "$label: reason names $want" \
       || no "$label: reason does not name $want (reason: '$rsn')"
   }
@@ -718,7 +720,7 @@ else
   [ "$(sstatus "$JDJ" sessions)" = "unverified" ] && [ "$(scount "$JDJ" sessions)" = "ABSENT" ] \
     && ok "a directory named *.jsonl makes sessions unverified with no count" \
     || no "sessions == $(sstatus "$JDJ" sessions)/$(scount "$JDJ" sessions) with a directory named *.jsonl"
-  sreason "$JDJ" sessions | grep -qF "a-directory.jsonl" \
+  grep -qF "a-directory.jsonl" < <(sreason "$JDJ" sessions) \
     && ok "reason names the offending glob member" \
     || no "reason does not name the offending glob member: $(sreason "$JDJ" sessions)"
 
@@ -759,10 +761,10 @@ else
     errW="$( cd "$RW" && bash "$BUILD" 2>&1 >/dev/null )"; rcW=$?
     [ "$rcW" -eq 0 ] && ok "unwritable output: still exits 0" \
       || no "unwritable output: expected exit 0, got $rcW"
-    printf '%s' "$errW" | grep -qF "build-floor: cannot write" \
+    grep -qF "build-floor: cannot write" < <(printf '%s' "$errW") \
       && ok "unwritable output: the script's own one-line message is emitted" \
       || no "unwritable output: our own message is missing (stderr: '$errW')"
-    printf '%s' "$errW" | grep -qiE 'line [0-9]+:|permission denied' \
+    grep -qiE 'line [0-9]+:|permission denied' < <(printf '%s' "$errW") \
       && no "unwritable output: a raw bash redirect diagnostic leaked: '$errW'" \
       || ok "unwritable output: no raw bash redirect diagnostic leaks to the caller"
 
@@ -780,9 +782,9 @@ else
        && grep -qF "$WM_NEW" "$WMUT"; then
       ok "the un-brace-grouped write mutant is buildable and bash -n clean"
       errWM="$( cd "$RW" && bash "$WMUT" 2>&1 >/dev/null )"; rcWM=$?
-      if [ "$rcWM" -eq 0 ] && printf '%s' "$errWM" | grep -qF "build-floor: cannot write"; then
+      if [ "$rcWM" -eq 0 ] && grep -qF "build-floor: cannot write" < <(printf '%s' "$errWM"); then
         ok "the mutant still reaches its own success path (exit 0 + its own message)"
-        printf '%s' "$errWM" | grep -qiE 'line [0-9]+:|permission denied' \
+        grep -qiE 'line [0-9]+:|permission denied' < <(printf '%s' "$errWM") \
           && ok "MUTATION CONTROL: the un-brace-grouped variant DOES leak a bash diagnostic" \
           || no "the un-brace-grouped variant leaked nothing - the leak assertion is vacuous"
       else
@@ -810,7 +812,7 @@ RG="$(new_repo)"; seed_tree "$RG"
   || no "shim PATH hides git too - the jq-absent case would prove nothing"
 errG="$( cd "$RG" && PATH="$SHIM" bash "$BUILD" 2>&1 >/dev/null )"; rcG=$?
 [ "$rcG" -eq 0 ] && ok "exits 0 with jq absent" || no "expected exit 0, got $rcG"
-printf '%s' "$errG" | grep -qi "jq" && ok "names jq as the reason for skipping" \
+grep -qi "jq" < <(printf '%s' "$errG") && ok "names jq as the reason for skipping" \
   || no "did not name the reason: $errG"
 [ ! -f "$RG/.supervisor/floor/floor.json" ] \
   && ok "no artefact written when jq is absent" || no "wrote an artefact without jq"
@@ -873,7 +875,7 @@ for k in $TOP_REQ; do
   jq --arg k "$k" 'del(.[$k])' "$JA" > "$MUT" 2>/dev/null
   out="$(validate_floor "$MUT" 2>&1)"; rc=$?
   if [ "$rc" -ne 1 ]; then bad_top="$bad_top $k(not-rejected)"
-  elif ! printf '%s' "$out" | grep -qF "missing required key: $k"; then bad_top="$bad_top $k(no-diagnostic)"; fi
+  elif ! grep -qF "missing required key: $k" < <(printf '%s' "$out"); then bad_top="$bad_top $k(no-diagnostic)"; fi
 done
 [ -z "$bad_top" ] \
   && ok "removing any of the $n_top required top-level keys is rejected, each named in the diagnostic" \
@@ -886,7 +888,7 @@ for k in $ENTRY_REQ; do
   jq --arg k "$k" 'del(.surfaces.logs[$k])' "$JA" > "$MUT" 2>/dev/null
   out="$(validate_floor "$MUT" 2>&1)"; rc=$?
   if [ "$rc" -eq 0 ]; then bad_ent="$bad_ent $k(not-rejected)"
-  elif ! printf '%s' "$out" | grep -qF "surfaces.logs.$k"; then bad_ent="$bad_ent $k(no-diagnostic)"; fi
+  elif ! grep -qF "surfaces.logs.$k" < <(printf '%s' "$out"); then bad_ent="$bad_ent $k(no-diagnostic)"; fi
 done
 [ -z "$bad_ent" ] \
   && ok "removing any of the $n_ent required surfaces-entry keys is rejected, each named by path" \
@@ -962,17 +964,17 @@ intro="$(grep -n 'Current versions:' "$SCHEMA_MD" | head -1 | cut -d: -f1)"
 [ -n "$intro" ] && ok "the intro 'Current versions:' paragraph is present" \
   || no "could not locate the intro 'Current versions:' paragraph"
 introline="$(sed -n "${intro:-1}p" "$SCHEMA_MD")"
-printf '%s' "$introline" | grep -qF 'FLOOR_PROJECTION at `schema_version: 1`' \
+grep -qF 'FLOOR_PROJECTION at `schema_version: 1`' < <(printf '%s' "$introline") \
   && ok "the intro names FLOOR_PROJECTION with its schema_version" \
   || no "the intro does not name FLOOR_PROJECTION with its schema_version"
-printf '%s' "$introline" | grep -qi 'FLOOR_PROJECTION.*no hook validator' \
+grep -qi 'FLOOR_PROJECTION.*no hook validator' < <(printf '%s' "$introline") \
   && ok "the intro records FLOOR_PROJECTION's no-hook-validator status" \
   || no "the intro does not record FLOOR_PROJECTION's no-hook-validator status"
 
 vh="$(awk '/^### Version History$/{f=1;next} f&&/^## /{exit} f' "$SCHEMA_MD" | grep -F 'FLOOR_PROJECTION' | head -1)"
 [ -n "$vh" ] && ok "### Version History gains a FLOOR_PROJECTION entry" \
   || no "### Version History has no FLOOR_PROJECTION entry"
-printf '%s' "$vh" | grep -qE '20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]' \
+grep -qE '20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]' < <(printf '%s' "$vh") \
   && ok "the Version History entry is dated" || no "the Version History entry carries no date"
 
 # The two checks above are SECTION-SCOPED (one addresses the single `Current versions:` line,
@@ -984,11 +986,11 @@ companion_ok() {
   local md="$1" il vhl
   il="$(grep -m1 'Current versions:' "$md" 2>/dev/null)"
   [ -n "$il" ] || return 1
-  printf '%s' "$il" | grep -qF 'FLOOR_PROJECTION at `schema_version: 1`' || return 1
-  printf '%s' "$il" | grep -qi 'FLOOR_PROJECTION.*no hook validator'     || return 1
+  grep -qF 'FLOOR_PROJECTION at `schema_version: 1`' < <(printf '%s' "$il") || return 1
+  grep -qi 'FLOOR_PROJECTION.*no hook validator' < <(printf '%s' "$il")     || return 1
   vhl="$(awk '/^### Version History$/{f=1;next} f&&/^## /{exit} f' "$md" 2>/dev/null | grep -F 'FLOOR_PROJECTION' | head -1)"
   [ -n "$vhl" ] || return 1
-  printf '%s' "$vhl" | grep -qE '20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]' || return 1
+  grep -qE '20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]' < <(printf '%s' "$vhl") || return 1
   return 0
 }
 companion_ok "$SCHEMA_MD" \
@@ -1058,7 +1060,7 @@ nch="$(printf '%s\n' "$dtxt" | awk '/^[<>]/{n++} END{print n+0}')"
   && ok "two DIFFERENT injected timestamps: exactly one changed line pair in the raw diff" \
   || no "raw diff has $nch changed lines, expected 2:
 $dtxt"
-printf '%s\n' "$dtxt" | grep '^[<>]' | grep -vqF 'generated_at_epoch' \
+grep -vqF 'generated_at_epoch' < <(printf '%s\n' "$dtxt" | grep '^[<>]') \
   && no "a changed line other than generated_at_epoch:
 $dtxt" \
   || ok "the only changed line is generated_at_epoch"
@@ -1126,7 +1128,7 @@ done
 # Comment lines are stripped FIRST: a comment that quotes the literal it warns about would
 # otherwise trip this check, which is the second-order trap this repo has recorded before.
 build_code() { sed '/^[[:space:]]*#/d' "$BUILD"; }
-build_code | grep -qF "notes_json='[]'" \
+grep -qF "notes_json='[]'" < <(build_code) \
   && no "the notes fallback is a bare [] - it claims nothing was omitted at exactly the moment that is unknown" \
   || ok "the notes fallback is not a bare [] (an empty array there would be a false all-clear)"
 nf_line="$(build_code | grep -F '|| notes_json=' | head -1)"
@@ -2046,7 +2048,7 @@ RNONE="$(mk_rules_repo broken)"; run_build "$RNONE"; JNONE="$RNONE/.supervisor/f
 [ "$(sstatus "$JPART" rules)" = "unverified" ] && [ "$(scount "$JPART" rules)" = "ABSENT" ] \
   && ok "a store with one unparseable file is unverified with NO count - never counted clean" \
   || no "partial store: status=$(sstatus "$JPART" rules) count=$(scount "$JPART" rules)"
-printf '%s' "$(sreason "$JPART" rules)" | grep -qF 'broken.json' \
+grep -qF 'broken.json' < <(printf '%s' "$(sreason "$JPART" rules)") \
   && ok "...and the reason NAMES the offending file" \
   || no "the reason does not name the offender: $(sreason "$JPART" rules)"
 [ "$(jq -r '.surfaces.rules.detail.read_completeness' "$JPART" 2>/dev/null)" = "partial" ] \
@@ -2182,7 +2184,7 @@ cor() { jq -c "$2" "$1" 2>/dev/null; }
   && ok "it is LABELLED an observation, not a measurement" \
   || no "correlation label: $(cor "$JA" '.surfaces.rules.detail.correlations[0].label')"
 cbasis="$(jq -r '.surfaces.rules.detail.correlations[0].basis // ""' "$JA" 2>/dev/null)"
-printf '%s' "$cbasis" | grep -qF 'changed_paths' && printf '%s' "$cbasis" | grep -qi 'not evidence' \
+grep -qF 'changed_paths' < <(printf '%s' "$cbasis") && grep -qi 'not evidence' < <(printf '%s' "$cbasis") \
   && ok "...and states its basis, including that a path overlap is not evidence of a violation" \
   || no "correlation basis is missing or does not disclaim: '$cbasis'"
 [ "$(cor "$JA" '.surfaces.rules.detail.correlations[0].matched | length')" = "5" ] \

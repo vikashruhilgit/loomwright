@@ -342,7 +342,7 @@ OUT15="$( printf '%s' "$IN14" | bash "$CLASSIFY" --trusted-actors "$TMP/does-not
 ERRTXT15="$(cat "$TMP/stderr15.log")"
 if [ "$RC15" -eq 0 ] \
    && printf '%s' "$OUT15" | jq -e '(type=="array") and (length==1)' >/dev/null 2>&1 \
-   && printf '%s' "$ERRTXT15" | grep -q 'actor_allowlist_absent' \
+   && grep -q 'actor_allowlist_absent' < <(printf '%s' "$ERRTXT15") \
    && [ "$(printf '%s' "$ERRTXT15" | grep -c 'actor_allowlist_absent')" -eq 1 ]; then
   ok "--trusted-actors missing file: falls back to bot_author_re (claude[bot] IN), logs actor_allowlist_absent exactly once"
 else
@@ -366,7 +366,7 @@ OUT17="$( printf '%s' "$IN14" | bash "$CLASSIFY" --trusted-actors "$TMP/malforme
 ERRTXT17="$(cat "$TMP/stderr17.log")"
 if [ "$RC17" -eq 0 ] \
    && printf '%s' "$OUT17" | jq -e '(type=="array") and (length==1)' >/dev/null 2>&1 \
-   && printf '%s' "$ERRTXT17" | grep -q 'actor_allowlist_absent'; then
+   && grep -q 'actor_allowlist_absent' < <(printf '%s' "$ERRTXT17"); then
   ok "--trusted-actors malformed JSON: treated as absent, falls back to bot_author_re, logged"
 else
   no "(17) wrong (rc=$RC17 out=$OUT17 err='$ERRTXT17')"

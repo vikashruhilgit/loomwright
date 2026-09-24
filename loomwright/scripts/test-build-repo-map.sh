@@ -104,11 +104,11 @@ else
 fi
 
 # Case 3: exported symbols per language fixture
-if grep -E '^src/app\.js: ' "$MAP" | grep -q 'main' \
-   && grep -E '^src/app\.js: ' "$MAP" | grep -q 'Runner' \
-   && grep -E '^src/model\.py: ' "$MAP" | grep -q 'Model' \
-   && grep -E '^src/model\.py: ' "$MAP" | grep -q 'train' \
-   && grep -E '^lib/util\.sh: ' "$MAP" | grep -q 'do_thing'; then
+if grep -q 'main' < <(grep -E '^src/app\.js: ' "$MAP") \
+   && grep -q 'Runner' < <(grep -E '^src/app\.js: ' "$MAP") \
+   && grep -q 'Model' < <(grep -E '^src/model\.py: ' "$MAP") \
+   && grep -q 'train' < <(grep -E '^src/model\.py: ' "$MAP") \
+   && grep -q 'do_thing' < <(grep -E '^lib/util\.sh: ' "$MAP"); then
   ok "exported symbols found for .js / .py / .sh fixtures"
 else
   no "expected exported symbols missing (js: main/Runner, py: Model/train, sh: do_thing)"
@@ -160,7 +160,7 @@ env PATH=/usr/bin:/bin /bin/bash "$BUILDER" --repo "$SB" --out "$SCRUBMAP" >/dev
 RC=$?
 if [ "$RC" -eq 0 ] && [ -f "$SCRUBMAP" ] \
    && grep -q '^## Exported symbols$' "$SCRUBMAP" \
-   && grep -E '^src/app\.js: ' "$SCRUBMAP" | grep -q 'main'; then
+   && grep -q 'main' < <(grep -E '^src/app\.js: ' "$SCRUBMAP"); then
   ok "tree-sitter-absent (scrubbed PATH) ⇒ Tier B floor used, exit 0"
 else
   no "scrubbed-PATH Tier B path failed (rc=$RC)"

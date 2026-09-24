@@ -51,11 +51,11 @@ assert_eq() {
 }
 assert_match() {
   local label="$1" needle="$2" haystack="$3"
-  if printf '%s' "$haystack" | grep -qF -- "$needle"; then pass "$label"; else fail "$label  needle='$needle' not found"; fi
+  if grep -qF -- "$needle" < <(printf '%s' "$haystack"); then pass "$label"; else fail "$label  needle='$needle' not found"; fi
 }
 assert_not_match() {
   local label="$1" needle="$2" haystack="$3"
-  if printf '%s' "$haystack" | grep -qF -- "$needle"; then fail "$label  unexpected '$needle' present"; else pass "$label"; fi
+  if grep -qF -- "$needle" < <(printf '%s' "$haystack"); then fail "$label  unexpected '$needle' present"; else pass "$label"; fi
 }
 assert_empty() {
   local label="$1" value="$2"

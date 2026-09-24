@@ -67,7 +67,7 @@ marker_count() {
 echo "== 1. clean PR (no churn triggers) -> no-op (AC9) =="
 WD="$(fresh_repo)"
 run_dispatch "$WD" "$PR" --fix-cycles 1 --decision READY
-if [ "$RUN_RC" -eq 0 ] && ! printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 0 ]; then
+if [ "$RUN_RC" -eq 0 ] && ! grep -q 'DRY_RUN_DISPATCH' < <(printf '%s' "$RUN_OUT") && [ "$(marker_count "$WD")" -eq 0 ]; then
   ok "clean-PR: exit 0, no dispatch, no marker"
 else
   no "clean-PR wrong (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"
@@ -77,7 +77,7 @@ rm -rf "$WD"
 echo "== 2. fix_cycles > threshold -> dispatch (AC10/AC11) =="
 WD="$(fresh_repo)"
 run_dispatch "$WD" "$PR" --fix-cycles 3 --decision PASS
-if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 1 ]; then
+if [ "$RUN_RC" -eq 0 ] && grep -q 'DRY_RUN_DISPATCH' < <(printf '%s' "$RUN_OUT") && [ "$(marker_count "$WD")" -eq 1 ]; then
   ok "fix-cycles-over-threshold: dispatch emitted + 1 marker written"
 else
   no "fix-cycles-over-threshold wrong (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"
@@ -87,7 +87,7 @@ rm -rf "$WD"
 echo "== 3. fix_cycles == default threshold (2) -> no dispatch (boundary) =="
 WD="$(fresh_repo)"
 run_dispatch "$WD" "$PR" --fix-cycles 2 --decision PASS
-if [ "$RUN_RC" -eq 0 ] && ! printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 0 ]; then
+if [ "$RUN_RC" -eq 0 ] && ! grep -q 'DRY_RUN_DISPATCH' < <(printf '%s' "$RUN_OUT") && [ "$(marker_count "$WD")" -eq 0 ]; then
   ok "boundary: fix_cycles==threshold does NOT dispatch (> not >=)"
 else
   no "boundary wrong (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"
@@ -97,7 +97,7 @@ rm -rf "$WD"
 echo "== 4. decision == ESCALATED -> dispatch despite low fix_cycles (AC10) =="
 WD="$(fresh_repo)"
 run_dispatch "$WD" "$PR" --fix-cycles 0 --decision ESCALATED
-if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 1 ]; then
+if [ "$RUN_RC" -eq 0 ] && grep -q 'DRY_RUN_DISPATCH' < <(printf '%s' "$RUN_OUT") && [ "$(marker_count "$WD")" -eq 1 ]; then
   ok "escalated: dispatch emitted even with fix_cycles=0"
 else
   no "escalated wrong (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"
@@ -107,7 +107,7 @@ rm -rf "$WD"
 echo "== 5. --repeat-check-failure -> dispatch (AC10) =="
 WD="$(fresh_repo)"
 run_dispatch "$WD" "$PR" --fix-cycles 1 --decision PASS --repeat-check-failure
-if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 1 ]; then
+if [ "$RUN_RC" -eq 0 ] && grep -q 'DRY_RUN_DISPATCH' < <(printf '%s' "$RUN_OUT") && [ "$(marker_count "$WD")" -eq 1 ]; then
   ok "repeat-check-failure: dispatch emitted"
 else
   no "repeat-check-failure wrong (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"
@@ -117,7 +117,7 @@ rm -rf "$WD"
 echo "== 6. --unresolved-bot-feedback -> dispatch (AC10) =="
 WD="$(fresh_repo)"
 run_dispatch "$WD" "$PR" --fix-cycles 1 --decision PASS --unresolved-bot-feedback
-if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 1 ]; then
+if [ "$RUN_RC" -eq 0 ] && grep -q 'DRY_RUN_DISPATCH' < <(printf '%s' "$RUN_OUT") && [ "$(marker_count "$WD")" -eq 1 ]; then
   ok "unresolved-bot-feedback: dispatch emitted"
 else
   no "unresolved-bot-feedback wrong (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"
@@ -127,7 +127,7 @@ rm -rf "$WD"
 echo "== 7. --no-auto-postmortem suppresses even on heavy churn (AC13) =="
 WD="$(fresh_repo)"
 run_dispatch "$WD" "$PR" --fix-cycles 9 --decision ESCALATED --no-auto-postmortem
-if [ "$RUN_RC" -eq 0 ] && ! printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 0 ]; then
+if [ "$RUN_RC" -eq 0 ] && ! grep -q 'DRY_RUN_DISPATCH' < <(printf '%s' "$RUN_OUT") && [ "$(marker_count "$WD")" -eq 0 ]; then
   ok "--no-auto-postmortem: suppressed despite heavy churn, no dispatch, no marker"
 else
   no "--no-auto-postmortem wrong (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"
@@ -138,7 +138,7 @@ echo "== 8. config auto_postmortem:false suppresses even on heavy churn (AC13) =
 WD="$(fresh_repo)"
 printf '{"auto_postmortem": false}\n' > "$WD/.supervisor/config.json"
 run_dispatch "$WD" "$PR" --fix-cycles 9 --decision ESCALATED
-if [ "$RUN_RC" -eq 0 ] && ! printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 0 ]; then
+if [ "$RUN_RC" -eq 0 ] && ! grep -q 'DRY_RUN_DISPATCH' < <(printf '%s' "$RUN_OUT") && [ "$(marker_count "$WD")" -eq 0 ]; then
   ok "config auto_postmortem:false: suppressed despite heavy churn"
 else
   no "config-opt-out wrong (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"
@@ -152,7 +152,7 @@ WD="$(fresh_repo)"
 # dispatch. Suppression proves the legacy fallback path is honored.
 printf '{"auto_postmortem": false}\n' > "$WD/.supervisor/notify-config.json"
 run_dispatch "$WD" "$PR" --fix-cycles 9 --decision ESCALATED
-if [ "$RUN_RC" -eq 0 ] && ! printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 0 ]; then
+if [ "$RUN_RC" -eq 0 ] && ! grep -q 'DRY_RUN_DISPATCH' < <(printf '%s' "$RUN_OUT") && [ "$(marker_count "$WD")" -eq 0 ]; then
   ok "legacy-fallback: legacy notify-config.json honored (suppressed despite heavy churn)"
 else
   no "legacy-fallback wrong (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"
@@ -166,7 +166,7 @@ WD="$(fresh_repo)"
 printf '{"auto_postmortem": false}\n' > "$WD/.supervisor/config.json"
 printf '{"auto_postmortem": true}\n'  > "$WD/.supervisor/notify-config.json"
 run_dispatch "$WD" "$PR" --fix-cycles 9 --decision ESCALATED
-if [ "$RUN_RC" -eq 0 ] && ! printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 0 ]; then
+if [ "$RUN_RC" -eq 0 ] && ! grep -q 'DRY_RUN_DISPATCH' < <(printf '%s' "$RUN_OUT") && [ "$(marker_count "$WD")" -eq 0 ]; then
   ok "both-present: new config.json wins (suppressed), legacy true ignored"
 else
   no "both-present wrong — new file should win (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"
@@ -177,14 +177,14 @@ echo "== 9. configurable threshold via config raises the bar (AC11) =="
 WD="$(fresh_repo)"
 printf '{"postmortem_churn_threshold": 5}\n' > "$WD/.supervisor/config.json"
 run_dispatch "$WD" "$PR" --fix-cycles 3 --decision PASS    # 3 > default 2 but not > 5
-if [ "$RUN_RC" -eq 0 ] && ! printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 0 ]; then
+if [ "$RUN_RC" -eq 0 ] && ! grep -q 'DRY_RUN_DISPATCH' < <(printf '%s' "$RUN_OUT") && [ "$(marker_count "$WD")" -eq 0 ]; then
   ok "config threshold 5: fix_cycles=3 below raised bar, no dispatch"
 else
   no "config-threshold (below) wrong (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"
 fi
 # now exceed the raised bar
 run_dispatch "$WD" "$PR" --fix-cycles 6 --decision PASS    # 6 > 5
-if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 1 ]; then
+if [ "$RUN_RC" -eq 0 ] && grep -q 'DRY_RUN_DISPATCH' < <(printf '%s' "$RUN_OUT") && [ "$(marker_count "$WD")" -eq 1 ]; then
   ok "config threshold 5: fix_cycles=6 exceeds raised bar, dispatch emitted"
 else
   no "config-threshold (above) wrong (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"
@@ -195,7 +195,7 @@ echo "== 10. --postmortem-churn-threshold flag overrides config + default (AC11)
 WD="$(fresh_repo)"
 printf '{"postmortem_churn_threshold": 5}\n' > "$WD/.supervisor/config.json"
 run_dispatch "$WD" "$PR" --fix-cycles 2 --decision PASS --postmortem-churn-threshold 1   # 2 > 1 (flag beats config 5)
-if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 1 ]; then
+if [ "$RUN_RC" -eq 0 ] && grep -q 'DRY_RUN_DISPATCH' < <(printf '%s' "$RUN_OUT") && [ "$(marker_count "$WD")" -eq 1 ]; then
   ok "--postmortem-churn-threshold 1: overrides config 5, fix_cycles=2 trips, dispatch emitted"
 else
   no "flag-threshold-override wrong (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"
@@ -208,7 +208,7 @@ run_dispatch "$WD" "$PR" --fix-cycles 3 --decision PASS          # first dispatc
 FIRST_RC=$RUN_RC
 run_dispatch "$WD" "$PR" --fix-cycles 3 --decision PASS          # second call, same PR
 if [ "$FIRST_RC" -eq 0 ] && [ "$RUN_RC" -eq 0 ] \
-   && ! printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' \
+   && ! grep -q 'DRY_RUN_DISPATCH' < <(printf '%s' "$RUN_OUT") \
    && [ "$(marker_count "$WD")" -eq 1 ]; then
   ok "re-dispatch blocked: 2nd call no-op, still exactly 1 marker"
 else
@@ -216,7 +216,7 @@ else
 fi
 # sanity: a DIFFERENT PR still dispatches (marker is per-PR)
 run_dispatch "$WD" "$PR2" --fix-cycles 3 --decision PASS
-if printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 2 ]; then
+if grep -q 'DRY_RUN_DISPATCH' < <(printf '%s' "$RUN_OUT") && [ "$(marker_count "$WD")" -eq 2 ]; then
   ok "different PR dispatches independently (2 markers)"
 else
   no "per-PR marker keying wrong (out='$RUN_OUT' markers=$(marker_count "$WD"))"
@@ -226,7 +226,7 @@ rm -rf "$WD"
 echo "== 12. missing PR url -> graceful no-op =="
 WD="$(fresh_repo)"
 run_dispatch "$WD" --fix-cycles 9 --decision ESCALATED          # heavy churn, but no PR url
-if [ "$RUN_RC" -eq 0 ] && ! printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 0 ]; then
+if [ "$RUN_RC" -eq 0 ] && ! grep -q 'DRY_RUN_DISPATCH' < <(printf '%s' "$RUN_OUT") && [ "$(marker_count "$WD")" -eq 0 ]; then
   ok "missing-pr-url: exit 0, no dispatch"
 else
   no "missing-pr-url wrong (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"
@@ -243,8 +243,8 @@ LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
 # when detached. The namespaced match also fails the bare form: bare emits `"/pr-postmortem `
 # (a `/` before the name) whereas the required form has `:pr-postmortem` (a `:` before it).
 if [ "$RUN_RC" -eq 0 ] \
-   && printf '%s' "$LINE" | grep -Eq '(^| )-p( |$)|(^| )--print( |$)' \
-   && printf '%s' "$LINE" | grep -q "/loomwright:pr-postmortem $PR"; then
+   && grep -Eq '(^| )-p( |$)|(^| )--print( |$)' < <(printf '%s' "$LINE") \
+   && grep -q "/loomwright:pr-postmortem $PR" < <(printf '%s' "$LINE"); then
   ok "launch-form: headless -p + namespaced /loomwright:pr-postmortem <url> ($LINE)"
 else
   no "launch-form missing -p or namespaced slash command (line='$LINE')"
@@ -258,7 +258,7 @@ WD="$(fresh_repo)"
 # launching anything — so a later run that DOES have claude can still dispatch (marker not
 # pre-consumed). Exercises the binary-absent fallback the dry-run cases never reach.
 RUN_OUT="$( cd "$WD" && LOOMWRIGHT_CLAUDE_BIN=claude-does-not-exist-xyz bash "$DISPATCH" "$PR" --fix-cycles 9 --decision ESCALATED 2>/dev/null )"; RUN_RC=$?
-if [ "$RUN_RC" -eq 0 ] && ! printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 0 ]; then
+if [ "$RUN_RC" -eq 0 ] && ! grep -q 'DRY_RUN_DISPATCH' < <(printf '%s' "$RUN_OUT") && [ "$(marker_count "$WD")" -eq 0 ]; then
   ok "claude-absent: exit 0, no marker, no dispatch (fail-safe)"
 else
   no "claude-absent fallback wrong (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"

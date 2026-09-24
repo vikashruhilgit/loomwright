@@ -159,13 +159,13 @@ TMP="$(newrepo)"
 write_data "$TMP" "src/a.ts" "KA" "uA" "alpha" "$NOW_TS"
 write_data "$TMP" "src/b.ts" "KB" "uB" "beta"  "$NOW_TS"
 out="$( cd "$TMP" && bash "$READ" "src/a.ts" 2>/dev/null )"
-echo "$out" | grep -q "src/a.ts" && ok "sanity: entry LIVE before curation" || no "sanity pre-curation hit missing"
+grep -q "src/a.ts" < <(echo "$out") && ok "sanity: entry LIVE before curation" || no "sanity pre-curation hit missing"
 ( cd "$TMP" && bash "$CURATE" retract --target KA --reason "noise" --confirm ) >/dev/null 2>&1
 out="$( cd "$TMP" && bash "$READ" "src/a.ts" 2>/dev/null )"; rc=$?
 [ "$rc" -eq 0 ] && ok "reader exit 0 after retract" || no "reader non-zero after retract ($rc)"
 [ -z "$out" ] && ok "retracted entry (by automate_key) hidden → EMPTY output" || no "retracted entry still hits: [$out]"
 out2="$( cd "$TMP" && bash "$READ" "src/b.ts" 2>/dev/null )"
-echo "$out2" | grep -q "beta" && ok "sibling entry stays LIVE (retract is targeted)" || no "sibling entry wrongly hidden"
+grep -q "beta" < <(echo "$out2") && ok "sibling entry stays LIVE (retract is targeted)" || no "sibling entry wrongly hidden"
 rm -rf "$TMP"
 
 echo "== 7. reader hides a superseded entry by pr_url =="
@@ -199,13 +199,13 @@ jq -cn --arg ts "$NOW_TS" '{schema_version:1, source:"curation", curation_action
   replacement:null, reason:"missing key", ts:$ts}' >> "$TMP/$CORPUS"
 out="$( cd "$TMP" && bash "$READ" "src/m.ts" 2>/dev/null )"; rc=$?
 [ "$rc" -eq 0 ] && ok "reader exit 0 with missing-target_key curation line" || no "reader non-zero missing-key ($rc)"
-echo "$out" | grep -q "gamma" && ok "missing target_key ⇒ entry stays LIVE" || no "missing target_key wrongly hid the entry"
+grep -q "gamma" < <(echo "$out") && ok "missing target_key ⇒ entry stays LIVE" || no "missing target_key wrongly hid the entry"
 # (b) curation line with EXPLICIT null target_key (presence discipline: has() alone is not enough).
 jq -cn --arg ts "$NOW_TS" '{schema_version:1, source:"curation", curation_action:"retract",
   target_key:null, replacement:null, reason:"null key", ts:$ts}' >> "$TMP/$CORPUS"
 out="$( cd "$TMP" && bash "$READ" "src/m.ts" 2>/dev/null )"; rc=$?
 [ "$rc" -eq 0 ] && ok "reader exit 0 with null-target_key curation line" || no "reader non-zero null-key ($rc)"
-echo "$out" | grep -q "gamma" && ok "explicit null target_key ⇒ entry stays LIVE" || no "null target_key wrongly hid the entry"
+grep -q "gamma" < <(echo "$out") && ok "explicit null target_key ⇒ entry stays LIVE" || no "null target_key wrongly hid the entry"
 rm -rf "$TMP"
 
 echo "== 10. staleness: old excluded, missing/unparseable ts fail-open, override honored =="
@@ -218,21 +218,21 @@ out="$( cd "$TMP" && bash "$READ" "src/old.ts" 2>/dev/null )"; rc=$?
 [ "$rc" -eq 0 ] && ok "reader exit 0 on stale query" || no "reader non-zero stale query ($rc)"
 [ -z "$out" ] && ok "ts 2020 excluded at default 180-day horizon" || no "stale entry still hits: [$out]"
 out="$( cd "$TMP" && bash "$READ" "src/nots.ts" 2>/dev/null )"
-echo "$out" | grep -q "nots-class" && ok "missing ts ⇒ FRESH (fail-open, still counted)" || no "missing-ts entry wrongly excluded"
+grep -q "nots-class" < <(echo "$out") && ok "missing ts ⇒ FRESH (fail-open, still counted)" || no "missing-ts entry wrongly excluded"
 out="$( cd "$TMP" && bash "$READ" "src/bad.ts" 2>/dev/null )"
-echo "$out" | grep -q "bad-class" && ok "unparseable ts ⇒ FRESH (fail-open, still counted)" || no "unparseable-ts entry wrongly excluded"
+grep -q "bad-class" < <(echo "$out") && ok "unparseable ts ⇒ FRESH (fail-open, still counted)" || no "unparseable-ts entry wrongly excluded"
 out="$( cd "$TMP" && bash "$READ" "src/fresh.ts" 2>/dev/null )"
-echo "$out" | grep -q "fresh-class" && ok "fresh entry still hits at default horizon" || no "fresh entry lost"
+grep -q "fresh-class" < <(echo "$out") && ok "fresh entry still hits at default horizon" || no "fresh entry lost"
 # Override: a huge horizon makes the 2020 entry fresh again.
 out="$( cd "$TMP" && CHURN_STALE_DAYS=100000 bash "$READ" "src/old.ts" 2>/dev/null )"; rc=$?
 [ "$rc" -eq 0 ] && ok "reader exit 0 with CHURN_STALE_DAYS override" || no "reader non-zero with override ($rc)"
-echo "$out" | grep -q "old-class" && ok "CHURN_STALE_DAYS=100000 makes the 2020 entry fresh again" || no "override not honored"
+grep -q "old-class" < <(echo "$out") && ok "CHURN_STALE_DAYS=100000 makes the 2020 entry fresh again" || no "override not honored"
 # Non-numeric override falls back to 180 (validated in shell, never crosses into jq).
 out="$( cd "$TMP" && CHURN_STALE_DAYS=abc bash "$READ" "src/old.ts" 2>/dev/null )"; rc=$?
 [ "$rc" -eq 0 ] && ok "reader exit 0 with non-numeric CHURN_STALE_DAYS" || no "reader non-zero non-numeric override ($rc)"
 [ -z "$out" ] && ok "non-numeric override fell back to 180 (2020 entry excluded)" || no "non-numeric override leaked: [$out]"
 out="$( cd "$TMP" && CHURN_STALE_DAYS=abc bash "$READ" "src/fresh.ts" 2>/dev/null )"
-echo "$out" | grep -q "fresh-class" && ok "non-numeric override: fresh entry still hits" || no "non-numeric override lost the fresh hit"
+grep -q "fresh-class" < <(echo "$out") && ok "non-numeric override: fresh entry still hits" || no "non-numeric override lost the fresh hit"
 rm -rf "$TMP"
 
 echo "== 11. reader still exits 0 on every path incl. malformed corpus lines =="
@@ -243,7 +243,7 @@ printf '%s\n' 'this is { not json at all' >> "$TMP/$CORPUS"
 printf '%s\n' '' >> "$TMP/$CORPUS"
 out="$( cd "$TMP" && bash "$READ" "src/a.ts" 2>/dev/null )"; rc=$?
 [ "$rc" -eq 0 ] && ok "exit 0 despite malformed/blank lines + curation records" || no "non-zero with malformed lines ($rc)"
-echo "$out" | grep -q "alpha" && ok "valid data line still hits past malformed + curation lines" || no "valid hit lost"
+grep -q "alpha" < <(echo "$out") && ok "valid data line still hits past malformed + curation lines" || no "valid hit lost"
 out="$( cd "$TMP" && bash "$READ" "src/never/touched.ts" 2>/dev/null )"; rc=$?
 [ "$rc" -eq 0 ] && [ -z "$out" ] && ok "no-overlap stays EMPTY + exit 0 with curation records present" || no "no-overlap contract broken (rc=$rc out=[$out])"
 rm -rf "$TMP"

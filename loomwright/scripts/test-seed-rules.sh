@@ -76,7 +76,7 @@ out_a="$(seedrun "$A" check 2>&1)"; rc_a=$?
 [ ! -e "$A/.agent" ] && ok "(a) check created no .agent/ directory (read-only)" || no "(a) check created .agent/"
 n_absent="$(printf '%s\n' "$out_a" | grep -c 'seed: ABSENT' || true)"
 [ "$n_absent" -ge 1 ] && ok "(a) check reports $n_absent absent seeds" || no "(a) check reported no absent seeds"
-printf '%s\n' "$out_a" | grep -q 'no writer is invoked' && ok "(a) check states it invokes no writer" || no "(a) check does not state its read-only posture"
+grep -q 'no writer is invoked' < <(printf '%s\n' "$out_a") && ok "(a) check states it invokes no writer" || no "(a) check does not state its read-only posture"
 
 # ============================================================================
 echo "== (e1) bare seed = PLAN ONLY, and it is stdin-detached (live 'y' on stdin changes nothing) =="
@@ -86,14 +86,14 @@ E="$(mkfix)"
 out_e="$(printf 'y\ny\ny\ny\ny\n' | seedrun "$E" seed 2>&1)"; rc_e=$?
 [ "$rc_e" -eq 0 ] && ok "(e1) bare seed exits 0" || no "(e1) bare seed exited $rc_e"
 [ ! -e "$E/.agent/rules" ] && ok "(e1) bare seed wrote NOTHING even with a live 'y' on stdin (writer invocations are stdin-detached)" || no "(e1) bare seed WROTE to the store — the writer's prompt branch was reachable through this caller"
-printf '%s\n' "$out_e" | grep -q 'PLANNED WRITE (not written' && ok "(e1) the writer's PLANNED-WRITE branch was the one reached" || no "(e1) no PLANNED WRITE line — the dry-run branch was not reached"
-printf '%s\n' "$out_e" | grep -q 'NOTHING WAS WRITTEN' && ok "(e1) the summary says nothing was written" || no "(e1) summary does not say nothing was written"
-printf '%s\n' "$out_e" | grep -q -- '< /dev/null' && ok "(e1) the composed invocation is printed with its stdin redirection, so a reader can check it" || no "(e1) composed invocation does not show the stdin redirection"
+grep -q 'PLANNED WRITE (not written' < <(printf '%s\n' "$out_e") && ok "(e1) the writer's PLANNED-WRITE branch was the one reached" || no "(e1) no PLANNED WRITE line — the dry-run branch was not reached"
+grep -q 'NOTHING WAS WRITTEN' < <(printf '%s\n' "$out_e") && ok "(e1) the summary says nothing was written" || no "(e1) summary does not say nothing was written"
+grep -q -- '< /dev/null' < <(printf '%s\n' "$out_e") && ok "(e1) the composed invocation is printed with its stdin redirection, so a reader can check it" || no "(e1) composed invocation does not show the stdin redirection"
 # (d) rules are DATA: no --check is ever composed, on any path.
-printf '%s\n' "$out_e" | grep -q -- '--check' && no "(d) a --check flag was composed — a shell command must never be synthesised into a rule" || ok "(d) no --check flag is ever composed (rules stay DATA)"
+grep -q -- '--check' < <(printf '%s\n' "$out_e") && no "(d) a --check flag was composed — a shell command must never be synthesised into a rule" || ok "(d) no --check flag is ever composed (rules stay DATA)"
 # (a) portability: no --applies-to is ever composed — a path glob is a claim about a layout.
-printf '%s\n' "$out_e" | grep -q -- '--applies-to' && no "(a) an --applies-to glob was composed — a portable seed must not assume a directory layout" || ok "(a) no --applies-to is composed; every seed is repo-wide by construction"
-printf '%s\n' "$out_e" | grep -q 'scope=repo-wide (justification' && ok "(a) the repo-wide scope is a STATED justification, not a silent default" || no "(a) repo-wide scope is not justified in the output"
+grep -q -- '--applies-to' < <(printf '%s\n' "$out_e") && no "(a) an --applies-to glob was composed — a portable seed must not assume a directory layout" || ok "(a) no --applies-to is composed; every seed is repo-wide by construction"
+grep -q 'scope=repo-wide (justification' < <(printf '%s\n' "$out_e") && ok "(a) the repo-wide scope is a STATED justification, not a silent default" || no "(a) repo-wide scope is not justified in the output"
 
 # ============================================================================
 echo "== (e2) the stdin detachment is LOAD-BEARING, proven without a TTY =="
@@ -172,17 +172,17 @@ echo "== (a) PORTABILITY of the seed statements themselves =="
 # A portable statement names no file, no path, no tool and no project. Each pattern below is a
 # way a statement could smuggle in something that is only true HERE.
 stmts="$(store_json "$W" | jq -r '.[].statement')"
-if printf '%s\n' "$stmts" | grep -qiE 'loomwright|supervisor|beads|langfuse|graphify|claude'; then
+if grep -qiE 'loomwright|supervisor|beads|langfuse|graphify|claude' < <(printf '%s\n' "$stmts"); then
   no "(a) a seed statement names this project or one of its tools"
 else
   ok "(a) no seed statement names this project or one of its tools"
 fi
-if printf '%s\n' "$stmts" | grep -qE '\.(sh|md|json|py|ts|js|yml|yaml)([^a-zA-Z]|$)'; then
+if grep -qE '\.(sh|md|json|py|ts|js|yml|yaml)([^a-zA-Z]|$)' < <(printf '%s\n' "$stmts"); then
   no "(a) a seed statement names a concrete file"
 else
   ok "(a) no seed statement names a concrete file"
 fi
-if printf '%s\n' "$stmts" | grep -qE '[A-Za-z0-9_.-]+/[A-Za-z0-9_.*-]+'; then
+if grep -qE '[A-Za-z0-9_.-]+/[A-Za-z0-9_.*-]+' < <(printf '%s\n' "$stmts"); then
   no "(a) a seed statement names a path or a glob (a claim about a directory layout)"
 else
   ok "(a) no seed statement names a path or a glob"
@@ -196,13 +196,13 @@ echo "== (b) the module's OWN output states these are seeded, not earned =="
 # prints would leave a user reading `check` believing the rules were earned.
 assert_disclosure() {   # <mode-label> <captured output>
   local m="$1" body="$2"
-  printf '%s\n' "$body" | grep -q 'NOT learned from this' \
+  grep -q 'NOT learned from this' < <(printf '%s\n' "$body") \
     && ok "(b) [$m] output states the rules were NOT learned from this repo" \
     || no "(b) [$m] output does not say the rules were not learned here"
-  printf '%s\n' "$body" | grep -q 'SEEDED' \
+  grep -q 'SEEDED' < <(printf '%s\n' "$body") \
     && ok "(b) [$m] output labels them SEEDED" \
     || no "(b) [$m] output does not label them seeded"
-  printf '%s\n' "$body" | grep -q 'setup:rules-seed' \
+  grep -q 'setup:rules-seed' < <(printf '%s\n' "$body") \
     && ok "(b) [$m] output names the provenance.source that carries the distinction" \
     || no "(b) [$m] output does not name setup:rules-seed"
 }
@@ -219,17 +219,17 @@ after="$(store_count "$W")"
 [ "$before" = "$after" ] && ok "(f) rule count unchanged across the second run ($after)" || no "(f) rule count moved $before → $after on a second run"
 dups="$(store_json "$W" | jq '[.[].id] | (length - (unique | length))')"
 [ "$dups" -eq 0 ] && ok "(f) no duplicate rule ids after two runs" || no "(f) $dups duplicate rule ids after two runs"
-printf '%s\n' "$out_f" | grep -q 'ALREADY SEEDED' && ok "(f) the second run reports the seeds as already seeded" || no "(f) second run does not report already-seeded"
-printf '%s\n' "$out_f" | grep -q '5 already seeded\|already seeded · 0 absent' && ok "(f) the summary counts them as already seeded, 0 absent" || no "(f) summary does not show 0 absent on the second run"
+grep -q 'ALREADY SEEDED' < <(printf '%s\n' "$out_f") && ok "(f) the second run reports the seeds as already seeded" || no "(f) second run does not report already-seeded"
+grep -q '5 already seeded\|already seeded · 0 absent' < <(printf '%s\n' "$out_f") && ok "(f) the summary counts them as already seeded, 0 absent" || no "(f) summary does not show 0 absent on the second run"
 # and `check` on the seeded fixture reports them present rather than absent.
 out_f2="$(seedrun "$W" check 2>&1)"
-printf '%s\n' "$out_f2" | grep -q 'seed: ABSENT' && no "(f) check still reports an ABSENT seed on a fully-seeded fixture" || ok "(f) check reports no absent seed on a fully-seeded fixture"
+grep -q 'seed: ABSENT' < <(printf '%s\n' "$out_f2") && no "(f) check still reports an ABSENT seed on a fully-seeded fixture" || ok "(f) check reports no absent seed on a fully-seeded fixture"
 
 # ============================================================================
 echo "== (g) exit contract =="
 out_h="$(bash "$SEED" --help 2>&1)"; rc_h=$?
 [ "$rc_h" -eq 0 ] && ok "(g) --help exits 0" || no "(g) --help exited $rc_h"
-printf '%s\n' "$out_h" | grep -q 'WRITE POSTURE' && ok "(g) --help prints the write posture (which invocation writes)" || no "(g) --help does not print the write posture"
+grep -q 'WRITE POSTURE' < <(printf '%s\n' "$out_h") && ok "(g) --help prints the write posture (which invocation writes)" || no "(g) --help does not print the write posture"
 
 G="$(mkfix)"
 bash "$SEED" --root "$G" --bogus-flag check >/dev/null 2>&1; rc_u=$?
@@ -245,7 +245,7 @@ bash "$SEED" --root >/dev/null 2>&1; rc_v=$?
 # EXIT plus an EMPTY STORE: a rejection that still wrote would be no rejection at all.
 Gd2="$(mkfix)"
 out_d2="$(bash "$SEED" --root "$Gd2" --add-rule "$ADDRULE" seed check --confirm 2>&1)"; rc_d2=$?
-if [ "$rc_d2" -eq 2 ] && printf '%s\n' "$out_d2" | grep -q 'only one subcommand'; then
+if [ "$rc_d2" -eq 2 ] && grep -q 'only one subcommand' < <(printf '%s\n' "$out_d2"); then
   ok "(g) a duplicate subcommand ('seed check') exits 2 with a diagnostic naming both"
 else
   no "(g) duplicate subcommand exited $rc_d2 (expected 2): $(printf '%s\n' "$out_d2" | head -1)"
@@ -277,7 +277,7 @@ chmod +x "$STUB"
 Gr="$(mkfix)"
 out_r="$(bash "$SEED" --root "$Gr" --add-rule "$STUB" seed --confirm 2>&1)"; rc_r=$?
 [ "$rc_r" -eq 1 ] && ok "(g) a refused seed exits 1" || no "(g) refused seed exited $rc_r (expected 1)"
-printf '%s\n' "$out_r" | grep -q 'seed: FAILED' && ok "(g) the refused seed is named in the output" || no "(g) a refused seed was not reported"
+grep -q 'seed: FAILED' < <(printf '%s\n' "$out_r") && ok "(g) the refused seed is named in the output" || no "(g) a refused seed was not reported"
 [ "$(store_count "$Gr")" = "0" ] && ok "(g) nothing landed in the store when every write was refused" || no "(g) something landed in the store despite refusals"
 
 # default writer resolution (no --add-rule) still works — the flag is a testing seam, not the path.
@@ -307,17 +307,17 @@ if [ -f "$h_file" ]; then
 
   out_h="$(seedrun "$H" check 2>&1)"; rc_h1=$?
   [ "$rc_h1" -eq 0 ] && ok "(h) check exits 0 after a seed was edited" || no "(h) check exited $rc_h1 after an edit"
-  printf '%s\n' "$out_h" | grep -q 'seed: ALREADY SEEDED  \[security\]' \
+  grep -q 'seed: ALREADY SEEDED  \[security\]' < <(printf '%s\n' "$out_h") \
     && ok "(h) an edited seed is reported ALREADY SEEDED, not ABSENT" \
     || no "(h) an edited seed was reported ABSENT (the exact-match regression is back)"
-  printf '%s\n' "$out_h" | grep -q 'curated' \
+  grep -q 'curated' < <(printf '%s\n' "$out_h") \
     && ok "(h) the report names the match as CURATED (the stored wording is the user's, not the seed's)" \
     || no "(h) a curated match was not disclosed as such"
 
   out_h2="$(seedrun "$H" seed --confirm 2>&1)"; rc_h2=$?
   [ "$rc_h2" -eq 0 ] && ok "(h) seed --confirm exits 0 on a repo with an edited seed" \
     || no "(h) seed --confirm exited $rc_h2 on an edited seed (the permanent-failure regression is back)"
-  printf '%s\n' "$out_h2" | grep -q 'written: 0 · failed: 0' \
+  grep -q 'written: 0 · failed: 0' < <(printf '%s\n' "$out_h2") \
     && ok "(h) an edited seed causes no write and no failure" || no "(h) an edited seed did not report written:0 failed:0"
   [ "$(cat "$h_file")" = "$h_before" ] \
     && ok "(h) the user's edit survives byte-for-byte (never overwritten)" || no "(h) the user's edited rule was modified"
@@ -342,7 +342,7 @@ if [ -f "$hc_file" ]; then
   out_hc="$(seedrun "$Hc" seed --confirm 2>&1)"; rc_hc=$?
   [ "$rc_hc" -eq 0 ] && ok "(h) a re-categorised seed still exits 0 (matched on the frozen id prefix)" \
     || no "(h) a re-categorised seed exited $rc_hc"
-  printf '%s\n' "$out_hc" | grep -q 'written: 0 · failed: 0' \
+  grep -q 'written: 0 · failed: 0' < <(printf '%s\n' "$out_hc") \
     && ok "(h) a re-categorised seed is not rewritten" || no "(h) a re-categorised seed was re-offered"
 fi
 
@@ -367,7 +367,7 @@ if [ -f "$hm_file" ]; then
   out_hm="$(seedrun "$Hm" check 2>&1)"; rc_hm=$?
   [ "$rc_hm" -eq 0 ] && ok "(h) check exits 0 with a statement-less stamped rule in the store" \
     || no "(h) check exited $rc_hm on a statement-less stamped rule"
-  printf '%s\n' "$out_hm" | grep -q 'seed: ALREADY SEEDED  \[verification\]' \
+  grep -q 'seed: ALREADY SEEDED  \[verification\]' < <(printf '%s\n' "$out_hm") \
     && ok "(h) a stamped rule whose .statement member was deleted is still reported PRESENT (curated), not ABSENT" \
     || no "(h) a statement-less stamped rule reported ABSENT — jq empty-propagation drops it before the provenance arm: $(printf '%s\n' "$out_hm" | grep -F 'verification' | head -1)"
 
@@ -378,7 +378,7 @@ if [ -f "$hm_file" ]; then
   sed 's@(((\.statement | strings) // "") == $s)@((.statement | strings) == $s)@' "$SEED" > "$hm_mut"
   if ! cmp -s "$SEED" "$hm_mut" && bash -n "$hm_mut" 2>/dev/null; then
     out_hmm="$(bash "$hm_mut" --root "$Hm" --add-rule "$ADDRULE" check 2>&1)" || true
-    printf '%s\n' "$out_hmm" | grep -q 'seed: ABSENT  \[verification\]' \
+    grep -q 'seed: ABSENT  \[verification\]' < <(printf '%s\n' "$out_hmm") \
       && ok "(h) CONFIRMED: with the `// \"\"` hoist removed the SAME store reports 'seed: ABSENT [verification]' — the assertion above is load-bearing" \
       || no "(h) REFUTED: the unhoisted comparison still found the statement-less rule — the assertion above may be vacuous"
   else
@@ -395,7 +395,7 @@ awk '/^SEEDS$/ && !done { print "process|A second seed sharing an existing categ
 out_hi="$(bash "$hi_copy" --root "$Hi" --add-rule "$ADDRULE" check 2>&1)"; rc_hi=$?
 [ "$rc_hi" -eq 2 ] && ok "(h) a duplicate seed-table category fails loudly (exit 2)" \
   || no "(h) a duplicate seed-table category exited $rc_hi (expected 2 — the invariant is not asserted)"
-printf '%s\n' "$out_hi" | grep -q 'seed table invariant violated' \
+grep -q 'seed table invariant violated' < <(printf '%s\n' "$out_hi") \
   && ok "(h) the duplicate-category failure names the invariant it broke" || no "(h) duplicate category produced no diagnostic"
 
 # THE CATEGORY-IS-ALREADY-ITS-OWN-SLUG INVARIANT — the same permanent-failure class as the duplicate
@@ -410,9 +410,9 @@ awk '/^SEEDS$/ && !d { print "Error Handling|A seed whose category is not alread
 out_hs="$(bash "$hs_copy" --root "$Hs" --add-rule "$ADDRULE" check 2>&1)"; rc_hs=$?
 [ "$rc_hs" -eq 2 ] && ok "(h) a seed-table category that is not already its own slug fails loudly at startup (exit 2)" \
   || no "(h) a non-slug seed-table category exited $rc_hs (expected 2 — the invariant is not asserted)"
-printf '%s\n' "$out_hs" | grep -q 'seed table invariant violated' \
+grep -q 'seed table invariant violated' < <(printf '%s\n' "$out_hs") \
   && ok "(h) the non-slug-category failure names the invariant it broke" || no "(h) non-slug category produced no diagnostic"
-printf '%s\n' "$out_hs" | grep -q "add-rule.sh would store it as 'error-handling'" \
+grep -q "add-rule.sh would store it as 'error-handling'" < <(printf '%s\n' "$out_hs") \
   && ok "(h) the diagnostic names the slug add-rule.sh would actually have written, so the fix is mechanical" \
   || no "(h) the non-slug diagnostic does not name the corrected category: $(printf '%s\n' "$out_hs" | head -1)"
 # MUTATION CONTROL: with the invariant stripped, the SAME table must run through — proving the two
@@ -421,7 +421,7 @@ hs_mut="$Hs/nonslug-unguarded.sh"
 sed 's@\[ "\$_cat" = "\$_cat_slug" \] ||@[ true ] ||@' "$hs_copy" > "$hs_mut"
 if ! cmp -s "$hs_copy" "$hs_mut" && bash -n "$hs_mut" 2>/dev/null; then
   out_hsm="$(bash "$hs_mut" --root "$Hs" --add-rule "$ADDRULE" check 2>&1)"; rc_hsm=$?
-  [ "$rc_hsm" -ne 2 ] || ! printf '%s\n' "$out_hsm" | grep -q 'not already its own slug' \
+  [ "$rc_hsm" -ne 2 ] || ! grep -q 'not already its own slug' < <(printf '%s\n' "$out_hsm") \
     && ok "(h) CONFIRMED: with the slug invariant stripped the same table no longer fails — the guard is what fires, not the fixture" \
     || no "(h) REFUTED: the non-slug table still fails with the guard removed — the assertion above may be measuring something else"
 else
@@ -440,10 +440,10 @@ if [ -n "$hr_id" ]; then
   [ "$(jq 'length' "$Hr/.agent/rules/security.json")" = "0" ] && ok "(h) the retract fixture actually removed the rule" || no "(h) retract fixture did not remove the rule"
   out_hr="$(seedrun "$Hr" seed --confirm 2>&1)"; rc_hr=$?
   [ "$rc_hr" -eq 0 ] && ok "(h) a run after a retraction exits 0 (no failure state)" || no "(h) post-retract run exited $rc_hr"
-  printf '%s\n' "$out_hr" | grep -q 'written: 1' \
+  grep -q 'written: 1' < <(printf '%s\n' "$out_hr") \
     && ok "(h) DOCUMENTED LIMIT holds: a retracted seed IS re-offered and rewritten (retract is not an opt-out)" \
     || no "(h) post-retract behaviour changed — update the honest-limits docs in commands/setup.md and seed-rules.sh's header"
-  printf '%s\n' "$out_hr" | grep -qi 'RETRACT IS NOT A PERMANENT OPT-OUT' \
+  grep -qi 'RETRACT IS NOT A PERMANENT OPT-OUT' < <(printf '%s\n' "$out_hr") \
     && ok "(h) the terminal output states the retraction limit before writing" || no "(h) the retraction limit is not disclosed in the output"
 fi
 

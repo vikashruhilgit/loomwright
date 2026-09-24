@@ -107,7 +107,7 @@ BASELINE="$(run_hook resume)"; rc=$?
 [ "$rc" -eq 0 ] && ok "exits 0" || no "rc=$rc"
 [ -n "$BASELINE" ] && printf '%s' "$BASELINE" | jq -e '.hookSpecificOutput.additionalContext' >/dev/null 2>&1 \
   && ok "normal context envelope still emitted" || no "context envelope missing/invalid"
-printf '%s' "$BASELINE" | grep -qi "observability" && no "probe text leaked into unconfigured output" || ok "no probe text in output"
+grep -qi "observability" < <(printf '%s' "$BASELINE") && no "probe text leaked into unconfigured output" || ok "no probe text in output"
 [ ! -f "$CURL_LOG_FILE" ] && ok "curl never invoked when unconfigured" || no "curl was invoked when unconfigured"
 [ ! -f "$MARKER" ] && ok "no marker written" || no "marker written when unconfigured"
 
@@ -138,13 +138,13 @@ configure; rm -f "$MARKER"; reset_logs
 echo "down" > "$CURL_MODE_FILE"
 OUT3="$(run_hook resume)"; rc=$?
 [ "$rc" -eq 0 ] && ok "exits 0 even when stack is down" || no "rc=$rc"
-printf '%s' "$OUT3" | grep -qF "Observability stack unreachable" && ok "warning block emitted" || no "warning block missing"
+grep -qF "Observability stack unreachable" < <(printf '%s' "$OUT3") && ok "warning block emitted" || no "warning block missing"
 # Pins the full restart command INCLUDING -p loomwright-observability:
 # without the explicit project name, compose would derive project
 # "observability" from the dir basename and start a second parallel stack.
-printf '%s' "$OUT3" | grep -qF "docker compose -p loomwright-observability -f ~/.claude/loomwright/observability/docker-compose.yml up -d" \
+grep -qF "docker compose -p loomwright-observability -f ~/.claude/loomwright/observability/docker-compose.yml up -d" < <(printf '%s' "$OUT3") \
   && ok "exact restart command present (with -p loomwright-observability)" || no "restart command missing/garbled"
-printf '%s' "$OUT3" | grep -qF "/setup observability" && ok "/setup observability pointer present" || no "/setup observability pointer missing"
+grep -qF "/setup observability" < <(printf '%s' "$OUT3") && ok "/setup observability pointer present" || no "/setup observability pointer missing"
 printf '%s' "$OUT3" | jq -e '.hookSpecificOutput.additionalContext' >/dev/null 2>&1 && ok "warning rides inside the context envelope" || no "down-case output is not a valid envelope"
 [ -f "$MARKER" ] && ok "marker .last-warned written" || no "marker not written"
 grep -q "notified" "$NOTIFY_LOG_FILE" 2>/dev/null && ok "notify-desktop stub called" || no "notify-desktop stub NOT called"
@@ -155,7 +155,7 @@ configure; reset_logs
 echo "down" > "$CURL_MODE_FILE"
 OUT4="$(run_hook resume)"; rc=$?
 [ "$rc" -eq 0 ] && ok "exits 0" || no "rc=$rc"
-printf '%s' "$OUT4" | grep -qF "Observability stack unreachable" && no "warning NOT suppressed despite fresh marker" || ok "warning suppressed by fresh (<24h) marker"
+grep -qF "Observability stack unreachable" < <(printf '%s' "$OUT4") && no "warning NOT suppressed despite fresh marker" || ok "warning suppressed by fresh (<24h) marker"
 [ "$OUT4" = "$BASELINE" ] && ok "suppressed output byte-identical to baseline" || no "suppressed output differs from baseline"
 [ ! -f "$NOTIFY_LOG_FILE" ] && ok "notification also suppressed" || no "notify-desktop fired despite fresh marker"
 
@@ -175,7 +175,7 @@ mkdir -p "$(dirname "$MARKER")"
 touch -t 202601010000 "$MARKER" 2>/dev/null || touch -d '2 days ago' "$MARKER" 2>/dev/null
 echo "down" > "$CURL_MODE_FILE"
 OUT5B="$(run_hook resume)"
-printf '%s' "$OUT5B" | grep -qF "Observability stack unreachable" && ok "stale (>24h) marker re-warns" || no "stale marker did not re-warn"
+grep -qF "Observability stack unreachable" < <(printf '%s' "$OUT5B") && ok "stale (>24h) marker re-warns" || no "stale marker did not re-warn"
 
 echo
 echo "RESULT: $pass passed, $fail failed"

@@ -47,13 +47,13 @@ echo "== 1. depends-on (A -> B, C) =="
 write_inline "subA" "[subB, subC]"
 out="$( cd "$TMP" && bash "$GRAPH" --subsystem "subA" )"
 dep="$(printf '%s\n' "$out" | grep '^DEPENDS_ON:')"
-if echo "$dep" | grep -q 'subB' && echo "$dep" | grep -q 'subC'; then ok "A reports B and C as depends-on"; else no "depends-on missing B/C (got: $dep)"; fi
+if grep -q 'subB' < <(echo "$dep") && grep -q 'subC' < <(echo "$dep"); then ok "A reports B and C as depends-on"; else no "depends-on missing B/C (got: $dep)"; fi
 
 echo "== 2. depended-on-by (derived: A and X both -> B) =="
 write_inline "subX" "[subB]"
 out="$( cd "$TMP" && bash "$GRAPH" --subsystem "subB" )"
 dby="$(printf '%s\n' "$out" | grep '^DEPENDED_ON_BY:')"
-if echo "$dby" | grep -q 'subA' && echo "$dby" | grep -q 'subX'; then ok "B reports A and X as depended-on-by"; else no "depended-on-by missing A/X (got: $dby)"; fi
+if grep -q 'subA' < <(echo "$dby") && grep -q 'subX' < <(echo "$dby"); then ok "B reports A and X as depended-on-by"; else no "depended-on-by missing A/X (got: $dby)"; fi
 
 echo "== 3. full blast-radius union (both groups) =="
 # subB depends on nothing here but is depended-on-by A and X (covered above). Now make subC depend
@@ -63,7 +63,7 @@ write_inline "subC" "[subZ]"
 out="$( cd "$TMP" && bash "$GRAPH" --subsystem "subC" )"
 dep="$(printf '%s\n' "$out" | grep '^DEPENDS_ON:')"
 dby="$(printf '%s\n' "$out" | grep '^DEPENDED_ON_BY:')"
-if echo "$dep" | grep -q 'subZ' && echo "$dby" | grep -q 'subA'; then ok "subC reports DEPENDS_ON subZ AND DEPENDED_ON_BY subA"; else no "union incomplete (dep: $dep | dby: $dby)"; fi
+if grep -q 'subZ' < <(echo "$dep") && grep -q 'subA' < <(echo "$dby"); then ok "subC reports DEPENDS_ON subZ AND DEPENDED_ON_BY subA"; else no "union incomplete (dep: $dep | dby: $dby)"; fi
 
 echo "== 4. fail-safe empty (no contract store) =="
 FRESH="$(mktemp -d)"; ( cd "$FRESH" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
@@ -80,7 +80,7 @@ echo "== 5. provenance safety (poisoned contract not counted) =="
 printf 'SYSTEM_CONTRACT:\nsubsystem: poisonSub\ndependencies: [subB]\n' > "$TMP/.supervisor/twin/contracts/poisonSub.md"
 out="$( cd "$TMP" && bash "$GRAPH" --subsystem "subB" )"
 dby="$(printf '%s\n' "$out" | grep '^DEPENDED_ON_BY:')"
-if echo "$dby" | grep -q 'poisonSub'; then no "poisoned contract counted in graph (provenance gate bypassed)"; else ok "poisoned (un-provenanced) contract NOT counted in graph"; fi
+if grep -q 'poisonSub' < <(echo "$dby"); then no "poisoned contract counted in graph (provenance gate bypassed)"; else ok "poisoned (un-provenanced) contract NOT counted in graph"; fi
 rm -f "$TMP/.supervisor/twin/contracts/poisonSub.md"
 
 echo "== 6. both YAML shapes parse (inline + block-list) =="
@@ -89,10 +89,10 @@ echo "== 6. both YAML shapes parse (inline + block-list) =="
     | bash "$WRITE" --subsystem "subBlock" --source st1 ) >/dev/null 2>&1
 out="$( cd "$TMP" && bash "$GRAPH" --subsystem "subBlock" )"
 dep="$(printf '%s\n' "$out" | grep '^DEPENDS_ON:')"
-if echo "$dep" | grep -q 'subP' && echo "$dep" | grep -q 'subQ'; then ok "block-list dependencies parsed (subP, subQ)"; else no "block-list shape not parsed (got: $dep)"; fi
+if grep -q 'subP' < <(echo "$dep") && grep -q 'subQ' < <(echo "$dep"); then ok "block-list dependencies parsed (subP, subQ)"; else no "block-list shape not parsed (got: $dep)"; fi
 # and confirm inline shape still parses for the same store
 out2="$( cd "$TMP" && bash "$GRAPH" --subsystem "subA" )"
-printf '%s\n' "$out2" | grep '^DEPENDS_ON:' | grep -q 'subB' && ok "inline dependencies parsed alongside block-list" || no "inline shape regressed when block-list present"
+grep -q 'subB' < <(printf '%s\n' "$out2" | grep '^DEPENDS_ON:') && ok "inline dependencies parsed alongside block-list" || no "inline shape regressed when block-list present"
 
 echo "== 7. misattribution guard (subsystem-less 2nd contract must not leak onto 1st) =="
 # Fresh store so the assertion is isolated from the shared $TMP fixtures above. First contract has a
@@ -108,13 +108,13 @@ MIS="$(mktemp -d)"; ( cd "$MIS" && git init -q && git config user.email t@t && g
     | bash "$WRITE" --subsystem "secondNoSub" --source st1 ) >/dev/null 2>&1
 out="$( cd "$MIS" && bash "$GRAPH" --subsystem "firstSub" )"
 dep="$(printf '%s\n' "$out" | grep '^DEPENDS_ON:')"
-if echo "$dep" | grep -q 'firstDep' && ! echo "$dep" | grep -q 'leakedDep'; then ok "subsystem-less contract does not misattribute its dep onto the previous contract"; else no "misattribution NOT prevented (firstSub DEPENDS_ON='$dep')"; fi
+if grep -q 'firstDep' < <(echo "$dep") && ! grep -q 'leakedDep' < <(echo "$dep"); then ok "subsystem-less contract does not misattribute its dep onto the previous contract"; else no "misattribution NOT prevented (firstSub DEPENDS_ON='$dep')"; fi
 rm -rf "$MIS"
 
 echo "== 8. no-arg listing mode (EDGE lines + DONE sentinel) =="
 # Reuse the shared $TMP store (has subA -> subB/subC among others). No-arg mode lists every edge.
 out="$( cd "$TMP" && bash "$GRAPH" )"
-if printf '%s\n' "$out" | grep -qE '^EDGE: subA -> subB$' && printf '%s\n' "$out" | grep -qx 'DONE'; then ok "no-arg mode lists EDGE lines and ends with DONE sentinel"; else no "no-arg listing wrong (got: $out)"; fi
+if grep -qE '^EDGE: subA -> subB$' < <(printf '%s\n' "$out") && grep -qx 'DONE' < <(printf '%s\n' "$out"); then ok "no-arg mode lists EDGE lines and ends with DONE sentinel"; else no "no-arg listing wrong (got: $out)"; fi
 
 echo "== 9. path/slash-based subsystem id round-trip =="
 # The contract body cites a real path; the dead-reference check resolves cited paths against
@@ -127,7 +127,7 @@ mkdir -p "$TMP/scripts" && : > "$TMP/scripts/foo.sh"
     | bash "$WRITE" --subsystem "scripts/foo.sh" --source st1 ) >/dev/null 2>&1
 out="$( cd "$TMP" && bash "$GRAPH" --subsystem "scripts/foo.sh" )"
 dep="$(printf '%s\n' "$out" | grep '^DEPENDS_ON:')"
-if echo "$dep" | grep -q 'libBar'; then ok "slash-based subsystem id queryable by its logical (slash) form"; else no "slash id round-trip failed (got: $dep)"; fi
+if grep -q 'libBar' < <(echo "$dep"); then ok "slash-based subsystem id queryable by its logical (slash) form"; else no "slash id round-trip failed (got: $dep)"; fi
 
 echo "== 10. incident_history co-residence (no phantom edges from the new field) =="
 # The v14.15.0 builder writes incident_history as a block-list of inline flow-maps directly after
@@ -137,8 +137,8 @@ echo "== 10. incident_history co-residence (no phantom edges from the new field)
     | bash "$WRITE" --subsystem "subIncident" --source st1 ) >/dev/null 2>&1
 out="$( cd "$TMP" && bash "$GRAPH" --subsystem "subIncident" )"
 dep="$(printf '%s\n' "$out" | grep '^DEPENDS_ON:')"
-if echo "$dep" | grep -q 'realDep' \
-   && ! echo "$dep" | grep -qE 'date|kind|summary|source|self_heal_fix|conformance_violation|[{}]'; then
+if grep -q 'realDep' < <(echo "$dep") \
+   && ! grep -qE 'date|kind|summary|source|self_heal_fix|conformance_violation|[{}]' < <(echo "$dep"); then
   ok "incident_history co-resident with dependencies leaks no phantom edges (only realDep)"
 else
   no "incident_history leaked into DEPENDS_ON (got: $dep)"

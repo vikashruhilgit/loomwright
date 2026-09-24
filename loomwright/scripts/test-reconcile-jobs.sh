@@ -757,7 +757,7 @@ case "$out" in stranded_merged*"pull/42"*) ok "30n3 (control) a CONFIRMED vcs ma
 # --- 30p. PR #243 review, finding 5: the base-ref probe is cached in a GLOBAL,
 # which only works when the function is called directly. A `$(vcs_base_ref)`
 # call site would silently discard the cache (subshell) — assert none exists.
-if grep -v "^[[:space:]]*#" "$RECON" | grep -q '\$(vcs_base_ref)'; then
+if grep -q '\$(vcs_base_ref)' < <(grep -v "^[[:space:]]*#" "$RECON"); then
   no "30p a \$(vcs_base_ref) subshell call site exists — the VCS_BASE_REF cache cannot persist through it"
 else
   ok "30p no \$(vcs_base_ref) subshell call — callers read the VCS_BASE_REF global"

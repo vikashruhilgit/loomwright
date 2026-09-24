@@ -184,7 +184,7 @@ DRY_LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
 if [ "$RUN_RC" -eq 0 ] \
    && [ -n "$DRY_LINE" ] \
    && [ "$(marker_count "$WD")" -eq 1 ] \
-   && printf '%s' "$DRY_LINE" | grep -q -- "$PR"; then
+   && grep -q -- "$PR" < <(printf '%s' "$DRY_LINE"); then
   ok "dispatch: exit 0, 1 marker, DRY_RUN_DISPATCH carries $PR ($DRY_LINE)"
 else
   no "dispatch wrong (rc=$RUN_RC markers=$(marker_count "$WD") line='$DRY_LINE')"
@@ -291,7 +291,7 @@ DRY_LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
 if [ "$RUN_RC" -eq 0 ] \
    && [ -n "$DRY_LINE" ] \
    && [ "$(marker_count "$WD")" -eq 1 ] \
-   && printf '%s' "$DRY_LINE" | grep -q -- "$PR"; then
+   && grep -q -- "$PR" < <(printf '%s' "$DRY_LINE"); then
   ok "bold-match: exit 0, 1 marker, branch resolved from bold line ($DRY_LINE)"
 else
   no "bold-match wrong (rc=$RUN_RC markers=$(marker_count "$WD") line='$DRY_LINE')"
@@ -428,7 +428,7 @@ DRY_LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
 if [ "$RUN_RC" -eq 0 ] \
    && [ -n "$DRY_LINE" ] \
    && [ "$(marker_count "$WD")" -eq 1 ] \
-   && printf '%s' "$DRY_LINE" | grep -q -- "$PR"; then
+   && grep -q -- "$PR" < <(printf '%s' "$DRY_LINE"); then
   ok "stale-terminal-statemd + active state.json: exit 0, 1 marker, DRY_RUN carries $PR ($DRY_LINE)"
 else
   no "headline regression wrong (rc=$RUN_RC markers=$(marker_count "$WD") line='$DRY_LINE')"
@@ -524,7 +524,7 @@ DRY_LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
 if [ "$RUN_RC" -eq 0 ] \
    && [ -n "$DRY_LINE" ] \
    && [ "$(marker_count "$WD")" -eq 1 ] \
-   && printf '%s' "$DRY_LINE" | grep -q -- "$PR"; then
+   && grep -q -- "$PR" < <(printf '%s' "$DRY_LINE"); then
   ok "status-less state.md + active state.json: exit 0, 1 marker, DRY_RUN carries $PR ($DRY_LINE)"
 else
   no "status-less + state.json dispatch wrong (rc=$RUN_RC markers=$(marker_count "$WD") line='$DRY_LINE')"
@@ -555,7 +555,7 @@ DRY_LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
 if [ "$RUN_RC" -eq 0 ] \
    && [ -n "$DRY_LINE" ] \
    && [ "$(marker_count "$WD")" -eq 1 ] \
-   && printf '%s' "$DRY_LINE" | grep -q -- "$PR"; then
+   && grep -q -- "$PR" < <(printf '%s' "$DRY_LINE"); then
   ok "non-terminal branch-mismatch state.md + active state.json: exit 0, 1 marker, DRY_RUN carries $PR ($DRY_LINE)"
 else
   no "branch-mismatch fallthrough + state.json dispatch wrong (rc=$RUN_RC markers=$(marker_count "$WD") line='$DRY_LINE')"

@@ -533,7 +533,7 @@ dispatcher_seam_ok() {
       # NON-COMMENT lines only: a commented-out call (leading `#`, with or without
       # indentation) must not satisfy the seam. grep -E, not a `case` glob — bash 3.2
       # has no extglob, and `" "*\#*` would also skip a code line with a trailing comment.
-      if printf '%s' "$L" | grep -qE '^[[:space:]]*#'; then i=$((i+1)); continue; fi
+      if grep -qE '^[[:space:]]*#' < <(printf '%s' "$L"); then i=$((i+1)); continue; fi
       case "$L" in
         *'bash "$'*'--reason "dispatch pre-add cleanup"'*)      FOUND_REASONS="$FOUND_REASONS pre-add" ;;
         *'bash "$'*'--reason "dispatch header-write teardown"'*) FOUND_REASONS="$FOUND_REASONS header-write" ;;

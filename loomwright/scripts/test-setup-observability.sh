@@ -51,7 +51,7 @@ services="$(awk '
 n_services="$(printf '%s\n' "$services" | grep -c . || true)"
 [ "$n_services" -eq 7 ] && ok "exactly 7 services declared" || no "expected 7 services, found $n_services ($services)"
 for svc in langfuse-web langfuse-worker postgres clickhouse redis minio otel-collector; do
-  printf '%s\n' "$services" | grep -qx "$svc" && ok "service present: $svc" || no "service missing: $svc"
+  grep -qx "$svc" < <(printf '%s\n' "$services") && ok "service present: $svc" || no "service missing: $svc"
 done
 
 echo "== 3. compose: restart + healthcheck on every service =="

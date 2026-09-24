@@ -224,41 +224,41 @@ F3="$ROOT/f3"; build_tab "$F3"
 before="$(listing "$F3")"
 run_rs "$RS" "$F3" "$F3"
 [ "$RC" -eq 0 ] && ok "AC-3 default invocation exits 0" || no "AC-3 rc=$RC"
-printf '%s' "$OUT" | grep -qF "keep (unsafe name, not swept): .supervisor/drain-rounds/$TAB_BASE" && ! printf '%s' "$OUT" | grep -qF "would remove: .supervisor/drain-rounds/$TAB_SIB" \
+grep -qF "keep (unsafe name, not swept): .supervisor/drain-rounds/$TAB_BASE" < <(printf '%s' "$OUT") && ! grep -qF "would remove: .supervisor/drain-rounds/$TAB_SIB" < <(printf '%s' "$OUT") \
   && ok "AC-3 REPORT mode refuses the tab-named candidate at listing time (keep line present, not listed as would-remove)" || no "AC-3 unsafe-name keep missing in REPORT mode: $(printf '%s\n' "$OUT" | grep -F drain-rounds | head -4)"
-printf '%s' "$OUT" | grep -qF 'would remove:' && ok "AC-3 control — the default report DOES list candidates (the fixture is aged past 90 days)" || no "AC-3 control: no candidates listed — the report-only assertion would be vacuous: $OUT"
+grep -qF 'would remove:' < <(printf '%s' "$OUT") && ok "AC-3 control — the default report DOES list candidates (the fixture is aged past 90 days)" || no "AC-3 control: no candidates listed — the report-only assertion would be vacuous: $OUT"
 [ "$(listing "$F3")" = "$before" ] && ok "AC-3 default invocation leaves the full listing byte-identical" || no "AC-3 listing changed under the default invocation"
-printf '%s' "$OUT" | grep -qF 'pass --delete to remove the files listed above' && ok "AC-3 summary says nothing removed / pass --delete" || no "AC-3 summary line missing: $(printf '%s' "$OUT" | tail -1)"
+grep -qF 'pass --delete to remove the files listed above' < <(printf '%s' "$OUT") && ok "AC-3 summary says nothing removed / pass --delete" || no "AC-3 summary line missing: $(printf '%s' "$OUT" | tail -1)"
 [ "$(printf '%s\n' "$OUT" | head -1)" = 'retention-sweep: IRREVERSIBLE — .supervisor/ is gitignored and exists only in this checkout; nothing removed here can be recovered.' ] \
   && ok "AC-11 REPORT mode: the IRREVERSIBLE line is the FIRST line" || no "AC-11 REPORT first line: $(printf '%s\n' "$OUT" | head -1)"
 
 for bad in 0 08 abc; do
   run_rs "$RS" "$F3" "$F3" --delete --older-than "$bad"
-  if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -qF "mode=REPORT" && printf '%s' "$OUT" | grep -qF -- "--older-than '$bad'" && [ "$(listing "$F3")" = "$before" ]; then
+  if [ "$RC" -eq 0 ] && grep -qF "mode=REPORT" < <(printf '%s' "$OUT") && grep -qF -- "--older-than '$bad'" < <(printf '%s' "$OUT") && [ "$(listing "$F3")" = "$before" ]; then
     ok "AC-11 --older-than $bad with --delete ⇒ exit 0, REPORT, reason names the value, nothing removed"
   else
     no "AC-11 --older-than $bad: rc=$RC / $(printf '%s\n' "$OUT" | sed -n 2,3p)"
   fi
 done
 run_rs "$RS" "$F3" "$F3" --delete --older-than
-if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -qF "mode=REPORT" && printf '%s' "$OUT" | grep -qF -- "--older-than needs a value" && [ "$(listing "$F3")" = "$before" ]; then
+if [ "$RC" -eq 0 ] && grep -qF "mode=REPORT" < <(printf '%s' "$OUT") && grep -qF -- "--older-than needs a value" < <(printf '%s' "$OUT") && [ "$(listing "$F3")" = "$before" ]; then
   ok "AC-11 --older-than with a missing value ⇒ exit 0, REPORT, reason, nothing removed"
 else
   no "AC-11 missing value: rc=$RC / $(printf '%s\n' "$OUT" | sed -n 2,3p)"
 fi
 run_rs "$RS" "$F3" "$F3" --older-than 30
-printf '%s' "$OUT" | grep -qF 'older-than=30 days' && ok "AC-11 a valid --older-than is honoured (30)" || no "AC-11 valid value not honoured: $(printf '%s\n' "$OUT" | sed -n 2p)"
+grep -qF 'older-than=30 days' < <(printf '%s' "$OUT") && ok "AC-11 a valid --older-than is honoured (30)" || no "AC-11 valid value not honoured: $(printf '%s\n' "$OUT" | sed -n 2p)"
 # Upper bound: above 36500 `find -mtime +N` silently yields nothing — a run that looks clean and did nothing.
 for big in 36501 999999999999 99999999999999999999999; do
   run_rs "$RS" "$F3" "$F3" --delete --older-than "$big"
-  if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -qF "mode=REPORT" && printf '%s' "$OUT" | grep -qF -- "--older-than '$big' is rejected (above 36500 days" && printf '%s' "$OUT" | grep -qF "older-than=90 days" && [ "$(listing "$F3")" = "$before" ]; then
+  if [ "$RC" -eq 0 ] && grep -qF "mode=REPORT" < <(printf '%s' "$OUT") && grep -qF -- "--older-than '$big' is rejected (above 36500 days" < <(printf '%s' "$OUT") && grep -qF "older-than=90 days" < <(printf '%s' "$OUT") && [ "$(listing "$F3")" = "$before" ]; then
     ok "AC-11 --older-than $big with --delete ⇒ exit 0, REPORT, reason names the bound, threshold stays 90, nothing removed"
   else
     no "AC-11 --older-than $big: rc=$RC / $(printf '%s\n' "$OUT" | sed -n 2,3p)"
   fi
 done
 run_rs "$RS" "$F3" "$F3" --older-than 36500
-printf '%s' "$OUT" | grep -qF 'older-than=36500 days' && printf '%s' "$OUT" | grep -qF 'mode=REPORT' && ! printf '%s' "$OUT" | grep -qF 'is rejected' \
+grep -qF 'older-than=36500 days' < <(printf '%s' "$OUT") && grep -qF 'mode=REPORT' < <(printf '%s' "$OUT") && ! grep -qF 'is rejected' < <(printf '%s' "$OUT") \
   && ok "AC-11 --older-than 36500 (the bound itself) is accepted" || no "AC-11 36500 not accepted: $(printf '%s\n' "$OUT" | sed -n 2,3p)"
 
 # ============================================================================
@@ -273,7 +273,7 @@ run_rs "$RS" "$F4" "$F4" --delete --older-than 1
 [ "$RC" -eq 0 ] && ok "--delete exits 0" || no "--delete rc=$RC"
 [ "$(printf '%s\n' "$OUT" | head -1)" = 'retention-sweep: IRREVERSIBLE — .supervisor/ is gitignored and exists only in this checkout; nothing removed here can be recovered.' ] \
   && ok "AC-11 DELETE mode: the IRREVERSIBLE line is the FIRST line" || no "AC-11 DELETE first line: $(printf '%s\n' "$OUT" | head -1)"
-printf '%s' "$OUT" | grep -qF 'mode=DELETE' && ok "AC-4 mode=DELETE was actually entered (not silently degraded)" || no "AC-4 mode line: $(printf '%s\n' "$OUT" | sed -n 2,4p)"
+grep -qF 'mode=DELETE' < <(printf '%s' "$OUT") && ok "AC-4 mode=DELETE was actually entered (not silently degraded)" || no "AC-4 mode line: $(printf '%s\n' "$OUT" | sed -n 2,4p)"
 # AC-1, individually
 for t in $TRACKED; do
   if [ -f "$S4/$t" ] && [ "$(hash_of "$S4/$t")" = "$(printf '%s\n' "$h_before" | grep -F "$t=" | cut -d= -f2)" ]; then
@@ -304,8 +304,8 @@ pp_after="$(pending_pair "$F4")"
 [ "$pp_after" = "$pp_before" ] && ok "AC-5 status --json dreaming.pending/insights.pending identical before/after ($pp_after)" || no "AC-5 pending changed: before '$pp_before' after '$pp_after'"
 # AC-6
 [ -f "$S4/zzz-future/aged" ] && ok "AC-6 novel zzz-future/ keeps its aged file" || no "AC-6 zzz-future/aged removed"
-printf '%s' "$OUT" | grep -qF 'zzz-future/: unclassified — not swept' && ok "AC-6 report line says 'unclassified — not swept'" || no "AC-6 report line missing"
-printf '%s' "$OUT" | grep -qF 'logs/: removed 3 file(s)' && printf '%s' "$OUT" | grep -qF 'drain-rounds/: removed 2 file(s)' \
+grep -qF 'zzz-future/: unclassified — not swept' < <(printf '%s' "$OUT") && ok "AC-6 report line says 'unclassified — not swept'" || no "AC-6 report line missing"
+grep -qF 'logs/: removed 3 file(s)' < <(printf '%s' "$OUT") && grep -qF 'drain-rounds/: removed 2 file(s)' < <(printf '%s' "$OUT") \
   && ok "DELETE summary names the count removed per directory" || no "DELETE summary: $(printf '%s\n' "$OUT" | tail -3)"
 
 # ============================================================================
@@ -322,7 +322,7 @@ g_before="$(listing "$G5")"
 pp5_before="$(pending_pair "$F5")"
 run_rs "$RS" "$G5" "$F5" --delete --older-than 1
 [ "$RC" -eq 0 ] && ok "AC-5b exits 0" || no "AC-5b rc=$RC"
-printf '%s' "$OUT" | grep -qF "root=$(cd "$F5" && pwd -P) " && ok "AC-5b the run names the --project-root, not the cwd" || no "AC-5b root line: $(printf '%s\n' "$OUT" | sed -n 2p)"
+grep -qF "root=$(cd "$F5" && pwd -P) " < <(printf '%s' "$OUT") && ok "AC-5b the run names the --project-root, not the cwd" || no "AC-5b root line: $(printf '%s\n' "$OUT" | sed -n 2p)"
 [ -f "$F5/.supervisor/logs/old-unconsumed.jsonl" ] && ok "AC-5b the FIRST fixture's aged unconsumed log survives (pending set came from the target, not the cwd)" || no "AC-5b old-unconsumed.jsonl deleted — pending-ids was computed from the caller's cwd"
 [ ! -e "$F5/.supervisor/logs/old-consumed.jsonl" ] && ok "AC-5b …while its aged consumed log was removed (the sweep did act on the target)" || no "AC-5b old-consumed.jsonl survived — the sweep did nothing"
 [ "$(pending_pair "$F5")" = "$pp5_before" ] && ok "AC-5b first fixture's pending pair unchanged ($pp5_before)" || no "AC-5b pending changed: '$pp5_before' → '$(pending_pair "$F5")'"
@@ -337,7 +337,7 @@ run_rs "$RS" "$F1B" "$F1B" --delete --older-than 1
 [ -f "$F1B/.supervisor/drain-rounds/tracked.json" ] && [ "$(hash_of "$F1B/.supervisor/drain-rounds/tracked.json")" = "$h1b" ] \
   && ok "AC-1b tracked file inside an exhaust dir present with unchanged hash" || no "AC-1b tracked.json removed or changed"
 [ ! -e "$F1B/.supervisor/drain-rounds/aaa.json" ] && ok "AC-1b control — the untracked aged ledger beside it WAS removed" || no "AC-1b control: aaa.json survived (sweep vacuous)"
-printf '%s' "$OUT" | grep -qF 'keep (tracked by git): .supervisor/drain-rounds/tracked.json' && ok "AC-1b the report names the tracked keep" || no "AC-1b keep line missing"
+grep -qF 'keep (tracked by git): .supervisor/drain-rounds/tracked.json' < <(printf '%s' "$OUT") && ok "AC-1b the report names the tracked keep" || no "AC-1b keep line missing"
 
 # ============================================================================
 echo "== AC-1c: a candidate that becomes TRACKED between the listing pass and the deletion pass survives =="
@@ -391,10 +391,10 @@ OUT="$(cd "$F1C" && PATH="$SHIM1C:$PATH" bash "$RS" --project-root "$F1C" --dele
 [ "$RC" -eq 0 ] && ok "AC-1c exits 0" || no "AC-1c rc=$RC"
 [ -e "$SHIM1C/.fired" ] && ok "AC-1c control — the shim fired (the listing-time probe for the file went through it)" || no "AC-1c control: the shim never fired — the arm is vacuous"
 [ "$("$GIT_REAL" -C "$F1C" ls-files --error-unmatch -- "$BT_REL" >/dev/null 2>&1; echo $?)" = "0" ] && ok "AC-1c control — after the run the file IS tracked (real git rc 0): it became tracked mid-run" || no "AC-1c control: file not tracked after the run"
-printf '%s' "$OUT" | grep -qF "would remove: $BT_REL" && ok "AC-1c the listing pass listed it as would-remove (git said not-tracked at listing time)" || no "AC-1c listing pass did not list the file: $(printf '%s\n' "$OUT" | grep -F drain-rounds | head -5)"
+grep -qF "would remove: $BT_REL" < <(printf '%s' "$OUT") && ok "AC-1c the listing pass listed it as would-remove (git said not-tracked at listing time)" || no "AC-1c listing pass did not list the file: $(printf '%s\n' "$OUT" | grep -F drain-rounds | head -5)"
 [ -f "$F1C/$BT_REL" ] && [ "$(hash_of "$F1C/$BT_REL")" = "$h1c" ] && ok "AC-1c the file that became tracked between the passes SURVIVES with unchanged hash" || no "AC-1c becomes-tracked.json removed or changed — guard (ii) is not re-evaluated at deletion time"
-printf '%s' "$OUT" | grep -qF "keep (tracked at deletion time): $BT_REL" && ok "AC-1c the deletion pass names it 'keep (tracked at deletion time)'" || no "AC-1c deletion-time keep line missing"
-[ ! -e "$F1C/.supervisor/drain-rounds/aaa.json" ] && printf '%s' "$OUT" | grep -qF 'drain-rounds/: removed 2 file(s)' && ok "AC-1c control — the two untracked aged ledgers beside it WERE removed and the summary counts what was actually removed (2), not what was listed (3)" || no "AC-1c control: aaa.json survived or summary miscounts: $(printf '%s\n' "$OUT" | tail -3)"
+grep -qF "keep (tracked at deletion time): $BT_REL" < <(printf '%s' "$OUT") && ok "AC-1c the deletion pass names it 'keep (tracked at deletion time)'" || no "AC-1c deletion-time keep line missing"
+[ ! -e "$F1C/.supervisor/drain-rounds/aaa.json" ] && grep -qF 'drain-rounds/: removed 2 file(s)' < <(printf '%s' "$OUT") && ok "AC-1c control — the two untracked aged ledgers beside it WERE removed and the summary counts what was actually removed (2), not what was listed (3)" || no "AC-1c control: aaa.json survived or summary miscounts: $(printf '%s\n' "$OUT" | tail -3)"
 
 # ============================================================================
 echo "== AC-1d: git cannot answer at deletion time (rc 128) ⇒ that file is kept, per file =="
@@ -403,12 +403,12 @@ h1d="$(hash_of "$F1D/$BT_REL")"
 OUT="$(cd "$F1D" && PATH="$SHIM1D:$PATH" bash "$RS" --project-root "$F1D" --delete --older-than 1 2>&1)"; RC=$?
 [ "$RC" -eq 0 ] && ok "AC-1d exits 0" || no "AC-1d rc=$RC"
 [ -e "$SHIM1D/.fired" ] && ok "AC-1d control — the shim fired" || no "AC-1d control: the shim never fired — the arm is vacuous"
-printf '%s' "$OUT" | grep -qF 'mode=DELETE' && printf '%s' "$OUT" | grep -qF "would remove: $BT_REL" && ok "AC-1d control — DELETE mode entered and the listing pass listed the file (rc 1 at listing time)" || no "AC-1d control: not DELETE or not listed: $(printf '%s\n' "$OUT" | sed -n 2,4p)"
+grep -qF 'mode=DELETE' < <(printf '%s' "$OUT") && grep -qF "would remove: $BT_REL" < <(printf '%s' "$OUT") && ok "AC-1d control — DELETE mode entered and the listing pass listed the file (rc 1 at listing time)" || no "AC-1d control: not DELETE or not listed: $(printf '%s\n' "$OUT" | sed -n 2,4p)"
 n1d="$(listed_in drain-rounds)"
 [ -f "$F1D/$BT_REL" ] && [ "$(hash_of "$F1D/$BT_REL")" = "$h1d" ] && ok "AC-1d the file git could not answer for at deletion time SURVIVES with unchanged hash" || no "AC-1d becomes-tracked.json removed or changed — rc 128 at deletion time fell through to rm"
-printf '%s' "$OUT" | grep -qF "keep (git could not answer at deletion time, rc 128): $BT_REL" && ok "AC-1d the keep line names the file AND the rc (128)" || no "AC-1d keep line missing: $(printf '%s\n' "$OUT" | grep -F 'deletion time' | head -3)"
+grep -qF "keep (git could not answer at deletion time, rc 128): $BT_REL" < <(printf '%s' "$OUT") && ok "AC-1d the keep line names the file AND the rc (128)" || no "AC-1d keep line missing: $(printf '%s\n' "$OUT" | grep -F 'deletion time' | head -3)"
 [ ! -e "$F1D/.supervisor/drain-rounds/aaa.json" ] && [ ! -e "$F1D/.supervisor/drain-rounds/bbb.json" ] && ok "AC-1d the sibling candidates beside it WERE removed (per file, never widened to a refusal)" || no "AC-1d siblings survived — the deletion-time rc widened into a refusal"
-[ "$n1d" -eq 3 ] && printf '%s' "$OUT" | grep -qF "drain-rounds/: removed $((n1d - 1)) file(s)" && ok "AC-1d summary counts actual removals: listed $n1d, removed $((n1d - 1))" || no "AC-1d summary miscounts (listed $n1d): $(printf '%s\n' "$OUT" | tail -3)"
+[ "$n1d" -eq 3 ] && grep -qF "drain-rounds/: removed $((n1d - 1)) file(s)" < <(printf '%s' "$OUT") && ok "AC-1d summary counts actual removals: listed $n1d, removed $((n1d - 1))" || no "AC-1d summary miscounts (listed $n1d): $(printf '%s\n' "$OUT" | tail -3)"
 
 # ============================================================================
 echo "== AC-1e / AC-1f: candidate renamed away / replaced by a symlink between the passes ⇒ 'skipped (not a regular file now)' =="
@@ -419,8 +419,8 @@ for arm in rename symlink; do
   P1E="$(cd "$F1E" && pwd -P)/$BT_REL"   # the tool prints the pwd -P resolved absolute path
   OUT="$(cd "$F1E" && PATH="$SHIM1E:$PATH" bash "$RS" --project-root "$F1E" --delete --older-than 1 2>&1)"; RC=$?
   [ "$RC" -eq 0 ] && ok "AC-1e/$arm exits 0" || no "AC-1e/$arm rc=$RC"
-  [ -e "$SHIM1E/.fired" ] && printf '%s' "$OUT" | grep -qF "would remove: $BT_REL" && ok "AC-1e/$arm control — the shim fired and the listing pass listed the file" || no "AC-1e/$arm control: shim never fired or file not listed"
-  printf '%s' "$OUT" | grep -qF "skipped (not a regular file now): $P1E" && ok "AC-1e/$arm pass 2 prints 'skipped (not a regular file now)' for the path" || no "AC-1e/$arm skip line missing: $(printf '%s\n' "$OUT" | grep -F 'skipped' | head -3)"
+  [ -e "$SHIM1E/.fired" ] && grep -qF "would remove: $BT_REL" < <(printf '%s' "$OUT") && ok "AC-1e/$arm control — the shim fired and the listing pass listed the file" || no "AC-1e/$arm control: shim never fired or file not listed"
+  grep -qF "skipped (not a regular file now): $P1E" < <(printf '%s' "$OUT") && ok "AC-1e/$arm pass 2 prints 'skipped (not a regular file now)' for the path" || no "AC-1e/$arm skip line missing: $(printf '%s\n' "$OUT" | grep -F 'skipped' | head -3)"
   [ -f "$F1E/$BT_REL.moved" ] && [ "$(hash_of "$F1E/$BT_REL.moved")" = "$h1e" ] && ok "AC-1e/$arm the moved-away file is untouched (unchanged hash)" || no "AC-1e/$arm the moved-away file is missing or changed"
   if [ "$arm" = symlink ]; then
     [ -L "$F1E/$BT_REL" ] && [ -f "$F1E/link-target" ] && [ "$(hash_of "$F1E/link-target")" = "$ht" ] && ok "AC-1f the symlink is still in place and its target is untouched (rm never followed the link)" || no "AC-1f symlink removed or its target changed"
@@ -428,7 +428,7 @@ for arm in rename symlink; do
     [ ! -e "$F1E/$BT_REL" ] && ok "AC-1e the renamed path stays absent (nothing re-created it)" || no "AC-1e something exists at the renamed path"
   fi
   n1e="$(listed_in drain-rounds)"
-  [ "$n1e" -eq 3 ] && [ ! -e "$F1E/.supervisor/drain-rounds/aaa.json" ] && printf '%s' "$OUT" | grep -qF "drain-rounds/: removed $((n1e - 1)) file(s)" && ok "AC-1e/$arm siblings removed; summary counts actual removals: listed $n1e, removed $((n1e - 1))" || no "AC-1e/$arm siblings or summary wrong (listed $n1e): $(printf '%s\n' "$OUT" | tail -3)"
+  [ "$n1e" -eq 3 ] && [ ! -e "$F1E/.supervisor/drain-rounds/aaa.json" ] && grep -qF "drain-rounds/: removed $((n1e - 1)) file(s)" < <(printf '%s' "$OUT") && ok "AC-1e/$arm siblings removed; summary counts actual removals: listed $n1e, removed $((n1e - 1))" || no "AC-1e/$arm siblings or summary wrong (listed $n1e): $(printf '%s\n' "$OUT" | tail -3)"
 done
 
 # ============================================================================
@@ -438,12 +438,12 @@ F1G="$ROOT/f1g"; build_tab "$F1G"
 h1g_tab="$(hash_of "$F1G/.supervisor/drain-rounds/$TAB_BASE")"; h1g_sib="$(hash_of "$F1G/.supervisor/drain-rounds/$TAB_SIB")"
 run_rs "$RS" "$F1G" "$F1G" --delete --older-than 1
 [ "$RC" -eq 0 ] && ok "AC-1g exits 0" || no "AC-1g rc=$RC"
-printf '%s' "$OUT" | grep -qF "keep (unsafe name, not swept): .supervisor/drain-rounds/$TAB_BASE" && ok "AC-1g pass 1 prints 'keep (unsafe name, not swept)' for the tab-named file" || no "AC-1g keep line missing: $(printf '%s\n' "$OUT" | grep -F drain-rounds | head -4)"
-! printf '%s' "$OUT" | grep -qF "would remove: .supervisor/drain-rounds/$TAB_SIB" && ok "AC-1g the tab-named file is NOT listed as would-remove (no truncated row)" || no "AC-1g a would-remove line names the tab-named file or its prefix"
+grep -qF "keep (unsafe name, not swept): .supervisor/drain-rounds/$TAB_BASE" < <(printf '%s' "$OUT") && ok "AC-1g pass 1 prints 'keep (unsafe name, not swept)' for the tab-named file" || no "AC-1g keep line missing: $(printf '%s\n' "$OUT" | grep -F drain-rounds | head -4)"
+! grep -qF "would remove: .supervisor/drain-rounds/$TAB_SIB" < <(printf '%s' "$OUT") && ok "AC-1g the tab-named file is NOT listed as would-remove (no truncated row)" || no "AC-1g a would-remove line names the tab-named file or its prefix"
 [ -f "$F1G/.supervisor/drain-rounds/$TAB_BASE" ] && [ "$(hash_of "$F1G/.supervisor/drain-rounds/$TAB_BASE")" = "$h1g_tab" ] && ok "AC-1g the tab-named file survives with unchanged hash" || no "AC-1g tab-named file removed or changed"
 [ -f "$F1G/.supervisor/drain-rounds/$TAB_SIB" ] && [ "$(hash_of "$F1G/.supervisor/drain-rounds/$TAB_SIB")" = "$h1g_sib" ] && ok "AC-1g the same-prefix untracked sibling survives with unchanged hash" || no "AC-1g the same-prefix sibling was deleted — a truncated TSV row named it"
-[ ! -e "$F1G/.supervisor/drain-rounds/aaa.json" ] && [ "$(listed_in drain-rounds)" -eq 2 ] && printf '%s' "$OUT" | grep -qF 'drain-rounds/: removed 2 file(s)' && ok "AC-1g control — the two safe aged ledgers WERE removed; listed 2, removed 2 (the tab-named file is in neither count)" || no "AC-1g control: counts wrong (listed $(listed_in drain-rounds)): $(printf '%s\n' "$OUT" | tail -3)"
-! printf '%s' "$OUT" | grep -qiE 'syntax error|arithmetic' && ok "AC-1g no arithmetic error leaked from a corrupted bytes field" || no "AC-1g arithmetic error in output: $(printf '%s\n' "$OUT" | grep -iE 'syntax error|arithmetic' | head -2)"
+[ ! -e "$F1G/.supervisor/drain-rounds/aaa.json" ] && [ "$(listed_in drain-rounds)" -eq 2 ] && grep -qF 'drain-rounds/: removed 2 file(s)' < <(printf '%s' "$OUT") && ok "AC-1g control — the two safe aged ledgers WERE removed; listed 2, removed 2 (the tab-named file is in neither count)" || no "AC-1g control: counts wrong (listed $(listed_in drain-rounds)): $(printf '%s\n' "$OUT" | tail -3)"
+! grep -qiE 'syntax error|arithmetic' < <(printf '%s' "$OUT") && ok "AC-1g no arithmetic error leaked from a corrupted bytes field" || no "AC-1g arithmetic error in output: $(printf '%s\n' "$OUT" | grep -iE 'syntax error|arithmetic' | head -2)"
 
 # ============================================================================
 echo "== AC-7: fail-safe — exit 0, nothing deleted, condition named =="
@@ -458,7 +458,7 @@ else
   rc7a=$RC; out7a="$OUT"
   chmod 755 "$F7A/.supervisor/logs" "$F7A/.supervisor/drain-rounds"
   [ "$rc7a" -eq 0 ] && ok "AC-7 unreadable exhaust dirs ⇒ exit 0" || no "AC-7 unreadable rc=$rc7a"
-  printf '%s' "$out7a" | grep -qF 'logs/: unreadable — not swept' && printf '%s' "$out7a" | grep -qF 'drain-rounds/: unreadable — not swept' \
+  grep -qF 'logs/: unreadable — not swept' < <(printf '%s' "$out7a") && grep -qF 'drain-rounds/: unreadable — not swept' < <(printf '%s' "$out7a") \
     && ok "AC-7 unreadable dirs named as 'unreadable — not swept'" || no "AC-7 unreadable condition not named: $out7a"
   [ "$(listing "$F7A")" = "$b7a" ] && ok "AC-7 unreadable exhaust dirs ⇒ nothing deleted (listing identical)" || no "AC-7 something was deleted around an unreadable dir"
   # never widens: ONE unreadable exhaust dir keeps its files while the other is still swept as designed
@@ -477,7 +477,7 @@ nj="$(find "$F7C/.supervisor/logs" -name '*.jsonl' | wc -l | tr -d ' ')"
 run_rs "$RS" "$F7C" "$F7C" --delete --older-than 1
 [ "$RC" -eq 0 ] && ok "AC-7 garbage curation-state.json ⇒ exit 0" || no "AC-7 garbage state rc=$RC"
 [ "$(find "$F7C/.supervisor/logs" -name '*.jsonl' | wc -l | tr -d ' ')" = "$nj" ] && ok "AC-7 garbage curation-state.json ⇒ no session log removed (all $nj kept)" || no "AC-7 a session log was removed under a garbage consumed record"
-printf '%s' "$OUT" | grep -qF 'pending set is fail-closed' && ok "AC-7 garbage state condition named (pending set is fail-closed)" || no "AC-7 garbage state not named: $(printf '%s\n' "$OUT" | grep -F 'logs' | head -3)"
+grep -qF 'pending set is fail-closed' < <(printf '%s' "$OUT") && ok "AC-7 garbage state condition named (pending set is fail-closed)" || no "AC-7 garbage state not named: $(printf '%s\n' "$OUT" | grep -F 'logs' | head -3)"
 # (iii)/(iv) PATH without jq / without git
 mk_bin() { local d="$1"; shift; mkdir -p "$d"; local t p; for t in "$@"; do p="$(command -v "$t" 2>/dev/null)" || continue; [ -n "$p" ] && ln -sf "$p" "$d/$t"; done; }
 BASE_TOOLS="sh bash env date stat find mkdir mv rm cat ls chmod grep sed head tail sort tr wc dirname basename cut uname mktemp touch"
@@ -488,7 +488,7 @@ for arm in jq git; do
   if [ "$arm" = jq ]; then bin="$BIN_NOJQ"; else bin="$BIN_NOGIT"; fi
   OUT="$(cd "$F7" && PATH="$bin" bash "$RS" --project-root "$F7" --delete --older-than 1 2>&1)"; RC=$?
   [ "$RC" -eq 0 ] && ok "AC-7 PATH without $arm ⇒ exit 0" || no "AC-7 no-$arm rc=$RC"
-  printf '%s' "$OUT" | grep -qF "$arm unavailable" && printf '%s' "$OUT" | grep -qF 'degraded to REPORT' \
+  grep -qF "$arm unavailable" < <(printf '%s' "$OUT") && grep -qF 'degraded to REPORT' < <(printf '%s' "$OUT") \
     && ok "AC-7 PATH without $arm ⇒ named, --delete degraded to REPORT" || no "AC-7 no-$arm condition not named: $(printf '%s\n' "$OUT" | sed -n 2,5p)"
   [ "$(listing "$F7")" = "$b7" ] && ok "AC-7 PATH without $arm ⇒ nothing deleted" || no "AC-7 no-$arm deleted something"
 done
@@ -496,7 +496,7 @@ done
 F7G="$ROOT/f7g"; build_fixture "$F7G"; rm -rf "$F7G/.git"; b7g="$(listing "$F7G")"
 run_rs "$RS" "$F7G" "$F7G" --delete --older-than 1
 [ "$RC" -eq 0 ] && ok "AC-7 non-git --project-root ⇒ exit 0" || no "AC-7 non-git rc=$RC"
-printf '%s' "$OUT" | grep -qF 'git could not answer (rc 128)' && ok "AC-7 non-git root ⇒ 'git could not answer (rc 128)' named" || no "AC-7 rc-128 not named: $(printf '%s\n' "$OUT" | sed -n 2,5p)"
+grep -qF 'git could not answer (rc 128)' < <(printf '%s' "$OUT") && ok "AC-7 non-git root ⇒ 'git could not answer (rc 128)' named" || no "AC-7 rc-128 not named: $(printf '%s\n' "$OUT" | sed -n 2,5p)"
 [ "$(listing "$F7G")" = "$b7g" ] && ok "AC-7 non-git root ⇒ nothing deleted" || no "AC-7 non-git root deleted something"
 
 # ============================================================================
@@ -508,13 +508,13 @@ F7R="$ROOT/f7r"; build_fixture "$F7R"; b7r="$(listing "$F7R")"
 BAD_A="$ROOT/does-not-exist"
 run_rs "$RS" "$F7R" "$BAD_A" --delete --older-than 1
 [ "$RC" -eq 0 ] && ok "AC-7r (a) nonexistent --project-root ⇒ exit 0" || no "AC-7r (a) rc=$RC"
-printf '%s\n' "$OUT" | grep -qxF "retention-sweep: project root $BAD_A is not a directory — nothing done." && ok "AC-7r (a) exact message names the path" || no "AC-7r (a) message: $(printf '%s\n' "$OUT" | sed -n 2p)"
+grep -qxF "retention-sweep: project root $BAD_A is not a directory — nothing done." < <(printf '%s\n' "$OUT") && ok "AC-7r (a) exact message names the path" || no "AC-7r (a) message: $(printf '%s\n' "$OUT" | sed -n 2p)"
 [ "$(listing "$F7R")" = "$b7r" ] && ok "AC-7r (a) the adjacent cwd fixture is byte-identical (no cwd fallback)" || no "AC-7r (a) the adjacent fixture changed"
 # (c) root exists but has no .supervisor/
 BAD_C="$ROOT/empty-root"; mkdir -p "$BAD_C"; BAD_C_P="$(cd "$BAD_C" && pwd -P)"
 run_rs "$RS" "$F7R" "$BAD_C" --delete --older-than 1
 [ "$RC" -eq 0 ] && ok "AC-7r (c) root without .supervisor/ ⇒ exit 0" || no "AC-7r (c) rc=$RC"
-printf '%s\n' "$OUT" | grep -qxF "retention-sweep: no .supervisor/ under $BAD_C_P — nothing to do." && ok "AC-7r (c) exact message names the resolved root" || no "AC-7r (c) message: $(printf '%s\n' "$OUT" | sed -n 2p)"
+grep -qxF "retention-sweep: no .supervisor/ under $BAD_C_P — nothing to do." < <(printf '%s\n' "$OUT") && ok "AC-7r (c) exact message names the resolved root" || no "AC-7r (c) message: $(printf '%s\n' "$OUT" | sed -n 2p)"
 [ "$(listing "$F7R")" = "$b7r" ] && [ -z "$(ls -A "$BAD_C")" ] && ok "AC-7r (c) the adjacent fixture is byte-identical and the empty root stays empty (nothing created)" || no "AC-7r (c) the adjacent fixture changed or the empty root gained an entry"
 # (b) root exists but cannot be entered
 if [ "${EUID:-$(id -u)}" -eq 0 ]; then
@@ -524,7 +524,7 @@ else
   run_rs "$RS" "$F7R" "$BAD_B" --delete --older-than 1
   rc7rb=$RC; out7rb="$OUT"; chmod 755 "$BAD_B"
   [ "$rc7rb" -eq 0 ] && ok "AC-7r (b) unenterable --project-root ⇒ exit 0" || no "AC-7r (b) rc=$rc7rb"
-  printf '%s\n' "$out7rb" | grep -qxF "retention-sweep: cannot enter the project root — nothing done." && ok "AC-7r (b) exact message" || no "AC-7r (b) message: $(printf '%s\n' "$out7rb" | sed -n 2p)"
+  grep -qxF "retention-sweep: cannot enter the project root — nothing done." < <(printf '%s\n' "$out7rb") && ok "AC-7r (b) exact message" || no "AC-7r (b) message: $(printf '%s\n' "$out7rb" | sed -n 2p)"
   [ "$(listing "$F7R")" = "$b7r" ] && ok "AC-7r (b) the adjacent fixture is byte-identical" || no "AC-7r (b) the adjacent fixture changed"
 fi
 [ "$(printf '%s\n' "$OUT" | head -1)" = 'retention-sweep: IRREVERSIBLE — .supervisor/ is gitignored and exists only in this checkout; nothing removed here can be recovered.' ] \
@@ -566,8 +566,8 @@ fi
 if mutant a2listing '/# LS-FILES-GUARD$/d'; then
   FA2L="$ROOT/fa2l"; build_fixture "$FA2L" tracked-in-drain-rounds
   run_rs "$MUT/a2listing.sh" "$FA2L" "$FA2L" --delete --older-than 1
-  printf '%s' "$OUT" | grep -qF 'would remove: .supervisor/drain-rounds/tracked.json' && ok "AC-9 (a2-listing) control — with the listing-time guard gone the tracked file IS listed as would-remove" || no "AC-9 (a2-listing) control: tracked.json not listed — the listing-time edit did nothing"
-  [ -f "$FA2L/.supervisor/drain-rounds/tracked.json" ] && printf '%s' "$OUT" | grep -qF 'keep (tracked at deletion time): .supervisor/drain-rounds/tracked.json' \
+  grep -qF 'would remove: .supervisor/drain-rounds/tracked.json' < <(printf '%s' "$OUT") && ok "AC-9 (a2-listing) control — with the listing-time guard gone the tracked file IS listed as would-remove" || no "AC-9 (a2-listing) control: tracked.json not listed — the listing-time edit did nothing"
+  [ -f "$FA2L/.supervisor/drain-rounds/tracked.json" ] && grep -qF 'keep (tracked at deletion time): .supervisor/drain-rounds/tracked.json' < <(printf '%s' "$OUT") \
     && ok "AC-9 (a2-listing) with ONLY the listing-time guard removed, the deletion-time re-check still keeps the tracked file and names it" || no "AC-9 (a2-listing) tracked.json deleted or keep line missing — the deletion-time guard is not live on its own"
 fi
 # (a2) BOTH ls-files guard lines removed ⇒ AC-1b red.
@@ -634,7 +634,7 @@ if [ "$script_policy" = "$doc_policy" ]; then
 else
   no "AC-10 policy mirror drift:"; diff <(printf '%s\n' "$script_policy") <(printf '%s\n' "$doc_policy") | sed 's/^/      /'
 fi
-printf '%s\n' "$script_policy" | grep -qx "logs${TAB}consumed → partial exhaust" && ok "AC-10 logs/ carries the partial-exhaust class in the machine surface" || no "AC-10 logs/ class wrong: $(printf '%s\n' "$script_policy" | grep '^logs')"
+grep -qx "logs${TAB}consumed → partial exhaust" < <(printf '%s\n' "$script_policy") && ok "AC-10 logs/ carries the partial-exhaust class in the machine surface" || no "AC-10 logs/ class wrong: $(printf '%s\n' "$script_policy" | grep '^logs')"
 [ "$(printf '%s\n' "$script_policy" | grep -c "${TAB}.*exhaust")" = "2" ] && ok "AC-10 exactly two rows carry an exhaust class (logs, drain-rounds)" || no "AC-10 exhaust row count != 2"
 
 echo

@@ -70,7 +70,7 @@ fi
 LONG_601="$(python3 -c 'print("x" * 601)')"
 set_description "$LONG_601"
 OUT2="$(cd "$TMP" && bash scripts/check-doc-currency.sh 2>&1)"; RC2=$?
-if [ "$RC2" -ne 0 ] && printf '%s' "$OUT2" | grep -q 'DRIFT \[description-length\]'; then
+if [ "$RC2" -ne 0 ] && grep -q 'DRIFT \[description-length\]' < <(printf '%s' "$OUT2"); then
   ok "case 2: a 601-char description FAILS with a description-length DRIFT line"
 else
   no "case 2: a 601-char description should fail with description-length DRIFT (rc=$RC2): $(printf '%s' "$OUT2" | tail -5)"
@@ -80,7 +80,7 @@ fi
 EXACT_600="$(python3 -c 'print("x" * 600)')"
 set_description "$EXACT_600"
 OUT2B="$(cd "$TMP" && bash scripts/check-doc-currency.sh 2>&1)"
-if ! printf '%s' "$OUT2B" | grep -q 'DRIFT \[description-length\]'; then
+if ! grep -q 'DRIFT \[description-length\]' < <(printf '%s' "$OUT2B"); then
   ok "case 2b: exactly 600 chars does NOT trigger description-length DRIFT (boundary is 'exceeds 600', not '>= 600')"
 else
   no "case 2b: exactly 600 chars should not trigger description-length DRIFT: $(printf '%s' "$OUT2B" | tail -5)"
@@ -90,7 +90,7 @@ fi
 TWO_VERSIONS="Loomwright v1.2.3 replaces v1.0.0 with a shorter card."
 set_description "$TWO_VERSIONS"
 OUT3="$(cd "$TMP" && bash scripts/check-doc-currency.sh 2>&1)"; RC3=$?
-if [ "$RC3" -ne 0 ] && printf '%s' "$OUT3" | grep -q 'DRIFT \[description-version-tokens\]'; then
+if [ "$RC3" -ne 0 ] && grep -q 'DRIFT \[description-version-tokens\]' < <(printf '%s' "$OUT3"); then
   ok "case 3: two vX.Y.Z tokens FAILS with a description-version-tokens DRIFT line"
 else
   no "case 3: two vX.Y.Z tokens should fail with description-version-tokens DRIFT (rc=$RC3): $(printf '%s' "$OUT3" | tail -5)"
@@ -100,7 +100,7 @@ fi
 ONE_VERSION="Loomwright v1.2.3 is a plan-first system."
 set_description "$ONE_VERSION"
 OUT3B="$(cd "$TMP" && bash scripts/check-doc-currency.sh 2>&1)"
-if ! printf '%s' "$OUT3B" | grep -q 'DRIFT \[description-version-tokens\]'; then
+if ! grep -q 'DRIFT \[description-version-tokens\]' < <(printf '%s' "$OUT3B"); then
   ok "case 3b: exactly one vX.Y.Z token does NOT trigger description-version-tokens DRIFT"
 else
   no "case 3b: exactly one vX.Y.Z token should not trigger DRIFT: $(printf '%s' "$OUT3B" | tail -5)"

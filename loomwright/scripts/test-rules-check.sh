@@ -79,7 +79,7 @@ out_a1="$(run_checker "$RA" --no-cmd)"; rc_a1=$?
 [ "$rc_a1" -eq 0 ] && ok "(a1 --no-cmd) exits 0" || no "(a1) expected exit 0, got $rc_a1"
 [ ! -e "$MARKER_A" ] && ok "(a1) --no-cmd did NOT execute the check (marker absent)" \
   || no "(a1) SECURITY REGRESSION: --no-cmd executed the check (marker created)"
-echo "$out_a1" | grep -qF "cmd execution disabled" \
+grep -qF "cmd execution disabled" < <(echo "$out_a1") \
   && ok "(a1) --no-cmd reports 'cmd execution disabled'" || no "(a1) missing 'cmd execution disabled' notice"
 
 # (a2) default non-interactive (no flag) → not created
@@ -88,7 +88,7 @@ out_a2="$(run_checker "$RA")"; rc_a2=$?
 [ "$rc_a2" -eq 0 ] && ok "(a2 default) exits 0" || no "(a2) expected exit 0, got $rc_a2"
 [ ! -e "$MARKER_A" ] && ok "(a2) default non-interactive did NOT execute the check (marker absent)" \
   || no "(a2) SECURITY REGRESSION: default executed the check without confirmation"
-echo "$out_a2" | grep -qF "needs confirmation" \
+grep -qF "needs confirmation" < <(echo "$out_a2") \
   && ok "(a2) default reports 'needs confirmation'" || no "(a2) missing 'needs confirmation' notice"
 
 # (a3) --no-cmd + --confirm BOTH → --no-cmd WINS → not created
@@ -117,7 +117,7 @@ out_b1="$(run_checker "$RB" --confirm)"; rc_b1=$?
 [ "$rc_b1" -eq 0 ] && ok "(b1 --confirm) exits 0 (check passed)" || no "(b1) expected exit 0, got $rc_b1"
 [ -e "$MARKER_B" ] && ok "(b1) --confirm EXECUTED the check (marker CREATED)" \
   || no "(b1) --confirm did not execute the check (marker absent) — execution broken"
-echo "$out_b1" | grep -qF "Checks passed: 1/1" \
+grep -qF "Checks passed: 1/1" < <(echo "$out_b1") \
   && ok "(b1) executed check counted in aggregate (1/1)" || no "(b1) aggregate not 1/1"
 
 # (b2) RULES_CHECK_CONFIRM=1 env → also creates it
@@ -139,7 +139,7 @@ seed_rules_file "$RB3" "safety.json" '[
 ]'
 out_b3="$(run_checker "$RB3" --confirm)"; rc_b3=$?
 [ "$rc_b3" -eq 1 ] && ok "(b3 failing check) exits 1" || no "(b3) expected exit 1, got $rc_b3"
-echo "$out_b3" | grep -qF "Checks passed: 0/1" \
+grep -qF "Checks passed: 0/1" < <(echo "$out_b3") \
   && ok "(b3) failing check reflected in aggregate (0/1)" || no "(b3) aggregate not 0/1"
 
 # ============================================================================
@@ -158,7 +158,7 @@ out_c="$(run_checker "$RC" --confirm)"; rc_c=$?
 [ "$rc_c" -eq 0 ] && ok "(c) exits 0" || no "(c) expected exit 0, got $rc_c"
 [ ! -e "$MARKER_ADV" ] && ok "(c) advisory rule's check NOT executed (marker absent)" \
   || no "(c) REGRESSION: advisory rule's check was executed"
-echo "$out_c" | grep -qF "Checks passed: 0/0" \
+grep -qF "Checks passed: 0/0" < <(echo "$out_c") \
   && ok "(c) no must+non-null-check rules selected (0/0)" || no "(c) expected 0/0 selected, got: $out_c"
 
 # ============================================================================
@@ -179,7 +179,7 @@ out_d1="$(run_checker "$RD1" --confirm)"; rc_d1=$?
   || no "(d1) first-seen dup's check did not run"
 [ ! -e "$MARKER_DUP_SECOND" ] && ok "(d1) later dup's check NOT run (dedup parity)" \
   || no "(d1) REGRESSION: later duplicate-id check was executed"
-echo "$out_d1" | grep -qF "Checks passed: 1/1" \
+grep -qF "Checks passed: 1/1" < <(echo "$out_d1") \
   && ok "(d1) exactly one (deduped) check selected (1/1)" || no "(d1) expected 1/1, got: $out_d1"
 
 # (d2) malformed / non-array JSON file alongside a valid one: malformed is skipped, valid still runs.
@@ -218,7 +218,7 @@ out_d3="$(run_checker "$RD3" --confirm)"; rc_d3=$?
   || no "(d3) REGRESSION: missing-field object's check ran"
 [ -e "$MARKER_D3_GOOD" ] && ok "(d3) valid must-rule sibling's check ran" \
   || no "(d3) valid must-rule sibling's check did not run"
-echo "$out_d3" | grep -qF "Checks passed: 1/1" \
+grep -qF "Checks passed: 1/1" < <(echo "$out_d3") \
   && ok "(d3) exactly the one valid must-rule selected (1/1)" || no "(d3) expected 1/1, got: $out_d3"
 
 # ============================================================================
@@ -235,7 +235,7 @@ seed_rules_file "$RE" "e.json" "[
 #      execute: with no valid confirmation it stays in the default need-confirm skip. Capture stderr.
 err_e1="$( cd "$RE" && bash "$CHECKER" --no-cmnd </dev/null 2>&1 >/dev/null )"; rc_e1=$?
 [ "$rc_e1" -eq 0 ] && ok "(e1) unknown arg still exits 0 (fail-safe)" || no "(e1) expected exit 0, got $rc_e1"
-printf '%s\n' "$err_e1" | grep -qF -- "--no-cmnd" \
+grep -qF -- "--no-cmnd" < <(printf '%s\n' "$err_e1") \
   && ok "(e1) unknown arg produces a stderr warning naming it" \
   || no "(e1) expected a stderr warning naming --no-cmnd, got: $err_e1"
 [ ! -e "$MARKER_E" ] && ok "(e1) typo'd flag left the default skip in place — check NOT executed" \
@@ -265,8 +265,8 @@ READER_F="$SCRIPT_DIR/read-rules.sh"
 if [ -r "$READER_F" ]; then
   routed_out="$( cd "$RF" && bash "$READER_F" docs/readme.md 2>/dev/null )"
   routed_in="$( cd "$RF" && bash "$READER_F" src/main.ts 2>/dev/null )"
-  if ! printf '%s\n' "$routed_out" | grep -qF "Scoped to src, still audited repo-wide" \
-     && printf '%s\n' "$routed_in" | grep -qF -- "- [MUST] Scoped to src, still audited repo-wide"; then
+  if ! grep -qF "Scoped to src, still audited repo-wide" < <(printf '%s\n' "$routed_out") \
+     && grep -qF -- "- [MUST] Scoped to src, still audited repo-wide" < <(printf '%s\n' "$routed_in"); then
     ok "(f1 premise) the reader DOES route this rule out for an unrelated path set (premise is real)"
   else
     no "(f1 premise) the reader did not route the rule out — (f2) would be vacuous. out:[$routed_out]"
@@ -284,7 +284,7 @@ rm -f "$MARKER_F" 2>/dev/null
 err_f3="$( cd "$RF" && bash "$CHECKER" docs/readme.md --confirm </dev/null 2>&1 >/dev/null )"; rc_f3=$?
 [ "$rc_f3" -eq 0 ] && ok "(f3) a stray path argument still exits 0 (fail-safe)" \
                    || no "(f3) expected exit 0 with a stray path arg, got $rc_f3"
-printf '%s\n' "$err_f3" | grep -qF -- "docs/readme.md" \
+grep -qF -- "docs/readme.md" < <(printf '%s\n' "$err_f3") \
   && ok "(f3) a path argument is WARNED-and-ignored (the checker accepts no path scope)" \
   || no "(f3) expected a stderr warning naming the ignored path arg, got: $err_f3"
 [ -e "$MARKER_F" ] \

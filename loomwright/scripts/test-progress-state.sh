@@ -174,25 +174,7 @@ REALBASH="$(command -v bash)"
 PAYLOAD_DIR="$(mktemp -d)"
 CLEANUP_DIRS=("$PAYLOAD_DIR")
 CLEANUP_WORKTREES=()  # "repo_root|worktree_path" pairs
-CLEANUP_RENAMES=()  # "current_path|restore_to_path|backup_path" triples — a
-                     # test that renames a REAL tracked file to simulate a
-                     # failure registers the pending restore here so an
-                     # interrupt (INT/TERM) mid-test still restores the file,
-                     # same as CLEANUP_DIRS/CLEANUP_WORKTREES. Processed BEFORE
-                     # CLEANUP_DIRS so a backup_path living under a
-                     # CLEANUP_DIRS-managed scratch dir is still available.
 cleanup() {
-  local rn
-  for rn in "${CLEANUP_RENAMES[@]:-}"; do
-    [ -n "$rn" ] || continue
-    local cur="${rn%%|*}" rest="${rn#*|}"
-    local dest="${rest%%|*}" backup="${rest#*|}"
-    if [ -f "$cur" ]; then
-      mv "$cur" "$dest" 2>/dev/null || true
-    elif [ ! -f "$dest" ] && [ -n "$backup" ] && [ -f "$backup" ]; then
-      cp "$backup" "$dest" 2>/dev/null || true
-    fi
-  done
   local wt
   for wt in "${CLEANUP_WORKTREES[@]:-}"; do
     [ -n "$wt" ] || continue
@@ -259,6 +241,20 @@ build_curated_path() {
 # LOOMWRIGHT_AGENT_TYPE is UNSET here so a developer export cannot supply the
 # field case 36c asserts is absent. This is a SCRUB, never a default — case 36a
 # sets the var explicitly through run_emitter_agent to prove it is IGNORED.
+# scripts_copy — a private, cleanup-registered copy of this scripts directory; prints its path.
+# A case that needs a sibling MISSING or STUBBED (41d, 42d-g) mutates the COPY and runs the
+# copy's emitter (`EMITTER="$copy/emit-progress-event.sh" run_emitter …` — the emitter resolves
+# its siblings from its own location). NEVER rename or overwrite the tracked file itself: the
+# suite runs tests concurrently (run-self-tests.sh), and a tracked result_block_parser.py hidden
+# for even one emitter run made every validator another test was driving at that moment fail
+# SAFE (`{}`) — test-result-validators.sh went red only under parallelism. The same window would
+# also silently disable a developer's live hooks in this checkout.
+scripts_copy() {
+  local d; d="$(mktemp -d)" || return 1
+  CLEANUP_DIRS+=("$d")
+  cp -R "$SCRIPT_DIR/." "$d/" && rm -rf "$d/__pycache__" && printf '%s\n' "$d"
+}
+
 run_emitter() {
   local wd="$1" payload="$2" exclude="${3:-}"
   local path; path="$(build_curated_path "$exclude")"
@@ -666,7 +662,7 @@ assert_eq "case21 Phase Flags preserved" "$FLAGS_BEFORE" "$FLAGS_AFTER"
 assert_eq "case21 Checkpoint preserved" "$CHECKPOINT_BEFORE" "$CHECKPOINT_AFTER"
 assert_eq "case21 Config preserved (untouched, unrelated section)" "$CONFIG_BEFORE" "$CONFIG_AFTER"
 # The ## Session block itself MUST have been replaced (stale id/task_id gone).
-if printf '%s' "$(sed -n '/^## Session/,/^## Decisions Log/p' "$S21")" | grep -q "STALE-OLD-ID"; then
+if grep -q "STALE-OLD-ID" < <(printf '%s' "$(sed -n '/^## Session/,/^## Decisions Log/p' "$S21")"); then
   no "case21 stale ## Session content was NOT replaced"
 else
   ok "case21 ## Session block was replaced (stale content gone)"
@@ -693,7 +689,7 @@ DISPATCH_RC=$?
 assert_eq "case22 dispatch wrapper exit 0" "0" "$DISPATCH_RC"
 MARKER_COUNT22="$(ls -1 "$REPO22/.supervisor/review-dispatch" 2>/dev/null | grep -c . || true)"
 assert_eq "case22 exactly one dispatch marker (Source 1 authorized)" "1" "$MARKER_COUNT22"
-if printf '%s' "$DISPATCH_OUT" | grep -q 'DRY_RUN_DISPATCH'; then
+if grep -q 'DRY_RUN_DISPATCH' < <(printf '%s' "$DISPATCH_OUT"); then
   ok "case22 DRY_RUN_DISPATCH observed — Source 1 authorized on the projected state.md"
 else
   no "case22 no DRY_RUN_DISPATCH observed"
@@ -1553,34 +1549,25 @@ assert_eq "case41c result_block_present key ABSENT (no last_assistant_message at
 # NOT read as clean/omitted — it must OMIT the key just like 41c (a
 # detection-failed case is not a "false" verdict either), proving the
 # detection path is actually exercised rather than vacuously true. Simulated
-# by pointing EMIT_PROGRESS_SCRIPT_DIR-equivalent import at a broken copy:
-# temporarily rename result_block_parser.py so the import fails.
+# by running a scripts_copy() whose result_block_parser.py is deleted, so the
+# copy's import fails. The tracked module is never touched (asserted below).
 RBP="$SCRIPT_DIR/result_block_parser.py"
-RBP_BAK="$PAYLOAD_DIR/result_block_parser.py.bak"
-RBP_HIDDEN="$RBP.hidden-for-test"
-if [ -f "$RBP" ]; then
-  cp "$RBP" "$RBP_BAK"
-  mv "$RBP" "$RBP_HIDDEN"
-  # Register the pending restore in the shared cleanup() trap BEFORE doing
-  # anything else — if this process is interrupted (INT/TERM) anywhere between
-  # here and the `mv` back below, EXIT still fires cleanup(), which restores
-  # the tracked file from $RBP_HIDDEN (or, if that itself is gone, from the
-  # $RBP_BAK safety copy). Without this, an interrupt mid-test left the
-  # tracked file permanently renamed AND deleted the one fallback (CLEANUP_DIRS
-  # removes $PAYLOAD_DIR, which held $RBP_BAK, on the very same trap).
-  CLEANUP_RENAMES+=("$RBP_HIDDEN|$RBP|$RBP_BAK")
+if [ -f "$RBP" ] && RBP_COPY="$(scripts_copy)"; then
+  RBP_SUM_BEFORE="$(cksum < "$RBP")"
+  rm -f "$RBP_COPY/result_block_parser.py"
   REPO41D="$(init_repo "feature/case41d")"
   P41D="$PAYLOAD_DIR/p41d.json"
   jq -n '{session_id:"sid-case41d", agent_id:"a41d", agent_type:"loomwright:worker",
           last_assistant_message:"no fence here either"}' > "$P41D"
-  OUT41D="$(run_emitter "$REPO41D" "$P41D")"
-  mv "$RBP_HIDDEN" "$RBP"
+  OUT41D="$(EMITTER="$RBP_COPY/emit-progress-event.sh" run_emitter "$REPO41D" "$P41D")"
+  assert_eq "case41d the TRACKED result_block_parser.py was never touched (only the private copy's was removed)" \
+    "$RBP_SUM_BEFORE" "$(cksum < "$RBP" 2>/dev/null)"
   assert_eq "case41d(mutation) exit 0 even with detection module missing" "0" "$(get_rc "$OUT41D")"
   LINE41D="$(tail -1 "$REPO41D/.supervisor/logs/sid-case41d.jsonl" 2>/dev/null)"
   assert_eq "case41d(mutation) result_block_present key OMITTED when detection unavailable (never guessed false)" \
     "false" "$(printf '%s' "$LINE41D" | jq -r 'has("result_block_present")')"
 else
-  no "case41d(mutation) result_block_parser.py not found at expected path — cannot mutate"
+  no "case41d(mutation) result_block_parser.py not found at expected path, or the scripts copy failed — cannot mutate"
 fi
 
 echo "== 42. rejected / stop_hook_active (v15.83.0) — a validator-rejected stop is recorded, never guessed =="
@@ -1646,14 +1633,14 @@ assert_eq "case42c stop_hook_active ABSENT from payload -> key OMITTED" "false" 
 assert_eq "case42c stop_hook_active non-boolean in payload -> key OMITTED (never coerced)" "false" \
   "$(sed -n 2p "$REPO42C/.supervisor/logs/sid-case42c.jsonl" | jq -r 'has("stop_hook_active")')"
 
-# 42d/42e/42f/42g share one rename dance on the REAL validator (same discipline as
-# 41d: registered in CLEANUP_RENAMES first so an interrupt still restores it).
-VAL_BAK="$PAYLOAD_DIR/validate-worker-result.py.bak"
-VAL_HIDDEN="$VALIDATOR.hidden-for-test"
-if [ -f "$VALIDATOR" ]; then
-  cp "$VALIDATOR" "$VAL_BAK"
-  mv "$VALIDATOR" "$VAL_HIDDEN"
-  CLEANUP_RENAMES+=("$VAL_HIDDEN|$VALIDATOR|$VAL_BAK")
+# 42d/42e/42f/42g share one scripts_copy(): the validator is deleted / stubbed in
+# the COPY and the copy's emitter runs, so the tracked validator is never touched
+# (same discipline as 41d; asserted at the end of the block).
+if [ -f "$VALIDATOR" ] && VAL_COPY="$(scripts_copy)"; then
+  VAL_SUM_BEFORE="$(cksum < "$VALIDATOR")"
+  MUT_VALIDATOR="$VAL_COPY/validate-worker-result.py"
+  MUT_EMITTER="$VAL_COPY/emit-progress-event.sh"
+  rm -f "$MUT_VALIDATOR"
 
   # 42d: validator ABSENT -> rejected key OMITTED (a missing sibling cannot have
   # blocked anything; the reader derives unknown, consumers treat it as terminal
@@ -1662,7 +1649,7 @@ if [ -f "$VALIDATOR" ]; then
   P42D="$PAYLOAD_DIR/p42d.json"
   jq -n --arg lam "$LAM_MALFORMED" '{session_id:"sid-case42d", agent_id:"a42d", agent_type:"loomwright:worker",
           last_assistant_message:($lam | gsub("\\\\n"; "\n"))}' > "$P42D"
-  OUT42D="$(run_emitter "$REPO42D" "$P42D")"
+  OUT42D="$(EMITTER="$MUT_EMITTER" run_emitter "$REPO42D" "$P42D")"
   assert_eq "case42d exit 0 with the validator missing" "0" "$(get_rc "$OUT42D")"
   LINE42D="$(tail -1 "$REPO42D/.supervisor/logs/sid-case42d.jsonl" 2>/dev/null)"
   assert_eq "case42d row still written (event)" "subtask_complete" "$(printf '%s' "$LINE42D" | jq -r '.event')"
@@ -1673,9 +1660,9 @@ if [ -f "$VALIDATOR" ]; then
   # must make the VALID fixture read rejected:true — proving the value comes from
   # the validator's stdout and not from the emitter's own reading of the block.
   printf '%s\n' '#!/usr/bin/env python3' 'import sys; sys.stdin.read()' \
-    'print("{\"decision\": \"block\", \"reason\": \"stub: always block\"}")' > "$VALIDATOR"
+    'print("{\"decision\": \"block\", \"reason\": \"stub: always block\"}")' > "$MUT_VALIDATOR"
   REPO42E="$(init_repo "feature/case42e")"
-  OUT42E="$(run_emitter "$REPO42E" "$P42B")"
+  OUT42E="$(EMITTER="$MUT_EMITTER" run_emitter "$REPO42E" "$P42B")"
   assert_eq "case42e(mutation) exit 0" "0" "$(get_rc "$OUT42E")"
   LINE42E="$(tail -1 "$REPO42E/.supervisor/logs/sid-case42b.jsonl" 2>/dev/null)"
   assert_eq "case42e(mutation) stub validator printing decision:block flips the VALID fixture to rejected:true — the field is derived from the validator's stdout" \
@@ -1685,9 +1672,9 @@ if [ -f "$VALIDATOR" ]; then
   # NOT a block decision — the runtime never blocked on it, so the stop IS terminal
   # and rejected must be false (the two-dialect rule, docs/HOOKS.md).
   printf '%s\n' '#!/usr/bin/env python3' 'import sys; sys.stdin.read()' \
-    'print("{\"ok\": false, \"reason\": \"stub: legacy shape\"}")' > "$VALIDATOR"
+    'print("{\"ok\": false, \"reason\": \"stub: legacy shape\"}")' > "$MUT_VALIDATOR"
   REPO42F="$(init_repo "feature/case42f")"
-  OUT42F="$(run_emitter "$REPO42F" "$P42A")"
+  OUT42F="$(EMITTER="$MUT_EMITTER" run_emitter "$REPO42F" "$P42A")"
   assert_eq "case42f exit 0" "0" "$(get_rc "$OUT42F")"
   LINE42F="$(tail -1 "$REPO42F/.supervisor/logs/sid-case42a.jsonl" 2>/dev/null)"
   assert_eq "case42f legacy {\"ok\": false} is not a block decision -> rejected:false (that shape never blocked the runtime)" \
@@ -1695,20 +1682,19 @@ if [ -f "$VALIDATOR" ]; then
 
   # 42g: a stub printing NOT-JSON -> rejected key OMITTED (unparseable is not a
   # verdict), exit 0, row still written.
-  printf '%s\n' '#!/usr/bin/env python3' 'import sys; sys.stdin.read()' 'print("not json at all")' > "$VALIDATOR"
+  printf '%s\n' '#!/usr/bin/env python3' 'import sys; sys.stdin.read()' 'print("not json at all")' > "$MUT_VALIDATOR"
   REPO42G="$(init_repo "feature/case42g")"
-  OUT42G="$(run_emitter "$REPO42G" "$P42A")"
+  OUT42G="$(EMITTER="$MUT_EMITTER" run_emitter "$REPO42G" "$P42A")"
   assert_eq "case42g exit 0" "0" "$(get_rc "$OUT42G")"
   LINE42G="$(tail -1 "$REPO42G/.supervisor/logs/sid-case42a.jsonl" 2>/dev/null)"
   assert_eq "case42g row still written" "subtask_complete" "$(printf '%s' "$LINE42G" | jq -r '.event')"
   assert_eq "case42g unparseable validator stdout -> rejected key OMITTED" "false" \
     "$(printf '%s' "$LINE42G" | jq -r 'has("rejected")')"
 
-  rm -f "$VALIDATOR"
-  mv "$VAL_HIDDEN" "$VALIDATOR"
-  assert_eq "case42 real validator restored byte-identical" "" "$(cmp "$VALIDATOR" "$VAL_BAK" 2>&1 || echo DIFFERS)"
+  assert_eq "case42 the TRACKED validator was never touched (every stub went into the private copy)" \
+    "$VAL_SUM_BEFORE" "$(cksum < "$VALIDATOR" 2>/dev/null)"
 else
-  no "case42d-g validate-worker-result.py not found at expected path — cannot exercise the validator seam"
+  no "case42d-g validate-worker-result.py not found at expected path, or the scripts copy failed — cannot exercise the validator seam"
 fi
 
 # 42h: hooks.json wires the validator and this emitter on the SAME matcher — the

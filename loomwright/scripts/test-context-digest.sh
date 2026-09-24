@@ -173,7 +173,7 @@ rm -f "$TINY_OUT"
 TINY_ERR="$(bash "$BUILDER" --brief "$CONTRACT_BRIEF" --out "$TINY_OUT" --max-chars 120 2>&1 >/dev/null)"
 TINY_RC=$?
 if [ "$TINY_RC" -eq 0 ] && [ ! -f "$TINY_OUT" ] \
-   && printf '%s' "$TINY_ERR" | grep -q "below the digest's own fixed overhead"; then
+   && grep -q "below the digest's own fixed overhead" < <(printf '%s' "$TINY_ERR"); then
   ok "cap below the fixed overhead: nothing written, reason on stderr, still exit 0 (fail-safe)"
 else
   no "sub-overhead cap not refused cleanly (rc=$TINY_RC file_exists=$([ -f "$TINY_OUT" ] && echo yes || echo no) err='$TINY_ERR')"
@@ -448,8 +448,8 @@ OUT_G="$(mktemp -t ifout.XXXXXX)"
 bash "$REPO_ROOT/loomwright/scripts/build-context-digest.sh" --brief "$IFBRIEF" --out "$OUT_G" >/dev/null 2>&1
 IFSEC="$(sed -n '/^## Interfaces touched/,/^## /p' "$OUT_G")"
 TOTAL=$((TOTAL+1))
-if printf '%s' "$IFSEC" | grep -q 'PROVIDES_SIDE_SYMBOL' \
-   && printf '%s' "$IFSEC" | grep -q 'REQUIRES_SIDE_SYMBOL'; then
+if grep -q 'PROVIDES_SIDE_SYMBOL' < <(printf '%s' "$IFSEC") \
+   && grep -q 'REQUIRES_SIDE_SYMBOL' < <(printf '%s' "$IFSEC"); then
   ok "Interfaces touched indexes BOTH provides-side and requires-side symbols (key-order independent)"
 else
   no "Interfaces touched dropped a side — provides:$(printf '%s' "$IFSEC" | grep -c 'PROVIDES_SIDE_SYMBOL') requires:$(printf '%s' "$IFSEC" | grep -c 'REQUIRES_SIDE_SYMBOL') (requires entries lead with from:, so a '{kind:'-anchored match silently skips them)"
@@ -601,8 +601,8 @@ DECOYOUT="$(mktemp -t decoyout.XXXXXX)"
 bash "$REPO_ROOT/loomwright/scripts/build-context-digest.sh" --brief "$DECOYBRIEF" --out "$DECOYOUT" >/dev/null 2>&1
 DECOYSEC="$(sed -n '/^## File Impact Map$/,/^## Interfaces/p' "$DECOYOUT")"
 TOTAL=$((TOTAL+1))
-if printf '%s' "$DECOYSEC" | grep -q 'REAL_TARGET_BODY' \
-   && ! printf '%s' "$DECOYSEC" | grep -q 'DECOY_BODY_MUST_NOT_APPEAR'; then
+if grep -q 'REAL_TARGET_BODY' < <(printf '%s' "$DECOYSEC") \
+   && ! grep -q 'DECOY_BODY_MUST_NOT_APPEAR' < <(printf '%s' "$DECOYSEC"); then
   ok "prefix-decoy heading does not steal the section — 'File Impact Mapping' is not 'File Impact Map'"
 else
   no "prefix-decoy heading stole the section: extract_section's index()==1 prefix test needs a word-boundary guard (matched body: $(printf '%s' "$DECOYSEC" | tr '\n' ' ' | cut -c1-160))"

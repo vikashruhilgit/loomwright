@@ -236,7 +236,7 @@ else
 fi
 ORIGIN_AFTER="$(git -C "$REPO_ROOT" remote -v)"
 assert_eq "B PARENT repo's own origin remote unchanged after the run (proves clone-based isolation, not worktree-based)" "$ORIGIN_BEFORE" "$ORIGIN_AFTER"
-assert_true "B PARENT repo's origin remote still present at all" "$( echo "$ORIGIN_AFTER" | grep -q '^origin' && echo 1 || echo 0 )"
+assert_true "B PARENT repo's origin remote still present at all" "$( grep -q '^origin' < <(echo "$ORIGIN_AFTER") && echo 1 || echo 0 )"
 
 echo ""
 echo "==== C: stub produces unparseable garbage -> lens_unparseable ===="
@@ -283,7 +283,7 @@ RC_F=0
 LOOMWRIGHT_LENS_DEBUG_WT_PATH_FILE="$DEBUG_F" run_lens "$STUB_F_DIR" "$OUT_F" || RC_F=$?
 assert_eq "F rc=0" "0" "$RC_F"
 assert_eq "F lens_status=lens_unparseable (isolation setup failed closed)" "lens_unparseable" "$(jq -r '.lens_status' "$OUT_F" 2>/dev/null)"
-assert_true "F notes name the origin-remove failure" "$( jq -r '.notes // empty' "$OUT_F" 2>/dev/null | grep -q 'remote remove origin failed' && echo 1 || echo 0 )"
+assert_true "F notes name the origin-remove failure" "$( grep -q 'remote remove origin failed' < <(jq -r '.notes // empty' "$OUT_F" 2>/dev/null) && echo 1 || echo 0 )"
 assert_eq "F provider CLI never ran" "0" "$( [ -f "$CLI_RAN_F" ] && echo 1 || echo 0 )"
 if [ -s "$DEBUG_F" ]; then
   SANDBOX_F="$(cat "$DEBUG_F")"
@@ -321,7 +321,7 @@ END_H="$(date +%s)"
 ELAPSED_H=$((END_H - START_H))
 assert_eq "H rc=0" "0" "$RC_H"
 assert_eq "H lens_status=lens_unparseable" "lens_unparseable" "$(jq -r '.lens_status' "$OUT_H" 2>/dev/null)"
-assert_true "H notes name the timeout" "$( jq -r '.notes // empty' "$OUT_H" 2>/dev/null | grep -q 'timed out' && echo 1 || echo 0 )"
+assert_true "H notes name the timeout" "$( grep -q 'timed out' < <(jq -r '.notes // empty' "$OUT_H" 2>/dev/null) && echo 1 || echo 0 )"
 assert_true "H finished well inside the hung-sleep (elapsed=${ELAPSED_H}s, bound ~1s+kill)" "$( [ "$ELAPSED_H" -lt 20 ] && echo 1 || echo 0 )"
 H_SELF="$(cat "$PIDS_H.self" 2>/dev/null || true)"
 H_CHILD="$(cat "$PIDS_H.child" 2>/dev/null || true)"
@@ -345,7 +345,7 @@ DEBUG_I="$TMP/debug-wt-i.txt"
 LOOMWRIGHT_LENS_DEBUG_WT_PATH_FILE="$DEBUG_I" run_lens_named '../evil' "" "$OUT_I" || RC_I=$?
 assert_eq "I rc=0" "0" "$RC_I"
 assert_eq "I lens_status=provider_unavailable" "provider_unavailable" "$(jq -r '.lens_status' "$OUT_I" 2>/dev/null)"
-assert_true "I notes name the invalid provider name" "$( jq -r '.notes // empty' "$OUT_I" 2>/dev/null | grep -q 'invalid provider name' && echo 1 || echo 0 )"
+assert_true "I notes name the invalid provider name" "$( grep -q 'invalid provider name' < <(jq -r '.notes // empty' "$OUT_I" 2>/dev/null) && echo 1 || echo 0 )"
 assert_eq "I no sandbox created (rejected before isolate)" "0" "$( [ -f "$DEBUG_I" ] && echo 1 || echo 0 )"
 
 echo ""
@@ -356,7 +356,7 @@ DEBUG_J="$TMP/debug-wt-j.txt"
 LOOMWRIGHT_LENS_DEBUG_WT_PATH_FILE="$DEBUG_J" run_lens_named 'nosuchprovider' "" "$OUT_J" || RC_J=$?
 assert_eq "J rc=0" "0" "$RC_J"
 assert_eq "J lens_status=provider_unavailable" "provider_unavailable" "$(jq -r '.lens_status' "$OUT_J" 2>/dev/null)"
-assert_true "J notes name the missing provider-table entry" "$( jq -r '.notes // empty' "$OUT_J" 2>/dev/null | grep -q 'no provider-table entry' && echo 1 || echo 0 )"
+assert_true "J notes name the missing provider-table entry" "$( grep -q 'no provider-table entry' < <(jq -r '.notes // empty' "$OUT_J" 2>/dev/null) && echo 1 || echo 0 )"
 assert_eq "J no sandbox created (rejected before isolate)" "0" "$( [ -f "$DEBUG_J" ] && echo 1 || echo 0 )"
 
 echo ""

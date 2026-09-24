@@ -210,7 +210,7 @@ n="$(printf '%s\n' "$items" | grep -c .)"
 first="$(printf '%s\n' "$items" | sed -n 1p)"; second="$(printf '%s\n' "$items" | sed -n 2p)"
 [ "$first" = "$FOLDER/01-a.md" ] && ok "(A) item 1 is 01-a.md" || no "(A) item 1 is '$first'"
 [ "$second" = "$FOLDER/02-b.md" ] && ok "(A) item 2 is 02-b.md" || no "(A) item 2 is '$second'"
-printf '%s\n' "$items" | grep -q '03-c.md' && no "(A) done ticket 03-c.md was NOT skipped" || ok "(A) 03-c.md (## Status: done) skipped"
+grep -q '03-c.md' < <(printf '%s\n' "$items") && no "(A) done ticket 03-c.md was NOT skipped" || ok "(A) 03-c.md (## Status: done) skipped"
 
 build_queue "$TA" ".supervisor/verify/queue-test.md" 5 "$first" "$second"
 QA="$(qfile_of "$TA")"
@@ -421,10 +421,10 @@ bash -n "$VH_SRC" && ok "(S) verify-helpers.sh: bash -n" || no "(S) verify-helpe
 bash -n "$VR_SRC" && ok "(S) verify-run.sh: bash -n" || no "(S) verify-run.sh: bash -n failed"
 help_vh="$(bash "$VH_SRC" --help 2>&1)"
 for sub in queue-write queue-progress-append queue-checkoff queue-remaining; do
-  printf '%s\n' "$help_vh" | grep -q "$sub" && ok "(S) verify-helpers.sh --help lists $sub" || no "(S) --help missing $sub"
+  grep -q "$sub" < <(printf '%s\n' "$help_vh") && ok "(S) verify-helpers.sh --help lists $sub" || no "(S) --help missing $sub"
 done
 help_vr="$(bash "$VR_SRC" --help 2>&1)"
-printf '%s\n' "$help_vr" | grep -q 'queue-reconcile-item' && ok "(S) verify-run.sh --help lists queue-reconcile-item" || no "(S) --help missing queue-reconcile-item"
+grep -q 'queue-reconcile-item' < <(printf '%s\n' "$help_vr") && ok "(S) verify-run.sh --help lists queue-reconcile-item" || no "(S) --help missing queue-reconcile-item"
 
 # ============================================================================
 echo ""

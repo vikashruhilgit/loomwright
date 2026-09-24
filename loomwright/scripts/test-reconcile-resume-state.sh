@@ -57,12 +57,12 @@ mkstate "$TMPROOT/incident.md" feature/thing \
 assert_verdict "all subtasks PENDING but committed => STALE" STALE 3 "$TMPROOT/incident.md" "$REPO"
 
 _out=$(bash "$SUT" "$TMPROOT/incident.md" "$REPO" 2>&1)
-if printf '%s' "$_out" | grep -q 'under_reported: 3'; then
+if grep -q 'under_reported: 3' < <(printf '%s' "$_out"); then
   ok "reports the exact count of under-reported subtasks"
 else
   bad "reports the exact count" "under_reported: 3" "$(printf '%s' "$_out" | tr '\n' ' ')"
 fi
-if printf '%s' "$_out" | grep -q 'stale_subtask: id=2 state_says=PENDING'; then
+if grep -q 'stale_subtask: id=2 state_says=PENDING' < <(printf '%s' "$_out"); then
   ok "names each divergent subtask with both claims"
 else
   bad "names each divergent subtask" "stale_subtask: id=2 …" "$(printf '%s' "$_out" | tr '\n' ' ')"

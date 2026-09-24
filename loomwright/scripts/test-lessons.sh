@@ -191,9 +191,9 @@ else
   no "(sep3) entry counts wrong after the non-last write (sepa=$sepa_n, sepz=$sepz_n)"
 fi
 sep_out="$( cd "$SEPDIR" && bash "$READ" 2>/dev/null )"
-if printf '%s\n' "$sep_out" | grep -qF "separator alpha lesson" \
-   && printf '%s\n' "$sep_out" | grep -qF "separator bravo lesson" \
-   && printf '%s\n' "$sep_out" | grep -qF "separator zulu lesson"; then
+if grep -qF "separator alpha lesson" < <(printf '%s\n' "$sep_out") \
+   && grep -qF "separator bravo lesson" < <(printf '%s\n' "$sep_out") \
+   && grep -qF "separator zulu lesson" < <(printf '%s\n' "$sep_out"); then
   ok "(sep4) all three entries still read back through read-lessons.sh — the provenance chain is intact"
 else
   no "(sep4) an entry went invisible to read-lessons.sh after the non-last write"
@@ -244,7 +244,7 @@ fi
 # Captured to a variable first, NOT piped into `grep -q`: under this file's `set -o pipefail` a
 # producer killed by SIGPIPE when grep exits early makes the pipeline fail (141) EVEN ON MATCH.
 sep_eout="$( cd "$SEPEDIR" && bash "$READ" 2>/dev/null )"
-if printf '%s\n' "$sep_eout" | grep -qF "replacement solo lesson"; then
+if grep -qF "replacement solo lesson" < <(printf '%s\n' "$sep_eout"); then
   ok "(sep6) and the re-added entry reads back through read-lessons.sh"
 else
   no "(sep6) the re-added entry is invisible to read-lessons.sh"
@@ -417,14 +417,14 @@ if grep -qF -- "retract me lesson" "$rf" 2>/dev/null; then no "retracted line st
 grep -q '"action":"retract"' "$rj" 2>/dev/null && ok "retract provenance tombstone appended" || no "retract provenance entry missing"
 grep -q '^## ret$' "$rf" 2>/dev/null && ok "category heading left in place after retract" || no "category heading dropped by retract"
 out="$( cd "$RDIR" && bash "$READ" 2>/dev/null )"
-if echo "$out" | grep -qF "retract me lesson"; then no "reader still emits the retracted lesson"; else ok "reader no longer emits the retracted lesson"; fi
-echo "$out" | grep -qF "keep me lesson" && ok "untargeted lesson still emitted after retract" || no "untargeted lesson lost after retract"
+if grep -qF "retract me lesson" < <(echo "$out"); then no "reader still emits the retracted lesson"; else ok "reader no longer emits the retracted lesson"; fi
+grep -qF "keep me lesson" < <(echo "$out") && ok "untargeted lesson still emitted after retract" || no "untargeted lesson lost after retract"
 
 # (b) retracted-but-line-lingers: re-append the original markdown line out-of-band under the same
 #     category → reader drops it (does not emit) and logs it with the distinct RETRACTED label.
 printf '%s\n' "$target_line" >> "$rf"
 out="$( cd "$RDIR" && bash "$READ" 2>/dev/null )"
-if echo "$out" | grep -qF "retract me lesson"; then no "lingering retracted line was emitted"; else ok "lingering retracted line dropped by reader"; fi
+if grep -qF "retract me lesson" < <(echo "$out"); then no "lingering retracted line was emitted"; else ok "lingering retracted line dropped by reader"; fi
 if [ -f "$rlog" ] && grep -q "RETRACTED" "$rlog" 2>/dev/null; then ok "lingering line logged with distinct RETRACTED label"; else no "RETRACTED label missing from memory.log"; fi
 # Remove the lingering line again (out-of-band) so the later re-add sub-case starts clean
 # (otherwise the writer's dedup guard would see it as already present and skip the re-add).
@@ -449,14 +449,14 @@ ph="$(printf '%s' "$(tail -n1 "$rj")" | sha)"
 printf '{"id":"deadbeef","prev_hash":"%s","content_hash":"","source":"test","action":"retract","written_at":"2026-01-01T00:00:00Z"}\n' "$ph" >> "$rj"
 out="$( cd "$RDIR" && bash "$READ" 2>/dev/null )"; rrc=$?
 [ "$rrc" -eq 0 ] && ok "reader exits 0 with malformed retract entries (fail-safe)" || no "reader exited $rrc on malformed retract entries"
-echo "$out" | grep -qF "keep me lesson" && ok "untargeted lesson survives malformed retract entries (missing-key + empty-value)" || no "a malformed retract entry untrusted an unrelated lesson"
+grep -qF "keep me lesson" < <(echo "$out") && ok "untargeted lesson survives malformed retract entries (missing-key + empty-value)" || no "a malformed retract entry untrusted an unrelated lesson"
 
 # (e) re-add after retract → emitted again (last action wins); chain stays valid end-to-end
 ( cd "$RDIR" && bash "$WRITE" --confirm --category ret --lesson "retract me lesson" --source "session:fixture-0001" ) >/dev/null 2>&1
 out="$( cd "$RDIR" && bash "$READ" 2>/dev/null )"
-echo "$out" | grep -qF "retract me lesson" && ok "re-added lesson emitted again (last action wins)" || no "re-add after retract not re-trusted"
+grep -qF "retract me lesson" < <(echo "$out") && ok "re-added lesson emitted again (last action wins)" || no "re-add after retract not re-trusted"
 err="$( cd "$RDIR" && bash "$READ" 2>&1 >/dev/null )"
-if echo "$err" | grep -q "chain broken"; then no "chain reported broken after retract/re-add cycle"; else ok "provenance chain valid end-to-end across retract + malformed entries + re-add"; fi
+if grep -q "chain broken" < <(echo "$err"); then no "chain reported broken after retract/re-add cycle"; else ok "provenance chain valid end-to-end across retract + malformed entries + re-add"; fi
 
 # (f) --hash form: retract by full content_hash (no text) removes the re-added lesson again
 h="$(printf '%s' "ret retract me lesson" | sha)"
@@ -464,7 +464,7 @@ h="$(printf '%s' "ret retract me lesson" | sha)"
 rc=$?
 [ "$rc" -eq 0 ] && ok "retract --hash <content_hash> accepted" || no "retract --hash failed (exit $rc)"
 out="$( cd "$RDIR" && bash "$READ" 2>/dev/null )"
-if echo "$out" | grep -qF "retract me lesson"; then no "--hash retract did not untrust the lesson"; else ok "--hash retract removes + untrusts (add→retract→re-add→retract)"; fi
+if grep -qF "retract me lesson" < <(echo "$out"); then no "--hash retract did not untrust the lesson"; else ok "--hash retract removes + untrusts (add→retract→re-add→retract)"; fi
 rm -rf "$RDIR"
 
 echo "== 10. sha-tool-absent branch: add = fail-safe no-op, retract = fail LOUD =="
@@ -514,10 +514,10 @@ sp2j="$SDIR2/$PJFILE"
 grep -q "\"action\":\"retract\"" "$sp2j" 2>/dev/null && ok "retract provenance entry recorded for the superseded target" || no "retract provenance missing"
 grep -q "\"action\":\"add\"" "$sp2j" 2>/dev/null && ok "add provenance entry recorded for the replacement" || no "add provenance missing"
 out2="$( cd "$SDIR2" && bash "$READ" 2>/dev/null )"
-echo "$out2" | grep -qF "cap lesson two" && no "reader still emits the superseded lesson text" || ok "reader no longer emits the superseded lesson text"
-echo "$out2" | grep -qF "cap replacement two" && ok "reader emits the replacement lesson" || no "reader does not emit the replacement lesson"
-echo "$out2" | grep -qF "cap lesson one" && ok "reader still emits the surviving oldest entry" || no "reader lost the surviving oldest entry"
-echo "$out2" | grep -qF "cap lesson three" && ok "reader still emits the surviving newest entry" || no "reader lost the surviving newest entry"
+grep -qF "cap lesson two" < <(echo "$out2") && no "reader still emits the superseded lesson text" || ok "reader no longer emits the superseded lesson text"
+grep -qF "cap replacement two" < <(echo "$out2") && ok "reader emits the replacement lesson" || no "reader does not emit the replacement lesson"
+grep -qF "cap lesson one" < <(echo "$out2") && ok "reader still emits the surviving oldest entry" || no "reader lost the surviving oldest entry"
+grep -qF "cap lesson three" < <(echo "$out2") && ok "reader still emits the surviving newest entry" || no "reader lost the surviving newest entry"
 rm -rf "$SDIR2"
 
 echo "-- 11b. MANDATORY: --replacement required for supersede; rejected on retract --"
@@ -672,7 +672,16 @@ if [ -f "$real_lessons" ]; then
   # echo would append a SECOND line and make the -eq comparison below throw. (Same for the piped
   # form, which additionally needs the `|| true` because `set -o pipefail` is on.)
   file_n="$(grep -c '^- \[' "$real_lessons" 2>/dev/null || true)"
-  read_n="$(cd "$REAL_REPO" && bash "$READ" 2>/dev/null | grep -c '^- \[' || true)"
+  # The reader runs over a COPY of the real store in a throwaway git repo, never in the checkout:
+  # read-lessons.sh cds to its git root and `mkdir -p .supervisor/logs` (and appends memory.log on
+  # any DROPPED line), so reading in place left an empty .supervisor/logs in the real repo — which
+  # test-progress-state.sh's "real logs snapshot unchanged" guard caught once the suite ran
+  # concurrently (run-self-tests.sh). The reader only reads .supervisor/memory/, so the copy is the
+  # same input.
+  RRDIR="$(mktemp -d)"
+  ( cd "$RRDIR" && git init -q && mkdir -p .supervisor && cp -R "$REAL_REPO/.supervisor/memory" .supervisor/ ) >/dev/null 2>&1
+  read_n="$(cd "$RRDIR" && bash "$READ" 2>/dev/null | grep -c '^- \[' || true)"
+  rm -rf "$RRDIR"
   file_n="${file_n:-0}"; read_n="${read_n:-0}"
   if [ "$file_n" -eq "$read_n" ]; then
     ok "real LESSONS.md: all $file_n entries are readable (no unbacked/retracted-but-lingering lines)"

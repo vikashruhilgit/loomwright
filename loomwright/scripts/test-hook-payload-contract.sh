@@ -98,7 +98,7 @@ print("\n".join(sorted(fields)))
 [ -n "$FIXTURE_FIELDS" ] || { echo "FATAL  no fixture fields extracted from $FIXTURE_DIR" >&2; exit 1; }
 
 fixture_has_field() { # fixture_has_field <name>
-  printf '%s\n' "$FIXTURE_FIELDS" | grep -qxF -- "$1"
+  grep -qxF -- "$1" < <(printf '%s\n' "$FIXTURE_FIELDS")
 }
 
 # ---- Documented, deliberate exemptions (see header comment) -----------------
@@ -107,7 +107,7 @@ output
 agent_output
 error"
 is_exempt() { # is_exempt <name>
-  printf '%s\n' "$KNOWN_EXEMPT" | grep -qxF -- "$1"
+  grep -qxF -- "$1" < <(printf '%s\n' "$KNOWN_EXEMPT")
 }
 
 # ---- Hook-script set: named in hooks.json, plus one level of siblings ------
@@ -208,7 +208,7 @@ EOF
 )"
 while IFS= read -r ef; do
   [ -n "$ef" ] || continue
-  if ! printf '%s\n' "$FOUND_ALL" | grep -qxF -- "$ef"; then
+  if ! grep -qxF -- "$ef" < <(printf '%s\n' "$FOUND_ALL"); then
     missing_expected="$missing_expected $ef"
   fi
 done <<EOF
@@ -228,7 +228,7 @@ if [ -f "$MUTANT_SRC" ]; then
   cp "$MUTANT_SRC" "$MUTANT"
   printf '\n_never_recorded = payload.get("xyz_never_recorded_field")\n' >> "$MUTANT"
   MUT_FIELDS="$(scan_field_reads "$MUTANT" | sort -u)"
-  if printf '%s\n' "$MUT_FIELDS" | grep -qxF -- "xyz_never_recorded_field"; then
+  if grep -qxF -- "xyz_never_recorded_field" < <(printf '%s\n' "$MUT_FIELDS"); then
     if fixture_has_field "xyz_never_recorded_field"; then
       no "mutation control: fixture precondition broken — xyz_never_recorded_field unexpectedly present in a fixture"
     else

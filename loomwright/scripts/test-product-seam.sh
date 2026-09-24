@@ -221,8 +221,8 @@ check_pair() {
     block="$(offer_block "$f")"
     if [ -z "$block" ]; then
       _chk 1 "[$base] no offer blockquote containing the absent-store message — cannot check the stance enum (see (E))"
-    elif printf '%s' "$block" | grep -qF -- "$STANCE_ENUM_PRODUCT" \
-      && printf '%s' "$block" | grep -qF -- "$STANCE_ENUM_TOOL"; then
+    elif grep -qF -- "$STANCE_ENUM_PRODUCT" < <(printf '%s' "$block") \
+      && grep -qF -- "$STANCE_ENUM_TOOL" < <(printf '%s' "$block"); then
       _chk 0 "[$base] the offer names BOTH stance values ($STANCE_ENUM_PRODUCT and $STANCE_ENUM_TOOL) — the choice is left to the user"
     else
       _chk 1 "[$base] the offer does NOT name both stance values — one of $STANCE_ENUM_PRODUCT / $STANCE_ENUM_TOOL is missing, so a stance is being pre-decided in prose"

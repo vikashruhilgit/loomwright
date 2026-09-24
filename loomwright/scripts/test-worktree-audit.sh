@@ -120,7 +120,7 @@ keys="$(jq -c 'keys' "$WC_FIX" 2>/dev/null)"
 [ "$keys" = '["cwd","hook_event_name","name","prompt_id","scratchpad_dir","session_id","transcript_path"]' ] \
   && ok "AC-1 fixture key set is exactly the seven measured keys" || no "AC-1 fixture keys: $keys"
 [ "$(jq -r '.hook_event_name' "$WC_FIX")" = "WorktreeCreate" ] && ok "AC-1 hook_event_name == WorktreeCreate" || no "AC-1 hook_event_name wrong"
-jq -r '.name' "$WC_FIX" | grep -qE '^agent-[0-9a-f]{17}$' && ok "AC-1 name matches ^agent-[0-9a-f]{17}\$" || no "AC-1 name shape wrong"
+grep -qE '^agent-[0-9a-f]{17}$' < <(jq -r '.name' "$WC_FIX") && ok "AC-1 name matches ^agent-[0-9a-f]{17}\$" || no "AC-1 name shape wrong"
 [ "$(jq -r 'has("worktree_path")' "$WC_FIX")" = "false" ] && ok "AC-1 has(\"worktree_path\") is false" || no "AC-1 worktree_path present"
 for f in "$REPO_ROOT/CHANGELOG.md" "$REPO_ROOT/loomwright/docs/HOOKS.md"; do
   grep -qF 'hook succeeded but returned no worktree path' "$f" && ok "AC-1 $(basename "$f") quotes the harness error" || no "AC-1 $(basename "$f") lacks the harness error string"
@@ -159,7 +159,7 @@ echo "== AC-2: no empty-string extraction =="
 [ "$(jq '[.hooks[][].hooks[]] | length' "$HOOKS_JSON")" = "43" ] && ok "AC-2 leaf hook count is 43" || no "AC-2 leaf hook count != 43"
 [ "$(jq '[.hooks.PostToolUse[] | select(.matcher == "Bash")] | length' "$HOOKS_JSON")" = "1" ] && ok "AC-2 exactly ONE PostToolUse Bash matcher-object" || no "AC-2 Bash matcher-object count != 1"
 [ "$(jq -r '.hooks.PostToolUse[] | select(.matcher == "Bash") | .hooks | length' "$HOOKS_JSON")" = "4" ] && ok "AC-2 the Bash matcher carries four leaves" || no "AC-2 Bash matcher leaf count != 4"
-jq -r '.hooks.PostToolUse[] | select(.matcher == "Bash") | .hooks[].command' "$HOOKS_JSON" | grep -q 'worktree-audit.sh" record || true' \
+grep -q 'worktree-audit.sh" record || true' < <(jq -r '.hooks.PostToolUse[] | select(.matcher == "Bash") | .hooks[].command' "$HOOKS_JSON") \
   && ok "AC-2 the third leaf runs worktree-audit.sh record with || true" || no "AC-2 observer leaf missing/unshaped"
 
 # The OLD command string, verbatim, kept here as the defect pin (NOT in hooks.json).
@@ -184,7 +184,7 @@ run_record "$AUDIT" "$r" "git branch feature/s1 && git worktree add ../repo-s1 f
 [ "$(log_lines "$r")" = "1" ] && ok "AC-2 exactly one JSON line appended" || no "AC-2 log lines: $(log_lines "$r")"
 l="$(last_line "$r")"; p="$(field "$l" '.path')"
 [ -n "$p" ] && [ "$p" != "null" ] && ok "AC-2 path is non-empty" || no "AC-2 path empty/null: $l"
-live_paths "$r" | grep -qxF -- "$p" && ok "AC-2 path equals a git worktree list --porcelain row" || no "AC-2 path not in porcelain: $p"
+grep -qxF -- "$p" < <(live_paths "$r") && ok "AC-2 path equals a git worktree list --porcelain row" || no "AC-2 path not in porcelain: $p"
 [ "$p" = "$(dirname "$r")/repo-s1" ] && ok "AC-2 path is the absolute ../repo-s1" || no "AC-2 path != $(dirname "$r")/repo-s1: $p"
 [ "$(field "$l" '.event')" = "created" ] && ok "AC-2 event == created" || no "AC-2 event: $l"
 [ "$(field "$l" '.confirmed')" = "true" ] && ok "AC-2 confirmed == true" || no "AC-2 confirmed: $l"
@@ -201,7 +201,7 @@ ac3() {  # <audit> <repo> → prints report; log must have 3 lines
 r="$(new_repo)"; out="$(ac3 "$AUDIT" "$r")"
 [ "$(log_lines "$r")" = "3" ] && ok "AC-3 two adds in one payload + one remove ⇒ 3 log lines" || no "AC-3 log lines: $(log_lines "$r")"
 [ "$(rows "$out")" = "1" ] && ok "AC-3 report prints exactly one orphan row" || no "AC-3 rows: $(rows "$out") — $out"
-printf '%s' "$out" | grep -q "^orphan	$(dirname "$r")/repo-s2	" && ok "AC-3 the row names s2 (s1 was paired by path)" || no "AC-3 row: $out"
+grep -q "^orphan	$(dirname "$r")/repo-s2	" < <(printf '%s' "$out") && ok "AC-3 the row names s2 (s1 was paired by path)" || no "AC-3 row: $out"
 # variant: -b <branch> <path> ordering with a git -C prefix from the parent dir
 r="$(new_repo)"; parent="$(dirname "$r")"
 ( cd "$parent" && git -C repo worktree add -b feature/v1 ../repo-v1 && git -C "repo" worktree add -b feature/v2 '../repo-v2' ) >/dev/null 2>&1
@@ -240,7 +240,7 @@ r="$(new_repo)"; out="$(ac3f "$AUDIT" "$r")"; l="$(last_line "$r")"
 [ "$(field "$l" '.path')" = "$(dirname "$r")/repo-BD-XXa" ] && ok "AC-3f path is the REAL worktree (../repo-BD-XXa), not ../\$(basename" || no "AC-3f path: $l"
 [ "$(field "$l" '.confirmed')" = "true" ] && [ "$(field "$l" '.resolved_by')" = "branch" ] && [ "$(field "$l" '.branch')" = "feature/BD-XXa" ] \
   && ok "AC-3f confirmed:true, resolved_by:branch, branch feature/BD-XXa" || no "AC-3f line: $l"
-[ "$(rows "$out")" = "1" ] && printf '%s' "$out" | grep -q "^orphan	$(dirname "$r")/repo-BD-XXa	" && ok "AC-3f report lists the real worktree as an orphan" || no "AC-3f report: $out"
+[ "$(rows "$out")" = "1" ] && grep -q "^orphan	$(dirname "$r")/repo-BD-XXa	" < <(printf '%s' "$out") && ok "AC-3f report lists the real worktree as an orphan" || no "AC-3f report: $out"
 # whitespace inside quotes: `"../repo sp"` whitespace-splits to `"../repo` +
 # `sp"`; the tokenizer RE-JOINS the expression while a quote is open, so the
 # path is literal and needs NO fallback (resolved_by path).
@@ -280,15 +280,15 @@ r="$(new_repo)"; out="$(ac3f_guard "$AUDIT" "$r")"; l="$(last_line "$r")"
 [ "$(log_lines "$r")" = "2" ] && ok "AC-3f guard: the foreign add and the failed add both record (2 lines)" || no "AC-3f guard lines: $(log_lines "$r")"
 [ "$(field "$l" '.confirmed')" = "false" ] && [ "$(field "$l" '.resolved_by')" = "path" ] && [ "$(field "$l" '.path')" = "$(dirname "$r")/\$(basename \$(pwd))-mine" ] \
   && ok "AC-3f guard: the failed add stays confirmed:false / resolved_by:path with the expression as written" || no "AC-3f guard line: $l"
-[ "$(grep -c '"confirmed":true' "$(log_of "$r")")" = "1" ] && ! grep -F "$(dirname "$r")/repo-foreign" "$(log_of "$r")" | grep -q '"resolved_by":"branch"' \
+[ "$(grep -c '"confirmed":true' "$(log_of "$r")")" = "1" ] && ! grep -q '"resolved_by":"branch"' < <(grep -F "$(dirname "$r")/repo-foreign" "$(log_of "$r")") \
   && ok "AC-3f guard: no confirmed:true / resolved_by:branch line names repo-foreign (the only confirmed line is its own literal add)" || no "AC-3f guard: repo-foreign was paired: $(cat "$(log_of "$r")")"
 [ "$(field "$l" '.branch')" = "null" ] && ok "AC-3f guard: the unresolved expression records branch null (no -b, positional not trusted)" || no "AC-3f guard branch: $l"
-[ "$(rows "$out")" = "1" ] && printf '%s' "$out" | grep -q "repo-foreign" && ok "AC-3f guard: report lists repo-foreign ONCE — from its own literal add, never from the failed add" || no "AC-3f guard report: $out"
+[ "$(rows "$out")" = "1" ] && grep -q "repo-foreign" < <(printf '%s' "$out") && ok "AC-3f guard: report lists repo-foreign ONCE — from its own literal add, never from the failed add" || no "AC-3f guard report: $out"
 [ "$(printf '%s' "$out" | grep -c 'mine')" = "0" ] && ok "AC-3f guard: report prints 0 rows for the failed add's path" || no "AC-3f guard: a -mine row leaked: $out"
 r="$(new_repo)"; out="$(ac3f_guard_ok "$AUDIT" "$r")"; l="$(last_line "$r")"
 [ "$(field "$l" '.path')" = "$(dirname "$r")/repo-mine" ] && [ "$(field "$l" '.confirmed')" = "true" ] && [ "$(field "$l" '.resolved_by')" = "branch" ] && [ "$(field "$l" '.branch')" = "feature/ok" ] \
   && ok "AC-3f guard POSITIVE CONTROL: the same shape with the add succeeding resolves via the fallback (repo-mine ends with -mine)" || no "AC-3f guard positive control: $l"
-[ "$(rows "$out")" = "1" ] && printf '%s' "$out" | grep -q "repo-mine" && ok "AC-3f guard positive control: report lists repo-mine" || no "AC-3f guard positive control report: $out"
+[ "$(rows "$out")" = "1" ] && grep -q "repo-mine" < <(printf '%s' "$out") && ok "AC-3f guard positive control: report lists repo-mine" || no "AC-3f guard positive control report: $out"
 # branch is null when the expression is unexpanded and the fallback misses
 # (--detach + a commit-ish positional: nothing branch-shaped to trust)
 r="$(new_repo)"
@@ -312,7 +312,7 @@ l="$(last_line "$r")"
   && ok "AC-3f a literal absent path (failed add) stays confirmed:false with NO branch fallback" || no "AC-3f failed-add line: $l"
 [ "$(field "$l" '.branch')" = "null" ] && ok "AC-3f the failed literal add records branch null (git lists no branch for it; the positional is not promoted)" || no "AC-3f failed-add branch: $l"
 out="$(run_report "$AUDIT" "$r")"
-[ "$(rows "$out")" = "1" ] && printf '%s' "$out" | grep -q "repo-held" && ok "AC-3f report still lists only the real worktree (the failed add's path is not live)" || no "AC-3f report after failed add: $out"
+[ "$(rows "$out")" = "1" ] && grep -q "repo-held" < <(printf '%s' "$out") && ok "AC-3f report still lists only the real worktree (the failed add's path is not live)" || no "AC-3f report after failed add: $out"
 
 # ============================================================================
 echo "== AC-3g: branch provenance — porcelain, else -b/-B, else null; never a positional =="
@@ -347,7 +347,7 @@ r="$(new_repo)"; ac3g_bflag "$AUDIT" "$r"; l="$(last_line "$r")"
 r="$(new_repo)"; wt="$(dirname "$r")/repo-review-deadbee"
 ( cd "$r" && git worktree add --detach "$wt" HEAD && bash "$AUDIT" note created "$wt" ) >/dev/null 2>&1
 l="$(last_line "$r")"; out="$(run_report "$AUDIT" "$r")"
-[ "$(field "$l" '.branch')" = "null" ] && [ "$(field "$l" '.confirmed')" = "true" ] && printf '%s' "$out" | grep -q "^orphan	$wt	-	" \
+[ "$(field "$l" '.branch')" = "null" ] && [ "$(field "$l" '.confirmed')" = "true" ] && grep -q "^orphan	$wt	-	" < <(printf '%s' "$out") \
   && ok "AC-3g(d) note created on the drain's detached worktree ⇒ branch null, report row carries '-'" || no "AC-3g(d) line: $l report: [$out]"
 
 # ============================================================================
@@ -419,7 +419,7 @@ ac6c() {  # <audit> <repo> → report
 }
 r="$(new_repo)"; out="$(ac6c "$AUDIT" "$r")"; l="$(last_line "$r")"
 [ "$(field "$l" '.event')" = "removed" ] && [ "$(field "$l" '.confirmed')" = "false" ] && ok "AC-6(c) failed remove ⇒ removed line with confirmed: false" || no "AC-6(c) line: $l"
-[ "$(rows "$out")" = "1" ] && printf '%s' "$out" | grep -q "repo-d1" && ok "AC-6(c) report STILL prints the live worktree (unconfirmed removed never clears)" || no "AC-6(c) rows: $(rows "$out") — $out"
+[ "$(rows "$out")" = "1" ] && grep -q "repo-d1" < <(printf '%s' "$out") && ok "AC-6(c) report STILL prints the live worktree (unconfirmed removed never clears)" || no "AC-6(c) rows: $(rows "$out") — $out"
 # (d) the hand-run dismissal: a DIRECT `note removed <abs>` on a worktree that is
 # still live (confirmed:false, source:direct) clears the candidate — it is a
 # deliberate statement, not an observed command that may have failed like (c).
@@ -432,7 +432,7 @@ r="$(new_repo)"; out="$(ac6d "$AUDIT" "$r")"; l="$(last_line "$r")"
 [ "$(field "$l" '.event')" = "removed" ] && [ "$(field "$l" '.confirmed')" = "false" ] && [ "$(field "$l" '.source')" = "direct" ] \
   && ok "AC-6(d) note removed on a live worktree ⇒ removed / confirmed:false / source:direct (the log tells the truth)" || no "AC-6(d) line: $l"
 [ "$(rows "$out")" = "0" ] && ok "AC-6(d) the direct dismissal clears the candidate ⇒ zero rows while the worktree stays live" || no "AC-6(d) rows: $(rows "$out") — $out"
-live_paths "$r" | grep -qF -- "$(dirname "$r")/repo-keep" && ok "AC-6(d) the dismissed worktree is still live (nothing was removed)" || no "AC-6(d) worktree vanished"
+grep -qF -- "$(dirname "$r")/repo-keep" < <(live_paths "$r") && ok "AC-6(d) the dismissed worktree is still live (nothing was removed)" || no "AC-6(d) worktree vanished"
 
 # ============================================================================
 echo "== AC-7: ground truth wins (with a live sibling as self-control) =="
@@ -447,10 +447,10 @@ run_record "$AUDIT" "$r" "git worktree add -b feature/g1 ../repo-g1 && git workt
 cp "$(log_of "$r")" "$before"
 out="$(run_report "$AUDIT" "$r")"
 [ "$(rows "$out")" = "1" ] && ok "AC-7 exactly one row (the out-of-band-removed path is NOT reported)" || no "AC-7 rows: $(rows "$out") — $out"
-printf '%s' "$out" | grep -q "^orphan	$(dirname "$r")/repo-g2	" && ok "AC-7 the row names the LIVE sibling g2" || no "AC-7 row: $out"
-printf '%s' "$out" | grep -q "repo-g1" && no "AC-7 g1 leaked" || ok "AC-7 g1 (gone from git) is absent"
+grep -q "^orphan	$(dirname "$r")/repo-g2	" < <(printf '%s' "$out") && ok "AC-7 the row names the LIVE sibling g2" || no "AC-7 row: $out"
+grep -q "repo-g1" < <(printf '%s' "$out") && no "AC-7 g1 leaked" || ok "AC-7 g1 (gone from git) is absent"
 cmp -s "$before" "$(log_of "$r")" && ok "AC-7 the log is untouched by report (cmp)" || no "AC-7 report edited the log"
-grep -c '"event":"created"' "$(log_of "$r")" | grep -qx 2 && ok "AC-7 both created lines are still in the log (input, not authority)" || no "AC-7 log content changed"
+grep -qx 2 < <(grep -c '"event":"created"' "$(log_of "$r")") && ok "AC-7 both created lines are still in the log (input, not authority)" || no "AC-7 log content changed"
 
 # ============================================================================
 echo "== AC-8: fail-safe per case =="
@@ -465,7 +465,7 @@ r="$(new_repo)"; run_record "$AUDIT" "$r" "git worktree add -b feature/m1 ../rep
 valid="$(last_line "$r")"
 { echo 'this is not json {'; echo "[2026-09-11T12:51:30Z] WORKTREE_CREATED $(cat "$WC_FIX" | jq -c .)"; echo '{"path":"/nowhere","ts":"x"}'; echo "$valid"; echo '42'; } > "$(log_of "$r")"
 out="$(run_report "$AUDIT" "$r")"
-[ "$(lastrc)" -eq 0 ] && [ "$(rows "$out")" = "1" ] && printf '%s' "$out" | grep -q "repo-m1" && ok "AC-8(iii) malformed + legacy + event-less lines interleaved ⇒ exactly the valid orphan row, rc 0" || no "AC-8(iii) rc=$(lastrc) rows=$(rows "$out") out=$out"
+[ "$(lastrc)" -eq 0 ] && [ "$(rows "$out")" = "1" ] && grep -q "repo-m1" < <(printf '%s' "$out") && ok "AC-8(iii) malformed + legacy + event-less lines interleaved ⇒ exactly the valid orphan row, rc 0" || no "AC-8(iii) rc=$(lastrc) rows=$(rows "$out") out=$out"
 # (iv) git absent — PATH with only the non-git tools the script needs
 shim="$(mktmp)"; for t in bash jq awk sed grep date mkdir dirname head cat wc tail tr cut env sort; do p="$(command -v "$t" 2>/dev/null)"; [ -n "$p" ] && ln -s "$p" "$shim/$t"; done
 r="$(new_repo)"; ( cd "$r" && git worktree add -b feature/x1 ../repo-x1 ) >/dev/null 2>&1
@@ -476,7 +476,7 @@ l="$(last_line "$r")"
 out="$( cd "$r" && PATH="$shim" bash "$AUDIT" report )"; rc=$?
 [ "$rc" -eq 0 ] && [ -z "$out" ] && ok "AC-8(iv) git absent ⇒ report prints nothing, rc 0" || no "AC-8(iv) report: rc=$rc out=$out"
 out="$(run_report "$AUDIT" "$r")"
-[ "$(rows "$out")" = "1" ] && printf '%s' "$out" | grep -q repo-x1 && ok "AC-8(iv) POSITIVE CONTROL: PATH restored, same log ⇒ one orphan row (silence was the missing tool)" || no "AC-8(iv) positive control failed: $out"
+[ "$(rows "$out")" = "1" ] && grep -q repo-x1 < <(printf '%s' "$out") && ok "AC-8(iv) POSITIVE CONTROL: PATH restored, same log ⇒ one orphan row (silence was the missing tool)" || no "AC-8(iv) positive control failed: $out"
 # (v) jq absent
 nojq="$(mktmp)"; for t in bash git awk sed grep date mkdir dirname head cat wc tail tr cut env sort; do p="$(command -v "$t" 2>/dev/null)"; [ -n "$p" ] && ln -s "$p" "$nojq/$t"; done
 r="$(new_repo)"; ( cd "$r" && git worktree add -b feature/j1 ../repo-j1 ) >/dev/null 2>&1
@@ -529,7 +529,7 @@ ac8g "$AUDIT" "$b"
 [ "$(lastrc)" -eq 0 ] && ok "AC-8g record exits 0 without .supervisor/" || no "AC-8g rc $(lastrc)"
 [ ! -e "$b/.supervisor" ] && ok "AC-8g no .supervisor/ was created (record AND note)" || no "AC-8g .supervisor/ appeared: $(ls -a "$b/.supervisor" 2>/dev/null | tr '\n' ' ')"
 [ "$(log_lines "$b")" = "0" ] && ok "AC-8g nothing appended without .supervisor/" || no "AC-8g lines: $(log_lines "$b")"
-live_paths "$b" | grep -q "repo-scratch" && ok "AC-8g control: the worktree itself WAS created (silence is the gate, not a failed add)" || no "AC-8g control: worktree missing"
+grep -q "repo-scratch" < <(live_paths "$b") && ok "AC-8g control: the worktree itself WAS created (silence is the gate, not a failed add)" || no "AC-8g control: worktree missing"
 # positive control: the SAME commands in a repo WITH .supervisor/ append two lines
 r="$(new_repo)"; ac8g "$AUDIT" "$r"
 [ "$(log_lines "$r")" = "2" ] && ok "AC-8g POSITIVE CONTROL: with .supervisor/ present the same record + note append 2 lines" || no "AC-8g positive control lines: $(log_lines "$r")"
@@ -596,7 +596,7 @@ if gate_mutant "$AUDIT" "$MD" "AC-10(d)"; then
   r="$(new_repo)"; out="$(ac5 "$MD" "$r")"
   [ "$(rows "$out")" = "1" ] && ok "AC-10(d) AC-5 stays green on the mutant" || no "AC-10(d) AC-5 went red"
   r="$(new_repo)"; out="$(ac7 "$MD" "$r")"
-  [ "$(rows "$out")" = "1" ] && printf '%s' "$out" | grep -q repo-g2 && ok "AC-10(d) AC-7 stays green on the mutant" || no "AC-10(d) AC-7 went red"
+  [ "$(rows "$out")" = "1" ] && grep -q repo-g2 < <(printf '%s' "$out") && ok "AC-10(d) AC-7 stays green on the mutant" || no "AC-10(d) AC-7 went red"
 fi
 # (e) the add arm's branch-keyed fallback is dropped
 d="$(mktmp)"; copy_with_siblings "$d"; ME="$d/worktree-audit.sh"
@@ -646,7 +646,7 @@ sed -i.bak 's/cands\[\${#cands\[@\]}\]="\$t"; pos=2/[ "$pos" -eq 1 ] \&\& [ -z "
 if gate_mutant "$AUDIT" "$MI" "AC-10(i)"; then
   grep -qF '[ "$pos" -eq 1 ] && [ -z "$branch" ] && branch="$t"' "$MI" && ok "AC-10(i) the mutant carries the restored positional assignment (sed matched)" || no "AC-10(i) sed did not land the assignment"
   r="$(new_repo)"; out="$(ac3g_detach "$MI" "$r")"; l="$(last_line "$r")"
-  [ "$(field "$l" '.branch')" = "HEAD" ] && [ "$(field "$l" '.confirmed')" = "true" ] && printf '%s' "$out" | grep -q "	HEAD	" \
+  [ "$(field "$l" '.branch')" = "HEAD" ] && [ "$(field "$l" '.confirmed')" = "true" ] && grep -q "	HEAD	" < <(printf '%s' "$out") \
     && ok "AC-10(i) mutant records branch:\"HEAD\" for the literal detached add and report prints HEAD ⇒ AC-3g(a) red" || no "AC-10(i) AC-3g(a) stayed green: $l / [$out]"
   r="$(new_repo)"; ac3g_positional "$MI" "$r"; l="$(last_line "$r")"
   [ "$(field "$l" '.branch')" = "feature/y" ] && ok "AC-10(i) AC-3g(b) (positional branch git lists) stays GREEN on the mutant" || no "AC-10(i) AC-3g(b) went red: $l"

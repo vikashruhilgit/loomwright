@@ -36,7 +36,7 @@ run_case() {
   if [ "$expect" = "zero" ] && [ "$status" -ne 0 ]; then ok=0; fi
   if [ "$expect" = "nonzero" ] && [ "$status" -eq 0 ]; then ok=0; fi
   if [ "$ok" -eq 1 ] && [ -n "$must_match" ]; then
-    if ! printf '%s\n' "$out" | grep -qF "$must_match"; then ok=0; fi
+    if ! grep -qF "$must_match" < <(printf '%s\n' "$out"); then ok=0; fi
   fi
   if [ "$ok" -eq 1 ]; then
     echo "PASS: $name"

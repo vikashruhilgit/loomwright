@@ -215,7 +215,7 @@ seed_store "$r" "process" '[{"id":"p-1","category":"process","statement":"prefer
 fp="$(fingerprint "$r")"
 for flag in --fix --write --apply --confirm; do
   OUT="$( cd "$r" && AUDIT_RULES_VALIDATOR="$VALIDATOR" bash "$ENGINE" "$flag" 2>&1 )"; RC=$?
-  if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'unknown option'; then
+  if [ "$RC" -ne 0 ] && grep -q 'unknown option' < <(printf '%s' "$OUT"); then
     ok "(b7) write-shaped flag '$flag' is REFUSED (exit $RC), not silently ignored"
   else
     no "(b7) write-shaped flag '$flag' was ACCEPTED (exit $RC) — a read-only engine must refuse it"
@@ -236,17 +236,17 @@ run_audit "$r"
                 || no "(c1) a clean fixture store did not audit clean (exit $RC): $(printf '%s' "$OUT" | head -20)"
 five_named=1
 for tok in duplicate contradiction provenance dead-reference cross-repo; do
-  printf '%s' "$OUT" | grep -q -- "$tok" || five_named=0
+  grep -q -- "$tok" < <(printf '%s' "$OUT") || five_named=0
 done
 [ "$five_named" -eq 1 ] && ok "(c2) the report names all FIVE shared checks it re-ran (AC1)" \
                         || no "(c2) the report does not name all five shared checks"
-printf '%s' "$OUT" | grep -q 'STANDING rules audited: 2' \
+grep -q 'STANDING rules audited: 2' < <(printf '%s' "$OUT") \
   && ok "(c3) the engine prints the store size (AC8)" \
   || no "(c3) the engine did not print the standing-rule count"
-printf '%s' "$OUT" | grep -qi 'SMALL-N RESULT, NOT EVIDENCE THE STORE IS SOUND' \
+grep -qi 'SMALL-N RESULT, NOT EVIDENCE THE STORE IS SOUND' < <(printf '%s' "$OUT") \
   && ok "(c4) the engine's OWN output frames 0 findings as a small-N result, not soundness (AC8)" \
   || no "(c4) MISSING the small-N framing in the engine's own output"
-printf '%s' "$OUT" | grep -q 'BYTE-IDENTICAL' \
+grep -q 'BYTE-IDENTICAL' < <(printf '%s' "$OUT") \
   && ok "(c5) the engine asserts store byte-identity from its own run (AC6)" \
   || no "(c5) the engine does not state the byte-identity result"
 byte_identical "$r" "$fp" "(c6)"
@@ -261,12 +261,12 @@ mk_no_mechanism() {
 }
 r="$(new_repo)"; mk_no_mechanism "$r"; fp="$(fingerprint "$r")"
 run_audit "$r"
-if printf '%s' "$OUT" | grep -q '\[no_mechanism\]' && [ "$RC" -eq 1 ]; then
+if grep -q '\[no_mechanism\]' < <(printf '%s' "$OUT") && [ "$RC" -eq 1 ]; then
   ok "(e1) a must-rule with a null check is reported [no_mechanism] and the run exits 1"
 else
   no "(e1) no_mechanism NOT reported (exit $RC)"
 fi
-printf '%s' "$OUT" | grep -q 'enforcement=must check=null' \
+grep -q 'enforcement=must check=null' < <(printf '%s' "$OUT") \
   && ok "(e2) the finding carries its EVIDENCE (the enforcement/check pair), not a bare verdict" \
   || no "(e2) the no_mechanism finding carries no evidence"
 byte_identical "$r" "$fp" "(e3)"
@@ -275,7 +275,7 @@ byte_identical "$r" "$fp" "(e3)"
 sed -e 's/ck_empty=1$/ck_empty=0/' "$ENGINE" > "$MUT/no-mech.sh"
 if mutant_ok "$MUT/no-mech.sh" "(e4) no_mechanism mutant" && ! cmp -s "$ENGINE" "$MUT/no-mech.sh"; then
   run_audit "$r" "$MUT/no-mech.sh"
-  if ! printf '%s' "$OUT" | grep -q '\[no_mechanism\]' && [ "$RC" -eq 0 ]; then
+  if ! grep -q '\[no_mechanism\]' < <(printf '%s' "$OUT") && [ "$RC" -eq 0 ]; then
     ok "(e4) MUTATION CONTROL: with the null-check detector broken the finding DISAPPEARS (exit 0) — (e1) is not vacuous"
   else
     no "(e4) MUTATION CONTROL: the mutant STILL reported no_mechanism (exit $RC) — (e1) may pass for another reason"
@@ -290,12 +290,12 @@ seed_store "$r" "process" '[
 ]'
 fp="$(fingerprint "$r")"
 run_audit "$r"
-if printf '%s' "$OUT" | grep -q '\[never_fires\]' && [ "$RC" -eq 1 ]; then
+if grep -q '\[never_fires\]' < <(printf '%s' "$OUT") && [ "$RC" -eq 1 ]; then
   ok "(f1) a rule whose every glob matches zero tracked paths is reported [never_fires] (exit 1)"
 else
   no "(f1) never_fires NOT reported (exit $RC)"
 fi
-printf '%s' "$OUT" | grep -q 'legacy/removed-dir/\*' \
+grep -q 'legacy/removed-dir/\*' < <(printf '%s' "$OUT") \
   && ok "(f2) the finding names the offending glob as EVIDENCE" \
   || no "(f2) the never_fires finding does not name the glob"
 # A glob that DOES match must NOT be reported — the check is not just "any applies_to is a finding".
@@ -304,7 +304,7 @@ seed_store "$r2" "process" '[
  {"id":"p-scope-ok","category":"process","statement":"a renamed module keeps its rule scope in review pr-138","enforcement":"advisory","check":null,"provenance":{"source":"pr-138","added":"'"$ISO_A"'"},"applies_to":["src/*"]}
 ]'
 run_audit "$r2"
-if ! printf '%s' "$OUT" | grep -q '\[never_fires\]' && [ "$RC" -eq 0 ]; then
+if ! grep -q '\[never_fires\]' < <(printf '%s' "$OUT") && [ "$RC" -eq 0 ]; then
   ok "(f3) a glob that DOES match tracked paths is NOT reported (the check discriminates)"
 else
   no "(f3) a MATCHING glob was reported as never-firing (exit $RC) — false positive"
@@ -315,7 +315,7 @@ byte_identical "$r" "$fp" "(f4)"
 sed -e 's/\[ "\$live_globs" -eq 0 \]/[ "$live_globs" -lt 0 ]/' "$ENGINE" > "$MUT/never-fires.sh"
 if mutant_ok "$MUT/never-fires.sh" "(f5) never_fires mutant"; then
   run_audit "$r" "$MUT/never-fires.sh"
-  if ! printf '%s' "$OUT" | grep -q '\[never_fires\]'; then
+  if ! grep -q '\[never_fires\]' < <(printf '%s' "$OUT"); then
     ok "(f5) MUTATION CONTROL: with the zero-match condition unreachable the finding DISAPPEARS — (f1) is not vacuous"
   else
     no "(f5) MUTATION CONTROL: the mutant STILL reported never_fires — (f1) may pass for another reason"
@@ -330,12 +330,12 @@ seed_store "$r" "process" '[
 ]'
 fp="$(fingerprint "$r")"
 run_audit "$r"
-if printf '%s' "$OUT" | grep -q '\[dangling_supersedes\]' && [ "$RC" -eq 1 ]; then
+if grep -q '\[dangling_supersedes\]' < <(printf '%s' "$OUT") && [ "$RC" -eq 1 ]; then
   ok "(g1) a supersedes naming an absent id is reported [dangling_supersedes] (exit 1)"
 else
   no "(g1) dangling_supersedes NOT reported (exit $RC)"
 fi
-printf '%s' "$OUT" | grep -q 'p-does-not-exist' \
+grep -q 'p-does-not-exist' < <(printf '%s' "$OUT") \
   && ok "(g2) the finding names the unresolved target as EVIDENCE" \
   || no "(g2) the dangling finding does not name the target"
 byte_identical "$r" "$fp" "(g3)"
@@ -344,7 +344,7 @@ byte_identical "$r" "$fp" "(g3)"
 sed -e 's/select( (\$ok_ids | index(\$tgt)) == null )/select(false)/' "$ENGINE" > "$MUT/dangle.sh"
 if mutant_ok "$MUT/dangle.sh" "(g4) dangling mutant"; then
   run_audit "$r" "$MUT/dangle.sh"
-  if ! printf '%s' "$OUT" | grep -q '\[dangling_supersedes\]'; then
+  if ! grep -q '\[dangling_supersedes\]' < <(printf '%s' "$OUT"); then
     ok "(g4) MUTATION CONTROL: with the absent-target test disabled the finding DISAPPEARS — (g1) is not vacuous"
   else
     no "(g4) MUTATION CONTROL: the mutant STILL reported dangling_supersedes — (g1) may pass for another reason"
@@ -360,15 +360,15 @@ seed_store "$r" "process" '[
 ]'
 fp="$(fingerprint "$r")"
 run_audit "$r"
-if printf '%s' "$OUT" | grep -q '\[dead_rule\]' && [ "$RC" -eq 1 ]; then
+if grep -q '\[dead_rule\]' < <(printf '%s' "$OUT") && [ "$RC" -eq 1 ]; then
   ok "(h1) a rule hidden by a later rule's supersedes is reported [dead_rule] (exit 1)"
 else
   no "(h1) dead_rule NOT reported (exit $RC)"
 fi
-printf '%s' "$OUT" | grep -q 'p-newer -> p-old' \
+grep -q 'p-newer -> p-old' < <(printf '%s' "$OUT") \
   && ok "(h2) the finding names the hiding EDGE as evidence (hider -> hidden)" \
   || no "(h2) the dead_rule finding does not name the supersedes edge"
-printf '%s' "$OUT" | grep -q 'superseded / hidden from the reader: 1' \
+grep -q 'superseded / hidden from the reader: 1' < <(printf '%s' "$OUT") \
   && ok "(h3) the store summary counts the hidden rule separately from the standing ones" \
   || no "(h3) the store summary does not count hidden rules"
 byte_identical "$r" "$fp" "(h4)"
@@ -377,7 +377,7 @@ byte_identical "$r" "$fp" "(h4)"
 sed -e 's/+ ( \$edges_live | map( "DEAD/+ ( [] | map( "DEAD/' "$ENGINE" > "$MUT/dead.sh"
 if mutant_ok "$MUT/dead.sh" "(h5) dead_rule mutant"; then
   run_audit "$r" "$MUT/dead.sh"
-  if ! printf '%s' "$OUT" | grep -q '\[dead_rule\]'; then
+  if ! grep -q '\[dead_rule\]' < <(printf '%s' "$OUT"); then
     ok "(h5) MUTATION CONTROL: with the DEAD emitter emptied the finding DISAPPEARS — (h1) is not vacuous"
   else
     no "(h5) MUTATION CONTROL: the mutant STILL reported dead_rule — (h1) may pass for another reason"
@@ -395,12 +395,12 @@ seed_store "$r" "process" '[
 ]'
 fp="$(fingerprint "$r")"
 run_audit "$r"
-if printf '%s' "$OUT" | grep -q '\[later_contradiction\]' && [ "$RC" -eq 1 ]; then
+if grep -q '\[later_contradiction\]' < <(printf '%s' "$OUT") && [ "$RC" -eq 1 ]; then
   ok "(i1) a rule contradicted by a LATER rule is reported [later_contradiction] (exit 1)"
 else
   no "(i1) later_contradiction NOT reported (exit $RC): $(printf '%s' "$OUT" | grep -A2 'BLOCKING' | head -6)"
 fi
-printf '%s' "$OUT" | grep -q 'REFUSE_CONTRADICTION' \
+grep -q 'REFUSE_CONTRADICTION' < <(printf '%s' "$OUT") \
   && ok "(i2) the finding carries the validator's OWN message (the matched stored text) as evidence" \
   || no "(i2) the later_contradiction finding carries no validator evidence"
 # Direction matters: only the OLDER rule is reported as contradicted-by-a-later-one.
@@ -416,7 +416,7 @@ byte_identical "$r" "$fp" "(i4)"
 awk '/c_added/ && /after/ && /continue/ { print "      continue"; next } { print }' "$ENGINE" > "$MUT/later.sh"
 if mutant_ok "$MUT/later.sh" "(i5) later_contradiction mutant"; then
   run_audit "$r" "$MUT/later.sh"
-  if ! printf '%s' "$OUT" | grep -q '\[later_contradiction\]'; then
+  if ! grep -q '\[later_contradiction\]' < <(printf '%s' "$OUT"); then
     ok "(i5) MUTATION CONTROL: with the later-rules corpus emptied the finding DISAPPEARS — (i1) is not vacuous"
   else
     no "(i5) MUTATION CONTROL: the mutant STILL reported later_contradiction — (i1) may pass for another reason"
@@ -441,7 +441,7 @@ if [ ! -e "$CANARY" ]; then
 else
   no "(j1) THE CANARY EXISTS — the audit EXECUTED a rule's check. This breaks the sole-executor invariant."
 fi
-printf '%s' "$OUT" | grep -q 'check` strings EXECUTED by this audit: 0' \
+grep -q 'check` strings EXECUTED by this audit: 0' < <(printf '%s' "$OUT") \
   && ok "(j2) the engine states in its own output that it executed zero checks" \
   || no "(j2) the engine does not state that it executed zero checks"
 byte_identical "$r" "$fp" "(j3)"
@@ -486,8 +486,8 @@ fp="$(fingerprint "$r")"
 degraded_case() {  # <label> <validator-path>
   run_audit "$r" "$ENGINE" "$2"
   if [ "$RC" -eq 2 ] \
-     && printf '%s' "$OUT" | grep -q 'REFUSE_VALIDATOR_UNAVAILABLE' \
-     && printf '%s' "$OUT" | grep -q 'UNEXAMINED'; then
+     && grep -q 'REFUSE_VALIDATOR_UNAVAILABLE' < <(printf '%s' "$OUT") \
+     && grep -q 'UNEXAMINED' < <(printf '%s' "$OUT"); then
     ok "(k) AC9 $1 — UNEXAMINED, named reason, exit 2 (never reported clean)"
   else
     no "(k) AC9 $1 — expected exit 2 + REFUSE_VALIDATOR_UNAVAILABLE + UNEXAMINED, got exit $RC"
@@ -509,7 +509,7 @@ awk '/---- LOAD GUARD BEGIN/{s=1; print "  . \"$VALIDATOR\" || true"; next} /---
 if mutant_ok "$MUT/guard.sh" "(k6) load-guard mutant"; then
   if grep -q '|| true' "$MUT/guard.sh"; then
     run_audit "$r" "$MUT/guard.sh" "$VD/nosentinel.sh"
-    if [ "$RC" -ne 2 ] && ! printf '%s' "$OUT" | grep -q 'REFUSE_VALIDATOR_UNAVAILABLE'; then
+    if [ "$RC" -ne 2 ] && ! grep -q 'REFUSE_VALIDATOR_UNAVAILABLE' < <(printf '%s' "$OUT"); then
       ok "(k6) MUTATION CONTROL: with the guard replaced by '|| true' an unverified-contract validator audits the store CLEAN (exit $RC) — the AC9 assertions are not vacuous"
     else
       no "(k6) MUTATION CONTROL: the '|| true' mutant did not go RED (exit $RC) — AC9 may pass for another reason"
@@ -533,7 +533,7 @@ seed_store "$r" "process" '[
 ]'
 fp="$(fingerprint "$r")"
 run_audit "$r"
-if printf '%s' "$OUT" | grep -q '\[duplicate\]' && [ "$RC" -eq 1 ]; then
+if grep -q '\[duplicate\]' < <(printf '%s' "$OUT") && [ "$RC" -eq 1 ]; then
   ok "(l1) with the ONE-LINE-PER-RULE corpus the duplicate check DECIDES (a real rc-1 finding, exit 1)"
 else
   no "(l1) the correctly-shaped corpus did not produce a duplicate verdict (exit $RC)"
@@ -550,8 +550,8 @@ awk '/^  build_compare_corpus "\$CORPUS" "\$rid" ""$/ {
 if mutant_ok "$MUT/badshape.sh" "(l3) wrong-corpus-shape mutant"; then
   run_audit "$r" "$MUT/badshape.sh"
   if [ "$RC" -eq 2 ] \
-     && printf '%s' "$OUT" | grep -q 'UNCOMPARABLE_SHAPE' \
-     && printf '%s' "$OUT" | grep -q 'UNKNOWN, NOT clean'; then
+     && grep -q 'UNCOMPARABLE_SHAPE' < <(printf '%s' "$OUT") \
+     && grep -q 'UNKNOWN, NOT clean' < <(printf '%s' "$OUT"); then
     ok "(l3) a wrong-shaped corpus yields rc 2 and is surfaced as UNKNOWN with exit 2 — never absorbed as clean (AC10)"
   else
     no "(l3) the wrong-shaped corpus did not surface as UNKNOWN/exit 2 (exit $RC)"
@@ -567,7 +567,7 @@ if mutant_ok "$MUT/badshape.sh" "(l3) wrong-corpus-shape mutant"; then
     no "(l4) MUTATION CONTROL: the rc-2-absorbing mutant did not land (vacuous control)"
   else
     run_audit "$r" "$MUT/absorb.sh"
-    if [ "$RC" -ne 2 ] && ! printf '%s' "$OUT" | grep -q 'UNKNOWN, NOT clean'; then
+    if [ "$RC" -ne 2 ] && ! grep -q 'UNKNOWN, NOT clean' < <(printf '%s' "$OUT"); then
       ok "(l4) MUTATION CONTROL: an engine that absorbs rc 2 reports the SAME store clean (exit $RC) — (l3) is not vacuous"
     else
       no "(l4) MUTATION CONTROL: the rc-2-absorbing mutant still reported UNKNOWN (exit $RC)"
@@ -579,13 +579,13 @@ fi
 echo "== (m) every recommendation names an EXISTING action; no new write path is invented =="
 r="$(new_repo)"; mk_no_mechanism "$r"
 run_audit "$r"
-if printf '%s' "$OUT" | grep -q '/rules add --supersedes' \
-   && printf '%s' "$OUT" | grep -q 'add-rule.sh --retract --target'; then
+if grep -q '/rules add --supersedes' < <(printf '%s' "$OUT") \
+   && grep -q 'add-rule.sh --retract --target' < <(printf '%s' "$OUT"); then
   ok "(m1) recommendations name the two EXISTING actions (/rules add --supersedes, add-rule.sh --retract)"
 else
   no "(m1) a recommendation does not name an existing action"
 fi
-if ! printf '%s' "$OUT" | grep -qiE 'audit-rules\.sh (--fix|--write|--apply)|run this script with --'; then
+if ! grep -qiE 'audit-rules\.sh (--fix|--write|--apply)|run this script with --' < <(printf '%s' "$OUT"); then
   ok "(m2) no recommendation proposes a write performed by this script (it has no write path)"
 else
   no "(m2) a recommendation proposes a write by the audit itself"
@@ -675,7 +675,7 @@ if [ -f "$r/.agent/rules/zz-appeared.json" ]; then
 else
   no "(o0) the shim never fired — every (o) assertion below would be vacuous"
 fi
-if printf '%s' "$OUT" | grep -q 'THE STORE CHANGED DURING THIS RUN'; then
+if grep -q 'THE STORE CHANGED DURING THIS RUN' < <(printf '%s' "$OUT"); then
   ok "(o1) a rule file ADDED mid-run trips the store-integrity mismatch"
 else
   no "(o1) A FILE ADDED MID-RUN WAS NOT DETECTED — the run reported the store unchanged"
@@ -687,7 +687,7 @@ fi
 if mutant_ok "$FIXED_FP_MUT" "(o3)"; then
   rm -f "$r/.agent/rules/zz-appeared.json"
   run_audit "$r" "$FIXED_FP_MUT" "$CWVAL_ADD"
-  if printf '%s' "$OUT" | grep -q 'BYTE-IDENTICAL'; then
+  if grep -q 'BYTE-IDENTICAL' < <(printf '%s' "$OUT"); then
     ok "(o3) the once-enumerated fingerprint MISSES the add (so (o1) has a mechanism, not a coincidence)"
   else
     no "(o3) the once-enumerated mutant also detected the add — (o1) proves nothing"
@@ -705,7 +705,7 @@ seed_store "$r2" "zz-doomed" '[
 CWVAL_RM="$MUT/cw-rm-validator.sh"
 mk_cw_validator "$CWVAL_RM" "rm -f '$r2/.agent/rules/zz-doomed.json'"
 run_audit "$r2" "$ENGINE" "$CWVAL_RM"
-if [ ! -f "$r2/.agent/rules/zz-doomed.json" ] && printf '%s' "$OUT" | grep -q 'THE STORE CHANGED DURING THIS RUN'; then
+if [ ! -f "$r2/.agent/rules/zz-doomed.json" ] && grep -q 'THE STORE CHANGED DURING THIS RUN' < <(printf '%s' "$OUT"); then
   ok "(o4) a rule file REMOVED mid-run trips the store-integrity mismatch"
 else
   no "(o4) a file removed mid-run was not detected (shim fired: $([ -f "$r2/.agent/rules/zz-doomed.json" ] && echo no || echo yes))"
@@ -720,7 +720,7 @@ seed_store "$r3" "process" '[
 ]'
 fp="$(fingerprint "$r3")"
 run_audit "$r3"
-if printf '%s' "$OUT" | grep -q 'BYTE-IDENTICAL' && [ "$RC" -ne 2 ]; then
+if grep -q 'BYTE-IDENTICAL' < <(printf '%s' "$OUT") && [ "$RC" -ne 2 ]; then
   ok "(o6) an ordinary run with no concurrent writer still reports BYTE-IDENTICAL (exit $RC)"
 else
   no "(o6) an ordinary run no longer reports byte-identity (exit $RC) — the fingerprint is unstable"

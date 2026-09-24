@@ -28,7 +28,7 @@ no() { echo "  FAIL: $1"; fail=$((fail+1)); }
 echo "== 1. no logs (friendly no-op) =="
 N="$(mktemp -d)"; ( cd "$N" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
 out="$( cd "$N" && bash "$BUILD" 2>&1 )"; rc=$?
-{ [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q "no session logs"; } && ok "exits 0 with friendly message" || no "no-logs case wrong (rc=$rc)"
+{ [ "$rc" -eq 0 ] && grep -q "no session logs" < <(printf '%s' "$out"); } && ok "exits 0 with friendly message" || no "no-logs case wrong (rc=$rc)"
 [ ! -f "$N/.supervisor/insights/dashboard.md" ] && ok "no dashboard written when no logs" || no "dashboard written with no logs"
 rm -rf "$N"
 
@@ -126,8 +126,8 @@ grep -qF "6/6" "$ed" 2>/dev/null && ok "latest pass-rate 6/6 appears" || no "lat
 grep -qF "4/4 → 5/6 → 6/6" "$ed" 2>/dev/null && ok "eval trend arrow chain present (sorted oldest→newest by recorded_at, out-of-order file)" || no "eval trend chain wrong"
 # the unverified 0/0 record must be filtered out of the Eval fitness section (status=="ok" only).
 evsec="$(sed -n '/^## Eval fitness function/,/^## System Twin growth/p' "$ed" 2>/dev/null)"
-printf '%s' "$evsec" | grep -qF "0/0" && no "unverified 0/0 leaked into the eval fitness trend" || ok "unverified 0/0 excluded from eval fitness trend (status==ok filter)"
-printf '%s' "$evsec" | grep -qF "Latest pass-rate:** 6/6" && ok "latest pass-rate = newest by recorded_at (6/6)" || no "latest pass-rate not newest-by-recorded_at"
+grep -qF "0/0" < <(printf '%s' "$evsec") && no "unverified 0/0 leaked into the eval fitness trend" || ok "unverified 0/0 excluded from eval fitness trend (status==ok filter)"
+grep -qF "Latest pass-rate:** 6/6" < <(printf '%s' "$evsec") && ok "latest pass-rate = newest by recorded_at (6/6)" || no "latest pass-rate not newest-by-recorded_at"
 grep -q "^## System Twin growth" "$ed" 2>/dev/null && ok "System Twin growth section present" || no "Twin growth section missing"
 grep -qF "3 contracts" "$ed" 2>/dev/null && ok "contract count (3) appears" || no "contract count wrong"
 grep -qF "(2 → 3)" "$ed" 2>/dev/null && ok "twin growth cumulative arrow present" || no "twin growth arrow wrong"
@@ -289,15 +289,15 @@ md="$M/.supervisor/insights/dashboard.md"
 grep -q "^## Missing-drain reconciliation" "$md" 2>/dev/null && ok "missing-drain section renders when a heal-signal PR has no marker" || no "missing-drain section missing"
 # pull/72 has a marker → must NOT appear as a missing row.
 mdsec="$(sed -n '/^## Missing-drain reconciliation/,/^## /p' "$md" 2>/dev/null)"
-printf '%s' "$mdsec" | grep -qE "\| $URL/72 \|" && no "pull/72 listed despite having a matching marker" || ok "pull/72 reconciled (has marker, not listed)"
+grep -qE "\| $URL/72 \|" < <(printf '%s' "$mdsec") && no "pull/72 listed despite having a matching marker" || ok "pull/72 reconciled (has marker, not listed)"
 # pull/73 → opted_out (durable run-time evidence present).
-printf '%s' "$mdsec" | grep -qE "\| $URL/73 \| opted_out \|" && ok "pull/73 classified opted_out (durable run-time evidence)" || no "pull/73 not classified opted_out"
+grep -qE "\| $URL/73 \| opted_out \|" < <(printf '%s' "$mdsec") && ok "pull/73 classified opted_out (durable run-time evidence)" || no "pull/73 not classified opted_out"
 # pull/74 → unknown_or_opted_out (silent drop, no evidence).
-printf '%s' "$mdsec" | grep -qE "\| $URL/74 \| unknown_or_opted_out \|" && ok "pull/74 classified unknown_or_opted_out (silent drop, no evidence)" || no "pull/74 not classified unknown_or_opted_out"
+grep -qE "\| $URL/74 \| unknown_or_opted_out \|" < <(printf '%s' "$mdsec") && ok "pull/74 classified unknown_or_opted_out (silent drop, no evidence)" || no "pull/74 not classified unknown_or_opted_out"
 # exact-URL join: pull/7 marker must NOT reconcile pull/72.
-printf '%s' "$mdsec" | grep -qF "Missing a drain marker:** 2" && ok "exact-URL join: 2 missing (pull/7 marker did not satisfy pull/72)" || no "missing count wrong (exact-URL join failed)"
+grep -qF "Missing a drain marker:** 2" < <(printf '%s' "$mdsec") && ok "exact-URL join: 2 missing (pull/7 marker did not satisfy pull/72)" || no "missing count wrong (exact-URL join failed)"
 # never a blanket accusation.
-printf '%s' "$mdsec" | grep -qiE "\bdropped\b" && no "section printed a blanket 'dropped' accusation" || ok "no blanket 'dropped' accusation in the section"
+grep -qiE "\bdropped\b" < <(printf '%s' "$mdsec") && no "section printed a blanket 'dropped' accusation" || ok "no blanket 'dropped' accusation in the section"
 grep -q "^## Summary" "$md" 2>/dev/null && ok "dashboard still renders fully with the missing-drain section" || no "dashboard incomplete with missing-drain section"
 rm -rf "$M"
 
@@ -322,7 +322,7 @@ printf '20260618T195030Z\t%s/81\n' "$URL" > "$C/.supervisor/review-dispatch/zzz"
 ( cd "$C" && bash "$BUILD" >/dev/null 2>&1 )
 cd2="$C/.supervisor/insights/dashboard.md"
 csec="$(sed -n '/^## Missing-drain reconciliation/,/^## /p' "$cd2" 2>/dev/null)"
-printf '%s' "$csec" | grep -qE "\| $URL/80 \| unknown_or_opted_out \|" && ok "config.json auto_review:false does NOT yield opted_out (not inferred from current config)" || no "opted_out wrongly inferred from current config.json"
+grep -qE "\| $URL/80 \| unknown_or_opted_out \|" < <(printf '%s' "$csec") && ok "config.json auto_review:false does NOT yield opted_out (not inferred from current config)" || no "opted_out wrongly inferred from current config.json"
 rm -rf "$C"
 
 echo "== 13. Missing-drain section suppressed when no corpus =="
@@ -366,8 +366,8 @@ EOF
 printf '20260618T195030Z\t%s/78\n' "$URL" > "$P/.supervisor/review-dispatch/zzz"   # non-empty corpus
 ( cd "$P" && bash "$BUILD" >/dev/null 2>&1 )
 psec="$(sed -n '/^## Missing-drain reconciliation/,/^## /p' "$P/.supervisor/insights/dashboard.md" 2>/dev/null)"
-printf '%s' "$psec" | grep -qE "\| $URL/76 \| unknown_or_opted_out \|" && ok "prose mention of auto_review/suppress (no durable form) => unknown_or_opted_out (not mislabeled)" || no "prose mention wrongly classified opted_out (finding #2 regression)"
-printf '%s' "$psec" | grep -qE "\| $URL/77 \| opted_out \|" && ok "durable 'auto_review == false' still => opted_out (tightening didn't over-correct)" || no "durable opt-out form no longer detected"
+grep -qE "\| $URL/76 \| unknown_or_opted_out \|" < <(printf '%s' "$psec") && ok "prose mention of auto_review/suppress (no durable form) => unknown_or_opted_out (not mislabeled)" || no "prose mention wrongly classified opted_out (finding #2 regression)"
+grep -qE "\| $URL/77 \| opted_out \|" < <(printf '%s' "$psec") && ok "durable 'auto_review == false' still => opted_out (tightening didn't over-correct)" || no "durable opt-out form no longer detected"
 rm -rf "$P"
 
 echo "== 15. Corpus health — renders with correct counts (both corpora present) =="
@@ -404,7 +404,7 @@ grep -qF -- "- lessons: 2 entries, 1 retracted, 1 stale (>90d)" "$chd" 2>/dev/nu
 # Additive: existing sections must be untouched, and the section sits before the Obsidian footer.
 grep -q "^## Summary" "$chd" 2>/dev/null && grep -q "^## Recent sessions" "$chd" 2>/dev/null && grep -q "^## View in Obsidian" "$chd" 2>/dev/null && ok "dashboard still renders fully with corpus health" || no "dashboard incomplete with corpus health"
 chorder="$(grep -n "^## Corpus health\|^## View in Obsidian" "$chd" 2>/dev/null | head -1)"
-printf '%s' "$chorder" | grep -q "Corpus health" && ok "corpus health placed before the Obsidian footer" || no "corpus health placed after the footer"
+grep -q "Corpus health" < <(printf '%s' "$chorder") && ok "corpus health placed before the Obsidian footer" || no "corpus health placed after the footer"
 rm -rf "$CH"
 
 echo "== 16. Corpus health — absent corpora degrade gracefully =="
@@ -525,7 +525,7 @@ grep -qF "| loomwright:code-reviewer | 1 | 800 | 100 |" "$trd" 2>/dev/null && ok
 grep -qF "cache_read share of (cache_read+cache_creation+input)" "$trd" 2>/dev/null && ok "cache_read share shown when cache fields exist" || no "cache_read share missing despite cache fields"
 # Must NOT claim the real path is a proxy / transcript_bytes table for these events.
 tesec="$(sed -n '/^## Token economics/,/^## Recent sessions/p' "$trd" 2>/dev/null)"
-printf '%s' "$tesec" | grep -qF "Transcript-byte proxy" && no "proxy subsection appeared with only real-usage lines" || ok "no proxy subsection on real-only corpus"
+grep -qF "Transcript-byte proxy" < <(printf '%s' "$tesec") && no "proxy subsection appeared with only real-usage lines" || ok "no proxy subsection on real-only corpus"
 rm -rf "$TR"
 
 echo "== 21. Token economics — absent ledger → degrade note =="

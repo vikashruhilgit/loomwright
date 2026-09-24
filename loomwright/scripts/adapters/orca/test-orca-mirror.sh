@@ -104,7 +104,7 @@ argv_matches() {
   # argv_matches <log-file> <jq-filter-testing-one-line-array> -> "1" if ANY
   # recorded line satisfies the filter, else "0"
   [ -f "$1" ] || { printf '0'; return; }
-  jq -s "any(.[]; $2)" "$1" 2>/dev/null | grep -q '^true$' && printf '1' || printf '0'
+  grep -q '^true$' < <(jq -s "any(.[]; $2)" "$1" 2>/dev/null) && printf '1' || printf '0'
 }
 
 echo "==== A: orca ABSENT on PATH -> exit 0, zero attempts ===="

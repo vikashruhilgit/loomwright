@@ -52,7 +52,7 @@ assert_eq() {
 
 assert_not_match_multiline() {
   local label="$1" needle="$2" haystack="$3"
-  if printf '%s' "$haystack" | grep -qF -- "$needle"; then
+  if grep -qF -- "$needle" < <(printf '%s' "$haystack"); then
     fail "$label  unexpected '$needle' present"
   else
     pass "$label"

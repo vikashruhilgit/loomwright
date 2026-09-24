@@ -184,22 +184,22 @@ run main clean
 
 printf '{"schema_version":1,"paths":"billing/**"}\n' > "$R/.agent/risk.json"
 run main billing
-if [ "$(j '.high_risk')" = "false" ] && printf '%s' "$ERR" | grep -q 'risk_json_malformed'; then
+if [ "$(j '.high_risk')" = "false" ] && grep -q 'risk_json_malformed' < <(printf '%s' "$ERR"); then
   ok "C4 paths as a string (not array) ⇒ generic-only (false) + risk_json_malformed on stderr, never null"
 else
   no "C4 malformed-string wrong ($OUT err='$ERR')"
 fi
 printf '[1,2]\n' > "$R/.agent/risk.json"
 run main billing
-[ "$(j '.high_risk')" = "false" ] && printf '%s' "$ERR" | grep -q 'risk_json_malformed' \
+[ "$(j '.high_risk')" = "false" ] && grep -q 'risk_json_malformed' < <(printf '%s' "$ERR") \
   && ok "C5 non-object root ⇒ generic-only + risk_json_malformed" || no "C5 non-object wrong ($OUT err='$ERR')"
 printf '{not json\n' > "$R/.agent/risk.json"
 run main billing
-[ "$(j '.high_risk')" = "false" ] && printf '%s' "$ERR" | grep -q 'risk_json_malformed' \
+[ "$(j '.high_risk')" = "false" ] && grep -q 'risk_json_malformed' < <(printf '%s' "$ERR") \
   && ok "C6 invalid JSON ⇒ generic-only + risk_json_malformed" || no "C6 invalid-json wrong ($OUT err='$ERR')"
 printf '{"schema_version":1,"paths":["billing/**"],"exclude":["billing/**"]}\n' > "$R/.agent/risk.json"
 run main billing
-if [ "$(j '.high_risk')" = "true" ] && printf '%s' "$ERR" | grep -q 'risk_json_exclude_ignored'; then
+if [ "$(j '.high_risk')" = "true" ] && grep -q 'risk_json_exclude_ignored' < <(printf '%s' "$ERR"); then
   ok "C7 exclude key is IGNORED (still true) + risk_json_exclude_ignored on stderr — never honoured (R5)"
 else
   no "C7 exclude wrong ($OUT err='$ERR')"
@@ -223,7 +223,7 @@ unc() {  # unc <label> <reason> <args...>
   OUT="$(cd "$ELSEWHERE" && bash "$S" "$@" 2>"$TMP/err")"; RC=$?; ERR="$(cat "$TMP/err")"
   if [ "$RC" -eq 0 ] && one_json && [ "$(j '.high_risk')" = "null" ] \
      && [ "$(jc '.reasons')" = "$(jq -nc --arg r "unclassifiable: $reason" '[$r]')" ] \
-     && printf '%s' "$ERR" | grep -q "$reason"; then
+     && grep -q "$reason" < <(printf '%s' "$ERR"); then
     ok "$label ⇒ null + [\"unclassifiable: $reason\"] + stderr, exit 0"
   else
     no "$label wrong (rc=$RC out='$OUT' err='$ERR')"
@@ -238,7 +238,7 @@ unc "D6 empty --root"           bad_args        main clean --root=
 unc "D7 unknown option"         bad_args        main clean --exclude x --root "$R"
 OUT="$(cd "$ELSEWHERE" && PATH=/nonexistent "$BASH_BIN" "$S" main clean --root "$R" 2>"$TMP/err")"; RC=$?; ERR="$(cat "$TMP/err")"
 if [ "$RC" -eq 0 ] && one_json && [ "$(j '.high_risk')" = "null" ] && [ "$(j '.reasons[0]')" = "unclassifiable: jq_missing" ] \
-   && [ "$(j '.source')" = "classify-risk.sh" ] && printf '%s' "$ERR" | grep -q jq_missing; then
+   && [ "$(j '.source')" = "classify-risk.sh" ] && grep -q jq_missing < <(printf '%s' "$ERR"); then
   ok "D8 jq off PATH ⇒ the ONE shell-templated object is valid JSON with null + unclassifiable: jq_missing"
 else
   no "D8 jq-missing wrong (rc=$RC out='$OUT' err='$ERR')"
