@@ -69,6 +69,8 @@ Check ALL criteria in order. For each, note whether it passes or has issues. Cri
 
 **Severity if failed:** BLOCKING (nonexistent modify paths), MEDIUM (missing parent dirs for create paths)
 
+**Sub-check (conditional — cited-line premise staleness):** when the brief contains a `### Cited-line premise check` section with a STALE row, record a LOW `file_path` finding naming the ref, with body text verbatim: "A STALE premise row is advisory; on its own it never moves the decision from PASS to NEEDS_HUMAN or FAIL."
+
 ### 2. Pattern Alignment
 
 **Check:** Do the skill references and approach match patterns documented in CLAUDE.md?

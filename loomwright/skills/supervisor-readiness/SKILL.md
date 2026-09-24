@@ -2,8 +2,8 @@
 name: supervisor-readiness
 description: Pre-flight checklist, Supervisor-Ready Brief format, jobs folder convention, and failure prevention. Use before launching autonomous workflows or when diagnosing Supervisor failures.
 allowed-tools: [Read, Bash]
-version: "1.4.0"
-lastUpdated: "2026-08-04"
+version: "1.5.0"
+lastUpdated: "2026-09-24"
 ---
 
 # Supervisor Readiness Skill
@@ -353,6 +353,14 @@ Subtask 2 (independent)
 | 1 | `skills/{name}/SKILL.md` |
 | 2 | `skills/{name}/SKILL.md` |
 
+### Cited-line premise check (optional — Launch Pad Phase 3, harness-port/03)
+
+| ref | resolves | premise | deciding line | as of |
+|-----|----------|---------|----------------|-------|
+| `{path}:{line}` | yes/no | HOLDS / HOLDS (moved to {line}) / STALE / UNCLEAR | {excerpt line, or the line it moved to} | tip {age}, fetched {age} |
+
+**Omit-when-empty:** when Launch Pad's Phase 3 `path:line`-reference extraction finds zero refs in the goal/requirement, this subsection is entirely absent from the brief — no heading, no "none" line (same convention as the `- **Source requirement:**` Environment line). Advisory only: it never changes CLEAR/OVERLAP/SUPERSEDED, never causes `unverified`, and never moves PASS → NEEDS_HUMAN by itself. Any STALE row is separately carried to `## Risk Assessment` below as a MEDIUM row with `source: "Cited-line premise (Phase 3)"` — see `agents/launch-pad.md` Phase 3 action 10 / Phase 5 action 4b.
+
 ## Risk Assessment
 
 | Risk | Impact | Mitigation |
@@ -374,7 +382,7 @@ Subtask 2 (independent)
 
 ### Section Requirements
 
-**9 required sections** (mandatory — Supervisor relies on them) plus **optional sections**: `Feasibility` (Launch Pad v10.3+, in the table below), `Outcomes Rubric` (v12.2.0+) and `Executable Acceptance` (v14.19.0+) — the latter two are documented in their own blocks above and omitted from the table below:
+**9 required sections** (mandatory — Supervisor relies on them) plus **optional sections**: `Feasibility` (Launch Pad v10.3+, in the table below), `Outcomes Rubric` (v12.2.0+), `Executable Acceptance` (v14.19.0+), and `Cited-line premise check` (harness-port/03, nested under `## Skill References`) — the latter three are documented in their own blocks above and omitted from the table below:
 
 | Section | Required? | Used In Phase | Purpose |
 |---------|-----------|---------------|---------|
