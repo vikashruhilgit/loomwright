@@ -662,7 +662,7 @@ assert_eq "case21 Phase Flags preserved" "$FLAGS_BEFORE" "$FLAGS_AFTER"
 assert_eq "case21 Checkpoint preserved" "$CHECKPOINT_BEFORE" "$CHECKPOINT_AFTER"
 assert_eq "case21 Config preserved (untouched, unrelated section)" "$CONFIG_BEFORE" "$CONFIG_AFTER"
 # The ## Session block itself MUST have been replaced (stale id/task_id gone).
-if printf '%s' "$(sed -n '/^## Session/,/^## Decisions Log/p' "$S21")" | grep -q "STALE-OLD-ID"; then
+if grep -q "STALE-OLD-ID" < <(printf '%s' "$(sed -n '/^## Session/,/^## Decisions Log/p' "$S21")"); then
   no "case21 stale ## Session content was NOT replaced"
 else
   ok "case21 ## Session block was replaced (stale content gone)"
@@ -689,7 +689,7 @@ DISPATCH_RC=$?
 assert_eq "case22 dispatch wrapper exit 0" "0" "$DISPATCH_RC"
 MARKER_COUNT22="$(ls -1 "$REPO22/.supervisor/review-dispatch" 2>/dev/null | grep -c . || true)"
 assert_eq "case22 exactly one dispatch marker (Source 1 authorized)" "1" "$MARKER_COUNT22"
-if printf '%s' "$DISPATCH_OUT" | grep -q 'DRY_RUN_DISPATCH'; then
+if grep -q 'DRY_RUN_DISPATCH' < <(printf '%s' "$DISPATCH_OUT"); then
   ok "case22 DRY_RUN_DISPATCH observed — Source 1 authorized on the projected state.md"
 else
   no "case22 no DRY_RUN_DISPATCH observed"

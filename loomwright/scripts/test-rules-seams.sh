@@ -173,7 +173,7 @@ SUP="$PLUGIN_ROOT/agents/supervisor.md"
 sup_base="agents/supervisor.md"
 if [ ! -f "$SUP" ]; then
   no "[$sup_base] (D) MISSING pointer surface"
-elif grep -n 'read-rules\.sh' "$SUP" | grep -qE 'args, never stdin'; then
+elif grep -qE 'args, never stdin' < <(grep -n 'read-rules\.sh' "$SUP"); then
   ok "[$sup_base] (D) the read-rules.sh pointer still states the args-shape non-negotiable (\"args, never stdin\")"
 else
   no "[$sup_base] (D) the read-rules.sh pointer lost its args-shape non-negotiable — the delegated Worker spawn could go bare"
@@ -211,8 +211,8 @@ FIXTURE
   # Trace it TWICE with different path sets, because that is the only way the two prose seams differ.
   # (i-a) a worker-style path set that INCLUDES a scripts path ⇒ both rules.
   s1a="$( cd "$FIXREPO" && bash "$READER" loomwright/scripts/read-rules.sh CHANGELOG.md 2>/dev/null )"
-  if printf '%s\n' "$s1a" | grep -qF -- "- SEAM scoped to loomwright scripts" \
-     && printf '%s\n' "$s1a" | grep -qF -- "- SEAM repo wide rule"; then
+  if grep -qF -- "- SEAM scoped to loomwright scripts" < <(printf '%s\n' "$s1a") \
+     && grep -qF -- "- SEAM repo wide rule" < <(printf '%s\n' "$s1a"); then
     ok "[shape i] \`read-rules.sh <paths…>\` with an in-scope path emits the scoped AND the repo-wide rule"
   else
     no "[shape i] in-scope path set did not emit both rules: $s1a"
@@ -220,8 +220,8 @@ FIXTURE
   # (i-b) a Phase-4.5-style integrated-diff path set that EXCLUDES scripts ⇒ scoped rule ABSENT.
   # This is the assertion that makes the trace non-vacuous: it fails against an emit-everything reader.
   s1b="$( cd "$FIXREPO" && bash "$READER" docs/ARCHITECTURE.md README.md 2>/dev/null )"
-  if printf '%s\n' "$s1b" | grep -qF -- "- SEAM repo wide rule" \
-     && ! printf '%s\n' "$s1b" | grep -qF "SEAM scoped to loomwright scripts"; then
+  if grep -qF -- "- SEAM repo wide rule" < <(printf '%s\n' "$s1b") \
+     && ! grep -qF "SEAM scoped to loomwright scripts" < <(printf '%s\n' "$s1b"); then
     ok "[shape i] an out-of-scope path set emits ONLY the repo-wide rule (scoped rule ABSENT from stdout)"
   else
     no "[shape i] out-of-scope path set did not route the scoped rule out: $s1b"
@@ -229,7 +229,7 @@ FIXTURE
   # The shape's own no-hang contract: args take precedence and stdin is NEVER read, so an
   # open-but-idle pipe on stdin cannot block an agent caller.
   s1c="$( cd "$FIXREPO" && bash "$READER" loomwright/scripts/x.sh < /dev/zero 2>/dev/null )"
-  printf '%s\n' "$s1c" | grep -qF -- "- SEAM scoped to loomwright scripts" \
+  grep -qF -- "- SEAM scoped to loomwright scripts" < <(printf '%s\n' "$s1c") \
     && ok "[shape i] args take precedence and stdin is never read (no hang on an idle//dev/zero stdin)" \
     || no "[shape i] the args-not-stdin no-hang contract regressed"
 
@@ -242,8 +242,8 @@ FIXTURE
                    || no "[shape ii] expected exit 0 from the no-arg shape, got $rc2"
   [ -n "$s2" ] && ok "[shape ii] no-arg stdout is NON-EMPTY (rules_nudge stays quiet on a repo with rules)" \
                || no "[shape ii] no-arg stdout EMPTY — the SessionStart nudge would misfire"
-  if printf '%s\n' "$s2" | grep -qF -- "- SEAM scoped to loomwright scripts" \
-     && printf '%s\n' "$s2" | grep -qF -- "- SEAM repo wide rule"; then
+  if grep -qF -- "- SEAM scoped to loomwright scripts" < <(printf '%s\n' "$s2") \
+     && grep -qF -- "- SEAM repo wide rule" < <(printf '%s\n' "$s2"); then
     ok "[shape ii] the no-arg shape stays REPO-WIDE — a path-scoped rule is emitted too"
   else
     no "[shape ii] the no-arg shape dropped a scoped rule (empty path set must fail OPEN): $s2"

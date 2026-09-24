@@ -149,7 +149,7 @@ outA="$(run_build "$RA")"; rcA=$?
 DIGA="$RA/.supervisor/handoff/digest.md"
 [ "$rcA" -eq 0 ] && ok "exits 0" || no "expected exit 0, got $rcA"
 [ -f "$DIGA" ] && ok "digest written" || no "digest missing at $DIGA"
-echo "$outA" | grep -qF "wrote .supervisor/handoff/digest.md" && ok "echoes the output path" || no "output-path echo missing"
+grep -qF "wrote .supervisor/handoff/digest.md" < <(echo "$outA") && ok "echoes the output path" || no "output-path echo missing"
 # Both items present in ONE unified list.
 grep -qF "alpha-feature" "$DIGA" 2>/dev/null && ok "job item present in digest" || no "job item missing"
 grep -qF "sess-a" "$DIGA" 2>/dev/null && ok "autonomous item present in digest" || no "autonomous item missing"
@@ -268,9 +268,9 @@ grep -q "hint — basis ${FAKE_G:0:8}, HEAD ${HEADG:0:8}" "$DIGG" 2>/dev/null \
 # Isolate the commit-less item's section and assert its freshness line is 'unknown' with NO hint.
 # awk: print lines from the commit-less '### ' heading up to (but not incl.) the next '### ' heading.
 LESS_SECTION="$(awk '/^### commit-less-item$/{f=1} f&&/^### / && !/^### commit-less-item$/{exit} f' "$DIGG" 2>/dev/null)"
-echo "$LESS_SECTION" | grep -qF "freshness unknown (no commit SHA recorded)" \
+grep -qF "freshness unknown (no commit SHA recorded)" < <(echo "$LESS_SECTION") \
   && ok "commit-less item renders 'freshness unknown' (mtime basis)" || no "commit-less item missing 'freshness unknown' line"
-echo "$LESS_SECTION" | grep -qF "hint —" \
+grep -qF "hint —" < <(echo "$LESS_SECTION") \
   && no "commit-less item incorrectly shows a 'hint —' SHA comparison" || ok "commit-less item shows NO 'hint —' SHA comparison"
 
 # ============================================================================
@@ -281,13 +281,13 @@ run_build "$RH" >/dev/null; rcH=$?
 DIGH="$RH/.supervisor/handoff/digest.md"
 [ "$rcH" -eq 0 ] && ok "exits 0" || no "expected exit 0, got $rcH"
 SECTH="$(awk '/^### real-outcome-item$/{f=1} f&&/^### / && !/^### real-outcome-item$/{exit} f' "$DIGH" 2>/dev/null)"
-echo "$SECTH" | grep -qF "completed" \
+grep -qF "completed" < <(echo "$SECTH") \
   && ok "Status facet renders (decision shows '— completed')" || no "Status facet missing (decision didn't pick up **Status:**)"
-echo "$SECTH" | grep -qF "self-heal PASS" \
+grep -qF "self-heal PASS" < <(echo "$SECTH") \
   && ok "Heal decision facet renders (tried/rejected shows 'self-heal PASS')" || no "Heal decision facet missing"
-echo "$SECTH" | grep -qF "https://github.com/o/r/pull/99" \
+grep -qF "https://github.com/o/r/pull/99" < <(echo "$SECTH") \
   && ok "PR facet renders" || no "PR facet missing"
-echo "$SECTH" | grep -qF "ship the real-outcome-item thing" \
+grep -qF "ship the real-outcome-item thing" < <(echo "$SECTH") \
   && ok "Goal (why) facet renders from the bare **Goal:** under ## Task" || no "Goal facet missing"
 # Legacy lowercase/underscore Outcome keys must ALSO render (real briefs carry both casings).
 RH2="$(new_repo)"
@@ -296,7 +296,7 @@ mkdir -p "$RH2/.supervisor/jobs/done"
   printf -- '- **heal_decision:** PASS\n'; printf -- '- **heal_iterations:** 1\n'; } > "$RH2/.supervisor/jobs/done/legacy-keys-item.md"
 run_build "$RH2" >/dev/null
 SECTH2="$(awk '/^### legacy-keys-item$/{f=1} f&&/^### / && !/^### legacy-keys-item$/{exit} f' "$RH2/.supervisor/handoff/digest.md" 2>/dev/null)"
-echo "$SECTH2" | grep -qF "self-heal PASS" \
+grep -qF "self-heal PASS" < <(echo "$SECTH2") \
   && ok "legacy lowercase heal_decision key still renders (dual-casing fallback)" || no "legacy lowercase Outcome keys not picked up"
 
 # ============================================================================
@@ -326,10 +326,10 @@ run_build "$RJ" >/dev/null; rcJ=$?
 DIGJ="$RJ/.supervisor/handoff/digest.md"
 [ "$rcJ" -eq 0 ] && ok "exits 0" || no "expected exit 0, got $rcJ"
 SECTJ="$(awk '/^### fresh-short-sha$/{f=1} f&&/^### / && !/^### fresh-short-sha$/{exit} f' "$DIGJ" 2>/dev/null)"
-echo "$SECTJ" | grep -qF "fresh (basis" \
+grep -qF "fresh (basis" < <(echo "$SECTJ") \
   && ok "abbreviated HEAD SHA renders 'fresh' (prefix-tolerant)" \
   || no "abbreviated HEAD SHA not 'fresh'; got: $(echo "$SECTJ" | grep -E 'fresh|hint —' || echo '<none>')"
-echo "$SECTJ" | grep -qF "hint —" \
+grep -qF "hint —" < <(echo "$SECTJ") \
   && no "abbreviated HEAD SHA wrongly shows 'hint' (finding #2 regression)" \
   || ok "no false 'hint' for a fresh abbreviated SHA"
 
@@ -341,11 +341,11 @@ run_build "$RK" >/dev/null; rcK=$?
 DIGK="$RK/.supervisor/handoff/digest.md"
 [ "$rcK" -eq 0 ] && ok "exits 0" || no "expected exit 0, got $rcK"
 SECTK="$(awk '/^### automate-run-1$/{f=1} f&&/^### / && !/^### automate-run-1$/{exit} f' "$DIGK" 2>/dev/null)"
-echo "$SECTK" | grep -qF "automate run — paused" \
+grep -qF "automate run — paused" < <(echo "$SECTK") \
   && ok "automate Status facet renders (decision shows '— paused')" || no "automate Status facet missing"
-echo "$SECTK" | grep -qF "folder .supervisor/requirements/" \
+grep -qF "folder .supervisor/requirements/" < <(echo "$SECTK") \
   && ok "automate Source facet renders (why)" || no "automate Source facet missing"
-echo "$SECTK" | grep -qF "https://github.com/o/r/pull/77" \
+grep -qF "https://github.com/o/r/pull/77" < <(echo "$SECTK") \
   && ok "automate PR facet renders (from ## Current)" || no "automate PR facet missing"
 
 # ============================================================================
@@ -419,7 +419,7 @@ SNAPN="$RN/.supervisor/handoff/snapshot.md"
 [ "$rcN" -eq 0 ] && ok "exits 0 with --publish" || no "expected exit 0, got $rcN"
 [ -f "$DIGN" ] && ok "digest.md still written with --publish" || no "digest.md missing with --publish"
 [ -f "$SNAPN" ] && ok "AC-handoff-publish: snapshot.md written with --publish" || no "snapshot.md missing with --publish"
-echo "$outN" | grep -qF "published snapshot" && ok "echoes the snapshot path" || no "no 'published snapshot' echo"
+grep -qF "published snapshot" < <(echo "$outN") && ok "echoes the snapshot path" || no "no 'published snapshot' echo"
 # Snapshot states it is a static export: generation time + explicit non-live/non-polling language.
 grep -q "STATIC SNAPSHOT" "$SNAPN" 2>/dev/null && ok "snapshot states it is a static export" || no "snapshot missing static-export framing"
 grep -qi "does not poll" "$SNAPN" 2>/dev/null && ok "snapshot states it does not poll" || no "snapshot missing 'does not poll' statement"

@@ -125,7 +125,7 @@ for f in $SUITES; do
 
   for c in $calls; do
     [ -n "$c" ] || continue
-    printf '%s\n' "$defs" | grep -qx "$c" && continue      # defined in-file
+    grep -qx "$c" < <(printf '%s\n' "$defs") && continue      # defined in-file
     command -v "$c" >/dev/null 2>&1 && continue            # a real command (e.g. `pass`, `check`)
     no "$(basename "$f"): calls helper '$c' which is NOT defined in the file — bash returns 127, the suite's counter never increments, and the suite still reports success"
     DEAD_TOTAL=$((DEAD_TOTAL + 1))
@@ -158,7 +158,7 @@ _c_defs="$(strip_heredocs "$TMPD/loomwright/scripts/test-canary.sh" | grep -oE '
 _c_calls="$(strip_heredocs "$TMPD/loomwright/scripts/test-canary.sh" | sed "$STRIP_COMMENTS" | sed -E "$STRIP_QUOTED" | grep -oE "$HELPER_RE" | sed -E "$HELPER_STRIP" | tr -d ' \t' | sort -u)"
 _c_dead=0
 for c in $_c_calls; do
-  printf '%s\n' "$_c_defs" | grep -qx "$c" && continue
+  grep -qx "$c" < <(printf '%s\n' "$_c_defs") && continue
   command -v "$c" >/dev/null 2>&1 && continue
   _c_dead=$((_c_dead + 1))
 done

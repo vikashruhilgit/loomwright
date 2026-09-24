@@ -2657,7 +2657,7 @@ done
 [ "$(grep -cF 'first seen wins' "$JS")" -le 1 ] \
   && ok "(j44) the duplicate-id render no longer claims first-seen-wins (any survivor is the comment explaining why)" \
   || no "(j44) 'first seen wins' still appears outside the explanatory comment"
-grep -n 'liDI.textContent' -A2 "$JS" 2>/dev/null | grep -qF 'the walk follows the last' \
+grep -qF 'the walk follows the last' < <(grep -n 'liDI.textContent' -A2 "$JS" 2>/dev/null) \
   && ok "(j44) the duplicate-id render states the actual resolution rule (walk follows the last)" \
   || no "(j44) the duplicate-id render does not state the projector's real resolution rule"
 

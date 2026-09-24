@@ -117,20 +117,20 @@ seed_rules_file "$RB" "core.json" '[
 ]'
 outB="$(run_reader "$RB")"; rcB=$?
 [ "$rcB" -eq 0 ] && ok "exits 0" || no "expected exit 0, got $rcB"
-echo "$outB" | grep -qF "$BANNER" && ok "advisory banner present" || no "banner missing"
+grep -qF "$BANNER" < <(echo "$outB") && ok "advisory banner present" || no "banner missing"
 # `must` rule is flagged with the [MUST] marker on its statement line.
-echo "$outB" | grep -qF -- "- [MUST] Always verify before asserting state" \
+grep -qF -- "- [MUST] Always verify before asserting state" < <(echo "$outB") \
   && ok "must rule flagged with [MUST]" || no "must rule not flagged with [MUST]"
 # advisory rule statement line carries NO [MUST] flag.
-if echo "$outB" | grep -qF -- "- Prefer descriptive anchors" \
-   && ! echo "$outB" | grep -qF "[MUST] Prefer descriptive anchors"; then
+if grep -qF -- "- Prefer descriptive anchors" < <(echo "$outB") \
+   && ! grep -qF "[MUST] Prefer descriptive anchors" < <(echo "$outB"); then
   ok "advisory rule unflagged (no [MUST])"
 else
   no "advisory rule flagging incorrect"
 fi
 # category + check-data lines render (using the reader's EXACT prefixes).
-echo "$outB" | grep -qF "  - category: safety" && ok "category line renders" || no "category line missing"
-echo "$outB" | grep -qF "  - check (data only, NOT executed by this reader): echo verify" \
+grep -qF "  - category: safety" < <(echo "$outB") && ok "category line renders" || no "category line missing"
+grep -qF "  - check (data only, NOT executed by this reader): echo verify" < <(echo "$outB") \
   && ok "check-as-data line renders verbatim" || no "check-as-data line missing"
 
 # ============================================================================
@@ -142,7 +142,7 @@ seed_rules_file "$RC" "good.json" '[
 seed_rules_file "$RC" "bad.json" '{ this is not valid json at all ]['
 outC="$(run_reader "$RC")"; rcC=$?
 [ "$rcC" -eq 0 ] && ok "exits 0 despite malformed sibling (fail-safe)" || no "expected exit 0, got $rcC"
-echo "$outC" | grep -qF -- "- This valid rule survives" \
+grep -qF -- "- This valid rule survives" < <(echo "$outC") \
   && ok "valid sibling still emitted past the malformed file" || no "valid sibling not emitted"
 
 # (c2) valid JSON but NOT an array (a bare object / scalar) → skipped with diagnostic, NOT crash; a
@@ -157,8 +157,8 @@ seed_rules_file "$RC2" "object.json" '{"id":"not-an-array","category":"safety","
 seed_rules_file "$RC2" "scalar.json" '42'
 outC2="$(run_reader "$RC2")"; rcC2=$?
 [ "$rcC2" -eq 0 ] && ok "(c2 valid-JSON non-array) exits 0" || no "expected exit 0, got $rcC2"
-if echo "$outC2" | grep -qF -- "- Array sibling survives the non-array file" \
-   && ! echo "$outC2" | grep -qF "bare object, not an array"; then
+if grep -qF -- "- Array sibling survives the non-array file" < <(echo "$outC2") \
+   && ! grep -qF "bare object, not an array" < <(echo "$outC2"); then
   ok "(c2) non-array JSON file SKIPPED, array sibling still emitted"
 else
   no "(c2) non-array JSON file must be skipped while the array sibling emits"
@@ -204,7 +204,7 @@ outE="$(run_reader "$RE")"; rcE=$?
 [ ! -e "$MARKER" ] && ok "INVARIANT: check NOT executed (marker file absent)" \
   || no "SECURITY REGRESSION: check WAS executed (marker file created at $MARKER)"
 # The check string must appear in stdout as data.
-echo "$outE" | grep -qF "  - check (data only, NOT executed by this reader): touch $MARKER" \
+grep -qF "  - check (data only, NOT executed by this reader): touch $MARKER" < <(echo "$outE") \
   && ok "INVARIANT: check string emitted verbatim as data in stdout" || no "check string not emitted as data"
 
 # ============================================================================
@@ -234,8 +234,8 @@ seed_rules_file "$RG1" "g1.json" '[
 ]'
 outG1="$(run_reader "$RG1")"; rcG1=$?
 [ "$rcG1" -eq 0 ] && ok "(g1 missing field) exits 0" || no "expected exit 0, got $rcG1"
-if echo "$outG1" | grep -qF -- "- Valid sibling g1 survives" \
-   && ! echo "$outG1" | grep -qF "g1-bad"; then
+if grep -qF -- "- Valid sibling g1 survives" < <(echo "$outG1") \
+   && ! grep -qF "g1-bad" < <(echo "$outG1"); then
   ok "(g1) missing-field object SKIPPED, valid sibling emitted"
 else
   no "(g1) missing-field skip incorrect"
@@ -248,8 +248,8 @@ seed_rules_file "$RG2" "g2.json" '[
 ]'
 outG2="$(run_reader "$RG2")"; rcG2=$?
 [ "$rcG2" -eq 0 ] && ok "(g2 bad enforcement) exits 0" || no "expected exit 0, got $rcG2"
-if echo "$outG2" | grep -qF -- "- [MUST] Valid sibling g2 survives" \
-   && ! echo "$outG2" | grep -qF "unknown enforcement"; then
+if grep -qF -- "- [MUST] Valid sibling g2 survives" < <(echo "$outG2") \
+   && ! grep -qF "unknown enforcement" < <(echo "$outG2"); then
   ok "(g2) unknown-enforcement object SKIPPED, valid sibling emitted"
 else
   no "(g2) unknown-enforcement skip incorrect"
@@ -262,8 +262,8 @@ seed_rules_file "$RG3" "g3.json" '[
 ]'
 outG3="$(run_reader "$RG3")"; rcG3=$?
 [ "$rcG3" -eq 0 ] && ok "(g3 duplicate id) exits 0" || no "expected exit 0, got $rcG3"
-if echo "$outG3" | grep -qF -- "- First seen dup wins" \
-   && ! echo "$outG3" | grep -qF "Second dup is dropped"; then
+if grep -qF -- "- First seen dup wins" < <(echo "$outG3") \
+   && ! grep -qF "Second dup is dropped" < <(echo "$outG3"); then
   ok "(g3) duplicate id: first-seen wins, later duplicate SKIPPED"
 else
   no "(g3) duplicate-id handling incorrect"
@@ -279,8 +279,8 @@ seed_rules_file "$RG4" "g4.json" '[
 ]'
 outG4="$(run_reader "$RG4")"; rcG4=$?
 [ "$rcG4" -eq 0 ] && ok "(g4 missing check key) exits 0" || no "expected exit 0, got $rcG4"
-if echo "$outG4" | grep -qF -- "- Valid sibling g4 survives" \
-   && ! echo "$outG4" | grep -qF "missing the required check key"; then
+if grep -qF -- "- Valid sibling g4 survives" < <(echo "$outG4") \
+   && ! grep -qF "missing the required check key" < <(echo "$outG4"); then
   ok "(g4) missing-check object SKIPPED, valid sibling emitted"
 else
   no "(g4) missing-check skip incorrect — a rule with no check key must be dropped"
@@ -294,11 +294,11 @@ seed_rules_file "$RG5" "g5.json" '[
 ]'
 outG5="$(run_reader "$RG5")"; rcG5=$?
 [ "$rcG5" -eq 0 ] && ok "(g5 explicit null check) exits 0" || no "expected exit 0, got $rcG5"
-echo "$outG5" | grep -qF -- "- Explicit null check is valid" \
+grep -qF -- "- Explicit null check is valid" < <(echo "$outG5") \
   && ok "(g5) explicit check:null rule still emitted" \
   || no "(g5) explicit check:null rule should remain valid"
 # (g5b) and a null check renders as the literal "(none)" sentinel (the `(.check // "(none)")` branch).
-echo "$outG5" | grep -qF -- "check (data only, NOT executed by this reader): (none)" \
+grep -qF -- "check (data only, NOT executed by this reader): (none)" < <(echo "$outG5") \
   && ok "(g5b) null check renders as (none)" \
   || no "(g5b) null check should render as (none)"
 
@@ -310,7 +310,7 @@ seed_rules_file "$RG6" "g6.json" '[
 ]'
 outG6="$(run_reader "$RG6")"; rcG6=$?
 [ "$rcG6" -eq 0 ] && ok "(g6 bad category) exits 0" || no "expected exit 0, got $rcG6"
-echo "$outG6" | grep -qF -- "- Valid sibling g6 survives" && ! echo "$outG6" | grep -qF "non-string category" \
+grep -qF -- "- Valid sibling g6 survives" < <(echo "$outG6") && ! grep -qF "non-string category" < <(echo "$outG6") \
   && ok "(g6) non-string-category object SKIPPED, valid sibling emitted" \
   || no "(g6) bad-category skip incorrect"
 
@@ -322,7 +322,7 @@ seed_rules_file "$RG7" "g7.json" '[
 ]'
 outG7="$(run_reader "$RG7")"; rcG7=$?
 [ "$rcG7" -eq 0 ] && ok "(g7 bad provenance) exits 0" || no "expected exit 0, got $rcG7"
-echo "$outG7" | grep -qF -- "- Valid sibling g7 survives" && ! echo "$outG7" | grep -qF "string provenance not object" \
+grep -qF -- "- Valid sibling g7 survives" < <(echo "$outG7") && ! grep -qF "string provenance not object" < <(echo "$outG7") \
   && ok "(g7) non-object-provenance object SKIPPED, valid sibling emitted" \
   || no "(g7) bad-provenance skip incorrect"
 
@@ -335,7 +335,7 @@ seed_rules_file "$RG8" "g8.json" '[
 ]'
 outG8="$(run_reader "$RG8")"; rcG8=$?
 [ "$rcG8" -eq 0 ] && ok "(g8 non-string check) exits 0" || no "expected exit 0, got $rcG8"
-echo "$outG8" | grep -qF -- "- Valid sibling g8 survives" && ! echo "$outG8" | grep -qF "numeric check is invalid" \
+grep -qF -- "- Valid sibling g8 survives" < <(echo "$outG8") && ! grep -qF "numeric check is invalid" < <(echo "$outG8") \
   && ok "(g8) non-string-check object SKIPPED, valid sibling emitted" \
   || no "(g8) bad-check (non-string) skip incorrect"
 
@@ -349,7 +349,7 @@ seed_rules_file "$RG9" "g9.json" '[
 ]'
 outG9="$(run_reader "$RG9")"; rcG9=$?
 [ "$rcG9" -eq 0 ] && ok "(g9 non-object element) exits 0" || no "expected exit 0, got $rcG9"
-echo "$outG9" | grep -qF -- "- Valid object among non-object elements" \
+grep -qF -- "- Valid object among non-object elements" < <(echo "$outG9") \
   && ok "(g9) non-object array elements SKIPPED, valid object sibling emitted" \
   || no "(g9) not-an-object handling incorrect"
 
@@ -365,8 +365,8 @@ seed_rules_file "$RG10" "aaa.json" '[
 ]'
 outG10="$(run_reader "$RG10")"; rcG10=$?
 [ "$rcG10" -eq 0 ] && ok "(g10 cross-file dup) exits 0" || no "expected exit 0, got $rcG10"
-if echo "$outG10" | grep -qF -- "- From aaa — first-seen across files WINS" \
-   && ! echo "$outG10" | grep -qF "From zzz"; then
+if grep -qF -- "- From aaa — first-seen across files WINS" < <(echo "$outG10") \
+   && ! grep -qF "From zzz" < <(echo "$outG10"); then
   ok "(g10) cross-file duplicate id: LC_ALL=C path-sort first-file wins, later file's dup SKIPPED"
 else
   no "(g10) cross-file dedup incorrect — earlier-path file must win"
@@ -414,7 +414,7 @@ seed_rules_file "$RI1" "core.json" '[
 ]'
 outI1="$(run_reader "$RI1")"; rcI1=$?
 [ "$rcI1" -eq 0 ] && ok "(i1 supersession) exits 0" || no "(i1) expected exit 0, got $rcI1"
-if echo "$outI1" | grep -qF -- "- New replaces old" && ! echo "$outI1" | grep -qF "Old rule hidden"; then
+if grep -qF -- "- New replaces old" < <(echo "$outI1") && ! grep -qF "Old rule hidden" < <(echo "$outI1"); then
   ok "(i1) superseding rule visible, superseded target HIDDEN from reader output"
 else
   no "(i1) supersession not honored: $outI1"
@@ -431,10 +431,10 @@ seed_rules_file "$RI2" "core.json" '[
 ]'
 outI2="$(run_reader "$RI2")"; rcI2=$?
 [ "$rcI2" -eq 0 ] && ok "(i2 malformed supersedes) exits 0" || no "(i2) expected exit 0, got $rcI2"
-if echo "$outI2" | grep -qF -- "- Numeric supersedes is ignored" \
-   && echo "$outI2" | grep -qF -- "- Object supersedes is ignored" \
-   && echo "$outI2" | grep -qF -- "- Empty-string supersedes is ignored" \
-   && echo "$outI2" | grep -qF -- "- Explicit null supersedes is ignored"; then
+if grep -qF -- "- Numeric supersedes is ignored" < <(echo "$outI2") \
+   && grep -qF -- "- Object supersedes is ignored" < <(echo "$outI2") \
+   && grep -qF -- "- Empty-string supersedes is ignored" < <(echo "$outI2") \
+   && grep -qF -- "- Explicit null supersedes is ignored" < <(echo "$outI2"); then
   ok "(i2) malformed supersedes (numeric/object/empty-string/null) all IGNORED — every carrier still emitted"
 else
   no "(i2) a malformed-supersedes carrier was wrongly hidden/dropped: $outI2"
@@ -447,7 +447,7 @@ seed_rules_file "$RI3" "core.json" '[
 ]'
 outI3="$(run_reader "$RI3")"; rcI3=$?
 [ "$rcI3" -eq 0 ] && ok "(i3 self-referential) exits 0" || no "(i3) expected exit 0, got $rcI3"
-echo "$outI3" | grep -qF -- "- Self-referential supersedes is ignored" \
+grep -qF -- "- Self-referential supersedes is ignored" < <(echo "$outI3") \
   && ok "(i3) self-referential supersedes IGNORED — entry still emitted, does not hide itself" \
   || no "(i3) self-referential supersedes wrongly hid its own entry: $outI3"
 
@@ -458,7 +458,7 @@ seed_rules_file "$RI4" "core.json" '[
 ]'
 outI4="$(run_reader "$RI4")"; rcI4=$?
 [ "$rcI4" -eq 0 ] && ok "(i4 dangling target) exits 0" || no "(i4) expected exit 0, got $rcI4"
-echo "$outI4" | grep -qF -- "- Dangling supersedes is ignored" \
+grep -qF -- "- Dangling supersedes is ignored" < <(echo "$outI4") \
   && ok "(i4) dangling supersedes IGNORED — carrying entry still emitted" \
   || no "(i4) dangling supersedes wrongly suppressed its carrier: $outI4"
 
@@ -472,7 +472,7 @@ seed_rules_file "$RI4B" "core.json" '[
 ]'
 outI4B="$(run_reader "$RI4B")"; rcI4B=$?
 [ "$rcI4B" -eq 0 ] && ok "(i4b dangling-via-invalid-target) exits 0" || no "(i4b) expected exit 0, got $rcI4B"
-echo "$outI4B" | grep -qF -- "- Points at an invalid, never-OK sibling" \
+grep -qF -- "- Points at an invalid, never-OK sibling" < <(echo "$outI4B") \
   && ok "(i4b) supersedes targeting a never-OK (SKIPped) sibling is dangling — carrier still emitted" \
   || no "(i4b) carrier wrongly suppressed when its target never validation-survived: $outI4B"
 
@@ -488,8 +488,8 @@ seed_rules_file "$RI5" "core.json" '[
 ]'
 outI5="$(run_reader "$RI5")"; rcI5=$?
 [ "$rcI5" -eq 0 ] && ok "(i5 mutual cycle) exits 0" || no "(i5) expected exit 0, got $rcI5"
-if echo "$outI5" | grep -qF -- "- Cycle member A stays visible" \
-   && echo "$outI5" | grep -qF -- "- Cycle member B stays visible"; then
+if grep -qF -- "- Cycle member A stays visible" < <(echo "$outI5") \
+   && grep -qF -- "- Cycle member B stays visible" < <(echo "$outI5"); then
   ok "(i5) mutually-cyclic supersedes IGNORED on both sides — BOTH entries remain visible (single-hop, non-transitive)"
 else
   no "(i5) a mutual-cycle member was wrongly hidden: $outI5"
@@ -507,9 +507,9 @@ seed_rules_file "$RI6" "core.json" '[
 ]'
 outI6="$(run_reader "$RI6")"; rcI6=$?
 [ "$rcI6" -eq 0 ] && ok "(i6 one-way chain) exits 0" || no "(i6) expected exit 0, got $rcI6"
-if echo "$outI6" | grep -qF -- "- Chain head A stays visible" \
-   && ! echo "$outI6" | grep -qF "Chain middle B is hidden by A" \
-   && ! echo "$outI6" | grep -qF "Chain tail C is hidden by B"; then
+if grep -qF -- "- Chain head A stays visible" < <(echo "$outI6") \
+   && ! grep -qF "Chain middle B is hidden by A" < <(echo "$outI6") \
+   && ! grep -qF "Chain tail C is hidden by B" < <(echo "$outI6"); then
   ok "(i6) chain head A visible; B (hidden by A) and C (hidden by B) both absent"
 else
   no "(i6) one-way chain hiding incorrect: $outI6"
@@ -527,9 +527,9 @@ seed_rules_file "$RI7" "core.json" '[
 ]'
 outI7="$(run_reader "$RI7")"; rcI7=$?
 [ "$rcI7" -eq 0 ] && ok "(i7 n=3 cycle) exits 0" || no "(i7) expected exit 0, got $rcI7"
-if echo "$outI7" | grep -qF -- "- 3-cycle member A stays visible" \
-   && echo "$outI7" | grep -qF -- "- 3-cycle member B stays visible" \
-   && echo "$outI7" | grep -qF -- "- 3-cycle member C stays visible"; then
+if grep -qF -- "- 3-cycle member A stays visible" < <(echo "$outI7") \
+   && grep -qF -- "- 3-cycle member B stays visible" < <(echo "$outI7") \
+   && grep -qF -- "- 3-cycle member C stays visible" < <(echo "$outI7"); then
   ok "(i7) n=3 cycle: ALL THREE members stay VISIBLE (generalized cycle detection, not pairwise-only)"
 else
   no "(i7) n=3 cycle wrongly hid one or more members (0-visible regression): $outI7"
@@ -545,10 +545,10 @@ seed_rules_file "$RI8" "core.json" '[
 ]'
 outI8="$(run_reader "$RI8")"; rcI8=$?
 [ "$rcI8" -eq 0 ] && ok "(i8 n=4 cycle) exits 0" || no "(i8) expected exit 0, got $rcI8"
-if echo "$outI8" | grep -qF -- "- 4-cycle member A stays visible" \
-   && echo "$outI8" | grep -qF -- "- 4-cycle member B stays visible" \
-   && echo "$outI8" | grep -qF -- "- 4-cycle member C stays visible" \
-   && echo "$outI8" | grep -qF -- "- 4-cycle member D stays visible"; then
+if grep -qF -- "- 4-cycle member A stays visible" < <(echo "$outI8") \
+   && grep -qF -- "- 4-cycle member B stays visible" < <(echo "$outI8") \
+   && grep -qF -- "- 4-cycle member C stays visible" < <(echo "$outI8") \
+   && grep -qF -- "- 4-cycle member D stays visible" < <(echo "$outI8"); then
   ok "(i8) n=4 cycle: ALL FOUR members stay VISIBLE (generalized cycle detection)"
 else
   no "(i8) n=4 cycle wrongly hid one or more members: $outI8"
@@ -568,10 +568,10 @@ seed_rules_file "$RI9" "core.json" '[
 ]'
 outI9="$(run_reader "$RI9")"; rcI9=$?
 [ "$rcI9" -eq 0 ] && ok "(i9 cycle-plus-tail) exits 0" || no "(i9) expected exit 0, got $rcI9"
-if ! echo "$outI9" | grep -qF "Cycle-plus-tail member A hidden by external D" \
-   && echo "$outI9" | grep -qF -- "- Cycle-plus-tail member B stays visible" \
-   && echo "$outI9" | grep -qF -- "- Cycle-plus-tail member C stays visible" \
-   && echo "$outI9" | grep -qF -- "- Cycle-plus-tail external D stays visible"; then
+if ! grep -qF "Cycle-plus-tail member A hidden by external D" < <(echo "$outI9") \
+   && grep -qF -- "- Cycle-plus-tail member B stays visible" < <(echo "$outI9") \
+   && grep -qF -- "- Cycle-plus-tail member C stays visible" < <(echo "$outI9") \
+   && grep -qF -- "- Cycle-plus-tail external D stays visible" < <(echo "$outI9"); then
   ok "(i9) cycle-plus-tail: A hidden by external D (ordinary single-hop); B, C, D all visible"
 else
   no "(i9) cycle-plus-tail behaved insanely: $outI9"
@@ -600,18 +600,18 @@ RJ="$(new_repo)"; seed_routing_store "$RJ"
 # (Case (l) below proves that empirically by mutation.)
 outJ1a="$(run_reader_args "$RJ" loomwright/scripts/read-rules.sh)"; rcJ1a=$?
 [ "$rcJ1a" -eq 0 ] && ok "(j1 match) exits 0" || no "(j1) expected exit 0, got $rcJ1a"
-echo "$outJ1a" | grep -qF -- "- [MUST] Scoped to the scripts dir" \
+grep -qF -- "- [MUST] Scoped to the scripts dir" < <(echo "$outJ1a") \
   && ok "(j1) MATCH: a rule scoped to loomwright/scripts/* IS emitted for a script path" \
   || no "(j1) matching rule was not emitted: $outJ1a"
-if echo "$outJ1a" | grep -qF "Scoped to docs and markdown"; then
+if grep -qF "Scoped to docs and markdown" < <(echo "$outJ1a"); then
   no "(j1) NON-MATCH: a docs-scoped rule leaked into a scripts-only call"
 else
   ok "(j1) NON-MATCH: the docs-scoped rule is ABSENT from stdout (asserted by absence)"
 fi
 # ...and the mirror direction, so neither result is an artifact of one particular path set.
 outJ1b="$(run_reader_args "$RJ" docs/architecture.md)"
-if echo "$outJ1b" | grep -qF -- "- Scoped to docs and markdown" \
-   && ! echo "$outJ1b" | grep -qF "Scoped to the scripts dir"; then
+if grep -qF -- "- Scoped to docs and markdown" < <(echo "$outJ1b") \
+   && ! grep -qF "Scoped to the scripts dir" < <(echo "$outJ1b"); then
   ok "(j1 mirror) docs path emits the docs-scoped rule and the scripts-scoped rule is ABSENT"
 else
   no "(j1 mirror) routing is not symmetric: $outJ1b"
@@ -620,7 +620,7 @@ fi
 # (j2) `applies_to: null` AND an absent key are BOTH repo-wide — emitted for any path set. This is the
 # no-regression guard for the one rule the plugin's own store ships (.agent/rules/process.json).
 for want in "Explicit null applies_to is repo-wide" "Absent applies_to key is repo-wide"; do
-  if echo "$outJ1a" | grep -qF -- "- $want" && echo "$outJ1b" | grep -qF -- "- $want"; then
+  if grep -qF -- "- $want" < <(echo "$outJ1a") && grep -qF -- "- $want" < <(echo "$outJ1b"); then
     ok "(j2) repo-wide rule emitted for BOTH unrelated path sets: $want"
   else
     no "(j2) repo-wide rule was wrongly filtered: $want"
@@ -632,26 +632,26 @@ done
 outJ3="$(run_reader_args "$RJ" totally/unrelated/path.txt)"; rcJ3=$?
 [ "$rcJ3" -eq 0 ] && ok "(j3 fail-open) exits 0" || no "(j3) expected exit 0, got $rcJ3"
 for want in "Non-array applies_to fails open" "Empty-array applies_to fails open" "Non-string element fails open"; do
-  echo "$outJ3" | grep -qF -- "- $want" \
+  grep -qF -- "- $want" < <(echo "$outJ3") \
     && ok "(j3) malformed applies_to fails OPEN (rule still emitted): $want" \
     || no "(j3) malformed applies_to failed CLOSED (rule suppressed): $want"
 done
 # Both well-formed scoped rules must be gone for this unrelated path — proving (j3) is not just
 # "everything is emitted".
-if echo "$outJ3" | grep -qF "Scoped to the scripts dir" || echo "$outJ3" | grep -qF "Scoped to docs and markdown"; then
+if grep -qF "Scoped to the scripts dir" < <(echo "$outJ3") || grep -qF "Scoped to docs and markdown" < <(echo "$outJ3"); then
   no "(j3) a well-formed scoped rule leaked into an unrelated-path call"
 else
   ok "(j3) both well-formed scoped rules ABSENT for an unrelated path (fail-open is not blanket-emit)"
 fi
 # The fail-open diagnostic must NOT be on stdout. stdout carries only the banner + rule bullets.
-if echo "$outJ3" | grep -qiE 'fail-OPEN|malformed or empty applies_to'; then
+if grep -qiE 'fail-OPEN|malformed or empty applies_to' < <(echo "$outJ3"); then
   no "(j3) a fail-open diagnostic leaked onto STDOUT"
 else
   ok "(j3) no fail-open diagnostic on stdout (diagnostics are stderr + memory.log only)"
 fi
 # ...and it IS present on stderr (so the fail-open is observable, not silent).
 errJ3="$( ( cd "$RJ" && bash "$READER" totally/unrelated/path.txt ) 2>&1 >/dev/null )"
-echo "$errJ3" | grep -qF "malformed or empty applies_to on id=j-nonarray" \
+grep -qF "malformed or empty applies_to on id=j-nonarray" < <(echo "$errJ3") \
   && ok "(j3) fail-open diagnostic IS emitted on stderr (observable, not silent)" \
   || no "(j3) fail-open diagnostic missing from stderr: $errJ3"
 
@@ -718,18 +718,18 @@ outJ5="$(run_reader_args "$RJ5" docs/readme.md)"; rcJ5=$?
   || no "(j5) expected empty stdout when nothing routes in; got: $outJ5"
 # ...and the SAME store with no args still emits it (the two halves of the same contract).
 outJ5b="$(run_reader "$RJ5")"
-echo "$outJ5b" | grep -qF -- "- The only rule, scoped to src" \
+grep -qF -- "- The only rule, scoped to src" < <(echo "$outJ5b") \
   && ok "(j5) the same scoped-only store is NON-EMPTY on the no-arg call" \
   || no "(j5) scoped-only store went empty on the no-arg call — nudge regression"
 
 # (j6) `case`-glob semantics, pinned because they are NOT .gitignore semantics (job Risk R2 / AC8):
 # `*` and `**` are EQUIVALENT in a bash `case` and BOTH cross `/`.
 outJ6a="$(run_reader_args "$RJ" loomwright/scripts/nested/deep/file.sh)"
-echo "$outJ6a" | grep -qF -- "- [MUST] Scoped to the scripts dir" \
+grep -qF -- "- [MUST] Scoped to the scripts dir" < <(echo "$outJ6a") \
   && ok "(j6) a single \`*\` CROSSES \`/\` (loomwright/scripts/* matched a nested path — NOT gitignore semantics)" \
   || no "(j6) case-glob \`*\` failed to cross \`/\`; the documented semantics drifted"
 outJ6b="$(run_reader_args "$RJ" docs/a/b/c.md)"
-echo "$outJ6b" | grep -qF -- "- Scoped to docs and markdown" \
+grep -qF -- "- Scoped to docs and markdown" < <(echo "$outJ6b") \
   && ok "(j6) \`**\` behaves as \`*\` and crosses \`/\` too (docs/** matched docs/a/b/c.md)" \
   || no "(j6) \`**\` did not match a nested docs path"
 
@@ -749,15 +749,15 @@ seed_rules_file "$RJ8" "mixed.json" '[
 # (j8a) EMITTED for a path matching the surviving pattern.
 outJ8a="$(run_reader_args "$RJ8" docs/guide.md)"; rcJ8a=$?
 [ "$rcJ8a" -eq 0 ] && ok "(j8 mixed-array) exits 0" || no "(j8) expected exit 0, got $rcJ8a"
-echo "$outJ8a" | grep -qF -- "- Mixed array routes on the surviving pattern" \
+grep -qF -- "- Mixed array routes on the surviving pattern" < <(echo "$outJ8a") \
   && ok "(j8) MIXED \`[\"\", \"docs/*\"]\`: EMITTED for a docs path (empties dropped, routes on survivors)" \
   || no "(j8) mixed-array rule was not emitted for a matching docs path: $outJ8a"
 # (j8b) ABSENT for a non-matching path — i.e. the empty entry did NOT collapse the cell to fail-open.
 outJ8b="$(run_reader_args "$RJ8" src/app.ts)"
-echo "$outJ8b" | grep -qF -- "- Mixed-case repo-wide control" \
+grep -qF -- "- Mixed-case repo-wide control" < <(echo "$outJ8b") \
   && ok "(j8) the repo-wide control IS emitted for the non-docs path (reader is alive)" \
   || no "(j8) repo-wide control missing — the non-match assertion below would be vacuous: $outJ8b"
-if echo "$outJ8b" | grep -qF "Mixed array routes on the surviving pattern"; then
+if grep -qF "Mixed array routes on the surviving pattern" < <(echo "$outJ8b"); then
   no "(j8) FAIL-OPEN REGRESSION: a partially-empty applies_to leaked repo-wide (should route like [\"docs/*\"])"
 else
   ok "(j8) MIXED array: ABSENT for a non-docs path (partial emptiness does NOT fail the cell OPEN)"
@@ -766,7 +766,7 @@ fi
 # before routing and would fire regardless of which path set was passed.
 errJ8a="$( ( cd "$RJ8" && bash "$READER" docs/guide.md ) 2>&1 >/dev/null )"
 errJ8b="$( ( cd "$RJ8" && bash "$READER" src/app.ts   ) 2>&1 >/dev/null )"
-if printf '%s\n%s\n' "$errJ8a" "$errJ8b" | grep -qF "applies_to on id=j8-mixed"; then
+if grep -qF "applies_to on id=j8-mixed" < <(printf '%s\n%s\n' "$errJ8a" "$errJ8b"); then
   no "(j8) a WARN diagnostic fired for the partially-empty array — the docstring calls this SILENT"
 else
   ok "(j8) NO WARN diagnostic for the partially-empty array (silence is the documented decision)"
@@ -782,10 +782,10 @@ outJ9="$(run_reader_args "$RJ" "" docs/architecture.md)"; rcJ9=$?
 [ "$rcJ9" -eq 0 ] && ok "(j9 mixed empty+real arg) exits 0" || no "(j9) expected exit 0, got $rcJ9"
 # LIVENESS CONTROL — the docs-scoped rule must be PRESENT, so the absence assertion below cannot pass
 # vacuously on an empty/broken stdout.
-echo "$outJ9" | grep -qF -- "- Scoped to docs and markdown" \
+grep -qF -- "- Scoped to docs and markdown" < <(echo "$outJ9") \
   && ok "(j9) LIVENESS: the docs-scoped rule IS emitted (the empty arg was filtered, routing still ran)" \
   || no "(j9) docs-scoped rule missing — the absence assertion below would be vacuous: $outJ9"
-if echo "$outJ9" | grep -qF "Scoped to the scripts dir"; then
+if grep -qF "Scoped to the scripts dir" < <(echo "$outJ9"); then
   no "(j9) FAIL-OPEN REGRESSION: a scripts-scoped rule leaked when '' was mixed with a docs path"
 else
   ok "(j9) a rule scoped ELSEWHERE stays ABSENT (mixing '' in does not degrade to a repo-wide call)"
@@ -809,7 +809,7 @@ seed_rules_file "$RK" "order.json" '[
 ]'
 outK1="$(run_reader_args "$RK" docs/guide.md)"; rcK1=$?
 [ "$rcK1" -eq 0 ] && ok "(k) exits 0" || no "(k) expected exit 0, got $rcK1"
-if echo "$outK1" | grep -qF "OLD retired rule must stay retired"; then
+if grep -qF "OLD retired rule must stay retired" < <(echo "$outK1"); then
   no "(k) ORDER REGRESSION: routing ran before supersession — the retired rule RESURRECTED"
 else
   ok "(k) a rule routed out of this call does NOT resurrect the rule it supersedes"
@@ -819,13 +819,13 @@ fi
 # Sanity in the other two directions: the replacement IS emitted for an in-scope path and for no-args,
 # and in BOTH cases the superseded rule stays hidden.
 outK2="$(run_reader_args "$RK" src/main.ts)"
-if echo "$outK2" | grep -qF -- "- NEW rule, scoped to src" && ! echo "$outK2" | grep -qF "OLD retired"; then
+if grep -qF -- "- NEW rule, scoped to src" < <(echo "$outK2") && ! grep -qF "OLD retired" < <(echo "$outK2"); then
   ok "(k) in-scope path: replacement emitted, superseded rule still hidden"
 else
   no "(k) in-scope path behaved unexpectedly: $outK2"
 fi
 outK3="$(run_reader "$RK")"
-if echo "$outK3" | grep -qF -- "- NEW rule, scoped to src" && ! echo "$outK3" | grep -qF "OLD retired"; then
+if grep -qF -- "- NEW rule, scoped to src" < <(echo "$outK3") && ! grep -qF "OLD retired" < <(echo "$outK3"); then
   ok "(k) no-arg call: replacement emitted repo-wide, superseded rule still hidden"
 else
   no "(k) no-arg call behaved unexpectedly: $outK3"
@@ -848,13 +848,13 @@ if [ -s "$MUTANT" ] && ! cmp -s "$MUTANT" "$READER"; then
   # THE CONTROL: under the bypassed filter the docs-scoped rule leaks in, so (j1)'s absence assertion
   # ("Scoped to docs and markdown" NOT in stdout) is FALSE here. If it were still true, (j1) would be
   # passing for some reason other than the routing filter.
-  if echo "$mut_out" | grep -qF "Scoped to docs and markdown"; then
+  if grep -qF "Scoped to docs and markdown" < <(echo "$mut_out"); then
     ok "(l) CONTROL HELD: with routing bypassed the non-match rule LEAKS IN ⇒ (j1)'s absence assertion FAILS as required"
   else
     no "(l) CONTROL BROKEN: (j1)'s absence assertion still passes with routing bypassed — (j1) is VACUOUS"
   fi
   # And the mutant must still emit the matching rule, i.e. the mutation disabled ONLY the filter.
-  echo "$mut_out" | grep -qF -- "- [MUST] Scoped to the scripts dir" \
+  grep -qF -- "- [MUST] Scoped to the scripts dir" < <(echo "$mut_out") \
     && ok "(l) the mutation disabled only the routing filter (the reader otherwise still works)" \
     || no "(l) the mutant is broken beyond the filter — the control would be meaningless"
 else

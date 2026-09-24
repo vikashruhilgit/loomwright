@@ -77,7 +77,7 @@ fi
 
 echo "== 2. second acquire while held -> run_lock_held + non-zero exit =="
 run_sut acquire --owner automate:run2 --root "$D1"
-if [ "$RUN_RC" -ne 0 ] && printf '%s' "$RUN_OUT" | grep -qE '^run_lock_held owner=automate:run1 pid=[0-9]+ age=[0-9]+$'; then
+if [ "$RUN_RC" -ne 0 ] && grep -qE '^run_lock_held owner=automate:run1 pid=[0-9]+ age=[0-9]+$' < <(printf '%s' "$RUN_OUT"); then
   ok "second acquire refused: $RUN_OUT"
 else
   no "second acquire should have printed run_lock_held + exit non-zero: rc=$RUN_RC out='$RUN_OUT'"
@@ -85,7 +85,7 @@ fi
 
 echo "== 3. status reflects LOCKED =="
 run_sut status --root "$D1"
-if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | grep -qE '^LOCKED owner=automate:run1 pid=[0-9]+ age=[0-9]+$'; then
+if [ "$RUN_RC" -eq 0 ] && grep -qE '^LOCKED owner=automate:run1 pid=[0-9]+ age=[0-9]+$' < <(printf '%s' "$RUN_OUT"); then
   ok "status LOCKED: $RUN_OUT"
 else
   no "status wrong: rc=$RUN_RC out='$RUN_OUT'"
@@ -114,7 +114,7 @@ D6="$(fresh_root)"
 run_sut acquire --owner automate:runA --session-id sessA --root "$D6"
 run_sut release --owner automate:runB --session-id sessB --root "$D6"
 run_sut status --root "$D6"
-if printf '%s' "$RUN_OUT" | grep -q '^LOCKED owner=automate:runA'; then
+if grep -q '^LOCKED owner=automate:runA' < <(printf '%s' "$RUN_OUT"); then
   ok "release by non-owning owner/session left the lock intact: $RUN_OUT"
 else
   no "release by non-owning owner/session should NOT have cleared the lock: $RUN_OUT"
@@ -146,7 +146,7 @@ set_meta_field "$D9" ts 1
 run_sut acquire --owner automate:reclaimer --root "$D9"
 if [ "$RUN_RC" -eq 0 ]; then
   run_sut status --root "$D9"
-  if printf '%s' "$RUN_OUT" | grep -q 'owner=automate:reclaimer'; then
+  if grep -q 'owner=automate:reclaimer' < <(printf '%s' "$RUN_OUT"); then
     ok "stale lock (dead pid, age >= TTL) reclaimed by new acquirer"
   else
     no "reclaim succeeded but owner not updated: $RUN_OUT"
@@ -162,7 +162,7 @@ set_meta_field "$D10" pid 999999
 NOW="$(date +%s)"
 set_meta_field "$D10" ts "$((NOW - 10))"
 run_sut acquire --owner automate:impatient --root "$D10"
-if [ "$RUN_RC" -ne 0 ] && printf '%s' "$RUN_OUT" | grep -q 'owner=automate:young'; then
+if [ "$RUN_RC" -ne 0 ] && grep -q 'owner=automate:young' < <(printf '%s' "$RUN_OUT"); then
   ok "young stale lock correctly refused early reclaim: $RUN_OUT"
 else
   no "young stale lock should have refused reclaim: rc=$RUN_RC out='$RUN_OUT'"
@@ -174,7 +174,7 @@ run_sut acquire --owner automate:live --root "$D11"
 set_meta_field "$D11" pid "$$"
 set_meta_field "$D11" ts 1
 run_sut acquire --owner automate:other --root "$D11"
-if [ "$RUN_RC" -ne 0 ] && printf '%s' "$RUN_OUT" | grep -q 'owner=automate:live'; then
+if [ "$RUN_RC" -ne 0 ] && grep -q 'owner=automate:live' < <(printf '%s' "$RUN_OUT"); then
   ok "live pid with old ts still refused (liveness gates TTL): $RUN_OUT"
 else
   no "live pid should refuse regardless of age: rc=$RUN_RC out='$RUN_OUT'"
@@ -184,9 +184,9 @@ echo "== 12. --force-unlock breaks a live lock and prints what it broke =="
 D12="$(fresh_root)"
 run_sut acquire --owner automate:victim --root "$D12"
 run_sut acquire --owner automate:forcer --force-unlock --root "$D12"
-if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | grep -q 'force-unlock: broke run_lock_held owner=automate:victim'; then
+if [ "$RUN_RC" -eq 0 ] && grep -q 'force-unlock: broke run_lock_held owner=automate:victim' < <(printf '%s' "$RUN_OUT"); then
   run_sut status --root "$D12"
-  if printf '%s' "$RUN_OUT" | grep -q 'owner=automate:forcer'; then
+  if grep -q 'owner=automate:forcer' < <(printf '%s' "$RUN_OUT"); then
     ok "force-unlock broke the old lock and acquired a new one"
   else
     no "force-unlock reported breaking the lock but new owner not recorded: $RUN_OUT"
@@ -224,7 +224,7 @@ if bash -n "$MUT" 2>/dev/null && ! diff -q "$MUT" "$SUT" >/dev/null 2>&1; then
   set_meta_field "$D15" ts 1
   MUT_OUT="$(bash "$MUT" acquire --owner automate:reclaimer --root "$D15" 2>&1)"
   MUT_RC=$?
-  if [ "$MUT_RC" -ne 0 ] && printf '%s' "$MUT_OUT" | grep -q 'owner=automate:stale'; then
+  if [ "$MUT_RC" -ne 0 ] && grep -q 'owner=automate:stale' < <(printf '%s' "$MUT_OUT"); then
     ok "mutation control: forcing pid_alive=1 blocks the genuinely-reclaimable stale lock from test 9 -- the liveness check is load-bearing"
   else
     no "mutation control REFUTED: mutant still reclaimed the stale lock -- pid_alive guard may not be load-bearing (mutant rc=$MUT_RC out='$MUT_OUT')"

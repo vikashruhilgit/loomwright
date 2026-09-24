@@ -265,7 +265,7 @@ case "$t2" in
 esac
 [ "$(jq -r '.acs[0].text' "$LAST_OUT")" = "Given the form page, when it loads, then a Value field and a Submit button are visible." ] \
   && ok "(AC6) requirement bullet text is verbatim (no leading '- ')" || no "(AC6) AC1 text: $(jq -r '.acs[0].text' "$LAST_OUT")"
-[ "$(jq -r '.acs | length' "$LAST_OUT")" = "3" ] && ! jq -r '.acs[].text' "$LAST_OUT" | grep -q 'NOT an acceptance criterion' \
+[ "$(jq -r '.acs | length' "$LAST_OUT")" = "3" ] && ! grep -q 'NOT an acceptance criterion' < <(jq -r '.acs[].text' "$LAST_OUT") \
   && ok "(AC6) extraction stops at the next ## header" || no "(AC6) a bullet from a later section leaked in"
 
 run_bin "$T1" acs "$BRIEF"
@@ -1128,7 +1128,7 @@ n="$(grep -cF -- "$CARVE" "$AGENT")"
 [ "$n" -eq 1 ] && ok "(AC7a) exactly one carve-out sentence points at the skill" || no "(AC7a) carve-out sentence count: $n (expected 1)"
 # The sentence must FOLLOW the rule: the line after the rule carries it (continuation line).
 after="$(grep -nF -- "$L1_RULE" "$AGENT" | cut -d: -f1)"
-[ -n "$after" ] && sed -n "$((after+1))p" "$AGENT" | grep -qF -- "$CARVE" \
+[ -n "$after" ] && grep -qF -- "$CARVE" < <(sed -n "$((after+1))p" "$AGENT") \
   && ok "(AC7a) the carve-out sentence is the line immediately following the rule" || no "(AC7a) carve-out sentence does not immediately follow the rule"
 
 echo "== (AC7b) --verify branch: keeps Phase 2, skips every other phase with the fixed reason =="
@@ -1146,7 +1146,7 @@ grep -qF -- 'VERIFY_RESULT:' "$AGENT" && grep -qF -- 'counts: {pass:' "$AGENT" \
 grep -qF -- 'skills/verify-walkthrough/SKILL.md' "$AGENT" && ok "(AC7b) the agent Reads the skill at mode entry" || no "(AC7b) agent never names the skill"
 # Read on demand, NOT preloaded: the frontmatter skills: list must not carry it (token budget, AC7d).
 fm="$(awk 'NR==1 && /^---$/ {c=1; next} c==1 && /^---$/ {exit} c==1 {print}' "$AGENT")"
-printf '%s\n' "$fm" | grep -q -- '- verify-walkthrough' \
+grep -q -- '- verify-walkthrough' < <(printf '%s\n' "$fm") \
   && no "(AC7d) verify-walkthrough is PRELOADED in the agent frontmatter (budget breach risk)" || ok "(AC7d) verify-walkthrough is NOT in the frontmatter skills: list (Read on demand)"
 
 echo "== (AC7c) no harness-specific browser tool on any of the four verify surfaces =="
@@ -1157,7 +1157,7 @@ done
 
 echo "== (AC5-skill) derivation fixtures + the four verdicts =="
 grep -qF -- '### Derivation fixtures' "$SKILL" && ok "(AC5) the skill carries a \`### Derivation fixtures\` table" || no "(AC5) no \`### Derivation fixtures\` header in the skill"
-grep -F -- 'under 200 concurrent users' "$SKILL" | grep -qF -- 'NOT_VERIFIABLE' \
+grep -qF -- 'NOT_VERIFIABLE' < <(grep -F -- 'under 200 concurrent users' "$SKILL") \
   && ok "(AC5) the concurrency row (\`under 200 concurrent users\`) maps to NOT_VERIFIABLE on the same line" || no "(AC5) concurrency row missing or not NOT_VERIFIABLE"
 n="$(grep -cE '^\| Given .*\| (`?\[AC[0-9n]+\]`?|none) ' "$SKILL")"
 [ "$n" -ge 5 ] && ok "(AC5) ≥5 derivation-fixture rows ($n)" || no "(AC5) only $n derivation-fixture rows (need ≥5)"

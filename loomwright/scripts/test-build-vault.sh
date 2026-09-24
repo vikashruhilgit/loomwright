@@ -131,7 +131,7 @@ rc=$?
 if [ "$HAVE_JQ" -eq 1 ]; then
   [ -f "$V4/$SLUG4/$SLUG4 — Index.md" ] || no "first run produced no vault (idempotency precondition)"
   # Primary signal: the script's own summary on the 2nd run reports 0 written.
-  if echo "$out2" | grep -Eq 'build-vault: 0 note\(s\) written'; then
+  if grep -Eq 'build-vault: 0 note\(s\) written' < <(echo "$out2"); then
     ok "second run writes ZERO notes (summary: 0 written)"
   else
     no "second run reported writes: $(echo "$out2" | grep 'note(s) written' || echo '<no summary>')"

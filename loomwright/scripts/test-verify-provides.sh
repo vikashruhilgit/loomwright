@@ -333,9 +333,9 @@ NOJQ_OUT="$(PATH="$TMP/nojq" "$BASH" "$SCRIPT" "$TMP/briefA.md" 'ok-1_x' 2>/dev/
 echo "--- script: --kind-table ---"
 KT="$(bash "$SCRIPT" --kind-table)"
 [ "$(printf '%s\n' "$KT" | wc -l | tr -d ' ')" = "5" ] && ok "--kind-table prints header + separator + 3 rows" || no "--kind-table line count: $(printf '%s\n' "$KT" | wc -l)"
-printf '%s\n' "$KT" | grep -q '^| `file` | `test -f ' && ok "--kind-table file row = test -f" || no "--kind-table file row"
-printf '%s\n' "$KT" | grep -q "^| \`symbol\` | \`grep -nE -- '<escaped name>'" && ok "--kind-table symbol row = grep -nE --" || no "--kind-table symbol row"
-printf '%s\n' "$KT" | grep -q '(type\\|interface\\|class\\|enum)\[\[:space:\]\]+<escaped name>(\[^\[:alnum:\]_\]\\|\$)' && ok "--kind-table type row = portable ERE (markdown-escaped |)" || no "--kind-table type row"
+grep -q '^| `file` | `test -f ' < <(printf '%s\n' "$KT") && ok "--kind-table file row = test -f" || no "--kind-table file row"
+grep -q "^| \`symbol\` | \`grep -nE -- '<escaped name>'" < <(printf '%s\n' "$KT") && ok "--kind-table symbol row = grep -nE --" || no "--kind-table symbol row"
+grep -q '(type\\|interface\\|class\\|enum)\[\[:space:\]\]+<escaped name>(\[^\[:alnum:\]_\]\\|\$)' < <(printf '%s\n' "$KT") && ok "--kind-table type row = portable ERE (markdown-escaped |)" || no "--kind-table type row"
 grep -q '\\s\|\\b' <<<"$KT" && no "--kind-table carries a GNU-ism (\\s or \\b)" || ok "--kind-table has no \\s / \\b"
 
 # ============================================================================ SEAMS
@@ -347,33 +347,33 @@ section() { awk -v from="$2" -v to="$3" 'on && $0 ~ to { exit } $0 ~ from { on =
 em_gate_ok() {   # exit 0 iff the poll-loop gate section of $1 cites the script + decision + phrase
   local s; s="$(section "$1" 'v12 outputs_verified gate' 'Lane-collision gate')"
   [ -n "$s" ] || return 1
-  printf '%s\n' "$s" | grep -q 'verify-provides\.sh' || return 1
-  printf '%s\n' "$s" | grep -q 'provides_mismatch' || return 1
-  printf '%s\n' "$s" | grep -q 'regardless of the worker' || return 1
+  grep -q 'verify-provides\.sh' < <(printf '%s\n' "$s") || return 1
+  grep -q 'provides_mismatch' < <(printf '%s\n' "$s") || return 1
+  grep -q 'regardless of the worker' < <(printf '%s\n' "$s") || return 1
   return 0
 }
 em_gate_ok "$EM" && ok "EM §v12 outputs_verified gate cites verify-provides.sh + provides_mismatch + 'regardless of the worker'" || no "EM poll-loop gate seam"
-section "$EM" 'v12 outputs_verified gate' 'Lane-collision gate' | grep -q 'worker_result_absent' && ok "EM gate handles the dead-worker case (worker_result_absent)" || no "EM gate lacks worker_result_absent"
-section "$EM" 'v12 outputs_verified gate' 'Lane-collision gate' | grep -q 'legacy_brief' && ok "EM gate carries D1 routing (legacy_brief)" || no "EM gate lacks D1 legacy_brief routing"
+grep -q 'worker_result_absent' < <(section "$EM" 'v12 outputs_verified gate' 'Lane-collision gate') && ok "EM gate handles the dead-worker case (worker_result_absent)" || no "EM gate lacks worker_result_absent"
+grep -q 'legacy_brief' < <(section "$EM" 'v12 outputs_verified gate' 'Lane-collision gate') && ok "EM gate carries D1 routing (legacy_brief)" || no "EM gate lacks D1 legacy_brief routing"
 em_routes_ok() {   # exit 0 iff the gate section of $1 routes BOTH non-disk-wins cells to a checkpoint
   local s; s="$(section "$1" 'v12 outputs_verified gate' 'Lane-collision gate')"
   [ -n "$s" ] || return 1
-  printf '%s\n' "$s" | grep -q 'partial with no provides gap' || return 1          # Step 1 carve-out ⇒ checkpoint
-  printf '%s\n' "$s" | grep -q 'Step 1 carve-out' || return 1
-  printf '%s\n' "$s" | grep -q 'worker_result_absent and provides unverifiable' || return 1   # ABSENT × unverifiable ⇒ checkpoint
+  grep -q 'partial with no provides gap' < <(printf '%s\n' "$s") || return 1          # Step 1 carve-out ⇒ checkpoint
+  grep -q 'Step 1 carve-out' < <(printf '%s\n' "$s") || return 1
+  grep -q 'worker_result_absent and provides unverifiable' < <(printf '%s\n' "$s") || return 1   # ABSENT × unverifiable ⇒ checkpoint
   return 0
 }
 em_routes_ok "$EM" && ok "EM gate routes 'partial with no provides gap' (Step 1 carve-out) AND ABSENT-on-unverifiable to a checkpoint" || no "EM gate routing seam (carve-out / absent-on-unverifiable)"
-section "$EM" 'v12 outputs_verified gate' 'Lane-collision gate' | grep -q 'disk.source == "verify-provides.sh"' && ok "EM 'worker_result_absent: disk verified' record is gated on disk.source == verify-provides.sh" || no "EM absent-record not gated on disk.source"
-section "$EM" 'v12 outputs_verified gate' 'Lane-collision gate' | grep -q 'bare token after `Subtask`' && ok "EM gate pins the subtask_id shape (bare anchor token)" || no "EM gate lacks the subtask_id shape clause"
+grep -q 'disk.source == "verify-provides.sh"' < <(section "$EM" 'v12 outputs_verified gate' 'Lane-collision gate') && ok "EM 'worker_result_absent: disk verified' record is gated on disk.source == verify-provides.sh" || no "EM absent-record not gated on disk.source"
+grep -q 'bare token after `Subtask`' < <(section "$EM" 'v12 outputs_verified gate' 'Lane-collision gate') && ok "EM gate pins the subtask_id shape (bare anchor token)" || no "EM gate lacks the subtask_id shape clause"
 grep -q 'bare token the brief.s contract anchor names' "$SCRIPT" && ok "script header pins the subtask_id shape (bare anchor token)" || no "script header lacks the subtask_id shape clause"
 grep -q '^\*\*Tool call tracking:\*\*.*verify-provides\.sh' "$EM" && ok "EM tool-call tracking notes the +1 Bash per subtask" || no "EM tool-call tracking lacks the verify-provides.sh note"
 pointer_section_ok() {   # exit 0 iff section <from>..<to> of $1 cites --kind-table AND restates neither a table row nor a GNU-ism
   local s; s="$(section "$1" "$2" "$3")"
   [ -n "$s" ] || return 1
-  printf '%s\n' "$s" | grep -q -- '--kind-table' || return 1                # the pointer
-  printf '%s\n' "$s" | grep -q '\\s\|\\b' && return 1                       # no GNU-only \s / \b (BSD grep false-FAILs)
-  printf '%s\n' "$s" | grep -q '^| `symbol`\|^| `type`' && return 1         # no second copy of the kind-table rows
+  grep -q -- '--kind-table' < <(printf '%s\n' "$s") || return 1                # the pointer
+  grep -q '\\s\|\\b' < <(printf '%s\n' "$s") && return 1                       # no GNU-only \s / \b (BSD grep false-FAILs)
+  grep -q '^| `symbol`\|^| `type`' < <(printf '%s\n' "$s") && return 1         # no second copy of the kind-table rows
   return 0
 }
 em_step2b_ok()    { pointer_section_ok "$1" 'Step 2b — Pre-Spawn Verification Gate' 'CHECKPOINT format'; }
@@ -382,22 +382,22 @@ em_step2b_ok "$EM" && ok "EM Step 2b points at --kind-table and restates NO tabl
 skill_gate_ok "$ASYNC" && ok "async-orchestration §Pre-Spawn Verification Gate points at --kind-table and restates NO table row / GNU-ism" || no "async-orchestration §Pre-Spawn Verification Gate: missing pointer, restated table row, or \\s / \\b GNU-ism"
 
 sup_single="$(section "$SUP" '#### Single-Agent Path' '#### Sequential Path')"
-printf '%s\n' "$sup_single" | grep -q 'verify-provides\.sh.*--root \.' && ok "Supervisor Single-Agent step 3 cites verify-provides.sh with --root ." || no "Supervisor Single-Agent gate seam"
+grep -q 'verify-provides\.sh.*--root \.' < <(printf '%s\n' "$sup_single") && ok "Supervisor Single-Agent step 3 cites verify-provides.sh with --root ." || no "Supervisor Single-Agent gate seam"
 sup_seq="$(section "$SUP" '#### Sequential Path' '#### Parallel Path')"
-printf '%s\n' "$sup_seq" | grep -q 'verify-provides\.sh.*--root \.' && ok "Supervisor Sequential gate cites verify-provides.sh with --root ." || no "Supervisor Sequential gate seam"
-printf '%s\n' "$sup_single" | grep -q 'pre-spawn' && no "Supervisor step 3 still calls the poll-loop gate 'pre-spawn'" || ok "Supervisor step 3 no longer mislabels the poll-loop gate as pre-spawn"
-printf '%s\n' "$sup_single" | grep -q 'Step 1 carve-out' && ok "Supervisor Single-Agent step 3 states the partial-with-empty-gap carve-out (retry/pause, not pass)" || no "Supervisor Single-Agent step 3 lacks the Step 1 carve-out clause"
-printf '%s\n' "$sup_seq" | grep -q 'Step 1 carve-out' && ok "Supervisor Sequential gate states the Step 1 carve-out" || no "Supervisor Sequential gate lacks the Step 1 carve-out clause"
-printf '%s\n' "$sup_single" | grep -q 'bare token after `Subtask`' && ok "Supervisor step 3 pins the subtask_id shape (bare anchor token)" || no "Supervisor step 3 lacks the subtask_id shape clause"
-printf '%s\n' "$sup_single" | grep -q 'never a pass' && ok "Supervisor step 3: absent WORKER_RESULT on an unverifiable contract is a pause, never a pass" || no "Supervisor step 3 lacks the absent-on-unverifiable clause"
+grep -q 'verify-provides\.sh.*--root \.' < <(printf '%s\n' "$sup_seq") && ok "Supervisor Sequential gate cites verify-provides.sh with --root ." || no "Supervisor Sequential gate seam"
+grep -q 'pre-spawn' < <(printf '%s\n' "$sup_single") && no "Supervisor step 3 still calls the poll-loop gate 'pre-spawn'" || ok "Supervisor step 3 no longer mislabels the poll-loop gate as pre-spawn"
+grep -q 'Step 1 carve-out' < <(printf '%s\n' "$sup_single") && ok "Supervisor Single-Agent step 3 states the partial-with-empty-gap carve-out (retry/pause, not pass)" || no "Supervisor Single-Agent step 3 lacks the Step 1 carve-out clause"
+grep -q 'Step 1 carve-out' < <(printf '%s\n' "$sup_seq") && ok "Supervisor Sequential gate states the Step 1 carve-out" || no "Supervisor Sequential gate lacks the Step 1 carve-out clause"
+grep -q 'bare token after `Subtask`' < <(printf '%s\n' "$sup_single") && ok "Supervisor step 3 pins the subtask_id shape (bare anchor token)" || no "Supervisor step 3 lacks the subtask_id shape clause"
+grep -q 'never a pass' < <(printf '%s\n' "$sup_single") && ok "Supervisor step 3: absent WORKER_RESULT on an unverifiable contract is a pause, never a pass" || no "Supervisor step 3 lacks the absent-on-unverifiable clause"
 
-section "$WORKER" 'verify own `provides:`' 'Step 5.65' | grep -q 'verify-provides\.sh' && ok "worker Step 5.5 cites verify-provides.sh" || no "worker Step 5.5 seam"
+grep -q 'verify-provides\.sh' < <(section "$WORKER" 'verify own `provides:`' 'Step 5.65') && ok "worker Step 5.5 cites verify-provides.sh" || no "worker Step 5.5 seam"
 w55="$(section "$WORKER" 'verify own `provides:`' 'Step 5.65')"
-printf '%s\n' "$w55" | grep -q 'verify-provides\.sh.*--root \.' && no "worker Step 5.5 hard-codes --root . (wrong tree on the Parallel path: Bash cwd is the main checkout)" || ok "worker Step 5.5 does not hard-code --root ."
-printf '%s\n' "$w55" | grep -qi 'worktree.*ABSOLUTE path on the Parallel path' && ok "worker Step 5.5 passes the worktree's absolute path on the Parallel path" || no "worker Step 5.5 lacks the Parallel-path worktree --root clause"
+grep -q 'verify-provides\.sh.*--root \.' < <(printf '%s\n' "$w55") && no "worker Step 5.5 hard-codes --root . (wrong tree on the Parallel path: Bash cwd is the main checkout)" || ok "worker Step 5.5 does not hard-code --root ."
+grep -qi 'worktree.*ABSOLUTE path on the Parallel path' < <(printf '%s\n' "$w55") && ok "worker Step 5.5 passes the worktree's absolute path on the Parallel path" || no "worker Step 5.5 lacks the Parallel-path worktree --root clause"
 grep -q 'present' "$WORKER" && grep -q 'missing' "$WORKER" && ok "worker.md keeps the present/missing enum tokens (check-contract-parity.sh)" || no "worker.md lost present/missing"
-printf '%s\n' "$w55" | grep -q 'brief_unreadable.*jq_missing' && printf '%s\n' "$w55" | grep -q 'name the reason in `summary`' && ok "worker Step 5.5 covers the field-less unverifiable reasons (brief_unreadable / jq_missing: empty fields, reason in summary)" || no "worker Step 5.5 lacks the brief_unreadable / jq_missing clause"
-printf '%s\n' "$w55" | grep -q 'subtask_not_found.*name it in `summary`' && ok "worker Step 5.5 distinguishes subtask_not_found (contracts present, anchor absent — named in summary) from no_contracts" || no "worker Step 5.5 conflates subtask_not_found with no_contracts"
+grep -q 'brief_unreadable.*jq_missing' < <(printf '%s\n' "$w55") && grep -q 'name the reason in `summary`' < <(printf '%s\n' "$w55") && ok "worker Step 5.5 covers the field-less unverifiable reasons (brief_unreadable / jq_missing: empty fields, reason in summary)" || no "worker Step 5.5 lacks the brief_unreadable / jq_missing clause"
+grep -q 'subtask_not_found.*name it in `summary`' < <(printf '%s\n' "$w55") && ok "worker Step 5.5 distinguishes subtask_not_found (contracts present, anchor absent — named in summary) from no_contracts" || no "worker Step 5.5 conflates subtask_not_found with no_contracts"
 
 DOC_KT="$(awk '/<!-- kind-table:begin -->/ { on = 1; next } /<!-- kind-table:end -->/ { on = 0 } on { print }' "$SCHEMAS")"
 [ -n "$DOC_KT" ] && ok "RESULT_SCHEMAS.md has the kind-table marker block" || no "RESULT_SCHEMAS.md marker block missing/empty"
@@ -471,7 +471,7 @@ else
   else
     ok "MUTATION CONTROL: restating a kind-table row (with \\s / \\b) inside the skill's gate section makes its assertion fail"
   fi
-  section "$MUT4" '^## Pre-Spawn Verification Gate' '^## Scope Expansion Adjudication' | grep -q -- '--kind-table' && ok "skill-gate mutant still carries the --kind-table pointer (it fails on the restated row, not on a broken section extraction)" || no "skill-gate mutant lost the pointer — the control is failing for the wrong reason"
+  grep -q -- '--kind-table' < <(section "$MUT4" '^## Pre-Spawn Verification Gate' '^## Scope Expansion Adjudication') && ok "skill-gate mutant still carries the --kind-table pointer (it fails on the restated row, not on a broken section extraction)" || no "skill-gate mutant lost the pointer — the control is failing for the wrong reason"
 fi
 
 echo

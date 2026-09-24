@@ -82,7 +82,7 @@ D1="$(fresh_stub_dir)"
 write_pending_then_settle_stub "$D1" "SUCCESS"
 OUT1="$(GH="$D1/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 10 --interval 1 --required-only)"
 RC1=$?
-if [ "$RC1" -eq 0 ] && printf '%s' "$OUT1" | grep -qE '^SETTLED sha=deadbeef00 required=green'; then
+if [ "$RC1" -eq 0 ] && grep -qE '^SETTLED sha=deadbeef00 required=green' < <(printf '%s' "$OUT1"); then
   ok "pending->green: $OUT1"
 else
   no "pending->green wrong (rc=$RC1 out='$OUT1')"
@@ -94,7 +94,7 @@ D2="$(fresh_stub_dir)"
 write_pending_then_settle_stub "$D2" "FAILURE"
 OUT2="$(GH="$D2/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 10 --interval 1 --required-only)"
 RC2=$?
-if [ "$RC2" -eq 0 ] && printf '%s' "$OUT2" | grep -qE '^SETTLED sha=deadbeef00 required=red'; then
+if [ "$RC2" -eq 0 ] && grep -qE '^SETTLED sha=deadbeef00 required=red' < <(printf '%s' "$OUT2"); then
   ok "pending->red: $OUT2"
 else
   no "pending->red wrong (rc=$RC2 out='$OUT2')"
@@ -139,7 +139,7 @@ chmod +x "$D3/gh"
 OUT3="$(GH="$D3/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 10 --interval 1 --required-only)"
 RC3=$?
 CALLS3="$(cat "$D3/count" 2>/dev/null || echo 0)"
-if [ "$RC3" -eq 0 ] && printf '%s' "$OUT3" | grep -qE '^SETTLED sha=deadbeef00 required=green' && [ "$CALLS3" -ge 2 ]; then
+if [ "$RC3" -eq 0 ] && grep -qE '^SETTLED sha=deadbeef00 required=green' < <(printf '%s' "$OUT3") && [ "$CALLS3" -ge 2 ]; then
   ok "wrong-sha->right-sha: settled only once the sha matched ($OUT3, polls=$CALLS3)"
 else
   no "wrong-sha->right-sha wrong (rc=$RC3 out='$OUT3' polls=$CALLS3)"
@@ -176,7 +176,7 @@ OUT4="$(GH="$D4/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 2 --interval 1 --requ
 RC4=$?
 ELAPSED4=$((SECONDS - START4))
 # Bound (2s) + one poll interval (1s) + generous scheduling slack.
-if [ "$RC4" -eq 0 ] && printf '%s' "$OUT4" | grep -qE '^ELAPSED sha=deadbeef00' && [ "$ELAPSED4" -le 8 ]; then
+if [ "$RC4" -eq 0 ] && grep -qE '^ELAPSED sha=deadbeef00' < <(printf '%s' "$OUT4") && [ "$ELAPSED4" -le 8 ]; then
   ok "never-settles: ELAPSED within bound+interval ($OUT4, wall=${ELAPSED4}s)"
 else
   no "never-settles wrong (rc=$RC4 out='$OUT4' wall=${ELAPSED4}s)"
@@ -219,7 +219,7 @@ chmod +x "$D5/gh"
 OUT5="$(GH="$D5/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 10 --interval 1 --review-check-pattern '*review*')"
 RC5=$?
 CALLS5="$(cat "$D5/count" 2>/dev/null || echo 0)"
-if [ "$RC5" -eq 0 ] && printf '%s' "$OUT5" | grep -qE '^SETTLED sha=deadbeef00 required=green review_producing=settled' && [ "$CALLS5" -ge 2 ]; then
+if [ "$RC5" -eq 0 ] && grep -qE '^SETTLED sha=deadbeef00 required=green review_producing=settled' < <(printf '%s' "$OUT5") && [ "$CALLS5" -ge 2 ]; then
   ok "review-check-pattern scope: waited for claude-review too ($OUT5, polls=$CALLS5)"
 else
   no "review-check-pattern scope wrong (rc=$RC5 out='$OUT5' polls=$CALLS5)"
@@ -249,7 +249,7 @@ EOF
 chmod +x "$D6/gh"
 OUT6="$(GH="$D6/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 10 --interval 1 --required-only)"
 RC6=$?
-if [ "$RC6" -eq 0 ] && printf '%s' "$OUT6" | grep -qE '^SETTLED sha=deadbeef00 required=green'; then
+if [ "$RC6" -eq 0 ] && grep -qE '^SETTLED sha=deadbeef00 required=green' < <(printf '%s' "$OUT6"); then
   ok "required-only scope: settled on the FIRST poll, ignoring claude-review's IN_PROGRESS ($OUT6)"
 else
   no "required-only scope wrong (rc=$RC6 out='$OUT6')"
@@ -265,7 +265,7 @@ EOF
 chmod +x "$D7/gh"
 OUT7="$(GH="$D7/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 1 --interval 1 --required-only)"
 RC7=$?
-if [ "$RC7" -eq 0 ] && printf '%s' "$OUT7" | grep -q '^ELAPSED'; then
+if [ "$RC7" -eq 0 ] && grep -q '^ELAPSED' < <(printf '%s' "$OUT7"); then
   ok "unusable gh: exit 0, degrades to ELAPSED ($OUT7)"
 else
   no "unusable gh wrong (rc=$RC7 out='$OUT7')"
@@ -275,7 +275,7 @@ rm -rf "$D7"
 echo "== 8. bad usage (missing --sha/--bound) => exit 0, ELAPSED, never a non-zero exit =="
 OUT8="$(bash "$SUT" "$PR" 2>/dev/null)"
 RC8=$?
-if [ "$RC8" -eq 0 ] && printf '%s' "$OUT8" | grep -q '^ELAPSED'; then
+if [ "$RC8" -eq 0 ] && grep -q '^ELAPSED' < <(printf '%s' "$OUT8"); then
   ok "bad usage: exit 0, ELAPSED ($OUT8)"
 else
   no "bad usage wrong (rc=$RC8 out='$OUT8')"
@@ -318,7 +318,7 @@ D9="$(fresh_stub_dir)"
 write_protection_failure_stub "$D9" "gh: Resource not accessible by integration (HTTP 403)"
 OUT9="$(GH="$D9/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 10 --interval 1 --required-only)"
 RC9=$?
-if [ "$RC9" -eq 0 ] && printf '%s' "$OUT9" | grep -qE '^SETTLED sha=deadbeef00 required=unknown'; then
+if [ "$RC9" -eq 0 ] && grep -qE '^SETTLED sha=deadbeef00 required=unknown' < <(printf '%s' "$OUT9"); then
   ok "protection 403: required=unknown, not green ($OUT9)"
 else
   no "protection 403 wrong (rc=$RC9 out='$OUT9') -- must never claim required=green on an unreadable read"
@@ -330,7 +330,7 @@ D10="$(fresh_stub_dir)"
 write_protection_failure_stub "$D10" "gh: Branch not protected (HTTP 404)"
 OUT10="$(GH="$D10/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 10 --interval 1 --required-only)"
 RC10=$?
-if [ "$RC10" -eq 0 ] && printf '%s' "$OUT10" | grep -qE '^SETTLED sha=deadbeef00 required=green'; then
+if [ "$RC10" -eq 0 ] && grep -qE '^SETTLED sha=deadbeef00 required=green' < <(printf '%s' "$OUT10"); then
   ok "genuinely unprotected (404): required=green, not unknown ($OUT10)"
 else
   no "genuinely unprotected (404) wrong (rc=$RC10 out='$OUT10') -- a verified-empty required set must not be punished as unknown"

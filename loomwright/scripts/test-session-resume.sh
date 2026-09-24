@@ -130,7 +130,7 @@ seed_rules_file "$RB" "allbad.json" '[
 ]'
 ctxB="$(run_hook_ctx "$RB" resume)"; rcB="$(lastrc)"
 [ "$rcB" -eq 0 ] && ok "(b) exits 0" || no "(b) expected exit 0, got $rcB"
-if printf '%s\n' "$ctxB" | grep -qF -- "$NUDGE_LINE"; then
+if grep -qF -- "$NUDGE_LINE" < <(printf '%s\n' "$ctxB"); then
   ok "(b) nudge fires for an all-invalid store (proves reader-output gate, not file presence)"
 else
   no "(b) nudge should fire when the store holds only invalid rules"
@@ -144,7 +144,7 @@ seed_rules_file "$RC1" "good.json" '[
 ]'
 ctxC="$(run_hook_ctx "$RC1" resume)"; rcC="$(lastrc)"
 [ "$rcC" -eq 0 ] && ok "(c) exits 0" || no "(c) expected exit 0, got $rcC"
-if printf '%s\n' "$ctxC" | grep -qF -- "$NUDGE_LINE"; then
+if grep -qF -- "$NUDGE_LINE" < <(printf '%s\n' "$ctxC"); then
   no "(c) nudge must NOT fire when ≥1 valid rule is present"
 else
   ok "(c) no nudge when a valid rule is present"
@@ -171,7 +171,7 @@ echo "== (e) .supervisor/-absent ⇒ no nudge (bail preserved, no crash) =="
 RE="$(new_repo)"   # NO make_plugin_active ⇒ no .supervisor/ ⇒ hook bails before nudge
 ctxE="$(run_hook_ctx "$RE" resume)"; rcE="$(lastrc)"
 [ "$rcE" -eq 0 ] && ok "(e) exits 0 with no .supervisor/" || no "(e) expected exit 0, got $rcE"
-if printf '%s\n' "$ctxE" | grep -qF -- "$NUDGE_LINE"; then
+if grep -qF -- "$NUDGE_LINE" < <(printf '%s\n' "$ctxE"); then
   no "(e) nudge must NOT fire in a truly-fresh repo (no .supervisor/)"
 else
   ok "(e) no nudge when .supervisor/ absent (bail preserved)"
@@ -185,7 +185,7 @@ RF="$(new_repo)"; make_plugin_active "$RF"
 # .supervisor/logs/ here nothing is pending either, so the output is empty.
 outF="$( cd "$RF" && printf '{"source":"startup"}' | bash "$HOOK" )"; rcF=$?
 [ "$rcF" -eq 0 ] && ok "(f) exits 0 on startup source" || no "(f) expected exit 0 on startup, got $rcF"
-if printf '%s\n' "$outF" | grep -qF -- "$NUDGE_LINE"; then
+if grep -qF -- "$NUDGE_LINE" < <(printf '%s\n' "$outF"); then
   no "(f) startup source must not carry the house-rules nudge"
 else
   ok "(f) startup source carries no house-rules nudge"
@@ -204,7 +204,7 @@ for optout in 0 off false no; do
             | jq -r '.hookSpecificOutput.additionalContext // ""' 2>/dev/null )"; rcG=$?
   [ "$rcG" -eq 0 ] && ok "(g) exits 0 with LOOMWRIGHT_RULES_NUDGE=$optout" \
     || no "(g) expected exit 0 with opt-out=$optout, got $rcG"
-  if printf '%s\n' "$ctxG" | grep -qF -- "$NUDGE_LINE"; then
+  if grep -qF -- "$NUDGE_LINE" < <(printf '%s\n' "$ctxG"); then
     no "(g) nudge must be silenced when LOOMWRIGHT_RULES_NUDGE=$optout"
   else
     ok "(g) opt-out=$optout suppresses the nudge"
@@ -212,7 +212,7 @@ for optout in 0 off false no; do
 done
 # Control: the SAME repo with no opt-out DOES nudge (proves the suppression is the env var, not the repo).
 ctxGc="$(run_hook_ctx "$RG" resume)"
-if printf '%s\n' "$ctxGc" | grep -qF -- "$NUDGE_LINE"; then
+if grep -qF -- "$NUDGE_LINE" < <(printf '%s\n' "$ctxGc"); then
   ok "(g) control — same repo nudges without the opt-out (marker was never stamped under opt-out)"
 else
   no "(g) control — repo should nudge once the opt-out is removed"
@@ -279,7 +279,7 @@ test_curation_nudge_fires_on_startup() {
   r="$(new_repo)"; make_plugin_active "$r"; make_curation_pending "$r"
   ctx="$(run_hook_ctx "$r" startup)"; rc="$(lastrc)"
   [ "$rc" -eq 0 ] && ok "(h) exits 0 on startup" || no "(h) expected exit 0 on startup, got $rc"
-  if printf '%s\n' "$ctx" | grep -qF -- "$CURATION_MARK"; then
+  if grep -qF -- "$CURATION_MARK" < <(printf '%s\n' "$ctx"); then
     ok "(h) curation nudge FIRES on source=startup (the case the shared gate bails on)"
   else
     no "(h) curation nudge did NOT fire on startup — the feature never reaches a fresh session"
@@ -288,10 +288,10 @@ test_curation_nudge_fires_on_startup() {
   # own count. A single shared pattern silently degrades into testing whichever
   # half still matches: the fixture makes BOTH halves ready, so a regression that
   # dropped the count from one line would sail through on the other's text.
-  printf '%s\n' "$ctx" | grep -qE '/dreaming [0-9]+ unreflected session log' \
+  grep -qE '/dreaming [0-9]+ unreflected session log' < <(printf '%s\n' "$ctx") \
     && ok "(h) the /dreaming half of the startup line carries a real COUNT, not merely a date" \
     || no "(h) the /dreaming half of the startup line carries no count: $ctx"
-  printf '%s\n' "$ctx" | grep -qE '/insights [0-9]+ new session log' \
+  grep -qE '/insights [0-9]+ new session log' < <(printf '%s\n' "$ctx") \
     && ok "(h) the /insights half of the startup line carries a real COUNT, not merely a date" \
     || no "(h) the /insights half of the startup line carries no count: $ctx"
   # ...and the same line still fires on a resume source (a DIFFERENT repo, so the
@@ -300,7 +300,7 @@ test_curation_nudge_fires_on_startup() {
   r2="$(new_repo)"; make_plugin_active "$r2"; make_curation_pending "$r2"
   ctx2="$(run_hook_ctx "$r2" resume)"; rc2="$(lastrc)"
   [ "$rc2" -eq 0 ] && ok "(h) exits 0 on resume" || no "(h) expected exit 0 on resume, got $rc2"
-  printf '%s\n' "$ctx2" | grep -qF -- "$CURATION_MARK" \
+  grep -qF -- "$CURATION_MARK" < <(printf '%s\n' "$ctx2") \
     && ok "(h) curation nudge also fires on source=resume" \
     || no "(h) curation nudge did not fire on resume"
 }
@@ -330,18 +330,18 @@ test_startup_emits_nothing_else() {
             | HOME="$fakehome" PATH="$shim:$PATH" bash "$HOOK" )"; rc=$?
   [ "$rc" -eq 0 ] && ok "(i) exits 0" || no "(i) expected exit 0, got $rc"
 
-  printf '%s\n' "$out" | grep -qF -- "$CURATION_MARK" \
+  grep -qF -- "$CURATION_MARK" < <(printf '%s\n' "$out") \
     && ok "(i) the curation line IS present (control — the absence checks below are not vacuous)" \
     || no "(i) control failed: the curation line is missing, so the absence checks prove nothing"
 
   for probe in "prior-session context" "Recovery hints" "In-progress briefs" "Recent failed briefs" "state.md" "notify-desktop.sh"; do
-    if printf '%s\n' "$out" | grep -qF -- "$probe"; then
+    if grep -qF -- "$probe" < <(printf '%s\n' "$out"); then
       no "(i) startup output must NOT contain '$probe'"
     else
       ok "(i) absent: '$probe'"
     fi
   done
-  if printf '%s\n' "$out" | grep -qF -- "$NUDGE_LINE"; then
+  if grep -qF -- "$NUDGE_LINE" < <(printf '%s\n' "$out"); then
     no "(i) startup output must NOT contain the house-rules nudge"
   else
     ok "(i) absent: the house-rules nudge"
@@ -401,7 +401,7 @@ test_startup_silent_in_subdir_of_plugin_repo() {
   # Control: from the repo ROOT the same fixture DOES nudge — so the silence
   # below is attributable to the cwd, not to an empty corpus.
   ctl="$(run_hook_raw "$r" startup)"
-  printf '%s\n' "$ctl" | grep -qF -- "$CURATION_MARK" \
+  grep -qF -- "$CURATION_MARK" < <(printf '%s\n' "$ctl") \
     && ok "(j) control: the same fixture DOES nudge from the repo root" \
     || no "(j) control failed: fixture produced no nudge at the root, so the subdir case proves nothing"
   # Clear the debounce marker the control just stamped, or the subdir run would
@@ -411,7 +411,7 @@ test_startup_silent_in_subdir_of_plugin_repo() {
   out="$(run_hook_raw "$sub" startup)"; rc="$(lastrc)"
   [ "$rc" -eq 0 ] && ok "(j) exits 0 from a subdirectory of a plugin-active repo" \
     || no "(j) expected exit 0 from a subdir, got $rc"
-  if printf '%s\n' "$out" | grep -qF -- "$CURATION_MARK"; then
+  if grep -qF -- "$CURATION_MARK" < <(printf '%s\n' "$out"); then
     no "(j) startup nudged from a SUBDIRECTORY — the cwd-relative .supervisor/ gate is gone (the probe's git-root fallback found the repo root)"
   else
     ok "(j) silent from a subdirectory of a plugin-active repo (cwd-relative gate holds)"
@@ -441,8 +441,7 @@ test_startup_envelope_reaches_the_model() {
   [ "$(printf '%s' "$out" | jq -r '.hookSpecificOutput.hookEventName // ""' 2>/dev/null)" = "SessionStart" ] \
     && ok "(k) .hookSpecificOutput.hookEventName == SessionStart" \
     || no "(k) missing/incorrect hookSpecificOutput.hookEventName"
-  printf '%s' "$out" | jq -r '.hookSpecificOutput.additionalContext // ""' 2>/dev/null \
-    | grep -qF -- "$CURATION_MARK" \
+  grep -qF -- "$CURATION_MARK" < <(printf '%s' "$out" | jq -r '.hookSpecificOutput.additionalContext // ""' 2>/dev/null) \
     && ok "(k) .hookSpecificOutput.additionalContext carries the curation line" \
     || no "(k) additionalContext does not carry the curation line"
   # A bare top-level additionalContext would be the failure mode; assert it is not that shape.
@@ -461,13 +460,13 @@ test_rules_nudge_surface_unchanged() {
   local r ctx_startup ctx_resume
   r="$(new_repo)"; make_plugin_active "$r"; make_curation_pending "$r"  # zero valid house rules
   ctx_startup="$(run_hook_ctx "$r" startup)"
-  printf '%s\n' "$ctx_startup" | grep -qF -- "$NUDGE_LINE" \
+  grep -qF -- "$NUDGE_LINE" < <(printf '%s\n' "$ctx_startup") \
     && no "(l) the house-rules nudge must NOT fire on startup" \
     || ok "(l) house-rules nudge does not fire on startup (surface unchanged)"
   local r2 ctx2
   r2="$(new_repo)"; make_plugin_active "$r2"; make_curation_pending "$r2"
   ctx2="$(run_hook_ctx "$r2" resume)"
-  printf '%s\n' "$ctx2" | grep -qF -- "$NUDGE_LINE" \
+  grep -qF -- "$NUDGE_LINE" < <(printf '%s\n' "$ctx2") \
     && ok "(l) house-rules nudge still fires on resume in the same repo shape" \
     || no "(l) house-rules nudge stopped firing on resume — its surface moved"
 }
@@ -480,7 +479,7 @@ test_curation_nudge_debounce_and_optout() {
   r="$(new_repo)"; make_plugin_active "$r"; make_curation_pending "$r"
   c1="$(run_hook_ctx "$r" startup)"
   c2="$(run_hook_ctx "$r" startup)"
-  printf '%s\n' "$c1" | grep -qF -- "$CURATION_MARK" \
+  grep -qF -- "$CURATION_MARK" < <(printf '%s\n' "$c1") \
     && ok "(m) first startup run shows the curation line" || no "(m) first run should show the line"
   [ -z "$c2" ] && ok "(m) second (debounced) run within 24h emits nothing" \
     || no "(m) second run should be debounced, got: $c2"
@@ -501,7 +500,7 @@ test_curation_nudge_debounce_and_optout() {
   # Control: the same repo DOES nudge once the opt-out is removed (proving the
   # suppression was the env var, and that no marker was stamped under opt-out).
   out="$(run_hook_ctx "$r2" startup)"
-  printf '%s\n' "$out" | grep -qF -- "$CURATION_MARK" \
+  grep -qF -- "$CURATION_MARK" < <(printf '%s\n' "$out") \
     && ok "(m) control — same repo nudges once the opt-out is removed" \
     || no "(m) control — repo should nudge without the opt-out"
 }

@@ -70,14 +70,14 @@ echo "== 1. query path overlapping a churn entry =="
 TMP="$(newrepo)"; write_fixture "$TMP"
 out="$( cd "$TMP" && bash "$READ" "src/auth/guard.ts" 2>/dev/null )"; rc=$?
 [ "$rc" -eq 0 ] && ok "exit 0 on hit" || no "non-zero exit on hit ($rc)"
-echo "$out" | grep -q "subordinate to CLAUDE.md" && ok "advisory banner present" || no "advisory banner missing"
-echo "$out" | grep -q "src/auth/guard.ts" && ok "names the churned path" || no "churned path not named"
-echo "$out" | grep -q "validation-parity" && ok "surfaces recurring class validation-parity" || no "class validation-parity missing"
-echo "$out" | grep -q "falsy-coercion" && ok "surfaces recurring class falsy-coercion" || no "class falsy-coercion missing"
-echo "$out" | grep -qE "flow stages:.*(self_heal|worker)" && ok "surfaces flow_stage(s)" || no "flow_stage missing"
-echo "$out" | grep -qi "self_heal_miss in prior rounds: yes" && ok "surfaces self_heal_miss=yes" || no "self_heal_miss not surfaced"
+grep -q "subordinate to CLAUDE.md" < <(echo "$out") && ok "advisory banner present" || no "advisory banner missing"
+grep -q "src/auth/guard.ts" < <(echo "$out") && ok "names the churned path" || no "churned path not named"
+grep -q "validation-parity" < <(echo "$out") && ok "surfaces recurring class validation-parity" || no "class validation-parity missing"
+grep -q "falsy-coercion" < <(echo "$out") && ok "surfaces recurring class falsy-coercion" || no "class falsy-coercion missing"
+grep -qE "flow stages:.*(self_heal|worker)" < <(echo "$out") && ok "surfaces flow_stage(s)" || no "flow_stage missing"
+grep -qi "self_heal_miss in prior rounds: yes" < <(echo "$out") && ok "surfaces self_heal_miss=yes" || no "self_heal_miss not surfaced"
 # guard.ts appears in entries 1 and 2 → ROUNDS should be 2, ENTRIES 2.
-echo "$out" | grep -qE "prior churn rounds: 2" && ok "round count = 2 for guard.ts" || no "round count wrong"
+grep -qE "prior churn rounds: 2" < <(echo "$out") && ok "round count = 2 for guard.ts" || no "round count wrong"
 rm -rf "$TMP"
 
 echo "== 2. query path with NO overlap =="
@@ -107,8 +107,8 @@ TMP="$(newrepo)"; write_fixture "$TMP"
 # for ANY path. Confirm querying app.ts (a real hit) does NOT surface the OLD line's class.
 out="$( cd "$TMP" && bash "$READ" "src/app.ts" 2>/dev/null )"; rc=$?
 [ "$rc" -eq 0 ] && ok "exit 0 with OLD line in corpus" || no "non-zero exit with OLD line ($rc)"
-echo "$out" | grep -q "count-drift" && ok "real hit (app.ts → count-drift) still surfaced" || no "real hit lost"
-echo "$out" | grep -q "legacy-class" && no "OLD no-changed_paths line wrongly contributed" || ok "OLD line skipped silently (no contribution)"
+grep -q "count-drift" < <(echo "$out") && ok "real hit (app.ts → count-drift) still surfaced" || no "real hit lost"
+grep -q "legacy-class" < <(echo "$out") && no "OLD no-changed_paths line wrongly contributed" || ok "OLD line skipped silently (no contribution)"
 rm -rf "$TMP"
 
 echo "== 4b. malformed JSONL line tolerated (skipped element-locally) =="
@@ -117,7 +117,7 @@ printf '%s\n' 'this is { not json at all' >> "$TMP/$CORPUS"
 printf '%s\n' '' >> "$TMP/$CORPUS"   # blank line too
 out="$( cd "$TMP" && bash "$READ" "src/auth/guard.ts" 2>/dev/null )"; rc=$?
 [ "$rc" -eq 0 ] && ok "exit 0 despite malformed/blank lines" || no "non-zero exit with malformed lines ($rc)"
-echo "$out" | grep -q "validation-parity" && ok "valid lines still parsed past malformed line" || no "malformed line aborted parse"
+grep -q "validation-parity" < <(echo "$out") && ok "valid lines still parsed past malformed line" || no "malformed line aborted parse"
 rm -rf "$TMP"
 
 echo "== 4c. stdin read ONLY when no args (args take precedence — no-hang contract) =="
@@ -125,15 +125,15 @@ TMP="$(newrepo)"; write_fixture "$TMP"
 # (a) No args: newline-separated paths piped on stdin are used.
 out="$( cd "$TMP" && printf '%s\n' "src/auth/guard.ts" | bash "$READ" 2>/dev/null )"; rc=$?
 [ "$rc" -eq 0 ] && ok "exit 0 reading paths from stdin (no args)" || no "non-zero exit stdin ($rc)"
-echo "$out" | grep -q "src/auth/guard.ts" && ok "no-args: stdin path matched" || no "no-args: stdin path not matched"
+grep -q "src/auth/guard.ts" < <(echo "$out") && ok "no-args: stdin path matched" || no "no-args: stdin path not matched"
 # (b) Args present: stdin is IGNORED entirely. This is the regression guard for the
 #     blocks-on-stdin hang — an args-bearing call must NEVER consume stdin (a path supplied
 #     only via stdin must not influence the result when an arg is given), so it can never
 #     hang waiting on an open-but-idle stdin in a non-TTY caller (CI / hook / inline Bash).
 out2="$( cd "$TMP" && printf '%s\n' "src/auth/guard.ts" | bash "$READ" "src/app.ts" 2>/dev/null )"; rc=$?
 [ "$rc" -eq 0 ] && ok "exit 0 with args + piped stdin" || no "non-zero exit args+stdin ($rc)"
-echo "$out2" | grep -q "src/app.ts" && ok "args-present: arg path matched" || no "args-present: arg path not matched"
-echo "$out2" | grep -q "src/auth/guard.ts" && no "args-present: stdin path leaked (stdin NOT ignored — hang risk)" || ok "args-present: stdin ignored (no-hang contract holds)"
+grep -q "src/app.ts" < <(echo "$out2") && ok "args-present: arg path matched" || no "args-present: arg path not matched"
+grep -q "src/auth/guard.ts" < <(echo "$out2") && no "args-present: stdin path leaked (stdin NOT ignored — hang risk)" || ok "args-present: stdin ignored (no-hang contract holds)"
 rm -rf "$TMP"
 
 echo "== 4d. no paths at all → exit 0, quiet =="
@@ -150,11 +150,11 @@ TMP="$(newrepo)"; write_fixture "$TMP"
 #  - empty categories → classes AND stages have nothing to aggregate → "(none recorded)" fallback.
 out="$( cd "$TMP" && bash "$READ" "src/lonely.ts" 2>/dev/null )"; rc=$?
 [ "$rc" -eq 0 ] && ok "exit 0 on single empty-categories hit" || no "non-zero exit single-empty hit ($rc)"
-echo "$out" | grep -q "src/lonely.ts" && ok "names the lonely churned path" || no "lonely path not named"
-echo "$out" | grep -qE "1 postmortem entry\b" && ok "singular \"entry\" pluralization (ENTRIES=1)" || no "singular \"entry\" not rendered"
-echo "$out" | grep -qE "1 postmortem entries" && no "rendered plural \"entries\" for a single entry" || ok "did not render plural for a single entry"
-echo "$out" | grep -q "recurring root-cause classes: (none recorded)" && ok "(none recorded) fallback for classes" || no "(none recorded) classes fallback missing"
-echo "$out" | grep -q "recurring flow stages: (none recorded)" && ok "(none recorded) fallback for stages" || no "(none recorded) stages fallback missing"
+grep -q "src/lonely.ts" < <(echo "$out") && ok "names the lonely churned path" || no "lonely path not named"
+grep -qE "1 postmortem entry\b" < <(echo "$out") && ok "singular \"entry\" pluralization (ENTRIES=1)" || no "singular \"entry\" not rendered"
+grep -qE "1 postmortem entries" < <(echo "$out") && no "rendered plural \"entries\" for a single entry" || ok "did not render plural for a single entry"
+grep -q "recurring root-cause classes: (none recorded)" < <(echo "$out") && ok "(none recorded) fallback for classes" || no "(none recorded) classes fallback missing"
+grep -q "recurring flow stages: (none recorded)" < <(echo "$out") && ok "(none recorded) fallback for stages" || no "(none recorded) stages fallback missing"
 rm -rf "$TMP"
 
 echo "== 4f. repo scoping: same-path entry from ANOTHER repo must NOT contribute =="
@@ -166,8 +166,8 @@ TMP="$(newrepo)"; write_fixture "$TMP"
 # (a) With origin=o/r, a query path overlapping an o/r entry STILL hits (scoping keeps own repo).
 out="$( cd "$TMP" && bash "$READ" "src/auth/guard.ts" 2>/dev/null )"; rc=$?
 [ "$rc" -eq 0 ] && ok "exit 0 with resolved CUR_REPO" || no "non-zero exit with resolved CUR_REPO ($rc)"
-echo "$out" | grep -q "src/auth/guard.ts" && ok "own-repo (o/r) hit still surfaced under scoping" || no "own-repo hit lost under scoping"
-echo "$out" | grep -q "validation-parity" && ok "own-repo class still surfaced under scoping" || no "own-repo class lost under scoping"
+grep -q "src/auth/guard.ts" < <(echo "$out") && ok "own-repo (o/r) hit still surfaced under scoping" || no "own-repo hit lost under scoping"
+grep -q "validation-parity" < <(echo "$out") && ok "own-repo class still surfaced under scoping" || no "own-repo class lost under scoping"
 # (b) Append a line with the SAME changed_paths but repo:"other/repo" — it must NOT contribute.
 jq -cn '{schema_version:1, number:7, repo:"other/repo", branch:"b7", pr_url:"u7",
          changed_paths:["src/cross/repo-only.ts"],
@@ -177,7 +177,7 @@ out2="$( cd "$TMP" && bash "$READ" "src/cross/repo-only.ts" 2>/dev/null )"; rc2=
 [ "$rc2" -eq 0 ] && ok "exit 0 querying a foreign-repo-only path" || no "non-zero exit on foreign-repo query ($rc2)"
 # Foreign-repo entry is the only match → scoping excludes it → NO hit → EMPTY output (no sentinel).
 [ -z "$out2" ] && ok "foreign-repo entry did NOT contribute → EMPTY (no false cross-repo hit)" || no "foreign-repo entry leaked output: [$out2]"
-echo "$out2" | grep -q "cross-repo-leak" && no "foreign-repo class leaked under scoping" || ok "foreign-repo class correctly excluded"
+grep -q "cross-repo-leak" < <(echo "$out2") && no "foreign-repo class leaked under scoping" || ok "foreign-repo class correctly excluded"
 rm -rf "$TMP"
 
 echo "== 4g. repo scoping is CASE-INSENSITIVE (GitHub slugs are case-insensitive) =="
@@ -188,8 +188,8 @@ TMP="$(newrepo)"; write_fixture "$TMP"
 ( cd "$TMP" && git remote add origin https://github.com/O/R.git )
 out="$( cd "$TMP" && bash "$READ" "src/auth/guard.ts" 2>/dev/null )"; rc=$?
 [ "$rc" -eq 0 ] && ok "exit 0 with mixed-case CUR_REPO" || no "non-zero exit with mixed-case CUR_REPO ($rc)"
-echo "$out" | grep -q "src/auth/guard.ts" && ok "case-insensitive: O/R hit against corpus o/r still surfaced" || no "case-insensitive same-repo hit dropped"
-echo "$out" | grep -q "validation-parity" && ok "case-insensitive: own-repo class still surfaced" || no "case-insensitive class lost"
+grep -q "src/auth/guard.ts" < <(echo "$out") && ok "case-insensitive: O/R hit against corpus o/r still surfaced" || no "case-insensitive same-repo hit dropped"
+grep -q "validation-parity" < <(echo "$out") && ok "case-insensitive: own-repo class still surfaced" || no "case-insensitive class lost"
 rm -rf "$TMP"
 
 echo "== 5. jq masked off PATH → exit 0, quiet (missing-tool fail-safe) =="

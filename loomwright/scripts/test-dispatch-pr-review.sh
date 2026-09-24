@@ -224,7 +224,7 @@ run_real() {
 # worktree_gone <repo> <wt_path> — the sibling is gone from disk AND the admin list.
 worktree_gone() {
   local repo="$1" wt="$2"
-  [ ! -d "$wt" ] && ! ( cd "$repo" && git worktree list 2>/dev/null | grep -qF "$wt" )
+  [ ! -d "$wt" ] && ! ( cd "$repo" && grep -qF "$wt" < <(git worktree list 2>/dev/null) )
 }
 
 # wait_for_no_worktree <repo> <wt_path> — poll until the detached wrapper's trap
@@ -283,7 +283,7 @@ pr_hash() {
 echo "== 1. ENABLED by default (no config, no flag) -> dispatch (AC7) =="
 WD="$(fresh_repo)"
 run_dispatch "$WD" "$PR"
-if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 1 ]; then
+if [ "$RUN_RC" -eq 0 ] && grep -q 'DRY_RUN_DISPATCH' < <(printf '%s' "$RUN_OUT") && [ "$(marker_count "$WD")" -eq 1 ]; then
   ok "enabled-by-default: exit 0, dispatch emitted, 1 marker"
 else
   no "enabled-by-default wrong (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"
@@ -293,7 +293,7 @@ rm -rf "$WD"
 echo "== 2. missing config file -> still dispatches (default ON), exit 0 =="
 WD="$(mktemp -d)"   # NO .supervisor at all
 run_dispatch "$WD" "$PR"
-if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH'; then
+if [ "$RUN_RC" -eq 0 ] && grep -q 'DRY_RUN_DISPATCH' < <(printf '%s' "$RUN_OUT"); then
   ok "missing-config: exit 0, dispatch emitted (default ON)"
 else
   no "missing-config wrong (rc=$RUN_RC out='$RUN_OUT')"
@@ -304,7 +304,7 @@ echo "== 3. config auto_review:true -> dispatch =="
 WD="$(fresh_repo)"
 printf '{"auto_review": true}\n' > "$WD/.supervisor/config.json"
 run_dispatch "$WD" "$PR"
-if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 1 ]; then
+if [ "$RUN_RC" -eq 0 ] && grep -q 'DRY_RUN_DISPATCH' < <(printf '%s' "$RUN_OUT") && [ "$(marker_count "$WD")" -eq 1 ]; then
   ok "config-enabled: dispatch emitted + 1 marker written"
 else
   no "config-enabled wrong (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"
@@ -314,7 +314,7 @@ rm -rf "$WD"
 echo "== 4. --auto-review flag (no config) -> dispatch =="
 WD="$(fresh_repo)"
 run_dispatch "$WD" "$PR" --auto-review
-if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 1 ]; then
+if [ "$RUN_RC" -eq 0 ] && grep -q 'DRY_RUN_DISPATCH' < <(printf '%s' "$RUN_OUT") && [ "$(marker_count "$WD")" -eq 1 ]; then
   ok "--auto-review: dispatch emitted + marker written without config"
 else
   no "--auto-review wrong (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"
@@ -328,7 +328,7 @@ run_dispatch "$WD" "$PR"                       # first dispatch
 FIRST_RC=$RUN_RC
 run_dispatch "$WD" "$PR"                        # second call, same PR
 if [ "$FIRST_RC" -eq 0 ] && [ "$RUN_RC" -eq 0 ] \
-   && ! printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' \
+   && ! grep -q 'DRY_RUN_DISPATCH' < <(printf '%s' "$RUN_OUT") \
    && [ "$(marker_count "$WD")" -eq 1 ]; then
   ok "re-dispatch blocked: 2nd call no-op, still exactly 1 marker"
 else
@@ -336,7 +336,7 @@ else
 fi
 # sanity: a DIFFERENT PR still dispatches (marker is per-PR)
 run_dispatch "$WD" "$PR2"
-if printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 2 ]; then
+if grep -q 'DRY_RUN_DISPATCH' < <(printf '%s' "$RUN_OUT") && [ "$(marker_count "$WD")" -eq 2 ]; then
   ok "different PR dispatches independently (2 markers)"
 else
   no "per-PR marker keying wrong (out='$RUN_OUT' markers=$(marker_count "$WD"))"
@@ -347,7 +347,7 @@ echo "== 6. --no-auto-review suppresses even with config auto_review:true =="
 WD="$(fresh_repo)"
 printf '{"auto_review": true}\n' > "$WD/.supervisor/config.json"
 run_dispatch "$WD" "$PR" --no-auto-review
-if [ "$RUN_RC" -eq 0 ] && ! printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 0 ]; then
+if [ "$RUN_RC" -eq 0 ] && ! grep -q 'DRY_RUN_DISPATCH' < <(printf '%s' "$RUN_OUT") && [ "$(marker_count "$WD")" -eq 0 ]; then
   ok "--no-auto-review: suppressed despite config, no dispatch, no marker"
 else
   no "--no-auto-review wrong (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"
@@ -358,7 +358,7 @@ echo "== 6b. config auto_review:false suppresses the default-ON dispatch =="
 WD="$(fresh_repo)"
 printf '{"auto_review": false}\n' > "$WD/.supervisor/config.json"
 run_dispatch "$WD" "$PR"          # no flag — config false must suppress the default ON
-if [ "$RUN_RC" -eq 0 ] && ! printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 0 ]; then
+if [ "$RUN_RC" -eq 0 ] && ! grep -q 'DRY_RUN_DISPATCH' < <(printf '%s' "$RUN_OUT") && [ "$(marker_count "$WD")" -eq 0 ]; then
   ok "config auto_review:false: suppressed despite default-ON, no dispatch, no marker"
 else
   no "config-false-suppress wrong (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"
@@ -372,7 +372,7 @@ WD="$(fresh_repo)"
 # the default-ON dispatch would fire (marker written). Suppression proves fallback.
 printf '{"auto_review": false}\n' > "$WD/.supervisor/notify-config.json"
 run_dispatch "$WD" "$PR"
-if [ "$RUN_RC" -eq 0 ] && ! printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 0 ]; then
+if [ "$RUN_RC" -eq 0 ] && ! grep -q 'DRY_RUN_DISPATCH' < <(printf '%s' "$RUN_OUT") && [ "$(marker_count "$WD")" -eq 0 ]; then
   ok "legacy-fallback: legacy notify-config.json honored (suppressed), no dispatch, no marker"
 else
   no "legacy-fallback wrong (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"
@@ -386,7 +386,7 @@ WD="$(fresh_repo)"
 printf '{"auto_review": false}\n' > "$WD/.supervisor/config.json"
 printf '{"auto_review": true}\n'  > "$WD/.supervisor/notify-config.json"
 run_dispatch "$WD" "$PR"
-if [ "$RUN_RC" -eq 0 ] && ! printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 0 ]; then
+if [ "$RUN_RC" -eq 0 ] && ! grep -q 'DRY_RUN_DISPATCH' < <(printf '%s' "$RUN_OUT") && [ "$(marker_count "$WD")" -eq 0 ]; then
   ok "both-present: new config.json wins (suppressed), legacy true ignored"
 else
   no "both-present wrong — new file should win (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"
@@ -396,7 +396,7 @@ rm -rf "$WD"
 echo "== 7. --no-auto-review beats --auto-review (suppress wins) =="
 WD="$(fresh_repo)"
 run_dispatch "$WD" "$PR" --auto-review --no-auto-review
-if [ "$RUN_RC" -eq 0 ] && ! printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 0 ]; then
+if [ "$RUN_RC" -eq 0 ] && ! grep -q 'DRY_RUN_DISPATCH' < <(printf '%s' "$RUN_OUT") && [ "$(marker_count "$WD")" -eq 0 ]; then
   ok "suppress beats force: no dispatch"
 else
   no "suppress-vs-force wrong (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"
@@ -407,7 +407,7 @@ echo "== 8. missing PR url -> graceful no-op =="
 WD="$(fresh_repo)"
 printf '{"auto_review": true}\n' > "$WD/.supervisor/config.json"
 run_dispatch "$WD" --auto-review            # enabled, but no PR url
-if [ "$RUN_RC" -eq 0 ] && ! printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 0 ]; then
+if [ "$RUN_RC" -eq 0 ] && ! grep -q 'DRY_RUN_DISPATCH' < <(printf '%s' "$RUN_OUT") && [ "$(marker_count "$WD")" -eq 0 ]; then
   ok "missing-pr-url: exit 0, no dispatch"
 else
   no "missing-pr-url wrong (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"
@@ -423,10 +423,10 @@ LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
 # trap). `claude --agent <runner> "<prompt>"` WITHOUT -p starts an interactive session
 # (--agent only selects the agent, it does NOT switch to headless) that hangs when detached.
 if [ "$RUN_RC" -eq 0 ] \
-   && printf '%s' "$LINE" | grep -Eq '(^| )-p( |$)|(^| )--print( |$)' \
-   && printf '%s' "$LINE" | grep -q -- '--agent loomwright:review-pr-runner' \
-   && printf '%s' "$LINE" | grep -q -- "$PR" \
-   && ! printf '%s' "$LINE" | grep -q -- '/review-pr'; then
+   && grep -Eq '(^| )-p( |$)|(^| )--print( |$)' < <(printf '%s' "$LINE") \
+   && grep -q -- '--agent loomwright:review-pr-runner' < <(printf '%s' "$LINE") \
+   && grep -q -- "$PR" < <(printf '%s' "$LINE") \
+   && ! grep -q -- '/review-pr' < <(printf '%s' "$LINE"); then
   ok "launch-form: headless -p + --agent <runner> + <url>, no slash string ($LINE)"
 else
   no "launch-form wrong (missing -p / --agent <runner> / url, or a /review-pr slash present) (line='$LINE')"
@@ -438,7 +438,7 @@ WD="$(fresh_repo)"
 run_dispatch "$WD" "$PR"          # no flag — until-mergeable must be ON by default
 LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
 if [ "$RUN_RC" -eq 0 ] \
-   && printf '%s' "$LINE" | grep -q -- 'LOOMWRIGHT_UNTIL_MERGEABLE=1'; then
+   && grep -q -- 'LOOMWRIGHT_UNTIL_MERGEABLE=1' < <(printf '%s' "$LINE"); then
   ok "default until-mergeable: LOOMWRIGHT_UNTIL_MERGEABLE=1 present ($LINE)"
 else
   no "default until-mergeable signal missing (line='$LINE')"
@@ -451,8 +451,8 @@ run_dispatch "$WD" "$PR" --no-until-mergeable
 LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
 # Dispatch still fires (auto-review default ON) but WITHOUT the until-mergeable signal.
 if [ "$RUN_RC" -eq 0 ] \
-   && printf '%s' "$LINE" | grep -q 'DRY_RUN_DISPATCH' \
-   && ! printf '%s' "$LINE" | grep -q -- 'LOOMWRIGHT_UNTIL_MERGEABLE'; then
+   && grep -q 'DRY_RUN_DISPATCH' < <(printf '%s' "$LINE") \
+   && ! grep -q -- 'LOOMWRIGHT_UNTIL_MERGEABLE' < <(printf '%s' "$LINE"); then
   ok "--no-until-mergeable: dispatch fires, signal NOT set ($LINE)"
 else
   no "--no-until-mergeable wrong (signal should be absent) (line='$LINE')"
@@ -465,8 +465,8 @@ printf '{"auto_until_mergeable": false}\n' > "$WD/.supervisor/config.json"
 run_dispatch "$WD" "$PR"          # no flag — config opts out of until-mergeable only
 LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
 if [ "$RUN_RC" -eq 0 ] \
-   && printf '%s' "$LINE" | grep -q 'DRY_RUN_DISPATCH' \
-   && ! printf '%s' "$LINE" | grep -q -- 'LOOMWRIGHT_UNTIL_MERGEABLE'; then
+   && grep -q 'DRY_RUN_DISPATCH' < <(printf '%s' "$LINE") \
+   && ! grep -q -- 'LOOMWRIGHT_UNTIL_MERGEABLE' < <(printf '%s' "$LINE"); then
   ok "config auto_until_mergeable:false: dispatch fires, signal NOT set ($LINE)"
 else
   no "config-until-mergeable-false wrong (signal should be absent) (line='$LINE')"
@@ -478,9 +478,9 @@ WD="$(fresh_repo)"
 run_dispatch "$WD" "$PR" --check-wait-timeout 300 --review-check-pattern 'claude*'
 LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
 if [ "$RUN_RC" -eq 0 ] \
-   && printf '%s' "$LINE" | grep -q -- 'LOOMWRIGHT_UNTIL_MERGEABLE=1' \
-   && printf '%s' "$LINE" | grep -q -- 'LOOMWRIGHT_CHECK_WAIT_TIMEOUT=300' \
-   && printf '%s' "$LINE" | grep -q -- 'LOOMWRIGHT_REVIEW_CHECK_PATTERN=claude\*'; then
+   && grep -q -- 'LOOMWRIGHT_UNTIL_MERGEABLE=1' < <(printf '%s' "$LINE") \
+   && grep -q -- 'LOOMWRIGHT_CHECK_WAIT_TIMEOUT=300' < <(printf '%s' "$LINE") \
+   && grep -q -- 'LOOMWRIGHT_REVIEW_CHECK_PATTERN=claude\*' < <(printf '%s' "$LINE"); then
   ok "tuning forwarded: timeout + pattern present ($LINE)"
 else
   no "tuning forwarding wrong (line='$LINE')"
@@ -489,8 +489,8 @@ fi
 WD2="$(fresh_repo)"
 run_dispatch "$WD2" "$PR"
 LINE2="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
-if ! printf '%s' "$LINE2" | grep -q -- 'LOOMWRIGHT_CHECK_WAIT_TIMEOUT' \
-   && ! printf '%s' "$LINE2" | grep -q -- 'LOOMWRIGHT_REVIEW_CHECK_PATTERN'; then
+if ! grep -q -- 'LOOMWRIGHT_CHECK_WAIT_TIMEOUT' < <(printf '%s' "$LINE2") \
+   && ! grep -q -- 'LOOMWRIGHT_REVIEW_CHECK_PATTERN' < <(printf '%s' "$LINE2"); then
   ok "tuning absent by default (only forwarded when set) ($LINE2)"
 else
   no "tuning leaked when unset (line='$LINE2')"
@@ -508,9 +508,9 @@ RC13=$RUN_RC
 HDR="$(cat "$FX_REPO"/.supervisor/logs/review-pr-dispatch-*.log 2>/dev/null || true)"
 if [ "$RC13" -eq 0 ] \
    && [ -n "$HDR" ] \
-   && printf '%s' "$HDR" | grep -q 'DISPATCHED' \
-   && printf '%s' "$HDR" | grep -q -- 'until_mergeable=1' \
-   && printf '%s' "$HDR" | grep -qF "url=$PR"; then
+   && grep -q 'DISPATCHED' < <(printf '%s' "$HDR") \
+   && grep -q -- 'until_mergeable=1' < <(printf '%s' "$HDR") \
+   && grep -qF "url=$PR" < <(printf '%s' "$HDR"); then
   ok "real-launch RUN_LOG header present + greppable (DISPATCHED + until_mergeable=1 + url)"
 else
   no "real-launch RUN_LOG header missing/wrong (rc=$RC13 hdr='$HDR')"
@@ -536,7 +536,7 @@ REMOVED_OK=0; worktree_gone "$FX_REPO" "$WT" && REMOVED_OK=1
 LOCK_GONE=0; [ ! -d "$LOCK" ] && LOCK_GONE=1
 # Header present + non-empty.
 HDR="$(cat "$FX_REPO"/.supervisor/logs/review-pr-dispatch-*.log 2>/dev/null || true)"
-HDR_OK=0; printf '%s' "$HDR" | grep -q 'DISPATCHED' && HDR_OK=1
+HDR_OK=0; grep -q 'DISPATCHED' < <(printf '%s' "$HDR") && HDR_OK=1
 # Inline repo clean (no stray worktree pollution; status unchanged).
 POST_STATUS="$( cd "$FX_REPO" && git status --porcelain )"
 CLEAN_OK=0; [ "$PRE_STATUS" = "$POST_STATUS" ] && CLEAN_OK=1
@@ -874,19 +874,19 @@ WD="$(fresh_repo)"
 run_dispatch "$WD" "$PR"
 LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
 if [ "$RUN_RC" -eq 0 ] \
-   && printf '%s' "$LINE" | grep -q -- '--permission-mode dontAsk' \
-   && printf '%s' "$LINE" | grep -q -- 'Read,Grep,Glob,Task' \
-   && printf '%s' "$LINE" | grep -q -- 'Bash(git fetch:\*)' \
-   && printf '%s' "$LINE" | grep -q -- 'Bash(git checkout:\*)' \
-   && printf '%s' "$LINE" | grep -q -- 'Bash(git add:\*)' \
-   && printf '%s' "$LINE" | grep -q -- 'Bash(git commit:\*)' \
-   && printf '%s' "$LINE" | grep -q -- 'Bash(git push origin' \
-   && printf '%s' "$LINE" | grep -q -- 'Bash(gh pr view:\*)' \
-   && printf '%s' "$LINE" | grep -q -- 'Bash(gh pr diff:\*)' \
-   && printf '%s' "$LINE" | grep -q -- 'Bash(gh pr comment:\*)' \
-   && printf '%s' "$LINE" | grep -q -- 'Bash(gh api repos/\*:\*)' \
-   && printf '%s' "$LINE" | grep -q -- 'Bash(gh api graphql:\*)' \
-   && printf '%s' "$LINE" | grep -q -- '--disallowedTools WebFetch,WebSearch'; then
+   && grep -q -- '--permission-mode dontAsk' < <(printf '%s' "$LINE") \
+   && grep -q -- 'Read,Grep,Glob,Task' < <(printf '%s' "$LINE") \
+   && grep -q -- 'Bash(git fetch:\*)' < <(printf '%s' "$LINE") \
+   && grep -q -- 'Bash(git checkout:\*)' < <(printf '%s' "$LINE") \
+   && grep -q -- 'Bash(git add:\*)' < <(printf '%s' "$LINE") \
+   && grep -q -- 'Bash(git commit:\*)' < <(printf '%s' "$LINE") \
+   && grep -q -- 'Bash(git push origin' < <(printf '%s' "$LINE") \
+   && grep -q -- 'Bash(gh pr view:\*)' < <(printf '%s' "$LINE") \
+   && grep -q -- 'Bash(gh pr diff:\*)' < <(printf '%s' "$LINE") \
+   && grep -q -- 'Bash(gh pr comment:\*)' < <(printf '%s' "$LINE") \
+   && grep -q -- 'Bash(gh api repos/\*:\*)' < <(printf '%s' "$LINE") \
+   && grep -q -- 'Bash(gh api graphql:\*)' < <(printf '%s' "$LINE") \
+   && grep -q -- '--disallowedTools WebFetch,WebSearch' < <(printf '%s' "$LINE"); then
   ok "DRY_RUN permission pin: --permission-mode dontAsk + full allowedTools list + disallowedTools present"
 else
   no "DRY_RUN permission pin wrong (line='$LINE')"
@@ -899,12 +899,12 @@ run_real "$FX_REPO" "$PR"
 RC29=$RUN_RC
 ARGS_LINE="$(grep -F "cwd=$(expected_wt_path "$FX_REPO")" "$FX_CLAUDE_LOG" 2>/dev/null || true)"
 if [ "$RC29" -eq 0 ] \
-   && printf '%s' "$ARGS_LINE" | grep -q -- '--permission-mode dontAsk' \
-   && printf '%s' "$ARGS_LINE" | grep -q -- 'Read,Grep,Glob,Task' \
-   && printf '%s' "$ARGS_LINE" | grep -q -- 'Bash(git push origin' \
-   && printf '%s' "$ARGS_LINE" | grep -q -- 'Bash(gh api graphql:\*)' \
-   && printf '%s' "$ARGS_LINE" | grep -q -- '--disallowedTools WebFetch,WebSearch' \
-   && printf '%s' "$ARGS_LINE" | grep -q -- '--agent loomwright:review-pr-runner'; then
+   && grep -q -- '--permission-mode dontAsk' < <(printf '%s' "$ARGS_LINE") \
+   && grep -q -- 'Read,Grep,Glob,Task' < <(printf '%s' "$ARGS_LINE") \
+   && grep -q -- 'Bash(git push origin' < <(printf '%s' "$ARGS_LINE") \
+   && grep -q -- 'Bash(gh api graphql:\*)' < <(printf '%s' "$ARGS_LINE") \
+   && grep -q -- '--disallowedTools WebFetch,WebSearch' < <(printf '%s' "$ARGS_LINE") \
+   && grep -q -- '--agent loomwright:review-pr-runner' < <(printf '%s' "$ARGS_LINE"); then
   ok "real-path binding: captured args= carries --permission-mode/--allowedTools/--disallowedTools (not just DRY_RUN_DISPATCH) (args='$ARGS_LINE')"
 else
   no "real-path binding wrong — the REAL WRAPPER invocation must carry the pinned flags too (rc=$RC29 args='$ARGS_LINE')"
@@ -942,8 +942,8 @@ run_dispatch "$WD" "$PR"
 LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
 MARKER_CONTENT="$(cat "$WD/.supervisor/review-dispatch/$(pr_hash)" 2>/dev/null || true)"
 if [ "$RUN_RC" -eq 0 ] \
-   && printf '%s' "$LINE" | grep -q -- 'LOOMWRIGHT_PR_IS_FORK=1' \
-   && printf '%s' "$MARKER_CONTENT" | grep -q 'regime=permissive_refused'; then
+   && grep -q -- 'LOOMWRIGHT_PR_IS_FORK=1' < <(printf '%s' "$LINE") \
+   && grep -q 'regime=permissive_refused' < <(printf '%s' "$MARKER_CONTENT"); then
   ok "regime probe DRY_RUN permissive-refused: LOOMWRIGHT_PR_IS_FORK=1 + marker regime=permissive_refused (line='$LINE')"
 else
   no "regime probe DRY_RUN permissive-refused wrong (line='$LINE' marker='$MARKER_CONTENT')"
@@ -958,8 +958,8 @@ RUN_RC=$?
 LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
 MARKER_CONTENT="$(cat "$WD/.supervisor/review-dispatch/$(pr_hash)" 2>/dev/null || true)"
 if [ "$RUN_RC" -eq 0 ] \
-   && ! printf '%s' "$LINE" | grep -q -- 'LOOMWRIGHT_PR_IS_FORK' \
-   && ! printf '%s' "$MARKER_CONTENT" | grep -q 'permissive_refused'; then
+   && ! grep -q -- 'LOOMWRIGHT_PR_IS_FORK' < <(printf '%s' "$LINE") \
+   && ! grep -q 'permissive_refused' < <(printf '%s' "$MARKER_CONTENT"); then
   ok "regime probe DRY_RUN opt-out: dispatches normally, no forced fork-degrade, marker not permissive_refused (line='$LINE')"
 else
   no "regime probe DRY_RUN opt-out wrong (line='$LINE' marker='$MARKER_CONTENT')"
@@ -973,8 +973,8 @@ run_dispatch "$WD" "$PR"
 LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
 MARKER_CONTENT="$(cat "$WD/.supervisor/review-dispatch/$(pr_hash)" 2>/dev/null || true)"
 if [ "$RUN_RC" -eq 0 ] \
-   && printf '%s' "$LINE" | grep -q -- 'LOOMWRIGHT_PR_IS_FORK=1' \
-   && printf '%s' "$MARKER_CONTENT" | grep -q 'regime=permissive_refused'; then
+   && grep -q -- 'LOOMWRIGHT_PR_IS_FORK=1' < <(printf '%s' "$LINE") \
+   && grep -q 'regime=permissive_refused' < <(printf '%s' "$MARKER_CONTENT"); then
   ok "regime probe malformed-JSON: treated as unreadable => permissive => refused (never assumed safe)"
 else
   no "regime probe malformed-JSON wrong (line='$LINE' marker='$MARKER_CONTENT') — unreadable settings must fail CLOSED"
@@ -991,8 +991,8 @@ ARGS_LINE="$(grep -F "cwd=$WT" "$FX_CLAUDE_LOG" 2>/dev/null || true)"
 H="$(pr_hash)"
 MARKER_CONTENT="$(cat "$FX_REPO/.supervisor/review-dispatch/$H" 2>/dev/null || true)"
 if [ "$RC33" -eq 0 ] \
-   && printf '%s' "$ARGS_LINE" | grep -q 'fork=1' \
-   && printf '%s' "$MARKER_CONTENT" | grep -q 'regime=permissive_refused'; then
+   && grep -q 'fork=1' < <(printf '%s' "$ARGS_LINE") \
+   && grep -q 'regime=permissive_refused' < <(printf '%s' "$MARKER_CONTENT"); then
   ok "regime probe REAL permissive-refused: launched env carries fork=1, marker regime=permissive_refused"
 else
   no "regime probe REAL permissive-refused wrong (rc=$RC33 args='$ARGS_LINE' marker='$MARKER_CONTENT')"
@@ -1044,7 +1044,7 @@ else
   MUT_OUT="$( cd "$WD" && HOME="$RUN_HOME" LOOMWRIGHT_REVIEW_DISPATCH_DRY_RUN=1 bash "$MUT" "$PR" 2>/dev/null )"
   MUT_LINE="$(printf '%s' "$MUT_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
   DRY_FLIPPED=0
-  printf '%s' "$MUT_LINE" | grep -q -- 'LOOMWRIGHT_PR_IS_FORK' || DRY_FLIPPED=1
+  grep -q -- 'LOOMWRIGHT_PR_IS_FORK' < <(printf '%s' "$MUT_LINE") || DRY_FLIPPED=1
   rm -rf "$WD"
   # Real-path half.
   fresh_git_repo >/dev/null
@@ -1054,7 +1054,7 @@ else
   H="$(pr_hash)"
   REAL_MARKER="$(cat "$FX_REPO/.supervisor/review-dispatch/$H" 2>/dev/null || true)"
   REAL_FLIPPED=0
-  printf '%s' "$REAL_MARKER" | grep -q 'permissive_refused' || REAL_FLIPPED=1
+  grep -q 'permissive_refused' < <(printf '%s' "$REAL_MARKER") || REAL_FLIPPED=1
   rm -rf "$(dirname "$FX_REPO")" "$RUN_HOME"
   if [ "$DRY_FLIPPED" -eq 1 ] && [ "$REAL_FLIPPED" -eq 1 ]; then
     ok "mutation control: removing the regime-probe guard flips BOTH dry-run and real-path permissive-refused to non-refused — the guard is load-bearing"
@@ -1072,8 +1072,8 @@ run_dispatch "$WD" "$PR"
 LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
 MARKER_CONTENT="$(cat "$WD/.supervisor/review-dispatch/$(pr_hash)" 2>/dev/null || true)"
 if [ "$RUN_RC" -eq 0 ] \
-   && printf '%s' "$LINE" | grep -q -- 'LOOMWRIGHT_PR_IS_FORK=1' \
-   && printf '%s' "$MARKER_CONTENT" | grep -q 'regime=permissive_refused'; then
+   && grep -q -- 'LOOMWRIGHT_PR_IS_FORK=1' < <(printf '%s' "$LINE") \
+   && grep -q 'regime=permissive_refused' < <(printf '%s' "$MARKER_CONTENT"); then
   ok "regime probe DRY_RUN acceptEdits-refused: LOOMWRIGHT_PR_IS_FORK=1 + marker regime=permissive_refused (line='$LINE')"
 else
   no "regime probe DRY_RUN acceptEdits-refused wrong — acceptEdits must be treated as permissive, not fallen-through (line='$LINE' marker='$MARKER_CONTENT')"
@@ -1096,7 +1096,7 @@ D_EC="$(awk -F'\t' '$1=="exit_code"{print $2; exit}' "$DIED" 2>/dev/null || true
 D_LAST="$(awk -F'\t' '$1=="last_log_line"{print $2; exit}' "$DIED" 2>/dev/null || true)"
 D_ATT="$(awk -F'\t' '$1=="attempt"{print $2; exit}' "$DIED" 2>/dev/null || true)"
 HDR="$(cat "$FX_REPO"/.supervisor/logs/review-pr-dispatch-*.log 2>/dev/null || true)"
-DRAIN_DIED_OK=0; printf '%s' "$HDR" | grep -q '^DRAIN_DIED' && DRAIN_DIED_OK=1
+DRAIN_DIED_OK=0; grep -q '^DRAIN_DIED' < <(printf '%s' "$HDR") && DRAIN_DIED_OK=1
 MARKER_STILL_THERE=0; [ -f "$FX_REPO/.supervisor/review-dispatch/$H" ] && MARKER_STILL_THERE=1
 if [ "$RC37" -eq 0 ] && [ -f "$DIED" ] && [ -n "$D_TS" ] && [ "$D_PR" = "$PR" ] \
    && [ -n "$D_EC" ] && [ -n "$D_LAST" ] && [ "$D_ATT" = "1" ] \

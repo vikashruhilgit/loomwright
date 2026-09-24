@@ -41,7 +41,7 @@ echo "== (a) brief with ONLY cmd:/bare bullets => sha256:<hex> covering them =="
 A_BRIEF="$TMP/a.md"
 printf '## Executable Acceptance\n- cmd: true\n- npm test\n' > "$A_BRIEF"
 outA="$(bash "$HASH" "$A_BRIEF")"; rcA=$?
-if [ "$rcA" -eq 0 ] && printf '%s' "$outA" | grep -qE '^sha256:[0-9a-f]{64}$'; then
+if [ "$rcA" -eq 0 ] && grep -qE '^sha256:[0-9a-f]{64}$' < <(printf '%s' "$outA"); then
   ok "(a) cmd:/bare-only brief prints sha256:<64-hex>"
 else
   no "(a) wrong (rc=$rcA): $outA"

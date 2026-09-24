@@ -332,7 +332,7 @@ for sub in "status" "status --json" "nudge" "record dreaming"; do
   [ "$rcDJ" -eq 0 ] && ok "(d) '$sub' exits 0 with jq absent" || no "(d) '$sub' with jq absent: rc=$rcDJ"
   case "$sub" in
     "status --json")
-      if printf '%s' "$outDJ" | grep -qF '"jq":false' && ! printf '%s' "$outDJ" | grep -qE '"(last_run|pending)": *0'; then
+      if grep -qF '"jq":false' < <(printf '%s' "$outDJ") && ! grep -qE '"(last_run|pending)": *0' < <(printf '%s' "$outDJ"); then
         ok "(d) jq-absent --json reports unknown throughout (no fabricated 0)"
       else
         no "(d) jq-absent --json unexpected: $outDJ"
@@ -343,7 +343,7 @@ for sub in "status" "status --json" "nudge" "record dreaming"; do
         || no "(d) jq-absent nudge should emit nothing, got: $outDJ"
       ;;
     "record dreaming")
-      printf '%s' "$outDJ" | grep -qF 'jq is absent' \
+      grep -qF 'jq is absent' < <(printf '%s' "$outDJ") \
         && ok "(d) jq-absent record says so and writes nothing" \
         || no "(d) jq-absent record message missing: $outDJ"
       [ -f "$RDJ/.supervisor/curation-state.json" ] \
@@ -370,7 +370,7 @@ outRF="$( cd "$RDR" && PATH="$BADJQ" LOOMWRIGHT_CURATION_REMOTE=0 "$(command -v 
 [ "$rcRF" -eq 0 ] && ok "(d) status --json exits 0 when the jq render throws" \
   || no "(d) render-failure rc=$rcRF: $outRF"
 # Control: without this the test could pass against the HAPPY path and prove nothing.
-printf '%s' "$outRF" | grep -qF '"error":"render_failed"' \
+grep -qF '"error":"render_failed"' < <(printf '%s' "$outRF") \
   && ok "(d) render-failure control — the fixture really took the render_failed arm" \
   || no "(d) fixture did NOT reach the render_failed arm: $outRF"
 printf '%s' "$outRF" | jq -e . >/dev/null 2>&1 \
@@ -502,13 +502,13 @@ for n in 1 2; do echo '{}' > "$RG/.supervisor/logs/s$n.jsonl"; done       # 2 pe
 outG="$(run "$RG" status --json)"
 msgG="$(jget "$outG" '.commands.dreaming.decline_message')"
 [ -n "$msgG" ] && ok "(g) below threshold ⇒ a decline message is produced" || no "(g) expected a decline message"
-printf '%s' "$msgG" | grep -qF ' 2 unreflected session log' && ok "(g) decline names the observed count (2)" \
+grep -qF ' 2 unreflected session log' < <(printf '%s' "$msgG") && ok "(g) decline names the observed count (2)" \
   || no "(g) decline does not name the observed count: $msgG"
-printf '%s' "$msgG" | grep -qF 'threshold of 15' && ok "(g) decline names the threshold (15)" \
+grep -qF 'threshold of 15' < <(printf '%s' "$msgG") && ok "(g) decline names the threshold (15)" \
   || no "(g) decline does not name the threshold: $msgG"
-printf '%s' "$msgG" | grep -qi 'unvalidated' && ok "(g) decline says the threshold is an unvalidated guess" \
+grep -qi 'unvalidated' < <(printf '%s' "$msgG") && ok "(g) decline says the threshold is an unvalidated guess" \
   || no "(g) decline omits the 'unvalidated' disclosure: $msgG"
-printf '%s' "$msgG" | grep -qF -- '--force' && ok "(g) decline points at --force as the override" \
+grep -qF -- '--force' < <(printf '%s' "$msgG") && ok "(g) decline points at --force as the override" \
   || no "(g) decline does not mention --force: $msgG"
 [ "$(lastrc)" -eq 0 ] && ok "(g) declining still exits 0 (advisory, never a gate)" || no "(g) rc=$(lastrc)"
 # /pr-postmortem never declines, at any count.
@@ -534,7 +534,7 @@ case "$lrH" in
 esac
 for badtarget in insights pr-postmortem "" bogus; do
   outH2="$(run "$RH" record $badtarget)"
-  if [ "$(lastrc)" -eq 0 ] && printf '%s' "$outH2" | grep -qF 'accepts only `dreaming`'; then
+  if [ "$(lastrc)" -eq 0 ] && grep -qF 'accepts only `dreaming`' < <(printf '%s' "$outH2"); then
     ok "(h) record '${badtarget:-<none>}' is rejected with a message and still exits 0"
   else
     no "(h) record '${badtarget:-<none>}' should be rejected and exit 0 (rc=$(lastrc)): $outH2"
@@ -546,7 +546,7 @@ after_h2="$(run "$RH" status --json)"
   || no "(h) a rejected record target mutated the stored value"
 # An unknown subcommand is reported, never an error exit.
 outH3="$(run "$RH" wibble)"
-[ "$(lastrc)" -eq 0 ] && printf '%s' "$outH3" | grep -qF 'unknown subcommand' \
+[ "$(lastrc)" -eq 0 ] && grep -qF 'unknown subcommand' < <(printf '%s' "$outH3") \
   && ok "(h) unknown subcommand reported, exit 0" || no "(h) unknown subcommand: rc=$(lastrc) / $outH3"
 
 # The help branch: all three spellings print usage and exit 0. Asserting the
@@ -556,8 +556,8 @@ outH3="$(run "$RH" wibble)"
 for helpform in -h --help help; do
   outH4="$(run "$RH" "$helpform")"
   if [ "$(lastrc)" -eq 0 ] \
-    && printf '%s' "$outH4" | grep -qF 'usage: curation-status.sh' \
-    && ! printf '%s' "$outH4" | grep -qF 'unknown subcommand'; then
+    && grep -qF 'usage: curation-status.sh' < <(printf '%s' "$outH4") \
+    && ! grep -qF 'unknown subcommand' < <(printf '%s' "$outH4"); then
     ok "(h) '$helpform' prints usage (not the unknown-subcommand fallthrough), exit 0"
   else
     no "(h) '$helpform' expected the usage line and exit 0 (rc=$(lastrc)): $outH4"
@@ -567,7 +567,7 @@ done
 # into advertising a command set the script no longer has.
 outH5="$(run "$RH" --help)"
 for advertised in status record nudge; do
-  printf '%s' "$outH5" | grep -qF "$advertised" \
+  grep -qF "$advertised" < <(printf '%s' "$outH5") \
     && ok "(h) usage names the '$advertised' subcommand" \
     || no "(h) usage omits '$advertised': $outH5"
 done
@@ -592,10 +592,10 @@ linesI="$(printf '%s\n' "$outI1" | grep -c . || true)"
 # Only /dreaming is pending on this fixture (the logs carry no session_end, so
 # /insights counts 0) — so pin /dreaming's OWN noun rather than an alternation
 # that would also accept /insights' text and quietly test the other half.
-printf '%s' "$outI1" | grep -qE '/dreaming [0-9]+ unreflected session log' \
+grep -qE '/dreaming [0-9]+ unreflected session log' < <(printf '%s' "$outI1") \
   && ok "(i) the line carries a real COUNT, not merely a date" \
   || no "(i) the nudge line carries no count: $outI1"
-printf '%s' "$outI1" | grep -qi 'unvalidated' \
+grep -qi 'unvalidated' < <(printf '%s' "$outI1") \
   && ok "(i) the line labels the thresholds unvalidated" || no "(i) missing 'unvalidated' in: $outI1"
 for optout in 0 off false no; do
   outI2="$( cd "$RI" && LOOMWRIGHT_CURATION_NUDGE="$optout" bash "$PROBE" nudge 2>&1 )"; rcI2=$?
@@ -681,13 +681,13 @@ grep -qF -- '/dreaming --force' "$HELP" \
 help_insights_section() {
   sed -n '/^### .* \/insights /,/^### .* \/obsidian /p' "$HELP"
 }
-help_insights_section | grep -qF -- '/insights --force' \
+grep -qF -- '/insights --force' < <(help_insights_section) \
   && ok "(k) agent-help.md's /insights ENTRY names --force (not only the /dreaming entry)" \
   || no "(k) agent-help.md's /insights entry does not name --force"
-help_insights_section | grep -qi 'decline' \
+grep -qi 'decline' < <(help_insights_section) \
   && ok "(k) agent-help.md's /insights entry says it can decline" \
   || no "(k) agent-help.md's /insights entry does not mention declining"
-help_insights_section | grep -qF 'curation.thresholds.insights' \
+grep -qF 'curation.thresholds.insights' < <(help_insights_section) \
   && ok "(k) agent-help.md's /insights entry names the threshold override key" \
   || no "(k) agent-help.md's /insights entry omits .curation.thresholds.insights"
 # The window on the remote count is documented where the count is consumed.
@@ -864,7 +864,7 @@ else
     || no "(m) unreadable logs dir produced a decline: $(jget "$outM" '.commands.dreaming.decline_message')"
   # …and the nudge does NOT go silent on it — `unknown` means do not suppress.
   outM2="$(run "$RM" nudge)"
-  printf '%s' "$outM2" | grep -qF '/dreaming unknown unreflected session log' \
+  grep -qF '/dreaming unknown unreflected session log' < <(printf '%s' "$outM2") \
     && ok "(m) unreadable logs dir ⇒ the nudge still fires, carrying 'unknown'" \
     || no "(m) expected the nudge to fire with an unknown count, got: $outM2"
   chmod 755 "$RM/.supervisor/logs" 2>/dev/null || true
@@ -908,7 +908,7 @@ outN3="$(run "$RN" status --json)"
 [ "$(jget "$outN3" '.commands.dreaming.pending')" = "4" ] \
   && ok "(n) a later run that consumed NOTHING leaves pending at 4 (a wall-clock watermark would report 0)" \
   || no "(n) the unread backlog was silently retired: pending='$(jget "$outN3" '.commands.dreaming.pending')'"
-printf '%s' "$outN2" | grep -qF 'NO logs were named' \
+grep -qF 'NO logs were named' < <(printf '%s' "$outN2") \
   && ok "(n) recording zero ids WARNS that pending will not fall" \
   || no "(n) zero-id record did not warn: $outN2"
 
@@ -943,20 +943,20 @@ script_window="$(grep -E '^DREAMING_DEFAULT_WINDOW=[0-9]+' "$PROBE" 2>/dev/null 
   || no "(o) window drift: dreaming.md says '$doc_window', probe says '$script_window'"
 
 outO="$(run "$RN" status)"   # RN now has 6 logs, all consumed ⇒ pending 0
-printf '%s' "$outO" | grep -qF "window=$script_window" \
+grep -qF "window=$script_window" < <(printf '%s' "$outO") \
   && ok "(o) the /dreaming status row states the window alongside the count" \
   || no "(o) status row omits window=: $outO"
-printf '%s' "$outO" | grep -qF 'note(/dreaming)' \
+grep -qF 'note(/dreaming)' < <(printf '%s' "$outO") \
   && no "(o) window note fired with pending(0) <= window — it should be silent" \
   || ok "(o) pending <= window ⇒ no window note (nothing is being left behind)"
 # …and it DOES fire when the backlog exceeds one run's reach.
 RO="$(new_repo)"; mkdir -p "$RO/.supervisor/logs"
 n=0; while [ "$n" -lt 9 ]; do n=$((n+1)); printf '{"event":"session_end"}\n' > "$RO/.supervisor/logs/w$n.jsonl"; done
 outO2="$(run "$RO" status)"
-printf '%s' "$outO2" | grep -qF 'note(/dreaming)' \
+grep -qF 'note(/dreaming)' < <(printf '%s' "$outO2") \
   && ok "(o) pending(9) > window ⇒ the note says the rest stay pending" \
   || no "(o) expected a window note at pending 9 > window $script_window: $outO2"
-printf '%s' "$outO2" | grep -qE 'reads the [0-9]+ most recent UNCONSUMED of those 9 logs' \
+grep -qE 'reads the [0-9]+ most recent UNCONSUMED of those 9 logs' < <(printf '%s' "$outO2") \
   && ok "(o) the note names BOTH numbers (window and backlog), not just the backlog" \
   || no "(o) the note does not name both numbers: $outO2"
 [ "$(jget "$(run "$RO" status --json)" '.commands.dreaming.window')" = "$script_window" ] \
@@ -1022,7 +1022,7 @@ echo "== (q) record hygiene: prune to disk, ids are data, malformed state ⇒ un
 RQ="$(new_repo)"; mkdir -p "$RQ/.supervisor/logs"
 printf '{"event":"session_end"}\n' > "$RQ/.supervisor/logs/real1.jsonl"
 outQ="$(run "$RQ" record dreaming real1 ghost-that-does-not-exist)"
-printf '%s' "$outQ" | grep -qF 'not on disk' \
+grep -qF 'not on disk' < <(printf '%s' "$outQ") \
   && ok "(q) an id with no log on disk is reported, not silently stored" \
   || no "(q) no report for the off-disk id: $outQ"
 [ "$(jq -r '[.dreaming.consumed.logs[]] | length' "$RQ/.supervisor/curation-state.json")" = "1" ] \
@@ -1116,10 +1116,10 @@ if [ ! -r "$RQW/.supervisor/curation-state.json" ]; then
   [ "$(lastrc)" -eq 0 ] \
     && ok "(q) record exits 0 on an unreadable state file (always-exit-0 invariant holds on the refusal path)" \
     || no "(q) record rc=$(lastrc) on an unreadable state file"
-  printf '%s' "$outQW" | grep -qF 'NOT recorded' \
+  grep -qF 'NOT recorded' < <(printf '%s' "$outQW") \
     && ok "(q) record SAYS it did not record, rather than reporting a write it refused to make" \
     || no "(q) record did not report the refusal: $outQW"
-  printf '%s' "$outQW" | grep -qF 'destroy the consumed history' \
+  grep -qF 'destroy the consumed history' < <(printf '%s' "$outQW") \
     && ok "(q) …and names the stake — overwriting would destroy the consumed history" \
     || no "(q) refusal does not explain the stake: $outQW"
   chmod 644 "$RQW/.supervisor/curation-state.json" 2>/dev/null || true
@@ -1266,10 +1266,10 @@ if [ ! -r "$RRU/.supervisor/curation-state.json" ]; then
     && ok "(r) unreadable consumed record ⇒ ALL 3 signal logs listed (fail OPEN, not silence)" \
     || no "(r) fail-open regression — expected 3 ids, got: $outRU"
   errRU="$(run_err "$RRU" unconsumed)"
-  printf '%s' "$errRU" | grep -qF 'could not be read' \
+  grep -qF 'could not be read' < <(printf '%s' "$errRU") \
     && ok "(r) …and the explanatory note goes to STDERR" \
     || no "(r) no stderr note for the unreadable consumed record: $errRU"
-  printf '%s' "$outRU" | grep -qF 'could not be read' \
+  grep -qF 'could not be read' < <(printf '%s' "$outRU") \
     && no "(r) the note leaked onto STDOUT — it would be consumed as a session id" \
     || ok "(r) …and NEVER onto stdout (stdout stays a pure id list)"
 else
@@ -1280,16 +1280,16 @@ chmod 644 "$RRU/.supervisor/curation-state.json" 2>/dev/null || true
 # FIX 2: "newly consumed" is a REAL delta, not the count of ids forwarded to jq.
 # `record dreaming s1 s1 s2` over an already-full set names 3 ids and adds none.
 outR2="$(run "$RR" record dreaming s1 s1 s2)"
-printf '%s' "$outR2" | grep -qF 'logs named: 3' \
+grep -qF 'logs named: 3' < <(printf '%s' "$outR2") \
   && ok "(r) record still reports the validated/named count (3)" \
   || no "(r) named count missing from: $outR2"
-printf '%s' "$outR2" | grep -qF 'newly consumed: 0' \
+grep -qF 'newly consumed: 0' < <(printf '%s' "$outR2") \
   && ok "(r) re-recording already-consumed ids reports newly consumed: 0 (a real delta)" \
   || no "(r) expected 'newly consumed: 0', got: $outR2"
 # …and a genuinely new id reports a delta of 1.
 printf '{"event":"session_end"}\n' > "$RR/.supervisor/logs/s9.jsonl"
 outR3="$(run "$RR" record dreaming s9 s1)"
-printf '%s' "$outR3" | grep -qF 'newly consumed: 1' \
+grep -qF 'newly consumed: 1' < <(printf '%s' "$outR3") \
   && ok "(r) one new id among two named ⇒ newly consumed: 1" \
   || no "(r) expected 'newly consumed: 1', got: $outR3"
 
@@ -1346,8 +1346,8 @@ outS4="$(run_out "$RS_" pending-ids)"
   && ok "(s) garbage state ⇒ EVERY *.jsonl id listed (noise included) — fail closed toward keep" \
   || no "(s) garbage state did not list every id: $(printf '%s\n' "$outS4" | LC_ALL=C sort | tr '\n' ' ')"
 errS4="$(run_err "$RS_" pending-ids)"
-printf '%s' "$errS4" | grep -qF 'fail closed toward keep' && ok "(s) …with the explanatory note on STDERR" || no "(s) no stderr note for the garbage state: $errS4"
-printf '%s' "$outS4" | grep -qF 'fail closed' && no "(s) the note leaked onto STDOUT" || ok "(s) …and never on stdout (stdout stays a pure id list)"
+grep -qF 'fail closed toward keep' < <(printf '%s' "$errS4") && ok "(s) …with the explanatory note on STDERR" || no "(s) no stderr note for the garbage state: $errS4"
+grep -qF 'fail closed' < <(printf '%s' "$outS4") && no "(s) the note leaked onto STDOUT" || ok "(s) …and never on stdout (stdout stays a pure id list)"
 printf '{"dreaming":{"last_run":"2026-05-01T00:00:00Z","consumed":{"logs":["i-only","neither","noise"]}}}' > "$RS_/.supervisor/curation-state.json"
 
 # Unknown insights last-run (dashboard present but its mtime unreadable — a
@@ -1365,7 +1365,7 @@ else
   [ "$(printf '%s\n' "$outS5" | LC_ALL=C sort | tr '\n' ' ')" = "both d-only i-only neither noise " ] \
     && ok "(s) not-fully-readable logs dir ⇒ EVERY id listed (fail closed toward keep)" \
     || no "(s) r-only logs dir did not list every id: $(printf '%s\n' "$outS5" | LC_ALL=C sort | tr '\n' ' ')"
-  printf '%s' "$errS5" | grep -qF 'not fully readable' && ok "(s) …naming the logs dir on stderr" || no "(s) stderr did not name the logs dir: $errS5"
+  grep -qF 'not fully readable' < <(printf '%s' "$errS5") && ok "(s) …naming the logs dir on stderr" || no "(s) stderr did not name the logs dir: $errS5"
 fi
 # Absent logs dir ⇒ silent, exit 0 (there is no corpus to keep).
 RSE="$(new_repo)"
@@ -1373,7 +1373,7 @@ outSE="$(run_out "$RSE" pending-ids)"
 [ "$(lastrc)" -eq 0 ] && [ -z "$outSE" ] && ok "(s) absent logs dir ⇒ silent, exit 0" || no "(s) absent logs dir: rc=$(lastrc) out='$outSE'"
 # The dispatch arm and the usage line name the subcommand.
 outSH="$(run "$RSE" --help)"
-printf '%s' "$outSH" | grep -qF 'pending-ids' && ok "(s) --help names pending-ids" || no "(s) usage line lacks pending-ids: $outSH"
+grep -qF 'pending-ids' < <(printf '%s' "$outSH") && ok "(s) --help names pending-ids" || no "(s) usage line lacks pending-ids: $outSH"
 
 echo
 if [ "$skip" -gt 0 ]; then

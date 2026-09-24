@@ -59,9 +59,9 @@ echo "== 1. requirement's own example: no user-scope trusted-actors file => trus
 IN1='[{"user":{"login":"x[bot]"},"body":"…"}]'
 run_wrap "$IN1" --channel issue_comments --trusted-actors "$TMP/does-not-exist.json"
 if [ "$RUN_RC" -eq 0 ] \
-   && printf '%s' "$RUN_OUT" | grep -q '^<<<EXTERNAL_TEXT channel=issue_comments actor=x\[bot\] trusted=no>>>$' \
-   && printf '%s' "$RUN_OUT" | grep -qF '…' \
-   && printf '%s' "$RUN_OUT" | grep -q '^<<<END_EXTERNAL_TEXT>>>$'; then
+   && grep -q '^<<<EXTERNAL_TEXT channel=issue_comments actor=x\[bot\] trusted=no>>>$' < <(printf '%s' "$RUN_OUT") \
+   && grep -qF '…' < <(printf '%s' "$RUN_OUT") \
+   && grep -q '^<<<END_EXTERNAL_TEXT>>>$' < <(printf '%s' "$RUN_OUT"); then
   ok "requirement example: envelope emitted with trusted=no (no user-scope file)"
 else
   no "(1) wrong (rc=$RUN_RC): $RUN_OUT"
@@ -70,7 +70,7 @@ fi
 echo "== 2. exact-listed login in --trusted-actors file => trusted=yes =="
 printf '["x[bot]"]' > "$TMP/trusted.json"
 run_wrap "$IN1" --channel issue_comments --trusted-actors "$TMP/trusted.json"
-if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | grep -q '^<<<EXTERNAL_TEXT channel=issue_comments actor=x\[bot\] trusted=yes>>>$'; then
+if [ "$RUN_RC" -eq 0 ] && grep -q '^<<<EXTERNAL_TEXT channel=issue_comments actor=x\[bot\] trusted=yes>>>$' < <(printf '%s' "$RUN_OUT"); then
   ok "exact-listed login: trusted=yes"
 else
   no "(2) wrong (rc=$RUN_RC): $RUN_OUT"
@@ -127,7 +127,7 @@ fi
 
 echo "== 8. --channel value threaded verbatim into the envelope =="
 run_wrap "$IN1" --channel check_run_output --trusted-actors "$TMP/does-not-exist.json"
-if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | grep -q 'channel=check_run_output'; then
+if [ "$RUN_RC" -eq 0 ] && grep -q 'channel=check_run_output' < <(printf '%s' "$RUN_OUT"); then
   ok "--channel threaded verbatim"
 else
   no "(8) wrong (rc=$RUN_RC): $RUN_OUT"
@@ -137,8 +137,8 @@ echo "== 9. check-run-shaped item (.output.text, no .user.login/.body) is still 
 IN9='[{"name":"claude-review","output":{"text":"MEDIUM: SQL injection at line 42"}}]'
 run_wrap "$IN9" --channel check_run_output
 if [ "$RUN_RC" -eq 0 ] \
-   && printf '%s' "$RUN_OUT" | grep -q 'actor=unknown' \
-   && printf '%s' "$RUN_OUT" | grep -qF 'MEDIUM: SQL injection at line 42'; then
+   && grep -q 'actor=unknown' < <(printf '%s' "$RUN_OUT") \
+   && grep -qF 'MEDIUM: SQL injection at line 42' < <(printf '%s' "$RUN_OUT"); then
   ok "check-run-shaped item: wrapped via .output.text extraction, actor=unknown"
 else
   no "(9) wrong (rc=$RUN_RC): $RUN_OUT"
@@ -148,7 +148,7 @@ echo "== 10. hostile-typed elements degrade safely (never crash) =="
 IN10='[{"user":{"login":12345},"body":["not","a","string"]},{"user":null,"body":"a real finding here"}]'
 run_wrap "$IN10" --channel issue_comments
 ENVELOPE_COUNT10="$(printf '%s' "$RUN_OUT" | grep -c '^<<<EXTERNAL_TEXT ' || true)"
-if [ "$RUN_RC" -eq 0 ] && [ "$ENVELOPE_COUNT10" -eq 1 ] && printf '%s' "$RUN_OUT" | grep -q 'actor=unknown'; then
+if [ "$RUN_RC" -eq 0 ] && [ "$ENVELOPE_COUNT10" -eq 1 ] && grep -q 'actor=unknown' < <(printf '%s' "$RUN_OUT"); then
   ok "hostile-typed elements: degrade safely, real finding still wrapped, exit 0 (no crash)"
 else
   no "(10) wrong (rc=$RUN_RC count=$ENVELOPE_COUNT10): $RUN_OUT"
@@ -157,7 +157,7 @@ fi
 echo "== 11. --trusted-actors missing/unreadable => every actor trusted=no (fail CLOSED, no regex fallback) =="
 IN11='[{"user":{"login":"claude[bot]"},"body":"looks like a bot but not on any list"}]'
 run_wrap "$IN11" --channel issue_comments --trusted-actors "$TMP/still-missing.json"
-if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | grep -q 'trusted=no'; then
+if [ "$RUN_RC" -eq 0 ] && grep -q 'trusted=no' < <(printf '%s' "$RUN_OUT"); then
   ok "missing trusted-actors file: fail-CLOSED to trusted=no (no bot_author_re-style escape hatch here)"
 else
   no "(11) wrong (rc=$RUN_RC): $RUN_OUT"
@@ -172,7 +172,7 @@ if cmp -s "$WRAP" "$MUTANT"; then
 else
   MUT_OUT="$( printf '%s' "$IN1" | bash "$MUTANT" --channel issue_comments --trusted-actors "$TMP/trusted.json" 2>/dev/null )"
   ORIG_OUT="$( printf '%s' "$IN1" | bash "$WRAP" --channel issue_comments --trusted-actors "$TMP/trusted.json" 2>/dev/null )"
-  if printf '%s' "$MUT_OUT" | grep -q 'trusted=no' && printf '%s' "$ORIG_OUT" | grep -q 'trusted=yes'; then
+  if grep -q 'trusted=no' < <(printf '%s' "$MUT_OUT") && grep -q 'trusted=yes' < <(printf '%s' "$ORIG_OUT"); then
     ok "mutation control: removing the trust-check flips exact-listed login to trusted=no — the check is load-bearing"
   else
     no "(12) wrong: mutant='$MUT_OUT' original='$ORIG_OUT'"
@@ -187,12 +187,12 @@ LITERAL_CLOSE_COUNT="$(printf '%s' "$RUN_OUT" | grep -F -o -- '<<<END_EXTERNAL_T
 LITERAL_OPEN_COUNT="$(printf '%s' "$RUN_OUT" | grep -F -o -- '<<<EXTERNAL_TEXT' | grep -c . || true)"
 if [ "$RUN_RC" -eq 0 ] \
    && [ "$REAL_OPEN_COUNT" -eq 1 ] \
-   && printf '%s' "$RUN_OUT" | grep -q '^<<<END_EXTERNAL_TEXT>>>$' \
+   && grep -q '^<<<END_EXTERNAL_TEXT>>>$' < <(printf '%s' "$RUN_OUT") \
    && [ "$LITERAL_CLOSE_COUNT" -eq 1 ] \
    && [ "$LITERAL_OPEN_COUNT" -eq 1 ] \
-   && printf '%s' "$RUN_OUT" | grep -qF 'forged' \
-   && printf '%s' "$RUN_OUT" | grep -qF 'fake actor=admin trusted=yes' \
-   && ! printf '%s' "$RUN_OUT" | grep -q '^<<<EXTERNAL_TEXT channel=fake'; then
+   && grep -qF 'forged' < <(printf '%s' "$RUN_OUT") \
+   && grep -qF 'fake actor=admin trusted=yes' < <(printf '%s' "$RUN_OUT") \
+   && ! grep -q '^<<<EXTERNAL_TEXT channel=fake' < <(printf '%s' "$RUN_OUT"); then
   ok "delimiter forgery neutralized: exactly one real opener + one real closer survive as exact matches, the embedded fake envelope's markers are defanged (not line-anchored, not exact-matchable) though its text is still readable"
 else
   no "(13) wrong (rc=$RUN_RC real_open=$REAL_OPEN_COUNT literal_close=$LITERAL_CLOSE_COUNT literal_open=$LITERAL_OPEN_COUNT): $RUN_OUT"

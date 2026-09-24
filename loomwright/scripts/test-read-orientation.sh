@@ -110,9 +110,9 @@ seed_memo "$R3" "api.md" "$(memo_content "$sha3" "API area summary line." "The a
 run_reader "$R3"
 first_line="$(printf '%s\n' "$OUT" | head -n 1)"
 if [ "$RC" -eq 0 ] && [ "$first_line" = "$BANNER" ] \
-   && printf '%s' "$OUT" | grep -qF "## api (written 2026-07-20T00:00:00Z)" \
-   && printf '%s' "$OUT" | grep -qF "API area summary line." \
-   && ! printf '%s' "$OUT" | grep -qF "[stale"; then
+   && grep -qF "## api (written 2026-07-20T00:00:00Z)" < <(printf '%s' "$OUT") \
+   && grep -qF "API area summary line." < <(printf '%s' "$OUT") \
+   && ! grep -qF "[stale" < <(printf '%s' "$OUT"); then
   ok "fresh memo emitted with banner first line, unannotated"
 else
   no "fresh memo (rc=$RC out=[$OUT])"
@@ -131,8 +131,8 @@ stale_annot="[stale — area changed since 2026-07-20T00:00:00Z, verify before t
 fresh_ln="$(printf '%s\n' "$OUT" | grep -nF "## fresharea" | head -n 1 | cut -d: -f1)"
 stale_ln="$(printf '%s\n' "$OUT" | grep -nF "## stalearea" | head -n 1 | cut -d: -f1)"
 if [ "$RC" -eq 0 ] \
-   && printf '%s' "$OUT" | grep -qF "$stale_annot" \
-   && printf '%s\n' "$OUT" | grep -F "## fresharea" | grep -vqF "[stale" \
+   && grep -qF "$stale_annot" < <(printf '%s' "$OUT") \
+   && grep -vqF "[stale" < <(printf '%s\n' "$OUT" | grep -F "## fresharea") \
    && [ -n "$fresh_ln" ] && [ -n "$stale_ln" ] && [ "$fresh_ln" -lt "$stale_ln" ]; then
   ok "stale memo annotated and demoted AFTER fresh memo"
 else
@@ -146,9 +146,9 @@ seed_memo "$R5" "bogus.md" "$(memo_content "deadbeefdead" "Bogus sha summary." "
 seed_memo "$R5" "nonhex.md" "$(memo_content "zzzz" "Nonhex sha summary." "Body.")"
 run_reader "$R5"
 if [ "$RC" -eq 0 ] \
-   && printf '%s' "$OUT" | grep -qF "Bogus sha summary." \
-   && printf '%s' "$OUT" | grep -qF "Nonhex sha summary." \
-   && ! printf '%s' "$OUT" | grep -qF "[stale"; then
+   && grep -qF "Bogus sha summary." < <(printf '%s' "$OUT") \
+   && grep -qF "Nonhex sha summary." < <(printf '%s' "$OUT") \
+   && ! grep -qF "[stale" < <(printf '%s' "$OUT"); then
   ok "git-error / unparseable sha => fresh-unknown, emitted without annotation"
 else
   no "fresh-unknown handling (rc=$RC out=[$OUT])"
@@ -163,8 +163,8 @@ seed_memo "$R6" "big.md" "$(memo_content "$sha6" "OVERCAP-SUMMARY-MARKER" "$big_
 seed_memo "$R6" "small.md" "$(memo_content "$sha6" "Small valid sibling." "Body.")"
 run_reader "$R6"
 if [ "$RC" -eq 0 ] \
-   && printf '%s' "$OUT" | grep -qF "Small valid sibling." \
-   && ! printf '%s' "$OUT" | grep -qF "OVERCAP-SUMMARY-MARKER"; then
+   && grep -qF "Small valid sibling." < <(printf '%s' "$OUT") \
+   && ! grep -qF "OVERCAP-SUMMARY-MARKER" < <(printf '%s' "$OUT"); then
   ok "over-cap memo skipped; valid sibling emitted"
 else
   no "over-cap skip (rc=$RC out=[$OUT])"
@@ -179,9 +179,9 @@ seed_memo "$R7" "hostile2.md" "$(memo_content "$sha7" "HOSTILE2-SUMMARY" "embedd
 seed_memo "$R7" "clean.md" "$(memo_content "$sha7" "Clean sibling summary." "Benign body.")"
 run_reader "$R7"
 if [ "$RC" -eq 0 ] \
-   && printf '%s' "$OUT" | grep -qF "Clean sibling summary." \
-   && ! printf '%s' "$OUT" | grep -qF "HOSTILE-MARKER-SUMMARY" \
-   && ! printf '%s' "$OUT" | grep -qF "HOSTILE2-SUMMARY"; then
+   && grep -qF "Clean sibling summary." < <(printf '%s' "$OUT") \
+   && ! grep -qF "HOSTILE-MARKER-SUMMARY" < <(printf '%s' "$OUT") \
+   && ! grep -qF "HOSTILE2-SUMMARY" < <(printf '%s' "$OUT"); then
   ok "hostile-content memos skipped (case-insensitive); clean sibling emitted"
 else
   no "hostile skip (rc=$RC out=[$OUT])"
@@ -214,8 +214,8 @@ more text
 seed_memo "$R9" "withheader.md" "$(memo_content "$sha9" "Headered sibling summary." "Body.")"
 run_reader "$R9"
 if [ "$RC" -eq 0 ] \
-   && printf '%s' "$OUT" | grep -qF "Headered sibling summary." \
-   && ! printf '%s' "$OUT" | grep -qF "NOHEADER-MARKER"; then
+   && grep -qF "Headered sibling summary." < <(printf '%s' "$OUT") \
+   && ! grep -qF "NOHEADER-MARKER" < <(printf '%s' "$OUT"); then
   ok "missing-header memo skipped; headered sibling emitted"
 else
   no "missing-header skip (rc=$RC out=[$OUT])"
@@ -231,8 +231,8 @@ seed_memo "$R10" "split.md" "$(memo_content "$sha10" "SPLIT-HOSTILE-SUMMARY" "pl
 seed_memo "$R10" "cleansib.md" "$(memo_content "$sha10" "Clean split sibling." "Benign body.")"
 run_reader "$R10"
 if [ "$RC" -eq 0 ] \
-   && printf '%s' "$OUT" | grep -qF "Clean split sibling." \
-   && ! printf '%s' "$OUT" | grep -qF "SPLIT-HOSTILE-SUMMARY"; then
+   && grep -qF "Clean split sibling." < <(printf '%s' "$OUT") \
+   && ! grep -qF "SPLIT-HOSTILE-SUMMARY" < <(printf '%s' "$OUT"); then
   ok "split-line hostile marker (ignore\\nprevious) memo skipped; clean sibling emitted"
 else
   no "split-line hostile skip (rc=$RC out=[$OUT])"
@@ -262,8 +262,8 @@ seed_memo "$R12" "oldarea.md" "$(memo_content "$sha12" "OLD-AREA-SUMMARY-MARKER"
 seed_memo "$R12" "newarea.md" "$(memo_content_v4 "$sha12" "oldarea" "NEW-AREA-SUMMARY-MARKER" "New body.")"
 run_reader "$R12"
 if [ "$RC" -eq 0 ] \
-   && printf '%s' "$OUT" | grep -qF "NEW-AREA-SUMMARY-MARKER" \
-   && ! printf '%s' "$OUT" | grep -qF "OLD-AREA-SUMMARY-MARKER"; then
+   && grep -qF "NEW-AREA-SUMMARY-MARKER" < <(printf '%s' "$OUT") \
+   && ! grep -qF "OLD-AREA-SUMMARY-MARKER" < <(printf '%s' "$OUT"); then
   ok "supersedes hides its target memo; superseding memo still emitted"
 else
   no "supersedes hide (rc=$RC out=[$OUT])"
@@ -275,7 +275,7 @@ R13="$(new_repo)"
 sha13="$(git -C "$R13" rev-parse --short HEAD)"
 seed_memo "$R13" "badsuper.md" "$(memo_content_v4 "$sha13" "UPPERCASE-TARGET" "BADSUPER-SUMMARY-MARKER" "Body.")"
 run_reader "$R13"
-if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -qF "BADSUPER-SUMMARY-MARKER"; then
+if [ "$RC" -eq 0 ] && grep -qF "BADSUPER-SUMMARY-MARKER" < <(printf '%s' "$OUT"); then
   ok "malformed supersedes field ignored; declaring memo still emitted, reader exits 0"
 else
   no "malformed supersedes (rc=$RC out=[$OUT])"
@@ -287,7 +287,7 @@ R14="$(new_repo)"
 sha14="$(git -C "$R14" rev-parse --short HEAD)"
 seed_memo "$R14" "selfref.md" "$(memo_content_v4 "$sha14" "selfref" "SELFREF-SUMMARY-MARKER" "Body.")"
 run_reader "$R14"
-if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -qF "SELFREF-SUMMARY-MARKER"; then
+if [ "$RC" -eq 0 ] && grep -qF "SELFREF-SUMMARY-MARKER" < <(printf '%s' "$OUT"); then
   ok "self-referential supersedes ignored; memo still emitted"
 else
   no "self-ref supersedes (rc=$RC out=[$OUT])"
@@ -299,7 +299,7 @@ R15="$(new_repo)"
 sha15="$(git -C "$R15" rev-parse --short HEAD)"
 seed_memo "$R15" "dangling.md" "$(memo_content_v4 "$sha15" "nosuchmemo" "DANGLING-SUMMARY-MARKER" "Body.")"
 run_reader "$R15"
-if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -qF "DANGLING-SUMMARY-MARKER"; then
+if [ "$RC" -eq 0 ] && grep -qF "DANGLING-SUMMARY-MARKER" < <(printf '%s' "$OUT"); then
   ok "dangling supersedes target ignored; declaring memo still emitted"
 else
   no "dangling supersedes (rc=$RC out=[$OUT])"
@@ -313,8 +313,8 @@ seed_memo "$R16" "cyca.md" "$(memo_content_v4 "$sha16" "cycb" "CYCA-SUMMARY-MARK
 seed_memo "$R16" "cycb.md" "$(memo_content_v4 "$sha16" "cyca" "CYCB-SUMMARY-MARKER" "Body B.")"
 run_reader "$R16"
 if [ "$RC" -eq 0 ] \
-   && printf '%s' "$OUT" | grep -qF "CYCA-SUMMARY-MARKER" \
-   && printf '%s' "$OUT" | grep -qF "CYCB-SUMMARY-MARKER"; then
+   && grep -qF "CYCA-SUMMARY-MARKER" < <(printf '%s' "$OUT") \
+   && grep -qF "CYCB-SUMMARY-MARKER" < <(printf '%s' "$OUT"); then
   ok "mutually-cyclic supersedes (A<->B) ignored; both memos remain visible"
 else
   no "cyclic supersedes (rc=$RC out=[$OUT])"
@@ -332,9 +332,9 @@ seed_memo "$R17" "superstale.md" "$(memo_content_v4 "$old_sha17" "hiddentarget" 
 run_reader "$R17"
 stale_annot17="[stale — area changed since 2026-07-20T00:00:00Z, verify before trusting]"
 if [ "$RC" -eq 0 ] \
-   && printf '%s' "$OUT" | grep -qF "SUPERSTALE-SUMMARY-MARKER" \
-   && printf '%s' "$OUT" | grep -qF "$stale_annot17" \
-   && ! printf '%s' "$OUT" | grep -qF "HIDDENTARGET-SUMMARY-MARKER"; then
+   && grep -qF "SUPERSTALE-SUMMARY-MARKER" < <(printf '%s' "$OUT") \
+   && grep -qF "$stale_annot17" < <(printf '%s' "$OUT") \
+   && ! grep -qF "HIDDENTARGET-SUMMARY-MARKER" < <(printf '%s' "$OUT"); then
   ok "REGRESSION: memo carrying supersedes still resolves areas+staleness correctly; its target is hidden"
 else
   no "supersedes+staleness regression (rc=$RC out=[$OUT])"
@@ -348,9 +348,9 @@ seed_memo "$R18" "legacyshape.md" "$(memo_content "$sha18" "LEGACYSHAPE-SUMMARY-
 seed_memo "$R18" "newshape.md" "$(memo_content_v4 "$sha18" "nonexistenttarget" "NEWSHAPE-SUMMARY-MARKER" "New 4-field body.")"
 run_reader "$R18"
 if [ "$RC" -eq 0 ] \
-   && printf '%s' "$OUT" | grep -qF "LEGACYSHAPE-SUMMARY-MARKER" \
-   && printf '%s' "$OUT" | grep -qF "NEWSHAPE-SUMMARY-MARKER" \
-   && ! printf '%s' "$OUT" | grep -qF "[stale"; then
+   && grep -qF "LEGACYSHAPE-SUMMARY-MARKER" < <(printf '%s' "$OUT") \
+   && grep -qF "NEWSHAPE-SUMMARY-MARKER" < <(printf '%s' "$OUT") \
+   && ! grep -qF "[stale" < <(printf '%s' "$OUT"); then
   ok "legacy 3-field header AND new 4-field header coexist; both parse+emit correctly (backward compat)"
 else
   no "header-shape coexistence (rc=$RC out=[$OUT])"
@@ -369,9 +369,9 @@ seed_memo "$R19" "n3b.md" "$(memo_content_v4 "$sha19" "n3c" "N3B-SUMMARY-MARKER"
 seed_memo "$R19" "n3c.md" "$(memo_content_v4 "$sha19" "n3a" "N3C-SUMMARY-MARKER" "Body C.")"
 run_reader "$R19"
 if [ "$RC" -eq 0 ] \
-   && printf '%s' "$OUT" | grep -qF "N3A-SUMMARY-MARKER" \
-   && printf '%s' "$OUT" | grep -qF "N3B-SUMMARY-MARKER" \
-   && printf '%s' "$OUT" | grep -qF "N3C-SUMMARY-MARKER"; then
+   && grep -qF "N3A-SUMMARY-MARKER" < <(printf '%s' "$OUT") \
+   && grep -qF "N3B-SUMMARY-MARKER" < <(printf '%s' "$OUT") \
+   && grep -qF "N3C-SUMMARY-MARKER" < <(printf '%s' "$OUT"); then
   ok "n=3 cyclic supersedes: ALL THREE members stay VISIBLE (generalized cycle detection, not pairwise-only)"
 else
   no "n=3 cycle wrongly hid one or more members (0-visible regression) (rc=$RC out=[$OUT])"
@@ -387,10 +387,10 @@ seed_memo "$R20" "n4c.md" "$(memo_content_v4 "$sha20" "n4d" "N4C-SUMMARY-MARKER"
 seed_memo "$R20" "n4d.md" "$(memo_content_v4 "$sha20" "n4a" "N4D-SUMMARY-MARKER" "Body D.")"
 run_reader "$R20"
 if [ "$RC" -eq 0 ] \
-   && printf '%s' "$OUT" | grep -qF "N4A-SUMMARY-MARKER" \
-   && printf '%s' "$OUT" | grep -qF "N4B-SUMMARY-MARKER" \
-   && printf '%s' "$OUT" | grep -qF "N4C-SUMMARY-MARKER" \
-   && printf '%s' "$OUT" | grep -qF "N4D-SUMMARY-MARKER"; then
+   && grep -qF "N4A-SUMMARY-MARKER" < <(printf '%s' "$OUT") \
+   && grep -qF "N4B-SUMMARY-MARKER" < <(printf '%s' "$OUT") \
+   && grep -qF "N4C-SUMMARY-MARKER" < <(printf '%s' "$OUT") \
+   && grep -qF "N4D-SUMMARY-MARKER" < <(printf '%s' "$OUT"); then
   ok "n=4 cyclic supersedes: ALL FOUR members stay VISIBLE (generalized cycle detection)"
 else
   no "n=4 cycle wrongly hid one or more members (rc=$RC out=[$OUT])"
@@ -410,10 +410,10 @@ seed_memo "$R21" "tailc.md" "$(memo_content_v4 "$sha21" "taila" "TAILC-SUMMARY-M
 seed_memo "$R21" "taild.md" "$(memo_content_v4 "$sha21" "taila" "TAILD-SUMMARY-MARKER" "Body D.")"
 run_reader "$R21"
 if [ "$RC" -eq 0 ] \
-   && ! printf '%s' "$OUT" | grep -qF "TAILA-SUMMARY-MARKER" \
-   && printf '%s' "$OUT" | grep -qF "TAILB-SUMMARY-MARKER" \
-   && printf '%s' "$OUT" | grep -qF "TAILC-SUMMARY-MARKER" \
-   && printf '%s' "$OUT" | grep -qF "TAILD-SUMMARY-MARKER"; then
+   && ! grep -qF "TAILA-SUMMARY-MARKER" < <(printf '%s' "$OUT") \
+   && grep -qF "TAILB-SUMMARY-MARKER" < <(printf '%s' "$OUT") \
+   && grep -qF "TAILC-SUMMARY-MARKER" < <(printf '%s' "$OUT") \
+   && grep -qF "TAILD-SUMMARY-MARKER" < <(printf '%s' "$OUT"); then
   ok "cycle-plus-tail: A hidden by external D (ordinary single-hop); B, C, D all visible (sane, non-crashing)"
 else
   no "cycle-plus-tail behaved insanely (rc=$RC out=[$OUT])"

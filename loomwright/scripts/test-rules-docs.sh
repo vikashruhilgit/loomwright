@@ -219,7 +219,7 @@ region_verbs() {
     if [ -z "$region" ]; then no "$label -- the enumeration segment /$narrow/ is gone from $f"; return; fi
   fi
   for v in $RULES_VERBS; do
-    printf '%s' "$region" | grep -qE -- "(^|[^a-z-])$v([^a-z-]|$)" || missing="$missing $v"
+    grep -qE -- "(^|[^a-z-])$v([^a-z-]|$)" < <(printf '%s' "$region") || missing="$missing $v"
   done
   if [ -z "$missing" ]; then ok "$label -- restates all $n_verbs verbs"
   else no "$label -- restated verb list is STALE, missing:$missing ($f)"; fi

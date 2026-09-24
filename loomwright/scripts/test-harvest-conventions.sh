@@ -314,7 +314,7 @@ MUT5="$ROOT/mut-join.sh"
 sed 's@| join($us)) as $cp@| join("")) as $cp@' "$HARVEST" > "$MUT5"
 if ! cmp -s "$HARVEST" "$MUT5" && grep -qF 'join("")) as $cp' "$MUT5" && bash -n "$MUT5" 2>/dev/null; then
   M5OUT="$( bash "$MUT5" --root "$RJ" --session-id fx-m5 --min-support 4 --cap 3 --no-writer 2>&1 )" || true
-  if printf '%s\n' "$M5OUT" | grep -qF '4 of the 4 CHECKABLE motivating findings'; then
+  if grep -qF '4 of the 4 CHECKABLE motivating findings' < <(printf '%s\n' "$M5OUT"); then
     no "(M5) REFUTED: the mutant still reported 4 checkable findings — (j1)/(j2) are vacuous"
   else
     ok "(M5) CONFIRMED: with the separator destroyed the scope collapses to '$(printf '%s\n' "$M5OUT" | grep -F 'scope fidelity:' | head -1 | sed 's/^ *//')' — (j1)/(j2) are load-bearing"
@@ -324,7 +324,7 @@ else
 fi
 # ...and the same mutant must also break (B), which no longer has a single-path record to mask it.
 M5B="$( bash "$MUT5" --root "$R" --session-id fx-m5b --min-support 4 --cap 3 --no-writer 2>&1 )" || true
-if printf '%s\n' "$M5B" | grep -qE '^     applies_to: \[.*src/a/\*'; then
+if grep -qE '^     applies_to: \[.*src/a/\*' < <(printf '%s\n' "$M5B"); then
   no "(M5b) REFUTED: (B) still derives src/a/* with the separator destroyed — it is masked again"
 else
   ok "(M5b) CONFIRMED: the same mutant also breaks (B)'s applies_to derivation — its de-masked third record is load-bearing"
@@ -521,7 +521,7 @@ awk '/^matches_any\(\) \{$/ { print; print "  return 1   # MUTANT"; inf=1; next 
      inf && /^\}$/ { print; inf=0; next } { print }' "$HARVEST" > "$MUT2"
 if ! cmp -s "$HARVEST" "$MUT2" && bash -n "$MUT2" 2>/dev/null; then
   M2OUT="$( bash "$MUT2" --root "$R6" --session-id fx-m2 --min-support 4 --cap 5 --no-writer 2>&1 )" || true
-  if printf '%s\n' "$M2OUT" | grep -q '(empty batch'; then
+  if grep -q '(empty batch' < <(printf '%s\n' "$M2OUT"); then
     ok "(M2) CONFIRMED: with matches_any neutered the batch is EMPTY — (e1)-(e3) are load-bearing"
   else
     no "(M2) REFUTED: the mutant still emitted a batch, so the metric assertions are vacuous"
@@ -536,7 +536,7 @@ sed 's|ADD_RULE_ARGV+=(--source "$SOURCE_VAL")|ADD_RULE_ARGV+=(--check "bash mut
   "$HARVEST" > "$MUT3"
 if ! cmp -s "$HARVEST" "$MUT3" && bash -n "$MUT3" 2>/dev/null; then
   M3OUT="$( bash "$MUT3" --root "$R6" --session-id fx-m3 --min-support 4 --cap 5 --no-writer 2>&1 )" || true
-  if printf '%s\n' "$M3OUT" | grep -q -- '--check'; then
+  if grep -q -- '--check' < <(printf '%s\n' "$M3OUT"); then
     ok "(M3) CONFIRMED: a synthesised --check IS visible in the output — (c2) would go RED and is load-bearing"
   else
     no "(M3) REFUTED: a synthesised --check was invisible, so (c2) proves nothing"
@@ -678,7 +678,7 @@ grep -q 'share of self-heal MISSES:  3/4 (75%)' "$ROOT/i.txt" \
 # SAME values. Before the fix this printed `5/0 (0%)` and `3/0 (0%)` and still exited 0.
 BCSTUB="$ROOT/bcstub"; mkdir -p "$BCSTUB"; printf '#!/bin/sh\nexit 127\n' > "$BCSTUB/bc"; chmod +x "$BCSTUB/bc"
 I5OUT="$( PATH="$BCSTUB:$PATH" bash "$HARVEST" --root "$R10" --session-id fx-i5 --min-support 2 --cap 5 --no-writer 2>&1 )"; i5rc=$?
-if [ "$i5rc" -eq 0 ] && printf '%s\n' "$I5OUT" | grep -q 'share of self-heal MISSES:  3/4 (75%)'; then
+if [ "$i5rc" -eq 0 ] && grep -q 'share of self-heal MISSES:  3/4 (75%)' < <(printf '%s\n' "$I5OUT"); then
   ok "(i5) with \`bc\` stubbed to exit 127 the denominators are UNCHANGED — bc is no longer a dependency"
 else
   no "(i5) a broken \`bc\` still changes the AC14 numbers (rc=$i5rc): $(printf '%s\n' "$I5OUT" | grep 'share of self-heal MISSES' | head -1)"
@@ -694,7 +694,7 @@ MUT4="$ROOT/mut-count.sh"
 sed 's@(\[$r | select((\.|type)=="object") | \.categories\[\]?\] | length)@1@' "$HARVEST" > "$MUT4"
 if ! cmp -s "$HARVEST" "$MUT4" && grep -q 'reduce inputs as $r (0; . + 1)' "$MUT4" && bash -n "$MUT4" 2>/dev/null; then
   M4OUT="$( bash "$MUT4" --root "$R10" --session-id fx-m4 --min-support 2 --cap 5 --no-writer 2>&1 )" || true
-  if printf '%s\n' "$M4OUT" | grep -q 'share of all findings:      5/8 (63%)'; then
+  if grep -q 'share of all findings:      5/8 (63%)' < <(printf '%s\n' "$M4OUT"); then
     no "(M4) REFUTED: the mutant still printed 3/5 — (i2)/(i3) are vacuous"
   else
     ok "(M4) CONFIRMED: counting records instead of findings turns 5/8 into $(printf '%s\n' "$M4OUT" | sed -n 's/.*share of all findings: *//p' | head -1) — (i2)/(i3) are load-bearing"
@@ -794,7 +794,7 @@ MUT7="$ROOT/mut-fidden.sh"
 sed 's@^  FIDELITY_ALL_TOTAL=$((FIDELITY_ALL_TOTAL + fid_n))$@  [ -n "$globs" ] \&\& FIDELITY_ALL_TOTAL=$((FIDELITY_ALL_TOTAL + fid_n))@' "$HARVEST" > "$MUT7"
 if ! cmp -s "$HARVEST" "$MUT7" && bash -n "$MUT7" 2>/dev/null; then
   M7OUT="$( bash "$MUT7" --root "$RL" --session-id fx-m7 --min-support 4 --cap 3 --no-writer 2>&1 )" || true
-  if printf '%s\n' "$M7OUT" | grep -qF 'over ALL motivating findings: 56% (5 of 9)'; then
+  if grep -qF 'over ALL motivating findings: 56% (5 of 9)' < <(printf '%s\n' "$M7OUT"); then
     no "(M7) REFUTED: the mutant still reports 5 of 9 — (l3) is vacuous"
   else
     ok "(M7) CONFIRMED: excluding repo-wide rules turns the honest figure into '$(printf '%s\n' "$M7OUT" | sed -n 's/.*over ALL motivating findings: \([0-9]*% ([0-9]* of [0-9]*)\).*/\1/p' | head -1)' — a batch of 9 findings reported as if it had 5"
@@ -831,7 +831,7 @@ MUT8="$ROOT/mut-split.sh"
 sed 's@^    while IFS= read -r p; do$@    for p in $(cat); do@' "$HARVEST" > "$MUT8"
 if ! cmp -s "$HARVEST" "$MUT8" && grep -qF 'for p in $(cat); do' "$MUT8" && bash -n "$MUT8" 2>/dev/null; then
   M8OUT="$( bash "$MUT8" --root "$RN" --session-id fx-m8 --min-support 4 --cap 3 --no-writer 2>&1 )" || true
-  if printf '%s\n' "$M8OUT" | grep -qF '5 of the 5 CHECKABLE'; then
+  if grep -qF '5 of the 5 CHECKABLE' < <(printf '%s\n' "$M8OUT"); then
     no "(M8) REFUTED: the word-splitting version still matches the spaced path — (n2) is vacuous"
   else
     ok "(M8) CONFIRMED: with the unquoted split restored the same fixture reports '$(printf '%s\n' "$M8OUT" | grep -F 'scope fidelity:' | head -1 | sed 's/^ *//')' — (n2) is load-bearing"
@@ -924,7 +924,7 @@ grep -qF 'no theme reached the support floor' "$ROOT/p.txt" \
   || ok "(p3) the --cap 0 run does NOT blame the support floor (4 findings/theme cleared it)"
 # The other arm must survive the branch: a floor nothing can reach is still reported as the floor.
 run_harvest "$RO" --session-id "fx-p2" --min-support 9999 --cap 5 --no-writer
-if printf '%s\n' "$OUT" | grep -qF '(empty batch — no theme reached the support floor'; then
+if grep -qF '(empty batch — no theme reached the support floor' < <(printf '%s\n' "$OUT"); then
   ok "(p4) a genuinely thin corpus still reports the support floor — the branch did not overwrite the true case"
 else
   no "(p4) the support-floor arm was lost: $(printf '%s\n' "$OUT" | grep -F '(empty batch' | head -1)"
@@ -935,7 +935,7 @@ MUT10="$ROOT/mut-emptycause.sh"
 sed 's@\[ "$CAP_DEFERRED" -gt 0 \]@[ "$CAP_DEFERRED" -gt 999999 ]@' "$HARVEST" > "$MUT10"
 if ! cmp -s "$HARVEST" "$MUT10" && bash -n "$MUT10" 2>/dev/null; then
   M10OUT="$( bash "$MUT10" --root "$RO" --session-id fx-m10 --min-support 4 --cap 0 --no-writer 2>&1 )" || true
-  if printf '%s\n' "$M10OUT" | grep -qF 'no theme reached the support floor'; then
+  if grep -qF 'no theme reached the support floor' < <(printf '%s\n' "$M10OUT"); then
     ok "(M10) CONFIRMED: with the cap arm unreachable the --cap 0 run blames the support floor again — (p2)/(p3) are load-bearing"
   else
     no "(M10) REFUTED: the unconditional message did not reappear — (p2)/(p3) may be vacuous"
@@ -991,7 +991,7 @@ if [ "$RC" -eq 0 ]; then
 else
   no "(q2) mixed categories[] exited $RC (expected 0): $(printf '%s\n' "$OUT" | grep -i 'could not count' | head -1)"
 fi
-if printf '%s\n' "$OUT" | grep -qF 'share of self-heal MISSES:  1/2'; then
+if grep -qF 'share of self-heal MISSES:  1/2' < <(printf '%s\n' "$OUT"); then
   ok "(q3) only the OBJECT elements are counted: misses 1/2 (the string/number/null/array contribute to neither side)"
 else
   no "(q3) miss denominators wrong: $(printf '%s\n' "$OUT" | grep -F 'share of self-heal MISSES' | head -1)"
@@ -1004,7 +1004,7 @@ MUT11="$ROOT/mut-allmisses.sh"
 sed 's@ | select(type=="object")@@' "$HARVEST" > "$MUT11"
 if ! cmp -s "$HARVEST" "$MUT11" && bash -n "$MUT11" 2>/dev/null; then
   M11OUT="$( bash "$MUT11" --root "$RQ" --session-id fx-m11 --min-support 1 --cap 5 --no-writer 2>&1 )"; m11rc=$?
-  if [ "$m11rc" -eq 3 ] && printf '%s\n' "$M11OUT" | grep -qF 'could not count findings/misses'; then
+  if [ "$m11rc" -eq 3 ] && grep -qF 'could not count findings/misses' < <(printf '%s\n' "$M11OUT"); then
     ok "(M11) CONFIRMED: with the type guard removed the SAME fixture dies exit 3 'could not count findings/misses' — (q2)/(q3) are load-bearing, not vacuous"
   else
     no "(M11) REFUTED: the unguarded ALL_MISSES survived the mixed array (rc=$m11rc) — (q2)/(q3) may be vacuous"
@@ -1053,7 +1053,7 @@ if ! cmp -s "$HARVEST" "$MUT12" && bash -n "$MUT12" 2>/dev/null; then
   M12OUT="$( bash "$MUT12" --root "$RR" --session-id fx-m12 --min-support 4 --cap 3 --no-writer 2>&1 )" || true
   # With the trap restored `pn` is the two-line string "0\n0"; `[ "$pn" -eq 0 ]` then fails loudly on
   # a non-numeric operand, so the tell is that the clean single-line zero-path justification is GONE.
-  if ! printf '%s\n' "$M12OUT" | grep -q 'REPO-WIDE JUSTIFICATION.*asked to accept\.$'; then
+  if ! grep -q 'REPO-WIDE JUSTIFICATION.*asked to accept\.$' < <(printf '%s\n' "$M12OUT"); then
     ok "(M12) CONFIRMED: with the two-line capture restored the SAME fixture no longer renders a whole justification line — (r1)/(r2) are load-bearing"
   else
     no "(M12) REFUTED: the two-line capture still produced an intact justification — (r1)/(r2) may be vacuous"
@@ -1101,7 +1101,7 @@ MUT13="$ROOT/mut-recguard.sh"
 sed 's@^    | select((.value | type) == "object")$@@' "$HARVEST" > "$MUT13"
 if ! cmp -s "$HARVEST" "$MUT13" && bash -n "$MUT13" 2>/dev/null; then
   M13OUT="$( bash "$MUT13" --root "$RS2" --session-id fx-m13 --min-support 4 --cap 3 --no-writer 2>&1 )"; m13rc=$?
-  if [ "$m13rc" -eq 3 ] && printf '%s\n' "$M13OUT" | grep -qF 'could not extract findings from the ledger'; then
+  if [ "$m13rc" -eq 3 ] && grep -qF 'could not extract findings from the ledger' < <(printf '%s\n' "$M13OUT"); then
     ok "(M13) CONFIRMED: without the record-level guard the SAME fixture dies exit 3 'could not extract findings' — (r3)/(r4) are load-bearing"
   else
     no "(M13) REFUTED: the unguarded extractor survived the non-object records (rc=$m13rc) — (r3)/(r4) may be vacuous"
@@ -1117,7 +1117,7 @@ MUT14="$ROOT/mut-aggguard.sh"
 sed 's@ | select((\.|type)=="object")@@g' "$HARVEST" > "$MUT14"
 if ! cmp -s "$HARVEST" "$MUT14" && bash -n "$MUT14" 2>/dev/null; then
   M14OUT="$( bash "$MUT14" --root "$RS2" --session-id fx-m14 --min-support 4 --cap 3 --no-writer 2>&1 )"; m14rc=$?
-  if [ "$m14rc" -eq 3 ] && printf '%s\n' "$M14OUT" | grep -qF 'could not count findings/misses'; then
+  if [ "$m14rc" -eq 3 ] && grep -qF 'could not count findings/misses' < <(printf '%s\n' "$M14OUT"); then
     ok "(M14) CONFIRMED: with the extractor guarded but the aggregates not, the SAME fixture still dies exit 3 — the sibling-level guards are load-bearing too"
   else
     no "(M14) REFUTED: the unguarded aggregates survived the non-object records (rc=$m14rc)"
@@ -1385,7 +1385,7 @@ TD5="$(new_repo)"
 rec 1 "count drift in the banner" '["src/a/x.md"]' 6 > "$TD5/.supervisor/postmortem/results.jsonl"
 rm -rf "$TD5/.agent"
 run_harvest "$TD5" --session-id "fx-t5" --min-support 4 --cap 5 --no-writer
-if [ "$RC" -eq 0 ] && printf '%s\n' "$OUT" | grep -qF 'store dedupe: no live rule to compare against'; then
+if [ "$RC" -eq 0 ] && grep -qF 'store dedupe: no live rule to compare against' < <(printf '%s\n' "$OUT"); then
   ok "(t20) an absent rules store exits 0 and says outright that nothing could have been deduped"
 else
   no "(t20) an absent store misbehaved (exit $RC): $(printf '%s\n' "$OUT" | grep -F 'store dedupe' | head -1)"
@@ -1433,9 +1433,9 @@ MUT18="$ROOT/mut-nocontinuation.sh"
 sed 's@^  \[ "$DUP_DEFERRED" -eq 0 \] || \\$@  [ "$DUP_DEFERRED" -ge 0 ] || \\@' "$HARVEST" > "$MUT18"
 if ! cmp -s "$HARVEST" "$MUT18" && bash -n "$MUT18" 2>/dev/null; then
   M18OUT="$( bash "$MUT18" --root "$TD" --session-id fx-m18 --min-support 4 --cap 0 --no-writer 2>&1 )" || true
-  if printf '%s\n' "$M18OUT" | grep -qF '(and a further 1 theme(s) were deferred as ALREADY COVERED'; then
+  if grep -qF '(and a further 1 theme(s) were deferred as ALREADY COVERED' < <(printf '%s\n' "$M18OUT"); then
     no "(M18) REFUTED: the continuation line still printed with its guard always-true — (t24) is vacuous"
-  elif printf '%s\n' "$M18OUT" | grep -qF 'were deferred by the cap=0 batch bound'; then
+  elif grep -qF 'were deferred by the cap=0 batch bound' < <(printf '%s\n' "$M18OUT"); then
     ok "(M18) CONFIRMED: with the guard always-true the cap sentence still prints but the already-covered continuation is silently lost — (t24) is load-bearing"
   else
     no "(M18) the mutant printed neither sentence — the control proved nothing"

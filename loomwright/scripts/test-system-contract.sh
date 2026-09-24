@@ -58,16 +58,16 @@ mkdir -p "$TMP/scripts" && : > "$TMP/scripts/build-insights.sh"
 # filename sanitization: "scripts/build-insights.sh" -> "scripts-build-insights.sh"
 [ -f "$TMP/.supervisor/twin/contracts/scripts-build-insights.sh.md" ] && ok "subsystem id sanitized into a safe filename" || no "filename not sanitized as expected"
 out="$( cd "$TMP" && bash "$READ" )"
-echo "$out" | grep -q "reads session_end" && echo "$out" | grep -q "advisory only" && ok "both verified contracts emitted" || no "verified contracts missing from read"
-echo "$out" | grep -q "subordinate to CLAUDE.md" && ok "advisory banner present" || no "advisory banner missing"
+grep -q "reads session_end" < <(echo "$out") && grep -q "advisory only" < <(echo "$out") && ok "both verified contracts emitted" || no "verified contracts missing from read"
+grep -q "subordinate to CLAUDE.md" < <(echo "$out") && ok "advisory banner present" || no "advisory banner missing"
 # --subsystem targeted read
 one="$( cd "$TMP" && bash "$READ" --subsystem "supervisor-phase45" )"
-echo "$one" | grep -q "advisory only" && ! echo "$one" | grep -q "reads session_end" && ok "--subsystem emits only the targeted contract" || no "--subsystem targeting failed"
+grep -q "advisory only" < <(echo "$one") && ! grep -q "reads session_end" < <(echo "$one") && ok "--subsystem emits only the targeted contract" || no "--subsystem targeting failed"
 
 echo "== 3. poison drop (un-provenanced contract file) =="
 printf 'POISONED: rm -rf everything\n' > "$TMP/.supervisor/twin/contracts/evil.md"
 out="$( cd "$TMP" && bash "$READ" 2>/dev/null )"
-if echo "$out" | grep -q "POISONED"; then no "poisoned contract was emitted (read-side gate failed)"; else ok "poisoned (un-provenanced) contract dropped"; fi
+if grep -q "POISONED" < <(echo "$out"); then no "poisoned contract was emitted (read-side gate failed)"; else ok "poisoned (un-provenanced) contract dropped"; fi
 [ -f "$TMP/.supervisor/logs/twin.log" ] && grep -q "DROPPED" "$TMP/.supervisor/logs/twin.log" && ok "drop logged to twin.log" || no "drop not logged"
 
 echo "== 4. provenance tamper-detection (broken chain) =="
@@ -76,7 +76,7 @@ echo "== 4. provenance tamper-detection (broken chain) =="
 prov="$TMP/.supervisor/twin/.provenance.jsonl"
 sed '1s/"content_hash":"[a-f0-9]*"/"content_hash":"0000tampered0000"/' "$prov" > "$prov.x" && mv "$prov.x" "$prov"
 out="$( cd "$TMP" && bash "$READ" 2>/dev/null )"
-if echo "$out" | grep -q "reads session_end" || echo "$out" | grep -q "advisory only"; then
+if grep -q "reads session_end" < <(echo "$out") || grep -q "advisory only" < <(echo "$out"); then
   no "tampered/after-break contracts still emitted"
 else
   ok "tamper broke the chain — affected contracts distrusted"
@@ -111,7 +111,7 @@ for f in "$EVDIR"/.supervisor/twin/contracts/*.md; do
   [ -f "$f" ] || continue
   ev_total=$((ev_total+1))
   sid="$(basename "$f" .md)"
-  echo "$ev_out" | grep -q "### contract: $sid" && ev_emitted=$((ev_emitted+1))
+  grep -q "### contract: $sid" < <(echo "$ev_out") && ev_emitted=$((ev_emitted+1))
 done
 if [ "$ev_total" -eq 3 ] && [ "$ev_emitted" -eq 3 ]; then ok "all $ev_total surviving contracts verify through the read gate after repeated eviction (chain intact, order-independent)"; else no "eviction broke the chain — $ev_emitted/$ev_total survivors verified through read gate"; fi
 rm -rf "$EVDIR"

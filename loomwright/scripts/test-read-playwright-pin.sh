@@ -60,7 +60,7 @@ bash_n_rc=0; bash -n "$S" 2>/dev/null || bash_n_rc=$?
 [ "$bash_n_rc" -eq 0 ] && ok "(C) read-playwright-pin.sh parses (bash -n)" || no "(C) bash -n failed on the reader"
 [ "$rc" -eq 0 ] && ok "(C) exit 0 against test-verify-walkthrough.sh" || no "(C) rc=$rc; stderr: $(cat "$ERR")"
 got="$(cat "$OUT")"
-printf '%s\n' "$got" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' && ok "(C) stdout is an exact x.y.z ($got)" || no "(C) stdout is not x.y.z: '$got'"
+grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' < <(printf '%s\n' "$got") && ok "(C) stdout is an exact x.y.z ($got)" || no "(C) stdout is not x.y.z: '$got'"
 want="$(grep '^PW_TEST_VERSION=' "$SUBJECT" | cut -d= -f2)"
 [ -n "$want" ] && [ "$got" = "$want" ] && ok "(C) equals the plain grep|cut of the pin line ($want) — not vacuous" || no "(C) reader='$got' grep|cut='$want'"
 [ "$(wc -l < "$OUT" | tr -d ' ')" -eq 1 ] && ok "(C) exactly one stdout line" || no "(C) $(wc -l < "$OUT") stdout lines"
@@ -95,12 +95,12 @@ echo "== (W) wiring: ci.yml invokes the reader (no inline sed drift) and the lin
 grep -q 'read-playwright-pin.sh' "$CI_YML" && ok "(W) ci.yml names read-playwright-pin.sh" || no "(W) ci.yml does not invoke read-playwright-pin.sh"
 invoke_lines="$(grep 'read-playwright-pin.sh' "$CI_YML" | grep -v '^ *#')"
 [ -n "$invoke_lines" ] && ok "(W) at least one NON-comment invoking line" || no "(W) read-playwright-pin.sh appears only in comments"
-! printf '%s\n' "$invoke_lines" | grep -q '|| true' && ok "(W) the invoking line carries no \`|| true\`" || no "(W) the invoking line masks failure with || true"
+! grep -q '|| true' < <(printf '%s\n' "$invoke_lines") && ok "(W) the invoking line carries no \`|| true\`" || no "(W) the invoking line masks failure with || true"
 ! grep -qE "^[^#]*sed -n 's/\^PW_TEST_VERSION=" "$CI_YML" && ok "(W) no inline PW_TEST_VERSION sed remains in ci.yml" || no "(W) an inline PW_TEST_VERSION sed still lives in ci.yml"
 # The invoking step must be under `set -euo pipefail` so a non-zero exit from the reader fails the step
 # BEFORE `echo "version=$pin"` can write an empty key.
 pwpin_block="$(awk '/id: pw-pin/{f=1} f&&/read-playwright-pin.sh/{print; exit} f{print}' "$CI_YML")"
-printf '%s\n' "$pwpin_block" | grep -q 'set -euo pipefail' && ok "(W) the pw-pin step runs under set -euo pipefail" || no "(W) pw-pin step: no set -euo pipefail before the reader call"
+grep -q 'set -euo pipefail' < <(printf '%s\n' "$pwpin_block") && ok "(W) the pw-pin step runs under set -euo pipefail" || no "(W) pw-pin step: no set -euo pipefail before the reader call"
 
 # ============================================================================
 echo "== (M) mutation control: a loosened pattern ACCEPTS the range fixture the real reader refuses =="

@@ -132,7 +132,7 @@ fi
 
 echo "== 3. bold + lowercase Outcome forms both harvest =="
 sig1="$("$JQ" -sc '[.[].number]|sort' "$OUT1/signal.jsonl")"
-if printf '%s' "$sig1" | grep -q '1' && printf '%s' "$sig1" | grep -q '2'; then
+if grep -q '1' < <(printf '%s' "$sig1") && grep -q '2' < <(printf '%s' "$sig1"); then
   ok "both #1 (bold **Heal decision:**) and #2 (lowercase) harvested ($sig1)"
 else
   no "outcome-form harvest gap ($sig1)"
@@ -148,7 +148,7 @@ OUT5="$(mktemp -d)"
 out5_console="$(run_engine "$TMP1" "$OUT5" --no-ledger --backfill 5 2>&1)"
 # console is --quiet-suppressed; the plan rides in report.md §6 + _summary.backfill
 bf_prs="$("$JQ" -r '.backfill.prs[].number' "$OUT5/_summary.json" 2>/dev/null | sort | tr '\n' ' ')"
-if echo "$bf_prs" | grep -q '7' \
+if grep -q '7' < <(echo "$bf_prs") \
    && grep -q "Nothing was dispatched" "$OUT5/report.md" \
    && grep -q "a PLAN, not an action" "$OUT5/report.md"; then
   ok "backfill plan lists unlabeled #7 and is marked plan-only ($bf_prs)"
@@ -214,7 +214,7 @@ add_label "$TMP10" '{"schema_version":1,"ts":"2026-06-01T00:00:00Z","repo":"acme
 run_engine "$TMP10" "$OUT10" --no-ledger >/dev/null 2>&1
 sig10="$("$JQ" -sc '[.[].number]' "$OUT10/signal.jsonl" 2>/dev/null)"
 cell10="$("$JQ" -r 'select(.number==42)|.cell' "$OUT10/joined.jsonl" 2>/dev/null)"
-if printf '%s' "$sig10" | grep -q '42' && [ "$cell10" = FN ]; then
+if grep -q '42' < <(printf '%s' "$sig10") && [ "$cell10" = FN ]; then
   ok "plain '- heal_decision: PASS' brief harvested + joined (FN)"
 else
   no "plain-bullet brief NOT harvested (sig=$sig10 cell=$cell10) — bold-only regex regression"

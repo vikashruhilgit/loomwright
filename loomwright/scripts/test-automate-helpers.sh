@@ -1321,7 +1321,7 @@ bash "$H" learning-emit "$LED" \
 READER_OUT="$( cd "$WD" && bash "$READ_PM" "src/corrected.ts" 2>/dev/null )"
 N_COMPLETE="$(jq -R 'fromjson? // empty' "$LED" 2>/dev/null \
   | jq -s '[ .[] | select(((.changed_paths // []) | length) > 0) ] | length' 2>/dev/null)"
-if printf '%s' "$READER_OUT" | grep -q "src/corrected.ts" && [ "$N_COMPLETE" = "1" ]; then
+if grep -q "src/corrected.ts" < <(printf '%s' "$READER_OUT") && [ "$N_COMPLETE" = "1" ]; then
   ok "degraded-then-corrective: corrective emit NOT skipped and read-postmortem.sh returns it (exactly ONE complete line)"
 else
   no "degraded-then-corrective wrong (reader_out='$READER_OUT' n_complete='$N_COMPLETE' ledger='$(cat "$LED" 2>/dev/null)')"
@@ -1355,7 +1355,7 @@ bash "$H" learning-emit "$LED2" \
   --changed-paths-json '["src/corrected.ts"]' --additions 9 --deletions 3 --changed-files 1 \
   --summary "corrective over a LEGACY degraded key"
 AFTER="$( cd "$WD2" && bash "$READ_PM" "src/corrected.ts" 2>/dev/null )"
-if [ -z "$BEFORE" ] && printf '%s' "$AFTER" | grep -q "src/corrected.ts"; then
+if [ -z "$BEFORE" ] && grep -q "src/corrected.ts" < <(printf '%s' "$AFTER"); then
   ok "mutation control: a LEGACY (pre-discriminator) degraded key is invisible BEFORE and correctable AFTER (skip rule is load-bearing)"
 else
   no "legacy-degraded correction wrong (before='$BEFORE' after='$AFTER' ledger='$(cat "$LED2" 2>/dev/null)')"
@@ -1409,7 +1409,7 @@ N3="$(wc -l < "$LED3" | tr -d ' ')"
 SAME_KEY="$(jq -R 'fromjson? // empty' "$LED3" 2>/dev/null \
   | jq -s '[ .[] | ((.repo|ascii_downcase) + "#" + (.number|tostring)) ] | unique | length' 2>/dev/null)"
 VIS3="$( cd "$WD3" && bash "$READ_PM" "src/shared.ts" 2>/dev/null )"
-if [ "$N3" = "2" ] && [ "$SAME_KEY" = "1" ] && printf '%s' "$VIS3" | grep -q "src/shared.ts"; then
+if [ "$N3" = "2" ] && [ "$SAME_KEY" = "1" ] && grep -q "src/shared.ts" < <(printf '%s' "$VIS3"); then
   ok "realistic degraded shape (--number passed): correction still appends, both lines SHARE repo#number, reader returns the complete one"
 else
   no "realistic-degraded wrong (lines='$N3' distinct_repo_number_keys='$SAME_KEY' reader='$VIS3')"
@@ -1691,7 +1691,7 @@ seam_has() {  # seam_has <skill_path> <anchor> -> 0 when the line starting with 
 }
 seam_has "$SKILL_FILE" '1. **RECONCILE**' && ok "G7 AC-2 prose seam: SKILL §6 step 1 (RECONCILE) names brief-repair" || no "G7 §6 step 1 lacks brief-repair"
 seam_has "$SKILL_FILE" '5. **SYNC**'      && ok "G7 AC-1 prose seam: SKILL §6 step 5 (SYNC) names brief-repair"      || no "G7 §6 step 5 lacks brief-repair"
-grep -F -- '**PR merged?**' "$SKILL_FILE" | grep -q 'brief-repair' && ok "G7 §4 step 2 'PR merged?' bullet references the repair" || no "G7 §4 'PR merged?' bullet lacks the reference"
+grep -q 'brief-repair' < <(grep -F -- '**PR merged?**' "$SKILL_FILE") && ok "G7 §4 step 2 'PR merged?' bullet references the repair" || no "G7 §4 'PR merged?' bullet lacks the reference"
 skill_mutant() {  # skill_mutant <anchor> <out> — strip every `brief-repair` token from the anchored line only
   awk -v a="$1" 'index($0,a)==1 {gsub(/brief-repair/,"brief_removed")} {print}' "$SKILL_FILE" > "$2"
 }
@@ -1807,7 +1807,7 @@ BEFORE="$(cd "$R" && find .supervisor/requirements -type f -exec sh -c 'echo "$1
 rs_run "$R" "$R/.supervisor/requirements/qh"
 nplan="$(printf '%s\n' "$RUN_OUT" | grep -c '^plan	')"
 AFTER="$(cd "$R" && find .supervisor/requirements -type f -exec sh -c 'echo "$1" $(cksum < "$1")' _ {} \; | sort)"
-if [ "$nplan" = "1" ] && printf '%s\n' "$RUN_OUT" | grep -qF "plan	$RELB	done (PR #42, merge abcdef1)" && [ "$BEFORE" = "$AFTER" ]; then
+if [ "$nplan" = "1" ] && grep -qF "plan	$RELB	done (PR #42, merge abcdef1)" < <(printf '%s\n' "$RUN_OUT") && [ "$BEFORE" = "$AFTER" ]; then
   ok "H1 AC-1: dry run prints exactly one plan line for (b), root untouched (diff -r equivalent)"
 else
   no "H1 AC-1 wrong (nplan=$nplan out='$RUN_OUT' unchanged=$([ "$BEFORE" = "$AFTER" ] && echo y || echo n))"
@@ -1890,7 +1890,7 @@ mkdir -p "$R/.supervisor/requirements/qh" "$R/.supervisor/jobs/done" "$R/.superv
 rs_stub_bin "$R/bin"
 printf '# shipped\n\n## Status: brief-shipped\n\nJob done, ACs unverified.\n' > "$R/.supervisor/requirements/qh/07-shipped.md"
 rs_run "$R" "$R/.supervisor/requirements/qh" --apply
-if printf '%s\n' "$RUN_OUT" | grep -qE '^info	.*07-shipped\.md	brief-shipped	' \
+if grep -qE '^info	.*07-shipped\.md	brief-shipped	' < <(printf '%s\n' "$RUN_OUT") \
    && grep -qE '^## Status:[[:space:]]*brief-shipped[[:space:]]*$' "$R/.supervisor/requirements/qh/07-shipped.md"; then
   ok "H6 brief-shipped: listed as an 'info' row, file untouched (never promoted) even under --apply"
 else
@@ -1928,7 +1928,7 @@ cat > "$R/.supervisor/logs/ckA.jsonl" <<'EOF'
 EOF
 RF="$(ck_runfile "$R" ckA)"
 OUT="$(bash "$H" ceiling-check "$RF" 1000 --root "$R" 2>&1)"; RC=$?
-if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -qE '^OK total=200 max=1000$'; then
+if [ "$RC" -eq 0 ] && grep -qE '^OK total=200 max=1000$' < <(printf '%s' "$OUT"); then
   ok "I1 under-max: $OUT"
 else
   no "I1 under-max wrong: rc=$RC out='$OUT'"
@@ -1942,7 +1942,7 @@ cat > "$R/.supervisor/logs/ckB.jsonl" <<'EOF'
 EOF
 RF="$(ck_runfile "$R" ckB)"
 OUT="$(bash "$H" ceiling-check "$RF" 1000 --root "$R" 2>&1)"; RC=$?
-if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -qE '^PARK: token_ceiling total=1400 max=1000$'; then
+if [ "$RC" -eq 0 ] && grep -qE '^PARK: token_ceiling total=1400 max=1000$' < <(printf '%s' "$OUT"); then
   ok "I2 over-max parks (rc still 0, PARK is a normal outcome like gate-eval): $OUT"
 else
   no "I2 over-max wrong: rc=$RC out='$OUT'"
@@ -1956,7 +1956,7 @@ cat > "$R/.supervisor/logs/ckC.jsonl" <<'EOF'
 EOF
 RF="$(ck_runfile "$R" ckC)"
 OUT="$(bash "$H" ceiling-check "$RF" 1000 --root "$R" 2>&1)"; RC=$?
-if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -qE '^OK total=1000 max=1000$'; then
+if [ "$RC" -eq 0 ] && grep -qE '^OK total=1000 max=1000$' < <(printf '%s' "$OUT"); then
   ok "I3 exactly-at-max is OK, not a breach: $OUT"
 else
   no "I3 exactly-at-max wrong: rc=$RC out='$OUT'"
@@ -1968,7 +1968,7 @@ R="$(ck_root)"
 # No session log file at all for the named session -> reader returns LEDGER_UNREADABLE=1.
 RF="$(ck_runfile "$R" ckMissing)"
 OUT="$(bash "$H" ceiling-check "$RF" 1000 --root "$R" 2>&1)"; RC=$?
-if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -qE '^PARK: ledger_unreadable$'; then
+if [ "$RC" -eq 0 ] && grep -qE '^PARK: ledger_unreadable$' < <(printf '%s' "$OUT"); then
   ok "I4 unreadable ledger fails CLOSED: $OUT"
 else
   no "I4 unreadable ledger wrong: rc=$RC out='$OUT'"
@@ -2020,7 +2020,7 @@ EOF
   # at the point of use).
   MUT_OUT="$BASE_OUT"
   rm -rf "$R"
-  if printf '%s' "$MUT_OUT" | grep -q '^OK'; then
+  if grep -q '^OK' < <(printf '%s' "$MUT_OUT"); then
     ok "I7 mutation control: always-0 numf() flips a genuinely-over-ceiling fixture to OK -- proves ceiling-check's breach-parks behavior is load-bearing, not vacuous (mutant='$MUT_OUT')"
   else
     no "I7 mutation control REFUTED: mutant still parked -- ceiling-check may not actually depend on the reader's real-usage sums (mutant='$MUT_OUT')"

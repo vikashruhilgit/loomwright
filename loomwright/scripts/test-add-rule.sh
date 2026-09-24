@@ -187,7 +187,7 @@ src_e="$(jq -r '.[0].provenance.source' "$RE/.agent/rules/prov.json" 2>/dev/null
 added_e="$(jq -r '.[0].provenance.added' "$RE/.agent/rules/prov.json" 2>/dev/null)"
 [ "$src_e" = "unit-test:pr-1" ] && ok "(E) provenance.source stamped from --source" || no "(E) source=[$src_e]"
 # ISO-8601 UTC shape: YYYY-MM-DDThh:mm:ssZ
-if printf '%s' "$added_e" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'; then
+if grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' < <(printf '%s' "$added_e"); then
   ok "(E) provenance.added is UTC ISO-8601 ($added_e)"
 else
   no "(E) provenance.added not ISO-8601: [$added_e]"
@@ -207,7 +207,7 @@ run_writer "$RF" --category "verify" --statement "read back" --confirm
 leftover="$(find "$RF/.agent/rules" -name '.add-rule.*' 2>/dev/null | wc -l | tr -d '[:space:]')"
 [ "$leftover" = "0" ] && ok "(F) no leftover temp files (atomic mv)" || no "(F) $leftover temp files left"
 # The success message names the id.
-echo "$OUT" | grep -q "verify-read-back" && ok "(F) success output names the written id" || no "(F) id not in output"
+grep -q "verify-read-back" < <(echo "$OUT") && ok "(F) success output names the written id" || no "(F) id not in output"
 
 # ============================================================================
 echo "== (G) value validation: bad enforcement / empty statement / non-string check =="
@@ -255,7 +255,7 @@ echo "== (H) confirm-only: no --confirm + non-TTY ⇒ DRY-RUN (plan printed, NO 
 RH="$(new_repo)"
 # run_writer already runs in a non-TTY subshell context; omit --confirm.
 run_writer "$RH" --category "dryrun" --statement "planned only"
-if [ "$RC" -eq 0 ] && [ "$(count_rule_files "$RH")" = "0" ] && echo "$OUT" | grep -q "PLANNED WRITE"; then
+if [ "$RC" -eq 0 ] && [ "$(count_rule_files "$RH")" = "0" ] && grep -q "PLANNED WRITE" < <(echo "$OUT"); then
   ok "(H) no --confirm + non-TTY prints planned write and writes NOTHING (rc 0)"
 else
   no "(H) dry-run behavior incorrect (rc=$RC files=$(count_rule_files "$RH"))"
@@ -310,7 +310,7 @@ fi
 
 # (J2) --retract PRINTS a one-line provenance reason to stdout (there is no in-store home for it —
 # the commit that lands the removal is the durable record; test asserts on the printed text).
-echo "$OUT" | grep -qF "j-gone" && echo "$OUT" | grep -qF "superseded by a clearer rule" \
+grep -qF "j-gone" < <(echo "$OUT") && grep -qF "superseded by a clearer rule" < <(echo "$OUT") \
   && ok "(J2) retract prints a one-line provenance reason naming the target id + reason" \
   || no "(J2) provenance reason not printed to stdout: $OUT"
 
@@ -528,7 +528,7 @@ for cpat_label in \
   run_writer "$RM3F" --category "Routing" --statement "Control character pattern rule" \
     --applies-to "$cf_pat" --confirm
   if [ "$RC" -ne 0 ] && [ "$(count_rule_files "$RM3F")" = "0" ] \
-     && printf '%s' "$OUT" | grep -qF -- "may not contain $cf_msg characters"; then
+     && grep -qF -- "may not contain $cf_msg characters" < <(printf '%s' "$OUT"); then
     ok "(M3f) $cf_name --applies-to REJECTED (rc=$RC) with no file written and the $cf_msg-specific diagnostic"
   else
     no "(M3f) $cf_name --applies-to did not hit the $cf_msg-specific reject (rc=$RC files=$(count_rule_files "$RM3F")): $OUT"
@@ -538,7 +538,7 @@ done
 # (M4) --applies-to is an ADD-only flag: combining it with --retract is rejected outright (R1).
 RM4="$(new_repo)"
 run_writer "$RM4" --retract --target "x" --reason "y" --applies-to "src/*" --confirm
-if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -qF -- "--applies-to"; then
+if [ "$RC" -ne 0 ] && grep -qF -- "--applies-to" < <(printf '%s' "$OUT"); then
   ok "(M4) --retract + --applies-to REJECTED, and the diagnostic names the offending flag"
 else
   no "(M4) --retract + --applies-to not rejected with a naming diagnostic (rc=$RC): $OUT"
@@ -553,9 +553,9 @@ if [ "$RC" -eq 0 ]; then
   rt_in="$( cd "$RM5" && bash "$SCRIPT_DIR/read-rules.sh" loomwright/scripts/x.sh 2>/dev/null )"
   rt_out="$( cd "$RM5" && bash "$SCRIPT_DIR/read-rules.sh" docs/x.md 2>/dev/null )"
   rt_noarg="$( cd "$RM5" && bash "$SCRIPT_DIR/read-rules.sh" 2>/dev/null )"
-  if echo "$rt_in" | grep -qF -- "- Round trip scoped rule" \
-     && ! echo "$rt_out" | grep -qF "Round trip scoped rule" \
-     && echo "$rt_noarg" | grep -qF -- "- Round trip scoped rule"; then
+  if grep -qF -- "- Round trip scoped rule" < <(echo "$rt_in") \
+     && ! grep -qF "Round trip scoped rule" < <(echo "$rt_out") \
+     && grep -qF -- "- Round trip scoped rule" < <(echo "$rt_noarg"); then
     ok "(M5) writer→reader round trip: in-scope emits, out-of-scope ABSENT, no-arg repo-wide"
   else
     no "(M5) round trip failed — in:[$rt_in] out:[$rt_out] noarg:[$rt_noarg]"

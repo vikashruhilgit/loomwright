@@ -662,7 +662,7 @@ else
   # this assertion is coupled to comment wording as well as to code. Flagged in review of #173.
   unclassified=""
   for kw in $recon_set; do
-    if printf '%s\n' "$sl_done" | grep -Fqx "$kw"; then continue; fi
+    if grep -Fqx "$kw" < <(printf '%s\n' "$sl_done"); then continue; fi
     grep -Fq "$kw" "$SL" && continue
     unclassified="$unclassified $kw"
   done
