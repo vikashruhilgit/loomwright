@@ -248,12 +248,20 @@ never a direct write to `evidence.jsonl`):
         most-recent-first. For every surface from (b) with ZERO matched prior ACs, plan exactly one
         shallow smoke check (navigate, assert 2xx + no console/network 5xx, one primary form
         submission with seed values when the surface is a form).
+     d2. **`not_verified` source (harness-port/04, brief tickets only).** Read `<run_dir>/acs.json`'s
+        `not_verified` array — objects already shaped `{id, text, source: "not_verified", surfaces:
+        []}`, parsed by `verify-run.sh acs` from the ticket's own `## Not verified` section (the
+        worker-reported surfaces its diff affects that it did not observe running; `[]` for a
+        `ticket_kind: requirement` ticket or an absent/empty section — the common case). Merge each
+        VERBATIM into the manifest in (e), no further transform — they land in the impact table
+        exactly like a (d) or smoke entry, NEVER in the ticket's own score.
      e. Author `<run_dir>/impact-manifest.json` — a JSON array of `{id, text, source, surfaces}`
         (`id` unique per entry; `source` is `prior_ac:<run_id>/<ac_id>` for a (d) match, `smoke` for a
-        smoke check) — and one `[<id>]`-titled spec per entry at
-        `<run_dir>/impact-specs/<id>.spec.ts`, the same conventions as step 6 (role-based locators,
-        follow-up read after any mutation, the afterEach page-body + non-2xx response attaches). The
-        V7 mutation carve-out and the forbidden payment/logout/account-delete set apply identically.
+        smoke check, or the verbatim `not_verified` from (d2)) — and one `[<id>]`-titled spec per
+        entry at `<run_dir>/impact-specs/<id>.spec.ts`, the same conventions as step 6 (role-based
+        locators, follow-up read after any mutation, the afterEach page-body + non-2xx response
+        attaches). The V7 mutation carve-out and the forbidden payment/logout/account-delete set
+        apply identically.
      f. `verify-run.sh walk <run_dir> --repo <dir> --scope impact --specs-dir impact-specs --manifest
         <run_dir>/impact-manifest.json [--base-url <url>]` — records every impact-scope verdict the
         same PASS/FAIL/BLOCKED way step 8 does for the ticket (exit 3 = harness/no-report, handled the

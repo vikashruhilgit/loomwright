@@ -17,7 +17,7 @@
 # `walk` (an observation), never from a hand-typed argument (`pass_requires_observation`).
 #
 # Subcommands:
-#   acs        <ticket>                                              # print {"ticket_kind": …, "acs": [{"ac_id":"AC1","text":"…"}, …]}
+#   acs        <ticket>                                              # print {"ticket_kind": …, "acs": [{"ac_id":"AC1","text":"…"}, …], "not_verified": [{"id":"NV1","text":"…","source":"not_verified","surfaces":[]}, …]} — not_verified always [] for ticket_kind requirement or an absent/empty brief section (harness-port/04)
 #   preflight  <ticket> [--branch <name>] [--repo <dir>] [--notify]  # contract read → run dir + run_start → assert-non-prod → env line; `--notify` touches <run_dir>/.notify-enabled (read by verify-helpers.sh's notify dispatch); prints `run_dir=<path>` LAST
 #   auth-check <run_dir> [--repo <dir>]                              # auth.method none ⇒ no-op exit 0; else probe — authenticated ⇒ one `auth` line exit 0; else `auth`+`pause` lines, exit 4
 #   pause      <run_dir> --reason <needs_auth|session_expired>       # append ONE `pause` line (the only place a pause line is ever written) + rebuild summary.md
@@ -142,8 +142,58 @@ acs_bullets() {
   ' "$1"
 }
 
+# not_verified_bullets <ticket> — one raw bullet per stdout line (continuations folded); EMPTY
+# (never a non-zero exit) when the `## Not verified` header is absent — that is the common case,
+# not an error, unlike acs_bullets' `## Acceptance Criteria` header (see not_verified_json below).
+not_verified_bullets() {
+  awk '
+    function flush() { if (cur != "") print cur; cur = "" }
+    BEGIN { on = 0; cur = "" }
+    /^## / {
+      if (on) { flush(); on = 0; exit }
+      h = tolower($0); sub(/^##[ \t]+/, "", h); gsub(/[ \t\r]+$/, "", h)
+      if (h == "not verified") { on = 1 }
+      next
+    }
+    on && /^- / { flush(); cur = substr($0, 3); next }
+    on && /^[ \t]+[^ \t]/ && cur != "" { line = $0; sub(/^[ \t]+/, "", line); cur = cur " " line; next }
+    on && /^[ \t\r]*$/ { next }
+    on { flush() }
+    END { flush() }
+  ' "$1"
+}
+
+# not_verified_json <ticket> <kind> — prints a JSON array `[{id,text,source,surfaces}]` parsed from
+# the brief's `## Not verified` bullets (harness-port/04). ALWAYS `[]` for `ticket_kind: requirement`
+# (a requirement file has no completion tail that could have written the section) and for an
+# absent/empty section on a brief — never a failure. Bullet shape `- **<surface>** — <reason>
+# (subtask <id>)` (skills/async-orchestration/SKILL.md Part 2, skills/self-heal-advisory/SKILL.md
+# step 2); `text` drops the trailing `(subtask <id>)` annotation. `source` is always the literal
+# string `"not_verified"` (no enumerated `source` value set is documented for impact-manifest
+# entries — see docs/RESULT_SCHEMAS.md's transport note under §EXECUTE_RESULT). `surfaces` is
+# always `[]` — these entries are not diff/classification-derived, so there is no surface-name set
+# to attach.
+not_verified_json() {
+  local ticket="$1" kind="$2" raw
+  if [ "$kind" != "brief" ]; then
+    printf '[]'
+    return 0
+  fi
+  raw="$(not_verified_bullets "$ticket" 2>/dev/null)"
+  raw="$(printf '%s\n' "$raw" \
+    | tr -d '\r' \
+    | sed -E 's/^\*\*(.+)\*\*[[:space:]]+—[[:space:]]+(.+)[[:space:]]+\(subtask [^)]*\)[[:space:]]*$/\1 — \2/' \
+    | grep -v '^[[:space:]]*$')"
+  if [ -z "$raw" ]; then
+    printf '[]'
+    return 0
+  fi
+  printf '%s\n' "$raw" | jq -R . | jq -sc '
+    to_entries | map({id: ("NV" + ((.key + 1) | tostring)), text: .value, source: "not_verified", surfaces: []})'
+}
+
 acs_json() {
-  local ticket="${1:-}" kind raw rc
+  local ticket="${1:-}" kind raw rc nv
   [ -n "$ticket" ] || usage "acs <ticket>"
   kind="$(ticket_kind_of "$ticket")"
   if [ -z "$kind" ]; then
@@ -168,9 +218,11 @@ acs_json() {
     diag "'$ticket' has an acceptance-criteria header but no bullets under it [ticket_unresolved]"
     return 2
   fi
-  printf '%s\n' "$raw" | jq -R . | jq -sc --arg kind "$kind" '
+  nv="$(not_verified_json "$ticket" "$kind")"
+  printf '%s\n' "$raw" | jq -R . | jq -sc --arg kind "$kind" --argjson nv "$nv" '
     {ticket_kind: $kind,
-     acs: (to_entries | map({ac_id: ("AC" + ((.key + 1) | tostring)), text: .value}))}'
+     acs: (to_entries | map({ac_id: ("AC" + ((.key + 1) | tostring)), text: .value})),
+     not_verified: $nv}'
 }
 
 acs_cmd() {
