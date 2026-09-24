@@ -30,8 +30,8 @@
 #   queue-checkoff   <runfile_path> <item> [reason] [mark]  # §3/§5 flip - [ ] -> - [x] (optional "# <skipped|abandoned>: reason"; mark default skipped)
 #   remaining        <runfile_path>                     # §3 count of "- [ ]" lines only
 #   ceiling-check    <runfile_path> <max_tokens> [--root <checkout>]  # §6 PICK-time token-ceiling check via read-token-ledger.sh --run-id; prints OK/PARK, always exits 0
-#   resolve-folder   <dir>                              # §2 list *.md not "## Status: done"
-#   resolve-backlog  <backlog.md>                       # §2 dependency-ordered items honoring done/✅ markers
+#   resolve-folder   <dir>                              # §2 list *.md not done and not proposed|parked
+#   resolve-backlog  <backlog.md>                       # §2 dependency-ordered items honoring done/✅ markers (dir-fallback path also skips proposed|parked, per is_not_ready)
 #   resume-glob      <automate_dir>                     # §4 list *.md not "## Status: done"
 #   reconcile-item   <pr_url> <belief>                  # §4 belief vs gh/git truth -> corrected state
 #   gate-eval        <pr_url> <ctx.json>                # §10 MERGE|PARK 6-condition fail-closed gate (cond 6 = classify-risk.sh high_risk, NO override)
@@ -296,13 +296,25 @@ ceiling_check() {
 # step 2.5, which stamps the value ON this heading for exactly this reason.
 is_done() { grep -qE '^## Status:[[:space:]]*done(_with_escalation)?\b' "$1" 2>/dev/null; }
 
-# resolve-folder <dir> — every *.md NOT marked "## Status: done" (sorted).
+# is_not_ready <file> — true when the file carries a not-ready-to-run stamp on
+# its `## Status:` HEADING line (`proposed` or `parked`). This is a SEPARATE
+# predicate from `is_done` and MUST NOT be folded into it (decision H2):
+# `is_done` is shared with `resume-glob`, whose run files use a DIFFERENT
+# status vocabulary (`running|paused|done`, per docs/RESULT_SCHEMAS.md
+# §AUTOMATE_RUN) — a run file stamped `## Status: paused` must never be
+# treated as not-ready, so `is_not_ready` is called ONLY from `resolve_folder`
+# and `resolve_backlog_dir`, never from `resume_glob`.
+is_not_ready() { grep -qE '^## Status:[[:space:]]*(proposed|parked)\b' "$1" 2>/dev/null; }
+
+# resolve-folder <dir> — every *.md NOT marked "## Status: done" and not
+# "## Status: proposed|parked" (sorted).
 resolve_folder() {
   local dir="$1" f
   [ -d "$dir" ] || die "folder not found: $dir"
   for f in "$dir"/*.md; do
     [ -e "$f" ] || continue
     is_done "$f" && continue
+    is_not_ready "$f" && continue
     echo "$f"
   done | LC_ALL=C sort
 }
@@ -312,6 +324,12 @@ resolve_folder() {
 # documented order = file order) and emit only the not-done ones. A line carrying
 # "## Status: done" inline, a "✅" marker, or a checked "[x]" box is treated as
 # ground-truth done and excluded. _BACKLOG.md-absent ⇒ fall back to dir scan.
+# SCOPE BOUNDARY (deliberate, not an oversight): a checklist line here names a
+# path directly, which is a human's explicit inclusion decision for that line —
+# distinct from the file's own internal stamp. This parser does NOT check the
+# pointed-to file's own `## Status:` stamp; that stamp is honoured ONLY on the
+# dir-fallback path below (`resolve_backlog_dir`, via `is_not_ready`), never
+# when a checklist line directly names an existing file.
 resolve_backlog() {
   local doc="$1"
   if [ ! -f "$doc" ]; then
@@ -341,12 +359,13 @@ resolve_backlog() {
 }
 
 # resolve_backlog_dir <dir> — fallback ordering by directory order over *.md,
-# excluding ## Status: done files.
+# excluding ## Status: done files and ## Status: proposed|parked files.
 resolve_backlog_dir() {
   local dir="$1" f
   for f in "$dir"/*.md; do
     [ -e "$f" ] || continue
     is_done "$f" && continue
+    is_not_ready "$f" && continue
     echo "$f"
   done | LC_ALL=C sort
 }
