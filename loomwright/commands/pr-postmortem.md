@@ -31,7 +31,7 @@ Read ${CLAUDE_PLUGIN_ROOT}/skills/pr-postmortem/SKILL.md
 
 1. **Parse input** — a PR URL or `OWNER/REPO#N`; pass it straight to the gather script.
 2. **Gather (read-only)** — `bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-postmortem-gather.sh" "<input>"`, parse its single JSON object. On `{"status":"unavailable",...}` print one clear line and exit gracefully (no partial write).
-3. **Categorize** each review round into exactly one of `plan_gap | missing_context | convention_mismatch | execution_bug | quality_gap | scope_too_large`, set the optional `self_heal_miss` flag, and attribute a `flow_stage` (`launch_pad | worker | self_heal | unknowable`).
+3. **Categorize** each review round into exactly one of `plan_gap | missing_context | convention_mismatch | execution_bug | quality_gap | scope_too_large`, set the optional `self_heal_miss` and `dismissed_then_raised` flags, and attribute a `flow_stage` (`launch_pad | worker | self_heal | unknowable`).
 4. **Print** the categorized root-cause report (PR identity, size, review_rounds, per-round breakdown, root-cause narrative).
 5. **Append** exactly one `POSTMORTEM_RESULT` JSON line to `.supervisor/postmortem/results.jsonl` (jq-built, fail-safe).
 

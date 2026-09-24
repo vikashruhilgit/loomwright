@@ -17,11 +17,28 @@
 #     "review_comments": [{"author": "...", "snippet": "..."}],
 #     "ci_checks": [{"name": "...", "state": "SUCCESS"}],
 #     "pr_url": "https://github.com/owner/repo/pull/42", "branch": "feature/x",
-#     "changed_paths": ["src/a.ts", "src/b.ts"]
+#     "changed_paths": ["src/a.ts", "src/b.ts"],
+#     "dismissed_findings": [{"round": 1, "finding": "...", "reason": "...", "source": "..."}]
 #   }
-# The trailing three keys are PROVENANCE enrichment (Learning Loop Phase 4 — additive,
-# advisory, fail-safe): pr_url/branch from the PR JSON, changed_paths from .files[].path
-# (`// null` and `(.files // [])` so absent/empty input never errors the jq build).
+# The trailing three provenance keys are PROVENANCE enrichment (Learning Loop Phase 4 —
+# additive, advisory, fail-safe): pr_url/branch from the PR JSON, changed_paths from
+# .files[].path (`// null` and `(.files // [])` so absent/empty input never errors the jq build).
+#
+# dismissed_findings (dismissed-findings-01, additive, fail-safe): extracted from the SAME
+# issue-comments fetch used for bot review rounds (below) — any comment whose RAW body
+# starts with the marker prefix `<!-- loomwright:dismissed round=<n> -->` (posted once per
+# round by the --until-mergeable drain / Phase 4.5 self-heal, skills/review-heal/SKILL.md /
+# skills/self-heal-advisory/SKILL.md) is parsed for its `- **<finding>** — <reason> (<source>)`
+# bullet lines — but ONLY from a comment whose author matches the resolved operator's own
+# `gh` login (`gh api user --jq .login`, best-effort, fail-SAFE toward EXCLUDING); any other
+# GitHub user can post an issue comment, so without this author gate a spoofed marker-prefixed
+# comment would be ingested as an authoritative dismissal record. These marker comments are
+# DELIBERATELY excluded from `bot_review_comments`
+# above (classify-bot-review.sh's --skip-marker default-ON filter drops them before
+# classification), so this extraction reads the RAW $COMMENTS_JSON directly, not the
+# classified $BOT_REVIEW_JSON. Fail-safe per comment: a marker-prefixed body whose header
+# line does not parse (malformed round=, hand-edited) contributes ZERO items for that
+# comment — never a crash, never a partial/garbled item. `[]` when no marker comments exist.
 #
 # On ANY failure (gh/jq missing or unauthenticated, PR private/not-found/inaccessible,
 # unparseable input) it emits a jq-built unavailable object and exits 0:
@@ -216,6 +233,30 @@ fi
 [ -n "$BOT_REVIEW_JSON" ] || BOT_REVIEW_JSON='[]'
 printf '%s' "$BOT_REVIEW_JSON" | jq -e 'type=="array"' >/dev/null 2>&1 || BOT_REVIEW_JSON='[]'
 
+# ---- resolve the operator's own gh login (author check for dismissed_findings) ----
+# A `<!-- loomwright:dismissed round=<n> --> ` marker comment is posted under the
+# OPERATOR's own authenticated `gh` login (dispatch-pr-review.sh / review-heal /
+# self-heal-advisory all post via the caller's `gh pr comment`) — but issue comments
+# are readable-and-writable by any authenticated GitHub user, so without an author
+# check anyone could post a spoofed marker-prefixed comment and have it ingested as
+# an authoritative dismissal record (PR #264 review finding). Read-only, best-effort,
+# fail-SAFE toward EXCLUDING (never toward accepting unauthenticated matches): on any
+# resolution failure OPERATOR_LOGIN stays empty, which the jq filter below treats as
+# "match nothing" — dismissed_findings degrades to [], never to "accept any author".
+#
+# Honest limit (PR #264 review, design note): this assumes the identity running THIS
+# gather (`gh api user`) is the SAME identity that posted the marker comment. That
+# holds for the common case (one operator's `gh` session runs both the heal loop and
+# a later `/pr-postmortem` on the same machine) but not necessarily for a marker
+# posted by a detached `dispatch-pr-review.sh` process under a different authenticated
+# identity than whoever runs `/pr-postmortem` afterward — that legitimate dismissal
+# would be silently excluded, same as a spoofed one. Deliberately NOT generalized to
+# an allowlist file (`classify-bot-review.sh --trusted-actors`) here: doing so would
+# widen the accepted-author set past "the identity that can currently prove itself via
+# `gh api user`", which is a stronger, simpler guarantee for the common single-operator
+# case this script targets. Revisit if/when the plugin's deployment topology needs it.
+OPERATOR_LOGIN="$("$GH_BIN" api user --jq '.login' 2>/dev/null)" || OPERATOR_LOGIN=""
+
 # ---- build the normalized object (SINGLE jq invocation) --------------------
 # All untrusted PR text (title, body, commit messages, review bodies, check names)
 # is passed via --arg/--argjson and processed ENTIRELY inside the jq program. The
@@ -228,8 +269,32 @@ OUTPUT="$(printf '%s' "$PR_JSON" | jq -c \
   --arg repo "$REPO" \
   --argjson number "$NUMBER" \
   --argjson bot_review_comments "$BOT_REVIEW_JSON" \
+  --argjson raw_comments "$COMMENTS_JSON" \
+  --arg operator_login "$OPERATOR_LOGIN" \
   '
+  # ---- dismissed_findings: parse <!-- loomwright:dismissed round=<n> --> marker
+  # comments out of the RAW (unclassified) issue-comments fetch (see header doc).
+  # AUTHOR-GATED (PR #264 review finding): only a comment whose `.user.login`
+  # case-insensitively matches the resolved operator login is eligible — an empty
+  # $operator_login (resolution failed) matches nothing, so a fetch failure degrades
+  # to zero dismissed_findings rather than trusting an unauthenticated comment.
+  # Fail-safe per comment: a marker-prefixed body whose header does not parse
+  # contributes ZERO items; a bullet line that does not match the fixed shape is
+  # skipped, never crashes the single jq invocation.
+  ($raw_comments // []) as $rc
+  | [ $rc[]?
+      | select($operator_login != "" and ((((.user.login)? | strings) // "") | ascii_downcase) == ($operator_login | ascii_downcase))
+      | (((.body)? | strings) // "") as $b
+      | select($b | startswith("<!-- loomwright:dismissed "))
+      | select($b | test("^<!-- loomwright:dismissed round=[0-9]+ -->"))
+      | ($b | capture("^<!-- loomwright:dismissed round=(?<round>[0-9]+) -->").round | tonumber) as $round
+      | ($b | split("\n"))[]
+      | select(test("^- \\*\\*.+\\*\\* — .+ \\([^()]+\\)\\s*$"))
+      | capture("^- \\*\\*(?<finding>.+?)\\*\\* — (?<reason>.+?) \\((?<source>[^()]+)\\)\\s*$")
+      | {round: $round, finding, reason, source}
+    ] as $dismissed_findings
   # ---- heuristic regexes (case-insensitive) ----
+  |
   # NB: do NOT embed \uXXXX surrogate escapes in these regex strings — the jq regex
   # engine treats \u literally. The 🤖 robot-emoji marker is matched as a literal
   # below via a plain substring `contains`, not via a regex escape.
@@ -349,7 +414,10 @@ OUTPUT="$(printf '%s' "$PR_JSON" | jq -c \
       # JSON omits these keys (old gh, --json mismatch). Advisory only — never gates.
       pr_url: (.url // null),
       branch: (.headRefName // null),
-      changed_paths: ([(.files // [])[].path])
+      changed_paths: ([(.files // [])[].path]),
+      # ---- dismissed-findings-01 (additive, fail-safe) ----
+      # [] when no marker comments exist. Each item: {round, finding, reason, source}.
+      dismissed_findings: $dismissed_findings
     }
   ' 2>/dev/null)" || emit_unavailable "normalize_failed"
 

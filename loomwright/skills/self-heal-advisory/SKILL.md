@@ -753,6 +753,9 @@ always execute.
 heal_iterations = 0
 heal_fixable_issues_fixed = 0
 max_heal_iterations = {--heal-iterations value, default 3}
+heal_dismissed = []                 # ITEMISED {finding, reason, source} list (dismissed-findings-01) — review.issues
+                                     # entries excluded from fixable_issues each iteration (pre_existing / nit / drift /
+                                     # below_severity_floor); the self-heal-side PARALLEL to review-heal's `dismissed`
 
 while heal_iterations < max_heal_iterations:
   review = Task(
@@ -784,6 +787,25 @@ while heal_iterations < max_heal_iterations:
   )
   phase45_review_invoked = true  # flipped once the code-reviewer Task actually ran
   # Parse CODE_REVIEW_RESULT block from review output
+
+  # dismissed-findings-01: itemise EVERY review.issues entry excluded from the fix-time filter
+  # (the SAME filter the FAIL branch's `fixable_issues` computes below — new+BLOCKING/HIGH). Computed
+  # HERE, once per iteration, BEFORE the three-way decision branch, so it also covers PASS/NEEDS_HUMAN
+  # iterations whose review.issues can still carry pre_existing/nit/drift entries (a PASS decision
+  # means zero new+BLOCKING/HIGH issues — it does NOT mean review.issues is empty). `reason` is a
+  # CLOSED enum here (unlike review-heal's free-text dismissed.reason): the finding's own `category`
+  # when it is pre_existing/nit/drift (docs/RESULT_SCHEMAS.md:610 [pins: `category: enum [new, pre_existing, nit, drift]`]), else "below_severity_floor" for a
+  # `new` finding whose severity is below the fix-time BLOCKING/HIGH floor. `source` is "code_reviewer"
+  # for every item accumulated here — the single-voter loop's one review lens (see docs/RESULT_SCHEMAS.md
+  # §SUPERVISOR_RESULT for the full `source` enum, including the multi-voter `red_team`/`voter:<provider>`
+  # values this pass does not yet emit).
+  heal_dismissed += [
+    {finding: i.description,
+     reason: (i.category if i.category in ("pre_existing", "nit", "drift") else "below_severity_floor"),
+     source: "code_reviewer"}
+    for i in review.issues
+    if not (i.category == "new" and i.severity in (BLOCKING, HIGH))
+  ]
 
   if review.decision == PASS:
     heal_decision = PASS
@@ -1116,6 +1138,10 @@ else:
    - **Failure is non-fatal** — log `record_decision(phase: SELF_HEAL, decision: "twin_builder: {n} written / {m} skipped", rationale: "advisory — non-fatal")` and continue.
 
 5. **Emit SUPERVISOR_RESULT block for this task** (see `agents/supervisor.md` §"Result Block (SUPERVISOR_RESULT)" — the block definition deliberately stays in the agent file, untouched, and the SubagentStop hook validation is unchanged). Exactly one block per task, emitted here — Phase 5 LOOP emits nothing. When looping to a new task, the next task's Phase 4.5 tail will emit its own block. The SubagentStop hook validates the last block; earlier blocks must still be schema-valid. Include the additive `contract_conformance`, `benchmark_result`, and `ground_truth` objects (computed earlier in this phase), the additive `knowledge_sources_used` array (the memory sources consulted this run, per the tag vocabulary in the Result Block section), and also emit the FLAT hard-signal fields — including a flat `knowledge_sources_used` array carrying the SAME value — onto the `session_end` JSONL event — see "Hard-signal fields (System Twin)" below.
+
+   **`heal_dismissed` (dismissed-findings-01) — include when non-empty, omit when empty ("empty ⇒ absent", same rule as `REVIEW_HEAL_RESULT.dismissed`, `docs/RESULT_SCHEMAS.md` §SUPERVISOR_RESULT).** `heal_dismissed` accumulated across every loop iteration (the `review.issues` minus fix-time-filter itemisation computed right after each `review = Task(...)` call, above) is the field's value verbatim.
+
+   **Dismissed-findings marker comment (same shape as the drain's — `skills/review-heal/SKILL.md` §"Dismissed-findings marker comment", not restated here).** When `heal_dismissed` is non-empty, post ONE `gh pr comment` at this same completion-tail point, body `<!-- loomwright:dismissed round=<n> -->` followed by one `- **<finding>** — <reason> (<source>)` bullet per `heal_dismissed` item. **Round-number anchor (recorded choice, exit-path-aware — PR #264 review):** Phase 4.5 is not round-numbered the way the drain is (there is no per-round ledger), and Part 2's `heal_iterations += 1` sits at the BOTTOM of the loop body, so which exit path fired changes what the post-loop value of `heal_iterations` means: on the two break-based exits (`PASS`, `NEEDS_HUMAN` — both break BEFORE that iteration's own increment) `heal_iterations` still holds the PRE-increment count, so `<n> = heal_iterations + 1` (1-indexed, matching this file's own `fixer_deviations` prefix convention above AND the drain side's 1-indexed `round_number`). On the loop-EXHAUSTION exit (every iteration up to `max_heal_iterations` was `FAIL`, no `break` fires, the `while` condition goes false naturally) the FINAL iteration's own `heal_iterations += 1` already ran before the loop exits, so `heal_iterations` already equals the true count of iterations run — use `<n> = heal_iterations` UNCHANGED there (adding +1 would overcount by one, e.g. posting `round=4` for a 3-iteration exhaustion under the default `--heal-iterations 3`). **Discriminating the two ESCALATED sub-cases (PR #264 review round 3):** `heal_decision == ESCALATED` alone cannot tell you which formula applies — BOTH the `NEEDS_HUMAN` break and loop-exhaustion set `heal_decision = ESCALATED`, with no separate flag distinguishing them. Use the SAME condition the "Loop exit" exhaustion-detection guard earlier in this same Part 2 loop already applies (`if heal_iterations == max_heal_iterations AND review.decision != PASS:`): `heal_iterations == max_heal_iterations` ⇒ exhaustion (`<n> = heal_iterations`); `heal_iterations < max_heal_iterations` ⇒ the `NEEDS_HUMAN` break fired (`<n> = heal_iterations + 1`). `heal_decision == PASS` is unambiguous on its own (only the `PASS` break sets it) and always takes the `+1` form. When `heal_loop_ran=false` (the loop was skipped, so `heal_iterations=null` and `heal_dismissed` is necessarily empty — nothing accumulates outside the loop), no comment is posted. Post-once, never edited later — same append-only, one-comment discipline as the drain side. `classify-bot-review.sh`'s `--skip-marker` default-ON filter (see `skills/review-heal/SKILL.md` §U1) also protects this comment from ever being mis-classified as a human finding by the `--until-mergeable` drain, should one run on the same PR afterward (step 5.5, below).
 
 5.5. **Until-mergeable review-drain dispatch (DEFAULT ON — opt-out, best-effort, fire-and-forget):**
 
