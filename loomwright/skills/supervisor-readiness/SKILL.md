@@ -128,7 +128,7 @@ The `.supervisor/` directory should be gitignored (Supervisor auto-adds this):
 - **Blockers:** {count} | **Warnings:** {count}
 - **Source requirement:** {repo-root-relative path to the `.supervisor/requirements/*.md` this brief was planned from — OPTIONAL; emitted only when Launch Pad resolved a requirement file at Phase 2 step 0, omitted entirely otherwise}
 - **Base commit:** {sha — full commit SHA the brief was planned against, unconditional}
-- **Shared local services:** {bounded, single-line description of the host project's `## Shared local services` CLAUDE.md section — fences stripped, ≤10 items, `(truncated)` if more existed, joined by ` · ` — OPTIONAL, omitted entirely when the host CLAUDE.md has no matching section}
+- **Shared local services:** {bounded, single-line description of the host project's `## Shared local services` CLAUDE.md section — fences stripped, ≤10 non-empty lines, `(truncated)` if more existed, joined by ` · ` — OPTIONAL, omitted entirely when the host CLAUDE.md has no matching section}
 
 ## Feasibility (optional — Launch Pad v10.3+)
 
