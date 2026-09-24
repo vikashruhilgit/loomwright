@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# run-self-tests: serial
+# ^ run alone, after the concurrent batch (run-self-tests.sh): (M1) feeds 'y' to a PTY after a fixed `sleep 1`; under load the writer has not reached its prompt yet and the control reads as vacuous.
 # test-harvest-conventions.sh — self-tests for harvest-conventions.sh, the READ-ONLY distiller that
 # turns ledger `convention_mismatch` findings + the agent-memory corpus into a bounded `.agent/rules/`
 # proposal batch. Mirrors the test-add-rule.sh harness convention: isolated temp git repos via

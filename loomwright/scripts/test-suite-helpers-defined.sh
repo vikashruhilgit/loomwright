@@ -103,7 +103,7 @@ DEAD_TOTAL=0
 # Collect suites: plugin scripts, third-party adapter self-tests (one directory deeper than the
 # flat glob above reaches — docs/ARCHITECTURE_CONTRACTS.md §"Portability"), the sdk-spike suites,
 # and wrapper-root test scripts. The adapters glob mirrors the same fix already made to the
-# whole-suite CI runner glob in .github/workflows/ci.yml — without it, a new adapter's test suite
+# whole-suite CI runner glob in loomwright/scripts/run-self-tests.sh — without it, a new adapter's test suite
 # is invisible to this exact dead-helper-call safety net.
 SUITES="$(
   { ls "$REPO_ROOT"/loomwright/scripts/test-*.sh 2>/dev/null

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# run-self-tests: serial
+# ^ run alone, after the concurrent batch (run-self-tests.sh): (j5/X)/(j5/Y) mutation controls need a deliberate lock race to actually happen; under load the race window is missed and the control reads as vacuous.
 # test-write-agent-memory.sh — hermetic offline self-tests for write-agent-memory.sh, the SIXTH
 # sole writer and the OWNER of each agent-memory store's MEMORY.md index. Mirrors the
 # test-add-orientation.sh harness convention (pass/fail counters, ok()/no(), a RESULT tail, exit 1

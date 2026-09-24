@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# run-self-tests: serial
+# ^ run alone, after the concurrent batch (run-self-tests.sh): case (x) is a calibrated wall-clock runtime ratio; under a loaded concurrent run it measured 183-222 units against its 180 bound.
 # test-build-floor.sh - self-tests for build-floor.sh, the read-only floor projector.
 #
 # HERMETIC BY CONSTRUCTION, and that is the load-bearing property of this file.

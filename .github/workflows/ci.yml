@@ -100,24 +100,13 @@ jobs:
           # hard-gating. Pre-existing build-vault bug, tracked in issue #40; drop this env
           # once #40 lands.
           BUILD_VAULT_SKIP_IDEMPOTENCY: "1"
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          # Loops over the WHOLE suite as a hard gate (every test-*.sh runs; future tests are
-          # auto-included — anti-drift), failing the job on the first non-zero exit. nullglob +
-          # the count check make a moved/renamed scripts dir fail LOUDLY ("no self-tests found")
-          # rather than passing the literal glob to bash as a confusing "No such file".
-          # The second glob covers loomwright/scripts/adapters/<tool>/test-*.sh — third-party
-          # adapter self-tests (docs/ARCHITECTURE_CONTRACTS.md §"Portability") live one
-          # directory deeper than the flat first glob reaches, so without this they would be a
-          # committed test nothing ever runs (the exact silently-green non-gate the sdk-spike
-          # suite below this step was already fixed for, for the same reason).
-          tests=(loomwright/scripts/test-*.sh loomwright/scripts/adapters/*/test-*.sh)
-          [ "${#tests[@]}" -gt 0 ] || { echo "no self-tests found (loomwright/scripts/test-*.sh, loomwright/scripts/adapters/*/test-*.sh) — anti-drift loop matched nothing" >&2; exit 1; }
-          for t in "${tests[@]}"; do
-            echo "== $t =="
-            bash "$t"
-          done
+        # Runs the WHOLE suite as a hard gate, CONCURRENTLY (one test per vCPU): every test-*.sh
+        # and adapters/*/test-*.sh runs — future tests are auto-included, anti-drift — then every
+        # failure's full log is printed and the step fails. The serial `for … bash "$t"` loop this
+        # replaced used 1 of the runner's 4 vCPUs (~13.5 of a ~14 min job) and stopped at the
+        # first red test, hiding the rest. Glob, fail-closed rules and the zero-tests check live
+        # in the script so the same command runs locally; test-run-self-tests.sh covers them.
+        run: bash loomwright/scripts/run-self-tests.sh
 
       # The sdk-spike suite is NOT matched by the `loomwright/scripts/test-*.sh` glob above
       # (it lives under `loomwright/sdk-spike/test/`), so until v15.20.0 it never ran in CI at
