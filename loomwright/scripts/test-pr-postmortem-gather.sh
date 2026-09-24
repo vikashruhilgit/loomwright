@@ -89,6 +89,14 @@
 #                     yields [] for that comment, fail-safe, no crash.
 #  10. dismissed_findings absent -> the plain happy-path fixture (no marker comments)
 #                     yields dismissed_findings == [].
+#  11. dismissed_findings author gate (PR #264 review finding) -> a well-formed marker
+#                     comment from a NON-operator login is excluded (mutation control:
+#                     the SAME fixture with the stub's operator login flipped to match
+#                     it DOES parse, proving the gate — not the marker shape alone — is
+#                     what decides inclusion).
+#  12. dismissed_findings author gate: operator-login resolution failure (`gh api user`
+#                     returns empty) degrades to [] even against an otherwise-legit
+#                     operator-authored marker comment — fail-SAFE toward excluding.
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -420,8 +428,18 @@ cat > "$FIX_DISMISSED_MALFORMED" <<'FIX'
 ]
 FIX
 
+# Otherwise well-formed marker comment, but from a DIFFERENT (non-operator) login —
+# proves the author gate (PR #264 review finding) actually excludes a spoofed
+# dismissal record rather than accepting any marker-shaped body regardless of author.
+FIX_DISMISSED_SPOOFED="$TMP/fixture-dismissed-spoofed.json"
+cat > "$FIX_DISMISSED_SPOOFED" <<'FIX'
+[
+  {"user": {"login": "some-random-user"}, "created_at": "2026-01-01T12:00:00Z", "body": "<!-- loomwright:dismissed round=1 -->\n- **fake finding** — spoofed (reviewThreads)"}
+]
+FIX
+
 make_gh_stub() {
-  local mode="$1" api_mode="${2:-empty}" fixture="" api_fixture=""
+  local mode="$1" api_mode="${2:-empty}" operator_login="${3-vikashruhilgit}" fixture="" api_fixture=""
   case "$mode" in
     ok)        fixture="$FIX_OK" ;;
     human)     fixture="$FIX_HUMAN" ;;
@@ -439,13 +457,23 @@ make_gh_stub() {
     bigcomments) api_fixture="$FIX_BIGCOMMENTS" ;;
     dismissedmarker)    api_fixture="$FIX_DISMISSED_MARKER" ;;
     dismissedmalformed) api_fixture="$FIX_DISMISSED_MALFORMED" ;;
+    dismissedspoofed)   api_fixture="$FIX_DISMISSED_SPOOFED" ;;
   esac
   cat > "$BIN/gh" <<STUB
 #!/usr/bin/env bash
-# fake gh — fixture mode: $mode / api mode: $api_mode
+# fake gh — fixture mode: $mode / api mode: $api_mode / operator login: $operator_login
 if [ "\${1:-}" = "pr" ] && [ "\${2:-}" = "view" ]; then
   if [ "$mode" = "fail" ]; then exit 1; fi
   cat "$fixture"
+  exit 0
+fi
+if [ "\${1:-}" = "api" ] && [ "\${2:-}" = "user" ]; then
+  # dismissed_findings author-gate (PR #264 review finding): the gatherer resolves
+  # its OWN operator login via \`gh api user --jq .login\` — gh itself applies the
+  # jq filter, so the stub simulates that by printing the bare login string, not
+  # JSON. "$operator_login" = "" simulates a resolution failure (empty output, rc 0
+  # — matches a real \`gh api user\` degrade path, which the gatherer treats fail-safe).
+  printf '%s\n' "$operator_login"
   exit 0
 fi
 if [ "\${1:-}" = "api" ]; then
@@ -827,6 +855,36 @@ if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | jq -e '.dismissed_findings ==
   ok "no marker comments => dismissed_findings []"
 else
   no "(10) wrong (rc=$RUN_RC): $RUN_OUT"
+fi
+
+echo "== 11. dismissed_findings: well-formed marker from a NON-operator login is excluded (spoofing guard) =="
+make_gh_stub ok dismissedspoofed
+run_gather "$PR_URL"
+if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | jq -e '.dismissed_findings == []' >/dev/null 2>&1; then
+  ok "marker comment from a non-operator author => dismissed_findings [] (spoofed dismissal not ingested)"
+else
+  no "(11) wrong (rc=$RUN_RC): $RUN_OUT"
+fi
+# Mutation control: the SAME fixture parses when the stub's resolved operator login is
+# flipped to match the fixture's author — proves the exclusion above came from the
+# author gate, not from the marker/body shape being rejected for some other reason.
+make_gh_stub ok dismissedspoofed some-random-user
+run_gather "$PR_URL"
+if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | jq -e '
+    (.dismissed_findings | length == 1) and (.dismissed_findings[0].finding == "fake finding")
+  ' >/dev/null 2>&1; then
+  ok "(mutation control) same fixture parses once the operator login matches its author => the gate is load-bearing"
+else
+  no "(11 mutation control) wrong (rc=$RUN_RC): $RUN_OUT"
+fi
+
+echo "== 12. dismissed_findings: gh api user resolution failure (empty login) degrades to [] even for a legit marker =="
+make_gh_stub ok dismissedmarker ""
+run_gather "$PR_URL"
+if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | jq -e '.dismissed_findings == []' >/dev/null 2>&1; then
+  ok "unresolvable operator login => dismissed_findings [] (fail-safe toward excluding, never toward accepting all)"
+else
+  no "(12) wrong (rc=$RUN_RC): $RUN_OUT"
 fi
 
 echo

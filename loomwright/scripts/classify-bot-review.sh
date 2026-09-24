@@ -121,11 +121,11 @@ set -euo pipefail
 TRUSTED_ACTORS_FILE=""
 TRUSTED_ACTORS_GIVEN=0
 # SKIP_MARKER_PREFIX default-ON at the built-in marker (dismissed-findings-01).
-# SKIP_MARKER_GIVEN distinguishes "flag never passed" (stays at the default)
-# from "flag passed with an explicit value" (including an EXPLICIT empty
-# string, which disables the filter — see the header doc above).
+# The on/off decision is re-derived purely from whether SKIP_MARKER_PREFIX is
+# non-empty (see below) — no separate "flag given" tracking variable is needed,
+# since an EXPLICIT empty string is itself the disable signal (see the header
+# doc above).
 SKIP_MARKER_PREFIX="<!-- loomwright:"
-SKIP_MARKER_GIVEN=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --trusted-actors)
@@ -141,13 +141,11 @@ while [ $# -gt 0 ]; do
       ;;
     --skip-marker)
       SKIP_MARKER_PREFIX="${2:-}"
-      SKIP_MARKER_GIVEN=1
       shift
       if [ $# -gt 0 ]; then shift; fi
       ;;
     --skip-marker=*)
       SKIP_MARKER_PREFIX="${1#--skip-marker=}"
-      SKIP_MARKER_GIVEN=1
       shift
       ;;
     *)
