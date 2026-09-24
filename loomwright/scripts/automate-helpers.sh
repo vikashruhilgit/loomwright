@@ -31,7 +31,7 @@
 #   remaining        <runfile_path>                     # §3 count of "- [ ]" lines only
 #   ceiling-check    <runfile_path> <max_tokens> [--root <checkout>]  # §6 PICK-time token-ceiling check via read-token-ledger.sh --run-id; prints OK/PARK, always exits 0
 #   resolve-folder   <dir>                              # §2 list *.md not done and not proposed|parked
-#   resolve-backlog  <backlog.md>                       # §2 dependency-ordered items honoring done/✅ markers
+#   resolve-backlog  <backlog.md>                       # §2 dependency-ordered items honoring done/✅ markers (dir-fallback path also skips proposed|parked, per is_not_ready)
 #   resume-glob      <automate_dir>                     # §4 list *.md not "## Status: done"
 #   reconcile-item   <pr_url> <belief>                  # §4 belief vs gh/git truth -> corrected state
 #   gate-eval        <pr_url> <ctx.json>                # §10 MERGE|PARK 6-condition fail-closed gate (cond 6 = classify-risk.sh high_risk, NO override)

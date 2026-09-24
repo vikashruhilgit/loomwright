@@ -532,6 +532,26 @@ else
   no "resolve-backlog dir-fallback not-ready wrong:\n$RUN_OUT"
 fi
 
+# SCOPE BOUNDARY: resolve-backlog's CHECKLIST path (a real _BACKLOG.md, not the
+# dir-fallback) does NOT apply is_not_ready — a checklist line naming a file
+# directly is a human's explicit inclusion decision, so a file it points at
+# carrying "## Status: proposed" is still enqueued (per automate-helpers.sh's
+# own resolve_backlog SCOPE BOUNDARY comment). This is the inverse of C2 above
+# (which exercises the dir-fallback path, where is_not_ready DOES apply).
+BL2="$WD/_BACKLOG2.md"
+cat > "$BL2" <<EOF
+# Backlog
+- [ ] $DIR/01-proposed.md
+- [ ] $DIR/05-ready.md
+EOF
+run_h bash "$H" resolve-backlog "$BL2"
+if [ "$RUN_OUT" = "$DIR/01-proposed.md
+$DIR/05-ready.md" ]; then
+  ok "resolve-backlog (checklist path): a checklist-referenced '## Status: proposed' file is still enqueued (SCOPE BOUNDARY — is_not_ready applies only on the dir-fallback path)"
+else
+  no "resolve-backlog checklist-path scope-boundary wrong:\n$RUN_OUT"
+fi
+
 # Negative control: resume-glob's run-file vocabulary (running|paused|done) is
 # NOT widened by is_not_ready — a "## Status: paused" run file is STILL listed
 # (proves is_done itself was never touched to match proposed/parked, decision H2).
