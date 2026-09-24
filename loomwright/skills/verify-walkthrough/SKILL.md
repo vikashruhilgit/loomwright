@@ -276,9 +276,9 @@ the *surface* (`--folder`/`--limit`/`--resume` flags) and does not restate the p
 ### Intake — reuse, never re-implement
 
 `--folder <dir>` resolves via `automate-helpers.sh resolve-folder <dir>` **verbatim** — the exact same
-non-recursive `*.md` scan, `## Status: done` skip, and `LC_ALL=C sort` order that `/automate --folder`
-uses. No second folder-scanning implementation exists anywhere in the plugin. `--backlog` is Phase 2
-(not built here).
+non-recursive `*.md` scan, `## Status: done` and `## Status: proposed|parked` skip (harness-port/02),
+and `LC_ALL=C sort` order that `/automate --folder` uses. No second folder-scanning implementation
+exists anywhere in the plugin. `--backlog` is Phase 2 (not built here).
 
 ### The queue file (`.supervisor/verify/queue-<UTC ts>-<slug>.md`)
 
