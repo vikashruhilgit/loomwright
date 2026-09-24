@@ -128,6 +128,15 @@ Produced by Execute Manager when all subtasks are completed.
 > `## Worker Results`. `EXECUTE_RESULT` stays at `schema_version: 1`, unchanged.
 > This is deliberate: lane reporting is report-only and per-worker, so it belongs
 > in the per-worker record, not in the aggregate execute summary.
+>
+> **`not_verified` is likewise NOT an `EXECUTE_RESULT` field (harness-port/04).** It
+> reaches durable state the SAME way `out_of_lane` does — through Context-Keeper's
+> `record_worker_result` parameter contract, landing in `state.md`'s `## Worker
+> Results` — and from there is aggregated into the FINALIZE PR body's optional
+> `## Not verified` section (`skills/async-orchestration/SKILL.md` Part 2) and the
+> done brief's own `## Not verified` section (`skills/self-heal-advisory/SKILL.md`
+> step 2), which `verify-run.sh acs` parses back for `/verify`. `EXECUTE_RESULT`
+> stays at `schema_version: 1`, unchanged.
 
 ```yaml
 EXECUTE_RESULT:
@@ -2937,6 +2946,12 @@ VERIFY_EVIDENCE:                       # one JSON object per line
     artifacts: string[]                # required — may be empty; paths RELATIVE to <run_dir>/ (never absolute or `~`-anchored; a `..` segment is rejected — the path must stay inside the run dir)
     reason: string                     # REQUIRED non-empty for every non-PASS verdict; optional on PASS
     surfaces: string[]                 # OPTIONAL (item 06, additive) — surface names this AC exercises, matched against a LATER run's `impact_surfaces` for prior-AC regression; absent on every pre-item-06 line
+    # NOTE (harness-port/04): `<run_dir>/impact-manifest.json` (a JSON array of `{id, text, source,
+    # surfaces}`, authored by `agents/qa-executor.md` Phase 8.5, consumed by `verify-run.sh walk
+    # --scope impact --manifest`) is NOT itself a documented schema in this file, and its `source`
+    # field has NO enumerated value set here — it is free-form, like `PLAN_REVIEW_RESULT.issues[].
+    # category` above, with three values used by convention: `prior_ac:<run_id>/<ac_id>`, `smoke`,
+    # and `not_verified` (harness-port/04's addition). Do not infer an enum from this list.
   issue:
     text: string                       # required
     severity: enum [BLOCKING, HIGH, MEDIUM, LOW]                     # required

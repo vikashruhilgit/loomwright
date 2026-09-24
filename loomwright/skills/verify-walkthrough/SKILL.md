@@ -247,6 +247,19 @@ inflates or deflates the ticket's own score. This is the load-bearing invariant 
    values when the surface is a form) — recorded `scope: "impact", source: "smoke"`, same four-verdict
    taxonomy as a ticket AC.
 
+**One more best-effort input, read directly from the ticket rather than diff-derived (harness-port/04):**
+
+6. **`not_verified` (worker-reported unverified surfaces).** For a `ticket_kind: brief` ticket,
+   `verify-run.sh acs <ticket>` also parses the brief's own `## Not verified` section (a worker's
+   report of a surface its diff affects that it did not observe running — `docs/RESULT_SCHEMAS.md`
+   §WORKER_RESULT) into `<run_dir>/acs.json`'s `not_verified` array, already shaped `{id, text,
+   source: "not_verified", surfaces: []}`; `[]` for a `ticket_kind: requirement` ticket (no completion
+   tail could have written the section) or an absent/empty section on a brief — the common case. Each
+   entry is merged verbatim into `impact-manifest.json` alongside the diff/prior-acs/smoke entries
+   (`agents/qa-executor.md` Phase 8.5 step d2) and gets its own spec like any other manifest entry —
+   recorded `scope: "impact", source: "not_verified"`, same four-verdict taxonomy, and the SAME
+   "NEVER inflates or deflates the ticket score" invariant as every source above.
+
 **Execution.** Author `<run_dir>/impact-manifest.json` (a JSON array of `{id, text, source,
 surfaces}`) and one `[<id>]`-titled spec per entry at `<run_dir>/impact-specs/<id>.spec.ts` (same
 conventions as §2: role-based locators, follow-up read after a mutation, the afterEach page-body +
