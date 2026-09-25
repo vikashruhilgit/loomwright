@@ -503,6 +503,31 @@ record_decision(phase: SELF_HEAL, decision: "ground_truth: {status} ({checks_pas
 - `status: pass` requires zero failing checks (and ≥1 check executed); `status: advisory_failures` requires ≥1 failing check and a non-empty `findings[]` (each `severity: advisory`); `status: unverified` is the fail-safe tooling path (no `jq`, or checks resolved but none could be verified — e.g. only deferred `qa-executor` checks).
 - `qa-executor:` checks are recognized but DEFERRED to M2b slice 1b — the runner records them `unverified` (reason `qa_executor_dispatch_deferred_m2b_1b`) and they never block a `pass`. **Trust boundary (not a sandbox):** the runner itself does no repo writes and no network, but a `cmd:` check runs arbitrary `bash -c` with full shell privileges — so a `## Executable Acceptance` `cmd:` bullet is a trust-sensitive surface (review it at Plan Review, especially for `/autonomous`-generated briefs). `corpus-task` ids are constrained to a single path segment so they cannot escape `eval-corpus`.
 
+### Rules-check replay (executable-rule-candidates/01 — advisory-only, NEVER gates)
+
+After ground-truth execution, replay any HUMAN-CONFIRMED `.agent/rules/` `must`-rule checks via the content-keyed, user-scope stamp `rules-check.sh --if-stamped` established (`skills/rules/SKILL.md` §8.1). **This is SURFACED, not a new review pass**: it never enters the review-and-fix loop and it NEVER changes `heal_decision` — matching CLAUDE.md's own Failure-Mode Invariants, which this item does not weaken.
+
+```
+# Reuses $NO_CMD_FLAG UNCHANGED from the Ground-truth execution step above (never re-derived, so the
+# two calls can never disagree about whether cmd execution is disabled this run).
+rc_out = bash ${CLAUDE_PLUGIN_ROOT}/scripts/rules-check.sh --if-stamped $NO_CMD_FLAG
+# Parse the summary line(s). `--if-stamped` is itself NON-INTERACTIVE and NEVER PROMPTS — no TTY
+# concern here, unlike a bare `--confirm` run — so this call is safe on every path (interactive or
+# not) exactly as $NO_CMD_FLAG's own derivation above already accounts for.
+
+rules_check_line =
+  if $NO_CMD_FLAG is non-empty:                        "rules_check: cmd_disabled"
+  elif rc_out contains "[SKIP] all (unstamped)":        "rules_check: unstamped"
+  else:                                                  "rules_check: passed {n}/{m}"   # from rc_out's "Checks passed: n/m" line; n MAY be < m — a failing stamped check still replays and still never gates
+
+record_decision(phase: SELF_HEAL, decision: rules_check_line, rationale: "advisory replay of human-confirmed rules-check.sh checks on THIS machine — heal_decision unchanged regardless of state or whether n<m")
+```
+
+**Rules-check replay rules:**
+- **Three states only**, stated exhaustively: `passed n/m` (n may be less than m — a failing stamped check is reported honestly, never hidden, and still never gates), `unstamped` (no human has run `/rules check --confirm` on THIS machine for the current `id\tcheck` set, or a rule changed since they did), `cmd_disabled` ($NO_CMD_FLAG was set this run — mirrors the ground-truth step's own unattended trust valve). `heal_decision` stays **byte-identical** regardless of which state fires. Edge: a repo with no `.agent/rules/` store (or no `jq`) makes the checker exit before any stamp lookup with a bare `Checks passed: 0/0` — that maps to `passed 0/0` (nothing to replay), never to `unstamped`.
+- **One line, one place:** `rules_check_line` is surfaced in the Phase 4.5 report and (per the completion tail below) travels alongside the Advisory Twin delta line into the run's advisory output — it is prose only. `docs/RESULT_SCHEMAS.md` is deliberately NOT touched: no nested `SUPERVISOR_RESULT` field and no flat `session_end` field are added for this — unlike `ground_truth`/`contract_conformance`/`benchmark_result`, which DO get the dual nested+flat emission described above, `rules_check` is advisory report text only.
+- **The script always exits with a normal tally** (0 on no failures, 1 on ≥1 selected-check failure) — this step never fails the phase: a non-zero `rules-check.sh` exit is read as "some replayed check failed", folded into the `n/m` figure, and nothing else. No fix iteration is ever triggered by this line.
+- **Never a second review pass.** Unlike the Code Reviewer loop or the Advisory red-team lens, this step runs exactly once per Phase 4.5, reads no diff, and asks no question — it is a pure replay of a command a human already ran and confirmed themselves, on their own machine, at some earlier point.
 
 ---
 
@@ -1181,6 +1206,7 @@ else:
    Then record `until_mergeable_dispatched: {UM_DISPATCHED}` and (only when true AND a log was found) `until_mergeable_log: {UM_LOG}` on the job's `## Outcome` block (step 2 above) AND on the `session_end` JSONL event. Additively/optionally also surface them on `SUPERVISOR_RESULT` (no `schema_version` bump — additive, advisory, never gated, following the `branch_base`/`pr_state` precedent). **NEVER assert `false` from "I skipped step 5.5" alone** — a marker means the drain is live regardless of which path fired. `false` is truthful ONLY when no marker exists (opted out / no PR / dispatcher no-op). The drain itself fires the terminal `READY`/`ESCALATED` notification asynchronously; the marker + log path are the Supervisor-side trail a downstream consumer reads to know a drain is in flight.
 
 6. **Advisory Twin delta line (informational ONLY):** echo one human-readable line via `format-twin-delta.sh`, built from the `contract_conformance` / `benchmark_result` values computed above — exact invocation in Part 1 §"Advisory Twin delta line" above. The script always exits 0; the line never gates, never alters the PR, never affects control flow.
+7. **Rules-check replay line (informational ONLY, executable-rule-candidates/01):** surface the single `rules_check_line` computed in Part 1 §"Rules-check replay" above (`passed n/m` | `unstamped` | `cmd_disabled`) alongside the Advisory Twin delta line from step 6 — same completion-tail moment, same advisory-report placement, no new mechanism of its own. It never gates, never alters the PR, never affects control flow, and (unlike step 6's `contract_conformance`/`benchmark_result` pair) carries NO nested `SUPERVISOR_RESULT` field and NO flat `session_end` field — it is report prose only, by design (see Part 1's rules).
 
 **Hard-signal fields (System Twin / ST3 — written in BOTH shapes):**
 

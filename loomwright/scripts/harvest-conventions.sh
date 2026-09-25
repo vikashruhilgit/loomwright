@@ -145,7 +145,17 @@
 #   harvest-conventions.sh [--session-id <id>] [--cap <N>] [--min-support <N>]
 #                          [--ledger <path>] [--corpus-dir <path>] [--proposals-dir <path>]
 #                          [--surface <path> ...] [--root <dir>] [--add-rule <path>]
-#                          [--expect-repo <owner/repo> ...] [--dup-pct <N>] [--no-writer] [-h|--help]
+#                          [--expect-repo <owner/repo> ...] [--dup-pct <N>] [--no-writer]
+#                          [--json] [-h|--help]
+#
+# --json: after the ordinary human-readable report, ALSO print a machine-readable JSON array — one
+# object per EMITTED proposal (never the already-covered-deferred ones, which carry no invocation at
+# all) — under a "--- proposal JSON (--json) ---" header. Each object carries
+# {theme, category, statement, enforcement, check, check_candidate, applies_to, finding_ids}, with
+# `check` ALWAYS null (AC9b — unchanged) and `check_candidate` either the SAME string shown in the
+# human block or JSON null when no candidate qualified. This is purely ADDITIVE to the default
+# output — the human report above it is byte-identical to a run without --json — so no existing
+# caller or test asserting against the human text is affected by passing it.
 #
 # Exit contract — explicit, and deliberately NOT uniformly fail-safe:
 #   0  the harvest ran and the report was printed. This INCLUDES every legitimately empty case: an
@@ -217,6 +227,7 @@ PROPOSALS_DIR=""
 ROOT=""
 ADD_RULE=""
 NO_WRITER=0
+JSON_OUT=0
 SURFACES=()
 EXPECT_REPOS=()
 RAW_ARGV=("$0" "$@")
@@ -287,6 +298,7 @@ while [ "$#" -gt 0 ]; do
     --add-rule)      [ "$#" -ge 2 ] || die "--add-rule requires a value"; ADD_RULE="$2"; shift 2 ;;
     --dup-pct)       [ "$#" -ge 2 ] || die "--dup-pct requires a value"; DUPLICATE_PCT="$2"; shift 2 ;;
     --no-writer)     NO_WRITER=1; shift ;;
+    --json)          JSON_OUT=1; shift ;;
     -h|--help)       usage ;;
     *) die "unknown argument: $1 (see --help)" 2 ;;
   esac
@@ -664,6 +676,121 @@ dedupe_rate() {
   rate=$((inn * 100 / out))
   if [ "$rate" -lt "$DISTILLATION_FLOOR" ]; then verdict="FAILURE"; else verdict="OK"; fi
   printf '%s %s' "$rate" "$verdict"
+}
+
+# ---------------------------------------------------------------------------
+# build_check_candidate <theme-key> — AC (executable-rule-candidates/01). Proposes a DATA-ONLY,
+# NEVER-EXECUTED shell "check_candidate" string for a theme whose evidence shares one literal,
+# grep-able token or path across >= 3 of its supporting findings. Sets CC_CANDIDATE (empty string
+# when no candidate qualifies) and CC_SUPPORT (0 when empty). This is advisory data shown to a human
+# in the harvester's own report/JSON — it is NEVER passed to add-rule.sh (check stays null, AC9b
+# unchanged) and NEVER executed by this script or any caller of it.
+#
+# THE WHOLE SECURITY BOUNDARY IS THIS FUNCTION'S TEMPLATE + REJECT LIST — read it before touching it.
+#
+# EXTRACTION: this repo's own evidence-authoring convention already backtick-quotes the exact
+# literal a finding cites (grep the real ledger: `` `19` ``, `` `^## Status:` `` — both real,
+# unedited evidence strings). So the "literal token or path" AC1 asks for is read directly off that
+# convention: every backtick-delimited span `` `...` `` in a finding's (raw, un-lowered) evidence
+# text is a candidate literal. A span is counted AT MOST ONCE per finding (a finding repeating the
+# same span twice must not inflate its own support), then tallied across the theme's findings; the
+# highest-support span with >= 3 DISTINCT supporting findings wins (ties broken by `sort -rn`'s
+# stable order, i.e. the first-encountered span at that count).
+#
+# REJECT, NEVER ESCAPE (AC1, verbatim from the brief): a raw span containing a single quote, a
+# backtick (structurally impossible here — see the extraction regex — but checked anyway, in case
+# this function is ever reused against a differently-delimited source), `$(`, `;`, `|`, `&`, or a
+# newline yields NO candidate for this theme AT ALL — the whole theme falls back to `check_candidate`
+# absent, never a "sanitised" or partially-escaped rewrite of the hostile text. This is the mutation
+# -controlled gate test-harvest-conventions.sh's (P) block proves is load-bearing.
+#
+# NO ERE-ESCAPING (a deliberate, documented simplification, not an oversight): the winning span is
+# used as-is as a `grep -E` PATTERN — an ERE metacharacter in it (a literal `.` matching any char,
+# etc.) is a CORRECTNESS nicety the human reviewer can see and fix before accepting, never a SAFETY
+# property. Safety comes entirely from the reject list above, which runs on the RAW span before any
+# template is composed — escaping would only add sed-substitution bug surface to a security-critical
+# path for no safety benefit.
+#
+# TEMPLATE CHOICE (absence vs. bound) is a RATCHET, deliberately mirroring this repo's own
+# check-vendor-coupling.sh convention: this function measures the span's CURRENT hit count (files
+# under $ROOT matched by the theme's own derived `applies_to` scope, or the whole repo when that
+# scope is null/repo-wide) via a plain read-only `grep -rlE`. Zero hits today -> the absence template
+# (a forward-looking "this must never appear" invariant, trivially true right now). >=1 hit today ->
+# the bound template pinned at today's own count (a ratchet: today's count may never grow), because
+# an absence template over a token already present today would propose a check that fails the moment
+# it is written. Both templates are FIXED STRINGS from AC1's own allowlist; nothing outside them is
+# ever composed.
+# ---------------------------------------------------------------------------
+build_check_candidate() {
+  local k="$1" globs="$2" root="$3"
+  CC_CANDIDATE=""; CC_SUPPORT=0
+  local tokfile="$WORK/cctok.$k"
+  {
+    while IFS=$'\t' read -r fid _repo _stage _miss ev _paths; do
+      [ -n "$fid" ] || continue
+      printf '%s\n' "$ev" | grep -oE '`[^`]+`' 2>/dev/null | sed -E 's/^.//; s/.$//' | LC_ALL=C sort -u \
+        | while IFS= read -r tok; do [ -n "$tok" ] && printf '%s\t%s\n' "$fid" "$tok"; done
+    done < "$WORK/theme.$k.tsv"
+  } > "$tokfile" 2>/dev/null
+  [ -s "$tokfile" ] || return 0
+
+  local top count tok
+  top="$(awk -F'\t' '{print $2}' "$tokfile" | LC_ALL=C sort | uniq -c | LC_ALL=C sort -rn | head -1)"
+  [ -n "$top" ] || return 0
+  count="$(printf '%s' "$top" | sed -E 's/^ *([0-9]+).*/\1/')"
+  tok="$(printf '%s' "$top" | sed -E 's/^ *[0-9]+ //')"
+  is_num "$count" || return 0
+  [ "$count" -ge 3 ] || return 0
+  [ -n "$tok" ] || return 0
+
+  # REJECT, NEVER ESCAPE — see header. Each case checked on the RAW span independently.
+  case "$tok" in
+    *"'"*)   return 0 ;;
+    *'`'*)   return 0 ;;
+    *'$('*)  return 0 ;;
+    *';'*)   return 0 ;;
+    *'|'*)   return 0 ;;
+    *'&'*)   return 0 ;;
+    *$'\n'*) return 0 ;;
+    -*)      return 0 ;;   # a leading `-` would be read by grep as an OPTION, not a pattern
+  esac
+
+  # <paths> are composed UNQUOTED into the template (so a glob like `src/a/*` expands when a human
+  # later runs the accepted check), which makes each one a shell-syntax surface in its own right: a
+  # live changed_path named `a;b` or `a>b` would otherwise land verbatim in the candidate. Same
+  # reject-never-escape discipline, but STRICTER than the token list — an allowlisted character set
+  # (letters, digits, `.`, `_`, `/`, `-`, `+`, `@`, `,`, `=`, and the glob `*`), no leading `-`.
+  # Any path outside it ⇒ NO candidate for this theme at all.
+  local paths g rest path_re='^[A-Za-z0-9._/+@,=*-]+$'
+  if [ -n "$globs" ]; then
+    rest="$globs"
+    while [ -n "$rest" ]; do
+      case "$rest" in
+        *"$US"*) g="${rest%%"$US"*}"; rest="${rest#*"$US"}" ;;
+        *)       g="$rest"; rest="" ;;
+      esac
+      [ -n "$g" ] || continue
+      case "$g" in -*) return 0 ;; esac
+      [[ "$g" =~ $path_re ]] || return 0   # no `printf | grep -q` here — SIGPIPE under pipefail
+    done
+    paths="$(printf '%s' "$globs" | tr "$US" ' ')"
+  else
+    paths="."
+  fi
+
+  # Read-only probe: how many files under $root does this pattern hit TODAY, over the SAME scope the
+  # candidate itself will be checked against. `--` guards a token that happens to start with `-`.
+  local hitcount
+  hitcount="$(cd "$root" 2>/dev/null && grep -rlE -- "$tok" $paths 2>/dev/null | grep -c . || true)"
+  is_num "$hitcount" || hitcount=0
+
+  if [ "$hitcount" -eq 0 ]; then
+    CC_CANDIDATE="! grep -rnE '$tok' $paths"
+  else
+    CC_CANDIDATE="test \"\$(grep -rlE '$tok' $paths | wc -l)\" -le $hitcount"
+  fi
+  CC_SUPPORT="$count"
+  return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -1119,6 +1246,10 @@ emit_rule() {   # emit_rule <theme> <category> <statement> <origin-label>
   # self-flattering arithmetic this two-number design was built to prevent.
   FIDELITY_ALL_TOTAL=$((FIDELITY_ALL_TOTAL + fid_n))
 
+  # check_candidate (executable-rule-candidates/01, AC1) — DATA ONLY, never executed, never passed
+  # to add-rule.sh. See build_check_candidate's own header for the full security-boundary rationale.
+  build_check_candidate "$k" "$globs" "$ROOT"
+
   compose_add_rule "$category" "$statement" "$globs"
   plan_rule
 
@@ -1126,7 +1257,10 @@ emit_rule() {   # emit_rule <theme> <category> <statement> <origin-label>
     printf '  %s) [%s] theme=%s  origin=%s\n' "$((EMITTED + 1))" "$category" "$k" "$origin"
     printf '     statement: %s\n' "$statement"
     printf '     enforcement: advisory\n'
-    printf '     check: null  (AC9b — no obviously mechanical check; this harvester never synthesises shell into `check`)\n'
+    printf '     check: null  (AC9b — no obviously mechanical check IS EVER SYNTHESISED into check; this harvester never writes shell into the live check field. A check_candidate MAY be shown below — DATA only, never executed by this harvester and never passed to add-rule.sh — when >= 3 supporting findings share one literal, template-bounded token/path; see check_candidate)\n'
+    if [ -n "$CC_CANDIDATE" ]; then
+      printf '     check_candidate: %s  (data only — never executed by this harvester; %s of this theme'"'"'s findings share this literal token/path, built from a FIXED template allowlist, reject-not-escape checked)\n' "$CC_CANDIDATE" "$CC_SUPPORT"
+    fi
     # The dedupe pass reports on the proposals it did NOT defer as well. A pass that is only visible
     # when it fires is a pass a reader has to take on trust; printing the nearest live rule and its
     # distance from the floor makes the threshold checkable from the report alone.
@@ -1165,6 +1299,24 @@ emit_rule() {   # emit_rule <theme> <category> <statement> <origin-label>
     [ -n "$PLAN_DETAIL" ] && printf '%s\n' "$PLAN_DETAIL" | sed 's/^/       | /'
     printf '\n'
   } >> "$BATCH"
+
+  if [ "$JSON_OUT" -eq 1 ]; then
+    local applies_json="null" fids_json cc_json="null"
+    if [ -n "$globs" ]; then
+      applies_json="$(printf '%s' "$globs" | tr "$US" '\n' | jq -R -s -c 'split("\n") | map(select(length>0))' 2>/dev/null)"
+      [ -n "$applies_json" ] || applies_json="null"
+    fi
+    fids_json="$(awk -F'\t' '{print $1}' "$WORK/theme.$k.tsv" | head -12 | jq -R -s -c 'split("\n") | map(select(length>0))' 2>/dev/null)"
+    [ -n "$fids_json" ] || fids_json="[]"
+    [ -n "$CC_CANDIDATE" ] && cc_json="$(jq -n --arg v "$CC_CANDIDATE" '$v' 2>/dev/null)"
+    [ -n "$cc_json" ] || cc_json="null"
+    jq -n --arg theme "$k" --arg category "$category" --arg statement "$statement" \
+          --argjson applies_to "$applies_json" --argjson finding_ids "$fids_json" \
+          --argjson check_candidate "$cc_json" \
+      '{theme: $theme, category: $category, statement: $statement, enforcement: "advisory",
+        check: null, check_candidate: $check_candidate, applies_to: $applies_to,
+        finding_ids: $finding_ids}' >> "$WORK/json.batch" 2>/dev/null
+  fi
 
   EMITTED=$((EMITTED + 1))
   MAPPED=$((MAPPED + fid_n))
@@ -1344,6 +1496,15 @@ elif [ "$DEDUPE_VERDICT" = "EMPTY" ]; then
   echo "  distillation:    n/a — nothing was emitted, so there is nothing to have distilled."
 else
   echo "  distillation:    OK — above the $((DISTILLATION_FLOOR / 100)).$(printf '%02d' $((DISTILLATION_FLOOR % 100))) findings-per-rule floor."
+fi
+if [ "$JSON_OUT" -eq 1 ]; then
+  echo
+  echo "--- proposal JSON (--json) ---"
+  if [ -s "$WORK/json.batch" ]; then
+    jq -s '.' "$WORK/json.batch" 2>/dev/null || echo '[]'
+  else
+    echo '[]'
+  fi
 fi
 echo
 echo "=== END DRY RUN — no branch, no commit, no PR, nothing written to $RULES_DIR ==="

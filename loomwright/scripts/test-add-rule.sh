@@ -250,6 +250,49 @@ run_writer "$RG5" --category "gval" --statement "no check here" --confirm
 [ "$(jq -r '.[0].check | type' "$RG5/.agent/rules/gval.json" 2>/dev/null)" = "null" ] \
   && ok "(G4b) omitted --check yields explicit null" || no "(G4b) omitted check not null"
 
+# (G4c) executable-rule-candidates/01 — the "Accept rule WITH check" button composes EXACTLY
+# `add-rule.sh --check "<candidate>" --confirm` with NO code change to this file (verified
+# separately: `git diff main -- loomwright/scripts/add-rule.sh` is empty). This case proves a
+# REALISTIC check_candidate-shaped string (harvest-conventions.sh's own absence-template output,
+# built from its FIXED template allowlist) round-trips BYTE-EXACT through the unmodified writer —
+# the "accept-with-check" half of the two-button flow. (G4b above already proves the sibling
+# "accept-without-check" half via the SAME unmodified --check/no-check paths.)
+RG6="$(new_repo)"
+CANDIDATE_G6="! grep -rnE '19' src/a/*"
+run_writer "$RG6" --category "gval" --statement "candidate round trip" --check "$CANDIDATE_G6" --confirm
+stored_check_g6="$(jq -r '.[0].check' "$RG6/.agent/rules/gval.json" 2>/dev/null)"
+[ "$stored_check_g6" = "$CANDIDATE_G6" ] \
+  && ok "(G4c) a check_candidate-shaped string round-trips BYTE-EXACT through --check (accept-with-check produces check == the candidate string exactly)" \
+  || no "(G4c) round-trip mismatch: stored=[$stored_check_g6] expected=[$CANDIDATE_G6]"
+
+# (G4d) the BOUND template carries `"$(` — the delivery shape commands/dreaming.md documents (load the
+# candidate through a QUOTED heredoc, pass "$CANDIDATE") must store it byte-exact AND must not run the
+# embedded $(grep …) at delivery. A marker-touching payload inside the $( proves non-execution directly.
+RG7="$(new_repo)"
+MARKER_G7="$ROOT/g7_marker_$$"; rm -f "$MARKER_G7" 2>/dev/null
+CANDIDATE_G7="$(cat <<LOOMWRIGHT_CHECK_CANDIDATE_FIXTURE
+test "\$(grep -rlE '19' src/a/* | wc -l; touch $MARKER_G7)" -le 2
+LOOMWRIGHT_CHECK_CANDIDATE_FIXTURE
+)"
+# Build the delivery script exactly as dreaming.md step 3 shows it, with the candidate pasted verbatim
+# into the quoted-heredoc body, then run it as its own bash process (as the agent's Bash tool would).
+DELIVER_G7="$ROOT/deliver_g7.sh"
+{
+  printf 'CANDIDATE="$(cat <<'"'"'LOOMWRIGHT_CHECK_CANDIDATE'"'"'\n'
+  printf '%s\n' "$CANDIDATE_G7"
+  printf 'LOOMWRIGHT_CHECK_CANDIDATE\n)"\n'
+  printf 'cd %q && bash %q --category gval --statement %q --check "$CANDIDATE" --confirm < /dev/null\n' \
+    "$RG7" "$WRITER" "bound candidate round trip"
+} > "$DELIVER_G7"
+bash "$DELIVER_G7" >/dev/null 2>&1
+stored_check_g7="$(jq -r '.[0].check' "$RG7/.agent/rules/gval.json" 2>/dev/null)"
+[ "$stored_check_g7" = "$CANDIDATE_G7" ] \
+  && ok "(G4d) the bound-template candidate (with \"\$( inside) round-trips BYTE-EXACT via the documented quoted-heredoc delivery shape" \
+  || no "(G4d) bound-candidate mismatch: stored=[$stored_check_g7] expected=[$CANDIDATE_G7]"
+[ ! -e "$MARKER_G7" ] \
+  && ok "(G4d) …and the embedded \$( … ) was NOT executed at delivery (marker absent)" \
+  || no "(G4d) SECURITY REGRESSION: the delivery shape executed the candidate's \$( … )"
+
 # ============================================================================
 echo "== (H) confirm-only: no --confirm + non-TTY ⇒ DRY-RUN (plan printed, NO file written) =="
 RH="$(new_repo)"

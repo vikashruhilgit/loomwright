@@ -37,8 +37,14 @@
 #
 # Asserts, for EACH seam surface:
 #   (A) it references read-rules.sh for house-rules context (the ADVISORY reader), AND
-#   (B) it NEVER references rules-check.sh (the human-invoked EXECUTION path must not leak into
-#       an unattended seam), AND
+#   (B) it NEVER references rules-check.sh's HUMAN-CONFIRMATION shape (`--confirm`/TTY-yes) — that
+#       execution path must not leak into an unattended seam. ONE NAMED, NARROW EXCEPTION
+#       (executable-rule-candidates/01): skills/self-heal-advisory/SKILL.md MAY reference
+#       `rules-check.sh --if-stamped` — the unattended-SAFE replay valve that can only ever replay a
+#       run a human already confirmed, ON THIS SAME MACHINE (the content-keyed user-scope stamp,
+#       `skills/rules/SKILL.md` §8.1) — and ONLY that shape: a `--confirm` (or bare, flagless)
+#       invocation anywhere in that same file still fails this check. The other three seams keep the
+#       original zero-tolerance rule unchanged. AND
 #   (C) it NEVER pipes / substitutes / execs read-rules.sh OUTPUT into a shell executor
 #       (`| bash`, `| sh`, `eval`, exec'd `$(...)`, `source`) — the reader emits `check` as DATA
 #       and no seam runs it.
@@ -64,12 +70,13 @@
 #     ON PURPOSE (repo-wide by design). Exempt from (D); pinned instead by PART 2 [shape ii], by
 #     test-read-rules.sh (j4), and — for the cited line number itself — by test-citation-drift.sh.
 #
-# SCOPE NOTE: the negative assertion is scoped to (1) rules-check.sh and (2) executing
-# read-rules.sh OUTPUT. It does NOT blanket-ban `bash -c`, because self-heal-advisory/SKILL.md
-# legitimately mentions `bash -c` in UNRELATED ground-truth `cmd:` trust-boundary prose (a
-# pre-existing line about `## Executable Acceptance` cmd: bullets, not about house rules). Seam
-# prose that says the reader "never ... `bash -c`s a check" is an ASSERTION of the invariant, not
-# a violation, so we do not grep for a bare `bash -c` token.
+# SCOPE NOTE: the negative assertion is scoped to (1) rules-check.sh's HUMAN-CONFIRMATION shape
+# (narrowed as of executable-rule-candidates/01 — see (B) above) and (2) executing read-rules.sh
+# OUTPUT. It does NOT blanket-ban `bash -c`, because self-heal-advisory/SKILL.md legitimately
+# mentions `bash -c` in UNRELATED ground-truth `cmd:` trust-boundary prose (a pre-existing line
+# about `## Executable Acceptance` cmd: bullets, not about house rules). Seam prose that says the
+# reader "never ... `bash -c`s a check" is an ASSERTION of the invariant, not a violation, so we do
+# not grep for a bare `bash -c` token.
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -103,8 +110,23 @@ for f in "${SEAMS[@]}"; do
     no "[$base] MISSING read-rules.sh reference"
   fi
 
-  # (B) NEVER references rules-check.sh (the human-invoked execution path must not leak here)
-  if grep -qF 'rules-check.sh' "$f"; then
+  # (B) rules-check.sh's HUMAN-CONFIRMATION shape must never leak into an unattended seam. ONE named
+  #     exception (executable-rule-candidates/01): self-heal-advisory/SKILL.md may reference the
+  #     unattended-SAFE `--if-stamped` replay valve — and ONLY that shape. A `--confirm` (or bare,
+  #     flagless) mention anywhere in that same file still fails this check.
+  if [ "$base" = "self-heal-advisory/SKILL.md" ]; then
+    if grep -qF 'rules-check.sh' "$f"; then
+      bad_confirm=0
+      grep -qF -- '--confirm' < <(grep -F 'rules-check.sh' "$f") && bad_confirm=1
+      if [ "$bad_confirm" -eq 0 ] && grep -qF 'rules-check.sh --if-stamped' "$f"; then
+        ok "[$base] references rules-check.sh ONLY via the unattended-safe --if-stamped replay valve (executable-rule-candidates/01) — no --confirm shape present"
+      else
+        no "[$base] rules-check.sh reference is NOT the safe --if-stamped-only shape (bad_confirm=$bad_confirm) — execution path leaked unsafely into an unattended seam"
+      fi
+    else
+      ok "[$base] never references rules-check.sh"
+    fi
+  elif grep -qF 'rules-check.sh' "$f"; then
     no "[$base] MUST NOT reference rules-check.sh (execution path leaked into an unattended seam)"
   else
     ok "[$base] never references rules-check.sh"
