@@ -2,8 +2,8 @@
 name: automate-loop
 description: Protocol authority for `/automate` — the generic automation engine that converts ANY source (a prompt via /product-owner, a requirements folder, or a backlog-doc) into a FULL Queue with a per-run processing cap inside ONE markdown run file (`.supervisor/automate/<run_id>.md` — the contract, dashboard, and resume state), then drives each Queue item through the per-item loop (`/autonomous --single-iteration` → owned inline `/review-pr --until-mergeable` → trusted-merge-or-park → pull main → check off + append `## Progress`). Smart resume = glob `*.md` for not-done + reconcile-vs-ground-truth. Use when implementing or invoking `/automate`.
 allowed-tools: [Read, Write, Edit, Bash, Task, AskUserQuestion]
-version: "1.5.0"
-lastUpdated: "2026-09-22"
+version: "1.6.0"
+lastUpdated: "2026-09-25"
 ---
 
 # Automate Loop Skill
@@ -328,7 +328,7 @@ then `--resume`.
 ```json
 {
   "drain_result": "READY|ESCALATED",
-  "termination_reason": "converged|bound_hit|sub_floor_converged",
+  "termination_reason": "converged|bound_hit|sub_floor_converged|ci_untrusted",
   "ready_sha": "<sha>",
   "trust_unprotected": true|false,
   "review_heal_result_path": "<path to the verbatim REVIEW_HEAL_RESULT artifact>",
@@ -340,7 +340,7 @@ then `--resume`.
 
 `gh pr merge --squash` fires **ONLY** when **ALL 6** conditions hold. If any fails or is **unreadable** ⇒ fail **CLOSED** → park (`pause_reason: awaiting_merge`/`escalated`) + notify. (Two values are NOT automatic parks — they have explicit per-condition semantics below: a **reviews-not-required `reviewDecision`** is deferred to cond 4, and an **absent rubric** is N/A — see cond 3 and cond 5.) This gate — implemented in `automate-helpers.sh gate-eval` — is the **only** sanctioned, EXECUTED `gh pr merge --squash` in the plugin (§11).
 
-1. **Owned drain == `READY`, AND its `termination_reason` is NOT `sub_floor_converged`.** The engine's own inline `/review-pr --until-mergeable` (§7) returned `READY` (not `ESCALATED`). **A `sub_floor_converged` READY is NOT auto-merge-eligible** (AC9, drain-bounding-earned-checks): its final round skipped the all-channel bot-finding re-scan (`review-heal/SKILL.md` §"Termination-only severity floor"), so it must PARK exactly like a non-`READY` drain result. `automate-helpers.sh gate-eval` reads `termination_reason` with the same explicit `has()`/`!= null` fail-CLOSED form as cond 3's `unresolved_human_thread` — missing/unreadable ⇒ PARK, never a silent merge.
+1. **Owned drain == `READY`, AND its `termination_reason` is NOT `sub_floor_converged`.** The engine's own inline `/review-pr --until-mergeable` (§7) returned `READY` (not `ESCALATED`). **A `sub_floor_converged` READY is NOT auto-merge-eligible** (AC9, drain-bounding-earned-checks): its final round skipped the all-channel bot-finding re-scan (`review-heal/SKILL.md` §"Termination-only severity floor"), so it must PARK exactly like a non-`READY` drain result. `automate-helpers.sh gate-eval` reads `termination_reason` with the same explicit `has()`/`!= null` fail-CLOSED form as cond 3's `unresolved_human_thread` — missing/unreadable ⇒ PARK, never a silent merge. **`termination_reason: ci_untrusted` (ci-trust-probe-01):** a `ci_untrusted` termination always pairs with `drain_result: ESCALATED`, never `READY` (`scripts/ci-run-probe.sh` classifying a required check `untrusted_infra` still blocks READY, `review-heal/SKILL.md` §"READY redefinition"), so a well-formed ctx already fails CLOSED through this SAME condition's `drain_result != "READY"` check. `gate_eval()` (`automate-helpers.sh`) ALSO carries a separate, deliberate defense-in-depth PARK for this value specifically (its condition 1c, immediately after the `sub_floor_converged` check) — mirroring that guard's shape — so a hypothetically-corrupted ctx claiming `drain_result: READY` alongside `termination_reason: ci_untrusted` still cannot merge.
    - **Cross-checked against the artifact, never trusted as a bare assertion.** The gate ALSO reads `ctx.json`'s `review_heal_result_path` — the file the DRAIN step (§6) wrote the terminal `REVIEW_HEAL_RESULT` block to VERBATIM — and parses that file's OWN `decision`/`termination_reason` fields (a bounded grep/awk extraction; `result_block_parser.py` is a library with no CLI). The ctx's `drain_result`/`termination_reason` MUST match what the artifact actually says, or the gate PARKs (`PARK: review_heal_result_unreadable` if the file is missing/unreadable, `PARK: drain_result_mismatch` if the two disagree). The drain's self-report about its own outcome is corroborated against the artifact it actually produced, never trusted blind.
 
 2. **Head SHA still == the `READY` SHA AND base == `main`.** The gate itself re-reads `gh pr view <url> --json headRefOid,baseRefName,statusCheckRollup`; if the live head moved since the drain declared `READY` (a new commit landed), or the base is not `main`, **do not merge** (the approved state is stale). `ready_sha` stays a ctx input (the drain's claim) — but it is now CROSS-CHECKED against the live read, never trusted alone.

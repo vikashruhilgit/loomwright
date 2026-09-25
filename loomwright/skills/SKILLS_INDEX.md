@@ -21,8 +21,8 @@ Comprehensive index of all skills available in the Loomwright plugin.
 | Telemetry | `telemetry/` | — (reference, shell-script-driven) | ~600 | 1.0.0 | 2026-04 |
 | Memory Tool | `memory-tool/` | — (reference) | ~500 | 1.0.0 | 2026-05-10 |
 | Autonomous Loop | `autonomous-loop/` | `/autonomous` (slash command, reference) | ~2,800 [^al-tokens] | 1.5.0 | 2026-09-22 |
-| Automate Loop | `automate-loop/` | `/automate` (slash command, reference) | ~3,200 | 1.5.0 | 2026-09-22 |
-| Review Heal | `review-heal/` | `review-pr-runner` (preload), `/review-pr` + Supervisor + `/autonomous` (reference) | ~3,000 | 1.7.0 | 2026-09-15 |
+| Automate Loop | `automate-loop/` | `/automate` (slash command, reference) | ~3,200 | 1.6.0 | 2026-09-25 |
+| Review Heal | `review-heal/` | `review-pr-runner` (preload), `/review-pr` + Supervisor + `/autonomous` (reference) | ~3,000 | 1.8.0 | 2026-09-25 |
 | Self-Heal Advisory | `self-heal-advisory/` | Supervisor (on-demand Read at Phase 4.5 entry — deliberately NOT preloaded; Part 1 advisory machinery + Part 2 full Phase 4.5 loop protocol) | ~7,000 | 1.7.0 | 2026-09-13 |
 | Preflight Sync | `preflight-sync/` | Supervisor (on-demand Read at Phase 1.5 entry — deliberately NOT preloaded) | ~1,900 | 1.3.0 | 2026-09-24 |
 | Supervisor Config | `supervisor-config/` | Supervisor (on-demand Read at Phase 0 entry — deliberately NOT preloaded) | ~2,400 | 1.3.0 | 2026-09-22 |
