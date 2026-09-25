@@ -744,6 +744,26 @@ else
   no "AC9 missing-termination_reason FAILED OPEN (out='$RUN_OUT' merges=$(merges))"
 fi
 
+# --- Condition 1c (ci-trust-probe-01) — `ci_untrusted` is NEVER merge-eligible.
+# Two cases, both must PARK (brief AC): the well-formed shape a real drain
+# actually emits (drain_result ESCALATED, since an untrusted_infra required
+# check still blocks READY) AND, as a defense-in-depth mutation control, a
+# deliberately-malformed drain_result READY + termination_reason ci_untrusted
+# combination — proving even a hypothetically-corrupted ctx can't merge on
+# this reason. ---
+gate "$(pass_ctx | jq '.drain_result="ESCALATED" | .termination_reason="ci_untrusted"')"
+if [ "$RUN_OUT" = "PARK: drain_not_ready" ] && [ "$(merges)" -eq 0 ]; then
+  ok "ci-trust-probe-01: well-formed ci_untrusted (ESCALATED) ⇒ PARK: drain_not_ready, no merge"
+else
+  no "ci-trust-probe-01 well-formed ci_untrusted wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+gate "$(pass_ctx | jq '.termination_reason="ci_untrusted"')"   # drain_result stays "READY" from pass_ctx — the mutation
+if [ "$RUN_OUT" = "PARK: ci_untrusted_not_merge_eligible" ] && [ "$(merges)" -eq 0 ]; then
+  ok "ci-trust-probe-01: mutation control — corrupted READY+ci_untrusted ctx still ⇒ PARK, no merge"
+else
+  no "ci-trust-probe-01 mutation-control ci_untrusted FAILED OPEN (out='$RUN_OUT' merges=$(merges))"
+fi
+
 # --- Condition 1 cross-check (NEW) — the drain's self-report must match the
 # REVIEW_HEAL_RESULT artifact it actually wrote. ---
 gate "$(pass_ctx | jq '.review_heal_result_path="/no/such/file"')"

@@ -500,9 +500,14 @@ _ge_pr_parts() {
 # other former key is now GATE-OWNED and REFUSED if present — see below):
 #   {
 #     "drain_result": "READY|ESCALATED",           # cond 1 — the owned drain's terminal decision
-#     "termination_reason": "converged|bound_hit|sub_floor_converged",  # cond 1b
+#     "termination_reason": "converged|bound_hit|sub_floor_converged|ci_untrusted",  # cond 1b
 #        # A "sub_floor_converged" drain skipped its final all-channel re-scan, so it is NOT
-#        # merge-eligible. Read with an explicit has()/!= null check: missing/null ⇒ PARK.
+#        # merge-eligible. "ci_untrusted" (ci-trust-probe-01) always pairs with drain_result ==
+#        # "ESCALATED" (never "READY" — scripts/ci-run-probe.sh classifying a required check
+#        # untrusted_infra still blocks READY, review-heal/SKILL.md §"READY redefinition"), so it
+#        # already PARKs via cond 1's plain drain_result != "READY" check below — no separate
+#        # PARK branch needed for this value specifically. Read with an explicit has()/!= null
+#        # check: missing/null ⇒ PARK.
 #     "ready_sha": "<sha>",                         # cond 2 — the drain's claim, cross-checked
 #        # against the LIVE `gh pr view --json headRefOid` (never trusted alone).
 #     "trust_unprotected": true|false,              # cond 4 override — a legitimate operator flag,
@@ -561,6 +566,13 @@ _ge_pr_parts() {
 # rubric_unsatisfied, high_risk_diff, merge_command_failed. New reasons added by
 # self-resolution: ctx_carries_gate_owned_key, review_heal_result_unreadable,
 # drain_result_mismatch, protection_unreadable, supervisor_result_unreadable.
+# New reason added by ci-trust-probe-01: ci_untrusted_not_merge_eligible (an
+# explicit, unconditional defense-in-depth PARK for termination_reason ==
+# "ci_untrusted" — see cond 1b below; a well-formed ctx already PARKs via
+# drain_not_ready since a real drain never pairs ci_untrusted with READY, but
+# this guard also catches a hypothetically-corrupted ctx that claims READY
+# anyway, exactly like the pre-existing sub_floor_converged guard it sits
+# beside).
 gate_eval() {
   local url="$1" ctx="$2"
   shift 2 2>/dev/null || true
@@ -606,6 +618,18 @@ gate_eval() {
   tr="$("$JQ" -r 'if has("termination_reason") and (.termination_reason != null) then .termination_reason else "__MISSING__" end' "$ctx")"
   if [ "$tr" = "__MISSING__" ] || [ "$tr" = "sub_floor_converged" ]; then
     echo "PARK: sub_floor_not_merge_eligible"; return 0
+  fi
+
+  # Condition 1c (ci-trust-probe-01) — `ci_untrusted` is NEVER merge-eligible,
+  # under ANY drain_result value. A well-formed ctx already PARKs above via
+  # cond 1 (`drain_not_ready`) — a real drain never pairs `ci_untrusted` with
+  # `READY` (an untrusted_infra required check still blocks READY,
+  # review-heal/SKILL.md §"READY redefinition"). This explicit, unconditional
+  # check is defense-in-depth against a hypothetically-corrupted ctx that
+  # claims `drain_result: "READY"` anyway — exactly the same shape of guard
+  # as cond 1b's `sub_floor_converged` check immediately above.
+  if [ "$tr" = "ci_untrusted" ]; then
+    echo "PARK: ci_untrusted_not_merge_eligible"; return 0
   fi
 
   # Condition 1 cross-check — the drain's OWN self-report (drain_result /
