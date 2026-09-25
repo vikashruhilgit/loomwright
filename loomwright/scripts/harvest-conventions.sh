@@ -683,8 +683,14 @@ dedupe_rate() {
 # NEVER-EXECUTED shell "check_candidate" string for a theme whose evidence shares one literal,
 # grep-able token or path across >= 3 of its supporting findings. Sets CC_CANDIDATE (empty string
 # when no candidate qualifies) and CC_SUPPORT (0 when empty). This is advisory data shown to a human
-# in the harvester's own report/JSON — it is NEVER passed to add-rule.sh (check stays null, AC9b
-# unchanged) and NEVER executed by this script or any caller of it.
+# in the harvester's own report/JSON — it is NEVER passed to add-rule.sh by this script (check stays
+# null, AC9b unchanged; the separately-printed WITH-check invocation carries only the LITERAL text
+# `--check "$CANDIDATE"`, for a human-confirmed delivery to fill in) and NEVER executed by this script.
+#
+# THE FIXED TEMPLATE ALLOWLIST (exactly two strings; <p> = the token, <paths> = the scoped globs):
+#   absence : grep -rnE -- '<p>' <paths>; test $? -eq 1
+#   ratchet : test "$(grep -rlE -- '<p>' <paths> | wc -l)" -le <N>
+# `--` before the pattern keeps a glob-expanded filename or pattern from being read as a grep option.
 #
 # THE WHOLE SECURITY BOUNDARY IS THIS FUNCTION'S TEMPLATE + REJECT LIST — read it before touching it.
 #
@@ -713,13 +719,16 @@ dedupe_rate() {
 #
 # TEMPLATE CHOICE (absence vs. bound) is a RATCHET, deliberately mirroring this repo's own
 # check-vendor-coupling.sh convention: this function measures the span's CURRENT hit count (files
-# under $ROOT matched by the theme's own derived `applies_to` scope, or the whole repo when that
-# scope is null/repo-wide) via a plain read-only `grep -rlE`. Zero hits today -> the absence template
-# (a forward-looking "this must never appear" invariant, trivially true right now). >=1 hit today ->
+# under $ROOT matched by the theme's own derived `applies_to` scope — a null/repo-wide scope yields
+# NO candidate at all, see the body) via a plain read-only `grep -rlE`, whose exit status must be 0
+# or 1 (2 = invalid ERE / unreadable path ⇒ no candidate). Zero hits today -> the absence template
+# (a forward-looking "this must never appear" invariant, trivially true right now, and FAIL-CLOSED on
+# a later grep exit 2 via `; test $? -eq 1`). >=1 hit today ->
 # the bound template pinned at today's own count (a ratchet: today's count may never grow), because
 # an absence template over a token already present today would propose a check that fails the moment
 # it is written. Both templates are FIXED STRINGS from AC1's own allowlist; nothing outside them is
-# ever composed.
+# ever composed. HONEST LIMIT: the ratchet is NOT fail-closed — if its scope later vanishes, the count
+# is 0 and it passes vacuously (documented in skills/rules/SKILL.md §8.1).
 # ---------------------------------------------------------------------------
 build_check_candidate() {
   local k="$1" globs="$2" root="$3"
@@ -755,39 +764,62 @@ build_check_candidate() {
     -*)      return 0 ;;   # a leading `-` would be read by grep as an OPTION, not a pattern
   esac
 
+  # REPO-WIDE ⇒ NO CANDIDATE (PR #267 Phase 4.5 finding 3). A null/empty derived scope would make
+  # <paths> `.`, and a `grep -r` over `.` walks `.git/`, the gitignored `.supervisor/` ledger (which
+  # ALWAYS contains the token — it is where the token was harvested from) and the accepted rule's own
+  # `.agent/rules/*.json` (which contains the token inside its `check` string). Such a candidate
+  # fails the moment it is accepted. Emitting none is the simplest safe choice and keeps the
+  # template allowlist tiny.
+  [ -n "$globs" ] || return 0
+
   # <paths> are composed UNQUOTED into the template (so a glob like `src/a/*` expands when a human
   # later runs the accepted check), which makes each one a shell-syntax surface in its own right: a
   # live changed_path named `a;b` or `a>b` would otherwise land verbatim in the candidate. Same
   # reject-never-escape discipline, but STRICTER than the token list — an allowlisted character set
   # (letters, digits, `.`, `_`, `/`, `-`, `+`, `@`, `,`, `=`, and the glob `*`), no leading `-`.
-  # Any path outside it ⇒ NO candidate for this theme at all.
-  local paths g rest path_re='^[A-Za-z0-9._/+@,=*-]+$'
-  if [ -n "$globs" ]; then
-    rest="$globs"
-    while [ -n "$rest" ]; do
-      case "$rest" in
-        *"$US"*) g="${rest%%"$US"*}"; rest="${rest#*"$US"}" ;;
-        *)       g="$rest"; rest="" ;;
-      esac
-      [ -n "$g" ] || continue
-      case "$g" in -*) return 0 ;; esac
-      [[ "$g" =~ $path_re ]] || return 0   # no `printf | grep -q` here — SIGPIPE under pipefail
-    done
-    paths="$(printf '%s' "$globs" | tr "$US" ' ')"
-  else
-    paths="."
-  fi
+  # Any path outside it ⇒ NO candidate for this theme at all. A glob is ALSO rejected when it could
+  # reach a store the check must never scan: a `..` segment (escapes the repo), a first segment that
+  # IS `.git` / `.supervisor` / `.agent` (the VCS dir, the gitignored ledger, the rules store that
+  # will hold this very check string), or a dot-leading wildcard first segment (`.*`, `.a*`) that
+  # could expand to any of them.
+  local paths g rest seg path_re='^[A-Za-z0-9._/+@,=*-]+$'
+  rest="$globs"
+  while [ -n "$rest" ]; do
+    case "$rest" in
+      *"$US"*) g="${rest%%"$US"*}"; rest="${rest#*"$US"}" ;;
+      *)       g="$rest"; rest="" ;;
+    esac
+    [ -n "$g" ] || continue
+    case "$g" in -*) return 0 ;; esac
+    [[ "$g" =~ $path_re ]] || return 0   # no `printf | grep -q` here — SIGPIPE under pipefail
+    case "/$g/" in */../*) return 0 ;; esac
+    seg="${g%%/*}"
+    case "$seg" in
+      .git|.supervisor|.agent) return 0 ;;
+      .*'*'*)                  return 0 ;;
+    esac
+  done
+  paths="$(printf '%s' "$globs" | tr "$US" ' ')"
 
   # Read-only probe: how many files under $root does this pattern hit TODAY, over the SAME scope the
   # candidate itself will be checked against. `--` guards a token that happens to start with `-`.
-  local hitcount
-  hitcount="$(cd "$root" 2>/dev/null && grep -rlE -- "$tok" $paths 2>/dev/null | grep -c . || true)"
+  # The probe's EXIT STATUS is load-bearing (PR #267 Phase 4.5 finding 4): grep exits 2 on an
+  # INVALID ERE (`foo(`, `[abc`, `a{2`) or an unreadable / non-existent path (an unexpanded glob).
+  # Reading only the hit COUNT would turn that 2 into "0 hits" ⇒ the absence template ⇒ a check that
+  # can never fail. Anything but 0 (hits) or 1 (no hits) ⇒ NO candidate.
+  ( cd "$root" ) 2>/dev/null || return 0
+  local probe_out probe_rc hitcount
+  probe_out="$(cd "$root" && grep -rlE -- "$tok" $paths 2>/dev/null)"; probe_rc=$?
+  case "$probe_rc" in 0|1) : ;; *) return 0 ;; esac
+  hitcount="$(printf '%s\n' "$probe_out" | grep -c . || true)"
   is_num "$hitcount" || hitcount=0
 
   if [ "$hitcount" -eq 0 ]; then
-    CC_CANDIDATE="! grep -rnE '$tok' $paths"
+    # Absence template, FAIL-CLOSED on grep exit 2: `test $? -eq 1` passes ONLY on "no match";
+    # a match (0) OR an error (2 — e.g. the scoped path later disappears) fails the check.
+    CC_CANDIDATE="grep -rnE -- '$tok' $paths; test \$? -eq 1"
   else
-    CC_CANDIDATE="test \"\$(grep -rlE '$tok' $paths | wc -l)\" -le $hitcount"
+    CC_CANDIDATE="test \"\$(grep -rlE -- '$tok' $paths | wc -l)\" -le $hitcount"
   fi
   CC_SUPPORT="$count"
   return 0
@@ -797,13 +829,14 @@ build_check_candidate() {
 # compose_add_rule — builds the writer invocation for ONE proposal. Prints the human-readable,
 # shell-quoted command string INCLUDING the mandatory `< /dev/null` stdin detachment (decision (f)),
 # and leaves the real argv in the global ADD_RULE_ARGV array for plan_rule to execute.
-# `--check` is NEVER passed (AC9b) and no flag outside add-rule.sh's own set is ever composed, so no
-# new member can reach the frozen rule object (AC9).
+# `--check` is NEVER passed by plan_rule (AC9b) and no flag outside add-rule.sh's own set is ever
+# composed, so no new member can reach the frozen rule object (AC9). ADD_RULE_CMD_WITH_CHECK (below)
+# is display-only text for the human-confirmed "Accept rule WITH check" delivery; it is never run here.
 # ---------------------------------------------------------------------------
 shq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 
 compose_add_rule() {
-  local category="$1" statement="$2" globs="$3" rest g
+  local category="$1" statement="$2" globs="$3" rest g at_part=""
   ADD_RULE_ARGV=(--category "$category" --statement "$statement" --enforcement advisory)
   ADD_RULE_CMD="add-rule.sh --category $(shq "$category") --statement $(shq "$statement") --enforcement advisory"
   rest="$globs"
@@ -812,10 +845,19 @@ compose_add_rule() {
     if [ "$g" = "$rest" ]; then rest=""; else rest="${rest#*"$US"}"; fi
     [ -n "$g" ] || continue
     ADD_RULE_ARGV+=(--applies-to "$g")
-    ADD_RULE_CMD="$ADD_RULE_CMD --applies-to $(shq "$g")"
+    at_part="$at_part --applies-to $(shq "$g")"
   done
+  ADD_RULE_CMD="$ADD_RULE_CMD$at_part"
   ADD_RULE_ARGV+=(--source "$SOURCE_VAL")
   ADD_RULE_CMD="$ADD_RULE_CMD --source $(shq "$SOURCE_VAL") < /dev/null"
+  # The "Accept rule WITH check" invocation (PR #267 Phase 4.5 finding 2). rules-check.sh selects
+  # ONLY `enforcement == "must"` rules, so a rule accepted WITH its check but stored `advisory` could
+  # never run under --confirm or --if-stamped. This path therefore composes `--enforcement must`
+  # (add-rule.sh has always accepted it — the writer is unmodified). `--check "$CANDIDATE"` is the
+  # LITERAL text `"$CANDIDATE"`: the candidate itself is never spliced into this string — the
+  # delivery step loads it through a quoted heredoc (commands/dreaming.md, delivery step 3). The
+  # plain ADD_RULE_CMD above (the default Accept path) is byte-unchanged and never carries --check.
+  ADD_RULE_CMD_WITH_CHECK="add-rule.sh --category $(shq "$category") --statement $(shq "$statement") --enforcement must$at_part --source $(shq "$SOURCE_VAL") --check \"\$CANDIDATE\" < /dev/null"
 }
 
 # ---------------------------------------------------------------------------
@@ -1247,7 +1289,7 @@ emit_rule() {   # emit_rule <theme> <category> <statement> <origin-label>
   FIDELITY_ALL_TOTAL=$((FIDELITY_ALL_TOTAL + fid_n))
 
   # check_candidate (executable-rule-candidates/01, AC1) — DATA ONLY, never executed, never passed
-  # to add-rule.sh. See build_check_candidate's own header for the full security-boundary rationale.
+  # to add-rule.sh by this script. See build_check_candidate's own header for the security boundary.
   build_check_candidate "$k" "$globs" "$ROOT"
 
   compose_add_rule "$category" "$statement" "$globs"
@@ -1257,7 +1299,7 @@ emit_rule() {   # emit_rule <theme> <category> <statement> <origin-label>
     printf '  %s) [%s] theme=%s  origin=%s\n' "$((EMITTED + 1))" "$category" "$k" "$origin"
     printf '     statement: %s\n' "$statement"
     printf '     enforcement: advisory\n'
-    printf '     check: null  (AC9b — no obviously mechanical check IS EVER SYNTHESISED into check; this harvester never writes shell into the live check field. A check_candidate MAY be shown below — DATA only, never executed by this harvester and never passed to add-rule.sh — when >= 3 supporting findings share one literal, template-bounded token/path; see check_candidate)\n'
+    printf '     check: null  (AC9b — no obviously mechanical check IS EVER SYNTHESISED into check; this harvester never writes shell into the live check field. A check_candidate MAY be shown below — DATA only, never executed by this harvester and never passed to add-rule.sh on the plain Accept path — when >= 3 supporting findings share one literal, template-bounded token/path; see check_candidate)\n'
     if [ -n "$CC_CANDIDATE" ]; then
       printf '     check_candidate: %s  (data only — never executed by this harvester; %s of this theme'"'"'s findings share this literal token/path, built from a FIXED template allowlist, reject-not-escape checked)\n' "$CC_CANDIDATE" "$CC_SUPPORT"
     fi
@@ -1295,6 +1337,9 @@ emit_rule() {   # emit_rule <theme> <category> <statement> <origin-label>
     fi
     printf '     motivating findings (%s): %s\n' "$fid_n" "$fid_list"
     printf '     invocation: %s\n' "$ADD_RULE_CMD"
+    if [ -n "$CC_CANDIDATE" ]; then
+      printf '     invocation (Accept rule WITH check): %s\n' "$ADD_RULE_CMD_WITH_CHECK"
+    fi
     printf '     writer result: %s\n' "$PLAN_STATUS"
     [ -n "$PLAN_DETAIL" ] && printf '%s\n' "$PLAN_DETAIL" | sed 's/^/       | /'
     printf '\n'

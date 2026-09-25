@@ -50,19 +50,26 @@
 #     AND --if-stamped (fail-safe: an unattended caller can guarantee nothing runs regardless of any
 #     other signal).
 #   - --confirm (or RULES_CHECK_CONFIRM=1): explicit authorization to execute. Equivalent to an
-#     interactive TTY confirmation.
-#   - Interactive TTY (stdin AND stdout are TTYs): prompts once and executes on y/Y/yes.
-#   - --if-stamped (executable-rule-candidates/01, non-interactive, no prompt): the UNATTENDED REPLAY
-#     valve. Slots into the SAME precedence chain, ABOVE default-skip and BELOW --no-cmd/--confirm/TTY:
-#     it computes the live sha256 hash of the SAME (sorted `id\tcheck`) selection this run would
-#     otherwise execute, and compares it to the STAMP for this repo's absolute path in the user-scope
-#     stamp file $RULES_CHECK_STAMP_FILE (see "THE STAMP" below). Equal ⇒ execute with
-#     no prompt, same output shape as --confirm. Unequal or absent ⇒ print `[SKIP] all (unstamped)` and
-#     `Checks passed: 0/0`, exit 0 — the per-rule loop below is not even entered. A stamped REPLAY does
-#     NOT itself refresh the stamp (see "THE STAMP WRITE" below) — only a genuine --confirm/TTY-y run
-#     does, so the stamp always traces back to an actual human confirmation, never to an automated
-#     replay of one.
-#   Precedence, evaluated top-down:  --no-cmd  >  (--confirm | TTY-yes)  >  --if-stamped  >  default-skip.
+#     interactive TTY confirmation. EXCEPTION (PR #267 Phase 4.5 finding 1): when --if-stamped is on
+#     argv, the RULES_CHECK_CONFIRM env var does NOT count — only an explicit argv `--confirm` can
+#     confirm. Otherwise an ambient `RULES_CHECK_CONFIRM=1` in the environment of an unattended
+#     `--if-stamped` caller would run every must-check with no stamp at all AND write the stamp,
+#     laundering an unconfirmed set into a "confirmed" one.
+#   - --if-stamped (executable-rule-candidates/01, non-interactive, NEVER prompts): the UNATTENDED
+#     REPLAY valve. It computes the live sha256 hash of the SAME (sorted `id\tcheck`) selection this
+#     run would otherwise execute, and compares it to the STAMP recorded for this repository (keyed by
+#     its physical `git rev-parse --git-common-dir`, see "THE STAMP" below) in the user-scope stamp
+#     file $RULES_CHECK_STAMP_FILE. Equal ⇒ execute with no prompt, same output shape as --confirm.
+#     Unequal or absent ⇒ print `[SKIP] all (unstamped)` and `Checks passed: 0/0`, exit 0 — the
+#     per-rule loop below is not even entered. It is evaluated BEFORE the TTY prompt, so an
+#     `--if-stamped` run never prompts even on a terminal. A stamped REPLAY does NOT itself refresh
+#     the stamp (see "THE STAMP WRITE" below) — only a genuine --confirm/TTY-y run does, so the stamp
+#     always traces back to an actual human confirmation, never to an automated replay of one.
+#   - Interactive TTY (stdin AND stdout are TTYs, no --if-stamped): prompts once and executes on
+#     y/Y/yes.
+#   Precedence, evaluated top-down:
+#     --no-cmd  >  argv --confirm (or RULES_CHECK_CONFIRM=1 when --if-stamped is ABSENT)
+#               >  --if-stamped  >  TTY-yes  >  default-skip.
 #
 # THE STAMP (R2 — the SECOND security boundary this slice adds, independent of the reject/allowlist
 # boundary in harvest-conventions.sh's check_candidate). `.agent/rules/*.json` is repo-committed and
@@ -72,6 +79,13 @@
 # own "a human already confirmed this" — the stamp lives on the human's own machine, in the SAME
 # per-user Loomwright config directory under $HOME that red-team-hardening item 02 established for
 # `egress.json` (resolve-egress-config.sh), but in its OWN file (`rules-check-stamp.json`, never `egress.json` itself, which is telemetry-specific).
+# KEYED PER REPOSITORY, NOT PER CHECKOUT PATH (PR #267 Phase 4.5 finding 5): the key is the PHYSICAL
+# absolute path of `git rev-parse --git-common-dir` (made physical via `cd … && pwd -P`, not the
+# non-portable `realpath`). Every linked worktree of one repository shares that directory, so a set
+# confirmed in the main checkout replays in an /automate worktree of the same repo on the same
+# machine — while a separate clone (its own .git) is a separate key and stays unstamped. Outside a
+# git repo the key falls back to the physical cwd. The record stores `git_common_dir` (the key),
+# `repo_root` (the checkout that LAST confirmed — informational only, never read back), `hash`, `ts`.
 # This is DELIBERATELY the opposite mechanism from `exec-acceptance-lib.sh`'s brief-embedded
 # `sha256:` stamp line (red-team-hardening item 05) — that stamp lives INSIDE the (human-approved)
 # brief precisely because a brief only exists after a human already signed off on it; a `.agent/rules/`
@@ -80,9 +94,15 @@
 # shared across CI or teammates: every other machine/CI replays `unstamped` until ITS OWN human runs
 # `/rules check --confirm` once there.
 #
+# HONEST LIMIT — CONCURRENT WRITES: the stamp write is a read-modify-rename with NO lock. Two
+# confirming runs for different repos racing on one machine are last-writer-wins: one repo's fresh
+# record can be lost, and that repo simply replays `unstamped` until its human confirms again. That
+# is fail-closed (a lost stamp never RUNS anything), so no lock is taken.
+#
 # THE STAMP WRITE. On a run whose MODE resolves to `execute` via a GENUINE --confirm/RULES_CHECK_CONFIRM=1
-# /TTY-y (never via a --if-stamped-promoted replay), this script writes `{repo_root, hash, ts}` for
-# $GITROOT into the stamp file, keyed by $GITROOT, AFTER the run completes — regardless of whether any
+# /TTY-y (never via a --if-stamped-promoted replay), this script writes
+# `{git_common_dir, repo_root, hash, ts}` into the stamp file, keyed by $STAMP_KEY (the physical
+# git-common-dir — see "THE STAMP"), AFTER the run completes — regardless of whether any
 # individual check PASSED or FAILED (the stamp records "a human confirmed THIS SET was run", not "every
 # check in it currently passes"; a failing stamped check still replays and still fails under
 # --if-stamped, which is the honest, non-gating behaviour this whole feature is advisory for). `hash` is
@@ -106,6 +126,16 @@ PROG="rules-check.sh"
 GITROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$GITROOT" 2>/dev/null || true
 
+# STAMP_KEY — the physical git-common-dir (shared by every linked worktree of this repository), or
+# the physical cwd outside a repo. See the header's "THE STAMP" note. `--git-common-dir` may print a
+# path RELATIVE to the cwd (e.g. `.git` in a main checkout), hence resolving it after the cd above.
+STAMP_KEY=""
+_rc_gcd="$(git rev-parse --git-common-dir 2>/dev/null || true)"
+if [ -n "$_rc_gcd" ]; then
+  STAMP_KEY="$(cd "$_rc_gcd" 2>/dev/null && pwd -P)"
+fi
+[ -n "$STAMP_KEY" ] || STAMP_KEY="$(pwd -P)"
+
 RULES_DIR=".agent/rules"
 
 # ---------------------------------------------------------------------------
@@ -114,13 +144,14 @@ RULES_DIR=".agent/rules"
 NO_CMD=0
 [ "${RULES_CHECK_NO_CMD:-0}" = "1" ] && NO_CMD=1
 CONFIRM=0
-[ "${RULES_CHECK_CONFIRM:-0}" = "1" ] && CONFIRM=1
+CONFIRM_ENV=0
+[ "${RULES_CHECK_CONFIRM:-0}" = "1" ] && CONFIRM_ENV=1
 IF_STAMPED=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --no-cmd)     NO_CMD=1; shift ;;
-    --confirm)    CONFIRM=1; shift ;;
+    --confirm)    CONFIRM=1; shift ;;   # ARGV confirm — the only confirm that counts under --if-stamped
     --if-stamped) IF_STAMPED=1; shift ;;
     -h|--help)
       grep -E '^# ' "$0" | sed -E 's/^# ?//'
@@ -134,6 +165,14 @@ while [ "$#" -gt 0 ]; do
       shift ;;
   esac
 done
+
+# THE ANTI-LAUNDERING RULE (PR #267 Phase 4.5 finding 1): the RULES_CHECK_CONFIRM env var confirms
+# ONLY when --if-stamped is absent. With --if-stamped on argv, an ambient env confirm is ignored — an
+# unattended replay caller cannot be promoted into a fresh, stamp-writing confirmation by its
+# environment. Only an explicit argv --confirm (a deliberate human act on the command line) can.
+if [ "$CONFIRM_ENV" -eq 1 ] && [ "$IF_STAMPED" -eq 0 ]; then
+  CONFIRM=1
+fi
 
 # ---------------------------------------------------------------------------
 # sha256 helper — mirrors exec-acceptance-lib.sh's OWN fallback chain (shasum -a 256 -> sha256sum ->
@@ -158,38 +197,49 @@ _rc_sha256_file() {
 # the ONE place the path is spelled out; every other reference derives from it.
 RULES_CHECK_STAMP_FILE="${HOME:-}/.claude/loomwright/rules-check-stamp.json"
 
-# _rc_read_stamp_hash <repo_root> — prints the stored hash for this repo_root, or empty (absent /
+# _rc_read_stamp_hash <stamp_key> — prints the stored hash for this key, or empty (absent /
 # unreadable / unparseable / no HOME / no jq — all fail CLOSED to "no stamp", never a fabricated match).
 _rc_read_stamp_hash() {
-  local repo_root="$1"
+  local key="$1"
   [ -n "${HOME:-}" ] || return 0
   [ -r "$RULES_CHECK_STAMP_FILE" ] || return 0
   command -v jq >/dev/null 2>&1 || return 0
   jq -e . "$RULES_CHECK_STAMP_FILE" >/dev/null 2>&1 || return 0
-  jq -r --arg rr "$repo_root" \
-    '(.[$rr].hash // "") | if type == "string" then . else "" end' \
+  jq -r --arg k "$key" \
+    'if type == "object" then ((.[$k].hash // "") | if type == "string" then . else "" end) else "" end' \
     "$RULES_CHECK_STAMP_FILE" 2>/dev/null || true
 }
 
-# _rc_write_stamp <repo_root> <hash> — best-effort, silent-on-failure (never blocks/errors the run).
+# _rc_write_stamp <stamp_key> <repo_root> <hash> — best-effort: never blocks/errors the run and never
+# changes the exit code, but a write that does not land is WARNED on stderr (a silent failure would
+# leave the human believing the set is stamped when every later --if-stamped replays `unstamped`).
 # Only ever called after a GENUINE --confirm/TTY-y execute completes — see "THE STAMP WRITE" above.
+# No lock: concurrent writers are last-writer-wins (header, "HONEST LIMIT — CONCURRENT WRITES").
 _rc_write_stamp() {
-  local repo_root="$1" hash="$2" dir ts tmp existing
-  [ -n "${HOME:-}" ] || return 0
+  local key="$1" repo_root="$2" hash="$3" dir ts tmp existing
+  [ -n "${HOME:-}" ] || { echo "$PROG: warning: HOME unset — stamp not written" >&2; return 0; }
   command -v jq >/dev/null 2>&1 || return 0
   dir="$(dirname "$RULES_CHECK_STAMP_FILE")"
-  mkdir -p "$dir" 2>/dev/null || return 0
+  mkdir -p "$dir" 2>/dev/null || { echo "$PROG: warning: cannot create $dir — stamp not written" >&2; return 0; }
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   existing="{}"
   if [ -r "$RULES_CHECK_STAMP_FILE" ] && jq -e . "$RULES_CHECK_STAMP_FILE" >/dev/null 2>&1; then
+    if [ "$(jq -r 'type' "$RULES_CHECK_STAMP_FILE" 2>/dev/null)" != "object" ]; then
+      # Valid JSON that is not an object: never clobber a file we do not understand.
+      echo "$PROG: warning: $RULES_CHECK_STAMP_FILE is valid JSON but not an object — stamp not written (fix or remove the file)" >&2
+      return 0
+    fi
     existing="$(cat "$RULES_CHECK_STAMP_FILE" 2>/dev/null || echo '{}')"
   fi
-  tmp="$(mktemp "$dir/.rules-check-stamp.XXXXXX" 2>/dev/null)" || return 0
-  if printf '%s' "$existing" | jq --arg rr "$repo_root" --arg h "$hash" --arg ts "$ts" \
-       '. + {($rr): {repo_root: $rr, hash: $h, ts: $ts}}' > "$tmp" 2>/dev/null; then
-    mv -f "$tmp" "$RULES_CHECK_STAMP_FILE" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+  tmp="$(mktemp "$dir/.rules-check-stamp.XXXXXX" 2>/dev/null)" \
+    || { echo "$PROG: warning: cannot create a temp file in $dir — stamp not written" >&2; return 0; }
+  if printf '%s' "$existing" | jq --arg k "$key" --arg rr "$repo_root" --arg h "$hash" --arg ts "$ts" \
+       '. + {($k): {git_common_dir: $k, repo_root: $rr, hash: $h, ts: $ts}}' > "$tmp" 2>/dev/null \
+     && mv -f "$tmp" "$RULES_CHECK_STAMP_FILE" 2>/dev/null; then
+    :
   else
     rm -f "$tmp" 2>/dev/null
+    echo "$PROG: warning: failed to write $RULES_CHECK_STAMP_FILE — stamp not written" >&2
   fi
 }
 
@@ -206,10 +256,12 @@ fi
 # ---------------------------------------------------------------------------
 # Resolve the EXECUTION MODE up front so it is reported once and applied uniformly.
 #   no-cmd      : --no-cmd / RULES_CHECK_NO_CMD=1 present  → skip ALL execution (WINS over everything).
-#   execute     : --confirm / RULES_CHECK_CONFIRM=1, OR an interactive TTY that confirms y/Y/yes.
-#                 CAME_FROM_CONFIRM=1 records that this is a GENUINE confirmation (eligible to write
-#                 a stamp), as opposed to a later --if-stamped promotion to "execute" below.
-#   if-stamped  : --if-stamped, no --no-cmd, no --confirm, no interactive TTY-yes. DEFERRED — the
+#   execute     : argv --confirm / RULES_CHECK_CONFIRM=1 (env counts ONLY without --if-stamped — see
+#                 the anti-laundering rule above), OR — without --if-stamped — an interactive TTY that
+#                 confirms y/Y/yes. CAME_FROM_CONFIRM=1 records that this is a GENUINE confirmation
+#                 (eligible to write a stamp), as opposed to a later --if-stamped promotion below.
+#   if-stamped  : --if-stamped, no --no-cmd, no argv --confirm. Evaluated BEFORE the TTY branch, so it
+#                 NEVER prompts, even on a terminal. DEFERRED — the
 #                 actual hash comparison happens after $selected is built below (it needs the same
 #                 selection the execute loop will use), and either promotes this to "execute"
 #                 (CAME_FROM_CONFIRM stays 0 — a replay is not a fresh confirmation) or short-circuits
@@ -222,12 +274,12 @@ if [ "$NO_CMD" -eq 1 ]; then
   MODE="no-cmd"                      # --no-cmd WINS over everything (fail-safe)
 elif [ "$CONFIRM" -eq 1 ]; then
   MODE="execute"; CAME_FROM_CONFIRM=1
+elif [ "$IF_STAMPED" -eq 1 ]; then
+  MODE="if-stamped"                  # BEFORE the TTY branch: an --if-stamped run never prompts
 elif [ -t 0 ] && [ -t 1 ]; then
   printf 'Run the `must`-rule check commands from %s ? [y/N] ' "$GITROOT" >&2
   read -r reply || reply=""
   case "$reply" in y|Y|yes|YES) MODE="execute"; CAME_FROM_CONFIRM=1 ;; *) MODE="need-confirm" ;; esac
-elif [ "$IF_STAMPED" -eq 1 ]; then
-  MODE="if-stamped"
 fi
 
 # ---------------------------------------------------------------------------
@@ -338,14 +390,14 @@ rm -f "$_rc_hash_input" 2>/dev/null
 
 # ---------------------------------------------------------------------------
 # --if-stamped RESOLUTION (deferred from the MODE block above — it needs $LIVE_HASH). Compares the
-# live hash to the stamp recorded for THIS repo_root ($GITROOT); equal ⇒ promote to "execute" (no
+# live hash to the stamp recorded for THIS repository ($STAMP_KEY); equal ⇒ promote to "execute" (no
 # prompt, same output shape as a real --confirm run, CAME_FROM_CONFIRM stays 0 so this replay does
 # NOT itself refresh the stamp); unequal or absent ⇒ the whole run short-circuits here, before the
 # per-rule loop is even entered — a single "all" line, not a per-rule one, because there is nothing
 # stamped for THIS set to report per-rule against.
 # ---------------------------------------------------------------------------
 if [ "$MODE" = "if-stamped" ]; then
-  _rc_stamped_hash="$(_rc_read_stamp_hash "$GITROOT")"
+  _rc_stamped_hash="$(_rc_read_stamp_hash "$STAMP_KEY")"
   # THE HASH-COMPARISON LINE — the load-bearing gate a mutation control proves is not vacuous
   # (test-rules-check.sh case (h)/(M-hash)): delete/weaken this comparison and a stale or absent
   # stamp starts being treated as valid.
@@ -385,9 +437,11 @@ while IFS= read -r record; do
       printf '  [SKIP] %s: %s (skipped — needs confirmation)\n' "$rid" "$rcheck"
       ;;
     execute)
-      # DISPLAY the command, then run it byte-exact from the repo root.
+      # DISPLAY the command, then run it byte-exact from the repo root. stdin is /dev/null: this loop
+      # reads its records from "$selected" on stdin, so a check that reads stdin (`cat`, `read`)
+      # would otherwise SWALLOW the remaining records and silently shrink the run.
       printf '  [RUN ] %s: %s\n' "$rid" "$rcheck"
-      if bash -c "$rcheck" >/dev/null 2>&1; then
+      if bash -c "$rcheck" </dev/null >/dev/null 2>&1; then
         passed=$((passed + 1))
         printf '  [PASS] %s\n' "$rid"
       else
@@ -417,7 +471,7 @@ fi
 # and silent — a write failure never changes this script's exit code or output.
 # ---------------------------------------------------------------------------
 if [ "$MODE" = "execute" ] && [ "$CAME_FROM_CONFIRM" -eq 1 ] && [ -n "$LIVE_HASH" ]; then
-  _rc_write_stamp "$GITROOT" "$LIVE_HASH"
+  _rc_write_stamp "$STAMP_KEY" "$GITROOT" "$LIVE_HASH"
 fi
 
 [ "$failures" -eq 0 ] || exit 1

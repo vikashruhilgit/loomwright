@@ -251,17 +251,17 @@ run_writer "$RG5" --category "gval" --statement "no check here" --confirm
   && ok "(G4b) omitted --check yields explicit null" || no "(G4b) omitted check not null"
 
 # (G4c) executable-rule-candidates/01 — the "Accept rule WITH check" button composes EXACTLY
-# `add-rule.sh --check "<candidate>" --confirm` with NO code change to this file (verified
+# `add-rule.sh --enforcement must --check "<candidate>" --confirm` with NO code change to this file (verified
 # separately: `git diff main -- loomwright/scripts/add-rule.sh` is empty). This case proves a
 # REALISTIC check_candidate-shaped string (harvest-conventions.sh's own absence-template output,
 # built from its FIXED template allowlist) round-trips BYTE-EXACT through the unmodified writer —
 # the "accept-with-check" half of the two-button flow. (G4b above already proves the sibling
 # "accept-without-check" half via the SAME unmodified --check/no-check paths.)
 RG6="$(new_repo)"
-CANDIDATE_G6="! grep -rnE '19' src/a/*"
-run_writer "$RG6" --category "gval" --statement "candidate round trip" --check "$CANDIDATE_G6" --confirm
+CANDIDATE_G6="grep -rnE -- '19' src/a/*; test \$? -eq 1"
+run_writer "$RG6" --category "gval" --statement "candidate round trip" --enforcement must --check "$CANDIDATE_G6" --confirm
 stored_check_g6="$(jq -r '.[0].check' "$RG6/.agent/rules/gval.json" 2>/dev/null)"
-[ "$stored_check_g6" = "$CANDIDATE_G6" ] \
+[ "$stored_check_g6" = "$CANDIDATE_G6" ] && [ "$(jq -r '.[0].enforcement' "$RG6/.agent/rules/gval.json" 2>/dev/null)" = "must" ] \
   && ok "(G4c) a check_candidate-shaped string round-trips BYTE-EXACT through --check (accept-with-check produces check == the candidate string exactly)" \
   || no "(G4c) round-trip mismatch: stored=[$stored_check_g6] expected=[$CANDIDATE_G6]"
 
@@ -271,7 +271,7 @@ stored_check_g6="$(jq -r '.[0].check' "$RG6/.agent/rules/gval.json" 2>/dev/null)
 RG7="$(new_repo)"
 MARKER_G7="$ROOT/g7_marker_$$"; rm -f "$MARKER_G7" 2>/dev/null
 CANDIDATE_G7="$(cat <<LOOMWRIGHT_CHECK_CANDIDATE_FIXTURE
-test "\$(grep -rlE '19' src/a/* | wc -l; touch $MARKER_G7)" -le 2
+test "\$(grep -rlE -- '19' src/a/* | wc -l; touch $MARKER_G7)" -le 2
 LOOMWRIGHT_CHECK_CANDIDATE_FIXTURE
 )"
 # Build the delivery script exactly as dreaming.md step 3 shows it, with the candidate pasted verbatim
@@ -281,7 +281,7 @@ DELIVER_G7="$ROOT/deliver_g7.sh"
   printf 'CANDIDATE="$(cat <<'"'"'LOOMWRIGHT_CHECK_CANDIDATE'"'"'\n'
   printf '%s\n' "$CANDIDATE_G7"
   printf 'LOOMWRIGHT_CHECK_CANDIDATE\n)"\n'
-  printf 'cd %q && bash %q --category gval --statement %q --check "$CANDIDATE" --confirm < /dev/null\n' \
+  printf 'cd %q && bash %q --category gval --statement %q --enforcement must --check "$CANDIDATE" --confirm < /dev/null\n' \
     "$RG7" "$WRITER" "bound candidate round trip"
 } > "$DELIVER_G7"
 bash "$DELIVER_G7" >/dev/null 2>&1

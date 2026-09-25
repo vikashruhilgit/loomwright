@@ -1501,15 +1501,25 @@ RCC="$(new_repo)"
 run_harvest "$RCC" --session-id "fx-cc" --min-support 3 --cap 2 --no-writer
 printf '%s\n' "$OUT" > "$ROOT/cc.txt"
 [ "$RC" -eq 0 ] && ok "(cc0) exits 0" || no "(cc0) exited $RC"
-grep -qE "check_candidate: ! grep -rnE '19' " "$ROOT/cc.txt" \
-  && ok "(cc1) check_candidate appears in the human-facing block, built from the absence template ('19' has zero hits in this fixture repo)" \
+grep -qF "check_candidate: grep -rnE -- '19' src/a/*; test \$? -eq 1 " "$ROOT/cc.txt" \
+  && ok "(cc1) check_candidate appears in the human-facing block, built from the fail-closed absence template ('19' has zero hits in this fixture repo)" \
   || no "(cc1) expected a check_candidate line, got: $(grep -A2 'check: null' "$ROOT/cc.txt" | head -6)"
 grep -qF 'check: null' "$ROOT/cc.txt" \
   && ok "(cc2) check stays null even with a candidate shown beside it (AC9b unchanged)" \
   || no "(cc2) check not null"
-grep -qF -- '--check' "$ROOT/cc.txt" \
-  && no "(cc2b) a composed add-rule invocation passed --check — the harvester must never author one" \
-  || ok "(cc2b) no composed invocation passes --check even when a check_candidate is shown (AC9b freeze holds)"
+grep -F '     invocation: ' "$ROOT/cc.txt" > "$ROOT/cc_inv.txt"
+[ -s "$ROOT/cc_inv.txt" ] && ! grep -qF -- '--check' "$ROOT/cc_inv.txt" \
+  && grep -qF -- '--enforcement advisory' "$ROOT/cc_inv.txt" \
+  && ok "(cc2b) the DEFAULT Accept invocation never passes --check and stays --enforcement advisory even when a check_candidate is shown (AC9b freeze holds)" \
+  || no "(cc2b) the default Accept invocation changed: $(cat "$ROOT/cc_inv.txt")"
+# (cc2c) the "Accept rule WITH check" invocation composes --enforcement must (rules-check.sh selects
+# ONLY must-rules — an advisory rule's check can never run) and carries the LITERAL "$CANDIDATE".
+grep -F '     invocation (Accept rule WITH check): ' "$ROOT/cc.txt" > "$ROOT/cc_invwc.txt"
+[ -s "$ROOT/cc_invwc.txt" ] && grep -qF -- '--enforcement must' "$ROOT/cc_invwc.txt" \
+  && grep -qF -- '--check "$CANDIDATE" < /dev/null' "$ROOT/cc_invwc.txt" \
+  && ! grep -qF -- '--enforcement advisory' "$ROOT/cc_invwc.txt" \
+  && ok "(cc2c) the WITH-check invocation composes --enforcement must + the literal --check \"\$CANDIDATE\" (never the spliced candidate)" \
+  || no "(cc2c) WITH-check invocation wrong or missing: $(cat "$ROOT/cc_invwc.txt")"
 
 # (p-json) --json emits the SAME candidate as a machine-readable `check_candidate` key; `check` null.
 run_harvest "$RCC" --session-id "fx-cc" --min-support 3 --cap 2 --no-writer --json
@@ -1520,7 +1530,7 @@ if command -v jq >/dev/null 2>&1 && jq -e . "$ROOT/ccjson_only.json" >/dev/null 
   cc_cand_val="$(jq -r '.[0].check_candidate' "$ROOT/ccjson_only.json" 2>/dev/null)"
   [ "$cc_check_val" = "null" ] && ok "(cc3) proposal JSON's check is null" \
     || no "(cc3) proposal JSON check not null: $cc_check_val"
-  grep -qF "grep -rnE '19'" < <(printf '%s' "$cc_cand_val") \
+  grep -qF "grep -rnE -- '19'" < <(printf '%s' "$cc_cand_val") \
     && ok "(cc4) proposal JSON's check_candidate carries the SAME candidate shown in the human block" \
     || no "(cc4) proposal JSON check_candidate unexpected: $cc_cand_val"
 else
@@ -1562,7 +1572,7 @@ grep -qF 'check_candidate:' "$ROOT/ccd.txt" \
 # spot-checking one line: normalise each run's repo path + session id, drop the ONE check_candidate
 # line from the candidate-bearing run (RCC), and require byte-identity with each rejected run.
 norm_cc() {   # norm_cc <file> <repo> <session-id>
-  sed -e "s|$2|<REPO>|g" -e "s|$3|<SID>|g" "$1" | grep -vF 'check_candidate:'
+  sed -e "s|$2|<REPO>|g" -e "s|$3|<SID>|g" "$1" | grep -vF -e 'check_candidate:' -e 'invocation (Accept rule WITH check):'
 }
 norm_cc "$ROOT/cc.txt"  "$RCC" "fx-cc"  > "$ROOT/cc.norm"
 norm_cc "$ROOT/ccq.txt" "$RCQ" "fx-ccq" > "$ROOT/ccq.norm"
@@ -1590,7 +1600,7 @@ MUT_CX="$ROOT/mut-harvest-dash.sh"
 grep -vF '    -*)      return 0 ;;   # a leading' "$HARVEST" > "$MUT_CX"
 if ! cmp -s "$HARVEST" "$MUT_CX" && bash -n "$MUT_CX" 2>/dev/null; then
   M_CX_OUT="$( bash "$MUT_CX" --root "$RCX" --session-id fx-ccx-mut --min-support 3 --cap 2 --no-writer 2>&1 )" || true
-  grep -qF "check_candidate: ! grep -rnE '-f'" < <(printf '%s\n' "$M_CX_OUT") \
+  grep -qF "check_candidate: grep -rnE -- '-f'" < <(printf '%s\n' "$M_CX_OUT") \
     && ok "(M-cx) CONFIRMED: with the leading-dash arm removed, the '-f' token lands in a candidate — (cx1) is load-bearing" \
     || no "(M-cx) REFUTED: the mutant still showed no '-f' candidate — (cx1) may be vacuous"
 else
@@ -1664,6 +1674,118 @@ if ! cmp -s "$HARVEST" "$MUT_CC" && bash -n "$MUT_CC" 2>/dev/null; then
     || no "(M-cc2) SECURITY REGRESSION: the mutant run actually EXECUTED the hostile text"
 else
   no "(M-cc) the semicolon-reject-arm mutation did not land cleanly"
+fi
+
+# ============================================================================
+echo "(U) check_candidate hardening — PR #267 Phase 4.5 round 1 (findings 2, 3, 4)"
+# ============================================================================
+# (u-null-scope) finding 3: a repo-wide (null applies_to) proposal gets NO candidate. Old code
+# composed `! grep -rnE '19' .`, which walks .git/, the gitignored .supervisor/ ledger (which always
+# holds the token) and the accepted rule's own .agent/rules/*.json — failing on arrival.
+RQN="$(new_repo)"
+{
+  rec 1 'citation reference example `19` noted' '["gone/old/a.md"]'
+  rec 2 'citation reference example `19` noted again' '["gone/old/b.md"]'
+  rec 3 'another citation reference `19` example' '["gone/old/a.md"]'
+} > "$RQN/.supervisor/postmortem/results.jsonl"
+run_harvest "$RQN" --session-id "fx-qn" --min-support 3 --cap 2 --no-writer
+printf '%s\n' "$OUT" > "$ROOT/qn.txt"
+grep -qE '^     applies_to: null' "$ROOT/qn.txt" \
+  && ok "(un0) premise: the proposal really is repo-wide (applies_to: null)" \
+  || no "(un0) premise failed — applies_to is not null: $(grep 'applies_to:' "$ROOT/qn.txt")"
+grep -qF 'check_candidate:' "$ROOT/qn.txt" \
+  && no "(un1) a repo-wide proposal was given a candidate (would scan .git/.supervisor/.agent/rules): $(grep 'check_candidate:' "$ROOT/qn.txt")" \
+  || ok "(un1) a null-applies_to (repo-wide) proposal yields NO check_candidate"
+
+# (u-invalid-ere) finding 4: a token that is not a valid ERE makes the probe grep exit 2. Old code
+# read that as 0 hits, chose the absence template, and `! grep` turned exit 2 into PASS forever.
+for qtok in 'foo(' '[abc'; do
+  RQE="$(new_repo)"
+  {
+    rec 1 "citation reference example \`$qtok\` noted" '["src/a/x.md"]'
+    rec 2 "citation reference example \`$qtok\` noted again" '["src/a/y.md"]'
+    rec 3 "another citation reference \`$qtok\` example" '["src/a/x.md"]'
+  } > "$RQE/.supervisor/postmortem/results.jsonl"
+  run_harvest "$RQE" --session-id "fx-qe" --min-support 3 --cap 2 --no-writer
+  printf '%s\n' "$OUT" > "$ROOT/qe.txt"
+  [ "$RC" -eq 0 ] && ok "(ue0 $qtok) exits 0" || no "(ue0 $qtok) exited $RC"
+  grep -qF 'check_candidate:' "$ROOT/qe.txt" \
+    && no "(ue1 $qtok) an invalid-ERE token was given a candidate that can never fail: $(grep 'check_candidate:' "$ROOT/qe.txt")" \
+    || ok "(ue1 $qtok) an invalid-ERE token (probe grep exit 2) yields NO check_candidate"
+done
+
+# (u-dotglob) finding 3, scoped half: a derived glob whose first segment is .agent (the rules store
+# that will hold this very check string) must never become <paths>.
+RQD="$(new_repo)"
+mkdir -p "$RQD/.agent/notes" && printf 'n\n' > "$RQD/.agent/notes/n.md"
+( cd "$RQD" && git add -A && git commit -qm "agent notes" ) >/dev/null 2>&1
+{
+  rec 1 'citation reference example `19` noted' '[".agent/notes/n.md"]'
+  rec 2 'citation reference example `19` noted again' '[".agent/notes/n.md"]'
+  rec 3 'another citation reference `19` example' '[".agent/notes/n.md"]'
+} > "$RQD/.supervisor/postmortem/results.jsonl"
+run_harvest "$RQD" --session-id "fx-qd" --min-support 3 --cap 2 --no-writer
+printf '%s\n' "$OUT" > "$ROOT/qd.txt"
+grep -qF 'applies_to: [.agent/notes/*]' "$ROOT/qd.txt" \
+  && ok "(ud0) premise: the derived scope really is under .agent/" \
+  || no "(ud0) premise failed: $(grep 'applies_to:' "$ROOT/qd.txt")"
+grep -qF 'check_candidate:' "$ROOT/qd.txt" \
+  && no "(ud1) a glob under .agent/ was given a candidate: $(grep 'check_candidate:' "$ROOT/qd.txt")" \
+  || ok "(ud1) a derived glob whose first segment is .agent yields NO check_candidate"
+
+# (u-e2e) finding 2 — END TO END: harvest a candidate, accept it WITH check via the DOCUMENTED
+# delivery shape (commands/dreaming.md delivery step 3: the printed WITH-check invocation, --confirm
+# appended, stdin redirect kept, $CANDIDATE loaded through a QUOTED heredoc), then the SOLE execution
+# path runs it: `rules-check.sh --confirm` ⇒ 1/1, then `--if-stamped` replays 1/1. Old code composed
+# `--enforcement advisory`, which rules-check.sh never selects ⇒ `Checks passed: 0/0`.
+CHECKER_E2E="$SCRIPT_DIR/rules-check.sh"
+RQ2="$(new_repo)"
+HQ2="$ROOT/home_q2"; mkdir -p "$HQ2"
+{
+  rec 1 'citation reference example `19` noted' '["src/a/x.md"]'
+  rec 2 'citation reference example `19` noted again' '["src/a/y.md"]'
+  rec 3 'another citation reference `19` example' '["src/a/x.md"]'
+} > "$RQ2/.supervisor/postmortem/results.jsonl"
+run_harvest "$RQ2" --session-id "fx-q2" --min-support 3 --cap 2 --no-writer
+printf '%s\n' "$OUT" > "$ROOT/q2.txt"
+Q2_CAND="$(sed -n 's/^     check_candidate: \(.*\)  (data only — .*/\1/p' "$ROOT/q2.txt" | head -1)"
+Q2_INV="$(sed -n 's/^     invocation (Accept rule WITH check): //p' "$ROOT/q2.txt" | head -1)"
+if [ -n "$Q2_CAND" ] && [ -n "$Q2_INV" ]; then
+  ok "(u2a) premise: the harvest printed a check_candidate AND a WITH-check invocation"
+  # Documented delivery shape: `add-rule.sh` → the real writer path, `--confirm` inserted before the
+  # kept `< /dev/null`. The candidate is loaded verbatim through a quoted heredoc at column 0.
+  Q2_RUN="${Q2_INV%< /dev/null}"
+  Q2_RUN="${Q2_RUN#add-rule.sh }"
+  Q2_SCRIPT="$ROOT/q2_deliver.sh"
+  {
+    printf 'CANDIDATE="$(cat <<'"'"'LOOMWRIGHT_CHECK_CANDIDATE'"'"'\n%s\nLOOMWRIGHT_CHECK_CANDIDATE\n)"\n' "$Q2_CAND"
+    printf 'cd %q && bash %q %s--confirm < /dev/null\n' "$RQ2" "$ADD_RULE" "$Q2_RUN"
+  } > "$Q2_SCRIPT"
+  bash "$Q2_SCRIPT" >/dev/null 2>&1; q2_rc=$?
+  [ "$q2_rc" -eq 0 ] && ok "(u2b) the documented WITH-check delivery wrote the rule (exit 0)" \
+    || no "(u2b) delivery exited $q2_rc: $(bash "$Q2_SCRIPT" 2>&1 | tail -3)"
+  q2_enf="$(cat "$RQ2"/.agent/rules/*.json 2>/dev/null | jq -r '.[0].enforcement' 2>/dev/null)"
+  q2_chk="$(cat "$RQ2"/.agent/rules/*.json 2>/dev/null | jq -r '.[0].check' 2>/dev/null)"
+  [ "$q2_enf" = "must" ] && [ "$q2_chk" = "$Q2_CAND" ] \
+    && ok "(u2c) the stored rule is enforcement=must with check == the candidate BYTE-EXACT" \
+    || no "(u2c) stored enforcement=[$q2_enf] check=[$q2_chk] expected must / [$Q2_CAND]"
+  q2_conf="$( cd "$RQ2" && HOME="$HQ2" bash "$CHECKER_E2E" --confirm </dev/null 2>/dev/null )"
+  grep -qF "Checks passed: 1/1" < <(printf '%s\n' "$q2_conf") \
+    && ok "(u2d) rules-check.sh --confirm RUNS the accepted check: Checks passed: 1/1 (n/m > 0/0)" \
+    || no "(u2d) expected 'Checks passed: 1/1', got: $q2_conf"
+  q2_rep="$( cd "$RQ2" && HOME="$HQ2" bash "$CHECKER_E2E" --if-stamped </dev/null 2>/dev/null )"
+  grep -qF "Checks passed: 1/1" < <(printf '%s\n' "$q2_rep") \
+    && ok "(u2e) rules-check.sh --if-stamped replays the accepted check: Checks passed: 1/1" \
+    || no "(u2e) expected --if-stamped 'Checks passed: 1/1', got: $q2_rep"
+  # (u2f) finding 4, runtime half: the absence template is FAIL-CLOSED on grep exit 2 — when the
+  # scoped path later disappears the check FAILS instead of passing vacuously (old `! grep` passed).
+  rm -rf "$RQ2/src/a"
+  q2_gone="$( cd "$RQ2" && HOME="$HQ2" bash "$CHECKER_E2E" --confirm </dev/null 2>/dev/null )"
+  grep -qF "Checks passed: 0/1" < <(printf '%s\n' "$q2_gone") \
+    && ok "(u2f) with the scoped path gone, the accepted absence check FAILS (0/1) — fail-closed on grep exit 2, never a vacuous pass" \
+    || no "(u2f) expected 'Checks passed: 0/1' after removing the scope, got: $q2_gone"
+else
+  no "(u2a) premise failed — candidate=[$Q2_CAND] invocation=[$Q2_INV]"
 fi
 
 echo
