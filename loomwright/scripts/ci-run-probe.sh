@@ -36,7 +36,7 @@
 # paginated):
 #   {"check": "<name>", "verdict": "ran"|"untrusted_infra"|"unknown",
 #    "reason": "<short slug>", "steps_count": <int|null>,
-#    "runner_assigned": <bool|null>, "annotation_match": "<pattern|null>",
+#    "runner_assigned": <bool|null>, "annotation_match": "<'startup_failure'|null>",
 #    "run_id": "<run id|null>"}
 # `run_id` is additive beyond the AC's six-key shape — it is what lets a
 # caller build docs/RESULT_SCHEMAS.md's `checks_untrusted[].run_id` and the
@@ -57,17 +57,38 @@
 #   2. no_runner_assigned    — every job has BOTH `runner_name` and
 #                               `started_at` null (queued, never assigned a
 #                               runner — e.g. cancelled before dispatch).
-#   3. annotation_match:<p>  — a job name / step name / top-level `message`
-#                               field matches one of the FIXED generic
-#                               GitHub-native strings below (case-insensitive,
-#                               no project/account/repo names baked in):
-#                               account payments | spending limit | billing |
-#                               quota | rate limit exceeded |
-#                               workflow validation error | not started
-# A run whose jobs report >0 real steps and no pattern match is "ran" — a
-# genuine failure, healed exactly as today. This is the narrowing that keeps
-# `untrusted_infra` from ever masking a real test failure as an infra fault
-# (see the brief's own Risk Assessment item 1).
+#   3. startup_failure       — ANY job's `conclusion == "startup_failure"`, a
+#                               REAL, DOCUMENTED GitHub Actions job-conclusion
+#                               enum value meaning "the job could not start
+#                               due to a runner/infra problem" — read from the
+#                               SAME `.../jobs` response already fetched (no
+#                               second call). `annotation_match` in the output
+#                               object is set to the literal string
+#                               "startup_failure" when this rule fires, else
+#                               null.
+# A run whose jobs report >0 real steps, a runner was assigned, and no job's
+# conclusion is `startup_failure` is "ran" — a genuine failure, healed exactly
+# as today. This is the narrowing that keeps `untrusted_infra` from ever
+# masking a real test failure as an infra fault (see the brief's own Risk
+# Assessment item 1).
+#
+# WHY NOT FREE-TEXT JOB/STEP-NAME OR `.message` MATCHING (PR #266 review
+# round 1, HIGH finding — fixed here). An earlier cut of this script matched a
+# fixed generic word list (`billing`, `quota`, `rate limit exceeded`, …)
+# against the job name, every step name, and a top-level `.message` field.
+# Two problems made that UNSOUND, not just imprecise: (a) `.message` does NOT
+# exist in the real `GET /repos/{owner}/{repo}/actions/runs/{run_id}/jobs`
+# response shape — in live traffic the rule was effectively "match arbitrary
+# human-chosen job/step NAME text", and job/step names are free text a repo
+# owner controls, so a genuinely failing job named e.g. `billing-service-tests`
+# (word-bounded "billing", 2 real steps, runner assigned) or
+# `docs-quotation-lint` (unanchored "quota" inside "quotation") both
+# misclassified `untrusted_infra` and would have been silently un-healed; (b)
+# word-boundary anchoring alone would NOT have fixed case (a) — "billing" is a
+# complete word in "billing-service-tests". `startup_failure` above replaces
+# that free-text rule with a STRUCTURED, GitHub-owned enum value that cannot
+# collide with an arbitrary human-chosen name. See test-ci-run-probe.sh cases
+# 13/14 for both reproduced false-positive regressions, now asserted `ran`.
 #
 # NO DATE ARITHMETIC ANYWHERE (Non-goal, this repo's own documented BSD-vs-GNU
 # `date` flag-divergence trap) — every evidence rule above is evaluated from
@@ -94,10 +115,6 @@ set -u
 
 GH_BIN="${GH:-gh}"
 JQ_BIN="${JQ:-jq}"
-
-# Fixed, generic GitHub-native pattern list (AC-pinned; no project/account/
-# repo names baked in — see EVIDENCE RULES rule 3 above).
-ANNOTATION_PATTERN='account payments|spending limit|billing|quota|rate limit exceeded|workflow validation error|not started'
 
 REPO=""
 CHECK=""
@@ -182,33 +199,25 @@ probe_one() {
   fi
 
   # Single jq pass over the validated response: derive steps_count,
-  # runner_assigned, and the annotation-pattern match, then apply the
-  # evidence rules in fixed order (first match wins) and print the verdict
-  # line as ONE more jq-built object — this function's own emit.
+  # runner_assigned, and the structured startup_failure signal, then apply
+  # the evidence rules in fixed order (first match wins) and print the
+  # verdict line as ONE more jq-built object — this function's own emit.
+  # (PR #266 review round 1, HIGH finding: no free-text job/step-name or
+  # `.message` matching here — see the header's "WHY NOT FREE-TEXT..." note.)
   printf '%s' "$raw" | "$JQ_BIN" -c \
-    --arg check "$check" --arg run "$run_id" --arg pat "$ANNOTATION_PATTERN" '
+    --arg check "$check" --arg run "$run_id" '
     (.jobs // []) as $jobs
     | ([$jobs[]?.steps[]?] | length) as $steps_count
     | ( ([$jobs[]?] | length) > 0
         and ( [$jobs[]? | select(((.runner_name // null) != null) or ((.started_at // null) != null))] | length ) > 0
       ) as $runner_assigned
-    | ( [ .message, ($jobs[]?.name), ($jobs[]?.steps[]?.name) ]
-        | map(select(type=="string"))
-        | join(" • ")
-      ) as $text
-    | ( $text | test($pat; "i") ) as $pat_hit
-    | ( if $pat_hit then
-          ( [ ($pat | split("|")[])
-              | select(. as $p | $text | test($p; "i"))
-            ] | first // "pattern_match" )
-        else null end
-      ) as $matched_pattern
+    | ( [$jobs[]? | select((.conclusion // "") == "startup_failure")] | length > 0 ) as $startup_failure
     | if $steps_count == 0 then
         {verdict: "untrusted_infra", reason: "zero_steps", ann: null}
       elif ($runner_assigned | not) then
         {verdict: "untrusted_infra", reason: "no_runner_assigned", ann: null}
-      elif $pat_hit then
-        {verdict: "untrusted_infra", reason: ("annotation_match:" + $matched_pattern), ann: $matched_pattern}
+      elif $startup_failure then
+        {verdict: "untrusted_infra", reason: "startup_failure", ann: "startup_failure"}
       else
         {verdict: "ran", reason: "real_failure", ann: null}
       end

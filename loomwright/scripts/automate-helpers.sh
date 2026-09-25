@@ -504,10 +504,13 @@ _ge_pr_parts() {
 #        # A "sub_floor_converged" drain skipped its final all-channel re-scan, so it is NOT
 #        # merge-eligible. "ci_untrusted" (ci-trust-probe-01) always pairs with drain_result ==
 #        # "ESCALATED" (never "READY" — scripts/ci-run-probe.sh classifying a required check
-#        # untrusted_infra still blocks READY, review-heal/SKILL.md §"READY redefinition"), so it
-#        # already PARKs via cond 1's plain drain_result != "READY" check below — no separate
-#        # PARK branch needed for this value specifically. Read with an explicit has()/!= null
-#        # check: missing/null ⇒ PARK.
+#        # untrusted_infra still blocks READY, review-heal/SKILL.md §"READY redefinition"), so a
+#        # well-formed ctx already PARKs via cond 1's plain drain_result != "READY" check below.
+#        # Condition 1c (below, immediately after 1b) is a SEPARATE, DELIBERATE defense-in-depth
+#        # PARK for this value specifically — bot review (PR #266) correctly flagged an earlier
+#        # draft of this comment as self-contradicting, since it claimed "no code change needed"
+#        # for the exact branch the same diff adds. Read with an explicit has()/!= null check:
+#        # missing/null ⇒ PARK.
 #     "ready_sha": "<sha>",                         # cond 2 — the drain's claim, cross-checked
 #        # against the LIVE `gh pr view --json headRefOid` (never trusted alone).
 #     "trust_unprotected": true|false,              # cond 4 override — a legitimate operator flag,

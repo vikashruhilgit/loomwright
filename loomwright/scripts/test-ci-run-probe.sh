@@ -8,10 +8,13 @@
 # `loomwright/scripts/test-*.sh` glob — must be ubuntu-clean, not merely
 # macOS-clean.
 #
-# Covers (per the brief's own AC):
+# Covers (per the brief's own AC, PLUS PR #266 review round 1 HIGH-finding
+# regressions 13/14):
 #   1. steps_count: 0 ⇒ untrusted_infra
 #   2. a real failing job (real steps, real failure) ⇒ ran
-#   3. an annotation-pattern match ⇒ untrusted_infra with the matched reason
+#   3. a job conclusion of "startup_failure" ⇒ untrusted_infra with reason
+#      "startup_failure" (the STRUCTURED signal that replaced the old
+#      free-text job/step-name/`.message` pattern matching — PR #266 fix)
 #   4. gh stubbed to fail ⇒ unknown, exit 0
 #   5. gh missing entirely ⇒ unknown, exit 0
 #   6. no_runner_assigned evidence rule (queued, never assigned a runner, but
@@ -24,15 +27,23 @@
 #   9. malformed --max-probes falls back to the documented default (5),
 #      never aborts
 #   10. jq missing ⇒ unknown (fail-safe fallback path), still exit 0
-#   11. mutation control — a job with real steps AND a coincidental red
-#       herring word ("quota" nowhere in text) must NOT be misclassified;
-#       negative assertion that "ran" cases never carry annotation_match
+#   11. mutation control — a job with real steps and an ordinary job/step name
+#       must NOT be misclassified; negative assertion that "ran" cases never
+#       carry annotation_match
 #   12. static regression pins — no suggested-rerun command construction, no
 #       date/stat portability traps anywhere in ci-run-probe.sh (the AC's own
 #       grep gates). This test file itself must stay a ZERO hit for the
 #       repo-wide plugin-scripts sweep for that same forbidden re-run command
 #       literal, so the phrase below is assembled at runtime, never written
 #       as one literal token in this file's own source.
+#   13/14. PR #266 review round 1 HIGH-finding regressions — a job named
+#       `billing-service-tests` with a step `Run rate limit exceeded
+#       assertions` (case 13) and a job named `docs-quotation-lint` with a
+#       step `Verify quotation marks` (case 14) BOTH have real steps, a
+#       runner assigned, and conclusion "failure" (never "startup_failure")
+#       — both MUST classify "ran", proving the old free-text job/step-name
+#       substring match (now removed) cannot resurface and mask a genuine
+#       failure whose name merely CONTAINS a word like "billing" or "quota".
 
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -49,9 +60,11 @@ mkdir -p "$BIN"
 
 FIX_ZERO="$TMP/zero.json"
 FIX_REAL="$TMP/real.json"
-FIX_ANNOT="$TMP/annot.json"
+FIX_STARTUP="$TMP/startup.json"
 FIX_NORUNNER="$TMP/norunner.json"
 FIX_CLEAN="$TMP/clean.json"
+FIX_BILLING_FP="$TMP/billing-fp.json"
+FIX_QUOTATION_FP="$TMP/quotation-fp.json"
 
 cat > "$FIX_ZERO" <<'EOF'
 {"jobs":[{"name":"ci","conclusion":"failure","runner_name":null,"started_at":null,"steps":[]}]}
@@ -61,8 +74,15 @@ cat > "$FIX_REAL" <<'EOF'
 {"jobs":[{"name":"ci","conclusion":"failure","runner_name":"gh-hosted-1","started_at":"2026-09-25T00:00:00Z","steps":[{"name":"Checkout","conclusion":"success"},{"name":"Install deps","conclusion":"success"},{"name":"Run tests","conclusion":"failure"}]}]}
 EOF
 
-cat > "$FIX_ANNOT" <<'EOF'
-{"jobs":[{"name":"ci","conclusion":"failure","runner_name":"gh-hosted-1","started_at":"2026-09-25T00:00:00Z","steps":[{"name":"Set up job","conclusion":"failure"}]}],"message":"The job was not started because recent account payments have failed or your spending limit needs to be increased"}
+# A job that never started due to a runner/infra problem — the REAL,
+# DOCUMENTED GitHub Actions job conclusion enum value "startup_failure".
+# runner_name/started_at ARE set here (unlike the more common real-world
+# shape) so this fixture isolates rule 3 on its own — a null-runner variant
+# would be caught by rule 2 first, which is a SEPARATE evidence path already
+# covered by case 6; case 15 duplicates this isolation deliberately as its
+# own explicit mutation control.
+cat > "$FIX_STARTUP" <<'EOF'
+{"jobs":[{"name":"ci","conclusion":"startup_failure","runner_name":"gh-hosted-0","started_at":"2026-09-25T00:00:00Z","steps":[{"name":"Set up job","conclusion":"failure"}]}]}
 EOF
 
 # no_runner_assigned WITHOUT zero steps: a job whose steps array is non-empty
@@ -75,11 +95,29 @@ cat > "$FIX_NORUNNER" <<'EOF'
 {"jobs":[{"name":"ci","conclusion":"cancelled","runner_name":null,"started_at":null,"steps":[{"name":"Queued","conclusion":null}]}]}
 EOF
 
-# A clean real failure whose job/step text coincidentally contains none of
-# the fixed pattern words — negative control for rule 3.
+# A clean real failure whose job/step text is unremarkable — negative control.
 cat > "$FIX_CLEAN" <<'EOF'
 {"jobs":[{"name":"unit-tests","conclusion":"failure","runner_name":"gh-hosted-2","started_at":"2026-09-25T01:00:00Z","steps":[{"name":"Build","conclusion":"success"},{"name":"Test suite","conclusion":"failure"}]}]}
 EOF
+
+# PR #266 review round 1, HIGH finding, case 13: a genuinely failing job
+# whose NAME contains the complete word "billing" and whose STEP name
+# contains "rate limit exceeded" — real steps, runner assigned, conclusion
+# "failure" (never "startup_failure"). Word-boundary anchoring alone would
+# NOT have saved this case (the old rule matched "billing" as a complete
+# word in "billing-service-tests"); only dropping free-text name matching
+# entirely fixes it.
+cat > "$FIX_BILLING_FP" <<'EOF'
+{"jobs":[{"name":"billing-service-tests","conclusion":"failure","runner_name":"gh-hosted-3","started_at":"2026-09-25T02:00:00Z","steps":[{"name":"Checkout","conclusion":"success"},{"name":"Run rate limit exceeded assertions","conclusion":"failure"}]}]}
+EOF
+
+# PR #266 review round 1, HIGH finding, case 14: a genuinely failing job
+# whose STEP name contains an unanchored substring of "quota" inside
+# "quotation" — real steps, runner assigned, conclusion "failure".
+cat > "$FIX_QUOTATION_FP" <<'EOF'
+{"jobs":[{"name":"docs-quotation-lint","conclusion":"failure","runner_name":"gh-hosted-4","started_at":"2026-09-25T03:00:00Z","steps":[{"name":"Verify quotation marks","conclusion":"failure"}]}]}
+EOF
+
 
 make_gh_stub() {
   # $1: mode — ok | fail
@@ -91,9 +129,11 @@ if [ "\${1:-}" = "api" ]; then
   case "\${2:-}" in
     repos/acme/widgets/actions/runs/1/jobs) cat "$FIX_ZERO" ;;
     repos/acme/widgets/actions/runs/2/jobs) cat "$FIX_REAL" ;;
-    repos/acme/widgets/actions/runs/3/jobs) cat "$FIX_ANNOT" ;;
+    repos/acme/widgets/actions/runs/3/jobs) cat "$FIX_STARTUP" ;;
     repos/acme/widgets/actions/runs/4/jobs) cat "$FIX_NORUNNER" ;;
     repos/acme/widgets/actions/runs/5/jobs) cat "$FIX_CLEAN" ;;
+    repos/acme/widgets/actions/runs/6/jobs) cat "$FIX_BILLING_FP" ;;
+    repos/acme/widgets/actions/runs/7/jobs) cat "$FIX_QUOTATION_FP" ;;
     repos/acme/widgets/actions/runs/*/jobs) cat "$FIX_REAL" ;;
     *) exit 1 ;;
   esac
@@ -128,15 +168,12 @@ run_probe --repo acme/widgets --check ci --run-id 2
 [ "$(field .runner_assigned)" = "true" ] && ok "2 runner_assigned=true" || no "2 got runner_assigned=$(field .runner_assigned)"
 [ "$(field .annotation_match)" = "null" ] && ok "2 annotation_match=null on a genuine failure" || no "2 got annotation_match=$(field .annotation_match)"
 
-# --- 3. annotation-pattern match ⇒ untrusted_infra with the matched reason --
+# --- 3. structured startup_failure conclusion ⇒ untrusted_infra ------------
 run_probe --repo acme/widgets --check ci --run-id 3
 [ "$RUN_RC" -eq 0 ] && ok "3 exit 0" || no "3 exit 0, got $RUN_RC"
-[ "$(field .verdict)" = "untrusted_infra" ] && ok "3 annotation match -> untrusted_infra" || no "3 got verdict=$(field .verdict)"
-case "$(field .reason)" in
-  annotation_match:*) ok "3 reason names the matched pattern: $(field .reason)" ;;
-  *) no "3 expected an annotation_match: reason, got $(field .reason)" ;;
-esac
-[ "$(field .annotation_match)" != "null" ] && ok "3 annotation_match is populated" || no "3 annotation_match unexpectedly null"
+[ "$(field .verdict)" = "untrusted_infra" ] && ok "3 startup_failure conclusion -> untrusted_infra" || no "3 got verdict=$(field .verdict)"
+[ "$(field .reason)" = "startup_failure" ] && ok "3 reason=startup_failure" || no "3 got reason=$(field .reason)"
+[ "$(field .annotation_match)" = "startup_failure" ] && ok "3 annotation_match=startup_failure" || no "3 got annotation_match=$(field .annotation_match)"
 
 # --- 4. gh stubbed to fail ⇒ unknown, exit 0 --------------------------------
 make_gh_stub fail
@@ -161,6 +198,25 @@ run_probe --repo acme/widgets --check ci --run-id 4
 # --- 11. clean real failure with no pattern coincidence never misclassifies -
 run_probe --repo acme/widgets --check unit-tests --run-id 5
 [ "$(field .verdict)" = "ran" ] && ok "11 clean real failure -> ran" || no "11 got verdict=$(field .verdict)"
+
+# --- 13/14. PR #266 review round 1 HIGH-finding regressions -----------------
+# A genuinely failing job whose NAME contains the complete word "billing" and
+# whose STEP name contains "rate limit exceeded" must classify "ran" — the
+# old free-text job/step-name substring match (now removed) misclassified
+# this as untrusted_infra even though nothing infra-related happened.
+run_probe --repo acme/widgets --check billing-service-tests --run-id 6
+[ "$RUN_RC" -eq 0 ] && ok "13 exit 0" || no "13 exit 0, got $RUN_RC"
+[ "$(field .verdict)" = "ran" ] && ok "13 billing-service-tests (real failure, name/step contain 'billing'/'rate limit exceeded') -> ran" || no "13 REGRESSION: got verdict=$(field .verdict) (must be ran, not untrusted_infra)"
+[ "$(field .reason)" = "real_failure" ] && ok "13 reason=real_failure" || no "13 got reason=$(field .reason)"
+[ "$(field .annotation_match)" = "null" ] && ok "13 annotation_match=null" || no "13 got annotation_match=$(field .annotation_match)"
+
+# A genuinely failing job whose STEP name contains an UNANCHORED substring of
+# "quota" inside "quotation" must classify "ran".
+run_probe --repo acme/widgets --check docs-quotation-lint --run-id 7
+[ "$RUN_RC" -eq 0 ] && ok "14 exit 0" || no "14 exit 0, got $RUN_RC"
+[ "$(field .verdict)" = "ran" ] && ok "14 docs-quotation-lint (real failure, step contains 'quotation') -> ran" || no "14 REGRESSION: got verdict=$(field .verdict) (must be ran, not untrusted_infra)"
+[ "$(field .reason)" = "real_failure" ] && ok "14 reason=real_failure" || no "14 got reason=$(field .reason)"
+[ "$(field .annotation_match)" = "null" ] && ok "14 annotation_match=null" || no "14 got annotation_match=$(field .annotation_match)"
 
 # --- 7. --max-probes bound genuinely enforced in batch mode -----------------
 CHECKS='[{"name":"c1","run_id":"2"},{"name":"c2","run_id":"2"},{"name":"c3","run_id":"2"},{"name":"c4","run_id":"2"},{"name":"c5","run_id":"2"},{"name":"c6","run_id":"2"},{"name":"c7","run_id":"2"}]'
