@@ -1,6 +1,10 @@
 # 07 — `/verify` spec replay: derive a ticket AC's Playwright spec once, replay it deterministically, re-derive only on drift
 
-## Status: pending
+## Status: parked
+- **Code shipped:** PR #269, merge e319536 (2026-09-26T09:45:26Z); brief `.supervisor/jobs/done/2026-09-26-verify-spec-replay.md`.
+- **Why parked, not done:** this requirement's own Honest limits say "before stamping this item done, record the
+  first 5 real re-runs' `spec sources:` lines in a `## Result` section here (D11)". That is post-merge observation.
+  Stamp `done` once the `## Result` section exists. (`parked` keeps `/automate` from re-picking it.)
 
 > **Origin (2026-09-22).** From the AI Radar review of Simular Sai's *learn-once → compile-to-code → replay*
 > pattern (LLM for discovery, deterministic code for repeats, fall back to the model only when the recipe
