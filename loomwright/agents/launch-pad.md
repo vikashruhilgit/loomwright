@@ -401,6 +401,7 @@ Every subtask MUST declare what it produces (`provides`), what it consumes from 
 **Example subtask block:**
 
 ```yaml
+# Subtask 2 — JWT guard (BLOCKED by #1)
 provides:
   - {kind: "file", path: "src/auth/jwt.guard.ts"}
   - {kind: "symbol", path: "src/auth/jwt.guard.ts", name: "JwtAuthGuard"}
@@ -414,6 +415,7 @@ external_requires:
 
 **Authoring rules (enforced by Plan Reviewer Criterion 12 for provides/requires, Criterion 16 for lanes):**
 
+- **Anchor every contract block with `# Subtask N`** (N = its Subtask Structure `#` id), `### Subtask N`, or a `subtask_N:` key — the `outputs_verified` gate (`scripts/verify-provides.sh`) locates the block ONLY by that token. Never anchor with a slug key (`subtask_id: foo-01`); extra keys are fine *under* a real anchor. Checked mechanically before review (Phase 5.5 action 1b)
 - Every subtask SHOULD have a non-empty `provides`. Purely-deletion subtasks may use `provides: []` but MUST include a justification comment on the line above (e.g. `# provides: [] — pure deletion, removes deprecated module`)
 - Reject vague provides like `"adds feature"` or `"updates code"` — every entry MUST be a `{kind: file|symbol|type, path, name?}` addressable on disk
 - `external_requires` is for things outside the brief's scope; do NOT cross-reference it from `requires` (the `from` field of `requires` MUST point to a sibling subtask ID, never an external item)
@@ -527,7 +529,8 @@ Subtask 2 (independent)
 **Actions:**
 
 1. Reuse the scratch file **as last written by Phase 5 step 9 MATERIALIZE** (do NOT re-assemble the brief here — re-assembling in this action risks reviewing text that differs from what MATERIALIZE wrote and what Phase 6 will save). **On a retry, MATERIALIZE has already been re-run by the FAIL branch below, so this file holds the REVISED brief** — that is what makes the retry a genuine second review rather than a re-read of the rejected text. If the scratch file is missing, serialize the assembled brief from Phase 5 into a text block here as a fallback
-2. Spawn Plan Reviewer as a subagent with brief text + CLAUDE.md context
+1b. **Gate-parse check (mechanical, before every spawn):** for each id N in the Subtask Structure table, run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/verify-provides.sh" <scratch-file> N --parse-only` (the same parser the `outputs_verified` gate runs, no disk checks). Any `unverifiable` line, or `provides_count: 0` for a block that lists entries, is a contract anchor the gate cannot find — fix the anchor (Phase 4 authoring rules), re-run MATERIALIZE, and re-check before spawning (a pre-spawn fix consumes no review attempt). Paste the final lines into the spawn prompt's `--- GATE PARSE ---` block — Plan Reviewer has no Bash and treats them as authoritative for Criterion 12
+2. Spawn Plan Reviewer as a subagent with brief text + CLAUDE.md context + the GATE PARSE lines
 3. Parse PLAN_REVIEW_RESULT from reviewer output
 4. Decision handling:
    - **PASS:** Proceed to Phase 6 (save enabled)
@@ -601,6 +604,10 @@ Task(
 --- BRIEF START ---
 {complete brief text from Phase 5}
 --- BRIEF END ---
+
+--- GATE PARSE ---
+{one verify-provides.sh --parse-only JSON line per subtask id, from action 1b}
+--- GATE PARSE END ---
 
 Project CLAUDE.md context:
 {relevant patterns, tech stack, directory structure — max 500 tokens}
