@@ -865,7 +865,42 @@ GEPARTS
 #   --repeat-check-failure <true|false> --unresolved-bot-feedback <true|false>
 #   --changed-paths-json <json-array> --additions <n> --deletions <n>
 #   --changed-files <n> --summary <text> [--plugin-version <v>] [--ts <iso>]
-#   [--branch <b>] [--source <s>]
+#   [--branch <b>] [--source <s>] [--self-heal-rounds <n>]
+#
+# --self-heal-rounds <n> — the Phase 4.5 self-heal churn that happened BEFORE the
+# PR reached the drain. <n> is the OBSERVED count, `SUPERVISOR_RESULT.heal_iterations`,
+# never the configured `/supervisor --heal-iterations` MAXIMUM bound (default 3) —
+# which is exactly why the flag is not named `--heal-iterations`: passing the bound
+# would record fake churn. Contract (decisions 1–8 of the
+# 2026-09-26-learning-emit-self-heal-rounds brief; authority for the field mapping
+# is docs/RESULT_SCHEMAS.md POSTMORTEM_RESULT §"`source: \"automate_drain\"` variant"):
+#   1. `review_rounds` keeps its DRAIN-ONLY meaning (effective_review_rounds, below).
+#      build-loop-evidence.sh / measure-heal-signal.py join on it floor-raising, so
+#      folding self-heal into it would silently change historical comparisons.
+#   2. Additive integer `self_heal_rounds`, emitted ONLY when the flag was passed
+#      (any value). Omit the flag ⇒ the line is byte-identical to the pre-flag one.
+#      Normalization: a non-negative integer passes through; anything else
+#      (non-numeric, negative, fractional, empty) ⇒ 0 — never a non-zero exit.
+#      Surrounding whitespace is trimmed FIRST (`" 2"`/`"2\n"` from a grep/awk
+#      extraction ⇒ 2), so a padded value is never silently recorded as 0.
+#   3. `self_heal_rounds > 0` adds ONE `categories[]` entry
+#      {round: n, class: "self_heal_churn", self_heal_miss: false,
+#       flow_stage: "self_heal", evidence: "Phase 4.5 self-heal, heal_iterations=<n>"},
+#      placed BEFORE any drain entry (self-heal precedes the drain). A healed finding
+#      is a catch, not a miss ⇒ self_heal_miss:false. read-postmortem.sh counts each
+#      element as one round and groups by .class, so it needs no change.
+#   4. Zero-rule restated: `categories: []` iff effective_review_rounds == 0 AND
+#      self_heal_rounds == 0 (absent counts as 0) — at most ONE drain entry plus at
+#      most ONE self_heal_churn entry. Still no fake churn: self-heal churn is real.
+#   5. Default summary unchanged when self_heal_rounds is absent/0; when > 0 it
+#      appends "; self-heal: <n> round(s)". A caller --summary is emitted verbatim.
+#   6. The idempotency key (run_id|item|pr_url|source|completeness) is UNCHANGED —
+#      self_heal_rounds is not part of it.
+#   7. (flag name — see the first paragraph above.)
+#   8. `flow_stages.self_heal` keeps counting DRAIN rounds only; self-heal churn
+#      appears only in `self_heal_rounds` and `categories[]` (this widens the known
+#      counter-vs-categories disagreement build-floor.sh reports as
+#      flow_stage_counter_disagreements, confined to automate_drain lines).
 #
 # FAIL-SAFE: this is one of the two subcommands (with brief-repair) that must
 # NEVER die/abort — it runs inside the per-item loop as an advisory side-effect
@@ -884,6 +919,7 @@ learning_emit() {
   local fix_cycles="0" drain_result="" repeat_check_failure="false" unresolved_bot_feedback="false"
   local changed_paths_json="[]" additions="0" deletions="0" changed_files="0"
   local summary="" plugin_version="" ts="" branch="" source="automate_drain"
+  local shr_given="0" shr_raw=""
 
   # Parse named flags defensively — an unknown/short flag is ignored, never fatal.
   while [ "$#" -gt 0 ]; do
@@ -906,6 +942,7 @@ learning_emit() {
       --ts)                      ts="${2:-}"; shift 2 || shift ;;
       --branch)                  branch="${2:-}"; shift 2 || shift ;;
       --source)                  source="${2:-automate_drain}"; shift 2 || shift ;;
+      --self-heal-rounds)        shr_given="1"; shr_raw="${2:-}"; shift 2 || shift ;;
       *)                         shift ;;   # unknown flag: ignore, never fatal
     esac
   done
@@ -923,6 +960,25 @@ learning_emit() {
   cp_clean="$( printf '%s' "$changed_paths_json" \
     | "$JQ" -c 'if type=="array" then map(select(type=="string")) else [] end' 2>/dev/null )"
   [ -n "$cp_clean" ] || cp_clean="[]"
+
+  # self_heal_rounds (decision 2): JSON `null` ⇒ the flag was NOT passed ⇒ the field
+  # is omitted and the line stays byte-identical to the pre-flag shape. When passed,
+  # ONLY a string of ASCII digits survives; everything else (empty, `-1`, `1.5`,
+  # `abc`) normalizes to 0. An explicit digit check, NOT a bare `tonumber? // 0`
+  # (which would accept `-1` and `1.5`). Surrounding whitespace is trimmed first —
+  # prefix/suffix parameter expansion only (bash 3.2-safe; never the O(n²)
+  # `${var//[[:space:]]/}` global substitution), and INTERNAL whitespace (`"1 2"`)
+  # still normalizes to 0.
+  local shr_json="null"
+  if [ "$shr_given" = "1" ]; then
+    shr_raw="${shr_raw#"${shr_raw%%[![:space:]]*}"}"
+    shr_raw="${shr_raw%"${shr_raw##*[![:space:]]}"}"
+    case "$shr_raw" in
+      ''|*[!0-9]*) shr_json="0" ;;
+      *) shr_json="$( printf '%s' "$shr_raw" | "$JQ" -R 'tonumber? // 0' 2>/dev/null )"
+         [ -n "$shr_json" ] || shr_json="0" ;;
+    esac
+  fi
 
   # DEGRADED-EMIT DESIGN — option (b): the idempotency key is degradation-aware.
   #
@@ -1038,6 +1094,7 @@ learning_emit() {
     --arg source "$source" \
     --arg automate_key "$key" \
     --argjson cp_raw "$cp_clean" \
+    --argjson shr "$shr_json" \
     '
     # changed_paths: keep only an array of strings, else [].
     ( if ($cp_raw | type) == "array" then ($cp_raw | map(select(type=="string"))) else [] end ) as $changed_paths
@@ -1050,7 +1107,18 @@ learning_emit() {
     # categories[] zero-rule (read-postmortem counts each element as one round):
     #   fix_cycles>0           -> one drain_churn entry {round: fix_cycles}
     #   fix_cycles==0 ESCALATED -> one drain_escalation entry {round: 1}
-    #   fix_cycles==0 non-esc  -> [] (NEVER a synthetic entry — no fake churn)
+    #   fix_cycles==0 non-esc  -> no drain entry (NEVER a synthetic one — no fake churn)
+    # plus, BEFORE any drain entry, one self_heal_churn entry iff self_heal_rounds > 0.
+    # So `categories: []` iff effective_review_rounds == 0 AND self_heal_rounds == 0
+    # ($shr null = flag absent = 0).
+    | ( if $shr == null then 0 else $shr end ) as $shrn
+    | ( if $shrn > 0 then
+          [ { round: $shrn, class: "self_heal_churn", self_heal_miss: false,
+              flow_stage: "self_heal",
+              evidence: ("Phase 4.5 self-heal, heal_iterations=" + ($shrn|tostring)) } ]
+        else
+          []
+        end ) as $self_heal_categories
     | ( if $fix_cycles > 0 then
           [ { round: $fix_cycles, class: "drain_churn", self_heal_miss: ($shm > 0),
               flow_stage: "self_heal",
@@ -1061,21 +1129,32 @@ learning_emit() {
               evidence: "until-mergeable drain escalated before any fix cycle" } ]
         else
           []
-        end ) as $categories
+        end ) as $drain_categories
+    | ($self_heal_categories + $drain_categories) as $categories
+    # self_heal_rounds sits right after review_rounds, and ONLY when the flag was
+    # passed — built by object concatenation so the flag-absent line keeps the exact
+    # pre-flag key order (byte-identical, decision 2).
     | {
         schema_version: 1,
         ts: $ts,
         repo: $repo,
         number: $number,
         agent_generated_guess: true,
-        review_rounds: $err,
+        review_rounds: $err
+      }
+      + (if $shr == null then {} else { self_heal_rounds: $shr } end)
+      + {
         additions: $additions,
         deletions: $deletions,
         changed_files: $changed_files,
         categories: $categories,
         self_heal_misses: $shm,
+        # flow_stages.self_heal counts DRAIN rounds only (decision 8).
         flow_stages: { launch_pad: 0, worker: 0, self_heal: $err, unknowable: 0 },
-        summary: (if $summary == "" then ("automate drain: " + (if $err==0 then "no churn" else (($err|tostring) + " round(s)") end)) else $summary end),
+        summary: (if $summary == "" then
+                    ("automate drain: " + (if $err==0 then "no churn" else (($err|tostring) + " round(s)") end)
+                     + (if $shrn > 0 then ("; self-heal: " + ($shrn|tostring) + " round(s)") else "" end))
+                  else $summary end),
         plugin_version: (if $plugin_version == "" then "unknown" else $plugin_version end),
         pr_url: (if $pr_url == "" then null else $pr_url end),
         branch: (if $branch == "" then null else $branch end),

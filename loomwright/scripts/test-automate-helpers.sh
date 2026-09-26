@@ -43,7 +43,11 @@
 #      later complete one) with a legacy-key mutation control + skip-arm no-regression,
 #      the REALISTIC degraded shape (--number passed, so both lines share repo#number)
 #      + the floor-raising downstream join, degraded-after-degraded in isolation, and
-#      empty-string-only changed_paths classified DEGRADED.
+#      empty-string-only changed_paths classified DEGRADED; PLUS --self-heal-rounds
+#      (F14–F19): self_heal_rounds + one self_heal_churn entry asserted through the REAL
+#      read-postmortem.sh output, a no-flag byte-identity pin against the base-commit
+#      helper, fail-safe normalization + the restated zero-rule, self-heal-before-drain
+#      ordering, key-unchanged idempotency, and a validated mutation control.
 #   G. brief-repair (fail-SAFE evidence-positive engine seam, v15.65.0): MERGED ⇒
 #      the sibling reconcile-jobs.sh --repair --evidence moves the brief (AC-1/2/3/8),
 #      OPEN/CLOSED ⇒ skipped with the reconciler NOT invoked (AC-6), TEN separate
@@ -1492,6 +1496,206 @@ else
   no "empty-string-path classification wrong (lines=$(wc -l < "$LED5" 2>/dev/null | tr -d ' ') ledger='$(cat "$LED5" 2>/dev/null)')"
 fi
 rm -rf "$WD5"
+
+# F14–F19. --self-heal-rounds (the Phase 4.5 self-heal churn the PR absorbed BEFORE the
+#          drain; the OBSERVED SUPERVISOR_RESULT.heal_iterations). The PR #267 shape:
+#          self-heal round 1 FAIL → fix → round 2 PASS, drain 0 fix cycles — before this
+#          flag the line read review_rounds:0 + categories:[] and the reader called the
+#          most-churned area clean. Every visibility claim below runs the REAL
+#          read-postmortem.sh (not the reader_select mirror) in a throwaway repo whose
+#          origin resolves to the emitted line's repo, ledger at the reader's default path.
+SHR_PR="https://github.com/acme/widgets/pull/267"
+SHR_ITEM=".supervisor/requirements/automate-followups/01-learning-emit-counts-self-heal-rounds.md"
+# shr_emit <helper> <ledger> <run_id> [extra learning-emit args...] — the AC1 base call.
+shr_emit() {
+  local helper="$1" led="$2" rid="$3"; shift 3
+  bash "$helper" learning-emit "$led" \
+    --repo "acme/widgets" --number 267 --pr-url "$SHR_PR" --run-id "$rid" --item "$SHR_ITEM" \
+    --repeat-check-failure false --unresolved-bot-feedback false \
+    --changed-paths-json '["src/heal.ts","src/other.ts"]' --additions 5 --deletions 1 --changed-files 2 \
+    --plugin-version 9.9.9 --branch feat/x "$@"
+}
+# shr_repo — a throwaway git repo whose origin makes the reader's CUR_REPO acme/widgets.
+shr_repo() {
+  local d; d="$(mktemp -d)"
+  ( cd "$d" && git init -q && git config user.email t@t && git config user.name t \
+      && git remote add origin https://github.com/acme/widgets.git \
+      && echo i > f && git add f && git commit -qm i ) >/dev/null 2>&1
+  printf '%s' "$d"
+}
+# shr_ac1_holds <helper> — 0 iff the AC1 claim holds for <helper>: the emitted line carries
+# self_heal_rounds:2 + review_rounds:0 + exactly one self_heal_churn{round:2} entry, AND the
+# REAL reader prints `self_heal_churn (1)` on its classes line and `1` on its rounds line.
+# Parametrised on the helper so the F19 mutant is judged by the identical predicate.
+SHR_OUT=""; SHR_LINE=""
+shr_ac1_holds() {
+  local helper="$1" d led
+  d="$(shr_repo)"; led="$d/.supervisor/postmortem/results.jsonl"
+  shr_emit "$helper" "$led" "run-shr-ac1" --self-heal-rounds 2 --fix-cycles 0 --drain-result READY
+  SHR_LINE="$(cat "$led" 2>/dev/null)"
+  SHR_OUT="$( cd "$d" && bash "$READ_PM" "src/heal.ts" 2>/dev/null )"
+  rm -rf "$d"
+  [ "$(printf '%s' "$SHR_LINE" | jq -r '.self_heal_rounds' 2>/dev/null)" = "2" ] || return 1
+  [ "$(printf '%s' "$SHR_LINE" | jq -r '.review_rounds' 2>/dev/null)" = "0" ] || return 1
+  [ "$(printf '%s' "$SHR_LINE" | jq -c '[.categories[] | {class, round}]' 2>/dev/null)" \
+      = '[{"class":"self_heal_churn","round":2}]' ] || return 1
+  grep -qxF -- "- recurring root-cause classes: self_heal_churn (1)" < <(printf '%s\n' "$SHR_OUT") || return 1
+  grep -qE -- '^- prior churn rounds: 1 \(' < <(printf '%s\n' "$SHR_OUT") || return 1
+  return 0
+}
+
+# F14 (AC1). self-heal 2, drain 0 ⇒ self_heal_rounds:2, review_rounds:0, ONE self_heal_churn
+#      entry — and the REAL reader surfaces it as a prior-churn hit (the false-0 closed).
+if shr_ac1_holds "$H"; then
+  ok "self-heal-rounds: --self-heal-rounds 2 + drain 0 ⇒ self_heal_rounds:2, review_rounds:0, one self_heal_churn(round 2); REAL reader prints 'self_heal_churn (1)' + rounds 1"
+else
+  no "self-heal-rounds AC1 wrong (line='$SHR_LINE' reader='$SHR_OUT')"
+fi
+
+# F15 (AC2). BACK-COMPAT PIN: the same call WITHOUT the flag is byte-identical (after
+#      deleting ts) to the PRE-CHANGE helper's line, and carries no self_heal_rounds key.
+#      Frozen golden = `git show 05ad3057a9628992e7f7fbf6f3f62868ca97f85a:loomwright/scripts/automate-helpers.sh`
+#      run on these exact args, piped through `jq -c 'del(.ts)'` (the pinned base commit,
+#      never a moving origin/main). A frozen literal, so a shallow CI clone that lacks the
+#      base commit still enforces it; when the base commit IS reachable the live base helper
+#      is ALSO run as a cross-check that the golden was transcribed correctly.
+SHR_GOLDEN='{"schema_version":1,"repo":"acme/widgets","number":267,"agent_generated_guess":true,"review_rounds":0,"additions":5,"deletions":1,"changed_files":2,"categories":[],"self_heal_misses":0,"flow_stages":{"launch_pad":0,"worker":0,"self_heal":0,"unknowable":0},"summary":"automate drain: no churn","plugin_version":"9.9.9","pr_url":"https://github.com/acme/widgets/pull/267","branch":"feat/x","changed_paths":["src/heal.ts","src/other.ts"],"brief_path":null,"job_path":null,"source":"automate_drain","automate_key":"run-shr-ac2\u001f.supervisor/requirements/automate-followups/01-learning-emit-counts-self-heal-rounds.md\u001fhttps://github.com/acme/widgets/pull/267\u001fautomate_drain\u001fcomplete"}'
+WD6="$(mktemp -d)"
+shr_emit "$H" "$WD6/new.jsonl" "run-shr-ac2" --fix-cycles 0 --drain-result READY
+NEW_NOFLAG="$(jq -c 'del(.ts)' "$WD6/new.jsonl" 2>/dev/null)"
+HAS_KEY="$(jq -r 'has("self_heal_rounds")' "$WD6/new.jsonl" 2>/dev/null)"
+BASE_REV="05ad3057a9628992e7f7fbf6f3f62868ca97f85a"
+BASE_XCHECK="skipped (base commit not reachable — frozen golden is authoritative)"
+if git -C "$HERE" cat-file -e "$BASE_REV^{commit}" 2>/dev/null \
+   && git -C "$HERE" show "$BASE_REV:loomwright/scripts/automate-helpers.sh" > "$WD6/base-helpers.sh" 2>/dev/null \
+   && [ -s "$WD6/base-helpers.sh" ]; then
+  shr_emit "$WD6/base-helpers.sh" "$WD6/base.jsonl" "run-shr-ac2" --fix-cycles 0 --drain-result READY
+  if [ "$(jq -c 'del(.ts)' "$WD6/base.jsonl" 2>/dev/null)" = "$SHR_GOLDEN" ]; then
+    BASE_XCHECK="ok"
+  else
+    BASE_XCHECK="MISMATCH"
+  fi
+fi
+if [ "$NEW_NOFLAG" = "$SHR_GOLDEN" ] && [ "$HAS_KEY" = "false" ] && [ "$BASE_XCHECK" != "MISMATCH" ]; then
+  ok "self-heal-rounds back-compat: no flag ⇒ byte-identical (minus ts) to the pre-change helper's line, no self_heal_rounds key (live base cross-check: $BASE_XCHECK)"
+else
+  no "self-heal-rounds back-compat wrong (has_key='$HAS_KEY' base_xcheck='$BASE_XCHECK' new='$NEW_NOFLAG')"
+fi
+rm -rf "$WD6"
+
+# F16 (AC3). normalization is fail-SAFE: abc / -1 / 1.5 / "" ⇒ exit 0, line emitted,
+#      self_heal_rounds:0, NO self_heal_churn entry. And the restated zero-rule: an explicit
+#      0 with drain 0 READY ⇒ self_heal_rounds:0, review_rounds:0, categories:[] exactly.
+SHR_BAD=""
+for v in "abc" "-1" "1.5" ""; do
+  WD7="$(mktemp -d)"; LED7="$WD7/results.jsonl"
+  run_h shr_emit "$H" "$LED7" "run-shr-ac3" --self-heal-rounds "$v" --fix-cycles 0 --drain-result READY
+  if [ "$RUN_RC" -ne 0 ] || [ "$(wc -l < "$LED7" 2>/dev/null | tr -d ' ')" != "1" ] \
+     || [ "$(jq -r '.self_heal_rounds' "$LED7" 2>/dev/null)" != "0" ] \
+     || [ "$(jq -r '[.categories[] | select(.class == "self_heal_churn")] | length' "$LED7" 2>/dev/null)" != "0" ]; then
+    SHR_BAD="$SHR_BAD [v='$v' rc=$RUN_RC line=$(cat "$LED7" 2>/dev/null)]"
+  fi
+  rm -rf "$WD7"
+done
+WD7="$(mktemp -d)"; LED7="$WD7/results.jsonl"
+shr_emit "$H" "$LED7" "run-shr-ac3z" --self-heal-rounds 0 --fix-cycles 0 --drain-result READY
+if [ -z "$SHR_BAD" ] \
+   && [ "$(jq -r '.self_heal_rounds' "$LED7")" = "0" ] \
+   && [ "$(jq -r '.review_rounds' "$LED7")" = "0" ] \
+   && [ "$(jq -c '.categories' "$LED7")" = "[]" ]; then
+  ok "self-heal-rounds normalization: abc/-1/1.5/\"\" ⇒ exit 0 + self_heal_rounds:0 + no self_heal_churn; explicit 0 + drain 0 ⇒ categories:[] exactly (zero-rule)"
+else
+  no "self-heal-rounds normalization/zero-rule wrong (bad=$SHR_BAD zero_line='$(cat "$LED7" 2>/dev/null)')"
+fi
+rm -rf "$WD7"
+
+# F16b. surrounding whitespace is trimmed before the digit check (a grep/awk-extracted
+#       " 2" / "2 " / "3\n" must NOT be silently recorded as 0 — the false-0 this item
+#       exists to prevent); INTERNAL whitespace ("1 2") and whitespace-only still ⇒ 0.
+SHR_WS_BAD=""
+for pair in " 2|2" "2 |2" $'3\n|3' $'\t4 |4' "1 2|0" "  |0"; do
+  v="${pair%|*}"; want="${pair##*|}"
+  WD7="$(mktemp -d)"; LED7="$WD7/results.jsonl"
+  run_h shr_emit "$H" "$LED7" "run-shr-ws" --self-heal-rounds "$v" --fix-cycles 0 --drain-result READY
+  got="$(jq -r '.self_heal_rounds' "$LED7" 2>/dev/null)"
+  if [ "$RUN_RC" -ne 0 ] || [ "$got" != "$want" ]; then
+    SHR_WS_BAD="$SHR_WS_BAD [v='$v' want=$want got=$got rc=$RUN_RC]"
+  fi
+  rm -rf "$WD7"
+done
+if [ -z "$SHR_WS_BAD" ]; then
+  ok "self-heal-rounds trims surrounding whitespace (' 2'/'2 '/'3\\n'/tab ⇒ value) while internal/whitespace-only ⇒ 0"
+else
+  no "self-heal-rounds whitespace handling wrong:$SHR_WS_BAD"
+fi
+
+# F17 (AC3b + AC4). ordering — self-heal precedes the drain, and review_rounds stays
+#      DRAIN-ONLY. 1 + zero-cycle ESCALATED ⇒ [self_heal_churn(1), drain_escalation(1)],
+#      review_rounds:1. 1 + fix_cycles 3 READY ⇒ [self_heal_churn(1), drain_churn(3)],
+#      review_rounds:3, and the REAL reader's rounds line reports 2.
+WD8="$(mktemp -d)"; LED8="$WD8/esc.jsonl"
+shr_emit "$H" "$LED8" "run-shr-ac3b" --self-heal-rounds 1 --fix-cycles 0 --drain-result ESCALATED
+D8="$(shr_repo)"; LED8B="$D8/.supervisor/postmortem/results.jsonl"
+shr_emit "$H" "$LED8B" "run-shr-ac4" --self-heal-rounds 1 --fix-cycles 3 --drain-result READY
+READ8="$( cd "$D8" && bash "$READ_PM" "src/heal.ts" 2>/dev/null )"
+if [ "$(jq -r '.review_rounds' "$LED8")" = "1" ] \
+   && [ "$(jq -r '.self_heal_rounds' "$LED8")" = "1" ] \
+   && [ "$(jq -c '[.categories[] | {class, round}]' "$LED8")" = '[{"class":"self_heal_churn","round":1},{"class":"drain_escalation","round":1}]' ] \
+   && [ "$(jq -r '.review_rounds' "$LED8B")" = "3" ] \
+   && [ "$(jq -r '.self_heal_rounds' "$LED8B")" = "1" ] \
+   && [ "$(jq -r '.flow_stages.self_heal' "$LED8B")" = "3" ] \
+   && [ "$(jq -c '[.categories[] | {class, round}]' "$LED8B")" = '[{"class":"self_heal_churn","round":1},{"class":"drain_churn","round":3}]' ] \
+   && grep -qE -- '^- prior churn rounds: 2 \(' < <(printf '%s\n' "$READ8") \
+   && grep -qF "self_heal_churn (1)" < <(grep -E -- '^- recurring root-cause classes: ' < <(printf '%s\n' "$READ8")) \
+   && grep -qF "drain_churn (1)" < <(grep -E -- '^- recurring root-cause classes: ' < <(printf '%s\n' "$READ8")); then
+  ok "self-heal-rounds ordering: self_heal_churn precedes drain_escalation/drain_churn; review_rounds + flow_stages.self_heal stay drain-only; REAL reader rounds 2"
+else
+  no "self-heal-rounds ordering wrong (esc='$(cat "$LED8" 2>/dev/null)' combined='$(cat "$LED8B" 2>/dev/null)' reader='$READ8')"
+fi
+rm -rf "$WD8" "$D8"
+
+# F18 (AC5). idempotency: the automate_key is byte-identical with and without the flag,
+#      and a re-entry for the same run/item/PR writes nothing new — in BOTH orders.
+WD9="$(mktemp -d)"
+shr_emit "$H" "$WD9/a.jsonl" "run-shr-ac5" --self-heal-rounds 2 --fix-cycles 1 --drain-result READY
+shr_emit "$H" "$WD9/b.jsonl" "run-shr-ac5" --fix-cycles 1 --drain-result READY
+KEY_A="$(jq -r '.automate_key' "$WD9/a.jsonl" 2>/dev/null)"
+KEY_B="$(jq -r '.automate_key' "$WD9/b.jsonl" 2>/dev/null)"
+# a.jsonl already holds the WITH-flag line: re-enter with AND without the flag.
+shr_emit "$H" "$WD9/a.jsonl" "run-shr-ac5" --self-heal-rounds 2 --fix-cycles 1 --drain-result READY
+shr_emit "$H" "$WD9/a.jsonl" "run-shr-ac5" --fix-cycles 1 --drain-result READY
+# b.jsonl already holds the WITHOUT-flag line: re-enter WITH the flag.
+shr_emit "$H" "$WD9/b.jsonl" "run-shr-ac5" --self-heal-rounds 2 --fix-cycles 1 --drain-result READY
+if [ -n "$KEY_A" ] && [ "$KEY_A" = "$KEY_B" ] \
+   && [ "$(wc -l < "$WD9/a.jsonl" | tr -d ' ')" = "1" ] \
+   && [ "$(wc -l < "$WD9/b.jsonl" | tr -d ' ')" = "1" ]; then
+  ok "self-heal-rounds idempotency: automate_key identical with/without the flag; re-entry (either order) writes nothing new"
+else
+  no "self-heal-rounds idempotency wrong (key_a='$KEY_A' key_b='$KEY_B' a_lines=$(wc -l < "$WD9/a.jsonl" | tr -d ' ') b_lines=$(wc -l < "$WD9/b.jsonl" | tr -d ' '))"
+fi
+rm -rf "$WD9"
+
+# F19 (AC6). MUTATION CONTROL — proves F14 is load-bearing: a COPY of the helper whose
+#      parsed --self-heal-rounds value is never plumbed into the record (the jq arg is
+#      forced to 0) must FAIL the identical shr_ac1_holds predicate. The mutant is trusted
+#      only when non-empty, differs from the original, and passes `bash -n` (lesson
+#      fa32a308: an unvalidated mutant that silently equals the original, or does not
+#      parse, "fails" for the wrong reason and proves nothing).
+WD10="$(mktemp -d)"; MUT="$WD10/automate-helpers.sh"
+sed 's/--argjson shr "\$shr_json"/--argjson shr 0/' "$H" > "$MUT"
+if [ -s "$MUT" ] && ! cmp -s "$H" "$MUT" && bash -n "$MUT" 2>/dev/null \
+   && [ "$(grep -c -- '--argjson shr 0' "$MUT")" = "1" ]; then
+  if shr_ac1_holds "$MUT"; then
+    no "self-heal-rounds mutation control: F14's predicate still PASSES against a mutant that never plumbs the value (vacuous)"
+  elif shr_ac1_holds "$H"; then
+    ok "self-heal-rounds mutation control: a validated mutant (value forced to 0) FAILS the F14 predicate while the real helper passes it"
+  else
+    no "self-heal-rounds mutation control: real helper no longer passes the F14 predicate"
+  fi
+else
+  no "self-heal-rounds mutation control: mutant invalid (empty / identical to original / bash -n failed / anchor not found)"
+fi
+rm -rf "$WD10"
 
 # =============================================================================
 echo "== G. brief-repair (fail-SAFE, evidence-positive engine seam; ONE mover) =="
