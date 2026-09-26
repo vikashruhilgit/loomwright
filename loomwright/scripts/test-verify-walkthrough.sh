@@ -1599,6 +1599,185 @@ nv_line="$(jq -c 'select(.event=="ac" and .ac_id=="NV1")' "$TI6/repo/.supervisor
   && ok "(NV-summary) the NV1 row itself is recorded scope:impact source:not_verified (present in evidence, excluded from the ticket score)" \
   || no "(NV-summary) NV1 line: $nv_line"
 
+# ============================================================================
+# token-economy 07 "spec-replay" arms (mechanism only — subtask 1). Prose/SKILL/agent/command mirror
+# is subtask 2, sequenced after this one; NOT asserted here. Tag: (SR-*).
+# ============================================================================
+echo "== (SR-AC1/AC6) spec-replay: 3/3 replayed from the most recent same-ticket sibling; source dir byte-identical before/after =="
+TSR="$(mktmp)"; stage "$TSR"; contract "$TSR" true
+run_bin "$TSR" preflight "$REQ" --repo .
+RD_PRIOR="$(last_run_dir)"
+mkdir -p "$RD_PRIOR/specs"
+for i in 1 2 3; do printf '// prior AC%s spec\n' "$i" > "$RD_PRIOR/specs/AC$i.spec.ts"; done
+run_bin "$TSR" finish "$RD_PRIOR" --status completed
+PRIOR_SNAPSHOT="$TSR/prior-snapshot"
+cp -R "$RD_PRIOR" "$PRIOR_SNAPSHOT"
+sleep 1
+run_bin "$TSR" preflight "$REQ" --repo .
+RD_NEW="$(last_run_dir)"
+run_bin "$TSR" spec-replay "$RD_NEW" --repo .
+rc=$?
+[ "$rc" -eq 0 ] && [ "$(tail -1 "$LAST_OUT")" = "replayed=3 total=3" ] \
+  && ok "(SR-AC1) spec-replay: 3/3 replayed, replayed=3 total=3 printed LAST" \
+  || no "(SR-AC1) rc=$rc stdout=$(cat "$LAST_OUT")"
+for i in 1 2 3; do
+  [ -f "$RD_NEW/specs/AC$i.spec.ts" ] && diff -q "$RD_NEW/specs/AC$i.spec.ts" "$RD_PRIOR/specs/AC$i.spec.ts" >/dev/null 2>&1 \
+    && ok "(SR-AC1) AC$i spec copied byte-for-byte" || no "(SR-AC1) AC$i spec missing or differs from the source"
+done
+n_sr="$(jq -rs '[.[] | select(.event=="spec_replay")] | length' "$RD_NEW/evidence.jsonl")"
+prior_rid="$(basename "$RD_PRIOR")"
+srcs="$(jq -rs '[.[] | select(.event=="spec_replay") | .source_run_id] | unique | join(",")' "$RD_NEW/evidence.jsonl")"
+[ "$n_sr" = "3" ] && [ "$srcs" = "$prior_rid" ] \
+  && ok "(SR-AC1) exactly 3 spec_replay lines, each source_run_id == the prior run id" \
+  || no "(SR-AC1) n_sr=$n_sr srcs=$srcs prior_rid=$prior_rid"
+python3 "$HERE/validate-verify-evidence.py" "$RD_NEW/evidence.jsonl" >/dev/null 2>&1 \
+  && ok "(SR-AC1) the store re-validates in file mode" || no "(SR-AC1) store invalid"
+diff -r "$RD_PRIOR" "$PRIOR_SNAPSHOT" >/dev/null 2>&1 \
+  && ok "(SR-AC6) the source (prior) run dir is byte-identical before/after — spec-replay never writes into it" \
+  || no "(SR-AC6) prior run dir CHANGED: $(diff -r "$RD_PRIOR" "$PRIOR_SNAPSHOT" 2>&1 | head -5)"
+
+echo "== (SR-AC5) spec-replay --no-replay: replayed=0, nothing copied, exit 0 =="
+sleep 1
+run_bin "$TSR" preflight "$REQ" --repo .
+RD_NOREPLAY="$(last_run_dir)"
+run_bin "$TSR" spec-replay "$RD_NOREPLAY" --repo . --no-replay
+rc=$?
+[ "$rc" -eq 0 ] && [ "$(tail -1 "$LAST_OUT")" = "replayed=0 total=3" ] \
+  && ok "(SR-AC5) --no-replay: exit 0, replayed=0 total=3" || no "(SR-AC5) rc=$rc stdout=$(cat "$LAST_OUT")"
+{ [ ! -d "$RD_NOREPLAY/specs" ] || [ -z "$(ls -A "$RD_NOREPLAY/specs" 2>/dev/null)" ]; } \
+  && ok "(SR-AC5) --no-replay: specs/ absent or empty, nothing copied" || no "(SR-AC5) specs/ was populated: $(ls "$RD_NOREPLAY/specs" 2>/dev/null)"
+n_sr5="$(jq -rs '[.[] | select(.event=="spec_replay")] | length' "$RD_NOREPLAY/evidence.jsonl")"
+[ "$n_sr5" = "0" ] && ok "(SR-AC5) --no-replay: no spec_replay evidence line" || no "(SR-AC5) n_sr5=$n_sr5"
+
+echo "== (SR-AC2) spec-replay: one changed AC (text_sha mismatch) is skipped, unchanged ACs still replay =="
+cat > "$TSR/repo/$REQ" <<'EOF'
+# 03 — echo form
+
+## Problem
+A form that echoes.
+
+## Acceptance criteria
+- Given the form page, when it loads, then a Value field and a Submit button are visible.
+- Given the Value field, when `hello` is submitted, then the follow-up page shows `hello!`
+  in the echo paragraph.
+- Given 200 bookings, when submitted under 200 concurrent users, then no double-booking occurs.
+
+## Notes
+- this bullet is NOT an acceptance criterion
+EOF
+sleep 1
+run_bin "$TSR" preflight "$REQ" --repo .
+RD_AC2="$(last_run_dir)"
+run_bin "$TSR" spec-replay "$RD_AC2" --repo .
+rc=$?
+[ "$rc" -eq 0 ] && [ "$(tail -1 "$LAST_OUT")" = "replayed=2 total=3" ] \
+  && ok "(SR-AC2) one changed AC (AC2) → replayed=2 total=3" || no "(SR-AC2) rc=$rc stdout=$(cat "$LAST_OUT")"
+[ ! -f "$RD_AC2/specs/AC2.spec.ts" ] && ok "(SR-AC2) specs/AC2.spec.ts absent (text_sha mismatch)" || no "(SR-AC2) AC2.spec.ts was copied despite the text change"
+[ -f "$RD_AC2/specs/AC1.spec.ts" ] && [ -f "$RD_AC2/specs/AC3.spec.ts" ] \
+  && ok "(SR-AC2) unchanged AC1/AC3 still replayed" || no "(SR-AC2) AC1/AC3 missing: $(ls "$RD_AC2/specs" 2>/dev/null)"
+
+echo "== (SR-AC9a) mutation control: deleting the text_sha comparison flips AC2 from skipped to replayed =="
+MUT_TEXT="$(mktmp)"; mkdir -p "$MUT_TEXT/bin"
+grep -vF 'AC9-mutation:text_sha' "$RUNNER" > "$MUT_TEXT/bin/verify-run.sh"
+cp "$HERE/verify-helpers.sh" "$HERE/validate-verify-evidence.py" "$MUT_TEXT/bin/"
+chmod +x "$MUT_TEXT/bin/verify-run.sh"
+sleep 1
+run_bin "$TSR" preflight "$REQ" --repo .
+RD_BASE9="$(last_run_dir)"
+run_bin "$TSR" spec-replay "$RD_BASE9" --repo .
+base9_out="$(tail -1 "$LAST_OUT")"
+[ "$base9_out" = "replayed=2 total=3" ] && ok "(SR-AC9a) positive control (unmutated): replayed=2 total=3 (AC2 still text-mismatched)" || no "(SR-AC9a) positive control: $base9_out"
+sleep 1
+run_bin "$TSR" preflight "$REQ" --repo .
+RD_MUT9T="$(last_run_dir)"
+( cd "$TSR/repo" && bash "$MUT_TEXT/bin/verify-run.sh" spec-replay "$RD_MUT9T" --repo . ) >"$LAST_OUT" 2>"$LAST_ERR"
+mut9t_out="$(tail -1 "$LAST_OUT")"
+[ "$mut9t_out" = "replayed=3 total=3" ] && [ -f "$RD_MUT9T/specs/AC2.spec.ts" ] \
+  && ok "(SR-AC9a) mutant (text_sha comparison DELETED): AC2 now incorrectly replays too → replayed=3 total=3 (the comparison is load-bearing)" \
+  || no "(SR-AC9a) mutant: $mut9t_out (AC2.spec.ts present: $([ -f "$RD_MUT9T/specs/AC2.spec.ts" ] && echo yes || echo no))"
+
+echo "== (SR-AC3) spec-replay: no sibling run at all → replayed=0 total=3, exit 0, no evidence line, specs/ absent =="
+T_AC3="$(mktmp)"; stage "$T_AC3"; contract "$T_AC3" true
+run_bin "$T_AC3" preflight "$REQ" --repo .
+RD_AC3="$(last_run_dir)"
+run_bin "$T_AC3" spec-replay "$RD_AC3" --repo .
+rc=$?
+[ "$rc" -eq 0 ] && [ "$(tail -1 "$LAST_OUT")" = "replayed=0 total=3" ] \
+  && ok "(SR-AC3) no sibling at all → replayed=0 total=3, exit 0" || no "(SR-AC3) rc=$rc stdout=$(cat "$LAST_OUT")"
+n_sr3="$(jq -rs '[.[] | select(.event=="spec_replay")] | length' "$RD_AC3/evidence.jsonl")"
+[ "$n_sr3" = "0" ] && ok "(SR-AC3) no spec_replay evidence line" || no "(SR-AC3) n_sr3=$n_sr3"
+{ [ ! -d "$RD_AC3/specs" ] || [ -z "$(ls -A "$RD_AC3/specs" 2>/dev/null)" ]; } \
+  && ok "(SR-AC3) specs/ absent or empty" || no "(SR-AC3) specs/ populated: $(ls "$RD_AC3/specs" 2>/dev/null)"
+
+echo "== (SR-AC4) spec-replay: sibling of a DIFFERENT ticket_path with byte-identical text → replayed=0 (ticket-scoped) =="
+T_AC4="$(mktmp)"; stage "$T_AC4"; contract "$T_AC4" true
+mkdir -p "$T_AC4/repo/.supervisor/verify/verify-20260101T000000Z-otherticket/specs"
+OTHER="$T_AC4/repo/.supervisor/verify/verify-20260101T000000Z-otherticket"
+jq -cn '{schema_version:1, ts:"2026-01-01T00:00:00Z", run_id:"verify-20260101T000000Z-otherticket", event:"run_start",
+  ticket_path:"a-different-ticket.md", ticket_kind:"requirement", branch:"b", head_sha:"h", base_sha:"h", env_contract_hash:null}' \
+  > "$OTHER/evidence.jsonl"
+jq -cn '{acs:[
+  {ac_id:"AC1", text:"Given the form page, when it loads, then a Value field and a Submit button are visible."},
+  {ac_id:"AC2", text:"Given the Value field, when `hello` is submitted, then the follow-up page shows `hello` in the echo paragraph."},
+  {ac_id:"AC3", text:"Given 200 bookings, when submitted under 200 concurrent users, then no double-booking occurs."}
+]}' > "$OTHER/acs.json"
+for i in 1 2 3; do printf '// other-ticket AC%s spec\n' "$i" > "$OTHER/specs/AC$i.spec.ts"; done
+run_bin "$T_AC4" preflight "$REQ" --repo .
+RD_AC4="$(last_run_dir)"
+run_bin "$T_AC4" spec-replay "$RD_AC4" --repo .
+rc=$?
+[ "$rc" -eq 0 ] && [ "$(tail -1 "$LAST_OUT")" = "replayed=0 total=3" ] \
+  && ok "(SR-AC4) identical text but a DIFFERENT ticket_path sibling → replayed=0 (ticket-scoped)" \
+  || no "(SR-AC4) rc=$rc stdout=$(cat "$LAST_OUT")"
+
+echo "== (SR-AC9b) mutation control: deleting the ticket_path comparison flips a different-ticket sibling into a match =="
+MUT_TICK="$(mktmp)"; mkdir -p "$MUT_TICK/bin"
+grep -vF 'AC9-mutation:ticket_path' "$RUNNER" > "$MUT_TICK/bin/verify-run.sh"
+cp "$HERE/verify-helpers.sh" "$HERE/validate-verify-evidence.py" "$MUT_TICK/bin/"
+chmod +x "$MUT_TICK/bin/verify-run.sh"
+sleep 1
+run_bin "$T_AC4" preflight "$REQ" --repo .
+RD_MUT9P="$(last_run_dir)"
+( cd "$T_AC4/repo" && bash "$MUT_TICK/bin/verify-run.sh" spec-replay "$RD_MUT9P" --repo . ) >"$LAST_OUT" 2>"$LAST_ERR"
+mut9p_out="$(tail -1 "$LAST_OUT")"
+[ "$mut9p_out" = "replayed=3 total=3" ] \
+  && ok "(SR-AC9b) mutant (ticket_path comparison DELETED): a DIFFERENT-ticket sibling now incorrectly replays → replayed=3 total=3 (the comparison is load-bearing)" \
+  || no "(SR-AC9b) mutant: $mut9p_out"
+
+echo "== (SR-AC10/AC12) spec sources: line + replayed-row marker in summary.md, derived from evidence =="
+T_SR10="$(mktmp)"
+RD10="$T_SR10/rd"
+mkdir -p "$RD10"
+jq -cn '{schema_version:1, ts:"2026-09-26T00:00:00Z", run_id:"verify-20260926T000000Z-sr10", event:"run_start",
+  ticket_path:"x.md", ticket_kind:"brief", branch:"b", head_sha:"h", base_sha:"h", env_contract_hash:null}' > "$RD10/evidence.jsonl"
+jq -cn '{schema_version:1, ts:"2026-09-26T00:00:01Z", run_id:"verify-20260926T000000Z-sr10", event:"ac",
+  ac_id:"AC1", text:"t1", scope:"ticket", verdict:"FAIL", classification:"REAL_BUG", reason:"broke", steps:[], artifacts:[]}' \
+  | bash "$HERE/verify-helpers.sh" evidence-append "$RD10" - >/dev/null
+jq -cn '{schema_version:1, ts:"2026-09-26T00:00:02Z", run_id:"verify-20260926T000000Z-sr10", event:"spec_replay",
+  ac_id:"AC1", source_run_id:"verify-20260101T000000Z-old", text_sha:"abc", churn_files:null}' \
+  | bash "$HERE/verify-helpers.sh" evidence-append "$RD10" - >/dev/null
+jq -cn '{schema_version:1, ts:"2026-09-26T00:00:03Z", run_id:"verify-20260926T000000Z-sr10", event:"spec_replay",
+  ac_id:"AC2", source_run_id:"verify-20260101T000000Z-old", text_sha:"abc", churn_files:2}' \
+  | bash "$HERE/verify-helpers.sh" evidence-append "$RD10" - >/dev/null
+jq -cn '{schema_version:1, ts:"2026-09-26T00:00:04Z", run_id:"verify-20260926T000000Z-sr10", event:"spec_rederived",
+  ac_id:"AC2", reason:"spec_skipped"}' \
+  | bash "$HERE/verify-helpers.sh" evidence-append "$RD10" - >/dev/null
+jq -cn '{schema_version:1, ts:"2026-09-26T00:00:05Z", run_id:"verify-20260926T000000Z-sr10", event:"ac",
+  ac_id:"AC3", text:"t3", scope:"ticket", verdict:"PASS", classification:null, steps:[], artifacts:[]}' \
+  | bash "$HERE/verify-helpers.sh" evidence-append "$RD10" - >/dev/null
+grep -qF 'spec sources: replayed 2 · authored 1 · re-derived 1' "$RD10/summary.md" \
+  && ok "(SR-AC10) summary.md carries the exact spec sources: line derived from the evidence counts" \
+  || no "(SR-AC10) spec sources line: $(grep 'spec sources:' "$RD10/summary.md")"
+grep -E '^\| AC1 \| ticket \| FAIL \|.*\| replayed \|$' "$RD10/summary.md" >/dev/null \
+  && ok "(SR-AC12) the replayed AC1 row (a FAIL, never re-derived) carries the replayed marker" \
+  || no "(SR-AC12) AC1 row: $(grep '^| AC1 ' "$RD10/summary.md")"
+grep -E '^\| AC3 \| ticket \| PASS \|.*\| — \|$' "$RD10/summary.md" >/dev/null \
+  && ok "(SR-AC12) the authored AC3 row carries — (not replayed)" \
+  || no "(SR-AC12) AC3 row: $(grep '^| AC3 ' "$RD10/summary.md")"
+python3 "$HERE/validate-verify-evidence.py" "$RD10/evidence.jsonl" >/dev/null 2>&1 \
+  && ok "(SR-AC10) the fabricated evidence store re-validates in file mode" || no "(SR-AC10) store invalid"
+
+# ============================================================================
 echo "== (I06-docs) skill §9 + qa-executor Impact Pass step + verify.md flags are present =="
 grep -qF -- '## 9. Impact pass' "$SKILL" && ok "(I06-docs) skill has a ## 9. Impact pass section" || no "(I06-docs) skill missing ## 9. Impact pass"
 grep -qF -- "ticket's own PASS/FAIL/BLOCKED/NOT_VERIFIABLE counts are unchanged by it" "$SKILL" \

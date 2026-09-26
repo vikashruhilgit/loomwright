@@ -22,6 +22,11 @@
 #   auth-check <run_dir> [--repo <dir>]                              # auth.method none ⇒ no-op exit 0; else probe — authenticated ⇒ one `auth` line exit 0; else `auth`+`pause` lines, exit 4
 #   pause      <run_dir> --reason <needs_auth|session_expired>       # append ONE `pause` line (the only place a pause line is ever written) + rebuild summary.md
 #   notify-enable <run_dir>                                          # touch <run_dir>/.notify-enabled — the ONLY other place that marker is created (besides preflight --notify); used by the `--resume --notify` path, which never calls preflight
+#   spec-replay <run_dir> [--repo <dir>] [--no-replay]               # token-economy 07: for each ac_id in THIS run's acs.json, replays a byte-identical spec from the MOST RECENT sibling
+#                                                                     # run of the SAME ticket_path whose acs.json has the same ac_id AND text_sha (sha256 of the whitespace-normalised AC
+#                                                                     # text) and an existing specs/<ac_id>.spec.ts; runs after preflight, before any authoring; appends ONE `spec_replay`
+#                                                                     # evidence line per copy; --no-replay is a pure no-op; prints `replayed=<n> total=<m>` LAST; NEVER writes into,
+#                                                                     # resumes, or deletes the sibling run dir it reads from
 #   walk       <run_dir> [--repo <dir>] [--base-url <url>]           # generate the per-run Playwright config, run the `[ACn]` specs, ingest the reporter into `ac` lines
 #   verdict    <run_dir> <ac_id> <NOT_VERIFIABLE|BLOCKED> --reason <text> [--classification <c>]   # append one browser-less `ac` line
 #   finish     <run_dir> [--status completed|aborted]                # append run_end (NO counts), rebuild summary.md, print its counts row
@@ -92,6 +97,19 @@ sha256_of() {
   elif command -v sha256sum >/dev/null 2>&1; then
     h="$(sha256sum "$f" 2>/dev/null | cut -d' ' -f1)"
   fi
+  printf '%s' "$h"
+}
+
+# ac_text_sha <text> — sha256 of <text> WHITESPACE-NORMALISED (runs of whitespace collapsed to one
+# space, leading/trailing trimmed) through the EXISTING sha256_of helper on a temp file — never a new
+# hashing routine (token-economy 07, Design step 1). Empty on a sha256_of failure (neither shasum nor
+# sha256sum available), same fail-safe-to-empty convention sha256_of itself already uses.
+ac_text_sha() {
+  local text="$1" f h
+  f="$(mktemp "${TMPDIR:-/tmp}/verify-actext.XXXXXX")" || die "mktemp failed"
+  printf '%s' "$text" | tr -s '[:space:]' ' ' | sed -E 's/^ +//; s/ +$//' > "$f"
+  h="$(sha256_of "$f")"
+  rm -f "$f"
   printf '%s' "$h"
 }
 
@@ -469,6 +487,152 @@ auth_check_cmd() {
     | bash "$HELPERS" evidence-append "$run_dir" - >/dev/null || die "auth needs_auth line was refused"
   pause_cmd "$run_dir" --reason needs_auth || die "pause (needs_auth) failed for $run_dir"
   exit 4
+}
+
+# --------------------------------------------------------------------------- #
+# spec-replay <run_dir> [--repo <dir>] [--no-replay]
+# --------------------------------------------------------------------------- #
+# token-economy 07 — replay-first ticket-scope spec authoring (the SKILL/qa-executor mirror of this
+# mechanism is Subtask 2). For each ac_id in THIS run's acs.json, scans SIBLING run dirs (never self),
+# most-recent-first by run_id (timestamp-prefixed, so a lexical sort is chronological — the SAME rule
+# impact_prior_acs_cmd already uses), and takes the FIRST (i.e. most recent) sibling whose
+# run_start.ticket_path equals THIS run's ticket_path AND whose acs.json carries the SAME ac_id with
+# the SAME text_sha (sha256 of the ac text, whitespace-normalised, via ac_text_sha/sha256_of — never a
+# new hashing routine) AND which has an existing specs/<ac_id>.spec.ts. On a match, the spec is copied
+# BYTE-FOR-BYTE into <run_dir>/specs/ (spec_replay_copy_one) and ONE `spec_replay` evidence line is
+# appended. The match is id AND text — a renumbered-but-unchanged AC is re-derived (stated limit;
+# rewriting `[ACn]` titles is out of scope). --no-replay, zero ac_ids, zero siblings, or no
+# same-ticket sibling all print `replayed=<n> total=<m>` with n=0 and exit 0 — nothing copied, no
+# evidence line, <run_dir>/specs/ never created. NEVER writes into, resumes, or deletes a sibling run
+# dir — every read of one is a plain `cat`/`jq`/`cp` FROM it (AC6).
+spec_replay_cmd() {
+  local run_dir="" repo_arg="" no_replay=0 repo run_id total ticket_path head_sha
+  local u="spec-replay <run_dir> [--repo <dir>] [--no-replay]"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --repo)      [ "$#" -ge 2 ] || usage "--repo needs a value"; repo_arg="$2"; shift 2 ;;
+      --no-replay) no_replay=1; shift ;;
+      -*)          usage "$u (unknown flag $1)" ;;
+      *)           if [ -z "$run_dir" ]; then run_dir="$1"; shift; else usage "spec-replay takes ONE run dir"; fi ;;
+    esac
+  done
+  [ -n "$run_dir" ] || usage "$u"
+  command -v jq >/dev/null 2>&1 || die "jq is required [jq_unavailable]"
+  [ -f "$HELPERS" ] || die "sibling verify-helpers.sh not found at $HELPERS"
+  [ -d "$run_dir" ] || { diag "run dir not found at $run_dir [run_dir_missing]"; exit 2; }
+  [ -f "$run_dir/acs.json" ] || { diag "no acs.json in $run_dir - run preflight first [acs_missing]"; exit 2; }
+  run_dir="$(cd "$run_dir" && pwd)"
+  repo="$(resolve_repo "$repo_arg")" || exit 2
+  run_id="$(run_id_of "$run_dir")"
+  total="$(jq '.acs | length' "$run_dir/acs.json" 2>/dev/null)"
+  case "$total" in ''|*[!0-9]*) total=0 ;; esac
+
+  if [ "$no_replay" -eq 1 ] || [ "$total" -eq 0 ]; then
+    echo "replayed=0 total=$total"
+    return 0
+  fi
+
+  ticket_path="$(run_start_field "$run_dir" ticket_path)"
+  head_sha="$(run_start_field "$run_dir" head_sha)"
+
+  local verify_root acids_file siblings_file replayed=0 d rid
+  verify_root="$(cd "$run_dir/.." && pwd)"
+  acids_file="$(mktemp "${TMPDIR:-/tmp}/verify-specreplay-ids.XXXXXX")" || die "mktemp failed"
+  jq -r '.acs[].ac_id' "$run_dir/acs.json" > "$acids_file" 2>/dev/null
+
+  # Sibling run dirs (never self), most-recent-first — same lexical-sort-is-chronological-sort rule
+  # impact_prior_acs_cmd already relies on (timestamp-prefixed run_ids). A candidate needs BOTH an
+  # evidence.jsonl (for run_start.ticket_path) and an acs.json (for the per-ac_id text); either
+  # missing means it can never match and is dropped from the scan up front.
+  siblings_file="$(mktemp "${TMPDIR:-/tmp}/verify-specreplay-sib.XXXXXX")" || die "mktemp failed"
+  : > "$siblings_file"
+  for d in "$verify_root"/*/; do
+    [ -d "$d" ] || continue
+    d="${d%/}"
+    rid="$(basename "$d")"
+    [ "$rid" = "$run_id" ] && continue
+    [ -f "$d/evidence.jsonl" ] || continue
+    [ -f "$d/acs.json" ] || continue
+    printf '%s\n' "$rid" >> "$siblings_file"
+  done
+  sort -r "$siblings_file" -o "$siblings_file" 2>/dev/null
+
+  local ac_id ac_text cur_sha
+  while IFS= read -r ac_id; do
+    [ -n "$ac_id" ] || continue
+    ac_text="$(jq -r --arg id "$ac_id" '.acs[] | select(.ac_id == $id) | .text' "$run_dir/acs.json" 2>/dev/null | head -1)"
+    [ -n "$ac_text" ] || continue
+    cur_sha="$(ac_text_sha "$ac_text")"
+    [ -n "$cur_sha" ] || continue
+
+    local sib_rid sib_dir sib_ticket sib_text sib_sha matched_rid=""
+    while IFS= read -r sib_rid; do
+      [ -n "$sib_rid" ] || continue
+      sib_dir="$verify_root/$sib_rid"
+      sib_ticket="$(run_start_field "$sib_dir" ticket_path)"
+      [ "$sib_ticket" = "$ticket_path" ] || continue   # AC9-mutation:ticket_path
+      sib_text="$(jq -r --arg id "$ac_id" '.acs[] | select(.ac_id == $id) | .text' "$sib_dir/acs.json" 2>/dev/null | head -1)"
+      [ -n "$sib_text" ] || continue
+      sib_sha="$(ac_text_sha "$sib_text")"
+      [ -n "$sib_sha" ] && [ "$sib_sha" = "$cur_sha" ] || continue   # AC9-mutation:text_sha
+      [ -f "$sib_dir/specs/$ac_id.spec.ts" ] || continue
+      matched_rid="$sib_rid"
+      break
+    done < "$siblings_file"
+
+    if [ -n "$matched_rid" ]; then
+      spec_replay_copy_one "$run_dir" "$run_id" "$repo" "$ac_id" "$matched_rid" "$verify_root/$matched_rid" "$cur_sha" "$head_sha" \
+        || die "spec_replay line for $ac_id was refused (see $run_dir/rejected.jsonl)"
+      replayed=$((replayed + 1))
+    fi
+  done < "$acids_file"
+
+  rm -f "$acids_file" "$siblings_file"
+  echo "replayed=$replayed total=$total"
+  return 0
+}
+
+# spec_replay_copy_one <run_dir> <run_id> <repo> <ac_id> <source_run_id> <source_dir> <text_sha> <head_sha>
+# Copies <source_dir>/specs/<ac_id>.spec.ts BYTE-FOR-BYTE into <run_dir>/specs/ (never touching
+# <source_dir> — a plain `cp` FROM it) and appends ONE `spec_replay` evidence line. `churn_files`: the
+# source run's OWN latest ticket-scope `ac` line for this ac_id may optionally carry `surfaces`
+# (check_ac already allows it); when it does (and both head_shas resolve), churn_files is the count of
+# `git diff --name-only <source.head_sha>...<this.head_sha>` intersected with those surfaces; absent
+# or empty surfaces, or an unresolvable diff, => JSON null, NEVER 0 (AC7 — never conclude "no churn"
+# from an empty/unmapped diff, the same pathspec-trap convention impact_record_surfaces_cmd follows).
+spec_replay_copy_one() {
+  local run_dir="$1" run_id="$2" repo="$3" ac_id="$4" source_run_id="$5" source_dir="$6" text_sha="$7" head_sha="$8"
+  local source_head surfaces_json diff_files churn_files n ts
+  mkdir -p "$run_dir/specs" || die "cannot create $run_dir/specs"
+  cp "$source_dir/specs/$ac_id.spec.ts" "$run_dir/specs/$ac_id.spec.ts" || die "could not copy the spec for $ac_id from $source_dir"
+
+  source_head="$(run_start_field "$source_dir" head_sha)"
+  surfaces_json="[]"
+  if [ -f "$source_dir/evidence.jsonl" ]; then
+    surfaces_json="$(jq -c --arg id "$ac_id" '
+      def latest_by(f): group_by(f) | map(max_by(._i)) | sort_by(._i);
+      (to_entries | map(.value + {_i: .key})) as $L
+      | ([$L[] | select(.event == "ac" and .scope == "ticket" and .ac_id == $id)] | latest_by(.ac_id)) as $m
+      | ($m[0].surfaces // [])
+    ' "$source_dir/evidence.jsonl" 2>/dev/null)"
+    [ -n "$surfaces_json" ] || surfaces_json="[]"
+  fi
+
+  churn_files="null"
+  if [ "$surfaces_json" != "[]" ] && [ -n "$source_head" ] && [ -n "$head_sha" ]; then
+    diff_files="$(git -C "$repo" diff --name-only "$source_head...$head_sha" 2>/dev/null | jq -R . 2>/dev/null | jq -sc . 2>/dev/null)"
+    [ -n "$diff_files" ] || diff_files="[]"
+    n="$(jq -n --argjson a "$diff_files" --argjson b "$surfaces_json" '[$a[] as $x | select($b | index($x) != null)] | length' 2>/dev/null)"
+    case "$n" in ''|*[!0-9]*) n="" ;; esac
+    [ -n "$n" ] && churn_files="$n"
+  fi
+
+  ts="$(now_ts)"
+  jq -cn --arg ts "$ts" --arg run_id "$run_id" --arg ac_id "$ac_id" --arg source_run_id "$source_run_id" \
+     --arg text_sha "$text_sha" --argjson churn_files "$churn_files" '
+    {schema_version: 1, ts: $ts, run_id: $run_id, event: "spec_replay", ac_id: $ac_id,
+     source_run_id: $source_run_id, text_sha: $text_sha, churn_files: $churn_files}' \
+    | bash "$HELPERS" evidence-append "$run_dir" -
 }
 
 # --------------------------------------------------------------------------- #
@@ -1200,6 +1364,7 @@ main() {
     auth-check) auth_check_cmd "$@" ;;
     preflight)  preflight_cmd "$@" ;;
     notify-enable) notify_enable_cmd "$@" ;;
+    spec-replay) spec_replay_cmd "$@" ;;
     walk)       walk_cmd "$@" ;;
     verdict)    verdict_cmd "$@" ;;
     finish)     finish_cmd "$@" ;;

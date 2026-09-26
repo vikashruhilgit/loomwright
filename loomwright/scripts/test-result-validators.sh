@@ -2874,6 +2874,103 @@ EOF
 run_v "$V_QA" "$F"
 assert_pass "verify: [ITEM-04] status completed with pause_reason ABSENT (backward-compatible, same as null) [rule V7]"
 
+# --- token-economy 07 (spec-replay, subtask 1): spec_sources — OPTIONAL, additive, no
+# schema_version bump (rule V8, the V7 precedent) ---
+mk vr-spec-sources-absent.md <<'EOF'
+VERIFY_RESULT:
+  schema_version: 1
+  run_id: verify-20260926T090000Z-x
+  run_dir: .supervisor/verify/verify-20260926T090000Z-x
+  status: completed
+  counts: {pass: 1, fail: 0, blocked: 0, not_verifiable: 0, total: 1}
+  summary: spec_sources OMITTED entirely (pre-item emitter shape)
+EOF
+run_v "$V_QA" "$F"
+assert_pass "verify: [token-economy 07] spec_sources ABSENT validates unchanged [rule V8]"
+
+mk vr-spec-sources-valid.md <<'EOF'
+VERIFY_RESULT:
+  schema_version: 1
+  run_id: verify-20260926T090000Z-x
+  run_dir: .supervisor/verify/verify-20260926T090000Z-x
+  status: completed
+  counts: {pass: 1, fail: 0, blocked: 0, not_verifiable: 0, total: 1}
+  spec_sources: {replayed: 2, authored: 1, rederived: 1}
+  summary: three non-negative ints
+EOF
+run_v "$V_QA" "$F"
+assert_pass "verify: [token-economy 07] spec_sources with three non-negative ints validates [rule V8]"
+
+mk vr-spec-sources-string.md <<'EOF'
+VERIFY_RESULT:
+  schema_version: 1
+  run_id: verify-20260926T090000Z-x
+  run_dir: .supervisor/verify/verify-20260926T090000Z-x
+  status: completed
+  counts: {pass: 1, fail: 0, blocked: 0, not_verifiable: 0, total: 1}
+  spec_sources: {replayed: three, authored: 1, rederived: 0}
+  summary: replayed is a non-integer string, not a count
+EOF
+run_v "$V_QA" "$F"
+assert_fail "verify: [token-economy 07] spec_sources.replayed is a non-integer string [rule V8]" \
+  "spec_sources.replayed must be an integer"
+
+mk vr-spec-sources-negative.md <<'EOF'
+VERIFY_RESULT:
+  schema_version: 1
+  run_id: verify-20260926T090000Z-x
+  run_dir: .supervisor/verify/verify-20260926T090000Z-x
+  status: completed
+  counts: {pass: 1, fail: 0, blocked: 0, not_verifiable: 0, total: 1}
+  spec_sources: {replayed: 2, authored: -1, rederived: 0}
+  summary: authored is negative
+EOF
+run_v "$V_QA" "$F"
+assert_fail "verify: [token-economy 07] spec_sources.authored is a NEGATIVE integer [rule V8]" \
+  "spec_sources.authored must be a non-negative integer"
+
+mk vr-spec-sources-missing-key.md <<'EOF'
+VERIFY_RESULT:
+  schema_version: 1
+  run_id: verify-20260926T090000Z-x
+  run_dir: .supervisor/verify/verify-20260926T090000Z-x
+  status: completed
+  counts: {pass: 1, fail: 0, blocked: 0, not_verifiable: 0, total: 1}
+  spec_sources: {replayed: 2, authored: 1}
+  summary: rederived is absent from spec_sources
+EOF
+run_v "$V_QA" "$F"
+assert_fail "verify: [token-economy 07] spec_sources missing rederived [rule V8]" \
+  "spec_sources is missing rederived"
+
+mk vr-spec-sources-extra-key.md <<'EOF'
+VERIFY_RESULT:
+  schema_version: 1
+  run_id: verify-20260926T090000Z-x
+  run_dir: .supervisor/verify/verify-20260926T090000Z-x
+  status: completed
+  counts: {pass: 1, fail: 0, blocked: 0, not_verifiable: 0, total: 1}
+  spec_sources: {replayed: 2, authored: 1, rederived: 0, bogus: 9}
+  summary: an unknown extra key on spec_sources
+EOF
+run_v "$V_QA" "$F"
+assert_fail "verify: [token-economy 07] spec_sources carries an EXTRA unknown key [rule V8]" \
+  "spec_sources carries unknown key(s)"
+
+mk vr-spec-sources-scalar.md <<'EOF'
+VERIFY_RESULT:
+  schema_version: 1
+  run_id: verify-20260926T090000Z-x
+  run_dir: .supervisor/verify/verify-20260926T090000Z-x
+  status: completed
+  counts: {pass: 1, fail: 0, blocked: 0, not_verifiable: 0, total: 1}
+  spec_sources: 3
+  summary: spec_sources is a scalar, not a mapping
+EOF
+run_v "$V_QA" "$F"
+assert_fail "verify: [token-economy 07] spec_sources not a mapping [rule V8]" \
+  "spec_sources must be a mapping"
+
 # ── F. plan-reviewer validator ───────────────────────────────────────────────
 echo "== F. validate-plan-review-result.py — 6 rules =="
 
