@@ -19,7 +19,12 @@
 #             a '/\/\n-sequence name round-trips; the jq-less path (jq off PATH, id containing `"`)
 #             prints exit 0 + the literal object with NO subtask_id key; three brief layouts
 #             (H3 + fence + `# Subtask N` comment / H2 + `subtask_N:` key / inline `### Subtask N`
-#             heading, raw YAML); provides list ends at the next top-level key; --root honoured.
+#             heading, raw YAML); provides list ends at the next top-level key; --root honoured;
+#             `subtask_<non-digit>` keys (`subtask_id:` / `subtask_title:`) and `subtasks:` are never
+#             anchors (brief G, + mutation control); a lone `subtask_id:` block on an anchor-less
+#             brief anchors as subtask 1, two are ambiguous ⇒ subtask_not_found (H/I); an anchor
+#             with no `provides:` key ⇒ no_contracts, not [] (J); a duplicate anchor resolves to
+#             the one carrying provides (K); `--parse-only` counts entries without disk checks.
 #   seams   — EM §"v12 outputs_verified gate" cites verify-provides.sh + provides_mismatch +
 #             "regardless of the worker"; Supervisor Single-Agent step 3 AND Sequential gate cite
 #             verify-provides.sh with `--root .` (by anchor, never line number); worker Step 5.5 cites
@@ -59,12 +64,15 @@ ORCH="$PLUGIN_ROOT/agents/orchestrator.md"
 SCHEMAS="$PLUGIN_ROOT/docs/RESULT_SCHEMAS.md"
 ASYNC="$PLUGIN_ROOT/skills/async-orchestration/SKILL.md"
 FAILDOC="$PLUGIN_ROOT/docs/FAILURE_ESCALATION.md"
+LAUNCHPAD="$PLUGIN_ROOT/agents/launch-pad.md"
+REVIEWER="$PLUGIN_ROOT/agents/plan-reviewer.md"
+READINESS="$PLUGIN_ROOT/skills/supervisor-readiness/SKILL.md"
 
 pass=0; fail=0
 ok() { echo "  ok: $1"; pass=$((pass+1)); }
 no() { echo "  FAIL: $1"; fail=$((fail+1)); }
 
-for f in "$SCRIPT" "$EM" "$SUP" "$WORKER" "$ORCH" "$SCHEMAS" "$FAILDOC" "$ASYNC"; do
+for f in "$SCRIPT" "$EM" "$SUP" "$WORKER" "$ORCH" "$SCHEMAS" "$FAILDOC" "$ASYNC" "$LAUNCHPAD" "$REVIEWER" "$READINESS"; do
   [ -f "$f" ] || no "MISSING surface: $f"
 done
 if [ "$fail" -ne 0 ]; then
@@ -279,6 +287,132 @@ done
 [ "$(jq_get '.outputs_verified[10].name')" = "it's\\back\\nslash" ] && ok "D injection name (' \\ \\n-sequence) round-trips through jq --arg" || no "D injection name: $(jq_get '.outputs_verified[10].name')"
 [ "$(jq_get '.outputs_verified[10].status')" = "present" ] && ok "D injection name matched literally on disk" || no "D injection: $(jq_get '.outputs_verified[10]')"
 
+echo "--- script: subtask_<non-digit> keys are never anchors (2026-09-26 subtask_id: regression) ---"
+# Brief G — the shape four 2026-09-24..26 briefs carried: `# Subtask 1` comment, THEN a `subtask_id:`
+# slug key, then provides. The key used to register as an anchor for subtask "id", ending the block
+# before `provides:` ⇒ a vacuous `outputs_verified: []`. Also `subtask_title:` / `subtasks:` keys.
+cat > "$TMP/briefG.md" <<'EOF2'
+## Subtask Contracts
+
+```yaml
+# Subtask 1 — end-to-end (LAUNCHABLE)
+subtask_id: thing-01
+subtask_title: "the thing"
+subtasks: 1
+lanes:
+  - src/a.ts
+requires: []
+provides:
+  - {kind: "symbol", path: "src/a.ts", name: "Sym"}
+  - {kind: "file",   path: "src/nope.ts"}
+out_of_lane: []
+```
+EOF2
+run "$TMP/briefG.md" 1 --root "$ROOT"
+[ "$(jq_get '.outputs_verified | length')" = "2" ] && [ "$(jq_get '.outputs_gap')" = "src/nope.ts" ] && ok "G/1 '# Subtask 1' + subtask_id:/subtask_title:/subtasks: keys ⇒ both provides parsed (not a vacuous [])" || no "G/1: $OUT"
+run "$TMP/briefG.md" 2 --root "$ROOT"
+case "$ERR" in *"anchors found: 1"$'\n'*|*"anchors found: 1") ok "G/2 anchor list is exactly '1' — no phantom 'id' / 'title' / 's' anchor" ;; *) no "G/2 anchor list: $ERR" ;; esac
+
+# Brief H — NO anchor, exactly ONE `subtask_id:` block (the 2026-09-26 learning-emit brief shape).
+cat > "$TMP/briefH.md" <<'EOF2'
+## Subtask Structure
+
+| # | Title |
+|---|-------|
+| 1 | only |
+
+```yaml
+subtask_id: only-01
+lanes:
+  - src/a.ts
+requires: []
+provides:
+  - {kind: "symbol", path: "src/a.ts", name: "Sym"}
+out_of_lane: []
+```
+EOF2
+run "$TMP/briefH.md" 1 --root "$ROOT"
+[ "$(jq_get '.outputs_verified | length')" = "1" ] && [ "$(jq_get '.outputs_verified[0].status')" = "present" ] && ok "H/1 lone subtask_id: block on an anchor-less brief anchors as subtask 1 (legacy fallback)" || no "H/1 fallback: $OUT"
+case "$ERR" in *"lone \`subtask_id: only-01\` block anchored as subtask 1"*) ok "H/1 fallback is announced on stderr (never silent)" ;; *) no "H/1 fallback not logged: $ERR" ;; esac
+run "$TMP/briefH.md" 2 --root "$ROOT"
+[ "$(jq_get '.reason')" = "subtask_not_found" ] && ok "H/2 the fallback serves id 1 only ⇒ id 2 is subtask_not_found" || no "H/2: $OUT"
+
+# Brief I — NO anchor, TWO `subtask_id:` blocks (the verify-spec-replay shape): ambiguous ⇒ fail closed.
+cat > "$TMP/briefI.md" <<'EOF2'
+```yaml
+subtask_id: two-01
+provides:
+  - {kind: "symbol", path: "src/a.ts", name: "Sym"}
+```
+
+```yaml
+subtask_id: two-02
+provides:
+  - {kind: "file", path: "src/a.ts"}
+```
+EOF2
+run "$TMP/briefI.md" 1 --root "$ROOT"
+[ "$RC" -eq 0 ] && [ "$(jq_get '.reason')" = "subtask_not_found" ] && ok "I/1 two subtask_id: blocks, no anchors ⇒ subtask_not_found (never guess by position)" || no "I/1: rc=$RC $OUT"
+case "$ERR" in *"2 \`subtask_id:\` key(s) (two-01, two-02)"*"# Subtask N"*) ok "I/1 stderr names the slug keys and the fix (anchor with # Subtask N)" ;; *) no "I/1 stderr hint: $ERR" ;; esac
+
+# Brief J — an anchor with NO provides: key under it ⇒ no_contracts, never an empty list.
+cat > "$TMP/briefJ.md" <<'EOF2'
+```yaml
+# Subtask 1 — contract-less
+requires: []
+lanes: []
+# Subtask 2 — has one
+provides:
+  - {kind: "file", path: "src/a.ts"}
+```
+EOF2
+run "$TMP/briefJ.md" 1 --root "$ROOT"
+[ "$RC" -eq 0 ] && [ "$(jq_get '.status')" = "unverifiable" ] && [ "$(jq_get '.reason')" = "no_contracts" ] && ok "J/1 anchor without a provides: key ⇒ unverifiable/no_contracts (not outputs_verified [])" || no "J/1: rc=$RC $OUT"
+case "$ERR" in *"no provides: key"*) ok "J/1 stderr says the provides: key is absent" ;; *) no "J/1 stderr: $ERR" ;; esac
+run "$TMP/briefJ.md" 2 --root "$ROOT"
+[ "$(jq_get '.outputs_verified | length')" = "1" ] && ok "J/2 sibling with provides still parses" || no "J/2: $OUT"
+
+# Brief K — the same anchor twice: a prose `### Subtask 1` section (no provides) THEN the contract comment.
+cat > "$TMP/briefK.md" <<'EOF2'
+### Subtask 1 — prose description
+Does the thing.
+
+## Subtask Contracts
+
+```yaml
+# Subtask 1
+provides:
+  - {kind: "symbol", path: "src/a.ts", name: "Sym"}
+```
+EOF2
+run "$TMP/briefK.md" 1 --root "$ROOT"
+[ "$(jq_get '.outputs_verified | length')" = "1" ] && ok "K/1 duplicate anchor: the occurrence carrying provides: wins over an earlier prose heading" || no "K/1: $OUT"
+
+echo "--- script: --parse-only (Launch Pad's pre-review anchor check; no disk checks) ---"
+run "$TMP/briefA.md" 1 --parse-only --root "$TMP/does-not-exist"
+valid_json && [ "$(jq_get '.status')" = "parsed" ] && [ "$(jq_get '.provides_count')" = "6" ] && [ "$(jq_get 'has("outputs_verified")')" = "false" ] && ok "--parse-only A/1 ⇒ status parsed, provides_count 6, no disk results (root need not exist)" || no "--parse-only A/1: $OUT"
+run "$TMP/briefB.md" 2 --parse-only
+[ "$(jq_get '.status')" = "parsed" ] && [ "$(jq_get '.provides_count')" = "0" ] && ok "--parse-only explicit provides: [] ⇒ parsed, provides_count 0" || no "--parse-only B/2: $OUT"
+run "$TMP/briefG.md" 1 --parse-only
+[ "$(jq_get '.provides_count')" = "2" ] && ok "--parse-only G/1 (subtask_id: under # Subtask 1) ⇒ provides_count 2" || no "--parse-only G/1: $OUT"
+run "$TMP/briefI.md" 1 --parse-only
+[ "$(jq_get '.reason')" = "subtask_not_found" ] && ok "--parse-only I/1 ⇒ subtask_not_found (the brief a reviewer must bounce)" || no "--parse-only I/1: $OUT"
+run "$TMP/briefJ.md" 1 --parse-only
+[ "$(jq_get '.reason')" = "no_contracts" ] && ok "--parse-only J/1 ⇒ no_contracts" || no "--parse-only J/1: $OUT"
+
+# MUTATION CONTROL — restore the pre-fix anchor rule (key form `[[:alnum:]]`, no subtask_<non-digit>
+# guard) in a COPY of the script; brief G MUST regress to the empty/vacuous result.
+MUTA="$TMP/verify-provides-old-anchor.sh"
+sed -e '/subtask_\[\^0-9\]\/) return 0$/d' \
+    -e 's#subtask\[\[:space:\]_-\]\*\[0-9\]/#subtask[[:space:]_-]*[[:alnum:]]/#' "$SCRIPT" > "$MUTA"
+if cmp -s "$MUTA" "$SCRIPT"; then no "old-anchor mutant identical to original — control invalid (anchor_kind shape changed?)"
+else
+  MOUT="$(bash "$MUTA" "$TMP/briefG.md" 1 --root "$ROOT" 2>/dev/null)"
+  if [ "$(printf '%s' "$MOUT" | jq -r '.outputs_verified | length')" = "2" ]; then
+    no "MUTATION CONTROL: brief G still parses with the pre-fix anchor rule — the G/1 assertion is vacuous"
+  else ok "MUTATION CONTROL: the pre-fix anchor rule makes brief G lose its provides (G/1 is load-bearing)"; fi
+fi
+
 echo "--- script: unverifiable reasons + degenerate list ---"
 run "$TMP/does-not-exist.md" 1 --root "$ROOT"
 [ "$RC" -eq 0 ] && [ "$(jq_get '.reason')" = "brief_unreadable" ] && ok "missing brief ⇒ unverifiable/brief_unreadable, exit 0" || no "brief_unreadable: rc=$RC $OUT"
@@ -407,6 +541,33 @@ grep -q 'provides_mismatch' "$SCHEMAS" && ok "RESULT_SCHEMAS.md names provides_m
 [ "$(grep -c 'worker self-verification, zero tokens)' "$ORCH")" = "0" ] && ok "orchestrator.md: retired '(worker self-verification, zero tokens)' is 0-hit" || no "orchestrator.md still carries the retired parenthetical"
 [ "$(grep -c 'cross-checked on disk by the consumer via `verify-provides.sh`' "$ORCH")" = "2" ] && ok "orchestrator.md: both mirrors carry the cross-checked-on-disk phrasing" || no "orchestrator.md mirror count: $(grep -c 'cross-checked on disk' "$ORCH")"
 grep -q 'verify-provides\.sh' "$FAILDOC" && ok "FAILURE_ESCALATION.md trigger names verify-provides.sh" || no "FAILURE_ESCALATION.md lacks verify-provides.sh"
+
+# Anchor guarantee (2026-09-26): the gate can only verify what it can parse, and Plan Reviewer has no
+# Bash — so Launch Pad runs --parse-only per id before every review spawn and hands the reviewer the
+# lines; Criterion 12 blocks an unparseable anchor; both templates name the required anchor.
+lp_1b="$(section "$LAUNCHPAD" '^1b[.] [*][*]Gate-parse check' '^2[.] Spawn Plan Reviewer')"
+grep -q 'verify-provides\.sh.*--parse-only' < <(printf '%s\n' "$lp_1b") && ok "Launch Pad Phase 5.5 action 1b runs verify-provides.sh --parse-only per subtask id" || no "Launch Pad lacks the --parse-only pre-review check"
+grep -q -- '--- GATE PARSE ---' "$LAUNCHPAD" && ok "Launch Pad spawn contract carries the GATE PARSE block" || no "Launch Pad spawn contract lacks GATE PARSE"
+c12="$(section "$REVIEWER" '^### 12[.] Inter-Subtask Output Contracts' '^### 13[.]')"
+grep -q 'Gate-parseable anchor' < <(printf '%s\n' "$c12") && grep -q 'GATE PARSE' < <(printf '%s\n' "$c12") && grep -q 'subtask_id: foo-01' < <(printf '%s\n' "$c12") && ok "Criterion 12 requires a gate-parseable anchor, rejects slug keys, and consumes GATE PARSE" || no "Criterion 12 anchor clause missing"
+grep -q 'no gate-parseable `Subtask N` anchor' < <(printf '%s\n' "$c12") && ok "Criterion 12 lists the unparseable anchor as BLOCKING" || no "Criterion 12 severity list lacks the anchor case"
+grep -q 'NOT an anchor' "$READINESS" && grep -q -- '--parse-only' "$READINESS" && ok "supervisor-readiness authoring rules name the required anchor" || no "supervisor-readiness lacks the anchor rule"
+# every contract example in the two templates is itself gate-parseable (a template that violates the rule teaches it)
+tpl_counts() {   # prints "<fenced yaml blocks with provides:> <of those lacking a Subtask N anchor>" for $1
+  awk '/^```yaml$/ { on = 1; blk = ""; next } on && /^```$/ { on = 0; if (blk ~ /(^|\n)[[:space:]]*provides:/) print blk "\n---BLOCK---"; next } on { blk = blk $0 "\n" }' "$1" |
+    awk -v RS='---BLOCK---\n' 'NF { n++; if ($0 !~ /(^|\n)[[:space:]]*(#+[[:space:]]*[Ss]ubtask[[:space:]]+[0-9]|subtask_[0-9])/) bad++ } END { print n+0, bad+0 }'
+}
+for tpl in "$LAUNCHPAD" "$READINESS"; do
+  read -r nblk bad < <(tpl_counts "$tpl")
+  [ "$nblk" -gt 0 ] && [ "$bad" -eq 0 ] && ok "$(basename "$(dirname "$tpl")")/$(basename "$tpl"): all $nblk fenced contract examples carry a Subtask N anchor" || no "$(basename "$tpl"): $bad of $nblk fenced contract examples lack a Subtask N anchor"
+done
+MUTT="$TMP/launch-pad-no-anchor.md"
+sed '/^# Subtask 2 — JWT guard (BLOCKED by #1)$/d' "$LAUNCHPAD" > "$MUTT"
+if cmp -s "$MUTT" "$LAUNCHPAD"; then no "template mutant identical to original — control invalid (example anchor line changed?)"
+else
+  read -r nblk bad < <(tpl_counts "$MUTT")
+  [ "$bad" -eq 1 ] && ok "MUTATION CONTROL: dropping the example block's '# Subtask 2' anchor makes the template check fail" || no "MUTATION CONTROL: template check still passes with the example anchor removed — vacuous"
+fi
 
 echo "--- mutation control ---"
 MUT="$TMP/em-mutant.md"

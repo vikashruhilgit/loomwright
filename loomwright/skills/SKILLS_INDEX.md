@@ -8,7 +8,7 @@ Comprehensive index of all skills available in the Loomwright plugin.
 
 | Skill Name | Directory | Agent Consumers | Token Est. | Version | Last Updated |
 |------------|-----------|-----------------|------------|---------|--------------|
-| Supervisor Readiness | `supervisor-readiness/` | Launch Pad (preload) | ~800 | 1.5.0 | 2026-09-24 |
+| Supervisor Readiness | `supervisor-readiness/` | Launch Pad (preload) | ~800 | 1.6.0 | 2026-09-26 |
 | Workflow Management | `workflow-management/` | — (removed outright, no replacement Read — see `agents/supervisor.md` §"Preloaded Skill Routing (4f)") | ~1,200 | 1.2.0 | 2026-07-30 |
 | Async Orchestration | `async-orchestration/` | Supervisor (on-demand Read at Phase 2 PLAN entry, refreshed at Phase 4 FINALIZE entry — deliberately NOT preloaded) | ~1,600 | 1.6.1 | 2026-09-23 |
 | State Management | `state-management/` | Supervisor (on-demand Read at Phase 4.5 entry — deliberately NOT preloaded) | ~1,500 | 1.5.0 | 2026-08-02 |
