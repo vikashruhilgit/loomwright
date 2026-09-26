@@ -203,6 +203,16 @@ never a direct write to `evidence.jsonl`):
    outcome: pass|fail} (the app was started at step 3, this run or a prior one) for cleanup, then
    go straight to EMIT (11) with `status: paused, pause_reason: needs_auth` — `auth-check` itself
    already appended the `auth`/`pause` lines and rebuilt `summary.md`.
+5.5. **Spec replay (token-economy 07).** `verify-run.sh spec-replay <run_dir> --repo <dir>
+     [--no-replay]` (`--no-replay` iff passed on the Task prompt) — copies a byte-identical prior
+     spec for every `ac_id` whose text is unchanged from the most recent same-ticket run, per skill
+     §2. Author a spec in step 6 ONLY for `ac_id`s still without a file under `<run_dir>/specs/`
+     afterwards. **Drift fallback:** after step 8's `walk`, a REPLAYED `ac_id` whose verdict is
+     BLOCKED with reason `spec_skipped`/`spec_not_run` is re-derived (fresh spec, re-`walk` that one
+     id, append `{event:"spec_rederived", ac_id, reason}`) ONCE — never for an environment-wide
+     BLOCKED reason (`playwright_unavailable`, `reporter_missing: …`, a navigation/timeout message,
+     `session_expired`, `run_paused_session_expired`), and NEVER for a replayed spec that FAILS (a
+     FAIL is always real). At most one re-derivation per `ac_id` per run.
 6. AC SET for this pass: on a fresh run, every ac_id in acs.json; on a `resumed` run, ONLY the
    still-unverdicted ones — `verify-helpers.sh first-unverdicted <run_dir>` prints the first, then
    take every `acs.json` ac_id from that point on in file order. `first-unverdicted` treats a FORCED

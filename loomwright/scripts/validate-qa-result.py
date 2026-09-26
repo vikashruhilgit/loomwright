@@ -53,8 +53,17 @@ validates BOTH blocks; which rules apply is decided by NAME, not by position:
       (V7) pause_reason is a REQUIRED KEY / NULLABLE VALUE: non-null and one
            of [needs_auth, session_expired] iff status == paused; null iff
            status is completed/aborted (either direction of mismatch fails)
+      (V8) spec_sources (token-economy 07) is OPTIONAL — absent validates
+           unchanged (the V7 precedent: additive, no schema_version bump).
+           Present: must be a mapping with EXACTLY the keys replayed /
+           authored / rederived, each a non-negative integer (mirrors V5's
+           as_int conversion for `counts` — this text-block parser never
+           distinguishes a quoted numeric literal from a bare one, so "a
+           string" rejected here means a value that does not parse as an
+           integer at all, e.g. `replayed: three`)
     (`counts` is COPIED from `verify-run.sh finish`'s printed row — the agent
-    never tallies; V6 is what catches a hand-edited row.)
+    never tallies; V6 is what catches a hand-edited row. `spec_sources` is
+    COPIED from the same `finish`/`summary-build` derived line, same rule.)
   * else the existing `missing QA_RESULT block` reason, unchanged.
 
 INVARIANT: ALWAYS exits 0. Decision on stdout only — including when the shared
@@ -108,6 +117,7 @@ VERIFY_BLOCK = "VERIFY_RESULT"
 VERIFY_VALID_STATUS = ("completed", "aborted", "paused")
 VERIFY_COUNT_KEYS = ("pass", "fail", "blocked", "not_verifiable", "total")
 VERIFY_PAUSE_REASONS = ("needs_auth", "session_expired")
+SPEC_SOURCES_KEYS = ("replayed", "authored", "rederived")
 
 VALID_STATUS = (
     "passed",
@@ -159,7 +169,7 @@ def locate_blocks():
 
 
 def validate_verify(fields):
-    """The VERIFY_RESULT rules (V1)–(V6); see the module docstring."""
+    """The VERIFY_RESULT rules (V1)–(V8); see the module docstring."""
     # ── (V1) schema_version equal to 1 ───────────────────────────────────────
     if not present(fields, "schema_version"):
         emit(False, "VERIFY_RESULT is missing the schema_version field (rule V1)")
@@ -240,6 +250,32 @@ def validate_verify(fields):
                 "VERIFY_RESULT pause_reason must be null when status is %r; got %r (rule V7)"
                 % (status, fields.get("pause_reason")),
             )
+
+    # ── (V8) spec_sources: OPTIONAL, additive, no schema_version bump ────────
+    # token-economy 07 — the V7 precedent (absent ⇒ a pre-item emitter keeps validating unchanged).
+    if present(fields, "spec_sources"):
+        spec_sources = fields.get("spec_sources")
+        if not isinstance(spec_sources, dict):
+            emit(False, "VERIFY_RESULT spec_sources must be a mapping; got %r (rule V8)" % (spec_sources,))
+        extra_keys = sorted(set(spec_sources) - set(SPEC_SOURCES_KEYS))
+        if extra_keys:
+            emit(
+                False,
+                "VERIFY_RESULT spec_sources carries unknown key(s) %s; it must have EXACTLY "
+                "replayed/authored/rederived (rule V8)" % ", ".join(extra_keys),
+            )
+        for key in SPEC_SOURCES_KEYS:
+            if key not in spec_sources:
+                emit(False, "VERIFY_RESULT spec_sources is missing %s (rule V8)" % key)
+            value, bad = as_int(spec_sources.get(key))
+            if value is None:
+                emit(False, "VERIFY_RESULT spec_sources.%s must be an integer; got %s (rule V8)" % (key, bad))
+            if value < 0:
+                emit(
+                    False,
+                    "VERIFY_RESULT spec_sources.%s must be a non-negative integer; got %d (rule V8)"
+                    % (key, value),
+                )
 
     emit(True)
 

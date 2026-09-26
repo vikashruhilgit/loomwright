@@ -16,6 +16,7 @@
 #   summary-build      <run_dir>           # the ONLY reader of evidence.jsonl: derives <run_dir>/summary.md (atomic temp+mv) with a `derived_from:` trailer
 #   first-unverdicted  <run_dir>           # prints the first `ac_id` (acs.json order) not yet GENUINELY verdicted — a FORCED pause-verdict (latest ac line reason session_expired / run_paused_session_expired) does NOT count, so it re-opens on resume; else nothing; exit 0 either way ("fully verdicted" is not an error)
 #   impact-summary-render <run_dir>        # item 06: renders the "## Impact pass" section (separate table + counts from the ticket ones) — called by summary-build on every append, also directly testable
+#   spec-sources-render    <run_dir>       # token-economy 07: derives the ONE `spec sources: replayed n · authored n · re-derived n` line from evidence.jsonl (replayed = distinct ac_ids with a `spec_replay` line; authored = ticket-scope `ac` ids with NO `spec_replay` line whose latest verdict is not NOT_VERIFIABLE — see spec_sources_render; re-derived = count of `spec_rederived` lines) — called by summary-build on every append, also directly testable; sits BESIDE impact-summary-render's table, never inside it
 #
 # Item 07 (`/verify --folder <dir>` multi-ticket queue) subcommands — the ONLY sanctioned writer of
 # `.supervisor/verify/queue-*.md`; protocol authority: `skills/verify-walkthrough/SKILL.md` §"Multi-
@@ -162,6 +163,40 @@ impact_summary_render() {
 }
 
 # --------------------------------------------------------------------------- #
+# spec-sources-render <run_dir>
+# --------------------------------------------------------------------------- #
+# token-economy 07 — derives the ONE `spec sources: replayed n · authored n · re-derived n` line from
+# evidence.jsonl (never tallied by the agent, never a filesystem scan). Called by summary_build on
+# every append but reads evidence.jsonl independently so it can be exercised and tested standalone —
+# the SAME "also directly testable" convention impact_summary_render already uses.
+#   replayed   = count of DISTINCT ac_ids carrying a `spec_replay` line (one line per replay, but an
+#                ac_id is counted once even if it were somehow replayed more than once)
+#   authored   = ticket-scope `ac` ids with NO `spec_replay` line for that id, EXCLUDING ids whose
+#                latest ticket-scope verdict is NOT_VERIFIABLE — that verdict is only ever written by
+#                the browser-less `verify-run.sh verdict` path (walk never emits it), so no spec was
+#                authored for it (PR #269 review). An ac_id that has NOT yet reached a verdict at all is
+#                neither authored nor counted here; it surfaces once its own `ac` line lands. HONEST
+#                LIMIT: a BLOCKED id still counts — evidence cannot tell walk's `no_spec` BLOCKED or a
+#                browser-less `verdict … BLOCKED` (no spec) apart from a spec that ran and was BLOCKED.
+#   re-derived = count of `spec_rederived` lines (bounded to <= replayed by construction, per the
+#                owning brief's Design step 3 — never re-checked here, this is a pure derivation)
+spec_sources_render() {
+  local run_dir="${1:-}" src
+  [ -n "$run_dir" ] || usage "spec-sources-render <run_dir>"
+  src="$run_dir/evidence.jsonl"
+  [ -f "$src" ] || src=/dev/null
+  jq -rs '
+    ([.[] | select(.event == "ac" and .scope == "ticket")] | group_by(.ac_id) | map(last)
+      | map(select(.verdict != "NOT_VERIFIABLE")) | map(.ac_id)) as $ticket_ids
+    | ([.[] | select(.event == "spec_replay") | .ac_id] | unique) as $replayed_ids
+    | ($replayed_ids | length) as $replayed
+    | ([$ticket_ids[] | select(. as $i | ($replayed_ids | index($i)) == null)] | length) as $authored
+    | ([.[] | select(.event == "spec_rederived")] | length) as $rederived
+    | "spec sources: replayed \($replayed) · authored \($authored) · re-derived \($rederived)"
+  ' "$src"
+}
+
+# --------------------------------------------------------------------------- #
 # summary-build <run_dir>
 # --------------------------------------------------------------------------- #
 # The ONLY reader of evidence.jsonl and the ONLY writer of summary.md. `jq -s` over the file (absent
@@ -170,14 +205,15 @@ impact_summary_render() {
 # counts row is COMPUTED over the latest-per-ac_id set. Written to `summary.md.tmp.$$` then `mv -f`,
 # so a crash never leaves a half summary. No agent ever writes this file.
 summary_build() {
-  local run_dir="${1:-}" src body tmp n hash rc
+  local run_dir="${1:-}" src body tmp n hash rc impact_section spec_sources_line
   [ -n "$run_dir" ] || usage "summary-build <run_dir>"
   mkdir -p "$run_dir" || die "summary-build: cannot create $run_dir"
   src="$run_dir/evidence.jsonl"
   [ -f "$src" ] || src=/dev/null
   tmp="$run_dir/summary.md.tmp.$$"
   impact_section="$(impact_summary_render "$run_dir")"
-  body="$(jq -rs --arg impact_section "$impact_section" '
+  spec_sources_line="$(spec_sources_render "$run_dir")"
+  body="$(jq -rs --arg impact_section "$impact_section" --arg spec_sources_line "$spec_sources_line" '
     def esc: tostring | gsub("\\|"; "\\|") | gsub("\n"; " ");
     def show: if . == null then "—" else esc end;
     def listish: if (. == null) or (. == []) then "—" else (map(tostring) | join(", ") | esc) end;
@@ -189,6 +225,7 @@ summary_build() {
     | ([$L[] | select(.event == "auth")] | last) as $auth
     | ([$L[] | select(.event == "ac")] | latest_by(.ac_id)) as $all_acs
     | ([$L[] | select(.event == "ac" and .scope == "ticket")] | latest_by(.ac_id)) as $acs
+    | ([$L[] | select(.event == "spec_replay") | .ac_id] | unique) as $replayed_ids
     | [$L[] | select(.event == "issue")] as $issues
     | [$L[] | select(.event == "pause" or .event == "resume")] as $pr
     | ([$L[] | select(.event == "run_end")] | last) as $re
@@ -217,13 +254,17 @@ summary_build() {
       (if $auth == null then "_no auth line_" else "- state: \($auth.state | show)" end),
       "",
       "## Acceptance criteria (ticket scope only, latest line per ac_id)",
+      # AC12 (token-economy 07): the replayed column marks every ac_id with a spec_replay line — so
+      # a replayed spec that FAILS (never re-derived, per the own-assertion rule) is visibly a
+      # replay rather than a silent authored FAIL.
       (if ($acs | length) == 0 then "_no ticket-scope ac lines_" else
-        "| ac_id | scope | verdict | classification | reason | artifacts |",
-        "|---|---|---|---|---|---|",
-        ($acs[] | "| \(.ac_id | show) | \(.scope | show) | \(.verdict | show) | \(.classification | show) | \(.reason | show) | \(.artifacts | listish) |")
+        "| ac_id | scope | verdict | classification | reason | artifacts | replayed |",
+        "|---|---|---|---|---|---|---|",
+        ($acs[] | .ac_id as $row_id | "| \(.ac_id | show) | \(.scope | show) | \(.verdict | show) | \(.classification | show) | \(.reason | show) | \(.artifacts | listish) | \(if ($replayed_ids | index($row_id)) != null then "replayed" else "—" end) |")
       end),
       "",
       "PASS: \(cnt("PASS")) · FAIL: \(cnt("FAIL")) · BLOCKED: \(cnt("BLOCKED")) · NOT_VERIFIABLE: \(cnt("NOT_VERIFIABLE")) · total: \($acs | length)",
+      $spec_sources_line,
       "",
       $impact_section,
       "",
@@ -520,6 +561,7 @@ main() {
     summary-build)      summary_build "$@" ;;
     first-unverdicted)  first_unverdicted "$@" ;;
     impact-summary-render) impact_summary_render "$@" ;;
+    spec-sources-render)   spec_sources_render "$@" ;;
     queue-write)            queue_write "$@" ;;
     queue-progress-append)  queue_progress_append "$@" ;;
     queue-checkoff)         queue_checkoff "$@" ;;

@@ -75,7 +75,8 @@ import sys
 
 SCHEMA_VERSION = 1
 
-EVENTS = ("run_start", "env", "auth", "ac", "issue", "pause", "resume", "run_end", "impact_surfaces")
+EVENTS = ("run_start", "env", "auth", "ac", "issue", "pause", "resume", "run_end", "impact_surfaces",
+          "spec_replay", "spec_rederived")
 TICKET_KINDS = ("requirement", "brief")
 ENV_STEPS = ("non_prod_assert", "start", "health", "seed", "reset", "stop")
 ENV_OUTCOMES = ("pass", "fail", "skipped")
@@ -302,6 +303,36 @@ def check_impact_surfaces(rec):
         fail("bad_type:limit")
 
 
+def check_spec_replay(rec):
+    """One line per replayed spec, token-economy 07: `verify-run.sh spec-replay` copied a prior
+    run's `specs/<ac_id>.spec.ts` into this run byte-for-byte. `ac_id` / `source_run_id` / `text_sha`
+    are non-empty strings; `churn_files` is a required KEY / nullable VALUE (int >= 0, or null when
+    the source run's ac line carried no `surfaces` — never a missing key, per the
+    nullable-required-field-needs-presence-check lesson)."""
+    ac_id = require_str(rec, "ac_id")
+    if ac_id == "":
+        fail("bad_type:ac_id")
+    source_run_id = require_str(rec, "source_run_id")
+    if source_run_id == "":
+        fail("bad_type:source_run_id")
+    text_sha = require_str(rec, "text_sha")
+    if text_sha == "":
+        fail("bad_type:text_sha")
+    churn = require(rec, "churn_files")  # required KEY, nullable VALUE
+    if churn is not None and not (is_int(churn) and churn >= 0):
+        fail("bad_type:churn_files")
+
+
+def check_spec_rederived(rec):
+    """One line per re-derivation, token-economy 07: a replayed spec that was BLOCKED for a harness
+    reason was re-authored, at most once per ac_id per run. `ac_id` and `reason` are non-empty
+    strings (a genuine assertion FAIL is never re-derived and never reaches this event)."""
+    ac_id = require_str(rec, "ac_id")
+    if ac_id == "":
+        fail("bad_type:ac_id")
+    require_nonempty_reason(rec)
+
+
 EVENT_CHECKS = {
     "run_start": check_run_start,
     "env": check_env,
@@ -312,6 +343,8 @@ EVENT_CHECKS = {
     "resume": check_pause_resume,
     "run_end": check_run_end,
     "impact_surfaces": check_impact_surfaces,
+    "spec_replay": check_spec_replay,
+    "spec_rederived": check_spec_rederived,
 }
 
 

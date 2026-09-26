@@ -991,6 +991,72 @@ hits="$(grep -c '_impact pass not run for this run' "$D22/summary.md")"
 [ "$hits" -eq 1 ] && ok "(I06-helper) with no impact_surfaces line at all, the Impact pass section says so advisorily (never a failure)" || no "(I06-helper) no-impact-pass placeholder missing: $(sed -n '/## Impact pass/,/## Issues/p' "$D22/summary.md")"
 
 # ============================================================================
+# (SR) token-economy 07 "spec-replay" mechanism (mechanism only — subtask 1): the two new
+# VERIFY_EVIDENCE events (`spec_replay` / `spec_rederived`) and AC7's evidence-append refusal.
+# ============================================================================
+echo "== (SR) spec_replay event: valid line accepted, per-key rejects, forward-compat =="
+L_SPEC_REPLAY="{$COMMON,\"event\":\"spec_replay\",\"ac_id\":\"AC1\",\"source_run_id\":\"verify-20260101T000000Z-old\",\"text_sha\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b85\",\"churn_files\":null}"
+expect_accept "(SR) spec_replay: churn_files null (source ac line carried no surfaces)" "$L_SPEC_REPLAY"
+expect_accept "(SR) spec_replay: churn_files a positive integer" "$(mut "$L_SPEC_REPLAY" '.churn_files=2')"
+expect_accept "(SR) spec_replay: churn_files zero (never confused with null)" "$(mut "$L_SPEC_REPLAY" '.churn_files=0')"
+expect_reject "(SR) spec_replay: ac_id absent" missing_key:ac_id "$(mut "$L_SPEC_REPLAY" 'del(.ac_id)')"
+expect_reject "(SR) spec_replay: ac_id empty" bad_type:ac_id "$(mut "$L_SPEC_REPLAY" '.ac_id=""')"
+expect_reject "(SR) spec_replay: source_run_id absent" missing_key:source_run_id "$(mut "$L_SPEC_REPLAY" 'del(.source_run_id)')"
+expect_reject "(SR) spec_replay: source_run_id empty" bad_type:source_run_id "$(mut "$L_SPEC_REPLAY" '.source_run_id=""')"
+expect_reject "(SR) spec_replay: text_sha absent" missing_key:text_sha "$(mut "$L_SPEC_REPLAY" 'del(.text_sha)')"
+expect_reject "(SR) spec_replay: text_sha empty" bad_type:text_sha "$(mut "$L_SPEC_REPLAY" '.text_sha=""')"
+expect_reject "(SR) spec_replay: churn_files KEY ABSENT (null is legal, absent is not)" missing_key:churn_files "$(mut "$L_SPEC_REPLAY" 'del(.churn_files)')"
+expect_reject "(SR) spec_replay: churn_files negative" bad_type:churn_files "$(mut "$L_SPEC_REPLAY" '.churn_files=-1')"
+expect_reject "(SR) spec_replay: churn_files a string" bad_type:churn_files "$(mut "$L_SPEC_REPLAY" '.churn_files="2"')"
+expect_accept "(SR) forward-compat: an additive key on spec_replay is tolerated" "$(mut "$L_SPEC_REPLAY" '.note="extra"')"
+
+echo "== (SR) spec_rederived event: valid line accepted, per-key rejects, forward-compat =="
+L_SPEC_REDERIVED="{$COMMON,\"event\":\"spec_rederived\",\"ac_id\":\"AC2\",\"reason\":\"spec_skipped\"}"
+expect_accept "(SR) spec_rederived: well-formed" "$L_SPEC_REDERIVED"
+expect_reject "(SR) spec_rederived: ac_id absent" missing_key:ac_id "$(mut "$L_SPEC_REDERIVED" 'del(.ac_id)')"
+expect_reject "(SR) spec_rederived: ac_id empty" bad_type:ac_id "$(mut "$L_SPEC_REDERIVED" '.ac_id=""')"
+expect_reject "(SR) spec_rederived: reason absent" missing_key:reason "$(mut "$L_SPEC_REDERIVED" 'del(.reason)')"
+expect_reject "(SR) spec_rederived: reason empty" missing_key:reason "$(mut "$L_SPEC_REDERIVED" '.reason=""')"
+expect_reject "(SR) spec_rederived: reason null" missing_key:reason "$(mut "$L_SPEC_REDERIVED" '.reason=null')"
+expect_accept "(SR) forward-compat: an additive key on spec_rederived is tolerated" "$(mut "$L_SPEC_REDERIVED" '.note="extra"')"
+
+echo "== (SR) validator EVENTS/check registration =="
+hits="$(grep -c 'spec_replay' "$VALIDATOR")"
+[ "$hits" -ge 2 ] && ok "(SR) validate-verify-evidence.py names spec_replay (EVENTS + a check function)" || no "(SR) validator mentions of spec_replay: $hits"
+hits="$(grep -c 'check_spec_replay' "$VALIDATOR")"
+[ "$hits" -ge 2 ] && ok "(SR) a dedicated check_spec_replay function is defined and registered" || no "(SR) check_spec_replay mentions: $hits"
+hits="$(grep -c 'spec_rederived' "$VALIDATOR")"
+[ "$hits" -ge 2 ] && ok "(SR) validate-verify-evidence.py names spec_rederived (EVENTS + a check function)" || no "(SR) validator mentions of spec_rederived: $hits"
+hits="$(grep -c 'check_spec_rederived' "$VALIDATOR")"
+[ "$hits" -ge 2 ] && ok "(SR) a dedicated check_spec_rederived function is defined and registered" || no "(SR) check_spec_rederived mentions: $hits"
+
+echo "== (SR-AC7) evidence-append REFUSES a malformed spec_replay: missing source_run_id, or churn_files KEY absent — nothing appended =="
+D_SR7="$(mktmp)"
+run_h evidence-append "$D_SR7" "$RUN_START"
+BAD_MISSING_SRC="$(mut "$L_SPEC_REPLAY" 'del(.source_run_id)')"
+run_h evidence-append "$D_SR7" "$BAD_MISSING_SRC"; rc=$?
+n_after="$(grep -c . "$D_SR7/evidence.jsonl")"
+[ "$rc" -ne 0 ] && ok "(SR-AC7) evidence-append REFUSES a spec_replay missing source_run_id (rc=$rc)" || no "(SR-AC7) evidence-append accepted a spec_replay missing source_run_id"
+[ "$n_after" -eq 1 ] && ok "(SR-AC7) evidence.jsonl unchanged (run_start only) — nothing appended" || no "(SR-AC7) evidence.jsonl has $n_after lines: $(cat "$D_SR7/evidence.jsonl")"
+got="$(jq -r '.line' "$D_SR7/rejected.jsonl" 2>/dev/null)"
+gotreason="$(jq -r '.reason' "$D_SR7/rejected.jsonl" 2>/dev/null)"
+[ "$got" = "$BAD_MISSING_SRC" ] && [ "$gotreason" = "missing_key:source_run_id" ] \
+  && ok "(SR-AC7) the refused line is wrapped verbatim into rejected.jsonl with reason missing_key:source_run_id" \
+  || no "(SR-AC7) rejected.jsonl line/reason: got=$got reason=$gotreason"
+
+D_SR7B="$(mktmp)"
+run_h evidence-append "$D_SR7B" "$RUN_START"
+BAD_NO_CHURN_KEY="$(mut "$L_SPEC_REPLAY" 'del(.churn_files)')"
+run_h evidence-append "$D_SR7B" "$BAD_NO_CHURN_KEY"; rc=$?
+n_after2="$(grep -c . "$D_SR7B/evidence.jsonl")"
+[ "$rc" -ne 0 ] && ok "(SR-AC7) evidence-append REFUSES a spec_replay with the churn_files KEY absent (rc=$rc)" || no "(SR-AC7) evidence-append accepted churn_files-key-absent"
+[ "$n_after2" -eq 1 ] && ok "(SR-AC7) evidence.jsonl unchanged after the churn_files-key-absent refusal" || no "(SR-AC7) evidence.jsonl has $n_after2 lines"
+gotreason2="$(jq -r '.reason' "$D_SR7B/rejected.jsonl" 2>/dev/null)"
+[ "$gotreason2" = "missing_key:churn_files" ] \
+  && ok "(SR-AC7) reason is missing_key:churn_files — a present-but-null value stays legal, only the ABSENT key is refused" \
+  || no "(SR-AC7) reason: $gotreason2"
+
+# ============================================================================
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
