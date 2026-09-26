@@ -1587,17 +1587,45 @@ on the inline-drain + CI-check + squash flow `/automate` produces). Field-mappin
 variant:
 - `review_rounds` is the **`effective_review_rounds`** = the ground-truth drain `fix_cycles` (the real
   fix→push count), OR `1` for a zero-cycle escalation (`fix_cycles == 0 AND decision == "ESCALATED"`) —
-  it is NOT a GitHub-measured review count. `flow_stages.self_heal` carries the same value; the other
-  flow stages are `0` (the engine cannot attribute drain churn to launch_pad/worker).
-- `categories[]` carries at most ONE synthetic entry, coarser than `/pr-postmortem`'s per-round
-  classification but honestly labeled by `class`. The **zero-rule** (load-bearing because
-  `read-postmortem.sh` counts each `categories[]` element as one prior-churn round): when
-  `effective_review_rounds == 0` (i.e. `fix_cycles == 0 AND decision != "ESCALATED"`), `categories: []`
-  AND `review_rounds: 0` — NEVER a synthetic entry (a synthetic entry would report fake churn). For
-  `fix_cycles > 0` → one `{round: fix_cycles, class: "drain_churn", flow_stage: "self_heal", ...}`; for
-  a zero-cycle escalation → one `{round: 1, class: "drain_escalation", flow_stage: "self_heal", ...}`.
-- `self_heal_misses` ← `1` if `repeat_check_failure OR unresolved_bot_feedback`, else `0` (the single
-  synthetic `categories[]` entry's `self_heal_miss` mirrors `self_heal_misses > 0`).
+  it is NOT a GitHub-measured review count. It stays **drain-only** even when `self_heal_rounds` (next
+  bullet) is present — `build-loop-evidence.sh` / `measure-heal-signal.py` join on `review_rounds`
+  floor-raising, so folding self-heal churn into it would silently change historical comparisons.
+  `flow_stages.self_heal` carries the same drain-only value; the other flow stages are `0` (the engine
+  cannot attribute drain churn to launch_pad/worker).
+- `self_heal_rounds` — integer, **additive & optional**, `automate_drain` lines only — the Phase 4.5
+  self-heal fix iterations the PR absorbed BEFORE it reached the drain (a PR healed in self-heal and
+  then drained with 0 fix cycles otherwise reads as `review_rounds: 0` / `categories: []` — a false
+  clean). Its source is the **OBSERVED** `SUPERVISOR_RESULT.heal_iterations`, passed as
+  `learning-emit --self-heal-rounds <n>` — **never** the configured `/supervisor --heal-iterations`
+  MAXIMUM bound (which is why the flag does not reuse that name: the bound would record fake churn).
+  **Presence rule:** emitted ONLY when `--self-heal-rounds` was passed (any value), placed right after
+  `review_rounds`; with the flag omitted the line is byte-identical to a pre-field line (the engine
+  omits the flag when its `SUPERVISOR_RESULT` artifact has no `heal_iterations:` line — never a
+  fabricated count). **Normalization:** a non-negative integer passes through; anything else
+  (non-numeric, negative, fractional, empty) ⇒ `0` — never a non-zero exit (fail-SAFE). NOT part of
+  `automate_key`. Absent on `github_postmortem` lines and older trend lines — `schema_version` stays `1`.
+- `categories[]` carries **at most one drain entry plus at most one `self_heal_churn` entry**, coarser
+  than `/pr-postmortem`'s per-round classification but honestly labeled by `class`. The **zero-rule**
+  (load-bearing because `read-postmortem.sh` counts each `categories[]` element as one prior-churn round
+  and groups by `.class`): `categories: []` **iff** `effective_review_rounds == 0` (i.e.
+  `fix_cycles == 0 AND decision != "ESCALATED"`) **AND** `self_heal_rounds == 0` (absent counts as `0`)
+  — NEVER a synthetic entry for absent churn (it would report fake churn; self-heal churn is real).
+  Entries, in chronological order (self-heal precedes the drain):
+  - `self_heal_rounds > 0` → FIRST, one `{round: self_heal_rounds, class: "self_heal_churn",
+    self_heal_miss: false, flow_stage: "self_heal", evidence: "Phase 4.5 self-heal, heal_iterations=<n>"}`
+    (`self_heal_miss: false` — a finding healed in self-heal is a catch, not a miss);
+  - `fix_cycles > 0` → one `{round: fix_cycles, class: "drain_churn", flow_stage: "self_heal", ...}`;
+    a zero-cycle escalation → one `{round: 1, class: "drain_escalation", flow_stage: "self_heal", ...}`.
+- **`flow_stages.self_heal` is drain-only (the counter-vs-categories split):** self-heal churn appears
+  ONLY in `self_heal_rounds` and its `categories[]` entry, never in the `flow_stages` counter. This
+  widens the known counter-vs-`categories[]` disagreement that `build-floor.sh` reports as
+  `flow_stage_counter_disagreements` (see the `postmortem` caveat in FLOOR_PROJECTION) — still confined
+  to `automate_drain` lines.
+- The default `summary` (no caller `--summary`) appends `; self-heal: <n> round(s)` when
+  `self_heal_rounds > 0`; otherwise it is unchanged. A caller-supplied `--summary` is emitted verbatim.
+- `self_heal_misses` ← `1` if `repeat_check_failure OR unresolved_bot_feedback`, else `0` (the drain
+  `categories[]` entry's `self_heal_miss` mirrors `self_heal_misses > 0`; the `self_heal_churn` entry's
+  is always `false`).
 - `changed_paths` **and** `repo` are **both required for `read-postmortem.sh` visibility** — the advisory
   reader keeps a corpus line only when its `changed_paths` overlaps the query paths **AND** (when the
   current repo is determinable) its `repo` matches the reader's repo case-insensitively
@@ -1665,7 +1693,8 @@ advisorily (entries / curated / stale) using the same record shapes.
 `brief_path`, `job_path`, `source`, `automate_key`) are purely additive — a pre-Phase-4 corpus line that
 omits all of them is still a valid `schema_version: 1` POSTMORTEM_RESULT line and parses cleanly for any
 consumer (a line with no `source` is read as `"github_postmortem"`; `automate_key` is present only on
-`automate_drain` lines). The `source: "curation"` record variant is likewise additive: `schema_version`
+`automate_drain` lines; so is `self_heal_rounds`, which additionally appears only when
+`learning-emit --self-heal-rounds` was passed). The `source: "curation"` record variant is likewise additive: `schema_version`
 stays `1`, and a pre-curation reader fail-safe-skips it via the `changed_paths` overlap filter.
 
 **Append-only / write-only:** the file is the seed corpus for the deferred synthetic eval harness; it is
@@ -2194,6 +2223,7 @@ All result schemas include a `schema_version` field. This enables forward compat
 
 ### Version History
 
+- **POSTMORTEM_RESULT additive `self_heal_rounds` + `self_heal_churn` class** (2026-09-26, `.supervisor/requirements/automate-followups/01-learning-emit-counts-self-heal-rounds.md`): `source: "automate_drain"` lines gain an optional integer `self_heal_rounds` (emitted only when `learning-emit --self-heal-rounds <n>` is passed — the OBSERVED `SUPERVISOR_RESULT.heal_iterations`, never the `/supervisor --heal-iterations` bound; non-integer/negative/fractional/empty ⇒ `0`) and, when it is `> 0`, one `categories[]` entry of the new class `self_heal_churn` placed before any drain entry, so a PR whose churn was absorbed in Phase 4.5 self-heal is a `read-postmortem.sh` prior-churn hit instead of a false-0. `review_rounds` and `flow_stages.self_heal` stay drain-only; the zero-rule is restated (`categories: []` iff both counts are 0); `automate_key` is unchanged; a flag-less line is byte-identical to before. **No `schema_version` bump** — additive (same precedent as `source`/`automate_key`/`changed_paths`). Additive — all other schemas unchanged.
 - **AUTOMATE_RUN additive `drain_died`/`died` values** (2026-09-22, `.supervisor/requirements/red-team-hardening/04-drain-wait-and-death-detection.md`, PR #251 review finding — corrects this section's own drift, the exact two-listing trap the `rate_limit` note directly below already documented): Added `drain_died` as a sixth value to the `pause_reason` enum and to the item-level `status` enum, and `died` as a third value to `owned_drain_result` (`READY|ESCALATED|died`) — in the `## Current` template comment block, the fields table, AND the item-lifecycle diagram (three listings, all updated together this time). `skills/automate-loop/SKILL.md` §4 RECONCILE now checks `.supervisor/review-dispatch/*.died` for a marker matching the current item's PR — written by `dispatch-pr-review.sh`'s wrapper trap when a DETACHED drain runner exits without ever printing a terminal `REVIEW_HEAL_RESULT` — and parks `pause_reason: drain_died` / `owned_drain_result: died`, **explicitly never `awaiting_merge`**, since a died drain never reached a real verdict. This is a SEPARATE fact from the engine's own inline OWNED drain (`owned_drain_result: READY|ESCALATED`), which cannot die silently the same way — it runs synchronously in the same turn, never detached. **No `schema_version` bump** — purely additive enum values on an already-open, non-hook-validated markdown state-file contract. Additive — all other schemas unchanged.
 - **AUTOMATE_RUN additive `rate_limit` value** (2026-09-17, `.supervisor/requirements/orca-derived/04-rate-limit-park.md`): Added `rate_limit` as a fifth value to the EXISTING `pause_reason` enum (`awaiting_merge|escalated|limit_reached|resume_ambiguous|rate_limit|null`) and to the item-level `status` enum (`running|awaiting_merge|escalated|failed|rate_limit|done`), in both the `## Current` template comment block AND the fields table (this doc has a documented history of exactly this kind of two-listing drift within one section — both listings, plus the item-lifecycle diagram, were updated together). `/automate`'s §6 RUN step (`skills/automate-loop/SKILL.md` §6 "Rate-limit park") now checks the loop's own `.supervisor/logs/{session_id}.jsonl` for a main-scope `agent_lifecycle: failed` row with `reason: rate_limit` (or `reason: unknown` plus a `429` substring in the sibling `failures.log` `last_assistant_message`, recorded as a SEPARATE, never-promoted `reason_hint: rate_limit` field) post-dating the item's "picked" line, and parks — item-level `status` mirrors `pause_reason` exactly as `awaiting_merge`/`escalated` already do, never a new `parked` placeholder — instead of retrying into the same wall or DRAINing a PR that never existed. Every other classified `StopFailure` reason (`server_error`/`authentication_failed`/`model_not_found`, or `unknown` with no `429` hint) is UNCHANGED. Resuming a `rate_limit` park round-trips through the EXISTING RESUME reconcile (§4) exactly as `awaiting_merge` does — no second reconcile code path, no second park vocabulary; since a `rate_limit` park has no PR (`pr: null`), reconcile is simply a no-op for that item and the loop falls straight through to re-picking it and retrying RUN. **No `schema_version` bump** — purely an additive enum value on an already-open, non-hook-validated markdown state-file contract; a pre-item-04 reader that has never seen `rate_limit` still validates every other value unchanged. Additive — all other schemas unchanged.
 - **VERIFY_QUEUE (new markdown state-file schema)** (2026-09-16, item 07 "multi-ticket queue and resume"): New `## VERIFY_QUEUE` section documenting `.supervisor/verify/queue-<UTC ts>-<slug>.md`, the `/verify --folder <dir>` queue engine's run file — mirrors `AUTOMATE_RUN`'s framing (a markdown state-file contract, NOT hook-validated) adapted for `/verify`'s own truth source (`evidence.jsonl` + `git rev-parse`, never `gh`). New `verify-helpers.sh` subcommands `queue-write` (atomic, LINE-COUNT GUARDED — refuses to shrink the file, a guard `automate-helpers.sh runfile-write` does not carry), `queue-progress-append`, `queue-checkoff`, `queue-remaining`; new `verify-run.sh queue-reconcile-item` (git/evidence belief-vs-truth read, pure, always advisory). `--resume <run_id>` gains a probe-then-fallback DISPATCH RULE (not a new flag): a queue file match wins, else the existing single-ticket resume is unchanged. No `schema_version` bump on any existing schema — purely additive new surfaces. Additive — all other schemas unchanged.
