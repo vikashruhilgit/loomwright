@@ -1,6 +1,5 @@
 # 07 — CI trust: live infra probe on red required checks, fail-CLOSED (`ci_untrusted`), never a dated note
 
-## Status: pending
 
 ## Problem
 A required check can be red for reasons unrelated to the diff — the job never started (account billing/spending
@@ -78,3 +77,8 @@ cross-reference it.
   gate-eval header listing cond 1b's accepted values.
 - Owner's machine notes (global CLAUDE.md, 2026-09-21): billing block string, `steps_count`/`runner_name` as the
   first discriminators, mid-session trips, `claude-review` self-skip on workflow-file PRs.
+
+## Status: done (PR #266, merge 4348036)
+- **Completed:** 2026-09-26T02:15:05Z
+- **Brief:** .supervisor/jobs/done/2026-09-25-ci-trust-probe.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/266

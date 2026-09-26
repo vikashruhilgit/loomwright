@@ -1,6 +1,5 @@
 # 01 — Worker rules: honest limits, no self-promotion, shared services read-only (ONE edit, ONE budget raise)
 
-## Status: pending
 
 > **Cross-queue amendment (2026-09-22).** This item is sequenced by `.supervisor/requirements/_BACKLOG-hardening-sequence-2026-09-22.md` AFTER `six-phase-loop-gaps/01` and `/02`, which ALSO add `agents/worker.md` prose, an optional WORKER_RESULT list (`deviations`), a `validate-worker-result.py` rule and a worker budget raise. Therefore: (a) the validator rule number is **the next after the live last rule** in `scripts/validate-worker-result.py` at implementation time — "rule (10)" below is the number as of `05823bf`, not authoritative; (b) `worker 5876/5905, 29 headroom` is the `05823bf` measurement — re-run `bash scripts/check-token-budget.sh` and raise from the LIVE number (measured + ~10%), one raise-log row naming this item; (c) H1 "one worker.md PR, one budget raise" holds WITHIN this folder only — the two sibling-queue raises are legitimate and precede this one. Re-verify every "Verified premises" row against `main` before starting.
 
@@ -81,3 +80,8 @@ or spawn-prompt line for shared services (item 06) — rule (c) is inert until 0
 - `async-orchestration/SKILL.md` §"Pointers, not payloads" and the worker spawn block listing "Subtask index
   (compact — ids/titles/deps only …)".
 - RESULT_SCHEMAS §WORKER_RESULT `out_of_lane` / `memory_candidates` additive-field wording.
+
+## Status: done (PR #259, merge a58c991)
+- **Completed:** 2026-09-26T02:14:52Z
+- **Brief:** .supervisor/jobs/done/2026-09-23-harness-port-01-worker-rules.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/259

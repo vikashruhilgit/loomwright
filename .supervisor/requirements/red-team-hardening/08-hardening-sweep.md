@@ -1,6 +1,10 @@
 # 08 — Hardening sweep: Floor GET Host check, bot-author regex, telemetry body, description card, platform pin
 
-## Status: pending
+
+## Status: done (PR #256, merge e388d9d)
+- **Completed:** 2026-09-26T02:26:15Z
+- **Brief:** .supervisor/jobs/done/2026-09-23-hardening-sweep.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/256
 
 > Five small, independent fixes bundled because each is under an hour and none changes a contract. Sequenced
 > after 02 (shares `send-telemetry-core.sh`). If the Supervisor's overlap check wants them split, split by

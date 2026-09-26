@@ -1,6 +1,5 @@
 # 07 — Pin the `mysql-mcp` package; drop `--refresh`; state what "read-only" does and does not verify
 
-## Status: pending
 
 ## Problem
 `mysql-mcp/.mcp.json:4`: `"args": ["--from", "vikashruhil-mysql-mcp", "--refresh", "mysql-mcp"]` — no version,
@@ -41,3 +40,8 @@ No vendoring, no fork of the server, no change to the loomwright plugin's counts
 ## Verified premises
 - `mysql-mcp/` contains only `.mcp.json`, `README.md`, `.claude-plugin/plugin.json` (no source).
 - `commands/setup.md` has a `mysql-mcp` module that reports unset env vars.
+
+## Status: done (PR #255, merge 223cd89)
+- **Completed:** 2026-09-26T02:14:45Z
+- **Brief:** .supervisor/jobs/done/2026-09-22-mysql-mcp-pin.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/255

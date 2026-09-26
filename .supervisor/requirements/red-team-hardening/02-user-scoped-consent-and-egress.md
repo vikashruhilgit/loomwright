@@ -1,6 +1,5 @@
 # 02 — Telemetry consent and webhook destination move to user scope; repo-relative copies are never honoured alone
 
-## Status: pending
 
 ## Problem
 `scripts/send-telemetry-core.sh:43` reads `CONSENT_FILE="${PWD}/.supervisor/telemetry-consent.json"`;
@@ -76,3 +75,8 @@ body). No new hook. No removal of the repo-relative files (they become requests)
 - `send-webhook.sh:2-8` URL resolution order (env, then config file).
 - `commands/telemetry.md` lines 30, 49, 92, 110.
 - `.supervisor/` tracked files in this repo: `git ls-files .supervisor | wc -l` → **5 at authoring (2026-09-21, pre-#243: `memory/` + `postmortem/results.jsonl`) and 276 on `main` after PR #243 committed the trail the same day.** Re-run before implementing; the number only goes up, and every added file is a repo-controlled input to whatever reads `.supervisor/` — the exact vector this item closes.
+
+## Status: done (PR #249, merge bcbfdd3)
+- **Completed:** 2026-09-26T02:14:33Z
+- **Brief:** unknown
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/249

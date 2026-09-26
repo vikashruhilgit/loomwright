@@ -1,6 +1,5 @@
 # 03 — Cited-line premise check (Launch Pad Phase 3 + Supervisor Phase 1.5 signal (d)), advisory
 
-## Status: pending
 
 ## Problem
 Nothing checks whether a defect a goal or requirement describes is still visible at the `path:line` it cites.
@@ -82,3 +81,8 @@ sub-agent spawn. No change to Plan Reviewer's Decision Matrix. No attempt to re-
 - `plan-reviewer.md` Criterion 1 body + Decision Matrix rows ("Only MEDIUM/LOW issues, but design approach is
   ambiguous → NEEDS_HUMAN").
 - FETCH_HEAD-mtime ≠ `%cr` tip age (observed 14:10 vs "5 hours ago" on 2026-09-21).
+
+## Status: done (PR #262, merge 076a18c)
+- **Completed:** 2026-09-26T02:14:56Z
+- **Brief:** .supervisor/jobs/done/2026-09-24-cited-line-premise.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/262

@@ -94,4 +94,8 @@ work stops being re-enqueued and dropped tracks stop looking pending.
 - A merged worktree with unmerged bytes is reported as salvage, never as removable
 - Stamp shape byte-compatible with §6; PR state via `reconcile-item`; base ref via `vcs_base_ref`
 
-## Status: pending
+
+## Status: done (PR #247, merge bc4d502)
+- **Completed:** 2026-09-26T02:14:28Z
+- **Brief:** unknown
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/247
