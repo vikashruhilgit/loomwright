@@ -36,6 +36,18 @@
 #      and its lock is un-reclaimable by that path -- this is a grep on the
 #      committed prose, not an execution trace (markdown, not code; mirrors the
 #      static PART 1 convention in test-rules-seams.sh).
+#  --- Holder liveness + re-entrancy (automate-2026-09-26-115755 regression) ---
+#  17. BASH-TOOL REPRODUCTION: acquire from an ephemeral shell that exits
+#      (the Claude Code Bash tool's shell) under a live fake `claude`
+#      ($CLAUDE_PID) -> meta pid is the fake claude, NOT the exited shell; with
+#      the lock aged past the TTL, a second acquire with a DIFFERENT owner AND
+#      DIFFERENT session is REFUSED; once the fake claude dies the same acquire
+#      reclaims (dead + old). Mutation control: a copy recording the old `$$`
+#      reclaims in the identical scenario -- proving 17 detects the incident.
+#  18. no $CLAUDE_PID (or a dead one) -> meta pid is the invoking shell ($PPID).
+#  19. same-session nested acquire (automate -> supervisor) is RE-ENTRANT:
+#      rc=0, prints run_lock_reentrant, owner stays the OUTER label; the inner
+#      `release --owner <inner>` is a no-op and only the outer release clears it.
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -269,6 +281,93 @@ check_acquire_has_session_id "Supervisor Phase 0 (agents/supervisor.md)" "$PLUGI
 check_acquire_has_session_id "supervisor-config SKILL step 0" "$PLUGIN_ROOT/skills/supervisor-config/SKILL.md"
 check_acquire_has_session_id "autonomous-loop SKILL INIT" "$PLUGIN_ROOT/skills/autonomous-loop/SKILL.md"
 check_acquire_has_session_id "automate-loop SKILL PICK (reference shape)" "$PLUGIN_ROOT/skills/automate-loop/SKILL.md"
+
+echo "== 17. Bash-tool reproduction: ephemeral acquirer shell, live claude, different session -> REFUSED =="
+# fake_claude — a long-lived stand-in for the session's `claude` process.
+sleep 600 & FAKE_CLAUDE=$!
+D17="$(fresh_root)"
+# The acquirer runs in its own `bash -c` shell that exits right after, exactly
+# like a Claude Code Bash-tool call.
+CLAUDE_PID="$FAKE_CLAUDE" bash -c 'bash "$1" acquire --owner automate:run17 --session-id sess-auto --root "$2"' _ "$SUT" "$D17" >/dev/null 2>&1
+rec_pid="$(awk -F'\t' '$1=="pid"{print $2}' "$(meta_file "$D17")")"
+if [ "$rec_pid" = "$FAKE_CLAUDE" ]; then
+  ok "meta pid is the live claude process ($rec_pid), not the exited acquirer shell"
+else
+  no "meta pid should be \$CLAUDE_PID=$FAKE_CLAUDE, got '$rec_pid'"
+fi
+set_meta_field "$D17" ts 1   # the incident: launch-pad ran past the 1800s TTL
+S17_OUT="$(CLAUDE_PID="$FAKE_CLAUDE" bash -c 'bash "$1" acquire --owner supervisor:sess-other --session-id sess-other --root "$2"' _ "$SUT" "$D17" 2>&1)"
+S17_RC=$?
+if [ "$S17_RC" -ne 0 ] && grep -q '^run_lock_held owner=automate:run17 ' < <(printf '%s' "$S17_OUT"); then
+  ok "different owner + different session refused while claude lives, even past the TTL: $S17_OUT"
+else
+  no "different-session acquire must be REFUSED (rc=$S17_RC out='$S17_OUT')"
+fi
+kill "$FAKE_CLAUDE" 2>/dev/null; wait "$FAKE_CLAUDE" 2>/dev/null
+run_sut acquire --owner supervisor:sess-other --session-id sess-other --root "$D17"
+run_sut status --root "$D17"
+if grep -q 'owner=supervisor:sess-other' < <(printf '%s' "$RUN_OUT"); then
+  ok "once claude is dead (and age >= TTL) the lock reclaims"
+else
+  no "dead claude + old lock should reclaim: $RUN_OUT"
+fi
+# Mutation control: restore the pre-fix `$$` pid recording in a copy.
+MUT17DIR="$(mktemp -d)"; MUT17="$MUT17DIR/run-lock.sh"
+cp "$SUT" "$MUT17"
+sed -i.bak 's/"\$(holder_pid)"/"$$"/' "$MUT17"
+if bash -n "$MUT17" 2>/dev/null && ! diff -q "$MUT17" "$SUT" >/dev/null 2>&1 && grep -qF "'pid\t%s\n' \"\$\$\"" "$MUT17"; then
+  sleep 600 & FAKE2=$!
+  D17M="$(fresh_root)"
+  CLAUDE_PID="$FAKE2" bash -c 'bash "$1" acquire --owner automate:run17 --session-id sess-auto --root "$2"' _ "$MUT17" "$D17M" >/dev/null 2>&1
+  set_meta_field "$D17M" ts 1
+  CLAUDE_PID="$FAKE2" bash -c 'bash "$1" acquire --owner supervisor:sess-other --session-id sess-other --root "$2"' _ "$MUT17" "$D17M" >/dev/null 2>&1
+  M17_RC=$?
+  kill "$FAKE2" 2>/dev/null; wait "$FAKE2" 2>/dev/null
+  if [ "$M17_RC" -eq 0 ]; then
+    ok "mutation control: the pre-fix \$\$ recording reclaims in the identical scenario -- test 17 detects the incident"
+  else
+    no "mutation control REFUTED: pre-fix mutant also refused (rc=$M17_RC) -- test 17 would not have caught the incident"
+  fi
+else
+  no "mutation control: could not build the \$\$ mutant (sed did not apply) -- control inconclusive"
+fi
+rm -rf "$MUT17DIR"
+
+echo "== 18. no / dead \$CLAUDE_PID -> meta pid is the invoking shell =="
+for cp_val in "" 999999; do
+  D18="$(fresh_root)"
+  caller="$(CLAUDE_PID="$cp_val" bash -c 'bash "$1" acquire --owner x:18 --root "$2" >/dev/null 2>&1; echo $$' _ "$SUT" "$D18")"
+  rec_pid="$(awk -F'\t' '$1=="pid"{print $2}' "$(meta_file "$D18")")"
+  if [ -n "$caller" ] && [ "$rec_pid" = "$caller" ]; then
+    ok "CLAUDE_PID='${cp_val}' -> pid is the invoking shell ($rec_pid)"
+  else
+    no "CLAUDE_PID='${cp_val}' -> expected invoking shell pid '$caller', got '$rec_pid'"
+  fi
+done
+
+echo "== 19. same-session nested acquire is re-entrant; outer owner kept; inner release is a no-op =="
+D19="$(fresh_root)"
+run_sut acquire --owner automate:run19 --session-id sess19 --root "$D19"
+run_sut acquire --owner supervisor:sess19 --session-id sess19 --root "$D19"
+if [ "$RUN_RC" -eq 0 ] && [ "$RUN_OUT" = "run_lock_reentrant owner=automate:run19 session_id=sess19" ]; then
+  ok "nested acquire re-entered: $RUN_OUT"
+else
+  no "nested same-session acquire should re-enter: rc=$RUN_RC out='$RUN_OUT'"
+fi
+run_sut release --owner supervisor:sess19 --root "$D19"
+run_sut status --root "$D19"
+if grep -q '^LOCKED owner=automate:run19 ' < <(printf '%s' "$RUN_OUT"); then
+  ok "inner release left the outer run's lock held: $RUN_OUT"
+else
+  no "inner release must not clear the outer lock: $RUN_OUT"
+fi
+run_sut release --owner automate:run19 --root "$D19"
+run_sut status --root "$D19"
+if [ "$RUN_OUT" = "UNLOCKED" ]; then
+  ok "outer release cleared the lock"
+else
+  no "outer release should clear: $RUN_OUT"
+fi
 
 echo
 echo "RESULT: $pass passed, $fail failed"

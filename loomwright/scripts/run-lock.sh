@@ -19,6 +19,19 @@
 #                                              write_lock_meta convention):
 #         pid, owner, session_id, ts
 #
+# `pid` is the HOLDER's liveness pid — NOT this script's `$$` (which is dead
+# the instant `acquire` returns, so every lock looked "dead pid" immediately
+# and degraded to a bare 1800s lease). Resolution order:
+#   1. `$CLAUDE_PID` when numeric and alive — the long-lived `claude` process
+#      Claude Code exports into every Bash-tool shell. The Bash-tool shell
+#      itself exits after each call, so `$PPID` is useless there; `claude`
+#      lives exactly as long as the session that owns the run.
+#   2. `$PPID` otherwise — the invoking shell (an interactive terminal, a CI
+#      step, a test harness).
+# Observed 2026-09-26 (automate-2026-09-26-115755): automate PICK recorded its
+# own shell pid, launch-pad ran ~28 min, and Supervisor Phase 0's acquire
+# (different owner) reclaimed the "dead-pid + >=1800s" lock as stale.
+#
 # This is a NEW lock, not a call into dispatch-pr-review.sh's acquire_lock —
 # that function's meta shape carries no `session_id`/`owner` fields and its
 # lock dir is scoped to a per-PR hash (a different namespace: one dispatch
@@ -29,12 +42,24 @@
 # under a crashed holder.
 #
 # acquire:
-#   Success: exits 0, prints nothing.
+#   Success: exits 0, prints nothing (fresh acquire or reclaim), or one
+#     `run_lock_reentrant ...` line (re-entrant, below).
 #   Held (and not reclaimable): prints
 #     `run_lock_held owner=<label> pid=<pid> age=<s>`
 #   to stdout and exits 1 — NEVER proceeds silently (fail CLOSED). The
 #   caller (automate PICK / Supervisor Phase 0 INIT / /autonomous INIT) must
 #   park on this, not retry into a spin.
+#   Re-entrant: when the lock is held and `--session-id` equals the recorded
+#     `session_id`, acquire SUCCEEDS without changing the recorded `owner`
+#     and prints `run_lock_reentrant owner=<outer> session_id=<id>`. This is
+#     the nested-entry case — /automate RUN inlines /autonomous, which inlines
+#     /supervisor, all in ONE session — made explicit instead of relying on an
+#     accidental stale-reclaim. Keeping the OUTER owner means the inner run's
+#     own `release --owner <inner>` is a no-op, so the lock is held until the
+#     outermost run releases it. The refresh re-stamps `pid`/`ts` (a nested
+#     acquire doubles as a liveness heartbeat). An empty `--session-id` never
+#     re-enters. Cooperative, like the rest of this lock: a caller that lies
+#     about its session id can re-enter, exactly as it could `--force-unlock`.
 #   Reclaim: fires ONLY when BOTH the recorded pid is dead AND
 #   age >= LOCK_TTL_SECONDS (1800s) — a dead pid alone, or a young lock
 #   alone, both refuse (matches dispatch-pr-review.sh's acquire_lock TTL
@@ -128,10 +153,23 @@ lock_age() {
   fi
 }
 
+# holder_pid — the liveness pid recorded in meta (see header): the session's
+# long-lived `claude` process when running under Claude Code, else the caller.
+holder_pid() {
+  case "${CLAUDE_PID:-}" in
+    ''|*[!0-9]*) : ;;
+    *) if kill -0 "$CLAUDE_PID" 2>/dev/null; then echo "$CLAUDE_PID"; return; fi ;;
+  esac
+  echo "$PPID"
+}
+
+# write_meta [owner] — owner defaults to --owner; the re-entrant path passes
+# the recorded outer owner so a nested acquire never relabels the lock.
 write_meta() {
+  local owner="${1:-$OWNER}"
   {
-    printf 'pid\t%s\n' "$$"
-    printf 'owner\t%s\n' "$OWNER"
+    printf 'pid\t%s\n' "$(holder_pid)"
+    printf 'owner\t%s\n' "$owner"
     printf 'session_id\t%s\n' "$SESSION_ID"
     printf 'ts\t%s\n' "$(now_epoch)"
   } > "$LOCK_META" 2>/dev/null || true
@@ -160,6 +198,17 @@ cmd_acquire() {
 
   if mkdir "$LOCK_DIR" 2>/dev/null; then
     write_meta
+    exit 0
+  fi
+
+  # Held by THIS session (nested /automate → /autonomous → /supervisor entry)
+  # — re-entrant: keep the outer owner, refresh pid/ts, succeed.
+  local lk_session lk_owner
+  lk_session="$(meta_get session_id)"
+  if [ -n "$SESSION_ID" ] && [ "$lk_session" = "$SESSION_ID" ]; then
+    lk_owner="$(meta_get owner)"
+    write_meta "$lk_owner"
+    echo "run_lock_reentrant owner=${lk_owner} session_id=${SESSION_ID}"
     exit 0
   fi
 
