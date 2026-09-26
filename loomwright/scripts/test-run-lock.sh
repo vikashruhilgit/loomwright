@@ -52,6 +52,9 @@
 #      non-shell ancestor (a long-lived perl standing in for `claude`) is
 #      recorded with pid_source=ancestor, and a different session is refused
 #      past the TTL -- the fix survives CLAUDE_PID (undocumented) disappearing.
+#  21. under Claude Code with BOTH tiers failing (no CLAUDE_PID, a `ps` that
+#      yields nothing -- e.g. a minimal image) -> falls through to the invoking
+#      shell and records pid_source=ppid, the visible "degraded to TTL" marker.
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -400,6 +403,20 @@ else
   no "different-session acquire must be REFUSED (rc=$S20_RC out='$S20_OUT')"
 fi
 kill "$FAKE_PARENT" 2>/dev/null; wait "$FAKE_PARENT" 2>/dev/null
+
+echo "== 21. under Claude Code, ancestor walk fails -> pid_source=ppid (degraded, visible) =="
+STUB21="$(mktemp -d)"
+printf '#!/bin/sh\nexit 1\n' > "$STUB21/ps"; chmod +x "$STUB21/ps"
+D21="$(fresh_root)"
+caller="$(env -u CLAUDE_PID CLAUDECODE=1 PATH="$STUB21:$PATH" bash -c 'bash "$1" acquire --owner x:21 --root "$2" >/dev/null 2>&1; echo $$' _ "$SUT" "$D21")"
+rec_pid="$(awk -F'\t' '$1=="pid"{print $2}' "$(meta_file "$D21")")"
+rec_src="$(awk -F'\t' '$1=="pid_source"{print $2}' "$(meta_file "$D21")")"
+if [ -n "$caller" ] && [ "$rec_pid" = "$caller" ] && [ "$rec_src" = "ppid" ]; then
+  ok "ancestor walk failed under CLAUDECODE -> invoking shell ($rec_pid), pid_source=ppid"
+else
+  no "expected pid=$caller pid_source=ppid, got pid='$rec_pid' source='$rec_src'"
+fi
+rm -rf "$STUB21"
 
 echo
 echo "RESULT: $pass passed, $fail failed"
