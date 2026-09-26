@@ -1609,6 +1609,26 @@ else
 fi
 rm -rf "$WD7"
 
+# F16b. surrounding whitespace is trimmed before the digit check (a grep/awk-extracted
+#       " 2" / "2 " / "3\n" must NOT be silently recorded as 0 — the false-0 this item
+#       exists to prevent); INTERNAL whitespace ("1 2") and whitespace-only still ⇒ 0.
+SHR_WS_BAD=""
+for pair in " 2|2" "2 |2" $'3\n|3' $'\t4 |4' "1 2|0" "  |0"; do
+  v="${pair%|*}"; want="${pair##*|}"
+  WD7="$(mktemp -d)"; LED7="$WD7/results.jsonl"
+  run_h shr_emit "$H" "$LED7" "run-shr-ws" --self-heal-rounds "$v" --fix-cycles 0 --drain-result READY
+  got="$(jq -r '.self_heal_rounds' "$LED7" 2>/dev/null)"
+  if [ "$RUN_RC" -ne 0 ] || [ "$got" != "$want" ]; then
+    SHR_WS_BAD="$SHR_WS_BAD [v='$v' want=$want got=$got rc=$RUN_RC]"
+  fi
+  rm -rf "$WD7"
+done
+if [ -z "$SHR_WS_BAD" ]; then
+  ok "self-heal-rounds trims surrounding whitespace (' 2'/'2 '/'3\\n'/tab ⇒ value) while internal/whitespace-only ⇒ 0"
+else
+  no "self-heal-rounds whitespace handling wrong:$SHR_WS_BAD"
+fi
+
 # F17 (AC3b + AC4). ordering — self-heal precedes the drain, and review_rounds stays
 #      DRAIN-ONLY. 1 + zero-cycle ESCALATED ⇒ [self_heal_churn(1), drain_escalation(1)],
 #      review_rounds:1. 1 + fix_cycles 3 READY ⇒ [self_heal_churn(1), drain_churn(3)],

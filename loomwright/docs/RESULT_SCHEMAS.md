@@ -1601,8 +1601,9 @@ variant:
   **Presence rule:** emitted ONLY when `--self-heal-rounds` was passed (any value), placed right after
   `review_rounds`; with the flag omitted the line is byte-identical to a pre-field line (the engine
   omits the flag when its `SUPERVISOR_RESULT` artifact has no `heal_iterations:` line — never a
-  fabricated count). **Normalization:** a non-negative integer passes through; anything else
-  (non-numeric, negative, fractional, empty) ⇒ `0` — never a non-zero exit (fail-SAFE). NOT part of
+  fabricated count). **Normalization:** surrounding whitespace is trimmed first; a non-negative
+  integer then passes through; anything else (non-numeric, negative, fractional, empty, internal
+  whitespace) ⇒ `0` — never a non-zero exit (fail-SAFE). NOT part of
   `automate_key`. Absent on `github_postmortem` lines and older trend lines — `schema_version` stays `1`.
 - `categories[]` carries **at most one drain entry plus at most one `self_heal_churn` entry**, coarser
   than `/pr-postmortem`'s per-round classification but honestly labeled by `class`. The **zero-rule**
@@ -1621,6 +1622,12 @@ variant:
   widens the known counter-vs-`categories[]` disagreement that `build-floor.sh` reports as
   `flow_stage_counter_disagreements` (see the `postmortem` caveat in FLOOR_PROJECTION) — still confined
   to `automate_drain` lines.
+- **`/propose` will see `self_heal_churn` as a recurring pair.** `scripts/propose-work.sh` groups
+  `categories[]` by `(class, flow_stage)` and writes a candidate once a pair reaches its threshold
+  (`PROPOSE_THRESHOLD`, default 10). Every self-healed PR adds one `self_heal_churn`/`self_heal` entry,
+  so that pair WILL cross the threshold and yield candidates whose evidence is entirely catches
+  (`self_heal_miss: false`) — the same shape as the owner-dismissed `drain_churn` pair. Advisory only
+  (a candidate still needs a human to promote it); dismiss it the same durable way `drain_churn` was.
 - The default `summary` (no caller `--summary`) appends `; self-heal: <n> round(s)` when
   `self_heal_rounds > 0`; otherwise it is unchanged. A caller-supplied `--summary` is emitted verbatim.
 - `self_heal_misses` ← `1` if `repeat_check_failure OR unresolved_bot_feedback`, else `0` (the drain
@@ -2650,7 +2657,7 @@ FLOOR_PROJECTION:
   notes: string[]                      # string[], required — one human-readable line per omitted or unverified surface, in surface-processing order. MAY be `[]` when every surface was counted
 ```
 
-**The two flow-stage representations, and why only one is published (the `postmortem` caveat):** the churn ledger records flow stage TWICE and the two do not agree. Every line may carry a `flow_stages` COUNTER object (`launch_pad` / `worker` / `self_heal` / `unknowable`), and every element of that line's `categories[]` carries its own single `flow_stage`. They diverge because the emitter derives the counter from a line's fix-cycle count while emitting one category object, so on an engine-drain line the counter can read several where `categories[]` holds exactly one entry — measured on this repo when this field was added, they disagree on a MINORITY of lines, all of them `automate_drain`. No count is pinned here: `learning-emit` appends to that ledger on every engine tick, so three measurements taken hours apart returned 89/26, 88/25 and 90/27 — the projector's own `flow_stage_counter_disagreements` field is the live answer, and `build-floor.sh` carries the jq one-liner that re-derives it. **The projector publishes `.categories[].flow_stage` and nothing else, and names that choice in `flow_stage_basis`.** The reason is denominator coherence rather than preference: `evidence` is a field ON the category object, so the class distribution is necessarily computed over category objects, and taking the counter for the flow-stage half would place two different denominators side by side inside one `detail` — in the one view whose entire premise is an honest basis. `flow_stage_counter_disagreements` records how often the unpublished representation would have said something different, so the choice is falsifiable rather than merely declared.
+**The two flow-stage representations, and why only one is published (the `postmortem` caveat):** the churn ledger records flow stage TWICE and the two do not agree. Every line may carry a `flow_stages` COUNTER object (`launch_pad` / `worker` / `self_heal` / `unknowable`), and every element of that line's `categories[]` carries its own single `flow_stage`. They diverge because the emitter derives the counter from a line's drain fix-cycle count while emitting at most one drain category object plus at most one `self_heal_churn` object, so on an engine-drain line the counter can read several where `categories[]` holds one or two entries — and, since `self_heal_rounds`, a self-heal-only line reads counter `self_heal: 0` against one `self_heal`-stage category (a line with `fix_cycles: 1` plus self-heal reads 1 vs 2) — measured on this repo when this field was added, they disagree on a MINORITY of lines, all of them `automate_drain`. No count is pinned here: `learning-emit` appends to that ledger on every engine tick, so three measurements taken hours apart returned 89/26, 88/25 and 90/27 — the projector's own `flow_stage_counter_disagreements` field is the live answer, and `build-floor.sh` carries the jq one-liner that re-derives it. **The projector publishes `.categories[].flow_stage` and nothing else, and names that choice in `flow_stage_basis`.** The reason is denominator coherence rather than preference: `evidence` is a field ON the category object, so the class distribution is necessarily computed over category objects, and taking the counter for the flow-stage half would place two different denominators side by side inside one `detail` — in the one view whose entire premise is an honest basis. `flow_stage_counter_disagreements` records how often the unpublished representation would have said something different, so the choice is falsifiable rather than merely declared.
 
 **Validation rules:**
 - `schema_version` must equal `1`.

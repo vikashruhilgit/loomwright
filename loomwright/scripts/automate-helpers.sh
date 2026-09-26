@@ -881,6 +881,8 @@ GEPARTS
 #      (any value). Omit the flag ⇒ the line is byte-identical to the pre-flag one.
 #      Normalization: a non-negative integer passes through; anything else
 #      (non-numeric, negative, fractional, empty) ⇒ 0 — never a non-zero exit.
+#      Surrounding whitespace is trimmed FIRST (`" 2"`/`"2\n"` from a grep/awk
+#      extraction ⇒ 2), so a padded value is never silently recorded as 0.
 #   3. `self_heal_rounds > 0` adds ONE `categories[]` entry
 #      {round: n, class: "self_heal_churn", self_heal_miss: false,
 #       flow_stage: "self_heal", evidence: "Phase 4.5 self-heal, heal_iterations=<n>"},
@@ -963,9 +965,14 @@ learning_emit() {
   # is omitted and the line stays byte-identical to the pre-flag shape. When passed,
   # ONLY a string of ASCII digits survives; everything else (empty, `-1`, `1.5`,
   # `abc`) normalizes to 0. An explicit digit check, NOT a bare `tonumber? // 0`
-  # (which would accept `-1` and `1.5`).
+  # (which would accept `-1` and `1.5`). Surrounding whitespace is trimmed first —
+  # prefix/suffix parameter expansion only (bash 3.2-safe; never the O(n²)
+  # `${var//[[:space:]]/}` global substitution), and INTERNAL whitespace (`"1 2"`)
+  # still normalizes to 0.
   local shr_json="null"
   if [ "$shr_given" = "1" ]; then
+    shr_raw="${shr_raw#"${shr_raw%%[![:space:]]*}"}"
+    shr_raw="${shr_raw%"${shr_raw##*[![:space:]]}"}"
     case "$shr_raw" in
       ''|*[!0-9]*) shr_json="0" ;;
       *) shr_json="$( printf '%s' "$shr_raw" | "$JQ" -R 'tonumber? // 0' 2>/dev/null )"
