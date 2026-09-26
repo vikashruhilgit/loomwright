@@ -1,8 +1,8 @@
 ---
 name: verify-walkthrough
 description: Protocol authority for `/verify <ticket>` and the QA Executor's `--verify <run_dir>` mode — AC extraction, AC → Playwright spec derivation, the four observation-derived verdicts (PASS / FAIL / BLOCKED / NOT_VERIFIABLE), the V7 mutation carve-out, evidence-per-AC, and budget. Read on demand at mode entry, deliberately not preloaded.
-version: "1.3.0"
-lastUpdated: "2026-09-16"
+version: "1.4.0"
+lastUpdated: "2026-09-26"
 ---
 
 # Verify Walkthrough Protocol (`/verify` + qa-executor `--verify` mode)
@@ -43,6 +43,14 @@ is the project's own `@playwright/test`, which is what keeps this protocol porta
 ticket again.
 
 ## 2. AC → spec derivation
+
+**Replay-first (token-economy 07).** Right after `preflight` and BEFORE authoring anything by hand,
+run `verify-run.sh spec-replay <run_dir> [--repo <dir>] [--no-replay]` — it copies a byte-identical
+prior spec into `<run_dir>/specs/<ac_id>.spec.ts` for every `ac_id` whose text is unchanged from the
+most recent run of the SAME ticket that still has that spec on disk, and appends one `spec_replay`
+evidence line per copy. Author a spec by hand ONLY for the `ac_id`s that still have no file under
+`<run_dir>/specs/` afterwards — a replayed id is NEVER re-authored. `--no-replay` (forwarded from
+`/verify --no-replay`) disables this for the run; every id is then authored fresh, as before this item.
 
 ONE spec file per verifiable AC at `<run_dir>/specs/<ac_id>.spec.ts`, whose test title is
 `[<ac_id>] <AC text>` — the `[ACn]` prefix is the ingest key (§VERIFY_RESULT "Title convention"); a
@@ -89,6 +97,17 @@ test('[AC2] Given the form page, when "hello" is submitted, then the echo shows 
 
 `screenshot: 'on'` and `trace: 'on'` come from the per-run config `walk` generates; the template adds
 only what Playwright does not capture by itself (the page body at the failed Then, non-2xx bodies).
+
+**The drift fallback (token-economy 07).** After `walk --scope ticket` runs, a REPLAYED `ac_id` whose
+latest verdict is `BLOCKED` with reason `spec_skipped` or `spec_not_run` is re-derived ONCE — author a
+fresh spec for it (replacing the replayed one), re-run `walk` for that one `ac_id`, and append
+`{event: "spec_rederived", ac_id, reason}` via `evidence-append`. Environment-wide BLOCKED reasons are
+NEVER re-derived — they mean the harness or session failed, not that this one spec drifted:
+`playwright_unavailable`, `reporter_missing: …`, a `net::ERR_`/`ECONNREFUSED`/`page.goto`-timeout
+message, `session_expired`, `run_paused_session_expired` (§VERIFY_RESULT "Reporter → verdict mapping",
+`docs/RESULT_SCHEMAS.md`). **The key rule: a replayed spec that FAILS is a real FAIL and is NEVER
+re-derived** — only a harness-classification BLOCKED on a replayed id ever triggers this path. At most
+ONE re-derivation per `ac_id` per run.
 
 ## 3. The four verdicts
 
@@ -147,8 +166,9 @@ Artifact paths are recorded RELATIVE to `<run_dir>/`; the store's validator reje
 ## 6. Budget and checkpoints
 
 - Reuse the QA Executor's **80-tool-call default**; `--verify` runs no discovery, so the budget is
-  spent on spec authoring (about 2–3 calls per AC) plus the fixed shell-outs (`start`, `seed`,
-  `auth-check`, `walk`, `reset`, `stop`, `finish`).
+  spent on spec authoring (about 2–3 calls per AUTHORED AC; replayed ACs cost 0 authoring calls)
+  plus the fixed shell-outs (`start`, `seed`, `auth-check`, `spec-replay`, `walk`, `reset`, `stop`,
+  `finish`).
 - **The checkpoint IS the evidence already written.** A run that exhausts its budget or aborts mid-way
   still ends with `verify-run.sh finish <run_dir> --status aborted`: the `ac` lines recorded so far are
   counted, every AC without a line is left for the human to see as absent in `summary.md`, and
@@ -428,3 +448,13 @@ protocol, no cross-project queues.
 - [ ] `VERIFY_RESULT.counts` is the printed counts row, copied — never tallied
 - [ ] a paused run (`needs_auth` or `session_expired`) never calls `finish`; `counts` comes from `summary.md`'s current row instead
 - [ ] the impact pass (§9), if it ran, recorded every verdict `scope: "impact"` — never `scope: "ticket"` — so the ticket's own PASS/FAIL/BLOCKED/NOT_VERIFIABLE counts are unchanged by it
+- [ ] every replayed id has a `spec_replay` evidence line
+
+**Honest limits (token-economy 07, spec replay).**
+- A replayed spec that still PASSES may no longer exercise the AC if the UI moved; `churn_files`
+  surfaces this, it does not decide.
+- **AC12:** `walk` maps a locator/selector timeout to FAIL/REAL_BUG, so a UI-drifted replayed spec
+  reports FAIL. The replayed-row marker in `summary.md` makes that visible; the remedy is
+  `/verify --no-replay`.
+- There is zero benefit on a fresh clone / worktree / CI, because `.supervisor/verify/` is gitignored.
+- A renumbered-but-unchanged AC is re-derived.

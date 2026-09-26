@@ -2927,7 +2927,7 @@ VERIFY_EVIDENCE:                       # one JSON object per line
   schema_version: 1                    # integer, required — always 1 (a JSON `true` is NOT 1)
   ts: string                           # required — ISO-8601 UTC, `YYYY-MM-DDTHH:MM:SS[.fff]Z`
   run_id: string                       # required — `verify-<YYYYMMDDTHHMMSSZ>-<slug>` as minted by `verify-helpers.sh run-id`; must start with `verify-`
-  event: enum [run_start, env, auth, ac, issue, pause, resume, run_end, impact_surfaces]   # required
+  event: enum [run_start, env, auth, ac, issue, pause, resume, run_end, impact_surfaces, spec_replay, spec_rederived]   # required
 
   # --- per-event required keys -------------------------------------------------
   run_start:
@@ -2979,6 +2979,14 @@ VERIFY_EVIDENCE:                       # one JSON object per line
     unmapped: string[]                 # required — `files` entries no surface claimed; may be empty
     brief_surfaces: string[]           # required — subsystem names sourced from a done brief Blast-Radius section; may be empty (the common case — real briefs rarely populate this section)
     limit: integer                     # required, >= 0 — the --impact-limit bound the prior-AC regression pass used (default 10)
+  spec_replay:                         # token-economy 07 — one line per spec copied byte-for-byte from a prior same-ticket run
+    ac_id: string                      # required, non-empty
+    source_run_id: string               # required, non-empty — the sibling run_id the spec was copied FROM
+    text_sha: string                   # required, non-empty — sha256 of the whitespace-normalised AC text (matched against the source run)
+    churn_files: integer|null          # REQUIRED KEY, NULLABLE VALUE — >= 0 file-overlap count when measurable, else null (NEVER 0 as a stand-in for "unmeasurable")
+  spec_rederived:                      # token-economy 07 — one line per re-authored replayed spec (at most one per ac_id per run)
+    ac_id: string                      # required, non-empty
+    reason: string                     # required, non-empty — the harness-classification BLOCKED reason that triggered re-derivation (e.g. spec_skipped, spec_not_run)
 ```
 
 **Latest-per-`ac_id` rule.** A run may re-verify an AC (resume after a pause, a retry after an
@@ -3103,6 +3111,11 @@ VERIFY_RESULT:
   artifacts_dir: string                # `<run_dir>/artifacts/` — screenshots / traces / response bodies, one subdir per ac_id
   summary: string                      # required, non-empty — one paragraph: what was walked, what PASSed, what could not be observed and why
   notes: string                        # optional — anything the human should read next (e.g. which NOT_VERIFIABLE needs a non-UI check)
+  spec_sources:                        # OPTIONAL (token-economy 07, additive — no schema_version bump, the V7 precedent) — COPIED from the
+                                        # `spec sources:` line `verify-helpers.sh summary-build` derives, same rule as `counts`
+    replayed: integer                  # non-negative — distinct ac_ids with a spec_replay evidence line
+    authored: integer                  # non-negative — ticket-scope ac_ids with NO spec_replay line
+    rederived: integer                 # non-negative — count of spec_rederived evidence lines
 ```
 
 **`paused` is not a completion state.** A `status: paused` block is emitted by the qa-executor's VERIFY MODE the moment `verify-run.sh auth-check` exits `4` (a fresh run needing a human sign-in, `pause_reason: needs_auth`) or `verify-run.sh walk` exits `5` (a session that died mid-run, `pause_reason: session_expired`) — in BOTH cases `counts` still carries whatever the store had accumulated so far (a paused run never calls `finish`, so `counts` is the LAST derived `summary.md` row, not a fresh tally) and `artifacts_dir` / `summary` still describe the run through the point of the pause. A `/verify --resume <run_id>` that completes normally emits a second, ordinary `status: completed` block for the same `run_id` — `pause_reason` is never carried forward onto it.
@@ -3113,6 +3126,13 @@ row — `PASS: 2 · FAIL: 0 · BLOCKED: 0 · NOT_VERIFIABLE: 1 · total: 3`. The
 `counts` and nothing else: the latest-per-`ac_id` rule, the `run_end`-carries-no-counts rule and the four-verdict
 enum are all enforced upstream by the evidence validator, so a `VERIFY_RESULT` can only restate a total the store
 computed. The hook's `total == pass + fail + blocked + not_verifiable` check exists to catch a hand-edited row.
+
+**`spec_sources` is derived the same way (token-economy 07).** `summary-build` also derives a
+`spec sources: replayed <n> · authored <n> · re-derived <n>` line in `summary.md` from the evidence
+(`spec_replay` / `spec_rederived` events) — the agent copies those three numbers into `spec_sources`
+verbatim, same rule as `counts`. `summary.md`'s per-AC ticket table also gains a `replayed` column
+(`replayed` for a row with a `spec_replay` line, `—` otherwise) so a replayed spec's FAIL is visibly a
+replay, never a silent authored FAIL.
 
 **Where each verdict comes from.** `PASS` and `FAIL` are emitted ONLY by `verify-run.sh walk`'s ingest of the
 Playwright reporter (an observed Then, or an observed contradiction — `FAIL` always carries `classification`,
@@ -3132,6 +3152,7 @@ A `PASS` is therefore never a claim — it is always the reporter's `expected` s
 | V5 | `counts` is a mapping whose `pass` / `fail` / `blocked` / `not_verifiable` / `total` are all present non-negative integers |
 | V6 | `counts.total == pass + fail + blocked + not_verifiable` |
 | V7 | `pause_reason` must be non-null and one of `needs_auth`/`session_expired` IFF `status == paused`; it must be `null` IFF `status` is `completed`/`aborted` — either direction of mismatch (`paused` + null, non-`paused` + non-null, or `paused` + an unrecognized string) is rejected. An ABSENT key is treated identically to an explicit `null` (the `classification` null/absent convention of §VERIFY_EVIDENCE), so a pre-item-04 emitter that never sends the key keeps validating unchanged for every non-`paused` status |
+| V8 | `spec_sources` (token-economy 07) is OPTIONAL — absent validates unchanged (the V7 additive precedent, no `schema_version` bump). Present: must be a mapping with EXACTLY the keys `replayed`/`authored`/`rederived`, each a non-negative integer |
 | neither | no `QA_RESULT` and no `VERIFY_RESULT` block ⇒ the existing `missing QA_RESULT block` reason, unchanged |
 
 The validator keeps its ALWAYS-exit-0 invariant (decision on stdout, in the documented command-hook shape — `{}` allow / `{"decision": "block", "reason": …}` block, per `result_block_parser.emit`); the
