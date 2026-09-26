@@ -3114,7 +3114,7 @@ VERIFY_RESULT:
   spec_sources:                        # OPTIONAL (token-economy 07, additive — no schema_version bump, the V7 precedent) — COPIED from the
                                         # `spec sources:` line `verify-helpers.sh summary-build` derives, same rule as `counts`
     replayed: integer                  # non-negative — distinct ac_ids with a spec_replay evidence line
-    authored: integer                  # non-negative — ticket-scope ac_ids with NO spec_replay line
+    authored: integer                  # non-negative — ticket-scope ac_ids with NO spec_replay line and a latest verdict other than NOT_VERIFIABLE (a BLOCKED id still counts — honest limit)
     rederived: integer                 # non-negative — count of spec_rederived evidence lines
 ```
 

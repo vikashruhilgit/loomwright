@@ -1778,6 +1778,81 @@ python3 "$HERE/validate-verify-evidence.py" "$RD10/evidence.jsonl" >/dev/null 2>
   && ok "(SR-AC10) the fabricated evidence store re-validates in file mode" || no "(SR-AC10) store invalid"
 
 # ============================================================================
+echo "== (SR-AC7c) churn_files through the REAL spec_replay_copy_one: a count when measurable, null when not =="
+# PR #269 Phase 4.5: the surfaces read lacked jq -s, so churn_files was silently ALWAYS null; and a
+# failed `git diff` (unresolvable source head_sha) fell through to [] ⇒ churn 0. Every earlier SR case
+# used ACs with no surfaces, so neither path was ever exercised. This drives the real function.
+TSC="$(mktmp)"; stage "$TSC"; contract "$TSC" true
+run_bin "$TSC" preflight "$REQ" --repo .
+RD_SC1="$(last_run_dir)"
+mkdir -p "$RD_SC1/specs"; printf '// prior AC1 spec\n' > "$RD_SC1/specs/AC1.spec.ts"
+jq -cn --arg rid "$(basename "$RD_SC1")" '{schema_version:1, ts:"2026-09-26T00:00:01Z", run_id:$rid, event:"ac",
+  ac_id:"AC1", text:"t", scope:"ticket", verdict:"PASS", classification:null, steps:[], artifacts:[],
+  surfaces:["src/a.ts","src/c.ts"]}' | bash "$TSC/bin/verify-helpers.sh" evidence-append "$RD_SC1" - >/dev/null
+run_bin "$TSC" finish "$RD_SC1" --status completed
+( cd "$TSC/repo" && mkdir -p src && printf 'x\n' > src/a.ts && printf 'y\n' > src/b.ts && git add src \
+  && git -c user.email=t@example.invalid -c user.name=t commit -q -m "touch a (a surface) and b (not)" )
+sleep 1
+run_bin "$TSC" preflight "$REQ" --repo .
+RD_SC2="$(last_run_dir)"
+run_bin "$TSC" spec-replay "$RD_SC2" --repo .
+cf="$(jq -rs '[.[] | select(.event=="spec_replay" and .ac_id=="AC1")][0].churn_files' "$RD_SC2/evidence.jsonl")"
+[ "$cf" = "1" ] \
+  && ok "(SR-AC7c) surfaces [a,c] ∩ diff [a,b] ⇒ churn_files 1 (a real count, not the silent null)" \
+  || no "(SR-AC7c) churn_files=$cf (expected 1); stdout=$(cat "$LAST_OUT") stderr=$(cat "$LAST_ERR")"
+# Unresolvable source head_sha (a rebased/gc'd commit): the diff FAILS ⇒ null, never 0.
+jq -c 'if .event=="run_start" then .head_sha="0000000000000000000000000000000000000bad" else . end' \
+  "$RD_SC1/evidence.jsonl" > "$RD_SC1/evidence.jsonl.tmp" && mv "$RD_SC1/evidence.jsonl.tmp" "$RD_SC1/evidence.jsonl"
+# RD_SC2 (newer, carrying a replayed AC1 copy but no AC1 surfaces) would otherwise be the match and
+# yield null for the WRONG reason — remove its copy so the bad-sha RD_SC1 is the only possible source.
+rm -f "$RD_SC2/specs/AC1.spec.ts"
+sleep 1
+run_bin "$TSC" preflight "$REQ" --repo .
+RD_SC3="$(last_run_dir)"
+run_bin "$TSC" spec-replay "$RD_SC3" --repo .
+cf3="$(jq -rs '[.[] | select(.event=="spec_replay" and .ac_id=="AC1")][0].churn_files' "$RD_SC3/evidence.jsonl")"
+src3="$(jq -rs '[.[] | select(.event=="spec_replay" and .ac_id=="AC1")][0].source_run_id' "$RD_SC3/evidence.jsonl")"
+[ "$src3" = "$(basename "$RD_SC1")" ] && [ "$cf3" = "null" ] \
+  && ok "(SR-AC7u) source head_sha unresolvable ⇒ git diff fails ⇒ churn_files null (never 0)" \
+  || no "(SR-AC7u) source=$src3 churn_files=$cf3 (expected source $(basename "$RD_SC1"), null); stdout=$(cat "$LAST_OUT") stderr=$(head -c 400 "$LAST_ERR")"
+
+echo "== (SR-AC10v) authored excludes a browser-less NOT_VERIFIABLE id (verify-run.sh verdict writes no spec) =="
+# PR #269 review: a ticket-scope ac line from `verdict … NOT_VERIFIABLE` was counted as "authored"
+# though no spec was ever written. walk never emits NOT_VERIFIABLE, so that verdict is unambiguous.
+# A BLOCKED id still counts (documented honest limit) — pinned here so the limit stays deliberate.
+RDV="$(mktmp)"
+{
+  jq -cn '{event:"spec_replay", ac_id:"AC1"}'
+  jq -cn '{event:"ac", scope:"ticket", ac_id:"AC1", verdict:"PASS"}'
+  jq -cn '{event:"ac", scope:"ticket", ac_id:"AC2", verdict:"FAIL"}'
+  jq -cn '{event:"ac", scope:"ticket", ac_id:"AC3", verdict:"NOT_VERIFIABLE"}'
+  jq -cn '{event:"ac", scope:"ticket", ac_id:"AC4", verdict:"BLOCKED"}'
+  jq -cn '{event:"ac", scope:"ticket", ac_id:"AC5", verdict:"FAIL"}'
+  jq -cn '{event:"ac", scope:"ticket", ac_id:"AC5", verdict:"NOT_VERIFIABLE"}'
+} > "$RDV/evidence.jsonl"
+sv="$(bash "$HERE/verify-helpers.sh" spec-sources-render "$RDV")"
+[ "$sv" = "spec sources: replayed 1 · authored 2 · re-derived 0" ] \
+  && ok "(SR-AC10v) authored = AC2 + AC4 (BLOCKED, honest limit); AC3 and AC5 (latest NOT_VERIFIABLE) excluded; AC1 replayed" \
+  || no "(SR-AC10v) got '$sv' (expected replayed 1 · authored 2 · re-derived 0)"
+
+echo "== (SR-empty-ticket) an unreadable run_start (ticket_path \"\") never matches another empty ticket =="
+TSE="$(mktmp)"; stage "$TSE"; contract "$TSE" true
+run_bin "$TSE" preflight "$REQ" --repo .
+RD_SE1="$(last_run_dir)"
+mkdir -p "$RD_SE1/specs"; for i in 1 2 3; do printf '// p%s\n' "$i" > "$RD_SE1/specs/AC$i.spec.ts"; done
+run_bin "$TSE" finish "$RD_SE1" --status completed
+sleep 1
+run_bin "$TSE" preflight "$REQ" --repo .
+RD_SE2="$(last_run_dir)"
+for rd in "$RD_SE1" "$RD_SE2"; do
+  jq -c 'if .event=="run_start" then del(.ticket_path) else . end' "$rd/evidence.jsonl" > "$rd/e.tmp" && mv "$rd/e.tmp" "$rd/evidence.jsonl"
+done
+run_bin "$TSE" spec-replay "$RD_SE2" --repo .
+[ "$(tail -1 "$LAST_OUT")" = "replayed=0 total=3" ] \
+  && ok "(SR-empty-ticket) both ticket_paths empty ⇒ replayed=0 (no empty==empty false match)" \
+  || no "(SR-empty-ticket) stdout=$(cat "$LAST_OUT")"
+
+# ============================================================================
 echo "== (I06-docs) skill §9 + qa-executor Impact Pass step + verify.md flags are present =="
 grep -qF -- '## 9. Impact pass' "$SKILL" && ok "(I06-docs) skill has a ## 9. Impact pass section" || no "(I06-docs) skill missing ## 9. Impact pass"
 grep -qF -- "ticket's own PASS/FAIL/BLOCKED/NOT_VERIFIABLE counts are unchanged by it" "$SKILL" \

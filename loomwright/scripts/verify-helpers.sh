@@ -171,9 +171,13 @@ impact_summary_render() {
 # the SAME "also directly testable" convention impact_summary_render already uses.
 #   replayed   = count of DISTINCT ac_ids carrying a `spec_replay` line (one line per replay, but an
 #                ac_id is counted once even if it were somehow replayed more than once)
-#   authored   = ticket-scope `ac` ids with NO `spec_replay` line for that id (an ac_id that has NOT
-#                yet reached `walk` at all — replayed or not — is neither authored nor counted here;
-#                it surfaces once its own `ac` line lands)
+#   authored   = ticket-scope `ac` ids with NO `spec_replay` line for that id, EXCLUDING ids whose
+#                latest ticket-scope verdict is NOT_VERIFIABLE — that verdict is only ever written by
+#                the browser-less `verify-run.sh verdict` path (walk never emits it), so no spec was
+#                authored for it (PR #269 review). An ac_id that has NOT yet reached a verdict at all is
+#                neither authored nor counted here; it surfaces once its own `ac` line lands. HONEST
+#                LIMIT: a BLOCKED id still counts — evidence cannot tell walk's `no_spec` BLOCKED or a
+#                browser-less `verdict … BLOCKED` (no spec) apart from a spec that ran and was BLOCKED.
 #   re-derived = count of `spec_rederived` lines (bounded to <= replayed by construction, per the
 #                owning brief's Design step 3 — never re-checked here, this is a pure derivation)
 spec_sources_render() {
@@ -182,7 +186,8 @@ spec_sources_render() {
   src="$run_dir/evidence.jsonl"
   [ -f "$src" ] || src=/dev/null
   jq -rs '
-    ([.[] | select(.event == "ac" and .scope == "ticket") | .ac_id] | unique) as $ticket_ids
+    ([.[] | select(.event == "ac" and .scope == "ticket")] | group_by(.ac_id) | map(last)
+      | map(select(.verdict != "NOT_VERIFIABLE")) | map(.ac_id)) as $ticket_ids
     | ([.[] | select(.event == "spec_replay") | .ac_id] | unique) as $replayed_ids
     | ($replayed_ids | length) as $replayed
     | ([$ticket_ids[] | select(. as $i | ($replayed_ids | index($i)) == null)] | length) as $authored

@@ -570,6 +570,8 @@ spec_replay_cmd() {
       [ -n "$sib_rid" ] || continue
       sib_dir="$verify_root/$sib_rid"
       sib_ticket="$(run_start_field "$sib_dir" ticket_path)"
+      # An unreadable run_start degrades to "" — never let two empties "match" as the same ticket.
+      [ -n "$sib_ticket" ] && [ -n "$ticket_path" ] || continue
       [ "$sib_ticket" = "$ticket_path" ] || continue   # AC9-mutation:ticket_path
       sib_text="$(jq -r --arg id "$ac_id" '.acs[] | select(.ac_id == $id) | .text' "$sib_dir/acs.json" 2>/dev/null | head -1)"
       [ -n "$sib_text" ] || continue
@@ -602,14 +604,17 @@ spec_replay_cmd() {
 # from an empty/unmapped diff, the same pathspec-trap convention impact_record_surfaces_cmd follows).
 spec_replay_copy_one() {
   local run_dir="$1" run_id="$2" repo="$3" ac_id="$4" source_run_id="$5" source_dir="$6" text_sha="$7" head_sha="$8"
-  local source_head surfaces_json diff_files churn_files n ts
+  local source_head surfaces_json diff_files churn_files n="" ts
   mkdir -p "$run_dir/specs" || die "cannot create $run_dir/specs"
   cp "$source_dir/specs/$ac_id.spec.ts" "$run_dir/specs/$ac_id.spec.ts" || die "could not copy the spec for $ac_id from $source_dir"
 
   source_head="$(run_start_field "$source_dir" head_sha)"
   surfaces_json="[]"
   if [ -f "$source_dir/evidence.jsonl" ]; then
-    surfaces_json="$(jq -c --arg id "$ac_id" '
+    # -s: evidence.jsonl is one object per line; to_entries must index the SLURPED array (as
+    # impact_summary_render / summary_build do). Without it jq errors per line, 2>/dev/null hides it,
+    # and churn_files is silently always null (PR #269 Phase 4.5 finding).
+    surfaces_json="$(jq -sc --arg id "$ac_id" '
       def latest_by(f): group_by(f) | map(max_by(._i)) | sort_by(._i);
       (to_entries | map(.value + {_i: .key})) as $L
       | ([$L[] | select(.event == "ac" and .scope == "ticket" and .ac_id == $id)] | latest_by(.ac_id)) as $m
@@ -620,9 +625,18 @@ spec_replay_copy_one() {
 
   churn_files="null"
   if [ "$surfaces_json" != "[]" ] && [ -n "$source_head" ] && [ -n "$head_sha" ]; then
-    diff_files="$(git -C "$repo" diff --name-only "$source_head...$head_sha" 2>/dev/null | jq -R . 2>/dev/null | jq -sc . 2>/dev/null)"
-    [ -n "$diff_files" ] || diff_files="[]"
-    n="$(jq -n --argjson a "$diff_files" --argjson b "$surfaces_json" '[$a[] as $x | select($b | index($x) != null)] | length' 2>/dev/null)"
+    # A FAILED diff (a source head_sha rebased/gc'd away, not a commit here) is UNMEASURABLE ⇒ null.
+    # Only a SUCCESSFUL diff may yield a count — an empty list from a failed diff would read as
+    # "0 churn", the exact empty-means-no-change trap this field exists to avoid.
+    local diff_raw diff_rc
+    diff_raw="$(git -C "$repo" diff --name-only "$source_head...$head_sha" 2>/dev/null)"; diff_rc=$?
+    if [ "$diff_rc" -eq 0 ]; then
+      diff_files="$(printf '%s' "$diff_raw" | jq -R . 2>/dev/null | jq -sc . 2>/dev/null)"
+      [ -n "$diff_files" ] || diff_files="[]"
+    else
+      diff_files=""
+    fi
+    [ -n "$diff_files" ] && n="$(jq -n --argjson a "$diff_files" --argjson b "$surfaces_json" '[$a[] as $x | select($b | index($x) != null)] | length' 2>/dev/null)"
     case "$n" in ''|*[!0-9]*) n="" ;; esac
     [ -n "$n" ] && churn_files="$n"
   fi

@@ -458,3 +458,6 @@ protocol, no cross-project queues.
   `/verify --no-replay`.
 - There is zero benefit on a fresh clone / worktree / CI, because `.supervisor/verify/` is gitignored.
 - A renumbered-but-unchanged AC is re-derived.
+- `spec sources:` `authored` excludes an id whose latest verdict is `NOT_VERIFIABLE` (only the browser-less
+  `verify-run.sh verdict` path writes one — no spec), but still counts a `BLOCKED` id: evidence cannot tell
+  `walk`'s `no_spec` block or a browser-less `verdict … BLOCKED` apart from a spec that ran and was BLOCKED.
