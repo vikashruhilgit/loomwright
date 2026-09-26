@@ -1,6 +1,5 @@
 # 06 — Token ceiling for `/automate` and `/autonomous` + single-run-per-repo lock
 
-## Status: pending
 
 ## Problem
 There is no spend ceiling anywhere in the plugin (0 hits for `max_cost|spend cap|cost ceiling|token ceiling`
@@ -68,3 +67,8 @@ point (state the limit).
 - `dispatch-pr-review.sh` `acquire_lock` (mkdir lock dir, `meta` TSV, pid liveness, 1800 s TTL).
 - `automate-loop/SKILL.md` §1.5 helper list, §4 RECONCILE, §11 concurrent-run constraint; `--cheap`
   forwarding precedent in `autonomous-loop/SKILL.md:121,289`.
+
+## Status: done (PR #253, merge 67fd680)
+- **Completed:** 2026-09-26T02:14:42Z
+- **Brief:** .supervisor/jobs/done/2026-09-22-cost-ceiling-and-run-lock.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/253

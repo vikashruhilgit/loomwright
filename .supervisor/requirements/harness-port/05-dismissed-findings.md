@@ -1,6 +1,5 @@
 # 05 — Itemised dismissed findings, persisted where the postmortem can read them
 
-## Status: pending
 
 ## Problem
 Phase 4.5 self-heal (`skills/self-heal-advisory/SKILL.md`) and the `/review-pr` drain (`skills/review-heal/SKILL.md`
@@ -73,3 +72,8 @@ per round; no edit of earlier marker comments.
 - `pr-postmortem-gather.sh` header output shape (`review_comments: [{author, snippet}]`) and fail-safe contract.
 - `classify-bot-review.sh` exists with `[]` fail-safe (red-team-hardening/01 also edits it — coordinate if both
   queues run; this item's flag is additive).
+
+## Status: done (PR #264, merge 63ec5e3)
+- **Completed:** 2026-09-26T02:15:00Z
+- **Brief:** .supervisor/jobs/done/2026-09-24-dismissed-findings.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/264

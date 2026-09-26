@@ -1,6 +1,10 @@
 # 02 — Not-ready stamp honoured by intake (`proposed` / `parked` skip)
 
-## Status: pending
+
+## Status: done (PR #260, merge 65ef43a)
+- **Completed:** 2026-09-26T02:26:15Z
+- **Brief:** .supervisor/jobs/done/2026-09-24-harness-port-02-not-ready-stamp.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/260
 
 ## Problem
 `loomwright/scripts/automate-helpers.sh` `is_done()` matches only `^## Status:[[:space:]]*done(_with_escalation)?\b`;

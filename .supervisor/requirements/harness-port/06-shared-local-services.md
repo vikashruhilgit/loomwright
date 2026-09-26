@@ -1,6 +1,5 @@
 # 06 — Shared local services declared, not assumed (host CLAUDE.md → brief → spawn paste)
 
-## Status: pending
 ## Depends on: 01 (worker rule (c) consumes the spawn line)
 
 ## Problem
@@ -65,3 +64,8 @@ ignore, and item 01's rule says so.
   lacks `Base commit`).
 - `async-orchestration/SKILL.md` §"Pointers, not payloads" naming `docs/POINTER_AUDIT.md` as the exception list.
 - `plan-reviewer.md` Criterion 9 body + its `## Feasibility` optional note.
+
+## Status: done (PR #265, merge ee09946)
+- **Completed:** 2026-09-26T02:15:02Z
+- **Brief:** .supervisor/jobs/done/2026-09-24-shared-local-services.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/265

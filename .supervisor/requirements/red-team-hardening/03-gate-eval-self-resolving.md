@@ -1,6 +1,5 @@
 # 03 — `gate-eval` resolves the merge conditions itself; `ctx.json` shrinks to what only the drain knows
 
-## Status: pending
 
 ## Problem
 `scripts/automate-helpers.sh` `gate_eval` (lines ~361–524) is "a pure decision over a context JSON describing
@@ -79,3 +78,8 @@ No second merge path; no change to the five-surface grep; no change to `classify
 - `classify-risk.sh <base> <head> --root <dir>` output object `{high_risk, reasons, …}`; `null` on
   unclassifiable.
 - `automate-loop/SKILL.md` §10 lines ~306–349, §11 enumeration.
+
+## Status: done (PR #250, merge 8dbb1d5)
+- **Completed:** 2026-09-26T02:14:35Z
+- **Brief:** unknown
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/250
