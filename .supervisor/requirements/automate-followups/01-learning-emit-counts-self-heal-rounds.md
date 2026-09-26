@@ -63,6 +63,14 @@ the external bot in the drain".
   `check-vendor-coupling.sh` + `check-doc-currency.sh`).
 
 ## Verified premises (re-check before starting)
+- **Caveat (found by PR #268's review):** the contract says the engine writes `SUPERVISOR_RESULT`
+  verbatim to `<run_id>.supervisor-result.md`, but in run `automate-2026-09-22-013403` that file was a
+  main-thread RECONSTRUCTION (item resumed via a worker, no Supervisor block emitted) with no
+  `heal_iterations`. Before relying on it, verify that a normal (non-resumed) RUN writes the full block;
+  if it does not, this item must also fix that capture, or source the heal count elsewhere.
+- **Ledger key drift:** the PR #267 line's `automate_key` item is `twin-loop/08-…md`, while sibling
+  lines use the full `.supervisor/requirements/<queue>/<file>.md`; the main thread passed a short
+  `--item`. Cosmetic (opaque key), append-only (not rewritten); `--item` must be the full Queue path.
 - `automate-helpers.sh` `learning_emit()`'s jq body: the `effective_review_rounds` rule quoted above (read at
   `main @ 91c117e`, 2026-09-26).
 - `docs/RESULT_SCHEMAS.md` SUPERVISOR_RESULT: `heal_iterations: integer | null # required`, null when

@@ -142,4 +142,4 @@ command / skill / hook; no merge path; `heal_decision` untouched; nothing gating
 - **Completed:** 2026-09-26T02:15:12Z
 - **Brief:** .supervisor/jobs/done/2026-09-25-executable-rule-candidates.md
 - **PR:** https://github.com/vikashruhilgit/loomwright/pull/267
-- **Follow-up (open, not blocking):** D11 observation — record the `rules_check:` line from 10 real Phase 4.5 runs in a `
+- **Follow-up (open, not blocking):** D11 observation — record the `rules_check:` line from 10 real Phase 4.5 runs in a `## Result` section here. Post-merge, multi-run; the mechanism shipped in PR #267. Note: every machine replays `unstamped` until its human runs `/rules check --confirm` once.
