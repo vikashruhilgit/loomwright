@@ -71,7 +71,10 @@ the contract. Does not touch qa-executor.
 - Exactly one writer, propose-only, `--confirm`-gated
 - Reader never executes a contract string
 
-## Status: pending
+## Status: done (PR #220, merge be8329b)
+- **Completed:** 2026-09-14T08:05:20Z (PR merge time; stamp backfilled 2026-09-26 — it had been left `pending`)
+- **Brief:** .supervisor/jobs/done/2026-09-14-verify-env-contract.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/220
 
 <!-- loomwright:requirement-closeout -->
 ## Status: done

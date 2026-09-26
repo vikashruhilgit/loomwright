@@ -1,6 +1,13 @@
 # 08 — Rules in EVERY project: `/setup rules` offers a deterministic CI job (the plugin cannot edit a user's CI)
 
-## Status: pending
+## Status: proposed
+
+> **Parked in `proposed/` (owner decision, 2026-09-26).** Moved out of `automate-followups/` so no
+> `--folder` run can pick it up. **Revisit trigger:** the first time `.agent/rules/` holds ≥1 `enforcement:
+> must` rule with a non-null `check` (on 2026-09-26 the store had 3 rules, 0 `must`, 0 with a check, so a gate
+> would gate on nothing). `automate-followups/09` makes `/rules audit` print that nudge automatically.
+> Promotion = a human moves this file back out of `proposed/` and stamps `## Status: pending`.
+> Also blocked on `proposed/automate-followups-07-…` (it decides whether a failing check gates at all).
 
 ## Depends on
 Item 07 (decides whether a failing check gates at all). Related: item 02 in this folder — the `claude-review`

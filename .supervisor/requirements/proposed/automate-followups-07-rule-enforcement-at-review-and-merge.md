@@ -2,12 +2,18 @@
 
 ## Status: proposed
 
+> **Parked in `proposed/` (owner decision, 2026-09-26).** Moved out of `automate-followups/` so no
+> `--folder` run can pick it up. **Revisit trigger:** the first time `.agent/rules/` holds ≥1 `enforcement:
+> must` rule with a non-null `check` (on 2026-09-26 the store had 3 rules, 0 `must`, 0 with a check, so a gate
+> would gate on nothing). `automate-followups/09` makes `/rules audit` print that nudge automatically.
+> Promotion = a human moves this file back out of `proposed/` and stamps `## Status: pending`.
+
 > **Why `proposed` and not `pending` (stamped 2026-09-26).** `--folder` intake skips `proposed`, so this
 > item is deliberately OUT of the queue until the owner answers **D1–D4** below. D1 reverses a documented
 > CLAUDE.md invariant and D4 amends that invariant's wording — neither is a worker's decision. It also
 > collides head-on with `twin-remediation/03-mechanize-rules-tier1.md`, whose non-goals state "No new
 > gating paths"; resolve that conflict (supersede 03, or narrow D1) in the same decision. Promote back to
-> `pending` once answered. Items 05, 06 and 08 are additive and do NOT depend on this one.
+> `pending` once answered. Items 05 and 06 are additive and do NOT depend on this one; 08 (also parked here) does.
 
 ## Depends on
 `twin-loop/08` (**done**, PR #267) and `red-team-hardening/03` (gate-eval self-resolving, **done**, PR #250).
@@ -111,3 +117,11 @@ matching zero tracked paths), `later_contradiction`, `supersession_cycle`, `skip
 - `commands/rules.md` §`audit`: read-only, propose-only, has NO write mode and NO write flag, refuses unknown
   flags, asserts a byte-identical store via a path-list + per-file-hash fingerprint, re-runs `validate-entry.sh`'s
   shared checks, exit `0` clean / `1` findings / `2` could not examine, and "NEVER EXECUTES a `check`".
+
+## Owner direction (2026-09-26)
+- **Yes in principle to D1–D4, deferred** until the revisit trigger fires. Scope (c) (`audit-rules.sh` at
+  Phase 4.5) was split out and ships now as `automate-followups/09`; it is no longer part of this item.
+- **D1 caveat found by PR #267 review:** the stamp binds a check's TEXT, never files it invokes. A PR can
+  edit the script a stamped check runs (e.g. `bash scripts/lint.sh`) and make its own gate pass. When built,
+  gate only on checks that do not execute repo files (e.g. harvested grep-only candidates), or bind those files.
+- Accepting D1 supersedes `twin-remediation/03-mechanize-rules-tier1.md`'s "No new gating paths" non-goal.
