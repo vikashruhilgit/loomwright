@@ -676,9 +676,10 @@ else
   # The ledger carries TWO flow-stage representations that do NOT agree: a per-line
   # `flow_stages` COUNTER object {launch_pad, worker, self_heal, unknowable}, and one
   # `flow_stage` field per element of `categories[]`. `learning-emit` derives the counter from
-  # `fix_cycles` while emitting a single category object, so on an `automate_drain` line the
-  # counter can read 7 where `categories[]` holds one entry, and the disagreement is confined to
-  # `automate_drain` lines.
+  # drain `fix_cycles` while emitting at most one drain category object plus at most one
+  # `self_heal_churn` object, so on an `automate_drain` line the counter can read 7 where
+  # `categories[]` holds one or two entries (and a self-heal-only line reads counter 0 against
+  # one `self_heal` category), and the disagreement is confined to `automate_drain` lines.
   #
   # NO COUNT IS PINNED HERE, deliberately. An earlier version of this comment said "26 of 89
   # lines", and three separate measurements of that same file returned 89/26, 88/25 and 90/27 —
