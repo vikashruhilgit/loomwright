@@ -41,6 +41,17 @@ trap 'rm -rf "$ROOT" 2>/dev/null' EXIT
 
 mktmp() { mktemp -d "$ROOT/d.XXXXXX"; }
 
+# FAKE_HOME — every (a)-(f) case below runs the checker with HOME overridden to an isolated temp dir,
+# so rules-check.sh's new user-scope stamp read/write (STAMP_REL below, resolved under $HOME)
+# NEVER touches the real developer's home directory during a test run. The (g)-(j) stamp-specific
+# cases below use their OWN per-case HOME dirs (mirroring test-resolve-egress-config.sh's convention)
+# so each can control exactly what stamp state it starts from.
+# STAMP_REL — the stamp's path RELATIVE to $HOME, spelled out ONCE here (it must match rules-check.sh's
+# own RULES_CHECK_STAMP_FILE); every per-case stamp path below is derived from it.
+STAMP_REL=".claude/loomwright/rules-check-stamp.json"
+FAKE_HOME="$ROOT/home"
+mkdir -p "$FAKE_HOME"
+
 new_repo() {
   local r; r="$(mktmp)"
   ( cd "$r" && git init -q && git config user.email t@t && git config user.name t \
@@ -57,7 +68,8 @@ seed_rules_file() {
 
 # Run the checker inside a temp repo (cd so --show-toplevel = the temp repo). Extra args forwarded.
 # stdin redirected from /dev/null so `[ -t 0 ]` is false (deterministic non-interactive default).
-run_checker() { local repo="$1"; shift; ( cd "$repo" && bash "$CHECKER" "$@" </dev/null ); }
+# HOME is always overridden (FAKE_HOME by default) so no case here can touch the real user scope.
+run_checker() { local repo="$1"; shift; ( cd "$repo" && HOME="$FAKE_HOME" bash "$CHECKER" "$@" </dev/null ); }
 
 if ! command -v jq >/dev/null 2>&1; then
   echo "test-rules-check: jq absent on this host — rules-check.sh no-ops. Skipping data assertions."
@@ -127,7 +139,7 @@ RB2="$(new_repo)"
 seed_rules_file "$RB2" "safety.json" "[
   {\"id\":\"b2-run\",\"category\":\"safety\",\"statement\":\"env-confirmed check runs\",\"enforcement\":\"must\",\"check\":\"touch $MARKER_B2\",\"provenance\":{\"source\":\"test\"}}
 ]"
-( cd "$RB2" && RULES_CHECK_CONFIRM=1 bash "$CHECKER" </dev/null ) >/dev/null 2>&1; rc_b2=$?
+( cd "$RB2" && HOME="$FAKE_HOME" RULES_CHECK_CONFIRM=1 bash "$CHECKER" </dev/null ) >/dev/null 2>&1; rc_b2=$?
 [ "$rc_b2" -eq 0 ] && ok "(b2 env-confirm) exits 0" || no "(b2) expected exit 0, got $rc_b2"
 [ -e "$MARKER_B2" ] && ok "(b2) RULES_CHECK_CONFIRM=1 EXECUTED the check (marker CREATED)" \
   || no "(b2) env confirm did not execute the check"
@@ -233,7 +245,7 @@ seed_rules_file "$RE" "e.json" "[
 ]"
 # (e1) a typo'd --no-cmd (`--no-cmnd`) is NOT honored as --no-cmd, but ALSO must not silently
 #      execute: with no valid confirmation it stays in the default need-confirm skip. Capture stderr.
-err_e1="$( cd "$RE" && bash "$CHECKER" --no-cmnd </dev/null 2>&1 >/dev/null )"; rc_e1=$?
+err_e1="$( cd "$RE" && HOME="$FAKE_HOME" bash "$CHECKER" --no-cmnd </dev/null 2>&1 >/dev/null )"; rc_e1=$?
 [ "$rc_e1" -eq 0 ] && ok "(e1) unknown arg still exits 0 (fail-safe)" || no "(e1) expected exit 0, got $rc_e1"
 grep -qF -- "--no-cmnd" < <(printf '%s\n' "$err_e1") \
   && ok "(e1) unknown arg produces a stderr warning naming it" \
@@ -281,7 +293,7 @@ run_checker "$RF" --confirm >/dev/null 2>&1
   || no "(f2) REGRESSION: the checker skipped a rule merely because applies_to would route it out"
 # (f3) ...and the checker still takes NO path scope: passing one is warned-and-ignored, never a filter.
 rm -f "$MARKER_F" 2>/dev/null
-err_f3="$( cd "$RF" && bash "$CHECKER" docs/readme.md --confirm </dev/null 2>&1 >/dev/null )"; rc_f3=$?
+err_f3="$( cd "$RF" && HOME="$FAKE_HOME" bash "$CHECKER" docs/readme.md --confirm </dev/null 2>&1 >/dev/null )"; rc_f3=$?
 [ "$rc_f3" -eq 0 ] && ok "(f3) a stray path argument still exits 0 (fail-safe)" \
                    || no "(f3) expected exit 0 with a stray path arg, got $rc_f3"
 grep -qF -- "docs/readme.md" < <(printf '%s\n' "$err_f3") \
@@ -290,6 +302,288 @@ grep -qF -- "docs/readme.md" < <(printf '%s\n' "$err_f3") \
 [ -e "$MARKER_F" ] \
   && ok "(f3) the stray path arg did NOT narrow the audit — the check still ran" \
   || no "(f3) a stray path arg silently narrowed the audit"
+
+# ---------------------------------------------------------------------------
+# sha256 helper for the STAMP cases below — mirrors rules-check.sh's OWN fallback chain
+# (shasum -a 256 -> sha256sum -> openssl dgst), but kept SEPARATE (never sourcing the script) so
+# these assertions are an INDEPENDENT recomputation, not an echo of the script's own output.
+# ---------------------------------------------------------------------------
+_t_sha256_file() {
+  local f="$1"
+  if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$f" 2>/dev/null | awk '{print $1}'
+  elif command -v sha256sum >/dev/null 2>&1; then sha256sum "$f" 2>/dev/null | awk '{print $1}'
+  elif command -v openssl >/dev/null 2>&1; then openssl dgst -sha256 "$f" 2>/dev/null | awk '{print $NF}'
+  fi
+}
+
+# ============================================================================
+echo "== (g) STAMP WRITE on --confirm — user-scope file, hash matches an INDEPENDENT computation =="
+# ============================================================================
+RG="$(new_repo)"
+HG="$ROOT/home_g"; mkdir -p "$HG"
+MARKER_G1="$ROOT/g1_marker_$$"; MARKER_G2="$ROOT/g2_marker_$$"; MARKER_G_ADV="$ROOT/g_adv_marker_$$"
+rm -f "$MARKER_G1" "$MARKER_G2" "$MARKER_G_ADV" 2>/dev/null
+seed_rules_file "$RG" "g.json" "[
+  {\"id\":\"g-one\",\"category\":\"safety\",\"statement\":\"first\",\"enforcement\":\"must\",\"check\":\"touch $MARKER_G1\",\"provenance\":{\"source\":\"test\"}},
+  {\"id\":\"g-two\",\"category\":\"safety\",\"statement\":\"second\",\"enforcement\":\"must\",\"check\":\"touch $MARKER_G2\",\"provenance\":{\"source\":\"test\"}},
+  {\"id\":\"g-adv\",\"category\":\"safety\",\"statement\":\"advisory excluded\",\"enforcement\":\"advisory\",\"check\":\"touch $MARKER_G_ADV\",\"provenance\":{\"source\":\"test\"}}
+]"
+STAMP_FILE_G="$HG/$STAMP_REL"
+[ ! -e "$STAMP_FILE_G" ] && ok "(g0) no stamp file exists before the run" \
+  || no "(g0) stamp file already exists — fixture contaminated"
+out_g="$( cd "$RG" && HOME="$HG" bash "$CHECKER" --confirm </dev/null )"; rc_g=$?
+[ "$rc_g" -eq 0 ] && ok "(g1) --confirm run exits 0" || no "(g1) expected exit 0, got $rc_g"
+[ -f "$STAMP_FILE_G" ] && ok "(g2) the stamp file was WRITTEN to user scope ($STAMP_FILE_G)" \
+  || no "(g2) no stamp file written at $STAMP_FILE_G"
+[ -e "$MARKER_G1" ] && [ -e "$MARKER_G2" ] \
+  && ok "(g2b) both must-rule checks actually ran under --confirm" \
+  || no "(g2b) expected both markers created"
+[ ! -e "$MARKER_G_ADV" ] && ok "(g2c) the advisory rule's check was NOT run (excluded from the set)" \
+  || no "(g2c) REGRESSION: advisory rule's check ran"
+# The stamp is keyed by the PHYSICAL git-common-dir (PR #267 Phase 4.5 finding 5), resolved here
+# the same way rules-check.sh resolves it (`cd <git-common-dir> && pwd -P` — physical, because on
+# macOS mktemp's /var/folders/... is a symlink to /private/var/folders/...).
+REPO_G="$(cd "$RG" && cd "$(git rev-parse --git-common-dir)" && pwd -P)"
+stamped_hash_g="$(jq -r --arg rr "$REPO_G" '.[$rr].hash // "MISSING"' "$STAMP_FILE_G" 2>/dev/null)"
+[ "$stamped_hash_g" != "MISSING" ] && [ -n "$stamped_hash_g" ] \
+  && ok "(g3) the stamp record carries a non-empty hash keyed by this repository's physical git-common-dir" \
+  || no "(g3) no hash recorded for key $REPO_G: $(cat "$STAMP_FILE_G" 2>/dev/null)"
+# INDEPENDENT recomputation — jq+sha256 in THIS test, never the script's own code path. Only
+# g-one/g-two are must-rules with non-null checks; g-adv (advisory) must be excluded from the set.
+TMP_G="$ROOT/g_hash_input"
+jq -nr --arg id1 "g-one" --arg c1 "touch $MARKER_G1" --arg id2 "g-two" --arg c2 "touch $MARKER_G2" \
+  '[{id:$id1,check:$c1},{id:$id2,check:$c2}] | .[] | [.id, .check] | @tsv' \
+  | LC_ALL=C sort > "$TMP_G"
+expected_hash_g="$(_t_sha256_file "$TMP_G")"
+[ -n "$expected_hash_g" ] && [ "$expected_hash_g" = "$stamped_hash_g" ] \
+  && ok "(g4) the written stamp's hash MATCHES an independently jq+sha256-computed hash of the sorted id/check set — not just echoing the script's own output back at itself" \
+  || no "(g4) hash mismatch: written=$stamped_hash_g independent=$expected_hash_g"
+
+# ============================================================================
+echo "== (h) --if-stamped REPLAYS a valid stamp with NO PROMPT — same output shape as --confirm =="
+# ============================================================================
+out_h="$( cd "$RG" && HOME="$HG" bash "$CHECKER" --if-stamped </dev/null )"; rc_h=$?
+[ "$rc_h" -eq 0 ] && ok "(h1) --if-stamped exits 0 (both stamped checks pass again)" \
+  || no "(h1) expected exit 0, got $rc_h"
+grep -qF "Checks passed: 2/2" < <(printf '%s\n' "$out_h") \
+  && ok "(h2) --if-stamped ran without a prompt and reported n/m with n/m > 0/0 (2/2)" \
+  || no "(h2) expected 'Checks passed: 2/2', got: $out_h"
+grep -qE '^  \[RUN \]' < <(printf '%s\n' "$out_h") \
+  && ok "(h3) the output shape matches --confirm ([RUN] lines present, no prompt)" \
+  || no "(h3) expected [RUN] lines in --if-stamped output, got: $out_h"
+
+# ============================================================================
+echo "== (i) editing ONE byte after stamping ⇒ --if-stamped reports [SKIP] all (unstamped) =="
+# ============================================================================
+seed_rules_file "$RG" "g.json" "[
+  {\"id\":\"g-one\",\"category\":\"safety\",\"statement\":\"first\",\"enforcement\":\"must\",\"check\":\"touch $MARKER_G1 \",\"provenance\":{\"source\":\"test\"}},
+  {\"id\":\"g-two\",\"category\":\"safety\",\"statement\":\"second\",\"enforcement\":\"must\",\"check\":\"touch $MARKER_G2\",\"provenance\":{\"source\":\"test\"}}
+]"
+out_i="$( cd "$RG" && HOME="$HG" bash "$CHECKER" --if-stamped </dev/null )"; rc_i=$?
+[ "$rc_i" -eq 0 ] && ok "(i1) --if-stamped after a byte-edited check still exits 0" \
+  || no "(i1) expected exit 0, got $rc_i"
+grep -qF "[SKIP] all (unstamped)" < <(printf '%s\n' "$out_i") \
+  && ok "(i2) a single-byte edit invalidates the stamp — '[SKIP] all (unstamped)'" \
+  || no "(i2) expected '[SKIP] all (unstamped)', got: $out_i"
+grep -qF "Checks passed: 0/0" < <(printf '%s\n' "$out_i") \
+  && ok "(i3) unstamped reports Checks passed: 0/0" || no "(i3) expected 'Checks passed: 0/0', got: $out_i"
+
+# --no-cmd + --if-stamped together: cmd-disabled WINS regardless of stamp validity. Restore the
+# originally-stamped content first so the stamp WOULD be valid, to prove --no-cmd still wins over it.
+seed_rules_file "$RG" "g.json" "[
+  {\"id\":\"g-one\",\"category\":\"safety\",\"statement\":\"first\",\"enforcement\":\"must\",\"check\":\"touch $MARKER_G1\",\"provenance\":{\"source\":\"test\"}},
+  {\"id\":\"g-two\",\"category\":\"safety\",\"statement\":\"second\",\"enforcement\":\"must\",\"check\":\"touch $MARKER_G2\",\"provenance\":{\"source\":\"test\"}}
+]"
+out_i2="$( cd "$RG" && HOME="$HG" bash "$CHECKER" --no-cmd --if-stamped </dev/null )"; rc_i2=$?
+[ "$rc_i2" -eq 0 ] && ok "(i4) --no-cmd --if-stamped exits 0" || no "(i4) expected exit 0, got $rc_i2"
+grep -qF "cmd execution disabled" < <(printf '%s\n' "$out_i2") \
+  && ok "(i5) --no-cmd --if-stamped together -> 'cmd execution disabled' WINS regardless of stamp validity (the stamp here is VALID again — restored above — yet --no-cmd still blocks)" \
+  || no "(i5) expected 'cmd execution disabled', got: $out_i2"
+
+# ============================================================================
+echo "== (j) git status --porcelain shows NO new/modified file after a --confirm stamp-writing run =="
+# ============================================================================
+RJ="$(new_repo)"
+HJ="$ROOT/home_j"; mkdir -p "$HJ"
+MARKER_J="$ROOT/j_marker_$$"; rm -f "$MARKER_J" 2>/dev/null
+seed_rules_file "$RJ" "j.json" "[
+  {\"id\":\"j-one\",\"category\":\"safety\",\"statement\":\"j\",\"enforcement\":\"must\",\"check\":\"touch $MARKER_J\",\"provenance\":{\"source\":\"test\"}}
+]"
+( cd "$RJ" && git add .agent/rules/j.json && git commit -qm "seed rule" ) >/dev/null 2>&1
+before_status="$( cd "$RJ" && git status --porcelain )"
+[ -z "$before_status" ] && ok "(j0) the repo is CLEAN before the run (premise for the porcelain assertion)" \
+  || no "(j0) repo not clean before the run — fixture contaminated: $before_status"
+( cd "$RJ" && HOME="$HJ" bash "$CHECKER" --confirm </dev/null ) >/dev/null 2>&1
+after_status="$( cd "$RJ" && git status --porcelain )"
+[ -z "$after_status" ] \
+  && ok "(j1) git status --porcelain is EMPTY after a --confirm stamp-writing run — the stamp genuinely never lands under the repo root (the load-bearing security property of the whole design)" \
+  || no "(j1) SECURITY REGRESSION: git status is dirty after --confirm: $after_status"
+[ -f "$HJ/$STAMP_REL" ] \
+  && ok "(j2) …while the stamp WAS written, just to user scope outside the repo — (j1) is not vacuous" \
+  || no "(j2) the stamp was not written at all — (j1) would be vacuous without this"
+
+# ============================================================================
+echo "== (k) MUTATION CONTROL — deleting the hash-comparison line breaks (i2)/(i3) =="
+# ============================================================================
+MUT_K="$ROOT/mut-rules-check.sh"
+sed 's/if \[ -n "\$_rc_stamped_hash" \] && \[ "\$_rc_stamped_hash" = "\$LIVE_HASH" \]; then/if true; then/' \
+  "$CHECKER" > "$MUT_K"
+if ! cmp -s "$CHECKER" "$MUT_K" && grep -qF 'if true; then' "$MUT_K" && bash -n "$MUT_K" 2>/dev/null; then
+  RK="$(new_repo)"
+  HK="$ROOT/home_k"; mkdir -p "$HK"
+  MARKER_K="$ROOT/k_marker_$$"; rm -f "$MARKER_K" 2>/dev/null
+  seed_rules_file "$RK" "k.json" "[
+    {\"id\":\"k-one\",\"category\":\"safety\",\"statement\":\"k\",\"enforcement\":\"must\",\"check\":\"touch $MARKER_K\",\"provenance\":{\"source\":\"test\"}}
+  ]"
+  # Stamp with the ORIGINAL (unmutated) checker, so the stamp itself is genuine.
+  ( cd "$RK" && HOME="$HK" bash "$CHECKER" --confirm </dev/null ) >/dev/null 2>&1
+  rm -f "$MARKER_K" 2>/dev/null
+  # Invalidate the stamp with a one-byte edit, then rerun --if-stamped under the MUTANT checker.
+  seed_rules_file "$RK" "k.json" "[
+    {\"id\":\"k-one\",\"category\":\"safety\",\"statement\":\"k\",\"enforcement\":\"must\",\"check\":\"touch $MARKER_K \",\"provenance\":{\"source\":\"test\"}}
+  ]"
+  out_k="$( cd "$RK" && HOME="$HK" bash "$MUT_K" --if-stamped </dev/null )"; rc_k=$?
+  if [ -e "$MARKER_K" ] && grep -qF "Checks passed: 1/1" < <(printf '%s\n' "$out_k"); then
+    ok "(k) CONFIRMED: with the hash-comparison line removed, a byte-edited (genuinely unstamped) check set is incorrectly treated as stamped and RUNS — the comparison is load-bearing, not vacuous"
+  else
+    no "(k) REFUTED: the mutant still correctly reported unstamped — (i2)/(i3) may be vacuous. out: $out_k"
+  fi
+else
+  no "(k) the hash-comparison mutation did not land cleanly"
+fi
+
+# ============================================================================
+echo "== (l) ANTI-LAUNDERING — RULES_CHECK_CONFIRM=1 + --if-stamped with NO stamp runs nothing, writes nothing =="
+# ============================================================================
+# PR #267 Phase 4.5 finding 1. Old code: the env confirm beat --if-stamped, so this ran every
+# must-check with no stamp at all AND wrote the stamp — laundering the set into "confirmed".
+RL="$(new_repo)"
+HL="$ROOT/home_l"; mkdir -p "$HL"
+MARKER_L="$ROOT/l_marker_$$"; rm -f "$MARKER_L" 2>/dev/null
+seed_rules_file "$RL" "l.json" "[
+  {\"id\":\"l-one\",\"category\":\"safety\",\"statement\":\"l\",\"enforcement\":\"must\",\"check\":\"touch $MARKER_L\",\"provenance\":{\"source\":\"test\"}}
+]"
+out_l="$( cd "$RL" && HOME="$HL" RULES_CHECK_CONFIRM=1 bash "$CHECKER" --if-stamped </dev/null 2>/dev/null )"; rc_l=$?
+[ "$rc_l" -eq 0 ] && ok "(l1) exits 0" || no "(l1) expected exit 0, got $rc_l"
+grep -qF "[SKIP] all (unstamped)" < <(printf '%s\n' "$out_l") \
+  && ok "(l2) env confirm + --if-stamped with no stamp reports '[SKIP] all (unstamped)' — the env var does not count under --if-stamped" \
+  || no "(l2) expected '[SKIP] all (unstamped)', got: $out_l"
+[ ! -e "$MARKER_L" ] && ok "(l3) the must-check did NOT run (no marker)" \
+  || no "(l3) SECURITY REGRESSION: env confirm laundered an unstamped --if-stamped run into execution"
+[ ! -e "$HL/$STAMP_REL" ] && ok "(l4) NO stamp file was written — the unconfirmed set was not laundered into a stamp" \
+  || no "(l4) SECURITY REGRESSION: a stamp was written: $(cat "$HL/$STAMP_REL" 2>/dev/null)"
+# (l5) the env confirm still works WITHOUT --if-stamped (b2's behaviour is not collateral damage),
+# and an explicit ARGV --confirm alongside --if-stamped still confirms.
+( cd "$RL" && HOME="$HL" bash "$CHECKER" --if-stamped --confirm </dev/null ) >/dev/null 2>&1
+[ -e "$MARKER_L" ] && [ -f "$HL/$STAMP_REL" ] \
+  && ok "(l5) an explicit ARGV --confirm alongside --if-stamped still confirms (runs + stamps)" \
+  || no "(l5) argv --confirm with --if-stamped did not confirm"
+
+# ============================================================================
+echo "== (m) --if-stamped under a pseudo-TTY NEVER prompts =="
+# ============================================================================
+# PR #267 Phase 4.5 finding 7. Old code evaluated the TTY branch BEFORE --if-stamped, so on a
+# terminal an unattended replay prompted. `script` allocates a pty; BSD and util-linux differ in
+# syntax, so probe each and skip gracefully when neither works.
+RM="$(new_repo)"
+HM="$ROOT/home_m"; mkdir -p "$HM"
+MARKER_M="$ROOT/m_marker_$$"; rm -f "$MARKER_M" 2>/dev/null
+seed_rules_file "$RM" "m.json" "[
+  {\"id\":\"m-one\",\"category\":\"safety\",\"statement\":\"m\",\"enforcement\":\"must\",\"check\":\"touch $MARKER_M\",\"provenance\":{\"source\":\"test\"}}
+]"
+M_RUNNER="$ROOT/m_runner.sh"
+printf 'cd %q && [ -t 0 ] && [ -t 1 ] && echo PTY_OK; HOME=%q bash %q --if-stamped 2>&1\n' "$RM" "$HM" "$CHECKER" > "$M_RUNNER"
+out_m=""
+if command -v script >/dev/null 2>&1; then
+  out_m="$(script -q /dev/null bash "$M_RUNNER" </dev/null 2>/dev/null)"
+  case "$out_m" in *PTY_OK*) : ;; *) out_m="$(script -q -c "bash $M_RUNNER" /dev/null </dev/null 2>/dev/null)" ;; esac
+fi
+case "$out_m" in
+  *PTY_OK*)
+    case "$out_m" in
+      *"check commands from"*) no "(m1) --if-stamped PROMPTED on a TTY: $out_m" ;;
+      *) ok "(m1) --if-stamped on a pseudo-TTY does not prompt" ;;
+    esac
+    case "$out_m" in
+      *"[SKIP] all (unstamped)"*) ok "(m2) …and resolves to '[SKIP] all (unstamped)' with no stamp" ;;
+      *) no "(m2) expected '[SKIP] all (unstamped)' under a pty, got: $out_m" ;;
+    esac
+    [ ! -e "$MARKER_M" ] && ok "(m3) …and nothing ran" || no "(m3) a check ran under a pty --if-stamped"
+    ;;
+  *) echo "  skip: (m) no usable \`script\` pseudo-TTY on this host — case skipped" ;;
+esac
+
+# ============================================================================
+echo "== (n) the stamp is per REPOSITORY: --confirm in the main checkout ⇒ --if-stamped replays in a linked worktree =="
+# ============================================================================
+# PR #267 Phase 4.5 finding 5. Old code keyed by --show-toplevel, so every linked worktree (what
+# /automate runs in) was a different key and always replayed `unstamped`.
+RN="$(new_repo)"
+HN="$ROOT/home_n"; mkdir -p "$HN"
+seed_rules_file "$RN" "n.json" "[
+  {\"id\":\"n-one\",\"category\":\"safety\",\"statement\":\"n\",\"enforcement\":\"must\",\"check\":\"true\",\"provenance\":{\"source\":\"test\"}}
+]"
+( cd "$RN" && git add .agent/rules/n.json && git commit -qm "seed rule" ) >/dev/null 2>&1
+( cd "$RN" && HOME="$HN" bash "$CHECKER" --confirm </dev/null ) >/dev/null 2>&1
+WT_N="$ROOT/wt_n_$$"
+( cd "$RN" && git worktree add -q "$WT_N" >/dev/null 2>&1 )
+if [ -f "$WT_N/.agent/rules/n.json" ]; then
+  out_n="$( cd "$WT_N" && HOME="$HN" bash "$CHECKER" --if-stamped </dev/null 2>/dev/null )"
+  grep -qF "Checks passed: 1/1" < <(printf '%s\n' "$out_n") \
+    && ok "(n1) a set confirmed in the main checkout replays stamped (1/1) in a linked worktree of the same repository" \
+    || no "(n1) expected 'Checks passed: 1/1' in the linked worktree, got: $out_n"
+  wt_status="$( cd "$WT_N" && git status --porcelain )"
+  main_status="$( cd "$RN" && git status --porcelain )"
+  [ -z "$wt_status" ] && [ -z "$main_status" ] \
+    && ok "(n2) git status --porcelain is EMPTY in both checkouts — the stamp never lands in the repo" \
+    || no "(n2) a checkout went dirty: wt=[$wt_status] main=[$main_status]"
+  # (n3) a SEPARATE clone (its own .git) is a different key and stays unstamped.
+  CL_N="$ROOT/clone_n_$$"
+  git clone -q "$RN" "$CL_N" >/dev/null 2>&1
+  out_n3="$( cd "$CL_N" && HOME="$HN" bash "$CHECKER" --if-stamped </dev/null 2>/dev/null )"
+  grep -qF "[SKIP] all (unstamped)" < <(printf '%s\n' "$out_n3") \
+    && ok "(n3) a separate clone of the same content stays unstamped (its own git-common-dir)" \
+    || no "(n3) a separate clone replayed the other clone's stamp: $out_n3"
+else
+  no "(n0) git worktree add failed — case could not run"
+fi
+
+# ============================================================================
+echo "== (o) a stdin-reading check cannot swallow the loop's remaining records =="
+# ============================================================================
+# PR #267 Phase 4.5 finding 9. Old code ran `bash -c "$check"` with the loop's record stream as
+# stdin, so a `cat` check consumed the remaining records and the run silently shrank.
+RO="$(new_repo)"
+HO="$ROOT/home_o"; mkdir -p "$HO"
+MARKER_OA="$ROOT/oa_marker_$$"; MARKER_OB="$ROOT/ob_marker_$$"; rm -f "$MARKER_OA" "$MARKER_OB" 2>/dev/null
+seed_rules_file "$RO" "o.json" "[
+  {\"id\":\"o-1\",\"category\":\"safety\",\"statement\":\"a\",\"enforcement\":\"must\",\"check\":\"touch $MARKER_OA\",\"provenance\":{\"source\":\"test\"}},
+  {\"id\":\"o-2\",\"category\":\"safety\",\"statement\":\"cat\",\"enforcement\":\"must\",\"check\":\"cat >/dev/null\",\"provenance\":{\"source\":\"test\"}},
+  {\"id\":\"o-3\",\"category\":\"safety\",\"statement\":\"b\",\"enforcement\":\"must\",\"check\":\"touch $MARKER_OB\",\"provenance\":{\"source\":\"test\"}}
+]"
+out_o="$( cd "$RO" && HOME="$HO" bash "$CHECKER" --confirm </dev/null 2>/dev/null )"
+[ -e "$MARKER_OA" ] && [ -e "$MARKER_OB" ] \
+  && ok "(o1) both markers exist — the check after the stdin-reading one still ran" \
+  || no "(o1) a stdin-reading check swallowed later records (A=$([ -e "$MARKER_OA" ] && echo y || echo n) B=$([ -e "$MARKER_OB" ] && echo y || echo n))"
+grep -qF "Checks passed: 3/3" < <(printf '%s\n' "$out_o") \
+  && ok "(o2) Checks passed: 3/3" || no "(o2) expected 'Checks passed: 3/3', got: $out_o"
+
+# ============================================================================
+echo "== (p) stamp-write warnings — a non-object stamp file is warned about and never clobbered =="
+# ============================================================================
+RP="$(new_repo)"
+HP="$ROOT/home_p"; mkdir -p "$(dirname "$ROOT/home_p/$STAMP_REL")"
+printf '[1,2]' > "$HP/$STAMP_REL"
+seed_rules_file "$RP" "p.json" "[
+  {\"id\":\"p-one\",\"category\":\"safety\",\"statement\":\"p\",\"enforcement\":\"must\",\"check\":\"true\",\"provenance\":{\"source\":\"test\"}}
+]"
+err_p="$( cd "$RP" && HOME="$HP" bash "$CHECKER" --confirm </dev/null 2>&1 >/dev/null )"; rc_p=$?
+[ "$rc_p" -eq 0 ] && ok "(p1) a non-object stamp file does not change the exit code" || no "(p1) exit $rc_p"
+grep -qF "not an object" < <(printf '%s\n' "$err_p") \
+  && ok "(p2) a valid-JSON non-object stamp file is WARNED about on stderr" \
+  || no "(p2) no warning for a non-object stamp file; stderr: $err_p"
+[ "$(cat "$HP/$STAMP_REL")" = "[1,2]" ] && ok "(p3) the non-object stamp file was NOT clobbered" \
+  || no "(p3) the non-object stamp file was overwritten: $(cat "$HP/$STAMP_REL")"
 
 echo
 echo "RESULT: $pass passed, $fail failed"

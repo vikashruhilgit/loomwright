@@ -1483,6 +1483,337 @@ else
   no "(M17) the self-crediting mutation did not land"
 fi
 
+# ============================================================================
+echo "(P) check_candidate — proposal DATA only (executable-rule-candidates/01)"
+# ============================================================================
+# All three findings' evidence uses the "citation" keyword so the fixture themes as
+# citation-anchor (4th in THEME_KEYS precedence) without accidentally hitting an earlier theme's
+# patterns (restated-count-version / cross-surface-sync / doc-currency-drift) on a stray word.
+
+# (p-quorum) 3 findings sharing the literal `19` ⇒ a check_candidate appears, built from the
+# ABSENCE template (the token has zero hits in this fixture repo's tracked file content).
+RCC="$(new_repo)"
+{
+  rec 1 'citation reference example `19` noted' '["src/a/x.md"]'
+  rec 2 'citation reference example `19` noted again' '["src/a/y.md"]'
+  rec 3 'another citation reference `19` example' '["src/a/x.md"]'
+} > "$RCC/.supervisor/postmortem/results.jsonl"
+run_harvest "$RCC" --session-id "fx-cc" --min-support 3 --cap 2 --no-writer
+printf '%s\n' "$OUT" > "$ROOT/cc.txt"
+[ "$RC" -eq 0 ] && ok "(cc0) exits 0" || no "(cc0) exited $RC"
+grep -qF "check_candidate: grep -rnE -- '19' src/a/*; test \$? -eq 1 " "$ROOT/cc.txt" \
+  && ok "(cc1) check_candidate appears in the human-facing block, built from the fail-closed absence template ('19' has zero hits in this fixture repo)" \
+  || no "(cc1) expected a check_candidate line, got: $(grep -A2 'check: null' "$ROOT/cc.txt" | head -6)"
+grep -qF 'check: null' "$ROOT/cc.txt" \
+  && ok "(cc2) check stays null even with a candidate shown beside it (AC9b unchanged)" \
+  || no "(cc2) check not null"
+grep -F '     invocation: ' "$ROOT/cc.txt" > "$ROOT/cc_inv.txt"
+[ -s "$ROOT/cc_inv.txt" ] && ! grep -qF -- '--check' "$ROOT/cc_inv.txt" \
+  && grep -qF -- '--enforcement advisory' "$ROOT/cc_inv.txt" \
+  && ok "(cc2b) the DEFAULT Accept invocation never passes --check and stays --enforcement advisory even when a check_candidate is shown (AC9b freeze holds)" \
+  || no "(cc2b) the default Accept invocation changed: $(cat "$ROOT/cc_inv.txt")"
+# (cc2c) the "Accept rule WITH check" invocation composes --enforcement must (rules-check.sh selects
+# ONLY must-rules — an advisory rule's check can never run) and carries the LITERAL "$CANDIDATE".
+grep -F '     invocation (Accept rule WITH check): ' "$ROOT/cc.txt" > "$ROOT/cc_invwc.txt"
+[ -s "$ROOT/cc_invwc.txt" ] && grep -qF -- '--enforcement must' "$ROOT/cc_invwc.txt" \
+  && grep -qF -- '--check "$CANDIDATE" < /dev/null' "$ROOT/cc_invwc.txt" \
+  && ! grep -qF -- '--enforcement advisory' "$ROOT/cc_invwc.txt" \
+  && ok "(cc2c) the WITH-check invocation composes --enforcement must + the literal --check \"\$CANDIDATE\" (never the spliced candidate)" \
+  || no "(cc2c) WITH-check invocation wrong or missing: $(cat "$ROOT/cc_invwc.txt")"
+
+# (p-json) --json emits the SAME candidate as a machine-readable `check_candidate` key; `check` null.
+run_harvest "$RCC" --session-id "fx-cc" --min-support 3 --cap 2 --no-writer --json
+printf '%s\n' "$OUT" > "$ROOT/ccjson.txt"
+awk '/--- proposal JSON \(--json\) ---/{f=1;next} /^=== END DRY RUN/{f=0} f' "$ROOT/ccjson.txt" > "$ROOT/ccjson_only.json"
+if command -v jq >/dev/null 2>&1 && jq -e . "$ROOT/ccjson_only.json" >/dev/null 2>&1; then
+  cc_check_val="$(jq -r '.[0].check' "$ROOT/ccjson_only.json" 2>/dev/null)"
+  cc_cand_val="$(jq -r '.[0].check_candidate' "$ROOT/ccjson_only.json" 2>/dev/null)"
+  [ "$cc_check_val" = "null" ] && ok "(cc3) proposal JSON's check is null" \
+    || no "(cc3) proposal JSON check not null: $cc_check_val"
+  grep -qF "grep -rnE -- '19'" < <(printf '%s' "$cc_cand_val") \
+    && ok "(cc4) proposal JSON's check_candidate carries the SAME candidate shown in the human block" \
+    || no "(cc4) proposal JSON check_candidate unexpected: $cc_cand_val"
+else
+  no "(cc3/cc4) proposal JSON did not parse: $(cat "$ROOT/ccjson_only.json")"
+fi
+
+# (p-reject-quote) a shared token containing a single quote ⇒ NO candidate, block otherwise identical.
+RCQ="$(new_repo)"
+{
+  rec 1 "citation reference example \`a'b\` noted" '["src/a/x.md"]'
+  rec 2 "citation reference example \`a'b\` noted again" '["src/a/y.md"]'
+  rec 3 "another citation reference \`a'b\` example" '["src/a/x.md"]'
+} > "$RCQ/.supervisor/postmortem/results.jsonl"
+run_harvest "$RCQ" --session-id "fx-ccq" --min-support 3 --cap 2 --no-writer
+printf '%s\n' "$OUT" > "$ROOT/ccq.txt"
+[ "$RC" -eq 0 ] && ok "(cq0) exits 0" || no "(cq0) exited $RC"
+grep -qF 'check_candidate:' "$ROOT/ccq.txt" \
+  && no "(cq1) REJECT FAILED: a candidate containing a single quote was shown: $(grep 'check_candidate:' "$ROOT/ccq.txt")" \
+  || ok "(cq1) a shared token containing a single quote yields NO check_candidate (rejected, never escaped)"
+grep -qF 'check: null' "$ROOT/ccq.txt" \
+  && ok "(cq2) the proposal is otherwise identical to the no-candidate case (check: null still printed)" \
+  || no "(cq2) check: null missing"
+
+# (p-reject-dollarparen) a shared token containing $( ⇒ NO candidate, in a SEPARATE fixture.
+RCD="$(new_repo)"
+{
+  rec 1 'citation reference example `$(x)` noted' '["src/a/x.md"]'
+  rec 2 'citation reference example `$(x)` noted again' '["src/a/y.md"]'
+  rec 3 'another citation reference `$(x)` example' '["src/a/x.md"]'
+} > "$RCD/.supervisor/postmortem/results.jsonl"
+run_harvest "$RCD" --session-id "fx-ccd" --min-support 3 --cap 2 --no-writer
+printf '%s\n' "$OUT" > "$ROOT/ccd.txt"
+[ "$RC" -eq 0 ] && ok "(cd0) exits 0" || no "(cd0) exited $RC"
+grep -qF 'check_candidate:' "$ROOT/ccd.txt" \
+  && no "(cd1) REJECT FAILED: a candidate containing \$( was shown: $(grep 'check_candidate:' "$ROOT/ccd.txt")" \
+  || ok "(cd1) a shared token containing \$( yields NO check_candidate (rejected, never escaped)"
+
+# (p-identical) "proposal otherwise identical to the no-candidate case" — asserted by DIFF, not by
+# spot-checking one line: normalise each run's repo path + session id, drop the ONE check_candidate
+# line from the candidate-bearing run (RCC), and require byte-identity with each rejected run.
+norm_cc() {   # norm_cc <file> <repo> <session-id>
+  sed -e "s|$2|<REPO>|g" -e "s|$3|<SID>|g" "$1" | grep -vF -e 'check_candidate:' -e 'invocation (Accept rule WITH check):'
+}
+norm_cc "$ROOT/cc.txt"  "$RCC" "fx-cc"  > "$ROOT/cc.norm"
+norm_cc "$ROOT/ccq.txt" "$RCQ" "fx-ccq" > "$ROOT/ccq.norm"
+norm_cc "$ROOT/ccd.txt" "$RCD" "fx-ccd" > "$ROOT/ccd.norm"
+cmp -s "$ROOT/cc.norm" "$ROOT/ccq.norm" \
+  && ok "(cq3) the rejected-quote proposal is byte-identical to the candidate-bearing one minus its check_candidate line" \
+  || no "(cq3) rejected-quote proposal differs beyond the candidate line: $(diff "$ROOT/cc.norm" "$ROOT/ccq.norm" | head -6)"
+cmp -s "$ROOT/cc.norm" "$ROOT/ccd.norm" \
+  && ok "(cd2) the rejected-\$( proposal is byte-identical to the candidate-bearing one minus its check_candidate line" \
+  || no "(cd2) rejected-\$( proposal differs beyond the candidate line: $(diff "$ROOT/cc.norm" "$ROOT/ccd.norm" | head -6)"
+
+# (p-reject-dash) a shared token starting with `-` would be read by grep as an OPTION ⇒ NO candidate.
+RCX="$(new_repo)"
+{
+  rec 1 'citation reference example `-f` noted' '["src/a/x.md"]'
+  rec 2 'citation reference example `-f` noted again' '["src/a/y.md"]'
+  rec 3 'another citation reference `-f` example' '["src/a/x.md"]'
+} > "$RCX/.supervisor/postmortem/results.jsonl"
+run_harvest "$RCX" --session-id "fx-ccx" --min-support 3 --cap 2 --no-writer
+printf '%s\n' "$OUT" > "$ROOT/ccx.txt"
+grep -qF 'check_candidate:' "$ROOT/ccx.txt" \
+  && no "(cx1) REJECT FAILED: a leading-dash token was shown: $(grep 'check_candidate:' "$ROOT/ccx.txt")" \
+  || ok "(cx1) a shared token starting with '-' yields NO check_candidate (would be parsed as a grep option)"
+MUT_CX="$ROOT/mut-harvest-dash.sh"
+grep -vF '    -*)      return 0 ;;   # a leading' "$HARVEST" > "$MUT_CX"
+if ! cmp -s "$HARVEST" "$MUT_CX" && bash -n "$MUT_CX" 2>/dev/null; then
+  M_CX_OUT="$( bash "$MUT_CX" --root "$RCX" --session-id fx-ccx-mut --min-support 3 --cap 2 --no-writer 2>&1 )" || true
+  grep -qF "check_candidate: grep -rnE -- '-f'" < <(printf '%s\n' "$M_CX_OUT") \
+    && ok "(M-cx) CONFIRMED: with the leading-dash arm removed, the '-f' token lands in a candidate — (cx1) is load-bearing" \
+    || no "(M-cx) REFUTED: the mutant still showed no '-f' candidate — (cx1) may be vacuous"
+else
+  no "(M-cx) the leading-dash mutation did not land cleanly"
+fi
+
+# (p-reject-path) <paths> are composed UNQUOTED, so a live changed_path carrying shell syntax must
+# also yield NO candidate — even though the shared TOKEN itself (`19`) is perfectly clean.
+RCS="$(new_repo)"
+mkdir -p "$RCS/src/c;d" && printf 'q\n' > "$RCS/src/c;d/q.md"
+( cd "$RCS" && git add -A && git commit -qm "hostile dir" ) >/dev/null 2>&1
+{
+  rec 1 'citation reference example `19` noted' '["src/c;d/q.md"]'
+  rec 2 'citation reference example `19` noted again' '["src/c;d/q.md"]'
+  rec 3 'another citation reference `19` example' '["src/c;d/q.md"]'
+} > "$RCS/.supervisor/postmortem/results.jsonl"
+run_harvest "$RCS" --session-id "fx-ccs" --min-support 3 --cap 2 --no-writer
+printf '%s\n' "$OUT" > "$ROOT/ccs.txt"
+grep -qF 'applies_to: [src/c;d/*]' "$ROOT/ccs.txt" \
+  && ok "(cs0) premise: the hostile directory really is the derived applies_to scope" \
+  || no "(cs0) premise failed — applies_to is not src/c;d/*: $(grep 'applies_to:' "$ROOT/ccs.txt")"
+grep -qF 'check_candidate:' "$ROOT/ccs.txt" \
+  && no "(cs1) REJECT FAILED: a candidate over a ';'-bearing path was shown: $(grep 'check_candidate:' "$ROOT/ccs.txt")" \
+  || ok "(cs1) a derived path outside the path allowlist yields NO check_candidate (rejected, never quoted)"
+MUT_CS="$ROOT/mut-harvest-pathre.sh"
+grep -vF '[[ "$g" =~ $path_re ]] || return 0' "$HARVEST" > "$MUT_CS"
+if ! cmp -s "$HARVEST" "$MUT_CS" && bash -n "$MUT_CS" 2>/dev/null; then
+  M_CS_OUT="$( bash "$MUT_CS" --root "$RCS" --session-id fx-ccs-mut --min-support 3 --cap 2 --no-writer 2>&1 )" || true
+  grep -qF 'check_candidate:' < <(printf '%s\n' "$M_CS_OUT") \
+    && ok "(M-cs) CONFIRMED: with the path-allowlist line removed, the ';'-bearing path lands in a candidate — (cs1)'s guard is load-bearing" \
+    || no "(M-cs) REFUTED: the mutant still showed no candidate — (cs1) may be vacuous"
+else
+  no "(M-cs) the path-allowlist mutation did not land cleanly"
+fi
+
+# (p-mutation-control) — the ; touch <tmpdir>/pwned non-execution proof (AC, hard gate).
+PWNED_MARK="$ROOT/pwned_marker_$$"
+rm -f "$PWNED_MARK" 2>/dev/null
+RCP="$(new_repo)"
+{
+  rec 1 "citation reference example \`; touch $PWNED_MARK\` noted" '["src/a/x.md"]'
+  rec 2 "citation reference example \`; touch $PWNED_MARK\` noted again" '["src/a/y.md"]'
+  rec 3 "another citation reference \`; touch $PWNED_MARK\` example" '["src/a/x.md"]'
+} > "$RCP/.supervisor/postmortem/results.jsonl"
+run_harvest "$RCP" --session-id "fx-ccp" --min-support 3 --cap 2 --no-writer
+printf '%s\n' "$OUT" > "$ROOT/ccp.txt"
+[ "$RC" -eq 0 ] && ok "(cp0) exits 0" || no "(cp0) exited $RC"
+[ ! -e "$PWNED_MARK" ] \
+  && ok "(cp1) the hostile shared token's implied command NEVER EXECUTED — <tmpdir>/pwned does not exist after the harvest run (asserted by the file's absence, not by exit code)" \
+  || no "(cp1) SECURITY REGRESSION: <tmpdir>/pwned EXISTS after the harvest run"
+grep -qF 'check_candidate:' "$ROOT/ccp.txt" \
+  && no "(cp2) REJECT FAILED: a candidate containing ';' was shown: $(grep 'check_candidate:' "$ROOT/ccp.txt")" \
+  || ok "(cp2) the hostile token is rejected — no check_candidate shown (inert text, per the rejection rule)"
+
+# Mutation control: with the `;`-reject arm removed, the SAME hostile fixture's candidate DOES show
+# the raw hostile text (proving (cp2)'s guard is load-bearing) — and the marker STILL never exists,
+# because this harvester genuinely never executes anything it prints, guard or no guard.
+MUT_CC="$ROOT/mut-harvest-semicolon.sh"
+grep -vF "    *';'*)   return 0 ;;" "$HARVEST" > "$MUT_CC"
+if ! cmp -s "$HARVEST" "$MUT_CC" && bash -n "$MUT_CC" 2>/dev/null; then
+  rm -f "$PWNED_MARK" 2>/dev/null
+  M_CC_OUT="$( bash "$MUT_CC" --root "$RCP" --session-id fx-ccp-mut --min-support 3 --cap 2 --no-writer 2>&1 )" || true
+  printf '%s\n' "$M_CC_OUT" > "$ROOT/ccp-mut.txt"
+  if grep -qF 'check_candidate:' "$ROOT/ccp-mut.txt"; then
+    ok "(M-cc) CONFIRMED: with the ';' reject arm removed, the SAME hostile fixture's candidate IS shown — (cp2)'s guard is load-bearing, not vacuous"
+  else
+    no "(M-cc) REFUTED: the mutant still rejected the hostile token — (cp2) may be vacuous"
+  fi
+  [ ! -e "$PWNED_MARK" ] \
+    && ok "(M-cc2) …and even under the mutant, <tmpdir>/pwned STILL does not exist — this harvester never executes anything it prints, guard or no guard" \
+    || no "(M-cc2) SECURITY REGRESSION: the mutant run actually EXECUTED the hostile text"
+else
+  no "(M-cc) the semicolon-reject-arm mutation did not land cleanly"
+fi
+
+# ============================================================================
+echo "(U) check_candidate hardening — PR #267 Phase 4.5 round 1 (findings 2, 3, 4)"
+# ============================================================================
+# (u-null-scope) finding 3: a repo-wide (null applies_to) proposal gets NO candidate. Old code
+# composed `! grep -rnE '19' .`, which walks .git/, the gitignored .supervisor/ ledger (which always
+# holds the token) and the accepted rule's own .agent/rules/*.json — failing on arrival.
+RQN="$(new_repo)"
+{
+  rec 1 'citation reference example `19` noted' '["gone/old/a.md"]'
+  rec 2 'citation reference example `19` noted again' '["gone/old/b.md"]'
+  rec 3 'another citation reference `19` example' '["gone/old/a.md"]'
+} > "$RQN/.supervisor/postmortem/results.jsonl"
+run_harvest "$RQN" --session-id "fx-qn" --min-support 3 --cap 2 --no-writer
+printf '%s\n' "$OUT" > "$ROOT/qn.txt"
+grep -qE '^     applies_to: null' "$ROOT/qn.txt" \
+  && ok "(un0) premise: the proposal really is repo-wide (applies_to: null)" \
+  || no "(un0) premise failed — applies_to is not null: $(grep 'applies_to:' "$ROOT/qn.txt")"
+grep -qF 'check_candidate:' "$ROOT/qn.txt" \
+  && no "(un1) a repo-wide proposal was given a candidate (would scan .git/.supervisor/.agent/rules): $(grep 'check_candidate:' "$ROOT/qn.txt")" \
+  || ok "(un1) a null-applies_to (repo-wide) proposal yields NO check_candidate"
+
+# (u-invalid-ere) finding 4: a token that is not a valid ERE makes the probe grep exit 2. Old code
+# read that as 0 hits, chose the absence template, and `! grep` turned exit 2 into PASS forever.
+for qtok in 'foo(' '[abc'; do
+  RQE="$(new_repo)"
+  {
+    rec 1 "citation reference example \`$qtok\` noted" '["src/a/x.md"]'
+    rec 2 "citation reference example \`$qtok\` noted again" '["src/a/y.md"]'
+    rec 3 "another citation reference \`$qtok\` example" '["src/a/x.md"]'
+  } > "$RQE/.supervisor/postmortem/results.jsonl"
+  run_harvest "$RQE" --session-id "fx-qe" --min-support 3 --cap 2 --no-writer
+  printf '%s\n' "$OUT" > "$ROOT/qe.txt"
+  [ "$RC" -eq 0 ] && ok "(ue0 $qtok) exits 0" || no "(ue0 $qtok) exited $RC"
+  grep -qF 'check_candidate:' "$ROOT/qe.txt" \
+    && no "(ue1 $qtok) an invalid-ERE token was given a candidate that can never fail: $(grep 'check_candidate:' "$ROOT/qe.txt")" \
+    || ok "(ue1 $qtok) an invalid-ERE token (probe grep exit 2) yields NO check_candidate"
+done
+
+# (u-dotglob) finding 3, scoped half: a derived glob whose first segment is .agent (the rules store
+# that will hold this very check string) must never become <paths>.
+RQD="$(new_repo)"
+mkdir -p "$RQD/.agent/notes" && printf 'n\n' > "$RQD/.agent/notes/n.md"
+( cd "$RQD" && git add -A && git commit -qm "agent notes" ) >/dev/null 2>&1
+{
+  rec 1 'citation reference example `19` noted' '[".agent/notes/n.md"]'
+  rec 2 'citation reference example `19` noted again' '[".agent/notes/n.md"]'
+  rec 3 'another citation reference `19` example' '[".agent/notes/n.md"]'
+} > "$RQD/.supervisor/postmortem/results.jsonl"
+run_harvest "$RQD" --session-id "fx-qd" --min-support 3 --cap 2 --no-writer
+printf '%s\n' "$OUT" > "$ROOT/qd.txt"
+grep -qF 'applies_to: [.agent/notes/*]' "$ROOT/qd.txt" \
+  && ok "(ud0) premise: the derived scope really is under .agent/" \
+  || no "(ud0) premise failed: $(grep 'applies_to:' "$ROOT/qd.txt")"
+grep -qF 'check_candidate:' "$ROOT/qd.txt" \
+  && no "(ud1) a glob under .agent/ was given a candidate: $(grep 'check_candidate:' "$ROOT/qd.txt")" \
+  || ok "(ud1) a derived glob whose first segment is .agent yields NO check_candidate"
+
+# (ud2)/(ud3) PR #267 Phase 4.5 round-2 N2 — a `./`-prefixed glob has first segment `.`, which the
+# `.git|.supervisor|.agent` arm did not name, so `./.agent/*` (and `./.*`, which bash 3.2 expands to
+# include `./..`) got a candidate. Only reachable with raw (non-ls-files) paths, so this exercises
+# build_check_candidate in ISOLATION: extract the function, feed it a 3-finding theme directly.
+UD_DIR="$ROOT/ud-iso"; mkdir -p "$UD_DIR/w" "$UD_DIR/src" "$UD_DIR/.agent" "$UD_DIR/.git"
+# Real files under each scope — a missing scope makes the probe grep exit 2 ⇒ no candidate (finding
+# 4), which would make every case below pass vacuously.
+printf 'x\n' | tee "$UD_DIR/src/a.md" "$UD_DIR/.agent/a.md" "$UD_DIR/.git/a" >/dev/null
+sed -n '/^build_check_candidate() {/,/^}/p' "$HARVEST" > "$UD_DIR/fn.sh"
+for i in 1 2 3; do printf 'f%s\tr\ts\tm\tsee `zqzq` here\t[]\n' "$i"; done > "$UD_DIR/w/theme.1.tsv"
+ud_cand() {
+  # US must match harvest-conventions.sh's global separator — an EMPTY US makes the function's
+  # glob-splitting loop never shrink its input (an infinite loop, observed while writing this test).
+  bash -c 'WORK="$1"; US=$'"'"'\037'"'"'; is_num() { case "$1" in ""|*[!0-9]*) return 1 ;; esac; }; . "$2"
+           cd "$3" && build_check_candidate 1 "$4" "$3"; printf "%s" "$CC_CANDIDATE"' \
+    _ "$UD_DIR/w" "$UD_DIR/fn.sh" "$UD_DIR" "$1" 2>/dev/null
+}
+[ -s "$UD_DIR/fn.sh" ] && [ -n "$(ud_cand 'src/*')" ] \
+  && ok "(ud2) premise: the isolated function DOES emit a candidate for an ordinary src/* glob" \
+  || no "(ud2) premise failed: isolated build_check_candidate emitted nothing for src/*"
+ud_bad=""
+for g in './.agent/*' './.*' './.git/*'; do [ -n "$(ud_cand "$g")" ] && ud_bad="$ud_bad $g"; done
+[ -z "$ud_bad" ] \
+  && ok "(ud3) ./-prefixed globs reaching dot-stores (./.agent/*, ./.*, ./.git/*) yield NO candidate" \
+  || no "(ud3) ./-prefixed glob(s) still given a candidate:$ud_bad"
+
+# (u-e2e) finding 2 — END TO END: harvest a candidate, accept it WITH check via the DOCUMENTED
+# delivery shape (commands/dreaming.md delivery step 3: the printed WITH-check invocation, --confirm
+# appended, stdin redirect kept, $CANDIDATE loaded through a QUOTED heredoc), then the SOLE execution
+# path runs it: `rules-check.sh --confirm` ⇒ 1/1, then `--if-stamped` replays 1/1. Old code composed
+# `--enforcement advisory`, which rules-check.sh never selects ⇒ `Checks passed: 0/0`.
+CHECKER_E2E="$SCRIPT_DIR/rules-check.sh"
+RQ2="$(new_repo)"
+HQ2="$ROOT/home_q2"; mkdir -p "$HQ2"
+{
+  rec 1 'citation reference example `19` noted' '["src/a/x.md"]'
+  rec 2 'citation reference example `19` noted again' '["src/a/y.md"]'
+  rec 3 'another citation reference `19` example' '["src/a/x.md"]'
+} > "$RQ2/.supervisor/postmortem/results.jsonl"
+run_harvest "$RQ2" --session-id "fx-q2" --min-support 3 --cap 2 --no-writer
+printf '%s\n' "$OUT" > "$ROOT/q2.txt"
+Q2_CAND="$(sed -n 's/^     check_candidate: \(.*\)  (data only — .*/\1/p' "$ROOT/q2.txt" | head -1)"
+Q2_INV="$(sed -n 's/^     invocation (Accept rule WITH check): //p' "$ROOT/q2.txt" | head -1)"
+if [ -n "$Q2_CAND" ] && [ -n "$Q2_INV" ]; then
+  ok "(u2a) premise: the harvest printed a check_candidate AND a WITH-check invocation"
+  # Documented delivery shape: `add-rule.sh` → the real writer path, `--confirm` inserted before the
+  # kept `< /dev/null`. The candidate is loaded verbatim through a quoted heredoc at column 0.
+  Q2_RUN="${Q2_INV%< /dev/null}"
+  Q2_RUN="${Q2_RUN#add-rule.sh }"
+  Q2_SCRIPT="$ROOT/q2_deliver.sh"
+  {
+    printf 'CANDIDATE="$(cat <<'"'"'LOOMWRIGHT_CHECK_CANDIDATE'"'"'\n%s\nLOOMWRIGHT_CHECK_CANDIDATE\n)"\n' "$Q2_CAND"
+    printf 'cd %q && bash %q %s--confirm < /dev/null\n' "$RQ2" "$ADD_RULE" "$Q2_RUN"
+  } > "$Q2_SCRIPT"
+  bash "$Q2_SCRIPT" >/dev/null 2>&1; q2_rc=$?
+  [ "$q2_rc" -eq 0 ] && ok "(u2b) the documented WITH-check delivery wrote the rule (exit 0)" \
+    || no "(u2b) delivery exited $q2_rc: $(bash "$Q2_SCRIPT" 2>&1 | tail -3)"
+  q2_enf="$(cat "$RQ2"/.agent/rules/*.json 2>/dev/null | jq -r '.[0].enforcement' 2>/dev/null)"
+  q2_chk="$(cat "$RQ2"/.agent/rules/*.json 2>/dev/null | jq -r '.[0].check' 2>/dev/null)"
+  [ "$q2_enf" = "must" ] && [ "$q2_chk" = "$Q2_CAND" ] \
+    && ok "(u2c) the stored rule is enforcement=must with check == the candidate BYTE-EXACT" \
+    || no "(u2c) stored enforcement=[$q2_enf] check=[$q2_chk] expected must / [$Q2_CAND]"
+  q2_conf="$( cd "$RQ2" && HOME="$HQ2" bash "$CHECKER_E2E" --confirm </dev/null 2>/dev/null )"
+  grep -qF "Checks passed: 1/1" < <(printf '%s\n' "$q2_conf") \
+    && ok "(u2d) rules-check.sh --confirm RUNS the accepted check: Checks passed: 1/1 (n/m > 0/0)" \
+    || no "(u2d) expected 'Checks passed: 1/1', got: $q2_conf"
+  q2_rep="$( cd "$RQ2" && HOME="$HQ2" bash "$CHECKER_E2E" --if-stamped </dev/null 2>/dev/null )"
+  grep -qF "Checks passed: 1/1" < <(printf '%s\n' "$q2_rep") \
+    && ok "(u2e) rules-check.sh --if-stamped replays the accepted check: Checks passed: 1/1" \
+    || no "(u2e) expected --if-stamped 'Checks passed: 1/1', got: $q2_rep"
+  # (u2f) finding 4, runtime half: the absence template is FAIL-CLOSED on grep exit 2 — when the
+  # scoped path later disappears the check FAILS instead of passing vacuously (old `! grep` passed).
+  rm -rf "$RQ2/src/a"
+  q2_gone="$( cd "$RQ2" && HOME="$HQ2" bash "$CHECKER_E2E" --confirm </dev/null 2>/dev/null )"
+  grep -qF "Checks passed: 0/1" < <(printf '%s\n' "$q2_gone") \
+    && ok "(u2f) with the scoped path gone, the accepted absence check FAILS (0/1) — fail-closed on grep exit 2, never a vacuous pass" \
+    || no "(u2f) expected 'Checks passed: 0/1' after removing the scope, got: $q2_gone"
+else
+  no "(u2a) premise failed — candidate=[$Q2_CAND] invocation=[$Q2_INV]"
+fi
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

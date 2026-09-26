@@ -37,8 +37,14 @@
 #
 # Asserts, for EACH seam surface:
 #   (A) it references read-rules.sh for house-rules context (the ADVISORY reader), AND
-#   (B) it NEVER references rules-check.sh (the human-invoked EXECUTION path must not leak into
-#       an unattended seam), AND
+#   (B) it NEVER references rules-check.sh's HUMAN-CONFIRMATION shape (`--confirm`/TTY-yes) — that
+#       execution path must not leak into an unattended seam. ONE NAMED, NARROW EXCEPTION
+#       (executable-rule-candidates/01): skills/self-heal-advisory/SKILL.md MAY reference
+#       `rules-check.sh --if-stamped` — the unattended-SAFE replay valve that can only ever replay a
+#       run a human already confirmed, ON THIS SAME MACHINE (the content-keyed user-scope stamp,
+#       `skills/rules/SKILL.md` §8.1) — and ONLY that shape: a `--confirm` (or bare, flagless)
+#       invocation anywhere in that same file still fails this check. The other three seams keep the
+#       original zero-tolerance rule unchanged. AND
 #   (C) it NEVER pipes / substitutes / execs read-rules.sh OUTPUT into a shell executor
 #       (`| bash`, `| sh`, `eval`, exec'd `$(...)`, `source`) — the reader emits `check` as DATA
 #       and no seam runs it.
@@ -64,12 +70,13 @@
 #     ON PURPOSE (repo-wide by design). Exempt from (D); pinned instead by PART 2 [shape ii], by
 #     test-read-rules.sh (j4), and — for the cited line number itself — by test-citation-drift.sh.
 #
-# SCOPE NOTE: the negative assertion is scoped to (1) rules-check.sh and (2) executing
-# read-rules.sh OUTPUT. It does NOT blanket-ban `bash -c`, because self-heal-advisory/SKILL.md
-# legitimately mentions `bash -c` in UNRELATED ground-truth `cmd:` trust-boundary prose (a
-# pre-existing line about `## Executable Acceptance` cmd: bullets, not about house rules). Seam
-# prose that says the reader "never ... `bash -c`s a check" is an ASSERTION of the invariant, not
-# a violation, so we do not grep for a bare `bash -c` token.
+# SCOPE NOTE: the negative assertion is scoped to (1) rules-check.sh's HUMAN-CONFIRMATION shape
+# (narrowed as of executable-rule-candidates/01 — see (B) above) and (2) executing read-rules.sh
+# OUTPUT. It does NOT blanket-ban `bash -c`, because self-heal-advisory/SKILL.md legitimately
+# mentions `bash -c` in UNRELATED ground-truth `cmd:` trust-boundary prose (a pre-existing line
+# about `## Executable Acceptance` cmd: bullets, not about house rules). Seam prose that says the
+# reader "never ... `bash -c`s a check" is an ASSERTION of the invariant, not a violation, so we do
+# not grep for a bare `bash -c` token.
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -85,6 +92,27 @@ SEAMS=(
 pass=0; fail=0
 ok() { echo "  ok: $1"; pass=$((pass+1)); }
 no() { echo "  FAIL: $1"; fail=$((fail+1)); }
+
+# seam_b_self_heal <file> — (B)'s self-heal-advisory predicate. Returns 0 when the file's
+# rules-check.sh usage is the --if-stamped-only shape; sets SEAM_B_N (invocation count) and
+# SEAM_B_WHY (the first violation). A plain read loop — no `printf | grep -q` (SIGPIPE under pipefail).
+seam_b_self_heal() {
+  local f="$1" line
+  SEAM_B_N=0; SEAM_B_WHY=""
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in *rules-check.sh*) : ;; *) continue ;; esac
+    case "$line" in *--confirm*) SEAM_B_WHY="a line naming rules-check.sh carries --confirm: $line"; return 1 ;; esac
+    case "$line" in
+      *"bash "*)
+        SEAM_B_N=$((SEAM_B_N + 1))
+        case "$line" in *--if-stamped*) : ;; *) SEAM_B_WHY="an invocation lacks --if-stamped: $line"; return 1 ;; esac
+        case "$line" in *RULES_CHECK_CONFIRM*) SEAM_B_WHY="an invocation mentions RULES_CHECK_CONFIRM: $line"; return 1 ;; esac
+        ;;
+    esac
+  done < "$f"
+  [ "$SEAM_B_N" -ge 1 ] || { SEAM_B_WHY="no rules-check.sh invocation line found"; return 1; }
+  return 0
+}
 
 for f in "${SEAMS[@]}"; do
   base="$(basename "$(dirname "$f")")/$(basename "$f")"
@@ -103,8 +131,25 @@ for f in "${SEAMS[@]}"; do
     no "[$base] MISSING read-rules.sh reference"
   fi
 
-  # (B) NEVER references rules-check.sh (the human-invoked execution path must not leak here)
-  if grep -qF 'rules-check.sh' "$f"; then
+  # (B) rules-check.sh's HUMAN-CONFIRMATION shape must never leak into an unattended seam. ONE named
+  #     exception (executable-rule-candidates/01): self-heal-advisory/SKILL.md may reference the
+  #     unattended-SAFE `--if-stamped` replay valve — and ONLY that shape. Checked by
+  #     seam_b_self_heal (below the loop's helpers): EVERY INVOCATION line (a line carrying both
+  #     `bash ` and `rules-check.sh`) must carry `--if-stamped` and must mention neither `--confirm`
+  #     nor `RULES_CHECK_CONFIRM`; at least one invocation must exist; and no line naming the script
+  #     anywhere in the file may carry `--confirm`. (The earlier file-wide "some line has
+  #     --if-stamped" check was weaker than its comment: a second, bare invocation elsewhere passed.)
+  if [ "$base" = "self-heal-advisory/SKILL.md" ]; then
+    if grep -qF 'rules-check.sh' "$f"; then
+      if seam_b_self_heal "$f"; then
+        ok "[$base] every rules-check.sh invocation is the unattended-safe --if-stamped replay shape ($SEAM_B_N invocation line(s); no --confirm / RULES_CHECK_CONFIRM on any)"
+      else
+        no "[$base] rules-check.sh reference is NOT the safe --if-stamped-only shape: $SEAM_B_WHY"
+      fi
+    else
+      ok "[$base] never references rules-check.sh"
+    fi
+  elif grep -qF 'rules-check.sh' "$f"; then
     no "[$base] MUST NOT reference rules-check.sh (execution path leaked into an unattended seam)"
   else
     ok "[$base] never references rules-check.sh"
@@ -248,6 +293,29 @@ FIXTURE
   else
     no "[shape ii] the no-arg shape dropped a scoped rule (empty path set must fail OPEN): $s2"
   fi
+fi
+
+# (B-mut) MUTATION CONTROL for (B)'s self-heal-advisory predicate: append a BARE invocation (no
+# --if-stamped) to a temp copy of the real SKILL — the predicate must reject it — and one carrying
+# RULES_CHECK_CONFIRM. Proves (B) is not satisfied merely by SOME line carrying --if-stamped.
+SHA_SKILL="$(cd "$HERE/.." && pwd)/skills/self-heal-advisory/SKILL.md"
+if [ -f "$SHA_SKILL" ]; then
+  MUT_B="$(mktemp)"
+  { cat "$SHA_SKILL"; printf '\nrc_out = bash scripts/rules-check.sh $NO_CMD_FLAG\n'; } > "$MUT_B"
+  if seam_b_self_heal "$MUT_B"; then
+    no "(B-mut) REFUTED: a bare rules-check.sh invocation appended to the SKILL still passed (B)"
+  else
+    ok "(B-mut) CONFIRMED: a bare (no --if-stamped) invocation appended to the SKILL fails (B) — the per-invocation check is load-bearing"
+  fi
+  { cat "$SHA_SKILL"; printf '\nrc_out = RULES_CHECK_CONFIRM=1 bash scripts/rules-check.sh --if-stamped\n'; } > "$MUT_B"
+  if seam_b_self_heal "$MUT_B"; then
+    no "(B-mut2) REFUTED: an invocation carrying RULES_CHECK_CONFIRM still passed (B)"
+  else
+    ok "(B-mut2) CONFIRMED: an invocation carrying RULES_CHECK_CONFIRM fails (B)"
+  fi
+  rm -f "$MUT_B"
+else
+  no "(B-mut) self-heal-advisory SKILL not found at $SHA_SKILL"
 fi
 
 echo

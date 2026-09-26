@@ -134,8 +134,9 @@ The engine passes `--store` a **one-line-per-rule comparison corpus** (`build_co
 
 ```bash
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/rules-check.sh" \
-  --confirm       # execute the checks (equivalently RULES_CHECK_CONFIRM=1, or an interactive TTY confirm)
-# bash "${CLAUDE_PLUGIN_ROOT}/scripts/rules-check.sh" --no-cmd   # unattended trust valve: skip ALL execution
+  --confirm       # execute the checks (equivalently RULES_CHECK_CONFIRM=1 when --if-stamped is absent, or an interactive TTY confirm)
+# bash "${CLAUDE_PLUGIN_ROOT}/scripts/rules-check.sh" --no-cmd       # unattended trust valve: skip ALL execution
+# bash "${CLAUDE_PLUGIN_ROOT}/scripts/rules-check.sh" --if-stamped   # unattended REPLAY of an already-confirmed run — see "Stamp semantics" below
 ```
 
 The helper, per `rules-check.sh` (mechanizing SKILL.md §8):
@@ -143,9 +144,21 @@ The helper, per `rules-check.sh` (mechanizing SKILL.md §8):
 - **Reads the store DIRECTLY via jq** for the RAW `.check` string — reusing `read-rules.sh`'s per-object validation + `LC_ALL=C` first-seen-`id`-wins dedup. It **never parses the reader's human-facing markdown** (whose `gsub("[\t\n]"; " ")` render is LOSSY); the executed command is **byte-exact** to the authored rule.
 - Runs ONLY `must` rules whose `check` is a **non-null string** (advisory rules and null-check rules are skipped — never run).
 - Each selected command runs from the **repo root** via `bash -c`, **DISPLAYED before running**, and an **aggregate pass/fail** summary is printed.
-- **Confirmation gate:** executes ONLY after explicit confirmation — an interactive TTY prompt, `--confirm`, or `RULES_CHECK_CONFIRM=1`. Under **non-interactive / no-confirm** (CI, stdin-not-tty, no flag) it runs **nothing** and reports `skipped — needs confirmation` for each.
-- **Default-off unattended valve `--no-cmd` (or `RULES_CHECK_NO_CMD=1`)** skips all execution, recording `cmd execution disabled` — and **`--no-cmd` WINS over `--confirm`** if both are passed (fail-safe). This mirrors `run-ground-truth.sh --no-cmd`, the trust valve for machine/unattended callers.
-- It is **NOT an unattended gate** in this slice — human-invoked only; it never blocks a PR, a worker, or a merge.
+- **Confirmation gate:** executes ONLY after explicit confirmation — an interactive TTY prompt, `--confirm`, or `RULES_CHECK_CONFIRM=1` (the env var counts ONLY without `--if-stamped` — see below). Under **non-interactive / no-confirm / no `--if-stamped`** (CI, stdin-not-tty, no flag) it runs **nothing** and reports `skipped — needs confirmation` for each.
+- **Default-off unattended valve `--no-cmd` (or `RULES_CHECK_NO_CMD=1`)** skips all execution, recording `cmd execution disabled` — and **`--no-cmd` WINS over `--confirm` AND `--if-stamped`** if any are passed together (fail-safe). This mirrors `run-ground-truth.sh --no-cmd`, the trust valve for machine/unattended callers.
+- **`--if-stamped` (executable-rule-candidates/01) — the unattended REPLAY valve, non-interactive, NEVER prompts.** Precedence, top-down: `--no-cmd` > argv `--confirm` (or `RULES_CHECK_CONFIRM=1` only when `--if-stamped` is absent) > `--if-stamped` > TTY-yes > default-skip. Two consequences: **under `--if-stamped` the `RULES_CHECK_CONFIRM` env var is ignored** — only an explicit argv `--confirm` confirms, so an ambient env confirm cannot run an unstamped set and then write the stamp that launders it; and `--if-stamped` is evaluated **before** the TTY prompt, so it never prompts even on a terminal. See "Stamp semantics" below for what it replays and why.
+- It is **NOT an unattended gate** in this slice — `--confirm`/TTY use is human-invoked only; `--if-stamped` is consumed by Phase 4.5's advisory replay (`skills/self-heal-advisory/SKILL.md`), which never gates `heal_decision`. Neither path blocks a PR, a worker, or a merge.
+
+#### Stamp semantics (executable-rule-candidates/01)
+
+`.agent/rules/*.json` is **repo-committed and model-writable inside an unreviewed PR** — unlike a Launch-Pad-authored Supervisor-Ready Brief, which only ever saves after an explicit human Phase 6 approval, a `.agent/rules/` object has no such gate. So `check` **execution is keyed to a fact recorded OUTSIDE the repo**, on the confirming human's own machine, rather than to anything a PR can carry:
+
+- **On a genuine `--confirm` (or `RULES_CHECK_CONFIRM=1` without `--if-stamped` / TTY-`y`) run**, `rules-check.sh` writes `{git_common_dir, repo_root, hash, ts}`, keyed by `git_common_dir`, to `~/.claude/loomwright/rules-check-stamp.json` — a **user-scope** file, in the SAME directory red-team-hardening item 02 established for `egress.json`, but its OWN separate file (never `egress.json` itself, which is telemetry-specific). `hash` is a sha256 over the sorted `id\tcheck` lines of exactly the must-rule set that run selected — so the stamp can never describe a different set than the one a human actually watched run.
+- **`--if-stamped` replays that confirmation, non-interactively:** it recomputes the live hash of the SAME selection and compares it to the stamp for the current **repository** — keyed by the physical `git rev-parse --git-common-dir`, which every linked worktree shares (so a set confirmed in the main checkout replays in an `/automate` worktree of the same repo; a separate clone has its own key; `repo_root` in the record is informational only). Equal ⇒ run with no prompt, same output shape as `--confirm`. Unequal or absent ⇒ `[SKIP] all (unstamped)`, `Checks passed: 0/0`, exit 0 — nothing runs.
+- **A rule edit invalidates the stamp.** Any change to an `id` or a `check` in the selected set — including a single byte — changes the hash, so `--if-stamped` reports `unstamped` again until a human re-runs `/rules check --confirm` on their own machine.
+- **Deliberately per-user-per-machine (per repository on that machine), never shared.** The stamp is NOT committed, NOT synced, and NOT valid across machines or CI — every other machine and CI itself replay `unstamped` until *their own* human confirms there, once. This is the opposite mechanism from `exec-acceptance-lib.sh`'s brief-embedded `sha256:` stamp line (red-team-hardening item 05, used for a brief's `## Executable Acceptance` `cmd:` bullets): that stamp lives INSIDE a human-approved brief because the brief itself is the gate; a `.agent/rules/` object has no equivalent gate, so reusing that pattern here would put the "human already confirmed this" fact back inside the repo — exactly what this design exists to avoid.
+- **Honest limit — no lock:** the stamp write is last-writer-wins; a lost record just replays `unstamped` until re-confirmed (fail-closed). A stamp file that is valid JSON but not an object is warned about on stderr and never clobbered; a failed write is warned about too.
+- **This is a replay, not a new execution mode:** a stamped check that fails still fails under `--if-stamped`, exactly as it would under `--confirm` — the stamp records that a human confirmed *this set*, never that every check in it currently passes.
 
 ## Trust boundary (`check` is arbitrary shell — §9)
 
@@ -153,7 +166,7 @@ A `check` value is **arbitrary shell authored by anyone who cloned or PR'd the r
 
 - **The reader (`read-rules.sh`) emits `check` as DATA and the `check` is never executed by the reader** — there is no code path in it that runs a `check`. Safe for any unattended caller (a hook, a worker, a future enforcement seam) with zero code-execution risk.
 - **`/rules check` requires confirmation** — it is HUMAN-invoked only, DISPLAYS each `must`-rule's `check`, and runs it ONLY after explicit confirmation. It never blind-executes a check authored by a cloning teammate.
-- **Unattended execution of `check` commands is now MECHANIZED + GATED in `rules-check.sh`** — its default-off `--no-cmd` valve (which WINS over `--confirm`) inherits `run-ground-truth.sh --no-cmd`'s machine-authored trust boundary (the same boundary Plan Reviewer Criterion 14 enforces). The advisory seams (worker / Phase 4.5 / SessionStart-nudge) consume the READER only — which surfaces each `check` as DATA and never executes it.
+- **Unattended execution of `check` commands is now MECHANIZED + GATED in `rules-check.sh`** — its default-off `--no-cmd` valve (which WINS over `--confirm` AND `--if-stamped`) inherits `run-ground-truth.sh --no-cmd`'s machine-authored trust boundary (the same boundary Plan Reviewer Criterion 14 enforces). The worker / SessionStart-nudge seams consume the READER only — which surfaces each `check` as DATA and never executes it. **Phase 4.5's advisory replay is the ONE exception**: it calls `rules-check.sh --if-stamped`, which only ever replays a set a human already confirmed on THAT SAME MACHINE (see "Stamp semantics" above) — it never gates `heal_decision` and enters no fix loop.
 
 ## See Also
 - `skills/rules/SKILL.md` — the protocol authority (schema, validation, merge order, read/write/check contracts, trust boundary).
