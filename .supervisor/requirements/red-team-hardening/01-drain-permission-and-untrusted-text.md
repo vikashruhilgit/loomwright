@@ -1,6 +1,5 @@
 # 01 — Detached drain: pinned permission regime + untrusted-text envelope + actor allowlist
 
-## Status: pending
 
 ## Problem
 `scripts/dispatch-pr-review.sh` launches `"$_bin" -p --agent loomwright:review-pr-runner "$_pr"` (wrapper at
@@ -110,3 +109,8 @@ envelope (record as an honest limit).
 - `classify-bot-review.sh` regexes and `[]` fail-safe contract; `test-classify-bot-review.sh` exists.
 - `~/.claude/settings.json` on the owner's machine resolves `permissions.defaultMode: auto` (the finding's
   live evidence); the project has no `.claude/settings.json`, only `settings.local.json`.
+
+## Status: done (PR #248, merge b72fdef)
+- **Completed:** 2026-09-26T02:14:30Z
+- **Brief:** unknown
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/248

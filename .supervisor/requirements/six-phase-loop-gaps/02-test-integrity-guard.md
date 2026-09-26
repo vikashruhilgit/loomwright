@@ -1,6 +1,5 @@
 # 02 — Test-integrity guard (blocking `PreToolUse` hook + worker rule of explanation)
 
-## Status: pending
 
 > **Cross-queue amendment (2026-09-22).** Sequenced by `.supervisor/requirements/_BACKLOG-hardening-sequence-2026-09-22.md` AFTER `red-team-hardening/01` (which rewrites the `dispatch-pr-review.sh` launch line this item pre-arms — re-read that line, do not apply the §"Dispatcher pre-arm" edit from memory) and AFTER `six-phase-loop-gaps/01`; `harness-port/01` follows and adds its own worker prose. §7 budget: `5876/5905 — 29 headroom` is the `05823bf` figure; re-measure and raise from the LIVE number with one raise-log row naming this item.
 
@@ -331,3 +330,8 @@ That is the intended trade for having no tool-call disarm; it is stated, not hid
   matcher never sees.
 - Claude Code `PreToolUse`: exit 2 blocks and stderr is shown to the model — re-verify against the current
   hooks reference; if `permissionDecision: deny` JSON is preferred, emit it AND still exit 2.
+
+## Status: done (PR #258, merge 0b1975e)
+- **Completed:** 2026-09-26T02:14:50Z
+- **Brief:** .supervisor/jobs/done/2026-09-23-test-integrity-guard.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/258

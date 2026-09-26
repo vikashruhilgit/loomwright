@@ -1,6 +1,10 @@
 # 04 — `not_verified` transport end-to-end (worker → state → PR body + done brief → `/verify` impact rows)
 
-## Status: pending
+
+## Status: done (PR #263, merge 3e38b56)
+- **Completed:** 2026-09-26T02:26:15Z
+- **Brief:** .supervisor/jobs/done/2026-09-24-not-verified-transport.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/263
 ## Depends on: 01 (the worker emits the field; the schema + validator exist)
 
 ## Problem

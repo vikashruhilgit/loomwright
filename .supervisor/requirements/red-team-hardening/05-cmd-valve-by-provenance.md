@@ -1,6 +1,5 @@
 # 05 — `cmd:` Executable-Acceptance bullets run only behind an explicit, command-visible human stamp
 
-## Status: pending
 
 ## Problem
 `skills/self-heal-advisory/SKILL.md:390-403`: `NO_CMD_FLAG = (NON_INTERACTIVE == true) ? "--no-cmd" : ""`, with
@@ -74,3 +73,8 @@ once approved.
 - `agents/plan-reviewer.md` Criterion 14 text (~261–278) and the Decision Matrix (lone LOW ⇒ PASS).
 - `agents/launch-pad.md:482` "NEVER emit `cmd:`"; Phase 5.5 / Phase 6 gates (`autonomous-loop/SKILL.md:197-199`).
 - `skills/self-heal-advisory/SKILL.md:390-403`.
+
+## Status: done (PR #252, merge ed2dbcd)
+- **Completed:** 2026-09-26T02:14:40Z
+- **Brief:** .supervisor/jobs/done/2026-09-22-cmd-valve-by-provenance.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/252

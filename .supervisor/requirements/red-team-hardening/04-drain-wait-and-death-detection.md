@@ -1,6 +1,5 @@
 # 04 — Mechanized scoped wait + detection of a drain that exited without a result
 
-## Status: pending
 
 ## Problem
 `skills/review-heal/SKILL.md` §"Wait-For-Settled-Checks" is pseudocode (`sleep(poll_interval); re-read
@@ -69,3 +68,8 @@ salvage. Does not fix item 01's permission regime (sequenced after it; both edit
   `LOOMWRIGHT_CHECK_WAIT_TIMEOUT` forwarding.
 - `.supervisor/logs/review-pr-dispatch-*.log` tails on 2026-09-17 (five "waiting" endings).
 - `session-resume.sh` MAX_CHARS=8000; `automate-loop/SKILL.md` §4 RECONCILE and §9 park reasons.
+
+## Status: done (PR #251, merge 3468f07)
+- **Completed:** 2026-09-26T02:14:38Z
+- **Brief:** .supervisor/jobs/done/2026-09-22-drain-wait-and-death-detection.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/251
