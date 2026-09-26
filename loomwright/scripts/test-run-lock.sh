@@ -48,6 +48,10 @@
 #  19. same-session nested acquire (automate -> supervisor) is RE-ENTRANT:
 #      rc=0, prints run_lock_reentrant, owner stays the OUTER label; the inner
 #      `release --owner <inner>` is a no-op and only the outer release clears it.
+#  20. under Claude Code (CLAUDECODE set) WITHOUT $CLAUDE_PID -> the first
+#      non-shell ancestor (a long-lived perl standing in for `claude`) is
+#      recorded with pid_source=ancestor, and a different session is refused
+#      past the TTL -- the fix survives CLAUDE_PID (undocumented) disappearing.
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -314,7 +318,7 @@ fi
 # Mutation control: restore the pre-fix `$$` pid recording in a copy.
 MUT17DIR="$(mktemp -d)"; MUT17="$MUT17DIR/run-lock.sh"
 cp "$SUT" "$MUT17"
-sed -i.bak 's/"\$(holder_pid)"/"$$"/' "$MUT17"
+sed -i.bak 's/"\$hp"/"$$"/' "$MUT17"
 if bash -n "$MUT17" 2>/dev/null && ! diff -q "$MUT17" "$SUT" >/dev/null 2>&1 && grep -qF "'pid\t%s\n' \"\$\$\"" "$MUT17"; then
   sleep 600 & FAKE2=$!
   D17M="$(fresh_root)"
@@ -333,10 +337,10 @@ else
 fi
 rm -rf "$MUT17DIR"
 
-echo "== 18. no / dead \$CLAUDE_PID -> meta pid is the invoking shell =="
+echo "== 18. outside Claude Code, no / dead \$CLAUDE_PID -> meta pid is the invoking shell =="
 for cp_val in "" 999999; do
   D18="$(fresh_root)"
-  caller="$(CLAUDE_PID="$cp_val" bash -c 'bash "$1" acquire --owner x:18 --root "$2" >/dev/null 2>&1; echo $$' _ "$SUT" "$D18")"
+  caller="$(env -u CLAUDECODE CLAUDE_PID="$cp_val" bash -c 'bash "$1" acquire --owner x:18 --root "$2" >/dev/null 2>&1; echo $$' _ "$SUT" "$D18")"
   rec_pid="$(awk -F'\t' '$1=="pid"{print $2}' "$(meta_file "$D18")")"
   if [ -n "$caller" ] && [ "$rec_pid" = "$caller" ]; then
     ok "CLAUDE_PID='${cp_val}' -> pid is the invoking shell ($rec_pid)"
@@ -368,6 +372,34 @@ if [ "$RUN_OUT" = "UNLOCKED" ]; then
 else
   no "outer release should clear: $RUN_OUT"
 fi
+
+echo "== 20. under Claude Code WITHOUT \$CLAUDE_PID -> first non-shell ancestor (survives the env var being dropped) =="
+# A long-lived NON-shell parent (perl, standing in for the claude binary)
+# spawns an ephemeral shell that runs acquire and exits — the Bash-tool shape
+# with CLAUDE_PID absent. The recorded pid must be perl, not the shell.
+D20="$(fresh_root)"
+SUT="$SUT" D20="$D20" env -u CLAUDE_PID CLAUDECODE=1 perl -e 'system("bash", "-c", q{bash "$SUT" acquire --owner automate:run20 --session-id sess20 --root "$D20"}); sleep 600' >/dev/null 2>&1 &
+FAKE_PARENT=$!
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+  [ -n "$(awk -F'\t' '$1=="pid_source"{print $2}' "$(meta_file "$D20")" 2>/dev/null)" ] && break
+  sleep 0.25
+done
+rec_pid="$(awk -F'\t' '$1=="pid"{print $2}' "$(meta_file "$D20")" 2>/dev/null)"
+rec_src="$(awk -F'\t' '$1=="pid_source"{print $2}' "$(meta_file "$D20")" 2>/dev/null)"
+if [ "$rec_pid" = "$FAKE_PARENT" ] && [ "$rec_src" = "ancestor" ]; then
+  ok "no CLAUDE_PID: recorded the long-lived non-shell ancestor ($rec_pid, pid_source=ancestor)"
+else
+  no "expected ancestor pid $FAKE_PARENT / pid_source=ancestor, got pid='$rec_pid' source='$rec_src'"
+fi
+set_meta_field "$D20" ts 1
+S20_OUT="$(env -u CLAUDE_PID bash "$SUT" acquire --owner supervisor:other --session-id other --root "$D20" 2>&1)"
+S20_RC=$?
+if [ "$S20_RC" -ne 0 ] && grep -q '^run_lock_held owner=automate:run20 ' < <(printf '%s' "$S20_OUT"); then
+  ok "different session refused while the ancestor lives, past the TTL: $S20_OUT"
+else
+  no "different-session acquire must be REFUSED (rc=$S20_RC out='$S20_OUT')"
+fi
+kill "$FAKE_PARENT" 2>/dev/null; wait "$FAKE_PARENT" 2>/dev/null
 
 echo
 echo "RESULT: $pass passed, $fail failed"

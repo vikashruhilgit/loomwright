@@ -17,17 +17,25 @@
 #                                              NOT JSON, matching
 #                                              dispatch-pr-review.sh's
 #                                              write_lock_meta convention):
-#         pid, owner, session_id, ts
+#         pid, owner, session_id, ts, pid_source
 #
 # `pid` is the HOLDER's liveness pid — NOT this script's `$$` (which is dead
 # the instant `acquire` returns, so every lock looked "dead pid" immediately
-# and degraded to a bare 1800s lease). Resolution order:
-#   1. `$CLAUDE_PID` when numeric and alive — the long-lived `claude` process
-#      Claude Code exports into every Bash-tool shell. The Bash-tool shell
-#      itself exits after each call, so `$PPID` is useless there; `claude`
-#      lives exactly as long as the session that owns the run.
-#   2. `$PPID` otherwise — the invoking shell (an interactive terminal, a CI
-#      step, a test harness).
+# and degraded to a bare 1800s lease). The Bash-tool shell that invokes this
+# script also exits after each call, so `$PPID` is no better there; the only
+# process that lives as long as the run is the session's `claude` process.
+# Resolution order (recorded as `pid_source`):
+#   1. `claude_pid` — `$CLAUDE_PID` when numeric and alive. Evidence: observed
+#      2026-09-26 on Claude Code 2.1.281 (Desktop), `CLAUDE_PID` in a Bash-tool
+#      shell = that shell's own parent = the `claude` binary. It is NOT in the
+#      public env-var docs, so it is never the only line of defence:
+#   2. `ancestor` — under Claude Code (`CLAUDECODE` set), the first ancestor
+#      of this script that is not a shell (sh/bash/zsh/dash/ksh/fish): the
+#      Bash-tool shell's parent, i.e. `claude`. Survives `CLAUDE_PID` being
+#      dropped or renamed by a future release.
+#   3. `ppid` — otherwise the invoking shell (an interactive terminal, a CI
+#      step, a test harness). Under Claude Code this source means 1 and 2 both
+#      failed — the lock is degraded to the 1800s TTL, visible in `meta`.
 # Observed 2026-09-26 (automate-2026-09-26-115755): automate PICK recorded its
 # own shell pid, launch-pad ran ~28 min, and Supervisor Phase 0's acquire
 # (different owner) reclaimed the "dead-pid + >=1800s" lock as stale.
@@ -153,25 +161,50 @@ lock_age() {
   fi
 }
 
-# holder_pid — the liveness pid recorded in meta (see header): the session's
-# long-lived `claude` process when running under Claude Code, else the caller.
+is_shell_comm() {
+  local c="${1##*/}"
+  c="${c#-}"   # login shells show as -zsh / -bash
+  case "$c" in sh|bash|zsh|dash|ksh|fish) return 0 ;; esac
+  return 1
+}
+
+# holder_pid — prints `<pid> <pid_source>`, the liveness pid recorded in meta
+# (resolution order in the header).
 holder_pid() {
   case "${CLAUDE_PID:-}" in
     ''|*[!0-9]*) : ;;
-    *) if kill -0 "$CLAUDE_PID" 2>/dev/null; then echo "$CLAUDE_PID"; return; fi ;;
+    *) if kill -0 "$CLAUDE_PID" 2>/dev/null; then echo "$CLAUDE_PID claude_pid"; return; fi ;;
   esac
-  echo "$PPID"
+  if [ -n "${CLAUDECODE:-}" ]; then
+    local p="$PPID" c n=0
+    while [ "$n" -lt 8 ]; do
+      c="$(ps -o comm= -p "$p" 2>/dev/null)"
+      [ -n "$c" ] || break
+      if ! is_shell_comm "$c"; then
+        [ "$p" -gt 1 ] 2>/dev/null && { echo "$p ancestor"; return; }
+        break
+      fi
+      p="$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')"
+      case "$p" in ''|*[!0-9]*) break ;; esac
+      n=$((n+1))
+    done
+  fi
+  echo "$PPID ppid"
 }
 
 # write_meta [owner] — owner defaults to --owner; the re-entrant path passes
 # the recorded outer owner so a nested acquire never relabels the lock.
 write_meta() {
-  local owner="${1:-$OWNER}"
+  local owner="${1:-$OWNER}" hp hsrc
+  read -r hp hsrc <<EOF_HOLDER
+$(holder_pid)
+EOF_HOLDER
   {
-    printf 'pid\t%s\n' "$(holder_pid)"
+    printf 'pid\t%s\n' "$hp"
     printf 'owner\t%s\n' "$owner"
     printf 'session_id\t%s\n' "$SESSION_ID"
     printf 'ts\t%s\n' "$(now_epoch)"
+    printf 'pid_source\t%s\n' "$hsrc"
   } > "$LOCK_META" 2>/dev/null || true
 }
 
