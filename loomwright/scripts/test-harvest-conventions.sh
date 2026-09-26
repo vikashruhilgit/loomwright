@@ -1733,6 +1733,32 @@ grep -qF 'check_candidate:' "$ROOT/qd.txt" \
   && no "(ud1) a glob under .agent/ was given a candidate: $(grep 'check_candidate:' "$ROOT/qd.txt")" \
   || ok "(ud1) a derived glob whose first segment is .agent yields NO check_candidate"
 
+# (ud2)/(ud3) PR #267 Phase 4.5 round-2 N2 — a `./`-prefixed glob has first segment `.`, which the
+# `.git|.supervisor|.agent` arm did not name, so `./.agent/*` (and `./.*`, which bash 3.2 expands to
+# include `./..`) got a candidate. Only reachable with raw (non-ls-files) paths, so this exercises
+# build_check_candidate in ISOLATION: extract the function, feed it a 3-finding theme directly.
+UD_DIR="$ROOT/ud-iso"; mkdir -p "$UD_DIR/w" "$UD_DIR/src" "$UD_DIR/.agent" "$UD_DIR/.git"
+# Real files under each scope — a missing scope makes the probe grep exit 2 ⇒ no candidate (finding
+# 4), which would make every case below pass vacuously.
+printf 'x\n' | tee "$UD_DIR/src/a.md" "$UD_DIR/.agent/a.md" "$UD_DIR/.git/a" >/dev/null
+sed -n '/^build_check_candidate() {/,/^}/p' "$HARVEST" > "$UD_DIR/fn.sh"
+for i in 1 2 3; do printf 'f%s\tr\ts\tm\tsee `zqzq` here\t[]\n' "$i"; done > "$UD_DIR/w/theme.1.tsv"
+ud_cand() {
+  # US must match harvest-conventions.sh's global separator — an EMPTY US makes the function's
+  # glob-splitting loop never shrink its input (an infinite loop, observed while writing this test).
+  bash -c 'WORK="$1"; US=$'"'"'\037'"'"'; is_num() { case "$1" in ""|*[!0-9]*) return 1 ;; esac; }; . "$2"
+           cd "$3" && build_check_candidate 1 "$4" "$3"; printf "%s" "$CC_CANDIDATE"' \
+    _ "$UD_DIR/w" "$UD_DIR/fn.sh" "$UD_DIR" "$1" 2>/dev/null
+}
+[ -s "$UD_DIR/fn.sh" ] && [ -n "$(ud_cand 'src/*')" ] \
+  && ok "(ud2) premise: the isolated function DOES emit a candidate for an ordinary src/* glob" \
+  || no "(ud2) premise failed: isolated build_check_candidate emitted nothing for src/*"
+ud_bad=""
+for g in './.agent/*' './.*' './.git/*'; do [ -n "$(ud_cand "$g")" ] && ud_bad="$ud_bad $g"; done
+[ -z "$ud_bad" ] \
+  && ok "(ud3) ./-prefixed globs reaching dot-stores (./.agent/*, ./.*, ./.git/*) yield NO candidate" \
+  || no "(ud3) ./-prefixed glob(s) still given a candidate:$ud_bad"
+
 # (u-e2e) finding 2 — END TO END: harvest a candidate, accept it WITH check via the DOCUMENTED
 # delivery shape (commands/dreaming.md delivery step 3: the printed WITH-check invocation, --confirm
 # appended, stdin redirect kept, $CANDIDATE loaded through a QUOTED heredoc), then the SOLE execution

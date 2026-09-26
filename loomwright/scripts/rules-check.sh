@@ -135,6 +135,9 @@ if [ -n "$_rc_gcd" ]; then
   STAMP_KEY="$(cd "$_rc_gcd" 2>/dev/null && pwd -P)"
 fi
 [ -n "$STAMP_KEY" ] || STAMP_KEY="$(pwd -P)"
+# Honest limit: `git rev-parse` honours a caller-set GIT_DIR/GIT_COMMON_DIR, so the CALLER's
+# environment can redirect STAMP_KEY. A repository cannot set its caller's environment, and whoever
+# controls that environment can already execute anything (e.g. BASH_ENV) — so this is not unset here.
 
 RULES_DIR=".agent/rules"
 
@@ -468,7 +471,7 @@ fi
 # NEVER on a --if-stamped-promoted replay (which does not itself constitute a fresh human
 # confirmation — see the header's "THE STAMP WRITE" note). Regardless of pass/fail tally: the stamp
 # records that a human confirmed THIS SET, not that every check in it currently passes. Best-effort
-# and silent — a write failure never changes this script's exit code or output.
+# — a failed write is warned about on stderr but never changes this script's exit code or stdout.
 # ---------------------------------------------------------------------------
 if [ "$MODE" = "execute" ] && [ "$CAME_FROM_CONFIRM" -eq 1 ] && [ -n "$LIVE_HASH" ]; then
   _rc_write_stamp "$STAMP_KEY" "$GITROOT" "$LIVE_HASH"

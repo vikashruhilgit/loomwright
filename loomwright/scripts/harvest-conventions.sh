@@ -795,7 +795,7 @@ build_check_candidate() {
     case "/$g/" in */../*) return 0 ;; esac
     seg="${g%%/*}"
     case "$seg" in
-      .git|.supervisor|.agent) return 0 ;;
+      .|.git|.supervisor|.agent) return 0 ;;   # `.`: a ./-prefixed glob (./.agent/*, ./.*) would otherwise slip past
       .*'*'*)                  return 0 ;;
     esac
   done
