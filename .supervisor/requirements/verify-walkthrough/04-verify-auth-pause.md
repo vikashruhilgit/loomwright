@@ -57,7 +57,10 @@ qa-executor's non-verify auth warning.
 - Resume position derived from evidence lines
 - No credential ever touches the plugin's files or logs
 
-## Status: pending
+## Status: done (PR #226, merge 23d54f3)
+- **Completed:** 2026-09-15T14:52:10Z (PR merge time; stamp backfilled 2026-09-26 — it had been left `pending`)
+- **Brief:** .supervisor/jobs/done/2026-09-15-verify-auth-pause.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/226
 
 <!-- loomwright:requirement-closeout -->
 ## Status: done

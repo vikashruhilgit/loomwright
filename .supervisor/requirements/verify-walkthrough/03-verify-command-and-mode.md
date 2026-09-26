@@ -81,7 +81,10 @@ existing test fixtures must stay byte-identical in outcome).
 - Counts derived, never agent-tallied; advisory, nothing gated
 - Command ↔ agent prose synced; budgets/counts/docs green
 
-## Status: pending
+## Status: done (PR #223, merge 83764bd)
+- **Completed:** 2026-09-15T01:36:22Z (PR merge time; stamp backfilled 2026-09-26 — it had been left `pending`)
+- **Brief:** .supervisor/jobs/done/2026-09-14-verify-command-and-mode.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/223
 
 <!-- loomwright:requirement-closeout -->
 ## Status: done

@@ -61,7 +61,10 @@ No Playwright, no ticket parsing, no queue (07), no drafts (05). No `state.md` w
 - Non-PASS always carries a reason
 - Schema documented with frozen examples
 
-## Status: pending
+## Status: done (PR #222, merge 959c35e)
+- **Completed:** 2026-09-14T16:02:52Z (PR merge time; stamp backfilled 2026-09-26 — it had been left `pending`)
+- **Brief:** .supervisor/jobs/done/2026-09-14-verify-evidence-store.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/222
 
 <!-- loomwright:requirement-closeout -->
 ## Status: done
