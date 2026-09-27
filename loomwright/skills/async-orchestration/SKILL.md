@@ -558,9 +558,10 @@ Before completing async orchestration:
    ls -d ../project-{subtask_a} ../project-{subtask_c} ../project-{subtask_b}
    # Verify all branches exist
    git branch --list feature/{subtask_a} feature/{subtask_c} feature/{subtask_b}
-   # Verify each worktree has changes
+   # Verify each worktree has changes (every branch in merge_order)
    git -C ../project-{subtask_a} diff --stat HEAD
    ```
+   The has-changes check, and steps 2–3 below, cover the branches in `merge_order` only. A read-only subtask (`WORKER_RESULT.no_changes: true`) is deliberately absent from `merge_order` — it has nothing to commit or merge — but its worktree is still in `worktrees` and is cleaned up in step 4.
    If any verification fails → checkpoint, report missing worktree/branch, exit with resume.
 
 2. **Commit worker changes in worktrees** (before merging):

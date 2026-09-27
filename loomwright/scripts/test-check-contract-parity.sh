@@ -49,7 +49,7 @@ import json,sys
 def prompt(fields): return "Verify block contains " + ", ".join(fields) + " fields."
 mk=lambda m,f:{"matcher":f"loomwright:{m}","hooks":[{"type":"prompt","prompt":prompt(f),"timeout":30}]}
 h={"hooks":{"SubagentStop":[
-  mk("worker",["schema_version","task_id","status","files_modified","summary","outputs_verified","outputs_gap","out_of_lane","deviations","not_verified"]),
+  mk("worker",["schema_version","task_id","status","files_modified","summary","outputs_verified","outputs_gap","out_of_lane","deviations","not_verified","no_changes"]),
   mk("execute-manager",["schema_version","subtasks_completed","worktrees","merge_order","summary","completed_so_far","remaining","resume_context","reason","adjudication_required","missing_outputs","adjudication_options","adjudication_kind","colliding_lanes"]),
   mk("qa-executor",["schema_version","tests_generated","tests_passed","summary","coverage_estimate","run_id","run_dir","counts","pause_reason"]),
   mk("supervisor-runner",["schema_version","status","pr_url","heal_loop_ran","heal_iterations","heal_decision","heal_fixable_issues_fixed","heal_remaining_issues","error","summary"]),
@@ -64,7 +64,8 @@ Emit WORKER_RESULT: schema_version, task_id, status: completed, files_modified,
 summary, outputs_verified (status: present / status: missing), outputs_gap,
 out_of_lane (optional, additive at schema_version 2 — report-only),
 deviations (optional, additive at schema_version 2 — report-only),
-not_verified (optional, additive at schema_version 2 — report-only).
+not_verified (optional, additive at schema_version 2 — report-only),
+no_changes (optional, additive at schema_version 2 — read-only subtasks).
 Other statuses: status: failed, status: partial.
 EOF
   cat >"$d/loomwright/agents/execute-manager.md" <<'EOF'
@@ -403,7 +404,10 @@ RESULT_SCHEMAS="$REPO_ROOT/loomwright/docs/RESULT_SCHEMAS.md"
 # grep below fail on its own, which the counted check at line ~403 already
 # treats as a real FAIL (an uncounted pre-check here previously printed a
 # misleading "FAIL" that never incremented total/pass — PR #257 review nit).
-MANIFEST_ROW_RE='^worker\|worker\.md\|WORKER_RESULT\|.*,not_verified$'
+# `(,[a-z_]+)*` tolerates later validated-when-present fields appended after
+# not_verified (no_changes, rule 12) without weakening the pairing: the row must still
+# name not_verified as a whole comma-delimited field.
+MANIFEST_ROW_RE='^worker\|worker\.md\|WORKER_RESULT\|.*,not_verified(,[a-z_]+)*$'
 
 total=$((total+1))
 if grep -qE "$MANIFEST_ROW_RE" "$GUARD" && grep -q 'not_verified: object\[\]' "$RESULT_SCHEMAS"; then

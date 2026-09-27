@@ -587,7 +587,11 @@ exactly these shapes; `schema_version` and `summary`/`reason` are hook-required.
 There is no top-level `status:` field — consumers discriminate on
 **`subtasks_failed`: non-empty ⇔ escalation** (and `subtasks_completed` empty ⇔
 all-failed). `merge_order` lists only completed branches, so a partial
-escalation is directly mergeable from it.
+escalation is directly mergeable from it. **A completed subtask whose
+WORKER_RESULT declared `no_changes: true` (a read-only / verify-only subtask,
+`agents/worker.md` §"Read-only subtasks") is omitted from `merge_order`** — its
+branch carries nothing to commit or merge — while it still appears in
+`subtasks_completed` and `worktrees` (FINALIZE cleans its worktree up).
 
 **If all subtasks completed:**
 
@@ -606,7 +610,7 @@ EXECUTE_RESULT:
       files_modified: [{files}]
       review_decision: PASS
   subtasks_failed: []                 # optional — entries with task_id/status/error/retry_count
-  merge_order: [{dependency-ordered branch names}]
+  merge_order: [{dependency-ordered branch names}]   # completed branches only, minus any `no_changes: true` subtask
   worktrees:                          # one entry per worktree, for cleanup
     - task_id: {subtask_id}
       path: {absolute worktree path}

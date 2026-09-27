@@ -960,6 +960,130 @@ EOF
 run_v "$V_WORKER" "$F"
 assert_fail "worker: status=completed with empty files_modified AND files_created [rule 2]" "(rule 2)"
 
+# ── rule 12: no_changes — the ONE sanctioned rule-2 exemption ──────────────
+# The 2026-09-27 wedge: a worker handed a read-only task (count files, change
+# nothing) honestly emitted completed-with-empty-lists and was re-prompted by
+# rule 2 on every SubagentStop until the runtime's continuation cap. The
+# re-prompt reason must name the honest exit, and taking it must pass.
+assert_fail "worker: rule-2 re-prompt names the honest exit (no_changes: true) [rule 2]" "declare no_changes: true"
+
+mk worker-no-changes.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: []
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- no_changes: true
+- error: none
+- summary: Read-only subtask — counted 42 files under src/; changed nothing, as instructed.
+EOF
+run_v "$V_WORKER" "$F"
+assert_pass "worker: read-only subtask, completed + empty file lists + no_changes: true [rule 12]"
+
+mk worker-no-changes-false.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: []
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- no_changes: false
+- summary: claims completion, touched nothing, and says so is NOT intended
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: no_changes: false does NOT exempt rule 2 [rule 12 → rule 2]" "(rule 2)"
+
+mk worker-no-changes-contradiction.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- outputs_verified: []
+- outputs_gap: ""
+- no_changes: true
+- summary: says it changed nothing but lists a modified file
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: no_changes: true alongside a non-empty files_modified [rule 12]" "contradicts a non-empty files_modified"
+
+mk worker-no-changes-contradiction-failed.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: failed
+- files_modified: []
+- files_created: [b.py]
+- outputs_verified: []
+- outputs_gap: ""
+- no_changes: true
+- error: build broke
+- summary: contradiction is rejected at ANY status, not only completed
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: no_changes: true alongside a non-empty files_created, status=failed [rule 12]" "contradicts a non-empty files_modified"
+
+mk worker-no-changes-nonbool.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: []
+- outputs_verified: []
+- outputs_gap: ""
+- no_changes: yes
+- summary: non-boolean spelling must be told, not bounced by rule 2
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: no_changes non-boolean (yes) [rule 12]" "no_changes, when present, must be a boolean"
+
+mk worker-no-changes-null.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: []
+- outputs_verified: []
+- outputs_gap: ""
+- no_changes:
+- summary: explicit null is not false
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: no_changes explicit null [rule 12]" "no_changes, when present, must be a boolean"
+
+mk worker-no-changes-gap.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: []
+- outputs_verified: [{kind: file, path: src/x.ts, status: missing}]
+- outputs_gap: "src/x.ts"
+- no_changes: true
+- summary: no_changes exempts rule 2 only — the outputs_gap invariant still bites
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: no_changes: true does not exempt the outputs_gap/status invariant [rule 12 → rule 8]" "outputs_gap non-empty must map to status: partial"
+
+mk worker-no-changes-no-summary-file.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: []
+- outputs_verified: []
+- outputs_gap: ""
+- no_changes: true
+- summary: no_changes exempts rule 2 only — rule 3 still needs summary evidence
+EOF
+run_v "$V_WORKER" "$F" "$BARE"
+assert_fail "worker: no_changes: true does not exempt the summary-file rule [rule 12 → rule 3]" "(rule 3)"
+
 run_v "$V_WORKER" "$FIXDIR/worker-valid-bullet.md" "$BARE"
 assert_fail "worker: no .worker-summary.md and no degradation marker [rule 3]" "(rule 3)"
 
