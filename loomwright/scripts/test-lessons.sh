@@ -57,6 +57,15 @@
 #      because the store bootstrap is LAZY (deferred past every refusal) rather than gated only on
 #      the confirm verdict; with the positive control that a legitimate --confirm add on a virgin
 #      store still creates both files, without which a bootstrap that never fires would pass.
+#  17. reverify verb (the sanctioned refresh of a trusted lesson's last_verified — before it, a
+#      STALE skip could only be cleared by hand-editing LESSONS.md): a stale lesson becomes readable
+#      again; only the trailer changes (text, [id], content_hash, spacing unchanged; confidence kept
+#      unless --confidence is explicit; supersedes= carried through; an untrailered attested line
+#      gains a trailer and stays readable); a chain-valid `reverify` provenance entry is appended;
+#      dry-run without --confirm; absent / duplicated / untrusted / retracted / virgin-store targets
+#      fail loud (exit 4) byte-identical; a backdate and --replacement refuse (exit 2); the
+#      `reverify` action is TRUST-NEUTRAL (a forged chain-valid reverify cannot resurrect a
+#      retracted hash, and a later retract still works); plus the sha-less fail-loud case in 10.
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -483,6 +492,10 @@ rc=$?
 rc=$?
 [ "$rc" -ne 0 ] && ok "sha-less retract FAILS LOUD (exit $rc, non-zero)" || no "sha-less retract silently exited 0"
 [ ! -e "$SDIR/$LFILE" ] && [ ! -e "$SDIR/$PJFILE" ] && ok "sha-less retract touched nothing" || no "sha-less retract wrote state"
+( cd "$SDIR" && PATH="$SB" bash "$WRITE" reverify shaless "harmless add" --confirm ) >/dev/null 2>&1
+rc=$?
+[ "$rc" -eq 2 ] && ok "sha-less reverify FAILS LOUD (exit 2)" || no "sha-less reverify exited $rc (expected 2)"
+[ ! -e "$SDIR/$LFILE" ] && [ ! -e "$SDIR/$PJFILE" ] && ok "sha-less reverify touched nothing" || no "sha-less reverify wrote state"
 rm -rf "$SB" "$SDIR"
 
 echo "== 11. supersede verb (PRE-CHECK -> RETRACT -> ADD) =="
@@ -686,7 +699,7 @@ if [ -f "$real_lessons" ]; then
   if [ "$file_n" -eq "$read_n" ]; then
     ok "real LESSONS.md: all $file_n entries are readable (no unbacked/retracted-but-lingering lines)"
   else
-    no "real LESSONS.md has $file_n entries but read-lessons.sh emits $read_n — $((file_n - read_n)) invisible; see .supervisor/logs/memory.log for the DROPPED/RETRACTED/STALE reason per line, then heal with: write-lessons.sh --category <cat> --lesson \"<text>\" --attest-existing"
+    no "real LESSONS.md has $file_n entries but read-lessons.sh emits $read_n — $((file_n - read_n)) invisible; see .supervisor/logs/memory.log for the reason per line, then heal from the repo root: STALE (still true after re-checking) -> write-lessons.sh reverify <cat> \"<text>\" --source \"<id>\" --confirm; DROPPED (no chain-valid add) -> write-lessons.sh --category <cat> --lesson \"<text>\" --attest-existing --confirm; no longer true -> retract/supersede. Never hand-edit LESSONS.md."
   fi
 else
   ok "real LESSONS.md absent — count-parity assertion vacuously satisfied"
@@ -1402,6 +1415,207 @@ grep -qF -- "the first lesson in a fresh repo must land" "$CGV10/$LFILE" 2>/dev/
   || no "(cg10) CONTROL FAILED: the entry never landed in $LFILE"
 
 rm -rf "$CGTMP" 2>/dev/null
+
+# =============================================================================
+# 17. THE reverify VERB — the sanctioned refresh of a stored lesson's last_verified.
+#
+# WHY THIS SECTION EXISTS. read-lessons.sh skips a trusted lesson whose last_verified is older than
+# LESSON_STALE_DAYS, and until reverify there was no writer path back: a re-`add` dedups before any
+# update, and --attest-existing is a no-op on an already-trusted hash. The fix was twice a hand-edit
+# of the committed store (commit a0625ab; ef916b74 on 2026-09-27). This section pins that the verb
+# refreshes ONLY the trailer, is auditable, and cannot launder: every refusal is byte-identical, and
+# the new `reverify` provenance action is trust-neutral in BOTH chain walks (writer + reader).
+# =============================================================================
+echo "== 17. reverify verb (refresh a trusted lesson's last_verified) =="
+VDIR="$(mktemp -d)"; ( cd "$VDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
+vf="$VDIR/$LFILE"; vj="$VDIR/$PJFILE"; VOUT="$VDIR.out"
+vread() { ( cd "$VDIR" && bash "$READ" ) 2>/dev/null; }
+# Chain validity, walked independently of both scripts under test.
+vchain_ok() {
+  local prev="GENESIS" p got n=0
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue; n=$((n+1))
+    got="$(printf '%s' "$p" | sed -E 's/.*"prev_hash":"([^"]*)".*/\1/')"
+    [ "$got" = "$prev" ] || return 1
+    prev="$(printf '%s' "$p" | sha)"
+  done < "$vj"
+  [ "$n" -gt 0 ]
+}
+( cd "$VDIR" && bash "$WRITE" --confirm --category fresh --lesson "stale caching lesson needs a refresh" --last-verified 2020-01-01T00:00:00Z --confidence high --source "session:fixture-0001" \
+    && bash "$WRITE" --confirm --category fresh --lesson "sibling lesson about retry budgets" --last-verified 2020-01-01T00:00:00Z --source "session:fixture-0001" ) >/dev/null 2>&1
+v_hash="$(printf '%s' "fresh stale caching lesson needs a refresh" | sha)"; v_id="$(printf '%s' "$v_hash" | cut -c1-8)"
+
+echo "-- 17a. baseline: the stale lesson is skipped by the reader --"
+out="$(vread)"
+emits "$out" "stale caching lesson needs a refresh" \
+  && no "(17a) fixture: the 2020 lesson was emitted — it is not stale, so every refresh assertion below is vacuous" \
+  || ok "(17a) the 2020-stamped lesson is skipped as STALE (the state reverify exists to heal)"
+
+echo "-- 17b. without --confirm (non-interactive) it is a dry-run: plan printed, nothing written --"
+cp "$vf" "$vf.snap"; cp "$vj" "$vj.snap"
+( cd "$VDIR" && bash "$WRITE" reverify fresh "stale caching lesson needs a refresh" --source "session:fixture-0001" ) >"$VOUT" 2>&1
+rc=$?
+[ "$rc" -eq 0 ] && ok "(17b) dry-run reverify exits 0" || no "(17b) dry-run reverify exited $rc"
+grep -qF 'PLANNED REVERIFY (not written — pass --confirm to apply):' "$VOUT" \
+  && ok "(17b) and prints PLANNED REVERIFY" || no "(17b) no PLANNED REVERIFY line: $(tr '\n' ' ' < "$VOUT" | cut -c1-200)"
+if cmp -s "$vf" "$vf.snap" && cmp -s "$vj" "$vj.snap"; then ok "(17b) LESSONS.md and the chain are byte-identical after the dry-run"
+else no "(17b) the dry-run reverify mutated the store or the chain"; fi
+
+echo "-- 17c. with --confirm: trailer refreshed, text/[id]/hash unchanged, provenance appended, readable again --"
+old_line="$(grep -F -- "- [$v_id] " "$vf")"
+prov_before="$(wc -l < "$vj" | tr -d ' ')"
+( cd "$VDIR" && bash "$WRITE" reverify fresh "stale caching lesson needs a refresh" --source "session:reverify-fixture" --confirm ) >"$VOUT" 2>&1
+rc=$?
+[ "$rc" -eq 0 ] && ok "(17c) reverify --confirm exits 0" || no "(17c) reverify exited $rc: $(tr '\n' ' ' < "$VOUT" | cut -c1-200)"
+new_line="$(grep -F -- "- [$v_id] " "$vf")"
+if [ "${old_line%%  <!--*}" = "${new_line%%  <!--*}" ] && [ -n "${new_line%%  <!--*}" ]; then
+  ok "(17c) everything before the trailer ([id], text, spacing) is byte-identical"
+else
+  no "(17c) the entry text changed: '$old_line' -> '$new_line'"
+fi
+case "$new_line" in
+  *'<!-- last_verified=2020-01-01T00:00:00Z'*) no "(17c) last_verified was NOT refreshed: $new_line" ;;
+  *'<!-- last_verified='[0-9][0-9][0-9][0-9]-*' confidence=high -->') ok "(17c) last_verified refreshed to write time; confidence=high preserved (no --confidence given)" ;;
+  *) no "(17c) unexpected trailer shape: $new_line" ;;
+esac
+# Everything OTHER than the target line is byte-identical (the sibling kept its own stale stamp).
+if diff <(grep -vF -- "- [$v_id] " "$vf.snap") <(grep -vF -- "- [$v_id] " "$vf") >/dev/null; then
+  ok "(17c) every other line of LESSONS.md is byte-identical (only the target's trailer moved)"
+else
+  no "(17c) reverify changed lines other than its target"
+fi
+prov_after="$(wc -l < "$vj" | tr -d ' ')"
+last="$(tail -n1 "$vj")"
+[ "$prov_after" -eq $((prov_before + 1)) ] && ok "(17c) exactly ONE provenance entry appended" || no "(17c) provenance grew $prov_before -> $prov_after (want +1)"
+case "$last" in
+  *'"action":"reverify"'*"\"content_hash\":\"$v_hash\""*|*"\"content_hash\":\"$v_hash\""*'"action":"reverify"'*)
+    ok "(17c) the entry is action=reverify for the UNCHANGED content_hash" ;;
+  *) no "(17c) last provenance entry is not a reverify of $v_id: $last" ;;
+esac
+case "$last" in *'"source":"session:reverify-fixture"'*'"last_verified":"'[0-9]*) ok "(17c) and records who vouched (source) and the new last_verified" ;;
+  *) no "(17c) reverify entry lacks source/last_verified: $last" ;; esac
+vchain_ok && ok "(17c) provenance chain valid end-to-end after reverify" || no "(17c) chain broken after reverify"
+out="$(vread)"
+emits "$out" "stale caching lesson needs a refresh" \
+  && ok "(17c) the reader emits the refreshed lesson again" || no "(17c) refreshed lesson still not emitted"
+emits "$out" "sibling lesson about retry budgets" \
+  && no "(17c) the untargeted stale sibling became readable — reverify touched more than its target" \
+  || ok "(17c) the untargeted stale sibling is still skipped (refresh is per-lesson)"
+rm -f "$vf.snap" "$vj.snap"
+
+echo "-- 17d. explicit --last-verified / --confidence; a backdate is refused (exit 2) --"
+( cd "$VDIR" && bash "$WRITE" reverify fresh "stale caching lesson needs a refresh" --last-verified 2099-01-01T00:00:00Z --confidence low --source "session:reverify-fixture" --confirm ) >/dev/null 2>&1
+grep -qF -- "- [$v_id] stale caching lesson needs a refresh  <!-- last_verified=2099-01-01T00:00:00Z confidence=low -->" "$vf" \
+  && ok "(17d) explicit --last-verified and --confidence both honored" || no "(17d) explicit flags not honored: $(grep -F -- "- [$v_id] " "$vf")"
+cp "$vf" "$vf.snap"; cp "$vj" "$vj.snap"
+( cd "$VDIR" && bash "$WRITE" reverify fresh "stale caching lesson needs a refresh" --last-verified 2030-01-01T00:00:00Z --source "session:reverify-fixture" --confirm ) >"$VOUT" 2>&1
+rc=$?
+[ "$rc" -eq 2 ] && ok "(17d) a --last-verified OLDER than the stored stamp is refused (exit 2)" || no "(17d) backdate exited $rc (want 2)"
+grep -qF 'never ages a lesson' "$VOUT" && ok "(17d) and the refusal names why" || no "(17d) backdate refusal unexplained: $(tr '\n' ' ' < "$VOUT" | cut -c1-200)"
+if cmp -s "$vf" "$vf.snap" && cmp -s "$vj" "$vj.snap"; then ok "(17d) store + chain byte-identical after the refused backdate"
+else no "(17d) refused backdate mutated state"; fi
+# Same stamp + same confidence again is a no-op (nothing appended).
+( cd "$VDIR" && bash "$WRITE" reverify fresh "stale caching lesson needs a refresh" --last-verified 2099-01-01T00:00:00Z --confidence low --source "session:reverify-fixture" --confirm ) >/dev/null 2>&1
+rc=$?
+if [ "$rc" -eq 0 ] && cmp -s "$vf" "$vf.snap" && cmp -s "$vj" "$vj.snap"; then ok "(17d) an identical re-stamp is a no-op (exit 0, nothing appended)"
+else no "(17d) identical re-stamp was not a clean no-op (exit $rc)"; fi
+rm -f "$vf.snap" "$vj.snap"
+
+echo "-- 17e. refusals fail loud (exit 4) and are byte-identical: absent, untrusted, retracted, duplicated --"
+v_refuse() {  # v_refuse <label> <want-rc> <args...>
+  local label="$1" want="$2"; shift 2
+  cp "$vf" "$vf.snap"; cp "$vj" "$vj.snap"
+  ( cd "$VDIR" && bash "$WRITE" reverify "$@" --source "session:reverify-fixture" --confirm ) >"$VOUT" 2>&1
+  local r=$?
+  [ "$r" -eq "$want" ] && ok "(17e) $label refused (exit $want)" || no "(17e) $label exited $r (want $want): $(tr '\n' ' ' < "$VOUT" | cut -c1-200)"
+  if cmp -s "$vf" "$vf.snap" && cmp -s "$vj" "$vj.snap"; then ok "(17e) $label: store + chain byte-identical"
+  else no "(17e) $label: refused reverify mutated state"; fi
+  rm -f "$vf.snap" "$vj.snap"
+}
+v_refuse "absent target" 4 fresh "no such lesson was ever stored here"
+# Out-of-band line (present, never added): must not be laundered into a refreshed-looking entry.
+oob_id="$(printf '%s' "fresh an out of band poisoned lesson" | sha | cut -c1-8)"
+printf -- '- [%s] an out of band poisoned lesson\n' "$oob_id" >> "$vf"
+v_refuse "present-but-untrusted (out-of-band) target" 4 fresh "an out of band poisoned lesson"
+grep -vF -- "- [$oob_id] " "$vf" > "$vf.t" && mv "$vf.t" "$vf"
+v_refuse "--replacement on reverify" 2 fresh "stale caching lesson needs a refresh" --replacement "x"
+v_refuse "--attest-existing on reverify" 2 fresh "stale caching lesson needs a refresh" --attest-existing
+# Duplicated [id] (an out-of-band copy of a trusted line): ambiguous, refused.
+printf '%s\n' "$(grep -F -- "- [$v_id] " "$vf")" >> "$vf"
+v_refuse "duplicated [id]" 4 fresh "stale caching lesson needs a refresh"
+awk -v pfx="- [$v_id] " 'index($0,pfx)==1 { if (seen++) next } { print }' "$vf" > "$vf.t" && mv "$vf.t" "$vf"
+
+echo "-- 17f. --hash form, and retract still works after a reverify (chain_trusted stays trusted) --"
+( cd "$VDIR" && bash "$WRITE" reverify --hash "$v_hash" --last-verified 2099-06-01T00:00:00Z --source "session:reverify-fixture" --confirm ) >/dev/null 2>&1
+rc=$?
+[ "$rc" -eq 0 ] && grep -qF -- "last_verified=2099-06-01T00:00:00Z confidence=low -->" "$vf" \
+  && ok "(17f) reverify --hash accepted (category auto-detected from the heading)" || no "(17f) reverify --hash failed (exit $rc)"
+( cd "$VDIR" && bash "$WRITE" retract fresh "stale caching lesson needs a refresh" --source "session:reverify-fixture" --confirm ) >/dev/null 2>&1
+rc=$?
+[ "$rc" -eq 0 ] && ok "(17f) a retract after reverify succeeds — reverify did not disturb last-action-wins trust" || no "(17f) retract after reverify exited $rc"
+v_refuse "retracted target" 4 fresh "stale caching lesson needs a refresh"
+
+echo "-- 17g. TRUST-NEUTRAL: a forged chain-valid reverify cannot resurrect a retracted hash --"
+# Re-append the retracted line out-of-band, then append a CHAIN-VALID reverify entry for its hash.
+# If either chain walk treated `reverify` like `add`, the line would be readable (reader) or
+# retractable/reverifiable (writer) again.
+printf -- '- [%s] stale caching lesson needs a refresh  <!-- last_verified=2099-06-01T00:00:00Z confidence=low -->\n' "$v_id" >> "$vf"
+ph="$(printf '%s' "$(tail -n1 "$vj")" | sha)"
+printf '{"id":"%s","prev_hash":"%s","content_hash":"%s","source":"forged","action":"reverify","last_verified":"2099-06-01T00:00:00Z","written_at":"2026-01-01T00:00:00Z"}\n' "$v_id" "$ph" "$v_hash" >> "$vj"
+vchain_ok && ok "(17g) fixture: the forged reverify entry is chain-valid" || no "(17g) fixture: forged entry broke the chain — the test proves nothing"
+out="$(vread)"
+emits "$out" "stale caching lesson needs a refresh" \
+  && no "(17g) READER re-trusted a retracted hash off a reverify entry — reverify is not trust-neutral" \
+  || ok "(17g) the reader still drops the retracted line (reverify does not re-trust)"
+v_refuse "retracted target after a forged reverify (writer walk)" 4 fresh "stale caching lesson needs a refresh"
+rm -rf "$VDIR" "$VOUT"
+
+echo "-- 17h. an untrailered (attested) line gains a trailer and stays readable; supersedes= carried through --"
+UDIR="$(mktemp -d)"; ( cd "$UDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
+uf="$UDIR/$LFILE"
+( cd "$UDIR" && bash "$WRITE" --confirm --category att --lesson "seed lesson for the attested store" --source "session:fixture-0001" ) >/dev/null 2>&1
+u_id="$(printf '%s' "att bare attested lesson without trailer" | sha | cut -c1-8)"
+printf -- '- [%s] bare attested lesson without trailer\n' "$u_id" >> "$uf"
+( cd "$UDIR" && bash "$WRITE" --confirm --category att --lesson "bare attested lesson without trailer" --attest-existing --source "session:fixture-0001" ) >/dev/null 2>&1
+( cd "$UDIR" && bash "$WRITE" reverify att "bare attested lesson without trailer" --source "session:reverify-fixture" --confirm ) >/dev/null 2>&1
+rc=$?
+if [ "$rc" -eq 0 ] && grep -qE -- "^- \[$u_id\] bare attested lesson without trailer  <!-- last_verified=[0-9]{4}-[0-9-]+T[0-9:]+Z confidence=medium -->$" "$uf"; then
+  ok "(17h) the untrailered line gained a standard trailer (confidence defaults to medium)"
+else
+  no "(17h) untrailered reverify wrong (exit $rc): $(grep -F -- "- [$u_id] " "$uf")"
+fi
+out="$( cd "$UDIR" && bash "$READ" 2>/dev/null )"
+emits "$out" "bare attested lesson without trailer" && ok "(17h) and it is still readable (hash parity held)" || no "(17h) the trailered line is no longer readable"
+# supersedes= must survive a confidence change.
+( cd "$UDIR" && bash "$WRITE" supersede att "seed lesson for the attested store" --replacement "replacement lesson carrying a supersedes field" --source "session:fixture-0001" --confirm ) >/dev/null 2>&1
+( cd "$UDIR" && bash "$WRITE" reverify att "replacement lesson carrying a supersedes field" --last-verified 2099-01-01T00:00:00Z --confidence high --source "session:reverify-fixture" --confirm ) >/dev/null 2>&1
+sup_id="$(printf '%s' "att seed lesson for the attested store" | sha | cut -c1-8)"
+grep -qF -- "replacement lesson carrying a supersedes field  <!-- last_verified=2099-01-01T00:00:00Z confidence=high supersedes=$sup_id -->" "$uf" \
+  && ok "(17h) supersedes=<old id> carried through verbatim; last_verified stays first" \
+  || no "(17h) supersedes field lost or reordered: $(grep -F -- "supersedes field" "$uf")"
+# A trailing-whitespace untrailered line would change its reader hash once a trailer lets the strip
+# eat the spaces — the post-check must refuse rather than write a line the reader then drops.
+w_id="$(printf '%s' "att spaced lesson  " | sha | cut -c1-8)"
+printf -- '- [%s] spaced lesson  \n' "$w_id" >> "$uf"
+w_hash="$(printf '%s' "att spaced lesson  " | sha)"
+ph="$(printf '%s' "$(tail -n1 "$UDIR/$PJFILE")" | sha)"
+printf '{"id":"%s","prev_hash":"%s","content_hash":"%s","source":"fixture","action":"add","written_at":"2026-01-01T00:00:00Z"}\n' "$w_id" "$ph" "$w_hash" >> "$UDIR/$PJFILE"
+cp "$uf" "$uf.snap"
+( cd "$UDIR" && bash "$WRITE" reverify --hash "$w_hash" --source "session:reverify-fixture" --confirm ) >/dev/null 2>&1
+rc=$?
+[ "$rc" -eq 4 ] && cmp -s "$uf" "$uf.snap" \
+  && ok "(17h) a rewrite that would change the reader-derived hash is refused (exit 4), store byte-identical" \
+  || no "(17h) hash-drifting rewrite not refused cleanly (exit $rc)"
+rm -rf "$UDIR"
+
+echo "-- 17i. virgin store: reverify WITH --confirm exits 4 and creates nothing --"
+VV="$(mktemp -d)"; ( cd "$VV" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
+( cd "$VV" && bash "$WRITE" reverify fresh "anything at all" --confirm ) >/dev/null 2>&1
+rc=$?
+[ "$rc" -eq 4 ] && ok "(17i) reverify on a virgin store exits 4" || no "(17i) exit $rc (want 4)"
+[ ! -e "$VV/.supervisor/memory" ] || [ -z "$(ls -A "$VV/.supervisor/memory" 2>/dev/null)" ] \
+  && ok "(17i) and .supervisor/memory/ is absent-or-empty" || no "(17i) refused reverify bootstrapped files"
+rm -rf "$VV"
 
 echo
 echo "RESULT: $pass passed, $fail failed"
