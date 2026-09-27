@@ -292,8 +292,10 @@ write("longerr-b.json", block(
      "- summary: long primary_error fixture B"]))
 
 # Group 11: REAL runtime payload shape (captured 2026-09-27 from a live
-# loomwright:code-reviewer SubagentStop). Two properties the older fixtures
-# never exercised, and that together blocked 100% of real events:
+# code-reviewer SubagentStop — the runtime reported its agent_type with the
+# plugin prefix DOUBLED, `loomwright:loomwright:code-reviewer`, which is why
+# the fixtures below use that form). Two properties the older fixtures never
+# exercised, and that together blocked 100% of real events:
 #  (a) transport keys (cwd / transcript_path / agent_transcript_path /
 #      scratchpad_dir) are ABSOLUTE home paths on every real payload;
 #  (b) the report reaches the parent via a `SubagentHandback` tool call — its
@@ -308,14 +310,14 @@ def handback_transcript(name, message):
         fh.write(json.dumps(entry) + "\n")
     return path
 
-def real_payload(name, recap, agent_transcript):
+def real_payload(name, recap, agent_transcript, agent_type="loomwright:loomwright:code-reviewer"):
     payload = {
         "session_id": "fixture-core-%s" % os.path.splitext(name)[0],
         "transcript_path": HOME_ROOT + "/transcripts/session.jsonl",
         "cwd": HOME_ROOT,
         "scratchpad_dir": HOME_ROOT + "/scratchpad",
         "agent_id": "a0000000000000000",
-        "agent_type": "loomwright:loomwright:code-reviewer",
+        "agent_type": agent_type,
         "hook_event_name": "SubagentStop",
         "permission_mode": "auto",
         "stop_hook_active": False,
@@ -350,6 +352,20 @@ real_payload("real-handback-secret.json", RECAP, handback_transcript(
     "real-handback-secret.agent.jsonl",
     review_block("token ghp_REALSHAPESECRET0123456789 leaked")))
 real_payload("real-prose-only.json", RECAP, os.path.join(outdir, "no-such-agent.jsonl"))
+# QA_RESULT in YAML header form (`QA_RESULT:`) delivered via handback — the
+# older qa fixture only covers the `## QA_RESULT` markdown form.
+real_payload("real-handback-qa.json",
+    "QA run finished; 8 of 12 tests failed. I sent back the QA_RESULT block.",
+    handback_transcript("real-handback-qa.agent.jsonl", "\n".join([
+        "QA done.", "", "```yaml", "QA_RESULT:",
+        "  schema_version: 1",
+        "  task_id: real-qa-task",
+        "  tests_generated: 12",
+        "  tests_passed: 4",
+        "  tests_failed: 8",
+        "  summary: eight generated tests failed",
+        "```"])),
+    agent_type="loomwright:loomwright:qa-executor")
 PY
 if [ ! -f "$FIXDIR/secrets.tsv" ]; then
   echo "FATAL  fixture generation failed" >&2
@@ -930,6 +946,15 @@ assert_match "real_shape_failed_title" "Failed: true" "$out"
 assert_match "real_shape_issue_from_handback" "[HIGH] unquoted var in" "$out"
 assert_match "real_shape_home_path_redacted" "[REDACTED:macos-home-path]" "$out"
 assert_not_match "real_shape_no_username_leak" "/Users/testuser" "$out"
+# Doubled runtime prefix must normalise to the same label the goldens pin.
+assert_match "real_shape_task_type_normalised" "Task Type: code-reviewer" "$out"
+assert_match "real_shape_label_normalised" "task:code-reviewer" "$out"
+assert_not_match "real_shape_no_residual_prefix" "task:loomwright:" "$out"
+
+out="$(run_core "$FIXDIR/real-handback-qa.json" --dry-run)"
+assert_eq "real_shape_qa_yaml_header_would_send" "0" "$(extract_would_exit "$out")"
+assert_not_match "real_shape_qa_detected" "no_known_result_block" "$out"
+assert_match "real_shape_qa_task_type" "Task Type: qa-executor" "$out"
 
 out="$(run_core "$FIXDIR/real-handback-secret.json" --dry-run)"
 assert_eq "real_shape_secret_still_blocks" "2" "$(extract_would_exit "$out")"

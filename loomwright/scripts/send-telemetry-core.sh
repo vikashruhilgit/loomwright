@@ -630,9 +630,12 @@ task_id = field(result_block, "task_id") or session_id or "unknown"
 # ---- Normalised agent type for labels --------------------------------------
 def normalise_agent(at, schema):
     s = at or ""
-    # Strip plugin prefix.
-    if s.startswith("loomwright:"):
-        s = s.split(":", 1)[1]
+    # Strip plugin prefix — EVERY leading occurrence: the runtime reports
+    # plugin agents doubled (`loomwright:loomwright:code-reviewer`, observed
+    # in a live SubagentStop payload 2026-09-27), and stripping only one left
+    # `loomwright:code-reviewer` in the issue title and `task:` label.
+    while s.startswith("loomwright:"):
+        s = s[len("loomwright:"):]
     # Strip -runner suffix.
     if s.endswith("-runner"):
         s = s[:-len("-runner")]
