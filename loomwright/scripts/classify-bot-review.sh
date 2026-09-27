@@ -57,6 +57,10 @@
 #                    or any login ending in "[bot]". A bare "claude" (human) or
 #                    a "github-actions"-prefixed non-bot login is NOT matched
 #                    (tightened red-team-hardening item 08). Case-insensitive.
+#   (Coupling, v15.108.0: `.github/workflows/claude-code-review.yml` mandates a last line
+#   `execution: none — static review; this reviewer …`, which itself contains the stem
+#   `review`, so EVERY claude[bot] review comment now satisfies review_marker_re. A future
+#   marker rewording that drops the stem silently changes drain input — test case 27 pins it.)
 #   review_marker_re — the RAW body carries, ANYWHERE, a word-bounded REVIEW STEM
 #                    ("review", "reviews", "reviewed", "reviewer(s)", "reviewing")
 #                    or "finding(s)" (Oniguruma \b). Case-insensitive. Widened from

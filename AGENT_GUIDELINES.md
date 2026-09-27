@@ -54,8 +54,8 @@ A review pass is a cost (tokens, latency, a human's attention) that must be earn
 
 | Lens | Information it has that the other lacks |
 |---|---|
-| Phase 4.5 integrated review | The working tree, the brief, and the Outcomes Rubric — it can check intent-vs-implementation, not just the diff |
-| CI review (`claude-review`) | Fully independent context, PR-only — no memory of the authoring session, so it cannot inherit the implementer's blind spots |
+| Phase 4.5 integrated review | The working tree, the brief, and the Outcomes Rubric — it can check intent-vs-implementation, not just the diff; and it EXECUTES: scratch-dir adversarial repros of load-bearing claims (`agents/code-reviewer.md` §5, under the EXECUTION DIRECTIVE) |
+| CI review (`claude-review`) | Fully independent context, PR-only — no memory of the authoring session, so it cannot inherit the implementer's blind spots. Static-only (`execution: none` — reads, never runs), so its "no findings" is never runtime verification |
 
 A fifth pass (or a third lens) has to name an information advantage neither row above already covers, or show that one of these two rows verifiably did not run. Every surviving pass elsewhere in this repo cites this section by path — it is not restated.
 
