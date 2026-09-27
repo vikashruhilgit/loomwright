@@ -57,7 +57,8 @@ CARVE='Scratch-dir exception (in addition to the agent-memory proposal write): u
 SCRATCH_CD='every repro command runs as `cd "$SCRATCH" && …`'
 IGNORED_SNAP='the `git status --porcelain --ignored` before/after check'
 CAPTURE_IGNORED='capture `git status --porcelain --ignored`'
-OVERWRITE_LIMIT='never an overwrite of an existing one, and never a new file inside an already-ignored directory'
+OVERWRITE_LIMIT='never an overwrite of an existing one'
+COLLAPSE_LIMIT='never a new file inside an already-ignored directory'
 TIG_RENAME='rename it (e.g. `fixture-hooks.json`) when the script takes a path'
 TIG_NOT_DEFECT='that block is NOT a defect in the PR and NOT by itself grounds for NEEDS_HUMAN'
 GATE='without the EXECUTION DIRECTIVE, do not author or run new adversarial repro scripts; the rest of §5 (type-check, the existing tests that cover the diff, `unverified`) is unchanged.'
@@ -181,13 +182,15 @@ check_with_mutant "(d) §5 guardrails: before/after snapshot is git status --por
 check_with_mutant "(d) Critical Rules bullet: before/after snapshot is git status --porcelain --ignored" \
   chk_ign_crit "$REVIEWER" strip_in_line "$CRIT_ANCHOR" "$IGNORED_SNAP"
 # Honest limit of `--ignored` + the test-integrity-guard fixture rule (PR #281 review, MEDIUM).
-chk_overwrite() { l="$(line_with "$1" '**Scratch-dir adversarial repro')"; [ -n "$l" ] && has "$l" "$OVERWRITE_LIMIT"; }
+chk_overwrite() { l="$(line_with "$1" '**Scratch-dir adversarial repro')"; [ -n "$l" ] && has "$l" "$OVERWRITE_LIMIT" && has "$l" "$COLLAPSE_LIMIT"; }
 chk_tig() {
   l="$(line_with "$1" '**Scratch-dir adversarial repro')"
   [ -n "$l" ] && has "$l" "$TIG_RENAME" && has "$l" 'reason `test_integrity_guard`' && has "$l" "$TIG_NOT_DEFECT"
 }
 check_with_mutant "(d) repro paragraph states --ignored cannot see an overwrite of an existing ignored file" \
   chk_overwrite "$REVIEWER" strip_in_line '**Scratch-dir adversarial repro' "$OVERWRITE_LIMIT"
+check_with_mutant "(d) repro paragraph states --ignored cannot see a new file inside an already-ignored dir" \
+  chk_overwrite "$REVIEWER" strip_in_line '**Scratch-dir adversarial repro' "$COLLAPSE_LIMIT"
 check_with_mutant "(d) repro paragraph: guard-blocked fixture => rename, else unverified; not a PR defect / not NEEDS_HUMAN" \
   chk_tig "$REVIEWER" strip_in_line '**Scratch-dir adversarial repro' "$TIG_NOT_DEFECT"
 # Same scope in both places: the SAME canonical literal is asserted in each, so a one-sided edit of the
