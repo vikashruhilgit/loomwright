@@ -7,7 +7,7 @@
 > must` rule with a non-null `check` (on 2026-09-26 the store had 3 rules, 0 `must`, 0 with a check, so a gate
 > would gate on nothing). `automate-followups/09` makes `/rules audit` print that nudge automatically.
 > Promotion = a human moves this file back out of `proposed/` and stamps `## Status: pending`.
-> Also blocked on `proposed/automate-followups-07-…` (it decides whether a failing check gates at all).
+> Also blocked on item 07 (`automate-followups/07-rule-enforcement-at-review-and-merge.md`, queued 2026-09-28; it decides whether a failing check gates at all).
 
 ## Depends on
 Item 07 (decides whether a failing check gates at all). Related: item 02 in this folder — the `claude-review`
