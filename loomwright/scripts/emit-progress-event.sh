@@ -312,10 +312,16 @@ elif (isinstance(_tpath, str) and _tpath and cc_session_id
 if _scope:
     event["agent_scope"] = _scope
 
-# `result_block_present` (v15.79.0, additive): whether `last_assistant_message`
-# — WHEN THE KEY IS PRESENT — contains a WORKER_RESULT fence. Reuses the exact
-# detection validate-worker-result.py runs (`result_block_parser.find_last_block`)
-# rather than reinventing a regex, so the two never drift. PRESENCE, not
+# `result_block_present` (v15.79.0, additive): whether the resolved worker
+# output — WHEN THE `last_assistant_message` KEY IS PRESENT — contains a
+# WORKER_RESULT fence. "Resolved" = `result_block_parser.resolve_payload_text`,
+# the SAME resolution validate-worker-result.py runs: current runtimes deliver
+# the report through a SubagentHandback tool call and leave only a prose recap
+# in `last_assistant_message`, so scanning that field alone read `false` (and
+# derived `ended_without_result`) for every real worker (probed 2026-09-27).
+# Reuses the exact detection validate-worker-result.py runs
+# (`result_block_parser.find_last_block`) rather than reinventing a regex, so
+# the two never drift. PRESENCE, not
 # absence, decides the key: a `last_assistant_message` key that is present but
 # not a string, or whose fence-scan raises for any reason (e.g.
 # result_block_parser.py unavailable), OMITS the key entirely — this is a
@@ -329,7 +335,9 @@ if "last_assistant_message" in payload:
     if isinstance(_lam, str):
         try:
             from result_block_parser import find_last_block as _find_last_block
-            event["result_block_present"] = _find_last_block(_lam, "WORKER_RESULT") is not None
+            from result_block_parser import resolve_payload_text as _resolve
+            _txt = _resolve(payload, "WORKER_RESULT") or _lam
+            event["result_block_present"] = _find_last_block(_txt, "WORKER_RESULT") is not None
         except Exception:
             pass  # detection unavailable -> key OMITTED, never a guessed False
 

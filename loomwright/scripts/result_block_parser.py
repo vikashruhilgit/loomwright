@@ -8,11 +8,15 @@ hardened and self-tested ONCE.
 
 Behaviour-compatible with, and lifted from, `validate-launch-pad-result.py`:
 
-  1. PAYLOAD EXTRACTION LADDER (`extract_payload` / `extract_payload_text`)
+  1. PAYLOAD EXTRACTION LADDER (`extract_payload` / `resolve_payload_text`)
      last_assistant_message -> result_block -> output -> agent_output ->
      agent_transcript_path -> transcript_path (the subagent-scoped path is
-     preferred over the shared session one). Plus `--raw` mode, where stdin IS
-     the agent output text with no JSON envelope.
+     preferred over the shared session one). When the inline text carries no
+     result-block HEADER line, the `input.message` of the LAST
+     `SubagentHandback` tool call in `agent_transcript_path` wins if IT does —
+     current runtimes deliver the report there and leave only a prose recap
+     (which may NAME the block) in `last_assistant_message`. Plus `--raw`
+     mode, where stdin IS the agent output text with no JSON envelope.
 
   2. BLOCK LOCATION (`find_last_block` / `find_last_named_block`)
      The LAST block wins — "the most recent emission wins" contract. Two
@@ -165,7 +169,8 @@ PAYLOAD_UNPARSEABLE = _Sentinel("PAYLOAD_UNPARSEABLE")
 NO_OUTPUT_REASON = (
     "could not locate agent output in the SubagentStop payload "
     "(checked last_assistant_message / result_block / output / agent_output / "
-    "agent_transcript_path / transcript_path)"
+    "SubagentHandback in agent_transcript_path / agent_transcript_path / "
+    "transcript_path)"
 )
 
 #: The extraction ladder, in priority order. Kept as data so the self-test can
@@ -211,7 +216,112 @@ def _last_assistant_text_from_transcript(path):
     return last_text
 
 
-def extract_payload(argv=None, stream=None):
+def _last_handback_message_from_transcript(path):
+    """Return the `input.message` of the LAST `SubagentHandback` tool call in a
+    subagent transcript JSONL, or "" when there is none / on any failure.
+
+    Current Claude Code runtimes return a subagent's report through a
+    `SubagentHandback` tool call: the full report (including the result block)
+    is that call's `input.message`, while `last_assistant_message` is a short
+    prose recap that typically NAMES the block without containing it (captured
+    2026-09-27 from real loomwright:code-reviewer and loomwright:worker
+    SubagentStop payloads — the worker validator then blocked a correct worker
+    with "missing WORKER_RESULT block" and the runtime re-prompted it). Same
+    reader as send-telemetry-core.sh's helper of the same name."""
+    last_msg = ""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                msg = obj.get("message") if isinstance(obj, dict) else None
+                if not isinstance(msg, dict) or msg.get("role") != "assistant":
+                    continue
+                content = msg.get("content")
+                if not isinstance(content, list):
+                    continue
+                for part in content:
+                    if (isinstance(part, dict) and part.get("type") == "tool_use"
+                            and part.get("name") == "SubagentHandback"):
+                        inp = part.get("input")
+                        m = inp.get("message") if isinstance(inp, dict) else None
+                        if isinstance(m, str) and m:
+                            last_msg = m
+    except OSError:
+        return ""
+    return last_msg
+
+
+#: Header-line shape of ANY `*_RESULT` block (YAML `NAME:` or markdown
+#: `## NAME`), used when the caller names no specific block. A bare mention in
+#: prose ("I sent back the WORKER_RESULT block") is NOT a header.
+_ANY_RESULT_HEADER_RE = re.compile(
+    r"^[ \t]*(?:#{1,6}[ \t]+`?\*{0,2})?[A-Z][A-Z0-9_]*_RESULT\*{0,2}`?[ \t]*:?[ \t]*(?:#.*)?$",
+    re.MULTILINE,
+)
+
+
+def has_result_block(text, names=None):
+    """True when `text` holds an actual result block — for `names`, via the
+    exact locator the validators run (find_last_named_block), so resolution
+    and validation can never disagree; with no names, any `*_RESULT` header
+    line. A block NAMED in prose does not count."""
+    if not isinstance(text, str) or not text:
+        return False
+    if names:
+        if isinstance(names, str):
+            names = (names,)
+        return find_last_named_block(text, names)[1] is not None
+    return _ANY_RESULT_HEADER_RE.search(text) is not None
+
+
+def resolve_payload_text(payload, names=None):
+    """Resolve the finishing agent's output text from a decoded SubagentStop
+    payload dict. Returns "" when nothing is found.
+
+    Order: the first non-empty inline PAYLOAD_TEXT_KEYS value, UNLESS it holds
+    no result block while the last SubagentHandback message in the
+    subagent-scoped `agent_transcript_path` does (then the handback wins);
+    else the inline text; else the last assistant text of
+    agent_transcript_path / transcript_path. Only `agent_transcript_path` is
+    searched for a handback — the shared session `transcript_path` belongs to
+    the PARENT, whose handbacks are some other agent's report."""
+    if not isinstance(payload, dict):
+        return ""
+    inline = ""
+    for key in PAYLOAD_TEXT_KEYS:
+        val = payload.get(key)
+        if isinstance(val, str) and val:
+            inline = val
+            break
+
+    if not has_result_block(inline, names):
+        atp = payload.get("agent_transcript_path")
+        if isinstance(atp, str) and atp and os.path.exists(atp):
+            hb = _last_handback_message_from_transcript(atp)
+            if has_result_block(hb, names):
+                return hb
+
+    if inline:
+        return inline
+
+    # Prefer the subagent-scoped `agent_transcript_path` (the finishing
+    # subagent's own messages) over the shared session `transcript_path`.
+    for tp_key in PAYLOAD_TRANSCRIPT_KEYS:
+        tp = payload.get(tp_key)
+        if isinstance(tp, str) and tp and os.path.exists(tp):
+            txt = _last_assistant_text_from_transcript(tp)
+            if txt:
+                return txt
+    return ""
+
+
+def extract_payload(argv=None, stream=None, names=None):
     """Read stdin once and resolve the agent's output text.
 
     Returns (text, payload) where:
@@ -221,7 +331,9 @@ def extract_payload(argv=None, stream=None):
                                     Caller emits ok:false with NO_OUTPUT_REASON.
       text is a str               — the agent output text.
     `payload` is the decoded hook payload dict, or None in --raw mode / on
-    failure. Validators use it for the `cwd` field.
+    failure. Validators use it for the `cwd` field. `names` (a block name or
+    tuple of names) scopes the SubagentHandback preference to the block the
+    caller will look for — see resolve_payload_text.
     """
     argv = sys.argv[1:] if argv is None else list(argv)
     stream = sys.stdin if stream is None else stream
@@ -243,21 +355,7 @@ def extract_payload(argv=None, stream=None):
     if not isinstance(payload, dict):
         return PAYLOAD_UNPARSEABLE, None
 
-    for key in PAYLOAD_TEXT_KEYS:
-        val = payload.get(key)
-        if isinstance(val, str) and val:
-            return val, payload
-
-    # Prefer the subagent-scoped `agent_transcript_path` (the finishing
-    # subagent's own messages) over the shared session `transcript_path`.
-    for tp_key in PAYLOAD_TRANSCRIPT_KEYS:
-        tp = payload.get(tp_key)
-        if isinstance(tp, str) and tp and os.path.exists(tp):
-            txt = _last_assistant_text_from_transcript(tp)
-            if txt:
-                return txt, payload
-
-    return "", payload
+    return resolve_payload_text(payload, names), payload
 
 
 def extract_payload_text(argv=None, stream=None):
@@ -1344,7 +1442,7 @@ def load_block(names, missing_reason, argv=None, stream=None):
     """
     if isinstance(names, str):
         names = (names,)
-    text, payload = extract_payload(argv, stream)
+    text, payload = extract_payload(argv, stream, names)
     if text is PAYLOAD_UNPARSEABLE:
         emit(True)
     if not text:

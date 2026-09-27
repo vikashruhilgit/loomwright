@@ -3914,6 +3914,155 @@ else
   no "validate-worker-result.py: committed SubagentStop payload fixture -> got: $LAST_OUT"
 fi
 
+# ═════════════════════════════════════════════════════════════════════════════
+# L. SubagentHandback resolution — REAL payload shape (captured 2026-09-27)
+# ═════════════════════════════════════════════════════════════════════════════
+# A live capture of real loomwright:worker and loomwright:code-reviewer
+# SubagentStop payloads showed the report (incl. the result block) is the
+# `input.message` of the LAST `SubagentHandback` tool_use in
+# `agent_transcript_path`, while `last_assistant_message` is a prose recap that
+# only NAMES the block. Before the fix the worker validator blocked a correct
+# worker ("missing WORKER_RESULT block") and the runtime re-prompted it.
+# Payloads are built from the committed sanitized fixture (absolute cwd /
+# transcript paths, the real 16-key set, the real transcript entry sequence).
+echo ""
+echo "== L. SubagentHandback resolution (real payload shape) =="
+HB_FIX="$SCRIPT_DIR/fixtures/subagentstop-handback-real-shape"
+HB_MAT="$HB_FIX/materialize.py"
+HB_N=0
+# run_hb <validator> <agent_type> <handback_file|-> <recap> [materialize flags…]
+# File-redirected, never piped (see run_v).
+run_hb() {
+  local validator="$1" atype="$2" hbf="$3" recap="$4"; shift 4
+  HB_N=$((HB_N + 1))
+  local d="$TMPROOT/hb$HB_N"
+  python3 "$HB_MAT" "$d" "$atype" "$hbf" "$recap" "$@" > "$TMPROOT/.hb-payload.json"
+  LAST_OUT="$( ( cd "$TMPROOT" && python3 "$validator" < "$TMPROOT/.hb-payload.json" ) 2>/dev/null)"
+  LAST_RC=$?
+}
+WORKER_RECAP="Done: guard implemented and tested. I sent back the WORKER_RESULT block."
+mk hb-lp.md <<'EOF'
+Brief discarded at the user's request.
+
+LAUNCH_PAD_RESULT:
+  schema_version: 1
+  status: discarded
+  saved_brief_path: null
+  summary: user discarded the brief
+EOF
+HB_LP="$F"
+mk hb-worker-invalid.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: add-jwt-guard
+- status: bogus
+EOF
+HB_WORKER_BAD="$F"
+
+# Sanity: the committed fixture keeps the real payload's absolute paths.
+if python3 -c 'import json,sys; p=json.load(open(sys.argv[1]))
+sys.exit(0 if all(p[k].startswith("/") for k in ("cwd","transcript_path","agent_transcript_path","scratchpad_dir")) else 1)' "$HB_FIX/payload.json"; then
+  ok "L0 committed real-shape payload carries ABSOLUTE cwd/transcript/scratchpad paths"
+else
+  no "L0 committed real-shape payload lost its absolute paths"
+fi
+
+# L1 worker: recap names the block, handback carries it -> PASS.
+run_hb "$V_WORKER" loomwright:loomwright:worker "$FIXDIR/worker-valid-bullet.md" "$WORKER_RECAP" --cwd "$SANDBOX_JWT"
+assert_pass "L1 worker: block only in SubagentHandback (recap names it) -> PASS"
+# L1-regression: the SAME payload without agent_transcript_path is the pre-fix
+# view — the recap alone -> the exact false block the live capture produced.
+run_hb "$V_WORKER" loomwright:loomwright:worker "$FIXDIR/worker-valid-bullet.md" "$WORKER_RECAP" --cwd "$SANDBOX_JWT" --no-agent-transcript
+assert_fail "L1-regression worker: recap only (no agent transcript) -> missing WORKER_RESULT block" "missing WORKER_RESULT block"
+
+# L2 the handback's block is VALIDATED, not just found: an invalid handback block blocks.
+run_hb "$V_WORKER" loomwright:loomwright:worker "$HB_WORKER_BAD" "$WORKER_RECAP" --cwd "$SANDBOX_JWT"
+assert_fail "L2 worker: invalid block in handback -> blocked on its content" "missing required field(s)"
+
+# L3 inline text WITH a real block beats the handback (precedence unchanged).
+cp "$FIXDIR/worker-valid-bullet.md" "$TMPROOT/hb-inline.md"
+run_hb "$V_WORKER" loomwright:loomwright:worker "$HB_WORKER_BAD" "$(cat "$TMPROOT/hb-inline.md")" --cwd "$SANDBOX_JWT"
+assert_pass "L3 worker: inline block present -> inline wins over an (invalid) handback"
+
+# L4 no handback at all + recap -> still missing (no false acceptance).
+run_hb "$V_WORKER" loomwright:loomwright:worker - "$WORKER_RECAP" --cwd "$SANDBOX_JWT"
+assert_fail "L4 worker: no handback, recap only -> missing WORKER_RESULT block" "missing WORKER_RESULT block"
+
+# L5 the PARENT transcript (transcript_path) is never searched for a handback —
+# its handbacks are some other agent's report.
+run_hb "$V_WORKER" loomwright:loomwright:worker "$FIXDIR/worker-valid-bullet.md" "$WORKER_RECAP" --cwd "$SANDBOX_JWT" --parent-handback
+assert_fail "L5 worker: handback only in the PARENT transcript_path -> not used" "missing WORKER_RESULT block"
+
+# L6 the LAST handback wins (an earlier valid one does not rescue a later invalid one).
+run_hb "$V_WORKER" loomwright:loomwright:worker "$HB_WORKER_BAD" "$WORKER_RECAP" --cwd "$SANDBOX_JWT" --extra-handback "$FIXDIR/worker-valid-bullet.md"
+assert_fail "L6 worker: earlier valid + LAST invalid handback -> the last one is validated" "missing required field(s)"
+
+# L7-L10 the other validators resolve through the same seam.
+run_hb "$V_QA" loomwright:loomwright:qa-executor "$FIXDIR/qa-result-valid.md" "QA done. I sent back the QA_RESULT block."
+assert_pass "L7 qa-executor: block only in SubagentHandback -> PASS"
+run_hb "$V_SUPERVISOR" loomwright:loomwright:supervisor-runner "$FIXDIR/supervisor-valid.md" "Run finished. SUPERVISOR_RESULT sent."
+assert_pass "L8 supervisor-runner: block only in SubagentHandback -> PASS"
+run_hb "$V_PLAN" loomwright:loomwright:plan-reviewer "$FIXDIR/plan-review-valid.md" "Review sent back as PLAN_REVIEW_RESULT."
+assert_pass "L9 plan-reviewer: block only in SubagentHandback -> PASS"
+run_hb "$V_EXECUTE" loomwright:loomwright:execute-manager "$FIXDIR/execute-result-valid.md" "Phase 3 done; EXECUTE_RESULT handed back."
+assert_pass "L10 execute-manager: block only in SubagentHandback -> PASS"
+run_hb "$SCRIPT_DIR/validate-launch-pad-result.py" loomwright:loomwright:launch-pad-runner "$HB_LP" "Brief discarded; LAUNCH_PAD_RESULT sent back."
+assert_pass "L11 launch-pad-runner: block only in SubagentHandback -> PASS"
+run_hb "$SCRIPT_DIR/validate-launch-pad-result.py" loomwright:loomwright:launch-pad-runner "$HB_LP" "Brief discarded; LAUNCH_PAD_RESULT sent back." --no-agent-transcript
+assert_fail "L11-regression launch-pad-runner: recap only -> missing LAUNCH_PAD_RESULT block" "missing LAUNCH_PAD_RESULT block"
+
+# L12 parser unit: a prose mention is not a block; a header line is.
+if python3 - "$SCRIPT_DIR" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import result_block_parser as R
+cases = [
+    (R.has_result_block("I sent back the WORKER_RESULT block."), False),
+    (R.has_result_block("I sent back the WORKER_RESULT block.", "WORKER_RESULT"), False),
+    (R.has_result_block("x\n## WORKER_RESULT\n- status: completed\n", "WORKER_RESULT"), True),
+    (R.has_result_block("x\nCODE_REVIEW_RESULT:\n  decision: PASS\n"), True),
+    (R.has_result_block("x\n## WORKER_RESULT\n- status: completed\n", "QA_RESULT"), False),
+    (R.resolve_payload_text({"agent_transcript_path": "/nonexistent/x.jsonl",
+                             "last_assistant_message": "recap"}), "recap"),
+    (R.resolve_payload_text([]), ""),
+]
+bad = [i for i, (got, want) in enumerate(cases) if got != want]
+sys.exit(1 if bad else 0)
+PY
+then
+  ok "L12 parser: has_result_block needs a header line; resolve_payload_text degrades to the recap"
+else
+  no "L12 parser: has_result_block / resolve_payload_text unit cases"
+fi
+
+# L13 MUTATION CONTROL: disable the SubagentHandback preference in a COPY of
+# result_block_parser.py (the branch that swaps a header-less inline recap for
+# the handback message); L1's exact payload must FLIP to the pre-fix false
+# block, proving section L exercises that branch rather than passing vacuously.
+HB_MUT_DIR="$TMPROOT/hb-mutant"
+mkdir -p "$HB_MUT_DIR"
+cp "$V_WORKER" "$HB_MUT_DIR/validate-worker-result.py"
+cp "$PARSER" "$HB_MUT_DIR/result_block_parser.py"
+python3 - "$HB_MUT_DIR/result_block_parser.py" <<'PY'
+import sys
+p = sys.argv[1]
+src = open(p, encoding="utf-8").read()
+mutated = src.replace(
+    "    if not has_result_block(inline, names):\n        atp = ",
+    "    if False:\n        atp = ",
+    1,
+)
+assert mutated != src, "mutation target not found — resolve_payload_text shape changed"
+open(p, "w", encoding="utf-8").write(mutated)
+PY
+if [ -s "$HB_MUT_DIR/result_block_parser.py" ] && ! cmp -s "$PARSER" "$HB_MUT_DIR/result_block_parser.py"; then
+  ok "L13 mutation control — mutant parser is non-empty and differs from the original"
+else
+  no "L13 mutation control — mutant invalid (empty or identical), cannot be trusted"
+fi
+run_hb "$HB_MUT_DIR/validate-worker-result.py" loomwright:loomwright:worker "$FIXDIR/worker-valid-bullet.md" "$WORKER_RECAP" --cwd "$SANDBOX_JWT"
+assert_fail "L13 mutation control — with the handback preference disabled, L1 FLIPS to the pre-fix false block (the branch is load-bearing)" "missing WORKER_RESULT block"
+
 echo "RESULT  pass=$PASS_COUNT  fail=$FAIL_COUNT"
 if [ "$FAIL_COUNT" -eq 0 ]; then
   exit 0

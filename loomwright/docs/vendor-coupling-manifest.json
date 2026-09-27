@@ -84,6 +84,7 @@
     "loomwright/scripts/dispatch-pr-review.sh": 12,
     "loomwright/scripts/emit-progress-event.sh": 1,
     "loomwright/scripts/fixtures/posttooluse-gh-pr-create.json": 1,
+    "loomwright/scripts/fixtures/subagentstop-handback-real-shape/payload.json": 2,
     "loomwright/scripts/guard-arm.sh": 6,
     "loomwright/scripts/guard-test-integrity.sh": 10,
     "loomwright/scripts/harvest-conventions.sh": 1,

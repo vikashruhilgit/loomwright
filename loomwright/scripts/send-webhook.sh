@@ -426,8 +426,14 @@ fi
 # Strategy:
 #   1. Resolve the result text: last_assistant_message → legacy
 #      result_block/output/agent_output → last assistant message read out of
-#      agent_transcript_path / transcript_path. (Mirrors
-#      scripts/validate-launch-pad-result.py and send-telemetry-core.sh.)
+#      agent_transcript_path / transcript_path. When that text carries no
+#      SUPERVISOR_RESULT HEADER line, the `input.message` of the LAST
+#      `SubagentHandback` tool call in agent_transcript_path wins if IT does:
+#      current runtimes deliver the report there and leave only a prose recap
+#      (which may NAME the block) in last_assistant_message — resolving the
+#      recap left STATUS empty and silently skipped every POST (probed
+#      2026-09-27). (Mirrors result_block_parser.resolve_payload_text and
+#      send-telemetry-core.sh.)
 #   2. Grep the YAML-style `key: value` lines from that text using sed.
 #   3. Fall back to top-level keys (forward compat + flat-object test fixtures).
 STATUS=""
@@ -484,6 +490,40 @@ extract_last_assistant() {
   [ -n "$encoded" ] && printf '%s' "$encoded" | "$JQ_BIN" -r '. // empty' 2>/dev/null || true
 }
 
+# extract_last_handback <transcript_jsonl_path>  →  prints the `input.message`
+# of the LAST `SubagentHandback` tool_use in the subagent transcript (or
+# nothing). Same JSON-encoded-per-line + `tail -n 1` + decode trick as
+# extract_last_assistant above. Reads the WHOLE file, not a tail window: stop-
+# hook re-prompts append lines after the handback, and the Python twins
+# (result_block_parser.py, send-telemetry-core.sh) read the whole file too.
+extract_last_handback() {
+  local tpath="$1" encoded
+  [ -n "$JQ_BIN" ] || return 0
+  [ -r "$tpath" ] || return 0
+  encoded="$("$JQ_BIN" -R '
+    fromjson?
+    | select(type == "object")
+    | .message
+    | select(type == "object" and .role == "assistant")
+    | .content
+    | select(type == "array")
+    | .[]
+    | select(type == "object" and .type == "tool_use" and .name == "SubagentHandback")
+    | .input.message?
+    | select(type == "string" and length > 0)
+  ' "$tpath" 2>/dev/null | tail -n 1)"
+  [ -n "$encoded" ] && printf '%s' "$encoded" | "$JQ_BIN" -r '. // empty' 2>/dev/null || true
+}
+
+# has_supervisor_block <text>  →  exit 0 iff a SUPERVISOR_RESULT HEADER line
+# (`SUPERVISOR_RESULT:` YAML form or `## SUPERVISOR_RESULT` markdown form)
+# stands on its own line. A prose mention ("I sent back the SUPERVISOR_RESULT
+# block") is not a header. Here-string, not `printf | grep -q` (SIGPIPE under
+# pipefail can fail a pipe even on a match).
+has_supervisor_block() {
+  grep -Eq '^[[:space:]]*(#{1,6}[[:space:]]+`?\*{0,2})?SUPERVISOR_RESULT\*{0,2}`?[[:space:]]*:?[[:space:]]*$' <<<"$1"
+}
+
 if [ -n "$JQ_BIN" ]; then
   # Primary: the real inline field is `last_assistant_message`. The legacy
   # `result_block` / `output` / `agent_output` names are kept in the chain so
@@ -503,6 +543,21 @@ if [ -n "$JQ_BIN" ]; then
         [ -n "$RESULT_BLOCK" ] && break
       fi
     done
+  fi
+
+  # SubagentHandback preference: the inline text may be a recap that names
+  # the block without carrying it — prefer the subagent's last handback
+  # message when IT holds a SUPERVISOR_RESULT header and the inline text does
+  # not. Only agent_transcript_path is searched (transcript_path is the
+  # PARENT session, whose handbacks are some other agent's report).
+  if ! has_supervisor_block "$RESULT_BLOCK"; then
+    _ATP="$(printf '%s' "$INPUT" | "$JQ_BIN" -r '.agent_transcript_path // empty' 2>/dev/null || true)"
+    if [ -n "$_ATP" ] && [ -r "$_ATP" ]; then
+      _HB="$(extract_last_handback "$_ATP")"
+      if [ -n "$_HB" ] && has_supervisor_block "$_HB"; then
+        RESULT_BLOCK="$_HB"
+      fi
+    fi
   fi
 
   if [ -n "$RESULT_BLOCK" ]; then
