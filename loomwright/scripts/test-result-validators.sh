@@ -1084,6 +1084,77 @@ EOF
 run_v "$V_WORKER" "$F" "$BARE"
 assert_fail "worker: no_changes: true does not exempt the summary-file rule [rule 12 → rule 3]" "(rule 3)"
 
+# ── files_deleted counts as a change (rules 2 + 12) ─────────────────────────
+# worker.md's Output Format emits `files_deleted: [...] | none`, but rules 2
+# and 12 read only files_modified/files_created: a delete-only subtask that
+# honestly reported completed was re-prompted to the continuation cap (the
+# same wedge rule 12 closed for read-only work), and `no_changes: true`
+# alongside real deletions passed — which drops the subtask from
+# merge_order, so its deletions would never be committed. The `none`
+# placeholder must stay empty on both sides, since workers emit it by default.
+mk worker-delete-only.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: []
+- files_created: []
+- files_deleted: [src/legacy/old_auth.ts]
+- outputs_verified: []
+- outputs_gap: ""
+- error: none
+- summary: Delete-only subtask — removed the dead legacy auth module, as instructed.
+EOF
+run_v "$V_WORKER" "$F"
+assert_pass "worker: delete-only subtask, completed + only files_deleted non-empty [rule 2]"
+
+mk worker-delete-none-placeholder.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: []
+- files_created: []
+- files_deleted: none
+- outputs_verified: []
+- outputs_gap: ""
+- summary: the `none` placeholder is not a deletion — rule 2 still applies
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: files_deleted: none placeholder does NOT satisfy rule 2 [rule 2]" "(rule 2)"
+
+mk worker-no-changes-deleted-contradiction.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: []
+- files_created: []
+- files_deleted: [src/legacy/old_auth.ts]
+- outputs_verified: []
+- outputs_gap: ""
+- no_changes: true
+- summary: says it changed nothing but lists a deleted file
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: no_changes: true alongside a non-empty files_deleted [rule 12]" "files_deleted"
+
+mk worker-no-changes-deleted-none.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: []
+- files_created: []
+- files_deleted: none
+- outputs_verified: []
+- outputs_gap: ""
+- no_changes: true
+- summary: Read-only subtask — the default `files_deleted: none` is not a contradiction.
+EOF
+run_v "$V_WORKER" "$F"
+assert_pass "worker: no_changes: true with files_deleted: none placeholder [rule 12]"
+
 run_v "$V_WORKER" "$FIXDIR/worker-valid-bullet.md" "$BARE"
 assert_fail "worker: no .worker-summary.md and no degradation marker [rule 3]" "(rule 3)"
 
