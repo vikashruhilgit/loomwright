@@ -506,6 +506,64 @@ else
 fi
 
 echo ""
+echo "==== Case 21: REAL payload shape — report delivered via SubagentHandback (captured 2026-09-27) ===="
+# The real runtime puts the report (incl. SUPERVISOR_RESULT) in the
+# `input.message` of the subagent's LAST SubagentHandback tool call; the
+# `last_assistant_message` recap only NAMES the block. Pre-fix, STATUS resolved
+# empty and the POST was silently skipped. Payloads are built from the
+# committed sanitized fixture (absolute cwd/transcript paths, real key set).
+HB_MAT="$SCRIPT_DIR/fixtures/subagentstop-handback-real-shape/materialize.py"
+HB_RECAP="Run finished; the SUPERVISOR_RESULT block went back to the caller."
+HB_YAML="$TMPDIR_TEST/hb-yaml.md"
+cat > "$HB_YAML" <<'EOF'
+All three subtasks merged.
+
+```yaml
+SUPERVISOR_RESULT:
+  schema_version: 1
+  status: completed
+  pr_url: https://github.com/example/repo/pull/77
+  summary: Handback-delivered result block.
+```
+EOF
+HB_MD="$TMPDIR_TEST/hb-md.md"
+printf '%s\n' "$RESULT_TEXT" > "$HB_MD"
+HB_NONE="$TMPDIR_TEST/hb-none.md"
+printf 'Finished; no result block in this message.\n' > "$HB_NONE"
+
+PAYLOAD21A="$(python3 "$HB_MAT" "$TMPDIR_TEST/hb21a" loomwright:loomwright:supervisor-runner "$HB_MD" "$HB_RECAP")"
+run_dry_run "$PAYLOAD21A"
+assert_eq "case21a exit 0" "0" "$RC"
+assert_eq "case21a status from the SubagentHandback message (markdown form)" "completed" "$(printf '%s' "$OUT" | jq -r '.status // empty')"
+assert_eq "case21a pr_url from the SubagentHandback message" "https://github.com/example/repo/pull/42" "$(printf '%s' "$OUT" | jq -r '.pr_url // empty')"
+
+PAYLOAD21B="$(python3 "$HB_MAT" "$TMPDIR_TEST/hb21b" loomwright:loomwright:supervisor-runner "$HB_YAML" "$HB_RECAP")"
+run_dry_run "$PAYLOAD21B"
+assert_eq "case21b status from a fenced YAML-form SUPERVISOR_RESULT: header" "completed" "$(printf '%s' "$OUT" | jq -r '.status // empty')"
+assert_eq "case21b pr_url from the YAML-form handback" "https://github.com/example/repo/pull/77" "$(printf '%s' "$OUT" | jq -r '.pr_url // empty')"
+
+# Regression reproduction: the same payload WITHOUT agent_transcript_path is
+# exactly the pre-fix view (recap only) -> nothing to send.
+PAYLOAD21C="$(python3 "$HB_MAT" "$TMPDIR_TEST/hb21c" loomwright:loomwright:supervisor-runner "$HB_MD" "$HB_RECAP" --no-agent-transcript)"
+run_dry_run "$PAYLOAD21C"
+assert_empty "case21c recap only (no agent transcript) -> no payload" "$OUT"
+assert_match "case21c recap only -> skipping POST" "skipping POST" "$ERR"
+
+# A handback without a block is not a result; the PARENT transcript_path is
+# never searched for a handback (its handbacks are another agent's report).
+PAYLOAD21D="$(python3 "$HB_MAT" "$TMPDIR_TEST/hb21d" loomwright:loomwright:supervisor-runner "$HB_NONE" "$HB_RECAP")"
+run_dry_run "$PAYLOAD21D"
+assert_empty "case21d handback with no block -> no payload" "$OUT"
+PAYLOAD21E="$(python3 "$HB_MAT" "$TMPDIR_TEST/hb21e" loomwright:loomwright:supervisor-runner "$HB_MD" "$HB_RECAP" --parent-handback)"
+run_dry_run "$PAYLOAD21E"
+assert_empty "case21e handback only in the PARENT transcript_path -> not used" "$OUT"
+
+# Inline text that already carries a real block wins over the handback.
+PAYLOAD21F="$(python3 "$HB_MAT" "$TMPDIR_TEST/hb21f" loomwright:loomwright:supervisor-runner "$HB_YAML" "$RESULT_TEXT")"
+run_dry_run "$PAYLOAD21F"
+assert_eq "case21f inline block wins over the handback (pr_url from inline)" "https://github.com/example/repo/pull/42" "$(printf '%s' "$OUT" | jq -r '.pr_url // empty')"
+
+echo ""
 TOTAL=$((PASS_COUNT + FAIL_COUNT))
 echo "=========================================="
 echo "RESULT  total=$TOTAL  passed=$PASS_COUNT  failed=$FAIL_COUNT"

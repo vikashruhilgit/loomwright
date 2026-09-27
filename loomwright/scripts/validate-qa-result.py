@@ -144,7 +144,7 @@ def locate_blocks():
     decided by presence, never by which block happens to occur last.
     Returns (block_name, fields).
     """
-    text, _payload = extract_payload()
+    text, _payload = extract_payload(names=(BLOCK, VERIFY_BLOCK))
     if text is PAYLOAD_UNPARSEABLE:
         emit(True)
     if not text:

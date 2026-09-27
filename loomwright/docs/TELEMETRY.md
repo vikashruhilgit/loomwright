@@ -1716,8 +1716,10 @@ Field semantics:
   `completed | completed_with_escalation | failed | checkpoint`. The
   `SUPERVISOR_RESULT` block is located inside the agent's resolved result text
   (`last_assistant_message`, then legacy inline fields, then the transcript
-  JSONL — see §Result-text extraction), **not** a top-level `result_block`
-  field. Empty string if extraction failed (jq missing or malformed payload —
+  JSONL — see §Result-text extraction; when that text holds no
+  `SUPERVISOR_RESULT` header line, the `input.message` of the subagent's LAST
+  `SubagentHandback` tool call in `agent_transcript_path` wins if it does),
+  **not** a top-level `result_block` field. Empty string if extraction failed (jq missing or malformed payload —
   see below); the payload-validity guard then suppresses the POST.
 - **`pr_url`** — copied verbatim from `SUPERVISOR_RESULT.pr_url`. Empty
   string when `status ∈ {failed, checkpoint}` (no PR was created).
@@ -1748,7 +1750,7 @@ JSON extraction and payload composition. Behaviour when tools are missing:
 | `LOOMWRIGHT_WEBHOOK_URL` unset | exit 0 immediately, zero side effects |
 | `curl` not on PATH | log one line to stderr, exit 0 (no webhook fired) |
 | `jq` not on PATH | field extraction skipped, `status` stays empty → payload-validity guard exits 0, webhook is NOT fired |
-| Result text not resolvable (no `last_assistant_message` / legacy inline field / readable transcript) or `status` empty after extraction | logs `"no status in result block — skipping POST"` to stderr, exit 0 (no webhook fired) |
+| Result text not resolvable (no `last_assistant_message` / legacy inline field / SubagentHandback message / readable transcript) or `status` empty after extraction | logs `"no status in result block — skipping POST"` to stderr, exit 0 (no webhook fired) |
 | Webhook returns non-2xx, times out (>5s), or DNS fails | curl error suppressed, exit 0 |
 
 The wrapper **always exits 0**. The fire-and-forget contract means a slow
