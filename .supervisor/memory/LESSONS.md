@@ -15,7 +15,7 @@
 
 ## testing
 - [34e7c865] Every shell-script deliverable in this plugin ships a co-located static-only test-*.sh; CI runs all of them with no Docker daemon, no network, and no gh, so tests must stub external deps (PATH stubs for curl/docker/gh), parse YAML/JSON, and assert state machines rather than hit live dependencies.
-- [ef916b74] A self-test asserting the "feature OFF" path of an env-gated script must scrub the gating flag with `env -u <FLAG>` (or a clean env); the dev/CI shell may set it globally, and an inherited =1 silently turns OFF-path fixtures into false passes.  <!-- last_verified=2026-06-29T13:00:14Z confidence=medium -->
+- [ef916b74] A self-test asserting the "feature OFF" path of an env-gated script must scrub the gating flag with `env -u <FLAG>` (or a clean env); the dev/CI shell may set it globally, and an inherited =1 silently turns OFF-path fixtures into false passes.  <!-- last_verified=2026-09-27T00:00:00Z confidence=medium -->
 - [fa32a308] A mutation control is evidence only if the mutant is VALID. Two mechanisms have produced silently-invalid mutants here: perl -0pi -e interpolates $VAR inside the pattern even under \Q...\E (the mutation no-ops), and a sed delimiter colliding with the target line (| vs ||) yields an EMPTY mutant. Both pass every fail-open assertion. Gate every mutant on non-empty + differs-from-original + bash -n before trusting the run.  <!-- last_verified=2026-09-01T05:59:31Z confidence=high supersedes=4abc6112 -->
 
 ## verification
