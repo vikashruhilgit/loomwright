@@ -86,6 +86,32 @@
 #   Fails loud (exit 4) if the line is NOT present — a caller asserting "this exists" must not
 #   silently fall back to creating it. If the hash is ALREADY chain-trusted it is a no-op (exit 0).
 #
+# REVERIFY NOTE (curation verb): `reverify` is the sanctioned way to refresh a stored lesson's
+# `last_verified` (and, with an explicit --confidence, its confidence) once a human has re-checked
+# it. Before it existed a stored last_verified was write-once — the dedup guard short-circuits an
+# identical `add` before any update — so the only way back from read-lessons.sh's STALE skip was
+# hand-editing LESSONS.md, an out-of-band edit to a sole-writer store.
+#   * Targets EXACTLY like retract (positional <category> <lesson-text>, or --hash <content_hash>)
+#     and REQUIRES the target to be present in LESSONS.md (exactly ONE line with that [id] — a
+#     duplicated id is ambiguous and refused) AND chain-trusted (the shared chain_trusted walk).
+#     Anything else fails loud (exit 4) with LESSONS.md + the chain byte-identical.
+#   * Rewrites ONLY the trailer: last_verified is replaced (--last-verified, default write time),
+#     confidence is replaced only when --confidence was passed explicitly, and any other trailer
+#     field (supersedes=) is carried through verbatim. A line with NO trailer (an attested line)
+#     gains one. The lesson text is untouched, so content_hash is unchanged — and that is CHECKED,
+#     not assumed: the rewritten line is re-hashed exactly as read-lessons.sh hashes it, and any
+#     mismatch refuses (exit 4) before anything is written.
+#   * Never ages a lesson: a --last-verified OLDER than the stored one is refused (exit 2). Making a
+#     lesson unreadable is retract's job, with a tombstone; a backdate would be a silent one.
+#   * Appends a chain-valid `action:"reverify"` provenance entry (content_hash + the new
+#     last_verified), so every refresh is auditable. The action is TRUST-NEUTRAL by construction:
+#     read-lessons.sh and chain_trusted() below act only on `add` (trust) and `retract` (untrust)
+#     and merely chain past any other action — so a reverify can neither re-trust a retracted hash
+#     nor untrust a live one, and last-action-wins is unchanged. The trust pre-check above is what
+#     keeps reverify from laundering: it refuses before any write unless the hash is ALREADY trusted.
+#   * Runs no write-time validator call — like retract, it introduces no new entry text.
+#   * A reverify whose rewrite would be byte-identical (same stamp, same confidence) is a no-op.
+#
 # CONFIRM NOTE (`--confirm`, REQUIRED for every mutating action): `.supervisor/memory/` is
 # UN-IGNORED by `.gitignore` (`!.supervisor/memory/`), so LESSONS.md and .lessons-provenance.jsonl
 # are TRACKED, COMMITTED files. Until this gate existed, a single non-interactive invocation from
@@ -110,13 +136,18 @@
 #         write-lessons.sh retract --hash <content_hash>    --confirm [--source "<id>"]
 #         write-lessons.sh supersede <category> <lesson-text> --replacement "<new text>" --confirm [--source "<id>"]
 #         write-lessons.sh supersede --hash <content_hash>    --replacement "<new text>" --confirm [--source "<id>"] [--category "<cat>"]
-# Exit:   0 on success or safe no-op (e.g. `add` with no sha tool; a sha-less `retract`/`supersede`
-#         FAILS LOUD with exit 2 — a curation verb must never silently no-op); non-zero only on a
-#         disallowed / would-corrupt condition (so a bad call can never half-write state).
-#         retract/supersede exit 4 when the target is absent from LESSONS.md or not chain-trusted
-#         (fail loud, never tombstone a nonexistent lesson silently; store left byte-identical).
+#         write-lessons.sh reverify <category> <lesson-text> --confirm [--source "<id>"] [--last-verified "<iso8601Z>"] [--confidence "<value>"]
+#         write-lessons.sh reverify --hash <content_hash>    --confirm [--source "<id>"] [--last-verified "<iso8601Z>"] [--confidence "<value>"]
+# Exit:   0 on success or safe no-op (e.g. `add` with no sha tool; a sha-less `retract`/`supersede`/
+#         `reverify` FAILS LOUD with exit 2 — a curation verb must never silently no-op); non-zero
+#         only on a disallowed / would-corrupt condition (so a bad call can never half-write state).
+#         retract/supersede/reverify exit 4 when the target is absent from LESSONS.md or not
+#         chain-trusted (fail loud, never tombstone or refresh a nonexistent lesson silently; store
+#         left byte-identical). reverify also exits 4 on a duplicated [id] or a rewrite that would
+#         change the reader-derived content_hash, and 2 on a --last-verified older than the stored
+#         one or with --replacement.
 #         --attest-existing exits 4 when the target line is absent from LESSONS.md, and 2 when
-#         combined with retract/supersede (add-only flag).
+#         combined with retract/supersede/reverify (add-only flag).
 
 set -uo pipefail
 
@@ -200,10 +231,14 @@ _ve_load_validator() {
 
 CATEGORY=""; LESSON=""; SOURCE="unknown"; LAST_VERIFIED=""; CONFIDENCE="medium"; REPLACEMENT=""
 ATTEST=0; CONFIRM=0
-# Subcommand detection: a leading `retract`/`supersede` selects that flow (default action is add).
+# CONFIDENCE_SET distinguishes an explicit --confidence from the "medium" default: `reverify` must
+# keep the stored confidence unless the caller actually asked to change it.
+CONFIDENCE_SET=0
+# Subcommand detection: a leading `retract`/`supersede`/`reverify` selects that flow (default action is add).
 ACTION="add"; HASH=""
 if [ "${1:-}" = "retract" ]; then ACTION="retract"; shift
 elif [ "${1:-}" = "supersede" ]; then ACTION="supersede"; shift
+elif [ "${1:-}" = "reverify" ]; then ACTION="reverify"; shift
 fi
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -215,8 +250,8 @@ while [ $# -gt 0 ]; do
     --source=*)        SOURCE="${1#--source=}"; shift ;;
     --last-verified)   LAST_VERIFIED="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
     --last-verified=*) LAST_VERIFIED="${1#--last-verified=}"; shift ;;
-    --confidence)      CONFIDENCE="${2:-medium}"; shift; [ $# -gt 0 ] && shift ;;
-    --confidence=*)    CONFIDENCE="${1#--confidence=}"; shift ;;
+    --confidence)      CONFIDENCE="${2:-medium}"; CONFIDENCE_SET=1; shift; [ $# -gt 0 ] && shift ;;
+    --confidence=*)    CONFIDENCE="${1#--confidence=}"; CONFIDENCE_SET=1; shift ;;
     --hash)            HASH="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
     --hash=*)          HASH="${1#--hash=}"; shift ;;
     --replacement)     REPLACEMENT="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
@@ -245,7 +280,7 @@ while [ $# -gt 0 ]; do
     # passed as `--lesson=<text>` rather than positionally. That is the same trade write-agent-memory.sh
     # and add-orientation.sh already make, and it is the price of the refusal being unambiguous.
     --*) echo "write-lessons: unrecognised flag '$1' — refusing rather than writing to a curated store with a flag this writer does not implement (accepted: --category, --lesson, --source, --last-verified, --confidence, --hash, --replacement, --attest-existing, --confirm; see the usage header). Nothing was written." >&2; exit 2 ;;
-    *) # retract/supersede accept positional <category> <lesson-text> (in that order); add ignores strays.
+    *) # retract/supersede/reverify accept positional <category> <lesson-text> (in that order); add ignores strays.
        #
        # SCOPE, DELIBERATE: this arm is UNCHANGED, and a stray bare word is still silently dropped
        # here. The guard above covers unrecognised FLAGS only. An earlier revision refused stray
@@ -255,20 +290,20 @@ while [ $# -gt 0 ]; do
        # someone's working command into an exit 2. Flags carry no such risk: an unimplemented flag
        # never did anything, so refusing it cannot break a caller who was relying on its effect.
        # If this is ever revisited, the two `elif` refusal branches are what to restore.
-       if { [ "$ACTION" = "retract" ] || [ "$ACTION" = "supersede" ]; } && [ -z "$CATEGORY" ]; then CATEGORY="$1"
-       elif { [ "$ACTION" = "retract" ] || [ "$ACTION" = "supersede" ]; } && [ -z "$LESSON" ]; then LESSON="$1"
+       if [ "$ACTION" != "add" ] && [ -z "$CATEGORY" ]; then CATEGORY="$1"
+       elif [ "$ACTION" != "add" ] && [ -z "$LESSON" ]; then LESSON="$1"
        fi
        shift ;;
   esac
 done
 # --attest-existing is an ADD-only healing path (see ATTEST NOTE above). Rejecting it on the
-# curation verbs is deliberate: retract/supersede already REQUIRE a chain-trusted target, so
+# curation verbs is deliberate: retract/supersede/reverify already REQUIRE a chain-trusted target, so
 # pairing them with a flag whose whole purpose is to trust an untrusted line is contradictory,
 # and silently ignoring it would let a caller believe an attestation happened when it did not.
 if [ "$ATTEST" -eq 1 ] && [ "$ACTION" != "add" ]; then
   echo "write-lessons: --attest-existing is add-only (not valid with $ACTION)" >&2; exit 2
 fi
-if [ "$ACTION" = "retract" ] || [ "$ACTION" = "supersede" ]; then
+if [ "$ACTION" = "retract" ] || [ "$ACTION" = "supersede" ] || [ "$ACTION" = "reverify" ]; then
   if [ -n "$HASH" ]; then
     # --hash identifies the target directly; must be a full lowercase sha256 (it feeds the
     # content-derived [id] grep below, so a partial/garbage value could mis-target an entry).
@@ -282,7 +317,7 @@ if [ "$ACTION" = "retract" ] || [ "$ACTION" = "supersede" ]; then
   if [ "$ACTION" = "supersede" ]; then
     [ -n "$REPLACEMENT" ] || { echo "write-lessons: supersede requires --replacement \"<new lesson text>\" (a supersede without a replacement is an indistinguishable synonym for retract)" >&2; exit 2; }
   elif [ -n "$REPLACEMENT" ]; then
-    echo "write-lessons: --replacement is only meaningful for supersede (a retract has no replacement)" >&2; exit 2
+    echo "write-lessons: --replacement is only meaningful for supersede (a $ACTION has no replacement — to change the text, supersede it)" >&2; exit 2
   fi
 else
   [ -n "$CATEGORY" ] || { echo "write-lessons: --category is required" >&2; exit 2; }
@@ -328,11 +363,11 @@ cd "$GITROOT" || { echo "write-lessons: cannot cd to repo root" >&2; exit 2; }
 if command -v sha256sum >/dev/null 2>&1; then   sha() { sha256sum | cut -d' ' -f1; }
 elif command -v shasum  >/dev/null 2>&1; then   sha() { shasum -a 256 | cut -d' ' -f1; }
 else
-  # `add` stays a fail-safe no-op (exit 0 — a missed advisory write is harmless). `retract` and
-  # `supersede` are curation verbs and must FAIL LOUD instead: a silent no-op would leave the
+  # `add` stays a fail-safe no-op (exit 0 — a missed advisory write is harmless). `retract`,
+  # `supersede` and `reverify` are curation verbs and must FAIL LOUD instead: a silent no-op would leave the
   # caller believing the tombstone (and, for supersede, the replacement) was written while the
   # old lesson stays live (exit 2, state untouched either way).
-  if [ "$ACTION" = "retract" ] || [ "$ACTION" = "supersede" ]; then
+  if [ "$ACTION" != "add" ]; then
     echo "write-lessons: no sha256 tool (sha256sum/shasum) — cannot $ACTION, failing loud" >&2
     exit 2
   fi
@@ -422,18 +457,17 @@ fi
 # This trims ONLY trailing whitespace — interior backslashes / spaces are untouched. The SAME
 # value feeds both content_hash and the awk-stored line below.
 lesson_oneline="$(printf '%s' "$LESSON" | tr '\n' ' ' | sed -E 's/[[:space:]]+$//')"
-# retract/supersede --hash targets the lesson directly by its content_hash; otherwise (add, or
-# retract/supersede by <category> <lesson-text>) the hash is computed EXACTLY as add computes it:
+# retract/supersede/reverify --hash targets the lesson directly by its content_hash; otherwise (add,
+# or a curation verb by <category> <lesson-text>) the hash is computed EXACTLY as add computes it:
 # sha("<cat> <text>"). For supersede this identifies the TARGET (old) entry only — the
 # replacement's own id/content_hash is computed separately, later, after the retract half lands.
-if { [ "$ACTION" = "retract" ] || [ "$ACTION" = "supersede" ]; } && [ -n "$HASH" ]; then
+if [ "$ACTION" != "add" ] && [ -n "$HASH" ]; then
   content_hash="$HASH"
 else
 # CRITICAL: content_hash is over category + lesson text ONLY — the freshness trailer never enters
-# it. This is a FORWARD-LOOKING property: a future re-verification path (refreshing last_verified)
-# could update the trailer without changing the hash or breaking the chain. No such path exists
-# today — the dedup guard below short-circuits an identical lesson before any update, so a stored
-# last_verified is effectively write-once until the entry is evicted.
+# it. That is what lets `reverify` (see REVERIFY NOTE) refresh last_verified in place without
+# changing the hash or breaking the chain. A plain `add` still cannot: the dedup guard below
+# short-circuits an identical lesson before any update, so re-adding is never a refresh.
 content_hash="$(printf '%s' "$CATSLUG $lesson_oneline" | sha)"
 fi
 id="$(printf '%s' "$content_hash" | cut -c1-8)"
@@ -532,13 +566,18 @@ if [ -n "$_ve_entry" ] && [ "${ATTEST:-0}" -ne 1 ]; then
   # ---- VALIDATOR CALL END ---------------------------------------------------
 fi
 
-# prov_line <id> <prev_hash> <content_hash> <source> <action>
+# prov_line <id> <prev_hash> <content_hash> <source> <action> [<last_verified>]
 # Emits the JSON with NO trailing newline; callers add exactly one via printf '%s\n'.
 # (jq -nc would otherwise append its own newline → blank lines that break the hash chain.)
+# The optional 6th arg adds a `last_verified` key — passed ONLY by `reverify`, so every other
+# action's entry is byte-for-byte the shape it always was. Its value is a validated ISO-8601 stamp
+# ([0-9T:Z-] only), so the printf fallback cannot emit malformed JSON with it either.
 prov_line() {
   if command -v jq >/dev/null 2>&1; then
-    jq -cn --arg id "$1" --arg ph "$2" --arg ch "$3" --arg src "$4" --arg act "$5" --arg ts "$ts" \
-      '{id:$id,prev_hash:$ph,content_hash:$ch,source:$src,action:$act,written_at:$ts}' | tr -d '\n'
+    jq -cn --arg id "$1" --arg ph "$2" --arg ch "$3" --arg src "$4" --arg act "$5" --arg ts "$ts" --arg lv "${6:-}" \
+      '{id:$id,prev_hash:$ph,content_hash:$ch,source:$src,action:$act} + (if $lv != "" then {last_verified:$lv} else {} end) + {written_at:$ts}' | tr -d '\n'
+  elif [ -n "${6:-}" ]; then
+    printf '{"id":"%s","prev_hash":"%s","content_hash":"%s","source":"%s","action":"%s","last_verified":"%s","written_at":"%s"}' "$1" "$2" "$3" "$4" "$5" "$6" "$ts"
   else
     printf '{"id":"%s","prev_hash":"%s","content_hash":"%s","source":"%s","action":"%s","written_at":"%s"}' "$1" "$2" "$3" "$4" "$5" "$ts"
   fi
@@ -547,8 +586,8 @@ prov_line() {
 # ---------------------------------------------------------------------------
 # CONFIRM-ONLY GATE — shape cloned from add-rule.sh (its two `proceed=0` blocks) and
 # add-orientation.sh; see the CONFIRM NOTE at the top of the file for WHY this store needs one.
-# Factored into one function because this writer has THREE mutation sites (attest, retract/
-# supersede, add) that must all be gated identically — a second hand-rolled copy is how one of
+# Factored into one function because this writer has FOUR mutation sites (attest, reverify,
+# retract/supersede, add) that must all be gated identically — a second hand-rolled copy is how one of
 # them ends up subtly different. The semantics are the precedent's, unchanged:
 #   --confirm -> proceed; interactive TTY -> prompt y/Y/yes/YES; otherwise dry-run + exit 0.
 # Callers MUST pass at least one detail line (bash 3.2 + `set -u` treats an empty "$@" badly).
@@ -591,11 +630,11 @@ if [ "${ATTEST_PRESENT:-0}" -eq 1 ]; then
     echo "write-lessons: [$id] in $CATSLUG is already chain-trusted — nothing to attest (no-op)"
     exit 0
   fi
-  # Gate site 1/3 — after the "already chain-trusted" no-op check above (so a no-op still reports
+  # Gate site 1/4 — after the "already chain-trusted" no-op check above (so a no-op still reports
   # itself rather than printing a plan for work that would not happen) and before the provenance
   # append, which is this path's ONLY mutation.
   confirm_gate "ATTEST" "entry: [$id] in $CATSLUG" "effect: append a chain-valid 'add' for the existing line; LESSONS.md unchanged" "source: $SOURCE"
-  # Lazy bootstrap, call site 1/3 — past this path's refusals (target-not-found exit 4) and past
+  # Lazy bootstrap, call site 1/4 — past this path's refusals (target-not-found exit 4) and past
   # the gate. This path is only reachable when LESSONS.md already holds the line, but the chain may
   # still be absent, and `cat "$PROV"` below needs it to exist.
   ensure_store
@@ -610,6 +649,111 @@ if [ "${ATTEST_PRESENT:-0}" -eq 1 ]; then
   }
   validate_entry_advisory_notice "write-lessons"
   echo "write-lessons: attested existing [$id] in $CATSLUG (source=$SOURCE) — provenance appended, LESSONS.md unchanged"
+  exit 0
+fi
+
+# ---- REVERIFY flow (refresh a trusted lesson's freshness trailer; see REVERIFY NOTE) ----------
+# Gate-side curation like retract: every pre-check FAILS LOUD (exit 4, or 2 for a backdate) with the
+# store and the chain byte-identical. Only the target line's trailer changes; the lesson text — and
+# therefore content_hash — does not, and the re-hash post-check below proves it before any write.
+if [ "$ACTION" = "reverify" ]; then
+  if [ ! -f "$LESSONS" ] || [ ! -f "$PROV" ]; then
+    echo "write-lessons: reverify [$id] — no lessons store yet ($LESSONS / $PROV missing) — refusing" >&2
+    exit 4
+  fi
+  # (1) Exactly ONE entry line carries this [id]. Matched as a line PREFIX (not a substring, which
+  #     could hit an id quoted inside another lesson's text). Zero = absent; more than one = an
+  #     out-of-band duplicate, and refreshing "the" line would be a guess.
+  rv_n="$(awk -v pfx="- [$id] " 'index($0, pfx) == 1 { c++ } END { print c + 0 }' "$LESSONS" 2>/dev/null)"
+  if [ "${rv_n:-0}" -eq 0 ]; then
+    echo "write-lessons: reverify target [$id] not found in $LESSONS — refusing (reverify never creates)" >&2
+    exit 4
+  fi
+  if [ "$rv_n" -gt 1 ]; then
+    echo "write-lessons: reverify target [$id] appears on $rv_n lines in $LESSONS — ambiguous, refusing (resolve the duplicate first)" >&2
+    exit 4
+  fi
+  # (2) ...and its hash must be chain-trusted (shared walk — see chain_trusted() above). This is the
+  #     anti-laundering check: `reverify` provenance is trust-neutral, so it can only ever refresh a
+  #     lesson that is ALREADY trusted, never make an untrusted one readable.
+  if ! chain_trusted "$content_hash"; then
+    echo "write-lessons: reverify target [$id] is not chain-trusted (never added, already retracted, or beyond a chain break) — refusing" >&2
+    exit 4
+  fi
+  rv_old="$(awk -v pfx="- [$id] " 'index($0, pfx) == 1 { print; exit }' "$LESSONS")"
+  rv_cat="$(awk -v pfx="- [$id] " 'BEGIN{cat=""} /^## /{cat=substr($0,4)} index($0,pfx)==1{print cat; exit}' "$LESSONS" 2>/dev/null)"
+
+  # (3) Build the new line. Only a trailer read-lessons.sh recognises (`<!-- last_verified=`) is
+  #     rewritten; everything before it (the entry text AND its spacing) is kept byte-for-byte.
+  case "$rv_old" in
+    *'<!-- last_verified='*)
+      rv_prefix="${rv_old%%<!-- last_verified=*}"
+      rv_inner="${rv_old#"$rv_prefix"<!-- last_verified=}"   # "<lv> confidence=<c> [supersedes=<h>] -->"
+      rv_inner="$(printf '%s' "$rv_inner" | sed -E 's/[[:space:]]*-->[[:space:]]*$//')"
+      rv_old_lv="${rv_inner%% *}"
+      case "$rv_inner" in *' '*) rv_rest="${rv_inner#* }" ;; *) rv_rest="" ;; esac
+      ;;
+    *)
+      # No trailer (e.g. an --attest-existing line): one is appended with the writer's own spacing.
+      rv_prefix="$rv_old  "; rv_old_lv=""; rv_rest=""
+      ;;
+  esac
+  if [ "$CONFIDENCE_SET" -eq 1 ] || [ -z "$rv_rest" ]; then
+    # Replace (or supply) confidence, carrying any later field (supersedes=) through verbatim.
+    rv_tail=""
+    case "$rv_rest" in *' supersedes='*) rv_tail=" supersedes=${rv_rest##* supersedes=}" ;; esac
+    case "$rv_rest" in
+      confidence=*|'') rv_rest="confidence=$CONFIDENCE$rv_tail" ;;
+      *)               rv_rest="confidence=$CONFIDENCE $rv_rest" ;;
+    esac
+  fi
+  rv_new="${rv_prefix}<!-- last_verified=$LAST_VERIFIED $rv_rest -->"
+
+  # (4) Never age a lesson. Stamps are fixed-width ISO-8601 UTC, so byte order is time order; an
+  #     unparseable stored value (hand-edited) is not compared — the refresh replaces it.
+  case "$rv_old_lv" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z)
+      if [[ "$LAST_VERIFIED" < "$rv_old_lv" ]]; then
+        echo "write-lessons: reverify [$id] — --last-verified $LAST_VERIFIED is OLDER than the stored $rv_old_lv; reverify never ages a lesson (retract it instead). Nothing was written." >&2
+        exit 2
+      fi ;;
+  esac
+
+  # (5) POST-CHECK: re-hash the rewritten line exactly as read-lessons.sh does (same trailer strip,
+  #     same "<heading> <text>" input). If it no longer maps to content_hash the reader would DROP
+  #     the lesson we meant to refresh — e.g. an untrailered line with trailing whitespace, whose
+  #     hashed text changes once a trailer lets the strip eat it. Refuse instead of writing that.
+  rv_text="$(printf '%s' "$rv_new" | sed -E 's/^- \[[^]]*\] //; s/[[:space:]]*<!-- last_verified=.*-->[[:space:]]*$//')"
+  if [ "$(printf '%s' "$rv_cat $rv_text" | sha)" != "$content_hash" ]; then
+    echo "write-lessons: reverify [$id] — the refreshed line would no longer hash to its content_hash under read-lessons.sh (its stored text or category does not match its provenance) — refusing; supersede it instead. Nothing was written." >&2
+    exit 4
+  fi
+
+  if [ "$rv_new" = "$rv_old" ]; then
+    echo "write-lessons: [$id] in ${rv_cat:-$CATSLUG} already carries last_verified=$LAST_VERIFIED with that confidence — nothing to reverify (no-op)"
+    exit 0
+  fi
+
+  # Gate site 2/4 — after every refusal above, before the first mktemp.
+  confirm_gate "REVERIFY" "entry: [$id] in ${rv_cat:-$CATSLUG}" "last_verified: ${rv_old_lv:-<none>} -> $LAST_VERIFIED" "line: $rv_new" "source: $SOURCE"
+  # Lazy bootstrap, call site 2/4 — a no-op in practice (the pre-checks exit 4 on an absent store).
+  ensure_store
+  mem_tmp="$(mktemp "$MEM_DIR/.ltmp.XXXXXX")"
+  prov_tmp="$(mktemp "$MEM_DIR/.lptmp.XXXXXX")"
+  trap 'rm -f "$mem_tmp" "$prov_tmp" 2>/dev/null' EXIT
+  # The new line goes through ENVIRON, never -v (awk -v interprets backslash escapes in the value).
+  RV_NEW="$rv_new" awk -v pfx="- [$id] " 'index($0, pfx) == 1 { print ENVIRON["RV_NEW"]; next } { print }' "$LESSONS" > "$mem_tmp"
+  cat "$PROV" > "$prov_tmp"
+  prev_hash="$(printf '%s' "$(tail -n1 "$prov_tmp")" | sha)"
+  printf '%s\n' "$(prov_line "$id" "$prev_hash" "$content_hash" "$SOURCE" "reverify" "$LAST_VERIFIED")" >> "$prov_tmp"
+  # Provenance FIRST (same order as every other path): if the second rename fails, the worst case
+  # is a trust-neutral reverify entry with the old trailer still in place — harmless, and re-runnable.
+  mv "$prov_tmp" "$PROV" && mv "$mem_tmp" "$LESSONS" || {
+    echo "write-lessons: atomic rename failed — reverify aborted; a stray reverify entry is trust-neutral" >&2
+    exit 2
+  }
+  validate_entry_advisory_notice "write-lessons"
+  echo "write-lessons: reverified [$id] in ${rv_cat:-$CATSLUG} (source=$SOURCE, last_verified ${rv_old_lv:-<none>} -> $LAST_VERIFIED) — provenance appended, trailer refreshed"
   exit 0
 fi
 
@@ -646,7 +790,7 @@ if [ "$ACTION" = "retract" ] || [ "$ACTION" = "supersede" ]; then
     exit 4
   fi
 
-  # Gate site 2/3 — after BOTH pre-checks above (target present, target chain-trusted), so a bad
+  # Gate site 3/4 — after BOTH pre-checks above (target present, target chain-trusted), so a bad
   # target still exits 4 rather than printing a plan for a retraction that could never happen; and
   # before the first mktemp, so a dry-run creates no temp state. For `supersede` this ONE gate
   # covers both halves (the retract below and the fall-through add), which is why the add-flow gate
@@ -659,7 +803,7 @@ if [ "$ACTION" = "retract" ] || [ "$ACTION" = "supersede" ]; then
 
   # (3) Append the chained retract tombstone + rewrite LESSONS.md without the entry line.
   #     Same atomic discipline and commit ORDER as add: temps IN the memory dir, provenance FIRST.
-  # Lazy bootstrap, call site 2/3 — past BOTH pre-checks (which already exit 4 on an absent store)
+  # Lazy bootstrap, call site 3/4 — past BOTH pre-checks (which already exit 4 on an absent store)
   # and past the gate. A no-op here in practice; called anyway so no mutating path depends on
   # another path having created the files.
   ensure_store
@@ -705,15 +849,15 @@ if [ "$ACTION" = "retract" ] || [ "$ACTION" = "supersede" ]; then
   fi
 fi
 
-# Gate site 3/3 — the plain `add` path. Guarded on `ACTION = add` because a `supersede` reaches
-# here by FALL-THROUGH, already gated (and already half-committed) at site 2/3; re-prompting there
+# Gate site 4/4 — the plain `add` path. Guarded on `ACTION = add` because a `supersede` reaches
+# here by FALL-THROUGH, already gated (and already half-committed) at site 3/4; re-prompting there
 # would ask a second time for one operation, and worse, a "no" would exit 0 having already
 # retracted the target.
 if [ "$ACTION" = "add" ]; then
   confirm_gate "WRITE" "entry: - [$id] $lesson_oneline" "category: $CATSLUG" "source: $SOURCE, last_verified: $LAST_VERIFIED, confidence: $CONFIDENCE"
 fi
 
-# Lazy bootstrap, call site 3/3 — the ADD flow (reached directly by `add`, or by `supersede`
+# Lazy bootstrap, call site 4/4 — the ADD flow (reached directly by `add`, or by `supersede`
 # falling through after its retract half). Sits past every refusal above (argument validation, the
 # validator call, the retract/supersede pre-checks) and past the gate, immediately before the first
 # mutation: the awk pass below READS $LESSONS, so the file must exist by this line.
