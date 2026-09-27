@@ -69,7 +69,9 @@ export SELF_TEST_OUT="$out"
 # PTY feeds) declare `# run-self-tests: serial` on a line of their own; they run one at a time
 # AFTER the concurrent batch, on an otherwise idle machine — the conditions they were written for.
 # Observed flaking under an oversubscribed concurrent run before being marked: test-build-floor.sh
-# (x), test-write-agent-memory.sh (j5/X), test-harvest-conventions.sh (M1a).
+# (x), test-harvest-conventions.sh (M1a). Serial is a mitigation, not a fix: test-write-agent-memory.sh
+# (j5/X) was marked too and STILL flaked under outside load, then was made deterministic (barriers
+# instead of sleeps) and unmarked — prefer that repair whenever the ordering can be pinned.
 par_idx=(); ser_idx=()
 i=0
 for t in "${tests[@]}"; do
