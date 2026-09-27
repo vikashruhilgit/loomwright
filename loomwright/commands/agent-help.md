@@ -1069,7 +1069,7 @@ The plugin centralizes its hooks in `hooks/hooks.json`, which automatically enfo
 | **SessionStart** | Session resume / clear / compact | Injects bounded recovery context (`session-resume.sh`, v14.2.0); also maintains per-project OpenTelemetry resource attributes (`set-otel-resource-attrs.sh`, telemetry-gated, fail-safe, v14.47.0) |
 | **Stop / TaskCompleted / StopFailure** | Various | Completeness gate, task-done check, failure logging (the `WorktreeCreate`/`WorktreeRemove` hooks were removed in v15.66.0) |
 
-These hooks run automatically — no configuration needed. Most are `type: command` scripts that cost no model call; only three still use prompt-based validation (haiku model, 30s timeout): the `code-reviewer` SubagentStop validator, `Stop`, and `TaskCompleted`.
+These hooks run automatically — no configuration needed. Most are `type: command` scripts that cost no model call; only two still use prompt-based validation (haiku model, 30s timeout): `Stop` and `TaskCompleted`.
 
 ### Agent Teams (Experimental)
 
