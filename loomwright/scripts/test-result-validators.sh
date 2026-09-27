@@ -3911,6 +3911,34 @@ else
   no "L12 parser: has_result_block / resolve_payload_text unit cases"
 fi
 
+# L13 MUTATION CONTROL: disable the SubagentHandback preference in a COPY of
+# result_block_parser.py (the branch that swaps a header-less inline recap for
+# the handback message); L1's exact payload must FLIP to the pre-fix false
+# block, proving section L exercises that branch rather than passing vacuously.
+HB_MUT_DIR="$TMPROOT/hb-mutant"
+mkdir -p "$HB_MUT_DIR"
+cp "$V_WORKER" "$HB_MUT_DIR/validate-worker-result.py"
+cp "$PARSER" "$HB_MUT_DIR/result_block_parser.py"
+python3 - "$HB_MUT_DIR/result_block_parser.py" <<'PY'
+import sys
+p = sys.argv[1]
+src = open(p, encoding="utf-8").read()
+mutated = src.replace(
+    "    if not has_result_block(inline, names):\n        atp = ",
+    "    if False:\n        atp = ",
+    1,
+)
+assert mutated != src, "mutation target not found — resolve_payload_text shape changed"
+open(p, "w", encoding="utf-8").write(mutated)
+PY
+if [ -s "$HB_MUT_DIR/result_block_parser.py" ] && ! cmp -s "$PARSER" "$HB_MUT_DIR/result_block_parser.py"; then
+  ok "L13 mutation control — mutant parser is non-empty and differs from the original"
+else
+  no "L13 mutation control — mutant invalid (empty or identical), cannot be trusted"
+fi
+run_hb "$HB_MUT_DIR/validate-worker-result.py" loomwright:loomwright:worker "$FIXDIR/worker-valid-bullet.md" "$WORKER_RECAP" --cwd "$SANDBOX_JWT"
+assert_fail "L13 mutation control — with the handback preference disabled, L1 FLIPS to the pre-fix false block (the branch is load-bearing)" "missing WORKER_RESULT block"
+
 echo "RESULT  pass=$PASS_COUNT  fail=$FAIL_COUNT"
 if [ "$FAIL_COUNT" -eq 0 ]; then
   exit 0

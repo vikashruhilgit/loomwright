@@ -3,7 +3,8 @@
 Captured 2026-09-27 (Claude Code desktop, `claude-desktop` entrypoint) by a
 temporary `SubagentStop` hook that tee'd stdin to a file, while a real
 `loomwright:code-reviewer` and a real `loomwright:worker` ran. Sanitized: every
-home path is `/Users/testuser/...`, ids are zeroed, and all message content is
+home path is `/Users/testuser/...`, session/agent/prompt ids are zeroed, tool ids are
+sequential placeholders (`toolu_<n>`, each tool_use paired with its tool_result), and all message content is
 replaced by placeholders. The **key set of `payload.json`** and the **entry
 sequence of `agent-transcript.jsonl`** are exactly what the runtime produced.
 
