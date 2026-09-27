@@ -13,7 +13,8 @@ string verbatim, that exact string is used.
   (1) a WORKER_RESULT block with schema_version, task_id, status,
       files_modified, and summary fields
   (2) at least one of files_modified or files_created is non-empty when
-      status=completed (create-only subtasks are valid)
+      status=completed (create-only subtasks are valid) — UNLESS the block
+      declares `no_changes: true` (rule 12 below, the one exemption)
   (3) a worker summary file was written — {worktree}/.worker-summary.md or
       .supervisor/worker-summaries/{task_id}.md — OR the output records the
       literal marker summary_file_write_failed
@@ -92,6 +93,32 @@ as rules (9)/(10), NOT sourced from any hooks.json prompt string:
       script does not reject `not_verified: []` — the emission convention is
       enforced by prompt instruction, not by this validator.
 
+ADDITIONAL RULE (12), added post-hoc for the read-only-worker wedge
+(2026-09-27) — same treatment as rules (9)-(11), NOT sourced from any
+hooks.json prompt string:
+
+  (12) no_changes — OPTIONAL and ADDITIVE at schema_version 2. The ONE
+      sanctioned exemption from rule 2: a `status: completed` block whose
+      files_modified AND files_created are both empty is accepted when it
+      declares `no_changes: true` (a read-only / verify-only subtask that
+      correctly changed nothing). WHY an explicit flag and not an inference:
+      before this rule a worker handed a read-only task that honestly
+      reported completed-with-empty-lists was re-prompted by rule 2 on every
+      SubagentStop until the runtime's continuation cap (8 on Claude Code
+      v2.1.278) forced the stop — its only way out was to FABRICATE a file
+      entry, and a capped worker leaves only `rejected: true` rows, so
+      check-children-settled.sh never settles it. Inferring "read-only" from
+      `outputs_verified: []` alone would accept a worker that merely forgot
+      to run verify-provides.sh; the flag makes the claim deliberate and
+      auditable, and the consumer's on-disk verify-provides.sh re-run (disk
+      wins) remains the backstop against a false claim. WHEN PRESENT it must
+      be a YAML boolean; `no_changes: true` alongside a non-empty
+      files_modified or files_created is a self-contradiction and is
+      rejected at ANY status. `no_changes: false` / absence change nothing —
+      rule 2 applies as before. It does NOT exempt any other rule: rule 3's
+      summary file, rule 8's outputs_gap/status invariant, etc. all still
+      apply.
+
 DELIBERATE NON-ADDITIONS / NARROWINGS (recorded, not accidental):
   * The prompt does NOT constrain WORKER_RESULT.status to an enum, so neither
     does this script (R4: transcribe, do not silently strengthen).
@@ -114,6 +141,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
     from result_block_parser import (  # noqa: E402
+        as_bool,
         as_int,
         as_text,
         emit,
@@ -196,6 +224,15 @@ REASON_NOT_VERIFIED_SHAPE = (
     "non-empty string surface and reason (optional additive field, rule 11)"
 )
 
+REASON_NO_CHANGES_SHAPE = (
+    "no_changes, when present, must be a boolean (true|false) (optional "
+    "additive field, rule 12)"
+)
+REASON_NO_CHANGES_CONTRADICTION = (
+    "no_changes: true contradicts a non-empty files_modified/files_created — "
+    "declare no_changes only when the subtask changed nothing (rule 12)"
+)
+
 MISSING_BLOCK = (
     "missing WORKER_RESULT block — every worker execution must end with one "
     "(agents/worker.md §\"Output Format\")"
@@ -241,18 +278,34 @@ def main():
 
     status = as_text(fields.get("status")).strip()
 
+    touched_files = _non_empty_list(fields.get("files_modified")) or _non_empty_list(
+        fields.get("files_created")
+    )
+
+    # ── (12) no_changes shape + contradiction — evaluated BEFORE rule 2 ──────
+    # PRESENCE-GATED like rules 9-11. Evaluated first because it decides
+    # whether rule 2's one exemption applies. A present-but-null or non-boolean
+    # value is rejected (never silently read as false: a worker that meant
+    # `true` but wrote `yes` must be told, not bounced by rule 2's reason).
+    no_changes = False
+    if present(fields, "no_changes"):
+        no_changes, _bad = as_bool(fields.get("no_changes"))
+        if no_changes is None:
+            emit(False, REASON_NO_CHANGES_SHAPE)
+        if no_changes and touched_files:
+            emit(False, REASON_NO_CHANGES_CONTRADICTION)
+
     # ── (2) completed subtasks must have touched at least one file ───────────
-    if status == "completed":
-        if not (
-            _non_empty_list(fields.get("files_modified"))
-            or _non_empty_list(fields.get("files_created"))
-        ):
-            emit(
-                False,
-                "status=completed requires at least one of files_modified or "
-                "files_created to be non-empty (create-only subtasks are valid) "
-                "(rule 2)",
-            )
+    # ...unless they explicitly declared `no_changes: true` (rule 12).
+    if status == "completed" and not touched_files and not no_changes:
+        emit(
+            False,
+            "status=completed requires at least one of files_modified or "
+            "files_created to be non-empty (create-only subtasks are valid) — "
+            "or, for a read-only/verify-only subtask that correctly changed "
+            "nothing, declare no_changes: true; never list a file you did not "
+            "change (rule 2)",
+        )
 
     # ── (3) worker summary file / degradation marker ─────────────────────────
     if not worker_summary_file_evidence(task_id, text, payload):

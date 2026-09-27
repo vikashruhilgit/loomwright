@@ -336,9 +336,10 @@ PY
 
 # ── MANIFEST ─────────────────────────────────────────────────────────────────
 # matcher | agent file | block name | comma-separated hook-ENFORCED fields
-#   "enforced" = required OR validated-when-present. `out_of_lane` and `deviations` are the
-#   latter: validate-worker-result.py rules 9 and 10 (respectively) accept ABSENCE at any
-#   schema_version but reject a present-but-malformed value. Both of this gate's real checks
+#   "enforced" = required OR validated-when-present. `out_of_lane`, `deviations`,
+#   `not_verified` and `no_changes` are the latter: validate-worker-result.py rules 9, 10, 11
+#   and 12 (respectively) accept ABSENCE at any schema_version but reject a present-but-
+#   malformed value. Both of this gate's real checks
 #   (pin-drift against the validator source, field-presence in the agent prompt) are satisfied
 #   either way.
 #
@@ -351,7 +352,7 @@ PY
 #   conditional adjudication fields are now pinned together. Verified to have teeth: renaming
 #   `adjudication_kind` in execute-manager.md fails this gate with a field-presence error.
 MANIFEST="
-worker|worker.md|WORKER_RESULT|schema_version,task_id,status,files_modified,summary,outputs_verified,outputs_gap,out_of_lane,deviations,not_verified
+worker|worker.md|WORKER_RESULT|schema_version,task_id,status,files_modified,summary,outputs_verified,outputs_gap,out_of_lane,deviations,not_verified,no_changes
 execute-manager|execute-manager.md|EXECUTE_RESULT|schema_version,subtasks_completed,worktrees,merge_order,summary
 execute-manager|execute-manager.md|EXECUTE_CHECKPOINT|completed_so_far,remaining,resume_context,reason,adjudication_required,missing_outputs,adjudication_options,adjudication_kind,colliding_lanes
 qa-executor|qa-executor.md|QA_RESULT|schema_version,tests_generated,tests_passed,summary,coverage_estimate
