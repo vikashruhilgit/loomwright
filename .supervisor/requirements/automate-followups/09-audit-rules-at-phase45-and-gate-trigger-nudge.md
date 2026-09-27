@@ -31,18 +31,21 @@ None. `audit-rules.sh` already exists on `main`. The Phase 4.5 rules-check repla
 - It never changes `heal_decision` and never enters the review-and-fix loop, matching the existing replay step's
   wording.
 
-**(b) The revisit nudge for the parked gate (item 07).**
+**(b) The revisit nudge for the parked CI offer (item 08).**
+> **Retargeted 2026-09-28.** This nudge was written for item 07, which the owner has since promoted to the queue
+> (`automate-followups/07-rule-enforcement-at-review-and-merge.md`), so 07 no longer needs a watcher. Item 08
+> is still parked in `proposed/` with the SAME revisit trigger, so the nudge now watches 08.
 - When the store contains ≥1 `enforcement: must` rule with a non-null `check`, AND
-  `.supervisor/requirements/proposed/automate-followups-07-rule-enforcement-at-review-and-merge.md` still exists,
+  `.supervisor/requirements/proposed/automate-followups-08-setup-rules-ci-offer.md` still exists,
   print ONE extra advisory line naming that file, e.g. `rules_gate_trigger: <n> must rule(s) now carry a check —
-  proposed/automate-followups-07-… is now actionable`.
+  proposed/automate-followups-08-… is now actionable`.
 - Emit it from the same Phase 4.5 step, and also from `/rules audit` (`commands/rules.md` §`audit`), so it
   reaches a human with or without Supervisor.
 - Read-only. It never moves, stamps or edits the proposed file; promotion stays a human act
   (`proposed/README.md`).
 
 ## Non-goals
-- Any gating on audit findings or on the trigger (that is item 07, parked).
+- Any gating on audit findings or on the trigger (gating on a failing check is item 07).
 - Any write mode in `audit-rules.sh`, which stays dry-run ONLY by design.
 - Generalising (b) into a watcher for every hand-authored doc in `proposed/`. That is a possible follow-up
   once this one instance proves useful. Record the idea; don't build it here.
@@ -55,7 +58,7 @@ None. `audit-rules.sh` already exists on `main`. The Phase 4.5 rules-check repla
   byte-identical before and after.
 - [ ] Fixture: an unreadable store (audit exit 2) ⇒ `unexamined`, never `clean`. Mutation control: mapping exit 2
   to `clean` makes this fixture fail.
-- [ ] Fixture: a store with ≥1 `must` rule with a `check` AND the proposed 07 file present ⇒ the
+- [ ] Fixture: a store with ≥1 `must` rule with a `check` AND the proposed 08 file present ⇒ the
   `rules_gate_trigger:` line appears. With 0 such rules, or with the proposed file absent, it does not appear.
 - [ ] `/rules audit` (`commands/rules.md`) prints the same trigger line under the same conditions.
 - [ ] The seam guard stays green: `test-rules-seams.sh` must still pass. If it asserts on which rules scripts an
