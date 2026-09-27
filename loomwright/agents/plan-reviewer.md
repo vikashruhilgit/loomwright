@@ -220,12 +220,13 @@ Check ALL criteria in order. For each, note whether it passes or has issues. Cri
 - Reject vague provides entries (`"adds feature"`, `"updates code"`, free-text strings without `{kind, path}`): every entry MUST be `{kind: file|symbol|type, path, name?}` addressable on disk
 - `external_requires` items must NOT appear as `from` references in any `requires` entry (the `from` field always points at a sibling subtask ID)
 - **Single-subtask briefs:** a lone subtask has no siblings — `requires: []` is correct and expected. The `provides:`/`requires:` contract YAML block itself remains BLOCKING-if-absent (see Conditional below).
+- **Gate-parseable anchor:** each contract block must sit under an anchor naming its Subtask Structure `#` id — a `# Subtask N …` YAML comment, a `### Subtask N …` heading, or a `subtask_N:` key — because the deterministic `outputs_verified` gate (`scripts/verify-provides.sh`) finds the block by that token and nothing else. A slug key (`subtask_id: foo-01`) is NOT an anchor: a multi-subtask brief anchored only by slugs is unverifiable at runtime (every subtask checkpoints `subtask_not_found`). You have no Bash, so Launch Pad runs the parser for you: when the spawn prompt carries a `--- GATE PARSE ---` block (one `verify-provides.sh --parse-only` line per subtask id), any `unverifiable` line, or `provides_count: 0` for a subtask whose block lists entries, is BLOCKING — the parser's output outranks your reading of the YAML (contract *shape* passing is not the gate being able to parse it).
 
 **Issue category:** `dep_graph` — use this category in the issues array of PLAN_REVIEW_RESULT for any Criterion 12 violation.
 
 **Severity if failed:**
 
-- BLOCKING: cycle in dependency DAG; `requires` entry has no matching sibling provide; subtask with non-empty `requires` marked LAUNCHABLE; `from` references an `external_requires` item
+- BLOCKING: cycle in dependency DAG; `requires` entry has no matching sibling provide; subtask with non-empty `requires` marked LAUNCHABLE; `from` references an `external_requires` item; a contract block with no gate-parseable `Subtask N` anchor, or a `--- GATE PARSE ---` line that is `unverifiable` / `provides_count: 0` against a non-empty block
 - HIGH: vague provides entry without addressable `{kind, path}`; provides entry whose path/name does not match any plausible file in the impact map
 - MEDIUM: `requires` entry whose `name` is a near-miss against the producer's `provides` (likely typo)
 

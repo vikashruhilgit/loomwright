@@ -7,6 +7,7 @@
 #
 # Usage:
 #   verify-provides.sh <brief> <subtask-id> [--root <dir>]     # default --root .
+#   verify-provides.sh <brief> <subtask-id> --parse-only        # anchor/contract parse only, no disk checks
 #   verify-provides.sh --kind-table                            # print the 3-row markdown check table
 #
 # <subtask-id> is the bare token the brief's contract anchor names — the `N` in `# Subtask N …` /
@@ -14,6 +15,11 @@
 # `1`). It is NOT the state.md task_id, a Beads id or a slug: those return `subtask_not_found`,
 # which every consumer routes to a checkpoint (D1) — so the stderr line for that reason lists the
 # anchors the brief actually carries.
+#
+# `--parse-only` (Launch Pad's pre-review anchor check — agents/launch-pad.md Phase 5.5): runs the
+# SAME parser but no disk check, printing {"subtask_id":"<id>","status":"parsed","provides_count":N,
+# "source":"verify-provides.sh"} or the usual `unverifiable` object. It answers "can the gate find
+# this subtask's contract?" before any file exists — the question Plan Reviewer (no Bash) cannot run.
 #
 # Output (ONE JSON object on stdout, always exit 0):
 #   {"subtask_id":"<id>",
@@ -47,10 +53,18 @@
 # Brief parser tolerance (measured over real Launch Pad briefs): the contracts heading is matched
 # case-insensitively at ANY `#` depth, the YAML may sit in a ```yaml fence or be raw, and a
 # subtask is anchored by a `# Subtask N …` YAML comment, a `### Subtask N …` markdown heading, or a
-# `subtask_N:` key. Entries are `- {kind: "file", path: "x", name: "y"}` (quotes optional, trailing
+# `subtask_N:` key. A key-form anchor needs a DIGIT after `subtask` — `subtask_id:` / `subtask_title:`
+# / `subtasks:` are ordinary keys, never anchors (a `subtask_id: <slug>` line under `# Subtask 1` used
+# to register as an anchor for subtask "id" and end the real block — 2026-09-26, six briefs). Legacy
+# fallback: a brief with NO anchor at all and exactly ONE `subtask_id:` key anchors that block as
+# subtask `1` (the Single-Agent Path's id — unambiguous); two or more such keys with no anchors is
+# ambiguous and stays `subtask_not_found`. An anchor with no `provides:` key under it is
+# `no_contracts`, never an empty list (that was a vacuous `outputs_verified: []` pass). Entries are `- {kind: "file", path: "x", name: "y"}` (quotes optional, trailing
 # `# comment` after the closing `}` stripped). The `provides:` list ends at the next top-level key
 # (`requires:` / `lanes:` / `external_requires:`), the next anchor, a heading, or the fence end.
 # `provides: []` — or a `provides:` with no parsable entries — yields `[]` + `""` (logged to stderr).
+# When the same anchor appears twice (a prose `### Subtask 1` section and a `# Subtask 1` contract
+# comment), the first occurrence that carries a `provides:` key wins.
 #
 # HONEST LIMITS: the `symbol` check is `grep -nE -- '<escaped name>'` over the whole file — any line
 # containing the name passes, including a comment or a prose mention; there is no semantic check
@@ -86,6 +100,7 @@ id=""
 root="."
 have_brief=0
 have_id=0
+parse_only=0
 bad_args=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -94,8 +109,9 @@ while [ $# -gt 0 ]; do
       if [ $# -lt 2 ]; then bad_args="--root needs a directory argument"; break; fi
       root="$2"; shift 2 ;;
     --root=*) root="${1#--root=}"; shift ;;
+    --parse-only) parse_only=1; shift ;;
     -h|--help)
-      printf 'usage: %s <brief> <subtask-id> [--root <dir>] | --kind-table\n' "$SELF" >&2
+      printf 'usage: %s <brief> <subtask-id> [--root <dir>] [--parse-only] | --kind-table\n' "$SELF" >&2
       exit 0 ;;
     *)
       if [ "$have_brief" -eq 0 ]; then brief="$1"; have_brief=1
@@ -159,7 +175,7 @@ emit_unverifiable() {
 # Brief readable?
 # ---------------------------------------------------------------------------
 if [ "$have_brief" -eq 0 ] || [ "$have_id" -eq 0 ]; then
-  printf 'usage: %s <brief> <subtask-id> [--root <dir>] | --kind-table\n' "$SELF" >&2
+  printf 'usage: %s <brief> <subtask-id> [--root <dir>] [--parse-only] | --kind-table\n' "$SELF" >&2
   emit_unverifiable "brief_unreadable"
 fi
 if [ ! -f "$brief" ] || [ ! -r "$brief" ]; then
@@ -172,7 +188,8 @@ fi
 # The id is passed as DATA (-v) and matched with index()/substr(), never interpolated into a regex.
 # ---------------------------------------------------------------------------
 parse_brief() {
-  awk -v want="$1" '
+  # $1 = wanted id, $2 = sidmode (1 = the lone-`subtask_id:` legacy fallback: that key IS the anchor)
+  awk -v want="$1" -v sidmode="${2:-0}" '
     function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
     # id_here(rest): rest (lowercased) starts with the wanted id, followed by a non-alnum or end.
     function id_here(rest,   c) {
@@ -192,14 +209,18 @@ parse_brief() {
     }
     # anchor_kind(line): 0 = not an anchor; 1 = anchor for SOME subtask; 2 = anchor for OURS.
     # Forms: `# Subtask N …` (YAML comment) / `### Subtask N …` (heading) / `subtask_N:` (key).
+    # `subtask_<non-digit>` (`subtask_id:`, `# subtask_title`) is never an anchor in any form; the
+    # key form additionally needs a digit, so `subtasks:` / `subtask id:` are plain keys too.
     function anchor_kind(line,   t, rest, pos) {
       t = tolower(line)
+      if (sidmode && t ~ /^[[:space:]]*subtask_id[[:space:]]*:/) return 2
+      if (t ~ /^[[:space:]]*(#+[[:space:]]*)?subtask_[^0-9]/) return 0
       if (match(t, /^[[:space:]]*#+[[:space:]]*subtask[[:space:]_-]*[[:alnum:]]/)) {
         pos = RSTART + RLENGTH - 1; rest = substr(t, pos)
         note_anchor(line, pos)
         return id_here(rest) ? 2 : 1
       }
-      if (match(t, /^[[:space:]]*subtask[[:space:]_-]*[[:alnum:]]/)) {
+      if (match(t, /^[[:space:]]*subtask[[:space:]_-]*[0-9]/)) {
         pos = RSTART + RLENGTH - 1; rest = substr(t, pos)
         if (rest !~ /^[^:]*:/) return 0
         note_anchor(line, pos)
@@ -221,7 +242,7 @@ parse_brief() {
       if (match(v, /[,}]/)) v = substr(v, 1, RSTART - 1)
       return trim(v)
     }
-    BEGIN { lwant = tolower(want); infence = 0; inside = 0; inprov = 0; found = 0; any = 0; n = 0; empty = 0; anchors = "" }
+    BEGIN { lwant = tolower(want); infence = 0; inside = 0; inprov = 0; found = 0; sawprov = 0; any = 0; n = 0; empty = 0; anchors = ""; sidn = 0; sids = "" }
     {
       line = $0
       # Fence toggle. Closing the fence while inside our block ends the provides list.
@@ -233,18 +254,22 @@ parse_brief() {
       t = tolower(line)
       if (!infence && t ~ /^#+[[:space:]]*subtask[[:space:]]+contracts/) { any = 1 }
       if (t ~ /^[[:space:]]*provides[[:space:]]*:/) any = 1
+      if (t ~ /^[[:space:]]*subtask_id[[:space:]]*:/) {
+        sidn++; v = line; sub(/^[^:]*:[[:space:]]*/, "", v); v = trim(v); gsub(/\t/, " ", v)
+        sids = (sids == "" ? v : sids ", " v)
+      }
       ak = anchor_kind(line)
       if (!infence && line ~ /^#+[[:space:]]/ && ak == 0) {
         # a markdown heading outside a fence ends our block
         if (inside) { inside = 0; inprov = 0 }
         next
       }
-      if (ak == 2 && !found) { found = 1; inside = 1; inprov = 0; next }
+      if (ak == 2 && !sawprov) { found = 1; inside = 1; inprov = 0; next }
       if (ak >= 1 && inside) { inside = 0; inprov = 0; next }
       if (!inside) next
       if (!inprov) {
         if (t ~ /^[[:space:]]*provides[[:space:]]*:/) {
-          inprov = 1
+          inprov = 1; sawprov = 1
           rest = line; sub(/^[[:space:]]*[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Ss][[:space:]]*:[[:space:]]*/, "", rest)
           if (rest ~ /^\[[[:space:]]*\]/) { empty = 1; inside = 0; inprov = 0 }
         }
@@ -266,7 +291,8 @@ parse_brief() {
       next
     }
     END {
-      if (!found) { print (any ? "NOT_FOUND\t" anchors : "NO_CONTRACTS"); exit 0 }
+      if (!found) { print (any ? "NOT_FOUND\t" anchors "\t" sidn "\t" sids : "NO_CONTRACTS"); exit 0 }
+      if (!sawprov) { print "NO_PROVIDES"; exit 0 }
       if (n == 0) { print "EMPTY"; exit 0 }
       print "FOUND"
       for (i = 1; i <= n; i++) print out[i]
@@ -291,18 +317,39 @@ grep_literal() {
 TAB="$(printf '\t')"
 status=""
 anchors=""
+sid_n=0
+sid_list=""
+count=0
 entries='[]'
 gap=""
 line_no=0
 parse_ok=1
 
+parsed="$(parse_brief "$id" 0)"
+first="${parsed%%$'\n'*}"
+case "$first" in
+  NOT_FOUND*)
+    # parameter expansion, not `IFS=$TAB read`: tab is IFS-whitespace, so read collapses an EMPTY
+    # anchors field and shifts sid_n into it
+    rest="${first#*"$TAB"}"; anchors="${rest%%"$TAB"*}"
+    rest="${rest#*"$TAB"}"; sid_n="${rest%%"$TAB"*}"; sid_list="${rest#*"$TAB"}"
+    case "$sid_n" in ''|*[!0-9]*) sid_n=0 ;; esac
+    # Legacy fallback (header above): no anchor at all + exactly ONE `subtask_id:` key ⇒ that block
+    # is subtask 1. Anything else stays not-found — never guess among several blocks.
+    if [ -z "$anchors" ] && [ "$sid_n" -eq 1 ] && [ "$id" = "1" ]; then
+      printf '%s: no `# Subtask N` anchor; lone `subtask_id: %s` block anchored as subtask 1 (add `# Subtask 1` to the brief)\n' "$SELF" "$sid_list" >&2
+      parsed="$(parse_brief "$id" 1)"
+    fi
+    ;;
+esac
+
 while IFS= read -r line; do
   line_no=$((line_no + 1))
   if [ "$line_no" -eq 1 ]; then
     status="${line%%"$TAB"*}"
-    anchors="${line#*"$TAB"}"; [ "$anchors" = "$line" ] && anchors=""
     continue
   fi
+  if [ "$parse_only" -eq 1 ]; then count=$((count + 1)); continue; fi
   kind="${line%%"$TAB"*}"
   rest="${line#*"$TAB"}"
   path="${rest%%"$TAB"*}"
@@ -352,12 +399,19 @@ while IFS= read -r line; do
     if [ "$kind" = "file" ]; then item="$path"; else item="$path:$name"; fi
     gap="${gap:+$gap, }$item"
   fi
-done < <(parse_brief "$id")
+done <<<"$parsed"
 
 case "$status" in
   NO_CONTRACTS) emit_unverifiable "no_contracts" ;;
+  NO_PROVIDES)
+    printf '%s: subtask %s anchor found but no provides: key under it (not an empty list)\n' "$SELF" "$id" >&2
+    emit_unverifiable "no_contracts"
+    ;;
   NOT_FOUND)
     printf '%s: subtask %s not in brief — anchors found: %s\n' "$SELF" "$id" "${anchors:-(none)}" >&2
+    if [ "$sid_n" -gt 0 ]; then
+      printf '%s: the brief carries %s `subtask_id:` key(s) (%s) — a slug key is not an anchor; anchor each contract block with `# Subtask N`\n' "$SELF" "$sid_n" "$sid_list" >&2
+    fi
     emit_unverifiable "subtask_not_found"
     ;;
   EMPTY)
@@ -367,6 +421,12 @@ case "$status" in
   FOUND) ;;
   *)            emit_unverifiable "brief_unreadable" ;;
 esac
+
+if [ "$parse_only" -eq 1 ]; then
+  jq -n -c --arg id "$id" --argjson c "$count" --arg s "$SELF" \
+    '{subtask_id: $id, status: "parsed", provides_count: $c, source: $s}'
+  exit 0
+fi
 
 if [ "$parse_ok" -ne 1 ]; then
   printf '%s: internal jq error while building outputs_verified\n' "$SELF" >&2
