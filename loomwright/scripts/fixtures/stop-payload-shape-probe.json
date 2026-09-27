@@ -1,0 +1,71 @@
+{
+  "_what": "Real main-thread `Stop` hook payloads, captured 2026-09-27 on Claude Code v2.1.283 (headless `-p`, macOS) with a temporary `Stop` command hook (passed via `--settings`) that recorded stdin and printed `{}`. Values sanitized (paths, session/prompt/task ids). This is the evidence behind `validate-code-review-result.py --main-session`: identity comes from the payload's TOP-LEVEL `agent_type`, and `background_tasks[]` must never be read as identity.",
+  "_how_to_reproduce": "Probe A: pipe a prompt to `-p --settings <hook-settings> --plugin-dir loomwright` telling the main thread to launch ONE `loomwright:code-reviewer` subagent with `run_in_background: true` and end its turn at once. Probe B: same settings plus `--agent loomwright:code-reviewer`, telling it to reply one line and stop. Read the recorded payloads.",
+  "probe_a_main_thread_with_background_reviewer": {
+    "payload_while_reviewer_runs": {
+      "session_id": "<session_id>",
+      "transcript_path": "<transcript_path>",
+      "cwd": "<cwd>",
+      "scratchpad_dir": "<scratchpad_dir>",
+      "prompt_id": "<prompt_id>",
+      "permission_mode": "dontAsk",
+      "effort": {
+        "level": "high"
+      },
+      "hook_event_name": "Stop",
+      "stop_hook_active": false,
+      "last_assistant_message": "LAUNCHED",
+      "background_tasks": [
+        {
+          "id": "<task_id>",
+          "type": "subagent",
+          "status": "running",
+          "description": "Sleep 40 then reply DONE",
+          "agent_type": "loomwright:loomwright:code-reviewer"
+        }
+      ],
+      "session_crons": []
+    },
+    "payload_after_reviewer_finished": {
+      "session_id": "<session_id>",
+      "transcript_path": "<transcript_path>",
+      "cwd": "<cwd>",
+      "scratchpad_dir": "<scratchpad_dir>",
+      "prompt_id": "<prompt_id>",
+      "permission_mode": "dontAsk",
+      "effort": {
+        "level": "high"
+      },
+      "hook_event_name": "Stop",
+      "stop_hook_active": false,
+      "last_assistant_message": "<prose summary of the background result>",
+      "background_tasks": [],
+      "session_crons": []
+    },
+    "observations": [
+      "No top-level `agent_type` on a plain main thread.",
+      "The running reviewer appears ONLY inside `background_tasks[]`, with the plugin-doubled `agent_type`, `type: subagent` and `status: running` — the exact fields the retired prompt hook quoted when it blocked main-thread turn ends (\"background_tasks array confirms status is running\").",
+      "In this single capture the retired prompt hook did not block the first turn end; its verdict on this shape is a model judgement, not a rule (the 2026-09-27 /automate run saw it block every turn end). The command validator allows it deterministically."
+    ]
+  },
+  "probe_b_agent_session_reviewer": {
+    "payload_first_turn_end": {
+      "session_id": "<session_id>",
+      "transcript_path": "<transcript_path>",
+      "cwd": "<cwd>",
+      "scratchpad_dir": "<scratchpad_dir>",
+      "prompt_id": "<prompt_id>",
+      "permission_mode": "dontAsk",
+      "agent_type": "loomwright:loomwright:code-reviewer",
+      "hook_event_name": "Stop",
+      "stop_hook_active": false,
+      "last_assistant_message": "PROBE_B",
+      "background_tasks": [],
+      "session_crons": []
+    },
+    "observations": [
+      "An `--agent loomwright:code-reviewer` session carries top-level `agent_type: \"loomwright:loomwright:code-reviewer\"` (plugin-doubled prefix, as on SubagentStop).",
+      "The reply carried no CODE_REVIEW_RESULT block, so the retired prompt hook blocked, correctly for this case: 9 Stop firings, all 9 blocked (9 `Stop hook feedback` messages), the last 8 with `stop_hook_active: true`; the session ended at the runtime's continuation cap. This is the one case the Stop hook exists for, and `--main-session` keeps it covered."
+    ]
+  }
+}
