@@ -2,8 +2,8 @@
 name: review-heal
 description: Shared loop contract for the standalone PR review-and-heal workflow (`/review-pr <pr-url>` + `loomwright:review-pr-runner`). Single source of truth for the bounded review→fix→re-review loop, PR-URL→branch resolution, the REVIEW_HEAL_RESULT block, and the pinned canonical names consumed by the dispatcher script, the runner agent, and the autonomous EVALUATE step. Use when implementing or invoking standalone PR review-and-heal.
 allowed-tools: [Read, Write, Edit, Bash, Task]
-version: "1.8.0"
-lastUpdated: "2026-09-25"
+version: "1.9.0"
+lastUpdated: "2026-09-27"
 ---
 
 # Review-Heal Skill
@@ -762,6 +762,8 @@ The drain is **heal-only by default** (§U4) — it spawns no `code-reviewer` of
 - and, separately, it runs as a **Task-spawned step** with fresh isolated context — see §"Emission contexts" (a bold paragraph, not a `###` heading — grep the text; it says only that the step is Task-spawned and parses the block, and does NOT itself support the non-caller claim above).
 
 Routing the drain through a Task step in the future would turn this fallback into a hard failure — *subagents cannot spawn subagents* (this skill's §"Execution-contract rule (AC9)"; `agents/review-pr.md`'s mirror of the same rule; the 11.1.1 `-runner` trap) — so a future caller-side change that Task-spawns a `--until-mergeable` drain would silently break this fallback's `code-reviewer` spawn. Keep this note next to the fallback so that change cannot land unnoticed.
+
+**The CI lens is static-only (`execution: none`).** `.github/workflows/claude-code-review.yml` mandates that every posted `claude-review` comment ends with a line starting `execution: none` — that lens reads code and never runs it (its tool allowlist forbids execution, deliberately). A `claude-review` comment carrying `execution: none` still counts as "a review lens posted" for `no_review_lens_posted` — the trigger's DEFINITION above is unchanged, but its input is not: the marker line itself contains the stem `review`, so `classify-bot-review.sh`'s `review_marker_re` now classifies EVERY `claude[bot]` comment in (even a finding-free one — classification no longer depends on each comment's wording), which closes false negatives and leaves ungroundable candidates to Validate-Then-Fix, at the marginal cost of the fallback review running a little less often (`Reviewed <sha>` openers already matched the stem) (pinned by `test-classify-bot-review.sh`) — and its "no findings" is never runtime verification: READY reasoning, any terminal PR comment the drain posts, and its notification text label that lens `CI review lens: static-only (execution: none)`. The executing lens is Supervisor Phase 4.5 (`agents/code-reviewer.md` §5 under the EXECUTION DIRECTIVE); neither this drain, its Earned Fallback Review, nor the default `/review-pr` loop carries that directive. No `REVIEW_HEAL_RESULT` field records this — it is wording, not a new field.
 
 ---
 

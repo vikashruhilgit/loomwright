@@ -49,7 +49,7 @@ INVARIANT: ALWAYS exits 0. Decision on stdout only — `{}` to allow,
 never the `{"ok": …}` prompt-hook shape — including when the shared module
 below cannot be imported (see the guard).
 
-`--main-session` MODE (the `Stop` hook, v15.106.3): the same rules for a
+`--main-session` MODE (the `Stop` hook, v15.108.1): the same rules for a
 code-reviewer running as the MAIN agent of its own session
 (`claude --agent loomwright:code-reviewer`), where no SubagentStop fires. The
 `Stop` event fires at EVERY main-thread turn end of EVERY session, so this mode
