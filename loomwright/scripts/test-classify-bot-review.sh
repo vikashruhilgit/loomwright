@@ -498,7 +498,11 @@ OUTB27="$(printf '%s' "$BARE27" | bash "$CLASSIFY" 2>/dev/null)"
 if printf '%s' "$OUT27" | jq -e '(length==1) and (.[0].id==2701)' >/dev/null 2>&1 \
    && printf '%s' "$OUTB27" | jq -e 'length==0' >/dev/null 2>&1 \
    && { [ ! -f "$WF27" ] || grep -qF -- "$MARKER27" "$WF27"; }; then
-  ok "marker coupling pinned: the mandated marker alone classifies a finding-free body IN (control: the bare body stays OUT); workflow still carries this exact marker"
+  if [ -f "$WF27" ]; then
+    ok "marker coupling pinned: the mandated marker alone classifies a finding-free body IN (control: the bare body stays OUT); workflow still carries this exact marker"
+  else
+    ok "marker alone classifies a finding-free body IN (control: the bare body stays OUT); workflow absent — marker leg skipped"
+  fi
 else
   no "(27) wrong (with-marker=$OUT27 bare=$OUTB27)"
 fi

@@ -50,11 +50,12 @@ ok() { echo "  ok: $1"; pass=$((pass+1)); }
 no() { echo "  FAIL: $1"; fail=$((fail+1)); }
 
 # Canonical strings — ONE copy each, used by the real check AND by the mutant builders.
-CARVE='Scratch-dir exception (in addition to the agent-memory proposal write): under the EXECUTION DIRECTIVE, Bash may create, write and `rm` files ONLY inside a `mktemp -d` scratch dir the reviewer itself created outside the checkout, and every repro command runs as `cd "$SCRATCH" && …` with `CLAUDE_PROJECT_DIR` unset or set to `$SCRATCH`, so CWD-relative writes (e.g. `.supervisor/`) land there; the working tree, git state and shared state remain read-only, and the `git status --porcelain --ignored` before/after check still runs against the checkout.'
+CARVE='Scratch-dir exception (in addition to the agent-memory proposal write): under the EXECUTION DIRECTIVE, Bash may create, write and `rm` files ONLY inside a `mktemp -d` scratch dir the reviewer itself created outside the checkout, and every repro command runs as `cd "$SCRATCH" && …` with `HOME="$SCRATCH/home"` (`mkdir -p` it first; a scratch `git init` then needs `git -c user.name=r -c user.email=r@x …`) and `CLAUDE_PROJECT_DIR` unset or set to `$SCRATCH`, so CWD-relative and `$HOME`-default writes (e.g. `.supervisor/`, `~/.claude/`) land there; the working tree, git state and shared state remain read-only, and the `git status --porcelain --ignored` before/after check still runs against the checkout — it cannot see writes outside the checkout, so relocating `HOME` is the guard for user-scope state.'
 # PR #281 review: a repro run from the checkout could overwrite gitignored live state (`.supervisor/`)
 # invisibly to a plain `git status --porcelain` — these pin the run-from-scratch rule and the
 # `--ignored` snapshot on their own, so a CARVE edit that drops either still turns a check red.
 SCRATCH_CD='every repro command runs as `cd "$SCRATCH" && …`'
+HOME_RELOC='with `HOME="$SCRATCH/home"` (`mkdir -p` it first'
 IGNORED_SNAP='the `git status --porcelain --ignored` before/after check'
 CAPTURE_IGNORED='capture `git status --porcelain --ignored`'
 OVERWRITE_LIMIT='never an overwrite of an existing one'
@@ -181,6 +182,15 @@ check_with_mutant "(d) §5 guardrails: before/after snapshot is git status --por
   chk_ign_guard "$REVIEWER" strip_in_line "$GUARD_ANCHOR" "$CAPTURE_IGNORED"
 check_with_mutant "(d) Critical Rules bullet: before/after snapshot is git status --porcelain --ignored" \
   chk_ign_crit "$REVIEWER" strip_in_line "$CRIT_ANCHOR" "$IGNORED_SNAP"
+# HOME relocation in BOTH carve-out copies (PR #281 review, HIGH): `--ignored` sees only the checkout,
+# so a repro of a script whose default target is under $HOME (settings.json, ~/.claude/loomwright/ui)
+# would write real user config unseen.
+chk_home_both() {
+  g="$(line_with "$1" "$GUARD_ANCHOR")"; c="$(line_with "$1" "$CRIT_ANCHOR")"
+  [ -n "$g" ] && [ -n "$c" ] && has "$g" "$HOME_RELOC" && has "$c" "$HOME_RELOC"
+}
+check_with_mutant "(d) both carve-out copies relocate HOME=\"\$SCRATCH/home\"" \
+  chk_home_both "$REVIEWER" strip_in_line "$CRIT_ANCHOR" "$HOME_RELOC"
 # Honest limit of `--ignored` + the test-integrity-guard fixture rule (PR #281 review, MEDIUM).
 chk_overwrite() { l="$(line_with "$1" '**Scratch-dir adversarial repro')"; [ -n "$l" ] && has "$l" "$OVERWRITE_LIMIT" && has "$l" "$COLLAPSE_LIMIT"; }
 chk_tig() {
