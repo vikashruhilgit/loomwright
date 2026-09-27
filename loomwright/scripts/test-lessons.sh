@@ -691,16 +691,26 @@ if [ -f "$real_lessons" ]; then
   # test-progress-state.sh's "real logs snapshot unchanged" guard caught once the suite ran
   # concurrently (run-self-tests.sh). The reader only reads .supervisor/memory/, so the copy is the
   # same input.
+  #
+  # The parity read PINS LESSON_STALE_DAYS so this assertion is a function of the committed files
+  # only, never of the calendar. Staleness is a different class from invisibility: a STALE skip is
+  # the reader's advisory freshness lint doing its job (covered by test-read-lessons.sh §4), not a
+  # provenance defect, and --attest-existing cannot clear it (an already chain-trusted line is an
+  # attest no-op) — `write-lessons.sh reverify` is the sanctioned refresh (section 17). Counting it here turned every entry's 90th birthday into a red `ci` on every
+  # PR with no code change — twice (a0625ab hand-refreshed 3 trailers; ef916b74 aged out after).
+  # Stale entries are still REPORTED below, as a non-failing note, so they get re-verified.
   RRDIR="$(mktemp -d)"
   ( cd "$RRDIR" && git init -q && mkdir -p .supervisor && cp -R "$REAL_REPO/.supervisor/memory" .supervisor/ ) >/dev/null 2>&1
-  read_n="$(cd "$RRDIR" && bash "$READ" 2>/dev/null | grep -c '^- \[' || true)"
+  read_n="$(cd "$RRDIR" && LESSON_STALE_DAYS=100000 bash "$READ" 2>/dev/null | grep -c '^- \[' || true)"
+  stale_msg="$(cd "$RRDIR" && env -u LESSON_STALE_DAYS bash "$READ" 2>&1 >/dev/null | grep 'stale' || true)"
   rm -rf "$RRDIR"
   file_n="${file_n:-0}"; read_n="${read_n:-0}"
   if [ "$file_n" -eq "$read_n" ]; then
     ok "real LESSONS.md: all $file_n entries are readable (no unbacked/retracted-but-lingering lines)"
   else
-    no "real LESSONS.md has $file_n entries but read-lessons.sh emits $read_n — $((file_n - read_n)) invisible; see .supervisor/logs/memory.log for the reason per line, then heal from the repo root: STALE (still true after re-checking) -> write-lessons.sh reverify <cat> \"<text>\" --source \"<id>\" --confirm; DROPPED (no chain-valid add) -> write-lessons.sh --category <cat> --lesson \"<text>\" --attest-existing --confirm; no longer true -> retract/supersede. Never hand-edit LESSONS.md."
+    no "real LESSONS.md has $file_n entries but read-lessons.sh emits $read_n (staleness excluded) — $((file_n - read_n)) invisible for lack of a chain-valid add (DROPPED) or a lingering RETRACTED line; run read-lessons.sh from the repo root and read .supervisor/logs/memory.log for the reason per line, then heal a DROPPED line with: write-lessons.sh --category <cat> --lesson \"<text>\" --attest-existing --confirm"
   fi
+  [ -n "$stale_msg" ] && echo "  note (non-failing): $stale_msg — re-verify each against current code, then from the repo root either refresh it with write-lessons.sh reverify <cat> \"<text>\" --source \"<id>\" --confirm (never a hand-edit of the trailer), or retire it with write-lessons.sh retract / supersede"
 else
   ok "real LESSONS.md absent — count-parity assertion vacuously satisfied"
 fi
