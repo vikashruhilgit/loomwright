@@ -1,0 +1,19 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "/Users/testuser/.claude/projects/-Users-testuser-proj/00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "/Users/testuser/proj",
+  "scratchpad_dir": "/private/tmp/claude-501/-Users-testuser-proj/00000000-0000-4000-8000-000000000001/scratchpad",
+  "prompt_id": "00000000-0000-4000-8000-000000000002",
+  "permission_mode": "auto",
+  "agent_id": "a0000000000000001",
+  "agent_type": "loomwright:loomwright:code-reviewer",
+  "effort": {
+    "level": "high"
+  },
+  "hook_event_name": "SubagentStop",
+  "stop_hook_active": false,
+  "agent_transcript_path": "/Users/testuser/.claude/projects/-Users-testuser-proj/00000000-0000-4000-8000-000000000001/subagents/agent-a0000000000000001.jsonl",
+  "last_assistant_message": "I've sent the review. The verdict is PASS with no issues. I sent back the CODE_REVIEW_RESULT block.",
+  "background_tasks": [],
+  "session_crons": []
+}

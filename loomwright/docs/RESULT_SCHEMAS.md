@@ -980,8 +980,10 @@ replacement.
 
 **`result_block_present` (additive, on `subtask_complete` — added v15.79.0):** `emit-progress-event.sh`
 gains one boolean field, present only when the SubagentStop payload carries a `last_assistant_message`
-key: whether that text contains a `WORKER_RESULT` fence, using the exact same detection
-`validate-worker-result.py` runs (`result_block_parser.find_last_block`) rather than a second regex.
+key: whether the worker's resolved output contains a `WORKER_RESULT` fence, using the exact same
+resolution (`result_block_parser.resolve_payload_text` — which prefers the subagent's last
+`SubagentHandback` message when `last_assistant_message` is only a prose recap without a block) and
+detection (`result_block_parser.find_last_block`) `validate-worker-result.py` runs, never a second regex.
 **PRESENCE, not truthiness, decides the key** — a `last_assistant_message` key that is present but not
 a string, or whose fence-scan raises for any reason (e.g. `result_block_parser.py` unavailable), OMITS
 the key entirely (a detection-FAILED case, never a guessed `false`); only an actual scan may assert

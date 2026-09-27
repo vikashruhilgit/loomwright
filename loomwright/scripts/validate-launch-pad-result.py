@@ -245,14 +245,31 @@ def main():
         # result_block/output/agent_output are the plugin's prior convention),
         # then fall back to reading the transcript JSONL (the subagent-scoped
         # `agent_transcript_path` first, else the shared `transcript_path`).
-        result_block = (
-            payload.get("last_assistant_message")
-            or payload.get("result_block")
-            or payload.get("output")
-            or payload.get("agent_output")
-            or ""
-        )
-        if not result_block:
+        #
+        # The shared resolver (result_block_parser.resolve_payload_text) runs
+        # the same chain PLUS the SubagentHandback preference: current runtimes
+        # deliver the report as the `input.message` of the subagent's last
+        # SubagentHandback tool call and leave only a prose recap (naming the
+        # block without containing it) in `last_assistant_message`. The inline
+        # chain below is kept ONLY as the import-failure fallback.
+        try:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            from result_block_parser import resolve_payload_text
+
+            result_block = resolve_payload_text(payload, "LAUNCH_PAD_RESULT")
+            resolved = True
+        except Exception:  # noqa: BLE001 — fall back to the local chain
+            result_block = ""
+            resolved = False
+        if not resolved:
+            result_block = (
+                payload.get("last_assistant_message")
+                or payload.get("result_block")
+                or payload.get("output")
+                or payload.get("agent_output")
+                or ""
+            )
+        if not resolved and not result_block:
             # Prefer the subagent-scoped `agent_transcript_path` (the finishing
             # subagent's own messages) over the shared session `transcript_path`
             # (the parent session). For a Task-spawned subagent the former is the
@@ -271,7 +288,8 @@ def main():
             False,
             "could not locate agent output in the SubagentStop payload "
             "(checked last_assistant_message / result_block / output / "
-            "agent_output / agent_transcript_path / transcript_path)",
+            "agent_output / SubagentHandback in agent_transcript_path / "
+            "agent_transcript_path / transcript_path)",
         )
         return
 

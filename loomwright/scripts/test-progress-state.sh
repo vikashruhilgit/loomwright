@@ -1570,6 +1570,35 @@ else
   no "case41d(mutation) result_block_parser.py not found at expected path, or the scripts copy failed — cannot mutate"
 fi
 
+# 41e/41f: REAL payload shape (captured 2026-09-27) — the worker's report
+# reaches the parent via a SubagentHandback tool call; last_assistant_message
+# is a recap that only NAMES the block. result_block_present must follow the
+# RESOLVED text (the same resolution validate-worker-result.py runs), so a
+# worker that did emit its block is not derived `ended_without_result`.
+HB_MAT="$SCRIPT_DIR/fixtures/subagentstop-handback-real-shape/materialize.py"
+HB_BLOCK="$PAYLOAD_DIR/hb41-block.md"
+printf '## WORKER_RESULT\n- status: completed\n' > "$HB_BLOCK"
+REPO41E="$(init_repo "feature/case41e")"
+P41E="$PAYLOAD_DIR/p41e.json"
+python3 "$HB_MAT" "$PAYLOAD_DIR/hb41e" loomwright:loomwright:worker "$HB_BLOCK" \
+  "Done. I sent back the WORKER_RESULT block." --cwd "$REPO41E" \
+  | jq '.session_id = "sid-case41e"' > "$P41E"
+OUT41E="$(run_emitter "$REPO41E" "$P41E")"
+assert_eq "case41e exit 0" "0" "$(get_rc "$OUT41E")"
+LINE41E="$(tail -1 "$REPO41E/.supervisor/logs/sid-case41e.jsonl" 2>/dev/null)"
+assert_eq "case41e result_block_present true (block only in the SubagentHandback message, real payload shape)" \
+  "true" "$(printf '%s' "$LINE41E" | jq -r '.result_block_present')"
+# 41f: same real shape, NO handback in the transcript -> an actual scan -> false.
+REPO41F="$(init_repo "feature/case41f")"
+P41F="$PAYLOAD_DIR/p41f.json"
+python3 "$HB_MAT" "$PAYLOAD_DIR/hb41f" loomwright:loomwright:worker - \
+  "Done. I sent back the WORKER_RESULT block." --cwd "$REPO41F" \
+  | jq '.session_id = "sid-case41f"' > "$P41F"
+OUT41F="$(run_emitter "$REPO41F" "$P41F")"
+LINE41F="$(tail -1 "$REPO41F/.supervisor/logs/sid-case41f.jsonl" 2>/dev/null)"
+assert_eq "case41f result_block_present false (recap names the block, no handback carries it)" \
+  "false" "$(printf '%s' "$LINE41F" | jq -r '.result_block_present')"
+
 echo "== 42. rejected / stop_hook_active (v15.83.0) — a validator-rejected stop is recorded, never guessed =="
 # The emitter re-runs the REAL sibling validator (validate-worker-result.py, next
 # to it on disk) on the same payload bytes and records `rejected: true` iff that
