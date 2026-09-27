@@ -200,6 +200,58 @@ def _last_assistant_text_from_transcript(path):
         return ""
     return last_text
 
+def _last_handback_message_from_transcript(path):
+    """Return the `message` of the LAST `SubagentHandback` tool call in a
+    subagent transcript JSONL, or "" when there is none / on any failure.
+
+    Current Claude Code runtimes return a subagent's report through a
+    `SubagentHandback` tool call: the full report (including the YAML result
+    block) is that call's `input.message`, while `last_assistant_message` is a
+    short prose recap that typically NAMES the block without containing it
+    (captured 2026-09-27 from a real loomwright:code-reviewer SubagentStop).
+    Reading only the recap made every CODE_REVIEW_RESULT score with an empty
+    `decision`."""
+    last_msg = ""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                msg = obj.get("message") if isinstance(obj, dict) else None
+                if not isinstance(msg, dict) or msg.get("role") != "assistant":
+                    continue
+                content = msg.get("content")
+                if not isinstance(content, list):
+                    continue
+                for part in content:
+                    if (isinstance(part, dict) and part.get("type") == "tool_use"
+                            and part.get("name") == "SubagentHandback"):
+                        inp = part.get("input")
+                        m = inp.get("message") if isinstance(inp, dict) else None
+                        if isinstance(m, str) and m:
+                            last_msg = m
+    except OSError:
+        return ""
+    return last_msg
+
+# A result block is present only when its name stands on a HEADER line
+# (`NAME:` YAML form or `## NAME` markdown form). A bare substring match also
+# fired on prose that merely mentions the block ("I sent back the
+# CODE_REVIEW_RESULT block"), which then scored with every field empty.
+SCHEMA_NAMES = ("SUPERVISOR_RESULT", "CODE_REVIEW_RESULT", "QA_RESULT")
+
+def _has_block_header(text, name):
+    return re.search(r"^[ \t]*(?:#+[ \t]*)?" + name + r"[ \t]*:?[ \t]*$",
+                     text, re.MULTILINE) is not None
+
+def _has_any_block(text):
+    return any(_has_block_header(text, n) for n in SCHEMA_NAMES)
+
 # ---- Parse JSON ------------------------------------------------------------
 try:
     raw = sys.stdin.read()
@@ -238,6 +290,15 @@ result_block = (
 )
 if not isinstance(result_block, str):
     result_block = ""
+# The inline text may be a handback recap that names the block without
+# carrying it — prefer the subagent's SubagentHandback message when the
+# inline text holds no actual block.
+if not _has_any_block(result_block):
+    _atp = payload.get("agent_transcript_path")
+    if isinstance(_atp, str) and _atp and os.path.exists(_atp):
+        _hb = _last_handback_message_from_transcript(_atp)
+        if _has_any_block(_hb):
+            result_block = _hb
 if not result_block:
     for _tp_key in ("agent_transcript_path", "transcript_path"):
         _tp = payload.get(_tp_key)
@@ -249,13 +310,11 @@ if not result_block:
 
 # ---- Detect schema ---------------------------------------------------------
 schema = None
-if "SUPERVISOR_RESULT" in result_block:
-    schema = "SUPERVISOR_RESULT"
-elif "CODE_REVIEW_RESULT" in result_block:
-    schema = "CODE_REVIEW_RESULT"
-elif "QA_RESULT" in result_block:
-    schema = "QA_RESULT"
-else:
+for _name in SCHEMA_NAMES:
+    if _has_block_header(result_block, _name):
+        schema = _name
+        break
+if schema is None:
     fail("unknown_payload_skipped", "no_known_result_block", 5)
 
 # ---- Helpers to extract fields from a result block --------
@@ -571,9 +630,12 @@ task_id = field(result_block, "task_id") or session_id or "unknown"
 # ---- Normalised agent type for labels --------------------------------------
 def normalise_agent(at, schema):
     s = at or ""
-    # Strip plugin prefix.
-    if s.startswith("loomwright:"):
-        s = s.split(":", 1)[1]
+    # Strip plugin prefix — EVERY leading occurrence: the runtime reports
+    # plugin agents doubled (`loomwright:loomwright:code-reviewer`, observed
+    # in a live SubagentStop payload 2026-09-27), and stripping only one left
+    # `loomwright:code-reviewer` in the issue title and `task:` label.
+    while s.startswith("loomwright:"):
+        s = s[len("loomwright:"):]
     # Strip -runner suffix.
     if s.endswith("-runner"):
         s = s[:-len("-runner")]
@@ -604,19 +666,52 @@ agent_norm = normalise_agent(agent_type, schema)
 failed = (not success)
 
 # ---- Privacy-scan helper used in stage 1 (raw payload only) ----------------
-# We pre-flag any raw-string secrets; bash will re-scan the prospective body
-# in stage 2. Both scans must agree (defence in depth via shared regex set).
-def scan_for_secret(text):
+# We pre-flag any raw-string secrets; the prospective body is re-scanned with
+# the FULL set below (defence in depth via shared regex set).
+def scan_for_secret(text, skip=()):
     for rx, label in PRIVACY_PATTERNS:
+        if label in skip:
+            continue
         if rx.search(text):
             return label
     return ""
 
-# Walk every string field of payload (1 level deep) for raw secrets.
+# Home paths identify the user (the username) but are not credentials, and
+# agent reports carry them almost always (SUPERVISOR_RESULT's worktree `path`
+# is absolute BY SCHEMA; reviewers cite absolute file paths). Blocking on them
+# meant nothing was ever posted. They are REDACTED out of the prospective body
+# instead (`redact_home_paths` below, applied before the final body scan, which
+# still runs the FULL pattern set and stays fail-closed). Every secret-class
+# pattern (keys, tokens, bearer, password, email, .env assignment) still
+# hard-blocks in the raw scan exactly as before.
+HOME_PATH_LABELS = frozenset(("macos-home-path", "linux-home-path"))
+
+def redact_home_paths(text):
+    out = text
+    for rx, label in PRIVACY_PATTERNS:
+        if label in HOME_PATH_LABELS:
+            out = rx.sub("[REDACTED:" + label + "]/", out)
+    return out
+
+# Walk every string field of payload (1 level deep) for raw secrets — EXCEPT
+# the runtime's transport metadata. Claude Code always sets `cwd`,
+# `transcript_path`, `agent_transcript_path` and `scratchpad_dir` to absolute
+# paths, so on macOS/Linux they ALWAYS match the home-path patterns; scanning
+# them blocked 100% of real events (4,580 PRIVACY_BLOCKED, 0 sent, 2026-05 ..
+# 2026-09). None of them is ever copied into the issue: the body is built only
+# from the resolved result text, the alnum-sanitized session_id and
+# agent_type. Every OTHER string field stays scanned (fail-closed default for
+# any field a future runtime adds).
+TRANSPORT_KEYS = frozenset((
+    "cwd", "transcript_path", "agent_transcript_path", "scratchpad_dir",
+    "hook_event_name", "permission_mode", "agent_id", "prompt_id",
+))
 raw_hit = ""
 for k, v in payload.items():
+    if k in TRANSPORT_KEYS:
+        continue
     if isinstance(v, str):
-        h = scan_for_secret(v)
+        h = scan_for_secret(v, skip=HOME_PATH_LABELS)
         if h:
             raw_hit = h
             break
@@ -626,7 +721,7 @@ for k, v in payload.items():
 # above would miss a secret embedded there. The body scan only ever sees the
 # REDACTED copy, so this raw scan is the authoritative fail-closed gate.
 if not raw_hit:
-    raw_hit = scan_for_secret(result_block)
+    raw_hit = scan_for_secret(result_block, skip=HOME_PATH_LABELS)
 
 # ---- Build prospective body components -------------------------------------
 # Issues Detected — per schema.
@@ -771,7 +866,7 @@ body.append("```json\n")
 body.append(raw_data_json + "\n")
 body.append("```\n")
 
-body_text = "".join(body)
+body_text = redact_home_paths("".join(body))
 
 # ---- Privacy scan (final) on prospective issue body + raw payload ----------
 body_hit = scan_for_secret(body_text)
