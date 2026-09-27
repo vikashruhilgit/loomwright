@@ -14,6 +14,13 @@
 # block and BLOCKS an invalid one — the second is what proves the block was
 # actually read, not rubber-stamped.
 #
+# Section I covers `--main-session`, the mode the `Stop` hook runs (a reviewer
+# as the MAIN agent of its own session). It replays the committed real Stop
+# payloads (fixtures/stop-payload-shape-probe.json): a main thread with a
+# reviewer running in the BACKGROUND must be allowed. The retired `type: prompt`
+# Stop hook judged that background child and blocked every main-thread turn end
+# while it ran (2026-09-27).
+#
 # Separate from test-result-validators.sh so the rule-by-rule coverage reads
 # next to the one validator it falsifies. Same contract, same wire shape:
 #   pass -> exactly `{}`;  fail -> exactly `{"decision": "block", "reason": …}`;
@@ -30,9 +37,10 @@ V="$SCRIPT_DIR/validate-code-review-result.py"
 HOOKS="$SCRIPT_DIR/../hooks/hooks.json"
 HB_FIX="$SCRIPT_DIR/fixtures/subagentstop-handback-real-shape"
 HB_MAT="$HB_FIX/materialize.py"
+STOP_FIX="$SCRIPT_DIR/fixtures/stop-payload-shape-probe.json"
 
 for f in "$V" "$SCRIPT_DIR/result_block_parser.py" "$HOOKS" "$HB_MAT" \
-         "$HB_FIX/payload.json" "$HB_FIX/agent-transcript.jsonl"; do
+         "$HB_FIX/payload.json" "$HB_FIX/agent-transcript.jsonl" "$STOP_FIX"; do
   if [ ! -e "$f" ]; then
     echo "FATAL  required file not found: $f" >&2
     exit 1
@@ -316,7 +324,58 @@ assert_block "no handback at all, recap only -> missing block" "missing CODE_REV
 run_hb "$V3_DIFF" --parent-handback
 assert_block "a handback in the PARENT transcript is someone else's report -> not used" "missing CODE_REVIEW_RESULT block"
 
-echo "== I. hooks.json wiring =="
+echo "== I. --main-session (the Stop hook; real payloads captured 2026-09-27) =="
+# run_ms <probe> [agent_type|-|@absent] [textfile] [extra validator args…] —
+# replay a committed Stop payload through `--main-session`, optionally
+# overriding the top-level agent_type ("-" keeps it, "@absent" deletes it) and
+# last_assistant_message (read from textfile).
+run_ms() {
+  local probe="$1" at="${2:--}" txt="${3:-}"; shift 3 2>/dev/null || shift $#
+  python3 - "$STOP_FIX" "$probe" "$at" "$txt" > "$TMPROOT/.stop.json" <<'EOF'
+import json, sys
+fix, probe, at, txt = sys.argv[1:5]
+d = json.load(open(fix, encoding="utf-8"))
+p = dict(d["probe_a_main_thread_with_background_reviewer"]["payload_while_reviewer_runs"]
+         if probe == "a" else d["probe_b_agent_session_reviewer"]["payload_first_turn_end"])
+if at == "@absent":
+    p.pop("agent_type", None)
+elif at != "-":
+    p["agent_type"] = at
+if txt:
+    p["last_assistant_message"] = open(txt, encoding="utf-8").read()
+sys.stdout.write(json.dumps(p))
+EOF
+  LAST_OUT="$( ( cd "$TMPROOT" && python3 "$V" --main-session "$@" < "$TMPROOT/.stop.json" ) 2>/dev/null)"
+  LAST_RC=$?
+}
+run_ms a
+assert_pass "main thread, reviewer RUNNING in background_tasks[], no top-level agent_type -> {} (the 2026-09-27 false block)"
+LAST_OUT="$( ( cd "$TMPROOT" && python3 "$V" < "$TMPROOT/.stop.json" ) 2>/dev/null)"; LAST_RC=$?
+assert_block "control: the same payload WITHOUT --main-session is validated and blocked -> the gate is what allows it" "missing CODE_REVIEW_RESULT block"
+sub ms-bad.md v3-diff.md 's.replace("decision: PASS", "decision: NEEDS_HUMAN").split("  issues:")[0] + "  issues: []\n  summary: \"x\"\n```\n"'
+MS_BAD="$F"
+run_ms a @absent "$MS_BAD"
+assert_pass "main thread whose last message HOLDS a broken CODE_REVIEW_RESULT (inline /code-reviewer, prose about reviews) -> {}"
+run_ms b
+assert_block "--agent code-reviewer session, reply without a block -> blocked (the case the Stop hook exists for)" "missing CODE_REVIEW_RESULT block"
+run_ms b - "$V3_DIFF"
+assert_pass "--agent code-reviewer session, valid v3 block -> {}"
+run_ms b - "$MS_BAD"
+assert_block "--agent code-reviewer session, INVALID block -> blocked on its own rule" "(v3 rule l)"
+run_ms b "loomwright:code-reviewer"
+assert_block "single-prefix agent_type (the frontmatter name, user-level install) is the reviewer too" "missing CODE_REVIEW_RESULT block"
+run_ms b "loomwright:loomwright:review-pr-runner"
+assert_pass "another --agent session (review-pr-runner) -> {}"
+run_ms b "other-plugin:code-reviewer"
+assert_pass "a different plugin's code-reviewer -> {} (identity is anchored to loomwright)"
+printf 'not json' > "$TMPROOT/.stop.json"
+LAST_OUT="$( ( cd "$TMPROOT" && python3 "$V" --main-session < "$TMPROOT/.stop.json" ) 2>/dev/null)"; LAST_RC=$?
+assert_pass "unparseable Stop payload -> {} exit 0"
+printf '["loomwright:loomwright:code-reviewer"]' > "$TMPROOT/.stop.json"
+LAST_OUT="$( ( cd "$TMPROOT" && python3 "$V" --main-session < "$TMPROOT/.stop.json" ) 2>/dev/null)"; LAST_RC=$?
+assert_pass "non-object Stop payload -> {} exit 0"
+
+echo "== J. hooks.json wiring =="
 wiring="$(python3 - "$HOOKS" <<'EOF'
 import json, sys
 d = json.load(open(sys.argv[1]))
@@ -325,17 +384,28 @@ leaves = [h for m in d["hooks"]["SubagentStop"] if m.get("matcher") == "loomwrig
 prompts = [h for h in leaves if h.get("type") == "prompt"]
 val = [h for h in leaves if h.get("type") == "command"
        and "validate-code-review-result.py" in h.get("command", "")]
+stop = [h for m in d["hooks"].get("Stop", []) for h in m["hooks"]]
+stop_val = [h for h in stop if h.get("type") == "command"
+            and "validate-code-review-result.py" in h.get("command", "")]
 if prompts:
     print("prompt hook still wired")
 elif len(val) != 1:
     print("expected exactly one validator leaf, got %d" % len(val))
 elif not val[0]["command"].rstrip().endswith("|| true"):
     print("validator leaf lacks the fail-safe `|| true`")
+elif "--main-session" in val[0]["command"]:
+    print("SubagentStop leaf must not carry --main-session")
+elif [h for h in stop if h.get("type") == "prompt"]:
+    print("Stop still carries a prompt hook")
+elif len(stop_val) != 1 or "--main-session" not in stop_val[0]["command"]:
+    print("Stop: expected exactly one validator leaf with --main-session")
+elif not stop_val[0]["command"].rstrip().endswith("|| true"):
+    print("Stop validator leaf lacks the fail-safe `|| true`")
 else:
     print("ok")
 EOF
 )"
-if [ "$wiring" = "ok" ]; then ok "code-reviewer matcher: one command validator leaf with || true, no prompt leaf"
+if [ "$wiring" = "ok" ]; then ok "code-reviewer matcher + Stop: one command validator leaf each (Stop with --main-session), || true, no prompt leaf"
 else no "code-reviewer matcher wiring: $wiring"; fi
 
 echo "RESULT  pass=$PASS_COUNT  fail=$FAIL_COUNT"

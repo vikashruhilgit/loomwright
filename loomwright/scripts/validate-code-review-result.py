@@ -48,9 +48,27 @@ INVARIANT: ALWAYS exits 0. Decision on stdout only — `{}` to allow,
 `{"decision": "block", "reason": …}` to block (result_block_parser.emit),
 never the `{"ok": …}` prompt-hook shape — including when the shared module
 below cannot be imported (see the guard).
+
+`--main-session` MODE (the `Stop` hook, v15.108.1): the same rules for a
+code-reviewer running as the MAIN agent of its own session
+(`claude --agent loomwright:code-reviewer`), where no SubagentStop fires. The
+`Stop` event fires at EVERY main-thread turn end of EVERY session, so this mode
+first decides whose turn is ending from the payload's TOP-LEVEL `agent_type`
+alone and allows (`{}`) anything that is not the reviewer. Probed 2026-09-27 on
+Claude Code v2.1.283 (fixture: scripts/fixtures/stop-payload-shape-probe.json):
+a plain main thread's Stop payload carries NO top-level `agent_type`; an
+`--agent loomwright:code-reviewer` session carries
+`agent_type: "loomwright:loomwright:code-reviewer"`; and a main thread with a
+reviewer running in the background carries that same string only INSIDE
+`background_tasks[]`. The retired `type: prompt` Stop hook read the whole
+payload and judged that background child, blocking every main-thread turn end
+while the reviewer ran. `background_tasks` is never read here.
 """
 
+import io
+import json
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -270,8 +288,33 @@ def _check_v3(fields, decision):
                     "and severity BLOCKING or HIGH (v3 rule k)")
 
 
+MAIN_SESSION_FLAG = "--main-session"
+# The frontmatter name is `loomwright:code-reviewer`; the runtime reports the
+# plugin-doubled `loomwright:loomwright:code-reviewer` (both probed).
+REVIEWER_AGENT_TYPE = re.compile(r"^(?:loomwright:){1,2}code-reviewer$")
+
+
+def _main_session_stream(argv):
+    """`--main-session` gate: return a replay stream of stdin when the session
+    whose turn is ending IS the code-reviewer, else allow (`{}`) and exit.
+    Identity is the payload's top-level `agent_type` ONLY — never
+    `background_tasks[]`, never message content."""
+    raw = sys.stdin.read()
+    try:
+        payload = json.loads(raw)
+    except ValueError:
+        emit(True)
+    agent_type = payload.get("agent_type") if isinstance(payload, dict) else None
+    if not (isinstance(agent_type, str) and REVIEWER_AGENT_TYPE.match(agent_type)):
+        emit(True)
+    return io.StringIO(raw), [a for a in argv if a != MAIN_SESSION_FLAG]
+
+
 def main():
-    _name, fields, _text, _payload = load_block(BLOCK, MISSING_BLOCK)
+    argv, stream = sys.argv[1:], None
+    if MAIN_SESSION_FLAG in argv:
+        stream, argv = _main_session_stream(argv)
+    _name, fields, _text, _payload = load_block(BLOCK, MISSING_BLOCK, argv=argv, stream=stream)
 
     # ── schema_version ∈ {2, 3} ──────────────────────────────────────────────
     if not present(fields, "schema_version"):

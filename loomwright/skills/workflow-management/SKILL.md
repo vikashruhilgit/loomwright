@@ -2,8 +2,8 @@
 name: workflow-management
 description: Patterns for managing autonomous workflows including context, checkpoints, parallel execution, and permissions. Use when orchestrating multi-stage agent workflows.
 allowed-tools: [Read, Bash]
-version: "1.2.1"
-lastUpdated: "2026-07-30"
+version: "1.2.2"
+lastUpdated: "2026-09-28"
 ---
 
 # Workflow Management Skill
@@ -384,11 +384,14 @@ full reviewer subagent. Which to use depends on whether the check is mechanical:
   presence, type, enum membership, cross-field invariants. Deterministic, zero model tokens, no
   latency, and self-testable over fixtures in CI. The `TaskCompleted` example above is prompt-shaped
   only because judging "genuinely done vs abandoned" is not mechanical.
-- **`type: prompt` (reserve for genuine judgement).** Only two remain: `Stop` and `TaskCompleted`.
+- **`type: prompt` (reserve for genuine judgement).** Only one remains: `TaskCompleted`.
   Each spends a haiku call (30s timeout) whose model sees the hook PAYLOAD, not the transcript — so
   never put one on a `SubagentStop` matcher to judge a result block: the payload carries only the
   subagent's recap, while the block is in its `SubagentHandback` report (why `code-reviewer`'s became
-  `validate-code-review-result.py` after the 2026-09-27 probe).
+  `validate-code-review-result.py` after the 2026-09-27 probe). Nor on `Stop`: it fires at every
+  main-thread turn end and its payload lists running children in `background_tasks[]`, which the
+  model judged as the finishing session (why `Stop` became `validate-code-review-result.py
+  --main-session`, keyed on the payload's top-level `agent_type`).
 
 > v15.17.0 converted the five mechanical `SubagentStop` prompt validators (worker, execute-manager,
 > supervisor-runner, qa-executor, plan-reviewer) to command scripts. If you are adding a hook whose
