@@ -113,6 +113,12 @@ jobs:
             only counts comments longer than 200 characters as a posted review, so a
             one-line "no new findings" still registers as silence.
 
+            The LAST line of EVERY comment you post — finding-bearing and no-findings
+            alike — is exactly this line, verbatim, on a line of its own:
+            execution: none — static review; this reviewer cannot run code in CI, so runtime behavior is NOT verified by this review.
+            It is informational, not a gate: it tells every reader (and the drain that
+            consumes this comment) that this lens reads code and never runs it.
+
           # No --model or --effort pin: inherit the action's defaults.
           #
           # --allowed-tools REPLACES the defaults, it does not extend them. Until
