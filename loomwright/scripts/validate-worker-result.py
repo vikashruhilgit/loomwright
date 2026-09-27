@@ -12,9 +12,13 @@ string verbatim, that exact string is used.
 
   (1) a WORKER_RESULT block with schema_version, task_id, status,
       files_modified, and summary fields
-  (2) at least one of files_modified or files_created is non-empty when
-      status=completed (create-only subtasks are valid) — UNLESS the block
-      declares `no_changes: true` (rule 12 below, the one exemption)
+  (2) at least one of files_modified, files_created or files_deleted is
+      non-empty when status=completed (create-only and delete-only subtasks
+      are valid; the `none` placeholder is empty) — UNLESS the block declares
+      `no_changes: true` (rule 12 below, the one exemption). files_deleted is
+      OPTIONAL (agents/worker.md §"Output Format" emits it, defaulting to
+      `none`); it was counted from 2026-09-27 after a delete-only worker hit
+      the same continuation-cap wedge rule 12 closed for read-only work
   (3) a worker summary file was written — {worktree}/.worker-summary.md or
       .supervisor/worker-summaries/{task_id}.md — OR the output records the
       literal marker summary_file_write_failed
@@ -99,9 +103,9 @@ hooks.json prompt string:
 
   (12) no_changes — OPTIONAL and ADDITIVE at schema_version 2. The ONE
       sanctioned exemption from rule 2: a `status: completed` block whose
-      files_modified AND files_created are both empty is accepted when it
-      declares `no_changes: true` (a read-only / verify-only subtask that
-      correctly changed nothing). WHY an explicit flag and not an inference:
+      files_modified, files_created AND files_deleted are all empty is
+      accepted when it declares `no_changes: true` (a read-only /
+      verify-only subtask that correctly changed nothing). WHY an explicit flag and not an inference:
       before this rule a worker handed a read-only task that honestly
       reported completed-with-empty-lists was re-prompted by rule 2 on every
       SubagentStop until the runtime's continuation cap (8 on Claude Code
@@ -113,9 +117,11 @@ hooks.json prompt string:
       auditable, and the consumer's on-disk verify-provides.sh re-run (disk
       wins) remains the backstop against a false claim. WHEN PRESENT it must
       be a YAML boolean; `no_changes: true` alongside a non-empty
-      files_modified or files_created is a self-contradiction and is
-      rejected at ANY status. `no_changes: false` / absence change nothing —
-      rule 2 applies as before. It does NOT exempt any other rule: rule 3's
+      files_modified, files_created or files_deleted is a self-contradiction
+      and is rejected at ANY status (files_deleted matters most here: Execute
+      Manager drops a no_changes subtask from merge_order, so a false claim
+      over real deletions would leave them uncommitted). `no_changes:
+      false` / absence change nothing — rule 2 applies as before. It does NOT exempt any other rule: rule 3's
       summary file, rule 8's outputs_gap/status invariant, etc. all still
       apply.
 
@@ -229,7 +235,8 @@ REASON_NO_CHANGES_SHAPE = (
     "additive field, rule 12)"
 )
 REASON_NO_CHANGES_CONTRADICTION = (
-    "no_changes: true contradicts a non-empty files_modified/files_created — "
+    "no_changes: true contradicts a non-empty files_modified/files_created/"
+    "files_deleted — "
     "declare no_changes only when the subtask changed nothing (rule 12)"
 )
 
@@ -278,8 +285,11 @@ def main():
 
     status = as_text(fields.get("status")).strip()
 
-    touched_files = _non_empty_list(fields.get("files_modified")) or _non_empty_list(
-        fields.get("files_created")
+    # files_deleted counts: a delete-only subtask changed the tree and has a
+    # branch to commit and merge. `none` / [] / null stay empty.
+    touched_files = any(
+        _non_empty_list(fields.get(f))
+        for f in ("files_modified", "files_created", "files_deleted")
     )
 
     # ── (12) no_changes shape + contradiction — evaluated BEFORE rule 2 ──────
@@ -300,8 +310,9 @@ def main():
     if status == "completed" and not touched_files and not no_changes:
         emit(
             False,
-            "status=completed requires at least one of files_modified or "
-            "files_created to be non-empty (create-only subtasks are valid) — "
+            "status=completed requires at least one of files_modified, "
+            "files_created or files_deleted to be non-empty (create-only and "
+            "delete-only subtasks are valid) — "
             "or, for a read-only/verify-only subtask that correctly changed "
             "nothing, declare no_changes: true; never list a file you did not "
             "change (rule 2)",
