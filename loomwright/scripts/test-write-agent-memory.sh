@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# run-self-tests: serial
-# ^ run alone, after the concurrent batch (run-self-tests.sh): (j5/X)/(j5/Y) mutation controls need a deliberate lock race to actually happen; under load the race window is missed and the control reads as vacuous.
+# NOT `run-self-tests: serial` (it was, from the concurrent-runner commit until 2026-09-27): the
+# (j5/X)/(j5/Y) controls used to depend on natural interleaving and read as vacuous under load. They
+# now pin every ordering with marker-file barriers (see the (j5) block), so load cannot change them.
 # test-write-agent-memory.sh — hermetic offline self-tests for write-agent-memory.sh, the SIXTH
 # sole writer and the OWNER of each agent-memory store's MEMORY.md index. Mirrors the
 # test-add-orientation.sh harness convention (pass/fail counters, ok()/no(), a RESULT tail, exit 1
@@ -982,10 +983,27 @@ fi
 #   · SIMULTANEOUS (fixture Y): both racers act on their observation at the same moment.
 #
 # The interleaving is controlled by a `find` SHIM on PATH: it runs the real `find`, captures the
-# answer, and only then sleeps for a per-waiter interval. That reproduces exactly the hazard — an
-# observation taken early and acted on late — without a single timing assumption, and it lets the
-# real `acquire_index_lock`/`release_index_lock` run VERBATIM (extracted between the INDEX LOCK
-# PRIMITIVE markers in the writer) rather than a paraphrase of them.
+# answer, and on a chosen call GATES the answer's delivery on the PEER's progress — a barrier on
+# marker files, not a sleep. It lets the real `acquire_index_lock`/`release_index_lock` run
+# VERBATIM (extracted between the INDEX LOCK PRIMITIVE markers in the writer) rather than a
+# paraphrase of them.
+#
+# WHY BARRIERS AND NOT SLEEPS (the 2026-09-26 flake). The first version delayed B's answer by a
+# fixed 2s and relied on the two waiters reaching the breaker together. But B's observation is
+# only a STALE one if B's real `find` runs BEFORE A's `rmdir` of the stale lock — and A, with no
+# delay, gets from its own `find` to that `rmdir` in milliseconds. Any scheduling skew beyond that
+# (one waiter forked or woken later under CPU contention) made B observe A's FRESH lock, skip the
+# break, and the M6 mutant read 1 acquisition instead of 2: the control reported itself vacuous for
+# reasons unrelated to the code. Each ordering the fixture needs is now a happens-before edge the
+# shim waits for, so the outcome no longer depends on how the scheduler interleaves the waiters.
+#
+# Markers, all in the race's control dir: `observed.<id>` (the shim took the gated observation),
+# `held.<id>` (the harness acquired), `done.<id>` (the harness exited, by any path). A gate opens
+# when ANY of the peer markers it names exists — `done.<peer>` is always one of them, so a peer
+# that legitimately never reaches the awaited point (the arbitration loser in the real primitive)
+# releases the gate by exiting rather than wedging it. A gate that times out writes
+# `gate-timeout.<id>`, and the race then reports a non-numeric count: a broken barrier FAILS the
+# assertion, it can never be mistaken for either expected answer.
 #
 # Each fixture is run twice: against the real primitive (exactly ONE acquisition) and against a
 # mutant with one half of the arbitration stripped (TWO acquisitions). The mutants are what make
@@ -998,13 +1016,23 @@ REAL_FIND="$(command -v find 2>/dev/null || true)"
 SHIMDIR="$LOCKH/bin"; mkdir -p "$SHIMDIR" || setup_fail "could not create the (j5) shim dir"
 cat > "$SHIMDIR/find" <<'SHIM_EOS'
 #!/bin/bash
-# find(1) shim — answers from the REAL find, then delays the ANSWER's delivery on a chosen call.
-cf="$FIND_CALL_DIR/count.$WAITER_ID"
+# find(1) shim — answers from the REAL find, then on the gated call holds the ANSWER back until
+# one of the peer markers named in $FIND_GATE_ANY exists (bounded by $RACE_GATE_MAX_SECS).
+cf="$RACE_CTL_DIR/count.$WAITER_ID"
 n=1
 [ -f "$cf" ] && n=$(( $(cat "$cf") + 1 ))
 printf '%s' "$n" > "$cf"
 out="$("$REAL_FIND" "$@" 2>/dev/null)"
-[ "$n" = "${FIND_DELAY_ON_CALL:-0}" ] && sleep "${FIND_DELAY_SECS:-0}"
+if [ "$n" = "${FIND_GATE_ON_CALL:-0}" ]; then
+  : > "$RACE_CTL_DIR/observed.$WAITER_ID"
+  polls=$(( ${RACE_GATE_MAX_SECS:-60} * 20 )) open=0
+  while [ "$polls" -gt 0 ]; do
+    for m in $FIND_GATE_ANY; do [ -e "$RACE_CTL_DIR/$m" ] && open=1; done
+    [ "$open" = 1 ] && break
+    sleep 0.05; polls=$(( polls - 1 ))
+  done
+  [ "$open" = 1 ] || : > "$RACE_CTL_DIR/gate-timeout.$WAITER_ID"
+fi
 [ -n "$out" ] && printf '%s\n' "$out"
 exit 0
 SHIM_EOS
@@ -1013,42 +1041,52 @@ chmod +x "$SHIMDIR/find" || setup_fail "could not make the (j5) find shim execut
 # build_lock_harness <source-script> <out> — the primitive VERBATIM plus a main that records every
 # successful acquisition. Extraction is by marker, not line number, so an edit above it cannot
 # silently shift what gets tested.
+#
+# A holder keeps the lock until its PEER has either exited or acquired too (bounded by
+# $RACE_GATE_MAX_SECS) rather than for a fixed interval, so a second acquisition can only ever
+# come from breaking a LIVE lock — never from a peer that was merely slow and found it released.
 build_lock_harness() {
   {
     printf '#!/bin/bash\nset -u\nPROG=lock-harness\n'
     printf 'index_lock=""\nindex_lock_token=""\nindex_breaker=""\nindex_lock_seq=0\n'
     printf 'INDEX_LOCK_WAIT_SECS="${AGENT_MEMORY_INDEX_LOCK_WAIT_SECS:-30}"\n'
+    printf 'trap '"'"': > "$RACE_CTL_DIR/done.$WAITER_ID"'"'"' EXIT\n'
     sed -n '/^# >>> INDEX LOCK PRIMITIVE/,/^# <<< INDEX LOCK PRIMITIVE/p' "$1"
     printf 'if acquire_index_lock "$1"; then\n'
-    printf '  printf "%%s\\n" "${WAITER_ID:-?}" >> "$2"\n'
-    printf '  sleep "${HOLD_SECS:-3}"\n'
+    printf '  printf "%%s\\n" "$WAITER_ID" >> "$2"\n'
+    printf '  : > "$RACE_CTL_DIR/held.$WAITER_ID"\n'
+    printf '  polls=$(( ${RACE_GATE_MAX_SECS:-60} * 20 ))\n'
+    printf '  while [ "$polls" -gt 0 ] && [ ! -e "$RACE_CTL_DIR/done.$PEER_ID" ] && [ ! -e "$RACE_CTL_DIR/held.$PEER_ID" ]; do\n'
+    printf '    sleep 0.05; polls=$(( polls - 1 ))\n  done\n'
     printf '  release_index_lock\n  exit 0\nfi\nexit 1\n'
   } > "$2"
 }
 
-# run_breaker_race <harness> <label> <A-delay-call> <A-secs> <B-delay-call> <B-secs> -> prints the
-# number of waiters that acquired. A stale lock is constructed first, so both waiters reach the
-# breaker; neither waiter can "win" by luck because the shim pins the ordering.
+# run_breaker_race <harness> <label> <A-gate-call> <A-gate-markers> <B-gate-call> <B-gate-markers>
+# -> prints the number of waiters that acquired, or `gate-timeout:<n>` if any barrier timed out.
+# A stale lock is constructed first, so both waiters reach the breaker; neither can "win" by luck
+# because the shim's gates pin the ordering.
 run_breaker_race() {
-  local h="$1" label="$2" ac="$3" as="$4" bc="$5" bs="$6"
-  local d="$LOCKH/race-$label" holders="$LOCKH/holders-$label" cd="$LOCKH/calls-$label"
+  local h="$1" label="$2" ac="$3" ag="$4" bc="$5" bg="$6"
+  local d="$LOCKH/race-$label" holders="$LOCKH/holders-$label" cd="$LOCKH/ctl-$label" n
   rm -rf "$d" "$cd" 2>/dev/null
   mkdir -p "$d" "$cd" || return 1
   : > "$holders"
   mkdir "$d/.write-agent-memory.lock" 2>/dev/null || return 1
   printf 'dead-holder\n' > "$d/.write-agent-memory.lock/owner" 2>/dev/null
   touch -t 200001010000 "$d/.write-agent-memory.lock" 2>/dev/null || return 1
-  PATH="$SHIMDIR:$PATH" REAL_FIND="$REAL_FIND" FIND_CALL_DIR="$cd" WAITER_ID=A \
-    FIND_DELAY_ON_CALL="$ac" FIND_DELAY_SECS="$as" AGENT_MEMORY_INDEX_LOCK_WAIT_SECS=1 HOLD_SECS=3 \
+  PATH="$SHIMDIR:$PATH" REAL_FIND="$REAL_FIND" RACE_CTL_DIR="$cd" WAITER_ID=A PEER_ID=B \
+    FIND_GATE_ON_CALL="$ac" FIND_GATE_ANY="$ag" AGENT_MEMORY_INDEX_LOCK_WAIT_SECS=1 \
     bash "$h" "$d" "$holders" >/dev/null 2>&1 &
   local pa=$!
-  PATH="$SHIMDIR:$PATH" REAL_FIND="$REAL_FIND" FIND_CALL_DIR="$cd" WAITER_ID=B \
-    FIND_DELAY_ON_CALL="$bc" FIND_DELAY_SECS="$bs" AGENT_MEMORY_INDEX_LOCK_WAIT_SECS=1 HOLD_SECS=3 \
+  PATH="$SHIMDIR:$PATH" REAL_FIND="$REAL_FIND" RACE_CTL_DIR="$cd" WAITER_ID=B PEER_ID=A \
+    FIND_GATE_ON_CALL="$bc" FIND_GATE_ANY="$bg" AGENT_MEMORY_INDEX_LOCK_WAIT_SECS=1 \
     bash "$h" "$d" "$holders" >/dev/null 2>&1 &
   local pb=$!
   wait "$pa" 2>/dev/null || true
   wait "$pb" 2>/dev/null || true
-  wc -l < "$holders" | tr -d '[:space:]'
+  n="$(wc -l < "$holders" | tr -d '[:space:]')"
+  if ls "$cd"/gate-timeout.* >/dev/null 2>&1; then printf 'gate-timeout:%s\n' "$n"; else printf '%s\n' "$n"; fi
 }
 
 H_REAL="$MUT_DIR/lock-harness-real.sh"
@@ -1076,18 +1114,23 @@ n_bk_mut="$(grep -c '^    if mkdir "\$breaker" 2>/dev/null; then' "$M7" 2>/dev/n
 [ "$n_bk_orig" -eq 1 ] && [ "$n_bk_mut" -eq 0 ] && ok "(j5) M7 is NON-VACUOUS: the single-winner arbitration directory is gone ($n_bk_orig → $n_bk_mut sites)" || no "(j5) M7 did not take (arbitration sites $n_bk_orig → $n_bk_mut) — the control proves nothing"
 H_M7="$MUT_DIR/lock-harness-m7.sh"; build_lock_harness "$M7" "$H_M7"
 
-# FIXTURE X — the SEQUENTIAL hazard. B's first staleness answer is delivered 2s late, so B observes
-# the STALE lock but acts on that observation after A has already broken it and re-acquired.
-x_real="$(run_breaker_race "$H_REAL" real-x 0 0 1 2)"
+# FIXTURE X — the SEQUENTIAL hazard. Both gates sit on find call 1 (the unarbitrated staleness
+# test). A's answer is held until B has OBSERVED (so B's observation is guaranteed to predate A's
+# break); B's answer is held until A HOLDS the re-taken lock (so B acts on a stale observation of a
+# lock that is now live). Happens-before: B observes stale → A breaks + acquires → B acts.
+x_real="$(run_breaker_race "$H_REAL" real-x 1 "observed.B done.B" 1 "held.A done.A")"
 [ "$x_real" = "1" ] && ok "(j5/X) sequential: exactly ONE waiter acquired — the late breaker re-checked, saw a FRESH lock and left it alone" || no "(j5/X) $x_real waiters acquired the lock (expected 1) — a breaker acting on a stale observation deleted a LIVE lock and both entered the critical section"
-x_m6="$(run_breaker_race "$H_M6" m6-x 0 0 1 2)"
+x_m6="$(run_breaker_race "$H_M6" m6-x 1 "observed.B done.B" 1 "held.A done.A")"
 [ "$x_m6" = "2" ] && ok "(j5/X) M6 CONFIRMED: without the re-check the same fixture puts TWO waiters in the lock — the assertion above is caused by the re-check and nothing else" || no "(j5/X) the re-check-stripped mutant did NOT double-acquire ($x_m6 acquisitions) — (j5/X) is passing for some other reason and is vacuous"
 
-# FIXTURE Y — the SIMULTANEOUS hazard. Both waiters observe the stale lock at the same moment and
-# both have their answer delivered late (A later than B), so both would act on it unarbitrated.
-y_real="$(run_breaker_race "$H_REAL" real-y 2 3 2 1)"
+# FIXTURE Y — the SIMULTANEOUS hazard. Both gates sit on find call 2 (the re-check, reached only
+# from inside the breaker block). B's answer is held until A has OBSERVED; A's answer is held until
+# B HOLDS. So whoever gets inside the breaker block observes the stale lock before anyone breaks it,
+# and A acts on its observation after B has broken and re-taken. With the arbitration directory
+# intact only one waiter ever reaches call 2 and the other's exit (`done.*`) opens the gate.
+y_real="$(run_breaker_race "$H_REAL" real-y 2 "held.B done.B" 2 "observed.A done.A")"
 [ "$y_real" = "1" ] && ok "(j5/Y) simultaneous: exactly ONE waiter acquired — only the holder of the arbitration directory may break, the other refuses" || no "(j5/Y) $y_real waiters acquired the lock (expected 1) — two racers broke the same lock and both entered the critical section"
-y_m7="$(run_breaker_race "$H_M7" m7-y 2 3 2 1)"
+y_m7="$(run_breaker_race "$H_M7" m7-y 2 "held.B done.B" 2 "observed.A done.A")"
 [ "$y_m7" = "2" ] && ok "(j5/Y) M7 CONFIRMED: without the arbitration directory the same fixture puts TWO waiters in the lock" || no "(j5/Y) the arbitration-stripped mutant did NOT double-acquire ($y_m7 acquisitions) — (j5/Y) is passing for some other reason and is vacuous"
 
 echo "== (g) the confirm-only gate: a non-TTY run WITHOUT --confirm writes nothing =="
