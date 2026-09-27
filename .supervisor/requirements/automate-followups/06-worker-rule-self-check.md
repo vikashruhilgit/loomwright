@@ -79,7 +79,7 @@ exactly as today. Enforcement must never depend on a machine having been stamped
 ## Out of scope
 - Adding path scoping to `rules-check.sh` (explicitly refused above).
 - Any new `WORKER_RESULT` field, or any `schema_version` bump.
-- Making a rule failure block the worker — that decision belongs to item 07 (parked: `proposed/automate-followups-07-rule-enforcement-at-review-and-merge.md`).
+- Making a rule failure block the worker — that decision belongs to item 07 (`automate-followups/07-rule-enforcement-at-review-and-merge.md`, queued 2026-09-28).
 
 ## Risks
 - **Worker prompt budget.** `agents/worker.md` took three consecutive raises during the hardening run
