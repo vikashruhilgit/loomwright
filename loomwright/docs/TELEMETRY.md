@@ -1523,12 +1523,14 @@ contradiction the split was created to resolve.
 ### Deny-list (regex)
 
 The core scans two surfaces inside `send-telemetry-core.sh`: the **raw
-input payload** (every string field, plus the *resolved* result text — which
-may have been read from the transcript JSONL and is therefore not itself a
-payload field; scanned before consent so privacy violations always log even on
-healthy runs) AND the **prospective issue body** (the rendered title + body +
-redacted JSON payload, post-render). Any single match in either scan -> fail
-closed (exit 2). The core's stderr is
+input payload** (every string field EXCEPT the runtime's transport metadata —
+`cwd`, `transcript_path`, `agent_transcript_path`, `scratchpad_dir`,
+`hook_event_name`, `permission_mode`, `agent_id`, `prompt_id` — plus the
+*resolved* result text, which may have been read from the transcript JSONL and
+is therefore not itself a payload field; scanned before consent so privacy
+violations always log even on healthy runs) AND the **prospective issue body**
+(the rendered title + body + redacted JSON payload, post-render). Any single
+match in either scan -> fail closed (exit 2). The core's stderr is
 redacted separately by the wrapper before it lands in `telemetry.log`
 (see "Stderr redaction" below) — that is defence in depth, not part of
 the fail-closed check.
@@ -1544,6 +1546,25 @@ the fail-closed check.
 | `/home/[a-zA-Z._\-]+/`          | Linux home paths (PII — usernames)               |
 | `[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}` | Email addresses |
 | `^\s*[A-Z_][A-Z0-9_]*=.+$` (multiline) | Raw `.env` style assignments              |
+
+**Home paths redact, they do not block.** The two home-path rows are
+excluded from the *raw* scan and instead replaced with
+`[REDACTED:<label>]/` throughout the prospective body before the final body
+scan, which still runs the FULL set and stays fail-closed. Every other row
+still hard-blocks in both scans. Why: Claude Code sets the transport keys
+above to absolute paths on every real payload, and agent reports cite
+absolute paths almost always (SUPERVISOR_RESULT's worktree `path` is absolute
+by schema) — scanning them fail-closed blocked 100% of real events (4,580
+`PRIVACY_BLOCKED pattern=macos-home-path`, 0 sent, May–Sep 2026). None of the
+transport keys is ever copied into the issue. Pinned by
+`test-send-telemetry-core.sh` Group 11 (real runtime payload shape).
+
+**Result text source.** Current runtimes return a subagent's report through a
+`SubagentHandback` tool call; `last_assistant_message` is then a prose recap
+that names the block without carrying it. When the inline text holds no block
+*header line* (`NAME:` or `## NAME`), the core reads the last
+`SubagentHandback` `message` from `agent_transcript_path`. A bare mention of a
+block name in prose is not a result (exit 5, `no_known_result_block`).
 
 Subtask #2b owns the canonical list in code; this table is the spec.
 Any change to the regex set must update both this doc and the script in

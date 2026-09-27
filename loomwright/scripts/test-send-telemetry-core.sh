@@ -290,6 +290,82 @@ write("longerr-b.json", block(
     "longerr-task", "failed",
     ["- subtasks_failed: [%sTAILBBBB]" % LONG_PREFIX,
      "- summary: long primary_error fixture B"]))
+
+# Group 11: REAL runtime payload shape (captured 2026-09-27 from a live
+# code-reviewer SubagentStop — the runtime reported its agent_type with the
+# plugin prefix DOUBLED, `loomwright:loomwright:code-reviewer`, which is why
+# the fixtures below use that form). Two properties the older fixtures never
+# exercised, and that together blocked 100% of real events:
+#  (a) transport keys (cwd / transcript_path / agent_transcript_path /
+#      scratchpad_dir) are ABSOLUTE home paths on every real payload;
+#  (b) the report reaches the parent via a `SubagentHandback` tool call — its
+#      `message` carries the YAML block, while `last_assistant_message` is a
+#      prose recap that only NAMES the block.
+HOME_ROOT = "/Users/testuser/proj"
+def handback_transcript(name, message):
+    path = os.path.join(outdir, name)
+    entry = {"type": "assistant", "message": {"role": "assistant", "content": [
+        {"type": "tool_use", "name": "SubagentHandback", "input": {"message": message}}]}}
+    with open(path, "w") as fh:
+        fh.write(json.dumps(entry) + "\n")
+    return path
+
+def real_payload(name, recap, agent_transcript, agent_type="loomwright:loomwright:code-reviewer"):
+    payload = {
+        "session_id": "fixture-core-%s" % os.path.splitext(name)[0],
+        "transcript_path": HOME_ROOT + "/transcripts/session.jsonl",
+        "cwd": HOME_ROOT,
+        "scratchpad_dir": HOME_ROOT + "/scratchpad",
+        "agent_id": "a0000000000000000",
+        "agent_type": agent_type,
+        "hook_event_name": "SubagentStop",
+        "permission_mode": "auto",
+        "stop_hook_active": False,
+        "agent_transcript_path": agent_transcript,
+        "last_assistant_message": recap,
+        "background_tasks": [],
+    }
+    with open(os.path.join(outdir, name), "w") as fh:
+        json.dump(payload, fh)
+
+def review_block(desc):
+    return "\n".join([
+        "Review done.", "", "```yaml", "CODE_REVIEW_RESULT:",
+        "  schema_version: 3",
+        "  review_mode: diff_review",
+        "  files_checked:",
+        "    - %s/x.sh" % HOME_ROOT,
+        "  decision: FAIL",
+        "  issues:",
+        "    - severity: HIGH",
+        "      category: new",
+        "      file: %s/x.sh" % HOME_ROOT,
+        "      description: %s" % desc,
+        "  summary: one high issue",
+        "```"])
+
+RECAP = "Review failed with one HIGH issue. I sent back the CODE_REVIEW_RESULT block."
+real_payload("real-handback-fail.json", RECAP, handback_transcript(
+    "real-handback-fail.agent.jsonl",
+    review_block("unquoted var in %s/x.sh breaks on spaces" % HOME_ROOT)))
+real_payload("real-handback-secret.json", RECAP, handback_transcript(
+    "real-handback-secret.agent.jsonl",
+    review_block("token ghp_REALSHAPESECRET0123456789 leaked")))
+real_payload("real-prose-only.json", RECAP, os.path.join(outdir, "no-such-agent.jsonl"))
+# QA_RESULT in YAML header form (`QA_RESULT:`) delivered via handback — the
+# older qa fixture only covers the `## QA_RESULT` markdown form.
+real_payload("real-handback-qa.json",
+    "QA run finished; 8 of 12 tests failed. I sent back the QA_RESULT block.",
+    handback_transcript("real-handback-qa.agent.jsonl", "\n".join([
+        "QA done.", "", "```yaml", "QA_RESULT:",
+        "  schema_version: 1",
+        "  task_id: real-qa-task",
+        "  tests_generated: 12",
+        "  tests_passed: 4",
+        "  tests_failed: 8",
+        "  summary: eight generated tests failed",
+        "```"])),
+    agent_type="loomwright:loomwright:qa-executor")
 PY
 if [ ! -f "$FIXDIR/secrets.tsv" ]; then
   echo "FATAL  fixture generation failed" >&2
@@ -328,7 +404,11 @@ fi
 # Live (non-dry-run) invocations: privacy blocks in stage 1, BEFORE consent, so
 # the real exit code must be 2 with a PRIVACY_BLOCKED stderr line naming the label.
 echo ""
-echo "==== Group 1: privacy true-positives (9 labels, exit 2 + label) ===="
+# Home-path labels are the exception: they are REDACTED out of the body rather
+# than blocking (agent reports carry absolute paths almost always — blocking on
+# them meant 0 issues were ever sent), so those two must pass the scan and stop
+# at the missing consent (exit 3). Group 11 proves the redaction itself.
+echo "==== Group 1: privacy true-positives (7 secret labels exit 2; 2 home-path labels redact) ===="
 user_scope_none
 consent_none
 LABELS_SEEN=0
@@ -337,8 +417,16 @@ while IFS="$(printf '\t')" read -r label secret; do
   LABELS_SEEN=$((LABELS_SEEN + 1))
   out="$(run_core "$FIXDIR/priv-$label.json")"
   rc=$?
-  assert_eq "privacy_exit=2 [$label]" "2" "$rc"
-  assert_match "privacy_label [$label]" "PRIVACY_BLOCKED pattern=$label" "$out"
+  case "$label" in
+    macos-home-path|linux-home-path)
+      assert_eq "home_path_not_blocked_exit=3 [$label]" "3" "$rc"
+      assert_not_match "home_path_no_privacy_block [$label]" "PRIVACY_BLOCKED" "$out"
+      ;;
+    *)
+      assert_eq "privacy_exit=2 [$label]" "2" "$rc"
+      assert_match "privacy_label [$label]" "PRIVACY_BLOCKED pattern=$label" "$out"
+      ;;
+  esac
 done < "$FIXDIR/secrets.tsv"
 assert_eq "privacy_label_count" "9" "$LABELS_SEEN"
 
@@ -844,6 +932,38 @@ else
   echo "FAIL  mutation_control_sentinels_present  MUTATION_CONTROL markers not found in $CORE"
   FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
+
+# ---- Group 11: real runtime payload shape (transport paths + SubagentHandback) -
+echo ""
+echo "==== Group 11: real runtime payload shape ===="
+consent_none
+user_scope_write '{"telemetry": "always_allow", "telemetry_repo": "example/repo"}'
+out="$(run_core "$FIXDIR/real-handback-fail.json" --dry-run)"
+assert_eq "real_shape_would_send" "0" "$(extract_would_exit "$out")"
+assert_not_match "real_shape_transport_paths_not_blocked" "PRIVACY_BLOCKED" "$out"
+assert_not_match "real_shape_decision_parsed" "score_default_used" "$out"
+assert_match "real_shape_failed_title" "Failed: true" "$out"
+assert_match "real_shape_issue_from_handback" "[HIGH] unquoted var in" "$out"
+assert_match "real_shape_home_path_redacted" "[REDACTED:macos-home-path]" "$out"
+assert_not_match "real_shape_no_username_leak" "/Users/testuser" "$out"
+# Doubled runtime prefix must normalise to the same label the goldens pin.
+assert_match "real_shape_task_type_normalised" "Task Type: code-reviewer" "$out"
+assert_match "real_shape_label_normalised" "task:code-reviewer" "$out"
+assert_not_match "real_shape_no_residual_prefix" "task:loomwright:" "$out"
+
+out="$(run_core "$FIXDIR/real-handback-qa.json" --dry-run)"
+assert_eq "real_shape_qa_yaml_header_would_send" "0" "$(extract_would_exit "$out")"
+assert_not_match "real_shape_qa_detected" "no_known_result_block" "$out"
+assert_match "real_shape_qa_task_type" "Task Type: qa-executor" "$out"
+
+out="$(run_core "$FIXDIR/real-handback-secret.json" --dry-run)"
+assert_eq "real_shape_secret_still_blocks" "2" "$(extract_would_exit "$out")"
+assert_match "real_shape_secret_label" "PRIVACY_BLOCKED pattern=github-token" "$out"
+
+out="$(run_core "$FIXDIR/real-prose-only.json" --dry-run)"
+assert_eq "real_shape_prose_mention_skipped" "5" "$(extract_would_exit "$out")"
+assert_match "real_shape_prose_reason" "no_known_result_block" "$out"
+user_scope_none
 
 # ---- Final invariants: gh never invoked; real .supervisor untouched -------------
 echo ""
