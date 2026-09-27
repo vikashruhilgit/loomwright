@@ -1,19 +1,16 @@
 # 07 — Rules that GATE: promote a failing stamped must-check from a report line to a blocker (owner decision)
 
-## Status: proposed
+## Status: pending
 
-> **Parked in `proposed/` (owner decision, 2026-09-26).** Moved out of `automate-followups/` so no
-> `--folder` run can pick it up. **Revisit trigger:** the first time `.agent/rules/` holds ≥1 `enforcement:
-> must` rule with a non-null `check` (on 2026-09-26 the store had 3 rules, 0 `must`, 0 with a check, so a gate
-> would gate on nothing). `automate-followups/09` makes `/rules audit` print that nudge automatically.
-> Promotion = a human moves this file back out of `proposed/` and stamps `## Status: pending`.
-
-> **Why `proposed` and not `pending` (stamped 2026-09-26).** `--folder` intake skips `proposed`, so this
-> item is deliberately OUT of the queue until the owner answers **D1–D4** below. D1 reverses a documented
-> CLAUDE.md invariant and D4 amends that invariant's wording — neither is a worker's decision. It also
-> collides head-on with `twin-remediation/03-mechanize-rules-tier1.md`, whose non-goals state "No new
-> gating paths"; resolve that conflict (supersede 03, or narrow D1) in the same decision. Promote back to
-> `pending` once answered. Items 05 and 06 are additive and do NOT depend on this one; 08 (also parked here) does.
+> **Promoted from `proposed/` to the queue (owner decision, 2026-09-28).** The owner overrode the original
+> revisit trigger (≥1 `enforcement: must` rule with a non-null `check` in `.agent/rules/`) and answered
+> **D1–D4** — see §"Owner decisions (2026-09-28)" at the end. Build the gate now so it is ready when the first
+> checkable `must` rule lands. **Consequence, stated honestly:** on 2026-09-28 the store still holds 3 rules,
+> 0 `must`, 0 with a check, so on this repo the gate ships DORMANT — every acceptance criterion below must be
+> proven against fixture stores, never against the live one. Accepting D1 supersedes
+> `twin-remediation/03-mechanize-rules-tier1.md`'s "No new gating paths" non-goal (already recorded in the
+> 2026-09-26 owner direction). Items 05, 06 and 10 are additive and do NOT depend on this one;
+> `proposed/automate-followups-08-setup-rules-ci-offer.md` (still parked) does.
 
 ## Depends on
 `twin-loop/08` (**done**, PR #267) and `red-team-hardening/03` (gate-eval self-resolving, **done**, PR #250).
@@ -59,9 +56,9 @@ decision recorded in CLAUDE.md — not a quiet edit inside a worker's diff.
   exactly the "a claim no check backs" defect the store's own rules describe.
 
 ## Goal
-On owner acceptance: a failing human-confirmed `must` check blocks the drain and parks the merge gate, with
-`unstamped` and `cmd_disabled` still non-gating; and the rules **store itself** is re-validated every run so a
-rule cannot rot into a claim nothing backs.
+A failing human-confirmed `must` check blocks the drain and parks the merge gate, with `unstamped` and
+`cmd_disabled` still non-gating. (Re-validating the rules store itself every run was this item's scope (c); it
+moved to item 09.)
 
 ## Scope
 **(a) Phase 4.5** — per D1, a stamped failure becomes a BLOCKING finding entering the existing review-and-fix
@@ -72,12 +69,15 @@ verbatim. `--no-cmd` still wins over everything, including a valid stamp.
 `!= "true"` ⇒ PARK form. **Never** a `= "false"` test. No override flag (cond-6 posture): `--trust-unprotected`
 is cond 4 only.
 
-**(c) `audit-rules.sh` runs at Phase 4.5 — advisory, and this is the "never again" half.** It **executes
-nothing** (it lints a `check` as data), so it is safe unattended anywhere and needs no stamp. It catches what a
-write-time gate structurally cannot: `no_mechanism` (a `must` with a null/whitespace `check` — i.e. a rule
-wearing a `must` label with nothing behind it), `dangling_supersedes`, `never_fires` (an `applies_to` glob
-matching zero tracked paths), `later_contradiction`, `supersession_cycle`, `skipped_object`. Exit `1` findings /
-`2` could-not-examine; **`2` must never be reported as clean**.
+**(c) MOVED to item 09** (`automate-followups/09-audit-rules-at-phase45-and-gate-trigger-nudge.md`, owner
+direction 2026-09-26). Do not re-implement `audit-rules.sh` at Phase 4.5 here; if 09 has not merged when this
+item is picked, build on whatever 09 left and do not duplicate it.
+
+**(d) Close the D1 caveat (required, not optional).** A stamp binds a check's TEXT, never the files that check
+runs, so a PR could edit `scripts/lint.sh` and make its own gate pass. The gate may only count a check that
+either (i) executes no repo-tracked file (e.g. a grep-only check), or (ii) is bound to the content of every
+repo file it invokes. Pick one in the plan and state why; Plan Review decides. A check outside the chosen set
+must stay advisory, reported as such, never silently counted as a pass.
 
 ## Acceptance criteria
 - [ ] Stamped + failing ⇒ drain does not reach `READY`; the finding names the rule id and its failing check.
@@ -89,8 +89,8 @@ matching zero tracked paths), `later_contradiction`, `supersession_cycle`, `skip
       condition is gate-owned and self-resolved, not caller-supplied).
 - [ ] gate-eval cond 7 per D3: failing ⇒ PARK with a named reason; unstamped-with-must-checks ⇒ PARK;
       unstamped-with-none ⇒ not a blocker.
-- [ ] `audit-rules.sh` runs at 4.5, leaves the store **byte-identical** (its own fingerprint assertion), and its
-      exit 2 surfaces as UNEXAMINED/UNKNOWN — never as clean.
+- [ ] (d): a fixture PR that edits the file a counted check invokes cannot turn that check from failing to
+      passing without the gate noticing; a check outside the chosen set is reported advisory, never counted.
 - [ ] Mutation controls: reverting (a) makes AC1 reach `READY`; reverting (b) makes the failing-check gate MERGE.
 - [ ] CLAUDE.md's Failure-Mode Invariants amended in the same change (D4); grep the OLD wording repo-wide.
 - [ ] `grep -rn "gh pr merge --squash" loomwright/ | grep -viE "no |never |not "` still resolves to exactly the
@@ -125,3 +125,14 @@ matching zero tracked paths), `later_contradiction`, `supersession_cycle`, `skip
   edit the script a stamped check runs (e.g. `bash scripts/lint.sh`) and make its own gate pass. When built,
   gate only on checks that do not execute repo files (e.g. harvested grep-only candidates), or bind those files.
 - Accepting D1 supersedes `twin-remediation/03-mechanize-rules-tier1.md`'s "No new gating paths" non-goal.
+
+## Owner decisions (2026-09-28)
+- **D1 — yes, stamped failures only.** A failing stamped `must` check is a BLOCKING Phase 4.5 finding.
+  `unstamped` and `cmd_disabled` stay advisory.
+- **D2 — yes.** gate-eval condition 7, self-resolved (the gate runs `rules-check.sh --if-stamped` itself),
+  refused if a caller passes it in `ctx.json`.
+- **D3 — the middle form.** At the merge gate, `unstamped` PARKS only when the store holds ≥1 `must` rule with a
+  non-null `check`; otherwise it passes as `none`.
+- **D4 — yes.** Amend CLAUDE.md §"Failure-Mode Invariants" in the same change: a stamped rule check is a
+  correctness gate, not an advisory emitter. Grep the old wording repo-wide.
+- **Revisit trigger overridden.** Build now; the gate is dormant on this repo until a checkable `must` rule exists.
