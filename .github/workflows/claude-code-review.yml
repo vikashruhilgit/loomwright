@@ -119,7 +119,7 @@ jobs:
             It is informational, not a gate: it tells every reader (and the drain that
             consumes this comment) that this lens reads code and never runs it.
 
-          # Honest limit of the execution: none marker (v15.107.0): it is ~121 chars of
+          # Honest limit of the execution: none marker (v15.108.0): it is ~121 chars of
           # mandated boilerplate, so the assert step's ">200 chars = a substantive review"
           # floor now admits ~80 chars of real content (a bare "Reviewed <sha>: no new
           # findings" + marker is still 188 < 200, a 12-char margin). Follow-up: strip a

@@ -487,7 +487,7 @@ else
   no "(26) wrong (rc=$RC26 out=$OUT26 err='$ERRTXT26')"
 fi
 
-echo "== 27. CI-marker coupling (v15.107.0): a finding-free claude[bot] body ending in the mandated execution: none line => classified IN =="
+echo "== 27. CI-marker coupling (v15.108.0): a finding-free claude[bot] body ending in the mandated execution: none line => classified IN =="
 MARKER27='execution: none — static review; this reviewer cannot run code in CI, so runtime behavior is NOT verified by this review.'
 WF27="$(dirname "$0")/../../.github/workflows/claude-code-review.yml"
 IN27="$(jq -cn --arg b "LGTM, nothing to flag in the diff.
