@@ -176,13 +176,13 @@ check_with_mutant "(e) workflow prompt mandates the marker as the LAST line of e
 chk_static() {
   grep -qF -- 'The CI lens is static-only (`execution: none`)' "$1" \
     && grep -qF -- '`CI review lens: static-only (execution: none)`' "$1" \
-    && grep -qF -- 'the trigger above is UNCHANGED' "$1"
+    && grep -qF -- "the trigger's DEFINITION above is unchanged" "$1"
 }
 check_with_mutant "(f) review-heal labels the CI lens static-only and keeps the fallback trigger unchanged" \
   chk_static "$HEAL" del_lines 'The CI lens is static-only'
 
 # ---- (g) standalone /review-pr surfaces never carry the directive ------------------------------------
-chk_no_directive() { ! grep -qF -- 'EXECUTION DIRECTIVE' "$1"; }
+chk_no_directive() { ! grep -qiF -- 'EXECUTION DIRECTIVE' "$1"; }   # -i: a mixed-case leak counts too (Phase 4.5 review, PR #281)
 check_with_mutant "(g) agents/review-pr.md does not carry the EXECUTION DIRECTIVE" \
   chk_no_directive "$RP_AGENT" append_text "$DIRECTIVE_PREFIX — injected by the mutation control)**"
 check_with_mutant "(g) commands/review-pr.md does not carry the EXECUTION DIRECTIVE" \

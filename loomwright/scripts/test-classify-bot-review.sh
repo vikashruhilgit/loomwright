@@ -487,6 +487,22 @@ else
   no "(26) wrong (rc=$RC26 out=$OUT26 err='$ERRTXT26')"
 fi
 
+echo "== 27. CI-marker coupling (v15.107.0): a finding-free claude[bot] body ending in the mandated execution: none line => classified IN =="
+MARKER27='execution: none — static review; this reviewer cannot run code in CI, so runtime behavior is NOT verified by this review.'
+WF27="$(dirname "$0")/../../.github/workflows/claude-code-review.yml"
+IN27="$(jq -cn --arg b "LGTM, nothing to flag in the diff.
+$MARKER27" '[{id: 2701, user: {login: "claude[bot]"}, body: $b}]')"
+BARE27='[{"id": 2702, "user": {"login": "claude[bot]"}, "body": "LGTM, nothing to flag in the diff."}]'
+OUT27="$(printf '%s' "$IN27" | bash "$CLASSIFY" 2>/dev/null)"
+OUTB27="$(printf '%s' "$BARE27" | bash "$CLASSIFY" 2>/dev/null)"
+if printf '%s' "$OUT27" | jq -e '(length==1) and (.[0].id==2701)' >/dev/null 2>&1 \
+   && printf '%s' "$OUTB27" | jq -e 'length==0' >/dev/null 2>&1 \
+   && { [ ! -f "$WF27" ] || grep -qF -- "$MARKER27" "$WF27"; }; then
+  ok "marker coupling pinned: the mandated marker alone classifies a finding-free body IN (control: the bare body stays OUT); workflow still carries this exact marker"
+else
+  no "(27) wrong (with-marker=$OUT27 bare=$OUTB27)"
+fi
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
