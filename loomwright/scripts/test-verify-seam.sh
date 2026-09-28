@@ -75,7 +75,11 @@ set -uo pipefail
 # Hermetic exception: REAL curl only. verify-env.sh's start/auth-probe cases health-check a python
 # http.server this test launches on 127.0.0.1 with curl, deep inside the executor, so the helper's
 # recording curl stub would make every one of those checks vacuous. The egress env stays scrubbed
-# and the notifier stubs stay in force.
+# and the notifier stubs stay in force. No HOME sandbox is needed for the real curl: the scripts this
+# test drives (read-verify.sh, propose-verify.sh, verify-env.sh) never call send-webhook.sh,
+# send-telemetry-core.sh or resolve-egress-config.sh, so no user-scope webhook_url/telemetry repo
+# from $HOME-rooted egress.json is ever resolved. A future case that reaches those (e.g. via
+# verify-helpers.sh evidence-append on a `.notify-enabled` run dir) must sandbox HOME first.
 hermetic_allow_real curl || true
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

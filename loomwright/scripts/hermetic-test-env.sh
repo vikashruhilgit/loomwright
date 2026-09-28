@@ -23,10 +23,23 @@
 #   (d) exports HERMETIC_TEST_ENV=1 (the marker test-run-self-tests.sh and the probe read);
 #   (e) never touches HOME — tests keep their own HOME isolation where they have it.
 #
+# SCOPE LIMIT — what this does NOT cover: egress configured OUTSIDE the environment. The user-scope
+# $HOME-rooted egress.json (resolve-egress-config.sh, keyed by repo slug) still supplies
+# webhook_url, telemetry consent and telemetry_repo, and telemetry files its issue through the
+# unstubbed `gh`. The curl stub also stops being a backstop wherever a test restores the real curl.
+# So a test that exercises webhook or telemetry RESOLUTION must additionally run under a sandbox
+# HOME (as test-telemetry.sh, test-send-telemetry-core.sh and test-hermetic-egress.sh do). This
+# helper stays HOME-neutral on purpose: forcing a HOME here would silently change every test's git
+# config, caches and tool state.
+#
 # Shim-dir lifecycle (idempotent — sourcing twice, e.g. runner then test, is safe):
 #   - an exported HERMETIC_SHIM_DIR is REUSED only if it exists, carries this helper's marker file,
 #     and every stub in it is present and executable; otherwise a fresh dir is made, so a stray
 #     user-shell export or a half-built dir can never silently drop the stubs;
+#   - the fresh dir is made under ${TMPDIR:-/tmp}, retried ONCE under /tmp if that fails (a stale
+#     or unwritable TMPDIR must not silently cost the stubs); if both fail HERMETIC_SHIM_DIR is left
+#     EMPTY with a warning — this file never exits, so run-self-tests.sh checks for that and fails
+#     closed;
 #   - the dir is prepended to PATH unless it is ALREADY the first entry, so these stubs always win
 #     over shims placed earlier;
 #   - each stub resolves its log at RUN time as ${HERMETIC_EGRESS_LOG:-<its own dir>/egress.log},
@@ -75,6 +88,9 @@ _hermetic_shim_dir_ok() {
 
 if ! _hermetic_shim_dir_ok "${HERMETIC_SHIM_DIR:-}"; then
   HERMETIC_SHIM_DIR="$(mktemp -d "${TMPDIR:-/tmp}/hermetic-shims.XXXXXX" 2>/dev/null)" || HERMETIC_SHIM_DIR=""
+  if [ -z "$HERMETIC_SHIM_DIR" ] || [ ! -d "$HERMETIC_SHIM_DIR" ]; then
+    HERMETIC_SHIM_DIR="$(mktemp -d "/tmp/hermetic-shims.XXXXXX" 2>/dev/null)" || HERMETIC_SHIM_DIR=""
+  fi
   if [ -n "$HERMETIC_SHIM_DIR" ]; then
     for _hermetic_s in $_hermetic_stub_names; do
       cat > "$HERMETIC_SHIM_DIR/$_hermetic_s" <<'HERMETIC_STUB'
@@ -88,7 +104,8 @@ HERMETIC_STUB
     unset _hermetic_s
     : > "$HERMETIC_SHIM_DIR/.hermetic-shim-dir"
   else
-    printf 'hermetic-test-env.sh: WARNING: mktemp failed — egress env scrubbed but no PATH stubs installed\n' >&2
+    HERMETIC_SHIM_DIR=""
+    printf 'hermetic-test-env.sh: WARNING: mktemp failed under %s and /tmp — egress env scrubbed but no PATH stubs installed\n' "${TMPDIR:-/tmp}" >&2
   fi
 fi
 
@@ -126,11 +143,15 @@ hermetic_path_without_shims() {
 # hermetic_allow_real <cmd>... — for a test whose SUBJECT is a local server: prepend a private dir
 # holding symlinks to the REAL <cmd> binaries (resolved with the shims removed), so only those
 # commands escape the stubs. Scoped to the calling shell and its children. The egress env stays
-# scrubbed, so a real curl still has no webhook/telemetry URL to reach. Returns 1 if a <cmd> has no
-# real binary (the caller's own "tool missing" handling then applies as before).
+# scrubbed, but the curl backstop is gone for this shell: a webhook_url in the user-scope
+# $HOME-rooted egress.json would now be reachable, so a caller that can drive
+# send-webhook.sh / send-telemetry-core.sh must ALSO sandbox HOME (or say in its comment why its
+# code path never resolves one). Returns 1 if a <cmd> has no real binary (the caller's own "tool
+# missing" handling then applies as before).
 hermetic_allow_real() {
   local d c real rc=0
-  d="$(mktemp -d "${TMPDIR:-/tmp}/hermetic-real.XXXXXX" 2>/dev/null)" || return 1
+  d="$(mktemp -d "${TMPDIR:-/tmp}/hermetic-real.XXXXXX" 2>/dev/null)" \
+    || d="$(mktemp -d "/tmp/hermetic-real.XXXXXX" 2>/dev/null)" || return 1
   for c in "$@"; do
     real="$(PATH="$(hermetic_path_without_shims)" command -v "$c" 2>/dev/null)" || real=""
     case "$real" in /*) ln -s "$real" "$d/$c" ;; *) rc=1 ;; esac

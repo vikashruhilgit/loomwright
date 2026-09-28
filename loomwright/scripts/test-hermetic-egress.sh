@@ -33,6 +33,10 @@
 # detached notifier never starts, with or without the helper.
 # Every mutant is gated: non-empty, differs from the original, `bash -n`, and the specific override
 # verifiably injected (with the original as the positive control that the pattern matched).
+# Lifecycle arm:
+#   (R)  TMPDIR points at a missing dir => the helper's one retry under /tmp still builds the shim
+#        dir; mutant (Rm) points that retry nowhere too => HERMETIC_SHIM_DIR is left empty with a
+#        warning (the state run-self-tests.sh fails closed on — see test-run-self-tests.sh (G3)).
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 
@@ -296,6 +300,48 @@ if MIII="$(make_mutant iii '[ "$(grep -cE "$DESK_RE" "$m")" -eq 0 ] && grep -qx 
     || no "(Miii) expected an outer notifier call (outer='$(cat "$OUTER_LOG")')"
 else
   no "(Miii) mutant failed its gates (empty / identical / bash -n / override not injected)"
+fi
+
+echo "== (R) shim-dir mktemp retry: an unusable TMPDIR still yields the stubs, made under /tmp =="
+# probe_shim_dir <helper> — source <helper> in a stripped subshell (the real helper's shim dir off
+# PATH, its markers unset, so nothing is reused) with TMPDIR pointing at a dir that does not exist;
+# print "<HERMETIC_SHIM_DIR>|<first PATH entry>|<helper stderr>".
+R_TMPDIR="$T/absent-tmpdir/nested"
+probe_shim_dir() {
+  ( PATH="$(hermetic_path_without_shims)"
+    unset HERMETIC_SHIM_DIR HERMETIC_EGRESS_LOG HERMETIC_TEST_ENV
+    export TMPDIR="$R_TMPDIR"
+    . "$1" 2>"$T/r.err"
+    printf '%s|%s|%s' "${HERMETIC_SHIM_DIR:-}" "${PATH%%:*}" "$(tr '\n' ' ' < "$T/r.err")" )
+}
+[ ! -e "$R_TMPDIR" ] || no "(R) precondition: $R_TMPDIR unexpectedly exists"
+IFS='|' read -r r_dir r_first r_err <<<"$(probe_shim_dir "$HELPER")"
+r_stubs=1
+for s in osascript notify-send terminal-notifier curl wget; do [ -x "$r_dir/$s" ] || r_stubs=0; done
+case "$r_dir" in /tmp/hermetic-shims.*) r_under_tmp=1 ;; *) r_under_tmp=0 ;; esac
+if [ "$r_under_tmp" = 1 ] && [ -d "$r_dir" ] && [ -f "$r_dir/.hermetic-shim-dir" ] && [ "$r_stubs" = 1 ] \
+   && [ "$r_first" = "$r_dir" ] && [ -z "$r_err" ]; then
+  ok "(R) TMPDIR unusable => the helper retried under /tmp: shim dir $r_dir built, marked, first on PATH, no warning"
+else
+  no "(R) retry failed: dir='$r_dir' first-PATH='$r_first' stubs=$r_stubs err='$r_err'"
+fi
+case "$r_dir" in /tmp/hermetic-shims.*) rm -rf "$r_dir" ;; esac
+
+# Mutation control: point the retry at a path that cannot exist either => the helper must leave
+# HERMETIC_SHIM_DIR EMPTY and warn (the state run-self-tests.sh fails closed on), proving (R)'s
+# green came from the retry and not from a TMPDIR that silently worked.
+RETRY_RE='mktemp -d "/tmp/hermetic-shims\.XXXXXX"'
+if RM="$(make_mutant r '[ "$(grep -cE "$RETRY_RE" "$m")" -eq 0 ] && [ "$(grep -cE "$RETRY_RE" "$HELPER")" -eq 1 ]' \
+      -e "s|mktemp -d \"/tmp/hermetic-shims\.XXXXXX\"|mktemp -d \"$R_TMPDIR/hermetic-shims.XXXXXX\"|")"; then
+  IFS='|' read -r rm_dir rm_first rm_err <<<"$(probe_shim_dir "$RM")"
+  case "$rm_err" in *"WARNING: mktemp failed"*) rm_warned=1 ;; *) rm_warned=0 ;; esac
+  if [ -z "$rm_dir" ] && [ "$rm_warned" = 1 ] && [ ! -f "$rm_first/.hermetic-shim-dir" ]; then
+    ok "(Rm) without a working retry the helper leaves HERMETIC_SHIM_DIR empty and warns — (R) is not vacuous"
+  else
+    no "(Rm) expected an empty shim dir + warning, got dir='$rm_dir' first-PATH='$rm_first' err='$rm_err'"
+  fi
+else
+  no "(Rm) mutant failed its gates (empty / identical / bash -n / retry pattern not matched exactly once)"
 fi
 
 echo

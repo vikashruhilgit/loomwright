@@ -55,7 +55,13 @@ set -uo pipefail
 # Hermetic exception: REAL curl only. The walkthrough cases health-check and drive fixture apps this
 # test launches on 127.0.0.1 with curl (start_app, the mutation controls, verify-env underneath), so
 # the helper's recording curl stub would make every one of those checks vacuous. The egress env
-# stays scrubbed and the notifier stubs stay in force.
+# stays scrubbed and the notifier stubs stay in force. No HOME sandbox is needed for the real curl:
+# this suite's only webhook route is verify-helpers.sh's verify_notify_once, which fires only in a run
+# dir carrying `.notify-enabled`, and the only such run dirs ((NOTIFY) below) are made through the
+# stage()d $T/bin copy — stage() copies neither send-webhook.sh nor notify-desktop.sh, so the sender's
+# `[ -f ]` guard skips it and no user-scope webhook_url from $HOME-rooted egress.json is ever
+# resolved. A case that stages send-webhook.sh, or enables --notify on a run driven by the real
+# $RUNNER, must sandbox HOME first.
 hermetic_allow_real curl || true
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
