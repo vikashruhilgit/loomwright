@@ -47,3 +47,9 @@ Effects:
 - `automate-helpers.sh` `resume_glob()`: `for f in "$dir"/*.md; … is_done "$f" && continue; echo "$f"`. There
   is no run-file shape check.
 - Live output after run `automate-2026-09-22-013403` was stamped done: exactly the two sidecar paths above.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-09-28T02:24:30Z
+- **Brief:** .supervisor/jobs/done/2026-09-28-resume-glob-skips-sidecars.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/288

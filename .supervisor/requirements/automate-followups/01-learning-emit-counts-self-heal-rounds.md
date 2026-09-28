@@ -77,3 +77,9 @@ the external bot in the drain".
   `heal_loop_ran=false`. Map null ⇒ 0.
 - Evidence: `.supervisor/postmortem/results.jsonl`'s `automate_drain` line for PR #267 shows `review_rounds: 0`,
   while the run file's `## Progress` records Phase 4.5 round 1 FAIL (4 HIGH) → fix → round 2 PASS.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-09-26T13:12:19Z
+- **Brief:** .supervisor/jobs/done/2026-09-26-learning-emit-self-heal-rounds.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/272
