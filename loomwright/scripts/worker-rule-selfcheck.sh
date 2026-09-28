@@ -79,7 +79,9 @@ LINE_MAX=200
 SHOW_MAX=3
 
 # Resolve the sibling checker BEFORE any cd (a relative $0 would break afterwards). Never from PATH.
-HERE="$(cd "$(dirname "$0")" 2>/dev/null && pwd)" || exit 0
+# CDPATH= + >/dev/null: an exported CDPATH makes `cd` echo the resolved dir to stdout, which would
+# corrupt HERE (and, for --root below, the stdout contract).
+HERE="$(CDPATH= cd -- "$(dirname "$0")" >/dev/null 2>&1 && pwd)" || exit 0
 CHECKER="$HERE/rules-check.sh"
 
 # Never forward an ambient confirmation to the checker (see DELEGATION (b) above).
@@ -105,7 +107,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-cd "$ROOT_ARG" 2>/dev/null || { echo "$PROG: cannot enter --root $ROOT_ARG — nothing checked" >&2; exit 0; }
+CDPATH= cd -- "$ROOT_ARG" >/dev/null 2>&1 || { echo "$PROG: cannot enter --root $ROOT_ARG — nothing checked" >&2; exit 0; }
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
   || { echo "$PROG: $ROOT_ARG is not inside a git work tree — nothing checked" >&2; exit 0; }
 [ -f "$CHECKER" ] || { echo "$PROG: sibling rules-check.sh not found — nothing checked" >&2; exit 0; }

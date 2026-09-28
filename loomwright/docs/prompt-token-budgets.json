@@ -40,9 +40,9 @@
       "note": "re-measured v15.33.0 (measured 13095 + ~10%); 3 preloaded skills — grew when the shared `### Agent memory write permission` block landed in all six memory: project prompts. Previously the v15.10.0 authoring baseline (12551 / budget 13807); now a LIVE re-measure row, taken the same way and in the same PR as red-team-reviewer."
     },
     "qa-executor": {
-      "budget": 48165,
-      "measured": 43786,
-      "note": "re-measured v15.33.0 (measured 43786 + ~10%); 5 preloaded skills — grew when the shared `### Agent memory write permission` block landed in all six memory: project prompts. Previously the v15.10.0 authoring baseline (43235 / budget 47559); now a LIVE re-measure row, taken the same way and in the same PR as red-team-reviewer."
+      "budget": 52914,
+      "measured": 48103,
+      "note": "re-measured v15.33.0 (measured 43786 + ~10%); 5 preloaded skills — grew when the shared `### Agent memory write permission` block landed in all six memory: project prompts. Previously the v15.10.0 authoring baseline (43235 / budget 47559); now a LIVE re-measure row, taken the same way and in the same PR as red-team-reviewer. **Raised 48165 -> 52914, measured 43786 -> 48103 (worker-rule-self-check, automate-followups/06, v15.110.0, review iteration 1):** the preloaded `quality-checklist` skill's Deviations-conformance item gained the `rule:` clause (the same edit that raised code-reviewer), and with the growth that had accrued since v15.33.0 this left 62 headroom (under ~10% of the live measure); restored to live measured + ~10% (48103 * 1.10 = 52913.3, rounded up to 52914), `measured` set to that live figure per this row's live-re-measure convention."
     },
     "qa-strategist": {
       "budget": 23488,

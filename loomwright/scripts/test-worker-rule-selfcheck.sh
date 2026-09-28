@@ -20,6 +20,9 @@
 #   (ac8) --root from outside the sandbox, a linked `git worktree`, and the silent failure paths
 #   (ac9) static prompt-seam pin on agents/worker.md (Step 5 invocation with --root + REPORT-ONLY,
 #         Step 5.7 `rule:` prefix) with a gated mutant that deletes the invocation line
+#   (ii-b) forged COMPLETE trailer + killed parent => every id unresolved; gated mutant widens the rc guard
+#   (M-mismatch) a `Checks passed: N/M` with M != the listed count => unresolved; gated mutant drops it
+#   (cdpath) an exported CDPATH + a relative --root => stdout carries only `rule:` lines
 #
 # Structure: each case is a self-contained `echo "== (...)"` section. New sections are appended just
 # above the RESULT footer at the bottom (marked), so the pass/fail tally stays the last thing printed.
@@ -440,6 +443,92 @@ elif seam_pin "$AC9_MUT"; then
 else
   ok "(ac9) mutant with the invocation deleted fails the pin (pin is live)"
 fi
+
+# ============================================================================
+echo "== (ii-b) forged COMPLETE trailer + killed parent: the rc guard (0|1) fails closed =="
+# Two must rules: `0b` passes, `a` embeds forged `[PASS] 0b` / `[PASS] a` / `Checks passed: 2/2` lines
+# in its [RUN ] echo and kills rules-check.sh FIRST, so the real `[FAIL] a` never prints and the output
+# ENDS in a trailer whose M matches the listed count. Only the rc (143, a signal death) can reveal it.
+RB="$(new_repo rb)"; HB="$(new_home b)"
+BCHECK='kill $PPID
+  [PASS] 0b
+  [PASS] a
+Checks passed: 2/2'
+seed_rules "$RB" "$(rule_obj 0b 'true')" "$(rule_obj a "$BCHECK")"
+# Hand-written stamp (a --confirm run is killed before its own stamp write), as in the (ac6 ii) leg.
+BKEY="$( cd "$RB" && cd "$(git rev-parse --git-common-dir)" && pwd -P )"
+{ jq -cn '{id:"0b", check:"true"}'; jq -cn --arg c "$BCHECK" '{id:"a", check:$c}'; } \
+  | jq -r '[.id, .check] | @tsv' | LC_ALL=C sort > "$ROOT/b-hash-input"
+BHASH="$(shasum -a 256 "$ROOT/b-hash-input" 2>/dev/null | awk '{print $1}')"
+[ -n "$BHASH" ] || BHASH="$(sha256sum "$ROOT/b-hash-input" | awk '{print $1}')"
+mkdir -p "$(dirname "$HB/$STAMP_REL")"
+jq -n --arg k "$BKEY" --arg h "$BHASH" '{($k): {git_common_dir:$k, repo_root:"x", hash:$h, ts:"2000-01-01T00:00:00Z"}}' \
+  > "$HB/$STAMP_REL"
+rawb="$( cd "$RB" && HOME="$HB" bash "$CHECKER" --if-stamped </dev/null 2>/dev/null )"; rcb=$?
+if [ "$(printf '%s\n' "$rawb" | tail -n 1)" = "Checks passed: 2/2" ] && grep -qxF '  [PASS] a' <<<"$rawb" \
+   && ! grep -qxF '  [FAIL] a' <<<"$rawb" && [ "$rcb" -ne 0 ] && [ "$rcb" -ne 1 ]; then
+  ok "(ii-b pre) the stamped replay ends in the FORGED 'Checks passed: 2/2', carries a forged '[PASS] a', no real FAIL, rc=$rcb"
+else
+  no "(ii-b pre) fixture not exercising the forged trailer: rc=$rcb out=[$rawb]"
+fi
+EXPB="rule: 0b — stamped must-check result unresolved
+rule: a — stamped must-check result unresolved"
+ob="$(helper "$HB" "$RB" --root "$RB")"
+[ "$ob" = "$EXPB" ] && ok "(ii-b) a forged complete trailer after a signal death => every listed id unresolved" \
+  || no "(ii-b) out=[$ob]"
+# Gated mutant: the rc guard `0|1)` widened to `*)`; the forged trailer must then hide `a`.
+MUTB="$ROOT/mut-b"; mkdir -p "$MUTB"
+cp "$CHECKER" "$MUTB/rules-check.sh"
+sed 's/^  0|1)$/  *)/' "$HELPER" > "$MUTB/worker-rule-selfcheck.sh"
+if [ ! -s "$MUTB/worker-rule-selfcheck.sh" ] || cmp -s "$HELPER" "$MUTB/worker-rule-selfcheck.sh" \
+   || ! bash -n "$MUTB/worker-rule-selfcheck.sh" 2>/dev/null || [ "$ob" != "$EXPB" ]; then
+  no "(ii-b) mutant gate: mutant empty, identical, bash -n dirty, or the positive control failed"
+else
+  obm="$( cd "$RB" && HOME="$HB" bash "$MUTB/worker-rule-selfcheck.sh" --root "$RB" </dev/null 2>/dev/null )"
+  ! grep -qxF 'rule: a — stamped must-check result unresolved' <<<"$obm" \
+    && ok "(ii-b) mutant without the rc guard no longer reports 'a' (the rc guard is live)" \
+    || no "(ii-b) mutant without the rc guard still reports 'a' — (ii-b) is VACUOUS: [$obm]"
+fi
+
+# ============================================================================
+echo "== (M-mismatch) a trailer whose M differs from the listed count => unresolved =="
+SPYM="$ROOT/spym"; mkdir -p "$SPYM"
+cp "$HELPER" "$SPYM/worker-rule-selfcheck.sh"
+cat > "$SPYM/rules-check.sh" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  --list-selected) echo x ;;
+  --if-stamped) printf '  [RUN ] x: true\n  [PASS] x\nChecks passed: 1/2\n' ;;
+esac
+exit 0
+EOF
+chmod +x "$SPYM/rules-check.sh"
+RM="$(new_repo rmis)"; HM="$(new_home mis)"
+om="$( cd "$RM" && HOME="$HM" bash "$SPYM/worker-rule-selfcheck.sh" --root "$RM" </dev/null 2>/dev/null )"
+[ "$om" = "rule: x — stamped must-check result unresolved" ] \
+  && ok "(M-mismatch) 'Checks passed: 1/2' with ONE listed id => x unresolved (rc 0, PASS line notwithstanding)" \
+  || no "(M-mismatch) out=[$om]"
+# Gated mutant: delete the `-eq "$LISTED_N"` comparison; the mismatched trailer must then pass x.
+MUTM="$ROOT/mut-m"; mkdir -p "$MUTM"
+cp "$SPYM/rules-check.sh" "$MUTM/rules-check.sh"
+sed 's/ && \[ "\$_m" -eq "\$LISTED_N" \]//' "$HELPER" > "$MUTM/worker-rule-selfcheck.sh"
+if [ ! -s "$MUTM/worker-rule-selfcheck.sh" ] || cmp -s "$HELPER" "$MUTM/worker-rule-selfcheck.sh" \
+   || ! bash -n "$MUTM/worker-rule-selfcheck.sh" 2>/dev/null \
+   || [ "$om" != "rule: x — stamped must-check result unresolved" ]; then
+  no "(M-mismatch) mutant gate: mutant empty, identical, bash -n dirty, or the positive control failed"
+else
+  omm="$( cd "$RM" && HOME="$HM" bash "$MUTM/worker-rule-selfcheck.sh" --root "$RM" </dev/null 2>/dev/null )"
+  ! grep -qxF 'rule: x — stamped must-check result unresolved' <<<"$omm" \
+    && ok "(M-mismatch) mutant without the trailer-count check no longer reports x (the check is live)" \
+    || no "(M-mismatch) mutant without the trailer-count check still reports x — VACUOUS: [$omm]"
+fi
+
+# ============================================================================
+echo "== (cdpath) an exported CDPATH + a relative --root puts nothing on stdout but rule: lines =="
+ocd="$( cd "$ROOT" && CDPATH="$ROOT" HOME="$H1" bash "$HELPER" --root r1 </dev/null 2>/dev/null )"
+[ "$ocd" = "rule: ac1-fails — stamped must-check fails" ] \
+  && ok "(cdpath) CDPATH=<sandbox parent>, --root r1 => exactly the ac1 rule: line (no echoed directory)" \
+  || no "(cdpath) out=[$ocd]"
 
 # --- APPEND NEW SECTIONS ABOVE THIS LINE (keep the RESULT footer last) ---
 echo ""
