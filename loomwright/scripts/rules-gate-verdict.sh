@@ -16,7 +16,16 @@
 #
 #   {"verdict":"ok|none|fail|unresolved|unstamped|cmd_disabled|unreadable",
 #    "selected":[ids], "countable":[ids], "advisory":[{"id":..,"reason":..}],
-#    "passed":[ids], "failing":[ids], "unresolved":[ids], "checks_passed":"n/m"|null}
+#    "passed":[ids], "failing":[ids], "unresolved":[ids], "checks_passed":"n/m"|null
+#    [, "unstamped_reason":"never_confirmed|countable_set_drift|legacy_stamp"]}
+#
+#   unstamped_reason is OPTIONAL and ADDITIVE: present ONLY when verdict is `unstamped` (absent on every
+#   other verdict, so the 8 keys above are unchanged for them). It is message text for the consumer
+#   (gate-eval names WHY it parks) and never a decision input — a consumer keys on `verdict` alone, and a
+#   missing / unknown reason must still be treated as `unstamped`. never_confirmed = the replay itself
+#   said `[SKIP] all (unstamped)` (no stamp, or the stamp hash no longer matches); countable_set_drift =
+#   the live countable set differs from the one recorded at the last confirm; legacy_stamp = the stamp
+#   predates the recorded countable set and the live countable set is non-empty.
 #
 #   Every field is built with `jq -n --arg`/`--argjson`: ids and reasons are DATA, never program text.
 #   selected  = every id `--list-selected` printed;  countable / advisory = `--list-gateable`'s split
@@ -104,20 +113,23 @@ PASSED=""        # newline-joined ids
 FAILING=""       # newline-joined ids
 UNRESOLVED=""    # newline-joined ids
 CHECKS_PASSED="" # "n/m" or empty (⇒ null)
+UNSTAMPED_REASON="" # set only just before `_emit unstamped` (serialized only for that verdict)
 
 # _emit <verdict> — print the ONE JSON object and exit 0. Every value enters jq as --arg data.
 _emit() {
   local verdict="$1"
   if command -v jq >/dev/null 2>&1; then
     jq -nc --arg v "$verdict" --arg sel "$SELECTED" --arg cnt "$COUNTABLE" --arg adv "$ADVISORY" \
-          --arg pas "$PASSED" --arg fai "$FAILING" --arg unr "$UNRESOLVED" --arg cp "$CHECKS_PASSED" '
+          --arg pas "$PASSED" --arg fai "$FAILING" --arg unr "$UNRESOLVED" --arg cp "$CHECKS_PASSED" \
+          --arg ur "$UNSTAMPED_REASON" '
       def ids: split("\n") | map(select(length > 0));
       def advs: split("\n") | map(select(length > 0)
                  | . as $l | ($l | rindex("\t")) as $i
                  | if $i == null then {id: $l, reason: ""} else {id: $l[0:$i], reason: $l[($i + 1):]} end);
       {verdict: $v, selected: ($sel | ids), countable: ($cnt | ids), advisory: ($adv | advs),
        passed: ($pas | ids), failing: ($fai | ids), unresolved: ($unr | ids),
-       checks_passed: (if $cp == "" then null else $cp end)}' 2>/dev/null && exit 0
+       checks_passed: (if $cp == "" then null else $cp end)}
+      + (if $v == "unstamped" and $ur != "" then {unstamped_reason: $ur} else {} end)' 2>/dev/null && exit 0
   fi
   # No jq (or jq itself failed): a static, data-free object — still one JSON object, still exit 0.
   printf '{"verdict":"unreadable","selected":[],"countable":[],"advisory":[],"passed":[],"failing":[],"unresolved":[],"checks_passed":null}\n'
@@ -231,11 +243,13 @@ case "$STAMP_STATE" in
     _sorted_cnt="$(printf '%s' "$COUNTABLE" | LC_ALL=C sort -u)"
     if [ "$_sorted_rec" != "$_sorted_cnt" ]; then
       echo "$PROG: the countable id set differs from the one recorded at the last /rules check --confirm — verdict unstamped" >&2
+      UNSTAMPED_REASON="countable_set_drift"
       _emit unstamped
     fi ;;
   legacy)
     if [ "$COUNTABLE_N" -gt 0 ]; then
       echo "$PROG: the stamp predates the recorded countable set and $COUNTABLE_N id(s) are countable — verdict unstamped" >&2
+      UNSTAMPED_REASON="legacy_stamp"
       _emit unstamped
     fi ;;
   absent) : ;;   # nothing recorded ⇒ nothing to drift from; the replay itself answers unstamped
@@ -280,6 +294,7 @@ fi
 # Step 1: unstamped — only when nothing executed (exact whole line, and no RUN line).
 if grep -Fxq -- "  [SKIP] all (unstamped)" <<<"$RUN_OUT" \
    && ! grep -q '^  \[RUN \] ' <<<"$RUN_OUT"; then
+  UNSTAMPED_REASON="never_confirmed"
   _verdict_or_none unstamped
 fi
 

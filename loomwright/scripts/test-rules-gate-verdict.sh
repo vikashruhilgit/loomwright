@@ -45,6 +45,9 @@
 #          the legacy stamp over an empty countable set stays none; a re-confirm overwrites the
 #          recorded set; --gate-state executes nothing and writes no stamp
 #   (m4)   gated mutant: delete the recorded-vs-live set comparison => the (cs 1) leg flips to ok
+#   (ur)   the optional `unstamped_reason` (present only on `unstamped`): never_confirmed for (ac3a)/
+#          (ac3c), countable_set_drift for (cs 1)/(cs 4) — (cs 4) with ZERO live countable ids —
+#          legacy_stamp for (cs 6); absent on a `fail` verdict
 #
 # Structure: each case is a self-contained `echo "== (...)"` section. New sections are appended just
 # above the RESULT footer at the bottom (marked), so the pass/fail tally stays the last thing printed.
@@ -134,10 +137,16 @@ verdict() {
 vf() { printf '%s' "$1" | jq -r "$2" 2>/dev/null; }
 # has_id <json> <array-field> <id> — 0 iff <id> is an element of .<field>.
 has_id() { printf '%s' "$1" | jq -e --arg id "$3" ".$2 | index([\$id]) != null" >/dev/null 2>&1; }
-# json_ok <json> — 0 iff ONE line, a JSON object with exactly the 8 contract keys.
+# json_ok <json> — 0 iff ONE line, a JSON object with exactly the 8 contract keys — plus the
+# OPTIONAL `unstamped_reason`, which must be present (one of its 3 values) exactly when the
+# verdict is `unstamped` and absent on every other verdict.
 json_ok() {
   [ "$(printf '%s\n' "$1" | awk 'NF{n++} END{print n+0}')" -eq 1 ] \
-    && printf '%s' "$1" | jq -e 'type == "object" and (keys | sort) == ["advisory","checks_passed","countable","failing","passed","selected","unresolved","verdict"]' >/dev/null 2>&1
+    && printf '%s' "$1" | jq -e 'type == "object"
+      and ((keys - ["unstamped_reason"]) | sort) == ["advisory","checks_passed","countable","failing","passed","selected","unresolved","verdict"]
+      and (if .verdict == "unstamped"
+           then (.unstamped_reason | IN("never_confirmed", "countable_set_drift", "legacy_stamp"))
+           else has("unstamped_reason") | not end)' >/dev/null 2>&1
 }
 # lg <repo> <home> — the checker's raw --list-gateable stdout.
 lg() { ( cd "$1" && HOME="$2" bash "$CHECKER" --list-gateable </dev/null 2>/dev/null ); }
@@ -755,6 +764,25 @@ else
   [ "$(vf "$om4" .verdict)" = "ok" ] && ok "(m4) without the comparison, dropping binds:[] turns a stamped FAIL into ok (the comparison is load-bearing)" \
     || no "(m4) mutant says $(vf "$om4" .verdict) — the (cs 1) leg is VACUOUS"
 fi
+
+# ============================================================================
+echo "== (ur) unstamped_reason names WHY the verdict is unstamped (message text for gate-eval, never a decision input) =="
+# ur_is <label> <json> <expected-reason>
+ur_is() {
+  if [ "$(vf "$2" .verdict)" = "unstamped" ] && [ "$(vf "$2" .unstamped_reason)" = "$3" ] && json_ok "$2"; then
+    ok "(ur) $1 => unstamped_reason $3"
+  else no "(ur) $1 => [$2] (expected unstamped / $3)"; fi
+}
+ur_is "(ac3a) stamp absent" "$o3a" never_confirmed
+ur_is "(ac3c) one-byte edit after stamping" "$o3c" never_confirmed
+ur_is "(cs 1) binds:[] dropped (countable set drifted)" "$oc1" countable_set_drift
+ur_is "(cs 4) must->should on the last countable rule (drift to ZERO live countable)" "$oc4" countable_set_drift
+[ "$(vf "$oc4" '.countable | length')" = "0" ] \
+  && ok "(ur) (cs 4) is the drift-with-zero-live-countable case the gate-eval message must not render as \"0 … never confirmed\"" \
+  || no "(ur) (cs 4) countable=[$(vf "$oc4" .countable)] — fixture no longer exercises zero live countable"
+ur_is "(cs 6) legacy stamp over a countable store" "$oc6" legacy_stamp
+{ [ "$(vf "$o1" 'has("unstamped_reason")')" = "false" ] && [ "$(vf "$oc0" 'has("unstamped_reason")')" = "false" ]; } \
+  && ok "(ur) a non-unstamped verdict (fail) carries no unstamped_reason key" || no "(ur) unstamped_reason leaked onto a fail verdict"
 
 # --- APPEND NEW SECTIONS ABOVE THIS LINE (keep the RESULT footer last) ---
 echo ""

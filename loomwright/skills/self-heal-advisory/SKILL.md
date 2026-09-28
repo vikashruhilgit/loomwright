@@ -516,7 +516,8 @@ Replay any HUMAN-CONFIRMED `.agent/rules/` `must`-rule checks through ONE fail-C
 if $NO_CMD_FLAG is non-empty: export RULES_CHECK_NO_CMD=1     # the SAME valve — the helper then NEVER invokes --if-stamped
 out = run(bash "${CLAUDE_PLUGIN_ROOT}/scripts/rules-gate-verdict.sh" --root <the feature-branch checkout>)
 # Contract: ONE JSON object, always exit 0: {verdict: ok|none|fail|unresolved|unstamped|cmd_disabled|unreadable,
-#   selected, countable, advisory[{id, reason}], passed, failing, unresolved, checks_passed: "n/m"|null}
+#   selected, countable, advisory[{id, reason}], passed, failing, unresolved, checks_passed: "n/m"|null,
+#   unstamped_reason? (only on `unstamped`; message text, never read here)}
 # (field contract + verdict state trace: the helper's own header — not restated here).
 # ALLOW-LISTED read (never a deny-list of bad values):
 if out.exit_code == 0 and out.stdout parses as ONE JSON object whose `verdict` is a STRING in

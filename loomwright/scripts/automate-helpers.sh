@@ -588,10 +588,14 @@ _ge_pr_parts() {
 #           has() + `type == "string"` check. AFFIRMATIVE test: `ok` or `none` (nothing countable
 #           to verify, D3) ⇒ holds; anything else PARKs with a named reason — `fail` ⇒
 #           `rules_check_failed (<up to 3 countable ids, "; ">)`, `unresolved` ⇒
-#           `rules_check_unresolved (<ids>)`, `unstamped` ⇒ `rules_unstamped (<n> countable
-#           must-check(s) never confirmed on this machine)` (the helper answers `unstamped` only
-#           when ≥1 countable must-check exists or the countable set drifted from the one
-#           recorded at the last confirm — D3's middle form), `cmd_disabled` ⇒
+#           `rules_check_unresolved (<ids>)`, `unstamped` ⇒ `rules_unstamped (<text>)` where the
+#           text follows the helper's optional `unstamped_reason` (message only — the park is keyed
+#           on the verdict): `countable_set_drift` ⇒ `countable rule set changed since the last
+#           /rules check --confirm on this machine`, `legacy_stamp` ⇒ `the stamp predates the
+#           recorded countable rule set; re-run /rules check --confirm on this machine`, anything
+#           else (never_confirmed / missing / unknown) ⇒ `<n> countable must-check(s) never
+#           confirmed on this machine` (when the helper answers `unstamped`: skills/automate-loop/
+#           SKILL.md §10 condition 7, D3's middle form), `cmd_disabled` ⇒
 #           `rules_cmd_disabled`, and `unreadable` / helper absent / non-zero exit / non-JSON /
 #           missing or non-string `.verdict` / any unrecognised verdict ⇒ `rules_gate_unreadable`.
 #           No ctx input feeds it (`rules_gate`/`rules_ok`/`rules_check` are refused) and NO flag,
@@ -930,6 +934,18 @@ GEPARTS
         # with zero countable ids and no drift is already `none` above).
         local rn; rn="$(printf '%s' "$rules_json" | "$JQ" -r '[ (.countable // [])[]? | select(type == "string") ] | length' 2>/dev/null)" || rn=""
         case "$rn" in ''|*[!0-9]*) rn="?" ;; esac
+        # WHY it is unstamped (the helper's optional `unstamped_reason`) only picks the
+        # message text — the PARK itself is keyed on the verdict, so a missing or unknown
+        # reason still parks, with the never-confirmed text. The drift/legacy texts carry no
+        # live count: drift can empty the live countable set (a stamped failing rule
+        # demoted away), and "0 … never confirmed" would read as nothing to confirm.
+        local ur; ur="$(printf '%s' "$rules_json" | "$JQ" -r 'if (.unstamped_reason|type) == "string" then .unstamped_reason else "" end' 2>/dev/null)" || ur=""
+        case "$ur" in
+          countable_set_drift)
+            echo "PARK: rules_unstamped (countable rule set changed since the last /rules check --confirm on this machine)"; return 0 ;;
+          legacy_stamp)
+            echo "PARK: rules_unstamped (the stamp predates the recorded countable rule set; re-run /rules check --confirm on this machine)"; return 0 ;;
+        esac
         echo "PARK: rules_unstamped (${rn} countable must-check(s) never confirmed on this machine)"; return 0 ;;
       cmd_disabled)
         echo "PARK: rules_cmd_disabled"; return 0 ;;

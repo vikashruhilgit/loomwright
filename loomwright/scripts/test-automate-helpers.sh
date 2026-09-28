@@ -39,7 +39,9 @@
 #      learning-emit). A stub sibling rules-gate-verdict.sh (default verdict `none`, so
 #      every Section E case is unchanged) drives: fail ⇒ PARK: rules_check_failed (<≤3
 #      countable ids>), ok ⇒ MERGE, unresolved ⇒ rules_check_unresolved, unstamped with
-#      countable ⇒ rules_unstamped, none (advisory-only, even failing) ⇒ MERGE,
+#      countable ⇒ rules_unstamped (message text picked by the optional
+#      unstamped_reason: drift with 0 live countable / legacy stamp get their own text, an
+#      unknown reason still parks), none (advisory-only, even failing) ⇒ MERGE,
 #      cmd_disabled ⇒ rules_cmd_disabled, every unreadable shape (non-JSON, empty,
 #      non-object, missing/null/non-string/unknown verdict, non-zero exit, helper absent)
 #      ⇒ rules_gate_unreadable; the refused ctx keys rules_gate/rules_ok/rules_check with
@@ -1261,6 +1263,45 @@ if [ "$RUN_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ] && rules_called; then
   ok "R4b cond 7: verdict none (only advisory must-checks — here an unbound one that FAILS) ⇒ MERGE: nothing uncounted gates"
 else
   no "R4b cond-7 none-with-advisory wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+# R4c — unstamped by COUNTABLE-SET DRIFT with ZERO live countable ids (the last stamped,
+# failing countable rule demoted away — test-rules-gate-verdict.sh (cs 4)) ⇒ PARK with the
+# drift text, never the self-contradictory "0 countable must-check(s) never confirmed".
+reset_live
+rules_fixture unstamped '[]' '[]' '[]'
+jq -c '. + {unstamped_reason: "countable_set_drift"}' "$GH_STUB_DIR/rules.json" > "$GH_STUB_DIR/rules.tmp" && mv "$GH_STUB_DIR/rules.tmp" "$GH_STUB_DIR/rules.json"
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: rules_unstamped (countable rule set changed since the last /rules check --confirm on this machine)" ] && [ "$(merges)" -eq 0 ]; then
+  ok "R4c cond 7: unstamped by countable-set drift with 0 live countable ⇒ PARK: rules_unstamped (countable rule set changed …), 0 merges"
+else
+  no "R4c cond-7 drift unstamped wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+# R4d — unstamped by a LEGACY stamp ⇒ its own text; still 0 merges.
+reset_live
+rules_fixture unstamped '["r-lint"]' '[]' '[]'
+jq -c '. + {unstamped_reason: "legacy_stamp"}' "$GH_STUB_DIR/rules.json" > "$GH_STUB_DIR/rules.tmp" && mv "$GH_STUB_DIR/rules.tmp" "$GH_STUB_DIR/rules.json"
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: rules_unstamped (the stamp predates the recorded countable rule set; re-run /rules check --confirm on this machine)" ] && [ "$(merges)" -eq 0 ]; then
+  ok "R4d cond 7: unstamped by a legacy stamp ⇒ PARK: rules_unstamped (the stamp predates …), 0 merges"
+else
+  no "R4d cond-7 legacy unstamped wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+# R4e — an UNKNOWN / non-string unstamped_reason is message text only: it still PARKs
+# (never-confirmed text), because the park is keyed on the verdict.
+reset_live
+rules_fixture unstamped '["r-lint"]' '[]' '[]'
+jq -c '. + {unstamped_reason: {"x":1}}' "$GH_STUB_DIR/rules.json" > "$GH_STUB_DIR/rules.tmp" && mv "$GH_STUB_DIR/rules.tmp" "$GH_STUB_DIR/rules.json"
+gate "$(pass_ctx)"
+R4E_A="$RUN_OUT"; R4E_MA="$(merges)"
+reset_live
+rules_fixture unstamped '["r-lint"]' '[]' '[]'
+jq -c '. + {unstamped_reason: "something_new"}' "$GH_STUB_DIR/rules.json" > "$GH_STUB_DIR/rules.tmp" && mv "$GH_STUB_DIR/rules.tmp" "$GH_STUB_DIR/rules.json"
+gate "$(pass_ctx)"
+R4E_EXP="PARK: rules_unstamped (1 countable must-check(s) never confirmed on this machine)"
+if [ "$R4E_A" = "$R4E_EXP" ] && [ "$R4E_MA" -eq 0 ] && [ "$RUN_OUT" = "$R4E_EXP" ] && [ "$(merges)" -eq 0 ]; then
+  ok "R4e cond 7: a non-string or unknown unstamped_reason still PARKs rules_unstamped (never-confirmed text), 0 merges"
+else
+  no "R4e cond-7 unknown reason wrong (a='$R4E_A'/$R4E_MA b='$RUN_OUT'/$(merges))"
 fi
 
 # R5 (AC4 gate leg) — cmd_disabled ⇒ PARK: rules_cmd_disabled (the gate cannot verify).
