@@ -34,7 +34,7 @@
 #   resolve-backlog  <backlog.md>                       # §2 dependency-ordered items honoring done/✅ markers (dir-fallback path also skips proposed|parked, per is_not_ready)
 #   resume-glob      <automate_dir>                     # §4 list run files (is_run_file: a "# Automate Run:" title line) not "## Status: done"; §6 result sidecars never listed
 #   reconcile-item   <pr_url> <belief>                  # §4 belief vs gh/git truth -> corrected state
-#   gate-eval        <pr_url> <ctx.json>                # §10 MERGE|PARK 6-condition fail-closed gate (cond 6 = classify-risk.sh high_risk, NO override)
+#   gate-eval        <pr_url> <ctx.json>                # §10 MERGE|PARK fail-closed trusted-merge gate (conditions enumerated in skills/automate-loop/SKILL.md §10; cond 6 = classify-risk.sh high_risk, cond 7 = rules-gate-verdict.sh, NO override)
 #   learning-emit    <ledger_path> <flags...>           # §6 step 3 fail-safe (always exit 0) engine-native ground-truth POSTMORTEM_RESULT line; idempotent on run_id+item+pr_url+source+completeness (a degraded emit never blocks a later complete one)
 #   brief-repair     <item> <pr_url>                    # §6 steps 1/5 fail-safe (always exit 0) evidence-positive brief lifecycle repair: `gh pr view` says MERGED (or a non-empty mergedAt) ⇒ sibling reconcile-jobs.sh --repair --evidence <item>=<pr_url>; prints ONE line for ## Progress
 #   reconcile-status <requirements_root> [--apply]      # queue-hygiene/01: dry-run-default requirement `## Status:` reconciler — a `pending`/absent-status *.md under <requirements_root> (skips `00-*`, `_*`, `README*`, `operator-run/`) whose PR is MERGED (state via reconcile-item) and whose body cites the file's repo-relative path, OR whose head branch matches the slug on its `.supervisor/jobs/done/` brief, is stamped the §6 shape byte-for-byte; a `.supervisor/automate/*.md` Queue row carrying `# abandoned:` and naming a requirement stamps `done_with_escalation — ABANDONED (<row verbatim>)`; NEVER downgrades an existing `done`/`done_with_escalation`; prints one `plan\t…` row per file it WOULD stamp (or `stamped\t…` under `--apply`) plus one `info\t…` row per `brief-shipped` file (never promoted); writes nothing without `--apply`.
@@ -448,7 +448,7 @@ reconcile_item() {
 }
 
 # --------------------------------------------------------------------------- #
-# §10 — trusted auto-merge gate (6 conditions, fail CLOSED, SELF-RESOLVING)
+# §10 — trusted auto-merge gate (conditions enumerated in skills/automate-loop/SKILL.md §10; fail CLOSED, SELF-RESOLVING)
 # --------------------------------------------------------------------------- #
 
 # _ge_result_field <file> <field> — bounded grep/awk extraction of one scalar
@@ -508,12 +508,13 @@ _ge_pr_parts() {
 }
 
 # gate-eval <pr_url> <ctx.json> [--root <checkout>]
-# SELF-RESOLVING decision over the six conditions (red-team-hardening item 03):
+# SELF-RESOLVING decision over the trusted-merge conditions (red-team-hardening item 03;
+# the authoritative enumeration is skills/automate-loop/SKILL.md §10):
 # the gate re-derives every condition it can from LIVE ground truth (`gh`,
 # GraphQL, `classify-risk.sh`, and two artifact-file reads) instead of trusting
 # a model-authored value — a caller can no longer hand the gate a fabricated
-# verdict for any of conditions 2 through 6. Prints "MERGE" and EXECUTES
-# `gh pr merge --squash <url>` ONLY when ALL 6 hold; otherwise prints
+# verdict for any of conditions 2 through 7. Prints "MERGE" and EXECUTES
+# `gh pr merge --squash <url>` ONLY when EVERY condition holds; otherwise prints
 # "PARK: <reason>" and returns 0 (a PARK is a normal, expected outcome — fail
 # CLOSED, never crash).
 #
@@ -551,7 +552,7 @@ _ge_pr_parts() {
 # `ctx_carries_gate_owned_key` BEFORE evaluating anything else: `high_risk`,
 # `risk_reasons`, `head_sha`, `base`, `review_decision`,
 # `unresolved_human_thread`, `protection_enforceable`, `checks_green`,
-# `rubric_satisfied`. A caller attempting to hand the gate a pre-computed
+# `rubric_satisfied`, `rules_gate`, `rules_ok`, `rules_check`. A caller attempting to hand the gate a pre-computed
 # verdict for a gate-owned condition is refused, never silently accepted.
 #
 # Self-resolution per condition (all fail CLOSED — any read failure ⇒ PARK):
@@ -582,6 +583,18 @@ _ge_pr_parts() {
 #           --root <root>` and reads `.high_risk`/`.reasons` from its own output — no ctx input of
 #           any kind feeds this condition any more. NO override of any kind (owner decision R5):
 #           not `--trust-unprotected` (cond 4 only), not a config key, not an exclude list.
+#   cond 7  evaluated AFTER cond 6: the gate ITSELF invokes `"$(dirname "$0")/rules-gate-verdict.sh"
+#           --root <root>` (sibling lookup, never PATH) and reads `.verdict` with an explicit
+#           has() + `type == "string"` check. AFFIRMATIVE test: `ok` or `none` (nothing countable
+#           to verify, D3) ⇒ holds; anything else PARKs with a named reason — `fail` ⇒
+#           `rules_check_failed (<up to 3 countable ids, "; ">)`, `unresolved` ⇒
+#           `rules_check_unresolved (<ids>)`, `unstamped` ⇒ `rules_unstamped (<n> countable
+#           must-check(s) never confirmed on this machine)` (the helper answers `unstamped` only
+#           when ≥1 countable must-check exists — D3's middle form), `cmd_disabled` ⇒
+#           `rules_cmd_disabled`, and `unreadable` / helper absent / non-zero exit / non-JSON /
+#           missing or non-string `.verdict` / any unrecognised verdict ⇒ `rules_gate_unreadable`.
+#           No ctx input feeds it (`rules_gate`/`rules_ok`/`rules_check` are refused) and NO flag,
+#           config key or project file overrides it.
 #
 # Every PARK reason from the pre-self-resolving gate is preserved verbatim:
 # ctx_unreadable, drain_not_ready, sub_floor_not_merge_eligible, head_sha_moved,
@@ -596,7 +609,9 @@ _ge_pr_parts() {
 # drain_not_ready since a real drain never pairs ci_untrusted with READY, but
 # this guard also catches a hypothetically-corrupted ctx that claims READY
 # anyway, exactly like the pre-existing sub_floor_converged guard it sits
-# beside).
+# beside). New reasons added by condition 7 (rule-enforcement-at-review-and-merge):
+# rules_check_failed, rules_check_unresolved, rules_unstamped, rules_cmd_disabled,
+# rules_gate_unreadable.
 gate_eval() {
   local url="$1" ctx="$2"
   shift 2 2>/dev/null || true
@@ -618,7 +633,8 @@ gate_eval() {
   # condition is refused outright, regardless of the value it carries.
   local _ge_k
   for _ge_k in high_risk risk_reasons head_sha base review_decision \
-               unresolved_human_thread protection_enforceable checks_green rubric_satisfied; do
+               unresolved_human_thread protection_enforceable checks_green rubric_satisfied \
+               rules_gate rules_ok rules_check; do
     if "$JQ" -e --arg k "$_ge_k" 'has($k)' "$ctx" >/dev/null 2>&1; then
       echo "PARK: ctx_carries_gate_owned_key"; return 0
     fi
@@ -862,7 +878,67 @@ GEPARTS
     echo "PARK: high_risk_diff ($rr)"; return 0
   fi
 
-  # ALL 6 hold — the ONLY sanctioned `gh pr merge --squash` in the plugin (§11).
+  # Condition 7 — no stamped, gate-COUNTABLE `must`-rule check is failing
+  # (rule-enforcement-at-review-and-merge, owner decisions D1–D4). Evaluated AFTER
+  # cond 6 so every earlier PARK reason keeps its precedence. Same posture as
+  # cond 6: the gate ITSELF invokes its sibling `rules-gate-verdict.sh` (never
+  # PATH) on the checkout it was handed — no ctx input feeds this condition
+  # (`rules_gate`/`rules_ok`/`rules_check` are refused above) and NO flag, config
+  # key or project file overrides it. `.verdict` is read with an explicit
+  # has() + `type == "string"` check; `rules_ok` is computed in the AFFIRMATIVE
+  # form (`ok`, or `none` = nothing countable to verify, D3 — the cond-5 `na`
+  # precedent) and the single test is `!= "true"` — never a `= "false"` test, so
+  # any verdict this code does not recognise parks.
+  local rules_bin; rules_bin="$(dirname "$0")/rules-gate-verdict.sh"
+  # `cmd || rc=$?` (the cond-2 read's shape): under `set -e` a failing command
+  # substitution in a plain assignment would abort the gate with NO line printed.
+  # The helper's contract is "always exit 0", so a non-zero exit is unreadable.
+  local rules_json="" rules_rc=0
+  if [ -r "$rules_bin" ]; then
+    rules_json="$(bash "$rules_bin" --root "$root" </dev/null 2>/dev/null)" || rules_rc=$?
+  fi
+  local rv="__MISSING__"
+  if [ "$rules_rc" -eq 0 ] && [ -n "$rules_json" ] && printf '%s' "$rules_json" | "$JQ" -e 'type == "object"' >/dev/null 2>&1; then
+    rv="$(printf '%s' "$rules_json" | "$JQ" -r 'if has("verdict") and ((.verdict|type) == "string") then .verdict else "__MISSING__" end' 2>/dev/null)" || rv="__MISSING__"
+    [ -n "$rv" ] || rv="__MISSING__"
+  fi
+  local rules_ok="false"
+  case "$rv" in
+    ok|none) rules_ok="true" ;;
+  esac
+  if [ "$rules_ok" != "true" ]; then
+    # _ge_rules_ids <field> — up to 3 ids of <field> that are also COUNTABLE (an
+    # advisory id never names a gate blocker), joined by "; ", one line, as data.
+    _ge_rules_ids() {
+      printf '%s' "$rules_json" | "$JQ" -r --arg f "$1" '
+        ([ (.countable // [])[]? | select(type == "string") ]) as $c
+        | [ (.[$f] // [])[]? | select(type == "string") | . as $i | select(any($c[]; . == $i)) ]
+        | .[:3] | map(gsub("[[:cntrl:]]"; "")) | join("; ")' 2>/dev/null
+    }
+    local rids
+    case "$rv" in
+      fail)
+        rids="$(_ge_rules_ids failing)" || rids=""; [ -n "$rids" ] || rids="no failing ids recorded"
+        echo "PARK: rules_check_failed ($rids)"; return 0 ;;
+      unresolved)
+        rids="$(_ge_rules_ids unresolved)" || rids=""; [ -n "$rids" ] || rids="no unresolved ids recorded"
+        echo "PARK: rules_check_unresolved ($rids)"; return 0 ;;
+      unstamped)
+        # D3 middle form: the helper answers `unstamped` ONLY when countable != []
+        # (an unstamped store with zero countable ids is already `none` above).
+        local rn; rn="$(printf '%s' "$rules_json" | "$JQ" -r '[ (.countable // [])[]? | select(type == "string") ] | length' 2>/dev/null)" || rn=""
+        case "$rn" in ''|*[!0-9]*) rn="?" ;; esac
+        echo "PARK: rules_unstamped (${rn} countable must-check(s) never confirmed on this machine)"; return 0 ;;
+      cmd_disabled)
+        echo "PARK: rules_cmd_disabled"; return 0 ;;
+      *)
+        # unreadable, helper absent, non-JSON output, missing/non-string verdict,
+        # or any verdict string this gate does not recognise.
+        echo "PARK: rules_gate_unreadable"; return 0 ;;
+    esac
+  fi
+
+  # ALL conditions hold — the ONLY sanctioned `gh pr merge --squash` in the plugin (§11).
   if "$GH" pr merge --squash "$url" >/dev/null 2>&1; then
     echo "MERGE"; return 0
   fi
