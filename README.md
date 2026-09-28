@@ -744,7 +744,7 @@ Claude Code caches plugin contents. After pulling new changes (e.g. a fresh `git
 
 ## License
 
-MIT — See LICENSE file
+Loomwright is **source-available** under the [PolyForm Shield License 1.0.0](LICENSE.md). You may use, modify, and share it for any purpose, including at work and inside your company, except to provide a product that competes with Loomwright or with a product the licensor provides using it. Commercial rights stay with the author. Versions published before 15.108.2 were released under MIT and remain available under those terms.
 
 ---
 
