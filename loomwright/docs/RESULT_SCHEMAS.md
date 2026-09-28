@@ -676,7 +676,7 @@ PLAN_REVIEW_RESULT:
   issues: object[]                     # required (can be empty for PASS)
     - severity: enum [BLOCKING, HIGH, MEDIUM, LOW]
       section: string                  # brief section name (e.g., "Subtask Structure", "File Impact Map")
-      category: string                 # optional — issue category (e.g., "dep_graph" for Criterion 12 violations, "file_path" for missing files, "cited_line_premise" for Criterion 1's STALE cited-line-premise sub-check — a file that EXISTS but whose cited content moved, distinct from "file_path"'s missing-file meaning, "executable_acceptance" for Criterion 14 cmd:/bare-shell trust-surface findings, "canonical_source" for Criterion 15 canonical-list / source-of-truth verification findings); free-form, but use canonical names where defined
+      category: string                 # optional — issue category (e.g., "dep_graph" for Criterion 12 violations, "file_path" for missing files, "cited_line_premise" for Criterion 1's STALE cited-line-premise sub-check — a file that EXISTS but whose cited content moved, distinct from "file_path"'s missing-file meaning, "executable_acceptance" for Criterion 14 cmd:/bare-shell trust-surface findings, "canonical_source" for Criterion 15 canonical-list / source-of-truth verification findings, "rule_conformance" for Criterion 17 house-rule conformance findings); free-form, but use canonical names where defined
       description: string              # what's wrong
       suggestion: string               # optional — how to fix
   summary: string                      # required — concise review summary
@@ -688,7 +688,7 @@ PLAN_REVIEW_RESULT:
 - When `decision=FAIL`: `issues` must contain at least one issue with BLOCKING or HIGH severity
 - When `decision=NEEDS_HUMAN`: `issues` must be non-empty
 - `section` must reference a valid brief section name
-- `category` is optional but recommended; when present, prefer canonical names — `dep_graph` for Criterion 12 (provides/requires) violations, `file_path` for missing-file violations, `cited_line_premise` for Criterion 1's STALE cited-line-premise sub-check, `feasibility` for Criterion 11 issues, `executable_acceptance` for Criterion 14 (`## Executable Acceptance` `cmd:`/bare-shell bullets), `canonical_source` for Criterion 15 (canonical-list / source-of-truth verification)
+- `category` is optional but recommended; when present, prefer canonical names — `dep_graph` for Criterion 12 (provides/requires) violations, `file_path` for missing-file violations, `cited_line_premise` for Criterion 1's STALE cited-line-premise sub-check, `feasibility` for Criterion 11 issues, `executable_acceptance` for Criterion 14 (`## Executable Acceptance` `cmd:`/bare-shell bullets), `canonical_source` for Criterion 15 (canonical-list / source-of-truth verification), `lane_overlap` for Criterion 16, `rule_conformance` for Criterion 17 (an applicable `must` house rule contradicted, or its checkable `rule: <id>` bullet missing)
 - `summary` must be present
 
 **Severity mapping for plan review:**
@@ -1296,8 +1296,10 @@ GROUND_TRUTH_JSON: {
     (a bare `cmd:` with no command), `cmd_disabled` (a `cmd:`/bare check skipped under `--no-cmd` /
     `GROUND_TRUTH_NO_CMD=1`), `cmd_unapproved` (red-team-hardening item 05, v15.90.0 — a `--brief`-sourced
     `cmd:`/bare bullet whose `## Configuration` stamp is absent or stale against the CURRENT bullet
-    list; see §"`## Executable Acceptance`" below), and `qa_executor_dispatch_deferred_m2b_1b` (the
-    deferred `qa-executor` kind).
+    list; see §"`## Executable Acceptance`" below), `qa_executor_dispatch_deferred_m2b_1b` (the
+    deferred `qa-executor` kind), and the five `rule:`-kind reasons `rule_not_found`,
+    `rule_cmd_disabled`, `rule_unapproved`, `rule_check_failed`, `rule_unresolved` (defined once in
+    §"`## Executable Acceptance`" below).
 - `commit` — short commit SHA at run time, or `"unknown"`. **Contextual — NOT part of any determinism
   invariant.**
 - `date` — ISO 8601 UTC timestamp at run time, or `"unknown"`. **Contextual.**
@@ -1321,7 +1323,7 @@ and `docs/SPIKES/SYSTEM_TWIN_ROADMAP.md` §4 (M2) for milestone status.
 ### `## Executable Acceptance` (brief convention)
 
 The optional `## Executable Acceptance` section in a brief is a list of `- ` bullets, each either a
-raw shell command or a `<kind>: <target>` line where `kind ∈ {cmd, corpus-task, qa-executor}`:
+raw shell command or a `<kind>: <target>` line where `kind ∈ {cmd, corpus-task, qa-executor, rule}`:
 - `cmd: <shell>` (or a **bare** bullet with no recognized `kind:` prefix) — a shell command run from
   the **project root** (`--project <dir>` if the runner was given one, else the git toplevel of the
   caller's CWD, else the caller's CWD; Supervisor Phase 4.5 pins repo-root CWD, so there the project
@@ -1337,6 +1339,30 @@ raw shell command or a `<kind>: <target>` line where `kind ∈ {cmd, corpus-task
   (reason `corpus_task_not_found`), not a silent drop. The `<id>` is a single path segment (a `/` or
   `..` is rejected as `corpus_task_invalid_id`).
 - `qa-executor: <target>` — RECOGNIZED but DEFERRED to slice 1b (per-check `unverified`).
+- `rule: <id>` — a house rule (`.agent/rules/`), resolved by DELEGATION to `scripts/rules-check.sh`;
+  `run-ground-truth.sh` never reads the rules store and never runs a `check` itself (`rules-check.sh`
+  stays the one executor — `skills/rules/SKILL.md` §9). Each call runs at most ONCE per run, cwd = the
+  project root, stdin `</dev/null`. Per-check reasons (the authoritative list — other surfaces point here):
+  - `rule_not_found` (`fail`) — `<id>` is not printed by `rules-check.sh --list-selected` (absent id,
+    an `advisory` rule, or a null-`check` rule): named, never a silent pass. Aggregate status is then
+    `advisory_failures`.
+  - `rule_cmd_disabled` (`unverified`) — `--no-cmd` / `GROUND_TRUTH_NO_CMD=1`: `rules-check.sh
+    --if-stamped` is NOT invoked and nothing is parsed (a check is arbitrary shell, and its echoed text
+    could forge a result line).
+  - `rule_unapproved` (`unverified`) — `--if-stamped` printed `  [SKIP] all (unstamped)`: nothing ran.
+  - `rule_check_failed` (`fail`) — exactly one whole-line `  [FAIL] <id>` and no other result line for
+    the id.
+  - `rule_unresolved` (`unverified`) — anything ambiguous: duplicate or conflicting result lines, a
+    near-miss line, no line, a missing/mismatched `Checks passed: N/M` trailer, an rc outside {0,1},
+    or a failed `--list-selected` call. A forged or ambiguous line only DEGRADES a result.
+  - `pass` requires exactly one whole-line `  [PASS] <id>` and no other result line for the id.
+
+  A `rule:` bullet carries no shell, so it is machine-authorable (Launch Pad Phase 5 action 6a), is
+  never hashed into the brief `sha256:` stamp, and is never flagged by Criterion 14. Its only
+  authorization is the USER-SCOPE rules stamp (`skills/rules/SKILL.md` §8.1 — two stamps, never
+  conflated). Honest limit: `--if-stamped` replays the WHOLE stamped must-set, not just the named ids;
+  only the named ids are reported. Plan Reviewer **Criterion 17** (`rule_conformance`) fails a brief
+  that omits the `rule: <id>` bullet for an applicable checkable `must` rule.
 
 Supervisor Phase 4.5 passes this section to `run-ground-truth.sh` via `--brief <brief_path>` (falling
 back to `.supervisor/twin/ground-truth.json` when the brief has no such section).

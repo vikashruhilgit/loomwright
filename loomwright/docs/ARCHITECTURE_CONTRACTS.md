@@ -507,9 +507,9 @@ A CI ratchet on **spawn-time prompt inventory**. Each agent's effective weight i
 | `code-reviewer`     | 25131 | 22846¹ | 5 |
 | `context-keeper`    | 3818  | 3471¹ | 0 |
 | `execute-manager`   | 38646 | 37027¹ | 3 |
-| `launch-pad`        | 41923 | 41021¹ | 7 |
+| `launch-pad`        | 45940 | 41763¹ | 7 |
 | `orchestrator`      | 9558  | 8924¹ | 1 |
-| `plan-reviewer`     | 10046 | 6392  | 0 |
+| `plan-reviewer`     | 11300 | 6392  | 0 |
 | `product-owner`     | 14405 | 13095¹ | 3 |
 | `qa-executor`       | 48165 | 43786¹ | 5 |
 | `qa-strategist`     | 23488 | 21352¹ | 3 |
@@ -523,6 +523,8 @@ A CI ratchet on **spawn-time prompt inventory**. Each agent's effective weight i
 
 **Known trade-off, not a benefit — de-batching costs Execute Manager tool-call budget.** The same Subtask 2 deletion retired `record_batch` (alongside `queue_ck_update`/`flush_ck_batch`), converting the Phase 3 poll loop's Context-Keeper updates from one batched call covering N events to a direct per-event `Task(Context-Keeper, …)` call each (`skills/async-orchestration/SKILL.md` §"Poll Loop" — "direct call — de-batched, one call per event"), consuming ≥2 calls per subtask instead of ~1 for the whole batch against Execute Manager's 60-call budget documented above. This is **orthogonal** to the progress-state fix: `record_batch` only ever batched `worker_result`/`review`/`decision`/`error` writes — none of which are `## Session` writes — so retiring it did nothing to address the prompt-instructed-bookkeeping miss rate this change exists to fix, and restoring it would not reopen that gap. Restoring a batch operation scoped to the non-`## Session` sections (`record_worker_result`/`record_review`/`record_decision`/`record_error`) is a reasonable follow-up, but is a larger change than this fix's scope and was not made unilaterally here.
 
+> **Raise log (plan-time-rule-routing, v15.109.0):** `launch-pad` 41923 → 45940 — Phase 3 action 0c (`read-rules.sh --with-ids`), Phase 5 action 6a (`## House Rules` + `rule:` bullets), the `--- APPLICABLE RULES ---` spawn block and the preloaded `supervisor-readiness` skill's `rule:` kind moved measured 41021 → 41763 (160 headroom); `plan-reviewer` 10046 → 11300 — NEW Criterion 17 (Rule Conformance) plus the 16 → 17 count updates moved the live weight 9598 → 10273 (breach by 227). Both restored to measured + ~10% per the raise rule.
+>
 > **Re-measure log (no raise — fix/verify-provides-subtask-id-anchor, v15.105.0):** `launch-pad` 40569 → 41021 (Phase 5.5 action 1b `verify-provides.sh --parse-only` gate-parse check, the `--- GATE PARSE ---` spawn block, the anchor authoring rule and the example block's anchor; 902 headroom) and `plan-reviewer` live 9330 → 9598 (Criterion 12's gate-parseable-anchor rule + severity clause; 448 headroom, `measured` column stays the frozen 6392 baseline). Both "before" figures are origin/main's own unrecorded drift from the last logged 40081 / 9293. No budget breached; none raised.
 >
 > **Re-measure log (no raise — dismissed-findings-01, harness-port/05):** `review-pr` measured 31467 → 33893 — the preloaded `review-heal/SKILL.md` gained the itemised `dismissed` field, the "Dismissed-findings marker comment" subsection, and the `--skip-marker` self-skip note in §U1; 721 proxy tokens of headroom against the unchanged 34614 budget (no breach) — not raised, per the anti-treadmill rule. `supervisor` measured 24989 → 26181 — this item touches `self-heal-advisory/SKILL.md` only, which `loomwright:supervisor-runner` does NOT preload (0 preloaded skills, unchanged); the live figure moved purely from OTHER already-merged PRs' growth in `agents/supervisor.md` itself (untouched by this item) landing on `main` since this row's prior re-measure; 1307 proxy tokens of headroom against the unchanged 27488 budget (no breach) — not raised.
