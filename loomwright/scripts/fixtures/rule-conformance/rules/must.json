@@ -1,0 +1,11 @@
+[
+  {
+    "id": "payments-money-integer-minor-units",
+    "category": "payments",
+    "statement": "Money amounts under src/payments/ are integer minor units (cents); never parse or store money as a floating-point number (no parseFloat, no toFixed).",
+    "enforcement": "must",
+    "check": "grep -rnE -- 'parseFloat|toFixed' src/payments; test $? -eq 1",
+    "provenance": { "source": "fixture: test-rule-conformance-seam.sh", "added": "2026-09-28T00:00:00Z" },
+    "applies_to": ["src/payments/*"]
+  }
+]

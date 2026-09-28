@@ -394,7 +394,7 @@ Run 5 grounded checks (CLAUDE.md + grep/glob/read), output GO/CAUTION/NO-GO:
 ### Phase 5.5: PLAN REVIEW (Mandatory Gate)
 
 1. Spawn Plan Reviewer subagent with brief + CLAUDE.md context
-2. Plan Reviewer checks all 16 criteria (file paths, patterns, dependencies, parallelism, subtask contracts, lane declarations, etc.) — Criteria 11, 13, 14, 15, and 16 are conditional (skip silently when their gating section/field/claim is absent); Criterion 12 requires `provides:`/`requires:` contracts unless `legacy_brief: true`
+2. Plan Reviewer checks all 17 criteria (file paths, patterns, dependencies, parallelism, subtask contracts, lane declarations, house-rule conformance, etc.) — Criteria 11, 13, 14, 15, 16, and 17 are conditional (skip silently when their gating section/field/claim is absent; Criterion 17 runs only when Launch Pad pasted a non-empty `--- APPLICABLE RULES ---` block from its `read-rules.sh --with-ids` consult); Criterion 12 requires `provides:`/`requires:` contracts unless `legacy_brief: true`
 3. Decision handling:
    - PASS → proceed to Phase 6 (save enabled)
    - FAIL (attempt < 3) → fix issues, re-assemble, re-spawn reviewer

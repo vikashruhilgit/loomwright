@@ -586,6 +586,89 @@ grep -qF "not an object" < <(printf '%s\n' "$err_p") \
 [ "$(cat "$HP/$STAMP_REL")" = "[1,2]" ] && ok "(p3) the non-object stamp file was NOT clobbered" \
   || no "(p3) the non-object stamp file was overwritten: $(cat "$HP/$STAMP_REL")"
 
+# ---------------------------------------------------------------------------------------------------
+# (ls) --list-selected (plan-time-rule-routing AC6 + Plan Review advisory A1): prints EXACTLY the
+#      must+checkable ids (sorted, after validation + first-seen dedup), executes NOTHING (canary),
+#      writes NO stamp (sentinel stamp file content + mtime unchanged), exits 0, and WINS over
+#      --confirm / --if-stamped / --no-cmd. Every early-exit path prints NOTHING on stdout.
+# ---------------------------------------------------------------------------------------------------
+echo "== (ls) --list-selected: read-only enumeration of the must+checkable ids =="
+RLS="$(new_repo)"
+HLS="$ROOT/home-ls"; mkdir -p "$(dirname "$HLS/$STAMP_REL")"
+CANARY_LS="$ROOT/ls_canary_$$"
+rm -f "$CANARY_LS"
+seed_rules_file "$RLS" "a.json" "[
+  {\"id\":\"zz-must\",\"category\":\"a\",\"statement\":\"s\",\"enforcement\":\"must\",\"check\":\"touch $CANARY_LS\",\"provenance\":{\"source\":\"test\"}},
+  {\"id\":\"aa-must\",\"category\":\"z\",\"statement\":\"s\",\"enforcement\":\"must\",\"check\":\"touch $CANARY_LS\",\"provenance\":{\"source\":\"test\"}},
+  {\"id\":\"null-must\",\"category\":\"a\",\"statement\":\"s\",\"enforcement\":\"must\",\"check\":null,\"provenance\":{\"source\":\"test\"}},
+  {\"id\":\"adv-check\",\"category\":\"a\",\"statement\":\"s\",\"enforcement\":\"advisory\",\"check\":\"touch $CANARY_LS\",\"provenance\":{\"source\":\"test\"}},
+  {\"id\":\"bad-enf\",\"category\":\"a\",\"statement\":\"s\",\"enforcement\":\"MUST\",\"check\":\"true\",\"provenance\":{\"source\":\"test\"}},
+  {\"id\":\"nl\\nforged\",\"category\":\"a\",\"statement\":\"s\",\"enforcement\":\"must\",\"check\":\"true\",\"provenance\":{\"source\":\"test\"}}
+]"
+# A later file re-declaring aa-must as ADVISORY loses to first-seen (still listed); a new must id is listed.
+seed_rules_file "$RLS" "b.json" "[
+  {\"id\":\"aa-must\",\"category\":\"a\",\"statement\":\"dup\",\"enforcement\":\"advisory\",\"check\":null,\"provenance\":{\"source\":\"test\"}},
+  {\"id\":\"mm-must\",\"category\":\"a\",\"statement\":\"s\",\"enforcement\":\"must\",\"check\":\"false\",\"provenance\":{\"source\":\"test\"}}
+]"
+# Sentinel stamp: fixed content + an old mtime; any rewrite changes the content AND bumps the mtime.
+STAMP_LS="$HLS/$STAMP_REL"
+printf '%s\n' '{"sentinel":{"git_common_dir":"x","repo_root":"x","hash":"x","ts":"2000-01-01T00:00:00Z"}}' > "$STAMP_LS"
+touch -t 200001010000 "$STAMP_LS"
+STAMP_REF="$ROOT/ls-stamp-ref"; cp "$STAMP_LS" "$STAMP_REF"; touch -t 200001010000 "$STAMP_REF"
+EXPECT_LS="$(printf 'aa-must\nmm-must\nzz-must')"
+ls_run() { ( cd "$RLS" && HOME="$HLS" bash "$CHECKER" "$@" </dev/null 2>/dev/null ); }
+out_ls="$(ls_run --list-selected)"; rc_ls=$?
+[ "$rc_ls" -eq 0 ] && ok "(ls1) --list-selected exits 0 (even though mm-must's check would FAIL)" || no "(ls1) rc=$rc_ls"
+[ "$out_ls" = "$EXPECT_LS" ] \
+  && ok "(ls2) prints EXACTLY the must+checkable ids, sorted (null-check / advisory / invalid / dup-advisory / newline-id excluded)" \
+  || no "(ls2) wrong id list: '$out_ls'"
+[ ! -e "$CANARY_LS" ] && ok "(ls3) executes NOTHING (the canary check did not run)" || no "(ls3) a check RAN under --list-selected"
+for combo in "--list-selected --confirm" "--confirm --list-selected" "--list-selected --if-stamped" \
+             "--list-selected --no-cmd" "--no-cmd --if-stamped --confirm --list-selected"; do
+  # shellcheck disable=SC2086 — word-splitting the combo into argv is the point.
+  out_c="$(ls_run $combo)"; rc_c=$?
+  if [ "$rc_c" -eq 0 ] && [ "$out_c" = "$EXPECT_LS" ] && [ ! -e "$CANARY_LS" ]; then
+    ok "(ls4) '$combo' ⇒ same id list, exit 0, nothing executed (--list-selected wins)"
+  else
+    no "(ls4) '$combo' rc=$rc_c out='$out_c' canary=$([ -e "$CANARY_LS" ] && echo PRESENT || echo absent)"
+  fi
+  rm -f "$CANARY_LS"
+done
+out_env="$( cd "$RLS" && HOME="$HLS" RULES_CHECK_CONFIRM=1 bash "$CHECKER" --list-selected </dev/null 2>/dev/null )"
+[ "$out_env" = "$EXPECT_LS" ] && [ ! -e "$CANARY_LS" ] \
+  && ok "(ls5) an ambient RULES_CHECK_CONFIRM=1 cannot turn --list-selected into an execute run" \
+  || no "(ls5) env confirm changed --list-selected: '$out_env'"
+if cmp -s "$STAMP_LS" "$STAMP_REF" && ! [ "$STAMP_LS" -nt "$STAMP_REF" ]; then
+  ok "(ls6) writes NO stamp: the sentinel stamp file's content AND mtime are unchanged after every --list-selected run"
+else
+  no "(ls6) the stamp file was rewritten under --list-selected: $(cat "$STAMP_LS")"
+fi
+# A1: every early-exit path prints NOTHING on stdout (no 'Checks passed: 0/0').
+RLS0="$(new_repo)"
+o0a="$( cd "$RLS0" && HOME="$HLS" bash "$CHECKER" --list-selected </dev/null 2>/dev/null )"; r0a=$?
+mkdir -p "$RLS0/.agent/rules"
+o0b="$( cd "$RLS0" && HOME="$HLS" bash "$CHECKER" --list-selected </dev/null 2>/dev/null )"; r0b=$?
+printf 'not json' > "$RLS0/.agent/rules/x.json"
+o0c="$( cd "$RLS0" && HOME="$HLS" bash "$CHECKER" --list-selected </dev/null 2>/dev/null )"; r0c=$?
+printf '%s' '[{"id":"only-adv","category":"a","statement":"s","enforcement":"advisory","check":"true","provenance":{}}]' > "$RLS0/.agent/rules/x.json"
+o0d="$( cd "$RLS0" && HOME="$HLS" bash "$CHECKER" --list-selected </dev/null 2>/dev/null )"; r0d=$?
+if [ -z "$o0a$o0b$o0c$o0d" ] && [ "$r0a$r0b$r0c$r0d" = "0000" ]; then
+  ok "(ls7) A1: absent store / empty dir / unparseable file / advisory-only store ⇒ EMPTY stdout, exit 0"
+else
+  no "(ls7) A1 early-exit leaked stdout: a='$o0a' b='$o0b' c='$o0c' d='$o0d' rcs=$r0a$r0b$r0c$r0d"
+fi
+# ...while the NON-list mode keeps its existing early-exit summary line (the change is list-mode-only).
+o0e="$( cd "$RLS0" && rm -f .agent/rules/x.json && HOME="$HLS" bash "$CHECKER" --no-cmd </dev/null 2>/dev/null )"
+[ "$o0e" = "Checks passed: 0/0" ] && ok "(ls8) without --list-selected the empty-store path still prints 'Checks passed: 0/0'" \
+  || no "(ls8) non-list early exit changed: '$o0e'"
+# POSITIVE CONTROL for (ls3)/(ls4)/(ls5): the SAME store under a plain --confirm (no --list-selected)
+# DOES run the canary check — so "canary absent" above is a real observation, not a broken fixture.
+rm -f "$CANARY_LS"
+ls_run --confirm >/dev/null
+[ -e "$CANARY_LS" ] && ok "(ls9) positive control: plain --confirm on the same store DOES create the canary (ls3/ls4 non-vacuous)" \
+  || no "(ls9) positive control broken: --confirm did not create the canary — (ls3)/(ls4) are VACUOUS"
+rm -f "$CANARY_LS"
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

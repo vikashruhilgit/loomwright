@@ -138,11 +138,38 @@
 #   - malformed JSON                            → fail-safe skip, exit 0
 #   - zero valid rules survive                  → EMPTY (no banner), exit 0
 #
-# Usage:  read-rules.sh [touched-path ...]   (args are the ROUTING scope — see "PATH ROUTING" above;
-#                                             NO args = repo-wide. Prints applicable rules to stdout.)
+# --with-ids (OPT-IN, plan-time-rule-routing): when this EXACT token appears anywhere in argv, each
+#   rendered rule gains two extra lines — `  - id: <id>` and `  - enforcement: <advisory|must>` —
+#   so a planner (Launch Pad action 0c) can author a `rule: <id>` Executable Acceptance bullet. The
+#   token is REMOVED from the routing scope; every other positional (including look-alikes such as
+#   `--with-ids=1` or `--WITH-IDS`) stays a touched path exactly as before. Routing, validation, dedup,
+#   supersession and the schema are unchanged. WITHOUT the flag the output is BYTE-IDENTICAL to the
+#   pre-flag reader (pinned by test-read-rules.sh against a hand-written pre-change baseline), so the worker paste,
+#   the Phase 4.5 seam and their token budgets are untouched.
+#
+# Usage:  read-rules.sh [--with-ids] [touched-path ...]   (args are the ROUTING scope — see "PATH
+#                                             ROUTING" above; NO args = repo-wide. Prints applicable
+#                                             rules to stdout.)
 # Exit:   always 0; diagnostics go to stderr + .supervisor/logs/memory.log.
 
 set -uo pipefail   # `set -e` intentionally omitted — a read must NEVER fail its caller.
+
+# --with-ids extraction: rotate argv once, dropping ONLY the exact `--with-ids` token and keeping every
+# other positional (in order) as a touched path. A rotate — not an array — because an EMPTY array
+# expansion is an unbound-variable error under `set -u` on bash 3.2, while `"$@"` is safe when empty.
+WITH_IDS=0
+_rr_n=$#
+_rr_i=0
+while [ "$_rr_i" -lt "$_rr_n" ]; do
+  _rr_a="$1"; shift
+  if [ "$_rr_a" = "--with-ids" ]; then
+    WITH_IDS=1
+  else
+    set -- "$@" "$_rr_a"
+  fi
+  _rr_i=$((_rr_i + 1))
+done
+unset _rr_n _rr_i _rr_a
 
 GITROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$GITROOT" 2>/dev/null || true
@@ -516,6 +543,11 @@ while IFS=$'\t' read -r kind r_id r_cat r_enf r_stmt r_check; do
     flag=""
   fi
   printf '%s\n' "- ${flag}${r_stmt}"
+  if [ "$WITH_IDS" -eq 1 ]; then
+    # --with-ids only (see header). The id cell is the same tab/newline-neutralized value jq emitted.
+    printf '%s\n' "  - id: ${r_id}"
+    printf '%s\n' "  - enforcement: ${r_enf}"
+  fi
   printf '%s\n' "  - category: ${r_cat}"
   # `check` is emitted as DATA only — NEVER executed (the invariant, §9).
   printf '%s\n' "  - check (data only, NOT executed by this reader): ${r_check}"

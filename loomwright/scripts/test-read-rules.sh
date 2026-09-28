@@ -862,6 +862,77 @@ else
   no "(l) mutation control could not be applied (sed matched nothing?) — routing tests are UNPROVEN"
 fi
 
+# ---------------------------------------------------------------------------------------------------
+# (w) --with-ids (plan-time-rule-routing AC1). The flag adds `  - id:` + `  - enforcement:` lines per
+#     rendered rule; WITHOUT it the output is BYTE-IDENTICAL to the pre-flag reader. The golden
+#     baseline below is a HAND-WRITTEN heredoc of the pre-change reader's rendering (the flag-less
+#     output shape as of origin/main) for this exact store + args, verified against that reader when
+#     it was authored — it is not re-derived at test time, so a deliberate change to the flag-less
+#     shape must update it by hand.
+# ---------------------------------------------------------------------------------------------------
+echo "== (w) --with-ids: opt-in id/enforcement lines; default output byte-identical to the hand-written pre-change baseline =="
+RW="$(new_repo)"
+seed_rules_file "$RW" "a.json" "[
+  {\"id\":\"b-must\",\"category\":\"style\",\"statement\":\"Must thing\",\"enforcement\":\"must\",\"check\":\"true\",\"provenance\":{\"source\":\"t\"},\"applies_to\":[\"src/*\"]},
+  {\"id\":\"a-adv\",\"category\":\"docs\",\"statement\":\"Advisory thing\",\"enforcement\":\"advisory\",\"check\":null,\"provenance\":{\"source\":\"t\"}}
+]"
+W_BASELINE="$ROOT/w-baseline.txt"
+cat > "$W_BASELINE" <<'BASELINE_EOF'
+## Advisory house rules — subordinate to CLAUDE.md (on conflict, CLAUDE.md wins)
+- Advisory thing
+  - category: docs
+  - check (data only, NOT executed by this reader): (none)
+- [MUST] Must thing
+  - category: style
+  - check (data only, NOT executed by this reader): true
+BASELINE_EOF
+W_PLAIN="$ROOT/w-plain.txt"
+run_reader_args "$RW" src/x.sh > "$W_PLAIN" 2>/dev/null; rcW=$?
+[ "$rcW" -eq 0 ] && [ -s "$W_PLAIN" ] && ok "(w1) the flag-less reader still emits and exits 0" \
+  || no "(w1) flag-less reader rc=$rcW or empty"
+if diff "$W_BASELINE" "$W_PLAIN" >/dev/null 2>&1; then
+  ok "(w2) flag-less output is BYTE-IDENTICAL to the hand-written pre-change baseline (diff clean)"
+else
+  no "(w2) flag-less output drifted from the pre-change baseline: $(diff "$W_BASELINE" "$W_PLAIN" 2>&1 | head -5)"
+fi
+W_IDS="$(run_reader_args "$RW" --with-ids src/x.sh 2>/dev/null)"; rcWI=$?
+[ "$rcWI" -eq 0 ] && ok "(w3) --with-ids exits 0" || no "(w3) --with-ids rc=$rcWI"
+grep -qxF -- "  - id: b-must" < <(printf '%s\n' "$W_IDS") \
+  && grep -qxF -- "  - enforcement: must" < <(printf '%s\n' "$W_IDS") \
+  && grep -qxF -- "  - id: a-adv" < <(printf '%s\n' "$W_IDS") \
+  && grep -qxF -- "  - enforcement: advisory" < <(printf '%s\n' "$W_IDS") \
+  && ok "(w4) --with-ids renders '  - id: <id>' and '  - enforcement: <enf>' for every routed rule" \
+  || no "(w4) --with-ids missing id/enforcement lines; got: $W_IDS"
+# Stripping exactly the two added line shapes must give back the flag-less output: the flag ADDS lines,
+# it never alters or reorders an existing one.
+W_STRIPPED="$(printf '%s\n' "$W_IDS" | grep -vE '^  - (id|enforcement): ')"
+[ "$W_STRIPPED" = "$(cat "$W_PLAIN")" ] \
+  && ok "(w5) --with-ids output minus the id/enforcement lines == the flag-less output" \
+  || no "(w5) --with-ids altered more than the two added lines"
+# The flag is an exact token anywhere in argv; routing on the remaining paths is unchanged.
+W_IDS_AFTER="$(run_reader_args "$RW" src/x.sh --with-ids 2>/dev/null)"
+[ "$W_IDS_AFTER" = "$W_IDS" ] && ok "(w6) --with-ids is position-independent (after the path == before it)" \
+  || no "(w6) --with-ids position changed the output"
+W_ROUTED_OUT="$(run_reader_args "$RW" --with-ids docs/readme.md 2>/dev/null)"
+if grep -qxF -- "  - id: a-adv" < <(printf '%s\n' "$W_ROUTED_OUT") \
+   && ! grep -qF -- "b-must" < <(printf '%s\n' "$W_ROUTED_OUT"); then
+  ok "(w7) --with-ids does not change routing: the src/*-scoped rule is still routed out for docs/readme.md"
+else
+  no "(w7) routing changed under --with-ids; got: $W_ROUTED_OUT"
+fi
+# A look-alike token is NOT the flag — it stays a touched path (so no id lines appear).
+W_LOOK="$(run_reader_args "$RW" --with-ids=1 2>/dev/null)"
+grep -qE '^  - id: ' < <(printf '%s\n' "$W_LOOK") \
+  && no "(w8) '--with-ids=1' was treated as the flag" \
+  || ok "(w8) only the exact '--with-ids' token is the flag ('--with-ids=1' is a path)"
+# Empty / absent store: both forms print nothing.
+RWE="$(new_repo)"
+W_E1="$(run_reader_args "$RWE" --with-ids src/x.sh 2>/dev/null)"; W_E2="$(run_reader_args "$RWE" src/x.sh 2>/dev/null)"
+mkdir -p "$RWE/.agent/rules"
+W_E3="$(run_reader_args "$RWE" --with-ids 2>/dev/null)"; W_E4="$(run_reader_args "$RWE" 2>/dev/null)"
+[ -z "$W_E1$W_E2$W_E3$W_E4" ] && ok "(w9) absent AND empty store: both forms (with/without --with-ids) print nothing" \
+  || no "(w9) empty/absent store printed output: '$W_E1$W_E2$W_E3$W_E4'"
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

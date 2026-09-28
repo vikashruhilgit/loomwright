@@ -67,8 +67,8 @@
 #     always traces back to an actual human confirmation, never to an automated replay of one.
 #   - Interactive TTY (stdin AND stdout are TTYs, no --if-stamped): prompts once and executes on
 #     y/Y/yes.
-#   Precedence, evaluated top-down:
-#     --no-cmd  >  argv --confirm (or RULES_CHECK_CONFIRM=1 when --if-stamped is ABSENT)
+#   Precedence, evaluated top-down (--list-selected, a read-only enumeration, sits above all of these):
+#     --list-selected  >  --no-cmd  >  argv --confirm (or RULES_CHECK_CONFIRM=1 when --if-stamped is ABSENT)
 #               >  --if-stamped  >  TTY-yes  >  default-skip.
 #
 # THE STAMP (R2 — the SECOND security boundary this slice adds, independent of the reject/allowlist
@@ -115,9 +115,25 @@
 # NEVER changes `heal_decision` and enters no fix loop. No enforcement seam calls this with unattended
 # WRITE authority; --if-stamped can only ever replay a set a human already confirmed on this machine.
 #
-# Usage:  rules-check.sh [--confirm] [--no-cmd] [--if-stamped]
+# --list-selected (plan-time-rule-routing, READ-ONLY enumeration): prints the id of every rule the
+# execute loop WOULD select (enforcement `must` AND a non-null string `check`, after the SAME
+# per-object validation + LC_ALL=C first-seen dedup), one per line, LC_ALL=C-sorted, and exits 0. It
+# executes NOTHING, writes NO stamp and NEVER prompts: it short-circuits the MODE block (no TTY
+# prompt, no confirm/if-stamped branch) and exits right after the selection is computed, before the
+# --if-stamped comparison and the execute loop. It therefore WINS over --confirm, --if-stamped AND
+# --no-cmd (listing ids executes nothing, so the no-cmd valve has nothing to guard). Every early-exit
+# path (no jq / no rule files / no parseable objects) prints NOTHING on stdout in this mode, so the
+# stdout is EXACTLY the id list (empty on an empty/absent store). An id containing a newline or CR is
+# OMITTED from the list (it could otherwise inject a second, forged id line, and no one-line
+# `rule: <id>` bullet can name it anyway); a caller comparing the list's length to a later
+# `Checks passed: N/M` total therefore sees a mismatch and fails CLOSED. Consumer: run-ground-truth.sh's
+# `rule:` kind, which learns "is this id checkable?" without ever reading the store itself — this
+# script stays the ONE place that parses a `check`.
+#
+# Usage:  rules-check.sh [--confirm] [--no-cmd] [--if-stamped] [--list-selected]
 # Exit:   0 = ran (or skipped) with zero check FAILURES ; 1 = >=1 selected check FAILED when executed.
 #         Fail-safe on tooling/absent-store paths (no jq / no rules) → exit 0 (nothing to run).
+#         --list-selected always exits 0.
 
 set -uo pipefail   # NO `set -e` — a failed check is a normal tally, not a script crash.
 
@@ -150,12 +166,14 @@ CONFIRM=0
 CONFIRM_ENV=0
 [ "${RULES_CHECK_CONFIRM:-0}" = "1" ] && CONFIRM_ENV=1
 IF_STAMPED=0
+LIST_SELECTED=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --no-cmd)     NO_CMD=1; shift ;;
     --confirm)    CONFIRM=1; shift ;;   # ARGV confirm — the only confirm that counts under --if-stamped
     --if-stamped) IF_STAMPED=1; shift ;;
+    --list-selected) LIST_SELECTED=1; shift ;;   # read-only enumeration — wins over every mode flag
     -h|--help)
       grep -E '^# ' "$0" | sed -E 's/^# ?//'
       exit 0 ;;
@@ -164,7 +182,7 @@ while [ "$#" -gt 0 ]; do
       # typo'd safety flag (e.g. `--no-cmnd` for `--no-cmd`) is not a SILENT no-op.
       # Without this warning a mistyped `--no-cmd` would be dropped, and a co-present
       # `--confirm`/TTY would then execute checks against the caller's intent.
-      printf 'rules-check.sh: warning: ignoring unrecognized argument %s (did you mean --no-cmd, --confirm, or --if-stamped?)\n' "$1" >&2
+      printf 'rules-check.sh: warning: ignoring unrecognized argument %s (did you mean --no-cmd, --confirm, --if-stamped, or --list-selected?)\n' "$1" >&2
       shift ;;
   esac
 done
@@ -252,7 +270,7 @@ _rc_write_stamp() {
 # ---------------------------------------------------------------------------
 if ! command -v jq >/dev/null 2>&1; then
   echo "$PROG: jq unavailable — cannot read rules, nothing to run (fail-safe)" >&2
-  echo "Checks passed: 0/0"
+  [ "$LIST_SELECTED" -eq 1 ] || echo "Checks passed: 0/0"   # --list-selected: stdout is ONLY ids
   exit 0
 fi
 
@@ -273,7 +291,9 @@ fi
 # ---------------------------------------------------------------------------
 MODE="need-confirm"
 CAME_FROM_CONFIRM=0
-if [ "$NO_CMD" -eq 1 ]; then
+if [ "$LIST_SELECTED" -eq 1 ]; then
+  MODE="list-selected"               # read-only enumeration: WINS over everything, never prompts
+elif [ "$NO_CMD" -eq 1 ]; then
   MODE="no-cmd"                      # --no-cmd WINS over everything (fail-safe)
 elif [ "$CONFIRM" -eq 1 ]; then
   MODE="execute"; CAME_FROM_CONFIRM=1
@@ -295,7 +315,7 @@ LC_ALL=C find "$RULES_DIR" -maxdepth 1 -type f -name '*.json' 2>/dev/null \
   | LC_ALL=C sort > "$files_list" 2>/dev/null || true
 if [ ! -s "$files_list" ]; then
   echo "$PROG: no .agent/rules/*.json rule files — nothing to check" >&2
-  echo "Checks passed: 0/0"
+  [ "$MODE" = "list-selected" ] || echo "Checks passed: 0/0"
   exit 0
 fi
 
@@ -325,7 +345,7 @@ done < "$files_list"
 
 if [ ! -s "$combined" ]; then
   echo "$PROG: no parseable rule objects — nothing to check" >&2
-  echo "Checks passed: 0/0"
+  [ "$MODE" = "list-selected" ] || echo "Checks passed: 0/0"
   exit 0
 fi
 
@@ -374,6 +394,16 @@ jq -cs '
   | .[]
   | {id: .id, check: .check}
 ' "$combined" 2>/dev/null > "$selected" || true
+
+# ---------------------------------------------------------------------------
+# --list-selected: print the SELECTED ids (the exact set the execute loop would run), sorted, and
+# exit 0 — BEFORE the hash / --if-stamped comparison / execute loop / stamp write, none of which a
+# listing may reach. Ids carrying a newline/CR are dropped (see the header): one id, one line.
+# ---------------------------------------------------------------------------
+if [ "$MODE" = "list-selected" ]; then
+  jq -r '.id | select(test("[\n\r]") | not)' "$selected" 2>/dev/null | LC_ALL=C sort
+  exit 0
+fi
 
 # ---------------------------------------------------------------------------
 # LIVE_HASH — sha256 of the sorted `id\tcheck\n` lines of EXACTLY the set $selected holds above. This

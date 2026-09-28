@@ -38,7 +38,7 @@
 #   3. None -> status "skipped".
 #
 # A check line is a `- `-stripped bullet that is EITHER a raw shell command OR `<kind>: <target>`
-# where kind in {cmd, corpus-task, qa-executor}. Per-kind execution:
+# where kind in {cmd, corpus-task, qa-executor, rule}. Per-kind execution:
 #   - cmd: <shell>   (or a bare line with no recognized kind:) -> run in the PROJECT ROOT (see
 #                    "Project root" below) via `bash -c '<shell>' >/dev/null 2>&1`; exit 0 = pass.
 #                    (Supervisor Phase 4.5 pins the repo-root CWD, so in that path the project root
@@ -65,6 +65,55 @@
 #   - qa-executor: <target> -> RECOGNIZED but DEFERRED to slice 1b. Does NOT spawn anything; records
 #                    per_check status "unverified", reason "qa_executor_dispatch_deferred_m2b_1b".
 #                    Counts toward checks_total but neither checks_passed nor a fail.
+#   - rule: <id>     -> a house rule, resolved by DELEGATION to rules-check.sh (plan-time-rule-routing).
+#                    This runner NEVER reads the rules store and NEVER extracts or runs a rule's check
+#                    itself — rules-check.sh stays the ONE script that parses and executes a check
+#                    (skills/rules/SKILL.md §9). Resolution, all calls with cwd = PROJECT_ROOT and
+#                    stdin </dev/null, each made at most ONCE per run however many rule: bullets exist:
+#                    (a) `rules-check.sh --list-selected` names the must+checkable ids. An id NOT in that
+#                        list -> per_check fail, reason "rule_not_found" (an absent id, an advisory
+#                        rule, a null-check rule, an empty target — named, never a silent pass). A list
+#                        call that itself exits non-zero -> every rule: bullet unverified,
+#                        "rule_unresolved".
+#                    (b) --no-cmd / GROUND_TRUTH_NO_CMD=1 -> rules-check.sh --if-stamped is NOT invoked
+#                        and no PASS/FAIL is parsed; every listed id is unverified, reason
+#                        "rule_cmd_disabled". (A check is arbitrary shell, so the unattended valve must
+#                        reach it; and rules-check echoes raw check text on its SKIP/RUN lines, so a
+#                        check carrying a newline + `  [PASS] <id>` could forge a pass if we parsed.)
+#                    (c) otherwise `rules-check.sh --if-stamped` runs ONCE and its output is mapped
+#                        FAIL-CLOSED, in this order:
+#                          1. an exact `  [SKIP] all (unstamped)` line -> every listed id unverified,
+#                             reason "rule_unapproved" (nothing executed);
+#                          2. the run must END with an exact `Checks passed: N/M` line whose M equals
+#                             the number of ids --list-selected printed, and exit 0 or 1 (1 is the
+#                             EXPECTED rc when any check fails — a normal result, not a tooling
+#                             error). Missing / malformed / mismatched trailer or any other rc -> every
+#                             listed id unverified, reason "rule_unresolved". This closes the residual
+#                             where a stamped check pre-prints a forged `[PASS] <id>` (via its own
+#                             echoed check text) and then kills its parent before the real line;
+#                          3. per id: exactly one whole-line `  [PASS] <id>` and no other result line
+#                             for it -> pass; exactly one `  [FAIL] <id>` and no other -> fail, reason
+#                             "rule_check_failed"; anything else (duplicates, a PASS+FAIL pair, a
+#                             near-miss line containing `[PASS] <id>`/`[FAIL] <id>` that is not an
+#                             exact result line, or no line at all) -> unverified, "rule_unresolved".
+#                             A forged or ambiguous line can only DEGRADE a result, never promote it.
+#                    NOT subject to the brief `sha256:` stamp gate and never hashed by
+#                    exec-acceptance-lib.sh: a rule: bullet's authorization is the USER-SCOPE rules
+#                    stamp only (skills/rules/SKILL.md §8.1 — two different stamps, never conflated).
+#                    HONEST LIMITS: (i) --if-stamped replays the WHOLE stamped must-set, not just the
+#                    named ids — the pre-existing rules-check contract, a set a human already
+#                    confirmed; this runner REPORTS only the named ids. In Supervisor Phase 4.5 a
+#                    brief carrying `rule:` bullets therefore executes the stamped must-set TWICE per
+#                    self-heal iteration: once via the advisory rules-check replay
+#                    (skills/self-heal-advisory/SKILL.md §"Rules-check replay") and once here. Both
+#                    are the same human-approved set; checks with side effects run twice. (ii) in
+#                    execute mode rules-check echoes `  [RUN ] <id>: <check>` before each check, so a
+#                    crafted stamped check can pre-print a forged `[PASS] <id>` for ANY listed id, not
+#                    only its own. The duplicate/conflict rule turns that into rule_unresolved whenever
+#                    the real result line for that id also appears, and the trailer rule covers the
+#                    case where it does not — so another rule's FAIL can be MASKED to unverified, but
+#                    never promoted to pass. A stamped set's check text was confirmed by a human (the
+#                    stamp hashes `id\tcheck`), which bounds this to checks a human already approved.
 #
 # TRUST BOUNDARY (not a sandbox): the runner ITSELF performs no repo writes and makes no network
 # calls — but it is NOT a security boundary. A `cmd:` (or bare) check runs an arbitrary
@@ -101,6 +150,8 @@
 # Safety valve: --no-cmd (or GROUND_TRUTH_NO_CMD=1) skips cmd:/bare shell checks entirely (recorded
 # per_check "unverified", reason "cmd_disabled" — never executed); corpus-task:/qa-executor: are
 # unaffected. --no-cmd ALWAYS wins, regardless of source or stamp (see below) — it is checked first.
+# It ALSO reaches rule: bullets (a rule check is arbitrary shell): listed ids become "unverified",
+# reason "rule_cmd_disabled", and rules-check.sh --if-stamped is never invoked.
 #
 # Content-keyed stamp gate (red-team-hardening item 05, "cmd: valve by provenance" — supersedes the
 # NON_INTERACTIVE-only mitigation this section used to describe): a `cmd:`/bare bullet sourced from
@@ -319,6 +370,118 @@ if [ -n "$BRIEF" ] && [ -f "$BRIEF" ]; then
 fi
 # MUTATION_CONTROL_END: exec-acceptance-stamp-gate
 
+# ---- rule: pre-resolution (DELEGATION to rules-check.sh — see the header's `rule:` entry) --------
+# Everything a rule: bullet needs is gathered HERE, ONCE, before the per-check loop: the selected-id
+# list and (unless --no-cmd) one --if-stamped replay. This block never reads the rules store and never
+# sees a check string — rules-check.sh is the only party that does.
+RULE_LISTED=""        # newline-joined ids printed by `rules-check.sh --list-selected`
+RULE_LIST_OK=1        # 0 => the list call exited non-zero => every rule: bullet rule_unresolved
+RULE_LISTED_N=0       # number of listed ids (the M the --if-stamped trailer must agree with)
+RULE_RUN_MODE=""      # disabled | unapproved | unresolved | mapped | "" (nothing listed to run)
+RULE_RUN_OUT=""       # captured stdout of the ONE --if-stamped call (mapped mode only)
+
+# _rule_is_listed <id> — exit 0 iff <id> is exactly one of the listed ids (whole-line, literal).
+_rule_is_listed() {
+  [ -n "$1" ] && [ -n "$RULE_LISTED" ] || return 1
+  grep -Fxq -- "$1" <<<"$RULE_LISTED"
+}
+
+# _rule_map_id <id> — prints pass | fail | unresolved from RULE_RUN_OUT (decision (c) step 3).
+_rule_map_id() {
+  local id="$1" l rest np=0 nf=0 nm=0
+  while IFS= read -r l; do
+    if [ "$l" = "  [PASS] $id" ]; then
+      np=$((np+1))
+    elif [ "$l" = "  [FAIL] $id" ]; then
+      nf=$((nf+1))
+    else
+      case "$l" in
+        *"[PASS] $id"*|*"[FAIL] $id"*)
+          # An exact result line of ANOTHER listed id (e.g. `ab` when this id is `a`) is not about
+          # this id; anything else mentioning `[PASS] <id>`/`[FAIL] <id>` is a near-miss => degrade.
+          rest=""
+          case "$l" in
+            "  [PASS] "*) rest="${l#"  [PASS] "}" ;;
+            "  [FAIL] "*) rest="${l#"  [FAIL] "}" ;;
+          esac
+          if [ -n "$rest" ] && [ "$rest" != "$id" ] && _rule_is_listed "$rest"; then
+            :
+          else
+            nm=$((nm+1))
+          fi
+          ;;
+      esac
+    fi
+  done <<EOF
+$RULE_RUN_OUT
+EOF
+  if [ "$np" -eq 1 ] && [ "$nf" -eq 0 ] && [ "$nm" -eq 0 ]; then
+    printf 'pass\n'
+  elif [ "$nf" -eq 1 ] && [ "$np" -eq 0 ] && [ "$nm" -eq 0 ]; then
+    printf 'fail\n'
+  else
+    printf 'unresolved\n'
+  fi
+}
+
+_rule_any=0
+_rule_any_listed=0
+for idx in "${!CHECK_LINES[@]}"; do
+  [ "$(classify_kind "${CHECK_LINES[$idx]}")" = "rule" ] && { _rule_any=1; break; }
+done
+if [ "$_rule_any" -eq 1 ]; then
+  RULE_LISTED="$( cd "$PROJECT_ROOT" && bash "$SCRIPT_DIR/rules-check.sh" --list-selected </dev/null 2>/dev/null )"
+  _rule_rc=$?
+  if [ "$_rule_rc" -ne 0 ]; then
+    RULE_LIST_OK=0
+    RULE_LISTED=""
+  fi
+  if [ -n "$RULE_LISTED" ]; then
+    while IFS= read -r _rule_l; do
+      [ -n "$_rule_l" ] && RULE_LISTED_N=$((RULE_LISTED_N+1))
+    done <<EOF
+$RULE_LISTED
+EOF
+  fi
+  for idx in "${!CHECK_LINES[@]}"; do
+    [ "$(classify_kind "${CHECK_LINES[$idx]}")" = "rule" ] || continue
+    if _rule_is_listed "$(trim "${CHECK_LINES[$idx]#rule:}")"; then _rule_any_listed=1; break; fi
+  done
+fi
+if [ "$_rule_any_listed" -eq 1 ]; then
+  if [ "$NO_CMD" -eq 1 ]; then
+    RULE_RUN_MODE="disabled"            # (b): never invoke --if-stamped, never parse PASS/FAIL
+  else
+    RULE_RUN_OUT="$( cd "$PROJECT_ROOT" && bash "$SCRIPT_DIR/rules-check.sh" --if-stamped </dev/null 2>/dev/null )"
+    _rule_rc=$?
+    if grep -Fxq -- "  [SKIP] all (unstamped)" <<<"$RULE_RUN_OUT"; then
+      RULE_RUN_MODE="unapproved"        # (c)1: checked FIRST — nothing executed
+    else
+      RULE_RUN_MODE="unresolved"        # (c)2: default until the trailer + rc validate
+      _rule_last="${RULE_RUN_OUT##*$'\n'}"
+      case "$_rule_rc" in
+        0|1)
+          case "$_rule_last" in
+            "Checks passed: "*/*)
+              _rule_nm="${_rule_last#Checks passed: }"
+              _rule_n="${_rule_nm%%/*}"
+              _rule_m="${_rule_nm#*/}"
+              case "$_rule_n$_rule_m" in
+                *[!0-9]*) : ;;
+                *)
+                  if [ -n "$_rule_n" ] && [ -n "$_rule_m" ] && [ "$_rule_m" -eq "$RULE_LISTED_N" ]; then
+                    RULE_RUN_MODE="mapped"
+                  fi
+                  ;;
+              esac
+              ;;
+          esac
+          ;;
+      esac
+    fi
+  fi
+fi
+
 # ---- execute each resolved check ------------------------------------------
 total=0
 passed=0
@@ -355,6 +518,7 @@ for idx in "${!CHECK_LINES[@]}"; do
     cmd)          target="$(trim "${line#cmd:}")" ;;
     corpus-task)  target="$(trim "${line#corpus-task:}")" ;;
     qa-executor)  target="$(trim "${line#qa-executor:}")" ;;
+    rule)         target="$(trim "${line#rule:}")" ;;
   esac
 
   case "$kind" in
@@ -423,6 +587,56 @@ for idx in "${!CHECK_LINES[@]}"; do
         failures=$((failures+1))
         echo "  [FAIL] corpus-task:$target"
         append_check "corpus-task" "$target" "fail"
+      fi
+      ;;
+    rule)
+      # Resolved by DELEGATION (see the pre-resolution block + header). Never hashed, never subject
+      # to the brief stamp gate, never executed here.
+      if [ "$RULE_LIST_OK" -ne 1 ]; then
+        deferred=$((deferred+1))
+        echo "  [SKIP] rule:$target (unresolved — rules-check.sh --list-selected failed)"
+        append_check "rule" "$target" "unverified" "rule_unresolved"
+      elif ! _rule_is_listed "$target"; then
+        failures=$((failures+1))
+        echo "  [FAIL] rule:$target (not a must rule with a check)"
+        append_check "rule" "$target" "fail" "rule_not_found"
+      else
+        case "$RULE_RUN_MODE" in
+          disabled)
+            deferred=$((deferred+1))
+            echo "  [SKIP] rule:$target (cmd execution disabled via --no-cmd)"
+            append_check "rule" "$target" "unverified" "rule_cmd_disabled"
+            ;;
+          unapproved)
+            deferred=$((deferred+1))
+            echo "  [SKIP] rule:$target (unapproved — no matching rules-check stamp)"
+            append_check "rule" "$target" "unverified" "rule_unapproved"
+            ;;
+          mapped)
+            case "$(_rule_map_id "$target")" in
+              pass)
+                passed=$((passed+1))
+                echo "  [PASS] rule:$target"
+                append_check "rule" "$target" "pass"
+                ;;
+              fail)
+                failures=$((failures+1))
+                echo "  [FAIL] rule:$target"
+                append_check "rule" "$target" "fail" "rule_check_failed"
+                ;;
+              *)
+                deferred=$((deferred+1))
+                echo "  [SKIP] rule:$target (unresolved rules-check output)"
+                append_check "rule" "$target" "unverified" "rule_unresolved"
+                ;;
+            esac
+            ;;
+          *)
+            deferred=$((deferred+1))
+            echo "  [SKIP] rule:$target (unresolved rules-check output)"
+            append_check "rule" "$target" "unverified" "rule_unresolved"
+            ;;
+        esac
       fi
       ;;
     qa-executor)

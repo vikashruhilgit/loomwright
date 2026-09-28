@@ -493,6 +493,292 @@ else
   no "(n7) mutation_control_sentinels_present  MUTATION_CONTROL markers not found in $RUN"
 fi
 
+# ===================================================================================================
+# (t) rule: <id> — resolved by DELEGATION to rules-check.sh (plan-time-rule-routing AC2–AC5 + A2).
+#     Every case runs in a SANDBOX repo (own `git init`) with a SANDBOX HOME, so the user-scope rules
+#     stamp starts empty and the live store / real stamp are never read. The CANARY file is the
+#     execution witness: a must rule whose check is `touch <sandbox>/CANARY`.
+# ===================================================================================================
+echo "== (t) rule: bullets — delegation to rules-check.sh, fail-closed mapping, CANARY witness =="
+RSB="$TMP/rules-sb"; mkdir -p "$RSB/home"
+RSB_HOME="$RSB/home"
+RSB_REPO="$RSB/repo"; mkdir -p "$RSB_REPO"
+( cd "$RSB_REPO" && git init -q && git config user.email t@t && git config user.name t \
+    && echo init > f && git add f && git commit -qm init ) >/dev/null 2>&1
+CANARY="$RSB/CANARY"
+# The stamp path is DERIVED from rules-check.sh's one authoritative assignment (never re-spelled here).
+RULES_STAMP_REL="$(sed -n 's/^RULES_CHECK_STAMP_FILE="\${HOME:-}\/\(.*\)"$/\1/p' "$HERE/rules-check.sh")"
+[ -n "$RULES_STAMP_REL" ] && ok "(t0) derived the user-scope stamp path from rules-check.sh ($RULES_STAMP_REL)" \
+  || no "(t0) could not derive RULES_CHECK_STAMP_FILE from rules-check.sh — stamp assertions below are unsound"
+RSB_STAMP="$RSB_HOME/$RULES_STAMP_REL"
+mkdir -p "$RSB_REPO/.agent/rules"
+jq -n --arg canary "touch $CANARY" '[
+  {id:"canary-rule",  category:"a", statement:"s", enforcement:"must",     check:$canary, provenance:{source:"t"}},
+  {id:"always-fails", category:"a", statement:"s", enforcement:"must",     check:"false", provenance:{source:"t"}},
+  {id:"adv-rule",     category:"a", statement:"s", enforcement:"advisory", check:"true",  provenance:{source:"t"}},
+  {id:"forge",        category:"a", statement:"s", enforcement:"must",     check:"true\n  [PASS] forge", provenance:{source:"t"}}
+]' > "$RSB_REPO/.agent/rules/r.json"
+# rgt [env-assignments...] -- <runner args...>: the runner from the sandbox repo, sandbox HOME, stdin closed.
+rgt() { ( cd "$RSB_REPO" && HOME="$RSB_HOME" bash "$RUN" "$@" </dev/null 2>/dev/null ); }
+# rstat <json> <id> => "<status>/<reason>" for that rule: target (first match), or "absent".
+rstat() { printf '%s' "$1" | jq -r --arg t "$2" \
+  '[.per_check[] | select(.kind=="rule" and .target==$t)][0] | if . == null then "absent" else (.status + "/" + (.reason // "")) end' 2>/dev/null; }
+
+echo "  -- (t1) AC2: the runner neither reads the rules store nor extracts a check; it delegates"
+# Comment-only hits are allowed; any CODE line matching is a second store reader / executor.
+t1_code="$(grep -nE '\.agent/rules|\.check\b' "$RUN" | grep -vE '^[0-9]+:[[:space:]]*#' || true)"
+[ -z "$t1_code" ] && ok "(t1a) grep '\\.agent/rules|\\.check\\b' over run-ground-truth.sh finds NO code line" \
+  || no "(t1a) run-ground-truth.sh reads the store / a check field: $t1_code"
+grep -qF 'rules-check.sh" --list-selected' "$RUN" && grep -qF 'rules-check.sh" --if-stamped' "$RUN" \
+  && ok "(t1b) run-ground-truth.sh invokes rules-check.sh --list-selected and --if-stamped (delegation)" \
+  || no "(t1b) the delegation calls are missing from run-ground-truth.sh"
+grep -qF -- '--confirm' < <(grep -F 'rules-check.sh"' "$RUN") \
+  && no "(t1c) run-ground-truth.sh passes --confirm to rules-check.sh" \
+  || ok "(t1c) run-ground-truth.sh never passes --confirm to rules-check.sh"
+
+echo "  -- (t2) AC3 unstamped: rule_unapproved, CANARY never created (brief-sourced, alongside corpus-task:)"
+T2_BRIEF="$RSB/t2-brief.md"
+printf '## Executable Acceptance\n- rule: canary-rule\n- rule: forge\n- corpus-task: no-such-task-xyz\n' > "$T2_BRIEF"
+rm -f "$CANARY"
+jT2="$(gt_json "$(rgt --brief "$T2_BRIEF")")"
+[ "$(rstat "$jT2" canary-rule)" = "unverified/rule_unapproved" ] \
+  && ok "(t2a) unstamped rule: canary-rule => unverified / rule_unapproved" \
+  || no "(t2a) got '$(rstat "$jT2" canary-rule)': $jT2"
+[ ! -e "$CANARY" ] && ok "(t2b) unstamped: CANARY does NOT exist afterwards (nothing executed)" \
+  || no "(t2b) CANARY was created by an UNSTAMPED run"
+[ "$(rstat "$jT2" forge)" = "unverified/rule_unapproved" ] \
+  && ok "(t2c) newline-forgery check, unstamped => rule_unapproved (never pass)" \
+  || no "(t2c) forge unstamped got '$(rstat "$jT2" forge)'"
+printf '%s' "$jT2" | jq -e '[.per_check[] | select(.reason=="cmd_unapproved")] | length == 0' >/dev/null 2>&1 \
+  && ok "(t2d) AC5: a rule:+corpus-task: brief yields NO cmd_unapproved (rule: is outside the brief stamp gate)" \
+  || no "(t2d) a cmd_unapproved appeared for a brief with no cmd: bullet: $jT2"
+
+echo "  -- (t3) AC5 ambient RULES_CHECK_CONFIRM=1 cannot launder an unstamped run"
+rm -f "$CANARY"
+jT3="$(gt_json "$( cd "$RSB_REPO" && HOME="$RSB_HOME" RULES_CHECK_CONFIRM=1 bash "$RUN" --check 'rule: canary-rule' </dev/null 2>/dev/null )")"
+if [ "$(rstat "$jT3" canary-rule)" = "unverified/rule_unapproved" ] && [ ! -e "$CANARY" ] && [ ! -e "$RSB_STAMP" ]; then
+  ok "(t3) RULES_CHECK_CONFIRM=1 in the runner env: still rule_unapproved, CANARY absent, no stamp written"
+else
+  no "(t3) env confirm laundered the run: '$(rstat "$jT3" canary-rule)' canary=$([ -e "$CANARY" ] && echo PRESENT || echo absent)"
+fi
+
+echo "  -- (t4) AC4 unknown / advisory id => fail rule_not_found, aggregate advisory_failures"
+jT4="$(gt_json "$(rgt --check 'rule: no-such-id')")"
+if [ "$(rstat "$jT4" no-such-id)" = "fail/rule_not_found" ] \
+   && printf '%s' "$jT4" | jq -e '.status=="advisory_failures"' >/dev/null 2>&1; then
+  ok "(t4a) rule: no-such-id => fail / rule_not_found, status advisory_failures (never pass)"
+else
+  no "(t4a) got: $jT4"
+fi
+jT4b="$(gt_json "$(rgt --check 'rule: adv-rule')")"
+if [ "$(rstat "$jT4b" adv-rule)" = "fail/rule_not_found" ] \
+   && printf '%s' "$jT4b" | jq -e '.status=="advisory_failures"' >/dev/null 2>&1; then
+  ok "(t4b) rule: <advisory-rule id> => fail / rule_not_found, status advisory_failures"
+else
+  no "(t4b) got: $jT4b"
+fi
+
+echo "  -- (t5) AC5 --no-cmd, unstamped => rule_cmd_disabled (forge never passes)"
+jT5="$(gt_json "$(rgt --no-cmd --check 'rule: canary-rule' --check 'rule: forge')")"
+if [ "$(rstat "$jT5" canary-rule)" = "unverified/rule_cmd_disabled" ] \
+   && [ "$(rstat "$jT5" forge)" = "unverified/rule_cmd_disabled" ] && [ ! -e "$CANARY" ]; then
+  ok "(t5) --no-cmd: canary-rule AND forge => unverified / rule_cmd_disabled, CANARY absent"
+else
+  no "(t5) got: $jT5"
+fi
+
+echo "  -- (t6) AC3 POSITIVE CONTROL: stamp via --confirm, rm CANARY, runner re-creates it => pass"
+( cd "$RSB_REPO" && HOME="$RSB_HOME" bash "$HERE/rules-check.sh" --confirm </dev/null >/dev/null 2>&1 )
+[ -e "$CANARY" ] && [ -s "$RSB_STAMP" ] && ok "(t6a) rules-check.sh --confirm wrote the stamp AND ran the check (CANARY created)" \
+  || no "(t6a) --confirm did not stamp/run — the positive control is broken"
+rm -f "$CANARY"
+[ ! -e "$CANARY" ] && ok "(t6b) CANARY removed before the runner call (so a pass cannot come from --confirm's own CANARY)" \
+  || no "(t6b) could not remove CANARY"
+jT6="$(gt_json "$(rgt --check 'rule: canary-rule' --check 'rule: always-fails' --check 'rule: forge')")"
+[ "$(rstat "$jT6" canary-rule)" = "pass/" ] && [ -e "$CANARY" ] \
+  && ok "(t6c) stamped: rule: canary-rule => pass AND the runner's delegated call RE-CREATED CANARY" \
+  || no "(t6c) got '$(rstat "$jT6" canary-rule)' canary=$([ -e "$CANARY" ] && echo PRESENT || echo absent)"
+[ "$(rstat "$jT6" always-fails)" = "fail/rule_check_failed" ] \
+  && ok "(t6d) stamped failing check => fail / rule_check_failed (rules-check rc 1 is a normal result)" \
+  || no "(t6d) always-fails got '$(rstat "$jT6" always-fails)'"
+[ "$(rstat "$jT6" forge)" = "unverified/rule_unresolved" ] \
+  && ok "(t6e) stamped newline-forgery (forged + real [PASS] forge) => rule_unresolved, never pass" \
+  || no "(t6e) forge stamped got '$(rstat "$jT6" forge)'"
+
+echo "  -- (t7) AC5 stamped + --no-cmd => rule_cmd_disabled, CANARY absent (after an rm + assert-gone)"
+rm -f "$CANARY"
+[ ! -e "$CANARY" ] && ok "(t7a) CANARY removed and confirmed gone BEFORE the --no-cmd runner call" || no "(t7a) CANARY still present"
+jT7="$(gt_json "$(rgt --no-cmd --check 'rule: canary-rule' --check 'rule: forge')")"
+if [ "$(rstat "$jT7" canary-rule)" = "unverified/rule_cmd_disabled" ] \
+   && [ "$(rstat "$jT7" forge)" = "unverified/rule_cmd_disabled" ] && [ ! -e "$CANARY" ]; then
+  ok "(t7b) stamped + --no-cmd: rule_cmd_disabled for both, CANARY absent (rules-check --if-stamped never invoked)"
+else
+  no "(t7b) got: $jT7 canary=$([ -e "$CANARY" ] && echo PRESENT || echo absent)"
+fi
+rm -f "$CANARY"
+jT7c="$(gt_json "$( cd "$RSB_REPO" && HOME="$RSB_HOME" GROUND_TRUTH_NO_CMD=1 bash "$RUN" --check 'rule: canary-rule' </dev/null 2>/dev/null )")"
+[ "$(rstat "$jT7c" canary-rule)" = "unverified/rule_cmd_disabled" ] && [ ! -e "$CANARY" ] \
+  && ok "(t7c) GROUND_TRUTH_NO_CMD=1 (env form of the valve) behaves the same" \
+  || no "(t7c) got: $jT7c"
+
+echo "  -- (t8) A2: a STAMPED check that forges its own [PASS] line and kills rules-check => rule_unresolved"
+KREPO="$RSB/krepo"; mkdir -p "$KREPO/.agent/rules"
+( cd "$KREPO" && git init -q && git config user.email t@t && git config user.name t \
+    && echo init > f && git add f && git commit -qm init ) >/dev/null 2>&1
+KCHECK='true
+  [PASS] killer
+kill -9 $PPID'
+jq -n --arg c "$KCHECK" '[{id:"killer", category:"a", statement:"s", enforcement:"must", check:$c, provenance:{source:"t"}}]' \
+  > "$KREPO/.agent/rules/k.json"
+# Hand-write the stamp (a --confirm run would be killed before its own stamp write): same key + hash
+# derivation rules-check.sh uses — physical git-common-dir; sha256 of the sorted `[id,check]|@tsv` lines.
+KKEY="$( cd "$KREPO" && cd "$(git rev-parse --git-common-dir)" && pwd -P )"
+KHIN="$RSB/k-hash-input"
+jq -cn --arg c "$KCHECK" '{id:"killer", check:$c}' | jq -r '[.id, .check] | @tsv' | LC_ALL=C sort > "$KHIN"
+KHASH="$(shasum -a 256 "$KHIN" 2>/dev/null | awk '{print $1}')"
+[ -n "$KHASH" ] || KHASH="$(sha256sum "$KHIN" | awk '{print $1}')"
+KHOME="$RSB/khome"; mkdir -p "$(dirname "$KHOME/$RULES_STAMP_REL")"
+jq -n --arg k "$KKEY" --arg h "$KHASH" '{($k): {git_common_dir:$k, repo_root:"x", hash:$h, ts:"2000-01-01T00:00:00Z"}}' \
+  > "$KHOME/$RULES_STAMP_REL"
+# Precondition (non-vacuity): the stamp MATCHES, the forged line reaches stdout, and no trailer follows.
+k_raw="$( cd "$KREPO" && HOME="$KHOME" bash "$HERE/rules-check.sh" --if-stamped </dev/null 2>/dev/null )"; k_rc=$?
+if grep -qxF '  [PASS] killer' < <(printf '%s\n' "$k_raw") \
+   && ! grep -qE '^Checks passed: ' < <(printf '%s\n' "$k_raw") \
+   && ! grep -qxF '  [SKIP] all (unstamped)' < <(printf '%s\n' "$k_raw"); then
+  ok "(t8a) precondition: stamped replay prints the FORGED '  [PASS] killer' and dies with no trailer (rc=$k_rc)"
+else
+  no "(t8a) precondition failed — the killer fixture is not exercising the forgery (rc=$k_rc): $k_raw"
+fi
+jT8="$(gt_json "$( cd "$KREPO" && HOME="$KHOME" bash "$RUN" --check 'rule: killer' </dev/null 2>/dev/null )")"
+[ "$(rstat "$jT8" killer)" = "unverified/rule_unresolved" ] \
+  && ok "(t8b) forged [PASS] + killed parent (no trailer, rc!=0/1) => rule_unresolved, never pass" \
+  || no "(t8b) killer got '$(rstat "$jT8" killer)': $jT8"
+
+echo "  -- (t9) MUTATION CONTROL for (t8b): drop the trailer/rc validation => the forgery must PASS"
+MUT_DIR="$TMP/rule-mut"; mkdir -p "$MUT_DIR"
+cp "$HERE/exec-acceptance-lib.sh" "$HERE/rules-check.sh" "$MUT_DIR/"
+R_MUT="$MUT_DIR/run-ground-truth.sh"
+sed 's/^\([[:space:]]*\)RULE_RUN_MODE="unresolved"\([[:space:]]*# (c)2\)/\1RULE_RUN_MODE="mapped"\2/' "$RUN" > "$R_MUT"
+if [ -s "$R_MUT" ] && ! cmp -s "$R_MUT" "$RUN" && bash -n "$R_MUT" 2>/dev/null; then
+  ok "(t9a) mutant built: non-empty, differs from the real runner, bash -n clean"
+  # Positive control: the mutant still resolves an ordinary stamped rule (it is otherwise working).
+  rm -f "$CANARY"
+  jM1="$(gt_json "$( cd "$RSB_REPO" && HOME="$RSB_HOME" bash "$R_MUT" --check 'rule: canary-rule' </dev/null 2>/dev/null )")"
+  if [ "$(rstat "$jM1" canary-rule)" = "pass/" ] && [ -e "$CANARY" ]; then
+    ok "(t9b) positive control: the mutant still passes the stamped canary-rule (mutation is surgical)"
+  else
+    no "(t9b) the mutant is broken beyond the gate — control meaningless: $jM1"
+  fi
+  jM2="$(gt_json "$( cd "$KREPO" && HOME="$KHOME" bash "$R_MUT" --check 'rule: killer' </dev/null 2>/dev/null )")"
+  [ "$(rstat "$jM2" killer)" = "pass/" ] \
+    && ok "(t9c) CONTROL HELD: without the trailer/rc gate the forgery PASSES — (t8b) depends on the gate" \
+    || no "(t9c) CONTROL BROKEN: mutant still rejects the forgery ('$(rstat "$jM2" killer)') — (t8b) is VACUOUS"
+else
+  no "(t9a) mutant construction failed (sed matched nothing / bash -n error) — (t8b) UNPROVEN"
+fi
+rm -f "$CANARY"
+
+# (t10)–(t13) pin the remaining FAIL-CLOSED branches of the rule: mapping (review iteration 1).
+# mk_rsb <name> <store-json>: a fresh sandbox (own HOME + own `git init` repo) under $RSB/<name>,
+# store written, then stamped via `rules-check.sh --confirm` (the human-confirm path). Sets MK_HOME /
+# MK_REPO. Returns non-zero when the stamp was not written (the caller reports it — never silent).
+mk_rsb() {
+  MK_HOME="$RSB/$1-home"; MK_REPO="$RSB/$1-repo"
+  mkdir -p "$MK_HOME" "$MK_REPO/.agent/rules"
+  ( cd "$MK_REPO" && git init -q && git config user.email t@t && git config user.name t \
+      && echo init > f && git add f && git commit -qm init ) >/dev/null 2>&1
+  printf '%s\n' "$2" > "$MK_REPO/.agent/rules/r.json"
+  ( cd "$MK_REPO" && HOME="$MK_HOME" bash "$HERE/rules-check.sh" --confirm </dev/null >/dev/null 2>&1 )
+  [ -s "$MK_HOME/$RULES_STAMP_REL" ]
+}
+
+echo "  -- (t10) a failing or ABSENT --list-selected call => every rule: bullet rule_unresolved"
+LS_DIR="$TMP/rule-no-lister"; mkdir -p "$LS_DIR"
+cp "$RUN" "$HERE/exec-acceptance-lib.sh" "$LS_DIR/"
+[ ! -e "$LS_DIR/rules-check.sh" ] && ok "(t10a) precondition: the copied runner has NO rules-check.sh beside it" \
+  || no "(t10a) precondition: rules-check.sh unexpectedly present in $LS_DIR"
+rm -f "$CANARY"
+jT10="$(gt_json "$( cd "$RSB_REPO" && HOME="$RSB_HOME" bash "$LS_DIR/run-ground-truth.sh" \
+  --check 'rule: canary-rule' --check 'rule: always-fails' </dev/null 2>/dev/null )")"
+if [ "$(rstat "$jT10" canary-rule)" = "unverified/rule_unresolved" ] \
+   && [ "$(rstat "$jT10" always-fails)" = "unverified/rule_unresolved" ] && [ ! -e "$CANARY" ]; then
+  ok "(t10b) absent rules-check.sh (stamped repo): both bullets unverified / rule_unresolved, CANARY absent"
+else
+  no "(t10b) got canary-rule='$(rstat "$jT10" canary-rule)' always-fails='$(rstat "$jT10" always-fails)': $jT10"
+fi
+# A lister that prints a plausible id list but exits non-zero: the rc, not the text, decides.
+LF_DIR="$TMP/rule-failing-lister"; mkdir -p "$LF_DIR"
+cp "$RUN" "$HERE/exec-acceptance-lib.sh" "$LF_DIR/"
+printf '#!/usr/bin/env bash\nprintf "canary-rule\\n"\nexit 3\n' > "$LF_DIR/rules-check.sh"
+jT10c="$(gt_json "$( cd "$RSB_REPO" && HOME="$RSB_HOME" bash "$LF_DIR/run-ground-truth.sh" \
+  --check 'rule: canary-rule' </dev/null 2>/dev/null )")"
+[ "$(rstat "$jT10c" canary-rule)" = "unverified/rule_unresolved" ] && [ ! -e "$CANARY" ] \
+  && ok "(t10c) lister prints the id but exits 3 => rule_unresolved (never rule_not_found, never pass)" \
+  || no "(t10c) got '$(rstat "$jT10c" canary-rule)': $jT10c"
+
+echo "  -- (t11) prefix-similar ids a / ab, both stamped + passing => each its OWN pass"
+if mk_rsb pfx '[
+  {"id":"a",  "category":"a", "statement":"s", "enforcement":"must", "check":"true", "provenance":{"source":"t"}},
+  {"id":"ab", "category":"a", "statement":"s", "enforcement":"must", "check":"true", "provenance":{"source":"t"}}
+]'; then ok "(t11a) sandbox store with ids a + ab stamped via rules-check.sh --confirm"
+else no "(t11a) --confirm did not write the stamp for the a/ab store"; fi
+jT11="$(gt_json "$( cd "$MK_REPO" && HOME="$MK_HOME" bash "$RUN" --check 'rule: a' --check 'rule: ab' </dev/null 2>/dev/null )")"
+if [ "$(rstat "$jT11" a)" = "pass/" ] && [ "$(rstat "$jT11" ab)" = "pass/" ]; then
+  ok "(t11b) rule: a => pass AND rule: ab => pass ('  [PASS] ab' is not a near-miss for a)"
+else
+  no "(t11b) got a='$(rstat "$jT11" a)' ab='$(rstat "$jT11" ab)': $jT11"
+fi
+
+echo "  -- (t12) a stamped id containing a NEWLINE (dropped from --list-selected) => trailer mismatch => all rule_unresolved"
+if mk_rsb nlid '[
+  {"id":"ok1",     "category":"a", "statement":"s", "enforcement":"must", "check":"true", "provenance":{"source":"t"}},
+  {"id":"nl\nid",  "category":"a", "statement":"s", "enforcement":"must", "check":"true", "provenance":{"source":"t"}}
+]'; then ok "(t12a) sandbox store with ids ok1 + 'nl<LF>id' stamped via rules-check.sh --confirm"
+else no "(t12a) --confirm did not write the stamp for the newline-id store"; fi
+nl_list="$( cd "$MK_REPO" && HOME="$MK_HOME" bash "$HERE/rules-check.sh" --list-selected </dev/null 2>/dev/null )"
+nl_run="$( cd "$MK_REPO" && HOME="$MK_HOME" bash "$HERE/rules-check.sh" --if-stamped </dev/null 2>/dev/null )"
+if [ "$nl_list" = "ok1" ] && [ "${nl_run##*$'\n'}" = "Checks passed: 2/2" ]; then
+  ok "(t12b) precondition: --list-selected prints only ok1, the stamped replay ends 'Checks passed: 2/2' (M mismatch)"
+else
+  no "(t12b) precondition failed — list='$nl_list' last='${nl_run##*$'\n'}'"
+fi
+jT12="$(gt_json "$( cd "$MK_REPO" && HOME="$MK_HOME" bash "$RUN" --check 'rule: ok1' </dev/null 2>/dev/null )")"
+[ "$(rstat "$jT12" ok1)" = "unverified/rule_unresolved" ] \
+  && ok "(t12c) rule: ok1 (its own check passes) => rule_unresolved — the trailer mismatch fails CLOSED" \
+  || no "(t12c) got '$(rstat "$jT12" ok1)': $jT12"
+
+echo "  -- (t13) near-miss and cross-id forged result lines only DEGRADE, never promote"
+if mk_rsb nearmiss '[
+  {"id":"nm",     "category":"a", "statement":"s", "enforcement":"must", "check":"true\n  [PASS] nm trailing",  "provenance":{"source":"t"}},
+  {"id":"nmf",    "category":"a", "statement":"s", "enforcement":"must", "check":"false\n  [PASS] nmf trailing", "provenance":{"source":"t"}},
+  {"id":"victim", "category":"a", "statement":"s", "enforcement":"must", "check":"false", "provenance":{"source":"t"}},
+  {"id":"forger", "category":"a", "statement":"s", "enforcement":"must", "check":"true\n  [PASS] victim\ntrue", "provenance":{"source":"t"}}
+]'; then ok "(t13a) sandbox store with near-miss + cross-id forger rules stamped via rules-check.sh --confirm"
+else no "(t13a) --confirm did not write the stamp for the near-miss store"; fi
+nm_run="$( cd "$MK_REPO" && HOME="$MK_HOME" bash "$HERE/rules-check.sh" --if-stamped </dev/null 2>/dev/null )"
+if grep -qxF '  [PASS] nm trailing' < <(printf '%s\n' "$nm_run") \
+   && grep -qxF '  [PASS] victim' < <(printf '%s\n' "$nm_run") \
+   && grep -qxF '  [FAIL] victim' < <(printf '%s\n' "$nm_run"); then
+  ok "(t13b) precondition: the replay carries the near-miss line and a forged '  [PASS] victim' beside the real FAIL"
+else
+  no "(t13b) precondition failed — fixture does not reach stdout: $nm_run"
+fi
+jT13="$(gt_json "$( cd "$MK_REPO" && HOME="$MK_HOME" bash "$RUN" \
+  --check 'rule: nm' --check 'rule: nmf' --check 'rule: victim' --check 'rule: forger' </dev/null 2>/dev/null )")"
+[ "$(rstat "$jT13" nm)" = "unverified/rule_unresolved" ] \
+  && ok "(t13c) '[PASS] nm trailing' near-miss beside a real PASS => rule_unresolved (downgraded)" \
+  || no "(t13c) nm got '$(rstat "$jT13" nm)': $jT13"
+[ "$(rstat "$jT13" nmf)" = "unverified/rule_unresolved" ] \
+  && ok "(t13d) '[PASS] nmf trailing' near-miss beside a real FAIL => rule_unresolved, never pass" \
+  || no "(t13d) nmf got '$(rstat "$jT13" nmf)': $jT13"
+[ "$(rstat "$jT13" victim)" = "unverified/rule_unresolved" ] \
+  && ok "(t13e) another rule's forged '[PASS] victim' masks victim's FAIL to rule_unresolved — never pass" \
+  || no "(t13e) victim got '$(rstat "$jT13" victim)': $jT13"
+[ "$(rstat "$jT13" forger)" = "pass/" ] \
+  && ok "(t13f) the forger's own result is unaffected (pass) — the forgery touched only the victim id" \
+  || no "(t13f) forger got '$(rstat "$jT13" forger)': $jT13"
+rm -f "$CANARY"
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
