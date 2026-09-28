@@ -865,10 +865,12 @@ fi
 # ---------------------------------------------------------------------------------------------------
 # (w) --with-ids (plan-time-rule-routing AC1). The flag adds `  - id:` + `  - enforcement:` lines per
 #     rendered rule; WITHOUT it the output is BYTE-IDENTICAL to the pre-flag reader. The golden
-#     baseline below was CAPTURED from the pre-change reader (`git show` of the parent commit) on this
-#     exact store + args — it is the byte-identity proof, not a hand-written guess.
+#     baseline below is a HAND-WRITTEN heredoc of the pre-change reader's rendering (the flag-less
+#     output shape as of origin/main) for this exact store + args, verified against that reader when
+#     it was authored — it is not re-derived at test time, so a deliberate change to the flag-less
+#     shape must update it by hand.
 # ---------------------------------------------------------------------------------------------------
-echo "== (w) --with-ids: opt-in id/enforcement lines; default output byte-identical to the captured baseline =="
+echo "== (w) --with-ids: opt-in id/enforcement lines; default output byte-identical to the hand-written pre-change baseline =="
 RW="$(new_repo)"
 seed_rules_file "$RW" "a.json" "[
   {\"id\":\"b-must\",\"category\":\"style\",\"statement\":\"Must thing\",\"enforcement\":\"must\",\"check\":\"true\",\"provenance\":{\"source\":\"t\"},\"applies_to\":[\"src/*\"]},
@@ -889,7 +891,7 @@ run_reader_args "$RW" src/x.sh > "$W_PLAIN" 2>/dev/null; rcW=$?
 [ "$rcW" -eq 0 ] && [ -s "$W_PLAIN" ] && ok "(w1) the flag-less reader still emits and exits 0" \
   || no "(w1) flag-less reader rc=$rcW or empty"
 if diff "$W_BASELINE" "$W_PLAIN" >/dev/null 2>&1; then
-  ok "(w2) flag-less output is BYTE-IDENTICAL to the captured pre-change baseline (diff clean)"
+  ok "(w2) flag-less output is BYTE-IDENTICAL to the hand-written pre-change baseline (diff clean)"
 else
   no "(w2) flag-less output drifted from the pre-change baseline: $(diff "$W_BASELINE" "$W_PLAIN" 2>&1 | head -5)"
 fi
