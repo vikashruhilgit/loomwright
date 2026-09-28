@@ -12,6 +12,7 @@
 #   6. .gitignore coverage of .supervisor/twin/ (checked against the real repo)
 #   7. dedup guard (unchanged contract body written once)
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 WRITE="$HERE/write-system-contract.sh"

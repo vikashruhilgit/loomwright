@@ -32,6 +32,7 @@
 # mirrors say). It cannot prove a reviewer emits the finding — that is prompt behaviour, observable
 # only on the NEXT job's Phase 4.5 run.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd "$HERE/.." && pwd)"

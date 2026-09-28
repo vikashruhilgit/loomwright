@@ -22,6 +22,7 @@
 #      `incident_history` block (the v14.15.0 enrichment's new co-resident field) reports ONLY the
 #      real deps — incident_history flow-map entries must NOT leak in as phantom dependency edges.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 WRITE="$HERE/write-system-contract.sh"

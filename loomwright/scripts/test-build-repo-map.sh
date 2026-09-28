@@ -16,6 +16,7 @@
 #   8. Output dir auto-created (default <repo>/.supervisor/repo-map.md, dir absent in worktrees)
 #   9. Env overrides honored: REPO_MAP_OUT + REPO_MAP_MAX_CHARS (no flags)
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILDER="$SCRIPT_DIR/build-repo-map.sh"

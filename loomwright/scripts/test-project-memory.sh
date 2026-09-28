@@ -15,6 +15,7 @@
 #      creating neither file on a virgin repo. Plus the two controls without which the section
 #      proves nothing: a refusal still outranks the gate, and the same call WITH --confirm writes.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 WRITE="$HERE/write-project-memory.sh"

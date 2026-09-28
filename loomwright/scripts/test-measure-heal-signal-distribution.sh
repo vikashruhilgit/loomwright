@@ -31,6 +31,7 @@
 # confirm this suite goes RED). It DEFAULTS to the real wrapper, so it can never disarm an
 # assertion here — the default is the thing under test, never a fixture stand-in.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WRAP="${MHS_WRAPPER:-$HERE/measure-heal-signal.sh}"

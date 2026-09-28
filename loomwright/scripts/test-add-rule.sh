@@ -25,6 +25,7 @@
 #       rejected alongside --retract, and a writer→reader ROUND TRIP proves what is authored is what
 #       read-rules.sh actually routes on.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WRITER="$SCRIPT_DIR/add-rule.sh"

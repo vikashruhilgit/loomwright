@@ -15,6 +15,7 @@
 # Scope: loomwright/scripts/test-*.sh, loomwright/scripts/adapters/*/test-*.sh and root
 # scripts/test-*.sh — every file that mentions `pipefail`. Comment lines are ignored. Exit 0 = clean,
 # 1 = a violation (or a broken detector — see the controls).
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

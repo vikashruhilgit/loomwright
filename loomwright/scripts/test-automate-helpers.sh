@@ -69,6 +69,7 @@
 #      always returns 0 makes the known-over-ceiling seam fixture wrongly print OK,
 #      proving the breach-parks check is load-bearing, not vacuous.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 H="$HERE/automate-helpers.sh"

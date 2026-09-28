@@ -38,6 +38,7 @@
 #
 # Exit 0 = all pass, 1 = any failure.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LENS="$HERE/lens-run.sh"

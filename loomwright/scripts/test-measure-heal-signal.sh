@@ -17,6 +17,7 @@
 #   9. wrapper repo resolution — default-self + $LOOMWRIGHT_HEAL_SIGNAL_REPOS override.
 #  10. PLAIN (non-bold) `- heal_decision:` Outcome bullets — the /automate brief format — harvest.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PY_ENGINE="$HERE/measure-heal-signal.py"

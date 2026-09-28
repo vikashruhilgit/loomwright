@@ -56,6 +56,7 @@
 #   (S) static shape — `bash -n` on both changed scripts; `--help` lists the four queue-*
 #       subcommands (verify-helpers.sh) and queue-reconcile-item (verify-run.sh).
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

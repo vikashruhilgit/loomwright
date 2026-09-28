@@ -27,6 +27,7 @@
 #         warned-and-ignored rather than narrowing the audit. Routing is an emission filter; /rules
 #         check is a repo-wide audit — see rules-check.sh's header near the parity comment.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHECKER="$SCRIPT_DIR/rules-check.sh"

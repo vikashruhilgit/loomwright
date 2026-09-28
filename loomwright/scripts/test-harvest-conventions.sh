@@ -93,6 +93,7 @@
 #        That line was reachable, correct, and NEVER EXECUTED until (t24): every rule-seeding
 #        fixture ran at --cap 5 and the only --cap 0 fixture seeded no rule.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HARVEST="$SCRIPT_DIR/harvest-conventions.sh"

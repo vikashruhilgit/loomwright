@@ -32,6 +32,7 @@
 #      byte-identical to the clean-cwd output; independent mutation control deletes the `-f` from a
 #      COPY (gated on non-empty + differs + `bash -n`) ⇒ the seeded-cwd case goes red
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 S="$HERE/classify-risk.sh"

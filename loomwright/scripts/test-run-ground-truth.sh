@@ -40,6 +40,7 @@
 #       BRIEF_HASH_VALID=1, confirm the (n3) stale-stamp case then WRONGLY executes against the
 #       mutant, proving the real gate is load-bearing (AC7).
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 RUN="$HERE/run-ground-truth.sh"

@@ -46,6 +46,7 @@
 #       dead-pid-but-young-age non-reclaimable edge (z11), and no lock dir ⇒
 #       no section at all (z12).
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK="$SCRIPT_DIR/session-resume.sh"

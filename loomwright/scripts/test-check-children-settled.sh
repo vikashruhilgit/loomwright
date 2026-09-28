@@ -39,6 +39,7 @@
 # EXPLICIT LIMIT: this pins the script's behaviour and the WIRING (the prompts cite it where they say
 # they do). It cannot prove an Execute Manager / Supervisor actually runs the Bash call at runtime.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd "$HERE/.." && pwd)"

@@ -23,6 +23,7 @@
 #   6.  LIVE REPO — the real gate passes against the checked-in repo (this run
 #       also exercises the REAL mirror table, since no override is set)
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../loomwright/scripts/hermetic-test-env.sh"
 set -uo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"

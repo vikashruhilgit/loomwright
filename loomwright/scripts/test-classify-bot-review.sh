@@ -58,6 +58,7 @@
 #                  built-in default. An unmarked body is unaffected (no
 #                  false-positive drop, no stderr note when dropped==0).
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 CLASSIFY="$HERE/classify-bot-review.sh"

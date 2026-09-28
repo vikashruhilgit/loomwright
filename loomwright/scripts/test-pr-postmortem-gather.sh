@@ -98,6 +98,7 @@
 #                     returns empty) degrades to [] even against an otherwise-legit
 #                     operator-authored marker comment — fail-SAFE toward excluding.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 GATHER="$HERE/pr-postmortem-gather.sh"

@@ -70,7 +70,13 @@
 #   (Z)      the developer's REAL .agent/ is byte-identical before/after, and this repo never gains
 #                                      a .agent/verify.json
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
+# Hermetic exception: REAL curl only. verify-env.sh's start/auth-probe cases health-check a python
+# http.server this test launches on 127.0.0.1 with curl, deep inside the executor, so the helper's
+# recording curl stub would make every one of those checks vacuous. The egress env stays scrubbed
+# and the notifier stubs stay in force.
+hermetic_allow_real curl || true
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 READER="$HERE/read-verify.sh"

@@ -50,7 +50,13 @@
 #                                  marker on an existing run (idempotent) and refuses a missing/invalid
 #                                  run dir with exit 2 [run_dir_missing]; --help lists notify-enable
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
+# Hermetic exception: REAL curl only. The walkthrough cases health-check and drive fixture apps this
+# test launches on 127.0.0.1 with curl (start_app, the mutation controls, verify-env underneath), so
+# the helper's recording curl stub would make every one of those checks vacuous. The egress env
+# stays scrubbed and the notifier stubs stay in force.
+hermetic_allow_real curl || true
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNNER="$HERE/verify-run.sh"

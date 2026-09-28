@@ -51,6 +51,7 @@
 # they do). It cannot prove an Execute Manager actually runs the Bash call — that is prompt behaviour,
 # first observable on the NEXT job after the plugin is reinstalled.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd "$HERE/.." && pwd)"

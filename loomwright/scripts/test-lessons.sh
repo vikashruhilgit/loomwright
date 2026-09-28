@@ -67,6 +67,7 @@
 #      `reverify` action is TRUST-NEUTRAL (a forged chain-valid reverify cannot resurrect a
 #      retracted hash, and a later retract still works); plus the sha-less fail-loud case in 10.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 WRITE="$HERE/write-lessons.sh"

@@ -24,6 +24,7 @@
 #      a non-404 error => required=unknown, NEVER a vacuous green; a genuine
 #      404 (real unprotected branch) => required=green (verified empty).
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SUT="$HERE/wait-for-checks.sh"

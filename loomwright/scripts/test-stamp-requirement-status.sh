@@ -4,6 +4,7 @@
 # Auto-registered by CI's `loomwright/scripts/test-*.sh` glob. Fully offline, operates only inside
 # a mktemp sandbox via `--project-root`, never touches the real `.supervisor/`.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

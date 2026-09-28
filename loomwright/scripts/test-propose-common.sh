@@ -24,6 +24,7 @@
 #
 # Exit 0 = all pass, 1 = any failure. Registered automatically by ci.yml's test-*.sh glob.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"

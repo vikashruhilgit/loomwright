@@ -31,6 +31,7 @@
 #       measured there on 2026-09-12 were exactly that. The end-of-suite LEAK
 #       PIN below makes any recurrence red.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DR="$SCRIPT_DIR/drain-rounds.sh"

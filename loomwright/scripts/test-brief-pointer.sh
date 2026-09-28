@@ -27,6 +27,7 @@
 # written. Exit 0 = all pass (auto-registered by ci.yml's
 # `loomwright/scripts/test-*.sh` glob).
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

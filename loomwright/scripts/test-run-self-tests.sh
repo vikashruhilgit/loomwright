@@ -20,6 +20,7 @@
 #   (G)  no-argument glob, in a fake repo layout   → runs flat test-*.sh AND adapters/*/test-*.sh;
 #        an empty layout                           → exit 1, "matched nothing"
 #   (W)  wiring: ci.yml's self-test step invokes run-self-tests.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -125,6 +126,7 @@ echo "== (G) no-argument glob covers flat AND adapter tests; empty fails closed 
 G="$T/fake-repo"
 mkdir -p "$G/loomwright/scripts/adapters/tool"
 cp "$RUNNER" "$G/loomwright/scripts/run-self-tests.sh"
+cp "$HERE/hermetic-test-env.sh" "$G/loomwright/scripts/hermetic-test-env.sh"
 printf 'echo flat > "%s/flat.ran"\n' "$T" > "$G/loomwright/scripts/test-flat.sh"
 printf 'echo adapter > "%s/adapter.ran"\n' "$T" > "$G/loomwright/scripts/adapters/tool/test-adapter.sh"
 ( cd / && GITHUB_ACTIONS= bash "$G/loomwright/scripts/run-self-tests.sh" > "$T/g.out" 2>&1 ); rc=$?
@@ -134,10 +136,34 @@ printf 'echo adapter > "%s/adapter.ran"\n' "$T" > "$G/loomwright/scripts/adapter
 E="$T/empty-repo"
 mkdir -p "$E/loomwright/scripts"
 cp "$RUNNER" "$E/loomwright/scripts/run-self-tests.sh"
+cp "$HERE/hermetic-test-env.sh" "$E/loomwright/scripts/hermetic-test-env.sh"
 GITHUB_ACTIONS= bash "$E/loomwright/scripts/run-self-tests.sh" > "$T/e.out" 2>&1; rc=$?
 [ "$rc" -eq 1 ] && grep -q "matched nothing" "$T/e.out" \
   && ok "(G) an empty layout fails LOUDLY (exit 1, 'matched nothing') — never green on zero tests" \
   || no "(G) empty layout: rc=$rc $(cat "$T/e.out")"
+
+echo "== (H) egress-hermetic runner layer: workers see the helper's effect even when the parent exports the egress env =="
+# The fixture test deliberately does NOT source the helper, so what it observes is the RUNNER's layer.
+# The parent is re-dangered first: this test's own helper state is stripped (shim dir off PATH,
+# markers unset) and LOOMWRIGHT_WEBHOOK_URL is exported, exactly like an owner's terminal.
+cat > "$T/hermetic-probe.sh" <<'EOF'
+printf '%s|%s|%s|%s\n' "${HERMETIC_TEST_ENV:-unset}" "${LOOMWRIGHT_WEBHOOK_URL:-unset}" \
+  "${LOOMWRIGHT_DESKTOP_NOTIFICATIONS:-unset}" "$(command -v osascript 2>/dev/null)" > "$(dirname "$0")/hermetic-probe.seen"
+EOF
+( PATH="$(hermetic_path_without_shims)"
+  unset HERMETIC_TEST_ENV HERMETIC_SHIM_DIR HERMETIC_EGRESS_LOG LOOMWRIGHT_DESKTOP_NOTIFICATIONS
+  export LOOMWRIGHT_WEBHOOK_URL="http://127.0.0.1:9/parent-exported"
+  [ "${LOOMWRIGHT_WEBHOOK_URL:-}" = "http://127.0.0.1:9/parent-exported" ] && [ -z "${HERMETIC_TEST_ENV:-}" ] \
+    && echo "parent-dangered" > "$T/hermetic-parent.state"
+  run "$T/h.out" "$T/hermetic-probe.sh" ); rc=$?
+seen="$(cat "$T/hermetic-probe.seen" 2>/dev/null || true)"
+IFS='|' read -r h_marker h_url h_desk h_osa <<<"$seen"
+if [ "$rc" -eq 0 ] && [ -f "$T/hermetic-parent.state" ] && [ "$h_marker" = "1" ] && [ "$h_url" = "unset" ] \
+   && [ "$h_desk" = "0" ] && [ -n "$h_osa" ] && [ -f "$(dirname "$h_osa")/.hermetic-shim-dir" ]; then
+  ok "(H) worker saw HERMETIC_TEST_ENV=1, LOOMWRIGHT_WEBHOOK_URL unset, notifications=0, osascript -> a hermetic stub, though the parent exported the URL"
+else
+  no "(H) runner layer missing: rc=$rc parent=$(cat "$T/hermetic-parent.state" 2>/dev/null) seen='$seen' $(cat "$T/h.out")"
+fi
 
 echo "== (W) wiring: ci.yml invokes the runner =="
 if [ -f "$CI_YML" ]; then

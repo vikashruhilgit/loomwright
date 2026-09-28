@@ -55,6 +55,7 @@
 # do NOT prove the live LLM Context-Keeper/Supervisor actually implements it that way — that is
 # observable only on the NEXT job's real run.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd "$HERE/.." && pwd)"

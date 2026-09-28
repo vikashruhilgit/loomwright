@@ -50,6 +50,7 @@
 #   AC6  non-Bash tool_name (e.g. "Read") -> rc 0, 0 markers (matcher-defensive no-op).
 #   AC6  jq absent on PATH -> rc 0, 0 markers (fail-safe missing-jq branch).
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 WRAPPER="$HERE/hook-dispatch-on-pr-create.sh"

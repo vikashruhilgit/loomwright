@@ -26,6 +26,7 @@
 # CI runs it automatically via the existing `loomwright/scripts/test-*.sh` self-test loop, so it
 # needs no `.github/workflows/` edit (which would make `claude-code-action` self-skip the PR's
 # own review — see CLAUDE.md).
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd)"

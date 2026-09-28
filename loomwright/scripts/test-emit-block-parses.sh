@@ -10,6 +10,7 @@
 # parseability and not house style, M5 pins that a broken extractor fails loudly
 # instead of passing vacuously.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

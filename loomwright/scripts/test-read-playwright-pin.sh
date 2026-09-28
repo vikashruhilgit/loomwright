@@ -25,6 +25,7 @@
 #                           ACCEPTS the range fixture the real reader refuses — the (F) range arm tests
 #                           the pattern, not the harness
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

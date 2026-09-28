@@ -14,6 +14,7 @@
 #
 # Portability: bash 3.2 safe (macOS) + Linux CI. No sed -i, no mapfile, offline.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../loomwright/scripts/hermetic-test-env.sh"
 set -uo pipefail
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"

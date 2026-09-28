@@ -28,6 +28,7 @@
 # convention (test-webhook.sh's curl stub) and its mutation-control convention
 # (test-classify-risk.sh's gated copy-mutate-diff pattern).
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MIRROR="$HERE/orca-mirror.sh"

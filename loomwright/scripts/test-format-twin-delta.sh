@@ -11,6 +11,7 @@
 #   5. no-arg → "Twin: no signal this run" and exit 0
 #   6. --from-session-end round-trip (guarded behind jq availability)
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 FMT="$HERE/format-twin-delta.sh"

@@ -67,6 +67,7 @@
 #   (g)  the confirm-only gate: non-TTY without --confirm is a dry-run that writes NOTHING
 #   (h)  no `.write-agent-memory.*` temp residue after a successful write (atomicity)
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WRITER="$SCRIPT_DIR/write-agent-memory.sh"

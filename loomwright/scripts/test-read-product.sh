@@ -46,6 +46,7 @@
 #                                        A malformed one still names its reason on stderr (it used to
 #                                        be silent on BOTH streams); a well-formed one is still read
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 READER="$SCRIPT_DIR/read-product.sh"

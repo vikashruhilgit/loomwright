@@ -32,6 +32,19 @@ shopt -s nullglob
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Egress-hermetic layer for every worker (second layer — each test ALSO sources the helper itself,
+# enforced by scripts/check-test-hermetic.sh). Sourcing it here scrubs the egress env vars, sets
+# LOOMWRIGHT_DESKTOP_NOTIFICATIONS=0 and PATH-prepends the recording notifier/curl/wget stubs, and
+# every `bash "$t"` worker below inherits that exported state — so even a test that somehow skipped
+# its own source line cannot reach a real webhook or OS notifier through this runner. Missing helper
+# = FAIL CLOSED: running the suite un-hermetic is exactly what this layer exists to prevent.
+if [ ! -f "$here/hermetic-test-env.sh" ]; then
+  echo "run-self-tests: $here/hermetic-test-env.sh is missing — refusing to run the suite without the egress-hermetic layer" >&2
+  exit 1
+fi
+# shellcheck source=hermetic-test-env.sh
+. "$here/hermetic-test-env.sh"
+
 if [ "$#" -gt 0 ]; then
   tests=("$@")
 else

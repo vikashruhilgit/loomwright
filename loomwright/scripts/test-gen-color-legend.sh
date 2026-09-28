@@ -32,6 +32,7 @@
 # and SIGPIPEs the producer, so the PIPELINE status becomes 141 even though grep matched. Every
 # text assertion below captures stdout into a variable first and matches it with a here-string.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 export LC_ALL=C
 

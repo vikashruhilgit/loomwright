@@ -27,6 +27,7 @@
 # Fully offline and deterministic. macOS bash 3.2 / BSD userland safe: no GNU-only
 # stat/sed/date flags, no `timeout`, counts validated numeric before arithmetic.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../loomwright/scripts/hermetic-test-env.sh"
 set -uo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
