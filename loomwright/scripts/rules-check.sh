@@ -67,9 +67,9 @@
 #     always traces back to an actual human confirmation, never to an automated replay of one.
 #   - Interactive TTY (stdin AND stdout are TTYs, no --if-stamped): prompts once and executes on
 #     y/Y/yes.
-#   Precedence, evaluated top-down (--list-selected and --list-gateable, two read-only listings, sit
-#   above all of these):
-#     --list-selected  >  --list-gateable  >  --no-cmd
+#   Precedence, evaluated top-down (--list-selected, --list-gateable and --gate-state, three read-only
+#   listings, sit above all of these):
+#     --list-selected  >  --list-gateable  >  --gate-state  >  --no-cmd
 #               >  argv --confirm (or RULES_CHECK_CONFIRM=1 when --if-stamped is ABSENT)
 #               >  --if-stamped  >  TTY-yes  >  default-skip.
 #
@@ -87,7 +87,8 @@
 # confirmed in the main checkout replays in an /automate worktree of the same repo on the same
 # machine — while a separate clone (its own .git) is a separate key and stays unstamped. Outside a
 # git repo the key falls back to the physical cwd. The record stores `git_common_dir` (the key),
-# `repo_root` (the checkout that LAST confirmed — informational only, never read back), `hash`, `ts`.
+# `repo_root` (the checkout that LAST confirmed — informational only, never read back), `hash`, `ts`,
+# and `countable` (the gate-COUNTABLE id set at confirm time — see "THE COUNTABLE SET" below).
 # This is DELIBERATELY the opposite mechanism from `exec-acceptance-lib.sh`'s brief-embedded
 # `sha256:` stamp line (red-team-hardening item 05) — that stamp lives INSIDE the (human-approved)
 # brief precisely because a brief only exists after a human already signed off on it; a `.agent/rules/`
@@ -103,7 +104,7 @@
 #
 # THE STAMP WRITE. On a run whose MODE resolves to `execute` via a GENUINE --confirm/RULES_CHECK_CONFIRM=1
 # /TTY-y (never via a --if-stamped-promoted replay), this script writes
-# `{git_common_dir, repo_root, hash, ts}` into the stamp file, keyed by $STAMP_KEY (the physical
+# `{git_common_dir, repo_root, hash, ts, countable}` into the stamp file, keyed by $STAMP_KEY (the physical
 # git-common-dir — see "THE STAMP"), AFTER the run completes — regardless of whether any
 # individual check PASSED or FAILED (the stamp records "a human confirmed THIS SET was run", not "every
 # check in it currently passes"; a failing stamped check still replays and still fails under
@@ -111,6 +112,21 @@
 # sha256 over the sorted `id\tcheck\n` lines of EXACTLY the must-rules the execute loop's own selection
 # query chose — the SAME in-memory value feeds both the stamp write and the --if-stamped comparison, so
 # the two can never independently drift on what "the set" means.
+#
+# THE COUNTABLE SET (rule-enforcement-at-review-and-merge, review iteration 1). WHICH selected rules the
+# gate COUNTS (--list-gateable below) is derived from PR-controlled state the hash does NOT cover: a
+# `binds` key dropped or made a non-array (hashes exactly like `[]`), a data file made `+x` (a
+# `binds: []` rule turns `unbound`), or a rule demoted out of the selection. So the genuine-confirm
+# stamp write ALSO records `countable`: the LC_ALL=C-sorted, de-duplicated id list whose
+# --list-gateable class was `countable` at confirm time (computed from $selected BEFORE the execute
+# loop; a replay never computes or writes it). It is a SEPARATE record field that the --if-stamped
+# hash comparison never reads, so the binds-free stamp `hash`, every stdout line and every existing
+# --if-stamped consumer (worker-rule-selfcheck.sh, run-ground-truth.sh) stay byte-identical. The ONE
+# reader is --gate-state (below), consumed by rules-gate-verdict.sh, which answers `unstamped` when the
+# live countable set differs from the recorded one in either direction. A re-confirm overwrites the
+# whole record, so the recorded set always matches the latest human confirmation. If the set cannot be
+# computed (jq failure) the field is OMITTED — a record without it reads as `legacy`, which the verdict
+# helper fails CLOSED on whenever anything is countable.
 #
 # UNATTENDED CALLERS: this helper is invoked by `/rules check` (human-invoked) and, for --if-stamped
 # only, by advisory consumers — Phase 4.5's replay (`skills/self-heal-advisory/SKILL.md`),
@@ -182,10 +198,25 @@
 #   An id containing a tab is printed as-is (the consumer parses the LAST two tab fields); an id
 #   carrying a newline/CR is omitted exactly as under --list-selected.
 #
+# --gate-state (READ-ONLY, same early-exit tier, just below --list-gateable — executes nothing, writes
+# no stamp, never prompts, exits 0; prints NOTHING when jq is absent). The two facts the fail-CLOSED
+# verdict helper needs that no other listing carries, as tab-separated lines in this fixed order:
+#     store<TAB>ok|unreadable        `unreadable` iff some .agent/rules/*.json file is not parseable
+#                                    JSON whose value is an array (the per-object fail-safe SKIP in
+#                                    Pass 2 below is unchanged; this only makes a corrupt FILE visible)
+#     stamp<TAB>absent|legacy|recorded
+#                                    absent   = no usable stamp record (no HOME / unreadable / not an
+#                                               object / no non-empty string `hash` for this key)
+#                                    legacy   = a record with no usable `countable` field (written before
+#                                               THE COUNTABLE SET existed, or the field is malformed)
+#                                    recorded = a record carrying `countable` (an array of strings)
+#     countable<TAB><id>             zero or more, ONLY under `recorded`: the recorded ids, sorted, unique
+#
 # Usage:  rules-check.sh [--confirm] [--no-cmd] [--if-stamped] [--list-selected] [--list-gateable]
+#                        [--gate-state]
 # Exit:   0 = ran (or skipped) with zero check FAILURES ; 1 = >=1 selected check FAILED when executed.
 #         Fail-safe on tooling/absent-store paths (no jq / no rules) → exit 0 (nothing to run).
-#         --list-selected and --list-gateable always exit 0.
+#         --list-selected, --list-gateable and --gate-state always exit 0.
 
 set -uo pipefail   # NO `set -e` — a failed check is a normal tally, not a script crash.
 
@@ -220,6 +251,7 @@ CONFIRM_ENV=0
 IF_STAMPED=0
 LIST_SELECTED=0
 LIST_GATEABLE=0
+GATE_STATE=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -228,6 +260,7 @@ while [ "$#" -gt 0 ]; do
     --if-stamped) IF_STAMPED=1; shift ;;
     --list-selected) LIST_SELECTED=1; shift ;;   # read-only enumeration — wins over every mode flag
     --list-gateable) LIST_GATEABLE=1; shift ;;   # read-only classification — same tier, below --list-selected
+    --gate-state) GATE_STATE=1; shift ;;         # read-only store-health + stamp countable-set — same tier, below --list-gateable
     -h|--help)
       grep -E '^# ' "$0" | sed -E 's/^# ?//'
       exit 0 ;;
@@ -236,7 +269,7 @@ while [ "$#" -gt 0 ]; do
       # typo'd safety flag (e.g. `--no-cmnd` for `--no-cmd`) is not a SILENT no-op.
       # Without this warning a mistyped `--no-cmd` would be dropped, and a co-present
       # `--confirm`/TTY would then execute checks against the caller's intent.
-      printf 'rules-check.sh: warning: ignoring unrecognized argument %s (did you mean --no-cmd, --confirm, --if-stamped, --list-selected, or --list-gateable?)\n' "$1" >&2
+      printf 'rules-check.sh: warning: ignoring unrecognized argument %s (did you mean --no-cmd, --confirm, --if-stamped, --list-selected, --list-gateable, or --gate-state?)\n' "$1" >&2
       shift ;;
   esac
 done
@@ -285,13 +318,20 @@ _rc_read_stamp_hash() {
     "$RULES_CHECK_STAMP_FILE" 2>/dev/null || true
 }
 
-# _rc_write_stamp <stamp_key> <repo_root> <hash> — best-effort: never blocks/errors the run and never
+# _rc_write_stamp <stamp_key> <repo_root> <hash> [<countable_json>] — best-effort: never blocks/errors the run and never
 # changes the exit code, but a write that does not land is WARNED on stderr (a silent failure would
 # leave the human believing the set is stamped when every later --if-stamped replays `unstamped`).
 # Only ever called after a GENUINE --confirm/TTY-y execute completes — see "THE STAMP WRITE" above.
 # No lock: concurrent writers are last-writer-wins (header, "HONEST LIMIT — CONCURRENT WRITES").
 _rc_write_stamp() {
-  local key="$1" repo_root="$2" hash="$3" dir ts tmp existing
+  local key="$1" repo_root="$2" hash="$3" cnt="${4:-}" dir ts tmp existing
+  # <countable_json> is recorded ONLY when it is a JSON array of strings; anything else (empty, a jq
+  # failure upstream) OMITS the field, so the record reads back as `legacy` — fail-CLOSED at the gate.
+  if [ -n "$cnt" ] && printf '%s' "$cnt" | jq -e 'type == "array" and all(.[]; type == "string")' >/dev/null 2>&1; then
+    :
+  else
+    cnt=""
+  fi
   [ -n "${HOME:-}" ] || { echo "$PROG: warning: HOME unset — stamp not written" >&2; return 0; }
   command -v jq >/dev/null 2>&1 || return 0
   dir="$(dirname "$RULES_CHECK_STAMP_FILE")"
@@ -309,7 +349,9 @@ _rc_write_stamp() {
   tmp="$(mktemp "$dir/.rules-check-stamp.XXXXXX" 2>/dev/null)" \
     || { echo "$PROG: warning: cannot create a temp file in $dir — stamp not written" >&2; return 0; }
   if printf '%s' "$existing" | jq --arg k "$key" --arg rr "$repo_root" --arg h "$hash" --arg ts "$ts" \
-       '. + {($k): {git_common_dir: $k, repo_root: $rr, hash: $h, ts: $ts}}' > "$tmp" 2>/dev/null \
+       --arg cnt "$cnt" \
+       '. + {($k): ({git_common_dir: $k, repo_root: $rr, hash: $h, ts: $ts}
+                    + (if $cnt == "" then {} else {countable: ($cnt | fromjson)} end))}' > "$tmp" 2>/dev/null \
      && mv -f "$tmp" "$RULES_CHECK_STAMP_FILE" 2>/dev/null; then
     :
   else
@@ -318,14 +360,38 @@ _rc_write_stamp() {
   fi
 }
 
+# _rc_stamp_gate_state <stamp_key> — the `stamp<TAB>…` line (+ `countable<TAB><id>` lines) of
+# --gate-state. Every unusable-file path reads as `absent` (never a fabricated record); a record whose
+# `countable` is missing or not an array of tab/newline/CR-free strings reads as `legacy`.
+_rc_stamp_gate_state() {
+  local key="$1" out
+  if [ -z "${HOME:-}" ] || [ ! -r "$RULES_CHECK_STAMP_FILE" ] || ! jq -e . "$RULES_CHECK_STAMP_FILE" >/dev/null 2>&1; then
+    printf 'stamp\tabsent\n'; return 0
+  fi
+  out="$(jq -r --arg k "$key" '
+    if type != "object" then "stamp\tabsent"
+    else .[$k] as $r
+      | if ($r | type) != "object" then "stamp\tabsent"
+        elif (($r.hash | type) != "string") or ($r.hash == "") then "stamp\tabsent"
+        elif ($r | has("countable") | not) then "stamp\tlegacy"
+        elif (($r.countable | type) != "array")
+             or any($r.countable[]; (type != "string") or (. == "") or test("[\t\n\r]")) then "stamp\tlegacy"
+        else "stamp\trecorded", ($r.countable | unique | .[] | "countable\t" + .)
+        end
+    end' "$RULES_CHECK_STAMP_FILE" 2>/dev/null)" || out=""
+  [ -n "$out" ] || out="$(printf 'stamp\tabsent')"
+  printf '%s\n' "$out"
+}
+
 # ---------------------------------------------------------------------------
 # Tooling presence (fail-safe): jq is REQUIRED to parse the store injection-safely. Absent jq → nothing
 # can be resolved to run → fail-safe no-op, exit 0.
 # ---------------------------------------------------------------------------
 if ! command -v jq >/dev/null 2>&1; then
   echo "$PROG: jq unavailable — cannot read rules, nothing to run (fail-safe)" >&2
-  # --list-selected / --list-gateable: stdout is ONLY the listing (empty here).
-  [ "$LIST_SELECTED" -eq 1 ] || [ "$LIST_GATEABLE" -eq 1 ] || echo "Checks passed: 0/0"
+  # --list-selected / --list-gateable / --gate-state: stdout is ONLY the listing (empty here — the
+  # verdict helper reads an empty --gate-state as unreadable).
+  [ "$LIST_SELECTED" -eq 1 ] || [ "$LIST_GATEABLE" -eq 1 ] || [ "$GATE_STATE" -eq 1 ] || echo "Checks passed: 0/0"
   exit 0
 fi
 
@@ -350,6 +416,8 @@ if [ "$LIST_SELECTED" -eq 1 ]; then
   MODE="list-selected"               # read-only enumeration: WINS over everything, never prompts
 elif [ "$LIST_GATEABLE" -eq 1 ]; then
   MODE="list-gateable"               # read-only classification: same tier, executes nothing, never prompts
+elif [ "$GATE_STATE" -eq 1 ]; then
+  MODE="gate-state"                  # read-only store-health + stamp state: same tier, executes nothing
 elif [ "$NO_CMD" -eq 1 ]; then
   MODE="no-cmd"                      # --no-cmd WINS over everything (fail-safe)
 elif [ "$CONFIRM" -eq 1 ]; then
@@ -370,6 +438,23 @@ files_list="$(mktemp)"
 trap 'rm -f "$files_list" 2>/dev/null' EXIT
 LC_ALL=C find "$RULES_DIR" -maxdepth 1 -type f -name '*.json' 2>/dev/null \
   | LC_ALL=C sort > "$files_list" 2>/dev/null || true
+# ---------------------------------------------------------------------------
+# --gate-state: store health + the stamp's recorded countable set (header, "--gate-state"), exit 0 —
+# BEFORE every other early exit, so an absent store still reports `store ok` + the stamp state.
+# Reads the rule FILES only to ask "is each one a parseable JSON array?" — no check is extracted,
+# nothing executes, no stamp is written.
+# ---------------------------------------------------------------------------
+if [ "$MODE" = "gate-state" ]; then
+  _rc_store="ok"
+  while IFS= read -r rf; do
+    [ -n "$rf" ] || continue
+    jq -e 'type == "array"' "$rf" >/dev/null 2>&1 </dev/null || _rc_store="unreadable"
+  done < "$files_list"
+  printf 'store\t%s\n' "$_rc_store"
+  _rc_stamp_gate_state "$STAMP_KEY"
+  exit 0
+fi
+
 if [ ! -s "$files_list" ]; then
   echo "$PROG: no .agent/rules/*.json rule files — nothing to check" >&2
   [ "$MODE" = "list-selected" ] || [ "$MODE" = "list-gateable" ] || echo "Checks passed: 0/0"
@@ -632,17 +717,22 @@ EOF
 # the ONLY place the `binds` / invoked-file classification is computed — this script stays the one
 # parser of a check (skills/rules/SKILL.md §9).
 # ---------------------------------------------------------------------------
+# _rc_gateable_lines — the full --list-gateable listing over $selected (LC_ALL=C sorted). ONE
+# definition, read by both --list-gateable and the genuine-confirm stamp write's `countable` field, so
+# the recorded set and the live listing can never disagree on what "countable" means.
+_rc_gateable_lines() {
+  local rec lid lcheck
+  while IFS= read -r rec; do
+    [ -n "$rec" ] || continue
+    lid="$(printf '%s' "$rec" | jq -r '.id | select(test("[\n\r]") | not)' 2>/dev/null)"
+    [ -n "$lid" ] || continue
+    lcheck="$(printf '%s' "$rec" | jq -r '.check' 2>/dev/null)"
+    _rc_lg_classify "$rec" "$lid" "$lcheck"
+  done < "$selected" | LC_ALL=C sort
+}
+
 if [ "$MODE" = "list-gateable" ]; then
-  _rc_lg_out="$(mktemp)"
-  trap 'rm -f "$files_list" "$combined" "$selected" "$_rc_lg_out" 2>/dev/null' EXIT
-  while IFS= read -r _rc_rec; do
-    [ -n "$_rc_rec" ] || continue
-    rid="$(printf '%s' "$_rc_rec" | jq -r '.id | select(test("[\n\r]") | not)' 2>/dev/null)"
-    [ -n "$rid" ] || continue
-    rcheck="$(printf '%s' "$_rc_rec" | jq -r '.check' 2>/dev/null)"
-    _rc_lg_classify "$_rc_rec" "$rid" "$rcheck" >> "$_rc_lg_out"
-  done < "$selected"
-  LC_ALL=C sort "$_rc_lg_out"
+  _rc_gateable_lines
   exit 0
 fi
 
@@ -663,6 +753,24 @@ while IFS= read -r _rc_rec; do
 done < "$selected" | LC_ALL=C sort > "$_rc_hash_input"
 LIVE_HASH="$(_rc_sha256_file "$_rc_hash_input")"
 rm -f "$_rc_hash_input" 2>/dev/null
+
+# STAMP_COUNTABLE — the `countable` field of the stamp record (header, "THE COUNTABLE SET"): the ids
+# whose --list-gateable class is `countable`, as a sorted unique JSON array. Computed ONLY for a
+# GENUINE confirmation (the one path that writes a stamp), from the SAME $selected as LIVE_HASH and
+# BEFORE the execute loop runs any check; a replay / listing / skip never computes it. The id is every
+# field before the LAST two tab-separated ones (an id may itself carry a tab). A jq failure leaves it
+# empty ⇒ _rc_write_stamp omits the field ⇒ the record reads `legacy` (fail-closed at the gate).
+STAMP_COUNTABLE=""
+if [ "$MODE" = "execute" ] && [ "$CAME_FROM_CONFIRM" -eq 1 ]; then
+  STAMP_COUNTABLE="$(
+    _rc_gateable_lines | while IFS= read -r _rc_gl; do
+      [ -n "$_rc_gl" ] || continue
+      _rc_gl_rest="${_rc_gl%$'\t'*}"
+      [ "${_rc_gl_rest##*$'\t'}" = "countable" ] || continue
+      printf '%s\n' "${_rc_gl_rest%$'\t'*}"
+    done | jq -Rsc 'split("\n") | map(select(length > 0)) | unique' 2>/dev/null
+  )" || STAMP_COUNTABLE=""
+fi
 
 # ---------------------------------------------------------------------------
 # --if-stamped RESOLUTION (deferred from the MODE block above — it needs $LIVE_HASH). Compares the
@@ -747,7 +855,7 @@ fi
 # — a failed write is warned about on stderr but never changes this script's exit code or stdout.
 # ---------------------------------------------------------------------------
 if [ "$MODE" = "execute" ] && [ "$CAME_FROM_CONFIRM" -eq 1 ] && [ -n "$LIVE_HASH" ]; then
-  _rc_write_stamp "$STAMP_KEY" "$GITROOT" "$LIVE_HASH"
+  _rc_write_stamp "$STAMP_KEY" "$GITROOT" "$LIVE_HASH" "$STAMP_COUNTABLE"
 fi
 
 [ "$failures" -eq 0 ] || exit 1

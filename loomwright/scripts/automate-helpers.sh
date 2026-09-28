@@ -590,7 +590,8 @@ _ge_pr_parts() {
 #           `rules_check_failed (<up to 3 countable ids, "; ">)`, `unresolved` ⇒
 #           `rules_check_unresolved (<ids>)`, `unstamped` ⇒ `rules_unstamped (<n> countable
 #           must-check(s) never confirmed on this machine)` (the helper answers `unstamped` only
-#           when ≥1 countable must-check exists — D3's middle form), `cmd_disabled` ⇒
+#           when ≥1 countable must-check exists or the countable set drifted from the one
+#           recorded at the last confirm — D3's middle form), `cmd_disabled` ⇒
 #           `rules_cmd_disabled`, and `unreadable` / helper absent / non-zero exit / non-JSON /
 #           missing or non-string `.verdict` / any unrecognised verdict ⇒ `rules_gate_unreadable`.
 #           No ctx input feeds it (`rules_gate`/`rules_ok`/`rules_check` are refused) and NO flag,
@@ -924,8 +925,9 @@ GEPARTS
         rids="$(_ge_rules_ids unresolved)" || rids=""; [ -n "$rids" ] || rids="no unresolved ids recorded"
         echo "PARK: rules_check_unresolved ($rids)"; return 0 ;;
       unstamped)
-        # D3 middle form: the helper answers `unstamped` ONLY when countable != []
-        # (an unstamped store with zero countable ids is already `none` above).
+        # D3 middle form: the helper answers `unstamped` ONLY when countable != [] or
+        # the countable set drifted from the stamp's recorded one (an unstamped store
+        # with zero countable ids and no drift is already `none` above).
         local rn; rn="$(printf '%s' "$rules_json" | "$JQ" -r '[ (.countable // [])[]? | select(type == "string") ] | length' 2>/dev/null)" || rn=""
         case "$rn" in ''|*[!0-9]*) rn="?" ;; esac
         echo "PARK: rules_unstamped (${rn} countable must-check(s) never confirmed on this machine)"; return 0 ;;

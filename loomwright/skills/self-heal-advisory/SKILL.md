@@ -514,10 +514,20 @@ Replay any HUMAN-CONFIRMED `.agent/rules/` `must`-rule checks through ONE fail-C
 # Reuses $NO_CMD_FLAG UNCHANGED from the Ground-truth execution step above (never re-derived, so the
 # two calls can never disagree about whether cmd execution is disabled this run):
 if $NO_CMD_FLAG is non-empty: export RULES_CHECK_NO_CMD=1     # the SAME valve — the helper then NEVER invokes --if-stamped
-rules = JSON(bash ${CLAUDE_PLUGIN_ROOT}/scripts/rules-gate-verdict.sh --root <the feature-branch checkout>)
-# ONE JSON object, always exit 0: {verdict: ok|none|fail|unresolved|unstamped|cmd_disabled|unreadable,
+out = run(bash "${CLAUDE_PLUGIN_ROOT}/scripts/rules-gate-verdict.sh" --root <the feature-branch checkout>)
+# Contract: ONE JSON object, always exit 0: {verdict: ok|none|fail|unresolved|unstamped|cmd_disabled|unreadable,
 #   selected, countable, advisory[{id, reason}], passed, failing, unresolved, checks_passed: "n/m"|null}
-# (field contract + verdict state trace: the helper's own header — not restated here). The helper unsets
+# (field contract + verdict state trace: the helper's own header — not restated here).
+# ALLOW-LISTED read (never a deny-list of bad values):
+if out.exit_code == 0 and out.stdout parses as ONE JSON object whose `verdict` is a STRING in
+   ("ok", "none", "unstamped", "cmd_disabled", "fail", "unresolved", "unreadable"):
+  rules = that object
+else:
+  # EVERYTHING else — helper absent, non-zero exit, empty stdout, non-JSON, non-object, missing / null /
+  # non-string verdict, or an unrecognised verdict string — is treated as unreadable (⇒ Part 2 ESCALATES):
+  rules = {verdict: "unreadable", selected: [], countable: [], advisory: [], passed: [], failing: [], unresolved: [], checks_passed: null}
+RULES_PASSABLE = ("ok", "none", "unstamped", "cmd_disabled")   # the allow-list Part 2 branches on
+# The helper unsets
 # the ambient confirm env var and never passes --confirm, so the environment can never turn this replay
 # into a fresh, stamp-writing confirmation; `--if-stamped` itself never prompts (no TTY concern).
 
@@ -534,8 +544,8 @@ record_decision(phase: SELF_HEAL, decision: rules_check_line, rationale: "rules 
 ```
 
 **Rules-check replay rules:**
-- **The verdict decides; the line reports.** Only `rules.verdict` feeds Part 2: `fail` ⇒ a BLOCKING finding per countable failing id (the loop iterates on it); `unresolved` / `unreadable` ⇒ the loop escalates with `rules_gate_unresolved` (fail CLOSED — a verdict the gate could not compute never passes silently; the one deliberate departure from "byte-identical", since those states did not exist before); `ok` / `none` / `unstamped` / `cmd_disabled` ⇒ the loop is BYTE-IDENTICAL to a run with no rules store. An advisory id's pass/fail NEVER changes the verdict — it is reported in the line only.
-- **Line states:** `passed n/m` (a countable pass, or an advisory-only store whose replay reached a trailer — a failing ADVISORY check is reported honestly as `n < m` and never gates), `unstamped` (no human has run `/rules check --confirm` on THIS machine for the current hash input, a rule changed since, or a PR edited a file a rule `binds` — the hash moved), `cmd_disabled` ($NO_CMD_FLAG was set — mirrors the ground-truth step's own unattended trust valve), `none` (no must+checkable rule selected, or an all-advisory store whose replay produced no accepted trailer — the helper's JSON does not distinguish those, an honest limit), `unresolved <ids>` / `unreadable` (the escalating states), each optionally followed by one `rules_advisory: <id> (<reason>)` clause per non-countable id (`binds_undeclared` | `binds_invalid` | `unbound:<paths>`). A countable passing store prints `rules_check: passed 1/1` — byte-identical to the pre-gate line for that state. Edge: a repo with no `.agent/rules/` store (or no must+checkable rule) is `none`.
+- **The verdict decides; the line reports.** Only `rules.verdict` feeds Part 2, through an ALLOW-LIST: `fail` ⇒ a BLOCKING finding per countable failing id (the loop iterates on it); `ok` / `none` / `unstamped` / `cmd_disabled` (`RULES_PASSABLE`) ⇒ nothing; EVERY other value — `unresolved`, `unreadable`, and any helper output the read above cannot affirm (absent helper, non-zero exit, non-JSON, missing or unknown verdict), all normalised to `unreadable` — ⇒ the loop escalates with `rules_gate_unresolved` (fail CLOSED — a verdict the gate could not compute never passes silently; the one deliberate departure from "byte-identical", since those states did not exist before); `ok` / `none` / `unstamped` / `cmd_disabled` ⇒ the loop is BYTE-IDENTICAL to a run with no rules store. An advisory id's pass/fail NEVER changes the verdict — it is reported in the line only.
+- **Line states:** `passed n/m` (a countable pass, or an advisory-only store whose replay reached a trailer — a failing ADVISORY check is reported honestly as `n < m` and never gates), `unstamped` (no human has run `/rules check --confirm` on THIS machine for the current hash input, a rule changed since, or a PR edited a file a rule `binds` — the hash moved; or the gate-countable id set changed since the last confirm — `skills/rules/SKILL.md` §8.1), `cmd_disabled` ($NO_CMD_FLAG was set — mirrors the ground-truth step's own unattended trust valve), `none` (no must+checkable rule selected, or an all-advisory store whose replay produced no accepted trailer — the helper's JSON does not distinguish those, an honest limit), `unresolved <ids>` / `unreadable` (the escalating states), each optionally followed by one `rules_advisory: <id> (<reason>)` clause per non-countable id (`binds_undeclared` | `binds_invalid` | `unbound:<paths>`). A countable passing store prints `rules_check: passed 1/1` — byte-identical to the pre-gate line for that state. Edge: a repo with no `.agent/rules/` store (or no must+checkable rule) is `none`.
 - **One line, one place:** `rules_check_line` is surfaced in the Phase 4.5 report and (per the completion tail below) travels alongside the Advisory Twin delta line into the run's advisory output — it is prose only; the GATING effect travels through Part 2's findings, not through this line. **Deviation from the brief (executable-rule-candidates/01 AC4):** the PR body is written at Phase 4 FINALIZE, before Phase 4.5 runs, so the line is surfaced in the Phase 4.5 report only — no PR-body writer is added. `docs/RESULT_SCHEMAS.md` carries no nested `SUPERVISOR_RESULT` field and no flat `session_end` field for it.
 - **The helper always exits 0** — a verdict, including `unreadable`, is a normal outcome and never fails the phase; the CONSUMER (Part 2) decides.
 - **Never a second review pass.** It reads no diff and asks no question — it replays a command a human already ran and confirmed themselves, on their own machine; it runs once per iteration only because a fix can change what the command observes.
@@ -829,7 +839,7 @@ while heal_iterations < max_heal_iterations:
   # RULES GATE (automate-followups/07 — the one DETERMINISTIC co-gate beside the LLM review; Part 1
   # §"Rules-check replay"). Re-run THIS iteration via `scripts/rules-gate-verdict.sh` (a fix can change
   # the outcome); record this iteration's rules_check_line per Part 1.
-  rules = rules-gate-verdict (Part 1 call)
+  rules = rules-gate-verdict (Part 1 call — its ALLOW-LISTED read: anything unaffirmed is already `unreadable`)
   rule_findings = []
   if rules.verdict == "fail":
     for id in rules.failing if id in rules.countable:       # an ADVISORY id's failure never becomes a finding
@@ -866,9 +876,10 @@ while heal_iterations < max_heal_iterations:
 
   # Rules gate, fail-CLOSED leg (placed AFTER heal_dismissed so this iteration's dismissals are itemised
   # on this break too, exactly as on the NEEDS_HUMAN break):
-  if rules.verdict in ("unresolved", "unreadable"):
-    # FAIL CLOSED — a verdict the gate could not compute never passes silently (forged / truncated
-    # replay, helper or checker unreadable). Terminal for this run, like NEEDS_HUMAN (a pre-increment break).
+  if rules.verdict not in RULES_PASSABLE and rules.verdict != "fail":   # allow-list complement, never a deny-list
+    # FAIL CLOSED — a verdict the gate could not compute (or could not be READ — Part 1 normalises every
+    # unaffirmed output to unreadable) never passes silently (forged / truncated replay, helper or
+    # checker unreadable). Terminal for this run, like NEEDS_HUMAN (a pre-increment break).
     heal_decision = ESCALATED
     heal_remaining_issues = count(review.issues where category=new AND severity in [BLOCKING, HIGH]) + max(1, len(rules.unresolved))
     record_decision(phase: SELF_HEAL, decision: "rules_gate_unresolved", rationale: rules_check_line)

@@ -28,16 +28,38 @@
 # DELEGATION (the trust boundary, skills/rules/SKILL.md §9 — rules-check.sh stays the SOLE executor of
 # a rule `check`). This script never reads the rules store, never extracts or runs a check, resolves
 # rules-check.sh as a SIBLING of itself (never from PATH), unsets RULES_CHECK_CONFIRM before any call,
-# never passes --confirm, and runs every delegated call with </dev/null. It makes AT MOST three calls,
-# in this order: `--list-selected`, `--list-gateable`, `--if-stamped`.
+# never passes --confirm, and runs every delegated call with </dev/null. It makes AT MOST four calls,
+# in this order: `--list-selected`, `--list-gateable`, `--gate-state`, `--if-stamped`.
+#
+# THE COUNTABLE-SET BINDING (review iteration 1 — "the edit cannot turn a failing bound check into a
+# counted pass without a human re-confirm" must hold for WHICH rules count, not only for their text).
+# Which selected rules are countable is read from the PR-controlled tree, and several edits move it
+# WITHOUT moving the stamp hash: dropping `binds: []` (hashes like absent), a non-array `binds`, a
+# `chmod +x` on a data file a `binds: []` check reads (it turns `unbound`), or demoting/removing the
+# last countable rule (`must`→anything else, a corrupted file). So a genuine `--confirm` also records
+# the countable id set in the stamp (rules-check.sh "THE COUNTABLE SET"), and `--gate-state` reads it
+# back: when the LIVE countable set differs from the RECORDED one in EITHER direction the verdict is
+# `unstamped` (a human must re-confirm); a stamp written before that field existed (`legacy`) is
+# `unstamped` whenever the live countable set is non-empty (the binds-free / all-advisory path, whose
+# live set is empty, is unchanged). HONEST LIMIT: the binding is to the ID SET — an edit that keeps
+# every countable id countable but changes a bound file's content or a check's text is caught by the
+# hash instead (the replay says unstamped), so between them no edit to the PR tree can produce `ok`
+# or `none` over a stamped failing countable check without a re-confirm.
 #
 # VERDICT DERIVATION (a state trace — evaluated top-down, first match wins):
 #   unreadable    no jq / unknown or valueless argument / bad --root / not a git work tree / sibling
 #                 rules-check.sh absent / sibling rules-replay-lib.sh absent or unsourceable /
-#                 --list-selected or --list-gateable exits non-zero / --list-gateable output malformed
-#                 (a line without `id<TAB>countable|advisory<TAB><reason>`) or its id multiset differs
-#                 from --list-selected's / --if-stamped prints NOTHING (the checker never reached its
+#                 --list-selected, --list-gateable or --gate-state exits non-zero / --list-gateable
+#                 output malformed (a line without `id<TAB>countable|advisory<TAB><reason>`) or its id
+#                 multiset differs from --list-selected's / --gate-state output malformed (not exactly
+#                 `store<TAB>ok|unreadable`, then `stamp<TAB>absent|legacy|recorded`, then only
+#                 `countable<TAB><id>` lines and those only under `recorded`) / --gate-state says
+#                 `store<TAB>unreadable` (a rules file that is not a parseable JSON array — a corrupted
+#                 store is NEVER `none`) / --if-stamped prints NOTHING (the checker never reached its
 #                 per-rule loop). Fail-CLOSED: a gate that cannot READ its input must not pass.
+#   unstamped     (countable-set drift, ranked ABOVE none / cmd_disabled) --gate-state says `recorded`
+#                 and the recorded countable set differs from the live one in either direction, OR says
+#                 `legacy` and the live countable set is non-empty. See THE COUNTABLE-SET BINDING.
 #   none          --list-selected is empty (no must+checkable rule), OR every selected id is advisory
 #                 (countable == []) — the advisory ids are still listed so a consumer can REPORT them.
 #                 In the all-advisory case the replay still runs (unless RULES_CHECK_NO_CMD=1) ONLY to
@@ -148,7 +170,9 @@ while IFS= read -r _l; do
 done <<EOF
 $LISTED
 EOF
-[ "$LISTED_N" -gt 0 ] || _emit none
+# NO `none` short-circuit here any more: an EMPTY live selection is exactly what demoting the last
+# countable rule (or corrupting its file) produces, so (3) must first check the store and the stamp's
+# recorded countable set. --list-gateable over an empty selection prints nothing and exits 0.
 
 # ---- (2) countable / advisory split ------------------------------------------------------------------
 GATEABLE="$(bash "$CHECKER" --list-gateable </dev/null 2>/dev/null)" || _unreadable "rules-check.sh --list-gateable failed"
@@ -176,6 +200,48 @@ _sorted_sel="$(printf '%s' "$SELECTED" | LC_ALL=C sort)"
 _sorted_gate="$(printf '%s' "$GATE_IDS" | LC_ALL=C sort)"
 [ "$_sorted_sel" = "$_sorted_gate" ] || _unreadable "--list-gateable id set differs from --list-selected"
 
+# ---- (3) store health + the countable-set binding (THE COUNTABLE-SET BINDING above) ------------------
+# The format is ALLOW-LISTED line by line: anything this block does not recognise is unreadable.
+GSTATE="$(bash "$CHECKER" --gate-state </dev/null 2>/dev/null)" || _unreadable "rules-check.sh --gate-state failed"
+STORE_STATE=""
+STAMP_STATE=""
+RECORDED=""
+_gi=0
+while IFS= read -r _l; do
+  _gi=$((_gi + 1))
+  if [ "$_gi" -eq 1 ]; then
+    case "$_l" in "store"$'\t'"ok"|"store"$'\t'"unreadable") STORE_STATE="${_l#store$'\t'}" ;;
+      *) _unreadable "malformed --gate-state store line" ;; esac
+  elif [ "$_gi" -eq 2 ]; then
+    case "$_l" in "stamp"$'\t'"absent"|"stamp"$'\t'"legacy"|"stamp"$'\t'"recorded") STAMP_STATE="${_l#stamp$'\t'}" ;;
+      *) _unreadable "malformed --gate-state stamp line" ;; esac
+  else
+    [ "$STAMP_STATE" = "recorded" ] || _unreadable "--gate-state countable line without a recorded stamp"
+    case "$_l" in "countable"$'\t'?*) RECORDED="$RECORDED${_l#countable$'\t'}"$'\n' ;;
+      *) _unreadable "malformed --gate-state countable line" ;; esac
+  fi
+done <<EOF
+$GSTATE
+EOF
+[ -n "$STORE_STATE" ] && [ -n "$STAMP_STATE" ] || _unreadable "incomplete --gate-state output"
+[ "$STORE_STATE" = "ok" ] || _unreadable "a .agent/rules/*.json file is not a parseable JSON array"
+case "$STAMP_STATE" in
+  recorded)
+    _sorted_rec="$(printf '%s' "$RECORDED" | LC_ALL=C sort -u)"
+    _sorted_cnt="$(printf '%s' "$COUNTABLE" | LC_ALL=C sort -u)"
+    if [ "$_sorted_rec" != "$_sorted_cnt" ]; then
+      echo "$PROG: the countable id set differs from the one recorded at the last /rules check --confirm — verdict unstamped" >&2
+      _emit unstamped
+    fi ;;
+  legacy)
+    if [ "$COUNTABLE_N" -gt 0 ]; then
+      echo "$PROG: the stamp predates the recorded countable set and $COUNTABLE_N id(s) are countable — verdict unstamped" >&2
+      _emit unstamped
+    fi ;;
+  absent) : ;;   # nothing recorded ⇒ nothing to drift from; the replay itself answers unstamped
+esac
+[ "$LISTED_N" -gt 0 ] || _emit none
+
 # _is_countable <id> — exit 0 iff <id> is exactly one of the countable ids (whole line, literal).
 _is_countable() {
   case $'\n'"$COUNTABLE" in *$'\n'"$1"$'\n'*) return 0 ;; esac
@@ -190,7 +256,7 @@ _is_countable() {
 ADVISORY_ONLY=0
 [ "$COUNTABLE_N" -gt 0 ] || ADVISORY_ONLY=1
 
-# ---- (3) the unattended no-cmd valve: decided from the environment, --if-stamped never invoked -------
+# ---- (4) the unattended no-cmd valve: decided from the environment, --if-stamped never invoked -------
 if [ "${RULES_CHECK_NO_CMD:-0}" = "1" ]; then
   [ "$ADVISORY_ONLY" -eq 1 ] && _emit none
   _emit cmd_disabled
@@ -202,7 +268,7 @@ _verdict_or_none() {
   _emit "$1"
 }
 
-# ---- (4) the ONE replay ------------------------------------------------------------------------------
+# ---- (5) the ONE replay ------------------------------------------------------------------------------
 RUN_OUT="$(bash "$CHECKER" --if-stamped </dev/null 2>/dev/null)"; RUN_RC=$?
 
 # Step 0: empty stdout — the checker never reached its per-rule loop.

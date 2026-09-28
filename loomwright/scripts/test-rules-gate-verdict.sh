@@ -14,7 +14,7 @@
 #          no `[RUN ]`, the canary the check would touch stays absent; positive control proves it can fire
 #   (ac4)  RULES_CHECK_NO_CMD=1 => verdict cmd_disabled, --if-stamped NEVER invoked (argv spy), canary
 #          absent; the spy also proves: sibling resolution (PATH decoy never called), never --confirm,
-#          an ambient RULES_CHECK_CONFIRM=1 never reaches the checker, exactly three calls
+#          an ambient RULES_CHECK_CONFIRM=1 never reaches the checker, exactly four calls
 #   (ac6)  --list-gateable fixtures (a1) binds:[] grep-only => countable/no_invocations; (a2) no key or
 #          null => advisory/binds_undeclared; (b) `bash scripts/lint.sh` + binds:[] => advisory/unbound;
 #          (c) + binds:["scripts/lint.sh"] => countable/bound:1; (d) a tracked `#!` script named bare
@@ -37,6 +37,14 @@
 #   (m1)   gated mutant: delete the lib's `M == listed` comparison => the M-mismatch leg flips to ok
 #   (m2)   gated mutant: the verdict helper treats advisory ids as countable => the (ac7-b) leg flips
 #   (m3)   gated mutant: the checker collapses `[]` and an absent `binds` => (ac6 a2) flips
+#   (cs)   the countable-set binding (review iteration 1): a stamped, countable, FAILING check beside a
+#          passing countable one, then — with NO re-confirm — (1) `binds: []` dropped, (2) `binds` made a
+#          string, (3) `chmod +x` on the data file a `binds: []` grep-check reads, (4) `must`→`should` on
+#          the last countable rule, (5) a corrupted rules JSON, (6) a stamp written before the
+#          `countable` field existed => verdict never ok/none ((1)-(4),(6) unstamped; (5) unreadable);
+#          the legacy stamp over an empty countable set stays none; a re-confirm overwrites the
+#          recorded set; --gate-state executes nothing and writes no stamp
+#   (m4)   gated mutant: delete the recorded-vs-live set comparison => the (cs 1) leg flips to ok
 #
 # Structure: each case is a self-contained `echo "== (...)"` section. New sections are appended just
 # above the RESULT footer at the bottom (marked), so the pass/fail tally stays the last thing printed.
@@ -220,6 +228,7 @@ printf 'argv=%s confirm_env=%s\n' "\$*" "\${RULES_CHECK_CONFIRM:-}" >> "$SPYLOG"
 case "\$1" in
   --list-selected) echo spy-id ;;
   --list-gateable) printf 'spy-id\tcountable\tno_invocations\n' ;;
+  --gate-state) printf 'store\tok\nstamp\trecorded\ncountable\tspy-id\n' ;;
   --if-stamped) printf '  [RUN ] spy-id: x\n  [FAIL] spy-id\nChecks passed: 0/1\n'; exit 1 ;;
 esac
 exit 0
@@ -233,9 +242,10 @@ RS="$(new_repo rspy)"; HS="$(new_home spy)"
 : > "$SPYLOG"
 os1="$( cd "$RS" && HOME="$HS" PATH="$ROOT/decoy:$PATH" RULES_CHECK_CONFIRM=1 bash "$SPY/rules-gate-verdict.sh" --root "$RS" </dev/null 2>/dev/null )"
 if [ "$(sed -n 1p "$SPYLOG")" = "argv=--list-selected confirm_env=" ] && [ "$(sed -n 2p "$SPYLOG")" = "argv=--list-gateable confirm_env=" ] \
-   && [ "$(sed -n 3p "$SPYLOG")" = "argv=--if-stamped confirm_env=" ] && [ "$(nlines "$(cat "$SPYLOG")")" -eq 3 ] \
+   && [ "$(sed -n 3p "$SPYLOG")" = "argv=--gate-state confirm_env=" ] \
+   && [ "$(sed -n 4p "$SPYLOG")" = "argv=--if-stamped confirm_env=" ] && [ "$(nlines "$(cat "$SPYLOG")")" -eq 4 ] \
    && [ "$(vf "$os1" .verdict)" = "fail" ]; then
-  ok "(ac4 spy) exactly three calls in order (--list-selected, --list-gateable, --if-stamped) and the stub's FAIL => verdict fail"
+  ok "(ac4 spy) exactly four calls in order (--list-selected, --list-gateable, --gate-state, --if-stamped) and the stub's FAIL => verdict fail"
 else
   no "(ac4 spy) log=[$(cat "$SPYLOG")] out=[$os1]"
 fi
@@ -384,7 +394,7 @@ has_id "$o7d" failing b && [ "$(vf "$o7d" .checks_passed)" = "0/1" ] \
 # and RULES_CHECK_NO_CMD=1 all stay `none`; the no-cmd leg never invokes --if-stamped.
 mkadv() {  # mkadv <dir> <ifstamped-printf-fmt>
   mkdir -p "$1"; cp "$HELPER" "$1/rules-gate-verdict.sh"; cp "$LIB" "$1/rules-replay-lib.sh"
-  printf '#!/usr/bin/env bash\necho "$*" >> "%s/calls.log"\ncase "$1" in\n  --list-selected) echo x ;;\n  --list-gateable) printf '"'"'x\\tadvisory\\tbinds_undeclared\\n'"'"' ;;\n  --if-stamped) printf '"'"'%s'"'"' ;;\nesac\nexit 0\n' "$1" "$2" > "$1/rules-check.sh"
+  printf '#!/usr/bin/env bash\necho "$*" >> "%s/calls.log"\ncase "$1" in\n  --list-selected) echo x ;;\n  --list-gateable) printf '"'"'x\\tadvisory\\tbinds_undeclared\\n'"'"' ;;\n  --gate-state) printf '"'"'store\\tok\\nstamp\\tabsent\\n'"'"' ;;\n  --if-stamped) printf '"'"'%s'"'"' ;;\nesac\nexit 0\n' "$1" "$2" > "$1/rules-check.sh"
   chmod +x "$1/rules-check.sh"
 }
 R7h="$(new_repo r7h)"; H7h="$(new_home 7h)"
@@ -413,6 +423,7 @@ cat > "$MX/rules-check.sh" <<'EOF'
 case "$1" in
   --list-selected) printf 'adv\ncnt\n' ;;
   --list-gateable) printf 'adv\tadvisory\tbinds_undeclared\ncnt\tcountable\tno_invocations\n' ;;
+  --gate-state) printf 'store\tok\nstamp\trecorded\ncountable\tcnt\n' ;;
   --if-stamped) printf '  [RUN ] adv: true\n  [PASS] adv\n  [RUN ] cnt: true\n  [PASS] cnt\n' ;;
 esac
 exit 0
@@ -515,13 +526,14 @@ Checks passed: 2/2'
 seed_rules "$RK" "$(rule_objb 0b 'true' '[]')" "$(rule_objb a "$KCHECK" '[]')"
 # Hand-written stamp (a --confirm run is killed before its own stamp write) with rules-check.sh's own
 # key + hash derivation: physical git-common-dir; sha256 of the sorted `[id,check]|@tsv` lines — a
-# `binds: []` rule contributes NO binds term, so this derivation is still exact.
+# `binds: []` rule contributes NO binds term, so this derivation is still exact — plus the `countable`
+# set a genuine --confirm records (both ids are `binds: []` + no invocations ⇒ countable).
 KKEY="$( cd "$RK" && cd "$(git rev-parse --git-common-dir)" && pwd -P )"
 { jq -cn '{id:"0b", check:"true"}'; jq -cn --arg c "$KCHECK" '{id:"a", check:$c}'; } \
   | jq -r '[.id, .check] | @tsv' | LC_ALL=C sort > "$ROOT/k-hash-input"
 KHASH="$(_t_sha256_file "$ROOT/k-hash-input")"
 mkdir -p "$(dirname "$HK/$STAMP_REL")"
-jq -n --arg k "$KKEY" --arg h "$KHASH" '{($k): {git_common_dir:$k, repo_root:"x", hash:$h, ts:"2000-01-01T00:00:00Z"}}' > "$HK/$STAMP_REL"
+jq -n --arg k "$KKEY" --arg h "$KHASH" '{($k): {git_common_dir:$k, repo_root:"x", hash:$h, ts:"2000-01-01T00:00:00Z", countable:["0b","a"]}}' > "$HK/$STAMP_REL"
 rawk="$(ifs "$RK" "$HK")"; rck=$?
 if [ "$(printf '%s\n' "$rawk" | tail -n 1)" = "Checks passed: 2/2" ] && grep -qxF '  [PASS] a' <<<"$rawk" \
    && ! grep -qxF '  [FAIL] a' <<<"$rawk" && [ "$rck" -ne 0 ] && [ "$rck" -ne 1 ]; then
@@ -544,6 +556,7 @@ cat > "$SPYM/rules-check.sh" <<'EOF'
 case "$1" in
   --list-selected) echo x ;;
   --list-gateable) printf 'x\tcountable\tno_invocations\n' ;;
+  --gate-state) printf 'store\tok\nstamp\trecorded\ncountable\tx\n' ;;
   --if-stamped) printf '  [RUN ] x: true\n  [PASS] x\nChecks passed: 1/2\n' ;;
 esac
 exit 0
@@ -572,9 +585,9 @@ NC="$ROOT/nochecker"; mkdir -p "$NC"; cp "$HELPER" "$NC/rules-gate-verdict.sh"; 
 o="$( cd "$RU" && HOME="$HU" bash "$NC/rules-gate-verdict.sh" --root "$RU" </dev/null 2>/dev/null )"; unr "sibling rules-check.sh absent" "$o"
 NL="$ROOT/nolib"; mkdir -p "$NL"; cp "$HELPER" "$NL/rules-gate-verdict.sh"; cp "$CHECKER" "$NL/rules-check.sh"
 o="$( cd "$RU" && HOME="$HU" bash "$NL/rules-gate-verdict.sh" --root "$RU" </dev/null 2>/dev/null )"; unr "sibling rules-replay-lib.sh absent (fail-CLOSED source, unlike the worker helper)" "$o"
-mkstub() {  # mkstub <dir> <gateable-printf-fmt> <ifstamped-printf-fmt>
+mkstub() {  # mkstub <dir> <gateable-printf-fmt> <ifstamped-printf-fmt> [<gatestate-printf-fmt>]
   mkdir -p "$1"; cp "$HELPER" "$1/rules-gate-verdict.sh"; cp "$LIB" "$1/rules-replay-lib.sh"
-  printf '#!/usr/bin/env bash\ncase "$1" in\n  --list-selected) echo x ;;\n  --list-gateable) printf '"'"'%s'"'"' ;;\n  --if-stamped) printf '"'"'%s'"'"' ;;\nesac\nexit 0\n' "$2" "$3" > "$1/rules-check.sh"
+  printf '#!/usr/bin/env bash\ncase "$1" in\n  --list-selected) echo x ;;\n  --list-gateable) printf '"'"'%s'"'"' ;;\n  --gate-state) printf '"'"'%s'"'"' ;;\n  --if-stamped) printf '"'"'%s'"'"' ;;\nesac\nexit 0\n' "$2" "${4:-store\\tok\\nstamp\\trecorded\\ncountable\\tx\\n}" "$3" > "$1/rules-check.sh"
   chmod +x "$1/rules-check.sh"
 }
 mkstub "$ROOT/st-malformed" 'x\n' '  [RUN ] x: true\n  [PASS] x\nChecks passed: 1/1\n'
@@ -620,8 +633,12 @@ if [ ! -s "$MUT2/rules-gate-verdict.sh" ] || cmp -s "$HELPER" "$MUT2/rules-gate-
   no "(m2) mutant gate: mutant empty, identical, bash -n dirty, or the positive control failed"
 else
   om2="$( cd "$R7b" && HOME="$H7b" bash "$MUT2/rules-gate-verdict.sh" --root "$R7b" </dev/null 2>/dev/null )"
-  [ "$(vf "$om2" .verdict)" = "fail" ] && ok "(m2) mutant counting advisory ids says fail on fixture (b) (countability is live)" \
-    || no "(m2) mutant still says $(vf "$om2" .verdict) — the (ac7d) leg is VACUOUS"
+  # The mutant's live countable set ({b}) differs from the one the stamp recorded ({}), so the
+  # countable-set binding answers `unstamped` before the replay; either way the verdict leaves `none`.
+  case "$(vf "$om2" .verdict)" in
+    fail|unstamped) ok "(m2) mutant counting advisory ids leaves none on fixture (b): $(vf "$om2" .verdict) (countability is live)" ;;
+    *) no "(m2) mutant still says $(vf "$om2" .verdict) — the (ac7d) leg is VACUOUS" ;;
+  esac
 fi
 
 # ============================================================================
@@ -636,6 +653,107 @@ else
   [ "$om3" = "a2-absent${TAB}countable${TAB}no_invocations" ] \
     && ok "(m3) mutant with \`// []\` promotes the undeclared rule to countable (the has(\"binds\") distinction is live)" \
     || no "(m3) mutant output [$om3] — the (ac6 a2) leg is VACUOUS"
+fi
+
+# ============================================================================
+echo "== (cs) the countable-set binding: which rules COUNT is tied to the human confirmation =="
+# cs_repo <name> <home> — a repo with a tracked data file + the base store (cs-fail countable+failing,
+# cs-ok countable+passing), confirmed by a genuine --confirm; prints the repo path.
+cs_repo() {
+  local r; r="$(new_repo "$1")"
+  printf 'hello\n' > "$r/data.txt"
+  ( cd "$r" && git add data.txt && git commit -qm data ) >/dev/null 2>&1
+  seed_rules "$r" "$(rule_objb cs-fail 'grep -q nomatch data.txt' '[]')" "$(rule_objb cs-ok 'true' '[]')"
+  confirm "$r" "$2"
+  printf '%s' "$r"
+}
+not_ok_none() {  # not_ok_none <label> <json> <expected-verdict>
+  local v; v="$(vf "$2" .verdict)"
+  if [ "$v" = "$3" ] && json_ok "$2"; then ok "(cs) $1 => verdict $v (never ok/none)"; else no "(cs) $1 => [$2] (expected $3)"; fi
+}
+HC="$(new_home cs)"
+RC0="$(cs_repo rcs0 "$HC")"
+oc0="$(verdict "$HC" "$RC0" --root "$RC0")"
+[ "$(vf "$oc0" .verdict)" = "fail" ] && has_id "$oc0" failing cs-fail \
+  && ok "(cs pre) positive control: the stamped store's verdict is fail (cs-fail countable + failing)" || no "(cs pre) out=[$oc0]"
+key_cs() { ( cd "$1" && cd "$(git rev-parse --git-common-dir)" && pwd -P ); }
+[ "$(jq -c --arg k "$(key_cs "$RC0")" '.[$k].countable' "$HC/$STAMP_REL" 2>/dev/null)" = '["cs-fail","cs-ok"]' ] \
+  && ok "(cs pre) the genuine --confirm recorded countable [\"cs-fail\",\"cs-ok\"] beside the hash" \
+  || no "(cs pre) stamp=[$(cat "$HC/$STAMP_REL" 2>/dev/null)]"
+raw0="$(ifs "$RC0" "$HC")"
+# (1) drop `binds: []` — hashes exactly like before, so the replay still runs; the id is no longer countable.
+H1c="$(new_home cs1)"; R1c="$(cs_repo rcs1 "$H1c")"
+seed_rules "$R1c" "$(rule_obj cs-fail 'grep -q nomatch data.txt')" "$(rule_objb cs-ok 'true' '[]')"
+[ "$(printf '%s\n' "$(ifs "$R1c" "$H1c")" | tail -n 1)" = "Checks passed: 1/2" ] \
+  && ok "(cs 1 pre) the hash did NOT move (the replay still runs 1/2) — only the countable set can catch this" \
+  || no "(cs 1 pre) replay=[$(ifs "$R1c" "$H1c")]"
+oc1="$(verdict "$H1c" "$R1c" --root "$R1c")"; not_ok_none "(1) binds:[] dropped from the failing rule" "$oc1" unstamped
+# (2) `binds` made a non-array string.
+H2c="$(new_home cs2)"; R2c="$(cs_repo rcs2 "$H2c")"
+seed_rules "$R2c" "$(rule_objb cs-fail 'grep -q nomatch data.txt' '"data.txt"')" "$(rule_objb cs-ok 'true' '[]')"
+oc2="$(verdict "$H2c" "$R2c" --root "$R2c")"; not_ok_none "(2) binds set to a string" "$oc2" unstamped
+# (3) chmod +x on the data file the binds:[] grep-check reads — the rule turns `unbound`, the hash does not move.
+H3c="$(new_home cs3)"; R3c="$(cs_repo rcs3 "$H3c")"
+seed_rules "$R3c" "$(rule_objb cs-fail 'grep -q nomatch data.txt' '[]')"
+confirm "$R3c" "$H3c"
+[ "$(vf "$(verdict "$H3c" "$R3c" --root "$R3c")" .verdict)" = "fail" ] && ok "(cs 3 pre) single-rule store stamped: fail" || no "(cs 3 pre) not fail"
+chmod +x "$R3c/data.txt"
+[ "$(lg "$R3c" "$H3c")" = "cs-fail${TAB}advisory${TAB}unbound:data.txt" ] && ok "(cs 3 pre) +x demoted cs-fail to unbound" || no "(cs 3 pre) lg=[$(lg "$R3c" "$H3c")]"
+oc3="$(verdict "$H3c" "$R3c" --root "$R3c")"; not_ok_none "(3) chmod +x on the data file" "$oc3" unstamped
+# (4) must -> should on the LAST countable rule (the rule leaves the selection entirely).
+H4c="$(new_home cs4)"; R4c="$(cs_repo rcs4 "$H4c")"
+seed_rules "$R4c" "$(rule_objb cs-fail 'grep -q nomatch data.txt' '[]')"
+confirm "$R4c" "$H4c"
+seed_rules "$R4c" "$(rule_objb cs-fail 'grep -q nomatch data.txt' '[]' | jq -c '.enforcement = "should"')"
+oc4="$(verdict "$H4c" "$R4c" --root "$R4c")"; not_ok_none "(4) must->should on the last countable rule" "$oc4" unstamped
+# (5) a corrupted rules JSON file.
+H5c="$(new_home cs5)"; R5c="$(cs_repo rcs5 "$H5c")"
+printf '[{"id": "cs-fail",\n' > "$R5c/.agent/rules/r.json"
+oc5="$(verdict "$H5c" "$R5c" --root "$R5c")"; not_ok_none "(5) corrupted rules JSON" "$oc5" unreadable
+printf '{"not":"an array"}\n' > "$R5c/.agent/rules/r.json"
+oc5b="$(verdict "$H5c" "$R5c" --root "$R5c")"; not_ok_none "(5b) a rules file that is valid JSON but not an array" "$oc5b" unreadable
+# (6) a stamp that predates the `countable` field (the hash still matches) over a countable store.
+H6c="$(new_home cs6)"; R6c="$(cs_repo rcs6 "$H6c")"
+jq 'with_entries(.value |= del(.countable))' "$H6c/$STAMP_REL" > "$H6c/stamp.tmp" && mv "$H6c/stamp.tmp" "$H6c/$STAMP_REL"
+[ "$(printf '%s\n' "$(ifs "$R6c" "$H6c")" | tail -n 1)" = "Checks passed: 1/2" ] \
+  && ok "(cs 6 pre) the pre-field stamp's hash still matches (the replay runs)" || no "(cs 6 pre) replay=[$(ifs "$R6c" "$H6c")]"
+oc6="$(verdict "$H6c" "$R6c" --root "$R6c")"; not_ok_none "(6) a stamp without a recorded countable set, countable ids present" "$oc6" unstamped
+# ...a legacy stamp over an EMPTY countable set (binds-free store) keeps today's none.
+H6n="$(new_home cs6n)"; R6n="$(new_repo rcs6n)"
+seed_rules "$R6n" "$(rule_obj adv 'false')"
+confirm "$R6n" "$H6n"
+jq 'with_entries(.value |= del(.countable))' "$H6n/$STAMP_REL" > "$H6n/stamp.tmp" && mv "$H6n/stamp.tmp" "$H6n/$STAMP_REL"
+[ "$(vf "$(verdict "$H6n" "$R6n" --root "$R6n")" .verdict)" = "none" ] \
+  && ok "(cs 6n) a legacy stamp over a binds-free (all-advisory) store is still none — that path is unchanged" || no "(cs 6n) not none"
+# A re-confirm OVERWRITES the recorded set (vector 1's tree): the human accepted the new classification.
+confirm "$R1c" "$H1c"
+[ "$(jq -c --arg k "$(key_cs "$R1c")" '.[$k].countable' "$H1c/$STAMP_REL" 2>/dev/null)" = '["cs-ok"]' ] \
+  && [ "$(vf "$(verdict "$H1c" "$R1c" --root "$R1c")" .verdict)" = "ok" ] \
+  && ok "(cs re-confirm) a human re-confirm rewrites countable to [\"cs-ok\"] and the verdict follows it (ok)" \
+  || no "(cs re-confirm) stamp=[$(cat "$H1c/$STAMP_REL" 2>/dev/null)]"
+# --gate-state is a read-only listing: executes nothing, writes no stamp, exits 0.
+HG="$(new_home csg)"; RG="$(new_repo rcsg)"; CANG="$RG/CANARYG"
+seed_rules "$RG" "$(rule_objb g "touch $CANG" '[]')"
+og="$( cd "$RG" && HOME="$HG" RULES_CHECK_CONFIRM=1 bash "$CHECKER" --gate-state --confirm </dev/null 2>/dev/null )"; rcg=$?
+[ "$rcg" -eq 0 ] && [ "$og" = "$(printf 'store\tok\nstamp\tabsent')" ] && [ ! -e "$CANG" ] && [ ! -e "$HG/$STAMP_REL" ] \
+  && ok "(cs gate-state) --gate-state (+ --confirm + ambient confirm) prints store/stamp only, runs nothing, writes no stamp" \
+  || no "(cs gate-state) rc=$rcg out=[$og] canary=$([ -e "$CANG" ] && echo PRESENT || echo absent)"
+
+# ============================================================================
+echo "== (m4) MUTATION CONTROL: delete the recorded-vs-live countable comparison => (cs 1) flips to ok =="
+MUT4="$ROOT/mut4"; mkdir -p "$MUT4"
+cp "$CHECKER" "$MUT4/rules-check.sh"; cp "$LIB" "$MUT4/rules-replay-lib.sh"
+sed 's/if \[ "\$_sorted_rec" != "\$_sorted_cnt" \]; then/if false; then/' "$HELPER" > "$MUT4/rules-gate-verdict.sh"
+if [ ! -s "$MUT4/rules-gate-verdict.sh" ] || cmp -s "$HELPER" "$MUT4/rules-gate-verdict.sh" \
+   || ! bash -n "$MUT4/rules-gate-verdict.sh" 2>/dev/null || [ "$(vf "$oc1" .verdict)" != "unstamped" ]; then
+  no "(m4) mutant gate: mutant empty, identical, bash -n dirty, or the positive control failed"
+else
+  # A fresh copy of vector (1) — the (cs re-confirm) leg above re-stamped R1c.
+  H1m="$(new_home cs1m)"; R1m="$(cs_repo rcs1m "$H1m")"
+  seed_rules "$R1m" "$(rule_obj cs-fail 'grep -q nomatch data.txt')" "$(rule_objb cs-ok 'true' '[]')"
+  om4="$( cd "$R1m" && HOME="$H1m" bash "$MUT4/rules-gate-verdict.sh" --root "$R1m" </dev/null 2>/dev/null )"
+  [ "$(vf "$om4" .verdict)" = "ok" ] && ok "(m4) without the comparison, dropping binds:[] turns a stamped FAIL into ok (the comparison is load-bearing)" \
+    || no "(m4) mutant says $(vf "$om4" .verdict) — the (cs 1) leg is VACUOUS"
 fi
 
 # --- APPEND NEW SECTIONS ABOVE THIS LINE (keep the RESULT footer last) ---

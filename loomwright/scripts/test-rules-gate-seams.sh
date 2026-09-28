@@ -13,12 +13,20 @@
 #   P4 self-heal-advisory's BLOCKING finding synthesis + its routing into the fix loop
 #   P5 CLAUDE.md carries the D4 invariant sentence
 #   P6 automate-loop §10 carries condition 7 and its named PARK reason
+#   P7 review-heal's rules read is ALLOW-LISTED: everything unaffirmed ⇒ unreadable ⇒ ESCALATED
+#   P8 self-heal-advisory's rules read is ALLOW-LISTED the same way, and Part 2 escalates on the
+#      allow-list complement (never a deny-list of bad verdicts)
+#   P1/P2 pin the invocation in its RUNTIME form — the quoted plugin-install-root variable prefix
+#   ($INVOKE below) — never the developer-side repo-relative `scripts/…` path, which resolves neither
+#   in a user project nor at this repo's root.
 #
 # MUTATION CONTROLS (gated — the mutant must be non-empty and differ from the original, and the
 # UNMUTATED copy must pass first as a positive control; otherwise the control FAILS loudly):
 #   M<n>  delete every line carrying pin n's first needle ⇒ pin n must FAIL on the mutant tree.
 #   AC9a  delete the helper invocation + the READY clause from review-heal AND the synthesis block
 #         from self-heal-advisory in one tree ⇒ the pin run must FAIL.
+#   MROOT rewrite the runtime prefix to the repo-relative `scripts/…` form in BOTH skills ⇒ P1 and P2
+#         must FAIL (the prefix itself is load-bearing, not just the script name).
 #
 # Portability: bash 3.2 (macOS) + Linux; no GNU-only flags, no mapfile, no sed -i.
 set -uo pipefail
@@ -35,12 +43,14 @@ SHA="loomwright/skills/self-heal-advisory/SKILL.md"
 RH="loomwright/skills/review-heal/SKILL.md"
 AL="loomwright/skills/automate-loop/SKILL.md"
 CM="CLAUDE.md"
+# The helper invocation in its RUNTIME form (the plugin install root variable, quoted).
+INVOKE='bash "${CLAUDE_PLUGIN_ROOT}/scripts/rules-gate-verdict.sh" --root'
 
 # pin <n> — prints "<file>" then one needle per line for pin n (first needle = the mutant's target).
 pin() {
   case "$1" in
-    1) printf '%s\n' "$SHA" 'scripts/rules-gate-verdict.sh --root' ;;
-    2) printf '%s\n' "$RH" 'scripts/rules-gate-verdict.sh --root' ;;
+    1) printf '%s\n' "$SHA" "$INVOKE" ;;
+    2) printf '%s\n' "$RH" "$INVOKE" ;;
     3) printf '%s\n' "$RH" \
          'no countable human-stamped must-rule check is failing (rules-gate-verdict.sh verdict ok or none)' ;;
     4) printf '%s\n' "$SHA" \
@@ -50,9 +60,18 @@ pin() {
     5) printf '%s\n' "$CM" \
          'A human-stamped, gate-countable `must`-rule check is a correctness gate, not an advisory emitter' ;;
     6) printf '%s\n' "$AL" 'PARK: rules_check_failed (' 'rules-gate-verdict.sh' ;;
+    7) printf '%s\n' "$RH" \
+         'or an unrecognised verdict string — is treated as unreadable:' \
+         'return {verdict: "unreadable"' \
+         'and rules_after.verdict in RULES_PASSABLE:' \
+         'rules_escalates = rules.verdict not in RULES_PASSABLE and rules.verdict != "fail"' ;;
+    8) printf '%s\n' "$SHA" \
+         'non-string verdict, or an unrecognised verdict string — is treated as unreadable' \
+         'rules = {verdict: "unreadable"' \
+         'if rules.verdict not in RULES_PASSABLE and rules.verdict != "fail":' ;;
   esac
 }
-PINS="1 2 3 4 5 6"
+PINS="1 2 3 4 5 6 7 8"
 
 # check_pin <root> <n> — 0 iff every needle of pin n is present in <root>/<file>.
 check_pin() {
@@ -114,12 +133,26 @@ done
 # AC9(a): revert the gate prose in both skills at once.
 d="$TMP/ac9a"
 if fresh_tree "$d" && run_pins "$d"; then
-  mutate "$d" "$RH" 'scripts/rules-gate-verdict.sh --root' \
+  mutate "$d" "$RH" "$INVOKE" \
   && mutate "$d" "$RH" 'no countable human-stamped must-rule check is failing' \
   && mutate "$d" "$SHA" 'rule_findings' \
   && { if run_pins "$d"; then no "AC9a reverting the gate prose left every pin passing"; else ok "AC9a reverting the gate prose fails the pin run"; fi; }
 else
   no "AC9a positive control: tree copy or unmutated pin run failed"
+fi
+
+# MROOT: strip the runtime prefix (the developer-side path form) in both skills ⇒ P1 and P2 must fail.
+d="$TMP/mroot"
+if fresh_tree "$d" && run_pins "$d"; then
+  for f in "$SHA" "$RH"; do
+    sed 's|"${CLAUDE_PLUGIN_ROOT}/scripts/rules-gate-verdict.sh"|scripts/rules-gate-verdict.sh|' "$d/$f" > "$d/$f.mut"
+    if [ ! -s "$d/$f.mut" ] || cmp -s "$d/$f.mut" "$d/$f"; then no "MROOT mutant of $f empty or unchanged (gate)"; continue; fi
+    mv "$d/$f.mut" "$d/$f"
+  done
+  if check_pin "$d" 1 || check_pin "$d" 2; then no "MROOT a repo-relative helper path left P1 or P2 passing"
+  else ok "MROOT the repo-relative helper path fails P1 and P2 (the runtime prefix is load-bearing)"; fi
+else
+  no "MROOT positive control: tree copy or unmutated pin run failed"
 fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
