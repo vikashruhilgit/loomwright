@@ -32,7 +32,7 @@
 #   ceiling-check    <runfile_path> <max_tokens> [--root <checkout>]  # §6 PICK-time token-ceiling check via read-token-ledger.sh --run-id; prints OK/PARK, always exits 0
 #   resolve-folder   <dir>                              # §2 list *.md not done and not proposed|parked
 #   resolve-backlog  <backlog.md>                       # §2 dependency-ordered items honoring done/✅ markers (dir-fallback path also skips proposed|parked, per is_not_ready)
-#   resume-glob      <automate_dir>                     # §4 list *.md not "## Status: done"
+#   resume-glob      <automate_dir>                     # §4 list run files (is_run_file: a "# Automate Run:" title line) not "## Status: done"; §6 result sidecars never listed
 #   reconcile-item   <pr_url> <belief>                  # §4 belief vs gh/git truth -> corrected state
 #   gate-eval        <pr_url> <ctx.json>                # §10 MERGE|PARK 6-condition fail-closed gate (cond 6 = classify-risk.sh high_risk, NO override)
 #   learning-emit    <ledger_path> <flags...>           # §6 step 3 fail-safe (always exit 0) engine-native ground-truth POSTMORTEM_RESULT line; idempotent on run_id+item+pr_url+source+completeness (a degraded emit never blocks a later complete one)
@@ -306,6 +306,20 @@ is_done() { grep -qE '^## Status:[[:space:]]*done(_with_escalation)?\b' "$1" 2>/
 # and `resolve_backlog_dir`, never from `resume_glob`.
 is_not_ready() { grep -qE '^## Status:[[:space:]]*(proposed|parked)\b' "$1" 2>/dev/null; }
 
+# is_run_file <file> — true when the file carries the `/automate` run-file title
+# line `# Automate Run:` (docs/RESULT_SCHEMAS.md §AUTOMATE_RUN; the H1 every run
+# file is written with). A SHAPE check, not a filename rule: the per-run result
+# sidecars `<run_id>.review-heal-result.md` / `<run_id>.supervisor-result.md`
+# (skills/automate-loop/SKILL.md §6 steps 2-3) share this directory and the `.md`
+# extension but are verbatim `## REVIEW_HEAL_RESULT` / `## SUPERVISOR_RESULT`
+# blocks with no such line, so they — and any future sidecar — are never taken
+# for a run. Line-anchored ANYWHERE in the file, deliberately not "line 1 only":
+# a leading blank line or front-matter must never hide a real incomplete run from
+# RESUME (hiding a run is the worse failure). Called ONLY from `resume_glob`;
+# requirement files are not run files, so `resolve_folder` / `resolve_backlog*`
+# never call it (same scoping discipline as `is_not_ready`, decision H2).
+is_run_file() { grep -qE '^# Automate Run:' "$1" 2>/dev/null; }
+
 # resolve-folder <dir> — every *.md NOT marked "## Status: done" and not
 # "## Status: proposed|parked" (sorted).
 resolve_folder() {
@@ -374,12 +388,19 @@ resolve_backlog_dir() {
 # §4 — resume: glob + reconcile (run-file is BELIEF; git/gh is TRUTH)
 # --------------------------------------------------------------------------- #
 
-# resume-glob <automate_dir> — list run files NOT marked "## Status: done".
+# resume-glob <automate_dir> — list RUN FILES (is_run_file: they carry the
+# `# Automate Run:` title line) that are NOT marked "## Status: done". A *.md
+# without that title — the §6 steps 2-3 result sidecars
+# (`<run_id>.review-heal-result.md`, `<run_id>.supervisor-result.md`), transient
+# or committed — is skipped BEFORE the done check, so it is never reported as an
+# incomplete run (it has no `## Status:` line, so `is_done` alone would list it,
+# and >1 listed run fails RESUME closed as `resume_ambiguous`).
 resume_glob() {
   local dir="$1" f
   [ -d "$dir" ] || return 0
   for f in "$dir"/*.md; do
     [ -e "$f" ] || continue
+    is_run_file "$f" || continue
     is_done "$f" && continue
     echo "$f"
   done | LC_ALL=C sort

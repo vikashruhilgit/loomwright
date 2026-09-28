@@ -18,7 +18,9 @@
 #      never loses prior lines; queue check-off flips the box (+ skipped form);
 #      `remaining` counts ONLY "- [ ]" lines.
 #   C. folder / backlog-doc resolvers (skip ## Status: done; documented order).
-#   D. resume reconcile: belief pending but gh says merged ⇒ merged; belief checked
+#   D. resume-glob lists only run files (is_run_file: `# Automate Run:` title) not
+#      done — §6 result sidecars excluded, with a validated is_run_file mutant;
+#      resume reconcile: belief pending but gh says merged ⇒ merged; belief checked
 #      but gh says open ⇒ awaiting_merge; gh unreadable ⇒ awaiting_merge (fail closed);
 #      gh CLOSED-unmerged ⇒ gone.
 #   E. auto-merge gate fail-CLOSED on EACH of the 6 conditions individually (incl.
@@ -560,7 +562,10 @@ fi
 # NOT widened by is_not_ready — a "## Status: paused" run file is STILL listed
 # (proves is_done itself was never touched to match proposed/parked, decision H2).
 AUT2="$WD/automate2"; mkdir -p "$AUT2"
-printf '# paused-run\n## Status: paused\n' > "$AUT2/paused.md"
+# Title is the real run-file H1 (`# Automate Run:`, automate-followups/03) so
+# resume-glob's is_run_file shape check admits it; the expected output below is
+# unchanged — this still tests is_done, not is_run_file.
+printf '# Automate Run: paused-run\n## Status: paused\n' > "$AUT2/paused.md"
 run_h bash "$H" resume-glob "$AUT2"
 if [ "$RUN_OUT" = "$AUT2/paused.md" ]; then
   ok "resume-glob: '## Status: paused' run file STILL listed (is_done was not widened to match proposed/parked)"
@@ -611,10 +616,76 @@ export GH_STUB_DIR="$WD/ghstub"; mkdir -p "$GH_STUB_DIR"
 
 # D0. resume-glob finds incomplete runs only.
 AUT="$WD/automate"; mkdir -p "$AUT"
-printf '# r1\n## Status: running\n' > "$AUT/r1.md"
-printf '# r2\n## Status: done\n'    > "$AUT/r2.md"
+# Both fixtures carry the real run-file H1 (`# Automate Run:`, automate-followups/03)
+# so is_run_file admits them and r2 is excluded by is_done — NOT by the shape
+# check — keeping "r2 done excluded" a test of is_done. Expected output unchanged.
+printf '# Automate Run: r1\n## Status: running\n' > "$AUT/r1.md"
+printf '# Automate Run: r2\n## Status: done\n'    > "$AUT/r2.md"
 run_h bash "$H" resume-glob "$AUT"
 if [ "$RUN_OUT" = "$AUT/r1.md" ]; then ok "resume-glob: only not-done runs (r1; r2 done excluded)"; else no "resume-glob wrong:\n$RUN_OUT"; fi
+
+# D0b. resume-glob lists only RUN FILES (is_run_file, automate-followups/03).
+#      The §6 steps 2-3 per-run result sidecars share the directory and `.md`
+#      extension but carry no `# Automate Run:` title and no `## Status:` line —
+#      before is_run_file, is_done alone listed them as incomplete runs (and >1
+#      "incomplete run" fails RESUME closed as resume_ambiguous).
+SC="$WD/sidecars"; mkdir -p "$SC"
+printf '# Automate Run: sc\n## Status: done\n## Queue\n' > "$SC/automate-x.md"
+printf '## REVIEW_HEAL_RESULT\n- schema_version: 1\n- decision: READY\n' > "$SC/automate-x.review-heal-result.md"
+printf '## SUPERVISOR_RESULT\n- schema_version: 1\n- status: completed\n- rubric_score: 5/5\n' > "$SC/automate-x.supervisor-result.md"
+# AC1: done run + both sidecars ⇒ nothing listed, exit 0.
+run_h bash "$H" resume-glob "$SC"
+if [ "$RUN_RC" -eq 0 ] && [ -z "$RUN_OUT" ]; then
+  ok "resume-glob: done run + both result sidecars ⇒ prints nothing, exit 0 (sidecars are not run files)"
+else
+  no "resume-glob sidecar exclusion wrong (rc=$RUN_RC):\n$RUN_OUT"
+fi
+# AC2: same fixture, run stamped paused ⇒ exactly the run file.
+printf '# Automate Run: sc\n## Status: paused\n## Queue\n' > "$SC/automate-x.md"
+run_h bash "$H" resume-glob "$SC"
+if [ "$RUN_OUT" = "$SC/automate-x.md" ]; then
+  ok "resume-glob: paused run + both result sidecars ⇒ exactly the run file"
+else
+  no "resume-glob paused-run-with-sidecars wrong:\n$RUN_OUT"
+fi
+# AC4 (decision 2): the title line is matched anywhere, not only on line 1 — a
+# leading blank line must never hide a real incomplete run from RESUME.
+BL="$WD/blankfirst"; mkdir -p "$BL"
+printf '\n# Automate Run: late-title\n## Status: running\n' > "$BL/late.md"
+run_h bash "$H" resume-glob "$BL"
+if [ "$RUN_OUT" = "$BL/late.md" ]; then
+  ok "resume-glob: a run file whose '# Automate Run:' title follows a blank line is STILL listed"
+else
+  no "resume-glob blank-first-line run wrong:\n$RUN_OUT"
+fi
+# AC3 mutation control: a sed-built mutant whose is_run_file is forced to
+# `return 0` must leak BOTH sidecars back into the AC1 fixture's output — proves
+# the resume_glob call is load-bearing (not defined-but-uncalled, not called
+# after echo). Gated like the harness-port/02 is_not_ready mutant: non-empty,
+# differs from the original, `bash -n` clean, override actually injected.
+printf '# Automate Run: sc\n## Status: done\n## Queue\n' > "$SC/automate-x.md"
+MUT="$(mktemp -d)"
+sed 's/^is_run_file() { grep -qE .*$/is_run_file() { return 0; }/' "$H" > "$MUT/automate-helpers.sh"
+if [ -s "$MUT/automate-helpers.sh" ] && ! cmp -s "$H" "$MUT/automate-helpers.sh" && bash -n "$MUT/automate-helpers.sh" 2>/dev/null \
+   && grep -qF 'is_run_file() { return 0; }' "$MUT/automate-helpers.sh"; then
+  MUT_RG_OUT="$(bash "$MUT/automate-helpers.sh" resume-glob "$SC" 2>/dev/null)"
+  EXPECTED_RG_MUT="$SC/automate-x.review-heal-result.md
+$SC/automate-x.supervisor-result.md"
+  if [ "$MUT_RG_OUT" = "$EXPECTED_RG_MUT" ]; then
+    ok "mutation control: is_run_file forced to always-true ⇒ exactly the two sidecars leak into resume-glob (sorted) — the shape check is load-bearing"
+  else
+    no "is_run_file mutation control did NOT discriminate (out='$MUT_RG_OUT' expected='$EXPECTED_RG_MUT')"
+  fi
+  CTRL_RG_OUT="$(bash "$H" resume-glob "$SC" 2>/dev/null)"
+  if [ -z "$CTRL_RG_OUT" ]; then
+    ok "is_run_file mutation positive control: the unmutated script, same fixture, still prints nothing"
+  else
+    no "is_run_file mutation positive control failed (out='$CTRL_RG_OUT') — cannot trust the mutation result without this"
+  fi
+else
+  no "is_run_file mutation control not gated (mutant empty, identical to original, bash -n failed, or the is_run_file override was not injected)"
+fi
+rm -rf "$MUT"
 
 # D1. belief says pending but gh says MERGED ⇒ corrected to merged (check it off).
 printf '{"state":"MERGED","mergedAt":"2026-06-20T00:00:00Z"}\n' > "$GH_STUB_DIR/pr-view.json"

@@ -1,9 +1,9 @@
 ---
 name: automate-loop
-description: Protocol authority for `/automate` — the generic automation engine that converts ANY source (a prompt via /product-owner, a requirements folder, or a backlog-doc) into a FULL Queue with a per-run processing cap inside ONE markdown run file (`.supervisor/automate/<run_id>.md` — the contract, dashboard, and resume state), then drives each Queue item through the per-item loop (`/autonomous --single-iteration` → owned inline `/review-pr --until-mergeable` → trusted-merge-or-park → pull main → check off + append `## Progress`). Smart resume = glob `*.md` for not-done + reconcile-vs-ground-truth. Use when implementing or invoking `/automate`.
+description: Protocol authority for `/automate` — the generic automation engine that converts ANY source (a prompt via /product-owner, a requirements folder, or a backlog-doc) into a FULL Queue with a per-run processing cap inside ONE markdown run file (`.supervisor/automate/<run_id>.md` — the contract, dashboard, and resume state), then drives each Queue item through the per-item loop (`/autonomous --single-iteration` → owned inline `/review-pr --until-mergeable` → trusted-merge-or-park → pull main → check off + append `## Progress`). Smart resume = glob run files (`# Automate Run:` title, `is_run_file`) not stamped done + reconcile-vs-ground-truth. Use when implementing or invoking `/automate`.
 allowed-tools: [Read, Write, Edit, Bash, Task, AskUserQuestion]
-version: "1.7.0"
-lastUpdated: "2026-09-26"
+version: "1.7.1"
+lastUpdated: "2026-09-28"
 ---
 
 # Automate Loop Skill
@@ -60,7 +60,7 @@ so **the tested code IS the executed code** (one implementation, guarded by `scr
 | `remaining` | §3 | Count of `- [ ]` Queue items (COMPUTED — not a stored run-file field). |
 | `resolve-folder` | §2 | List `*.md` in a folder not stamped `## Status: done` and not `## Status: proposed\|parked` (harness-port/02). |
 | `resolve-backlog` | §2 | Dependency-ordered items honoring `done`/✅ markers; dir-scan fallback also skips `## Status: proposed\|parked` (harness-port/02) — a checklist line naming a file directly is unaffected (by design). |
-| `resume-glob` | §4 | List run files not stamped `## Status: done`. |
+| `resume-glob` | §4 | List run files not stamped `## Status: done`. A run file is a `*.md` carrying the `# Automate Run:` title line anywhere (`is_run_file`) — the §6 steps 2–3 result sidecars (`<run_id>.review-heal-result.md`, `<run_id>.supervisor-result.md`) never are, so they are never listed. |
 | `reconcile-item` | §4 | Reconcile one item's belief vs `gh` ground truth ⇒ `merged`/`awaiting_merge`/`gone`. |
 | `gate-eval` | §10 | The 6-condition fail-CLOSED trusted auto-merge gate — the **only** executor of `gh pr merge --squash`. **SELF-RESOLVING (red-team-hardening item 03):** the gate re-derives conditions 2–6 itself from live `gh`/GraphQL/`scripts/classify-risk.sh` reads and two artifact-file reads — the loop passes only what it alone knows (`drain_result`, `termination_reason`, `ready_sha`, `trust_unprotected`, `review_heal_result_path`, `supervisor_result_path`). A ctx carrying any gate-owned key (`high_risk`, `risk_reasons`, `head_sha`, `base`, `review_decision`, `unresolved_human_thread`, `protection_enforceable`, `checks_green`, `rubric_satisfied`) is refused (`PARK: ctx_carries_gate_owned_key`), never trusted. Condition 6 (`high_risk`) is computed by the gate itself via `scripts/classify-risk.sh`; nothing overrides it. |
 | `learning-emit` | §6 step 3 | Fail-SAFE (always exit 0) engine-native ground-truth line: appends ONE full valid `schema_version: 1` POSTMORTEM_RESULT (`source: "automate_drain"` + `automate_key`) per processed PR from `REVIEW_HEAL_RESULT` + `SUPERVISOR_RESULT` data already in hand; idempotent on `run_id`+item+`pr_url`+`source`+completeness (a `changed_paths: []` degraded line never blocks a later complete one — §6 "Learning-emit at end-of-DRAIN"). |
@@ -108,7 +108,7 @@ Exactly **one** source is resolved per run. Resolution produces the **FULL** ord
 
 ## §3 — The single run file (`.supervisor/automate/<run_id>.md`)
 
-**The single-file principle (this design's core):** there is **no manifest, no registry, no `progress.jsonl`, no dashboard file**. ONE markdown run file holds everything — it IS the manifest, registry, progress log, and dashboard. **"Find prior runs" = glob `.supervisor/automate/*.md` for files not marked `## Status: done`** (§4). The only other artifact is a *transient* config-backup sidecar that exists only during a tick (§7).
+**The single-file principle (this design's core):** there is **no manifest, no registry, no `progress.jsonl`, no dashboard file**. ONE markdown run file holds everything — it IS the manifest, registry, progress log, and dashboard. **"Find prior runs" = glob `.supervisor/automate/*.md` for run files — those carrying the `# Automate Run:` title line (`is_run_file`) — not marked `## Status: done`** (§4). The only other artifacts are sidecars, never runs: a *transient* config-backup sidecar that exists only during a tick (§7), and the two per-run result sidecars `<run_id>.supervisor-result.md` / `<run_id>.review-heal-result.md` written verbatim at §6 steps 2–3 (overwritten per item; they carry no `# Automate Run:` title, so RESUME never lists them).
 
 ### Run-file template (reproduce exactly)
 
@@ -165,7 +165,7 @@ queued (- [ ]) → running → rate_limit (parks, no PR yet) | pr-open → await
 
 **On every start** (including bare `/automate` and any `--resume`):
 
-1. **Glob** `.supervisor/automate/*.md` for runs **NOT** marked `## Status: done`.
+1. **Glob** `.supervisor/automate/*.md` for **run files** — a `*.md` carrying the `# Automate Run:` title line anywhere in the file (`is_run_file`, a shape check, not a filename rule) — **NOT** marked `## Status: done`. The §6 steps 2–3 result sidecars (`<run_id>.review-heal-result.md`, `<run_id>.supervisor-result.md`), transient or committed, are excluded: they have no `## Status:` line, so without the shape check each would read as an incomplete run and make resume ambiguous.
 2. The run file is the loop's **belief**. **Reconcile each in-flight item against GROUND TRUTH before trusting a checkbox** — a crash between merge and check-off makes belief and reality disagree:
    - **PR merged?** `gh pr view <url> --json state,mergedAt` — a merged PR ⇒ the item is `- [x]` (merged) even if the file still shows it `- [ ]`/`awaiting_merge`; a merge found here is also the evidence §6 step 1's `brief-repair` call hands to the reconciler, so the item's stranded brief is repaired before the next item is picked.
    - **PR open?** an `OPEN` PR ⇒ the item stays `awaiting_merge` (resumed on merge per §8).
@@ -464,7 +464,7 @@ The engine is designed to be driven continuously by Claude's `/loop`. Use the **
 - `--limit N` caps **PROCESSED** items (default 5), never Queue size; the run file always stores the full list.
 - Exactly ONE `.supervisor/automate/<run_id>.md` per run — NO `manifest.json` / `runs.jsonl` / `progress.jsonl` / dashboard created.
 - Run-file writes are atomic (temp + rename); `## Progress` is append-only; rewrites confined to `## Queue` + `## Current`.
-- RESUME globs `*.md` for not-done and reconciles each in-flight item vs `gh`/`git`/`## Status: done` BEFORE trusting a checkbox; continue/new/archive (ambiguous resume fails closed under `--non-interactive-fallback`).
+- RESUME globs run files (`# Automate Run:` title, `is_run_file` — §6 result sidecars excluded) not stamped done and reconciles each in-flight item vs `gh`/`git`/`## Status: done` BEFORE trusting a checkbox; continue/new/archive (ambiguous resume fails closed under `--non-interactive-fallback`).
 - Single drain: `.auto_review:false` set before `/autonomous`, restored finally-style (config-backup deleted on clean restore, crash-restored by RECONCILE); ONE inline `/review-pr --until-mergeable`; `## Current` records `owned_drain_started`/`owned_drain_result`/`suppressed_default_dispatch:true`; no detached `dispatch-pr-review.sh` artifact for the PR.
 - Single-open-PR invariant holds in BOTH modes: `awaiting_merge` resumes on merge, `escalated` parks until human-resolved or the item is `skipped`/`abandoned`.
 - `--auto-merge` executes `gh pr merge --squash` ONLY when ALL 6 trusted-gate conditions hold; fails CLOSED (park + notify) on any blocker (unprotected/toothless, moved SHA, `CHANGES_REQUESTED`/`REVIEW_REQUIRED`, null/unreadable `reviewDecision`, unresolved human thread, high-risk or unclassifiable diff per `classify-risk.sh` — no override).
