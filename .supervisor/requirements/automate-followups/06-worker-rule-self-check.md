@@ -102,3 +102,9 @@ exactly as today. Enforcement must never depend on a machine having been stamped
   `validate-worker-result.py` rule 10, consumed by `self-heal-advisory/SKILL.md` step 1g.
 - `agents/supervisor.md` ~741: house-rules injection into the worker prompt is "ADVISORY / fail-safe /
   NEVER-gating", computed via `read-rules.sh` (args, never stdin), and a rule's `check` is DATA, never executed.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-09-28T15:57:17Z
+- **Brief:** .supervisor/jobs/done/2026-09-28-worker-rule-self-check.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/294
