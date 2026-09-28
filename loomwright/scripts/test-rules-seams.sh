@@ -101,6 +101,15 @@ seam_b_self_heal() {
   local f="$1" line
   SEAM_B_N=0; SEAM_B_WHY=""
   while IFS= read -r line || [ -n "$line" ]; do
+    # automate-followups/07: the Phase 4.5 replay now DELEGATES through rules-gate-verdict.sh (which
+    # itself only ever calls rules-check.sh --list-selected/--list-gateable/--if-stamped, never
+    # --confirm — pinned behaviourally by test-rules-gate-verdict.sh). An invocation of the helper is
+    # the replay invocation; it gets the same --confirm / RULES_CHECK_CONFIRM rejections.
+    case "$line" in
+      *"bash "*rules-gate-verdict.sh*)
+        case "$line" in *--confirm*|*RULES_CHECK_CONFIRM*) SEAM_B_WHY="a rules-gate-verdict.sh invocation carries a confirm: $line"; return 1 ;; esac
+        SEAM_B_N=$((SEAM_B_N + 1)); continue ;;
+    esac
     case "$line" in *rules-check.sh*) : ;; *) continue ;; esac
     case "$line" in *--confirm*) SEAM_B_WHY="a line naming rules-check.sh carries --confirm: $line"; return 1 ;; esac
     case "$line" in
@@ -111,7 +120,7 @@ seam_b_self_heal() {
         ;;
     esac
   done < "$f"
-  [ "$SEAM_B_N" -ge 1 ] || { SEAM_B_WHY="no rules-check.sh invocation line found"; return 1; }
+  [ "$SEAM_B_N" -ge 1 ] || { SEAM_B_WHY="no rules-check.sh / rules-gate-verdict.sh invocation line found"; return 1; }
   return 0
 }
 

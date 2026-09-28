@@ -22,6 +22,7 @@ Each rule object:
 | `enforcement` | `"advisory"` \| `"must"` | yes | Exactly one of these two values. |
 | `check` | string \| null | yes | A runnable shell string OR `null`. **Read as DATA only — `read-rules.sh` NEVER executes it.** `/rules check` runs a `must`-rule's `check` ONLY when human-invoked and explicitly confirmed. |
 | `provenance` | object | yes | e.g. `{ "source": "...", "added": "<UTC ISO-8601>" }`. |
+| `binds` | `null` \| array of repo-relative paths | no (optional) | The repo-tracked files this `must` rule's `check` EXECUTES. Their content joins the stamp hash, and only a rule whose `binds` covers every file its check invokes is COUNTED by the rules gate (a stamped failing countable check blocks Phase 4.5, the drain's `READY`, and `--auto-merge`). Absent / `null` ⇒ never counted; `[]` ⇒ "executes no repo file". Hand-authored. Contract: `loomwright/skills/rules/SKILL.md` §8.1/§8.2. |
 | `applies_to` | `null` \| array of path globs | no (optional) | **ACTIVE path routing.** `null` or absent ⇒ the rule is **repo-wide**. A non-empty **array of strings** ⇒ the rule is emitted only when a touched path passed to `read-rules.sh` matches one of its globs. Any other shape fails **OPEN** (emitted repo-wide + a diagnostic). See "Path routing" below. |
 
 An object that is missing a required field, carries an unknown `enforcement` value, or duplicates an already-seen `id` is **skipped** (not emitted) — the reader never crashes and still emits the remaining valid rules.
