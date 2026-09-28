@@ -273,7 +273,7 @@ echo "== (Mii) mutant: ONLY the unset line removed => zero hits, but the stub re
 if MII="$(make_mutant ii '[ "$(grep -cE "$UNSET_RE" "$m")" -eq 0 ] && [ "$(grep -cE "$STUBS_RE" "$m")" -eq 1 ]' -e "/$UNSET_RE/d")"; then
   : > "$HITS"; ELOG="$T/egress-mii.log"; : > "$ELOG"
   read -r mii_died _ _ <<<"$(in_danger "$MII" "$ELOG" run_d)"
-  if [ "$mii_died" = 1 ] && [ "$(hits)" -eq 0 ] && grep -E '^curl ' "$ELOG" | grep -qF "$URL"; then
+  if [ "$mii_died" = 1 ] && [ "$(hits)" -eq 0 ] && grep -qF "$URL" < <(grep -E '^curl ' "$ELOG"); then
     ok "(Mii) zero listener hits AND the private egress log recorded curl -> $URL — the stub layer alone catches it"
   else
     no "(Mii) died=$mii_died hits=$(hits) egress-log='$(cat "$ELOG")'"
