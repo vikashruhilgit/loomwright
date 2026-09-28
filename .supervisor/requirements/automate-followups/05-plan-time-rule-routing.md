@@ -1,6 +1,6 @@
 # 05 — Rules reach the PLAN: Launch Pad routes applicable rules into the brief, Plan Reviewer gates on them
 
-## Status: done
+## Status: pending
 
 > **Origin (2026-09-26).** Owner question after twin-loop/08 shipped (PR #267): *"why are these only for after
 > implementation, why not at planning and at the time of working as well?"* 08 gave the substrate its trust key
@@ -90,3 +90,9 @@ Two checks:
   brief-embedded `sha256:` stamp … Do not conflate the two stamps or their storage locations."
 - `scripts/read-rules.sh`: always exits 0, self-gates on `.agent/rules/*.json`, emits nothing on an empty store,
   and never executes a `check`.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-09-28T12:06:30Z
+- **Brief:** .supervisor/jobs/done/2026-09-28-plan-time-rule-routing.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/292
