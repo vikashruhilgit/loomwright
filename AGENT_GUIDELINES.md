@@ -75,6 +75,11 @@ A fifth pass (or a third lens) has to name an information advantage neither row 
 - Integration tests for dependencies; no implementation-detail tests
 - Pre-commit: format, lint, type-check pass locally
 
+### Egress-hermetic self-tests
+- Every self-test (`loomwright/scripts/test-*.sh`, `loomwright/scripts/adapters/*/test-*.sh`, `scripts/test-*.sh`) sources `loomwright/scripts/hermetic-test-env.sh` as its **first executable line**, before its `set` line: `. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"` (adjust the relative path by directory depth). The helper unsets the egress env vars, sets `LOOMWRIGHT_DESKTOP_NOTIFICATIONS=0`, and PATH-prepends recording `osascript`/`notify-send`/`terminal-notifier`/`curl`/`wget` stubs, so no test can reach a real webhook, telemetry endpoint or OS notification, however it is run.
+- CI enforces it: `scripts/check-test-hermetic.sh` fails on any covered test that does not source the helper first. `run-self-tests.sh` also applies it to its workers as a second layer.
+- A test that re-enables a notifier does so only inside its own subshell, for what it asserts on. A test whose subject is its own `127.0.0.1` server may restore the real `curl` (`hermetic_allow_real curl`, or `PATH="$(hermetic_path_without_shims)"` for one command) and says why in a comment.
+
 ### Documentation
 - Comments explain "why" not "what"; JSDoc for public APIs
 - Update README/architecture docs for features
