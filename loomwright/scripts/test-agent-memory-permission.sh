@@ -43,6 +43,7 @@
 # Portability: macOS bash 3.2 + BSD userland dev host, GNU/Linux CI. No `mapfile`, no `sed -i`, no
 # `stat` flavour, no `pipefail` (a `producer | grep -q` reports the producer's SIGPIPE under it).
 # Exit 0 = all pass, 1 = any fail — matching the sibling test-*.sh suites CI picks up by glob.
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

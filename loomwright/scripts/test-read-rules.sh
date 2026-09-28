@@ -56,6 +56,7 @@
 #                                                only asserts emission would pass identically against
 #                                                the pre-routing no-op reader (job Risk R3).
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 READER="$SCRIPT_DIR/read-rules.sh"

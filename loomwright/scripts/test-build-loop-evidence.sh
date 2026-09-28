@@ -37,6 +37,7 @@
 #       era bucket; no version AND no parseable ts => unknown bucket — each with its
 #       labeled Data-quality note.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILDER="$SCRIPT_DIR/build-loop-evidence.sh"

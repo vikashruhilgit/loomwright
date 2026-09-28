@@ -45,6 +45,7 @@
 #       substring match (now removed) cannot resurface and mask a genuine
 #       failure whose name merely CONTAINS a word like "billing" or "quota".
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROBE="$SCRIPT_DIR/ci-run-probe.sh"

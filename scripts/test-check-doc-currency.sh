@@ -19,6 +19,7 @@
 #
 # bash-3.2-safe: no mapfile, no associative arrays.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../loomwright/scripts/hermetic-test-env.sh"
 set -uo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"

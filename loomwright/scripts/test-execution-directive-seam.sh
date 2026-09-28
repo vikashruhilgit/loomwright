@@ -33,6 +33,7 @@
 # EXPLICIT LIMIT: this pins WIRING. It cannot prove a reviewer actually reproduces a claim, nor that a
 # live claude-review comment ends with the marker — both are runtime behaviour.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd "$HERE/.." && pwd)"

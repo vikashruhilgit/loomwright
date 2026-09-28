@@ -4,6 +4,7 @@
 # here depends on a real `.supervisor/verify/` run existing. Exit 0 = all pass, 1 = any failure.
 # Registered automatically by ci.yml's test-*.sh glob.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -272,16 +273,27 @@ else
 fi
 
 echo "== AC9: LOOMWRIGHT_WEBHOOK_URL unset -> exit 0, no webhook call, the run is unaffected =="
-# Real send-webhook.sh and notify-desktop.sh (symlinked, not faked) beside a copy of
-# verify-helpers.sh, so this exercises the ACTUAL fail-safe no-op path rather than a stub that
-# assumes it. A curl/wget/nc-denying shim on PATH proves zero network calls were attempted -
+# The REAL send-webhook.sh (symlinked, not faked) beside a copy of verify-helpers.sh, so this
+# exercises the ACTUAL fail-safe no-op path rather than a stub that assumes it. notify-desktop.sh,
+# by contrast, IS faked here (the AC9 stub notifier below): the real one ends in `osascript display
+# notification`, so staging it made this fixture fire a real macOS banner on the owner's desktop
+# ("verify-nourl ... needs a human sign-in (ticket: t.md)"). Only the notifier is stubbed — stubbing
+# send-webhook.sh as well, as AC8-notify does, would make the zero-network assertion vacuous. A curl/wget/nc-denying shim on PATH proves zero network calls were attempted -
 # "no webhook call" is observed, not merely inferred from send-webhook.sh's own header comment.
 # Run from a FRESH cwd with no .supervisor/config.json or .supervisor/notify-config.json, so
 # send-webhook.sh's repo-local-config fallback (its "URL must come from the legacy file" arm)
 # cannot accidentally supply a URL the unset env var was meant to withhold.
 STUBDIR3="$(mktmp)"
 ln -sf "$HERE/send-webhook.sh" "$STUBDIR3/send-webhook.sh"
-ln -sf "$HERE/notify-desktop.sh" "$STUBDIR3/notify-desktop.sh"
+# AC9 stub notifier: records the desktop payload instead of reaching osascript/notify-send.
+DCALLLOG3="$STUBDIR3/desktop-calls.log"; : > "$DCALLLOG3"
+cat > "$STUBDIR3/notify-desktop.sh" << STUBEOF3
+#!/usr/bin/env bash
+cat >> "$DCALLLOG3"
+printf '\n' >> "$DCALLLOG3"
+exit 0
+STUBEOF3
+chmod +x "$STUBDIR3/notify-desktop.sh"
 ln -sf "$HERE/validate-verify-evidence.py" "$STUBDIR3/validate-verify-evidence.py"
 cp "$HERE/verify-helpers.sh" "$STUBDIR3/verify-helpers.sh"
 
@@ -319,6 +331,8 @@ if [ -f "$STUBDIR3/verify-helpers.sh" ]; then
     || no "AC9: expected 2 evidence.jsonl lines, got $n_ev"
   grep -q '"event":"pause"' "$RD7/evidence.jsonl" 2>/dev/null && ok "AC9: the pause/needs_auth line itself is present and intact" \
     || no "AC9: the pause line is missing from evidence.jsonl"
+  grep -Fq 'verify_needs_auth' "$DCALLLOG3" 2>/dev/null && ok "AC9: the needs_auth desktop notification went to the AC9 stub notifier (never the real osascript path)" \
+    || no "AC9: the AC9 stub notifier recorded no verify_needs_auth payload: $(cat "$DCALLLOG3")"
 else
   no "verify-helpers.sh not found - AC9 cannot be evaluated"
 fi

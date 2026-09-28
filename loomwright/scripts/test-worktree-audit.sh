@@ -28,6 +28,7 @@
 # stderr refusal of a relative `note` path, and one gated mutant for each
 # mechanism (AC-10 (b)–(i)).
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"

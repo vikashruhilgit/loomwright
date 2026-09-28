@@ -74,6 +74,7 @@
 #       id; unknown insights last-run ⇒ every id) — the keep-set
 #       retention-sweep.sh excludes from its session-log sweep
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"

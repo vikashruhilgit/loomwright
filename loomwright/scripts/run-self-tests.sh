@@ -32,6 +32,27 @@ shopt -s nullglob
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Egress-hermetic layer for every worker (second layer — each test ALSO sources the helper itself,
+# enforced by scripts/check-test-hermetic.sh). Sourcing it here scrubs the egress env vars, sets
+# LOOMWRIGHT_DESKTOP_NOTIFICATIONS=0 and PATH-prepends the recording notifier/curl/wget stubs, and
+# every `bash "$t"` worker below inherits that exported state — so even a test that somehow skipped
+# its own source line gets no egress env and no real notifier/curl/wget through this runner. (Not
+# covered here or in the helper: the user-scope $HOME-rooted egress.json and `gh` — a test
+# that exercises webhook/telemetry resolution sandboxes HOME itself; see the helper's SCOPE LIMIT.)
+# FAIL CLOSED when the helper is missing OR sourced without producing a shim dir (it never exits
+# itself, it only warns when mktemp fails twice): running the suite without the stubs is exactly
+# what this layer exists to prevent.
+if [ ! -f "$here/hermetic-test-env.sh" ]; then
+  echo "run-self-tests: $here/hermetic-test-env.sh is missing — refusing to run the suite without the egress-hermetic layer" >&2
+  exit 1
+fi
+# shellcheck source=hermetic-test-env.sh
+. "$here/hermetic-test-env.sh"
+if [ -z "${HERMETIC_SHIM_DIR:-}" ] || [ ! -d "$HERMETIC_SHIM_DIR" ]; then
+  echo "run-self-tests: hermetic-test-env.sh left no shim dir (HERMETIC_SHIM_DIR='${HERMETIC_SHIM_DIR:-}') — refusing to run the suite without the recording notifier/curl/wget stubs" >&2
+  exit 1
+fi
+
 if [ "$#" -gt 0 ]; then
   tests=("$@")
 else

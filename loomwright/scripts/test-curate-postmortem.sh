@@ -26,6 +26,7 @@
 #  12. worktree guard (red-team F1): writer refuses from a linked worktree (exit 3), nothing
 #      written in EITHER location (worktree or main checkout)
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 CURATE="$HERE/curate-postmortem.sh"

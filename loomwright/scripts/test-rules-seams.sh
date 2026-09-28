@@ -78,6 +78,7 @@
 # reader "never ... `bash -c`s a check" is an ASSERTION of the invariant, not a violation, so we do
 # not grep for a bare `bash -c` token.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd "$HERE/.." && pwd)"

@@ -10,6 +10,7 @@
 # meta-lookup theory, and `tool_name` (the matcher is `Task`, the payload says
 # `Agent`). A fixture nobody invented cannot inherit an invented assumption.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SUT="$HERE/emit-agent-identity.sh"

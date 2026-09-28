@@ -173,6 +173,7 @@
 #
 # NO `producer | grep -q` PIPELINES (SIGPIPE turns a match into rc=141 under pipefail).
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 export LC_ALL=C
 
@@ -1975,7 +1976,9 @@ finally:
   else
     GOT="$H/got.json"
     if command -v curl >/dev/null 2>&1; then
-      curl -s -o "$GOT" "http://127.0.0.1:$port/floor.json" 2>/dev/null
+      # REAL curl on purpose (hermetic exception): this fetch's subject is the test's own 127.0.0.1
+      # listener, so the hermetic helper's recording curl stub would make it vacuous.
+      PATH="$(hermetic_path_without_shims)" curl -s -o "$GOT" "http://127.0.0.1:$port/floor.json" 2>/dev/null
     else
       python3 -c 'import sys, urllib.request
 sys.stdout.flush()

@@ -61,6 +61,18 @@ jobs:
           bash scripts/test-check-shared-prefix.sh
           bash scripts/check-shared-prefix.sh
 
+      # Every self-test must source loomwright/scripts/hermetic-test-env.sh as its first executable
+      # line: egress env vars scrubbed, and PATH-resolved OS notifiers + curl/wget replaced by
+      # recording stubs. It does NOT touch HOME or stub gh, so the user-scope
+      # ~/.claude/loomwright/egress.json (webhook_url, telemetry consent + telemetry_repo) still
+      # resolves — a test that exercises webhook/telemetry resolution must also sandbox HOME.
+      # Root scripts/test-*.sh are not globbed by run-self-tests.sh, hence the explicit self-test
+      # line. No `|| true`: fail-CLOSED correctness gate (CLAUDE.md §"Failure-Mode Invariants").
+      - name: Check self-tests are egress-hermetic (ratchet)
+        run: |
+          bash scripts/test-check-test-hermetic.sh
+          bash scripts/check-test-hermetic.sh
+
       # test-verify-walkthrough.sh installs @playwright/test + a chromium build (~150 MB from
       # the Playwright CDN) into $LOOMWRIGHT_VERIFY_TEST_CACHE, and under CI=1 an install
       # failure is a HARD red (its AC11i arm) — so every run of the required `ci` check

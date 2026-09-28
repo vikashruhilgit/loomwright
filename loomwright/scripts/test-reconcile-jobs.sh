@@ -25,6 +25,7 @@
 # satisfied by a degenerate implementation. In particular 6 and 11e stop
 # "repair everything" and "call everything done" from passing the suite.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RECON="$SCRIPT_DIR/reconcile-jobs.sh"

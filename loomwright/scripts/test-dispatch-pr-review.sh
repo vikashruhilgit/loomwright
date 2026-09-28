@@ -54,6 +54,7 @@
 #      (PR #248 review finding #1 — acceptEdits auto-approves file edits without
 #      prompting and was missing from the permissive case, a fail-open gap).
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 DISPATCH="$HERE/dispatch-pr-review.sh"

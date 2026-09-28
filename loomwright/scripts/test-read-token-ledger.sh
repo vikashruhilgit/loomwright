@@ -28,6 +28,7 @@
 #      fixture report TOTAL=0 -- proving the normal (unmutated) script's
 #      non-zero result in test 1 is load-bearing, not a fixture accident.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SUT="$HERE/read-token-ledger.sh"

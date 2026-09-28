@@ -72,6 +72,7 @@
 #   a host with no jq has no write path to exercise. The suite then reports a DEGRADED RUN and
 #   asserts only what remains true: the writer refuses, and the real .agent/ is untouched.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

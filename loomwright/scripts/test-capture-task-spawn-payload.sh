@@ -27,6 +27,7 @@
 #
 # Runs fully offline. Touches nothing outside its own mktemp dir.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

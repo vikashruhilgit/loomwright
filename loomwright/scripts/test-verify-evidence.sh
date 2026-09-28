@@ -47,6 +47,7 @@
 #         section sits between `## VERIFY_ENV` and `## Validation Location` with its Version History
 #         bullet and `Current versions:` mention present (a claim no check backs is a defect)
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -35,6 +35,7 @@
 # NB: run_writer passes --confirm (the mechanized per-item human-approval gate) so the write
 # cases exercise the write path; case 10 covers the gate itself via run_writer_noconfirm.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WRITER="$SCRIPT_DIR/add-orientation.sh"

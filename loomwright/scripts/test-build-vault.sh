@@ -16,6 +16,7 @@
 #   6. path-escape slug ('..') is contained — a pure-dot slug can NEVER write to the vault's
 #      PARENT; it falls back to the safe 'project/' subfolder under the vault, still exit 0
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 BUILD="$HERE/build-vault.sh"

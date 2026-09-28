@@ -83,6 +83,7 @@
 # Bash-3.2/BSD-safe: no `timeout`, no `${var//…}` on large strings, `"$@"` under
 # `set -u`. The Bash tool's shell is zsh — run this as `bash test-worktree-salvage.sh`.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SALVAGE="$HERE/worktree-salvage.sh"

@@ -29,6 +29,7 @@
 # confirm the suite goes RED). It DEFAULTS to the real script, so it can never disarm an
 # assertion here; the copy is given the real writer via --add-rule.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SEED="${SEED_RULES_BIN:-$HERE/seed-rules.sh}"

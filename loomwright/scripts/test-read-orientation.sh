@@ -29,6 +29,7 @@
 #      while its named target is hidden
 #  18. legacy 3-field header AND new 4-field header coexist in one store (backward compat)
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 READER="$SCRIPT_DIR/read-orientation.sh"

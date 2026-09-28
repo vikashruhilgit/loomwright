@@ -47,6 +47,7 @@
 # (b6) shipped that flake against `validate_dead_reference`. Large-producer matches are captured
 # first and grepped via here-string; `grep -c` is also safe because it drains stdin.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENGINE="$SCRIPT_DIR/audit-rules.sh"

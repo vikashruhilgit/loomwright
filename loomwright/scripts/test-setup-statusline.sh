@@ -49,6 +49,7 @@
 #
 # NO `producer | grep -q` PIPELINES (SIGPIPE turns a match into rc=141 under pipefail).
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 export LC_ALL=C
 

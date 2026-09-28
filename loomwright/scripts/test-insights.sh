@@ -17,6 +17,7 @@
 # builder-absent, and garbage-emitting-builder degradations — all rendering the one-line
 # "no data" note without ever failing the dashboard build).
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 BUILD="$HERE/build-insights.sh"

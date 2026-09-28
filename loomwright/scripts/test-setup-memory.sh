@@ -126,6 +126,7 @@
 # appended in the spaced form evades a compact grep entirely. The ledger_count / ledger_has_repo
 # helpers below are the only sanctioned way to assert on ledger content here.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 MEM="$HERE/setup-memory.sh"

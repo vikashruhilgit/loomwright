@@ -75,6 +75,12 @@ A fifth pass (or a third lens) has to name an information advantage neither row 
 - Integration tests for dependencies; no implementation-detail tests
 - Pre-commit: format, lint, type-check pass locally
 
+### Egress-hermetic self-tests
+- Every self-test (`loomwright/scripts/test-*.sh`, `loomwright/scripts/adapters/*/test-*.sh`, `scripts/test-*.sh`) sources `loomwright/scripts/hermetic-test-env.sh` as its **first executable line**, before its `set` line: `. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"` (adjust the relative path by directory depth). The helper unsets the egress env vars, sets `LOOMWRIGHT_DESKTOP_NOTIFICATIONS=0`, and PATH-prepends recording `osascript`/`notify-send`/`terminal-notifier`/`curl`/`wget` stubs. That covers egress routed through those env vars or through a PATH-resolved notifier/`curl`/`wget`, however the test is run — and nothing else.
+- The helper deliberately does not touch `HOME` and does not stub `gh`. The user-scope `~/.claude/loomwright/egress.json` (keyed by repo slug, read by `resolve-egress-config.sh`) still supplies `webhook_url`, telemetry consent and `telemetry_repo`, and telemetry files its issue through `gh`. So a test that exercises webhook or telemetry resolution must also run under a sandbox `HOME`, as `test-telemetry.sh` and `test-send-telemetry-core.sh` do.
+- CI enforces it: `scripts/check-test-hermetic.sh` fails on any covered test that does not source the helper first. `run-self-tests.sh` also applies it to its workers as a second layer.
+- A test that re-enables a notifier does so only inside its own subshell, for what it asserts on. A test whose subject is its own `127.0.0.1` server may restore the real `curl` (`hermetic_allow_real curl`, or `PATH="$(hermetic_path_without_shims)"` for one command) and says why in a comment.
+
 ### Documentation
 - Comments explain "why" not "what"; JSDoc for public APIs
 - Update README/architecture docs for features

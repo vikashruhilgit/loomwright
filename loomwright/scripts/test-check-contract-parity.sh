@@ -3,6 +3,7 @@
 # Auto-run by CI's test-*.sh loop. Deterministic, no network, no repo writes
 # (fixtures live in mktemp -d).
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

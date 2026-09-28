@@ -11,6 +11,7 @@
 #   5. --no-record => no history file written, still status "ok" + exit 0
 #   6. BRAIN_BASELINE_EVAL_RESULT line is valid JSON carrying the documented fields
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 RUN="$HERE/brain-baseline-eval.sh"

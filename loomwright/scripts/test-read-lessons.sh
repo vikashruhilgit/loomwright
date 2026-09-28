@@ -16,6 +16,7 @@
 #      superseded text is gone only because write-lessons.sh's supersede verb already retracted it
 #      (rule 1: lessons supersession is writer-side, never a reader-side skip)
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 WRITE="$HERE/write-lessons.sh"

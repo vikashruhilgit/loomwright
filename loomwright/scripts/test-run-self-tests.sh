@@ -19,7 +19,13 @@
 #   (J)  SELF_TEST_JOBS not a positive integer     → exit 1
 #   (G)  no-argument glob, in a fake repo layout   → runs flat test-*.sh AND adapters/*/test-*.sh;
 #        an empty layout                           → exit 1, "matched nothing"
+#   (G2) hermetic-test-env.sh missing beside the runner → exit 1, "refusing", no fixture test ran
+#   (G3) the helper present but mktemp failing everywhere (it leaves HERMETIC_SHIM_DIR empty)
+#                                                  → exit 1, "left no shim dir", no fixture test ran
+#   (H)  egress-hermetic runner layer: a worker sees the helper's effect though the parent exported
+#        LOOMWRIGHT_WEBHOOK_URL
 #   (W)  wiring: ci.yml's self-test step invokes run-self-tests.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -125,6 +131,7 @@ echo "== (G) no-argument glob covers flat AND adapter tests; empty fails closed 
 G="$T/fake-repo"
 mkdir -p "$G/loomwright/scripts/adapters/tool"
 cp "$RUNNER" "$G/loomwright/scripts/run-self-tests.sh"
+cp "$HERE/hermetic-test-env.sh" "$G/loomwright/scripts/hermetic-test-env.sh"
 printf 'echo flat > "%s/flat.ran"\n' "$T" > "$G/loomwright/scripts/test-flat.sh"
 printf 'echo adapter > "%s/adapter.ran"\n' "$T" > "$G/loomwright/scripts/adapters/tool/test-adapter.sh"
 ( cd / && GITHUB_ACTIONS= bash "$G/loomwright/scripts/run-self-tests.sh" > "$T/g.out" 2>&1 ); rc=$?
@@ -134,10 +141,62 @@ printf 'echo adapter > "%s/adapter.ran"\n' "$T" > "$G/loomwright/scripts/adapter
 E="$T/empty-repo"
 mkdir -p "$E/loomwright/scripts"
 cp "$RUNNER" "$E/loomwright/scripts/run-self-tests.sh"
+cp "$HERE/hermetic-test-env.sh" "$E/loomwright/scripts/hermetic-test-env.sh"
 GITHUB_ACTIONS= bash "$E/loomwright/scripts/run-self-tests.sh" > "$T/e.out" 2>&1; rc=$?
 [ "$rc" -eq 1 ] && grep -q "matched nothing" "$T/e.out" \
   && ok "(G) an empty layout fails LOUDLY (exit 1, 'matched nothing') — never green on zero tests" \
   || no "(G) empty layout: rc=$rc $(cat "$T/e.out")"
+
+echo "== (G2) helper missing: the runner refuses to run un-hermetic =="
+G2="$T/no-helper-repo"
+mkdir -p "$G2/loomwright/scripts"
+cp "$RUNNER" "$G2/loomwright/scripts/run-self-tests.sh"
+printf 'echo ran > "%s/g2.ran"\n' "$T" > "$G2/loomwright/scripts/test-g2.sh"
+[ ! -e "$G2/loomwright/scripts/hermetic-test-env.sh" ] || no "(G2) precondition: the fixture must NOT carry the helper"
+GITHUB_ACTIONS= bash "$G2/loomwright/scripts/run-self-tests.sh" > "$T/g2.out" 2>&1; rc=$?
+[ "$rc" -eq 1 ] && grep -q "refusing to run the suite without the egress-hermetic layer" "$T/g2.out" && [ ! -f "$T/g2.ran" ] \
+  && ok "(G2) no hermetic-test-env.sh beside the runner → exit 1, 'refusing', and the fixture test never ran" \
+  || no "(G2) rc=$rc ran=$([ -f "$T/g2.ran" ] && echo y || echo n): $(cat "$T/g2.out")"
+
+echo "== (G3) helper present but no shim dir (mktemp fails everywhere): the runner fails closed =="
+# A failing `mktemp` shadows the real one, and this test's own shim dir is stripped from the
+# environment so the helper cannot reuse it — both of its mktemp attempts fail and it leaves
+# HERMETIC_SHIM_DIR empty (it only warns; it never exits). The runner must refuse, not run bare.
+G3="$T/no-shim-repo"
+mkdir -p "$G3/loomwright/scripts" "$T/g3-bin"
+cp "$RUNNER" "$G3/loomwright/scripts/run-self-tests.sh"
+cp "$HERE/hermetic-test-env.sh" "$G3/loomwright/scripts/hermetic-test-env.sh"
+printf 'echo ran > "%s/g3.ran"\n' "$T" > "$G3/loomwright/scripts/test-g3.sh"
+printf '#!/bin/sh\nexit 1\n' > "$T/g3-bin/mktemp"; chmod +x "$T/g3-bin/mktemp"
+( PATH="$T/g3-bin:$(hermetic_path_without_shims)"
+  unset HERMETIC_SHIM_DIR HERMETIC_EGRESS_LOG HERMETIC_TEST_ENV
+  GITHUB_ACTIONS= bash "$G3/loomwright/scripts/run-self-tests.sh" > "$T/g3.out" 2>&1 ); rc=$?
+[ "$rc" -eq 1 ] && grep -q "left no shim dir" "$T/g3.out" && grep -q "WARNING: mktemp failed" "$T/g3.out" && [ ! -f "$T/g3.ran" ] \
+  && ok "(G3) helper warned (mktemp failed twice) → runner exit 1, 'left no shim dir', fixture test never ran" \
+  || no "(G3) rc=$rc ran=$([ -f "$T/g3.ran" ] && echo y || echo n): $(cat "$T/g3.out")"
+
+echo "== (H) egress-hermetic runner layer: workers see the helper's effect even when the parent exports the egress env =="
+# The fixture test deliberately does NOT source the helper, so what it observes is the RUNNER's layer.
+# The parent is re-dangered first: this test's own helper state is stripped (shim dir off PATH,
+# markers unset) and LOOMWRIGHT_WEBHOOK_URL is exported, exactly like an owner's terminal.
+cat > "$T/hermetic-probe.sh" <<'EOF'
+printf '%s|%s|%s|%s\n' "${HERMETIC_TEST_ENV:-unset}" "${LOOMWRIGHT_WEBHOOK_URL:-unset}" \
+  "${LOOMWRIGHT_DESKTOP_NOTIFICATIONS:-unset}" "$(command -v osascript 2>/dev/null)" > "$(dirname "$0")/hermetic-probe.seen"
+EOF
+( PATH="$(hermetic_path_without_shims)"
+  unset HERMETIC_TEST_ENV HERMETIC_SHIM_DIR HERMETIC_EGRESS_LOG LOOMWRIGHT_DESKTOP_NOTIFICATIONS
+  export LOOMWRIGHT_WEBHOOK_URL="http://127.0.0.1:9/parent-exported"
+  [ "${LOOMWRIGHT_WEBHOOK_URL:-}" = "http://127.0.0.1:9/parent-exported" ] && [ -z "${HERMETIC_TEST_ENV:-}" ] \
+    && echo "parent-dangered" > "$T/hermetic-parent.state"
+  run "$T/h.out" "$T/hermetic-probe.sh" ); rc=$?
+seen="$(cat "$T/hermetic-probe.seen" 2>/dev/null || true)"
+IFS='|' read -r h_marker h_url h_desk h_osa <<<"$seen"
+if [ "$rc" -eq 0 ] && [ -f "$T/hermetic-parent.state" ] && [ "$h_marker" = "1" ] && [ "$h_url" = "unset" ] \
+   && [ "$h_desk" = "0" ] && [ -n "$h_osa" ] && [ -f "$(dirname "$h_osa")/.hermetic-shim-dir" ]; then
+  ok "(H) worker saw HERMETIC_TEST_ENV=1, LOOMWRIGHT_WEBHOOK_URL unset, notifications=0, osascript -> a hermetic stub, though the parent exported the URL"
+else
+  no "(H) runner layer missing: rc=$rc parent=$(cat "$T/hermetic-parent.state" 2>/dev/null) seen='$seen' $(cat "$T/h.out")"
+fi
 
 echo "== (W) wiring: ci.yml invokes the runner =="
 if [ -f "$CI_YML" ]; then

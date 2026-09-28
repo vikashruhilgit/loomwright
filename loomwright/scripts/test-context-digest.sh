@@ -20,6 +20,7 @@
 #      the specific 2-waves-apart-no-direct-edge regression this brief calls out by name (the
 #      naive "no requires edge" phrasing would falsely flag it).
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

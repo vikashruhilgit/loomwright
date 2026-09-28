@@ -56,6 +56,7 @@
 #      yields nothing -- e.g. a minimal image) -> falls through to the invoking
 #      shell and records pid_source=ppid, the visible "degraded to TTL" marker.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SUT="$HERE/run-lock.sh"

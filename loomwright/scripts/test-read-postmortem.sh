@@ -15,6 +15,7 @@
 #   + repo scoping: when CUR_REPO resolves from a remote, only same-repo entries contribute
 #     (a same-path entry from another repo must NOT produce a false cross-repo churn hit).
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 READ="$HERE/read-postmortem.sh"

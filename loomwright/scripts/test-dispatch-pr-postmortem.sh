@@ -32,6 +32,7 @@
 #   14. claude binary absent -> fail-safe no-op (non-dry-run; exit 0, no marker, no launch)
 #       — exercises the binary-absent fallback the dry-run cases never reach.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 DISPATCH="$HERE/dispatch-pr-postmortem.sh"

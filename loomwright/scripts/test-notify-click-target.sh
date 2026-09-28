@@ -3,6 +3,7 @@
 # Mirrors the scripts/test-format-twin-delta.sh pattern. Not counted by the
 # doc-currency gate. Exits 0 on pass, 1 on first failure.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd)"

@@ -10,6 +10,7 @@
 # file_storage, the Langfuse OTLP exporter target, and a no-committed-secrets
 # scan (${...} placeholders only).
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 COMPOSE="$HERE/otel/docker-compose.yml"

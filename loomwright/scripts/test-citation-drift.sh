@@ -73,6 +73,7 @@
 #
 # Portability: macOS bash 3.2 + BSD userland is the dev host, GNU/Linux is CI. No `stat -f`/`-c`,
 # no `sed -i`, no `mapfile`, no `grep -q` on the read end of a pipe (SIGPIPE 141 under pipefail).
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd)"

@@ -12,6 +12,7 @@
 #   6. fail-safe — missing corpus => status unverified, value null, exit 0
 #   7. BENCHMARK_JSON line is valid JSON carrying the benchmark_result fields
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 RUN="$HERE/run-benchmark.sh"

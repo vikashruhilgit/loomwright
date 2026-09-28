@@ -31,6 +31,7 @@
 # Comparisons that involve a temp dir go through `cd && pwd` on BOTH sides, so a
 # symlinked TMPDIR (/var -> /private/var on macOS) cannot produce a false failure.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"

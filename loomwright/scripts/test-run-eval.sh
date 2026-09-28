@@ -24,6 +24,7 @@
 # Cases 1-4 and 6 pass --no-record so they never touch the real .supervisor/eval/; case 5 redirects the
 # history file into $TMP via $EVAL_RESULTS_FILE.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 RUN="$HERE/run-eval.sh"

@@ -23,6 +23,7 @@
 #                                                       impossible to diverge, verified here by
 #                                                       grepping both scripts' source line.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 HASH="$HERE/exec-acceptance-hash.sh"

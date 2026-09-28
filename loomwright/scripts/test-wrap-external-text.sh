@@ -32,6 +32,7 @@
 #      start/end markers survive as exact matches; the embedded copies are
 #      defanged.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 WRAP="$HERE/wrap-external-text.sh"

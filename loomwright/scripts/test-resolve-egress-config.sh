@@ -16,6 +16,7 @@
 #
 # EXIT: 0 on full pass, 1 on any failure.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -u
 set -o pipefail
 

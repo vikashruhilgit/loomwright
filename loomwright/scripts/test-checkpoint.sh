@@ -20,6 +20,7 @@
 #   (j) text longer than 200 chars is truncated to exactly 200 chars (checkpoint.sh's
 #       defensive safety-net branch, not a validation gate)
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 CP="$HERE/checkpoint.sh"

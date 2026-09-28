@@ -27,6 +27,7 @@
 #   (q) worker_checkpoint — an in-progress job's checkpoints render under Tried/rejected with the
 #       session id as provenance; scoped to the in-progress job only; absent state/log is a silent skip
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 BUILD="$HERE/build-handoff.sh"
