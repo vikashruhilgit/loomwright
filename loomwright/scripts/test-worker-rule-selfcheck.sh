@@ -415,12 +415,12 @@ o8h="$(helper "$H8" "$R8" --rot "$R8")"; rc8h=$?
 echo "== (ac9) prompt seam: worker.md Step 5 invokes the helper with --root, Step 5.7 names rule:, REPORT-ONLY"
 WORKER_MD="$SCRIPT_DIR/../agents/worker.md"
 # seam_pin <worker.md> — 0 iff (1) a line inside "### Step 5: Verify" (up to "### Step 5.5") invokes
-# worker-rule-selfcheck.sh with --root AND says REPORT-ONLY, and (2) "### Step 5.7" (up to the next
-# "### ") names the `rule:` prefix. Fixed-string matching only.
+# worker-rule-selfcheck.sh with --root AND says REPORT-ONLY, and (2) "### Step 5.7:" (anchored on the colon so
+# "### Step 5.75" never matches; up to the next "### ") names the `rule:` prefix. Fixed-string matching only.
 seam_pin() {
   awk '
     /^### Step 5: Verify/ { s5=1; s57=0; next }
-    /^### Step 5\.7/      { s57=1; s5=0; next }
+    /^### Step 5\.7:/     { s57=1; s5=0; next }
     /^### /               { s5=0; s57=0 }
     s5  && index($0, "worker-rule-selfcheck.sh") && index($0, "--root") && index($0, "REPORT-ONLY") { inv=1 }
     s57 && index($0, "`rule:`") { pre=1 }
