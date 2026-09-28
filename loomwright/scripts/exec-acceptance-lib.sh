@@ -2,7 +2,7 @@
 # `## Executable Acceptance` section. SOURCED (never executed directly) by BOTH
 # `run-ground-truth.sh` (the enforcement side, Phase 4.5) and `exec-acceptance-hash.sh` (the
 # human-facing / brief-authoring side). This is the ONE place the `cmd:`/`corpus-task:`/
-# `qa-executor:` classification rule and the content-keyed stamp hash are defined — factored out
+# `qa-executor:`/`rule:` classification rule and the content-keyed stamp hash are defined — factored out
 # specifically so the two consumers can never silently diverge (red-team-hardening item 05, AC1
 # risk mitigation: "the worker should factor the shared classification logic into one definition
 # both scripts read, or add a cross-check test that fails if they ever diverge"). Sourcing the
@@ -11,7 +11,8 @@
 # Functions (all pure — no I/O beyond reading the given `<brief>` path; no execution, no writes):
 #   trim <line>                          -> leading/trailing-whitespace-trimmed line
 #   strip_bullet <line>                  -> `trim` PLUS a leading `- `/`-` bullet marker removed
-#   classify_kind <line>                 -> `cmd` | `corpus-task` | `qa-executor` (bare line -> `cmd`)
+#   classify_kind <line>                 -> `cmd` | `corpus-task` | `qa-executor` | `rule`
+#                                           (bare line -> `cmd`)
 #   extract_brief_section_bullets <brief> -> one stripped bullet per line from the brief's
 #                                           `## Executable Acceptance` section (exact heading
 #                                           match only — a sibling heading like "## Executable
@@ -29,7 +30,7 @@
 #                                           newline-joined list of `cmd:`/bare bullets ONLY
 #                                           (classify_kind == "cmd"), or the literal `none` when
 #                                           that filtered list is empty (incl. brief/section absent,
-#                                           or only corpus-task:/qa-executor: bullets present).
+#                                           or only corpus-task:/qa-executor:/rule: bullets present).
 #                                           Returns 1 (with a stderr diagnostic, no stdout) only
 #                                           when the filtered list is non-empty and no sha256 tool
 #                                           is available — a hash claiming to represent content it
@@ -72,15 +73,21 @@ strip_bullet() {
   printf '%s' "$line"
 }
 
-# classify_kind <line> — `cmd` | `corpus-task` | `qa-executor`. A bare line (no recognized
+# classify_kind <line> — `cmd` | `corpus-task` | `qa-executor` | `rule`. A bare line (no recognized
 # `<kind>:` prefix) classifies as `cmd` — IDENTICAL rule to run-ground-truth.sh's execution-time
 # case statement (kept in exact lockstep on purpose; do not edit one without the other, though
 # both now read from this single definition so that can no longer happen silently).
+# `rule:` (plan-time-rule-routing) is a PRECONDITION, not a nicety: without its own arm a
+# `rule: <id>` bullet would fall through to bare `cmd` — hashed into the brief stamp, flagged by
+# Plan Review Criterion 14, and EXECUTED as the literal shell text "rule: …". With it, a `rule:` bullet is never
+# hashed (exec_acceptance_hash keeps only `cmd`) and run-ground-truth.sh resolves it by delegating
+# to rules-check.sh; its authorization is the user-scope rules stamp, never the brief `sha256:` stamp.
 classify_kind() {
   case "$1" in
     cmd:*)          printf 'cmd\n' ;;
     corpus-task:*)  printf 'corpus-task\n' ;;
     qa-executor:*)  printf 'qa-executor\n' ;;
+    rule:*)         printf 'rule\n' ;;
     *)              printf 'cmd\n' ;;   # bare line -> treat as shell cmd
   esac
 }

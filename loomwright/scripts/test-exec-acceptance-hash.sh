@@ -133,6 +133,32 @@ else
   no "(h) one or both scripts do not source the shared lib — classification could silently diverge"
 fi
 
+echo "== (i) rule: is its own kind — never 'cmd', never hashed (plan-time-rule-routing AC5) =="
+kI1="$( . "$LIB"; classify_kind "rule: x" )"
+kI2="$( . "$LIB"; classify_kind "rule:no-space" )"
+kI3="$( . "$LIB"; classify_kind "rules are fun" )"
+if [ "$kI1" = "rule" ] && [ "$kI2" = "rule" ]; then
+  ok "(i1) classify_kind 'rule: x' => rule (and 'rule:no-space' => rule)"
+else
+  no "(i1) classify_kind rule: gave '$kI1' / '$kI2' (would fall through to cmd and be EXECUTED)"
+fi
+[ "$kI3" = "cmd" ] && ok "(i2) a bare line merely starting with 'rule' (no colon) is still cmd — the prefix is exact" \
+  || no "(i2) 'rules are fun' classified as '$kI3'"
+I_BRIEF="$TMP/i.md"
+printf '## Executable Acceptance\n- rule: some-rule\n- corpus-task: version-consistent\n' > "$I_BRIEF"
+outI="$(bash "$HASH" "$I_BRIEF")"; rcI=$?
+[ "$rcI" -eq 0 ] && [ "$outI" = "none" ] \
+  && ok "(i3) a brief with ONLY rule: + corpus-task: bullets => hash none (never subject to cmd_unapproved)" \
+  || no "(i3) rule:+corpus-task: brief hashed as '$outI' (rc=$rcI)"
+I2_BRIEF="$TMP/i2.md"
+printf '## Executable Acceptance\n- rule: some-rule\n- cmd: true\n- rule: other\n' > "$I2_BRIEF"
+I2_SUB="$TMP/i2-sub.md"
+printf '## Executable Acceptance\n- cmd: true\n' > "$I2_SUB"
+outI2="$(bash "$HASH" "$I2_BRIEF")"; outI2s="$(bash "$HASH" "$I2_SUB")"
+[ "$outI2" = "$outI2s" ] && [ "$outI2" != "none" ] \
+  && ok "(i4) a mixed cmd:+rule: brief hashes identically to its cmd:-only subset (rule: excluded from the stamp)" \
+  || no "(i4) rule: bullets leaked into the stamp hash: '$outI2' vs '$outI2s'"
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
