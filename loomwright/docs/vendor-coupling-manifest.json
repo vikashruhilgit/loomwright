@@ -123,6 +123,7 @@
     "loomwright/scripts/test-resolve-egress-config.sh": 8,
     "loomwright/scripts/test-resolve-loomwright-root.sh": 10,
     "loomwright/scripts/test-rules-check.sh": 1,
+    "loomwright/scripts/test-rules-gate-verdict.sh": 1,
     "loomwright/scripts/test-send-telemetry-core.sh": 3,
     "loomwright/scripts/test-session-probe.sh": 6,
     "loomwright/scripts/test-session-resume.sh": 3,

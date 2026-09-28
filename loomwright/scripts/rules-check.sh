@@ -67,8 +67,10 @@
 #     always traces back to an actual human confirmation, never to an automated replay of one.
 #   - Interactive TTY (stdin AND stdout are TTYs, no --if-stamped): prompts once and executes on
 #     y/Y/yes.
-#   Precedence, evaluated top-down (--list-selected, a read-only enumeration, sits above all of these):
-#     --list-selected  >  --no-cmd  >  argv --confirm (or RULES_CHECK_CONFIRM=1 when --if-stamped is ABSENT)
+#   Precedence, evaluated top-down (--list-selected and --list-gateable, two read-only listings, sit
+#   above all of these):
+#     --list-selected  >  --list-gateable  >  --no-cmd
+#               >  argv --confirm (or RULES_CHECK_CONFIRM=1 when --if-stamped is ABSENT)
 #               >  --if-stamped  >  TTY-yes  >  default-skip.
 #
 # THE STAMP (R2 — the SECOND security boundary this slice adds, independent of the reject/allowlist
@@ -110,13 +112,14 @@
 # query chose — the SAME in-memory value feeds both the stamp write and the --if-stamped comparison, so
 # the two can never independently drift on what "the set" means.
 #
-# NOT AN UNATTENDED GATE in this slice: this helper is invoked by `/rules check` (human-invoked) and,
-# for --if-stamped only, by three advisory consumers: Phase 4.5's replay
-# (`skills/self-heal-advisory/SKILL.md`) and run-ground-truth.sh's `rule:` kind — neither ever changes
-# `heal_decision` or enters a fix loop — and, at worker Step 5, `worker-rule-selfcheck.sh`, whose
-# output becomes REPORT-ONLY `rule:` deviations that never change a worker's `status`. No enforcement
-# seam calls this with unattended WRITE authority; --if-stamped can only ever replay a set a human
-# already confirmed on this machine.
+# UNATTENDED CALLERS: this helper is invoked by `/rules check` (human-invoked) and, for --if-stamped
+# only, by advisory consumers — Phase 4.5's replay (`skills/self-heal-advisory/SKILL.md`),
+# run-ground-truth.sh's `rule:` kind, and, at worker Step 5, `worker-rule-selfcheck.sh` (REPORT-ONLY
+# `rule:` deviations) — and by `rules-gate-verdict.sh`, the fail-CLOSED verdict helper the review and
+# merge gates delegate to (rule-enforcement-at-review-and-merge): it maps a STAMPED, COUNTABLE (see
+# `binds` below) must-check's FAIL to a gating verdict, while `unstamped` / `cmd_disabled` / advisory
+# stay advisory. No caller has unattended WRITE authority; --if-stamped can only ever replay a set a
+# human already confirmed on this machine, and this script remains the SOLE executor of a check.
 #
 # --list-selected (plan-time-rule-routing, READ-ONLY enumeration): prints the id of every rule the
 # execute loop WOULD select (enforcement `must` AND a non-null string `check`, after the SAME
@@ -133,10 +136,56 @@
 # `rule:` kind and worker-rule-selfcheck.sh, which learn "which ids are checkable?" without ever
 # reading the store themselves — this script stays the ONE place that parses a `check`.
 #
-# Usage:  rules-check.sh [--confirm] [--no-cmd] [--if-stamped] [--list-selected]
+# `binds` + --list-gateable (rule-enforcement-at-review-and-merge, D-a — the gate's universe):
+#   A rule MAY carry an OPTIONAL `binds` field: `null`/absent, or an array of repo-relative path
+#   strings (the `applies_to` path space; the same write-time rejections — `..`, absolute, `~`).
+#   Semantics: "the repo-TRACKED files this check EXECUTES; their CONTENT is part of what the
+#   confirming human approved".
+#   HASH BINDING: when a selected rule carries a NON-EMPTY `binds` array, its LIVE_HASH input line
+#   becomes `id\tcheck\t<path>=<sha256 of content | MISSING | INVALID>` per element in LC_ALL=C sorted
+#   order (paths resolved from the repo root; `MISSING` = tracked but absent from the working tree;
+#   `INVALID` = malformed / untracked / outside the repo / not a string). A rule WITHOUT `binds`
+#   (absent, `null`, `[]`, or not an array) hashes EXACTLY as before `binds` existed, so every existing
+#   stamp stays valid. Both the stamp WRITE and the --if-stamped COMPARE read the one LIVE_HASH, so a
+#   PR that edits a bound file moves the live hash ⇒ `[SKIP] all (unstamped)` — the edit cannot turn
+#   a stamped failure into a counted pass without a human re-running `/rules check --confirm`.
+#   --list-gateable (READ-ONLY classification, same early-exit tier as --list-selected — executes
+#   nothing, writes no stamp, never prompts, exits 0; every early-exit path prints NOTHING on stdout):
+#   prints ONE `id<TAB>countable|advisory<TAB><reason>` line per SELECTED id (the --list-selected set),
+#   LC_ALL=C sorted. Per check it derives the DETECTED INVOKED FILES = every whitespace-split token
+#   (surrounding quotes and a leading `./` stripped) that resolves from the repo root to a git-TRACKED
+#   file (`git ls-files --error-unmatch`, never `[ -e ]` alone) AND is executable (`test -x`) OR
+#   starts with `#!` OR is immediately preceded by an interpreter word from the FIXED set
+#   `bash sh zsh source . python python3 node perl ruby`. Reasons:
+#     advisory   binds_undeclared   no `binds` key or `binds: null` — nothing a human declared is counted
+#     advisory   binds_invalid      `binds` present but not an array of strings, or an element that is
+#                                   absolute / `..`-bearing / `~` / untracked / control-char-bearing
+#     advisory   unbound:<p>[,<p>]  detected invoked files NOT declared in `binds` (the declaration
+#                                   was dishonest or incomplete — the heuristic DEMOTES it)
+#     countable  no_invocations     explicit `binds: []` AND zero detected invoked files
+#     countable  bound:<n>          non-empty `binds`, every detected file declared (n = distinct paths)
+#   The (i) leg is an EXPLICIT human declaration, never an inference: the heuristic only ever DEMOTES a
+#   rule to advisory; it never promotes one.
+#   HONEST LIMITS of the detection (all resolve to "a countable rule whose check executes something it
+#   did not declare" — the remedy is to declare the executed files in `binds`, and item 09's
+#   `audit-rules.sh unbound_invocation` follow-up is the seam that should flag them):
+#     - TASK-RUNNER INDIRECTION: `make lint`, `npm run lint`, `pytest`, `cargo test`, `go test ./...`
+#       execute tracked files (Makefile, package.json scripts, conftest/test modules) that a
+#       whitespace-token scan cannot see — a human who declares `binds: []` on such a check has
+#       asserted something false.
+#     - TRANSITIVE CALLS: a bound script that calls another script — only the first hop is bound.
+#     - `$(…)`, `eval`, backticks, globs, brace expansion, variables: the token is not a literal path.
+#     - INTERPRETER ALIASES / wrappers (`python3.12`, `uv run`, `npx`, `bun`, `/usr/bin/env python`):
+#       the preceding-word set is fixed; a non-+x, non-`#!` file behind an alias is not detected.
+#     - NON-CANONICAL PATH FORMS (`scripts/../scripts/x.sh`, `"$ROOT/x.sh"`) and a token glued to
+#       punctuation (`x.sh;`, `x.sh)`) are not resolved.
+#   An id containing a tab is printed as-is (the consumer parses the LAST two tab fields); an id
+#   carrying a newline/CR is omitted exactly as under --list-selected.
+#
+# Usage:  rules-check.sh [--confirm] [--no-cmd] [--if-stamped] [--list-selected] [--list-gateable]
 # Exit:   0 = ran (or skipped) with zero check FAILURES ; 1 = >=1 selected check FAILED when executed.
 #         Fail-safe on tooling/absent-store paths (no jq / no rules) → exit 0 (nothing to run).
-#         --list-selected always exits 0.
+#         --list-selected and --list-gateable always exit 0.
 
 set -uo pipefail   # NO `set -e` — a failed check is a normal tally, not a script crash.
 
@@ -170,6 +219,7 @@ CONFIRM_ENV=0
 [ "${RULES_CHECK_CONFIRM:-0}" = "1" ] && CONFIRM_ENV=1
 IF_STAMPED=0
 LIST_SELECTED=0
+LIST_GATEABLE=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -177,6 +227,7 @@ while [ "$#" -gt 0 ]; do
     --confirm)    CONFIRM=1; shift ;;   # ARGV confirm — the only confirm that counts under --if-stamped
     --if-stamped) IF_STAMPED=1; shift ;;
     --list-selected) LIST_SELECTED=1; shift ;;   # read-only enumeration — wins over every mode flag
+    --list-gateable) LIST_GATEABLE=1; shift ;;   # read-only classification — same tier, below --list-selected
     -h|--help)
       grep -E '^# ' "$0" | sed -E 's/^# ?//'
       exit 0 ;;
@@ -185,7 +236,7 @@ while [ "$#" -gt 0 ]; do
       # typo'd safety flag (e.g. `--no-cmnd` for `--no-cmd`) is not a SILENT no-op.
       # Without this warning a mistyped `--no-cmd` would be dropped, and a co-present
       # `--confirm`/TTY would then execute checks against the caller's intent.
-      printf 'rules-check.sh: warning: ignoring unrecognized argument %s (did you mean --no-cmd, --confirm, --if-stamped, or --list-selected?)\n' "$1" >&2
+      printf 'rules-check.sh: warning: ignoring unrecognized argument %s (did you mean --no-cmd, --confirm, --if-stamped, --list-selected, or --list-gateable?)\n' "$1" >&2
       shift ;;
   esac
 done
@@ -273,7 +324,8 @@ _rc_write_stamp() {
 # ---------------------------------------------------------------------------
 if ! command -v jq >/dev/null 2>&1; then
   echo "$PROG: jq unavailable — cannot read rules, nothing to run (fail-safe)" >&2
-  [ "$LIST_SELECTED" -eq 1 ] || echo "Checks passed: 0/0"   # --list-selected: stdout is ONLY ids
+  # --list-selected / --list-gateable: stdout is ONLY the listing (empty here).
+  [ "$LIST_SELECTED" -eq 1 ] || [ "$LIST_GATEABLE" -eq 1 ] || echo "Checks passed: 0/0"
   exit 0
 fi
 
@@ -296,6 +348,8 @@ MODE="need-confirm"
 CAME_FROM_CONFIRM=0
 if [ "$LIST_SELECTED" -eq 1 ]; then
   MODE="list-selected"               # read-only enumeration: WINS over everything, never prompts
+elif [ "$LIST_GATEABLE" -eq 1 ]; then
+  MODE="list-gateable"               # read-only classification: same tier, executes nothing, never prompts
 elif [ "$NO_CMD" -eq 1 ]; then
   MODE="no-cmd"                      # --no-cmd WINS over everything (fail-safe)
 elif [ "$CONFIRM" -eq 1 ]; then
@@ -318,7 +372,7 @@ LC_ALL=C find "$RULES_DIR" -maxdepth 1 -type f -name '*.json' 2>/dev/null \
   | LC_ALL=C sort > "$files_list" 2>/dev/null || true
 if [ ! -s "$files_list" ]; then
   echo "$PROG: no .agent/rules/*.json rule files — nothing to check" >&2
-  [ "$MODE" = "list-selected" ] || echo "Checks passed: 0/0"
+  [ "$MODE" = "list-selected" ] || [ "$MODE" = "list-gateable" ] || echo "Checks passed: 0/0"
   exit 0
 fi
 
@@ -348,7 +402,7 @@ done < "$files_list"
 
 if [ ! -s "$combined" ]; then
   echo "$PROG: no parseable rule objects — nothing to check" >&2
-  [ "$MODE" = "list-selected" ] || echo "Checks passed: 0/0"
+  [ "$MODE" = "list-selected" ] || [ "$MODE" = "list-gateable" ] || echo "Checks passed: 0/0"
   exit 0
 fi
 
@@ -395,7 +449,11 @@ jq -cs '
   | map(select(.enforcement == "must" and (.check | type) == "string"))
   | sort_by([.category, .id])
   | .[]
-  | {id: .id, check: .check}
+  # `binds` (rule-enforcement-at-review-and-merge, D-a) is carried ONLY when the key is PRESENT, so
+  # downstream an explicit `has("binds")` can tell an ABSENT key (advisory: nothing declared) from an
+  # explicit `binds: []` (a human asserted "this check executes no repo file"). Never `// []` here —
+  # that would collapse the two and silently promote an undeclared rule to countable.
+  | {id: .id, check: .check} + (if has("binds") then {binds: .binds} else {} end)
 ' "$combined" 2>/dev/null > "$selected" || true
 
 # ---------------------------------------------------------------------------
@@ -409,17 +467,199 @@ if [ "$MODE" = "list-selected" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# LIVE_HASH — sha256 of the sorted `id\tcheck\n` lines of EXACTLY the set $selected holds above. This
-# is the ONE computation both the stamp WRITE (below, after the loop) and the --if-stamped COMPARISON
+# `binds` helpers (rule-enforcement-at-review-and-merge, D-a). Shared by the LIVE_HASH extension and
+# the --list-gateable classification below. All READ-ONLY: `git ls-files`, `test`, `head -c 2`,
+# sha256 of file content — nothing here executes a check or a bound file.
+# ---------------------------------------------------------------------------
+
+# _rc_path_ok <p> — exit 0 iff <p> is a well-formed repo-relative path string: the SAME write-time
+# rejections /rules add applies to `applies_to` (non-empty; not absolute; not `~`-relative; no `..`;
+# no tab / newline / CR).
+_rc_path_ok() {
+  local p="$1"
+  [ -n "$p" ] || return 1
+  case "$p" in
+    /*|'~'*|*..*|*$'\t'*|*$'\n'*|*$'\r'*) return 1 ;;
+  esac
+  return 0
+}
+
+# _rc_tracked_file <p> — exit 0 iff <p> is a git-TRACKED file path (an index entry EXACTLY <p>,
+# resolved from the repo root; a directory or an untracked / gitignored / outside-the-repo path is
+# not). `core.quotePath=false` so a non-ASCII path compares byte-exact; `--literal-pathspecs` so a
+# token carrying `*`/`?`/`[`/`:(magic)` is matched as a literal name, never as a pattern. The WHOLE
+# listing is compared (no `| head` — under pipefail a truncated multi-line listing would SIGPIPE the
+# producer and hide the answer). Never `[ -e ]` alone.
+_rc_tracked_file() {
+  local p="$1" listed
+  listed="$(git --literal-pathspecs -c core.quotePath=false ls-files --error-unmatch -- "$p" 2>/dev/null </dev/null)" || return 1
+  [ -n "$listed" ] && [ "$listed" = "$p" ]
+}
+
+# _rc_bind_value <p> — the hash-input value for ONE `binds` element: the sha256 of its content, or
+# `MISSING` (tracked but absent from the working tree), or `INVALID` (malformed / untracked / outside
+# the repo). Deterministic for any input; INVALID also drives --list-gateable's `binds_invalid`.
+_rc_bind_value() {
+  local p="$1"
+  _rc_path_ok "$p" || { printf 'INVALID\n'; return 0; }
+  _rc_tracked_file "$p" || { printf 'INVALID\n'; return 0; }
+  if [ -f "$p" ]; then _rc_sha256_file "$p"; else printf 'MISSING\n'; fi
+}
+
+# _rc_binds_lines <record> — one line per `binds` element, LC_ALL=C sorted: `S<TAB><path>` for a
+# string element free of tab/newline/CR, `X<TAB><json>` for anything else (always INVALID). Prints
+# nothing when `binds` is absent / null / not an array / empty — the binds-free hash stays as today.
+_rc_binds_lines() {
+  printf '%s' "$1" | jq -r '
+    if (has("binds") and (.binds | type) == "array") then
+      .binds[]
+      | if (type == "string" and (test("[\t\n\r]") | not)) then "S\t" + . else "X\t" + tojson end
+    else empty end' 2>/dev/null | LC_ALL=C sort
+}
+
+# _rc_hash_line <record> — this record's LIVE_HASH input line: `id\tcheck` (byte-identical to the
+# pre-`binds` checker for a rule whose `binds` is absent / null / `[]` / not an array — every existing
+# stamp stays valid) and, for a non-empty `binds` array, `\t<path>=<sha256|MISSING|INVALID>` appended
+# per element in `_rc_binds_lines` order. A bound file's CONTENT is thereby part of what the
+# confirming human approved: editing it moves the live hash ⇒ `--if-stamped` replays `unstamped`.
+_rc_hash_line() {
+  local rec="$1" line l tag p v blines
+  blines="$(_rc_binds_lines "$rec")"
+  if [ -z "$blines" ]; then
+    # BINDS-FREE: the pre-`binds` pipeline VERBATIM (jq straight into the hash input — no capture, so
+    # not even a jq failure or a byte a command substitution would drop can differ from before).
+    printf '%s' "$rec" | jq -r '[.id, .check] | @tsv' 2>/dev/null
+    return 0
+  fi
+  line="$(printf '%s' "$rec" | jq -r '[.id, .check] | @tsv' 2>/dev/null)" || return 0
+  while IFS= read -r l; do
+    [ -n "$l" ] || continue
+    tag="${l%%$'\t'*}"; p="${l#*$'\t'}"
+    if [ "$tag" = "S" ]; then v="$(_rc_bind_value "$p")"; else v="INVALID"; fi
+    line="$line"$'\t'"$p=$v"
+  done <<EOF
+$blines
+EOF
+  printf '%s\n' "$line"
+}
+
+# _rc_is_interp <tok> — the fixed interpreter-word set: a tracked file token that immediately follows
+# one of these is "invoked" even when it is neither +x nor `#!`-headed.
+_rc_is_interp() {
+  case "$1" in bash|sh|zsh|source|.|python|python3|node|perl|ruby) return 0 ;; esac
+  return 1
+}
+
+# _rc_detect_invoked <check> — the DETECTED INVOKED FILES of a check, one per line, LC_ALL=C sorted,
+# deduplicated: every whitespace-split token (surrounding quotes and a leading `./` stripped) that
+# resolves from the repo root to a git-TRACKED file present in the working tree AND is executable
+# (`test -x`) OR starts with `#!` OR is immediately preceded by an interpreter word (_rc_is_interp).
+# Glob expansion is OFF while splitting (a `*` token must stay a literal token). This is a HEURISTIC
+# that only ever DEMOTES a rule (see the header's --list-gateable honest limits): it cannot see
+# task-runner indirection, transitive calls, `$(…)`/`eval`/globs or interpreter aliases.
+_rc_detect_invoked() {
+  local check="$1" tok t prev="" out=""
+  set -f
+  # shellcheck disable=SC2086 — whitespace-splitting the check into tokens is the point.
+  for tok in $check; do
+    t="$tok"
+    while :; do case "$t" in \'*|\"*) t="${t#?}" ;; *) break ;; esac; done
+    while :; do case "$t" in *\'|*\") t="${t%?}" ;; *) break ;; esac; done
+    t="${t#./}"
+    if [ -n "$t" ] && _rc_path_ok "$t" && _rc_tracked_file "$t" && [ -f "$t" ]; then
+      if [ -x "$t" ] || [ "$(head -c 2 "$t" 2>/dev/null)" = "#!" ] || _rc_is_interp "$prev"; then
+        case $'\n'"$out" in *$'\n'"$t"$'\n'*) : ;; *) out="$out$t"$'\n' ;; esac
+      fi
+    fi
+    prev="$t"
+  done
+  set +f
+  printf '%s' "$out" | LC_ALL=C sort
+}
+
+# _rc_lg_classify <record> <id> <check> — ONE `id<TAB>countable|advisory<TAB><reason>` line. The
+# classification only ever DEMOTES: nothing is counted that a human did not explicitly declare.
+#   binds absent / null                      ⇒ advisory  binds_undeclared
+#   binds not an array / element not a well-formed tracked path ⇒ advisory  binds_invalid
+#   detected invoked files ⊄ binds           ⇒ advisory  unbound:<p>[,<p>]  (sorted, the undeclared ones)
+#   binds == [] and zero detections          ⇒ countable no_invocations
+#   non-empty binds, detected ⊆ binds        ⇒ countable bound:<n>  (n = distinct bound paths)
+_rc_lg_classify() {
+  local rec="$1" rid="$2" rcheck="$3" bkind l tag p v invalid=0 nb=0 bset="" detected unbound="" nl
+  nl=$'\n'
+  bkind="$(printf '%s' "$rec" | jq -r '
+    if (has("binds") | not) then "absent"
+    elif .binds == null then "null"
+    elif (.binds | type) != "array" then "nonarray"
+    else "array" end' 2>/dev/null)"
+  case "$bkind" in
+    absent|null) printf '%s\tadvisory\tbinds_undeclared\n' "$rid"; return 0 ;;
+    array) : ;;
+    *)           printf '%s\tadvisory\tbinds_invalid\n' "$rid"; return 0 ;;
+  esac
+  while IFS= read -r l; do
+    [ -n "$l" ] || continue
+    tag="${l%%$'\t'*}"; p="${l#*$'\t'}"
+    if [ "$tag" != "S" ]; then invalid=1; continue; fi
+    v="$(_rc_bind_value "$p")"
+    [ "$v" != "INVALID" ] || invalid=1
+    case "$nl$bset" in *"$nl$p$nl"*) : ;; *) bset="$bset$p$nl"; nb=$((nb + 1)) ;; esac
+  done <<EOF
+$(_rc_binds_lines "$rec")
+EOF
+  if [ "$invalid" -eq 1 ]; then printf '%s\tadvisory\tbinds_invalid\n' "$rid"; return 0; fi
+  detected="$(_rc_detect_invoked "$rcheck")"
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    case "$nl$bset" in *"$nl$p$nl"*) : ;; *) unbound="${unbound:+$unbound,}$p" ;; esac
+  done <<EOF
+$detected
+EOF
+  if [ -n "$unbound" ]; then
+    printf '%s\tadvisory\tunbound:%s\n' "$rid" "$unbound"
+  elif [ "$nb" -eq 0 ]; then
+    printf '%s\tcountable\tno_invocations\n' "$rid"
+  else
+    printf '%s\tcountable\tbound:%d\n' "$rid" "$nb"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# --list-gateable: print ONE `id<TAB>countable|advisory<TAB><reason>` line per SELECTED id (the same
+# set --list-selected prints, ids carrying a newline/CR dropped), LC_ALL=C sorted, exit 0 — in the
+# SAME early-exit tier as --list-selected: BEFORE the hash / --if-stamped comparison / execute loop /
+# stamp write. It executes NOTHING (the canary case in test-rules-gate-verdict.sh proves it) and is
+# the ONLY place the `binds` / invoked-file classification is computed — this script stays the one
+# parser of a check (skills/rules/SKILL.md §9).
+# ---------------------------------------------------------------------------
+if [ "$MODE" = "list-gateable" ]; then
+  _rc_lg_out="$(mktemp)"
+  trap 'rm -f "$files_list" "$combined" "$selected" "$_rc_lg_out" 2>/dev/null' EXIT
+  while IFS= read -r _rc_rec; do
+    [ -n "$_rc_rec" ] || continue
+    rid="$(printf '%s' "$_rc_rec" | jq -r '.id | select(test("[\n\r]") | not)' 2>/dev/null)"
+    [ -n "$rid" ] || continue
+    rcheck="$(printf '%s' "$_rc_rec" | jq -r '.check' 2>/dev/null)"
+    _rc_lg_classify "$_rc_rec" "$rid" "$rcheck" >> "$_rc_lg_out"
+  done < "$selected"
+  LC_ALL=C sort "$_rc_lg_out"
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# LIVE_HASH — sha256 of the sorted `id\tcheck\n` lines of EXACTLY the set $selected holds above
+# (`_rc_hash_line`: a bound rule's line additionally carries `\t<path>=<sha256|MISSING|INVALID>` per
+# `binds` element; a binds-free rule's line is byte-identical to before `binds` existed). This is the
+# ONE computation both the stamp WRITE (below, after the loop) and the --if-stamped COMPARISON
 # (immediately below) read from — the same in-memory value, so the two can never independently drift
-# on what "the set" means (executable-rule-candidates/01 AC).
+# on what "the set" means (executable-rule-candidates/01 AC; D-a's "extend that ONE line").
 # ---------------------------------------------------------------------------
 LIVE_HASH=""
 _rc_hash_input="$(mktemp)"
 trap 'rm -f "$files_list" "$combined" "$selected" "$_rc_hash_input" 2>/dev/null' EXIT
 while IFS= read -r _rc_rec; do
   [ -n "$_rc_rec" ] || continue
-  printf '%s' "$_rc_rec" | jq -r '[.id, .check] | @tsv' 2>/dev/null
+  _rc_hash_line "$_rc_rec"
 done < "$selected" | LC_ALL=C sort > "$_rc_hash_input"
 LIVE_HASH="$(_rc_sha256_file "$_rc_hash_input")"
 rm -f "$_rc_hash_input" 2>/dev/null

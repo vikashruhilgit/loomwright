@@ -669,6 +669,101 @@ ls_run --confirm >/dev/null
   || no "(ls9) positive control broken: --confirm did not create the canary — (ls3)/(ls4) are VACUOUS"
 rm -f "$CANARY_LS"
 
+# ============================================================================
+echo "== (lg) --list-gateable: read-only countable/advisory classification per selected id =="
+# (rule-enforcement-at-review-and-merge, D-a). The deep fixture matrix lives in
+# test-rules-gate-verdict.sh (ac6); this section pins the flag's contract INSIDE the checker's own
+# suite: exact lines for the four canonical fixtures, the same early-exit tier as --list-selected
+# (nothing executed, no stamp written, empty stdout on an empty store), exit 0.
+RLG="$(new_repo)"
+HLG="$ROOT/home-lg"; mkdir -p "$HLG"
+CANARY_LG="$ROOT/lg_canary_$$"; rm -f "$CANARY_LG"
+mkdir -p "$RLG/scripts"
+printf '#!/bin/sh\nexit 1\n' > "$RLG/scripts/lint.sh"; chmod +x "$RLG/scripts/lint.sh"
+( cd "$RLG" && git add scripts && git commit -qm scripts ) >/dev/null 2>&1
+seed_rules_file "$RLG" "lg.json" "[
+  {\"id\":\"a1\",\"category\":\"t\",\"statement\":\"s\",\"enforcement\":\"must\",\"check\":\"grep -q init f\",\"binds\":[],\"provenance\":{\"source\":\"test\"}},
+  {\"id\":\"a2\",\"category\":\"t\",\"statement\":\"s\",\"enforcement\":\"must\",\"check\":\"grep -q init f\",\"provenance\":{\"source\":\"test\"}},
+  {\"id\":\"b\",\"category\":\"t\",\"statement\":\"s\",\"enforcement\":\"must\",\"check\":\"bash scripts/lint.sh\",\"binds\":[],\"provenance\":{\"source\":\"test\"}},
+  {\"id\":\"c\",\"category\":\"t\",\"statement\":\"s\",\"enforcement\":\"must\",\"check\":\"bash scripts/lint.sh\",\"binds\":[\"scripts/lint.sh\"],\"provenance\":{\"source\":\"test\"}},
+  {\"id\":\"canary\",\"category\":\"t\",\"statement\":\"s\",\"enforcement\":\"must\",\"check\":\"touch $CANARY_LG\",\"binds\":[],\"provenance\":{\"source\":\"test\"}},
+  {\"id\":\"adv\",\"category\":\"t\",\"statement\":\"s\",\"enforcement\":\"advisory\",\"check\":\"touch $CANARY_LG\",\"binds\":[],\"provenance\":{\"source\":\"test\"}}
+]"
+EXPECT_LG="$(printf 'a1\tcountable\tno_invocations\na2\tadvisory\tbinds_undeclared\nb\tadvisory\tunbound:scripts/lint.sh\nc\tcountable\tbound:1\ncanary\tcountable\tno_invocations')"
+out_lg="$( cd "$RLG" && HOME="$HLG" bash "$CHECKER" --list-gateable </dev/null 2>/dev/null )"; rc_lg=$?
+[ "$rc_lg" -eq 0 ] && ok "(lg1) --list-gateable exits 0" || no "(lg1) rc=$rc_lg"
+[ "$out_lg" = "$EXPECT_LG" ] \
+  && ok "(lg2) exactly one id<TAB>class<TAB>reason line per SELECTED id, sorted (advisory rule excluded)" \
+  || no "(lg2) wrong listing: '$out_lg'"
+[ ! -e "$CANARY_LG" ] && [ ! -e "$HLG/$STAMP_REL" ] && ok "(lg3) executes NOTHING and writes NO stamp" \
+  || no "(lg3) canary=$([ -e "$CANARY_LG" ] && echo PRESENT || echo absent) stamp=$([ -e "$HLG/$STAMP_REL" ] && echo PRESENT || echo absent)"
+out_lgc="$( cd "$RLG" && HOME="$HLG" RULES_CHECK_CONFIRM=1 bash "$CHECKER" --confirm --list-gateable </dev/null 2>/dev/null )"
+[ "$out_lgc" = "$EXPECT_LG" ] && [ ! -e "$CANARY_LG" ] && [ ! -e "$HLG/$STAMP_REL" ] \
+  && ok "(lg4) --confirm + ambient confirm cannot turn --list-gateable into an execute run" || no "(lg4) '$out_lgc'"
+RLG0="$(new_repo)"
+o_lg0="$( cd "$RLG0" && HOME="$HLG" bash "$CHECKER" --list-gateable </dev/null 2>/dev/null )"; r_lg0=$?
+[ -z "$o_lg0" ] && [ "$r_lg0" -eq 0 ] && ok "(lg5) empty store ⇒ EMPTY stdout, exit 0 (no 'Checks passed: 0/0' leak)" || no "(lg5) rc=$r_lg0 out='$o_lg0'"
+( cd "$RLG" && HOME="$HLG" bash "$CHECKER" --confirm </dev/null >/dev/null 2>&1 )
+[ -e "$CANARY_LG" ] && ok "(lg6) positive control: plain --confirm on the same store DOES create the canary (lg3/lg4 non-vacuous)" \
+  || no "(lg6) positive control broken — (lg3)/(lg4) are VACUOUS"
+rm -f "$CANARY_LG"
+
+# ============================================================================
+echo "== (bh) binds hash-binding: a bound file's content is in the stamp; binds-free rules hash as before =="
+# (bh1) binds absent / null / [] ⇒ the stamp hash equals the INDEPENDENT id/check-only computation
+# case (g4) already pins — i.e. exactly the pre-`binds` hash (existing stamps stay valid).
+RBH="$(new_repo)"
+HBH="$ROOT/home-bh"; mkdir -p "$HBH"
+seed_rules_file "$RBH" "bh.json" "[
+  {\"id\":\"h-absent\",\"category\":\"t\",\"statement\":\"s\",\"enforcement\":\"must\",\"check\":\"true\",\"provenance\":{\"source\":\"test\"}},
+  {\"id\":\"h-null\",\"category\":\"t\",\"statement\":\"s\",\"enforcement\":\"must\",\"check\":\"true\",\"binds\":null,\"provenance\":{\"source\":\"test\"}},
+  {\"id\":\"h-empty\",\"category\":\"t\",\"statement\":\"s\",\"enforcement\":\"must\",\"check\":\"false\",\"binds\":[],\"provenance\":{\"source\":\"test\"}}
+]"
+( cd "$RBH" && HOME="$HBH" bash "$CHECKER" --confirm </dev/null >/dev/null 2>&1 )
+KEY_BH="$(cd "$RBH" && cd "$(git rev-parse --git-common-dir)" && pwd -P)"
+hash_bh="$(jq -r --arg k "$KEY_BH" '.[$k].hash // ""' "$HBH/$STAMP_REL" 2>/dev/null)"
+TMP_BH="$ROOT/bh_hash_input"
+jq -nr '[{id:"h-absent",check:"true"},{id:"h-null",check:"true"},{id:"h-empty",check:"false"}] | .[] | [.id, .check] | @tsv' \
+  | LC_ALL=C sort > "$TMP_BH"
+exp_bh="$(_t_sha256_file "$TMP_BH")"
+[ -n "$hash_bh" ] && [ "$hash_bh" = "$exp_bh" ] \
+  && ok "(bh1) binds absent / null / [] ⇒ the stamp hash equals the independent id/check-only hash (no binds term — pre-binds stamps stay valid)" \
+  || no "(bh1) written=$hash_bh independent=$exp_bh"
+# (bh2) a NON-EMPTY binds ⇒ `id\tcheck\t<path>=<sha256 of content>` — independently recomputed here.
+RBB="$(new_repo)"
+HBB="$ROOT/home-bb"; mkdir -p "$HBB"
+mkdir -p "$RBB/scripts"
+printf '#!/bin/sh\nexit 1\n' > "$RBB/scripts/lint.sh"; chmod +x "$RBB/scripts/lint.sh"
+( cd "$RBB" && git add scripts && git commit -qm scripts ) >/dev/null 2>&1
+seed_rules_file "$RBB" "bb.json" "[
+  {\"id\":\"bound\",\"category\":\"t\",\"statement\":\"s\",\"enforcement\":\"must\",\"check\":\"bash scripts/lint.sh\",\"binds\":[\"scripts/lint.sh\"],\"provenance\":{\"source\":\"test\"}}
+]"
+( cd "$RBB" && HOME="$HBB" bash "$CHECKER" --confirm </dev/null >/dev/null 2>&1 )
+KEY_BB="$(cd "$RBB" && cd "$(git rev-parse --git-common-dir)" && pwd -P)"
+hash_bb="$(jq -r --arg k "$KEY_BB" '.[$k].hash // ""' "$HBB/$STAMP_REL" 2>/dev/null)"
+sha_lint="$(_t_sha256_file "$RBB/scripts/lint.sh")"
+TMP_BB="$ROOT/bb_hash_input"
+{ jq -nr '{id:"bound",check:"bash scripts/lint.sh"} | [.id, .check] | @tsv' | tr -d '\n'; printf '\tscripts/lint.sh=%s\n' "$sha_lint"; } > "$TMP_BB"
+exp_bb="$(_t_sha256_file "$TMP_BB")"
+[ -n "$hash_bb" ] && [ "$hash_bb" = "$exp_bb" ] \
+  && ok "(bh2) a bound rule's stamp hash equals the independent 'id<TAB>check<TAB>scripts/lint.sh=<sha256>' computation" \
+  || no "(bh2) written=$hash_bb independent=$exp_bb"
+[ -n "$hash_bb" ] && [ "$hash_bb" != "$(_t_sha256_file <(jq -nr '{id:"bound",check:"bash scripts/lint.sh"} | [.id, .check] | @tsv'))" ] \
+  && ok "(bh2b) ...and differs from the id/check-only hash (the bound content really is in it)" || no "(bh2b) bound hash equals the unbound hash"
+out_bb1="$( cd "$RBB" && HOME="$HBB" bash "$CHECKER" --if-stamped </dev/null 2>/dev/null )"
+[ "$(printf '%s\n' "$out_bb1" | tail -n 1)" = "Checks passed: 0/1" ] \
+  && ok "(bh3) before any edit, --if-stamped replays the bound rule (0/1 — it fails)" || no "(bh3) replay=[$out_bb1]"
+( cd "$RBB" && printf '#!/bin/sh\nexit 0\n' > scripts/lint.sh && git commit -qam "edit the bound file" ) >/dev/null 2>&1
+out_bb2="$( cd "$RBB" && HOME="$HBB" bash "$CHECKER" --if-stamped </dev/null 2>/dev/null )"
+[ "$out_bb2" = "$(printf '  [SKIP] all (unstamped)\nChecks passed: 0/0')" ] \
+  && ok "(bh4) editing the BOUND file after stamping ⇒ '[SKIP] all (unstamped)' — the check text alone did not change" \
+  || no "(bh4) replay after the bound edit: [$out_bb2]"
+( cd "$RBB" && git rm -q --cached scripts/lint.sh && git commit -qm untrack ) >/dev/null 2>&1
+out_bb3="$( cd "$RBB" && HOME="$HBB" bash "$CHECKER" --list-gateable </dev/null 2>/dev/null )"
+[ "$out_bb3" = "$(printf 'bound\tadvisory\tbinds_invalid')" ] \
+  && ok "(bh5) untracking the bound file ⇒ --list-gateable demotes the rule to advisory/binds_invalid (tracked-ness is checked with git, not [ -e ])" \
+  || no "(bh5) listing after untracking: [$out_bb3]"
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

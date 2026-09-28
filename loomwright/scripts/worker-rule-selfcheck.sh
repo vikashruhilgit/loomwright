@@ -30,7 +30,9 @@
 #        can only ever replay a set a human already confirmed on this machine.
 #
 # FAIL-CLOSED PARSE of (b) — the `rule:` resolution run-ground-truth.sh adopted in PR #292, including
-# its trailer rule (its header step "(c)2"). rules-check.sh echoes raw check text on its
+# its trailer rule (its header step "(c)2"). Steps 2 and 3 are IMPLEMENTED in the sibling
+# rules-replay-lib.sh (`rules_replay_trailer_ok`, `rules_replay_map_id`), shared with
+# rules-gate-verdict.sh and sourced fail-safe below. rules-check.sh echoes raw check text on its
 # `  [RUN ] <id>: <check>` lines, so a stamped check whose text embeds a newline can pre-print forged
 # lines, and a check can pre-print a forged `  [PASS] <id>` and then kill its parent before the real
 # result line. In order:
@@ -83,6 +85,11 @@ SHOW_MAX=3
 # corrupt HERE (and, for --root below, the stdout contract).
 HERE="$(CDPATH= cd -- "$(dirname "$0")" >/dev/null 2>&1 && pwd)" || exit 0
 CHECKER="$HERE/rules-check.sh"
+
+# The fail-closed replay PARSE (steps 2 and 3 below) lives in the sibling rules-replay-lib.sh, shared
+# with rules-gate-verdict.sh so both consumers judge a replay by the SAME tested code. Sourced
+# FAIL-SAFE: an absent/unsourceable lib is one more silent exit 0 (stdout empty, contract unchanged).
+. "$HERE/rules-replay-lib.sh" 2>/dev/null || exit 0
 
 # Never forward an ambient confirmation to the checker (see DELEGATION (b) above).
 unset RULES_CHECK_CONFIRM
@@ -140,70 +147,11 @@ if grep -Fxq -- "  [SKIP] all (unstamped)" <<<"$RUN_OUT" \
   exit 0
 fi
 
-# Step 2: the trailer rule.
+# Step 2: the trailer rule (rules_replay_trailer_ok — rules-replay-lib.sh).
 MAPPED=0
-_last="${RUN_OUT##*$'\n'}"
-case "$RUN_RC" in
-  0|1)
-    case "$_last" in
-      "Checks passed: "*/*)
-        _nm="${_last#Checks passed: }"
-        _n="${_nm%%/*}"
-        _m="${_nm#*/}"
-        case "$_n$_m" in
-          *[!0-9]*) : ;;
-          *)
-            if [ -n "$_n" ] && [ -n "$_m" ] && [ "$_m" -eq "$LISTED_N" ]; then
-              MAPPED=1
-            fi
-            ;;
-        esac
-        ;;
-    esac
-    ;;
-esac
-
-# _is_listed <id> — exit 0 iff <id> is exactly one of the listed ids (whole line, literal).
-_is_listed() {
-  [ -n "$1" ] || return 1
-  grep -Fxq -- "$1" <<<"$LISTED"
-}
-
-# _map_id <id> — prints pass | fail | unresolved from RUN_OUT (step 3).
-_map_id() {
-  local id="$1" l rest np=0 nf=0 nm=0
-  while IFS= read -r l; do
-    if [ "$l" = "  [PASS] $id" ]; then
-      np=$((np + 1))
-    elif [ "$l" = "  [FAIL] $id" ]; then
-      nf=$((nf + 1))
-    else
-      case "$l" in
-        *"[PASS] $id"*|*"[FAIL] $id"*)
-          rest=""
-          case "$l" in
-            "  [PASS] "*) rest="${l#"  [PASS] "}" ;;
-            "  [FAIL] "*) rest="${l#"  [FAIL] "}" ;;
-          esac
-          if [ -n "$rest" ] && [ "$rest" != "$id" ] && _is_listed "$rest"; then
-            :
-          else
-            nm=$((nm + 1))
-          fi
-          ;;
-      esac
-    fi
-  done <<EOF
-$RUN_OUT
-EOF
-  if [ "$np" -eq 1 ] && [ "$nf" -eq 0 ] && [ "$nm" -eq 0 ]; then
-    printf 'pass\n'
-  elif [ "$nf" -eq 1 ] && [ "$np" -eq 0 ] && [ "$nm" -eq 0 ]; then
-    printf 'fail\n'
-  else
-    printf 'unresolved\n'
-  fi
-}
+if rules_replay_trailer_ok "$RUN_OUT" "$RUN_RC" "$LISTED_N"; then
+  MAPPED=1
+fi
 
 # _emit_line <id> <suffix> — `rule: <id><suffix>`, id truncated with `…` to fit LINE_MAX characters.
 _emit_line() {
@@ -220,7 +168,7 @@ REPORTED=0
 while IFS= read -r id; do
   [ -n "$id" ] || continue
   if [ "$MAPPED" -eq 1 ]; then
-    verdict="$(_map_id "$id")"
+    verdict="$(rules_replay_map_id "$id" "$RUN_OUT" "$LISTED")"   # step 3 — rules-replay-lib.sh
   else
     verdict="unresolved"
   fi
