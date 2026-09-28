@@ -111,9 +111,12 @@
 # the two can never independently drift on what "the set" means.
 #
 # NOT AN UNATTENDED GATE in this slice: this helper is invoked by `/rules check` (human-invoked) and,
-# for --if-stamped only, by Phase 4.5's advisory replay (`skills/self-heal-advisory/SKILL.md`) — which
-# NEVER changes `heal_decision` and enters no fix loop. No enforcement seam calls this with unattended
-# WRITE authority; --if-stamped can only ever replay a set a human already confirmed on this machine.
+# for --if-stamped only, by three advisory consumers: Phase 4.5's replay
+# (`skills/self-heal-advisory/SKILL.md`) and run-ground-truth.sh's `rule:` kind — neither ever changes
+# `heal_decision` or enters a fix loop — and, at worker Step 5, `worker-rule-selfcheck.sh`, whose
+# output becomes REPORT-ONLY `rule:` deviations that never change a worker's `status`. No enforcement
+# seam calls this with unattended WRITE authority; --if-stamped can only ever replay a set a human
+# already confirmed on this machine.
 #
 # --list-selected (plan-time-rule-routing, READ-ONLY enumeration): prints the id of every rule the
 # execute loop WOULD select (enforcement `must` AND a non-null string `check`, after the SAME
@@ -126,9 +129,9 @@
 # stdout is EXACTLY the id list (empty on an empty/absent store). An id containing a newline or CR is
 # OMITTED from the list (it could otherwise inject a second, forged id line, and no one-line
 # `rule: <id>` bullet can name it anyway); a caller comparing the list's length to a later
-# `Checks passed: N/M` total therefore sees a mismatch and fails CLOSED. Consumer: run-ground-truth.sh's
-# `rule:` kind, which learns "is this id checkable?" without ever reading the store itself — this
-# script stays the ONE place that parses a `check`.
+# `Checks passed: N/M` total therefore sees a mismatch and fails CLOSED. Consumers: run-ground-truth.sh's
+# `rule:` kind and worker-rule-selfcheck.sh, which learn "which ids are checkable?" without ever
+# reading the store themselves — this script stays the ONE place that parses a `check`.
 #
 # Usage:  rules-check.sh [--confirm] [--no-cmd] [--if-stamped] [--list-selected]
 # Exit:   0 = ran (or skipped) with zero check FAILURES ; 1 = >=1 selected check FAILED when executed.

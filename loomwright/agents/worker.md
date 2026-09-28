@@ -119,7 +119,8 @@ Implement a single subtask in an isolated git worktree. Operate independently, f
    - Record pass/fail counts
    - If a test fails, diagnose before you fix: add one `test: <test name> — <code wrong | assertion wrong | env>: <why>` entry to `deviations` (and its `## deviations` echo). An assertion edit with no `test:` entry for that test, or one whose diagnosis says `code wrong`, is a review finding. (Honest framing: the `deviations` record is emitted at the END of your run, so this captures the diagnosis itself, not the order of operations — diagnose mentally/in your own reasoning before editing the assertion, then record it.)
 3. If no tests: note "no test infrastructure"
-4. Self-review: check for obvious issues
+4. **House-rule self-check:** run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/worker-rule-selfcheck.sh" --root <tree>` (`<tree>` = the same value as Step 5.5's `verify-provides.sh` call). Empty output ⇒ nothing to do. Otherwise fix each failing rule in your lane, re-run once, and copy the final run's `rule:` lines verbatim into `deviations` (you MAY append `: <why>` within 200 chars). Never parse `rules-check.sh` yourself. REPORT-ONLY: a `rule:` entry never changes `status` or `outputs_gap`.
+5. Self-review: check for obvious issues
 
 ### Step 5.5: Write Self-Summary File
 
@@ -190,11 +191,12 @@ CRITICAL constraints:
 
 ### Step 5.7: Optional — record deviations from plan
 
-OPTIONALLY populate the additive `deviations` field on WORKER_RESULT with short, bounded strings recording where THIS run departed from the brief — up to 12 entries, each up to 200 characters; longer stories belong in `.worker-summary.md` prose, not here. Four kinds, by convention prefixed:
+OPTIONALLY populate the additive `deviations` field on WORKER_RESULT with short, bounded strings recording where THIS run departed from the brief — up to 12 entries, each up to 200 characters; longer stories belong in `.worker-summary.md` prose, not here. Five kinds, by convention prefixed:
 - `plan:` — you did something other than the subtask literally said, and why. Example: `plan: skipped migration down-direction — brief did not ask; flagged open`.
 - `edge:` — an edge case the brief never named and how you handled it. Example: `edge: empty CSV upload — treated as 0 rows, not an error`.
 - `open:` — a decision the brief left open and which way you went. Example: `open: retry backoff — chose exponential, brief did not specify`.
 - `test:` — a failing test's diagnosis (`test: <name> — <code wrong | assertion wrong | env>: <why>`). Example: `test: audit-log format — assertion wrong: asserted the pre-change format`.
+- `rule:` — a failing stamped `must` house rule, produced only by `worker-rule-selfcheck.sh` (Step 5 item 4; bound: `docs/RESULT_SCHEMAS.md` §WORKER_RESULT).
 
 An entry without one of these prefixes is read as `other:` by consumers and is **never rejected** for lacking a prefix — the prefix is a convention, not a gate.
 
@@ -242,7 +244,7 @@ Produce the structured WORKER_RESULT block (see Output Format below).
 - outputs_gap: "{comma-separated missing items, or empty string if all present}"
 - out_of_lane: ["<path you touched outside your own declared lane>", ...]   # array of plain STRINGS (not objects, unlike outputs_verified); `[]` when none   # OPTIONAL, additive at schema_version 2 (D6) — REPORT-ONLY, see Step 5.65; NEVER affects status or outputs_gap; omit the field entirely (or emit `[]`) when your subtask has no `lanes:` declaration or every touched path is in-lane
 - memory_candidates: ["<one-line durable fact>", ...]   # OPTIONAL array of strings — omit the field entirely if no candidates
-- deviations: ["plan: …", "edge: …", …]   # OPTIONAL array of strings, at most 12 entries each at most 200 chars — see Step 5.7; plan:/edge:/open:/test: convention, unprefixed reads as other:, never rejected; REPORT-ONLY, fed to the Phase 4.5 review lens only
+- deviations: ["plan: …", "edge: …", …]   # OPTIONAL array of strings, at most 12 entries each at most 200 chars — see Step 5.7; plan:/edge:/open:/test:/rule: convention, unprefixed reads as other:, never rejected; REPORT-ONLY, fed to the Phase 4.5 review lens only
 - no_changes: true   # OPTIONAL boolean — ONLY for a read-only / verify-only subtask that correctly changed nothing (files_modified, files_created and files_deleted all empty/none); see "Read-only subtasks" below. Omit it otherwise; never pair it with a non-empty files_modified/files_created/files_deleted
 - not_verified: [{surface: "<string>", reason: "<string>"}, …]   # CONDITIONALLY MANDATORY when such a surface exists, OPTIONAL otherwise — see Step 5.75; one item per surface your diff affects that you did not observe running (a rendered `<route>`/view, a CLI path, a consumer of a changed contract); item shape {surface: string, reason: string}, both non-empty; zero items ⇒ omit the field entirely, never `not_verified: []`. REPORT-ONLY, never influences status or outputs_gap.
 - error: none | {brief error description}

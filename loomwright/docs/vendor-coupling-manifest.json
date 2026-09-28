@@ -132,6 +132,7 @@
     "loomwright/scripts/test-telemetry.sh": 3,
     "loomwright/scripts/test-validate-entry.sh": 12,
     "loomwright/scripts/test-webhook.sh": 4,
+    "loomwright/scripts/test-worker-rule-selfcheck.sh": 1,
     "loomwright/scripts/test-write-agent-memory.sh": 32,
     "loomwright/scripts/validate-entry.sh": 8,
     "loomwright/scripts/wait-for-checks.sh": 2,
