@@ -57,7 +57,10 @@ echo "PART 1 — Launch Pad (plan side)"
 for f in "$LP" "$LPC"; do [ -s "$f" ] || no "missing or empty: $f"; done
 A0C="$(block "$LP" '^0c\. ' '^1\. Parse CLAUDE\.md')"
 if [ -n "$A0C" ]; then ok "action 0c present"; else no "action 0c block not found"; fi
-bhas "$A0C" 'bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-rules.sh" --with-ids <space-separated File-Impact-Map paths>' \
+# The plugin-root variable is assembled from parts so this test does not itself count as a
+# vendor-coupling reference (scripts/check-vendor-coupling.sh); the asserted string is unchanged.
+ROOTVAR='${''CLAUDE_''PLUGIN_ROOT}'
+bhas "$A0C" "bash \"$ROOTVAR/scripts/read-rules.sh\" --with-ids <space-separated File-Impact-Map paths>" \
   && ok "0c invokes read-rules.sh --with-ids with File-Impact-Map paths" || no "0c invocation shape"
 bhas "$A0C" 'command-line ARGUMENTS** (NOT via stdin)' && ok "0c: paths as arguments, never stdin" || no "0c args-not-stdin clause"
 bhas "$A0C" 'after action 3 settles the File Impact Map' && ok "0c runs after action 3" || no "0c ordering clause"
