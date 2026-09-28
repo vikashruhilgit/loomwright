@@ -72,7 +72,8 @@ same treatment as rule (9), NOT sourced from any hooks.json prompt string:
       contents NEVER affect any other rule in this file, and it never
       substitutes for or is derived from outputs_gap (rule 8's cross-field
       invariant is unaffected). By convention each entry is prefixed
-      plan:/edge:/open:/test: (unprefixed reads as other:), but the prefix is
+      plan:/edge:/open:/test:/rule: (rule: is emitted only by
+      worker-rule-selfcheck.sh; unprefixed reads as other:), but the prefix is
       a consumer convention, not a validation rule — this script does not
       check for one.
 
