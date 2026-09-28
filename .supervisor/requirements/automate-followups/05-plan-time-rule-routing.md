@@ -90,3 +90,9 @@ Two checks:
   brief-embedded `sha256:` stamp … Do not conflate the two stamps or their storage locations."
 - `scripts/read-rules.sh`: always exits 0, self-gates on `.agent/rules/*.json`, emits nothing on an empty store,
   and never executes a `check`.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-09-28T12:06:30Z
+- **Brief:** .supervisor/jobs/done/2026-09-28-plan-time-rule-routing.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/292
