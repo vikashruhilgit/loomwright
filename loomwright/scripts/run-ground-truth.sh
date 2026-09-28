@@ -102,13 +102,18 @@
 #                    stamp only (skills/rules/SKILL.md §8.1 — two different stamps, never conflated).
 #                    HONEST LIMITS: (i) --if-stamped replays the WHOLE stamped must-set, not just the
 #                    named ids — the pre-existing rules-check contract, a set a human already
-#                    confirmed; this runner REPORTS only the named ids. (ii) in execute mode
-#                    rules-check echoes `  [RUN ] <id>: <check>` before each check, so a crafted check
-#                    can still pre-print a forged `[PASS] <id>` for its OWN id; the duplicate/conflict
-#                    rule turns that into rule_unresolved whenever the real result line also appears,
-#                    and the trailer rule covers the case where it does not. A stamped set's check
-#                    text was confirmed by a human (the stamp hashes `id\tcheck`), which bounds this to
-#                    checks a human already approved.
+#                    confirmed; this runner REPORTS only the named ids. In Supervisor Phase 4.5 a
+#                    brief carrying `rule:` bullets therefore executes the stamped must-set TWICE per
+#                    self-heal iteration: once via the advisory rules-check replay
+#                    (skills/self-heal-advisory/SKILL.md §"Rules-check replay") and once here. Both
+#                    are the same human-approved set; checks with side effects run twice. (ii) in
+#                    execute mode rules-check echoes `  [RUN ] <id>: <check>` before each check, so a
+#                    crafted stamped check can pre-print a forged `[PASS] <id>` for ANY listed id, not
+#                    only its own. The duplicate/conflict rule turns that into rule_unresolved whenever
+#                    the real result line for that id also appears, and the trailer rule covers the
+#                    case where it does not — so another rule's FAIL can be MASKED to unverified, but
+#                    never promoted to pass. A stamped set's check text was confirmed by a human (the
+#                    stamp hashes `id\tcheck`), which bounds this to checks a human already approved.
 #
 # TRUST BOUNDARY (not a sandbox): the runner ITSELF performs no repo writes and makes no network
 # calls — but it is NOT a security boundary. A `cmd:` (or bare) check runs an arbitrary

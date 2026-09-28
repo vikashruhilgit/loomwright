@@ -1354,14 +1354,19 @@ raw shell command or a `<kind>: <target>` line where `kind ∈ {cmd, corpus-task
     the id.
   - `rule_unresolved` (`unverified`) — anything ambiguous: duplicate or conflicting result lines, a
     near-miss line, no line, a missing/mismatched `Checks passed: N/M` trailer, an rc outside {0,1},
-    or a failed `--list-selected` call. A forged or ambiguous line only DEGRADES a result.
+    or a failed `--list-selected` call. A forged or ambiguous line only DEGRADES a result: a stamped
+    check's echoed text can pre-print a forged `  [PASS] <id>` for ANY listed id (not only its own), so
+    another rule's FAIL can be masked to `rule_unresolved`, but never promoted to `pass`.
   - `pass` requires exactly one whole-line `  [PASS] <id>` and no other result line for the id.
 
   A `rule:` bullet carries no shell, so it is machine-authorable (Launch Pad Phase 5 action 6a), is
   never hashed into the brief `sha256:` stamp, and is never flagged by Criterion 14. Its only
   authorization is the USER-SCOPE rules stamp (`skills/rules/SKILL.md` §8.1 — two stamps, never
   conflated). Honest limit: `--if-stamped` replays the WHOLE stamped must-set, not just the named ids;
-  only the named ids are reported. Plan Reviewer **Criterion 17** (`rule_conformance`) fails a brief
+  only the named ids are reported. So when a brief carries `rule:` bullets, Supervisor Phase 4.5 runs
+  the stamped must-set TWICE per self-heal iteration — once via the advisory rules-check replay
+  (`skills/self-heal-advisory/SKILL.md` §"Rules-check replay") and once here; checks with side effects
+  run twice. Plan Reviewer **Criterion 17** (`rule_conformance`) fails a brief
   that omits the `rule: <id>` bullet for an applicable checkable `must` rule.
 
 Supervisor Phase 4.5 passes this section to `run-ground-truth.sh` via `--brief <brief_path>` (falling

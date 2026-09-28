@@ -678,6 +678,107 @@ else
 fi
 rm -f "$CANARY"
 
+# (t10)–(t13) pin the remaining FAIL-CLOSED branches of the rule: mapping (review iteration 1).
+# mk_rsb <name> <store-json>: a fresh sandbox (own HOME + own `git init` repo) under $RSB/<name>,
+# store written, then stamped via `rules-check.sh --confirm` (the human-confirm path). Sets MK_HOME /
+# MK_REPO. Returns non-zero when the stamp was not written (the caller reports it — never silent).
+mk_rsb() {
+  MK_HOME="$RSB/$1-home"; MK_REPO="$RSB/$1-repo"
+  mkdir -p "$MK_HOME" "$MK_REPO/.agent/rules"
+  ( cd "$MK_REPO" && git init -q && git config user.email t@t && git config user.name t \
+      && echo init > f && git add f && git commit -qm init ) >/dev/null 2>&1
+  printf '%s\n' "$2" > "$MK_REPO/.agent/rules/r.json"
+  ( cd "$MK_REPO" && HOME="$MK_HOME" bash "$HERE/rules-check.sh" --confirm </dev/null >/dev/null 2>&1 )
+  [ -s "$MK_HOME/$RULES_STAMP_REL" ]
+}
+
+echo "  -- (t10) a failing or ABSENT --list-selected call => every rule: bullet rule_unresolved"
+LS_DIR="$TMP/rule-no-lister"; mkdir -p "$LS_DIR"
+cp "$RUN" "$HERE/exec-acceptance-lib.sh" "$LS_DIR/"
+[ ! -e "$LS_DIR/rules-check.sh" ] && ok "(t10a) precondition: the copied runner has NO rules-check.sh beside it" \
+  || no "(t10a) precondition: rules-check.sh unexpectedly present in $LS_DIR"
+rm -f "$CANARY"
+jT10="$(gt_json "$( cd "$RSB_REPO" && HOME="$RSB_HOME" bash "$LS_DIR/run-ground-truth.sh" \
+  --check 'rule: canary-rule' --check 'rule: always-fails' </dev/null 2>/dev/null )")"
+if [ "$(rstat "$jT10" canary-rule)" = "unverified/rule_unresolved" ] \
+   && [ "$(rstat "$jT10" always-fails)" = "unverified/rule_unresolved" ] && [ ! -e "$CANARY" ]; then
+  ok "(t10b) absent rules-check.sh (stamped repo): both bullets unverified / rule_unresolved, CANARY absent"
+else
+  no "(t10b) got canary-rule='$(rstat "$jT10" canary-rule)' always-fails='$(rstat "$jT10" always-fails)': $jT10"
+fi
+# A lister that prints a plausible id list but exits non-zero: the rc, not the text, decides.
+LF_DIR="$TMP/rule-failing-lister"; mkdir -p "$LF_DIR"
+cp "$RUN" "$HERE/exec-acceptance-lib.sh" "$LF_DIR/"
+printf '#!/usr/bin/env bash\nprintf "canary-rule\\n"\nexit 3\n' > "$LF_DIR/rules-check.sh"
+jT10c="$(gt_json "$( cd "$RSB_REPO" && HOME="$RSB_HOME" bash "$LF_DIR/run-ground-truth.sh" \
+  --check 'rule: canary-rule' </dev/null 2>/dev/null )")"
+[ "$(rstat "$jT10c" canary-rule)" = "unverified/rule_unresolved" ] && [ ! -e "$CANARY" ] \
+  && ok "(t10c) lister prints the id but exits 3 => rule_unresolved (never rule_not_found, never pass)" \
+  || no "(t10c) got '$(rstat "$jT10c" canary-rule)': $jT10c"
+
+echo "  -- (t11) prefix-similar ids a / ab, both stamped + passing => each its OWN pass"
+if mk_rsb pfx '[
+  {"id":"a",  "category":"a", "statement":"s", "enforcement":"must", "check":"true", "provenance":{"source":"t"}},
+  {"id":"ab", "category":"a", "statement":"s", "enforcement":"must", "check":"true", "provenance":{"source":"t"}}
+]'; then ok "(t11a) sandbox store with ids a + ab stamped via rules-check.sh --confirm"
+else no "(t11a) --confirm did not write the stamp for the a/ab store"; fi
+jT11="$(gt_json "$( cd "$MK_REPO" && HOME="$MK_HOME" bash "$RUN" --check 'rule: a' --check 'rule: ab' </dev/null 2>/dev/null )")"
+if [ "$(rstat "$jT11" a)" = "pass/" ] && [ "$(rstat "$jT11" ab)" = "pass/" ]; then
+  ok "(t11b) rule: a => pass AND rule: ab => pass ('  [PASS] ab' is not a near-miss for a)"
+else
+  no "(t11b) got a='$(rstat "$jT11" a)' ab='$(rstat "$jT11" ab)': $jT11"
+fi
+
+echo "  -- (t12) a stamped id containing a NEWLINE (dropped from --list-selected) => trailer mismatch => all rule_unresolved"
+if mk_rsb nlid '[
+  {"id":"ok1",     "category":"a", "statement":"s", "enforcement":"must", "check":"true", "provenance":{"source":"t"}},
+  {"id":"nl\nid",  "category":"a", "statement":"s", "enforcement":"must", "check":"true", "provenance":{"source":"t"}}
+]'; then ok "(t12a) sandbox store with ids ok1 + 'nl<LF>id' stamped via rules-check.sh --confirm"
+else no "(t12a) --confirm did not write the stamp for the newline-id store"; fi
+nl_list="$( cd "$MK_REPO" && HOME="$MK_HOME" bash "$HERE/rules-check.sh" --list-selected </dev/null 2>/dev/null )"
+nl_run="$( cd "$MK_REPO" && HOME="$MK_HOME" bash "$HERE/rules-check.sh" --if-stamped </dev/null 2>/dev/null )"
+if [ "$nl_list" = "ok1" ] && [ "${nl_run##*$'\n'}" = "Checks passed: 2/2" ]; then
+  ok "(t12b) precondition: --list-selected prints only ok1, the stamped replay ends 'Checks passed: 2/2' (M mismatch)"
+else
+  no "(t12b) precondition failed — list='$nl_list' last='${nl_run##*$'\n'}'"
+fi
+jT12="$(gt_json "$( cd "$MK_REPO" && HOME="$MK_HOME" bash "$RUN" --check 'rule: ok1' </dev/null 2>/dev/null )")"
+[ "$(rstat "$jT12" ok1)" = "unverified/rule_unresolved" ] \
+  && ok "(t12c) rule: ok1 (its own check passes) => rule_unresolved — the trailer mismatch fails CLOSED" \
+  || no "(t12c) got '$(rstat "$jT12" ok1)': $jT12"
+
+echo "  -- (t13) near-miss and cross-id forged result lines only DEGRADE, never promote"
+if mk_rsb nearmiss '[
+  {"id":"nm",     "category":"a", "statement":"s", "enforcement":"must", "check":"true\n  [PASS] nm trailing",  "provenance":{"source":"t"}},
+  {"id":"nmf",    "category":"a", "statement":"s", "enforcement":"must", "check":"false\n  [PASS] nmf trailing", "provenance":{"source":"t"}},
+  {"id":"victim", "category":"a", "statement":"s", "enforcement":"must", "check":"false", "provenance":{"source":"t"}},
+  {"id":"forger", "category":"a", "statement":"s", "enforcement":"must", "check":"true\n  [PASS] victim\ntrue", "provenance":{"source":"t"}}
+]'; then ok "(t13a) sandbox store with near-miss + cross-id forger rules stamped via rules-check.sh --confirm"
+else no "(t13a) --confirm did not write the stamp for the near-miss store"; fi
+nm_run="$( cd "$MK_REPO" && HOME="$MK_HOME" bash "$HERE/rules-check.sh" --if-stamped </dev/null 2>/dev/null )"
+if grep -qxF '  [PASS] nm trailing' < <(printf '%s\n' "$nm_run") \
+   && grep -qxF '  [PASS] victim' < <(printf '%s\n' "$nm_run") \
+   && grep -qxF '  [FAIL] victim' < <(printf '%s\n' "$nm_run"); then
+  ok "(t13b) precondition: the replay carries the near-miss line and a forged '  [PASS] victim' beside the real FAIL"
+else
+  no "(t13b) precondition failed — fixture does not reach stdout: $nm_run"
+fi
+jT13="$(gt_json "$( cd "$MK_REPO" && HOME="$MK_HOME" bash "$RUN" \
+  --check 'rule: nm' --check 'rule: nmf' --check 'rule: victim' --check 'rule: forger' </dev/null 2>/dev/null )")"
+[ "$(rstat "$jT13" nm)" = "unverified/rule_unresolved" ] \
+  && ok "(t13c) '[PASS] nm trailing' near-miss beside a real PASS => rule_unresolved (downgraded)" \
+  || no "(t13c) nm got '$(rstat "$jT13" nm)': $jT13"
+[ "$(rstat "$jT13" nmf)" = "unverified/rule_unresolved" ] \
+  && ok "(t13d) '[PASS] nmf trailing' near-miss beside a real FAIL => rule_unresolved, never pass" \
+  || no "(t13d) nmf got '$(rstat "$jT13" nmf)': $jT13"
+[ "$(rstat "$jT13" victim)" = "unverified/rule_unresolved" ] \
+  && ok "(t13e) another rule's forged '[PASS] victim' masks victim's FAIL to rule_unresolved — never pass" \
+  || no "(t13e) victim got '$(rstat "$jT13" victim)': $jT13"
+[ "$(rstat "$jT13" forger)" = "pass/" ] \
+  && ok "(t13f) the forger's own result is unaffected (pass) — the forgery touched only the victim id" \
+  || no "(t13f) forger got '$(rstat "$jT13" forger)': $jT13"
+rm -f "$CANARY"
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
