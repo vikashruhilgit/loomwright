@@ -105,3 +105,9 @@ pushing, or `bash test-x.sh` alone. A new test is covered without anyone remembe
   and no open PR covers test-egress hermeticity. Related but distinct, all done: red-team-hardening/02
   (production egress consent), red-team-hardening/04 (added the `drain_died` alert), review-remediation/06
   (notifier unit coverage), verify-walkthrough/05 (`/verify --notify`).
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-09-28T05:52:51Z
+- **Brief:** .supervisor/jobs/done/2026-09-28-hermetic-test-egress.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/290
