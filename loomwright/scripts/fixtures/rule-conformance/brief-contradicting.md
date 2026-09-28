@@ -1,8 +1,6 @@
-<!-- FIXTURE (CONTRADICTING — Design decisions use parseFloat/toFixed against the must rule; expect a 17a HIGH rule_conformance FAIL) for Plan Reviewer Criterion 17 (Rule Conformance). Paired with
-     rules/must.json; the APPLICABLE RULES block is `read-rules.sh --with-ids src/payments/refund.ts`
-     run in a sandbox repo holding that store. Pinned by scripts/test-rule-conformance-seam.sh;
-     driven live by the plan-time-rule-routing AC7 probe. Not a real job. -->
-# Supervisor Job: Partial refunds (contradicting)
+<!-- Plan Reviewer Criterion 17 fixture, paired with rules/must.json. Pinned by
+     scripts/test-rule-conformance-seam.sh. Not a real job. -->
+# Supervisor Job: Partial refunds
 
 ## Environment
 - **Project:** fixture-shop (TypeScript, Node 20)

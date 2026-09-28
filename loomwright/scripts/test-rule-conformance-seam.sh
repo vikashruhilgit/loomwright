@@ -106,6 +106,35 @@ echo "PART 3 — fixtures"
 for f in rules/must.json brief-conforming.md brief-contradicting.md brief-omitting.md; do
   [ -s "$FIX/$f" ] && ok "fixture present: $f" || no "fixture missing/empty: $f"
 done
+# Blind fixtures: a live Plan Reviewer probe reads the brief, so no brief may carry its own verdict or
+# label. The answer key lives in the sibling README.md, which a probe never passes to the reviewer.
+HINTS='expect|rule_conformance|17a|17b|conforming|contradicting|omitting'
+for b in conforming contradicting omitting; do
+  if grep -qiE -- "$HINTS" "$FIX/brief-$b.md"; then
+    no "brief-$b.md leaks a verdict/label hint (/$HINTS/i): $(grep -niE -- "$HINTS" "$FIX/brief-$b.md" | head -n1)"
+  else
+    ok "brief-$b.md carries no verdict/label hint (case-insensitive /$HINTS/)"
+  fi
+done
+T_CONF="$(grep -m1 '^# Supervisor Job:' "$FIX/brief-conforming.md")"
+T_CONT="$(grep -m1 '^# Supervisor Job:' "$FIX/brief-contradicting.md")"
+T_OMIT="$(grep -m1 '^# Supervisor Job:' "$FIX/brief-omitting.md")"
+[ -n "$T_CONF" ] && [ "$T_CONF" = "$T_CONT" ] && [ "$T_CONF" = "$T_OMIT" ] \
+  && ok "all three briefs share one neutral title ($T_CONF)" || no "brief titles differ: '$T_CONF' / '$T_CONT' / '$T_OMIT'"
+RM="$FIX/README.md"
+if [ -s "$RM" ]; then
+  R_CONF="$(grep -F '| `brief-conforming.md` |' "$RM")"
+  R_CONT="$(grep -F '| `brief-contradicting.md` |' "$RM")"
+  R_OMIT="$(grep -F '| `brief-omitting.md` |' "$RM")"
+  bhas "$R_CONF" 'PASS: no `rule_conformance` issue' \
+    && ok "README: conforming => PASS, no rule_conformance issue" || no "README conforming verdict row: '$R_CONF'"
+  bhas "$R_CONT" 'FAIL: 17a HIGH `rule_conformance`' \
+    && ok "README: contradicting => FAIL 17a HIGH rule_conformance" || no "README contradicting verdict row: '$R_CONT'"
+  bhas "$R_OMIT" 'FAIL: 17b HIGH `rule_conformance`' \
+    && ok "README: omitting => FAIL 17b HIGH rule_conformance" || no "README omitting verdict row: '$R_OMIT'"
+else
+  no "fixture answer key missing/empty: README.md"
+fi
 if ! command -v jq >/dev/null 2>&1; then
   echo "  skip: jq unavailable — read-rules.sh no-ops by contract, so the store trace is vacuous here."
 else
