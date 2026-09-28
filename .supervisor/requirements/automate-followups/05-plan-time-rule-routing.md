@@ -1,6 +1,6 @@
 # 05 — Rules reach the PLAN: Launch Pad routes applicable rules into the brief, Plan Reviewer gates on them
 
-## Status: pending
+## Status: done
 
 > **Origin (2026-09-26).** Owner question after twin-loop/08 shipped (PR #267): *"why are these only for after
 > implementation, why not at planning and at the time of working as well?"* 08 gave the substrate its trust key
