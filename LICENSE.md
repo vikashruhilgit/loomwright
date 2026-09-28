@@ -2,7 +2,7 @@ Required Notice: Copyright (c) 2025-2026 Vikash Ruhil (https://github.com/vikash
 
 Licensor Line of Business: Loomwright and Loomwright Studio: AI agent orchestration, code review, and developer workflow automation tools (https://github.com/vikashruhilgit/loomwright)
 
-Versions of this repository published before this license was added were distributed under the MIT License, as declared in their plugin manifests at the time, and those earlier versions remain available under those terms. Every version from Loomwright 15.108.2 onward is licensed under the PolyForm Shield License 1.0.0 below.
+Versions of this repository published before this license was added were distributed under the MIT License, as declared in their plugin manifests at the time, and those earlier versions remain available under those terms. Every version from Loomwright 15.108.3 onward is licensed under the PolyForm Shield License 1.0.0 below.
 
 ---
 
