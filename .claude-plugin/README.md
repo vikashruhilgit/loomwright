@@ -598,7 +598,7 @@ Yes. Your code stays local. Agent memory is stored in `.claude/agent-memory/` on
 
 ## License
 
-MIT License
+Loomwright is **source-available** under the [PolyForm Shield License 1.0.0](../LICENSE.md). You may use, modify, and share it for any purpose, including at work and inside your company, except to provide a product that competes with Loomwright or with a product the licensor provides using it. Commercial rights stay with the author. Versions published before 15.108.3 were released under MIT and remain available under those terms.
 
 ---
 

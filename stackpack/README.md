@@ -47,4 +47,4 @@ See `skills/SKILLS_INDEX.md` for versions and token estimates.
 
 ## License
 
-MIT
+Source-available under the [PolyForm Shield License 1.0.0](../LICENSE.md), the same license as the rest of this repository. Versions published before this change were released under MIT and remain available under those terms.
