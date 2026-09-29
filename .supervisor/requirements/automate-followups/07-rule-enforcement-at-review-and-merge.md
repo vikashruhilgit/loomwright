@@ -136,3 +136,9 @@ must stay advisory, reported as such, never silently counted as a pass.
 - **D4 — yes.** Amend CLAUDE.md §"Failure-Mode Invariants" in the same change: a stamped rule check is a
   correctness gate, not an advisory emitter. Grep the old wording repo-wide.
 - **Revisit trigger overridden.** Build now; the gate is dormant on this repo until a checkable `must` rule exists.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-09-28T23:24:23Z
+- **Brief:** .supervisor/jobs/done/2026-09-28-rule-enforcement-at-review-and-merge.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/296
