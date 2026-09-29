@@ -61,10 +61,15 @@
 #       invocation fragment — zero means (C) is vacuous there and FAILS. This pass also runs (C)'s
 #       sink check on every args-bearing surface, which brings skills/async-orchestration/SKILL.md
 #       (args-bearing but not in SEAMS) into (C).
-#   (C-mut) MUTATION CONTROL: a temp copy of agents/code-reviewer.md with ` | bash` added to the real
-#       invocation (inside its code span, and at the end of the line) must be flagged by the SAME
-#       seam_c_scan, while the unmutated original passes (positive control). An empty or unchanged
-#       mutant is a FAILURE, never a skip.
+#       A pipe into a shell placed right AFTER an invocation's closing backtick is outside that
+#       fragment, so it is checked separately and ALSO unconditionally (seam_c_scan pass 1b) — the
+#       `never` allowlist cannot hide it on a line that carries a reader invocation.
+#   (C-mut) MUTATION CONTROL: temp copies with ` | bash` added to a real invocation must be flagged by
+#       the SAME seam_c_scan, while each unmutated original passes (positive control): on
+#       agents/code-reviewer.md inside its code span and at the end of the line; on
+#       agents/execute-manager.md and skills/self-heal-advisory/SKILL.md right after the closing
+#       backtick of a line that carries "never …" prose. An empty or unchanged mutant is a FAILURE,
+#       never a skip.
 #
 # Plus (D) INVOCATION SHAPE, asserted per surface CLASS rather than uniformly, because the seams
 # genuinely differ in kind — a uniform grep here would be either vacuous or wrong:
@@ -163,11 +168,20 @@ seam_c_is_sink() {
 #      No allowlist applies here: the seams state their invariant in prose on the SAME line as the
 #      invocation ("args, never stdin", "never pipe/eval/…"), and a line-level allowlist once skipped
 #      the Code Reviewer's and execute-manager's only invocation lines entirely, leaving (C) vacuous.
+#   1b. AFTER THE SPAN — pass 1 sees only the backtick-delimited fragment, so a sink appended right
+#      AFTER an invocation's closing backtick (`bash … read-rules.sh <paths>` | bash) is outside it. A
+#      line whose invocation span is followed ANYWHERE later on the line by a pipe into a shell
+#      (`|`/`|&` into bash/sh/zsh/dash — $SEAM_C_AFTER_SPAN_RE) is flagged UNCONDITIONALLY, before the
+#      pass-2 allowlist: the execute-manager and self-heal-advisory invocation lines both carry
+#      "never …" prose, and the allowlist once hid exactly this shape there. Limit: only the
+#      pipe-to-shell sink is checked in that remainder — `eval`/`source` are common NEGATED prose words
+#      on these lines and would false-positive; they stay covered inside the span by pass 1.
 #   2. WHOLE LINES — every other read-rules.sh line, with lines that NEGATE execution (`never`/`NEVER`,
 #      the seams' invariant phrasing) allowlisted: a negated assertion is not a violation. Deliberately
 #      NOT allowlisting a bare `not`/`NOT`/`# comment` — too broad. The allowlist can no longer hide an
 #      invocation, because pass 1 already inspected it.
 # Plain read loops over here-strings — no `printf | grep -q` (SIGPIPE under pipefail).
+SEAM_C_AFTER_SPAN_RE='bash [^`]*read-rules\.sh[^`]*`.*\|&?[[:space:]]*(ba|z|da)?sh([^[:alnum:]_]|$)'
 seam_c_scan() {
   local f="$1" line frag
   SEAM_C_LEAK=""; SEAM_C_INVOC=0; SEAM_C_LINES=0
@@ -178,6 +192,7 @@ seam_c_scan() {
       SEAM_C_INVOC=$((SEAM_C_INVOC + 1))
       if [ -z "$SEAM_C_LEAK" ] && seam_c_is_sink "$frag"; then SEAM_C_LEAK="$frag"; fi
     done <<< "$(grep -oE '[^`]*bash [^`]*read-rules\.sh[^`]*' <<< "$line")"
+    if [ -z "$SEAM_C_LEAK" ] && [[ "$line" =~ $SEAM_C_AFTER_SPAN_RE ]]; then SEAM_C_LEAK="$line"; fi
     case "$line" in *never*|*NEVER*) continue ;; esac
     SEAM_C_LINES=$((SEAM_C_LINES + 1))
     if [ -z "$SEAM_C_LEAK" ] && seam_c_is_sink "$line"; then SEAM_C_LEAK="$line"; fi
@@ -309,43 +324,51 @@ else
   rm -f "$MUT_D"
 fi
 
-# (C-mut) MUTATION CONTROL for (C) on agents/code-reviewer.md: pipe the REAL reader invocation into
-# `bash` in a temp copy — once inside its code span (right after the path placeholder) and once
-# appended to the end of the invocation line — and run the SAME seam_c_scan on each mutant. Each
-# mutant MUST be flagged while the unmutated original is not (positive control). An INVALID mutant
-# (empty, or byte-identical to the original — the sed matched nothing) is a FAILURE, never a skip.
-if [ ! -f "$CR" ]; then
-  no "(C-mut) agents/code-reviewer.md not found at $CR"
-else
-  MUT_C="$(mktemp)"
-  for cmode in in-span end-of-line; do
-    if [ "$cmode" = in-span ]; then
-      sed -E 's#(read-rules\.sh"[[:space:]]*<[^<>]*>)#\1 | bash#' "$CR" > "$MUT_C"
-    else
-      sed -E '/read-rules\.sh"[[:space:]]*<[^<>]*>/ s#$# | bash#' "$CR" > "$MUT_C"
-    fi
-    if [ ! -s "$MUT_C" ]; then
-      no "(C-mut:$cmode) INVALID mutant: the mutated copy of agents/code-reviewer.md is EMPTY"
-    elif cmp -s "$CR" "$MUT_C"; then
-      no "(C-mut:$cmode) INVALID mutant: identical to the original — the invocation sed matched nothing"
-    else
-      ok "(C-mut:$cmode) mutant is valid (non-empty and differs from the original)"
-      seam_c_scan "$MUT_C"
-      if [ -n "$SEAM_C_LEAK" ]; then
-        ok "(C-mut:$cmode) CONFIRMED: piping the real reader invocation into bash makes (C) flag the mutant"
-      else
-        no "(C-mut:$cmode) REFUTED: a \`| bash\` on the real invocation still passes (C) — the exec-sink check is vacuous here"
-      fi
-    fi
-  done
-  rm -f "$MUT_C"
-  seam_c_scan "$CR"
-  if [ -z "$SEAM_C_LEAK" ]; then
-    ok "(C-mut) positive control: the unmutated agents/code-reviewer.md passes (C)"
-  else
-    no "(C-mut) positive control FAILED: the unmutated agents/code-reviewer.md is flagged by (C): $SEAM_C_LEAK"
+# (C-mut) MUTATION CONTROL for (C): pipe a REAL reader invocation into `bash` in a temp copy and run
+# the SAME seam_c_scan on each mutant. Each mutant MUST be flagged while the unmutated original is not
+# (positive control). An INVALID mutant (empty, or byte-identical to the original — the sed matched
+# nothing) is a FAILURE, never a skip. Modes:
+#   - in-span / end-of-line on agents/code-reviewer.md (inside its code span, right after the path
+#     placeholder; appended to the end of the invocation line — a line WITHOUT "never" prose).
+#   - after-span on agents/execute-manager.md and skills/self-heal-advisory/SKILL.md: ` | bash`
+#     inserted right after the invocation's CLOSING backtick, on lines that DO carry "never …" prose —
+#     the shape pass 1 cannot see and the pass-2 allowlist once hid (seam_c_scan pass 1b).
+# c_mut_run <label> <file> <sed-ERE-script>
+c_mut_run() {
+  local label="$1" src="$2" expr="$3" mut rel
+  rel="$(basename "$(dirname "$src")")/$(basename "$src")"
+  if [ ! -f "$src" ]; then
+    no "(C-mut:$label) $rel not found at $src"
+    return 0
   fi
-fi
+  mut="$(mktemp)"
+  sed -E "$expr" "$src" > "$mut"
+  if [ ! -s "$mut" ]; then
+    no "(C-mut:$label) INVALID mutant: the mutated copy of $rel is EMPTY"
+  elif cmp -s "$src" "$mut"; then
+    no "(C-mut:$label) INVALID mutant: identical to the original — the invocation sed matched nothing"
+  else
+    ok "(C-mut:$label) mutant of $rel is valid (non-empty and differs from the original)"
+    seam_c_scan "$mut"
+    if [ -n "$SEAM_C_LEAK" ]; then
+      ok "(C-mut:$label) CONFIRMED: piping the real reader invocation in $rel into bash makes (C) flag the mutant"
+    else
+      no "(C-mut:$label) REFUTED: a \`| bash\` on the real invocation in $rel still passes (C) — the exec-sink check is vacuous here"
+    fi
+  fi
+  rm -f "$mut"
+  seam_c_scan "$src"
+  if [ -z "$SEAM_C_LEAK" ]; then
+    ok "(C-mut:$label) positive control: the unmutated $rel passes (C)"
+  else
+    no "(C-mut:$label) positive control FAILED: the unmutated $rel is flagged by (C): $SEAM_C_LEAK"
+  fi
+}
+C_MUT_AFTER_SPAN='s#(bash [^`]*read-rules\.sh[^`]*<[^`<>]*>[^`]*`)#\1 | bash#'
+c_mut_run in-span     "$CR" 's#(read-rules\.sh"[[:space:]]*<[^<>]*>)#\1 | bash#'
+c_mut_run end-of-line "$CR" '/read-rules\.sh"[[:space:]]*<[^<>]*>/ s#$# | bash#'
+c_mut_run after-span  "$PLUGIN_ROOT/agents/execute-manager.md" "$C_MUT_AFTER_SPAN"
+c_mut_run after-span  "$PLUGIN_ROOT/skills/self-heal-advisory/SKILL.md" "$C_MUT_AFTER_SPAN"
 
 # The POINTER surface: no literal invocation, so assert the non-negotiable it delegates instead.
 SUP="$PLUGIN_ROOT/agents/supervisor.md"
