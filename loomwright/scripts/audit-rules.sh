@@ -67,6 +67,17 @@
 # handful of rules, not evidence the store is sound, and this script says so IN ITS OWN OUTPUT rather
 # than leaving the caveat in a doc nobody reads next to the number.
 #
+# REVISIT TRIGGER (automate-followups/09). When the store holds at least one STANDING `must` rule
+# whose `check` is a non-empty string (the exact complement, among `must` rules, of `no_mechanism` —
+# the same `ck_empty` predicate, not a second copy) AND the parked file named by
+# $REVISIT_TRIGGER_08 exists under <root>, the report gains a `## Revisit triggers` section with ONE
+# column-0 `rules_gate_trigger:` line naming that file, printed just before `## Store integrity`.
+# It is READ-ONLY (`test -f` only — the proposed file is never opened, read, moved or stamped; no
+# `check` is executed, the predicate is the same static string test `no_mechanism` uses) and it is
+# NEVER EXIT-BEARING: it touches none of n_block / n_adv / n_unk and never changes the exit status.
+# Otherwise nothing new is printed. Generalising this into a watcher over every hand-authored
+# `proposed/` doc is a recorded possible follow-up, deliberately not built here.
+#
 # Usage:
 #   audit-rules.sh [--root <dir>] [--rules-dir <dir>]
 #     --root <dir>        repo root paths are resolved against (default: git toplevel, else $PWD)
@@ -85,6 +96,9 @@ set -uo pipefail   # `set -e` deliberately omitted: this script COLLECTS finding
                    # verdict would truncate the report at the first finding.
 
 PROG="audit-rules.sh"
+# REVISIT TRIGGER target (automate-followups/09) — repo-relative, resolved against $ROOT after the
+# `cd "$ROOT"` below; only ever `test -f`-ed (see the header's REVISIT TRIGGER paragraph).
+REVISIT_TRIGGER_08=".supervisor/requirements/proposed/automate-followups-08-setup-rules-ci-offer.md"
 
 # ---------------------------------------------------------------------------
 # LOAD GUARD. Copied in SUBSTANCE from add-rule.sh's `_ve_load_validator` — a second implementation
@@ -567,6 +581,7 @@ done < "$MALFORMED"
 # and a check that read fd 0 would consume the rules it is being run over.
 # ---------------------------------------------------------------------------
 n_rules=0; n_must=0; n_dead=0; n_skipped=0
+n_must_check=0   # REVISIT TRIGGER's K: standing `must` rules whose check is a non-empty string
 ERR="$WORK/err"
 while IFS=$'\t' read -r kind rid r_cat r_enf r_ckk r_ckv r_route r_src r_added r_fi stmt; do
   [ "$kind" = "RULE" ] || continue
@@ -673,6 +688,10 @@ while IFS=$'\t' read -r kind rid r_cat r_enf r_ckk r_ckv r_route r_src r_added r
         "enforcement is \`must\` but \`check\` is a whitespace-only string — a mechanism in name only" \
         "enforcement=must check=\"$r_ckv\" (read as data; NOT executed by this audit)" \
         "$REC_CURATE Add a real \`--check\` to the replacement, or downgrade it to \`--enforcement advisory\`."
+    else
+      # ck_empty == 0 ⇔ a non-empty check string (r_ckk is only ever null|string): the REVISIT
+      # TRIGGER's K counts it. Read as data; never executed. Never touches n_block/n_adv/n_unk.
+      n_must_check=$((n_must_check + 1))
     fi
   fi
 
@@ -852,6 +871,13 @@ else
   printf 'in any category is a small-N result and is not evidence that category is clean.\n'
 fi
 printf '\n'
+
+# REVISIT TRIGGER (header paragraph). `test -f` only; prints nothing unless it fires; exit-neutral.
+if [ "$n_must_check" -ge 1 ] && test -f "$ROOT/$REVISIT_TRIGGER_08"; then
+  printf '## Revisit triggers\n\n'
+  printf 'rules_gate_trigger: %s must rule(s) now carry a check — %s is now actionable (promotion is a human moving it out of proposed/, see its Revisit trigger)\n\n' \
+    "$n_must_check" "$REVISIT_TRIGGER_08"
+fi
 
 printf '## Store integrity\n\n'
 if [ "$FP_BEFORE" = "$FP_AFTER" ]; then

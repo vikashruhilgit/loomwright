@@ -270,7 +270,7 @@ This is a **security distinction wearing two similar names**, so it is stated no
 | Subject | runs the **rules against the repo** | examines the **store for correctness** |
 | A rule's `check` value | **EXECUTED**, behind a human confirmation gate | **NEVER executed** — read as data, statically linted |
 | Sole mechanism | `rules-check.sh` — **the sole executor** | `audit-rules.sh` — executes nothing |
-| Caller | **human-invoked only** (§9) | safe for **any unattended caller**, zero code-execution risk |
+| Caller | **human-invoked only** (§9) | safe for **any unattended caller**, zero code-execution risk — its first unattended caller is Phase 4.5, via `rules-audit-line.sh` (§11.7) |
 
 The audit's only interest in a `check` string is **static**: is it absent, is it whitespace-only (`no_mechanism`, §11.4). It never runs, evals, sources, or `bash -c`s one. **The §9 trust boundary extends unchanged to the audit** — this verb adds a second *read-only consumer* of `check`, never a second executor. Any future change that gives the audit an execution path breaks §9 and is out of contract; the suite proves the invariant with a `check` whose value would create a canary file and asserts the canary never appears.
 
@@ -306,6 +306,12 @@ Two further conditions are reported because the fail-safe reader swallows them *
 ### §11.6 — Small-N honesty belongs in the OUTPUT, not only in a doc
 
 The audit **must state the store size and frame a zero-finding result as a small-N result in its own output**, adjacent to the number, rather than leaving the caveat in a document nobody reads next to it. "Zero blocking findings over N rules" establishes that these checks found nothing to report in **these N rules** — it establishes nothing about rules not in the store, nothing about conditions none of these N rules can exhibit, and nothing about the two advisory checks, whose clean verdict is explicitly not proof of absence. A run that prints `0` without that framing is reporting a result it did not earn.
+
+### §11.7 — Revisit trigger and the Phase 4.5 caller
+
+**Revisit trigger (automate-followups/09).** When the store holds at least one STANDING `must` rule whose `check` is a non-empty string — the complement, among `must` rules, of `no_mechanism` (§11.4), computed from the SAME predicate — AND the parked `.supervisor/requirements/proposed/automate-followups-08-setup-rules-ci-offer.md` exists under the audited root, the report gains a `## Revisit triggers` section with ONE column-0 `rules_gate_trigger:` line naming that file (just before `## Store integrity`); otherwise nothing new is printed. It is **read-only** — the engine only `test -f`s the proposed file and never opens, moves or stamps it, and it executes no `check` — and it is **never exit-bearing**: the §11.5 exit contract and every finding count are unchanged. Promotion stays a human act. The condition is stated once, in `audit-rules.sh`'s header; a watcher over every hand-authored `proposed/` doc is a recorded possible follow-up, deliberately not built.
+
+**The Phase 4.5 caller.** Phase 4.5 runs this engine once per run through `scripts/rules-audit-line.sh` (`skills/self-heal-advisory/SKILL.md` §"Rules-store audit"), a deterministic always-exit-0 helper that maps the report to exactly one advisory `rules_audit: clean | findings <n> (<kinds>) | unexamined` line — allow-listed, so could-not-examine (§11.5) is `unexamined`, NEVER `clean` — and echoes the `rules_gate_trigger:` line as a second line when present. It never changes `heal_decision`, never enters the review-and-fix loop, and never gates; the engine still executes nothing (§11.2).
 
 ---
 

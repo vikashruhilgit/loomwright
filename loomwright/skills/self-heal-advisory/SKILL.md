@@ -324,9 +324,9 @@ reviewer prompt only. It runs on **every** Phase 4.5 iteration (not only the fir
 
 ## Post-review advisory checks
 
-Run all three after the Code Reviewer loop has completed (regardless of
-`heal_decision`); they populate the `contract_conformance`, `benchmark_result`, and
-`ground_truth` objects consumed by the completion-tail "Emit SUPERVISOR_RESULT" step (step 5) in Part 2 below.
+Run the checks in this section after the Code Reviewer loop has completed (regardless of
+`heal_decision`); the contract-conformance, benchmark and ground-truth checks populate the `contract_conformance`, `benchmark_result`, and
+`ground_truth` objects consumed by the completion-tail "Emit SUPERVISOR_RESULT" step (step 5) in Part 2 below. (§"Rules-check replay" is the exception — it runs per review-and-fix iteration; §"Rules-store audit" runs once, here, and feeds only a report line.)
 
 ### Contract-conformance check (READ path — runs after the Code Reviewer pass)
 
@@ -551,6 +551,28 @@ record_decision(phase: SELF_HEAL, decision: rules_check_line, rationale: "rules 
 - **The helper always exits 0** — a verdict, including `unreadable`, is a normal outcome and never fails the phase; the CONSUMER (Part 2) decides.
 - **Never a second review pass.** It reads no diff and asks no question — it replays a command a human already ran and confirmed themselves, on their own machine; it runs once per iteration only because a fix can change what the command observes.
 
+### Rules-store audit (automate-followups/09 — advisory, NEVER gates)
+
+Re-validate the committed `.agent/rules/` store itself, once per Phase 4.5 run, through ONE deterministic always-exit-0 helper, `scripts/rules-audit-line.sh`, which runs the read-only `audit-rules.sh` engine (`skills/rules/SKILL.md` §11) over the feature-branch checkout and maps its report to exactly one `rules_audit:` line (plus an optional `rules_gate_trigger:` line). The engine re-runs the write-time correctness checks plus the store-wide ones (the finding-kind list is owned by `audit-rules.sh` / `skills/rules/SKILL.md` §11 — not restated here). It EXECUTES NOTHING: every rule `check` is read as text and statically linted, never run — which is why this step has no `$NO_CMD_FLAG` valve and no stamp interplay (there is no command to disable and nothing a human must have confirmed).
+
+> **HARD ADVISORY CONTRACT — this check NEVER changes a gate.** Exactly like the contract-conformance check and the ground-truth execution above, the rules-store audit is **advisory only**: it **NEVER changes `heal_decision`**, **NEVER triggers a fix iteration**, and **NEVER blocks the PR**. Nothing it reports enters Part 2's findings or the review-and-fix loop, and nothing escalates. It is read-only (the helper never writes; the engine has no write mode) and the helper ALWAYS exits 0, so this step can never fail the phase. Unlike §"Rules-check replay" above (a correctness gate since automate-followups/07, re-run every iteration), this step runs ONCE per Phase 4.5 run, at the same post-review advisory point as the other checks in this section — it lints the store, not the diff, and adds no loop coupling.
+
+```
+out = run(bash "${CLAUDE_PLUGIN_ROOT}/scripts/rules-audit-line.sh" --root <the feature-branch checkout>)
+# Contract: always exit 0; stdout is EXACTLY one or two lines (mapping: the helper's own header — not restated here).
+lines = out.stdout split on newlines
+rules_audit_line        = lines[0] if lines[0] starts with "rules_audit: " else "rules_audit: unexamined"   # an absent/garbled helper never reads as clean
+rules_gate_trigger_line = lines[1] if lines[1] starts with "rules_gate_trigger: " else none
+
+record_decision(phase: SELF_HEAL, decision: rules_audit_line [+ "; " + rules_gate_trigger_line when present], rationale: "read-only store audit (audit-rules.sh via rules-audit-line.sh)")
+```
+
+**Rules-store audit state trace** (exactly one `rules_audit:` line per run):
+- `rules_audit: clean` — the engine examined the store and found no BLOCKING finding (a store with no `.agent/rules/` directory is also `clean`: zero rules, a small-N result). `heal_decision` is unchanged; nothing enters Part 2's findings or the loop; nothing escalates.
+- `rules_audit: findings <n> (<kinds>)` — the engine reported `<n>` BLOCKING store findings of the listed kinds (e.g. `findings 1 (no_mechanism)`). `heal_decision` is unchanged; the findings are NOT synthesized into Part 2's findings, NOT fed to the review-and-fix loop, and NOT escalated — a human reads the line and runs `/rules audit` for the evidence and the recommended `/rules add --supersedes` / retract action.
+- `rules_audit: unexamined` — the engine could not examine the store (its exit 2, an absent or garbled engine/helper, a disagreeing report). Could-not-examine is NEVER reported as `clean`. `heal_decision` is unchanged; nothing enters Part 2's findings or the loop; nothing escalates.
+- `rules_gate_trigger: …` (optional second line, any state) — the store now holds at least one `must` rule with a non-empty `check` while the parked `proposed/automate-followups-08-…` file still exists: that parked item is now actionable. Promotion stays a human act; nothing is moved, stamped or gated.
+
 ---
 
 ### Contract builder (WRITE path — completion tail only)
@@ -708,7 +730,7 @@ The contract-conformance result, the benchmark result, and the ground-truth resu
 > **completion-tail guard** and the phase **Output** block). Zero behavior change: every gate,
 > error value, bound, and grep-stable string keeps identical semantics. The Supervisor Reads this
 > file at Phase 4.5 entry (still NOT preloaded) and executes this Part as the protocol authority.
-> Step numbering (on-entry steps 1–4, cleanup step 5, completion-tail steps 0–6 incl. 2.5 / 4.5 /
+> Step numbering (on-entry steps 1–4, cleanup step 5, and the completion-tail steps below, incl. 2.5 / 4.5 /
 > 5.5) is preserved verbatim, so cross-file references to e.g. "Phase 4.5 step 5.5" remain valid —
 > they now resolve here. The `SUPERVISOR_RESULT` block definition stays in `agents/supervisor.md`
 > §"Result Block (SUPERVISOR_RESULT)"; the completion-tail guard (step 0) stays in the agent file —
@@ -1263,6 +1285,7 @@ else:
 
 6. **Advisory Twin delta line (informational ONLY):** echo one human-readable line via `format-twin-delta.sh`, built from the `contract_conformance` / `benchmark_result` values computed above — exact invocation in Part 1 §"Advisory Twin delta line" above. The script always exits 0; the line never gates, never alters the PR, never affects control flow.
 7. **Rules-check replay line (report line, executable-rule-candidates/01; its gating effect lives in Part 2, automate-followups/07):** surface the LAST iteration's `rules_check_line` computed per Part 1 §"Rules-check replay" above (`passed n/m` | `unstamped` | `cmd_disabled` | `none` | `unresolved <ids>` | `unreadable`, plus any `rules_advisory: <id> (<reason>)` clauses) alongside the Advisory Twin delta line from step 6 — same completion-tail moment, same advisory-report placement, no new mechanism of its own. It goes in the Phase 4.5 report only, not the PR body (written at Phase 4 FINALIZE, before this phase runs). The LINE itself never alters the PR or control flow and (unlike step 6's `contract_conformance`/`benchmark_result` pair) carries NO nested `SUPERVISOR_RESULT` field and NO flat `session_end` field; the gate it reports on already acted inside the loop — a countable stamped `fail` became BLOCKING `rule_findings` (so a `heal_decision: PASS` means every countable stamped check passed or none was countable), and `unresolved`/`unreadable` already escalated with `rules_gate_unresolved`.
+8. **Rules-store audit line (report line ONLY, automate-followups/09):** surface the `rules_audit_line` computed ONCE per run per Part 1 §"Rules-store audit" above (`clean` | `findings <n> (<kinds>)` | `unexamined`), followed by `rules_gate_trigger_line` when present, alongside step 7's line — same completion-tail moment, same placement contract step 7 states: the Phase 4.5 report only, NOT the PR body, NO nested `SUPERVISOR_RESULT` field, NO flat `session_end` field. Unlike step 7, there is no gate behind this line at all: it never alters `heal_decision`, the PR, or control flow.
 
 **Hard-signal fields (System Twin / ST3 — written in BOTH shapes):**
 
