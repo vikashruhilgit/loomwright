@@ -459,7 +459,7 @@ For **either** kind, the Supervisor MUST:
 
 **Purpose:** Run a holistic Code Reviewer pass on the integrated feature branch; auto-fix bounded BLOCKING/HIGH `new` issues; escalate if anything remains.
 
-**Protocol authority (read at phase entry):** `Read("${CLAUDE_PLUGIN_ROOT}/skills/self-heal-advisory/SKILL.md")` and execute its **Part 2 — Phase 4.5 SELF_HEAL Loop Protocol** as the authoritative procedure: on-entry actions (phase transition, the `prior_churn`/`house_rules`/`brief_conformance` pre-review advisory enrichments, invariant-tracking init, resume-thrash guard, `--skip-self-heal` check), base-mismatch cleanup, the bounded review-and-fix loop (reviewer + fix-task spawn contracts), Outcomes Rubric grading, the System Twin advisory checks, the advisory red-team lens, fix-task crash handling, the completion-tail procedure (steps 1–6), hard-signal dual emission, and the error-handling table. Part 1 of the same file holds the advisory-only machinery. The skill is deliberately NOT preloaded — one Read here keeps this agent prompt gate-focused. Also `Read("${CLAUDE_PLUGIN_ROOT}/skills/state-management/SKILL.md")` — needed for §"Session Logging"'s exact `session_end` JSONL line shape (the base `ts`/`event`/`type`/`task_id`/`status`/`plugin_version`/`knowledge_sources_used` wrapper): self-heal-advisory's own Part 1 §"Hard-signal dual emission" gives the flat-field correspondence table but explicitly defers to `state-management` for "the exact shape" (see §"Preloaded Skill Routing (4f)" above — `state-management` is likewise no longer frontmatter-preloaded). The gates below stay in THIS file.
+**Protocol authority (read at phase entry):** `Read("${CLAUDE_PLUGIN_ROOT}/skills/self-heal-advisory/SKILL.md")` and execute its **Part 2 — Phase 4.5 SELF_HEAL Loop Protocol** as the authoritative procedure: on-entry actions (phase transition, the `prior_churn`/`house_rules`/`brief_conformance` pre-review advisory enrichments, invariant-tracking init, resume-thrash guard, `--skip-self-heal` check), base-mismatch cleanup, the bounded review-and-fix loop (reviewer + fix-task spawn contracts), Outcomes Rubric grading, the System Twin advisory checks, the advisory red-team lens, fix-task crash handling, the completion-tail procedure (its numbered steps), hard-signal dual emission, and the error-handling table. Part 1 of the same file holds the advisory-only machinery. The skill is deliberately NOT preloaded — one Read here keeps this agent prompt gate-focused. Also `Read("${CLAUDE_PLUGIN_ROOT}/skills/state-management/SKILL.md")` — needed for §"Session Logging"'s exact `session_end` JSONL line shape (the base `ts`/`event`/`type`/`task_id`/`status`/`plugin_version`/`knowledge_sources_used` wrapper): self-heal-advisory's own Part 1 §"Hard-signal dual emission" gives the flat-field correspondence table but explicitly defers to `state-management` for "the exact shape" (see §"Preloaded Skill Routing (4f)" above — `state-management` is likewise no longer frontmatter-preloaded). The gates below stay in THIS file.
 
 **Entry:** Always entered immediately after Phase 4 FINALIZE completes successfully. The `--skip-self-heal` flag does NOT skip the phase — it only short-circuits the review-and-fix loop. The phase transition and the completion tail always execute.
 
@@ -472,7 +472,7 @@ For **either** kind, the Supervisor MUST:
 - `heal_decision == ESCALATED` (reviewer NEEDS_HUMAN, max `--heal-iterations` reached, or resume-thrash) → task `completed_with_escalation`; findings posted to the PR as a comment; job → `done/` with escalation fields (heal reason, `heal_remaining_issues`).
 - Hard failure: base-branch mismatch cleanup → `status: failed`, job → `failed/`; fix-task crash / budget exhaustion → `status: checkpoint` pause with resume command; guard violation (below) → `status: failed`, job stays in `in-progress/`.
 
-**Completion tail (always runs — both when the loop ran and when it was skipped; procedure steps 1–6 live in the skill Part 2. Step 0 — the guard — lives HERE, verbatim):**
+**Completion tail (always runs — both when the loop ran and when it was skipped; the numbered procedure steps live in the skill Part 2 completion tail — a range-free pointer, so an added step cannot make it stale. Step 0 — the guard — lives HERE, verbatim):**
 
 0. **Completion-tail guard (runtime invariant — primary enforcement of Phase 4.5 mandate):**
 
@@ -509,6 +509,8 @@ For **either** kind, the Supervisor MUST:
 - Fixable issues fixed: {count}
 - Remaining issues: {count}
 - Twin signal: {format-twin-delta.sh output line}
+- Rules check: {rules_check_line — completion-tail step 7}
+- Rules audit: {rules_audit_line, then "; " + rules_gate_trigger_line when present — completion-tail step 8}
 - Resume count: {N} (0 after successful PASS/ESCALATED)
 - Task: {task_id} [COMPLETED | COMPLETED_WITH_ESCALATION]
 - Tool calls: Supervisor {N}/50
