@@ -75,3 +75,9 @@ None. `audit-rules.sh` already exists on `main`. The Phase 4.5 rules-check repla
   2026-09-26).
 - `proposed/README.md`: "promotion is a human moving a file out of it"; `/propose` reads `floor.json`, a
   `/verify` run, or `product.json`, never the rules store and never hand-authored proposed docs.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-09-29T09:40:40Z
+- **Brief:** .supervisor/jobs/done/2026-09-29-audit-rules-at-phase45-and-gate-trigger-nudge.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/299
