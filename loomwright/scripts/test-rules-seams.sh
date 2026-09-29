@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
-# test-rules-seams.sh — trust-boundary + invocation-shape self-test for the FOUR advisory house-rules
-# enforcement seams wired in slice #3b-ii. Two parts, deliberately different in kind:
+# test-rules-seams.sh — trust-boundary + invocation-shape self-test for the advisory house-rules
+# enforcement seams listed below (wired in slice #3b-ii and extended since; the SEAMS array is the
+# authority for which surfaces are covered). Two parts, deliberately different in kind:
 #
 #   PART 1 (STATIC, always runs) — greps the committed seam surfaces; no network, no jq, no shell
-#     execution of anything. This is what holds the WIRING: two of the four seams are agent/skill
+#     execution of anything. This is what holds the WIRING: most of the seams are agent/skill
 #     MARKDOWN, so there is nothing there to execute and only a grep can assert that the prose still
 #     hands the reader the right thing.
 #   PART 2 (DYNAMIC, jq-gated, added with `applies_to` PATH ROUTING) — actually EXECUTES the reader
-#     against a throwaway fixture rules store and asserts on real stdout. The three prose seams reduce
+#     against a throwaway fixture rules store and asserts on real stdout. The prose seams reduce
 #     to exactly TWO distinct executable invocation shapes, and routing made the difference between
 #     them behavioural rather than cosmetic, so both are now traced:
 #       (i)  `bash read-rules.sh <paths…>`  — worker DO-side (agents/execute-manager.md,
-#            agents/supervisor.md) AND Phase 4.5 (skills/self-heal-advisory/SKILL.md). They differ
-#            only in WHICH path set they pass, not in the shape.
+#            agents/supervisor.md), Phase 4.5 (skills/self-heal-advisory/SKILL.md)
+#            AND the Code Reviewer's own read (agents/code-reviewer.md Context Setup step 4a). They
+#            differ only in WHICH path set they pass, not in the shape.
 #       (ii) `bash read-rules.sh`  (no args) — the SessionStart nudge (scripts/session-resume.sh).
 #     EXPLICIT LIMIT, stated so nobody reads more into these than they carry: a dynamic trace CANNOT
 #     prove the prose seams still pass the reader the right paths — they are markdown, not code. That
@@ -29,10 +31,12 @@
 # "RESULT: N passed, M failed" tail, exit 1 on any failure. Paths resolve from $BASH_SOURCE's
 # dir so it runs from any CWD under the CI glob.
 #
-# The FOUR advisory seams (worker DO-side + Phase 4.5 self-heal review + SessionStart nudge):
+# The advisory seams (worker DO-side + Phase 4.5 self-heal review + Code Reviewer + SessionStart nudge):
 #   - agents/supervisor.md              (Phase 4.5 self-heal review lens + worker Single-Agent-path spawn)
 #   - agents/execute-manager.md         (parallel-path worker spawn injects house rules)
 #   - skills/self-heal-advisory/SKILL.md (the self-heal advisory contract)
+#   - agents/code-reviewer.md           (the reviewer reads the store itself, Context Setup step 4a,
+#                                        unless its spawn prompt already carries HOUSE-RULES ADVISORY)
 #   - scripts/session-resume.sh         (the SessionStart nudge)
 #
 # Asserts, for EACH seam surface:
@@ -43,19 +47,40 @@
 #       `rules-check.sh --if-stamped` — the unattended-SAFE replay valve that can only ever replay a
 #       run a human already confirmed, ON THIS SAME MACHINE (the content-keyed user-scope stamp,
 #       `skills/rules/SKILL.md` §8.1) — and ONLY that shape: a `--confirm` (or bare, flagless)
-#       invocation anywhere in that same file still fails this check. The other three seams keep the
-#       original zero-tolerance rule unchanged. AND
+#       invocation anywhere in that same file still fails this check. Every other seam — including
+#       agents/code-reviewer.md, which gets NO exception — keeps the original zero-tolerance rule
+#       unchanged. AND
 #   (C) it NEVER pipes / substitutes / execs read-rules.sh OUTPUT into a shell executor
 #       (`| bash`, `| sh`, `eval`, exec'd `$(...)`, `source`) — the reader emits `check` as DATA
-#       and no seam runs it.
+#       and no seam runs it. The reader INVOCATION itself (a `bash … read-rules.sh …` fragment) is
+#       checked unconditionally; only the OTHER read-rules.sh lines get the `never`/`NEVER`
+#       negated-assertion allowlist (see seam_c_scan). A line-level allowlist alone once skipped the
+#       Code Reviewer's and execute-manager's only invocation lines — both share a line with
+#       "never …" prose — so (C) inspected nothing there and a `| bash` on the real call passed.
+#   (C-cov) for EACH args-bearing surface (below), (C) must have inspected at least one reader-
+#       invocation fragment — zero means (C) is vacuous there and FAILS. This pass also runs (C)'s
+#       sink check on every args-bearing surface, which brings skills/async-orchestration/SKILL.md
+#       (args-bearing but not in SEAMS) into (C).
+#       A pipe into a shell placed right AFTER an invocation's closing backtick is outside that
+#       fragment, so it is checked separately and ALSO unconditionally (seam_c_scan pass 1b) — the
+#       `never` allowlist cannot hide it on a line that carries a reader invocation.
+#   (C-mut) MUTATION CONTROL: temp copies with ` | bash` added to a real invocation must be flagged by
+#       the SAME seam_c_scan, while each unmutated original passes (positive control): on
+#       agents/code-reviewer.md inside its code span and at the end of the line; on
+#       agents/execute-manager.md and skills/self-heal-advisory/SKILL.md right after the closing
+#       backtick of a line that carries "never …" prose. An empty or unchanged mutant is a FAILURE,
+#       never a skip.
 #
-# Plus (D) INVOCATION SHAPE, asserted per surface CLASS rather than uniformly, because the four seams
+# Plus (D) INVOCATION SHAPE, asserted per surface CLASS rather than uniformly, because the seams
 # genuinely differ in kind — a uniform grep here would be either vacuous or wrong:
 #   - ARGS-BEARING surfaces (the prose invocations that MUST scope on the diff): the reader path must
 #     be followed by a path-argument PLACEHOLDER (`<touched paths…>` / `<touched files…>`). A bare
 #     `bash …/read-rules.sh` in any of these silently degrades that seam to ALWAYS-REPO-WIDE, which is
 #     precisely the failure `applies_to` routing exists to prevent, and nothing else in this file or
-#     in PART 2 would catch it. Three surfaces carry such an invocation:
+#     in PART 2 would catch it. These surfaces carry such an invocation (the ARGS_BEARING array is
+#     the authority):
+#       agents/code-reviewer.md               (the reviewer's own step-4a read; guarded by the
+#                                              (D-mut) mutation control below the (D) loop)
 #       skills/self-heal-advisory/SKILL.md    (Phase 4.5)
 #       agents/execute-manager.md             (parallel-path worker spawn)
 #       skills/async-orchestration/SKILL.md   (Part 2 §"Subagent Spawn Contracts" — the VERBATIM
@@ -87,6 +112,7 @@ SEAMS=(
   "$PLUGIN_ROOT/agents/supervisor.md"
   "$PLUGIN_ROOT/agents/execute-manager.md"
   "$PLUGIN_ROOT/skills/self-heal-advisory/SKILL.md"
+  "$PLUGIN_ROOT/agents/code-reviewer.md"
   "$PLUGIN_ROOT/scripts/session-resume.sh"
 )
 
@@ -121,6 +147,56 @@ seam_b_self_heal() {
     esac
   done < "$f"
   [ "$SEAM_B_N" -ge 1 ] || { SEAM_B_WHY="no rules-check.sh / rules-gate-verdict.sh invocation line found"; return 1; }
+  return 0
+}
+
+# seam_c_is_sink <text> — (C)'s executor-sink predicate: 0 when <text> pipes / substitutes / evals /
+# sources read-rules.sh OUTPUT into a shell (`| bash`, `| sh`, `eval`, `source`, exec'd `$(bash …)`).
+seam_c_is_sink() {
+  case "$1" in
+    *'read-rules.sh'*'| bash'*|*'read-rules.sh'*'| sh'*|*'eval'*'read-rules.sh'*|*'source'*'read-rules.sh'*|*'$(bash'*'read-rules.sh'*')'*)
+      return 0 ;;
+  esac
+  return 1
+}
+
+# seam_c_scan <file> — (C) for one surface. Sets SEAM_C_LEAK (the first offending text, empty when
+# clean), SEAM_C_INVOC (reader-INVOCATION fragments inspected) and SEAM_C_LINES (whole lines inspected).
+# Two passes per line that mentions read-rules.sh, deliberately different in trust:
+#   1. INVOCATION FRAGMENTS — every backtick-free run containing `bash ` … `read-rules.sh` (i.e. the
+#      actual reader call, inside its code span or on a code-block line) is checked UNCONDITIONALLY.
+#      No allowlist applies here: the seams state their invariant in prose on the SAME line as the
+#      invocation ("args, never stdin", "never pipe/eval/…"), and a line-level allowlist once skipped
+#      the Code Reviewer's and execute-manager's only invocation lines entirely, leaving (C) vacuous.
+#   1b. AFTER THE SPAN — pass 1 sees only the backtick-delimited fragment, so a sink appended right
+#      AFTER an invocation's closing backtick (`bash … read-rules.sh <paths>` | bash) is outside it. A
+#      line whose invocation span is followed ANYWHERE later on the line by a pipe into a shell
+#      (`|`/`|&` into bash/sh/zsh/dash — $SEAM_C_AFTER_SPAN_RE) is flagged UNCONDITIONALLY, before the
+#      pass-2 allowlist: the execute-manager and self-heal-advisory invocation lines both carry
+#      "never …" prose, and the allowlist once hid exactly this shape there. Limit: only the
+#      pipe-to-shell sink is checked in that remainder — `eval`/`source` are common NEGATED prose words
+#      on these lines and would false-positive; they stay covered inside the span by pass 1.
+#   2. WHOLE LINES — every other read-rules.sh line, with lines that NEGATE execution (`never`/`NEVER`,
+#      the seams' invariant phrasing) allowlisted: a negated assertion is not a violation. Deliberately
+#      NOT allowlisting a bare `not`/`NOT`/`# comment` — too broad. The allowlist can no longer hide an
+#      invocation, because pass 1 already inspected it.
+# Plain read loops over here-strings — no `printf | grep -q` (SIGPIPE under pipefail).
+SEAM_C_AFTER_SPAN_RE='bash [^`]*read-rules\.sh[^`]*`.*\|&?[[:space:]]*(ba|z|da)?sh([^[:alnum:]_]|$)'
+seam_c_scan() {
+  local f="$1" line frag
+  SEAM_C_LEAK=""; SEAM_C_INVOC=0; SEAM_C_LINES=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in *read-rules.sh*) : ;; *) continue ;; esac
+    while IFS= read -r frag; do
+      [ -n "$frag" ] || continue
+      SEAM_C_INVOC=$((SEAM_C_INVOC + 1))
+      if [ -z "$SEAM_C_LEAK" ] && seam_c_is_sink "$frag"; then SEAM_C_LEAK="$frag"; fi
+    done <<< "$(grep -oE '[^`]*bash [^`]*read-rules\.sh[^`]*' <<< "$line")"
+    if [ -z "$SEAM_C_LEAK" ] && [[ "$line" =~ $SEAM_C_AFTER_SPAN_RE ]]; then SEAM_C_LEAK="$line"; fi
+    case "$line" in *never*|*NEVER*) continue ;; esac
+    SEAM_C_LINES=$((SEAM_C_LINES + 1))
+    if [ -z "$SEAM_C_LEAK" ] && seam_c_is_sink "$line"; then SEAM_C_LEAK="$line"; fi
+  done < "$f"
   return 0
 }
 
@@ -165,33 +241,10 @@ for f in "${SEAMS[@]}"; do
     ok "[$base] never references rules-check.sh"
   fi
 
-  # (C) NEVER pipes/substitutes/execs read-rules.sh OUTPUT into a shell executor.
-  #     We flag any line that mentions read-rules.sh AND ALSO carries an executor sink
-  #     (| bash, | sh, eval, source, or a command-substituted invocation that is exec'd).
-  #     Lines that ASSERT the invariant ("never pipes/evals/sources/`bash -c`s the reader
-  #     output" / "does NOT eval") are allowlisted — a negated assertion is not a violation.
-  exec_leak=""
-  while IFS= read -r line; do
-    # only consider lines that actually mention the reader
-    case "$line" in
-      *read-rules.sh*) ;;
-      *) continue ;;
-    esac
-    # allowlist ONLY lines that explicitly NEGATE execution (invariant assertions).
-    # Scoped tight to `never`/`NEVER` — the exact phrasing the seams use ("NEVER
-    # pipes/evals/sources/`bash -c`s the reader output"). Deliberately NOT allowlisting
-    # a bare `not`/`NOT`/`# comment`: those are too broad and could mask a genuine
-    # exec-leak line that merely happened to contain "not" or sit in a comment. The
-    # precise positive sink match below — not this allowlist — is the real guarantee.
-    case "$line" in
-      *never*|*NEVER*) continue ;;
-    esac
-    # flag genuine executor sinks piping/substituting the reader output
-    case "$line" in
-      *'read-rules.sh'*'| bash'*|*'read-rules.sh'*'| sh'*|*'eval'*'read-rules.sh'*|*'source'*'read-rules.sh'*|*'$(bash'*'read-rules.sh'*')'*)
-        exec_leak="$line" ;;
-    esac
-  done < "$f"
+  # (C) NEVER pipes/substitutes/execs read-rules.sh OUTPUT into a shell executor — seam_c_scan
+  #     (defined above the loop; the SAME function the (C-mut) control below runs on a mutant).
+  seam_c_scan "$f"
+  exec_leak="$SEAM_C_LEAK"
 
   if [ -z "$exec_leak" ]; then
     ok "[$base] never pipes/execs read-rules.sh OUTPUT into a shell executor"
@@ -209,6 +262,7 @@ ARGS_BEARING=(
   "$PLUGIN_ROOT/skills/self-heal-advisory/SKILL.md"
   "$PLUGIN_ROOT/agents/execute-manager.md"
   "$PLUGIN_ROOT/skills/async-orchestration/SKILL.md"
+  "$PLUGIN_ROOT/agents/code-reviewer.md"
 )
 ARGS_SHAPE_RE='read-rules\.sh[^<>]{0,12}<[^<>]{0,40}(path|file)'
 
@@ -216,12 +270,105 @@ for f in "${ARGS_BEARING[@]}"; do
   base="$(basename "$(dirname "$f")")/$(basename "$f")"
   if [ ! -f "$f" ]; then
     no "[$base] MISSING args-bearing invocation surface ($f)"
-  elif grep -qE "$ARGS_SHAPE_RE" "$f"; then
-    ok "[$base] (D) the read-rules.sh invocation still carries a touched-path ARGUMENT placeholder"
   else
-    no "[$base] (D) read-rules.sh invoked with NO path-argument placeholder — this seam would degrade to ALWAYS-REPO-WIDE"
+    if grep -qE "$ARGS_SHAPE_RE" "$f"; then
+      ok "[$base] (D) the read-rules.sh invocation still carries a touched-path ARGUMENT placeholder"
+    else
+      no "[$base] (D) read-rules.sh invoked with NO path-argument placeholder — this seam would degrade to ALWAYS-REPO-WIDE"
+    fi
+    # (C-cov) (C) must actually INSPECT this surface's reader invocation — a surface where (C) looked
+    # at zero invocation fragments passes (C) vacuously. Also runs (C)'s sink check here, which is how
+    # skills/async-orchestration/SKILL.md (args-bearing, but not in SEAMS) is brought into (C).
+    seam_c_scan "$f"
+    if [ "$SEAM_C_INVOC" -ge 1 ]; then
+      ok "[$base] (C-cov) (C) inspected $SEAM_C_INVOC reader-invocation fragment(s) here — the exec-sink check is not vacuous"
+    else
+      no "[$base] (C-cov) (C) inspected ZERO reader-invocation fragments — the exec-sink check is vacuous on this surface"
+    fi
+    if [ -z "$SEAM_C_LEAK" ]; then
+      ok "[$base] (C) never pipes/execs read-rules.sh OUTPUT into a shell executor"
+    else
+      no "[$base] (C) read-rules.sh OUTPUT executed in a shell sink: $SEAM_C_LEAK"
+    fi
   fi
 done
+
+# (D-mut) MUTATION CONTROL for (D) on agents/code-reviewer.md: strip the path-argument placeholder
+# from every reader invocation in a temp copy — the args-less mutant MUST fail $ARGS_SHAPE_RE while the
+# unmutated original passes (positive control). The `#` sed delimiter cannot collide with the pattern.
+# An INVALID mutant (empty, or byte-identical to the original — i.e. the sed matched nothing) is a
+# FAILURE, never a skip: a mutant that changed nothing proves nothing.
+CR="$PLUGIN_ROOT/agents/code-reviewer.md"
+if [ ! -f "$CR" ]; then
+  no "(D-mut) agents/code-reviewer.md not found at $CR"
+else
+  MUT_D="$(mktemp)"
+  sed -E 's#(read-rules\.sh[^<>]{0,12})<[^<>]*>#\1#g' "$CR" > "$MUT_D"
+  if [ ! -s "$MUT_D" ]; then
+    no "(D-mut) INVALID mutant: the mutated copy of agents/code-reviewer.md is EMPTY"
+  elif cmp -s "$CR" "$MUT_D"; then
+    no "(D-mut) INVALID mutant: identical to the original — the placeholder-strip sed matched nothing"
+  else
+    ok "(D-mut) mutant is valid (non-empty and differs from the original)"
+    if grep -qE "$ARGS_SHAPE_RE" "$MUT_D"; then
+      no "(D-mut) REFUTED: the args-less mutant still matches (D) — the placeholder check is not load-bearing"
+    else
+      ok "(D-mut) CONFIRMED: removing the path-argument placeholder makes (D) fail on the mutant"
+    fi
+    if grep -qE "$ARGS_SHAPE_RE" "$CR"; then
+      ok "(D-mut) positive control: the unmutated agents/code-reviewer.md passes (D)"
+    else
+      no "(D-mut) positive control FAILED: the unmutated agents/code-reviewer.md does not pass (D)"
+    fi
+  fi
+  rm -f "$MUT_D"
+fi
+
+# (C-mut) MUTATION CONTROL for (C): pipe a REAL reader invocation into `bash` in a temp copy and run
+# the SAME seam_c_scan on each mutant. Each mutant MUST be flagged while the unmutated original is not
+# (positive control). An INVALID mutant (empty, or byte-identical to the original — the sed matched
+# nothing) is a FAILURE, never a skip. Modes:
+#   - in-span / end-of-line on agents/code-reviewer.md (inside its code span, right after the path
+#     placeholder; appended to the end of the invocation line — a line WITHOUT "never" prose).
+#   - after-span on agents/execute-manager.md and skills/self-heal-advisory/SKILL.md: ` | bash`
+#     inserted right after the invocation's CLOSING backtick, on lines that DO carry "never …" prose —
+#     the shape pass 1 cannot see and the pass-2 allowlist once hid (seam_c_scan pass 1b).
+# c_mut_run <label> <file> <sed-ERE-script>
+c_mut_run() {
+  local label="$1" src="$2" expr="$3" mut rel
+  rel="$(basename "$(dirname "$src")")/$(basename "$src")"
+  if [ ! -f "$src" ]; then
+    no "(C-mut:$label) $rel not found at $src"
+    return 0
+  fi
+  mut="$(mktemp)"
+  sed -E "$expr" "$src" > "$mut"
+  if [ ! -s "$mut" ]; then
+    no "(C-mut:$label) INVALID mutant: the mutated copy of $rel is EMPTY"
+  elif cmp -s "$src" "$mut"; then
+    no "(C-mut:$label) INVALID mutant: identical to the original — the invocation sed matched nothing"
+  else
+    ok "(C-mut:$label) mutant of $rel is valid (non-empty and differs from the original)"
+    seam_c_scan "$mut"
+    if [ -n "$SEAM_C_LEAK" ]; then
+      ok "(C-mut:$label) CONFIRMED: piping the real reader invocation in $rel into bash makes (C) flag the mutant"
+    else
+      no "(C-mut:$label) REFUTED: a \`| bash\` on the real invocation in $rel still passes (C) — the exec-sink check is vacuous here"
+    fi
+  fi
+  rm -f "$mut"
+  seam_c_scan "$src"
+  if [ -z "$SEAM_C_LEAK" ]; then
+    ok "(C-mut:$label) positive control: the unmutated $rel passes (C)"
+  else
+    no "(C-mut:$label) positive control FAILED: the unmutated $rel is flagged by (C): $SEAM_C_LEAK"
+  fi
+}
+C_MUT_AFTER_SPAN='s#(bash [^`]*read-rules\.sh[^`]*<[^`<>]*>[^`]*`)#\1 | bash#'
+c_mut_run in-span     "$CR" 's#(read-rules\.sh"[[:space:]]*<[^<>]*>)#\1 | bash#'
+c_mut_run end-of-line "$CR" '/read-rules\.sh"[[:space:]]*<[^<>]*>/ s#$# | bash#'
+c_mut_run after-span  "$PLUGIN_ROOT/agents/execute-manager.md" "$C_MUT_AFTER_SPAN"
+c_mut_run after-span  "$PLUGIN_ROOT/skills/self-heal-advisory/SKILL.md" "$C_MUT_AFTER_SPAN"
 
 # The POINTER surface: no literal invocation, so assert the non-negotiable it delegates instead.
 SUP="$PLUGIN_ROOT/agents/supervisor.md"
@@ -263,7 +410,7 @@ else
 FIXTURE
 
   # ---- SHAPE (i): `bash read-rules.sh <paths…>` — worker DO-side AND Phase 4.5 -------------------
-  # Trace it TWICE with different path sets, because that is the only way the two prose seams differ.
+  # Trace it TWICE with different path sets, because that is the only way the prose seams sharing this shape differ.
   # (i-a) a worker-style path set that INCLUDES a scripts path ⇒ both rules.
   s1a="$( cd "$FIXREPO" && bash "$READER" loomwright/scripts/read-rules.sh CHANGELOG.md 2>/dev/null )"
   if grep -qF -- "- SEAM scoped to loomwright scripts" < <(printf '%s\n' "$s1a") \
