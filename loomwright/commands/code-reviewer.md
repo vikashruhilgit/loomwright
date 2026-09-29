@@ -28,7 +28,7 @@ description: Review code changes with LSP diagnostics, issue categorization, and
 1. **Auto-detects your project** by finding CLAUDE.md
 2. **Auto-detects Beads** — if `.beads/` is present AND `bd --version` succeeds, runs the Beads workflow (claim task, comment, close). Otherwise proceeds without any `bd` commands and relies on the CODE_REVIEW_RESULT block as the sole output channel. Beads integration is opt-in via the presence of `.beads/`.
 3. **Reads project patterns** from CLAUDE.md
-4. **Reads review rules** from optional `REVIEW.md` (falls back to CLAUDE.md)
+4. **Reads review rules** from optional `REVIEW.md` (falls back to CLAUDE.md), and the project's applicable **house rules** (advisory; skipped when Supervisor already passed them in)
 5. **Reviews specified files** or recent git changes
 6. **Selects review mode automatically** based on trigger paths:
    - `diff_review` (default): normal code change.
