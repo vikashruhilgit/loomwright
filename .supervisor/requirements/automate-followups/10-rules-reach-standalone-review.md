@@ -117,3 +117,9 @@ placeholder. Update the header comment's count and list in the same change.
 - `commands/code-reviewer.md`: thin wrapper — "The canonical prompt lives in `loomwright/agents/code-reviewer.md`".
 - `loomwright/scripts/test-rules-seams.sh`: `SEAMS=(agents/supervisor.md agents/execute-manager.md
   skills/self-heal-advisory/SKILL.md scripts/session-resume.sh)`; assertions (A)–(D) as described in its header.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-09-29T12:00:23Z
+- **Brief:** .supervisor/jobs/done/2026-09-29-rules-reach-standalone-review.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/301
