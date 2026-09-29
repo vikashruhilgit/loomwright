@@ -77,7 +77,7 @@ Code Reviewer returns NEEDS_HUMAN
 **Rules:**
 - Bounded by `--heal-iterations` (default 3) per Phase 4.5 run — not a per-subtask retry count
 - NEEDS_HUMAN always escalates immediately (no partial-workflow continuation — Phase 4.5 is a single integrated review, not per-subtask)
-- `heal_decision` is derived ONLY from the Code Reviewer's `CODE_REVIEW_RESULT` (PASS only from a reviewer PASS; ESCALATED on NEEDS_HUMAN, max iterations, or resume-thrash)
+- `heal_decision` is derived ONLY from the Code Reviewer's `CODE_REVIEW_RESULT` plus the one deterministic rules co-gate — a stamped countable `must`-rule failure (PASS only from a reviewer PASS with no such rule failure; ESCALATED on NEEDS_HUMAN, max iterations, or resume-thrash)
 - Supervisor never force-resolves review issues; ESCALATED always leaves the PR open for a human — the heal loop never merges
 - A fully-refuted FAIL (multi-voter mode) is still a human call, never a silent auto-PASS (`skills/self-heal-advisory/SKILL.md` §"Delay-vs-decide")
 

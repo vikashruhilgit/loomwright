@@ -23,7 +23,7 @@
 #      resume reconcile: belief pending but gh says merged ⇒ merged; belief checked
 #      but gh says open ⇒ awaiting_merge; gh unreadable ⇒ awaiting_merge (fail closed);
 #      gh CLOSED-unmerged ⇒ gone.
-#   E. auto-merge gate fail-CLOSED on EACH of the 6 conditions individually (incl.
+#   E. auto-merge gate fail-CLOSED on EACH of conditions 1-6 individually (incl.
 #      both arms of cond. 2 base/SHA, both blocking reviewDecision arms CHANGES_REQUESTED
 #      and REVIEW_REQUIRED of cond. 3, both arms of cond. 5 checks/rubric, and cond. 6
 #      high_risk on `true` / `null` / missing / a non-boolean string / the JSON STRING
@@ -35,6 +35,20 @@
 #      `gh pr merge --squash` exactly once; AND a mutation control (cond 6 deleted from a
 #      COPY of gate_eval, gated on non-empty + differs + `bash -n`) turns the cond-6 PARK
 #      cases red while the MERGE case stays green.
+#   R. gate-eval condition 7 — the rules gate (section letter "R": "F" is already
+#      learning-emit). A stub sibling rules-gate-verdict.sh (default verdict `none`, so
+#      every Section E case is unchanged) drives: fail ⇒ PARK: rules_check_failed (<≤3
+#      countable ids>), ok ⇒ MERGE, unresolved ⇒ rules_check_unresolved, unstamped with
+#      countable ⇒ rules_unstamped (message text picked by the optional
+#      unstamped_reason: drift with 0 live countable / legacy stamp get their own text, an
+#      unknown reason still parks), none (advisory-only, even failing) ⇒ MERGE,
+#      cmd_disabled ⇒ rules_cmd_disabled, every unreadable shape (non-JSON, empty,
+#      non-object, missing/null/non-string/unknown verdict, non-zero exit, helper absent)
+#      ⇒ rules_gate_unreadable; the refused ctx keys rules_gate/rules_ok/rules_check with
+#      a call-log proof the helper never ran; cond-6-before-cond-7 precedence; two gated
+#      mutants (PARK test deleted ⇒ MERGE; invocation commented out ⇒ fail-closed
+#      rules_gate_unreadable) + a positive control; and an end-to-end leg against the
+#      REAL rules-gate-verdict.sh / rules-check.sh / rules-replay-lib.sh siblings.
 #   F. learning-emit (engine-native ground-truth POSTMORTEM_RESULT line): happy path
 #      (fix_cycles>0 → one drain_churn entry, review_rounds==fix_cycles), the zero-rule
 #      (fix_cycles==0 non-escalated → categories:[] + review_rounds:0), zero-cycle
@@ -736,6 +750,23 @@ else
 fi
 RISK
 chmod +x "$GWD/classify-risk.sh"
+# Condition 7's sibling rules-gate-verdict.sh — likewise a STUB beside the gate copy
+# (never the real checker): it logs its argv to rules-called.log (the call-log
+# assertions prove cond 7 is gate-owned and self-resolved) and echoes rules.json.
+# reset_live re-baselines rules.json to verdict `none` (nothing countable ⇒ the
+# condition holds), so every PRE-EXISTING gate case MERGEs/PARKs exactly as before.
+RULES_NONE='{"verdict":"none","selected":[],"countable":[],"advisory":[],"passed":[],"failing":[],"unresolved":[],"checks_passed":null}'
+cat > "$GWD/rules-gate-verdict.sh" <<'RULES'
+#!/usr/bin/env bash
+set -u
+if [ -n "${GH_STUB_DIR:-}" ]; then
+  printf '%s\n' "$*" >> "$GH_STUB_DIR/rules-called.log"
+  if [ -f "$GH_STUB_DIR/rules.json" ]; then cat "$GH_STUB_DIR/rules.json"; fi
+  if [ -f "$GH_STUB_DIR/rules-exit" ]; then exit "$(cat "$GH_STUB_DIR/rules-exit")"; fi
+fi
+exit 0
+RULES
+chmod +x "$GWD/rules-gate-verdict.sh"
 
 # Fixture artifact files the gate cross-checks/parses ITSELF (cond 1 cross-check,
 # cond 5 rubric) — no longer caller-asserted ctx fields.
@@ -763,6 +794,8 @@ reset_live() {
   rm -f "$GH_STUB_DIR/protection-404" "$GH_STUB_DIR/protection-fail"
   printf '{"high_risk": false, "reasons": [], "changed_files": 0, "changed_lines": 0, "source": "classify-risk.sh"}\n' > "$GH_STUB_DIR/risk.json"
   rm -f "$GH_STUB_DIR/merge-fail"
+  printf '%s\n' "$RULES_NONE" > "$GH_STUB_DIR/rules.json"
+  rm -f "$GH_STUB_DIR/rules-exit" "$GH_STUB_DIR/rules-called.log"
 }
 
 # A fully-passing ctx (the SHRUNK shape — exactly the 6 allowed keys).
@@ -1119,6 +1152,7 @@ sed 's/^\(  if \[ -r "\$risk_bin" \]; then\)$/  if false \&\& [ -r "$risk_bin" ]
 if [ -s "$MUT/automate-helpers.sh" ] && ! cmp -s "$GWD/automate-helpers.sh" "$MUT/automate-helpers.sh" && bash -n "$MUT/automate-helpers.sh" 2>/dev/null \
    && grep -q 'if false && \[ -r "\$risk_bin" \]; then' "$MUT/automate-helpers.sh"; then
   cp "$GWD/classify-risk.sh" "$MUT/classify-risk.sh"
+  cp "$GWD/rules-gate-verdict.sh" "$MUT/rules-gate-verdict.sh"
   # Instrument the stub classify-risk.sh to prove (positively) whether it was called.
   printf '#!/usr/bin/env bash\necho called >> "%s/classify-risk-called.log"\necho '"'"'{"high_risk": false, "reasons": [], "source": "classify-risk.sh"}'"'"'\n' "$WD" > "$MUT/classify-risk.sh"
   chmod +x "$MUT/classify-risk.sh"
@@ -1138,6 +1172,7 @@ if [ -s "$MUT/automate-helpers.sh" ] && ! cmp -s "$GWD/automate-helpers.sh" "$MU
   CTRL="$(mktemp -d)"
   cp "$GWD/automate-helpers.sh" "$CTRL/automate-helpers.sh"
   cp "$MUT/classify-risk.sh" "$CTRL/classify-risk.sh"
+  cp "$GWD/rules-gate-verdict.sh" "$CTRL/rules-gate-verdict.sh"
   rm -f "$WD/classify-risk-called.log" "$GH_STUB_DIR/merge.log"
   printf '%s' "$(pass_ctx)" > "$WD/ctx.json"
   CTRL_OUT="$( env PATH="$BIN:$PATH" GH_STUB_DIR="$GH_STUB_DIR" HOME="$WD/nohome" bash "$CTRL/automate-helpers.sh" gate-eval "$PR" "$WD/ctx.json" --root "$WD" 2>/dev/null )"
@@ -1151,6 +1186,299 @@ else
   no "gate cond-6 mutation control not gated (mutant empty, identical to original, bash -n failed, or the invocation guard was not injected)"
 fi
 rm -rf "$MUT"
+
+# =============================================================================
+echo "== R. gate-eval condition 7 — rules gate (self-resolved via sibling rules-gate-verdict.sh; named PARK reasons; refused ctx keys; gated mutants) =="
+# Section letter "R" (rules): "F" is already this file's learning-emit section.
+# Reuses Section E's harness ($GWD gate copy + stub rules-gate-verdict.sh, gate(),
+# pass_ctx, merges, reset_live). Every case runs on an otherwise ALL-GREEN PR
+# (conditions 1–6 hold), so the ONLY variable is the verdict the stub returns.
+
+# rules_fixture <verdict> <countable-json> <failing-json> <unresolved-json> [advisory-json]
+# — write a well-formed verdict object (every field, the helper's own contract shape).
+rules_fixture() {
+  jq -nc --arg v "$1" --argjson c "$2" --argjson f "$3" --argjson u "$4" --argjson a "${5:-[]}" \
+    '{verdict:$v, selected:(($c + ($a|map(.id))) | unique), countable:$c, advisory:$a,
+      passed:[], failing:$f, unresolved:$u, checks_passed:null}' > "$GH_STUB_DIR/rules.json"
+}
+rules_called() { [ -f "$GH_STUB_DIR/rules-called.log" ]; }
+# R_EXP_ROOT — the argv the gate must hand its sibling: `--root <the checkout gate() passed>`.
+R_EXP_ROOT="--root $WD"
+
+# R1 (AC1 gate half) — a stamped, countable, FAILING must-check ⇒ PARK: rules_check_failed (<id>).
+reset_live
+rules_fixture fail '["r-lint"]' '["r-lint"]' '[]'
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: rules_check_failed (r-lint)" ] && [ "$(merges)" -eq 0 ] \
+   && rules_called && [ "$(cat "$GH_STUB_DIR/rules-called.log")" = "$R_EXP_ROOT" ]; then
+  ok "R1 cond 7: verdict fail ⇒ PARK: rules_check_failed (r-lint), 0 merges, and the gate ITSELF called its sibling with '$R_EXP_ROOT'"
+else
+  no "R1 cond-7 fail wrong (out='$RUN_OUT' merges=$(merges) argv='$(cat "$GH_STUB_DIR/rules-called.log" 2>/dev/null)')"
+fi
+
+# R1b — ids: at most 3, "; "-joined, COUNTABLE only (a failing ADVISORY id never names a blocker).
+reset_live
+rules_fixture fail '["a","b","c","d"]' '["adv-x","a","b","c","d"]' '[]' '[{"id":"adv-x","reason":"binds_undeclared"}]'
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: rules_check_failed (a; b; c)" ] && [ "$(merges)" -eq 0 ]; then
+  ok "R1b cond 7: fail reason names up to 3 COUNTABLE failing ids joined by '; ' (advisory adv-x excluded)"
+else
+  no "R1b cond-7 id list wrong (out='$RUN_OUT')"
+fi
+
+# R2 (AC2 gate half) — verdict ok ⇒ the condition holds ⇒ MERGE (1 merge).
+reset_live
+rules_fixture ok '["r-lint"]' '[]' '[]'
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ] && rules_called; then
+  ok "R2 cond 7: verdict ok ⇒ MERGE (exactly 1 merge; the helper WAS consulted)"
+else
+  no "R2 cond-7 ok wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+
+# R3 (AC10 gate half) — unresolved (a forged / truncated replay) ⇒ PARK: rules_check_unresolved (<ids>).
+reset_live
+rules_fixture unresolved '["r-lint","r-fmt"]' '[]' '["r-lint","r-fmt"]'
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: rules_check_unresolved (r-lint; r-fmt)" ] && [ "$(merges)" -eq 0 ]; then
+  ok "R3 cond 7: verdict unresolved ⇒ PARK: rules_check_unresolved (r-lint; r-fmt), 0 merges"
+else
+  no "R3 cond-7 unresolved wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+
+# R4 (AC3 / AC7 gate legs, D3 middle form) — unstamped WITH countable must-checks ⇒ PARK;
+# the helper answers `none` when nothing is countable (all advisory, even one FAILING) ⇒ MERGE.
+reset_live
+rules_fixture unstamped '["r-lint","r-fmt"]' '[]' '[]'
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: rules_unstamped (2 countable must-check(s) never confirmed on this machine)" ] && [ "$(merges)" -eq 0 ]; then
+  ok "R4 cond 7: unstamped with 2 countable ⇒ PARK: rules_unstamped (2 countable must-check(s) never confirmed on this machine)"
+else
+  no "R4 cond-7 unstamped wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+reset_live
+rules_fixture none '[]' '["r-lint"]' '[]' '[{"id":"r-lint","reason":"unbound:scripts/lint.sh"}]'
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ] && rules_called; then
+  ok "R4b cond 7: verdict none (only advisory must-checks — here an unbound one that FAILS) ⇒ MERGE: nothing uncounted gates"
+else
+  no "R4b cond-7 none-with-advisory wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+# R4c — unstamped by COUNTABLE-SET DRIFT with ZERO live countable ids (the last stamped,
+# failing countable rule demoted away — test-rules-gate-verdict.sh (cs 4)) ⇒ PARK with the
+# drift text, never the self-contradictory "0 countable must-check(s) never confirmed".
+reset_live
+rules_fixture unstamped '[]' '[]' '[]'
+jq -c '. + {unstamped_reason: "countable_set_drift"}' "$GH_STUB_DIR/rules.json" > "$GH_STUB_DIR/rules.tmp" && mv "$GH_STUB_DIR/rules.tmp" "$GH_STUB_DIR/rules.json"
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: rules_unstamped (countable rule set changed since the last /rules check --confirm on this machine)" ] && [ "$(merges)" -eq 0 ]; then
+  ok "R4c cond 7: unstamped by countable-set drift with 0 live countable ⇒ PARK: rules_unstamped (countable rule set changed …), 0 merges"
+else
+  no "R4c cond-7 drift unstamped wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+# R4d — unstamped by a LEGACY stamp ⇒ its own text; still 0 merges.
+reset_live
+rules_fixture unstamped '["r-lint"]' '[]' '[]'
+jq -c '. + {unstamped_reason: "legacy_stamp"}' "$GH_STUB_DIR/rules.json" > "$GH_STUB_DIR/rules.tmp" && mv "$GH_STUB_DIR/rules.tmp" "$GH_STUB_DIR/rules.json"
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: rules_unstamped (the stamp predates the recorded countable rule set; re-run /rules check --confirm on this machine)" ] && [ "$(merges)" -eq 0 ]; then
+  ok "R4d cond 7: unstamped by a legacy stamp ⇒ PARK: rules_unstamped (the stamp predates …), 0 merges"
+else
+  no "R4d cond-7 legacy unstamped wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+# R4e — an UNKNOWN / non-string unstamped_reason is message text only: it still PARKs
+# (never-confirmed text), because the park is keyed on the verdict.
+reset_live
+rules_fixture unstamped '["r-lint"]' '[]' '[]'
+jq -c '. + {unstamped_reason: {"x":1}}' "$GH_STUB_DIR/rules.json" > "$GH_STUB_DIR/rules.tmp" && mv "$GH_STUB_DIR/rules.tmp" "$GH_STUB_DIR/rules.json"
+gate "$(pass_ctx)"
+R4E_A="$RUN_OUT"; R4E_MA="$(merges)"
+reset_live
+rules_fixture unstamped '["r-lint"]' '[]' '[]'
+jq -c '. + {unstamped_reason: "something_new"}' "$GH_STUB_DIR/rules.json" > "$GH_STUB_DIR/rules.tmp" && mv "$GH_STUB_DIR/rules.tmp" "$GH_STUB_DIR/rules.json"
+gate "$(pass_ctx)"
+R4E_EXP="PARK: rules_unstamped (1 countable must-check(s) never confirmed on this machine)"
+if [ "$R4E_A" = "$R4E_EXP" ] && [ "$R4E_MA" -eq 0 ] && [ "$RUN_OUT" = "$R4E_EXP" ] && [ "$(merges)" -eq 0 ]; then
+  ok "R4e cond 7: a non-string or unknown unstamped_reason still PARKs rules_unstamped (never-confirmed text), 0 merges"
+else
+  no "R4e cond-7 unknown reason wrong (a='$R4E_A'/$R4E_MA b='$RUN_OUT'/$(merges))"
+fi
+
+# R5 (AC4 gate leg) — cmd_disabled ⇒ PARK: rules_cmd_disabled (the gate cannot verify).
+reset_live
+rules_fixture cmd_disabled '["r-lint"]' '[]' '[]'
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: rules_cmd_disabled" ] && [ "$(merges)" -eq 0 ]; then
+  ok "R5 cond 7: verdict cmd_disabled ⇒ PARK: rules_cmd_disabled, 0 merges"
+else
+  no "R5 cond-7 cmd_disabled wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+
+# R6 — every unreadable shape fails CLOSED on ONE named reason: rules_gate_unreadable.
+r6_case() {  # r6_case <label> <rules.json body or __NONE__> [exit-code]
+  reset_live
+  if [ "$2" = "__NONE__" ]; then rm -f "$GH_STUB_DIR/rules.json"; else printf '%s\n' "$2" > "$GH_STUB_DIR/rules.json"; fi
+  [ -n "${3:-}" ] && printf '%s' "$3" > "$GH_STUB_DIR/rules-exit"
+  gate "$(pass_ctx)"
+  if [ "$RUN_OUT" = "PARK: rules_gate_unreadable" ] && [ "$(merges)" -eq 0 ]; then
+    ok "R6 cond 7 fail-closed: $1 ⇒ PARK: rules_gate_unreadable, 0 merges"
+  else
+    no "R6 cond-7 $1 FAILED OPEN or misnamed (out='$RUN_OUT' merges=$(merges))"
+  fi
+}
+r6_case "verdict unreadable"            '{"verdict":"unreadable","selected":[],"countable":[],"advisory":[],"passed":[],"failing":[],"unresolved":[],"checks_passed":null}'
+r6_case "non-JSON helper output"        'Checks passed: 1/1'
+r6_case "empty helper output"           '__NONE__'
+r6_case "JSON that is not an object"    '["ok"]'
+r6_case "missing .verdict"              '{"selected":[],"countable":[]}'
+r6_case "non-string .verdict (true)"    '{"verdict":true}'
+r6_case "null .verdict"                 '{"verdict":null}'
+r6_case "unrecognised verdict string"   '{"verdict":"OK"}'
+r6_case "non-zero helper exit with an ok body" '{"verdict":"ok","selected":[],"countable":[],"advisory":[],"passed":[],"failing":[],"unresolved":[],"checks_passed":null}' 3
+# Helper ABSENT beside the gate — moved away, then restored.
+reset_live
+mv "$GWD/rules-gate-verdict.sh" "$WD/rules-gate-verdict.sh.away"
+gate "$(pass_ctx)"
+mv "$WD/rules-gate-verdict.sh.away" "$GWD/rules-gate-verdict.sh"
+if [ "$RUN_OUT" = "PARK: rules_gate_unreadable" ] && [ "$(merges)" -eq 0 ]; then
+  ok "R6 cond 7 fail-closed: sibling rules-gate-verdict.sh ABSENT ⇒ PARK: rules_gate_unreadable, 0 merges"
+else
+  no "R6 cond-7 helper-absent FAILED OPEN (out='$RUN_OUT' merges=$(merges))"
+fi
+
+# R7 (AC5) — the three new gate-owned ctx keys are REFUSED before anything runs; the
+# rules helper is NEVER called (call-log) — even a value asserting a pass cannot help.
+for K in rules_gate rules_ok rules_check; do
+  for V in 'true' '"ok"' 'false'; do
+    reset_live
+    rules_fixture ok '["r-lint"]' '[]' '[]'
+    gate "$(pass_ctx | jq --arg k "$K" --argjson v "$V" '.[$k]=$v')"
+    if [ "$RUN_OUT" = "PARK: ctx_carries_gate_owned_key" ] && [ "$(merges)" -eq 0 ] && ! rules_called; then
+      ok "R7 refuses ctx key '$K'=$V ⇒ PARK: ctx_carries_gate_owned_key, 0 merges, helper never called"
+    else
+      no "R7 ctx key '$K'=$V NOT refused (out='$RUN_OUT' merges=$(merges) called=$(rules_called && echo yes || echo no))"
+    fi
+  done
+done
+
+# R8 — precedence: cond 7 is evaluated AFTER cond 6 (a high-risk diff parks on its own
+# reason and the rules helper is never even called).
+reset_live
+printf '{"high_risk": true, "reasons": ["path: billing/x.ts matched billing/**"], "source":"classify-risk.sh"}\n' > "$GH_STUB_DIR/risk.json"
+rules_fixture fail '["r-lint"]' '["r-lint"]' '[]'
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: high_risk_diff (path: billing/x.ts matched billing/**)" ] && [ "$(merges)" -eq 0 ] && ! rules_called; then
+  ok "R8 precedence: cond 6 PARK wins over a failing cond 7, and cond 7's helper is not called (evaluated after cond 6)"
+else
+  no "R8 cond-6/7 precedence wrong (out='$RUN_OUT' called=$(rules_called && echo yes || echo no))"
+fi
+
+# R9 (AC9(b)) — GATED mutation controls. Each mutant is a sed COPY of the gate, trusted only
+# if non-empty, differs from the original, passes `bash -n`, and carries the injected marker.
+# (i) the cond-7 PARK test disabled (the condition deleted) ⇒ the AC1 failing case prints MERGE.
+# (ii) ONLY the helper invocation commented out ⇒ the AC1 failing case does NOT merge — it
+#      fails CLOSED on rules_gate_unreadable (removing the call can never open the gate) —
+#      and the instrumented call log proves the helper was never called.
+# Positive control: the UN-mutated gate copy, same stubs, calls the helper on the all-green
+# path (log proves it, MERGE) and PARKs the failing case on rules_check_failed.
+r9_run() {  # r9_run <dir> — gate-eval from <dir>'s copy; sets R9_OUT
+  rm -f "$GH_STUB_DIR/merge.log" "$GH_STUB_DIR/rules-called.log"
+  printf '%s' "$(pass_ctx)" > "$WD/ctx.json"
+  R9_OUT="$( env PATH="$BIN:$PATH" GH_STUB_DIR="$GH_STUB_DIR" HOME="$WD/nohome" bash "$1/automate-helpers.sh" gate-eval "$PR" "$WD/ctx.json" --root "$WD" 2>/dev/null )"
+}
+r9_dir() {  # r9_dir <sed-expr> <marker-regex> — prints a gated mutant dir, or nothing
+  local d; d="$(mktemp -d)"
+  sed "$1" "$GWD/automate-helpers.sh" > "$d/automate-helpers.sh"
+  if [ -s "$d/automate-helpers.sh" ] && ! cmp -s "$GWD/automate-helpers.sh" "$d/automate-helpers.sh" \
+     && bash -n "$d/automate-helpers.sh" 2>/dev/null && grep -q "$2" "$d/automate-helpers.sh"; then
+    cp "$GWD/classify-risk.sh" "$GWD/rules-gate-verdict.sh" "$d/"
+    printf '%s' "$d"
+  else
+    rm -rf "$d"
+  fi
+}
+reset_live
+M_PARK="$(r9_dir 's/^\(  if \[ "\$rules_ok" != "true" \]; then\)$/  if false \&\& [ "$rules_ok" != "true" ]; then/' 'if false && \[ "\$rules_ok" != "true" \]; then')"
+M_CALL="$(r9_dir 's/^\(  if \[ -r "\$rules_bin" \]; then\)$/  if false \&\& [ -r "$rules_bin" ]; then/' 'if false && \[ -r "\$rules_bin" \]; then')"
+if [ -n "$M_PARK" ] && [ -n "$M_CALL" ]; then
+  rules_fixture fail '["r-lint"]' '["r-lint"]' '[]'
+  r9_run "$M_PARK"
+  if [ "$R9_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ]; then
+    ok "R9 (mutant i) cond-7 PARK test deleted ⇒ the AC1 failing-check case prints MERGE — condition 7 is what parks it"
+  else
+    no "R9 mutant (i) did NOT flip the failing case to MERGE (out='$R9_OUT' merges=$(merges)) — the cond-7 PARK is not load-bearing"
+  fi
+  r9_run "$M_CALL"
+  if [ "$R9_OUT" = "PARK: rules_gate_unreadable" ] && [ "$(merges)" -eq 0 ] && [ ! -f "$GH_STUB_DIR/rules-called.log" ]; then
+    ok "R9 (mutant ii) invocation commented out ⇒ helper never called (log absent) and the failing case parks rules_gate_unreadable, not rules_check_failed — fail CLOSED, never MERGE"
+  else
+    no "R9 mutant (ii) wrong (out='$R9_OUT' merges=$(merges) called=$([ -f "$GH_STUB_DIR/rules-called.log" ] && echo yes || echo no))"
+  fi
+  # Positive control on the UN-mutated copy.
+  CTRL="$(mktemp -d)"; cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/rules-gate-verdict.sh" "$CTRL/"
+  r9_run "$CTRL"
+  R9_FAIL_OUT="$R9_OUT"; R9_FAIL_MERGES="$(merges)"
+  rules_fixture ok '["r-lint"]' '[]' '[]'
+  r9_run "$CTRL"
+  if [ "$R9_FAIL_OUT" = "PARK: rules_check_failed (r-lint)" ] && [ "$R9_FAIL_MERGES" -eq 0 ] \
+     && [ "$R9_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ] && [ -f "$GH_STUB_DIR/rules-called.log" ]; then
+    ok "R9 (positive control) the UN-mutated gate PARKs the failing case on rules_check_failed and, on the all-green path, DOES call the helper (log) and MERGE — the mutants' outcomes are caused by their one-line edits"
+  else
+    no "R9 positive control failed (fail-case='$R9_FAIL_OUT'/$R9_FAIL_MERGES green='$R9_OUT'/$(merges)) — cannot trust the mutation results without it"
+  fi
+  rm -rf "$CTRL"
+else
+  no "R9 cond-7 mutation controls not gated (a mutant was empty, identical to the original, failed bash -n, or lacked its injected marker)"
+fi
+rm -rf "${M_PARK:-/nonexistent-r9}" "${M_CALL:-/nonexistent-r9}"
+
+# R10 — END-TO-END against the REAL siblings (rules-gate-verdict.sh + rules-check.sh +
+# rules-replay-lib.sh beside the gate copy; only gh and classify-risk.sh stubbed): a real
+# fixture store stamped by a genuine `rules-check.sh --confirm` in a sandboxed HOME.
+# A countable (binds: []) FAILING must-check ⇒ PARK: rules_check_failed (<id>); the same
+# store with the check PASSING ⇒ MERGE. Proves the stub's JSON shape is the real one.
+TAB_CHAR="$(printf '\t')"
+reset_live
+rm -f "$GH_STUB_DIR/rules.json"
+IWD="$(mktemp -d)"; IWD="$(cd "$IWD" && pwd -P)"
+cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$IWD/"
+cp "$HERE/rules-gate-verdict.sh" "$HERE/rules-check.sh" "$HERE/rules-replay-lib.sh" "$IWD/"
+r10_store() {  # r10_store <name> <check> — a committed temp repo + stamped store; prints "<repo>\t<home>"
+  local r="$IWD/$1" h="$IWD/home-$1"
+  mkdir -p "$r/.agent/rules" "$h"
+  ( cd "$r" && git init -q && git config user.email t@t && git config user.name t \
+      && echo init > f && git add f && git commit -qm init ) >/dev/null 2>&1
+  jq -cn --arg id "e2e-$1" --arg c "$2" \
+    '[{id:$id, category:"test", statement:("s " + $id), enforcement:"must", check:$c, binds:[], provenance:{source:"test"}}]' \
+    > "$r/.agent/rules/r.json"
+  ( cd "$r" && env -u RULES_CHECK_NO_CMD -u RULES_CHECK_STAMP_FILE HOME="$h" bash "$IWD/rules-check.sh" --confirm </dev/null >/dev/null 2>&1 )
+  printf '%s\t%s' "$r" "$h"
+}
+r10_gate() {  # r10_gate <repo> <home> — sets R10_OUT
+  rm -f "$GH_STUB_DIR/merge.log"
+  printf '%s' "$(pass_ctx)" > "$WD/ctx.json"
+  R10_OUT="$( cd "$1" && env -u RULES_CHECK_NO_CMD -u RULES_CHECK_STAMP_FILE PATH="$BIN:$PATH" GH_STUB_DIR="$GH_STUB_DIR" HOME="$2" bash "$IWD/automate-helpers.sh" gate-eval "$PR" "$WD/ctx.json" --root "$1" 2>/dev/null )"
+}
+IFS="$TAB_CHAR" read -r R10_REPO R10_HOME <<R10A
+$(r10_store fails false)
+R10A
+r10_gate "$R10_REPO" "$R10_HOME"
+if [ "$R10_OUT" = "PARK: rules_check_failed (e2e-fails)" ] && [ "$(merges)" -eq 0 ]; then
+  ok "R10 end-to-end (real siblings): stamped countable FAILING must-check ⇒ PARK: rules_check_failed (e2e-fails), 0 merges"
+else
+  no "R10 end-to-end failing case wrong (out='$R10_OUT' merges=$(merges))"
+fi
+IFS="$TAB_CHAR" read -r R10_REPO R10_HOME <<R10B
+$(r10_store passes true)
+R10B
+r10_gate "$R10_REPO" "$R10_HOME"
+if [ "$R10_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ]; then
+  ok "R10 end-to-end (real siblings): the same store shape with the check PASSING ⇒ MERGE (1 merge)"
+else
+  no "R10 end-to-end passing case wrong (out='$R10_OUT' merges=$(merges))"
+fi
+rm -rf "$IWD"
+reset_live
 
 unset GH_STUB_DIR
 rm -rf "$WD"

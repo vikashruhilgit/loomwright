@@ -312,6 +312,7 @@ ok6k="$(helper "$HK" "$RK" --root "$RK")"
 echo "  -- argv/PATH spy: a sibling rules-check.sh stub in a temp copy of the helper's dir"
 SPY="$ROOT/spy"; mkdir -p "$SPY" "$ROOT/decoy"
 cp "$HELPER" "$SPY/worker-rule-selfcheck.sh"
+cp "$SCRIPT_DIR/rules-replay-lib.sh" "$SPY/rules-replay-lib.sh"   # the helper sources its sibling parse lib
 SPYLOG="$ROOT/spy.log"; DECOYLOG="$ROOT/decoy.log"
 cat > "$SPY/rules-check.sh" <<EOF
 #!/usr/bin/env bash
@@ -353,6 +354,7 @@ fi
 echo "== (ac7) MUTATION CONTROL: delete the --if-stamped invocation => no rule: line on the ac1 fixture =="
 MUT="$ROOT/mut"; mkdir -p "$MUT"
 cp "$CHECKER" "$MUT/rules-check.sh"
+cp "$SCRIPT_DIR/rules-replay-lib.sh" "$MUT/rules-replay-lib.sh"   # unmutated lib beside the mutant helper
 sed '/"\$CHECKER" --if-stamped <\/dev\/null/d' "$HELPER" > "$MUT/worker-rule-selfcheck.sh"
 ndiff="$(diff "$HELPER" "$MUT/worker-rule-selfcheck.sh" | grep -c '^<')"
 if [ -s "$MUT/worker-rule-selfcheck.sh" ] && ! cmp -s "$HELPER" "$MUT/worker-rule-selfcheck.sh" \
@@ -476,12 +478,16 @@ rule: a — stamped must-check result unresolved"
 ob="$(helper "$HB" "$RB" --root "$RB")"
 [ "$ob" = "$EXPB" ] && ok "(ii-b) a forged complete trailer after a signal death => every listed id unresolved" \
   || no "(ii-b) out=[$ob]"
-# Gated mutant: the rc guard `0|1)` widened to `*)`; the forged trailer must then hide `a`.
+# Gated mutant: the rc guard `0|1)` widened to `*)`; the forged trailer must then hide `a`. The guard
+# lives in the shared parse lib (rules-replay-lib.sh, rules_replay_trailer_ok), so the mutant is the
+# LIB copy beside an unmutated helper copy.
 MUTB="$ROOT/mut-b"; mkdir -p "$MUTB"
 cp "$CHECKER" "$MUTB/rules-check.sh"
-sed 's/^  0|1)$/  *)/' "$HELPER" > "$MUTB/worker-rule-selfcheck.sh"
-if [ ! -s "$MUTB/worker-rule-selfcheck.sh" ] || cmp -s "$HELPER" "$MUTB/worker-rule-selfcheck.sh" \
-   || ! bash -n "$MUTB/worker-rule-selfcheck.sh" 2>/dev/null || [ "$ob" != "$EXPB" ]; then
+cp "$HELPER" "$MUTB/worker-rule-selfcheck.sh"
+LIB="$SCRIPT_DIR/rules-replay-lib.sh"
+sed 's/^    0|1)$/    *)/' "$LIB" > "$MUTB/rules-replay-lib.sh"
+if [ ! -s "$MUTB/rules-replay-lib.sh" ] || cmp -s "$LIB" "$MUTB/rules-replay-lib.sh" \
+   || ! bash -n "$MUTB/rules-replay-lib.sh" 2>/dev/null || [ "$ob" != "$EXPB" ]; then
   no "(ii-b) mutant gate: mutant empty, identical, bash -n dirty, or the positive control failed"
 else
   obm="$( cd "$RB" && HOME="$HB" bash "$MUTB/worker-rule-selfcheck.sh" --root "$RB" </dev/null 2>/dev/null )"
@@ -494,6 +500,7 @@ fi
 echo "== (M-mismatch) a trailer whose M differs from the listed count => unresolved =="
 SPYM="$ROOT/spym"; mkdir -p "$SPYM"
 cp "$HELPER" "$SPYM/worker-rule-selfcheck.sh"
+cp "$SCRIPT_DIR/rules-replay-lib.sh" "$SPYM/rules-replay-lib.sh"   # the helper sources its sibling parse lib
 cat > "$SPYM/rules-check.sh" <<'EOF'
 #!/usr/bin/env bash
 case "$1" in
@@ -508,12 +515,15 @@ om="$( cd "$RM" && HOME="$HM" bash "$SPYM/worker-rule-selfcheck.sh" --root "$RM"
 [ "$om" = "rule: x — stamped must-check result unresolved" ] \
   && ok "(M-mismatch) 'Checks passed: 1/2' with ONE listed id => x unresolved (rc 0, PASS line notwithstanding)" \
   || no "(M-mismatch) out=[$om]"
-# Gated mutant: delete the `-eq "$LISTED_N"` comparison; the mismatched trailer must then pass x.
+# Gated mutant: delete the `-eq "$_listed_n"` comparison (in the shared parse lib's
+# rules_replay_trailer_ok); the mismatched trailer must then pass x. Mutant = the LIB copy beside an
+# unmutated helper copy.
 MUTM="$ROOT/mut-m"; mkdir -p "$MUTM"
 cp "$SPYM/rules-check.sh" "$MUTM/rules-check.sh"
-sed 's/ && \[ "\$_m" -eq "\$LISTED_N" \]//' "$HELPER" > "$MUTM/worker-rule-selfcheck.sh"
-if [ ! -s "$MUTM/worker-rule-selfcheck.sh" ] || cmp -s "$HELPER" "$MUTM/worker-rule-selfcheck.sh" \
-   || ! bash -n "$MUTM/worker-rule-selfcheck.sh" 2>/dev/null \
+cp "$HELPER" "$MUTM/worker-rule-selfcheck.sh"
+sed 's/ && \[ "\$_m" -eq "\$_listed_n" \]//' "$LIB" > "$MUTM/rules-replay-lib.sh"
+if [ ! -s "$MUTM/rules-replay-lib.sh" ] || cmp -s "$LIB" "$MUTM/rules-replay-lib.sh" \
+   || ! bash -n "$MUTM/rules-replay-lib.sh" 2>/dev/null \
    || [ "$om" != "rule: x — stamped must-check result unresolved" ]; then
   no "(M-mismatch) mutant gate: mutant empty, identical, bash -n dirty, or the positive control failed"
 else
