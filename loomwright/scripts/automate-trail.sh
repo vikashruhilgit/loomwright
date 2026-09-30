@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # automate-trail.sh — the `/automate` engine's post-park lifecycle MUTATORS.
-# PROTOCOL AUTHORITY: `skills/automate-loop/SKILL.md` §6 "Trail PR at every
-# park and at run end" (and §1.5's rows for each subcommand). Dispatched from
+# PROTOCOL AUTHORITY: `skills/automate-loop/SKILL.md` §6 "Trail PR after merge
+# and at run end" (and §1.5's rows for each subcommand). trail-pr is called only
+# by closeout (after its merge evidence gate), at `## Status: done`, and on a
+# skip/abandon check-off — never at a park; its _evidence_gate drops a
+# done-stamped requirement / done brief whose PR is not merged regardless. Dispatched from
 # `automate-helpers.sh` (`exec bash "$(dirname "$0")/automate-trail.sh" <subcmd>`)
 # so the helper itself stays read-only toward git; THIS script is the carve-out.
 #
@@ -33,10 +36,12 @@
 #       and checks its keys against the tables below (required keys, no
 #       non-schema key, canonical `channels_scanned`, `risk_classification`
 #       carries `reasons`). A file that cannot be checked is a `fail`.
-#   trail-pr <runfile> [--reason <park_reason>]
+#   trail-pr <runfile> [--reason <reason>]
 #       One line: `trail-pr: opened <url>` | `trail-pr: pushed <url>` |
 #       `trail-pr: skipped — <reason>`. Sidecars that fail `sidecar-check` are
 #       excluded and named INSIDE that same line (`; excluded <path> — <reason>`),
+#       and so is a done-stamped requirement / done brief whose PR is not merged
+#       (`; excluded <path> — pr not merged`, _evidence_gate),
 #       so the loop can append it to `## Progress` with one progress-append.
 #   closeout <runfile> <item> <pr_url> [--session-id <sid>]
 #       The post-merge close-out (SKILL §6 "Post-merge close-out"): evidence
@@ -66,7 +71,7 @@
 # commits the whole index), so the loop runs `trail-unstage` at PICK, before
 # the next commit-producing phase, and `closeout` re-applies the contract at
 # its own pull for the recorded blobs that have landed upstream. The next
-# trail-pr (at the next park or run end) re-stages every path its open trail PR
+# trail-pr (the next closeout, skip/abandon check-off or run end) re-stages every path its open trail PR
 # carries, including ones an earlier PICK dropped. trail-unstage clears the
 # union of the record and today's candidates. Honest limits: between a PICK and
 # the next trail-pr, a HAND-run `git pull` over a merged trail PR refuses
@@ -74,7 +79,7 @@
 # staged until the next PICK's trail-unstage. The trail branch is NEVER
 # rebased: once origin/<default branch> moves the postmortem ledger (another
 # run's trail PR, a postmortem line) after this run's trail branch was cut, a
-# later push/no-diff re-park stages the trail-TIP ledger blob, which lacks
+# later push/no-diff re-trail stages the trail-TIP ledger blob, which lacks
 # main's new line — the trail PR then conflicts at the ledger's EOF, and both a
 # hand pull and closeout's sync refuse (fail-safe: no reset, nothing lost);
 # resolve the trail PR by hand. When closeout's `git pull --ff-only` refuses,
@@ -434,14 +439,14 @@ EOF
 }
 
 trail_pr() {
-  local runfile="" reason="park"
+  local runfile="" reason="trail"
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --reason) reason="${2:-park}"; shift 2 || shift ;;
+      --reason) reason="${2:-trail}"; shift 2 || shift ;;
       *) [ -z "$runfile" ] && runfile="$1"; shift ;;
     esac
   done
-  [ -n "$reason" ] || reason="park"
+  [ -n "$reason" ] || reason="trail"
   local skip_prefix="trail-pr: skipped —"
   if [ -z "$runfile" ] || [ ! -f "$runfile" ]; then echo "$skip_prefix run file not found"; return 0; fi
   if ! command -v git >/dev/null 2>&1; then echo "$skip_prefix git unavailable"; return 0; fi

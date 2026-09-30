@@ -40,7 +40,11 @@
 #   V. bash 3.2 — `/bin/bash -n` (when it is 3.x) on both new scripts, the helper
 #      and this file; sidecar-check / trail-pr / trail-unstage / closeout run
 #      with a 3.2 `bash` first on PATH, so the child is not a Homebrew bash.
-#   K. SKILL text — trail-pr precedes run-lock.sh release on every park path.
+#   K. SKILL text — trail-after-merge (v15.114.2): trail-pr runs only in
+#      closeout (after its merge gate), at `## Status: done` and on a
+#      skip/abandon check-off (each before the lock release); NO park path
+#      (awaiting_merge/escalated/rate_limit/drain_died/token_ceiling/
+#      limit_reached) calls it; old heading referenced nowhere.
 #
 # Part B legs:
 #   C. closeout — squash-merged fixture PR (a new commit on origin/main, not the
@@ -69,6 +73,18 @@
 #      watcher is never signalled (reclaimed as stale); MERGED seen + transient
 #      closeout skips until the cap ⇒ failure notify + a Progress line naming
 #      the merge and the last skip reason.
+#   E. evidence-gated stamps (decision 2) — a sentinel-led done /
+#      done_with_escalation requirement stamp (and a done/ brief's Outcome PR)
+#      rides only when its PR reads MERGED: OPEN, CLOSED, gh failing, a stamp
+#      naming no PR ⇒ excluded + named; unstamped ⇒ committed with no gh call;
+#      a skipped item's done stamp for a CLOSED PR ⇒ excluded; a mutant without
+#      the _evidence_gate call commits the OPEN-PR stamp (control).
+#   D3. checkout contract re-examined for trail-after-merge (decision 3), from
+#      closeout's own trail (primary on main): (i) trail-unstage still needed
+#      (control: the next commit sweeps the run file); (ii) _stage_tip still
+#      needed for the owner's hand pull (control: neutered ⇒ refuses); (iii)
+#      the .trail-staged re-stage still needed for closeout #2's sync after a
+#      PICK un-stage (control: no record ⇒ refuses). All KEPT.
 #   K. SKILL text (Part B) — watcher named, §6 step 1 closeout --session-id
 #      before PICK, decision-9 grep clean, commands/automate.md surface.
 
@@ -108,6 +124,7 @@ case "${1:-} ${2:-}" in
     jq --arg h "$head" --arg u "$url" --argjson n "$n" '. + [{number:$n,url:$u,state:"OPEN",headRefName:$h}]' "$d/prs.json" > "$d/prs.tmp" && mv "$d/prs.tmp" "$d/prs.json"
     echo "$url"; exit 0 ;;
   "pr view")
+    [ -f "$d/pr-view-fail" ] && exit 1
     key="${3:-}"
     # state-seq: one state per `pr view <url>` call, persisted into prs.json
     # (drives the merge watcher's OPEN → MERGED flip).
@@ -288,7 +305,7 @@ count_creates() { grep -c '^pr create' "$GH_STUB_DIR/argv.log" 2>/dev/null || tr
 echo "== T. trail-pr =="
 RF_REL0=".supervisor/automate/$RUN_ID.md"
 new_fixture 1
-out="$(cd "$P" && bash "$H" trail-pr ".supervisor/automate/$RUN_ID.md" --reason awaiting_merge)"; rc=$?
+out="$(cd "$P" && bash "$H" trail-pr ".supervisor/automate/$RUN_ID.md" --reason closeout)"; rc=$?
 lines="$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
 case "$out" in "trail-pr: opened https://github.com/acme/widgets/pull/100"*) ok "first run opens a PR ($out)" ;; *) no "first run: $out" ;; esac
 [ "$rc" -eq 0 ] && [ "$lines" = "1" ] && ok "exactly one line, exit 0" || no "rc=$rc lines=$lines"
@@ -300,18 +317,18 @@ case "$names" in *stray.txt*|*README*|*feat.txt*|*brief-other*|*brief-live*|*sup
 case "$out" in *"excluded .supervisor/automate/$RUN_ID.supervisor-result.md — risk_classification present without reasons"*) ok "failing sidecar named in the output line" ;; *) no "exclusion not named: $out" ;; esac
 led="$(git -C "$FX/origin.git" show "refs/heads/$BR:.supervisor/postmortem/results.jsonl")"
 if grep -q "old-run" <<<"$led" && grep -q "$RUN_ID" <<<"$led" && ! grep -q "other-run" <<<"$led"; then ok "ledger = base + this run's lines only"; else no "ledger content: $led"; fi
-[ "$(git -C "$FX/origin.git" log -1 --format=%s "refs/heads/$BR")" = "chore(supervisor): $RUN_ID trail (awaiting_merge)" ] && ok "commit subject names run + reason" || no "subject"
+[ "$(git -C "$FX/origin.git" log -1 --format=%s "refs/heads/$BR")" = "chore(supervisor): $RUN_ID trail (closeout)" ] && ok "commit subject names run + reason" || no "subject"
 wt_n="$(git -C "$P" worktree list --porcelain | grep -c '^worktree ')"
 [ "$wt_n" = "1" ] && ok "temporary worktree removed" || no "worktrees leaked: $wt_n"
 [ "$(git -C "$P" rev-parse --abbrev-ref HEAD)" = "feature/x" ] && ok "primary stays on its branch" || no "primary branch moved"
 
 # AC4 idempotency
-out2="$(cd "$P" && bash "$H" trail-pr ".supervisor/automate/$RUN_ID.md" --reason awaiting_merge)"
+out2="$(cd "$P" && bash "$H" trail-pr ".supervisor/automate/$RUN_ID.md" --reason closeout)"
 case "$out2" in "trail-pr: skipped — trail already up to date"*) ok "no-diff re-run skips" ;; *) no "no-diff re-run: $out2" ;; esac
 [ "$(count_creates)" = "1" ] && ok "gh pr create called once after re-run" || no "create count $(count_creates)"
 tip1="$(git -C "$FX/origin.git" rev-parse "refs/heads/$BR")"
 echo "- t1 trail-pr: opened …" >> "$P/.supervisor/automate/$RUN_ID.md"
-out3="$(cd "$P" && bash "$H" trail-pr ".supervisor/automate/$RUN_ID.md" --reason escalated)"
+out3="$(cd "$P" && bash "$H" trail-pr ".supervisor/automate/$RUN_ID.md" --reason done)"
 case "$out3" in "trail-pr: pushed https://github.com/acme/widgets/pull/100"*) ok "changed re-run pushes to the open PR" ;; *) no "changed re-run: $out3" ;; esac
 [ "$(count_creates)" = "1" ] && ok "still one gh pr create" || no "create count $(count_creates)"
 tip2="$(git -C "$FX/origin.git" rev-parse "refs/heads/$BR")"
@@ -339,12 +356,12 @@ echo "== O. crash-recovery orphan: remote trail branch with NO linked PR =="
 for omode in nodiff changed; do
   if [ "$omode" = "nodiff" ]; then new_fixture 41; else new_fixture 42; fi
   BR="chore/$RUN_ID-trail-1"
-  (cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason awaiting_merge >/dev/null)
+  (cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason closeout >/dev/null)
   git -C "$FX/origin.git" rev-parse -q --verify "refs/heads/$BR" >/dev/null && ok "[$omode] setup: $BR pushed" || no "[$omode] setup: $BR not pushed"
   otip1="$(git -C "$FX/origin.git" rev-parse "refs/heads/$BR" 2>/dev/null)"
   echo '[]' > "$GH_STUB_DIR/prs.json"; : > "$GH_STUB_DIR/argv.log"   # the crash: branch pushed, no PR
   [ "$omode" = "changed" ] && echo "- t1 parked again after the crash" >> "$P/$RF_REL0"
-  out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason escalated)"; rc=$?
+  out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason done)"; rc=$?
   case "$out" in "trail-pr: opened https://github.com/acme/widgets/pull/"*) [ "$rc" -eq 0 ] && ok "[$omode] orphan re-run opens a PR, exit 0 ($out)" || no "[$omode] rc=$rc" ;; *) no "[$omode] orphan re-run: $out" ;; esac
   [ "$(count_creates)" = "1" ] && ok "[$omode] exactly one gh pr create" || no "[$omode] create count $(count_creates)"
   grep -q -- "--head $BR " "$GH_STUB_DIR/argv.log" && ok "[$omode] the PR is opened for the orphan branch $BR" || no "[$omode] pr create head: $(grep '^pr create' "$GH_STUB_DIR/argv.log")"
@@ -361,7 +378,7 @@ done
 # =============================================================================
 echo "== U. PICK-time trail-unstage (the next item's commit carries no trail path) =="
 new_fixture 12
-(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason awaiting_merge >/dev/null)
+(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason closeout >/dev/null)
 pre="$(git -C "$P" diff --cached --name-only)"
 [ -n "$pre" ] && ok "trail-pr left trail paths staged (the hazard this leg guards)" || no "nothing staged after trail-pr"
 [ -s "$P/.supervisor/automate/$RUN_ID.trail-staged" ] && ok "trail-pr recorded the staged blobs in <run_id>.trail-staged" || no "trail-staged record missing"
@@ -385,15 +402,15 @@ echo "== B2. park → PICK un-stage → next park re-stages EVERY trail path (ha
 for b2mode in pushed nodiff; do
   if [ "$b2mode" = "pushed" ]; then new_fixture 21; else new_fixture 22; fi
   BR="chore/$RUN_ID-trail-1"
-  (cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason awaiting_merge >/dev/null)
+  (cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason closeout >/dev/null)
   (cd "$P" && bash "$H" trail-unstage "$RF_REL0" >/dev/null)
   [ -z "$(git -C "$P" diff --cached --name-only)" ] && ok "[$b2mode] PICK un-stage cleared the index" || no "[$b2mode] still staged after un-stage"
   if [ "$b2mode" = "pushed" ]; then
     echo "- t1 parked again" >> "$P/$RF_REL0"
-    out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason escalated)"
+    out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason done)"
     case "$out" in "trail-pr: pushed "*) ok "[$b2mode] second park pushes to the reused PR" ;; *) no "[$b2mode] second park: $out" ;; esac
   else
-    out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason escalated)"
+    out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason done)"
     case "$out" in "trail-pr: skipped — trail already up to date"*) ok "[$b2mode] second park is the no-diff skip" ;; *) no "[$b2mode] second park: $out" ;; esac
   fi
   tip="$(git -C "$P" rev-parse "refs/remotes/origin/$BR")"
@@ -411,7 +428,7 @@ EOF
   if [ "$b2mode" = "nodiff" ]; then
     recn="$(wc -l < "$P/.supervisor/automate/$RUN_ID.trail-staged" | tr -d ' ')"
     idx1="$(git -C "$P" ls-files -s | LC_ALL=C sort)"
-    (cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason escalated >/dev/null 2>&1) || true
+    (cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason done >/dev/null 2>&1) || true
     recn2="$(wc -l < "$P/.supervisor/automate/$RUN_ID.trail-staged" | tr -d ' ')"
     [ "$recn" = "$recn2" ] && [ "$idx1" = "$(git -C "$P" ls-files -s | LC_ALL=C sort)" ] && ok "[$b2mode] re-run is idempotent (same index, no duplicate record lines)" || no "[$b2mode] re-run changed state (record $recn -> $recn2)"
   fi
@@ -426,7 +443,7 @@ done
 # trail-unstage clears the union of the record and today's candidates: a
 # recorded path that is no longer a candidate is still unstaged.
 new_fixture 23
-(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason awaiting_merge >/dev/null)
+(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason closeout >/dev/null)
 NC=".supervisor/jobs/done/brief-a.md"
 grep -qxF -- "$NC" < <(git -C "$P" diff --cached --name-only) && ok "done brief staged by trail-pr" || no "done brief not staged"
 printf '# Brief\n## Environment\n- **Source requirement:** .supervisor/requirements/zz.md\n' > "$P/$NC"
@@ -490,7 +507,7 @@ else
   [ "$out" = "3" ] && ok "3.2 bash is first on PATH for the legs below" || no "PATH bash is $out"
   out="$(cd "$P" && PATH="$B32DIR:$PATH" bash "$H" sidecar-check ".supervisor/automate/$RUN_ID.review-heal-result.md")"; rc=$?
   [ "$out" = "ok .supervisor/automate/$RUN_ID.review-heal-result.md" ] && [ "$rc" -eq 0 ] && ok "3.2: sidecar-check ok, exit 0" || no "3.2 sidecar-check: $out rc=$rc"
-  out="$(cd "$P" && PATH="$B32DIR:$PATH" bash "$H" trail-pr "$RF_REL0" --reason awaiting_merge)"; rc=$?
+  out="$(cd "$P" && PATH="$B32DIR:$PATH" bash "$H" trail-pr "$RF_REL0" --reason closeout)"; rc=$?
   case "$out" in "trail-pr: opened "*) [ "$rc" -eq 0 ] && ok "3.2: trail-pr opens a PR, exit 0" || no "3.2 trail-pr rc=$rc" ;; *) no "3.2 trail-pr: $out" ;; esac
   out="$(cd "$P" && PATH="$B32DIR:$PATH" bash "$H" trail-unstage "$RF_REL0")"; rc=$?
   case "$out" in "trail-unstage: unstaged "*) [ "$rc" -eq 0 ] && ok "3.2: trail-unstage, exit 0" || no "3.2 trail-unstage rc=$rc" ;; *) no "3.2 trail-unstage: $out" ;; esac
@@ -516,7 +533,7 @@ out="$(cd "$P" && bash "$H" trail-pr ".supervisor/automate/nope.md")"; rc=$?
 SPY="$TOP/spy"; mkdir -p "$SPY"
 cp "$T" "$HERE/result_block_parser.py" "$HERE/brief-pointer.sh" "$HERE/worktree-salvage.sh" "$SPY/"
 printf '#!/usr/bin/env bash\necho "$*" >> "%s/runlock.log"\n' "$SPY" > "$SPY/run-lock.sh"
-out="$(cd "$P" && bash "$SPY/automate-trail.sh" trail-pr ".supervisor/automate/$RUN_ID.md" --reason limit_reached)"
+out="$(cd "$P" && bash "$SPY/automate-trail.sh" trail-pr ".supervisor/automate/$RUN_ID.md" --reason done)"
 case "$out" in "trail-pr: opened "*) ok "spy copy ran trail-pr ($out)" ;; *) no "spy run: $out" ;; esac
 [ ! -f "$SPY/runlock.log" ] && ok "trail-pr never invokes run-lock.sh" || no "run-lock.sh was invoked"
 code_lines="$(grep -vE '^[[:space:]]*#' "$T")"
@@ -543,26 +560,53 @@ fi
 
 # =============================================================================
 echo "== K. SKILL wiring =="
-grep -q '^### Trail PR at every park and at run end' "$SKILL" && ok "SKILL trail section present" || no "trail section missing"
+grep -q '^### Trail PR after merge and at run end$' "$SKILL" && ok "SKILL trail section present (after merge and at run end)" || no "trail section missing"
+OLDH="Trail PR at every"" park"   # split so this file is not a hit of its own sweep
+hits="$(grep -rnF "$OLDH" "$HERE/.." 2>/dev/null || true)"
+[ -z "$hits" ] && ok "old heading referenced nowhere under loomwright/" || no "stale old-heading refs: $hits"
 for s in sidecar-check trail-pr closeout trail-unstage; do
   grep -qE "^\| \`$s\` \|" "$SKILL" && ok "§1.5 row $s" || no "§1.5 row $s missing"
 done
-# trail-pr precedes run-lock.sh release on the named lines
+# The three triggers: trail-pr precedes run-lock.sh release where the loop runs it.
 precedes() { # <regex identifying the line> <label>
   local line; line="$(grep -m1 -E "$1" "$SKILL")"
   local a="${line%%trail-pr*}" b="${line%%run-lock.sh release*}"
   if [ -n "$line" ] && [ "$a" != "$line" ] && [ "$b" != "$line" ] && [ "${#a}" -lt "${#b}" ]; then ok "$2: trail-pr before run-lock.sh release"; else no "$2: ordering not stated"; fi
 }
-precedes '^6\. \*\*CHECK OFF' "§6 step 6"
-precedes '^   \*\*PICK-time token-ceiling check' "token_ceiling park"
-precedes '^- \*\*Classified hit' "rate_limit park"
-precedes '^- \*\*Safe mode \(default\):' "§9 awaiting_merge park"
-precedes '^\*\*`ESCALATED` never merges' "§9 escalated park"
-precedes '^Before the run-lock release' "Termination (done + limit_reached)"
-sect="$(awk '/^### Trail PR at every park and at run end/{s=1;next} s&&/^##/{exit} s' "$SKILL")"
-for pr in awaiting_merge escalated limit_reached rate_limit drain_died token_ceiling '## Status: done' run_lock_held resume_ambiguous; do
-  grep -qF -- "$pr" <<<"$sect" && ok "trail section names $pr" || no "trail section missing $pr"
+precedes '^6\. \*\*CHECK OFF' "§6 step 6 (skip/abandon check-off + done)"
+precedes '^On the \*\*`## Status: done`\*\* exit ONLY' "Termination (done)"
+grep -qE '^6\. \*\*CHECK OFF.*`# skipped:`/`# abandoned:`.*`## Status: done`.*no park path runs it' "$SKILL" && ok "§6 step 6 scopes trail-pr to skip/abandon + done, no park" || no "§6 step 6 trail scope"
+grep -qE '^1\. \*\*RECONCILE.*`# skipped:`/`# abandoned:` by a human.*trail-pr <runfile> --reason skipped\|abandoned.*BEFORE PICK' "$SKILL" && ok "RECONCILE runs trail-pr for a human skip/abandon, before PICK" || no "RECONCILE human skip trigger missing"
+grep -qE '\*\*trail\*\* via `automate-helpers.sh trail-pr <runfile> --reason closeout`' "$SKILL" && ok "closeout steps end with trail-pr --reason closeout" || no "closeout trail step missing"
+co_fn="$(awk '/^closeout\(\) \{/{s=1} s{print} s&&/^}/{exit}' "$T" | grep -vE '^[[:space:]]*#')"
+ln_gate="$(grep -n 'reconcile-item' <<<"$co_fn" | head -n1 | cut -d: -f1)"
+ln_trail="$(grep -n 'trail-pr' <<<"$co_fn" | head -n1 | cut -d: -f1)"
+[ -n "$ln_gate" ] && [ -n "$ln_trail" ] && [ "$ln_gate" -lt "$ln_trail" ] && ok "script: closeout calls trail-pr only after its reconcile-item merge gate" || no "closeout gate/trail order ($ln_gate/$ln_trail)"
+# No park path calls trail-pr: each park line says so, and no `trail-pr --reason <park>` anywhere.
+no_trail_on() { # <regex identifying the park line> <label>
+  local line; line="$(grep -m1 -E "$1" "$SKILL")"
+  if [ -n "$line" ] && ! grep -qF 'trail-pr --reason' <<<"$line" && grep -qiE 'no `trail-pr`|without a trail' <<<"$line"; then ok "$2: no trail-pr at this park"; else no "$2: park line still runs trail-pr (or does not say it does not)"; fi
+}
+no_trail_on '^   \*\*PICK-time token-ceiling check' "token_ceiling park"
+no_trail_on '^- \*\*Classified hit' "rate_limit park"
+no_trail_on '^- \*\*Safe mode \(default\):' "§9 awaiting_merge park"
+no_trail_on '^\*\*`ESCALATED` never merges' "§9 escalated park"
+grep -qE '^On the \*\*`## Status: done`\*\* exit ONLY.*the `limit_reached` exit is a park and releases the lock without a trail' "$SKILL" && ok "Termination limit_reached: no trail-pr at this park" || no "Termination limit_reached still trails"
+hits="$(grep -nE 'trail-pr --reason (awaiting_merge|escalated|rate_limit|drain_died|token_ceiling|limit_reached)' "$SKILL" "$HERE/../commands/automate.md" "$T" "$H" "$HERE/automate-merge-watch.sh" || true)"
+[ -z "$hits" ] && ok "no trail-pr --reason <park_reason> anywhere (SKILL, command, scripts)" || no "park-reason trail calls: $hits"
+sect="$(awk '/^### Trail PR after merge and at run end/{s=1;next} s&&/^##/{exit} s' "$SKILL")"
+when="$(grep -m1 -F -- '- **When — this is the ONE authoritative trigger list' <<<"$sect")"
+for t in '`--reason closeout`' '`--reason done`' '`--reason skipped`' '`--reason abandoned`' 'MERGED'; do
+  grep -qF -- "$t" <<<"$when" && ok "trigger list names $t" || no "trigger list missing $t"
 done
+nopark="${when#*No park calls it:\*\*}"
+[ "$nopark" != "$when" ] && ok "trigger list carries the one 'No park calls it' park-path list" || no "no-park list missing"
+for pr in awaiting_merge escalated rate_limit drain_died token_ceiling limit_reached run_lock_held resume_ambiguous; do
+  grep -qF -- "\`$pr\`" <<<"$nopark" && ok "no-park list names $pr" || no "no-park list missing $pr"
+done
+grep -qF -- '- **Evidence-gated stamps' <<<"$sect" && ok "trail section documents the evidence gate" || no "evidence-gate bullet missing"
+grep -qF -- '- **Committing a done stamp for unmerged work.**' "$SKILL" && ok "Anti-Pattern: committing a done stamp for unmerged work" || no "anti-pattern missing"
+grep -qF 'never at a park' "$HERE/../commands/automate.md" && ok "commands/automate.md trail bullet: never at a park" || no "commands/automate.md trail bullet stale"
 
 # =============================================================================
 # Part B — closeout + merge watcher
@@ -610,7 +654,7 @@ run_closeout() { (cd "$P" && bash "$SPYD/automate-helpers.sh" closeout "$RF_REL"
 
 echo "== C. closeout =="
 closeout_fixture 4
-(cd "$P" && bash "$H" trail-pr "$RF_REL" --reason awaiting_merge >/dev/null)   # stages trail blobs in the primary index
+(cd "$P" && bash "$H" trail-pr "$RF_REL" --reason closeout >/dev/null)   # stages trail blobs in the primary index
 spy_reset
 out="$(run_closeout)"; rc=$?
 printf '%s\n' "$out" | sed 's/^/    | /'
@@ -646,7 +690,7 @@ echo "== C. closeout after a PICK un-stage (decision 4 kept) =="
 # the recorded trail blobs that landed on origin/main right before its pull.
 for variant in record no-record; do
   if [ "$variant" = record ]; then closeout_fixture 13; else closeout_fixture 14; fi
-  (cd "$P" && bash "$H" trail-pr "$RF_REL" --reason awaiting_merge >/dev/null)
+  (cd "$P" && bash "$H" trail-pr "$RF_REL" --reason closeout >/dev/null)
   TM="$FX/tmerger"; git clone -q "$FX/origin.git" "$TM" 2>/dev/null
   ( cd "$TM" && git checkout -q main && git merge -q --squash "origin/chore/$RUN_ID-trail-1" >/dev/null && git commit -qm "squash trail" && git push -q origin main 2>/dev/null )
   (cd "$P" && bash "$H" trail-unstage "$RF_REL" >/dev/null)
@@ -672,11 +716,11 @@ echo "== C. closeout: a self-staged trail path that is no longer a candidate =="
 SC=".supervisor/automate/$RUN_ID.review-heal-result.md"
 for variant in own foreign; do
   if [ "$variant" = own ]; then closeout_fixture 15; else closeout_fixture 16; fi
-  (cd "$P" && bash "$H" trail-pr "$RF_REL" --reason awaiting_merge >/dev/null)
+  (cd "$P" && bash "$H" trail-pr "$RF_REL" --reason closeout >/dev/null)
   (cd "$P" && bash "$H" trail-unstage "$RF_REL" >/dev/null)
   echo "not a result block" > "$P/$SC"
   echo "- t5 parked again" >> "$P/$RF_REL"
-  out="$(cd "$P" && bash "$H" trail-pr "$RF_REL" --reason escalated)"
+  out="$(cd "$P" && bash "$H" trail-pr "$RF_REL" --reason done)"
   case "$out" in "trail-pr: pushed "*"excluded $SC"*) ok "[$variant] second park pushes with the sidecar excluded" ;; *) no "[$variant] second park: $out" ;; esac
   case "$(git -C "$P" status --porcelain --untracked-files=no -- "$SC")" in "AM $SC") ok "[$variant] sidecar is self-staged (AM) from the trail tip" ;; *) no "[$variant] sidecar status: $(git -C "$P" status --porcelain -- "$SC")" ;; esac
   [ "$variant" = foreign ] && ( cd "$P" && echo "foreign edit" > README )
@@ -752,7 +796,7 @@ L6M="$TOP/l6m"; mkdir -p "$L6M"; cp "$L6D"/*.sh "$L6D"/*.py "$L6M/"
 sed 's/^\([[:space:]]*\)_restore_prior$/\1:/' "$L6D/automate-trail.sh" > "$L6M/automate-trail.sh"
 for variant in fixed mutant; do
   if [ "$variant" = fixed ]; then closeout_fixture 33; D="$L6D"; else closeout_fixture 34; D="$L6M"; fi
-  (cd "$P" && bash "$H" trail-pr "$RF_REL" --reason awaiting_merge >/dev/null)
+  (cd "$P" && bash "$H" trail-pr "$RF_REL" --reason closeout >/dev/null)
   TM="$FX/tmerger"; git clone -q "$FX/origin.git" "$TM" 2>/dev/null
   ( cd "$TM" && git checkout -q main && git merge -q --squash "origin/chore/$RUN_ID-trail-1" >/dev/null && git commit -qm "squash trail" && git push -q origin main 2>/dev/null )
   (cd "$P" && bash "$H" trail-unstage "$RF_REL" >/dev/null)
@@ -773,9 +817,144 @@ new_fixture 35
 ( cd "$P" && mkdir -p src && echo "v1" > src/app.py && git add src/app.py && git commit -qm app && echo "local WIP" >> src/app.py )
 awk '{print} /^## Queue$/{print "- [ ] src/app.py"}' "$P/$RF_REL0" > "$TOP/rf35" && mv "$TOP/rf35" "$P/$RF_REL0"
 grep -qxF -- '- [ ] src/app.py' "$P/$RF_REL0" && ok "setup: a Queue item names a tracked source file" || no "setup: Queue edit failed"
-(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason awaiting_merge >/dev/null)
+(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason closeout >/dev/null)
 names="$(git -C "$FX/origin.git" show --name-only --format= "refs/heads/chore/$RUN_ID-trail-1" 2>/dev/null)"
 case "$names" in *src/app.py*) no "L5: source file's local WIP committed into the trail: $names" ;; *"$REQ"*) ok "L5: source-file Queue item not committed; requirement still is" ;; *) no "L5: trail names: $names" ;; esac
+
+echo "== E. evidence-gated stamps: a done claim rides only when its PR merged (decision 2) =="
+# The requirement (and the done/ brief) Phase 4.5 stamps BEFORE any merge. trail-pr
+# must commit such a stamp only when the PR it names reads MERGED; everything else
+# is excluded, named in the one output line, and fails CLOSED.
+stamp_req() { # <path> <status> <pr-line or empty>
+  printf '# req\n\n<!-- loomwright:requirement-closeout -->\n## Status: %s\n- **Completed:** 2026-01-01T00:00:00Z\n- **Brief:** .supervisor/jobs/done/brief-a.md\n%s' "$2" "$3" > "$P/$1"
+}
+set_pr() { # <url> <state> [<url> <state>]
+  jq -n --arg u "$1" --arg s "$2" --arg u2 "${3:-}" --arg s2 "${4:-}" \
+    '[{number:7,url:$u,state:$s,headRefName:"feature/x"}] + (if $u2 == "" then [] else [{number:8,url:$u2,state:$s2,headRefName:"feature/y"}] end)' > "$GH_STUB_DIR/prs.json"
+}
+trail_names() { git -C "$FX/origin.git" show --name-only --format= "refs/heads/chore/$RUN_ID-trail-1" 2>/dev/null; }
+PRL="- **PR:** $PRURL
+"
+# (a) stamped + OPEN ⇒ excluded + named, not committed; the run file still rides
+new_fixture 50; stamp_req "$REQ" done "$PRL"; set_pr "$PRURL" OPEN
+out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason done)"; rc=$?
+case "$out" in "trail-pr: opened "*"; excluded $REQ — pr not merged"*) ok "(a) stamped + PR OPEN ⇒ requirement excluded and named ($out)" ;; *) no "(a) stamped+OPEN: $out" ;; esac
+names="$(trail_names)"
+if ! grep -qxF -- "$REQ" <<<"$names" && grep -qxF -- "$RF_REL0" <<<"$names"; then ok "(a) requirement NOT committed; the run file is"; else no "(a) trail names: $names"; fi
+[ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" = "1" ] && ok "(a) one line, exit 0" || no "(a) rc=$rc"
+# (a') done_with_escalation + OPEN, and a done stamp naming no PR ⇒ excluded
+new_fixture 51; stamp_req "$REQ" done_with_escalation "$PRL"; set_pr "$PRURL" OPEN
+out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason done)"
+case "$out" in *"; excluded $REQ — pr not merged"*) ok "(a') done_with_escalation + PR OPEN ⇒ excluded" ;; *) no "(a') dwe: $out" ;; esac
+new_fixture 52; stamp_req "$REQ" done ""; set_pr "$PRURL" MERGED
+out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason done)"
+case "$out" in *"; excluded $REQ — pr not merged"*) ok "(a') a done stamp naming no PR ⇒ excluded (fail closed)" ;; *) no "(a') no-pr stamp: $out" ;; esac
+# (b) stamped + MERGED ⇒ committed, no exclusion
+new_fixture 53; stamp_req "$REQ" done "$PRL"; set_pr "$PRURL" MERGED
+out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason closeout)"
+case "$out" in *"excluded $REQ"*) no "(b) merged stamp excluded: $out" ;; "trail-pr: opened "*) ok "(b) stamped + PR MERGED ⇒ not excluded" ;; *) no "(b): $out" ;; esac
+grep -qxF -- "$REQ" < <(trail_names) && ok "(b) the merged item's stamped requirement is committed" || no "(b) requirement missing: $(trail_names)"
+# (c) gh pr view failing ⇒ excluded (fail closed); pr list still answers
+new_fixture 54; stamp_req "$REQ" done "$PRL"; set_pr "$PRURL" MERGED; touch "$GH_STUB_DIR/pr-view-fail"
+out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason done)"
+case "$out" in "trail-pr: opened "*"; excluded $REQ — pr not merged"*) ok "(c) gh pr view failing ⇒ excluded (fail closed)" ;; *) no "(c) gh fail: $out" ;; esac
+grep -qxF -- "$REQ" < <(trail_names) && no "(c) requirement committed despite unreadable PR" || ok "(c) requirement not committed"
+rm -f "$GH_STUB_DIR/pr-view-fail"
+# (d) an unstamped requirement (no sentinel — the fixture's bare `## Status: done`) rides regardless
+new_fixture 55; set_pr "$PRURL" OPEN
+out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason done)"
+case "$out" in *"excluded $REQ"*) no "(d) unstamped requirement excluded: $out" ;; *) grep -qxF -- "$REQ" < <(trail_names) && ok "(d) unstamped requirement committed even with its PR OPEN" || no "(d) names: $(trail_names)" ;; esac
+grep -q '^pr view' "$GH_STUB_DIR/argv.log" && no "(d) gh pr view called for unstamped paths" || ok "(d) no gh pr view for an unstamped requirement / Outcome-less brief"
+# (e) done/ brief: same rule on its `## Outcome` `- **PR:**`
+BA=".supervisor/jobs/done/brief-a.md"
+for bstate in OPEN MERGED; do
+  if [ "$bstate" = OPEN ]; then new_fixture 56; else new_fixture 57; fi
+  printf '# Brief\n## Environment\n- **Source requirement:** %s\n\n## Outcome\n- **Status:** completed\n- **PR:** %s\n' "$REQ" "$PRURL" > "$P/$BA"
+  set_pr "$PRURL" "$bstate"
+  out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason done)"
+  names="$(trail_names)"
+  if [ "$bstate" = OPEN ]; then
+    case "$out" in *"; excluded $BA — pr not merged"*) ! grep -qxF -- "$BA" <<<"$names" && ok "(e) done brief whose Outcome PR is OPEN ⇒ excluded + named, not committed" || no "(e) OPEN brief committed" ;; *) no "(e) OPEN brief: $out" ;; esac
+    grep -qxF -- "$REQ" <<<"$names" && ok "(e) the unstamped requirement beside it still rides" || no "(e) requirement lost"
+  else
+    case "$out" in *"excluded $BA"*) no "(e) merged brief excluded: $out" ;; *) grep -qxF -- "$BA" <<<"$names" && ok "(e) done brief whose Outcome PR MERGED ⇒ committed" || no "(e) merged brief missing: $names" ;; esac
+  fi
+done
+# (f) a skipped Queue item carrying a done stamp for an unmerged PR ⇒ excluded
+REQB=".supervisor/requirements/f/02-b.md"
+new_fixture 58; stamp_req "$REQB" done_with_escalation "- **PR:** https://github.com/acme/widgets/pull/8
+"; set_pr "$PRURL" MERGED "https://github.com/acme/widgets/pull/8" CLOSED
+out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason skipped)"
+case "$out" in *"; excluded $REQB — pr not merged"*) ! grep -qxF -- "$REQB" < <(trail_names) && ok "(f) skipped item stamped done for a CLOSED PR ⇒ excluded" || no "(f) committed" ;; *) no "(f): $out" ;; esac
+# mutation control: without the _evidence_gate call, (a)'s world commits the stamp
+EGM="$TOP/egmut"; mkdir -p "$EGM"; cp "$HERE"/*.sh "$HERE"/*.py "$EGM/"
+sed 's/^\([[:space:]]*\)_evidence_gate$/\1:/' "$T" > "$EGM/automate-trail.sh"
+if ! cmp -s "$T" "$EGM/automate-trail.sh" && bash -n "$EGM/automate-trail.sh"; then
+  new_fixture 59; stamp_req "$REQ" done "$PRL"; set_pr "$PRURL" OPEN
+  (cd "$P" && bash "$EGM/automate-helpers.sh" trail-pr "$RF_REL0" --reason done >/dev/null)
+  grep -qxF -- "$REQ" < <(trail_names) && ok "mutation control: without _evidence_gate the OPEN-PR done stamp IS committed (leg (a) is load-bearing)" || no "mutant did not commit the stamp — leg (a) may be vacuous"
+else
+  no "evidence-gate mutant not generated"
+fi
+
+echo "== D3. checkout contract re-examined for trail-after-merge (decision 3) =="
+# With trail-pr only after merge / at run end, the trail that matters is closeout's
+# own, which runs AFTER closeout's sync — the primary is on main. Each piece of
+# the contract is re-proved from THAT state, each with a control that turns red.
+# (i) closeout's trail still stages into the primary index; the next PICK branches
+#     off that main ⇒ trail-unstage is still needed.
+for v in control unstage; do
+  if [ "$v" = control ]; then closeout_fixture 60; else closeout_fixture 61; fi
+  out="$(run_closeout)"
+  case "$out" in *"closeout: synced — main at "*"trail-pr: opened "*) ;; *) no "[D3i $v] closeout: $out" ;; esac
+  [ "$(git -C "$P" symbolic-ref --short HEAD)" = main ] && [ -n "$(git -C "$P" diff --cached --name-only)" ] && ok "[D3i $v] after closeout's trail the primary is on main WITH staged trail paths" || no "[D3i $v] nothing staged / not on main"
+  [ "$v" = unstage ] && (cd "$P" && bash "$H" trail-unstage "$RF_REL" >/dev/null)
+  names="$(cd "$P" && git checkout -q -b feature/next && echo n > new.txt && git add new.txt && git commit -qm next && git show --name-only --format= HEAD)"
+  if [ "$v" = control ]; then
+    grep -qxF -- "$RF_REL" <<<"$names" && ok "[D3i control] without trail-unstage the next item's plain commit sweeps the trail (run file in it)" || no "[D3i control] no sweep — trail-unstage would be dead: [$names]"
+  else
+    [ "$names" = "new.txt" ] && ok "[D3i] with trail-unstage the next item's commit holds exactly new.txt — trail-unstage KEPT" || no "[D3i] swept: [$names]"
+  fi
+done
+# (ii) the owner merges closeout's trail PR, then hand-pulls main ⇒ needs _stage_tip.
+STM="$TOP/d3stm"; mkdir -p "$STM"; cp "$HERE"/*.sh "$HERE"/*.py "$STM/"
+awk '{ if ($0 == "_stage_tip() {") { print "_stage_tip() { return 0; }"; print "_stage_tip_dead() {" } else print }' "$T" > "$STM/automate-trail.sh"
+for v in kept mutant; do
+  if [ "$v" = kept ]; then closeout_fixture 62; D="$SPYD"; else closeout_fixture 63; D="$STM"; fi
+  out="$(cd "$P" && bash "$D/automate-helpers.sh" closeout "$RF_REL" "$REQ" "$PRURL")"
+  case "$out" in *"trail-pr: opened "*) ;; *) no "[D3ii $v] closeout trail: $out" ;; esac
+  TM="$FX/tmerger"; git clone -q "$FX/origin.git" "$TM" 2>/dev/null
+  ( cd "$TM" && git checkout -q main && git merge -q --squash "origin/chore/$RUN_ID-trail-1" >/dev/null && git commit -qm "squash trail" && git push -q origin main 2>/dev/null )
+  echo "- t9 live progress after closeout" >> "$P/$RF_REL"
+  pull_out="$(cd "$P" && git pull -q 2>&1)"; prc=$?
+  if [ "$v" = kept ]; then
+    [ "$prc" -eq 0 ] && [ "$(git -C "$P" rev-parse HEAD)" = "$(git -C "$FX/origin.git" rev-parse main)" ] && grep -q 't9 live progress' "$P/$RF_REL" && ok "[D3ii] hand git pull over closeout's merged trail PR fast-forwards, live bytes kept — _stage_tip KEPT" || no "[D3ii] hand pull: $pull_out"
+  else
+    [ "$prc" -ne 0 ] && ok "[D3ii control] without _stage_tip the same hand pull refuses (the staged blobs are load-bearing)" || no "[D3ii control] pull succeeded without staging — _stage_tip would be dead"
+  fi
+done
+# (iii) closeout #1's trail PR merged → PICK un-stage → item 2's PR merged →
+#       closeout #2's sync ⇒ needs the .trail-staged re-stage.
+PRURL8="https://github.com/acme/widgets/pull/8"
+for v in record no-record; do
+  if [ "$v" = record ]; then closeout_fixture 64; else closeout_fixture 65; fi
+  run_closeout >/dev/null
+  TM="$FX/tmerger"; git clone -q "$FX/origin.git" "$TM" 2>/dev/null
+  ( cd "$TM" && git checkout -q main && git merge -q --squash "origin/chore/$RUN_ID-trail-1" >/dev/null && git commit -qm "squash trail" && git push -q origin main 2>/dev/null \
+    && git checkout -q -b feature/y && echo y > y.txt && git add y.txt && git commit -qm y && git push -q origin feature/y 2>/dev/null \
+    && git checkout -q main && git merge -q --squash feature/y >/dev/null && git commit -qm "y (#8)" && git push -q origin main 2>/dev/null )
+  OID8="$(git -C "$TM" rev-parse feature/y)"
+  jq --arg u "$PRURL8" --arg o "$OID8" '. + [{number:8,url:$u,state:"MERGED",headRefName:"feature/y",headRefOid:$o}]' "$GH_STUB_DIR/prs.json" > "$GH_STUB_DIR/p.tmp" && mv "$GH_STUB_DIR/p.tmp" "$GH_STUB_DIR/prs.json"
+  (cd "$P" && bash "$H" trail-unstage "$RF_REL" >/dev/null)
+  echo "- t10 live progress after the PICK un-stage" >> "$P/$RF_REL"
+  [ "$v" = no-record ] && rm -f "$P/.supervisor/automate/$RUN_ID.trail-staged"
+  out="$(cd "$P" && bash "$SPYD/automate-helpers.sh" closeout "$RF_REL" "$REQB" "$PRURL8")"
+  if [ "$v" = record ]; then
+    case "$out" in *"closeout: synced — main at "*) [ "$(git -C "$P" rev-parse HEAD)" = "$(git -C "$FX/origin.git" rev-parse main)" ] && grep -q 't10 live progress' "$P/$RF_REL" && ok "[D3iii] closeout #2's sync fast-forwards over closeout #1's merged trail — the .trail-staged re-stage KEPT" || no "[D3iii] synced but state wrong" ;; *) no "[D3iii] sync: $out" ;; esac
+  else
+    case "$out" in *"closeout: skipped — git pull --ff-only refused"*) ok "[D3iii control] without the record closeout #2's pull refuses (the re-stage is load-bearing)" ;; *) no "[D3iii control] did not refuse — _restage_landed would be dead: $out" ;; esac
+  fi
+done
 
 echo "== C. RECONCILE re-entry (AC14) =="
 closeout_fixture 8
