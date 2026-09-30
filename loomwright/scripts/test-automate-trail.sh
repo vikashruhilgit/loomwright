@@ -606,7 +606,7 @@ for pr in awaiting_merge escalated rate_limit drain_died token_ceiling limit_rea
 done
 grep -qF -- '- **Evidence-gated stamps' <<<"$sect" && ok "trail section documents the evidence gate" || no "evidence-gate bullet missing"
 eg="$(grep -m1 -F -- '- **Evidence-gated stamps' <<<"$sect")"
-for t in '`is_done`' 'ABANDONED' '### Outcome' 'Outcomes Rubric' '`; retracted <path>`' 'never stages a gate-excluded path'; do
+for t in '`is_done`' '`## Status: done_with_escalation — ABANDONED (- [x] <path>  # abandoned: <reason>)`' 'merely contains' '### Outcome' 'Outcomes Rubric' '`[]()<>`' '`; retracted <path>`' 'never stages a gate-excluded path' 'transient `gh pr view` failure'; do
   grep -qF -- "$t" <<<"$eg" && ok "evidence-gate bullet names $t" || no "evidence-gate bullet missing $t"
 done
 grep -qF -- '- **Committing a done stamp for unmerged work.**' "$SKILL" && ok "Anti-Pattern: committing a done stamp for unmerged work" || no "anti-pattern missing"
