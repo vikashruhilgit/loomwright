@@ -389,7 +389,7 @@ For each finding in the classified `bot_findings` UNION (§U1), apply this three
 1. **Validate (evidence-citing — mitigates R4, no rubber-stamping).** The finding is **confirmed** ONLY when it (a) maps to a **concrete current-branch location** (file + line/region that still exists in the checked-out head state) AND (b) is **actionable** (describes a change that can be made). Validation must **cite the evidence** (the grounding location); a finding that **cannot be grounded** on the current branch is **dismissed, not fixed** — never rubber-stamp a finding into a fix without grounding it.
 2. **Confirmed + auto-fixable → FIX regardless of stated severity.** Dispatch the existing fix-worker model: `Task(general-purpose)` with tool allowlist **Read / Write / Edit / Bash / Glob / Grep — NO Task**, told to address ONLY the validated findings; then **fork-aware push** (same-repo: explicit refspec, **REGULAR push, NEVER `--force`**; fork: no push → degrade to ESCALATED — see "Fork-aware push"); then **re-scan ALL channels** (U1). A confirmed MEDIUM/LOW is fixed exactly like a confirmed HIGH — there is no severity floor.
 3. **Confirmed but NOT auto-fixable (needs human judgment) → BLOCKS READY.** It is surfaced/escalated (counted in `remaining_issues`); it does not get a blind fix.
-4. **Validated as stale / invalid / already-addressed → DISMISSED.** Recorded as dismissed (`findings_dismissed`, the count; `dismissed`, the itemised `{finding, reason, source}` list — dismissed-findings-01, `docs/RESULT_SCHEMAS.md` §REVIEW_HEAL_RESULT); does **NOT** block READY and is **not** fixed.
+4. **Validated as stale / invalid / already-addressed → DISMISSED.** Recorded as dismissed (`findings_dismissed`, the count; `dismissed`, the itemised `{finding, reason, source}` list, plus an OPTIONAL `severity` when the finding stated one — dismissed-findings-01 / automate-followups/12, `docs/RESULT_SCHEMAS.md` §REVIEW_HEAL_RESULT); does **NOT** block READY and is **not** fixed.
 
 `findings_validated` counts findings confirmed (cases 2+3); `findings_dismissed` counts case 4. Only **case-3 (confirmed-but-not-auto-fixable)** findings remain as READY-blockers after a round — case-2 findings are fixed (and may recur, governed by the Anti-Churn Guardrail), case-4 findings are gone.
 
@@ -428,7 +428,7 @@ churn_rounds = 0                    # consecutive rounds whose fingerprint set d
 fingerprints_prev = {}              # see "Anti-Churn Guardrail"
 repeat_check_failure = false        # a required check that was fixed re-failed (postmortem input; AC13)
 unresolved_bot_feedback = false     # bot finding (any channel) still open after >=1 fix (postmortem input)
-dismissed = []                      # ITEMISED {finding, reason, source} list (dismissed-findings-01) — findings validated as
+dismissed = []                      # ITEMISED {finding, reason, source[, severity]} list (dismissed-findings-01) — findings validated as
                                      # stale/invalid/already-addressed; findings_dismissed (below) is derived as len(dismissed)
 checks_untrusted = []                # ITEMISED {check, reason, run_id} list (ci-trust-probe-01) — required checks this
                                      # drain classified `untrusted_infra` via scripts/ci-run-probe.sh (narrow, evidence-
@@ -520,7 +520,12 @@ loop:
   # STALE_OR_INVALID verdict, NOT a closed enum on this side); `source` = the channel f came from
   # (reviews | reviewThreads | issue_comments | check_outputs — §"All-Channel Read"'s own channel
   # set, already known at classification time since f carries its originating channel).
+  # `severity` (automate-followups/12, OPTIONAL) is added ONLY when the finding itself states one
+  # (stated_severity(f) = the BLOCKING|HIGH|MEDIUM|LOW|INFO the bot/classifier surfaced for f, else
+  # none) — never invented, never parsed out of `finding` text; omitted otherwise. The marker-comment
+  # bullet format is unchanged (severity is not rendered there).
   dismissed     += [ {finding: describe(f), reason: validate_reason(f), source: channel_of(f)}
+                     | ({severity: stated_severity(f)} if stated_severity(f) else {})
                       for f in bot_findings if validate(f) == STALE_OR_INVALID ]
   auto_fixable   = [f for f in validated if is_auto_fixable(f)]
   needs_human    = [f for f in validated if not is_auto_fixable(f)]        # confirmed but not auto-fixable → blocks READY
@@ -582,7 +587,9 @@ loop:
       fallback_findings = [i for i in fallback_review.issues if i.category == "new"]
       validated    += [f for f in fallback_findings if validate(f) == CONFIRMED]
       # source is always "code_reviewer" here — the fallback IS the code-reviewer lens (dismissed-findings-01).
-      dismissed    += [ {finding: describe(f), reason: validate_reason(f), source: "code_reviewer"}
+      # severity is carried unconditionally (automate-followups/12): a CODE_REVIEW_RESULT issue always has one.
+      dismissed    += [ {finding: describe(f), reason: validate_reason(f), source: "code_reviewer",
+                         severity: f.severity}
                          for f in fallback_findings if validate(f) == STALE_OR_INVALID ]
       auto_fixable  = [f for f in validated if is_auto_fixable(f)]        # RE-DERIVE from the now-larger
       needs_human   = [f for f in validated if not is_auto_fixable(f)]   # `validated` — not appended to the stale lists

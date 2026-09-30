@@ -822,7 +822,7 @@ always execute.
 heal_iterations = 0
 heal_fixable_issues_fixed = 0
 max_heal_iterations = {--heal-iterations value, default 3}
-heal_dismissed = []                 # ITEMISED {finding, reason, source} list (dismissed-findings-01) — review.issues
+heal_dismissed = []                 # ITEMISED {finding, reason, source, severity} list (dismissed-findings-01) — review.issues
                                      # entries excluded from fixable_issues each iteration (pre_existing / nit / drift /
                                      # below_severity_floor); the self-heal-side PARALLEL to review-heal's `dismissed`
 
@@ -888,11 +888,16 @@ while heal_iterations < max_heal_iterations:
   # `new` finding whose severity is below the fix-time BLOCKING/HIGH floor. `source` is "code_reviewer"
   # for every item accumulated here — the single-voter loop's one review lens (see docs/RESULT_SCHEMAS.md
   # §SUPERVISOR_RESULT for the full `source` enum, including the multi-voter `red_team`/`voter:<provider>`
-  # values this pass does not yet emit).
+  # values this pass does not yet emit). `severity` (automate-followups/12, OPTIONAL in the schema) is the
+  # issue's own CODE_REVIEW_RESULT severity — always present on a review.issues entry, so it is always
+  # carried here; `/automate`'s dismissed-findings decision step thresholds on it
+  # (skills/automate-loop/SKILL.md §6 "Dismissed-findings decision step (before the park)"). The
+  # marker-comment bullet format below is unchanged — severity is not rendered there.
   heal_dismissed += [
     {finding: i.description,
      reason: (i.category if i.category in ("pre_existing", "nit", "drift") else "below_severity_floor"),
-     source: "code_reviewer"}
+     source: "code_reviewer",
+     severity: i.severity}
     for i in review.issues
     if not (i.category == "new" and i.severity in (BLOCKING, HIGH))
   ]

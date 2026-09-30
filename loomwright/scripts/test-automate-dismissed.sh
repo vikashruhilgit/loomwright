@@ -30,6 +30,16 @@
 #       file, no repo); `gh` never invoked, no `git commit` / `git push`;
 #       pc_guarded_write is load-bearing (mutation control: PROPOSE_COMMON_SH at a
 #       copy with the marked guard block deleted turns the refusal legs red).
+#   B. (Part B) SKILL-text legs — the prose the inline loop executes: the decision
+#       subsection exists and precedes the park write + the watcher arm on every park
+#       path (safe-mode, fail-closed --auto-merge, escalated, GATE step 4);
+#       --non-interactive-fallback asks nothing and records pending_decisions; the
+#       PICK ask precedes RECONCILE's closeout and offers Follow-up / Drop only;
+#       fix-now bounds + honest limits; every restating single-drain surface carries
+#       the fix-now qualifier (targeted per surface, not a blanket grep); the
+#       optional `severity` key in the schema + all three producers; the §1.5 rows,
+#       §3 / AUTOMATE_RUN `## Current` line; the proposed/ README template and the
+#       committed README are byte-identical.
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -311,6 +321,96 @@ if [ -s "$MUT" ] && ! cmp -s "$MUT" "$HERE/propose-common.sh" && bash -n "$MUT";
 else
   no "could not build the guard-deleted mutant"
 fi
+
+# ---- B. SKILL-text legs (Part B prose) ---------------------------------------
+REPO="$(cd "$HERE/../.." && pwd)"
+SK="$REPO/loomwright/skills/automate-loop/SKILL.md"
+RS="$REPO/loomwright/docs/RESULT_SCHEMAS.md"
+QUAL="at most one owner-requested fix-now re-drain per item"
+SUBH="### Dismissed-findings decision step (before the park)"
+# first_line <file> <fixed anchor> — the first line containing the anchor (empty if none)
+first_line() { grep -F -m1 -- "$2" "$1" 2>/dev/null || true; }
+# ln_of <file> <fixed anchor> — its line number (0 if none)
+ln_of() { local n; n="$(grep -nF -m1 -- "$2" "$1" 2>/dev/null)"; n="${n%%:*}"; echo "${n:-0}"; }
+# before <line> <a> <b> — a occurs in line, and before b (which also occurs)
+before() {
+  case "$1" in *"$2"*) ;; *) return 1 ;; esac
+  case "$1" in *"$3"*) ;; *) return 1 ;; esac
+  local pa="${1%%"$2"*}" pb="${1%%"$3"*}"
+  [ "${#pa}" -lt "${#pb}" ]
+}
+sub_body() { awk -v h="$SUBH" '$0 == h { f = 1; next } f && /^### / { exit } f { print }' "$SK"; }
+SUBF="$TOP/subsection.md"; sub_body > "$SUBF"
+
+grep -qxF -- "$SUBH" "$SK" && ok "B: SKILL carries the subsection heading" || no "B: SKILL lacks '$SUBH'"
+s_ask="$(ln_of "$SUBF" "2. **Interactive**")"; s_park="$(ln_of "$SUBF" "4. Only then write the park state")"
+[ "$s_ask" -gt 0 ] && [ "$s_park" -gt "$s_ask" ] && ok "B: the ask (step 2) precedes the park write (step 4) in the subsection" || no "B: subsection order ask=$s_ask park=$s_park"
+L="$(first_line "$SUBF" "4. Only then write the park state")"
+before "$L" "Only then write the park state" "merge-watcher arming" && ok "B: the watcher is armed only after the park write" || no "B: step 4 does not order park write before watcher arm"
+L="$(first_line "$SK" "4. **GATE**")"
+before "$L" "Dismissed-findings decision step (before the park)" "merge watcher is armed" && ok "B: GATE step 4 runs the decision step before any park/watcher" || no "B: GATE step 4 lacks the before-park decision step"
+L="$(first_line "$SK" "**Safe mode (default):**")"
+before "$L" "Dismissed-findings decision step (before the park)" "arm the merge watcher" && ok "B: §9 safe-mode park runs the decision step before arming the watcher" || no "B: §9 safe-mode bullet order"
+L="$(first_line "$SK" "otherwise fail **CLOSED** → park + notify")"
+case "$L" in *"Dismissed-findings decision step (before the park)"*) ok "B: §9 fail-closed --auto-merge park runs the decision step" ;; *) no "B: §9 --auto-merge park lacks the decision step" ;; esac
+L="$(first_line "$SK" "**\`ESCALATED\` never merges and PARKS the run**")"
+before "$L" "Dismissed-findings decision step (before the park)" "## Status: paused" && ok "B: §9 escalated park runs the decision step before the park write" || no "B: §9 escalated bullet order"
+L="$(first_line "$SUBF" "**Under \`--non-interactive-fallback\`**")"
+case "$L" in *"asks nothing"*"pending_decisions"*) ok "B: --non-interactive-fallback asks nothing and records pending_decisions" ;; *) no "B: non-interactive sentence missing" ;; esac
+L="$(first_line "$SK" "**PICK-time pending-decisions ask")"
+case "$L" in *"BEFORE RECONCILE's \`closeout\`"*"**Follow-up (keep draft)** / **Drop** ONLY"*"fix-now is offered only at the park"*) ok "B: PICK ask precedes RECONCILE's closeout, Follow-up / Drop only" ;; *) no "B: PICK-time ask paragraph wrong" ;; esac
+case "$L" in *"Fix now on this PR"*) no "B: PICK ask must never offer Fix now" ;; *) ok "B: PICK ask offers no Fix-now option" ;; esac
+p_ask="$(ln_of "$SK" "**PICK-time pending-decisions ask")"; p_rec="$(ln_of "$SK" "1. **RECONCILE**")"; p_run="$(ln_of "$SK" "2. **RUN**")"
+[ "$p_ask" -gt "$p_rec" ] && [ "$p_ask" -lt "$p_run" ] && ok "B: the PICK ask sits inside §6 step 1 (PICK), before RUN" || no "B: PICK ask placement rec=$p_rec ask=$p_ask run=$p_run"
+for want in "at most ONCE per item" "2 × \`--max-rounds\`" "FIRST drain only" "a re-drain \`ESCALATED\` turns the park into \`escalated\`" "undecided (fix-now unconfirmed)" "This is drain-origin ONLY" "\`--after-fix-now\`" "EXTERNAL_TEXT envelope"; do
+  grep -qF -- "$want" "$SUBF" && ok "B: subsection states: $want" || no "B: subsection lacks: $want"
+done
+# single-drain qualifier, per restating surface (targeted — the unrelated "exactly ONE line/executor" claims stay)
+while IFS='|' read -r f anchor; do
+  L="$(first_line "$REPO/$f" "$anchor")"
+  if [ -z "$L" ]; then no "B: single-drain anchor not found in $f: $anchor"
+  else case "$L" in *"$QUAL"*) ok "B: single-drain qualifier on $f ($anchor)" ;; *) no "B: unqualified single-drain claim in $f ($anchor)" ;; esac; fi
+done <<'SURF'
+loomwright/skills/automate-loop/SKILL.md|3. **DRAIN** — own **exactly ONE** inline
+loomwright/skills/automate-loop/SKILL.md|suppresses the default dispatch and owns exactly ONE inline drain
+loomwright/skills/automate-loop/SKILL.md|After suppression, DRAIN owns **exactly ONE** inline
+loomwright/skills/automate-loop/SKILL.md|- **Double until-mergeable drain.**
+loomwright/skills/automate-loop/SKILL.md|- Single drain: `.auto_review:false` set before
+loomwright/docs/RESULT_SCHEMAS.md|| `suppressed_default_dispatch` | `true` |
+loomwright/commands/automate.md|4. **Per-item loop.**
+README.md|- **Single drain, single open PR:**
+CLAUDE.md|**`/automate` single-drain ownership
+SURF
+unq=0
+for f in loomwright/skills/automate-loop/SKILL.md loomwright/docs/RESULT_SCHEMAS.md loomwright/commands/automate.md README.md CLAUDE.md; do
+  while IFS= read -r L; do
+    case "$L" in *"$QUAL"*) ;; *) unq=$((unq+1)); echo "    unqualified: $f: ${L:0:120}" ;; esac
+  done <<EOF2
+$(grep -E 'exactly ONE\*\* inline|exactly ONE inline|ONE owned inline|ONE inline `/review-pr' "$REPO/$f" 2>/dev/null)
+EOF2
+done
+[ "$unq" -eq 0 ] && ok "B: no drain-ownership line on any restating surface lacks the qualifier" || no "B: $unq unqualified drain-ownership line(s)"
+# optional severity: schema + three producers
+n="$(grep -cF 'severity?: string}]' "$RS" 2>/dev/null)"; [ "${n:-0}" -ge 2 ] && ok "B: RESULT_SCHEMAS field lines carry optional severity (heal_dismissed + dismissed)" || no "B: RESULT_SCHEMAS severity field lines: ${n:-0}"
+grep -qF '`[{finding, reason, source, severity?}]`' "$RS" && ok "B: REVIEW_HEAL_RESULT table row carries severity?" || no "B: dismissed table row lacks severity?"
+grep -qF 'severity: i.severity' "$REPO/loomwright/skills/self-heal-advisory/SKILL.md" && ok "B: self-heal-advisory Part 2 producer carries severity" || no "B: self-heal-advisory producer lacks severity"
+grep -qF '({severity: stated_severity(f)} if stated_severity(f) else {})' "$REPO/loomwright/skills/review-heal/SKILL.md" && ok "B: review-heal §U3.5 main pass carries severity only when stated" || no "B: review-heal main pass severity"
+grep -qF 'severity: f.severity}' "$REPO/loomwright/skills/review-heal/SKILL.md" && ok "B: review-heal Earned Fallback pass carries f.severity" || no "B: review-heal fallback severity"
+grep -qF -- '- **<finding>** — <reason> (<source>)' "$REPO/loomwright/skills/review-heal/SKILL.md" && ok "B: marker-comment bullet format unchanged" || no "B: marker-comment bullet format changed"
+# §1.5 rows, §3 + AUTOMATE_RUN ## Current line
+for sc in dismissed-drafts dismissed-decide dismissed-pending; do
+  grep -qF "| \`$sc\` |" "$SK" && ok "B: §1.5 row for $sc" || no "B: §1.5 lacks a $sc row"
+done
+grep -qF -- '- pending_decisions: <n> | fix_now_reentered: <true|false>' "$SK" && ok "B: §3 template carries the pending_decisions line" || no "B: §3 template lacks pending_decisions"
+grep -qF -- '- pending_decisions: <n> | fix_now_reentered: <true|false>' "$RS" && ok "B: AUTOMATE_RUN template carries the pending_decisions line" || no "B: AUTOMATE_RUN lacks pending_decisions"
+# proposed/ README: the generator template and the committed file are byte-identical
+PW="$REPO/loomwright/scripts/propose-work.sh"
+awk "/^printf '%s\\\\n' \\\\\$/{f=1} f{print} /guarded_write \"README.md\"/{exit}" "$PW" | sed '$d' | sed '$s/ \\$//' > "$TOP/readme-tpl.sh"
+bash "$TOP/readme-tpl.sh" > "$TOP/readme-gen.md" 2>/dev/null
+if [ -s "$TOP/readme-gen.md" ] && cmp -s "$TOP/readme-gen.md" "$REPO/.supervisor/requirements/proposed/README.md"; then
+  ok "B: committed proposed/README.md == propose-work.sh template, byte for byte"
+else no "B: proposed/README.md differs from the propose-work.sh template"; fi
+grep -qF -- '--dismissed-*.md` drafts for dismissed review findings' "$TOP/readme-gen.md" && ok "B: README template names the second writer" || no "B: README template lacks the second writer"
 
 echo
 echo "test-automate-dismissed: $pass passed, $fail failed"
