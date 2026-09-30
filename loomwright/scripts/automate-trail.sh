@@ -296,6 +296,92 @@ EOF
   return 0
 }
 
+# _stamp_prs <requirement> — prints one line per `<!-- loomwright:requirement-closeout -->`
+# block whose `## Status:` heading is `done` or `done_with_escalation`: that
+# block's `- **PR:**` value, or `-` when the block names no PR. Prints nothing
+# for a file with no such block (an unstamped requirement). The block runs from
+# its `## Status:` line to the next `## ` heading or EOF (the self-heal-advisory
+# completion-tail shape).
+_stamp_prs() {
+  awk '
+    function flush() { if (inb && !seen) print "-"; inb = 0; seen = 0 }
+    /<!-- loomwright:requirement-closeout -->/ { flush(); sent = 1; next }
+    sent && /^## Status:/ {
+      sent = 0
+      if ($0 ~ /^## Status:[[:space:]]*done(_with_escalation)?([^A-Za-z0-9_]|$)/) { inb = 1; seen = 0 }
+      next
+    }
+    sent && /^## / { sent = 0 }
+    inb && /^## / { flush(); next }
+    inb && /^- \*\*PR:\*\*/ {
+      v = $0; sub(/^- \*\*PR:\*\*[[:space:]]*/, "", v); sub(/[[:space:]]+$/, "", v)
+      print (v == "" ? "-" : v); seen = 1; next
+    }
+    END { flush() }
+  ' "$1" 2>/dev/null
+}
+
+# _outcome_prs <brief> — prints every `- **PR:**` value inside a done/ brief's
+# `## Outcome` section (nothing when the brief has no such line).
+_outcome_prs() {
+  awk '
+    /^## Outcome[[:space:]]*$/ { o = 1; next }
+    o && /^## / { o = 0 }
+    o && /^- \*\*PR:\*\*/ { v = $0; sub(/^- \*\*PR:\*\*[[:space:]]*/, "", v); sub(/[[:space:]]+$/, "", v); print (v == "" ? "-" : v) }
+  ' "$1" 2>/dev/null
+}
+
+# _evidence_gate — trail_pr only (never trail-unstage / closeout's owned set:
+# it calls gh). A trail must never commit a done claim for unmerged work, so a
+# TRAIL_KEPT requirement carrying a sentinel-led `## Status: done|done_with_escalation`
+# stamp, and a `.supervisor/jobs/done/` brief whose `## Outcome` names a PR,
+# stays in TRAIL_KEPT ONLY when every PR it names reads `merged` via
+# `automate-helpers.sh reconcile-item` (one `gh pr view --json state,mergedAt`
+# per distinct URL per call). Anything else — OPEN, CLOSED, gh failing
+# (reconcile-item fails closed to awaiting_merge), a stamp naming no PR, a
+# non-URL value — drops the path and appends `; excluded <path> — pr not merged`
+# to TRAIL_EXCLUDED. A requirement without the sentinel, and a brief without an
+# Outcome PR, pass untouched. Fails CLOSED toward exclusion. Always returns 0.
+_evidence_gate() {
+  local p u st prs keep kept_new="" cache="" tab=$'\t' hit
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    prs=""
+    case "$p" in
+      .supervisor/requirements/*.md) prs="$(_stamp_prs "$p")" ;;
+      .supervisor/jobs/done/*.md)    prs="$(_outcome_prs "$p")" ;;
+    esac
+    keep=1
+    if [ -n "$prs" ]; then
+      while IFS= read -r u; do
+        [ -n "$u" ] || continue
+        case "$u" in
+          http://*|https://*)
+            hit="$(printf '%s' "$cache" | awk -F'\t' -v u="$u" '$1 == u {print $2; exit}')"
+            if [ -n "$hit" ]; then st="$hit"; else
+              st="$(bash "$HERE/automate-helpers.sh" reconcile-item "$u" 2>/dev/null | tail -n1)"
+              [ -n "$st" ] || st="unreadable"
+              cache="$cache$u$tab$st"$'\n'
+            fi ;;
+          *) st="unreadable" ;;
+        esac
+        [ "$st" = "merged" ] || keep=0
+      done <<EOF
+$prs
+EOF
+    fi
+    if [ "$keep" -eq 1 ]; then
+      kept_new="${kept_new:+$kept_new$'\n'}$p"
+    else
+      TRAIL_EXCLUDED="$TRAIL_EXCLUDED; excluded $p — pr not merged"
+    fi
+  done <<EOF
+$TRAIL_KEPT
+EOF
+  TRAIL_KEPT="$kept_new"
+  return 0
+}
+
 # _trail_owned <rf_rel> <run_id> — run from the checkout root. The ONE
 # "is this dirty/staged path this run's own trail?" set, shared by trail-unstage
 # and closeout step 4: today's candidates (_trail_candidates → TRAIL_KEPT) ∪ the
@@ -375,6 +461,9 @@ trail_pr() {
 
   # ---- candidate paths (explicit; never -A / .) ----------------------------
   _trail_candidates "$rf_rel" "$run_id"
+  # Evidence-gated stamps: a done-stamped requirement / done brief rides only
+  # when its PR reads merged (never a done claim for unmerged work).
+  _evidence_gate
   local excluded="$TRAIL_EXCLUDED" kept="$TRAIL_KEPT" ledger="$TRAIL_LEDGER" p
 
   # ---- idempotency: this run's trail PRs -----------------------------------
