@@ -26,6 +26,14 @@
 #      recorded (gitignored `<run_id>.trail-staged`); trail-unstage clears the
 #      index (working copies untouched), then `checkout -b` + `add new.txt` +
 #      plain `git commit` holds exactly new.txt; re-run / missing run file skip.
+#   B2. park → PICK un-stage → next park (pushed, and the no-diff skip) re-stages
+#      EVERY path the reused trail PR carries, from the trail-branch tip (a live
+#      local edit stays unstaged; no duplicate record lines); after the owner
+#      merges it, a hand `git checkout main && git pull` succeeds. trail-unstage
+#      clears a recorded path that is no longer a candidate.
+#   V. bash 3.2 — `/bin/bash -n` (when it is 3.x) on both new scripts, the helper
+#      and this file; sidecar-check / trail-pr / trail-unstage / closeout run
+#      with a 3.2 `bash` first on PATH, so the child is not a Homebrew bash.
 #   K. SKILL text — trail-pr precedes run-lock.sh release on every park path.
 #
 # Part B legs:
@@ -325,6 +333,89 @@ out="$(cd "$P" && bash "$H" trail-unstage "$RF_REL0")"
 [ "$out" = "trail-unstage: skipped — nothing staged" ] && ok "trail-unstage re-run: skipped — nothing staged" || no "re-run: $out"
 out="$(cd "$P" && bash "$H" trail-unstage ".supervisor/automate/nope.md")"; rc=$?
 [ "$out" = "trail-unstage: skipped — run file not found" ] && [ "$rc" -eq 0 ] && ok "missing run file ⇒ skipped, exit 0" || no "missing run file: $out"
+
+# =============================================================================
+echo "== B2. park → PICK un-stage → next park re-stages EVERY trail path (hand pull after merge) =="
+# The reused trail PR carries paths from BOTH pushes; the second trail-pr must
+# re-stage all of them (from the trail-branch tip, never the working copy), in
+# the pushed mode AND in the no-diff "already up to date" skip.
+for b2mode in pushed nodiff; do
+  if [ "$b2mode" = "pushed" ]; then new_fixture 21; else new_fixture 22; fi
+  BR="chore/$RUN_ID-trail-1"
+  (cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason awaiting_merge >/dev/null)
+  (cd "$P" && bash "$H" trail-unstage "$RF_REL0" >/dev/null)
+  [ -z "$(git -C "$P" diff --cached --name-only)" ] && ok "[$b2mode] PICK un-stage cleared the index" || no "[$b2mode] still staged after un-stage"
+  if [ "$b2mode" = "pushed" ]; then
+    echo "- t1 parked again" >> "$P/$RF_REL0"
+    out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason escalated)"
+    case "$out" in "trail-pr: pushed "*) ok "[$b2mode] second park pushes to the reused PR" ;; *) no "[$b2mode] second park: $out" ;; esac
+  else
+    out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason escalated)"
+    case "$out" in "trail-pr: skipped — trail already up to date"*) ok "[$b2mode] second park is the no-diff skip" ;; *) no "[$b2mode] second park: $out" ;; esac
+  fi
+  tip="$(git -C "$P" rev-parse "refs/remotes/origin/$BR")"
+  want="$(git -C "$P" diff --name-only "$(git -C "$P" merge-base origin/main "$tip")" "$tip" | LC_ALL=C sort)"
+  got="$(git -C "$P" diff --cached --name-only | LC_ALL=C sort)"
+  [ -n "$want" ] && [ "$got" = "$want" ] && ok "[$b2mode] every path the trail PR carries is staged again" || no "[$b2mode] staged [$got] want [$want]"
+  bad=""
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    [ "$(git -C "$P" ls-files -s -- "$p" | awk '{print $2}')" = "$(git -C "$P" rev-parse "$tip:$p")" ] || bad="$bad $p"
+  done <<EOF
+$want
+EOF
+  [ -z "$bad" ] && ok "[$b2mode] index holds the trail-TIP blobs" || no "[$b2mode] index != tip for:$bad"
+  if [ "$b2mode" = "nodiff" ]; then
+    recn="$(wc -l < "$P/.supervisor/automate/$RUN_ID.trail-staged" | tr -d ' ')"
+    idx1="$(git -C "$P" ls-files -s | LC_ALL=C sort)"
+    (cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason escalated >/dev/null 2>&1) || true
+    recn2="$(wc -l < "$P/.supervisor/automate/$RUN_ID.trail-staged" | tr -d ' ')"
+    [ "$recn" = "$recn2" ] && [ "$idx1" = "$(git -C "$P" ls-files -s | LC_ALL=C sort)" ] && ok "[$b2mode] re-run is idempotent (same index, no duplicate record lines)" || no "[$b2mode] re-run changed state (record $recn -> $recn2)"
+  fi
+  echo "- t9 live edit after the push" >> "$P/$RF_REL0"
+  [ "$(git -C "$P" ls-files -s -- "$RF_REL0" | awk '{print $2}')" != "$(git -C "$P" hash-object -- "$RF_REL0")" ] && ok "[$b2mode] live local edit not staged" || no "[$b2mode] live edit staged"
+  MC="$FX/merger"; git clone -q "$FX/origin.git" "$MC" 2>/dev/null
+  ( cd "$MC" && git checkout -q main && git merge -q --squash "origin/$BR" >/dev/null && git commit -qm "squash trail" && git push -q origin main 2>/dev/null )
+  pull_out="$(cd "$P" && git checkout -q main 2>&1 && git pull -q 2>&1)"; prc=$?
+  [ "$prc" -eq 0 ] && ok "[$b2mode] hand git checkout main && git pull succeeds after merging the reused trail PR" || no "[$b2mode] hand pull refused: $pull_out"
+  grep -q 't9 live edit' "$P/$RF_REL0" && ok "[$b2mode] live run-file bytes survive" || no "[$b2mode] live bytes lost"
+done
+# trail-unstage clears the union of the record and today's candidates: a
+# recorded path that is no longer a candidate is still unstaged.
+new_fixture 23
+(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason awaiting_merge >/dev/null)
+NC=".supervisor/jobs/done/brief-a.md"
+git -C "$P" diff --cached --name-only | grep -qxF "$NC" && ok "done brief staged by trail-pr" || no "done brief not staged"
+printf '# Brief\n## Environment\n- **Source requirement:** .supervisor/requirements/zz.md\n' > "$P/$NC"
+case "$(cd "$P" && bash "$H" trail-unstage "$RF_REL0" >/dev/null; git -C "$P" diff --cached --name-only)" in *"$NC"*) no "recorded non-candidate brief left staged" ;; *) ok "brief re-pointed away is still unstaged (from the record)" ;; esac
+[ -z "$(git -C "$P" diff --cached --name-only)" ] && ok "trail-unstage cleared the recorded non-candidate path too" || no "left staged: $(git -C "$P" diff --cached --name-only | tr '\n' ' ')"
+
+# =============================================================================
+echo "== V. macOS bash 3.2 (the child is really 3.2, not a Homebrew bash) =="
+B32=""
+for cand in /bin/bash /usr/local/bin/bash3 /opt/bash3/bin/bash; do
+  [ -x "$cand" ] || continue
+  [ "$("$cand" -c 'echo ${BASH_VERSINFO[0]}' 2>/dev/null)" = "3" ] && { B32="$cand"; break; }
+done
+if [ -z "$B32" ]; then
+  echo "  (no bash 3.x on this host — 3.2 legs not applicable)"
+else
+  for f in "$T" "$HERE/automate-merge-watch.sh" "$HERE/automate-helpers.sh" "$0"; do
+    "$B32" -n "$f" 2>/dev/null && ok "$B32 -n $(basename "$f")" || no "$B32 cannot parse $(basename "$f")"
+  done
+  B32DIR="$TOP/bash32"; mkdir -p "$B32DIR"; ln -sf "$B32" "$B32DIR/bash"
+  new_fixture 24
+  out="$(cd "$P" && PATH="$B32DIR:$PATH" bash -c 'echo ${BASH_VERSINFO[0]}')"
+  [ "$out" = "3" ] && ok "3.2 bash is first on PATH for the legs below" || no "PATH bash is $out"
+  out="$(cd "$P" && PATH="$B32DIR:$PATH" bash "$H" sidecar-check ".supervisor/automate/$RUN_ID.review-heal-result.md")"; rc=$?
+  [ "$out" = "ok .supervisor/automate/$RUN_ID.review-heal-result.md" ] && [ "$rc" -eq 0 ] && ok "3.2: sidecar-check ok, exit 0" || no "3.2 sidecar-check: $out rc=$rc"
+  out="$(cd "$P" && PATH="$B32DIR:$PATH" bash "$H" trail-pr "$RF_REL0" --reason awaiting_merge)"; rc=$?
+  case "$out" in "trail-pr: opened "*) [ "$rc" -eq 0 ] && ok "3.2: trail-pr opens a PR, exit 0" || no "3.2 trail-pr rc=$rc" ;; *) no "3.2 trail-pr: $out" ;; esac
+  out="$(cd "$P" && PATH="$B32DIR:$PATH" bash "$H" trail-unstage "$RF_REL0")"; rc=$?
+  case "$out" in "trail-unstage: unstaged "*) [ "$rc" -eq 0 ] && ok "3.2: trail-unstage, exit 0" || no "3.2 trail-unstage rc=$rc" ;; *) no "3.2 trail-unstage: $out" ;; esac
+  out="$(cd "$P" && PATH="$B32DIR:$PATH" bash "$H" closeout "$RF_REL0" "$REQ" https://github.com/acme/widgets/pull/7)"; rc=$?
+  [ "$rc" -eq 0 ] && [ -n "$out" ] && ok "3.2: closeout runs (guarded), exit 0" || no "3.2 closeout rc=$rc out=$out"
+fi
 
 # =============================================================================
 echo "== T. fail-safe legs =="

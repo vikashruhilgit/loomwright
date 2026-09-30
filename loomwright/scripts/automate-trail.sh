@@ -9,9 +9,10 @@
 #   * `trail-pr` commits ONLY this run's explicit trail paths, from a temporary
 #     `git worktree` off fresh origin/<default branch> (or off this run's open
 #     trail branch), pushes ONLY to `chore/<run_id>-trail-<n>` (never forced),
-#     opens/reuses ONE PR via `gh pr create`, stages the COMMITTED blobs in
-#     the primary checkout's index (see "Checkout contract" below), and records
-#     them in the gitignored `<run_id>.trail-staged` beside the run file.
+#     opens/reuses ONE PR via `gh pr create`, stages the trail-branch-tip blobs
+#     of every path that branch changes in the primary checkout's index (see
+#     "Checkout contract" below), and records them in the gitignored
+#     `<run_id>.trail-staged` beside the run file.
 #   * `trail-unstage` only drops this run's trail-path index entries
 #     (`git restore --staged -- <path>`); working copies are never touched.
 #   * `closeout` removes ONLY this PR's head-branch worktrees (clean after
@@ -51,10 +52,12 @@
 #       item's branch + commit cannot sweep them.
 #
 # CHECKOUT CONTRACT (decision 4 of the post-park-lifecycle brief, proved by the
-# post-merge-pull leg of test-automate-trail.sh): after a successful push,
-# trail-pr sets the primary checkout's INDEX entry of every committed path to the
-# exact COMMITTED blob (`git update-index --add --cacheinfo`), leaving working
-# copies untouched. A later plain `git checkout main && git pull` then
+# post-merge-pull legs of test-automate-trail.sh): after a successful push, AND
+# on the no-diff "already up to date" skip against an open trail PR, trail-pr
+# sets the primary checkout's INDEX entry of EVERY path the trail branch changes
+# (every push on it, not only the latest delta) to that path's blob at the trail
+# branch tip (`git update-index --add --cacheinfo`; never the working copy),
+# recording each in `<run_id>.trail-staged`, and leaves working copies untouched. A later plain `git checkout main && git pull` then
 # fast-forwards over those paths (index == incoming blob), and bytes that exist
 # only locally BY DESIGN — Progress lines the live run file gained after the
 # push, other runs' postmortem ledger lines — survive as ordinary unstaged
@@ -62,10 +65,13 @@
 # the primary index (`git checkout -b` carries them; a plain `git commit`
 # commits the whole index), so the loop runs `trail-unstage` at PICK, before
 # the next commit-producing phase, and `closeout` re-applies the contract at
-# its own pull for the recorded blobs that have landed upstream. Honest
-# limits: between a PICK and the next trail-pr, a HAND-run `git pull` over a
-# merged trail PR refuses (closeout's sync does not); a trail PR closed unmerged
-# leaves its entries staged until the next PICK's trail-unstage.
+# its own pull for the recorded blobs that have landed upstream. The next
+# trail-pr (at the next park or run end) re-stages every path its open trail PR
+# carries, including ones an earlier PICK dropped. trail-unstage clears the
+# union of the record and today's candidates. Honest limits: between a PICK and
+# the next trail-pr, a HAND-run `git pull` over a merged trail PR refuses
+# (closeout's sync does not); a trail PR closed unmerged leaves its entries
+# staged until the next PICK's trail-unstage.
 #
 # Always exits 0 (a runtime side-effect emitter — CLAUDE.md §"Failure-Mode
 # Invariants"). bash 3.2 / BSD-userland safe. Seams: LOOMWRIGHT_GH_BIN,
@@ -103,7 +109,7 @@ except Exception as exc:  # pragma: no cover - defensive
 # ("Schema v1" / "Schema v2" blocks). Update together with that section.
 # `rounds` is REQUIRED for v2 here although the schema block marks only the first
 # seven fields required: the --until-mergeable drain always emits it (its value is
-# read from scripts/drain-rounds.sh's ledger), and the hand-rebuilt item-10
+# read from the scripts/drain-rounds.sh ledger), and the hand-rebuilt item-10
 # sidecar dropped it (the #303 drift this check exists to catch).
 RH_V1_REQUIRED = ["schema_version", "decision", "iterations", "issues_fixed",
                   "remaining_issues", "pr_url", "notified"]
@@ -277,6 +283,39 @@ EOF
   return 0
 }
 
+# _stage_tip <tip> <base_ref> <record> — the checkout contract, applied from the
+# trail branch TIP (never the working copy): for EVERY path the trail branch
+# changes (`git diff --name-only <merge-base of base_ref and tip> <tip>` — every
+# push on this branch, not only the latest delta) whose tip blob differs from
+# <base_ref> (= origin/<default branch>), set the primary INDEX entry to that
+# tip blob and record path/mode/blob in <record>. Skipped per path when HEAD already carries that blob (nothing for a
+# pull to bring; a staged user change on that path is left alone); the index
+# write is skipped when it already holds the blob (idempotent). Working copies
+# are never touched. Always returns 0.
+_stage_tip() {
+  local tip="$1" base="$2" rec="$3" paths mb p ent mode_bits blob rec_line
+  [ -n "$tip" ] || return 0
+  mb="$(git merge-base "$base" "$tip" 2>/dev/null)" || return 0
+  [ -n "$mb" ] || return 0
+  paths="$(git diff --name-only --no-renames "$mb" "$tip" 2>/dev/null)" || return 0
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    ent="$(git ls-tree "$tip" -- "$p" 2>/dev/null)"
+    mode_bits="${ent%% *}"; blob="$(printf '%s' "$ent" | awk '{print $3}')"
+    [ -n "$blob" ] || continue
+    [ "$(git rev-parse -q --verify "$base:$p" 2>/dev/null)" = "$blob" ] && continue
+    [ "$(git rev-parse -q --verify "HEAD:$p" 2>/dev/null)" = "$blob" ] && continue
+    if [ "$(git ls-files -s -- "$p" 2>/dev/null | awk 'NR==1{print $2}')" != "$blob" ]; then
+      git update-index --add --cacheinfo "$mode_bits,$blob,$p" >/dev/null 2>&1
+    fi
+    rec_line="$(printf '%s\t%s\t%s' "$p" "$mode_bits" "$blob")"
+    grep -qxF -- "$rec_line" "$rec" 2>/dev/null || printf '%s\n' "$rec_line" >> "$rec" 2>/dev/null
+  done <<EOF
+$paths
+EOF
+  return 0
+}
+
 trail_pr() {
   local runfile="" reason="park"
   while [ "$#" -gt 0 ]; do
@@ -376,7 +415,13 @@ $kept
 EOF
 
   local title="chore(supervisor): $run_id trail ($reason)"
+  local rec origin_base="refs/remotes/origin/$base_branch"
+  rec="$(dirname "$rf_rel")/$run_id.trail-staged"
   if [ -z "$changed" ] && [ "$orphan" -eq 0 ]; then
+    # Nothing new to push, but an open trail branch still carries earlier pushes
+    # whose index entries a PICK trail-unstage may have dropped: re-apply the
+    # contract from that branch tip.
+    [ "$mode" = "pushed" ] && _stage_tip "$base_ref" "$origin_base" "$rec"
     trail_cleanup; trap - EXIT
     echo "$skip_prefix trail already up to date$excluded"; return 0
   fi
@@ -403,24 +448,14 @@ EOF
       trail_cleanup; trap - EXIT
       echo "$skip_prefix git push to $branch failed$excluded"; return 0
     fi
-    # Checkout contract: stage the COMMITTED blob of each path in the primary index,
-    # and record it (path/mode/blob) in the run's trail-staged record — closeout
-    # re-stages a recorded blob that has LANDED upstream right before its pull,
-    # because trail-unstage (PICK) drops these index entries before the next
-    # commit-producing phase.
-    local ent mode_bits blob rec rec_line
-    rec="$(dirname "$rf_rel")/$run_id.trail-staged"
-    while IFS= read -r p; do
-      [ -n "$p" ] || continue
-      ent="$(git -C "$TRAIL_WT" ls-tree HEAD -- "$p" 2>/dev/null)"
-      mode_bits="${ent%% *}"; blob="$(printf '%s' "$ent" | awk '{print $3}')"
-      [ -n "$blob" ] || continue
-      git update-index --add --cacheinfo "$mode_bits,$blob,$p" >/dev/null 2>&1
-      rec_line="$(printf '%s\t%s\t%s' "$p" "$mode_bits" "$blob")"
-      grep -qxF -- "$rec_line" "$rec" 2>/dev/null || printf '%s\n' "$rec_line" >> "$rec" 2>/dev/null
-    done <<EOF
-$changed
-EOF
+    # Checkout contract: stage, from the pushed trail TIP, EVERY path the
+    # trail PR changes (not only this push's delta: an earlier push's entries
+    # may have been dropped by a PICK trail-unstage) and record each blob in the
+    # run's trail-staged record; closeout re-stages a recorded blob that has
+    # LANDED upstream right before its pull.
+    _stage_tip "$(git -C "$TRAIL_WT" rev-parse -q --verify HEAD 2>/dev/null)" "$origin_base" "$rec"
+  elif [ "$orphan" -eq 1 ]; then
+    _stage_tip "$base_ref" "$origin_base" "$rec"
   fi
 
   if [ "$mode" = "opened" ]; then
@@ -457,8 +492,8 @@ The engine never merges this PR; a human does."
 # closeout, before RUN). Drops the index entries trail-pr staged under the
 # checkout contract (`git restore --staged -- <path>`, working copies untouched)
 # so the next item's `git checkout -b` + commit cannot sweep them into its PR.
-# Only this run's trail paths (+ its two sidecars) that differ from HEAD in the
-# index are touched. Safe to drop: the committed bytes live on the trail branch,
+# Only this run's trail paths (+ its two sidecars, + every path in its
+# `<run_id>.trail-staged` record) that differ from HEAD in the index are touched. Safe to drop: the committed bytes live on the trail branch,
 # and trail-pr records them in `<run_id>.trail-staged`, from which closeout
 # re-stages a landed blob right before its pull. One line; always exit 0.
 trail_unstage() {
@@ -478,6 +513,10 @@ trail_unstage() {
   local sc_dir p paths="" staged="" n=0
   sc_dir="$(dirname "$rf_rel")"
   paths="$TRAIL_KEPT"$'\n'"$sc_dir/$run_id.review-heal-result.md"$'\n'"$sc_dir/$run_id.supervisor-result.md"
+  # + every path trail-pr ever staged for this run (its trail-staged record):
+  # a path no longer among today's candidates (a sidecar that now fails its
+  # check, a Queue item edited out) can still hold a staged trail blob.
+  [ -f "$sc_dir/$run_id.trail-staged" ] && paths="$paths"$'\n'"$(cut -f1 "$sc_dir/$run_id.trail-staged" 2>/dev/null)"
   while IFS= read -r p; do
     [ -n "$p" ] || continue
     _in_list "$p" "$staged" && continue
