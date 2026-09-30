@@ -1844,7 +1844,10 @@ does for the supervisor_result path — the script exits 0 immediately when
 the env var is unset.
 
 **Known `gate_type` values and firing sites** (closed set in v14.0.0; new
-values require updating both this doc and `skills/autonomous-loop/SKILL.md`):
+values require updating both this doc and `skills/autonomous-loop/SKILL.md`;
+the additive sets fired from outside autonomous-loop are documented in their
+own sections below — §"`/verify --notify` gate events" and §"`/automate`
+merge-watch gate event"):
 
 | `gate_type`      | Firing site                                                                                 | When                                                                                                |
 |------------------|---------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------|
@@ -1898,7 +1901,8 @@ Field semantics:
 - **`event_type`** — always the literal string `"gate"`. Distinguishes gate
   payloads from supervisor_result payloads (which have `"agent": "supervisor"`
   as their stable type discriminator).
-- **`gate_type`** — one of the four values in the table above. Consumers
+- **`gate_type`** — one of the four values in the table above, or a value
+  from the additive `/verify --notify` / `/automate` merge-watch sections below. Consumers
   SHOULD treat unrecognized values as opaque rather than rejecting; new
   values may be added in future versions.
 - **`iteration`** — **emitted as a JSON string** (e.g., `"2"`, `"0"`), not
@@ -1967,6 +1971,44 @@ exit 0, the run completes unaffected.
 **Cross-references:** `commands/verify.md` §"Notify", `scripts/verify-helpers.sh`
 (`verify_notify_dispatch` / `verify_notify_once`), `scripts/verify-run.sh`
 (`preflight --notify`, `notify-enable`).
+
+### `/automate` merge-watch gate event (v-next)
+
+A SEPARATE, ADDITIVE closed set of one value — the autonomous-loop table and
+the `/verify --notify` table above are UNCHANGED by this addition. The
+`/automate` merge watcher (`scripts/automate-merge-watch.sh`, armed at the
+safe-mode `awaiting_merge` park — protocol authority
+`skills/automate-loop/SKILL.md` §6 "Post-merge close-out") fires the same
+`send-webhook.sh --event-type gate` seam with a single `gate_type`. Every
+emission goes through the watcher's one `notify()` helper, which ALSO pipes a
+synthetic `Notification`-shaped payload (`notification_type:
+"automate_merge_watch"`, `message` = the same string as `--context`) into
+`notify-desktop.sh`; both calls are fail-safe (output discarded, exit status
+ignored). `--iteration` and `--session-id` are NOT passed, so both fields
+arrive as empty strings — correlate on the `run_id` inside `context`.
+
+| `gate_type`            | Firing site                              | When (and `--context`)                                                                                                        | Fires at most |
+|-------------------------|-------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------|---------------|
+| `automate_merge_watch`  | `automate-merge-watch.sh` `notify()`, `MERGED` branch — closeout ran | The PR merged and `automate-helpers.sh closeout` got past its guards. `"<pr_url> merged — /automate closeout ran for <item> (run <run_id>); the next item waits for your go"` | once per watcher |
+| `automate_merge_watch`  | `automate-merge-watch.sh` `notify()`, `MERGED` branch — terminal closeout guard | The PR merged but closeout stopped at a non-transient `closeout: skipped — <guard>` line (a `## Progress` line is also appended; the operator runs `/automate --resume`). `"<pr_url> merged but /automate closeout could not run for <item> (run <run_id>): <guard>"` | once per watcher |
+| `automate_merge_watch`  | `automate-merge-watch.sh` `notify()`, `CLOSED` branch | The PR was closed unmerged; the item is `gone` (no cleanup). `"<pr_url> closed unmerged — /automate item <item> is gone (run <run_id>)"` | once per watcher |
+
+The three rows are mutually exclusive — each is followed by the watcher's
+exit — so a watcher emits at most ONE `automate_merge_watch` event. It
+deliberately does NOT notify on: a TRANSIENT closeout skip (`run lock held`,
+`gh unavailable`, `pr not merged (…)`, or no output — retried on a later poll
+with backoff), a `gh pr view` error (backoff retry), a still-`OPEN` PR, a
+second-launch `already running` exit, or the lifetime cap
+(`LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS`, which only appends a `## Progress`
+line). There is no opt-in flag: the webhook half is gated solely by
+`LOOMWRIGHT_WEBHOOK_URL` (unset ⇒ the existing gate-path no-op, exit 0) and
+the desktop half by `notify-desktop.sh`'s own opt-out
+(`LOOMWRIGHT_DESKTOP_NOTIFICATIONS=0`). No change to
+`send-webhook.sh` itself or its payload schema.
+
+**Cross-references:** `scripts/automate-merge-watch.sh` (header + `notify()`),
+`skills/automate-loop/SKILL.md` §6, `scripts/test-automate-trail.sh` (asserts
+exactly one desktop + one `automate_merge_watch` webhook per watcher).
 
 ---
 
