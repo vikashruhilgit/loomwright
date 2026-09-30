@@ -1100,13 +1100,13 @@ grep -qE "^- .* merge-watch: lifetime cap \(2s\) reached watching $PRURL" "$P/$R
 
 # single instance: a live watcher blocks a second launch; a dead pid is reclaimed
 ( cd "$P" && LOOMWRIGHT_MERGE_WATCH_INTERVAL=1 LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=60 nohup bash "$WATCH" "$RF_REL" "$REQ" "$PRURL" </dev/null >"$TOP/w1.log" 2>&1 & )
-i=0; while [ ! -s "$P/$MARK" ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i+1)); done
+i=0; while [ ! -s "$P/$MARK" ] && [ "$i" -lt 200 ]; do sleep 0.1; i=$((i+1)); done
 wpid="$(awk -F'\t' '$1=="pid"{print $2}' "$P/$MARK" 2>/dev/null)"
 out="$(cd "$P" && bash "$WATCH" "$RF_REL" "$REQ" "$PRURL" </dev/null 2>&1)"
 [ -n "$wpid" ] && [ "$out" = "merge-watch: already running pid=$wpid" ] && ok "AC13: second launch ⇒ already running, no second poller" || no "AC13 second launch: '$out' (pid=$wpid)"
 [ "$(awk -F'\t' '$1=="pid"{print $2}' "$P/$MARK" 2>/dev/null)" = "$wpid" ] && ok "marker still names the first watcher" || no "marker overwritten"
 [ -n "$wpid" ] && kill "$wpid" 2>/dev/null
-i=0; while [ -e "$P/$MARK" ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i+1)); done
+i=0; while [ -e "$P/$MARK" ] && [ "$i" -lt 200 ]; do sleep 0.1; i=$((i+1)); done
 [ ! -e "$P/$MARK" ] && ok "AC13: marker gone after the watcher is terminated" || no "marker left after TERM"
 ( sleep 0 & echo $! > "$TOP/deadpid" ); sleep 0.2
 printf 'pid\t%s\npr_url\t%s\nstarted\tx\n' "$(cat "$TOP/deadpid")" "$PRURL" > "$P/$MARK"
@@ -1121,20 +1121,24 @@ closeout_fixture 38
 spy_reset
 jq --arg u "$PRURL2" '.[0].state = "OPEN" | . + [{number:8,url:$u,state:"OPEN",headRefName:"feature/y",headRefOid:"0"}]' "$GH_STUB_DIR/prs.json" > "$GH_STUB_DIR/p.tmp" && mv "$GH_STUB_DIR/p.tmp" "$GH_STUB_DIR/prs.json"
 ( cd "$P" && LOOMWRIGHT_MERGE_WATCH_INTERVAL=30 LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=600 nohup bash "$WATCH" "$RF_REL" "$REQ" "$PRURL" </dev/null >"$TOP/wa.log" 2>&1 & )
-i=0; while [ ! -s "$P/$MARK" ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i+1)); done
+i=0; while [ ! -s "$P/$MARK" ] && [ "$i" -lt 200 ]; do sleep 0.1; i=$((i+1)); done
 apid="$(awk -F'\t' '$1=="pid"{print $2}' "$P/$MARK" 2>/dev/null)"
 sleep 0.5   # A is now inside its 30s interval nap
 t0="$(date +%s)"
 ( cd "$P" && LOOMWRIGHT_MERGE_WATCH_INTERVAL=30 LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=600 nohup bash "$WATCH" "$RF_REL" "$REQ2" "$PRURL2" </dev/null >"$TOP/wb.log" 2>&1 & )
-i=0; while [ "$(awk -F'\t' '$1=="pr_url"{print $2}' "$P/$MARK" 2>/dev/null)" != "$PRURL2" ] && [ "$i" -lt 150 ]; do sleep 0.1; i=$((i+1)); done
+i=0; while [ "$(awk -F'\t' '$1=="pr_url"{print $2}' "$P/$MARK" 2>/dev/null)" != "$PRURL2" ] && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i+1)); done
 bpid="$(awk -F'\t' '$1=="pid"{print $2}' "$P/$MARK" 2>/dev/null)"
-[ -n "$apid" ] && ! kill -0 "$apid" 2>/dev/null && [ $(( $(date +%s) - t0 )) -lt 10 ] && ok "M2: launch for another PR terminates the old watcher promptly (interruptible nap)" || no "M2: old watcher pid=$apid still alive / slow"
+t1="$(date +%s)"
+# The replacing watcher writes its marker BEFORE its `replaced` Progress + log
+# lines, so wait (bounded) for those instead of reading them at the flip.
+i=0; while ! grep -qF "merge-watch: replaced pid=$apid" "$TOP/wb.log" 2>/dev/null && [ "$i" -lt 200 ]; do sleep 0.1; i=$((i+1)); done
+[ -n "$apid" ] && ! kill -0 "$apid" 2>/dev/null && [ $(( t1 - t0 )) -lt 15 ] && ok "M2: launch for another PR terminates the old watcher promptly (interruptible nap)" || no "M2: old watcher pid=$apid still alive / slow"
 [ -n "$bpid" ] && [ "$bpid" != "$apid" ] && kill -0 "$bpid" 2>/dev/null && ok "M2: the marker now names the new watcher for $PRURL2" || no "M2: marker: $(cat "$P/$MARK" 2>/dev/null | tr '\n' '|')"
 grep -qF "merge-watch: replaced pid=$apid watching $PRURL" "$TOP/wb.log" && ok "M2: the new watcher says whom it replaced" || no "M2: wb.log: $(cat "$TOP/wb.log")"
 grep -qE "^- .* merge-watch: replaced watcher pid=$apid for $PRURL \(now watching $PRURL2\)" "$P/$RF_REL" && ok "M2: a Progress line names the PR that is no longer watched" || no "M2: replace Progress line missing"
 [ ! -s "$SPYLOG.notify" ] && [ ! -s "$SPYLOG.webhook" ] && ok "M2: the replaced watcher sent no notify" || no "M2: notify sent on replace"
 [ -n "$bpid" ] && kill "$bpid" 2>/dev/null
-i=0; while [ -e "$P/$MARK" ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i+1)); done
+i=0; while [ -e "$P/$MARK" ] && [ "$i" -lt 200 ]; do sleep 0.1; i=$((i+1)); done
 [ ! -e "$P/$MARK" ] && ok "M2: marker gone after the new watcher exits" || no "M2: marker left"
 
 # stale-pid safety: a LIVE pid that is not our watcher is never signalled — the
@@ -1163,9 +1167,12 @@ case "${1:-}" in
   *) exec bash "$SPYD_REAL/automate-helpers.real.sh" "$@" ;;
 esac
 FAKE
-wout="$(cd "$P" && SPYD_REAL="$SPYD" LOOMWRIGHT_MERGE_WATCH_INTERVAL=0 LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=2 bash "$TC/automate-merge-watch.sh" "$RF_REL" "$REQ" "$PRURL" </dev/null 2>&1)"
+# MAX=5, not 2: the watcher's clock is `date +%s` (whole seconds), so a start at
+# x.9s plus the 1s retry nap can already read "2s elapsed" and hit a 2s cap
+# before the retry — the 1-in-N 3.2 flake. 5s leaves room for >=2 closeouts.
+wout="$(cd "$P" && SPYD_REAL="$SPYD" LOOMWRIGHT_MERGE_WATCH_INTERVAL=0 LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=5 bash "$TC/automate-merge-watch.sh" "$RF_REL" "$REQ" "$PRURL" </dev/null 2>&1)"
 case "$wout" in *"merge-watch: lifetime cap reached (merged; closeout never ran — gh unavailable)"*) ok "M3: cap after MERGED names the merge + last skip" ;; *) no "M3: $wout" ;; esac
-grep -qE "^- .* merge-watch: lifetime cap \(2s\) reached — $PRURL is MERGED but closeout never ran \(last skip: gh unavailable\)" "$P/$RF_REL" && ok "M3: Progress line says MERGED + the reason" || no "M3: Progress line missing"
+grep -qE "^- .* merge-watch: lifetime cap \(5s\) reached — $PRURL is MERGED but closeout never ran \(last skip: gh unavailable\)" "$P/$RF_REL" && ok "M3: Progress line says MERGED + the reason" || no "M3: Progress line missing"
 grep -q 'after the merge' "$P/$RF_REL" && no "M3: Progress still says 'after the merge'" || ok "M3: never tells the owner to resume 'after the merge'"
 [ "$(spy_count notify "$SPYLOG.notify")" = "1" ] && grep -q 'could not run.*lifetime cap reached, last skip: gh unavailable' "$SPYLOG.webhook" && ok "M3: one failure-style notify naming the reason" || no "M3 notify: $(cat "$SPYLOG.webhook" 2>/dev/null)"
 [ "$(spy_count '^closeout ' "$SPYLOG")" -ge 2 ] && ok "M3: closeout was retried before the cap" || no "M3: closeout calls $(spy_count '^closeout ' "$SPYLOG")"
