@@ -22,6 +22,9 @@
 #   M. post-merge pull (decision 4) — trail PR squash-merged into the fixture
 #      remote ⇒ plain `git checkout main && git pull` succeeds with the live run
 #      file and the ledger's other-run lines surviving as local modifications.
+#   O. crash-recovery orphan — a remote chore/<run_id>-trail-<n> with no PR is
+#      REUSED (no trail-<n+1>), with and without a new change, and exactly one
+#      PR is opened for it.
 #   U. PICK-time trail-unstage — after trail-pr the trail paths are staged and
 #      recorded (gitignored `<run_id>.trail-staged`); trail-unstage clears the
 #      index (working copies untouched), then `checkout -b` + `add new.txt` +
@@ -31,6 +34,9 @@
 #      local edit stays unstaged; no duplicate record lines); after the owner
 #      merges it, a hand `git checkout main && git pull` succeeds. trail-unstage
 #      clears a recorded path that is no longer a candidate.
+#   V0. portable 3.2 parse guard — a static scan (any bash) for an apostrophe
+#      in a heredoc body opened inside `$(` (the 866529f trap), with a
+#      mutation control; carries the guard where leg V has no 3.x binary.
 #   V. bash 3.2 — `/bin/bash -n` (when it is 3.x) on both new scripts, the helper
 #      and this file; sidecar-check / trail-pr / trail-unstage / closeout run
 #      with a 3.2 `bash` first on PATH, so the child is not a Homebrew bash.
@@ -316,6 +322,34 @@ grep -q 'other-run' "$P/.supervisor/postmortem/results.jsonl" && ok "other-run l
 [ -f "$P/stray.txt" ] && ok "stray file untouched" || no "stray file removed"
 
 # =============================================================================
+echo "== O. crash-recovery orphan: remote trail branch with NO linked PR =="
+# A crash between trail-pr's push and its `gh pr create` leaves
+# chore/<run_id>-trail-<n> on the remote with no PR. The next trail-pr must
+# REUSE that branch (never push trail-<n+1>) and open exactly one PR for it —
+# both with nothing new to push and with a new change to push first.
+for omode in nodiff changed; do
+  if [ "$omode" = "nodiff" ]; then new_fixture 41; else new_fixture 42; fi
+  BR="chore/$RUN_ID-trail-1"
+  (cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason awaiting_merge >/dev/null)
+  git -C "$FX/origin.git" rev-parse -q --verify "refs/heads/$BR" >/dev/null && ok "[$omode] setup: $BR pushed" || no "[$omode] setup: $BR not pushed"
+  otip1="$(git -C "$FX/origin.git" rev-parse "refs/heads/$BR" 2>/dev/null)"
+  echo '[]' > "$GH_STUB_DIR/prs.json"; : > "$GH_STUB_DIR/argv.log"   # the crash: branch pushed, no PR
+  [ "$omode" = "changed" ] && echo "- t1 parked again after the crash" >> "$P/$RF_REL0"
+  out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason escalated)"; rc=$?
+  case "$out" in "trail-pr: opened https://github.com/acme/widgets/pull/"*) [ "$rc" -eq 0 ] && ok "[$omode] orphan re-run opens a PR, exit 0 ($out)" || no "[$omode] rc=$rc" ;; *) no "[$omode] orphan re-run: $out" ;; esac
+  [ "$(count_creates)" = "1" ] && ok "[$omode] exactly one gh pr create" || no "[$omode] create count $(count_creates)"
+  grep -q -- "--head $BR " "$GH_STUB_DIR/argv.log" && ok "[$omode] the PR is opened for the orphan branch $BR" || no "[$omode] pr create head: $(grep '^pr create' "$GH_STUB_DIR/argv.log")"
+  [ -z "$(git -C "$FX/origin.git" for-each-ref "refs/heads/chore/$RUN_ID-trail-2")" ] && ok "[$omode] no trail-2 branch pushed" || no "[$omode] trail-2 pushed"
+  otip2="$(git -C "$FX/origin.git" rev-parse "refs/heads/$BR" 2>/dev/null)"
+  if [ "$omode" = "nodiff" ]; then
+    [ "$otip1" = "$otip2" ] && ok "[$omode] orphan tip unchanged (nothing new to push)" || no "[$omode] orphan tip moved"
+  else
+    if [ "$otip1" != "$otip2" ] && git -C "$FX/origin.git" merge-base --is-ancestor "$otip1" "$otip2"; then ok "[$omode] new change fast-forwarded onto the orphan branch"; else no "[$omode] orphan push not a fast-forward"; fi
+    grep -q 'parked again after the crash' < <(git -C "$FX/origin.git" show "refs/heads/$BR:$RF_REL0") && ok "[$omode] orphan tip carries the new run-file bytes" || no "[$omode] new bytes not pushed"
+  fi
+done
+
+# =============================================================================
 echo "== U. PICK-time trail-unstage (the next item's commit carries no trail path) =="
 new_fixture 12
 (cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason awaiting_merge >/dev/null)
@@ -385,12 +419,50 @@ done
 new_fixture 23
 (cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason awaiting_merge >/dev/null)
 NC=".supervisor/jobs/done/brief-a.md"
-grep -qxF "$NC" < <(git -C "$P" diff --cached --name-only) && ok "done brief staged by trail-pr" || no "done brief not staged"
+grep -qxF -- "$NC" < <(git -C "$P" diff --cached --name-only) && ok "done brief staged by trail-pr" || no "done brief not staged"
 printf '# Brief\n## Environment\n- **Source requirement:** .supervisor/requirements/zz.md\n' > "$P/$NC"
 case "$(cd "$P" && bash "$H" trail-unstage "$RF_REL0" >/dev/null; git -C "$P" diff --cached --name-only)" in *"$NC"*) no "recorded non-candidate brief left staged" ;; *) ok "brief re-pointed away is still unstaged (from the record)" ;; esac
 [ -z "$(git -C "$P" diff --cached --name-only)" ] && ok "trail-unstage cleared the recorded non-candidate path too" || no "left staged: $(git -C "$P" diff --cached --name-only | tr '\n' ' ')"
 
 # =============================================================================
+echo "== V0. portable 3.2 parse guard (runs on ANY bash, incl. CI's bash 5) =="
+# macOS /bin/bash 3.2 cannot parse an apostrophe inside the BODY of a heredoc
+# (quoted `<<'X'` or not) that is opened inside a `$(` command substitution —
+# the exact trap fixed in 866529f (rc=2 for every subcommand). Leg V below proves
+# 3.2 directly but is skipped where no 3.x binary exists (CI's ubuntu runner),
+# so this static scan carries the guard there. Honest limit: it only sees a
+# heredoc whose `$(` is on the SAME line as the `<<` opener.
+heredoc_apos_in_comsub() {  # prints file:line of each offending body line
+  awk '
+    inbody {
+      t = $0; if (strip) sub(/^\t+/, "", t)
+      if (t == tag) { inbody = 0; next }
+      if (index($0, "\047")) print FILENAME ":" FNR ": " $0
+      next
+    }
+    /\$\(/ && /(^|[^<])<<-?[ \t]*[\047"\\]?[A-Za-z_][A-Za-z0-9_]*/ {
+      r = $0; sub(/^.*\$\(/, "", r)
+      if (!match(r, /(^|[^<])<<-?[ \t]*[\047"\\]?[A-Za-z_][A-Za-z0-9_]*/)) next
+      op = substr(r, RSTART, RLENGTH); sub(/^[^<]/, "", op)
+      strip = (substr(op, 3, 1) == "-")
+      tag = op; sub(/^<<-?[ \t]*[\047"\\]?/, "", tag)
+      inbody = 1
+    }
+  ' "$@"
+}
+hd_bad="$(heredoc_apos_in_comsub "$T" "$HERE/automate-merge-watch.sh")"
+[ -z "$hd_bad" ] && ok "no apostrophe in a heredoc body opened inside \$( (automate-trail.sh, automate-merge-watch.sh)" || no "3.2-unparseable heredoc body: $hd_bad"
+HDM="$TOP/heredoc-mut"; mkdir -p "$HDM"
+# mutation control: re-inject an apostrophe into the first body line of the
+# python heredoc inside sidecar-check's $( — the 866529f regression.
+awk 'done == 0 && prev ~ /\$\(python3 .*<</ { print "# it" "\047" "s back"; done = 1 } { print; prev = $0 }' "$T" > "$HDM/automate-trail.sh"
+if [ -s "$HDM/automate-trail.sh" ] && ! cmp -s "$T" "$HDM/automate-trail.sh"; then
+  hd_mut="$(heredoc_apos_in_comsub "$HDM/automate-trail.sh")"
+  [ -n "$hd_mut" ] && ok "mutation control: an apostrophe injected into the \$( heredoc body IS flagged" || no "mutant not flagged — guard is vacuous"
+else
+  no "heredoc mutant not generated"
+fi
+
 echo "== V. macOS bash 3.2 (the child is really 3.2, not a Homebrew bash) =="
 B32=""
 for cand in /bin/bash /usr/local/bin/bash3 /opt/bash3/bin/bash; do

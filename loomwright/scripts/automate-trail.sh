@@ -646,6 +646,8 @@ closeout() {
   case "$l" in *"skipped —"*) ;; *) did=1 ;; esac
 
   # ---- steps 3–7 under the run lock -----------------------------------------
+  # The step numbers are the SKILL's labels (§6 "Post-merge close-out"); the
+  # EXECUTION order is 3a → 4 → 3b → 5 → 7 → 6, and the blocks below follow it.
   CO_ROOT="$root"; CO_OWNER="automate-closeout:$run_id"
   local lk rc
   if [ -n "$sid" ]; then
@@ -670,7 +672,7 @@ closeout() {
   base_branch="${base_branch#origin/}"
   [ -n "$base_branch" ] || base_branch="main"
 
-  # ---- 3a. worktrees on the PR's head branch (never the primary) ------------
+  # ---- 3a. worktrees on the PR's head branch (never the primary; runs 1st) --
   local wt_line="" wt_list wt salv dirty wrem="" wkeep=""
   if [ -z "$head_ref" ] || [ -z "$head_oid" ]; then
     wt_line="$S head branch unresolved (gh pr view headRefName/headRefOid failed)"; head_ref=""
@@ -703,7 +705,7 @@ WTLIST
   echo "$wt_line"; lines="$lines"$'\n'"$wt_line"
   case "$wt_line" in "closeout: removed"*) did=1 ;; esac
 
-  # ---- 4. sync the primary onto the base branch ------------------------------
+  # ---- 4. sync the primary onto the base branch (runs 2nd, before 3b) -------
   # This run's own trail paths (_trail_owned — the SAME set trail-unstage
   # drops: today's candidates ∪ sidecars ∪ every path _stage_tip staged in this
   # index, recorded in `<run_id>.trail-staged`) never count as "uncommitted
@@ -732,7 +734,10 @@ STATUS
     sy="$S already synced ($base_branch at origin/$base_branch)"
   elif [ "$cur" != "$base_branch" ] && ! git checkout -q "$base_branch" >/dev/null 2>&1; then
     sy="$S git checkout $base_branch refused"
-  elif _restage_landed "$(dirname "$rf_rel")/$run_id.trail-staged" "refs/remotes/origin/$base_branch"
+  # Two-command elif list, deliberately: `_restage_landed` runs only once every
+  # guard above has passed (never on a refused sync), and its status is ignored
+  # (`;`) — only the pull's status decides this branch.
+  elif _restage_landed "$(dirname "$rf_rel")/$run_id.trail-staged" "refs/remotes/origin/$base_branch";
        ! git pull -q --ff-only origin "$base_branch" >/dev/null 2>&1; then
     sy="$S git pull --ff-only refused (no reset attempted)"
   else
@@ -740,7 +745,7 @@ STATUS
   fi
   echo "$sy"; lines="$lines"$'\n'"$sy"
 
-  # ---- 3b. the local head branch (after sync; squash-safe tip check) --------
+  # ---- 3b. the local head branch (runs 3rd, after 4; squash-safe tip check) -
   local br tip
   if [ -z "$head_ref" ]; then
     br="$S branch unresolved"
@@ -760,7 +765,7 @@ STATUS
   fi
   echo "$br"; lines="$lines"$'\n'"$br"
 
-  # ---- 5. requirement stamp (PASS shape — self-heal-advisory completion tail) --
+  # ---- 5. requirement stamp (runs 4th; PASS shape — self-heal-advisory tail) -
   local sp done_brief="" b ptr
   if [ ! -f "$item" ]; then
     sp="$S requirement $item not found"
@@ -789,7 +794,8 @@ STATUS
   fi
   echo "$sp"; lines="$lines"$'\n'"$sp"
 
-  # ---- 7. check off (NO reason argument — a reason writes `# skipped: …`) ----
+  # ---- 7. check off (runs 5th, BEFORE 6 so the trail PR records it; NO reason
+  #      argument — a reason writes `# skipped: …`) ------------------------------
   local ck
   if grep -qxF -- "- [ ] $item" "$rf_rel" 2>/dev/null; then
     if bash "$HLP" queue-checkoff "$rf_rel" "$item" >/dev/null 2>&1 && grep -qxF -- "- [x] $item" "$rf_rel" 2>/dev/null; then
@@ -813,7 +819,7 @@ $lines
 PROGRESS
   fi
 
-  # ---- 6. trail (via the dispatcher — a stub-able, spy-visible call) --------
+  # ---- 6. trail (runs LAST, after 7; via the dispatcher — stub-able, spy-visible)
   l="$(bash "$HLP" trail-pr "$rf_abs" --reason closeout 2>/dev/null | tail -n1)"
   echo "${l:-trail-pr: skipped — no output}"
 
