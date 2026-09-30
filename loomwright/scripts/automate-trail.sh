@@ -306,21 +306,28 @@ EOF
 # reading done / done_with_escalation, sentinel or not): prints one line per such
 # heading block — the first `https?://…/pull/<n>` token of each `- **PR:**`
 # line in it (an annotated value like `<url> (merged by …)` yields the URL), or
-# `-` when the block names no parseable PR. A reconcile-status
-# `done_with_escalation — ABANDONED (…)` heading is an owner decision, not a
-# shipped-work claim, and prints nothing. Prints nothing for a requirement with
-# no done heading. A block runs to the next `## ` heading or EOF.
+# `-` when the block names no parseable PR. The ONE exemption is the exact
+# heading `automate-helpers.sh reconcile-status --apply` writes for an owner's
+# `# abandoned:` Queue row — `## Status: done_with_escalation — ABANDONED
+# (- [x] <path>  # abandoned: <reason>)`, em dash byte-exact (passed in as
+# $'\xe2\x80\x94', never a source literal, so no locale or editor can shift it):
+# an owner decision, not a shipped-work claim, so it prints nothing. Any other
+# heading merely containing "ABANDONED" is a done claim like any other. Prints
+# nothing for a requirement with no done heading. A block runs to the next
+# `## ` heading or EOF. The PR token excludes markdown link punctuation
+# (`[]()<>`), so `[<url>](<url>)` and `<url>` yield the bare URL.
+AB_PREFIX="## Status: done_with_escalation "$'\xe2\x80\x94'" ABANDONED (- [x] "
 _done_prs() {
-  awk '
+  awk -v ab="$AB_PREFIX" '
     function flush() { if (inb && !seen) print "-"; inb = 0; seen = 0 }
     /^## Status:[[:space:]]*done(_with_escalation)?([^A-Za-z0-9_]|$)/ {
       flush()
-      if ($0 !~ /ABANDONED/) { inb = 1; seen = 0 }
+      if (!(index($0, ab) == 1 && $0 ~ /  # abandoned: .*\)[[:space:]]*$/)) { inb = 1; seen = 0 }
       next
     }
     inb && /^## / { flush(); next }
     inb && /^- \*\*PR:\*\*/ {
-      if (match($0, /https?:\/\/[^[:space:]]+\/pull\/[0-9]+/)) print substr($0, RSTART, RLENGTH); else print "-"
+      if (match($0, /https?:\/\/[^][:space:]()<>]+\/pull\/[0-9]+/)) print substr($0, RSTART, RLENGTH); else print "-"
       seen = 1; next
     }
     END { flush() }
@@ -328,18 +335,20 @@ _done_prs() {
 }
 
 # _outcome_prs <brief-file> — every PR a done/ brief's Outcome section names.
-# The section opens at an `## Outcome` / `### Outcome` heading in any spelling
-# (`## Outcome — ESCALATED`, `## Outcome:`; never `## Outcomes Rubric`) and runs
+# The section opens at an `## Outcome` / `### Outcome` heading — whitespace
+# after the hashes, then whitespace, a colon or end of line after the word
+# (`## Outcome — ESCALATED`, `## Outcome:`; never `## Outcomes Rubric`,
+# `##Outcome` or `## Outcome-ish`) — and runs
 # to the next H1–H3 heading. One line per `- **PR:**` line (its first
 # `…/pull/<n>` token, or `-`), and `-` for a section naming no PR at all (fail
 # closed). Prints nothing for a brief with no Outcome section.
 _outcome_prs() {
   awk '
     function flush() { if (o && !seen) print "-"; o = 0; seen = 0 }
-    /^(##|###)[[:space:]]*Outcome([^A-Za-z0-9_]|$)/ { flush(); o = 1; seen = 0; next }
+    /^(##|###)[[:space:]]+Outcome([[:space:]:]|$)/ { flush(); o = 1; seen = 0; next }
     o && /^(#|##|###)[[:space:]]/ { flush(); next }
     o && /^- \*\*PR:\*\*/ {
-      if (match($0, /https?:\/\/[^[:space:]]+\/pull\/[0-9]+/)) print substr($0, RSTART, RLENGTH); else print "-"
+      if (match($0, /https?:\/\/[^][:space:]()<>]+\/pull\/[0-9]+/)) print substr($0, RSTART, RLENGTH); else print "-"
       seen = 1; next
     }
     END { flush() }
@@ -564,12 +573,15 @@ EOF
   local rec origin_base="refs/remotes/origin/$base_branch"
   rec="$(dirname "$rf_rel")/$run_id.trail-staged"
 
-  # ---- retract: a gate-excluded path whose blob on a REUSED trail branch (an
-  # earlier push — e.g. a v15.114.0/.1 park-time trail) still carries a done
-  # claim that fails the gate is put back to origin/<default>'s version (or
-  # removed when main lacks it) in this commit, so the branch tip never keeps
-  # a done stamp for unmerged work. Only paths the trail branch itself changed
-  # (base blob != main blob) are touched; named as `; retracted <path>`.
+  # ---- retract: a gate-excluded path whose blob at the REUSED trail branch's
+  # tip (e.g. from a v15.114.0/.1 park-time push) differs from origin/<default>'s
+  # CURRENT blob and itself fails the gate is put back to origin/<default>'s
+  # version (removed when main lacks it) in this commit, so the branch tip never
+  # keeps a done stamp for unmerged work; named as `; retracted <path>`. The
+  # comparison is against main's current blob, not the fork point, so a path
+  # main changed after the fork that the trail branch never touched also counts
+  # when its (old) tip blob fails the gate — harmless: the tip becomes main's
+  # version. A transient gh failure fails such a claim closed too (see SKILL §6).
   local retract="" retracted="" retract_old="" rb
   if [ "$base_ref" != "$origin_base" ] && [ -n "$TRAIL_GATED" ]; then
     while IFS= read -r p; do

@@ -922,6 +922,43 @@ for dv in bare-open bare-nopr bare-merged abandoned; do
       grep -qxF -- "$REQ" < <(trail_names) && ! grep -q '^pr view' "$GH_STUB_DIR/argv.log" && ok "(d) [$dv] an ABANDONED stamp rides with no gh call (owner decision)" || no "(d) [$dv]: $out" ;;
   esac
 done
+# (d2) round-2 finding 1 — the ABANDONED exemption is anchored to the EXACT
+# heading reconcile-status writes; a done heading that merely contains the word
+# is a done claim like any other. Each spoof carries an OPEN PR ⇒ excluded.
+EMD="$(printf '\342\200\224')"
+spoof_leg() { # <fixture-n> <label> <heading> <helpers-dir>
+  new_fixture "$1"
+  printf '# req a\n%s\n- **PR:** %s\n' "$3" "$PRURL" > "$P/$REQ"; set_pr "$PRURL" OPEN
+  out="$(cd "$P" && bash "$4/automate-helpers.sh" trail-pr "$RF_REL0" --reason done)"
+}
+n=83
+for sp in "## Status: done $EMD ABANDONED" "## Status: done <!-- ABANDONED -->" "## Status: done $EMD not ABANDONED, shipped" "## Status: done_with_escalation $EMD ABANDONED (hand-typed, no queue row)"; do
+  spoof_leg "$n" spoof "$sp" "$HERE"; n=$((n+1))
+  case "$out" in *"; excluded $REQ — pr not merged"*) ! grep -qxF -- "$REQ" < <(trail_names) && ok "(d2) spoof [$sp] + PR OPEN ⇒ excluded" || no "(d2) spoof [$sp] committed" ;; *) no "(d2) spoof [$sp] rode: $out" ;; esac
+done
+# the genuine reconcile-status stamp — byte-for-byte what `reconcile-status --apply` writes
+new_fixture 87; set_pr "$PRURL" OPEN
+printf '# req a\n\n## Status: done_with_escalation \342\200\224 ABANDONED (%s)\n' "- [x] $REQ  # abandoned: owner dropped it" > "$P/$REQ"
+out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason abandoned)"
+grep -qxF -- "$REQ" < <(trail_names) && [ "$(grep -c '^pr view' "$GH_STUB_DIR/argv.log")" = "0" ] && ok "(d2) the genuine reconcile-status ABANDONED stamp rides with 0 gh calls" || no "(d2) genuine stamp: $out"
+# mutation control: the pre-fix loose `/ABANDONED/` test lets the comment spoof ride
+ABM="$TOP/abmut"; mkdir -p "$ABM"; cp "$HERE"/*.sh "$HERE"/*.py "$ABM/"
+awk '/if \(!\(index\(\$0, ab\) == 1/ { print "      if ($0 !~ /ABANDONED/) { inb = 1; seen = 0 }"; next } { print }' "$T" > "$ABM/automate-trail.sh"
+if ! cmp -s "$T" "$ABM/automate-trail.sh" && bash -n "$ABM/automate-trail.sh"; then
+  spoof_leg 88 mutant "## Status: done <!-- ABANDONED -->" "$ABM"
+  grep -qxF -- "$REQ" < <(trail_names) && ok "mutation control: with the loose /ABANDONED/ test the spoof rides (the anchor is load-bearing)" || no "loose mutant excluded the spoof — the anchor leg may be vacuous: $out"
+else
+  no "ABANDONED-anchor mutant not generated"
+fi
+# (g2) round-2 finding 2 — a markdown-link / angle-bracket PR value yields the bare URL
+for lv in link angle; do
+  if [ "$lv" = link ]; then new_fixture 89; pv="[$PRURL]($PRURL)"; else new_fixture 90; pv="<$PRURL>"; fi
+  stamp_req "$REQ" done "- **PR:** $pv
+"; set_pr "$PRURL" MERGED
+  out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason done)"
+  case "$out" in *"excluded $REQ"*) no "(g2) [$lv] merged PR excluded: $out" ;; *) grep -qxF -- "$REQ" < <(trail_names) && ok "(g2) [$lv] a $lv PR value reads MERGED and rides" || no "(g2) [$lv] names" ;; esac
+  grep -qE "^pr view $PRURL --json" "$GH_STUB_DIR/argv.log" && ok "(g2) [$lv] gh pr view got the bare URL" || no "(g2) [$lv] argv: $(grep '^pr view' "$GH_STUB_DIR/argv.log")"
+done
 # (g) finding 4 — an annotated PR value: the first …/pull/<n> token is what gh reads
 for gv in req brief; do
   if [ "$gv" = req ]; then new_fixture 74; stamp_req "$REQ" done "- **PR:** $PRURL (merged by the owner, squash)
@@ -933,8 +970,8 @@ for gv in req brief; do
 done
 # (h) finding 2 — Outcome heading variants fail CLOSED on the brief side too
 BA=".supervisor/jobs/done/brief-a.md"
-n=76
-for hv in '## Outcome — ESCALATED' '## Outcome:' '### Outcome' 'nopr' 'rubric'; do
+n=91   # 91-97 (81-82 belong to leg R, 83-90 to d2/g2)
+for hv in '## Outcome — ESCALATED' '## Outcome:' '### Outcome' 'nopr' 'rubric' '##Outcome' '## Outcome-ish'; do
   new_fixture "$n"; n=$((n+1)); set_pr "$PRURL" OPEN
   case "$hv" in
     nopr)   printf '# Brief\n- **Source requirement:** %s\n\n## Outcome\n- **Status:** completed\n- **Branch:** feature/x\n' "$REQ" > "$P/$BA"; set_pr "$PRURL" MERGED ;;
@@ -942,8 +979,8 @@ for hv in '## Outcome — ESCALATED' '## Outcome:' '### Outcome' 'nopr' 'rubric'
     *)      printf '# Brief\n- **Source requirement:** %s\n\n%s\n- **PR:** %s\n' "$REQ" "$hv" "$PRURL" > "$P/$BA" ;;
   esac
   out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason done)"
-  if [ "$hv" = rubric ]; then
-    grep -qxF -- "$BA" < <(trail_names) && ok "(h) [## Outcomes Rubric] is not an Outcome section — the brief rides" || no "(h) rubric: $out"
+  if [ "$hv" = rubric ] || [ "$hv" = '##Outcome' ] || [ "$hv" = '## Outcome-ish' ]; then
+    grep -qxF -- "$BA" < <(trail_names) && ok "(h) [$hv] is not an Outcome section — the brief rides" || no "(h) $hv: $out"
   else
     case "$out" in *"; excluded $BA — pr not merged"*) ! grep -qxF -- "$BA" < <(trail_names) && ok "(h) [$hv] ⇒ brief excluded (fail closed)" || no "(h) [$hv] committed" ;; *) no "(h) [$hv]: $out" ;; esac
   fi
