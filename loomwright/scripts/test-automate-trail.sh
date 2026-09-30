@@ -707,6 +707,67 @@ out="$(cd "$P" && LOOMWRIGHT_GH_BIN="$TOP/no-such-gh" bash "$H" closeout "$RF_RE
 out="$(cd "$P" && bash "$H" closeout ".supervisor/automate/nope.md" "$REQ" "$PRURL")"; rc=$?
 [ "$out" = "closeout: skipped — run file not found" ] && [ "$rc" -eq 0 ] && ok "missing run file ⇒ skipped, exit 0" || no "missing run file: $out rc=$rc"
 
+echo "== C. closeout 3a: a head-branch worktree at another tip is kept (M1) =="
+# `git worktree remove` (no --force) deletes GITIGNORED content, which
+# worktree-salvage.sh skips by design; a same-named branch reused for other work
+# (worktree HEAD != headRefOid) must be kept with its gitignored .env intact.
+for variant in moved match; do
+  if [ "$variant" = moved ]; then closeout_fixture 31; else closeout_fixture 32; fi
+  mkdir -p "$P/.git/info"; echo ".env" >> "$P/.git/info/exclude"
+  echo "SECRET=1" > "$FX/wt-pr/.env"
+  git -C "$FX/wt-pr" check-ignore -q .env && ok "[$variant] setup: .env is gitignored in the PR worktree" || no "[$variant] .env not ignored"
+  [ "$variant" = moved ] && ( cd "$FX/wt-pr" && echo more > more.txt && git add more.txt && git commit -qm "other work, same branch name" )
+  out="$(run_closeout)"
+  if [ "$variant" = moved ]; then
+    [ -d "$FX/wt-pr" ] && [ "$(cat "$FX/wt-pr/.env" 2>/dev/null)" = "SECRET=1" ] && ok "moved: worktree at another tip kept, gitignored .env intact" || no "moved: worktree/.env lost"
+    case "$out" in *"closeout: skipped — kept worktree $FX/wt-pr (tip "*" != merged head "*) ok "moved: the kept line names the tip mismatch" ;; *) no "moved: kept line: $out" ;; esac
+    git -C "$P" rev-parse -q --verify refs/heads/feature/x >/dev/null && ok "moved: branch at another tip kept" || no "moved: branch deleted"
+  else
+    [ ! -d "$FX/wt-pr" ] && ok "match: worktree at the merged head is removed" || no "match: worktree kept: $out"
+  fi
+done
+
+echo "== C. closeout: a refused pull restores the re-staged index entries (L6) =="
+# After a PICK un-stage over a merged trail PR, closeout re-stages the landed
+# blobs right before its pull; when that pull refuses (a local commit diverges
+# main), the index must go back to its prior state. trail-pr is stubbed out so
+# its own checkout-contract staging does not mask the assertion; a mutant
+# without the restore call is the control.
+L6D="$TOP/l6d"; mkdir -p "$L6D"; cp "$SPYD"/*.sh "$SPYD"/*.py "$L6D/"
+cat > "$L6D/automate-helpers.sh" <<'SHIM'
+#!/usr/bin/env bash
+if [ "${1:-}" = trail-pr ]; then echo "trail-pr: skipped — stubbed"; exit 0; fi
+exec bash "$(dirname "$0")/automate-helpers.real.sh" "$@"
+SHIM
+L6M="$TOP/l6m"; mkdir -p "$L6M"; cp "$L6D"/*.sh "$L6D"/*.py "$L6M/"
+sed 's/^\([[:space:]]*\)_restore_prior$/\1:/' "$L6D/automate-trail.sh" > "$L6M/automate-trail.sh"
+for variant in fixed mutant; do
+  if [ "$variant" = fixed ]; then closeout_fixture 33; D="$L6D"; else closeout_fixture 34; D="$L6M"; fi
+  (cd "$P" && bash "$H" trail-pr "$RF_REL" --reason awaiting_merge >/dev/null)
+  TM="$FX/tmerger"; git clone -q "$FX/origin.git" "$TM" 2>/dev/null
+  ( cd "$TM" && git checkout -q main && git merge -q --squash "origin/chore/$RUN_ID-trail-1" >/dev/null && git commit -qm "squash trail" && git push -q origin main 2>/dev/null )
+  (cd "$P" && bash "$H" trail-unstage "$RF_REL" >/dev/null)
+  git -C "$P" commit -q --allow-empty -m "local diverging commit"
+  pre_idx="$(git -C "$P" ls-files -s | LC_ALL=C sort)"
+  out="$(cd "$P" && bash "$D/automate-helpers.sh" closeout "$RF_REL" "$REQ" "$PRURL")"
+  case "$out" in *"closeout: skipped — git pull --ff-only refused"*) ok "[$variant] diverged main ⇒ the pull refuses" ;; *) no "[$variant] pull did not refuse: $out" ;; esac
+  post_idx="$(git -C "$P" ls-files -s | LC_ALL=C sort)"
+  if [ "$variant" = fixed ]; then
+    [ "$pre_idx" = "$post_idx" ] && [ -z "$(git -C "$P" diff --cached --name-only)" ] && ok "fixed: index restored to its pre-closeout state (nothing staged)" || no "fixed: index changed: $(git -C "$P" diff --cached --name-only | tr '\n' ' ')"
+  else
+    [ "$pre_idx" != "$post_idx" ] && ok "mutation control: without _restore_prior the re-staged entries stay staged" || no "mutant left the index unchanged — the restore assertion is vacuous"
+  fi
+done
+
+echo "== T. Queue candidates are requirement files only (L5) =="
+new_fixture 35
+( cd "$P" && mkdir -p src && echo "v1" > src/app.py && git add src/app.py && git commit -qm app && echo "local WIP" >> src/app.py )
+awk '{print} /^## Queue$/{print "- [ ] src/app.py"}' "$P/$RF_REL0" > "$TOP/rf35" && mv "$TOP/rf35" "$P/$RF_REL0"
+grep -qxF -- '- [ ] src/app.py' "$P/$RF_REL0" && ok "setup: a Queue item names a tracked source file" || no "setup: Queue edit failed"
+(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason awaiting_merge >/dev/null)
+names="$(git -C "$FX/origin.git" show --name-only --format= "refs/heads/chore/$RUN_ID-trail-1" 2>/dev/null)"
+case "$names" in *src/app.py*) no "L5: source file's local WIP committed into the trail: $names" ;; *"$REQ"*) ok "L5: source-file Queue item not committed; requirement still is" ;; *) no "L5: trail names: $names" ;; esac
+
 echo "== C. RECONCILE re-entry (AC14) =="
 closeout_fixture 8
 bash "$HERE/run-lock.sh" acquire --owner "automate:$RUN_ID" --session-id SESS-1 --root "$P" >/dev/null
@@ -779,7 +840,7 @@ bad="$(grep -nE 'pr merge|/autonomous|(^|[^a-z-])timeout |setsid|sed -i|stat -c|
 
 # transient gh failure inside closeout: fails once, then succeeds ⇒ exactly one
 # successful closeout + one notify (never a success notify for the guard skip)
-closeout_fixture 15
+closeout_fixture 36   # fresh id: 15/16 are the C legs above (a reused dir fails its clone)
 spy_reset
 touch "$GH_STUB_DIR/auth-fail-once"
 wout="$(cd "$P" && LOOMWRIGHT_MERGE_WATCH_INTERVAL=0 LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=60 bash "$WATCH" "$RF_REL" "$REQ" "$PRURL" </dev/null 2>&1)"
@@ -789,7 +850,7 @@ case "$wout" in *"closeout: skipped — gh unavailable"*"merge-watch: closeout d
 [ "$(spy_count notify "$SPYLOG.notify")" = "1" ] && [ "$(spy_count 'automate_merge_watch' "$SPYLOG.webhook")" = "1" ] && ok "W: exactly one notify" || no "W: notify count $(spy_count notify "$SPYLOG.notify")"
 
 # terminal guard skip: one Progress line + a failure notify, never the success notify
-closeout_fixture 16
+closeout_fixture 37
 spy_reset
 TG="$TOP/tguard"; mkdir -p "$TG"
 cp "$WATCH" "$SPYD/notify-desktop.sh" "$SPYD/send-webhook.sh" "$TG/"
