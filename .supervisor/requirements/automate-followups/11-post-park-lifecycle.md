@@ -225,3 +225,10 @@ anything else. So a watcher that expired, or a machine that was off, still conve
 - `git branch --merged origin/main` lists none of the squash-merged `feature/*` / `fix/*` branches.
 - Desktop PR monitor (`mcp__ccd_pr__set_monitor` tool description): `auto_fix` wakes the session "on CI failures,
   merge conflicts and review comments"; `auto_archive_on_close` archives the session "once the PR merges or closes".
+
+<!-- loomwright:requirement-closeout -->
+## Status: done_with_escalation
+- **Completed:** 2026-09-30T03:17:39Z
+- **Brief:** .supervisor/jobs/done/2026-09-30-post-park-lifecycle.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/305
+- **Heal:** max_iterations_reached — 1 remaining
