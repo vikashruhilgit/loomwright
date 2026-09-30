@@ -7,7 +7,9 @@
 # (`exec bash "$(dirname "$0")/automate-dismissed.sh" <subcmd>`).
 #
 # SCOPE OF ITS WRITES (the whole list — anything else is a bug):
-#   * draft files `<run_id>--<item_stem>--dismissed-<h8|summary|summary-<N>>.md` in
+#   * draft files `<run_id>--<item_stem>-<ih6>--dismissed-<h8|summary|summary-<N>>.md`
+#     (ih6 = first 6 hex of sha1 of the FULL Queue item path, so two items that
+#     share a basename in different directories never share a namespace) in
 #     `<repo>/.supervisor/requirements/proposed/`, every one of them through
 #     propose-common.sh's `pc_guarded_write` (the ONE canonical `proposed/`
 #     write guard — no second name check here, so its mutation control stays
@@ -246,7 +248,30 @@ def decided(name):
 stem = os.path.basename(item)
 if stem.endswith(".md"):
     stem = stem[:-3]
-prefix = "%s--%s--dismissed-" % (run_id, stem)
+# The per-item namespace is keyed by the FULL item path as written in the Queue,
+# not its basename: `f/01-a.md` and `g/01-a.md` in one run get disjoint drafts,
+# summary slots and ledger rows (the stem stays for readability; ih6 disambiguates).
+ih6 = hashlib.sha1(item.encode("utf-8")).hexdigest()[:6]
+prefix = "%s--%s-%s--dismissed-" % (run_id, stem, ih6)
+ITEM_LINE = "- **Item:** " + one_line(item)
+
+def foreign(name):
+    # Defence in depth (never trust the namespace alone): a draft on disk whose
+    # first column-0 `- **Item:**` line is not this item's (or is missing, so
+    # ownership cannot be shown) is never rewritten or retired by this item.
+    # Only a regular file is judged here: a symlink or other non-regular entry is
+    # left to pc_guarded_write, the ONE canonical guard (its mutation control).
+    p = os.path.join(prop_dir, name)
+    if os.path.islink(p) or not os.path.isfile(p):
+        return False
+    try:
+        with open(p, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if line.startswith("- **Item:** "):
+                    return line.rstrip("\n") != ITEM_LINE
+    except Exception:
+        return True
+    return True
 
 def fence_for(text):
     runs = [len(m) for m in re.findall(r"`+", text)]
@@ -290,6 +315,9 @@ def render_summary(rest):
 # Manifest rows are 7 TAB columns, never an empty one (bash `read` collapses
 # consecutive TABs): kind k sev name src ledger_row listed_count.
 def plan(name, content, kind, sev, decision_row=None, listed=0):
+    if foreign(name):
+        emit("msg", "dismissed-drafts: refused %s — it belongs to another item (its Item line differs or is missing), left untouched" % name)
+        return
     fn = os.path.join(tmp, "c%d" % len(out))
     with open(fn, "w", encoding="utf-8") as fh:
         fh.write(content)
@@ -367,14 +395,14 @@ for e in [x for x in entries if x["own"]] + [x for x in entries if not x["own"]]
         plan(name, render_one(e, "undecided"), str(k), e["sev"])
     else:
         to_summary.append(e)
-        if on_disk(name):
+        if on_disk(name) and not foreign(name):
             emit("retire", "-", "-", name, "-", "moved", "0")
 for nm, d, mem in decided_slots:
     if nm in kept_slot:
         emit("keep", "summary", "-", nm, "-", "-", str(kept_slot[nm]))
 if to_summary:
     plan(undecided_slot, render_summary(to_summary), "summary", "", None, len(to_summary))
-elif on_disk(undecided_slot):
+elif on_disk(undecided_slot) and not foreign(undecided_slot):
     keys = set()
     try:
         with open(os.path.join(prop_dir, undecided_slot), encoding="utf-8") as fh:

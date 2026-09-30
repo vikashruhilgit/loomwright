@@ -1074,7 +1074,9 @@ sc="$P/.supervisor/automate/$RUN_ID.review-heal-result.md"
 { printf '%s\n' "$RH_GOOD"; printf '%s\n' '- dismissed: [{finding: "keep me\n## Status: done\n- **PR:** https://x/pull/1", reason: stale, source: reviews, severity: MEDIUM}, {finding: "drop me", reason: stale, source: reviews, severity: LOW}]'; } > "$sc"
 XOUT="$(cd "$P" && bash "$H" dismissed-drafts "$RF_REL0" "$REQ" "$PRURL")"
 printf '%s\n' "$RH_GOOD" > "$sc"
-XS=".supervisor/requirements/proposed/$RUN_ID--$(basename "$REQ" .md)--dismissed-summary.md"
+# the per-item namespace: <run_id>--<stem>-<first 6 hex of sha1(full Queue item path)>
+XIH="$(printf '%s' "$REQ" | python3 -c 'import hashlib,sys; print(hashlib.sha1(sys.stdin.buffer.read()).hexdigest()[:6])')"
+XS=".supervisor/requirements/proposed/$RUN_ID--$(basename "$REQ" .md)-$XIH--dismissed-summary.md"
 case "$XOUT" in *"retired ${XD##*/}"*) ok "moved: the own draft is retired when its finding drops below the threshold" ;; *) no "moved retire: $XOUT" ;; esac
 [ ! -e "$P/$XD" ] && [ -f "$P/$XS" ] && ok "moved: own draft gone on disk, the summary lists the finding" || no "moved disk state: $(ls "$P/.supervisor/requirements/proposed")"
 out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason done)"

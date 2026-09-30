@@ -37,6 +37,11 @@
 #       unconfirmed draft, never a summary line); an UNDECIDED finding that moves
 #       is retired from its old bucket (`moved` row) — listed and counted once; a
 #       genuinely new finding is still drafted; re-runs idempotent.
+#   A7. per-item namespace: two Queue items sharing a basename in different
+#       directories in ONE run ⇒ disjoint drafts / summary slots / ledger rows; the
+#       second item never overwrites or retires the first item's undecided drafts
+#       and never inherits its decisions; a draft whose Item line names another
+#       item is never rewritten or retired (defence in depth).
 #   A6. exit 0 everywhere (missing / unparseable sidecar, unwritable dir, no run
 #       file, no repo); `gh` never invoked, no `git commit` / `git push`;
 #       pc_guarded_write is load-bearing (mutation control: PROPOSE_COMMON_SH at a
@@ -79,6 +84,9 @@ unset PROPOSE_COMMON_SH
 PRURL="https://github.com/acme/widgets/pull/42"
 ITEM=".supervisor/requirements/f/01-a.md"
 RUN_ID="automate-2026-01-01-000000"
+# ih6 <item> — first 6 hex of sha1(full Queue item path): the per-item namespace key.
+ih6() { printf '%s' "$1" | python3 -c 'import hashlib,sys; print(hashlib.sha1(sys.stdin.buffer.read()).hexdigest()[:6])'; }
+NS="$RUN_ID--01-a-$(ih6 "$ITEM")"   # this item's draft-name namespace
 
 # fx <n> [run_id] — a fresh repo with a run file; sets R (repo), RF, AD, PROP.
 fx() {
@@ -123,7 +131,7 @@ for spec in "medium phase one|2|phase_4_5|MEDIUM" "pre-existing low one|2|phase_
   t="${spec%%|*}"; rest="${spec#*|}"; rnd="${rest%%|*}"; rest="${rest#*|}"; org="${rest%%|*}"; sev="${rest#*|}"
   f="$(draft_with "$t")"
   if [ -z "$f" ]; then bad="$bad [no draft for $t]"; continue; fi
-  case "$(basename "$f")" in "$RUN_ID--01-a--dismissed-"[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f].md) ;; *) bad="$bad [name $(basename "$f")]" ;; esac
+  case "$(basename "$f")" in "$NS--dismissed-"[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f].md) ;; *) bad="$bad [name $(basename "$f")]" ;; esac
   for want in "- **PR:** $PRURL" "- **Round:** $rnd" "- **Origin:** $org" "- **Severity:** $sev" "- **Decision:** undecided" "## Status: proposed" "- **Run:** $RUN_ID" "- **Item:** $ITEM" "> $t"; do
     grep -qxF -- "$want" "$f" || bad="$bad [$t lacks '$want']"
   done
@@ -131,7 +139,7 @@ for spec in "medium phase one|2|phase_4_5|MEDIUM" "pre-existing low one|2|phase_
 done
 [ -z "$bad" ] && ok "each per-finding draft: content-addressed name, verbatim > quote, PR URL, round, origin, severity, undecided" || no "draft content:$bad"
 S1="$(path_of summary)"
-if [ -n "$S1" ] && grep -qxF -- "> a nit" "$S1" && grep -qxF -- "- **Reason dismissed:** nit" "$S1" && [ "$(basename "$S1")" = "$RUN_ID--01-a--dismissed-summary.md" ]; then ok "summary draft lists the nit with its metadata"; else no "summary: $S1"; fi
+if [ -n "$S1" ] && grep -qxF -- "> a nit" "$S1" && grep -qxF -- "- **Reason dismissed:** nit" "$S1" && [ "$(basename "$S1")" = "$NS--dismissed-summary.md" ]; then ok "summary draft lists the nit with its metadata"; else no "summary: $S1"; fi
 grep -qF 'propose-only — nothing enqueues this file' "$S1" 2>/dev/null && ok "closing line quotes the proposed/ contract" || no "closing contract line missing"
 grep -q 'reason: "stale: fixed in abc123"' "$AD/$RUN_ID.review-heal-result.md" && grep -qxF -- "- **Reason dismissed:** stale: fixed in abc123" "$(draft_with 'drain medium one')" && ok "free-text drain reason carried verbatim" || no "drain reason"
 
@@ -251,7 +259,7 @@ fi
 
 # =============================================================================
 echo "== A5s. a decided summary never hides a below-threshold finding it did not list =="
-SB="$RUN_ID--01-a--dismissed-summary"
+SB="$NS--dismissed-summary"
 L1='{finding: "low one", reason: below_severity_floor, source: code_reviewer, severity: LOW}'
 L2='{finding: "low two", reason: nit, source: red_team, severity: LOW}'
 L3='{finding: "low three", reason: below_severity_floor, source: code_reviewer, severity: INFO}'
@@ -289,7 +297,7 @@ o="$(bash "$H" dismissed-decide "$RF" "$PROP/$SB.md" fix-now)"
 case "$o" in "dismissed-decide: refused — "*) ok "fix-now on a summary draft is refused" ;; *) no "fix-now on summary: $o" ;; esac
 [ -f "$PROP/$SB.md" ] && [ ! -e "$AD/$RUN_ID.dismissed-decisions" ] && ok "the refusal deletes nothing and writes no ledger row" || no "summary fix-now refusal side effects"
 # dismissed-pending: a this-run draft with no readable Decision line ⇒ unknown
-printf '# Dismissed finding: hand-edited\n\n## Status: proposed\n' > "$PROP/$RUN_ID--01-a--dismissed-deadbeef.md"
+printf '# Dismissed finding: hand-edited\n\n## Status: proposed\n' > "$PROP/$NS--dismissed-deadbeef.md"
 [ "$(bash "$H" dismissed-pending "$RF")" = "unknown" ] && ok "dismissed-pending: a draft without a Decision line ⇒ unknown (fail closed)" || no "pending no-decision: $(bash "$H" dismissed-pending "$RF")"
 
 # =============================================================================
@@ -378,6 +386,46 @@ sup 1 "[$(mv_ LOW), $NEWL]"; drafts
 ! grep -qxF -- "> mover" "$PROP/$SB.md" 2>/dev/null && grep -qxF -- "> brand new low" "$PROP/$SB.md" && [ ! -e "$PROP/$SB-2.md" ] && ok "U: a dropped own draft is not resurrected in the summary it once sat in" || no "U2 drop: $dd_out"
 
 # =============================================================================
+echo "== A7. per-item namespace keyed by the FULL item path (basename collision) =="
+fx 10
+IT1=".supervisor/requirements/f/01-a.md"; IT2=".supervisor/requirements/g/01-a.md"
+NS1="$RUN_ID--01-a-$(ih6 "$IT1")"; NS2="$RUN_ID--01-a-$(ih6 "$IT2")"
+[ "$NS1" != "$NS2" ] && ok "same basename, different dirs ⇒ different namespaces ($NS1 / $NS2)" || no "namespaces collide: $NS1"
+dd_item() { dd_out="$(bash "$H" dismissed-drafts "$RF" "$1" "$PRURL" 2>&1)"; dd_rc=$?; }
+ns_n() { find "$PROP" -maxdepth 1 -type f -name "$1--dismissed-*.md" 2>/dev/null | wc -l | tr -d ' '; }
+sup 1 '[{finding: "shared medium", reason: below_severity_floor, source: code_reviewer, severity: MEDIUM}, {finding: "shared low", reason: nit, source: code_reviewer, severity: LOW}]'
+dd_item "$IT1"; s1="$(cd "$PROP" && for f in "$NS1"--dismissed-*.md; do printf '%s %s\n' "$f" "$(cksum < "$f")"; done)"
+dd_item "$IT2"; o2="$dd_out"
+[ "$(ns_n "$NS1")" = "2" ] && [ "$(ns_n "$NS2")" = "2" ] && [ "$(nfiles)" = "4" ] && ok "each item has its own draft + its own summary (4 files)" || no "files: ns1=$(ns_n "$NS1") ns2=$(ns_n "$NS2") all=$(nfiles)"
+s1b="$(cd "$PROP" && for f in "$NS1"--dismissed-*.md; do printf '%s %s\n' "$f" "$(cksum < "$f")"; done)"
+[ "$s1" = "$s1b" ] && ok "item 2's run leaves item 1's drafts byte-identical (no summary overwrite)" || no "item 1 drafts changed by item 2"
+bad=""
+for f in "$PROP/$NS1"--dismissed-*.md; do grep -qxF -- "- **Item:** $IT1" "$f" || bad="$bad $(basename "$f")"; done
+for f in "$PROP/$NS2"--dismissed-*.md; do grep -qxF -- "- **Item:** $IT2" "$f" || bad="$bad $(basename "$f")"; done
+[ -z "$bad" ] && ok "every draft's Item line names the item of its namespace" || no "Item lines:$bad"
+# the finding moves to the summary for item 2 only: item 2 retires ITS own draft, never item 1's
+sup 1 '[{finding: "shared medium", reason: below_severity_floor, source: code_reviewer, severity: LOW}, {finding: "shared low", reason: nit, source: code_reviewer, severity: LOW}]'
+dd_item "$IT2"
+case "$dd_out" in *"retired $NS2--dismissed-"*) ok "item 2 retires its own moved draft" ;; *) no "item 2 retire: $dd_out" ;; esac
+case "$dd_out" in *"$NS1"*) no "item 2 touched item 1's namespace: $dd_out" ;; *) ok "item 2's output never names an item-1 draft" ;; esac
+[ "$(ns_n "$NS1")" = "2" ] && [ -n "$(cd "$PROP" && grep -lxF -- '> shared medium' "$NS1"--dismissed-[0-9a-f]*.md 2>/dev/null)" ] && ok "item 1's undecided own draft survives item 2's move (not retired as moved)" || no "item 1 own draft lost"
+! awk -F'\t' -v p="$NS1" 'index($1, p) == 1' "$AD/$RUN_ID.dismissed-decisions" 2>/dev/null | grep -q . && ok "no ledger row for item 1 was written by item 2" || no "ledger: $(cat "$AD/$RUN_ID.dismissed-decisions")"
+# decisions do not cross items: dropping item 1's summary leaves item 2's summary undecided
+bash "$H" dismissed-decide "$RF" "$PROP/$NS1--dismissed-summary.md" drop >/dev/null
+dd_item "$IT2"
+[ -f "$PROP/$NS2--dismissed-summary.md" ] && grep -qxF -- "- **Decision:** undecided" "$PROP/$NS2--dismissed-summary.md" && grep -qxF -- "> shared low" "$PROP/$NS2--dismissed-summary.md" && ok "item 1's drop does not govern item 2's identical finding" || no "item 2 summary: $dd_out"
+# defence in depth: a file at this item's draft name whose Item line names another item
+fx 11
+sup 1 '[{finding: "foreign one", reason: pre_existing, source: code_reviewer, severity: MEDIUM}]'
+H8="$(printf 'phase_4_5\tcode_reviewer\tforeign one' | python3 -c 'import hashlib,sys; print(hashlib.sha1(sys.stdin.buffer.read()).hexdigest()[:8])')"
+mkdir -p "$PROP"; FN="$PROP/$NS--dismissed-$H8.md"
+printf '# Dismissed finding: other\n\n## Status: proposed\n\n- **Item:** .supervisor/requirements/zz/other.md\n- **Decision:** undecided\n' > "$FN"; c0="$(cksum < "$FN")"
+drafts
+[ "$(cksum < "$FN")" = "$c0" ] && case "$dd_out" in *"refused $NS--dismissed-$H8.md — it belongs to another item"*) true ;; *) false ;; esac && ok "a draft whose Item line names another item is refused, left byte-identical" || no "foreign draft: $dd_out"
+sup 1 '[{finding: "foreign one", reason: nit, source: code_reviewer, severity: LOW}]'; drafts
+[ -f "$FN" ] && [ "$(cksum < "$FN")" = "$c0" ] && ok "a foreign draft is never retired as moved" || no "foreign draft retired: $dd_out"
+
+# =============================================================================
 echo "== A6. fail-safe exits, no gh / git commit / git push, pc_guarded_write load-bearing =="
 fx 8
 sup 1 '[{finding: "fine one", reason: below_severity_floor, source: code_reviewer, severity: HIGH}]'
@@ -393,7 +441,7 @@ out="$(GIT_CEILING_DIRECTORIES="$TOP" bash "$H" dismissed-drafts "$TOP/norepo/x.
 if [ "$(id -u)" != "0" ]; then
   fx 9; sup 1 '[{finding: "cannot write me", reason: pre_existing, source: code_reviewer}]'
   mkdir -p "$PROP"; chmod 555 "$PROP"; drafts; chmod 755 "$PROP"
-  [ "$dd_rc" -eq 0 ] && [ "$(nfiles)" = "0" ] && case "$dd_out" in *"dismissed-drafts: refused $RUN_ID--01-a--dismissed-"*"dismissed-drafts: 0 per-finding + 0 summary (0 listed in summary)") true ;; *) false ;; esac \
+  [ "$dd_rc" -eq 0 ] && [ "$(nfiles)" = "0" ] && case "$dd_out" in *"dismissed-drafts: refused $NS--dismissed-"*"dismissed-drafts: 0 per-finding + 0 summary (0 listed in summary)") true ;; *) false ;; esac \
     && ok "unwritable proposed/ ⇒ refused line, 0 written, exit 0" || no "unwritable: rc=$dd_rc $dd_out"
   o="$(bash "$H" dismissed-decide "$RF" "$PROP/x" drop)"; [ $? -eq 0 ] && ok "decide never exits non-zero ($o)" || no "decide rc"
 else
@@ -403,7 +451,7 @@ fi
 if grep -qE '^(commit|push)( |$)|(^| )(commit|push) ' "$TOP/git.log" 2>/dev/null; then no "git commit/push invoked: $(grep -E 'commit|push' "$TOP/git.log")"; else ok "no git commit / git push (git used only for rev-parse: $(grep -c 'rev-parse --show-toplevel' "$TOP/git.log" 2>/dev/null) call(s))"; fi
 
 # ---- pc_guarded_write mutation control --------------------------------------
-# Draft names are built from basenames (run_id + item stem + hash), so a `/` can
+# Draft names are built from basenames + hex (run_id, item stem, item-path hash, h8), so a `/` can
 # never reach the guard; the two inputs the guard alone refuses are a dot-leading
 # name (a run file named `.evil.md`) and a planted SYMLINK at a draft's name.
 # Both legs must be green against the real propose-common.sh and turn RED when

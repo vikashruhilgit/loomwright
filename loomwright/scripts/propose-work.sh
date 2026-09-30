@@ -247,7 +247,7 @@ printf '%s\n' \
 'cites the entries it rests on. None of them has been decided on.' \
 '' \
 'A second writer shares this directory: `/automate`'"'"'s gate writes' \
-'`<run_id>--<item>--dismissed-*.md` drafts for dismissed review findings; same contract:' \
+'`<run_id>--<item>-<ih6>--dismissed-*.md` drafts for dismissed review findings; same contract:' \
 'propose-only, never enqueued. Their owner decisions live in the run'"'"'s gitignored' \
 '`<run_id>.dismissed-decisions` ledger, not in an `evidence-set:` token.' \
 '' \

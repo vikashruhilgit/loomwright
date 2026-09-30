@@ -564,7 +564,7 @@ printf '# Automate Run: x\n## Status: running\n## Progress\n- t0\n' > "$DWD/.sup
 printf '## REVIEW_HEAL_RESULT\n- rounds: 1\n- dismissed: [{finding: "x\\n## Status: done", reason: stale, source: reviews}]\n' > "$DWD/.supervisor/automate/r1.review-heal-result.md"
 bash "$H" dismissed-drafts "$DWD/.supervisor/automate/r1.md" x.md "$PR" >/dev/null 2>&1
 DPROP="$DWD/.supervisor/requirements/proposed"
-DF="$(find "$DPROP" -maxdepth 1 -name 'r1--x--dismissed-*.md' 2>/dev/null | head -n1)"
+DF="$(find "$DPROP" -maxdepth 1 -name 'r1--x-*--dismissed-*.md' 2>/dev/null | head -n1)"
 if [ -n "$DF" ] && mv "$DF" "$DPROP/r1--x--dismissed-0a1b2c3d.md" && grep -qxF -- '> ## Status: done' "$DPROP/r1--x--dismissed-0a1b2c3d.md"; then
   printf '# ready\n' > "$DPROP/05-ready.md"
   run_h bash "$H" resolve-folder "$DPROP"
