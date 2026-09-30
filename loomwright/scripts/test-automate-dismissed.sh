@@ -409,7 +409,7 @@ dd_item "$IT2"
 case "$dd_out" in *"retired $NS2--dismissed-"*) ok "item 2 retires its own moved draft" ;; *) no "item 2 retire: $dd_out" ;; esac
 case "$dd_out" in *"$NS1"*) no "item 2 touched item 1's namespace: $dd_out" ;; *) ok "item 2's output never names an item-1 draft" ;; esac
 [ "$(ns_n "$NS1")" = "2" ] && [ -n "$(cd "$PROP" && grep -lxF -- '> shared medium' "$NS1"--dismissed-[0-9a-f]*.md 2>/dev/null)" ] && ok "item 1's undecided own draft survives item 2's move (not retired as moved)" || no "item 1 own draft lost"
-! awk -F'\t' -v p="$NS1" 'index($1, p) == 1' "$AD/$RUN_ID.dismissed-decisions" 2>/dev/null | grep -q . && ok "no ledger row for item 1 was written by item 2" || no "ledger: $(cat "$AD/$RUN_ID.dismissed-decisions")"
+! grep -q . < <(awk -F'\t' -v p="$NS1" 'index($1, p) == 1' "$AD/$RUN_ID.dismissed-decisions" 2>/dev/null) && ok "no ledger row for item 1 was written by item 2" || no "ledger: $(cat "$AD/$RUN_ID.dismissed-decisions")"
 # decisions do not cross items: dropping item 1's summary leaves item 2's summary undecided
 bash "$H" dismissed-decide "$RF" "$PROP/$NS1--dismissed-summary.md" drop >/dev/null
 dd_item "$IT2"
