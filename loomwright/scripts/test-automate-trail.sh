@@ -286,7 +286,7 @@ GI
 ## Progress
 - t0 picked $REQ
 RF
-    printf '# req a\n## Status: done\n' > "$REQ"
+    printf '# req a\n\nlocal notes (no done heading: Phase 4.5 stamps are set per leg)\n' > "$REQ"
     printf '# Brief\n## Environment\n- **Source requirement:** %s\n' "$REQ" > .supervisor/jobs/done/brief-a.md
     printf '# Brief\n## Environment\n- **Source requirement:** .supervisor/requirements/zz.md\n' > .supervisor/jobs/done/brief-other.md
     printf '# Brief\n- **Source requirement:** %s\n' "$REQ" > .supervisor/jobs/in-progress/brief-live.md
@@ -860,11 +860,6 @@ out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason done)"
 case "$out" in "trail-pr: opened "*"; excluded $REQ — pr not merged"*) ok "(c) gh pr view failing ⇒ excluded (fail closed)" ;; *) no "(c) gh fail: $out" ;; esac
 grep -qxF -- "$REQ" < <(trail_names) && no "(c) requirement committed despite unreadable PR" || ok "(c) requirement not committed"
 rm -f "$GH_STUB_DIR/pr-view-fail"
-# (d) an unstamped requirement (no sentinel — the fixture's bare `## Status: done`) rides regardless
-new_fixture 55; set_pr "$PRURL" OPEN
-out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason done)"
-case "$out" in *"excluded $REQ"*) no "(d) unstamped requirement excluded: $out" ;; *) grep -qxF -- "$REQ" < <(trail_names) && ok "(d) unstamped requirement committed even with its PR OPEN" || no "(d) names: $(trail_names)" ;; esac
-grep -q '^pr view' "$GH_STUB_DIR/argv.log" && no "(d) gh pr view called for unstamped paths" || ok "(d) no gh pr view for an unstamped requirement / Outcome-less brief"
 # (e) done/ brief: same rule on its `## Outcome` `- **PR:**`
 BA=".supervisor/jobs/done/brief-a.md"
 for bstate in OPEN MERGED; do
@@ -896,6 +891,97 @@ if ! cmp -s "$T" "$EGM/automate-trail.sh" && bash -n "$EGM/automate-trail.sh"; t
 else
   no "evidence-gate mutant not generated"
 fi
+
+# (d) finding 3 — the gate keys on is_done's own predicate (any `## Status: done…`
+# heading, sentinel or not). No done heading ⇒ committed with zero gh calls; a
+# bare done heading needs a merged PR too; an ABANDONED stamp is an owner
+# decision and rides without a gh call.
+new_fixture 55; set_pr "$PRURL" OPEN
+out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason done)"
+case "$out" in *"excluded $REQ"*) no "(d) requirement without a done heading excluded: $out" ;; *) grep -qxF -- "$REQ" < <(trail_names) && ok "(d) a requirement with NO done heading is committed even with its PR OPEN" || no "(d) names: $(trail_names)" ;; esac
+grep -q '^pr view' "$GH_STUB_DIR/argv.log" && no "(d) gh pr view called for unstamped paths" || ok "(d) zero gh pr view calls for a requirement without a done heading / an Outcome-less brief"
+for dv in bare-open bare-nopr bare-merged abandoned; do
+  case "$dv" in bare-open) new_fixture 70 ;; bare-nopr) new_fixture 71 ;; bare-merged) new_fixture 72 ;; abandoned) new_fixture 73 ;; esac
+  case "$dv" in
+    bare-open)   printf '# req a\n## Status: done\n- **PR:** %s\n' "$PRURL" > "$P/$REQ"; set_pr "$PRURL" OPEN ;;
+    bare-nopr)   printf '# req a\n## Status: done\n' > "$P/$REQ"; set_pr "$PRURL" MERGED ;;
+    bare-merged) printf '# req a\n## Status: done_with_escalation\n- **PR:** %s\n' "$PRURL" > "$P/$REQ"; set_pr "$PRURL" MERGED ;;
+    abandoned)   printf '# req a\n\n## Status: done_with_escalation \342\200\224 ABANDONED (- [x] %s  # abandoned: owner)\n' "$REQ" > "$P/$REQ"; set_pr "$PRURL" OPEN ;;
+  esac
+  out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason done)"
+  case "$dv" in
+    bare-open|bare-nopr)
+      case "$out" in *"; excluded $REQ — pr not merged"*) ! grep -qxF -- "$REQ" < <(trail_names) && ok "(d) [$dv] a bare (sentinel-less) done heading with no merged PR ⇒ excluded" || no "(d) [$dv] committed" ;; *) no "(d) [$dv]: $out" ;; esac ;;
+    bare-merged)
+      grep -qxF -- "$REQ" < <(trail_names) && ok "(d) [$dv] a bare done heading whose PR MERGED ⇒ committed" || no "(d) [$dv]: $out" ;;
+    abandoned)
+      grep -qxF -- "$REQ" < <(trail_names) && ! grep -q '^pr view' "$GH_STUB_DIR/argv.log" && ok "(d) [$dv] an ABANDONED stamp rides with no gh call (owner decision)" || no "(d) [$dv]: $out" ;;
+  esac
+done
+# (g) finding 4 — an annotated PR value: the first …/pull/<n> token is what gh reads
+for gv in req brief; do
+  if [ "$gv" = req ]; then new_fixture 74; stamp_req "$REQ" done "- **PR:** $PRURL (merged by the owner, squash)
+"; else new_fixture 75; printf '# Brief\n- **Source requirement:** %s\n\n## Outcome\n- **PR:** %s (merged 2026-01-01)\n' "$REQ" "$PRURL" > "$P/.supervisor/jobs/done/brief-a.md"; fi
+  set_pr "$PRURL" MERGED
+  out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason done)"
+  case "$out" in *"excluded "*"pr not merged"*) no "(g) [$gv] annotated merged PR excluded: $out" ;; *) ok "(g) [$gv] an annotated merged PR value is not excluded" ;; esac
+  grep -qE "^pr view $PRURL --json" "$GH_STUB_DIR/argv.log" && ok "(g) [$gv] gh pr view got the bare URL token" || no "(g) [$gv] argv: $(grep '^pr view' "$GH_STUB_DIR/argv.log")"
+done
+# (h) finding 2 — Outcome heading variants fail CLOSED on the brief side too
+BA=".supervisor/jobs/done/brief-a.md"
+n=76
+for hv in '## Outcome — ESCALATED' '## Outcome:' '### Outcome' 'nopr' 'rubric'; do
+  new_fixture "$n"; n=$((n+1)); set_pr "$PRURL" OPEN
+  case "$hv" in
+    nopr)   printf '# Brief\n- **Source requirement:** %s\n\n## Outcome\n- **Status:** completed\n- **Branch:** feature/x\n' "$REQ" > "$P/$BA"; set_pr "$PRURL" MERGED ;;
+    rubric) printf '# Brief\n- **Source requirement:** %s\n\n## Outcomes Rubric\n- **PR:** %s\n' "$REQ" "$PRURL" > "$P/$BA" ;;
+    *)      printf '# Brief\n- **Source requirement:** %s\n\n%s\n- **PR:** %s\n' "$REQ" "$hv" "$PRURL" > "$P/$BA" ;;
+  esac
+  out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason done)"
+  if [ "$hv" = rubric ]; then
+    grep -qxF -- "$BA" < <(trail_names) && ok "(h) [## Outcomes Rubric] is not an Outcome section — the brief rides" || no "(h) rubric: $out"
+  else
+    case "$out" in *"; excluded $BA — pr not merged"*) ! grep -qxF -- "$BA" < <(trail_names) && ok "(h) [$hv] ⇒ brief excluded (fail closed)" || no "(h) [$hv] committed" ;; *) no "(h) [$hv]: $out" ;; esac
+  fi
+done
+
+echo "== R. retract: a reused OPEN trail branch never keeps a done claim for unmerged work (finding 1) =="
+# An earlier push (a v15.114.0/.1 park-time trail, replayed here by the gate-less
+# mutant) committed an OPEN-PR done stamp to chore/<run>-trail-1 and staged it.
+# The next trail-pr reuses that branch: it must retract the stamp at the tip
+# (main's version, or removed when main lacks the file), name it, and leave no
+# done blob staged. REQ3 is a requirement main does not have.
+REQ3=".supervisor/requirements/f/03-c.md"
+RETM="$TOP/retmut"; mkdir -p "$RETM"; cp "$HERE"/*.sh "$HERE"/*.py "$RETM/"
+sed 's/^\([[:space:]]*\)retract="\${retract:+.*$/\1:/' "$T" > "$RETM/automate-trail.sh"
+cmp -s "$T" "$RETM/automate-trail.sh" && no "retract mutant not generated"
+for rv in fixed mutant; do
+  if [ "$rv" = fixed ]; then new_fixture 81; D="$HERE"; else new_fixture 82; D="$RETM"; fi
+  stamp_req "$REQ" done "$PRL"; stamp_req "$REQ3" done "$PRL"
+  awk -v r="$REQ3" '{print} /^## Queue$/{print "- [ ] " r}' "$P/$RF_REL0" > "$TOP/rf8x" && mv "$TOP/rf8x" "$P/$RF_REL0"
+  set_pr "$PRURL" OPEN
+  (cd "$P" && bash "$EGM/automate-helpers.sh" trail-pr "$RF_REL0" --reason awaiting_merge >/dev/null)
+  BR1="refs/heads/chore/$RUN_ID-trail-1"
+  old="$(git -C "$FX/origin.git" rev-parse "$BR1:$REQ" 2>/dev/null)"
+  grep -q '^## Status: done' < <(git -C "$FX/origin.git" show "$BR1:$REQ" 2>/dev/null) && [ "$(git -C "$P" ls-files -s -- "$REQ" | awk '{print $2}')" = "$old" ] \
+    && ok "[$rv] setup: the old trail branch tip AND the primary index carry the OPEN-PR done stamp" || no "[$rv] setup failed"
+  echo "- t1 later" >> "$P/$RF_REL0"
+  out="$(cd "$P" && bash "$D/automate-helpers.sh" trail-pr "$RF_REL0" --reason done)"
+  if [ "$rv" = fixed ]; then
+    case "$out" in "trail-pr: pushed "*) ;; *) no "[fixed] not a push: $out" ;; esac
+    bad=""; for x in "; excluded $REQ — pr not merged" "; retracted $REQ" "; retracted $REQ3"; do case "$out" in *"$x"*) ;; *) bad="$bad [$x]" ;; esac; done
+    [ -z "$bad" ] && ok "[fixed] reused branch: excluded AND retracted, each named ($out)" || no "[fixed] output lacks$bad: $out"
+    [ "$(git -C "$FX/origin.git" rev-parse "$BR1:$REQ")" = "$(git -C "$FX/origin.git" rev-parse "main:$REQ")" ] && ok "[fixed] trail tip holds main's version of the requirement (no done stamp)" || no "[fixed] tip still: $(git -C "$FX/origin.git" show "$BR1:$REQ")"
+    git -C "$FX/origin.git" rev-parse -q --verify "$BR1:$REQ3" >/dev/null && no "[fixed] REQ3 still on the tip" || ok "[fixed] a requirement main lacks is removed from the tip"
+    idx="$(git -C "$P" ls-files -s -- "$REQ" | awk '{print $2}')"
+    [ "$idx" != "$old" ] && [ -z "$(git -C "$P" ls-files -s -- "$REQ3")" ] && ok "[fixed] no done-stamp blob left staged in the primary index" || no "[fixed] index still holds the stamp"
+    grep -q '^## Status: done' "$P/$REQ" && ok "[fixed] the working copy is untouched" || no "[fixed] working copy changed"
+    out2="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason done)"
+    case "$out2" in "trail-pr: skipped — trail already up to date"*) case "$out2" in *retracted*) no "[fixed] re-run retracts again: $out2" ;; *) ok "[fixed] re-run: no-diff skip, nothing left to retract" ;; esac ;; *) no "[fixed] re-run: $out2" ;; esac
+  else
+    grep -q '^## Status: done' < <(git -C "$FX/origin.git" show "$BR1:$REQ") && ok "mutation control: without the retract the reused tip keeps the done stamp (leg R is load-bearing)" || no "mutant retracted anyway — leg R may be vacuous"
+  fi
+done
 
 echo "== D3. checkout contract re-examined for trail-after-merge (decision 3) =="
 # With trail-pr only after merge / at run end, the trail that matters is closeout's
