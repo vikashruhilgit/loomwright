@@ -81,3 +81,9 @@ keep as a follow-up / drop — before the engine picks the next item.
   `{finding, reason, source}` arrays per `docs/RESULT_SCHEMAS.md`.
 - `.supervisor/requirements/proposed/README.md`: "deliberately NOT an `/automate --folder` target; promotion is a
   human moving a file out of it."
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-09-30T13:48:20Z
+- **Brief:** .supervisor/jobs/done/2026-09-30-dismissed-findings-tracked-decisions.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/314
