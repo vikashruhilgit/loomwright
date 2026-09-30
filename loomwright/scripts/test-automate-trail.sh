@@ -54,12 +54,21 @@
 #      survives; without it ⇒ `skipped — run lock held`). After a PICK
 #      un-stage over a merged trail PR, closeout's sync still fast-forwards (it
 #      re-stages the recorded landed blobs); a no-record control refuses.
+#      A head-branch worktree whose HEAD != headRefOid is kept with its
+#      gitignored .env intact (matching tip ⇒ removed); a refused pull restores
+#      the re-staged index entries (mutant without the restore = control); a
+#      Queue item naming a tracked source file is never committed by trail-pr.
 #   W. merge watcher — OPEN → MERGED ⇒ one closeout + one notify (pid_source
 #      ppid in the lock meta), CLOSED ⇒ `gone` line + no cleanup, lifetime cap,
 #      single instance + TERM + dead-pid reclaim, marker gone on every exit;
 #      a transient `gh unavailable` closeout skip is retried (one successful
 #      closeout + one notify); a terminal guard skip ⇒ Progress line + failure
-#      notify, never the success notify.
+#      notify, never the success notify. A launch for ANOTHER PR of the same
+#      run replaces the live watcher promptly (interruptible nap; Progress line;
+#      no notify from the replaced one); a live marker pid that is not our
+#      watcher is never signalled (reclaimed as stale); MERGED seen + transient
+#      closeout skips until the cap ⇒ failure notify + a Progress line naming
+#      the merge and the last skip reason.
 #   K. SKILL text (Part B) — watcher named, §6 step 1 closeout --session-id
 #      before PICK, decision-9 grep clean, commands/automate.md surface.
 
@@ -834,6 +843,64 @@ i=0; while [ -e "$P/$MARK" ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i+1)); done
 printf 'pid\t%s\npr_url\t%s\nstarted\tx\n' "$(cat "$TOP/deadpid")" "$PRURL" > "$P/$MARK"
 out="$(cd "$P" && LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=0 bash "$WATCH" "$RF_REL" "$REQ" "$PRURL" </dev/null 2>&1)"
 case "$out" in *"merge-watch: started pid="*) ok "dead-pid marker is reclaimed" ;; *) no "dead-pid reclaim: $out" ;; esac
+
+# M2: the marker is per RUN; a launch for ANOTHER PR of the same run replaces
+# the live watcher (verified as ours by ps), a same-PR launch does not (above).
+PRURL2="https://github.com/acme/widgets/pull/8"
+REQ2=".supervisor/requirements/f/02-b.md"
+closeout_fixture 38
+spy_reset
+jq --arg u "$PRURL2" '.[0].state = "OPEN" | . + [{number:8,url:$u,state:"OPEN",headRefName:"feature/y",headRefOid:"0"}]' "$GH_STUB_DIR/prs.json" > "$GH_STUB_DIR/p.tmp" && mv "$GH_STUB_DIR/p.tmp" "$GH_STUB_DIR/prs.json"
+( cd "$P" && LOOMWRIGHT_MERGE_WATCH_INTERVAL=30 LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=600 nohup bash "$WATCH" "$RF_REL" "$REQ" "$PRURL" </dev/null >"$TOP/wa.log" 2>&1 & )
+i=0; while [ ! -s "$P/$MARK" ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i+1)); done
+apid="$(awk -F'\t' '$1=="pid"{print $2}' "$P/$MARK" 2>/dev/null)"
+sleep 0.5   # A is now inside its 30s interval nap
+t0="$(date +%s)"
+( cd "$P" && LOOMWRIGHT_MERGE_WATCH_INTERVAL=30 LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=600 nohup bash "$WATCH" "$RF_REL" "$REQ2" "$PRURL2" </dev/null >"$TOP/wb.log" 2>&1 & )
+i=0; while [ "$(awk -F'\t' '$1=="pr_url"{print $2}' "$P/$MARK" 2>/dev/null)" != "$PRURL2" ] && [ "$i" -lt 150 ]; do sleep 0.1; i=$((i+1)); done
+bpid="$(awk -F'\t' '$1=="pid"{print $2}' "$P/$MARK" 2>/dev/null)"
+[ -n "$apid" ] && ! kill -0 "$apid" 2>/dev/null && [ $(( $(date +%s) - t0 )) -lt 10 ] && ok "M2: launch for another PR terminates the old watcher promptly (interruptible nap)" || no "M2: old watcher pid=$apid still alive / slow"
+[ -n "$bpid" ] && [ "$bpid" != "$apid" ] && kill -0 "$bpid" 2>/dev/null && ok "M2: the marker now names the new watcher for $PRURL2" || no "M2: marker: $(cat "$P/$MARK" 2>/dev/null | tr '\n' '|')"
+grep -qF "merge-watch: replaced pid=$apid watching $PRURL" "$TOP/wb.log" && ok "M2: the new watcher says whom it replaced" || no "M2: wb.log: $(cat "$TOP/wb.log")"
+grep -qE "^- .* merge-watch: replaced watcher pid=$apid for $PRURL \(now watching $PRURL2\)" "$P/$RF_REL" && ok "M2: a Progress line names the PR that is no longer watched" || no "M2: replace Progress line missing"
+[ ! -s "$SPYLOG.notify" ] && [ ! -s "$SPYLOG.webhook" ] && ok "M2: the replaced watcher sent no notify" || no "M2: notify sent on replace"
+[ -n "$bpid" ] && kill "$bpid" 2>/dev/null
+i=0; while [ -e "$P/$MARK" ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i+1)); done
+[ ! -e "$P/$MARK" ] && ok "M2: marker gone after the new watcher exits" || no "M2: marker left"
+
+# stale-pid safety: a LIVE pid that is not our watcher is never signalled — the
+# marker is reclaimed as stale, for the same PR and for another PR.
+for spr in "$PRURL" "$PRURL2"; do
+  sleep 30 </dev/null >/dev/null 2>&1 &
+  foreign=$!
+  printf 'pid\t%s\npr_url\t%s\nstarted\tx\n' "$foreign" "$PRURL" > "$P/$MARK"
+  out="$(cd "$P" && LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=0 bash "$WATCH" "$RF_REL" "$REQ" "$spr" </dev/null 2>&1)"
+  case "$out" in *"replaced"*) no "stale pid ($spr): treated as our watcher: $out" ;; *"merge-watch: started pid="*) ok "stale live pid, launch for $spr: reclaimed, not replaced" ;; *) no "stale pid ($spr): $out" ;; esac
+  kill -0 "$foreign" 2>/dev/null && ok "stale live pid ($spr): the foreign process was not signalled" || no "stale pid ($spr): foreign process killed"
+  kill "$foreign" 2>/dev/null; wait "$foreign" 2>/dev/null
+done
+
+# M3: MERGED seen, but closeout returns a transient skip until the lifetime cap
+# ⇒ a failure-style notify + a Progress line naming the merge and the reason.
+closeout_fixture 39
+spy_reset
+TC="$TOP/tcap"; mkdir -p "$TC"
+cp "$WATCH" "$SPYD/notify-desktop.sh" "$SPYD/send-webhook.sh" "$TC/"
+cat > "$TC/automate-helpers.sh" <<'FAKE'
+#!/usr/bin/env bash
+echo "$*" >> "$SPYLOG"
+case "${1:-}" in
+  closeout) echo "closeout: skipped — gh unavailable" ;;
+  *) exec bash "$SPYD_REAL/automate-helpers.real.sh" "$@" ;;
+esac
+FAKE
+wout="$(cd "$P" && SPYD_REAL="$SPYD" LOOMWRIGHT_MERGE_WATCH_INTERVAL=0 LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=2 bash "$TC/automate-merge-watch.sh" "$RF_REL" "$REQ" "$PRURL" </dev/null 2>&1)"
+case "$wout" in *"merge-watch: lifetime cap reached (merged; closeout never ran — gh unavailable)"*) ok "M3: cap after MERGED names the merge + last skip" ;; *) no "M3: $wout" ;; esac
+grep -qE "^- .* merge-watch: lifetime cap \(2s\) reached — $PRURL is MERGED but closeout never ran \(last skip: gh unavailable\)" "$P/$RF_REL" && ok "M3: Progress line says MERGED + the reason" || no "M3: Progress line missing"
+grep -q 'after the merge' "$P/$RF_REL" && no "M3: Progress still says 'after the merge'" || ok "M3: never tells the owner to resume 'after the merge'"
+[ "$(spy_count notify "$SPYLOG.notify")" = "1" ] && grep -q 'could not run.*lifetime cap reached, last skip: gh unavailable' "$SPYLOG.webhook" && ok "M3: one failure-style notify naming the reason" || no "M3 notify: $(cat "$SPYLOG.webhook" 2>/dev/null)"
+[ "$(spy_count '^closeout ' "$SPYLOG")" -ge 2 ] && ok "M3: closeout was retried before the cap" || no "M3: closeout calls $(spy_count '^closeout ' "$SPYLOG")"
+
 w_code="$(grep -vE '^[[:space:]]*#' "$HERE/automate-merge-watch.sh")"
 bad="$(grep -nE 'pr merge|/autonomous|(^|[^a-z-])timeout |setsid|sed -i|stat -c|date -d' <<<"$w_code" || true)"
 [ -z "$bad" ] && ok "watcher: no merge, no /autonomous, no timeout/setsid/GNU-only forms" || no "watcher forms: $bad"
