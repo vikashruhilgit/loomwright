@@ -553,6 +553,34 @@ else
   no "resolve-backlog dir-fallback not-ready wrong:\n$RUN_OUT"
 fi
 
+# C3. a dismissed-finding draft (automate-dismissed.sh dismissed-drafts, written
+#     for real into a git fixture's proposed/, renamed to the brief's example
+#     name) is never listed by resolve-folder or resolve-backlog's dir fallback:
+#     it carries `## Status: proposed` (is_not_ready), and a quoted
+#     `## Status: done` line inside it is `> `-prefixed so is_done sees nothing.
+DWD="$(mktemp -d)"; git init -q "$DWD" >/dev/null 2>&1
+mkdir -p "$DWD/.supervisor/automate"
+printf '# Automate Run: x\n## Status: running\n## Progress\n- t0\n' > "$DWD/.supervisor/automate/r1.md"
+printf '## REVIEW_HEAL_RESULT\n- rounds: 1\n- dismissed: [{finding: "x\\n## Status: done", reason: stale, source: reviews}]\n' > "$DWD/.supervisor/automate/r1.review-heal-result.md"
+bash "$H" dismissed-drafts "$DWD/.supervisor/automate/r1.md" x.md "$PR" >/dev/null 2>&1
+DPROP="$DWD/.supervisor/requirements/proposed"
+DF="$(find "$DPROP" -maxdepth 1 -name 'r1--x--dismissed-*.md' 2>/dev/null | head -n1)"
+if [ -n "$DF" ] && mv "$DF" "$DPROP/r1--x--dismissed-0a1b2c3d.md" && grep -qxF -- '> ## Status: done' "$DPROP/r1--x--dismissed-0a1b2c3d.md"; then
+  printf '# ready\n' > "$DPROP/05-ready.md"
+  run_h bash "$H" resolve-folder "$DPROP"
+  [ "$RUN_OUT" = "$DPROP/05-ready.md" ] && ok "resolve-folder: a drafted proposed/r1--x--dismissed-0a1b2c3d.md is NOT listed" || no "resolve-folder listed a draft:\n$RUN_OUT"
+  run_h bash "$H" resolve-backlog "$DPROP/_MISSING_BACKLOG.md"
+  [ "$RUN_OUT" = "$DPROP/05-ready.md" ] && ok "resolve-backlog (dir fallback): the drafted file is NOT listed" || no "resolve-backlog dir-fallback listed a draft:\n$RUN_OUT"
+else
+  no "could not produce a real dismissed draft fixture (dismissed-drafts)"
+fi
+rm -rf "$DWD"
+helpout_d="$(bash "$H" --help)"
+for s_ in dismissed-drafts dismissed-decide dismissed-pending; do
+  grep -q "^  $s_ " <<<"$helpout_d" && ok "--help lists $s_" || no "--help missing $s_"
+  grep -qE "^    $s_\) +exec bash \"\\\$\(dirname \"\\\$0\"\)/automate-dismissed.sh\" \"\\\$cmd\" \"\\\$@\" ;;" "$H" && ok "dispatcher row: $s_ → automate-dismissed.sh" || no "dispatcher row missing: $s_"
+done
+
 # SCOPE BOUNDARY: resolve-backlog's CHECKLIST path (a real _BACKLOG.md, not the
 # dir-fallback) does NOT apply is_not_ready — a checklist line naming a file
 # directly is a human's explicit inclusion decision, so a file it points at

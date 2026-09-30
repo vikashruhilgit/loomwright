@@ -24,8 +24,13 @@
 # run's trail branch, this PR's local branch/worktree, and — in the primary
 # checkout — index-only entries for this run's own trail paths plus closeout's
 # `git checkout <base>` + `git pull --ff-only` sync (never a commit, reset or
-# stash there) — never `gh pr merge`. UNCOUNTED by the doc-currency gate (it is
-# a plain script, not an agent/command/skill/hook).
+# stash there) — never `gh pr merge`. A second, narrower carve-out:
+# `dismissed-drafts`/`dismissed-decide`/`dismissed-pending` are delegated to the
+# sibling `automate-dismissed.sh`, which writes ONLY this run's dismissed-finding
+# drafts under `.supervisor/requirements/proposed/` (through propose-common.sh's
+# `pc_guarded_write`), its gitignored `<run_id>.dismissed-decisions` ledger and
+# one `## Progress` line per decision — never git, never `gh`. UNCOUNTED by the
+# doc-currency gate (it is a plain script, not an agent/command/skill/hook).
 #
 # Subcommands:
 #   config-suppress  <config_path> <backup_path>      # §7 backup byte-for-byte, set auto_review=false; malformed ⇒ abort
@@ -47,6 +52,9 @@
 #   sidecar-check    <path>                             # §6 trail: delegated to automate-trail.sh — `ok <path>` / `fail <path>: <reason>` (RESULT_SCHEMAS key-table shape check of a result sidecar); always exits 0
 #   trail-pr         <runfile> [--reason <reason>]      # §6 "Trail PR after merge and at run end": delegated to automate-trail.sh — called only by closeout, at ## Status: done, and on a skip/abandon check-off (never at a park); commits this run's explicit trail paths as ONE PR off fresh origin/main, a done-stamped requirement/done brief only when its PR reads merged; one line (opened|pushed|skipped); always exits 0
 #   closeout         <runfile> <item> <pr_url> [--session-id <sid>]  # §6 post-merge close-out: delegated to automate-trail.sh; always exits 0
+#   dismissed-drafts <runfile> <item> <pr_url> [--after-fix-now]  # §6 "Dismissed-findings decision step (before the park)": delegated to automate-dismissed.sh — one propose-only draft per dismissed finding over the threshold (+ one summary draft) in proposed/, content-addressed names, decisions never reset; TSV `draft` rows + one summary line; always exits 0
+#   dismissed-decide <runfile> <draft_path> <fix-now|follow-up|drop>  # §6 decision step / next PICK: delegated to automate-dismissed.sh — records the decision in <run_id>.dismissed-decisions, rewrites (follow-up) or deletes (drop/fix-now) the draft, one Progress line; refuses a foreign path; always exits 0
+#   dismissed-pending <runfile>                         # §6 step 1 PICK: delegated to automate-dismissed.sh — count of this run's undecided drafts, or `unknown` (treated as non-zero); always exits 0
 #   trail-unstage    <runfile>                          # §6 step 1 PICK (before RUN): delegated to automate-trail.sh — drops the trail-path index entries trail-pr staged so the next item's commit cannot sweep them; one line; always exits 0
 #
 # Exit codes: 0 success; 1 generic failure; 2 abort (malformed pre-existing config, §7).
@@ -1747,6 +1755,11 @@ main() {
     # Post-park lifecycle MUTATORS live in the sibling automate-trail.sh (the
     # read-only carve-out named in the header) — one mover per concern.
     sidecar-check|trail-pr|closeout|trail-unstage) exec bash "$(dirname "$0")/automate-trail.sh" "$cmd" "$@" ;;
+    # Dismissed-finding drafts (propose-only writes, never git) — the sibling
+    # automate-dismissed.sh, the second carve-out named in the header.
+    dismissed-drafts)  exec bash "$(dirname "$0")/automate-dismissed.sh" "$cmd" "$@" ;;
+    dismissed-decide)  exec bash "$(dirname "$0")/automate-dismissed.sh" "$cmd" "$@" ;;
+    dismissed-pending) exec bash "$(dirname "$0")/automate-dismissed.sh" "$cmd" "$@" ;;
     ""|-h|--help)
       grep -E '^#   [a-z]' "$0" | sed 's/^#   /  /'
       ;;
