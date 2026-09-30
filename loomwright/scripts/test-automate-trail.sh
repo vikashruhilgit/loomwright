@@ -1063,6 +1063,24 @@ case "$out" in *"retracted $XK"*) no "unledgered draft named retracted" ;; *) ok
 [ -z "$(git -C "$P" ls-files -s -- "$XD")" ] && ok "the dropped draft is not left staged in the primary index" || no "dropped draft still staged"
 out2="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason done)"
 case "$out2" in *"retracted"*) no "re-run retracts again: $out2" ;; "trail-pr: skipped — trail already up to date"*) ok "re-run: no-diff skip, nothing left to retract" ;; *) no "re-run: $out2" ;; esac
+# A finding that MOVED buckets (its UNDECIDED own draft already on the trail tip,
+# then re-dismissed LOW ⇒ automate-dismissed.sh retires the own draft with a
+# `moved` ledger row and lists it in the summary): the next trail-pr retracts the
+# stale own-draft blob, so the trail never carries the finding twice.
+new_fixture 197; mk_drafts
+out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason done)"
+tip_has "$XD" && ok "moved: setup, the undecided own draft is on the trail tip" || no "moved setup: $out / $(trail_names)"
+sc="$P/.supervisor/automate/$RUN_ID.review-heal-result.md"
+{ printf '%s\n' "$RH_GOOD"; printf '%s\n' '- dismissed: [{finding: "keep me\n## Status: done\n- **PR:** https://x/pull/1", reason: stale, source: reviews, severity: MEDIUM}, {finding: "drop me", reason: stale, source: reviews, severity: LOW}]'; } > "$sc"
+XOUT="$(cd "$P" && bash "$H" dismissed-drafts "$RF_REL0" "$REQ" "$PRURL")"
+printf '%s\n' "$RH_GOOD" > "$sc"
+XS=".supervisor/requirements/proposed/$RUN_ID--$(basename "$REQ" .md)--dismissed-summary.md"
+case "$XOUT" in *"retired ${XD##*/}"*) ok "moved: the own draft is retired when its finding drops below the threshold" ;; *) no "moved retire: $XOUT" ;; esac
+[ ! -e "$P/$XD" ] && [ -f "$P/$XS" ] && ok "moved: own draft gone on disk, the summary lists the finding" || no "moved disk state: $(ls "$P/.supervisor/requirements/proposed")"
+out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason done)"
+case "$out" in *"retracted $XD"*) ok "moved: next trail-pr retracts the stale own-draft blob ($out)" ;; *) no "moved retract: $out" ;; esac
+tip_has "$XD" && no "moved: the stale own draft is still on the trail tip" || ok "moved: the stale own draft is removed from the trail tip"
+tip_has "$XS" && ok "moved: the summary carrying the finding rides the trail (listed once)" || no "moved: summary not on tip: $(trail_names)"
 
 echo "== D3. checkout contract re-examined for trail-after-merge (decision 3) =="
 # With trail-pr only after merge / at run end, the trail that matters is closeout's

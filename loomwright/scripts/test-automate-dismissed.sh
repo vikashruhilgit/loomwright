@@ -30,6 +30,13 @@
 #   A5f. fix-now: suppressed without --after-fix-now (crash/resume edge);
 #       drain-origin + --after-fix-now ⇒ `undecided (fix-now unconfirmed)` (counted
 #       by dismissed-pending's prefix match); phase_4_5-origin NOT re-drafted.
+#   A5x. decisions are per FINDING across own/summary buckets (h8 omits severity):
+#       S6 own drop / S6m own follow-up / S7 summary drop / S7m summary follow-up /
+#       S9 drain fix-now, each then re-dismissed at the other bucket's severity ⇒
+#       the decision is honoured (no new undecided draft, fix-now ⇒ its own
+#       unconfirmed draft, never a summary line); an UNDECIDED finding that moves
+#       is retired from its old bucket (`moved` row) — listed and counted once; a
+#       genuinely new finding is still drafted; re-runs idempotent.
 #   A6. exit 0 everywhere (missing / unparseable sidecar, unwritable dir, no run
 #       file, no repo); `gh` never invoked, no `git commit` / `git push`;
 #       pc_guarded_write is load-bearing (mutation control: PROPOSE_COMMON_SH at a
@@ -307,6 +314,68 @@ drafts --after-fix-now
 [ "$(cksum < "$FD")" = "$c1" ] && [ "$(wc -l < "$AD/$RUN_ID.dismissed-decisions" | tr -d ' ')" = "$l1" ] && ok "unconfirmed re-run is byte-identical and appends no second ledger row" || no "unconfirmed re-run drift"
 bash "$H" dismissed-decide "$RF" "$FD" follow-up >/dev/null
 grep -qxF -- "- **Decision:** follow-up" "$FD" && [ "$(bash "$H" dismissed-pending "$RF")" = "0" ] && ok "the repeat answer (follow-up) settles it" || no "repeat answer"
+
+# =============================================================================
+echo "== A5x. decisions are per FINDING, across own/summary buckets =="
+# h8 omits severity, so a rewritten sidecar can move one finding between its own
+# draft and a summary. mv_ <SEV> — the same finding at another severity.
+mv_() { printf '{finding: "mover", reason: below_severity_floor, source: code_reviewer, severity: %s}' "$1"; }
+NEWL='{finding: "brand new low", reason: nit, source: red_team, severity: LOW}'
+led() { cat "$AD/$RUN_ID.dismissed-decisions" 2>/dev/null; }
+last() { printf '%s\n' "$dd_out" | tail -n1; }
+# S6 — own draft DROPPED, re-dismissed LOW ⇒ no summary lists it; a NEW LOW still does.
+fx x6; sup 1 "[$(mv_ MEDIUM)]"; drafts; OD="$(draft_with mover)"
+bash "$H" dismissed-decide "$RF" "$OD" drop >/dev/null
+sup 1 "[$(mv_ LOW)]"; drafts
+[ "$(nfiles)" = "0" ] && [ "$(last)" = "dismissed-drafts: 0 per-finding + 0 summary (0 listed in summary)" ] && ok "S6: dropped own draft ⇒ re-dismissed LOW is NOT re-listed in a new summary" || no "S6: $dd_out / $(ls "$PROP" 2>/dev/null)"
+sup 1 "[$(mv_ LOW), $NEWL]"; drafts
+[ -f "$PROP/$SB.md" ] && grep -qxF -- "> brand new low" "$PROP/$SB.md" && ! grep -qxF -- "> mover" "$PROP/$SB.md" && ok "S6: a genuinely NEW finding is still drafted (summary lists only it)" || no "S6 new finding: $dd_out"
+# S6m — own draft FOLLOW-UP, re-dismissed LOW ⇒ own draft kept, no summary, not re-asked.
+fx x6m; sup 1 "[$(mv_ MEDIUM)]"; drafts; OD="$(draft_with mover)"
+bash "$H" dismissed-decide "$RF" "$OD" follow-up >/dev/null; c0="$(cksum < "$OD")"
+sup 1 "[$(mv_ LOW)]"; drafts
+[ "$(cksum < "$OD")" = "$c0" ] && [ ! -e "$PROP/$SB.md" ] && [ "$(last)" = "dismissed-drafts: 1 per-finding + 0 summary (0 listed in summary)" ] && [ "$(bash "$H" dismissed-pending "$RF")" = "0" ] && ok "S6m: follow-up own draft kept as is, no summary line, nothing pending" || no "S6m: $dd_out"
+# S7 — summary DROPPED, re-dismissed MEDIUM ⇒ no new per-finding draft.
+fx x7; sup 1 "[$(mv_ LOW)]"; drafts
+bash "$H" dismissed-decide "$RF" "$PROP/$SB.md" drop >/dev/null
+sup 1 "[$(mv_ MEDIUM)]"; drafts
+[ "$(nfiles)" = "0" ] && [ "$(last)" = "dismissed-drafts: 0 per-finding + 0 summary (0 listed in summary)" ] && ok "S7: dropped summary ⇒ re-dismissed MEDIUM gets NO new undecided own draft" || no "S7: $dd_out / $(ls "$PROP" 2>/dev/null)"
+# S7m — summary FOLLOW-UP, re-dismissed MEDIUM ⇒ summary kept, no own draft.
+fx x7m; sup 1 "[$(mv_ LOW)]"; drafts
+bash "$H" dismissed-decide "$RF" "$PROP/$SB.md" follow-up >/dev/null; c0="$(cksum < "$PROP/$SB.md")"
+sup 1 "[$(mv_ MEDIUM)]"; drafts
+[ "$(nfiles)" = "1" ] && [ "$(cksum < "$PROP/$SB.md")" = "$c0" ] && [ "$(last)" = "dismissed-drafts: 0 per-finding + 1 summary (1 listed in summary)" ] && [ "$(bash "$H" dismissed-pending "$RF")" = "0" ] && ok "S7m: follow-up summary inherited — kept, no own draft, nothing pending" || no "S7m: $dd_out"
+# S9 — drain fix-now, re-drain dismisses it LOW ⇒ its OWN unconfirmed draft (never a summary line).
+fx x9; rh 1 "[$(mv_ MEDIUM)]"; drafts; OD="$(draft_with mover)"
+bash "$H" dismissed-decide "$RF" "$OD" fix-now >/dev/null
+rh 2 "[$(mv_ LOW)]"; drafts
+[ "$(nfiles)" = "0" ] && ok "S9: without --after-fix-now the LOW re-dismissal stays suppressed (no summary)" || no "S9 no-flag: $dd_out"
+drafts --after-fix-now
+if [ -f "$OD" ] && grep -qxF -- "- **Decision:** undecided (fix-now unconfirmed)" "$OD" && [ ! -e "$PROP/$SB.md" ]; then ok "S9: fix-now → re-drain LOW ⇒ own draft 'undecided (fix-now unconfirmed)', no summary entry"; else no "S9: $dd_out / $(ls "$PROP" 2>/dev/null)"; fi
+[ "$(led | awk -F'\t' -v n="$(basename "$OD")" '$1==n{d=$2} END{print d}')" = "fix-now-unconfirmed" ] && [ "$(bash "$H" dismissed-pending "$RF")" = "1" ] && ok "S9: fix-now-unconfirmed ledger row, counted pending" || no "S9 ledger: $(led)"
+l0="$(led | wc -l | tr -d ' ')"; drafts --after-fix-now
+[ "$(led | wc -l | tr -d ' ')" = "$l0" ] && [ ! -e "$PROP/$SB.md" ] && ok "S9: re-run appends no second ledger row" || no "S9 re-run: $(led)"
+# U — an UNDECIDED finding that moves is re-placed, never listed (or asked) twice.
+fx xu; sup 1 "[$(mv_ MEDIUM), $NEWL]"; drafts; OD="$(draft_with mover)"
+sup 1 "[$(mv_ LOW), $NEWL]"; drafts
+case "$dd_out" in *"dismissed-drafts: retired $(basename "$OD") — "*) ok "U: undecided own draft retired when its finding drops below the threshold (named)" ;; *) no "U retire line: $dd_out" ;; esac
+[ ! -e "$OD" ] && grep -qxF -- "> mover" "$PROP/$SB.md" && [ "$(bash "$H" dismissed-pending "$RF")" = "1" ] && ok "U: the finding is listed once (summary), one pending draft — not double-counted" || no "U placement: $(ls "$PROP")"
+[ "$(led | awk -F'\t' -v n="$(basename "$OD")" '$1==n{d=$2} END{print d}')" = "moved" ] && ok "U: a 'moved' ledger row records the retirement (the trail retracts by it)" || no "U ledger: $(led)"
+before="$(tree_sum)"; l0="$(led | wc -l | tr -d ' ')"; drafts
+[ "$(tree_sum)" = "$before" ] && [ "$(led | wc -l | tr -d ' ')" = "$l0" ] && ok "U: re-run idempotent (no second moved row, byte-identical tree)" || no "U re-run drift: $(led)"
+sup 1 "[$(mv_ MEDIUM), $NEWL]"; drafts
+[ -f "$OD" ] && grep -qxF -- "- **Decision:** undecided" "$OD" && grep -qxF -- "> brand new low" "$PROP/$SB.md" && ! grep -qxF -- "> mover" "$PROP/$SB.md" && ok "U: moved back up ⇒ own draft again (moved is not a decision), summary rewritten without it" || no "U back: $dd_out"
+fx xu3; sup 1 "[$(mv_ LOW)]"; drafts
+sup 1 "[$(mv_ MEDIUM)]"; drafts
+[ ! -e "$PROP/$SB.md" ] && [ -n "$(draft_with mover)" ] && [ "$(bash "$H" dismissed-pending "$RF")" = "1" ] && ok "U: an undecided summary whose entry moved up is retired — the own draft is the one pending" || no "U summary retire: $dd_out"
+# both sidecars gone (nothing current overlaps) ⇒ the undecided summary is left alone
+fx xu2; sup 1 "[$(mv_ LOW), $NEWL]"; drafts
+rm -f "$AD/$RUN_ID.supervisor-result.md"; drafts
+[ -f "$PROP/$SB.md" ] && grep -qxF -- "> mover" "$PROP/$SB.md" && ok "U: no current findings (sidecars missing) ⇒ the undecided summary is left alone" || no "U2: $dd_out"
+sup 1 "[$(mv_ MEDIUM), $NEWL]"; drafts
+bash "$H" dismissed-decide "$RF" "$(draft_with mover)" drop >/dev/null
+sup 1 "[$(mv_ LOW), $NEWL]"; drafts
+! grep -qxF -- "> mover" "$PROP/$SB.md" 2>/dev/null && grep -qxF -- "> brand new low" "$PROP/$SB.md" && [ ! -e "$PROP/$SB-2.md" ] && ok "U: a dropped own draft is not resurrected in the summary it once sat in" || no "U2 drop: $dd_out"
 
 # =============================================================================
 echo "== A6. fail-safe exits, no gh / git commit / git push, pc_guarded_write load-bearing =="

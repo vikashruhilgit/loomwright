@@ -612,7 +612,9 @@ RETRACT
   # under --non-interactive-fallback, at an --auto-merge MERGE, or when the
   # watcher's closeout runs first). A path matching this run's draft glob that
   # the branch TIP carries (or <run_id>.trail-staged records), that is ABSENT on
-  # disk, and whose <run_id>.dismissed-decisions last row reads drop / fix-now is
+  # disk, and whose <run_id>.dismissed-decisions last row reads drop / fix-now
+  # (or `moved`: an UNDECIDED draft automate-dismissed.sh retired because its
+  # finding moved to the other bucket — the finding rides in its new draft) is
   # `git rm`'d from the tip and dropped from the primary index — named
   # `; retracted <path>`. No ledger row ⇒ left alone (never guess). Never on a
   # fresh branch cut from origin/<default>, and never when origin/<default>
@@ -628,7 +630,7 @@ RETRACT
       [ -e "$dp" ] && continue
       dn="${dp##*/}"
       dd="$(awk -F'\t' -v n="$dn" '$1 == n { d = $2 } END { print d }' "$dl" 2>/dev/null)"
-      case "$dd" in drop|fix-now) ;; *) continue ;; esac
+      case "$dd" in drop|fix-now|moved) ;; *) continue ;; esac
       rb="$(git rev-parse -q --verify "$base_ref:$dp" 2>/dev/null)"
       [ -n "$rb" ] || continue
       [ "$rb" = "$(git rev-parse -q --verify "$origin_base:$dp" 2>/dev/null)" ] && continue

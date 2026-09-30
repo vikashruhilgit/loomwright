@@ -11,11 +11,14 @@
 #     `<repo>/.supervisor/requirements/proposed/`, every one of them through
 #     propose-common.sh's `pc_guarded_write` (the ONE canonical `proposed/`
 #     write guard — no second name check here, so its mutation control stays
-#     live), plus `rm` of THIS run's draft on a `drop` / `fix-now` decision;
+#     live), plus `rm` of THIS run's draft on a `drop` / `fix-now` decision, and
+#     of an UNDECIDED draft of THIS run retired because its finding moved to the
+#     other bucket (a `moved` ledger row first);
 #   * the gitignored decision ledger `<run_id>.dismissed-decisions` beside the
 #     run file (`draft_name<TAB>decision<TAB>ts`, keyed by draft NAME, last row
 #     wins; plus `summary-member<TAB><h8><TAB>summary_name` rows recording which
-#     entries a DECIDED summary listed), and ONE `## Progress` line per decision via
+#     entries a DECIDED summary listed; `moved` rows are placement records, never
+#     decisions), and ONE `## Progress` line per decision via
 #     `automate-helpers.sh progress-append`.
 # It never runs `gh`, `git commit`, `git push` or any other git mutation (only
 # `git rev-parse --show-toplevel`), and never merges anything.
@@ -37,6 +40,13 @@
 #       below-threshold entry no decided slot covers is (re)written into the first
 #       slot with no ledger row — so a decided summary never hides a finding it did
 #       not list, and there is at most one undecided summary per item.
+#       DECISIONS ARE PER FINDING, ACROSS BUCKETS (h8 omits severity, so a
+#       rewritten sidecar can move a finding between its own draft and a
+#       summary): a decision on its own-draft name governs it wherever it now
+#       falls (a fix-now finding is never put in a summary), else a decided
+#       summary that listed it does; an undecided finding is placed by the
+#       threshold, and an UNDECIDED draft of it left in the other bucket is
+#       retired (`moved` ledger row, then removed; a `retired <name>` line).
 #       The ledger decides what is (re)written: no row ⇒ written (deterministic,
 #       no timestamp, so an undecided re-run is byte-identical); `follow-up` ⇒
 #       kept as is, never rewritten or recreated; `drop` ⇒ never recreated;
@@ -49,10 +59,12 @@
 #       Output: one `draft<TAB><k|summary><TAB><severity|-><TAB><path>` row per
 #       file written or kept, message lines (`dismissed-drafts: no <sidecar> —
 #       skipped`, `dismissed-drafts: unreadable <path>`, `dismissed-drafts:
-#       refused <name> — <reason>`), then ONE summary line
+#       refused <name> — <reason>`, `dismissed-drafts: retired <name> — its
+#       finding moved to the other bucket`), then ONE summary line
 #       `dismissed-drafts: <n> per-finding + <s> summary (<m> listed in summary)`
-#       (s = summary files written or kept; m = current below-threshold entries
-#       listed in one of them — an entry in a DROPPED summary is not counted).
+#       (s = summary files written or kept; m = current entries listed in one of
+#       them — an entry in a DROPPED summary is not counted; an above-threshold
+#       entry that inherits a kept summary's follow-up counts in m, not in n).
 #   dismissed-decide <runfile> <draft_path> <fix-now|follow-up|drop>
 #       Refuses (`dismissed-decide: refused — <reason>`) a path that is not a
 #       regular file directly under `proposed/` named `<this run_id>--*--dismissed-*.md`,
@@ -139,9 +151,9 @@ dismissed_drafts() {
 
   # The pure half: parse, dedupe, threshold, name, render, consult the ledger.
   # Emits a manifest of directives; every rendered file lands in $tmp.
-  python3 - "$SCRIPT_DIR" "$rf_dir" "$run_id" "$item" "$pr_url" "$after_fix_now" "$ledger" "$tmp" <<'PY' > "$manifest" 2>/dev/null
+  python3 - "$SCRIPT_DIR" "$rf_dir" "$run_id" "$item" "$pr_url" "$after_fix_now" "$ledger" "$tmp" "$root/.supervisor/requirements/proposed" <<'PY' > "$manifest" 2>/dev/null
 import hashlib, os, re, sys
-here, rf_dir, run_id, item, pr_url, after_fix_now, ledger_path, tmp = sys.argv[1:9]
+here, rf_dir, run_id, item, pr_url, after_fix_now, ledger_path, tmp, prop_dir = sys.argv[1:10]
 after_fix_now = after_fix_now == "1"
 sys.path.insert(0, here)
 out = []
@@ -222,6 +234,13 @@ try:
 except Exception:
     pass
 
+DECISIONS = ("follow-up", "drop", "fix-now", "fix-now-unconfirmed")
+def decided(name):
+    # A `moved` row (this script retired an UNDECIDED draft because its finding
+    # now belongs in the other bucket) is a placement record, never a decision.
+    d = ledger.get(name)
+    return d if d in DECISIONS else None
+
 stem = os.path.basename(item)
 if stem.endswith(".md"):
     stem = stem[:-3]
@@ -274,45 +293,101 @@ def plan(name, content, kind, sev, decision_row=None, listed=0):
         fh.write(content)
     emit("write", kind, sev or "-", name, fn, decision_row or "-", str(listed))
 
-k = 0
-for e in [x for x in entries if x["own"]]:
-    k += 1
-    name = prefix + e["h8"] + ".md"
-    d = ledger.get(name)
+# DECISIONS ARE PER FINDING, ACROSS BUCKETS. h8 omits severity, so a rewritten
+# sidecar can move one finding between its OWN draft and a summary (e.g. the
+# re-drain re-dismisses it at another severity). Its decision follows it:
+#   * a ledger decision on its own-draft name (`<prefix><h8>.md`) governs it
+#     wherever the threshold now puts it — follow-up ⇒ that draft is kept; drop ⇒
+#     never recreated (no summary line either); fix-now ⇒ suppressed, or, when
+#     drain-origin and `--after-fix-now`, its OWN draft re-written
+#     `undecided (fix-now unconfirmed)` (never a summary line: fix-now is refused
+#     on summaries);
+#   * else a `summary-member` row in a DECIDED summary slot governs it — follow-up
+#     ⇒ that summary is kept (not re-asked); drop ⇒ not recreated as own or summary;
+#   * else it is undecided and placed by the threshold. An UNDECIDED draft of it
+#     left in the other bucket (its own draft, or the undecided summary slot when
+#     no current entry belongs in it and it lists one now placed elsewhere) is
+#     retired: a `moved` ledger row
+#     FIRST, then the file is removed — so the finding is never listed (or asked,
+#     or counted) twice, and the trail retracts the stale blob by that row.
+# Summary SLOTS: `summary.md`, then `summary-2.md`, `summary-3.md`, … A DECIDED
+# slot (a decision row) covers exactly the entries it listed when decided — its
+# `summary-member<TAB><h8><TAB><slot name>` rows, written by dismissed-decide
+# from the slot's `- **Key:**` lines. Every undecided below-threshold entry goes
+# into the first slot with no decision (rewritten in place on a re-run, so there
+# is never a second undecided one): a decided summary never hides a finding it
+# did not list. A genuinely NEW finding (new h8) has no decision anywhere and is
+# always drafted.
+def own_name(e):
+    return prefix + e["h8"] + ".md"
+
+decided_slots, i = [], 1
+while True:
+    nm = prefix + ("summary.md" if i == 1 else "summary-%d.md" % i)
+    d = decided(nm)
     if d is None:
+        undecided_slot = nm
+        break
+    decided_slots.append((nm, d, members.get(nm, set())))
+    i += 1
+
+def inherited(h8):
+    for nm, d, mem in decided_slots:
+        if h8 in mem:
+            return nm, d
+    return None, None
+
+def on_disk(name):
+    p = os.path.join(prop_dir, name)
+    return os.path.isfile(p) and not os.path.islink(p)
+
+k, kept_slot, to_summary = 0, {}, []
+for e in [x for x in entries if x["own"]] + [x for x in entries if not x["own"]]:
+    name = own_name(e)
+    d = decided(name)
+    if e["own"] or d is not None:
+        k += 1
+    if d is not None:
+        if d == "fix-now-unconfirmed":
+            plan(name, render_one(e, "undecided (fix-now unconfirmed)"), str(k), e["sev"])
+        elif d == "fix-now" and e["origin"] == "drain" and after_fix_now:
+            plan(name, render_one(e, "undecided (fix-now unconfirmed)"), str(k), e["sev"], "fix-now-unconfirmed")
+        elif d == "follow-up":
+            emit("keep", str(k), e["sev"] or "-", name, "-", "-", "0")
+        # drop / fix-now (phase_4_5, or no re-drain yet) ⇒ never recreated
+        continue
+    snm, sd = inherited(e["h8"])
+    if snm is not None:
+        if sd == "follow-up":
+            kept_slot[snm] = kept_slot.get(snm, 0) + 1
+        continue  # drop ⇒ never recreated, in either bucket
+    if e["own"]:
         plan(name, render_one(e, "undecided"), str(k), e["sev"])
-    elif d == "fix-now-unconfirmed":
-        plan(name, render_one(e, "undecided (fix-now unconfirmed)"), str(k), e["sev"])
-    elif d == "fix-now" and e["origin"] == "drain" and after_fix_now:
-        plan(name, render_one(e, "undecided (fix-now unconfirmed)"), str(k), e["sev"], "fix-now-unconfirmed")
-    elif d == "follow-up":
-        emit("keep", str(k), e["sev"] or "-", name, "-", "-", "0")
-    # drop / fix-now (phase_4_5, or no re-drain yet) ⇒ never recreated
-# Summary slots: `summary.md`, then `summary-2.md`, `summary-3.md`, … A DECIDED
-# slot (any ledger row) covers exactly the entries it listed when decided — its
-# `summary-member<TAB><h8><TAB><slot name>` ledger rows, written by
-# dismissed-decide from the slot's `- **Key:**` lines. Every current
-# below-threshold entry NOT covered goes into the first UNDECIDED slot
-# (rewritten in place on a re-run, so there is never a second undecided one):
-# a decided summary never suppresses a finding it did not list.
-rest = [x for x in entries if not x["own"]]
-if rest:
-    rest_keys = set(x["h8"] for x in rest)
-    covered, slot, i = set(), None, 1
-    while slot is None:
-        name = prefix + ("summary.md" if i == 1 else "summary-%d.md" % i)
-        d = ledger.get(name)
-        if d is None:
-            slot = name
-            break
-        mem = members.get(name, set())
-        covered |= mem
-        if d == "follow-up" and (mem & rest_keys):
-            emit("keep", "summary", "-", name, "-", "-", str(len(mem & rest_keys)))
-        i += 1
-    uncovered = [x for x in rest if x["h8"] not in covered]
-    if uncovered:
-        plan(slot, render_summary(uncovered), "summary", "", None, len(uncovered))
+    else:
+        to_summary.append(e)
+        if on_disk(name):
+            emit("retire", "-", "-", name, "-", "moved", "0")
+for nm, d, mem in decided_slots:
+    if nm in kept_slot:
+        emit("keep", "summary", "-", nm, "-", "-", str(kept_slot[nm]))
+if to_summary:
+    plan(undecided_slot, render_summary(to_summary), "summary", "", None, len(to_summary))
+elif on_disk(undecided_slot):
+    keys = set()
+    try:
+        with open(os.path.join(prop_dir, undecided_slot), encoding="utf-8") as fh:
+            for line in fh:
+                m = re.match(r"^- \*\*Key:\*\* ([0-9a-f]{8})$", line.rstrip("\n"))
+                if m:
+                    keys.add(m.group(1))
+    except Exception:
+        keys = set()
+    # It lists a current finding now placed elsewhere and no current finding
+    # belongs in it — the same outcome as the in-place rewrite above, which also
+    # keeps only the current undecided set. No overlap with the current findings
+    # (e.g. both sidecars missing or unreadable) ⇒ left alone, never guess.
+    if keys & set(x["h8"] for x in entries):
+        emit("retire", "-", "-", undecided_slot, "-", "moved", "0")
 print("\n".join(out))
 PY
   local prc=$?
@@ -332,6 +407,16 @@ PY
     case "$cnt" in ''|*[!0-9]*) cnt=0 ;; esac
     case "$kind" in
       msg) echo "$kname" ;;
+      retire)
+        # An UNDECIDED draft whose finding the ledger/threshold now places in the
+        # other bucket: the `moved` row FIRST (the trail retracts the blob by it),
+        # then the file. Only a regular file, never a symlink.
+        if [ -n "$out_abs" ] && [ -f "$out_abs/$name" ] && [ ! -L "$out_abs/$name" ]; then
+          if printf '%s\t%s\t%s\n' "$name" moved "$(_ts)" >> "$ledger" 2>/dev/null; then
+            rm -f -- "$out_abs/$name" 2>/dev/null
+            printf 'dismissed-drafts: retired %s — its finding moved to the other bucket\n' "$name"
+          fi
+        fi ;;
       keep)
         if [ -n "$out_abs" ] && [ -f "$out_abs/$name" ]; then
           printf 'draft\t%s\t%s\t%s\n' "$kname" "$sev" "$out_abs/$name"
