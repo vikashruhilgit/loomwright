@@ -605,6 +605,10 @@ for pr in awaiting_merge escalated rate_limit drain_died token_ceiling limit_rea
   grep -qF -- "\`$pr\`" <<<"$nopark" && ok "no-park list names $pr" || no "no-park list missing $pr"
 done
 grep -qF -- '- **Evidence-gated stamps' <<<"$sect" && ok "trail section documents the evidence gate" || no "evidence-gate bullet missing"
+eg="$(grep -m1 -F -- '- **Evidence-gated stamps' <<<"$sect")"
+for t in '`is_done`' 'ABANDONED' '### Outcome' 'Outcomes Rubric' '`; retracted <path>`' 'never stages a gate-excluded path'; do
+  grep -qF -- "$t" <<<"$eg" && ok "evidence-gate bullet names $t" || no "evidence-gate bullet missing $t"
+done
 grep -qF -- '- **Committing a done stamp for unmerged work.**' "$SKILL" && ok "Anti-Pattern: committing a done stamp for unmerged work" || no "anti-pattern missing"
 grep -qF 'never at a park' "$HERE/../commands/automate.md" && ok "commands/automate.md trail bullet: never at a park" || no "commands/automate.md trail bullet stale"
 
