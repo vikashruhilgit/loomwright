@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # automate-merge-watch.sh — the `/automate` merge watcher. PROTOCOL AUTHORITY:
 # `skills/automate-loop/SKILL.md` §6 "Post-merge close-out" (armed at §9's
-# safe-mode `awaiting_merge` park, after trail-pr and before the lock release).
+# safe-mode `awaiting_merge` park, before the lock release; that park runs no
+# trail-pr — closeout's own trail commits the item once its PR has merged).
 #
 # Usage: automate-merge-watch.sh <runfile> <item> <pr_url>
 #

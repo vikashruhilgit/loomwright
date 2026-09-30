@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # automate-trail.sh — the `/automate` engine's post-park lifecycle MUTATORS.
-# PROTOCOL AUTHORITY: `skills/automate-loop/SKILL.md` §6 "Trail PR at every
-# park and at run end" (and §1.5's rows for each subcommand). Dispatched from
+# PROTOCOL AUTHORITY: `skills/automate-loop/SKILL.md` §6 "Trail PR after merge
+# and at run end" (and §1.5's rows for each subcommand). trail-pr is called only
+# by closeout (after its merge evidence gate), at `## Status: done`, and on a
+# skip/abandon check-off — never at a park; its _evidence_gate drops a
+# done-stamped requirement / done brief whose PR is not merged regardless. Dispatched from
 # `automate-helpers.sh` (`exec bash "$(dirname "$0")/automate-trail.sh" <subcmd>`)
 # so the helper itself stays read-only toward git; THIS script is the carve-out.
 #
@@ -33,10 +36,12 @@
 #       and checks its keys against the tables below (required keys, no
 #       non-schema key, canonical `channels_scanned`, `risk_classification`
 #       carries `reasons`). A file that cannot be checked is a `fail`.
-#   trail-pr <runfile> [--reason <park_reason>]
+#   trail-pr <runfile> [--reason <reason>]
 #       One line: `trail-pr: opened <url>` | `trail-pr: pushed <url>` |
 #       `trail-pr: skipped — <reason>`. Sidecars that fail `sidecar-check` are
 #       excluded and named INSIDE that same line (`; excluded <path> — <reason>`),
+#       and so is a done-stamped requirement / done brief whose PR is not merged
+#       (`; excluded <path> — pr not merged`, _evidence_gate),
 #       so the loop can append it to `## Progress` with one progress-append.
 #   closeout <runfile> <item> <pr_url> [--session-id <sid>]
 #       The post-merge close-out (SKILL §6 "Post-merge close-out"): evidence
@@ -66,7 +71,7 @@
 # commits the whole index), so the loop runs `trail-unstage` at PICK, before
 # the next commit-producing phase, and `closeout` re-applies the contract at
 # its own pull for the recorded blobs that have landed upstream. The next
-# trail-pr (at the next park or run end) re-stages every path its open trail PR
+# trail-pr (the next closeout, skip/abandon check-off or run end) re-stages every path its open trail PR
 # carries, including ones an earlier PICK dropped. trail-unstage clears the
 # union of the record and today's candidates. Honest limits: between a PICK and
 # the next trail-pr, a HAND-run `git pull` over a merged trail PR refuses
@@ -74,7 +79,7 @@
 # staged until the next PICK's trail-unstage. The trail branch is NEVER
 # rebased: once origin/<default branch> moves the postmortem ledger (another
 # run's trail PR, a postmortem line) after this run's trail branch was cut, a
-# later push/no-diff re-park stages the trail-TIP ledger blob, which lacks
+# later push/no-diff re-trail stages the trail-TIP ledger blob, which lacks
 # main's new line — the trail PR then conflicts at the ledger's EOF, and both a
 # hand pull and closeout's sync refuse (fail-safe: no reset, nothing lost);
 # resolve the trail PR by hand. When closeout's `git pull --ff-only` refuses,
@@ -296,6 +301,120 @@ EOF
   return 0
 }
 
+# _done_prs <requirement-file> — the gate's view of a requirement, keyed on the
+# SAME predicate as automate-helpers.sh `is_done` (a `^## Status:` heading
+# reading done / done_with_escalation, sentinel or not): prints one line per such
+# heading block — the first `https?://…/pull/<n>` token of each `- **PR:**`
+# line in it (an annotated value like `<url> (merged by …)` yields the URL), or
+# `-` when the block names no parseable PR. The ONE exemption is the exact
+# heading `automate-helpers.sh reconcile-status --apply` writes for an owner's
+# `# abandoned:` Queue row — `## Status: done_with_escalation — ABANDONED
+# (- [x] <path>  # abandoned: <reason>)`, em dash byte-exact (passed in as
+# $'\xe2\x80\x94', never a source literal, so no locale or editor can shift it):
+# an owner decision, not a shipped-work claim, so it prints nothing. Any other
+# heading merely containing "ABANDONED" is a done claim like any other. Prints
+# nothing for a requirement with no done heading. A block runs to the next
+# `## ` heading or EOF. The PR token excludes markdown link punctuation
+# (`[]()<>`), so `[<url>](<url>)` and `<url>` yield the bare URL.
+AB_PREFIX="## Status: done_with_escalation "$'\xe2\x80\x94'" ABANDONED (- [x] "
+_done_prs() {
+  awk -v ab="$AB_PREFIX" '
+    function flush() { if (inb && !seen) print "-"; inb = 0; seen = 0 }
+    /^## Status:[[:space:]]*done(_with_escalation)?([^A-Za-z0-9_]|$)/ {
+      flush()
+      if (!(index($0, ab) == 1 && $0 ~ /  # abandoned: .*\)[[:space:]]*$/)) { inb = 1; seen = 0 }
+      next
+    }
+    inb && /^## / { flush(); next }
+    inb && /^- \*\*PR:\*\*/ {
+      if (match($0, /https?:\/\/[^][:space:]()<>]+\/pull\/[0-9]+/)) print substr($0, RSTART, RLENGTH); else print "-"
+      seen = 1; next
+    }
+    END { flush() }
+  ' "$1" 2>/dev/null
+}
+
+# _outcome_prs <brief-file> — every PR a done/ brief's Outcome section names.
+# The section opens at an `## Outcome` / `### Outcome` heading — whitespace
+# after the hashes, then whitespace, a colon or end of line after the word
+# (`## Outcome — ESCALATED`, `## Outcome:`; never `## Outcomes Rubric`,
+# `##Outcome` or `## Outcome-ish`) — and runs
+# to the next H1–H3 heading. One line per `- **PR:**` line (its first
+# `…/pull/<n>` token, or `-`), and `-` for a section naming no PR at all (fail
+# closed). Prints nothing for a brief with no Outcome section.
+_outcome_prs() {
+  awk '
+    function flush() { if (o && !seen) print "-"; o = 0; seen = 0 }
+    /^(##|###)[[:space:]]+Outcome([[:space:]:]|$)/ { flush(); o = 1; seen = 0; next }
+    o && /^(#|##|###)[[:space:]]/ { flush(); next }
+    o && /^- \*\*PR:\*\*/ {
+      if (match($0, /https?:\/\/[^][:space:]()<>]+\/pull\/[0-9]+/)) print substr($0, RSTART, RLENGTH); else print "-"
+      seen = 1; next
+    }
+    END { flush() }
+  ' "$1" 2>/dev/null
+}
+
+# _gate_keep <trail-path> <file-to-read> — 0 when the content of <file-to-read>
+# (the path's working copy, or a blob written to a temp file) may ride under
+# <trail-path>; 1 when it carries a done claim whose PR is not verifiably
+# merged. `.supervisor/requirements/**.md` → _done_prs; `.supervisor/jobs/done/*.md`
+# → _outcome_prs; any other path → 0. Every named PR must read `merged` via
+# `automate-helpers.sh reconcile-item` (cached per URL in GATE_CACHE); `-`,
+# OPEN, CLOSED or an unreadable forge ⇒ 1 (fail closed).
+GATE_CACHE=""
+_gate_keep() {
+  local p="$1" f="$2" prs u st hit tab=$'\t' verdict=0
+  case "$p" in
+    .supervisor/requirements/*.md) prs="$(_done_prs "$f")" ;;
+    .supervisor/jobs/done/*.md)    prs="$(_outcome_prs "$f")" ;;
+    *) return 0 ;;
+  esac
+  [ -n "$prs" ] || return 0
+  while IFS= read -r u; do
+    [ -n "$u" ] || continue
+    case "$u" in
+      http://*/pull/*|https://*/pull/*)
+        hit="$(printf '%s' "$GATE_CACHE" | awk -F'\t' -v u="$u" '$1 == u {print $2; exit}')"
+        if [ -n "$hit" ]; then st="$hit"; else
+          st="$(bash "$HERE/automate-helpers.sh" reconcile-item "$u" 2>/dev/null | tail -n1)"
+          [ -n "$st" ] || st="unreadable"
+          GATE_CACHE="$GATE_CACHE$u$tab$st"$'\n'
+        fi ;;
+      *) st="unreadable" ;;
+    esac
+    [ "$st" = "merged" ] || verdict=1
+  done <<GATEPRS
+$prs
+GATEPRS
+  return "$verdict"
+}
+
+# _evidence_gate — trail_pr only (never trail-unstage / closeout's owned set:
+# it calls gh). A trail must never commit a done claim for unmerged work: a
+# TRAIL_KEPT requirement or done/ brief failing _gate_keep is dropped, named
+# (`; excluded <path> — pr not merged`) and recorded in TRAIL_GATED, which
+# trail_pr uses to RETRACT such a claim an earlier push left on a reused trail
+# branch, and which _stage_tip never stages. Always returns 0.
+TRAIL_GATED=""
+_evidence_gate() {
+  local p kept_new=""
+  TRAIL_GATED=""
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    if _gate_keep "$p" "$p"; then
+      kept_new="${kept_new:+$kept_new$'\n'}$p"
+    else
+      TRAIL_EXCLUDED="$TRAIL_EXCLUDED; excluded $p — pr not merged"
+      TRAIL_GATED="${TRAIL_GATED:+$TRAIL_GATED$'\n'}$p"
+    fi
+  done <<GATEKEPT
+$TRAIL_KEPT
+GATEKEPT
+  TRAIL_KEPT="$kept_new"
+  return 0
+}
+
 # _trail_owned <rf_rel> <run_id> — run from the checkout root. The ONE
 # "is this dirty/staged path this run's own trail?" set, shared by trail-unstage
 # and closeout step 4: today's candidates (_trail_candidates → TRAIL_KEPT) ∪ the
@@ -334,6 +453,8 @@ _stage_tip() {
     ent="$(git ls-tree "$tip" -- "$p" 2>/dev/null)"
     mode_bits="${ent%% *}"; blob="$(printf '%s' "$ent" | awk '{print $3}')"
     [ -n "$blob" ] || continue
+    # Never stage a gate-excluded path (a done claim for unmerged work).
+    _in_list "$p" "$TRAIL_GATED" && continue
     [ "$(git rev-parse -q --verify "$base:$p" 2>/dev/null)" = "$blob" ] && continue
     [ "$(git rev-parse -q --verify "HEAD:$p" 2>/dev/null)" = "$blob" ] && continue
     if [ "$(git ls-files -s -- "$p" 2>/dev/null | awk 'NR==1{print $2}')" != "$blob" ]; then
@@ -348,14 +469,14 @@ EOF
 }
 
 trail_pr() {
-  local runfile="" reason="park"
+  local runfile="" reason="trail"
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --reason) reason="${2:-park}"; shift 2 || shift ;;
+      --reason) reason="${2:-trail}"; shift 2 || shift ;;
       *) [ -z "$runfile" ] && runfile="$1"; shift ;;
     esac
   done
-  [ -n "$reason" ] || reason="park"
+  [ -n "$reason" ] || reason="trail"
   local skip_prefix="trail-pr: skipped —"
   if [ -z "$runfile" ] || [ ! -f "$runfile" ]; then echo "$skip_prefix run file not found"; return 0; fi
   if ! command -v git >/dev/null 2>&1; then echo "$skip_prefix git unavailable"; return 0; fi
@@ -375,6 +496,9 @@ trail_pr() {
 
   # ---- candidate paths (explicit; never -A / .) ----------------------------
   _trail_candidates "$rf_rel" "$run_id"
+  # Evidence-gated stamps: a done-stamped requirement / done brief rides only
+  # when its PR reads merged (never a done claim for unmerged work).
+  _evidence_gate
   local excluded="$TRAIL_EXCLUDED" kept="$TRAIL_KEPT" ledger="$TRAIL_LEDGER" p
 
   # ---- idempotency: this run's trail PRs -----------------------------------
@@ -448,7 +572,34 @@ EOF
   local title="chore(supervisor): $run_id trail ($reason)"
   local rec origin_base="refs/remotes/origin/$base_branch"
   rec="$(dirname "$rf_rel")/$run_id.trail-staged"
-  if [ -z "$changed" ] && [ "$orphan" -eq 0 ]; then
+
+  # ---- retract: a gate-excluded path whose blob at the REUSED trail branch's
+  # tip (e.g. from a v15.114.0/.1 park-time push) differs from origin/<default>'s
+  # CURRENT blob and itself fails the gate is put back to origin/<default>'s
+  # version (removed when main lacks it) in this commit, so the branch tip never
+  # keeps a done stamp for unmerged work; named as `; retracted <path>`. The
+  # comparison is against main's current blob, not the fork point, so a path
+  # main changed after the fork that the trail branch never touched also counts
+  # when its (old) tip blob fails the gate — harmless: the tip becomes main's
+  # version. A transient gh failure fails such a claim closed too (see SKILL §6).
+  local retract="" retracted="" retract_old="" rb
+  if [ "$base_ref" != "$origin_base" ] && [ -n "$TRAIL_GATED" ]; then
+    while IFS= read -r p; do
+      [ -n "$p" ] || continue
+      rb="$(git rev-parse -q --verify "$base_ref:$p" 2>/dev/null)"
+      [ -n "$rb" ] || continue
+      [ "$rb" = "$(git rev-parse -q --verify "$origin_base:$p" 2>/dev/null)" ] && continue
+      if git cat-file blob "$rb" > "$TRAIL_TMP/retract" 2>/dev/null && _gate_keep "$p" "$TRAIL_TMP/retract"; then continue; fi
+      retract="${retract:+$retract$'\n'}$p"
+      retract_old="$retract_old$p"$'\t'"$rb"$'\n'   # the retracted blob, pinned now: the push below moves base_ref
+      retracted="$retracted; retracted $p"
+    done <<RETRACT
+$TRAIL_GATED
+RETRACT
+  fi
+  excluded="$excluded$retracted"
+
+  if [ -z "$changed" ] && [ -z "$retract" ] && [ "$orphan" -eq 0 ]; then
     # Nothing new to push, but an open trail branch still carries earlier pushes
     # whose index entries a PICK trail-unstage may have dropped: re-apply the
     # contract from that branch tip.
@@ -457,7 +608,7 @@ EOF
     echo "$skip_prefix trail already up to date$excluded"; return 0
   fi
 
-  if [ -n "$changed" ]; then
+  if [ -n "$changed" ] || [ -n "$retract" ]; then
     TRAIL_WT="$TRAIL_TMP/wt"
     if ! git worktree add -q --detach "$TRAIL_WT" "$base_ref" >/dev/null 2>&1; then
       TRAIL_WT=""; trail_cleanup; trap - EXIT
@@ -471,6 +622,17 @@ EOF
     done <<EOF
 $changed
 EOF
+    while IFS= read -r p; do
+      [ -n "$p" ] || continue
+      if git rev-parse -q --verify "$origin_base:$p" >/dev/null 2>&1; then
+        git -C "$TRAIL_WT" checkout -q "$origin_base" -- "$p" >/dev/null 2>&1
+      else
+        git -C "$TRAIL_WT" rm -q --cached --ignore-unmatch -- "$p" >/dev/null 2>&1
+        rm -f "$TRAIL_WT/$p"
+      fi
+    done <<RETRACT
+$retract
+RETRACT
     if ! git -C "$TRAIL_WT" commit -q -m "$title" >/dev/null 2>&1; then
       trail_cleanup; trap - EXIT
       echo "$skip_prefix git commit failed$excluded"; return 0
@@ -485,6 +647,15 @@ EOF
     # run's trail-staged record; closeout re-stages a recorded blob that has
     # LANDED upstream right before its pull.
     _stage_tip "$(git -C "$TRAIL_WT" rev-parse -q --verify HEAD 2>/dev/null)" "$origin_base" "$rec"
+    # A retracted claim an earlier trail-pr staged in the primary index is
+    # dropped from it too (index only; the working copy is never touched).
+    while IFS=$'\t' read -r p rb; do
+      [ -n "$p" ] && [ -n "$rb" ] || continue
+      [ "$(git ls-files -s -- "$p" 2>/dev/null | awk 'NR==1{print $2}')" = "$rb" ] \
+        && git restore --staged -- "$p" >/dev/null 2>&1
+    done <<RETRACT
+$retract_old
+RETRACT
   elif [ "$orphan" -eq 1 ]; then
     _stage_tip "$base_ref" "$origin_base" "$rec"
   fi
@@ -492,6 +663,8 @@ EOF
   if [ "$mode" = "opened" ]; then
     local body out pl
     pl="$(printf '%s\n' "${changed:-(no new commit; opening the PR for an already-pushed branch)}" | sed 's/^/- /')"
+    [ -n "$retract" ] && pl="$pl
+$(printf '%s\n' "$retract" | sed 's/^/- retracted (done claim for unmerged work): /')"
     body="Run trail for \`/automate\` run \`$run_id\` (reason: \`$reason\`), committed by \`automate-trail.sh trail-pr\` from explicit paths only:
 
 $pl
