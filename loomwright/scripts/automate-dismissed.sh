@@ -172,6 +172,8 @@ def one_line(v):
 def norm(v):
     return " ".join(("" if v is None else str(v)).split())
 
+# INFO is reachable only from a drain main-pass item (review-heal stated_severity(f), raw stated text);
+# Phase 4.5 heal_dismissed and Earned-Fallback items carry CODE_REVIEW_RESULT's closed BLOCKING|HIGH|MEDIUM|LOW.
 SEVS = ("BLOCKING", "HIGH", "MEDIUM", "LOW", "INFO")
 entries, seen = [], set()
 for origin, fname, block, key, round_key in (
