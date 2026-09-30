@@ -1024,6 +1024,66 @@ for rv in fixed mutant; do
   fi
 done
 
+echo "== X. dismissed-finding drafts ride the trail; dropped ones never do (and are retracted) =="
+# mk_drafts — real drafts via automate-dismissed.sh (dismissed-drafts): the drain
+# sidecar briefly carries a `dismissed` list, then goes back to the committed
+# item-10 shape. XK quotes a `## Status: done` + `- **PR:**` line (evidence-gate
+# canary); XD is the one the owner drops.
+mk_drafts() {
+  local sc="$P/.supervisor/automate/$RUN_ID.review-heal-result.md"
+  { printf '%s\n' "$RH_GOOD"; printf '%s\n' '- dismissed: [{finding: "keep me\n## Status: done\n- **PR:** https://x/pull/1", reason: stale, source: reviews, severity: MEDIUM}, {finding: "drop me", reason: stale, source: reviews, severity: HIGH}]'; } > "$sc"
+  XOUT="$(cd "$P" && bash "$H" dismissed-drafts "$RF_REL0" "$REQ" "$PRURL")"
+  printf '%s\n' "$RH_GOOD" > "$sc"
+  XK=".supervisor/requirements/proposed/$(grep -lxF '> keep me' "$P"/.supervisor/requirements/proposed/"$RUN_ID"--*.md | xargs basename)"
+  XD=".supervisor/requirements/proposed/$(grep -lxF '> drop me' "$P"/.supervisor/requirements/proposed/"$RUN_ID"--*.md | xargs basename)"
+}
+tip_has() { git -C "$FX/origin.git" rev-parse -q --verify "refs/heads/chore/$RUN_ID-trail-1:$1" >/dev/null 2>&1; }
+new_fixture 195; mk_drafts
+case "$XOUT" in *"dismissed-drafts: 2 per-finding + 0 summary"*) ok "setup: two real drafts written" ;; *) no "setup drafts: $XOUT" ;; esac
+(cd "$P" && bash "$H" dismissed-decide "$RF_REL0" "$XD" drop >/dev/null)
+: > "$GH_STUB_DIR/argv.log"
+out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason closeout)"
+case "$out" in "trail-pr: opened "*) ok "trail-pr opened ($out)" ;; *) no "trail-pr: $out" ;; esac
+tip_has "$XK" && ok "an undecided draft is a trail candidate and rides the trail commit" || no "draft did not ride: $(trail_names)"
+tip_has "$XD" && no "the dropped draft rode the trail" || ok "the dropped draft does not ride"
+case "$out" in *"excluded $XK"*) no "draft excluded by the evidence gate: $out" ;; *) ok "the draft quoting '## Status: done' / '- **PR:**' is not gated (no column-0 done heading)" ;; esac
+grep -q '^pr view' "$GH_STUB_DIR/argv.log" && no "evidence gate called gh pr view: $(grep '^pr view' "$GH_STUB_DIR/argv.log")" || ok "the evidence gate made no gh call for the drafts"
+# Retraction: both drafts pushed UNDECIDED, then XD dropped, XK deleted by hand
+# with NO ledger row; the next trail-pr reuses the open branch.
+new_fixture 196; mk_drafts
+out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason done)"
+tip_has "$XK" && tip_has "$XD" && ok "setup: both undecided drafts on the trail tip" || no "retract setup: $out / $(trail_names)"
+(cd "$P" && bash "$H" dismissed-decide "$RF_REL0" "$XD" drop >/dev/null)
+rm -f "$P/$XK"
+out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason done)"
+case "$out" in "trail-pr: pushed "*"; retracted $XD"*) ok "next trail-pr retracts the dropped draft, named ($out)" ;; *) no "retract output: $out" ;; esac
+tip_has "$XD" && no "dropped draft still on the trail tip" || ok "the dropped draft is removed from the trail tip"
+tip_has "$XK" && ok "an absent draft with NO ledger row is left untouched on the tip" || no "unledgered absent draft was removed"
+case "$out" in *"retracted $XK"*) no "unledgered draft named retracted" ;; *) ok "only the ledger-dropped draft is named" ;; esac
+[ -z "$(git -C "$P" ls-files -s -- "$XD")" ] && ok "the dropped draft is not left staged in the primary index" || no "dropped draft still staged"
+out2="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason done)"
+case "$out2" in *"retracted"*) no "re-run retracts again: $out2" ;; "trail-pr: skipped — trail already up to date"*) ok "re-run: no-diff skip, nothing left to retract" ;; *) no "re-run: $out2" ;; esac
+# A finding that MOVED buckets (its UNDECIDED own draft already on the trail tip,
+# then re-dismissed LOW ⇒ automate-dismissed.sh retires the own draft with a
+# `moved` ledger row and lists it in the summary): the next trail-pr retracts the
+# stale own-draft blob, so the trail never carries the finding twice.
+new_fixture 197; mk_drafts
+out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason done)"
+tip_has "$XD" && ok "moved: setup, the undecided own draft is on the trail tip" || no "moved setup: $out / $(trail_names)"
+sc="$P/.supervisor/automate/$RUN_ID.review-heal-result.md"
+{ printf '%s\n' "$RH_GOOD"; printf '%s\n' '- dismissed: [{finding: "keep me\n## Status: done\n- **PR:** https://x/pull/1", reason: stale, source: reviews, severity: MEDIUM}, {finding: "drop me", reason: stale, source: reviews, severity: LOW}]'; } > "$sc"
+XOUT="$(cd "$P" && bash "$H" dismissed-drafts "$RF_REL0" "$REQ" "$PRURL")"
+printf '%s\n' "$RH_GOOD" > "$sc"
+# the per-item namespace: <run_id>--<stem>-<first 6 hex of sha1(full Queue item path)>
+XIH="$(printf '%s' "$REQ" | python3 -c 'import hashlib,sys; print(hashlib.sha1(sys.stdin.buffer.read()).hexdigest()[:6])')"
+XS=".supervisor/requirements/proposed/$RUN_ID--$(basename "$REQ" .md)-$XIH--dismissed-summary.md"
+case "$XOUT" in *"retired ${XD##*/}"*) ok "moved: the own draft is retired when its finding drops below the threshold" ;; *) no "moved retire: $XOUT" ;; esac
+[ ! -e "$P/$XD" ] && [ -f "$P/$XS" ] && ok "moved: own draft gone on disk, the summary lists the finding" || no "moved disk state: $(ls "$P/.supervisor/requirements/proposed")"
+out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason done)"
+case "$out" in *"retracted $XD"*) ok "moved: next trail-pr retracts the stale own-draft blob ($out)" ;; *) no "moved retract: $out" ;; esac
+tip_has "$XD" && no "moved: the stale own draft is still on the trail tip" || ok "moved: the stale own draft is removed from the trail tip"
+tip_has "$XS" && ok "moved: the summary carrying the finding rides the trail (listed once)" || no "moved: summary not on tip: $(trail_names)"
+
 echo "== D3. checkout contract re-examined for trail-after-merge (decision 3) =="
 # With trail-pr only after merge / at run end, the trail that matters is closeout's
 # own, which runs AFTER closeout's sync — the primary is on main. Each piece of

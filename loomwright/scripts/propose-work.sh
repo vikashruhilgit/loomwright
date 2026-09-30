@@ -246,6 +246,11 @@ printf '%s\n' \
 '`.supervisor/floor/floor.json`. Each one states a pattern the ledger already records and' \
 'cites the entries it rests on. None of them has been decided on.' \
 '' \
+'A second writer shares this directory: `/automate`'"'"'s gate writes' \
+'`<run_id>--<item>-<ih6>--dismissed-*.md` drafts for dismissed review findings; same contract:' \
+'propose-only, never enqueued. Their owner decisions live in the run'"'"'s gitignored' \
+'`<run_id>.dismissed-decisions` ledger, not in an `evidence-set:` token.' \
+'' \
 '`.supervisor/requirements/proposed/` is deliberately NOT an `/automate --folder` target;' \
 'promotion is a human moving a file out of it.' \
 '' \

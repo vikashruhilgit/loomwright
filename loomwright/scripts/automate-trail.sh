@@ -245,6 +245,7 @@ EOF
 # gitignored) and the failing-sidecar exclusions into TRAIL_EXCLUDED. Shared by
 # trail-pr (what to commit) and, via _trail_owned, by trail-unstage and closeout.
 TRAIL_LEDGER=".supervisor/postmortem/results.jsonl"
+DRAFT_DIR=".supervisor/requirements/proposed"
 TRAIL_KEPT=""
 TRAIL_EXCLUDED=""
 _trail_candidates() {
@@ -286,6 +287,13 @@ EOF
     done
   fi
   [ -f "$TRAIL_LEDGER" ] && cands="$cands"$'\n'"$TRAIL_LEDGER"
+  # This run's dismissed-finding drafts (automate-dismissed.sh dismissed-drafts):
+  # propose-only requirement files with no done heading (every finding line is
+  # `> `-quoted), so the evidence gate never calls gh for them. A dropped /
+  # fix-now draft is deleted on disk and so is no longer a candidate.
+  for p in "$DRAFT_DIR/$run_id"--*--dismissed-*.md; do
+    [ -f "$p" ] && [ ! -L "$p" ] && cands="$cands"$'\n'"$p"
+  done
 
   # Drop gitignored candidates (this is how the ledger's repo-allowlist is honoured).
   TRAIL_KEPT=""
@@ -599,7 +607,43 @@ RETRACT
   fi
   excluded="$excluded$retracted"
 
-  if [ -z "$changed" ] && [ -z "$retract" ] && [ "$orphan" -eq 0 ]; then
+  # ---- retract a DROPPED dismissed draft from a REUSED (open or orphaned)
+  # trail branch: an undecided draft can ride a pushed trail commit (no ask
+  # under --non-interactive-fallback, at an --auto-merge MERGE, or when the
+  # watcher's closeout runs first). A path matching this run's draft glob that
+  # the branch TIP carries (or <run_id>.trail-staged records), that is ABSENT on
+  # disk, and whose <run_id>.dismissed-decisions last row reads drop / fix-now
+  # (or `moved`: an UNDECIDED draft automate-dismissed.sh retired because its
+  # finding moved to the other bucket — the finding rides in its new draft) is
+  # `git rm`'d from the tip and dropped from the primary index — named
+  # `; retracted <path>`. No ledger row ⇒ left alone (never guess). Never on a
+  # fresh branch cut from origin/<default>, and never when origin/<default>
+  # already carries the same blob (that draft is main's content: the owner's
+  # hand delete — see SKILL §6).
+  local dretract="" dretract_old="" dl dp dn dd
+  dl="$(dirname "$rf_rel")/$run_id.dismissed-decisions"
+  if [ "$base_ref" != "$origin_base" ] && [ -f "$dl" ]; then
+    while IFS= read -r dp; do
+      [ -n "$dp" ] || continue
+      case "$dp" in "$DRAFT_DIR/$run_id"--*--dismissed-*.md) ;; *) continue ;; esac
+      _in_list "$dp" "$dretract" && continue
+      [ -e "$dp" ] && continue
+      dn="${dp##*/}"
+      dd="$(awk -F'\t' -v n="$dn" '$1 == n { d = $2 } END { print d }' "$dl" 2>/dev/null)"
+      case "$dd" in drop|fix-now|moved) ;; *) continue ;; esac
+      rb="$(git rev-parse -q --verify "$base_ref:$dp" 2>/dev/null)"
+      [ -n "$rb" ] || continue
+      [ "$rb" = "$(git rev-parse -q --verify "$origin_base:$dp" 2>/dev/null)" ] && continue
+      dretract="${dretract:+$dretract$'\n'}$dp"
+      dretract_old="$dretract_old$dp"$'\t'"$rb"$'\n'
+      excluded="$excluded; retracted $dp"
+    done <<DRETRACT
+$(git ls-tree -r --name-only "$base_ref" -- "$DRAFT_DIR" 2>/dev/null)
+$([ -f "$rec" ] && cut -f1 "$rec" 2>/dev/null)
+DRETRACT
+  fi
+
+  if [ -z "$changed" ] && [ -z "$retract" ] && [ -z "$dretract" ] && [ "$orphan" -eq 0 ]; then
     # Nothing new to push, but an open trail branch still carries earlier pushes
     # whose index entries a PICK trail-unstage may have dropped: re-apply the
     # contract from that branch tip.
@@ -608,7 +652,7 @@ RETRACT
     echo "$skip_prefix trail already up to date$excluded"; return 0
   fi
 
-  if [ -n "$changed" ] || [ -n "$retract" ]; then
+  if [ -n "$changed" ] || [ -n "$retract" ] || [ -n "$dretract" ]; then
     TRAIL_WT="$TRAIL_TMP/wt"
     if ! git worktree add -q --detach "$TRAIL_WT" "$base_ref" >/dev/null 2>&1; then
       TRAIL_WT=""; trail_cleanup; trap - EXIT
@@ -633,6 +677,12 @@ EOF
     done <<RETRACT
 $retract
 RETRACT
+    while IFS= read -r p; do
+      [ -n "$p" ] || continue
+      git -C "$TRAIL_WT" rm -q --ignore-unmatch -- "$p" >/dev/null 2>&1
+    done <<DRETRACT
+$dretract
+DRETRACT
     if ! git -C "$TRAIL_WT" commit -q -m "$title" >/dev/null 2>&1; then
       trail_cleanup; trap - EXIT
       echo "$skip_prefix git commit failed$excluded"; return 0
@@ -654,7 +704,7 @@ RETRACT
       [ "$(git ls-files -s -- "$p" 2>/dev/null | awk 'NR==1{print $2}')" = "$rb" ] \
         && git restore --staged -- "$p" >/dev/null 2>&1
     done <<RETRACT
-$retract_old
+$retract_old$dretract_old
 RETRACT
   elif [ "$orphan" -eq 1 ]; then
     _stage_tip "$base_ref" "$origin_base" "$rec"
@@ -665,6 +715,8 @@ RETRACT
     pl="$(printf '%s\n' "${changed:-(no new commit; opening the PR for an already-pushed branch)}" | sed 's/^/- /')"
     [ -n "$retract" ] && pl="$pl
 $(printf '%s\n' "$retract" | sed 's/^/- retracted (done claim for unmerged work): /')"
+    [ -n "$dretract" ] && pl="$pl
+$(printf '%s\n' "$dretract" | sed 's/^/- retracted (dismissed draft dropped): /')"
     body="Run trail for \`/automate\` run \`$run_id\` (reason: \`$reason\`), committed by \`automate-trail.sh trail-pr\` from explicit paths only:
 
 $pl
