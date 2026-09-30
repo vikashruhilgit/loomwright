@@ -23,6 +23,22 @@
 #      remote ⇒ plain `git checkout main && git pull` succeeds with the live run
 #      file and the ledger's other-run lines surviving as local modifications.
 #   K. SKILL text — trail-pr precedes run-lock.sh release on every park path.
+#
+# Part B legs:
+#   C. closeout — squash-merged fixture PR (a new commit on origin/main, not the
+#      branch tip): the PR's worktree + local branch removed, an unrelated
+#      branch + worktree untouched, main fast-forwarded over trail-pr's staged
+#      paths, stamp + `- [x]` (never `# skipped: done`), trail-pr invoked via the
+#      dispatcher (spy) under the closeout lock; second run all `skipped`, no
+#      mutation/push; guards (tip != headRefOid, dirty worktree salvaged + kept,
+#      OPEN, primary dirty outside trail paths, gh absent, missing run file);
+#      RECONCILE re-entry (--session-id re-enters `automate:<run_id>`, which
+#      survives; without it ⇒ `skipped — run lock held`).
+#   W. merge watcher — OPEN → MERGED ⇒ one closeout + one notify (pid_source
+#      ppid in the lock meta), CLOSED ⇒ `gone` line + no cleanup, lifetime cap,
+#      single instance + TERM + dead-pid reclaim, marker gone on every exit.
+#   K. SKILL text (Part B) — watcher named, §6 step 1 closeout --session-id
+#      before PICK, decision-9 grep clean, commands/automate.md surface.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
