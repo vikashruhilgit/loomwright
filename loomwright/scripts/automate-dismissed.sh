@@ -48,7 +48,18 @@
 #       falls (a fix-now finding is never put in a summary), else a decided
 #       summary that listed it does; an undecided finding is placed by the
 #       threshold, and an UNDECIDED draft of it left in the other bucket is
-#       retired (`moved` ledger row, then removed; a `retired <name>` line).
+#       retired (`moved` ledger row, then removed; a `retired <name>` line) —
+#       only AFTER the finding's new draft was written in this pass (a refused
+#       write keeps the old draft, `kept <name> — …`), only while that old
+#       draft's on-disk `- **Decision:**` still starts with `undecided` (a
+#       hand-edited one is kept, `kept <name> — …`), and an undecided summary
+#       slot only when EVERY entry it lists is a current finding (one that
+#       vanished from the sidecars may have no other record — the slot stays
+#       and is asked about).
+#       LEDGER: missing ⇒ empty. EXISTING but unreadable (EACCES, a non-UTF-8
+#       byte, …) ⇒ ONE `dismissed-drafts: skipped — unreadable ledger <path>`
+#       line and nothing written, retired or appended (read as empty it would
+#       reset every decision and resurrect dropped drafts).
 #       The ledger decides what is (re)written: no row ⇒ written (deterministic,
 #       no timestamp, so an undecided re-run is byte-identical); `follow-up` ⇒
 #       kept as is, never rewritten or recreated; `drop` ⇒ never recreated;
@@ -62,7 +73,8 @@
 #       file written or kept, message lines (`dismissed-drafts: no <sidecar> —
 #       skipped`, `dismissed-drafts: unreadable <path>`, `dismissed-drafts:
 #       refused <name> — <reason>`, `dismissed-drafts: retired <name> — its
-#       finding moved to the other bucket`), then ONE summary line
+#       finding moved to the other bucket`, `dismissed-drafts: kept <name> — …`),
+#       then ONE summary line
 #       `dismissed-drafts: <n> per-finding + <s> summary (<m> listed in summary)`
 #       (s = summary files written or kept; m = current entries listed in one of
 #       them — an entry in a DROPPED summary is not counted; an above-threshold
@@ -70,7 +82,9 @@
 #   dismissed-decide <runfile> <draft_path> <fix-now|follow-up|drop>
 #       Refuses (`dismissed-decide: refused — <reason>`) a path that is not a
 #       regular file directly under `proposed/` named `<this run_id>--*--dismissed-*.md`,
-#       and `fix-now` on a summary draft (Keep / Drop only there).
+#       and `fix-now` on a summary draft (Keep / Drop only there), and any
+#       decision while the ledger EXISTS but cannot be read back (a row nobody
+#       can read is no record, and drop / fix-now delete the draft on it).
 #       Appends the ledger row FIRST (nothing is deleted without a record; for a
 #       summary, its `summary-member` rows precede it in the same append), then
 #       rewrites the draft's `- **Decision:**` line (follow-up) or deletes the
@@ -80,8 +94,8 @@
 #       Prints the count of this run's drafts whose first `- **Decision:**` value
 #       STARTS WITH `undecided` (so `undecided (fix-now unconfirmed)` counts), or
 #       `unknown` when it cannot tell — including a draft with no readable
-#       `- **Decision:**` value (the caller treats `unknown` as non-zero —
-#       fail closed toward asking).
+#       `- **Decision:**` value and an existing but unreadable ledger (the
+#       caller treats `unknown` as non-zero — fail closed toward asking).
 #
 # Finding text is DATA ONLY: python string I/O / `printf '%s'`, never eval, never
 # an unquoted expansion; every line of a finding is written `> `-prefixed inside
@@ -113,6 +127,18 @@ _repo_root() {
 }
 
 _ts() { date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown; }
+
+# _ledger_unreadable <path> — true (0) when the decision ledger EXISTS (or is a
+# dangling symlink) but cannot be read back as UTF-8 text (EACCES, a non-UTF-8
+# byte, a directory, no python3 to tell). A missing ledger is fine (false).
+_ledger_unreadable() {
+  { [ -e "$1" ] || [ -L "$1" ]; } || return 1
+  command -v python3 >/dev/null 2>&1 || return 0
+  python3 -c 'import sys
+with open(sys.argv[1], encoding="utf-8") as fh:
+    fh.read()' "$1" >/dev/null 2>&1 && return 1
+  return 0
+}
 
 # --------------------------------------------------------------------------- #
 # dismissed-drafts
@@ -177,6 +203,27 @@ def norm(v):
 # INFO is reachable only from a drain main-pass item (review-heal stated_severity(f), raw stated text);
 # Phase 4.5 heal_dismissed and Earned-Fallback items carry CODE_REVIEW_RESULT's closed BLOCKING|HIGH|MEDIUM|LOW.
 SEVS = ("BLOCKING", "HIGH", "MEDIUM", "LOW", "INFO")
+
+# The ledger FIRST. Missing ⇒ empty (no decision yet). EXISTING but unreadable
+# (EACCES, a non-UTF-8 byte, a directory, a dangling symlink) ⇒ abort the whole
+# pass: read as empty, every decision would look undecided, a dropped draft
+# would be resurrected and a `moved` row appended after a follow-up row would
+# make that reset permanent (last row wins) once the ledger is repaired.
+ledger, members = {}, {}
+if os.path.lexists(ledger_path):
+    try:
+        with open(ledger_path, encoding="utf-8") as fh:
+            ledger_lines = fh.read().split("\n")
+    except Exception:
+        print("abort\tdismissed-drafts: skipped — unreadable ledger %s" % one_line(ledger_path).replace("\t", " "))
+        sys.exit(0)
+    for line in ledger_lines:
+        parts = line.split("\t")
+        if len(parts) >= 3 and parts[0] == "summary-member":
+            members.setdefault(parts[2], set()).add(parts[1])
+        elif len(parts) >= 2 and parts[0]:
+            ledger[parts[0]] = parts[1]
+
 entries, seen = [], set()
 for origin, fname, block, key, round_key in (
     ("phase_4_5", run_id + ".supervisor-result.md", "SUPERVISOR_RESULT", "heal_dismissed", "heal_iterations"),
@@ -225,18 +272,6 @@ for origin, fname, block, key, round_key in (
         own = sev in ("BLOCKING", "HIGH", "MEDIUM") or reason == "pre_existing" or (sev == "" and reason != "nit")
         entries.append(dict(origin=origin, source=source, reason=reason, sev=sev,
                             finding=finding, h8=h8, own=own, round=rnd or "unknown"))
-
-ledger, members = {}, {}
-try:
-    with open(ledger_path, encoding="utf-8") as fh:
-        for line in fh:
-            parts = line.rstrip("\n").split("\t")
-            if len(parts) >= 3 and parts[0] == "summary-member":
-                members.setdefault(parts[2], set()).add(parts[1])
-            elif len(parts) >= 2 and parts[0]:
-                ledger[parts[0]] = parts[1]
-except Exception:
-    pass
 
 DECISIONS = ("follow-up", "drop", "fix-now", "fix-now-unconfirmed")
 def decided(name):
@@ -313,15 +348,19 @@ def render_summary(rest):
     return "\n".join(lines) + "\n"
 
 # Manifest rows are 7 TAB columns, never an empty one (bash `read` collapses
-# consecutive TABs): kind k sev name src ledger_row listed_count.
+# consecutive TABs): kind k sev name src ledger_row listed_count. For a `retire`
+# row, src is the `/`-joined list of draft names that must be WRITTEN in this
+# pass before the retire may run (`-` = none; `/` never occurs in a draft name).
+# plan() returns True when it emitted a write directive.
 def plan(name, content, kind, sev, decision_row=None, listed=0):
     if foreign(name):
         emit("msg", "dismissed-drafts: refused %s — it belongs to another item (its Item line differs or is missing), left untouched" % name)
-        return
+        return False
     fn = os.path.join(tmp, "c%d" % len(out))
     with open(fn, "w", encoding="utf-8") as fh:
         fh.write(content)
     emit("write", kind, sev or "-", name, fn, decision_row or "-", str(listed))
+    return True
 
 # DECISIONS ARE PER FINDING, ACROSS BUCKETS. h8 omits severity, so a rewritten
 # sidecar can move one finding between its OWN draft and a summary (e.g. the
@@ -371,37 +410,48 @@ def on_disk(name):
     p = os.path.join(prop_dir, name)
     return os.path.isfile(p) and not os.path.islink(p)
 
-k, kept_slot, to_summary = 0, {}, []
+# home[h8] — where the finding lives after this pass: a draft name this pass
+# writes (a retire of its old draft waits on that write), "" (a decision or a
+# kept follow-up covers it — no new draft needed), or None (its new draft was
+# refused here — nothing of it may be retired).
+k, kept_slot, to_summary, home, own_retires = 0, {}, [], {}, []
 for e in [x for x in entries if x["own"]] + [x for x in entries if not x["own"]]:
     name = own_name(e)
     d = decided(name)
     if e["own"] or d is not None:
         k += 1
     if d is not None:
+        home[e["h8"]] = ""
         if d == "fix-now-unconfirmed":
-            plan(name, render_one(e, "undecided (fix-now unconfirmed)"), str(k), e["sev"])
+            home[e["h8"]] = name if plan(name, render_one(e, "undecided (fix-now unconfirmed)"), str(k), e["sev"]) else None
         elif d == "fix-now" and e["origin"] == "drain" and after_fix_now:
-            plan(name, render_one(e, "undecided (fix-now unconfirmed)"), str(k), e["sev"], "fix-now-unconfirmed")
+            home[e["h8"]] = name if plan(name, render_one(e, "undecided (fix-now unconfirmed)"), str(k), e["sev"], "fix-now-unconfirmed") else None
         elif d == "follow-up":
             emit("keep", str(k), e["sev"] or "-", name, "-", "-", "0")
         # drop / fix-now (phase_4_5, or no re-drain yet) ⇒ never recreated
         continue
     snm, sd = inherited(e["h8"])
     if snm is not None:
+        home[e["h8"]] = ""
         if sd == "follow-up":
             kept_slot[snm] = kept_slot.get(snm, 0) + 1
         continue  # drop ⇒ never recreated, in either bucket
     if e["own"]:
-        plan(name, render_one(e, "undecided"), str(k), e["sev"])
+        home[e["h8"]] = name if plan(name, render_one(e, "undecided"), str(k), e["sev"]) else None
     else:
         to_summary.append(e)
         if on_disk(name) and not foreign(name):
-            emit("retire", "-", "-", name, "-", "moved", "0")
+            own_retires.append(name)
 for nm, d, mem in decided_slots:
     if nm in kept_slot:
         emit("keep", "summary", "-", nm, "-", "-", str(kept_slot[nm]))
+# Every retire is emitted AFTER every write and names the write(s) it waits on:
+# the bash half runs it only once each of them succeeded (pc_guarded_write can
+# still refuse one), so a finding is never left with no draft.
 if to_summary:
-    plan(undecided_slot, render_summary(to_summary), "summary", "", None, len(to_summary))
+    if plan(undecided_slot, render_summary(to_summary), "summary", "", None, len(to_summary)):
+        for nm in own_retires:
+            emit("retire", "-", "-", nm, undecided_slot, "moved", "0")
 elif on_disk(undecided_slot) and not foreign(undecided_slot):
     keys = set()
     try:
@@ -412,16 +462,24 @@ elif on_disk(undecided_slot) and not foreign(undecided_slot):
                     keys.add(m.group(1))
     except Exception:
         keys = set()
-    # It lists a current finding now placed elsewhere and no current finding
-    # belongs in it — the same outcome as the in-place rewrite above, which also
-    # keeps only the current undecided set. No overlap with the current findings
-    # (e.g. both sidecars missing or unreadable) ⇒ left alone, never guess.
-    if keys & set(x["h8"] for x in entries):
-        emit("retire", "-", "-", undecided_slot, "-", "moved", "0")
+    # No current finding belongs in it. Retired ONLY when every entry it lists
+    # is a CURRENT finding with a home (a draft written in this pass, or a
+    # decision) — an entry absent from the current sidecars (vanished, or both
+    # sidecars missing / unreadable) may have no other record, so the slot is
+    # left on disk and asked about (fails toward asking; SKILL §6 honest limits).
+    cur = set(x["h8"] for x in entries)
+    if keys and keys <= cur and all(home.get(h) is not None for h in keys):
+        deps = sorted(set(home[h] for h in keys if home[h]))
+        emit("retire", "-", "-", undecided_slot, "/".join(deps) or "-", "moved", "0")
 print("\n".join(out))
 PY
   local prc=$?
   if [ "$prc" -ne 0 ]; then rm -rf "$tmp" 2>/dev/null; echo "$skip draft engine failed (python rc=$prc)"; return 0; fi
+  # An EXISTING but unreadable ledger: the engine emitted only an `abort` row.
+  # Write nothing, retire nothing, append no ledger row — ONE skipped line.
+  local abort_line
+  abort_line="$(awk -F'\t' '$1 == "abort" { print $2; exit }' "$manifest" 2>/dev/null)"
+  if [ -n "$abort_line" ]; then rm -rf "$tmp" 2>/dev/null; echo "$abort_line"; return 0; fi
 
   local out_dir="$root/.supervisor/requirements/proposed" out_abs=""
   if grep -q '^write' "$manifest" 2>/dev/null; then
@@ -432,7 +490,8 @@ PY
     out_abs="$(_abs_dir "$out_dir")"
   fi
 
-  local n=0 s=0 m=0 kind kname sev name src row cnt err tab=$'\t'
+  local n=0 s=0 m=0 kind kname sev name src row cnt err tab=$'\t' nl=$'\n'
+  local written="$nl" rest dep dep_ok v
   while IFS="$tab" read -r kind kname sev name src row cnt; do
     case "$cnt" in ''|*[!0-9]*) cnt=0 ;; esac
     case "$kind" in
@@ -440,8 +499,28 @@ PY
       retire)
         # An UNDECIDED draft whose finding the ledger/threshold now places in the
         # other bucket: the `moved` row FIRST (the trail retracts the blob by it),
-        # then the file. Only a regular file, never a symlink.
+        # then the file. Only a regular file, never a symlink. The engine emits
+        # every retire after every write; `src` names the write(s) it waits on —
+        # one that pc_guarded_write refused keeps the old draft (the finding is
+        # never left with no draft). A draft whose on-disk Decision value does
+        # not start with `undecided` (hand-edited) is kept too.
         if [ -n "$out_abs" ] && [ -f "$out_abs/$name" ] && [ ! -L "$out_abs/$name" ]; then
+          dep_ok=1; rest="$src"; [ "$rest" = "-" ] && rest=""
+          while [ -n "$rest" ]; do
+            dep="${rest%%/*}"
+            case "$rest" in */*) rest="${rest#*/}" ;; *) rest="" ;; esac
+            case "$written" in *"$nl$dep$nl"*) ;; *) dep_ok=0 ;; esac
+          done
+          if [ "$dep_ok" -ne 1 ]; then
+            printf 'dismissed-drafts: kept %s — the new draft for its finding was not written, not retired\n' "$name"
+            continue
+          fi
+          v="$(awk '/^- \*\*Decision:\*\* /{ sub(/^- \*\*Decision:\*\* /, ""); print; exit }' "$out_abs/$name" 2>/dev/null)"
+          case "$v" in
+            undecided*) ;;
+            *) printf 'dismissed-drafts: kept %s — its on-disk Decision is not undecided (hand-edited), not retired\n' "$name"
+               continue ;;
+          esac
           if printf '%s\t%s\t%s\n' "$name" moved "$(_ts)" >> "$ledger" 2>/dev/null; then
             rm -f -- "$out_abs/$name" 2>/dev/null
             printf 'dismissed-drafts: retired %s — its finding moved to the other bucket\n' "$name"
@@ -456,6 +535,7 @@ PY
         [ -n "$out_abs" ] || continue
         if err="$(pc_guarded_write "$out_abs" "$SELF" "$name" < "$src" 2>&1)"; then
           printf 'draft\t%s\t%s\t%s\n' "$kname" "$sev" "$out_abs/$name"
+          written="$written$name$nl"
           if [ "$kname" = summary ]; then s=$((s+1)); m=$((m+cnt)); else n=$((n+1)); fi
           [ "$row" != "-" ] && printf '%s\t%s\t%s\n' "$name" "$row" "$(_ts)" >> "$ledger" 2>/dev/null
         else
@@ -499,6 +579,10 @@ dismissed_decide() {
   fi
 
   local ledger="$rf_dir/$run_id.dismissed-decisions" f="$prop_abs/$name" snippet rows="" ts
+  # A row appended to a ledger that cannot be read back is no record at all
+  # (dismissed-drafts skips the whole pass on it), yet drop / fix-now would
+  # delete the draft on its strength — so refuse, touching nothing.
+  if _ledger_unreadable "$ledger"; then echo "$refuse unreadable ledger $ledger"; return 0; fi
   ts="$(_ts)"
   # A summary's decision covers exactly the entries it lists: one
   # `summary-member<TAB><h8><TAB><name>` row per `- **Key:**` line (script-written,
@@ -551,6 +635,9 @@ dismissed_pending() {
   run_id="$(basename "$runfile" .md)"
   root="$(_repo_root "$rf_dir")"
   if [ -z "$root" ]; then echo unknown; return 0; fi
+  # An existing but unreadable ledger ⇒ the drafts on disk may not reflect the
+  # decisions (dismissed-drafts skipped) ⇒ cannot tell (fail closed toward asking).
+  if _ledger_unreadable "$rf_dir/$run_id.dismissed-decisions"; then echo unknown; return 0; fi
   dir="$root/.supervisor/requirements/proposed"
   if [ ! -e "$dir" ]; then echo 0; return 0; fi
   if [ ! -d "$dir" ] || [ ! -r "$dir" ] || [ ! -x "$dir" ]; then echo unknown; return 0; fi

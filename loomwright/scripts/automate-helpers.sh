@@ -283,12 +283,15 @@ ceiling_check() {
   if [ -x "$reader" ] || [ -f "$reader" ]; then
     ledger_out="$(bash "$reader" "${args[@]}" 2>/dev/null || true)"
   fi
-  if [ -z "$ledger_out" ] || printf '%s' "$ledger_out" | grep -q 'LEDGER_UNREADABLE=1'; then
+  # Here-string / built-in regex, never `printf | grep -q` or `| head -1`: under
+  # `set -euo pipefail` an early-exiting reader (grep -q on its first match,
+  # head -1) can SIGPIPE the producer and fail the pipeline on a correct answer.
+  if [ -z "$ledger_out" ] || grep -q 'LEDGER_UNREADABLE=1' <<<"$ledger_out"; then
     echo "PARK: ledger_unreadable"
     return 0
   fi
-  local total
-  total="$(printf '%s' "$ledger_out" | grep -oE 'TOTAL=[0-9]+' | head -1 | cut -d= -f2)"
+  local total="" re_total='TOTAL=([0-9]+)'
+  if [[ "$ledger_out" =~ $re_total ]]; then total="${BASH_REMATCH[1]}"; fi
   if [ -z "$total" ]; then
     echo "PARK: ledger_unreadable"
     return 0

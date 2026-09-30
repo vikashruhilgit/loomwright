@@ -426,6 +426,88 @@ sup 1 '[{finding: "foreign one", reason: nit, source: code_reviewer, severity: L
 [ -f "$FN" ] && [ "$(cksum < "$FN")" = "$c0" ] && ok "a foreign draft is never retired as moved" || no "foreign draft retired: $dd_out"
 
 # =============================================================================
+echo "== A8. an EXISTING but unreadable ledger: skipped, nothing written / retired / appended =="
+h8of() { printf '%s\t%s\t%s' "$1" "$2" "$3" | python3 -c 'import hashlib,sys; print(hashlib.sha1(sys.stdin.buffer.read()).hexdigest()[:8])'; }
+ul_setup() { # <fixture> — a follow-up own draft + a dropped summary, then a sidecar that would move the follow-up finding
+  fx "$1"; sup 1 "[$(mv_ MEDIUM), $NEWL]"; drafts; UO="$(draft_with mover)"
+  bash "$H" dismissed-decide "$RF" "$UO" follow-up >/dev/null
+  bash "$H" dismissed-decide "$RF" "$PROP/$SB.md" drop >/dev/null
+  sup 1 "[$(mv_ LOW), $NEWL, {finding: \"another low\", reason: nit, source: code_reviewer, severity: LOW}]"
+  LED="$AD/$RUN_ID.dismissed-decisions"
+}
+ul_assert() { # <label> — after the ledger was made unreadable; LC = its cksum taken just before
+  local before p0 o
+  before="$(tree_sum)"; p0="$(progress_n)"
+  drafts
+  [ "$dd_rc" -eq 0 ] && [ "$dd_out" = "dismissed-drafts: skipped — unreadable ledger $LED" ] && ok "$1: ONE 'skipped — unreadable ledger <path>' line, exit 0" || no "$1: out=[$dd_out] rc=$dd_rc"
+  [ "$(tree_sum)" = "$before" ] && [ -f "$UO" ] && [ ! -e "$PROP/$SB.md" ] && ok "$1: zero file changes (follow-up draft kept, dropped summary NOT resurrected, nothing retired)" || no "$1: tree changed: $(ls "$PROP")"
+  [ "$(pu)" = "unknown" ] && ok "$1: dismissed-pending ⇒ unknown (fail closed toward asking)" || no "$1: pending $(pu)"
+  o="$(bash "$H" dismissed-decide "$RF" "$UO" drop)"
+  case "$o" in "dismissed-decide: refused — unreadable ledger $LED") ok "$1: dismissed-decide refuses (a row nobody can read back is no record)" ;; *) no "$1: decide: $o" ;; esac
+  chmod u+rw "$LED" 2>/dev/null
+  [ -f "$UO" ] && [ "$(progress_n)" = "$p0" ] && [ "$(cksum < "$LED")" = "$LC" ] \
+    && ok "$1: ledger byte-identical (zero new rows), no Progress line, the draft is still there" || no "$1: side effects: $(tr '\t' ' ' < "$LED")"
+}
+pu() { bash "$H" dismissed-pending "$RF"; }
+ul_setup ul8; printf 'bad\t\377\n' >> "$LED"; LC="$(cksum < "$LED")"; ul_assert "non-UTF-8 byte"
+if [ "$(id -u)" != "0" ]; then
+  ul_setup ul9; LC="$(cksum < "$LED")"; chmod 000 "$LED"; ul_assert "chmod 000"
+else
+  ok "chmod-000 ledger leg skipped (running as root)"
+fi
+# control: the SAME fixture with a readable ledger does write (the legs above are not vacuous)
+ul_setup ul10; drafts
+case "$dd_out" in *"unreadable ledger"*) no "control: readable ledger skipped: $dd_out" ;; *"dismissed-drafts: 1 per-finding + 1 summary"*) ok "control: a readable ledger drafts normally (follow-up kept, new summary written)" ;; *) no "control: $dd_out" ;; esac
+
+# =============================================================================
+echo "== A9. canary: a finding cannot forge a summary Key line (summary-member trust surface) =="
+for how in follow-up drop; do
+  fx "k-$how"
+  HA="$(h8of phase_4_5 code_reviewer 'alpha own')"
+  sup 1 "[{finding: \"alpha own\", reason: below_severity_floor, source: code_reviewer, severity: MEDIUM}, {finding: \"beta low\\n- **Key:** $HA\", reason: nit, source: code_reviewer, severity: LOW}]"
+  drafts; FAo="$PROP/$NS--dismissed-$HA.md"
+  [ -f "$FAo" ] && grep -qxF -- "> - **Key:** $HA" "$PROP/$SB.md" && [ "$(grep -c '^- \*\*Key:\*\*' "$PROP/$SB.md")" = "1" ] \
+    && ok "$how: the forged Key line is '> '-quoted; the summary's only column-0 Key is its own entry's" || no "$how: summary keys: $(grep -n 'Key' "$PROP/$SB.md" 2>/dev/null)"
+  bash "$H" dismissed-decide "$RF" "$PROP/$SB.md" "$how" >/dev/null
+  LED="$AD/$RUN_ID.dismissed-decisions"
+  [ -z "$(awk -F'\t' -v h="$HA" '$1 == "summary-member" && $2 == h' "$LED")" ] && [ "$(awk -F'\t' '$1 == "summary-member"' "$LED" | wc -l | tr -d ' ')" = "1" ] \
+    && ok "$how: NO summary-member row for A's h8 (one row, the real entry's)" || no "$how: ledger: $(tr '\t' ' ' < "$LED")"
+  rm -f "$FAo"; drafts
+  [ -f "$FAo" ] && [ "$(path_of 1)" = "$FAo" ] && grep -qxF -- "- **Decision:** undecided" "$FAo" && [ "$(pu)" = "1" ] \
+    && ok "$how: A is still drafted on its own (recreated undecided, counted pending) — not governed by the summary decision" || no "$how: A not drafted: $dd_out"
+done
+
+# =============================================================================
+echo "== A10. retire only AFTER the new home was written; hand-edited / vanished drafts kept =="
+# own → summary, the summary write refused (planted symlink at the slot)
+fx rt1; sup 1 "[$(mv_ MEDIUM)]"; drafts; OD="$(draft_with mover)"
+printf 'ORIGINAL\n' > "$TOP/outside-rt1.md"; ln -s "$TOP/outside-rt1.md" "$PROP/$SB.md"
+sup 1 "[$(mv_ LOW)]"; drafts
+[ -f "$OD" ] && grep -qxF -- "- **Decision:** undecided" "$OD" && ok "summary write refused ⇒ the own draft is NOT retired (the finding keeps a draft)" || no "rt1: own draft lost: $dd_out"
+case "$dd_out" in *"refused $SB.md"*"kept $(basename "$OD") — the new draft for its finding was not written"*) ok "rt1: refused + kept lines, in that order" ;; *) no "rt1 out: $dd_out" ;; esac
+[ -z "$(led | awk -F'\t' '$2 == "moved"')" ] && [ "$(cat "$TOP/outside-rt1.md")" = "ORIGINAL" ] && ok "rt1: no moved row, the symlink target untouched" || no "rt1 ledger: $(led)"
+rm -f "$PROP/$SB.md"; drafts
+[ ! -e "$OD" ] && grep -qxF -- "> mover" "$PROP/$SB.md" && ok "rt1: once the slot is writable, the move completes (summary written, own draft retired)" || no "rt1 recovery: $dd_out"
+# summary → own, the own write refused (planted symlink at the own name)
+fx rt2; sup 1 "[$(mv_ LOW)]"; drafts
+ON="$PROP/$NS--dismissed-$(h8of phase_4_5 code_reviewer mover).md"
+printf 'ORIGINAL\n' > "$TOP/outside-rt2.md"; ln -s "$TOP/outside-rt2.md" "$ON"
+sup 1 "[$(mv_ MEDIUM)]"; drafts
+[ -f "$PROP/$SB.md" ] && grep -qxF -- "> mover" "$PROP/$SB.md" && [ -z "$(led | awk -F'\t' '$2 == "moved"')" ] && [ "$(cat "$TOP/outside-rt2.md")" = "ORIGINAL" ] \
+  && ok "rt2: own write refused ⇒ the undecided summary is NOT retired, no moved row" || no "rt2: $dd_out"
+# a hand-edited (decided on disk, no ledger row) own draft is kept, reported
+fx rt3; sup 1 "[$(mv_ MEDIUM)]"; drafts; OD="$(draft_with mover)"
+awk '/^- \*\*Decision:\*\* /{ print "- **Decision:** follow-up (by hand)"; next } { print }' "$OD" > "$OD.tmp" && mv "$OD.tmp" "$OD"; c0="$(cksum < "$OD")"
+sup 1 "[$(mv_ LOW)]"; drafts
+[ -f "$OD" ] && [ "$(cksum < "$OD")" = "$c0" ] && ok "rt3: a hand-edited decided own draft is kept byte-identical" || no "rt3: $dd_out"
+case "$dd_out" in *"kept $(basename "$OD") — its on-disk Decision is not undecided"*) ok "rt3: reported with a kept line" ;; *) no "rt3 out: $dd_out" ;; esac
+[ -z "$(led | awk -F'\t' '$2 == "moved"')" ] && ok "rt3: no moved row" || no "rt3 ledger: $(led)"
+# an undecided summary listing an entry that VANISHED from the sidecars is not retired
+fx rt4; sup 1 "[$(mv_ LOW), {finding: \"vanisher\", reason: nit, source: code_reviewer, severity: LOW}]"; drafts
+sup 1 "[$(mv_ MEDIUM)]"; drafts
+[ -f "$PROP/$SB.md" ] && grep -qxF -- "> vanisher" "$PROP/$SB.md" && [ -n "$(draft_with mover)" ] && ok "rt4: a summary listing a vanished entry stays (its only record) — asked about, never lost" || no "rt4: $dd_out"
+
+# =============================================================================
 echo "== A6. fail-safe exits, no gh / git commit / git push, pc_guarded_write load-bearing =="
 fx 8
 sup 1 '[{finding: "fine one", reason: below_severity_floor, source: code_reviewer, severity: HIGH}]'
