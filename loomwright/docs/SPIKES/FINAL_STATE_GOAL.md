@@ -29,13 +29,13 @@ that activates above a stated bound; default to the cheap path below it.
 
 | # | Decision | Consequence |
 |---|---|---|
-| D1 | **The SDK runner is the chosen substrate, not an experiment.** "If it's not working, we fix it" — no more GO/NO-GO framing. The arm-3 CUT stands as an honest eval record of an unfinished artifact; both blockers are already fixed (PR #111, merged). | Fix it forward; re-run arm 3 as a second row. Never delete `sdk-spike/`. |
-| D2 | **End state is a standalone application** wrapped around the SDK runner (post-SDK completion). The plugin's judgment layers (Twin, lessons, rules, review lenses) ride on top of it. | Ports-and-adapters: 82% of scripts are already vendor-neutral; the runner replaces the prompt-orchestration core. |
+| D1 | **The SDK runner is the chosen substrate, not an experiment.** "If it's not working, we fix it" — no more GO/NO-GO framing. The arm-3 CUT stands as an honest eval record of an unfinished artifact; both blockers are already fixed (PR #111, merged). | Fix it forward; re-run arm 3 as a second row. Never delete `sdk-spike/`. **Amended 2026-09-30 → D1′:** the runner is the Claude adapter's optional runner, not the substrate — see §"D1/D2 amendment (2026-09-30)" below. |
+| D2 | **End state is a standalone application** wrapped around the SDK runner (post-SDK completion). The plugin's judgment layers (Twin, lessons, rules, review lenses) ride on top of it. | Ports-and-adapters: 82% of scripts are already vendor-neutral; the runner replaces the prompt-orchestration core. **Amended 2026-09-30 → D2′:** the end state is a harness-neutral core, not an app wrapped around the SDK runner — see §"D1/D2 amendment (2026-09-30)" below. |
 | D3 | **Single-agent is the default; fan-out is the exception** and needs a stated reason (file conflict, exceeds one context, genuine parallelism). Sizing intelligence lives at **Launch Pad/Orchestrator** (they decide subtask count today — verified; Supervisor only executes). | Fix 1(a)(b)(c). Kills the 6.4×. |
 | D4 | **Two review lenses, not four+ passes.** Keep Phase 4.5 (sees working tree + brief + rubric) and CI review (independent context). Per-subtask review dies with D3; the drain becomes heal-only (its channel-draining role is NOT duplicative — it heals CI findings). **SHIPPED 2026-07-30 in v15.18.0 — amended, not deviated:** "the drain becomes heal-only" landed as **heal-only by default PLUS an evidence-gated "Earned Fallback Review"** (`skills/review-heal/SKILL.md` §"Until-Mergeable Mode"), not an unconditional cut. Reason for the amendment: the live verification this decision itself called for (see Execution order item 4) found PR #117 (a workflow-touching PR) got a `claude-review` check green in 14s with **zero** posted comments — `claude-code-action` self-skips on any workflow-touching PR and still exits 0 — so an unconditional heal-only cut would have left such a PR with exactly ONE LLM lens, the opposite of this decision's intent. The fallback runs at most one diff review per drain run, only when no review-producing lens has actually posted (read from the issue-comment channel, never `--json reviews`), fails CLOSED toward running the review. Per-subtask review dying with D3 shipped as planned, unconditionally. | Fix 7 + 4b. Checks must be *earned*, never repeated by default. |
 | D5 | **One writer for progress state, and it is a hook.** `state.md` becomes derived from the append-only log; the five other prompt-instructed mechanisms are deleted, not deprecated. (Measured: 560 hook events vs 6 agent events; state.md lied about a fully-merged job.) | Fix 3. Read-side guard already shipped (PR #110). |
-| D6 | **Workers get shared context + explicit lanes.** Launch Pad's file-impact analysis is handed to workers as a per-job digest instead of thrown away; each worker gets explicit file-ownership boundaries so it cannot impact siblings' work. Cold-start re-acquisition is where the 6.4× goes. | New work; the SDK runner is the natural carrier (it composes each spawn's prompt). |
-| D7 | **Session-start token floor gets attacked via the SDK**, plus 4c (unify `tools:` lists — 13 distinct lists = zero shared cache prefix) and 4f (route skills instead of preloading; note the documented "refresh guarantee" rationale must be argued, not ignored). **4f SHIPPED 2026-07-31 in v15.19.0** (see execution-order item 07) — the refresh-guarantee rationale was argued rather than discarded: it is preserved at Phase 4 as a genuine second Read, with Phase 2 PLAN now the first load. **4c REMAINS OPEN** — deferred to its own PR; record at `.supervisor/requirements/final-state/12-4c-unified-tools-lists.md`. | Composed per-spawn prompts replace 14 static ones. |
+| D6 | **Workers get shared context + explicit lanes.** Launch Pad's file-impact analysis is handed to workers as a per-job digest instead of thrown away; each worker gets explicit file-ownership boundaries so it cannot impact siblings' work. Cold-start re-acquisition is where the 6.4× goes. | New work; the SDK runner is the natural carrier (it composes each spawn's prompt). **Amended 2026-09-30:** the carrier is whichever runner executes — the per-spawn composition must live in scripts any runner (or the plugin itself) can call; see §"D1/D2 amendment (2026-09-30)". |
+| D7 | **Session-start token floor gets attacked via the SDK**, plus 4c (unify `tools:` lists — 13 distinct lists = zero shared cache prefix) and 4f (route skills instead of preloading; note the documented "refresh guarantee" rationale must be argued, not ignored). **4f SHIPPED 2026-07-31 in v15.19.0** (see execution-order item 07) — the refresh-guarantee rationale was argued rather than discarded: it is preserved at Phase 4 as a genuine second Read, with Phase 2 PLAN now the first load. **4c REMAINS OPEN** — deferred to its own PR; record at `.supervisor/requirements/final-state/12-4c-unified-tools-lists.md`. | Composed per-spawn prompts replace 14 static ones. **Amended 2026-09-30:** "via the SDK" now reads "via composed per-spawn prompts, whichever runner uses them" — see §"D1/D2 amendment (2026-09-30)". |
 | D8 | **Everything generated must be verifiably current.** Brief staleness measured by **churn over the anticipated file set, never elapsed time** (4g: Launch Pad stamps base commit; preflight gains a **third** signal — SHIPPED v15.19.0. The original "4th" was inherited without checking the skill: `preflight-sync` §Protocol step 4 declared only TWO required signals (a)/(b), so the advisory churn signal is (c), the third). Derived-artifact freshness = twin-remediation item 06. | Data-freshness is a gate input, not a hope. |
 | D9 | **Memory/CLAUDE.md curation is `/dreaming`'s job.** Store curation shipped (v15.14.0: supersede/retract/decay flags). **CLAUDE.md diet** = twin-remediation item 04, extended so `/dreaming` proposes CLAUDE.md prunes as human-gated candidates. | ~~Nothing auto-deletes; flag-only remains the rule.~~ **Amended 2026-08-17** — split by regenerability; see §"D9 amendment (2026-08-17)" directly below the table. |
 | D10 | **Centralized user identity: parked** ("maybe later"). Recorded so it isn't re-proposed as urgent. | No work now. |
@@ -105,6 +105,76 @@ and deliberately left unedited. `README.md`'s one matching line is a frozen hist
 quote (left per the frozen-example-value convention). The only surface that carried the blanket
 form as a *live rule* was this D9 row itself.
 
+### D1/D2 amendment (2026-09-30) — the SDK runner is the Claude adapter, not the substrate
+
+Amended per this file's own rule (cite new evidence, amend, never silently rewrite), after the
+2026-09-30 flow-level Claude-coupling audit and vendor re-verification. Trigger: the owner's
+direction to make the plugin agent-agnostic. The owner approved this amendment in-session.
+
+**Original decisions (struck, kept for the record):**
+- D1: ~~"The SDK runner is the chosen substrate, not an experiment."~~
+- D2: ~~"End state is a standalone application wrapped around the SDK runner … the runner replaces
+  the prompt-orchestration core."~~
+
+**New evidence (none of it existed on 2026-07-28):**
+1. **The industry converged on the Claude plugin format.** Verified 2026-09-30 from official docs
+   and, for Grok Build, its open-source code (`xai-org/grok-build`, `main` as of 2026-09-29):
+   xAI Grok Build, GitHub Copilot CLI and OpenAI Codex all read `.claude-plugin` manifests and/or
+   marketplaces, accept Claude hook event names and decision shapes, and provide
+   Claude Code's plugin-root variable. Grok Build and Copilot CLI also read Claude's project agents
+   directory. The plugin layer is
+   therefore the most portable artifact Loomwright has. `@anthropic-ai/claude-agent-sdk` runs Claude
+   models only, so making it the core would move the least portable layer to the centre.
+2. **What the runner was for has harness-neutral fixes.**
+   - Completion certainty → a completion file protocol.
+   - Hook payload differences between tools → one payload converter.
+   - D6/D7 composed per-spawn prompts → prompt assembly in scripts any host can call.
+
+   The runner's genuine value, orchestration as code rather than a prompt-driven poll loop, does
+   not need the SDK either. Every target CLI has a headless JSON mode (Claude Code's print mode, `grok -p`,
+   `codex exec`, `copilot -p`, `cursor-agent -p`), and the provider table under
+   `scripts/adapters/providers/` already prototypes driving them.
+3. **No outcome evidence for the SDK arm yet.** D1 itself records the arm-3 CUT, and no re-run row
+   has since shown the SDK runner beating prompt orchestration. D11 applies equally here: this
+   amendment has no eval behind it either.
+4. **Distribution cost.** A plugin runs on the user's own host login. An SDK-based runner
+   distributed to others needs its own credential model; the Loomwright Studio decision record
+   already notes the Agent SDK's restriction on third-party products offering claude.ai login.
+
+**Amended decisions:**
+- **D1′** — The SDK runner is the **Claude adapter's optional runner** (`--sdk-runner`, opt-in,
+  default OFF), not the substrate. Keep it working; do not expand it into the core. "Never delete
+  `sdk-spike/`" stands.
+- **D2′** — The end state is a **harness-neutral core**, made of three parts:
+  - the plugin in the Claude plugin format, now the de facto cross-vendor standard;
+  - the `.supervisor/` and `.agent/` file protocol;
+  - the script layer.
+
+  If deterministic code orchestration is still wanted, build it as a runner over **headless CLIs
+  through a provider table**, and only after a real second-harness probe (Grok Build first) shows
+  it is needed. Loomwright Studio (separate repo) may stay on the Agent SDK as a knowingly
+  Claude-bound product; it is not Loomwright's core.
+
+**Known cost of this choice:** a CLI-driven runner loses SDK-native typed messages, streaming
+control and structured output; among the target CLIs only Codex documents an output schema. The
+mitigation is result files validated by the plugin, which the completion file protocol builds
+anyway.
+
+**Downstream rows this touches:**
+- D6 and D7 now mean "the runner in use" rather than "the SDK runner", so per-spawn prompt
+  composition must live in scripts that any runner can use.
+- Target end-state item 2 and Execution-order items 8 and 10 are annotated accordingly.
+- D3–D5 and D8–D11 are unaffected.
+
+**Variant sweep (traced, not edited):** every other live surface that mentions the runner already
+describes it as EXPERIMENTAL, opt-in and quarantined, which is exactly D1′, so they were left
+unedited:
+- `agents/supervisor.md` §"`--sdk-runner` branch"
+- `skills/supervisor-config/SKILL.md`
+- `commands/supervisor.md`
+- `docs/POINTER_AUDIT.md`
+- `docs/IMPROVEMENTS_ROADMAP.md` item 11
+
 ---
 
 ## Target end-state (what "done" looks like)
@@ -113,7 +183,8 @@ form as a *live rule* was this D9 row itself.
    one integrated review + CI. Target: arm-1-like cost/wall-clock on tree-and-find re-run, keeping
    the plan review, PR, and doc-drift catch.
 2. **A large task earns its fan-out** past a stated threshold, executed by the **SDK runner** with
-   wave materialization, shared context digest, and per-worker file lanes.
+   wave materialization, shared context digest, and per-worker file lanes. *(Amended 2026-09-30:
+   "the runner in use", not necessarily the SDK runner — see §"D1/D2 amendment (2026-09-30)".)*
 3. **State never lies:** one hook writer, derived `state.md`, resume reconciled against git ground
    truth (already shipped) — and nothing left that *can* write the lie.
 4. **Two review lenses total**, each with different information; every additional pass must state
@@ -138,9 +209,9 @@ form as a *live rule* was this D9 row itself.
 | 5 | **Arm-3 re-run** on tree-and-find, same base `5df1ded`, second row (D1, D11); also fix Launch Pad id non-determinism | Fix 2 remainder |
 | 6 | **Fix 5** — one arm-2 run on corpus entry 3 (~$60) to learn whether the corpus can measure quality layers at all | Fix 5 |
 | 7 | **Fix 4f/4g/4c** — route-not-preload (**no precondition**; the former "after 4d" dependency was void — see below), staleness stamps (D8), unify tools lists (D7). **4f + 4g SHIPPED 2026-07-31 in v15.19.0** — all 7 preloaded skills routed out of `agents/supervisor.md` (measured 51814 → 21029 spawn-time weight; 3 replaced by phase-entry Reads, 4 removed outright), Launch Pad stamps `Base commit`, preflight-sync gains advisory-only signal (c). **4c REMAINS OPEN** — deferred to its own PR per this doc's own instruction; record at `.supervisor/requirements/final-state/12-4c-unified-tools-lists.md`. | Fix 4 |
-| 8 | **D6 worker context digest + lanes**, carried by the SDK runner | this file |
+| 8 | **D6 worker context digest + lanes**, carried by the SDK runner *(amended 2026-09-30: by the runner in use, composition in scripts — see §"D1/D2 amendment")* | this file |
 | 9 | **D9 CLAUDE.md diet via /dreaming** (twin-remediation 04) + remaining automate queue 03/05/06 | twin-remediation folder |
-| 10 | **D2 standalone app** — planned only after 5 proves the runner end-to-end | this file |
+| 10 | ~~**D2 standalone app** — planned only after 5 proves the runner end-to-end~~ **Superseded 2026-09-30 by D2′** (harness-neutral core; any code runner drives headless CLIs and is built only after a second-harness probe) — see §"D1/D2 amendment (2026-09-30)" | this file |
 
 **Load-bearing orderings:** Fix 1 before Fix 2/7 (if most runs collapse to one agent, both the
 runner's fan-out path and review pass 1 shrink — decide with that knowledge, not before).
