@@ -289,8 +289,11 @@ printf '#!/usr/bin/env bash\necho "$*" >> "%s/runlock.log"\n' "$SPY" > "$SPY/run
 out="$(cd "$P" && bash "$SPY/automate-trail.sh" trail-pr ".supervisor/automate/$RUN_ID.md" --reason limit_reached)"
 case "$out" in "trail-pr: opened "*) ok "spy copy ran trail-pr ($out)" ;; *) no "spy run: $out" ;; esac
 [ ! -f "$SPY/runlock.log" ] && ok "trail-pr never invokes run-lock.sh" || no "run-lock.sh was invoked"
-if grep -nE 'gh[^|]*pr merge|push[^\n]*(--force|-f( |$)|\+refs)' "$T" | grep -v '^[0-9]*:#' | grep -qv 'never'; then no "script contains merge/force-push"; else ok "script has no gh pr merge / force push"; fi
-if grep -nE '(^|[^a-z-])timeout |sed -i|stat -c|date -d' "$T" | grep -qv '^[0-9]*:#'; then no "GNU-only / timeout form in script"; else ok "no timeout / GNU-only forms"; fi
+code_lines="$(grep -vE '^[[:space:]]*#' "$T")"
+bad="$(grep -E 'pr merge|push[^#]*(--force|--force-with-lease| -f |[[:space:]]\+)' <<<"$code_lines")"
+[ -z "$bad" ] && ok "script has no gh pr merge / force push" || no "script contains merge/force-push: $bad"
+bad="$(grep -E '(^|[^a-z-])timeout |sed -i|stat -c|date -d' <<<"$code_lines")"
+[ -z "$bad" ] && ok "no timeout / GNU-only forms" || no "GNU-only / timeout form in script: $bad"
 bash -n "$T" && ok "bash -n automate-trail.sh" || no "bash -n failed"
 
 # gated mutant: explicit `git add -- <path>` → `git add -A` must make the stray file leak
