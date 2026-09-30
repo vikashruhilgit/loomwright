@@ -385,7 +385,7 @@ done
 new_fixture 23
 (cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason awaiting_merge >/dev/null)
 NC=".supervisor/jobs/done/brief-a.md"
-git -C "$P" diff --cached --name-only | grep -qxF "$NC" && ok "done brief staged by trail-pr" || no "done brief not staged"
+grep -qxF "$NC" < <(git -C "$P" diff --cached --name-only) && ok "done brief staged by trail-pr" || no "done brief not staged"
 printf '# Brief\n## Environment\n- **Source requirement:** .supervisor/requirements/zz.md\n' > "$P/$NC"
 case "$(cd "$P" && bash "$H" trail-unstage "$RF_REL0" >/dev/null; git -C "$P" diff --cached --name-only)" in *"$NC"*) no "recorded non-candidate brief left staged" ;; *) ok "brief re-pointed away is still unstaged (from the record)" ;; esac
 [ -z "$(git -C "$P" diff --cached --name-only)" ] && ok "trail-unstage cleared the recorded non-candidate path too" || no "left staged: $(git -C "$P" diff --cached --name-only | tr '\n' ' ')"
