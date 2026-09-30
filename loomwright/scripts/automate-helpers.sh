@@ -18,7 +18,10 @@
 # (outside the explicitly-stubbed `gate-eval` MERGE branch) never calls
 # `gh pr merge` — and `brief-repair`, whose only write is the brief lifecycle
 # move performed by `reconcile-jobs.sh --repair` under `.supervisor/jobs/`,
-# never a source-repo or git mutation. UNCOUNTED by the doc-currency gate (it is
+# never a source-repo or git mutation. The ONE carve-out: `trail-pr`/`closeout`/`trail-unstage`
+# (and the read-only `sidecar-check` beside them) are delegated to the sibling
+# `automate-trail.sh`, which is a git/`gh pr create` mutator bounded to this
+# run's trail branch and this PR's local branch/worktree — never `gh pr merge`. UNCOUNTED by the doc-currency gate (it is
 # a plain script, not an agent/command/skill/hook).
 #
 # Subcommands:
@@ -38,6 +41,10 @@
 #   learning-emit    <ledger_path> <flags...>           # §6 step 3 fail-safe (always exit 0) engine-native ground-truth POSTMORTEM_RESULT line; idempotent on run_id+item+pr_url+source+completeness (a degraded emit never blocks a later complete one)
 #   brief-repair     <item> <pr_url>                    # §6 steps 1/5 fail-safe (always exit 0) evidence-positive brief lifecycle repair: `gh pr view` says MERGED (or a non-empty mergedAt) ⇒ sibling reconcile-jobs.sh --repair --evidence <item>=<pr_url>; prints ONE line for ## Progress
 #   reconcile-status <requirements_root> [--apply]      # queue-hygiene/01: dry-run-default requirement `## Status:` reconciler — a `pending`/absent-status *.md under <requirements_root> (skips `00-*`, `_*`, `README*`, `operator-run/`) whose PR is MERGED (state via reconcile-item) and whose body cites the file's repo-relative path, OR whose head branch matches the slug on its `.supervisor/jobs/done/` brief, is stamped the §6 shape byte-for-byte; a `.supervisor/automate/*.md` Queue row carrying `# abandoned:` and naming a requirement stamps `done_with_escalation — ABANDONED (<row verbatim>)`; NEVER downgrades an existing `done`/`done_with_escalation`; prints one `plan\t…` row per file it WOULD stamp (or `stamped\t…` under `--apply`) plus one `info\t…` row per `brief-shipped` file (never promoted); writes nothing without `--apply`.
+#   sidecar-check    <path>                             # §6 trail: delegated to automate-trail.sh — `ok <path>` / `fail <path>: <reason>` (RESULT_SCHEMAS key-table shape check of a result sidecar); always exits 0
+#   trail-pr         <runfile> [--reason <park_reason>] # §6 "Trail PR at every park and at run end": delegated to automate-trail.sh — commits this run's explicit trail paths as ONE PR off fresh origin/main; one line (opened|pushed|skipped); always exits 0
+#   closeout         <runfile> <item> <pr_url> [--session-id <sid>]  # §6 post-merge close-out: delegated to automate-trail.sh; always exits 0
+#   trail-unstage    <runfile>                          # §6 step 1 PICK (before RUN): delegated to automate-trail.sh — drops the trail-path index entries trail-pr staged so the next item's commit cannot sweep them; one line; always exits 0
 #
 # Exit codes: 0 success; 1 generic failure; 2 abort (malformed pre-existing config, §7).
 # (learning-emit, brief-repair and reconcile-status are the fail-SAFE exceptions: they ALWAYS exit 0 — never die/abort.)
@@ -1734,6 +1741,9 @@ main() {
     learning-emit)   learning_emit "$@" ;;
     brief-repair)    brief_repair "$@" ;;
     reconcile-status) reconcile_status "$@" ;;
+    # Post-park lifecycle MUTATORS live in the sibling automate-trail.sh (the
+    # read-only carve-out named in the header) — one mover per concern.
+    sidecar-check|trail-pr|closeout|trail-unstage) exec bash "$(dirname "$0")/automate-trail.sh" "$cmd" "$@" ;;
     ""|-h|--help)
       grep -E '^#   [a-z]' "$0" | sed 's/^#   /  /'
       ;;
