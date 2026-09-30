@@ -9,12 +9,16 @@
 #   * `trail-pr` commits ONLY this run's explicit trail paths, from a temporary
 #     `git worktree` off fresh origin/<default branch> (or off this run's open
 #     trail branch), pushes ONLY to `chore/<run_id>-trail-<n>` (never forced),
-#     opens/reuses ONE PR via `gh pr create`, and stages the COMMITTED blobs in
-#     the primary checkout's index (see "Checkout contract" below).
+#     opens/reuses ONE PR via `gh pr create`, stages the COMMITTED blobs in
+#     the primary checkout's index (see "Checkout contract" below), and records
+#     them in the gitignored `<run_id>.trail-staged` beside the run file.
+#   * `trail-unstage` only drops this run's trail-path index entries
+#     (`git restore --staged -- <path>`); working copies are never touched.
 #   * `closeout` removes ONLY this PR's head-branch worktrees (clean after
 #     `worktree-salvage.sh`) and that local branch (`git branch -D`, only when
 #     its tip == the PR's headRefOid), switches the primary to the base branch
-#     and `git pull --ff-only`s it, appends the requirement stamp, checks the
+#     and `git pull --ff-only`s it (first re-staging the recorded trail blobs
+#     that landed upstream — index only), appends the requirement stamp, checks the
 #     Queue item off, and calls trail-pr. It NEVER commits in the primary.
 #   * Neither subcommand merges anything (the sole merge executor is `automate-helpers.sh
 #     gate-eval`, SKILL §11), trail-pr never calls `run-lock.sh` (closeout takes it around steps 3–7);
@@ -40,6 +44,11 @@
 #       (`closeout: <verb> — …`, brief-repair/trail-pr lines passed through);
 #       idempotent; steps 3–7 run under run-lock.sh (re-enters a PICK lock via
 #       --session-id; releases with --owner only).
+#   trail-unstage <runfile>
+#       One line: `trail-unstage: unstaged <n> path(s) — <paths>` |
+#       `trail-unstage: skipped — <reason>` (`nothing staged` when clean). Run at
+#       PICK, before RUN: drops the trail entries trail-pr staged so the next
+#       item's branch + commit cannot sweep them.
 #
 # CHECKOUT CONTRACT (decision 4 of the post-park-lifecycle brief, proved by the
 # post-merge-pull leg of test-automate-trail.sh): after a successful push,
@@ -49,9 +58,14 @@
 # fast-forwards over those paths (index == incoming blob), and bytes that exist
 # only locally BY DESIGN — Progress lines the live run file gained after the
 # push, other runs' postmortem ledger lines — survive as ordinary unstaged
-# modifications. Honest limits: a `git commit` made in the primary before the
-# trail PR merges also commits those staged entries; a trail PR closed unmerged
-# leaves them staged until `git restore --staged <path>`.
+# modifications. Those staged entries WOULD ride along in any commit made from
+# the primary index (`git checkout -b` carries them; a plain `git commit`
+# commits the whole index), so the loop runs `trail-unstage` at PICK, before
+# the next commit-producing phase, and `closeout` re-applies the contract at
+# its own pull for the recorded blobs that have landed upstream. Honest
+# limits: between a PICK and the next trail-pr, a HAND-run `git pull` over a
+# merged trail PR refuses (closeout's sync does not); a trail PR closed unmerged
+# leaves its entries staged until the next PICK's trail-unstage.
 #
 # Always exits 0 (a runtime side-effect emitter — CLAUDE.md §"Failure-Mode
 # Invariants"). bash 3.2 / BSD-userland safe. Seams: LOOMWRIGHT_GH_BIN,
@@ -389,13 +403,21 @@ EOF
       trail_cleanup; trap - EXIT
       echo "$skip_prefix git push to $branch failed$excluded"; return 0
     fi
-    # Checkout contract: stage the COMMITTED blob of each path in the primary index.
-    local ent mode_bits blob
+    # Checkout contract: stage the COMMITTED blob of each path in the primary index,
+    # and record it (path/mode/blob) in the run's trail-staged record — closeout
+    # re-stages a recorded blob that has LANDED upstream right before its pull,
+    # because trail-unstage (PICK) drops these index entries before the next
+    # commit-producing phase.
+    local ent mode_bits blob rec rec_line
+    rec="$(dirname "$rf_rel")/$run_id.trail-staged"
     while IFS= read -r p; do
       [ -n "$p" ] || continue
       ent="$(git -C "$TRAIL_WT" ls-tree HEAD -- "$p" 2>/dev/null)"
       mode_bits="${ent%% *}"; blob="$(printf '%s' "$ent" | awk '{print $3}')"
-      [ -n "$blob" ] && git update-index --add --cacheinfo "$mode_bits,$blob,$p" >/dev/null 2>&1
+      [ -n "$blob" ] || continue
+      git update-index --add --cacheinfo "$mode_bits,$blob,$p" >/dev/null 2>&1
+      rec_line="$(printf '%s\t%s\t%s' "$p" "$mode_bits" "$blob")"
+      grep -qxF -- "$rec_line" "$rec" 2>/dev/null || printf '%s\n' "$rec_line" >> "$rec" 2>/dev/null
     done <<EOF
 $changed
 EOF
@@ -425,6 +447,82 @@ The engine never merges this PR; a human does."
   fi
   trail_cleanup; trap - EXIT
   echo "trail-pr: $mode $url$excluded"
+  return 0
+}
+
+# --------------------------------------------------------------------------- #
+# trail-unstage
+# --------------------------------------------------------------------------- #
+# trail-unstage <runfile> — PICK-time (SKILL §6 step 1, after RECONCILE's
+# closeout, before RUN). Drops the index entries trail-pr staged under the
+# checkout contract (`git restore --staged -- <path>`, working copies untouched)
+# so the next item's `git checkout -b` + commit cannot sweep them into its PR.
+# Only this run's trail paths (+ its two sidecars) that differ from HEAD in the
+# index are touched. Safe to drop: the committed bytes live on the trail branch,
+# and trail-pr records them in `<run_id>.trail-staged`, from which closeout
+# re-stages a landed blob right before its pull. One line; always exit 0.
+trail_unstage() {
+  local runfile="${1:-}" S="trail-unstage: skipped —"
+  if [ -z "$runfile" ] || [ ! -f "$runfile" ]; then echo "$S run file not found"; return 0; fi
+  if ! command -v git >/dev/null 2>&1; then echo "$S git unavailable"; return 0; fi
+  local rf_dir rf_abs root rf_rel run_id
+  rf_dir="$(cd "$(dirname "$runfile")" 2>/dev/null && pwd -P)" || { echo "$S run file not found"; return 0; }
+  rf_abs="$rf_dir/$(basename "$runfile")"
+  root="$(git -C "$rf_dir" rev-parse --show-toplevel 2>/dev/null)"
+  if [ -z "$root" ]; then echo "$S not a git checkout"; return 0; fi
+  root="$(cd "$root" && pwd -P)"
+  case "$rf_abs" in "$root"/*) rf_rel="${rf_abs#"$root"/}" ;; *) echo "$S run file outside the checkout"; return 0 ;; esac
+  run_id="$(basename "$runfile" .md)"
+  cd "$root" || { echo "$S cannot enter checkout"; return 0; }
+  _trail_candidates "$rf_rel" "$run_id"
+  local sc_dir p paths="" staged="" n=0
+  sc_dir="$(dirname "$rf_rel")"
+  paths="$TRAIL_KEPT"$'\n'"$sc_dir/$run_id.review-heal-result.md"$'\n'"$sc_dir/$run_id.supervisor-result.md"
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    _in_list "$p" "$staged" && continue
+    [ -n "$(git diff --cached --name-only -- "$p" 2>/dev/null)" ] || continue
+    staged="${staged:+$staged$'\n'}$p"
+  done <<EOF
+$paths
+EOF
+  if [ -z "$staged" ]; then echo "$S nothing staged"; return 0; fi
+  local done_l="" fail_l=""
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    if git restore --staged -- "$p" >/dev/null 2>&1 && [ -z "$(git diff --cached --name-only -- "$p" 2>/dev/null)" ]; then
+      done_l="${done_l:+$done_l, }$p"; n=$((n + 1))
+    else
+      fail_l="${fail_l:+$fail_l, }$p"
+    fi
+  done <<EOF
+$staged
+EOF
+  if [ -n "$fail_l" ]; then
+    echo "trail-unstage: unstaged $n path(s)${done_l:+ — $done_l}; FAILED $fail_l"
+  else
+    echo "trail-unstage: unstaged $n path(s) — $done_l"
+  fi
+  return 0
+}
+
+# _restage_landed <record> <ref> — closeout step 4, immediately before the pull:
+# for each recorded trail blob (path/mode/blob, written by trail-pr) that <ref>
+# (the fetched origin/<base>) now carries at that path, and that HEAD does not,
+# set the index entry to that blob — the checkout contract, re-applied at the
+# one moment it is needed, only for bytes this run itself committed and that
+# have landed upstream. Never touches the working copy. Always returns 0.
+_restage_landed() {
+  local rec="$1" ref="$2" path mode blob up
+  [ -f "$rec" ] || return 0
+  while IFS=$'\t' read -r path mode blob; do
+    [ -n "$path" ] && [ -n "$blob" ] || continue
+    up="$(git rev-parse -q --verify "$ref:$path" 2>/dev/null)"
+    [ "$up" = "$blob" ] || continue
+    [ "$(git rev-parse -q --verify "HEAD:$path" 2>/dev/null)" = "$blob" ] && continue
+    [ "$(git ls-files -s -- "$path" 2>/dev/null | awk 'NR==1{print $2}')" = "$blob" ] && continue
+    git update-index --add --cacheinfo "$mode,$blob,$path" >/dev/null 2>&1
+  done < "$rec"
   return 0
 }
 
@@ -581,7 +679,8 @@ STATUS
     sy="$S already synced ($base_branch at origin/$base_branch)"
   elif [ "$cur" != "$base_branch" ] && ! git checkout -q "$base_branch" >/dev/null 2>&1; then
     sy="$S git checkout $base_branch refused"
-  elif ! git pull -q --ff-only origin "$base_branch" >/dev/null 2>&1; then
+  elif _restage_landed "$(dirname "$rf_rel")/$run_id.trail-staged" "refs/remotes/origin/$base_branch"
+       ! git pull -q --ff-only origin "$base_branch" >/dev/null 2>&1; then
     sy="$S git pull --ff-only refused (no reset attempted)"
   else
     sy="closeout: synced — $base_branch at $(git rev-parse --short HEAD 2>/dev/null)"; did=1
@@ -678,6 +777,7 @@ main() {
     sidecar-check) sidecar_check "$@" ;;
     trail-pr)      trail_pr "$@" ;;
     closeout)      closeout "$@" ;;
+    trail-unstage) trail_unstage "$@" ;;
     ""|-h|--help)  grep -E '^#   [a-z]' "$0" | sed 's/^#   /  /' ;;
     *) echo "automate-trail: unknown subcommand: $cmd" >&2 ;;
   esac

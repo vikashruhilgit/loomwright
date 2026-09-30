@@ -22,6 +22,10 @@
 #   M. post-merge pull (decision 4) — trail PR squash-merged into the fixture
 #      remote ⇒ plain `git checkout main && git pull` succeeds with the live run
 #      file and the ledger's other-run lines surviving as local modifications.
+#   U. PICK-time trail-unstage — after trail-pr the trail paths are staged and
+#      recorded (gitignored `<run_id>.trail-staged`); trail-unstage clears the
+#      index (working copies untouched), then `checkout -b` + `add new.txt` +
+#      plain `git commit` holds exactly new.txt; re-run / missing run file skip.
 #   K. SKILL text — trail-pr precedes run-lock.sh release on every park path.
 #
 # Part B legs:
@@ -33,10 +37,15 @@
 #      mutation/push; guards (tip != headRefOid, dirty worktree salvaged + kept,
 #      OPEN, primary dirty outside trail paths, gh absent, missing run file);
 #      RECONCILE re-entry (--session-id re-enters `automate:<run_id>`, which
-#      survives; without it ⇒ `skipped — run lock held`).
+#      survives; without it ⇒ `skipped — run lock held`). After a PICK
+#      un-stage over a merged trail PR, closeout's sync still fast-forwards (it
+#      re-stages the recorded landed blobs); a no-record control refuses.
 #   W. merge watcher — OPEN → MERGED ⇒ one closeout + one notify (pid_source
 #      ppid in the lock meta), CLOSED ⇒ `gone` line + no cleanup, lifetime cap,
-#      single instance + TERM + dead-pid reclaim, marker gone on every exit.
+#      single instance + TERM + dead-pid reclaim, marker gone on every exit;
+#      a transient `gh unavailable` closeout skip is retried (one successful
+#      closeout + one notify); a terminal guard skip ⇒ Progress line + failure
+#      notify, never the success notify.
 #   K. SKILL text (Part B) — watcher named, §6 step 1 closeout --session-id
 #      before PICK, decision-9 grep clean, commands/automate.md surface.
 
@@ -88,6 +97,10 @@ case "${1:-} ${2:-}" in
     jq -e --arg h "$key" '[.[] | select(.headRefName == $h or .url == $h)] | last' "$d/prs.json" || exit 1
     exit 0 ;;
   "pr merge") echo "MERGE_CALLED $*" >> "$d/merge.log"; exit 0 ;;
+  "auth status")
+    # auth-fail-once: one transient `gh auth status` failure (closeout's gh guard)
+    if [ -f "$d/auth-fail-once" ]; then rm -f "$d/auth-fail-once"; exit 1; fi
+    exit 0 ;;
 esac
 exit 0
 STUB
@@ -176,7 +189,7 @@ r="$(bash "$H" sidecar-check "$SD/absent.md")"; rc=$?
 # =============================================================================
 echo "== D. dispatcher =="
 helpout="$(bash "$H" --help)"
-for s in sidecar-check trail-pr closeout; do
+for s in sidecar-check trail-pr closeout trail-unstage; do
   if grep -q "^  $s " <<<"$helpout"; then ok "--help lists $s"; else no "--help missing $s"; fi
 done
 if grep -q 'delegated to the sibling' "$H" && grep -q '`automate-trail.sh`, which is a git/`gh pr create` mutator' "$H"; then
@@ -184,7 +197,7 @@ if grep -q 'delegated to the sibling' "$H" && grep -q '`automate-trail.sh`, whic
 else
   no "helper header carve-out sentence missing"
 fi
-if grep -qE 'sidecar-check\|trail-pr\|closeout\) exec bash "\$\(dirname "\$0"\)/automate-trail.sh"' "$H"; then ok "dispatcher exec row present"; else no "dispatcher row missing"; fi
+if grep -qE 'sidecar-check\|trail-pr\|closeout\|trail-unstage\) exec bash "\$\(dirname "\$0"\)/automate-trail.sh"' "$H"; then ok "dispatcher exec row present"; else no "dispatcher row missing"; fi
 
 # =============================================================================
 # fixture builder: bare origin + primary clone on a feature branch with trail state
@@ -250,6 +263,7 @@ count_creates() { grep -c '^pr create' "$GH_STUB_DIR/argv.log" 2>/dev/null || tr
 
 # =============================================================================
 echo "== T. trail-pr =="
+RF_REL0=".supervisor/automate/$RUN_ID.md"
 new_fixture 1
 out="$(cd "$P" && bash "$H" trail-pr ".supervisor/automate/$RUN_ID.md" --reason awaiting_merge)"; rc=$?
 lines="$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
@@ -292,6 +306,25 @@ pull_out="$(cd "$P" && git checkout -q main 2>&1 && git pull -q 2>&1)"; prc=$?
 grep -q 't2 later progress' "$P/.supervisor/automate/$RUN_ID.md" && ok "live run-file bytes survive" || no "run file lost local lines"
 grep -q 'other-run' "$P/.supervisor/postmortem/results.jsonl" && ok "other-run ledger lines survive locally" || no "ledger lost local lines"
 [ -f "$P/stray.txt" ] && ok "stray file untouched" || no "stray file removed"
+
+# =============================================================================
+echo "== U. PICK-time trail-unstage (the next item's commit carries no trail path) =="
+new_fixture 12
+(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason awaiting_merge >/dev/null)
+pre="$(git -C "$P" diff --cached --name-only)"
+[ -n "$pre" ] && ok "trail-pr left trail paths staged (the hazard this leg guards)" || no "nothing staged after trail-pr"
+[ -s "$P/.supervisor/automate/$RUN_ID.trail-staged" ] && ok "trail-pr recorded the staged blobs in <run_id>.trail-staged" || no "trail-staged record missing"
+git -C "$P" check-ignore -q ".supervisor/automate/$RUN_ID.trail-staged" && ok "the record is gitignored (not *.md)" || no "record not gitignored"
+out="$(cd "$P" && bash "$H" trail-unstage "$RF_REL0")"; rc=$?
+case "$out" in "trail-unstage: unstaged "*" path(s) — "*) ok "trail-unstage prints one unstaged line ($out)" ;; *) no "trail-unstage: $out" ;; esac
+[ "$rc" -eq 0 ] && [ -z "$(git -C "$P" diff --cached --name-only)" ] && ok "index clean after trail-unstage, exit 0" || no "still staged: $(git -C "$P" diff --cached --name-only | tr '\n' ' ')"
+[ -f "$P/$RF_REL0" ] && grep -q 't0 picked' "$P/$RF_REL0" && [ -f "$P/.supervisor/jobs/done/brief-a.md" ] && ok "working copies untouched" || no "trail-unstage touched working copies"
+names="$(cd "$P" && git checkout -q -b feature/next && echo n > new.txt && git add new.txt && git commit -qm next && git show --name-only --format= HEAD)"
+[ "$names" = "new.txt" ] && ok "next item's commit (checkout -b, add, plain commit) holds exactly new.txt" || no "next commit swept: [$names]"
+out="$(cd "$P" && bash "$H" trail-unstage "$RF_REL0")"
+[ "$out" = "trail-unstage: skipped — nothing staged" ] && ok "trail-unstage re-run: skipped — nothing staged" || no "re-run: $out"
+out="$(cd "$P" && bash "$H" trail-unstage ".supervisor/automate/nope.md")"; rc=$?
+[ "$out" = "trail-unstage: skipped — run file not found" ] && [ "$rc" -eq 0 ] && ok "missing run file ⇒ skipped, exit 0" || no "missing run file: $out"
 
 # =============================================================================
 echo "== T. fail-safe legs =="
@@ -339,7 +372,7 @@ fi
 # =============================================================================
 echo "== K. SKILL wiring =="
 grep -q '^### Trail PR at every park and at run end' "$SKILL" && ok "SKILL trail section present" || no "trail section missing"
-for s in sidecar-check trail-pr closeout; do
+for s in sidecar-check trail-pr closeout trail-unstage; do
   grep -qE "^\| \`$s\` \|" "$SKILL" && ok "§1.5 row $s" || no "§1.5 row $s missing"
 done
 # trail-pr precedes run-lock.sh release on the named lines
@@ -434,6 +467,29 @@ badl="$(printf '%s\n' "$out2" | grep -v 'skipped — ' || true)"
 [ "$before_rf" = "$(cksum < "$P/$RF_REL")" ] && [ "$before_req" = "$(cksum < "$P/$REQ")" ] && ok "AC11: run file + requirement unchanged" || no "AC11: second run mutated files"
 [ "$before_trail" = "$(git -C "$FX/origin.git" for-each-ref --format='%(objectname)' 'refs/heads/chore/*')" ] && [ "$creates_before" = "$(count_creates)" ] && ok "AC11: no push, no PR create on the second run" || no "AC11: second run pushed/created"
 grep -q '^pr merge' "$GH_STUB_DIR/argv.log" && no "gh pr merge called" || ok "closeout never calls gh pr merge"
+
+echo "== C. closeout after a PICK un-stage (decision 4 kept) =="
+# trail PR squash-merged, then trail-unstage (as PICK runs it), then the live
+# run file gains bytes: closeout's sync must still fast-forward — it re-stages
+# the recorded trail blobs that landed on origin/main right before its pull.
+for variant in record no-record; do
+  if [ "$variant" = record ]; then closeout_fixture 13; else closeout_fixture 14; fi
+  (cd "$P" && bash "$H" trail-pr "$RF_REL" --reason awaiting_merge >/dev/null)
+  TM="$FX/tmerger"; git clone -q "$FX/origin.git" "$TM" 2>/dev/null
+  ( cd "$TM" && git checkout -q main && git merge -q --squash "origin/chore/$RUN_ID-trail-1" >/dev/null && git commit -qm "squash trail" && git push -q origin main 2>/dev/null )
+  (cd "$P" && bash "$H" trail-unstage "$RF_REL" >/dev/null)
+  echo "- t9 live progress after the un-stage" >> "$P/$RF_REL"
+  [ "$variant" = no-record ] && rm -f "$P/.supervisor/automate/$RUN_ID.trail-staged"
+  out="$(run_closeout)"
+  if [ "$variant" = record ]; then
+    [ -z "$(printf '%s' "$out" | grep 'git pull --ff-only refused')" ] && case "$out" in *"closeout: synced — main at "*) true ;; *) false ;; esac \
+      && ok "after un-stage: closeout's sync fast-forwards over the merged trail" || no "after un-stage sync: $out"
+    [ "$(git -C "$P" rev-parse HEAD)" = "$(git -C "$FX/origin.git" rev-parse main)" ] && ok "after un-stage: primary main == origin/main" || no "after un-stage: main not synced"
+    grep -q 't9 live progress' "$P/$RF_REL" && grep -q 'other-run' "$P/.supervisor/postmortem/results.jsonl" && ok "after un-stage: live run-file bytes + other-run ledger lines survive" || no "after un-stage: local bytes lost"
+  else
+    case "$out" in *"closeout: skipped — git pull --ff-only refused"*) ok "control: without the record the same pull refuses (the re-stage is load-bearing)" ;; *) no "control did not refuse: $out" ;; esac
+  fi
+done
 
 echo "== C. closeout guards (AC10, AC11) =="
 closeout_fixture 5 "0000000000000000000000000000000000000000"
@@ -531,6 +587,35 @@ case "$out" in *"merge-watch: started pid="*) ok "dead-pid marker is reclaimed" 
 w_code="$(grep -vE '^[[:space:]]*#' "$HERE/automate-merge-watch.sh")"
 bad="$(grep -nE 'pr merge|/autonomous|(^|[^a-z-])timeout |setsid|sed -i|stat -c|date -d' <<<"$w_code" || true)"
 [ -z "$bad" ] && ok "watcher: no merge, no /autonomous, no timeout/setsid/GNU-only forms" || no "watcher forms: $bad"
+
+# transient gh failure inside closeout: fails once, then succeeds ⇒ exactly one
+# successful closeout + one notify (never a success notify for the guard skip)
+closeout_fixture 15
+spy_reset
+touch "$GH_STUB_DIR/auth-fail-once"
+wout="$(cd "$P" && LOOMWRIGHT_MERGE_WATCH_INTERVAL=0 LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=60 bash "$WATCH" "$RF_REL" "$REQ" "$PRURL" </dev/null 2>&1)"
+case "$wout" in *"closeout: skipped — gh unavailable"*"merge-watch: closeout did not run (gh unavailable) — retry in "*"merge-watch: closeout done"*) ok "W: gh unavailable ⇒ retried, then closeout done" ;; *) no "W transient: $wout" ;; esac
+[ "$(spy_count '^closeout ' "$SPYLOG")" = "2" ] && ok "W: two closeout calls (one guard skip + one real)" || no "W: closeout calls $(spy_count '^closeout ' "$SPYLOG")"
+[ "$(printf '%s\n' "$wout" | grep -c '^closeout: checked — ')" = "1" ] && grep -qxF -- "- [x] $REQ" "$P/$RF_REL" && ok "W: exactly one successful closeout (checked off once)" || no "W: successful closeout count"
+[ "$(spy_count notify "$SPYLOG.notify")" = "1" ] && [ "$(spy_count 'automate_merge_watch' "$SPYLOG.webhook")" = "1" ] && ok "W: exactly one notify" || no "W: notify count $(spy_count notify "$SPYLOG.notify")"
+
+# terminal guard skip: one Progress line + a failure notify, never the success notify
+closeout_fixture 16
+spy_reset
+TG="$TOP/tguard"; mkdir -p "$TG"
+cp "$WATCH" "$SPYD/notify-desktop.sh" "$SPYD/send-webhook.sh" "$TG/"
+cat > "$TG/automate-helpers.sh" <<'FAKE'
+#!/usr/bin/env bash
+echo "$*" >> "$SPYLOG"
+case "${1:-}" in
+  closeout) echo "closeout: skipped — not a git checkout" ;;
+  *) exec bash "$SPYD_REAL/automate-helpers.real.sh" "$@" ;;
+esac
+FAKE
+wout="$(cd "$P" && SPYD_REAL="$SPYD" LOOMWRIGHT_MERGE_WATCH_INTERVAL=0 LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=60 bash "$TG/automate-merge-watch.sh" "$RF_REL" "$REQ" "$PRURL" </dev/null 2>&1)"
+[ "$(spy_count '^closeout ' "$SPYLOG")" = "1" ] && case "$wout" in *"merge-watch: closeout skipped — not a git checkout"*) true ;; *) false ;; esac && ok "W: terminal guard ⇒ one closeout call, exit" || no "W terminal: $wout"
+grep -qE "^- .* merge-watch: closeout for $PRURL could not run — skipped: not a git checkout" "$P/$RF_REL" && ok "W: terminal guard ⇒ a Progress line naming it" || no "W terminal Progress line missing"
+[ "$(spy_count notify "$SPYLOG.notify")" = "1" ] && grep -q 'could not run' "$SPYLOG.webhook" && ! grep -q 'closeout ran' "$SPYLOG.webhook" && ok "W: terminal guard ⇒ failure notify, never the success notify" || no "W terminal notify: $(cat "$SPYLOG.webhook" 2>/dev/null)"
 
 echo "== K. SKILL wiring (Part B) =="
 grep -qF 'automate-merge-watch.sh' "$SKILL" && ok "SKILL names automate-merge-watch.sh" || no "SKILL lacks the watcher"

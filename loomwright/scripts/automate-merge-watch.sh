@@ -12,10 +12,17 @@
 # state` every LOOMWRIGHT_MERGE_WATCH_INTERVAL seconds (default 60), doubling
 # the wait on a gh error up to 900s and resetting on success.
 #   MERGED ⇒ `automate-helpers.sh closeout <runfile> <item> <pr_url>` (NO
-#            --session-id: it takes the run lock as `automate-closeout:<run_id>`;
-#            while closeout reports `skipped — run lock held` it is retried on a
-#            later poll, within the lifetime cap), then ONE notify
-#            (notify-desktop.sh + send-webhook.sh, both fail-safe), exit.
+#            --session-id: it takes the run lock as `automate-closeout:<run_id>`).
+#            Its output is classified, never assumed a success:
+#              - TRANSIENT (`skipped — run lock held`, `skipped — gh
+#                unavailable`, `skipped — pr not merged (…)` — the forge
+#                contradicting this watcher's own MERGED read — or no output):
+#                retried on a later poll with the gh-error backoff, within the
+#                lifetime cap;
+#              - any OTHER lone `closeout: skipped — …` guard line: terminal —
+#                one ## Progress line + a notify naming it, exit;
+#              - otherwise (closeout got past its guards): ONE success notify
+#                (notify-desktop.sh + send-webhook.sh, both fail-safe), exit.
 #   CLOSED ⇒ one `gone` ## Progress line + notify, exit — no cleanup (§4's
 #            `gone` rules stand).
 #   Lifetime cap LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS (default 259200 = 72h) ⇒
@@ -102,6 +109,7 @@ notify() {
 echo "merge-watch: started pid=$$ pr=$pr_url interval=${interval}s cap=${max}s"
 start="$(now)"
 wait_s="$interval"
+co_wait="$interval"
 while :; do
   if [ $(( $(now) - start )) -ge "$max" ]; then
     progress "lifetime cap (${max}s) reached watching $pr_url — stopped; run /automate --resume after the merge"
@@ -119,10 +127,31 @@ while :; do
   case "$state" in
     MERGED)
       out="$(bash "$HERE/automate-helpers.sh" closeout "$rf_abs" "$item" "$pr_url" 2>/dev/null)"
-      printf '%s\n' "$out"
+      [ -n "$out" ] && printf '%s\n' "$out"
+      guard=""
+      # A lone `closeout: skipped — …` line is a guard that stopped closeout
+      # before any step ran; the lock-held skip follows the brief-repair line.
+      if [ -n "$out" ] && [ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" = "1" ]; then
+        case "$out" in "closeout: skipped — "*) guard="${out#closeout: skipped — }" ;; esac
+      fi
+      why=""
       case "$out" in
-        *"skipped — run lock held"*) sleep "$interval"; continue ;;
+        "") why="no output" ;;
+        *"closeout: skipped — run lock held"*) why="run lock held" ;;
       esac
+      case "$guard" in "gh unavailable"|"pr not merged"*) why="$guard" ;; esac
+      if [ -n "$why" ]; then
+        # own backoff (the poll's wait_s resets on every successful gh read)
+        co_wait=$(( co_wait * 2 )); [ "$co_wait" -ge 1 ] || co_wait=1
+        [ "$co_wait" -le "$BACKOFF_CAP" ] || co_wait="$BACKOFF_CAP"
+        echo "merge-watch: closeout did not run ($why) — retry in ${co_wait}s"
+        sleep "$co_wait"; continue
+      fi
+      if [ -n "$guard" ]; then
+        progress "closeout for $pr_url could not run — skipped: $guard; run /automate --resume"
+        notify "$pr_url merged but /automate closeout could not run for $item (run $run_id): $guard"
+        echo "merge-watch: closeout skipped — $guard"; exit 0
+      fi
       notify "$pr_url merged — /automate closeout ran for $item (run $run_id); the next item waits for your go"
       echo "merge-watch: closeout done"; exit 0 ;;
     CLOSED)

@@ -18,7 +18,7 @@
 # (outside the explicitly-stubbed `gate-eval` MERGE branch) never calls
 # `gh pr merge` — and `brief-repair`, whose only write is the brief lifecycle
 # move performed by `reconcile-jobs.sh --repair` under `.supervisor/jobs/`,
-# never a source-repo or git mutation. The ONE carve-out: `trail-pr`/`closeout`
+# never a source-repo or git mutation. The ONE carve-out: `trail-pr`/`closeout`/`trail-unstage`
 # (and the read-only `sidecar-check` beside them) are delegated to the sibling
 # `automate-trail.sh`, which is a git/`gh pr create` mutator bounded to this
 # run's trail branch and this PR's local branch/worktree — never `gh pr merge`. UNCOUNTED by the doc-currency gate (it is
@@ -44,6 +44,7 @@
 #   sidecar-check    <path>                             # §6 trail: delegated to automate-trail.sh — `ok <path>` / `fail <path>: <reason>` (RESULT_SCHEMAS key-table shape check of a result sidecar); always exits 0
 #   trail-pr         <runfile> [--reason <park_reason>] # §6 "Trail PR at every park and at run end": delegated to automate-trail.sh — commits this run's explicit trail paths as ONE PR off fresh origin/main; one line (opened|pushed|skipped); always exits 0
 #   closeout         <runfile> <item> <pr_url> [--session-id <sid>]  # §6 post-merge close-out: delegated to automate-trail.sh; always exits 0
+#   trail-unstage    <runfile>                          # §6 step 1 PICK (before RUN): delegated to automate-trail.sh — drops the trail-path index entries trail-pr staged so the next item's commit cannot sweep them; one line; always exits 0
 #
 # Exit codes: 0 success; 1 generic failure; 2 abort (malformed pre-existing config, §7).
 # (learning-emit, brief-repair and reconcile-status are the fail-SAFE exceptions: they ALWAYS exit 0 — never die/abort.)
@@ -1742,7 +1743,7 @@ main() {
     reconcile-status) reconcile_status "$@" ;;
     # Post-park lifecycle MUTATORS live in the sibling automate-trail.sh (the
     # read-only carve-out named in the header) — one mover per concern.
-    sidecar-check|trail-pr|closeout) exec bash "$(dirname "$0")/automate-trail.sh" "$cmd" "$@" ;;
+    sidecar-check|trail-pr|closeout|trail-unstage) exec bash "$(dirname "$0")/automate-trail.sh" "$cmd" "$@" ;;
     ""|-h|--help)
       grep -E '^#   [a-z]' "$0" | sed 's/^#   /  /'
       ;;
