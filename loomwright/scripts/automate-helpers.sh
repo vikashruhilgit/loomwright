@@ -21,7 +21,10 @@
 # never a source-repo or git mutation. The ONE carve-out: `trail-pr`/`closeout`/`trail-unstage`
 # (and the read-only `sidecar-check` beside them) are delegated to the sibling
 # `automate-trail.sh`, which is a git/`gh pr create` mutator bounded to this
-# run's trail branch and this PR's local branch/worktree — never `gh pr merge`. UNCOUNTED by the doc-currency gate (it is
+# run's trail branch, this PR's local branch/worktree, and — in the primary
+# checkout — index-only entries for this run's own trail paths plus closeout's
+# `git checkout <base>` + `git pull --ff-only` sync (never a commit, reset or
+# stash there) — never `gh pr merge`. UNCOUNTED by the doc-currency gate (it is
 # a plain script, not an agent/command/skill/hook).
 #
 # Subcommands:

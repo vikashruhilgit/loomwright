@@ -15,9 +15,9 @@
 #     `<run_id>.trail-staged` beside the run file.
 #   * `trail-unstage` only drops this run's trail-path index entries
 #     (`git restore --staged -- <path>`); working copies are never touched.
-#   * `closeout` removes ONLY this PR's head-branch worktrees (clean after
-#     `worktree-salvage.sh`) and that local branch (`git branch -D`, only when
-#     its tip == the PR's headRefOid), switches the primary to the base branch
+#   * `closeout` removes ONLY this PR's head-branch worktrees (HEAD == the PR's
+#     headRefOid AND clean after `worktree-salvage.sh`) and that local branch
+#     (`git branch -D`, only when its tip == the PR's headRefOid), switches the primary to the base branch
 #     and `git pull --ff-only`s it (first re-staging the recorded trail blobs
 #     that landed upstream — index only), appends the requirement stamp, checks the
 #     Queue item off, and calls trail-pr. It NEVER commits in the primary.
@@ -71,7 +71,17 @@
 # union of the record and today's candidates. Honest limits: between a PICK and
 # the next trail-pr, a HAND-run `git pull` over a merged trail PR refuses
 # (closeout's sync does not); a trail PR closed unmerged leaves its entries
-# staged until the next PICK's trail-unstage.
+# staged until the next PICK's trail-unstage. The trail branch is NEVER
+# rebased: once origin/<default branch> moves the postmortem ledger (another
+# run's trail PR, a postmortem line) after this run's trail branch was cut, a
+# later push/no-diff re-park stages the trail-TIP ledger blob, which lacks
+# main's new line — the trail PR then conflicts at the ledger's EOF, and both a
+# hand pull and closeout's sync refuse (fail-safe: no reset, nothing lost);
+# resolve the trail PR by hand. When closeout's `git pull --ff-only` refuses,
+# the entries it re-staged are put back to their prior index state
+# (_restore_prior), so a refused sync leaves the index as it found it.
+# Queue-derived candidates are restricted to `.supervisor/requirements/**.md`:
+# a Queue item naming any other path is never committed by the trail.
 #
 # Always exits 0 (a runtime side-effect emitter — CLAUDE.md §"Failure-Mode
 # Invariants"). bash 3.2 / BSD-userland safe. Seams: LOOMWRIGHT_GH_BIN,
@@ -252,6 +262,9 @@ _trail_candidates() {
     [ -n "$item" ] || continue
     case "$item" in /*|*..*) continue ;; esac
     p="${item#./}"
+    # Only a requirement file is trail: a Queue item naming any other tracked
+    # path (a source file) would commit that file's local WIP into the trail PR.
+    case "$p" in .supervisor/requirements/*.md) ;; *) continue ;; esac
     [ -f "$p" ] && cands="$cands"$'\n'"$p"
   done <<EOF
 $queue
@@ -564,17 +577,48 @@ EOF
 # set the index entry to that blob — the checkout contract, re-applied at the
 # one moment it is needed, only for bytes this run itself committed and that
 # have landed upstream. Never touches the working copy. Always returns 0.
+# Every entry it overwrites is remembered in RESTAGE_PRIOR (path TAB mode TAB
+# blob, or path TAB - TAB - when the index had no stage-0 entry), so a refused
+# pull can put the index back exactly as it was (_restore_prior).
+RESTAGE_PRIOR=""
 _restage_landed() {
-  local rec="$1" ref="$2" path mode blob up
+  local rec="$1" ref="$2" path mode blob up prior tab=$'\t'
+  RESTAGE_PRIOR=""
   [ -f "$rec" ] || return 0
   while IFS=$'\t' read -r path mode blob; do
     [ -n "$path" ] && [ -n "$blob" ] || continue
     up="$(git rev-parse -q --verify "$ref:$path" 2>/dev/null)"
     [ "$up" = "$blob" ] || continue
     [ "$(git rev-parse -q --verify "HEAD:$path" 2>/dev/null)" = "$blob" ] && continue
-    [ "$(git ls-files -s -- "$path" 2>/dev/null | awk 'NR==1{print $2}')" = "$blob" ] && continue
-    git update-index --add --cacheinfo "$mode,$blob,$path" >/dev/null 2>&1
+    prior="$(git ls-files -s -- "$path" 2>/dev/null | awk '$3 == "0" {print $1 "\t" $2; exit}')"
+    [ -n "$prior" ] && [ "${prior#*"$tab"}" = "$blob" ] && continue
+    if git update-index --add --cacheinfo "$mode,$blob,$path" >/dev/null 2>&1; then
+      [ -n "$prior" ] || prior="-${tab}-"
+      RESTAGE_PRIOR="${RESTAGE_PRIOR:+$RESTAGE_PRIOR$'\n'}$path$tab$prior"
+    fi
   done < "$rec"
+  return 0
+}
+
+# _restore_prior — undo _restage_landed after a refused `git pull --ff-only`
+# (git refuses before it touches the index): each overwritten entry goes back
+# to its recorded mode/blob, and an entry that did not exist is dropped from
+# the index again (`--force-remove`, index only — the working copy is never
+# touched). Returns 0; prints nothing.
+_restore_prior() {
+  local path mode blob
+  [ -n "$RESTAGE_PRIOR" ] || return 0
+  while IFS=$'\t' read -r path mode blob; do
+    [ -n "$path" ] || continue
+    if [ "$mode" = "-" ]; then
+      git update-index --force-remove -- "$path" >/dev/null 2>&1
+    else
+      git update-index --cacheinfo "$mode,$blob,$path" >/dev/null 2>&1
+    fi
+  done <<EOF
+$RESTAGE_PRIOR
+EOF
+  RESTAGE_PRIOR=""
   return 0
 }
 
@@ -681,9 +725,19 @@ closeout() {
   else
     wt_list="$(git worktree list --porcelain 2>/dev/null | awk -v b="refs/heads/$head_ref" '
       /^worktree /{p=substr($0,10); n++} /^branch /{ if (n>1 && substr($0,8)==b) print p }')"
+    local wtip
     while IFS= read -r wt; do
       [ -n "$wt" ] || continue
       [ "$(cd "$wt" 2>/dev/null && pwd -P)" = "$root" ] && continue
+      # Same squash-safe tip check as 3b: `git worktree remove` (no --force)
+      # still deletes GITIGNORED content, which worktree-salvage.sh skips by
+      # design — so a worktree whose HEAD is not the merged head (a same-named
+      # branch reused for other work) is kept, never salvaged or removed.
+      wtip="$(git -C "$wt" rev-parse -q --verify HEAD 2>/dev/null)"
+      if [ "$wtip" != "$head_oid" ]; then
+        wkeep="${wkeep:+$wkeep, }$wt (tip ${wtip:0:12} != merged head ${head_oid:0:12})"
+        continue
+      fi
       salv="$(bash "$HERE/worktree-salvage.sh" "$wt" --reason "automate closeout" 2>/dev/null)"
       dirty="$(git -C "$wt" status --porcelain 2>/dev/null)"
       if [ -z "$dirty" ] && git worktree remove "$wt" >/dev/null 2>&1; then
@@ -739,6 +793,9 @@ STATUS
   # (`;`) — only the pull's status decides this branch.
   elif _restage_landed "$(dirname "$rf_rel")/$run_id.trail-staged" "refs/remotes/origin/$base_branch";
        ! git pull -q --ff-only origin "$base_branch" >/dev/null 2>&1; then
+    # A refused pull must not leave the re-staged trail blobs in the index
+    # (they would ride along in the next commit made from the primary).
+    _restore_prior
     sy="$S git pull --ff-only refused (no reset attempted)"
   else
     sy="closeout: synced — $base_branch at $(git rev-parse --short HEAD 2>/dev/null)"; did=1
