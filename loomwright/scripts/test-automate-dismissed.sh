@@ -23,6 +23,10 @@
 #       same-sidecar re-run byte-identical; changed-sidecar re-run loses nothing,
 #       resets nothing, resurrects nothing; duplicates ⇒ one draft per origin;
 #       dismissed-pending counts / `unknown`.
+#   A5s. a decided (follow-up / drop) summary + a changed sidecar with a new LOW ⇒
+#       a NEW undecided summary slot listing only the uncovered entry; counts
+#       reflect what is written/kept; idempotent re-run; one undecided slot;
+#       fix-now refused on a summary; a draft with no Decision line ⇒ `unknown`.
 #   A5f. fix-now: suppressed without --after-fix-now (crash/resume edge);
 #       drain-origin + --after-fix-now ⇒ `undecided (fix-now unconfirmed)` (counted
 #       by dismissed-pending's prefix match); phase_4_5-origin NOT re-drafted.
@@ -237,6 +241,49 @@ if [ "$(id -u)" != "0" ]; then
 else
   ok "dismissed-pending unreadable leg skipped (running as root)"
 fi
+
+# =============================================================================
+echo "== A5s. a decided summary never hides a below-threshold finding it did not list =="
+SB="$RUN_ID--01-a--dismissed-summary"
+L1='{finding: "low one", reason: below_severity_floor, source: code_reviewer, severity: LOW}'
+L2='{finding: "low two", reason: nit, source: red_team, severity: LOW}'
+L3='{finding: "low three", reason: below_severity_floor, source: code_reviewer, severity: INFO}'
+for how in follow-up drop; do
+  fx "s-$how"; sup 1 "[$L1]"; drafts
+  S0="$PROP/$SB.md"
+  grep -qE '^- \*\*Key:\*\* [0-9a-f]{8}$' "$S0" && ok "$how: summary entries carry a column-0 Key line" || no "$how: no Key line in summary"
+  bash "$H" dismissed-decide "$RF" "$S0" "$how" >/dev/null
+  [ "$(awk -F'\t' -v n="$SB.md" '$1=="summary-member" && $3==n' "$AD/$RUN_ID.dismissed-decisions" | wc -l | tr -d ' ')" = "1" ] && ok "$how: decide records one summary-member row for the one listed entry" || no "$how: ledger $(cat "$AD/$RUN_ID.dismissed-decisions")"
+  c0="$( [ -f "$S0" ] && cksum < "$S0")"
+  # the drain's fix-now re-pass (or any changed sidecar) adds a new LOW finding
+  sup 1 "[$L1, $L2]"; drafts
+  S2="$PROP/$SB-2.md"
+  if [ -f "$S2" ] && grep -qxF -- "> low two" "$S2" && ! grep -qxF -- "> low one" "$S2" && grep -qxF -- "- **Decision:** undecided" "$S2"; then ok "$how: the new LOW lands in a NEW undecided summary slot (summary-2), the decided entry is not repeated"; else no "$how: new LOW not tracked: $dd_out"; fi
+  if [ "$how" = follow-up ]; then
+    [ "$(cksum < "$S0")" = "$c0" ] && ok "follow-up: the decided summary is untouched" || no "follow-up: decided summary rewritten"
+    want="dismissed-drafts: 0 per-finding + 2 summary (2 listed in summary)"
+  else
+    [ ! -e "$S0" ] && ok "drop: the dropped summary is not resurrected" || no "drop: summary.md resurrected"
+    want="dismissed-drafts: 0 per-finding + 1 summary (1 listed in summary)"
+  fi
+  [ "$(printf '%s\n' "$dd_out" | tail -n1)" = "$want" ] && ok "$how: output counts only what is written/kept ($want)" || no "$how: counts: $(printf '%s\n' "$dd_out" | tail -n1)"
+  [ "$(bash "$H" dismissed-pending "$RF")" = "1" ] && ok "$how: dismissed-pending counts the new summary slot" || no "$how: pending $(bash "$H" dismissed-pending "$RF")"
+  before="$(tree_sum)"; l0="$(wc -l < "$AD/$RUN_ID.dismissed-decisions" | tr -d ' ')"; drafts
+  [ "$(tree_sum)" = "$before" ] && [ ! -e "$PROP/$SB-3.md" ] && [ "$(wc -l < "$AD/$RUN_ID.dismissed-decisions" | tr -d ' ')" = "$l0" ] && ok "$how: re-run is idempotent (no third summary, no ledger row)" || no "$how: re-run drift"
+  sup 1 "[$L1, $L2, $L3]"; drafts
+  grep -qxF -- "> low two" "$S2" && grep -qxF -- "> low three" "$S2" && [ ! -e "$PROP/$SB-3.md" ] && ok "$how: another new LOW joins the one UNDECIDED slot (never a second undecided summary)" || no "$how: undecided slot not reused"
+  bash "$H" dismissed-decide "$RF" "$S2" follow-up >/dev/null
+  sup 1 "[$L1, $L2, $L3, {finding: \"low four\", reason: nit, source: code_reviewer, severity: LOW}]"; drafts
+  [ -f "$PROP/$SB-3.md" ] && grep -qxF -- "> low four" "$PROP/$SB-3.md" && [ "$(grep -c '^### Entry' "$PROP/$SB-3.md")" = "1" ] && ok "$how: once summary-2 is decided too, the next new LOW opens summary-3 with only itself" || no "$how: summary-3: $dd_out"
+done
+# fix-now is refused on a summary draft (Keep / Drop only)
+fx s-fix; sup 1 "[$L1]"; drafts
+o="$(bash "$H" dismissed-decide "$RF" "$PROP/$SB.md" fix-now)"
+case "$o" in "dismissed-decide: refused — "*) ok "fix-now on a summary draft is refused" ;; *) no "fix-now on summary: $o" ;; esac
+[ -f "$PROP/$SB.md" ] && [ ! -e "$AD/$RUN_ID.dismissed-decisions" ] && ok "the refusal deletes nothing and writes no ledger row" || no "summary fix-now refusal side effects"
+# dismissed-pending: a this-run draft with no readable Decision line ⇒ unknown
+printf '# Dismissed finding: hand-edited\n\n## Status: proposed\n' > "$PROP/$RUN_ID--01-a--dismissed-deadbeef.md"
+[ "$(bash "$H" dismissed-pending "$RF")" = "unknown" ] && ok "dismissed-pending: a draft without a Decision line ⇒ unknown (fail closed)" || no "pending no-decision: $(bash "$H" dismissed-pending "$RF")"
 
 # =============================================================================
 echo "== A5f. fix-now: unconfirmed re-draft (drain only, --after-fix-now only) =="

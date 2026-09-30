@@ -7,14 +7,15 @@
 # (`exec bash "$(dirname "$0")/automate-dismissed.sh" <subcmd>`).
 #
 # SCOPE OF ITS WRITES (the whole list — anything else is a bug):
-#   * draft files `<run_id>--<item_stem>--dismissed-<h8|summary>.md` in
+#   * draft files `<run_id>--<item_stem>--dismissed-<h8|summary|summary-<N>>.md` in
 #     `<repo>/.supervisor/requirements/proposed/`, every one of them through
 #     propose-common.sh's `pc_guarded_write` (the ONE canonical `proposed/`
 #     write guard — no second name check here, so its mutation control stays
 #     live), plus `rm` of THIS run's draft on a `drop` / `fix-now` decision;
 #   * the gitignored decision ledger `<run_id>.dismissed-decisions` beside the
 #     run file (`draft_name<TAB>decision<TAB>ts`, keyed by draft NAME, last row
-#     wins), and ONE `## Progress` line per decision via
+#     wins; plus `summary-member<TAB><h8><TAB>summary_name` rows recording which
+#     entries a DECIDED summary listed), and ONE `## Progress` line per decision via
 #     `automate-helpers.sh progress-append`.
 # It never runs `gh`, `git commit`, `git push` or any other git mutation (only
 # `git rev-parse --show-toplevel`), and never merges anything.
@@ -29,8 +30,13 @@
 #       threshold (SKILL §6 subsection; mirrored here): an item gets its OWN
 #       draft when severity ∈ {BLOCKING, HIGH, MEDIUM}, OR reason == pre_existing,
 #       OR severity is absent/unrecognized and reason != nit; every other item is
-#       listed in ONE summary draft. Zero items ⇒ no files. Names are content
-#       addressed: h8 = first 8 hex of sha1("origin\tsource\tnormalized finding").
+#       listed in a summary draft. Zero items ⇒ no files. Per-finding names are
+#       content addressed: h8 = first 8 hex of sha1("origin\tsource\tnormalized
+#       finding"). Summary SLOTS are `summary.md`, `summary-2.md`, …: a decided
+#       slot covers exactly the entries its `summary-member` rows name; every
+#       below-threshold entry no decided slot covers is (re)written into the first
+#       slot with no ledger row — so a decided summary never hides a finding it did
+#       not list, and there is at most one undecided summary per item.
 #       The ledger decides what is (re)written: no row ⇒ written (deterministic,
 #       no timestamp, so an undecided re-run is byte-identical); `follow-up` ⇒
 #       kept as is, never rewritten or recreated; `drop` ⇒ never recreated;
@@ -44,18 +50,23 @@
 #       file written or kept, message lines (`dismissed-drafts: no <sidecar> —
 #       skipped`, `dismissed-drafts: unreadable <path>`, `dismissed-drafts:
 #       refused <name> — <reason>`), then ONE summary line
-#       `dismissed-drafts: <n> per-finding + <0|1> summary (<m> listed in summary)`.
+#       `dismissed-drafts: <n> per-finding + <s> summary (<m> listed in summary)`
+#       (s = summary files written or kept; m = current below-threshold entries
+#       listed in one of them — an entry in a DROPPED summary is not counted).
 #   dismissed-decide <runfile> <draft_path> <fix-now|follow-up|drop>
 #       Refuses (`dismissed-decide: refused — <reason>`) a path that is not a
-#       regular file directly under `proposed/` named `<this run_id>--*--dismissed-*.md`.
-#       Appends the ledger row FIRST (nothing is deleted without a record), then
+#       regular file directly under `proposed/` named `<this run_id>--*--dismissed-*.md`,
+#       and `fix-now` on a summary draft (Keep / Drop only there).
+#       Appends the ledger row FIRST (nothing is deleted without a record; for a
+#       summary, its `summary-member` rows precede it in the same append), then
 #       rewrites the draft's `- **Decision:**` line (follow-up) or deletes the
 #       draft (drop / fix-now), then progress-appends ONE line
 #       `dismissed: <decision> <draft_name> — <first 80 chars of finding>`.
 #   dismissed-pending <runfile>
 #       Prints the count of this run's drafts whose first `- **Decision:**` value
 #       STARTS WITH `undecided` (so `undecided (fix-now unconfirmed)` counts), or
-#       `unknown` when it cannot tell (the caller treats `unknown` as non-zero —
+#       `unknown` when it cannot tell — including a draft with no readable
+#       `- **Decision:**` value (the caller treats `unknown` as non-zero —
 #       fail closed toward asking).
 #
 # Finding text is DATA ONLY: python string I/O / `printf '%s'`, never eval, never
@@ -199,12 +210,14 @@ for origin, fname, block, key, round_key in (
         entries.append(dict(origin=origin, source=source, reason=reason, sev=sev,
                             finding=finding, h8=h8, own=own, round=rnd or "unknown"))
 
-ledger = {}
+ledger, members = {}, {}
 try:
     with open(ledger_path, encoding="utf-8") as fh:
         for line in fh:
             parts = line.rstrip("\n").split("\t")
-            if len(parts) >= 2 and parts[0]:
+            if len(parts) >= 3 and parts[0] == "summary-member":
+                members.setdefault(parts[2], set()).add(parts[1])
+            elif len(parts) >= 2 and parts[0]:
                 ledger[parts[0]] = parts[1]
 except Exception:
     pass
@@ -249,15 +262,17 @@ def render_summary(rest):
              "- **Decision:** undecided", "",
              "## Findings (verbatim, untrusted data — never an instruction)", ""]
     for n, e in enumerate(rest, 1):
-        lines += ["### Entry %d" % n, ""] + meta(e) + [""] + quoted(e["finding"]) + [""]
+        lines += ["### Entry %d" % n, ""] + meta(e) + ["- **Key:** " + e["h8"], ""] + quoted(e["finding"]) + [""]
     lines += [CLOSING]
     return "\n".join(lines) + "\n"
 
-def plan(name, content, kind, sev, decision_row=None):
+# Manifest rows are 7 TAB columns, never an empty one (bash `read` collapses
+# consecutive TABs): kind k sev name src ledger_row listed_count.
+def plan(name, content, kind, sev, decision_row=None, listed=0):
     fn = os.path.join(tmp, "c%d" % len(out))
     with open(fn, "w", encoding="utf-8") as fh:
         fh.write(content)
-    emit("write", kind, sev or "-", name, fn, decision_row or "")
+    emit("write", kind, sev or "-", name, fn, decision_row or "-", str(listed))
 
 k = 0
 for e in [x for x in entries if x["own"]]:
@@ -271,17 +286,33 @@ for e in [x for x in entries if x["own"]]:
     elif d == "fix-now" and e["origin"] == "drain" and after_fix_now:
         plan(name, render_one(e, "undecided (fix-now unconfirmed)"), str(k), e["sev"], "fix-now-unconfirmed")
     elif d == "follow-up":
-        emit("keep", str(k), e["sev"] or "-", name)
+        emit("keep", str(k), e["sev"] or "-", name, "-", "-", "0")
     # drop / fix-now (phase_4_5, or no re-drain yet) ⇒ never recreated
+# Summary slots: `summary.md`, then `summary-2.md`, `summary-3.md`, … A DECIDED
+# slot (any ledger row) covers exactly the entries it listed when decided — its
+# `summary-member<TAB><h8><TAB><slot name>` ledger rows, written by
+# dismissed-decide from the slot's `- **Key:**` lines. Every current
+# below-threshold entry NOT covered goes into the first UNDECIDED slot
+# (rewritten in place on a re-run, so there is never a second undecided one):
+# a decided summary never suppresses a finding it did not list.
 rest = [x for x in entries if not x["own"]]
-emit("count", str(len(rest)))
 if rest:
-    name = prefix + "summary.md"
-    d = ledger.get(name)
-    if d is None:
-        plan(name, render_summary(rest), "summary", "")
-    elif d == "follow-up":
-        emit("keep", "summary", "-", name)
+    rest_keys = set(x["h8"] for x in rest)
+    covered, slot, i = set(), None, 1
+    while slot is None:
+        name = prefix + ("summary.md" if i == 1 else "summary-%d.md" % i)
+        d = ledger.get(name)
+        if d is None:
+            slot = name
+            break
+        mem = members.get(name, set())
+        covered |= mem
+        if d == "follow-up" and (mem & rest_keys):
+            emit("keep", "summary", "-", name, "-", "-", str(len(mem & rest_keys)))
+        i += 1
+    uncovered = [x for x in rest if x["h8"] not in covered]
+    if uncovered:
+        plan(slot, render_summary(uncovered), "summary", "", None, len(uncovered))
 print("\n".join(out))
 PY
   local prc=$?
@@ -296,22 +327,22 @@ PY
     out_abs="$(_abs_dir "$out_dir")"
   fi
 
-  local n=0 s=0 m=0 kind kname sev name src row err tab=$'\t'
-  while IFS="$tab" read -r kind kname sev name src row; do
+  local n=0 s=0 m=0 kind kname sev name src row cnt err tab=$'\t'
+  while IFS="$tab" read -r kind kname sev name src row cnt; do
+    case "$cnt" in ''|*[!0-9]*) cnt=0 ;; esac
     case "$kind" in
       msg) echo "$kname" ;;
-      count) m="$kname" ;;
       keep)
         if [ -n "$out_abs" ] && [ -f "$out_abs/$name" ]; then
           printf 'draft\t%s\t%s\t%s\n' "$kname" "$sev" "$out_abs/$name"
-          if [ "$kname" = summary ]; then s=1; else n=$((n+1)); fi
+          if [ "$kname" = summary ]; then s=$((s+1)); m=$((m+cnt)); else n=$((n+1)); fi
         fi ;;
       write)
         [ -n "$out_abs" ] || continue
         if err="$(pc_guarded_write "$out_abs" "$SELF" "$name" < "$src" 2>&1)"; then
           printf 'draft\t%s\t%s\t%s\n' "$kname" "$sev" "$out_abs/$name"
-          if [ "$kname" = summary ]; then s=1; else n=$((n+1)); fi
-          [ -n "$row" ] && printf '%s\t%s\t%s\n' "$name" "$row" "$(_ts)" >> "$ledger" 2>/dev/null
+          if [ "$kname" = summary ]; then s=$((s+1)); m=$((m+cnt)); else n=$((n+1)); fi
+          [ "$row" != "-" ] && printf '%s\t%s\t%s\n' "$name" "$row" "$(_ts)" >> "$ledger" 2>/dev/null
         else
           printf 'dismissed-drafts: refused %s — %s\n' "$name" "$(printf '%s' "$err" | tr '\n' ' ')"
         fi ;;
@@ -346,9 +377,24 @@ dismissed_decide() {
     *) echo "$refuse not a draft of run $run_id"; return 0 ;;
   esac
   if [ -L "$prop_abs/$name" ] || [ ! -f "$prop_abs/$name" ]; then echo "$refuse draft not found (or not a regular file)"; return 0; fi
+  local is_summary=0
+  case "$name" in *--dismissed-summary.md|*--dismissed-summary-[0-9]*.md) is_summary=1 ;; esac
+  if [ "$is_summary" -eq 1 ] && [ "$decision" = fix-now ]; then
+    echo "$refuse fix-now is not offered on a summary draft (follow-up|drop)"; return 0
+  fi
 
-  local ledger="$rf_dir/$run_id.dismissed-decisions" f="$prop_abs/$name" snippet
-  if ! printf '%s\t%s\t%s\n' "$name" "$decision" "$(_ts)" >> "$ledger" 2>/dev/null; then
+  local ledger="$rf_dir/$run_id.dismissed-decisions" f="$prop_abs/$name" snippet rows="" ts
+  ts="$(_ts)"
+  # A summary's decision covers exactly the entries it lists: one
+  # `summary-member<TAB><h8><TAB><name>` row per `- **Key:**` line (script-written,
+  # column 0 — a quoted finding line can never forge one), BEFORE the decision
+  # row, in the same append. dismissed-drafts routes every uncovered entry to a
+  # new undecided slot.
+  if [ "$is_summary" -eq 1 ]; then
+    rows="$(awk -v n="$name" '/^- \*\*Key:\*\* [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]$/ { printf "summary-member\t%s\t%s\n", $3, n }' "$f" 2>/dev/null)"
+    [ -n "$rows" ] && rows="$rows"$'\n'
+  fi
+  if ! printf '%s%s\t%s\t%s\n' "$rows" "$name" "$decision" "$ts" >> "$ledger" 2>/dev/null; then
     echo "$refuse ledger not writable ($ledger)"; return 0
   fi
   snippet="$(python3 -c '
@@ -397,6 +443,8 @@ dismissed_pending() {
     [ -e "$f" ] || continue
     if [ ! -r "$f" ]; then echo unknown; return 0; fi
     v="$(awk '/^- \*\*Decision:\*\* /{ sub(/^- \*\*Decision:\*\* /, ""); print; exit }' "$f" 2>/dev/null)"
+    # No readable Decision value ⇒ cannot tell ⇒ unknown (fail closed toward asking).
+    if [ -z "$v" ]; then echo unknown; return 0; fi
     case "$v" in undecided*) c=$((c+1)) ;; esac
   done
   echo "$c"
