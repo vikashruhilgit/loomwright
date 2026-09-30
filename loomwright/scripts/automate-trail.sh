@@ -228,7 +228,7 @@ EOF
 # _trail_candidates <rf_rel> <run_id> — run from the checkout root. Computes this
 # run's trail paths (explicit; never -A / .) into TRAIL_KEPT (newline list, not
 # gitignored) and the failing-sidecar exclusions into TRAIL_EXCLUDED. Shared by
-# trail-pr (what to commit) and closeout (which dirty paths are "trail paths").
+# trail-pr (what to commit) and, via _trail_owned, by trail-unstage and closeout.
 TRAIL_LEDGER=".supervisor/postmortem/results.jsonl"
 TRAIL_KEPT=""
 TRAIL_EXCLUDED=""
@@ -280,6 +280,24 @@ EOF
 $cands
 EOF
 
+  return 0
+}
+
+# _trail_owned <rf_rel> <run_id> — run from the checkout root. The ONE
+# "is this dirty/staged path this run's own trail?" set, shared by trail-unstage
+# and closeout step 4: today's candidates (_trail_candidates → TRAIL_KEPT) ∪ the
+# run's two sidecar paths ∪ every path in `<run_id>.trail-staged` (written only
+# by _stage_tip from this run's own pushed trail tip). The record matters because
+# _stage_tip stages every merge-base..tip path, including ones no longer among
+# today's candidates (a sidecar now failing its check, a Queue item edited out).
+# Sets TRAIL_OWNED (newline list; also refreshes TRAIL_KEPT/TRAIL_EXCLUDED).
+TRAIL_OWNED=""
+_trail_owned() {
+  local rf_rel="$1" run_id="$2" sc_dir
+  sc_dir="$(dirname "$rf_rel")"
+  _trail_candidates "$rf_rel" "$run_id"
+  TRAIL_OWNED="$TRAIL_KEPT"$'\n'"$sc_dir/$run_id.review-heal-result.md"$'\n'"$sc_dir/$run_id.supervisor-result.md"
+  [ -f "$sc_dir/$run_id.trail-staged" ] && TRAIL_OWNED="$TRAIL_OWNED"$'\n'"$(cut -f1 "$sc_dir/$run_id.trail-staged" 2>/dev/null)"
   return 0
 }
 
@@ -509,14 +527,9 @@ trail_unstage() {
   case "$rf_abs" in "$root"/*) rf_rel="${rf_abs#"$root"/}" ;; *) echo "$S run file outside the checkout"; return 0 ;; esac
   run_id="$(basename "$runfile" .md)"
   cd "$root" || { echo "$S cannot enter checkout"; return 0; }
-  _trail_candidates "$rf_rel" "$run_id"
-  local sc_dir p paths="" staged="" n=0
-  sc_dir="$(dirname "$rf_rel")"
-  paths="$TRAIL_KEPT"$'\n'"$sc_dir/$run_id.review-heal-result.md"$'\n'"$sc_dir/$run_id.supervisor-result.md"
-  # + every path trail-pr ever staged for this run (its trail-staged record):
-  # a path no longer among today's candidates (a sidecar that now fails its
-  # check, a Queue item edited out) can still hold a staged trail blob.
-  [ -f "$sc_dir/$run_id.trail-staged" ] && paths="$paths"$'\n'"$(cut -f1 "$sc_dir/$run_id.trail-staged" 2>/dev/null)"
+  # Today's candidates ∪ sidecars ∪ the trail-staged record (_trail_owned).
+  _trail_owned "$rf_rel" "$run_id"
+  local p paths="$TRAIL_OWNED" staged="" n=0
   while IFS= read -r p; do
     [ -n "$p" ] || continue
     _in_list "$p" "$staged" && continue
@@ -691,18 +704,19 @@ WTLIST
   case "$wt_line" in "closeout: removed"*) did=1 ;; esac
 
   # ---- 4. sync the primary onto the base branch ------------------------------
-  # Trail paths (the SAME set trail-pr commits — including the ones it staged in
-  # this index under its checkout contract) never count as "uncommitted
+  # This run's own trail paths (_trail_owned — the SAME set trail-unstage
+  # drops: today's candidates ∪ sidecars ∪ every path _stage_tip staged in this
+  # index, recorded in `<run_id>.trail-staged`) never count as "uncommitted
   # changes"; anything else tracked and modified refuses the sync. Untracked
   # files do not refuse it (git itself refuses a pull that would overwrite one).
   local sy cur outside p
   cur="$(git symbolic-ref -q --short HEAD 2>/dev/null)"
-  _trail_candidates "$rf_rel" "$run_id"
+  _trail_owned "$rf_rel" "$run_id"
   outside=""
   while IFS= read -r p; do
     [ -n "$p" ] || continue
     p="${p:3}"; p="${p#\"}"; p="${p%\"}"
-    _in_list "$p" "$TRAIL_KEPT" || outside="${outside:+$outside, }$p"
+    _in_list "$p" "$TRAIL_OWNED" || outside="${outside:+$outside, }$p"
   done <<STATUS
 $(git status --porcelain --untracked-files=no 2>/dev/null)
 STATUS

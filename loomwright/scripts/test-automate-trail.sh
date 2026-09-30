@@ -582,6 +582,32 @@ for variant in record no-record; do
   fi
 done
 
+echo "== C. closeout: a self-staged trail path that is no longer a candidate =="
+# park1 commits a good review-heal sidecar → PICK trail-unstage → the sidecar is
+# rewritten and now FAILS sidecar-check → park2 pushes (sidecar excluded) but
+# _stage_tip re-stages its tip blob (AM). That entry is this run's own trail
+# (in the trail-staged record), so closeout's sync must not call it "outside";
+# a genuinely foreign modification in the same world must still refuse.
+SC=".supervisor/automate/$RUN_ID.review-heal-result.md"
+for variant in own foreign; do
+  if [ "$variant" = own ]; then closeout_fixture 15; else closeout_fixture 16; fi
+  (cd "$P" && bash "$H" trail-pr "$RF_REL" --reason awaiting_merge >/dev/null)
+  (cd "$P" && bash "$H" trail-unstage "$RF_REL" >/dev/null)
+  echo "not a result block" > "$P/$SC"
+  echo "- t5 parked again" >> "$P/$RF_REL"
+  out="$(cd "$P" && bash "$H" trail-pr "$RF_REL" --reason escalated)"
+  case "$out" in "trail-pr: pushed "*"excluded $SC"*) ok "[$variant] second park pushes with the sidecar excluded" ;; *) no "[$variant] second park: $out" ;; esac
+  case "$(git -C "$P" status --porcelain --untracked-files=no -- "$SC")" in "AM $SC") ok "[$variant] sidecar is self-staged (AM) from the trail tip" ;; *) no "[$variant] sidecar status: $(git -C "$P" status --porcelain -- "$SC")" ;; esac
+  [ "$variant" = foreign ] && ( cd "$P" && echo "foreign edit" > README )
+  out="$(run_closeout)"
+  if [ "$variant" = own ]; then
+    case "$out" in *"outside the trail paths"*) no "own: self-staged sidecar counted as outside: $out" ;; *"closeout: synced — main at "*) ok "own: closeout syncs over its own self-staged non-candidate sidecar" ;; *) no "own: sync line: $out" ;; esac
+    [ "$(git -C "$P" rev-parse HEAD)" = "$(git -C "$FX/origin.git" rev-parse main)" ] && ok "own: primary main == origin/main" || no "own: main not synced"
+  else
+    case "$out" in *"closeout: skipped — uncommitted changes outside the trail paths (README)"*) ok "foreign: a foreign modification still refuses, and only it is named" ;; *) no "foreign: $out" ;; esac
+  fi
+done
+
 echo "== C. closeout guards (AC10, AC11) =="
 closeout_fixture 5 "0000000000000000000000000000000000000000"
 ( cd "$P" && echo "edited readme" > README )
