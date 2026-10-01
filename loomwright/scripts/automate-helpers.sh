@@ -36,9 +36,9 @@
 #   config-suppress  <config_path> <backup_path>      # §7 backup byte-for-byte, set auto_review=false; malformed ⇒ abort
 #   config-restore   <config_path> <backup_path>      # §7 overwrite-from-backup OR delete-if-absent; deletes backup
 #   config-orig      <config_path> [<backup_path>]     # §7 prints true|false|absent (the ORIGINAL auto_review); pass the backup once suppress has run
-#   runfile-write    <runfile_path> < CONTENT          # §3 atomic temp+rename write
-#   progress-append  <runfile_path> <line>             # §3 append-only ## Progress (never rewrites prior lines)
-#   queue-checkoff   <runfile_path> <item> [reason] [mark]  # §3/§5 flip - [ ] -> - [x] (optional "# <skipped|abandoned>: reason"; mark default skipped)
+#   runfile-write    <runfile_path> < CONTENT          # §3 atomic temp+rename write, validated before rename: refuses (exit 1, file unchanged) empty / no title / no "## Status:" / no "## Queue" / dropped Progress prefix
+#   progress-append  <runfile_path> <line>             # §3 append-only ## Progress (never rewrites prior lines); refuses a file with no "# Automate Run:" title
+#   queue-checkoff   <runfile_path> <item> [reason] [mark]  # §3/§5 flip - [ ] -> - [x] (optional "# <skipped|abandoned>: reason"; mark default skipped); refuses a file with no title
 #   remaining        <runfile_path>                     # §3 count of "- [ ]" lines only
 #   ceiling-check    <runfile_path> <max_tokens> [--root <checkout>]  # §6 PICK-time token-ceiling check via read-token-ledger.sh --run-id; prints OK/PARK, always exits 0
 #   resolve-folder   <dir>                              # §2 list *.md not done and not proposed|parked
@@ -162,15 +162,74 @@ config_orig() {
 # §3 — run-file atomic write + append-only Progress + queue check-off
 # --------------------------------------------------------------------------- #
 
+# _progress_block <file> — the lines under the `## Progress` heading, up to the
+# next `## ` heading (the heading itself excluded). Empty when there is none.
+_progress_block() {
+  awk '/^## Progress/ { p=1; next } p && /^## / { p=0 } p' "$1"
+}
+
+# _runfile_refusal <staged> <current> <full|title> — prints WHY <staged> must not
+# be renamed over <current> (nothing when it may). SKILL §3 "Crash-safety
+# contract" → "Validate before rename" is the spec: `full` (runfile-write) checks
+# non-empty + `# Automate Run:` title + `## Status:` + `## Queue`; `title` (the
+# in-place mutators, whose input was already checked to be a run file) checks
+# non-empty + title only, so a hand-edited run file missing a section still takes
+# progress lines. Both modes require the staged `## Progress` block to start with
+# <current>'s block line-for-line when <current> is a run file — the APPEND-ONLY
+# rule, enforced against a generator that died part-way and dropped the tail.
+_runfile_refusal() {
+  local staged="$1" cur="$2" mode="$3"
+  if [ ! -s "$staged" ]; then echo "empty content"; return 0; fi
+  if ! is_run_file "$staged"; then echo "content lacks the '# Automate Run:' title line"; return 0; fi
+  if [ "$mode" = "full" ]; then
+    grep -qE '^## Status:' "$staged" || { echo "content lacks a '## Status:' line"; return 0; }
+    grep -qE '^## Queue' "$staged"   || { echo "content lacks the '## Queue' heading"; return 0; }
+  fi
+  if [ -f "$cur" ] && is_run_file "$cur"; then
+    local old_blk new_blk n
+    old_blk="$(mktemp "${staged}.old.XXXXXX")"; new_blk="$(mktemp "${staged}.new.XXXXXX")"
+    _progress_block "$cur" > "$old_blk"
+    n=$(( $(wc -l < "$old_blk") ))
+    # n=0 (no prior Progress) is trivially a prefix — and BSD `head -n 0` is an
+    # error, not an empty read. Otherwise two plain file reads, no
+    # `producer | head` pipe: under pipefail an early head exit can SIGPIPE the
+    # producer and fail a correct comparison.
+    if [ "$n" -gt 0 ]; then
+      _progress_block "$staged" > "$new_blk"
+      if ! head -n "$n" "$new_blk" | cmp -s "$old_blk" -; then
+        echo "content does not keep the existing ## Progress block ($n line(s)) as its prefix — Progress is append-only"
+      fi
+    fi
+    rm -f "$old_blk" "$new_blk"
+  fi
+  return 0
+}
+
+# _runfile_install <staged> <out> <full|title> <verb> — validate, then rename.
+# On refusal: remove <staged>, leave <out> byte-unchanged, exit 1 via die.
+_runfile_install() {
+  local staged="$1" out="$2" mode="$3" verb="$4" why
+  why="$(_runfile_refusal "$staged" "$out" "$mode")"
+  if [ -n "$why" ]; then
+    rm -f "$staged"
+    die "$verb: refused — $why; $out left unchanged [runfile_write_refused]"
+  fi
+  mv -f "$staged" "$out"
+}
+
 # runfile-write <runfile_path>   (content on stdin)
-# Atomic write: stage to a temp file in the same dir, then rename into place.
+# Atomic write: stage to a temp file in the same dir, VALIDATE (SKILL §3
+# "Validate before rename"), then rename into place. The helper cannot see the
+# exit status of whatever generated its stdin (`awk … "$RF" | runfile-write "$RF"`
+# with a failing awk delivers EOF and nothing else), so the payload itself is
+# the only evidence — an empty or structureless one is refused, never installed.
 runfile_write() {
   local out="$1" dir tmp
   dir="$(dirname "$out")"
   mkdir -p "$dir"
   tmp="$(mktemp "${out}.XXXXXX")"
-  cat > "$tmp"
-  mv -f "$tmp" "$out"
+  cat > "$tmp" || { rm -f "$tmp"; die "runfile-write: could not stage stdin; $out left unchanged"; }
+  _runfile_install "$tmp" "$out" full runfile-write
 }
 
 # progress-append <runfile_path> <line>
@@ -181,6 +240,10 @@ runfile_write() {
 progress_append() {
   local out="$1" line="$2"
   [ -f "$out" ] || die "run file not found: $out"
+  # A file without the run-file title is not a run file (an emptied one, a
+  # sidecar, a wrong path) — appending would fabricate a titleless `## Progress`
+  # stub that `remaining` reads as 0 and `resume-glob` never lists (SKILL §3).
+  is_run_file "$out" || die "progress-append: refused — $out has no '# Automate Run:' title line (not a run file); left unchanged [runfile_write_refused]"
   local tmp; tmp="$(mktemp "${out}.XXXXXX")"
   # Pass the new line via the ENVIRONMENT (not awk -v): awk's -v assignment
   # interprets backslash escapes in the value, which would mangle a path/line
@@ -193,17 +256,17 @@ progress_append() {
       print; next
     }
     { print }
-    # Fallback: if the run file had NO "## Progress" section, create one rather
-    # than silently dropping the event (defensive — the template always includes
-    # the section, but a malformed file must not lose progress lines).
+    # Fallback: if the (title-checked) run file had NO "## Progress" section,
+    # create one rather than silently dropping the event (defensive — the
+    # template always includes the section). A NON-run file never gets here.
     END {
       if (!appended) {
         if (!seen_prog) print "## Progress"
         print newline
       }
     }
-  ' "$out" > "$tmp"
-  mv -f "$tmp" "$out"
+  ' "$out" > "$tmp" || { rm -f "$tmp"; die "progress-append: rewrite failed; $out left unchanged"; }
+  _runfile_install "$tmp" "$out" title progress-append
 }
 
 # queue-checkoff <runfile_path> <item> [reason] [mark]
@@ -216,6 +279,7 @@ queue_checkoff() {
   local out="$1" item="$2" reason="${3:-}" mark="${4:-skipped}"
   case "$mark" in skipped|abandoned) ;; *) die "queue-checkoff: mark must be skipped|abandoned (got '$mark')" ;; esac
   [ -f "$out" ] || die "run file not found: $out"
+  is_run_file "$out" || die "queue-checkoff: refused — $out has no '# Automate Run:' title line (not a run file); left unchanged [runfile_write_refused]"
   local tmp; tmp="$(mktemp "${out}.XXXXXX")"
   # Pass item/reason via the ENVIRONMENT (not awk -v): -v interprets backslash
   # escapes in the value, which would mangle a path/reason containing a literal
@@ -237,8 +301,8 @@ queue_checkoff() {
       }
       print line
     }
-  ' "$out" > "$tmp"
-  mv -f "$tmp" "$out"
+  ' "$out" > "$tmp" || { rm -f "$tmp"; die "queue-checkoff: rewrite failed; $out left unchanged"; }
+  _runfile_install "$tmp" "$out" title queue-checkoff
 }
 
 # remaining <runfile_path>
