@@ -104,14 +104,6 @@ jobs:
           key: verify-walkthrough-pw-${{ runner.os }}-${{ steps.pw-pin.outputs.version }}
 
       - name: Run full deterministic self-test suite (hard gate)
-        env:
-          # build-vault.sh's idempotency assertion (#3 in test-build-vault.sh) FAILS on
-          # ubuntu/ext4 but passes on macOS (unsorted dir enumeration churned by an in-$DEST
-          # mktemp). Skip ONLY that one assertion group so the test file's other groups —
-          # including the path-escape / write-containment SAFETY checks (#5/#6) — keep
-          # hard-gating. Pre-existing build-vault bug, tracked in issue #40; drop this env
-          # once #40 lands.
-          BUILD_VAULT_SKIP_IDEMPOTENCY: "1"
         # Runs the WHOLE suite as a hard gate, CONCURRENTLY (one test per vCPU): every test-*.sh
         # and adapters/*/test-*.sh runs — future tests are auto-included, anti-drift — then every
         # failure's full log is printed and the step fails. The serial `for … bash "$t"` loop this

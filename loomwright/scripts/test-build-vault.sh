@@ -50,8 +50,20 @@ seed_log() {
     > "$repo/.supervisor/logs/$sid.jsonl"
 }
 
-# Cross-platform mtime in seconds (BSD/macOS stat -f, GNU stat -c).
-mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null; }
+# Cross-platform mtime in seconds: GNU `stat -c %Y` FIRST, BSD/macOS `stat -f %m` second,
+# numeric-checked. The order matters: on GNU coreutils `-f` means --file-system, so
+# `stat -f %m` SUCCEEDS with a multi-line filesystem dump — trying it first made every
+# note read as rewritten on Linux (issue #40; same pattern as setup-ui.sh / build-floor.sh).
+mtime() {
+  local m
+  m="$(stat -c %Y "$1" 2>/dev/null)" || m=""
+  case "$m" in ''|*[!0-9]*) m="$(stat -f %m "$1" 2>/dev/null)" || m="" ;; esac
+  case "$m" in ''|*[!0-9]*) m="" ;; esac
+  printf '%s' "$m"
+}
+# Inode number: write_note replaces a note via `mv` of a fresh temp, so a rewrite ALWAYS
+# changes the inode — this catches a rewrite inside the same second, which mtime cannot.
+inode() { ls -i "$1" 2>/dev/null | awk '{print $1}'; }
 
 # Checksum helper (matches build-vault's tool fallback).
 csum() {
@@ -113,13 +125,6 @@ else
 fi
 
 echo "== 3. idempotent (no rewrite on unchanged sources) =="
-# build-vault.sh is non-idempotent on Linux/ext4 (unsorted dir enumeration churned by an
-# in-$DEST mktemp): assertion group #3 fails on ubuntu CI while passing on macOS. The CI step
-# sets BUILD_VAULT_SKIP_IDEMPOTENCY=1 to skip ONLY this group so the other six (incl. the
-# path-escape / write-containment SAFETY checks #5/#6) keep hard-gating. Tracked in issue #40.
-if [ -n "${BUILD_VAULT_SKIP_IDEMPOTENCY:-}" ]; then
-  ok "idempotency assertion (#3) skipped — BUILD_VAULT_SKIP_IDEMPOTENCY set (build-vault.sh non-idempotent on Linux/ext4; tracked in issue #40)"
-else
 R4="$(new_repo)"
 V4="$(mktmp)"
 SLUG4="$(basename "$R4")"
@@ -137,26 +142,29 @@ if [ "$HAVE_JQ" -eq 1 ]; then
   else
     no "second run reported writes: $(echo "$out2" | grep 'note(s) written' || echo '<no summary>')"
   fi
-  # Corroborate via mtimes: snapshot each note's mtime, do a fresh re-run on unchanged sources,
-  # and assert no note file's mtime changed. Uses a temp snapshot file (no associative arrays —
-  # macOS ships bash 3.2, which lacks `declare -A`).
-  changed=0
+  # Corroborate on disk: snapshot each note's mtime + inode, do a fresh re-run on unchanged
+  # sources, and assert neither changed. An unreadable (empty) mtime/inode FAILS rather than
+  # comparing "" = "" — that vacuous pass is how a broken probe hides. Uses a temp snapshot
+  # file (no associative arrays — macOS ships bash 3.2, which lacks `declare -A`).
+  changed=0; unreadable=0; seen=0
   SNAP="$(mktmp)/mtimes"; mkdir -p "$(dirname "$SNAP")"; : > "$SNAP"
   for nf in "$V4/$SLUG4/"*.md; do
     [ -f "$nf" ] || continue
-    printf '%s\t%s\n' "$(mtime "$nf")" "$nf" >> "$SNAP"
+    printf '%s:%s\t%s\n' "$(mtime "$nf")" "$(inode "$nf")" "$nf" >> "$SNAP"
   done
   ( cd "$R4" && LOOMWRIGHT_OBSIDIAN_VAULT="$V4" bash "$BUILD" ) >/dev/null 2>&1
   while IFS="$(printf '\t')" read -r m0 nf; do
     [ -n "$nf" ] && [ -f "$nf" ] || continue
-    [ "$m0" = "$(mtime "$nf")" ] || changed=$((changed+1))
+    seen=$((seen+1))
+    case "$m0" in [0-9]*:[0-9]*) ;; *) unreadable=$((unreadable+1)); continue ;; esac
+    [ "$m0" = "$(mtime "$nf"):$(inode "$nf")" ] || changed=$((changed+1))
   done < "$SNAP"
-  [ "$changed" -eq 0 ] && ok "note mtimes unchanged across an unchanged re-run" || no "$changed note(s) rewritten on unchanged re-run"
+  [ "$seen" -gt 0 ] && [ "$unreadable" -eq 0 ] && ok "note mtime/inode probe read $seen note(s)" || no "mtime/inode probe unusable: $seen note(s) seen, $unreadable unreadable"
+  [ "$changed" -eq 0 ] && ok "note mtimes + inodes unchanged across an unchanged re-run" || no "$changed note(s) rewritten on unchanged re-run"
 else
   ok "jq absent → idempotency vacuously holds (no-op)"
   ok "jq absent → mtimes trivially unchanged (no-op)"
 fi
-fi  # end BUILD_VAULT_SKIP_IDEMPOTENCY guard (assertion group #3)
 
 echo "== 4. per-project isolation (sibling folder untouched) =="
 R5="$(new_repo)"
