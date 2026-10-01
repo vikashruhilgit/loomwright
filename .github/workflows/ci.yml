@@ -9,6 +9,11 @@ on:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    # A green run takes ~8 min. Without a cap, one self-test that never exits held the job to
+    # GitHub's 6-hour default (15 runs cancelled at ~361 min, 2026-09-27 → 2026-10-01).
+    # run-self-tests.sh's per-test watchdog (SELF_TEST_TIMEOUT, default 900 s) is the primary
+    # guard and names the hung test; this cap is the backstop for anything outside it.
+    timeout-minutes: 30
     env:
       # test-verify-walkthrough.sh's Playwright cache (its LOOMWRIGHT_VERIFY_TEST_CACHE
       # override) — defined ONCE here so the actions/cache step below and the self-test
