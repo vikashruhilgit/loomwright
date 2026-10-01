@@ -198,14 +198,15 @@ LEDGER_INTENDED_PATH='.supervisor/postmortem/results.jsonl'
 
 # UNINTENDED: must stay ignored (worktree checkouts, machine-local settings, session logs,
 # in-flight briefs, automate sidecars, and the nested `.supervisor/` a hook leaves inside a
-# requirements folder — the trail re-includes are siblings of every one of these).
+# requirements folder or any other subfolder — the trail re-includes are siblings of every one of these).
 UNINTENDED_PATHS='.claude/worktrees/busy-darwin/README.md
 .claude/settings.local.json
 .supervisor/logs/session.jsonl
 .supervisor/jobs/in-progress/2026-01-01-brief.md
 .supervisor/jobs/pending/2026-01-01-brief.md
 .supervisor/automate/automate-2026-01-01-000000.config-backup.json
-.supervisor/requirements/queue/.supervisor/logs/telemetry.log'
+.supervisor/requirements/queue/.supervisor/logs/telemetry.log
+probes/.supervisor/.rules-nudge-shown'
 
 # ---- primitive probes (REAL commands only — never assert an unprobed state) --
 
@@ -432,8 +433,9 @@ managed_block() {
 # gate passes — the findings ledger `.supervisor/postmortem/results.jsonl`. Everything else under
 # these directories stays ignored: worktree checkouts, machine-local settings, session logs,
 # in-flight briefs (`jobs/pending/`, `jobs/in-progress/`), automate sidecars (`*.config-backup.json`),
-# the `.supervisor/` trees hook emitters leave INSIDE a requirements folder when a command ran with
-# its cwd there, and every other file under `.supervisor/postmortem/`.
+# the nested `.supervisor/` trees hook emitters leave in any subfolder (a requirements folder,
+# a `probes/` dir) when a command ran with its cwd there, and every other file under
+# `.supervisor/postmortem/`.
 #
 # Managed by `/setup memory`. Edit via that command (`/setup memory remove` reverts it);
 # hand-edits inside these sentinels are overwritten on the next apply.
@@ -445,7 +447,12 @@ managed_block() {
 # wanted-children shape as the ledger below; each `!<dir>/` line is dead without the `.supervisor/*`
 # line above it, and pinned as such in test-setup-memory.sh group (t).
 !.supervisor/requirements/
-.supervisor/requirements/**/.supervisor/
+# A NESTED `.supervisor/` at ANY depth below the root (`*/**/` needs at least one leading path
+# component, so the root store itself never matches): hook emitters write one wherever a command
+# ran with its cwd — inside a requirements folder, or any project subfolder (`probes/.supervisor/
+# .rules-nudge-shown`). A bare `.supervisor/` ignore used to hide these; `.supervisor/*` only
+# matches the root, so without this line moving to the block would suddenly expose them.
+*/**/.supervisor/
 !.supervisor/jobs/
 .supervisor/jobs/*
 !.supervisor/jobs/done/

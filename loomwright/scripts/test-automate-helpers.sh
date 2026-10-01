@@ -673,6 +673,60 @@ run_h bash "$H" resolve-backlog "$WD/missing/_BACKLOG.md"
 if [ "$RUN_RC" -eq 0 ]; then ok "resolve-backlog absent: falls back gracefully (exit 0)"; else no "resolve-backlog absent should not crash (rc=$RUN_RC)"; fi
 rm -rf "$WD"
 
+# C1b. the file stamp is ground truth on the CHECKLIST path too (loomwright-studio
+#      run automate-2026-09-30-211858: two merged + closed-out items stayed
+#      `- [ ]` in _BACKLOG.md, because closeout stamps the requirement and never
+#      ticks the human-owned doc, and resolve-backlog never opened the file).
+#      An unchecked line naming a `## Status: done|done_with_escalation` file is
+#      NOT re-queued — resolved repo-root-relative (cwd) AND backlog-dir-relative;
+#      a line naming a missing / non-.md path stays listed (fail toward listing);
+#      a `proposed` stamp still does not hide a checklist line (SCOPE BOUNDARY).
+WD="$(mktemp -d)"; mkdir -p "$WD/repo/.supervisor/requirements/phase-1"
+RQ="$WD/repo/.supervisor/requirements/phase-1"
+printf '# a\n\n<!-- loomwright:requirement-closeout -->\n## Status: done\n- **PR:** x\n' > "$RQ/01-merged.md"
+printf '# b\n## Status: done_with_escalation\n'  > "$RQ/02-escalated.md"
+printf '# c\n## Status: proposed\n'               > "$RQ/03-proposed.md"
+printf '# d\n'                                    > "$RQ/04-open.md"
+printf '# e\n> ## Status: done\n'                 > "$RQ/05-quoted.md"   # quoted, not a heading
+printf '# f\n## Status: done\n'                   > "$RQ/06-local.md"
+cat > "$RQ/_BACKLOG.md" <<'EOF'
+# Phase 1
+- [ ] .supervisor/requirements/phase-1/01-merged.md
+- [ ] .supervisor/requirements/phase-1/02-escalated.md
+- [ ] .supervisor/requirements/phase-1/03-proposed.md
+- [ ] .supervisor/requirements/phase-1/04-open.md
+- [ ] .supervisor/requirements/phase-1/05-quoted.md
+- [ ] 06-local.md
+- [ ] .supervisor/requirements/phase-1/07-missing.md
+- [ ] .supervisor/requirements/phase-1/08-notes.txt
+EOF
+printf '## Status: done\n' > "$RQ/08-notes.txt"   # stamped, but not *.md ⇒ never read
+BL_EXP=".supervisor/requirements/phase-1/03-proposed.md
+.supervisor/requirements/phase-1/04-open.md
+.supervisor/requirements/phase-1/05-quoted.md
+.supervisor/requirements/phase-1/07-missing.md
+.supervisor/requirements/phase-1/08-notes.txt"
+RUN_OUT="$(cd "$WD/repo" && bash "$H" resolve-backlog .supervisor/requirements/phase-1/_BACKLOG.md 2>/dev/null)"
+if [ "$RUN_OUT" = "$BL_EXP" ]; then
+  ok "resolve-backlog (checklist path): an unchecked line whose file is stamped done / done_with_escalation is NOT re-queued (repo-relative + backlog-relative); proposed / unstamped / quoted / missing / non-.md stay listed"
+else
+  no "resolve-backlog file-stamp wrong:\n$RUN_OUT"
+fi
+# Control (goes red without the fix): the same script with the file-stamp check
+# deleted re-queues the two merged items — the studio incident, reproduced.
+MUT="$(mktemp -d)"
+sed '/if \[ -n "\$item_file" \] && is_done "\$item_file"; then continue; fi/d' "$H" > "$MUT/automate-helpers.sh"
+if ! cmp -s "$H" "$MUT/automate-helpers.sh" && bash -n "$MUT/automate-helpers.sh" 2>/dev/null; then
+  MUT_OUT="$(cd "$WD/repo" && bash "$MUT/automate-helpers.sh" resolve-backlog .supervisor/requirements/phase-1/_BACKLOG.md 2>/dev/null)"
+  case "$MUT_OUT" in
+    *01-merged.md*02-escalated.md*06-local.md*) ok "control: without the is_done file check the merged/escalated items are re-queued — the check is load-bearing" ;;
+    *) no "control did not discriminate:\n$MUT_OUT" ;;
+  esac
+else
+  no "control mutant not built (sed matched nothing or broke the script)"
+fi
+rm -rf "$MUT" "$WD"
+
 # C2. not-ready stamp (## Status: proposed|parked, harness-port/02) is a real
 #     skip for resolve-folder AND resolve-backlog's dir-fallback path
 #     (resolve_backlog_dir), alongside a "done" file and a "done_with_escalation"

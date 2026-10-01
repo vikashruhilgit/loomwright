@@ -853,10 +853,12 @@ EOF
 # closeout <runfile> <item> <pr_url> [--session-id <sid>]
 # The post-merge close-out (SKILL §6 "Post-merge close-out"). Deterministic,
 # idempotent, fail-SAFE. Every output line is `closeout: <verb> — <detail>`
-# (verb ∈ removed|synced|stamped|checked|skipped), except the brief-repair and
-# trail-pr lines, which are passed through verbatim. Execution order: evidence
-# gate → brief repair → [run lock] 3a worktrees → 4 sync → 3b branch → 5 stamp
-# → check off + ## Progress → trail-pr → [release]. The check-off runs BEFORE
+# (verb ∈ removed|synced|stamped|checked|reconciled|skipped), except the
+# brief-repair and trail-pr lines, which are passed through verbatim. Execution
+# order: evidence gate → brief repair → [run lock] 3a worktrees → 4 sync → 3b
+# branch → 5 stamp → check off → 7b reconcile ## Current → ## Progress →
+# trail-pr → [release]. It never ticks `_BACKLOG.md` (human-owned; the step-5
+# stamp is what `resolve-backlog` reads — SKILL §2). The check-off runs BEFORE
 # the trail so the trail PR records the closed-out item; the trail line is
 # printed but never appended to ## Progress (appending it would leave the run
 # file one line ahead of the trail, so every re-run would push again).
@@ -872,6 +874,66 @@ co_release() {
     bash "$HERE/run-lock.sh" release --owner "$CO_OWNER" --root "$CO_ROOT" >/dev/null 2>&1
   fi
   CO_LOCKED=0
+  return 0
+}
+
+# _co_current <rf_rel> <item> <pr_url> — closeout step 7b. Prints ONE line.
+# Rewrites `## Current` for the item just closed out — the `- item:` line's
+# `status:` field to `done`, the `- pause_reason:` line to `awaiting_go` when
+# `## Status: paused` (`null` otherwise: a running loop is not paused) — ONLY
+# when that line names THIS item AND THIS pr, and only after the Queue reads
+# `- [x] <item>` (a failed check-off must not leave Current saying done while
+# the Queue says queued). A `## Current` naming another item/PR is never
+# touched: the merge watcher can fire after the owner already --resumed and a
+# later item was picked. Every other line is byte-unchanged; `## Status` is
+# never rewritten. The write goes through `runfile-write` (validated atomic
+# rename, SKILL §3) from a staged file — never a `generator | runfile-write`
+# pipe, whose failing generator the helper cannot see.
+_co_current() {
+  local rf="$1" item="$2" pr="$3" S="closeout: skipped —"
+  if ! grep -qxF -- "- [x] $item" "$rf" 2>/dev/null; then
+    echo "$S ## Current not reconciled ($item not checked off)"; return 0
+  fi
+  local cur_line cur_item cur_pr cur_status cur_reason run_status want
+  cur_line="$(awk '/^## Current/{c=1;next} /^## /{c=0} c && /^- item: /{print; exit}' "$rf" 2>/dev/null)"
+  if [ -z "$cur_line" ]; then echo "$S no ## Current item line"; return 0; fi
+  _co_field() { printf '%s\n' "$cur_line" | awk -v k="$1" 'BEGIN{FS=" [|] "} {sub(/^- /,""); for(i=1;i<=NF;i++) if (index($i, k ": ")==1) {print substr($i, length(k)+3); exit}}'; }
+  cur_item="$(_co_field item)"; cur_item="${cur_item#./}"
+  cur_pr="$(_co_field pr)"; cur_status="$(_co_field status)"
+  if [ "$cur_item" != "$item" ] || [ "$cur_pr" != "$pr" ]; then
+    echo "$S ## Current is ${cur_item:-?} (${cur_pr:-no pr}), not this item/PR"; return 0
+  fi
+  run_status="$(sed -n 's/^## Status:[[:space:]]*\([A-Za-z_]*\).*/\1/p' "$rf" | head -n1)"
+  if [ "$run_status" = "paused" ]; then want="awaiting_go"; else want="null"; fi
+  cur_reason="$(awk '/^## Current/{c=1;next} /^## /{c=0} c && /^- pause_reason:/{sub(/^- pause_reason:[[:space:]]*/,""); sub(/[[:space:]]+$/,""); print; exit}' "$rf" 2>/dev/null)"
+  if [ "$cur_status" = "done" ] && [ "$cur_reason" = "$want" ]; then
+    echo "$S ## Current already done"; return 0
+  fi
+  local tmp; tmp="$(mktemp "${rf}.current.XXXXXX")" || { echo "$S ## Current: cannot stage"; return 0; }
+  if ! CO_WANT="$want" awk '
+    BEGIN { want=ENVIRON["CO_WANT"] }
+    /^## Current/ { c=1; print; next }
+    /^## / {
+      if (c && !reason_done) { print "- pause_reason: " want; reason_done=1 }
+      c=0; print; next
+    }
+    c && /^- item: / && !item_done {
+      n=split($0, f, / [|] /); out=""
+      for (i=1;i<=n;i++) { if (index(f[i], "status: ")==1) f[i]="status: done"; out = out (i>1 ? " | " : "") f[i] }
+      print out; item_done=1; next
+    }
+    c && /^- pause_reason:/ && !reason_done { print "- pause_reason: " want; reason_done=1; next }
+    { print }
+    END { if (c && !reason_done) print "- pause_reason: " want }
+  ' "$rf" > "$tmp" 2>/dev/null; then
+    rm -f "$tmp"; echo "$S ## Current rewrite failed"; return 0
+  fi
+  if bash "$HERE/automate-helpers.sh" runfile-write "$rf" < "$tmp" >/dev/null 2>&1; then
+    rm -f "$tmp"
+    echo "closeout: reconciled — ## Current $item status done, pause_reason $want"
+  else
+    rm -f "$tmp"; echo "$S ## Current runfile-write refused"
+  fi
   return 0
 }
 
@@ -916,7 +978,7 @@ closeout() {
 
   # ---- steps 3–7 under the run lock -----------------------------------------
   # The step numbers are the SKILL's labels (§6 "Post-merge close-out"); the
-  # EXECUTION order is 3a → 4 → 3b → 5 → 7 → 6, and the blocks below follow it.
+  # EXECUTION order is 3a → 4 → 3b → 5 → 7 → 7b → 6, and the blocks below follow it.
   CO_ROOT="$root"; CO_OWNER="automate-closeout:$run_id"
   local lk rc
   if [ -n "$sid" ]; then
@@ -1091,6 +1153,13 @@ STATUS
     ck="$S $item not in ## Queue"
   fi
   echo "$ck"; lines="$lines"$'\n'"$ck"
+
+  # ---- 7b. reconcile ## Current (runs 6th, after the check-off; SKILL §3
+  #      "After a close-out") ----------------------------------------------------
+  local cu
+  cu="$(_co_current "$rf_rel" "$item" "$pr_url")"
+  case "$cu" in "closeout: reconciled"*) did=1 ;; esac
+  echo "$cu"; lines="$lines"$'\n'"$cu"
   if [ "$did" -eq 1 ]; then
     local ts; ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     while IFS= read -r l; do
