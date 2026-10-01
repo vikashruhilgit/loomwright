@@ -76,4 +76,6 @@ interactive options. Changing `/dreaming`'s per-item Accept model. Changing whic
 - Claude Code sub-agents doc (read 2026-09-30): `AskUserQuestion` is in the list of tools removed from all
   subagents "even when listed in the `tools` field".
 
+bump = write a `changelog.d/` fragment and run `scripts/bump-version.sh`
+
 ## Status: pending

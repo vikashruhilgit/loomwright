@@ -75,4 +75,6 @@ the FIRST of the two AND-ed conditions). Touching non-worker `general-purpose` s
 - The two `general-purpose` worker examples at `async-orchestration/SKILL.md:172` and
   `workflow-management/SKILL.md:232` (both unchanged between `d927996` and `a262d00`).
 
+bump = write a `changelog.d/` fragment and run `scripts/bump-version.sh`
+
 ## Status: pending
