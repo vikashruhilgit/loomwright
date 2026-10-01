@@ -134,7 +134,7 @@ tree_sum() { ( cd "$1" && find . -path ./.git -prune -o -type f -print | sort | 
 mkt_one_line() { # <dir>: exactly one changed line, and it is the loomwright version line
   local d="$1" n
   n="$(g "$d" diff --numstat HEAD -- "$MJ" | awk '{print $1 "+" $2}')"
-  [ "$n" = "1+1" ] && g "$d" diff -U0 HEAD -- "$MJ" | grep -qE '^\+[[:space:]]*"version": "'
+  [ "$n" = "1+1" ] && grep -qE '^\+[[:space:]]*"version": "' < <(g "$d" diff -U0 HEAD -- "$MJ")
 }
 mkt_others_unchanged() { # <dir>: the stackpack + mysql-mcp text is byte-identical to HEAD
   local d="$1"
