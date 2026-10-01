@@ -16,7 +16,10 @@
 #      pre-suppress; a pinned known limit post-suppress).
 #   B. run-file: atomic write produces a parseable file; append-only ## Progress
 #      never loses prior lines; queue check-off flips the box (+ skipped form);
-#      `remaining` counts ONLY "- [ ]" lines.
+#      `remaining` counts ONLY "- [ ]" lines; (B9) runfile-write / progress-append /
+#      queue-checkoff fail CLOSED — empty stdin, no title, no Status/Queue, a dropped
+#      Progress prefix, the failed-awk pipe shape and a titleless target all leave the
+#      run file byte-unchanged, with positive controls and a validation-removed mutant.
 #   C. folder / backlog-doc resolvers (skip ## Status: done; documented order).
 #   D. resume-glob lists only run files (is_run_file: `# Automate Run:` title) not
 #      done — §6 result sidecars excluded, with a validated is_run_file mutant;
@@ -487,6 +490,150 @@ else
   no "progress-create-section wrong:\n$(cat "$RF3")"
 fi
 rm -rf "$WD"
+
+# =============================================================================
+echo "== B9. fail-CLOSED run-file writes (SKILL §3 \"Validate before rename\") =="
+# 2026-10-01 incident (loomwright-studio automate-2026-09-30-211858): BSD awk
+# rejected a newline inside an `awk -v cur=…` value, exited non-zero and printed
+# nothing; `runfile-write` accepted the empty stdin and renamed a 0-byte file over
+# the ONLY copy of resume state, then three `progress-append`s fabricated a
+# titleless `## Progress` stub on it (remaining → 0, resume-glob stops listing it).
+# Every case asserts the run file is BYTE-UNCHANGED and no temp file is left.
+# b9_scenarios <helper> <tag> — runs each corrupting input against <helper> and
+# prints one "<case>=kept|CORRUPTED" token per case (used for the real helper AND
+# for the mutation control below, which must print CORRUPTED).
+B9_RF_BODY='# Automate Run: b9
+## Status: running
+## Source
+- demo
+## Run Config
+- mode: safe | limit: 5
+## Queue
+- [ ] a.md
+- [ ] b.md
+## Current
+- item: a.md | status: running
+- pending_decisions: 0 | fix_now_reentered: false
+## Progress
+- t0 picked a.md
+- t1 ran /autonomous'
+b9_seed() { mkdir -p "$(dirname "$1")"; printf '%s\n' "$B9_RF_BODY" > "$1"; cp "$1" "$1.orig-copy"; mv "$1.orig-copy" "$2"; }
+b9_verdict() {  # <rf> <orig> <dir> → kept|CORRUPTED (also CORRUPTED when a temp is left)
+  local extra; extra="$(ls -A "$3" | grep -vxF "$(basename "$1")" || true)"
+  if cmp -s "$1" "$2" && [ -z "$extra" ]; then echo kept; else echo CORRUPTED; fi
+}
+b9_scenarios() {
+  local helper="$1" d rf orig out=""
+  d="$(mktemp -d)"; rf="$d/automate/run.md"; orig="$d/orig.md"
+  # (1) empty stdin
+  b9_seed "$rf" "$orig"; : | bash "$helper" runfile-write "$rf" >/dev/null 2>&1
+  out="$out empty=$(b9_verdict "$rf" "$orig" "$d/automate")"
+  # (2) stdin missing the title line
+  b9_seed "$rf" "$orig"; grep -v '^# Automate Run:' "$orig" | bash "$helper" runfile-write "$rf" >/dev/null 2>&1
+  out="$out no_title=$(b9_verdict "$rf" "$orig" "$d/automate")"
+  # (3) the incident's exact pipe shape, literally: `awk -v cur="<multi-line>" … $RF | runfile-write $RF`.
+  #     BSD awk (macOS) dies "newline in string" and prints nothing — the real
+  #     reproduction; GNU awk/mawk accept it and `{print}` re-emits the file, an
+  #     identity rewrite. Either way the bytes must come out unchanged.
+  b9_seed "$rf" "$orig"
+  awk -v cur="- item: b.md | status: running
+- pause_reason: null" '{ print }' "$rf" 2>/dev/null | bash "$helper" runfile-write "$rf" >/dev/null 2>&1
+  out="$out incident_awk=$(b9_verdict "$rf" "$orig" "$d/automate")"
+  # (3b) the same pipe shape with a generator that fails on EVERY awk (syntax
+  #      error ⇒ non-zero, no output) — the portable form of (3), so CI on GNU
+  #      userland exercises the empty-stdin path too.
+  b9_seed "$rf" "$orig"; awk '{ print ' "$rf" 2>/dev/null | bash "$helper" runfile-write "$rf" >/dev/null 2>&1
+  out="$out failed_awk=$(b9_verdict "$rf" "$orig" "$d/automate")"
+  # (4) progress-append + queue-checkoff on a titleless file (the cascade's second
+  #     defect): an emptied run file and a sidecar-shaped stub.
+  : > "$rf"; cp "$rf" "$orig"
+  bash "$helper" progress-append "$rf" "t2 a" >/dev/null 2>&1
+  bash "$helper" progress-append "$rf" "t3 b" >/dev/null 2>&1
+  bash "$helper" progress-append "$rf" "t4 c" >/dev/null 2>&1
+  out="$out append_on_empty=$(b9_verdict "$rf" "$orig" "$d/automate")"
+  printf '## Progress\n- t0 stub\n' > "$rf"; cp "$rf" "$orig"
+  bash "$helper" progress-append "$rf" "t2 a" >/dev/null 2>&1
+  out="$out append_titleless=$(b9_verdict "$rf" "$orig" "$d/automate")"
+  printf '## Queue\n- [ ] a.md\n' > "$rf"; cp "$rf" "$orig"
+  bash "$helper" queue-checkoff "$rf" "a.md" >/dev/null 2>&1
+  out="$out checkoff_titleless=$(b9_verdict "$rf" "$orig" "$d/automate")"
+  # (5) missing ## Status: / missing ## Queue (both mandated by the §3 template)
+  b9_seed "$rf" "$orig"; grep -v '^## Status:' "$orig" | bash "$helper" runfile-write "$rf" >/dev/null 2>&1
+  out="$out no_status=$(b9_verdict "$rf" "$orig" "$d/automate")"
+  b9_seed "$rf" "$orig"; grep -v '^## Queue' "$orig" | bash "$helper" runfile-write "$rf" >/dev/null 2>&1
+  out="$out no_queue=$(b9_verdict "$rf" "$orig" "$d/automate")"
+  # (6) a generator that died part-way: header sections intact, Progress tail lost
+  b9_seed "$rf" "$orig"; sed '$d' "$orig" | bash "$helper" runfile-write "$rf" >/dev/null 2>&1
+  out="$out truncated_progress=$(b9_verdict "$rf" "$orig" "$d/automate")"
+  rm -rf "$d"
+  printf '%s' "${out# }"
+}
+B9_WANT="empty=kept no_title=kept incident_awk=kept failed_awk=kept append_on_empty=kept append_titleless=kept checkoff_titleless=kept no_status=kept no_queue=kept truncated_progress=kept"
+B9_OUT="$(b9_scenarios "$H")"
+if [ "$B9_OUT" = "$B9_WANT" ]; then
+  ok "B9 fail-closed: every corrupting payload refused, run file byte-unchanged, no temp left ($B9_OUT)"
+else
+  no "B9 fail-closed: some payload got through:\n  got:  $B9_OUT\n  want: $B9_WANT"
+fi
+
+# B9 refusal surface: exit 1 + the [runfile_write_refused] tag on stderr.
+WD="$(mktemp -d)"; RF="$WD/automate/run.md"; b9_seed "$RF" "$WD/orig.md"
+B9_ERR="$( : | bash "$H" runfile-write "$RF" 2>&1 >/dev/null)"; B9_RC=$?
+if [ "$B9_RC" -eq 1 ] && grep -qF 'runfile_write_refused' <<<"$B9_ERR" && grep -qF 'empty content' <<<"$B9_ERR"; then
+  ok "B9 refusal: exit 1 with a named reason + [runfile_write_refused] tag"
+else
+  no "B9 refusal surface wrong (rc=$B9_RC err='$B9_ERR')"
+fi
+
+# B9 positive controls — the guard must not block legitimate writes:
+#   (a) a ## Current rewrite that SHRINKS the file (pending_decisions dropped) and
+#       appends a Progress line; (b) first creation; (c) a human recovery write
+#       over an emptied (non-run) file; (d) progress-append/queue-checkoff on a
+#       valid run file still work through the validated rename.
+sed -e '/^- pending_decisions:/d' -e 's/^- item: a.md | status: running$/- item: b.md | status: running/' "$WD/orig.md" > "$WD/new.md"
+printf -- '- t2 picked b.md\n' >> "$WD/new.md"
+bash "$H" runfile-write "$RF" < "$WD/new.md" 2>/dev/null; B9_A=$?
+RF_NEW="$WD/automate/fresh.md"; printf '%s\n' "$B9_RF_BODY" | bash "$H" runfile-write "$RF_NEW" 2>/dev/null; B9_B=$?
+RF_EMPTY="$WD/automate/emptied.md"; : > "$RF_EMPTY"
+bash "$H" runfile-write "$RF_EMPTY" < "$WD/orig.md" 2>/dev/null; B9_C=$?
+bash "$H" progress-append "$RF" "t3 ok" 2>/dev/null && bash "$H" queue-checkoff "$RF" "a.md" 2>/dev/null; B9_D=$?
+if [ "$B9_A" -eq 0 ] && grep -qxF -- '- item: b.md | status: running' "$RF" && ! grep -q '^- pending_decisions:' "$RF" \
+   && [ "$B9_B" -eq 0 ] && cmp -s "$RF_NEW" "$WD/orig.md" \
+   && [ "$B9_C" -eq 0 ] && cmp -s "$RF_EMPTY" "$WD/orig.md" \
+   && [ "$B9_D" -eq 0 ] && grep -qxF -- '- [x] a.md' "$RF" && [ "$(tail -n1 "$RF")" = "- t3 ok" ] \
+   && [ "$(ls -A "$WD/automate" | wc -l | tr -d ' ')" = "3" ]; then
+  ok "B9 positive controls: shrinking ## Current rewrite, first creation, recovery over an emptied file, and append/check-off on a valid run file all succeed"
+else
+  no "B9 positive controls blocked a legitimate write (a=$B9_A b=$B9_B c=$B9_C d=$B9_D):\n$(cat "$RF")\n$(ls -A "$WD/automate")"
+fi
+rm -rf "$WD"
+
+# B9 mutation control: a COPY of the helper with the validation removed (the
+# pre-rename refusal forced empty, both is_run_file pre-checks deleted) must let
+# the SAME scenarios corrupt the file — proves the cases above are not vacuous.
+MUTDIR="$(mktemp -d)"
+sed -e 's/^  why="\$(_runfile_refusal .*$/  why=""/' \
+    -e '/^  is_run_file "\$out" || die "progress-append: refused/d' \
+    -e '/^  is_run_file "\$out" || die "queue-checkoff: refused/d' \
+    "$H" > "$MUTDIR/automate-helpers.sh"
+if [ -s "$MUTDIR/automate-helpers.sh" ] && ! cmp -s "$H" "$MUTDIR/automate-helpers.sh" && bash -n "$MUTDIR/automate-helpers.sh" 2>/dev/null \
+   && grep -qxF '  why=""' "$MUTDIR/automate-helpers.sh" \
+   && ! grep -q 'refused — \$out has no' "$MUTDIR/automate-helpers.sh"; then
+  B9_MUT="$(b9_scenarios "$MUTDIR/automate-helpers.sh")"
+  # incident_awk stays "kept" on GNU awk (identity rewrite) — every OTHER case must turn red.
+  B9_MUT_RED=1
+  for c in empty no_title failed_awk append_on_empty append_titleless checkoff_titleless no_status no_queue truncated_progress; do
+    case " $B9_MUT " in *" $c=CORRUPTED "*) ;; *) B9_MUT_RED=0 ;; esac
+  done
+  if [ "$B9_MUT_RED" -eq 1 ]; then
+    ok "B9 mutation control: validation removed ⇒ every corrupting case turns red ($B9_MUT)"
+  else
+    no "B9 mutation control did NOT discriminate — a case passes without the guard: $B9_MUT"
+  fi
+else
+  no "B9 mutation control: could not build the mutant (sed did not apply or bash -n failed) -- control inconclusive"
+fi
+rm -rf "$MUTDIR"
 
 # =============================================================================
 echo "== C. folder / backlog-doc resolvers (skip ## Status: done) =="

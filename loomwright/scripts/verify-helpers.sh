@@ -24,7 +24,8 @@
 # §3 run-file primitives (`runfile-write` / `progress-append` / `queue-checkoff` / `remaining`) with
 # ONE addition `queue-write` carries that automate's `runfile-write` does not: a LINE-COUNT GUARD
 # before every rewrite (memory: `runfile-write-accepts-empty-stdin` — a piped rewrite that errors can
-# atomically empty a run file). `verify-run.sh`'s `queue-reconcile-item` (git/evidence access lives
+# atomically empty a run file). Automate guards the same failure by shape + `## Progress`-prefix
+# validation instead, because its `## Current` block legitimately shrinks. `verify-run.sh`'s `queue-reconcile-item` (git/evidence access lives
 # there, not here) calls these four for every mutation; nothing else ever writes the queue file.
 #   queue-write            <queue_path>  (content on stdin)  # atomic temp+rename; REFUSES (exit 1, file byte-unchanged) when the existing file is non-empty and the new content has FEWER lines
 #   queue-progress-append  <queue_path> <line>                # append-only ## Progress — same shape as automate-helpers.sh progress-append
