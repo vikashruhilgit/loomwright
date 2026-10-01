@@ -1546,6 +1546,7 @@ echo "== (t) the judgement TRAIL (v15.84.0): requirements + jobs/done|failed + a
 # without the `.supervisor/*` line above them (the same silent-failure class as group (a)).
 P_REQ=".supervisor/requirements/queue/01-item.md"
 P_REQ_NESTED=".supervisor/requirements/queue/.supervisor/logs/telemetry.log"
+P_SUB_NESTED="probes/.supervisor/.rules-nudge-shown"
 P_DONE=".supervisor/jobs/done/2026-01-01-brief.md"
 P_FAILED=".supervisor/jobs/failed/2026-01-01-brief.md"
 P_INPROG=".supervisor/jobs/in-progress/2026-01-01-brief.md"
@@ -1568,6 +1569,10 @@ assert_ignored "$Tt" "$P_INPROG"      "(t) $P_INPROG stays ignored (in-flight st
 assert_ignored "$Tt" "$P_PENDING"     "(t) $P_PENDING stays ignored (in-flight state)"
 assert_ignored "$Tt" "$P_RUN_SIDECAR" "(t) $P_RUN_SIDECAR stays ignored (transient sidecar)"
 assert_ignored "$Tt" "$P_REQ_NESTED"  "(t) $P_REQ_NESTED stays ignored (hook junk nested in a requirements folder)"
+assert_ignored "$Tt" "$P_SUB_NESTED"  "(t) $P_SUB_NESTED stays ignored (hook junk nested in an arbitrary project subfolder)"
+assert_ignored "$Tt" "a/b/.supervisor/logs/x.jsonl" "(t) a .supervisor/ nested two levels below an ordinary folder stays ignored"
+# The nested rule must not reach the ROOT store: it stays committable (the reason `*/**/` and not `**/`).
+assert_committable "$Tt" ".supervisor/memory/LESSONS.md" "(t) the ROOT store .supervisor/memory/LESSONS.md stays committable under the nested rule"
 assert_ignored "$Tt" ".supervisor/state.md" "(t) .supervisor/state.md stays ignored (live run state)"
 assert_ignored "$Tt" "$P_LOGS"        "(t) $P_LOGS stays ignored"
 # The probes in the script itself must agree with these assertions, or `check` would report a
@@ -1581,11 +1586,12 @@ assert_ignored "$Tn" "$P_REQ"  "(t-neg1) bare '.supervisor/' + '!.supervisor/req
 assert_ignored "$Tn" "$P_DONE" "(t-neg1) same for $P_DONE"
 # Negative control 2 (mutant): drop the nested-.supervisor exclude from the block ⇒ the junk
 # becomes committable — proving (t)'s nested assertion holds the line, not the seed layout.
-Tm="$(mkfix)"; sed '/^\.supervisor\/requirements\/\*\*\/\.supervisor\/$/d' "$MEM" > "$Tm/setup-memory.sh"
+Tm="$(mkfix)"; sed '/^\*\/\*\*\/\.supervisor\/$/d' "$MEM" > "$Tm/setup-memory.sh"
 if cmp -s "$MEM" "$Tm/setup-memory.sh"; then no "(t-mut) mutant sed changed nothing"; else
   Tx="$(newgit https://github.com/acme/widget.git)"; seed_stores "$Tx"; printf '.supervisor/\n' > "$Tx/.gitignore"
   bash "$Tm/setup-memory.sh" --root "$Tx" apply >/dev/null 2>&1
   if ignored "$Tx" "$P_REQ_NESTED"; then no "(t-mut) mutant without the nested exclude still ignores $P_REQ_NESTED — the assertion is vacuous"; else ok "(t-mut) without the nested exclude line the hook junk WOULD be committed — the line is load-bearing"; fi
+  if ignored "$Tx" "$P_SUB_NESTED"; then no "(t-mut) mutant without the nested exclude still ignores $P_SUB_NESTED — the assertion is vacuous"; else ok "(t-mut) without the nested exclude line $P_SUB_NESTED WOULD be committed (the studio exposure)"; fi
 fi
 
 echo "== (k) the suite never touched the plugin repo's own .gitignore =="

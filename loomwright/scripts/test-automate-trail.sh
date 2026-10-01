@@ -688,6 +688,80 @@ badl="$(printf '%s\n' "$out2" | grep -v 'skipped — ' || true)"
 [ "$before_trail" = "$(git -C "$FX/origin.git" for-each-ref --format='%(objectname)' 'refs/heads/chore/*')" ] && [ "$creates_before" = "$(count_creates)" ] && ok "AC11: no push, no PR create on the second run" || no "AC11: second run pushed/created"
 grep -q '^pr merge' "$GH_STUB_DIR/argv.log" && no "gh pr merge called" || ok "closeout never calls gh pr merge"
 
+echo "== C. closeout reconciles a MATCHING ## Current, never a different one =="
+# loomwright-studio run automate-2026-09-30-211858: after the watcher's closeout
+# the Queue read `- [x] …02…` while ## Current still said awaiting_merge — a
+# self-contradictory run file whose next resume re-ran reconcile + closeout.
+cur_block() { awk '/^## Current/{c=1} /^## Progress/{c=0} c' "$1"; }
+# (i) matching item + PR, ## Status: paused ⇒ status done, pause_reason awaiting_go.
+closeout_fixture 101
+out="$(run_closeout)"
+grep -qxF -- "- item: $REQ | status: done | pr: $PRURL | branch: feature/x" "$P/$RF_REL" \
+  && grep -qxF -- "- pause_reason: awaiting_go" "$P/$RF_REL" \
+  && ok "## Current (matching item+PR, paused): status done + pause_reason awaiting_go" || no "## Current not reconciled: $(cur_block "$P/$RF_REL" | tr '\n' '|')"
+grep -qxF -- "## Status: paused" "$P/$RF_REL" && ok "## Status is never rewritten by closeout" || no "## Status changed: $(grep '^## Status' "$P/$RF_REL")"
+grep -qE "^- .* closeout $PRURL: closeout: reconciled — ## Current " "$P/$RF_REL" && ok "## Progress records the ## Current reconcile" || no "no Progress line for the reconcile"
+case "$out" in *"closeout: reconciled — ## Current $REQ status done, pause_reason awaiting_go"*) ok "closeout prints the reconciled line" ;; *) no "reconciled line missing: $out" ;; esac
+# Control (red without the fix): closeout with step 7b deleted leaves the studio state.
+MUTD="$TOP/mutd-current"; mkdir -p "$MUTD"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTD/"
+sed '/^  cu="\$(_co_current "\$rf_rel" "\$item" "\$pr_url")"$/d' "$HERE/automate-trail.sh" > "$MUTD/automate-trail.sh"
+if ! cmp -s "$HERE/automate-trail.sh" "$MUTD/automate-trail.sh" && bash -n "$MUTD/automate-trail.sh"; then
+  closeout_fixture 102
+  (cd "$P" && bash "$MUTD/automate-helpers.sh" closeout "$RF_REL" "$REQ" "$PRURL" >/dev/null)
+  grep -qxF -- "- [x] $REQ" "$P/$RF_REL" && grep -qxF -- "- pause_reason: awaiting_merge" "$P/$RF_REL" \
+    && ok "control: without step 7b the item is checked off while ## Current still says awaiting_merge (the incident)" || no "control did not reproduce the incident: $(cur_block "$P/$RF_REL" | tr '\n' '|')"
+else
+  no "control mutant not built"
+fi
+# (iii) matching item + PR inside a LIVE loop (RECONCILE's closeout, ## Status:
+#       running) ⇒ status done + pause_reason null (a running run is not paused).
+closeout_fixture 105
+(cd "$P" && sed -i.bak 's/^## Status: paused$/## Status: running/' "$RF_REL" && rm -f "$RF_REL.bak")
+run_closeout >/dev/null
+grep -qxF -- "- item: $REQ | status: done | pr: $PRURL | branch: feature/x" "$P/$RF_REL" \
+  && grep -qxF -- "- pause_reason: null" "$P/$RF_REL" && grep -qxF -- "## Status: running" "$P/$RF_REL" \
+  && ok "## Current (matching item+PR, running): status done + pause_reason null; ## Status stays running" || no "running-branch reconcile wrong: $(cur_block "$P/$RF_REL" | tr '\n' '|')"
+# Control (red without the branch): want forced to awaiting_go regardless of status.
+MUTW="$TOP/mutd-want"; mkdir -p "$MUTW"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTW/"
+sed 's/^  if \[ "\$run_status" = "paused" \]; then want="awaiting_go"; else want="null"; fi$/  want="awaiting_go"/' "$HERE/automate-trail.sh" > "$MUTW/automate-trail.sh"
+if ! cmp -s "$HERE/automate-trail.sh" "$MUTW/automate-trail.sh" && bash -n "$MUTW/automate-trail.sh"; then
+  closeout_fixture 106
+  (cd "$P" && sed -i.bak 's/^## Status: paused$/## Status: running/' "$RF_REL" && rm -f "$RF_REL.bak")
+  (cd "$P" && bash "$MUTW/automate-helpers.sh" closeout "$RF_REL" "$REQ" "$PRURL" >/dev/null)
+  grep -qxF -- "- pause_reason: awaiting_go" "$P/$RF_REL" \
+    && ok "control: without the status branch a running run is mis-written awaiting_go (the null assertion is load-bearing)" || no "want control did not discriminate: $(cur_block "$P/$RF_REL" | tr '\n' '|')"
+else
+  no "want mutant not built"
+fi
+# (ii) ## Current names a LATER item/PR (the watcher fired after the owner
+#      resumed and picked 02-b) ⇒ ## Current byte-identical; the check-off still lands.
+closeout_fixture 103
+LATER=".supervisor/requirements/f/02-b.md"
+( cd "$P"
+  awk -v L="$LATER" '/^- item: /{print "- item: " L " | status: running | pr: https://github.com/acme/widgets/pull/8 | branch: feature/y"; next}
+       /^- pause_reason:/{print "- pause_reason: null"; next} {print}' "$RF_REL" > "$RF_REL.tmp" && mv "$RF_REL.tmp" "$RF_REL"
+  sed -i.bak 's/^## Status: paused$/## Status: running/' "$RF_REL" && rm -f "$RF_REL.bak" )
+before_cur="$(cur_block "$P/$RF_REL")"
+out="$(run_closeout)"
+[ "$before_cur" = "$(cur_block "$P/$RF_REL")" ] && ok "## Current naming a different item/PR is left byte-identical" || no "## Current clobbered: $(cur_block "$P/$RF_REL" | tr '\n' '|')"
+case "$out" in *"closeout: skipped — ## Current is $LATER (https://github.com/acme/widgets/pull/8), not this item/PR"*) ok "closeout names the non-matching ## Current it skipped" ;; *) no "non-matching skip line missing: $out" ;; esac
+grep -qxF -- "- [x] $REQ" "$P/$RF_REL" && ok "the closed-out item is still checked off" || no "check-off lost"
+# Control (red without the guard): the same world, closeout with the item/PR
+# comparison neutered, overwrites the later item's ## Current.
+MUTG="$TOP/mutd-guard"; mkdir -p "$MUTG"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTG/"
+sed 's/^  if \[ "\$cur_item" != "\$item" \] || \[ "\$cur_pr" != "\$pr" \]; then$/  if false; then/' "$HERE/automate-trail.sh" > "$MUTG/automate-trail.sh"
+if ! cmp -s "$HERE/automate-trail.sh" "$MUTG/automate-trail.sh" && bash -n "$MUTG/automate-trail.sh"; then
+  closeout_fixture 104
+  ( cd "$P"
+    awk -v L="$LATER" '/^- item: /{print "- item: " L " | status: running | pr: https://github.com/acme/widgets/pull/8 | branch: feature/y"; next}
+         /^- pause_reason:/{print "- pause_reason: null"; next} {print}' "$RF_REL" > "$RF_REL.tmp" && mv "$RF_REL.tmp" "$RF_REL" )
+  (cd "$P" && bash "$MUTG/automate-helpers.sh" closeout "$RF_REL" "$REQ" "$PRURL" >/dev/null)
+  grep -qF -- "- item: $LATER | status: done" "$P/$RF_REL" \
+    && ok "control: without the item/PR guard the later item's ## Current is clobbered to done" || no "guard control did not discriminate: $(cur_block "$P/$RF_REL" | tr '\n' '|')"
+else
+  no "guard mutant not built"
+fi
+
 echo "== C. closeout after a PICK un-stage (decision 4 kept) =="
 # trail PR squash-merged, then trail-unstage (as PICK runs it), then the live
 # run file gains bytes: closeout's sync must still fast-forward — it re-stages
