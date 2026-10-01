@@ -713,6 +713,26 @@ if ! cmp -s "$HERE/automate-trail.sh" "$MUTD/automate-trail.sh" && bash -n "$MUT
 else
   no "control mutant not built"
 fi
+# (iii) matching item + PR inside a LIVE loop (RECONCILE's closeout, ## Status:
+#       running) ⇒ status done + pause_reason null (a running run is not paused).
+closeout_fixture 105
+(cd "$P" && sed -i.bak 's/^## Status: paused$/## Status: running/' "$RF_REL" && rm -f "$RF_REL.bak")
+run_closeout >/dev/null
+grep -qxF -- "- item: $REQ | status: done | pr: $PRURL | branch: feature/x" "$P/$RF_REL" \
+  && grep -qxF -- "- pause_reason: null" "$P/$RF_REL" && grep -qxF -- "## Status: running" "$P/$RF_REL" \
+  && ok "## Current (matching item+PR, running): status done + pause_reason null; ## Status stays running" || no "running-branch reconcile wrong: $(cur_block "$P/$RF_REL" | tr '\n' '|')"
+# Control (red without the branch): want forced to awaiting_go regardless of status.
+MUTW="$TOP/mutd-want"; mkdir -p "$MUTW"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTW/"
+sed 's/^  if \[ "\$run_status" = "paused" \]; then want="awaiting_go"; else want="null"; fi$/  want="awaiting_go"/' "$HERE/automate-trail.sh" > "$MUTW/automate-trail.sh"
+if ! cmp -s "$HERE/automate-trail.sh" "$MUTW/automate-trail.sh" && bash -n "$MUTW/automate-trail.sh"; then
+  closeout_fixture 106
+  (cd "$P" && sed -i.bak 's/^## Status: paused$/## Status: running/' "$RF_REL" && rm -f "$RF_REL.bak")
+  (cd "$P" && bash "$MUTW/automate-helpers.sh" closeout "$RF_REL" "$REQ" "$PRURL" >/dev/null)
+  grep -qxF -- "- pause_reason: awaiting_go" "$P/$RF_REL" \
+    && ok "control: without the status branch a running run is mis-written awaiting_go (the null assertion is load-bearing)" || no "want control did not discriminate: $(cur_block "$P/$RF_REL" | tr '\n' '|')"
+else
+  no "want mutant not built"
+fi
 # (ii) ## Current names a LATER item/PR (the watcher fired after the owner
 #      resumed and picked 02-b) ⇒ ## Current byte-identical; the check-off still lands.
 closeout_fixture 103
