@@ -280,6 +280,64 @@ if [ "$cmds_seen" -gt 0 ]; then
   fi
 fi
 
+# --- Bump without the script (parallel-automate item 01) --------------------------------------
+# The version is bumped ONLY by scripts/bump-version.sh, which folds every changelog.d/ fragment
+# into CHANGELOG.md and deletes it in the same step. So a branch whose WORKING-TREE plugin.json
+# version differs from the version at `git merge-base HEAD origin/main` (this branch changed the
+# version — an uncommitted hand bump is caught locally too) while a changelog.d/*.md fragment other
+# than README.md is still present carries either a bump not made by the script, or a scripted bump
+# left stale after main moved: a branch whose bump commit folded its own fragment, then rebased onto
+# a main that legally merged an unfolded fragment (decision P7 in changelog.d/README.md), lands in
+# exactly this state. The two are indistinguishable here, so the DRIFT message names both remedies:
+# if the branch already carries a bump commit, drop or revert it FIRST (that brings its own fragment
+# back), then re-run scripts/bump-version.sh once — re-running on top of the stale bump double-bumps
+# (two CHANGELOG entries in one PR). The same procedure is the P7 section of changelog.d/README.md.
+# A branch merely BEHIND main (main bumped after the fork, the branch carries only a fragment) has
+# the merge base's version and stays green.
+# HONEST LIMITS: (1) a hand bump with NO fragment is undetectable here — there is nothing left to
+# tell it apart from a scripted bump; (2) the requirement's literal "differs from origin/main"
+# wording was narrowed to the merge base, because comparing with origin/main itself would flag
+# every stale-but-unbumped branch; (3) when origin/main or the merge base is unresolvable (no .git,
+# no origin remote, or a depth-1 checkout that fetched only the PR ref) this one check is SKIPPED
+# with a visible note rather than failing — it is a doc gate, not a correctness gate.
+# (4) THIS REPO'S OWN CI CANNOT RUN IT YET. That depth-1 checkout is not an edge case: the
+# "Checkout repository" step in .github/workflows/ci.yml uses actions/checkout with its default
+# fetch depth and no origin/main fetch, so origin/main is absent on EVERY PR CI run and the guard
+# always skips there (silently when no fragment is present, with the NOTE below when one is). As
+# configured today it only bites on a local run against a fetched origin/main. Making it bite in
+# CI needs a follow-up that adds an origin/main fetch (or fetch-depth: 0) to that workflow — kept
+# out of this change because a PR that edits a workflow file makes the claude-code-action
+# reviewer skip itself.
+#
+# The invocation is a single line on purpose: scripts/test-bump-version.sh's mutation control
+# deletes exactly that line from a COPY of this script and proves the guard then stops firing.
+run_bump_fragment_guard() {
+  local frag frags="" base base_ver
+  for frag in changelog.d/*.md; do
+    [ -f "$frag" ] || continue
+    [ "$(basename "$frag")" = "README.md" ] && continue
+    frags="$frags $frag"
+  done
+  [ -n "$frags" ] || return 0
+  if ! git rev-parse --verify -q origin/main >/dev/null 2>&1; then
+    echo "  NOTE [bump-fragment-guard] skipped — origin/main is not resolvable here (fragments present:$frags); this is the EXPECTED state on this repo's PR CI (depth-1 checkout, no origin/main fetch), so the guard does not run in CI — it only bites locally until ci.yml fetches origin/main"
+    return 0
+  fi
+  base="$(git merge-base HEAD origin/main 2>/dev/null)" || base=""
+  base_ver=""
+  [ -n "$base" ] && base_ver="$(git show "$base:$PLUGIN_JSON" 2>/dev/null | jq -r '.version // empty' 2>/dev/null)"
+  if [ -z "$base_ver" ]; then
+    echo "  NOTE [bump-fragment-guard] skipped — no merge base with origin/main, or no plugin.json version there"
+    return 0
+  fi
+  if [ "$VERSION" != "$base_ver" ]; then
+    echo "  DRIFT [bump-fragment-guard] $PLUGIN_JSON — version $VERSION differs from the merge base's $base_ver while changelog.d/ fragment(s) remain:$frags — bump with scripts/bump-version.sh (it folds and removes them); if this branch already carries a bump commit (main moved after it), drop or revert that commit first, then re-run — never re-run on top of it (that double-bumps); see changelog.d/README.md (who runs the bump, P7)"
+    return 1
+  fi
+  return 0
+}
+run_bump_fragment_guard || fail=1
+
 if [ "$fail" -ne 0 ]; then
   echo "✗ doc-currency drift detected — update the offending lines to match the authoritative values above."
   exit 1

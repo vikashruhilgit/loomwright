@@ -72,4 +72,6 @@ the spawn shape that bypassed it). Any change to `guard-test-integrity.sh`'s den
   six-phase-loop-gaps/02 Rev 4 (one marker per session, no overwrite rule, no tool-call disarm, `arm` exits 3 on
   no id).
 
+bump = write a `changelog.d/` fragment and run `scripts/bump-version.sh`
+
 ## Status: pending

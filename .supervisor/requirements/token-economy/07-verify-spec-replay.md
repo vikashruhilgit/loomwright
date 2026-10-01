@@ -144,3 +144,5 @@ pushing (memory `run-full-ci-suite-loop-before-push`).
 After `harness-port/04` (shared `/verify` evidence + summary surfaces). Independent of everything else in the
 sequence backlog; placed LAST there. No new agent / command / skill / hook; no merge path; `heal_decision`
 untouched; nothing gating.
+
+bump = write a `changelog.d/` fragment and run `scripts/bump-version.sh`

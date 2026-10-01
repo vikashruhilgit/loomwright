@@ -75,4 +75,6 @@ names (keep the stated limit). Touching `sdk-spike/` code.
 - `loomwright/sdk-spike/src/runner.ts:1117-1120` imports `@anthropic-ai/claude-agent-sdk` via a string-constant
   variable; it scores 0 only because `@anthropic-ai` is not a token.
 
+bump = write a `changelog.d/` fragment and run `scripts/bump-version.sh`
+
 ## Status: pending

@@ -93,4 +93,6 @@ any spawn change) — those are owner decisions for Phase 2. Fixing `lens-run.sh
 - Claude Code docs (read 2026-09-30): sub-agents page (nesting depth 3; per-invocation `model` first in resolution
   order).
 
+bump = write a `changelog.d/` fragment and run `scripts/bump-version.sh`
+
 ## Status: pending

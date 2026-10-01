@@ -135,6 +135,8 @@ Version and count claims (agent/command/skill/hook counts, plugin version) repea
 2. **Every other surface either derives it at read/build time or drops the number entirely** — prose says "see `hooks.json`", never restates "N hooks" with a literal number (a literal here would itself be a live claim needing maintenance — which is the trap this rule names). A doc file may still describe *what* a count means (e.g. the `type: command` vs `type: prompt` split), but should avoid re-asserting the raw total wherever practical.
 3. **A sync-checking CI gate is the LAST resort** — kept only where a consumer genuinely needs a second static copy (e.g. a fast prose scan is cheaper than parsing JSON at read time). `scripts/check-doc-currency.sh` exists because (1)+(2) cannot be retrofitted everywhere at once; prefer deleting a restated claim over adding it to that gate's scanned surface.
 
+**The version is bumped only by `scripts/bump-version.sh`:** a PR adds a `changelog.d/<slug>.md` fragment instead of hand-editing `plugin.json`, `marketplace.json` or `CHANGELOG.md`; the script folds the fragments and bumps all three (fragment format and who runs it: `changelog.d/README.md`).
+
 Authority for the full rationale and the version-claim-surface case study that motivated this rule: `.supervisor/requirements/final-state/09-claude-md-diet-dreaming.md`.
 
 ---
