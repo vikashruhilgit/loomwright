@@ -861,7 +861,11 @@ EOF
 # stamp is what `resolve-backlog` reads — SKILL §2). The check-off runs BEFORE
 # the trail so the trail PR records the closed-out item; the trail line is
 # printed but never appended to ## Progress (appending it would leave the run
-# file one line ahead of the trail, so every re-run would push again).
+# file one line ahead of the trail, so every re-run would push again). The step
+# lines reach ## Progress only when an ITEM step changed something (removed /
+# stamped / checked / reconciled, or a non-skip brief repair); a `synced` line
+# alone never appends, so a re-run after the trail PR merged leaves the run
+# file byte-identical and its trail reads `skipped — trail already up to date`.
 # NEVER: commits in the primary checkout, `git reset`, `git stash`, `git branch
 # -d` / ancestry inference, touches another branch or worktree, merges anything.
 CO_ROOT=""
@@ -1085,7 +1089,14 @@ STATUS
     _restore_prior
     sy="$S git pull --ff-only refused (no reset attempted)"
   else
-    sy="closeout: synced — $base_branch at $(git rev-parse --short HEAD 2>/dev/null)"; did=1
+    # Deliberately NOT `did=1`: a sync is checkout housekeeping, not close-out
+    # progress for THIS item. `main` moves for reasons unrelated to the item —
+    # most often this run's own merged trail PR — so counting it made a re-run
+    # whose every item step skipped append its skip lines to ## Progress, which
+    # gave trail-pr a diff and opened a fresh trail PR holding only those lines
+    # (run automate-2026-10-01-142337: #329 merged → RECONCILE re-run → #330),
+    # and the next re-run would do it again.
+    sy="closeout: synced — $base_branch at $(git rev-parse --short HEAD 2>/dev/null)"
   fi
   echo "$sy"; lines="$lines"$'\n'"$sy"
 
