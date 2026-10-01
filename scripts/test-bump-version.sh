@@ -349,6 +349,10 @@ gate; rc=$?
 set_ver 98.0.0
 gate; rc=$?
 [ "$rc" -eq 1 ] && grep -q 'DRIFT \[bump-fragment-guard\]' "$TMP/gate.out"; check $? "guard: a hand bump with a fragment present FAILS"
+# The same state is reached by a scripted bump left stale after main moved (rebased onto a main
+# that merged a legal unfolded fragment); a bare re-run there double-bumps, so the DRIFT text must
+# name the drop-or-revert-the-bump-commit-first remedy, not only "bump with the script".
+grep -q 'DRIFT \[bump-fragment-guard\].*drop or revert that commit first, then re-run' "$TMP/gate.out"; check $? "guard: the DRIFT message names the drop-or-revert-the-stale-bump remedy"
 # Control: delete the single invocation line from a copy — the same case must now pass silently.
 grep -v '^run_bump_fragment_guard || fail=1$' "$G/scripts/check-doc-currency.sh" > "$G/scripts/nog.sh"
 [ "$(grep -c '^run_bump_fragment_guard || fail=1$' "$G/scripts/check-doc-currency.sh")" = "1" ]; check $? "guard control precondition: exactly one invocation line"

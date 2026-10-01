@@ -285,8 +285,15 @@ fi
 # into CHANGELOG.md and deletes it in the same step. So a branch whose WORKING-TREE plugin.json
 # version differs from the version at `git merge-base HEAD origin/main` (this branch changed the
 # version — an uncommitted hand bump is caught locally too) while a changelog.d/*.md fragment other
-# than README.md is still present, bumped by hand. A branch merely BEHIND main (main bumped after
-# the fork, the branch carries only a fragment) has the merge base's version and stays green.
+# than README.md is still present carries either a bump not made by the script, or a scripted bump
+# left stale after main moved: a branch whose bump commit folded its own fragment, then rebased onto
+# a main that legally merged an unfolded fragment (decision P7 in changelog.d/README.md), lands in
+# exactly this state. The two are indistinguishable here, so the DRIFT message names both remedies:
+# if the branch already carries a bump commit, drop or revert it FIRST (that brings its own fragment
+# back), then re-run scripts/bump-version.sh once — re-running on top of the stale bump double-bumps
+# (two CHANGELOG entries in one PR). The same procedure is the P7 section of changelog.d/README.md.
+# A branch merely BEHIND main (main bumped after the fork, the branch carries only a fragment) has
+# the merge base's version and stays green.
 # HONEST LIMITS: (1) a hand bump with NO fragment is undetectable here — there is nothing left to
 # tell it apart from a scripted bump; (2) the requirement's literal "differs from origin/main"
 # wording was narrowed to the merge base, because comparing with origin/main itself would flag
@@ -324,7 +331,7 @@ run_bump_fragment_guard() {
     return 0
   fi
   if [ "$VERSION" != "$base_ver" ]; then
-    echo "  DRIFT [bump-fragment-guard] $PLUGIN_JSON — version $VERSION differs from the merge base's $base_ver while changelog.d/ fragment(s) remain:$frags — bump with scripts/bump-version.sh (it folds and removes them)"
+    echo "  DRIFT [bump-fragment-guard] $PLUGIN_JSON — version $VERSION differs from the merge base's $base_ver while changelog.d/ fragment(s) remain:$frags — bump with scripts/bump-version.sh (it folds and removes them); if this branch already carries a bump commit (main moved after it), drop or revert that commit first, then re-run — never re-run on top of it (that double-bumps); see changelog.d/README.md (who runs the bump, P7)"
     return 1
   fi
   return 0
