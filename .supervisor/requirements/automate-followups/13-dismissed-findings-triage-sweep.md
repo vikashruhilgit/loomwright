@@ -89,3 +89,9 @@ the still-open ones are either fixed in this item (when small and inside one lan
   re-read on `main`, not assumed.
 - **Scope creep.** Behavioural findings (3, 6, 15) are tempting to fix inline; they go to `proposed/` unless the
   owner explicitly promotes them in the sign-off.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-01T02:21:42Z
+- **Brief:** .supervisor/jobs/done/2026-10-01-dismissed-findings-triage-sweep.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/319
