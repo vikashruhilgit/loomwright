@@ -42,6 +42,8 @@ The fragments fold, in filename order, into ONE new top entry of `CHANGELOG.md`:
 ## The guard
 
 `scripts/check-doc-currency.sh` fails when this branch changed the `plugin.json` version (compared with
-`git merge-base HEAD origin/main`) while a fragment is still here. That combination is a bump that did not go through
-the script. A branch that is only behind `main` stays green. A hand bump with no fragment cannot be detected, and the
+`git merge-base HEAD origin/main`) while a fragment is still here. That combination is either a bump not made by the
+script, or a scripted bump left stale after `main` moved (for example, a rebase onto a `main` that merged an unfolded
+fragment). If the branch already has a bump commit, drop or revert it first, then re-run the script; re-running on
+top of it double-bumps. A branch that is only behind `main` stays green. A hand bump with no fragment cannot be detected, and the
 script's header says so.
