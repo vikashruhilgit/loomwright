@@ -63,7 +63,8 @@
 #       A shell-variable reader (scripts/session-resume.sh: `reader=…/read-rules.sh`, then
 #       `bash "$reader"` on a LATER line that never names the script) is RESOLVED: every line
 #       referencing that variable is inspected too (seam_c_scan pass 0), so a sink on the real call is
-#       not hidden by the indirection.
+#       not hidden by the indirection. A variable CAPTURING reader output is tainted: executing it
+#       later (`eval`, `bash -c`, a pipe into a shell, `source <(…)`) is a leak (pass 0b).
 #   (C-cov) for EACH args-bearing surface (below), (C) must have inspected at least one reader-
 #       invocation fragment — zero means (C) is vacuous there and FAILS. This pass also runs (C)'s
 #       sink check on every args-bearing surface, which brings skills/async-orchestration/SKILL.md
@@ -77,7 +78,10 @@
 #       agents/execute-manager.md and skills/self-heal-advisory/SKILL.md right after the closing
 #       backtick of a line that carries "never …" prose; one leg per widened sink shape on
 #       agents/code-reviewer.md (nospace, zsh, pipe-amp, dot-source, source-procsub); and a
-#       `| bash` on scripts/session-resume.sh's `bash "$reader"` call (resume-var). An empty or
+#       `| bash` on scripts/session-resume.sh's `bash "$reader"` call (resume-var); and, on that
+#       same file's `rules_out="$(bash "$reader" …)"` capture, the captured output later executed
+#       (capture-eval, capture-pipe, capture-bash-c — seam_c_scan pass 0b), with a (C-taint-data)
+#       negative control that DATA uses of the capture stay clean. An empty or
 #       unchanged mutant is a FAILURE, never a skip.
 #
 # Plus (D) INVOCATION SHAPE, asserted per surface CLASS rather than uniformly, because the seams
@@ -212,17 +216,53 @@ seam_c_is_sink() {
 #      `local NAME="$(`) is stripped first: capturing the reader's stdout into a variable is the
 #      legitimate shape (session-resume.sh's rules_nudge), not the exec'd `$(bash …)` sink. Limit:
 #      only a literal assignment is resolved — a name built at runtime is not.
+#   0b. TAINTED CAPTURES — capturing is legitimate, but the capturing NAME then holds reader output:
+#      a `NAME="$(…read-rules.sh…)"` capture (direct, or through a resolved reader variable) makes
+#      NAME tainted, and any line in the file that EXECUTES `$NAME`/`${NAME}` is a leak
+#      (seam_c_taint_sink: `eval`, `bash|sh|zsh|dash -c`, a pipe or `<<<` into a shell,
+#      `source`/`. <(…)`) — including the capture's own line (`…)" && bash -c "$out"`). Using the
+#      captured text as DATA (testing, printing, grepping it, an argument to a non-shell command —
+#      session-resume.sh's `[ -z "$rules_out" ]`) is not a sink. Limit: taint does not propagate
+#      through a copy (`b=$out`) and only the `NAME="$(` / `local NAME="$(` capture shape taints —
+#      `read`/`mapfile` from the reader, or backtick capture, does not.
 # Plain read loops over here-strings — no `printf | grep -q` (SEAM_C_AFTER_SPAN_RE's SIGPIPE note).
 SEAM_C_VAR_ASSIGN_RE='^[[:space:]]*(local[[:space:]]+|export[[:space:]]+|readonly[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)=[^[:space:]]*read-rules\.sh'
 SEAM_C_CAPTURE_RE='^[[:space:]]*(local[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*="?\$\((.*)$'
+SEAM_C_CAPTURE_NAME_RE='^[[:space:]]*(local[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)="?\$\('
+# seam_c_taint_sink <line> <name> — 0 when <line> executes the tainted variable <name> (pass 0b).
+# <name> is an identifier ([A-Za-z0-9_] only), so it is safe to splice into the ERE.
+seam_c_taint_sink() {
+  local ref sh='(ba|z|da)?sh' re
+  ref='\$\{?'"$2"'(\}|[^[:alnum:]_]|$)'
+  for re in \
+    '(^|[^[:alnum:]_])eval[[:space:]]+[^;&|]*'"$ref" \
+    '(^|[^[:alnum:]_])'"$sh"'[[:space:]]+(-[[:alnum:]]+[[:space:]]+)*-[[:alnum:]]*c[[:alnum:]]*[[:space:]]+[^;&|]*'"$ref" \
+    "$ref"'.*\|&?[[:space:]]*'"$sh"'([^[:alnum:]_]|$)' \
+    '(^|[^[:alnum:]_])'"$sh"'[[:space:]]*<<<[[:space:]]*"?'"$ref" \
+    '(^|[^[:alnum:]_.])(\.|source)[[:space:]]+<\([^)]*'"$ref"; do
+    [[ "$1" =~ $re ]] && return 0
+  done
+  return 1
+}
 SEAM_C_AFTER_SPAN_RE='bash [^`]*read-rules\.sh[^`]*`.*\|&?[[:space:]]*(ba|z|da)?sh([^[:alnum:]_]|$)'
 seam_c_scan() {
-  local f="$1" line frag v norm vars=""
+  local f="$1" line frag v t norm vars="" taints=""
   SEAM_C_LEAK=""; SEAM_C_INVOC=0; SEAM_C_LINES=0
   while IFS= read -r line || [ -n "$line" ]; do
     if [[ "$line" =~ $SEAM_C_VAR_ASSIGN_RE ]]; then vars="$vars ${BASH_REMATCH[2]}"; fi
   done < "$f"
+  # Pass 0b pre-scan: a capture of reader output (direct, or via a resolved reader variable) taints its NAME.
   while IFS= read -r line || [ -n "$line" ]; do
+    [[ "$line" =~ $SEAM_C_CAPTURE_NAME_RE ]] || continue
+    t="${BASH_REMATCH[2]}"; norm="$line"
+    for v in $vars; do norm="${norm//"\$$v"/read-rules.sh}"; norm="${norm//"\${$v}"/read-rules.sh}"; done
+    case "$norm" in *read-rules.sh*) taints="$taints $t" ;; esac
+  done < "$f"
+  while IFS= read -r line || [ -n "$line" ]; do
+    for t in $taints; do
+      case "$line" in *"\$$t"*|*"\${$t}"*) : ;; *) continue ;; esac
+      if [ -z "$SEAM_C_LEAK" ] && seam_c_taint_sink "$line" "$t"; then SEAM_C_LEAK="$line"; fi
+    done
     if [ -n "$vars" ] && ! [[ "$line" =~ $SEAM_C_VAR_ASSIGN_RE ]]; then
       for v in $vars; do
         case "$line" in *"\$$v"*|*"\${$v}"*) : ;; *) continue ;; esac
@@ -431,6 +471,35 @@ c_mut_run source-procsub "$CR" "s#$C_MUT_INV#source <(\\1)#"
 # C-mut:resume-var — scripts/session-resume.sh's real call names the reader only through `$reader`;
 # pass 0's variable resolution must see a `| bash` added to it.
 c_mut_run resume-var "$PLUGIN_ROOT/scripts/session-resume.sh" 's#(bash "\$reader" 2>/dev/null)#\1 | bash#'
+# Pass 0b legs on the SAME real capture site (`rules_out="$(bash "$reader" …)"`): the captured text
+# is later EXECUTED. A backslash-newline in the replacement inserts a following line (POSIX, BSD+GNU).
+C_MUT_CAP='(rules_out="\$\(bash "\$reader"[^)]*\)")'
+# C-mut:capture-eval — a later line `eval "$rules_out"`.
+c_mut_run capture-eval   "$PLUGIN_ROOT/scripts/session-resume.sh" "s#$C_MUT_CAP#\\1\\
+  eval \"\$rules_out\"#"
+# C-mut:capture-pipe — a later line `printf '%s' "$rules_out" | bash`.
+c_mut_run capture-pipe   "$PLUGIN_ROOT/scripts/session-resume.sh" "s#$C_MUT_CAP#\\1\\
+  printf '%s' \"\$rules_out\" | bash#"
+# C-mut:capture-bash-c — same line, `… && bash -c "$rules_out"`.
+c_mut_run capture-bash-c "$PLUGIN_ROOT/scripts/session-resume.sh" "s#$C_MUT_CAP#\\1 \\&\\& bash -c \"\$rules_out\"#"
+# Pass 0b NEGATIVE control: DATA uses of the captured text (print, grep, pipe into a non-shell
+# command, an argument) are NOT sinks — a copy carrying them must still pass (C).
+CAP_DATA="$(mktemp)"
+sed -E "s#$C_MUT_CAP#\\1\\
+  printf '%s\\\\n' \"\$rules_out\" | wc -l >/dev/null\\
+  grep -F x <<< \"\$rules_out\" >/dev/null\\
+  echo \"\${rules_out}\" > /dev/null#" "$PLUGIN_ROOT/scripts/session-resume.sh" > "$CAP_DATA"
+if cmp -s "$PLUGIN_ROOT/scripts/session-resume.sh" "$CAP_DATA"; then
+  no "(C-taint-data) INVALID copy: the capture-site sed matched nothing in scripts/session-resume.sh"
+else
+  seam_c_scan "$CAP_DATA"
+  if [ -z "$SEAM_C_LEAK" ]; then
+    ok "(C-taint-data) data uses of the captured reader output (print/grep/wc) do not trip (C)"
+  else
+    no "(C-taint-data) FALSE POSITIVE: a data use of the captured reader output was flagged: $SEAM_C_LEAK"
+  fi
+fi
+rm -f "$CAP_DATA"
 
 # The POINTER surface: no literal invocation, so assert the non-negotiable it delegates instead.
 SUP="$PLUGIN_ROOT/agents/supervisor.md"
