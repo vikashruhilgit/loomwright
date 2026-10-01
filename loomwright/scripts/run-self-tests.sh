@@ -111,18 +111,21 @@ while kill -0 "$pid" 2>/dev/null; do
   sleep 0.5
 done
 if [ "$timed_out" -eq 1 ]; then
-  tree="$pid $(descendants "$pid" | tr '\n' ' ')"
+  # One pid per line, then joined with commas by paste: no reliance on unquoted word-splitting
+  # to trim a trailing separator (GNU `ps -p 1,` errors "improper list").
+  tree_lines="$( { echo "$pid"; descendants "$pid"; } | grep -E '^[0-9]+$')"
+  tree_csv="$(printf '%s\n' "$tree_lines" | paste -sd, -)"
   {
     echo "run-self-tests: TIMEOUT after ${limit}s: $t — still running; process tree:"
-    ps -o pid= -o ppid= -o etime= -o command= -p "$(echo $tree | tr ' ' ',')" 2>/dev/null | sed 's/^/    /'
+    ps -o pid= -o ppid= -o etime= -o command= -p "$tree_csv" 2>/dev/null | sed 's/^/    /'
     echo "  last 20 lines of its output:"
     tail -n 20 "$log" 2>/dev/null | sed 's/^/    /'
   } > "$SELF_TEST_OUT/$idx.hang" 2>&1
   cat "$SELF_TEST_OUT/$idx.hang" >&2
   { echo; echo "================ killed by run-self-tests watchdog ================"; cat "$SELF_TEST_OUT/$idx.hang"; } >> "$log"
-  kill -TERM $tree 2>/dev/null
+  for k in $tree_lines; do kill -TERM "$k" 2>/dev/null; done
   sleep 2
-  kill -KILL $tree 2>/dev/null
+  for k in $tree_lines; do kill -KILL "$k" 2>/dev/null; done
   wait "$pid" 2>/dev/null
   rc=124
 else
