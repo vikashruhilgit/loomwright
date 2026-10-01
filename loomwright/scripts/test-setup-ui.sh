@@ -7036,6 +7036,17 @@ rm -rf "$S_TWO" 2>/dev/null
 # SIGTERM, not SIGINT, and the reason is not cosmetic: a non-interactive shell sets SIGINT to
 # ignored for the async commands it starts, so `kill -INT` on a backgrounded serve is a no-op
 # and a case built on it would pass without the trap ever running. TERM reaches the SAME trap.
+# s_wait_gone <pid> — a BOUNDED wait (10 s) on a backgrounded serve; kill -9 and rc 1 if it is
+# still alive. NEVER a bare `wait`: (s12) used one, and when the engine swallowed the TERM (the
+# lock_release-trap race (s18) now pins) the bare `wait` hung this suite until CI's 6-hour
+# default — 15 runs, 2026-09-27 → 2026-10-01. A hang must be a named failure, not a stall.
+s_wait_gone() {
+  local p="$1" i=0
+  while kill -0 "$p" 2>/dev/null && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+  if kill -0 "$p" 2>/dev/null; then kill -9 "$p" 2>/dev/null; wait "$p" 2>/dev/null; return 1; fi
+  wait "$p" 2>/dev/null
+  return 0
+}
 S_FG="$(mktmp)"
 S_FG_UI="$S_FG/ui"
 S_FG_TOKEN="$S_FG/ui-serve.token"
@@ -7049,7 +7060,7 @@ s_i=0
 while [ "$s_i" -lt 100 ] && [ ! -f "$S_FG_TOKEN" ]; do s_i=$((s_i + 1)); sleep 0.1; done
 s_fg_before=0; [ -f "$S_FG_TOKEN" ] && s_fg_before=1
 kill -TERM "$s_fg_pid" 2>/dev/null
-wait "$s_fg_pid" 2>/dev/null
+s_fg_gone=1; s_wait_gone "$s_fg_pid" || s_fg_gone=0
 s_i=0
 while [ "$s_i" -lt 100 ] && [ -f "$S_FG_TOKEN" ]; do s_i=$((s_i + 1)); sleep 0.1; done
 n_wait_down "$s_fg_port" >/dev/null 2>&1
@@ -7058,6 +7069,9 @@ s_fg_chk="$(bash "$ENGINE" check --registry "$S_FG/reg.json" --ui-dir "$S_FG_UI"
 if [ "$s_fg_before" != "1" ]; then
   no "(s12) a foreground serve stopped by a signal removes its open-url file" \
      "the file never appeared while the server ran, so this case could not observe its removal"
+elif [ "$s_fg_gone" != "1" ]; then
+  no "(s12) a foreground serve stopped by a signal removes its open-url file" \
+     "serve was STILL RUNNING 10 s after TERM (killed -9) — the signal was swallowed; see (s18)"
 elif [ ! -f "$S_FG_TOKEN" ] && ! in_str "$s_fg_chk" "did not stop cleanly"; then
   ok "(s12) a FOREGROUND serve ended by a signal removes ui-serve.token through its own trap, and the next check reports a clean stop — the trap and do_stop clean up the same set of files, so the shutdown a human is told to use is not reported as a crash"
 else
@@ -7069,8 +7083,12 @@ fi
 # The state this file actually shipped in for one commit. Without this arm, (s12) passes for a
 # trap that removes everything AND for one that removes nothing, provided `stop` is never called.
 S_FG_MUT="$S_FG/engine-mut.sh"
-sed "s/serve_cleanup\" EXIT INT TERM/rm -f '\$UI_DIR\/serve.pid' 2>\/dev\/null\" EXIT INT TERM/" "$ENGINE" > "$S_FG_MUT"
-if ! grep -q "rm -f '\$UI_DIR/serve.pid' 2>/dev/null\" EXIT INT TERM" "$S_FG_MUT"; then
+# Both of serve's traps become pidfile-only: the INT/TERM one ends in `exit 0`, which fires the
+# EXIT trap, so mutating only one of them would leave the full cleanup running on the other.
+sed -e "s/^  trap 'serve_shutdown; exit 0' INT TERM\$/  trap 'rm -f \"\$UI_DIR\/serve.pid\" 2>\/dev\/null; exit 0' INT TERM/" \
+    -e "s/^  trap 'serve_shutdown' EXIT\$/  trap 'rm -f \"\$UI_DIR\/serve.pid\" 2>\/dev\/null' EXIT/" "$ENGINE" > "$S_FG_MUT"
+if ! { grep -qF "  trap 'rm -f \"\$UI_DIR/serve.pid\" 2>/dev/null; exit 0' INT TERM" "$S_FG_MUT" \
+       && grep -qF "  trap 'rm -f \"\$UI_DIR/serve.pid\" 2>/dev/null' EXIT" "$S_FG_MUT"; }; then
   no "(s13) MUTATION CONTROL: a trap that cleans only the pidfile is caught" \
      "the mutant engine could not be built — the trap line did not match, so this control never ran"
 else
@@ -7086,7 +7104,9 @@ else
   while [ "$s_i" -lt 100 ] && [ ! -f "$S_FG2_TOKEN" ]; do s_i=$((s_i + 1)); sleep 0.1; done
   s_fg2_before=0; [ -f "$S_FG2_TOKEN" ] && s_fg2_before=1
   kill -TERM "$s_fg2_pid" 2>/dev/null
-  wait "$s_fg2_pid" 2>/dev/null
+  s_wait_gone "$s_fg2_pid" || true
+  s_snap="$(ps -eo pid=,command= 2>/dev/null || true)"
+  for s_p in $(printf '%s\n' "$s_snap" | awk -v d="$S_FG2_UI" 'index($0, d) > 0 && index($0, "setup-ui.sh") > 0 { print $1 }'); do kill -9 "$s_p" 2>/dev/null; done
   n_wait_down "$s_fg2_port" >/dev/null 2>&1
   if [ "$s_fg2_before" = "1" ] && [ -f "$S_FG2_TOKEN" ]; then
     ok "(s13) MUTATION CONTROL: a trap that removes ONLY the pidfile leaves ui-serve.token behind — so (s12) is measuring the trap's cleanup and would redden if the shared serve_cleanup were unwired again"
@@ -7126,6 +7146,118 @@ else
   no "(s17) stop reports no removal when there was nothing to remove" "$(printf '%s' "$s_lo_out2" | tr '\n' '|')"
 fi
 rm -rf "$S_LO" 2>/dev/null
+
+
+# --- (s18)-(s21) A SIGNAL DURING SERVE'S STARTUP: NO HANG, NO ORPHANED HANDLER, NO LEFTOVER URL --
+# THE CI HANG (2026-09-27 → 2026-10-01, ~1 run in 9, each to the 6-hour default). `serve` wrote
+# its open-url file BEFORE installing its own traps, so a TERM in that gap met the file-level
+# `trap 'lock_release' EXIT INT TERM`. A trap on a signal REPLACES its default action; one that
+# only releases SWALLOWS it, so serve went on to `wait` on its handler forever — and (s12), which
+# TERMs the instant that file appears, waited on serve forever. Making that trap exit was not
+# enough on its own: the handler forked a moment earlier was then orphaned, and even with serve's
+# traps moved first, a TERM between `python3 … &` and the next line's `SERVE_HTTP_PID=$!` found
+# the pid unrecorded (6 of 40 tries, measured) — hence `jobs -p` in serve_shutdown.
+#
+# Timing is not left to luck: each arm runs a COPY of the engine with a `sleep 1` injected
+# INSIDE one gap, so the TERM lands there every time. The copies are named setup-ui.sh under
+# this run's temp root so the (p1) leak sweep would see anything they left behind.
+#   (s18) gap A — after the open-url file is written, before the handler is started
+#   (s19) gap B — after the handler is forked, before its pid is recorded
+#   (s20) MUTATION CONTROL for (s18): the pre-fix trap layout HANGS in gap A
+#   (s21) MUTATION CONTROL for (s19): serve_shutdown without `jobs -p` ORPHANS the handler in gap B
+s_mutant() {  # s_mutant <awk program> -> path of a transformed engine copy (empty on failure)
+  local d; d="$(mktmp)" || return 0
+  awk "$1" "$ENGINE" > "$d/setup-ui.sh" 2>/dev/null || return 0
+  printf '%s' "$d/setup-ui.sh"
+}
+# s_procs_naming <dir> [python] — pids of live engine processes (serve or its handler; both carry the
+# engine path, i.e. "setup-ui.sh", on their command line) that name <dir>. SNAPSHOT FIRST, then
+# filter — the fixture_serve_pids shape: in a `ps | awk -v d=<dir>` pipeline the awk is itself a
+# live process whose argv names <dir>, so it matched itself and every arm read as "handler left".
+s_procs_naming() {
+  local snap
+  snap="$(ps -eo pid=,command= 2>/dev/null || true)"
+  [ -n "$snap" ] || return 0
+  printf '%s\n' "$snap" | awk -v d="$1" -v want="${2:-}" '
+    index($0, d) > 0 && index($0, "setup-ui.sh") > 0 && (want == "" || index(tolower($0), want) > 0) { print $1 }'
+}
+# s_race <engine> [handler] — serve, TERM the instant the open-url file appears (or, with
+# `handler`, the instant the handler process also exists — gap B's TERM must land AFTER the
+# fork, and under a loaded suite the file can appear well before it), then measure.
+# Sets R_SEEN (file appeared), R_EXITED (serve gone within 10 s), R_ORPHAN (a process naming
+# this arm's ui dir — the handler — still alive 3 s after serve is gone), R_TOKEN (open-url file
+# left behind). PROCESS, not port: under a loaded concurrent suite an orphaned handler may not
+# have bound its port yet when a port probe runs, which read as "no orphan" and made (s21) flaky.
+s_race() {
+  local eng="$1" mode="${2:-}" d port pid i p
+  R_SEEN=0; R_EXITED=0; R_ORPHAN=0; R_TOKEN=0
+  d="$(mktmp)"
+  bash "$ENGINE" apply --ui-dir "$d/ui" >/dev/null 2>&1
+  port="$(n_free_port)"
+  case "$port" in ''|*[!0-9]*) setup_fail "(s18) fixture: could not obtain a free port" ;; esac
+  bash "$eng" serve --registry "$d/reg.json" --ui-dir "$d/ui" --no-regen --port "$port" >"$d/out" 2>&1 &
+  pid=$!
+  i=0; while [ "$i" -lt 500 ] && [ ! -f "$d/ui-serve.token" ]; do i=$((i + 1)); sleep 0.01; done
+  [ -f "$d/ui-serve.token" ] && R_SEEN=1
+  if [ "$mode" = "handler" ]; then
+    R_SEEN=0; i=0
+    while [ "$i" -lt 500 ]; do
+      [ -n "$(s_procs_naming "$d/ui" python)" ] && { R_SEEN=1; break; }
+      i=$((i + 1)); sleep 0.01
+    done
+  fi
+  kill -TERM "$pid" 2>/dev/null
+  s_wait_gone "$pid" && R_EXITED=1
+  i=0
+  while [ "$i" -lt 30 ] && [ -n "$(s_procs_naming "$d/ui")" ]; do i=$((i + 1)); sleep 0.1; done
+  [ -n "$(s_procs_naming "$d/ui")" ] && R_ORPHAN=1
+  [ -f "$d/ui-serve.token" ] && R_TOKEN=1
+  # Reap anything this arm started (the mutants exist to leak); the handler's argv names $d/ui.
+  for p in $(s_procs_naming "$d/ui"); do kill -9 "$p" 2>/dev/null; done
+  rm -rf "$d" 2>/dev/null
+}
+S_GAP_A='{ print } index($0, "printf '"'"'%s\\n'"'"' \"$open_url\" > \"$token_file\"") { print "    sleep 1  # s18-gap-A" }'
+S_GAP_B='$0 == "  SERVE_HTTP_PID=$!" { print "  sleep 1  # s19-gap-B" } { print }'
+S_ENG_A="$(s_mutant "$S_GAP_A")"
+S_ENG_B="$(s_mutant "$S_GAP_B")"
+# The mutation rules go FIRST: the gap programs end in a bare `{ print }`, and a rule placed
+# after it edits a line that has already been written.
+S_ENG_MA="$(s_mutant '$0 == "trap '"'"'lock_release; exit 0'"'"' INT TERM" { $0 = "trap '"'"'lock_release'"'"' INT TERM" } $0 == "  trap '"'"'serve_shutdown'"'"' EXIT" || $0 == "  trap '"'"'serve_shutdown; exit 0'"'"' INT TERM" { next } '"$S_GAP_A")"
+S_ENG_MB="$(s_mutant '{ sub(/\$\(jobs -p 2>\/dev\/null\) /, "") } '"$S_GAP_B")"
+# ANTI-VACUITY: every copy must carry exactly the change it claims, or its verdict means nothing.
+s_has() { [ -n "$1" ] && [ -f "$1" ] && grep -qF -- "$2" "$1"; }
+s_lacks() { [ -n "$1" ] && [ -f "$1" ] && ! grep -qF -- "$2" "$1"; }
+if ! { [ "$(grep -c 's18-gap-A' "$S_ENG_A" 2>/dev/null)" = "1" ] && [ "$(grep -c 's19-gap-B' "$S_ENG_B" 2>/dev/null)" = "1" ] \
+       && [ "$(grep -c 's18-gap-A' "$S_ENG_MA" 2>/dev/null)" = "1" ] && [ "$(grep -c 's19-gap-B' "$S_ENG_MB" 2>/dev/null)" = "1" ] \
+       && s_has "$S_ENG_MA" "trap 'lock_release' INT TERM" && s_lacks "$S_ENG_MA" "  trap 'serve_shutdown; exit 0' INT TERM" \
+       && s_has "$S_ENG_B" '$(jobs -p 2>/dev/null)' && s_lacks "$S_ENG_MB" '$(jobs -p 2>/dev/null)'; }; then
+  no "(s18) startup-signal arms: fixture" "an injected engine copy did not carry its change (A=$S_ENG_A B=$S_ENG_B MA=$S_ENG_MA MB=$S_ENG_MB) — the gap markers in setup-ui.sh moved; every verdict below would be vacuous"
+else
+  s_race "$S_ENG_A"
+  if [ "$R_SEEN$R_EXITED$R_ORPHAN$R_TOKEN" = "1100" ]; then
+    ok "(s18) a TERM landing AFTER the open-url file is written but BEFORE the handler starts ends serve, starts no server and leaves no url — the gap that hung CI for 6 hours a run"
+  else
+    no "(s18) TERM in startup gap A" "seen=$R_SEEN exited=$R_EXITED handler_left=$R_ORPHAN token_left=$R_TOKEN (want 1100)"
+  fi
+  s_race "$S_ENG_B" handler
+  if [ "$R_SEEN$R_EXITED$R_ORPHAN$R_TOKEN" = "1100" ]; then
+    ok "(s19) a TERM landing AFTER the handler is forked but BEFORE its pid is recorded still stops the handler (jobs -p) — no orphaned handler, no leftover url"
+  else
+    no "(s19) TERM in startup gap B" "seen=$R_SEEN exited=$R_EXITED handler_left=$R_ORPHAN token_left=$R_TOKEN (want 1100)"
+  fi
+  s_race "$S_ENG_MA"
+  if [ "$R_SEEN" = "1" ] && [ "$R_EXITED" = "0" ]; then
+    ok "(s20) MUTATION CONTROL: with the pre-fix traps (a lock_release-only INT/TERM trap, serve's traps not yet armed) the same TERM is SWALLOWED and serve is still running 10 s later — (s18) measures the fix, not luck"
+  else
+    no "(s20) MUTATION CONTROL: pre-fix traps swallow the TERM" "seen=$R_SEEN exited=$R_EXITED — (s18) may be vacuous"
+  fi
+  s_race "$S_ENG_MB" handler
+  if [ "$R_SEEN" = "1" ] && [ "$R_EXITED" = "1" ] && [ "$R_ORPHAN" = "1" ]; then
+    ok "(s21) MUTATION CONTROL: without jobs -p, a TERM in gap B leaves the handler RUNNING after serve is gone — (s19) measures jobs -p, not luck"
+  else
+    no "(s21) MUTATION CONTROL: recorded-pids-only shutdown orphans the handler" "seen=$R_SEEN exited=$R_EXITED handler_left=$R_ORPHAN — (s19) may be vacuous"
+  fi
+fi
 
 
 # =============================================================================================

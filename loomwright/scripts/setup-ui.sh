@@ -314,6 +314,24 @@ serve_cleanup() {
   [ -n "$tf" ] && rm -f "$tf" 2>/dev/null
   return 0
 }
+
+# serve_shutdown — what serve's own traps run while it is attached (not --detach): stop every process it has started so
+# far, then serve_cleanup. Installed BEFORE the first artefact exists, so it cannot rely on the
+# recorded pids alone: bash runs a pending trap BETWEEN commands, and a TERM that lands after
+# `python3 … &` has forked but before the next line's `SERVE_HTTP_PID=$!` finds the variable
+# EMPTY — the handler then outlived its serve (measured: 6 of 40 TERMs sent the instant the
+# open-url file appeared). `jobs -p` names every background child this shell still owns
+# whether or not its pid was recorded yet; an attached serve's only background jobs are the
+# handler and the regen loop. The recorded pids are kept as well, belt and braces.
+serve_shutdown() {
+  local j
+  for j in $(jobs -p 2>/dev/null) $SERVE_HTTP_PID $SERVE_LOOP_PID; do
+    case "$j" in ''|*[!0-9]*) continue ;; esac
+    kill "$j" 2>/dev/null
+  done
+  serve_cleanup
+  return 0
+}
 # The name of the CUSTOM request header the token travels in. Custom is the whole point: a
 # request carrying it can never be a CORS "simple request", so a hostile cross-origin page has
 # to win a preflight this server does not answer.
@@ -322,6 +340,7 @@ TOKEN_HEADER="X-Floor-Token"
 # abort and this file's contract is that every branch exits 0.
 UI_TOKEN=""
 SERVE_HTTP_PID=""
+SERVE_LOOP_PID=""
 
 # HOME is read ONCE, defensively. `set -u` turns an unset HOME into an abort with a bash
 # diagnostic and a non-zero status, which contradicts this file's own EVERY-BRANCH-EXITS-0
@@ -553,10 +572,18 @@ lock_release() {
 # branch release?" a question every future change has to answer correctly. Every verb in this
 # file is terminal — the dispatch at the bottom runs exactly one and the script exits — so the
 # trap fires on the refusals exactly as it does on the successes.
-# `do_serve` installs its OWN EXIT trap and therefore replaces this one; that is currently
-# harmless because `serve` takes no lock, so LOCK_HELD is empty for its whole life. If a future
-# change ever makes `serve` take this lock, that trap must chain this release.
-trap 'lock_release' EXIT INT TERM
+# `do_serve` installs its OWN traps and therefore replaces these; that is currently harmless
+# because `serve` takes no lock, so LOCK_HELD is empty for its whole life. If a future change
+# ever makes `serve` take this lock, those traps must chain this release.
+#
+# INT/TERM MUST EXIT, not merely release. A trap on a signal REPLACES the signal's default
+# action, so a handler that only releases SWALLOWS the signal and the shell carries on. That
+# was a live bug: `serve` writes its open-url file before installing its own traps, so a TERM
+# landing in that window ran this handler, was swallowed, and serve went on to `wait` on its
+# server forever. test-setup-ui.sh (s12) hung CI that way on ~1 run in 9 (2026-09-27 →
+# 2026-10-01) and (s18) now drives that window directly. Exit status 0, per the contract above.
+trap 'lock_release' EXIT
+trap 'lock_release; exit 0' INT TERM
 
 # lock_owner_pid <lockdir> -> the recorded holder pid on stdout, or rc 1 when there is not a
 # readable numeric one. Validated numeric before it can reach `kill`, for the same reason
@@ -1936,6 +1963,17 @@ do_serve() {
   # window before there is anything worth reading. A failure here is NOT fatal - the server is
   # already up and the URL is already on screen - so it degrades to a note, per this file's
   # every-branch-exits-0 contract.
+  # THE SHUTDOWN TRAPS GO IN HERE, BEFORE THE FIRST ARTEFACT. Everything from this line on —
+  # the open-url file, the handler process, the pidfile, the regen loop — is something a signal
+  # must clean up, and the traps used to be installed only after all of it, just before `wait`.
+  # A TERM in that gap met the file-level lock_release trap instead: the open-url file was
+  # already on disk (the very thing a supervising caller polls for to know serve is up), the
+  # signal was swallowed, and serve hung in `wait`; with that trap made to exit, the handler
+  # started a moment earlier was orphaned instead. --detach puts the file-level traps back
+  # below, because a detached server is SUPPOSED to outlive this shell.
+  trap 'serve_shutdown' EXIT
+  trap 'serve_shutdown; exit 0' INT TERM
+
   local token_file
   token_file="$(serve_token_path)" || token_file=""
   if [ -n "$token_file" ] && : > "$token_file" 2>/dev/null && chmod 600 "$token_file" 2>/dev/null; then
@@ -1958,19 +1996,21 @@ do_serve() {
         serve_tick "$tick"
       done ) >/dev/null 2>&1 &
     loop=$!
+    SERVE_LOOP_PID="$loop"
     printf '%s\n' "$loop" >> "$UI_DIR/serve.pid" 2>/dev/null
   fi
 
   if [ "$DETACH" -eq 1 ]; then
+    # Hand the server over: from here it is `stop`'s to end, so this shell's exit must not.
+    trap 'lock_release' EXIT
+    trap 'lock_release; exit 0' INT TERM
     echo "  detached: pids recorded in $UI_DIR/serve.pid — stop it with 'setup-ui.sh stop --ui-dir $UI_DIR'"
     return 0
   fi
 
-  # shellcheck disable=SC2064
-  # `$srv`/`$loop` are expanded NOW, while they are known; `serve_cleanup` is called at trap
-  # time and reads `$UI_DIR` then. It replaced an inline `rm` of the pidfile alone, which is how
-  # the open-url file came to survive the one shutdown a human is told to use.
-  trap "kill $srv $loop 2>/dev/null; serve_cleanup" EXIT INT TERM
+  # The attached shutdown path (an interrupt, TERM, or the server dying) is serve_shutdown, armed
+  # above before the first artefact; it shares serve_cleanup with `do_stop`, so the two
+  # shutdown paths cannot clean up different sets of files.
   echo "  foreground: Ctrl-C to stop"
   wait "$srv" 2>/dev/null
   return 0
