@@ -24,7 +24,14 @@
 #                                                  → exit 1, "left no shim dir", no fixture test ran
 #   (H)  egress-hermetic runner layer: a worker sees the helper's effect though the parent exported
 #        LOOMWRIGHT_WEBHOOK_URL
-#   (W)  wiring: ci.yml's self-test step invokes run-self-tests.sh
+#   (T)  a fixture that never exits (with a background child) under SELF_TEST_TIMEOUT=2
+#                                                  → exit 1, TIMEOUT banner, stderr names the test
+#                                                    and prints its process tree, the child is
+#                                                    killed, and a passing fixture still passes;
+#        MUTATION CONTROL: a slow fixture that FINISHES inside the limit → exit 0 (no false timeout)
+#   (TJ) SELF_TEST_TIMEOUT not a positive integer  → exit 1
+#   (W)  wiring: ci.yml's self-test step invokes run-self-tests.sh, and the ci job is capped
+#        with timeout-minutes
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 
@@ -198,11 +205,54 @@ else
   no "(H) runner layer missing: rc=$rc parent=$(cat "$T/hermetic-parent.state" 2>/dev/null) seen='$seen' $(cat "$T/h.out")"
 fi
 
+echo "== (T) per-test watchdog: a test that never exits is killed and named =="
+# The hung fixture mimics the CI hang's footprint: a background python-like child plus a
+# foreground wait that never returns. Its pid file lets us prove the child was killed too.
+cat > "$T/hang.sh" <<'EOF'
+d="$(dirname "$0")"
+sleep 300 & echo $! > "$d/hang-child.pid"
+echo "hang-marker-before-wait"
+sleep 300
+EOF
+cat > "$T/slow-ok.sh" <<'EOF'
+sleep 1; echo done
+EOF
+rm -f "$T/hang-child.pid"
+t0=$(date +%s)
+SELF_TEST_TIMEOUT=2 run "$T/t.out" "$T/hang.sh" "$T/pass1.sh"; rc=$?
+el=$(( $(date +%s) - t0 ))
+[ "$rc" -eq 1 ] && ok "(T) a never-exiting test fails the run (exit 1)" || no "(T) expected exit 1, got $rc: $(cat "$T/t.out")"
+[ "$el" -lt 30 ] && ok "(T) the run ended in ${el}s (limit 2s + kill grace) instead of waiting on the hung test" || no "(T) run took ${el}s"
+grep -q "FAIL (exit 124 — TIMEOUT after 2s): $T/hang.sh" "$T/t.out" && ok "(T) the FAIL banner says TIMEOUT and names the test" \
+  || no "(T) no TIMEOUT banner: $(cat "$T/t.out")"
+grep -q "run-self-tests: TIMEOUT after 2s: $T/hang.sh" "$T/t.out" && grep -q "sleep 300" "$T/t.out" \
+  && ok "(T) the live stderr report names the test and lists its process tree (the hung 'sleep 300')" \
+  || no "(T) live report missing test name or process tree: $(cat "$T/t.out")"
+grep -q "hang-marker-before-wait" "$T/t.out" && ok "(T) the hung test's own output tail is printed" || no "(T) output tail missing"
+grep -q "PASS .* $T/pass1.sh" "$T/t.out" && ok "(T) the passing fixture alongside it still passed" || no "(T) pass1.sh not reported PASS"
+cpid="$(cat "$T/hang-child.pid" 2>/dev/null || true)"
+if [ -n "$cpid" ] && ! kill -0 "$cpid" 2>/dev/null; then ok "(T) the hung test's background child was killed with it"
+else no "(T) background child ${cpid:-<no pid>} survived the watchdog"; kill "$cpid" 2>/dev/null; fi
+SELF_TEST_TIMEOUT=5 run "$T/t2.out" "$T/slow-ok.sh"; rc=$?
+[ "$rc" -eq 0 ] && ! grep -q TIMEOUT "$T/t2.out" \
+  && ok "(T) MUTATION CONTROL: a 1s test under a 5s limit passes — the watchdog fires only on a real overrun" \
+  || no "(T) MUTATION CONTROL: slow-but-finishing test rc=$rc: $(cat "$T/t2.out")"
+
+echo "== (TJ) SELF_TEST_TIMEOUT validation =="
+for bad in abc 0 -5; do
+  SELF_TEST_TIMEOUT="$bad" run "$T/tj.out" "$T/pass1.sh"; rc=$?
+  [ "$rc" -eq 1 ] && grep -q "SELF_TEST_TIMEOUT must be a positive integer" "$T/tj.out" \
+    && ok "(TJ) SELF_TEST_TIMEOUT='$bad' refused (exit 1)" || no "(TJ) SELF_TEST_TIMEOUT='$bad' → rc=$rc"
+done
+
 echo "== (W) wiring: ci.yml invokes the runner =="
 if [ -f "$CI_YML" ]; then
   grep -q 'bash loomwright/scripts/run-self-tests.sh' "$CI_YML" \
     && ok "(W) ci.yml's self-test step invokes run-self-tests.sh" \
     || no "(W) ci.yml does not invoke loomwright/scripts/run-self-tests.sh"
+  grep -qE '^    timeout-minutes: [0-9]+' "$CI_YML" \
+    && ok "(W) the ci job carries a timeout-minutes cap (backstop for the per-test watchdog)" \
+    || no "(W) ci.yml's ci job has no timeout-minutes — a hung step would run to GitHub's 6-hour default"
 else
   no "(W) ci.yml not found at $CI_YML"
 fi
