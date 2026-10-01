@@ -16,10 +16,16 @@
 #          than the flat glob reaches — without the second glob they are committed tests nothing
 #          runs). Future tests are auto-included — anti-drift.
 #   env:   SELF_TEST_JOBS  concurrency (default: CPU count, fallback 4)
+#          SELF_TEST_TIMEOUT  per-test wall-clock limit in seconds (default 900). A test still
+#          running at the limit is a FAILURE (exit 124 in its banner): its process tree and log
+#          tail are printed to stderr THE MOMENT it times out (so a CI log names the hung test
+#          even if the job is later killed), then the whole tree is killed. Before this, one test
+#          that never exited held the step until GitHub's 6-hour default (15 CI runs, 2026-09-27
+#          → 2026-10-01, each cancelled at ~361 min with no test named in the log).
 #   marker: a test carrying the exact line `# run-self-tests: serial` runs ALONE, after the
 #          concurrent batch — for tests that measure wall-clock time and need an idle machine
 #   exit 0 = every test ran AND exited 0
-#   exit 1 = FAIL CLOSED: any test exited non-zero, any test left no result (its worker died), or
+#   exit 1 = FAIL CLOSED: any test exited non-zero or timed out, any test left no result (its worker died), or
 #            the glob matched nothing (a moved/renamed scripts dir fails LOUDLY, never green)
 #
 # Unlike the serial `set -e` loop, a red test does not hide the ones after it: every test runs,
@@ -70,6 +76,9 @@ if [ -z "$jobs" ]; then
   jobs="$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 fi
 case "$jobs" in ''|*[!0-9]*|0) echo "SELF_TEST_JOBS must be a positive integer, got '$jobs'" >&2; exit 1 ;; esac
+limit="${SELF_TEST_TIMEOUT:-900}"
+case "$limit" in ''|*[!0-9]*|0) echo "SELF_TEST_TIMEOUT must be a positive integer (seconds), got '$limit'" >&2; exit 1 ;; esac
+export SELF_TEST_TIMEOUT="$limit"
 
 out="$(mktemp -d "${TMPDIR:-/tmp}/self-tests.XXXXXX")"
 trap 'rm -rf "$out"' EXIT
@@ -77,13 +86,54 @@ trap 'rm -rf "$out"' EXIT
 # One worker per test. It ALWAYS exits 0 so xargs keeps scheduling; the verdict is the per-test
 # `<idx>.rc` file it writes LAST. A missing rc file therefore means the worker never finished,
 # and is counted as a failure below — never as a pass.
-worker='
-idx="$1"; t="$2"
+#
+# The worker is a file (not a `bash -c` string) so the watchdog's awk program can be quoted
+# normally. Watchdog: no `timeout(1)` (absent on stock macOS) — the test runs in the background
+# and the worker polls it every 0.5 s against SELF_TEST_TIMEOUT. On expiry it collects the test's
+# descendants from `ps -A -o pid= -o ppid=` (same flags on BSD and procps), prints them with their
+# command lines plus the log tail to stderr immediately, appends the same to the test's log, then
+# TERMs and (2 s later) KILLs the tree. rc 124 = timed out, matching timeout(1).
+cat > "$out/worker.sh" <<'WORKER'
+idx="$1"; t="$2"; limit="$SELF_TEST_TIMEOUT"
+log="$SELF_TEST_OUT/$idx.log"
+descendants() {
+  local c
+  for c in $(ps -A -o pid= -o ppid= 2>/dev/null | awk -v p="$1" '$2 == p { print $1 }'); do
+    echo "$c"; descendants "$c"
+  done
+}
 start=$(date +%s)
-rc=0; bash "$t" > "$SELF_TEST_OUT/$idx.log" 2>&1 < /dev/null || rc=$?
+bash "$t" > "$log" 2>&1 < /dev/null &
+pid=$!
+timed_out=0
+while kill -0 "$pid" 2>/dev/null; do
+  if [ $(( $(date +%s) - start )) -ge "$limit" ]; then timed_out=1; break; fi
+  sleep 0.5
+done
+if [ "$timed_out" -eq 1 ]; then
+  # One pid per line, then joined with commas by paste: no reliance on unquoted word-splitting
+  # to trim a trailing separator (GNU `ps -p 1,` errors "improper list").
+  tree_lines="$( { echo "$pid"; descendants "$pid"; } | grep -E '^[0-9]+$')"
+  tree_csv="$(printf '%s\n' "$tree_lines" | paste -sd, -)"
+  {
+    echo "run-self-tests: TIMEOUT after ${limit}s: $t — still running; process tree:"
+    ps -o pid= -o ppid= -o etime= -o command= -p "$tree_csv" 2>/dev/null | sed 's/^/    /'
+    echo "  last 20 lines of its output:"
+    tail -n 20 "$log" 2>/dev/null | sed 's/^/    /'
+  } > "$SELF_TEST_OUT/$idx.hang" 2>&1
+  cat "$SELF_TEST_OUT/$idx.hang" >&2
+  { echo; echo "================ killed by run-self-tests watchdog ================"; cat "$SELF_TEST_OUT/$idx.hang"; } >> "$log"
+  for k in $tree_lines; do kill -TERM "$k" 2>/dev/null; done
+  sleep 2
+  for k in $tree_lines; do kill -KILL "$k" 2>/dev/null; done
+  wait "$pid" 2>/dev/null
+  rc=124
+else
+  rc=0; wait "$pid" || rc=$?
+fi
 printf "%s %s\n" "$rc" "$(( $(date +%s) - start ))" > "$SELF_TEST_OUT/$idx.rc.tmp"
 mv "$SELF_TEST_OUT/$idx.rc.tmp" "$SELF_TEST_OUT/$idx.rc"
-'
+WORKER
 export SELF_TEST_OUT="$out"
 
 # Tests that measure wall-clock time (calibrated runtime ratios, deliberate races, sleep-then-type
@@ -106,7 +156,7 @@ schedule() {
   [ "$#" -gt 0 ] || return 0
   local k
   for k in "$@"; do printf '%s\0%s\0' "$k" "${tests[$k]}"; done \
-    | xargs -0 -n 2 -P "$n" bash -c "$worker" worker || xargs_rc=$?
+    | xargs -0 -n 2 -P "$n" bash "$out/worker.sh" || xargs_rc=$?
 }
 
 echo "running ${#tests[@]} self-tests: ${#par_idx[@]} concurrently ($jobs at a time), then ${#ser_idx[@]} serially"
@@ -152,7 +202,11 @@ if [ "${#failed[@]}" -gt 0 ]; then
     t="${tests[$i]}"
     rc="no-result"; [ -f "$out/$i.rc" ] && read -r rc _ < "$out/$i.rc"
     echo
-    echo "================ FAIL (exit $rc): $t ================"
+    if [ "$rc" = "124" ]; then
+      echo "================ FAIL (exit 124 — TIMEOUT after ${limit}s): $t ================"
+    else
+      echo "================ FAIL (exit $rc): $t ================"
+    fi
     cat "$out/$i.log" 2>/dev/null || echo "(no output captured)"
   done
   echo
