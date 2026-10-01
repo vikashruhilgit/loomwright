@@ -291,8 +291,16 @@ fi
 # tell it apart from a scripted bump; (2) the requirement's literal "differs from origin/main"
 # wording was narrowed to the merge base, because comparing with origin/main itself would flag
 # every stale-but-unbumped branch; (3) when origin/main or the merge base is unresolvable (no .git,
-# a shallow CI checkout, no origin remote) this one check is SKIPPED with a visible note rather
-# than failing — it is a doc gate, not a correctness gate.
+# no origin remote, or a depth-1 checkout that fetched only the PR ref) this one check is SKIPPED
+# with a visible note rather than failing — it is a doc gate, not a correctness gate.
+# (4) THIS REPO'S OWN CI CANNOT RUN IT YET. That depth-1 checkout is not an edge case: the
+# "Checkout repository" step in .github/workflows/ci.yml uses actions/checkout with its default
+# fetch depth and no origin/main fetch, so origin/main is absent on EVERY PR CI run and the guard
+# always skips there (silently when no fragment is present, with the NOTE below when one is). As
+# configured today it only bites on a local run against a fetched origin/main. Making it bite in
+# CI needs a follow-up that adds an origin/main fetch (or fetch-depth: 0) to that workflow — kept
+# out of this change because a PR that edits a workflow file makes the claude-code-action
+# reviewer skip itself.
 #
 # The invocation is a single line on purpose: scripts/test-bump-version.sh's mutation control
 # deletes exactly that line from a COPY of this script and proves the guard then stops firing.
@@ -305,7 +313,7 @@ run_bump_fragment_guard() {
   done
   [ -n "$frags" ] || return 0
   if ! git rev-parse --verify -q origin/main >/dev/null 2>&1; then
-    echo "  NOTE [bump-fragment-guard] skipped — origin/main is not resolvable here (fragments present:$frags)"
+    echo "  NOTE [bump-fragment-guard] skipped — origin/main is not resolvable here (fragments present:$frags); this is the EXPECTED state on this repo's PR CI (depth-1 checkout, no origin/main fetch), so the guard does not run in CI — it only bites locally until ci.yml fetches origin/main"
     return 0
   fi
   base="$(git merge-base HEAD origin/main 2>/dev/null)" || base=""

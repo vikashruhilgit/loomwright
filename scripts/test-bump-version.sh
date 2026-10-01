@@ -206,6 +206,46 @@ D="$TMP/t6c"; make_fixture "$D"; frag "$D" x.md '<!-- bump: huge -->\nX\n'; befo
 run_bump "$D"; rc=$?
 [ "$rc" -eq 1 ] && [ "$(tree_sum "$D")" = "$before" ]; check $? "unknown bump level in a fragment: exit 1, nothing written"
 
+# One case per remaining refusal path. Each fixture is otherwise bumpable (a well-formed fragment
+# is present where the refusal is not about fragments), so ONLY the named guard can stop it — and
+# each input is chosen so that, with that guard deleted, the bump would go through or fail with a
+# DIFFERENT message, which the message assertion then catches. tree_sum covers the three version
+# files and every fragment.
+refusal() { # refusal <dir> <fixed-string refusal message> <label>
+  local d="$1" msg="$2" label="$3" before rc
+  before="$(tree_sum "$d")"
+  run_bump "$d"; rc=$?
+  [ "$rc" -eq 1 ] && [ "$(tree_sum "$d")" = "$before" ] && [ -z "$(g "$d" status --porcelain -- "$PJ" "$MJ" "$CL")" ] \
+    && [ -z "$(find "$d" -maxdepth 1 -name '.bump-version.*')" ]
+  check $? "$label: exit 1, three files + fragments byte-unchanged"
+  grep -qF -- "$msg" "$TMP/last.out"; check $? "$label: the refusal names the cause ('$msg')"
+}
+
+D="$TMP/t6d"; make_fixture "$D"; frag "$D" x.md 'Headline\n<!-- bump: minor -->\nbody\n'
+refusal "$D" "malformed bump directive" "bump directive on a later line"
+
+D="$TMP/t6e"; make_fixture "$D"; frag "$D" x.md '<!-- bump: minor -->\n## :\nbody\n'
+refusal "$D" "x.md: empty headline" "headline empty after stripping '#' and ':'"
+
+D="$TMP/t6f"; make_fixture "$D"; frag "$D" x.md '<!-- bump: minor -->\n\n'
+refusal "$D" "x.md: fragment has no headline" "fragment with only a bump directive"
+
+D="$TMP/t6g"; make_fixture "$D"
+sed 's/"name": "loomwright"/"name": "loomwright-renamed"/' "$D/$MJ" > "$D/mj.tmp" && mv "$D/mj.tmp" "$D/$MJ"
+g "$D" commit -q -am "no loomwright entry"; frag "$D" x.md 'X\n'
+refusal "$D" "must list exactly one loomwright plugin (found 0)" "marketplace.json with no loomwright entry"
+
+D="$TMP/t6h"; make_fixture "$D"
+jq '.plugins += [.plugins[0]]' "$D/$MJ" > "$D/mj.tmp" && mv "$D/mj.tmp" "$D/$MJ"
+g "$D" commit -q -am "two loomwright entries"; frag "$D" x.md 'X\n'
+refusal "$D" "must list exactly one loomwright plugin (found 2)" "marketplace.json with two loomwright entries"
+
+D="$TMP/t6i"; make_fixture "$D"
+sed 's/^\*\*v\([0-9]\)/**release \1/' "$D/$CL" > "$D/cl.tmp" && mv "$D/cl.tmp" "$D/$CL"
+g "$D" commit -q -am "no entry"; frag "$D" x.md 'X\n'
+[ -z "$(grep -E '^\*\*v[0-9]' "$D/$CL")" ]; check $? "no-entry precondition: the fixture CHANGELOG carries no **vX.Y.Z entry"
+refusal "$D" "has no '**vX.Y.Z" "CHANGELOG.md with no version entry"
+
 # ---- 5. --dry-run writes nothing ---------------------------------------------------------------
 D="$TMP/t7"; make_fixture "$D"; frag "$D" x.md '<!-- bump: minor -->\nDry headline\nbody\n'; before="$(tree_sum "$D")"
 run_bump "$D" --dry-run; rc=$?
