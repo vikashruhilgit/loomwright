@@ -280,6 +280,49 @@ if [ "$cmds_seen" -gt 0 ]; then
   fi
 fi
 
+# --- Bump without the script (parallel-automate item 01) --------------------------------------
+# The version is bumped ONLY by scripts/bump-version.sh, which folds every changelog.d/ fragment
+# into CHANGELOG.md and deletes it in the same step. So a branch whose WORKING-TREE plugin.json
+# version differs from the version at `git merge-base HEAD origin/main` (this branch changed the
+# version — an uncommitted hand bump is caught locally too) while a changelog.d/*.md fragment other
+# than README.md is still present, bumped by hand. A branch merely BEHIND main (main bumped after
+# the fork, the branch carries only a fragment) has the merge base's version and stays green.
+# HONEST LIMITS: (1) a hand bump with NO fragment is undetectable here — there is nothing left to
+# tell it apart from a scripted bump; (2) the requirement's literal "differs from origin/main"
+# wording was narrowed to the merge base, because comparing with origin/main itself would flag
+# every stale-but-unbumped branch; (3) when origin/main or the merge base is unresolvable (no .git,
+# a shallow CI checkout, no origin remote) this one check is SKIPPED with a visible note rather
+# than failing — it is a doc gate, not a correctness gate.
+#
+# The invocation is a single line on purpose: scripts/test-bump-version.sh's mutation control
+# deletes exactly that line from a COPY of this script and proves the guard then stops firing.
+run_bump_fragment_guard() {
+  local frag frags="" base base_ver
+  for frag in changelog.d/*.md; do
+    [ -f "$frag" ] || continue
+    [ "$(basename "$frag")" = "README.md" ] && continue
+    frags="$frags $frag"
+  done
+  [ -n "$frags" ] || return 0
+  if ! git rev-parse --verify -q origin/main >/dev/null 2>&1; then
+    echo "  NOTE [bump-fragment-guard] skipped — origin/main is not resolvable here (fragments present:$frags)"
+    return 0
+  fi
+  base="$(git merge-base HEAD origin/main 2>/dev/null)" || base=""
+  base_ver=""
+  [ -n "$base" ] && base_ver="$(git show "$base:$PLUGIN_JSON" 2>/dev/null | jq -r '.version // empty' 2>/dev/null)"
+  if [ -z "$base_ver" ]; then
+    echo "  NOTE [bump-fragment-guard] skipped — no merge base with origin/main, or no plugin.json version there"
+    return 0
+  fi
+  if [ "$VERSION" != "$base_ver" ]; then
+    echo "  DRIFT [bump-fragment-guard] $PLUGIN_JSON — version $VERSION differs from the merge base's $base_ver while changelog.d/ fragment(s) remain:$frags — bump with scripts/bump-version.sh (it folds and removes them)"
+    return 1
+  fi
+  return 0
+}
+run_bump_fragment_guard || fail=1
+
 if [ "$fail" -ne 0 ]; then
   echo "✗ doc-currency drift detected — update the offending lines to match the authoritative values above."
   exit 1
