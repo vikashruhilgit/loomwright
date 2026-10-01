@@ -2,8 +2,8 @@
 name: automate-loop
 description: Protocol authority for `/automate` — the generic automation engine that converts ANY source (a prompt via /product-owner, a requirements folder, or a backlog-doc) into a FULL Queue with a per-run processing cap inside ONE markdown run file (`.supervisor/automate/<run_id>.md` — the contract, dashboard, and resume state), then drives each Queue item through the per-item loop (`/autonomous --single-iteration` → owned inline `/review-pr --until-mergeable` → trusted-merge-or-park → pull main → check off + append `## Progress`). Smart resume = glob run files (`# Automate Run:` title, `is_run_file`) not stamped done + reconcile-vs-ground-truth. Use when implementing or invoking `/automate`.
 allowed-tools: [Read, Write, Edit, Bash, Task, AskUserQuestion]
-version: "1.8.0"
-lastUpdated: "2026-09-30"
+version: "1.8.1"
+lastUpdated: "2026-10-01"
 ---
 
 # Automate Loop Skill
@@ -60,7 +60,7 @@ so **the tested code IS the executed code** (one implementation, guarded by `scr
 | `remaining` | §3 | Count of `- [ ]` Queue items (COMPUTED — not a stored run-file field). |
 | `resolve-folder` | §2 | List `*.md` in a folder not stamped `## Status: done` and not `## Status: proposed\|parked` (harness-port/02). |
 | `resolve-backlog` | §2 | Dependency-ordered items honoring `done`/✅ markers; dir-scan fallback also skips `## Status: proposed\|parked` (harness-port/02) — a checklist line naming a file directly is unaffected (by design). |
-| `resume-glob` | §4 | List run files not stamped `## Status: done`. A run file is a `*.md` carrying the `# Automate Run:` title line anywhere (`is_run_file`) — the §6 steps 2–3 result sidecars (`<run_id>.review-heal-result.md`, `<run_id>.supervisor-result.md`) never are, so they are never listed. |
+| `resume-glob` | §4 | List run files not stamped `## Status: done`. A run file is a `*.md` carrying the `# Automate Run:` title line anywhere (`is_run_file`) — so the §6 steps 2–3 result sidecars (`<run_id>.review-heal-result.md`, `<run_id>.supervisor-result.md`) are never listed because they carry no `# Automate Run:` line (the title is matched anywhere in the file, so a sidecar that did carry one would be listed). |
 | `reconcile-item` | §4 | Reconcile one item's belief vs `gh` ground truth ⇒ `merged`/`awaiting_merge`/`gone`. |
 | `gate-eval` | §10 | The fail-CLOSED trusted auto-merge gate (conditions enumerated in §10) — the **only** executor of `gh pr merge --squash`. **SELF-RESOLVING (red-team-hardening item 03):** the gate re-derives every condition from 2 on itself from live `gh`/GraphQL/`scripts/classify-risk.sh`/`scripts/rules-gate-verdict.sh` reads and two artifact-file reads — the loop passes only what it alone knows (`drain_result`, `termination_reason`, `ready_sha`, `trust_unprotected`, `review_heal_result_path`, `supervisor_result_path`). A ctx carrying any gate-owned key (`high_risk`, `risk_reasons`, `head_sha`, `base`, `review_decision`, `unresolved_human_thread`, `protection_enforceable`, `checks_green`, `rubric_satisfied`, `rules_gate`, `rules_ok`, `rules_check`) is refused (`PARK: ctx_carries_gate_owned_key`), never trusted. Condition 6 (`high_risk`) is computed by the gate itself via `scripts/classify-risk.sh`, and condition 7 (a stamped, gate-countable `must`-rule check failing — `rules_check_failed` and its sibling PARK reasons) via `scripts/rules-gate-verdict.sh`; nothing overrides either. |
 | `learning-emit` | §6 step 3 | Fail-SAFE (always exit 0) engine-native ground-truth line: appends ONE full valid `schema_version: 1` POSTMORTEM_RESULT (`source: "automate_drain"` + `automate_key`) per processed PR from `REVIEW_HEAL_RESULT` + `SUPERVISOR_RESULT` data already in hand; idempotent on `run_id`+item+`pr_url`+`source`+completeness (a `changed_paths: []` degraded line never blocks a later complete one — §6 "Learning-emit at end-of-DRAIN"). |
@@ -444,7 +444,7 @@ then `--resume`.
    - `cmd_disabled` (`RULES_CHECK_NO_CMD=1` in the gate's environment) ⇒ `PARK: rules_cmd_disabled` — the gate cannot verify, same fail-closed posture as `unstamped`.
    - `unreadable`, helper absent/unreadable, non-zero exit, empty / non-JSON / non-object output, a missing / null / non-string `.verdict`, or any unrecognised verdict string ⇒ `PARK: rules_gate_unreadable`.
    Which must-checks count is decided by the rule's `binds` declaration and `rules-check.sh --list-gateable` (`skills/rules/SKILL.md` §8.1/§8.2 — not restated here); an advisory (non-countable) rule's pass/fail is reported, never counted. **Nothing overrides this condition** — not `--trust-unprotected` (cond 4 only), not a config key, not a project file.
-   - **Honest limit (dormancy):** on a store with no countable `must` rule (this repo's own store today) the verdict is `none` and the condition always holds — the gate has teeth only once a human declares `binds` on a checkable `must` rule and confirms it with `/rules check --confirm`.
+   - **Honest limit (dormancy):** on a READABLE store with no countable `must` rule (this repo's own store today) the verdict is `none` and the condition always holds — the gate has teeth only once a human declares `binds` on a checkable `must` rule and confirms it with `/rules check --confirm`. `none` needs that readable store: a non-parseable store is `unreadable` and a drifted / legacy stamp whose live countable set is now empty is `unstamped` — both park (the `unstamped` / `unreadable` bullets above).
 
 On all seven holding: `gh pr merge --squash <url>`. Then SYNC (`git checkout main && git pull`) so the next item branches fresh (§6).
 
