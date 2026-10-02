@@ -670,7 +670,11 @@ normalize_mode() {
     off) echo "off" ;;
     "on "*)
       b="${m#on }"
-      if valid_branch_name "$b"; then echo "on $b"
+      # A multi-line answer is never a valid mode, whatever its first line says: fail closed to
+      # `unknown`, truncated at the first newline like the arms below (one line out, always).
+      if [ "$b" != "${b%%$'\n'*}" ]; then
+        b="${b%%$'\n'*}"; echo "unknown mode reader returned a multi-line answer (first line 'on ${b//$'\r'/\\r}')"
+      elif valid_branch_name "$b"; then echo "on $b"
       else echo "unknown mode reader returned an invalid branch '${b//$'\r'/\\r}'"; fi ;;
     "unknown "*) printf '%s\n' "${m%%$'\n'*}" ;;
     *) m="${m%%$'\n'*}"; echo "unknown mode reader returned '${m//$'\r'/\\r}'" ;;

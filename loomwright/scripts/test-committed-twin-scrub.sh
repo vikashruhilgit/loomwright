@@ -5,7 +5,7 @@
 # WHY THIS EXISTS: `vikashruhilgit/loomwright` is a PUBLIC repo. Committing `.claude/agent-memory/`
 # and `.supervisor/memory/` publishes the Twin's accumulated judgment irreversibly — a push cannot
 # be taken back, and `/setup memory remove` explicitly does NOT unpublish
-# (setup-memory.sh:1208 [pins: `Removal does NOT unpublish`]).
+# (setup-memory.sh:1212 [pins: `Removal does NOT unpublish`]).
 # One memory entry cited a private work repo before this migration. This is the regression net that
 # stops it coming back.
 #

@@ -1653,7 +1653,8 @@ sed 's/^# loomwright-meta-branch: loomwright-meta$/# loomwright-meta-branch: bad
 mi="$(mem "$Bi" mode 2>/dev/null)"
 case "$mi" in "unknown "*) ok "(bm) an invalid branch in the mode line ⇒ 'unknown …' ($mi)" ;; *) no "(bm) invalid mode-line branch ⇒ '$mi'" ;; esac
 Bd="$(newgit)"; printf '.supervisor/\n' > "$Bd/.gitignore"; mem "$Bd" apply --branch-mode loomwright-meta >/dev/null 2>&1
-grep -F '>>> loomwright /setup memory BEGIN' "$Bd/.gitignore" >> "$Bd/.gitignore"
+# Via a temp file: GNU grep refuses a file that is both its input and its output (BSD grep allows it).
+grep -F '>>> loomwright /setup memory BEGIN' "$Bd/.gitignore" > "$Bd/dup" && cat "$Bd/dup" >> "$Bd/.gitignore" && rm -f "$Bd/dup"
 md="$(mem "$Bd" mode 2>/dev/null)"
 case "$md" in "unknown unparseable"*) ok "(bm) a sentinel-sanity failure ⇒ 'unknown …' ($md)" ;; *) no "(bm) duplicated sentinel ⇒ '$md'" ;; esac
 [ "$(mem "$Bd" mode 2>/dev/null | wc -l | tr -d ' ')" = 1 ] && ok "(bm) mode always prints exactly ONE line" || no "(bm) mode printed more than one line"
@@ -1845,6 +1846,14 @@ if awk '/^read_mode\(\) \{/ { f = 1 } f && /^}/ { exit } f && !/^[ \t]*#/ && /LC
 # (6) the realistic round trip is untouched: mode on → plain apply byte-identical no-op → mode on.
 Bfr="$(bmf_fix)"; sfr="$(sum "$Bfr/.gitignore")"; o="$(mem "$Bfr" apply 2>/dev/null)"
 if has '^apply: no-op' "$o" && [ "$(sum "$Bfr/.gitignore")" = "$sfr" ] && [ "$(mem "$Bfr" mode 2>/dev/null)" = "on loomwright-meta" ]; then ok "(bm-f) a valid branch-mode block still round-trips (plain apply no-op, mode on)"; else no "(bm-f) valid round trip: $(grep '^apply' <<< "$o")"; fi
+# (7) a MULTI-LINE reader answer whose first line is a valid `on <b>`: the `on ` arm must apply the
+# same one-line rule as the catch-all — exactly ONE `unknown …` line, never `on x`, never two lines.
+BML_D="$(mktemp -d)"
+awk '/^resolve_effective_branch$/ { print "read_mode() { printf '"'"'on x\\nextra\\n'"'"'; }" } { print }' "$MEM" > "$BML_D/multiline.sh"
+Bml="$(bmf_fix)"; mml="$(bash "$BML_D/multiline.sh" --root "$Bml" mode 2>/dev/null)"
+[ "$(printf '%s\n' "$mml" | wc -l | tr -d ' ')" = 1 ] && ok "(bm-f) stubbed two-line reader ('on x' + 'extra') ⇒ mode prints exactly ONE line" || no "(bm-f) stubbed two-line reader ⇒ mode printed $(printf '%s\n' "$mml" | wc -l | tr -d ' ') lines: $mml"
+case "$mml" in "unknown "*) ok "(bm-f) stubbed two-line reader ⇒ 'unknown …' ($mml)" ;; *) no "(bm-f) stubbed two-line reader ⇒ '$mml' (must be unknown, never on x)" ;; esac
+rm -rf "$BML_D"
 
 echo "== (k) the suite never touched the plugin repo's own .gitignore =="
 PLUGIN_GI_SUM_AFTER="$(sum "$PLUGIN_GI")"
