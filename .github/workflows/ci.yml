@@ -80,6 +80,12 @@ jobs:
           bash scripts/test-check-test-hermetic.sh
           bash scripts/check-test-hermetic.sh
 
+      # scripts/ci-local.sh is the local mirror of this job (it derives its gate list from the
+      # `bash scripts/…` lines in THIS file). Its self-test drives fixture repos only, never the
+      # real suite. Root scripts/test-*.sh are not globbed by run-self-tests.sh, hence explicit.
+      - name: Check the local pre-push runner (ci-local.sh)
+        run: bash scripts/test-ci-local.sh
+
       # test-verify-walkthrough.sh installs @playwright/test + a chromium build (~150 MB from
       # the Playwright CDN) into $LOOMWRIGHT_VERIFY_TEST_CACHE, and under CI=1 an install
       # failure is a HARD red (its AC11i arm) — so every run of the required `ci` check
