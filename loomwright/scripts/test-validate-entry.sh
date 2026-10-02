@@ -662,7 +662,7 @@ quiet "an entry citing a path that still resolves passes and advises nothing" \
 # after it) — a pin placed ABOVE is not seen, and a comment inside a `\`-continuation silently
 # breaks the argument list, which is how this fixture was broken once already.
 quiet "a bare CLAUDE.md and a :N line citation both resolve" \
-  "$VE" dead-reference --entry "see CLAUDE.md and loomwright/scripts/setup-memory.sh:128" --root "$REPO_ROOT"  # [pins: `robust to header edits`]
+  "$VE" dead-reference --entry "see CLAUDE.md and loomwright/scripts/setup-memory.sh:148" --root "$REPO_ROOT"  # [pins: `robust to header edits`]
 advisory "ADVISORY_DEAD_REFERENCE" "an entry citing a path that no longer resolves is ADVISED, not refused" \
   "$VE" dead-reference --entry "the guard lives in loomwright/scripts/long-gone.sh" --root "$REPO_ROOT"
 # The advisory must carry the SAME detail the refusal carried — the cited path — or "advisory" has

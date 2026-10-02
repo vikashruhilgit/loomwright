@@ -1466,7 +1466,7 @@ out="$(bm_trail done)"; rc=$?
 [ "$(git -C "$P" worktree list | wc -l | tr -d ' ')" = "$wt_before" ] && ok "(bm-a) no trail worktree created" || no "(bm-a) a worktree was added"
 names="$(bm_tree)"
 grep -qxF -- "$RF_REL0" <<<"$names" && ok "(bm-a) the branch holds the run file" || no "(bm-a) branch tree: $names"
-bm_show "$REQ" | grep -q '^## Status: done' && ok "(bm-a) the branch holds the MERGED item's done stamp" || no "(bm-a) stamp not on the branch"
+grep -q '^## Status: done' < <(bm_show "$REQ") && ok "(bm-a) the branch holds the MERGED item's done stamp" || no "(bm-a) stamp not on the branch"
 [ -z "$(git -C "$P" ls-remote --heads origin "chore/$RUN_ID-trail-*")" ] && ok "(bm-a) no chore/<run>-trail-* branch pushed" || no "(bm-a) a trail branch was pushed"
 [ ! -f "$P/.supervisor/automate/$RUN_ID.trail-staged" ] && ok "(bm-a) no .trail-staged record written" || no "(bm-a) .trail-staged written"
 
@@ -1474,7 +1474,7 @@ bm_show "$REQ" | grep -q '^## Status: done' && ok "(bm-a) the branch holds the M
 bm_unmerged() {  # <helper> → sets BM_OUT; 0 when the unmerged stamp stayed off the branch
   new_fixture "$1"; bm_switch; stamp_req "$REQ" done "$PRL"; set_pr "$PRURL" OPEN
   BM_OUT="$(BM_HELPER="$2" bm_trail done)"
-  ! bm_show "$REQ" | grep -q '^## Status: done'
+  ! grep -q '^## Status: done' < <(bm_show "$REQ")
 }
 if bm_unmerged 81 "$H"; then ok "(bm-b) unmerged item's done stamp is NOT on the branch"; else no "(bm-b) unmerged stamp reached the branch"; fi
 case "$BM_OUT" in "trail-pr: meta-pushed $BMB"*"; excluded $REQ — pr not merged"*) ok "(bm-b) '$BM_OUT'" ;; *) no "(bm-b) output: '$BM_OUT'" ;; esac
@@ -1491,10 +1491,10 @@ new_fixture 83; bm_switch; set_pr "$PRURL" OPEN
 DRN="$RUN_ID--01-a--dismissed-1.md"; DRP=".supervisor/requirements/proposed/$DRN"
 mkdir -p "$P/.supervisor/requirements/proposed"; printf '# draft\n## Status: proposed\n' > "$P/$DRP"
 bm_trail done >/dev/null
-bm_tree | grep -qxF -- "$DRP" && ok "(bm-c) precondition: the undecided draft rode a push" || no "(bm-c) precondition: draft not on the branch"
+grep -qxF -- "$DRP" < <(bm_tree) && ok "(bm-c) precondition: the undecided draft rode a push" || no "(bm-c) precondition: draft not on the branch"
 rm -f "$P/$DRP"; printf '%s\tdrop\n' "$DRN" > "$P/.supervisor/automate/$RUN_ID.dismissed-decisions"
 out="$(bm_trail done)"
-bm_tree | grep -qxF -- "$DRP" && no "(bm-c) the dropped draft is still on the branch ($out)" || ok "(bm-c) the dropped draft is DELETED on the branch ($out)"
+grep -qxF -- "$DRP" < <(bm_tree) && no "(bm-c) the dropped draft is still on the branch ($out)" || ok "(bm-c) the dropped draft is DELETED on the branch ($out)"
 
 # (bm-d) a push meta-sync refuses (scrub hit) is LOUD: exit 0, Progress line, notify, marker; the
 # next successful push removes the marker.
@@ -1541,8 +1541,8 @@ bm_switch
 out="$(cd "$P" && bash "$H" closeout "$RF_REL" "$REQ" "$PRURL")"
 grep -q 'meta-pushed' <<<"$out" && ok "(bm-g) closeout's trail step meta-pushed" || no "(bm-g) closeout output: $out"
 [ "$(count_creates)" = 0 ] && ok "(bm-g) closeout opened NO PR in branch mode" || no "(bm-g) pr create invoked by closeout"
-bm_tree | grep -qxF -- "$RF_REL" && ok "(bm-g) the branch holds the run file after closeout" || no "(bm-g) branch tree: $(bm_tree | tr '\n' ' ')"
-bm_show "$REQ" | grep -q '^## Status: done' && ok "(bm-g) the branch holds the closed-out item's stamp" || no "(bm-g) closed-out stamp not on the branch"
+grep -qxF -- "$RF_REL" < <(bm_tree) && ok "(bm-g) the branch holds the run file after closeout" || no "(bm-g) branch tree: $(bm_tree | tr '\n' ' ')"
+grep -q '^## Status: done' < <(bm_show "$REQ") && ok "(bm-g) the branch holds the closed-out item's stamp" || no "(bm-g) closed-out stamp not on the branch"
 
 # A1: the SKILL's "No park calls it" list carries meta_unreachable (it runs before the PICK lock).
 case "$nopark" in *meta_unreachable*) ok "(bm) the no-park list names meta_unreachable" ;; *) no "(bm) meta_unreachable missing from the 'No park calls it' list" ;; esac

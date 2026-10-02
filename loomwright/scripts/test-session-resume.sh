@@ -1474,11 +1474,11 @@ test_branch_mode_hint() {
   [ "$(lastrc)" = 0 ] && ok "branch mode: hook exits 0" || no "branch mode: rc=$(lastrc)"
   rm -rf "$r/.supervisor"
   ctx_r="$(PATH="$gshim:$PATH" run_hook_ctx "$r" resume)"
-  printf '%s' "$ctx_r" | grep -qF "$hint" && ok "branch mode: a clone with NO .supervisor/ still gets the hint on resume" || no "branch mode: no hint without .supervisor/ ('$ctx_r')"
+  grep -qF "$hint" < <(printf '%s' "$ctx_r") && ok "branch mode: a clone with NO .supervisor/ still gets the hint on resume" || no "branch mode: no hint without .supervisor/ ('$ctx_r')"
   make_plugin_active "$r"
   printf 'deadbeef\n' > "$r/.git/meta-base"
   ctx_s="$(run_hook_ctx "$r" startup)"; ctx_r="$(run_hook_ctx "$r" resume)"
-  if printf '%s\n%s' "$ctx_s" "$ctx_r" | grep -qF 'has not been pulled'; then no "branch mode: meta-base present still emits the hint"; else ok "branch mode: meta-base present ⇒ no hint line"; fi
+  if grep -qF 'has not been pulled' < <(printf '%s\n%s' "$ctx_s" "$ctx_r"); then no "branch mode: meta-base present still emits the hint"; else ok "branch mode: meta-base present ⇒ no hint line"; fi
   # Mode off ⇒ byte-identical to a copy of the hook whose hint function returns nothing.
   mutd="$(mktmp)"; cp "$SCRIPT_DIR"/*.sh "$SCRIPT_DIR"/*.py "$mutd/" 2>/dev/null
   awk '/^meta_branch_hint_line\(\) \{$/ { print; print "  return 0"; next } { print }' "$HOOK" > "$mutd/session-resume.sh"
