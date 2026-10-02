@@ -323,7 +323,7 @@ exp6 g-quoted countable bound:1
 exp6 g-two advisory unbound:scripts/hb.sh
 exp6 canary countable no_invocations
 [ "$(nlines "$o6")" -eq 19 ] && ok "(ac6) exactly one line per selected id (19)" || no "(ac6) $(nlines "$o6") lines: [$o6]"
-[ "$o6" = "$(printf '%s\n' "$o6" | LC_ALL=C sort)" ] && ok "(ac6) lines are LC_ALL=C sorted" || no "(ac6) not sorted"
+[ "$o6" = "$(printf '%s\n' "$o6" | env LC_ALL=C sort)" ] && ok "(ac6) lines are LC_ALL=C sorted" || no "(ac6) not sorted"
 sel6="$( cd "$R6" && HOME="$H6" bash "$CHECKER" --list-selected </dev/null 2>/dev/null )"
 [ "$(printf '%s\n' "$o6" | cut -f1)" = "$sel6" ] && ok "(ac6) the id column equals --list-selected exactly" || no "(ac6) id column differs from --list-selected"
 for combo in "--list-gateable --confirm" "--confirm --list-gateable" "--no-cmd --if-stamped --confirm --list-gateable"; do
@@ -464,7 +464,7 @@ for variant in absent null empty; do
   # Independent recomputation — jq+sha256 in THIS test over `[id, check] | @tsv` only (no binds term).
   T8="$ROOT/hash-$variant"
   { jq -cn '{id:"v-one", check:"true"}'; jq -cn '{id:"v-two", check:"false"}'; } \
-    | jq -r '[.id, .check] | @tsv' | LC_ALL=C sort > "$T8"
+    | jq -r '[.id, .check] | @tsv' | env LC_ALL=C sort > "$T8"
   exp8="$(_t_sha256_file "$T8")"
   key8="$( cd "$RA" && cd "$(git rev-parse --git-common-dir)" && pwd -P )"
   outB="$( cd "$RA" && HOME="$HB" bash "$CHECKER" --confirm </dev/null 2>/dev/null )"; rcB=$?
@@ -539,7 +539,7 @@ seed_rules "$RK" "$(rule_objb 0b 'true' '[]')" "$(rule_objb a "$KCHECK" '[]')"
 # set a genuine --confirm records (both ids are `binds: []` + no invocations ⇒ countable).
 KKEY="$( cd "$RK" && cd "$(git rev-parse --git-common-dir)" && pwd -P )"
 { jq -cn '{id:"0b", check:"true"}'; jq -cn --arg c "$KCHECK" '{id:"a", check:$c}'; } \
-  | jq -r '[.id, .check] | @tsv' | LC_ALL=C sort > "$ROOT/k-hash-input"
+  | jq -r '[.id, .check] | @tsv' | env LC_ALL=C sort > "$ROOT/k-hash-input"
 KHASH="$(_t_sha256_file "$ROOT/k-hash-input")"
 mkdir -p "$(dirname "$HK/$STAMP_REL")"
 jq -n --arg k "$KKEY" --arg h "$KHASH" '{($k): {git_common_dir:$k, repo_root:"x", hash:$h, ts:"2000-01-01T00:00:00Z", countable:["0b","a"]}}' > "$HK/$STAMP_REL"

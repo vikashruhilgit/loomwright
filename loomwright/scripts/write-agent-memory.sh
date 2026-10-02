@@ -509,10 +509,10 @@ if [ $((body_len + sum_len)) -gt "$ENTRY_MAX_CHARS" ]; then
 fi
 
 scan="$work/scan"
-{ printf '%s\n' "$summary"; cat "$body_tmp"; } | LC_ALL=C tr '\r\n\t' '   ' | tr -s ' ' > "$scan"
+{ printf '%s\n' "$summary"; cat "$body_tmp"; } | env LC_ALL=C tr '\r\n\t' '   ' | tr -s ' ' > "$scan"
 for m in "ignore previous" "ignore all previous" "system prompt" "you must now" \
          "disregard" "<system>" "[INST]"; do
-  if LC_ALL=C grep -qiF -- "$m" "$scan" 2>/dev/null; then
+  if env LC_ALL=C grep -qiF -- "$m" "$scan" 2>/dev/null; then
     refuse "REJECTED" "summary/body contains a hostile instruction-injection marker: '$m' — nothing was written" 1
   fi
 done

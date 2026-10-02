@@ -281,8 +281,8 @@ fi
 #    No matching files (or absent dir) → emit nothing, exit 0.
 files_list="$(mktemp)"; trap 'rm -f "$files_list" 2>/dev/null' EXIT
 # Use find (not a glob) so an empty/absent dir is a clean no-match, and sort under LC_ALL=C.
-LC_ALL=C find "$RULES_DIR" -maxdepth 1 -type f -name '*.json' 2>/dev/null \
-  | LC_ALL=C sort > "$files_list" 2>/dev/null || true
+env LC_ALL=C find "$RULES_DIR" -maxdepth 1 -type f -name '*.json' 2>/dev/null \
+  | env LC_ALL=C sort > "$files_list" 2>/dev/null || true
 [ -s "$files_list" ] || exit 0   # no *.json rule files → nothing to emit
 
 # 4. Merge + validate in TWO jq passes. Pass 1: a per-file loop reads each *.json file in sorted order

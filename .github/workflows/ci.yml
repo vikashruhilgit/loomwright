@@ -80,6 +80,17 @@ jobs:
           bash scripts/test-check-test-hermetic.sh
           bash scripts/check-test-hermetic.sh
 
+      # No shell script may run a command under a TEMPORARY locale assignment (`LC_ALL=C sort`);
+      # write `env LC_ALL=C sort`. Homebrew bash 5.3 on macOS segfaults (exit 139, empty output)
+      # restoring the locale in a forked subshell — CoreFoundation is not fork-safe — so the crash
+      # only reproduces on developer Macs, never on this Linux runner; the gate is the only thing
+      # that stops the shape coming back. Root scripts/test-*.sh are not globbed by
+      # run-self-tests.sh, hence the explicit self-test line. No `|| true`: fail-CLOSED gate.
+      - name: Check for temporary locale prefixes (bash 5.3 macOS segfault)
+        run: |
+          bash scripts/test-check-locale-prefix.sh
+          bash scripts/check-locale-prefix.sh
+
       # scripts/ci-local.sh is the local mirror of this job (it derives its gate list from the
       # `bash scripts/…` lines in THIS file). Its self-test drives fixture repos only, never the
       # real suite. Root scripts/test-*.sh are not globbed by run-self-tests.sh, hence explicit.

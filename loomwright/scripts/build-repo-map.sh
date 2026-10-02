@@ -169,7 +169,7 @@ MAX_SYMS_PER_FILE=30
 SKELETON="$WORKDIR/skeleton"
 {
   find "$REPO" -maxdepth "$DIR_DEPTH" "${PRUNE[@]}" -o -type d -print 2>/dev/null \
-    | LC_ALL=C sort | head -n "$MAX_SKEL_DIRS" \
+    | env LC_ALL=C sort | head -n "$MAX_SKEL_DIRS" \
     | awk -v root="$REPO" '{
         if ($0 == root) next
         rel = substr($0, length(root) + 2)
@@ -179,7 +179,7 @@ SKELETON="$WORKDIR/skeleton"
         print ind "- " parts[n] "/"
       }'
   find "$REPO" -maxdepth "$FILE_DEPTH" "${PRUNE[@]}" -o -type f "${FILE_EXCLUDES[@]}" -print 2>/dev/null \
-    | LC_ALL=C sort | head -n "$MAX_SKEL_FILES" \
+    | env LC_ALL=C sort | head -n "$MAX_SKEL_FILES" \
     | awk -v root="$REPO" '{
         rel = substr($0, length(root) + 2)
         n = split(rel, parts, "/")
@@ -195,7 +195,7 @@ SKELETON="$WORKDIR/skeleton"
 FILES_LIST="$WORKDIR/files"
 find "$REPO" -maxdepth 8 "${PRUNE[@]}" -o -type f "${SRC_NAMES[@]}" "${FILE_EXCLUDES[@]}" \
      -size -512k -print 2>/dev/null \
-  | LC_ALL=C sort | head -n "$MAX_SRC_FILES" > "$FILES_LIST" || true
+  | env LC_ALL=C sort | head -n "$MAX_SRC_FILES" > "$FILES_LIST" || true
 
 # Per-extension grep -E pattern (language-agnostic best effort — exported/top-level decls only).
 pattern_for() {
@@ -253,7 +253,7 @@ tier_a_scan() {
     _tags="$(tree-sitter tags "$_f" 2>/dev/null \
                | awk '{print $1}' \
                | grep -E '^[A-Za-z_$][A-Za-z0-9_$]*$' 2>/dev/null \
-               | LC_ALL=C sort -u | head -n "$MAX_SYMS_PER_FILE" || true)"
+               | env LC_ALL=C sort -u | head -n "$MAX_SYMS_PER_FILE" || true)"
     [ -n "$_tags" ] || continue
     printf '%s\n' "$_tags" | emit_sym_line "$_f"
     _got=1
@@ -269,7 +269,7 @@ tier_b_scan() {
     [ -n "$_f" ] || continue
     _pat="$(pattern_for "$_f")"
     grep -E "$_pat" "$_f" 2>/dev/null | head -n 60 | extract_names \
-      | LC_ALL=C sort -u | head -n "$MAX_SYMS_PER_FILE" | emit_sym_line "$_f"
+      | env LC_ALL=C sort -u | head -n "$MAX_SYMS_PER_FILE" | emit_sym_line "$_f"
   done < "$FILES_LIST"
   return 0
 }
@@ -280,7 +280,7 @@ fi
 
 # Order files by symbol count DESCENDING (simple sort, NOT PageRank), path as tie-break.
 SYMSORTED="$WORKDIR/symsorted"
-LC_ALL=C sort -t "$(printf '\t')" -k1,1nr -k2,2 "$SYMTMP" 2>/dev/null | cut -f2- > "$SYMSORTED" || true
+env LC_ALL=C sort -t "$(printf '\t')" -k1,1nr -k2,2 "$SYMTMP" 2>/dev/null | cut -f2- > "$SYMSORTED" || true
 
 # ---------------------------------------------------------------------------
 # Assemble + cap + atomic write

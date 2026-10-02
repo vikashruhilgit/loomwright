@@ -239,8 +239,8 @@ if [ -e "$RULES_DIR" ] && { [ ! -d "$RULES_DIR" ] || [ ! -r "$RULES_DIR" ] || [ 
   printf '%s: UNEXAMINED: the rule store "%s" exists but could not be listed, so NO rule was examined.\n' "$PROG" "$RULES_DIR" >&2
   exit 2
 fi
-LC_ALL=C find "$RULES_DIR" -maxdepth 1 -type f -name '*.json' 2>/dev/null \
-  | LC_ALL=C sort > "$FILES_LIST" 2>/dev/null || : > "$FILES_LIST"
+env LC_ALL=C find "$RULES_DIR" -maxdepth 1 -type f -name '*.json' 2>/dev/null \
+  | env LC_ALL=C sort > "$FILES_LIST" 2>/dev/null || : > "$FILES_LIST"
 [ -f "$FILES_LIST" ] || : > "$FILES_LIST"
 
 # hash_one <file> — a content fingerprint, portable across macOS (shasum) and Linux CI (sha256sum),
@@ -263,8 +263,8 @@ hash_one() {
 # with the set the fingerprint re-reads is what made the guarantee wider than the mechanism.
 store_fingerprint() {
   local f set_file="$WORK/fp-set"
-  LC_ALL=C find "$RULES_DIR" -maxdepth 1 -type f -name '*.json' 2>/dev/null \
-    | LC_ALL=C sort > "$set_file" 2>/dev/null || : > "$set_file"
+  env LC_ALL=C find "$RULES_DIR" -maxdepth 1 -type f -name '*.json' 2>/dev/null \
+    | env LC_ALL=C sort > "$set_file" 2>/dev/null || : > "$set_file"
   [ -f "$set_file" ] || : > "$set_file"
   printf 'set:\n'
   cat "$set_file" 2>/dev/null

@@ -346,7 +346,7 @@ gitignore_gate() {
   # comparing the file against a NUL-stripped copy of itself: bash cannot hold a NUL in a
   # variable, so `grep $'\0'` would silently degrade to an empty pattern that matches EVERY
   # file (it would flag every .gitignore as binary). `tr | cmp -` is portable to BSD and GNU.
-  if ! LC_ALL=C tr -d '\000' < "$GI" 2>/dev/null | cmp -s - "$GI" 2>/dev/null; then
+  if ! env LC_ALL=C tr -d '\000' < "$GI" 2>/dev/null | cmp -s - "$GI" 2>/dev/null; then
     echo "unparseable: .gitignore contains NUL bytes (binary, not a line-oriented ignore file)"
     return
   fi
@@ -641,6 +641,7 @@ read_mode() {
   # SEGFAULTs in the subshell (`dispose_temporary_env → sv_locale → libintl_setlocale →
   # CFLocaleCopyPreferredLanguages`, exit 139) a few percent of the time, and the reader then
   # printed NOTHING. -qF on these ASCII tokens is locale-independent (a binary match still exits 0).
+  # Repo-wide, scripts/check-locale-prefix.sh bans the temp-prefix shape; `env LC_ALL=C` is the safe form.
   grep -qF -- "$MODE_PREFIX" "$GI" 2>/dev/null || rc=$?
   # No exact prefix anywhere: a near-miss shape (no space after the colon) still carries the bare
   # token, so only a file WITHOUT the token at all is decided `off` here.

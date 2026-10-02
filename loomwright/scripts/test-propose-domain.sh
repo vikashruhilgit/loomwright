@@ -351,7 +351,7 @@ else
   count_surface() {
     cs_root="$1"; cs_globs="$2"; cs_excl="$3"
     find "$cs_root" \( -name .git -o -name node_modules -o -name .supervisor -o -name vendor \) -prune -o \
-      -type f -print 2>/dev/null | LC_ALL=C sort > "$ROOT/surface.all"
+      -type f -print 2>/dev/null | env LC_ALL=C sort > "$ROOT/surface.all"
     : > "$ROOT/surface.hit"
     set -f
     while IFS= read -r cs_p; do
@@ -391,7 +391,7 @@ else
   set -f
   find "$PROJ" \( -name .git -o -name .supervisor \) -prune -o -type f \
     \( -name '*.sh' -o -name '*.py' -o -name '*.yml' -o -name '*.json' \) -print 2>/dev/null \
-    | LC_ALL=C sort > "$A3/code.list"
+    | env LC_ALL=C sort > "$A3/code.list"
   set +f
   : > "$A3/termhits.txt"
   while IFS= read -r cf; do
@@ -499,16 +499,16 @@ np5="$(count_domain "$A5/product")"; nt5="$(count_domain "$A5/tool")"
 [ "$np5" -ge 1 ] && [ "$np5" -eq "$nt5" ] \
   && ok "both stances emitted the same $np5 gap file(s) - the diff below is over a non-empty, aligned pair" \
   || no "the two stances emitted $np5 and $nt5 file(s) - AC5's diff is not comparable"
-( cd "$A5/product" && grep -H '^- classification: ' ./*.md 2>/dev/null | LC_ALL=C sort ) > "$A5/cls.product"
-( cd "$A5/tool"    && grep -H '^- classification: ' ./*.md 2>/dev/null | LC_ALL=C sort ) > "$A5/cls.tool"
+( cd "$A5/product" && grep -H '^- classification: ' ./*.md 2>/dev/null | env LC_ALL=C sort ) > "$A5/cls.product"
+( cd "$A5/tool"    && grep -H '^- classification: ' ./*.md 2>/dev/null | env LC_ALL=C sort ) > "$A5/cls.tool"
 if cmp -s "$A5/cls.product" "$A5/cls.tool"; then
   ok "IDENTICAL classifications under both stances ($(lines "$A5/cls.product") files compared, per file)"
 else
   no "the classifications differ between stances - stance must never be a classification input:
 $(diff "$A5/cls.product" "$A5/cls.tool")"
 fi
-p_act="$(grep -h '^- default action: ' "$A5/product"/*.md 2>/dev/null | LC_ALL=C sort -u)"
-t_act="$(grep -h '^- default action: ' "$A5/tool"/*.md 2>/dev/null | LC_ALL=C sort -u)"
+p_act="$(grep -h '^- default action: ' "$A5/product"/*.md 2>/dev/null | env LC_ALL=C sort -u)"
+t_act="$(grep -h '^- default action: ' "$A5/tool"/*.md 2>/dev/null | env LC_ALL=C sort -u)"
 [ "$p_act" = "- default action: build-highest-priority" ] \
   && ok "stance \`product\` yields exactly one default action, and it is \`build-highest-priority\`" \
   || no "stance product's default action(s): '$p_act'"
@@ -622,7 +622,7 @@ $(cat "$A7/calls.txt")"
 n7="$(count_domain "$A7/out")"
 [ "$n7" -ge 1 ] && ok "the capped run still emitted $n7 gap file(s) from the one source it reached" \
   || no "the capped run emitted nothing - the coverage assertions below would be vacuous"
-F7="$(find "$A7/out" -maxdepth 1 -type f -name 'domain--*.md' 2>/dev/null | LC_ALL=C sort | awk 'NR==1{print}')"
+F7="$(find "$A7/out" -maxdepth 1 -type f -name 'domain--*.md' 2>/dev/null | env LC_ALL=C sort | awk 'NR==1{print}')"
 if [ -n "$F7" ] && [ -f "$F7" ]; then
   grep -Fq -- '- coverage: partial' "$F7" 2>/dev/null \
     && ok "the emitted file reports coverage as PARTIAL" || no "the emitted file does not report partial coverage"
@@ -708,7 +708,7 @@ echo "== AC9: namespacing - both bases into ONE directory, neither overwriting t
 A9="$(mktmp)"; SHARED="$A9/proposed"; mkdir -p "$SHARED"
 ( cd "$PROJ" && PROPOSE_FLOOR_JSON="$A1/floor.json" PROPOSE_OUT_DIR="$SHARED" PROPOSE_REQUIREMENTS_DIR="$A9/req" \
     bash "$LEDGER_SUT" ) >/dev/null 2>&1
-( cd "$SHARED" && find . -maxdepth 1 -type f -name '*.md' | LC_ALL=C sort ) > "$A9/ledger.names"
+( cd "$SHARED" && find . -maxdepth 1 -type f -name '*.md' | env LC_ALL=C sort ) > "$A9/ledger.names"
 nl9="$(lines "$A9/ledger.names")"
 [ "$nl9" -ge 1 ] && ok "the ledger basis wrote $nl9 file(s) into the shared directory" \
   || no "the ledger basis wrote nothing - AC9 has only one basis to compare"
@@ -724,7 +724,7 @@ done < "$A9/ledger.names"
 reset_domain
 D_PROJ="$PROJ"; D_OUT="$SHARED"; D_REQ="$A9/req"
 run_domain >/dev/null 2>&1
-( cd "$SHARED" && find . -maxdepth 1 -type f -name '*.md' | LC_ALL=C sort ) > "$A9/after.names"
+( cd "$SHARED" && find . -maxdepth 1 -type f -name '*.md' | env LC_ALL=C sort ) > "$A9/after.names"
 comm -13 "$A9/ledger.names" "$A9/after.names" > "$A9/new.names"
 nn9="$(lines "$A9/new.names")"
 [ "$nn9" -ge 1 ] && ok "the domain basis added $nn9 new file(s) to the same directory" \
@@ -765,7 +765,7 @@ hash_set() {
         -not -path './.git' -not -path './.git/*' \
         -not -path './.supervisor/requirements/proposed' \
         -not -path './.supervisor/requirements/proposed/*' \
-        -print | LC_ALL=C sort \
+        -print | env LC_ALL=C sort \
       | while IFS= read -r p; do
           if [ -f "$p" ] && [ ! -L "$p" ]; then printf '%s  %s\n' "$(csum "$p")" "$p"
           else printf 'DIRLINK  %s\n' "$p"; fi

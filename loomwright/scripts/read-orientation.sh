@@ -146,10 +146,10 @@ trim() { sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//'; }
 # evade the scan. Keep the list AND the normalization in sync with add-orientation.sh.
 is_hostile() {
   local f="$1" m norm="$TMPD/hostile.norm"
-  LC_ALL=C tr '\r\n\t' '   ' < "$f" 2>/dev/null | tr -s ' ' > "$norm" 2>/dev/null || return 1
+  env LC_ALL=C tr '\r\n\t' '   ' < "$f" 2>/dev/null | tr -s ' ' > "$norm" 2>/dev/null || return 1
   for m in "ignore previous" "ignore all previous" "system prompt" "you must now" \
            "disregard" "<system>" "[INST]"; do
-    if LC_ALL=C grep -qiF -- "$m" "$norm" 2>/dev/null; then
+    if env LC_ALL=C grep -qiF -- "$m" "$norm" 2>/dev/null; then
       return 0
     fi
   done
@@ -177,8 +177,8 @@ mtime_of() {
 # ---------------------------------------------------------------------------
 unsorted="$TMPD/unsorted"
 : > "$unsorted"
-LC_ALL=C find "$STORE_DIR" -maxdepth 1 -type f -name '*.md' ! -name 'README.md' 2>/dev/null \
-  | LC_ALL=C sort > "$TMPD/files" 2>/dev/null || true
+env LC_ALL=C find "$STORE_DIR" -maxdepth 1 -type f -name '*.md' ! -name 'README.md' 2>/dev/null \
+  | env LC_ALL=C sort > "$TMPD/files" 2>/dev/null || true
 [ -s "$TMPD/files" ] || exit 0
 
 while IFS= read -r f; do
@@ -187,7 +187,7 @@ while IFS= read -r f; do
 done < "$TMPD/files"
 
 sorted="$TMPD/sorted"
-LC_ALL=C sort -t "$TAB" -k1,1nr -k2,2 "$unsorted" > "$sorted" 2>/dev/null || cp "$unsorted" "$sorted"
+env LC_ALL=C sort -t "$TAB" -k1,1nr -k2,2 "$unsorted" > "$sorted" 2>/dev/null || cp "$unsorted" "$sorted"
 
 # ---------------------------------------------------------------------------
 # PASS A: validate + per-key-parse each memo (cap, header, hostile). Surviving memos are

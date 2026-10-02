@@ -172,7 +172,7 @@ case "$MODE" in
       RUNFILE="${ROOT}/.supervisor/automate/${ID}.md"
     fi
     [ -n "$RUNFILE" ] && [ -r "$RUNFILE" ] || emit_zero
-    SESSIONS="$(grep -oE 'session_id [A-Za-z0-9_-]+' "$RUNFILE" 2>/dev/null | awk '{print $2}' | LC_ALL=C sort -u || true)"
+    SESSIONS="$(grep -oE 'session_id [A-Za-z0-9_-]+' "$RUNFILE" 2>/dev/null | awk '{print $2}' | env LC_ALL=C sort -u || true)"
     [ -n "$SESSIONS" ] || emit_zero
     while IFS= read -r sid; do
       [ -n "$sid" ] || continue

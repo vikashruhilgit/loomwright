@@ -436,8 +436,8 @@ fi
 # ---------------------------------------------------------------------------
 files_list="$(mktemp)"
 trap 'rm -f "$files_list" 2>/dev/null' EXIT
-LC_ALL=C find "$RULES_DIR" -maxdepth 1 -type f -name '*.json' 2>/dev/null \
-  | LC_ALL=C sort > "$files_list" 2>/dev/null || true
+env LC_ALL=C find "$RULES_DIR" -maxdepth 1 -type f -name '*.json' 2>/dev/null \
+  | env LC_ALL=C sort > "$files_list" 2>/dev/null || true
 # ---------------------------------------------------------------------------
 # --gate-state: store health + the stamp's recorded countable set (header, "--gate-state"), exit 0 —
 # BEFORE every other early exit, so an absent store still reports `store ok` + the stamp state.
@@ -547,7 +547,7 @@ jq -cs '
 # listing may reach. Ids carrying a newline/CR are dropped (see the header): one id, one line.
 # ---------------------------------------------------------------------------
 if [ "$MODE" = "list-selected" ]; then
-  jq -r '.id | select(test("[\n\r]") | not)' "$selected" 2>/dev/null | LC_ALL=C sort
+  jq -r '.id | select(test("[\n\r]") | not)' "$selected" 2>/dev/null | env LC_ALL=C sort
   exit 0
 fi
 
@@ -599,7 +599,7 @@ _rc_binds_lines() {
     if (has("binds") and (.binds | type) == "array") then
       .binds[]
       | if (type == "string" and (test("[\t\n\r]") | not)) then "S\t" + . else "X\t" + tojson end
-    else empty end' 2>/dev/null | LC_ALL=C sort
+    else empty end' 2>/dev/null | env LC_ALL=C sort
 }
 
 # _rc_hash_line <record> — this record's LIVE_HASH input line: `id\tcheck` (byte-identical to the
@@ -659,7 +659,7 @@ _rc_detect_invoked() {
     prev="$t"
   done
   set +f
-  printf '%s' "$out" | LC_ALL=C sort
+  printf '%s' "$out" | env LC_ALL=C sort
 }
 
 # _rc_lg_classify <record> <id> <check> — ONE `id<TAB>countable|advisory<TAB><reason>` line. The
@@ -728,7 +728,7 @@ _rc_gateable_lines() {
     [ -n "$lid" ] || continue
     lcheck="$(printf '%s' "$rec" | jq -r '.check' 2>/dev/null)"
     _rc_lg_classify "$rec" "$lid" "$lcheck"
-  done < "$selected" | LC_ALL=C sort
+  done < "$selected" | env LC_ALL=C sort
 }
 
 if [ "$MODE" = "list-gateable" ]; then
@@ -750,7 +750,7 @@ trap 'rm -f "$files_list" "$combined" "$selected" "$_rc_hash_input" 2>/dev/null'
 while IFS= read -r _rc_rec; do
   [ -n "$_rc_rec" ] || continue
   _rc_hash_line "$_rc_rec"
-done < "$selected" | LC_ALL=C sort > "$_rc_hash_input"
+done < "$selected" | env LC_ALL=C sort > "$_rc_hash_input"
 LIVE_HASH="$(_rc_sha256_file "$_rc_hash_input")"
 rm -f "$_rc_hash_input" 2>/dev/null
 

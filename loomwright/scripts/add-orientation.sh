@@ -481,10 +481,10 @@ fi
 # ---------------------------------------------------------------------------
 scan="$work/scan"
 { printf '%s\n' "$summary"; cat "$body_tmp"; } \
-  | LC_ALL=C tr '\r\n\t' '   ' | tr -s ' ' > "$scan"
+  | env LC_ALL=C tr '\r\n\t' '   ' | tr -s ' ' > "$scan"
 for m in "ignore previous" "ignore all previous" "system prompt" "you must now" \
          "disregard" "<system>" "[INST]"; do
-  if LC_ALL=C grep -qiF -- "$m" "$scan" 2>/dev/null; then
+  if env LC_ALL=C grep -qiF -- "$m" "$scan" 2>/dev/null; then
     die "rejected: summary/body contains a hostile instruction-injection marker: '$m'"
   fi
 done

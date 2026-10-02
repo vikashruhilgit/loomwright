@@ -201,7 +201,7 @@ build_tab() {
 # cksum per regular file), sorted. A bare name list would miss an rmdir or a
 # truncation.
 listing() {
-  ( cd "$1" && find .supervisor \( -type f -o -type d \) -print 2>/dev/null | LC_ALL=C sort | while IFS= read -r p; do
+  ( cd "$1" && find .supervisor \( -type f -o -type d \) -print 2>/dev/null | env LC_ALL=C sort | while IFS= read -r p; do
       if [ -f "$p" ] && [ ! -L "$p" ]; then printf '%s %s\n' "$p" "$(cksum < "$p" | cut -d' ' -f1,2)"; else printf '%s\n' "$p"; fi
     done )
 }
@@ -623,11 +623,11 @@ fi
 
 # ============================================================================
 echo "== AC-10: policy mirror — script table ⇔ ARCHITECTURE_CONTRACTS.md, both directions =="
-script_policy="$(bash "$RS" policy | LC_ALL=C sort)"
+script_policy="$(bash "$RS" policy | env LC_ALL=C sort)"
 # Rows of the retention-policy section: first cell = backticked dir (`memory/` → memory; `.` → .), second = class.
 doc_policy="$(awk '/^## `\.supervisor\/` retention policy/{f=1; next} f && /^## /{f=0} f && /^\| `/{print}' "$CONTRACTS" \
   | awk -F'|' '{d=$2; c=$3; gsub(/^[ \t]+|[ \t]+$/, "", d); gsub(/^[ \t]+|[ \t]+$/, "", c); sub(/^`/, "", d); sub(/`.*$/, "", d); sub(/\/$/, "", d); gsub(/`/, "", c); print d "\t" c}' \
-  | LC_ALL=C sort)"
+  | env LC_ALL=C sort)"
 [ -n "$script_policy" ] && ok "AC-10 'policy' prints $(printf '%s\n' "$script_policy" | grep -c .) dir<TAB>class lines" || no "AC-10 'policy' printed nothing"
 [ -n "$doc_policy" ] && ok "AC-10 the doc section yields $(printf '%s\n' "$doc_policy" | grep -c .) rows" || no "AC-10 no retention table rows parsed from ARCHITECTURE_CONTRACTS.md"
 if [ "$script_policy" = "$doc_policy" ]; then

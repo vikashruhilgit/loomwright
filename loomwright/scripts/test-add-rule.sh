@@ -159,7 +159,7 @@ run_writer "$RD" --category "dedup" --statement "one convention" --confirm
 [ "$RC" -eq 0 ] && ok "(D) first add ok" || no "(D) first add failed ($OUT)"
 run_writer "$RD" --category "dedup" --statement "one convention" --confirm
 [ "$RC" -eq 0 ] && ok "(D) second add ok" || no "(D) second add failed ($OUT)"
-ids_d="$(jq -r '.[].id' "$RD/.agent/rules/dedup.json" 2>/dev/null | LC_ALL=C sort | tr '\n' ',')"
+ids_d="$(jq -r '.[].id' "$RD/.agent/rules/dedup.json" 2>/dev/null | env LC_ALL=C sort | tr '\n' ',')"
 if [ "$ids_d" = "dedup-one-convention,dedup-one-convention-2," ]; then
   ok "(D) collision produced deterministic base id + -2 suffix"
 else

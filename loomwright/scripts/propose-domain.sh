@@ -282,7 +282,7 @@ esac
 
 # Sorted before use: fetch order, citation order and cap effects are a function of CONTENT, not
 # of the store's serialisation order.
-LC_ALL=C sort "$WORK/competitors.tsv" > "$WORK/competitors.sorted.tsv"
+env LC_ALL=C sort "$WORK/competitors.tsv" > "$WORK/competitors.sorted.tsv"
 
 n_competitors="$(awk 'END{print NR+0}' "$WORK/competitors.sorted.tsv")"
 
@@ -317,7 +317,7 @@ superseded_by() {
   done
   # >>> DONE-SUPERSESSION CHECK (a self-test's mutation control deletes this block)
   if [ -d "$REQ_DIR" ]; then
-    sb_list="$(find "$REQ_DIR" -type f -name '*.md' 2>/dev/null | LC_ALL=C sort)"
+    sb_list="$(find "$REQ_DIR" -type f -name '*.md' 2>/dev/null | env LC_ALL=C sort)"
     while IFS= read -r sb_f; do
       [ -n "$sb_f" ] && [ -f "$sb_f" ] || continue
       grep -Eq '^##[[:space:]]+Status:[[:space:]]*done[[:space:]]*$' "$sb_f" 2>/dev/null || continue
@@ -584,7 +584,7 @@ enumerate_root() {
 select_surface() {
   grep -E "$1" 2>/dev/null | while IFS= read -r sf; do
     [ -f "$sf" ] && [ ! -L "$sf" ] && printf '%s\n' "$sf"
-  done | LC_ALL=C sort
+  done | env LC_ALL=C sort
 }
 
 # filter_inventory - stdin: sorted absolute paths; stdout: the inventory after every exclusion.
@@ -636,7 +636,7 @@ doc_truncated=0;  [ "$n_doc_total"  -gt "$n_doc_files"  ] && doc_truncated=1
 ORIENT_DIR="$ROOT/.agent/orientation"
 n_orient_files=0
 if [ -d "$ORIENT_DIR" ]; then
-  find "$ORIENT_DIR" -type f -name '*.md' -print 2>/dev/null | LC_ALL=C sort > "$WORK/orient.list"
+  find "$ORIENT_DIR" -type f -name '*.md' -print 2>/dev/null | env LC_ALL=C sort > "$WORK/orient.list"
   n_orient_files="$(awk 'END{print NR+0}' "$WORK/orient.list")"
 fi
 
@@ -665,9 +665,9 @@ search_surface() {
   ss_pat="$2"
   [ -s "$ss_list" ] || return 0
   [ -s "$ss_pat" ] || return 0
-  LC_ALL=C tr '\n' '\0' < "$ss_list" \
+  env LC_ALL=C tr '\n' '\0' < "$ss_list" \
     | xargs -0 grep -l -I -i -E -f "$ss_pat" -- 2>/dev/null \
-    | LC_ALL=C sort \
+    | env LC_ALL=C sort \
     | awk -v root="$ROOT/" 'NR<=3 { print (index($0, root) == 1) ? substr($0, length(root) + 1) : $0 }'
 }
 
@@ -786,7 +786,7 @@ fi
 # 13. One pass per catalogue expectation, in sorted slug order.
 # ---------------------------------------------------------------------------
 emitted=0
-read_catalogue | LC_ALL=C sort > "$WORK/catalogue.txt"
+read_catalogue | env LC_ALL=C sort > "$WORK/catalogue.txt"
 
 while IFS='|' read -r slug title source_terms inv_terms scope_terms kind; do
   [ -n "${slug:-}" ] || continue

@@ -1320,9 +1320,9 @@ touch -t 202604010000 "$RS_/.supervisor/logs/i-only.jsonl" "$RS_/.supervisor/log
 printf '{"dreaming":{"last_run":"2026-05-01T00:00:00Z","consumed":{"logs":["i-only","neither","noise"]}}}' > "$RS_/.supervisor/curation-state.json"
 outS="$(run_out "$RS_" pending-ids)"
 [ "$(lastrc)" -eq 0 ] && ok "(s) pending-ids exits 0" || no "(s) pending-ids rc=$(lastrc)"
-[ "$(printf '%s\n' "$outS" | LC_ALL=C sort | tr '\n' ' ')" = "both d-only i-only " ] \
+[ "$(printf '%s\n' "$outS" | env LC_ALL=C sort | tr '\n' ' ')" = "both d-only i-only " ] \
   && ok "(s) union: dreaming-only + insights-only + both are present ONCE each; neither/noise absent" \
-  || no "(s) union wrong — expected 'both d-only i-only', got: $(printf '%s\n' "$outS" | LC_ALL=C sort | tr '\n' ' ')"
+  || no "(s) union wrong — expected 'both d-only i-only', got: $(printf '%s\n' "$outS" | env LC_ALL=C sort | tr '\n' ' ')"
 # The union is exactly the counted set: status --json must count 2 + 2.
 outS2="$(run "$RS_" status --json)"
 [ "$(jget "$outS2" '.commands.dreaming.pending')" = "2" ] && [ "$(jget "$outS2" '.commands.insights.pending')" = "2" ] \
@@ -1334,18 +1334,18 @@ outS2="$(run "$RS_" status --json)"
 # consumed, older `neither`.
 rm -f "$RS_/.supervisor/insights/dashboard.md"
 outS3="$(run_out "$RS_" pending-ids)"
-[ "$(printf '%s\n' "$outS3" | LC_ALL=C sort | tr '\n' ' ')" = "both d-only i-only neither " ] \
+[ "$(printf '%s\n' "$outS3" | env LC_ALL=C sort | tr '\n' ' ')" = "both d-only i-only neither " ] \
   && ok "(s) insights last_run=never ⇒ every session_end log is pending (neither joins; noise still absent)" \
-  || no "(s) never-arm wrong, got: $(printf '%s\n' "$outS3" | LC_ALL=C sort | tr '\n' ' ')"
+  || no "(s) never-arm wrong, got: $(printf '%s\n' "$outS3" | env LC_ALL=C sort | tr '\n' ' ')"
 printf '# dash\n' > "$RS_/.supervisor/insights/dashboard.md"; touch -t 202603010000 "$RS_/.supervisor/insights/dashboard.md"
 
 # Garbage consumed record ⇒ EVERY id (fail closed toward keep) + ONE stderr note.
 printf '{"dreaming":' > "$RS_/.supervisor/curation-state.json"
 outS4="$(run_out "$RS_" pending-ids)"
 [ "$(lastrc)" -eq 0 ] && ok "(s) garbage state ⇒ exit 0" || no "(s) garbage state rc=$(lastrc)"
-[ "$(printf '%s\n' "$outS4" | LC_ALL=C sort | tr '\n' ' ')" = "both d-only i-only neither noise " ] \
+[ "$(printf '%s\n' "$outS4" | env LC_ALL=C sort | tr '\n' ' ')" = "both d-only i-only neither noise " ] \
   && ok "(s) garbage state ⇒ EVERY *.jsonl id listed (noise included) — fail closed toward keep" \
-  || no "(s) garbage state did not list every id: $(printf '%s\n' "$outS4" | LC_ALL=C sort | tr '\n' ' ')"
+  || no "(s) garbage state did not list every id: $(printf '%s\n' "$outS4" | env LC_ALL=C sort | tr '\n' ' ')"
 errS4="$(run_err "$RS_" pending-ids)"
 grep -qF 'fail closed toward keep' < <(printf '%s' "$errS4") && ok "(s) …with the explanatory note on STDERR" || no "(s) no stderr note for the garbage state: $errS4"
 grep -qF 'fail closed' < <(printf '%s' "$outS4") && no "(s) the note leaked onto STDOUT" || ok "(s) …and never on stdout (stdout stays a pure id list)"
@@ -1363,9 +1363,9 @@ else
   outS5="$(run_out "$RS_" pending-ids)"; rcS5="$(lastrc)"; errS5="$(run_err "$RS_" pending-ids)"
   chmod 755 "$RS_/.supervisor/logs"
   [ "$rcS5" -eq 0 ] && ok "(s) not-fully-readable logs dir ⇒ exit 0" || no "(s) r-only logs dir rc=$rcS5"
-  [ "$(printf '%s\n' "$outS5" | LC_ALL=C sort | tr '\n' ' ')" = "both d-only i-only neither noise " ] \
+  [ "$(printf '%s\n' "$outS5" | env LC_ALL=C sort | tr '\n' ' ')" = "both d-only i-only neither noise " ] \
     && ok "(s) not-fully-readable logs dir ⇒ EVERY id listed (fail closed toward keep)" \
-    || no "(s) r-only logs dir did not list every id: $(printf '%s\n' "$outS5" | LC_ALL=C sort | tr '\n' ' ')"
+    || no "(s) r-only logs dir did not list every id: $(printf '%s\n' "$outS5" | env LC_ALL=C sort | tr '\n' ' ')"
   grep -qF 'not fully readable' < <(printf '%s' "$errS5") && ok "(s) …naming the logs dir on stderr" || no "(s) stderr did not name the logs dir: $errS5"
 fi
 # Absent logs dir ⇒ silent, exit 0 (there is no corpus to keep).

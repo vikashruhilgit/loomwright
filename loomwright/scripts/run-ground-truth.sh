@@ -330,7 +330,7 @@ if [ "${#CHECK_LINES[@]}" -eq 0 ]; then
     gt_lines="$(jq -r '
         (if type=="array" then . elif (type=="object" and (.checks|type=="array")) then .checks else [] end)
         | map(select(type=="string")) | .[]
-      ' "$GT_FILE" 2>/dev/null | LC_ALL=C sort)"
+      ' "$GT_FILE" 2>/dev/null | env LC_ALL=C sort)"
     if [ -n "$gt_lines" ]; then
       while IFS= read -r raw; do add_line "$raw" "fallback"; done <<EOF
 $gt_lines

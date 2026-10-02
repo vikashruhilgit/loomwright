@@ -693,7 +693,7 @@ project_slug() {
   local p b s
   p="$(strip_slashes "$1")"
   b="$(basename "$p")"
-  s="$(printf '%s' "$b" | LC_ALL=C tr '[:upper:]' '[:lower:]' | LC_ALL=C sed -e 's/[^a-z0-9]/-/g' -e 's/--*/-/g' -e 's/^-//' -e 's/-$//')"
+  s="$(printf '%s' "$b" | env LC_ALL=C tr '[:upper:]' '[:lower:]' | env LC_ALL=C sed -e 's/[^a-z0-9]/-/g' -e 's/--*/-/g' -e 's/^-//' -e 's/-$//')"
   [ -n "$s" ] || s="project"
   printf '%s' "$s"
 }
@@ -980,7 +980,7 @@ do_scan() {
     proposed=$((proposed + 1))
     lines="$lines
   $slug  $d"
-  done < <(find "$abs" -maxdepth $((SCAN_MAX_DEPTH + 1)) -name .git 2>/dev/null | LC_ALL=C sort)
+  done < <(find "$abs" -maxdepth $((SCAN_MAX_DEPTH + 1)) -name .git 2>/dev/null | env LC_ALL=C sort)
 
   if [ "$proposed" -eq 0 ]; then
     echo "scan: found no unregistered project here (a candidate is a directory containing .git). Nothing was written."

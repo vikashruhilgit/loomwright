@@ -387,7 +387,7 @@ done
 [ -z "$missing" ] && ok "(V17) every one of the 12 reason codes was provoked at least once" || no "(V17) reason codes never provoked:$missing"
 # Nothing outside the closed set was ever emitted (strip suffixes, then diff against the set).
 stray=""
-for r in $(sed 's/:.*$//' "$SEEN_REASONS" | LC_ALL=C sort -u); do
+for r in $(sed 's/:.*$//' "$SEEN_REASONS" | env LC_ALL=C sort -u); do
   case " $AC6_REASONS " in
     *" $r "*) ;;
     *) stray="$stray $r" ;;
@@ -421,7 +421,7 @@ done
 
 # ============================================================================
 echo "== (V18) static shape of the two deliverables =="
-imports="$(grep -E '^(import|from) ' "$VALIDATOR" | awk '{print $2}' | LC_ALL=C sort -u | tr '\n' ' ')"
+imports="$(grep -E '^(import|from) ' "$VALIDATOR" | awk '{print $2}' | env LC_ALL=C sort -u | tr '\n' ' ')"
 case "$imports" in
   *result_block_parser*) no "(V18) the validator imports result_block_parser (it must read JSON lines with stdlib only)" ;;
   *) ok "(V18) the validator does not import result_block_parser" ;;

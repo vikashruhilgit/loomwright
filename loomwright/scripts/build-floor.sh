@@ -349,7 +349,7 @@ else
   sess_noid="$(printf '%s\n' "$classified"    | awk '$0=="noid"{n++} END{print n+0}')"
   sess_withid="$(printf '%s\n' "$classified"  | awk '/^id\t/{n++} END{print n+0}')"
   sess_distinct="$(printf '%s\n' "$classified" \
-    | awk -F'\t' '/^id\t/{print $2}' | LC_ALL=C sort -u | awk 'NF{n++} END{print n+0}')"
+    | awk -F'\t' '/^id\t/{print $2}' | env LC_ALL=C sort -u | awk 'NF{n++} END{print n+0}')"
 
   sess_lines=$((sess_total - sess_blank))
 
@@ -932,7 +932,7 @@ for rf in ${rulefiles[@]+"${rulefiles[@]}"}; do
 done
 
 if [ -n "$rules_docs" ]; then
-  rules_detail="$(printf '%s' "$rules_docs" | LC_ALL=C sort | jq -s -c '
+  rules_detail="$(printf '%s' "$rules_docs" | env LC_ALL=C sort | jq -s -c '
     . as $files
     | ($files | map(select(.parsed)))                                      as $okfiles
     | ($files | map(select(.parsed | not) | {file: .file, reason: .reason})) as $badfiles
@@ -1237,7 +1237,7 @@ else
       agent_tsv="${agent_tsv}$(agent_row "$af")
 "
     done
-    agents_roster="$(printf '%s' "$agent_tsv" | LC_ALL=C sort | jq -R -s -c '
+    agents_roster="$(printf '%s' "$agent_tsv" | env LC_ALL=C sort | jq -R -s -c '
       split("\n") | map(select(length > 0)) | map(split("\t"))
       | map({}
           + (if (.[0] // "") == "" then {} else {name:  .[0]} end)
@@ -1276,7 +1276,7 @@ notes_json="$(printf '%s' "$NOTES" | jq -R -s 'split("\n") | map(select(length >
 # check in test-build-floor.sh cannot be satisfied - or tripped - by this comment.
 [ -n "$notes_json" ] || notes_json='["notes unavailable: the notes list could not be assembled, so an empty notes array here would NOT mean nothing was omitted"]'
 
-out_json="$(printf '%s' "$SURF" | LC_ALL=C jq -S --indent 2 -s \
+out_json="$(printf '%s' "$SURF" | env LC_ALL=C jq -S --indent 2 -s \
     --argjson sv "$SCHEMA_VERSION" --arg ge "$now_epoch" \
     --arg gen "build-floor.sh" --arg head "$repo_head" --argjson notes "$notes_json" '
   {schema_version: $sv,

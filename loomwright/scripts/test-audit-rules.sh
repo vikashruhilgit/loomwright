@@ -110,7 +110,7 @@ fingerprint() {
     [ -n "$f" ] || continue
     printf '%s\n' "--- $f"
     cat "$f"
-  done < <(LC_ALL=C find "$d" -type f 2>/dev/null | LC_ALL=C sort)
+  done < <(env LC_ALL=C find "$d" -type f 2>/dev/null | env LC_ALL=C sort)
 }
 
 # run_audit <repo> [engine] [validator] — sets OUT and RC. Runs FROM INSIDE the repo so the engine's

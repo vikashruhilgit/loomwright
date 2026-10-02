@@ -557,7 +557,7 @@ _trail_meta_push() {
       dd="$(awk -F'\t' -v n="$dn" '$1 == n { d = $2 } END { print d }' "$dl" 2>/dev/null)"
       case "$dd" in drop|fix-now|moved) list="${list:+$list$'\n'}$dp" ;; esac
     done <<DLIST
-$(cut -f1 "$dl" 2>/dev/null | LC_ALL=C sort -u)
+$(cut -f1 "$dl" 2>/dev/null | env LC_ALL=C sort -u)
 DLIST
   fi
   local lf out rc=0 why

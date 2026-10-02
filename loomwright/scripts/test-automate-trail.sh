@@ -313,8 +313,8 @@ lines="$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
 case "$out" in "trail-pr: opened https://github.com/acme/widgets/pull/100"*) ok "first run opens a PR ($out)" ;; *) no "first run: $out" ;; esac
 [ "$rc" -eq 0 ] && [ "$lines" = "1" ] && ok "exactly one line, exit 0" || no "rc=$rc lines=$lines"
 BR="chore/$RUN_ID-trail-1"
-names="$(git -C "$FX/origin.git" show --name-only --format= "refs/heads/$BR" 2>/dev/null | LC_ALL=C sort)"
-want="$(printf '%s\n' ".supervisor/automate/$RUN_ID.md" ".supervisor/automate/$RUN_ID.review-heal-result.md" ".supervisor/jobs/done/brief-a.md" ".supervisor/postmortem/results.jsonl" "$REQ" | LC_ALL=C sort)"
+names="$(git -C "$FX/origin.git" show --name-only --format= "refs/heads/$BR" 2>/dev/null | env LC_ALL=C sort)"
+want="$(printf '%s\n' ".supervisor/automate/$RUN_ID.md" ".supervisor/automate/$RUN_ID.review-heal-result.md" ".supervisor/jobs/done/brief-a.md" ".supervisor/postmortem/results.jsonl" "$REQ" | env LC_ALL=C sort)"
 [ "$names" = "$want" ] && ok "trail commit holds exactly the trail paths" || no "commit names: [$names] want [$want]"
 case "$names" in *stray.txt*|*README*|*feat.txt*|*brief-other*|*brief-live*|*supervisor-result*) no "non-trail path committed" ;; *) ok "stray untracked + unrelated modified + unrelated/in-progress briefs absent" ;; esac
 case "$out" in *"excluded .supervisor/automate/$RUN_ID.supervisor-result.md — risk_classification present without reasons"*) ok "failing sidecar named in the output line" ;; *) no "exclusion not named: $out" ;; esac
@@ -417,8 +417,8 @@ for b2mode in pushed nodiff; do
     case "$out" in "trail-pr: skipped — trail already up to date"*) ok "[$b2mode] second park is the no-diff skip" ;; *) no "[$b2mode] second park: $out" ;; esac
   fi
   tip="$(git -C "$P" rev-parse "refs/remotes/origin/$BR")"
-  want="$(git -C "$P" diff --name-only "$(git -C "$P" merge-base origin/main "$tip")" "$tip" | LC_ALL=C sort)"
-  got="$(git -C "$P" diff --cached --name-only | LC_ALL=C sort)"
+  want="$(git -C "$P" diff --name-only "$(git -C "$P" merge-base origin/main "$tip")" "$tip" | env LC_ALL=C sort)"
+  got="$(git -C "$P" diff --cached --name-only | env LC_ALL=C sort)"
   [ -n "$want" ] && [ "$got" = "$want" ] && ok "[$b2mode] every path the trail PR carries is staged again" || no "[$b2mode] staged [$got] want [$want]"
   bad=""
   while IFS= read -r p; do
@@ -430,10 +430,10 @@ EOF
   [ -z "$bad" ] && ok "[$b2mode] index holds the trail-TIP blobs" || no "[$b2mode] index != tip for:$bad"
   if [ "$b2mode" = "nodiff" ]; then
     recn="$(wc -l < "$P/.supervisor/automate/$RUN_ID.trail-staged" | tr -d ' ')"
-    idx1="$(git -C "$P" ls-files -s | LC_ALL=C sort)"
+    idx1="$(git -C "$P" ls-files -s | env LC_ALL=C sort)"
     (cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason done >/dev/null 2>&1) || true
     recn2="$(wc -l < "$P/.supervisor/automate/$RUN_ID.trail-staged" | tr -d ' ')"
-    [ "$recn" = "$recn2" ] && [ "$idx1" = "$(git -C "$P" ls-files -s | LC_ALL=C sort)" ] && ok "[$b2mode] re-run is idempotent (same index, no duplicate record lines)" || no "[$b2mode] re-run changed state (record $recn -> $recn2)"
+    [ "$recn" = "$recn2" ] && [ "$idx1" = "$(git -C "$P" ls-files -s | env LC_ALL=C sort)" ] && ok "[$b2mode] re-run is idempotent (same index, no duplicate record lines)" || no "[$b2mode] re-run changed state (record $recn -> $recn2)"
   fi
   echo "- t9 live edit after the push" >> "$P/$RF_REL0"
   [ "$(git -C "$P" ls-files -s -- "$RF_REL0" | awk '{print $2}')" != "$(git -C "$P" hash-object -- "$RF_REL0")" ] && ok "[$b2mode] live local edit not staged" || no "[$b2mode] live edit staged"
@@ -923,10 +923,10 @@ for variant in fixed mutant; do
   ( cd "$TM" && git checkout -q main && git merge -q --squash "origin/chore/$RUN_ID-trail-1" >/dev/null && git commit -qm "squash trail" && git push -q origin main 2>/dev/null )
   (cd "$P" && bash "$H" trail-unstage "$RF_REL" >/dev/null)
   git -C "$P" commit -q --allow-empty -m "local diverging commit"
-  pre_idx="$(git -C "$P" ls-files -s | LC_ALL=C sort)"
+  pre_idx="$(git -C "$P" ls-files -s | env LC_ALL=C sort)"
   out="$(cd "$P" && bash "$D/automate-helpers.sh" closeout "$RF_REL" "$REQ" "$PRURL")"
   case "$out" in *"closeout: skipped — git pull --ff-only refused"*) ok "[$variant] diverged main ⇒ the pull refuses" ;; *) no "[$variant] pull did not refuse: $out" ;; esac
-  post_idx="$(git -C "$P" ls-files -s | LC_ALL=C sort)"
+  post_idx="$(git -C "$P" ls-files -s | env LC_ALL=C sort)"
   if [ "$variant" = fixed ]; then
     [ "$pre_idx" = "$post_idx" ] && [ -z "$(git -C "$P" diff --cached --name-only)" ] && ok "fixed: index restored to its pre-closeout state (nothing staged)" || no "fixed: index changed: $(git -C "$P" diff --cached --name-only | tr '\n' ' ')"
   else

@@ -1150,7 +1150,7 @@ echo "== (k) containment: git NEVER consulted; ignored files IN SCOPE =="
 hash_set() {
   ( cd "$1" 2>/dev/null || return 1
     find . -type f -not -path "./.git/*" -not -path "./.supervisor/floor/*" -print \
-      | LC_ALL=C sort \
+      | env LC_ALL=C sort \
       | while IFS= read -r p; do printf '%s  %s\n' "$(csum "$p")" "$p"; done )
 }
 # `-type f` ALONE would make a stray directory or a symlink dropped outside .supervisor/floor/
@@ -1160,7 +1160,7 @@ hash_set() {
 path_set() {
   ( cd "$1" 2>/dev/null || return 1
     find . \( -type f -o -type l -o -type d \) \
-      -not -path "./.git/*" -not -path "./.git" -print | LC_ALL=C sort )
+      -not -path "./.git/*" -not -path "./.git" -print | env LC_ALL=C sort )
 }
 
 RK="$(new_repo)"; seed_tree "$RK"
@@ -1589,29 +1589,29 @@ echo "== (o) newest-session agent rows: current is picked by the newest ts, neve
 # Every expectation below is recomputed FROM THE FIXTURE with jq, independently of the
 # projector's own aggregation - never read back out of floor.json.
 cf_lines="$(awk 'NF{n++} END{print n+0}' "$SESS_CUR_FIXTURE")"
-cf_ids="$(jq -r 'select(has("cc_session_id")) | .cc_session_id' "$SESS_CUR_FIXTURE" 2>/dev/null | LC_ALL=C sort -u | awk 'NF{n++} END{print n+0}')"
+cf_ids="$(jq -r 'select(has("cc_session_id")) | .cc_session_id' "$SESS_CUR_FIXTURE" 2>/dev/null | env LC_ALL=C sort -u | awk 'NF{n++} END{print n+0}')"
 cf_nots="$(jq -r 'select(has("ts") | not) | "x"' "$SESS_CUR_FIXTURE" 2>/dev/null | awk 'NF{n++} END{print n+0}')"
-cf_new_ts="$(jq -r 'select(has("ts")) | .ts' "$SESS_CUR_FIXTURE" 2>/dev/null | LC_ALL=C sort | tail -1)"
-cf_new_sid="$(jq -r 'select(has("ts")) | [.ts, .cc_session_id] | @tsv' "$SESS_CUR_FIXTURE" 2>/dev/null | LC_ALL=C sort | tail -1 | awk -F'\t' '{print $2}')"
-cf_agents="$(jq -r --arg s "$cf_new_sid" 'select(.cc_session_id == $s and has("agent_id")) | .agent_id' "$SESS_CUR_FIXTURE" 2>/dev/null | LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//')"
+cf_new_ts="$(jq -r 'select(has("ts")) | .ts' "$SESS_CUR_FIXTURE" 2>/dev/null | env LC_ALL=C sort | tail -1)"
+cf_new_sid="$(jq -r 'select(has("ts")) | [.ts, .cc_session_id] | @tsv' "$SESS_CUR_FIXTURE" 2>/dev/null | env LC_ALL=C sort | tail -1 | awk -F'\t' '{print $2}')"
+cf_agents="$(jq -r --arg s "$cf_new_sid" 'select(.cc_session_id == $s and has("agent_id")) | .agent_id' "$SESS_CUR_FIXTURE" 2>/dev/null | env LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//')"
 cf_n_agents="$(printf '%s' "$cf_agents" | tr ' ' '\n' | awk 'NF{n++} END{print n+0}')"
-cf_typed="$(jq -r --arg s "$cf_new_sid" 'select(.cc_session_id == $s and has("agent_type")) | .agent_id' "$SESS_CUR_FIXTURE" 2>/dev/null | LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//')"
+cf_typed="$(jq -r --arg s "$cf_new_sid" 'select(.cc_session_id == $s and has("agent_type")) | .agent_id' "$SESS_CUR_FIXTURE" 2>/dev/null | env LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//')"
 cf_type_val="$(jq -r --arg s "$cf_new_sid" 'select(.cc_session_id == $s and has("agent_type")) | .agent_type' "$SESS_CUR_FIXTURE" 2>/dev/null | head -1)"
 cf_branch_val="$(jq -r --arg s "$cf_new_sid" 'select(.cc_session_id == $s and has("branch")) | .branch' "$SESS_CUR_FIXTURE" 2>/dev/null | head -1)"
-cf_scoped="$(jq -r --arg s "$cf_new_sid" 'select(.cc_session_id == $s and has("agent_scope")) | .agent_id' "$SESS_CUR_FIXTURE" 2>/dev/null | LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//')"
+cf_scoped="$(jq -r --arg s "$cf_new_sid" 'select(.cc_session_id == $s and has("agent_scope")) | .agent_id' "$SESS_CUR_FIXTURE" 2>/dev/null | env LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//')"
 cf_main_agent="$(jq -r --arg s "$cf_new_sid" 'select(.cc_session_id == $s and .agent_scope == "main") | .agent_id' "$SESS_CUR_FIXTURE" 2>/dev/null | head -1)"
-cf_unscoped="$(jq -r --arg s "$cf_new_sid" 'select(.cc_session_id == $s and has("agent_id")) | .agent_id' "$SESS_CUR_FIXTURE" 2>/dev/null | LC_ALL=C sort -u | grep -v -x -F -f <(printf '%s\n' $cf_scoped) | tr '\n' ' ' | sed 's/ $//')"
+cf_unscoped="$(jq -r --arg s "$cf_new_sid" 'select(.cc_session_id == $s and has("agent_id")) | .agent_id' "$SESS_CUR_FIXTURE" 2>/dev/null | env LC_ALL=C sort -u | grep -v -x -F -f <(printf '%s\n' $cf_scoped) | tr '\n' ' ' | sed 's/ $//')"
 # The main-scoped agent's OWN newest line must NOT carry the scope either - same
 # take-from-ANY-line rule as agent_type, and it is only tested if the newest lacks it.
 cf_main_newest="$(jq -r --arg s "$cf_new_sid" --arg a "$cf_main_agent" \
   'select(.cc_session_id == $s and .agent_id == $a and has("ts")) | [.ts, (.agent_scope // "-")] | @tsv' \
-  "$SESS_CUR_FIXTURE" 2>/dev/null | LC_ALL=C sort | tail -1 | awk -F'\t' '{print $2}')"
-cf_other_agents="$(jq -r --arg s "$cf_new_sid" 'select(.cc_session_id != $s and has("agent_id")) | .agent_id' "$SESS_CUR_FIXTURE" 2>/dev/null | LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//')"
+  "$SESS_CUR_FIXTURE" 2>/dev/null | env LC_ALL=C sort | tail -1 | awk -F'\t' '{print $2}')"
+cf_other_agents="$(jq -r --arg s "$cf_new_sid" 'select(.cc_session_id != $s and has("agent_id")) | .agent_id' "$SESS_CUR_FIXTURE" 2>/dev/null | env LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//')"
 # The typed agent's OWN newest line must NOT be the one carrying agent_type: "take the type
 # from ANY of the agent's lines" is only tested if the newest line lacks it.
 cf_typed_newest="$(jq -r --arg s "$cf_new_sid" --arg a "$cf_typed" \
   'select(.cc_session_id == $s and .agent_id == $a and has("ts")) | [.ts, (.agent_type // "-")] | @tsv' \
-  "$SESS_CUR_FIXTURE" 2>/dev/null | LC_ALL=C sort | tail -1 | awk -F'\t' '{print $2}')"
+  "$SESS_CUR_FIXTURE" 2>/dev/null | env LC_ALL=C sort | tail -1 | awk -F'\t' '{print $2}')"
 
 [ "$cf_lines" -eq 9 ] && [ "$cf_ids" -eq 2 ] && [ "$cf_nots" -eq 1 ] && [ "$cf_n_agents" -eq 3 ] \
   && ok "PREMISE: the committed fixture is $cf_lines lines / $cf_ids sessions / $cf_nots ts-less line / $cf_n_agents agents in the newest session" \
@@ -1659,8 +1659,8 @@ got_agents="$(cur '.surfaces.sessions.detail.current.agents[].agent_id' | tr '\n
 agg_bad=""
 for a in $cf_agents; do
   want_ev="$(jq -r --arg s "$cf_new_sid" --arg a "$a" 'select(.cc_session_id == $s and .agent_id == $a) | "x"' "$SESS_CUR_FIXTURE" 2>/dev/null | awk 'NF{n++} END{print n+0}')"
-  want_first="$(jq -r --arg s "$cf_new_sid" --arg a "$a" 'select(.cc_session_id == $s and .agent_id == $a and has("ts")) | .ts' "$SESS_CUR_FIXTURE" 2>/dev/null | LC_ALL=C sort | head -1)"
-  want_last="$(jq -r --arg s "$cf_new_sid" --arg a "$a" 'select(.cc_session_id == $s and .agent_id == $a and has("ts")) | .ts' "$SESS_CUR_FIXTURE" 2>/dev/null | LC_ALL=C sort | tail -1)"
+  want_first="$(jq -r --arg s "$cf_new_sid" --arg a "$a" 'select(.cc_session_id == $s and .agent_id == $a and has("ts")) | .ts' "$SESS_CUR_FIXTURE" 2>/dev/null | env LC_ALL=C sort | head -1)"
+  want_last="$(jq -r --arg s "$cf_new_sid" --arg a "$a" 'select(.cc_session_id == $s and .agent_id == $a and has("ts")) | .ts' "$SESS_CUR_FIXTURE" 2>/dev/null | env LC_ALL=C sort | tail -1)"
   got_ev="$(jq -r --arg a "$a" '[.surfaces.sessions.detail.current.agents[] | select(.agent_id == $a) | .events] | .[0]' "$JO" 2>/dev/null)"
   got_first="$(jq -r --arg a "$a" '[.surfaces.sessions.detail.current.agents[] | select(.agent_id == $a) | .first_ts] | .[0]' "$JO" 2>/dev/null)"
   got_last="$(jq -r --arg a "$a" '[.surfaces.sessions.detail.current.agents[] | select(.agent_id == $a) | .last_ts] | .[0]' "$JO" 2>/dev/null)"
@@ -2295,7 +2295,7 @@ cp "$BUILD" "$ZPLUG/scripts/build-floor.sh" 2>/dev/null
 # from the script (the `<plugin>/agents` shape (n) describes, resolved from `$0`) is in scope.
 z_sig() {
   ( cd "$1" 2>/dev/null || return 1
-    find . \( -type f -o -type l -o -type d \) -print | LC_ALL=C sort \
+    find . \( -type f -o -type l -o -type d \) -print | env LC_ALL=C sort \
       | while IFS= read -r p; do
           if [ -f "$p" ] && [ ! -L "$p" ]; then printf '%s  %s\n' "$(csum "$p")" "$p"
           else printf 'NONFILE  %s\n' "$p"; fi
@@ -2367,7 +2367,7 @@ fi
 floor_dir_sig() {
   [ -d "$1" ] || { printf 'ABSENT\n'; return 0; }
   ( cd "$1" 2>/dev/null || return 1
-    find . \( -type f -o -type l -o -type d \) -print | LC_ALL=C sort \
+    find . \( -type f -o -type l -o -type d \) -print | env LC_ALL=C sort \
       | while IFS= read -r p; do
           if [ -f "$p" ] && [ ! -L "$p" ]; then printf '%s  %s\n' "$(csum "$p")" "$p"
           else printf 'NONFILE  %s\n' "$p"; fi
@@ -2402,7 +2402,7 @@ floor_changed_paths() {
                if (line == "ABSENT") { print "ABSENT"; next }
                sub(/^[^ ]+  /, "", line)
                if (line != "") print line }' \
-    | LC_ALL=C sort -u
+    | env LC_ALL=C sort -u
 }
 
 # classify_real_floor_delta <before file> <after file> <live serve: yes|no>
@@ -2540,7 +2540,7 @@ $(diff "$ROOT/real-floor-before" "$ROOT/real-floor-after" 2>/dev/null | head -20
   cmp_real postmortem       "$(awk 'NF{n++} END{print n+0}' "$REAL/.supervisor/postmortem/results.jsonl" 2>/dev/null)"
 
   real_sessions="$(cat "$REAL"/.supervisor/logs/*.jsonl 2>/dev/null \
-    | jq -r 'select(has("cc_session_id")) | .cc_session_id' 2>/dev/null | LC_ALL=C sort -u | awk 'NF{n++} END{print n+0}')"
+    | jq -r 'select(has("cc_session_id")) | .cc_session_id' 2>/dev/null | env LC_ALL=C sort -u | awk 'NF{n++} END{print n+0}')"
   cmp_real sessions "$real_sessions"
   validate_floor "$JM" >/dev/null 2>&1 \
     && ok "the real-tree artefact conforms to the schema parsed from RESULT_SCHEMAS.md" \

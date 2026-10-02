@@ -157,7 +157,7 @@ SEEDS
 # would then be silently skipped forever — a quiet mismatch, exactly the failure class this script
 # was fixed for. So the table is checked at startup and a duplicate category is a LOUD failure: a
 # future editor adding such a row cannot get a green run out of it.
-_dupe_cat="$(seed_table | cut -d'|' -f1 | LC_ALL=C sort | LC_ALL=C uniq -d | head -1 || true)"
+_dupe_cat="$(seed_table | cut -d'|' -f1 | env LC_ALL=C sort | env LC_ALL=C uniq -d | head -1 || true)"
 [ -z "$_dupe_cat" ] || die "seed table invariant violated: category '$_dupe_cat' appears in more than one row. seed_present() keys presence on (seeded stamp + category), so two seeds sharing a category would make one of them permanently unseedable — give the second seed its own category, or re-key seed_present per seed before adding the row"
 unset _dupe_cat
 
@@ -292,7 +292,7 @@ seed_present() {
       SEED_PRESENT_HOW="${hit##*$'\t'}"
       return 0
     fi
-  done < <(LC_ALL=C find "$RULES_DIR" -maxdepth 1 -type f -name '*.json' 2>/dev/null | LC_ALL=C sort)
+  done < <(env LC_ALL=C find "$RULES_DIR" -maxdepth 1 -type f -name '*.json' 2>/dev/null | env LC_ALL=C sort)
   return 1
 }
 

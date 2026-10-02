@@ -246,7 +246,7 @@ csum() {
 # into it nor the legitimate one (the same blindness test-build-floor.sh case (k) measures).
 tree_sig() {
   ( cd "$1" 2>/dev/null || return 1
-    find . -mindepth 1 2>/dev/null | LC_ALL=C sort | while IFS= read -r p; do
+    find . -mindepth 1 2>/dev/null | env LC_ALL=C sort | while IFS= read -r p; do
       if [ -f "$p" ]; then printf '%s %s\n' "$p" "$(csum "$p")"; else printf '%s DIR\n' "$p"; fi
     done )
 }
@@ -572,7 +572,7 @@ serve_owned_rel() {
 real_tree_changed_paths() {
   diff "$1" "$2" 2>/dev/null | awk '
     /^[<>] / { line = substr($0, 3); sub(/ [^ ]+$/, "", line); if (line != "") print line }' \
-    | LC_ALL=C sort -u
+    | env LC_ALL=C sort -u
 }
 
 # classify_real_tree_delta <before file> <after file> <ui rel> <live serve: yes|no>
@@ -840,7 +840,7 @@ STATE_SKILL="$script_dir/../skills/state-management/SKILL.md"
 PHASE_NOTE_LIT="no pipeline stage corresponds to it"
 map_keys_of() {
   awk '/var PHASE_STAGE = \{/{f=1} f{print} f&&/\};/{exit}' "$1" \
-    | tr ',' '\n' | sed -nE 's/^[[:space:]]*([A-Z_]+)[[:space:]]*:.*/\1/p' | LC_ALL=C sort
+    | tr ',' '\n' | sed -nE 's/^[[:space:]]*([A-Z_]+)[[:space:]]*:.*/\1/p' | env LC_ALL=C sort
 }
 not_in() { # not_in "<set>" "<candidates>" -> candidates absent from set
   local s="$1" c out="" x
@@ -2119,7 +2119,7 @@ bundle_after="$(tree_sig "$BUNDLE_DIR")"
 
 [ "$parent_before" = "$parent_after" ] \
   && ok "(i1) the fixture parent contains nothing that was not there before the whole sequence" \
-  || no "(i1) the fixture parent contains nothing that was not there before" "$(printf '%s\n' "$parent_after" | LC_ALL=C sort > "$TMPROOT/pa"; printf '%s\n' "$parent_before" | LC_ALL=C sort > "$TMPROOT/pb"; diff "$TMPROOT/pb" "$TMPROOT/pa" 2>/dev/null | head -20)"
+  || no "(i1) the fixture parent contains nothing that was not there before" "$(printf '%s\n' "$parent_after" | env LC_ALL=C sort > "$TMPROOT/pa"; printf '%s\n' "$parent_before" | env LC_ALL=C sort > "$TMPROOT/pb"; diff "$TMPROOT/pb" "$TMPROOT/pa" 2>/dev/null | head -20)"
 
 printf '%s\n' "$repo_before" > "$TMPROOT/rb"
 printf '%s\n' "$repo_after"  > "$TMPROOT/ra"
@@ -2778,7 +2778,7 @@ ph_paths_of() {
   # gate, not a defect in the fixture. Unfiltered paths include the intermediates, so a scalar
   # is always a subset of the object form.
   jq -r '[paths | select(.[0]=="surfaces") | join(".")] | .[]' "$1" 2>/dev/null \
-    | grep -E '^surfaces\.[a-z_]+\.detail' | sed -E 's/\.[0-9]+(\.|$)/.[]\1/g' | LC_ALL=C sort -u
+    | grep -E '^surfaces\.[a-z_]+\.detail' | sed -E 's/\.[0-9]+(\.|$)/.[]\1/g' | env LC_ALL=C sort -u
 }
 ph_seed() {   # $1 = repo dir, $2 = "clean"|"broken"
   mkdir -p "$1/.agent" "$1/agents" "$1/.supervisor/postmortem" "$1/.supervisor/logs"
@@ -2816,13 +2816,13 @@ for variant in clean broken curation; do
     ph_ok=0
   fi
 done
-LC_ALL=C sort -u "$live_paths" -o "$live_paths"
+env LC_ALL=C sort -u "$live_paths" -o "$live_paths"
 
 if [ "$ph_ok" -eq 1 ] && [ -s "$live_paths" ]; then
   parity_drift=""
   for fx in "$script_dir"/fixtures/floor-ui/*.json; do
     [ -e "$fx" ] || continue
-    extra="$(ph_paths_of "$fx" | LC_ALL=C comm -23 - "$live_paths" | tr '\n' ' ')"
+    extra="$(ph_paths_of "$fx" | env LC_ALL=C comm -23 - "$live_paths" | tr '\n' ' ')"
     [ -n "$extra" ] && parity_drift="$parity_drift | $(basename "$fx"): $extra"
   done
   [ -z "$parity_drift" ] \
@@ -2834,7 +2834,7 @@ if [ "$ph_ok" -eq 1 ] && [ -s "$live_paths" ]; then
   jq '.surfaces.rules.detail.correlations[0] += {a_key_the_projector_never_emits: 1}' \
      "$script_dir/fixtures/floor-ui/floor-rules-churn-live.json" > "$ph_mut" 2>/dev/null
   if [ -s "$ph_mut" ]; then
-    [ -n "$(ph_paths_of "$ph_mut" | LC_ALL=C comm -23 - "$live_paths")" ] \
+    [ -n "$(ph_paths_of "$ph_mut" | env LC_ALL=C comm -23 - "$live_paths")" ] \
       && ok "(j39) ANTI-VACUITY: an injected phantom key IS seen by the parity comparison" \
       || no "(j39) ANTI-VACUITY FAILED: the comparison cannot see an injected key - (j38) proves nothing"
   else
@@ -4125,7 +4125,7 @@ l_dirty=""
 for li in 1 2 4 5; do
   [ -d "$L/proj-$li" ] || continue
   l_extra="$(cd "$L/proj-$li" && find . -mindepth 1 2>/dev/null \
-    | grep -v -E '^\./\.supervisor(/floor(/floor\.json)?)?$' | LC_ALL=C sort | tr '\n' ' ')"
+    | grep -v -E '^\./\.supervisor(/floor(/floor\.json)?)?$' | env LC_ALL=C sort | tr '\n' ' ')"
   [ -n "$l_extra" ] && l_dirty="$l_dirty [proj-$li:$l_extra]"
 done
 [ -z "$l_dirty" ] \
@@ -4244,7 +4244,7 @@ else
   if [ -f "$L_IDX" ]; then
     l_keys_live=" $(jq -r '[paths(scalars) | map(select(type == "string")) | join(".")] | unique | .[]' \
         "$L_IDX" "$LE_UI/index.json" "$LB_UI/index.json" "$LJ_UI/index.json" 2>/dev/null \
-        | LC_ALL=C sort -u | tr '\n' ' ')"
+        | env LC_ALL=C sort -u | tr '\n' ' ')"
     l_key_bad=""
     for lfx in "$LFIX"/*.json; do
       [ -f "$lfx" ] || continue
@@ -4663,7 +4663,7 @@ doc_enum_lines() {
     END { print n + 0 }
   ' "$1"
 }
-setify() { tr ' \t' '\n\n' | sed '/^$/d' | LC_ALL=C sort -u | tr '\n' ' '; }
+setify() { tr ' \t' '\n\n' | sed '/^$/d' | env LC_ALL=C sort -u | tr '\n' ' '; }
 # not_in <candidate set> <reference set> -> members of the candidate absent from the reference
 not_in() {
   local v out=""
@@ -5535,7 +5535,7 @@ n_residue="$(ls "$script_dir"/*.n.mut.sh 2>/dev/null || true)"
 # page able to uninstall itself buys nothing and risks something. Read from the engine rather
 # than restated, so a fifth route added there fails here instead of shipping unnoticed.
 n_routes="$(sed -n 's/^ROUTES = (\(.*\))$/\1/p' "$ENGINE" | head -1 | tr -d '"' | tr ',' ' ')"
-n_route_set="$(printf '%s\n' $n_routes | LC_ALL=C sort | tr '\n' ' ')"
+n_route_set="$(printf '%s\n' $n_routes | env LC_ALL=C sort | tr '\n' ' ')"
 [ "$n_route_set" = "add forget scan stop " ] \
   && ok "(n29) the engine exposes exactly four mutating routes and they are add, forget, scan and stop — apply and remove are excluded by decision, and the set is read out of the engine rather than restated here" \
   || no "(n29) the engine exposes exactly the four intended mutating routes" "parsed '$n_route_set', expected 'add forget scan stop '"

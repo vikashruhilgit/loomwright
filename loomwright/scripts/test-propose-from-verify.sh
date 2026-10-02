@@ -156,9 +156,9 @@ SUP_AC1_FILE="$(find "$SUP_OUT" -maxdepth 1 -name "verify-${SUPERSEDE_RUN_ID}-AC
   || no "AC-supersede: expected zero drafts, got $(count_props "$SUP_OUT"): $(ls "$SUP_OUT" 2>/dev/null)"
 
 echo "== AC3/AC10: idempotency - re-running yields the same 3 files, no duplicates =="
-before="$(find "$OUT" -type f | LC_ALL=C sort)"
+before="$(find "$OUT" -type f | env LC_ALL=C sort)"
 run_sut "$RD" "$OUT"; rc2=$?
-after="$(find "$OUT" -type f | LC_ALL=C sort)"
+after="$(find "$OUT" -type f | env LC_ALL=C sort)"
 [ "$rc2" -eq 0 ] && ok "exit 0 on re-run" || no "exit $rc2 on re-run"
 [ "$(count_props "$OUT")" -eq 3 ] && ok "still exactly 3 files after re-run" || no "file count changed after re-run: $(count_props "$OUT")"
 [ "$before" = "$after" ] && ok "the file SET is byte-identical (paths) across the re-run" \
@@ -174,7 +174,7 @@ printf 'pre-existing\n' > "$CONT/untouched.txt"
 hash_tree() {
   ( cd "$1" && find . -not -path './.supervisor/requirements/proposed' -not -path './.supervisor/requirements/proposed/*' \
       -not -path "./.supervisor/verify/$RUN_ID/summary.md" \
-      | LC_ALL=C sort )
+      | env LC_ALL=C sort )
 }
 before10="$(hash_tree "$CONT")"
 ( cd "$CONT" && PROPOSE_FROM_VERIFY_OUT_DIR=".supervisor/requirements/proposed" bash "$SUT" ".supervisor/verify/$RUN_ID" ) >/dev/null 2>&1

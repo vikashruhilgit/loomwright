@@ -837,7 +837,7 @@ printf '.claude/\nbin\000ary\n' > "$F8/.gitignore" || setup_fail "(f8) could not
 # group into a duplicate of the text control below. Counted with `tr -d`, deliberately NOT with a
 # grep for `$'\0'` — bash cannot hold a NUL in a variable, so that pattern collapses to the EMPTY
 # pattern and matches every file (the very regression the (f8) negative control exists to pin).
-[ "$(LC_ALL=C tr -d '\000' < "$F8/.gitignore" | wc -c)" -lt "$(wc -c < "$F8/.gitignore")" ] \
+[ "$(env LC_ALL=C tr -d '\000' < "$F8/.gitignore" | wc -c)" -lt "$(wc -c < "$F8/.gitignore")" ] \
   || setup_fail "(f8) $F8/.gitignore contains no NUL byte — printf dropped it"
 before_f8="$(sum "$F8/.gitignore")"
 out_f8="$(mem "$F8" apply 2>&1)"; rc_f8=$?
@@ -903,33 +903,33 @@ Ii="$(newgit https://github.com/acme/widget.git)"
 seed_stores "$Ii"
 printf '.claude/\n.supervisor/\n' > "$Ii/.gitignore"
 # (i1) check writes NOTHING at all.
-before_i="$(cd "$Ii" && find . -not -path './.git/*' -not -name '.git' | LC_ALL=C sort)"
+before_i="$(cd "$Ii" && find . -not -path './.git/*' -not -name '.git' | env LC_ALL=C sort)"
 mem "$Ii" check >/dev/null 2>&1
-after_i="$(cd "$Ii" && find . -not -path './.git/*' -not -name '.git' | LC_ALL=C sort)"
+after_i="$(cd "$Ii" && find . -not -path './.git/*' -not -name '.git' | env LC_ALL=C sort)"
 [ "$before_i" = "$after_i" ] && ok "(i1) check created no files at all (read-only)" || no "(i1) check created or removed files"
 # (i2) apply touches only the sanctioned paths — anything else under the root is a containment breach.
 head_before="$(git -C "$Ii" rev-parse HEAD 2>/dev/null)"
-idx_before="$(git -C "$Ii" diff --cached --name-only 2>/dev/null | LC_ALL=C sort)"
+idx_before="$(git -C "$Ii" diff --cached --name-only 2>/dev/null | env LC_ALL=C sort)"
 mem "$Ii" apply >/dev/null 2>&1
 unexpected="$(cd "$Ii" && find . -not -path './.git/*' -not -name '.git' -type f \
   ! -name '.gitignore' ! -name '.gitignore.backup.*' ! -name 'seed.txt' \
   ! -path './.supervisor/config.json' \
   ! -path './.claude/agent-memory/*' ! -path './.supervisor/memory/*' \
   ! -path './.claude/worktrees/*' ! -name 'settings.local.json' ! -path './.supervisor/logs/*' \
-  | LC_ALL=C sort)"
+  | env LC_ALL=C sort)"
 [ -z "$unexpected" ] && ok "(i2) apply wrote ONLY .gitignore, its backup, and .supervisor/config.json" || no "(i2) apply wrote unexpected files: $(tr '\n' ' ' <<< "$unexpected")"
 [ ! -e "$Ii/.claude/settings.json" ] && ok "(i2) no <root>/.claude/settings.json written" || no "(i2) apply wrote <root>/.claude/settings.json"
 # (i3) nothing was staged, committed, or otherwise pushed into git — behavioural, not a grep.
 mem "$Ii" remove >/dev/null 2>&1
 head_after="$(git -C "$Ii" rev-parse HEAD 2>/dev/null)"
-idx_after="$(git -C "$Ii" diff --cached --name-only 2>/dev/null | LC_ALL=C sort)"
+idx_after="$(git -C "$Ii" diff --cached --name-only 2>/dev/null | env LC_ALL=C sort)"
 [ "$head_before" = "$head_after" ] && ok "(i3) HEAD unchanged across apply+remove (nothing committed)" || no "(i3) HEAD MOVED — the helper committed something"
 [ "$idx_before" = "$idx_after" ] && ok "(i3) the git index is unchanged across apply+remove (nothing staged)" || no "(i3) the helper STAGED files (index changed)"
 # (i4) static corroboration: every git invocation in the helper is read-only. Extracted from the
 # actual `git -C "<dir>" <subcommand>` call sites, NOT a bare `git rm` text grep — the helper's
 # user-facing copy legitimately QUOTES `git rm -r --cached` as guidance, and a text grep would
 # false-positive on that prose.
-git_subs="$(grep -oE 'git -C "[^"]*" [a-z-]+' "$MEM" | awk '{print $NF}' | LC_ALL=C sort -u | tr '\n' ' ')"
+git_subs="$(grep -oE 'git -C "[^"]*" [a-z-]+' "$MEM" | awk '{print $NF}' | env LC_ALL=C sort -u | tr '\n' ' ')"
 case "$git_subs" in
   *add*|*commit*|*rm*|*push*|*reset*|*checkout*|*stash*)
     no "(i4) a mutating git subcommand is invoked by setup-memory.sh: $git_subs" ;;
@@ -1842,6 +1842,8 @@ rm -rf "$BMF_D"
 # substitution SEGFAULTs Homebrew bash 5.3 on macOS a few percent of the time (dispose_temporary_env
 # → setlocale → CoreFoundation after fork), and a crashed reader is now — correctly — `unknown`. So
 # read_mode carries no `LC_ALL=` prefix at all; pinned structurally (the crash itself is flaky).
+# The same shape is banned repo-wide by scripts/check-locale-prefix.sh (CI gate); this pin is the
+# reader's local, stricter form (no LC_ALL= at all, not even through env).
 if awk '/^read_mode\(\) \{/ { f = 1 } f && /^}/ { exit } f && !/^[ \t]*#/ && /LC_ALL=/ { bad = 1 } END { exit !bad }' "$MEM"; then no "(bm-f) read_mode carries an LC_ALL= temp-env prefix (crash-prone in a subshell)"; else ok "(bm-f) read_mode carries no LC_ALL= temp-env prefix"; fi
 # (6) the realistic round trip is untouched: mode on → plain apply byte-identical no-op → mode on.
 Bfr="$(bmf_fix)"; sfr="$(sum "$Bfr/.gitignore")"; o="$(mem "$Bfr" apply 2>/dev/null)"
