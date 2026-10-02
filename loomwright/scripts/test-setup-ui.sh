@@ -313,40 +313,85 @@ track_serve() {
   return 0
 }
 
-# fixture_serve_pids — every LIVE process that is one of this module's servers AND names THIS
-# RUN's temp root on its command line. Both clauses are load-bearing:
-#   * "setup-ui.sh" alone would select the developer's own Floor, which may legitimately be
-#     serving on 7734 while this suite runs. Killing it would be the same class of damage the
-#     (k) group's whole isolation apparatus exists to prevent.
-#   * "$TMPROOT" alone would select nothing useful; together they select exactly the servers
-#     THIS process started, and provably not another concurrent run's (a different mktemp root)
-#     and not the developer's (their command line names their home directory, never our root).
+# fixture_pids — every LIVE process whose command line names a path UNDER THIS RUN's temp root
+# ("$TMPROOT/"). IDENTITY IS THE PATH, NEVER THE PROGRAM NAME, and that is the whole fix of the
+# 2026-10-02 leak: this used to require "setup-ui.sh" on the command line as well, so every
+# process the suite started through a mutant copy NAMED SOMETHING ELSE was invisible to it. (s13)
+# builds its mutant as `engine-mut.sh`; the handler that mutant orphans BY DESIGN runs as
+# `python3 - <ui> <port> <tmp>/d.X/engine-mut.sh …`, which carries neither "setup-ui.sh" nor
+# "http.server" — so (s13)'s own sweep, this detector and kill_if_fixture all walked past it,
+# (p1) printed green, and 21 such handlers were found re-parented to init, one per run, the
+# oldest 26 days old. A name clause can only ever describe the binaries someone remembered to
+# list; "this run created it in its own mktemp root" describes all of them, including the next
+# mutant nobody has written yet. (p4) below proves a non-engine-named process IS seen.
+#   * The path alone is also the SAFETY clause. The developer's own Floor, a concurrent run of
+#     this suite and anything else on the machine name THEIR paths, never this run's mktemp root;
+#     the trailing "/" keeps a sibling mktemp name that merely shares our prefix out as well.
 # `ps` is snapshotted into a variable FIRST so that the awk that filters it — whose own argv
-# would carry both strings — cannot appear in its own input and report itself as a leak.
-fixture_serve_pids() {
-  local snapshot
-  snapshot="$(ps -eo pid=,command= 2>/dev/null || true)"
-  [ -n "$snapshot" ] || return 0
-  printf '%s\n' "$snapshot" | awk -v root="$TMPROOT" '
-    index($0, "setup-ui.sh") > 0 && index($0, root) > 0 { print $1 }'
+# carries "$TMPROOT/" — cannot appear in its own input and report itself as a leak.
+#
+# FAILS CLOSED. An unreadable process table is NOT an empty one: if `ps` fails three times the
+# function returns 1, and (p1) reports the teardown UNVERIFIED rather than clean. It used to
+# `|| true` into an empty snapshot, which read as "nothing survived" — so a `ps` that failed
+# under load (fork pressure from the concurrent runner) turned a real leak into a green (p1)
+# and skipped the sweep that would have killed it. (p5) proves the closed reading.
+# [root] narrows the scope to one fixture directory under TMPROOT (the (p) controls use it so
+# their mid-run sweep cannot touch another group's live fixture); the teardown passes nothing.
+fixture_pids() {
+  local root="${1:-$TMPROOT/}" snapshot="" i=0
+  while [ "$i" -lt 3 ]; do
+    snapshot="$(ps -eo pid=,command= 2>/dev/null)" && [ -n "$snapshot" ] && break
+    snapshot=""; i=$((i + 1)); sleep 0.2
+  done
+  [ -n "$snapshot" ] || return 1
+  case "$root" in "$TMPROOT/"*) ;; *) return 1 ;; esac  # never a scope outside this run's root
+  printf '%s\n' "$snapshot" | awk -v root="$root" 'index($0, root) > 0 { print $1 }'
   return 0
 }
 
-# kill_if_fixture — kill a pid ONLY while it still answers to the description above. A pidfile
-# outlives its process and pids get recycled, so an unconditional `kill` of a remembered pid is
-# a kill of whatever now holds it. The engine's own `stop` guards this way for the same reason.
+# kill_if_fixture <pid> [signal] — kill a pid ONLY while it still answers to the description
+# above. A pidfile outlives its process and pids get recycled, so an unconditional `kill` of a
+# remembered pid is a kill of whatever now holds it. The engine's own `stop` guards this way for
+# the same reason. Same identity as fixture_pids — the path, not the name — for the same reason.
 kill_if_fixture() {
-  local pid="$1" cmd
+  local pid="$1" sig="${2:-TERM}" cmd
   case "$pid" in ''|*[!0-9]*) return 0 ;; esac
   cmd="$(ps -o command= -p "$pid" 2>/dev/null || true)"
   [ -n "$cmd" ] || return 0
-  case "$cmd" in *setup-ui.sh*|*http.server*) ;; *) return 0 ;; esac
-  case "$cmd" in *"$TMPROOT"*) kill "$pid" 2>/dev/null ;; esac
+  case "$cmd" in *"$TMPROOT/"*) kill -"$sig" "$pid" 2>/dev/null ;; esac
   return 0
 }
 
-# LEAKED_PIDS — what survived the reap. Set by cleanup_files, asserted on by finish (p1).
+# reap_fixture_pids — THE SWEEP: TERM every process fixture_pids names, give them ~2 s, then KILL
+# whatever is still there. Escalation is not optional: a TERM is a request, and a process that
+# traps or ignores it (a handler mid-shutdown, a `trap '' TERM` stub) would otherwise outlive the
+# run exactly as an untracked one does — the sweep used to send one TERM and never look again.
+# (p6) proves a TERM-ignoring process is gone after it. Sets REAP_LEFT to anything that survived
+# even KILL (empty on success) and returns 1 when the table could not be read. [root] as above.
+REAP_LEFT=""
+reap_fixture_pids() {
+  local root="${1:-$TMPROOT/}" pids pid i=0
+  REAP_LEFT=""
+  pids="$(fixture_pids "$root")" || return 1
+  [ -n "$pids" ] || return 0
+  for pid in $pids; do kill_if_fixture "$pid" TERM; done
+  while [ "$i" -lt 8 ]; do
+    pids="$(fixture_pids "$root")" || return 1
+    [ -z "$pids" ] && return 0
+    sleep 0.25; i=$((i + 1))
+  done
+  for pid in $pids; do kill_if_fixture "$pid" KILL; done
+  sleep 0.25
+  pids="$(fixture_pids "$root")" || return 1
+  REAP_LEFT="$(printf '%s\n' "$pids" | tr '\n' ' ' | sed 's/ *$//')"
+  return 0
+}
+
+# LEAKED_PIDS — what survived the registry reap. Set by cleanup_files, asserted on by finish (p1).
+# LEAK_UNVERIFIED — 1 when the process table could not be read at the reading or the sweep, so
+# that (p1) can say "unverified" instead of reporting an empty, unread list as "clean".
 LEAKED_PIDS=""
+LEAK_UNVERIFIED=0
 cleanup_files() {
   local pf pid waited
   for pid in $HOLDER_PIDS; do
@@ -366,14 +411,16 @@ cleanup_files() {
   # about to die is not a leak. No `timeout` on macOS, so this is a bounded loop.
   waited=0
   while [ "$waited" -lt 8 ]; do
-    LEAKED_PIDS="$(fixture_serve_pids | tr '\n' ' ' | sed 's/ *$//')"
+    if ! LEAKED_PIDS="$(fixture_pids)"; then LEAK_UNVERIFIED=1; LEAKED_PIDS=""; break; fi
+    LEAKED_PIDS="$(printf '%s\n' "$LEAKED_PIDS" | tr '\n' ' ' | sed 's/^ *//; s/ *$//')"
     [ -z "$LEAKED_PIDS" ] && break
     sleep 0.5; waited=$((waited + 1))
   done
 
-  # The sweep. It runs whatever (p1) is about to report, so a red assertion still leaves the
-  # machine clean — the point is to make a leak VISIBLE, not to make the developer chase pids.
-  for pid in $LEAKED_PIDS; do kill_if_fixture "$pid"; done
+  # The sweep. It runs whatever (p1) is about to report — and even when the reading could not be
+  # taken — so a red assertion still leaves the machine clean: the point is to make a leak
+  # VISIBLE, not to make the developer chase pids.
+  reap_fixture_pids || LEAK_UNVERIFIED=1
 
   chmod -R u+rwX "$TMPROOT" >/dev/null 2>&1
   rm -r "$TMPROOT" >/dev/null 2>&1
@@ -403,13 +450,19 @@ finish() {
   # (p1) — THE LEAK ASSERTION, and it lives here because its subject is what survived the
   # teardown, which does not exist until the teardown has run. Its input is the reading
   # cleanup_files took after the registry reap and before the safety sweep; its detector is
-  # proven non-vacuous by (p2)/(p3) at the bottom of this file, which leak a server on purpose.
-  if [ -z "$LEAKED_PIDS" ]; then
-    ok "(p1) no fixture server outlived the suite — every server this run started was reaped by the pid registry, so none is left holding a port on a mktemp directory that no longer exists"
+  # proven non-vacuous by (p2)-(p6) at the bottom of this file, which leak processes on purpose.
+  # Its subject is EVERY process naming this run's temp root — a server, a mutant's orphaned
+  # handler, a stub's stray `sleep` — because each of them is a process this run started and
+  # nothing else will ever end.
+  if [ "$LEAK_UNVERIFIED" -eq 1 ]; then
+    no "(p1) no fixture process outlives the suite" \
+       "UNVERIFIED — the process table could not be read (ps failed 3 times), so an empty list here would be a guess, not a reading. Re-run; a leak cannot be ruled out"
+  elif [ -z "$LEAKED_PIDS" ]; then
+    ok "(p1) no fixture process outlived the suite — nothing naming this run's temp root survived the pid-registry reap, so no server (or mutant's orphaned handler) is left holding a port on a mktemp directory that no longer exists"
   else
-    no "(p1) no fixture server outlives the suite" \
+    no "(p1) no fixture process outlives the suite" \
        "these were still running after the registry reap: $LEAKED_PIDS
-       (they have since been swept, so the machine is clean, but a server this suite started escaped its teardown — find the case that started it and give it a track_serve)"
+       (they have since been swept$([ -n "$REAP_LEFT" ] && printf ' — EXCEPT %s, which survived even KILL' "$REAP_LEFT"), but a process this suite started escaped its teardown — find the case that started it and reap it there, or give it a track_serve)"
   fi
   echo
   echo "RESULT: $pass passed, $fail failed, $skip skipped"
@@ -6027,13 +6080,13 @@ o_residue="$(ls "$script_dir"/setup-ui-*.sh 2>/dev/null || true)"
 echo "(p) AC-no-leaked-servers — the suite reaps every server it starts"
 # ===========================================================================
 # (p1) IS EMITTED FROM finish(), because its subject — what survived the teardown — does not
-# exist until the teardown has run. That makes its detector, fixture_serve_pids, the one piece
+# exist until the teardown has run. That makes its detector, fixture_pids, the one piece
 # of this suite that nothing else can put under load, so it is exercised HERE against a server
 # deliberately left untracked. Without these two, (p1) would be a green line proving only that
 # `ps | awk` returned nothing, which is also what a detector matching NOTHING returns.
 #
 # THE SERVER STARTED HERE IS A TMP-FIXTURE ONE and it is killed by pid, directly, below. The
-# developer's own Floor is never a candidate: fixture_serve_pids requires this run's TMPROOT on
+# developer's own Floor is never a candidate: fixture_pids requires this run's TMPROOT on
 # the command line, and a real Floor's names their home directory.
 P="$(mktmp)" || setup_fail "(p) fixture: mktemp under $TMPROOT failed"
 PH="$P/home"; P_UI="$P/ui"; mkdir -p "$PH" "$P/proj" \
@@ -6058,13 +6111,13 @@ case "${p_port:-x}" in
     p_seen=""
     case "$p_pid" in
       ''|*[!0-9]*) ;;
-      *) p_seen="$(fixture_serve_pids | awk -v want="$p_pid" '$1 == want {print; exit}')" ;;
+      *) p_seen="$(fixture_pids | awk -v want="$p_pid" '$1 == want {print; exit}')" ;;
     esac
     if [ -n "$p_seen" ]; then
       ok "(p2) CONTROL: a server started and left untracked IS detected as a survivor (pid $p_pid) — (p1)'s detector reports leaks rather than reporting nothing"
     else
       no "(p2) CONTROL: an untracked server is detected as a survivor" \
-         "started pid '$p_pid' but fixture_serve_pids did not name it, so (p1) would pass through a real leak"
+         "started pid '$p_pid' but fixture_pids did not name it, so (p1) would pass through a real leak"
     fi
 
     # (p3) ANTI-VACUITY. A "detector" that named every pid forever would satisfy (p2) perfectly
@@ -6074,7 +6127,7 @@ case "${p_port:-x}" in
     case "$p_pid" in ''|*[!0-9]*) ;; *) kill "$p_pid" 2>/dev/null ;; esac
     p_wait=0; p_still="x"
     while [ "$p_wait" -lt 20 ]; do
-      p_still="$(fixture_serve_pids | awk -v want="$p_pid" '$1 == want {print; exit}')"
+      p_still="$(fixture_pids | awk -v want="$p_pid" '$1 == want {print; exit}')"
       [ -z "$p_still" ] && break
       sleep 0.25; p_wait=$((p_wait + 1))
     done
@@ -6083,6 +6136,76 @@ case "${p_port:-x}" in
       || no "(p3) ANTI-VACUITY: the detector stops naming a killed server" \
            "pid $p_pid still reported after $((p_wait / 4))s — the detector matches regardless of liveness, which would make (p1) permanently red" ;;
 esac
+
+# --- (p4)-(p6) THE 2026-10-02 LEAK: A PROCESS THAT IS NOT NAMED LIKE THE ENGINE -------------------
+# (p2) leaks the SHIPPED engine, whose handler carries "setup-ui.sh" on its command line, so it
+# could not see the defect that actually leaked: (s13)'s `engine-mut.sh` mutant orphans a handler
+# whose command line names neither "setup-ui.sh" nor "http.server", and a detector that required
+# the engine's name walked past all 21 of them while (p1) printed green. The decoy here has
+# exactly that shape — a python3 process whose argv names a ui dir, a port and an
+# `engine-mut.sh` under this run's root — and it IGNORES TERM, which is the other way a process
+# outlives a one-shot sweep. Each control is the revert test of one half of the fix:
+#   (p4) reverts to a name-based detector  -> red (the decoy is not named like the engine)
+#   (p5) reverts to `ps … || true`          -> red (an unreadable table reads as clean)
+#   (p6) reverts to a single-TERM sweep     -> red (the decoy ignores TERM)
+P_DECOY="$P/decoy"
+mkdir -p "$P_DECOY/ui" || setup_fail "(p4) fixture: could not create $P_DECOY"
+python3 -c 'import signal, time
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+time.sleep(120)' "$P_DECOY/ui" 0 "$P_DECOY/engine-mut.sh" >/dev/null 2>&1 &
+p_dpid=$!
+p_wait=0; p_dseen=""
+while [ "$p_wait" -lt 20 ]; do
+  p_dseen="$(fixture_pids | awk -v want="$p_dpid" '$1 == want {print; exit}')"
+  [ -n "$p_dseen" ] && break
+  sleep 0.25; p_wait=$((p_wait + 1))
+done
+p_dcmd="$(ps -o command= -p "$p_dpid" 2>/dev/null || true)"
+# The subject must really be the leak's shape, or (p4) proves nothing about it: alive, naming
+# this run's root, and carrying NEITHER engine name a name-based detector looked for.
+p_dshape=no
+case "$p_dcmd" in
+  *setup-ui.sh*|*http.server*) ;;
+  *"$P_DECOY/engine-mut.sh"*) p_dshape=yes ;;
+esac
+if [ -n "$p_dseen" ] && [ "$p_dshape" = "yes" ]; then
+  ok "(p4) CONTROL: an untracked process named like the (s13) mutant's orphaned handler — no 'setup-ui.sh', no 'http.server' on its command line — IS detected (pid $p_dpid): (p1)'s identity is this run's temp root, not the engine's name, so the 2026-10-02 leak cannot pass (p1) green again"
+else
+  no "(p4) CONTROL: a non-engine-named process under this run's root is detected" \
+     "seen='$p_dseen' leak-shaped=$p_dshape cmd='$p_dcmd' — a detector that keys on the engine's name passes (p1) through exactly the leak found on 2026-10-02"
+fi
+
+# (p5) FAIL CLOSED: with `ps` unfindable the detector must say "could not read", not "nothing
+# there". PATH is a stub holding every tool this file uses EXCEPT ps; assigning PATH in the
+# subshell also clears bash's command hash, so a remembered /bin/ps cannot satisfy it.
+P_NOPS="$P/bin-nops"
+mkstub "$P_NOPS" "ps" || setup_fail "(p5) fixture: could not build the ps-absent PATH stub"
+[ ! -e "$P_NOPS/ps" ] || setup_fail "(p5) fixture: the ps-absent stub still contains ps"
+p_nops_out="$(PATH="$P_NOPS"; fixture_pids)"; p_nops_rc=$?
+if [ "$p_nops_rc" -ne 0 ] && [ -z "$p_nops_out" ]; then
+  ok "(p5) FAIL CLOSED: with ps unavailable the detector returns non-zero (rc=$p_nops_rc) instead of an empty list — (p1) then reports the teardown UNVERIFIED, never clean, while the decoy from (p4) is in fact still running"
+else
+  no "(p5) FAIL CLOSED: an unreadable process table is not reported as an empty one" \
+     "rc=$p_nops_rc out='$p_nops_out' — an unread table reading as 'no survivors' passes (p1) green on a real leak and skips the sweep"
+fi
+
+# (p6) THE SWEEP ESCALATES. Scoped to this group's own directory so a mid-run sweep cannot touch
+# another group's fixture; the teardown runs the same function over the whole root.
+# LIVENESS IS READ BEFORE ANY `wait`: the decoy is this shell's own child, so a `wait` on it while
+# it still runs blocks for its whole 120 s sleep and then reads "gone" — a stall AND a false pass
+# (measured: with the detector reverted, the sweep saw nothing and this arm went green after 2 min).
+# A zombie (stat Z, killed but not yet collected) is dead; `kill -0` alone would call it alive.
+reap_fixture_pids "$P_DECOY/"; p_reap_rc=$?
+p_dstat="$(ps -o stat= -p "$p_dpid" 2>/dev/null || true)"
+case "$p_dstat" in ''|Z*) p_dalive=no ;; *) p_dalive=yes ;; esac
+[ "$p_dalive" = "yes" ] && kill -KILL "$p_dpid" 2>/dev/null
+wait "$p_dpid" 2>/dev/null
+if [ "$p_reap_rc" -eq 0 ] && [ "$p_dalive" = "no" ] && [ -z "$REAP_LEFT" ]; then
+  ok "(p6) the sweep reaps a process that IGNORES TERM — it escalates to KILL after a bounded wait, so a survivor the reading reports is really gone afterwards, and this control leaves nothing for (p1) to find"
+else
+  no "(p6) the sweep reaps a TERM-ignoring process" \
+     "rc=$p_reap_rc alive-after-sweep=$p_dalive left='$REAP_LEFT' — a sweep that does not escalate (or does not see it) leaves it running past the end of the run"
+fi
 # =========================================================================================
 # (r) AC-no-blocking-foreground-serve — a COMMAND BODY may not tell the agent to run a
 #     foreground `serve`.
@@ -7105,8 +7228,13 @@ else
   s_fg2_before=0; [ -f "$S_FG2_TOKEN" ] && s_fg2_before=1
   kill -TERM "$s_fg2_pid" 2>/dev/null
   s_wait_gone "$s_fg2_pid" || true
+  # THIS MUTANT ORPHANS ITS HANDLER BY DESIGN (that is the defect it models), so this case owns
+  # the reap. It is selected by its FIXTURE DIRECTORY, never by engine name: the mutant is
+  # `engine-mut.sh`, so its handler's command line carries no "setup-ui.sh", and the name clause
+  # this line used to have matched nothing — one orphaned handler per run, re-parented to init,
+  # 21 of them found on 2026-10-02 while (p1) printed green. (p1) now sees it too if this regresses.
   s_snap="$(ps -eo pid=,command= 2>/dev/null || true)"
-  for s_p in $(printf '%s\n' "$s_snap" | awk -v d="$S_FG2_UI" 'index($0, d) > 0 && index($0, "setup-ui.sh") > 0 { print $1 }'); do kill -9 "$s_p" 2>/dev/null; done
+  for s_p in $(printf '%s\n' "$s_snap" | awk -v d="$S_FG2/" 'index($0, d) > 0 { print $1 }'); do kill -9 "$s_p" 2>/dev/null; done
   n_wait_down "$s_fg2_port" >/dev/null 2>&1
   if [ "$s_fg2_before" = "1" ] && [ -f "$S_FG2_TOKEN" ]; then
     ok "(s13) MUTATION CONTROL: a trap that removes ONLY the pidfile leaves ui-serve.token behind — so (s12) is measuring the trap's cleanup and would redden if the shared serve_cleanup were unwired again"
@@ -7172,7 +7300,7 @@ s_mutant() {  # s_mutant <awk program> -> path of a transformed engine copy (emp
 }
 # s_procs_naming <dir> [python] — pids of live engine processes (serve or its handler; both carry the
 # engine path, i.e. "setup-ui.sh", on their command line) that name <dir>. SNAPSHOT FIRST, then
-# filter — the fixture_serve_pids shape: in a `ps | awk -v d=<dir>` pipeline the awk is itself a
+# filter — the fixture_pids shape: in a `ps | awk -v d=<dir>` pipeline the awk is itself a
 # live process whose argv names <dir>, so it matched itself and every arm read as "handler left".
 s_procs_naming() {
   local snap
