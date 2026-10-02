@@ -273,6 +273,48 @@ One recorded verdict per directory (v15.68.0): **tracked** (committed; never tou
 
 ---
 
+## Metadata branch
+
+`scripts/meta-sync.sh` (`init` / `pull` / `push` / `status`) moves run history between a checkout's working folder and a dedicated metadata branch on `origin` (default `loomwright-meta`). It never switches branches, never forces a push, and never touches the code branch's index, HEAD or working tree: the branch side is built entirely in git plumbing — a **separate index** (`GIT_INDEX_FILE=<gitdir>/meta-index`, seeded from the remote tip's tree with `read-tree`, edited per path with `update-index --add --cacheinfo` / `--force-remove`), then `write-tree` → `commit-tree -p <remote tip>` → a refspec push. **Nothing calls it yet** — parallel-automate items 03 / M1 wire it in; `.gitignore` is not changed by it.
+
+**Managed set — one explicit list, never a directory add.** The authoritative list is the script's `is_managed` predicate (its header restates it; edit the two together with this paragraph):
+
+- `.supervisor/requirements/**/*.md`
+- `.supervisor/jobs/done/*.md`, `.supervisor/jobs/failed/*.md`
+- `.supervisor/automate/*.md`
+- `.supervisor/postmortem/results.jsonl`
+- minus anything under a NESTED `.supervisor/` (`.supervisor/requirements/**/.supervisor/**`).
+
+Local files are enumerated with `find` and filtered through that predicate, then staged by explicit path. The separate index never consults `.gitignore`, which is why the list — not `.gitignore` — decides membership: logs, pending briefs and the nested `.supervisor/` trees a hook leaves under requirement folders can never reach the branch.
+
+**3-way rule.** Every sync decides each managed path from `L` (this checkout), `R` (the remote tip) and `B` (the base tree recorded in `<gitdir>/meta-base`, `<gitdir>` = `git rev-parse --git-dir` of the resolved root). Equality is by blob SHA (`git hash-object --no-filters` against tree entries) — never mtime.
+
+| Condition | Outcome |
+|---|---|
+| `L == R` | nothing |
+| `L == B` | take `R` (absent in `R` ⇒ delete locally) |
+| `R == B` | take `L` (absent locally ⇒ delete on the branch) |
+| both changed, path is `.supervisor/postmortem/results.jsonl` | line-union: `R`'s lines unchanged (repeats inside `R` kept), then the `L` lines not present in `R`, in local order — never a global dedupe |
+| both changed, any other path | `meta_sync: conflict <path>`, exit 1, **nothing changed** (no file written, no ref moved, `meta-base` untouched) |
+
+**No `meta-base` yet** (a clone's first sync; `status` says `never_synced`): `B` is derived per path from `R`'s history, read from the old/new blob columns of `git log --no-renames --format= --raw --no-abbrev <R>` (never `<commit>:<path>`, which fails at the deleting commit). A path absent in `R` whose local blob equals ANY historical blob was deleted on the branch (`B = L`: pull deletes it, push never re-adds it); one that differs from every historical blob is a conflict; one that never existed in `R`'s history is new and is pushed. A path present in `R`: `L == R` ⇒ nothing; `L` absent or equal to an older blob ⇒ take `R`; the ledger with `L != R` ⇒ line-union; otherwise conflict. The derivation always covers the whole managed set — even under `--paths-from` — and any conflict anywhere aborts, because the `meta-base` written afterwards must cover every managed path.
+
+**What `meta-base` records — the agreed state, not the branch tree.** `meta-base` is the per-path state that local and remote are KNOWN to agree on, written as its own tree through a second index (`<gitdir>/meta-base-index`). After a **pull**, every path either now holds `R` locally or is a take-L path where `R == B`, so `R`'s tree is the agreed base. After an accepted **push** (which writes nothing locally) it is built per path: a pushed take-L path ⇒ the pushed `L`; `L == R` ⇒ `R`; a take-R path the push did not apply ⇒ the previous (or derived) `B`; a ledger union written to the branch but not locally ⇒ the local `L`; a path outside `--paths-from` ⇒ its previous (or derived) `B`. Recording the branch tree after a push would make the next sync revert a sibling's newer change or resurrect a deletion. (This deliberately departs from the source requirement's wording "the branch tree SHA of the last successful pull or push".) `refs/meta-sync/base` points at the same tree purely as a gc anchor; if the object is ever missing the script warns and falls back to the no-base derivation.
+
+**Push.** A rejected push re-fetches, recomputes from the new `R` and the unchanged `B`, and retries, bounded (the script header holds the bound) — never forced. `--paths-from <file>` restricts the push to the listed managed paths; unlisted or non-managed paths are never pushed. Before anything is published every file being added or changed is **scrubbed, fail CLOSED** (exit 2, branch and `meta-base` unchanged), and every hit is named in one run as `meta_sync: scrub <path>: <rule>` so a caller can build an exclusion list from the output: the ledger's `.repo` allowlist (resolved by `setup-memory.sh allowlist`; an empty allowlist fails everything); e-mail addresses; absolute home paths (`/Users/<name>/`, `/home/<name>/`); five anchored, length-bounded token shapes in portable POSIX ERE (no generic entropy rule, so commit SHAs and `sha256:` stamps pass); forge `owner/repo` slugs not in the allowlist; and project deny patterns from the tracked data file `.agent/meta-sync-deny.txt` (one ERE per line, never executed).
+
+**Exit codes.** `0` ok / `meta_sync: no_changes`; `1` conflict, `no_remote_branch`, fetch failure, `init` refusal, exhausted push retries, usage error; `2` scrub hit. `status` prints exactly one of `synced <sha>` / `local_ahead <n>` / `remote_ahead` / `conflict <n>` / `no_remote_branch` / `unreachable` / `never_synced` and always exits 0. `init` is the only command that may create the branch (an empty orphan commit) and refuses when it already exists; a missing branch is never treated as success (a clone whose `origin` is a local path is the common cause).
+
+**Stated limits.**
+
+- **A conflict needs a human.** The script never picks a side for a non-ledger path; it reports every conflicted path and changes nothing.
+- **Slug detection is forge-context only** — `github.com` / `gitlab.com` / `bitbucket.org` URLs and `repo:` / `"repo":` fields. A bare `owner/repo` elsewhere in prose is not detected (a bare `a/b` rule would match every relative path). The scrub is a pre-publication gate over named patterns, not complete PII coverage; `test-committed-twin-scrub.sh` is a test with placeholder deny terms, not a scrub.
+- **On this repo's own history the whole-set push fails closed** (absolute home paths in some run files and done briefs, a placeholder forge slug in a requirement) until those files are cleaned or excluded with `--paths-from` — correct behaviour, recorded for the migration (item M1).
+
+Self-tests: `scripts/test-meta-sync.sh` (hermetic bare origin + clones; includes two sed-patched mutation controls).
+
+---
+
 ## System Twin homing contract
 
 The **System Twin** maintains a persistent, per-subsystem **System Contract** artifact store under
