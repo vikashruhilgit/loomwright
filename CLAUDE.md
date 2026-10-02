@@ -140,6 +140,9 @@ Native Claude Code multi-agent coordination — requires `CLAUDE_CODE_EXPERIMENT
 
 Full pitfall list relocated to `loomwright/docs/PITFALLS.md` §"Common Pitfalls" in the v15.21.0 diet — only the ones that bite every session stay here.
 
+### Pre-push test run?
+`bash scripts/ci-local.sh` and nothing else. It covers the same gates as CI in one pool, is cached by tree content across sessions, and lets only one run go at a time (`AGENT_GUIDELINES.md` §"Pre-push: one command"). A hand-rolled serial `test-*.sh` loop is slower, skips the root gates, and cannot see untracked files.
+
 ### Claimed work is "already merged" / "on main" but isn't (stale-branch trap)?
 - Never assert git merge/PR state from memory or in-context summary — verify with `git log origin/$BASE_BRANCH` and `git branch --contains <sha>` before claiming work landed.
 - This is the **v13.1.0→v14.0.0 stale-branch incident** (work branched from a stale base and re-implemented something already merged) that motivated the Supervisor's Phase 1.5 PRE-FLIGHT SYNC gate (see `loomwright/agents/supervisor.md` §"Phase 1.5: PRE-FLIGHT SYNC"). The Supervisor row in `loomwright/docs/ARCHITECTURE_CONTRACTS.md` §"Agent Invariants" keeps the quick reference — the Agent Roles table above is now purpose-only and no longer carries it.
