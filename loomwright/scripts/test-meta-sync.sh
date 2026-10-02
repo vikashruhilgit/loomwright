@@ -24,7 +24,8 @@
 #  11. scrub positives: e-mail, home path, foreign slug, foreign ledger record and EACH of the five
 #      token shapes -> exit 2, branch tip unchanged, every offending path named in one run
 #  12. scrub with an EMPTY allowlist -> every forge slug is a hit (fail closed)
-#  13. scrub negative: risk-/task- prose, 40-hex SHA, sha256: stamp, allowlisted URL -> exit 0
+#  13. scrub negative: risk-/task- prose, 40-hex SHA, sha256: stamp, allowlisted URL, a reserved-word
+#      URL and a github.com/.../pull placeholder -> exit 0
 #  14. fresh-clone deletion (no meta-base): a stale deleted file is not re-added; the clone's pull
 #      deletes it; its next push still does not re-add it; a stale OLDER copy of a live file is not
 #      pushed; an edit away from every historical blob -> conflict; a grown ledger -> union
@@ -264,6 +265,9 @@ tip="$(br_tip)"; base_before="$(base_of B)"
 ms B push
 { [ "$RC" -eq 2 ] && [ "$(br_tip)" = "$tip" ] && [ "$(base_of B)" = "$base_before" ]; }
 check $? "scrub hit -> exit 2, branch tip and meta-base unchanged (rc=$RC)"
+# 12 = ten prose files + the foreign ledger record, which hits BOTH ledger_repo and forge_slug ("repo": field)
+{ [ "$(printf '%s\n' "$OUT" | grep -c '^meta_sync: scrub ')" -eq 12 ] && printf '%s\n' "$OUT" | grep -q '^meta_sync: aborted'; }
+check $? "exactly one 'meta_sync: scrub <path>: <rule>' line per hit (12); the summary line starts 'meta_sync: aborted' (got: $(printf '%s\n' "$OUT" | grep '^meta_sync: scrub ' | tr '\n' '|'))"
 for pr in "s-email.md: email" "s-home.md: home_path" "s-home2.md: home_path" "s-slug.md: forge_slug" \
           "s-repofield.md: forge_slug" "s-ghp.md: token_github" "s-pat.md: token_github_pat" \
           "s-sk.md: token_sk" "s-slack.md: token_slack" "s-aws.md: token_aws"; do
@@ -284,9 +288,9 @@ check $? "empty allowlist (local-path origin, no config) -> every forge slug is 
 echo "== 13. scrub negative =="
 put B "$RQ/ok-slug.md" "$(printf '%s\n' 'A risk-based plan for the task-ledger and sk-short.' \
   'Merged at 0123456789abcdef0123456789abcdef01234567 (sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef).' \
-  'See https://github.com/owner/repo/pull/1 and https://github.com/apps/claude.')"
+  'See https://github.com/owner/repo/pull/1, https://github.com/apps/claude and github.com/.../pull.')"
 ms B push
-{ [ "$RC" -eq 0 ] && br_has "$RQ/ok-slug.md"; }; check $? "clean prose with risk-/task-, a 40-hex SHA, a sha256: stamp and an allowlisted URL pushes (rc=$RC: $OUT)"
+{ [ "$RC" -eq 0 ] && br_has "$RQ/ok-slug.md"; }; check $? "clean prose with risk-/task-, a 40-hex SHA, a sha256: stamp, an allowlisted URL, a reserved-word URL and a .../pull placeholder push (rc=$RC: $OUT)"
 
 echo "== 14. fresh-clone deletion (no meta-base) =="
 synced_pair

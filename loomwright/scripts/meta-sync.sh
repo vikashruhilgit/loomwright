@@ -82,7 +82,8 @@
 #
 # SCRUB (push only, fail CLOSED: exit 2, branch and meta-base unchanged). EVERY file being added or
 # changed is scanned before deciding and EVERY hit is named in one run, one line per hit:
-#   `meta_sync: scrub <path>: <rule>` — so a caller can build a --paths-from exclusion list from it.
+#   `meta_sync: scrub <path>: <rule>` — so a caller can build a --paths-from exclusion list from it
+#   (no other output line starts with `meta_sync: scrub `; the final summary starts `meta_sync: aborted`).
 #   (a) ledger: every results.jsonl record's `.repo` must be in the repo allowlist resolved by the
 #       sibling setup-memory.sh (`allowlist`); a missing/unparseable `.repo` is a hit;
 #   (b) prose, portable POSIX ERE only (no GNU-only escapes — on BSD grep those would silently match
@@ -99,7 +100,8 @@
 #                        field. A bare `a/b` is deliberately NOT a slug (every relative path would
 #                        match) — that is a stated limit of this scrub, not complete coverage. URL
 #                        first segments that are forge-reserved words (apps, orgs, settings, …)
-#                        are not owners and are skipped. An EMPTY allowlist makes every slug a hit.
+#                        are not owners and are skipped, as is an all-dot placeholder segment
+#                        (github.com/.../pull). An EMPTY allowlist makes every slug a hit.
 #   Project extension: TRACKED file `.agent/meta-sync-deny.txt` — one extra POSIX ERE per line
 #   (blank and `#` lines ignored). It is DATA handed to `grep -E -e`, never executed or eval'd; an
 #   invalid pattern is itself a hit (fail closed). Rule name: `deny_pattern:<line>`.
@@ -409,6 +411,9 @@ EOF
     [ -n "$s" ] || continue
     owner="${s%%/*}"
     case "$RESERVED_OWNERS" in *" $owner "*) continue ;; esac
+    # an all-dot segment is a placeholder ellipsis (github.com/.../pull), never an owner or repo
+    case "$owner" in *[!.]*) : ;; *) continue ;; esac
+    case "${s#*/}" in *[!.]*) : ;; *) continue ;; esac
     grep -F -x -q -e "$s" "$ALLOW_FILE" 2>/dev/null || { bad=1; break; }
   done < "$slugs"
   [ "$bad" -eq 1 ] && { echo "meta_sync: scrub $p: forge_slug"; hits=1; }
@@ -560,7 +565,7 @@ cmd_push() {
       exit 0
     fi
     if ! scrub_candidates "$WORK/candidates" >&2; then
-      warn "scrub hit — nothing was pushed; the branch and meta-base are unchanged (exclude or clean the named paths)"
+      warn "aborted — scrub hit(s) above; nothing was pushed, the branch and meta-base are unchanged (exclude or clean the named paths)"
       exit 2
     fi
     commit="$(printf '%s\n' "$MESSAGE" | g commit-tree "$newtree" -p "$R")" \
