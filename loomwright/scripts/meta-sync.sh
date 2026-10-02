@@ -36,6 +36,15 @@
 # separate index by explicit path (update-index --cacheinfo). No directory is ever added, so a log or
 # a nested `.supervisor/` tree that .gitignore hides can never reach the branch: the separate index
 # never consults .gitignore, which is exactly why the list — not .gitignore — decides membership.
+# SYMLINKS fail closed: a symlink where run history lives (`.supervisor` itself, a folder on the
+# way to a managed folder, any folder under requirements/, or a managed file) makes pull and push
+# exit 1 naming it (`meta_sync: symlink <path>`), nothing changed — find does not descend it, so its
+# files would read as deleted (a push would delete them from the branch) and a pull would write
+# through it out of .supervisor/. Pull also re-checks every path it writes or deletes (no symlinked
+# component; the parent resolves physically under <physical root>/.supervisor/). Symlinks elsewhere
+# under .supervisor/ (logs, nested .supervisor/ trees) are not managed and are ignored. Every git
+# read that feeds a decision or a write (ls-tree, log, hash-object, cat-file) fails closed: a read
+# that fails is never treated as an empty tree, an absent file or an empty side of a union.
 #
 # 3-WAY RULE (per path; equality is by blob SHA — `git hash-object --no-filters` vs tree entries,
 # never mtime). L = this checkout, R = the remote branch tip, B = the merge base read from
@@ -92,9 +101,13 @@
 # LOCK — `pull` and `push` (the only commands that write local files or meta-base) hold
 # `<gitdir>/meta-sync.lock` (an atomic `mkdir` holding the holder's pid) for their whole run; every
 # worktree defaults to the same --root, so they serialise there. A holder whose pid is dead (or a
-# pid-less lock older than a minute) is reclaimed. A live holder is waited for up to
-# META_SYNC_LOCK_WAIT_SECS (default 120), then exit 1 `locked`, nothing changed. The lock is
-# released on every exit path (EXIT trap; HUP/INT/TERM exit through it) and only by its holder.
+# pid-less lock older than a minute) is reclaimed — by exactly ONE waiter per observed holder: the
+# one whose `mkdir <lock>.reclaim.<pid>` succeeds; inside that marker it re-reads the pid and
+# removes the lock only if it still carries that dead pid. A waiter never renames a lock aside, so
+# it can never move a live holder's lock and let a second process in. A live holder is waited for
+# up to META_SYNC_LOCK_WAIT_SECS (default 120), then exit 1 `locked`, nothing changed. A live
+# lock is released only by its holder, on every exit path (EXIT trap; HUP/INT/TERM exit through
+# it). Residual assumption: a pid is not recycled while its dead lock is being reclaimed.
 # `status` and `init` take no lock: status reads meta-base (always replaced by an atomic rename)
 # and writes nothing shared; all scratch state (index files, temp files) is per-run.
 #
@@ -192,6 +205,10 @@ if [ -z "$ROOT" ]; then
 fi
 [ -d "$ROOT" ] || die "usage: --root '$ROOT' is not a directory"
 ROOT="$(cd "$ROOT" && pwd)"
+# The PHYSICAL root (every symlink in the checkout path resolved, e.g. macOS /tmp -> /private/tmp):
+# the containment check compares physical paths, so a symlinked checkout path is never mistaken
+# for an escape.
+ROOT_P="$(cd -P "$ROOT" && pwd -P)" || die "usage: cannot resolve the physical path of '$ROOT'"
 GITDIR="$(git -C "$ROOT" rev-parse --absolute-git-dir 2>/dev/null)" \
   || die "usage: '$ROOT' is not inside a git work tree"
 git check-ref-format "refs/heads/$BRANCH" 2>/dev/null || die "usage: invalid branch name '$BRANCH'"
@@ -208,11 +225,19 @@ WORK="$(mktemp -d 2>/dev/null || mktemp -d -t meta-sync)" || die "cannot create 
 # Per-run scratch only: the gitdir is shared by every worktree and every concurrent invocation
 # (a read-only `status` included), so no fixed-name scratch file may live there.
 META_INDEX="$WORK/meta-index"
+# mktemp creates 0600 files; written files get the mode a plain `>` would give them (0666 & ~umask).
+FILE_MODE="$(printf '%o' $(( 0666 & ~0$(umask) )))"
 META_BASE_INDEX="$WORK/meta-base-index"
-# cleanup — removes only this run's own state: the per-run temp dir, and the lock iff we hold it.
+RECLAIM_MARK=""   # the reclaim marker this run holds right now, if any (see reclaim_lock)
+RECLAIMED=0
+# cleanup — removes only this run's own state: the per-run temp dir, and the lock / a reclaim
+# marker iff it still carries this run's pid (a live holder's lock is never removed by anyone else).
 cleanup() {
   if [ "$LOCK_HELD" = "1" ] && [ "$(cat "$LOCK_DIR/pid" 2>/dev/null)" = "$$" ]; then
     rm -rf "$LOCK_DIR"
+  fi
+  if [ -n "$RECLAIM_MARK" ] && [ "$(cat "$RECLAIM_MARK/pid" 2>/dev/null)" = "$$" ]; then
+    rm -rf "$RECLAIM_MARK"
   fi
   rm -rf "$WORK"
 }
@@ -230,37 +255,62 @@ lock_holder_alive() {
   command -v ps >/dev/null 2>&1 || return 1
   ps -p "$1" >/dev/null 2>&1
 }
+# lock_is_stale <dir> <token> — 0 when <dir>, carrying <token> (the pid read from <dir>/pid), is
+# abandoned: the token is a dead pid, or the dir is token-less (its holder died between mkdir and
+# the pid write) and over a minute old.
+lock_is_stale() {
+  [ -d "$1" ] || return 1
+  if [ -n "$2" ]; then
+    lock_holder_alive "$2" && return 1
+    return 0
+  fi
+  [ -n "$(find "$1" -maxdepth 0 -mmin +1 2>/dev/null)" ]
+}
+# reclaim_lock <dir> <token> <depth> — remove <dir> iff it STILL carries <token> and is STILL stale.
+# Exactly one process may act on a given (dir, token): the one whose mkdir of the marker
+# "<dir>.reclaim.<token>" succeeds. While it holds the marker, the instance carrying <token> can
+# only be removed by it (its holder is dead; every other reclaimer re-checks a DIFFERENT token or
+# waits on this marker), so the re-check-then-rm below cannot hit a live lock: a lock re-acquired
+# in between carries another token and is left alone. Nothing is ever renamed aside and put back,
+# so a waiter can never move a live holder's lock out from under it. A marker whose own owner died
+# inside this tiny section is reclaimed the same way, one level up (bounded depth).
+reclaim_lock() {
+  local d="$1" t="$2" depth="$3" m w
+  m="$1.reclaim.${2:-nopid}"
+  [ "$depth" -le 4 ] || return 0
+  if mkdir "$m" 2>/dev/null; then
+    RECLAIM_MARK="$m"
+    if printf '%s\n' "$$" > "$m/pid" \
+       && [ "$(cat "$d/pid" 2>/dev/null)" = "$t" ] && lock_is_stale "$d" "$t"; then
+      rm -rf "$d" && [ "$depth" -eq 0 ] && RECLAIMED=1
+    fi
+    rm -rf "$m"; RECLAIM_MARK=""
+    return 0
+  fi
+  w="$(cat "$m/pid" 2>/dev/null)"
+  if lock_is_stale "$m" "$w"; then reclaim_lock "$m" "$w" $((depth + 1)); fi
+  return 0
+}
 acquire_lock() {
-  local start holder stale grave
+  local start holder
   start="$(date +%s)"
   while :; do
+    # LOCK_HELD is set BEFORE the mkdir so a signal between the mkdir and the pid write still runs
+    # cleanup; cleanup removes the lock only when it carries this run's pid, so this is safe.
+    LOCK_HELD=1
     if mkdir "$LOCK_DIR" 2>/dev/null; then
-      if printf '%s\n' "$$" > "$LOCK_DIR/pid"; then LOCK_HELD=1; return 0; fi
-      rm -rf "$LOCK_DIR"; die "could not write the lock holder pid into $LOCK_DIR"
+      if printf '%s\n' "$$" > "$LOCK_DIR/pid"; then return 0; fi
+      rm -rf "$LOCK_DIR"; LOCK_HELD=0; die "could not write the lock holder pid into $LOCK_DIR"
     fi
+    LOCK_HELD=0
     holder="$(cat "$LOCK_DIR/pid" 2>/dev/null)"
-    stale=0
-    if [ -n "$holder" ]; then
-      lock_holder_alive "$holder" || stale=1
-    elif [ -n "$(find "$LOCK_DIR" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
-      stale=1   # pid-less for over a minute: the holder died between mkdir and the pid write
-    fi
-    if [ "$stale" = "1" ]; then
-      # Reclaim by atomic rename, then confirm we moved the SAME dead holder's lock; if another
-      # waiter reclaimed and re-acquired in between, put its live lock back.
-      grave="$LOCK_DIR.stale.$$"
-      rm -rf "$grave"
-      if mv "$LOCK_DIR" "$grave" 2>/dev/null; then
-        if [ "$(cat "$grave/pid" 2>/dev/null)" = "$holder" ]; then
-          rm -rf "$grave"
-          warn "reclaimed a stale lock left by pid ${holder:-unknown}"
-        elif [ ! -e "$LOCK_DIR" ]; then
-          mv "$grave" "$LOCK_DIR" 2>/dev/null || rm -rf "$grave"
-        else
-          rm -rf "$grave"
-        fi
+    if lock_is_stale "$LOCK_DIR" "$holder"; then
+      RECLAIMED=0
+      reclaim_lock "$LOCK_DIR" "$holder" 0
+      if [ "$RECLAIMED" = "1" ]; then
+        warn "reclaimed a stale lock left by pid ${holder:-unknown}"
+        continue
       fi
-      continue
     fi
     if [ $(( $(date +%s) - start )) -ge "$LOCK_WAIT" ]; then
       die "locked — another meta-sync (pid ${holder:-unknown}) holds $LOCK_DIR; waited ${LOCK_WAIT}s, nothing was changed"
@@ -286,6 +336,37 @@ is_managed() {
     .supervisor/jobs/done/*.md|.supervisor/jobs/failed/*.md|.supervisor/automate/*.md) return 0 ;;
     .supervisor/postmortem/results.jsonl) return 0 ;;
   esac
+  return 1
+}
+
+# ---- symlink containment (a symlink can redirect a write out of .supervisor/ or hide a file) ----
+# symlink_hazard <repo-relative path of a local symlink> — 0 when a symlink there could redirect
+# or hide managed run history: a managed path itself, a directory on the way to a managed folder,
+# or any directory under .supervisor/requirements/ that could hold managed .md files.
+symlink_hazard() {
+  case "$1" in
+    .supervisor|.supervisor/requirements|.supervisor/jobs|.supervisor/jobs/done|.supervisor/jobs/failed|.supervisor/automate|.supervisor/postmortem) return 0 ;;
+  esac
+  is_managed "$1" || is_managed "$1/x.md"
+}
+# path_has_no_symlink <managed path> — 0 when no EXISTING component of the path, from .supervisor
+# down to the leaf, is a symlink.
+path_has_no_symlink() {
+  local rest="$1" acc="" comp
+  while :; do
+    comp="${rest%%/*}"
+    acc="${acc:+$acc/}$comp"
+    [ -L "$ROOT/$acc" ] && return 1
+    [ "$rest" = "$comp" ] && return 0
+    rest="${rest#*/}"
+  done
+}
+# parent_inside <managed path> — 0 when the path's (existing) parent directory resolves PHYSICALLY
+# under <physical root>/.supervisor/.
+parent_inside() {
+  local phys
+  phys="$(cd -P "$(dirname "$ROOT/$1")" 2>/dev/null && pwd -P)" || return 1
+  case "$phys/" in "$ROOT_P/.supervisor/"*) return 0 ;; esac
   return 1
 }
 
@@ -317,7 +398,12 @@ fetch_remote() {
     absent) return 3 ;;
     unreachable) return 1 ;;
   esac
-  g fetch -q --no-tags origin "refs/heads/$BRANCH" >/dev/null 2>"$WORK/fetch.err" || return 1
+  # --no-write-fetch-head: the gitdir (and its FETCH_HEAD) is shared with the user's own fetches
+  # and every worktree; git < 2.29 rejects the flag, so fall back to a plain fetch there.
+  if ! g fetch -q --no-tags --no-write-fetch-head origin "refs/heads/$BRANCH" >/dev/null 2>"$WORK/fetch.err"; then
+    grep -q 'no-write-fetch-head' "$WORK/fetch.err" 2>/dev/null || return 1
+    g fetch -q --no-tags origin "refs/heads/$BRANCH" >/dev/null 2>"$WORK/fetch.err" || return 1
+  fi
   g cat-file -e "$REMOTE_SHA^{commit}" 2>/dev/null || return 1
   R="$REMOTE_SHA"
   RT="$(g rev-parse "$R^{tree}")" || return 1
@@ -325,21 +411,48 @@ fetch_remote() {
 }
 
 # ---- tables (path<TAB>sha, sorted) ----
+# Every producer below FAILS CLOSED (non-zero) when its git read fails: an empty table is a
+# decision input (an R or B table that silently came out empty turns every path into a deletion
+# or a re-add), so a failed read must never look like an empty tree. The filter loops use
+# `if`, not `&&`, so a non-managed LAST entry does not make the loop — and the pipeline — fail.
 # list_tree <tree-ish> <out> — managed blob entries of a tree.
 list_tree() {
-  g ls-tree -r -z --full-tree "$1" 2>/dev/null | tr '\0' '\n' \
+  g ls-tree -r -z --full-tree "$1" > "$WORK/lt.raw" 2>/dev/null || return 1
+  tr '\0' '\n' < "$WORK/lt.raw" \
     | awk -F'\t' '{ split($1, a, " "); if (a[2] == "blob" && index($2, ".supervisor/") == 1) print $2 "\t" a[3] }' \
-    | while IFS="$TAB" read -r p s; do is_managed "$p" && printf '%s\t%s\n' "$p" "$s"; done \
+    | while IFS="$TAB" read -r p s; do if is_managed "$p"; then printf '%s\t%s\n' "$p" "$s"; fi; done \
     | LC_ALL=C sort > "$2"
 }
 
 # list_local <out> <write:0|1> — managed files in the working folder, hashed as stored bytes.
+# Fails closed when .supervisor/ cannot be fully enumerated, or when a symlink sits where managed
+# run history lives (find does not descend a symlinked directory, so its files would read as
+# locally ABSENT — a push would delete them from the branch — and a pull would write through it).
 list_local() {
-  : > "$WORK/local.paths"
+  local p hz="$WORK/local.symlinks"
+  : > "$WORK/local.paths" || return 1
+  : > "$hz" || return 1
+  if [ -L "$ROOT/.supervisor" ]; then
+    warn "symlink .supervisor"
+    warn "refusing — .supervisor is a symlink; run history must live inside the checkout (nothing was changed)"
+    return 1
+  fi
   if [ -d "$ROOT/.supervisor" ]; then
-    (cd "$ROOT" && find .supervisor -type f -print 2>/dev/null) | sed 's|^\./||' \
-      | while IFS= read -r p; do is_managed "$p" && printf '%s\n' "$p"; done \
-      | LC_ALL=C sort > "$WORK/local.paths"
+    (cd "$ROOT" && find .supervisor \( -type f -o -type l \) -print) > "$WORK/local.found" \
+      || { warn "could not enumerate every file under .supervisor/ (find failed); nothing was changed"; return 1; }
+    while IFS= read -r p; do
+      p="${p#./}"
+      if [ -L "$ROOT/$p" ]; then
+        if symlink_hazard "$p"; then printf '%s\n' "$p" >> "$hz"; fi
+      elif is_managed "$p"; then
+        printf '%s\n' "$p"
+      fi
+    done < "$WORK/local.found" | LC_ALL=C sort > "$WORK/local.paths" || return 1
+    if [ -s "$hz" ]; then
+      sed 's/^/meta_sync: symlink /' "$hz" >&2
+      warn "refusing — the symlink(s) above sit where managed run history lives (a write could leave .supervisor/, and files behind them read as deleted); replace them with real directories/files. Nothing was changed."
+      return 1
+    fi
   fi
   : > "$1"
   [ -s "$WORK/local.paths" ] || return 0
@@ -353,12 +466,13 @@ list_local() {
 
 # list_history <commit> <out> — every (path, blob) a managed path ever held in R's history.
 list_history() {
-  g log --no-renames --format= --raw --no-abbrev -z "$1" -- .supervisor 2>/dev/null | tr '\0' '\n' \
+  g log --no-renames --format= --raw --no-abbrev -z "$1" -- .supervisor > "$WORK/lh.raw" 2>/dev/null || return 1
+  tr '\0' '\n' < "$WORK/lh.raw" \
     | awk '
         /^:/ { split($0, f, " "); old = f[3]; new = f[4]; getline p
                if (old != "" && old !~ /^0+$/) print p "\t" old
                if (new != "" && new !~ /^0+$/) print p "\t" new }' \
-    | while IFS="$TAB" read -r p s; do is_managed "$p" && printf '%s\t%s\n' "$p" "$s"; done \
+    | while IFS="$TAB" read -r p s; do if is_managed "$p"; then printf '%s\t%s\n' "$p" "$s"; fi; done \
     | LC_ALL=C sort -u > "$2"
 }
 
@@ -383,17 +497,18 @@ load_base() {
 compute_plan() {
   local L="$WORK/L.tsv" Rf="$WORK/R.tsv" Bf="$WORK/B.tsv" Hf="$WORK/H.tsv" Sf="$WORK/S.lst" hs=0
   list_local "$L" "$1" || { warn "could not hash the local managed files"; return 1; }
-  list_tree "$R" "$Rf"
-  : > "$Bf"; : > "$Hf"; : > "$Sf"
+  list_tree "$R" "$Rf" || { warn "could not list the remote tree $R"; return 1; }
+  : > "$Bf" && : > "$Hf" && : > "$Sf" || return 1
   load_base
   if [ "$HAVE_BASE" = "1" ]; then
-    list_tree "$BASE_TREE" "$Bf"
+    list_tree "$BASE_TREE" "$Bf" || { warn "could not list the meta-base tree $BASE_TREE"; return 1; }
   else
-    list_history "$R" "$Hf"
+    list_history "$R" "$Hf" || { warn "could not read the history of $R"; return 1; }
   fi
   if [ -n "$PATHS_FROM" ]; then
     hs=1
-    sed -e 's/\r$//' -e 's|^\./||' "$PATHS_FROM" | awk 'NF && $0 !~ /^#/' > "$Sf"
+    sed -e 's/\r$//' -e 's|^\./||' "$PATHS_FROM" | awk 'NF && $0 !~ /^#/' > "$Sf" \
+      || { warn "could not read --paths-from '$PATHS_FROM'"; return 1; }
   fi
   awk -F'\t' -v OFS='\t' -v hb="$HAVE_BASE" -v hs="$hs" -v ledger="$LEDGER_PATH" \
       -v LF="$L" -v RF="$Rf" -v BF="$Bf" -v HF="$Hf" -v SF="$Sf" '
@@ -428,7 +543,8 @@ compute_plan() {
         }
         print o, p, l, r, nb, sel
       }
-    }' "$L" "$Rf" "$Bf" "$Hf" "$Sf" | LC_ALL=C sort -t "$TAB" -k2,2 > "$WORK/plan"
+    }' "$L" "$Rf" "$Bf" "$Hf" "$Sf" | LC_ALL=C sort -t "$TAB" -k2,2 > "$WORK/plan" \
+    || { warn "could not compute the sync plan"; return 1; }
 }
 
 # count_outcome <outcome> [selected-only:0|1]
@@ -446,17 +562,33 @@ report_conflicts() {
   return 1
 }
 
-# union_into <R-blob|-> <L-blob> <out> — R's lines unchanged, then L's lines not present in R.
+# union_into <R-blob|-> <L-blob|-> <out> [<L-file>] — R's lines unchanged, then L's lines not
+# present in R. With <L-file> (pull) L is read from the working file — a pull hashes local files
+# WITHOUT -w, so L's blob is not in the object store — and must still hash to <L-blob> (a file
+# changed mid-sync fails closed). Every read fails closed: a side that cannot be read is NEVER
+# treated as empty (that silently drops the clone's unpushed ledger lines). "-" = absent side.
 union_into() {
-  : > "$WORK/u.r"
-  [ "$1" = "-" ] || g cat-file blob "$1" > "$WORK/u.r"
-  g cat-file blob "$2" > "$WORK/u.l"
+  { : > "$WORK/u.r" && : > "$WORK/u.l"; } || return 1
+  if [ "$1" != "-" ]; then g cat-file blob "$1" > "$WORK/u.r" 2>/dev/null || return 1; fi
+  if [ "$2" != "-" ]; then
+    if [ -n "${4:-}" ]; then
+      cat "$4" > "$WORK/u.l" 2>/dev/null || return 1
+      [ "$(g hash-object --no-filters -- "$WORK/u.l" 2>/dev/null)" = "$2" ] \
+        || { warn "$4 changed during the sync"; return 1; }
+    else
+      g cat-file blob "$2" > "$WORK/u.l" 2>/dev/null || return 1
+    fi
+  fi
   awk 'FNR == NR { inR[$0] = 1; print; next } !($0 in inR) && !seen[$0]++ { print }' "$WORK/u.r" "$WORK/u.l" > "$3"
 }
 
+# write_base_file <tree> — atomic replace via a mktemp'd (O_EXCL, never a pre-existing symlink)
+# sibling + rename; a meta-base that is a directory (mv would move INTO it) fails closed.
 write_base_file() {
-  local tmp="$META_BASE.tmp.$$"
-  printf '%s\n' "$1" > "$tmp" && mv -f "$tmp" "$META_BASE" || { rm -f "$tmp"; return 1; }
+  local tmp
+  [ -d "$META_BASE" ] && { warn "$META_BASE is a directory"; return 1; }
+  tmp="$(mktemp "$META_BASE.tmp.XXXXXX" 2>/dev/null)" || return 1
+  chmod "$FILE_MODE" "$tmp" && printf '%s\n' "$1" > "$tmp" && mv -f "$tmp" "$META_BASE" || { rm -f "$tmp"; return 1; }
   g update-ref "$BASE_REF" "$1" >/dev/null 2>&1 || warn "could not update the gc anchor $BASE_REF (meta-base itself was written)"
   return 0
 }
@@ -589,27 +721,40 @@ cmd_pull() {
   compute_plan 0 || exit 1
   report_conflicts 0 || exit 1
   local o p l r nb sel written=0 deleted=0 dst tmp
+  # Containment pre-pass: nothing is written or deleted unless EVERY path the plan touches is a
+  # canonical managed path with no symlinked component (list_local already refused symlinks where
+  # run history lives; this re-checks the exact plan paths before the first write).
   while IFS="$TAB" read -r o p l r nb sel; do
-    # Defence in depth: every plan path already passed is_managed (canonical, under .supervisor/);
-    # re-check before joining it to the root for a write or a delete.
-    case "$o" in TAKE_R|UNION) is_managed "$p" || die "refusing non-managed path in the plan: $p (meta-base untouched)" ;; esac
-    dst="$ROOT/$p"
-    tmp="$dst.meta-sync.tmp.$$"
     case "$o" in
-      TAKE_R)
-        if [ "$r" = "-" ]; then
-          rm -f "$dst" || die "could not delete $p (meta-base untouched)"
-          deleted=$((deleted + 1))
-        else
-          mkdir -p "$(dirname "$dst")" && g cat-file blob "$r" > "$tmp" && mv -f "$tmp" "$dst" \
-            || { rm -f "$tmp"; die "could not write $p (meta-base untouched)"; }
-          written=$((written + 1))
-        fi ;;
-      UNION)
-        union_into "$r" "$l" "$tmp" && mv -f "$tmp" "$dst" \
-          || { rm -f "$tmp"; die "could not write the union of $p (meta-base untouched)"; }
-        written=$((written + 1)) ;;
+      TAKE_R|UNION)
+        is_managed "$p" || die "refusing non-managed path in the plan: $p (nothing was changed)"
+        path_has_no_symlink "$p" || die "refusing — a component of $p is a symlink (nothing was changed)" ;;
     esac
+  done < "$WORK/plan"
+  while IFS="$TAB" read -r o p l r nb sel; do
+    case "$o" in TAKE_R|UNION) ;; *) continue ;; esac
+    dst="$ROOT/$p"
+    # Defence in depth (a symlink planted after the pre-pass): re-check right before the act, and
+    # after any mkdir -p confirm the parent resolves physically under .supervisor/.
+    path_has_no_symlink "$p" || die "refusing — a component of $p is a symlink (meta-base untouched)"
+    if [ "$o" = "TAKE_R" ] && [ "$r" = "-" ]; then
+      parent_inside "$p" || die "refusing — $p does not resolve under .supervisor/ (meta-base untouched)"
+      rm -f "$dst" || die "could not delete $p (meta-base untouched)"
+      deleted=$((deleted + 1))
+      continue
+    fi
+    mkdir -p "$(dirname "$dst")" || die "could not create the folder for $p (meta-base untouched)"
+    parent_inside "$p" || die "refusing — $p does not resolve under .supervisor/ (meta-base untouched)"
+    tmp="$(mktemp "$dst.meta-sync.tmp.XXXXXX" 2>/dev/null)" || die "could not create a temp file for $p (meta-base untouched)"
+    chmod "$FILE_MODE" "$tmp" || { rm -f "$tmp"; die "could not set the mode of a temp file for $p (meta-base untouched)"; }
+    if [ "$o" = "TAKE_R" ]; then
+      g cat-file blob "$r" > "$tmp" 2>/dev/null && mv -f "$tmp" "$dst" \
+        || { rm -f "$tmp"; die "could not write $p (meta-base untouched)"; }
+    else
+      union_into "$r" "$l" "$tmp" "$dst" && mv -f "$tmp" "$dst" \
+        || { rm -f "$tmp"; die "could not write the union of $p (meta-base untouched)"; }
+    fi
+    written=$((written + 1))
   done < "$WORK/plan"
   write_base_file "$RT" || die "could not write meta-base"
   say "pulled $R ($written written, $deleted deleted)"
@@ -670,7 +815,8 @@ cmd_push() {
     # tree_guard — the new tree may differ from R's ONLY at the selected take-L / union paths.
     g diff-tree -r -z --no-renames --name-only "$RT" "$newtree" > "$WORK/touched.z" \
       || die "tree_guard — could not diff the new tree against $RT; nothing was pushed"
-    tr '\0' '\n' < "$WORK/touched.z" | awk -v PF="$WORK/planned" 'FILENAME == PF { ok[$0] = 1; next } NF && !($0 in ok)' "$WORK/planned" - > "$WORK/unplanned"
+    tr '\0' '\n' < "$WORK/touched.z" | awk -v PF="$WORK/planned" 'FILENAME == PF { ok[$0] = 1; next } NF && !($0 in ok)' "$WORK/planned" - > "$WORK/unplanned" \
+      || die "tree_guard — could not compare the new tree with the plan; nothing was pushed"
     if [ -s "$WORK/unplanned" ]; then
       sed 's/^/  unplanned: /' "$WORK/unplanned" >&2
       die "tree_guard — the new tree changes $(wc -l < "$WORK/unplanned" | tr -d ' ') path(s) the plan did not select; nothing was pushed, meta-base untouched"

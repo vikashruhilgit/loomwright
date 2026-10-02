@@ -50,6 +50,15 @@
 #      fails closed; the same entry deleted again (history-derived deletion leg, fresh clone) is
 #      not a managed path: no conflict, nothing outside .supervisor/ touched (the deletion branch
 #      itself needs the path in the find-enumerated local list, so a '..' path never reaches it)
+#  25. a clone's UNPUSHED ledger lines survive a pull of a sibling's push (pull hashes without -w,
+#      so the union reads L from the working file); status then says local_ahead; a fresh no-base
+#      clone's first pull keeps its own pre-existing ledger lines
+#  26. symlinks where run history lives fail closed: a symlinked requirements folder -> pull and
+#      push exit 1 naming it, nothing written outside .supervisor/, nothing deleted from the
+#      branch, meta-base unchanged; a symlinked managed file and a symlinked .supervisor likewise;
+#      an unmanaged symlink under .supervisor/logs and a --root reached through a symlink still sync
+#  27. stale-lock reclaim under forced interleaving (dead holder + 3 contenders; PATH shims make
+#      the stale reader act only after another waiter reclaimed and entered): never two holders
 #  --- Mutation controls (sed-patched mutant copies in the temp dir; the shipped script has no
 #      test seam) ---
 #  20. (i) a mutant that drops the base comparison (any local difference is staged) MUST fail the
@@ -536,6 +545,126 @@ printf 'readme\n' > "$W/G/README.md"; git -C "$W/G" add README.md; git -C "$W/G"
 ms G pull
 { [ "$RC" -eq 0 ] && [ "$(get G README.md)" = "readme" ] && [ -z "$(porcelain G)" ] && ! grep -q 'conflict' < <(printf '%s' "$OUT"); }
 check $? "fresh clone G (history-derived deletion leg): the '..' path in R's history is not managed — no conflict, README.md intact (rc=$RC: $OUT)"
+
+echo "== 25. pull keeps a clone's UNPUSHED ledger lines (union reads L from the working file) =="
+synced_pair
+LG=".supervisor/postmortem/results.jsonl"
+n1='{"repo":"owner/repo","n":1}'; n2='{"repo":"owner/repo","n":2}'
+printf '%s\n' '{"repo":"owner/repo","n":5}' >> "$W/B/$LG"
+printf '%s\n' '{"repo":"owner/repo","n":3}' >> "$W/A/$LG"; ms A push
+ms B pull
+want="$(printf '%s\n' "$n1" "$n2" '{"repo":"owner/repo","n":3}' '{"repo":"owner/repo","n":5}')"
+{ [ "$RC" -eq 0 ] && [ "$(get B "$LG")" = "$want" ]; }
+check $? "B's unpushed n:5 survives the pull of A's n:3 — ledger = R's lines then B's (rc=$RC: $OUT; ledger: $(get B "$LG" | tr '\n' ' '))"
+: > "$W/B/.supervisor/postmortem/mode-ref"
+[ "$(ls -l "$W/B/$LG" | cut -c1-10)" = "$(ls -l "$W/B/.supervisor/postmortem/mode-ref" | cut -c1-10)" ]
+check $? "a pulled file gets the mode a plain redirect would give it (umask), not mktemp's 0600 ($(ls -l "$W/B/$LG" | cut -c1-10))"
+rm -f "$W/B/.supervisor/postmortem/mode-ref"
+ms B status; [ "$OUT" = "local_ahead 1" ]; check $? "after that pull status says local_ahead 1, never synced (got '$OUT')"
+ms B push; { [ "$RC" -eq 0 ] && [ "$(br_show "$LG")" = "$want" ]; }; check $? "B's next push publishes the union (rc=$RC)"
+clone H
+mkdir -p "$W/H/.supervisor/postmortem"
+printf '%s\n' '{"repo":"owner/repo","n":88}' "$n1" > "$W/H/$LG"
+ms H pull
+want_h="$(br_show "$LG"; printf '%s\n' '{"repo":"owner/repo","n":88}')"
+{ [ "$RC" -eq 0 ] && [ "$(get H "$LG")" = "$want_h" ]; }
+check $? "fresh no-base clone H: its first pull keeps its own pre-existing n:88 line (rc=$RC: $OUT; ledger: $(get H "$LG" | tr '\n' ' '))"
+
+echo "== 26. symlinks where run history lives fail closed =="
+synced_pair
+OUTSIDE="$W/outside/reqdir"; mkdir -p "$OUTSIDE"
+ln -s "$OUTSIDE" "$W/B/.supervisor/requirements/sub"
+put A ".supervisor/requirements/sub/keep.md" "keep"; ms A push
+tip="$(br_tip)"; base_before="$(base_of B)"
+ms B pull
+{ [ "$RC" -eq 1 ] && grep -q 'meta_sync: symlink .supervisor/requirements/sub' < <(printf '%s' "$OUT") && [ -z "$(ls -A "$OUTSIDE")" ] && [ "$(base_of B)" = "$base_before" ] && [ "$(get B "$RQ/x.md")" = "x v1" ]; }
+check $? "pull with a symlinked requirements folder -> exit 1 naming it, nothing written outside .supervisor/, meta-base unchanged (rc=$RC: $OUT; outside: $(ls -A "$OUTSIDE" | tr '\n' ' '))"
+put B "$RQ/y.md" "y v2 from B"; ms B push
+{ [ "$RC" -eq 1 ] && [ "$(br_tip)" = "$tip" ] && [ "$(br_show .supervisor/requirements/sub/keep.md)" = "keep" ] && [ "$(base_of B)" = "$base_before" ]; }
+check $? "push with the symlinked folder -> exit 1, branch unchanged (sub/keep.md NOT deleted), meta-base unchanged (rc=$RC: $OUT)"
+rm -f "$W/B/.supervisor/requirements/sub"
+ln -s "$OUTSIDE/victim.md" "$W/B/$RQ/link.md"
+ms B push
+{ [ "$RC" -eq 1 ] && grep -q "meta_sync: symlink $RQ/link.md" < <(printf '%s' "$OUT") && [ "$(br_tip)" = "$tip" ]; }
+check $? "a symlinked managed FILE -> push exits 1 naming it, branch unchanged (rc=$RC)"
+rm -f "$W/B/$RQ/link.md"
+mv "$W/B/.supervisor" "$W/B-sup"; ln -s "$W/B-sup" "$W/B/.supervisor"
+ms B push
+{ [ "$RC" -eq 1 ] && [ "$(br_tip)" = "$tip" ]; }; check $? ".supervisor itself a symlink -> push exits 1, branch unchanged (rc=$RC)"
+echo "-- no false refusal: unmanaged symlinks and a symlinked checkout path still sync --"
+synced_pair
+OUTSIDE="$W/outside/logdir"; mkdir -p "$OUTSIDE"
+put A ".supervisor/requirements/sub/keep.md" "keep"; ms A push
+mkdir -p "$W/B/.supervisor/logs"; ln -s "$OUTSIDE" "$W/B/.supervisor/logs/elsewhere"
+ln -s "$W/B" "$W/B-link"
+OUT="$(bash "$SCRIPT" pull --root "$W/B-link" 2>&1)"; RC=$?
+{ [ "$RC" -eq 0 ] && [ "$(get B .supervisor/requirements/sub/keep.md)" = "keep" ] && [ -z "$(ls -A "$OUTSIDE")" ]; }
+check $? "an unmanaged symlink under .supervisor/logs and a --root reached through a symlink still pull (rc=$RC: $OUT)"
+put B "$RQ/y.md" "y via link"
+OUT="$(bash "$SCRIPT" push --root "$W/B-link" 2>&1)"; RC=$?
+{ [ "$RC" -eq 0 ] && [ "$(br_show "$RQ/y.md")" = "y via link" ]; }; check $? "... and push (rc=$RC: $OUT)"
+
+echo "== 27. stale-lock reclaim under forced interleaving: never two holders =="
+REAL_CAT="$(command -v cat)"; REAL_MV="$(command -v mv)"
+# lock_race <script> — a dead holder plus three contenders, sequenced by condition (not by sleeps):
+# P2 reads the dead pid, and its cat shim then blocks until P1 has reclaimed the lock and ENTERed;
+# only then does P2 act on its stale read (the reviewer's interleaving). Any mv of the lock by P2
+# then blocks until P3 has ENTERed, so a moved-aside live lock is visible to P3. P1 holds 6s.
+# ENTER/LEAVE is logged at the first git call inside the lock (the remote probe). Sets LR_MAX (most
+# simultaneous holders), LR_ENTERS, LR_RCS and LR_LOG.
+lock_race() {
+  local s="$1" d i
+  synced_pair
+  d="$W/lockrace"; mkdir -p "$d/common" "$d/p2"
+  : > "$d/holders.log"
+  cat > "$d/common/git" <<SHIM
+#!/bin/sh
+if [ "\$3" = "ls-remote" ]; then
+  echo "ENTER \$MS_WHO" >> "$d/holders.log"; sleep "\$MS_HOLD"; echo "LEAVE \$MS_WHO" >> "$d/holders.log"
+fi
+exec "$REAL_GIT" "\$@"
+SHIM
+  cat > "$d/p2/cat" <<SHIM
+#!/bin/sh
+case "\$1" in
+  */meta-sync.lock/pid)
+    "$REAL_CAT" "\$@"; rc=\$?; : > "$d/p2.read"; i=0
+    while ! grep -qx 'ENTER P1' "$d/holders.log" && [ \$i -lt 300 ]; do sleep 0.1; i=\$((i+1)); done
+    exit \$rc ;;
+esac
+exec "$REAL_CAT" "\$@"
+SHIM
+  cat > "$d/p2/mv" <<SHIM
+#!/bin/sh
+case "\$1" in
+  */meta-sync.lock)
+    "$REAL_MV" "\$@"; rc=\$?; i=0
+    while ! grep -qx 'ENTER P3' "$d/holders.log" && [ \$i -lt 100 ]; do sleep 0.1; i=\$((i+1)); done
+    exit \$rc ;;
+esac
+exec "$REAL_MV" "\$@"
+SHIM
+  chmod +x "$d/common/git" "$d/p2/cat" "$d/p2/mv"
+  ( exit 0 ) & local dead=$!; wait "$dead" 2>/dev/null
+  mkdir "$W/A/.git/meta-sync.lock"; printf '%s\n' "$dead" > "$W/A/.git/meta-sync.lock/pid"
+  ( MS_WHO=P2 MS_HOLD=1 PATH="$d/p2:$d/common:$PATH" bash "$s" pull --root "$W/A" > "$d/p2.out" 2>&1; echo $? > "$d/p2.rc" ) &
+  i=0; while [ ! -e "$d/p2.read" ] && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i+1)); done
+  ( MS_WHO=P1 MS_HOLD=6 PATH="$d/common:$PATH" bash "$s" pull --root "$W/A" > "$d/p1.out" 2>&1; echo $? > "$d/p1.rc" ) &
+  i=0; while ! grep -qx 'ENTER P1' "$d/holders.log" && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i+1)); done
+  ( MS_WHO=P3 MS_HOLD=1 PATH="$d/common:$PATH" bash "$s" pull --root "$W/A" > "$d/p3.out" 2>&1; echo $? > "$d/p3.rc" ) &
+  wait
+  LR_RCS="$(cat "$d/p1.rc" "$d/p2.rc" "$d/p3.rc" | tr '\n' ' ')"
+  LR_LOG="$(tr '\n' ' ' < "$d/holders.log")"
+  LR_ENTERS="$(grep -c ENTER "$d/holders.log")"
+  # the interleaving really happened: P2 read the dead pid, and P1 (not P2) reclaimed it
+  LR_SEQ=0; [ -e "$d/p2.read" ] && grep -q 'reclaimed a stale lock' "$d/p1.out" && LR_SEQ=1
+  LR_MAX="$(awk '$1 == "ENTER" { n++; if (n > m) m = n } $1 == "LEAVE" { n-- } END { print m + 0 }' "$d/holders.log")"
+}
+LR_MAX=""; LR_RCS=""; LR_LOG=""; LR_ENTERS=""; LR_SEQ=0
+lock_race "$SUT"
+[ "$LR_SEQ" = "1" ]; check $? "fixture: P2 held a stale read of the dead pid while P1 reclaimed the lock (forced interleaving happened)"
+{ [ "$LR_MAX" = "1" ] && [ "$LR_RCS" = "0 0 0 " ] && [ "$LR_ENTERS" = "3" ] && [ ! -e "$W/A/.git/meta-sync.lock" ]; }
+check $? "dead holder + 3 contenders, P2 stalled between reading the dead pid and acting: at most ONE holder at a time, all three pulls succeed, lock released (max=$LR_MAX rcs=$LR_RCS log: $LR_LOG)"
 
 # ---------------------------------------------------------------------------------------------
 # Mutation controls — sed-patched copies; the sibling setup-memory.sh is copied beside each.
