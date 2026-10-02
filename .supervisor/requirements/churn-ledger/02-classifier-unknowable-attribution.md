@@ -1,5 +1,9 @@
 # Proposed: convention_mismatch findings at the unknowable stage
 
+## Status: pending
+
+> **Promoted from `proposed/` 2026-10-01** (carries out owner triage decision of 2026-09-06). **This is a classifier bug, not work in the code the ledger points at.** The cited evidence says so itself: one entry reads "counting artifact: initial feature commit subject contains self-heal, matching the fix-commit regex — not real churn", and four more are "push followed (low confidence)". The fix belongs in the `/pr-postmortem` classifier that writes `flow_stage` (stop the fix-commit regex from matching the feature commit; attribute or omit, never `unknowable`, for low-confidence pushes).
+
 evidence-set: convention_mismatch/unknowable@L3.0,L4.0,L4.1,L4.2,L4.4
 
 - basis: `.supervisor/floor/floor.json` at `generated_at_epoch: 1788692013`

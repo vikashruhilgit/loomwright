@@ -1,7 +1,8 @@
 # A countable rules `fail` that turns `unstamped` mid-loop is silently cleared at Phase 4.5 / the drain
 
-## Status: proposed
+## Status: pending
 
+> **Promoted from `proposed/` 2026-10-01** (owner triage session). **Owner decision 2026-10-01: Option A** — remember a countable `fail` seen earlier in the same loop; a later `unstamped` on that rule escalates instead of passing. Option B (document only) is rejected. This narrows D3 for the fail→unstamped transition only; a rule that was never seen failing stays advisory when `unstamped`.
 > **Origin.** Dismissed finding 6 from PR #296 (item 07, rules that gate), recovered by the item-13 triage sweep
 > (run automate-2026-09-30-054439, classified 2026-10-01 against main@0dc0a5b, owner-approved as *draft*).
 

@@ -1,5 +1,9 @@
 # Proposed: convention_mismatch findings at the self_heal stage
 
+## Status: pending
+
+> **Promoted from `proposed/` 2026-10-01** (carries out owner triage decision of 2026-09-06). Named cause, from a human read of the cited evidence: restated lists diverge from the authority they cite (doc-surface lists, trigger taxonomies, a timeout table, a roadmap framing). Re-run `/propose` first; the ledger has grown since this draft was written on 2026-09-21. The `evidence-set:` token below stays in this file, so stamping it `## Status: done` also retires the candidate.
+
 evidence-set: convention_mismatch/self_heal@L3.1,L3.4,L3.6,L4.3,L4.5
 
 - basis: `.supervisor/floor/floor.json` at `generated_at_epoch: 1788692013`
