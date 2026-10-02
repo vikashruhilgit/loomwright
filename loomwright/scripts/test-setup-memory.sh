@@ -1594,6 +1594,70 @@ if cmp -s "$MEM" "$Tm/setup-memory.sh"; then no "(t-mut) mutant sed changed noth
   if ignored "$Tx" "$P_SUB_NESTED"; then no "(t-mut) mutant without the nested exclude still ignores $P_SUB_NESTED — the assertion is vacuous"; else ok "(t-mut) without the nested exclude line $P_SUB_NESTED WOULD be committed (the studio exposure)"; fi
 fi
 
+echo "== (bm) branch mode: --branch-mode <branch>|off, plain-apply preservation, the one 'mode' reader =="
+# Branch mode (skills/automate-loop/SKILL.md §"Branch mode"): the block omits every run-history
+# re-include and carries ONE mode line; a plain apply preserves it; `mode` is the only reader.
+MLINE='# loomwright-meta-branch: '
+Bm="$(newgit https://github.com/acme/widget.git)"; seed_stores "$Bm"; printf 'node_modules/\n.supervisor/\n' > "$Bm/.gitignore"
+Bo="$(newgit https://github.com/acme/widget.git)"; seed_stores "$Bo"; printf 'node_modules/\n.supervisor/\n' > "$Bo/.gitignore"
+m0="$(mem "$Bm" mode 2>/dev/null)"
+[ "$m0" = "off" ] && ok "(bm) mode with no managed block prints 'off'" || no "(bm) mode with no block: '$m0'"
+s0="$(sum "$Bm/.gitignore")"
+o="$(mem "$Bm" apply --branch-mode 2>/dev/null)"
+if has 'requires a value' "$o" && [ "$(sum "$Bm/.gitignore")" = "$s0" ] && [ -z "$(ls "$Bm"/.gitignore.backup.* 2>/dev/null)" ]; then ok "(bm) bare --branch-mode is a usage error and writes nothing"; else no "(bm) bare --branch-mode: $o"; fi
+o="$(mem "$Bm" apply --branch-mode 'bad..name' 2>/dev/null)"
+if has 'apply: ABORTED — invalid --branch-mode branch name' "$o" && [ "$(sum "$Bm/.gitignore")" = "$s0" ]; then ok "(bm) an invalid branch name (check-ref-format) is refused with nothing written"; else no "(bm) invalid branch name: $o"; fi
+o="$(mem "$Bm" check --branch-mode x 2>/dev/null)"
+if has 'applies only to' "$o" && [ "$(sum "$Bm/.gitignore")" = "$s0" ]; then ok "(bm) --branch-mode with a non-apply subcommand is refused"; else no "(bm) --branch-mode on check: $o"; fi
+o="$(mem "$Bm" apply --branch-mode loomwright-meta 2>/dev/null)"
+has '^apply: applied (branch mode: loomwright-meta)' "$o" && ok "(bm) apply --branch-mode X reports the branch-mode write" || no "(bm) apply --branch-mode headline: $(grep '^apply' <<< "$o")"
+blk="$(sed -n "/>>> loomwright \/setup memory BEGIN/,/<<< loomwright \/setup memory END/p" "$Bm/.gitignore")"
+[ "$(grep -c "^${MLINE}loomwright-meta\$" <<< "$blk")" = 1 ] && ok "(bm) the block carries exactly ONE mode line '${MLINE}loomwright-meta'" || no "(bm) mode line count in block: $(grep -c "^$MLINE" <<< "$blk")"
+for l in '!.supervisor/requirements/' '!.supervisor/jobs/' '.supervisor/jobs/*' '!.supervisor/jobs/done/' '!.supervisor/jobs/failed/' '!.supervisor/automate/' '.supervisor/automate/*' '!.supervisor/automate/*.md' '!.supervisor/postmortem/' '.supervisor/postmortem/*' '!.supervisor/postmortem/results.jsonl'; do
+  if grep -qxF -- "$l" <<< "$blk"; then no "(bm) branch-mode block still carries run-history line '$l'"; else ok "(bm) branch-mode block omits '$l'"; fi
+done
+for l in '.claude/*' '!.claude/agent-memory/' '.supervisor/*' '!.supervisor/memory/' '*/**/.supervisor/'; do
+  grep -qxF -- "$l" <<< "$blk" && ok "(bm) branch-mode block keeps '$l'" || no "(bm) branch-mode block lost '$l'"
+done
+grep -q 'judgement TRAIL' <<< "$blk" && no "(bm) branch-mode block still claims the trail is committed" || ok "(bm) branch-mode block drops the 'judgement TRAIL' committed-on-purpose claim"
+assert_committable "$Bm" "$P_MEM" "(bm) $P_MEM stays committable in branch mode"
+assert_committable "$Bm" "$P_LES" "(bm) $P_LES stays committable in branch mode"
+assert_ignored "$Bm" "$P_REQ"  "(bm) $P_REQ is ignored in branch mode (on the metadata branch)"
+assert_ignored "$Bm" "$P_DONE" "(bm) $P_DONE is ignored in branch mode"
+assert_ignored "$Bm" ".supervisor/automate/automate-2026-01-01-000000.md" "(bm) automate run file is ignored in branch mode"
+assert_ignored "$Bm" "$P_LEDGER" "(bm) the ledger is ignored in branch mode"
+m1="$(mem "$Bm" mode 2>/dev/null)"
+[ "$m1" = "on loomwright-meta" ] && ok "(bm) mode prints 'on loomwright-meta'" || no "(bm) mode after apply: '$m1'"
+c1="$(mem "$Bm" check 2>/dev/null)"
+has '^Memory readiness: configured' "$c1" && ok "(bm) check reads a branch-mode block as configured (no drift)" || no "(bm) check verdict in branch mode: $(grep '^Memory readiness' <<< "$c1")"
+s1="$(sum "$Bm/.gitignore")"
+o="$(mem "$Bm" apply 2>/dev/null)"
+if [ "$(sum "$Bm/.gitignore")" = "$s1" ] && has '^apply: no-op' "$o"; then ok "(bm) a plain apply PRESERVES the mode line (byte-identical no-op)"; else no "(bm) plain apply rewrote the branch-mode block: $(grep '^apply' <<< "$o")"; fi
+mem "$Bm" apply --branch-mode off >/dev/null 2>&1
+mem "$Bo" apply >/dev/null 2>&1
+if cmp -s "$Bm/.gitignore" "$Bo/.gitignore"; then ok "(bm) apply --branch-mode off restores the default block byte-for-byte"; else no "(bm) --branch-mode off differs from a default apply"; fi
+[ "$(mem "$Bm" mode 2>/dev/null)" = "off" ] && ok "(bm) mode prints 'off' after --branch-mode off" || no "(bm) mode after off"
+mem "$Bm" apply --branch-mode loomwright-meta >/dev/null 2>&1
+mem "$Bm" remove >/dev/null 2>&1
+if grep -qF '>>> loomwright /setup memory BEGIN' "$Bm/.gitignore" || grep -qF "$MLINE" "$Bm/.gitignore"; then no "(bm) remove left the block or the mode line"; else ok "(bm) remove deletes the whole block, mode line included"; fi
+[ "$(mem "$Bm" mode 2>/dev/null)" = "off" ] && ok "(bm) mode prints 'off' after remove" || no "(bm) mode after remove"
+# The three unknown shapes.
+Bu="$(newgit)"; printf '.supervisor/\n' > "$Bu/.gitignore"; mem "$Bu" apply --branch-mode loomwright-meta >/dev/null 2>&1
+awk -v m="${MLINE}other" '{print} index($0, "# loomwright-meta-branch: ") == 1 {print m}' "$Bu/.gitignore" > "$Bu/g" && mv "$Bu/g" "$Bu/.gitignore"
+mu="$(mem "$Bu" mode 2>/dev/null)"
+case "$mu" in "unknown "*) ok "(bm) two mode lines ⇒ mode prints 'unknown …' ($mu)" ;; *) no "(bm) two mode lines ⇒ '$mu'" ;; esac
+su="$(sum "$Bu/.gitignore")"; o="$(mem "$Bu" apply 2>/dev/null)"
+if has '^apply: ABORTED' "$o" && [ "$(sum "$Bu/.gitignore")" = "$su" ]; then ok "(bm) a plain apply on an unknown mode is refused (nothing written)"; else no "(bm) plain apply on unknown mode: $(grep '^apply' <<< "$o")"; fi
+Bi="$(newgit)"; printf '.supervisor/\n' > "$Bi/.gitignore"; mem "$Bi" apply --branch-mode loomwright-meta >/dev/null 2>&1
+sed 's/^# loomwright-meta-branch: loomwright-meta$/# loomwright-meta-branch: bad..name/' "$Bi/.gitignore" > "$Bi/g" && mv "$Bi/g" "$Bi/.gitignore"
+mi="$(mem "$Bi" mode 2>/dev/null)"
+case "$mi" in "unknown "*) ok "(bm) an invalid branch in the mode line ⇒ 'unknown …' ($mi)" ;; *) no "(bm) invalid mode-line branch ⇒ '$mi'" ;; esac
+Bd="$(newgit)"; printf '.supervisor/\n' > "$Bd/.gitignore"; mem "$Bd" apply --branch-mode loomwright-meta >/dev/null 2>&1
+grep -F '>>> loomwright /setup memory BEGIN' "$Bd/.gitignore" >> "$Bd/.gitignore"
+md="$(mem "$Bd" mode 2>/dev/null)"
+case "$md" in "unknown unparseable"*) ok "(bm) a sentinel-sanity failure ⇒ 'unknown …' ($md)" ;; *) no "(bm) duplicated sentinel ⇒ '$md'" ;; esac
+[ "$(mem "$Bd" mode 2>/dev/null | wc -l | tr -d ' ')" = 1 ] && ok "(bm) mode always prints exactly ONE line" || no "(bm) mode printed more than one line"
+
 echo "== (k) the suite never touched the plugin repo's own .gitignore =="
 PLUGIN_GI_SUM_AFTER="$(sum "$PLUGIN_GI")"
 [ "$PLUGIN_GI_SUM_BEFORE" = "$PLUGIN_GI_SUM_AFTER" ] && ok "(k) $PLUGIN_GI is byte-identical before and after the whole suite" || no "(k) THE SUITE MUTATED THE PLUGIN REPO'S OWN .gitignore"

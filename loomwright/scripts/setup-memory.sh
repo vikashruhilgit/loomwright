@@ -101,11 +101,27 @@
 #   setup-memory.sh check                          # report: ignore status per path + allowlist (no writes)
 #   setup-memory.sh apply                          # write the negation block + seed the allowlist
 #   setup-memory.sh remove                         # undo the negation block (does NOT unpublish history)
+#   setup-memory.sh apply --branch-mode <branch>   # BRANCH MODE: run history lives on <branch> (meta-sync.sh)
+#   setup-memory.sh apply --branch-mode off        # back to the default block (run history committed here)
+#   setup-memory.sh mode                           # print ONE line: off | on <branch> | unknown <reason>
 #   setup-memory.sh allowlist                      # print the resolved allowlist, one entry per line
 #   setup-memory.sh filter-ledger --ledger F       # print ledger records whose .repo is in the allowlist
 #   setup-memory.sh filter-ledger --ledger F --allow owner/repo --allow owner/old-name
 #   setup-memory.sh --root /path/to/repo check     # point at a fixture repo
 #   setup-memory.sh -h | --help
+#
+# BRANCH MODE (opt-in, default OFF — skills/automate-loop/SKILL.md §"Branch mode"). `apply
+# --branch-mode <branch>` writes a block that OMITS every run-history re-include (requirements/,
+# jobs/done|failed/, automate/*.md and the three ledger lines) — run history then lives on the
+# metadata branch `meta-sync.sh` syncs — and records the switch as ONE comment line inside the
+# sentinels, `# loomwright-meta-branch: <branch>` (tracked, so a fresh clone can read it). A plain
+# `apply` PRESERVES the mode line already in the block (inside proposed_applied_content, so `check`,
+# `apply` and `remove` agree); `--branch-mode off` restores the default block; `remove` deletes the
+# whole block, mode included. `mode` is the ONE reader every caller uses — nothing else parses the
+# block. The branch name is validated exactly as meta-sync.sh does (`git check-ref-format
+# refs/heads/<name>`). The invariant above holds for the new flag too: switching mode only rewrites
+# `.gitignore`; it NEVER runs `git add` / `git rm` / `git commit`, so it never untracks the run
+# history already committed (that is a separate, deliberate operator step).
 #
 # Exit: 0 in every normal path.
 
@@ -116,12 +132,16 @@ set -uo pipefail
 MB_BEGIN='# >>> loomwright /setup memory BEGIN — committable Twin stores (managed block) >>>'
 MB_END='# <<< loomwright /setup memory END <<<'
 DISABLED_MARK='# [loomwright/setup-memory] disabled: a bare directory exclude defeats the negation below'
+# The branch-mode switch: ONE comment line inside the sentinels (read only by read_mode()).
+MODE_PREFIX='# loomwright-meta-branch: '
 
 # ---- arg parsing ------------------------------------------------------------
 SUBCMD=""
 ROOT_OVERRIDE=""
 LEDGER=""
 ALLOW_FLAGS=""     # newline-separated (bash-3.2-safe: no arrays needed downstream)
+BRANCH_MODE_SET=0  # 1 when --branch-mode was given (its value is REQUIRED: <branch> | off)
+BRANCH_MODE_VAL=""
 
 usage() {
   # Print the leading header comment block (line 2 through the last contiguous `#` line),
@@ -132,7 +152,7 @@ usage() {
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    check|apply|remove|allowlist|filter-ledger)
+    check|apply|remove|allowlist|filter-ledger|mode)
       [ -z "$SUBCMD" ] && SUBCMD="$1"; shift ;;
     --root)
       # Require a following value. Shift the flag first, then the value ONLY if present — a bare
@@ -157,6 +177,14 @@ while [ $# -gt 0 ]; do
       ALLOW_FLAGS="${ALLOW_FLAGS}${2}
 "
       shift 2 ;;
+    --branch-mode)
+      # The value is REQUIRED — a bare `--branch-mode` is a usage error and nothing is written
+      # (silently defaulting a branch name would switch a repo's run history somewhere unasked).
+      if [ $# -lt 2 ] || [ -z "$2" ]; then
+        echo "setup-memory: --branch-mode requires a value: <branch> (e.g. loomwright-meta) or off. Nothing was written."
+        exit 0
+      fi
+      BRANCH_MODE_SET=1; BRANCH_MODE_VAL="$2"; shift 2 ;;
     -h|--help) usage ;;
     *) echo "setup-memory: unknown arg '$1' (try --help)" >&2; shift ;;
   esac
@@ -173,6 +201,17 @@ else
 fi
 GI="$repo/.gitignore"
 CFG="$repo/.supervisor/config.json"
+
+if [ "$BRANCH_MODE_SET" = 1 ]; then
+  if [ "$SUBCMD" != "apply" ]; then
+    echo "setup-memory: --branch-mode applies only to 'apply' (got '$SUBCMD'). Nothing was written."
+    exit 0
+  fi
+  if [ "$BRANCH_MODE_VAL" != "off" ] && ! git check-ref-format "refs/heads/$BRANCH_MODE_VAL" >/dev/null 2>&1; then
+    echo "apply: ABORTED — invalid --branch-mode branch name '$BRANCH_MODE_VAL' (git check-ref-format refs/heads/<name> refused it). Nothing was written."
+    exit 0
+  fi
+fi
 
 # ---- probe paths ------------------------------------------------------------
 # INTENDED: must be committable after apply. The two `.`-prefixed sidecars are listed separately
@@ -418,6 +457,11 @@ uncomment_bare_excludes() {
 # the failure this gate exists to prevent.
 managed_block() {
   printf '%s\n' "$MB_BEGIN"
+  if [ -n "${EFFECTIVE_BRANCH:-}" ]; then
+    managed_block_branch_mode
+    printf '%s\n' "$MB_END"
+    return 0
+  fi
   cat <<'BLOCK'
 # Negate CONTENTS, not the directory. Git cannot re-include a file whose parent directory is
 # excluded, so the naive form
@@ -476,6 +520,84 @@ BLOCK
 LEDGERBLOCK
   fi
   printf '%s\n' "$MB_END"
+}
+
+# managed_block_branch_mode — the BRANCH-MODE body (between the sentinels). It keeps the two memory
+# stores and the nested-.supervisor exclude, OMITS every run-history re-include and the ledger lines
+# (they live on the metadata branch), and carries the mode line. The default block's "Committed on
+# purpose: … the judgement TRAIL" paragraph is false here, so this body replaces it.
+managed_block_branch_mode() {
+  printf '%s%s\n' "$MODE_PREFIX" "$EFFECTIVE_BRANCH"
+  cat <<'BLOCK'
+# BRANCH MODE: run history (`.supervisor/requirements/`, `jobs/done/`, `jobs/failed/`,
+# `automate/*.md`, the findings ledger) is NOT committed on this branch — it is synced to the
+# metadata branch named on the line above by `meta-sync.sh`, and stays ignored here.
+#
+# Negate CONTENTS, not the directory. Git cannot re-include a file whose parent directory is
+# excluded, so the naive form
+#     .claude/
+#     !.claude/agent-memory/
+# looks correct and silently does NOTHING. The `/*` form below excludes the directory's contents
+# and leaves the directory itself traversable, so the `!` lines can re-include.
+#
+# Committed on purpose: the Twin's accumulated judgment (agent memory + distilled lessons),
+# including their dot-prefixed provenance sidecars. Everything else under these directories stays
+# ignored, including the nested `.supervisor/` trees hook emitters leave in any subfolder.
+#
+# Managed by `/setup memory`. Edit via that command (`/setup memory remove` reverts it);
+# hand-edits inside these sentinels are overwritten on the next apply.
+.claude/*
+!.claude/agent-memory/
+.supervisor/*
+!.supervisor/memory/
+*/**/.supervisor/
+BLOCK
+}
+
+# read_mode — THE ONE READER of the branch-mode switch. Prints exactly ONE line:
+#   off               no managed block, or a block without a mode line
+#   on <branch>       the block's single, valid mode line
+#   unknown <reason>  the file fails gitignore_gate's sanity check, more than one mode line, or a
+#                     mode line whose branch fails `git check-ref-format refs/heads/<name>`
+read_mode() {
+  local gate lines n b
+  gate="$(gitignore_gate)"
+  case "$gate" in
+    absent) echo "off"; return 0 ;;
+    ok) ;;
+    *) echo "unknown $gate"; return 0 ;;
+  esac
+  lines="$(awk -v b="$MB_BEGIN" -v e="$MB_END" -v m="$MODE_PREFIX" '
+    index($0, b) > 0 { inblk = 1; next }
+    inblk && index($0, e) > 0 { inblk = 0; next }
+    inblk && index($0, m) == 1 { print substr($0, length(m) + 1) }
+  ' "$GI" 2>/dev/null)"
+  if [ -z "$lines" ]; then echo "off"; return 0; fi
+  n="$(printf '%s\n' "$lines" | wc -l | tr -d ' ')"
+  if [ "$n" -gt 1 ]; then echo "unknown $n mode lines in the managed block"; return 0; fi
+  b="$lines"
+  if [ -z "$b" ] || ! git check-ref-format "refs/heads/$b" >/dev/null 2>&1; then
+    echo "unknown invalid branch name '$b' in the mode line"; return 0
+  fi
+  echo "on $b"
+}
+
+# EFFECTIVE_BRANCH — the branch the block apply WOULD write names ("" = mode off). --branch-mode
+# wins; otherwise the mode line already in the block is PRESERVED (a plain `apply` must never
+# silently re-include run history in a branch-mode repo). Resolved once, in this shell, before any
+# subcommand runs, so every nested command substitution of managed_block sees the same answer.
+CURRENT_MODE=""
+EFFECTIVE_BRANCH=""
+resolve_effective_branch() {
+  CURRENT_MODE="$(read_mode)"
+  if [ "$BRANCH_MODE_SET" = 1 ]; then
+    [ "$BRANCH_MODE_VAL" = "off" ] && EFFECTIVE_BRANCH="" || EFFECTIVE_BRANCH="$BRANCH_MODE_VAL"
+    return 0
+  fi
+  case "$CURRENT_MODE" in
+    "on "*) EFFECTIVE_BRANCH="${CURRENT_MODE#on }" ;;
+    *) EFFECTIVE_BRANCH="" ;;
+  esac
 }
 
 # The exact content apply WOULD write (deterministic → byte-comparable for idempotency).
@@ -953,6 +1075,8 @@ existing_ledger_negation_present() {
 #   refuse WITH real slugs       → WITHDRAW (examined; we saw the contamination)
 #   anything else                → PRESERVE whatever is already there (could not examine)
 ledger_negation_in_block() {
+  # Branch mode: the ledger lives on the metadata branch, so the block never carries its negation.
+  [ -n "${EFFECTIVE_BRANCH:-}" ] && return 1
   ledger_gate_permits_negation && return 0
   ledger_gate_warrants_withdrawal && return 1
   existing_ledger_negation_present
@@ -1067,6 +1191,18 @@ render_report() {
   echo "  .gitignore:        $gate"
   echo "  managed block:     $([ "$mb" = "yes" ] && echo present || echo absent)"
 
+  # BRANCH MODE (the mode of the file ON DISK, via the one reader): the run-history probes move from
+  # the must-be-committable set to the must-stay-ignored set, so a branch-mode block reads as
+  # `configured`, not as drift.
+  local r_intended="$INTENDED_PATHS" r_unintended="$UNINTENDED_PATHS" r_mode
+  r_mode="$(read_mode)"
+  case "$r_mode" in
+    "on "*)
+      echo "  branch mode:       $r_mode (run history is synced to that branch and stays ignored here)"
+      r_intended="$(printf '%s\n' "$INTENDED_PATHS" | grep -vE '^\.supervisor/(requirements|jobs|automate)/')"
+      r_unintended="$UNINTENDED_PATHS
+$(printf '%s\n' "$INTENDED_PATHS" | grep -E '^\.supervisor/(requirements|jobs|automate)/')" ;;
+  esac
   echo "  intended (must be committable):"
   while IFS= read -r p; do
     [ -n "$p" ] || continue
@@ -1080,7 +1216,7 @@ render_report() {
 "
     fi
   done <<EOF
-$INTENDED_PATHS
+$r_intended
 EOF
 
   # THE THIRD STORE — probed ONLY when the ledger gate PASSES. When it refuses, the ledger is
@@ -1141,7 +1277,7 @@ EOF
 "
     fi
   done <<EOF
-$UNINTENDED_PATHS
+$r_unintended
 EOF
 
   echo "  tracked today:     .claude/agent-memory/ → $(tracked_count '.claude/agent-memory') file(s), .supervisor/memory/ → $(tracked_count '.supervisor/memory') file(s), $LEDGER_INTENDED_PATH → $(tracked_count "$LEDGER_INTENDED_PATH") file(s)"
@@ -1345,6 +1481,16 @@ do_apply() {
   # truth the `gated` class exists to tell).
   ledger_gate_blocks_foreign_records || true
 
+  # A plain apply PRESERVES the mode line; when the block's mode cannot be read it cannot be
+  # preserved either, so refuse rather than guess (an explicit --branch-mode resolves it).
+  if [ "$BRANCH_MODE_SET" = 0 ]; then
+    case "$CURRENT_MODE" in
+      unknown*)
+        echo "apply: ABORTED — the managed block's branch mode reads '$CURRENT_MODE'; re-run with --branch-mode <branch> or --branch-mode off. Nothing was written."
+        exit 0 ;;
+    esac
+  fi
+
   local current proposed neg_line ledger_withdrawn=no
   current="$(cat "$GI")"
   proposed="$(proposed_applied_content)"
@@ -1364,7 +1510,7 @@ do_apply() {
   # a documented recurring class, not a fix for an observed defect. It also makes this site agree with
   # `existing_ledger_negation_present()`, which was already anchored; having two different notions of
   # "the negation is present" in one file is the inconsistency worth removing.
-  if negation_line_in_block "$current" && ! negation_line_in_block "$proposed"; then
+  if [ -z "$EFFECTIVE_BRANCH" ] && negation_line_in_block "$current" && ! negation_line_in_block "$proposed"; then
     ledger_withdrawn=yes
   fi
 
@@ -1397,6 +1543,8 @@ do_apply() {
   backup="$(write_gitignore "$proposed")" || { echo "apply: ABORTED — the rewrite could not be staged; .gitignore is unchanged."; exit 0; }
   if [ "$ledger_withdrawn" = "yes" ]; then
     echo "apply: applied (ledger negation WITHDRAWN) — managed block written to $GI"
+  elif [ -n "$EFFECTIVE_BRANCH" ]; then
+    echo "apply: applied (branch mode: $EFFECTIVE_BRANCH) — managed block written to $GI; run history is no longer re-included here. Already-committed run history is NOT untracked by this helper."
   else
     echo "apply: applied — managed block written to $GI"
   fi
@@ -1512,7 +1660,15 @@ do_filter_ledger() {
   exit 0
 }
 
+resolve_effective_branch
+
+do_mode() {
+  read_mode
+  exit 0
+}
+
 case "$SUBCMD" in
+  mode)          do_mode ;;
   check)         do_check ;;
   apply)         do_apply ;;
   remove)        do_remove ;;
