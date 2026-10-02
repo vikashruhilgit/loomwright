@@ -484,7 +484,15 @@ rm -f "$IFBRIEF" "$OUT_G"
 # an unsupported LC_ALL is ignored by libc, which degrades to today's behavior, never an error.
 CORPUS_LOCALE="en_US.UTF-8"
 CORPUS_N=0; CORPUS_STARVED=""; CORPUS_OVER=""; CORPUS_BACKSTOP=""; CORPUS_BADUTF8=""
-for _cb in "$REPO_ROOT"/.supervisor/jobs/done/*.md "$REPO_ROOT"/.supervisor/jobs/pending/*.md "$REPO_ROOT"/.supervisor/jobs/failed/*.md; do
+# The live brief corpus is run history; in a branch-mode repo it is gitignored and may be absent
+# (skills/automate-loop/SKILL.md §"Branch mode"). Then the FROZEN fixture corpus is used, so this gate
+# still RUNS. LOOMWRIGHT_TEST_FIXTURE_CORPUS=1 forces the fixture path (to prove it runs).
+CORPUS_SRC="$REPO_ROOT/.supervisor/jobs"
+if [ "${LOOMWRIGHT_TEST_FIXTURE_CORPUS:-0}" = 1 ] || ! { compgen -G "$CORPUS_SRC/done/*.md" || compgen -G "$CORPUS_SRC/pending/*.md" || compgen -G "$CORPUS_SRC/failed/*.md"; } >/dev/null 2>&1; then
+  CORPUS_SRC="$HERE/fixtures/corpus-briefs"
+  echo "  note: live brief corpus absent (or LOOMWRIGHT_TEST_FIXTURE_CORPUS=1) — using the frozen fixture corpus $CORPUS_SRC"
+fi
+for _cb in "$CORPUS_SRC"/done/*.md "$CORPUS_SRC"/pending/*.md "$CORPUS_SRC"/failed/*.md; do
   [ -f "$_cb" ] || continue
   _co="$(mktemp -t corpusdg.XXXXXX)"
   LC_ALL="$CORPUS_LOCALE" bash "$REPO_ROOT/loomwright/scripts/build-context-digest.sh" --brief "$_cb" --out "$_co" >/dev/null 2>&1
@@ -768,7 +776,7 @@ _failsafe "--max-chars 007 (valid octal, tiny): base-10 normalized, falls back t
 TOTAL=$((TOTAL+1))
 _oz_out="$(mktemp -t ozout.XXXXXX)"
 CONTEXT_DIGEST_MAX_CHARS=020000 bash "$REPO_ROOT/loomwright/scripts/build-context-digest.sh" \
-  --brief "$REPO_ROOT/.supervisor/jobs/done/2026-07-23-curation-anti-rot.md" \
+  --brief "$CORPUS_SRC/done/2026-07-23-curation-anti-rot.md" \
   --out "$_oz_out" >/dev/null 2>&1 </dev/null
 _oz_sz="$(wc -c < "$_oz_out" 2>/dev/null | tr -d '[:space:]')"
 case "$_oz_sz" in ''|*[!0-9]*) _oz_sz=0 ;; esac

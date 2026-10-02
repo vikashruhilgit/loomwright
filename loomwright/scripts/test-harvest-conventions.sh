@@ -154,12 +154,21 @@ store_sum() {   # a stable byte-signature of an entire .agent/rules/ tree
 # ============================================================================
 echo "(A) three-bucket triage + the requirement's worked example"
 # ============================================================================
-if [ -d "$REPO_ROOT/.claude/agent-memory" ] && [ -f "$REPO_ROOT/.supervisor/postmortem/results.jsonl" ] \
+# The ledger is run history: in a branch-mode repo it is gitignored and may be absent (skills/
+# automate-loop/SKILL.md §"Branch mode"). Then (A) runs against the real repo with the FROZEN fixture
+# ledger (fixtures/harvest-ledger/, via --ledger), so the gate still RUNS.
+# LOOMWRIGHT_TEST_FIXTURE_CORPUS=1 forces that path (to prove it runs).
+A_LEDGER="$REPO_ROOT/.supervisor/postmortem/results.jsonl"
+if [ "${LOOMWRIGHT_TEST_FIXTURE_CORPUS:-0}" = 1 ] || [ ! -f "$A_LEDGER" ]; then
+  A_LEDGER="$(dirname "$HARVEST")/fixtures/harvest-ledger/results.jsonl"
+  echo "  note: live ledger absent (or LOOMWRIGHT_TEST_FIXTURE_CORPUS=1) — (A) runs over the frozen fixture ledger"
+fi
+if [ -d "$REPO_ROOT/.claude/agent-memory" ] && [ -f "$A_LEDGER" ] \
    && command -v jq >/dev/null 2>&1; then
   # (A) is the ONE run pointed at the REAL repo root, so it is the only run that could falsify this
   # file's header claim that the fixture runs never touch the real repo's stores. Signature it.
   REAL_SUM_BEFORE="$(store_sum "$REPO_ROOT")"
-  OUT="$( bash "$HARVEST" --root "$REPO_ROOT" --session-id "test-a" --no-writer 2>&1 )"; RC=$?
+  OUT="$( bash "$HARVEST" --root "$REPO_ROOT" --ledger "$A_LEDGER" --session-id "test-a" --no-writer 2>&1 )"; RC=$?
   REAL_SUM_AFTER="$(store_sum "$REPO_ROOT")"
   printf '%s\n' "$OUT" > "$ROOT/a.txt"
   [ "$RC" -eq 0 ] && ok "(a1) a real-corpus run exits 0" || no "(a1) real-corpus run exited $RC"
