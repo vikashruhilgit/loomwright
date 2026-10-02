@@ -347,13 +347,26 @@ meta_branch_hint_line() {
   printf '**Run history:** run history is on branch `%s` and has not been pulled — run `meta-sync.sh pull` (the plugin'"'"'s `scripts/meta-sync.sh pull --branch %s`)' "${mode#on }" "${mode#on }"
 }
 
+# load_meta_hint — computes the hint AT MOST ONCE per invocation into $META_HINT (one
+# `setup-memory.sh mode` subprocess + one `git worktree list`), in the CURRENT shell so the cached
+# answer is visible to every later reader. Both consumers — the startup arm and the
+# resume/clear/compact bail + recovery-hints path — read $META_HINT through this, never by calling
+# meta_branch_hint_line themselves.
+META_HINT=""
+META_HINT_LOADED=0
+load_meta_hint() {
+  [ "$META_HINT_LOADED" = 1 ] && return 0
+  META_HINT="$(meta_branch_hint_line)"
+  META_HINT_LOADED=1
+}
+
 startup_arm_emit() {
   local curation="" stranded="" orphans="" metahint="" body="" nl
   nl=$'\n'
   curation="$(curation_nudge_line)"
   stranded="$(stranded_briefs_startup_line)"
   orphans="$(orphaned_worktrees_block)"
-  metahint="$(meta_branch_hint_line)"
+  load_meta_hint; metahint="$META_HINT"
   body="$curation"
   [ -n "$stranded" ] && body="${body:+$body$nl}$stranded"
   [ -n "$orphans" ] && body="${body:+$body$nl}$orphans"
@@ -380,7 +393,7 @@ esac
 # ---- Bail if no plugin state at all ----------------------------------------
 # Branch mode: a clone whose run history was never pulled may have NO .supervisor/ at all, which is
 # exactly when the one hint line matters — so it alone is emitted; mode off keeps the silent bail.
-META_HINT="$(meta_branch_hint_line)"
+load_meta_hint
 if [ ! -d ".supervisor" ]; then
   if [ -n "$META_HINT" ]; then
     printf '%s' "$META_HINT" | jq -Rs '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: .}}' 2>/dev/null || true

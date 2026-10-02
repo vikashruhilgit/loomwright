@@ -1855,6 +1855,124 @@ Bml="$(bmf_fix)"; mml="$(bash "$BML_D/multiline.sh" --root "$Bml" mode 2>/dev/nu
 case "$mml" in "unknown "*) ok "(bm-f) stubbed two-line reader ⇒ 'unknown …' ($mml)" ;; *) no "(bm-f) stubbed two-line reader ⇒ '$mml' (must be unknown, never on x)" ;; esac
 rm -rf "$BML_D"
 
+echo "== (fn) owner fix-now: branch-mode check wording, option-shaped flag values, reserved 'off', scoped reader =="
+# (fn-1) BRANCH MODE: `check` reports the ledger honestly and PROBES it in the must-stay-ignored set;
+# the disclosure and apply's Next: hint describe the branch-mode block. Seeded with a FOREIGN ledger
+# record on purpose: the block never un-ignores the ledger here, so `gated` (and its filter-ledger
+# remedy) would describe a write that cannot happen.
+fn_unint() { awk '/^  unintended \(must stay ignored\):/ { f = 1; next } /^  tracked today:/ { f = 0 } f' <<< "$1"; }
+fn_int()   { awk '/^  intended \(must be committable\):/ { f = 1; next } /^  unintended / { f = 0 } f' <<< "$1"; }
+fn_bm_fixture() { local d; d="$(newgit https://github.com/acme/widgets.git)"; printf '.supervisor/\n' > "$d/.gitignore"
+  mkdir -p "$d/.supervisor/postmortem"; printf '{"repo":"acme/widgets"}\n{"repo": "other/secret"}\n' > "$d/.supervisor/postmortem/results.jsonl"; printf '%s' "$d"; }
+fn_check_assert() {  # <script> <label> — 0 when every branch-mode check expectation holds
+  local d o; d="$(fn_bm_fixture)"; bash "$1" --root "$d" apply --branch-mode loomwright-meta >/dev/null 2>&1
+  o="$(bash "$1" --root "$d" check 2>/dev/null)"
+  hasF '.supervisor/postmortem/results.jsonl                     branch mode — on loomwright-meta, stays ignored here' "$(fn_int "$o")" \
+    && hasF '.supervisor/postmortem/results.jsonl                     ignored' "$(fn_unint "$o")" \
+    && ! hasF 'not probed (jq unavailable' "$o" && ! hasF 'GATED' "$o" \
+    && hasF 'Memory readiness: configured' "$o"
+}
+if fn_check_assert "$MEM"; then ok "(fn-1) branch-mode check: ledger listed as 'branch mode — on loomwright-meta, stays ignored here', probed 'ignored' in the must-stay-ignored set, readiness configured (never gated / never 'jq unavailable')"; else no "(fn-1) branch-mode check ledger wording/probe"; fi
+Bfn="$(fn_bm_fixture)"; oa="$(mem "$Bfn" apply --branch-mode loomwright-meta 2>/dev/null)"; oc="$(mem "$Bfn" check 2>/dev/null)"
+for o_lbl in "apply:$oa" "check:$oc"; do
+  lbl="${o_lbl%%:*}"; o="${o_lbl#*:}"
+  if hasF 'What becomes VERSION-CONTROLLED if you apply this (BRANCH MODE — metadata branch `loomwright-meta`):' "$o" \
+     && hasF 'so there is nothing to commit for run history on this branch' "$o" \
+     && hasF 'Untracking it is a separate, deliberate operator step (the migration runbook, M1), never this' "$o" \
+     && ! hasF '.supervisor/requirements/** — the intake' "$o" && ! hasF 'GATED: it is un-ignored only while' "$o"; then
+    ok "(fn-1) $lbl prints the BRANCH-MODE disclosure (memory stores only; run history on the metadata branch; untracking is M1, not this helper)"
+  else no "(fn-1) $lbl disclosure still describes the default block"; fi
+done
+if hasF '  git status --short .claude/agent-memory .supervisor/memory' "$oa" && ! hasF '.supervisor/memory .supervisor/requirements' "$oa" \
+   && hasF "Run history lives on the metadata branch 'loomwright-meta' (meta-sync.sh)," "$oa" \
+   && hasF 'not on this branch — there is nothing to commit for it here.' "$oa" && hasF '(the migration runbook, M1), never this' "$oa"; then
+  ok "(fn-1) apply --branch-mode Next: hint names only the two memory stores and says run history lives on the metadata branch"
+else no "(fn-1) apply --branch-mode Next: hint: $(grep -A5 '^Next:' <<< "$oa")"; fi
+o="$(mem "$Bfn" apply 2>/dev/null)"
+if has '^apply: no-op — already configured (the managed block' "$o" && ! hasF 'GATED' "$o"; then ok "(fn-1) plain re-apply in branch mode with a foreign ledger: plain no-op headline, never 'GATED'"; else no "(fn-1) branch-mode no-op headline: $(grep '^apply' <<< "$o")"; fi
+o="$(mem "$Bfn" remove 2>/dev/null)"
+! hasF 'not probed (jq unavailable' "$o" && ok "(fn-1) remove from branch mode: the verify report never claims 'jq unavailable' (reads the file it just wrote)" || no "(fn-1) remove from branch mode still reports 'not probed (jq unavailable …)'"
+# Mode OFF keeps the default copy (byte identity vs origin/main is proven out-of-band with cmp).
+Bfo2="$(newgit https://github.com/acme/widgets.git)"; printf '.supervisor/\n' > "$Bfo2/.gitignore"; o="$(mem "$Bfo2" check 2>/dev/null)"
+if has '^What becomes VERSION-CONTROLLED if you apply this:$' "$o" && ! hasF 'branch mode' "$o"; then ok "(fn-1) mode off: default disclosure, no branch-mode wording anywhere in check"; else no "(fn-1) mode off check carries branch-mode wording"; fi
+# Mutation self-check: a copy that never records the disk branch makes the (fn-1) check assertion fail.
+FN_D="$(mktemp -d)"
+sed 's/^      r_branch="\${r_mode#on }"$/      :/' "$MEM" > "$FN_D/mut1.sh"
+if cmp -s "$MEM" "$FN_D/mut1.sh"; then no "(fn-1) mutation self-check: the patch changed nothing — inconclusive"
+elif fn_check_assert "$FN_D/mut1.sh"; then no "(fn-1) mutation self-check: the branch-mode check assertion is VACUOUS (passes without r_branch)"
+else ok "(fn-1) mutation self-check: dropping the disk-branch capture fails the branch-mode check assertion"; fi
+
+# (fn-2) --root / --ledger / --allow: an EMPTY or option-shaped value is a usage error — exit 0,
+# stderr names the flag, NOTHING written. --root is run with the cwd inside a fixture so a silent
+# fall-back to the cwd repo would show up as a written .gitignore there.
+for fv in "--root|-x" "--root|--branch-mode" "--root|" "--ledger|-x" "--ledger|" "--allow|-x" "--allow|--root" "--allow|"; do
+  fl="${fv%%|*}"; vv="${fv#*|}"
+  Dfv="$(newgit https://github.com/acme/widgets.git)"; printf '.supervisor/\n' > "$Dfv/.gitignore"; s0="$(sum "$Dfv/.gitignore")"
+  if [ "$fl" = "--root" ]; then
+    err="$(cd "$Dfv" && bash "$MEM" "$fl" "$vv" apply 2>&1 >/dev/null)"; rc=$?
+  else
+    err="$(bash "$MEM" --root "$Dfv" "$fl" "$vv" apply 2>&1 >/dev/null)"; rc=$?
+  fi
+  if [ "$rc" = 0 ] && hasF "setup-memory: $fl requires" "$err" && hasF 'Nothing was written.' "$err" \
+     && [ "$(sum "$Dfv/.gitignore")" = "$s0" ] && [ -z "$(ls "$Dfv"/.gitignore.backup.* 2>/dev/null)" ] && [ ! -e "$Dfv/.supervisor/config.json" ]; then
+    ok "(fn-2) '$fl ${vv:-<empty>}' is a usage error: exit 0, stderr names it, nothing written"
+  else no "(fn-2) '$fl ${vv:-<empty>}': rc=$rc err='$err'"; fi
+done
+err="$(bash "$MEM" --root "$Dfv" filter-ledger --ledger -x 2>&1 >/dev/null)"
+hasF "got option-shaped '-x'" "$err" && ok "(fn-2) 'filter-ledger --ledger -x' names the option-shaped value" || no "(fn-2) filter-ledger --ledger -x: $err"
+o="$(bash "$MEM" --root "$Dfv" --allow acme/widgets --allow owner/old-name allowlist 2>/dev/null)"
+[ "$o" = "acme/widgets
+owner/old-name" ] && ok "(fn-2) valid --allow values are unchanged" || no "(fn-2) valid --allow values: '$o'"
+
+# (fn-4) `off` is RESERVED: a hand-written `off` mode line reads unknown (never `on off`, never
+# silently `off`), a plain apply refuses it, and `--branch-mode off` is still the switch-off spelling.
+Bro="$(bmf_fix)"; bmf_sub "$Bro" "${MLINE}off"
+mro="$(mem "$Bro" mode 2>/dev/null)"
+[ "$mro" = "unknown invalid branch name 'off' in the mode line" ] && ok "(fn-4) a hand-written 'off' mode line reads '$mro'" || no "(fn-4) 'off' mode line ⇒ '$mro'"
+bmf_refused "$MEM" "$Bro" "reserved 'off' mode line"
+o="$(mem "$Bro" apply --branch-mode off 2>/dev/null)"
+if has '^apply: applied' "$o" && [ "$(mem "$Bro" mode 2>/dev/null)" = "off" ] && ! grep -qF "$MLINE" "$Bro/.gitignore"; then ok "(fn-4) '--branch-mode off' resolves it: mode 'off', no mode line recorded"; else no "(fn-4) --branch-mode off on an 'off' line: $(grep '^apply' <<< "$o")"; fi
+Bon="$(bmf_fix)"; o="$(mem "$Bon" apply --branch-mode off 2>/dev/null)"
+if has '^apply: applied' "$o" && [ "$(mem "$Bon" mode 2>/dev/null)" = "off" ] && ! grep -qF "$MLINE" "$Bon/.gitignore"; then ok "(fn-4) '--branch-mode off' still switches a branch-mode block off"; else no "(fn-4) --branch-mode off: $(grep '^apply' <<< "$o")"; fi
+awk '/^resolve_effective_branch$/ { print "read_mode() { echo \"on off\"; }" } { print }' "$MEM" > "$FN_D/onoff.sh"
+mrs="$(bash "$FN_D/onoff.sh" --root "$Bon" mode 2>/dev/null)"
+[ "$mrs" = "unknown mode reader returned an invalid branch 'off'" ] && ok "(fn-4) a reader answering 'on off' normalises to '$mrs'" || no "(fn-4) 'on off' reader ⇒ '$mrs'"
+hasF 'RESERVED' "$(bash "$MEM" --help 2>/dev/null)" && ok "(fn-4) --help states that 'off' is reserved" || no "(fn-4) --help is silent about the reserved 'off'"
+o="$(bash "$MEM" --root "$Bon" apply --branch-mode 2>/dev/null)"
+hasF 'or off (reserved — never a branch name)' "$o" && ok "(fn-4) the --branch-mode usage error states 'off' is reserved" || no "(fn-4) --branch-mode usage: $o"
+hasF '**`off` is reserved**' "$(cat "$HERE/../commands/setup.md" 2>/dev/null)" && ok "(fn-4) commands/setup.md §Branch mode states 'off' is reserved" || no "(fn-4) commands/setup.md does not state 'off' is reserved"
+hasF '`branch mode — on <branch>, stays ignored here`' "$(cat "$HERE/../commands/setup.md" 2>/dev/null)" && ok "(fn-1) commands/setup.md §Branch mode documents the branch-mode ledger line the helper prints" || no "(fn-1) commands/setup.md does not document the branch-mode ledger line"
+sed 's/-\*|HEAD|@|off) return 1/-*|HEAD|@) return 1/' "$MEM" > "$FN_D/mut4.sh"
+Bro2="$(bmf_fix)"; bmf_sub "$Bro2" "${MLINE}off"
+mm="$(bash "$FN_D/mut4.sh" --root "$Bro2" mode 2>/dev/null)"
+if cmp -s "$MEM" "$FN_D/mut4.sh"; then no "(fn-4) mutation self-check: the patch changed nothing — inconclusive"
+elif [ "$mm" = "on off" ]; then ok "(fn-4) mutation self-check: without the reservation the 'off' line reads 'on off' (the assertion above is load-bearing)"
+else no "(fn-4) mutation self-check: unreserved copy ⇒ '$mm'"; fi
+
+# (fn-5) allowlist / filter-ledger never run read_mode: a stub that leaves a marker proves it, and the
+# same stub DOES fire for check / mode (positive control). A mutant without the subcommand scope
+# fires for allowlist too (the probe is not vacuous).
+fn_stub() { awk -v s="read_mode() { echo called >> \"$2\"; echo off; }" '/^resolve_effective_branch$/ { print s } { print }' "$1"; }
+Bsc="$(newgit https://github.com/acme/widgets.git)"; printf '.supervisor/\n' > "$Bsc/.gitignore"
+mkdir -p "$Bsc/.supervisor/postmortem"; printf '{"repo":"acme/widgets"}\n' > "$Bsc/.supervisor/postmortem/results.jsonl"
+fn_stub "$MEM" "$FN_D/mark" > "$FN_D/stub.sh"
+for sc in "allowlist" "filter-ledger --ledger $Bsc/.supervisor/postmortem/results.jsonl"; do
+  rm -f "$FN_D/mark"
+  # shellcheck disable=SC2086
+  bash "$FN_D/stub.sh" --root "$Bsc" $sc >/dev/null 2>&1
+  [ ! -e "$FN_D/mark" ] && ok "(fn-5) '${sc%% *}' never runs read_mode" || no "(fn-5) '${sc%% *}' ran read_mode $(wc -l < "$FN_D/mark" | tr -d ' ')x"
+done
+for sc in check mode; do
+  rm -f "$FN_D/mark"; bash "$FN_D/stub.sh" --root "$Bsc" "$sc" >/dev/null 2>&1
+  [ -s "$FN_D/mark" ] && ok "(fn-5) positive control: '$sc' does run read_mode" || no "(fn-5) positive control: '$sc' never ran read_mode (the probe is blind)"
+done
+grep -v '^  case "\$SUBCMD" in apply|check|mode) ;; \*) return 0 ;; esac$' "$MEM" > "$FN_D/mut5.sh"
+fn_stub "$FN_D/mut5.sh" "$FN_D/mark" > "$FN_D/stub5.sh"; rm -f "$FN_D/mark"; bash "$FN_D/stub5.sh" --root "$Bsc" allowlist >/dev/null 2>&1
+if cmp -s "$MEM" "$FN_D/mut5.sh"; then no "(fn-5) mutation self-check: the patch changed nothing — inconclusive"
+elif [ -s "$FN_D/mark" ]; then ok "(fn-5) mutation self-check: without the subcommand scope 'allowlist' runs read_mode (the probe is load-bearing)"
+else no "(fn-5) mutation self-check: unscoped copy still shows no read_mode for allowlist"; fi
+rm -rf "$FN_D"
+
 echo "== (k) the suite never touched the plugin repo's own .gitignore =="
 PLUGIN_GI_SUM_AFTER="$(sum "$PLUGIN_GI")"
 [ "$PLUGIN_GI_SUM_BEFORE" = "$PLUGIN_GI_SUM_AFTER" ] && ok "(k) $PLUGIN_GI is byte-identical before and after the whole suite" || no "(k) THE SUITE MUTATED THE PLUGIN REPO'S OWN .gitignore"
