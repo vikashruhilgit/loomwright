@@ -110,7 +110,7 @@ synced_pair() {
 echo "== 1. missing branch / init =="
 mkworld; clone A
 ms A pull
-{ [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'meta_sync: no_remote_branch' && printf '%s' "$OUT" | grep -qi 'local path'; }
+{ [ "$RC" -ne 0 ] && grep -q 'meta_sync: no_remote_branch' < <(printf '%s' "$OUT") && grep -qi 'local path' < <(printf '%s' "$OUT"); }
 check $? "pull without the branch exits non-zero with no_remote_branch naming a local-path origin (rc=$RC)"
 ms A status
 { [ "$RC" -eq 0 ] && [ "$OUT" = "no_remote_branch" ]; }; check $? "status -> no_remote_branch, exit 0 (got '$OUT' rc=$RC)"
@@ -128,7 +128,7 @@ assert_ignored_clean() {
   local extra
   extra="$(br_names | grep -vE '\.md$|(^|/)results\.jsonl$')"
   [ -z "$extra" ] || return 1
-  br_names | grep -qE '/\.supervisor/|jobs/pending/|\.supervisor/logs/' && return 1
+  grep -qE '/\.supervisor/|jobs/pending/|\.supervisor/logs/' < <(br_names) && return 1
   return 0
 }
 roundtrip_world() {
@@ -153,7 +153,7 @@ roundtrip_world
 echo staged > "$W/A/staged.txt"; git -C "$W/A" add staged.txt; echo dirty >> "$W/A/app.txt"
 before_status="$(porcelain A)"; before_head="$(git -C "$W/A" rev-parse HEAD)"; before_index="$(git -C "$W/A" ls-files -s | cksum)"
 ms A push
-{ [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 'meta_sync: pushed'; }; check $? "push exits 0 (rc=$RC: $OUT)"
+{ [ "$RC" -eq 0 ] && grep -q 'meta_sync: pushed' < <(printf '%s' "$OUT"); }; check $? "push exits 0 (rc=$RC: $OUT)"
 { [ "$(porcelain A)" = "$before_status" ] && [ "$(git -C "$W/A" rev-parse HEAD)" = "$before_head" ] && [ "$(git -C "$W/A" ls-files -s | cksum)" = "$before_index" ] && [ "$(get A app.txt)" = "$(printf 'code\ndirty')" ]; }
 check $? "push leaves the code branch's status, HEAD, index and working tree byte-identical"
 git -C "$W/A" reset -q --hard; rm -f "$W/A/staged.txt"
@@ -230,7 +230,7 @@ put A "$RQ/c.md" "c from A"; put A "$RQ/w.md" "w v2 from A"; ms A push
 put B "$RQ/c.md" "c from B"
 tip="$(br_tip)"; base_before="$(base_of B)"
 ms B push
-{ [ "$RC" -eq 1 ] && printf '%s' "$OUT" | grep -q "meta_sync: conflict $RQ/c.md" && [ "$(br_tip)" = "$tip" ] && [ "$(base_of B)" = "$base_before" ]; }
+{ [ "$RC" -eq 1 ] && grep -q "meta_sync: conflict $RQ/c.md" < <(printf '%s' "$OUT") && [ "$(br_tip)" = "$tip" ] && [ "$(base_of B)" = "$base_before" ]; }
 check $? "push: both-edited c.md -> exit 1 'meta_sync: conflict', branch tip and meta-base unchanged (rc=$RC)"
 ms B pull
 { [ "$RC" -eq 1 ] && [ "$(get B "$RQ/c.md")" = "c from B" ] && [ "$(get B "$RQ/w.md")" = "w v1" ] && [ "$(base_of B)" = "$base_before" ]; }
@@ -266,15 +266,15 @@ ms B push
 { [ "$RC" -eq 2 ] && [ "$(br_tip)" = "$tip" ] && [ "$(base_of B)" = "$base_before" ]; }
 check $? "scrub hit -> exit 2, branch tip and meta-base unchanged (rc=$RC)"
 # 12 = ten prose files + the foreign ledger record, which hits BOTH ledger_repo and forge_slug ("repo": field)
-{ [ "$(printf '%s\n' "$OUT" | grep -c '^meta_sync: scrub ')" -eq 12 ] && printf '%s\n' "$OUT" | grep -q '^meta_sync: aborted'; }
+{ [ "$(printf '%s\n' "$OUT" | grep -c '^meta_sync: scrub ')" -eq 12 ] && grep -q '^meta_sync: aborted' < <(printf '%s\n' "$OUT"); }
 check $? "exactly one 'meta_sync: scrub <path>: <rule>' line per hit (12); the summary line starts 'meta_sync: aborted' (got: $(printf '%s\n' "$OUT" | grep '^meta_sync: scrub ' | tr '\n' '|'))"
 for pr in "s-email.md: email" "s-home.md: home_path" "s-home2.md: home_path" "s-slug.md: forge_slug" \
           "s-repofield.md: forge_slug" "s-ghp.md: token_github" "s-pat.md: token_github_pat" \
           "s-sk.md: token_sk" "s-slack.md: token_slack" "s-aws.md: token_aws"; do
-  printf '%s' "$OUT" | grep -qF "meta_sync: scrub $RQ/$pr"
+  grep -qF "meta_sync: scrub $RQ/$pr" < <(printf '%s' "$OUT")
   check $? "named in the same run: $pr"
 done
-printf '%s' "$OUT" | grep -qF "meta_sync: scrub .supervisor/postmortem/results.jsonl: ledger_repo"
+grep -qF "meta_sync: scrub .supervisor/postmortem/results.jsonl: ledger_repo" < <(printf '%s' "$OUT")
 check $? "named in the same run: foreign ledger record (ledger_repo)"
 
 echo "== 12. scrub with an EMPTY allowlist =="
@@ -282,7 +282,7 @@ synced_pair
 put B "$RQ/ok-slug.md" "see https://github.com/owner/repo/pull/1"
 tip="$(br_tip)"
 OUT="$(env -u LOOMWRIGHT_MEMORY_REPO_ALLOWLIST bash "$SCRIPT" push --root "$W/B" 2>&1)"; RC=$?
-{ [ "$RC" -eq 2 ] && printf '%s' "$OUT" | grep -qF "meta_sync: scrub $RQ/ok-slug.md: forge_slug" && [ "$(br_tip)" = "$tip" ]; }
+{ [ "$RC" -eq 2 ] && grep -qF "meta_sync: scrub $RQ/ok-slug.md: forge_slug" < <(printf '%s' "$OUT") && [ "$(br_tip)" = "$tip" ]; }
 check $? "empty allowlist (local-path origin, no config) -> every forge slug is a hit (rc=$RC)"
 
 echo "== 13. scrub negative =="
@@ -309,14 +309,14 @@ put C "$RQ/y.md" "y from C"; ms C push
 clone D
 put D "$RQ/d.md" "d edited away from every historical blob"
 tip="$(br_tip)"; ms D push
-{ [ "$RC" -eq 1 ] && printf '%s' "$OUT" | grep -q "meta_sync: conflict $RQ/d.md" && [ "$(br_tip)" = "$tip" ] && [ ! -e "$W/D/.git/meta-base" ]; }
+{ [ "$RC" -eq 1 ] && grep -q "meta_sync: conflict $RQ/d.md" < <(printf '%s' "$OUT") && [ "$(br_tip)" = "$tip" ] && [ ! -e "$W/D/.git/meta-base" ]; }
 check $? "fresh clone D with d.md edited away from history -> conflict, branch unchanged, no meta-base (rc=$RC)"
 clone E
 mkdir -p "$W/E/.supervisor/postmortem"
 br_show .supervisor/postmortem/results.jsonl > "$W/E/.supervisor/postmortem/results.jsonl"
 printf '%s\n' '{"repo":"owner/repo","n":77}' >> "$W/E/.supervisor/postmortem/results.jsonl"
 ms E push
-{ [ "$RC" -eq 0 ] && br_show .supervisor/postmortem/results.jsonl | grep -q '"n":77' && br_show .supervisor/postmortem/results.jsonl | grep -q '"n":1'; }
+{ [ "$RC" -eq 0 ] && grep -q '"n":77' < <(br_show .supervisor/postmortem/results.jsonl) && grep -q '"n":1' < <(br_show .supervisor/postmortem/results.jsonl); }
 check $? "fresh clone E whose ledger gained lines -> union, not conflict (rc=$RC: $OUT)"
 
 echo "== 15. no meta-base + --paths-from: out-of-list conflict still aborts =="
@@ -326,7 +326,7 @@ put F "$RQ/x.md" "x edited away from every historical blob"
 put F "$RQ/ynew.md" "listed new file"
 printf '%s\n' "$RQ/ynew.md" > "$W/list.txt"
 tip="$(br_tip)"; ms F push --paths-from "$W/list.txt"
-{ [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q "meta_sync: conflict $RQ/x.md" && [ "$(br_tip)" = "$tip" ] && [ ! -e "$W/F/.git/meta-base" ]; }
+{ [ "$RC" -ne 0 ] && grep -q "meta_sync: conflict $RQ/x.md" < <(printf '%s' "$OUT") && [ "$(br_tip)" = "$tip" ] && [ ! -e "$W/F/.git/meta-base" ]; }
 check $? "no base: unlisted X conflict aborts the --paths-from push; branch and meta-base unchanged (rc=$RC)"
 echo "-- with a base, --paths-from restricts the push --"
 put A "$RQ/x.md" "x listed"; put A "$RQ/y.md" "y unlisted"
@@ -340,7 +340,7 @@ ms A push
 echo "== 16. fetch failure =="
 synced_pair
 git -C "$W/B" remote set-url origin "$W/does-not-exist.git"
-ms B pull; { [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -q 'fetch_failed'; }; check $? "pull with an unreachable origin exits non-zero (rc=$RC)"
+ms B pull; { [ "$RC" -ne 0 ] && grep -q 'fetch_failed' < <(printf '%s' "$OUT"); }; check $? "pull with an unreachable origin exits non-zero (rc=$RC)"
 ms B status; { [ "$RC" -eq 0 ] && [ "$OUT" = "unreachable" ]; }; check $? "status -> unreachable, exit 0 (got '$OUT')"
 
 echo "== 17. concurrent pushes =="
@@ -363,10 +363,10 @@ chmod +x "$W/origin.git/hooks/pre-receive"
 put A "$RQ/x.md" "x from A (loser)"
 ms A push
 rm -f "$W/origin.git/hooks/pre-receive"
-{ [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 'rejected (attempt 1/5)' && grep -q 'meta_sync: pushed' "$W/race-b.log" \
+{ [ "$RC" -eq 0 ] && grep -q 'rejected (attempt 1/5)' < <(printf '%s' "$OUT") && grep -q 'meta_sync: pushed' "$W/race-b.log" \
   && [ "$(br_show "$RQ/x.md")" = "x from A (loser)" ] && [ "$(br_show "$RQ/y.md")" = "y from B (raced in)" ]; }
 check $? "the loser was rejected once, re-fetched, recomputed and landed; both changes on the branch (rc=$RC)"
-git --git-dir="$W/origin.git" rev-list --first-parent "refs/heads/$BR" | grep -q "$(git --git-dir="$W/origin.git" rev-parse "refs/heads/$BR~1")"
+{ [ -z "$(git --git-dir="$W/origin.git" rev-list --merges "refs/heads/$BR")" ] && [ "$(git --git-dir="$W/origin.git" rev-list --first-parent --count "refs/heads/$BR")" = "$(git --git-dir="$W/origin.git" rev-list --count "refs/heads/$BR")" ]; }
 check $? "history is linear (fast-forward only; origin denies non-fast-forward)"
 put A "$RQ/c.md" "c parallel A"; put B "$RQ/w.md" "w parallel B"
 ( bash "$SCRIPT" push --root "$W/A" > "$W/par-a.log" 2>&1; echo $? > "$W/par-a.rc" ) &
@@ -379,7 +379,7 @@ echo "== 18. status vocabulary always exits 0 =="
 synced_pair
 ms A status; { [ "$RC" -eq 0 ] && [ "$OUT" = "synced $(br_tip)" ]; }; check $? "synced (got '$OUT')"
 ms B push; ms A status; { [ "$RC" -eq 0 ] && [ "$OUT" = "synced $(br_tip)" ]; }; check $? "push with nothing to send -> still synced"
-ms B push; printf '%s' "$OUT" | grep -q 'meta_sync: no_changes'; check $? "push with nothing to send -> meta_sync: no_changes, exit 0 (rc=$RC)"
+ms B push; grep -q 'meta_sync: no_changes' < <(printf '%s' "$OUT"); check $? "push with nothing to send -> meta_sync: no_changes, exit 0 (rc=$RC)"
 
 echo "== 19. static: forbidden forms absent from meta-sync.sh =="
 ! grep -nE 'git (checkout|switch|merge)|push .*--force|add -f [^"$]*/( |$)' "$SUT"
