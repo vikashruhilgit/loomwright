@@ -191,7 +191,7 @@ echo "== (h) THE VERB-LIST CLASS: every surface restating the /rules verbs names
 # appears in X" would just leave verb #7 to drift identically, so the canonical set is DERIVED from
 # the authority (the `### `verb`` subcommand headings of commands/rules.md) and every known
 # restating surface is checked against it. Adding a seventh verb turns this red until swept.
-RULES_VERBS="$(grep -oE '^### `[a-z][a-z-]*`' "$CMD" 2>/dev/null | tr -d '#` ' | LC_ALL=C sort -u | tr '\n' ' ')"
+RULES_VERBS="$(grep -oE '^### `[a-z][a-z-]*`' "$CMD" 2>/dev/null | tr -d '#` ' | env LC_ALL=C sort -u | tr '\n' ' ')"
 n_verbs="$(printf '%s\n' $RULES_VERBS | grep -c . 2>/dev/null)"
 n_verbs="${n_verbs//[^0-9]/}"; n_verbs="${n_verbs:-0}"
 if [ "$n_verbs" -ge 6 ]; then

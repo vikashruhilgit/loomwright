@@ -111,7 +111,7 @@ AGENT="loomwright-loomwright-code-reviewer"
 # from stdin so no filename ever reaches the checksum text.
 store_sum() {
   ( cd "$1" 2>/dev/null || return 0
-    find . -type f 2>/dev/null | LC_ALL=C sort | while IFS= read -r f; do
+    find . -type f 2>/dev/null | env LC_ALL=C sort | while IFS= read -r f; do
       printf '%s ' "$f"; cksum < "$f" 2>/dev/null
     done )
 }

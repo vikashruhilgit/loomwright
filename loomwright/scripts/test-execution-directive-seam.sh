@@ -87,7 +87,7 @@ has() { case "$1" in *"$2"*) return 0 ;; esac; return 1; }
 # Mutant builders — each writes $MUT from $1. LC_ALL=C keeps awk's index/substr byte-consistent on the
 # multibyte em dash / section sign.
 del_lines()     { grep -vF -- "$2" "$1" > "$MUT" || true; }
-strip_in_line() { LC_ALL=C awk -v a="$2" -v n="$3" '{ if (index($0, a)) { i = index($0, n); if (i) $0 = substr($0, 1, i - 1) substr($0, i + length(n)) } print }' "$1" > "$MUT"; }
+strip_in_line() { env LC_ALL=C awk -v a="$2" -v n="$3" '{ if (index($0, a)) { i = index($0, n); if (i) $0 = substr($0, 1, i - 1) substr($0, i + length(n)) } print }' "$1" > "$MUT"; }
 append_text()   { { cat "$1"; printf '%s\n' "$2"; } > "$MUT"; }
 
 MUT="$(mktemp)"
@@ -119,7 +119,7 @@ chk_directive_line() {
     && has "$l" 'governs §5 load-bearing claims ONLY' && has "$l" 'stay diff-text-only'
 }
 chk_directive_after_antioverlap() {
-  LC_ALL=C awk -v d="$DIRECTIVE_PREFIX" '
+  env LC_ALL=C awk -v d="$DIRECTIVE_PREFIX" '
     { t = $0; sub(/^[[:space:]]+/, "", t) }
     after && t != "" { if (index(t, d) == 1) hit = 1; after = 0 }
     index(t, "**ANTI-OVERLAP (every iteration") == 1 { after = 1 }
@@ -213,7 +213,7 @@ check_with_mutant "(d) code-reviewer does not frame the carve-out as the 'Sole e
 
 # ---- (e) workflow marker ----------------------------------------------------------------------------
 chk_marker() {
-  LC_ALL=C awk -v m="$MARKER" '{ t = $0; sub(/^[[:space:]]+/, "", t); sub(/[[:space:]]+$/, "", t); if (t == m) hit = 1 } END { exit (hit ? 0 : 1) }' "$1"
+  env LC_ALL=C awk -v m="$MARKER" '{ t = $0; sub(/^[[:space:]]+/, "", t); sub(/[[:space:]]+$/, "", t); if (t == m) hit = 1 } END { exit (hit ? 0 : 1) }' "$1"
 }
 chk_marker_last() { grep -qF -- 'The LAST line of EVERY comment you post — finding-bearing and no-findings' "$1"; }
 check_with_mutant "(e) workflow prompt carries the exact execution: none marker on its own line" \

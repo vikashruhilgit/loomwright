@@ -257,9 +257,9 @@ grep -Fq "only $EXP_Z_CITABLE of its entries carry citable evidence" "$LOGERR" 2
   || no "the run does not name why execution_bug/worker was withheld"
 
 echo "== AC4a: a second run into a populated dir emits nothing new and reports the suppression =="
-before4="$(find "$GO" -type f 2>/dev/null | LC_ALL=C sort | while IFS= read -r p; do printf '%s  %s\n' "$(csum "$p")" "$p"; done)"
+before4="$(find "$GO" -type f 2>/dev/null | env LC_ALL=C sort | while IFS= read -r p; do printf '%s  %s\n' "$(csum "$p")" "$p"; done)"
 run_sut "$GJ" "$GO" "$GR"; rc=$?
-after4="$(find "$GO" -type f 2>/dev/null | LC_ALL=C sort | while IFS= read -r p; do printf '%s  %s\n' "$(csum "$p")" "$p"; done)"
+after4="$(find "$GO" -type f 2>/dev/null | env LC_ALL=C sort | while IFS= read -r p; do printf '%s  %s\n' "$(csum "$p")" "$p"; done)"
 [ "$rc" -eq 0 ] && ok "exit 0 on the second run" || no "exit $rc on the second run"
 [ "$before4" = "$after4" ] && ok "the second run added and changed nothing in proposed/" \
   || no "the second run altered proposed/:
@@ -475,7 +475,7 @@ hash_set() {
         -not -path './.git' -not -path './.git/*' \
         -not -path './.supervisor/requirements/proposed' \
         -not -path './.supervisor/requirements/proposed/*' \
-        -print | LC_ALL=C sort \
+        -print | env LC_ALL=C sort \
       | while IFS= read -r p; do
           if [ -f "$p" ] && [ ! -L "$p" ]; then printf '%s  %s\n' "$(csum "$p")" "$p"
           else printf 'DIRLINK  %s\n' "$p"; fi

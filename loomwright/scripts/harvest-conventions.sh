@@ -575,7 +575,7 @@ path_matches_globs() {
 derive_applies_to() {
   local src="$1" scratch="$2" rowtotal covered=0 taken=0 out="" pref line
   local rem="$scratch/rem" hit="$scratch/hit" prefs="$scratch/prefs"
-  rowtotal="$(cut -f1 "$src" 2>/dev/null | LC_ALL=C sort -u | grep -c . || true)"
+  rowtotal="$(cut -f1 "$src" 2>/dev/null | env LC_ALL=C sort -u | grep -c . || true)"
   is_num "$rowtotal" || rowtotal=0
   [ "$rowtotal" -gt 0 ] || return 0
 
@@ -588,17 +588,17 @@ derive_applies_to() {
                 if (n >= 3)      print $1 "\t" s[1] "/" s[2] "/*";
                 else if (n == 2) print $1 "\t" s[1] "/*";
                 else             print $1 "\t" $2 }' "$src" \
-    | LC_ALL=C sort -u > "$rem"
+    | env LC_ALL=C sort -u > "$rem"
 
   while [ "$taken" -lt "$MAX_GLOBS" ]; do
-    cut -f2 "$rem" | LC_ALL=C sort | uniq -c | LC_ALL=C sort -rn > "$prefs"
+    cut -f2 "$rem" | env LC_ALL=C sort | uniq -c | env LC_ALL=C sort -rn > "$prefs"
     line="$(head -1 "$prefs")"
     [ -n "$line" ] || break
     pref="$(printf '%s' "$line" | sed -E 's/^ *[0-9]+ //')"
     [ -n "$pref" ] || break
     if [ -n "$out" ]; then out="$out$US$pref"; else out="$pref"; fi
     taken=$((taken + 1))
-    awk -F'\t' -v p="$pref" '$2==p {print $1}' "$rem" | LC_ALL=C sort -u > "$hit"
+    awk -F'\t' -v p="$pref" '$2==p {print $1}' "$rem" | env LC_ALL=C sort -u > "$hit"
     covered=$((covered + $(grep -c . "$hit" 2>/dev/null || echo 0)))
     awk -F'\t' 'NR==FNR { d[$1]=1; next } !($1 in d)' "$hit" "$rem" > "$rem.next" \
       && mv -f "$rem.next" "$rem"
@@ -639,7 +639,7 @@ $(awk -F'\t' -v r="$row" '$1==r {print $2}' "$src")
 EOP
     matched=$((matched + ok))
   done <<EOF
-$(cut -f1 "$src" | LC_ALL=C sort -u)
+$(cut -f1 "$src" | env LC_ALL=C sort -u)
 EOF
   share="$(pct "$matched" "$total")"
   printf '%s %s %s' "$matched" "$total" "$share"
@@ -737,14 +737,14 @@ build_check_candidate() {
   {
     while IFS=$'\t' read -r fid _repo _stage _miss ev _paths; do
       [ -n "$fid" ] || continue
-      printf '%s\n' "$ev" | grep -oE '`[^`]+`' 2>/dev/null | sed -E 's/^.//; s/.$//' | LC_ALL=C sort -u \
+      printf '%s\n' "$ev" | grep -oE '`[^`]+`' 2>/dev/null | sed -E 's/^.//; s/.$//' | env LC_ALL=C sort -u \
         | while IFS= read -r tok; do [ -n "$tok" ] && printf '%s\t%s\n' "$fid" "$tok"; done
     done < "$WORK/theme.$k.tsv"
   } > "$tokfile" 2>/dev/null
   [ -s "$tokfile" ] || return 0
 
   local top count tok
-  top="$(awk -F'\t' '{print $2}' "$tokfile" | LC_ALL=C sort | uniq -c | LC_ALL=C sort -rn | head -1)"
+  top="$(awk -F'\t' '{print $2}' "$tokfile" | env LC_ALL=C sort | uniq -c | env LC_ALL=C sort -rn | head -1)"
   [ -n "$top" ] || return 0
   count="$(printf '%s' "$top" | sed -E 's/^ *([0-9]+).*/\1/')"
   tok="$(printf '%s' "$top" | sed -E 's/^ *[0-9]+ //')"
@@ -933,7 +933,7 @@ CM_MISSES="$(awk -F'\t' '$4=="miss"' "$FINDINGS" 2>/dev/null | grep -c . || true
 
 # Build the repo-index of live paths ONCE (a derived scope must be able to route something today).
 LIVE_INDEX="$WORK/live.idx"
-( cd "$ROOT" && git ls-files 2>/dev/null ) | LC_ALL=C sort > "$LIVE_INDEX" || : > "$LIVE_INDEX"
+( cd "$ROOT" && git ls-files 2>/dev/null ) | env LC_ALL=C sort > "$LIVE_INDEX" || : > "$LIVE_INDEX"
 LIVE_INDEX_N="$(grep -c . "$LIVE_INDEX" 2>/dev/null || true)"; is_num "$LIVE_INDEX_N" || LIVE_INDEX_N=0
 
 # Assign every finding to exactly one theme (first match in THEME_KEYS precedence order).
@@ -971,9 +971,9 @@ for k in $THEME_KEYS; do
     # All recorded paths for this theme (the raw denominator, used only for the null-scope
     # justification), and the per-finding (ordinal, LIVE path) pairs the scope is derived from.
     awk -F'\t' -v us="$US" '{ split($6, p, us); for (i in p) if (p[i] != "") print p[i] }' \
-      "$WORK/theme.$k.tsv" | LC_ALL=C sort -u > "$WORK/paths.$k" || true
+      "$WORK/theme.$k.tsv" | env LC_ALL=C sort -u > "$WORK/paths.$k" || true
     awk -F'\t' -v us="$US" '{ split($6, p, us); for (i in p) if (p[i] != "") print NR "\t" p[i] }' \
-      "$WORK/theme.$k.tsv" | LC_ALL=C sort -u > "$WORK/rowpaths.raw.$k" || true
+      "$WORK/theme.$k.tsv" | env LC_ALL=C sort -u > "$WORK/rowpaths.raw.$k" || true
     if [ "$LIVE_INDEX_N" -gt 0 ]; then
       # Keep only pairs whose path is still tracked: a scope derived from a path that no longer
       # exists could not route anything at read time, so it would be a dead rule authored on purpose.
@@ -995,12 +995,12 @@ CORPUS_LIST="$WORK/corpus.txt"; : > "$CORPUS_LIST"
 CORPUS_PRESENT=0
 if [ -d "$CORPUS_DIR" ]; then
   CORPUS_PRESENT=1
-  find "$CORPUS_DIR" -type f -name '*.md' ! -name 'MEMORY.md' 2>/dev/null | LC_ALL=C sort >> "$CORPUS_LIST" || true
+  find "$CORPUS_DIR" -type f -name '*.md' ! -name 'MEMORY.md' 2>/dev/null | env LC_ALL=C sort >> "$CORPUS_LIST" || true
 fi
 PROPOSALS_N=0
 PROPOSALS_STATE="absent (normal empty case — the queue has never been populated in this repo)"
 if [ -d "$PROPOSALS_DIR" ]; then
-  find "$PROPOSALS_DIR" -type f -name '*.md' ! -name 'MEMORY.md' 2>/dev/null | LC_ALL=C sort >> "$CORPUS_LIST" || true
+  find "$PROPOSALS_DIR" -type f -name '*.md' ! -name 'MEMORY.md' 2>/dev/null | env LC_ALL=C sort >> "$CORPUS_LIST" || true
   PROPOSALS_N="$(find "$PROPOSALS_DIR" -type f -name '*.md' ! -name 'MEMORY.md' 2>/dev/null | grep -c . || true)"
   is_num "$PROPOSALS_N" || PROPOSALS_N=0
   PROPOSALS_STATE="present ($PROPOSALS_N pending file(s))"
@@ -1025,7 +1025,7 @@ STOPWORDS=" this that with from have been will must never always when then than 
 # non-alphanumeric byte, >= 5 characters, deduped. Stopwords are dropped by the CALLERS (via
 # term_overlap), not here, so the token list itself stays a plain property of the text.
 tokens_of_text() {
-  printf '%s' "$1" | tr 'A-Z' 'a-z' | tr -cs 'a-z0-9' '\n' | awk 'length($0)>=5' | LC_ALL=C sort -u
+  printf '%s' "$1" | tr 'A-Z' 'a-z' | tr -cs 'a-z0-9' '\n' | awk 'length($0)>=5' | env LC_ALL=C sort -u
 }
 
 # haystack_words <text> — the same normalisation, space-joined and sentinel-padded so a caller can
@@ -1095,7 +1095,7 @@ if [ -d "$RULES_DIR" ]; then
       | [ (.id // "<no id>"), $f, ((.statement // "") | gsub("[\t\n\r]"; " ")) ] | @tsv
     ' "$rf" >> "$RULES_TSV" 2>/dev/null || RULES_UNREADABLE="$RULES_UNREADABLE $(basename "$rf")"
   done <<EOR
-$(find "$RULES_DIR" -maxdepth 1 -type f -name '*.json' 2>/dev/null | LC_ALL=C sort)
+$(find "$RULES_DIR" -maxdepth 1 -type f -name '*.json' 2>/dev/null | env LC_ALL=C sort)
 EOR
 fi
 RULES_N="$(grep -c . "$RULES_TSV" 2>/dev/null || true)"; is_num "$RULES_N" || RULES_N=0
@@ -1433,7 +1433,7 @@ if [ -n "$RULES_UNREADABLE" ]; then
 fi
 echo
 echo "--- repo distribution (advisory cross-check, decision (a)) ---"
-awk -F'\t' '{print $2}' "$FINDINGS" | LC_ALL=C sort | uniq -c | while read -r c r; do
+awk -F'\t' '{print $2}' "$FINDINGS" | env LC_ALL=C sort | uniq -c | while read -r c r; do
   flagged=""
   if [ "${#EXPECT_REPOS[@]}" -gt 0 ]; then
     flagged=" [OUT-OF-ALLOWLIST — named, not dropped]"
@@ -1452,7 +1452,7 @@ echo "  this batch targets: convention_mismatch"
 echo "  share of all findings:      $CM_TOTAL/$ALL_FINDINGS (${CM_SHARE}%)"
 echo "  share of self-heal MISSES:  $CM_MISSES/$ALL_MISSES (${CM_MISS_SHARE}%) — the class this batch is aimed at"
 echo "  by flow stage:"
-awk -F'\t' '{print $3}' "$FINDINGS" | LC_ALL=C sort | uniq -c | sed 's/^/    /'
+awk -F'\t' '{print $3}' "$FINDINGS" | env LC_ALL=C sort | uniq -c | sed 's/^/    /'
 echo
 echo "--- triage (AC1): every candidate in exactly ONE bucket, with the assigning reason ---"
 for b in rules agent-memory project-memory; do

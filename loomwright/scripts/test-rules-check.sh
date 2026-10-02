@@ -354,7 +354,7 @@ stamped_hash_g="$(jq -r --arg rr "$REPO_G" '.[$rr].hash // "MISSING"' "$STAMP_FI
 TMP_G="$ROOT/g_hash_input"
 jq -nr --arg id1 "g-one" --arg c1 "touch $MARKER_G1" --arg id2 "g-two" --arg c2 "touch $MARKER_G2" \
   '[{id:$id1,check:$c1},{id:$id2,check:$c2}] | .[] | [.id, .check] | @tsv' \
-  | LC_ALL=C sort > "$TMP_G"
+  | env LC_ALL=C sort > "$TMP_G"
 expected_hash_g="$(_t_sha256_file "$TMP_G")"
 [ -n "$expected_hash_g" ] && [ "$expected_hash_g" = "$stamped_hash_g" ] \
   && ok "(g4) the written stamp's hash MATCHES an independently jq+sha256-computed hash of the sorted id/check set — not just echoing the script's own output back at itself" \
@@ -724,7 +724,7 @@ KEY_BH="$(cd "$RBH" && cd "$(git rev-parse --git-common-dir)" && pwd -P)"
 hash_bh="$(jq -r --arg k "$KEY_BH" '.[$k].hash // ""' "$HBH/$STAMP_REL" 2>/dev/null)"
 TMP_BH="$ROOT/bh_hash_input"
 jq -nr '[{id:"h-absent",check:"true"},{id:"h-null",check:"true"},{id:"h-empty",check:"false"}] | .[] | [.id, .check] | @tsv' \
-  | LC_ALL=C sort > "$TMP_BH"
+  | env LC_ALL=C sort > "$TMP_BH"
 exp_bh="$(_t_sha256_file "$TMP_BH")"
 [ -n "$hash_bh" ] && [ "$hash_bh" = "$exp_bh" ] \
   && ok "(bh1) binds absent / null / [] ⇒ the stamp hash equals the independent id/check-only hash (no binds term — pre-binds stamps stay valid)" \

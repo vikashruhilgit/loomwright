@@ -455,7 +455,7 @@ list_tree() {
   tr '\0' '\n' < "$WORK/lt.raw" \
     | awk -F'\t' '{ split($1, a, " "); if (a[2] == "blob" && index($2, ".supervisor/") == 1) print $2 "\t" a[3] }' \
     | while IFS="$TAB" read -r p s; do if is_managed "$p"; then printf '%s\t%s\n' "$p" "$s"; fi; done \
-    | LC_ALL=C sort > "$2"
+    | env LC_ALL=C sort > "$2"
 }
 
 # list_local <out> <write:0|1> — managed files in the working folder, hashed as stored bytes.
@@ -506,7 +506,7 @@ list_local() {
     elif is_managed "$p"; then
       printf '%s\n' "$p"
     fi
-  done < "$WORK/local.found" | LC_ALL=C sort > "$WORK/local.paths" || return 1
+  done < "$WORK/local.found" | env LC_ALL=C sort > "$WORK/local.paths" || return 1
   if [ -s "$hz" ]; then
     sed 's/^/meta_sync: symlink /' "$hz" >&2
     warn "refusing — the symlink(s) above sit where managed run history lives (a write could leave .supervisor/, and files behind them read as deleted); replace them with real directories/files. Nothing was changed."
@@ -532,7 +532,7 @@ list_history() {
                if (old != "" && old !~ /^0+$/) print p "\t" old
                if (new != "" && new !~ /^0+$/) print p "\t" new }' \
     | while IFS="$TAB" read -r p s; do if is_managed "$p"; then printf '%s\t%s\n' "$p" "$s"; fi; done \
-    | LC_ALL=C sort -u > "$2"
+    | env LC_ALL=C sort -u > "$2"
 }
 
 # ---- base ----
@@ -602,7 +602,7 @@ compute_plan() {
         }
         print o, p, l, r, nb, sel
       }
-    }' "$L" "$Rf" "$Bf" "$Hf" "$Sf" | LC_ALL=C sort -t "$TAB" -k2,2 > "$WORK/plan" \
+    }' "$L" "$Rf" "$Bf" "$Hf" "$Sf" | env LC_ALL=C sort -t "$TAB" -k2,2 > "$WORK/plan" \
     || { warn "could not compute the sync plan"; return 1; }
 }
 
@@ -686,9 +686,9 @@ scan_file() {
   # rule<TAB>case(i = any letter case, s = exact)<TAB>ERE
   while IFS="$TAB" read -r rule icase re; do
     if [ "$icase" = "i" ]; then
-      LC_ALL=C grep -i -E -q -e "$re" "$f" 2>/dev/null; rc=$?
+      env LC_ALL=C grep -i -E -q -e "$re" "$f" 2>/dev/null; rc=$?
     else
-      LC_ALL=C grep -E -q -e "$re" "$f" 2>/dev/null; rc=$?
+      env LC_ALL=C grep -E -q -e "$re" "$f" 2>/dev/null; rc=$?
     fi
     if [ "$rc" -eq 0 ]; then echo "meta_sync: scrub $p: $rule"; hits=1
     elif [ "$rc" -gt 1 ]; then echo "meta_sync: scrub $p: scan_error($rule)"; hits=1
@@ -708,11 +708,11 @@ EOF
   # and its value may be bare or wrapped in double, single or back quotes.
   local slugs="$WORK/slugs" s owner bad=0 q="[\"'\`]?"
   {
-    LC_ALL=C grep -ioE '(github\.com|gitlab\.com|bitbucket\.org)[/:](repos/)?[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+' "$f" 2>/dev/null \
+    env LC_ALL=C grep -ioE '(github\.com|gitlab\.com|bitbucket\.org)[/:](repos/)?[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+' "$f" 2>/dev/null \
       | tr 'A-Z' 'a-z' | sed -E 's#^[^/:]+[/:]##; s#^repos/##'
-    LC_ALL=C grep -ioE "${L}${q}repo${q}[[:space:]]*:[[:space:]]*${q}[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+" "$f" 2>/dev/null \
+    env LC_ALL=C grep -ioE "${L}${q}repo${q}[[:space:]]*:[[:space:]]*${q}[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+" "$f" 2>/dev/null \
       | tr 'A-Z' 'a-z' | sed -E "s#^.*repo${q}[[:space:]]*:[[:space:]]*${q}##"
-  } | sed -E 's#\.+$##; s#\.git$##' | tr 'A-Z' 'a-z' | LC_ALL=C sort -u > "$slugs"
+  } | sed -E 's#\.+$##; s#\.git$##' | tr 'A-Z' 'a-z' | env LC_ALL=C sort -u > "$slugs"
   while IFS= read -r s; do
     [ -n "$s" ] || continue
     owner="${s%%/*}"
@@ -730,7 +730,7 @@ EOF
       n=$((n + 1))
       pat="${pat%$'\r'}"
       case "$pat" in ''|'#'*) continue ;; esac
-      LC_ALL=C grep -E -q -e "$pat" "$f" 2>/dev/null; rc=$?
+      env LC_ALL=C grep -E -q -e "$pat" "$f" 2>/dev/null; rc=$?
       if [ "$rc" -eq 0 ]; then echo "meta_sync: scrub $p: deny_pattern:$n"; hits=1
       elif [ "$rc" -gt 1 ]; then echo "meta_sync: scrub $p: deny_pattern_invalid:$n"; hits=1
       fi

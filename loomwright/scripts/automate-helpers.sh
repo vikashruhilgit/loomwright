@@ -425,7 +425,7 @@ resolve_folder() {
     is_done "$f" && continue
     is_not_ready "$f" && continue
     echo "$f"
-  done | LC_ALL=C sort
+  done | env LC_ALL=C sort
 }
 
 # resolve-backlog <backlog.md> — emit items in DOCUMENTED build order, honoring
@@ -507,7 +507,7 @@ resolve_backlog_dir() {
     is_done "$f" && continue
     is_not_ready "$f" && continue
     echo "$f"
-  done | LC_ALL=C sort
+  done | env LC_ALL=C sort
 }
 
 # --------------------------------------------------------------------------- #
@@ -529,7 +529,7 @@ resume_glob() {
     is_run_file "$f" || continue
     is_done "$f" && continue
     echo "$f"
-  done | LC_ALL=C sort
+  done | env LC_ALL=C sort
 }
 
 # reconcile-item <pr_url> <belief> — reconcile a single in-flight item's BELIEF
@@ -1846,7 +1846,7 @@ reconcile_status() {
     _rs_skip_path "$f" && continue
     is_done "$f" && continue
     _rs_process_file "$f" "$proj_root" "$jobs_done" "$apply"
-  done < <(find "$root_abs" -type f -name '*.md' 2>/dev/null | LC_ALL=C sort)
+  done < <(find "$root_abs" -type f -name '*.md' 2>/dev/null | env LC_ALL=C sort)
 
   _rs_process_abandoned "$root_abs" "$proj_root" "$automate_dir" "$apply"
   return 0

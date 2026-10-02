@@ -1982,7 +1982,7 @@ for _c in shasum sha256sum cksum; do
 done
 ro_tree_hash() { # ro_tree_hash <dir> -> a hash of every file's content, or empty
   [ -n "$ro_hash_cmd" ] || return 0
-  ( cd "$1" 2>/dev/null && find . -type f -print0 2>/dev/null | LC_ALL=C sort -z \
+  ( cd "$1" 2>/dev/null && find . -type f -print0 2>/dev/null | env LC_ALL=C sort -z \
       | xargs -0 "$ro_hash_cmd" 2>/dev/null | "$ro_hash_cmd" | awk '{print $1}' )
 }
 for b in $RO_WANT; do

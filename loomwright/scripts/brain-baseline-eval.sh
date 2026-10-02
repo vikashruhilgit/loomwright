@@ -167,7 +167,7 @@ lookup_note() {           # default ""
 records_json="[]"
 items_total=0
 
-item_files="$(find "$CORPUS" -mindepth 1 -maxdepth 1 -type f -name '*.md' 2>/dev/null | LC_ALL=C sort)"
+item_files="$(find "$CORPUS" -mindepth 1 -maxdepth 1 -type f -name '*.md' 2>/dev/null | env LC_ALL=C sort)"
 
 if [ -n "$item_files" ]; then
   while IFS= read -r f; do

@@ -208,8 +208,8 @@ done <<EOF
 $GATEABLE
 EOF
 # The two listings must name the SAME multiset of ids — anything else is a parser or checker drift.
-_sorted_sel="$(printf '%s' "$SELECTED" | LC_ALL=C sort)"
-_sorted_gate="$(printf '%s' "$GATE_IDS" | LC_ALL=C sort)"
+_sorted_sel="$(printf '%s' "$SELECTED" | env LC_ALL=C sort)"
+_sorted_gate="$(printf '%s' "$GATE_IDS" | env LC_ALL=C sort)"
 [ "$_sorted_sel" = "$_sorted_gate" ] || _unreadable "--list-gateable id set differs from --list-selected"
 
 # ---- (3) store health + the countable-set binding (THE COUNTABLE-SET BINDING above) ------------------
@@ -239,8 +239,8 @@ EOF
 [ "$STORE_STATE" = "ok" ] || _unreadable "a .agent/rules/*.json file is not a parseable JSON array"
 case "$STAMP_STATE" in
   recorded)
-    _sorted_rec="$(printf '%s' "$RECORDED" | LC_ALL=C sort -u)"
-    _sorted_cnt="$(printf '%s' "$COUNTABLE" | LC_ALL=C sort -u)"
+    _sorted_rec="$(printf '%s' "$RECORDED" | env LC_ALL=C sort -u)"
+    _sorted_cnt="$(printf '%s' "$COUNTABLE" | env LC_ALL=C sort -u)"
     if [ "$_sorted_rec" != "$_sorted_cnt" ]; then
       echo "$PROG: the countable id set differs from the one recorded at the last /rules check --confirm — verdict unstamped" >&2
       UNSTAMPED_REASON="countable_set_drift"

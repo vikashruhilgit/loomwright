@@ -466,14 +466,14 @@ SHIM
   chmod +x "$1/git"
 }
 synced_pair
-names_before="$(br_names | LC_ALL=C sort)"
+names_before="$(br_names | env LC_ALL=C sort)"
 touch "$W/race1.mark"
 mkshim "$W/shim1" "$W/race1.mark" "env -u GIT_INDEX_FILE PATH='$PATH' bash '$SUT' status --root '$W/A' > '$W/race-status.log' 2>&1"
 put A "$RQ/x.md" "x raced"
 OUT="$(PATH="$W/shim1:$PATH" bash "$SCRIPT" push --root "$W/A" 2>&1)"; RC=$?
 { [ ! -e "$W/race1.mark" ] && [ -s "$W/race-status.log" ]; }
 check $? "the injected same-root status really ran mid-push (log: $(cat "$W/race-status.log" 2>/dev/null))"
-{ [ "$RC" -eq 0 ] && [ "$(br_names | LC_ALL=C sort)" = "$names_before" ] && [ "$(br_show "$RQ/x.md")" = "x raced" ]; }
+{ [ "$RC" -eq 0 ] && [ "$(br_names | env LC_ALL=C sort)" = "$names_before" ] && [ "$(br_show "$RQ/x.md")" = "x raced" ]; }
 check $? "push still publishes the full tree with only x.md changed (rc=$RC: $OUT; branch now: $(br_names | tr '\n' ' '))"
 ms B pull
 { [ "$RC" -eq 0 ] && [ "$(get B "$RQ/y.md")" = "y v1" ] && [ "$(get B "$RQ/x.md")" = "x raced" ]; }

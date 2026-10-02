@@ -292,7 +292,7 @@ seed_rules "$RK" "$(rule_obj killer "$KCHECK")"
 # Hand-write the stamp (a --confirm run is killed before its own stamp write) with rules-check.sh's own
 # key + hash derivation: physical git-common-dir; sha256 of the sorted `[id,check]|@tsv` lines.
 KKEY="$( cd "$RK" && cd "$(git rev-parse --git-common-dir)" && pwd -P )"
-jq -cn --arg c "$KCHECK" '{id:"killer", check:$c}' | jq -r '[.id, .check] | @tsv' | LC_ALL=C sort > "$ROOT/k-hash-input"
+jq -cn --arg c "$KCHECK" '{id:"killer", check:$c}' | jq -r '[.id, .check] | @tsv' | env LC_ALL=C sort > "$ROOT/k-hash-input"
 KHASH="$(shasum -a 256 "$ROOT/k-hash-input" 2>/dev/null | awk '{print $1}')"
 [ -n "$KHASH" ] || KHASH="$(sha256sum "$ROOT/k-hash-input" | awk '{print $1}')"
 mkdir -p "$(dirname "$HK/$STAMP_REL")"
@@ -460,7 +460,7 @@ seed_rules "$RB" "$(rule_obj 0b 'true')" "$(rule_obj a "$BCHECK")"
 # Hand-written stamp (a --confirm run is killed before its own stamp write), as in the (ac6 ii) leg.
 BKEY="$( cd "$RB" && cd "$(git rev-parse --git-common-dir)" && pwd -P )"
 { jq -cn '{id:"0b", check:"true"}'; jq -cn --arg c "$BCHECK" '{id:"a", check:$c}'; } \
-  | jq -r '[.id, .check] | @tsv' | LC_ALL=C sort > "$ROOT/b-hash-input"
+  | jq -r '[.id, .check] | @tsv' | env LC_ALL=C sort > "$ROOT/b-hash-input"
 BHASH="$(shasum -a 256 "$ROOT/b-hash-input" 2>/dev/null | awk '{print $1}')"
 [ -n "$BHASH" ] || BHASH="$(sha256sum "$ROOT/b-hash-input" | awk '{print $1}')"
 mkdir -p "$(dirname "$HB/$STAMP_REL")"

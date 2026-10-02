@@ -98,7 +98,7 @@ trap 'rm -rf "$ROOT" 2>/dev/null' EXIT
 
 # tree_list <dir> — every regular file path under <dir>, excluding .git, sorted stably.
 tree_list() {
-  ( cd "$1" 2>/dev/null && find . -path ./.git -prune -o -type f -print 2>/dev/null | LC_ALL=C sort )
+  ( cd "$1" 2>/dev/null && find . -path ./.git -prune -o -type f -print 2>/dev/null | env LC_ALL=C sort )
 }
 
 # tree_hash <dir> — a content-AND-path digest of the whole tree (excluding .git). Two trees compare

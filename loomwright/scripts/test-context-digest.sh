@@ -495,7 +495,7 @@ fi
 for _cb in "$CORPUS_SRC"/done/*.md "$CORPUS_SRC"/pending/*.md "$CORPUS_SRC"/failed/*.md; do
   [ -f "$_cb" ] || continue
   _co="$(mktemp -t corpusdg.XXXXXX)"
-  LC_ALL="$CORPUS_LOCALE" bash "$REPO_ROOT/loomwright/scripts/build-context-digest.sh" --brief "$_cb" --out "$_co" >/dev/null 2>&1
+  env LC_ALL="$CORPUS_LOCALE" bash "$REPO_ROOT/loomwright/scripts/build-context-digest.sh" --brief "$_cb" --out "$_co" >/dev/null 2>&1
   [ -s "$_co" ] || { rm -f "$_co"; continue; }
   CORPUS_N=$((CORPUS_N+1))
   _csz="$(wc -c < "$_co" | tr -d '[:space:]')"
@@ -563,7 +563,7 @@ MB_BAD=""
 _cap=1400
 while [ "$_cap" -le 2400 ]; do
   MBOUT="$(mktemp -t mbout.XXXXXX)"
-  LC_ALL="$CORPUS_LOCALE" bash "$REPO_ROOT/loomwright/scripts/build-context-digest.sh" \
+  env LC_ALL="$CORPUS_LOCALE" bash "$REPO_ROOT/loomwright/scripts/build-context-digest.sh" \
     --brief "$MBBRIEF" --out "$MBOUT" --max-chars "$_cap" >/dev/null 2>&1
   if [ -s "$MBOUT" ]; then
     _sz="$(wc -c < "$MBOUT" | tr -d '[:space:]')"
@@ -809,7 +809,7 @@ SWEEP_BAD=""; SWEEP_WROTE=0; SWEEP_REFUSED=0
 _sc=650
 while [ "$_sc" -le 2600 ]; do
   SWOUT="$(mktemp -t swout.XXXXXX)"
-  LC_ALL="$CORPUS_LOCALE" bash "$REPO_ROOT/loomwright/scripts/build-context-digest.sh" \
+  env LC_ALL="$CORPUS_LOCALE" bash "$REPO_ROOT/loomwright/scripts/build-context-digest.sh" \
     --brief "$REPO_ROOT/loomwright/sdk-spike/test/fixtures/brief-digest-sections.md" \
     --out "$SWOUT" --max-chars "$_sc" >/dev/null 2>&1 </dev/null
   if [ -s "$SWOUT" ]; then

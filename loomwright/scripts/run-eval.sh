@@ -181,7 +181,7 @@ per_task_json="[]"   # jq-accumulated array of {id,status}
 
 # Collect candidate task dirs in sorted order. `find ... | LC_ALL=C sort` gives deterministic
 # ordering independent of filesystem enumeration order AND of the caller's locale (LC_COLLATE).
-task_dirs="$(find "$CORPUS" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | LC_ALL=C sort)"
+task_dirs="$(find "$CORPUS" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | env LC_ALL=C sort)"
 
 if [ -n "$task_dirs" ]; then
   while IFS= read -r dir; do

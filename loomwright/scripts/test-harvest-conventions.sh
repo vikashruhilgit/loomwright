@@ -147,7 +147,7 @@ run_harvest() {   # run_harvest <repo> [args...] → sets OUT (text) and RC
 }
 
 store_sum() {   # a stable byte-signature of an entire .agent/rules/ tree
-  ( cd "$1" && find .agent/rules -type f 2>/dev/null | LC_ALL=C sort | while IFS= read -r f; do
+  ( cd "$1" && find .agent/rules -type f 2>/dev/null | env LC_ALL=C sort | while IFS= read -r f; do
       printf '%s ' "$f"; wc -c < "$f" | tr -d ' '; printf ' '; cksum < "$f"; done )
 }
 
@@ -217,7 +217,7 @@ if [ -d "$REPO_ROOT/.claude/agent-memory" ] && [ -f "$A_LEDGER" ] \
     || no "(a4) project_self_heal_rubber_stamp was not triaged at all"
 
   # Exactly ONE bucket per candidate: no name may appear under two headings.
-  dupes="$(grep -E '^    - ' "$ROOT/a.txt" | sed -E 's/^    - ([^ ]+) .*/\1/' | LC_ALL=C sort | uniq -d)"
+  dupes="$(grep -E '^    - ' "$ROOT/a.txt" | sed -E 's/^    - ([^ ]+) .*/\1/' | env LC_ALL=C sort | uniq -d)"
   [ -z "$dupes" ] && ok "(a5) every candidate appears in exactly one bucket" \
     || no "(a5) candidates appear in more than one bucket: $dupes"
   # ...and every one carries a reason.
@@ -351,7 +351,7 @@ else
 fi
 # The rule object may carry ONLY add-rule.sh's own flags — no new member can reach the frozen schema.
 badflag=0
-for f in $(grep -o -- '--[a-z][a-z-]*' "$ROOT/b.txt" | LC_ALL=C sort -u); do
+for f in $(grep -o -- '--[a-z][a-z-]*' "$ROOT/b.txt" | env LC_ALL=C sort -u); do
   case "$f" in
     --category|--statement|--enforcement|--applies-to|--source|--confirm|--supersedes|--check|--retract|--target|--reason|--replacement|--help) : ;;
     --root|--session-id|--min-support|--cap|--no-writer|--ledger|--corpus-dir|--proposals-dir|--surface|--expect-repo|--add-rule|--distribution|--json) : ;;

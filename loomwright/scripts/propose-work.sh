@@ -223,7 +223,7 @@ superseded_by() {
   done
   # >>> DONE-SUPERSESSION CHECK (the self-test's AC4b mutation control deletes this block)
   if [ -d "$REQ_DIR" ]; then
-    sb_list="$(find "$REQ_DIR" -type f -name '*.md' 2>/dev/null | LC_ALL=C sort)"
+    sb_list="$(find "$REQ_DIR" -type f -name '*.md' 2>/dev/null | env LC_ALL=C sort)"
     while IFS= read -r sb_f; do
       [ -n "$sb_f" ] && [ -f "$sb_f" ] || continue
       grep -Eq '^##[[:space:]]+Status:[[:space:]]*done[[:space:]]*$' "$sb_f" 2>/dev/null || continue

@@ -537,7 +537,7 @@ _wta_salvage_count() {
   fi
   unpushed=""
   [ -n "$range" ] && unpushed="$(git -C "$wt" diff --name-only "$range" 2>/dev/null)"
-  n="$(printf '%s\n%s\n' "$uncommitted" "$unpushed" | sed '/^$/d' | LC_ALL=C sort -u | wc -l | tr -d ' ')"
+  n="$(printf '%s\n%s\n' "$uncommitted" "$unpushed" | sed '/^$/d' | env LC_ALL=C sort -u | wc -l | tr -d ' ')"
   printf '%s' "${n:-0}"
 }
 

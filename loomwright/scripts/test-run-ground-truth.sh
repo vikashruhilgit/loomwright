@@ -634,7 +634,7 @@ jq -n --arg c "$KCHECK" '[{id:"killer", category:"a", statement:"s", enforcement
 # derivation rules-check.sh uses — physical git-common-dir; sha256 of the sorted `[id,check]|@tsv` lines.
 KKEY="$( cd "$KREPO" && cd "$(git rev-parse --git-common-dir)" && pwd -P )"
 KHIN="$RSB/k-hash-input"
-jq -cn --arg c "$KCHECK" '{id:"killer", check:$c}' | jq -r '[.id, .check] | @tsv' | LC_ALL=C sort > "$KHIN"
+jq -cn --arg c "$KCHECK" '{id:"killer", check:$c}' | jq -r '[.id, .check] | @tsv' | env LC_ALL=C sort > "$KHIN"
 KHASH="$(shasum -a 256 "$KHIN" 2>/dev/null | awk '{print $1}')"
 [ -n "$KHASH" ] || KHASH="$(sha256sum "$KHIN" | awk '{print $1}')"
 KHOME="$RSB/khome"; mkdir -p "$(dirname "$KHOME/$RULES_STAMP_REL")"

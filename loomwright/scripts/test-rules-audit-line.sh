@@ -77,7 +77,7 @@ hash_store() {
   for f in "$1"/.agent/rules/*.json; do
     [ -e "$f" ] || continue
     printf '%s %s\n' "$(basename "$f")" "$(cksum < "$f")"
-  done | LC_ALL=C sort
+  done | env LC_ALL=C sort
 }
 # line <helper> <root> — run a helper; sets OUT and RC.
 line() { OUT="$(bash "$1" --root "$2" </dev/null 2>/dev/null)"; RC=$?; }

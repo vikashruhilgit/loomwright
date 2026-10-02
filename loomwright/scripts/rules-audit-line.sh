@@ -76,7 +76,7 @@ if [ "$RC" -eq 1 ] && [ "$HDRS" = "1" ] && [ -n "$HDR_N" ] && [ "$HDR_N" -ge 1 ]
     index($0, pfx) == 1 { inside = 1; next }
     inside && /^## / { inside = 0 }
     inside && /^  \[[a-z_]+\] / { k = $0; sub(/^  \[/, "", k); sub(/\].*$/, "", k); print k }
-  ' <<<"$REPORT" | LC_ALL=C sort -u | awk 'NR > 1 { printf ", " } { printf "%s", $0 }')"
+  ' <<<"$REPORT" | env LC_ALL=C sort -u | awk 'NR > 1 { printf ", " } { printf "%s", $0 }')"
   [ -n "$KINDS" ] || KINDS="unparsed"
   LINE1="rules_audit: findings $HDR_N ($KINDS)"
 fi

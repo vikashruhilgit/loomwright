@@ -305,7 +305,7 @@ if [ "$retract" -eq 1 ]; then
           break
         fi
       fi
-    done < <(LC_ALL=C find "$RULES_DIR" -maxdepth 1 -type f -name '*.json' 2>/dev/null | LC_ALL=C sort)
+    done < <(env LC_ALL=C find "$RULES_DIR" -maxdepth 1 -type f -name '*.json' 2>/dev/null | env LC_ALL=C sort)
   fi
   [ -n "$found_file" ] || die "rejected: target rule id not found in any .agent/rules/*.json array: $target_id" 2
 
@@ -540,10 +540,10 @@ if [ -d "$RULES_DIR" ]; then
     # Only array files contribute ids (matches reader). Extract string ids injection-safely.
     jq -r 'if type=="array" then (.[] | select(type=="object") | .id | select(type=="string")) else empty end' \
       "$rf" 2>/dev/null >> "$existing_ids" || true
-  done < <(LC_ALL=C find "$RULES_DIR" -maxdepth 1 -type f -name '*.json' 2>/dev/null | LC_ALL=C sort)
+  done < <(env LC_ALL=C find "$RULES_DIR" -maxdepth 1 -type f -name '*.json' 2>/dev/null | env LC_ALL=C sort)
 fi
 
-id_taken() { LC_ALL=C grep -qxF "$1" "$existing_ids"; }
+id_taken() { env LC_ALL=C grep -qxF "$1" "$existing_ids"; }
 
 base_id="$category_slug-$statement_slug"
 new_id="$base_id"

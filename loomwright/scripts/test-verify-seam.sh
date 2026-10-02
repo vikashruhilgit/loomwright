@@ -121,7 +121,7 @@ run_reader() {
 }
 
 tree_list() {
-  ( cd "$1" 2>/dev/null && find . -path ./.git -prune -o -type f -print 2>/dev/null | LC_ALL=C sort )
+  ( cd "$1" 2>/dev/null && find . -path ./.git -prune -o -type f -print 2>/dev/null | env LC_ALL=C sort )
 }
 tree_hash() {
   local d="$1" p
