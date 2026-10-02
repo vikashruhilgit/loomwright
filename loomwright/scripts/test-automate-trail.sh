@@ -88,6 +88,12 @@
 #      needed for the owner's hand pull (control: neutered ⇒ refuses); (iii)
 #      the .trail-staged re-stage still needed for closeout #2's sync after a
 #      PICK un-stage (control: no record ⇒ refuses). All KEPT.
+#   G. PICK-time trail gate — an open trail PR ⇒ PARK naming it, primary
+#      untouched (control: the OPEN filter dropped ⇒ clear), plus the #345/#347
+#      incident reproduced without the gate (next branch BEHIND); a merged trail
+#      PR ⇒ clear + sync, next branch carries it and holds only its own file
+#      (control: sync removed ⇒ BEHIND); CLOSED / other run / non-numeric suffix
+#      ⇒ clear; gh list failing / gh absent / missing run file ⇒ PARK, exit 0.
 #   K. SKILL text (Part B) — watcher named, §6 step 1 closeout --session-id
 #      before PICK, decision-9 grep clean, commands/automate.md surface.
 
@@ -232,7 +238,7 @@ r="$(bash "$H" sidecar-check "$SD/absent.md")"; rc=$?
 # =============================================================================
 echo "== D. dispatcher =="
 helpout="$(bash "$H" --help)"
-for s in sidecar-check trail-pr closeout trail-unstage; do
+for s in sidecar-check trail-pr closeout trail-unstage trail-gate; do
   if grep -q "^  $s " <<<"$helpout"; then ok "--help lists $s"; else no "--help missing $s"; fi
 done
 if grep -q 'delegated to the sibling' "$H" && grep -q '`automate-trail.sh`, which is a git/`gh pr create` mutator' "$H"; then
@@ -240,7 +246,7 @@ if grep -q 'delegated to the sibling' "$H" && grep -q '`automate-trail.sh`, whic
 else
   no "helper header carve-out sentence missing"
 fi
-if grep -qE 'sidecar-check\|trail-pr\|closeout\|trail-unstage\) exec bash "\$\(dirname "\$0"\)/automate-trail.sh"' "$H"; then ok "dispatcher exec row present"; else no "dispatcher row missing"; fi
+if grep -qE 'sidecar-check\|trail-pr\|closeout\|trail-unstage\|trail-gate\) exec bash "\$\(dirname "\$0"\)/automate-trail.sh"' "$H"; then ok "dispatcher exec row present"; else no "dispatcher row missing"; fi
 
 # =============================================================================
 # fixture builder: bare origin + primary clone on a feature branch with trail state
@@ -567,7 +573,7 @@ grep -q '^### Trail PR after merge and at run end$' "$SKILL" && ok "SKILL trail 
 OLDH="Trail PR at every"" park"   # split so this file is not a hit of its own sweep
 hits="$(grep -rnF "$OLDH" "$HERE/.." 2>/dev/null || true)"
 [ -z "$hits" ] && ok "old heading referenced nowhere under loomwright/" || no "stale old-heading refs: $hits"
-for s in sidecar-check trail-pr closeout trail-unstage; do
+for s in sidecar-check trail-pr closeout trail-unstage trail-gate; do
   grep -qE "^\| \`$s\` \|" "$SKILL" && ok "§1.5 row $s" || no "§1.5 row $s missing"
 done
 # The three triggers: trail-pr precedes run-lock.sh release where the loop runs it.
@@ -592,6 +598,7 @@ no_trail_on() { # <regex identifying the park line> <label>
 }
 no_trail_on '^   \*\*PICK-time token-ceiling check' "token_ceiling park"
 no_trail_on '^- \*\*Classified hit' "rate_limit park"
+no_trail_on '^   \*\*PICK-time trail gate' "trail_pr_open park"
 no_trail_on '^- \*\*Safe mode \(default\):' "§9 awaiting_merge park"
 no_trail_on '^\*\*`ESCALATED` never merges' "§9 escalated park"
 grep -qE '^On the \*\*`## Status: done`\*\* exit ONLY.*the `limit_reached` exit is a park and releases the lock without a trail' "$SKILL" && ok "Termination limit_reached: no trail-pr at this park" || no "Termination limit_reached still trails"
@@ -604,7 +611,7 @@ for t in '`--reason closeout`' '`--reason done`' '`--reason skipped`' '`--reason
 done
 nopark="${when#*No park calls it:\*\*}"
 [ "$nopark" != "$when" ] && ok "trigger list carries the one 'No park calls it' park-path list" || no "no-park list missing"
-for pr in awaiting_merge escalated rate_limit drain_died token_ceiling limit_reached run_lock_held resume_ambiguous; do
+for pr in awaiting_merge escalated rate_limit drain_died token_ceiling trail_pr_open limit_reached run_lock_held resume_ambiguous; do
   grep -qF -- "\`$pr\`" <<<"$nopark" && ok "no-park list names $pr" || no "no-park list missing $pr"
 done
 grep -qF -- '- **Evidence-gated stamps' <<<"$sect" && ok "trail section documents the evidence gate" || no "evidence-gate bullet missing"
@@ -612,6 +619,14 @@ eg="$(grep -m1 -F -- '- **Evidence-gated stamps' <<<"$sect")"
 for t in '`is_done`' '`## Status: done_with_escalation — ABANDONED (- [x] <path>  # abandoned: <reason>)`' 'merely contains' '### Outcome' 'Outcomes Rubric' '`[]()<>`' '`; retracted <path>`' 'never stages a gate-excluded path' 'transient `gh pr view` failure'; do
   grep -qF -- "$t" <<<"$eg" && ok "evidence-gate bullet names $t" || no "evidence-gate bullet missing $t"
 done
+ln_gate="$(grep -n '^   \*\*PICK-time trail gate' "$SKILL" | head -n1 | cut -d: -f1)"
+ln_unst="$(grep -n '^   \*\*PICK-time trail un-stage' "$SKILL" | head -n1 | cut -d: -f1)"
+[ -n "$ln_gate" ] && [ -n "$ln_unst" ] && [ "$ln_gate" -lt "$ln_unst" ] && ok "§6 step 1: the trail gate precedes the trail un-stage" || no "§6 step 1 gate/un-stage order ($ln_gate/$ln_unst)"
+s8="$(awk '/^## §8 /{s=1;next} s&&/^## /{exit} s' "$SKILL")"
+for t in 'or this run'"'"'s own trail PR is open' '`trail_pr_open`' '`mergeStateStatus: BEHIND`' '(a) Refresh a READY-but-BEHIND PR' '(c) Exempt `.supervisor/**`-only changes' 'not possible' 'Honest limits.'; do
+  grep -qF -- "$t" <<<"$s8" && ok "§8 names $t" || no "§8 missing $t"
+done
+grep -qF '`trail-gate`' "$HERE/../commands/automate.md" && ok "commands/automate.md per-item loop names trail-gate" || no "commands/automate.md missing trail-gate"
 grep -qF -- '- **Committing a done stamp for unmerged work.**' "$SKILL" && ok "Anti-Pattern: committing a done stamp for unmerged work" || no "anti-pattern missing"
 grep -qF 'never at a park' "$HERE/../commands/automate.md" && ok "commands/automate.md trail bullet: never at a park" || no "commands/automate.md trail bullet stale"
 
@@ -1259,6 +1274,105 @@ for v in record no-record; do
   else
     case "$out" in *"closeout: skipped — git pull --ff-only refused"*) ok "[D3iii control] without the record closeout #2's pull refuses (the re-stage is load-bearing)" ;; *) no "[D3iii control] did not refuse — _restage_landed would be dead: $out" ;; esac
   fi
+done
+
+echo "== G. PICK-time trail gate: the single-open-PR invariant counts this run's trail PR =="
+# Run automate-2026-10-01-142337: closeout opened trail PR #345, the owner gave
+# the next go first, item 03's branch was cut, THEN #345 merged — with strict
+# required checks PR #347 read BEHIND. trail-gate parks while the trail PR is
+# open and, once it merged, syncs the primary over it before the next branch.
+TG_URL="https://github.com/acme/widgets/pull/101"
+tg_merge_trail() {  # squash-merge this run's trail-1 branch into origin/main; the stub reads it MERGED
+  local TM="$FX/tgmerger"; rm -rf "$TM"; git clone -q "$FX/origin.git" "$TM" 2>/dev/null
+  ( cd "$TM" && git checkout -q main && git merge -q --squash "origin/chore/$RUN_ID-trail-1" >/dev/null && git commit -qm "squash trail (#101)" && git push -q origin main 2>/dev/null )
+  jq --arg u "$TG_URL" 'map(if .url == $u then .state = "MERGED" else . end)' "$GH_STUB_DIR/prs.json" > "$GH_STUB_DIR/p.tmp" && mv "$GH_STUB_DIR/p.tmp" "$GH_STUB_DIR/prs.json"
+}
+tg_gate() { (cd "$P" && bash "${TG_H:-$H}" trail-gate "$RF_REL"); }
+tg_next_branch() {  # the next item's branch, cut from the primary as PICK leaves it: prints its commit's file names
+  (cd "$P" && git checkout -q -b feature/next && echo n > new.txt && git add new.txt && git commit -qm next && git show --name-only --format= HEAD)
+}
+
+# G1. open trail PR ⇒ PARK naming it; nothing in the primary moves.
+closeout_fixture 120
+out="$(run_closeout)"
+case "$out" in *"trail-pr: opened $TG_URL"*) ok "[G1] setup: closeout opened trail PR #101" ;; *) no "[G1] setup: $out" ;; esac
+head0="$(git -C "$P" rev-parse HEAD)"; idx0="$(git -C "$P" ls-files -s | cksum)"
+out="$(tg_gate)"; rc=$?
+[ "$out" = "trail-gate: PARK — trail PR open $TG_URL (merge or close it, then --resume)" ] && [ "$rc" -eq 0 ] && ok "[G1] open trail PR ⇒ '$out', exit 0" || no "[G1] open trail PR ⇒ '$out' rc=$rc"
+[ "$head0" = "$(git -C "$P" rev-parse HEAD)" ] && [ "$idx0" = "$(git -C "$P" ls-files -s | cksum)" ] && ok "[G1] a PARK touches neither HEAD nor the index" || no "[G1] PARK moved the primary"
+# Mutation control: the OPEN filter neutered ⇒ the same state reads clear (the PARK is load-bearing).
+TGM="$TOP/tgm"; mkdir -p "$TGM"; cp "$HERE"/*.sh "$HERE"/*.py "$TGM/"
+sed 's/select((.state \/\/ "") == "OPEN") | //' "$T" > "$TGM/automate-trail.sh"
+if cmp -s "$T" "$TGM/automate-trail.sh"; then no "[G1] mutation control: the patch changed nothing — inconclusive"
+else
+  sed 's/select((.headRefName \/\/ "") | startswith($p)) | select((.headRefName | ltrimstr($p)) | test("^\[0-9\]+$")) | .url\] | join/select(false) | .url] | join/' "$TGM/automate-trail.sh" > "$TGM/at.mut" && mv "$TGM/at.mut" "$TGM/automate-trail.sh"
+  out="$(TG_H="$TGM/automate-helpers.sh" tg_gate)"
+  case "$out" in "trail-gate: clear — "*) ok "[G1] mutation control: with the open-PR filter dropped the same state reads '$out' — the PARK is load-bearing" ;; *) no "[G1] mutation control REFUTED: $out" ;; esac
+fi
+# The incident, reproduced without the gate (PICK before this fix): un-stage, cut the
+# next branch, THEN the owner merges the trail PR ⇒ the next branch is BEHIND origin/main.
+(cd "$P" && bash "$H" trail-unstage "$RF_REL" >/dev/null)
+tg_next_branch >/dev/null
+tg_merge_trail; git -C "$P" fetch -q origin
+git -C "$P" merge-base --is-ancestor origin/main feature/next && no "[G1] incident repro: next branch is up to date (the fixture no longer shows BEHIND)" || ok "[G1] incident repro: next branch cut while the trail PR was open is BEHIND once it merges (#345 under #347)"
+
+# G2. trail PR merged ⇒ clear + sync; the next branch carries it and holds only its own file.
+closeout_fixture 121
+run_closeout >/dev/null
+tg_merge_trail
+echo "- t11 live progress after the trail merged" >> "$P/$RF_REL"
+out="$(tg_gate)"; rc=$?
+case "$out" in "trail-gate: clear — no open trail PR; synced — main at "*) [ "$rc" -eq 0 ] && ok "[G2] merged trail PR ⇒ '$out'" || no "[G2] rc=$rc" ;; *) no "[G2] merged trail PR ⇒ '$out'" ;; esac
+[ "$(git -C "$P" rev-parse HEAD)" = "$(git -C "$FX/origin.git" rev-parse main)" ] && ok "[G2] primary main == origin/main (fast-forwarded over the merged trail)" || no "[G2] primary not synced"
+grep -q 't11 live progress' "$P/$RF_REL" && ok "[G2] live run-file bytes survive the sync" || no "[G2] live bytes lost"
+(cd "$P" && bash "$H" trail-unstage "$RF_REL" >/dev/null)
+names="$(tg_next_branch)"
+[ "$names" = "new.txt" ] && ok "[G2] next item's commit holds exactly new.txt" || no "[G2] next commit swept: [$names]"
+git -C "$P" merge-base --is-ancestor "$(git -C "$FX/origin.git" rev-parse main)" feature/next && ok "[G2] next branch carries the merged trail (not BEHIND)" || no "[G2] next branch BEHIND origin/main"
+out="$(tg_gate)"
+case "$out" in "trail-gate: clear — no open trail PR; sync skipped — primary checkout is on feature/next, not main") ok "[G2] primary on a feature branch ⇒ '$out' (reported, never a park)" ;; *) no "[G2] on feature branch ⇒ '$out'" ;; esac
+# Mutation control: the sync removed ⇒ the primary stays behind and the next branch is BEHIND.
+closeout_fixture 122
+run_closeout >/dev/null
+tg_merge_trail
+TGS="$TOP/tgs"; mkdir -p "$TGS"; cp "$HERE"/*.sh "$HERE"/*.py "$TGS/"
+sed 's/^  if _sync_primary "\$rf_rel" "\$run_id" "\$base_branch" "" "\$bm"; then$/  if false; then/' "$T" > "$TGS/automate-trail.sh"
+if cmp -s "$T" "$TGS/automate-trail.sh"; then no "[G2] mutation control: the patch changed nothing — inconclusive"
+else
+  TG_H="$TGS/automate-helpers.sh" tg_gate >/dev/null
+  (cd "$P" && bash "$H" trail-unstage "$RF_REL" >/dev/null)
+  tg_next_branch >/dev/null
+  git -C "$P" merge-base --is-ancestor "$(git -C "$FX/origin.git" rev-parse main)" feature/next && no "[G2] mutation control REFUTED: next branch up to date without the sync" || ok "[G2] mutation control: without the gate's sync the next branch is BEHIND — the sync is load-bearing"
+fi
+
+# G3. what does NOT count: a CLOSED trail PR, another run's open trail PR, a non-numeric suffix.
+closeout_fixture 123
+run_closeout >/dev/null
+jq --arg u "$TG_URL" 'map(if .url == $u then .state = "CLOSED" else . end)
+  + [{number:200,url:"https://github.com/acme/widgets/pull/200",state:"OPEN",headRefName:"chore/automate-2099-01-01-000000-trail-1"},
+     {number:201,url:"https://github.com/acme/widgets/pull/201",state:"OPEN",headRefName:("chore/'"$RUN_ID"'-trail-x")}]' \
+  "$GH_STUB_DIR/prs.json" > "$GH_STUB_DIR/p.tmp" && mv "$GH_STUB_DIR/p.tmp" "$GH_STUB_DIR/prs.json"
+out="$(tg_gate)"
+case "$out" in "trail-gate: clear — "*) ok "[G3] CLOSED trail PR + another run's trail PR + a non-numeric suffix ⇒ clear" ;; *) no "[G3] ⇒ '$out'" ;; esac
+
+# G4. fail CLOSED: anything that stops the read parks; exit 0 always.
+closeout_fixture 124
+run_closeout >/dev/null
+tg_merge_trail
+touch "$GH_STUB_DIR/pr-list-fail"
+out="$(tg_gate)"; rc=$?
+[ "$out" = "trail-gate: PARK — trail PR state unreadable (gh pr list failed)" ] && [ "$rc" -eq 0 ] && ok "[G4] gh pr list failing ⇒ '$out', exit 0" || no "[G4] list fail ⇒ '$out' rc=$rc"
+rm -f "$GH_STUB_DIR/pr-list-fail"
+out="$(cd "$P" && LOOMWRIGHT_GH_BIN="$TOP/no-such-gh" bash "$H" trail-gate "$RF_REL")"; rc=$?
+[ "$out" = "trail-gate: PARK — gh unavailable" ] && [ "$rc" -eq 0 ] && ok "[G4] gh absent ⇒ '$out', exit 0" || no "[G4] gh absent ⇒ '$out' rc=$rc"
+out="$(cd "$P" && bash "$H" trail-gate ".supervisor/automate/nope.md")"; rc=$?
+[ "$out" = "trail-gate: PARK — run file not found" ] && [ "$rc" -eq 0 ] && ok "[G4] missing run file ⇒ '$out', exit 0" || no "[G4] missing run file ⇒ '$out' rc=$rc"
+[ "$(git -C "$P" rev-parse HEAD)" != "$(git -C "$FX/origin.git" rev-parse main)" ] && ok "[G4] no PARK synced the primary" || no "[G4] a PARK synced the primary"
+grep -q '^pr merge' "$GH_STUB_DIR/argv.log" && no "[G] gh pr merge called" || ok "[G] trail-gate never calls gh pr merge"
+for fn in trail_gate _sync_primary; do
+  body="$(awk -v f="^$fn\\\\(\\\\) \\\\{" '$0 ~ f {s=1} s{print} s&&/^}/{exit}' "$T" | grep -vE '^[[:space:]]*#')"
+  bad="$(grep -nE 'git (-C [^ ]+ )?(commit|reset|stash|merge|push)|pr merge|--force' <<<"$body" || true)"
+  [ -n "$body" ] && [ -z "$bad" ] && ok "[G] $fn never commits/resets/stashes/merges/pushes" || no "[G] $fn body: ${bad:-<function not found>}"
 done
 
 echo "== C. RECONCILE re-entry (AC14) =="
