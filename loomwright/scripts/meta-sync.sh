@@ -216,7 +216,7 @@ remote_probe() {
 }
 
 no_remote_branch_msg() {
-  warn "no_remote_branch — '$BRANCH' does not exist on origin. Run 'meta-sync.sh init' once to create it. A common cause is a clone whose origin is a LOCAL PATH (another checkout) rather than the forge: that remote never carries the metadata branch. This is never treated as success."
+  printf '%s\n' "meta_sync: no_remote_branch — '$BRANCH' does not exist on origin. Run 'meta-sync.sh init' once to create it. A common cause is a clone whose origin is a LOCAL PATH (another checkout) rather than the forge: that remote never carries the metadata branch. This is never treated as success." >&2
 }
 
 # fetch_remote — probe + fetch; sets R (commit) and RT (tree). Returns 0 ok, 1 fetch failure,
