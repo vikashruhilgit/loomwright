@@ -1,7 +1,8 @@
 # `is_run_file` exact-match hides a run file whose title differs in whitespace / case / BOM
 
-## Status: proposed
+## Status: pending
 
+> **Promoted from `proposed/` 2026-10-01** (owner triage session).
 > **Origin.** Dismissed finding 1 from PR #288 (item 03, resume-glob / `is_run_file`), recovered by the item-13 triage
 > sweep (run automate-2026-09-30-054439, classified 2026-10-01 against main@0dc0a5b, owner-approved as *draft*).
 

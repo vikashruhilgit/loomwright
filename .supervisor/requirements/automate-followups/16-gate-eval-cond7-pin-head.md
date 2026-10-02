@@ -1,7 +1,8 @@
 # `gate-eval` condition 7 judges whatever is checked out at `--root`, not the PR head it is about to merge
 
-## Status: proposed
+## Status: pending
 
+> **Promoted from `proposed/` 2026-10-01** (owner triage session). Run first: the only open finding where the sole `gh pr merge --squash` executor can merge when it should park.
 > **Origin.** Dismissed finding 3 from PR #296 (item 07, rules that gate), recovered by the item-13 triage sweep
 > (run automate-2026-09-30-054439, classified 2026-10-01 against main@0dc0a5b, owner-approved as *draft*).
 > **Priority:** the only still-open finding of the sweep where the trusted auto-merge gate (the plugin's sole

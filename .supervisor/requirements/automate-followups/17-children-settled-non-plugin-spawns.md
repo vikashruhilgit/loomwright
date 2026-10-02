@@ -1,7 +1,8 @@
 # `check-children-settled.sh` treats a non-plugin (`general-purpose`) spawn as never settled
 
-## Status: proposed
+## Status: pending
 
+> **Promoted from `proposed/` 2026-10-01** (owner triage session).
 > **Origin (2026-10-01).** Supervisor FINALIZE pre-merge gate point 5 on item automate-followups/13 (run
 > automate-2026-09-30-054439) reported `unsettled` for three `general-purpose` agents that had demonstrably finished
 > (completion notifications + SubagentHandback reports received). Owner chose "proceed + draft follow-up".

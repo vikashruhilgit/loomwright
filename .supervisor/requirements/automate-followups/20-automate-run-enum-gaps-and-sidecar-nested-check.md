@@ -1,7 +1,8 @@
 # AUTOMATE_RUN enum gaps + sidecar-check nested-shape blind spot
 
-## Status: proposed
+## Status: pending
 
+> **Promoted from `proposed/` 2026-10-01** (owner triage session).
 > **Origin (2026-09-30).** claude[bot] review of trail PR #311 (item 11, run automate-2026-09-30-054439) — owner chose "record as null + follow-up".
 
 ## Problem
