@@ -118,8 +118,13 @@
 # `apply` PRESERVES the mode line already in the block (inside proposed_applied_content, so `check`,
 # `apply` and `remove` agree); `--branch-mode off` restores the default block; `remove` deletes the
 # whole block, mode included. `mode` is the ONE reader every caller uses — nothing else parses the
-# block. The branch name is validated exactly as meta-sync.sh does (`git check-ref-format
-# refs/heads/<name>`). The invariant above holds for the new flag too: switching mode only rewrites
+# block. A branch name is accepted ONLY when ALL hold (valid_branch_name): it does not start with
+# `-` and is not `HEAD` / `@`; `git check-ref-format --branch <name>` succeeds AND prints <name>
+# back unchanged (so `@{-N}` shorthand, which it expands, is refused); and meta-sync.sh's own check,
+# `git check-ref-format refs/heads/<name>`, succeeds. The accepted set is the INTERSECTION, so a
+# recorded name is always one meta-sync.sh accepts and never one git would read as an option or a
+# reserved ref. A `--branch-mode` whose value starts with `-` (e.g. `--branch-mode --root X`) is a
+# usage error: nothing is written. The invariant above holds for the new flag too: switching mode only rewrites
 # `.gitignore`; it NEVER runs `git add` / `git rm` / `git commit`, so it never untracks the run
 # history already committed (that is a separate, deliberate operator step).
 #
@@ -134,6 +139,25 @@ MB_END='# <<< loomwright /setup memory END <<<'
 DISABLED_MARK='# [loomwright/setup-memory] disabled: a bare directory exclude defeats the negation below'
 # The branch-mode switch: ONE comment line inside the sentinels (read only by read_mode()).
 MODE_PREFIX='# loomwright-meta-branch: '
+
+# valid_branch_name <name> — exit 0 iff <name> may be recorded as (or read back from) the mode
+# line. The accepted set is the INTERSECTION of `git check-ref-format --branch` (output equal to
+# the input — `@{-N}` expands, so it is refused) and meta-sync.sh's own `git check-ref-format
+# refs/heads/<name>`, minus anything option-shaped (`-…`) or reserved (`HEAD`, `@`) — belt and
+# braces for a git whose --branch check predates refusing them. Used by the --branch-mode check
+# AND read_mode, so a hand-written `-x` mode line reads `unknown`, never `on -x`. The --branch probe
+# runs as `git -C /` so the verdict never depends on the caller's cwd: a bare `--branch` consults
+# the cwd's repo (expanding `@{-N}` there) and FAILS outright when the cwd was deleted, which would
+# turn a valid recorded mode into `unknown`. Outside any repo `@{-N}` is refused, as intended.
+valid_branch_name() {
+  local v="${1:-}" out
+  [ -n "$v" ] || return 1
+  case "$v" in -*|HEAD|@) return 1 ;; esac
+  out="$(git -C / check-ref-format --branch "$v" 2>/dev/null)" || return 1
+  [ "$out" = "$v" ] || return 1
+  git check-ref-format "refs/heads/$v" >/dev/null 2>&1 || return 1
+  return 0
+}
 
 # ---- arg parsing ------------------------------------------------------------
 SUBCMD=""
@@ -184,6 +208,12 @@ while [ $# -gt 0 ]; do
         echo "setup-memory: --branch-mode requires a value: <branch> (e.g. loomwright-meta) or off. Nothing was written."
         exit 0
       fi
+      # An option-shaped value is the NEXT flag, not a branch (`--branch-mode --root X` must never
+      # record `--root` as the branch — nor resolve the root from the wrong checkout). Usage error.
+      case "$2" in
+        -*) echo "setup-memory: --branch-mode requires a value: <branch> (e.g. loomwright-meta) or off — got option-shaped '$2'. Nothing was written."
+            exit 0 ;;
+      esac
       BRANCH_MODE_SET=1; BRANCH_MODE_VAL="$2"; shift 2 ;;
     -h|--help) usage ;;
     *) echo "setup-memory: unknown arg '$1' (try --help)" >&2; shift ;;
@@ -207,8 +237,8 @@ if [ "$BRANCH_MODE_SET" = 1 ]; then
     echo "setup-memory: --branch-mode applies only to 'apply' (got '$SUBCMD'). Nothing was written."
     exit 0
   fi
-  if [ "$BRANCH_MODE_VAL" != "off" ] && ! git check-ref-format "refs/heads/$BRANCH_MODE_VAL" >/dev/null 2>&1; then
-    echo "apply: ABORTED — invalid --branch-mode branch name '$BRANCH_MODE_VAL' (git check-ref-format refs/heads/<name> refused it). Nothing was written."
+  if [ "$BRANCH_MODE_VAL" != "off" ] && ! valid_branch_name "$BRANCH_MODE_VAL"; then
+    echo "apply: ABORTED — invalid --branch-mode branch name '$BRANCH_MODE_VAL' (must pass git check-ref-format --branch unchanged AND refs/heads/<name>, and not be option-shaped or HEAD/@). Nothing was written."
     exit 0
   fi
 fi
@@ -565,7 +595,10 @@ BLOCK
 #   unknown <reason>  a .gitignore that cannot be read (a mode line cannot be ruled out); or one
 #                     that carries mode-line text AND fails gitignore_gate's STRUCTURAL checks
 #                     (symlink, NUL bytes, conflict markers, sentinel sanity); more than one mode
-#                     line; or a mode line whose branch fails `git check-ref-format refs/heads/<name>`
+#                     line; or a mode line whose branch fails valid_branch_name (the intersection of
+#                     `git check-ref-format --branch` unchanged and meta-sync.sh's refs/heads/<name>
+#                     check, minus option-shaped/HEAD/@ — so `-x` reads unknown). A carriage return
+#                     (CRLF .gitignore) is shown as a literal `\r` in the reason, never stripped.
 # "off" is decided from CONTENT first, never from the writer's rewrite-safety gate: a repo that
 # never opted in (no mode-line text at all) reads `off` even when its .gitignore is read-only,
 # conflict-marked or otherwise un-rewritable — `unknown` (which ABORTs /automate entry and fails
@@ -594,8 +627,8 @@ read_mode() {
   n="$(printf '%s\n' "$lines" | wc -l | tr -d ' ')"
   if [ "$n" -gt 1 ]; then echo "unknown $n mode lines in the managed block"; return 0; fi
   b="$lines"
-  if [ -z "$b" ] || ! git check-ref-format "refs/heads/$b" >/dev/null 2>&1; then
-    echo "unknown invalid branch name '$b' in the mode line"; return 0
+  if ! valid_branch_name "$b"; then
+    echo "unknown invalid branch name '${b//$'\r'/\\r}' in the mode line"; return 0
   fi
   echo "on $b"
 }

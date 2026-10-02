@@ -56,7 +56,7 @@
 #   dismissed-decide <runfile> <draft_path> <fix-now|follow-up|drop>  # §6 decision step / next PICK: delegated to automate-dismissed.sh — records the decision in <run_id>.dismissed-decisions, rewrites (follow-up) or deletes (drop/fix-now) the draft, one Progress line; refuses a foreign path; always exits 0
 #   dismissed-pending <runfile>                         # §6 step 1 PICK: delegated to automate-dismissed.sh — count of this run's undecided drafts, or `unknown` (treated as non-zero); always exits 0
 #   trail-unstage    <runfile>                          # §6 step 1 PICK (before RUN): delegated to automate-trail.sh — drops the trail-path index entries trail-pr staged so the next item's commit cannot sweep them; one line; always exits 0
-#   meta-entry       [--root <checkout>]                # §"Branch mode": the FIRST action of every /automate entry — reads `setup-memory.sh mode` itself (no caller input can assert the mode) and, when on, runs `meta-sync.sh pull`; ONE line `meta-entry: off|pulled <branch>|failed — <reason>`; writes nothing under .supervisor/automate/; always exits 0
+#   meta-entry       [--root <checkout>]                # §"Branch mode": the FIRST action of every /automate entry (a bare/empty/option-shaped --root value ⇒ `failed`) — reads `setup-memory.sh mode` itself (no caller input can assert the mode) and, when on, runs `meta-sync.sh pull`; ONE line `meta-entry: off|pulled <branch>|failed — <reason>`; writes nothing under .supervisor/automate/; always exits 0
 #   meta-push-failed <runfile>                          # §"Branch mode": read-only — prints the first line of this run's gitignored `<run_id>.meta-push-failed` marker (a failed mode-on trail push), or nothing; always exits 0
 #
 # Exit codes: 0 success; 1 generic failure; 2 abort (malformed pre-existing config, §7).
@@ -1873,7 +1873,14 @@ meta_entry() {
   local root="" here mode branch out rc reason ms
   while [ $# -gt 0 ]; do
     case "$1" in
-      --root) root="${2:-}"; shift 2 2>/dev/null || shift ;;
+      --root)
+        # A missing, empty or option-shaped value is a misinvocation, never "use the default root":
+        # `--root --x` would otherwise read the mode of a non-existent checkout as `off` and skip
+        # the pull silently. Fail-safe like every other path here: one `failed` line, exit 0.
+        case "${2:-}" in
+          ""|-*) echo "meta-entry: failed — --root requires a checkout path (got '${2:-}')"; return 0 ;;
+        esac
+        root="$2"; shift 2 ;;
       *) shift ;;
     esac
   done
@@ -1906,6 +1913,8 @@ meta_entry() {
 meta_push_failed() {
   local rf="${1:-}" m
   [ -n "$rf" ] || return 0
+  # An option-shaped <runfile> is a misinvocation (dirname/basename would read it as a flag).
+  case "$rf" in -*) return 0 ;; esac
   m="$(dirname "$rf")/$(basename "$rf" .md).meta-push-failed"
   [ -f "$m" ] || return 0
   head -n1 "$m" 2>/dev/null || true

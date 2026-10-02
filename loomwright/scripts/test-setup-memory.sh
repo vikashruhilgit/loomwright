@@ -1710,6 +1710,66 @@ else
 fi
 rm -rf "$BMR_MUT"
 
+echo "== (bm-v) branch names: option-shaped / reserved values refused; the accepted set is the INTERSECTION =="
+# A name is valid only when it passes `git check-ref-format --branch` UNCHANGED, meta-sync.sh's own
+# `git check-ref-format refs/heads/<name>`, and is not option-shaped / HEAD / @ (valid_branch_name).
+# The review repro: `apply --branch-mode --root X` swallowed `--root` as the branch and wrote the
+# mode line into the CWD repo's .gitignore — it must be a usage error with NOTHING written anywhere.
+Bvc="$(newgit)"; printf 'node_modules/\n.supervisor/\n' > "$Bvc/.gitignore"
+Bvt="$(newgit)"; printf 'node_modules/\n.supervisor/\n' > "$Bvt/.gitignore"
+svc="$(sum "$Bvc/.gitignore")"; svt="$(sum "$Bvt/.gitignore")"
+o="$(cd "$Bvc" && bash "$MEM" apply --branch-mode --root "$Bvt" 2>/dev/null)"; rc_v=$?
+if has 'requires a value' "$o" && has "option-shaped '--root'" "$o"; then ok "(bm-v) 'apply --branch-mode --root X' is a usage error naming the option-shaped value"; else no "(bm-v) --branch-mode --root X: $o"; fi
+[ "$rc_v" -eq 0 ] && ok "(bm-v) the usage error still exits 0 (fail-safe)" || no "(bm-v) --branch-mode --root X exited $rc_v"
+if [ "$(sum "$Bvc/.gitignore")" = "$svc" ] && [ -z "$(ls "$Bvc"/.gitignore.backup.* 2>/dev/null)" ]; then ok "(bm-v) nothing written to the CWD repo's .gitignore (the reproduced bug)"; else no "(bm-v) --branch-mode --root X wrote the CWD repo's .gitignore"; fi
+if [ "$(sum "$Bvt/.gitignore")" = "$svt" ] && [ -z "$(ls "$Bvt"/.gitignore.backup.* 2>/dev/null)" ]; then ok "(bm-v) nothing written to the target's .gitignore either"; else no "(bm-v) --branch-mode --root X wrote the target's .gitignore"; fi
+if grep -qF "$MLINE" "$Bvc/.gitignore" "$Bvt/.gitignore"; then no "(bm-v) a mode line was recorded by --branch-mode --root X"; else ok "(bm-v) no mode line recorded in either repo"; fi
+o="$(mem "$Bvt" apply --branch-mode -h 2>/dev/null)"
+if has "option-shaped '-h'" "$o" && [ "$(sum "$Bvt/.gitignore")" = "$svt" ]; then ok "(bm-v) '--branch-mode -h' is refused as option-shaped (never prints help, nothing written)"; else no "(bm-v) --branch-mode -h: $o"; fi
+for bad in HEAD '@{-1}' '@' 'a..b'; do
+  o="$(mem "$Bvt" apply --branch-mode "$bad" 2>/dev/null)"
+  if has 'apply: ABORTED — invalid --branch-mode branch name' "$o" && [ "$(sum "$Bvt/.gitignore")" = "$svt" ] && [ -z "$(ls "$Bvt"/.gitignore.backup.* 2>/dev/null)" ]; then ok "(bm-v) '--branch-mode $bad' is refused with nothing written"; else no "(bm-v) --branch-mode $bad: $o"; fi
+done
+# @{-N} would EXPAND under a cwd-relative --branch (to the previously checked-out branch) — run
+# from a repo where it resolves, so the refusal cannot rest on "no previous branch" alone.
+( cd "$Bvt" && git checkout -q -b vprev && git checkout -q - ) >/dev/null 2>&1
+o="$(cd "$Bvt" && bash "$MEM" --root "$Bvt" apply --branch-mode '@{-1}' 2>/dev/null)"
+if has 'apply: ABORTED — invalid --branch-mode branch name' "$o" && [ "$(sum "$Bvt/.gitignore")" = "$svt" ]; then ok "(bm-v) '@{-1}' is refused even where it expands to a real branch"; else no "(bm-v) resolvable @{-1}: $o"; fi
+# The verdict never depends on the caller's cwd: from a DELETED cwd (where a cwd-relative
+# `git check-ref-format --branch` dies with "Unable to read current working directory") a valid
+# recorded mode still reads `on <branch>` and check still reads it as configured.
+Bdc="$(newgit)"; printf '.supervisor/\n' > "$Bdc/.gitignore"; mem "$Bdc" apply --branch-mode loomwright-meta >/dev/null 2>&1
+DCWD="$(mkfix)"
+mdc="$(cd "$DCWD" && rmdir "$DCWD" && bash "$MEM" --root "$Bdc" mode 2>/dev/null)"
+[ "$mdc" = "on loomwright-meta" ] && ok "(bm-v) from a deleted cwd a valid mode line still reads 'on loomwright-meta'" || no "(bm-v) deleted cwd ⇒ '$mdc'"
+DCWD="$(mkfix)"
+cdc="$(cd "$DCWD" && rmdir "$DCWD" && bash "$MEM" --root "$Bdc" check 2>/dev/null)"
+has '^Memory readiness: configured' "$cdc" && ok "(bm-v) from a deleted cwd check still reads the branch-mode block as configured" || no "(bm-v) deleted cwd check: $(grep '^Memory readiness' <<< "$cdc")"
+# A hand-written option-shaped / reserved mode line reads `unknown` (never `on -x`), and a plain
+# apply on it aborts with nothing written.
+for hb in '-x' 'HEAD' '--root'; do
+  Bh="$(newgit)"; printf '.supervisor/\n' > "$Bh/.gitignore"; mem "$Bh" apply --branch-mode loomwright-meta >/dev/null 2>&1
+  awk -v m="${MLINE}${hb}" 'index($0, "# loomwright-meta-branch: ") == 1 { print m; next } { print }' "$Bh/.gitignore" > "$Bh/g" && mv "$Bh/g" "$Bh/.gitignore"
+  mh="$(mem "$Bh" mode 2>/dev/null)"
+  [ "$mh" = "unknown invalid branch name '$hb' in the mode line" ] && ok "(bm-v) a hand-written '${MLINE}${hb}' line reads '$mh'" || no "(bm-v) mode line '$hb' ⇒ '$mh'"
+  sh="$(sum "$Bh/.gitignore")"; o="$(mem "$Bh" apply 2>/dev/null)"
+  if has '^apply: ABORTED' "$o" && [ "$(sum "$Bh/.gitignore")" = "$sh" ]; then ok "(bm-v) a plain apply on the '$hb' mode line is refused (nothing written)"; else no "(bm-v) plain apply on '$hb' mode line: $(grep '^apply' <<< "$o")"; fi
+done
+# A CRLF mode line is never silently stripped: it reads unknown and the reason SHOWS the \r.
+Bcr="$(newgit)"; printf '.supervisor/\n' > "$Bcr/.gitignore"; mem "$Bcr" apply --branch-mode loomwright-meta >/dev/null 2>&1
+awk 'index($0, "# loomwright-meta-branch: ") == 1 { printf "%s\r\n", $0; next } { print }' "$Bcr/.gitignore" > "$Bcr/g" && mv "$Bcr/g" "$Bcr/.gitignore"
+mcr="$(mem "$Bcr" mode 2>/dev/null)"
+[ "$mcr" = "unknown invalid branch name 'loomwright-meta\r' in the mode line" ] && ok "(bm-v) a CRLF mode line reads unknown and names the carriage return as a literal '\\r'" || no "(bm-v) CRLF mode line ⇒ '$mcr'"
+# Previously-valid realistic names still round-trip: apply → mode on <name> → plain apply no-op.
+for good in loomwright-meta meta/run-history feature/x_y-1 off-branch; do
+  Bg="$(newgit)"; printf 'node_modules/\n.supervisor/\n' > "$Bg/.gitignore"
+  o="$(mem "$Bg" apply --branch-mode "$good" 2>/dev/null)"
+  has "^apply: applied (branch mode: $good)" "$o" && ok "(bm-v) '--branch-mode $good' is accepted" || no "(bm-v) --branch-mode $good: $(grep '^apply' <<< "$o")"
+  [ "$(mem "$Bg" mode 2>/dev/null)" = "on $good" ] && ok "(bm-v) mode reads 'on $good'" || no "(bm-v) mode after $good: '$(mem "$Bg" mode 2>/dev/null)'"
+  sg="$(sum "$Bg/.gitignore")"; o="$(mem "$Bg" apply 2>/dev/null)"
+  if [ "$(sum "$Bg/.gitignore")" = "$sg" ] && has '^apply: no-op' "$o"; then ok "(bm-v) a plain apply preserves '$good' (byte-identical no-op)"; else no "(bm-v) plain apply on '$good': $(grep '^apply' <<< "$o")"; fi
+done
+
 echo "== (k) the suite never touched the plugin repo's own .gitignore =="
 PLUGIN_GI_SUM_AFTER="$(sum "$PLUGIN_GI")"
 [ "$PLUGIN_GI_SUM_BEFORE" = "$PLUGIN_GI_SUM_AFTER" ] && ok "(k) $PLUGIN_GI is byte-identical before and after the whole suite" || no "(k) THE SUITE MUTATED THE PLUGIN REPO'S OWN .gitignore"

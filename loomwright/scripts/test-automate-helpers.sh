@@ -2991,6 +2991,17 @@ chmod 444 "$BM_T/roon/work/.gitignore"
 o="$(bm_entry "$BM_T/roon/work")"
 [ "$o" = "meta-entry: pulled loomwright-meta" ] && ok "BM6 branch mode + read-only .gitignore ⇒ '$o'" || no "BM6 read-only branch mode ⇒ '$o'"
 chmod 644 "$BM_T/roon/work/.gitignore"
+# (bm7) a bare / empty / option-shaped `--root` value is a misinvocation ⇒ `failed`, never a silent
+# `off` (pre-fix, `--root --x` read the mode of a non-existent checkout as off and skipped the pull
+# in a branch-mode repo). Fail-safe: ONE line, exit 0.
+for rv in --x -h ""; do
+  o="$(cd "$BM_T/roon/work" && bm_env bash "$H" meta-entry --root "$rv" 2>/dev/null)"; rc=$?
+  [ "$o" = "meta-entry: failed — --root requires a checkout path (got '$rv')" ] && [ "$rc" -eq 0 ] && ok "BM7 meta-entry --root '$rv' ⇒ '$o', exit 0" || no "BM7 meta-entry --root '$rv' ⇒ '$o' rc=$rc"
+done
+o="$(cd "$BM_T/roon/work" && bm_env bash "$H" meta-entry --root 2>/dev/null)"; rc=$?
+[ "$o" = "meta-entry: failed — --root requires a checkout path (got '')" ] && [ "$rc" -eq 0 ] && ok "BM7 a trailing bare meta-entry --root ⇒ failed, exit 0" || no "BM7 bare --root ⇒ '$o' rc=$rc"
+o="$(bash "$H" meta-push-failed -x.md 2>/dev/null)"; rc=$?
+[ -z "$o" ] && [ "$rc" -eq 0 ] && ok "BM7 meta-push-failed with an option-shaped <runfile> prints nothing, exit 0" || no "BM7 meta-push-failed -x.md ⇒ '$o' rc=$rc"
 rm -rf "$BM_T"
 
 echo
