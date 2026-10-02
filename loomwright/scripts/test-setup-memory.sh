@@ -1658,6 +1658,58 @@ md="$(mem "$Bd" mode 2>/dev/null)"
 case "$md" in "unknown unparseable"*) ok "(bm) a sentinel-sanity failure ⇒ 'unknown …' ($md)" ;; *) no "(bm) duplicated sentinel ⇒ '$md'" ;; esac
 [ "$(mem "$Bd" mode 2>/dev/null | wc -l | tr -d ' ')" = 1 ] && ok "(bm) mode always prints exactly ONE line" || no "(bm) mode printed more than one line"
 
+echo "== (bm-r) the mode READER decides 'off' from CONTENT, never from the writer's rewrite-safety gate =="
+# A repo that NEVER opted in (no mode-line text anywhere) must read `off` even when its .gitignore
+# is one apply would refuse to rewrite (read-only, conflict-marked, NUL bytes, not a regular file):
+# `unknown` ABORTs /automate entry (meta-entry) and fails trail-pr, so a writer-gate verdict leaking
+# into the reader turns every such repo's run into a failure. `unknown` stays for the cases where a
+# mode line could exist: an unreadable file, or mode-line text inside a structurally broken file.
+bmr_mode() { mem "$1" mode 2>/dev/null; }
+Br="$(newgit)"; printf 'node_modules/\n.supervisor/\n' > "$Br/.gitignore"; chmod 444 "$Br/.gitignore"
+[ "$(bmr_mode "$Br")" = "off" ] && ok "(bm-r) no mode line + read-only .gitignore ⇒ 'off'" || no "(bm-r) read-only, never opted in ⇒ '$(bmr_mode "$Br")'"
+chmod 644 "$Br/.gitignore"
+Bc="$(newgit)"; printf 'node_modules/\n<<<<<<< HEAD\na/\n=======\nb/\n>>>>>>> other\n' > "$Bc/.gitignore"
+[ "$(bmr_mode "$Bc")" = "off" ] && ok "(bm-r) no mode line + conflict markers ⇒ 'off'" || no "(bm-r) conflict-marked, never opted in ⇒ '$(bmr_mode "$Bc")'"
+Bn="$(newgit)"; printf 'node_modules/\nx\000y\n' > "$Bn/.gitignore"
+[ "$(bmr_mode "$Bn")" = "off" ] && ok "(bm-r) no mode line + NUL bytes ⇒ 'off'" || no "(bm-r) NUL bytes, never opted in ⇒ '$(bmr_mode "$Bn")'"
+Bk="$(newgit)"; mkdir "$Bk/.gitignore"
+[ "$(bmr_mode "$Bk")" = "off" ] && ok "(bm-r) .gitignore is a directory (no content) ⇒ 'off'" || no "(bm-r) directory .gitignore ⇒ '$(bmr_mode "$Bk")'"
+# Opted in + read-only: writability is irrelevant to a reader — the mode is still readable.
+Bro="$(newgit)"; printf '.supervisor/\n' > "$Bro/.gitignore"; mem "$Bro" apply --branch-mode loomwright-meta >/dev/null 2>&1; chmod 444 "$Bro/.gitignore"
+[ "$(bmr_mode "$Bro")" = "on loomwright-meta" ] && ok "(bm-r) branch-mode block + read-only .gitignore ⇒ 'on loomwright-meta'" || no "(bm-r) read-only branch-mode ⇒ '$(bmr_mode "$Bro")'"
+sro="$(sum "$Bro/.gitignore")"; o="$(mem "$Bro" apply 2>/dev/null)"
+if has '^apply: ABORTED' "$o" && [ "$(sum "$Bro/.gitignore")" = "$sro" ]; then ok "(bm-r) the WRITER still refuses a read-only .gitignore (gate unchanged for apply)"; else no "(bm-r) apply on read-only: $(grep '^apply' <<< "$o")"; fi
+chmod 644 "$Bro/.gitignore"
+# Opted in + structurally broken: a mode line could be one side of a conflict ⇒ stays loud.
+Bco="$(newgit)"; printf '.supervisor/\n' > "$Bco/.gitignore"; mem "$Bco" apply --branch-mode loomwright-meta >/dev/null 2>&1
+printf '<<<<<<< HEAD\na/\n=======\nb/\n>>>>>>> other\n' >> "$Bco/.gitignore"
+case "$(bmr_mode "$Bco")" in "unknown unparseable: .gitignore contains unresolved git conflict markers") ok "(bm-r) mode line + conflict markers ⇒ 'unknown …' (loud)" ;; *) no "(bm-r) mode line + conflict ⇒ '$(bmr_mode "$Bco")'" ;; esac
+# Unreadable: a mode line cannot be ruled out, so 'off' would be a claim about content never read.
+if [ "$(id -u)" = 0 ]; then
+  ok "(bm-r) running as root — the chmod-000 unreadable fixture is skipped (root bypasses mode bits)"
+else
+  Bur="$(newgit)"; printf 'node_modules/\n' > "$Bur/.gitignore"; chmod 000 "$Bur/.gitignore"
+  case "$(bmr_mode "$Bur")" in "unknown .gitignore is not readable"*) ok "(bm-r) unreadable .gitignore ⇒ 'unknown …' (cannot rule a mode line out)" ;; *) no "(bm-r) unreadable ⇒ '$(bmr_mode "$Bur")'" ;; esac
+  chmod 644 "$Bur/.gitignore"
+fi
+# A no-opt-in odd file must leave the plain-apply/check paths exactly as before: apply still aborts on
+# the writer gate (conflict markers), nothing written.
+sc="$(sum "$Bc/.gitignore")"; o="$(mem "$Bc" apply 2>/dev/null)"
+if has '^apply: ABORTED — unparseable: .gitignore contains unresolved git conflict markers' "$o" && [ "$(sum "$Bc/.gitignore")" = "$sc" ]; then ok "(bm-r) apply on a conflict-marked never-opted-in file still aborts on the writer gate"; else no "(bm-r) apply on conflict-marked: $(grep '^apply' <<< "$o")"; fi
+# Mutation control: a copy whose read_mode consults the WRITER's gate (the pre-fix shape) MUST turn
+# the conflict-marked 'off' assertion red — proves the assertion above is load-bearing.
+BMR_MUT="$(mktemp -d)"
+sed -e 's/^  LC_ALL=C grep -qF -- "\$MODE_PREFIX" "\$GI" 2>\/dev\/null || rc=\$?$/  :/' \
+    -e 's/gate="\$(gitignore_gate read)"/gate="$(gitignore_gate)"/' "$MEM" > "$BMR_MUT/setup-memory.sh"
+if cmp -s "$MEM" "$BMR_MUT/setup-memory.sh"; then
+  no "(bm-r) mutation control: the patch changed nothing — control inconclusive"
+elif [ "$(bash "$BMR_MUT/setup-memory.sh" --root "$Bc" mode 2>/dev/null)" = "off" ]; then
+  no "(bm-r) mutation control REFUTED: a reader on the writer's gate still reads 'off' for a conflict-marked file"
+else
+  ok "(bm-r) mutation control: a reader on the writer's gate reads '$(bash "$BMR_MUT/setup-memory.sh" --root "$Bc" mode 2>/dev/null)' — the 'off' assertion is load-bearing"
+fi
+rm -rf "$BMR_MUT"
+
 echo "== (k) the suite never touched the plugin repo's own .gitignore =="
 PLUGIN_GI_SUM_AFTER="$(sum "$PLUGIN_GI")"
 [ "$PLUGIN_GI_SUM_BEFORE" = "$PLUGIN_GI_SUM_AFTER" ] && ok "(k) $PLUGIN_GI is byte-identical before and after the whole suite" || no "(k) THE SUITE MUTATED THE PLUGIN REPO'S OWN .gitignore"

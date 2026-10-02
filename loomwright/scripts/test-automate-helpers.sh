@@ -2971,6 +2971,26 @@ o="$(bash "$H" meta-push-failed "$RF" 2>/dev/null)"
 [ "$o" = "2026-10-02T00:00:00Z conflict .supervisor/automate/x.md" ] && ok "BM5 meta-push-failed prints the marker's first line" || no "BM5 marker ⇒ '$o'"
 o="$(bash "$H" resume-glob "$BM_T/mp/.supervisor/automate" 2>/dev/null)"
 case "$o" in *meta-push-failed*) no "BM5 resume-glob lists the marker" ;; *) ok "BM5 resume-glob never lists the .meta-push-failed marker" ;; esac
+# (bm6) a repo that NEVER opted in reads `meta-entry: off` even when its .gitignore is one the
+# setup-memory WRITER would refuse to rewrite (read-only / conflict-marked) — the reader decides
+# from content, so AC3 ("off — proceed exactly as today") holds for every non-opted-in repo. The
+# origin is pointed at a missing path so any pull attempt would surface as `failed`.
+bm_world "$BM_T/ro" off
+git -C "$BM_T/ro/work" remote set-url origin "$BM_T/ro/no-such-origin.git"
+chmod 444 "$BM_T/ro/work/.gitignore"
+o="$(bm_entry "$BM_T/ro/work")"
+[ "$o" = "meta-entry: off" ] && ok "BM6 never opted in + read-only .gitignore ⇒ 'meta-entry: off'" || no "BM6 read-only, never opted in ⇒ '$o'"
+chmod 644 "$BM_T/ro/work/.gitignore"
+printf '<<<<<<< HEAD\na/\n=======\nb/\n>>>>>>> other\n' >> "$BM_T/ro/work/.gitignore"
+o="$(bm_entry "$BM_T/ro/work")"
+[ "$o" = "meta-entry: off" ] && ok "BM6 never opted in + conflict-marked .gitignore ⇒ 'meta-entry: off'" || no "BM6 conflict-marked, never opted in ⇒ '$o'"
+[ ! -e "$BM_T/ro/work/.supervisor" ] && ok "BM6 meta-entry off created nothing under .supervisor/" || no "BM6 meta-entry off wrote under .supervisor/"
+# Opted in + read-only: still `on` (a reader never needs writability) ⇒ the pull runs.
+bm_world "$BM_T/roon" on
+chmod 444 "$BM_T/roon/work/.gitignore"
+o="$(bm_entry "$BM_T/roon/work")"
+[ "$o" = "meta-entry: pulled loomwright-meta" ] && ok "BM6 branch mode + read-only .gitignore ⇒ '$o'" || no "BM6 read-only branch mode ⇒ '$o'"
+chmod 644 "$BM_T/roon/work/.gitignore"
 rm -rf "$BM_T"
 
 echo

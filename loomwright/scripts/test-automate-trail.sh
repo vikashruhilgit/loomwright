@@ -1546,6 +1546,21 @@ grep -q '^## Status: done' < <(bm_show "$REQ") && ok "(bm-g) the branch holds th
 
 # A1: the SKILL's "No park calls it" list carries meta_unreachable (it runs before the PICK lock).
 case "$nopark" in *meta_unreachable*) ok "(bm) the no-park list names meta_unreachable" ;; *) no "(bm) meta_unreachable missing from the 'No park calls it' list" ;; esac
+
+# (bm-h) a repo that NEVER opted in keeps the mode-off PR path even when its .gitignore is one the
+# setup-memory WRITER refuses (read-only / conflict-marked): the mode reader decides `off` from
+# content, so trail-pr must open its PR exactly as today — never route to a FAILED meta-push.
+new_fixture 88; chmod 444 "$P/.gitignore"
+out="$(bm_trail done)"; rc=$?
+chmod 644 "$P/.gitignore"
+case "$out" in "trail-pr: opened https://github.com/acme/widgets/pull/"*) [ "$rc" -eq 0 ] && ok "(bm-h) never opted in + read-only .gitignore ⇒ PR path ($out)" || no "(bm-h) read-only rc=$rc" ;; *) no "(bm-h) read-only, never opted in ⇒ '$out'" ;; esac
+[ "$(count_creates)" = 1 ] && ok "(bm-h) read-only: exactly one gh pr create (mode-off path)" || no "(bm-h) read-only: pr create count $(count_creates)"
+[ ! -f "$P/.supervisor/automate/$RUN_ID.meta-push-failed" ] && ok "(bm-h) read-only: no .meta-push-failed marker" || no "(bm-h) read-only: marker written"
+grep -q 'meta-push FAILED' "$P/$RF_REL0" && no "(bm-h) read-only: a meta-push FAILED Progress line was appended" || ok "(bm-h) read-only: no meta-push FAILED Progress line"
+new_fixture 89; printf '<<<<<<< HEAD\nzz-a/\n=======\nzz-b/\n>>>>>>> other\n' >> "$P/.gitignore"
+out="$(bm_trail done)"
+case "$out" in "trail-pr: opened https://github.com/acme/widgets/pull/"*) ok "(bm-h) never opted in + conflict-marked .gitignore ⇒ PR path ($out)" ;; *) no "(bm-h) conflict-marked, never opted in ⇒ '$out'" ;; esac
+[ ! -f "$P/.supervisor/automate/$RUN_ID.meta-push-failed" ] && ok "(bm-h) conflict-marked: no .meta-push-failed marker" || no "(bm-h) conflict-marked: marker written"
 unset LOOMWRIGHT_MEMORY_REPO_ALLOWLIST
 
 echo

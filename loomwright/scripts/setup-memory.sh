@@ -271,10 +271,14 @@ tracked_count() {
   case "$n" in ''|*[!0-9]*) echo "?" ;; *) echo "$n" ;; esac
 }
 
-# gitignore_gate → ok | absent | "unparseable: <reason>"
+# gitignore_gate [read] → ok | absent | "unparseable: <reason>"
 # Deliberately conservative: anything this rewriter cannot round-trip safely is refused OUTRIGHT
 # rather than half-written. A refusal changes nothing and says why.
+# `read` (read_mode only) drops the WRITABILITY requirement and nothing else: a reader never
+# rewrites the file, so a read-only .gitignore is not ambiguous to it. Every other check — the
+# structural ones that make the block's content ambiguous — still applies.
 gitignore_gate() {
+  local purpose="${1:-write}"
   if [ -L "$GI" ]; then
     echo "unparseable: .gitignore is a symlink (refusing to follow it and rewrite someone else's file)"
     return
@@ -287,7 +291,7 @@ gitignore_gate() {
     echo "unparseable: .gitignore exists but is not a regular file"
     return
   fi
-  if [ ! -r "$GI" ] || [ ! -w "$GI" ]; then
+  if [ ! -r "$GI" ] || { [ "$purpose" != "read" ] && [ ! -w "$GI" ]; }; then
     echo "unparseable: .gitignore is not both readable and writable"
     return
   fi
@@ -555,15 +559,29 @@ BLOCK
 }
 
 # read_mode — THE ONE READER of the branch-mode switch. Prints exactly ONE line:
-#   off               no managed block, or a block without a mode line
+#   off               no .gitignore (or not a regular file), no mode-line text anywhere in it, or a
+#                     managed block without a mode line
 #   on <branch>       the block's single, valid mode line
-#   unknown <reason>  the file fails gitignore_gate's sanity check, more than one mode line, or a
-#                     mode line whose branch fails `git check-ref-format refs/heads/<name>`
+#   unknown <reason>  a .gitignore that cannot be read (a mode line cannot be ruled out); or one
+#                     that carries mode-line text AND fails gitignore_gate's STRUCTURAL checks
+#                     (symlink, NUL bytes, conflict markers, sentinel sanity); more than one mode
+#                     line; or a mode line whose branch fails `git check-ref-format refs/heads/<name>`
+# "off" is decided from CONTENT first, never from the writer's rewrite-safety gate: a repo that
+# never opted in (no mode-line text at all) reads `off` even when its .gitignore is read-only,
+# conflict-marked or otherwise un-rewritable — `unknown` (which ABORTs /automate entry and fails
+# trail-pr) fires only when a mode line could plausibly exist. Writability never matters to a reader.
 read_mode() {
-  local gate lines n b
-  gate="$(gitignore_gate)"
+  local gate lines n b rc=0
+  if [ ! -e "$GI" ] || [ ! -f "$GI" ]; then echo "off"; return 0; fi
+  if [ ! -r "$GI" ]; then echo "unknown .gitignore is not readable (a mode line cannot be ruled out)"; return 0; fi
+  LC_ALL=C grep -qF -- "$MODE_PREFIX" "$GI" 2>/dev/null || rc=$?
+  case "$rc" in
+    0) ;;
+    1) echo "off"; return 0 ;;
+    *) echo "unknown .gitignore could not be searched for a mode line (grep exited $rc)"; return 0 ;;
+  esac
+  gate="$(gitignore_gate read)"
   case "$gate" in
-    absent) echo "off"; return 0 ;;
     ok) ;;
     *) echo "unknown $gate"; return 0 ;;
   esac
