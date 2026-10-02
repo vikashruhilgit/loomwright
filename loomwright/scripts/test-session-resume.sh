@@ -1449,6 +1449,53 @@ test_no_stale_lock() {
 }
 test_no_stale_lock
 
+# ---- Branch mode: the offline meta-base hint (skills/automate-loop/SKILL.md §"Branch mode") ----
+# Mode on + no <gitdir>/meta-base ⇒ exactly ONE hint line, with NO network (a git shim on PATH
+# records every fetch / ls-remote and origin points at an unreachable URL); meta-base present ⇒ no
+# line; mode off ⇒ output byte-identical to a hook copy whose hint function is stubbed out.
+test_branch_mode_hint() {
+  local r gshim real_git log hint n ctx_s ctx_r mutd off_a off_b
+  real_git="$(command -v git)"
+  gshim="$(mktmp)"; log="$ROOT/git-net.log"; : > "$log"
+  printf '#!/usr/bin/env bash\ncase " $* " in *" fetch "*|*" ls-remote "*|*" pull "*|*" remote update "*) echo "$*" >> "%s" ;; esac\nexec "%s" "$@"\n' "$log" "$real_git" > "$gshim/git"
+  chmod +x "$gshim/git"
+  r="$(new_repo)"; make_plugin_active "$r"
+  git -C "$r" remote add origin "https://unreachable.invalid/acme/widgets.git"
+  printf '.supervisor/\n' > "$r/.gitignore"
+  bash "$SCRIPT_DIR/setup-memory.sh" --root "$r" apply --branch-mode loomwright-meta >/dev/null 2>&1; rm -f "$r"/.gitignore.backup.*
+  hint='run history is on branch `loomwright-meta` and has not been pulled — run `meta-sync.sh pull`'
+  ctx_s="$(PATH="$gshim:$PATH" run_hook_ctx "$r" startup)"
+  n="$(printf '%s\n' "$ctx_s" | grep -cF "$hint")"
+  [ "$n" = 1 ] && ok "branch mode: startup carries exactly ONE meta-base hint line" || no "branch mode: startup hint count=$n ctx='$ctx_s'"
+  ctx_r="$(PATH="$gshim:$PATH" run_hook_ctx "$r" resume)"
+  n="$(printf '%s\n' "$ctx_r" | grep -cF "$hint")"
+  [ "$n" = 1 ] && ok "branch mode: resume carries exactly ONE meta-base hint line" || no "branch mode: resume hint count=$n"
+  [ ! -s "$log" ] && [ ! -e "$r/.git/FETCH_HEAD" ] && ok "branch mode: NO network call (no fetch / ls-remote, no FETCH_HEAD)" || no "branch mode: network git calls: $(cat "$log")"
+  [ "$(lastrc)" = 0 ] && ok "branch mode: hook exits 0" || no "branch mode: rc=$(lastrc)"
+  rm -rf "$r/.supervisor"
+  ctx_r="$(PATH="$gshim:$PATH" run_hook_ctx "$r" resume)"
+  printf '%s' "$ctx_r" | grep -qF "$hint" && ok "branch mode: a clone with NO .supervisor/ still gets the hint on resume" || no "branch mode: no hint without .supervisor/ ('$ctx_r')"
+  make_plugin_active "$r"
+  printf 'deadbeef\n' > "$r/.git/meta-base"
+  ctx_s="$(run_hook_ctx "$r" startup)"; ctx_r="$(run_hook_ctx "$r" resume)"
+  if printf '%s\n%s' "$ctx_s" "$ctx_r" | grep -qF 'has not been pulled'; then no "branch mode: meta-base present still emits the hint"; else ok "branch mode: meta-base present ⇒ no hint line"; fi
+  # Mode off ⇒ byte-identical to a copy of the hook whose hint function returns nothing.
+  mutd="$(mktmp)"; cp "$SCRIPT_DIR"/*.sh "$SCRIPT_DIR"/*.py "$mutd/" 2>/dev/null
+  awk '/^meta_branch_hint_line\(\) \{$/ { print; print "  return 0"; next } { print }' "$HOOK" > "$mutd/session-resume.sh"
+  # Two identical repos per source: the hook's debounce markers live in the repo, so a second run in
+  # the SAME repo would differ for reasons unrelated to branch mode.
+  local ra rb
+  for src in startup resume; do
+    ra="$(new_repo)"; make_plugin_active "$ra"; printf '.supervisor/\n' > "$ra/.gitignore"
+    rb="$(new_repo)"; make_plugin_active "$rb"; printf '.supervisor/\n' > "$rb/.gitignore"
+    off_a="$(cd "$ra" && printf '{"source":"%s"}' "$src" | bash "$HOOK" 2>/dev/null)"
+    off_b="$(cd "$rb" && printf '{"source":"%s"}' "$src" | bash "$mutd/session-resume.sh" 2>/dev/null)"
+    off_b="${off_b//$rb/$ra}"
+    [ "$off_a" = "$off_b" ] && ok "branch mode OFF: $src output byte-identical to the hint-free hook" || no "branch mode OFF: $src output differs"
+  done
+}
+test_branch_mode_hint
+
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
 exit 0
