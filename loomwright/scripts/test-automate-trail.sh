@@ -1435,6 +1435,119 @@ hits="$(grep -nE 're-checks the PR each tick|resumes once|resume[sd]? on merge' 
 grep -qF '/loop` re-invokes `/automate` each tick' "$SKILL" && ok "§12's accurate /loop tick sentence kept" || no "§12 /loop sentence changed"
 grep -qF 'closeout' "$HERE/../commands/automate.md" && grep -qF 'trail-pr' "$HERE/../commands/automate.md" && ok "commands/automate.md mirrors the surface" || no "commands/automate.md surface missing"
 
+echo "== BM. branch mode: trail-pr pushes to the metadata branch (no PR), evidence-gated, loud on failure =="
+# skills/automate-loop/SKILL.md §"Branch mode". Hermetic: the fixture's LOCAL bare origin, never
+# GitHub; the gh stub records every call and these cases FAIL if `pr create` is ever invoked.
+# The committed sidecar fixtures cite vikashruhilgit/loomwright; the stub PRs cite acme/widgets.
+export LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="acme/widgets,vikashruhilgit/loomwright"
+BM_MEM="$HERE/setup-memory.sh"; BM_MS="$HERE/meta-sync.sh"; BMB="loomwright-meta"
+# bm_switch: run history IGNORED (the post-migration shape, so a kept check-ignore drop would push
+# nothing), the branch-mode block, an allowlisted ledger, and an initialised metadata branch.
+bm_switch() {
+  ( cd "$P"
+    printf '.supervisor/\n' > .gitignore
+    bash "$BM_MEM" --root "$P" apply --branch-mode "$BMB" >/dev/null 2>&1; rm -f .gitignore.backup.*
+    printf '{"repo":"acme/widgets","automate_key":"%s\\u001fx","source":"automate_drain"}\n' "$RUN_ID" > .supervisor/postmortem/results.jsonl
+    bash "$BM_MS" init --root "$P" --branch "$BMB" >/dev/null 2>&1 )
+}
+bm_tree() { git --git-dir="$FX/origin.git" ls-tree -r --name-only "refs/heads/$BMB" 2>/dev/null; }
+bm_show() { git --git-dir="$FX/origin.git" show "refs/heads/$BMB:$1" 2>/dev/null; }
+bm_trail() { (cd "$P" && bash "${BM_HELPER:-$H}" trail-pr "$RF_REL0" --reason "${1:-done}"); }
+
+# (bm-a) merged item ⇒ meta-pushed, NO PR, no trail worktree; the branch holds the stamp + run file.
+new_fixture 80; bm_switch
+[ "$(bash "$BM_MEM" --root "$P" mode)" = "on $BMB" ] && ok "(bm-a) fixture is in branch mode" || no "(bm-a) fixture mode: $(bash "$BM_MEM" --root "$P" mode)"
+git -C "$P" check-ignore -q -- "$RF_REL0" && ok "(bm-a) the run file is gitignored (a kept check-ignore drop would push nothing)" || no "(bm-a) run file not ignored in the fixture"
+stamp_req "$REQ" done "$PRL"; set_pr "$PRURL" MERGED
+wt_before="$(git -C "$P" worktree list | wc -l | tr -d ' ')"
+out="$(bm_trail done)"; rc=$?
+[ "$rc" -eq 0 ] && case "$out" in "trail-pr: meta-pushed $BMB"*) true ;; *) false ;; esac && ok "(bm-a) mode on ⇒ '$out', exit 0" || no "(bm-a) trail-pr: '$out' rc=$rc"
+[ "$(count_creates)" = 0 ] && ok "(bm-a) gh pr create NEVER invoked in branch mode" || no "(bm-a) gh pr create was invoked: $(grep '^pr create' "$GH_STUB_DIR/argv.log")"
+[ "$(git -C "$P" worktree list | wc -l | tr -d ' ')" = "$wt_before" ] && ok "(bm-a) no trail worktree created" || no "(bm-a) a worktree was added"
+names="$(bm_tree)"
+grep -qxF -- "$RF_REL0" <<<"$names" && ok "(bm-a) the branch holds the run file" || no "(bm-a) branch tree: $names"
+bm_show "$REQ" | grep -q '^## Status: done' && ok "(bm-a) the branch holds the MERGED item's done stamp" || no "(bm-a) stamp not on the branch"
+[ -z "$(git -C "$P" ls-remote --heads origin "chore/$RUN_ID-trail-*")" ] && ok "(bm-a) no chore/<run>-trail-* branch pushed" || no "(bm-a) a trail branch was pushed"
+[ ! -f "$P/.supervisor/automate/$RUN_ID.trail-staged" ] && ok "(bm-a) no .trail-staged record written" || no "(bm-a) .trail-staged written"
+
+# (bm-b) UNMERGED item ⇒ excluded and named; its done stamp is NOT on the branch.
+bm_unmerged() {  # <helper> → sets BM_OUT; 0 when the unmerged stamp stayed off the branch
+  new_fixture "$1"; bm_switch; stamp_req "$REQ" done "$PRL"; set_pr "$PRURL" OPEN
+  BM_OUT="$(BM_HELPER="$2" bm_trail done)"
+  ! bm_show "$REQ" | grep -q '^## Status: done'
+}
+if bm_unmerged 81 "$H"; then ok "(bm-b) unmerged item's done stamp is NOT on the branch"; else no "(bm-b) unmerged stamp reached the branch"; fi
+case "$BM_OUT" in "trail-pr: meta-pushed $BMB"*"; excluded $REQ — pr not merged"*) ok "(bm-b) '$BM_OUT'" ;; *) no "(bm-b) output: '$BM_OUT'" ;; esac
+# Mutation control (ii): a patched copy that bypasses _evidence_gate on the mode-on push list MUST
+# turn (bm-b) red.
+MUTD="$TOP/bm-mut"; mkdir -p "$MUTD"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTD/" 2>/dev/null
+awk 'skip && /^  _evidence_gate$/ { skip = 0; next } { skip = 0 } /^  TRAIL_SKIP_IGNORE_DROP=0$/ { skip = 1 } { print }' "$HERE/automate-trail.sh" > "$MUTD/automate-trail.sh"
+if cmp -s "$HERE/automate-trail.sh" "$MUTD/automate-trail.sh"; then no "(bm-b) mutation control (ii): the patch changed nothing — control inconclusive"
+elif bm_unmerged 82 "$MUTD/automate-helpers.sh"; then no "(bm-b) mutation control (ii) REFUTED: bypassing _evidence_gate still kept the stamp off the branch"
+else ok "(bm-b) mutation control (ii): bypassing _evidence_gate puts the unmerged stamp on the branch — the assertion is load-bearing"; fi
+
+# (bm-c) a dropped dismissed draft becomes a real deletion on the branch.
+new_fixture 83; bm_switch; set_pr "$PRURL" OPEN
+DRN="$RUN_ID--01-a--dismissed-1.md"; DRP=".supervisor/requirements/proposed/$DRN"
+mkdir -p "$P/.supervisor/requirements/proposed"; printf '# draft\n## Status: proposed\n' > "$P/$DRP"
+bm_trail done >/dev/null
+bm_tree | grep -qxF -- "$DRP" && ok "(bm-c) precondition: the undecided draft rode a push" || no "(bm-c) precondition: draft not on the branch"
+rm -f "$P/$DRP"; printf '%s\tdrop\n' "$DRN" > "$P/.supervisor/automate/$RUN_ID.dismissed-decisions"
+out="$(bm_trail done)"
+bm_tree | grep -qxF -- "$DRP" && no "(bm-c) the dropped draft is still on the branch ($out)" || ok "(bm-c) the dropped draft is DELETED on the branch ($out)"
+
+# (bm-d) a push meta-sync refuses (scrub hit) is LOUD: exit 0, Progress line, notify, marker; the
+# next successful push removes the marker.
+new_fixture 84; bm_switch; set_pr "$PRURL" OPEN
+printf -- '- t1 see /Users/someone/notes.txt\n' >> "$P/$RF_REL0"
+spy_reset; : > "$SPYLOG"
+out="$(cd "$P" && bash "$SPYD/automate-helpers.sh" trail-pr "$RF_REL0" --reason done)"; rc=$?
+case "$out" in "trail-pr: meta-push FAILED — scrub "*) ok "(bm-d) scrub hit ⇒ '$out'" ;; *) no "(bm-d) scrub hit output: '$out'" ;; esac
+[ "$rc" -eq 0 ] && ok "(bm-d) trail-pr exits 0 on a refused push" || no "(bm-d) rc=$rc"
+grep -q '^- .*meta-push FAILED: scrub ' "$P/$RF_REL0" || grep -q 'meta-push FAILED: scrub ' "$P/$RF_REL0"; [ $? -eq 0 ] && ok "(bm-d) the 'meta-push FAILED:' line is in ## Progress" || no "(bm-d) no Progress line"
+MK="$P/.supervisor/automate/$RUN_ID.meta-push-failed"
+[ -f "$MK" ] && ok "(bm-d) the .meta-push-failed marker is written" || no "(bm-d) marker missing"
+grep -q 'meta_sync: scrub ' "$MK" 2>/dev/null && ok "(bm-d) the marker carries the full scrub list" || no "(bm-d) marker lacks the scrub list"
+[ "$(spy_count notify "$SPYLOG.notify")" -ge 1 ] && [ "$(spy_count automate_meta_push "$SPYLOG.webhook")" -ge 1 ] && ok "(bm-d) notify-desktop + send-webhook fired" || no "(bm-d) notify pair did not fire"
+mp="$(bash "$H" meta-push-failed "$P/$RF_REL0")"
+case "$mp" in *"scrub "*) ok "(bm-d) meta-push-failed prints the marker ($mp)" ;; *) no "(bm-d) meta-push-failed: '$mp'" ;; esac
+[ "$(count_creates)" = 0 ] && ok "(bm-d) no gh pr create on the failure path" || no "(bm-d) pr create invoked"
+grep -v '/Users/someone/' "$P/$RF_REL0" > "$P/rf.tmp" && mv "$P/rf.tmp" "$P/$RF_REL0"
+out="$(bm_trail done)"
+case "$out" in "trail-pr: meta-pushed $BMB"*) ok "(bm-d) the next push succeeds ($out)" ;; *) no "(bm-d) retry: '$out'" ;; esac
+[ ! -f "$MK" ] && [ -z "$(bash "$H" meta-push-failed "$P/$RF_REL0")" ] && ok "(bm-d) a successful push removes the marker" || no "(bm-d) marker survived a successful push"
+
+# (bm-e) mode unknown ⇒ loud failure, nothing pushed.
+new_fixture 85; bm_switch
+awk '{print} index($0, "# loomwright-meta-branch: ") == 1 {print "# loomwright-meta-branch: other"}' "$P/.gitignore" > "$P/g" && mv "$P/g" "$P/.gitignore"
+out="$(bm_trail done)"
+case "$out" in "trail-pr: meta-push FAILED — mode unknown "*) ok "(bm-e) mode unknown ⇒ '$out'" ;; *) no "(bm-e) mode unknown: '$out'" ;; esac
+[ -f "$P/.supervisor/automate/$RUN_ID.meta-push-failed" ] && ok "(bm-e) mode unknown writes the marker" || no "(bm-e) no marker"
+
+# (bm-f) trail-unstage in branch mode ⇒ skipped, index untouched.
+new_fixture 86; bm_switch
+(cd "$P" && git add -f "$RF_REL0" >/dev/null 2>&1)
+idx_before="$(git -C "$P" diff --cached --name-only)"
+out="$(cd "$P" && bash "$H" trail-unstage "$RF_REL0")"
+[ "$out" = "trail-unstage: skipped — branch mode" ] && ok "(bm-f) '$out'" || no "(bm-f) trail-unstage: '$out'"
+[ "$(git -C "$P" diff --cached --name-only)" = "$idx_before" ] && ok "(bm-f) the index is untouched" || no "(bm-f) index changed"
+
+# (bm-g) closeout on a merged item in branch mode: no PR, the branch holds the run file + stamp.
+closeout_fixture 87
+( cd "$P" && git pull -q --ff-only origin main >/dev/null 2>&1 )
+bm_switch
+( cd "$P" && git add .gitignore && git commit -qm "branch mode" && git push -q origin main ) >/dev/null 2>&1
+: > "$GH_STUB_DIR/argv.log"
+out="$(cd "$P" && bash "$H" closeout "$RF_REL" "$REQ" "$PRURL")"
+grep -q 'meta-pushed' <<<"$out" && ok "(bm-g) closeout's trail step meta-pushed" || no "(bm-g) closeout output: $out"
+[ "$(count_creates)" = 0 ] && ok "(bm-g) closeout opened NO PR in branch mode" || no "(bm-g) pr create invoked by closeout"
+bm_tree | grep -qxF -- "$RF_REL" && ok "(bm-g) the branch holds the run file after closeout" || no "(bm-g) branch tree: $(bm_tree | tr '\n' ' ')"
+bm_show "$REQ" | grep -q '^## Status: done' && ok "(bm-g) the branch holds the closed-out item's stamp" || no "(bm-g) closed-out stamp not on the branch"
+
+# A1: the SKILL's "No park calls it" list carries meta_unreachable (it runs before the PICK lock).
+case "$nopark" in *meta_unreachable*) ok "(bm) the no-park list names meta_unreachable" ;; *) no "(bm) meta_unreachable missing from the 'No park calls it' list" ;; esac
+unset LOOMWRIGHT_MEMORY_REPO_ALLOWLIST
+
 echo
 echo "test-automate-trail: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
