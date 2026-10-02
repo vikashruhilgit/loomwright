@@ -52,7 +52,10 @@
 #      branch + worktree untouched, main fast-forwarded over trail-pr's staged
 #      paths, stamp + `- [x]` (never `# skipped: done`), trail-pr invoked via the
 #      dispatcher (spy) under the closeout lock; second run all `skipped`, no
-#      mutation/push; guards (tip != headRefOid, dirty worktree salvaged + kept,
+#      mutation/push; a second run AFTER the first run's trail PR merged (its
+#      sync moves main) leaves the run file byte-identical, trails `skipped —
+#      trail already up to date` and opens no PR (control: `did=1` restored on
+#      the synced line ⇒ skip-only Progress lines + a fresh trail PR); guards (tip != headRefOid, dirty worktree salvaged + kept,
 #      OPEN, primary dirty outside trail paths, gh absent, missing run file);
 #      RECONCILE re-entry (--session-id re-enters `automate:<run_id>`, which
 #      survives; without it ⇒ `skipped — run lock held`). After a PICK
@@ -687,6 +690,47 @@ badl="$(printf '%s\n' "$out2" | grep -v 'skipped — ' || true)"
 [ "$before_rf" = "$(cksum < "$P/$RF_REL")" ] && [ "$before_req" = "$(cksum < "$P/$REQ")" ] && ok "AC11: run file + requirement unchanged" || no "AC11: second run mutated files"
 [ "$before_trail" = "$(git -C "$FX/origin.git" for-each-ref --format='%(objectname)' 'refs/heads/chore/*')" ] && [ "$creates_before" = "$(count_creates)" ] && ok "AC11: no push, no PR create on the second run" || no "AC11: second run pushed/created"
 grep -q '^pr merge' "$GH_STUB_DIR/argv.log" && no "gh pr merge called" || ok "closeout never calls gh pr merge"
+
+echo "== C. closeout idempotent AFTER its own trail PR merged (the sync moves; nothing else may) =="
+# Run automate-2026-10-01-142337: the watcher's closeout opened trail PR #329,
+# the owner merged it, and RECONCILE's re-run printed only skips plus
+# `synced — main at <the #329 merge>`. The sync set `did`, so the six step lines
+# were appended to ## Progress and trail-pr opened #330 carrying only them. The
+# AC11 leg above never merges the trail PR between runs, so its sync skips and
+# it stayed green. Control: the same world with `did=1` restored on the synced
+# line turns every assertion red.
+MUTS="$TOP/mutd-sync"; mkdir -p "$MUTS"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTS/"
+[ "$(grep -c '^    sy="closeout: synced — ' "$T")" = 1 ] || no "sync mutant anchor is not unique"
+awk 'index($0, "sy=\"closeout: synced — ")==5 { print $0 "; did=1"; next } { print }' "$T" > "$MUTS/automate-trail.sh"
+for v in fixed mutant; do
+  if [ "$v" = fixed ]; then closeout_fixture 110; D="$SPYD"; else closeout_fixture 111; D="$MUTS"; fi
+  if [ "$v" = mutant ] && { cmp -s "$T" "$D/automate-trail.sh" || ! bash -n "$D/automate-trail.sh"; }; then no "sync mutant not built"; continue; fi
+  out1="$(cd "$P" && bash "$D/automate-helpers.sh" closeout "$RF_REL" "$REQ" "$PRURL")"
+  case "$out1" in *"trail-pr: opened "*) ;; *) no "[$v] first closeout opened no trail PR: $out1"; continue ;; esac
+  # The owner squash-merges the trail PR; the stub now reports it MERGED.
+  TM="$FX/tmerger"; git clone -q "$FX/origin.git" "$TM" 2>/dev/null
+  ( cd "$TM" && git checkout -q main && git merge -q --squash "origin/chore/$RUN_ID-trail-1" >/dev/null && git commit -qm "squash trail" && git push -q origin main 2>/dev/null )
+  jq --arg h "chore/$RUN_ID-trail-1" 'map(if .headRefName == $h then .state = "MERGED" else . end)' "$GH_STUB_DIR/prs.json" > "$GH_STUB_DIR/p.tmp" && mv "$GH_STUB_DIR/p.tmp" "$GH_STUB_DIR/prs.json"
+  cp "$P/$RF_REL" "$FX/rf.before"; cp "$P/$REQ" "$FX/req.before"; creates_before="$(count_creates)"
+  out2="$(cd "$P" && bash "$D/automate-helpers.sh" closeout "$RF_REL" "$REQ" "$PRURL" --session-id SESS-RECONCILE)"
+  printf '%s\n' "$out2" | sed "s/^/    [$v] | /"
+  trail2="$(printf '%s\n' "$out2" | tail -n1)"
+  if [ "$v" = fixed ]; then
+    case "$out2" in *"closeout: synced — main at "*) ok "re-run after the trail merge: the sync really moved main (the leg exercises the bug's trigger)" ;; *) no "re-run did not sync — the leg does not reproduce the incident: $out2" ;; esac
+    badl="$(printf '%s\n' "$out2" | sed '$d' | grep -v 'skipped — ' | grep -v '^closeout: synced — ' || true)"
+    [ -z "$badl" ] && ok "re-run: every item line is skipped (only the sync moved)" || no "re-run non-skip item line(s): $badl"
+    cmp -s "$FX/rf.before" "$P/$RF_REL" && ok "re-run: run file byte-identical (no skip-only ## Progress lines)" || no "re-run mutated the run file: $(diff "$FX/rf.before" "$P/$RF_REL" | tr '\n' '|')"
+    cmp -s "$FX/req.before" "$P/$REQ" && ok "re-run: requirement byte-identical" || no "re-run mutated the requirement"
+    case "$trail2" in "trail-pr: skipped — trail already up to date"*) ok "re-run: trail reads skipped — trail already up to date" ;; *) no "re-run trail line: $trail2" ;; esac
+    [ "$creates_before" = "$(count_creates)" ] && ok "re-run: no new trail PR opened" || no "re-run opened a trail PR (the #330 incident)"
+  else
+    if ! cmp -s "$FX/rf.before" "$P/$RF_REL" && case "$trail2" in "trail-pr: opened "*) true ;; *) false ;; esac && [ "$creates_before" != "$(count_creates)" ]; then
+      ok "control: with did=1 on the synced line the re-run appends skip lines and opens a fresh trail PR (the incident; the assertions above are load-bearing)"
+    else
+      no "sync control did not reproduce the incident: $trail2"
+    fi
+  fi
+done
 
 echo "== C. closeout reconciles a MATCHING ## Current, never a different one =="
 # loomwright-studio run automate-2026-09-30-211858: after the watcher's closeout
