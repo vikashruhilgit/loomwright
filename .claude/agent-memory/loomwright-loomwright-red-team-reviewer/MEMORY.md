@@ -1,7 +1,10 @@
 # Red Team Reviewer Memory — loomwright
 
-- [Fail-closed vs fail-safe split](attack_failclosed_vs_failsafe_split.md) — correctness gates fail CLOSED under CI; runtime emitters fail SAFE (exit 0); inverting either is a regression
-- [jq-only JSON injection](attack_jq_only_json_injection.md) — user/PR-text → JSON must be jq --arg built, gated by a quote/backslash/newline round-trip test
-- [Sole-writer worktree ban](attack_sole_writer_worktree_ban.md) — .supervisor/{state.md,twin,memory,lessons} each have one repo-root writer that refuses a worktree CWD (red-team F1)
-- [User-global config writes](attack_user_global_config_writes.md) — ~/.claude/settings.json writes must deep-merge + backup-first + abort-on-parse-failure
-- [Self-heal PASS ≠ review-clean](attack_self_heal_pass_not_review_clean.md) — PASS is a weak signal; probe whether ground_truth/conformance actually ran
+- [attack_failclosed_vs_failsafe_split](attack_failclosed_vs_failsafe_split.md) — This plugin's failure philosophy is bimodal — correctness gates fail CLOSED, side-effect emitters fail SAFE; attack any deviation, including a fail-SAFE reader feeding a gate and an unscoped fail-CL
+- [attack-jq-only-json-injection](attack_jq_only_json_injection.md) — Every user/PR-text → JSON path in a firing path MUST be jq --arg built (never echo/shell-templated); gate with a quote/backslash/newline round-trip test
+- [attack_self_heal_pass_not_review_clean](attack_self_heal_pass_not_review_clean.md) — A green heal_decision=PASS does NOT mean the PR is reviewer-clean, and a max-iteration ESCALATED's final fix commit is unreviewed code
+- [attack-sole-writer-worktree-ban](attack_sole_writer_worktree_ban.md) — .supervisor/{state.md,twin,memory,lessons} each have one repo-root writer that refuses a worktree CWD; flag any direct/worktree write
+- [attack-user-global-config-writes](attack_user_global_config_writes.md) — Writes to ~/.claude/settings.json are the highest blast-radius op — MUST deep-merge + timestamped-backup-first + abort-on-parse-failure
+- [audit_history_hardening](audit_history_hardening.md) — Audit history — 2026-09-21 full-plugin audit closed by PRs #248-#256 (do not re-report); 2026-10-01 parallel-automate audit fixed in specs, attack the implementations next
+- [feedback_findings_need_repro_and_anchor](feedback_findings_need_repro_and_anchor.md) — Every red-team finding carries a pasted repro and is marked reproduced vs read-only, with exact file:line plus a grep-able anchor — authors copy findings into committed docs
+- [repo-scoped-consent-and-egress-config-is-attacker-controlled](repo-scoped-consent-and-egress-config-is-attacker-controlled.md) — Telemetry consent (.supervisor/telemetry-consent.json) and webhook egress (.supervisor/config.json webhook_url) are read from $PWD — a cloned repo can commit them, so "hooks never prompt, consent on
