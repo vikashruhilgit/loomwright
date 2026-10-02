@@ -17,7 +17,9 @@
 #                 main checkout, with a --show-toplevel sanity check and a $PWD fallback — the same
 #                 "resolve root" block run-lock.sh uses)
 #   --paths-from  push only the managed paths listed in <file> (one repo-relative path per line;
-#                 blank and `#` lines ignored; unlisted or non-managed paths are never pushed)
+#                 blank and `#` lines ignored; unlisted or non-managed paths are never pushed).
+#                 push ONLY: given to init / pull / status it is a usage error (exit 1, nothing
+#                 changed) — never silently accepted and ignored
 #   --message     commit message for the metadata-branch commit
 #
 # MANAGED SET — the ONE declared list (is_managed below); everything else is invisible to this script:
@@ -52,6 +54,14 @@
 # A DIRECTORY (or other non-regular file) at a managed path where the branch holds a file fails
 # closed the same way (`meta_sync: not_a_file <path>`, exit 1, nothing changed): it reads as locally
 # absent, so a pull would rename the file into it and a push would delete the branch file.
+# A NEWLINE in a name fails closed too (`meta_sync: newline_in_path <where>`, exit 1, nothing
+# changed, meta-base untouched): every listing is read NUL-delimited (ls-tree -z, log -z, diff-tree
+# -z, find -print0) and parsed line by line, so an embedded newline would split one entry into two
+# and could fabricate a managed record (a mktree'd directory named `x<LF>100644 blob <sha><TAB>
+# .supervisor` yields a fake `.supervisor/requirements/...` line). Records are NUL-separated, so ANY
+# newline byte in the raw stream is inside a name: the remote tree, the meta-base tree, R's history
+# (a fresh clone stays refused until the branch history is rewritten — a human decision), the
+# push's tree_guard diff, and every name under a managed root locally are all refused on sight.
 #
 # 3-WAY RULE (per path; equality is by blob SHA — `git hash-object --no-filters` vs tree entries,
 # never mtime). L = this checkout, R = the remote branch tip, B = the merge base read from
@@ -155,7 +165,7 @@
 # Precedence: unreachable > no_remote_branch > never_synced > conflict > local_ahead > remote_ahead.
 #
 # EXIT: 0 ok / no_changes; 1 conflict, no_remote_branch, fetch failure, init refusal, exhausted push
-# retries, tree_guard, locked, not_a_file, usage error; 2 scrub hit. `init` is the ONLY command that may create the branch (an empty
+# retries, tree_guard, locked, not_a_file, newline_in_path, usage error; 2 scrub hit. `init` is the ONLY command that may create the branch (an empty
 # orphan commit); it refuses when the branch already exists.
 #
 # Nothing calls this script yet (parallel-automate items 03 / M1 wire it in).
@@ -168,6 +178,7 @@ SUBCMD=""
 BRANCH="loomwright-meta"
 ROOT=""
 PATHS_FROM=""
+PATHS_FROM_SET=0
 MESSAGE="meta-sync: run history"
 MAX_ATTEMPTS=5
 LEDGER_PATH=".supervisor/postmortem/results.jsonl"
@@ -192,13 +203,16 @@ while [ $# -gt 0 ]; do
       SUBCMD="$1"; shift ;;
     --branch)     need_val "$1" "$#"; BRANCH="$2"; shift 2 ;;
     --root)       need_val "$1" "$#"; ROOT="$2"; shift 2 ;;
-    --paths-from) need_val "$1" "$#"; PATHS_FROM="$2"; shift 2 ;;
+    --paths-from) need_val "$1" "$#"; PATHS_FROM="$2"; PATHS_FROM_SET=1; shift 2 ;;
     --message)    need_val "$1" "$#"; MESSAGE="$2"; shift 2 ;;
     -h|--help)    usage ;;
     *) die "usage: unknown argument '$1' (try --help)" ;;
   esac
 done
 [ -n "$SUBCMD" ] || die "usage: a subcommand is required: init | pull | push | status (try --help)"
+# --paths-from restricts a PUSH; pull never reads it, so accepting it elsewhere would be a silent no-op.
+[ "$PATHS_FROM_SET" = "0" ] || [ "$SUBCMD" = "push" ] \
+  || die "usage: --paths-from applies to push only, not '$SUBCMD'; nothing was changed (try --help)"
 
 # ---- resolve root (mirrors run-lock.sh's "resolve root" block) ----
 if [ -z "$ROOT" ]; then
@@ -422,9 +436,22 @@ fetch_remote() {
 # decision input (an R or B table that silently came out empty turns every path into a deletion
 # or a re-add), so a failed read must never look like an empty tree. The filter loops use
 # `if`, not `&&`, so a non-managed LAST entry does not make the loop — and the pipeline — fail.
+# no_newline_in <NUL-delimited raw listing> <what> — 0 when the listing holds no newline byte.
+# Records are NUL-terminated and these -z listings emit no other newline, so any newline is INSIDE
+# a name; the line-oriented parsing below would split it into fabricated records. Refuse on sight.
+no_newline_in() {
+  local n
+  n="$(wc -l < "$1" | tr -d ' ')" || return 1
+  [ "$n" = "0" ] && return 0
+  warn "newline_in_path $2"
+  warn "refusing — $2 holds a name containing a newline (it cannot be parsed safely); nothing was changed, meta-base untouched"
+  return 1
+}
+
 # list_tree <tree-ish> <out> — managed blob entries of a tree.
 list_tree() {
   g ls-tree -r -z --full-tree "$1" > "$WORK/lt.raw" 2>/dev/null || return 1
+  no_newline_in "$WORK/lt.raw" "tree $1" || return 1
   tr '\0' '\n' < "$WORK/lt.raw" \
     | awk -F'\t' '{ split($1, a, " "); if (a[2] == "blob" && index($2, ".supervisor/") == 1) print $2 "\t" a[3] }' \
     | while IFS="$TAB" read -r p s; do if is_managed "$p"; then printf '%s\t%s\n' "$p" "$s"; fi; done \
@@ -462,13 +489,16 @@ list_local() {
     present="$present$d "
     case "$d" in .supervisor|.supervisor/jobs) : ;; *) roots="$roots $d" ;; esac
   done
+  : > "$WORK/local.found.z" || return 1
   for d in $roots; do
     if [ "$d" = ".supervisor/requirements" ]; then
-      (cd "$ROOT" && find "$d" -type d -name .supervisor -prune -o \( -type f -o -type l \) -print) >> "$WORK/local.found"
+      (cd "$ROOT" && find "$d" -type d -name .supervisor -prune -o \( -type f -o -type l \) -print0) >> "$WORK/local.found.z"
     else
-      (cd "$ROOT" && find "$d" -maxdepth 1 \( -type f -o -type l \) -print) >> "$WORK/local.found"
+      (cd "$ROOT" && find "$d" -maxdepth 1 \( -type f -o -type l \) -print0) >> "$WORK/local.found.z"
     fi || { warn "could not enumerate every file under $d/ (find failed); nothing was changed"; return 1; }
   done
+  no_newline_in "$WORK/local.found.z" "the local files under the managed roots" || return 1
+  tr '\0' '\n' < "$WORK/local.found.z" > "$WORK/local.found" || return 1
   while IFS= read -r p; do
     p="${p#./}"
     if [ -L "$ROOT/$p" ]; then
@@ -495,6 +525,7 @@ list_local() {
 # list_history <commit> <out> — every (path, blob) a managed path ever held in R's history.
 list_history() {
   g log --no-renames --format= --raw --no-abbrev -z "$1" -- .supervisor > "$WORK/lh.raw" 2>/dev/null || return 1
+  no_newline_in "$WORK/lh.raw" "the history of $1" || return 1
   tr '\0' '\n' < "$WORK/lh.raw" \
     | awk '
         /^:/ { split($0, f, " "); old = f[3]; new = f[4]; getline p
@@ -866,6 +897,7 @@ cmd_push() {
     # tree_guard — the new tree may differ from R's ONLY at the selected take-L / union paths.
     g diff-tree -r -z --no-renames --name-only "$RT" "$newtree" > "$WORK/touched.z" \
       || die "tree_guard — could not diff the new tree against $RT; nothing was pushed"
+    no_newline_in "$WORK/touched.z" "the new tree" || die "tree_guard — the new tree holds a newline name; nothing was pushed, meta-base untouched"
     tr '\0' '\n' < "$WORK/touched.z" | awk -v PF="$WORK/planned" 'FILENAME == PF { ok[$0] = 1; next } NF && !($0 in ok)' "$WORK/planned" - > "$WORK/unplanned" \
       || die "tree_guard — could not compare the new tree with the plan; nothing was pushed"
     if [ -s "$WORK/unplanned" ]; then

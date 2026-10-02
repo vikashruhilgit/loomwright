@@ -66,6 +66,16 @@
 #      .supervisor/worktrees, and a folder tree churning under .supervisor/worktrees, never block a
 #      pull or push; an unreadable folder INSIDE a managed root, or an unsearchable folder on the
 #      way to one, still refuses (nothing changed)
+#  30. a newline in a name fails closed: a mktree'd branch entry whose name embeds a newline (and
+#      would parse as a fabricated managed record) -> pull and push exit 1 `newline_in_path`,
+#      nothing written, branch and meta-base unchanged; with the entry gone the same clone syncs
+#      again; a fresh clone refuses while it is in R's history; a LOCAL newline name under a
+#      managed root likewise refuses, one under unmanaged .supervisor/logs does not
+#  31. --paths-from on pull / status / init -> usage error exit 1, nothing changed
+#  32. project deny patterns: a matching ERE -> exit 2 `deny_pattern:<line>`; an invalid ERE ->
+#      exit 2 `deny_pattern_invalid:<line>`; the deny file absent -> the push lands
+#  33. scan_error(<rule>) (failing grep), ledger_unverifiable(jq missing) (a hermetic no-jq PATH)
+#      and unreadable (failing cat-file) -> exit 2, branch and meta-base unchanged
 #  --- Mutation controls (sed-patched mutant copies in the temp dir; the shipped script has no
 #      test seam) ---
 #  20. (i) a mutant that drops the base comparison (any local difference is staged) MUST fail the
@@ -740,6 +750,154 @@ done
 rm -f "$CHURN_ON"; wait "$churn_pid" 2>/dev/null
 { [ "$churn_bad" -eq 0 ] && [ "$(get B "$RQ/x.md")" = "x churn 6" ] && [ "$(br_show "$RQ/y.md")" = "y churn 6" ]; }
 check $? "a folder tree churning under .supervisor/worktrees never blocks a pull or push (rcs:$churn_rcs)"
+
+echo "== 30. a newline in a name fails closed (remote tree, R's history, local find) =="
+synced_pair
+OG="$W/origin.git"
+tip0="$(br_tip)"
+fabblob="$(printf 'fabricated\n' | og hash-object -w --stdin)"
+legit="$(printf 'legit\n' | og hash-object -w --stdin)"
+# A directory named "x<LF>100644 blob <fabblob><TAB>.supervisor" holding requirements/fab.md: read
+# line by line, its ls-tree record splits into `.supervisor/requirements/x` and a FABRICATED
+# `100644 blob <fabblob><TAB>.supervisor/requirements/fab.md` record (fabblob is made reachable as
+# fabsrc.md so a parser fooled by it can really write it). legit.md / fabsrc.md are pending take-Rs.
+t_fab="$(printf '100644 blob %s\tfab.md\0' "$legit" | og mktree -z)"
+t_mid="$(printf '040000 tree %s\trequirements\0' "$t_fab" | og mktree -z)"
+nl_name="$(printf 'x\n100644 blob %s\t.supervisor' "$fabblob")"
+req0="$(og rev-parse "$tip0:.supervisor/requirements")"
+reqN="$({ og ls-tree -z "$req0"; printf '040000 tree %s\t%s\0' "$t_mid" "$nl_name"; printf '100644 blob %s\tlegit.md\0' "$legit"; printf '100644 blob %s\tfabsrc.md\0' "$fabblob"; } | og mktree -z)"
+cN="$(printf 'newline name\n' | og commit-tree "$(swap_req "$reqN")" -p "$tip0")"
+og update-ref "refs/heads/$BR" "$cN"
+grep -qF "requirements/x|100644 blob $fabblob" < <(og ls-tree -r -z --name-only "$cN" | tr '\0\n' '\n|')
+check $? "fixture: the branch tip really carries a tree entry whose name holds a newline"
+base_before="$(base_of B)"
+ms B pull
+{ [ "$RC" -eq 1 ] && grep -q 'meta_sync: newline_in_path tree ' < <(printf '%s' "$OUT") && [ ! -e "$W/B/.supervisor/requirements/fab.md" ] \
+  && [ ! -e "$W/B/.supervisor/requirements/legit.md" ] && [ ! -e "$W/B/.supervisor/requirements/fabsrc.md" ] && [ "$(base_of B)" = "$base_before" ] && [ -z "$(porcelain B)" ]; }
+check $? "pull over a newline entry -> exit 1 newline_in_path, no fabricated fab.md, pending legit.md / fabsrc.md not written, meta-base unchanged (rc=$RC: $OUT)"
+put B "$RQ/y.md" "y over a newline tip"; ms B push
+{ [ "$RC" -eq 1 ] && grep -q 'meta_sync: newline_in_path tree ' < <(printf '%s' "$OUT") && [ "$(br_tip)" = "$cN" ] && [ "$(base_of B)" = "$base_before" ]; }
+check $? "push over a newline entry -> exit 1 newline_in_path, branch tip and meta-base unchanged (rc=$RC: $OUT)"
+cC="$(printf 'cleanup\n' | og commit-tree "$(swap_req "$(og rev-parse "$tip0:.supervisor/requirements")")" -p "$cN")"
+og update-ref "refs/heads/$BR" "$cC"
+ms B pull; rc_pull=$RC; out_pull="$OUT"
+ms B push
+{ [ "$rc_pull" -eq 0 ] && [ "$RC" -eq 0 ] && [ "$(br_show "$RQ/y.md")" = "y over a newline tip" ] && [ ! -e "$W/B/.supervisor/requirements/fab.md" ]; }
+check $? "with the entry gone from the tip, the same clone (meta-base present) pulls and pushes again (pull rc=$rc_pull: $out_pull; push rc=$RC: $OUT)"
+clone NL
+ms NL pull
+{ [ "$RC" -eq 1 ] && grep -q 'meta_sync: newline_in_path the history of ' < <(printf '%s' "$OUT") && [ ! -e "$W/NL/.git/meta-base" ] && [ ! -e "$W/NL/.supervisor" ]; }
+check $? "a fresh clone (no meta-base) refuses the newline entry still in R's history: exit 1, nothing written, no meta-base (rc=$RC: $OUT)"
+echo "-- a newline in a LOCAL name under a managed root --"
+put A "$RQ/x.md" "x v2 from A"; ms A pull; ms A push
+nl_local="$W/B/$RQ/$(printf 'a\nb.md')"
+printf 'local newline\n' > "$nl_local"
+tip="$(br_tip)"; base_before="$(base_of B)"
+ms B pull
+{ [ "$RC" -eq 1 ] && grep -q 'meta_sync: newline_in_path the local files' < <(printf '%s' "$OUT") && [ "$(get B "$RQ/x.md")" = "x v1" ] && [ "$(base_of B)" = "$base_before" ]; }
+check $? "pull with a local newline name under requirements/ -> exit 1, pending x.md not written, meta-base unchanged (rc=$RC: $OUT)"
+put B "$RQ/w.md" "w v2 from B"; ms B push
+{ [ "$RC" -eq 1 ] && grep -q 'meta_sync: newline_in_path the local files' < <(printf '%s' "$OUT") && [ "$(br_tip)" = "$tip" ] && [ "$(base_of B)" = "$base_before" ]; }
+check $? "push with a local newline name -> exit 1, branch tip and meta-base unchanged (rc=$RC: $OUT)"
+rm -f "$nl_local"
+mkdir -p "$W/B/.supervisor/logs"; printf 'x\n' > "$W/B/.supervisor/logs/$(printf 'n\nl.log')"
+ms B pull; rc_pull=$RC; out_pull="$OUT"
+ms B push
+{ [ "$rc_pull" -eq 0 ] && [ "$RC" -eq 0 ] && [ "$(get B "$RQ/x.md")" = "x v2 from A" ] && [ "$(br_show "$RQ/w.md")" = "w v2 from B" ]; }
+check $? "with it removed (a newline name under unmanaged .supervisor/logs is ignored) pull and push land (pull rc=$rc_pull: $out_pull; push rc=$RC: $OUT)"
+
+echo "== 31. --paths-from is push-only (usage error elsewhere, nothing changed) =="
+synced_pair
+put A "$RQ/x.md" "x v2 from A"; ms A push
+printf '%s\n' "$RQ/x.md" > "$W/pf.txt"
+tip="$(br_tip)"; base_before="$(base_of B)"
+for sc in pull status init; do
+  ms B "$sc" --paths-from "$W/pf.txt"
+  { [ "$RC" -eq 1 ] && grep -q "meta_sync: usage: --paths-from applies to push only, not '$sc'" < <(printf '%s' "$OUT") \
+    && [ "$(get B "$RQ/x.md")" = "x v1" ] && [ "$(br_tip)" = "$tip" ] && [ "$(base_of B)" = "$base_before" ]; }
+  check $? "$sc --paths-from -> usage error exit 1, nothing written, branch and meta-base unchanged (rc=$RC: $OUT)"
+done
+ms B pull --paths-from ""
+{ [ "$RC" -eq 1 ] && [ "$(get B "$RQ/x.md")" = "x v1" ]; }; check $? "pull --paths-from '' (empty value) is rejected too (rc=$RC: $OUT)"
+ms B pull; { [ "$RC" -eq 0 ] && [ "$(get B "$RQ/x.md")" = "x v2 from A" ]; }; check $? "pull without the flag still lands (rc=$RC: $OUT)"
+
+echo "== 32. project deny patterns (.agent/meta-sync-deny.txt) =="
+synced_pair
+DENY="$W/B/.agent/meta-sync-deny.txt"
+mkdir -p "$W/B/.agent"
+printf '%s\n' '# project deny terms' '' 'ACME-SECRET-[0-9]+' > "$DENY"
+git -C "$W/B" add .agent/meta-sync-deny.txt && git -C "$W/B" commit -qm 'deny patterns'
+put B "$RQ/deny.md" "ticket ACME-SECRET-42 notes"
+put B "$RQ/clean.md" "nothing to see here"
+tip="$(br_tip)"; base_before="$(base_of B)"
+ms B push
+{ [ "$RC" -eq 2 ] && grep -qxF "meta_sync: scrub $RQ/deny.md: deny_pattern:3" < <(printf '%s\n' "$OUT") \
+  && ! grep -qF "scrub $RQ/clean.md" < <(printf '%s' "$OUT") && [ "$(br_tip)" = "$tip" ] && [ "$(base_of B)" = "$base_before" ]; }
+check $? "a matching deny ERE -> exit 2 naming deny_pattern:<line> (comment/blank lines counted), clean file not named, branch and meta-base unchanged (rc=$RC: $OUT)"
+printf '%s\n' 'never-matches-zzz' '[unclosed' > "$DENY"
+git -C "$W/B" commit -qam 'invalid deny pattern'
+ms B push
+{ [ "$RC" -eq 2 ] && grep -qxF "meta_sync: scrub $RQ/deny.md: deny_pattern_invalid:2" < <(printf '%s\n' "$OUT") \
+  && grep -qxF "meta_sync: scrub $RQ/clean.md: deny_pattern_invalid:2" < <(printf '%s\n' "$OUT") && [ "$(br_tip)" = "$tip" ] && [ "$(base_of B)" = "$base_before" ]; }
+check $? "an invalid deny ERE -> exit 2 deny_pattern_invalid:<line> for every candidate (fail closed), branch and meta-base unchanged (rc=$RC: $OUT)"
+git -C "$W/B" rm -q .agent/meta-sync-deny.txt && git -C "$W/B" commit -qm 'drop deny patterns'
+ms B push
+{ [ "$RC" -eq 0 ] && [ "$(br_show "$RQ/deny.md")" = "ticket ACME-SECRET-42 notes" ] && [ "$(br_show "$RQ/clean.md")" = "nothing to see here" ]; }
+check $? "with the deny file absent the extension is a no-op and the same push lands (rc=$RC: $OUT)"
+
+echo "== 33. the other fail-closed scrub branches (scan_error, ledger_unverifiable, unreadable) =="
+# scan_error and unreadable are only reachable through a failing tool: the built-in EREs are fixed
+# and valid, and every candidate blob was written by hash-object -w earlier in the same run. Both
+# are fault-injected with PATH shims (the technique legs 22 and 27 use).
+REAL_GREP="$(command -v grep)"
+synced_pair
+mkdir -p "$W/gshim"
+cat > "$W/gshim/grep" <<SHIM
+#!/bin/sh
+# fault injection: the built-in case-insensitive rule scan (grep -i -E -q -e <re> <file>) errors
+if [ "\$1" = "-i" ] && [ "\$2" = "-E" ] && [ "\$3" = "-q" ]; then exit 2; fi
+exec "$REAL_GREP" "\$@"
+SHIM
+chmod +x "$W/gshim/grep"
+put B "$RQ/se.md" "plain clean text"
+tip="$(br_tip)"; base_before="$(base_of B)"
+OUT="$(PATH="$W/gshim:$PATH" bash "$SCRIPT" push --root "$W/B" 2>&1)"; RC=$?
+{ [ "$RC" -eq 2 ] && grep -qxF "meta_sync: scrub $RQ/se.md: scan_error(email)" < <(printf '%s\n' "$OUT") \
+  && grep -qxF "meta_sync: scrub $RQ/se.md: scan_error(home_path)" < <(printf '%s\n' "$OUT") && [ "$(br_tip)" = "$tip" ] && [ "$(base_of B)" = "$base_before" ]; }
+check $? "a scan that errors -> exit 2 scan_error(<rule>), branch and meta-base unchanged (rc=$RC: $OUT)"
+rm -f "$W/B/$RQ/se.md"
+# a PATH with every tool the SUT and setup-memory.sh use EXCEPT jq (macOS ships /usr/bin/jq, so
+# dropping one directory is not enough): a hermetic dir of symlinks, built here.
+NOJQ="$W/nojq-bin"; mkdir -p "$NOJQ"
+for t in bash sh git cat dirname basename sed awk mktemp rm mkdir rmdir ps find date sleep tr sort uniq \
+         paste wc grep chmod mv cp ln touch cut env ls head tail id xargs cmp tee od stat readlink uname \
+         expr true false printf test; do
+  tp="$(command -v "$t" 2>/dev/null)"
+  case "$tp" in /*) ln -sf "$tp" "$NOJQ/$t" ;; esac
+done
+NOJQ_PATH="${HERMETIC_SHIM_DIR:+$HERMETIC_SHIM_DIR:}$NOJQ"
+[ -z "$(PATH="$NOJQ_PATH" command -v jq)" ] && [ -n "$(PATH="$NOJQ_PATH" command -v git)" ]
+check $? "fixture: the no-jq PATH has git but no jq"
+printf '%s\n' '{"repo":"owner/repo","n":3}' >> "$W/B/.supervisor/postmortem/results.jsonl"
+tip="$(br_tip)"; base_before="$(base_of B)"
+OUT="$(PATH="$NOJQ_PATH" "$NOJQ/bash" "$SCRIPT" push --root "$W/B" 2>&1)"; RC=$?
+{ [ "$RC" -eq 2 ] && grep -qxF "meta_sync: scrub .supervisor/postmortem/results.jsonl: ledger_unverifiable(jq missing)" < <(printf '%s\n' "$OUT") \
+  && [ "$(br_tip)" = "$tip" ] && [ "$(base_of B)" = "$base_before" ]; }
+check $? "jq missing -> the ledger is unverifiable: exit 2 ledger_unverifiable(jq missing), branch and meta-base unchanged (rc=$RC: $OUT)"
+ms B push; { [ "$RC" -eq 0 ] && grep -q '"n":3' < <(br_show .supervisor/postmortem/results.jsonl); }; check $? "... and with jq back the same ledger push lands (rc=$RC: $OUT)"
+mkdir -p "$W/cshim"
+cat > "$W/cshim/git" <<SHIM
+#!/bin/sh
+# fault injection: a candidate blob the scrub cannot read back (git -C <root> cat-file blob <sha>)
+if [ "\$3" = "cat-file" ] && [ "\$4" = "blob" ]; then exit 128; fi
+exec "$REAL_GIT" "\$@"
+SHIM
+chmod +x "$W/cshim/git"
+put B "$RQ/ur.md" "plain clean text"
+tip="$(br_tip)"; base_before="$(base_of B)"
+OUT="$(PATH="$W/cshim:$PATH" bash "$SCRIPT" push --root "$W/B" 2>&1)"; RC=$?
+{ [ "$RC" -eq 2 ] && grep -qxF "meta_sync: scrub $RQ/ur.md: unreadable" < <(printf '%s\n' "$OUT") && [ "$(br_tip)" = "$tip" ] && [ "$(base_of B)" = "$base_before" ]; }
+check $? "a candidate the scrub cannot read -> exit 2 unreadable, branch and meta-base unchanged (rc=$RC: $OUT)"
 
 # ---------------------------------------------------------------------------------------------
 # Mutation controls — sed-patched copies; the sibling setup-memory.sh is copied beside each.
