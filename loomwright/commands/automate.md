@@ -81,6 +81,8 @@ The scriptable steps — the config toggle, run-file atomic writes / append-only
 
 `/automate` then executes the protocol in `skills/automate-loop/SKILL.md` — the authority for every step below; this overview is a map, not the contract:
 
+> **Branch mode (opt-in, default OFF):** a repo switched on with `/setup memory` keeps run history on a metadata branch — `meta-entry` pulls it first on every entry and `trail-pr` pushes to it instead of opening a PR; see `skills/automate-loop/SKILL.md` §13.
+
 1. **RESUME first.** Glob `.supervisor/automate/*.md` for run files (carrying the `# Automate Run:` title, checked by `is_run_file` — the §6 result sidecars are not runs; rule in §4) not marked `## Status: done`, reconcile each in-flight item vs ground truth, and offer continue / start-new / archive (fail-closed under `--non-interactive-fallback`). (§4)
 2. **INTAKE → Queue.** Resolve exactly one source (prompt via `/product-owner` / folder / backlog-doc) into the FULL ordered `## Queue` inside one run file `.supervisor/automate/<run_id>.md`. (§2 / §3)
 3. **CONFIRM the Queue.** Show the full resolved Queue (count + ordered items) for confirmation before processing; `--limit N` (default 5) caps how many are PROCESSED this run, never Queue size. (§2)
