@@ -485,11 +485,14 @@ EOF
 
 # _branch_mode <root> — the ONE reader (`setup-memory.sh mode`): off | on <branch> | unknown <reason>.
 # A copy of this script WITHOUT its sibling reader (a stripped test/spy copy) reads `off` — unless
-# the checkout's .gitignore carries a mode line at all, which is then `unknown` (loud), never off.
+# the checkout's .gitignore carries mode-line text at all (the bare `loomwright-meta-branch` token,
+# so an indented or no-space near-miss counts too), which is then `unknown` (loud), never off.
+# FAIL-CLOSED on the answer's SHAPE: only an exact `off` or `on <non-empty>` passes through; empty
+# output (a crashed reader) or anything unrecognised becomes `unknown …`, never off.
 _branch_mode() {
   local m
   if [ ! -r "$HERE/setup-memory.sh" ]; then
-    if grep -q '^# loomwright-meta-branch: ' "$1/.gitignore" 2>/dev/null; then
+    if grep -qF 'loomwright-meta-branch' "$1/.gitignore" 2>/dev/null; then
       echo "unknown setup-memory.sh is missing beside automate-trail.sh"
     else
       echo "off"
@@ -498,6 +501,10 @@ _branch_mode() {
   fi
   m="$(bash "$HERE/setup-memory.sh" --root "$1" mode 2>/dev/null | head -n1)"
   [ -n "$m" ] || m="unknown setup-memory.sh mode printed nothing"
+  case "$m" in
+    off|"on "?*|"unknown "*) ;;
+    *) m="unknown setup-memory.sh mode printed '$m'" ;;
+  esac
   printf '%s\n' "$m"
 }
 

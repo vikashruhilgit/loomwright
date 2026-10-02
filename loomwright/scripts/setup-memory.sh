@@ -588,6 +588,11 @@ managed_block_branch_mode() {
 BLOCK
 }
 
+# The bare token: ANY line inside the sentinels carrying it that is not exactly a mode line (an
+# indented one, `# loomwright-meta-branch:x` with no space) is a near-miss — read_mode says
+# `unknown`, never `off`, so a plain apply cannot silently drop a hand-mangled branch mode.
+MODE_TOKEN='loomwright-meta-branch'
+
 # read_mode — THE ONE READER of the branch-mode switch. Prints exactly ONE line:
 #   off               no .gitignore (or not a regular file), no mode-line text anywhere in it, or a
 #                     managed block without a mode line
@@ -599,6 +604,11 @@ BLOCK
 #                     `git check-ref-format --branch` unchanged and meta-sync.sh's refs/heads/<name>
 #                     check, minus option-shaped/HEAD/@ — so `-x` reads unknown). A carriage return
 #                     (CRLF .gitignore) is shown as a literal `\r` in the reason, never stripped.
+#                     An EMPTY branch (`# loomwright-meta-branch: ` and nothing after it) fails
+#                     valid_branch_name too, so it reads `unknown`, never `off`; and any other line
+#                     INSIDE the sentinels carrying the bare token (indented, no space after the
+#                     colon) is a near-miss mode line ⇒ `unknown`. Token text OUTSIDE the sentinels
+#                     is ignored (a repo that never opted in still reads `off`).
 # "off" is decided from CONTENT first, never from the writer's rewrite-safety gate: a repo that
 # never opted in (no mode-line text at all) reads `off` even when its .gitignore is read-only,
 # conflict-marked or otherwise un-rewritable — `unknown` (which ABORTs /automate entry and fails
@@ -607,7 +617,16 @@ read_mode() {
   local gate lines n b rc=0
   if [ ! -e "$GI" ] || [ ! -f "$GI" ]; then echo "off"; return 0; fi
   if [ ! -r "$GI" ]; then echo "unknown .gitignore is not readable (a mode line cannot be ruled out)"; return 0; fi
-  LC_ALL=C grep -qF -- "$MODE_PREFIX" "$GI" 2>/dev/null || rc=$?
+  # NO `LC_ALL=C` prefix on these greps, deliberately: read_mode always runs inside a command
+  # substitution (a forked subshell), and disposing a temporary LC_ALL there makes bash call
+  # setlocale() → libintl → CoreFoundation, which is not fork-safe — Homebrew bash 5.3 on macOS
+  # SEGFAULTs in the subshell (`dispose_temporary_env → sv_locale → libintl_setlocale →
+  # CFLocaleCopyPreferredLanguages`, exit 139) a few percent of the time, and the reader then
+  # printed NOTHING. -qF on these ASCII tokens is locale-independent (a binary match still exits 0).
+  grep -qF -- "$MODE_PREFIX" "$GI" 2>/dev/null || rc=$?
+  # No exact prefix anywhere: a near-miss shape (no space after the colon) still carries the bare
+  # token, so only a file WITHOUT the token at all is decided `off` here.
+  if [ "$rc" -eq 1 ]; then rc=0; grep -qF -- "$MODE_TOKEN" "$GI" 2>/dev/null || rc=$?; fi
   case "$rc" in
     0) ;;
     1) echo "off"; return 0 ;;
@@ -618,19 +637,44 @@ read_mode() {
     ok) ;;
     *) echo "unknown $gate"; return 0 ;;
   esac
-  lines="$(awk -v b="$MB_BEGIN" -v e="$MB_END" -v m="$MODE_PREFIX" '
+  # One MARKED line per in-block match — `L<value>` for an exact mode line (column 1, the full
+  # prefix), `X` for any other in-block line carrying the bare token — so an EMPTY value is still a
+  # counted match (`L`), never the empty output that used to read `off`. A failed awk is `unknown`.
+  lines="$(awk -v b="$MB_BEGIN" -v e="$MB_END" -v m="$MODE_PREFIX" -v t="$MODE_TOKEN" '
     index($0, b) > 0 { inblk = 1; next }
     inblk && index($0, e) > 0 { inblk = 0; next }
-    inblk && index($0, m) == 1 { print substr($0, length(m) + 1) }
-  ' "$GI" 2>/dev/null)"
+    inblk && index($0, m) == 1 { print "L" substr($0, length(m) + 1); next }
+    inblk && index($0, t) > 0 { print "X" }
+  ' "$GI" 2>/dev/null)" || { echo "unknown .gitignore could not be parsed for a mode line (awk failed)"; return 0; }
   if [ -z "$lines" ]; then echo "off"; return 0; fi
+  case "$lines" in
+    X*|*$'\n'X*) echo "unknown a malformed mode line in the managed block (not exactly '${MODE_PREFIX}<branch>' at column 1)"; return 0 ;;
+  esac
   n="$(printf '%s\n' "$lines" | wc -l | tr -d ' ')"
   if [ "$n" -gt 1 ]; then echo "unknown $n mode lines in the managed block"; return 0; fi
-  b="$lines"
+  b="${lines#L}"
   if ! valid_branch_name "$b"; then
     echo "unknown invalid branch name '${b//$'\r'/\\r}' in the mode line"; return 0
   fi
   echo "on $b"
+}
+
+# normalize_mode <answer> — FAIL-CLOSED shape check on a reader answer: prints `off` only for an
+# exact `off`, `on <b>` only for a valid <b>, and `unknown <reason>` for EVERYTHING else (empty
+# output from a crashed/killed reader, garbage, `on ` with an empty/invalid branch). Never maps an
+# unrecognised answer to `off` — that is the fail-open the writer used to have (a plain apply then
+# rewrote a branch-mode block as the default one). One line out, always.
+normalize_mode() {
+  local m="${1-}" b
+  case "$m" in
+    off) echo "off" ;;
+    "on "*)
+      b="${m#on }"
+      if valid_branch_name "$b"; then echo "on $b"
+      else echo "unknown mode reader returned an invalid branch '${b//$'\r'/\\r}'"; fi ;;
+    "unknown "*) printf '%s\n' "${m%%$'\n'*}" ;;
+    *) m="${m%%$'\n'*}"; echo "unknown mode reader returned '${m//$'\r'/\\r}'" ;;
+  esac
 }
 
 # EFFECTIVE_BRANCH — the branch the block apply WOULD write names ("" = mode off). --branch-mode
@@ -640,12 +684,14 @@ read_mode() {
 CURRENT_MODE=""
 EFFECTIVE_BRANCH=""
 resolve_effective_branch() {
-  CURRENT_MODE="$(read_mode)"
+  CURRENT_MODE="$(normalize_mode "$(read_mode)")"
   if [ "$BRANCH_MODE_SET" = 1 ]; then
     [ "$BRANCH_MODE_VAL" = "off" ] && EFFECTIVE_BRANCH="" || EFFECTIVE_BRANCH="$BRANCH_MODE_VAL"
     return 0
   fi
+  # Exhaustive over normalize_mode's three shapes; `unknown` writes nothing (do_apply aborts on it).
   case "$CURRENT_MODE" in
+    off) EFFECTIVE_BRANCH="" ;;
     "on "*) EFFECTIVE_BRANCH="${CURRENT_MODE#on }" ;;
     *) EFFECTIVE_BRANCH="" ;;
   esac
@@ -1246,8 +1292,11 @@ render_report() {
   # the must-be-committable set to the must-stay-ignored set, so a branch-mode block reads as
   # `configured`, not as drift.
   local r_intended="$INTENDED_PATHS" r_unintended="$UNINTENDED_PATHS" r_mode
-  r_mode="$(read_mode)"
+  r_mode="$(normalize_mode "$(read_mode)")"
   case "$r_mode" in
+    off) ;;
+    unknown*)
+      echo "  branch mode:       $r_mode (a plain apply will refuse — re-run apply with --branch-mode <branch> or --branch-mode off)" ;;
     "on "*)
       echo "  branch mode:       $r_mode (run history is synced to that branch and stays ignored here)"
       r_intended="$(printf '%s\n' "$INTENDED_PATHS" | grep -vE '^\.supervisor/(requirements|jobs|automate)/')"
@@ -1714,7 +1763,9 @@ do_filter_ledger() {
 resolve_effective_branch
 
 do_mode() {
-  read_mode
+  # The answer resolve_effective_branch already normalized: an empty / unrecognised reader output
+  # prints `unknown …`, never nothing and never `off`.
+  printf '%s\n' "$CURRENT_MODE"
   exit 0
 }
 

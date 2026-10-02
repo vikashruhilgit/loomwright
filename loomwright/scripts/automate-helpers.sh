@@ -1889,7 +1889,7 @@ meta_entry() {
   mode="$(bash "$here/setup-memory.sh" --root "$root" mode 2>/dev/null | head -n1 || true)"
   case "$mode" in
     off) echo "meta-entry: off"; return 0 ;;
-    "on "*) branch="${mode#on }" ;;
+    "on "?*) branch="${mode#on }" ;;
     "unknown "*) echo "meta-entry: failed — mode unknown (${mode#unknown })"; return 0 ;;
     *) echo "meta-entry: failed — mode unknown (setup-memory.sh mode printed '${mode}')"; return 0 ;;
   esac

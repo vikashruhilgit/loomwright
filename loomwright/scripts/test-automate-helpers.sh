@@ -3002,6 +3002,35 @@ o="$(cd "$BM_T/roon/work" && bm_env bash "$H" meta-entry --root 2>/dev/null)"; r
 [ "$o" = "meta-entry: failed — --root requires a checkout path (got '')" ] && [ "$rc" -eq 0 ] && ok "BM7 a trailing bare meta-entry --root ⇒ failed, exit 0" || no "BM7 bare --root ⇒ '$o' rc=$rc"
 o="$(bash "$H" meta-push-failed -x.md 2>/dev/null)"; rc=$?
 [ -z "$o" ] && [ "$rc" -eq 0 ] && ok "BM7 meta-push-failed with an option-shaped <runfile> prints nothing, exit 0" || no "BM7 meta-push-failed -x.md ⇒ '$o' rc=$rc"
+# (bm8) review iteration 3 — the mode answer is FAIL-CLOSED on its SHAPE: an empty, garbage or
+# `on ` (empty-branch) answer from the reader is `failed — mode unknown`, and NO pull runs; a
+# near-miss mode line in a real branch-mode .gitignore reads unknown too (never `off`).
+BM8="$BM_T/bm8"; mkdir -p "$BM8/bin"
+cp "$H" "$BM8/bin/automate-helpers.sh"
+printf '#!/bin/bash\necho pulled-by-spy >> "%s/spy.log"\nexit 0\n' "$BM8" > "$BM8/spy-meta-sync.sh"
+bm8_entry() {  # <stub answer> [helpers copy] — runs meta-entry against a stub reader printing <answer>
+  printf '#!/bin/bash\nprintf "%%s" %q\n' "$1" > "$BM8/bin/setup-memory.sh"
+  (cd "$BM8" && LOOMWRIGHT_META_SYNC_BIN="$BM8/spy-meta-sync.sh" bash "${2:-$BM8/bin/automate-helpers.sh}" meta-entry --root "$BM8" 2>/dev/null)
+}
+for ans in '' 'on ' 'garbage' 'offx'; do
+  rm -f "$BM8/spy.log"
+  o="$(bm8_entry "$ans")"
+  case "$o" in "meta-entry: failed — mode unknown ("*) ok "BM8 reader answer '$ans' ⇒ '$o'" ;; *) no "BM8 reader answer '$ans' ⇒ '$o'" ;; esac
+  [ ! -e "$BM8/spy.log" ] && ok "BM8 reader answer '$ans' ran NO pull" || no "BM8 reader answer '$ans' ran a pull"
+done
+# Mutation control: the pre-fix `"on "*)` arm accepts `on ` (empty branch) and runs the pull.
+sed 's/^    "on "?\*) branch="\${mode#on }" ;;$/    "on "*) branch="${mode#on }" ;;/' "$BM8/bin/automate-helpers.sh" > "$BM8/bin/mut-helpers.sh"
+if cmp -s "$BM8/bin/automate-helpers.sh" "$BM8/bin/mut-helpers.sh"; then
+  no "BM8 mutation control: the patch changed nothing — inconclusive"
+else
+  rm -f "$BM8/spy.log"; o="$(bm8_entry 'on ' "$BM8/bin/mut-helpers.sh")"
+  case "$o" in "meta-entry: failed — "*) no "BM8 mutation control REFUTED: the pre-fix arm still fails on 'on ' ($o)" ;; *) ok "BM8 mutation control: the pre-fix arm accepts 'on ' ⇒ '$o' — the assertion is load-bearing" ;; esac
+fi
+# A near-miss (indented) mode line in a real branch-mode clone ⇒ unknown, through the real reader.
+bm_world "$BM_T/nm" on
+awk 'index($0, "# loomwright-meta-branch: ") == 1 { print "  " $0; next } { print }' "$BM_T/nm/work/.gitignore" > "$BM_T/nm/g" && mv "$BM_T/nm/g" "$BM_T/nm/work/.gitignore"
+o="$(bm_entry "$BM_T/nm/work")"
+case "$o" in "meta-entry: failed — mode unknown (a malformed mode line"*) ok "BM8 an indented mode line ⇒ '$o'" ;; *) no "BM8 indented mode line ⇒ '$o'" ;; esac
 rm -rf "$BM_T"
 
 echo

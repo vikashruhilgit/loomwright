@@ -1561,6 +1561,43 @@ new_fixture 89; printf '<<<<<<< HEAD\nzz-a/\n=======\nzz-b/\n>>>>>>> other\n' >>
 out="$(bm_trail done)"
 case "$out" in "trail-pr: opened https://github.com/acme/widgets/pull/"*) ok "(bm-h) never opted in + conflict-marked .gitignore ⇒ PR path ($out)" ;; *) no "(bm-h) conflict-marked, never opted in ⇒ '$out'" ;; esac
 [ ! -f "$P/.supervisor/automate/$RUN_ID.meta-push-failed" ] && ok "(bm-h) conflict-marked: no .meta-push-failed marker" || no "(bm-h) conflict-marked: marker written"
+
+# (bm-i) review iteration 3 — _branch_mode is FAIL-CLOSED on the answer's SHAPE. Only `off` and
+# `on <non-empty>` pass through; an `on ` (empty-branch) answer is `unknown`, so trail-pr fails LOUD
+# without ever invoking meta-sync; and a stripped copy (no sibling reader) treats near-miss mode text
+# (no space after the colon) as `unknown`, never `off` (which would open a PR in a branch-mode repo).
+BMI="$TOP/bm-i"; mkdir -p "$BMI/stub" "$BMI/strip"
+cp "$HERE"/*.sh "$HERE"/*.py "$BMI/stub/" 2>/dev/null; cp "$HERE"/*.sh "$HERE"/*.py "$BMI/strip/" 2>/dev/null
+printf '#!/bin/bash\necho "on "\n' > "$BMI/stub/setup-memory.sh"
+rm -f "$BMI/strip/setup-memory.sh"
+printf '#!/bin/bash\necho invoked >> "%s/ms.log"\nexit 0\n' "$BMI" > "$BMI/spy-ms.sh"
+bmi_trail() { (cd "$P" && LOOMWRIGHT_META_SYNC_BIN="$BMI/spy-ms.sh" bash "$1/automate-helpers.sh" trail-pr "$RF_REL0" --reason done); }
+new_fixture 90; bm_switch; rm -f "$BMI/ms.log"
+out="$(bmi_trail "$BMI/stub")"
+[ "$out" = "trail-pr: meta-push FAILED — mode unknown setup-memory.sh mode printed 'on '" ] && ok "(bm-i) an 'on ' (empty-branch) reader answer ⇒ '$out'" || no "(bm-i) 'on ' answer ⇒ '$out'"
+[ ! -e "$BMI/ms.log" ] && ok "(bm-i) meta-sync was NEVER invoked on the empty-branch answer" || no "(bm-i) meta-sync invoked with an empty branch"
+[ "$(count_creates)" = 0 ] && ok "(bm-i) no gh pr create on the empty-branch answer" || no "(bm-i) pr create invoked"
+# Mutation control: the pre-fix _branch_mode (no shape check) passes `on ` through and runs meta-sync.
+awk '/^  case "\$m" in$/ && !done { skip = 4; done = 1 } skip > 0 { skip--; next } { print }' "$BMI/stub/automate-trail.sh" > "$BMI/stub/at.mut" && mv "$BMI/stub/at.mut" "$BMI/stub/automate-trail.sh"
+if cmp -s "$HERE/automate-trail.sh" "$BMI/stub/automate-trail.sh"; then no "(bm-i) mutation control: the patch changed nothing — inconclusive"
+else
+  new_fixture 91; bm_switch; rm -f "$BMI/ms.log"; bmi_trail "$BMI/stub" >/dev/null
+  [ -e "$BMI/ms.log" ] && ok "(bm-i) mutation control: without the shape check meta-sync IS invoked on 'on ' — the assertion is load-bearing" || no "(bm-i) mutation control REFUTED: meta-sync still not invoked"
+fi
+# Stripped copy + a no-space near-miss inside the block ⇒ unknown (loud), not the mode-off PR path.
+new_fixture 92; bm_switch
+sed 's/^# loomwright-meta-branch: /# loomwright-meta-branch:/' "$P/.gitignore" > "$P/g" && mv "$P/g" "$P/.gitignore"
+: > "$GH_STUB_DIR/argv.log"
+out="$(bmi_trail "$BMI/strip")"
+[ "$out" = "trail-pr: meta-push FAILED — mode unknown setup-memory.sh is missing beside automate-trail.sh" ] && ok "(bm-i) stripped copy + no-space near-miss ⇒ '$out'" || no "(bm-i) stripped copy + near-miss ⇒ '$out'"
+[ "$(count_creates)" = 0 ] && ok "(bm-i) stripped copy + near-miss: no gh pr create" || no "(bm-i) stripped copy + near-miss opened a PR"
+sed "s/grep -qF 'loomwright-meta-branch' /grep -q '^# loomwright-meta-branch: ' /" "$BMI/strip/automate-trail.sh" > "$BMI/strip/at.mut"
+if cmp -s "$BMI/strip/automate-trail.sh" "$BMI/strip/at.mut"; then no "(bm-i) fallback mutation control: the patch changed nothing — inconclusive"
+else
+  mv "$BMI/strip/at.mut" "$BMI/strip/automate-trail.sh"
+  out="$(bmi_trail "$BMI/strip")"
+  case "$out" in *"mode unknown"*) no "(bm-i) fallback mutation control REFUTED: the prefix-only grep still reads unknown ($out)" ;; *) ok "(bm-i) fallback mutation control: the prefix-only grep reads the near-miss as off ($out) — the assertion is load-bearing" ;; esac
+fi
 unset LOOMWRIGHT_MEMORY_REPO_ALLOWLIST
 
 echo

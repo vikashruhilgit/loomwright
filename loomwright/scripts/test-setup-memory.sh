@@ -1699,7 +1699,7 @@ if has '^apply: ABORTED — unparseable: .gitignore contains unresolved git conf
 # Mutation control: a copy whose read_mode consults the WRITER's gate (the pre-fix shape) MUST turn
 # the conflict-marked 'off' assertion red — proves the assertion above is load-bearing.
 BMR_MUT="$(mktemp -d)"
-sed -e 's/^  LC_ALL=C grep -qF -- "\$MODE_PREFIX" "\$GI" 2>\/dev\/null || rc=\$?$/  :/' \
+sed -e 's/^  grep -qF -- "\$MODE_PREFIX" "\$GI" 2>\/dev\/null || rc=\$?$/  :/' \
     -e 's/gate="\$(gitignore_gate read)"/gate="$(gitignore_gate)"/' "$MEM" > "$BMR_MUT/setup-memory.sh"
 if cmp -s "$MEM" "$BMR_MUT/setup-memory.sh"; then
   no "(bm-r) mutation control: the patch changed nothing — control inconclusive"
@@ -1769,6 +1769,82 @@ for good in loomwright-meta meta/run-history feature/x_y-1 off-branch; do
   sg="$(sum "$Bg/.gitignore")"; o="$(mem "$Bg" apply 2>/dev/null)"
   if [ "$(sum "$Bg/.gitignore")" = "$sg" ] && has '^apply: no-op' "$o"; then ok "(bm-v) a plain apply preserves '$good' (byte-identical no-op)"; else no "(bm-v) plain apply on '$good': $(grep '^apply' <<< "$o")"; fi
 done
+
+echo "== (bm-f) the mode answer is FAIL-CLOSED: empty / malformed / unrecognised never reads 'off' =="
+# Review (iteration 3): the writer mapped ANY answer that was not `on <b>` to mode off, and the reader
+# turned an EMPTY mode value or a near-miss mode line (indented, no space after the colon) into
+# `off` — so a plain apply silently rewrote a branch-mode block as the default one (mode line gone,
+# run history re-included). Only an exact `off` or a valid `on <b>` may pass; everything else is
+# `unknown …`, and a plain apply on `unknown` aborts with nothing written.
+bmf_fix() { local d; d="$(newgit)"; printf '.supervisor/\n' > "$d/.gitignore"; mem "$d" apply --branch-mode loomwright-meta >/dev/null 2>&1; printf '%s\n' "$d"; }
+bmf_sub() { awk -v m="$2" 'index($0, "# loomwright-meta-branch: ") == 1 { print m; next } { print }' "$1/.gitignore" > "$1/g" && mv "$1/g" "$1/.gitignore"; }
+bmf_nbk() { ls "$1"/.gitignore.backup.* 2>/dev/null | wc -l | tr -d ' '; }
+bmf_refused() {  # <script> <repo> <label> — plain apply ABORTs, .gitignore byte-identical, no NEW backup
+  local s0 b0 o; s0="$(sum "$2/.gitignore")"; b0="$(bmf_nbk "$2")"; o="$(bash "$1" --root "$2" apply 2>/dev/null)"
+  if has '^apply: ABORTED — the managed block' "$o" && [ "$(sum "$2/.gitignore")" = "$s0" ] && [ "$(bmf_nbk "$2")" = "$b0" ]; then ok "(bm-f) $3: a plain apply is refused, .gitignore unchanged, no new backup"; else no "(bm-f) $3: plain apply: $(grep '^apply' <<< "$o")"; fi
+}
+# (1) EMPTY branch value inside the sentinels.
+Bfe="$(bmf_fix)"; bmf_sub "$Bfe" "$MLINE"
+mfe="$(mem "$Bfe" mode 2>/dev/null)"
+[ "$mfe" = "unknown invalid branch name '' in the mode line" ] && ok "(bm-f) an EMPTY mode-line branch reads '$mfe'" || no "(bm-f) empty mode-line branch ⇒ '$mfe'"
+bmf_refused "$MEM" "$Bfe" "empty mode-line branch"
+has '^  branch mode:       unknown invalid branch name' "$(mem "$Bfe" check 2>/dev/null)" && ok "(bm-f) check names the unknown mode (never silent)" || no "(bm-f) check on an empty mode-line branch printed no unknown mode line"
+# (2) near-miss shapes inside the sentinels: indented, no space after the colon, bare colon.
+for nm in "  ${MLINE}loomwright-meta" '# loomwright-meta-branch:loomwright-meta' '# loomwright-meta-branch:'; do
+  Bfn="$(bmf_fix)"; bmf_sub "$Bfn" "$nm"
+  mfn="$(mem "$Bfn" mode 2>/dev/null)"
+  case "$mfn" in "unknown a malformed mode line in the managed block"*) ok "(bm-f) near-miss '$nm' reads 'unknown …'" ;; *) no "(bm-f) near-miss '$nm' ⇒ '$mfn'" ;; esac
+  bmf_refused "$MEM" "$Bfn" "near-miss '$nm'"
+done
+# (3) the never-opted-in invariant holds for mode text OUTSIDE the sentinels, exact or near-miss.
+Bfo="$(newgit)"; printf 'node_modules/\n%sx\n# loomwright-meta-branch:y\n  %sz\n' "$MLINE" "$MLINE" > "$Bfo/.gitignore"
+[ "$(mem "$Bfo" mode 2>/dev/null)" = "off" ] && ok "(bm-f) mode text only OUTSIDE the sentinels (no block) ⇒ 'off'" || no "(bm-f) outside-only, no block ⇒ '$(mem "$Bfo" mode 2>/dev/null)'"
+mem "$Bfo" apply >/dev/null 2>&1
+[ "$(mem "$Bfo" mode 2>/dev/null)" = "off" ] && ok "(bm-f) mode text only OUTSIDE a default block ⇒ 'off'" || no "(bm-f) outside-only, default block ⇒ '$(mem "$Bfo" mode 2>/dev/null)'"
+sfo="$(sum "$Bfo/.gitignore")"; o="$(mem "$Bfo" apply 2>/dev/null)"
+if has '^apply: no-op' "$o" && [ "$(sum "$Bfo/.gitignore")" = "$sfo" ]; then ok "(bm-f) a plain re-apply there is still a byte-identical no-op"; else no "(bm-f) re-apply with outside-only mode text: $(grep '^apply' <<< "$o")"; fi
+# (4) a crashed / garbage reader: stub read_mode in a scratch copy (the review's repro).
+BMF_D="$(mktemp -d)"
+bmf_stub() { awk -v s="$2" '/^resolve_effective_branch$/ { print s } { print }' "$MEM" > "$BMF_D/$1.sh"; }
+bmf_stub empty 'read_mode() { return 0; }'
+bmf_stub garbage 'read_mode() { echo garbage; }'
+bmf_stub onempty 'read_mode() { echo "on "; }'
+for st in empty garbage onempty; do
+  Bfs="$(bmf_fix)"
+  mfs="$(bash "$BMF_D/$st.sh" --root "$Bfs" mode 2>/dev/null)"
+  case "$mfs" in "unknown mode reader returned"*) ok "(bm-f) stubbed reader ($st) ⇒ mode prints '$mfs'" ;; *) no "(bm-f) stubbed reader ($st) ⇒ mode '$mfs'" ;; esac
+  bmf_refused "$BMF_D/$st.sh" "$Bfs" "stubbed reader ($st)"
+done
+has '^  branch mode:       unknown mode reader returned' "$(bash "$BMF_D/empty.sh" --root "$Bfs" check 2>/dev/null)" && ok "(bm-f) check with a crashed reader names the unknown mode" || no "(bm-f) check with a crashed reader is silent about the mode"
+# Mutation controls — each restores ONE pre-fix shape in a scratch copy and MUST turn the matching
+# assertion above red (a copy the patch did not change is reported inconclusive, never green).
+bmf_mut() {  # <name> <label> <repo> <expect-mode-not> ; runs plain apply, reports whether it was refused
+  local s0 o
+  if cmp -s "$MEM" "$BMF_D/$1.sh"; then no "(bm-f) mutation control '$2': the patch changed nothing — inconclusive"; return; fi
+  s0="$(sum "$3/.gitignore")"; o="$(bash "$BMF_D/$1.sh" --root "$3" apply 2>/dev/null)"
+  if [ "$(sum "$3/.gitignore")" != "$s0" ] && ! has '^apply: ABORTED' "$o"; then ok "(bm-f) mutation control '$2': the pre-fix shape REWRITES the branch-mode block — the assertion is load-bearing"; else no "(bm-f) mutation control '$2' REFUTED: the pre-fix shape still refuses ($(grep '^apply' <<< "$o"))"; fi
+}
+# (a) the old catch-all: an unrecognised answer resolves to off.
+{ awk '/^resolve_effective_branch$/ { print "read_mode() { return 0; }"; print "normalize_mode() { case \"$1\" in \"on \"*|unknown*) printf \"%s\\n\" \"$1\" ;; *) echo off ;; esac; }" } { print }' "$MEM"; } > "$BMF_D/m_catchall.sh"
+bmf_mut m_catchall "old catch-all (empty reader ⇒ off)" "$(bmf_fix)"
+# (b) the old reader: no per-match marker, so an EMPTY value is empty output ⇒ off.
+sed -e 's/print "L" substr(\$0, length(m) + 1); next/print substr($0, length(m) + 1); next/' -e 's/b="\${lines#L}"/b="$lines"/' "$MEM" > "$BMF_D/m_nomarker.sh"
+Bfm="$(bmf_fix)"; bmf_sub "$Bfm" "$MLINE"; bmf_mut m_nomarker "no per-match marker (empty value ⇒ off)" "$Bfm"
+# (c) the old reader: in-block near-miss lines are not flagged.
+grep -v 'inblk && index(\$0, t) > 0 { print "X" }' "$MEM" > "$BMF_D/m_nonearmiss.sh"
+Bfm="$(bmf_fix)"; bmf_sub "$Bfm" "  ${MLINE}loomwright-meta"; bmf_mut m_nonearmiss "near-miss not flagged (indented ⇒ off)" "$Bfm"
+# (d) the old pre-check: only the exact prefix (with its trailing space) is searched for.
+grep -v 'then rc=0; grep -qF -- "\$MODE_TOKEN"' "$MEM" > "$BMF_D/m_prefixonly.sh"
+Bfm="$(bmf_fix)"; bmf_sub "$Bfm" '# loomwright-meta-branch:loomwright-meta'; bmf_mut m_prefixonly "prefix-only pre-check (no-space ⇒ off)" "$Bfm"
+rm -rf "$BMF_D"
+# (5) the reader must not crash in its subshell: a temporary LC_ALL on a command inside a command
+# substitution SEGFAULTs Homebrew bash 5.3 on macOS a few percent of the time (dispose_temporary_env
+# → setlocale → CoreFoundation after fork), and a crashed reader is now — correctly — `unknown`. So
+# read_mode carries no `LC_ALL=` prefix at all; pinned structurally (the crash itself is flaky).
+if awk '/^read_mode\(\) \{/ { f = 1 } f && /^}/ { exit } f && !/^[ \t]*#/ && /LC_ALL=/ { bad = 1 } END { exit !bad }' "$MEM"; then no "(bm-f) read_mode carries an LC_ALL= temp-env prefix (crash-prone in a subshell)"; else ok "(bm-f) read_mode carries no LC_ALL= temp-env prefix"; fi
+# (6) the realistic round trip is untouched: mode on → plain apply byte-identical no-op → mode on.
+Bfr="$(bmf_fix)"; sfr="$(sum "$Bfr/.gitignore")"; o="$(mem "$Bfr" apply 2>/dev/null)"
+if has '^apply: no-op' "$o" && [ "$(sum "$Bfr/.gitignore")" = "$sfr" ] && [ "$(mem "$Bfr" mode 2>/dev/null)" = "on loomwright-meta" ]; then ok "(bm-f) a valid branch-mode block still round-trips (plain apply no-op, mode on)"; else no "(bm-f) valid round trip: $(grep '^apply' <<< "$o")"; fi
 
 echo "== (k) the suite never touched the plugin repo's own .gitignore =="
 PLUGIN_GI_SUM_AFTER="$(sum "$PLUGIN_GI")"
