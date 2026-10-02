@@ -27,8 +27,14 @@
 #   offender:  x="$(… | LC_ALL=C sort -u)"     if LC_ALL=C grep -q …     LANG=C tr …
 #   allowed:   x="$(… | env LC_ALL=C sort -u)" export LC_ALL=C (script scope, main process)
 #              comment lines, and prose such as  echo "… in LC_ALL=C sort order"
-# `env LC_ALL=C cmd` is byte-identical to `LC_ALL=C cmd` for an external command: the child gets
-# the same environment, and bash never touches its own locale.
+# FIX by what follows the prefix:
+#   an external command   `env LC_ALL=C cmd` — byte-identical to `LC_ALL=C cmd`: the child gets the
+#                         same environment, and bash never touches its own locale.
+#   a builtin / function  NOT env — env only execs a binary on PATH (`env LC_ALL=C read` fails, or
+#   (read, printf, eval,  runs a separate /usr/bin/read whose result never reaches the shell). Set
+#   a shell function)     the locale for the whole shell instead: `export LC_ALL=C` once at script
+#                         scope, or as the first statement of the subshell, so it is never restored
+#                         (an export inside a subshell measured 0/150).
 #
 # FAILS CLOSED (exit 1, no `|| true`) naming every offender as file:line, and on zero scanned
 # files (a 0-file run of a fail-closed gate is a false green — mirrors check-test-hermetic.sh).
@@ -80,7 +86,9 @@ if [ -n "$offenders" ]; then
   n="$(printf '%s\n' "$offenders" | wc -l | tr -d ' ')"
   printf '%s\n' "$offenders" | sed 's/^/check-locale-prefix: OFFENDER /' >&2
   echo "check-locale-prefix: FAIL — $n temporary locale assignment(s) at command position in $total scanned shell files." >&2
-  echo "  Fix: prefix the command with env (\`env LC_ALL=C sort\`), or \`export LC_ALL=C\` once at script scope." >&2
+  echo "  Fix: an external command -> prefix it with env (\`env LC_ALL=C sort\`)." >&2
+  echo "       a builtin or shell function (read, printf, eval, a function) -> NOT env (it can only exec a binary);" >&2
+  echo "       \`export LC_ALL=C\` once at script scope, or as the subshell's first statement." >&2
   echo "  Why: Homebrew bash 5.3 segfaults restoring the locale in a forked subshell (see this script's header)." >&2
   exit 1
 fi

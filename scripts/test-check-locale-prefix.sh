@@ -11,7 +11,9 @@
 #   4. pruned dirs        — an offender under .git/ or node_modules/ is NOT scanned
 #   5. zero files         — an empty tree -> red (never green on nothing)
 #   6. mutation control   — the real setup-memory.sh with its gitignore_gate `env` dropped -> red
-#   7. the real tree      — green
+#   7. argument errors    — `--root` with no value, an unknown flag, a non-directory root -> red
+#   8. fix hint           — a flagged builtin (`read`) is pointed at `export LC_ALL=C`, not only env
+#   9. the real tree      — green
 #
 # The fixture lines below spell `@LC_ALL=` (stripped when written) so this file itself stays green
 # under the gate it tests — test 7 scans the real tree, this file included.
@@ -121,9 +123,27 @@ else
   no "6. setup-memory.sh no longer carries '! env LC_ALL=C tr -d' — re-point this mutation control"
 fi
 
-echo "== 7. the real tree is green =="
+echo "== 7. argument errors fail closed, each with its own message =="
+bash "$CHECK" --root > "$tmp/out" 2>&1; rc=$?
+[ "$rc" -ne 0 ] && grep -q -- '--root needs a directory' "$tmp/out" && ok "7a. --root with no value is red" || no "7a. rc=$rc: $(cat "$tmp/out")"
+bash "$CHECK" --bogus > "$tmp/out" 2>&1; rc=$?
+[ "$rc" -ne 0 ] && grep -q 'unknown argument: --bogus' "$tmp/out" && ok "7b. an unknown argument is red" || no "7b. rc=$rc: $(cat "$tmp/out")"
+: > "$tmp/notadir"
+bash "$CHECK" --root "$tmp/notadir" > "$tmp/out" 2>&1; rc=$?
+[ "$rc" -ne 0 ] && grep -q 'root is not a directory' "$tmp/out" && ok "7c. a non-directory --root is red" || no "7c. rc=$rc: $(cat "$tmp/out")"
+
+echo "== 8. the fix hint separates external commands from builtins/functions =="
+fresh_tree
+printf 'while @LC_ALL=C read -r l; do :; done < f\n' | sed 's/@//' > "$tmp/r/scripts/bad.sh"
+run; rc=$?
+# `env LC_ALL=C read` is NOT a fix: it runs /usr/bin/read in its own process (exit 0, variable empty).
+[ "$rc" -ne 0 ] && grep -q 'external command -> prefix it with env' "$tmp/out" \
+  && grep -q 'builtin or shell function.*NOT env' "$tmp/out" && grep -qF 'export LC_ALL=C' "$tmp/out" \
+  && ok "8. a flagged builtin gets the export remedy, not only env" || no "8. rc=$rc: $(cat "$tmp/out")"
+
+echo "== 9. the real tree is green =="
 bash "$CHECK" > "$tmp/out" 2>&1; rc=$?
-[ "$rc" -eq 0 ] && ok "7. real tree: $(cat "$tmp/out")" || no "7. real tree rc=$rc: $(cat "$tmp/out")"
+[ "$rc" -eq 0 ] && ok "9. real tree: $(cat "$tmp/out")" || no "9. real tree rc=$rc: $(cat "$tmp/out")"
 
 echo
 echo "test-check-locale-prefix: $pass passed, $fail failed"
