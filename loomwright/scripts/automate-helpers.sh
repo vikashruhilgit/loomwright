@@ -18,12 +18,12 @@
 # (outside the explicitly-stubbed `gate-eval` MERGE branch) never calls
 # `gh pr merge` — and `brief-repair`, whose only write is the brief lifecycle
 # move performed by `reconcile-jobs.sh --repair` under `.supervisor/jobs/`,
-# never a source-repo or git mutation. The ONE carve-out: `trail-pr`/`closeout`/`trail-unstage`
+# never a source-repo or git mutation. The ONE carve-out: `trail-pr`/`closeout`/`trail-unstage`/`trail-gate`
 # (and the read-only `sidecar-check` beside them) are delegated to the sibling
 # `automate-trail.sh`, which is a git/`gh pr create` mutator bounded to this
 # run's trail branch, this PR's local branch/worktree, and — in the primary
 # checkout — index-only entries for this run's own trail paths plus closeout's
-# `git checkout <base>` + `git pull --ff-only` sync (never a commit, reset or
+# (and trail-gate's PICK-time) `git checkout <base>` + `git pull --ff-only` sync (never a commit, reset or
 # stash there) — never `gh pr merge`. A second, narrower carve-out:
 # `dismissed-drafts`/`dismissed-decide`/`dismissed-pending` are delegated to the
 # sibling `automate-dismissed.sh`, which writes ONLY this run's dismissed-finding
@@ -48,7 +48,7 @@
 #   gate-eval        <pr_url> <ctx.json>                # §10 MERGE|PARK fail-closed trusted-merge gate (conditions enumerated in skills/automate-loop/SKILL.md §10; cond 6 = classify-risk.sh high_risk, cond 7 = rules-gate-verdict.sh, NO override)
 #   learning-emit    <ledger_path> <flags...>           # §6 step 3 fail-safe (always exit 0) engine-native ground-truth POSTMORTEM_RESULT line; idempotent on run_id+item+pr_url+source+completeness (a degraded emit never blocks a later complete one)
 #   brief-repair     <item> <pr_url>                    # §6 steps 1/5 fail-safe (always exit 0) evidence-positive brief lifecycle repair: `gh pr view` says MERGED (or a non-empty mergedAt) ⇒ sibling reconcile-jobs.sh --repair --evidence <item>=<pr_url>; prints ONE line for ## Progress
-#   reconcile-status <requirements_root> [--apply]      # queue-hygiene/01: dry-run-default requirement `## Status:` reconciler — a `pending`/absent-status *.md under <requirements_root> (skips `00-*`, `_*`, `README*`, `operator-run/`) whose PR is MERGED (state via reconcile-item) and whose body cites the file's repo-relative path, OR whose head branch matches the slug on its `.supervisor/jobs/done/` brief, is stamped the §6 shape byte-for-byte; a `.supervisor/automate/*.md` Queue row carrying `# abandoned:` and naming a requirement stamps `done_with_escalation — ABANDONED (<row verbatim>)`; NEVER downgrades an existing `done`/`done_with_escalation`; prints one `plan\t…` row per file it WOULD stamp (or `stamped\t…` under `--apply`) plus one `info\t…` row per `brief-shipped` file (never promoted); writes nothing without `--apply`.
+#   reconcile-status <requirements_root> [--apply]      # queue-hygiene/01: dry-run-default requirement `## Status:` reconciler — a `pending`/absent-status *.md under <requirements_root> (skips `00-*`, `_*`, `README*`, `operator-run/`) whose PR is MERGED (state via reconcile-item) and whose body cites the file's repo-relative path, OR whose head branch matches the slug on its `.supervisor/jobs/done/` brief (never the engine's own `chore/<run_id>-trail-<n>` PR), is stamped the §6 shape byte-for-byte; a `.supervisor/automate/*.md` Queue row carrying `# abandoned:` and naming a requirement stamps `done_with_escalation — ABANDONED (<row verbatim>)`; NEVER downgrades an existing `done`/`done_with_escalation`; prints one `plan\t…` row per file it WOULD stamp (or `stamped\t…` under `--apply`) plus one `info\t…` row per `brief-shipped` file (never promoted); writes nothing without `--apply`.
 #   sidecar-check    <path>                             # §6 trail: delegated to automate-trail.sh — `ok <path>` / `fail <path>: <reason>` (RESULT_SCHEMAS key-table shape check of a result sidecar); always exits 0
 #   trail-pr         <runfile> [--reason <reason>]      # §6 "Trail PR after merge and at run end": delegated to automate-trail.sh — called only by closeout, at ## Status: done, and on a skip/abandon check-off (never at a park); commits this run's explicit trail paths as ONE PR off fresh origin/main, a done-stamped requirement/done brief only when its PR reads merged; one line (opened|pushed|skipped); always exits 0
 #   closeout         <runfile> <item> <pr_url> [--session-id <sid>]  # §6 post-merge close-out: delegated to automate-trail.sh; always exits 0
@@ -56,6 +56,7 @@
 #   dismissed-decide <runfile> <draft_path> <fix-now|follow-up|drop>  # §6 decision step / next PICK: delegated to automate-dismissed.sh — records the decision in <run_id>.dismissed-decisions, rewrites (follow-up) or deletes (drop/fix-now) the draft, one Progress line; refuses a foreign path; always exits 0
 #   dismissed-pending <runfile>                         # §6 step 1 PICK: delegated to automate-dismissed.sh — count of this run's undecided drafts, or `unknown` (treated as non-zero); always exits 0
 #   trail-unstage    <runfile>                          # §6 step 1 PICK (before RUN): delegated to automate-trail.sh — drops the trail-path index entries trail-pr staged so the next item's commit cannot sweep them; one line; always exits 0
+#   trail-gate       <runfile>                          # §6 step 1 PICK (after RECONCILE, before trail-unstage) / §8: delegated to automate-trail.sh — `PARK — trail PR open <url>` while this run's trail PR is open (or its state is unreadable: fail CLOSED); else `clear — …` after syncing the primary onto the base branch (closeout's sync); one line; always exits 0
 #   meta-entry       [--root <checkout>]                # §"Branch mode": the FIRST action of every /automate entry (a bare/empty/option-shaped --root value ⇒ `failed`) — reads `setup-memory.sh mode` itself (no caller input can assert the mode) and, when on, runs `meta-sync.sh pull`; ONE line `meta-entry: off|pulled <branch>|failed — <reason>`; writes nothing under .supervisor/automate/; always exits 0
 #   meta-push-failed <runfile>                          # §"Branch mode": read-only — prints the first line of this run's gitignored `<run_id>.meta-push-failed` marker (a failed mode-on trail push), or nothing; always exits 0
 #
@@ -1554,6 +1555,12 @@ EOF
 #       Outcome line is tried as a candidate FIRST, and a merged candidate's
 #       `headRefName` ending in the brief's date-stripped filename slug is
 #       accepted as a match when the body citation is absent.
+# NEVER EVIDENCE: the engine's own trail PRs (`chore/<run_id>-trail-<n>`,
+# _rs_is_trail_branch). A trail PR's body lists every path it commits — the
+# run's Queue requirements and its dismissed-finding drafts under `proposed/` —
+# so a body citation there says "this file was committed", never "this work
+# shipped" (run automate-2026-10-01-142337: proposed/ drafts read "would stamp
+# done (PR #321)", #321 being trail PR chore/automate-2026-09-30-054439-trail-2).
 # PR STATE is resolved EXCLUSIVELY through `reconcile_item` (merged|open|gone)
 # — this is not a second gh-state parser; the extra `gh pr view` call here
 # reads ADDITIONAL fields (body, mergeCommit, headRefName) on a candidate
@@ -1666,6 +1673,14 @@ _rs_find_done_brief() {
   return 0
 }
 
+# _rs_is_trail_branch <headRefName> — 0 when the branch has the shape trail-pr
+# names its branches with (`chore/<run_id>-trail-<n>`, n numeric); such a PR is
+# never evidence for _rs_evidence_for, on either the body-citation or the
+# branch-slug path.
+_rs_is_trail_branch() {
+  printf '%s' "$1" | grep -qE '^chore/.+-trail-[0-9]+$'
+}
+
 # _rs_evidence_for <abs_file> <rel_path> <done_brief|""> — echo
 # "<pr_url>\t<pr_number>\t<sha7>\t<justification>" for the first candidate PR
 # that is MERGED (via reconcile_item) AND either cites <rel_path> in its body
@@ -1698,6 +1713,7 @@ _rs_evidence_for() {
     body="$(printf '%s' "$view" | "$JQ" -r '.body // empty' 2>/dev/null)"
     oid="$(printf '%s' "$view" | "$JQ" -r '.mergeCommit.oid // empty' 2>/dev/null)"
     headref="$(printf '%s' "$view" | "$JQ" -r '.headRefName // empty' 2>/dev/null)"
+    _rs_is_trail_branch "$headref" && continue
     local justification=""
     case "$body" in *"$rel"*) justification="PR body cites $rel" ;; esac
     if [ -z "$justification" ] && [ -n "$slug" ]; then
@@ -1944,7 +1960,7 @@ main() {
     meta-push-failed) meta_push_failed "$@" ;;
     # Post-park lifecycle MUTATORS live in the sibling automate-trail.sh (the
     # read-only carve-out named in the header) — one mover per concern.
-    sidecar-check|trail-pr|closeout|trail-unstage) exec bash "$(dirname "$0")/automate-trail.sh" "$cmd" "$@" ;;
+    sidecar-check|trail-pr|closeout|trail-unstage|trail-gate) exec bash "$(dirname "$0")/automate-trail.sh" "$cmd" "$@" ;;
     # Dismissed-finding drafts (propose-only writes, never git) — the sibling
     # automate-dismissed.sh, the second carve-out named in the header.
     dismissed-drafts)  exec bash "$(dirname "$0")/automate-dismissed.sh" "$cmd" "$@" ;;

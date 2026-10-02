@@ -76,6 +76,14 @@
 #      asked — the two SKILL §6 seam pins with per-line
 #      mutants (AC-9a), and the invocation-removed helper mutant beside real siblings
 #      behind a positive gate (AC-9b).
+#   H7. reconcile-status never takes the engine's own trail PR as evidence: a
+#      proposed/ draft and a Queue requirement cited ONLY by a merged
+#      chore/<run_id>-trail-<n> PR body get no plan line (run
+#      automate-2026-10-01-142337: proposed/ drafts read "would stamp done
+#      (PR #321)", a trail PR); a trail candidate ahead of the real PR is
+#      skipped, not fatal (the plan names the real PR); a near-miss branch
+#      (`chore/x-trail-final`) is still evidence; mutation control — the
+#      exclusion line neutered in a copy of the helper ⇒ the draft plans again.
 #   I. ceiling-check (red-team-hardening/06, PICK-time token ceiling; section letter
 #      "I" — "H" is already used in-body by the reconcile-status H1-H6 tests above):
 #      under-max
@@ -2649,9 +2657,9 @@ rs_repo() {
   printf '%s\t%s' "$r" "$relb"
 }
 rs_run() {
-  # rs_run <repo> <args...> — RUN_OUT / RUN_RC set.
+  # rs_run <repo> <args...> — RUN_OUT / RUN_RC set. RS_H overrides the helper (mutation controls).
   local r="$1"; shift
-  RUN_OUT="$(GH_STUB_DIR="$r/ghstub" PATH="$r/bin:$PATH" LOOMWRIGHT_GH_BIN=gh bash "$H" reconcile-status "$@" 2>/dev/null)"; RUN_RC=$?
+  RUN_OUT="$(GH_STUB_DIR="$r/ghstub" PATH="$r/bin:$PATH" LOOMWRIGHT_GH_BIN=gh bash "${RS_H:-$H}" reconcile-status "$@" 2>/dev/null)"; RUN_RC=$?
 }
 
 # H1. AC-1: dry run over the 5-file fixture prints exactly ONE plan line (b), writes nothing.
@@ -2749,6 +2757,68 @@ if grep -qE '^info	.*07-shipped\.md	brief-shipped	' < <(printf '%s\n' "$RUN_OUT"
 else
   no "H6 brief-shipped wrong (out='$RUN_OUT')"
 fi
+rm -rf "$R"
+
+# H7. The engine's own trail PR is never evidence (sibling defect of the
+#     trail-PR-moves-main fix, run automate-2026-10-01-142337). A trail PR's
+#     body lists every path it commits, so a body citation there is "committed",
+#     never "shipped".
+RS_TRAIL="https://github.com/acme/widgets/pull/321"
+rs_trail_repo() {  # <trail headRefName> → "<repo>\t<draft rel>\t<req rel>"
+  local r reld relq
+  r="$(mktemp -d)"
+  mkdir -p "$r/.supervisor/requirements/qh/proposed" "$r/.supervisor/jobs/done" "$r/.supervisor/automate" "$r/bin" "$r/ghstub"
+  reld=".supervisor/requirements/qh/proposed/automate-2026-01-01-000000--01-a-abc123--dismissed-1b4e0236.md"
+  relq=".supervisor/requirements/qh/01-a.md"
+  printf '# Dismissed finding\n\n- **Decision:** follow-up\n> some finding\n' > "$r/$reld"
+  printf '# a\n\n## Status: pending\n' > "$r/$relq"
+  rs_stub_bin "$r/bin"
+  jq -n --arg url "$RS_TRAIL" '[{url:$url}]' > "$r/ghstub/list-$(rs_key "$reld").json"
+  jq -n --arg url "$RS_TRAIL" '[{url:$url}]' > "$r/ghstub/list-$(rs_key "$relq").json"
+  jq -n --arg d "$reld" --arg q "$relq" --arg h "$1" \
+    '{state:"MERGED",mergedAt:"2026-09-30T00:00:00Z",number:321,body:("Trail paths:\n- "+$q+"\n- "+$d),mergeCommit:{oid:"6b388ae000000000"},headRefName:$h}' \
+    > "$r/ghstub/view-$(rs_key "$RS_TRAIL").json"
+  printf '%s\t%s\t%s' "$r" "$reld" "$relq"
+}
+IFS=$'\t' read -r R RELD RELQ <<<"$(rs_trail_repo chore/automate-2026-09-30-054439-trail-2)"
+rs_run "$R" "$R/.supervisor/requirements/qh"
+DRY_OUT="$RUN_OUT"
+rs_run "$R" "$R/.supervisor/requirements/qh" --apply
+if [ -z "$DRY_OUT" ] && [ -z "$RUN_OUT" ] && ! grep -q '^## Status' "$R/$RELD" && grep -qE '^## Status: pending$' "$R/$RELQ"; then
+  ok "H7 a merged trail PR whose body cites a proposed/ draft and a Queue requirement is not evidence (no plan, no stamp)"
+else
+  no "H7 trail PR read as evidence (dry='$DRY_OUT' apply='$RUN_OUT')"
+fi
+# Mutation control: the exclusion neutered in a copy of the helper ⇒ the same fixture plans both files again.
+RSM="$(mktemp -d)"; cp "$HERE"/*.sh "$HERE"/*.py "$RSM/" 2>/dev/null
+sed 's/^    _rs_is_trail_branch "\$headref" && continue$/    :/' "$H" > "$RSM/automate-helpers.sh"
+if cmp -s "$H" "$RSM/automate-helpers.sh"; then
+  no "H7 mutation control: the exclusion line was not found (the sed no longer matches)"
+else
+  RS_H="$RSM/automate-helpers.sh" rs_run "$R" "$R/.supervisor/requirements/qh"
+  if grep -qF "plan	$RELD	done (PR #321, merge 6b388ae)" <<<"$RUN_OUT" && grep -qF "plan	$RELQ	done (PR #321" <<<"$RUN_OUT"; then
+    ok "H7 mutation control: without the trail-branch exclusion the draft and the requirement plan 'done (PR #321)' — the exclusion is load-bearing"
+  else
+    no "H7 mutation control: mutant did not reproduce the defect (out='$RUN_OUT') — H7 would be vacuous"
+  fi
+fi
+rm -rf "$R" "$RSM"
+# A trail candidate listed ahead of the real implementation PR is skipped, not fatal.
+IFS=$'\t' read -r R RELD RELQ <<<"$(rs_trail_repo chore/automate-2026-09-30-054439-trail-2)"
+jq -n --arg t "$RS_TRAIL" --arg u "$RS_URL" '[{url:$t},{url:$u}]' > "$R/ghstub/list-$(rs_key "$RELQ").json"
+jq -n --arg q "$RELQ" '{state:"MERGED",mergedAt:"2026-09-01T00:00:00Z",number:42,body:("Ships "+$q),mergeCommit:{oid:"abcdef1234567890"},headRefName:"feature/a"}' \
+  > "$R/ghstub/view-$(rs_key "$RS_URL").json"
+rs_run "$R" "$R/.supervisor/requirements/qh"
+if [ "$(printf '%s\n' "$RUN_OUT" | grep -c '^plan	')" = "1" ] && grep -qF "plan	$RELQ	done (PR #42, merge abcdef1)	PR body cites $RELQ" <<<"$RUN_OUT"; then
+  ok "H7 a trail candidate ahead of the real PR is skipped; the plan names the implementation PR #42"
+else
+  no "H7 trail-then-real candidate order wrong (out='$RUN_OUT')"
+fi
+rm -rf "$R"
+# The exclusion is the trail shape only: a near-miss branch name stays evidence.
+IFS=$'\t' read -r R RELD RELQ <<<"$(rs_trail_repo chore/x-trail-final)"
+rs_run "$R" "$R/.supervisor/requirements/qh"
+grep -qF "plan	$RELQ	done (PR #321" <<<"$RUN_OUT" && ok "H7 near-miss branch chore/x-trail-final (no numeric suffix) is still evidence" || no "H7 near-miss excluded (out='$RUN_OUT')"
 rm -rf "$R"
 
 # ---------------------------------------------------------------------------
