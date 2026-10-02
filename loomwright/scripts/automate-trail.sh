@@ -16,6 +16,12 @@
 #     of every path that branch changes in the primary checkout's index (see
 #     "Checkout contract" below), and records them in the gitignored
 #     `<run_id>.trail-staged` beside the run file.
+#   * BRANCH MODE (`setup-memory.sh mode` = `on <branch>`; SKILL §"Branch mode"): `trail-pr`
+#     opens NO PR and creates no trail worktree — it runs `meta-sync.sh push --paths-from` with
+#     the same evidence-gated candidate list (the gitignore drop skipped), and on failure appends
+#     one `meta-push FAILED:` Progress line, notifies, and writes the gitignored
+#     `<run_id>.meta-push-failed` marker; `trail-unstage` and closeout's re-stage are skipped.
+#     Mode off ⇒ everything below is unchanged.
 #   * `trail-unstage` only drops this run's trail-path index entries
 #     (`git restore --staged -- <path>`); working copies are never touched.
 #   * `closeout` removes ONLY this PR's head-branch worktrees (HEAD == the PR's
@@ -248,6 +254,7 @@ TRAIL_LEDGER=".supervisor/postmortem/results.jsonl"
 DRAFT_DIR=".supervisor/requirements/proposed"
 TRAIL_KEPT=""
 TRAIL_EXCLUDED=""
+TRAIL_SKIP_IGNORE_DROP=0   # 1 only on the branch-mode push path (_trail_meta_push)
 _trail_candidates() {
   local rf_rel="$1" run_id="$2"
   local cands="" p q item
@@ -300,7 +307,7 @@ EOF
   while IFS= read -r p; do
     [ -n "$p" ] || continue
     _in_list "$p" "$TRAIL_KEPT" && continue
-    git check-ignore -q -- "$p" 2>/dev/null && continue
+    [ "$TRAIL_SKIP_IGNORE_DROP" = 1 ] || { git check-ignore -q -- "$p" 2>/dev/null && continue; }
     TRAIL_KEPT="${TRAIL_KEPT:+$TRAIL_KEPT$'\n'}$p"
   done <<EOF
 $cands
@@ -476,6 +483,106 @@ EOF
   return 0
 }
 
+# _branch_mode <root> — the ONE reader (`setup-memory.sh mode`): off | on <branch> | unknown <reason>.
+# A copy of this script WITHOUT its sibling reader (a stripped test/spy copy) reads `off` — unless
+# the checkout's .gitignore carries mode-line text at all (the bare `loomwright-meta-branch` token,
+# so an indented or no-space near-miss counts too), which is then `unknown` (loud), never off.
+# FAIL-CLOSED on the answer's SHAPE: only an exact `off` or `on <non-empty>` passes through; empty
+# output (a crashed reader) or anything unrecognised becomes `unknown …`, never off.
+_branch_mode() {
+  local m
+  if [ ! -r "$HERE/setup-memory.sh" ]; then
+    if grep -qF 'loomwright-meta-branch' "$1/.gitignore" 2>/dev/null; then
+      echo "unknown setup-memory.sh is missing beside automate-trail.sh"
+    else
+      echo "off"
+    fi
+    return 0
+  fi
+  m="$(bash "$HERE/setup-memory.sh" --root "$1" mode 2>/dev/null | head -n1)"
+  [ -n "$m" ] || m="unknown setup-memory.sh mode printed nothing"
+  case "$m" in
+    off|"on "?*|"unknown "*) ;;
+    *) m="unknown setup-memory.sh mode printed '$m'" ;;
+  esac
+  printf '%s\n' "$m"
+}
+
+# _trail_meta_fail <rf_abs> <marker> <reason> <full> — the LOUD failure path (SKILL §"Branch mode"):
+# one `meta-push FAILED:` Progress line on the run file itself, the fail-safe notify pair, and
+# the gitignored marker (first line = UTC timestamp + reason, then meta-sync's full output).
+_trail_meta_fail() {
+  local rf="$1" mk="$2" why="$3" full="$4" ts payload msg
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  bash "$HERE/automate-helpers.sh" progress-append "$rf" "meta-push FAILED: $why" >/dev/null 2>&1 || true
+  { printf '%s %s\n' "$ts" "$why"; [ -n "$full" ] && printf '%s\n' "$full"; } > "$mk" 2>/dev/null || true
+  msg="automate trail: meta-push FAILED — $why"
+  payload="$("$JQ" -cn --arg m "$msg" '{hook_event_name:"Notification",notification_type:"automate_meta_push",message:$m}' 2>/dev/null)"
+  [ -n "$payload" ] && printf '%s' "$payload" | bash "$HERE/notify-desktop.sh" >/dev/null 2>&1 </dev/null
+  bash "$HERE/send-webhook.sh" --event-type gate --gate-type automate_meta_push --context "$msg" >/dev/null 2>&1 </dev/null
+  return 0
+}
+
+# _trail_meta_push <mode> <rf_rel> <rf_abs> <run_id> <reason> — branch-mode trail-pr (cwd = root).
+# Same candidates + evidence gate as the PR path, EXCEPT the gitignore drop (after the migration
+# every run-history path is ignored, so keeping it would push nothing). The ledger rides as a
+# whole file (meta-sync line-unions it and its scrub rule (a) refuses a foreign `.repo`). This
+# run's dropped dismissed drafts — absent on disk, last decision drop / fix-now / moved — are
+# listed too, so meta-sync's `L absent, R == B` rule deletes them on the branch. One line; exit 0.
+_trail_meta_push() {
+  local bm="$1" rf_rel="$2" rf_abs="$3" run_id="$4" reason="$5"
+  local mk; mk="$(dirname "$rf_abs")/$run_id.meta-push-failed"
+  case "$bm" in
+    "on "*) ;;
+    *) local why="mode ${bm}"
+       _trail_meta_fail "$rf_abs" "$mk" "$why" ""
+       echo "trail-pr: meta-push FAILED — $why"; return 0 ;;
+  esac
+  local branch="${bm#on }"
+  TRAIL_SKIP_IGNORE_DROP=1
+  _trail_candidates "$rf_rel" "$run_id"
+  TRAIL_SKIP_IGNORE_DROP=0
+  _evidence_gate
+  local excluded="$TRAIL_EXCLUDED" list dl dn dd dp
+  list="$TRAIL_KEPT"
+  dl="$(dirname "$rf_rel")/$run_id.dismissed-decisions"
+  if [ -f "$dl" ]; then
+    while IFS= read -r dn; do
+      [ -n "$dn" ] || continue
+      dp="$DRAFT_DIR/$dn"
+      case "$dp" in "$DRAFT_DIR/$run_id"--*--dismissed-*.md) ;; *) continue ;; esac
+      case "$dn" in */*) continue ;; esac
+      [ -e "$dp" ] && continue
+      _in_list "$dp" "$list" && continue
+      dd="$(awk -F'\t' -v n="$dn" '$1 == n { d = $2 } END { print d }' "$dl" 2>/dev/null)"
+      case "$dd" in drop|fix-now|moved) list="${list:+$list$'\n'}$dp" ;; esac
+    done <<DLIST
+$(cut -f1 "$dl" 2>/dev/null | LC_ALL=C sort -u)
+DLIST
+  fi
+  local lf out rc=0 why
+  lf="$(mktemp "${TMPDIR:-/tmp}/automate-trail-meta.XXXXXX" 2>/dev/null)" || { echo "trail-pr: skipped — mktemp failed$excluded"; return 0; }
+  printf '%s\n' "$list" > "$lf"
+  out="$(bash "${LOOMWRIGHT_META_SYNC_BIN:-$HERE/meta-sync.sh}" push --branch "$branch" --root "$PWD" --paths-from "$lf" --message "chore(supervisor): $run_id trail ($reason)" 2>&1)" || rc=$?
+  rm -f "$lf"
+  if [ "$rc" -eq 0 ]; then
+    rm -f "$mk"
+    case "$out" in
+      *"meta_sync: no_changes"*) echo "trail-pr: skipped — meta no_changes$excluded" ;;
+      *) echo "trail-pr: meta-pushed $branch$excluded" ;;
+    esac
+    return 0
+  fi
+  # A scrub hit prints one `meta_sync: scrub <path>: <rule>` line per hit: the first rides in the
+  # reason, the full list in the marker. Otherwise the first meta_sync line is the reason.
+  why="$(printf '%s\n' "$out" | sed -n 's/^meta_sync: \(scrub .*\)$/\1/p' | head -n1)"
+  [ -n "$why" ] || why="$(printf '%s\n' "$out" | sed -n 's/^meta_sync: //p' | head -n1)"
+  [ -n "$why" ] || why="meta-sync.sh push exited $rc"
+  _trail_meta_fail "$rf_abs" "$mk" "$why" "$(printf '%s\n' "$out" | grep '^meta_sync: ')"
+  echo "trail-pr: meta-push FAILED — $why$excluded"
+  return 0
+}
+
 trail_pr() {
   local runfile="" reason="trail"
   while [ "$#" -gt 0 ]; do
@@ -501,6 +608,13 @@ trail_pr() {
   run_id="$(basename "$runfile" .md)"
   TRAIL_ROOT="$root"
   cd "$root" || { echo "$skip_prefix cannot enter checkout"; return 0; }
+
+  # ---- branch mode: push to the metadata branch instead of opening a PR -----
+  local bm; bm="$(_branch_mode "$root")"
+  if [ "$bm" != "off" ]; then
+    _trail_meta_push "$bm" "$rf_rel" "$rf_abs" "$run_id" "$reason"
+    return 0
+  fi
 
   # ---- candidate paths (explicit; never -A / .) ----------------------------
   _trail_candidates "$rf_rel" "$run_id"
@@ -765,6 +879,8 @@ trail_unstage() {
   case "$rf_abs" in "$root"/*) rf_rel="${rf_abs#"$root"/}" ;; *) echo "$S run file outside the checkout"; return 0 ;; esac
   run_id="$(basename "$runfile" .md)"
   cd "$root" || { echo "$S cannot enter checkout"; return 0; }
+  # Branch mode stages nothing (trail-pr pushes to the metadata branch), so there is nothing to drop.
+  case "$(_branch_mode "$root")" in "on "*) echo "$S branch mode"; return 0 ;; esac
   # Today's candidates ∪ sidecars ∪ the trail-staged record (_trail_owned).
   _trail_owned "$rf_rel" "$run_id"
   local p paths="$TRAIL_OWNED" staged="" n=0
@@ -962,6 +1078,8 @@ closeout() {
   root="$(git -C "$rf_dir" rev-parse --show-toplevel 2>/dev/null)"
   if [ -z "$root" ]; then echo "$S not a git checkout"; return 0; fi
   root="$(cd "$root" && pwd -P)"
+  CO_BRANCH_MODE=off
+  case "$(_branch_mode "$root")" in "on "*) CO_BRANCH_MODE=on ;; esac
   case "$rf_abs" in "$root"/*) rf_rel="${rf_abs#"$root"/}" ;; *) echo "$S run file outside the checkout"; return 0 ;; esac
   run_id="$(basename "$runfile" .md)"
   item="${item#./}"
@@ -1082,7 +1200,8 @@ STATUS
   # Two-command elif list, deliberately: `_restage_landed` runs only once every
   # guard above has passed (never on a refused sync), and its status is ignored
   # (`;`) — only the pull's status decides this branch.
-  elif _restage_landed "$(dirname "$rf_rel")/$run_id.trail-staged" "refs/remotes/origin/$base_branch";
+  # Branch mode: trail-pr never staged anything (no .trail-staged record), so nothing is re-staged.
+  elif { [ "$CO_BRANCH_MODE" = on ] || _restage_landed "$(dirname "$rf_rel")/$run_id.trail-staged" "refs/remotes/origin/$base_branch"; };
        ! git pull -q --ff-only origin "$base_branch" >/dev/null 2>&1; then
     # A refused pull must not leave the re-staged trail blobs in the index
     # (they would ride along in the next commit made from the primary).

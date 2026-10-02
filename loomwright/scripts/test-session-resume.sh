@@ -1449,6 +1449,105 @@ test_no_stale_lock() {
 }
 test_no_stale_lock
 
+# ---- Branch mode: the offline meta-base hint (skills/automate-loop/SKILL.md §"Branch mode") ----
+# Mode on + no <gitdir>/meta-base ⇒ exactly ONE hint line, with NO network (a git shim on PATH
+# records every fetch / ls-remote and origin points at an unreachable URL); meta-base present ⇒ no
+# line; mode off ⇒ output byte-identical to a hook copy whose hint function is stubbed out.
+test_branch_mode_hint() {
+  local r gshim real_git log hint n ctx_s ctx_r mutd off_a off_b
+  real_git="$(command -v git)"
+  gshim="$(mktmp)"; log="$ROOT/git-net.log"; : > "$log"
+  printf '#!/usr/bin/env bash\ncase " $* " in *" fetch "*|*" ls-remote "*|*" pull "*|*" remote update "*) echo "$*" >> "%s" ;; esac\nexec "%s" "$@"\n' "$log" "$real_git" > "$gshim/git"
+  chmod +x "$gshim/git"
+  r="$(new_repo)"; make_plugin_active "$r"
+  git -C "$r" remote add origin "https://unreachable.invalid/acme/widgets.git"
+  printf '.supervisor/\n' > "$r/.gitignore"
+  bash "$SCRIPT_DIR/setup-memory.sh" --root "$r" apply --branch-mode loomwright-meta >/dev/null 2>&1; rm -f "$r"/.gitignore.backup.*
+  hint='run history is on branch `loomwright-meta` and has not been pulled — run `meta-sync.sh pull`'
+  ctx_s="$(PATH="$gshim:$PATH" run_hook_ctx "$r" startup)"
+  n="$(printf '%s\n' "$ctx_s" | grep -cF "$hint")"
+  [ "$n" = 1 ] && ok "branch mode: startup carries exactly ONE meta-base hint line" || no "branch mode: startup hint count=$n ctx='$ctx_s'"
+  ctx_r="$(PATH="$gshim:$PATH" run_hook_ctx "$r" resume)"
+  n="$(printf '%s\n' "$ctx_r" | grep -cF "$hint")"
+  [ "$n" = 1 ] && ok "branch mode: resume carries exactly ONE meta-base hint line" || no "branch mode: resume hint count=$n"
+  [ ! -s "$log" ] && [ ! -e "$r/.git/FETCH_HEAD" ] && ok "branch mode: NO network call (no fetch / ls-remote, no FETCH_HEAD)" || no "branch mode: network git calls: $(cat "$log")"
+  [ "$(lastrc)" = 0 ] && ok "branch mode: hook exits 0" || no "branch mode: rc=$(lastrc)"
+  rm -rf "$r/.supervisor"
+  ctx_r="$(PATH="$gshim:$PATH" run_hook_ctx "$r" resume)"
+  grep -qF "$hint" < <(printf '%s' "$ctx_r") && ok "branch mode: a clone with NO .supervisor/ still gets the hint on resume" || no "branch mode: no hint without .supervisor/ ('$ctx_r')"
+  make_plugin_active "$r"
+  printf 'deadbeef\n' > "$r/.git/meta-base"
+  ctx_s="$(run_hook_ctx "$r" startup)"; ctx_r="$(run_hook_ctx "$r" resume)"
+  if grep -qF 'has not been pulled' < <(printf '%s\n%s' "$ctx_s" "$ctx_r"); then no "branch mode: meta-base present still emits the hint"; else ok "branch mode: meta-base present ⇒ no hint line"; fi
+  # Mode off ⇒ byte-identical to a copy of the hook whose hint function returns nothing.
+  mutd="$(mktmp)"; cp "$SCRIPT_DIR"/*.sh "$SCRIPT_DIR"/*.py "$mutd/" 2>/dev/null
+  awk '/^meta_branch_hint_line\(\) \{$/ { print; print "  return 0"; next } { print }' "$HOOK" > "$mutd/session-resume.sh"
+  # Two identical repos per source: the hook's debounce markers live in the repo, so a second run in
+  # the SAME repo would differ for reasons unrelated to branch mode.
+  local ra rb
+  for src in startup resume; do
+    ra="$(new_repo)"; make_plugin_active "$ra"; printf '.supervisor/\n' > "$ra/.gitignore"
+    rb="$(new_repo)"; make_plugin_active "$rb"; printf '.supervisor/\n' > "$rb/.gitignore"
+    off_a="$(cd "$ra" && printf '{"source":"%s"}' "$src" | bash "$HOOK" 2>/dev/null)"
+    off_b="$(cd "$rb" && printf '{"source":"%s"}' "$src" | bash "$mutd/session-resume.sh" 2>/dev/null)"
+    off_b="${off_b//$rb/$ra}"
+    [ "$off_a" = "$off_b" ] && ok "branch mode OFF: $src output byte-identical to the hint-free hook" || no "branch mode OFF: $src output differs"
+  done
+}
+test_branch_mode_hint
+
+# ---- Branch mode: the mode reader runs AT MOST ONCE per invocation, output unchanged ----
+# A counting stub setup-memory.sh (answering what the real reader would) beside a copy of the hook:
+# every arm — startup, resume, resume with NO .supervisor/, meta-base present, mode off — must invoke
+# it exactly once, and print exactly what the real hook prints for an identical repo. A mutant that
+# adds a second read proves the counter is not vacuous.
+test_branch_mode_single_read() {
+  local sd cnt r_real r_stub ans case_ src out_real out_stub n mutd
+  sd="$(mktmp)"; cp "$SCRIPT_DIR"/*.sh "$SCRIPT_DIR"/*.py "$sd/" 2>/dev/null
+  cnt="$ROOT/mode-calls.cnt"
+  fr_stub() {  # <answer> — write the counting stub
+    printf '#!/usr/bin/env bash\necho x >> "%s"\nfor a in "$@"; do [ "$a" = mode ] && { echo "%s"; exit 0; }; done\nexit 0\n' "$cnt" "$1" > "$sd/setup-memory.sh"
+  }
+  fr_pair() {  # <case> → two identical repos ($r_real, $r_stub) set up for <case>
+    local r
+    for r in a b; do
+      r="$(new_repo)"; make_plugin_active "$r"; printf '.supervisor/\n' > "$r/.gitignore"
+      case "$1" in
+        on|on-nosup|on-metabase)
+          bash "$SCRIPT_DIR/setup-memory.sh" --root "$r" apply --branch-mode loomwright-meta >/dev/null 2>&1; rm -f "$r"/.gitignore.backup.* ;;
+      esac
+      [ "$1" = on-nosup ] && rm -rf "$r/.supervisor"
+      [ "$1" = on-metabase ] && printf 'deadbeef\n' > "$r/.git/meta-base"
+      if [ -z "${r_real:-}" ]; then r_real="$r"; else r_stub="$r"; fi
+    done
+  }
+  for case_ in on on-nosup on-metabase off; do
+    [ "$case_" = off ] && ans="off" || ans="on loomwright-meta"
+    fr_stub "$ans"
+    for src in startup resume; do
+      r_real=""; r_stub=""; fr_pair "$case_"
+      out_real="$(cd "$r_real" && printf '{"source":"%s"}' "$src" | bash "$HOOK" 2>/dev/null)"
+      : > "$cnt"
+      out_stub="$(cd "$r_stub" && printf '{"source":"%s"}' "$src" | bash "$sd/session-resume.sh" 2>/dev/null)"
+      n="$(wc -l < "$cnt" | tr -d ' ')"
+      [ "$n" = 1 ] && ok "branch mode ($case_, $src): setup-memory.sh mode invoked exactly once" || no "branch mode ($case_, $src): mode invoked ${n}x"
+      out_stub="${out_stub//$r_stub/$r_real}"
+      [ "$out_real" = "$out_stub" ] && ok "branch mode ($case_, $src): output identical to the real hook" || no "branch mode ($case_, $src): output differs from the real hook"
+    done
+  done
+  # Mutation self-check: a second, uncached read before the dispatch is counted.
+  mutd="$(mktmp)"; cp "$sd"/* "$mutd/"
+  awk '/^load_meta_hint$/ && !d { print "meta_branch_hint_line >/dev/null"; d = 1 } { print }' "$sd/session-resume.sh" > "$mutd/session-resume.sh"
+  fr_stub "on loomwright-meta"; cp "$sd/setup-memory.sh" "$mutd/setup-memory.sh"
+  r_real=""; r_stub=""; fr_pair on
+  : > "$cnt"; (cd "$r_stub" && printf '{"source":"resume"}' | bash "$mutd/session-resume.sh" >/dev/null 2>&1)
+  n="$(wc -l < "$cnt" | tr -d ' ')"
+  if cmp -s "$sd/session-resume.sh" "$mutd/session-resume.sh"; then no "branch mode: mutation self-check changed nothing — inconclusive"
+  elif [ "$n" = 2 ]; then ok "branch mode: mutation self-check — a second read is counted (2x), so the once-only assertion is load-bearing"
+  else no "branch mode: mutation self-check counted ${n}x (expected 2)"; fi
+}
+test_branch_mode_single_read
+
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
 exit 0

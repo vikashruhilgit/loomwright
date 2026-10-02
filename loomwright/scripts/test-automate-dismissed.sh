@@ -653,7 +653,9 @@ grep -qF -- '- pending_decisions: <n> | fix_now_reentered: <true|false>' "$RS" &
 PW="$REPO/loomwright/scripts/propose-work.sh"
 awk "/^printf '%s\\\\n' \\\\\$/{f=1} f{print} /guarded_write \"README.md\"/{exit}" "$PW" | sed '$d' | sed '$s/ \\$//' > "$TOP/readme-tpl.sh"
 bash "$TOP/readme-tpl.sh" > "$TOP/readme-gen.md" 2>/dev/null
-if [ -s "$TOP/readme-gen.md" ] && cmp -s "$TOP/readme-gen.md" "$REPO/.supervisor/requirements/proposed/README.md"; then
+# Compared against a frozen fixture copy, not the live proposed/README.md: the live file is run
+# history and is absent in a branch-mode repo (skills/automate-loop/SKILL.md §"Branch mode").
+if [ -s "$TOP/readme-gen.md" ] && cmp -s "$TOP/readme-gen.md" "$REPO/loomwright/scripts/fixtures/proposed-readme/README.md"; then
   ok "B: committed proposed/README.md == propose-work.sh template, byte for byte"
 else no "B: proposed/README.md differs from the propose-work.sh template"; fi
 grep -qF -- '--dismissed-*.md` drafts for dismissed review findings' "$TOP/readme-gen.md" && ok "B: README template names the second writer" || no "B: README template lacks the second writer"

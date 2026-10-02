@@ -326,15 +326,51 @@ orphaned_worktrees_block() {
 # with no intervening state change — a third copy could only ever agree.
 # (curation-status.sh's own `[ -d "$SUP_DIR" ]` is a separate, legitimate copy:
 # different process, and it resolves the root via the git toplevel.)
+# meta_branch_hint_line — BRANCH MODE (skills/automate-loop/SKILL.md §"Branch mode"): ONE line, or
+# nothing. OFFLINE by construction — it never calls `meta-sync.sh status` (that runs `git ls-remote`
+# + `git fetch`); it only asks the one mode reader (`setup-memory.sh mode`) and checks whether the
+# documented merge-base file `<gitdir>/meta-base` exists, `<gitdir>` being the git dir of the root
+# meta-sync.sh resolves (the FIRST `git worktree list --porcelain` entry). Mode off / unknown, or
+# meta-base present ⇒ nothing (output byte-identical to a repo without branch mode). HONEST LIMIT:
+# presence only — a stale-but-once-synced clone gets no hint (the /automate entry pull covers it).
+meta_branch_hint_line() {
+  local here root mode gd
+  here="$(cd "$(dirname "$0")" 2>/dev/null && pwd)" || return 0
+  [ -r "$here/setup-memory.sh" ] || return 0
+  root="$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')"
+  [ -n "$root" ] && [ -d "$root" ] || return 0
+  mode="$(bash "$here/setup-memory.sh" --root "$root" mode 2>/dev/null | head -n1)"
+  case "$mode" in "on "*) ;; *) return 0 ;; esac
+  gd="$(git -C "$root" rev-parse --absolute-git-dir 2>/dev/null)" || return 0
+  [ -n "$gd" ] || return 0
+  [ -e "$gd/meta-base" ] && return 0
+  printf '**Run history:** run history is on branch `%s` and has not been pulled — run `meta-sync.sh pull` (the plugin'"'"'s `scripts/meta-sync.sh pull --branch %s`)' "${mode#on }" "${mode#on }"
+}
+
+# load_meta_hint — computes the hint AT MOST ONCE per invocation into $META_HINT (one
+# `setup-memory.sh mode` subprocess + one `git worktree list`), in the CURRENT shell so the cached
+# answer is visible to every later reader. Both consumers — the startup arm and the
+# resume/clear/compact bail + recovery-hints path — read $META_HINT through this, never by calling
+# meta_branch_hint_line themselves.
+META_HINT=""
+META_HINT_LOADED=0
+load_meta_hint() {
+  [ "$META_HINT_LOADED" = 1 ] && return 0
+  META_HINT="$(meta_branch_hint_line)"
+  META_HINT_LOADED=1
+}
+
 startup_arm_emit() {
-  local curation="" stranded="" orphans="" body="" nl
+  local curation="" stranded="" orphans="" metahint="" body="" nl
   nl=$'\n'
   curation="$(curation_nudge_line)"
   stranded="$(stranded_briefs_startup_line)"
   orphans="$(orphaned_worktrees_block)"
+  load_meta_hint; metahint="$META_HINT"
   body="$curation"
   [ -n "$stranded" ] && body="${body:+$body$nl}$stranded"
   [ -n "$orphans" ] && body="${body:+$body$nl}$orphans"
+  [ -n "$metahint" ] && body="${body:+$body$nl}$metahint"
   [ -n "$body" ] || return 0
   printf '%s' "$body" \
     | { iconv -c -f UTF-8 -t UTF-8 2>/dev/null || cat; } \
@@ -355,7 +391,13 @@ case "$SOURCE" in
 esac
 
 # ---- Bail if no plugin state at all ----------------------------------------
+# Branch mode: a clone whose run history was never pulled may have NO .supervisor/ at all, which is
+# exactly when the one hint line matters — so it alone is emitted; mode off keeps the silent bail.
+load_meta_hint
 if [ ! -d ".supervisor" ]; then
+  if [ -n "$META_HINT" ]; then
+    printf '%s' "$META_HINT" | jq -Rs '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: .}}' 2>/dev/null || true
+  fi
   exit 0
 fi
 
@@ -770,6 +812,7 @@ fi
 
 # Section 6: recovery hints ----
 append "### Recovery hints"$'\n'
+[ -n "$META_HINT" ] && append "- $META_HINT"$'\n'
 append "- Read \`.supervisor/state.md\` for full context."$'\n'
 append "- Check \`git status\` and \`git worktree list\` for in-flight changes."$'\n'
 if [ "${HAS_UNKNOWN_BRIEF:-0}" -eq 1 ]; then

@@ -56,9 +56,18 @@
 #   dismissed-decide <runfile> <draft_path> <fix-now|follow-up|drop>  # §6 decision step / next PICK: delegated to automate-dismissed.sh — records the decision in <run_id>.dismissed-decisions, rewrites (follow-up) or deletes (drop/fix-now) the draft, one Progress line; refuses a foreign path; always exits 0
 #   dismissed-pending <runfile>                         # §6 step 1 PICK: delegated to automate-dismissed.sh — count of this run's undecided drafts, or `unknown` (treated as non-zero); always exits 0
 #   trail-unstage    <runfile>                          # §6 step 1 PICK (before RUN): delegated to automate-trail.sh — drops the trail-path index entries trail-pr staged so the next item's commit cannot sweep them; one line; always exits 0
+#   meta-entry       [--root <checkout>]                # §"Branch mode": the FIRST action of every /automate entry (a bare/empty/option-shaped --root value ⇒ `failed`) — reads `setup-memory.sh mode` itself (no caller input can assert the mode) and, when on, runs `meta-sync.sh pull`; ONE line `meta-entry: off|pulled <branch>|failed — <reason>`; writes nothing under .supervisor/automate/; always exits 0
+#   meta-push-failed <runfile>                          # §"Branch mode": read-only — prints the first line of this run's gitignored `<run_id>.meta-push-failed` marker (a failed mode-on trail push), or nothing; always exits 0
 #
 # Exit codes: 0 success; 1 generic failure; 2 abort (malformed pre-existing config, §7).
-# (learning-emit, brief-repair and reconcile-status are the fail-SAFE exceptions: they ALWAYS exit 0 — never die/abort.)
+# (learning-emit, brief-repair, reconcile-status, meta-entry and meta-push-failed are the fail-SAFE
+# exceptions: they ALWAYS exit 0 — never die/abort; meta-entry's verdict line carries the outcome.)
+#
+# TEST SEAM (tests only — never set it in a real run): LOOMWRIGHT_META_SYNC_BIN names the meta-sync
+# script `meta-entry` invokes (default: the sibling meta-sync.sh). It selects WHICH pull runs, never
+# the mode — the mode is always read from `setup-memory.sh mode`. test-automate-helpers.sh uses it
+# for mutation control (i): a pull stand-in that exits 0 on a fetch failure must turn its
+# "abort, nothing created" assertion red.
 
 set -euo pipefail
 
@@ -1831,6 +1840,87 @@ reconcile_status() {
 # dispatch
 # --------------------------------------------------------------------------- #
 
+# --------------------------------------------------------------------------- #
+# §"Branch mode" — meta-entry (pull BEFORE the first read) + meta-push-failed
+# --------------------------------------------------------------------------- #
+
+# _meta_root [<root>] — the checkout meta-sync.sh resolves: the given root, else the FIRST
+# `git worktree list --porcelain` entry (the primary checkout), else $PWD. Mirrors meta-sync.sh's
+# own "resolve root" block so the mode is read from the same .gitignore meta-sync syncs.
+_meta_root() {
+  local r="${1:-}" top
+  if [ -z "$r" ]; then
+    r="$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')"
+    if [ -n "$r" ] && [ -d "$r" ]; then
+      top="$(git -C "$r" rev-parse --path-format=absolute --show-toplevel 2>/dev/null || true)"
+      [ "$top" = "$r" ] || r=""
+    fi
+    [ -n "$r" ] || r="$PWD"
+  fi
+  printf '%s\n' "$r"
+}
+
+# meta-entry [--root <checkout>] — ONE verdict line, ALWAYS exit 0:
+#   meta-entry: off                              mode off — proceed exactly as today, no network
+#   meta-entry: pulled <branch>                  mode on, `meta-sync.sh pull --branch <branch>` exited 0
+#   meta-entry: failed — <reason>                mode on, pull exited non-zero (meta-sync's own text:
+#                                                no_remote_branch / conflict <path> / fetch_failed …)
+#   meta-entry: failed — mode unknown (<reason>) `setup-memory.sh mode` said unknown
+# It creates and writes NOTHING under .supervisor/automate/ (meta-sync's pull writes only the
+# managed run-history files it syncs). The SKILL maps `failed` to ABORT (no run file targeted) or a
+# `meta_unreachable` park (an existing local run file targeted by --resume <id>).
+meta_entry() {
+  local root="" here mode branch out rc reason ms
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --root)
+        # A missing, empty or option-shaped value is a misinvocation, never "use the default root":
+        # `--root --x` would otherwise read the mode of a non-existent checkout as `off` and skip
+        # the pull silently. Fail-safe like every other path here: one `failed` line, exit 0.
+        case "${2:-}" in
+          ""|-*) echo "meta-entry: failed — --root requires a checkout path (got '${2:-}')"; return 0 ;;
+        esac
+        root="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  here="$(cd "$(dirname "$0")" && pwd)"
+  root="$(_meta_root "$root")"
+  mode="$(bash "$here/setup-memory.sh" --root "$root" mode 2>/dev/null | head -n1 || true)"
+  case "$mode" in
+    off) echo "meta-entry: off"; return 0 ;;
+    "on "?*) branch="${mode#on }" ;;
+    "unknown "*) echo "meta-entry: failed — mode unknown (${mode#unknown })"; return 0 ;;
+    *) echo "meta-entry: failed — mode unknown (setup-memory.sh mode printed '${mode}')"; return 0 ;;
+  esac
+  ms="${LOOMWRIGHT_META_SYNC_BIN:-$here/meta-sync.sh}"
+  rc=0
+  out="$(bash "$ms" pull --branch "$branch" --root "$root" 2>&1)" || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    echo "meta-entry: pulled $branch"
+    return 0
+  fi
+  # meta-sync's own lines (conflict <path> / no_remote_branch / fetch_failed …), joined.
+  reason="$(printf '%s\n' "$out" | sed -n 's/^meta_sync: //p' | awk 'NF { printf "%s%s", (n++ ? "; " : ""), $0 }')"
+  [ -n "$reason" ] || reason="meta-sync.sh pull exited $rc"
+  echo "meta-entry: failed — $reason"
+  return 0
+}
+
+# meta-push-failed <runfile> — read-only. Prints the first line (UTC timestamp + reason) of this
+# run's gitignored `<run_id>.meta-push-failed` marker, written by a failed mode-on trail-pr push
+# and removed by the next successful one; prints nothing when absent. ALWAYS exit 0.
+meta_push_failed() {
+  local rf="${1:-}" m
+  [ -n "$rf" ] || return 0
+  # An option-shaped <runfile> is a misinvocation (dirname/basename would read it as a flag).
+  case "$rf" in -*) return 0 ;; esac
+  m="$(dirname "$rf")/$(basename "$rf" .md).meta-push-failed"
+  [ -f "$m" ] || return 0
+  head -n1 "$m" 2>/dev/null || true
+  return 0
+}
+
 main() {
   local cmd="${1:-}"; shift || true
   case "$cmd" in
@@ -1850,6 +1940,8 @@ main() {
     learning-emit)   learning_emit "$@" ;;
     brief-repair)    brief_repair "$@" ;;
     reconcile-status) reconcile_status "$@" ;;
+    meta-entry)      meta_entry "$@" ;;
+    meta-push-failed) meta_push_failed "$@" ;;
     # Post-park lifecycle MUTATORS live in the sibling automate-trail.sh (the
     # read-only carve-out named in the header) — one mover per concern.
     sidecar-check|trail-pr|closeout|trail-unstage) exec bash "$(dirname "$0")/automate-trail.sh" "$cmd" "$@" ;;

@@ -318,6 +318,8 @@ Local files are enumerated with `find` over the **managed roots only** — `requ
 
 Self-tests: `scripts/test-meta-sync.sh` (hermetic bare origin + clones; includes two sed-patched mutation controls).
 
+**Engine integration (branch mode).** The `/automate` engine uses this branch only in a repo that opted in through `setup-memory.sh apply --branch-mode <branch>` (one tracked mode line in the managed `.gitignore` block, read only by `setup-memory.sh mode`): `automate-helpers.sh meta-entry` pulls before the engine first reads run history, `automate-trail.sh trail-pr` pushes the evidence-gated trail with `push --paths-from` instead of opening a PR, and `session-resume.sh` reports an unpulled clone OFFLINE from `meta-base` presence alone (never `status`, which fetches). Contract, abort-vs-park mapping and honest limits: `skills/automate-loop/SKILL.md` §13.
+
 ---
 
 ## System Twin homing contract
