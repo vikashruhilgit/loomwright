@@ -59,6 +59,13 @@
 #      an unmanaged symlink under .supervisor/logs and a --root reached through a symlink still sync
 #  27. stale-lock reclaim under forced interleaving (dead holder + 3 contenders; PATH shims make
 #      the stale reader act only after another waiter reclaimed and entered): never two holders
+#  28. a DIRECTORY at a managed path the branch holds a file at: pull exits 1 `not_a_file`, writes
+#      nothing (nothing renamed into the directory), meta-base unchanged; push exits 1 and never
+#      deletes the branch file (both the never-pulled and the replaced-after-sync shapes)
+#  29. enumeration scope: an unreadable (chmod 000) folder under .supervisor/logs and
+#      .supervisor/worktrees, and a folder tree churning under .supervisor/worktrees, never block a
+#      pull or push; an unreadable folder INSIDE a managed root, or an unsearchable folder on the
+#      way to one, still refuses (nothing changed)
 #  --- Mutation controls (sed-patched mutant copies in the temp dir; the shipped script has no
 #      test seam) ---
 #  20. (i) a mutant that drops the base comparison (any local difference is staged) MUST fail the
@@ -79,7 +86,8 @@ no() { echo "  FAIL: $1"; fail=$((fail+1)); }
 check() { if [ "$1" -eq 0 ]; then ok "$2"; else no "$2"; fi; }
 
 TROOT="$(mktemp -d)"
-trap 'rm -rf "$TROOT"' EXIT
+# leg 29 chmod-000s folders; restore perms first so the temp dir can always be removed
+trap 'chmod -R u+rwx "$TROOT" 2>/dev/null; rm -rf "$TROOT"' EXIT
 export HOME="$TROOT/home"; mkdir -p "$HOME"
 export GIT_CONFIG_NOSYSTEM=1
 export GIT_AUTHOR_NAME=tester GIT_AUTHOR_EMAIL=tester@test.invalid
@@ -665,6 +673,73 @@ lock_race "$SUT"
 [ "$LR_SEQ" = "1" ]; check $? "fixture: P2 held a stale read of the dead pid while P1 reclaimed the lock (forced interleaving happened)"
 { [ "$LR_MAX" = "1" ] && [ "$LR_RCS" = "0 0 0 " ] && [ "$LR_ENTERS" = "3" ] && [ ! -e "$W/A/.git/meta-sync.lock" ]; }
 check $? "dead holder + 3 contenders, P2 stalled between reading the dead pid and acting: at most ONE holder at a time, all three pulls succeed, lock released (max=$LR_MAX rcs=$LR_RCS log: $LR_LOG)"
+
+echo "== 28. a directory at a managed path never swallows or deletes the branch file =="
+synced_pair
+put A "$RQ/dir.md" "branch file"; put A "$RQ/x.md" "x v2 from A"; ms A push
+mkdir -p "$W/B/$RQ/dir.md"
+tip="$(br_tip)"; base_before="$(base_of B)"
+ms B pull
+{ [ "$RC" -eq 1 ] && grep -q "meta_sync: not_a_file $RQ/dir.md" < <(printf '%s' "$OUT") && [ -d "$W/B/$RQ/dir.md" ] && [ -z "$(ls -A "$W/B/$RQ/dir.md")" ] \
+  && [ "$(get B "$RQ/x.md")" = "x v1" ] && [ "$(base_of B)" = "$base_before" ]; }
+check $? "pull with a directory where the branch holds a file -> exit 1 not_a_file, nothing written into it or elsewhere, meta-base unchanged (rc=$RC: $OUT; inside: $(ls -A "$W/B/$RQ/dir.md" | tr '\n' ' '))"
+put B "$RQ/y.md" "y v2 from B"; ms B push
+{ [ "$RC" -eq 1 ] && [ "$(br_tip)" = "$tip" ] && [ "$(br_show "$RQ/dir.md")" = "branch file" ] && [ "$(base_of B)" = "$base_before" ]; }
+check $? "the next push refuses too and the branch file is NOT deleted (rc=$RC: $OUT)"
+rmdir "$W/B/$RQ/dir.md"; ms B pull
+{ [ "$RC" -eq 0 ] && [ "$(get B "$RQ/dir.md")" = "branch file" ]; }; check $? "with the directory gone the pull lands (rc=$RC: $OUT)"
+rm -f "$W/B/$RQ/dir.md"; mkdir -p "$W/B/$RQ/dir.md"
+tip="$(br_tip)"; base_before="$(base_of B)"
+ms B push
+{ [ "$RC" -eq 1 ] && grep -q "meta_sync: not_a_file $RQ/dir.md" < <(printf '%s' "$OUT") && [ "$(br_tip)" = "$tip" ] && [ "$(br_show "$RQ/dir.md")" = "branch file" ] && [ "$(base_of B)" = "$base_before" ]; }
+check $? "a synced file replaced by a directory -> push exits 1 not_a_file, the branch file is NOT deleted (rc=$RC: $OUT)"
+
+echo "== 29. enumeration scope: unmanaged churn never blocks; managed roots stay fail-closed =="
+if [ "$(id -u)" = "0" ]; then
+  echo "  SKIP: chmod-000 legs (running as root, permissions are not enforced)"
+else
+  synced_pair
+  mkdir -p "$W/B/.supervisor/logs/locked" "$W/B/.supervisor/worktrees/wt1/locked"
+  chmod 000 "$W/B/.supervisor/logs/locked" "$W/B/.supervisor/worktrees/wt1/locked"
+  put A "$RQ/x.md" "x v2 from A"; ms A push
+  ms B pull
+  { [ "$RC" -eq 0 ] && [ "$(get B "$RQ/x.md")" = "x v2 from A" ]; }
+  check $? "an unreadable folder under .supervisor/logs and .supervisor/worktrees does not block a pull (rc=$RC: $OUT)"
+  put B "$RQ/y.md" "y v2 from B"; ms B push
+  { [ "$RC" -eq 0 ] && [ "$(br_show "$RQ/y.md")" = "y v2 from B" ]; }; check $? "... nor a push (rc=$RC: $OUT)"
+  chmod 755 "$W/B/.supervisor/logs/locked" "$W/B/.supervisor/worktrees/wt1/locked"
+  mkdir -p "$W/B/$RQ/locked"; chmod 000 "$W/B/$RQ/locked"
+  put A "$RQ/x.md" "x v3 from A"; ms A push
+  put B "$RQ/y.md" "y v3 from B"
+  tip="$(br_tip)"; base_before="$(base_of B)"
+  ms B pull; rc_pull=$RC; out_pull="$OUT"
+  ms B push
+  { [ "$rc_pull" -eq 1 ] && [ "$RC" -eq 1 ] && grep -q 'could not enumerate' < <(printf '%s' "$out_pull") && [ "$(get B "$RQ/x.md")" = "x v2 from A" ] \
+    && [ "$(br_tip)" = "$tip" ] && [ "$(base_of B)" = "$base_before" ]; }
+  check $? "an unreadable folder INSIDE requirements/ -> pull and push exit 1, nothing written, branch and meta-base unchanged (pull rc=$rc_pull push rc=$RC: $out_pull)"
+  chmod 755 "$W/B/$RQ/locked"
+  chmod 000 "$W/B/.supervisor/jobs"
+  ms B push
+  { [ "$RC" -eq 1 ] && [ "$(br_tip)" = "$tip" ] && [ "$(br_show .supervisor/jobs/done/2026-01-01-brief.md)" = "brief" ] && [ "$(base_of B)" = "$base_before" ]; }
+  check $? "an unsearchable .supervisor/jobs (on the way to jobs/done) -> push exits 1, the done brief is NOT deleted (rc=$RC: $OUT)"
+  chmod 755 "$W/B/.supervisor/jobs"
+fi
+synced_pair
+CHURN="$W/B/.supervisor/worktrees/churn"; CHURN_ON="$W/churn.on"; : > "$CHURN_ON"
+( while [ -e "$CHURN_ON" ]; do
+    mkdir -p "$CHURN/a/b/c" "$CHURN/d/e/f" "$CHURN/g/h"; : > "$CHURN/a/b/c/f1"; : > "$CHURN/d/e/f/f2"
+    rm -rf "$CHURN"
+  done ) &
+churn_pid=$!
+churn_bad=0; churn_rcs=""
+for i in 1 2 3 4 5 6; do
+  put A "$RQ/x.md" "x churn $i"; ms A push
+  ms B pull; churn_rcs="$churn_rcs pull=$RC"; [ "$RC" -eq 0 ] || churn_bad=1
+  put B "$RQ/y.md" "y churn $i"; ms B push; churn_rcs="$churn_rcs push=$RC"; [ "$RC" -eq 0 ] || churn_bad=1
+done
+rm -f "$CHURN_ON"; wait "$churn_pid" 2>/dev/null
+{ [ "$churn_bad" -eq 0 ] && [ "$(get B "$RQ/x.md")" = "x churn 6" ] && [ "$(br_show "$RQ/y.md")" = "y churn 6" ]; }
+check $? "a folder tree churning under .supervisor/worktrees never blocks a pull or push (rcs:$churn_rcs)"
 
 # ---------------------------------------------------------------------------------------------
 # Mutation controls — sed-patched copies; the sibling setup-memory.sh is copied beside each.

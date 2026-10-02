@@ -32,7 +32,11 @@
 #   a `.supervisor/requirements/../../CLAUDE.md` entry must never be joined to the root and
 #   written or deleted, so it is simply not a managed path (pull ignores it; push fails closed,
 #   because git's read-tree refuses such a tree).
-# Local files are enumerated with `find` and filtered through that list; each one is staged into the
+# Local files are enumerated with `find` over the managed roots ONLY (requirements/ with nested
+# .supervisor/ trees pruned; the top level of jobs/done, jobs/failed, automate and postmortem), so
+# churn or an unreadable folder elsewhere under .supervisor/ (logs, worktrees) never blocks a sync;
+# an unsearchable managed root or folder on the way to one, or a find error inside a root, fails
+# closed. Matches are filtered through that list; each one is staged into the
 # separate index by explicit path (update-index --cacheinfo). No directory is ever added, so a log or
 # a nested `.supervisor/` tree that .gitignore hides can never reach the branch: the separate index
 # never consults .gitignore, which is exactly why the list — not .gitignore — decides membership.
@@ -45,6 +49,9 @@
 # under .supervisor/ (logs, nested .supervisor/ trees) are not managed and are ignored. Every git
 # read that feeds a decision or a write (ls-tree, log, hash-object, cat-file) fails closed: a read
 # that fails is never treated as an empty tree, an absent file or an empty side of a union.
+# A DIRECTORY (or other non-regular file) at a managed path where the branch holds a file fails
+# closed the same way (`meta_sync: not_a_file <path>`, exit 1, nothing changed): it reads as locally
+# absent, so a pull would rename the file into it and a push would delete the branch file.
 #
 # 3-WAY RULE (per path; equality is by blob SHA — `git hash-object --no-filters` vs tree entries,
 # never mtime). L = this checkout, R = the remote branch tip, B = the merge base read from
@@ -148,7 +155,7 @@
 # Precedence: unreachable > no_remote_branch > never_synced > conflict > local_ahead > remote_ahead.
 #
 # EXIT: 0 ok / no_changes; 1 conflict, no_remote_branch, fetch failure, init refusal, exhausted push
-# retries, tree_guard, locked, usage error; 2 scrub hit. `init` is the ONLY command that may create the branch (an empty
+# retries, tree_guard, locked, not_a_file, usage error; 2 scrub hit. `init` is the ONLY command that may create the branch (an empty
 # orphan commit); it refuses when the branch already exists.
 #
 # Nothing calls this script yet (parallel-automate items 03 / M1 wire it in).
@@ -425,34 +432,55 @@ list_tree() {
 }
 
 # list_local <out> <write:0|1> — managed files in the working folder, hashed as stored bytes.
-# Fails closed when .supervisor/ cannot be fully enumerated, or when a symlink sits where managed
-# run history lives (find does not descend a symlinked directory, so its files would read as
-# locally ABSENT — a push would delete them from the branch — and a pull would write through it).
+# Enumerates ONLY the managed roots (requirements/ minus nested .supervisor/ trees; the top level
+# of jobs/done, jobs/failed, automate and postmortem), so churn or unreadable entries elsewhere
+# under .supervisor/ (logs, worktrees) can never block a sync. Fails closed when a managed root or
+# a folder on the way to one cannot be searched or fully enumerated, or when a symlink sits where
+# managed run history lives (find does not descend a symlinked directory, so its files would read
+# as locally ABSENT — a push would delete them from the branch — and a pull would write through it).
 list_local() {
-  local p hz="$WORK/local.symlinks"
+  local p d hz="$WORK/local.symlinks" present=" " roots=""
   : > "$WORK/local.paths" || return 1
+  : > "$WORK/local.found" || return 1
   : > "$hz" || return 1
   if [ -L "$ROOT/.supervisor" ]; then
     warn "symlink .supervisor"
     warn "refusing — .supervisor is a symlink; run history must live inside the checkout (nothing was changed)"
     return 1
   fi
-  if [ -d "$ROOT/.supervisor" ]; then
-    (cd "$ROOT" && find .supervisor \( -type f -o -type l \) -print) > "$WORK/local.found" \
-      || { warn "could not enumerate every file under .supervisor/ (find failed); nothing was changed"; return 1; }
-    while IFS= read -r p; do
-      p="${p#./}"
-      if [ -L "$ROOT/$p" ]; then
-        if symlink_hazard "$p"; then printf '%s\n' "$p" >> "$hz"; fi
-      elif is_managed "$p"; then
-        printf '%s\n' "$p"
-      fi
-    done < "$WORK/local.found" | LC_ALL=C sort > "$WORK/local.paths" || return 1
-    if [ -s "$hz" ]; then
-      sed 's/^/meta_sync: symlink /' "$hz" >&2
-      warn "refusing — the symlink(s) above sit where managed run history lives (a write could leave .supervisor/, and files behind them read as deleted); replace them with real directories/files. Nothing was changed."
-      return 1
+  # Parents first: a child is only looked at when its parent is a searchable real directory, so an
+  # absent child is truly absent (never an EACCES on the parent read as "no such folder").
+  for d in .supervisor .supervisor/requirements .supervisor/jobs .supervisor/jobs/done \
+           .supervisor/jobs/failed .supervisor/automate .supervisor/postmortem; do
+    case "$d" in
+      .supervisor) : ;;
+      *) case "$present" in *" ${d%/*} "*) : ;; *) continue ;; esac ;;
+    esac
+    if [ -L "$ROOT/$d" ]; then printf '%s\n' "$d" >> "$hz"; continue; fi
+    [ -d "$ROOT/$d" ] || continue
+    [ -x "$ROOT/$d" ] || { warn "cannot search $d/ (permission denied); nothing was changed"; return 1; }
+    present="$present$d "
+    case "$d" in .supervisor|.supervisor/jobs) : ;; *) roots="$roots $d" ;; esac
+  done
+  for d in $roots; do
+    if [ "$d" = ".supervisor/requirements" ]; then
+      (cd "$ROOT" && find "$d" -type d -name .supervisor -prune -o \( -type f -o -type l \) -print) >> "$WORK/local.found"
+    else
+      (cd "$ROOT" && find "$d" -maxdepth 1 \( -type f -o -type l \) -print) >> "$WORK/local.found"
+    fi || { warn "could not enumerate every file under $d/ (find failed); nothing was changed"; return 1; }
+  done
+  while IFS= read -r p; do
+    p="${p#./}"
+    if [ -L "$ROOT/$p" ]; then
+      if symlink_hazard "$p"; then printf '%s\n' "$p" >> "$hz"; fi
+    elif is_managed "$p"; then
+      printf '%s\n' "$p"
     fi
+  done < "$WORK/local.found" | LC_ALL=C sort > "$WORK/local.paths" || return 1
+  if [ -s "$hz" ]; then
+    sed 's/^/meta_sync: symlink /' "$hz" >&2
+    warn "refusing — the symlink(s) above sit where managed run history lives (a write could leave .supervisor/, and files behind them read as deleted); replace them with real directories/files. Nothing was changed."
+    return 1
   fi
   : > "$1"
   [ -s "$WORK/local.paths" ] || return 0
@@ -559,6 +587,24 @@ report_conflicts() {
   [ "$n" -eq 0 ] && return 0
   awk -F'\t' -v so="$1" '$1 == "CONFLICT" && (so == 0 || $6 == 1) { print "meta_sync: conflict " $2 }' "$WORK/plan" >&2
   warn "aborted — $n conflict(s); nothing was changed (no file written, no ref moved, meta-base untouched). A conflict needs a human."
+  return 1
+}
+
+# report_not_a_file <selected-only:0|1> — 0 unless a path the branch holds a FILE at is, locally,
+# a directory or another non-regular file. find lists regular files only, so such a path reads as
+# locally ABSENT: a pull would rename the branch file INTO the directory (and record it as synced)
+# and a push would delete the branch file. Paths the branch does not hold are never refused.
+report_not_a_file() {
+  local o p l r nb sel n=0
+  while IFS="$TAB" read -r o p l r nb sel; do
+    [ "$r" != "-" ] || continue
+    [ "$1" = "0" ] || [ "$sel" = "1" ] || continue
+    if [ -e "$ROOT/$p" ] && [ ! -f "$ROOT/$p" ]; then
+      warn "not_a_file $p"; n=$((n + 1))
+    fi
+  done < "$WORK/plan"
+  [ "$n" -eq 0 ] && return 0
+  warn "refusing — $n managed path(s) above exist locally as a directory or another non-regular file while the branch holds a file there; nothing was changed (no file written, no ref moved, meta-base untouched)"
   return 1
 }
 
@@ -720,6 +766,7 @@ cmd_pull() {
   fetch_or_exit
   compute_plan 0 || exit 1
   report_conflicts 0 || exit 1
+  report_not_a_file 0 || exit 1
   local o p l r nb sel written=0 deleted=0 dst tmp
   # Containment pre-pass: nothing is written or deleted unless EVERY path the plan touches is a
   # canonical managed path with no symlinked component (list_local already refused symlinks where
@@ -737,6 +784,9 @@ cmd_pull() {
     # Defence in depth (a symlink planted after the pre-pass): re-check right before the act, and
     # after any mkdir -p confirm the parent resolves physically under .supervisor/.
     path_has_no_symlink "$p" || die "refusing — a component of $p is a symlink (meta-base untouched)"
+    if [ -e "$dst" ] && [ ! -f "$dst" ]; then
+      die "refusing — $p exists locally but is not a regular file (meta-base untouched)"
+    fi
     if [ "$o" = "TAKE_R" ] && [ "$r" = "-" ]; then
       parent_inside "$p" || die "refusing — $p does not resolve under .supervisor/ (meta-base untouched)"
       rm -f "$dst" || die "could not delete $p (meta-base untouched)"
@@ -780,6 +830,7 @@ cmd_push() {
     abort_sel=1
     [ "$HAVE_BASE" = "1" ] || abort_sel=0
     report_conflicts "$abort_sel" || exit 1
+    report_not_a_file "$abort_sel" || exit 1
     rm -f "$META_INDEX"
     GIT_INDEX_FILE="$META_INDEX" g read-tree "$RT" || die "read-tree into the separate index failed"
     : > "$WORK/candidates"
