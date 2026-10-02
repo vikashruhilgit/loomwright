@@ -52,7 +52,9 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --force) force=1; shift ;;
     --list)  list=1; shift ;;
-    -h|--help) sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
+    # --help = the header comment block: every line after the shebang up to the first line that is
+    # not a comment. Anchored on comment-ness, not on whatever code follows the header.
+    -h|--help) awk 'NR == 1 { next } !/^#/ { exit } { sub(/^# ?/, ""); print }' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "ci-local: unknown argument: $1 (try --help)" >&2; exit 2 ;;
   esac
 done

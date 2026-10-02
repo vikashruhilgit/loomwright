@@ -16,6 +16,11 @@
 #   (M)  the tree changes mid-run     → PASS reported but "NOT cached"; the next run re-runs
 #   (L)  lock held by a live pid      → waits, then exit 1 after CI_LOCAL_LOCK_WAIT, nothing ran;
 #        lock held by a dead pid      → taken over ("stale"), run proceeds, lock released after
+#   (LS) --list                       → key + cache status, exactly the ci.yml gates (with args) and the
+#                                       plain tests in order, no temp wrapper paths, nothing ran;
+#                                       a changed tree lists "cache: miss"
+#   (H)  --help                       → the whole header de-commented, no code; still correct when the
+#                                       first code line after the header changes
 #   (Z)  ci.yml names no gates        → exit 1 (no green on zero gates)
 #   (A)  unknown argument             → exit 2
 #   (W)  wiring: ci-local.sh's loomwright glob line is the one run-self-tests.sh uses, and the real
@@ -139,6 +144,34 @@ kill "$sleeper" 2>/dev/null; wait "$sleeper" 2>/dev/null; sleeper=""
 run --force
 if [ "$rc" -eq 0 ] && has "stale" && ran one && [ ! -d "$lockdir" ]; then ok "(L) dead holder: lock taken over, run passed, lock released"
 else no "(L) dead: rc=$rc lock_left=$([ -d "$lockdir" ] && echo yes || echo no) out=$out"; fi
+
+# (LS) — the (L) run above stamped the current tree.
+run --list
+if [ "$rc" -eq 0 ] && has "^key: " && has "^cache: PASS stamped" && [ ! -s "$FIXTURE_LOG" ]; then ok "(LS) --list: key + cached status, nothing ran"
+else no "(LS) rc=$rc log=[$(tr '\n' ' ' < "$FIXTURE_LOG")] out=$out"; fi
+want_gates=$'gate: scripts/check-a.sh --self-test\ngate: scripts/check-a.sh\ngate: scripts/check-vendor-coupling.sh'
+want_tests=$'test: scripts/test-extra.sh\ntest: loomwright/scripts/test-one.sh'
+if [ "$(grep '^gate: ' <<<"$out")" = "$want_gates" ] && [ "$(grep '^test: ' <<<"$out")" = "$want_tests" ]; then
+  ok "(LS) --list: exactly the ci.yml gates (with arguments) and the plain tests, in order"
+else no "(LS) plan lines: $out"; fi
+if has "/gates/"; then no "(LS) --list leaked a temp gate-wrapper path: $out"; else ok "(LS) --list hides the temp gate wrappers"; fi
+echo x > "$R/list-probe.txt"
+run --list
+if [ "$rc" -eq 0 ] && has "^cache: miss" && [ ! -s "$FIXTURE_LOG" ]; then ok "(LS) --list on a changed tree: cache miss, nothing ran"
+else no "(LS) changed tree: rc=$rc out=$out"; fi
+rm -f "$R/list-probe.txt"
+
+# (H)
+run --help
+if [ "$rc" -eq 0 ] && has "^ci-local.sh — " && has "^usage: ci-local.sh" && has "^Self-test: scripts/test-ci-local.sh" \
+   && ! has "^#" && ! has "set -euo"; then ok "(H) --help: the whole header, de-commented, no code"
+else no "(H) rc=$rc out=$out"; fi
+# The header ends at the first non-comment line, whatever that line is — not at a literal `set -euo`.
+sed 's/^set -euo pipefail$/set -eu -o pipefail/' "$R/scripts/ci-local.sh" > "$R/scripts/ci-local-variant.sh"
+out="$(cd "$R" && bash scripts/ci-local-variant.sh --help 2>&1)"; rc=$?
+if [ "$rc" -eq 0 ] && has "^Self-test: scripts/test-ci-local.sh" && ! has "set -eu" && ! has "shopt"; then ok "(H) --help survives a changed first code line"
+else no "(H) variant: rc=$rc out=$out"; fi
+rm -f "$R/scripts/ci-local-variant.sh"
 
 # (Z)
 printf 'jobs:\n  ci:\n    steps:\n      - run: echo nothing\n' > "$R/.github/workflows/ci.yml"
