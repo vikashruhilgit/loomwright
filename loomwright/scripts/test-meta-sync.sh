@@ -26,6 +26,9 @@
 #  12. scrub with an EMPTY allowlist -> every forge slug is a hit (fail closed)
 #  13. scrub negative: risk-/task- prose, 40-hex SHA, sha256: stamp, allowlisted URL, a reserved-word
 #      URL and a github.com/.../pull placeholder -> exit 0
+#  13b. scrub case / quoting variants: a mixed- and upper-case forge host, a single-quoted and a
+#      capitalised repo key, a lowercase /users/ home path -> each named, exit 2; the allowlisted
+#      slug in mixed case / single quotes still passes
 #  14. fresh-clone deletion (no meta-base): a stale deleted file is not re-added; the clone's pull
 #      deletes it; its next push still does not re-add it; a stale OLDER copy of a live file is not
 #      pushed; an edit away from every historical blob -> conflict; a grown ledger -> union
@@ -36,6 +39,17 @@
 #      (origin has receive.denyNonFastForwards); a truly parallel pair both land
 #  18. status vocabulary: synced / local_ahead / remote_ahead / conflict / never_synced, exit 0
 #  19. static: the requirement's forbidden-forms grep over meta-sync.sh returns nothing
+#  22. same-root concurrency: a `status` on the SAME root, injected (git shim) between a push's
+#      read-tree and its first update-index, must not shrink the pushed tree; an index lost mid-push
+#      trips tree_guard (exit 1, branch and meta-base unchanged)
+#  23. per-root lock: a live holder -> exit 1 `locked`, nothing changed, lock not stolen; a dead
+#      holder is reclaimed; the lock and no fixed-name scratch remain after success / conflict /
+#      scrub exits; a same-root push + pull pair both succeed
+#  24. untrusted tree paths: a mktree'd `.supervisor/requirements/../../README.md` entry on the branch
+#      -> pull writes nothing outside .supervisor/ (tracked README.md intact, legit file arrives), push
+#      fails closed; the same entry deleted again (history-derived deletion leg, fresh clone) is
+#      not a managed path: no conflict, nothing outside .supervisor/ touched (the deletion branch
+#      itself needs the path in the find-enumerated local list, so a '..' path never reaches it)
 #  --- Mutation controls (sed-patched mutant copies in the temp dir; the shipped script has no
 #      test seam) ---
 #  20. (i) a mutant that drops the base comparison (any local difference is staged) MUST fail the
@@ -292,6 +306,29 @@ put B "$RQ/ok-slug.md" "$(printf '%s\n' 'A risk-based plan for the task-ledger a
 ms B push
 { [ "$RC" -eq 0 ] && br_has "$RQ/ok-slug.md"; }; check $? "clean prose with risk-/task-, a 40-hex SHA, a sha256: stamp, an allowlisted URL, a reserved-word URL and a .../pull placeholder push (rc=$RC: $OUT)"
 
+echo "== 13b. scrub case / quoting variants =="
+synced_pair
+put B "$RQ/v-host-mixed.md" "upstream https://GitHub.com/evilcorp/secret-repo/pull/3"
+put B "$RQ/v-host-upper.md" "see HTTPS://GITHUB.COM/evilcorp/x for details"
+put B "$RQ/v-repo-sq.md" "repo: 'evilcorp/x'"
+put B "$RQ/v-repo-cap.md" '{"Repo": "evilcorp/x"}'
+put B "$RQ/v-repo-sqkey.md" "{'REPO': 'evilcorp/y'}"
+put B "$RQ/v-home-lc.md" "see /users/alice/project"
+tip="$(br_tip)"; base_before="$(base_of B)"
+ms B push
+{ [ "$RC" -eq 2 ] && [ "$(br_tip)" = "$tip" ] && [ "$(base_of B)" = "$base_before" ]; }
+check $? "case / quoting variants -> exit 2, branch tip and meta-base unchanged (rc=$RC)"
+for pr in "v-host-mixed.md: forge_slug" "v-host-upper.md: forge_slug" "v-repo-sq.md: forge_slug" \
+          "v-repo-cap.md: forge_slug" "v-repo-sqkey.md: forge_slug" "v-home-lc.md: home_path"; do
+  grep -qF "meta_sync: scrub $RQ/$pr" < <(printf '%s' "$OUT")
+  check $? "named in the same run: $pr"
+done
+rm -f "$W/B/$RQ"/v-*.md
+put B "$RQ/v-ok.md" "$(printf '%s\n' 'See https://GitHub.com/Owner/Repo/pull/1' "repo: 'owner/repo-old'" '{"Repo": "Owner/Repo"}')"
+ms B push
+{ [ "$RC" -eq 0 ] && br_has "$RQ/v-ok.md"; }
+check $? "allowlisted slugs in mixed case / single quotes / a capitalised key still push (rc=$RC: $OUT)"
+
 echo "== 14. fresh-clone deletion (no meta-base) =="
 synced_pair
 old_d="$(get A "$RQ/d.md")"; old_x="$(get A "$RQ/x.md")"
@@ -384,6 +421,121 @@ ms B push; grep -q 'meta_sync: no_changes' < <(printf '%s' "$OUT"); check $? "pu
 echo "== 19. static: forbidden forms absent from meta-sync.sh =="
 ! grep -nE 'git (checkout|switch|merge)|push .*--force|add -f [^"$]*/( |$)' "$SUT"
 check $? "no branch switching, no forced push, no directory add (requirement grep returns nothing)"
+
+echo "== 22. same-root concurrency: a status racing a push =="
+REAL_GIT="$(command -v git)"
+# mkshim <dir> <mark> <action-sh> — a `git` shim that runs <action-sh> once, at the FIRST
+# `git -C <root> update-index --add ...` (i.e. after the push's read-tree, before its first add).
+mkshim() {
+  mkdir -p "$1"
+  cat > "$1/git" <<SHIM
+#!/bin/sh
+if [ -f "$2" ] && [ "\$3" = "update-index" ] && [ "\$4" = "--add" ]; then
+  rm -f "$2"
+  $3
+fi
+exec "$REAL_GIT" "\$@"
+SHIM
+  chmod +x "$1/git"
+}
+synced_pair
+names_before="$(br_names | LC_ALL=C sort)"
+touch "$W/race1.mark"
+mkshim "$W/shim1" "$W/race1.mark" "env -u GIT_INDEX_FILE PATH='$PATH' bash '$SUT' status --root '$W/A' > '$W/race-status.log' 2>&1"
+put A "$RQ/x.md" "x raced"
+OUT="$(PATH="$W/shim1:$PATH" bash "$SCRIPT" push --root "$W/A" 2>&1)"; RC=$?
+{ [ ! -e "$W/race1.mark" ] && [ -s "$W/race-status.log" ]; }
+check $? "the injected same-root status really ran mid-push (log: $(cat "$W/race-status.log" 2>/dev/null))"
+{ [ "$RC" -eq 0 ] && [ "$(br_names | LC_ALL=C sort)" = "$names_before" ] && [ "$(br_show "$RQ/x.md")" = "x raced" ]; }
+check $? "push still publishes the full tree with only x.md changed (rc=$RC: $OUT; branch now: $(br_names | tr '\n' ' '))"
+ms B pull
+{ [ "$RC" -eq 0 ] && [ "$(get B "$RQ/y.md")" = "y v1" ] && [ "$(get B "$RQ/x.md")" = "x raced" ]; }
+check $? "the sibling's pull writes x.md and deletes nothing (rc=$RC: $OUT)"
+ms A status; [ "$OUT" = "synced $(br_tip)" ]; check $? "the pusher's own status -> synced (got '$OUT')"
+echo "-- an index lost mid-push trips tree_guard --"
+synced_pair
+tip="$(br_tip)"; base_before="$(base_of A)"
+touch "$W/race2.mark"
+mkshim "$W/shim2" "$W/race2.mark" 'rm -f "$GIT_INDEX_FILE"'
+put A "$RQ/x.md" "x after index loss"
+OUT="$(PATH="$W/shim2:$PATH" bash "$SCRIPT" push --root "$W/A" 2>&1)"; RC=$?
+{ [ ! -e "$W/race2.mark" ] && [ "$RC" -eq 1 ] && grep -q 'tree_guard' < <(printf '%s' "$OUT") && [ "$(br_tip)" = "$tip" ] && [ "$(base_of A)" = "$base_before" ]; }
+check $? "tree_guard: the new tree would delete unplanned paths -> exit 1, branch tip and meta-base unchanged (rc=$RC: $OUT)"
+
+echo "== 23. per-root lock =="
+synced_pair
+LOCK="$W/A/.git/meta-sync.lock"
+sleep 60 & live_pid=$!
+mkdir "$LOCK"; printf '%s\n' "$live_pid" > "$LOCK/pid"
+put A "$RQ/x.md" "x while locked"
+tip="$(br_tip)"; base_before="$(base_of A)"
+OUT="$(META_SYNC_LOCK_WAIT_SECS=1 bash "$SCRIPT" push --root "$W/A" 2>&1)"; RC=$?
+{ [ "$RC" -eq 1 ] && grep -q 'meta_sync: locked' < <(printf '%s' "$OUT") && [ "$(br_tip)" = "$tip" ] && [ "$(base_of A)" = "$base_before" ] && [ "$(cat "$LOCK/pid" 2>/dev/null)" = "$live_pid" ]; }
+check $? "a live holder -> push exits 1 'locked', nothing changed, the holder's lock is not stolen (rc=$RC: $OUT)"
+OUT="$(META_SYNC_LOCK_WAIT_SECS=1 bash "$SCRIPT" pull --root "$W/A" 2>&1)"; RC=$?
+{ [ "$RC" -eq 1 ] && grep -q 'meta_sync: locked' < <(printf '%s' "$OUT"); }; check $? "a live holder -> pull exits 1 'locked' (rc=$RC)"
+ms A status; { [ "$RC" -eq 0 ] && [ "$OUT" = "local_ahead 1" ]; }; check $? "status takes no lock (got '$OUT')"
+kill "$live_pid" 2>/dev/null; wait "$live_pid" 2>/dev/null
+( exit 0 ) & dead_pid=$!; wait "$dead_pid" 2>/dev/null
+printf '%s\n' "$dead_pid" > "$LOCK/pid"
+ms A push
+{ [ "$RC" -eq 0 ] && grep -q 'reclaimed a stale lock' < <(printf '%s' "$OUT") && [ "$(br_show "$RQ/x.md")" = "x while locked" ] && [ ! -e "$LOCK" ]; }
+check $? "a dead holder's lock is reclaimed, the push lands and the lock is released (rc=$RC: $OUT)"
+no_leftovers() { [ ! -e "$W/$1/.git/meta-sync.lock" ] && [ ! -e "$W/$1/.git/meta-index" ] && [ ! -e "$W/$1/.git/meta-base-index" ] && [ -z "$(ls "$W/$1/.git" | grep -E '^meta-(base\.tmp|sync\.lock\.stale)')" ]; }
+put B "$RQ/c.md" "c from B (conflict)"; put A "$RQ/c.md" "c from A"; ms A push; ms B push
+{ [ "$RC" -eq 1 ] && no_leftovers B; }; check $? "after a conflict exit: no lock and no fixed-name scratch left in the gitdir (rc=$RC)"
+put B "$RQ/c.md" "c v1"; ms B pull; put B "$RQ/s-mail.md" "mail someone@example.org"; ms B push
+{ [ "$RC" -eq 2 ] && no_leftovers B; }; check $? "after a scrub exit: no lock and no fixed-name scratch left (rc=$RC)"
+rm -f "$W/B/$RQ/s-mail.md"
+put A "$RQ/w.md" "w same-root parallel"; put B "$RQ/z.md" "z for the same-root pull"; ms B push
+( bash "$SUT" push --root "$W/A" > "$W/sr-push.log" 2>&1; echo $? > "$W/sr-push.rc" ) &
+( bash "$SUT" pull --root "$W/A" > "$W/sr-pull.log" 2>&1; echo $? > "$W/sr-pull.rc" ) &
+wait
+{ [ "$(cat "$W/sr-push.rc")" = "0" ] && [ "$(cat "$W/sr-pull.rc")" = "0" ] && [ "$(br_show "$RQ/w.md")" = "w same-root parallel" ] && [ "$(get A "$RQ/z.md")" = "z for the same-root pull" ] && br_has "$RQ/y.md" && no_leftovers A; }
+check $? "a same-root push + pull pair both succeed, serialised (push=$(cat "$W/sr-push.rc") pull=$(cat "$W/sr-pull.rc"))"
+ms A pull; ms A status; [ "$OUT" = "synced $(br_tip)" ]; check $? "and the root converges to synced (got '$OUT')"
+
+echo "== 24. untrusted tree paths (mktree '..' entries) =="
+synced_pair
+OG="$W/origin.git"
+# the climb targets a TRACKED .md at the root (a .md, so the pre-fix requirements glob matched it)
+printf 'readme\n' > "$W/B/README.md"; git -C "$W/B" add README.md; git -C "$W/B" commit -qm readme
+# req1 = requirements + a '..'/'..'/README.md climb + legit.md (commit c1); req2 = without the climb (c2).
+og() { git --git-dir="$OG" "$@"; }
+tip0="$(br_tip)"
+evil="$(printf 'pwned\n' | og hash-object -w --stdin)"
+legit="$(printf 'legit\n' | og hash-object -w --stdin)"
+t_app="$(printf '100644 blob %s\tREADME.md\n' "$evil" | og mktree)"
+t_up="$(printf '040000 tree %s\t..\n' "$t_app" | og mktree)"
+req0="$(og rev-parse "$tip0:.supervisor/requirements")"
+req1="$({ og ls-tree "$req0"; printf '040000 tree %s\t..\n' "$t_up"; printf '100644 blob %s\tlegit.md\n' "$legit"; } | og mktree)"
+req2="$({ og ls-tree "$req0"; printf '100644 blob %s\tlegit.md\n' "$legit"; } | og mktree)"
+# swap_req <requirements-tree> — prints a root tree equal to tip0's with requirements replaced.
+swap_req() {
+  local sup1
+  sup1="$({ og ls-tree "$tip0:.supervisor" | awk -F'\t' '$2 != "requirements"'; printf '040000 tree %s\trequirements\n' "$1"; } | og mktree)"
+  { og ls-tree "$tip0^{tree}" | awk -F'\t' '$2 != ".supervisor"'; printf '040000 tree %s\t.supervisor\n' "$sup1"; } | og mktree
+}
+c1="$(printf 'hostile\n' | og commit-tree "$(swap_req "$req1")" -p "$tip0")"
+og update-ref "refs/heads/$BR" "$c1"
+grep -qF '.supervisor/requirements/../../README.md' < <(og ls-tree -r --name-only "$c1")
+check $? "fixture: the branch tip really carries .supervisor/requirements/../../README.md"
+ms B pull
+{ [ "$RC" -eq 0 ] && [ "$(get B README.md)" = "readme" ] && [ -z "$(porcelain B)" ] && [ "$(get B "$RQ/../legit.md")" = "legit" ] && [ -z "$(ls "$W/B" | grep 'meta-sync')" ]; }
+check $? "pull writes nothing outside .supervisor/: tracked README.md intact, the legit file arrives (rc=$RC: $OUT; README.md='$(get B README.md)')"
+put B "$RQ/y.md" "y after hostile tip"; tip="$(br_tip)"; ms B push
+{ [ "$RC" -ne 0 ] && [ "$(br_tip)" = "$tip" ] && [ "$(get B README.md)" = "readme" ]; }
+check $? "push over a hostile tip fails closed, branch unchanged (rc=$RC)"
+c2="$(printf 'cleanup\n' | og commit-tree "$(swap_req "$req2")" -p "$c1")"
+og update-ref "refs/heads/$BR" "$c2"
+ms B pull
+{ [ "$RC" -eq 0 ] && [ "$(get B README.md)" = "readme" ] && [ -z "$(porcelain B)" ]; }
+check $? "the '..' entry deleted on the branch: B's pull deletes nothing outside .supervisor/ (rc=$RC: $OUT)"
+clone G
+printf 'readme\n' > "$W/G/README.md"; git -C "$W/G" add README.md; git -C "$W/G" commit -qm readme
+ms G pull
+{ [ "$RC" -eq 0 ] && [ "$(get G README.md)" = "readme" ] && [ -z "$(porcelain G)" ] && ! grep -q 'conflict' < <(printf '%s' "$OUT"); }
+check $? "fresh clone G (history-derived deletion leg): the '..' path in R's history is not managed — no conflict, README.md intact (rc=$RC: $OUT)"
 
 # ---------------------------------------------------------------------------------------------
 # Mutation controls — sed-patched copies; the sibling setup-memory.sh is copied beside each.

@@ -26,7 +26,12 @@
 #   .supervisor/jobs/failed/*.md
 #   .supervisor/automate/*.md
 #   .supervisor/postmortem/results.jsonl
-#   minus anything under a NESTED .supervisor/ (.supervisor/requirements/**/.supervisor/**).
+#   minus anything under a NESTED .supervisor/ (.supervisor/requirements/**/.supervisor/**),
+#   and minus every NON-CANONICAL path (an absolute path, or one with a `.` / `..` / empty segment).
+#   Branch trees are untrusted input (anyone who can push the branch can mktree any entry name);
+#   a `.supervisor/requirements/../../CLAUDE.md` entry must never be joined to the root and
+#   written or deleted, so it is simply not a managed path (pull ignores it; push fails closed,
+#   because git's read-tree refuses such a tree).
 # Local files are enumerated with `find` and filtered through that list; each one is staged into the
 # separate index by explicit path (update-index --cacheinfo). No directory is ever added, so a log or
 # a nested `.supervisor/` tree that .gitignore hides can never reach the branch: the separate index
@@ -58,7 +63,7 @@
 # history walk runs only while meta-base is absent.
 #
 # WHAT meta-base RECORDS — the per-path state local and remote are KNOWN to agree on, written as its
-# own tree (a second index, GIT_INDEX_FILE=<gitdir>/meta-base-index, + write-tree). This deliberately
+# own tree (a second, per-run index file under this run's temp dir + write-tree). This deliberately
 # differs from "the branch tree of the last pull or push":
 #   - after a pull every path either now holds R locally or is a take-L path where R == B, so R's
 #     tree is the agreed base;
@@ -74,11 +79,24 @@
 #   (the tree and its blobs are otherwise unreachable and `git gc` would prune them); if the object
 #   is ever missing anyway, the script falls back to the no-base derivation with a warning.
 #
-# PUSH — fetch, decide per path, build the new tree in a SEPARATE index (GIT_INDEX_FILE=<gitdir>/
-# meta-index, seeded from R's tree via read-tree) with explicit per-path update-index adds/removes,
-# write-tree -> commit-tree -p R -> refspec push of that commit to refs/heads/<branch>. A rejected
-# push re-fetches, recomputes from the NEW R and the unchanged B, and retries — at most 5 attempts,
-# never forced. Nothing to push => exit 0 `meta_sync: no_changes`.
+# PUSH — fetch, decide per path, build the new tree in a SEPARATE index (a per-run GIT_INDEX_FILE
+# under this run's temp dir — never a fixed name in the shared gitdir — seeded from R's tree via
+# read-tree) with explicit per-path update-index adds/removes, write-tree -> commit-tree -p R ->
+# refspec push of that commit to refs/heads/<branch>. Before commit-tree the new tree is checked
+# against the plan: `git diff-tree -r` from R's tree must touch ONLY the selected take-L / union
+# paths, otherwise exit 1 `tree_guard` and nothing is pushed (a lost or foreign index can never
+# publish a tree that deletes paths the plan did not choose). A rejected push re-fetches,
+# recomputes from the NEW R and the unchanged B, and retries — at most 5 attempts, never forced.
+# Nothing to push => exit 0 `meta_sync: no_changes`.
+#
+# LOCK — `pull` and `push` (the only commands that write local files or meta-base) hold
+# `<gitdir>/meta-sync.lock` (an atomic `mkdir` holding the holder's pid) for their whole run; every
+# worktree defaults to the same --root, so they serialise there. A holder whose pid is dead (or a
+# pid-less lock older than a minute) is reclaimed. A live holder is waited for up to
+# META_SYNC_LOCK_WAIT_SECS (default 120), then exit 1 `locked`, nothing changed. The lock is
+# released on every exit path (EXIT trap; HUP/INT/TERM exit through it) and only by its holder.
+# `status` and `init` take no lock: status reads meta-base (always replaced by an atomic rename)
+# and writes nothing shared; all scratch state (index files, temp files) is per-run.
 #
 # SCRUB (push only, fail CLOSED: exit 2, branch and meta-base unchanged). EVERY file being added or
 # changed is scanned before deciding and EVERY hit is named in one run, one line per hit:
@@ -89,15 +107,19 @@
 #   (b) prose, portable POSIX ERE only (no GNU-only escapes — on BSD grep those would silently match
 #       nothing and this fail-CLOSED gate would fail OPEN):
 #         email          e-mail addresses
-#         home_path      absolute home paths: /Users/<name>/ and /home/<name>/
+#         home_path      absolute home paths: /Users/<name>/ and /home/<name>/ (any letter case —
+#                        macOS paths are case-insensitive)
 #         token_github   gh[pousr]_ + 36+ chars       token_github_pat  github_pat_ + 22+ chars
 #         token_sk       sk- + 20+ chars              token_slack       xox[abp]- + 10+ chars
 #         token_aws      AKIA + 16 upper/digits
 #       Token rules are anchored with a leading non-word boundary and length-bounded; there is NO
-#       generic high-entropy rule, so 40-hex commit SHAs and `sha256:` stamps never hit.
+#       generic high-entropy rule, so 40-hex commit SHAs and `sha256:` stamps never hit. Token
+#       prefixes are matched case-SENSITIVELY on purpose: issuers emit them in exactly one case.
 #         forge_slug     an owner/repo NOT in the allowlist, detected ONLY in forge contexts:
-#                        github.com / gitlab.com / bitbucket.org URLs, and a `repo:` / `"repo":`
-#                        field. A bare `a/b` is deliberately NOT a slug (every relative path would
+#                        github.com / gitlab.com / bitbucket.org URLs (host in any letter case),
+#                        and a `repo` field in any letter case with the key and the value bare or
+#                        wrapped in double, single or back quotes (repo: a/b, "Repo": "a/b",
+#                        'repo': 'a/b'). A bare `a/b` is deliberately NOT a slug (every relative path would
 #                        match) — that is a stated limit of this scrub, not complete coverage. URL
 #                        first segments that are forge-reserved words (apps, orgs, settings, …)
 #                        are not owners and are skipped, as is an all-dot placeholder segment
@@ -113,7 +135,7 @@
 # Precedence: unreachable > no_remote_branch > never_synced > conflict > local_ahead > remote_ahead.
 #
 # EXIT: 0 ok / no_changes; 1 conflict, no_remote_branch, fetch failure, init refusal, exhausted push
-# retries, usage error; 2 scrub hit. `init` is the ONLY command that may create the branch (an empty
+# retries, tree_guard, locked, usage error; 2 scrub hit. `init` is the ONLY command that may create the branch (an empty
 # orphan commit); it refuses when the branch already exists.
 #
 # Nothing calls this script yet (parallel-automate items 03 / M1 wire it in).
@@ -175,19 +197,86 @@ GITDIR="$(git -C "$ROOT" rev-parse --absolute-git-dir 2>/dev/null)" \
 git check-ref-format "refs/heads/$BRANCH" 2>/dev/null || die "usage: invalid branch name '$BRANCH'"
 
 META_BASE="$GITDIR/meta-base"
-META_INDEX="$GITDIR/meta-index"
-META_BASE_INDEX="$GITDIR/meta-base-index"
+LOCK_DIR="$GITDIR/meta-sync.lock"
+LOCK_HELD=0
+LOCK_WAIT="${META_SYNC_LOCK_WAIT_SECS:-120}"
+case "$LOCK_WAIT" in ''|*[!0-9]*) LOCK_WAIT=120 ;; esac
 
 g() { git -C "$ROOT" "$@"; }
 
 WORK="$(mktemp -d 2>/dev/null || mktemp -d -t meta-sync)" || die "cannot create a temp dir"
-cleanup() { rm -rf "$WORK"; rm -f "$META_INDEX" "$META_BASE_INDEX"; }
+# Per-run scratch only: the gitdir is shared by every worktree and every concurrent invocation
+# (a read-only `status` included), so no fixed-name scratch file may live there.
+META_INDEX="$WORK/meta-index"
+META_BASE_INDEX="$WORK/meta-base-index"
+# cleanup — removes only this run's own state: the per-run temp dir, and the lock iff we hold it.
+cleanup() {
+  if [ "$LOCK_HELD" = "1" ] && [ "$(cat "$LOCK_DIR/pid" 2>/dev/null)" = "$$" ]; then
+    rm -rf "$LOCK_DIR"
+  fi
+  rm -rf "$WORK"
+}
 trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# ---- per-root lock (pull / push) ----
+# lock_holder_alive <pid> — kill -0 first; when it fails (dead, OR alive but owned by another user:
+# EPERM) let `ps -p` decide, if ps exists.
+lock_holder_alive() {
+  case "$1" in ''|*[!0-9]*) return 1 ;; esac
+  kill -0 "$1" 2>/dev/null && return 0
+  command -v ps >/dev/null 2>&1 || return 1
+  ps -p "$1" >/dev/null 2>&1
+}
+acquire_lock() {
+  local start holder stale grave
+  start="$(date +%s)"
+  while :; do
+    if mkdir "$LOCK_DIR" 2>/dev/null; then
+      if printf '%s\n' "$$" > "$LOCK_DIR/pid"; then LOCK_HELD=1; return 0; fi
+      rm -rf "$LOCK_DIR"; die "could not write the lock holder pid into $LOCK_DIR"
+    fi
+    holder="$(cat "$LOCK_DIR/pid" 2>/dev/null)"
+    stale=0
+    if [ -n "$holder" ]; then
+      lock_holder_alive "$holder" || stale=1
+    elif [ -n "$(find "$LOCK_DIR" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
+      stale=1   # pid-less for over a minute: the holder died between mkdir and the pid write
+    fi
+    if [ "$stale" = "1" ]; then
+      # Reclaim by atomic rename, then confirm we moved the SAME dead holder's lock; if another
+      # waiter reclaimed and re-acquired in between, put its live lock back.
+      grave="$LOCK_DIR.stale.$$"
+      rm -rf "$grave"
+      if mv "$LOCK_DIR" "$grave" 2>/dev/null; then
+        if [ "$(cat "$grave/pid" 2>/dev/null)" = "$holder" ]; then
+          rm -rf "$grave"
+          warn "reclaimed a stale lock left by pid ${holder:-unknown}"
+        elif [ ! -e "$LOCK_DIR" ]; then
+          mv "$grave" "$LOCK_DIR" 2>/dev/null || rm -rf "$grave"
+        else
+          rm -rf "$grave"
+        fi
+      fi
+      continue
+    fi
+    if [ $(( $(date +%s) - start )) -ge "$LOCK_WAIT" ]; then
+      die "locked — another meta-sync (pid ${holder:-unknown}) holds $LOCK_DIR; waited ${LOCK_WAIT}s, nothing was changed"
+    fi
+    sleep 1
+  done
+}
 
 # ---- the ONE managed-set declaration ----
 is_managed() {
   case "$1" in
     *"$TAB"*) return 1 ;;
+    # Non-canonical paths are never managed (paths from a branch tree are untrusted; `*` in a case
+    # pattern also matches `/`, so a dot segment would otherwise pass the globs below and climb out
+    # of .supervisor/ when joined to the root).
+    /*|./*|../*|*/./*|*/../*|*//*|*/.|*/..|*/) return 1 ;;
     .supervisor/requirements/*.md)
       case "$1" in
         .supervisor/requirements/.supervisor/*|.supervisor/requirements/*/.supervisor/*) return 1 ;;
@@ -384,28 +473,36 @@ RESERVED_OWNERS=' about apps blog collections contact enterprise events explore 
 
 # scan_file <file> <path> — prints `meta_sync: scrub <path>: <rule>` per hit; returns 1 when any hit.
 scan_file() {
-  local f="$1" p="$2" hits=0 L='(^|[^A-Za-z0-9_])' rule re rc
-  while IFS="$TAB" read -r rule re; do
-    LC_ALL=C grep -E -q -e "$re" "$f" 2>/dev/null; rc=$?
+  local f="$1" p="$2" hits=0 L='(^|[^A-Za-z0-9_])' rule re rc icase
+  # rule<TAB>case(i = any letter case, s = exact)<TAB>ERE
+  while IFS="$TAB" read -r rule icase re; do
+    if [ "$icase" = "i" ]; then
+      LC_ALL=C grep -i -E -q -e "$re" "$f" 2>/dev/null; rc=$?
+    else
+      LC_ALL=C grep -E -q -e "$re" "$f" 2>/dev/null; rc=$?
+    fi
     if [ "$rc" -eq 0 ]; then echo "meta_sync: scrub $p: $rule"; hits=1
     elif [ "$rc" -gt 1 ]; then echo "meta_sync: scrub $p: scan_error($rule)"; hits=1
     fi
   done <<EOF
-email${TAB}[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}
-home_path${TAB}/(Users|home)/[A-Za-z0-9._-]+/
-token_github${TAB}${L}gh[pousr]_[A-Za-z0-9]{36,}
-token_github_pat${TAB}${L}github_pat_[A-Za-z0-9_]{22,}
-token_sk${TAB}${L}sk-[A-Za-z0-9_-]{20,}
-token_slack${TAB}${L}xox[abp]-[A-Za-z0-9-]{10,}
-token_aws${TAB}${L}AKIA[0-9A-Z]{16}([^A-Za-z0-9_]|\$)
+email${TAB}i${TAB}[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}
+home_path${TAB}i${TAB}/(Users|home)/[A-Za-z0-9._-]+/
+token_github${TAB}s${TAB}${L}gh[pousr]_[A-Za-z0-9]{36,}
+token_github_pat${TAB}s${TAB}${L}github_pat_[A-Za-z0-9_]{22,}
+token_sk${TAB}s${TAB}${L}sk-[A-Za-z0-9_-]{20,}
+token_slack${TAB}s${TAB}${L}xox[abp]-[A-Za-z0-9-]{10,}
+token_aws${TAB}s${TAB}${L}AKIA[0-9A-Z]{16}([^A-Za-z0-9_]|\$)
 EOF
-  # forge slugs — URL contexts and repo fields only (see header: a bare a/b is not a slug).
-  local slugs="$WORK/slugs" s owner bad=0
+  # forge slugs — URL contexts and repo fields only (see header: a bare a/b is not a slug). Both
+  # extractions are case-INSENSITIVE (a host or key in any case is the same context) and the output
+  # is lowercased BEFORE the sed strip, so the strip patterns only ever see lowercase. The repo key
+  # and its value may be bare or wrapped in double, single or back quotes.
+  local slugs="$WORK/slugs" s owner bad=0 q="[\"'\`]?"
   {
-    LC_ALL=C grep -oE '(github\.com|gitlab\.com|bitbucket\.org)[/:]([Rr]epos/)?[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+' "$f" 2>/dev/null \
-      | sed -E 's#^[^/:]+[/:]##; s#^[Rr]epos/##'
-    LC_ALL=C grep -oE "${L}\"?repo\"?[[:space:]]*:[[:space:]]*\"?[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+" "$f" 2>/dev/null \
-      | sed -E 's#^.*repo"?[[:space:]]*:[[:space:]]*"?##'
+    LC_ALL=C grep -ioE '(github\.com|gitlab\.com|bitbucket\.org)[/:](repos/)?[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+' "$f" 2>/dev/null \
+      | tr 'A-Z' 'a-z' | sed -E 's#^[^/:]+[/:]##; s#^repos/##'
+    LC_ALL=C grep -ioE "${L}${q}repo${q}[[:space:]]*:[[:space:]]*${q}[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+" "$f" 2>/dev/null \
+      | tr 'A-Z' 'a-z' | sed -E "s#^.*repo${q}[[:space:]]*:[[:space:]]*${q}##"
   } | sed -E 's#\.+$##; s#\.git$##' | tr 'A-Z' 'a-z' | LC_ALL=C sort -u > "$slugs"
   while IFS= read -r s; do
     [ -n "$s" ] || continue
@@ -491,22 +588,26 @@ cmd_pull() {
   fetch_or_exit
   compute_plan 0 || exit 1
   report_conflicts 0 || exit 1
-  local o p l r nb sel written=0 deleted=0 dst
+  local o p l r nb sel written=0 deleted=0 dst tmp
   while IFS="$TAB" read -r o p l r nb sel; do
+    # Defence in depth: every plan path already passed is_managed (canonical, under .supervisor/);
+    # re-check before joining it to the root for a write or a delete.
+    case "$o" in TAKE_R|UNION) is_managed "$p" || die "refusing non-managed path in the plan: $p (meta-base untouched)" ;; esac
     dst="$ROOT/$p"
+    tmp="$dst.meta-sync.tmp.$$"
     case "$o" in
       TAKE_R)
         if [ "$r" = "-" ]; then
           rm -f "$dst" || die "could not delete $p (meta-base untouched)"
           deleted=$((deleted + 1))
         else
-          mkdir -p "$(dirname "$dst")" && g cat-file blob "$r" > "$dst.meta-sync.tmp" && mv -f "$dst.meta-sync.tmp" "$dst" \
-            || { rm -f "$dst.meta-sync.tmp"; die "could not write $p (meta-base untouched)"; }
+          mkdir -p "$(dirname "$dst")" && g cat-file blob "$r" > "$tmp" && mv -f "$tmp" "$dst" \
+            || { rm -f "$tmp"; die "could not write $p (meta-base untouched)"; }
           written=$((written + 1))
         fi ;;
       UNION)
-        union_into "$r" "$l" "$dst.meta-sync.tmp" && mv -f "$dst.meta-sync.tmp" "$dst" \
-          || { rm -f "$dst.meta-sync.tmp"; die "could not write the union of $p (meta-base untouched)"; }
+        union_into "$r" "$l" "$tmp" && mv -f "$tmp" "$dst" \
+          || { rm -f "$tmp"; die "could not write the union of $p (meta-base untouched)"; }
         written=$((written + 1)) ;;
     esac
   done < "$WORK/plan"
@@ -537,9 +638,11 @@ cmd_push() {
     rm -f "$META_INDEX"
     GIT_INDEX_FILE="$META_INDEX" g read-tree "$RT" || die "read-tree into the separate index failed"
     : > "$WORK/candidates"
+    : > "$WORK/planned"
     changed=0
     while IFS="$TAB" read -r o p l r nb sel; do
       [ "$sel" = "1" ] || continue
+      case "$o" in TAKE_L|UNION) printf '%s\n' "$p" >> "$WORK/planned" ;; esac
       case "$o" in
         TAKE_L)
           if [ "$l" = "-" ]; then
@@ -563,6 +666,14 @@ cmd_push() {
       write_base_file "$nb" || die "could not write meta-base"
       say "no_changes"
       exit 0
+    fi
+    # tree_guard — the new tree may differ from R's ONLY at the selected take-L / union paths.
+    g diff-tree -r -z --no-renames --name-only "$RT" "$newtree" > "$WORK/touched.z" \
+      || die "tree_guard — could not diff the new tree against $RT; nothing was pushed"
+    tr '\0' '\n' < "$WORK/touched.z" | awk -v PF="$WORK/planned" 'FILENAME == PF { ok[$0] = 1; next } NF && !($0 in ok)' "$WORK/planned" - > "$WORK/unplanned"
+    if [ -s "$WORK/unplanned" ]; then
+      sed 's/^/  unplanned: /' "$WORK/unplanned" >&2
+      die "tree_guard — the new tree changes $(wc -l < "$WORK/unplanned" | tr -d ' ') path(s) the plan did not select; nothing was pushed, meta-base untouched"
     fi
     if ! scrub_candidates "$WORK/candidates" >&2; then
       warn "aborted — scrub hit(s) above; nothing was pushed, the branch and meta-base are unchanged (exclude or clean the named paths)"
@@ -606,7 +717,7 @@ cmd_status() {
 
 case "$SUBCMD" in
   init)   cmd_init ;;
-  pull)   cmd_pull ;;
-  push)   cmd_push ;;
+  pull)   acquire_lock; cmd_pull ;;
+  push)   acquire_lock; cmd_push ;;
   status) cmd_status ;;
 esac
