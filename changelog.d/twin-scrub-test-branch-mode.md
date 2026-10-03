@@ -1,0 +1,3 @@
+<!-- bump: patch -->
+test-committed-twin-scrub reads the repo mode before checking run history
+Its ignore-status section asserted that five run-history paths are committable, which holds only in the default mode. In branch mode those paths are ignored by design (they live on the metadata branch), so the check failed on the first repo switched to branch mode (this one, operator M1). The section now reads `setup-memory.sh mode` and asserts committable for `off`, ignored for `on <branch>`, and fails on any other answer. Shown red on a branch-mode repo that re-includes run history and on an unreadable mode.
