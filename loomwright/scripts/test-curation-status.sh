@@ -48,7 +48,9 @@
 #   (n) /dreaming's pending is an unconsumed SET, not a watermark comparison: a
 #       run drains the count by exactly the logs it named, a later run that
 #       consumed nothing leaves the backlog intact (a wall-clock stamp would
-#       report 0), and ids UNION across calls so re-recording is idempotent
+#       report 0), and ids UNION across calls so re-recording is idempotent;
+#       a 5000-id consumed set under an IGNORED SIGPIPE writes nothing to stderr
+#       (the membership test must never be a writer piped into grep -q)
 #   (o) the count names the WINDOW that will drain it, and the probe's
 #       DREAMING_DEFAULT_WINDOW is pinned against commands/dreaming.md's
 #       Parameters table — the cross-file assertion whose absence let the
@@ -1027,6 +1029,38 @@ json_clean "(n) status --json [outN5]" "$outN5"
 [ "$(jget "$outN5" '.commands.dreaming.pending')" = "0" ] \
   && ok "(n) re-recording consumed ids is idempotent (unique), never double-counts" \
   || no "(n) duplicate ids perturbed the count: pending='$(jget "$outN5" '.commands.dreaming.pending')'"
+
+# THE FLAKE THIS PINS (ci run 37126834145): every consumed-set membership test
+# was `printf '%s\n' "$consumed" | grep -qxF -- "$id"`. grep -q exits on its
+# first match; a printf still writing then hits EPIPE. Under the DEFAULT SIGPIPE
+# disposition that writer dies silently (why it passed locally 5/5), but a CI
+# runner hands SIGPIPE down IGNORED, so bash prints "printf: write error: Broken
+# pipe" to stderr and json_clean's stderr-is-empty check went red at random. The
+# race is made CERTAIN here, not left to the scheduler: SIGPIPE is ignored for
+# the probe, the matching id is the FIRST line, and ~5000 filler ids (~170 KB,
+# well past any pipe buffer) follow it, so a piped writer is always still
+# writing when grep exits. Red on the pipe form, green on the here-string.
+RNP="$(new_repo)"
+mkdir -p "$RNP/.supervisor/logs"
+for i in 1 2 3; do printf '{"event":"session_end","n":%s}\n' "$i" > "$RNP/.supervisor/logs/s$i.jsonl"; done
+jq -n '{dreaming: {last_run: "2026-01-01T00:00:00Z",
+        consumed: {logs: (["s1", "s2"] + [range(0; 5000) | "filler-consumed-session-id-\(.)"])}}}' \
+  > "$RNP/.supervisor/curation-state.json"
+outNp="$(trap '' PIPE; run "$RNP" status --json)"
+json_clean "(n) status --json [outNp] SIGPIPE ignored, 5000-id consumed set" "$outNp"
+[ "$(jget "$outNp" '.commands.dreaming.pending')" = "1" ] \
+  && ok "(n) a 5000-id consumed set still yields an exact count (pending = 1: s3)" \
+  || no "(n) expected pending=1 with a large consumed set, got '$(jget "$outNp" '.commands.dreaming.pending')'"
+# The two other subcommands that test consumed-set membership; run() merges
+# their stderr into stdout, so the output must be exactly the ids.
+outNpu="$(trap '' PIPE; run "$RNP" unconsumed)"
+[ "$outNpu" = "s3" ] \
+  && ok "(n) unconsumed under ignored SIGPIPE prints exactly the unconsumed id, no EPIPE noise" \
+  || no "(n) unconsumed under ignored SIGPIPE: expected 's3', got: $(printf '%s' "$outNpu" | head -c 400)"
+outNpp="$(trap '' PIPE; run "$RNP" pending-ids | sort | tr '\n' ' ')"
+[ "$outNpp" = "s1 s2 s3 " ] \
+  && ok "(n) pending-ids under ignored SIGPIPE prints exactly the pending ids, no EPIPE noise" \
+  || no "(n) pending-ids under ignored SIGPIPE: expected 's1 s2 s3', got: $(printf '%s' "$outNpp" | head -c 400)"
 
 # ============================================================================
 echo "== (o) the count names the WINDOW that will drain it, pinned to dreaming.md =="
