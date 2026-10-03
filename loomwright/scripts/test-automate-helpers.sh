@@ -3364,11 +3364,20 @@ for bad in 'not json' '[]' '{"schema_version":2,"companions":[]}' '{"schema_vers
   '{"schema_version":1,"companions":[{"when":"./a/*","add":["b"]}]}' '{"schema_version":1,"companions":[{"when":"a/./*","add":["b"]}]}' \
   '{"schema_version":1,"companions":[{"when":"a/*","add":["./b"]}]}' '{"schema_version":1,"companions":[{"when":"a/*","add":["b/../c"]}]}' \
   '{"schema_version":1,"companions":[{"when":"a/*","add":["."]}]}' '{"schema_version":1,"companions":[{"when":"a/*","add":["/b"]}]}' \
-  '{"schema_version":1,"companions":[{"when":"a//*","add":["b"]}]}'; do
+  '{"schema_version":1,"companions":[{"when":"a//*","add":["b"]}]}' \
+  '{"schema_version":1,"companions":[{"when":"/a/*","add":["b"]}]}' '{"schema_version":1,"companions":[{"when":"a/../*","add":["b"]}]}'; do
   printf '%s\n' "$bad" > "$W_M/.agent/companions.json"
   w_run "$W_M" "$H" "$W_T/list" --max 2
   w_fails "W13 malformed companions.json '$bad' ⇒ exit 1" 'plan-waves: companions_malformed'
 done
+# Exactly ONE JSON document: a malformed first document followed by a valid one must not pass on
+# the strength of the last document alone (and two valid documents are not that shape either).
+printf '%s\n%s\n' '{"schema_version":2,"companions":[{"when":"a/*","add":["b"]}]}' '{"schema_version":1,"companions":[]}' > "$W_M/.agent/companions.json"
+w_run "$W_M" "$H" "$W_T/list" --max 2
+w_fails "W13 two documents, malformed first + valid second ⇒ exit 1" 'plan-waves: companions_malformed'
+printf '%s\n%s\n' '{"schema_version":1,"companions":[]}' '{"schema_version":1,"companions":[]}' > "$W_M/.agent/companions.json"
+w_run "$W_M" "$H" "$W_T/list" --max 2
+w_fails "W13 two valid documents ⇒ exit 1 (exactly one document)" 'plan-waves: companions_malformed'
 printf '{"schema_version":1,"companions":[]}\n' > "$W_M/.agent/companions.json"
 W_RC=0; W_OUT="$(LOOMWRIGHT_JQ_BIN=/nonexistent/jq bash "$H" plan-waves "$W_T/list" --root "$W_M" --max 2 2>"$W_T/err")" || W_RC=$?; W_ERR="$(cat "$W_T/err")"
 w_fails "W13 jq absent while companions.json exists ⇒ exit 1 companions_malformed" 'plan-waves: companions_malformed jq not found'

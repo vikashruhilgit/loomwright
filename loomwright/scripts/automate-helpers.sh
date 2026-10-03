@@ -2081,7 +2081,11 @@ _pw_load_companions() {
     return 0
   fi
   command -v "$JQ" >/dev/null 2>&1 || _pw_fail "companions_malformed jq not found (needed to read $cf)"
-  "$JQ" -e '
+  # `-s` slurps every JSON document into one array and the shape check demands EXACTLY one:
+  # `jq -e` alone exits on the LAST document only, so a malformed first document followed by a
+  # valid one would pass and have its rules loaded.
+  "$JQ" -se '
+    length == 1 and (.[0] |
     type == "object" and ((keys - ["companions", "schema_version"]) | length) == 0
     and .schema_version == 1 and (.companions | type) == "array"
     and all(.companions[];
@@ -2091,9 +2095,9 @@ _pw_load_companions() {
       and (.add | type) == "array" and (.add | length) > 0
       and all(.add[]; type == "string" and test("^[A-Za-z0-9._/@+-]+$")
         and (test("^/|//|(^|/)\\.\\.?(/|$)") | not))
-      and ((has("new") | not) or .new == true))' "$cf" >/dev/null 2>&1 \
+      and ((has("new") | not) or .new == true)))' "$cf" >/dev/null 2>&1 \
     || _pw_fail "companions_malformed $cf is not {\"schema_version\":1,\"companions\":[{\"when\":<glob>,[\"new\":true,]\"add\":[<path>,…]},…]}"
-  "$JQ" -r '.companions[] | . as $r | .add[] | [$r.when, (if $r.new then "1" else "0" end), .] | @tsv' "$cf" > "$_PW_TMP/rules" 2>/dev/null \
+  "$JQ" -sr '.[0].companions[] | . as $r | .add[] | [$r.when, (if $r.new then "1" else "0" end), .] | @tsv' "$cf" > "$_PW_TMP/rules" 2>/dev/null \
     || _pw_fail "companions_malformed $cf could not be read"
 }
 
