@@ -59,7 +59,7 @@
 #   trail-gate       <runfile>                          # §6 step 1 PICK (after RECONCILE, before trail-unstage) / §8: delegated to automate-trail.sh — `PARK — trail PR open <url>` while this run's trail PR is open (or its state is unreadable: fail CLOSED); else `clear — …` after syncing the primary onto the base branch (closeout's sync); one line; always exits 0
 #   meta-entry       [--root <checkout>]                # §"Branch mode": the FIRST action of every /automate entry (a bare/empty/option-shaped --root value ⇒ `failed`) — reads `setup-memory.sh mode` itself (no caller input can assert the mode) and, when on, runs `meta-sync.sh pull`; ONE line `meta-entry: off|pulled <branch>|failed — <reason>`; writes nothing under .supervisor/automate/; always exits 0
 #   meta-push-failed <runfile>                          # §"Branch mode": read-only — prints the first line of this run's gitignored `<run_id>.meta-push-failed` marker (a failed mode-on trail push), or nothing; always exits 0
-#   plan-waves       <runfile|dir|item-list> --max N [--root <checkout>]  # parallel-automate/04: READ-ONLY wave planner — `## Depends on` / `## Touches` (strict grammar) + <root>/.agent/companions.json expansion ⇒ `wave <k>: …` + `blocked <item>: …` lines; exit 1 + empty stdout on usage / unknown dependency / cycle / companions_malformed; called ONLY by `--parallel N>1` (item 05), never by the sequential loop
+#   plan-waves       <runfile|dir|item-list> --max N [--root <checkout>]  # parallel-automate/04: READ-ONLY wave planner — `## Depends on` / `## Touches` (strict grammar) + <root>/.agent/companions.json expansion ⇒ `wave <k>: …` + `blocked <item>: …` lines; exit 1 + empty stdout on usage / item not found / unknown dependency / cycle / companions_malformed; called ONLY by `--parallel N>1` (item 05), never by the sequential loop
 #
 # Exit codes: 0 success; 1 generic failure; 2 abort (malformed pre-existing config, §7).
 # (learning-emit, brief-repair, reconcile-status, meta-entry and meta-push-failed are the fail-SAFE
@@ -1976,7 +1976,8 @@ meta_push_failed() {
 # intersecting, an unknown-Touches item alone in its wave.
 # Output (stdout, only after the WHOLE plan is computed): `wave <k>: <item> …` lines then one
 # `blocked <item>: <why>` per unplaced item; exit 0. Exit 1 with NOTHING on stdout on usage
-# errors, an unknown dependency, a dependency cycle, or companions_malformed.
+# errors, `item not found: <item>` (a plan-set entry — Queue row, item-list line or resolve-folder
+# result — names no file on disk), an unknown dependency, a dependency cycle, or companions_malformed.
 # READ-ONLY: writes only its own `mktemp -d` dir (trap-removed); the only git call is
 # `rev-parse --show-toplevel`; never `gh`.
 

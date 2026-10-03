@@ -130,6 +130,13 @@ Keep them as the story's last sections (or follow them with another `##` heading
 
 ### Handoff
 Ready for: `/orchestrator goal: "BD-15"`
+
+## Depends on
+12-event-creation.md
+14-staff-profile-management.md
+
+## Touches
+unknown
 ```
 
 ## Anti-Patterns

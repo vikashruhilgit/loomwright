@@ -98,7 +98,8 @@
 #      expansion (file rules, "new" rules, directory entries); dependency ordering incl. an in-set
 #      ../other dep; run-file merged-done / skipped / ABANDONED / two-heading done; parked, pending
 #      and transitive blocks; missing/unknown/malformed Touches runs alone; undeclared queue = one
-#      per wave; explicit + implicit cycles and unknown ids exit 1 with empty stdout; --max; malformed
+#      per wave; explicit + implicit cycles, unknown ids and missing plan-set items exit 1 with empty
+#      stdout; --max; malformed
 #      or jq-less companions fail closed; fenced sections ignored; the harness-port shape; the
 #      five-item fixture byte-for-byte; usage errors; read-only (spy git/gh); every real
 #      parallel-automate Touches parses (SKIP when the gitignored queue is absent); the shipped
@@ -3340,6 +3341,15 @@ w_run "$W_T" "$H" "$W_T/list" --max 3
 w_fails "W11 two-match id ⇒ unknown dependency" 'plan-waves: unknown dependency 5 in q/01-a.md'
 w_item q/01-a.md '../nowhere/01-z.md' 'a'; w_run "$W_T" "$H" "$W_T/list" --max 3
 w_fails "W11 a dependency path that is not an existing file ⇒ unknown dependency" 'plan-waves: unknown dependency ../nowhere/01-z.md in q/01-a.md'
+
+# W11b a plan-set item that names no file on disk ⇒ exit 1 `item not found: <item>`, stdout empty
+#      (an item-list line, and an unchecked run-file Queue row).
+rm -rf "$W_T/q"; w_item q/01-a.md none 'a'
+w_list q/01-a.md q/02-gone.md; w_run "$W_T" "$H" "$W_T/list" --max 3
+w_fails "W11b item-list line naming a missing file ⇒ exit 1, item not found" 'plan-waves: item not found: q/02-gone.md'
+printf '# Automate Run: automate-test\n## Status: running\n## Queue\n- [ ] q/01-a.md\n- [ ] q/03-gone.md\n## Current\n' > "$W_T/run-missing.md"
+w_run "$W_T" "$H" "$W_T/run-missing.md" --max 3
+w_fails "W11b run-file Queue row naming a missing file ⇒ exit 1, item not found" 'plan-waves: item not found: q/03-gone.md'
 
 # W12 --max respected: three disjoint items, --max 2 ⇒ 2 + 1.
 rm -rf "$W_T/q"; w_item q/01-a.md none 'a'; w_item q/02-b.md none 'b'; w_item q/03-c.md none 'c'
