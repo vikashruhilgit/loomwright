@@ -85,5 +85,9 @@ red on the untrack PR; the real `/automate` cycle opening a second PR. Stop, rol
     CI swept 132 real briefs (2 known throws, a note, never a gate). The sweep still runs locally with the
     identical 2/132 result, and the committed fixture briefs remain the CI guard. Restoring it in CI is scoped
     in `meta-sync-followups/05` part D.
-  - **Open:** the one real single-item `/automate` cycle (`parallel-automate/04`, run
-    `automate-2026-10-01-142337 --limit 4`).
+  - **Real `/automate` cycle — PASSED (2026-10-03):** `parallel-automate/04` ran under branch mode, producing exactly ONE
+    PR (#365, merged 17:32Z). No `chore/…-trail-N` PR was opened (the newest is still trail-7, from before M1). The
+    close-out meta-pushed `f74ecee` "trail (closeout)": the run file and both sidecars, 04's done stamp, the done
+    brief, 1 ledger line and the dismissed summary. The final resume ended the run `## Status: done` and meta-pushed
+    `62639a0` "trail (done)". No meta-push failure and no lock left behind.
+- **M1 COMPLETE (2026-10-03).** Next per `00-overview.md` § Order (amended): S1 → `meta-sync-followups/01–05` → M2.
