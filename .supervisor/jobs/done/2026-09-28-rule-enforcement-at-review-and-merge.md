@@ -1,7 +1,7 @@
 # Supervisor Job: Rules that gate — a failing human-stamped `must` check blocks Phase 4.5 and the drain, and parks the merge gate (automate-followups 07)
 
 ## Environment
-- **Project:** /Users/vikashruhil/Documents/work/AI/ai-agent-manager/.claude/worktrees/loomwright-automate-resume-ca9197
+- **Project:** ~/Documents/work/AI/ai-agent-manager/.claude/worktrees/loomwright-automate-resume-ca9197
 - **CLAUDE.md:** ✓ Found (fresh — §"Failure-Mode Invariants" is the paragraph D4 amends)
 - **Git:** dirty (1 file: the tracked `/automate` run file, expected), branch: claude/loomwright-automate-resume-ca9197 (== origin/main)
 - **GitHub CLI:** ✓ Authenticated

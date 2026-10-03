@@ -1,7 +1,7 @@
 # Supervisor Job: meta-sync.sh — 3-way run-history sync on a metadata branch (parallel-automate/02)
 
 ## Environment
-- **Project:** /Users/vikashruhil/Documents/work/AI/ai-agent-manager
+- **Project:** ~/Documents/work/AI/ai-agent-manager
 - **CLAUDE.md:** ✓ Found (fresh)
 - **Git:** clean except this run's automate run file (modified), branch: main
 - **GitHub CLI:** ✓ Authenticated
@@ -17,7 +17,7 @@
 | 2 | Dependency Availability | GO | `git`, `bash`, `jq` present; the ledger `.repo` allowlist reader already exists (`loomwright/scripts/setup-memory.sh filter-ledger` / its allowlist resolution). |
 | 3 | Architecture Fit | GO | Additive standalone script in the `core` vendor class (`loomwright/scripts/*`); root resolution mirrors `run-lock.sh`'s "resolve root" block; nothing calls it (item 03 / M1 do). |
 | 4 | Scope vs Supervisor Capability | CAUTION | One script + one large hermetic test + one doc section; a single worker context, but the test matrix (12 scenarios + 2 mutation controls) is sizeable. One subtask (Single-Agent Path — the only path that works under `/automate`, since `/autonomous` does not forward `--sequential`). |
-| 5 | Hard Blockers | CAUTION | The new prose scrub WILL fail closed on this repo's own tracked managed set: 4 tracked files carry absolute home paths (`.supervisor/automate/automate-2026-09-01-232353.md`, `.supervisor/automate/automate-2026-09-26-115755.md`, `.supervisor/jobs/done/2026-09-28-rule-enforcement-at-review-and-merge.md`, `.supervisor/jobs/done/2026-10-01-parallel-automate-01-version-bump-script.md`) and one requirement carries the placeholder slug `github.com/acme/widgets`. That is correct behaviour (exit 2, path named), but the running-system validation must account for it — see Risk Assessment. |
+| 5 | Hard Blockers | CAUTION | The new prose scrub WILL fail closed on this repo's own tracked managed set: 4 tracked files carry absolute home paths (`.supervisor/automate/automate-2026-09-01-232353.md`, `.supervisor/automate/automate-2026-09-26-115755.md`, `.supervisor/jobs/done/2026-09-28-rule-enforcement-at-review-and-merge.md`, `.supervisor/jobs/done/2026-10-01-parallel-automate-01-version-bump-script.md`) and one requirement carries the placeholder slug `github.com/<owner>/<repo>`. That is correct behaviour (exit 2, path named), but the running-system validation must account for it — see Risk Assessment. |
 
 **Overall Verdict:** CAUTION
 
@@ -103,7 +103,7 @@ single-agent (no fan-out)
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| The scrub fails closed on this repo's own tracked managed set — 4 home-path files + the `github.com/acme/widgets` placeholder (Feasibility (Phase 2.5) #5) | HIGH | Correct behaviour, not a bug: Validation 3 shows the exit-2 output on real data FIRST, then completes the round trip with `--paths-from` excluding exactly those named paths. Cleaning them is M1's (operator) job — the PR body lists them for M1. Never weaken the scrub to make the real-data push green. |
+| The scrub fails closed on this repo's own tracked managed set — 4 home-path files + the `github.com/<owner>/<repo>` placeholder (Feasibility (Phase 2.5) #5) | HIGH | Correct behaviour, not a bug: Validation 3 shows the exit-2 output on real data FIRST, then completes the round trip with `--paths-from` excluding exactly those named paths. Cleaning them is M1's (operator) job — the PR body lists them for M1. Never weaken the scrub to make the real-data push green. |
 | Slug detection over-matching: a bare `owner/repo` regex matches every relative path (`loomwright/scripts`) in the corpus | HIGH | AC6 limits slug detection to forge contexts (`github.com/<o>/<r>` URLs, `repo:` / `"repo":` fields); the header and PR body state the limit honestly. The allowlist (`vikashruhilgit/ai-agent-manager`, `vikashruhilgit/loomwright` in `.supervisor/config.json`) must make this repo's own 529 forge URLs pass. |
 | Token-pattern over-matching: a loose secret rule (unanchored `sk-`, a generic entropy rule) flags `risk-`/`task-` prose, commit SHAs and `sha256:` stamps across the corpus (Plan Review, attempt 1) | MEDIUM | AC6 pins five anchored, length-bounded regexes and forbids a generic entropy rule; AC9's scrub negative case asserts clean prose with those shapes exits 0. |
 | `meta-base` set to the branch tree after a push that applied nothing locally ⇒ the next sync reverts a sibling's change (F1) or resurrects a deletion (Plan Review attempt 2, HIGH) | HIGH | AC2/AC5 define `meta-base` as the per-path agreed-state tree (separate index + `write-tree`); AC9's post-push-base case asserts it; the PR body names the deliberate deviation from Scope 2's wording. |

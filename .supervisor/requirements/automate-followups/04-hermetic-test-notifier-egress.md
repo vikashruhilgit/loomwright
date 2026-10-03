@@ -4,7 +4,7 @@
 
 > **Origin (2026-09-26).** Surfaced while `/automate` run `automate-2026-09-22-013403` was resumed from a
 > terminal and ran the full test loop before a push. Two real alerts reached the owner:
-> - **ntfy (network):** five `{"event_type":"gate","gate_type":"drain_died","context":"https://github.com/acme/widgets/pull/42"}`
+> - **ntfy (network):** five `{"event_type":"gate","gate_type":"drain_died","context":"https://github.com/<owner>/<repo>/pull/42"}`
 >   pushes in 12 s (2026-09-26T01:34:16Z–28Z) on the owner's real ntfy topic. `acme/widgets/pull/42` is the
 >   suite's placeholder PR, not a real repo.
 > - **macOS banner:** "Claude Code — /verify run verify-nourl needs a human sign-in (ticket: t.md)". `verify-nourl`

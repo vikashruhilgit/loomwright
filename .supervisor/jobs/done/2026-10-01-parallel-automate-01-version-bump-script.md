@@ -1,7 +1,7 @@
 # Supervisor Job: Version-bump script + changelog fragments (parallel-automate/01)
 
 ## Environment
-- **Project:** /Users/vikashruhil/Documents/work/AI/ai-agent-manager
+- **Project:** ~/Documents/work/AI/ai-agent-manager
 - **CLAUDE.md:** ✓ Found (fresh)
 - **Git:** clean (1 untracked: this run's automate run file), branch: main
 - **GitHub CLI:** ✓ Authenticated
