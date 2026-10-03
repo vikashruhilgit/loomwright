@@ -59,3 +59,31 @@ left in place.
 ## Stop conditions
 Any scrub hit you cannot explain; any path in A missing from B; a non-empty non-`.md` listing on the branch; CI
 red on the untrack PR; the real `/automate` cycle opening a second PR. Stop, roll back, and write up what happened.
+
+## Run record (2026-10-02 → 2026-10-03)
+- **Before step 1:** #359 cleared 7 scrub hits on tracked files (5 home paths, 2 `acme/widgets` placeholders). Step 1's
+  `push --dry-run` does not exist. A scratch-clone rehearsal (local bare remote, `config.json` copied for the
+  allowlist) stood in for it; the fix is `meta-sync-followups/04` + `/05` part D. Backup:
+  `~/supervisor-backup-2026-10-03.tgz` (2,357 files, verified identical).
+- **Steps 2–4:** branch `fc318fe` → `9ce8123`. Ruleset 24406129 (deletion + non-fast-forward, no bypass).
+  A = B = 381, with 0 blob mismatches against main@`9a78b9c`. Kept on `main`: `.supervisor/memory/` and the two
+  `twin-remediation/salvage/*/check.sh` scripts (owner decision).
+- **Rollback drill:** steps 5–7 work. **This runbook's Rollback recipe loses post-migration edits.** In branch mode
+  the files are gitignored, `git revert` overwrites them, and `meta-sync pull` then writes 0. Use the corrected
+  recipe in #361's PR body; `meta-sync-followups/05` part D fixes the section above.
+- **Step 5:** #361, with CI fixed by `f428263` (`test-committed-twin-scrub.sh` reads the mode). It merged
+  2026-10-03 (`36f3730`) **before** step 6 ran. Checked afterwards: no managed path was added or changed on `main`
+  after `9a78b9c`, and all 381 deleted paths are on the branch with identical bytes, so nothing was lost.
+  Lesson: an early merge skips step 6, so M2 must make the re-check a precondition for merging.
+- **Step 7:** the primary keeps all 381 files byte-identical, clean status, mode `on loomwright-meta`, readiness
+  `configured`.
+- **Verify:** a fresh GitHub clone shows the "not pulled" line, and `meta-sync pull` writes 382 files and clears
+  it; the primary shows none. `/handoff` (8 items) and `/insights` (89 run notes) are non-empty. CI green (122/122)
+  at `9a78b9c`, `36f3730` and `1f32d16`.
+  - **Skip count +1 — accepted (owner, option 1):** the `sdk-spike` `digest-lanes.test.sh` optional corpus sweep
+    no longer sees `.supervisor/jobs/done/` in CI and prints `SKIP: local corpus sweep … not present`. Before M1,
+    CI swept 132 real briefs (2 known throws, a note, never a gate). The sweep still runs locally with the
+    identical 2/132 result, and the committed fixture briefs remain the CI guard. Restoring it in CI is scoped
+    in `meta-sync-followups/05` part D.
+  - **Open:** the one real single-item `/automate` cycle (`parallel-automate/04`, run
+    `automate-2026-10-01-142337 --limit 4`).

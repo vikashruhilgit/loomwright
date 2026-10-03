@@ -79,7 +79,12 @@ Every store that improves how the agents work travels with the repo, guarded by 
 
    It prints one PASS/FAIL line per check, exits non-zero on any FAIL, and cleans up after itself.
 2. Its self-test proves each check can go red (mutants: a dropped file, a changed blob, the runbook's old rollback order, a contract without provenance).
-3. Fix M1's Rollback section to the corrected recipe (the runbook's own recipe silently loses post-migration edits — drill evidence 2026-10-03). Write `operator-run/M2-carry-learning-stores.md`, with the same shape as M1: backup → rehearsal (this script) → real push → verify → consent recorded. Pause for the owner at each step.
+3. **CI sees run history again (M1 Verify follow-up, owner 2026-10-03).** Since M1, CI's checkout has no
+   `.supervisor/jobs/done/`, so `loomwright/sdk-spike/test/digest-lanes.test.sh`'s optional corpus sweep prints
+   `SKIP` (before M1 it swept 132 real briefs). Add a CI step that runs `meta-sync.sh pull` before the suite.
+   Read-only: CI never pushes, and a failed pull is reported and leaves the suite as today. The PR edits a workflow
+   file, so `claude-review` skips itself on it; the owner reviews that PR by hand.
+4. Fix M1's Rollback section to the corrected recipe (the runbook's own recipe silently loses post-migration edits — drill evidence 2026-10-03). Write `operator-run/M2-carry-learning-stores.md`, with the same shape as M1: backup → rehearsal (this script) → real push → verify → consent recorded. Pause for the owner at each step.
 
 ## Stays local (non-goals — decided 2026-10-03, owner: "session-level things we can ignore")
 - Session traces: `.supervisor/logs/` (683 files, 13 MB, 35 with home paths, prompt traces), `state.md`, `.current-session*`, `history/`. Their durable output (worker summaries, ledger lines, lessons, memory) travels instead. Honest cost: a second machine's `/dreaming` reflects only on that machine's own logs.
@@ -99,6 +104,7 @@ Every store that improves how the agents work travels with the repo, guarded by 
 - **B5** Given no recorded consent, when `push` would add part-B paths, then it asks (or, non-interactively, skips and names them), and run history still syncs.
 - **C1** Given an accepted memory change and no Pre-push confirmation, then no branch is created and nothing is pushed. Given both gates, then the PR carries only `.supervisor/memory/` and `.claude/agent-memory/` paths, and `/dreaming` never merges it.
 - **D1** The rehearsal script passes on this repo with config and with `--no-config` + the request file. Its self-test shows each check going red under its mutant, including the old rollback order losing a post-migration edit.
+- **D3** On `main`'s CI after this lands, the corpus sweep reports `parseBrief threw on …/N` (or its NOTE) instead of `SKIP`, and the self-test count of real skips is back to the pre-M1 one (the Linux-host Darwin cases only).
 - **D2** M1's Rollback section is the corrected recipe. M2's runbook names only commands and flags that exist in the shipped scripts' `--help`.
 - `bash scripts/ci-local.sh` is green. Bump with a `changelog.d/` fragment + `scripts/bump-version.sh` as the last commit, never by hand.
 
