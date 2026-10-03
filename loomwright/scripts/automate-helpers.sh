@@ -1953,7 +1953,7 @@ meta_push_failed() {
 #
 # Grammar (outside ``` fences; a section runs to the next `# `/`## ` heading; blank lines ignored):
 #   `## Touches`    — one repo-relative path per line, chars [A-Za-z0-9._/@+-] only, no leading
-#                     `/`, no `..` segment, no `//`; trailing `/` = directory; the sole line
+#                     `/`, no `.` or `..` segment, no `//`; trailing `/` = directory; the sole line
 #                     `unknown` = not known. Missing, empty, duplicated, `unknown`-mixed or ANY
 #                     bad line ⇒ the WHOLE section is unknown ⇒ the item runs ALONE.
 #   `## Depends on` — `none` (sole line), a 1-3 digit id (resolved to the single `NN-*.md` in the
@@ -1962,11 +1962,13 @@ meta_push_failed() {
 #                     the item depends on EVERY earlier plan-set item (input order).
 # Every comparison (plan-set membership, Queue lookup, cycles) uses the PHYSICAL absolute path.
 # A dependency outside the plan set must be merged-done: a plain `- [x]` Queue row (run-file
-# input) or a done `## Status:` line on ANY heading (is_done) — an ABANDONED stamp wins over done.
+# input) or a done `## Status:` line on ANY heading (is_done) — an ABANDONED stamp, and a
+# `# skipped:` / `# abandoned:` Queue row mark, win over a done stamp (Phase 4.5 stamps before merge).
 # Companion expansion: <root>/.agent/companions.json (strict shape, read with jq) adds paths to
 # an item's Touches set — ONE pass, added paths are not re-expanded; `when` is an unquoted,
 # case-sensitive bash `case` pattern for a FILE entry (a `"new": true` rule only when the file is
-# absent under <root>); a DIRECTORY entry `D/` fires a rule when the rule's literal prefix (the
+# absent under <root>; `when` and `add` obey the Touches path rules — no leading `/`, no `//`, no
+# `.`/`..` segment — so a literal comparison never misses a non-canonical spelling); a DIRECTORY entry `D/` fires a rule when the rule's literal prefix (the
 # `when` text before its first glob character) starts with `D/` or `D/` starts with it. Absent ⇒
 # one stderr note, no expansion; malformed (or jq missing) ⇒ exit 1 `companions_malformed`.
 # Intersection is literal prefix on normalized entries (trailing `/` stripped): a == b, or one
@@ -1998,7 +2000,7 @@ _pw_touches() {
     !insec { next }
     /^[ \t]*$/ { next }
     $0 == "unknown" { unk = 1; next }
-    !/^[A-Za-z0-9._\/@+-]+$/ || /^\// || /\/\// || /(^|\/)\.\.(\/|$)/ { bad = 1; next }
+    !/^[A-Za-z0-9._\/@+-]+$/ || /^\// || /\/\// || /(^|\/)\.\.?(\/|$)/ { bad = 1; next }
     { E[++n] = $0 }
     END {
       if (count == 0) { print "unknown"; exit }   # PW_MISSING_TOUCHES: a missing section runs alone, never an empty set
@@ -2057,8 +2059,11 @@ _pw_dep_state() {
   local f="$1" row
   row="$(PW_K="$f" awk -F '\t' '$2 == ENVIRON["PW_K"] { print $1; exit }' "$_PW_TMP/checked")"
   if _pw_abandoned "$f"; then echo "never abandoned"; return 0; fi
-  if [ "$row" = done ] || is_done "$f"; then echo done; return 0; fi
+  # The owner's Queue row mark outranks the (gitignored) file stamp: Phase 4.5 writes
+  # done / done_with_escalation BEFORE any merge, so a `# skipped:` / `# abandoned:` row over a
+  # done stamp still never landed.
   case "$row" in skipped|abandoned) echo "never $row"; return 0 ;; esac
+  if [ "$row" = done ] || is_done "$f"; then echo done; return 0; fi
   if is_not_ready "$f"; then
     if grep -qE '^## Status:[[:space:]]*parked\b' "$f"; then echo "notready parked"; else echo "notready proposed"; fi
     return 0
@@ -2081,8 +2086,10 @@ _pw_load_companions() {
     and all(.companions[];
       type == "object" and ((keys - ["add", "new", "when"]) | length) == 0
       and (.when | type) == "string" and (.when | test("^[A-Za-z0-9._/@+*?\\[\\]!-]+$"))
+      and (.when | test("^/|//|(^|/)\\.\\.?(/|$)") | not)
       and (.add | type) == "array" and (.add | length) > 0
-      and all(.add[]; type == "string" and test("^[A-Za-z0-9._/@+-]+$"))
+      and all(.add[]; type == "string" and test("^[A-Za-z0-9._/@+-]+$")
+        and (test("^/|//|(^|/)\\.\\.?(/|$)") | not))
       and ((has("new") | not) or .new == true))' "$cf" >/dev/null 2>&1 \
     || _pw_fail "companions_malformed $cf is not {\"schema_version\":1,\"companions\":[{\"when\":<glob>,[\"new\":true,]\"add\":[<path>,…]},…]}"
   "$JQ" -r '.companions[] | . as $r | .add[] | [$r.when, (if $r.new then "1" else "0" end), .] | @tsv' "$cf" > "$_PW_TMP/rules" 2>/dev/null \

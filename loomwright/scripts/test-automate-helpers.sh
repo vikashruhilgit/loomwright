@@ -3240,6 +3240,30 @@ RUN
 w_run "$W_T" "$H" "$W_T/run.md" --max 3
 w_expect "W6 run file: merged-done / skipped / ABANDONED / two-heading done" 'wave 1: q/04-d.md q/08-h.md\nblocked q/03-c.md: waits on 01 (skipped — never landed)\nblocked q/05-e.md: waits on 06 (abandoned — never landed)'
 
+# W6b the owner's Queue row mark outranks the file stamp: a `# skipped:` / `# abandoned:` row over a
+#     plain done / done_with_escalation stamp (Phase 4.5 writes those BEFORE any merge) never landed.
+rm -rf "$W_T/q"
+w_item q/01-a.md none 'a' 'done_with_escalation'
+w_item q/02-b.md '01' 'b'
+w_item q/03-c.md none 'c' 'done_with_escalation'
+w_item q/04-d.md '03' 'd'
+w_item q/05-e.md none 'e' 'done'
+w_item q/06-f.md '05' 'f'
+cat > "$W_T/run.md" <<'RUN'
+# Automate Run: automate-test
+## Status: running
+## Queue
+- [x] q/01-a.md  # skipped: owner said so
+- [x] q/03-c.md  # abandoned: superseded
+- [x] q/05-e.md  # skipped: dropped
+- [ ] q/02-b.md
+- [ ] q/04-d.md
+- [ ] q/06-f.md
+## Current
+RUN
+w_run "$W_T" "$H" "$W_T/run.md" --max 3
+w_expect "W6b skipped/abandoned row over a done(_with_escalation) stamp ⇒ never landed (row wins)" 'blocked q/02-b.md: waits on 01 (skipped — never landed)\nblocked q/04-d.md: waits on 03 (abandoned — never landed)\nblocked q/06-f.md: waits on 05 (skipped — never landed)'
+
 # W7 parked dependency; out-of-set pending dependency; transitive block.
 rm -rf "$W_T/q"
 w_item q/01-a.md '02' 'a'
@@ -3271,6 +3295,11 @@ w_alone bullet '- b/x.sh'; w_expect "W8 bullet ⇒ unknown, runs alone" "$W_ALON
 w_alone mixed 'b/x.sh\nunknown'; w_expect "W8 unknown mixed with a path ⇒ unknown, runs alone" "$W_ALONE_WANT"
 w_alone empty ''; w_expect "W8 empty section ⇒ unknown, runs alone" "$W_ALONE_WANT"
 w_alone dotdot 'b/../x'; w_expect "W8 '..' segment ⇒ unknown, runs alone" "$W_ALONE_WANT"
+w_alone dot '.'; w_expect "W8 bare '.' (whole repo) ⇒ unknown, runs alone" "$W_ALONE_WANT"
+w_alone dot-dir './'; w_expect "W8 './' ⇒ unknown, runs alone" "$W_ALONE_WANT"
+w_alone dot-lead './b/x.sh'; w_expect "W8 leading './' segment ⇒ unknown, runs alone" "$W_ALONE_WANT"
+w_alone dot-mid 'b/./x.sh'; w_expect "W8 inner '.' segment ⇒ unknown, runs alone" "$W_ALONE_WANT"
+w_alone dot-name 'b/.x.sh'; w_expect "W8 a dot-file name is NOT a '.' segment (still known)" 'wave 1: q/01-a.md q/02-b.md q/03-c.md'
 w_alone duplicate 'b/x.sh\n\n## Touches\nb/y.sh'; w_expect "W8 heading twice ⇒ unknown, runs alone" "$W_ALONE_WANT"
 w_alone blank-lines 'b/x.sh\n\nb/y.sh'; w_expect "W8 blank lines inside a section are ignored (still known)" 'wave 1: q/01-a.md q/02-b.md q/03-c.md'
 # An unknown item first takes wave 1 alone.
@@ -3321,7 +3350,11 @@ w_expect "W12 --max 2 over three disjoint items ⇒ waves of 2 + 1" 'wave 1: q/0
 W_M="$W_T/mroot"; mkdir -p "$W_M/.agent"; cp -R "$W_T/q" "$W_M/q"
 for bad in 'not json' '[]' '{"schema_version":2,"companions":[]}' '{"schema_version":1}' \
   '{"schema_version":1,"companions":[{"when":"a/*"}]}' '{"schema_version":1,"companions":[{"when":"a/*","add":["b"],"new":false}]}' \
-  '{"schema_version":1,"companions":[{"when":"a/*","add":["b c"]}]}' '{"schema_version":1,"companions":[{"when":"a","add":["b"],"x":1}]}'; do
+  '{"schema_version":1,"companions":[{"when":"a/*","add":["b c"]}]}' '{"schema_version":1,"companions":[{"when":"a","add":["b"],"x":1}]}' \
+  '{"schema_version":1,"companions":[{"when":"./a/*","add":["b"]}]}' '{"schema_version":1,"companions":[{"when":"a/./*","add":["b"]}]}' \
+  '{"schema_version":1,"companions":[{"when":"a/*","add":["./b"]}]}' '{"schema_version":1,"companions":[{"when":"a/*","add":["b/../c"]}]}' \
+  '{"schema_version":1,"companions":[{"when":"a/*","add":["."]}]}' '{"schema_version":1,"companions":[{"when":"a/*","add":["/b"]}]}' \
+  '{"schema_version":1,"companions":[{"when":"a//*","add":["b"]}]}'; do
   printf '%s\n' "$bad" > "$W_M/.agent/companions.json"
   w_run "$W_M" "$H" "$W_T/list" --max 2
   w_fails "W13 malformed companions.json '$bad' ⇒ exit 1" 'plan-waves: companions_malformed'
