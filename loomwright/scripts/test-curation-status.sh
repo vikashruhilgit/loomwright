@@ -73,6 +73,10 @@
 #       (garbage state ⇒ every id + a stderr note; unreadable logs dir ⇒ every
 #       id; unknown insights last-run ⇒ every id) — the keep-set
 #       retention-sweep.sh excludes from its session-log sweep
+#
+# Every `status --json` run is followed by json_clean: stderr empty and stdout
+# exactly one JSON object, each a named check that prints the raw stream on
+# failure. A closing harness check fails any --json run left without one.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -113,14 +117,58 @@ new_repo() {
 # every exit-code assertion silently vacuous.
 RCFILE="$ROOT/.last-rc"
 printf '0' > "$RCFILE"
+# A `--json` run does NOT merge stderr into stdout: stdout is the document and
+# stderr lands in ERRFILE, read back by json_clean (below). Merged, ONE stray
+# stderr line (a crash message, a tool warning) makes the whole document
+# unparsable, and jget's `|| true` turns that into empty values — a parse
+# failure masquerading as a count mismatch, with nothing in the log to tell the
+# two apart (CI run 37110081398, group (s): "dreaming= insights="). Non-JSON
+# subcommands keep 2>&1: their assertions grep human text, where a stray line
+# cannot hide the answer.
+ERRFILE="$ROOT/.last-stderr"
+# Pairing registry: every `--json` run is recorded in JSON_PENDING and cleared by
+# its json_clean; a run whose check never came is moved to JSON_ORPHANS and fails
+# the harness check at the end — a new site cannot silently skip the stderr check.
+JSON_PENDING="$ROOT/.json-pending"; JSON_ORPHANS="$ROOT/.json-orphans"
+: > "$JSON_PENDING"; : > "$JSON_ORPHANS"
+json_register() {   # <caller-line> <what>
+  [ -s "$JSON_PENDING" ] && cat "$JSON_PENDING" >> "$JSON_ORPHANS"
+  printf 'line %s: %s\n' "$1" "$2" > "$JSON_PENDING"
+}
 run() {
   local repo="$1"; shift
-  ( cd "$repo" && LOOMWRIGHT_CURATION_REMOTE=0 bash "$PROBE" "$@" 2>&1; printf '%s' "$?" > "$RCFILE" )
+  case " $* " in
+    *" --json "*)
+      json_register "${BASH_LINENO[0]}" "run $*"
+      ( cd "$repo" && LOOMWRIGHT_CURATION_REMOTE=0 bash "$PROBE" "$@"; printf '%s' "$?" > "$RCFILE" ) 2>"$ERRFILE" ;;
+    *)
+      ( cd "$repo" && LOOMWRIGHT_CURATION_REMOTE=0 bash "$PROBE" "$@" 2>&1; printf '%s' "$?" > "$RCFILE" ) ;;
+  esac
 }
 lastrc() { cat "$RCFILE" 2>/dev/null || printf '99'; }
 
 # jget <json> <jq-filter>
 jget() { printf '%s' "$1" | jq -r "$2" 2>/dev/null || true; }
+
+# json_clean <label> <stdout> — the named checks every `--json` run pairs with:
+# (1) the probe wrote NOTHING to stderr, (2) stdout is exactly ONE JSON object.
+# Each failure carries the probe's rc and the RAW stream (first 2000 bytes), so
+# an unparsable document is reported as exactly that, never only as the empty
+# jget values a later value assertion would print. Must run in the CURRENT shell
+# (never inside $(…)), or its ok/no counts are lost with the subshell.
+json_clean() {
+  local label="$1" out="$2" err rc jqerr jrc
+  : > "$JSON_PENDING"
+  err="$(cat "$ERRFILE" 2>/dev/null || true)"
+  rc="$(lastrc)"
+  [ -z "$err" ] \
+    && ok "$label: stderr is empty" \
+    || no "$label: the probe wrote to STDERR (rc=$rc): $(printf '%s' "$err" | head -c 2000)"
+  jqerr="$(printf '%s' "$out" | jq -es 'length == 1 and (.[0] | type == "object")' 2>&1 >/dev/null)"; jrc=$?
+  [ "$jrc" -eq 0 ] \
+    && ok "$label: stdout is exactly one JSON object" \
+    || no "$label: stdout is NOT exactly one JSON object (rc=$rc, jq rc=$jrc${jqerr:+: $jqerr}) — raw stdout ($(printf '%s' "$out" | wc -c | tr -d ' ') bytes): $(printf '%s' "$out" | head -c 2000)"
+}
 
 # mk_bin <dir> <tool>... — a PATH dir holding symlinks to the named tools only.
 mk_bin() {
@@ -143,6 +191,7 @@ echo "== (a) absent state ⇒ never; present-but-unparseable ⇒ unknown (never 
 # no record — is an honest `never`.
 RA="$(new_repo)"
 outA="$(run "$RA" status --json)"
+json_clean "(a) status --json [outA]" "$outA"
 [ "$(lastrc)" -eq 0 ] && ok "(a) exits 0 with no curation-state.json" || no "(a) expected exit 0, got $(lastrc)"
 [ "$(jget "$outA" '.commands.dreaming.last_run')" = "never" ] \
   && ok "(a) absent state file ⇒ last_run=never" \
@@ -153,6 +202,7 @@ outA="$(run "$RA" status --json)"
 for bad in '' '{"dreaming":' 'not json at all' '[]' '{"dreaming":{"last_run":"yesterday-ish"}}'; do
   printf '%s' "$bad" > "$RA/.supervisor/curation-state.json"
   outA2="$(run "$RA" status --json)"
+  json_clean "(a) status --json [outA2]" "$outA2"
   lr="$(jget "$outA2" '.commands.dreaming.last_run')"
   if [ "$(lastrc)" -eq 0 ] && [ "$lr" = "unknown" ]; then
     ok "(a) unparseable state (\"${bad:0:14}\") ⇒ last_run=unknown, exit 0"
@@ -171,6 +221,7 @@ mkdir -p "$RA/.supervisor/logs"
 for n in 1 2 3; do echo '{}' > "$RA/.supervisor/logs/a$n.jsonl"; done
 printf '%s' '{"dreaming":' > "$RA/.supervisor/curation-state.json"
 outA3="$(run "$RA" status --json)"
+json_clean "(a) status --json [outA3]" "$outA3"
 [ "$(jget "$outA3" '.commands.dreaming.pending')" = "unknown" ] \
   && ok "(a) unparseable state ⇒ pending=unknown (no count claimed against a boundary we lack)" \
   || no "(a) expected pending=unknown, got '$(jget "$outA3" '.commands.dreaming.pending')'"
@@ -185,6 +236,7 @@ outA3="$(run "$RA" status --json)"
 # it, and it holds no record. This is the case `unknown` must NOT swallow.
 printf '%s' '{"other":{"k":1}}' > "$RA/.supervisor/curation-state.json"
 outA4="$(run "$RA" status --json)"
+json_clean "(a) status --json [outA4]" "$outA4"
 [ "$(jget "$outA4" '.commands.dreaming.last_run')" = "never" ] \
   && ok "(a) parseable object with no .dreaming.last_run ⇒ never (read it; no record)" \
   || no "(a) expected never for a parseable recordless state, got '$(jget "$outA4" '.commands.dreaming.last_run')'"
@@ -213,6 +265,7 @@ test_postmortem_excludes_automate_drain() {
 EOF
   local out lr
   out="$(run "$r" status --json)"
+  json_clean "(b) status --json [out: mixed ledger]" "$out"
   lr="$(jget "$out" '.commands.pr_postmortem.last_run')"
   [ "$(lastrc)" -eq 0 ] && ok "(b) exits 0" || no "(b) expected exit 0, got $(lastrc)"
   if [ "$lr" = "2026-02-15T00:00:00Z" ]; then
@@ -226,6 +279,7 @@ EOF
 {"ts":"2026-05-05T00:00:00Z","source":"automate_drain","automate_key":"k3","number":10}
 EOF
   out="$(run "$r" status --json)"
+  json_clean "(b) status --json [out: source-less legacy ledger]" "$out"
   lr="$(jget "$out" '.commands.pr_postmortem.last_run')"
   [ "$lr" = "2026-03-03T00:00:00Z" ] \
     && ok "(b) source-less legacy record is kept, not misclassified as a drain line" \
@@ -235,6 +289,7 @@ EOF
 {"ts":"2026-06-06T00:00:00Z","source":"automate_drain","automate_key":"k4","number":11}
 EOF
   out="$(run "$r" status --json)"
+  json_clean "(b) status --json [out: all-drain ledger]" "$out"
   lr="$(jget "$out" '.commands.pr_postmortem.last_run')"
   [ "$lr" = "never" ] \
     && ok "(b) all-drain ledger ⇒ never (no human ever ran /pr-postmortem)" \
@@ -248,6 +303,7 @@ RCQ="$(new_repo)"
 mkdir -p "$RCQ/.supervisor/insights"
 echo "dash" > "$RCQ/.supervisor/insights/dashboard.md"
 outC="$(run "$RCQ" status --json)"
+json_clean "(c) status --json [outC]" "$outC"
 lrC="$(jget "$outC" '.commands.insights.last_run')"
 case "$lrC" in
   ????-??-??T??:??:??Z) ok "(c) present dashboard ⇒ ISO last_run derived from mtime ($lrC)" ;;
@@ -268,7 +324,8 @@ printf 'not-a-number\n'
 exit 0
 EOF
 chmod +x "$BADSTAT/stat"
-outC2="$( cd "$RCQ" && PATH="$BADSTAT:$PATH" LOOMWRIGHT_CURATION_REMOTE=0 bash "$PROBE" status --json 2>&1 )"; rcC2=$?
+outC2="$(PATH="$BADSTAT:$PATH" run "$RCQ" status --json)"; rcC2="$(lastrc)"
+json_clean "(c) status --json with a garbage stat [outC2]" "$outC2"
 lrC2="$(jget "$outC2" '.commands.insights.last_run')"
 [ "$rcC2" -eq 0 ] && ok "(c) exits 0 when stat returns garbage" || no "(c) expected exit 0, got $rcC2"
 [ "$lrC2" = "unknown" ] \
@@ -287,6 +344,7 @@ grep -qF -- '-f %m' "$STATLOG" \
 echo "== (d) degradation matrix: absent/unreadable ledger, absent jq, absent dashboard =="
 RD="$(new_repo)"     # no ledger, no dashboard, no state file
 outD="$(run "$RD" status --json)"
+json_clean "(d) status --json [outD]" "$outD"
 [ "$(lastrc)" -eq 0 ] && ok "(d) status exits 0 on a bare .supervisor/" || no "(d) status rc=$(lastrc)"
 [ "$(jget "$outD" '.commands.pr_postmortem.last_run')" = "never" ] \
   && ok "(d) absent ledger ⇒ /pr-postmortem last_run=never (not a fabricated ts)" \
@@ -312,6 +370,7 @@ if [ "${EUID:-$(id -u)}" -eq 0 ]; then
 else
   chmod 000 "$RDU/.supervisor/postmortem/results.jsonl" 2>/dev/null || true
   outDU="$(run "$RDU" status --json)"
+  json_clean "(d) status --json [outDU]" "$outDU"
   lrDU="$(jget "$outDU" '.commands.pr_postmortem.last_run')"
   [ "$(lastrc)" -eq 0 ] && ok "(d) status exits 0 on an unreadable ledger" || no "(d) unreadable ledger rc=$(lastrc)"
   [ "$lrDU" = "unknown" ] \
@@ -390,7 +449,7 @@ bodyNJ="$(printf '%s' "$outNJ" | jq -S 'del(.jq, .error)' 2>/dev/null || true)"
 if [ -n "$bodyRF" ] && [ "$bodyRF" = "$bodyNJ" ]; then
   ok "(d) render_failed and jq-absent emit the SAME all-unknown body"
 else
-  no "(d) degraded --json bodies diverge — render_failed='$bodyRF' vs jq-absent='$bodyNJ'"
+  no "(d) degraded --json bodies diverge — render_failed='$bodyRF' vs jq-absent='$bodyNJ' — raw render_failed: $(printf '%s' "$outRF" | head -c 2000) — raw jq-absent: $(printf '%s' "$outNJ" | head -c 2000)"
 fi
 
 # ============================================================================
@@ -420,6 +479,7 @@ cat > "$RE/.supervisor/postmortem/results.jsonl" <<'EOF'
 {"ts":"2026-07-30T00:00:00Z","source":"automate_drain","automate_key":"k9","number":23}
 EOF
 outE="$(run "$RE" status --json)"
+json_clean "(e) status --json [outE]" "$outE"
 [ "$(lastrc)" -eq 0 ] && ok "(e) exits 0" || no "(e) rc=$(lastrc)"
 # /dreaming's pending is a SET complement, not a watermark comparison: none of
 # the 5 logs has been recorded as consumed, so all 5 are pending even though only
@@ -444,6 +504,7 @@ RF="$(new_repo)"
 mkdir -p "$RF/.supervisor/logs"
 for n in 1 2 3 4; do echo '{}' > "$RF/.supervisor/logs/s$n.jsonl"; done   # 4 pending (last_run never)
 outF0="$(run "$RF" status --json)"
+json_clean "(f) status --json [outF0]" "$outF0"
 [ "$(jget "$outF0" '.commands.dreaming.threshold')" = "15" ] \
   && ok "(f) in-script default threshold 15 applies with no config" \
   || no "(f) expected default 15, got '$(jget "$outF0" '.commands.dreaming.threshold')'"
@@ -452,6 +513,7 @@ outF0="$(run "$RF" status --json)"
   || no "(f) expected ready=no, got '$(jget "$outF0" '.commands.dreaming.ready')'"
 printf '{"curation":{"thresholds":{"dreaming":3}}}' > "$RF/.supervisor/config.json"
 outF1="$(run "$RF" status --json)"
+json_clean "(f) status --json [outF1]" "$outF1"
 [ "$(lastrc)" -eq 0 ] && ok "(f) exits 0 with a config override" || no "(f) rc=$(lastrc)"
 [ "$(jget "$outF1" '.commands.dreaming.threshold')" = "3" ] \
   && ok "(f) config .curation.thresholds.dreaming=3 overrides the default" \
@@ -468,6 +530,7 @@ outF1="$(run "$RF" status --json)"
 # actually wrote, which is the class of dishonesty this script forbids elsewhere.
 printf '{"curation":{"thresholds":{"dreaming":0}}}' > "$RF/.supervisor/config.json"
 outF0z="$(run "$RF" status --json)"
+json_clean "(f) status --json [outF0z]" "$outF0z"
 [ "$(jget "$outF0z" '.commands.dreaming.threshold')" = "0" ] \
   && ok "(f) a configured threshold of 0 is honoured, not silently replaced by the default" \
   || no "(f) expected threshold 0, got '$(jget "$outF0z" '.commands.dreaming.threshold')'"
@@ -481,6 +544,7 @@ outF0z="$(run "$RF" status --json)"
 for badcfg in '{"curation":{"thresholds":{"dreaming":"lots"}}}' '{"curation":{"thresholds":{"dreaming":-4}}}' 'not json'; do
   printf '%s' "$badcfg" > "$RF/.supervisor/config.json"
   outF2="$(run "$RF" status --json)"
+  json_clean "(f) status --json [outF2]" "$outF2"
   if [ "$(lastrc)" -eq 0 ] && [ "$(jget "$outF2" '.commands.dreaming.threshold')" = "15" ]; then
     ok "(f) malformed config (\"${badcfg:0:22}\") ⇒ default 15, exit 0"
   else
@@ -501,6 +565,7 @@ RG="$(new_repo)"
 mkdir -p "$RG/.supervisor/logs"
 for n in 1 2; do echo '{}' > "$RG/.supervisor/logs/s$n.jsonl"; done       # 2 pending vs default 15
 outG="$(run "$RG" status --json)"
+json_clean "(g) status --json [outG]" "$outG"
 msgG="$(jget "$outG" '.commands.dreaming.decline_message')"
 [ -n "$msgG" ] && ok "(g) below threshold ⇒ a decline message is produced" || no "(g) expected a decline message"
 grep -qF ' 2 unreflected session log' < <(printf '%s' "$msgG") && ok "(g) decline names the observed count (2)" \
@@ -524,10 +589,12 @@ grep -qF -- '--force' < <(printf '%s' "$msgG") && ok "(g) decline points at --fo
 echo "== (h) record: 'dreaming' is the ONLY legal target =="
 RH="$(new_repo)"
 before_h="$(run "$RH" status --json)"
+json_clean "(h) status --json [before_h]" "$before_h"
 [ "$(jget "$before_h" '.commands.dreaming.last_run')" = "never" ] && ok "(h) starts at never" || no "(h) expected never"
 outH="$(run "$RH" record dreaming)"
 [ "$(lastrc)" -eq 0 ] && ok "(h) record dreaming exits 0" || no "(h) rc=$(lastrc)"
 after_h="$(run "$RH" status --json)"
+json_clean "(h) status --json [after_h]" "$after_h"
 lrH="$(jget "$after_h" '.commands.dreaming.last_run')"
 case "$lrH" in
   ????-??-??T??:??:??Z) ok "(h) after record, /dreaming last_run is non-never ($lrH)" ;;
@@ -542,6 +609,7 @@ for badtarget in insights pr-postmortem "" bogus; do
   fi
 done
 after_h2="$(run "$RH" status --json)"
+json_clean "(h) status --json [after_h2]" "$after_h2"
 [ "$(jget "$after_h2" '.commands.dreaming.last_run')" = "$lrH" ] \
   && ok "(h) rejected record targets left the stored value untouched" \
   || no "(h) a rejected record target mutated the stored value"
@@ -573,9 +641,11 @@ for advertised in status record nudge; do
     || no "(h) usage omits '$advertised': $outH5"
 done
 # Help is read-only: it must not create or touch the state file.
-[ "$(jget "$(run "$RH" status --json)" '.commands.dreaming.last_run')" = "$lrH" ] \
+outH6="$(run "$RH" status --json)"
+json_clean "(h) status --json [outH6]" "$outH6"
+[ "$(jget "$outH6" '.commands.dreaming.last_run')" = "$lrH" ] \
   && ok "(h) the help branch left the stored value untouched" \
-  || no "(h) the help branch mutated the stored value"
+  || no "(h) the help branch mutated the stored value: last_run='$(jget "$outH6" '.commands.dreaming.last_run')' (expected '$lrH')"
 
 # ============================================================================
 echo "== (i) nudge: silent when idle, ONE counted line when pending, opt-out, NO network =="
@@ -724,7 +794,8 @@ run_gh() {
   local repo="$1" out="$2" rc="$3"
   printf '%s' "$out" > "$GHOUT"
   printf '%s' "$rc" > "$GHRC"
-  ( cd "$repo" && PATH="$GHBIN:$PATH" bash "$PROBE" status --json 2>&1; printf '%s' "$?" > "$RCFILE" )
+  json_register "${BASH_LINENO[0]}" "run_gh status --json"
+  ( cd "$repo" && PATH="$GHBIN:$PATH" bash "$PROBE" status --json; printf '%s' "$?" > "$RCFILE" ) 2>"$ERRFILE"
 }
 
 RL="$(new_repo)"
@@ -739,6 +810,7 @@ EOF
 # rc 0, EMPTY output — a repo with genuinely zero merged PRs. The honest answer
 # is 0, and it must be distinguishable from the failure below.
 outL="$(run_gh "$RL" '' 0)"
+json_clean "(l) status --json via gh stub [outL]" "$outL"
 pL="$(jget "$outL" '.commands.pr_postmortem.pending')"
 [ "$(lastrc)" -eq 0 ] && ok "(l) exits 0 with the gh stub on PATH" || no "(l) rc=$(lastrc)"
 [ "$pL" = "0" ] \
@@ -747,6 +819,7 @@ pL="$(jget "$outL" '.commands.pr_postmortem.pending')"
 
 # rc non-zero — gh missing auth / no network / API error. Could-not-examine.
 outL2="$(run_gh "$RL" '' 1)"
+json_clean "(l) status --json via gh stub [outL2]" "$outL2"
 [ "$(jget "$outL2" '.commands.pr_postmortem.pending')" = "unknown" ] \
   && ok "(l) gh exits NON-ZERO ⇒ pending=unknown (could not examine)" \
   || no "(l) expected unknown for a failing gh call, got '$(jget "$outL2" '.commands.pr_postmortem.pending')'"
@@ -754,6 +827,7 @@ outL2="$(run_gh "$RL" '' 1)"
 # rc non-zero WITH partial output — the status must still win over the bytes.
 outL3="$(run_gh "$RL" '101
 999' 1)"
+json_clean "(l) status --json via gh stub [outL3]" "$outL3"
 [ "$(jget "$outL3" '.commands.pr_postmortem.pending')" = "unknown" ] \
   && ok "(l) gh exits NON-ZERO but PRINTED rows ⇒ still unknown (status wins over bytes)" \
   || no "(l) expected unknown for a failing-but-noisy gh call, got '$(jget "$outL3" '.commands.pr_postmortem.pending')'"
@@ -762,6 +836,7 @@ outL3="$(run_gh "$RL" '101
 outL4="$(run_gh "$RL" '101
 998
 999' 0)"
+json_clean "(l) status --json via gh stub [outL4]" "$outL4"
 [ "$(jget "$outL4" '.commands.pr_postmortem.pending')" = "2" ] \
   && ok "(l) set-diff: 3 merged, 1 in the ledger ⇒ pending=2" \
   || no "(l) expected pending=2, got '$(jget "$outL4" '.commands.pr_postmortem.pending')'"
@@ -769,12 +844,14 @@ outL4="$(run_gh "$RL" '101
 # "is this PR in the corpus at all", not "did a human run /pr-postmortem on it".
 outL5="$(run_gh "$RL" '101
 102' 0)"
+json_clean "(l) status --json via gh stub [outL5]" "$outL5"
 [ "$(jget "$outL5" '.commands.pr_postmortem.pending')" = "0" ] \
   && ok "(l) set-diff: every merged PR present in the ledger ⇒ pending=0" \
   || no "(l) expected pending=0, got '$(jget "$outL5" '.commands.pr_postmortem.pending')'"
 # Non-numeric rows in gh's output are skipped, never counted as a missing PR.
 outL6="$(run_gh "$RL" 'not-a-number
 101' 0)"
+json_clean "(l) status --json via gh stub [outL6]" "$outL6"
 [ "$(jget "$outL6" '.commands.pr_postmortem.pending')" = "0" ] \
   && ok "(l) non-numeric gh rows are skipped, not counted as missing" \
   || no "(l) expected pending=0 with a non-numeric row, got '$(jget "$outL6" '.commands.pr_postmortem.pending')'"
@@ -785,6 +862,7 @@ grep -qF -- '--limit 50' "$GHLOG" \
 # …and the valve still wins over everything: REMOTE=0 makes no gh call at all.
 rm -f "$GHLOG"
 outL7="$(run "$RL" status --json)"   # run() sets LOOMWRIGHT_CURATION_REMOTE=0
+json_clean "(l) status --json [outL7]" "$outL7"
 [ "$(jget "$outL7" '.commands.pr_postmortem.pending')" = "unknown" ] \
   && ok "(l) LOOMWRIGHT_CURATION_REMOTE=0 ⇒ pending=unknown, gh never consulted" \
   || no "(l) expected unknown with the remote valve off, got '$(jget "$outL7" '.commands.pr_postmortem.pending')'"
@@ -806,6 +884,7 @@ RLA="$(new_repo)"
 outL8="$(run_gh "$RLA" '301
 302
 303' 0)"
+json_clean "(l) status --json via gh stub [outL8]" "$outL8"
 [ "$(lastrc)" -eq 0 ] && ok "(l) exits 0 with an absent ledger and a working gh" || no "(l) rc=$(lastrc)"
 [ "$(jget "$outL8" '.commands.pr_postmortem.pending')" = "3" ] \
   && ok "(l) ABSENT ledger + 3 merged PRs ⇒ pending=3 (never run ≠ could not examine)" \
@@ -826,6 +905,7 @@ else
   outL9="$(run_gh "$RLU" '301
 302
 303' 0)"
+  json_clean "(l) status --json via gh stub [outL9]" "$outL9"
   [ "$(lastrc)" -eq 0 ] && ok "(l) exits 0 with an unreadable ledger and a working gh" || no "(l) rc=$(lastrc)"
   [ "$(jget "$outL9" '.commands.pr_postmortem.pending')" = "unknown" ] \
     && ok "(l) PRESENT-but-unreadable ledger + working gh ⇒ pending=unknown (a real could-not-examine)" \
@@ -845,6 +925,7 @@ RM="$(new_repo)"
 mkdir -p "$RM/.supervisor/logs"
 for n in 1 2 3; do echo '{}' > "$RM/.supervisor/logs/s$n.jsonl"; done
 outM0="$(run "$RM" status --json)"
+json_clean "(m) status --json [outM0]" "$outM0"
 [ "$(jget "$outM0" '.commands.dreaming.pending')" = "3" ] \
   && ok "(m) control — the readable fixture counts its 3 logs" \
   || no "(m) control: expected pending=3, got '$(jget "$outM0" '.commands.dreaming.pending')'"
@@ -853,6 +934,7 @@ if [ "${EUID:-$(id -u)}" -eq 0 ]; then
 else
   chmod 000 "$RM/.supervisor/logs" 2>/dev/null || true
   outM="$(run "$RM" status --json)"
+  json_clean "(m) status --json [outM]" "$outM"
   [ "$(lastrc)" -eq 0 ] && ok "(m) status exits 0 on an unreadable logs dir" || no "(m) rc=$(lastrc)"
   [ "$(jget "$outM" '.commands.dreaming.pending')" = "unknown" ] \
     && ok "(m) unreadable logs dir ⇒ /dreaming pending=unknown (NOT a fabricated 0)" \
@@ -886,6 +968,7 @@ for stamp in 202601010000 202601020000 202601030000 202601040000 202601050000 20
   touch -t "$stamp" "$RN/.supervisor/logs/s$i.jsonl"
 done
 outN0="$(run "$RN" status --json)"
+json_clean "(n) status --json [outN0]" "$outN0"
 [ "$(jget "$outN0" '.commands.dreaming.pending')" = "6" ] \
   && ok "(n) 6 logs, none consumed ⇒ pending = 6" \
   || no "(n) expected pending=6, got '$(jget "$outN0" '.commands.dreaming.pending')'"
@@ -894,11 +977,16 @@ outN0="$(run "$RN" status --json)"
 outNrec="$(run "$RN" record dreaming s6 s5)"
 [ "$(lastrc)" -eq 0 ] && ok "(n) record with ids exits 0" || no "(n) record rc=$(lastrc)"
 outN1="$(run "$RN" status --json)"
+json_clean "(n) status --json [outN1]" "$outN1"
 [ "$(jget "$outN1" '.commands.dreaming.pending')" = "4" ] \
   && ok "(n) after reading the 2 NEWEST, pending falls to exactly 4 — by what was read, not to zero" \
   || no "(n) expected pending=4, got '$(jget "$outN1" '.commands.dreaming.pending')'"
 # The four survivors are the OLDER ones — the set a watermark could never count.
-[ "$(run "$RN" status --json | jq -r '.commands.dreaming.last_run')" != "never" ] \
+# A `!=` assertion passes VACUOUSLY on an unparsable document (an empty value is
+# "not never"), so json_clean is load-bearing here, not just diagnostic.
+outN1b="$(run "$RN" status --json)"
+json_clean "(n) status --json [outN1b]" "$outN1b"
+[ "$(jget "$outN1b" '.commands.dreaming.last_run')" != "never" ] \
   && ok "(n) last_run was stamped by the same call" \
   || no "(n) last_run not stamped"
 
@@ -906,6 +994,7 @@ outN1="$(run "$RN" status --json)"
 # retire the 4 survivors. Under a wall-clock watermark this collapses to 0.
 outN2="$(run "$RN" record dreaming)"
 outN3="$(run "$RN" status --json)"
+json_clean "(n) status --json [outN3]" "$outN3"
 [ "$(jget "$outN3" '.commands.dreaming.pending')" = "4" ] \
   && ok "(n) a later run that consumed NOTHING leaves pending at 4 (a wall-clock watermark would report 0)" \
   || no "(n) the unread backlog was silently retired: pending='$(jget "$outN3" '.commands.dreaming.pending')'"
@@ -915,14 +1004,18 @@ grep -qF 'NO logs were named' < <(printf '%s' "$outN2") \
 
 # Draining the remaining 4 reaches a real zero — the set is genuinely additive.
 run "$RN" record dreaming s1 s2 s3 s4 >/dev/null
-[ "$(run "$RN" status --json | jq -r '.commands.dreaming.pending')" = "0" ] \
+outN4="$(run "$RN" status --json)"
+json_clean "(n) status --json [outN4]" "$outN4"
+[ "$(jget "$outN4" '.commands.dreaming.pending')" = "0" ] \
   && ok "(n) naming the remaining 4 drains pending to 0 (ids UNION across calls)" \
-  || no "(n) expected pending=0 after draining all 6"
+  || no "(n) expected pending=0 after draining all 6, got '$(jget "$outN4" '.commands.dreaming.pending')'"
 # …and re-recording an already-consumed id is idempotent, never negative.
 run "$RN" record dreaming s1 s1 s2 >/dev/null
-[ "$(run "$RN" status --json | jq -r '.commands.dreaming.pending')" = "0" ] \
+outN5="$(run "$RN" status --json)"
+json_clean "(n) status --json [outN5]" "$outN5"
+[ "$(jget "$outN5" '.commands.dreaming.pending')" = "0" ] \
   && ok "(n) re-recording consumed ids is idempotent (unique), never double-counts" \
-  || no "(n) duplicate ids perturbed the count"
+  || no "(n) duplicate ids perturbed the count: pending='$(jget "$outN5" '.commands.dreaming.pending')'"
 
 # ============================================================================
 echo "== (o) the count names the WINDOW that will drain it, pinned to dreaming.md =="
@@ -960,9 +1053,11 @@ grep -qF 'note(/dreaming)' < <(printf '%s' "$outO2") \
 grep -qE 'reads the [0-9]+ most recent UNCONSUMED of those 9 logs' < <(printf '%s' "$outO2") \
   && ok "(o) the note names BOTH numbers (window and backlog), not just the backlog" \
   || no "(o) the note does not name both numbers: $outO2"
-[ "$(jget "$(run "$RO" status --json)" '.commands.dreaming.window')" = "$script_window" ] \
+outO3="$(run "$RO" status --json)"
+json_clean "(o) status --json [outO3]" "$outO3"
+[ "$(jget "$outO3" '.commands.dreaming.window')" = "$script_window" ] \
   && ok "(o) --json carries .commands.dreaming.window too" \
-  || no "(o) --json window missing/wrong"
+  || no "(o) --json window missing/wrong: '$(jget "$outO3" '.commands.dreaming.window')' (expected '$script_window')"
 
 # ============================================================================
 echo "== (p) pending counts logs carrying reflection SIGNAL, not raw files =="
@@ -983,6 +1078,7 @@ done
 printf '{"event":"token_ledger"}\n{"event":"session_end","status":"ok"}\n{"event":"token_ledger"}\n' \
   > "$RP/.supervisor/logs/mixed.jsonl"
 outP="$(run "$RP" status --json)"
+json_clean "(p) status --json [outP]" "$outP"
 [ "$(jget "$outP" '.commands.dreaming.pending')" = "1" ] \
   && ok "(p) 4 files, 3 noise-only ⇒ /dreaming pending = 1, not 4" \
   || no "(p) expected /dreaming pending=1, got '$(jget "$outP" '.commands.dreaming.pending')'"
@@ -993,6 +1089,7 @@ outP="$(run "$RP" status --json)"
 # non-noise event that is NOT session_end counts for /dreaming and not /insights.
 printf '{"event":"pr_created","url":"x"}\n' > "$RP/.supervisor/logs/pronly.jsonl"
 outP2="$(run "$RP" status --json)"
+json_clean "(p) status --json [outP2]" "$outP2"
 [ "$(jget "$outP2" '.commands.dreaming.pending')" = "2" ] \
   && ok "(p) a pr_created-only log counts for /dreaming (broad reader)" \
   || no "(p) expected /dreaming pending=2, got '$(jget "$outP2" '.commands.dreaming.pending')'"
@@ -1001,18 +1098,22 @@ outP2="$(run "$RP" status --json)"
   || no "(p) expected /insights pending=1, got '$(jget "$outP2" '.commands.insights.pending')'"
 # FAIL OPEN: a log whose shape the predicate cannot recognise counts as signal.
 printf 'not json at all\n' > "$RP/.supervisor/logs/weird.jsonl"
-[ "$(jget "$(run "$RP" status --json)" '.commands.dreaming.pending')" = "3" ] \
+outP3="$(run "$RP" status --json)"
+json_clean "(p) status --json [outP3]" "$outP3"
+[ "$(jget "$outP3" '.commands.dreaming.pending')" = "3" ] \
   && ok "(p) an unrecognisable log counts as SIGNAL (fail open — never silently suppressed)" \
-  || no "(p) unrecognisable log was dropped from the count (fail-closed regression)"
+  || no "(p) unrecognisable log was dropped from the count (fail-closed regression): pending='$(jget "$outP3" '.commands.dreaming.pending')'"
 # …and so does a log we cannot READ. This is the arm grep answers with exit 2;
 # it is only reachable because log_has_signal has no `[ -r ]` pre-guard, and a
 # mutation flipping it to fail-closed must be caught here.
 printf '{"event":"token_ledger"}\n' > "$RP/.supervisor/logs/locked.jsonl"
 chmod 000 "$RP/.supervisor/logs/locked.jsonl" 2>/dev/null || true
 if [ ! -r "$RP/.supervisor/logs/locked.jsonl" ]; then
-  [ "$(jget "$(run "$RP" status --json)" '.commands.dreaming.pending')" = "4" ] \
+  outP4="$(run "$RP" status --json)"
+  json_clean "(p) status --json [outP4]" "$outP4"
+  [ "$(jget "$outP4" '.commands.dreaming.pending')" = "4" ] \
     && ok "(p) an UNREADABLE log counts as signal (grep rc>1 ⇒ fail open, never suppressed)" \
-    || no "(p) unreadable log was dropped from the count (fail-closed regression)"
+    || no "(p) unreadable log was dropped from the count (fail-closed regression): pending='$(jget "$outP4" '.commands.dreaming.pending')'"
 else
   skp "(p) cannot create an unreadable file here (running as root?) — fail-open arm not exercisable"
 fi
@@ -1060,12 +1161,17 @@ else
 fi
 # A state file we cannot PARSE must not yield a confident backlog number.
 printf 'not json' > "$RQ/.supervisor/curation-state.json"
-[ "$(jget "$(run "$RQ" status --json)" '.commands.dreaming.pending')" = "unknown" ] \
+outQ1="$(run "$RQ" status --json)"
+json_clean "(q) status --json [outQ1]" "$outQ1"
+[ "$(jget "$outQ1" '.commands.dreaming.pending')" = "unknown" ] \
   && ok "(q) unparseable state ⇒ pending 'unknown', never every-log-is-pending" \
-  || no "(q) unparseable state fabricated a count: '$(jget "$(run "$RQ" status --json)" '.commands.dreaming.pending')'"
+  || no "(q) unparseable state fabricated a count: '$(jget "$outQ1" '.commands.dreaming.pending')'"
 # …but a state file that PARSES and simply has no consumed key is a real answer.
 printf '{"dreaming":{"last_run":"2026-01-01T00:00:00Z"}}' > "$RQ/.supervisor/curation-state.json"
-[ "$(jget "$(run "$RQ" status --json)" '.commands.dreaming.pending')" != "unknown" ] \
+# `!=` passes VACUOUSLY on an unparsable document — json_clean is load-bearing.
+outQ2="$(run "$RQ" status --json)"
+json_clean "(q) status --json [outQ2]" "$outQ2"
+[ "$(jget "$outQ2" '.commands.dreaming.pending')" != "unknown" ] \
   && ok "(q) parseable state with no consumed key ⇒ a real count (absent ≠ unexaminable)" \
   || no "(q) a readable recordless state was reported as unexaminable"
 
@@ -1086,6 +1192,7 @@ printf '{"dreaming":{"last_run":"2026-01-01T00:00:00Z","consumed":{"logs":["s1"]
 chmod 000 "$RQU/.supervisor/curation-state.json" 2>/dev/null || true
 if [ ! -r "$RQU/.supervisor/curation-state.json" ]; then
   outQU="$(run "$RQU" status --json)"
+  json_clean "(q) status --json [outQU]" "$outQU"
   [ "$(lastrc)" -eq 0 ] && ok "(q) status exits 0 on an unreadable state file" || no "(q) unreadable state rc=$(lastrc)"
   [ "$(jget "$outQU" '.commands.dreaming.pending')" = "unknown" ] \
     && ok "(q) unreadable state ⇒ pending 'unknown' (an unexaminable record never yields a number)" \
@@ -1173,7 +1280,6 @@ consume_round() {
   ( cd "$repo" && LOOMWRIGHT_CURATION_REMOTE=0 bash "$PROBE" record dreaming "$@" >/dev/null 2>&1 )
   printf '%s' "$#"
 }
-dpending() { jget "$(run "$1" status --json)" '.commands.dreaming.pending'; }
 
 RR="$(new_repo)"; mkdir -p "$RR/.supervisor/logs"
 i=0
@@ -1184,9 +1290,11 @@ for stamp in 202601010000 202601020000 202601030000 202601040000 \
   touch -t "$stamp" "$RR/.supervisor/logs/s$i.jsonl"
 done   # s8 is the NEWEST, s1 the oldest
 
-[ "$(dpending "$RR")" = "8" ] \
+outRc="$(run "$RR" status --json)"
+json_clean "(r) status --json [outRc: control]" "$outRc"
+[ "$(jget "$outRc" '.commands.dreaming.pending')" = "8" ] \
   && ok "(r) control — 8 signal-carrying logs, none consumed ⇒ pending 8" \
-  || no "(r) control: expected pending=8, got '$(dpending "$RR")'"
+  || no "(r) control: expected pending=8, got '$(jget "$outRc" '.commands.dreaming.pending')'"
 
 # Ordering: newest mtime FIRST. Assert the exact ends of the list.
 listR="$(run_out "$RR" unconsumed)"
@@ -1210,9 +1318,11 @@ listR="$(run_out "$RR" unconsumed)"
 # plain recency.
 r1="$(consume_round "$RR" 5)"
 [ "$r1" = "5" ] && ok "(r) run 1 consumed 5 ids" || no "(r) run 1 consumed '$r1', expected 5"
-[ "$(dpending "$RR")" = "3" ] \
+outR1="$(run "$RR" status --json)"
+json_clean "(r) status --json [outR1: after run 1]" "$outR1"
+[ "$(jget "$outR1" '.commands.dreaming.pending')" = "3" ] \
   && ok "(r) after run 1 pending falls 8 → 3" \
-  || no "(r) after run 1 expected pending=3, got '$(dpending "$RR")'"
+  || no "(r) after run 1 expected pending=3, got '$(jget "$outR1" '.commands.dreaming.pending')'"
 # Round 2 must return the OLD tail, not the newest again.
 tail2="$(run_out "$RR" unconsumed 5)"
 [ "$(printf '%s\n' "$tail2" | head -1)" = "s3" ] \
@@ -1220,9 +1330,11 @@ tail2="$(run_out "$RR" unconsumed 5)"
   || no "(r) run 2 head expected s3, got '$(printf '%s\n' "$tail2" | head -1)'"
 r2="$(consume_round "$RR" 5)"
 [ "$r2" = "3" ] && ok "(r) run 2 consumed the remaining 3" || no "(r) run 2 consumed '$r2', expected 3"
-[ "$(dpending "$RR")" = "0" ] \
+outR2="$(run "$RR" status --json)"
+json_clean "(r) status --json [outR2: after run 2]" "$outR2"
+[ "$(jget "$outR2" '.commands.dreaming.pending')" = "0" ] \
   && ok "(r) THE BACKLOG DRAINS: 8 → 3 → 0 (plain newest-by-mtime stalls at 3 forever)" \
-  || no "(r) backlog did NOT drain — pending='$(dpending "$RR")' (the 8→3→3→3 stall)"
+  || no "(r) backlog did NOT drain — pending='$(jget "$outR2" '.commands.dreaming.pending')' (the 8→3→3→3 stall)"
 
 # Fully drained ⇒ NOTHING on stdout, still exit 0.
 outR0="$(run_out "$RR" unconsumed)"
@@ -1325,9 +1437,10 @@ outS="$(run_out "$RS_" pending-ids)"
   || no "(s) union wrong — expected 'both d-only i-only', got: $(printf '%s\n' "$outS" | env LC_ALL=C sort | tr '\n' ' ')"
 # The union is exactly the counted set: status --json must count 2 + 2.
 outS2="$(run "$RS_" status --json)"
+json_clean "(s) status --json [outS2]" "$outS2"
 [ "$(jget "$outS2" '.commands.dreaming.pending')" = "2" ] && [ "$(jget "$outS2" '.commands.insights.pending')" = "2" ] \
   && ok "(s) …and status --json counts dreaming.pending=2 / insights.pending=2 over the same fixture" \
-  || no "(s) status counts do not match the union: dreaming=$(jget "$outS2" '.commands.dreaming.pending') insights=$(jget "$outS2" '.commands.insights.pending')"
+  || no "(s) status counts do not match the union: dreaming=$(jget "$outS2" '.commands.dreaming.pending') insights=$(jget "$outS2" '.commands.insights.pending') (rc=$(lastrc)) — raw stdout: $(printf '%s' "$outS2" | head -c 2000)"
 [ -z "$(run_err "$RS_" pending-ids)" ] && ok "(s) the examined path prints NO stderr note" || no "(s) unexpected stderr on the examined path: $(run_err "$RS_" pending-ids)"
 
 # `never` insights (no dashboard) ⇒ every insights-signal log joins, even the
@@ -1375,6 +1488,13 @@ outSE="$(run_out "$RSE" pending-ids)"
 # The dispatch arm and the usage line name the subcommand.
 outSH="$(run "$RSE" --help)"
 grep -qF 'pending-ids' < <(printf '%s' "$outSH") && ok "(s) --help names pending-ids" || no "(s) usage line lacks pending-ids: $outSH"
+
+# ============================================================================
+echo "== harness: every --json run was paired with its json_clean check =="
+[ -s "$JSON_PENDING" ] && cat "$JSON_PENDING" >> "$JSON_ORPHANS"
+[ -s "$JSON_ORPHANS" ] \
+  && no "harness: --json run(s) with no json_clean — stray stderr / an unparsable document there goes unasserted: $(tr '\n' ';' < "$JSON_ORPHANS")" \
+  || ok "harness: every run/run_gh --json call was followed by json_clean"
 
 echo
 if [ "$skip" -gt 0 ]; then
