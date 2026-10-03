@@ -79,7 +79,7 @@ unknown
 
 **Machine-read sections (`## Depends on`, `## Touches`).** Every persisted requirement file carries these two sections as **H2** headings — H2 in the file even though the template's own sections are H3 — so a planner can tell which stories may run at the same time. Grammar: one entry per line and nothing else on the line — no backticks, no bullets, no globs, no prose (blank lines are ignored):
 
-- `## Depends on` — `none` as the sole line, or one dependency per line: a 1–3 digit id of a story in the same folder (`03`), or a relative path ending in `.md` (`../other-queue/02-x.md`). A missing or unparseable section reads as "depends on every earlier story".
+- `## Depends on` — `none` as the sole line, or one dependency per line: a 1–3 digit id of a story in the same folder (`03`), or a relative path ending in `.md` (`../other-queue/02-x.md`). An id resolves only against `NN-*.md` siblings, so a timestamp-named story (`2026-10-03-101500-first-story.md`) must be referenced by its relative path, never by an id. A missing or unparseable section reads as "depends on every earlier story".
 - `## Touches` — one repo-relative path per line (characters `A-Za-z0-9._/@+-` only, no leading `/`, no `.` or `..` segment, no `//`); a trailing `/` marks a directory; the sole line `unknown` when the touched set is not known. Any line that does not parse makes the whole section `unknown`, and an `unknown` story runs alone.
 
 Keep them as the story's last sections (or follow them with another `##` heading): an `###` heading does not end an H2 section, so its text would be read as a bad `Touches` line. The prose `### Dependencies` block stays for humans and is never parsed — `## Depends on` / `## Touches` are the machine-read declarations.
