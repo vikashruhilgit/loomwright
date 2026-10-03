@@ -366,7 +366,6 @@ else
   ok "(c2) no composed invocation passes --check (AC9b)"
 fi
 # The rule object may carry ONLY add-rule.sh's own flags — no new member can reach the frozen schema.
-badflag=0
 # unexpected_flags <flag-list> — prints each flag outside the frozen set (empty = freeze holds).
 unexpected_flags() {
   local f
