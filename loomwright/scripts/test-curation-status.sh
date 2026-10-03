@@ -74,9 +74,11 @@
 #       id; unknown insights last-run ⇒ every id) — the keep-set
 #       retention-sweep.sh excludes from its session-log sweep
 #
-# Every `status --json` run is followed by json_clean: stderr empty and stdout
-# exactly one JSON object, each a named check that prints the raw stream on
-# failure. A closing harness check fails any --json run left without one.
+# Every `status --json` run goes through run()/run_gh() and is followed by
+# json_clean: stderr empty and stdout exactly one JSON object, each a named check
+# that prints the raw stream on failure. The closing harness checks enforce both
+# halves — a wrapper call left without json_clean, and a direct `"$PROBE" …
+# --json` invocation that bypasses the wrappers (and so the pairing) entirely.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -387,8 +389,15 @@ RDJ="$(new_repo)"
 mkdir -p "$RDJ/.supervisor/insights"; echo d > "$RDJ/.supervisor/insights/dashboard.md"
 mkdir -p "$RDJ/.supervisor/postmortem"; echo '{"ts":"2026-01-01T00:00:00Z"}' > "$RDJ/.supervisor/postmortem/results.jsonl"
 for sub in "status" "status --json" "nudge" "record dreaming"; do
-  # shellcheck disable=SC2086
-  outDJ="$( cd "$RDJ" && PATH="$NOJQ" LOOMWRIGHT_CURATION_REMOTE=0 "$(command -v bash)" "$PROBE" $sub 2>&1 )"; rcDJ=$?
+  if [ "$sub" = "status --json" ]; then
+    # Degraded routes are the MOST stderr-prone (a missing tool's complaint), so
+    # the --json arm goes through run() and json_clean like every other site.
+    outDJ="$(PATH="$NOJQ" run "$RDJ" status --json)"; rcDJ="$(lastrc)"
+    json_clean "(d) jq-absent status --json [outDJ]" "$outDJ"
+  else
+    # shellcheck disable=SC2086
+    outDJ="$( cd "$RDJ" && PATH="$NOJQ" LOOMWRIGHT_CURATION_REMOTE=0 "$(command -v bash)" "$PROBE" $sub 2>&1 )"; rcDJ=$?
+  fi
   [ "$rcDJ" -eq 0 ] && ok "(d) '$sub' exits 0 with jq absent" || no "(d) '$sub' with jq absent: rc=$rcDJ"
   case "$sub" in
     "status --json")
@@ -426,7 +435,8 @@ rm -f "$BADJQ/jq"
 printf '#!/bin/sh\nexit 1\n' > "$BADJQ/jq"; chmod +x "$BADJQ/jq"
 RDR="$(new_repo)"
 mkdir -p "$RDR/.supervisor/insights"; echo d > "$RDR/.supervisor/insights/dashboard.md"
-outRF="$( cd "$RDR" && PATH="$BADJQ" LOOMWRIGHT_CURATION_REMOTE=0 "$(command -v bash)" "$PROBE" status --json 2>&1 )"; rcRF=$?
+outRF="$(PATH="$BADJQ" run "$RDR" status --json)"; rcRF="$(lastrc)"
+json_clean "(d) render_failed status --json [outRF]" "$outRF"
 [ "$rcRF" -eq 0 ] && ok "(d) status --json exits 0 when the jq render throws" \
   || no "(d) render-failure rc=$rcRF: $outRF"
 # Control: without this the test could pass against the HAPPY path and prove nothing.
@@ -443,7 +453,8 @@ printf '%s' "$outRF" | jq -e . >/dev/null 2>&1 \
 # legitimately differ (`jq`, `error`) are removed. This is the assertion that
 # actually pins "the two degraded routes speak one sentinel" — it fails the
 # moment either literal drifts from the other.
-outNJ="$( cd "$RDJ" && PATH="$NOJQ" LOOMWRIGHT_CURATION_REMOTE=0 "$(command -v bash)" "$PROBE" status --json 2>&1 )"
+outNJ="$(PATH="$NOJQ" run "$RDJ" status --json)"
+json_clean "(d) jq-absent status --json [outNJ]" "$outNJ"
 bodyRF="$(printf '%s' "$outRF" | jq -S 'del(.jq, .error)' 2>/dev/null || true)"
 bodyNJ="$(printf '%s' "$outNJ" | jq -S 'del(.jq, .error)' 2>/dev/null || true)"
 if [ -n "$bodyRF" ] && [ "$bodyRF" = "$bodyNJ" ]; then
@@ -1495,6 +1506,13 @@ echo "== harness: every --json run was paired with its json_clean check =="
 [ -s "$JSON_ORPHANS" ] \
   && no "harness: --json run(s) with no json_clean — stray stderr / an unparsable document there goes unasserted: $(tr '\n' ';' < "$JSON_ORPHANS")" \
   || ok "harness: every run/run_gh --json call was followed by json_clean"
+# The registry only sees wrapper calls, so a direct probe invocation naming
+# --json would sit outside it. Scan this file for one: the sole legitimate line
+# is run_gh's own body (marked by its gh-stub PATH). Code only — comments skipped.
+bypass="$(grep -nE '"\$PROBE"[^#]*--json' "${BASH_SOURCE[0]}" | grep -vF 'PATH="$GHBIN:$PATH"' || true)"
+[ -z "$bypass" ] \
+  && ok "harness: no direct \"\$PROBE\" --json call bypasses run()/run_gh()" \
+  || no "harness: direct probe --json call(s) bypass run()/run_gh() and json_clean: $bypass"
 
 echo
 if [ "$skip" -gt 0 ]; then
