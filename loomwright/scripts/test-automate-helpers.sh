@@ -3142,7 +3142,7 @@ w_expect() {  # <label> <expected stdout (printf %b)>
   if [ "$W_RC" -eq 0 ] && [ "$W_OUT" = "$want" ]; then ok "$1"; else no "$1 (rc=$W_RC) got: $(printf '%s' "$W_OUT" | tr '\n' '|') err: $W_ERR"; fi
 }
 w_fails() {  # <label> <stderr substring>
-  if [ "$W_RC" -eq 1 ] && [ -z "$W_OUT" ] && printf '%s' "$W_ERR" | grep -qF -- "$2"; then ok "$1"; else no "$1 (rc=$W_RC out='$W_OUT' err='$W_ERR')"; fi
+  if [ "$W_RC" -eq 1 ] && [ -z "$W_OUT" ] && grep -qF -- "$2" <<<"$W_ERR"; then ok "$1"; else no "$1 (rc=$W_RC out='$W_OUT' err='$W_ERR')"; fi
 }
 
 # W1 disjoint items share a wave; the absent companion table is announced on stderr and the plan proceeds.
@@ -3377,9 +3377,9 @@ mkdir -p "$W_T/spy"
 printf '#!/bin/sh\necho "git $*" >> "%s/spy/calls"\nexit 1\n' "$W_T" > "$W_T/spy/git"
 printf '#!/bin/sh\necho "gh $*" >> "%s/spy/calls"\nexit 1\n' "$W_T" > "$W_T/spy/gh"
 chmod +x "$W_T/spy/git" "$W_T/spy/gh"; : > "$W_T/spy/calls"
-w_before="$(cd "$W_T" && find q list -print | LC_ALL=C sort | xargs ls -ld 2>/dev/null | awk '{ print $5, $NF }')"
+w_before="$(cd "$W_T" && find q list -print | env LC_ALL=C sort | xargs ls -ld 2>/dev/null | awk '{ print $5, $NF }')"
 W_RC=0; W_OUT="$(cd "$W_T" && PATH="$W_T/spy:$PATH" bash "$H" plan-waves list --max 3 2>/dev/null)" || W_RC=$?
-w_after="$(cd "$W_T" && find q list -print | LC_ALL=C sort | xargs ls -ld 2>/dev/null | awk '{ print $5, $NF }')"
+w_after="$(cd "$W_T" && find q list -print | env LC_ALL=C sort | xargs ls -ld 2>/dev/null | awk '{ print $5, $NF }')"
 [ "$W_RC" -eq 0 ] && [ "$(cat "$W_T/spy/calls")" = "git rev-parse --show-toplevel" ] && ok "W18 only git call is rev-parse --show-toplevel; no gh; --root fell back to \$PWD" || no "W18 calls: $(tr '\n' '|' < "$W_T/spy/calls") rc=$W_RC"
 [ "$w_before" = "$w_after" ] && [ ! -e "$W_T/.agent" ] && ok "W18 fixture tree unchanged after plan-waves (writes only its mktemp -d)" || no "W18 fixture tree changed"
 
@@ -3420,14 +3420,14 @@ w_files="$(awk '/^FILES=\(/ { p = 1; next } p && /^\)/ { exit } p' "$W_DC" \
   | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -v '^#' | grep -v '^$' | tr -d '"' \
   | while IFS= read -r e; do w_dc_entry "$e"; done)"
 if [ -z "$w_files" ] || [ -z "$w_pj" ]; then no "W20 parsed FILES set (or PLUGIN_JSON) is empty"
-elif printf '%s\n' "$w_files" | grep -q '^UNRESOLVED:'; then no "W20 unresolved \$ token in FILES: $(printf '%s' "$w_files" | grep '^UNRESOLVED:' | tr '\n' ' ')"
-elif ! printf '%s\n' "$w_files" | grep -qxF 'loomwright/.claude-plugin/plugin.json'; then no "W20 parsed FILES lacks loomwright/.claude-plugin/plugin.json"
+elif grep -q '^UNRESOLVED:' <<<"$w_files"; then no "W20 unresolved \$ token in FILES: $(printf '%s' "$w_files" | grep '^UNRESOLVED:' | tr '\n' ' ')"
+elif ! grep -qxF 'loomwright/.claude-plugin/plugin.json' <<<"$w_files"; then no "W20 parsed FILES lacks loomwright/.claude-plugin/plugin.json"
 else
   w_miss=""
   for pfx in 'loomwright/agents/*' 'loomwright/commands/*' 'loomwright/skills/*'; do
     w_add="$(jq -r --arg w "$pfx" '.companions[] | select(.when == $w and .new == true) | .add[]' "$W_CJ" 2>/dev/null)"
     [ -n "$w_add" ] || w_miss="$w_miss [no new rule for $pfx]"
-    while IFS= read -r e; do printf '%s\n' "$w_add" | grep -qxF "$e" || w_miss="$w_miss [$pfx lacks $e]"; done <<EOF
+    while IFS= read -r e; do grep -qxF -- "$e" <<<"$w_add" || w_miss="$w_miss [$pfx lacks $e]"; done <<EOF
 $w_files
 EOF
   done

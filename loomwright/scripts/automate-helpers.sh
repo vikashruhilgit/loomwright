@@ -1991,7 +1991,7 @@ _pw_abs() {
 
 # _pw_touches <file> — prints `unknown`, or `known` then one RAW entry per line.
 _pw_touches() {
-  LC_ALL=C awk '
+  env LC_ALL=C awk '
     BEGIN { fence = 0; insec = 0; count = 0; n = 0; bad = 0; unk = 0 }
     /^```/ { fence = !fence; if (insec) bad = 1; next }
     !fence && (/^# / || /^## /) { insec = 0; if ($0 == "## Touches") { count++; insec = 1 }; next }
@@ -2009,7 +2009,7 @@ _pw_touches() {
 
 # _pw_depends <file> — prints `missing` (absent or unparseable), `none`, or one id/path per line.
 _pw_depends() {
-  LC_ALL=C awk '
+  env LC_ALL=C awk '
     BEGIN { fence = 0; insec = 0; count = 0; n = 0; nn = 0; bad = 0 }
     /^```/ { fence = !fence; if (insec) bad = 1; next }
     !fence && (/^# / || /^## /) { insec = 0; if ($0 == "## Depends on") { count++; insec = 1 }; next }
@@ -2113,7 +2113,7 @@ _pw_expand() {
       printf '%s\n' "${a%/}" >> "$3.raw"
     done < "$_PW_TMP/rules"
   done < "$1"
-  LC_ALL=C sort -u "$3.raw" > "$3"
+  env LC_ALL=C sort -u "$3.raw" > "$3"
 }
 
 # _pw_intersect <setA> <setB> — true when an entry of A equals, contains or is contained by one of B.
@@ -2157,7 +2157,7 @@ plan_waves() {
   if [ -d "$input" ]; then
     resolve_folder "${input%/}" | while IFS= read -r line; do printf '%s\t%s\n' "$line" "$line"; done > "$_PW_TMP/plan"
   elif is_run_file "$input"; then
-    LC_ALL=C awk '
+    env LC_ALL=C awk '
       /^## Queue[ \t]*$/ { q = 1; next }
       /^## / { q = 0 }
       !q { next }
