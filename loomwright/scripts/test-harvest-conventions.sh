@@ -92,6 +92,9 @@
 #        always-true) ⇒ (T)'s combined --cap 0 run reports only the cap and loses the second cause.
 #        That line was reachable, correct, and NEVER EXECUTED until (t24): every rule-seeding
 #        fixture ran at --cap 5 and the only --cap 0 fixture seeded no rule.
+# (M-c3r) run the OLD bare `grep -o -- '--[a-z][a-z-]*'` flag extraction over a run whose --root sits
+#        under a `--`-bearing directory ⇒ it reports the path fragment as a composed flag, i.e. (c3)
+#        goes RED on a clean tree; the flag-position extractor (composed_flags) keeps it green.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -106,7 +109,7 @@ no() { echo "  FAIL: $1"; fail=$((fail+1)); }
 
 ROOT="$(mktemp -d)"
 trap 'rm -rf "$ROOT" 2>/dev/null' EXIT
-mktmp() { mktemp -d "$ROOT/d.XXXXXX"; }
+mktmp() { mktemp -d "${1:-$ROOT}/d.XXXXXX"; }   # mktmp [<parent>] — parent defaults to $ROOT
 
 if [ ! -f "$HARVEST" ]; then echo "test-harvest-conventions: $HARVEST not found"; exit 1; fi
 if ! command -v jq >/dev/null 2>&1; then
@@ -117,9 +120,10 @@ fi
 # --- fixture builders --------------------------------------------------------
 # new_repo — a temp git repo with CLAUDE.md/AGENT_GUIDELINES.md convention surfaces and a real git
 # index (the harvester filters derived scopes against `git ls-files`, so the fixture paths must
-# actually be tracked or every scope legitimately collapses to null).
-new_repo() {
-  local r; r="$(mktmp)"
+# actually be tracked or every scope legitimately collapses to null). Optional <parent> dir (default
+# $ROOT) lets a leg place the repo under a path of its choosing — (c3r) needs one containing `--`.
+new_repo() {   # new_repo [<parent>]
+  local r; r="$(mktmp "${1:-}")"
   mkdir -p "$r/.supervisor/postmortem" "$r/.agent/rules" "$r/src/a" "$r/src/b"
   printf 'CLAUDE guidance: counts live in one place. Rules are advisory.\n' > "$r/CLAUDE.md"
   printf 'Agent guidelines: fail closed on gates, fail safe on emitters.\n' > "$r/AGENT_GUIDELINES.md"
@@ -144,6 +148,17 @@ rec() {
 run_harvest() {   # run_harvest <repo> [args...] → sets OUT (text) and RC
   local repo="$1"; shift
   OUT="$( bash "$HARVEST" --root "$repo" "$@" 2>&1 )"; RC=$?
+}
+
+# composed_flags [<file>] — the `--flag` tokens in FLAG POSITION (line start, or after whitespace or a
+# quote: the harvester echoes its own argv as '--root') in <file> or stdin, one per line, sorted unique.
+# NOT a bare `grep -o -- '--[a-z][a-z-]*'`: the output carries absolute paths (the harvester's own path,
+# every --root), and that pattern matched INSIDE them, so a checkout or $TMPDIR under a directory whose
+# name contains `--` (Claude Code's scratchpad: `…-ai-agent-manager--claude-worktrees-<name>/…`) put
+# `--claude-worktrees-…` in the list and failed (c3) on a clean tree. Each line is prefixed with a space
+# so "line start" is just another whitespace boundary — no reliance on `^` under `grep -o`.
+composed_flags() {
+  sed 's/^/ /' "$@" | grep -oE -- "[[:space:]'\"]--[a-z][a-z-]*" | cut -c2- | env LC_ALL=C sort -u
 }
 
 store_sum() {   # a stable byte-signature of an entire .agent/rules/ tree
@@ -344,22 +359,68 @@ fi
 echo "(C) check stays null; no shell is ever synthesised into a rule"
 # ============================================================================
 grep -q 'check: null' "$ROOT/b.txt" && ok "(c1) every proposal reports check: null" || no "(c1) no 'check: null' line"
-if grep -q -- '--check' "$ROOT/b.txt"; then
+B_FLAGS="$(composed_flags "$ROOT/b.txt")"
+if grep -qx -- '--check' < <(printf '%s\n' "$B_FLAGS"); then
   no "(c2) a composed invocation passed --check — the harvester must never author one"
 else
   ok "(c2) no composed invocation passes --check (AC9b)"
 fi
 # The rule object may carry ONLY add-rule.sh's own flags — no new member can reach the frozen schema.
-badflag=0
-for f in $(grep -o -- '--[a-z][a-z-]*' "$ROOT/b.txt" | env LC_ALL=C sort -u); do
-  case "$f" in
-    --category|--statement|--enforcement|--applies-to|--source|--confirm|--supersedes|--check|--retract|--target|--reason|--replacement|--help) : ;;
-    --root|--session-id|--min-support|--cap|--no-writer|--ledger|--corpus-dir|--proposals-dir|--surface|--expect-repo|--add-rule|--distribution|--json) : ;;
-    *) echo "      unexpected flag in output: $f"; badflag=1 ;;
-  esac
-done
-[ "$badflag" -eq 0 ] && ok "(c3) no flag outside add-rule.sh's own set is ever composed (AC9 freeze)" \
+# unexpected_flags <flag-list> — prints each flag outside the frozen set (empty = freeze holds).
+unexpected_flags() {
+  local f
+  for f in $1; do
+    case "$f" in
+      --category|--statement|--enforcement|--applies-to|--source|--confirm|--supersedes|--check|--retract|--target|--reason|--replacement|--help) : ;;
+      --root|--session-id|--min-support|--cap|--no-writer|--ledger|--corpus-dir|--proposals-dir|--surface|--expect-repo|--add-rule|--distribution|--json) : ;;
+      *) printf '%s\n' "$f" ;;
+    esac
+  done
+}
+B_BAD="$(unexpected_flags "$B_FLAGS")"
+[ -n "$B_BAD" ] && printf '      unexpected flag in output: %s\n' $B_BAD
+[ -z "$B_BAD" ] && ok "(c3) no flag outside add-rule.sh's own set is ever composed (AC9 freeze)" \
   || no "(c3) an unrecognised flag appeared in a composed invocation"
+
+# (c3r) PATH INDEPENDENCE: the same run with --root under a directory whose name contains `--`, shaped
+# like Claude Code's scratchpad dir. (c3) used to fail there on a clean tree — the bare extraction read
+# `--claude-worktrees-c3r` out of the echoed absolute path as if it were a composed flag.
+DD_PARENT="$ROOT/-Users-x-ai-agent-manager--claude-worktrees-c3r"
+mkdir -p "$DD_PARENT"
+RDD="$(new_repo "$DD_PARENT")"
+cp "$R/.supervisor/postmortem/results.jsonl" "$RDD/.supervisor/postmortem/results.jsonl"
+run_harvest "$RDD" --session-id "fx-b" --min-support 4 --cap 3 --no-writer
+printf '%s\n' "$OUT" > "$ROOT/b_dd.txt"
+DD_FLAGS="$(composed_flags "$ROOT/b_dd.txt")"
+DD_BAD="$(unexpected_flags "$DD_FLAGS")"
+if ! grep -qF -- '--claude-worktrees-c3r' "$ROOT/b_dd.txt" \
+   || ! grep -qF -- '     invocation: add-rule.sh ' "$ROOT/b_dd.txt"; then
+  no "(c3r) premise: the run must echo the \`--\`-bearing --root path AND compose an add-rule.sh invocation; got: $(head -3 "$ROOT/b_dd.txt")"
+elif [ -n "$DD_BAD" ]; then
+  no "(c3r) a \`--\` in the --root path leaked into the flag list: $(printf '%s ' $DD_BAD)"
+else
+  ok "(c3r) (c3) stays green with --root under a \`--\`-bearing path — only flag-position tokens are read"
+fi
+# (c3q) the anchor did not blind the extractor: the composed add-rule.sh flags AND the quote-preceded
+# echoed argv flags are both still read, and a bogus flag in flag position is still caught.
+if grep -qx -- '--enforcement' < <(printf '%s\n' "$DD_FLAGS") \
+   && grep -qx -- '--root' < <(printf '%s\n' "$DD_FLAGS"); then
+  ok "(c3q) the extractor still reads composed flags (--enforcement) and quoted echoed argv (--root)"
+else
+  no "(c3q) the flag-position extractor dropped real flags: $(printf '%s ' $DD_FLAGS)"
+fi
+DD_BOGUS="$(sed 's/ --source / --bogus-flag --source /' "$ROOT/b_dd.txt" | composed_flags)"
+[ "$(unexpected_flags "$DD_BOGUS")" = "--bogus-flag" ] \
+  && ok "(c3q) a bogus flag spliced into the composed invocation is still caught — the freeze is not neutered" \
+  || no "(c3q) expected exactly --bogus-flag to be flagged, got: [$(unexpected_flags "$DD_BOGUS")]"
+# (M-c3r) MUTATION CONTROL: the OLD bare extraction on the same output DOES go red — so (c3r) is
+# load-bearing, not green because the fixture path happened to dodge the pattern.
+DD_OLD_BAD="$(unexpected_flags "$(grep -o -- '--[a-z][a-z-]*' "$ROOT/b_dd.txt" | env LC_ALL=C sort -u)")"
+if grep -q -- '^--claude-worktrees-' < <(printf '%s\n' "$DD_OLD_BAD"); then
+  ok "(M-c3r) CONFIRMED: the old \`grep -o -- '--[a-z][a-z-]*'\` reports the path fragment $(printf '%s ' $DD_OLD_BAD)as a composed flag on the same output — (c3r) is load-bearing"
+else
+  no "(M-c3r) REFUTED: the old pattern did not trip on the \`--\` path, so (c3r) proves nothing: [$DD_OLD_BAD]"
+fi
 
 # ============================================================================
 echo "(D) AC3b — stdin detachment, asserted TWO independent ways"
@@ -546,7 +607,7 @@ sed 's|ADD_RULE_ARGV+=(--source "$SOURCE_VAL")|ADD_RULE_ARGV+=(--check "bash mut
   "$HARVEST" > "$MUT3"
 if ! cmp -s "$HARVEST" "$MUT3" && bash -n "$MUT3" 2>/dev/null; then
   M3OUT="$( bash "$MUT3" --root "$R6" --session-id fx-m3 --min-support 4 --cap 5 --no-writer 2>&1 )" || true
-  if grep -q -- '--check' < <(printf '%s\n' "$M3OUT"); then
+  if grep -qx -- '--check' < <(printf '%s\n' "$M3OUT" | composed_flags); then
     ok "(M3) CONFIRMED: a synthesised --check IS visible in the output — (c2) would go RED and is load-bearing"
   else
     no "(M3) REFUTED: a synthesised --check was invisible, so (c2) proves nothing"
