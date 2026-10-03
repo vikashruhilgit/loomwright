@@ -36,6 +36,18 @@ carry the fixes.
 - `/automate --folder .supervisor/requirements/parallel-automate` enqueues 01, 02, 03, 04 only (checked with
   `automate-helpers.sh resolve-folder`). **Stop the run after 03 and do M1 by hand before anything else merges** —
   M1 must not happen in the middle of an `/automate` run.
+- **Amended 2026-10-03 (owner), after M1 steps 1–7:** M1 Verify → S1 (operator) → `meta-sync-followups/01–05`
+  (one release, then reinstall) → M2 (operator: carry the learning stores) → 05 → 06 → 07.
+  - M1 is done through step 7: #361 merged 2026-10-03 (`36f3730`). `loomwright-meta` holds the 381 run-history
+    files, byte-identical to main@`9a78b9c` (checked again after the merge). Verify is still open. Its one real
+    `/automate` cycle is item 04 here (small, read-only, needs no S1), via
+    `--resume automate-2026-10-01-142337 --limit 4`.
+  - S1 runs before the follow-ups, so it measures the engine as it is. Its answers (what a lane clone is missing)
+    may add scope to `meta-sync-followups/05`. The follow-ups must not run while S1 runs (S1's isolation and
+    contention checks).
+  - The follow-ups and M2 come before 05, because parallel lanes mean several clones pushing to `loomwright-meta`
+    at once. A clone has no allowlist, and two-writer conflicts plus the untested push fallbacks are exactly
+    what the follow-ups fix.
 
 ## Owner decisions (defaults recorded 2026-10-01 — change here, items read this section)
 - **P1 — merging: the owner merges each PR by hand.** Fact, not preference: the last 25 merged PRs all show
