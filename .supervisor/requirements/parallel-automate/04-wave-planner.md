@@ -96,3 +96,9 @@ one surfaces as a merge conflict, which item 06 handles by parking that lane.
 - `automate-loop/SKILL.md` §1.5: `automate-helpers.sh` is read-only toward the work it drives.
 
 ## Status: pending
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-03T13:17:52Z
+- **Brief:** .supervisor/jobs/done/2026-10-03-parallel-automate-04-wave-planner.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/365
