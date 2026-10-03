@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "companions": [
+    {"when": "loomwright/skills/*/SKILL.md", "add": ["loomwright/skills/SKILLS_INDEX.md"]},
+    {"when": "loomwright/agents/*.md", "add": ["loomwright/docs/prompt-token-budgets.json", "loomwright/docs/ARCHITECTURE_CONTRACTS.md"]},
+    {"when": "loomwright/agents/*", "new": true, "add": ["CLAUDE.md", "README.md", "AGENT_GUIDELINES.md", ".claude-plugin/README.md", ".claude-plugin/marketplace.json", "loomwright/.claude-plugin/plugin.json", "loomwright/commands/agent-help.md", "loomwright/docs/ARCHITECTURE.md", "loomwright/docs/ARCHITECTURE_CONTRACTS.md"]},
+    {"when": "loomwright/commands/*", "new": true, "add": ["CLAUDE.md", "README.md", "AGENT_GUIDELINES.md", ".claude-plugin/README.md", ".claude-plugin/marketplace.json", "loomwright/.claude-plugin/plugin.json", "loomwright/commands/agent-help.md", "loomwright/docs/ARCHITECTURE.md", "loomwright/docs/ARCHITECTURE_CONTRACTS.md"]},
+    {"when": "loomwright/skills/*", "new": true, "add": ["CLAUDE.md", "README.md", "AGENT_GUIDELINES.md", ".claude-plugin/README.md", ".claude-plugin/marketplace.json", "loomwright/.claude-plugin/plugin.json", "loomwright/commands/agent-help.md", "loomwright/docs/ARCHITECTURE.md", "loomwright/docs/ARCHITECTURE_CONTRACTS.md"]}
+  ]
+}
