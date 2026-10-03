@@ -155,8 +155,8 @@
 # CORE STAYS ORCA-FREE: this file and its test are the ONLY files under
 # loomwright/ that name `orca` outside documentation — see
 # loomwright/docs/ARCHITECTURE_CONTRACTS.md §"Portability" and the
-# `grep -rl orca loomwright/ --exclude-dir=adapters` check
-# test-orca-mirror.sh runs.
+# core-cleanliness check test-orca-mirror.sh runs (leg L: `git ls-files`
+# under loomwright/ outside adapters/, with a `grep -rl` fallback off git).
 #
 # Exit: 0, always.
 

@@ -14,9 +14,13 @@
 #   7. argument errors    — `--root` with no value, an unknown flag, a non-directory root -> red
 #   8. fix hint           — a flagged builtin (`read`) is pointed at `export LC_ALL=C`, not only env
 #   9. the real tree      — green
+#  10. git mode           — a git-repo root is enumerated the way CI sees it: an offender in a
+#                           .gitignore'd path is NOT reported (control: the same line in a tracked
+#                           file and in an untracked-unignored file IS); an index entry deleted from
+#                           disk is skipped; a root nested below a work-tree top level walks instead
 #
 # The fixture lines below spell `@LC_ALL=` (stripped when written) so this file itself stays green
-# under the gate it tests — test 7 scans the real tree, this file included.
+# under the gate it tests — test 9 scans the real tree, this file included.
 # Portability: bash 3.2 safe (macOS) + Linux CI. No sed -i, no mapfile, offline.
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../loomwright/scripts/hermetic-test-env.sh"
 set -uo pipefail
@@ -144,6 +148,37 @@ run; rc=$?
 echo "== 9. the real tree is green =="
 bash "$CHECK" > "$tmp/out" 2>&1; rc=$?
 [ "$rc" -eq 0 ] && ok "9. real tree: $(cat "$tmp/out")" || no "9. real tree rc=$rc: $(cat "$tmp/out")"
+
+echo "== 10. git mode: .gitignore'd files are not scanned, tracked + untracked-unignored are =="
+# The real failure: a find walk read stale salvage copies under the ignored .supervisor/ that a CI
+# checkout never has, so local runs went red where CI was green. Each sub-case below goes red if
+# the enumeration reverts to the walk (10a) or over-narrows to tracked-only (10c).
+if command -v git >/dev/null 2>&1; then
+  bad_line="$(printf 'x="$(@LC_ALL=C sort f; echo)"' | sed 's/@//')"
+  git_tree() {
+    fresh_tree; mkdir -p "$tmp/r/ignored/deep" "$tmp/r/tracked"
+    printf 'ignored/\n' > "$tmp/r/.gitignore"
+    printf '%s\n' "$bad_line" > "$tmp/r/ignored/deep/stale.sh"
+    git -C "$tmp/r" init -q && git -C "$tmp/r" add .gitignore scripts/good.sh
+  }
+  git_tree; run; rc=$?
+  [ "$rc" -eq 0 ] && grep -q '1/1 scanned shell files (git mode)' "$tmp/out" \
+    && ok "10a. an offender under a .gitignore'd path is not scanned (git mode, 1/1)" || no "10a. rc=$rc: $(cat "$tmp/out")"
+  git_tree; printf '%s\n' "$bad_line" > "$tmp/r/tracked/live.sh"; git -C "$tmp/r" add tracked/live.sh; run; rc=$?
+  [ "$rc" -ne 0 ] && grep -qF 'OFFENDER tracked/live.sh:1: ' "$tmp/out" && ! grep -q 'OFFENDER ignored/' "$tmp/out" \
+    && ok "10b. control: the same line in a tracked file is named (and only it)" || no "10b. rc=$rc: $(cat "$tmp/out")"
+  git_tree; printf '%s\n' "$bad_line" > "$tmp/r/tracked/new.sh"; run; rc=$?
+  [ "$rc" -ne 0 ] && grep -qF 'OFFENDER tracked/new.sh:1: ' "$tmp/out" \
+    && ok "10c. control: an untracked-but-not-ignored file is named before it is staged" || no "10c. rc=$rc: $(cat "$tmp/out")"
+  git_tree; printf ':\n' > "$tmp/r/tracked/gone.sh"; git -C "$tmp/r" add tracked/gone.sh; rm -f "$tmp/r/tracked/gone.sh"; run; rc=$?
+  [ "$rc" -eq 0 ] && grep -q '1/1 scanned shell files (git mode)' "$tmp/out" \
+    && ok "10d. an index entry deleted from disk is skipped, not an error" || no "10d. rc=$rc: $(cat "$tmp/out")"
+  git_tree; bash "$CHECK" --root "$tmp/r/ignored" > "$tmp/out" 2>&1; rc=$?
+  [ "$rc" -ne 0 ] && grep -qF 'OFFENDER deep/stale.sh:1: ' "$tmp/out" \
+    && ok "10e. a root below the work-tree top level walks (no inherited ignore rules scanning nothing)" || no "10e. rc=$rc: $(cat "$tmp/out")"
+else
+  no "10. git is not on PATH — cannot exercise git mode"
+fi
 
 echo
 echo "test-check-locale-prefix: $pass passed, $fail failed"
