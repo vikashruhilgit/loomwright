@@ -502,8 +502,13 @@ count_unconsumed_dreaming() {
     log_has_signal "$f" dreaming || continue
     id="$(basename "$f" .jsonl)"
     # grep -qx against the newline-separated id list: an exact whole-line match,
-    # so one session id can never be a prefix of another's.
-    printf '%s\n' "$consumed" | grep -qxF -- "$id" && continue
+    # so one session id can never be a prefix of another's. A here-string, never
+    # `printf ... | grep -q`: grep -q exits on its first match, and a writer still
+    # feeding the pipe then hits EPIPE — with SIGPIPE ignored (as CI runners hand
+    # it down) bash prints "printf: write error: Broken pipe" to stderr, which
+    # broke the --json stderr-is-empty contract intermittently. Every membership
+    # test in this file uses the same form; test-no-pipefail-grep-q.sh gates it.
+    grep -qxF -- "$id" <<<"$consumed" && continue
     n=$((n + 1))
   done
   printf '%s' "$n"
@@ -524,7 +529,7 @@ pending_from_merged() {
             "$LEDGER_FILE" 2>/dev/null || true)"
   for n in $merged; do
     is_uint "$n" || continue
-    printf '%s\n' "$have" | grep -qx -- "$n" || missing=$((missing + 1))
+    grep -qx -- "$n" <<<"$have" || missing=$((missing + 1))
   done
   printf '%s' "$missing"
 }
@@ -981,7 +986,7 @@ cmd_unconsumed() {
         # any other id — the same predicate count_unconsumed_dreaming uses.
         # (No apostrophes in comments inside this command substitution: bash
         # 3.2 treats an unpaired quote here as an unterminated string.)
-        printf '%s\n' "$consumed" | grep -qxF -- "$id" && continue
+        grep -qxF -- "$id" <<<"$consumed" && continue
       fi
       m="$(file_mtime "$f")"
       is_uint "$m" || continue
@@ -1060,7 +1065,7 @@ cmd_pending_ids() {
     # /dreaming half: signal-carrying and not yet consumed (exact whole-line
     # match, the count_unconsumed_dreaming predicate).
     if log_has_signal "$f" dreaming; then
-      if ! printf '%s\n' "$consumed" | grep -qxF -- "$id"; then
+      if ! grep -qxF -- "$id" <<<"$consumed"; then
         printf '%s\n' "$id"
         continue
       fi
