@@ -93,6 +93,17 @@
 #      AC-mandated mutation control — a read-token-ledger.sh mutant whose numf()
 #      always returns 0 makes the known-over-ceiling seam fixture wrongly print OK,
 #      proving the breach-parks check is load-bearing, not vacuous.
+#   W. plan-waves (parallel-automate/04, read-only wave planner; fixtures in mktemp -d with --root
+#      = the fixture root): disjoint items share a wave; literal-prefix intersection; companion
+#      expansion (file rules, "new" rules, directory entries); dependency ordering incl. an in-set
+#      ../other dep; run-file merged-done / skipped / ABANDONED / two-heading done; parked, pending
+#      and transitive blocks; missing/unknown/malformed Touches runs alone; undeclared queue = one
+#      per wave; explicit + implicit cycles, unknown ids and missing plan-set items exit 1 with empty
+#      stdout; --max; malformed
+#      or jq-less companions fail closed; fenced sections ignored; the harness-port shape; the
+#      five-item fixture byte-for-byte; usage errors; read-only (spy git/gh); every real
+#      parallel-automate Touches parses (SKIP when the gitignored queue is absent); the shipped
+#      companions.json new rules cover check-doc-currency.sh FILES; two mutation controls.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -3103,6 +3114,378 @@ o="$(bm_entry "$BM_T/nm/work")"
 case "$o" in "meta-entry: failed — mode unknown (a malformed mode line"*) ok "BM8 an indented mode line ⇒ '$o'" ;; *) no "BM8 indented mode line ⇒ '$o'" ;; esac
 rm -rf "$BM_T"
 
+
+# =============================================================================
+echo "== W. plan-waves (parallel-automate/04: read-only wave planner; fixtures under mktemp -d, --root = fixture root) =="
+W_T="$(mktemp -d)"
+W_REPO="$(cd "$HERE/../.." && pwd)"
+# w_item <path under W_T> <Depends body|-> <Touches body|-> [status line]  ('-' omits the section; bodies use printf %b)
+w_item() {
+  mkdir -p "$(dirname "$W_T/$1")"
+  {
+    echo "# Item $1"
+    if [ -n "${4:-}" ]; then echo; echo "## Status: $4"; fi
+    if [ "$2" != - ]; then echo; echo "## Depends on"; printf '%b\n' "$2"; fi
+    if [ "$3" != - ]; then echo; echo "## Touches"; printf '%b\n' "$3"; fi
+    echo; echo "## Notes"; echo "prose"
+  } > "$W_T/$1"
+}
+# w_run <root> <helper> <input> <args...> — stdout in W_OUT, stderr in W_ERR, exit code in W_RC
+w_run() {
+  local root="$1" helper="$2" input="$3"; shift 3
+  W_RC=0
+  W_OUT="$(bash "$helper" plan-waves "$input" --root "$root" "$@" 2>"$W_T/err")" || W_RC=$?
+  W_ERR="$(cat "$W_T/err")"
+}
+w_list() { printf '%s\n' "$@" > "$W_T/list"; }
+w_expect() {  # <label> <expected stdout (printf %b)>
+  local want; want="$(printf '%b' "$2")"
+  if [ "$W_RC" -eq 0 ] && [ "$W_OUT" = "$want" ]; then ok "$1"; else no "$1 (rc=$W_RC) got: $(printf '%s' "$W_OUT" | tr '\n' '|') err: $W_ERR"; fi
+}
+w_fails() {  # <label> <stderr substring>
+  if [ "$W_RC" -eq 1 ] && [ -z "$W_OUT" ] && grep -qF -- "$2" <<<"$W_ERR"; then ok "$1"; else no "$1 (rc=$W_RC out='$W_OUT' err='$W_ERR')"; fi
+}
+
+# W1 disjoint items share a wave; the absent companion table is announced on stderr and the plan proceeds.
+rm -rf "$W_T/q"
+w_item q/01-a.md none 'a/x.sh'
+w_item q/02-b.md none 'b/y.sh'
+w_list q/01-a.md q/02-b.md
+w_run "$W_T" "$H" "$W_T/list" --max 3
+w_expect "W1 disjoint items share a wave" 'wave 1: q/01-a.md q/02-b.md'
+case "$W_ERR" in *"plan-waves: no $W_T/.agent/companions.json — no companion expansion"*|*"/.agent/companions.json — no companion expansion"*) ok "W1 absent companions.json ⇒ one stderr note" ;; *) no "W1 absent companions note missing: $W_ERR" ;; esac
+
+# W2 prefix-intersecting items never share a wave (a/ vs a/b.sh; a/b vs a/b).
+rm -rf "$W_T/q"
+w_item q/01-a.md none 'a/'
+w_item q/02-b.md none 'a/b.sh'
+w_item q/03-c.md none 'z/b'
+w_item q/04-d.md none 'z/b'
+w_list q/01-a.md q/02-b.md q/03-c.md q/04-d.md
+w_run "$W_T" "$H" "$W_T/list" --max 4
+w_expect "W2 prefix/equal entries intersect (a/ vs a/b.sh; z/b vs z/b)" 'wave 1: q/01-a.md q/03-c.md\nwave 2: q/02-b.md q/04-d.md'
+
+# W3 companion expansion separates two items editing DIFFERENT x/skills/<s>/SKILL.md (fixture table);
+#    mutation control (ii): the same items under a root with NO companions.json share a wave.
+W_C="$W_T/croot"; W_NC="$W_T/nocroot"
+mkdir -p "$W_C/.agent" "$W_NC"
+cat > "$W_C/.agent/companions.json" <<'JSON'
+{"schema_version": 1, "companions": [
+  {"when": "x/skills/*/SKILL.md", "add": ["x/skills/SKILLS_INDEX.md"]},
+  {"when": "x/agents/*", "new": true, "add": ["x/INDEX.md"]}
+]}
+JSON
+for r in "$W_C" "$W_NC"; do
+  mkdir -p "$r/q" "$r/x/agents"; : > "$r/x/agents/old.md"
+  printf '# s1\n## Depends on\nnone\n## Touches\nx/skills/s1/SKILL.md\n' > "$r/q/01-s1.md"
+  printf '# s2\n## Depends on\nnone\n## Touches\nx/skills/s2/SKILL.md\n' > "$r/q/02-s2.md"
+done
+printf 'q/01-s1.md\nq/02-s2.md\n' > "$W_T/list"
+W_SEP_WANT='wave 1: q/01-s1.md\nwave 2: q/02-s2.md'
+w_run "$W_C" "$H" "$W_T/list" --max 3
+w_expect "W3 companion expansion separates two different x/skills/<s>/SKILL.md items" "$W_SEP_WANT"
+w_run "$W_NC" "$H" "$W_T/list" --max 3
+if [ "$W_OUT" != "$(printf '%b' "$W_SEP_WANT")" ] && [ "$W_OUT" = "wave 1: q/01-s1.md q/02-s2.md" ]; then
+  ok "W3 MUTATION CONTROL (ii): companion table removed ⇒ the separation assertion turns red (they share wave 1) — the table is load-bearing"
+else no "W3 mutation control (ii) did not turn red: $W_OUT"; fi
+
+# W4 a "new": true rule fires for a missing path and not for an existing one.
+printf '# n\n## Depends on\nnone\n## Touches\nx/agents/new.md\n' > "$W_C/q/03-new.md"
+printf '# o\n## Depends on\nnone\n## Touches\nx/agents/old.md\n' > "$W_C/q/04-old.md"
+printf '# i\n## Depends on\nnone\n## Touches\nx/INDEX.md\n' > "$W_C/q/05-idx.md"
+printf 'q/05-idx.md\nq/03-new.md\n' > "$W_T/list"
+w_run "$W_C" "$H" "$W_T/list" --max 3
+w_expect "W4 \"new\" rule fires for a missing file (x/agents/new.md drags x/INDEX.md)" 'wave 1: q/05-idx.md\nwave 2: q/03-new.md'
+printf 'q/05-idx.md\nq/04-old.md\n' > "$W_T/list"
+w_run "$W_C" "$H" "$W_T/list" --max 3
+w_expect "W4 \"new\" rule does NOT fire for an existing file (x/agents/old.md)" 'wave 1: q/05-idx.md q/04-old.md'
+# A directory entry D/ fires a rule whose literal prefix D/ covers (x/agents/ vs "x/agents/*"), new rules included.
+printf '# d\n## Depends on\nnone\n## Touches\nx/agents/\n' > "$W_C/q/06-dir.md"
+printf 'q/06-dir.md\nq/05-idx.md\n' > "$W_T/list"
+w_run "$W_C" "$H" "$W_T/list" --max 3
+w_expect "W4 directory entry x/agents/ fires the new rule ⇒ drags x/INDEX.md" 'wave 1: q/06-dir.md\nwave 2: q/05-idx.md'
+
+# W5 dependency ordering across waves, incl. an in-set ../other/NN-x.md dependency (physical-path key).
+rm -rf "$W_T/q" "$W_T/other"
+w_item q/01-a.md '../other/05-y.md' 'a'
+w_item q/02-b.md '1' 'b'
+w_item other/05-y.md none 'y'
+w_list q/01-a.md q/02-b.md other/05-y.md
+w_run "$W_T" "$H" "$W_T/list" --max 3
+w_expect "W5 deps order the waves (../other dep in the plan set; numeric id 1 ⇒ 01-a.md)" 'wave 1: other/05-y.md\nwave 2: q/01-a.md\nwave 3: q/02-b.md'
+
+# W6 run-file input: plain [x] ⇒ merged-done; `# skipped:` row and an ABANDONED stamp ⇒ never landed;
+#    a closed-out file (pending heading then done heading) ⇒ merged-done.
+rm -rf "$W_T/q"
+w_item q/01-a.md none 'a'
+w_item q/02-b.md none 'b'
+w_item q/03-c.md '01' 'c'
+w_item q/04-d.md '02' 'd'
+w_item q/05-e.md '06' 'e'
+w_item q/06-f.md none 'f' 'done_with_escalation — ABANDONED (- [x] q/06-f.md  # abandoned: x)'
+w_item q/07-g.md none 'g' 'pending'
+printf '\n## Status: done\n' >> "$W_T/q/07-g.md"
+w_item q/08-h.md '07' 'h'
+cat > "$W_T/run.md" <<'RUN'
+# Automate Run: automate-test
+## Status: running
+## Queue
+- [x] q/01-a.md  # skipped: owner said so
+- [x] q/02-b.md
+- [ ] q/03-c.md
+- [ ] q/04-d.md
+- [ ] q/05-e.md
+- [ ] q/08-h.md
+## Current
+RUN
+w_run "$W_T" "$H" "$W_T/run.md" --max 3
+w_expect "W6 run file: merged-done / skipped / ABANDONED / two-heading done" 'wave 1: q/04-d.md q/08-h.md\nblocked q/03-c.md: waits on 01 (skipped — never landed)\nblocked q/05-e.md: waits on 06 (abandoned — never landed)'
+
+# W6b the owner's Queue row mark outranks the file stamp: a `# skipped:` / `# abandoned:` row over a
+#     plain done / done_with_escalation stamp (Phase 4.5 writes those BEFORE any merge) never landed.
+rm -rf "$W_T/q"
+w_item q/01-a.md none 'a' 'done_with_escalation'
+w_item q/02-b.md '01' 'b'
+w_item q/03-c.md none 'c' 'done_with_escalation'
+w_item q/04-d.md '03' 'd'
+w_item q/05-e.md none 'e' 'done'
+w_item q/06-f.md '05' 'f'
+cat > "$W_T/run.md" <<'RUN'
+# Automate Run: automate-test
+## Status: running
+## Queue
+- [x] q/01-a.md  # skipped: owner said so
+- [x] q/03-c.md  # abandoned: superseded
+- [x] q/05-e.md  # skipped: dropped
+- [ ] q/02-b.md
+- [ ] q/04-d.md
+- [ ] q/06-f.md
+## Current
+RUN
+w_run "$W_T" "$H" "$W_T/run.md" --max 3
+w_expect "W6b skipped/abandoned row over a done(_with_escalation) stamp ⇒ never landed (row wins)" 'blocked q/02-b.md: waits on 01 (skipped — never landed)\nblocked q/04-d.md: waits on 03 (abandoned — never landed)\nblocked q/06-f.md: waits on 05 (skipped — never landed)'
+
+# W7 parked dependency; out-of-set pending dependency; transitive block.
+rm -rf "$W_T/q"
+w_item q/01-a.md '02' 'a'
+w_item q/02-b.md none 'b' 'parked (waits on S1)'
+w_item q/03-c.md '04' 'c'
+w_item q/04-d.md none 'd' 'pending'
+w_item q/05-e.md '01' 'e'
+w_list q/01-a.md q/03-c.md q/05-e.md
+w_run "$W_T" "$H" "$W_T/list" --max 3
+w_expect "W7 parked ⇒ depends on parked; pending out-of-set ⇒ waits on; transitive ⇒ waits on its id" 'blocked q/01-a.md: depends on parked 02\nblocked q/03-c.md: waits on 04\nblocked q/05-e.md: waits on 01'
+
+# W8 missing / unknown / malformed Touches runs ALONE (the item in the middle of three disjoint ones).
+w_alone() {  # <label> <Touches body|-> [helper]
+  rm -rf "$W_T/q"
+  w_item q/01-a.md none 'a'
+  w_item q/02-b.md none "$2"
+  w_item q/03-c.md none 'c'
+  w_list q/01-a.md q/02-b.md q/03-c.md
+  w_run "$W_T" "${3:-$H}" "$W_T/list" --max 3
+}
+W_ALONE_WANT='wave 1: q/01-a.md q/03-c.md\nwave 2: q/02-b.md'
+w_alone missing -; w_expect "W8 missing Touches runs alone" "$W_ALONE_WANT"
+w_alone unknown 'unknown'; w_expect "W8 'unknown' Touches runs alone" "$W_ALONE_WANT"
+w_alone backtick '`b/x.sh`'; w_expect "W8 backtick Touches line ⇒ unknown, runs alone" "$W_ALONE_WANT"
+w_alone glob 'b/*.sh'; w_expect "W8 glob Touches line ⇒ unknown, runs alone" "$W_ALONE_WANT"
+w_alone pipe 'a|b'; w_expect "W8 'a|b' Touches line ⇒ unknown, runs alone" "$W_ALONE_WANT"
+w_alone prose 'b/x.sh and friends'; w_expect "W8 trailing prose ⇒ unknown, runs alone" "$W_ALONE_WANT"
+w_alone bullet '- b/x.sh'; w_expect "W8 bullet ⇒ unknown, runs alone" "$W_ALONE_WANT"
+w_alone mixed 'b/x.sh\nunknown'; w_expect "W8 unknown mixed with a path ⇒ unknown, runs alone" "$W_ALONE_WANT"
+w_alone empty ''; w_expect "W8 empty section ⇒ unknown, runs alone" "$W_ALONE_WANT"
+w_alone dotdot 'b/../x'; w_expect "W8 '..' segment ⇒ unknown, runs alone" "$W_ALONE_WANT"
+w_alone dot '.'; w_expect "W8 bare '.' (whole repo) ⇒ unknown, runs alone" "$W_ALONE_WANT"
+w_alone dot-dir './'; w_expect "W8 './' ⇒ unknown, runs alone" "$W_ALONE_WANT"
+w_alone dot-lead './b/x.sh'; w_expect "W8 leading './' segment ⇒ unknown, runs alone" "$W_ALONE_WANT"
+w_alone dot-mid 'b/./x.sh'; w_expect "W8 inner '.' segment ⇒ unknown, runs alone" "$W_ALONE_WANT"
+w_alone dot-name 'b/.x.sh'; w_expect "W8 a dot-file name is NOT a '.' segment (still known)" 'wave 1: q/01-a.md q/02-b.md q/03-c.md'
+w_alone duplicate 'b/x.sh\n\n## Touches\nb/y.sh'; w_expect "W8 heading twice ⇒ unknown, runs alone" "$W_ALONE_WANT"
+w_alone blank-lines 'b/x.sh\n\nb/y.sh'; w_expect "W8 blank lines inside a section are ignored (still known)" 'wave 1: q/01-a.md q/02-b.md q/03-c.md'
+# An unknown item first takes wave 1 alone.
+rm -rf "$W_T/q"; w_item q/01-a.md none -; w_item q/02-b.md none 'b'; w_item q/03-c.md none 'c'
+w_list q/01-a.md q/02-b.md q/03-c.md
+w_run "$W_T" "$H" "$W_T/list" --max 3
+w_expect "W8 a missing-Touches FIRST item takes its wave alone" 'wave 1: q/01-a.md\nwave 2: q/02-b.md q/03-c.md'
+# MUTATION CONTROL (i): a helper copy where a MISSING Touches is an EMPTY set must turn "missing runs alone" red.
+sed 's/print "unknown"; exit }   # PW_MISSING_TOUCHES/print "known"; exit }   # PW_MISSING_TOUCHES/' "$H" > "$W_T/mut-empty.sh"
+if [ -s "$W_T/mut-empty.sh" ] && ! cmp -s "$H" "$W_T/mut-empty.sh" && bash -n "$W_T/mut-empty.sh"; then
+  w_alone missing - "$W_T/mut-empty.sh"
+  if [ "$W_OUT" != "$(printf '%b' "$W_ALONE_WANT")" ]; then
+    ok "W8 MUTATION CONTROL (i): missing-Touches-as-empty-set mutant turns 'missing runs alone' red ($(printf '%s' "$W_OUT" | tr '\n' '|'))"
+  else no "W8 mutation control (i) stayed green — the assertion is vacuous"; fi
+  w_alone missing -; w_expect "W8 mutation control (i): the REAL helper stays green" "$W_ALONE_WANT"
+else no "W8 mutation control (i) inconclusive: mutant empty, identical or not valid bash"; fi
+
+# W9 undeclared queue ⇒ one item per wave in queue order.
+rm -rf "$W_T/q"; w_item q/01-a.md - 'a'; w_item q/02-b.md - 'b'; w_item q/03-c.md - 'c'
+w_run "$W_T" "$H" "$W_T/q" --max 3
+w_expect "W9 undeclared queue (dir input) ⇒ one item per wave in order" "wave 1: $W_T/q/01-a.md\nwave 2: $W_T/q/02-b.md\nwave 3: $W_T/q/03-c.md"
+
+# W10 cycles: explicit and via the implicit rule ⇒ exit 1, stdout empty, items named.
+rm -rf "$W_T/q"; w_item q/01-a.md '02' 'a'; w_item q/02-b.md '01' 'b'
+w_list q/01-a.md q/02-b.md; w_run "$W_T" "$H" "$W_T/list" --max 3
+w_fails "W10 explicit cycle ⇒ exit 1, empty stdout" 'plan-waves: dependency cycle: q/01-a.md q/02-b.md'
+rm -rf "$W_T/q"; w_item q/01-a.md '02' 'a'; w_item q/02-b.md - 'b'; w_item q/03-c.md none 'c'
+w_list q/01-a.md q/02-b.md q/03-c.md; w_run "$W_T" "$H" "$W_T/list" --max 3
+w_fails "W10 implicit-rule cycle (01 ⇒ 02, undeclared 02 ⇒ every earlier) ⇒ exit 1, both named, 03 not" 'plan-waves: dependency cycle: q/01-a.md q/02-b.md'
+case "$W_ERR" in *03-c.md*) no "W10 implicit cycle named a non-cycle item: $W_ERR" ;; *) ok "W10 the cycle message names only the cycle's items" ;; esac
+
+# W11 unknown dependency id: zero matches and two matches ⇒ exit 1, stdout empty.
+rm -rf "$W_T/q"; w_item q/01-a.md '09' 'a'
+w_list q/01-a.md; w_run "$W_T" "$H" "$W_T/list" --max 3
+w_fails "W11 zero-match id ⇒ unknown dependency" 'plan-waves: unknown dependency 09 in q/01-a.md'
+w_item q/01-a.md '5' 'a'; w_item q/05-x.md none 'x'; w_item q/05-y.md none 'y'
+w_run "$W_T" "$H" "$W_T/list" --max 3
+w_fails "W11 two-match id ⇒ unknown dependency" 'plan-waves: unknown dependency 5 in q/01-a.md'
+w_item q/01-a.md '../nowhere/01-z.md' 'a'; w_run "$W_T" "$H" "$W_T/list" --max 3
+w_fails "W11 a dependency path that is not an existing file ⇒ unknown dependency" 'plan-waves: unknown dependency ../nowhere/01-z.md in q/01-a.md'
+
+# W11b a plan-set item that names no file on disk ⇒ exit 1 `item not found: <item>`, stdout empty
+#      (an item-list line, and an unchecked run-file Queue row).
+rm -rf "$W_T/q"; w_item q/01-a.md none 'a'
+w_list q/01-a.md q/02-gone.md; w_run "$W_T" "$H" "$W_T/list" --max 3
+w_fails "W11b item-list line naming a missing file ⇒ exit 1, item not found" 'plan-waves: item not found: q/02-gone.md'
+printf '# Automate Run: automate-test\n## Status: running\n## Queue\n- [ ] q/01-a.md\n- [ ] q/03-gone.md\n## Current\n' > "$W_T/run-missing.md"
+w_run "$W_T" "$H" "$W_T/run-missing.md" --max 3
+w_fails "W11b run-file Queue row naming a missing file ⇒ exit 1, item not found" 'plan-waves: item not found: q/03-gone.md'
+
+# W12 --max respected: three disjoint items, --max 2 ⇒ 2 + 1.
+rm -rf "$W_T/q"; w_item q/01-a.md none 'a'; w_item q/02-b.md none 'b'; w_item q/03-c.md none 'c'
+w_list q/01-a.md q/02-b.md q/03-c.md; w_run "$W_T" "$H" "$W_T/list" --max 2
+w_expect "W12 --max 2 over three disjoint items ⇒ waves of 2 + 1" 'wave 1: q/01-a.md q/02-b.md\nwave 2: q/03-c.md'
+
+# W13 companions.json malformed ⇒ exit 1 companions_malformed, stdout empty (every bad shape).
+W_M="$W_T/mroot"; mkdir -p "$W_M/.agent"; cp -R "$W_T/q" "$W_M/q"
+for bad in 'not json' '[]' '{"schema_version":2,"companions":[]}' '{"schema_version":1}' \
+  '{"schema_version":1,"companions":[{"when":"a/*"}]}' '{"schema_version":1,"companions":[{"when":"a/*","add":["b"],"new":false}]}' \
+  '{"schema_version":1,"companions":[{"when":"a/*","add":["b c"]}]}' '{"schema_version":1,"companions":[{"when":"a","add":["b"],"x":1}]}' \
+  '{"schema_version":1,"companions":[{"when":"./a/*","add":["b"]}]}' '{"schema_version":1,"companions":[{"when":"a/./*","add":["b"]}]}' \
+  '{"schema_version":1,"companions":[{"when":"a/*","add":["./b"]}]}' '{"schema_version":1,"companions":[{"when":"a/*","add":["b/../c"]}]}' \
+  '{"schema_version":1,"companions":[{"when":"a/*","add":["."]}]}' '{"schema_version":1,"companions":[{"when":"a/*","add":["/b"]}]}' \
+  '{"schema_version":1,"companions":[{"when":"a//*","add":["b"]}]}' \
+  '{"schema_version":1,"companions":[{"when":"/a/*","add":["b"]}]}' '{"schema_version":1,"companions":[{"when":"a/../*","add":["b"]}]}'; do
+  printf '%s\n' "$bad" > "$W_M/.agent/companions.json"
+  w_run "$W_M" "$H" "$W_T/list" --max 2
+  w_fails "W13 malformed companions.json '$bad' ⇒ exit 1" 'plan-waves: companions_malformed'
+done
+# Exactly ONE JSON document: a malformed first document followed by a valid one must not pass on
+# the strength of the last document alone (and two valid documents are not that shape either).
+printf '%s\n%s\n' '{"schema_version":2,"companions":[{"when":"a/*","add":["b"]}]}' '{"schema_version":1,"companions":[]}' > "$W_M/.agent/companions.json"
+w_run "$W_M" "$H" "$W_T/list" --max 2
+w_fails "W13 two documents, malformed first + valid second ⇒ exit 1" 'plan-waves: companions_malformed'
+printf '%s\n%s\n' '{"schema_version":1,"companions":[]}' '{"schema_version":1,"companions":[]}' > "$W_M/.agent/companions.json"
+w_run "$W_M" "$H" "$W_T/list" --max 2
+w_fails "W13 two valid documents ⇒ exit 1 (exactly one document)" 'plan-waves: companions_malformed'
+printf '{"schema_version":1,"companions":[]}\n' > "$W_M/.agent/companions.json"
+W_RC=0; W_OUT="$(LOOMWRIGHT_JQ_BIN=/nonexistent/jq bash "$H" plan-waves "$W_T/list" --root "$W_M" --max 2 2>"$W_T/err")" || W_RC=$?; W_ERR="$(cat "$W_T/err")"
+w_fails "W13 jq absent while companions.json exists ⇒ exit 1 companions_malformed" 'plan-waves: companions_malformed jq not found'
+
+# W14 a fenced `## Touches` is ignored; a real one beside a fenced one still parses.
+rm -rf "$W_T/q"
+mkdir -p "$W_T/q"; printf '# a\n## Depends on\nnone\n\n## Example\n```markdown\n## Touches\na/x\n```\n' > "$W_T/q/01-a.md"
+w_item q/02-b.md none 'b'
+printf '# c\n## Depends on\nnone\n## Example\n```\n## Touches\nb\n```\n## Touches\nc\n' > "$W_T/q/03-c.md"
+w_list q/01-a.md q/02-b.md q/03-c.md; w_run "$W_T" "$H" "$W_T/list" --max 3
+w_expect "W14 fenced ## Touches ignored (01 unknown ⇒ alone); a real section after a fenced one parses (03 known)" 'wave 1: q/01-a.md\nwave 2: q/02-b.md q/03-c.md'
+
+# W15 harness-port shape (fixture copy): 01→04→06, 02, 03 independent, 05→07 sharing skills/review-heal/SKILL.md.
+rm -rf "$W_T/hp"
+w_item hp/01-worker-rules.md none 'agents/worker.md\ndocs/prompt-token-budgets.json'
+w_item hp/02-not-ready-stamp.md none 'scripts/automate-helpers.sh'
+w_item hp/03-cited-line-premise.md none 'agents/worker.md'
+w_item hp/04-not-verified-transport.md '01' 'agents/worker.md\ndocs/RESULT_SCHEMAS.md'
+w_item hp/05-dismissed-findings.md none 'skills/review-heal/SKILL.md\ndocs/RESULT_SCHEMAS.md'
+w_item hp/06-shared-local-services.md '04' 'agents/worker.md'
+w_item hp/07-ci-trust-probe.md '05' 'skills/review-heal/SKILL.md'
+w_run "$W_T" "$H" "$W_T/hp" --max 3
+w_wave() { printf '%s\n' "$W_OUT" | awk -v it="$1" '/^wave / { for (i = 3; i <= NF; i++) if ($i ~ ("/" it "$")) { sub(":", "", $2); print $2 } }'; }
+w5="$(w_wave 05-dismissed-findings.md)"; w7="$(w_wave 07-ci-trust-probe.md)"; w1="$(w_wave 01-worker-rules.md)"; w3="$(w_wave 03-cited-line-premise.md)"
+if [ "$W_RC" -eq 0 ] && [ -n "$w5" ] && [ -n "$w7" ] && [ "$w7" -gt "$w5" ]; then ok "W15 harness-port: 07 lands strictly after 05 (waves $w5 < $w7)"; else no "W15 07 not after 05: $W_OUT"; fi
+if [ -n "$w1" ] && [ -n "$w3" ] && [ "$w1" != "$w3" ]; then ok "W15 harness-port: 03 never shares a wave with 01 (both touch agents/worker.md)"; else no "W15 03 shares a wave with 01: $W_OUT"; fi
+[ "$(printf '%s\n' "$W_OUT" | grep -c '^blocked')" -eq 0 ] && ok "W15 harness-port: nothing blocked" || no "W15 harness-port blocked lines: $W_OUT"
+
+# W16 the five-item acceptance fixture (two disjoint pairs + one dependent, --max 3), byte-for-byte.
+rm -rf "$W_T/q"
+w_item q/01-a.md none 'p/'
+w_item q/02-b.md none 'r/'
+w_item q/03-c.md none 'p/x.sh'
+w_item q/04-d.md none 'r/y.sh'
+w_item q/05-e.md '01' 's/'
+w_list q/01-a.md q/02-b.md q/03-c.md q/04-d.md q/05-e.md; w_run "$W_T" "$H" "$W_T/list" --max 3
+w_expect "W16 five-item acceptance fixture, byte-for-byte" 'wave 1: q/01-a.md q/02-b.md\nwave 2: q/03-c.md q/04-d.md q/05-e.md'
+
+# W17 usage errors ⇒ exit 1, stdout empty.
+w_run "$W_T" "$H" "$W_T/list"; w_fails "W17 --max missing ⇒ usage" 'usage:'
+for m in 0 x -1 ''; do w_run "$W_T" "$H" "$W_T/list" --max "$m"; w_fails "W17 --max '$m' ⇒ usage" 'usage:'; done
+w_run "$W_T" "$H" "$W_T/nope" --max 2; w_fails "W17 missing input ⇒ usage" 'usage:'
+w_run "$W_T" "$H" "$W_T/list" --max 2 --bogus; w_fails "W17 unknown option ⇒ usage" 'usage:'
+W_RC=0; W_OUT="$(bash "$H" plan-waves "$W_T/list" --max 2 --root --x 2>"$W_T/err")" || W_RC=$?; W_ERR="$(cat "$W_T/err")"
+w_fails "W17 option-shaped --root ⇒ refused" '--root requires a checkout path'
+
+# W18 read-only: no file written in the fixture root, the only git call is rev-parse --show-toplevel, never gh.
+mkdir -p "$W_T/spy"
+printf '#!/bin/sh\necho "git $*" >> "%s/spy/calls"\nexit 1\n' "$W_T" > "$W_T/spy/git"
+printf '#!/bin/sh\necho "gh $*" >> "%s/spy/calls"\nexit 1\n' "$W_T" > "$W_T/spy/gh"
+chmod +x "$W_T/spy/git" "$W_T/spy/gh"; : > "$W_T/spy/calls"
+w_before="$(cd "$W_T" && find q list -print | env LC_ALL=C sort | xargs ls -ld 2>/dev/null | awk '{ print $5, $NF }')"
+W_RC=0; W_OUT="$(cd "$W_T" && PATH="$W_T/spy:$PATH" bash "$H" plan-waves list --max 3 2>/dev/null)" || W_RC=$?
+w_after="$(cd "$W_T" && find q list -print | env LC_ALL=C sort | xargs ls -ld 2>/dev/null | awk '{ print $5, $NF }')"
+[ "$W_RC" -eq 0 ] && [ "$(cat "$W_T/spy/calls")" = "git rev-parse --show-toplevel" ] && ok "W18 only git call is rev-parse --show-toplevel; no gh; --root fell back to \$PWD" || no "W18 calls: $(tr '\n' '|' < "$W_T/spy/calls") rc=$W_RC"
+[ "$w_before" = "$w_after" ] && [ ! -e "$W_T/.agent" ] && ok "W18 fixture tree unchanged after plan-waves (writes only its mktemp -d)" || no "W18 fixture tree changed"
+
+# W19 every `## Touches` section under the REAL .supervisor/requirements/parallel-automate/ parses (not unknown).
+#     Read through a plan-waves ITEM-LIST run on a copy of each file with its `## Depends on` section dropped
+#     (so the copy is first and dependency-free) paired with a disjoint probe: known ⇒ copy + probe share wave 1,
+#     unknown ⇒ the copy runs alone. Gitignored, so absent in CI / fresh worktrees ⇒ SKIP.
+W_PA="$W_REPO/.supervisor/requirements/parallel-automate"
+if [ -d "$W_PA" ]; then
+  w_n=0; mkdir -p "$W_T/pa"
+  for f in "$W_PA"/*.md; do
+    [ -f "$f" ] && grep -q '^## Touches$' "$f" || continue
+    w_n=$((w_n+1))
+    awk '/^## Depends on$/ { skip = 1; next } skip && (/^# / || /^## /) { skip = 0 } !skip' "$f" > "$W_T/pa/01-copy.md"
+    printf '# probe\n## Depends on\nnone\n## Touches\nzz-plan-waves-probe-only/\n' > "$W_T/pa/02-probe.md"
+    printf 'pa/01-copy.md\npa/02-probe.md\n' > "$W_T/list"
+    w_run "$W_T" "$H" "$W_T/list" --max 2
+    w_expect "W19 real $(basename "$f") ## Touches parses (known)" 'wave 1: pa/01-copy.md pa/02-probe.md'
+  done
+  [ "$w_n" -gt 0 ] && ok "W19 checked $w_n real parallel-automate Touches sections" || no "W19 no Touches section found under $W_PA"
+else
+  echo "  SKIP: W19 $W_PA absent (gitignored) — real-queue Touches parse not checked here"
+fi
+
+# W20 the shipped .agent/companions.json "new" rules cover EVERY surface in scripts/check-doc-currency.sh's
+#     FILES array (the authority). Parse drops comments, strips quotes, resolves $PLUGIN_JSON from its own
+#     assignment line, FAILS on any other unresolved $ token, and must be non-empty and contain plugin.json.
+W_DC="$W_REPO/scripts/check-doc-currency.sh"; W_CJ="$W_REPO/.agent/companions.json"
+w_pj="$(sed -n 's/^PLUGIN_JSON="\([^"]*\)"$/\1/p' "$W_DC" | head -n1)"
+w_dc_entry() {  # one FILES entry ⇒ its path; $PLUGIN_JSON resolved; any other $ token marked UNRESOLVED
+  case "$1" in
+    '$PLUGIN_JSON') printf '%s\n' "$w_pj" ;;
+    *'$'*) printf 'UNRESOLVED:%s\n' "$1" ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+w_files="$(awk '/^FILES=\(/ { p = 1; next } p && /^\)/ { exit } p' "$W_DC" \
+  | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -v '^#' | grep -v '^$' | tr -d '"' \
+  | while IFS= read -r e; do w_dc_entry "$e"; done)"
+if [ -z "$w_files" ] || [ -z "$w_pj" ]; then no "W20 parsed FILES set (or PLUGIN_JSON) is empty"
+elif grep -q '^UNRESOLVED:' <<<"$w_files"; then no "W20 unresolved \$ token in FILES: $(printf '%s' "$w_files" | grep '^UNRESOLVED:' | tr '\n' ' ')"
+elif ! grep -qxF 'loomwright/.claude-plugin/plugin.json' <<<"$w_files"; then no "W20 parsed FILES lacks loomwright/.claude-plugin/plugin.json"
+else
+  w_miss=""
+  for pfx in 'loomwright/agents/*' 'loomwright/commands/*' 'loomwright/skills/*'; do
+    w_add="$(jq -r --arg w "$pfx" '.companions[] | select(.when == $w and .new == true) | .add[]' "$W_CJ" 2>/dev/null)"
+    [ -n "$w_add" ] || w_miss="$w_miss [no new rule for $pfx]"
+    while IFS= read -r e; do grep -qxF -- "$e" <<<"$w_add" || w_miss="$w_miss [$pfx lacks $e]"; done <<EOF
+$w_files
+EOF
+  done
+  [ -z "$w_miss" ] && ok "W20 shipped companions.json new rules cover all $(printf '%s\n' "$w_files" | wc -l | tr -d ' ') check-doc-currency.sh FILES entries" || no "W20 companions.json drifted from check-doc-currency.sh FILES:$w_miss"
+fi
+rm -rf "$W_T"
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
