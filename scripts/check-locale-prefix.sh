@@ -20,7 +20,7 @@
 # does. That is an implementation detail of one bash version, not a contract, so the rule bans
 # the shape everywhere rather than trying to tell exposed sites from safe ones.
 #
-# RULE: in every *.sh / *.bash file under the root (.git and node_modules pruned), a non-comment
+# RULE: in every *.sh / *.bash file in the scanned set (below), a non-comment
 # line must not carry a locale assignment (LC_ALL, LC_<CATEGORY>, LANG, LANGUAGE) at COMMAND
 # POSITION followed by a command word: line start, after one of | ; & ( { ! or a backtick (so
 # `$(` and `<(` too), or after if / elif / while / until / then / do / else / time.
@@ -35,6 +35,15 @@
 #   a shell function)     the locale for the whole shell instead: `export LC_ALL=C` once at script
 #                         scope, or as the first statement of the subshell, so it is never restored
 #                         (an export inside a subshell measured 0/150).
+#
+# SCANNED SET = what CI sees. When the root is the top level of a git work tree, the files are
+# `git ls-files --cached --others --exclude-standard` (tracked + untracked-but-not-ignored), minus
+# index entries deleted from disk, symlinks and gitlinks. A .gitignore'd file is never scanned: a
+# CI checkout has none, so a `find` walk made local runs fail on stale salvage copies under the
+# ignored .supervisor/ (and, in the main checkout, on every nested ignored git-worktree tree) that CI
+# could never see. Untracked-unignored files ARE scanned, so a new script is caught before it is
+# staged. Only a root that is not a work-tree top level (a fixture dir, an unpacked tarball) falls
+# back to a `find` walk. node_modules/ is dropped in both modes, .git/ in the walk.
 #
 # FAILS CLOSED (exit 1, no `|| true`) naming every offender as file:line, and on zero scanned
 # files (a 0-file run of a fail-closed gate is a false green — mirrors check-test-hermetic.sh).
@@ -57,12 +66,28 @@ done
 cd "$root" || exit 1
 
 list="$(mktemp "${TMPDIR:-/tmp}/check-locale-prefix.XXXXXX")" || exit 1
-trap 'rm -f "$list"' EXIT
-find . \( -name .git -o -name node_modules \) -prune -o -type f \( -name '*.sh' -o -name '*.bash' \) -print \
-  | sed 's#^\./##' | sort > "$list"
+trap 'rm -f "$list" "$list.z"' EXIT
+# Git mode only when the root IS the work-tree top level (physical paths: /tmp vs /private/tmp):
+# a fixture dir nested inside some other repo, possibly under an ignored path, must not inherit
+# that repo's ignore rules and silently scan nothing.
+mode=walk
+top="$(git rev-parse --show-toplevel 2>/dev/null)" && [ -n "$top" ] \
+  && [ "$(cd "$top" && pwd -P)" = "$(pwd -P)" ] && mode=git
+if [ "$mode" = git ]; then
+  git -c core.quotePath=false ls-files -z --cached --others --exclude-standard -- '*.sh' '*.bash' > "$list.z" \
+    || { echo "check-locale-prefix: FAIL — git ls-files failed under $root" >&2; rm -f "$list.z"; exit 1; }
+  tr '\0' '\n' < "$list.z" | while IFS= read -r f; do
+    case "/$f" in */node_modules/*) continue ;; esac
+    [ -f "$f" ] && [ ! -L "$f" ] && printf '%s\n' "$f"
+  done | env LC_ALL=C sort -u > "$list"
+  rm -f "$list.z"
+else
+  find . \( -name .git -o -name node_modules \) -prune -o -type f \( -name '*.sh' -o -name '*.bash' \) -print \
+    | sed 's#^\./##' | sort > "$list"
+fi
 total="$(wc -l < "$list" | tr -d ' ')"
 if [ "$total" -eq 0 ]; then
-  echo "check-locale-prefix: FAIL — no *.sh / *.bash files found under $root (the scan matched nothing)" >&2
+  echo "check-locale-prefix: FAIL — no *.sh / *.bash files found under $root ($mode mode; the scan matched nothing)" >&2
   exit 1
 fi
 
@@ -92,4 +117,4 @@ if [ -n "$offenders" ]; then
   echo "  Why: Homebrew bash 5.3 segfaults restoring the locale in a forked subshell (see this script's header)." >&2
   exit 1
 fi
-echo "check-locale-prefix: OK — $total/$total scanned shell files carry no temporary locale assignment at command position"
+echo "check-locale-prefix: OK — $total/$total scanned shell files ($mode mode) carry no temporary locale assignment at command position"

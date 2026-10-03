@@ -22,7 +22,9 @@
 #   J. malformed JSON / missing jq -> exit 0, zero orca invocations
 #   K. injection safety: shell-metacharacter-laden text/pr_url survive as ONE argv
 #      element verbatim, never executed
-#   L. core-cleanliness: grep -rl orca loomwright/ --exclude-dir=adapters returns docs only
+#   L. core-cleanliness: no non-doc file under loomwright/ outside adapters/ names orca. Files
+#      are what CI sees (git ls-files: tracked + untracked-unignored), never .gitignore'd ones;
+#      L2 proves that on a fixture repo (ignored hit NOT reported, tracked/untracked hit IS)
 #
 # Exit 0 = all pass, 1 = any failure. Mirrors this repo's stub-on-PATH testing
 # convention (test-webhook.sh's curl stub) and its mutation-control convention
@@ -297,23 +299,60 @@ echo "==== L: core-cleanliness ===="
 # documentation, exactly what the AC's "documentation files" carve-out
 # means); any OTHER file is allowed ONLY if every "orca" occurrence in it is
 # accounted for by the known orca-derived/orca-03 collision.
-RAW_HITS="$(grep -rl orca "$REPO_ROOT/loomwright" --exclude-dir=adapters 2>/dev/null || true)"
-REAL_HITS=""
-while IFS= read -r f; do
-  [ -n "$f" ] || continue
-  case "$f" in
-    */loomwright/docs/*) continue ;;  # documentation -- always allowed
-  esac
-  residue="$(grep -o 'orca' "$f" 2>/dev/null | wc -l | tr -d '[:space:]')"
-  known="$(grep -oE 'orca-derived|orca-03' "$f" 2>/dev/null | wc -l | tr -d '[:space:]')"
-  case "$residue" in ''|*[!0-9]*) residue=0 ;; esac
-  case "$known" in ''|*[!0-9]*) known=0 ;; esac
-  if [ "$residue" -gt "$known" ]; then
-    REAL_HITS="$REAL_HITS
-$f"
+#
+# ENUMERATION = what CI sees. In a git work tree the candidate files are `git ls-files --cached
+# --others --exclude-standard` under loomwright/ (tracked + untracked-but-not-ignored), never a
+# recursive grep of the disk: a CI checkout has no .gitignore'd files, so `grep -r` failed locally
+# on loomwright/sdk-spike/node_modules/ (an `npm ci` output) where CI was green. Untracked-
+# unignored files stay in, so a new offender is caught before it is staged. A root that is not a
+# work-tree top level (an unpacked tarball) falls back to the recursive grep.
+# core_orca_hits <root> - stdout: one non-doc file per line naming the real orca CLI.
+core_orca_hits() {
+  local root="$1" top raw f residue known
+  top="$(git -C "$root" rev-parse --show-toplevel 2>/dev/null)" || top=""
+  if [ -n "$top" ] && [ "$(cd "$top" && pwd -P)" = "$(cd "$root" && pwd -P)" ]; then
+    raw="$(git -C "$root" -c core.quotePath=false ls-files -z --cached --others --exclude-standard -- loomwright 2>/dev/null \
+      | tr '\0' '\n' | while IFS= read -r f; do
+          case "/$f/" in */adapters/*) continue ;; esac
+          [ -f "$root/$f" ] && [ ! -L "$root/$f" ] && grep -q orca "$root/$f" 2>/dev/null && printf '%s\n' "$root/$f"
+        done)"
+  else
+    raw="$(grep -rl orca "$root/loomwright" --exclude-dir=adapters 2>/dev/null || true)"
   fi
-done <<< "$RAW_HITS"
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    case "$f" in
+      */loomwright/docs/*) continue ;;  # documentation -- always allowed
+    esac
+    residue="$(grep -o 'orca' "$f" 2>/dev/null | wc -l | tr -d '[:space:]')"
+    known="$(grep -oE 'orca-derived|orca-03' "$f" 2>/dev/null | wc -l | tr -d '[:space:]')"
+    case "$residue" in ''|*[!0-9]*) residue=0 ;; esac
+    case "$known" in ''|*[!0-9]*) known=0 ;; esac
+    if [ "$residue" -gt "$known" ]; then printf '%s\n' "$f"; fi
+  done <<< "$raw"
+}
+REAL_HITS="$(core_orca_hits "$REPO_ROOT")"
 assert_eq "L: no non-doc file outside adapters/ names the real orca CLI (known orca-derived/orca-03 citations excluded)" "" "$REAL_HITS"
+
+# L2: the enumeration on a fixture repo. Goes red if leg L reverts to a disk walk (L2a) or narrows
+# to tracked-only (L2c).
+if command -v git >/dev/null 2>&1; then
+  FXL="$TMP/core-fixture"
+  mkdir -p "$FXL/loomwright/sdk-spike/node_modules/pkg" "$FXL/loomwright/scripts/adapters/orca" "$FXL/loomwright/docs"
+  printf 'node_modules/\n' > "$FXL/loomwright/sdk-spike/.gitignore"
+  printf 'run orca status\n' > "$FXL/loomwright/sdk-spike/node_modules/pkg/index.js"
+  printf 'orca status\n' > "$FXL/loomwright/scripts/adapters/orca/mirror.sh"
+  printf 'see orca docs\n' > "$FXL/loomwright/docs/notes.md"
+  printf 'from orca-derived/03\n' > "$FXL/loomwright/scripts/cites.sh"
+  git -C "$FXL" init -q && git -C "$FXL" add -A
+  assert_eq "L2a: an orca hit under a .gitignore'd path (sdk-spike/node_modules) is not reported" "" "$(core_orca_hits "$FXL")"
+  printf 'orca worktree set\n' > "$FXL/loomwright/scripts/tracked.sh"; git -C "$FXL" add loomwright/scripts/tracked.sh
+  assert_eq "L2b: control -- the same hit in a tracked file IS reported (and only it)" "$FXL/loomwright/scripts/tracked.sh" "$(core_orca_hits "$FXL")"
+  git -C "$FXL" rm -q --cached loomwright/scripts/tracked.sh
+  assert_eq "L2c: control -- an untracked-but-not-ignored file IS reported before it is staged" "$FXL/loomwright/scripts/tracked.sh" "$(core_orca_hits "$FXL")"
+else
+  no "L2: git is not on PATH -- cannot exercise the enumeration"
+fi
 
 echo ""
 echo "==== M: stdin invocation shape ===="
