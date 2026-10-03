@@ -81,6 +81,34 @@ scan_writer() {
 # count_writer <file> — number of rule-2 OCCURRENCES (not lines) in one file
 count_writer() { logical_lines "$1" | grep -oE "$WRE" | wc -l | tr -d ' '; }
 
+# ratchet <root> <baseline> <rel...> — compares each file's rule-2 count against <baseline>
+# (`count path` lines) and prints ONE tagged line per violation, nothing when clean:
+#   OVER <rel> <got> <base>   more occurrences than the baseline allows (an unlisted file has 0)
+#   UNDER <rel> <got> <base>  fewer than the baseline — the baseline must be lowered to match
+#   STALE <rel>               a baseline entry whose file is not among <rel...>
+# A function, so the controls below drive every branch on fixtures — the live tree alone sits at
+# got == base everywhere and would leave all three dead.
+ratchet() {
+  local root="$1" baseline="$2" rel got base seen=""
+  shift 2
+  for rel in "$@"; do
+    got="$(count_writer "$root/$rel")"
+    base="$(awk -v p="$rel" '$2 == p { print $1 }' <<<"$baseline")"
+    [ -n "$base" ] && seen="$seen$rel
+"
+    if [ "$got" -gt "${base:-0}" ]; then
+      echo "OVER $rel $got ${base:-0}"
+    elif [ -n "$base" ] && [ "$got" -lt "$base" ]; then
+      echo "UNDER $rel $got $base"
+    fi
+  done
+  while read -r base rel; do
+    [ -n "$rel" ] || continue
+    grep -qxF -- "$rel" <<<"$seen" || echo "STALE $rel"
+  done <<<"$baseline"
+  return 0
+}
+
 T="$(mktemp -d "${TMPDIR:-/tmp}/test-no-pipefail-grep-q.XXXXXX")" || { echo "mktemp failed" >&2; exit 1; }
 trap 'rm -rf "$T"' EXIT
 
@@ -139,6 +167,33 @@ done
 [ -z "$(scan "$T/w-bad-nopipefail.sh")" ] && ok "rule 1 alone misses the no-pipefail writer (the gap)" \
   || no "rule 1 unexpectedly flags a no-pipefail file — the controls above are stale"
 
+echo "== rule 2 ratchet controls: every branch fires on fixtures =="
+RT="$T/ratchet"; mkdir -p "$RT/sub"
+w1="$(printf '%s %s grep -q y' 'printf "%s" "$x"' "$P")"
+printf '%s\n%s\n' "$w1" "$w1" > "$RT/over.sh"       # 2 occurrences, baseline 1
+printf '%s\n' "$w1"            > "$RT/under.sh"      # 1 occurrence,  baseline 2
+printf '%s\n' "$w1"            > "$RT/equal.sh"      # 1 occurrence,  baseline 1
+printf '%s\n' "$w1"            > "$RT/new.sh"        # 1 occurrence,  unlisted
+printf 'grep -q y <<<"$x"\n'  > "$RT/clean.sh"      # 0 occurrences, unlisted
+printf '%s\n' "$w1"            > "$RT/sub/equal.sh"  # same basename as a listed file, unlisted
+RB='1 over.sh
+2 under.sh
+1 equal.sh
+1 gone.sh'
+rout="$(ratchet "$RT" "$RB" over.sh under.sh equal.sh new.sh clean.sh sub/equal.sh)"
+want='OVER over.sh 2 1
+UNDER under.sh 1 2
+OVER new.sh 1 0
+OVER sub/equal.sh 1 0
+STALE gone.sh'
+[ "$rout" = "$want" ] && ok "ratchet reports exactly OVER (raised + unlisted), UNDER, STALE — and nothing for equal/clean" \
+  || no "ratchet output wrong — want:
+$want
+got:
+$rout"
+[ -z "$(ratchet "$RT" '1 equal.sh' equal.sh clean.sh)" ] && ok "ratchet is silent when every count equals its baseline" \
+  || no "ratchet flags a tree that matches its baseline: $(ratchet "$RT" '1 equal.sh' equal.sh clean.sh)"
+
 echo "== the suite =="
 shopt -s nullglob
 files=("$REPO_ROOT"/loomwright/scripts/test-*.sh "$REPO_ROOT"/loomwright/scripts/adapters/*/test-*.sh "$REPO_ROOT"/scripts/test-*.sh)
@@ -174,25 +229,19 @@ while IFS= read -r rel; do
 done < <(git -C "$REPO_ROOT" ls-files -co --exclude-standard -- '*.sh' 2>/dev/null)
 [ "${#all_sh[@]}" -gt 100 ] && ok "rule 2 scanned ${#all_sh[@]} shell scripts" \
   || no "rule 2 found only ${#all_sh[@]} shell scripts (git ls-files failed?) — the scan set is wrong"
-seen=""
-for rel in "${all_sh[@]}"; do
-  got="$(count_writer "$REPO_ROOT/$rel")"
-  base="$(awk -v p="$rel" '$2 == p { print $1 }' <<<"$WRITER_BASELINE")"
-  [ -n "$base" ] && seen="$seen$rel
-"
-  if [ "$got" -gt "${base:-0}" ]; then
-    no "$rel: $got builtin-writer pipe(s) into grep -q, baseline ${base:-0} — rewrite as: grep -q PAT <<<\"\$var\""
-    scan_writer "$REPO_ROOT/$rel" | sed "s|^$REPO_ROOT/|    |"
-  elif [ -n "$base" ] && [ "$got" -lt "$base" ]; then
-    no "$rel: $got builtin-writer pipe(s) into grep -q, below baseline $base — lower WRITER_BASELINE to $got"
-  fi
-done
-while read -r base rel; do
-  [ -n "$rel" ] || continue
-  grep -qxF -- "$rel" <<<"$seen" \
-    || no "WRITER_BASELINE lists $rel, which no longer exists — drop the entry"
-done <<<"$WRITER_BASELINE"
-[ "$fail" -eq 0 ] && ok "no builtin writer is piped into grep -q beyond the baseline"
+rhits="$(ratchet "$REPO_ROOT" "$WRITER_BASELINE" "${all_sh[@]}")"
+if [ -z "$rhits" ]; then
+  ok "no builtin writer is piped into grep -q beyond the baseline"
+else
+  while read -r kind rel got base; do
+    case "$kind" in
+      OVER)  no "$rel: $got builtin-writer pipe(s) into grep -q, baseline $base — rewrite as: grep -q PAT <<<\"\$var\""
+             scan_writer "$REPO_ROOT/$rel" | sed "s|^$REPO_ROOT/|    |" ;;
+      UNDER) no "$rel: $got builtin-writer pipe(s) into grep -q, below baseline $base — lower WRITER_BASELINE to $got" ;;
+      STALE) no "WRITER_BASELINE lists $rel, which no longer exists — drop the entry" ;;
+    esac
+  done <<<"$rhits"
+fi
 
 echo
 echo "test-no-pipefail-grep-q: $pass passed, $fail failed"
