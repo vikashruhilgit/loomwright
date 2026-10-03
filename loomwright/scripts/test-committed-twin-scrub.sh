@@ -365,12 +365,33 @@ done <<'EOF'
 .supervisor/memory/PROJECT_MEMORY.md
 .supervisor/memory/.provenance.jsonl
 .supervisor/memory/.lessons-provenance.jsonl
-.supervisor/postmortem/results.jsonl
+EOF
+
+# RUN HISTORY depends on the repo's mode, read through the ONE reader (`setup-memory.sh mode`).
+# Default mode re-includes it, so it must be committable. BRANCH mode (`on <branch>`) omits those
+# re-includes BY DESIGN — run history lives on the metadata branch (meta-sync.sh) — so it must be
+# IGNORED: a committable path there would put it back on the code branch. Any other answer
+# (`unknown …`, empty, a missing reader) fails, never defaults to either branch of the check.
+RUN_HISTORY='.supervisor/postmortem/results.jsonl
 .supervisor/requirements/twin-loop/00-overview.md
 .supervisor/jobs/done/2026-09-03-example-feature.md
 .supervisor/jobs/failed/2026-08-20-relocate-qa-agents-commands-skills.md
-.supervisor/automate/automate-2026-09-17-030524.md
+.supervisor/automate/automate-2026-09-17-030524.md'
+REPO_MODE="$(bash "$SETUP_MEMORY" --root "$REPO_ROOT" mode 2>/dev/null | head -n1)"
+case "$REPO_MODE" in
+  off)    RUN_HISTORY_ASSERT=assert_committable ;;
+  "on "?*) RUN_HISTORY_ASSERT=assert_ignored ;;
+  *)      RUN_HISTORY_ASSERT=""; no "repo mode unreadable ('$REPO_MODE') — cannot tell whether run history must be committable or ignored" ;;
+esac
+if [ -n "$RUN_HISTORY_ASSERT" ]; then
+  ok "repo mode read: '$REPO_MODE' ⇒ run history checked with $RUN_HISTORY_ASSERT"
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    "$RUN_HISTORY_ASSERT" "$p"
+  done <<EOF
+$RUN_HISTORY
 EOF
+fi
 
 # THE COMMITTED LEDGER CARRIES ZERO FOREIGN RECORDS — asserted with jq, NEVER grep. This ledger
 # mixes compact (`"repo":"x"`) and spaced (`"repo": "x"`) JSON, so a compact-form grep silently
