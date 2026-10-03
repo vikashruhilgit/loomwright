@@ -48,7 +48,7 @@
 #   gate-eval        <pr_url> <ctx.json>                # §10 MERGE|PARK fail-closed trusted-merge gate (conditions enumerated in skills/automate-loop/SKILL.md §10; cond 6 = classify-risk.sh high_risk, cond 7 = rules-gate-verdict.sh, NO override)
 #   learning-emit    <ledger_path> <flags...>           # §6 step 3 fail-safe (always exit 0) engine-native ground-truth POSTMORTEM_RESULT line; idempotent on run_id+item+pr_url+source+completeness (a degraded emit never blocks a later complete one)
 #   brief-repair     <item> <pr_url>                    # §6 steps 1/5 fail-safe (always exit 0) evidence-positive brief lifecycle repair: `gh pr view` says MERGED (or a non-empty mergedAt) ⇒ sibling reconcile-jobs.sh --repair --evidence <item>=<pr_url>; prints ONE line for ## Progress
-#   reconcile-status <requirements_root> [--apply]      # queue-hygiene/01: dry-run-default requirement `## Status:` reconciler — a `pending`/absent-status *.md under <requirements_root> (skips `00-*`, `_*`, `README*`, `operator-run/`) whose PR is MERGED (state via reconcile-item) and whose body cites the file's repo-relative path, OR whose head branch matches the slug on its `.supervisor/jobs/done/` brief (never the engine's own `chore/<run_id>-trail-<n>` PR), is stamped the §6 shape byte-for-byte; a `.supervisor/automate/*.md` Queue row carrying `# abandoned:` and naming a requirement stamps `done_with_escalation — ABANDONED (<row verbatim>)`; NEVER downgrades an existing `done`/`done_with_escalation`; prints one `plan\t…` row per file it WOULD stamp (or `stamped\t…` under `--apply`) plus one `info\t…` row per `brief-shipped` file (never promoted); writes nothing without `--apply`.
+#   reconcile-status <requirements_root> [--apply]      # queue-hygiene/01: dry-run-default requirement `## Status:` reconciler — a `pending`/absent-status *.md under <requirements_root> (skips `00-*`, `_*`, `README*`, `operator-run/`) whose PR is MERGED (state via reconcile-item) and whose body cites the file's repo-relative path, OR whose head branch matches the slug on its `.supervisor/jobs/done/` brief (never the engine's own `chore/<run_id>-trail-<n>` PR, never a PR whose changed files are ALL under `.supervisor/`, and never a body citation from a PR whose own diff adds or modifies that requirement file; an unreadable or incomplete diff is no evidence), is stamped the §6 shape byte-for-byte; a `.supervisor/automate/*.md` Queue row carrying `# abandoned:` and naming a requirement stamps `done_with_escalation — ABANDONED (<row verbatim>)`; NEVER downgrades an existing `done`/`done_with_escalation`; prints one `plan\t…` row per file it WOULD stamp (or `stamped\t…` under `--apply`) plus one `info\t…` row per `brief-shipped` file (never promoted); writes nothing without `--apply`.
 #   sidecar-check    <path>                             # §6 trail: delegated to automate-trail.sh — `ok <path>` / `fail <path>: <reason>` (RESULT_SCHEMAS key-table shape check of a result sidecar); always exits 0
 #   trail-pr         <runfile> [--reason <reason>]      # §6 "Trail PR after merge and at run end": delegated to automate-trail.sh — called only by closeout, at ## Status: done, and on a skip/abandon check-off (never at a park); commits this run's explicit trail paths as ONE PR off fresh origin/main, a done-stamped requirement/done brief only when its PR reads merged; one line (opened|pushed|skipped); always exits 0
 #   closeout         <runfile> <item> <pr_url> [--session-id <sid>]  # §6 post-merge close-out: delegated to automate-trail.sh; always exits 0
@@ -1548,7 +1548,8 @@ EOF
 # EVIDENCE, for a *.md this script does NOT already consider `is_done()`:
 #   (a) PR-BODY CITATION — a `gh pr list --state merged --search <rel-path>`
 #       hit whose body (fetched with ONE more `gh pr view`) contains the
-#       file's own repo-relative path, literally.
+#       file's own repo-relative path, literally — and whose diff does NOT
+#       itself add or modify that file (see NEVER EVIDENCE below).
 #   (b) BRANCH-SLUG — when this requirement has an associated
 #       `.supervisor/jobs/done/<brief>.md` (found by the SAME reverse
 #       `## Source requirement:` pointer scan `stamp-requirement-status.sh`
@@ -1562,6 +1563,21 @@ EOF
 # so a body citation there says "this file was committed", never "this work
 # shipped" (run automate-2026-10-01-142337: proposed/ drafts read "would stamp
 # done (PR #321)", #321 being trail PR chore/automate-2026-09-30-054439-trail-2).
+# The trail branch is one instance of a general rule, enforced on the PR's DIFF
+# (`files`/`changedFiles` from the same `gh pr view`), not on its branch name:
+#   - a PR whose diff ADDED or MODIFIED <rel> itself gets no body-citation
+#     credit — its body names the file because it commits the file, which is
+#     "queued" or "committed", never "shipped" (2026-10-03: PR #359,
+#     chore/meta-scrub-cleanup, added meta-sync-followups/04 as `## Status:
+#     pending` and listed it in its body; the dry run read "would stamp done
+#     (PR #359)", which `--apply` would have made permanent and `is_done` would
+#     then have hidden from every later `resolve-folder`);
+#   - a PR whose changed files ALL sit under `.supervisor/` is never evidence on
+#     either path — state, briefs and run history are not an implementation;
+#   - a diff that cannot be read in full (`gh` failing, `changedFiles` 0 or
+#     absent, or fewer paths than `changedFiles` from both `pr view`'s 100-file
+#     page and the paginated REST fallback) is no evidence (fail closed: a
+#     missed stamp is recoverable, a false one silently drops queued work).
 # PR STATE is resolved EXCLUSIVELY through `reconcile_item` (merged|open|gone)
 # — this is not a second gh-state parser; the extra `gh pr view` call here
 # reads ADDITIONAL fields (body, mergeCommit, headRefName) on a candidate
@@ -1682,6 +1698,28 @@ _rs_is_trail_branch() {
   printf '%s' "$1" | grep -qE '^chore/.+-trail-[0-9]+$'
 }
 
+# _rs_pr_changed_paths <pr_url> <view_json> — print the PR's changed paths, one
+# per line, and return 0 ONLY when the list is complete (its length equals the
+# view's `changedFiles`, and that is > 0). `gh pr view --json files` returns at
+# most 100 entries (a 384-file PR reads 100), so a longer diff is re-read through
+# the paginated REST endpoint; anything still short — or any read failing —
+# returns 1 and the caller treats the candidate as no evidence (fail closed).
+_rs_pr_changed_paths() {
+  local url="$1" view="$2" want paths n host owner repo num
+  want="$(printf '%s' "$view" | "$JQ" -r '.changedFiles // empty' 2>/dev/null)"
+  case "$want" in ''|*[!0-9]*|0) return 1 ;; esac
+  paths="$(printf '%s' "$view" | "$JQ" -r '.files[]?.path // empty' 2>/dev/null)"
+  n=0; [ -n "$paths" ] && n="$(printf '%s\n' "$paths" | wc -l | tr -d ' ')"
+  if [ "$n" -ne "$want" ]; then
+    [[ "$url" =~ ^https?://([^/]+)/([^/]+)/([^/]+)/pull/([0-9]+) ]] || return 1
+    host="${BASH_REMATCH[1]}"; owner="${BASH_REMATCH[2]}"; repo="${BASH_REMATCH[3]}"; num="${BASH_REMATCH[4]}"
+    paths="$("$GH" api --hostname "$host" --paginate "repos/$owner/$repo/pulls/$num/files" --jq '.[].filename' 2>/dev/null)" || return 1
+    n=0; [ -n "$paths" ] && n="$(printf '%s\n' "$paths" | wc -l | tr -d ' ')"
+    [ "$n" -eq "$want" ] || return 1
+  fi
+  printf '%s\n' "$paths"
+}
+
 # _rs_evidence_for <abs_file> <rel_path> <done_brief|""> — echo
 # "<pr_url>\t<pr_number>\t<sha7>\t<justification>" for the first candidate PR
 # that is MERGED (via reconcile_item) AND either cites <rel_path> in its body
@@ -1707,16 +1745,18 @@ _rs_evidence_for() {
     seen="${seen}${c}"$'\x1f'
     local state; state="$(reconcile_item "$c" "" 2>/dev/null)"
     [ "$state" = "merged" ] || continue
-    local view num body oid headref
-    view="$("$GH" pr view "$c" --json number,body,mergeCommit,headRefName 2>/dev/null)"
+    local view num body oid headref paths
+    view="$("$GH" pr view "$c" --json number,body,mergeCommit,headRefName,files,changedFiles 2>/dev/null)"
     [ -n "$view" ] || continue
     num="$(printf '%s' "$view" | "$JQ" -r '.number // empty' 2>/dev/null)"
     body="$(printf '%s' "$view" | "$JQ" -r '.body // empty' 2>/dev/null)"
     oid="$(printf '%s' "$view" | "$JQ" -r '.mergeCommit.oid // empty' 2>/dev/null)"
     headref="$(printf '%s' "$view" | "$JQ" -r '.headRefName // empty' 2>/dev/null)"
     _rs_is_trail_branch "$headref" && continue
+    paths="$(_rs_pr_changed_paths "$c" "$view")" || continue
+    grep -qv '^\.supervisor/' <<<"$paths" || continue
     local justification=""
-    case "$body" in *"$rel"*) justification="PR body cites $rel" ;; esac
+    case "$body" in *"$rel"*) grep -qxF -- "$rel" <<<"$paths" || justification="PR body cites $rel" ;; esac
     if [ -z "$justification" ] && [ -n "$slug" ]; then
       case "$headref" in *"$slug") justification="head branch '$headref' matches brief slug '$slug'" ;; esac
     fi

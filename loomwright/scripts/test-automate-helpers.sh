@@ -84,6 +84,13 @@
 #      skipped, not fatal (the plan names the real PR); a near-miss branch
 #      (`chore/x-trail-final`) is still evidence; mutation control — the
 #      exclusion line neutered in a copy of the helper ⇒ the draft plans again.
+#   H8. reconcile-status judges a body citation by the PR's DIFF: a PR that adds
+#      the cited requirement (PR #359 queued meta-sync-followups/04 and read
+#      "would stamp done") gets no plan line, while the same PR without it in
+#      its diff does; an all-.supervisor/ diff is never evidence; an unreadable
+#      or truncated diff is no evidence, and a >100-file diff is re-read through
+#      the paginated REST endpoint; mutation controls neuter each of the two
+#      new checks in a copy of the helper and watch the leg go red.
 #   I. ceiling-check (red-team-hardening/06, PICK-time token ceiling; section letter
 #      "I" — "H" is already used in-body by the reconcile-status H1-H6 tests above):
 #      under-max
@@ -2617,7 +2624,9 @@ rs_key() { printf '%s' "$1" | tr -c 'A-Za-z0-9' '_'; }
 
 # rs_stub_bin <dir> — a gh stub keyed on `pr list --search <term>` and
 # `pr view <url>`, reading canned JSON from $GH_STUB_DIR/list-<key>.json /
-# view-<key>.json (absent list ⇒ "[]", absent view ⇒ exit 1). Dedicated to
+# view-<key>.json (absent list ⇒ "[]", absent view ⇒ exit 1), plus `api …
+# repos/<o>/<r>/pulls/<n>/files` (the >100-file diff fallback) from
+# api-<key>.txt, one path per line (absent ⇒ exit 1). Dedicated to
 # this section (not make_stub_bin) because reconcile-status's evidence-lookup
 # needs TWO gh verbs discriminated by argument, not one fixed response file.
 rs_stub_bin() {
@@ -2637,6 +2646,13 @@ fi
 if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then
   url="${3:-}"
   f="$GH_STUB_DIR/view-$(key "$url").json"
+  [ -f "$f" ] && cat "$f" || exit 1
+  exit 0
+fi
+if [ "${1:-}" = "api" ]; then
+  ep=""
+  for a in "$@"; do case "$a" in repos/*) ep="$a" ;; esac; done
+  f="$GH_STUB_DIR/api-$(key "$ep").txt"
   [ -f "$f" ] && cat "$f" || exit 1
   exit 0
 fi
@@ -2662,7 +2678,7 @@ rs_repo() {
   rs_stub_bin "$r/bin"
   jq -n --arg url "$RS_URL" '[{url:$url}]' > "$r/ghstub/list-$(rs_key "$relb").json"
   jq -n --arg rel "$relb" --arg url "$RS_URL" \
-    '{state:"MERGED",mergedAt:"2026-09-01T00:00:00Z",number:42,body:("Ships "+$rel),mergeCommit:{oid:"abcdef1234567890"},headRefName:"feature/b"}' \
+    '{state:"MERGED",mergedAt:"2026-09-01T00:00:00Z",number:42,body:("Ships "+$rel),mergeCommit:{oid:"abcdef1234567890"},headRefName:"feature/b",changedFiles:1,files:[{path:"src/b.sh"}]}' \
     > "$r/ghstub/view-$(rs_key "$RS_URL").json"
   printf '[]' > "$r/ghstub/list-$(rs_key ".supervisor/requirements/qh/03-c-open.md").json"
   printf '%s\t%s' "$r" "$relb"
@@ -2708,7 +2724,7 @@ rm -rf "$R"
 
 # H3. AC-3 mutation control: delete the path citation from (b)'s PR-body fixture ⇒ no plan line, no stamp.
 IFS=$'\t' read -r R RELB <<<"$(rs_repo)"
-jq -n --arg url "$RS_URL" '{state:"MERGED",mergedAt:"2026-09-01T00:00:00Z",number:42,body:"unrelated prose, no path here",mergeCommit:{oid:"abcdef1234567890"},headRefName:"feature/b"}' \
+jq -n --arg url "$RS_URL" '{state:"MERGED",mergedAt:"2026-09-01T00:00:00Z",number:42,body:"unrelated prose, no path here",mergeCommit:{oid:"abcdef1234567890"},headRefName:"feature/b",changedFiles:1,files:[{path:"src/b.sh"}]}' \
   > "$R/ghstub/view-$(rs_key "$RS_URL").json"
 rs_run "$R" "$R/.supervisor/requirements/qh"
 DRY_OUT="$RUN_OUT"
@@ -2786,8 +2802,11 @@ rs_trail_repo() {  # <trail headRefName> → "<repo>\t<draft rel>\t<req rel>"
   rs_stub_bin "$r/bin"
   jq -n --arg url "$RS_TRAIL" '[{url:$url}]' > "$r/ghstub/list-$(rs_key "$reld").json"
   jq -n --arg url "$RS_TRAIL" '[{url:$url}]' > "$r/ghstub/list-$(rs_key "$relq").json"
+  # The diff is deliberately NOT the trail's real one (which commits the cited
+  # files, all under .supervisor/): H8's diff rules would then exclude it too,
+  # and the mutation control below could not isolate the branch-name rule.
   jq -n --arg d "$reld" --arg q "$relq" --arg h "$1" \
-    '{state:"MERGED",mergedAt:"2026-09-30T00:00:00Z",number:321,body:("Trail paths:\n- "+$q+"\n- "+$d),mergeCommit:{oid:"6b388ae000000000"},headRefName:$h}' \
+    '{state:"MERGED",mergedAt:"2026-09-30T00:00:00Z",number:321,body:("Trail paths:\n- "+$q+"\n- "+$d),mergeCommit:{oid:"6b388ae000000000"},headRefName:$h,changedFiles:1,files:[{path:"src/trail-fixture.sh"}]}' \
     > "$r/ghstub/view-$(rs_key "$RS_TRAIL").json"
   printf '%s\t%s\t%s' "$r" "$reld" "$relq"
 }
@@ -2817,7 +2836,7 @@ rm -rf "$R" "$RSM"
 # A trail candidate listed ahead of the real implementation PR is skipped, not fatal.
 IFS=$'\t' read -r R RELD RELQ <<<"$(rs_trail_repo chore/automate-2026-09-30-054439-trail-2)"
 jq -n --arg t "$RS_TRAIL" --arg u "$RS_URL" '[{url:$t},{url:$u}]' > "$R/ghstub/list-$(rs_key "$RELQ").json"
-jq -n --arg q "$RELQ" '{state:"MERGED",mergedAt:"2026-09-01T00:00:00Z",number:42,body:("Ships "+$q),mergeCommit:{oid:"abcdef1234567890"},headRefName:"feature/a"}' \
+jq -n --arg q "$RELQ" '{state:"MERGED",mergedAt:"2026-09-01T00:00:00Z",number:42,body:("Ships "+$q),mergeCommit:{oid:"abcdef1234567890"},headRefName:"feature/a",changedFiles:1,files:[{path:"src/a.sh"}]}' \
   > "$R/ghstub/view-$(rs_key "$RS_URL").json"
 rs_run "$R" "$R/.supervisor/requirements/qh"
 if [ "$(printf '%s\n' "$RUN_OUT" | grep -c '^plan	')" = "1" ] && grep -qF "plan	$RELQ	done (PR #42, merge abcdef1)	PR body cites $RELQ" <<<"$RUN_OUT"; then
@@ -2830,6 +2849,109 @@ rm -rf "$R"
 IFS=$'\t' read -r R RELD RELQ <<<"$(rs_trail_repo chore/x-trail-final)"
 rs_run "$R" "$R/.supervisor/requirements/qh"
 grep -qF "plan	$RELQ	done (PR #321" <<<"$RUN_OUT" && ok "H7 near-miss branch chore/x-trail-final (no numeric suffix) is still evidence" || no "H7 near-miss excluded (out='$RUN_OUT')"
+rm -rf "$R"
+
+# H8. A body citation is evidence only when the PR's diff did not itself add or
+#     modify the cited requirement; an all-.supervisor/ diff is never evidence;
+#     an unreadable or incomplete diff is no evidence. (2026-10-03: PR #359,
+#     chore/meta-scrub-cleanup, ADDED meta-sync-followups/04 as `## Status:
+#     pending`, listed it in its body, and the dry run read "would stamp done
+#     (PR #359)".)
+RS_D="https://github.com/acme/widgets/pull/359"
+RS_DREL=".supervisor/requirements/qh/04-scrub-safe-briefs.md"
+rs_diff_repo() {  # <files_json_array> [changedFiles] → "<repo>"; PR #359 cites RS_DREL in its body
+  local r
+  r="$(mktemp -d)"
+  mkdir -p "$r/.supervisor/requirements/qh" "$r/.supervisor/jobs/done" "$r/.supervisor/automate" "$r/bin" "$r/ghstub"
+  printf '# scrub\n\n## Status: pending\n' > "$r/$RS_DREL"
+  rs_stub_bin "$r/bin"
+  jq -n --arg url "$RS_D" '[{url:$url}]' > "$r/ghstub/list-$(rs_key "$RS_DREL").json"
+  jq -n --arg q "$RS_DREL" --argjson f "$1" --arg c "${2:-}" \
+    '{state:"MERGED",mergedAt:"2026-10-02T00:00:00Z",number:359,body:("Queues:\n- "+$q),mergeCommit:{oid:"9a78b9c000000000"},headRefName:"chore/meta-scrub-cleanup",
+      files:[$f[]|{path:.}],changedFiles:(if $c=="" then ($f|length) else ($c|tonumber) end)}' \
+    > "$r/ghstub/view-$(rs_key "$RS_D").json"
+  printf '%s' "$r"
+}
+rs_plans_359() { grep -qF "plan	$RS_DREL	done (PR #359, merge 9a78b9c)	PR body cites $RS_DREL" <<<"$RUN_OUT"; }
+# rs_mutant <exact helper line> <replacement> — a copy of the helper with that ONE
+# line replaced; RSM names the copy's dir. Returns 1 when the line is not found.
+rs_mutant() {
+  RSM="$(mktemp -d)"; cp "$HERE"/*.sh "$HERE"/*.py "$RSM/" 2>/dev/null
+  OLD="$1" NEW="$2" awk '$0 == ENVIRON["OLD"] { print ENVIRON["NEW"]; next } { print }' "$H" > "$RSM/automate-helpers.sh"
+  ! cmp -s "$H" "$RSM/automate-helpers.sh"
+}
+RS_TOUCH_LINE='    case "$body" in *"$rel"*) grep -qxF -- "$rel" <<<"$paths" || justification="PR body cites $rel" ;; esac'
+RS_TOUCH_MUT='    case "$body" in *"$rel"*) justification="PR body cites $rel" ;; esac'
+RS_SUP_LINE="    grep -qv '^\\.supervisor/' <<<\"\$paths\" || continue"
+
+# H8a. The PR adds the requirement (plus a non-.supervisor file) and cites it ⇒ no plan, no stamp.
+R="$(rs_diff_repo "[\"$RS_DREL\",\"docs/scrub.md\"]")"
+rs_run "$R" "$R/.supervisor/requirements/qh"
+DRY_OUT="$RUN_OUT"
+rs_run "$R" "$R/.supervisor/requirements/qh" --apply
+if [ -z "$DRY_OUT" ] && [ -z "$RUN_OUT" ] && grep -qE '^## Status: pending$' "$R/$RS_DREL"; then
+  ok "H8a a PR whose diff adds the cited requirement is not evidence (no plan, no stamp under --apply)"
+else
+  no "H8a requirement-adding PR read as evidence (dry='$DRY_OUT' apply='$RUN_OUT')"
+fi
+# Mutation control: the diff-membership check removed ⇒ the same fixture plans 'done (PR #359)' again.
+if rs_mutant "$RS_TOUCH_LINE" "$RS_TOUCH_MUT"; then
+  RS_H="$RSM/automate-helpers.sh" rs_run "$R" "$R/.supervisor/requirements/qh"
+  rs_plans_359 && ok "H8a mutation control: without the diff-membership check the requirement plans 'done (PR #359)' — the check is load-bearing" \
+    || no "H8a mutation control: mutant did not reproduce the defect (out='$RUN_OUT') — H8a would be vacuous"
+else
+  no "H8a mutation control: the membership line was not found in the helper"
+fi
+rm -rf "$R" "$RSM"
+# Control: the same PR without the requirement in its diff ⇒ the plan row.
+R="$(rs_diff_repo '["docs/scrub.md"]')"
+rs_run "$R" "$R/.supervisor/requirements/qh"
+rs_plans_359 && ok "H8a control: the same citing PR without the requirement in its diff plans 'done (PR #359)'" || no "H8a control: no plan row (out='$RUN_OUT')"
+rm -rf "$R"
+
+# H8b. The real PR #359 shape (every changed file under .supervisor/, the requirement among them) ⇒ no plan.
+R="$(rs_diff_repo "[\".supervisor/automate/automate-2026-09-01-232353.md\",\".supervisor/jobs/done/2026-10-02-x.md\",\"$RS_DREL\"]")"
+rs_run "$R" "$R/.supervisor/requirements/qh"
+[ -z "$RUN_OUT" ] && ok "H8b the PR #359 shape (all-.supervisor diff that adds the requirement) plans nothing" || no "H8b PR #359 shape planned (out='$RUN_OUT')"
+rm -rf "$R"
+
+# H8c. An all-.supervisor/ diff that does NOT touch the requirement is still not evidence.
+R="$(rs_diff_repo '[".supervisor/jobs/done/2026-10-02-x.md",".supervisor/automate/run.md"]')"
+rs_run "$R" "$R/.supervisor/requirements/qh"
+if [ -z "$RUN_OUT" ]; then
+  ok "H8c a citing PR whose changed files are all under .supervisor/ is not evidence"
+else
+  no "H8c all-.supervisor diff read as evidence (out='$RUN_OUT')"
+fi
+if rs_mutant "$RS_SUP_LINE" '    :'; then
+  RS_H="$RSM/automate-helpers.sh" rs_run "$R" "$R/.supervisor/requirements/qh"
+  rs_plans_359 && ok "H8c mutation control: without the all-.supervisor check the same fixture plans — the check is load-bearing" \
+    || no "H8c mutation control: mutant did not reproduce (out='$RUN_OUT') — H8c would be vacuous"
+else
+  no "H8c mutation control: the all-.supervisor line was not found in the helper"
+fi
+rm -rf "$R" "$RSM"
+
+# H8d. Fail closed on an unreadable or incomplete diff; a >100-file diff is re-read in full.
+R="$(rs_diff_repo '["docs/scrub.md"]')"
+jq 'del(.files, .changedFiles)' "$R/ghstub/view-$(rs_key "$RS_D").json" > "$R/v.json" && mv "$R/v.json" "$R/ghstub/view-$(rs_key "$RS_D").json"
+rs_run "$R" "$R/.supervisor/requirements/qh"
+[ -z "$RUN_OUT" ] && ok "H8d a view with no files/changedFiles is no evidence (fail closed)" || no "H8d unreadable diff read as evidence (out='$RUN_OUT')"
+rm -rf "$R"
+# pr view returned a 1-entry page of a 150-file diff; no REST answer ⇒ no evidence.
+R="$(rs_diff_repo '["docs/scrub.md"]' 150)"
+rs_run "$R" "$R/.supervisor/requirements/qh"
+[ -z "$RUN_OUT" ] && ok "H8d a truncated diff whose REST re-read fails is no evidence" || no "H8d truncated diff read as evidence (out='$RUN_OUT')"
+RS_API="$R/ghstub/api-$(rs_key "repos/acme/widgets/pulls/359/files").txt"
+{ for i in $(seq 1 149); do printf 'src/f%s.sh\n' "$i"; done; printf '%s\n' "$RS_DREL"; } > "$RS_API"
+rs_run "$R" "$R/.supervisor/requirements/qh"
+[ -z "$RUN_OUT" ] && ok "H8d the requirement found on a later REST page of a 150-file diff ⇒ no evidence" || no "H8d requirement past pr view's first page missed (out='$RUN_OUT')"
+{ for i in $(seq 1 150); do printf 'src/f%s.sh\n' "$i"; done; } > "$RS_API"
+rs_run "$R" "$R/.supervisor/requirements/qh"
+rs_plans_359 && ok "H8d a complete 150-file REST re-read without the requirement keeps the citation as evidence" || no "H8d complete REST re-read lost the evidence (out='$RUN_OUT')"
+sed '$d' "$RS_API" > "$R/a.txt" && mv "$R/a.txt" "$RS_API"
+rs_run "$R" "$R/.supervisor/requirements/qh"
+[ -z "$RUN_OUT" ] && ok "H8d a REST re-read still short of changedFiles is no evidence" || no "H8d short REST re-read read as evidence (out='$RUN_OUT')"
 rm -rf "$R"
 
 # ---------------------------------------------------------------------------
