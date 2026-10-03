@@ -52,7 +52,7 @@ Comprehensive index of all skills available in the Loomwright plugin.
 |------------|-----------|-----------------|------------|---------|--------------|
 | Product Discovery | `product-discovery/` | Launch Pad (preload) | ~600 | 1.0.0 | 2026-03 |
 | MVP Scoping | `mvp-scoping/` | Launch Pad (preload) | ~500 | 1.0.0 | 2026-03 |
-| User Story Writing | `user-story-writing/` | Product Owner (reference) | ~500 | 1.0.0 | 2026-03 |
+| User Story Writing | `user-story-writing/` | Product Owner (reference) | ~800 | 1.1.0 | 2026-10-03 |
 | Domain Knowledge | `domain-knowledge/` | Product Owner (reference) | ~400 | 1.0.0 | 2026-03 |
 | Brainstorming | `brainstorming/` | Product Owner (preload) | ~1,000 | 1.0.0 | 2026-04 |
 
