@@ -26,6 +26,12 @@
 #   (k) real automate run-file — a /automate run-file's Status / Source / PR facets render (finding #3)
 #   (q) worker_checkpoint — an in-progress job's checkpoints render under Tried/rejected with the
 #       session id as provenance; scoped to the in-progress job only; absent state/log is a silent skip
+#   (r) automate title reader mirrors is_run_file — a BOM + lower-case + extra-space title renders
+#       the text after the colon; a file whose only title-like line is H2 or 4-space-indented is not
+#       a run file and is not listed; the mirrored RUN_TITLE_ERE / _RUN_TITLE_BOM copies are
+#       byte-identical (automate-followups/19)
+#   (s) AUTOMATE listing indexes only run files — the result sidecars are skipped; a sidecar-only
+#       dir gives the absent-dir "nothing to summarize" state; gated filter-removed mutant goes red
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -59,9 +65,10 @@ PLUGIN_ROOT="$(dirname "$HERE")"
 # Run build-handoff.sh inside a temp repo. cd so its `git rev-parse --show-toplevel` resolves to
 # the temp repo; CLAUDE_PLUGIN_ROOT=$PLUGIN_ROOT so the reused read-* helpers resolve to
 # $PLUGIN_ROOT/scripts (the real plugin layout), exactly as in production.
+# Optional $2 runs a different copy of the script (the mutation controls) in the same way.
 run_build() {
-  local repo="$1"
-  ( cd "$repo" && CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" bash "$BUILD" )
+  local repo="$1" script="${2:-$BUILD}"
+  ( cd "$repo" && CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" bash "$script" )
 }
 
 # Cross-platform mtime in seconds (GNU stat -c, BSD/macOS stat -f).
@@ -528,6 +535,122 @@ seed_job "$RQ3" in-progress "no-session-job" >/dev/null
 outQ3="$(run_build "$RQ3")"; rcQ3=$?
 [ "$rcQ3" -eq 0 ] && ok "(q) no state.md/session log → still exits 0" || no "(q) expected exit 0, got $rcQ3"
 [ -f "$RQ3/.supervisor/handoff/digest.md" ] && ok "(q) digest still produced with no session to join" || no "(q) digest missing"
+
+# ============================================================================
+echo "== (r) automate title reader mirrors is_run_file: tolerant forms read, H2 / 4-space indent not listed =="
+# automate-followups/19 (D5): build-handoff.sh's AUTOMATE title reader accepts exactly the title
+# forms automate-helpers.sh's is_run_file accepts (RUN_TITLE_ERE). The fixtures are built with
+# printf octal (no `\x` in BSD tools). `seed_automate_title <repo> <name> <title-line>` writes a
+# run file whose ONLY title-like line is <title-line> (raw bytes, printf %b).
+seed_automate_title() {
+  local repo="$1" name="$2" tline="$3"
+  mkdir -p "$repo/.supervisor/automate"
+  { printf '%b\n' "$tline"; printf '## Status: paused\n## Queue\n- [ ] req-r.md\n## Progress\n- ts\n'; } \
+    > "$repo/.supervisor/automate/$name.md"
+}
+RR="$(new_repo)"
+seed_automate_title "$RR" "tolerant-run" '\0357\0273\0277#  automate run: Tolerant Title R'
+seed_automate_title "$RR" "h2-run" '## Automate Run: H2 Title R'
+seed_automate_title "$RR" "indent4-run" '    # Automate Run: Indent4 Title R'
+# precondition: the tolerant fixture really starts with the BOM bytes and is lower-case.
+if [ "$(head -c 3 "$RR/.supervisor/automate/tolerant-run.md" | od -An -tx1 | tr -d ' \n')" = "efbbbf" ] \
+   && grep -qF '#  automate run: Tolerant Title R' "$RR/.supervisor/automate/tolerant-run.md"; then
+  ok "(r) precondition: tolerant fixture = BOM + extra space + lower-case title"
+else
+  no "(r) precondition: tolerant fixture not built as BOM + extra space + lower-case"
+fi
+run_build "$RR" >/dev/null; rcR=$?
+DIGR="$RR/.supervisor/handoff/digest.md"
+[ "$rcR" -eq 0 ] && ok "(r) exits 0" || no "(r) expected exit 0, got $rcR"
+grep -qxF "### Tolerant Title R" "$DIGR" 2>/dev/null \
+  && ok "(r) BOM + lower-case + extra-space title renders the text after the colon" \
+  || no "(r) tolerant title not read; headings: $(grep '^### ' "$DIGR" 2>/dev/null | tr '\n' '|')"
+grep -qxF "### tolerant-run" "$DIGR" 2>/dev/null \
+  && no "(r) tolerant title fell back to the basename" || ok "(r) tolerant title did NOT fall back to the basename"
+# An H2 / 4-space-indented line is not a title, so (like is_run_file) the file is not a run file
+# and is not listed at all — neither under the title text nor under its basename.
+if grep -qxE "### (h2-run|H2 Title R)" "$DIGR" 2>/dev/null; then
+  no "(r) H2 '## Automate Run:' file was listed; headings: $(grep '^### ' "$DIGR" 2>/dev/null | tr '\n' '|')"
+else
+  ok "(r) an H2 '## Automate Run:' line is not a title — the file is not a run file and is not listed"
+fi
+if grep -qxE "### (indent4-run|Indent4 Title R)" "$DIGR" 2>/dev/null; then
+  no "(r) 4-space-indented file was listed; headings: $(grep '^### ' "$DIGR" 2>/dev/null | tr '\n' '|')"
+else
+  ok "(r) a 4-space-indented title line (code block) is not a title — not listed (indent cap)"
+fi
+# Drift guard: the two mirrored copies of the title ERE are byte-identical.
+HELPERS="$HERE/automate-helpers.sh"
+for v in _RUN_TITLE_BOM RUN_TITLE_ERE; do
+  a="$(grep -E "^${v}=" "$HELPERS")"; b="$(grep -E "^${v}=" "$BUILD")"
+  if [ -n "$a" ] && [ "$a" = "$b" ]; then
+    ok "(r) $v is byte-identical in automate-helpers.sh and build-handoff.sh (mirrors is_run_file)"
+  else
+    no "(r) $v drifted between automate-helpers.sh ('$a') and build-handoff.sh ('$b')"
+  fi
+done
+
+# ============================================================================
+echo "== (s) AUTOMATE listing indexes only run files: result sidecars are skipped =="
+# The engine writes `<run_id>.review-heal-result.md` / `<run_id>.supervisor-result.md` next to the
+# run file. They carry no run-file title line, so (by is_run_file's predicate) they are not items.
+seed_sidecars() {
+  local repo="$1" rid="$2"
+  mkdir -p "$repo/.supervisor/automate"
+  printf '## REVIEW_HEAL_RESULT\n- schema_version: 1\n- decision: READY\n' > "$repo/.supervisor/automate/$rid.review-heal-result.md"
+  printf '## SUPERVISOR_RESULT\n- schema_version: 1\n- status: completed\n' > "$repo/.supervisor/automate/$rid.supervisor-result.md"
+}
+# count_automate_items <digest> — number of rendered "Automate run" items.
+count_automate_items() { grep -cxF "_Automate run_" "$1" 2>/dev/null || true; }
+RS="$(new_repo)"
+seed_automate "$RS" "run-s" >/dev/null
+seed_sidecars "$RS" "run-s"
+run_build "$RS" >/dev/null; rcS=$?
+DIGS="$RS/.supervisor/handoff/digest.md"
+[ "$rcS" -eq 0 ] && ok "(s) run + sidecars: exits 0" || no "(s) run + sidecars: expected exit 0, got $rcS"
+nS="$(count_automate_items "$DIGS")"
+[ "$nS" = "1" ] && ok "(s) run + both sidecars ⇒ exactly one Automate run item" \
+  || no "(s) expected 1 Automate run item, got '$nS'; headings: $(grep '^### ' "$DIGS" 2>/dev/null | tr '\n' '|')"
+grep -qxF "### run-s" "$DIGS" 2>/dev/null && ok "(s) the run file is the listed item" || no "(s) run file item missing"
+if grep -qE '^### run-s\.(review-heal|supervisor)-result$|result\.md`$' "$DIGS" 2>/dev/null; then
+  no "(s) a result sidecar was listed as a handoff item"
+else
+  ok "(s) neither result sidecar is listed (no heading, no provenance)"
+fi
+
+# A dir holding ONLY sidecars reads exactly like an absent automate dir: nothing to summarize.
+RS2="$(new_repo)"
+seed_sidecars "$RS2" "run-s2"
+run_build "$RS2" >/dev/null; rcS2=$?
+DIGS2="$RS2/.supervisor/handoff/digest.md"
+[ "$rcS2" -eq 0 ] && ok "(s) sidecars only: exits 0" || no "(s) sidecars only: expected exit 0, got $rcS2"
+nS2="$(count_automate_items "$DIGS2")"
+[ "$nS2" = "0" ] && ok "(s) sidecars only ⇒ no Automate run item" || no "(s) sidecars only: expected 0 items, got '$nS2'"
+grep -qF "Nothing to summarize yet" "$DIGS2" 2>/dev/null \
+  && ok "(s) sidecars only ⇒ the same 'nothing to summarize' state as an absent dir (sidecars do not count as a surface)" \
+  || no "(s) sidecars only did not produce the 'nothing to summarize' state"
+
+# Mutation control — the run-file filter removed. The sidecar legs must then go red (the sidecars
+# are listed), proving the filter is what excludes them. Gated: non-empty, differs, `bash -n`
+# clean, and the filter line really gone (while the index loop is still present).
+MUTS="$(mktmp)"
+grep -vF 'env LC_ALL=C grep -qE "$RUN_TITLE_ERE" "$f" 2>/dev/null || continue' "$BUILD" > "$MUTS/build-handoff.sh"
+if [ -s "$MUTS/build-handoff.sh" ] && ! cmp -s "$BUILD" "$MUTS/build-handoff.sh" && bash -n "$MUTS/build-handoff.sh" 2>/dev/null \
+   && ! grep -qF 'grep -qE "$RUN_TITLE_ERE" "$f"' "$MUTS/build-handoff.sh" \
+   && grep -qF 'for f in .supervisor/automate/*.md; do' "$MUTS/build-handoff.sh"; then
+  run_build "$RS" "$MUTS/build-handoff.sh" >/dev/null 2>&1
+  nM="$(count_automate_items "$DIGS")"
+  [ "$nM" = "3" ] && ok "(s) filter-removed mutant: run + sidecars ⇒ 3 items — the filter is load-bearing" \
+    || no "(s) filter-removed mutant did NOT discriminate (got '$nM' items, expected 3)"
+  run_build "$RS2" "$MUTS/build-handoff.sh" >/dev/null 2>&1
+  if grep -qF "Nothing to summarize yet" "$DIGS2" 2>/dev/null; then
+    no "(s) filter-removed mutant still reports 'nothing to summarize' for a sidecar-only dir — the empty-state leg is not load-bearing"
+  else
+    ok "(s) filter-removed mutant: a sidecar-only dir flips surfaces_found — the filter is what keeps the empty state"
+  fi
+else
+  no "(s) filter-removed mutant not gated (empty, identical to original, bash -n failed, or the filter line was not removed)"
+fi
 
 echo
 echo "RESULT: $pass passed, $fail failed"
