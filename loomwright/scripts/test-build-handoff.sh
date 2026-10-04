@@ -24,6 +24,8 @@
 #   (j) abbreviated-SHA freshness — a recorded short SHA that prefixes HEAD renders `fresh`, not
 #       `hint` (prefix-tolerant compare; finding #2)
 #   (k) real automate run-file — a /automate run-file's Status / Source / PR facets render (finding #3)
+#   (k2) tolerant run-file title — BOM / lower-case / inner-whitespace titles render their real title
+#       (same tolerance as automate-helpers.sh is_run_file); exact form unchanged; H2 still not a title
 #   (q) worker_checkpoint — an in-progress job's checkpoints render under Tried/rejected with the
 #       session id as provenance; scoped to the in-progress job only; absent state/log is a silent skip
 
@@ -348,6 +350,41 @@ grep -qF "folder .supervisor/requirements/" < <(echo "$SECTK") \
   && ok "automate Source facet renders (why)" || no "automate Source facet missing"
 grep -qF "https://github.com/o/r/pull/77" < <(echo "$SECTK") \
   && ok "automate PR facet renders (from ## Current)" || no "automate PR facet missing"
+
+# ============================================================================
+echo "== (k2) tolerant run-file title: the forms is_run_file accepts render their REAL title, not the basename =="
+# build-handoff.sh's title reader must agree with automate-helpers.sh `is_run_file` (the predicate
+# resume-glob lists by): optional UTF-8 BOM, whitespace around `#`, flexible inner whitespace, any
+# case. Each fixture's basename differs from its title, so a fallback to the basename is visible.
+BOM="$(printf '\357\273\277')"
+# seed_automate_titled <repo> <basename> <raw title line> — a run-file whose H1 is given verbatim.
+seed_automate_titled() {
+  local repo="$1" name="$2" line="$3"
+  mkdir -p "$repo/.supervisor/automate"
+  { printf '%s\n' "$line"; printf '## Status: paused\n'; printf '## Source\n- folder x/\n'; } \
+    > "$repo/.supervisor/automate/$name.md"
+}
+RK2="$(new_repo)"
+seed_automate_titled "$RK2" "file-bom"   "${BOM}# Automate Run: Bom Title"
+seed_automate_titled "$RK2" "file-lower" "# automate run: Lower Title"
+seed_automate_titled "$RK2" "file-inner" "  #  Automate   Run  :  Inner Title"
+seed_automate_titled "$RK2" "file-exact" "# Automate Run: Exact Title"
+seed_automate_titled "$RK2" "file-h2"    "## Automate Run: H2 Title"
+run_build "$RK2" >/dev/null; rcK2=$?
+DIGK2="$RK2/.supervisor/handoff/digest.md"
+[ "$rcK2" -eq 0 ] && ok "exits 0" || no "expected exit 0, got $rcK2"
+for pair in "Bom Title:file-bom" "Lower Title:file-lower" "Inner Title:file-inner" "Exact Title:file-exact"; do
+  t="${pair%%:*}"; b="${pair#*:}"
+  grep -qxF "### $t" "$DIGK2" 2>/dev/null && ok "$b renders its real title '### $t'" \
+    || no "$b: expected heading '### $t'; got: $(grep -E '^### ' "$DIGK2" 2>/dev/null | tr '\n' ' ')"
+  grep -qxF "### $b" "$DIGK2" 2>/dev/null && no "$b fell back to its basename heading" \
+    || ok "$b did not fall back to the basename"
+done
+# The BOM must be stripped, not carried into the rendered heading.
+grep -qF "$BOM" "$DIGK2" 2>/dev/null && no "a UTF-8 BOM leaked into the digest" || ok "no BOM bytes in the digest"
+# Negative control (same rule as is_run_file): an H2 `## Automate Run:` line is not the title.
+grep -qxF "### file-h2" "$DIGK2" 2>/dev/null && ok "H2 '## Automate Run:' line is not taken as the title (basename fallback)" \
+  || no "H2 line was taken as the title; got: $(grep -E '^### ' "$DIGK2" 2>/dev/null | tr '\n' ' ')"
 
 # ============================================================================
 echo "== (l) AC-handoff-byte-identical: default (no-flag) output matches the PRE-CHANGE script byte-for-byte =="

@@ -294,7 +294,18 @@ if [ -s "$index" ]; then
         # template"): the `# Automate Run: <title>` heading, the `## Status:` heading, the first
         # bullet under `## Source`, and the `## Current` line's `pr: <url>`. The run-file carries
         # NO `Goal`/`outcome` field and NO commit-SHA trailer → mtime basis (AC4b).
-        title="$(sed -nE 's/^#[[:space:]]*Automate Run:[[:space:]]*//p' "$path" 2>/dev/null | head -1)"
+        # The title is read with the SAME tolerance as automate-helpers.sh `is_run_file` (which
+        # decides what resume-glob lists): an optional leading UTF-8 BOM (built with octal printf —
+        # BSD tools have no `\x`), whitespace around the `#`, any whitespace run inside the phrase
+        # and before the colon, and any letter case. awk + tolower() because BSD sed has no `I`
+        # flag; LC_ALL=C keeps tolower/length byte-wise so the cut offset is exact. The text after
+        # the colon is taken from the ORIGINAL line, so the title's own case is preserved. An H2
+        # `## Automate Run:` line still does not match (the second `#` is not whitespace).
+        title="$(LC_ALL=C awk -v bom="$(printf '\357\273\277')" '
+          { l = $0
+            if (index(l, bom) == 1) l = substr(l, length(bom) + 1)
+            if (match(tolower(l), /^[[:space:]]*#[[:space:]]*automate[[:space:]]+run[[:space:]]*:[[:space:]]*/)) {
+              print substr(l, RLENGTH + 1); exit } }' "$path" 2>/dev/null)"
         [ -n "$title" ] || title="$(basename "$path" .md)"
         a_status="$(sed -nE 's/^##[[:space:]]*Status:[[:space:]]*//p' "$path" 2>/dev/null | head -1)"
         a_source="$(awk '/^##[[:space:]]*Source/{f=1;next} f&&/^## /{exit} f&&/^-[[:space:]]/{sub(/^-[[:space:]]*/,"");print;exit}' "$path" 2>/dev/null)"
