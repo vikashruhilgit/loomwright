@@ -72,7 +72,24 @@ carry the fixes.
 - **P8 — lane shape (NEW — S1 decides).** Either (A) a lane runs the whole per-item loop headless, which needs
   `agnostic-phase1/04` because Launch Pad's normal Phase 6 gate has no non-interactive branch today; or (B)
   brief-first — the coordinator runs Launch Pad for each wave item interactively in the primary, and lanes run
-  Supervisor + the owned drain only. S1 tries both and records the choice.
+  Supervisor + the owned drain only. S1 tries both and records the choice. **S1 added a third candidate (A +
+  relay):** a lane runs headless WITH a question channel, its `AskUserQuestion` deferred, and the owner answers
+  from the inbox (P9). See the S1 run record.
+- **P9 — add-ons are optional (owner, 2026-10-04).** The core owns all state and every action as FILES plus
+  SCRIPTS: lane status is the run files; a question is a file, an answer is a file, and resuming a lane is a
+  launcher script. Every extra is only a CLIENT of those files: a Claude Code mod (lanes pane, inbox buttons,
+  toast, status line), desktop/phone notifications, the Floor, Remote Control. Rules:
+  - (1) no gate, decision or state lives only in an add-on — remove it and runs behave identically;
+  - (2) an add-on writes only through the core's guarded scripts;
+  - (3) add-on display state is throwaway; the truth stays in files;
+  - (4) an add-on failure is fail-safe (a broken render falls back, a failing hook is skipped) and never blocks a
+    run;
+  - (5) an add-on never launches lanes as its own children (a mod's spawned child dies when the module unloads);
+  - (6) a plain fallback always exists (status script, live feed, `/janitor --report`, answering by file or through
+    the main session);
+  - (7) the core's tests run with NO add-on loaded.
+  Claude-specific add-ons live in the Claude adapter layer (portability core/adapter direction) and count against
+  the vendor-coupling ratchet.
 
 ## Red-team revisions (2026-10-01)
 | Finding | Verified how | Fix lives in |

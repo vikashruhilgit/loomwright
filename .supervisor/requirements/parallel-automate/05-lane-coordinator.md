@@ -143,6 +143,30 @@ coordinator. Without the flag, or with `--parallel 1`, no lane code runs at all.
 12. **Docs:** skill — a NEW §"Lanes" plus the non-goal and §8 wording ("one open PR per lane"), §11 concurrent-run
     paragraph; `commands/automate.md`; `agent-help.md`; `RESULT_SCHEMAS.md` §AUTOMATE_RUN (`ready_for_release`,
     `parallel`). `SKILLS_INDEX.md` in the same commit. No new agent.
+13. **Lane inbox — a file protocol, add-ons optional** (added 2026-10-04, owner, from S1's relay re-test; decision
+    P9 in `00-overview.md`).
+    - **Asking:** a lane is launched WITH a question channel (a permission host, e.g. `--permission-prompt-tool
+      stdio` + stream-json input; no `--non-interactive-fallback`) and a `PreToolUse[AskUserQuestion]` hook. The
+      hook writes the question to `<lane>/.supervisor/inbox/questions/<tool_use_id>.json` and returns `defer`.
+      The lane exits with `stop_reason: tool_deferred`, and `lane-status` shows it as
+      `pause_reason: awaiting_input` with the question.
+    - **Answering:** an answer is `<lane>/.supervisor/inbox/answers/<tool_use_id>.json`, written by ONE guarded
+      script that writes exactly one of the question's own option labels per question (plus an optional free-text
+      note that is NEVER the decision), `source: human|policy`, and a timestamp. `lane-answer <lane> <id>` then
+      resumes the lane (`claude -p --resume <session>` with the same flags and
+      `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`), and the hook returns `allow` with `updatedInput.answers`.
+    - **Safety net:** a `PermissionRequest[AskUserQuestion]` hook denies a question bundled with other tool calls
+      (where `defer` is ignored) and tells the model to re-ask on its own turn.
+    - **Clients, all optional:**
+      - plain: `lane-status`, the `lane-answer` CLI, the main session relaying through its own `AskUserQuestion`;
+      - Claude Code mod: a lanes pane with the options as buttons, a toast on park, a status line;
+      - notifications.
+      None holds state; all go through `lane-answer`.
+    - **Tests:** a full relay round trip with NO add-on loaded (park → answer file → resume → the tool result
+      carries the answer); a free-text-only answer is refused; an answer naming a label not in the question's
+      options is refused; the bundled-call deny; a `lane-remove` refusal while a question is pending (Scope 1).
+    - Evidence: the S1 run record. Lane B relayed 5 deferred calls carrying 10 questions (resume path, pre-flight overlap, unsettled join,
+      dismissed findings 1–7) through exactly this shape.
 
 ## Non-goals
 Merging and the release bump (item 06). More than one wave at once. Lanes on other machines. A `-runner` agent.

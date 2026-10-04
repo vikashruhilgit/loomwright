@@ -234,3 +234,18 @@ change — S1 stays "nothing committed to the plugin".**
 questions asked / relayed / decided by the lane alone, time parked, operator interventions, review findings
 (fixed / dismissed / dismissed-but-real), CI rounds, isolation result, leaks after teardown; per run — Q1–Q7
 answers, P8 recommendation.
+- **Relays 3–5, after the background-kill resume:**
+  - **Relay 3 (03:48Z):** FINALIZE's children-settled join was unsettled for the KILLED worker (8/8 outputs
+    verified on disk, all ACs re-checked by the main thread). The owner chose "Proceed, record skip"
+    (`provides_present_agent_unsettled` + `user_skipped_children_check`).
+  - **Lane B opened PR #371**, ran Phase 4.5 and the drain, and parked at the dismissed-findings decision step.
+    This is the step lane A could not ask, which is how lane A's regression went through as a dismissal.
+  - **Relay 4 (04:27Z, 4 questions in ONE call):** findings 1–4 (MEDIUM: P9/P10 do not pin the
+    `rules_fail_seen +=` lines; a PR comment omits remaining findings; the Heal-reason lists lack both rules
+    reasons; `rules_fail_seen` is lost across a checkpoint and `--continue`). The owner chose **fix now** ×4.
+  - **Relay 5 (04:28Z, 3 questions):** finding 5 (MEDIUM, pre-existing: FAILURE_ESCALATION list stale) → fix now;
+    finding 6 (drain FYI: review-pr budget headroom about 199 tokens) → fix now; the LOW summary → keep.
+  - Finding 1 is the same class as lane A's dismissed regression: a test that does not actually pin the new
+    behaviour. With the question channel, the owner caught it at the park; without it, lane A's slipped through.
+  - Totals for lane B's re-run: **5 deferred calls, 10 questions, every answer delivered** (the hook fired again on
+    each resume for the same id). One multi-question call was answered as a whole.
