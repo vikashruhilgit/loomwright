@@ -183,6 +183,14 @@ coordinator. Without the flag, or with `--parallel 1`, no lane code runs at all.
       `lane-remove`, the sweep (`automate-followups/22`) and `/janitor` read one shape.
     - **Lane count:** the owner's target is 5–10 (decision P2 as amended 2026-10-04); `--parallel N` accepts up to
       10, and the default comes from S2's measurements, not from this item.
+    - **Stalled-lane detection (added 2026-10-04, wave w1):** a headless lane can END ITS TURN while it waits — lane
+      w1-08 pushed a drain fix, started a background wait for CI on the new head, wrote "I'm waiting for CI …", and the
+      `-p` process exited (`success`/`end_turn`); the background wait was `stopped` with it. Result: no process, no park,
+      no question — stuck forever. (The same family as the known "drain dies before CI review settles".) `lane-status`
+      must classify a lane whose process is gone, whose run file is NOT parked and that has NO pending question as
+      `stalled`, and the coordinator resumes it once with a fixed, decision-free operator message ("continue where you
+      left off; wait in the foreground") — a second stall in the same phase escalates to the owner. The lane prompt /
+      skill must also say: in a headless lane, never end the turn to wait; wait in the foreground.
     - **Tests:** `lane-feed` on a fixture log prints parks and spawns; the remote-name check refuses (or suffixes) a
       name that exists only on origin; the park-state rule holds for both resume paths.
 
