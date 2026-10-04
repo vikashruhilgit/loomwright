@@ -87,7 +87,8 @@
 #   H8. reconcile-status judges a body citation by the PR's DIFF: a PR that adds
 #      the cited requirement (PR #359 queued meta-sync-followups/04 and read
 #      "would stamp done") gets no plan line, while the same PR without it in
-#      its diff does; an all-.supervisor/ diff is never evidence; an unreadable
+#      its diff does; an all-.supervisor/ diff is never evidence, on the
+#      body-citation AND the branch-slug path (H8e); an unreadable
 #      or truncated diff is no evidence, and a >100-file diff is re-read through
 #      the paginated REST endpoint; mutation controls neuter each of the two
 #      new checks in a copy of the helper and watch the leg go red.
@@ -2929,6 +2930,42 @@ if rs_mutant "$RS_SUP_LINE" '    :'; then
     || no "H8c mutation control: mutant did not reproduce (out='$RUN_OUT') — H8c would be vacuous"
 else
   no "H8c mutation control: the all-.supervisor line was not found in the helper"
+fi
+rm -rf "$R" "$RSM"
+
+# H8e. The all-.supervisor/ exclusion also holds on the BRANCH-SLUG path: a done/
+#      brief points at the requirement and names PR #359, whose head branch ends in
+#      the brief's slug and whose body does NOT cite the requirement.
+rs_slug_repo() {  # <files_json_array> → "<repo>"
+  local r v
+  r="$(rs_diff_repo "$1")"
+  v="$r/ghstub/view-$(rs_key "$RS_D").json"
+  jq '.body = "no path cited here" | .headRefName = "feature/scrub-safe-briefs"' "$v" > "$r/v.json" && mv "$r/v.json" "$v"
+  printf '# brief\n\n## Environment\n- **Source requirement:** %s\n\n## Outcome\n- **PR:** %s\n' "$RS_DREL" "$RS_D" \
+    > "$r/.supervisor/jobs/done/2026-10-02-scrub-safe-briefs.md"
+  printf '%s' "$r"
+}
+rs_slug_plans() { grep -qF "plan	$RS_DREL	done (PR #359, merge 9a78b9c)	head branch 'feature/scrub-safe-briefs' matches brief slug 'scrub-safe-briefs'" <<<"$RUN_OUT"; }
+# Control: the same slug-matched PR with an implementation file in its diff ⇒ the plan row.
+R="$(rs_slug_repo '["src/scrub.sh",".supervisor/jobs/done/2026-10-02-scrub-safe-briefs.md"]')"
+rs_run "$R" "$R/.supervisor/requirements/qh"
+rs_slug_plans && ok "H8e control: a slug-matched PR with an implementation file plans 'done (PR #359)' via the branch slug" || no "H8e control: no slug plan row (out='$RUN_OUT')"
+rm -rf "$R"
+R="$(rs_slug_repo '[".supervisor/jobs/done/2026-10-02-scrub-safe-briefs.md",".supervisor/automate/run.md"]')"
+rs_run "$R" "$R/.supervisor/requirements/qh"
+DRY_OUT="$RUN_OUT"
+rs_run "$R" "$R/.supervisor/requirements/qh" --apply
+if [ -z "$DRY_OUT" ] && [ -z "$RUN_OUT" ] && grep -qE '^## Status: pending$' "$R/$RS_DREL"; then
+  ok "H8e a slug-matched PR whose changed files are all under .supervisor/ is not evidence (no plan, no stamp)"
+else
+  no "H8e all-.supervisor slug match read as evidence (dry='$DRY_OUT' apply='$RUN_OUT')"
+fi
+if rs_mutant "$RS_SUP_LINE" '    :'; then
+  RS_H="$RSM/automate-helpers.sh" rs_run "$R" "$R/.supervisor/requirements/qh"
+  rs_slug_plans && ok "H8e mutation control: without the all-.supervisor check the slug path plans — the check covers both paths" \
+    || no "H8e mutation control: mutant did not reproduce (out='$RUN_OUT') — H8e would be vacuous"
+else
+  no "H8e mutation control: the all-.supervisor line was not found in the helper"
 fi
 rm -rf "$R" "$RSM"
 
