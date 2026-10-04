@@ -3,11 +3,16 @@
 # repo's stub-on-PATH testing convention (test-orca-mirror.sh) and its
 # TMP-dir-plus-trap cleanup convention.
 #
-# The test writes its OWN provider-table entry, provider-teststub.sh, into
-# THIS directory (lens-run.sh resolves $SCRIPT_DIR/provider-$NAME.sh from its
-# own BASH_SOURCE, so a stub provider must live here to be found at all) and
-# removes it in its own EXIT trap — no test-only file is left behind on a
-# clean exit. Each scenario gets its OWN stub CLI binary (different PATH
+# The test writes its OWN provider-table entries into THIS directory
+# (lens-run.sh resolves $SCRIPT_DIR/provider-$NAME.sh from its own
+# BASH_SOURCE, so a stub provider must live here to be found at all) and
+# removes them in its own EXIT trap — no test-only file is left behind on a
+# clean exit (a SIGKILLed run can leave an untracked provider-teststub<n>.sh).
+# Every per-run name — the provider-table entry provider-teststub<RUN_TAG>.sh
+# and the stub CLI binary loomwright-test-stub-cli-<RUN_TAG> — carries
+# RUN_TAG (this run's pid), so two suites running at once (two CI slots, or two
+# runs in one checkout) never share a provider file or a stub name. Each
+# scenario gets its OWN stub CLI binary (different PATH
 # directories prepended per invocation) rather than one CLI branching on an
 # env var, because lens-run.sh deliberately scrubs the child environment
 # (`env -i`) before exec — any env var the test tried to use to steer stub
@@ -30,11 +35,16 @@
 #   F. git remote remove origin fails -> fail-closed (CLI never runs)
 #   G. stub mutates .git internals only (hook + remote; porcelain empty)
 #      -> lens_mutated_tree (the reproduced porcelain-blind bypass)
-#   H. hung CLI + LOOMWRIGHT_LENS_CLI_TIMEOUT=1 -> lens_unparseable,
-#      process group killed, no leftover children
+#   H. hung CLI + LOOMWRIGHT_LENS_CLI_TIMEOUT=5 -> lens_unparseable,
+#      process group killed, no leftover children — checked ONLY over the
+#      pids/pgid this run's stub recorded, never a machine-wide name match
 #   I. invalid --provider NAME (slash / `..`) -> provider_unavailable,
 #      no source of a path outside $SCRIPT_DIR
 #   J. missing provider-<name>.sh -> provider_unavailable
+#   K. two overlapping lens-run.sh instances: B (released by a file, not a
+#      timeout) is held alive while A (case H's hung CLI) times out — A's
+#      scoped leftover checks pass with B's live stub on the machine, then B
+#      is released and ends ok, not timed out
 #
 # Exit 0 = all pass, 1 = any failure.
 
@@ -65,20 +75,55 @@ if [ ! -f "$LENS" ]; then
 fi
 
 TMP="$(mktemp -d)"
-PROVIDER_FILE="$HERE/provider-teststub.sh"
-cleanup() { rm -rf "$TMP"; rm -f "$PROVIDER_FILE"; }
+# Per-run identity. RUN_TAG is digits only, so every derived name passes
+# lens-run.sh's provider-name allowlist [a-zA-Z0-9_-] (the basename of $TMP
+# would not: macOS mktemp -d yields tmp.XXXXXXXX, and `.` is refused).
+RUN_TAG="$$"
+STUB_CLI_NAME="loomwright-test-stub-cli-$RUN_TAG"
+PROVIDER_NAME="teststub$RUN_TAG"
+PROVIDER_FILE="$HERE/provider-$PROVIDER_NAME.sh"
+# Case K's second instance (B, the live neighbour) gets its own names and its
+# own temp dir; its release file is written by the test (or by cleanup).
+KB_STUB_CLI_NAME="$STUB_CLI_NAME-kb"
+KB_PROVIDER_NAME="$PROVIDER_NAME-kb"
+KB_PROVIDER_FILE="$HERE/provider-$KB_PROVIDER_NAME.sh"
+KB_DIR="$TMP/k-b"
+KB_RELEASE="$KB_DIR/release"
+KB_LENS_PID=""
+TEST_PGID="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')"
+cleanup() {
+  # An interrupted case K must not strand B: release its stub, then TERM B's
+  # lens-run.sh (its own EXIT trap kills B's CLI process group). KB_LENS_PID is
+  # this shell's own un-waited child, so its pid cannot have been reused.
+  if [ -n "$KB_LENS_PID" ]; then
+    : > "$KB_RELEASE" 2>/dev/null
+    kill "$KB_LENS_PID" 2>/dev/null
+    wait "$KB_LENS_PID" 2>/dev/null
+    KB_LENS_PID=""
+  fi
+  rm -rf "$TMP"; rm -f "$PROVIDER_FILE" "$KB_PROVIDER_FILE"
+}
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
-# ---- test-only provider-table entry --------------------------------------
-STUB_CLI_NAME="loomwright-test-stub-cli"
-cat > "$PROVIDER_FILE" <<'PROVIDER'
+# ---- test-only provider-table entries ---------------------------------------
+# write_provider <file> <cli-name> — the CLI name is the only per-run value; it
+# is written by printf OUTSIDE the quoted heredocs, so nothing else in the
+# provider body is subject to expansion.
+write_provider() {
+  local file="$1" cli="$2"
+  {
+    cat <<'PROVIDER'
 #!/usr/bin/env bash
-# provider-teststub.sh — TEST-ONLY provider-table entry, written by
+# provider-teststub<RUN_TAG>.sh — TEST-ONLY provider-table entry, written by
 # test-lens-run.sh at test start and removed in its own EXIT trap. Not a real
 # provider; exists only to satisfy lens-run.sh's $SCRIPT_DIR/provider-<name>.sh
 # lookup convention. See lens-run.sh's own header for the per-provider-file
 # contract these globals/functions implement.
-PROVIDER_CLI_NAME="loomwright-test-stub-cli"
+PROVIDER
+    printf 'PROVIDER_CLI_NAME="%s"\n' "$cli"
+    cat <<'PROVIDER'
 PROVIDER_WORKSPACE_FLAG=0
 PROVIDER_HOME_SCRUB=1
 
@@ -95,7 +140,10 @@ provider_extract_text() {
   return 0
 }
 PROVIDER
-chmod +x "$PROVIDER_FILE"
+  } > "$file"
+  chmod +x "$file"
+}
+write_provider "$PROVIDER_FILE" "$STUB_CLI_NAME"
 
 # ---- fixed diff/prompt inputs ---------------------------------------------
 DIFF_FILE="$TMP/diff.txt"
@@ -178,17 +226,69 @@ printf '%s\\n' '{"issues":[{"severity":"HIGH","category":"new","file":"src/foo.p
 STUB
 chmod +x "$STUB_G_DIR/$STUB_CLI_NAME"
 
-# H: hangs (leader + child) so the process-group timeout can be proven.
-STUB_H_DIR="$TMP/stub-h"; mkdir -p "$STUB_H_DIR"
-PIDS_H="$TMP/pids-h"
-cat > "$STUB_H_DIR/$STUB_CLI_NAME" <<STUB
+# H (and case K's instance A): hangs (leader + child) so the process-group
+# timeout can be proven. The stub records its OWN pid and pgid as its FIRST
+# action, before it backgrounds the child, so a slow exec under load shortens
+# the time it has before the watchdog fires but never loses the record.
+# write_hung_stub <dir> <cli-name> <pid-file-prefix>
+write_hung_stub() {
+  local dir="$1" cli="$2" pids="$3"
+  mkdir -p "$dir"
+  cat > "$dir/$cli" <<STUB
 #!/usr/bin/env bash
+printf '%s\\n' "\$\$" > "$pids.self"
+ps -o pgid= -p "\$\$" 2>/dev/null | tr -d ' ' > "$pids.pgid"
 sleep 120 &
-printf '%s\\n' "\$!" > "$PIDS_H.child"
-printf '%s\\n' "\$\$" > "$PIDS_H.self"
+printf '%s\\n' "\$!" > "$pids.child"
 sleep 120
 STUB
-chmod +x "$STUB_H_DIR/$STUB_CLI_NAME"
+  chmod +x "$dir/$cli"
+}
+STUB_H_DIR="$TMP/stub-h"
+PIDS_H="$TMP/pids-h"
+write_hung_stub "$STUB_H_DIR" "$STUB_CLI_NAME" "$PIDS_H"
+
+# assert_no_leftovers <label> <pid-file-prefix> — scoped leftover check over
+# ONLY the processes this stub recorded: kill -0 on its leader and child pids
+# and a process-group query on its recorded pgid. Never a machine-wide name
+# match: another suite's live stub must not read as this run's leftover.
+# The kill check is polled for up to 10s, so a slow-to-reap process under
+# load is not a false leftover.
+assert_no_leftovers() {
+  local label="$1" pids="$2" self child pgid i=0 left
+  self="$(cat "$pids.self" 2>/dev/null || true)"
+  child="$(cat "$pids.child" 2>/dev/null || true)"
+  pgid="$(cat "$pids.pgid" 2>/dev/null || true)"
+  while [ "$i" -lt 50 ]; do
+    left=0
+    if [ -n "$self" ] && kill -0 "$self" 2>/dev/null; then left=1; fi
+    if [ -n "$child" ] && kill -0 "$child" 2>/dev/null; then left=1; fi
+    [ "$left" = "0" ] && break
+    sleep 0.2; i=$((i+1))
+  done
+  if [ -n "$self" ]; then
+    assert_eq "$label CLI leader is not still running" "0" "$( kill -0 "$self" 2>/dev/null && echo 1 || echo 0 )"
+  else
+    no "$label CLI never wrote its pid — timeout path may not have reached exec"
+  fi
+  if [ -n "$child" ]; then
+    assert_eq "$label CLI child is not still running (process-group kill)" "0" "$( kill -0 "$child" 2>/dev/null && echo 1 || echo 0 )"
+  else
+    no "$label CLI never wrote a child pid — cannot prove process-group kill"
+  fi
+  # Guard before `pgrep -g`: without lens-run.sh's perl/python setpgrp launch
+  # the stub would sit in THIS test's own group, and the query would list the
+  # test itself.
+  if [ -z "$pgid" ]; then
+    no "$label CLI never wrote its pgid — cannot scope the process-group check"
+  elif [ "$pgid" != "$self" ]; then
+    no "$label CLI pgid [$pgid] != its pid [$self] — not launched as its own process group (setpgrp), group check refused"
+  elif [ "$pgid" = "$TEST_PGID" ]; then
+    no "$label CLI pgid [$pgid] is the test's own process group — group check refused"
+  else
+    assert_eq "$label no process left in the CLI's own process group (pgrep -g $pgid)" "" "$(pgrep -g "$pgid" 2>/dev/null | tr '\n' ' ')"
+  fi
+}
 
 # ---- runner -----------------------------------------------------------------
 # run_lens [as run_lens_named] <provider> <stub-bin-dir-or-empty> <out-file>
@@ -206,7 +306,7 @@ run_lens_named() {
       --diff "$DIFF_FILE" --prompt "$PROMPT_FILE" --out "$outfile" )
 }
 run_lens() {
-  run_lens_named teststub "$1" "$2"
+  run_lens_named "$PROVIDER_NAME" "$1" "$2"
 }
 
 echo "==== A: provider absent from PATH -> provider_unavailable, no subprocess attempted ===="
@@ -216,7 +316,7 @@ RC_A=0
 LOOMWRIGHT_LENS_DEBUG_WT_PATH_FILE="$DEBUG_A" run_lens "" "$OUT_A" || RC_A=$?
 assert_eq "A rc=0" "0" "$RC_A"
 assert_eq "A lens_status=provider_unavailable" "provider_unavailable" "$(jq -r '.lens_status' "$OUT_A" 2>/dev/null)"
-assert_eq "A provider field echoes the requested name" "teststub" "$(jq -r '.provider' "$OUT_A" 2>/dev/null)"
+assert_eq "A provider field echoes the requested name" "$PROVIDER_NAME" "$(jq -r '.provider' "$OUT_A" 2>/dev/null)"
 assert_eq "A no subprocess attempted (sandbox-debug hatch never fired -> run never reached the exec stage)" "0" "$( [ -f "$DEBUG_A" ] && echo 1 || echo 0 )"
 
 echo ""
@@ -258,7 +358,7 @@ assert_eq "D lens_status=ok" "ok" "$(jq -r '.lens_status' "$OUT_D" 2>/dev/null)"
 EXPECTED_D='[{"severity":"HIGH","category":"new","file":"src/foo.py","line":42,"description":"unhandled error","suggestion":"add try/catch"}]'
 assert_eq "D issues[] normalized to the exact severity/category/file/line/description/suggestion fields (severity upcased)" "$EXPECTED_D" "$(jq -c '.issues' "$OUT_D" 2>/dev/null)"
 assert_eq "D cost is honestly 'unknown', never '0'" "unknown" "$(jq -r '.cost' "$OUT_D" 2>/dev/null)"
-assert_eq "D provider field" "teststub" "$(jq -r '.provider' "$OUT_D" 2>/dev/null)"
+assert_eq "D provider field" "$PROVIDER_NAME" "$(jq -r '.provider' "$OUT_D" 2>/dev/null)"
 assert_eq "D model is null (no :model suffix given)" "null" "$(jq -c '.model' "$OUT_D" 2>/dev/null)"
 
 echo ""
@@ -314,29 +414,30 @@ assert_eq "G PARENT repo origin unchanged" "$ORIGIN_BEFORE_G" "$ORIGIN_AFTER_G"
 
 echo ""
 echo "==== H: hung CLI times out, process group killed, no leftover children ===="
+# Why the timeout clock is not deferred until the stub's pid file exists: the
+# clock is lens-run.sh's own watchdog, forked right after the CLI subshell, so
+# it starts at CLI launch and the test cannot start it later. Load tolerance
+# comes instead from (a) the stub writing its pid/pgid first, (b) a 5s timeout
+# (was 1s) that leaves exec headroom under load, (c) the elapsed bound below,
+# which still proves the timeout fired rather than the CLI exiting (the stub
+# sleeps 120s), and (d) the 10s bounded kill poll in assert_no_leftovers.
+# Honest limits: (1) a `sleep` shim on the PATH the test passes could defer the
+# watchdog test-side, but it would alter the timing of the code under test, so
+# it is deliberately not used; (2) an exec stall longer than the 5s timeout
+# still fails "never wrote its pid" — the raise shrinks that flake window, it
+# does not abolish it, and the 10s bound applies to the post-return kill poll,
+# not to a pid-file wait.
 OUT_H="$TMP/out-h.json"
 RC_H=0
 START_H="$(date +%s)"
-LOOMWRIGHT_LENS_CLI_TIMEOUT=1 run_lens "$STUB_H_DIR" "$OUT_H" || RC_H=$?
+LOOMWRIGHT_LENS_CLI_TIMEOUT=5 run_lens "$STUB_H_DIR" "$OUT_H" || RC_H=$?
 END_H="$(date +%s)"
 ELAPSED_H=$((END_H - START_H))
 assert_eq "H rc=0" "0" "$RC_H"
 assert_eq "H lens_status=lens_unparseable" "lens_unparseable" "$(jq -r '.lens_status' "$OUT_H" 2>/dev/null)"
 assert_true "H notes name the timeout" "$( grep -q 'timed out' < <(jq -r '.notes // empty' "$OUT_H" 2>/dev/null) && echo 1 || echo 0 )"
-assert_true "H finished well inside the hung-sleep (elapsed=${ELAPSED_H}s, bound ~1s+kill)" "$( [ "$ELAPSED_H" -lt 20 ] && echo 1 || echo 0 )"
-H_SELF="$(cat "$PIDS_H.self" 2>/dev/null || true)"
-H_CHILD="$(cat "$PIDS_H.child" 2>/dev/null || true)"
-if [ -n "$H_SELF" ]; then
-  assert_eq "H CLI leader is not still running" "0" "$( kill -0 "$H_SELF" 2>/dev/null && echo 1 || echo 0 )"
-else
-  no "H CLI never wrote its pid — timeout path may not have reached exec"
-fi
-if [ -n "$H_CHILD" ]; then
-  assert_eq "H CLI child is not still running (process-group kill)" "0" "$( kill -0 "$H_CHILD" 2>/dev/null && echo 1 || echo 0 )"
-else
-  no "H CLI never wrote a child pid — cannot prove process-group kill"
-fi
-assert_eq "H no leftover stub CLI processes" "0" "$( pgrep -f "$STUB_CLI_NAME" >/dev/null 2>&1 && echo 1 || echo 0 )"
+assert_true "H finished well inside the hung-sleep (elapsed=${ELAPSED_H}s, bound: 5s timeout + 2s TERM->KILL grace, < 20s vs the stub's sleep 120)" "$( [ "$ELAPSED_H" -lt 20 ] && echo 1 || echo 0 )"
+assert_no_leftovers "H" "$PIDS_H"
 
 echo ""
 echo "==== I: invalid --provider NAME (slash / ..) -> provider_unavailable, no source-escape ===="
@@ -359,6 +460,72 @@ assert_eq "J rc=0" "0" "$RC_J"
 assert_eq "J lens_status=provider_unavailable" "provider_unavailable" "$(jq -r '.lens_status' "$OUT_J" 2>/dev/null)"
 assert_true "J notes name the missing provider-table entry" "$( grep -q 'no provider-table entry' < <(jq -r '.notes // empty' "$OUT_J" 2>/dev/null) && echo 1 || echo 0 )"
 assert_eq "J no sandbox created (rejected before isolate)" "0" "$( [ -f "$DEBUG_J" ] && echo 1 || echo 0 )"
+
+echo ""
+echo "==== K: overlapping lens-run.sh instances -> A's scoped leftover checks ignore live neighbour B ===="
+# B is held alive by a RELEASE FILE the test writes after A's checks, not by a
+# timeout: A's sandbox setup/teardown is unbounded under load, so B's lifetime
+# must not depend on A's wall time. B's 90s timeout is a backstop only.
+KB_STUB_DIR="$KB_DIR/stub"; mkdir -p "$KB_STUB_DIR"
+KB_PIDS="$KB_DIR/pids"
+OUT_KB="$KB_DIR/out.json"
+cat > "$KB_STUB_DIR/$KB_STUB_CLI_NAME" <<STUB
+#!/usr/bin/env bash
+printf '%s\\n' "\$\$" > "$KB_PIDS.self.tmp" && mv -f "$KB_PIDS.self.tmp" "$KB_PIDS.self"
+i=0
+while [ ! -e "$KB_RELEASE" ] && [ "\$i" -lt 300 ]; do sleep 0.2; i=\$((i+1)); done
+printf '{"issues":[]}\\n'
+exit 0
+STUB
+chmod +x "$KB_STUB_DIR/$KB_STUB_CLI_NAME"
+write_provider "$KB_PROVIDER_FILE" "$KB_STUB_CLI_NAME"
+# exec, so $! is B's lens-run.sh itself (cleanup TERMs exactly that process).
+( cd "$REPO_ROOT" && LOOMWRIGHT_LENS_CLI_TIMEOUT=90 PATH="$KB_STUB_DIR:$PATH" exec "$BASH_BIN" "$LENS" \
+    --provider "$KB_PROVIDER_NAME" --role review \
+    --diff "$DIFF_FILE" --prompt "$PROMPT_FILE" --out "$OUT_KB" ) >"$KB_DIR/lens.log" 2>&1 &
+KB_LENS_PID=$!
+# B's sandbox setup runs before its stub starts and is unbounded under load:
+# wait up to ~60s for B's pid file (or for B's lens-run.sh to exit early).
+i=0
+while [ ! -s "$KB_PIDS.self" ] && [ "$i" -lt 300 ] && kill -0 "$KB_LENS_PID" 2>/dev/null; do sleep 0.2; i=$((i+1)); done
+KB_SELF="$(cat "$KB_PIDS.self" 2>/dev/null || true)"
+if [ -z "$KB_SELF" ]; then
+  no "K B never started its stub within the bound (~60s) — overlap cannot be established"
+else
+  STUB_KA_DIR="$TMP/stub-ka"
+  PIDS_KA="$TMP/pids-ka"
+  write_hung_stub "$STUB_KA_DIR" "$STUB_CLI_NAME" "$PIDS_KA"
+  OUT_KA="$TMP/out-ka.json"
+  RC_KA=0
+  LOOMWRIGHT_LENS_CLI_TIMEOUT=5 run_lens "$STUB_KA_DIR" "$OUT_KA" || RC_KA=$?
+  assert_eq "K A rc=0" "0" "$RC_KA"
+  assert_eq "K A lens_status=lens_unparseable" "lens_unparseable" "$(jq -r '.lens_status' "$OUT_KA" 2>/dev/null)"
+  assert_true "K A notes name the timeout" "$( grep -q 'timed out' < <(jq -r '.notes // empty' "$OUT_KA" 2>/dev/null) && echo 1 || echo 0 )"
+  assert_no_leftovers "K A" "$PIDS_KA"
+  if kill -0 "$KB_SELF" 2>/dev/null; then
+    ok "K overlap held: B's stub (pid $KB_SELF) was alive during A's leftover checks"
+  else
+    no "K overlap not established — B exited before A's check"
+  fi
+fi
+: > "$KB_RELEASE"
+i=0
+while kill -0 "$KB_LENS_PID" 2>/dev/null && [ "$i" -lt 300 ]; do sleep 0.2; i=$((i+1)); done
+if kill -0 "$KB_LENS_PID" 2>/dev/null; then
+  no "K B lens-run.sh still running ~60s after its release file was written"
+  kill "$KB_LENS_PID" 2>/dev/null
+fi
+RC_KB=0
+wait "$KB_LENS_PID" || RC_KB=$?
+KB_LENS_PID=""
+assert_eq "K B rc=0" "0" "$RC_KB"
+assert_eq "K B lens_status=ok (ran and was released, not killed)" "ok" "$(jq -r '.lens_status' "$OUT_KB" 2>/dev/null)"
+assert_eq "K B notes do not say timed out" "0" "$( grep -q 'timed out' < <(jq -r '.notes // empty' "$OUT_KB" 2>/dev/null) && echo 1 || echo 0 )"
+if [ -n "$KB_SELF" ]; then
+  i=0
+  while kill -0 "$KB_SELF" 2>/dev/null && [ "$i" -lt 50 ]; do sleep 0.2; i=$((i+1)); done
+  assert_eq "K B stub leader is gone after release" "0" "$( kill -0 "$KB_SELF" 2>/dev/null && echo 1 || echo 0 )"
+fi
 
 echo ""
 echo "RESULT: $pass passed, $fail failed"

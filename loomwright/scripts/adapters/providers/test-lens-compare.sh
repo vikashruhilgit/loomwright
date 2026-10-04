@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # test-lens-compare.sh — stub-backed self-tests for lens-compare.sh. Mirrors
 # test-lens-run.sh's stub-on-PATH convention (own provider-table entries,
-# written at test start, removed in this test's own EXIT trap). lens-run.sh's
+# written at test start, removed in this test's own EXIT trap, named per run
+# via RUN_TAG so two concurrent runs in one checkout never share or delete
+# each other's entry). lens-run.sh's
 # OWN mechanics (sandbox isolation, mutation detection, timeout) are already
 # covered by test-lens-run.sh; this suite only exercises lens-compare.sh's
 # OWN logic — argument parsing and the agree/only-A/only-B set computation —
@@ -40,8 +42,11 @@ if [ ! -f "$COMPARE" ]; then
 fi
 
 TMP="$(mktemp -d)"
-PROVIDER_X_FILE="$HERE/provider-teststubx.sh"
-PROVIDER_Y_FILE="$HERE/provider-teststuby.sh"
+RUN_TAG="$$"   # digits only — passes lens-run.sh's provider-name allowlist
+PROVIDER_X_NAME="teststubx$RUN_TAG"
+PROVIDER_Y_NAME="teststuby$RUN_TAG"
+PROVIDER_X_FILE="$HERE/provider-$PROVIDER_X_NAME.sh"
+PROVIDER_Y_FILE="$HERE/provider-$PROVIDER_Y_NAME.sh"
 cleanup() { rm -rf "$TMP"; rm -f "$PROVIDER_X_FILE" "$PROVIDER_Y_FILE"; }
 trap cleanup EXIT
 
@@ -114,7 +119,7 @@ run_compare() {
 echo "==== A: overlapping + disjoint findings -> agree/only_a/only_b partition ===="
 OUT_A="$TMP/out-a.json"
 RC_A=0
-run_compare "teststubx,teststuby" "$OUT_A" "$STUB_X_DIR:$STUB_Y_DIR" || RC_A=$?
+run_compare "$PROVIDER_X_NAME,$PROVIDER_Y_NAME" "$OUT_A" "$STUB_X_DIR:$STUB_Y_DIR" || RC_A=$?
 assert_eq "A rc=0" "0" "$RC_A"
 assert_eq "A compare_status=ok" "ok" "$(jq -r '.compare_status' "$OUT_A" 2>/dev/null)"
 assert_eq "A agree has exactly 1 entry" "1" "$(jq '.agree | length' "$OUT_A" 2>/dev/null)"
@@ -130,7 +135,7 @@ echo ""
 echo "==== B: provider B unavailable -> degraded_b, all of A's findings in only_a ===="
 OUT_B="$TMP/out-b.json"
 RC_B=0
-run_compare "teststubx,does-not-exist" "$OUT_B" "$STUB_X_DIR" || RC_B=$?
+run_compare "$PROVIDER_X_NAME,does-not-exist" "$OUT_B" "$STUB_X_DIR" || RC_B=$?
 assert_eq "B rc=0" "0" "$RC_B"
 assert_eq "B compare_status=degraded_b" "degraded_b" "$(jq -r '.compare_status' "$OUT_B" 2>/dev/null)"
 assert_eq "B provider_b lens_status=provider_unavailable" "provider_unavailable" "$(jq -r '.provider_b.lens_status' "$OUT_B" 2>/dev/null)"
