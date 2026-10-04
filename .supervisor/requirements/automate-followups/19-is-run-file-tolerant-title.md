@@ -22,3 +22,9 @@
 - Fixture legs in `loomwright/scripts/test-automate-helpers.sh` (section D0b): BOM, extra space, lower-case, plus a
   sidecar control that must stay unlisted.
 - Behavioural, low risk; one function + one test file.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-04T08:18:54Z
+- **Brief:** .supervisor/jobs/done/2026-10-04-is-run-file-tolerant-title.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/374

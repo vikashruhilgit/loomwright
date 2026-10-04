@@ -25,3 +25,9 @@
 - Option B: keep behaviour, document the gap as an honest limit in both skills.
 - Files: `loomwright/skills/self-heal-advisory/SKILL.md` (Part 2 loop), `loomwright/skills/review-heal/SKILL.md`
   (drain), plus their tests if A.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-04T08:15:03Z
+- **Brief:** .supervisor/jobs/done/2026-10-04-fail-to-unstamped-escalates.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/372
