@@ -17,12 +17,14 @@
 #   P8 self-heal-advisory's rules read is ALLOW-LISTED the same way, and Part 2 escalates on the
 #      allow-list complement (never a deny-list of bad verdicts)
 #   P9 self-heal-advisory's fail→unstamped leg (automate-followups/18): the loop-local rules_fail_seen
-#      memory, the leg's condition, its `heal_decision = ESCALATED` line, and the named reason
-#      rules_fail_then_unstamped
+#      memory, the leg's condition, its `heal_decision = ESCALATED` line, the named reason
+#      rules_fail_then_unstamped, AND the line that FILLS rules_fail_seen ($FILL — without it the leg
+#      is unreachable while every other needle still holds)
 #   P10 review-heal's fail→unstamped legs: the run-scoped rules_fail_seen memory, the MAIN-path
 #      rules_fail_unstamped variable + its own leg + its fallback-gate exclusion, the named reason, AND
 #      the SUB-FLOOR leg's standalone check ($SUBFLOOR — a needle carried ONLY by the sub-floor leg, so
-#      deleting either leg alone fails P10)
+#      deleting either leg alone fails P10), AND both FILL lines — the main path's ($FILL) and the
+#      sub-floor branch's ($SUBFILL, carried ONLY by the sub-floor fill line)
 #   P1/P2 pin the invocation in its RUNTIME form — the quoted plugin-install-root variable prefix
 #   ($INVOKE below) — never the developer-side repo-relative `scripts/…` path, which resolves neither
 #   in a user project nor at this repo's root.
@@ -36,6 +38,8 @@
 #         must FAIL (the prefix itself is load-bearing, not just the script name).
 #   MSUB  delete ONLY the sub-floor needle of P10 ($SUBFLOOR) ⇒ P10 must FAIL (the sub-floor leg is pinned
 #         independently of the main-path leg, which M10 covers). M9/M10 come from the M<n> loop above.
+#   MSUBFILL delete ONLY the sub-floor FILL line ($SUBFILL) ⇒ P10 must FAIL (an empty rules_fail_seen
+#         makes the sub-floor leg unreachable even with its check intact).
 #
 # Portability: bash 3.2 (macOS) + Linux; no GNU-only flags, no mapfile, no sed -i.
 set -uo pipefail
@@ -56,6 +60,10 @@ CM="CLAUDE.md"
 INVOKE='bash "${CLAUDE_PLUGIN_ROOT}/scripts/rules-gate-verdict.sh" --root'
 # review-heal's sub-floor fail→unstamped check — carried ONLY by the sub-floor leg (MSUB's target).
 SUBFLOOR='if rules_after.verdict == "unstamped" and rules_fail_seen != []:'
+# The line that FILLS rules_fail_seen on the main path (both skills) — delete it and the legs are dead.
+FILL='rules_fail_seen += [id for id in rules.failing if id in rules.countable and id not in rules_fail_seen]'
+# review-heal's sub-floor fill line — carried ONLY by the sub-floor branch (MSUBFILL's target).
+SUBFILL='rules_fail_seen += [id for id in rules_after.failing'
 
 # pin <n> — prints "<file>" then one needle per line for pin n (first needle = the mutant's target).
 pin() {
@@ -84,14 +92,17 @@ pin() {
          'if rules.verdict == "unstamped" and rules_fail_seen != []:' \
          'rules_fail_seen = []' \
          'heal_decision = ESCALATED   # rules_fail_then_unstamped' \
-         'decision: "rules_fail_then_unstamped"' ;;
+         'decision: "rules_fail_then_unstamped"' \
+         "$FILL" ;;
     10) printf '%s\n' "$RH" \
          'rules_fail_unstamped = rules.verdict == "unstamped" and rules_fail_seen != []' \
          'rules_fail_seen = []' \
          'and not rules_fail_unstamped:' \
          'if rules_fail_unstamped:' \
          'rules_fail_then_unstamped' \
-         "$SUBFLOOR" ;;
+         "$SUBFLOOR" \
+         "$FILL" \
+         "$SUBFILL" ;;
   esac
 }
 PINS="1 2 3 4 5 6 7 8 9 10"
@@ -187,6 +198,17 @@ if fresh_tree "$d" && run_pins "$d"; then
        else ok "MSUB deleting only the sub-floor leg's check fails P10"; fi; }
 else
   no "MSUB positive control: tree copy or unmutated pin run failed"
+fi
+
+# MSUBFILL: delete ONLY review-heal's sub-floor FILL line ⇒ P10 must fail (the main-path fill alone
+# must not keep P10 green; an unfilled rules_fail_seen makes the sub-floor leg unreachable).
+d="$TMP/msubfill"
+if fresh_tree "$d" && run_pins "$d"; then
+  mutate "$d" "$RH" "$SUBFILL" \
+  && { if check_pin "$d" 10; then no "MSUBFILL deleting the sub-floor fill line left P10 passing"
+       else ok "MSUBFILL deleting only the sub-floor fill line fails P10"; fi; }
+else
+  no "MSUBFILL positive control: tree copy or unmutated pin run failed"
 fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
