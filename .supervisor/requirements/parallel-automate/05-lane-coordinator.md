@@ -167,6 +167,24 @@ coordinator. Without the flag, or with `--parallel 1`, no lane code runs at all.
       options is refused; the bundled-call deny; a `lane-remove` refusal while a question is pending (Scope 1).
     - Evidence: the S1 run record. Lane B relayed 5 deferred calls carrying 10 questions (resume path, pre-flight overlap, unsettled join,
       dismissed findings 1–7) through exactly this shape.
+14. **What a lane is doing, and lane hygiene at scale** (added 2026-10-04, owner, from S1 v2 and the 5–10-lane goal).
+    - **Live view:** `lane-status` adds each lane's last progress line and its last 3 actions (read from the lane's
+      session log and run file); `lane-feed <lane> [--follow]` prints a readable narration of the lane's session
+      (messages, tool calls, subagent starts, parks), the plain fallback P9 rule 6 already promises. The S1 v2
+      harness's `feed` and `status` are the prototype. While a lane waits for a CI slot (item 08), `lane-status`
+      says so, with its queue position (`ci-slot.sh status --json`).
+    - **Remote branch-name check before a lane takes a branch:** the Supervisor's branch-collision guard checks only
+      the LOCAL branch, and a fresh clone has none. In S1 v2 **both** lanes picked exactly v1's branch names
+      (`feature/is-run-file-tolerant-title`, `feature/automate-followups-18-…`); only moving v1's branches first
+      avoided a rejected push. `lane-create` / `lane-launch` must check `git ls-remote --heads origin <name>` too,
+      and a remote hit gets a suffixed name or fails closed, never a force push.
+    - **One defined clone state at park:** at `awaiting_merge`, v2-b's clone was back on `main` and v2-a's stayed on
+      its feature branch, from the same park step. Define it (recommended: stay on the PR branch until closeout), so
+      `lane-remove`, the sweep (`automate-followups/22`) and `/janitor` read one shape.
+    - **Lane count:** the owner's target is 5–10 (decision P2 as amended 2026-10-04); `--parallel N` accepts up to
+      10, and the default comes from S2's measurements, not from this item.
+    - **Tests:** `lane-feed` on a fixture log prints parks and spawns; the remote-name check refuses (or suffixes) a
+      name that exists only on origin; the park-state rule holds for both resume paths.
 
 ## Non-goals
 Merging and the release bump (item 06). More than one wave at once. Lanes on other machines. A `-runner` agent.

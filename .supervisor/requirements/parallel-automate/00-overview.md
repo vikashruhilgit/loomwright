@@ -26,9 +26,20 @@ carry the fixes.
 | 05 | Lane coordinator (`/automate --parallel N`) | large | The parallel run: one isolated lane per item, one coordinator. |
 | 06 | Wave close + split closeout | medium | One release bump per wave, closeout with no extra PR, no lane left behind. |
 | 07 | Pilot + docs | small | Run a real queue in parallel; update the standing docs. |
+| 08 | Shared CI slots across lanes | medium | All checkouts of the repo share N CI slots, one pass cache and a fair queue; each run uses its CPU share. (5–10-lane goal) |
+| 09 | Fewer full suite runs per lane | small | One full run per push, a mapped `--affected` inner loop, `--last` instead of re-running to read output. |
+| 10 | `Touches` / `Depends on` backfill, lint, `--explain` | medium | Today 26 open items plan into 24 waves (max 2 per wave); most items predate item 04's sections. |
+| 11 | Split shared hotspot files | medium | Generated skills index; `automate-helpers.sh` split along its subcommand seams; measured by 10's `--explain`. |
+| 12 | Policy answers for routine lane questions | medium | Stable gate ids + a human-stamped policy; 8 of S1 v2's 15 questions were routine. |
+| 13 | Sibling-merge conflict repair | medium | After each merge, repair a parked PR that turned CONFLICTING via a watcher handshake; pause on a red `main`. Not a train. |
+| S2 | Five-lane spike (`operator-run/`) | 1 day, operator | Measures CI slots, memory, owner load, merges and cost at 5 lanes; sets P2; go/no-go for 10. |
 
 ## Order
 01 → 02 → 03 → M1 (operator) → S1 (operator) → 04 → 05 → 06 → 07.
+- **Amended 2026-10-04 (owner: "at least 5 to 10 lanes"):** 08, 09 and 10 have no dependencies on 05 and can run
+  now. `plan-waves` (checked 2026-10-04): wave 1 = 08 + 10 (disjoint), wave 2 = 09 + 11 (09 shares `ci-local.sh`
+  with 08; 11 depends on 10). The item-10 backlog backfill (operator edit) goes between 10 and 11. 12 and 13 need 05. **S2 (operator) runs after 08 + 09 + 10 + the
+  backfill** and before the lane count is raised; 12 is optional for S2. 07's pilot uses S2's lane count.
 - 01, 02 and 04 are independent of each other. 03 needs 02. M1 needs 03 MERGED **and the plugin reinstalled**
   (sessions run the installed plugin, not the working tree). S1 needs M1. 05 needs 03 + 04 + S1's answers +
   `agnostic-phase1/04-non-interactive-gates.md`. 06 needs 01 + 05. 07 needs 06.
@@ -54,7 +65,9 @@ carry the fixes.
   `reviewDecision: REVIEW_REQUIRED` with zero reviews — every merge is an owner admin-bypass, because an author
   cannot approve their own PR. So **`--auto-merge` with `--parallel N>1` stays REFUSED in this queue**; nothing
   here builds a merge train that waits for an approval that never comes.
-- **P2 — default lane count: 2** until the pilot (item 07) measures contention. The subscription weekly cap, the
+- **P2 — lane count. AMENDED 2026-10-04 (owner): the target is 5 to 10 lanes, not 2.** The default is set from
+  S2's measurements (5 if clean; the largest N the data supports otherwise, limiting resource named); 10 only after
+  a clean 5. Original text, kept for history: default lane count 2 until the pilot (item 07) measures contention. The subscription weekly cap, the
   CI review lens and N concurrent self-test suites all share one account / one machine.
 - **P3 — metadata branch: `loomwright-meta`, run history only**, as explicit file patterns (never whole
   directories). Lessons (`.supervisor/memory/`), agent memory (`.claude/agent-memory/`) and `.agent/` stay on
@@ -90,6 +103,11 @@ carry the fixes.
   - (7) the core's tests run with NO add-on loaded.
   Claude-specific add-ons live in the Claude adapter layer (portability core/adapter direction) and count against
   the vendor-coupling ratchet.
+
+- **P10 — usage budget (NEW — owner to decide).** A lane cost about $24–27 per item in S1 v2, so 10 lanes are about
+  $250 of usage per wave, plus a `claude-review` CI run per push on the same subscription (the weekly cap tripped on
+  2026-09-15). Code cannot solve this: either lanes get their own billing (API key) or the lane count is capped by
+  budget. S2 records cost per wave to inform it.
 
 ## Red-team revisions (2026-10-01)
 | Finding | Verified how | Fix lives in |
