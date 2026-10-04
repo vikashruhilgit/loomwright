@@ -191,6 +191,13 @@ coordinator. Without the flag, or with `--parallel 1`, no lane code runs at all.
       `stalled`, and the coordinator resumes it once with a fixed, decision-free operator message ("continue where you
       left off; wait in the foreground") — a second stall in the same phase escalates to the owner. The lane prompt /
       skill must also say: in a headless lane, never end the turn to wait; wait in the foreground.
+      **Second occurrence (wave w2, lane w2-30, 2026-10-04):** the lane put slow PICK checks (`reconcile-status`, one
+      `gh` call per requirement) in the background, said "Waiting for the background PICK checks to complete" and ended
+      its turn, so the same stall happened in a different phase. Two lanes out of three in one afternoon means this is the
+      default behaviour, not an accident. **Mitigation now in the S1 harness, to carry into `lane-launch`:** every lane
+      launch and resume passes `--append-system-prompt` with a fixed headless-lane instruction ("ending your turn ends
+      this process … wait in the FOREGROUND … end your turn only when parked or asking the owner"). `lane-launch` must do
+      the same, and the stalled-lane detection above stays as the safety net.
     - **Tests:** `lane-feed` on a fixture log prints parks and spawns; the remote-name check refuses (or suffixes) a
       name that exists only on origin; the park-state rule holds for both resume paths.
 
