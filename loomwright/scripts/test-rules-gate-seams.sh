@@ -17,7 +17,8 @@
 #   P8 self-heal-advisory's rules read is ALLOW-LISTED the same way, and Part 2 escalates on the
 #      allow-list complement (never a deny-list of bad verdicts)
 #   P9 self-heal-advisory remembers countable fails across iterations (rules_failed_seen) and a later
-#      `unstamped` escalates `rules_fail_then_unstamped` (automate-followups/18)
+#      `unstamped` escalates `rules_fail_then_unstamped` (automate-followups/18) — including the
+#      persistence record_decision and the leg's ESCALATED line (bound by its unique trailing comment)
 #   P10 review-heal remembers countable fails across rounds, and the remembered set escalates an
 #      `unstamped` in BOTH rules_escalates and the sub-floor rules_after re-read (automate-followups/18)
 #   P1/P2 pin the invocation in its RUNTIME form — the quoted plugin-install-root variable prefix
@@ -77,7 +78,10 @@ pin() {
          'new_seen = {id for id in rules.failing if id in rules.countable} - rules_failed_seen' \
          'rules_failed_seen |= new_seen' \
          'if rules.verdict == "unstamped" and rules_failed_seen:' \
-         'record_decision(phase: SELF_HEAL, decision: "rules_fail_then_unstamped"' ;;
+         'record_decision(phase: SELF_HEAL, decision: "rules_fail_then_unstamped"' \
+         'record_decision(phase: SELF_HEAL, decision: "rules_failed_seen: added' \
+         'heal_decision = ESCALATED   # rules_fail_then_unstamped' \
+         '+ len(rules_failed_seen)' ;;
     10) printf '%s\n' "$RH" \
          'rules_failed_seen |= { id for id in rules.failing if id in rules.countable }' \
          'rules_escalates = rules_escalates or (rules.verdict == "unstamped" and rules_failed_seen)' \

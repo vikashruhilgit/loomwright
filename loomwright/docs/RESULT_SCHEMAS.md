@@ -1464,7 +1464,7 @@ On **ESCALATED** (same fields, escalated status value, plus one `Heal` line):
 - **Completed:** {ISO 8601 timestamp}
 - **Brief:** {done/ brief path}
 - **PR:** {PR URL}
-- **Heal:** {needs_human|max_iterations_reached|self_heal_resume_thrash} — {heal_remaining_issues} remaining
+- **Heal:** {needs_human|max_iterations_reached|self_heal_resume_thrash|rules_gate_unresolved|rules_fail_then_unstamped} — {heal_remaining_issues} remaining
 ```
 
 - **Who writes it:** Supervisor Phase 4.5 SELF_HEAL completion-tail step 2.5 (`agents/supervisor.md`),
