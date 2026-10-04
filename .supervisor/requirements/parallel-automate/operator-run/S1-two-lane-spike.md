@@ -249,3 +249,67 @@ answers, P8 recommendation.
     behaviour. With the question channel, the owner caught it at the park; without it, lane A's slipped through.
   - Totals for lane B's re-run: **5 deferred calls, 10 questions, every answer delivered** (the hook fired again on
     each resume for the same id). One multi-question call was answered as a whole.
+
+## Comparison table — v1 (filled 2026-10-04 ~05:30Z; v2 column to be added after v2)
+| Measure | v1 lane A (item 19, PR #370) | v1 lane B (item 18, PR #371) |
+|---|---|---|
+| Shape | A as shipped (headless, no question channel, `--non-interactive-fallback`) | first run: the same as A; re-run: **A + relay** (permission host, defer hook, no fallback) |
+| Wall-clock to READY park | 74 min (01:53:27 → 03:07:44Z) | first run 14 min (stopped at the brief save); relay run 02:52 → 05:13Z = 2 h 21 min, incl. 44 min parked on the owner and 15 min lost to the background kill |
+| Turns / cost | 130 turns / $19.75 | 214 turns over 11 segments / $29.51 ($7.16 first run + $22.35 relay run) |
+| Questions asked / relayed | 0 / 0 (it could not ask) | 10 questions in 5 deferred calls / all 10 relayed; answer latency 1.4–15.8 min |
+| Gates the lane decided ALONE | **2:** saved its own brief after a Plan Review FAIL→refine→PASS (no human approval); left 3 dismissed findings undecided, so fix-now was no longer offered | **1, partly:** read the free-text "…then continue" as save approval; Launch Pad's own Phase 6 never ran |
+| Operator interventions | 0 | 1 operator message (resume after the background kill) + 5 relays |
+| Review findings | Phase 4.5 PASS (0 iterations, 2 dismissed); drain 2 rounds / 2 fixes; 3 dismissed drafts, **1 dismissed-but-REAL regression** (indented-code sidecar listed as a run; reproduced) | Plan Review PASS 1/3 → 6 folded → PASS 2; Phase 4.5 + drain READY; 7 dismissed → **6 fixed now by owner choice**, 1 LOW kept |
+| CI | `ci` + `claude-review` green on #370 | baseline `ci-local` 142/142; `ci` + `claude-review` green on #371 |
+| Failures hit | its own: PR body blanked for about a minute; watcher armed before the park write; the notify call hung | **worker KILLED by the `-p` 600 s background ceiling**; run file stale after resume; each park released the run lock |
+| Isolation | own lock (`LOCKED … pid=82630` while running); primary untouched | own lock; config restored; primary untouched |
+| Leaks after the run | merge watcher alive in the clone (expected until merge or close) | merge watcher alive in the clone (expected) |
+
+**v1 answers to Q1–Q7 so far:**
+- **Q1 isolation:** yes, so far (final after-check at teardown).
+- **Q2 pre-flight:** the sibling-PR-OPEN case was answered — the gate caught the companion-file overlap. The NOT-open case was not observed.
+- **Q3 headless gates:** Shape A as shipped is unsafe; lanes either stop or decide silently. The relay works end to end. `-p` kills background workers after 600 s unless `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`. Multi-hour liveness is fine with that set.
+- **Q4 after a merge:** deferred to v2 (owner decision: no v1 merge, so v2 can rerun the same items).
+- **Q5 missing clone state:** config and allowlist carried by copy; rules stamp and settings.local absent. No lane metadata push has happened yet (none before a merge).
+- **Q6 contention:** the CI lock is per clone (no throttling); a concurrent measurement was not taken.
+- **Q7 shape:** the evidence points to **A + relay** (P8 candidate 3) over A as shipped; B is untested.
+
+## S1 v2 harness — built and probe-tested (2026-10-04 ~06:40Z)
+- **Harness `s1h.sh`** (in `<primary>-lanes-v2/`, beside the lanes; spike-level, not plugin code). Subcommands:
+  `snapshot before|after`, `plan-check`, `setup <lane> <item> [--seed]`, `launch <lane> [--probe]`,
+  `status [--json]`, `feed`, `answer`, `leaks`, `teardown`. It folds in every v1 lesson:
+  - a question channel from launch, with no `--non-interactive-fallback`;
+  - `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`;
+  - answers are exactly one option label (free text is a note);
+  - user settings kept;
+  - `launch` REFUSES a lane without its relay hook or backlog;
+  - `teardown` refuses on a live process or watcher, a pending question, uncommitted changes, commits not on
+    origin, or unpushed metadata.
+- **`plan-check` on v2's pair:** `wave 1: 18`, `wave 2: 19`. The planner would NOT run them in parallel (no
+  `## Touches` / `## Depends on`, so each runs alone; with Touches, the shared companions keep them apart). v2
+  keeps the pair on purpose for comparability with v1; the overlap also feeds Q4.
+- **Probe results (Haiku, throwaway branch `-s1`):** setup clean; the no-hook guard refused; park →
+  `QUESTION WAITING`; a bad label was refused; teardown was refused while a question was pending and while the
+  process was alive; the valid answer resumed the lane, which finished `end_turn | Red`; teardown removed the lane
+  and `leaks` was empty.
+- **Bugs the probe found and fixed:**
+  - (1) setup pulled the REAL branch before the throwaway one, causing 4 conflicts. Only the seeding lane reads
+    the real branch.
+  - (2) a lane launched with no hooks after a failed setup. `launch` now refuses.
+  - (3) the recorded pid was a wrapper shell: a backgrounded `cd && cmd` list makes `$!` the forked shell. `cd`
+    now runs on its own line. **v1's `s1-answer.sh` has the same bug**; v1's manual launches used a pipeline and
+    were correct.
+- **Observed drift:** on the first probe, the resumed Haiku session went off-task after its answer and began
+  implementing item 19 in the test clone (it was stopped, and the clone discarded). The second probe behaved. The
+  v2 lanes run the real `/automate`, so this does not apply to them, but a resumed session acting beyond the
+  question is worth watching.
+- **v2 launch checklist:**
+  1. `snapshot before`.
+  2. Close #370 and #371 WITHOUT deleting their branches (pre-flight lists all open PRs, drafts included, so open
+     v1 PRs would skew v2's Q2), and watch both v1 watchers record `gone` and exit.
+  3. `setup v2-a <19> --seed` (creates `loomwright-meta-s1v2`), then `setup v2-b <18>`.
+  4. Launch both together (Q2's "sibling PR not open" case).
+  5. Answer every question (optionally from the lanes mod).
+  6. Plan a deliberate concurrent `ci-local` (Q6).
+  7. Merge the chosen PR first, then observe the other (Q4).
+  8. Teardown, then `snapshot after`.
