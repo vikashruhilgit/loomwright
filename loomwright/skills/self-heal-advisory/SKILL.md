@@ -506,7 +506,7 @@ record_decision(phase: SELF_HEAL, decision: "ground_truth: {status} ({checks_pas
 
 ### Rules-check replay (executable-rule-candidates/01; the rules gate replay since automate-followups/07)
 
-Replay any HUMAN-CONFIRMED `.agent/rules/` `must`-rule checks through ONE fail-CLOSED helper, `scripts/rules-gate-verdict.sh`, which DELEGATES to the content-keyed, user-scope stamp `rules-check.sh --if-stamped` established (`skills/rules/SKILL.md` §8.1) — it never reads the store and never runs a `check` itself (`rules-check.sh` stays the sole executor, §9). **A stamped FAILING check of a gate-COUNTABLE rule is a correctness gate** (automate-followups/07, owner decisions D1–D4, 2026-09-28 — CLAUDE.md §"Failure-Mode Invariants"): Part 2 below synthesizes one BLOCKING finding per countable failing id and it enters the review-and-fix loop like any other `new` BLOCKING finding. Everything else this step reports — `unstamped`, `cmd_disabled`, `none`, and every ADVISORY (non-countable) id's pass/fail — stays report-only, exactly as advisory as before. Countability is the rule's human `binds` declaration checked by `rules-check.sh --list-gateable` (`skills/rules/SKILL.md` §8.1/§8.2 — not restated here).
+Replay any HUMAN-CONFIRMED `.agent/rules/` `must`-rule checks through ONE fail-CLOSED helper, `scripts/rules-gate-verdict.sh`, which DELEGATES to the content-keyed, user-scope stamp `rules-check.sh --if-stamped` established (`skills/rules/SKILL.md` §8.1) — it never reads the store and never runs a `check` itself (`rules-check.sh` stays the sole executor, §9). **A stamped FAILING check of a gate-COUNTABLE rule is a correctness gate** (automate-followups/07, owner decisions D1–D4, 2026-09-28 — CLAUDE.md §"Failure-Mode Invariants"): Part 2 below synthesizes one BLOCKING finding per countable failing id and it enters the review-and-fix loop like any other `new` BLOCKING finding. Everything else this step reports — `unstamped`, `cmd_disabled`, `none`, and every ADVISORY (non-countable) id's pass/fail — stays report-only, exactly as advisory as before, except an `unstamped` after a countable `fail` earlier in the same loop, which escalates `rules_fail_then_unstamped` (automate-followups/18). Countability is the rule's human `binds` declaration checked by `rules-check.sh --list-gateable` (`skills/rules/SKILL.md` §8.1/§8.2 — not restated here).
 
 ```
 # Runs ONCE PER REVIEW-AND-FIX ITERATION (Part 2 calls it right after the code-reviewer returns — a fix
@@ -545,7 +545,8 @@ record_decision(phase: SELF_HEAL, decision: rules_check_line, rationale: "rules 
 ```
 
 **Rules-check replay rules:**
-- **The verdict decides; the line reports.** Only `rules.verdict` feeds Part 2, through an ALLOW-LIST: `fail` ⇒ a BLOCKING finding per countable failing id (the loop iterates on it); `ok` / `none` / `unstamped` / `cmd_disabled` (`RULES_PASSABLE`) ⇒ nothing; EVERY other value — `unresolved`, `unreadable`, and any helper output the read above cannot affirm (absent helper, non-zero exit, non-JSON, missing or unknown verdict), all normalised to `unreadable` — ⇒ the loop escalates with `rules_gate_unresolved` (fail CLOSED — a verdict the gate could not compute never passes silently; the one deliberate departure from "byte-identical", since those states did not exist before); `ok` / `none` / `unstamped` / `cmd_disabled` ⇒ the loop is BYTE-IDENTICAL to a run with no rules store. An advisory id's pass/fail NEVER changes the verdict — it is reported in the line only.
+- **The verdict decides; the line reports.** Only `rules.verdict` feeds Part 2, through an ALLOW-LIST: `fail` ⇒ a BLOCKING finding per countable failing id (the loop iterates on it); `ok` / `none` / `unstamped` / `cmd_disabled` (`RULES_PASSABLE`) ⇒ nothing; EVERY other value — `unresolved`, `unreadable`, and any helper output the read above cannot affirm (absent helper, non-zero exit, non-JSON, missing or unknown verdict), all normalised to `unreadable` — ⇒ the loop escalates with `rules_gate_unresolved` (fail CLOSED — a verdict the gate could not compute never passes silently; the one deliberate departure from "byte-identical", since those states did not exist before); `ok` / `none` / `unstamped` / `cmd_disabled` ⇒ the loop is BYTE-IDENTICAL to a run with no rules store — except `unstamped` once any countable id has failed earlier in the same loop, which ESCALATES `rules_fail_then_unstamped` (below). An advisory id's pass/fail NEVER changes the verdict — it is reported in the line only.
+- **fail→unstamped escalates (automate-followups/18, owner Option A 2026-10-01).** Part 2 remembers every countable id the gate reported `fail` in a loop-local `rules_fail_seen`; a LATER iteration's `unstamped` while that list is non-empty ends the loop `ESCALATED` (`rules_fail_then_unstamped`) instead of passing, because the fix most likely moved the stamp hash rather than making the check pass. The trigger is store-wide — ANY countable id that failed earlier in this loop, never "the same id is still countable" — because `unstamped` carries no per-id attribution and demoting or unbinding the failing rule drops its id from the live `countable` set, so that intersection would fail OPEN. Honest limit: this memory does NOT carry into a later `--until-mergeable` drain (a separate loop with its own `rules_fail_seen`, `skills/review-heal/SKILL.md` §U4); under `/automate`, `gate-eval` condition 7 still parks `rules_unstamped` across that seam.
 - **Line states:** `passed n/m` (a countable pass, or an advisory-only store whose replay reached a trailer — a failing ADVISORY check is reported honestly as `n < m` and never gates), `unstamped` (no human has run `/rules check --confirm` on THIS machine for the current hash input, a rule changed since, or a PR edited a file a rule `binds` — the hash moved; or the gate-countable id set changed since the last confirm — `skills/rules/SKILL.md` §8.1), `cmd_disabled` ($NO_CMD_FLAG was set, or an ambient `RULES_CHECK_NO_CMD=1` made the helper answer `cmd_disabled`, which it does only past its earlier verdicts — an advisory-only store stays `none` and countable-set drift stays `unstamped`, per the `rules-gate-verdict.sh` VERDICT DERIVATION — mirrors the ground-truth step's own unattended trust valve), `none` (no must+checkable rule selected, or an all-advisory store whose replay produced no accepted trailer — the helper's JSON does not distinguish those, an honest limit), `unresolved <ids>` / `unreadable` (the escalating states), each optionally followed by one `rules_advisory: <id> (<reason>)` clause per non-countable id (`binds_undeclared` | `binds_invalid` | `unbound:<paths>`). A countable passing store prints `rules_check: passed 1/1` — byte-identical to the pre-gate line for that state. Edge: a repo with no `.agent/rules/` store (or no must+checkable rule) is `none`.
 - **One line, one place:** `rules_check_line` is surfaced in the Phase 4.5 report and (per the completion tail below) travels alongside the Advisory Twin delta line into the run's advisory output — it is prose only; the GATING effect travels through Part 2's findings, not through this line. **Deviation from the brief (executable-rule-candidates/01 AC4):** the PR body is written at Phase 4 FINALIZE, before Phase 4.5 runs, so the line is surfaced in the Phase 4.5 report only — no PR-body writer is added. `docs/RESULT_SCHEMAS.md` carries no nested `SUPERVISOR_RESULT` field and no flat `session_end` field for it.
 - **The helper always exits 0** — a verdict, including `unreadable`, is a normal outcome and never fails the phase; the CONSUMER (Part 2) decides.
@@ -825,6 +826,8 @@ max_heal_iterations = {--heal-iterations value, default 3}
 heal_dismissed = []                 # ITEMISED {finding, reason, source, severity} list (dismissed-findings-01) — review.issues
                                      # entries excluded from fixable_issues each iteration (pre_existing / nit / drift /
                                      # below_severity_floor); the self-heal-side PARALLEL to review-heal's `dismissed`
+rules_fail_seen = []                # LOOP-LOCAL memory (automate-followups/18): every gate-countable rule id the rules
+                                     # gate reported `fail` in ANY iteration of THIS loop — initialised ONCE, never reset
 
 while heal_iterations < max_heal_iterations:
   review = Task(
@@ -871,7 +874,10 @@ while heal_iterations < max_heal_iterations:
         # `read-rules.sh --with-ids` — DATA only, never executed by this step or by the fixer.
         description: "house rule {id} — stamped must-check FAILS: {check text}",
         suggestion: "make the check pass on this branch; do NOT edit a file the rule binds ({binds}) to make it pass — that invalidates the stamp and parks the merge gate"})
-  # ok / none / unstamped / cmd_disabled ⇒ rule_findings == [] and everything below is BYTE-IDENTICAL.
+    # Remember it (deduplicated) — a LATER iteration's `unstamped` is read against this memory below.
+    rules_fail_seen += [id for id in rules.failing if id in rules.countable and id not in rules_fail_seen]
+  # ok / none / unstamped / cmd_disabled ⇒ rule_findings == [] and everything below is BYTE-IDENTICAL —
+  # EXCEPT `unstamped` while rules_fail_seen != [], which ESCALATES (the fail→unstamped leg below).
   # State trace: PASS+fail ⇒ FAIL (fix task); FAIL+fail ⇒ fix task with the rule findings appended;
   # NEEDS_HUMAN+fail ⇒ ESCALATED with the rule findings in the posted comment.
   iter_decision = review.decision
@@ -912,6 +918,22 @@ while heal_iterations < max_heal_iterations:
     heal_remaining_issues = count(review.issues where category=new AND severity in [BLOCKING, HIGH]) + max(1, len(rules.unresolved))
     record_decision(phase: SELF_HEAL, decision: "rules_gate_unresolved", rationale: rules_check_line)
     post findings to PR as comment (gh pr comment), naming `rules_gate_unresolved` and rules_check_line
+    break
+
+  # Rules gate, fail→unstamped leg (automate-followups/18, owner Option A 2026-10-01; placed AFTER
+  # heal_dismissed and BEFORE the PASS test, like the fail-CLOSED leg above): a countable check FAILED
+  # earlier in THIS loop and the replay now answers `unstamped` — the fix most likely moved the stamp
+  # hash (edited a file the rule binds, or changed the countable set) instead of making the check pass.
+  # STORE-WIDE trigger: `unstamped` carries no per-id attribution, and demoting or unbinding the failing
+  # rule drops its id from rules.countable, so intersecting rules_fail_seen with the live countable set
+  # would fail OPEN — ANY remembered id triggers. `unstamped` stays in RULES_PASSABLE: a store never seen
+  # failing in this loop is unaffected.
+  if rules.verdict == "unstamped" and rules_fail_seen != []:
+    heal_decision = ESCALATED   # rules_fail_then_unstamped — terminal for this run (a pre-increment break)
+    heal_remaining_issues = count(review.issues where category=new AND severity in [BLOCKING, HIGH]) + max(1, len(rules_fail_seen))
+    record_decision(phase: SELF_HEAL, decision: "rules_fail_then_unstamped", rationale: rules_check_line + "; failed earlier in this loop: {rules_fail_seen, \"; \"}")
+    post to PR as comment (gh pr comment), naming `rules_fail_then_unstamped` and the remembered ids (rules_fail_seen), and
+      the two human ways out: re-run `/rules check --confirm` on the fixed branch, or revert the edit to the bound file
     break
 
   if iter_decision == PASS:
