@@ -76,7 +76,7 @@ A fifth pass (or a third lens) has to name an information advantage neither row 
 - Pre-commit: format, lint, type-check pass locally
 
 ### Pre-push: one command
-- Before every push, run `bash scripts/ci-local.sh`. Do not hand-roll a `for t in …/test-*.sh` loop. It runs every gate `ci.yml` names, plus all root and loomwright self-tests, in one concurrent pool. A tree that already passed returns instantly, including in another session or worktree. Only one full run happens at a time per repo; a second caller waits instead of competing for the CPUs. `--force` re-runs anyway; `--list` shows the plan. The sdk-spike step is not covered; CI still runs it.
+- Before every push, run `bash scripts/ci-local.sh`. Do not hand-roll a `for t in …/test-*.sh` loop. It runs every gate `ci.yml` names, plus all root and loomwright self-tests, in one concurrent pool. A tree that already passed returns instantly, including in another session, worktree or clone of the same repo. Full runs take one of a few shared CI slots per repo, and a caller that finds them all busy waits its turn instead of competing for the CPUs. Concurrent sessions and lane clones share those slots automatically; never raise `LOOMWRIGHT_CI_SLOTS` to "go faster". `--force` re-runs anyway; `--list` shows the plan. The sdk-spike step is not covered; CI still runs it.
 - For a quick inner-loop check while iterating, run the one suite you touched directly (`bash loomwright/scripts/test-<x>.sh`). A touched suite going green is not CI going green: meta-gates scan files you did not change. So the last thing before a push is always `ci-local.sh`.
 
 ### Egress-hermetic self-tests

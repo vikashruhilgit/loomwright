@@ -23,12 +23,23 @@
 #                      currency compares against the merge-base) + OS. The same key later — in
 #                      this session, another session, or another worktree of this repo — returns
 #                      instantly. Only PASSES are cached; a failure always re-runs. Stamps live in
-#                      the shared git dir (`git rev-parse --git-common-dir`/loomwright-ci-local/).
-#   ONE RUN AT A TIME  a lock in the same shared dir serializes full runs across sessions and
-#                      worktrees: two N-way suites on one machine both run ~2x slower and push the
-#                      timing-sensitive tests into flaking. A waiter re-checks the cache after
-#                      acquiring, so if the holder just verified the same tree it returns at once.
-#                      A lock whose holder pid is dead is taken over.
+#                      `<ci-slot.sh dir>/pass/` — the repo-keyed state dir every checkout of this
+#                      repo shares (primary, linked worktrees, lane clones), so a tree that passed
+#                      in any checkout is cached for all.
+#   SHARED CI SLOTS    full runs take one of N machine-wide slots from loomwright/scripts/ci-slot.sh
+#                      (default N = max(1, floor(CPUs / 6)); LOOMWRIGHT_CI_SLOTS overrides), keyed
+#                      by the repo's normalised `origin` URL — the git-common-dir only as the
+#                      no-origin fallback. A run with N starts only while fewer than N suites run
+#                      across every checkout; the rest wait in ticket order and print their position.
+#                      Each run gets SELF_TEST_JOBS = max(2, floor(CPUs / N)) unless SELF_TEST_JOBS is
+#                      set (an explicit value wins). LOOMWRIGHT_CI_SLOTS=1 makes this run wait until no
+#                      other suite runs, then use every CPU; strict one-at-a-time across sessions needs
+#                      the same value in every session (a larger-N session may still start beside it,
+#                      and a smaller-N waiter can be passed while the pool is at its cap — ci-slot.sh
+#                      CLAIM BY COUNT). A waiter re-checks the cache after it gets a slot, so
+#                      if a holder just verified the same tree it returns at once. A slot whose
+#                      holder pid is dead is taken over. Sharing assumes every checkout's `origin`
+#                      is the same remote URL; a clone whose `origin` is a local path does not share.
 #   TREE MOVED         the key is recomputed after the run; if the tree changed mid-run (a
 #                      concurrent writer on this checkout), the verdict is reported but NOT cached.
 #
@@ -36,7 +47,8 @@
 #   --force   ignore the pass cache and run everything
 #   --list    print the planned gate/test list and the content key, run nothing
 # env:   SELF_TEST_JOBS / SELF_TEST_TIMEOUT   passed through to run-self-tests.sh
-#        CI_LOCAL_LOCK_WAIT   seconds to wait for another run's lock before failing (default 1800)
+#        CI_LOCAL_LOCK_WAIT   seconds to wait for a CI slot before failing (default 1800)
+#        LOOMWRIGHT_CI_SLOTS  number of shared slots (see SHARED CI SLOTS; never raise it to "go faster")
 # exit:  0 = every gate passed (fresh or cached) · 1 = a gate failed / fail-closed condition · 2 = usage
 #
 # Honest limits: (1) .gitignore'd files are outside the key — a test that reads one is not
@@ -65,21 +77,30 @@ runner="loomwright/scripts/run-self-tests.sh"
 [ -f "$runner" ] || { echo "ci-local: $runner is missing — refusing to run" >&2; exit 1; }
 [ -f .github/workflows/ci.yml ] || { echo "ci-local: .github/workflows/ci.yml is missing — cannot derive the CI gates" >&2; exit 1; }
 
-state="$(cd "$(git rev-parse --git-common-dir)" && pwd)/loomwright-ci-local"
-mkdir -p "$state/pass"
-lockdir="$state/lock"
+slot_helper="loomwright/scripts/ci-slot.sh"
+[ -f "$slot_helper" ] || { echo "ci-local: $slot_helper is missing — refusing to run" >&2; exit 1; }
 lock_wait="${CI_LOCAL_LOCK_WAIT:-1800}"
 case "$lock_wait" in ''|*[!0-9]*) echo "ci-local: CI_LOCAL_LOCK_WAIT must be a non-negative integer, got '$lock_wait'" >&2; exit 2 ;; esac
+# The repo-keyed shared dir comes from the helper (never re-derived here): the PASS-cache check
+# and --list need it before any slot is taken.
+state="$(bash "$slot_helper" dir)" && [ -n "$state" ] \
+  || { echo "ci-local: $slot_helper dir failed — cannot locate the shared state dir" >&2; exit 1; }
+mkdir -p "$state/pass"
 
 tmpd="$(mktemp -d "${TMPDIR:-/tmp}/ci-local.XXXXXX")"
 have_lock=0
+acq_pid=""
 cleanup() {
-  if [ "$have_lock" -eq 1 ]; then rm -rf "$lockdir"; fi
+  # A queued acquire still running (INT/TERM arrived mid-wait): stop it and reap it BEFORE the
+  # release below, so it can neither claim a slot after that release nor write into $tmpd after the
+  # rm. Its own TERM trap removes its ticket; the release then frees anything recorded under $$.
+  if [ -n "$acq_pid" ]; then kill -TERM "$acq_pid" 2>/dev/null || true; wait "$acq_pid" 2>/dev/null || true; fi
+  if [ "$have_lock" -eq 1 ]; then bash "$slot_helper" release --pid "$$" || true; fi
   rm -rf "$tmpd"
 }
 trap cleanup EXIT
-# Turn INT/TERM into a normal exit so the EXIT trap releases the lock (a SIGKILLed holder leaves a
-# stale lock instead, which the next run takes over once that pid is gone).
+# Turn INT/TERM into a normal exit so the EXIT trap releases the slot (a SIGKILLed holder leaves a
+# stale slot instead, which the next run takes over once that pid is gone).
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
@@ -159,27 +180,30 @@ cached_exit() {
 }
 if [ "$force" -eq 0 ] && [ -f "$stamp" ]; then cached_exit; fi
 
-# --- lock ------------------------------------------------------------------------------------------
-waited=0; announced=0
-while ! mkdir "$lockdir" 2>/dev/null; do
-  holder="$(cat "$lockdir/pid" 2>/dev/null || true)"
-  if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
-    echo "ci-local: taking over a stale lock (holder pid $holder is gone)"
-    rm -rf "$lockdir"
-    continue
-  fi
-  if [ "$waited" -ge "$lock_wait" ]; then
-    echo "ci-local: still locked by pid ${holder:-?} after ${lock_wait}s — giving up (FAIL). If no run is active: rm -rf '$lockdir'" >&2
-    exit 1
-  fi
-  if [ "$announced" -eq 0 ]; then
-    echo "ci-local: another run (pid ${holder:-starting}) holds the lock — waiting up to ${lock_wait}s so the two suites do not fight over the CPUs"
-    announced=1
-  fi
-  sleep 2; waited=$((waited + 2))
-done
+# --- shared CI slot (the helper prints progress on stderr, only `slot=<k> jobs=<j>` on stdout) -------
+# have_lock is set BEFORE acquiring: a run interrupted mid-wait still has its queued ticket released.
+# The acquire runs in the background and is awaited with the `wait` builtin, never inside `$(...)`:
+# bash defers a trapped INT/TERM until a foreground child exits, so a `$(...)` acquire would ignore
+# them for up to CI_LOCAL_LOCK_WAIT seconds, while `wait` returns at once and lets the trap run.
 have_lock=1
-echo "$$" > "$lockdir/pid"
+bash "$slot_helper" acquire ci-local --pid "$$" --wait "$lock_wait" > "$tmpd/slot" &
+acq_pid=$!
+acq_rc=0
+wait "$acq_pid" || acq_rc=$?
+acq_pid=""
+if [ "$acq_rc" -ne 0 ]; then
+  echo "ci-local: no CI slot after ${lock_wait}s — giving up (FAIL). Holders: bash $slot_helper status" >&2
+  exit 1
+fi
+got="$(cat "$tmpd/slot")"
+slot="${got#slot=}"; slot="${slot%% *}"; slot_jobs="${got##*jobs=}"
+case "$slot_jobs" in ''|*[!0-9]*) echo "ci-local: unexpected answer from $slot_helper: '$got'" >&2; exit 1 ;; esac
+if [ -n "${SELF_TEST_JOBS:-}" ]; then
+  echo "ci-local: CI slot $slot (SELF_TEST_JOBS=$SELF_TEST_JOBS set by the caller; slot share would be $slot_jobs)"
+else
+  export SELF_TEST_JOBS="$slot_jobs"
+  echo "ci-local: CI slot $slot, $slot_jobs jobs"
+fi
 # The holder we waited on may have just verified this same tree.
 if [ "$force" -eq 0 ] && [ -f "$stamp" ]; then cached_exit; fi
 

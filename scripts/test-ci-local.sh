@@ -14,8 +14,20 @@
 #                                       run re-runs instead of reporting cached
 #   (O)  origin/main moves            → cache miss (check-doc-currency reads the merge-base)
 #   (M)  the tree changes mid-run     → PASS reported but "NOT cached"; the next run re-runs
-#   (L)  lock held by a live pid      → waits, then exit 1 after CI_LOCAL_LOCK_WAIT, nothing ran;
-#        lock held by a dead pid      → taken over ("stale"), run proceeds, lock released after
+#   (X)  another CLONE, same origin   → "PASS (cached)" from the shared repo-keyed pass dir, nothing
+#                                       ran; the same clone re-pointed at another origin re-runs
+#   (L)  every CI slot held by a live pid → waits (progress line), exit 1 after CI_LOCAL_LOCK_WAIT,
+#                                       nothing ran; held by a dead pid → taken over ("is gone"), run
+#                                       proceeds, slot released after
+#   (J)  job share                    → SELF_TEST_JOBS = the slot's share; an explicit SELF_TEST_JOBS
+#                                       is passed through unchanged
+#   (Q)  waiter queued behind a holder that stamps the same tree → "PASS (cached)", nothing ran
+#   (T)  TERM to a run queued for a slot → exit 143 within seconds (not after CI_LOCAL_LOCK_WAIT),
+#                                       no ticket and no slot left under its pid, nothing ran
+#   (B)  broken slot helper (stub)    → `dir` exits non-zero or prints nothing: exit 1 with the
+#                                       dir-failure message, no acquire, nothing ran; a malformed
+#                                       acquire answer: exit 1 "unexpected answer from", nothing ran,
+#                                       the EXIT trap still calls `release --pid`; real helper restored
 #   (LS) --list                       → key + cache status, exactly the ci.yml gates (with args) and the
 #                                       plain tests in order, no temp wrapper paths, nothing ran;
 #                                       a changed tree lists "cache: miss"
@@ -25,6 +37,8 @@
 #   (A)  unknown argument             → exit 2
 #   (W)  wiring: ci-local.sh's loomwright glob line is the one run-self-tests.sh uses, and the real
 #        ci.yml runs this self-test
+# Slot state lives under a sandboxed XDG_STATE_HOME: an inner fixture run must never queue on the
+# real shared pool that an outer ci-local.sh run is holding (that would deadlock it).
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../loomwright/scripts/hermetic-test-env.sh"
 set -uo pipefail
 
@@ -36,6 +50,11 @@ SUT="$HERE/ci-local.sh"
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/ci-local-test.XXXXXX")"
 sleeper=""
 trap '[ -n "$sleeper" ] && kill "$sleeper" 2>/dev/null; rm -rf "$tmp"' EXIT
+export XDG_STATE_HOME="$tmp/state"
+# The outer run exports its own job share / slot knobs; every arm here starts from a clean slate.
+unset SELF_TEST_JOBS LOOMWRIGHT_CI_SLOTS LOOMWRIGHT_CI_CPUS LOOMWRIGHT_CI_SLOT_PRINT_EVERY CI_LOCAL_LOCK_WAIT
+export LOOMWRIGHT_CI_SLOT_POLL=0.2
+ORIGIN_URL="https://example.invalid/fixture/repo.git"
 
 pass=0; fail=0
 ok() { pass=$((pass + 1)); echo "ok   $1"; }
@@ -48,7 +67,8 @@ export FIXTURE_LOG="$tmp/ran.log"
 build_fixture() {
   rm -rf "$R"; mkdir -p "$R/.github/workflows" "$R/scripts" "$R/loomwright/scripts"
   cp "$SUT" "$R/scripts/ci-local.sh"
-  cp "$REPO_ROOT/loomwright/scripts/run-self-tests.sh" "$REPO_ROOT/loomwright/scripts/hermetic-test-env.sh" "$R/loomwright/scripts/"
+  cp "$REPO_ROOT/loomwright/scripts/run-self-tests.sh" "$REPO_ROOT/loomwright/scripts/hermetic-test-env.sh" \
+     "$REPO_ROOT/loomwright/scripts/ci-slot.sh" "$R/loomwright/scripts/"
   cat > "$R/.github/workflows/ci.yml" <<'YML'
 jobs:
   ci:
@@ -74,15 +94,20 @@ echo "one" >> "$FIXTURE_LOG"
 exit 0
 SH
   ( cd "$R" && git init -q && git config user.email t@t && git config user.name t \
-      && git add -A && git commit -qm fixture && git update-ref refs/remotes/origin/main HEAD )
+      && git add -A && git commit -qm fixture && git update-ref refs/remotes/origin/main HEAD \
+      && git remote add origin "$ORIGIN_URL" )
 }
 
 run() { : > "$FIXTURE_LOG"; out="$(cd "$R" && bash scripts/ci-local.sh "$@" 2>&1)"; rc=$?; }
 ran() { grep -qx "$1" "$FIXTURE_LOG"; }
+slot() { (cd "$R" && bash loomwright/scripts/ci-slot.sh "$@"); }
 # has PAT — `grep -q` on a here-string, never a pipe (test-no-pipefail-grep-q.sh).
 has() { grep -q "$1" <<<"$out"; }
 
 build_fixture
+state="$(slot dir)"
+case "$state" in "$tmp/state/"*) ok "(S) slot state is inside the sandboxed XDG_STATE_HOME" ;;
+  *) no "(S) slot state escaped the sandbox: $state"; exit 1 ;; esac
 
 # (P)
 run
@@ -94,6 +119,19 @@ else no "(P) rc=$rc log=[$(tr '\n' ' ' < "$FIXTURE_LOG")] out=$out"; fi
 run
 if [ "$rc" -eq 0 ] && has "PASS (cached)" && [ ! -s "$FIXTURE_LOG" ]; then ok "(C) unchanged tree: cached, nothing ran"
 else no "(C) rc=$rc log=[$(tr '\n' ' ' < "$FIXTURE_LOG")] out=$out"; fi
+
+# (X) — a second clone of the same origin on the identical tree shares the pass stamp.
+R2="$tmp/clone"
+git clone -q "$R" "$R2" && ( cd "$R2" && git remote set-url origin "$ORIGIN_URL" \
+  && git update-ref refs/remotes/origin/main "$(git -C "$R" rev-parse refs/remotes/origin/main)" )
+: > "$FIXTURE_LOG"; out="$(cd "$R2" && bash scripts/ci-local.sh 2>&1)"; rc=$?
+if [ "$rc" -eq 0 ] && has "PASS (cached)" && [ ! -s "$FIXTURE_LOG" ]; then ok "(X) another clone, same origin: PASS (cached), nothing ran"
+else no "(X) rc=$rc log=[$(tr '\n' ' ' < "$FIXTURE_LOG")] out=$out"; fi
+( cd "$R2" && git remote set-url origin "https://example.invalid/other/repo.git" )
+: > "$FIXTURE_LOG"; out="$(cd "$R2" && bash scripts/ci-local.sh 2>&1)"; rc=$?
+if [ "$rc" -eq 0 ] && ran one && ! has "cached"; then ok "(X) same clone, different origin: own cache, re-ran"
+else no "(X) other origin: rc=$rc out=$out"; fi
+rm -rf "$R2"
 
 # (U)
 echo new > "$R/scripts/new-untracked.txt"
@@ -133,17 +171,20 @@ run
 if [ "$rc" -eq 0 ] && ran one && ! has "PASS (cached)"; then ok "(M) next run re-ran"
 else no "(M) next run: rc=$rc out=$out"; fi
 
-# (L)
-lockdir="$R/.git/loomwright-ci-local/lock"
+# (L) — one slot, held by a live process whose own acquire call has already exited.
 sleep 30 & sleeper=$!
-mkdir -p "$lockdir"; echo "$sleeper" > "$lockdir/pid"
-CI_LOCAL_LOCK_WAIT=2 run --force
-if [ "$rc" -eq 1 ] && has "giving up" && [ ! -s "$FIXTURE_LOG" ]; then ok "(L) live holder: waited, then exit 1, nothing ran"
+LOOMWRIGHT_CI_SLOTS=1 slot acquire holder --pid "$sleeper" >/dev/null
+LOOMWRIGHT_CI_SLOTS=1 CI_LOCAL_LOCK_WAIT=1 run --force
+if [ "$rc" -eq 1 ] && has "giving up" && has "waiting for a CI slot — position 1, holders: holder (" \
+   && [ ! -s "$FIXTURE_LOG" ]; then ok "(L) live holder: waited with a progress line, then exit 1, nothing ran"
 else no "(L) live: rc=$rc out=$out"; fi
 kill "$sleeper" 2>/dev/null; wait "$sleeper" 2>/dev/null; sleeper=""
-run --force
-if [ "$rc" -eq 0 ] && has "stale" && ran one && [ ! -d "$lockdir" ]; then ok "(L) dead holder: lock taken over, run passed, lock released"
-else no "(L) dead: rc=$rc lock_left=$([ -d "$lockdir" ] && echo yes || echo no) out=$out"; fi
+LOOMWRIGHT_CI_SLOTS=1 run --force
+held="$(ls "$state/slots")"
+if [ "$rc" -eq 0 ] && has "is gone" && ran one && [ -z "$held" ]; then ok "(L) dead holder: slot taken over, run passed, slot released"
+else no "(L) dead: rc=$rc slots_left=[$held] out=$out"; fi
+if [ ! -e "$R/.git/loomwright-ci-local" ]; then ok "(L) no per-clone loomwright-ci-local dir is created"
+else no "(L) the per-clone loomwright-ci-local dir still exists"; fi
 
 # (LS) — the (L) run above stamped the current tree.
 run --list
@@ -160,6 +201,88 @@ run --list
 if [ "$rc" -eq 0 ] && has "^cache: miss" && [ ! -s "$FIXTURE_LOG" ]; then ok "(LS) --list on a changed tree: cache miss, nothing ran"
 else no "(LS) changed tree: rc=$rc out=$out"; fi
 rm -f "$R/list-probe.txt"
+
+# (J)
+LOOMWRIGHT_CI_SLOTS=2 LOOMWRIGHT_CI_CPUS=12 run --force
+if [ "$rc" -eq 0 ] && has "CI slot 1, 6 jobs" && has "(6 at a time)"; then ok "(J) SELF_TEST_JOBS = the slot's share (12 CPUs / 2 slots = 6)"
+else no "(J) share: rc=$rc out=$out"; fi
+SELF_TEST_JOBS=3 LOOMWRIGHT_CI_SLOTS=2 LOOMWRIGHT_CI_CPUS=12 run --force
+if [ "$rc" -eq 0 ] && has "(3 at a time)" && ! has "(6 at a time)"; then ok "(J) an explicit SELF_TEST_JOBS is passed through unchanged"
+else no "(J) explicit: rc=$rc out=$out"; fi
+
+# (Q) — a waiter whose holder stamps the very tree it is waiting to verify.
+echo q > "$R/q-probe.txt"
+qkey="$(cd "$R" && bash scripts/ci-local.sh --list 2>/dev/null | sed -n 's/^key: //p')"
+sleep 30 & sleeper=$!
+LOOMWRIGHT_CI_SLOTS=1 slot acquire holder --pid "$sleeper" >/dev/null
+: > "$FIXTURE_LOG"
+( cd "$R" && LOOMWRIGHT_CI_SLOTS=1 CI_LOCAL_LOCK_WAIT=30 bash scripts/ci-local.sh > "$tmp/q.out" 2>&1; echo "$?" > "$tmp/q.rc" ) &
+qpid=$!
+i=0
+while ! grep -q '"waiters":\[{' <<<"$(slot status --json)" && [ "$i" -lt 150 ]; do sleep 0.1; i=$((i + 1)); done
+[ -n "$qkey" ] && date '+%Y-%m-%dT%H:%M:%S%z' > "$state/pass/$qkey"
+slot release --pid "$sleeper"
+wait "$qpid"
+kill "$sleeper" 2>/dev/null; wait "$sleeper" 2>/dev/null; sleeper=""
+out="$(cat "$tmp/q.out")"
+if [ -n "$qkey" ] && [ "$(cat "$tmp/q.rc")" = 0 ] && has "waiting for a CI slot" && has "PASS (cached)" && [ ! -s "$FIXTURE_LOG" ]; then
+  ok "(Q) waiter behind a holder that stamped the same tree: PASS (cached), nothing ran"
+else no "(Q) key=$qkey rc=$(cat "$tmp/q.rc") log=[$(tr '\n' ' ' < "$FIXTURE_LOG")] out=$out"; fi
+rm -f "$R/q-probe.txt"
+
+# (T) — TERM to a run queued for a slot exits at once (not after CI_LOCAL_LOCK_WAIT), leaves no ticket.
+echo t > "$R/t-probe.txt"
+sleep 60 & sleeper=$!
+LOOMWRIGHT_CI_SLOTS=1 slot acquire holder --pid "$sleeper" >/dev/null
+: > "$FIXTURE_LOG"
+( cd "$R" && LOOMWRIGHT_CI_SLOTS=1 CI_LOCAL_LOCK_WAIT=60 exec bash scripts/ci-local.sh > "$tmp/t.out" 2>&1 ) &
+tpid=$!
+i=0
+while ! grep -q "\"waiters\":\[{\"ticket\":[0-9]*,\"pid\":$tpid," <<<"$(slot status --json)" && [ "$i" -lt 150 ]; do sleep 0.1; i=$((i + 1)); done
+queued=$i
+kill -TERM "$tpid" 2>/dev/null
+i=0
+while kill -0 "$tpid" 2>/dev/null && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+if kill -0 "$tpid" 2>/dev/null; then trc="still-running"; kill -KILL "$tpid" 2>/dev/null; wait "$tpid" 2>/dev/null
+else wait "$tpid"; trc=$?; fi
+tickets="$(ls "$state/tickets")"
+tslots="$(grep -lx "$tpid" "$state"/slots/*/info 2>/dev/null || true)"
+slot release --pid "$sleeper"
+kill "$sleeper" 2>/dev/null; wait "$sleeper" 2>/dev/null; sleeper=""
+if [ "$queued" -lt 150 ] && [ "$trc" = 143 ] && [ -z "$tickets" ] && [ -z "$tslots" ] && [ ! -s "$FIXTURE_LOG" ]; then
+  ok "(T) TERM to a queued run: exit 143 within 5s, no ticket or slot left, nothing ran"
+else no "(T) queued_polls=$queued rc=$trc tickets=[$tickets] slots=[$tslots] out=$(cat "$tmp/t.out")"; fi
+rm -f "$R/t-probe.txt"
+
+# (B) — a broken slot helper: the fixture's ci-slot.sh is swapped for a stub that logs every call.
+stub_log="$tmp/stub.log"
+cat > "$R/loomwright/scripts/ci-slot.sh" <<'SH'
+echo "$*" >> "$STUB_LOG"
+case "$1:$STUB_MODE" in
+  dir:dir-fail)  exit 3 ;;
+  dir:dir-empty) exit 0 ;;
+  dir:*)         echo "$STUB_STATE" ;;
+  acquire:*)     echo "slot=1 jobs=abc"; exit 0 ;;
+esac
+exit 0
+SH
+for mode in dir-fail dir-empty; do
+  : > "$stub_log"
+  STUB_LOG="$stub_log" STUB_MODE="$mode" run --force
+  if [ "$rc" -eq 1 ] && has "ci-slot.sh dir failed" && [ ! -s "$FIXTURE_LOG" ] && ! grep -q '^acquire' "$stub_log"; then
+    ok "(B) slot helper 'dir' $mode: exit 1, dir-failure message, nothing ran, no acquire"
+  else no "(B) $mode: rc=$rc calls=[$(tr '\n' ' ' < "$stub_log")] out=$out"; fi
+done
+: > "$stub_log"
+STUB_LOG="$stub_log" STUB_MODE=bad-acquire STUB_STATE="$tmp/stub-state" run --force
+if [ "$rc" -eq 1 ] && has "unexpected answer from loomwright/scripts/ci-slot.sh: 'slot=1 jobs=abc'" \
+   && [ ! -s "$FIXTURE_LOG" ] && grep -qE '^release --pid [0-9]+$' "$stub_log"; then
+  ok "(B) malformed acquire answer: exit 1 'unexpected answer from', nothing ran, EXIT trap released"
+else no "(B) bad-acquire: rc=$rc calls=[$(tr '\n' ' ' < "$stub_log")] out=$out"; fi
+cp "$REPO_ROOT/loomwright/scripts/ci-slot.sh" "$R/loomwright/scripts/ci-slot.sh"
+rm -rf "$tmp/stub-state" "$stub_log"
+if ( cd "$R" && git diff --quiet -- loomwright/scripts/ci-slot.sh ); then ok "(B) real slot helper restored for later arms"
+else no "(B) the fixture's ci-slot.sh was not restored"; fi
 
 # (H)
 run --help
