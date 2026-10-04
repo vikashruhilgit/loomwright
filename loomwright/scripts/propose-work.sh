@@ -346,6 +346,10 @@ while IFS="$(printf '\t')" read -r cls fs n; do
     printf -- '- pair entries: %s (emission threshold %s)\n' "$n" "$PAIR_THRESHOLD"
     [ -n "$class_total" ] && printf -- '- entries in class `%s`: %s\n' "$cls" "$class_total"
     [ -n "$total_entries" ] && printf -- '- classified entries in the ledger: %s\n' "$total_entries"
+    # The planner's machine-read sections (parallel-automate/10; grammar: `automate-helpers.sh
+    # plan-waves`, checked by its `--lint`). A ledger-pattern candidate names a (class, flow_stage)
+    # pattern, never a change-site file, so Touches is `unknown` (it runs alone until a human fills it).
+    printf '\n## Depends on\n\nnone\n\n## Touches\n\nunknown\n'
     printf '\n## Problem\n\n'
     [ -n "$unknowable_note" ] && printf '%s\n\n' "$unknowable_note"
     printf 'The ledger holds %s entries classified `%s` attributed to the `%s` flow stage,\n' "$n" "$cls" "$fs"

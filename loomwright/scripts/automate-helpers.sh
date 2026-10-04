@@ -59,7 +59,8 @@
 #   trail-gate       <runfile>                          # §6 step 1 PICK (after RECONCILE, before trail-unstage) / §8: delegated to automate-trail.sh — `PARK — trail PR open <url>` while this run's trail PR is open (or its state is unreadable: fail CLOSED); else `clear — …` after syncing the primary onto the base branch (closeout's sync); one line; always exits 0
 #   meta-entry       [--root <checkout>]                # §"Branch mode": the FIRST action of every /automate entry (a bare/empty/option-shaped --root value ⇒ `failed`) — reads `setup-memory.sh mode` itself (no caller input can assert the mode) and, when on, runs `meta-sync.sh pull`; ONE line `meta-entry: off|pulled <branch>|failed — <reason>`; writes nothing under .supervisor/automate/; always exits 0
 #   meta-push-failed <runfile>                          # §"Branch mode": read-only — prints the first line of this run's gitignored `<run_id>.meta-push-failed` marker (a failed mode-on trail push), or nothing; always exits 0
-#   plan-waves       <runfile|dir|item-list> --max N [--root <checkout>]  # parallel-automate/04: READ-ONLY wave planner — `## Depends on` / `## Touches` (strict grammar) + <root>/.agent/companions.json expansion ⇒ `wave <k>: …` + `blocked <item>: …` lines; exit 1 + empty stdout on usage / item not found / unknown dependency / cycle / companions_malformed; called ONLY by `--parallel N>1` (item 05), never by the sequential loop
+#   plan-waves       <runfile|dir|item-list> --max N [--explain] [--root <checkout>]  # parallel-automate/04: READ-ONLY wave planner — `## Depends on` / `## Touches` (strict grammar) + <root>/.agent/companions.json expansion ⇒ `wave <k>: …` + `blocked <item>: …` lines (`--explain`, parallel-automate/10: then one `explain <item> (wave <k>):` block per placed item not in wave 1); exit 1 + empty stdout on usage / item not found / unknown dependency / cycle / companions_malformed; called ONLY by `--parallel N>1` (item 05), never by the sequential loop
+#   plan-waves       <item|dir|runfile|item-list> --lint [--root <checkout>]  # parallel-automate/10: READ-ONLY lint of both sections with the planner's OWN parser — one `<item>: Touches <verdict>; Depends on <verdict>` line per item + two count lines; exit 1 when any section is missing/unparsable (a sole `unknown` Touches is `ok (declared unknown)`); never needs --max
 #
 # Exit codes: 0 success; 1 generic failure; 2 abort (malformed pre-existing config, §7).
 # (learning-emit, brief-repair, reconcile-status, meta-entry and meta-push-failed are the fail-SAFE
@@ -2046,10 +2047,31 @@ meta_push_failed() {
 # result — names no file on disk), an unknown dependency, a dependency cycle, or companions_malformed.
 # READ-ONLY: writes only its own `mktemp -d` dir (trap-removed); the only git call is
 # `rev-parse --show-toplevel`; never `gh`.
+#
+# --explain (parallel-automate/10) — same inputs, same `wave`/`blocked` lines and exit codes; then,
+# for every PLACED item not in wave 1 (wave order, then input order), `explain <item> (wave <k>):`
+# and one indented line per distinct reason it stayed out of an earlier wave, recorded where the
+# wave loop made the decision: `conflicts with <item> on <path> (declared)` /
+# `conflicts with <item> on <path> (companion: <when>)` (the contained path of the intersecting
+# pair; companion when either side's entry came from a companion rule), `depends on <item>`,
+# `runs alone: Touches unknown (missing)` / `(unparsable line <N>: "<text>")` / `(declared unknown)`,
+# `runs alone: Depends on missing ⇒ depends on every earlier item`, `wave <w> full (--max <N>)`,
+# `wave <w> runs <item> alone (Touches unknown)`. A blocked item's reason is its `blocked` line.
+# --lint (parallel-automate/10) — `<item|dir|runfile|item-list> --lint`: a directory ⇒
+# resolve_folder's output; a run file ⇒ its unchecked Queue rows; any other `*.md` ⇒ that ONE item;
+# any other file ⇒ an item list. `--max` is not needed (ignored when given). Per item ONE line
+# `<item>: Touches <v>; Depends on <v>`, <v> = `ok` | `ok (declared unknown)` (Touches only) |
+# `missing section` | `line <N>: "<text>" — <reason>` [` (+<k> more)`], N = 1-based line in the
+# item file; then `<k> of <n> items will run alone: <items|none>` (Touches not known) and
+# `<m> of <n> items depend on every earlier item: <items|none>` (Depends on missing). Exit 1 when
+# ANY section of ANY item is missing or unparsable, else 0; exit 1 + empty stdout on usage /
+# item not found. The verdict is a by-product of the SAME awk pass the planner reads
+# (_pw_touches / _pw_depends with a diag file), so lint `ok` ⇔ the planner reads the section as known.
 
 _PW_TMP=""
+_PW_EXPLAIN=0
 _pw_fail()  { echo "plan-waves: $*" >&2; exit 1; }
-_pw_usage() { echo "plan-waves: ${1:-bad usage}" >&2; echo "usage: automate-helpers.sh plan-waves <runfile|dir|item-list> --max N [--root <checkout>]" >&2; exit 1; }
+_pw_usage() { echo "plan-waves: ${1:-bad usage}" >&2; echo "usage: automate-helpers.sh plan-waves <runfile|dir|item-list> --max N [--explain] [--root <checkout>]" >&2; echo "       automate-helpers.sh plan-waves <item|dir|runfile|item-list> --lint [--root <checkout>]" >&2; exit 1; }
 
 # _pw_abs <path> — "<physical dir>/<basename>"; non-zero when the directory does not exist.
 _pw_abs() {
@@ -2058,41 +2080,119 @@ _pw_abs() {
   printf '%s/%s\n' "$d" "$(basename "$1")"
 }
 
-# _pw_touches <file> — prints `unknown`, or `known` then one RAW entry per line.
+# The section parsers. ONE awk pass per section yields BOTH the planner's verdict (stdout, byte-for-
+# byte what the planner has always read) and — only when a diag file is given — its diagnosis
+# (the --lint / --explain view): `ok`, `declared` (Touches: the sole `unknown`), `missing`, or one
+# `bad<TAB><line N><TAB><reason><TAB><text>` row per offending line in line order. Every verdict
+# that is not `known`/`none`/ids and not missing/declared carries at least one `bad` row, so the
+# lint verdict and the planner's verdict cannot disagree (there is no second grammar to drift).
+# Shared awk helpers: _pw_diag records a row; _pw_flush sorts rows by line and writes them.
+_PW_AWK_DIAG='
+  function _pw_diag(ln, r, s) { if (DG == "") return; gsub(/\t/, " ", s); nd++; DL[nd] = ln; DR[nd] = r; DT[nd] = s }
+  function _pw_flush(   a, b, t) {
+    for (a = 2; a <= nd; a++) for (b = a; b > 1 && DL[b - 1] > DL[b]; b--) {
+      t = DL[b]; DL[b] = DL[b - 1]; DL[b - 1] = t; t = DR[b]; DR[b] = DR[b - 1]; DR[b - 1] = t
+      t = DT[b]; DT[b] = DT[b - 1]; DT[b - 1] = t }
+    for (a = 1; a <= nd; a++) printf "bad\t%d\t%s\t%s\n", DL[a], DR[a], DT[a] > DG
+  }'
+
+# _pw_touches <file> [diag file] — prints `unknown`, or `known` then one RAW entry per line.
 _pw_touches() {
-  env LC_ALL=C awk '
-    BEGIN { fence = 0; insec = 0; count = 0; n = 0; bad = 0; unk = 0 }
-    /^```/ { fence = !fence; if (insec) bad = 1; next }
-    !fence && (/^# / || /^## /) { insec = 0; if ($0 == "## Touches") { count++; insec = 1 }; next }
+  PW_DG="${2:-}" env LC_ALL=C awk "$_PW_AWK_DIAG"'
+    # _pw_why — the lint reason for a line the grammar below rejects (diagnosis only; the
+    # accept/reject decision is the single PW_TOUCHES_GRAMMAR line, never this function).
+    function _pw_why(s,   t) {
+      if (s ~ /^- /) return "\"- \" bullet"
+      if (index(s, "`")) return "backticks"
+      if (s ~ /[()]/) return "parenthetical/prose"
+      if (index(s, ",")) return "comma list"
+      t = s; sub(/^[ \t]+/, "", t); sub(/[ \t]+$/, "", t)
+      if (t != s && t !~ /[ \t]/) return "leading/trailing whitespace"
+      if (s ~ /[ \t]/) return "parenthetical/prose"
+      if (s ~ /^\//) return "leading /"
+      if (s ~ /\/\//) return "//"
+      if (s ~ /(^|\/)\.\.?(\/|$)/) return ". or .. segment"
+      return "character outside [A-Za-z0-9._/@+-]"
+    }
+    BEGIN { DG = ENVIRON["PW_DG"]; fence = 0; insec = 0; count = 0; n = 0; bad = 0; unk = 0; nd = 0 }
+    /^```/ { fence = !fence; if (insec) { bad = 1; _pw_diag(NR, "fenced block inside the section", $0) }; next }
+    !fence && (/^# / || /^## /) { insec = 0; if ($0 == "## Touches") { count++; insec = 1; if (count == 1) hl = NR; else _pw_diag(NR, "duplicated section", $0) }; next }
     !insec { next }
     /^[ \t]*$/ { next }
-    $0 == "unknown" { unk = 1; next }
-    !/^[A-Za-z0-9._\/@+-]+$/ || /^\// || /\/\// || /(^|\/)\.\.?(\/|$)/ { bad = 1; next }
+    $0 == "unknown" { unk = 1; if (!ul) ul = NR; next }
+    !/^[A-Za-z0-9._\/@+-]+$/ || /^\// || /\/\// || /(^|\/)\.\.?(\/|$)/ { bad = 1; _pw_diag(NR, _pw_why($0), $0); next }   # PW_TOUCHES_GRAMMAR
     { E[++n] = $0 }
     END {
-      if (count == 0) { print "unknown"; exit }   # PW_MISSING_TOUCHES: a missing section runs alone, never an empty set
-      if (count > 1 || bad || unk || n == 0) { print "unknown"; exit }
+      if (count == 0) { if (DG != "") print "missing" > DG; print "unknown"; exit }   # PW_MISSING_TOUCHES: a missing section runs alone, never an empty set
+      if (count > 1 || bad || unk || n == 0) {
+        if (DG != "") {
+          if (count == 1 && !bad && n == 0 && unk) print "declared" > DG
+          else {
+            if (unk && n > 0) _pw_diag(ul, "unknown mixed with paths", "unknown")
+            if (count == 1 && !bad && n == 0 && !unk) _pw_diag(hl, "empty section", "## Touches")
+            _pw_flush()
+          }
+        }
+        print "unknown"; exit
+      }
+      if (DG != "") print "ok" > DG
       print "known"; for (i = 1; i <= n; i++) print E[i]
     }' "$1"
 }
 
-# _pw_depends <file> — prints `missing` (absent or unparseable), `none`, or one id/path per line.
+# _pw_depends <file> [diag file] — prints `missing` (absent or unparseable), `none`, or one id/path per line.
 _pw_depends() {
-  env LC_ALL=C awk '
-    BEGIN { fence = 0; insec = 0; count = 0; n = 0; nn = 0; bad = 0 }
-    /^```/ { fence = !fence; if (insec) bad = 1; next }
-    !fence && (/^# / || /^## /) { insec = 0; if ($0 == "## Depends on") { count++; insec = 1 }; next }
+  PW_DG="${2:-}" env LC_ALL=C awk "$_PW_AWK_DIAG"'
+    BEGIN { DG = ENVIRON["PW_DG"]; fence = 0; insec = 0; count = 0; n = 0; nn = 0; bad = 0; nd = 0 }
+    /^```/ { fence = !fence; if (insec) { bad = 1; _pw_diag(NR, "fenced block inside the section", $0) }; next }
+    !fence && (/^# / || /^## /) { insec = 0; if ($0 == "## Depends on") { count++; insec = 1; if (count == 1) hl = NR; else _pw_diag(NR, "duplicated section", $0) }; next }
     !insec { next }
     /^[ \t]*$/ { next }
-    $0 == "none" { nn++; next }
+    $0 == "none" { nn++; if (nn == 1) n1 = NR; if (nn == 2) n2 = NR; next }
     /^[0-9][0-9]?[0-9]?$/ { D[++n] = $0; next }
     /^[A-Za-z0-9._\/@+-]+\.md$/ && !/^\// && !/\/\// { D[++n] = $0; next }
-    { bad = 1 }
+    { bad = 1; _pw_diag(NR, "not an id or *.md path", $0) }
     END {
-      if (count != 1 || bad || (nn && (n || nn > 1)) || (!nn && !n)) { print "missing"; exit }
+      if (count != 1 || bad || (nn && (n || nn > 1)) || (!nn && !n)) {
+        if (DG != "") {
+          if (count == 0) print "missing" > DG
+          else {
+            if (count == 1 && !bad && !nn && !n) _pw_diag(hl, "empty section", "## Depends on")
+            if (nn > 1) _pw_diag(n2, "none repeated", "none")
+            if (nn && n) _pw_diag(n1, "none mixed with ids", "none")
+            _pw_flush()
+          }
+        }
+        print "missing"; exit
+      }
+      if (DG != "") print "ok" > DG
       if (nn) { print "none"; exit }
       for (i = 1; i <= n; i++) print D[i]
     }' "$1"
+}
+
+# _pw_verdict <diag file> — the lint verdict text for one section; exit 0 when it is
+# `ok` / `ok (declared unknown)`, 1 when the section is missing or unparsable.
+_pw_verdict() {
+  local first
+  first="$(head -n1 "$1" 2>/dev/null)"
+  case "$first" in
+    ok) echo ok; return 0 ;;
+    declared) echo "ok (declared unknown)"; return 0 ;;
+    missing) echo "missing section"; return 1 ;;
+  esac
+  env LC_ALL=C awk -F '\t' 'NR == 1 { printf "line %s: \"%s\" — %s", $2, $4, $3 }
+    END { if (NR > 1) printf " (+%d more)", NR - 1; printf "\n" }' "$1"
+  return 1
+}
+
+# _pw_touches_why <diag file> — the parenthesised reason in `runs alone: Touches unknown (<why>)`.
+_pw_touches_why() {
+  case "$(head -n1 "$1" 2>/dev/null)" in
+    missing) echo missing ;;
+    declared) echo "declared unknown" ;;
+    *) env LC_ALL=C awk -F '\t' 'NR == 1 { printf "unparsable line %s: \"%s\"\n", $2, $4; exit }' "$1" ;;
+  esac
 }
 
 # _pw_resolve_dep <dependent abs path> <id> — prints the dependency's physical absolute path;
@@ -2169,13 +2269,16 @@ _pw_load_companions() {
 
 # _pw_expand <raw entries file> <root> <out> — normalized (trailing `/` stripped), sorted, unique
 # Touches set plus ONE pass of companion additions.
+# Under --explain it also writes <out>.why: `<entry>\t<declared | companion: <when>>` per entry of
+# <out> (declared wins when an entry is both), so a conflict can name the rule that added it.
 _pw_expand() {
   local e d w nw a pfx tab
   tab="$(printf '\t')"
-  : > "$3.raw"
+  : > "$3.raw"; : > "$3.prov"
   while IFS= read -r e; do
     d="${e%/}"
     printf '%s\n' "$d" >> "$3.raw"
+    if [ "$_PW_EXPLAIN" = 1 ]; then printf '%s\tdeclared\n' "$d" >> "$3.prov"; fi
     while IFS="$tab" read -r w nw a; do
       if [ "$d" != "$e" ]; then
         pfx="${w%%[*?[]*}"
@@ -2189,9 +2292,25 @@ _pw_expand() {
         if [ "$nw" = 1 ] && [ -e "$2/$e" ]; then continue; fi
       fi
       printf '%s\n' "${a%/}" >> "$3.raw"
+      if [ "$_PW_EXPLAIN" = 1 ]; then printf '%s\tcompanion: %s\n' "${a%/}" "$w" >> "$3.prov"; fi
     done < "$_PW_TMP/rules"
   done < "$1"
   env LC_ALL=C sort -u "$3.raw" > "$3"
+  if [ "$_PW_EXPLAIN" = 1 ]; then
+    env LC_ALL=C awk -F '\t' '!($1 in P) || $2 == "declared" { P[$1] = $2 } END { for (p in P) print p "\t" P[p] }' "$3.prov" \
+      | env LC_ALL=C sort > "$3.why"
+  fi
+}
+
+# _pw_conflicts <A.why> <B.why> — one `<path>\t<provenance>` per intersecting pair (the contained,
+# i.e. longer, path; `companion: <when>` when either side's entry came from a companion rule, A's first).
+_pw_conflicts() {
+  env LC_ALL=C awk -F '\t' 'NR == FNR { A[++na] = $1; PA[na] = $2; next }
+    { for (i = 1; i <= na; i++) { a = A[i]; b = $1
+        if (a == b || index(a, b "/") == 1 || index(b, a "/") == 1) {
+          p = (length(b) > length(a)) ? b : a
+          v = (PA[i] != "declared") ? PA[i] : $2
+          print p "\t" v } } }' "$1" "$2" | env LC_ALL=C sort -u
 }
 
 # _pw_intersect <setA> <setB> — true when an entry of A equals, contains or is contained by one of B.
@@ -2204,23 +2323,30 @@ _pw_intersect() {
 }
 
 plan_waves() {
-  local input="" max="" root="" line p f a i j k n=0 st id ds placed total cnt alone ready changed left msg
+  local input="" max="" root="" mode="plan" line p f a i j k n=0 st id ds placed total cnt alone ready changed left msg
+  local waitj alonei members m w tv dv rc ka kd la ld tab
   local DISP=() ABS=() TS=() DEPJ=() BLK=() W=() OK=()
+  tab="$(printf '\t')"
   while [ $# -gt 0 ]; do
     case "$1" in
       --max) [ $# -ge 2 ] || _pw_usage "--max requires a value"; max="$2"; shift 2 ;;
       --root)
         case "${2:-}" in ""|-*) _pw_usage "--root requires a checkout path (got '${2:-}')" ;; esac
         root="$2"; shift 2 ;;
+      --explain) [ "$mode" != lint ] || _pw_usage "--explain and --lint are separate modes"; mode=explain; shift ;;
+      --lint) [ "$mode" != explain ] || _pw_usage "--explain and --lint are separate modes"; mode=lint; shift ;;
       -*) _pw_usage "unknown option $1" ;;
       *) [ -z "$input" ] || _pw_usage "more than one input ($input, $1)"; input="$1"; shift ;;
     esac
   done
   [ -n "$input" ] || _pw_usage "missing <runfile|dir|item-list>"
   [ -e "$input" ] || _pw_usage "input not found: $input"
-  case "$max" in ""|*[!0-9]*) _pw_usage "--max must be a positive integer (got '$max')" ;; esac
-  [ "${#max}" -le 6 ] && [ "$((10#$max))" -ge 1 ] || _pw_usage "--max must be a positive integer (got '$max')"
-  max=$((10#$max))
+  if [ "$mode" != lint ]; then
+    case "$max" in ""|*[!0-9]*) _pw_usage "--max must be a positive integer (got '$max')" ;; esac
+    [ "${#max}" -le 6 ] && [ "$((10#$max))" -ge 1 ] || _pw_usage "--max must be a positive integer (got '$max')"
+    max=$((10#$max))
+  fi
+  [ "$mode" != explain ] || _PW_EXPLAIN=1
   if [ -z "$root" ]; then
     root="$(git rev-parse --show-toplevel 2>/dev/null)" || root=""
     [ -n "$root" ] || root="$PWD"
@@ -2254,6 +2380,10 @@ plan_waves() {
         printf '%s\t%s\n' "$a" "$f" >> "$_PW_TMP/checked"
       fi
     done < "$_PW_TMP/queue"
+  elif [ "$mode" = lint ] && [ -f "$input" ] && case "$input" in *.md) true ;; *) false ;; esac; then
+    # --lint only: a `*.md` that is not a run file is ONE item (the planner reads any non-run file
+    # as an item list, unchanged).
+    printf '%s\t%s\n' "$input" "$input" > "$_PW_TMP/plan"
   elif [ -f "$input" ]; then
     while IFS= read -r line || [ -n "$line" ]; do
       line="$(printf '%s' "$line" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
@@ -2265,11 +2395,32 @@ plan_waves() {
     _pw_usage "input is neither a run file, a directory nor an item list: $input"
   fi
 
+  # 1b. --lint: per item, the SAME parsers with a diag file; no dependency resolution, no waves.
+  if [ "$mode" = lint ]; then
+    rc=0; ka=0; kd=0; la=""; ld=""
+    : > "$_PW_TMP/out"
+    while IFS="$tab" read -r p f; do
+      [ -f "$f" ] || _pw_fail "item not found: $p"
+      _pw_touches "$f" "$_PW_TMP/tdiag.$n" > "$_PW_TMP/t.$n"
+      _pw_depends "$f" "$_PW_TMP/ddiag.$n" > /dev/null
+      tv="$(_pw_verdict "$_PW_TMP/tdiag.$n")" || rc=1
+      dv="$(_pw_verdict "$_PW_TMP/ddiag.$n")" || rc=1
+      if [ "$(head -n1 "$_PW_TMP/t.$n")" != known ]; then ka=$((ka+1)); la="${la:+$la }$p"; fi
+      if [ "$(head -n1 "$_PW_TMP/ddiag.$n")" != ok ]; then kd=$((kd+1)); ld="${ld:+$ld }$p"; fi
+      printf '%s: Touches %s; Depends on %s\n' "$p" "$tv" "$dv" >> "$_PW_TMP/out"
+      n=$((n+1))
+    done < "$_PW_TMP/plan"
+    printf '%s of %s items will run alone: %s\n' "$ka" "$n" "${la:-none}" >> "$_PW_TMP/out"
+    printf '%s of %s items depend on every earlier item: %s\n' "$kd" "$n" "${ld:-none}" >> "$_PW_TMP/out"
+    cat "$_PW_TMP/out"
+    return "$rc"
+  fi
+
   # 2. Per item: physical path, Touches, Depends.
   while IFS="$(printf '\t')" read -r p f; do
     [ -f "$f" ] || _pw_fail "item not found: $p"
     DISP[n]="$p"; ABS[n]="$(_pw_abs "$f")"
-    _pw_touches "$f" > "$_PW_TMP/t.$n"
+    if [ "$_PW_EXPLAIN" = 1 ]; then _pw_touches "$f" "$_PW_TMP/tdiag.$n" > "$_PW_TMP/t.$n"; else _pw_touches "$f" > "$_PW_TMP/t.$n"; fi
     TS[n]="$(head -n1 "$_PW_TMP/t.$n")"
     sed '1d' "$_PW_TMP/t.$n" > "$_PW_TMP/raw.$n"
     _pw_depends "$f" > "$_PW_TMP/d.$n"
@@ -2369,22 +2520,46 @@ plan_waves() {
   done
 
   # 7. Waves: greedy, input order, deps in earlier waves, <= max items, no intersection, unknown alone.
+  #    Under --explain the scan does not stop at a full / alone wave (nothing more can be placed in
+  #    it either way) so every unplaced item gets its reason recorded where the decision is made.
   : > "$_PW_TMP/out"
   placed=0; k=0
   while [ "$placed" -lt "$total" ]; do
-    k=$((k+1)); cnt=0; alone=0; line=""; : > "$_PW_TMP/wave"
+    k=$((k+1)); cnt=0; alone=0; alonei=""; members=""; line=""; : > "$_PW_TMP/wave"
     i=0
     while [ "$i" -lt "$n" ]; do
       if [ -z "${BLK[i]}" ] && [ "${W[i]}" -eq 0 ]; then
-        ready=1
-        for j in ${DEPJ[i]}; do { [ "${W[j]}" -ge 1 ] && [ "${W[j]}" -lt "$k" ]; } || ready=0; done
+        ready=1; waitj=""
+        for j in ${DEPJ[i]}; do { [ "${W[j]}" -ge 1 ] && [ "${W[j]}" -lt "$k" ]; } || { ready=0; waitj="$waitj $j"; }; done
         if [ "$ready" -eq 1 ]; then
-          [ "$alone" -eq 0 ] && [ "$cnt" -lt "$max" ] || break
-          if [ "${TS[i]}" != known ]; then
-            if [ "$cnt" -eq 0 ]; then W[i]=$k; alone=1; cnt=1; line="${DISP[i]}"; fi
+          if [ "$alone" -ne 0 ] || [ "$cnt" -ge "$max" ]; then
+            [ "$_PW_EXPLAIN" = 1 ] || break
+            if [ "$alone" -ne 0 ]; then
+              printf 'wave %s runs %s alone (Touches unknown)\n' "$k" "${DISP[alonei]}" >> "$_PW_TMP/why.$i"
+            else
+              printf 'wave %s full (--max %s)\n' "$k" "$max" >> "$_PW_TMP/why.$i"
+            fi
+          elif [ "${TS[i]}" != known ]; then
+            if [ "$cnt" -eq 0 ]; then
+              W[i]=$k; alone=1; alonei=$i; cnt=1; line="${DISP[i]}"
+            elif [ "$_PW_EXPLAIN" = 1 ]; then
+              printf 'runs alone: Touches unknown (%s)\n' "$(_pw_touches_why "$_PW_TMP/tdiag.$i")" >> "$_PW_TMP/why.$i"
+            fi
           elif [ "$cnt" -eq 0 ] || ! _pw_intersect "$_PW_TMP/s.$i" "$_PW_TMP/wave"; then
-            W[i]=$k; cnt=$((cnt+1)); line="${line:+$line }${DISP[i]}"
+            W[i]=$k; cnt=$((cnt+1)); line="${line:+$line }${DISP[i]}"; members="$members $i"
             cat "$_PW_TMP/s.$i" >> "$_PW_TMP/wave"
+          elif [ "$_PW_EXPLAIN" = 1 ]; then
+            for m in $members; do
+              _pw_conflicts "$_PW_TMP/s.$i.why" "$_PW_TMP/s.$m.why" | while IFS="$tab" read -r p a; do
+                printf 'conflicts with %s on %s (%s)\n' "${DISP[m]}" "$p" "$a"
+              done >> "$_PW_TMP/why.$i"
+            done
+          fi
+        elif [ "$_PW_EXPLAIN" = 1 ]; then
+          if [ "$(head -n1 "$_PW_TMP/d.$i")" = missing ]; then
+            printf 'runs alone: Depends on missing ⇒ depends on every earlier item\n' >> "$_PW_TMP/why.$i"
+          else
+            for j in $waitj; do printf 'depends on %s\n' "${DISP[j]}" >> "$_PW_TMP/why.$i"; done
           fi
         fi
       fi
@@ -2399,6 +2574,24 @@ plan_waves() {
     [ -z "${BLK[i]}" ] || printf 'blocked %s: %s\n' "${DISP[i]}" "${BLK[i]}" >> "$_PW_TMP/out"
     i=$((i+1))
   done
+  # 8. --explain: one block per placed item not in wave 1 (wave order, then input order), each
+  #    distinct reason once, in the order first recorded.
+  if [ "$_PW_EXPLAIN" = 1 ]; then
+    w=2
+    while [ "$w" -le "$k" ]; do
+      i=0
+      while [ "$i" -lt "$n" ]; do
+        if [ -z "${BLK[i]}" ] && [ "${W[i]}" -eq "$w" ]; then
+          printf 'explain %s (wave %s):\n' "${DISP[i]}" "$w" >> "$_PW_TMP/out"
+          if [ -f "$_PW_TMP/why.$i" ]; then
+            awk '!seen[$0]++ { print "  " $0 }' "$_PW_TMP/why.$i" >> "$_PW_TMP/out"
+          fi
+        fi
+        i=$((i+1))
+      done
+      w=$((w+1))
+    done
+  fi
   cat "$_PW_TMP/out"
 }
 

@@ -315,6 +315,13 @@ $(ls -1 "$A3O" 2>/dev/null)"
 else
   ok "a gap file was emitted for a capability the fixture project lacks: $(basename "$F3")"
 
+# parallel-automate/10 (AC-7): the draft carries the planner's sections and `plan-waves --lint` accepts it.
+pw_lint_out="$(bash "$HERE/automate-helpers.sh" plan-waves "$F3" --lint --root "$(dirname "$F3")" 2>&1)"; pw_lint_rc=$?
+if [ "$pw_lint_rc" -eq 0 ] && grep -qxF '## Depends on' "$F3" && grep -qxF '## Touches' "$F3" \
+  && grep -qF ': Touches ok (declared unknown); Depends on ok' <<<"${pw_lint_out%%$'\n'*}"; then
+  ok "AC-7 propose-domain draft: ## Depends on none + ## Touches unknown (it names no change-site file); plan-waves --lint ok (declared unknown), exit 0"
+else no "AC-7 propose-domain draft lint (rc=$pw_lint_rc): $(printf '%s' "$pw_lint_out" | head -n1)"; fi
+
   # -- classification -----------------------------------------------------------------------
   cls3="$(grep -m1 '^- classification: ' "$F3" 2>/dev/null | sed 's/^- classification: //')"
   case "$cls3" in

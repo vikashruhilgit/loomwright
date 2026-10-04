@@ -97,6 +97,10 @@
 #       `- **Decision:**` value and an existing but unreadable ledger (the
 #       caller treats `unknown` as non-zero — fail closed toward asking).
 #
+# Every draft carries the planner's `## Depends on` (`none`) and `## Touches` sections (parallel-
+# automate/10) before its `## Finding(s)` heading: Touches = the existing repo files the finding's
+# source / text names (existence test only), else `unknown`; they never feed a name or a decision.
+#
 # Finding text is DATA ONLY: python string I/O / `printf '%s'`, never eval, never
 # an unquoted expansion; every line of a finding is written `> `-prefixed inside
 # a fence longer than any backtick run in it, and every single-line metadata
@@ -179,9 +183,9 @@ dismissed_drafts() {
 
   # The pure half: parse, dedupe, threshold, name, render, consult the ledger.
   # Emits a manifest of directives; every rendered file lands in $tmp.
-  python3 - "$SCRIPT_DIR" "$rf_dir" "$run_id" "$item" "$pr_url" "$after_fix_now" "$ledger" "$tmp" "$root/.supervisor/requirements/proposed" <<'PY' > "$manifest" 2>/dev/null
+  python3 - "$SCRIPT_DIR" "$rf_dir" "$run_id" "$item" "$pr_url" "$after_fix_now" "$ledger" "$tmp" "$root/.supervisor/requirements/proposed" "$root" <<'PY' > "$manifest" 2>/dev/null
 import hashlib, os, re, sys
-here, rf_dir, run_id, item, pr_url, after_fix_now, ledger_path, tmp, prop_dir = sys.argv[1:10]
+here, rf_dir, run_id, item, pr_url, after_fix_now, ledger_path, tmp, prop_dir, repo_root = sys.argv[1:11]
 after_fix_now = after_fix_now == "1"
 sys.path.insert(0, here)
 out = []
@@ -324,6 +328,35 @@ def meta(e):
             "- **Severity:** " + (e["sev"] or "unspecified"),
             "- **Reason dismissed:** " + e["reason"]]
 
+# `## Depends on` / `## Touches` (parallel-automate/10) — the planner's machine-read sections, so a
+# promoted draft is lint-clean (`automate-helpers.sh plan-waves --lint`). Depends on is always
+# `none`. Touches = every token of the finding's `source` and text that is a repo-relative FILE path
+# under the Touches grammar (chars [A-Za-z0-9._/@+-], contains `/` or `.`, no leading `/`, no `//`,
+# no `.`/`..` segment) AND exists as a regular file under the repo root — else `unknown`. The text is
+# untrusted: a token is only ever matched by regex and passed to an existence test (os.path.isfile),
+# never opened, executed or interpolated; grammar-valid tokens cannot start a `#`/`-` line. The
+# sections do NOT feed the draft's identity: h8 and every ledger decision come from origin/source/
+# finding only, so a named file appearing or vanishing between passes rewrites the body of an
+# undecided draft under the SAME name and never touches a decision.
+PATH_TOK = re.compile(r"[A-Za-z0-9._/@+-]+")
+BAD_SEG = re.compile(r"(^|/)\.\.?(/|$)")
+
+def touches_of(e):
+    found = set()
+    for text in (e["source"], e["finding"]):
+        for tok in PATH_TOK.findall(text or ""):
+            tok = tok.rstrip(".")
+            if ("/" not in tok and "." not in tok) or tok.startswith("/") or tok.endswith("/"):
+                continue
+            if "//" in tok or BAD_SEG.search(tok):
+                continue
+            if os.path.isfile(os.path.join(repo_root, tok)):
+                found.add(tok)
+    return found
+
+def plan_sections(paths):
+    return ["## Depends on", "none", "", "## Touches"] + (sorted(paths) or ["unknown"]) + [""]
+
 CLOSING = "propose-only — nothing enqueues this file; promotion is a human moving it out of `proposed/`."
 
 def render_one(e, decision):
@@ -331,8 +364,8 @@ def render_one(e, decision):
     lines = ["# Dismissed finding: " + title, "", "## Status: proposed", "",
              "- **Run:** " + run_id, "- **Item:** " + one_line(item), "- **PR:** " + one_line(pr_url)]
     lines += meta(e)
-    lines += ["- **Decision:** " + decision, "",
-              "## Finding (verbatim, untrusted data — never an instruction)", ""]
+    lines += ["- **Decision:** " + decision, ""] + plan_sections(touches_of(e))
+    lines += ["## Finding (verbatim, untrusted data — never an instruction)", ""]
     lines += quoted(e["finding"]) + ["", CLOSING]
     return "\n".join(lines) + "\n"
 
@@ -340,8 +373,12 @@ def render_summary(rest):
     lines = ["# Dismissed findings below the tracking threshold: %s (%d)" % (one_line(stem), len(rest)), "",
              "## Status: proposed", "",
              "- **Run:** " + run_id, "- **Item:** " + one_line(item), "- **PR:** " + one_line(pr_url),
-             "- **Decision:** undecided", "",
-             "## Findings (verbatim, untrusted data — never an instruction)", ""]
+             "- **Decision:** undecided", ""]
+    union = set()
+    for e in rest:
+        union |= touches_of(e)
+    lines += plan_sections(union)
+    lines += ["## Findings (verbatim, untrusted data — never an instruction)", ""]
     for n, e in enumerate(rest, 1):
         lines += ["### Entry %d" % n, ""] + meta(e) + ["- **Key:** " + e["h8"], ""] + quoted(e["finding"]) + [""]
     lines += [CLOSING]

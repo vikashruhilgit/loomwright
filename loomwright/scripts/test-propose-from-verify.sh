@@ -71,6 +71,25 @@ AC3_FILE="$(find "$OUT" -maxdepth 1 -name "verify-${RUN_ID}-AC3-*.md" | head -1)
 [ -n "$AC1_FILE" ] && ok "AC1 (FAIL/REAL_BUG) drafted" || no "AC1 draft missing"
 [ -n "$AC4_FILE" ] && ok "AC4 (FAIL/REAL_BUG) drafted" || no "AC4 draft missing"
 [ -n "$ISSUE_FILE" ] && ok "issue #1 drafted" || no "issue draft missing"
+
+# parallel-automate/10 (AC-7): the draft carries the planner's sections and `plan-waves --lint` accepts it.
+pw_lint_out="$(bash "$HERE/automate-helpers.sh" plan-waves "$AC1_FILE" --lint --root "$(dirname "$AC1_FILE")" 2>&1)"; pw_lint_rc=$?
+if [ "$pw_lint_rc" -eq 0 ] && grep -qxF '## Depends on' "$AC1_FILE" && grep -qxF '## Touches' "$AC1_FILE" \
+  && grep -qF ': Touches ok (declared unknown); Depends on ok' <<<"${pw_lint_out%%$'\n'*}"; then
+  ok "AC-7 propose-from-verify draft: ## Depends on none + ## Touches unknown (it names no change-site file); plan-waves --lint ok (declared unknown), exit 0"
+else no "AC-7 propose-from-verify draft lint (rc=$pw_lint_rc): $(printf '%s' "$pw_lint_out" | head -n1)"; fi
+# A draft whose text names an existing repo file carries it as Touches (a missing one and an
+# absolute path are dropped) and lints `ok` — the cwd's checkout is the root the names resolve against.
+VT_DIR="$(mktmp)/proj"; mkdir -p "$VT_DIR/src"; ( cd "$VT_DIR" && git init -q . ); : > "$VT_DIR/src/app.ts"
+VT_RD="$(mktmp)/verify-20260915T000000Z-vt"; mkdir -p "$VT_RD"
+printf '%s\n' '{"schema_version":1,"ts":"2026-09-15T00:00:01Z","run_id":"verify-20260915T000000Z-vt","event":"ac","ac_id":"AC1","text":"Crash in src/app.ts (not src/none.ts, not /etc/hosts).","scope":"ticket","verdict":"FAIL","classification":"REAL_BUG","reason":"see src/app.ts","steps":[],"artifacts":[]}' > "$VT_RD/evidence.jsonl"
+( cd "$VT_DIR" && PROPOSE_FROM_VERIFY_OUT_DIR="$VT_DIR/out" bash "$SUT" "$VT_RD" ) >/dev/null 2>&1
+VT_F="$(find "$VT_DIR/out" -maxdepth 1 -name 'verify-*-AC1-*.md' 2>/dev/null | head -1)"
+vt_sec="$(awk '/^## Touches$/{p=1; next} p && /^## /{exit} p && NF' "${VT_F:-/dev/null}")"
+vt_lint="$(bash "$HERE/automate-helpers.sh" plan-waves "${VT_F:-/nonexistent.md}" --lint --root "$VT_DIR" 2>&1)"; vt_rc=$?
+[ "$vt_sec" = "src/app.ts" ] && [ "$vt_rc" -eq 0 ] && grep -qF ': Touches ok; Depends on ok' <<<"${vt_lint%%$'\n'*}" \
+  && ok "AC-7 propose-from-verify: Touches = the existing file the text names (src/app.ts), lint ok" \
+  || no "AC-7 named-file draft: Touches '$vt_sec', lint rc=$vt_rc: $(printf '%s' "$vt_lint" | head -n1)"
 [ -z "$AC2_FILE" ] && ok "AC2 (BLOCKED) NOT drafted" || no "AC2 (BLOCKED) was drafted - defect"
 [ -z "$AC3_FILE" ] && ok "AC3 (FAIL/DISCOVERY_GAP) NOT drafted" || no "AC3 (FAIL/DISCOVERY_GAP) was drafted - defect"
 
