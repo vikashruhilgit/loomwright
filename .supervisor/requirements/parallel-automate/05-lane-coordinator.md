@@ -194,6 +194,31 @@ coordinator. Without the flag, or with `--parallel 1`, no lane code runs at all.
     - **Tests:** `lane-feed` on a fixture log prints parks and spawns; the remote-name check refuses (or suffixes) a
       name that exists only on origin; the park-state rule holds for both resume paths.
 
+15. **Merge-readiness report and live tracking — what the operator did by hand in S1 and wave w1** (added
+    2026-10-04, owner: "yes we need to do that. can we do a live tracking?").
+    - **Merge-readiness report:** when a lane parks `awaiting_merge`, it writes `<run_id>.merge-readiness.md` (and
+      `lane-status --json` exposes it) with one line per check, each PASS / FAIL / NOT-RUN with the evidence:
+      a. **The item's own Validation section, executed or evidenced:** each `## Validation (must pass before merge)`
+         entry mapped to where it was satisfied (a test name, a pasted command output in the PR body, a CI run). A
+         "Running system" step with no pasted output is NOT-RUN, never PASS. (Example: item 08 requires a three-clone
+         `ci-local` run; the lane itself said it would "hold the merge on the three-clone validation", but a lane
+         cannot hold a merge — only this report can make the gap visible.)
+      b. **Plan Review's carried findings:** every MEDIUM/LOW note the owner chose to "carry to the worker" listed
+         with where it was addressed or why not (S1 v2: a carried LOW note was ignored and became an output-gate
+         failure).
+      c. **Scope fence:** `gh pr diff --name-only` ⊆ the brief's declared files plus `changelog.d/`; anything else is
+         listed.
+      d. **Gates:** required checks green on the CURRENT head; every dismissed finding has an owner decision;
+         children-settled result (with any override recorded).
+      e. **Repro of the item's headline claim** where the Validation names one (e.g. a mutation that must fail).
+      The report is advisory (never a merge executor, P1/P5): `lane-status` shows `ready (5/5)` or `ready (3/5:
+      running-system NOT-RUN)`, and the owner merges by hand as today.
+    - **Live tracking (a plain view, add-ons optional — P9):** `lane-status --watch` refreshes every 15 s in a terminal
+      (state, last progress line, last 3 actions, CI-slot position, pending question, merge-readiness score); `lane-feed
+      <lane> --follow` narrates one lane live (Scope 14). The lanes pane mod (S1 prototype `s1-lanes`) renders the same
+      `lane-status --json`, adding a per-lane "Details" toggle with the last ~20 steps, and answers through `lane-answer`.
+      Tests: `--watch` output on a fixture fleet; the report's NOT-RUN for a Validation step with no evidence.
+
 ## Non-goals
 Merging and the release bump (item 06). More than one wave at once. Lanes on other machines. A `-runner` agent.
 Making the rules stamp or Claude auto-memory follow a clone — record the gap; a lane whose requirement needs a
