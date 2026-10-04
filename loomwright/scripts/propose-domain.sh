@@ -892,6 +892,11 @@ while IFS='|' read -r slug title source_terms inv_terms scope_terms kind; do
       "$n_cites" "$n_fetched" "$n_competitors"
     printf -- '- external calls made by this run: %s of a cap of %s\n' "$FETCHES_USED" "$MAX_FETCHES"
 
+    # The planner's machine-read sections (parallel-automate/10; grammar: `automate-helpers.sh
+    # plan-waves`, checked by its `--lint`). A domain gap names a capability, never a change-site
+    # file (its inventory hits are where the TERMS matched, not where the work lands), so Touches
+    # is `unknown`.
+    printf '\n## Depends on\n\nnone\n\n## Touches\n\nunknown\n'
     printf '\n## Problem\n\n'
     printf 'Fetched domain sources describe **%s**. This project'"'"'s own code and docs do not\n' "$title"
     printf 'confirm it: the inventory status is `%s`.\n\n' "$inv_status"

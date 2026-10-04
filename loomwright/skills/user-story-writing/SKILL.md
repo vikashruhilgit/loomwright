@@ -2,8 +2,8 @@
 name: user-story-writing
 description: Write clear user stories with testable acceptance criteria. Use for requirements definition and feature scoping.
 allowed-tools: [Read]
-version: "1.1.0"
-lastUpdated: "2026-10-03"
+version: "1.2.0"
+lastUpdated: "2026-10-04"
 ---
 
 # User Story Writing Skill
@@ -74,13 +74,21 @@ Ready for: `/orchestrator goal: "BD-XX"`
 none
 
 ## Touches
-unknown
+src/scheduling/
+src/notifications/shift-assigned.ts
 ```
 
 **Machine-read sections (`## Depends on`, `## Touches`).** Every persisted requirement file carries these two sections as **H2** headings — H2 in the file even though the template's own sections are H3 — so a planner can tell which stories may run at the same time. Grammar: one entry per line and nothing else on the line — no backticks, no bullets, no globs, no prose (blank lines are ignored):
 
 - `## Depends on` — `none` as the sole line, or one dependency per line: a 1–3 digit id of a story in the same folder (`03`), or a relative path ending in `.md` (`../other-queue/02-x.md`). An id resolves only against `NN-*.md` siblings, so a timestamp-named story (`2026-10-03-101500-first-story.md`) must be referenced by its relative path, never by an id. A missing or unparseable section reads as "depends on every earlier story".
 - `## Touches` — one repo-relative path per line (characters `A-Za-z0-9._/@+-` only, no leading `/`, no `.` or `..` segment, no `//`); a trailing `/` marks a directory; the sole line `unknown` when the touched set is not known. Any line that does not parse makes the whole section `unknown`, and an `unknown` story runs alone.
+
+**Fill them; do not leave the defaults** (an undeclared story serialises the whole queue):
+
+- **`## Touches` comes from your own file-impact reasoning.** List every path the story's Scope names or plainly implies — the files and directories the change will edit or create. Write the sole line `unknown` only when you truly cannot name the change site (e.g. a capability with no code yet to point at), never as a placeholder.
+- **No prose inside the section, ever.** A condition ("only if a test exposes a defect"), a part label ("(part B)"), a comma list or a bullet makes the WHOLE section unknown. Put conditions in Scope; keep one bare path per line here.
+- **Always write `## Depends on`** — `none` when the story depends on nothing. A missing section is not "none"; it makes the story wait for every earlier story.
+- **Check before handing off:** `automate-helpers.sh plan-waves <file|dir> --lint` (the `/automate` engine's helper script) prints `ok` / `ok (declared unknown)` or the exact bad line, its number and the reason for both sections, and exits 1 when either is missing or unparsable.
 
 Keep them as the story's last sections (or follow them with another `##` heading): an `###` heading does not end an H2 section, so its text would be read as a bad `Touches` line. The prose `### Dependencies` block stays for humans and is never parsed — `## Depends on` / `## Touches` are the machine-read declarations.
 
@@ -136,7 +144,8 @@ Ready for: `/orchestrator goal: "BD-15"`
 14-staff-profile-management.md
 
 ## Touches
-unknown
+src/scheduling/shift-assignment/
+src/notifications/
 ```
 
 ## Anti-Patterns
@@ -185,6 +194,7 @@ Before finalizing a story:
 - [ ] Priority assigned (MVP/Phase 2/Nice-to-have)
 - [ ] Assumptions made explicit
 - [ ] Dependencies listed
+- [ ] `## Depends on` written (`none` when none) and `## Touches` filled from Scope — `plan-waves --lint` says `ok`
 - [ ] Risks identified
 - [ ] Story is estimable (not too vague, not too large)
 
