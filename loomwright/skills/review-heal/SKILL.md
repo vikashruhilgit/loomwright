@@ -444,9 +444,7 @@ termination_reason = null           # converged | bound_hit | sub_floor_converge
 checks_ever_fixed = {}              # required-check names this drain has attempted to fix — AC13 input for the confirming pass
 fallback_review_ran = false         # run-scoped (AC3); the earned fallback fires at MOST once per drain run —
                                      # this flag is what the mechanized bound cannot re-trigger it through
-rules_fail_seen = []                # run-scoped (automate-followups/18): every gate-countable rule id the rules gate
-                                     # reported `fail` in ANY round of THIS drain run (§U4 read AND the sub-floor
-                                     # re-read) — initialised ONCE per drain run, NEVER reset between rounds
+rules_fail_seen = []                # run-scoped: countable ids the rules gate reported `fail` this drain run — never reset
 round_number = 0                    # this run's own round ordinal (dismissed-findings-01) — incremented once
                                      # per loop iteration that reaches Step U3.5; used ONLY to number the
                                      # dismissed-findings marker comment ("round=<n>"), distinct from the
@@ -563,15 +561,13 @@ loop:
                    for id in rules.failing if id in rules.countable ]
     auto_fixable = [f for f in validated if is_auto_fixable(f)]        # RE-DERIVE from the now-larger
     needs_human  = [f for f in validated if not is_auto_fixable(f)]   # `validated`, exactly as the earned-fallback branch does
-    # Remember it for the rest of the drain run (deduplicated) — a LATER round's `unstamped` is read against it.
     rules_fail_seen += [id for id in rules.failing if id in rules.countable and id not in rules_fail_seen]
   # Any verdict NOT in RULES_PASSABLE and not `fail` (unresolved, unreadable, and every shape
   # rules_gate_read normalised to unreadable) ⇒ escalated below, AFTER the dismissed-findings marker (so
   # this round's dismissals still post). ok / none / unstamped / cmd_disabled ⇒ nothing appended —
-  # BYTE-IDENTICAL round — EXCEPT `unstamped` while rules_fail_seen != [] (rules_fail_unstamped), which
-  # escalates `rules_fail_then_unstamped` below, after the same marker.
+  # BYTE-IDENTICAL round — EXCEPT `unstamped` while rules_fail_seen != [] (escalated below, same placement).
   rules_escalates = rules.verdict not in RULES_PASSABLE and rules.verdict != "fail"   # allow-list complement
-  rules_fail_unstamped = rules.verdict == "unstamped" and rules_fail_seen != []   # automate-followups/18 — store-wide, see its leg
+  rules_fail_unstamped = rules.verdict == "unstamped" and rules_fail_seen != []
 
   # Earned fallback gate (AC3) — the ONE exception to heal-only, checked ONLY on a round that would
   # otherwise declare READY, and at most once per drain run (fallback_review_ran). Full contract:
@@ -627,19 +623,12 @@ loop:
     post "rules_gate_unresolved: rules-gate-verdict.sh verdict <verdict> (<unresolved ids>)" to PR (gh pr comment ...); notify (best-effort)
     break
 
-  # Rules gate, fail→unstamped leg (automate-followups/18, owner Option A 2026-10-01; AFTER the
-  # dismissed-findings marker, BEFORE the READY test): a countable check FAILED in an earlier round of
-  # THIS drain run and the replay now answers `unstamped` — the fix most likely moved the stamp hash
-  # (edited a file the rule binds, or changed the countable set) instead of making the check pass.
-  # STORE-WIDE trigger: `unstamped` carries no per-id attribution, and demoting or unbinding the failing
-  # rule drops its id from rules.countable, so intersecting rules_fail_seen with the live countable set
-  # would fail OPEN — ANY remembered id triggers. Its OWN leg, never folded into rules_escalates (whose
-  # leg posts rules_gate_unresolved). `unstamped` stays in RULES_PASSABLE: a store never seen failing in
-  # this drain run is unaffected.
+  # Rules gate, fail→unstamped leg (automate-followups/18; its OWN leg, never folded into rules_escalates):
+  # a fix most likely moved the stamp hash instead of passing the check. Store-wide trigger — §"READY redefinition".
   if rules_fail_unstamped:
     decision = ESCALATED                   # termination_reason left UNSET (like the fail-CLOSED leg above)
     remaining_issues = len(auto_fixable) + len(needs_human) + max(1, len(rules_fail_seen))
-    post "rules_fail_then_unstamped: <rules_fail_seen ids> — failed earlier in this drain run, now unstamped; re-run `/rules check --confirm` on the fixed branch, or revert the edit to the bound file" to PR (gh pr comment ...); notify (best-effort)
+    post "rules_fail_then_unstamped: <rules_fail_seen ids> — re-run `/rules check --confirm` on the fixed branch, or revert the edit to the bound file" to PR (gh pr comment ...); notify (best-effort)
     break
 
   # READY ⇔ required green AND scoped review-producing checks settled (already true here) AND
@@ -733,17 +722,16 @@ loop:
     # Rules clause of READY, re-read on the PUSHED commit (a sub-floor fix can change a check's outcome):
     rules_after = rules_gate_read(<checkout>)          # the SAME allow-listed read as §U4 (helper from the plugin install root)
     rules_gate = rules_after.verdict
-    if rules_after.verdict == "fail":                    # this read feeds the run-scoped memory too (automate-followups/18)
+    if rules_after.verdict == "fail":
       rules_fail_seen += [id for id in rules_after.failing if id in rules_after.countable and id not in rules_fail_seen]
-    # fail→unstamped on the PUSHED commit — `unstamped` is in RULES_PASSABLE, so the READY test below would
-    # pass it; this standalone check (same store-wide trigger as the §U4 leg above) runs first and is NEVER READY:
+    # `unstamped` is in RULES_PASSABLE, so fail→unstamped is checked first here — NEVER READY:
     if rules_after.verdict == "unstamped" and rules_fail_seen != []:
-      decision = ESCALATED                              # termination_reason left UNSET — rules_fail_then_unstamped
+      decision = ESCALATED                              # termination_reason left UNSET
       if outcome.result == "RED" and (outcome.failing_names & checks_ever_fixed) != {}:
-        repeat_check_failure = true                      # AC13 bookkeeping kept on this exit too (see the else branch)
+        repeat_check_failure = true                      # AC13, as in the else branch
       remaining_issues = len(auto_fixable) + len(needs_human) + max(1, len(rules_fail_seen))
-      post "rules_fail_then_unstamped: <rules_fail_seen ids> — failed earlier in this drain run, now unstamped on the pushed commit; re-run `/rules check --confirm` on the fixed branch, or revert the edit to the bound file" to PR (gh pr comment ...); notify (best-effort)
-      drain-rounds.sh bump <pr_url>                      # this round still counts against the ceiling, like every sibling exit
+      post the §U4 leg's "rules_fail_then_unstamped: <ids> …" comment to PR (gh pr comment ...); notify (best-effort)
+      drain-rounds.sh bump <pr_url>
       break
     if outcome.result == "GREEN" and rules_after.verdict in RULES_PASSABLE:   # AFFIRMATIVE — anything else is NOT READY
       # AC12 — the earned-fallback gate is NOT re-run here, and that is CORRECT rather than an omission.
