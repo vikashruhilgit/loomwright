@@ -325,3 +325,4 @@ answers, P8 recommendation.
 - **v2 relay 2, brief gates (Launch Pad Phase 6), both lanes ASKED:** the gate v1's lane A skipped and saved on its own now reaches the owner through the relay.
   - v2-b (item 18): Plan Review PASS on attempt 1/3, 0 blocking/high/medium, 4 LOW. Owner: **Save + carry notes** (resumed pid 93526).
   - v2-a (item 19): PASS on attempt 1/3, 1 MEDIUM (AC7 leaves out the plan-waves caller) + 3 LOW. Owner: **Refine further** (attempt 2/3). The brief already decides **D3 = indentation cap 0–3 spaces**, which is exactly the regression found in v1's #370 (a 4-space indented code block listed as a run), so v2 plans the fix that v1 shipped without.
+- **Collision confirmed (07:4xZ):** v2-b checked out `feature/automate-followups-18-fail-to-unstamped-escalates`, **the exact name v1's #371 used**. Without the move to `s1v1/`, its push would have met v1's branch on origin. The prediction held, so the remote-name check belongs in 05.
