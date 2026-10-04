@@ -43,7 +43,7 @@
 #   ceiling-check    <runfile_path> <max_tokens> [--root <checkout>]  # §6 PICK-time token-ceiling check via read-token-ledger.sh --run-id; prints OK/PARK, always exits 0
 #   resolve-folder   <dir>                              # §2 list *.md not done and not proposed|parked
 #   resolve-backlog  <backlog.md>                       # §2 dependency-ordered items honoring done/✅ markers AND the referenced file's own ## Status: done stamp (is_done); dir-fallback path also skips proposed|parked, per is_not_ready
-#   resume-glob      <automate_dir>                     # §4 list run files (is_run_file: a "# Automate Run:" title line anywhere) not "## Status: done"; §6 result sidecars never listed because they carry no such line
+#   resume-glob      <automate_dir>                     # §4 list run files (is_run_file: a "# Automate Run:" title line anywhere — BOM/0-3-space indent/whitespace/case tolerant, RUN_TITLE_ERE) not "## Status: done"; §6 result sidecars never listed because they carry no such line
 #   reconcile-item   <pr_url> <belief>                  # §4 belief vs gh/git truth -> corrected state
 #   gate-eval        <pr_url> <ctx.json>                # §10 MERGE|PARK fail-closed trusted-merge gate (conditions enumerated in skills/automate-loop/SKILL.md §10; cond 6 = classify-risk.sh high_risk, cond 7 = rules-gate-verdict.sh, NO override)
 #   learning-emit    <ledger_path> <flags...>           # §6 step 3 fail-safe (always exit 0) engine-native ground-truth POSTMORTEM_RESULT line; idempotent on run_id+item+pr_url+source+completeness (a degraded emit never blocks a later complete one)
@@ -411,10 +411,36 @@ is_not_ready() { grep -qE '^## Status:[[:space:]]*(proposed|parked)\b' "$1" 2>/d
 # blocks with no such line, so they — and any future sidecar — are never taken
 # for a run. Line-anchored ANYWHERE in the file, deliberately not "line 1 only":
 # a leading blank line or front-matter must never hide a real incomplete run from
-# RESUME (hiding a run is the worse failure). Called ONLY from `resume_glob`;
-# requirement files are not run files, so `resolve_folder` / `resolve_backlog*`
-# never call it (same scoping discipline as `is_not_ready`, decision H2).
-is_run_file() { grep -qE '^# Automate Run:' "$1" 2>/dev/null; }
+# RESUME (hiding a run is the worse failure).
+#
+# Tolerated title forms (RUN_TITLE_ERE, automate-followups/19) — the line may
+# differ from the exact `# Automate Run:` only in:
+#   D1 letter case — `# automate run:` matches (no sidecar carries the phrase,
+#      and a miss hides a run);
+#   D2 a leading UTF-8 BOM (bytes EF BB BF) — built with printf octal because
+#      BSD grep ERE has no `\x` escape, and matched under `env LC_ALL=C` so the
+#      bytes compare as bytes in every locale;
+#   D3 0-3 leading spaces — the CommonMark ATX-heading limit. 4+ spaces or a
+#      leading tab is an indented CODE BLOCK, not a heading: a sidecar or
+#      requirement quoting `    # Automate Run: x` must never be listed (that
+#      would re-create the `resume_ambiguous` failure automate-followups/03 fixed);
+#   D4 whitespace — zero-or-more spaces/tabs between `#` and `Automate`,
+#      one-or-more between `Automate` and `Run`, zero-or-more before `:`.
+#      Exactly ONE `#`: `## Automate Run:` (an H2) is not a run file.
+# build-handoff.sh's AUTOMATE title reader carries a mirrored copy of these two
+# assignments (it does not source this file) — change both together.
+#
+# Callers (every one shares this predicate, so a tolerated title is accepted by
+# all of them): `resume_glob` (the RESUME list); the `runfile-write` validator
+# `_runfile_refusal` (the staged-content check AND the existing-file check that
+# arms the append-only Progress rule); `progress_append` and `queue_checkoff`
+# (their target pre-checks); and `plan_waves` (its run-file-vs-item-list input
+# branch). Requirement files are not run files, so `resolve_folder` /
+# `resolve_backlog*` never call it (same scoping discipline as `is_not_ready`,
+# decision H2).
+_RUN_TITLE_BOM="$(printf '\357\273\277')"
+RUN_TITLE_ERE="^(${_RUN_TITLE_BOM})? {0,3}#[[:blank:]]*[Aa][Uu][Tt][Oo][Mm][Aa][Tt][Ee][[:blank:]]+[Rr][Uu][Nn][[:blank:]]*:"
+is_run_file() { env LC_ALL=C grep -qE "$RUN_TITLE_ERE" "$1" 2>/dev/null; }
 
 # resolve-folder <dir> — every *.md NOT marked "## Status: done" and not
 # "## Status: proposed|parked" (sorted).

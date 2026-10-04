@@ -26,6 +26,9 @@
 #   (k) real automate run-file — a /automate run-file's Status / Source / PR facets render (finding #3)
 #   (q) worker_checkpoint — an in-progress job's checkpoints render under Tried/rejected with the
 #       session id as provenance; scoped to the in-progress job only; absent state/log is a silent skip
+#   (r) automate title reader mirrors is_run_file — a BOM + lower-case + extra-space title renders
+#       the text after the colon; an H2 line and a 4-space-indented line fall back to the basename;
+#       the mirrored RUN_TITLE_ERE / _RUN_TITLE_BOM copies are byte-identical (automate-followups/19)
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -528,6 +531,54 @@ seed_job "$RQ3" in-progress "no-session-job" >/dev/null
 outQ3="$(run_build "$RQ3")"; rcQ3=$?
 [ "$rcQ3" -eq 0 ] && ok "(q) no state.md/session log → still exits 0" || no "(q) expected exit 0, got $rcQ3"
 [ -f "$RQ3/.supervisor/handoff/digest.md" ] && ok "(q) digest still produced with no session to join" || no "(q) digest missing"
+
+# ============================================================================
+echo "== (r) automate title reader mirrors is_run_file: tolerant forms read, H2 / 4-space indent fall back =="
+# automate-followups/19 (D5): build-handoff.sh's AUTOMATE title reader accepts exactly the title
+# forms automate-helpers.sh's is_run_file accepts (RUN_TITLE_ERE). The fixtures are built with
+# printf octal (no `\x` in BSD tools). `seed_automate_title <repo> <name> <title-line>` writes a
+# run file whose ONLY title-like line is <title-line> (raw bytes, printf %b).
+seed_automate_title() {
+  local repo="$1" name="$2" tline="$3"
+  mkdir -p "$repo/.supervisor/automate"
+  { printf '%b\n' "$tline"; printf '## Status: paused\n## Queue\n- [ ] req-r.md\n## Progress\n- ts\n'; } \
+    > "$repo/.supervisor/automate/$name.md"
+}
+RR="$(new_repo)"
+seed_automate_title "$RR" "tolerant-run" '\0357\0273\0277#  automate run: Tolerant Title R'
+seed_automate_title "$RR" "h2-run" '## Automate Run: H2 Title R'
+seed_automate_title "$RR" "indent4-run" '    # Automate Run: Indent4 Title R'
+# precondition: the tolerant fixture really starts with the BOM bytes and is lower-case.
+if [ "$(head -c 3 "$RR/.supervisor/automate/tolerant-run.md" | od -An -tx1 | tr -d ' \n')" = "efbbbf" ] \
+   && grep -qF '#  automate run: Tolerant Title R' "$RR/.supervisor/automate/tolerant-run.md"; then
+  ok "(r) precondition: tolerant fixture = BOM + extra space + lower-case title"
+else
+  no "(r) precondition: tolerant fixture not built as BOM + extra space + lower-case"
+fi
+run_build "$RR" >/dev/null; rcR=$?
+DIGR="$RR/.supervisor/handoff/digest.md"
+[ "$rcR" -eq 0 ] && ok "(r) exits 0" || no "(r) expected exit 0, got $rcR"
+grep -qxF "### Tolerant Title R" "$DIGR" 2>/dev/null \
+  && ok "(r) BOM + lower-case + extra-space title renders the text after the colon" \
+  || no "(r) tolerant title not read; headings: $(grep '^### ' "$DIGR" 2>/dev/null | tr '\n' '|')"
+grep -qxF "### tolerant-run" "$DIGR" 2>/dev/null \
+  && no "(r) tolerant title fell back to the basename" || ok "(r) tolerant title did NOT fall back to the basename"
+grep -qxF "### h2-run" "$DIGR" 2>/dev/null \
+  && ok "(r) an H2 '## Automate Run:' line is not a title — basename fallback" \
+  || no "(r) H2 line read as a title; headings: $(grep '^### ' "$DIGR" 2>/dev/null | tr '\n' '|')"
+grep -qxF "### indent4-run" "$DIGR" 2>/dev/null \
+  && ok "(r) a 4-space-indented title line (code block) is not a title — basename fallback (indent cap)" \
+  || no "(r) 4-space-indented line read as a title; headings: $(grep '^### ' "$DIGR" 2>/dev/null | tr '\n' '|')"
+# Drift guard: the two mirrored copies of the title ERE are byte-identical.
+HELPERS="$HERE/automate-helpers.sh"
+for v in _RUN_TITLE_BOM RUN_TITLE_ERE; do
+  a="$(grep -E "^${v}=" "$HELPERS")"; b="$(grep -E "^${v}=" "$BUILD")"
+  if [ -n "$a" ] && [ "$a" = "$b" ]; then
+    ok "(r) $v is byte-identical in automate-helpers.sh and build-handoff.sh (mirrors is_run_file)"
+  else
+    no "(r) $v drifted between automate-helpers.sh ('$a') and build-handoff.sh ('$b')"
+  fi
+done
 
 echo
 echo "RESULT: $pass passed, $fail failed"

@@ -51,6 +51,13 @@
 
 set -uo pipefail
 
+# /automate run-file title ERE — mirrors is_run_file in automate-helpers.sh (its RUN_TITLE_ERE and
+# _RUN_TITLE_BOM; that file's header comment states the tolerated forms D1-D4). This script does
+# not source the helper, so these two assignments are a byte-identical COPY of the helper's —
+# test-build-handoff.sh asserts the two copies match. Change both together.
+_RUN_TITLE_BOM="$(printf '\357\273\277')"
+RUN_TITLE_ERE="^(${_RUN_TITLE_BOM})? {0,3}#[[:blank:]]*[Aa][Uu][Tt][Oo][Mm][Aa][Tt][Ee][[:blank:]]+[Rr][Uu][Nn][[:blank:]]*:"
+
 # Opt-in flag parsing (AC-handoff-publish). Absent this flag PUBLISH stays 0 and the publish block
 # near the end of this script never runs — no new code path executes absent explicit opt-in.
 PUBLISH=0
@@ -294,7 +301,11 @@ if [ -s "$index" ]; then
         # template"): the `# Automate Run: <title>` heading, the `## Status:` heading, the first
         # bullet under `## Source`, and the `## Current` line's `pr: <url>`. The run-file carries
         # NO `Goal`/`outcome` field and NO commit-SHA trailer → mtime basis (AC4b).
-        title="$(sed -nE 's/^#[[:space:]]*Automate Run:[[:space:]]*//p' "$path" 2>/dev/null | head -1)"
+        # Title reader — mirrors is_run_file (automate-helpers.sh RUN_TITLE_ERE): the SAME
+        # tolerated title-line forms (optional UTF-8 BOM, 0-3 leading spaces, case-insensitive,
+        # flexible whitespace, exactly one `#`) via the mirrored RUN_TITLE_ERE defined near the
+        # top of this file; no title line ⇒ basename fallback.
+        title="$(env LC_ALL=C sed -nE "s/${RUN_TITLE_ERE}[[:space:]]*//p" "$path" 2>/dev/null | head -1)"
         [ -n "$title" ] || title="$(basename "$path" .md)"
         a_status="$(sed -nE 's/^##[[:space:]]*Status:[[:space:]]*//p' "$path" 2>/dev/null | head -1)"
         a_source="$(awk '/^##[[:space:]]*Source/{f=1;next} f&&/^## /{exit} f&&/^-[[:space:]]/{sub(/^-[[:space:]]*/,"");print;exit}' "$path" 2>/dev/null)"
