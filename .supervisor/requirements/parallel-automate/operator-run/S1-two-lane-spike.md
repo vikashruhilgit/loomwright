@@ -313,3 +313,11 @@ answers, P8 recommendation.
   6. Plan a deliberate concurrent `ci-local` (Q6).
   7. Merge the chosen PR first, then observe the other (Q4).
   8. Teardown, then `snapshot after`.
+
+## S1 v2 run record (started 2026-10-04 07:18Z)
+
+- **Before snapshot** (07:0xZ): primary clean at `6a048be`, worktree `main` only, run lock UNLOCKED, meta synced `991f82a` (`ai-agent-manager-lanes-v2/snapshot-before.txt`). `plan-check`: 18 = wave 1, 19 = wave 2 (same as v1).
+- **v1 parked out of the way** (owner yes): #370 and #371 closed unmerged with a comment. Watchers 78867 and 72409 each wrote `gone — closed unmerged (no cleanup; §4 gone rules)` (07:13:24Z / 07:13:50Z) and exited by themselves, so the §4 gone path is observed working.
+- **Condition found and removed before setup:** v1's branches on origin would have collided with v2's very likely identical branch names. The Supervisor's branch-collision guard checks the **local** branch only, and a fresh clone has none, so the lane would branch from `main` and its push would be rejected non-fast-forward. That's a path v1 never met, so it would skew the comparison, and a force push would destroy v1. Owner chose: move v1 to `s1v1/item-19` (`dfa9c0e`) and `s1v1/item-18` (`5c5bff4`), verified same SHAs, then delete the old names; also kept under `refs/pull/370|371/head`. **Finding for 05 (lane coordinator):** before a lane takes a branch name, check `git ls-remote --heads origin <name>` as well as the local ref; a remote-only collision is invisible to today's guard.
+- **Setup:** v2-a = item 19 (`--seed`, created `loomwright-meta-s1v2`, 386 paths), v2-b = item 18. Both on `6a048be`, mode `on loomwright-meta-s1v2`, clean, relay hooks installed, no v1 branch refs.
+- **Launch:** both at 07:18:03Z (v2-a pid 43790, v2-b pid 43805; the pids are `claude` itself).
