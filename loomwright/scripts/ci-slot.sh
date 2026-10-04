@@ -1,0 +1,316 @@
+#!/usr/bin/env bash
+# ci-slot.sh — N shared CI slots per repository per machine, one fair queue, files + pids only.
+#
+# Why it exists: a per-checkout lock lets every clone of one repo run its full suite at once, each
+# with every CPU — two lane clones on a 12-core machine took 2-3x longer and pushed load to 27.
+# This helper keys the slots by REPOSITORY identity, so every checkout of the same repo (primary,
+# linked worktrees, lane clones) shares ONE pool of N slots, ONE waiting queue and ONE state dir.
+#
+# usage: ci-slot.sh acquire <name> --pid <holder-pid> [--slots N] [--wait S]
+#          stdout: ONLY `slot=<k> jobs=<j>` on success (safe inside `$(...)`); exit 1 on timeout or
+#          when the holder pid dies while queued; exit 2 on usage (`--pid` is REQUIRED).
+#        ci-slot.sh release --pid <holder-pid> | --slot <k>
+#          frees that holder's slot and its queued ticket; idempotent — exit 0 when it holds nothing.
+#        ci-slot.sh status [--json]   holders (slot, pid, checkout, name, started) + waiters in order
+#        ci-slot.sh dir               print the repo-keyed state dir (mkdir -p only), for callers that
+#                                     keep their own files next to the slots (e.g. a pass cache)
+#        ci-slot.sh --help            this header
+#
+# HOLDER IDENTITY  the pid recorded in a slot or ticket is the caller's `--pid` (a long-lived run,
+#                  e.g. ci-local.sh's own $$) — never this helper's pid or its parent's: `acquire`
+#                  exits right after printing, so its own pid is dead at once and every later caller
+#                  would take the slot over. A slot whose holder pid is dead (`kill -0`) is taken over.
+# STATE DIR        ${XDG_STATE_HOME:-$HOME/.local/state}/loomwright/ci-slots/<repo-key>/ where
+#                  <repo-key> hashes the normalised `origin` URL: lowercase host + `/` + path, with
+#                  scp-style `git@host:owner/repo` mapped to `host/owner/repo`, scheme/user/port
+#                  stripped, trailing `.git` and `/` removed. The host stays in, so two hosts never
+#                  collide. No `origin` ⇒ a hash of the absolute git-common-dir path (per-repo only).
+#                  Layout: slots/<k>/info, tickets/<n>, counter, mutex/pid — info and tickets hold
+#                  four lines: pid, checkout path, name, start epoch.
+# ORIGIN ASSUMPTION  sharing assumes every checkout's `origin` is the same remote URL (lane-create
+#                  sets it so). A clone whose `origin` is a local filesystem path keys separately and
+#                  does NOT share; equality across URL forms (ssh vs https) is best-effort only.
+# N SLOTS          default max(1, floor(CPUs / 6)); LOOMWRIGHT_CI_SLOTS or --slots overrides. Each
+#                  slot's job share is max(2, floor(CPUs / N)). CPUs: getconf _NPROCESSORS_ONLN, else
+#                  sysctl -n hw.ncpu, else 4 (LOOMWRIGHT_CI_CPUS overrides, for tests).
+# FAIR QUEUE       a waiter takes a ticket from a counter guarded by a `mkdir` mutex (no flock); a
+#                  free slot goes only to the LOWEST LIVE ticket, so no run starves. A queued pid that
+#                  died has its ticket skipped and removed; a waiter that gives up removes its own.
+#                  The claim (lowest-ticket check + slot `mkdir`) happens under the mutex too.
+# STALE MUTEX      the mutex records its holder pid; a dead pid (or no pid file and older than 30 s)
+#                  is taken over, so a process SIGKILLed inside it never blocks every checkout.
+# WAITING          stderr, first wait then every LOOMWRIGHT_CI_SLOT_PRINT_EVERY s (default 30):
+#                  `waiting for a CI slot — position <p>, holders: <name> (<age>), …`. Poll period:
+#                  LOOMWRIGHT_CI_SLOT_POLL s (default 2). All diagnostics go to stderr.
+#
+# Honest limits: (1) pid reuse — a recycled pid makes a dead holder look alive until it exits too
+# (start time is recorded for humans, not checked). (2) `kill -0` on another user's pid fails, so a
+# slot held by another user looks stale. (3) two processes taking over the same dead mutex in the
+# same instant can both enter it; the slot claim is still an atomic `mkdir`, so N is never exceeded
+# — only ticket order can be off for that one claim.
+# Self-test: loomwright/scripts/test-ci-slot.sh. Portability: bash 3.2 safe, BSD + GNU userland.
+set -uo pipefail
+shopt -s nullglob
+
+die()  { echo "ci-slot: $*" >&2; exit 2; }
+warn() { echo "ci-slot: $*" >&2; }
+is_uint() { case "${1:-}" in ''|*[!0-9]*) return 1 ;; esac; return 0; }
+alive() { is_uint "${1:-}" && [ "$1" -gt 0 ] && kill -0 "$1" 2>/dev/null; }
+now() { date +%s; }
+
+cpus() {
+  local c="${LOOMWRIGHT_CI_CPUS:-}"
+  is_uint "$c" && [ "$c" -gt 0 ] || c="$(getconf _NPROCESSORS_ONLN 2>/dev/null || true)"
+  is_uint "$c" && [ "$c" -gt 0 ] || c="$(sysctl -n hw.ncpu 2>/dev/null || true)"
+  is_uint "$c" && [ "$c" -gt 0 ] || c=4
+  echo "$c"
+}
+
+# canon_origin URL — the canonical "host/path" form described in the header (local paths verbatim).
+canon_origin() {
+  local u="$1" auth host path
+  u="${u%/}"; u="${u%.git}"; u="${u%/}"
+  case "$u" in
+    *://*)
+      u="${u#*://}"; auth="${u%%/*}"
+      if [ "$auth" = "$u" ]; then path=""; else path="${u#*/}"; fi
+      host="${auth##*@}"; host="${host%%:*}" ;;
+    /*|.*) printf 'local:%s' "$u"; return ;;
+    *:*)
+      auth="${u%%:*}"
+      case "$auth" in */*) printf 'local:%s' "$u"; return ;; esac
+      host="${auth##*@}"; path="${u#*:}" ;;
+    *) printf 'local:%s' "$u"; return ;;
+  esac
+  path="${path#/}"
+  printf '%s/%s' "$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')" "$path"
+}
+
+hash_str() {
+  if command -v shasum >/dev/null 2>&1; then printf '%s' "$1" | shasum -a 256 | cut -c1-16
+  else printf '%s' "$1" | cksum | awk '{print $1}'; fi
+}
+
+# repo_key — hash of the canonical origin; no origin ⇒ hash of the absolute git-common-dir.
+repo_key() {
+  git rev-parse --git-dir >/dev/null 2>&1 || { echo "ci-slot: not inside a git repository ($PWD)" >&2; return 1; }
+  local origin common
+  origin="$(git remote get-url origin 2>/dev/null || true)"
+  if [ -n "$origin" ]; then hash_str "origin:$(canon_origin "$origin")"; return; fi
+  common="$(cd "$(git rev-parse --git-common-dir)" && pwd -P)" || return 1
+  hash_str "gitdir:$common"
+}
+
+state_dir() {
+  local key
+  key="$(repo_key)" || exit 1
+  D="${XDG_STATE_HOME:-$HOME/.local/state}/loomwright/ci-slots/$key"
+  mkdir -p "$D/slots" "$D/tickets" || { echo "ci-slot: cannot create $D" >&2; exit 1; }
+}
+
+mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0; }
+
+# --- counter mutex: held for milliseconds by THIS process ($$ is alive for the whole hold) ---------
+mutex_lock() {
+  local p stale
+  while ! mkdir "$D/mutex" 2>/dev/null; do
+    p="$(head -n 1 "$D/mutex/pid" 2>/dev/null || true)"
+    stale=""
+    if [ -n "$p" ]; then
+      alive "$p" || stale="pid $p is gone"
+    elif [ -d "$D/mutex" ] && [ $(( $(now) - $(mtime "$D/mutex") )) -ge 30 ]; then
+      stale="no pid file for 30s+"
+    fi
+    if [ -n "$stale" ]; then
+      # Rename first: only one taker can move a given dir, and rm never hits a fresh mutex.
+      if mv "$D/mutex" "$D/mutex.stale.$$" 2>/dev/null; then
+        warn "taking over a stale counter mutex ($stale)"
+        rm -rf "$D/mutex.stale.$$"
+      fi
+      continue
+    fi
+    sleep 0.05
+  done
+  echo "$$" > "$D/mutex/pid"
+}
+mutex_unlock() { rm -rf "$D/mutex"; }
+
+rec_field() { sed -n "${2}p" "$1" 2>/dev/null; }   # rec_field FILE LINE (1 pid 2 checkout 3 name 4 start)
+
+write_rec() { printf '%s\n%s\n%s\n%s\n' "$PID" "$CHECKOUT" "$NAME" "$(now)" > "$1"; }
+
+# live_tickets — ticket numbers in queue order; tickets of dead pids are removed (call under mutex).
+live_tickets() {
+  local t n
+  for t in "$D"/tickets/*; do
+    n="${t##*/}"; is_uint "$n" || continue
+    if alive "$(rec_field "$t" 1)"; then echo "$n"; else rm -f "$t"; fi
+  done | sort -n
+}
+
+# try_claim — under the mutex: claim a slot iff our ticket is the lowest live one. Prints the slot.
+try_claim() {
+  local k s p
+  [ "$(live_tickets | head -n 1)" = "$MY_TICKET" ] || return 1
+  for k in $(seq 1 "$SLOTS"); do
+    s="$D/slots/$k"
+    if [ -d "$s" ]; then
+      p="$(rec_field "$s/info" 1)"
+      alive "$p" && continue
+      warn "taking over slot $k (holder pid ${p:-?} is gone)"
+      rm -rf "$s"
+    fi
+    if mkdir "$s" 2>/dev/null; then
+      write_rec "$s/info"
+      rm -f "$D/tickets/$MY_TICKET"
+      echo "$k"; return 0
+    fi
+  done
+  return 1
+}
+
+fmt_age() {
+  local a="$1"
+  if [ "$a" -ge 3600 ]; then printf '%dh%02dm' $((a / 3600)) $((a % 3600 / 60))
+  elif [ "$a" -ge 60 ]; then printf '%dm%02ds' $((a / 60)) $((a % 60))
+  else printf '%ds' "$a"; fi
+}
+
+holders_line() {
+  local s p st out="" t
+  t="$(now)"
+  for s in "$D"/slots/*; do
+    p="$(rec_field "$s/info" 1)"; alive "$p" || continue
+    st="$(rec_field "$s/info" 4)"; is_uint "$st" || st="$t"
+    out="${out:+$out, }$(rec_field "$s/info" 3) ($(fmt_age $((t - st))))"
+  done
+  echo "${out:-none}"
+}
+
+json_str() { local s="$1"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; printf '"%s"' "$s"; }
+
+json_rec() {  # json_rec FILE KEY VALUE
+  local p st
+  p="$(rec_field "$1" 1)"; is_uint "$p" || p=0
+  st="$(rec_field "$1" 4)"; is_uint "$st" || st=0
+  printf '{%s:%s,"pid":%s,"checkout":%s,"name":%s,"started":%s}' "$(json_str "$2")" "$3" "$p" \
+    "$(json_str "$(rec_field "$1" 2)")" "$(json_str "$(rec_field "$1" 3)")" "$st"
+}
+
+cmd_status() {
+  local json=0 s k sep="" t n
+  [ "${1:-}" = "--json" ] && json=1
+  local c; c="$(cpus)"
+  if [ "$json" -eq 1 ]; then
+    printf '{"dir":%s,"cpus":%s,"slots":%s,"jobs":%s,"holders":[' "$(json_str "$D")" "$c" "$SLOTS" "$JOBS"
+    for s in "$D"/slots/*; do
+      k="${s##*/}"; is_uint "$k" || continue
+      alive "$(rec_field "$s/info" 1)" || continue
+      printf '%s%s' "$sep" "$(json_rec "$s/info" slot "$k")"; sep=","
+    done
+    printf '],"waiters":['; sep=""
+    for n in $(ls "$D/tickets" 2>/dev/null | sort -n); do
+      t="$D/tickets/$n"; is_uint "$n" || continue
+      alive "$(rec_field "$t" 1)" || continue
+      printf '%s%s' "$sep" "$(json_rec "$t" ticket "$n")"; sep=","
+    done
+    printf ']}\n'
+    return 0
+  fi
+  echo "dir: $D"
+  echo "slots: $SLOTS  cpus: $c  jobs per slot: $JOBS"
+  for s in "$D"/slots/*; do
+    alive "$(rec_field "$s/info" 1)" || continue
+    echo "holder: slot ${s##*/} pid $(rec_field "$s/info" 1) $(rec_field "$s/info" 3) $(rec_field "$s/info" 2)"
+  done
+  for n in $(ls "$D/tickets" 2>/dev/null | sort -n); do
+    alive "$(rec_field "$D/tickets/$n" 1)" || continue
+    echo "waiter: ticket $n pid $(rec_field "$D/tickets/$n" 1) $(rec_field "$D/tickets/$n" 3) $(rec_field "$D/tickets/$n" 2)"
+  done
+}
+
+cmd_acquire() {
+  local deadline n k next_print=0 every pos
+  [ -n "$PID" ] || die "acquire needs --pid <holder-pid> (the long-lived caller, never this helper)"
+  alive "$PID" || die "--pid $PID is not a live process"
+  deadline=$(( $(now) + WAIT ))
+  every="${LOOMWRIGHT_CI_SLOT_PRINT_EVERY:-30}"; is_uint "$every" || every=30
+  mutex_lock
+  n="$(cat "$D/counter" 2>/dev/null || true)"; is_uint "$n" || n=0
+  n=$((n + 1)); echo "$n" > "$D/counter"
+  MY_TICKET="$n"; write_rec "$D/tickets/$n"
+  mutex_unlock
+  while :; do
+    mutex_lock
+    if k="$(try_claim)"; then
+      mutex_unlock
+      echo "slot=$k jobs=$JOBS"
+      return 0
+    fi
+    pos="$(live_tickets | grep -nx "$MY_TICKET" | cut -d: -f1)"
+    mutex_unlock
+    if ! alive "$PID"; then
+      rm -f "$D/tickets/$MY_TICKET"; warn "holder pid $PID is gone — leaving the queue"; return 1
+    fi
+    if [ "$(now)" -ge "$deadline" ]; then
+      rm -f "$D/tickets/$MY_TICKET"
+      warn "no CI slot after ${WAIT}s — giving up (holders: $(holders_line)); see: ci-slot.sh status"
+      return 1
+    fi
+    if [ "$(now)" -ge "$next_print" ]; then
+      warn "waiting for a CI slot — position ${pos:-?}, holders: $(holders_line)"
+      next_print=$(( $(now) + every ))
+    fi
+    sleep "$POLL"
+  done
+}
+
+cmd_release() {
+  local s t
+  if [ -n "$SLOT" ]; then rm -rf "$D/slots/$SLOT"; return 0; fi
+  [ -n "$PID" ] || die "release needs --pid <holder-pid> or --slot <k>"
+  for s in "$D"/slots/*; do [ "$(rec_field "$s/info" 1)" = "$PID" ] && rm -rf "$s"; done
+  for t in "$D"/tickets/*; do [ "$(rec_field "$t" 1)" = "$PID" ] && rm -f "$t"; done
+  return 0
+}
+
+# --- arguments --------------------------------------------------------------------------------------
+case "${1:-}" in
+  -h|--help) awk 'NR == 1 { next } !/^#/ { exit } { sub(/^# ?/, ""); print }' "${BASH_SOURCE[0]}"; exit 0 ;;
+  acquire|release|status|dir) CMD="$1"; shift ;;
+  '') die "missing subcommand (try --help)" ;;
+  *) die "unknown subcommand: $1 (try --help)" ;;
+esac
+NAME=""; PID=""; SLOT=""; WAIT=1800; JSON=""; SLOTS="${LOOMWRIGHT_CI_SLOTS:-}"
+if [ "$CMD" = acquire ] && [ "$#" -gt 0 ] && [ "${1#-}" = "$1" ]; then NAME="$1"; shift; fi
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --pid)   [ "$#" -ge 2 ] && is_uint "$2" || die "--pid needs a numeric pid"; PID="$2"; shift 2 ;;
+    --slot)  [ "$#" -ge 2 ] && is_uint "$2" || die "--slot needs a number"; SLOT="$2"; shift 2 ;;
+    --slots) [ "$#" -ge 2 ] && is_uint "$2" && [ "$2" -gt 0 ] || die "--slots needs a positive integer"; SLOTS="$2"; shift 2 ;;
+    --wait)  [ "$#" -ge 2 ] && is_uint "$2" || die "--wait needs seconds (non-negative integer)"; WAIT="$2"; shift 2 ;;
+    --json)  JSON=--json; shift ;;
+    *) die "unknown argument: $1 (try --help)" ;;
+  esac
+done
+[ "$CMD" = acquire ] && [ -z "$NAME" ] && die "acquire needs a <name>"
+CPUS="$(cpus)"
+if [ -z "$SLOTS" ]; then SLOTS=$(( CPUS / 6 )); [ "$SLOTS" -ge 1 ] || SLOTS=1; fi
+is_uint "$SLOTS" && [ "$SLOTS" -gt 0 ] || die "LOOMWRIGHT_CI_SLOTS must be a positive integer, got '$SLOTS'"
+JOBS=$(( CPUS / SLOTS )); [ "$JOBS" -ge 2 ] || JOBS=2
+POLL="${LOOMWRIGHT_CI_SLOT_POLL:-2}"
+case "$POLL" in ''|*[!0-9.]*) POLL=2 ;; esac
+CHECKOUT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+MY_TICKET=""
+D=""
+state_dir
+
+case "$CMD" in
+  dir) echo "$D" ;;
+  status) cmd_status "$JSON" ;;
+  release) cmd_release ;;
+  acquire)
+    # A waiter leaving on INT/TERM removes its own ticket (and the mutex, if it was inside it).
+    trap '[ -n "$MY_TICKET" ] && rm -f "$D/tickets/$MY_TICKET"; [ "$(head -n 1 "$D/mutex/pid" 2>/dev/null)" = "$$" ] && rm -rf "$D/mutex"; exit 1' INT TERM
+    cmd_acquire ;;
+esac
