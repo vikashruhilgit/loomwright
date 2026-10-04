@@ -16,6 +16,13 @@
 #   P7 review-heal's rules read is ALLOW-LISTED: everything unaffirmed ⇒ unreadable ⇒ ESCALATED
 #   P8 self-heal-advisory's rules read is ALLOW-LISTED the same way, and Part 2 escalates on the
 #      allow-list complement (never a deny-list of bad verdicts)
+#   P9 self-heal-advisory's fail→unstamped leg (automate-followups/18): the loop-local rules_fail_seen
+#      memory, the leg's condition, its `heal_decision = ESCALATED` line, and the named reason
+#      rules_fail_then_unstamped
+#   P10 review-heal's fail→unstamped legs: the run-scoped rules_fail_seen memory, the MAIN-path
+#      rules_fail_unstamped variable + its own leg + its fallback-gate exclusion, the named reason, AND
+#      the SUB-FLOOR leg's standalone check ($SUBFLOOR — a needle carried ONLY by the sub-floor leg, so
+#      deleting either leg alone fails P10)
 #   P1/P2 pin the invocation in its RUNTIME form — the quoted plugin-install-root variable prefix
 #   ($INVOKE below) — never the developer-side repo-relative `scripts/…` path, which resolves neither
 #   in a user project nor at this repo's root.
@@ -27,6 +34,8 @@
 #         from self-heal-advisory in one tree ⇒ the pin run must FAIL.
 #   MROOT rewrite the runtime prefix to the repo-relative `scripts/…` form in BOTH skills ⇒ P1 and P2
 #         must FAIL (the prefix itself is load-bearing, not just the script name).
+#   MSUB  delete ONLY the sub-floor needle of P10 ($SUBFLOOR) ⇒ P10 must FAIL (the sub-floor leg is pinned
+#         independently of the main-path leg, which M10 covers). M9/M10 come from the M<n> loop above.
 #
 # Portability: bash 3.2 (macOS) + Linux; no GNU-only flags, no mapfile, no sed -i.
 set -uo pipefail
@@ -45,6 +54,8 @@ AL="loomwright/skills/automate-loop/SKILL.md"
 CM="CLAUDE.md"
 # The helper invocation in its RUNTIME form (the plugin install root variable, quoted).
 INVOKE='bash "${CLAUDE_PLUGIN_ROOT}/scripts/rules-gate-verdict.sh" --root'
+# review-heal's sub-floor fail→unstamped check — carried ONLY by the sub-floor leg (MSUB's target).
+SUBFLOOR='if rules_after.verdict == "unstamped" and rules_fail_seen != []:'
 
 # pin <n> — prints "<file>" then one needle per line for pin n (first needle = the mutant's target).
 pin() {
@@ -69,9 +80,21 @@ pin() {
          'non-string verdict, or an unrecognised verdict string — is treated as unreadable' \
          'rules = {verdict: "unreadable"' \
          'if rules.verdict not in RULES_PASSABLE and rules.verdict != "fail":' ;;
+    9) printf '%s\n' "$SHA" \
+         'if rules.verdict == "unstamped" and rules_fail_seen != []:' \
+         'rules_fail_seen = []' \
+         'heal_decision = ESCALATED   # rules_fail_then_unstamped' \
+         'decision: "rules_fail_then_unstamped"' ;;
+    10) printf '%s\n' "$RH" \
+         'rules_fail_unstamped = rules.verdict == "unstamped" and rules_fail_seen != []' \
+         'rules_fail_seen = []' \
+         'and not rules_fail_unstamped:' \
+         'if rules_fail_unstamped:' \
+         'rules_fail_then_unstamped' \
+         "$SUBFLOOR" ;;
   esac
 }
-PINS="1 2 3 4 5 6 7 8"
+PINS="1 2 3 4 5 6 7 8 9 10"
 
 # check_pin <root> <n> — 0 iff every needle of pin n is present in <root>/<file>.
 check_pin() {
@@ -153,6 +176,17 @@ if fresh_tree "$d" && run_pins "$d"; then
   else ok "MROOT the repo-relative helper path fails P1 and P2 (the runtime prefix is load-bearing)"; fi
 else
   no "MROOT positive control: tree copy or unmutated pin run failed"
+fi
+
+# MSUB: delete ONLY review-heal's sub-floor fail→unstamped check ⇒ P10 must fail (the main-path leg
+# alone must not keep P10 green).
+d="$TMP/msub"
+if fresh_tree "$d" && run_pins "$d"; then
+  mutate "$d" "$RH" "$SUBFLOOR" \
+  && { if check_pin "$d" 10; then no "MSUB deleting the sub-floor leg's check left P10 passing"
+       else ok "MSUB deleting only the sub-floor leg's check fails P10"; fi; }
+else
+  no "MSUB positive control: tree copy or unmutated pin run failed"
 fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
