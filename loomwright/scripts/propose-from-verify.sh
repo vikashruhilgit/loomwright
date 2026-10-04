@@ -115,6 +115,9 @@ RUN_ID="$(basename "$RUN_DIR_ABS")"
 # evidence: it is only split on characters outside the Touches grammar and each token is passed to
 # an existence test under the checkout root — never opened, executed or interpolated. A token must
 # contain `/` or `.`, and carry no leading `/`, trailing `/`, `//`, or `.`/`..` segment.
+# Grammar copy 3 of 3, sharing no code: the authority is the PW_TOUCHES_GRAMMAR line in
+# automate-helpers.sh (_pw_touches); copy 2 is PATH_TOK / BAD_SEG beside touches_of in
+# automate-dismissed.sh. Change all three together — test-automate-helpers.sh §X7 fails on drift.
 VT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 vt_touches() {
   printf '%s\n' "$1" | env LC_ALL=C tr -c 'A-Za-z0-9._/@+-' '\n' | sed 's/\.*$//' | env LC_ALL=C sort -u \

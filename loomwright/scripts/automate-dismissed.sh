@@ -338,6 +338,9 @@ def meta(e):
 # sections do NOT feed the draft's identity: h8 and every ledger decision come from origin/source/
 # finding only, so a named file appearing or vanishing between passes rewrites the body of an
 # undecided draft under the SAME name and never touches a decision.
+# Grammar copy 2 of 3, sharing no code: the authority is the PW_TOUCHES_GRAMMAR line in
+# automate-helpers.sh (_pw_touches); copy 3 is vt_touches in propose-from-verify.sh. Change all three
+# together — test-automate-helpers.sh §X7 fails when they accept/reject a token differently.
 PATH_TOK = re.compile(r"[A-Za-z0-9._/@+-]+")
 BAD_SEG = re.compile(r"(^|/)\.\.?(/|$)")
 

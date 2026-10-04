@@ -123,7 +123,9 @@
 #      its line and reason, a declared `unknown` is `ok (declared unknown)` (exit 0), a missing
 #      Depends on alone exits 1, dir / run-file / item-list / single-item inputs, no --max needed;
 #      lint `ok` ⇔ the planner reads the section as known on every shape (one grammar); read-only;
-#      a mutation control (a grammar copy that accepts a parenthetical turns X3 red).
+#      a mutation control (a grammar copy that accepts a parenthetical turns X3 red); --explain
+#      state never leaks into a later default call in the same shell (X2b); the three hand-copied
+#      Touches grammars (helper / automate-dismissed.sh / propose-from-verify.sh) agree token-for-token (X7).
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -3856,6 +3858,28 @@ w_fails "X2 --explain on a cycle ⇒ exit 1, empty stdout" 'plan-waves: dependen
 w_run "$W_T" "$H" "$W_T/list" --explain; w_fails "X2 --explain still needs --max" 'usage:'
 w_run "$W_T" "$H" "$W_T/list" --max 2 --explain --lint; w_fails "X2 --explain with --lint ⇒ usage" '--explain and --lint are separate modes'
 
+# X2b --explain state does not leak across calls in ONE shell process: the helper's functions are
+#     sourced (its trailing `main "$@"` dispatch line dropped, `main` itself untouched), plan_waves
+#     runs --explain and then a default call, and the second call must equal a fresh default run
+#     byte-for-byte with no `explain ` line (a global _PW_EXPLAIN set by call 1 and never reset fails it).
+rm -rf "$W_T/q"; w_item q/01-a.md none 'a/'; w_item q/02-b.md none 'a/b.sh'
+w_list q/01-a.md q/02-b.md
+w_run "$W_T" "$H" "$W_T/list" --max 3; X2B_FRESH="$W_OUT"
+mkdir -p "$W_T/x2b-tmp"
+X2B_RC=0
+X2B_OUT="$(TMPDIR="$W_T/x2b-tmp" bash -c '
+  grep -qx "main \"\$@\"" "$1" || { echo "no trailing main dispatch line" >&2; exit 3; }
+  source <(sed "/^main \"\\\$@\"\$/d" "$1")
+  plan_waves "$2" --root "$3" --max 3 --explain > /dev/null
+  plan_waves "$2" --root "$3" --max 3
+' _ "$H" "$W_T/list" "$W_T" 2>"$W_T/err")" || X2B_RC=$?
+if [ "$X2B_RC" -eq 0 ] && [ -n "$X2B_FRESH" ] && [ "$X2B_OUT" = "$X2B_FRESH" ] && ! grep -q '^explain ' <<<"$X2B_OUT"; then
+  ok "X2b a default plan_waves call after an --explain call in the same shell is byte-identical to a fresh default run"
+else
+  no "X2b --explain leaked into a later default call (rc=$X2B_RC) got: $(printf '%s' "$X2B_OUT" | tr '\n' '|') fresh: $(printf '%s' "$X2B_FRESH" | tr '\n' '|') err: $(cat "$W_T/err")"
+fi
+rm -rf "$W_T/x2b-tmp"
+
 # X3 --lint: every malformed shape flagged with its 1-based line, the exact text and the reason (AC-3/AC-4).
 #    Single-item input; the w_item layout puts the Depends on body on line 4, the Touches body on line 7.
 x_lint_t() {  # <label> <Touches body> <expected Touches verdict> <expected rc>
@@ -4014,6 +4038,42 @@ if [ -s "$W_T/mut-paren.sh" ] && ! cmp -s "$H" "$W_T/mut-paren.sh" && bash -n "$
   w_run "$W_T" "$H" "$W_T/q/02-b.md" --lint
   x_has "X6 mutation control: the REAL helper still flags it" "$W_T/q/02-b.md: Touches line 7: \"(only if a test exposes a defect)\" — parenthetical/prose; Depends on ok"
 else no "X6 mutation control inconclusive: mutant empty, identical or not valid bash"; fi
+
+# X7 GRAMMAR DRIFT: the Touches path grammar is hand-copied in three places that share no code —
+#    the PW_TOUCHES_GRAMMAR line (this helper's --lint), PATH_TOK / BAD_SEG beside touches_of in
+#    automate-dismissed.sh, and vt_touches in propose-from-verify.sh. One token set, every token's file
+#    created under a fixture root (so only the grammar can reject it), runs through all three; each must
+#    accept/reject exactly as the expected column. Tokens stay inside the SHARED grammar: the two
+#    extractors' own extra rules (needs `/` or `.`, no trailing `/`, trailing `.` stripped) are not
+#    exercised. The extractor copies are run straight out of their scripts (sed-extracted), never re-typed.
+X7_R="$W_T/x7"; rm -rf "$X7_R"
+x7_tokens='src/a.ts|1 @scope/x.ts|1 -dash/x.ts|1 a+b/c_d.v1.md|1 /abs/x.ts|0 a//b.ts|0 ./c.ts|0 d/../c.ts|0 d/./c.ts|0 e/f~g.ts|0 e/f$g.ts|0'
+for x7_p in src/a.ts @scope/x.ts -dash/x.ts a+b/c_d.v1.md abs/x.ts a/b.ts c.ts d/c.ts 'e/f~g.ts' 'e/f$g.ts'; do
+  mkdir -p "$X7_R/$(dirname -- "$x7_p")"; : > "$X7_R/$x7_p"
+done
+X7_PY="$(sed -n '/^PATH_TOK = re.compile/,/^    return found$/p' "$HERE/automate-dismissed.sh")"
+X7_SH="$(sed -n '/^vt_touches() {$/,/^}$/p' "$HERE/propose-from-verify.sh")"
+if [ -z "$X7_PY" ] || ! grep -q '^def touches_of' <<<"$X7_PY" || [ -z "$X7_SH" ]; then
+  no "X7 drift test could not extract the grammar copies (PATH_TOK..touches_of / vt_touches moved?)"
+else
+  for x7_e in $x7_tokens; do
+    x7_t="${x7_e%|*}"; x7_want="${x7_e#*|}"
+    rm -rf "$W_T/q"; w_item q/02-b.md none "$x7_t"
+    w_run "$X7_R" "$H" "$W_T/q/02-b.md" --lint
+    case "$W_OUT" in *": Touches ok; "*) x7_awk=1 ;; *) x7_awk=0 ;; esac
+    x7_py="$(X7_CODE="$X7_PY" python3 -c '
+import os, re, sys
+repo_root = sys.argv[1]
+exec(os.environ["X7_CODE"])
+print(1 if sys.argv[2] in touches_of({"source": sys.argv[2], "finding": ""}) else 0)' "$X7_R" "$x7_t" 2>&1)"
+    x7_sh="$(VT_ROOT="$X7_R" bash -c 'eval "$1"; grep -qxF -- "$2" < <(vt_touches "$2") && echo 1 || echo 0' _ "$X7_SH" "$x7_t" 2>&1)"
+    if [ "$x7_awk$x7_py$x7_sh" = "$x7_want$x7_want$x7_want" ]; then
+      ok "X7 grammar drift: '$x7_t' accepted=$x7_want by all three copies"
+    else
+      no "X7 grammar drift on '$x7_t' (want $x7_want): PW_TOUCHES_GRAMMAR=$x7_awk touches_of=$x7_py vt_touches=$x7_sh"
+    fi
+  done
+fi
 rm -rf "$W_T"
 echo
 echo "RESULT: $pass passed, $fail failed"

@@ -2097,6 +2097,10 @@ _PW_AWK_DIAG='
   }'
 
 # _pw_touches <file> [diag file] — prints `unknown`, or `known` then one RAW entry per line.
+# The Touches path grammar on its PW_TOUCHES_GRAMMAR line (charset [A-Za-z0-9._/@+-], no leading `/`,
+# no `//`, no `.`/`..` segment) is hand-copied, sharing no code, in automate-dismissed.sh (the
+# PATH_TOK / BAD_SEG regexes beside touches_of) and propose-from-verify.sh (vt_touches); change all
+# three together — test-automate-helpers.sh §X7 feeds one token set through all three and fails on drift.
 _pw_touches() {
   PW_DG="${2:-}" env LC_ALL=C awk "$_PW_AWK_DIAG"'
     # _pw_why — the lint reason for a line the grammar below rejects (diagnosis only; the
@@ -2327,6 +2331,7 @@ plan_waves() {
   local waitj alonei members m w tv dv rc ka kd la ld tab
   local DISP=() ABS=() TS=() DEPJ=() BLK=() W=() OK=()
   tab="$(printf '\t')"
+  _PW_EXPLAIN=0   # reset per call: a prior --explain in the same shell must not leak into a default run
   while [ $# -gt 0 ]; do
     case "$1" in
       --max) [ $# -ge 2 ] || _pw_usage "--max requires a value"; max="$2"; shift 2 ;;
