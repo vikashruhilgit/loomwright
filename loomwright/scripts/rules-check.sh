@@ -134,7 +134,8 @@
 # `rule:` deviations) — and by `rules-gate-verdict.sh`, the fail-CLOSED verdict helper the review and
 # merge gates delegate to (rule-enforcement-at-review-and-merge): it maps a STAMPED, COUNTABLE (see
 # `binds` below) must-check's FAIL to a gating verdict, while `unstamped` / `cmd_disabled` / advisory
-# stay advisory. No caller has unattended WRITE authority; --if-stamped can only ever replay a set a
+# stay advisory (except `unstamped` after a countable FAIL earlier in the same Phase 4.5 loop or
+# drain, which escalates `rules_fail_then_unstamped`). No caller has unattended WRITE authority; --if-stamped can only ever replay a set a
 # human already confirmed on this machine, and this script remains the SOLE executor of a check.
 #
 # --list-selected (plan-time-rule-routing, READ-ONLY enumeration): prints the id of every rule the
