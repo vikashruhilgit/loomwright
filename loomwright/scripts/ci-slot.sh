@@ -42,6 +42,8 @@
 # WAITING          stderr, first wait then every LOOMWRIGHT_CI_SLOT_PRINT_EVERY s (default 30):
 #                  `waiting for a CI slot — position <p>, holders: <name> (<age>), …`. Poll period:
 #                  LOOMWRIGHT_CI_SLOT_POLL s (default 2). All diagnostics go to stderr.
+# NUMBERS          integer options and env values may be zero-padded; they are read as decimal
+#                  (--slots 010 = 10 slots, never octal 8).
 #
 # Honest limits: (1) pid reuse — a recycled pid makes a dead holder look alive until it exits too
 # (start time is recorded for humans, not checked). (2) `kill -0` on another user's pid fails, so a
@@ -54,6 +56,8 @@ shopt -s nullglob
 
 die()  { echo "ci-slot: $*" >&2; exit 2; }
 warn() { echo "ci-slot: $*" >&2; }
+# Every validated number is re-read as $((10#x)) before use: `[ -gt ]` reads "010" as decimal but
+# $(( )) reads it as octal ("08" is an error), so a zero-padded value is normalised to decimal once.
 is_uint() { case "${1:-}" in ''|*[!0-9]*) return 1 ;; esac; return 0; }
 alive() { is_uint "${1:-}" && [ "$1" -gt 0 ] && kill -0 "$1" 2>/dev/null; }
 now() { date +%s; }
@@ -63,7 +67,7 @@ cpus() {
   is_uint "$c" && [ "$c" -gt 0 ] || c="$(getconf _NPROCESSORS_ONLN 2>/dev/null || true)"
   is_uint "$c" && [ "$c" -gt 0 ] || c="$(sysctl -n hw.ncpu 2>/dev/null || true)"
   is_uint "$c" && [ "$c" -gt 0 ] || c=4
-  echo "$c"
+  echo "$((10#$c))"
 }
 
 # canon_origin URL — the canonical "host/path" form described in the header (local paths verbatim).
@@ -234,10 +238,10 @@ cmd_acquire() {
   [ -n "$PID" ] || die "acquire needs --pid <holder-pid> (the long-lived caller, never this helper)"
   alive "$PID" || die "--pid $PID is not a live process"
   deadline=$(( $(now) + WAIT ))
-  every="${LOOMWRIGHT_CI_SLOT_PRINT_EVERY:-30}"; is_uint "$every" || every=30
+  every="${LOOMWRIGHT_CI_SLOT_PRINT_EVERY:-30}"; is_uint "$every" || every=30; every=$((10#$every))
   mutex_lock
   n="$(cat "$D/counter" 2>/dev/null || true)"; is_uint "$n" || n=0
-  n=$((n + 1)); echo "$n" > "$D/counter"
+  n=$((10#$n + 1)); echo "$n" > "$D/counter"
   MY_TICKET="$n"; write_rec "$D/tickets/$n"
   mutex_unlock
   while :; do
@@ -288,10 +292,10 @@ NAME=""; PID=""; SLOT=""; WAIT=1800; JSON=""; SLOTS="${LOOMWRIGHT_CI_SLOTS:-}"
 if [ "$CMD" = acquire ] && [ "$#" -gt 0 ] && [ "${1#-}" = "$1" ]; then NAME="$1"; shift; fi
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --pid)   [ "$#" -ge 2 ] && is_uint "$2" || die "--pid needs a numeric pid"; PID="$2"; shift 2 ;;
-    --slot)  [ "$#" -ge 2 ] && is_uint "$2" || die "--slot needs a number"; SLOT="$2"; shift 2 ;;
-    --slots) [ "$#" -ge 2 ] && is_uint "$2" && [ "$2" -gt 0 ] || die "--slots needs a positive integer"; SLOTS="$2"; shift 2 ;;
-    --wait)  [ "$#" -ge 2 ] && is_uint "$2" || die "--wait needs seconds (non-negative integer)"; WAIT="$2"; shift 2 ;;
+    --pid)   [ "$#" -ge 2 ] && is_uint "$2" || die "--pid needs a numeric pid"; PID="$((10#$2))"; shift 2 ;;
+    --slot)  [ "$#" -ge 2 ] && is_uint "$2" || die "--slot needs a number"; SLOT="$((10#$2))"; shift 2 ;;
+    --slots) [ "$#" -ge 2 ] && is_uint "$2" && [ "$2" -gt 0 ] || die "--slots needs a positive integer"; SLOTS="$((10#$2))"; shift 2 ;;
+    --wait)  [ "$#" -ge 2 ] && is_uint "$2" || die "--wait needs seconds (non-negative integer)"; WAIT="$((10#$2))"; shift 2 ;;
     --json)  JSON=--json; shift ;;
     *) die "unknown argument: $1 (try --help)" ;;
   esac
@@ -300,6 +304,7 @@ done
 CPUS="$(cpus)"
 if [ -z "$SLOTS" ]; then SLOTS=$(( CPUS / 6 )); [ "$SLOTS" -ge 1 ] || SLOTS=1; fi
 is_uint "$SLOTS" && [ "$SLOTS" -gt 0 ] || die "LOOMWRIGHT_CI_SLOTS must be a positive integer, got '$SLOTS'"
+SLOTS=$((10#$SLOTS))
 JOBS=$(( CPUS / SLOTS )); [ "$JOBS" -ge 2 ] || JOBS=2
 POLL="${LOOMWRIGHT_CI_SLOT_POLL:-2}"
 case "$POLL" in ''|*[!0-9.]*) POLL=2 ;; esac

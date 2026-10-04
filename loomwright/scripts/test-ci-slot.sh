@@ -22,8 +22,11 @@
 #   (R)  release is idempotent (nothing held ⇒ exit 0); --slot frees one slot
 #   (U)  usage: acquire without --pid ⇒ exit 2; unknown subcommand ⇒ exit 2; non-numeric --pid,
 #        --slot, --wait, --slots 0 and --slots abc ⇒ exit 2 with that option's own message and no
-#        ticket/slot/counter change; --help = the header.
+#        ticket/slot/counter change; --help = the header. Zero-padded numbers are decimal:
+#        --slots 010 = 10, --slots 08 / LOOMWRIGHT_CI_SLOTS=09 / LOOMWRIGHT_CI_CPUS=040 / --wait 08 /
+#        --pid 0<pid> / --slot 01 / PRINT_EVERY=08 neither crash nor read as octal.
 #        MUTATION CONTROL: drop the --slots -gt 0 check ⇒ the --slots 0 check fails.
+#        MUTATION CONTROL: drop the --slots normalisation ⇒ the --slots 010 check fails.
 # run-self-tests: serial
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -265,6 +268,30 @@ if [ -s "$mut" ] && ! cmp -s "$mut" "$SUT" && bash -n "$mut"; then
     no "(U) MUTATION CONTROL: without the -gt 0 guard --slots 0 was still refused by the parser — (U) proves nothing"
   else ok "(U) MUTATION CONTROL: without the -gt 0 guard --slots 0 is no longer refused by the parser"; fi
 else no "(U) MUTATION CONTROL: mutant not built (empty, unchanged or invalid)"; fi
+# Zero-padded numbers are decimal: with 40 CPUs, 10 slots ⇒ 4 jobs, octal 8 slots ⇒ 5 jobs.
+padded() { LOOMWRIGHT_CI_CPUS=40 at "$tmp/c1" "$1" -- status --slots 010 2>&1 | grep '^slots:'; }
+want10="slots: 10  cpus: 40  jobs per slot: 4"
+if [ "$(padded "$SUT")" = "$want10" ]; then ok "(U) --slots 010 is 10 slots (jobs 4 of 40 CPUs), not octal 8"
+else no "(U) --slots 010: got '$(padded "$SUT")', want '$want10'"; fi
+got="$(LOOMWRIGHT_CI_CPUS=40 at "$tmp/c1" -- status --slots 08 2>&1)"; rc=$?
+if [ "$rc" = 0 ] && grep -qx "slots: 8  cpus: 40  jobs per slot: 5" <<<"$got"; then ok "(U) --slots 08 is 8 slots, no 'value too great for base' crash"
+else no "(U) --slots 08: rc=$rc out=[$got]"; fi
+got="$(LOOMWRIGHT_CI_SLOTS=09 LOOMWRIGHT_CI_CPUS=040 at "$tmp/c1" -- status 2>&1)"; rc=$?
+if [ "$rc" = 0 ] && grep -qx "slots: 9  cpus: 40  jobs per slot: 4" <<<"$got"; then ok "(U) LOOMWRIGHT_CI_SLOTS=09 / LOOMWRIGHT_CI_CPUS=040 read as decimal 9 / 40"
+else no "(U) padded env: rc=$rc out=[$got]"; fi
+got="$(LOOMWRIGHT_CI_SLOT_PRINT_EVERY=08 LOOMWRIGHT_CI_CPUS=40 at "$tmp/c1" -- acquire u --pid "0$hu" --wait 08 --slots 08 2>"$tmp/u.err")"; rc=$?
+if [ "$rc" = 0 ] && [ "$got" = "slot=1 jobs=5" ] && [ "$(jq -c '[.holders[].pid]' <<<"$(at "$tmp/c1" -- status --json)")" = "[$hu]" ]; then
+  ok "(U) acquire --wait 08 --slots 08 --pid 0<pid> (PRINT_EVERY=08): claims slot 1, recorded under the decimal pid"
+else no "(U) padded acquire: rc=$rc out=[$got] err=[$(cat "$tmp/u.err")]"; fi
+had="$(ls "$d1/slots")"; at "$tmp/c1" -- release --slot 01
+if [ "$had" = 1 ] && [ -z "$(ls "$d1/slots")" ]; then ok "(U) release --slot 01 frees slot 1"; else no "(U) --slot 01 left [$(ls "$d1/slots")]"; fi
+# MUTATION CONTROL — drop the --slots normalisation ⇒ 010 is read as octal 8 by the job share.
+mut="$tmp/mut-pad.sh"
+sed 's/SLOTS="\$((10#\$2))"/SLOTS="$2"/; s/^SLOTS=\$((10#\$SLOTS))$//' "$SUT" > "$mut"
+if [ -s "$mut" ] && ! cmp -s "$mut" "$SUT" && bash -n "$mut"; then
+  if [ "$(padded "$mut")" = "$want10" ]; then no "(U) MUTATION CONTROL: without normalisation --slots 010 still gave 10 slots — (U) proves nothing"
+  else ok "(U) MUTATION CONTROL: without normalisation --slots 010 is no longer 10 slots ($(padded "$mut"))"; fi
+else no "(U) MUTATION CONTROL: padded mutant not built (empty, unchanged or invalid)"; fi
 kill "$hu" 2>/dev/null; wait "$hu" 2>/dev/null
 out="$(bash "$SUT" --help)"
 if grep -q '^ci-slot.sh — ' <<<"$out" && grep -q '^Self-test: loomwright/scripts/test-ci-slot.sh' <<<"$out" \
