@@ -43,7 +43,7 @@
 #   ceiling-check    <runfile_path> <max_tokens> [--root <checkout>]  # §6 PICK-time token-ceiling check via read-token-ledger.sh --run-id; prints OK/PARK, always exits 0
 #   resolve-folder   <dir>                              # §2 list *.md not done and not proposed|parked
 #   resolve-backlog  <backlog.md>                       # §2 dependency-ordered items honoring done/✅ markers AND the referenced file's own ## Status: done stamp (is_done); dir-fallback path also skips proposed|parked, per is_not_ready
-#   resume-glob      <automate_dir>                     # §4 list run files (is_run_file: a "# Automate Run:" title line anywhere) not "## Status: done"; §6 result sidecars never listed because they carry no such line
+#   resume-glob      <automate_dir>                     # §4 list run files (is_run_file: a "# Automate Run:" title line anywhere — BOM, whitespace and case tolerant; an H2 is not a title) not "## Status: done"; §6 result sidecars never listed because they carry no such line
 #   reconcile-item   <pr_url> <belief>                  # §4 belief vs gh/git truth -> corrected state
 #   gate-eval        <pr_url> <ctx.json>                # §10 MERGE|PARK fail-closed trusted-merge gate (conditions enumerated in skills/automate-loop/SKILL.md §10; cond 6 = classify-risk.sh high_risk, cond 7 = rules-gate-verdict.sh, NO override)
 #   learning-emit    <ledger_path> <flags...>           # §6 step 3 fail-safe (always exit 0) engine-native ground-truth POSTMORTEM_RESULT line; idempotent on run_id+item+pr_url+source+completeness (a degraded emit never blocks a later complete one)
@@ -411,10 +411,24 @@ is_not_ready() { grep -qE '^## Status:[[:space:]]*(proposed|parked)\b' "$1" 2>/d
 # blocks with no such line, so they — and any future sidecar — are never taken
 # for a run. Line-anchored ANYWHERE in the file, deliberately not "line 1 only":
 # a leading blank line or front-matter must never hide a real incomplete run from
-# RESUME (hiding a run is the worse failure). Called ONLY from `resume_glob`;
-# requirement files are not run files, so `resolve_folder` / `resolve_backlog*`
-# never call it (same scoping discipline as `is_not_ready`, decision H2).
-is_run_file() { grep -qE '^# Automate Run:' "$1" 2>/dev/null; }
+# RESUME (hiding a run is the worse failure).
+# TOLERATED title forms (same reasoning — an editor or a hand edit must not hide
+# a run): an optional leading UTF-8 BOM (bytes EF BB BF, built with octal
+# `printf` — BSD grep has no `\x` escapes), optional whitespace before and after
+# the `#`, any run of whitespace inside the phrase and before the colon
+# (`# Automate  Run :`), and any letter case (`# automate run:`). Still NOT a run
+# file: an H2 `## Automate Run:` line (the second `#` is not whitespace) and the
+# result sidecars above. The ERE is DOUBLE-quoted so `$_RUNFILE_BOM` expands.
+# Callers (all inherit the tolerance): `resume_glob`; `_runfile_refusal` (the
+# staged content and the current file — the `runfile-write` validator);
+# `progress_append` and `queue_checkoff` (their not-a-run-file refusals); and
+# `plan_waves`'s run-file input branch (a tolerant-titled input takes that
+# branch). Requirement files are not run files, so `resolve_folder` /
+# `resolve_backlog*` never call it (same scoping discipline as `is_not_ready`,
+# decision H2). Keep the predicate ONE line: test-automate-helpers.sh D0b
+# builds its mutants with a `sed` that targets this line.
+_RUNFILE_BOM="$(printf '\357\273\277')"
+is_run_file() { grep -qiE "^(${_RUNFILE_BOM})?[[:space:]]*#[[:space:]]*automate[[:space:]]+run[[:space:]]*:" "$1" 2>/dev/null; }
 
 # resolve-folder <dir> — every *.md NOT marked "## Status: done" and not
 # "## Status: proposed|parked" (sorted).
@@ -516,7 +530,8 @@ resolve_backlog_dir() {
 # --------------------------------------------------------------------------- #
 
 # resume-glob <automate_dir> — list RUN FILES (is_run_file: they carry the
-# `# Automate Run:` title line) that are NOT marked "## Status: done". A *.md
+# `# Automate Run:` title line, in any of its tolerated forms) that are NOT
+# marked "## Status: done". A *.md
 # without that title — the §6 steps 2-3 result sidecars
 # (`<run_id>.review-heal-result.md`, `<run_id>.supervisor-result.md`), transient
 # or committed — is skipped BEFORE the done check, so it is never reported as an

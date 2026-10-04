@@ -22,7 +22,8 @@
 #      run file byte-unchanged, with positive controls and a validation-removed mutant.
 #   C. folder / backlog-doc resolvers (skip ## Status: done; documented order).
 #   D. resume-glob lists only run files (is_run_file: `# Automate Run:` title) not
-#      done — §6 result sidecars excluded, with a validated is_run_file mutant;
+#      done — §6 result sidecars and an H2 title excluded, tolerant title forms
+#      (BOM / whitespace / case) admitted, with two validated is_run_file mutants;
 #      resume reconcile: belief pending but gh says merged ⇒ merged; belief checked
 #      but gh says open ⇒ awaiting_merge; gh unreadable ⇒ awaiting_merge (fail closed);
 #      gh CLOSED-unmerged ⇒ gone.
@@ -929,6 +930,94 @@ if [ "$RUN_OUT" = "$BL/late.md" ]; then
 else
   no "resume-glob blank-first-line run wrong:\n$RUN_OUT"
 fi
+# Tolerant title forms (automate-followups/19): an editor-added UTF-8 BOM, extra
+# or missing whitespace around `#` / inside the phrase, and letter case must not
+# hide a run from RESUME (hiding a run is the worse failure). The BOM is written
+# with octal printf escapes — portable to BSD and GNU printf alike.
+TOL="$WD/tolerant"; mkdir -p "$TOL"
+printf '# Automate Run: x\n## Status: running\n'             > "$TOL/canon.md"
+printf '\357\273\277# Automate Run: x\n## Status: running\n' > "$TOL/bom.md"
+printf '#  Automate Run: x\n## Status: running\n'            > "$TOL/sp2.md"
+printf '#Automate Run: x\n## Status: running\n'              > "$TOL/nosp.md"
+printf '# Automate  Run : x\n## Status: running\n'           > "$TOL/inner.md"
+printf '# automate run: x\n## Status: running\n'             > "$TOL/lower.md"
+TOL_EXPECTED="$(printf '%s\n' "$TOL/bom.md" "$TOL/canon.md" "$TOL/inner.md" "$TOL/lower.md" "$TOL/nosp.md" "$TOL/sp2.md" | env LC_ALL=C sort)"
+run_h bash "$H" resume-glob "$TOL"
+TOL_OUT="$RUN_OUT"
+# AC1: BOM-prefixed title.
+if grep -qxF "$TOL/bom.md" <<<"$TOL_OUT"; then
+  ok "resume-glob: a run file whose title starts with a UTF-8 BOM (EF BB BF) is listed"
+else
+  no "resume-glob dropped the BOM-titled run file:\n$TOL_OUT"
+fi
+# AC2: whitespace variants.
+for f_ in sp2 nosp inner; do
+  if grep -qxF "$TOL/$f_.md" <<<"$TOL_OUT"; then
+    ok "resume-glob: whitespace-variant title ($f_.md: $(head -n 1 "$TOL/$f_.md")) is listed"
+  else
+    no "resume-glob dropped the whitespace-variant run file $f_.md:\n$TOL_OUT"
+  fi
+done
+# AC3: lower case.
+if grep -qxF "$TOL/lower.md" <<<"$TOL_OUT"; then
+  ok "resume-glob: a lower-case '# automate run:' title is listed (case-insensitive)"
+else
+  no "resume-glob dropped the lower-case run file:\n$TOL_OUT"
+fi
+if [ "$RUN_RC" -eq 0 ] && [ "$TOL_OUT" = "$TOL_EXPECTED" ]; then
+  ok "resume-glob: tolerant fixture ⇒ exactly the six run files (sorted), exit 0"
+else
+  no "resume-glob tolerant fixture wrong (rc=$RUN_RC):\n$TOL_OUT"
+fi
+# AC4: the loosened predicate still rejects both result sidecars and an H2
+# `## Automate Run:` line (the second `#` is not whitespace).
+NEG="$WD/tolerant-neg"; mkdir -p "$NEG"
+printf '## REVIEW_HEAL_RESULT\n- schema_version: 1\n- decision: READY\n' > "$NEG/automate-x.review-heal-result.md"
+printf '## SUPERVISOR_RESULT\n- schema_version: 1\n- status: completed\n- rubric_score: 5/5\n' > "$NEG/automate-x.supervisor-result.md"
+printf '## Automate Run: x\n## Status: running\n' > "$NEG/h2.md"
+run_h bash "$H" resume-glob "$NEG"
+if [ "$RUN_RC" -eq 0 ] && [ -z "$RUN_OUT" ]; then
+  ok "resume-glob: both result sidecars and an H2 '## Automate Run:' file ⇒ prints nothing (still not run files)"
+else
+  no "resume-glob listed a sidecar or an H2-titled file (rc=$RUN_RC):\n$RUN_OUT"
+fi
+# AC5: the write validators share the tolerant predicate. A FULL valid run file
+# (title + `## Status:` + `## Queue` + `## Progress`), so a refusal could only be
+# about the title.
+WV="$WD/tolerant-write"; mkdir -p "$WV"
+printf '\357\273\277# Automate Run: w\n## Status: running\n## Queue\n- [ ] q/01.md\n## Progress\n- t0\n' > "$WV/bom.md"
+run_h bash "$H" progress-append "$WV/bom.md" "t1"
+if [ "$RUN_RC" -eq 0 ] && [ "$(tail -n 1 "$WV/bom.md")" = "- t1" ] && grep -qxF -- '- t0' "$WV/bom.md" \
+   && [ "$(head -c 3 "$WV/bom.md" | od -An -tx1 | tr -d ' \n')" = "efbbbf" ]; then
+  ok "progress-append: a BOM-titled run file takes the line (exit 0, prior line kept, BOM preserved)"
+else
+  no "progress-append refused or mangled a BOM-titled run file (rc=$RUN_RC)"
+fi
+run_h bash "$H" queue-checkoff "$WV/bom.md" "q/01.md"
+if [ "$RUN_RC" -eq 0 ] && grep -qxF -- '- [x] q/01.md' "$WV/bom.md"; then
+  ok "queue-checkoff: a BOM-titled run file is checked off (exit 0)"
+else
+  no "queue-checkoff refused a BOM-titled run file (rc=$RUN_RC)"
+fi
+for t_ in '#Automate Run: w' '# automate  run : w'; do
+  TW_BODY="$(printf '%s\n## Status: running\n## Queue\n- [ ] q/01.md\n## Progress\n' "$t_")"
+  rm -f "$WV/new.md"
+  run_h bash -c 'printf "%s\n" "$1" | bash "$2" runfile-write "$3"' _ "$TW_BODY" "$H" "$WV/new.md"
+  if [ "$RUN_RC" -eq 0 ] && [ "$(cat "$WV/new.md" 2>/dev/null)" = "$TW_BODY" ]; then
+    ok "runfile-write: staged content titled '$t_' is accepted and installed"
+  else
+    no "runfile-write refused staged content titled '$t_' (rc=$RUN_RC)"
+  fi
+done
+# Negative control for the write validators: an H2 title is still refused.
+H2_BODY="$(printf '## Automate Run: w\n## Status: running\n## Queue\n- [ ] q/01.md\n## Progress\n')"
+rm -f "$WV/h2.md"
+run_h bash -c 'printf "%s\n" "$1" | bash "$2" runfile-write "$3"' _ "$H2_BODY" "$H" "$WV/h2.md"
+if [ "$RUN_RC" -ne 0 ] && [ ! -e "$WV/h2.md" ]; then
+  ok "runfile-write: staged content whose only title is an H2 '## Automate Run:' is still refused"
+else
+  no "runfile-write accepted an H2-titled payload (rc=$RUN_RC)"
+fi
 # AC3 mutation control: a sed-built mutant whose is_run_file is forced to
 # `return 0` must leak BOTH sidecars back into the AC1 fixture's output — proves
 # the resume_glob call is load-bearing (not defined-but-uncalled, not called
@@ -936,9 +1025,13 @@ fi
 # differs from the original, `bash -n` clean, override actually injected.
 printf '# Automate Run: sc\n## Status: done\n## Queue\n' > "$SC/automate-x.md"
 MUT="$(mktemp -d)"
-sed 's/^is_run_file() { grep -qE .*$/is_run_file() { return 0; }/' "$H" > "$MUT/automate-helpers.sh"
+# The sed anchors on the tolerant predicate's `grep -qiE` (automate-followups/19);
+# the gate also checks the tolerant line is GONE, so a pattern that silently
+# stops matching (the predicate's text changed again) fails here as "not gated".
+sed 's/^is_run_file() { grep -qiE .*$/is_run_file() { return 0; }/' "$H" > "$MUT/automate-helpers.sh"
 if [ -s "$MUT/automate-helpers.sh" ] && ! cmp -s "$H" "$MUT/automate-helpers.sh" && bash -n "$MUT/automate-helpers.sh" 2>/dev/null \
-   && grep -qF 'is_run_file() { return 0; }' "$MUT/automate-helpers.sh"; then
+   && grep -qF 'is_run_file() { return 0; }' "$MUT/automate-helpers.sh" \
+   && ! grep -qF 'is_run_file() { grep -qiE' "$MUT/automate-helpers.sh"; then
   MUT_RG_OUT="$(bash "$MUT/automate-helpers.sh" resume-glob "$SC" 2>/dev/null)"
   EXPECTED_RG_MUT="$SC/automate-x.review-heal-result.md
 $SC/automate-x.supervisor-result.md"
@@ -955,6 +1048,35 @@ $SC/automate-x.supervisor-result.md"
   fi
 else
   no "is_run_file mutation control not gated (mutant empty, identical to original, bash -n failed, or the is_run_file override was not injected)"
+fi
+rm -rf "$MUT"
+# AC7 mutation control (automate-followups/19): restore the OLD exact-match
+# predicate in a sed-built mutant. Run over the tolerant fixture it must list
+# ONLY the canonical run file — the BOM, extra-space, no-space, inner-space and
+# lower-case runs vanish — proving the tolerant legs above are load-bearing.
+# Positive control: the unmutated script over the same fixture lists all six.
+# Gated the same way: non-empty, differs, `bash -n` clean, old predicate
+# injected AND the tolerant line gone.
+MUT="$(mktemp -d)"
+OLD_PRED='is_run_file() { grep -qE '"'"'^# Automate Run:'"'"' "$1" 2>/dev/null; }'
+sed "s|^is_run_file() { grep -qiE .*\$|${OLD_PRED}|" "$H" > "$MUT/automate-helpers.sh"
+if [ -s "$MUT/automate-helpers.sh" ] && ! cmp -s "$H" "$MUT/automate-helpers.sh" && bash -n "$MUT/automate-helpers.sh" 2>/dev/null \
+   && grep -qxF "$OLD_PRED" "$MUT/automate-helpers.sh" \
+   && ! grep -qF 'is_run_file() { grep -qiE' "$MUT/automate-helpers.sh"; then
+  MUT_TOL_OUT="$(bash "$MUT/automate-helpers.sh" resume-glob "$TOL" 2>/dev/null)"
+  if [ "$MUT_TOL_OUT" = "$TOL/canon.md" ]; then
+    ok "mutation control: the old exact-match is_run_file lists only canon.md — the BOM, extra-space and lower-case runs are NOT listed, so the tolerant legs discriminate"
+  else
+    no "old-predicate mutation control did NOT discriminate (out='$MUT_TOL_OUT' expected='$TOL/canon.md')"
+  fi
+  CTRL_TOL_OUT="$(bash "$H" resume-glob "$TOL" 2>/dev/null)"
+  if [ "$CTRL_TOL_OUT" = "$TOL_EXPECTED" ]; then
+    ok "old-predicate mutation positive control: the unmutated script, same fixture, lists all six run files"
+  else
+    no "old-predicate mutation positive control failed (out='$CTRL_TOL_OUT') — cannot trust the mutation result without this"
+  fi
+else
+  no "old-predicate mutation control not gated (mutant empty, identical to original, bash -n failed, the old predicate was not injected, or the tolerant line survived)"
 fi
 rm -rf "$MUT"
 
