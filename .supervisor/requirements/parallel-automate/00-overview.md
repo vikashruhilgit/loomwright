@@ -88,6 +88,9 @@ carry the fixes.
   Supervisor + the owned drain only. S1 tries both and records the choice. **S1 added a third candidate (A +
   relay):** a lane runs headless WITH a question channel, its `AskUserQuestion` deferred, and the owner answers
   from the inbox (P9). See the S1 run record.
+  **DECIDED 2026-10-04 by S1 (v1 + v2): A + relay.** It held every human gate in both v2 lanes (0 decided alone,
+  against 3 in v1's shapes); B is not needed because the relay brings the brief gate to the owner anyway. Exact
+  flags and hooks: item 05 "Spike findings".
 - **P9 — add-ons are optional (owner, 2026-10-04).** The core owns all state and every action as FILES plus
   SCRIPTS: lane status is the run files; a question is a file, an answer is a file, and resuming a lane is a
   launcher script. Every extra is only a CLIENT of those files: a Claude Code mod (lanes pane, inbox buttons,

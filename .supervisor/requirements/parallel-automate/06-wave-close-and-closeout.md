@@ -1,6 +1,6 @@
 # 06 — Wave close: one release bump per wave + split closeout (no extra PR, no merge train)
 
-## Status: parked (waits on S1 and item 05 — write the spike's answer to question 4 under "Spike findings", then set `## Status: pending`)
+## Status: pending (S1 Q4 written 2026-10-04; still depends on 01 and 05)
 
 ## Depends on
 01
@@ -128,9 +128,14 @@ the next wave.
    push metadata from each lane, remove the lanes.
 
 ## Spike findings
-_(fill in from S1 question 4 before un-parking: after a hand merge of one lane's PR, does the sibling PR still
-merge cleanly by bypass without a branch update? If NOT, step A must add a sync for ordinary lanes — redesign
-before building.)_
+Filled 2026-10-04 from S1 Q4. The owner merged #372 (item 18) at 10:17:51Z by hand; the sibling #374 (item 19)
+went `BEHIND` but stayed `MERGEABLE` and merged by hand two minutes later with **no branch update**. The two PRs
+were a deliberately overlapping pair (separate `plan-waves` waves) sharing one file, `RESULT_SCHEMAS.md`, in
+different hunks. **This item's premise holds: no sync is needed for ordinary lanes; step A stands as written.**
+Lane closeout ran inside each lane on the watcher's `merged` event within ~12 s (sync `main`, remove the branch,
+check off, reconcile `## Current`, watcher exits). One gap: v2-b's closeout metadata push FAILED on the push scrub
+(an absolute home path in its brief), so the fleet closeout must surface a lane's `meta-push-failed` marker and
+`meta-sync-followups/04` must land before 06 runs. Real `CONFLICTING` siblings are item 13's job.
 
 ## Verified premises (re-check before starting)
 - `gh pr list --state merged --limit 25 --json reviewDecision,reviews` on 2026-10-01: 25 × `REVIEW_REQUIRED`,

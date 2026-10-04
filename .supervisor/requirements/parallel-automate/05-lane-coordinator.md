@@ -1,6 +1,6 @@
 # 05 — Lane coordinator: `/automate --parallel N`
 
-## Status: parked (waits on S1 — write the spike's answers under "Spike findings" below, then set `## Status: pending`)
+## Status: pending (S1 findings written 2026-10-04; still depends on the items in `## Depends on`)
 
 ## Depends on
 03
@@ -220,8 +220,41 @@ stamped countable rule check parks `rules_unstamped` and that is correct.
    each lane PR by hand; metadata push in each lane; remove the lane directories. Written in the PR body.
 
 ## Spike findings
-_(fill in from S1 before un-parking: isolation; pre-flight classification with and without the sibling PR open;
-where a headless lane stops; state missing in a clone; contention; the chosen lane shape and the exact allowlist)_
+Filled 2026-10-04 from S1 (v1 + v2; full record `operator-run/S1-two-lane-spike.md`, lane logs archived in
+`ai-agent-manager-lanes-v2/archive/`).
+- **Isolation (Q1): holds.** Each clone takes its own run lock, no cross-talk in `state.md`, each lane's
+  `auto_review` toggle restored in its own clone. The primary was byte-identical before/after on status, worktree
+  list, run lock, config checksum and HEAD (`snapshot-before/after.txt`).
+- **Pre-flight (Q2).** Sibling PR OPEN (v1): the gate caught the companion-file overlap and asked. Sibling PR NOT
+  open (v2, both lanes launched together): both reported `PRE-FLIGHT SYNC = CLEAR (0 open PRs)`, so **pre-flight
+  cannot see a sibling lane; the wave planner is the only guard** (items 18/19 sat in separate waves and still
+  overlapped on `RESULT_SCHEMAS.md`).
+- **Headless gates (Q3).** Shape A as shipped is unsafe: with `--non-interactive-fallback` and no question channel,
+  v1 lane A saved its own brief with no approval and left dismissed findings undecided. **A + relay** (Scope 13)
+  held EVERY gate in both v2 lanes (15 questions in 10 deferred calls, 0 decided alone). `claude -p` kills
+  background workers 600 s after the main turn unless `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0` (v1 lane B's worker
+  was killed); with it set, multi-hour runs were stable. Every park ends the session as far as plugin hooks see:
+  they log a session end and RELEASE the run lock while the lane waits. Park notifications fire headless, 2 per
+  question (ask + re-fire on resume); one shared `-group loomwright` makes lanes replace each other's banners.
+- **Clone state (Q5).** Config and allowlist travel by copy; rules stamp and `settings.local.json` are absent
+  unless `lane-create` writes them (the harness wrote the relay hooks there). A lane's metadata push works (v2-a
+  pushed its closeout records), but **one absolute `/Users/<name>/…` path in a brief makes the push scrub refuse the
+  WHOLE push** (v2-b) — `meta-sync-followups/04` is a prerequisite. **Trap:** `meta-sync.sh` defaults
+  `BRANCH="loomwright-meta"` and does not read the `.gitignore` mode line, so a plain `meta-sync.sh pull|push` in a
+  lane with a different metadata branch targets the REAL branch (the engine passes `--branch`; an operator command
+  without it does not). `lane-create` / the coordinator must always pass `--branch`, or meta-sync must read the mode
+  line.
+- **Contention (Q6), measured:** solo `ci-local` 190–380 s, both lanes at once 490–820 s, load 27 vs 10, no lock
+  wait (the lock and pass cache are per git dir, so clones never share them) → item 08.
+- **Shape (Q7) and allowlist:** **A + relay**. The exact flags that worked: `claude -p --input-format stream-json
+  --output-format stream-json --verbose --permission-prompt-tool stdio --permission-mode acceptEdits --allowedTools
+  Bash,Read,Edit,Write,Glob,Grep,Task,Agent,AskUserQuestion`, NO `--non-interactive-fallback`, env
+  `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`, user settings loaded (`--setting-sources project,local` broke auth), a
+  `PreToolUse[AskUserQuestion]` hook returning `defer` (then `allow` + `updatedInput` on resume) and a
+  `PermissionRequest[AskUserQuestion]` deny for bundled calls. Scope 13 builds this; Scope 14 adds what v2 found.
+- **Also found:** both v2 lanes reused v1's exact branch names (Scope 14 remote check); park clone state differs
+  between lanes (Scope 14); the watcher was armed one step before the park write in both runs (harmless — acts only
+  on MERGED — but recurring).
 
 ## Verified premises (re-check before starting)
 - `run-lock.sh` "resolve root" block and `build-state.sh` "Worktree-safe anchoring" block; 12 non-test scripts
