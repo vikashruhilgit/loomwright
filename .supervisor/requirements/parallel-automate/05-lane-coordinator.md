@@ -78,7 +78,23 @@ coordinator. Without the flag, or with `--parallel 1`, no lane code runs at all.
      reconciled against `gh`.
    - **`lane-remove <lane>`** — only when the lane's metadata push reported nothing left, no meta-push failure
      marker is set (item 03 Scope 6), and the lane has no unpushed commits; salvage first. Never `rm -rf` a dirty
-     lane.
+     lane. **Also refuses (amended 2026-10-03, owner, from S1):**
+     - **while any process still lives in the lane.** That means the lane's merge watcher (its
+       `<run_id>.merge-watch` marker pid, checked the way `automate-merge-watch.sh` checks it: `ps -ww` shows that
+       script carrying the marker's `pr_url`, so a recycled pid is never trusted) and the lane's `claude -p` (the
+       pid `lane-launch` records in the lane table, same command-line check). S1 lane A arms a watcher INSIDE its
+       clone; deleting the clone first leaves an orphan whose closeout fails as `run file not found`. The refusal
+       names the process. `lane-remove --stop` TERMs it first (KILL after 60s, as the watcher-replace path does)
+       and then removes; there is no silent kill.
+     - **while the lane is parked waiting for an answer** (`pause_reason: awaiting_input` from the ask-user relay,
+       or any deferred tool call recorded in the lane table). A deferred session IS the pending question, and
+       removing the lane discards it. The refusal names the question.
+     - **A lane whose PR closed unmerged** (`gone`, item 06 Scope 8) stays refused until a human runs
+       `lane-remove --abandon <lane>`. That form still salvages, still refuses a dirty or process-holding lane,
+       and logs one `## Progress` line naming what was abandoned.
+   - **`lane-launch` records what `lane-remove` checks:** the launched `claude -p` pid, its start time and the
+     session id (read from the stream-json `system/init` event) in the lane table, so liveness and resume never
+     depend on the launching session still being alive.
 2. **Parent run file.** `## Run Config` gains `parallel: N`. The lane table is an UNTRACKED sidecar
    (`<run_id>.lanes`, a non-`.md` name). `## Current` names the wave.
 3. **Lane run files must not pollute the parent's resume.** A lane's run file is a managed `.md` under
@@ -119,8 +135,11 @@ coordinator. Without the flag, or with `--parallel 1`, no lane code runs at all.
     lane run id shape; one lane dying leaves the other's status unchanged; `lane-remove` refuses on unpushed
     metadata and on the failure marker; INIT refusal of `--auto-merge --parallel 2`; a plain `/automate` PICK in
     the primary is refused while a lane is live, including after the lock was reclaimed; lane run files never
-    listed by `resume-glob`; parent `dismissed-pending` counts a lane's draft. **Mutation controls:** dropping the
-    `-L<n>` skip in `resume-glob` must fail; a coordinator write into a launched lane must fail a checksum test.
+    listed by `resume-glob`; parent `dismissed-pending` counts a lane's draft. `lane-remove` refuses on a live
+    watcher, on a live `claude -p`, on `awaiting_input` and on `gone` without `--abandon`, and does NOT refuse on
+    a recycled pid whose command line is not the lane's process. **Mutation controls:** dropping the `-L<n>`
+    skip in `resume-glob` must fail; a coordinator write into a launched lane must fail a checksum test; deleting
+    the live-process check (or the `awaiting_input` check) from `lane-remove` must fail its leg.
 12. **Docs:** skill — a NEW §"Lanes" plus the non-goal and §8 wording ("one open PR per lane"), §11 concurrent-run
     paragraph; `commands/automate.md`; `agent-help.md`; `RESULT_SCHEMAS.md` §AUTOMATE_RUN (`ready_for_release`,
     `parallel`). `SKILLS_INDEX.md` in the same commit. No new agent.
@@ -150,8 +169,10 @@ stamped countable rule check parks `rules_unstamped` and that is correct.
 4. **Running system:** `/automate --parallel 2` on two real, disjoint, small items. Paste `lane-status` at launch
    and at the end, each lane's `## Current`, `run-lock.sh status` from the primary and each lane while both run,
    and the refusal of a second `/automate` started in the primary meanwhile. Kill one lane once; paste the result.
-5. **Leak check:** after the run, `git worktree list`, `ls <primary>-lanes/`, `pgrep -lf 'claude -p'`, the
-   primary's `.supervisor/config.json` checksum and `git status --porcelain` are as before the run.
+5. **Leak check:** after the run, `git worktree list`, `ls <primary>-lanes/`, `pgrep -lf 'claude -p'`,
+   `pgrep -lf automate-merge-watch`, the primary's `.supervisor/config.json` checksum and `git status --porcelain`
+   are as before the run. The same check ships as `lane-status --leaks` (amended 2026-10-03), so the Fleet
+   closeout (item 06) prints it rather than leaving it to a validation step.
 6. **A failure this must catch:** the two mutation controls in Scope 11, shown failing.
 7. **Rollback:** `git revert`. A run with live lanes is finished or abandoned first: `lane-status`; close or merge
    each lane PR by hand; metadata push in each lane; remove the lane directories. Written in the PR body.

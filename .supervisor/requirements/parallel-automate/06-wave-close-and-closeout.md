@@ -67,6 +67,18 @@ path, no new drain category, no push onto a PR that is waiting for a merge.
    `queue-checkoff`) → `git pull --ff-only` on the primary (it never left `main`) → `lane-remove` (refuses on the
    failure marker). Dismissed-finding drafts arrive via the pull and are asked at the parent's next interactive
    PICK through item 05's parent-aware `dismissed-pending`.
+   **Amended 2026-10-03 (owner, from S1): teardown is part of the closeout, not left to the operator.**
+   - `lane-remove` runs with item 05's full refusal set: a live watcher or `claude -p`, `awaiting_input`, unpushed
+     metadata, the failure marker. A lane closeout runs inside the lane's own merge watcher, so the fleet
+     closeout waits for that watcher to EXIT (a resumable step, re-checked on the next `--resume`, never an
+     in-session wait) before it removes the lane.
+   - When the last lane of the run is removed, remove the then-empty `<primary>-lanes/<run_id>/` directory. A
+     non-empty one is refused and its contents are listed.
+   - Then print `lane-status --leaks` (item 05 Validation 5) and append its one-line summary to `## Progress`.
+     A non-empty leak report is a loud report, not a block: it names each leftover worktree, lane directory or
+     live process and the command that clears it.
+   - Finally run the plugin-wide sweep in dry-run mode (`automate-followups/22`) and report what it WOULD
+     remove. The fleet closeout never removes anything outside this run's lanes.
 8. **PR closed unmerged** ⇒ lane is `gone`: no stamp, lane directory kept, human decides.
 9. **Next wave** becomes eligible after fleet closeout of the items it depends on and starts only on the owner's
    explicit go (P6). When the last lane of the last wave is closed out, release the primary's
@@ -77,7 +89,8 @@ path, no new drain category, no push onto a PR that is waiting for a merge.
     diff; release lane waits; after the sibling is merged the release lane's diff after step B is exactly the
     merge + the bump, with BOTH fragments folded; a sibling parked `escalated` does not block step B; a merge
     conflict at B.a parks only that lane; unstamped release command ⇒ step b skipped and recorded; closeout opens
-    no PR, pushes only evidence-gated paths, removes the lane; unmerged-closed PR ⇒ no stamp, lane kept; the
+    no PR, pushes only evidence-gated paths, removes the lane only after its watcher exited, removes the empty
+    `<run_id>` directory last and appends the leak summary; unmerged-closed PR ⇒ no stamp, lane kept; the
     single-item path never enters wave-close code. **Mutation controls:** letting step B run while a sibling is
     still `awaiting_merge` must fail a test; pushing in step B after the lane is already `awaiting_merge` must
     fail a test.
@@ -93,8 +106,9 @@ the next wave.
 - `grep -rn "gh pr merge --squash" loomwright/ | grep -viE "no |never |not "` resolves to the same five surfaces
   listed in CLAUDE.md §"Failure-Mode Invariants"; `git diff origin/main -- loomwright/scripts/automate-helpers.sh`
   shows no change inside `gate_eval`.
-- After the wave: no lane directory, the primary on fresh `main`, the parent queue checked off, stamps / briefs /
-  lane run files (each `## Status: done`) on `loomwright-meta`.
+- After the wave: no lane directory and no `<run_id>` parent directory, no live `claude -p` or merge watcher from
+  the wave, `lane-status --leaks` empty, the primary on fresh `main`, the parent queue checked off, stamps /
+  briefs / lane run files (each `## Status: done`) on `loomwright-meta`.
 - Full test loop + root checks green.
 
 ## Validation (must pass before merge)
