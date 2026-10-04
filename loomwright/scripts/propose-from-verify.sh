@@ -109,6 +109,45 @@ OUT_DIR_ABS="$(cd "$OUT_DIR" 2>/dev/null && pwd)"
 
 RUN_ID="$(basename "$RUN_DIR_ABS")"
 
+# The planner's machine-read sections (parallel-automate/10): every draft carries `## Depends on`
+# (`none`) and `## Touches` — the repo-relative FILE paths its AC / issue text (and reason) names,
+# else `unknown`; lint-clean under `automate-helpers.sh plan-waves --lint`. The text is untrusted
+# evidence: it is only split on characters outside the Touches grammar and each token is passed to
+# stat-style tests under the checkout root (`cd -P` / `[ -L ]` / `[ -f ]`) — never opened, executed
+# or interpolated. A token must contain `/` or `.`, and carry no leading `/`, trailing `/`, `//`, or
+# `.`/`..` segment. It must then pass the CONTAINMENT rule: its first segment is not `.git` (any
+# case); its parent directory, physically resolved (`cd -P … && pwd -P`, bash 3.2 / BSD safe — no
+# realpath / readlink -f), is the resolved root or strictly under it and not in its `.git` dir; and
+# its final component is a regular file that is NOT itself a symlink. So a committed symlink can
+# never turn the existence test into a probe of a path outside the checkout (an in-repo symlinked
+# DIRECTORY resolving inside the root is accepted as written; a symlinked FILE is always rejected).
+# Grammar copy 3 of 3, sharing no code: the authority is the PW_TOUCHES_GRAMMAR line in
+# automate-helpers.sh (_pw_touches); copy 2 is PATH_TOK / BAD_SEG beside touches_of in
+# automate-dismissed.sh. Change all three together — test-automate-helpers.sh §X7 fails on drift.
+# Containment is an EXTRACTOR-only rule shared with touches_of (the planner's --lint judges grammar,
+# never the filesystem), so X7 does not cover it; test-propose-from-verify.sh and
+# test-automate-dismissed.sh each pin it with the same symlink / `.git` fixtures.
+VT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+vt_touches() {
+  local vt_rp
+  vt_rp="$(cd -P -- "$VT_ROOT" 2>/dev/null && pwd -P)" || return 0
+  [ -n "$vt_rp" ] || return 0
+  printf '%s\n' "$1" | env LC_ALL=C tr -c 'A-Za-z0-9._/@+-' '\n' | sed 's/\.*$//' | env LC_ALL=C sort -u \
+    | while IFS= read -r t; do
+        case "$t" in ""|/*|*/|*//*) continue ;; esac
+        case "$t" in */*|*.*) ;; *) continue ;; esac
+        case "/$t/" in */./*|*/../*) continue ;; esac
+        case "$t" in [.][Gg][Ii][Tt]|[.][Gg][Ii][Tt]/*) continue ;; esac
+        case "$t" in */*) d="$VT_ROOT/${t%/*}" ;; *) d="$VT_ROOT" ;; esac
+        dp="$(cd -P -- "$d" 2>/dev/null && pwd -P)" || continue
+        case "$dp/" in "$vt_rp"/*) ;; *) continue ;; esac
+        case "${dp#"$vt_rp"}/" in /[.][Gg][Ii][Tt]/*) continue ;; esac
+        f="$dp/${t##*/}"
+        [ -L "$f" ] && continue
+        if [ -f "$f" ]; then printf '%s\n' "$t"; fi
+      done
+}
+
 # run_start fields - ticket, branch, head_sha. Absent run_start ⇒ empty strings, never fabricated.
 RS_JSON="$(jq -c 'select(.event == "run_start")' "$EVIDENCE" 2>/dev/null | head -1)"
 TICKET_PATH="$(printf '%s' "$RS_JSON" | jq -r '.ticket_path // ""' 2>/dev/null)"
@@ -152,10 +191,12 @@ while IFS= read -r rec; do
   if [ "$kind" = "ac" ]; then
     ac_id="$(printf '%s' "$rec" | jq -r '.ac_id')"
     reason="$(printf '%s' "$rec" | jq -r '.reason')"
+    touches="$(vt_touches "$text $reason")"
     fname="verify-${RUN_ID}-${ac_id}-${slug}.md"
     {
       printf '# Proposed: verify FAIL %s (%s)\n\n' "$ac_id" "$RUN_ID"
       printf 'evidence-set: %s/%s@L%s\n\n' "$RUN_ID" "$ac_id" "$line_no"
+      printf '## Depends on\n\nnone\n\n## Touches\n\n%s\n\n' "${touches:-unknown}"
       printf '## Problem\n\n'
       printf '%s\n\n' "$text"
       printf 'Observed verdict: FAIL (classification: REAL_BUG)\n'
@@ -177,10 +218,12 @@ while IFS= read -r rec; do
     n="$(printf '%s' "$rec" | jq -r '.n')"
     severity="$(printf '%s' "$rec" | jq -r '.severity')"
     route="$(printf '%s' "$rec" | jq -r '.route')"
+    touches="$(vt_touches "$text")"
     fname="verify-${RUN_ID}-issue-${n}-${slug}.md"
     {
       printf '# Proposed: verify issue #%s (%s)\n\n' "$n" "$RUN_ID"
       printf 'evidence-set: %s/issue-%s@L%s\n\n' "$RUN_ID" "$n" "$line_no"
+      printf '## Depends on\n\nnone\n\n## Touches\n\n%s\n\n' "${touches:-unknown}"
       printf '## Problem\n\n'
       printf '%s\n\n' "$text"
       [ -n "$severity" ] && printf 'Severity: %s\n' "$severity"

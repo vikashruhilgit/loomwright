@@ -244,6 +244,13 @@ run_sut "$BJ" "$BO" "$BR"; rc=$?
   && ok "POSITIVE CONTROL: sibling class Y (quality_gap/worker, $EXP_Y entries) WAS proposed - the run was capable of emitting" \
   || no "POSITIVE CONTROL FAILED: the above-threshold sibling was not emitted either, so 'X not emitted' proves nothing
 $(cat "$LOGERR" 2>/dev/null)"
+
+# parallel-automate/10 (AC-7): the draft carries the planner's sections and `plan-waves --lint` accepts it.
+pw_lint_out="$(bash "$HERE/automate-helpers.sh" plan-waves "$BO/quality_gap--worker.md" --lint --root "$(dirname "$BO/quality_gap--worker.md")" 2>&1)"; pw_lint_rc=$?
+if [ "$pw_lint_rc" -eq 0 ] && grep -qxF '## Depends on' "$BO/quality_gap--worker.md" && grep -qxF '## Touches' "$BO/quality_gap--worker.md" \
+  && grep -qF ': Touches ok (declared unknown); Depends on ok' <<<"${pw_lint_out%%$'\n'*}"; then
+  ok "AC-7 propose-work draft: ## Depends on none + ## Touches unknown (it names no change-site file); plan-waves --lint ok (declared unknown), exit 0"
+else no "AC-7 propose-work draft lint (rc=$pw_lint_rc): $(printf '%s' "$pw_lint_out" | head -n1)"; fi
 grep -Fq "below threshold ($EXP_X < 10): plan_gap/worker" "$LOGERR" 2>/dev/null \
   && ok "the run NAMES plan_gap/worker as below threshold, with its count" \
   || no "the run does not name plan_gap/worker as below threshold

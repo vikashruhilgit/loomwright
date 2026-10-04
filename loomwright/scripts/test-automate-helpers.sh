@@ -117,6 +117,15 @@
 #      five-item fixture byte-for-byte; usage errors; read-only (spy git/gh); every real
 #      parallel-automate Touches parses (SKIP when the gitignored queue is absent); the shipped
 #      companions.json new rules cover check-doc-currency.sh FILES; two mutation controls.
+#   X. plan-waves --explain / --lint (parallel-automate/10, same W harness): every --explain reason
+#      shape on a fixture that produces it, the wave/blocked lines unchanged under --explain, errors
+#      still exit 1 with empty stdout; --lint flags every malformed Touches / Depends on shape with
+#      its line and reason, a declared `unknown` is `ok (declared unknown)` (exit 0), a missing
+#      Depends on alone exits 1, dir / run-file / item-list / single-item inputs, no --max needed;
+#      lint `ok` ⇔ the planner reads the section as known on every shape (one grammar); read-only;
+#      a mutation control (a grammar copy that accepts a parenthetical turns X3 red); --explain
+#      state never leaks into a later default call in the same shell (X2b); the three hand-copied
+#      Touches grammars (helper / automate-dismissed.sh / propose-from-verify.sh) agree token-for-token (X7).
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -3782,6 +3791,288 @@ $w_files
 EOF
   done
   [ -z "$w_miss" ] && ok "W20 shipped companions.json new rules cover all $(printf '%s\n' "$w_files" | wc -l | tr -d ' ') check-doc-currency.sh FILES entries" || no "W20 companions.json drifted from check-doc-currency.sh FILES:$w_miss"
+fi
+
+# =============================================================================
+echo "== X. plan-waves --explain / --lint (parallel-automate/10: read-only; one grammar with the planner) =="
+# x_rc <label> <expected rc> <expected stdout (printf %b)> — exact stdout AND exit code.
+x_rc() {
+  local want; want="$(printf '%b' "$3")"
+  if [ "$W_RC" -eq "$2" ] && [ "$W_OUT" = "$want" ]; then ok "$1"; else no "$1 (rc=$W_RC, want $2) got: $(printf '%s' "$W_OUT" | tr '\n' '|') err: $W_ERR"; fi
+}
+# x_has <label> <line> — W_OUT contains <line> as a whole line.
+x_has() { if grep -qxF -- "$2" <<<"$W_OUT"; then ok "$1"; else no "$1 — missing line '$2' in: $(printf '%s' "$W_OUT" | tr '\n' '|')"; fi; }
+
+# X1 every --explain reason shape, each on a fixture that produces it (AC-2), stdout byte-for-byte.
+rm -rf "$W_T/q"
+w_item q/01-a.md none 'a/'; w_item q/02-b.md none 'a/b.sh'
+w_list q/01-a.md q/02-b.md; w_run "$W_T" "$H" "$W_T/list" --max 3 --explain
+x_rc "X1 explain: declared conflict names the item and the contained path" 0 'wave 1: q/01-a.md\nwave 2: q/02-b.md\nexplain q/02-b.md (wave 2):\n  conflicts with q/01-a.md on a/b.sh (declared)'
+printf 'q/01-s1.md\nq/02-s2.md\n' > "$W_T/list"
+w_run "$W_C" "$H" "$W_T/list" --max 3 --explain
+x_rc "X1 explain: companion conflict names the rule's when" 0 'wave 1: q/01-s1.md\nwave 2: q/02-s2.md\nexplain q/02-s2.md (wave 2):\n  conflicts with q/01-s1.md on x/skills/SKILLS_INDEX.md (companion: x/skills/*/SKILL.md)'
+rm -rf "$W_T/q" "$W_T/other"
+w_item q/01-a.md '../other/05-y.md' 'a'; w_item q/02-b.md '1' 'b'; w_item other/05-y.md none 'y'
+w_list q/01-a.md q/02-b.md other/05-y.md; w_run "$W_T" "$H" "$W_T/list" --max 3 --explain
+x_rc "X1 explain: depends on <item> (display path of the in-set dependency)" 0 'wave 1: other/05-y.md\nwave 2: q/01-a.md\nwave 3: q/02-b.md\nexplain q/01-a.md (wave 2):\n  depends on other/05-y.md\nexplain q/02-b.md (wave 3):\n  depends on q/01-a.md'
+w_alone missing -; w_run "$W_T" "$H" "$W_T/list" --max 3 --explain
+x_rc "X1 explain: runs alone: Touches unknown (missing)" 0 'wave 1: q/01-a.md q/03-c.md\nwave 2: q/02-b.md\nexplain q/02-b.md (wave 2):\n  runs alone: Touches unknown (missing)'
+w_alone bullet '- b/x.sh'; w_run "$W_T" "$H" "$W_T/list" --max 3 --explain
+x_rc "X1 explain: runs alone: Touches unknown (unparsable line <N>: \"<text>\"), N 1-based in the item file" 0 'wave 1: q/01-a.md q/03-c.md\nwave 2: q/02-b.md\nexplain q/02-b.md (wave 2):\n  runs alone: Touches unknown (unparsable line 7: "- b/x.sh")'
+w_alone unknown 'unknown'; w_run "$W_T" "$H" "$W_T/list" --max 3 --explain
+x_rc "X1 explain: runs alone: Touches unknown (declared unknown)" 0 'wave 1: q/01-a.md q/03-c.md\nwave 2: q/02-b.md\nexplain q/02-b.md (wave 2):\n  runs alone: Touches unknown (declared unknown)'
+rm -rf "$W_T/q"; w_item q/01-a.md none 'a'; w_item q/02-b.md - 'b'
+w_list q/01-a.md q/02-b.md; w_run "$W_T" "$H" "$W_T/list" --max 3 --explain
+x_rc "X1 explain: runs alone: Depends on missing ⇒ depends on every earlier item" 0 'wave 1: q/01-a.md\nwave 2: q/02-b.md\nexplain q/02-b.md (wave 2):\n  runs alone: Depends on missing ⇒ depends on every earlier item'
+rm -rf "$W_T/q"; w_item q/01-a.md none 'a'; w_item q/02-b.md none 'b'; w_item q/03-c.md none 'c'
+w_list q/01-a.md q/02-b.md q/03-c.md; w_run "$W_T" "$H" "$W_T/list" --max 2 --explain
+x_rc "X1 explain: wave <w> full (--max <N>)" 0 'wave 1: q/01-a.md q/02-b.md\nwave 2: q/03-c.md\nexplain q/03-c.md (wave 2):\n  wave 1 full (--max 2)'
+rm -rf "$W_T/q"; w_item q/01-a.md none -; w_item q/02-b.md none 'b'; w_item q/03-c.md none 'c'
+w_list q/01-a.md q/02-b.md q/03-c.md; w_run "$W_T" "$H" "$W_T/list" --max 3 --explain
+x_rc "X1 explain: wave <w> runs <item> alone (Touches unknown)" 0 'wave 1: q/01-a.md\nwave 2: q/02-b.md q/03-c.md\nexplain q/02-b.md (wave 2):\n  wave 1 runs q/01-a.md alone (Touches unknown)\nexplain q/03-c.md (wave 2):\n  wave 1 runs q/01-a.md alone (Touches unknown)'
+# Every reason of a multi-wave item, each distinct reason once (a conflict in wave 1, a dependency in wave 2).
+rm -rf "$W_T/q"; w_item q/01-a.md none 'a'; w_item q/02-b.md none 'b'; w_item q/03-c.md '02' 'a/x'
+w_list q/01-a.md q/02-b.md q/03-c.md; w_run "$W_T" "$H" "$W_T/list" --max 1 --explain
+x_rc "X1 explain: every reason across earlier waves, each once" 0 'wave 1: q/01-a.md\nwave 2: q/02-b.md\nwave 3: q/03-c.md\nexplain q/02-b.md (wave 2):\n  wave 1 full (--max 1)\nexplain q/03-c.md (wave 3):\n  depends on q/02-b.md'
+
+# X2 --explain leaves the wave/blocked lines and the exit codes alone (AC-1/AC-2): its stdout up to
+#    the first `explain ` line equals the default run on the same input; errors stay exit 1 + empty stdout.
+x_same() {  # <label> <root> <input> <max>
+  local base
+  w_run "$2" "$H" "$3" --max "$4"; base="$W_OUT"
+  w_run "$2" "$H" "$3" --max "$4" --explain
+  if [ "$W_RC" -eq 0 ] && [ "$(printf '%s\n' "$W_OUT" | awk '/^explain /{exit} {print}')" = "$base" ]; then ok "$1"; else no "$1 (rc=$W_RC) base: $(printf '%s' "$base" | tr '\n' '|') explain: $(printf '%s' "$W_OUT" | tr '\n' '|')"; fi
+}
+rm -rf "$W_T/q"
+w_item q/01-a.md none 'p/'; w_item q/02-b.md none 'r/'; w_item q/03-c.md none 'p/x.sh'; w_item q/04-d.md none 'r/y.sh'; w_item q/05-e.md '01' 's/'
+w_list q/01-a.md q/02-b.md q/03-c.md q/04-d.md q/05-e.md
+x_same "X2 five-item fixture: --explain prefix == default output" "$W_T" "$W_T/list" 3
+w_item q/06-f.md '07' 'f'; w_item q/07-g.md none 'g' 'parked (waits)'
+w_list q/01-a.md q/02-b.md q/06-f.md q/03-c.md
+x_same "X2 a blocked line is unchanged under --explain" "$W_T" "$W_T/list" 2
+x_has "X2 blocked item keeps its blocked line under --explain" 'blocked q/06-f.md: depends on parked 07'
+case "$W_OUT" in *"explain q/06-f.md"*) no "X2 a blocked item got an explain block" ;; *) ok "X2 a blocked item gets no explain block (its blocked line is its reason)" ;; esac
+rm -rf "$W_T/q"; w_item q/01-a.md '02' 'a'; w_item q/02-b.md '01' 'b'
+w_list q/01-a.md q/02-b.md; w_run "$W_T" "$H" "$W_T/list" --max 3 --explain
+w_fails "X2 --explain on a cycle ⇒ exit 1, empty stdout" 'plan-waves: dependency cycle: q/01-a.md q/02-b.md'
+w_run "$W_T" "$H" "$W_T/list" --explain; w_fails "X2 --explain still needs --max" 'usage:'
+w_run "$W_T" "$H" "$W_T/list" --max 2 --explain --lint; w_fails "X2 --explain with --lint ⇒ usage" '--explain and --lint are separate modes'
+
+# X2b --explain state does not leak across calls in ONE shell process: the helper's functions are
+#     sourced (its trailing `main "$@"` dispatch line dropped, `main` itself untouched), plan_waves
+#     runs --explain and then a default call, and the second call must equal a fresh default run
+#     byte-for-byte with no `explain ` line (a global _PW_EXPLAIN set by call 1 and never reset fails it).
+rm -rf "$W_T/q"; w_item q/01-a.md none 'a/'; w_item q/02-b.md none 'a/b.sh'
+w_list q/01-a.md q/02-b.md
+w_run "$W_T" "$H" "$W_T/list" --max 3; X2B_FRESH="$W_OUT"
+mkdir -p "$W_T/x2b-tmp"
+X2B_RC=0
+X2B_OUT="$(TMPDIR="$W_T/x2b-tmp" bash -c '
+  grep -qx "main \"\$@\"" "$1" || { echo "no trailing main dispatch line" >&2; exit 3; }
+  source <(sed "/^main \"\\\$@\"\$/d" "$1")
+  plan_waves "$2" --root "$3" --max 3 --explain > /dev/null
+  plan_waves "$2" --root "$3" --max 3
+' _ "$H" "$W_T/list" "$W_T" 2>"$W_T/err")" || X2B_RC=$?
+if [ "$X2B_RC" -eq 0 ] && [ -n "$X2B_FRESH" ] && [ "$X2B_OUT" = "$X2B_FRESH" ] && ! grep -q '^explain ' <<<"$X2B_OUT"; then
+  ok "X2b a default plan_waves call after an --explain call in the same shell is byte-identical to a fresh default run"
+else
+  no "X2b --explain leaked into a later default call (rc=$X2B_RC) got: $(printf '%s' "$X2B_OUT" | tr '\n' '|') fresh: $(printf '%s' "$X2B_FRESH" | tr '\n' '|') err: $(cat "$W_T/err")"
+fi
+rm -rf "$W_T/x2b-tmp"
+
+# X3 --lint: every malformed shape flagged with its 1-based line, the exact text and the reason (AC-3/AC-4).
+#    Single-item input; the w_item layout puts the Depends on body on line 4, the Touches body on line 7.
+x_lint_t() {  # <label> <Touches body> <expected Touches verdict> <expected rc>
+  rm -rf "$W_T/q"; w_item q/02-b.md none "$2"
+  w_run "$W_T" "$H" "$W_T/q/02-b.md" --lint
+  local runs="0 of 1 items will run alone: none"
+  case "$3" in ok) ;; *) runs="1 of 1 items will run alone: $W_T/q/02-b.md" ;; esac
+  x_rc "$1" "$4" "$W_T/q/02-b.md: Touches $3; Depends on ok\n$runs\n0 of 1 items depend on every earlier item: none"
+}
+x_lint_t "X3 lint: a path list is ok (exit 0)" 'b/x.sh\nb/dir/' ok 0
+x_lint_t "X3 lint: a sole unknown is ok (declared unknown) and does NOT set exit 1" 'unknown' 'ok (declared unknown)' 0
+x_lint_t "X3 lint: parenthetical '(only if a test exposes a defect)' flagged" '(only if a test exposes a defect)' 'line 7: "(only if a test exposes a defect)" — parenthetical/prose' 1
+x_lint_t "X3 lint: '(part B)' flagged" 'b/x.sh (part B)' 'line 7: "b/x.sh (part B)" — parenthetical/prose' 1
+x_lint_t "X3 lint: comma list 'a, b' flagged" 'a, b' 'line 7: "a, b" — comma list' 1
+x_lint_t "X3 lint: '- ' bullet flagged" '- b/x.sh' 'line 7: "- b/x.sh" — "- " bullet' 1
+x_lint_t "X3 lint: backticks flagged" '`b/x.sh`' 'line 7: "`b/x.sh`" — backticks' 1
+x_lint_t "X3 lint: prose flagged" 'b/x.sh and friends' 'line 7: "b/x.sh and friends" — parenthetical/prose' 1
+x_lint_t "X3 lint: leading / flagged" '/b/x.sh' 'line 7: "/b/x.sh" — leading /' 1
+x_lint_t "X3 lint: '..' segment flagged" 'b/../x' 'line 7: "b/../x" — . or .. segment' 1
+x_lint_t "X3 lint: './' segment flagged" './b/x.sh' 'line 7: "./b/x.sh" — . or .. segment' 1
+x_lint_t "X3 lint: '//' flagged" 'b//x.sh' 'line 7: "b//x.sh" — //' 1
+x_lint_t "X3 lint: a glob character flagged" 'b/*.sh' 'line 7: "b/*.sh" — character outside [A-Za-z0-9._/@+-]' 1
+x_lint_t "X3 lint: trailing whitespace flagged" 'b/x.sh ' 'line 7: "b/x.sh " — leading/trailing whitespace' 1
+x_lint_t "X3 lint: unknown mixed with paths flagged on the unknown line" 'b/x.sh\nunknown' 'line 8: "unknown" — unknown mixed with paths' 1
+x_lint_t "X3 lint: empty section flagged on its heading" '' 'line 6: "## Touches" — empty section' 1
+x_lint_t "X3 lint: duplicated section flagged on the second heading" 'b/x.sh\n\n## Touches\nb/y.sh' 'line 9: "## Touches" — duplicated section' 1
+x_lint_t "X3 lint: several bad lines ⇒ the first, plus a count" '- a\n- b' 'line 7: "- a" — "- " bullet (+1 more)' 1
+rm -rf "$W_T/q"; w_item q/02-b.md none -
+w_run "$W_T" "$H" "$W_T/q/02-b.md" --lint
+x_rc "X3 lint: missing Touches ⇒ missing section, exit 1" 1 "$W_T/q/02-b.md: Touches missing section; Depends on ok\n1 of 1 items will run alone: $W_T/q/02-b.md\n0 of 1 items depend on every earlier item: none"
+x_lint_d() {  # <label> <Depends body|-> <expected Depends verdict> <expected rc>
+  rm -rf "$W_T/q"; w_item q/02-b.md "$2" 'b/x.sh'
+  w_run "$W_T" "$H" "$W_T/q/02-b.md" --lint
+  local dep="0 of 1 items depend on every earlier item: none"
+  case "$3" in ok) ;; *) dep="1 of 1 items depend on every earlier item: $W_T/q/02-b.md" ;; esac
+  x_rc "$1" "$4" "$W_T/q/02-b.md: Touches ok; Depends on $3\n0 of 1 items will run alone: none\n$dep"
+}
+x_lint_d "X3 lint: valid Touches and NO Depends on ⇒ exit 1" - 'missing section' 1
+x_lint_d "X3 lint: Depends on ids and paths are ok" '03\n../other/01-x.md' ok 0
+x_lint_d "X3 lint: Depends on none mixed with ids" 'none\n03' 'line 4: "none" — none mixed with ids' 1
+x_lint_d "X3 lint: Depends on none repeated" 'none\nnone' 'line 5: "none" — none repeated' 1
+x_lint_d "X3 lint: Depends on prose ⇒ not an id or *.md path" 'item 03 (part B)' 'line 4: "item 03 (part B)" — not an id or *.md path' 1
+x_lint_d "X3 lint: Depends on 4-digit id ⇒ not an id or *.md path" '0003' 'line 4: "0003" — not an id or *.md path' 1
+x_lint_d "X3 lint: Depends on empty section" '' 'line 3: "## Depends on" — empty section' 1
+x_lint_d "X3 lint: Depends on duplicated" 'none\n\n## Depends on\nnone' 'line 6: "## Depends on" — duplicated section (+1 more)' 1
+# Directory input = what the folder intake would enqueue (resolve_folder: done / proposed / parked skipped).
+rm -rf "$W_T/q"
+w_item q/01-a.md none 'a'; w_item q/02-b.md - 'b'; w_item q/03-c.md none 'c' 'done'; w_item q/04-d.md none 'd' 'proposed'
+w_run "$W_T" "$H" "$W_T/q" --lint
+x_rc "X3 lint: directory input lints exactly the resolve_folder set; one line per item + two count lines; exit 1" 1 "$W_T/q/01-a.md: Touches ok; Depends on ok\n$W_T/q/02-b.md: Touches ok; Depends on missing section\n0 of 2 items will run alone: none\n1 of 2 items depend on every earlier item: $W_T/q/02-b.md"
+w_run "$W_T" "$H" "$W_T/q/" --lint --max 0
+[ "$W_RC" -eq 1 ] && [ -n "$W_OUT" ] && ok "X3 lint: --max is ignored (even an invalid one) — lint never needs it" || no "X3 lint with --max 0: rc=$W_RC out='$W_OUT' err=$W_ERR"
+# Item-list and run-file inputs resolve the plan set exactly as the planner does.
+w_list q/01-a.md
+w_run "$W_T" "$H" "$W_T/list" --lint
+x_rc "X3 lint: item-list input (display = the list line)" 0 'q/01-a.md: Touches ok; Depends on ok\n0 of 1 items will run alone: none\n0 of 1 items depend on every earlier item: none'
+printf '# Automate Run: automate-test\n## Status: running\n## Queue\n- [x] q/03-c.md\n- [ ] q/02-b.md\n## Current\n' > "$W_T/run-lint.md"
+w_run "$W_T" "$H" "$W_T/run-lint.md" --lint
+x_rc "X3 lint: run-file input = its unchecked Queue rows" 1 'q/02-b.md: Touches ok; Depends on missing section\n0 of 1 items will run alone: none\n1 of 1 items depend on every earlier item: q/02-b.md'
+w_list q/01-a.md q/09-gone.md; w_run "$W_T" "$H" "$W_T/list" --lint
+w_fails "X3 lint: an item that names no file ⇒ exit 1, empty stdout" 'plan-waves: item not found: q/09-gone.md'
+w_run "$W_T" "$H" "$W_T/nope.md" --lint; w_fails "X3 lint: missing input ⇒ usage" 'usage:'
+
+# X4 one grammar (AC-5): on every shape, lint `ok`/`ok (declared unknown)` vs failure agrees with
+#    what the planner reads — Touches known ⇔ the middle item shares wave 1 with two disjoint items;
+#    Depends on parsed ⇔ the second item shares wave 1 (its dependency 03 is out of the plan set and done).
+x_agree_n=0
+while IFS='|' read -r x_lbl x_body; do
+  [ -n "$x_lbl" ] || continue
+  w_alone "$x_lbl" "$x_body"; x_plan="$W_OUT"
+  w_run "$W_T" "$H" "$W_T/q/02-b.md" --lint
+  x_v="$(printf '%s\n' "$W_OUT" | sed -n '1s/^.*: Touches \(.*\); Depends on .*$/\1/p')"
+  if [ "$x_plan" = "wave 1: q/01-a.md q/02-b.md q/03-c.md" ]; then x_known=1; else x_known=0; fi
+  if [ "$x_v" = ok ]; then x_lok=1; else x_lok=0; fi
+  if [ "$x_known" -eq "$x_lok" ] && [ -n "$x_v" ]; then x_agree_n=$((x_agree_n+1)); else no "X4 Touches '$x_lbl': planner known=$x_known but lint says '$x_v'"; fi
+done <<'SHAPES'
+path|b/x.sh
+dir|b/
+two|b/x.sh\nb/y.sh
+blank-lines|b/x.sh\n\nb/y.sh
+dot-name|b/.x.sh
+unknown|unknown
+unknown-twice|unknown\nunknown
+backtick|`b/x.sh`
+glob|b/*.sh
+pipe|a|b
+prose|b/x.sh and friends
+bullet|- b/x.sh
+paren|(only if a test exposes a defect)
+comma|a, b
+mixed|b/x.sh\nunknown
+empty|
+dotdot|b/../x
+dot|.
+dot-lead|./b/x.sh
+lead-slash|/b/x.sh
+double-slash|b//x.sh
+trailing-space|b/x.sh\0040
+duplicate|b/x.sh\n\n## Touches\nb/y.sh
+fence|b/x.sh\n```\nb/y.sh\n```
+SHAPES
+[ "$x_agree_n" -eq 24 ] && ok "X4 lint ok ⇔ planner known on all 24 Touches shapes" || no "X4 Touches agreement on $x_agree_n of 24 shapes"
+x_agree_n=0
+while IFS='|' read -r x_lbl x_body; do
+  [ -n "$x_lbl" ] || continue
+  rm -rf "$W_T/q"; w_item q/01-a.md none 'a'; w_item q/02-b.md "$x_body" 'b'; w_item q/03-c.md none 'c' 'done'
+  w_list q/01-a.md q/02-b.md; w_run "$W_T" "$H" "$W_T/list" --max 3; x_plan="$W_OUT"
+  w_run "$W_T" "$H" "$W_T/q/02-b.md" --lint
+  x_v="$(printf '%s\n' "$W_OUT" | sed -n '1s/^.*; Depends on \(.*\)$/\1/p')"
+  if [ "$x_plan" = "wave 1: q/01-a.md q/02-b.md" ]; then x_known=1; else x_known=0; fi
+  if [ "$x_v" = ok ]; then x_lok=1; else x_lok=0; fi
+  if [ "$x_known" -eq "$x_lok" ] && [ -n "$x_v" ]; then x_agree_n=$((x_agree_n+1)); else no "X4 Depends '$x_lbl': planner parsed=$x_known ($x_plan) but lint says '$x_v'"; fi
+done <<'SHAPES'
+none|none
+id|03
+id-1|3
+path|03-c.md
+rel-path|../q/03-c.md
+none-mixed|none\n03
+none-twice|none\nnone
+prose|item 03 (part B)
+four-digit|0003
+bullet|- 03
+empty|
+fence|03\n```\n03\n```
+SHAPES
+rm -rf "$W_T/q"; w_item q/01-a.md none 'a'; w_item q/02-b.md - 'b'
+w_list q/01-a.md q/02-b.md; w_run "$W_T" "$H" "$W_T/list" --max 3; x_plan="$W_OUT"
+w_run "$W_T" "$H" "$W_T/q/02-b.md" --lint
+case "$x_plan|$W_OUT" in "wave 1: q/01-a.md"*"Depends on missing section"*) x_agree_n=$((x_agree_n+1)) ;; *) no "X4 Depends 'missing': $x_plan / $W_OUT" ;; esac
+[ "$x_agree_n" -eq 13 ] && ok "X4 lint ok ⇔ planner parsed on all 13 Depends on shapes" || no "X4 Depends agreement on $x_agree_n of 13 shapes"
+
+# X5 read-only: --lint and --explain write nothing in the fixture tree; the only git call is rev-parse.
+rm -rf "$W_T/q"; w_item q/01-a.md none 'a'; w_item q/02-b.md - 'b'; w_list q/01-a.md q/02-b.md
+for x_mode in "--lint" "--max 3 --explain"; do
+  : > "$W_T/spy/calls"
+  w_before="$(cd "$W_T" && find q list -print | env LC_ALL=C sort | xargs ls -ld 2>/dev/null | awk '{ print $5, $NF }')"
+  # shellcheck disable=SC2086 # word-split on purpose: the mode's flags
+  W_RC=0; W_OUT="$(cd "$W_T" && PATH="$W_T/spy:$PATH" bash "$H" plan-waves list $x_mode 2>/dev/null)" || W_RC=$?
+  w_after="$(cd "$W_T" && find q list -print | env LC_ALL=C sort | xargs ls -ld 2>/dev/null | awk '{ print $5, $NF }')"
+  [ -n "$W_OUT" ] && [ "$(cat "$W_T/spy/calls")" = "git rev-parse --show-toplevel" ] && [ "$w_before" = "$w_after" ] \
+    && ok "X5 plan-waves list $x_mode: read-only (tree unchanged, only git rev-parse, no gh)" \
+    || no "X5 $x_mode: rc=$W_RC calls=$(tr '\n' '|' < "$W_T/spy/calls") out='$W_OUT'"
+done
+
+# X6 MUTATION CONTROL (AC-4): a helper copy whose ONE grammar line also accepts `(`, `)` and spaces
+#    must turn X3's parenthetical assertion red — the lint verdict comes from that line, not a copy.
+sed '/# PW_TOUCHES_GRAMMAR/s|!/^\[A-Za-z0-9._\\/@+-\]+\$/|!/^[A-Za-z0-9._\\/@+() -]+$/|' "$H" > "$W_T/mut-paren.sh"
+if [ -s "$W_T/mut-paren.sh" ] && ! cmp -s "$H" "$W_T/mut-paren.sh" && bash -n "$W_T/mut-paren.sh"; then
+  rm -rf "$W_T/q"; w_item q/02-b.md none '(only if a test exposes a defect)'
+  w_run "$W_T" "$W_T/mut-paren.sh" "$W_T/q/02-b.md" --lint
+  case "$W_OUT" in
+    *"Touches ok; "*) ok "X6 MUTATION CONTROL: grammar-accepts-parenthetical mutant turns X3's parenthetical assertion red (lint now says ok, rc=$W_RC)" ;;
+    *) no "X6 mutation control stayed green — the X3 parenthetical assertion is vacuous: $W_OUT" ;;
+  esac
+  w_run "$W_T" "$H" "$W_T/q/02-b.md" --lint
+  x_has "X6 mutation control: the REAL helper still flags it" "$W_T/q/02-b.md: Touches line 7: \"(only if a test exposes a defect)\" — parenthetical/prose; Depends on ok"
+else no "X6 mutation control inconclusive: mutant empty, identical or not valid bash"; fi
+
+# X7 GRAMMAR DRIFT: the Touches path grammar is hand-copied in three places that share no code —
+#    the PW_TOUCHES_GRAMMAR line (this helper's --lint), PATH_TOK / BAD_SEG beside touches_of in
+#    automate-dismissed.sh, and vt_touches in propose-from-verify.sh. One token set, every token's file
+#    created under a fixture root (so only the grammar can reject it), runs through all three; each must
+#    accept/reject exactly as the expected column. Tokens stay inside the SHARED grammar: the two
+#    extractors' own extra rules (needs `/` or `.`, no trailing `/`, trailing `.` stripped) are not
+#    exercised. The extractor copies are run straight out of their scripts (sed-extracted), never re-typed.
+X7_R="$W_T/x7"; rm -rf "$X7_R"
+x7_tokens='src/a.ts|1 @scope/x.ts|1 -dash/x.ts|1 a+b/c_d.v1.md|1 /abs/x.ts|0 a//b.ts|0 ./c.ts|0 d/../c.ts|0 d/./c.ts|0 e/f~g.ts|0 e/f$g.ts|0'
+for x7_p in src/a.ts @scope/x.ts -dash/x.ts a+b/c_d.v1.md abs/x.ts a/b.ts c.ts d/c.ts 'e/f~g.ts' 'e/f$g.ts'; do
+  mkdir -p "$X7_R/$(dirname -- "$x7_p")"; : > "$X7_R/$x7_p"
+done
+X7_PY="$(sed -n '/^PATH_TOK = re.compile/,/^    return found$/p' "$HERE/automate-dismissed.sh")"
+X7_SH="$(sed -n '/^vt_touches() {$/,/^}$/p' "$HERE/propose-from-verify.sh")"
+if [ -z "$X7_PY" ] || ! grep -q '^def touches_of' <<<"$X7_PY" || [ -z "$X7_SH" ]; then
+  no "X7 drift test could not extract the grammar copies (PATH_TOK..touches_of / vt_touches moved?)"
+else
+  for x7_e in $x7_tokens; do
+    x7_t="${x7_e%|*}"; x7_want="${x7_e#*|}"
+    rm -rf "$W_T/q"; w_item q/02-b.md none "$x7_t"
+    w_run "$X7_R" "$H" "$W_T/q/02-b.md" --lint
+    case "$W_OUT" in *": Touches ok; "*) x7_awk=1 ;; *) x7_awk=0 ;; esac
+    x7_py="$(X7_CODE="$X7_PY" python3 -c '
+import os, re, sys
+repo_root = sys.argv[1]
+exec(os.environ["X7_CODE"])
+print(1 if sys.argv[2] in touches_of({"source": sys.argv[2], "finding": ""}) else 0)' "$X7_R" "$x7_t" 2>&1)"
+    x7_sh="$(VT_ROOT="$X7_R" bash -c 'eval "$1"; grep -qxF -- "$2" < <(vt_touches "$2") && echo 1 || echo 0' _ "$X7_SH" "$x7_t" 2>&1)"
+    if [ "$x7_awk$x7_py$x7_sh" = "$x7_want$x7_want$x7_want" ]; then
+      ok "X7 grammar drift: '$x7_t' accepted=$x7_want by all three copies"
+    else
+      no "X7 grammar drift on '$x7_t' (want $x7_want): PW_TOUCHES_GRAMMAR=$x7_awk touches_of=$x7_py vt_touches=$x7_sh"
+    fi
+  done
 fi
 rm -rf "$W_T"
 echo

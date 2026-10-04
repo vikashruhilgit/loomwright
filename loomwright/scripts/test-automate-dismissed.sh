@@ -660,6 +660,67 @@ if [ -s "$TOP/readme-gen.md" ] && cmp -s "$TOP/readme-gen.md" "$REPO/loomwright/
 else no "B: proposed/README.md differs from the propose-work.sh template"; fi
 grep -qF -- '--dismissed-*.md` drafts for dismissed review findings' "$TOP/readme-gen.md" && ok "B: README template names the second writer" || no "B: README template lacks the second writer"
 
+echo "== A11. ## Depends on / ## Touches sections (parallel-automate/10): lint-clean, identity-stable =="
+fx 11
+mkdir -p "$R/src"; : > "$R/src/real.sh"; : > "$R/README.md"
+sup 1 '[{finding: "bug in src/real.sh and src/gone.sh; also /etc/passwd, ../x.sh and a//b.sh", reason: below_severity_floor, source: "src/real.sh:12", severity: HIGH}, {finding: "plain prose only, no file", reason: below_severity_floor, source: code_reviewer, severity: MEDIUM}, {finding: "low in README.md.", reason: nit, source: red_team, severity: LOW}, {finding: "another low", reason: nit, source: red_team, severity: LOW}]'
+drafts
+F1="$(draft_with "bug in src/real.sh")"; F2="$(draft_with "plain prose only")"; FS="$(draft_with "low in README.md.")"
+between() { awk '/^- \*\*Decision:\*\* /{p=1; next} /^## Findings? \(verbatim/{exit} p' "$1"; }
+if [ -n "$F1" ] && [ "$(between "$F1")" = "$(printf '\n## Depends on\nnone\n\n## Touches\nsrc/real.sh\n')" ]; then
+  ok "A11 per-finding: Depends on none + Touches = the existing named file only (src/gone.sh absent; /etc/passwd, ../x.sh, a//b.sh refused), before ## Finding"
+else no "A11 per-finding sections: $(between "${F1:-/dev/null}" | tr '\n' '|')"; fi
+[ -n "$F2" ] && [ "$(between "$F2")" = "$(printf '\n## Depends on\nnone\n\n## Touches\nunknown\n')" ] && ok "A11 per-finding naming no file: Touches unknown" || no "A11 no-file sections: $(between "${F2:-/dev/null}" | tr '\n' '|')"
+case "$FS" in *--dismissed-summary.md) ok "A11 the LOW nits landed in the summary draft" ;; *) no "A11 summary draft not found: '$FS'" ;; esac
+[ -n "$FS" ] && [ "$(between "$FS")" = "$(printf '\n## Depends on\nnone\n\n## Touches\nREADME.md\n')" ] && ok "A11 summary: Touches = union of the listed entries' existing paths, before ## Findings" || no "A11 summary sections: $(between "${FS:-/dev/null}" | tr '\n' '|')"
+bad=""
+for f in "$F1" "$F2" "$FS"; do
+  [ -n "$f" ] || { bad="$bad [missing draft]"; continue; }
+  lo="$(bash "$H" plan-waves "$f" --lint --root "$R" 2>/dev/null)"; lrc=$?
+  case "$(printf '%s\n' "$lo" | head -n1)" in
+    *": Touches ok; Depends on ok"|*": Touches ok (declared unknown); Depends on ok") [ "$lrc" -eq 0 ] || bad="$bad [$(basename "$f") rc=$lrc]" ;;
+    *) bad="$bad [$(basename "$f"): $(printf '%s' "$lo" | head -n1)]" ;;
+  esac
+done
+[ -z "$bad" ] && ok "A11 plan-waves --lint reports every draft (per-finding and summary) ok / ok (declared unknown), exit 0" || no "A11 lint:$bad"
+# Identity: the sections never feed the name or a decision. Decide follow-up on F1, then remove the
+# files both drafts name and re-run: F1 is KEPT under the same name with the same decision; the
+# undecided summary is rewritten under the SAME name (Touches now unknown); no draft is added or lost.
+LEDGER="$AD/$RUN_ID.dismissed-decisions"
+bash "$H" dismissed-decide "$RF" "$F1" follow-up >/dev/null 2>&1
+n_before="$(nfiles)"; led_before="$(cat "$LEDGER" 2>/dev/null)"; f1_before="$(cksum < "$F1")"
+rm -f "$R/src/real.sh" "$R/README.md"
+drafts
+[ "$(nfiles)" = "$n_before" ] && [ -f "$F1" ] && [ -f "$FS" ] && ok "A11 named files removed ⇒ same draft names, none added or lost ($n_before)" || no "A11 names changed: $(ls "$PROP")"
+[ "$(cat "$LEDGER" 2>/dev/null)" = "$led_before" ] && [ "$(awk -F'\t' -v n="$(basename "$F1")" '$1 == n { d = $2 } END { print d }' "$LEDGER")" = follow-up ] \
+  && ok "A11 ledger untouched and F1's decision still follow-up after the re-render" || no "A11 ledger changed: $(tr '\n' '|' < "$LEDGER")"
+[ "$(cksum < "$F1")" = "$f1_before" ] && ok "A11 a decided (follow-up) draft is kept byte-for-byte, never re-rendered" || no "A11 follow-up draft rewritten"
+grep -qxF 'unknown' "$FS" && ! grep -qxF 'README.md' "$FS" && ok "A11 the undecided summary re-renders Touches unknown under the same name" || no "A11 summary not re-rendered: $(between "$FS" | tr '\n' '|')"
+
+echo "== A12. Touches containment: symlinks and .git never reach Touches (mirrors test-propose-from-verify.sh) =="
+# touches_of's CONTAINMENT rule (extractor-only — the planner's --lint grammar is unaffected, so the
+# test-automate-helpers.sh X7 drift test does not cover it; this section and the matching one in
+# test-propose-from-verify.sh do, with the same fixture set). Decision under test for an in-repo
+# symlink: a symlinked DIRECTORY resolving inside the root is accepted as written (indir/app.ts); a
+# symlinked FILE is rejected wherever it points, inside (inlink.ts) or outside (flink.txt).
+fx 12
+OUTSIDE12="$TOP/outside12"; mkdir -p "$OUTSIDE12" "$R/src"; : > "$OUTSIDE12/secret.txt"; : > "$R/src/app.ts"
+ln -s "$OUTSIDE12" "$R/lnk"; ln -s "$OUTSIDE12/secret.txt" "$R/flink.txt"
+ln -s src/app.ts "$R/inlink.ts"; ln -s src "$R/indir"
+"$REAL_GIT" -C "$R" add lnk flink.txt inlink.ts indir src/app.ts >/dev/null 2>&1
+sup 1 '[{finding: "bug: src/app.ts lnk/secret.txt flink.txt inlink.ts indir/app.ts .git/config .GIT/config .git/HEAD", reason: below_severity_floor, source: code_reviewer, severity: HIGH}]'
+drafts
+F12="$(draft_with "bug: src/app.ts")"
+T12="$(awk '/^## Touches$/{p=1; next} p && /^## /{exit} p && NF' "${F12:-/dev/null}")"
+t12_has() { grep -qxF -- "$1" <<<"$T12"; }
+[ -n "$F12" ] || no "A12 draft not written: $dd_out"
+t12_has src/app.ts && ok "A12 containment (e): a normal existing path is still accepted" || no "A12 normal path dropped: Touches '$T12'"
+! t12_has lnk/secret.txt && ok "A12 containment (a): a file under a symlink to an OUTSIDE dir is rejected" || no "A12 containment (a): lnk/secret.txt leaked into Touches: '$T12'"
+! t12_has flink.txt && ok "A12 containment (b): a symlinked FILE pointing outside is rejected" || no "A12 containment (b): flink.txt leaked into Touches: '$T12'"
+! t12_has inlink.ts && t12_has indir/app.ts && ok "A12 containment (c): in-repo symlinked file rejected, in-repo symlinked dir accepted as written" || no "A12 containment (c): in-repo symlink handling: '$T12'"
+! t12_has .git/config && ! t12_has .GIT/config && ! t12_has .git/HEAD && ok "A12 containment (d): .git/ paths are rejected (any case)" || no "A12 containment (d): .git path leaked into Touches: '$T12'"
+[ "$T12" = "$(printf 'indir/app.ts\nsrc/app.ts')" ] && ok "A12 Touches is exactly the two contained paths" || no "A12 Touches set: '$(tr '\n' '|' <<<"$T12")'"
+
 echo
 echo "test-automate-dismissed: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
