@@ -6,6 +6,8 @@ and refused by `runfile-write` / `progress-append` / `queue-checkoff`, while `bu
 different leniency. Both readers now share one title rule (`RUN_TITLE_ERE`, mirrored byte-for-byte into
 `build-handoff.sh` and pinned by a test): an optional BOM, 0-3 leading spaces, any letter case and flexible whitespace,
 exactly one `#`. H2 lines, 4+-space- and tab-indented lines (indented code blocks) and the result sidecars are still
-not run files. New legs cover each tolerated form, the negatives, the write validators and `plan-waves`, with gated
+not run files, and `build-handoff.sh`'s `/handoff` AUTOMATE listing now applies the same predicate, so the result
+sidecars no longer appear as work items (a dir holding only sidecars reads as empty). New legs cover each tolerated
+form, the negatives, the write validators and `plan-waves`, with gated
 mutation controls proving each tolerance and the indentation cap are load-bearing. Rule:
 `skills/automate-loop/SKILL.md` §4 step 1.

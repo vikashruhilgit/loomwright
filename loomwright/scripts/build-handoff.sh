@@ -9,7 +9,8 @@
 #
 # MODE-AGNOSTIC (AC2): ONE unified newest-first work-item list interleaving Supervisor jobs
 # (.supervisor/jobs/{pending,in-progress,done,failed}/*.md), autonomous runs
-# (.supervisor/autonomous/<session_id>/) and automate runs (.supervisor/automate/<run>.md) —
+# (.supervisor/autonomous/<session_id>/) and automate runs (.supervisor/automate/<run>.md, only
+# files with a run-file title line — is_run_file's predicate; the result sidecars are skipped) —
 # NOT three per-mode digests.
 #
 # FIVE FACETS per item where derivable (AC3): decision · why · tried/rejected · current state ·
@@ -191,8 +192,14 @@ for d in .supervisor/autonomous/*/; do
 done
 
 # Automate runs — does NOT exist on this repo today; nullglob makes this a clean no-op (AC6).
+# Only RUN FILES are items: the SAME predicate as is_run_file in automate-helpers.sh (the mirrored
+# RUN_TITLE_ERE under `env LC_ALL=C grep -qE`). The engine's result sidecars in the same dir
+# (`<run_id>.review-heal-result.md`, `<run_id>.supervisor-result.md`) carry no title line and are
+# skipped BEFORE surfaces_found is set, so a dir holding only sidecars reads exactly like an absent
+# dir ("nothing to summarize yet") instead of listing each sidecar under its file name.
 for f in .supervisor/automate/*.md; do
   [ -f "$f" ] || continue
+  env LC_ALL=C grep -qE "$RUN_TITLE_ERE" "$f" 2>/dev/null || continue
   surfaces_found=1
   e="$(mtime_epoch "$f")"; e="${e:-0}"
   printf '%s\t%s\t%s\n' "$e" "AUTOMATE" "$f" >> "$index"
@@ -304,7 +311,8 @@ if [ -s "$index" ]; then
         # Title reader — mirrors is_run_file (automate-helpers.sh RUN_TITLE_ERE): the SAME
         # tolerated title-line forms (optional UTF-8 BOM, 0-3 leading spaces, case-insensitive,
         # flexible whitespace, exactly one `#`) via the mirrored RUN_TITLE_ERE defined near the
-        # top of this file; no title line ⇒ basename fallback.
+        # top of this file. The index loop above admits only files with a title line, so the
+        # basename fallback below is defensive only (e.g. a file rewritten between index and render).
         title="$(env LC_ALL=C sed -nE "s/${RUN_TITLE_ERE}[[:space:]]*//p" "$path" 2>/dev/null | head -1)"
         [ -n "$title" ] || title="$(basename "$path" .md)"
         a_status="$(sed -nE 's/^##[[:space:]]*Status:[[:space:]]*//p' "$path" 2>/dev/null | head -1)"
