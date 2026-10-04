@@ -41,3 +41,10 @@ and so 10 is attempted only if five is clean.
 ## Done when
 The measures are recorded in this file's run record, P2 is set in `00-overview.md`, the five PRs are merged or
 closed by the owner, and the clones and throwaway branch are removed with `leaks` empty.
+
+## Pre-S2 evidence: wave w1 (2026-10-04, two real lanes, A + relay, harness `s1h.sh`)
+- Items 08 (#375, merged `d3ee8f2`) and 10 (#377, merged `2bdb2b7`), launched together 10:29Z from `95e8601`; throwaway records branch `loomwright-meta-w1`; records carried to `loomwright-meta` (`fc2e547`); lanes torn down, `leaks` empty, primary clean.
+- **~17 relayed questions** across both lanes (resume ×2, Plan Review gates ×5 including two attempt-3s, pre-flight-overlap-on-own-base ×1, children-settled ×1, dismissed findings ×4 calls). By item 12's classification, about half were routine.
+- **One operator intervention:** w1-08 ended its turn mid-drain to wait for CI, so its background wait was stopped and the lane stalled (no process, no park, no question). Resumed once with a decision-free note → 05 Scope 14 stalled-lane detection.
+- **Findings filed:** `automate-followups/29` (w1-10 never set `## Current` at PICK), the second cause in `/17` (turn-limit stops leave no terminal row), `/30` (case H of `test-lens-run.sh` is not concurrency-safe, found by the operator's three-clone check of #375), 05 Scope 15 (merge-readiness report; #375 itself listed its must-pass check as "Not verified"), item 12 evidence (pre-flight overlap with the lane's own base; already-fixed drafts), and a second home-path scrub failure (w1-08's brief) for `meta-sync-followups/04`.
+- **Operator merge checks** caught a gap that review/heal does not cover (an unrun must-pass Validation step), and an undercounted Touches list (#377 touched the `/propose` writer scripts, not just the command file).
