@@ -23,6 +23,15 @@
   agent types whose stop is observed — never silently drop the check. Fixture: a session log with a settled
   general-purpose spawn must read `settled`.
 
+## Second cause seen (2026-10-04, wave w1 lane w1-08) — widens this item
+The children-settled gate also failed on two **plugin** agents: `loomwright:loomwright:context-keeper` runs that hit
+Context-Keeper's 3-turn limit AFTER their writes landed (verified in the lane's `state.md`: the pre-flight decision
+and the worker-result row). Each had only `agent_identity` + `working` rows, no terminal row. So the gap is not only
+"non-plugin agent types have no SubagentStop matcher": **any child that ends by hitting its turn limit leaves no
+terminal lifecycle row**, and the gate cannot tell it from a hung child. The fix must cover both: a terminal row
+(e.g. `agent_lifecycle: ended reason=max_turns`) for every SubagentStop, whatever the agent type and however it
+ended. Both lanes' owners answered "proceed anyway", so this gate is producing human questions that carry no signal.
+
 ## Depends on
 none
 
