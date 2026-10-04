@@ -341,3 +341,9 @@ answers, P8 recommendation.
   - rules §8.1 bullet contradicts the exception above it: **Fix now**.
   - Summary of 5 LOW items: **Keep**.
   - **Recurrence across v1 and v2:** v1's lane B raised the Heal-reason gap and the P9/P10 pin gap on item 18 too. Both runs' workers miss the same two things, so they are brief or skill blind spots and not chance. Item 18's brief template (or Launch Pad) should name the closed Heal-reason enumerations and require a mutation check for each new pin.
+- **Hand-off (08:5xZ):** the v1 session (`0d556d54`, fork 2) handed S1 to this session (`07b3f63c`), which is now the **single owner** of the S1 record, comparison and teardown; the v1 session makes no more S1 edits or `loomwright-meta` pushes. Verified on handover: the "S1 lane note" exists **only** in the v1 clones' copies (spike-b/18, spike-a/19). The primary's copies and `origin/loomwright-meta` have none, so the planned "strip the lane note before records return" step is **not needed**. **Final teardown list (v1):**
+  - clones `ai-agent-manager-lanes/spike-a` and `spike-b` (idle, no process). spike-a holds **3 undecided item-19 dismissed drafts** (`automate-2026-10-04-072436--19-…--dismissed-{aa7ea74c,b1e35374,b6ae37cb}.md`), which need an owner keep/drop before teardown;
+  - throwaway branch `loomwright-meta-s1` (v1's records never went there; neither PR merged);
+  - `../ai-agent-manager-lanes-s1-{before,launch}.txt`;
+  - v1 branches on origin, now `s1v1/item-18|19`;
+  - v1's `s1-answer.sh`, `s1-status.sh`, `s1-feed.sh` and the unloaded `s1-lanes` mod (v1 paths).
