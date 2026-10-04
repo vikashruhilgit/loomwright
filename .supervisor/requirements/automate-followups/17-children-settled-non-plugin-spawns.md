@@ -30,7 +30,7 @@ and the worker-result row). Each had only `agent_identity` + `working` rows, no 
 "non-plugin agent types have no SubagentStop matcher": **any child that ends by hitting its turn limit leaves no
 terminal lifecycle row**, and the gate cannot tell it from a hung child. The fix must cover both: a terminal row
 (e.g. `agent_lifecycle: ended reason=max_turns`) for every SubagentStop, whatever the agent type and however it
-ended. Both lanes' owners answered "proceed anyway", so this gate is producing human questions that carry no signal.
+ended. Both lanes' owners answered "proceed anyway", so this gate is producing human questions that carry no signal. **Third occurrence (wave w2, lane w2-30):** a `worker` stopped at its 40-turn limit after committing; a continuation worker finished. Again no terminal row, again "proceed anyway". That makes three false gate questions in one day (S1 v2: an `Explore` agent; w1-08: two `context-keeper`s; w2-30: a `worker`), so this item should be scheduled early.
 
 ## Depends on
 none
