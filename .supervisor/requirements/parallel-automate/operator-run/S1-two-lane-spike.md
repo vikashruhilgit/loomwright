@@ -1,6 +1,6 @@
 # S1 — Two-lane spike (OPERATOR-RUN — not an `/automate` item; no plugin change)
 
-## Status: parked (operator-run: lives in `operator-run/` so folder intake never enqueues it; run by hand after M1)
+## Status: done (operator-run, closed 2026-10-04 by session 07b3f63c: v1 + v2 run, Q1–Q7 answered, findings written into 05 and 06, P8 = A + relay, all clones and spike branches removed; see the closing note at the end)
 
 ## Depends on
 M1
@@ -398,3 +398,15 @@ answers, P8 recommendation.
   - **`snapshot after`: the primary is identical to before** on status, worktree list, run lock, config checksum and HEAD. The only diff is the `loomwright-meta` tip, which moved because of this session's own record pushes. (The primary is still on `6a048be` while `origin/main` has #372 and #374; pulling it is the owner's call.)
   - **Written back:** 05 and 06 "Spike findings" filled and both set `pending`; overview **P8 = A + relay**.
   - **Left for S1 "Done when":** v1 teardown (clones `spike-a`/`spike-b`, branch `loomwright-meta-s1`, branches `s1v1/item-18|19`, spike-a's 3 undecided drafts), the throwaway `loomwright-meta-s1v2`, and stopping the lanes mod.
+
+## S1 closed (2026-10-04 ~11:00Z)
+- **Done-when, each checked:** both PRs merged by the owner (#372 item 18, #374 item 19; v1's #370/#371 closed). The seven answers are in 05/06 "Spike findings". P8 = A + relay in `00-overview.md`. Every clone is removed.
+- **Teardown (owner yes):**
+  - spike-a's 3 undecided item-19 drafts were dropped; all are fixed on `main` by #374 (build-handoff uses `RUN_TITLE_ERE`; 0–3 indent cap);
+  - removed clones `spike-a` and `spike-b` (no process, no commit outside origin);
+  - deleted origin branches `loomwright-meta-s1`, `loomwright-meta-s1v2`, `s1v1/item-18` and `s1v1/item-19`. v1's code stays reachable at `refs/pull/370/head` (`dfa9c0e`) and `refs/pull/371/head` (`5c5bff4`);
+  - removed the `s1-lanes` mod from this session's mods folder (its source stays in the v1 session's folder for S2);
+  - pruned local refs.
+  - No S1 process remains. The only merge watcher running belongs to `loomwright-studio` #25 (another repo, not S1).
+- **Kept on purpose (local evidence):** `ai-agent-manager-lanes-v2/` (`s1h.sh`, `archive/`, `q6-ci-contention.log`, snapshots, `launch.log`), plus v1's `s1-{answer,status,feed}.sh` and `../ai-agent-manager-lanes-s1-{before,launch}.txt`.
+- **Follow-ups this spike produced** (written as requirements): `parallel-automate/08`–`13`, `operator-run/S2`, 05 Scope 14. Not yet written: the `provides` quote parser; children-settled check order; a notification group per lane plus no re-fire on resume; the item-18 brief blind spot (closed Heal-reason lists, a mutation check per pin); `meta-sync.sh` reading the mode line; a priority bump for `meta-sync-followups/04`.
