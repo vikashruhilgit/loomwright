@@ -124,3 +124,113 @@ A concurrent two-suite measurement has not yet been taken.
 
 **Cost/time so far:** lane B 01:53:27Z → 02:07Z (Launch Pad + review only), $7.16 per its result event (the
 event's 1-minute duration is wrong; use the timestamps). Lane A was still running at 02:45Z.
+
+**Lane A finished (03:07:44Z, 74 min, 130 turns, $19.75):**
+- PR #370 opened. Phase 4.5 PASS (0 iterations). The drain reached READY in 2 rounds with 2 fix cycles: a
+  claude-review finding (build-handoff's title reader was still strict), then a `check-locale-prefix` CI failure
+  caused by that fix. Parked `awaiting_merge`. **Its merge watcher (pid 78867) runs INSIDE the clone**, the live
+  case for the new `lane-remove` refusal.
+- 3 dismissed-finding drafts stayed undecided: the lane was non-interactive, so `pending_decisions: 3`. The watcher
+  is already armed, so engine fix-now is no longer offered, by design. One MEDIUM is worth fixing: `[[:space:]]*`
+  before `#` also lists an indented sidecar title as a run.
+- Its own slips: the PR body was blanked for about a minute by a failed edit and then restored; the watcher was
+  armed and the lock released seconds BEFORE the park state was written (a broken `sed`, which `runfile-write`
+  rejected); the desktop notify call hung.
+- **Pairing finding: the two items were NOT disjoint.** The requirements named disjoint files, but both PRs touch
+  the companion files `loomwright/skills/SKILLS_INDEX.md` and `loomwright/docs/RESULT_SCHEMAS.md` (#370 also
+  touches `automate-loop/SKILL.md`). Picking pairs by hand from requirement text misses companions. This is
+  exactly what `plan-waves`' companion expansion (item 04) exists to catch, and the pair should have been checked
+  with it.
+
+**Lane B relay re-test (A + relay):** relaunched at 02:52:26Z with a permission host (`--permission-prompt-tool
+stdio` + stream-json input), a `PreToolUse`/`PermissionRequest` defer hook in the clone's
+`.claude/settings.local.json`, and NO `--non-interactive-fallback`. `AskUserQuestion` was present.
+- **Relay 1:** the `/automate` resume logic asked how to continue the unsaved reviewed brief and parked
+  (`tool_deferred`, 02:53:39Z). The main session relayed it, and the owner chose "Fold findings into draft" with
+  the note "fix the findings and review the brief again". The answer was written with `source: human` and the
+  lane resumed in the same session at 03:05:12Z; the hook fired again and returned the answer.
+- **Relay 2 (03:12:43Z → 03:13:57Z):** Supervisor Phase 1.5 pre-flight asked about the OVERLAP with open PR #370
+  (`SKILLS_INDEX.md` rebase conflict likely; `RESULT_SCHEMAS.md` in a different section). The owner chose "Proceed
+  anyway". **This answers Q2 for the sibling-PR-OPEN case:** the gate caught the companion-file overlap that the
+  hand pairing missed.
+- **Relay findings:**
+  - (a) **A free-text answer is read broadly.** Relay 1's "…review the brief again, then continue" was taken as
+    approval to SAVE. The lane folded all six findings, Plan Review 2 PASSed, the reviewer's 2 new LOW wording
+    items went in WITHOUT a further review, and the brief was saved. Because that path runs outside
+    `/autonomous`, **Launch Pad's own Phase 6 save ask never ran**, so the "how does Launch Pad hand over the brief
+    and ask" behaviour is still UNOBSERVED. Rule for the design: an answer is exactly one option; free text is a
+    note attached to that option, never the decision.
+  - (b) The relayer added a parenthetical to one option's description. Rule: relay verbatim, never edit a lane's
+    options.
+  - (c) **Each park ends the session as far as the plugin's hooks can tell.** Lifecycle hooks log `session_end`
+    `failed / session_ended_without_completion` and RELEASE the run lock, so while a lane waits for an answer its
+    lock is free.
+  - (d) After the resume the lane's run file stayed stale (`## Status: paused`, item `failed`, `awaiting_go`)
+    while the lane was implementing.
+- Lane B's first relay segment: 37 turns, $4.22. It then reached EXECUTE: branch
+  `feature/automate-followups-18-…`, baseline `ci-local` 142/142.
+
+- **NEW Q3 finding: headless `-p` killed lane B's implementation worker (03:30:39Z).** The lane's main thread
+  spawned the worker as a BACKGROUND agent and ended its turn. `claude -p` then waited its 10-minute ceiling for
+  background tasks and killed them: log line `Background tasks still running after 600s; terminating. Set
+  CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 to wait indefinitely.` The worker `Implement: automate-followups/18` was
+  marked `killed`. Lane A did not hit this; it apparently waited in the foreground. Left behind: 8 commits on the
+  branch (nothing uncommitted, not pushed, no PR); the run lock held by the dead pid (age about 17 min, so not yet
+  reclaimable); `auto_review` suppressed with a stranded `.config-backup.json` (the RECONCILE restore case).
+  Session cost so far $9.29. **Harness rule for v2 and for `lane-launch` (item 05):** set
+  `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`, or require lanes to wait for workers in the foreground. A lane must
+  never end its turn while a worker runs.
+
+**Owner review of lane A's PR #370 (03:20Z) — NOT acted on; the owner chose to redo S1 fresh and compare:**
+- Brief (self-approved by the lane): 10 ACs; tolerant `is_run_file` (BOM, whitespace, case); sidecars and H2
+  excluded; a mutant restoring the old exact match; docs; fragment only. Decisions the lane took ALONE:
+  case-insensitive matching; ANY whitespace before `#` (stated in the code comment, NOT in the ACs); whitespace
+  inside the phrase.
+- Diff: 8 files, +205/−16. The predicate is
+  `grep -qiE "^(BOM)?[[:space:]]*#[[:space:]]*automate[[:space:]]+run[[:space:]]*:"`, and build-handoff's
+  title reader got the same tolerance (drain round 1).
+- **Reproduced on the branch** (scratch dir, branch vs main):
+  - a sidecar quoting a run title in a 4-space INDENTED CODE block — main: not listed; #370: **listed — a
+    REGRESSION** (a quoting sidecar makes RESUME see two runs);
+  - a 3-space H1 (valid Markdown) — main: not listed; #370: listed (correct);
+  - a title inside a FENCED block — listed by both: an existing limitation, not caused by #370.
+- The review gate had flagged the regression and DISMISSED it as a below-threshold MEDIUM: a calibration data point.
+  Planned fix (not executed): `[[:space:]]*` → `[ ]{0,3}` before `#` (CommonMark: 4 or more spaces is code),
+  test legs (indented sidecar NOT listed; 3-space H1 listed) and a mutant restoring `[[:space:]]*` that must fail.
+  Route it through the plugin, not by hand: post the finding as a PR review comment, then run lane A's
+  `/review-pr <#370> --until-mergeable` with the relay.
+- Why the engine did not fix it: fix-now is offered only at the park, BEFORE the watcher is armed. Lane A could not
+  ask there (no question channel), so `pending_decisions: 3` was recorded and the next PICK offers only follow-up
+  or drop. **With the relay, the owner would have been asked fix-now at the right moment.**
+- Candidate follow-up (not queued): fence-aware `is_run_file`, ignoring lines between ``` fences.
+
+**Owner decision (2026-10-04): redo S1 FRESH and compare with this run** — see "S1 v2 plan" below.
+
+## S1 v2 plan (owner, 2026-10-04: redo fresh, compare with v1 above)
+**Same experiment, with v1's confounders removed. Spike-level only: hooks and scripts in the clones, NO plugin
+change — S1 stays "nothing committed to the plugin".**
+- **Same inputs:** the same two items (`automate-followups/18`, `/19`) from the same base commit `6a048be`, so
+  outcomes compare directly. v1's PRs stay open for comparison and are closed unmerged at the end unless the owner
+  picks one.
+- **Pair checked mechanically:** run `plan-waves` (with companion expansion) over the two items first and record
+  its answer. v1 picked by hand and missed the shared `SKILLS_INDEX.md` / `RESULT_SCHEMAS.md`.
+- **Both lanes get the question channel from launch:** a permission host plus the defer/deny hook, NO
+  `--non-interactive-fallback`. v1 had it only in lane B's re-run.
+- **Answers are exactly one option** (free text only as a note). The relay is verbatim and every question/answer
+  is logged with `source: human`.
+- **Observe Launch Pad's own Phase 6 save ask** in at least one lane: answer the resume and fold questions so the
+  lane goes through `/autonomous`, not around it.
+- **Reproducible harness first:** fold v1's ad-hoc commands into ONE script (setup / launch / relay /
+  status / feed / teardown) and test it on a scratch item before v2. That makes v2 repeatable and comparable.
+- **Planned measurements:** a deliberate concurrent `ci-local` in both lanes (Q6); the "sibling PR NOT open" Q2
+  case (start both lanes together); Q4 (owner merges lane A, then observe lane B's PR); multi-hour `claude -p`
+  liveness; rate-limit behaviour if it occurs.
+- **Visibility:** a status board, a live feed per lane, and a notification when a lane parks on a question. Probe
+  Remote Control as a watch-and-answer option before relying on it.
+- **Teardown with the new checklist:** stop watchers, copy records from `-s1`, remove clones, delete `-s1`, compare
+  the primary with the BEFORE snapshot.
+
+**Comparison table (fill v1 at the end of v1, v2 at the end of v2):** per lane — wall-clock, turns, cost,
+questions asked / relayed / decided by the lane alone, time parked, operator interventions, review findings
+(fixed / dismissed / dismissed-but-real), CI rounds, isolation result, leaks after teardown; per run — Q1–Q7
+answers, P8 recommendation.
