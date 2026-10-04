@@ -88,3 +88,9 @@ see who holds a slot and who is waiting.
 ## Evidence
 S1 v2 run record (`operator-run/S1-two-lane-spike.md`, "Q6 measured" and the v2 comparison table).
 - **Must-pass three-clone check, run by the operator 2026-10-04 (PR #375 head `bce76cf`; the PR listed it as "Not verified"):** three clones with the real origin ran `ci-local.sh --force` together. `ci-slot.sh status` was sampled every 15 s, 70 samples: **at most 2 holders**, the third queued (ticket shown, "waiting for a CI slot — position 1") and ran when a slot freed. Holders were the real `ci-local.sh` pids (the Plan Review risk). Wall-clock: the two concurrent runs 606 s each (6 jobs each), the queued run 449 s once started (1055 s total), solo 453 s; three runs in 1055 s against 1359 s serial. Result: c3 and solo **PASS 143/143**; c1 and c2 each **FAILED 1 test**, `test-lens-run.sh` case H. That is a pre-existing non-hermetic test (fixed stub name + machine-wide `pgrep`, 1 s timeout under load), not a slot defect, filed as `automate-followups/30`. Verdict: the mechanism is verified; merge recommended, with item 30 first in the next wave.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-04T11:51:32Z
+- **Brief:** .supervisor/jobs/done/2026-10-04-shared-ci-slots.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/375

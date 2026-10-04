@@ -85,3 +85,9 @@ exactly which path (or companion rule) put two items in different waves.
 ## Evidence
 2026-10-04 planner run over the backlog (this session); owner note that the items predate item 04.
 - **Backfill done by hand, 2026-10-04 (this session, ahead of the tooling):** 20 items fixed. 15 had neither section: agnostic-phase1/01–05, automate-followups/14/16/17/20/21, churn-ledger/01–02, token-economy/07, twin-remediation/06/10. 5 had prose in Touches: meta-sync-followups/01–05, whose conditions moved to a `## Notes on the touched files` section (the heading must NOT start with `## Touches`, or a prefix match sees a duplicate section). Four read-only research agents proposed the lists; every path was checked to exist, or to be a declared new file or a `changelog.d` fragment, before writing. Requirement docs (`.supervisor/...`) were kept OUT of Touches: they change on the metadata branch, not in the code PR, and listing them creates false conflicts. A grammar-check lint (`plan-waves` rules) now passes on all 37 open items. Planner over the 31 dispatchable ones: **24 waves / largest 2 → 20 waves / largest 7**. What still serialises is shared files (item 11), not missing metadata. The scope note in Scope 5 ("operator step after this PR") is therefore already satisfied; the PR only needs the tools and the writer changes.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-04T11:44:25Z
+- **Brief:** .supervisor/jobs/done/2026-10-04-touches-lint-and-explain.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/377
