@@ -332,19 +332,29 @@ def meta(e):
 # promoted draft is lint-clean (`automate-helpers.sh plan-waves --lint`). Depends on is always
 # `none`. Touches = every token of the finding's `source` and text that is a repo-relative FILE path
 # under the Touches grammar (chars [A-Za-z0-9._/@+-], contains `/` or `.`, no leading `/`, no `//`,
-# no `.`/`..` segment) AND exists as a regular file under the repo root — else `unknown`. The text is
-# untrusted: a token is only ever matched by regex and passed to an existence test (os.path.isfile),
-# never opened, executed or interpolated; grammar-valid tokens cannot start a `#`/`-` line. The
+# no `.`/`..` segment) AND passes the CONTAINMENT rule — else `unknown`. Containment: the token's
+# first segment is not `.git` (any case); its parent directory, physically resolved (os.path.realpath
+# here, `cd -P … && pwd -P` in vt_touches), is the resolved repo root or strictly under it and not in
+# its `.git` dir; and its final component is a regular file that is NOT itself a symlink. So a
+# committed symlink can never turn an existence test into a probe of a path outside the checkout
+# (an in-repo symlinked DIRECTORY that resolves inside the root is accepted as written; a symlinked
+# FILE is always rejected, wherever it points). The text is untrusted: a token is only ever matched
+# by regex and passed to stat-style tests (realpath / islink / isfile), never opened, executed or
+# interpolated; grammar-valid tokens cannot start a `#`/`-` line. The
 # sections do NOT feed the draft's identity: h8 and every ledger decision come from origin/source/
 # finding only, so a named file appearing or vanishing between passes rewrites the body of an
 # undecided draft under the SAME name and never touches a decision.
 # Grammar copy 2 of 3, sharing no code: the authority is the PW_TOUCHES_GRAMMAR line in
 # automate-helpers.sh (_pw_touches); copy 3 is vt_touches in propose-from-verify.sh. Change all three
 # together — test-automate-helpers.sh §X7 fails when they accept/reject a token differently.
+# Containment is an EXTRACTOR-only rule shared by copies 2 and 3 (the planner's --lint judges a
+# token's grammar, never the filesystem), so X7 does not cover it; test-automate-dismissed.sh and
+# test-propose-from-verify.sh each pin it with the same symlink / `.git` fixtures.
 PATH_TOK = re.compile(r"[A-Za-z0-9._/@+-]+")
 BAD_SEG = re.compile(r"(^|/)\.\.?(/|$)")
 
 def touches_of(e):
+    root_p = os.path.realpath(repo_root)
     found = set()
     for text in (e["source"], e["finding"]):
         for tok in PATH_TOK.findall(text or ""):
@@ -353,8 +363,18 @@ def touches_of(e):
                 continue
             if "//" in tok or BAD_SEG.search(tok):
                 continue
-            if os.path.isfile(os.path.join(repo_root, tok)):
-                found.add(tok)
+            if tok.split("/", 1)[0].lower() == ".git":
+                continue
+            p = os.path.join(repo_root, tok)
+            dp = os.path.realpath(os.path.dirname(p))
+            if dp != root_p and not dp.startswith(root_p + "/"):
+                continue
+            if (dp[len(root_p):] + "/").lower().startswith("/.git/"):
+                continue
+            f = os.path.join(dp, os.path.basename(p))
+            if os.path.islink(f) or not os.path.isfile(f):
+                continue
+            found.add(tok)
     return found
 
 def plan_sections(paths):

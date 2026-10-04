@@ -697,6 +697,30 @@ drafts
 [ "$(cksum < "$F1")" = "$f1_before" ] && ok "A11 a decided (follow-up) draft is kept byte-for-byte, never re-rendered" || no "A11 follow-up draft rewritten"
 grep -qxF 'unknown' "$FS" && ! grep -qxF 'README.md' "$FS" && ok "A11 the undecided summary re-renders Touches unknown under the same name" || no "A11 summary not re-rendered: $(between "$FS" | tr '\n' '|')"
 
+echo "== A12. Touches containment: symlinks and .git never reach Touches (mirrors test-propose-from-verify.sh) =="
+# touches_of's CONTAINMENT rule (extractor-only — the planner's --lint grammar is unaffected, so the
+# test-automate-helpers.sh X7 drift test does not cover it; this section and the matching one in
+# test-propose-from-verify.sh do, with the same fixture set). Decision under test for an in-repo
+# symlink: a symlinked DIRECTORY resolving inside the root is accepted as written (indir/app.ts); a
+# symlinked FILE is rejected wherever it points, inside (inlink.ts) or outside (flink.txt).
+fx 12
+OUTSIDE12="$TOP/outside12"; mkdir -p "$OUTSIDE12" "$R/src"; : > "$OUTSIDE12/secret.txt"; : > "$R/src/app.ts"
+ln -s "$OUTSIDE12" "$R/lnk"; ln -s "$OUTSIDE12/secret.txt" "$R/flink.txt"
+ln -s src/app.ts "$R/inlink.ts"; ln -s src "$R/indir"
+"$REAL_GIT" -C "$R" add lnk flink.txt inlink.ts indir src/app.ts >/dev/null 2>&1
+sup 1 '[{finding: "bug: src/app.ts lnk/secret.txt flink.txt inlink.ts indir/app.ts .git/config .GIT/config .git/HEAD", reason: below_severity_floor, source: code_reviewer, severity: HIGH}]'
+drafts
+F12="$(draft_with "bug: src/app.ts")"
+T12="$(awk '/^## Touches$/{p=1; next} p && /^## /{exit} p && NF' "${F12:-/dev/null}")"
+t12_has() { grep -qxF -- "$1" <<<"$T12"; }
+[ -n "$F12" ] || no "A12 draft not written: $dd_out"
+t12_has src/app.ts && ok "A12 containment (e): a normal existing path is still accepted" || no "A12 normal path dropped: Touches '$T12'"
+! t12_has lnk/secret.txt && ok "A12 containment (a): a file under a symlink to an OUTSIDE dir is rejected" || no "A12 containment (a): lnk/secret.txt leaked into Touches: '$T12'"
+! t12_has flink.txt && ok "A12 containment (b): a symlinked FILE pointing outside is rejected" || no "A12 containment (b): flink.txt leaked into Touches: '$T12'"
+! t12_has inlink.ts && t12_has indir/app.ts && ok "A12 containment (c): in-repo symlinked file rejected, in-repo symlinked dir accepted as written" || no "A12 containment (c): in-repo symlink handling: '$T12'"
+! t12_has .git/config && ! t12_has .GIT/config && ! t12_has .git/HEAD && ok "A12 containment (d): .git/ paths are rejected (any case)" || no "A12 containment (d): .git path leaked into Touches: '$T12'"
+[ "$T12" = "$(printf 'indir/app.ts\nsrc/app.ts')" ] && ok "A12 Touches is exactly the two contained paths" || no "A12 Touches set: '$(tr '\n' '|' <<<"$T12")'"
+
 echo
 echo "test-automate-dismissed: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

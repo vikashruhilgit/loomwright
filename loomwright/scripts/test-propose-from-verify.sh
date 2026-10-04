@@ -90,6 +90,29 @@ vt_lint="$(bash "$HERE/automate-helpers.sh" plan-waves "${VT_F:-/nonexistent.md}
 [ "$vt_sec" = "src/app.ts" ] && [ "$vt_rc" -eq 0 ] && grep -qF ': Touches ok; Depends on ok' <<<"${vt_lint%%$'\n'*}" \
   && ok "AC-7 propose-from-verify: Touches = the existing file the text names (src/app.ts), lint ok" \
   || no "AC-7 named-file draft: Touches '$vt_sec', lint rc=$vt_rc: $(printf '%s' "$vt_lint" | head -n1)"
+# vt_touches' CONTAINMENT rule (extractor-only — the planner's --lint grammar is unaffected, so the
+# test-automate-helpers.sh X7 drift test does not cover it; this block and A12 in
+# test-automate-dismissed.sh do, with the same fixture set). Decision under test for an in-repo
+# symlink: a symlinked DIRECTORY resolving inside the root is accepted as written (indir/app.ts); a
+# symlinked FILE is rejected wherever it points, inside (inlink.ts) or outside (flink.txt).
+CT_DIR="$(mktmp)/proj"; CT_OUT="$(mktmp)/outside"; mkdir -p "$CT_DIR/src" "$CT_OUT"
+( cd "$CT_DIR" && git init -q . ); : > "$CT_DIR/src/app.ts"; : > "$CT_OUT/secret.txt"
+ln -s "$CT_OUT" "$CT_DIR/lnk"; ln -s "$CT_OUT/secret.txt" "$CT_DIR/flink.txt"
+ln -s src/app.ts "$CT_DIR/inlink.ts"; ln -s src "$CT_DIR/indir"
+git -C "$CT_DIR" add lnk flink.txt inlink.ts indir src/app.ts >/dev/null 2>&1
+CT_RD="$(mktmp)/verify-20260915T000000Z-ct"; mkdir -p "$CT_RD"
+printf '%s\n' '{"schema_version":1,"ts":"2026-09-15T00:00:01Z","run_id":"verify-20260915T000000Z-ct","event":"ac","ac_id":"AC1","text":"bug: src/app.ts lnk/secret.txt flink.txt inlink.ts indir/app.ts .git/config .GIT/config .git/HEAD","scope":"ticket","verdict":"FAIL","classification":"REAL_BUG","reason":"r","steps":[],"artifacts":[]}' > "$CT_RD/evidence.jsonl"
+( cd "$CT_DIR" && PROPOSE_FROM_VERIFY_OUT_DIR="$CT_DIR/out" bash "$SUT" "$CT_RD" ) >/dev/null 2>&1
+CT_F="$(find "$CT_DIR/out" -maxdepth 1 -name 'verify-*-AC1-*.md' 2>/dev/null | head -1)"
+ct_sec="$(awk '/^## Touches$/{p=1; next} p && /^## /{exit} p && NF' "${CT_F:-/dev/null}")"
+ct_has() { grep -qxF -- "$1" <<<"$ct_sec"; }
+[ -n "$CT_F" ] || no "containment draft not written"
+ct_has src/app.ts && ok "containment (e): a normal existing path is still accepted" || no "containment (e): normal path dropped: Touches '$ct_sec'"
+! ct_has lnk/secret.txt && ok "containment (a): a file under a symlink to an OUTSIDE dir is rejected" || no "containment (a): lnk/secret.txt leaked into Touches: '$ct_sec'"
+! ct_has flink.txt && ok "containment (b): a symlinked FILE pointing outside is rejected" || no "containment (b): flink.txt leaked into Touches: '$ct_sec'"
+! ct_has inlink.ts && ct_has indir/app.ts && ok "containment (c): in-repo symlinked file rejected, in-repo symlinked dir accepted as written" || no "containment (c): in-repo symlink handling: '$ct_sec'"
+! ct_has .git/config && ! ct_has .GIT/config && ! ct_has .git/HEAD && ok "containment (d): .git/ paths are rejected (any case)" || no "containment (d): .git path leaked into Touches: '$ct_sec'"
+[ "$ct_sec" = "$(printf 'indir/app.ts\nsrc/app.ts')" ] && ok "containment: Touches is exactly the two contained paths" || no "containment Touches set: '$(tr '\n' '|' <<<"$ct_sec")'"
 [ -z "$AC2_FILE" ] && ok "AC2 (BLOCKED) NOT drafted" || no "AC2 (BLOCKED) was drafted - defect"
 [ -z "$AC3_FILE" ] && ok "AC3 (FAIL/DISCOVERY_GAP) NOT drafted" || no "AC3 (FAIL/DISCOVERY_GAP) was drafted - defect"
 
