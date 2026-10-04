@@ -564,8 +564,8 @@ run_leftovers_probe() {
 # l_expect_refusal <label> <probe-output> <expected FAIL text>
 l_expect_refusal() {
   local label="$1" out="$2" want="$3"
-  assert_true "$label: helper reported a failure" "$( printf '%s\n' "$out" | grep -qE '^DELTA [1-9]' && echo 1 || echo 0 )"
-  assert_true "$label: refusal text [$want] fired" "$( printf '%s\n' "$out" | grep -F "FAIL: L " | grep -qF "$want" && echo 1 || echo 0 )"
+  assert_true "$label: helper reported a failure" "$( grep -qE '^DELTA [1-9]' <<<"$out" && echo 1 || echo 0 )"
+  assert_true "$label: refusal text [$want] fired" "$( grep -qF "$want" < <(grep -F "FAIL: L " <<<"$out") && echo 1 || echo 0 )"
 }
 # (a) missing leader pid file.
 printf '%s\n' "$L_DEAD" > "$L_DIR/a.child"; printf '%s\n' "$L_DEAD" > "$L_DIR/a.pgid"
@@ -584,12 +584,12 @@ l_expect_refusal "L(b) pgid != leader pid" "$(run_leftovers_probe "$L_DIR/b")" "
 printf '%s\n' "$L_DEAD" > "$L_DIR/c.self"; printf '%s\n' "$L_DEAD" > "$L_DIR/c.child"; printf '%s\n' "$L_DEAD" > "$L_DIR/c.pgid"
 L_OUT_C="$(run_leftovers_probe "$L_DIR/c" "$L_DEAD")"
 l_expect_refusal "L(c) pgid is the test's own group" "$L_OUT_C" "is the test's own process group"
-assert_true "L(c) no pgrep -g query was run on the refused group" "$( printf '%s\n' "$L_OUT_C" | grep -q 'pgrep -g' && echo 0 || echo 1 )"
+assert_true "L(c) no pgrep -g query was run on the refused group" "$( grep -q 'pgrep -g' <<<"$L_OUT_C" && echo 0 || echo 1 )"
 # Negative control: the same well-formed record of a gone, setpgrp'd process,
 # checked against the REAL test pgid, passes — so the arms above fail for their
 # own reason, not for any input.
 L_OUT_N="$(run_leftovers_probe "$L_DIR/c")"
-assert_true "L negative control: gone own-group record passes (DELTA 0)" "$( printf '%s\n' "$L_OUT_N" | grep -qx 'DELTA 0' && echo 1 || echo 0 )"
+assert_true "L negative control: gone own-group record passes (DELTA 0)" "$( grep -qx 'DELTA 0' <<<"$L_OUT_N" && echo 1 || echo 0 )"
 # Positive control: a LIVE setpgrp'd process recorded as leader+child+pgid must
 # be flagged as a leftover (leader still running, and its group non-empty). It
 # is killed right after the probe; cleanup() also kills it on an interrupt.
@@ -606,7 +606,7 @@ ps -o pgid= -p "$L_LIVE_PID" 2>/dev/null | tr -d ' ' > "$L_DIR/p.pgid"
 L_OUT_P="$(run_leftovers_probe "$L_DIR/p")"
 kill "$L_LIVE_PID" 2>/dev/null; wait "$L_LIVE_PID" 2>/dev/null; L_LIVE_PID=""
 l_expect_refusal "L positive control: live setpgrp'd leftover" "$L_OUT_P" "CLI leader is not still running"
-assert_true "L positive control: its own process group reads non-empty" "$( printf '%s\n' "$L_OUT_P" | grep -qF "FAIL: L no process left in the CLI's own process group" && echo 1 || echo 0 )"
+assert_true "L positive control: its own process group reads non-empty" "$( grep -qF "FAIL: L no process left in the CLI's own process group" <<<"$L_OUT_P" && echo 1 || echo 0 )"
 
 echo ""
 echo "RESULT: $pass passed, $fail failed"
