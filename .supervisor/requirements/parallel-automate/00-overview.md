@@ -33,12 +33,13 @@ carry the fixes.
 | 12 | Policy answers for routine lane questions | medium | Stable gate ids + a human-stamped policy; 8 of S1 v2's 15 questions were routine. |
 | 13 | Sibling-merge conflict repair | medium | After each merge, repair a parked PR that turned CONFLICTING via a watcher handshake; pause on a red `main`. Not a train. |
 | S2 | Five-lane spike (`operator-run/`) | 1 day, operator | Measures CI slots, memory, owner load, merges and cost at 5 lanes; sets P2; go/no-go for 10. |
+| 14 | Lanes pane add-on (opt-in sibling plugin) | medium | The `/lanes` pane prototyped in S1/w1 as an installable, optional Claude-adapter plugin over 05's `lane-status` / `lane-answer`; lanes behave identically without it (P9). |
 
 ## Order
 01 → 02 → 03 → M1 (operator) → S1 (operator) → 04 → 05 → 06 → 07.
 - **Amended 2026-10-04 (owner: "at least 5 to 10 lanes"):** 08, 09 and 10 have no dependencies on 05 and can run
   now. `plan-waves` (checked 2026-10-04): wave 1 = 08 + 10 (disjoint), wave 2 = 09 + 11 (09 shares `ci-local.sh`
-  with 08; 11 depends on 10). The item-10 backlog backfill (operator edit) goes between 10 and 11. 12 and 13 need 05. **S2 (operator) runs after 08 + 09 + 10 + the
+  with 08; 11 depends on 10). The item-10 backlog backfill (operator edit) goes between 10 and 11. 12, 13 and 14 need 05. **S2 (operator) runs after 08 + 09 + 10 + the
   backfill** and before the lane count is raised; 12 is optional for S2. 07's pilot uses S2's lane count.
 - 01, 02 and 04 are independent of each other. 03 needs 02. M1 needs 03 MERGED **and the plugin reinstalled**
   (sessions run the installed plugin, not the working tree). S1 needs M1. 05 needs 03 + 04 + S1's answers +
