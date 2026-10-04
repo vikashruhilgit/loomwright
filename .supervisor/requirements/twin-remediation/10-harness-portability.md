@@ -132,3 +132,13 @@ evidence-backed pick rather than an open question.
 ## Status: pending — PARTIALLY LANDED outside this queue (note added 2026-09-21)
 - Scope item 1 (CORE/ADAPTER inventory as evidence) shipped as `scripts/check-vendor-coupling.sh` + `loomwright/docs/vendor-coupling-manifest.json` (commit 7fa14d8; today 629 refs / 0 breaches, ratchet one-directional). The "ONE adapter spike" shipped as `loomwright/scripts/adapters/providers/{lens-run,provider-claude,provider-codex,provider-cursor,provider-gemini}.sh` (PR #239) and `adapters/orca/` (PR #237).
 - **Remaining:** scope item 2 (written core contract: file protocol, CLI surface, capability ports + degraded fallbacks; `LOOMWRIGHT_ROOT` resolved-once env var) and item 3 (Cursor/Codex capability research from current docs). Re-scope the AC to those before dispatching.
+
+## Depends on
+../agnostic-phase1/01-ratchet-hardening.md
+
+## Touches
+loomwright/scripts/
+loomwright/docs/vendor-coupling-manifest.json
+loomwright/docs/CORE_CONTRACT.md
+loomwright/docs/ARCHITECTURE_CONTRACTS.md
+changelog.d/twin-remediation-10-harness-portability.md

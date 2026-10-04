@@ -78,3 +78,22 @@ the FIRST of the two AND-ed conditions). Touching non-worker `general-purpose` s
 bump = write a `changelog.d/` fragment and run `scripts/bump-version.sh`
 
 ## Status: pending
+
+## Depends on
+01
+
+## Touches
+loomwright/scripts/check-children-settled.sh
+loomwright/scripts/test-check-children-settled.sh
+loomwright/agents/supervisor.md
+loomwright/agents/execute-manager.md
+loomwright/agents/context-keeper.md
+loomwright/skills/async-orchestration/SKILL.md
+loomwright/skills/workflow-management/SKILL.md
+loomwright/skills/state-management/SKILL.md
+loomwright/docs/ARCHITECTURE_CONTRACTS.md
+loomwright/docs/RESULT_SCHEMAS.md
+loomwright/docs/FAILURE_ESCALATION.md
+loomwright/docs/prompt-token-budgets.json
+loomwright/docs/vendor-coupling-manifest.json
+changelog.d/agnostic-phase1-02-completion-evidence-integrity.md

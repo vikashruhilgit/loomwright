@@ -79,3 +79,23 @@ interactive options. Changing `/dreaming`'s per-item Accept model. Changing whic
 bump = write a `changelog.d/` fragment and run `scripts/bump-version.sh`
 
 ## Status: pending
+
+## Depends on
+01
+
+## Touches
+loomwright/agents/product-owner.md
+loomwright/commands/product-owner.md
+loomwright/skills/automate-loop/SKILL.md
+loomwright/commands/automate.md
+loomwright/agents/launch-pad.md
+loomwright/commands/launch-pad.md
+loomwright/agents/supervisor.md
+loomwright/agents/qa-executor.md
+loomwright/skills/autonomous-loop/SKILL.md
+loomwright/commands/autonomous.md
+loomwright/docs/ARCHITECTURE_CONTRACTS.md
+loomwright/docs/prompt-token-budgets.json
+loomwright/docs/vendor-coupling-manifest.json
+loomwright/scripts/test-non-interactive-gates-seam.sh
+changelog.d/agnostic-phase1-04-non-interactive-gates.md

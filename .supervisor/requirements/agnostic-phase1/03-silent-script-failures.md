@@ -75,3 +75,26 @@ the spawn shape that bypassed it). Any change to `guard-test-integrity.sh`'s den
 bump = write a `changelog.d/` fragment and run `scripts/bump-version.sh`
 
 ## Status: pending
+
+## Depends on
+01
+
+## Touches
+loomwright/scripts/run-lock.sh
+loomwright/scripts/test-run-lock.sh
+loomwright/scripts/guard-arm.sh
+loomwright/scripts/test-guard-test-integrity.sh
+loomwright/scripts/automate-merge-watch.sh
+loomwright/scripts/automate-trail.sh
+loomwright/scripts/test-automate-trail.sh
+loomwright/agents/supervisor.md
+loomwright/skills/async-orchestration/SKILL.md
+loomwright/skills/automate-loop/SKILL.md
+loomwright/skills/autonomous-loop/SKILL.md
+loomwright/skills/supervisor-config/SKILL.md
+loomwright/docs/HOOKS.md
+loomwright/docs/ARCHITECTURE_CONTRACTS.md
+loomwright/docs/RESULT_SCHEMAS.md
+loomwright/docs/prompt-token-budgets.json
+loomwright/docs/vendor-coupling-manifest.json
+changelog.d/agnostic-phase1-03-silent-script-failures.md

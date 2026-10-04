@@ -31,3 +31,13 @@
 ## Acceptance criteria
 - [ ] Each finding re-verified on `main`, then fixed or recorded as not reproducible.
 - [ ] Fixture legs for 1–3; the full `test-*.sh` loop green.
+
+## Depends on
+none
+
+## Touches
+loomwright/skills/self-heal-advisory/SKILL.md
+loomwright/scripts/test-rules-gate-seams.sh
+loomwright/scripts/test-rules-seams.sh
+loomwright/skills/automate-loop/SKILL.md
+changelog.d/automate-followups-21-rules-seam-dismissed-followups.md

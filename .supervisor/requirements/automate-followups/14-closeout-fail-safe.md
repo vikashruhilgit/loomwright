@@ -69,3 +69,18 @@ everything is already closed out, this is a no-op: no question, no mutation, no 
 - **False "leftover" on an idempotent re-run.** The classifier must treat "already removed/stamped/checked" skips as
   complete, or every resume would ask (the AC2 no-op leg pins this).
 - **Question fatigue.** Batch leftovers into one `AskUserQuestion` call (≤4 per call).
+
+## Depends on
+none
+
+## Touches
+loomwright/scripts/automate-trail.sh
+loomwright/scripts/automate-helpers.sh
+loomwright/scripts/session-resume.sh
+loomwright/scripts/test-automate-trail.sh
+loomwright/scripts/test-automate-helpers.sh
+loomwright/scripts/test-session-resume.sh
+loomwright/skills/automate-loop/SKILL.md
+loomwright/docs/RESULT_SCHEMAS.md
+loomwright/commands/automate.md
+changelog.d/automate-followups-14-closeout-fail-safe.md

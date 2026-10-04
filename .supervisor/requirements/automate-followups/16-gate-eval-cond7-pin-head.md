@@ -26,3 +26,13 @@
 - `loomwright/scripts/test-automate-helpers.sh`: a stale-HEAD leg and a dirty-tree leg that must PARK, with a control.
 - `loomwright/skills/automate-loop/SKILL.md` §10 condition 7 + the PARK-reason list.
 - Behavioural, security-relevant (merge gate). High-risk per `classify-risk.sh`.
+
+## Depends on
+none
+
+## Touches
+loomwright/scripts/automate-helpers.sh
+loomwright/scripts/test-automate-helpers.sh
+loomwright/scripts/test-rules-gate-seams.sh
+loomwright/skills/automate-loop/SKILL.md
+changelog.d/automate-followups-16-gate-eval-cond7-pin-head.md

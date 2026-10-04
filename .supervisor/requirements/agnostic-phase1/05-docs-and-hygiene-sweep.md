@@ -96,3 +96,36 @@ any spawn change) — those are owner decisions for Phase 2. Fixing `lens-run.sh
 bump = write a `changelog.d/` fragment and run `scripts/bump-version.sh`
 
 ## Status: pending
+
+## Depends on
+01
+
+## Touches
+loomwright/commands/supervisor.md
+loomwright/commands/launch-pad.md
+loomwright/commands/review-pr.md
+loomwright/commands/autonomous.md
+loomwright/commands/automate.md
+loomwright/commands/agent-help.md
+loomwright/commands/dreaming.md
+loomwright/agents/review-pr.md
+loomwright/agents/supervisor.md
+loomwright/agents/rubric-grader.md
+loomwright/skills/review-heal/SKILL.md
+loomwright/skills/autonomous-loop/SKILL.md
+loomwright/skills/self-heal-advisory/SKILL.md
+loomwright/skills/commit/SKILL.md
+loomwright/skills/agent-output/SKILL.md
+loomwright/skills/SKILL_TEMPLATE.md
+loomwright/docs/PITFALLS.md
+loomwright/docs/ARCHITECTURE_CONTRACTS.md
+loomwright/docs/prompt-token-budgets.json
+loomwright/docs/vendor-coupling-manifest.json
+loomwright/scripts/dispatch-pr-postmortem.sh
+loomwright/scripts/setup-memory.sh
+loomwright/scripts/test-setup-memory.sh
+loomwright/scripts/test-harvest-conventions.sh
+loomwright/scripts/test-skill-frontmatter.sh
+stackpack/skills/nestjs-drizzle/SKILL.md
+CLAUDE.md
+changelog.d/agnostic-phase1-05-docs-and-hygiene-sweep.md

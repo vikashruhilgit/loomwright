@@ -56,3 +56,10 @@ Every line below is a ledger entry read from `.supervisor/floor/floor.json`
   - evidence: IMPROVEMENTS_ROADMAP item-16 stale framing + ARCHITECTURE_CONTRACTS timeout-table drift + Launch Pad PASS-on-spawn-3 corner wording — cross-ref drift
 
 Cited 5 of the 62 entries in this pair (citation cap 5).
+
+## Depends on
+none
+
+## Touches
+.agent/rules/process.json
+changelog.d/churn-ledger-01-restated-lists-diverge-from-authority.md

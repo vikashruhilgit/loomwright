@@ -146,3 +146,9 @@ sequence backlog; placed LAST there. No new agent / command / skill / hook; no m
 untouched; nothing gating.
 
 bump = write a `changelog.d/` fragment and run `scripts/bump-version.sh`
+
+## Depends on
+none
+
+## Touches
+.supervisor/requirements/token-economy/07-verify-spec-replay.md

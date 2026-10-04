@@ -1,13 +1,29 @@
 # 04 — Branch mode: briefs that pass the scrub, and an M1 step 1 that matches the shipped `meta-sync.sh`
 
 ## Depends on
-PR #334 (`meta-sync.sh`) and PR #347 (branch-mode engine) MERGED to `main` (both are). Independent of 01–03.
+none
 
 ## Touches
-loomwright/skills/supervisor-readiness/SKILL.md (the brief template's `- **Project:**` line)
-loomwright/agents/launch-pad.md, loomwright/commands/launch-pad.md, loomwright/skills/agent-output/SKILL.md (their `/Users/<name>/...` examples)
-.supervisor/requirements/parallel-automate/operator-run/M1-migrate-this-repo.md (step 1)
-loomwright/scripts/meta-sync.sh + loomwright/scripts/test-meta-sync.sh (ONLY if the owner picks option B below)
+loomwright/skills/supervisor-readiness/SKILL.md
+loomwright/agents/launch-pad.md
+loomwright/commands/launch-pad.md
+loomwright/skills/agent-output/SKILL.md
+loomwright/agents/orchestrator.md
+loomwright/agents/supervisor.md
+loomwright/commands/orchestrator.md
+loomwright/commands/supervisor.md
+loomwright/commands/code-reviewer.md
+loomwright/commands/product-owner.md
+loomwright/scripts/meta-sync.sh
+loomwright/scripts/test-meta-sync.sh
+changelog.d/meta-sync-followups-04-scrub-safe-briefs-and-push-rehearsal.md
+
+## Notes on the touched files (conditions moved out of the machine-read section)
+- `supervisor-readiness/SKILL.md`: the brief template's `- **Project:**` line.
+- agents/commands/skills: their `/Users/<name>/...` examples (the acceptance grep also hits orchestrator, supervisor, code-reviewer and product-owner, so they are listed).
+- `meta-sync.sh` + `test-meta-sync.sh` ONLY if the owner picks option B.
+- Metadata-branch edits, not part of the code PR: `parallel-automate/operator-run/M1-migrate-this-repo.md` step 1 (and the runbook convention).
+- PRs #334 and #347 dropped from Depends (both merged).
 
 ## Problem
 Found 2026-10-02 while preparing operator M1, by rehearsing `meta-sync.sh init` + `push` from a scratch clone against a local bare remote (nothing reached GitHub).

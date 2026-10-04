@@ -78,3 +78,13 @@ names (keep the stated limit). Touching `sdk-spike/` code.
 bump = write a `changelog.d/` fragment and run `scripts/bump-version.sh`
 
 ## Status: pending
+
+## Depends on
+none
+
+## Touches
+scripts/check-vendor-coupling.sh
+scripts/test-check-vendor-coupling.sh
+loomwright/docs/vendor-coupling-manifest.json
+.github/workflows/ci.yml
+changelog.d/agnostic-phase1-01-ratchet-hardening.md

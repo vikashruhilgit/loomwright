@@ -58,3 +58,14 @@ Every line below is a ledger entry read from `.supervisor/floor/floor.json`
   - evidence: round 5 re-verification (dead refs, enum hits, budget bands); push followed (low confidence)
 
 Cited 5 of the 18 entries in this pair (citation cap 5).
+
+## Depends on
+none
+
+## Touches
+loomwright/scripts/pr-postmortem-gather.sh
+loomwright/scripts/test-pr-postmortem-gather.sh
+loomwright/skills/pr-postmortem/SKILL.md
+loomwright/commands/pr-postmortem.md
+loomwright/docs/RESULT_SCHEMAS.md
+changelog.d/churn-ledger-02-classifier-unknowable-attribution.md

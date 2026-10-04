@@ -1,12 +1,17 @@
 # 02 — meta-sync: a symlinked non-managed FILE under requirements/ must not refuse the whole sync
 
 ## Depends on
-PR #334 (parallel-automate/02, `meta-sync.sh`) MERGED to `main`, and meta-sync-followups/01 (same two files — keep the queue serial).
+01
 
 ## Touches
 loomwright/scripts/meta-sync.sh
 loomwright/scripts/test-meta-sync.sh
-loomwright/docs/ARCHITECTURE_CONTRACTS.md (§"Metadata branch", only if the stated rule changes)
+loomwright/docs/ARCHITECTURE_CONTRACTS.md
+changelog.d/meta-sync-followups-02-symlinked-file-under-requirements.md
+
+## Notes on the touched files (conditions moved out of the machine-read section)
+- `ARCHITECTURE_CONTRACTS.md` §"Metadata branch" changes only if the stated rule changes.
+- "PR #334 MERGED" dropped from Depends (merged).
 
 ## Problem
 `symlink_hazard` in `loomwright/scripts/meta-sync.sh` treats a local symlink as hazardous when `is_managed "$1" || is_managed "$1/x.md"`. The second arm is meant to catch a symlinked DIRECTORY under `.supervisor/requirements/` (which could hide managed `.md` files or redirect writes), but it matches every path under `requirements/`, including a symlinked regular FILE such as `requirements/q/design.png`. Such a file can neither hide managed files nor be written through (pull's `path_has_no_symlink` already guards every write, and a managed `.md` symlink is caught by the first arm), yet it makes `pull` and `push` refuse with `meta_sync: symlink <path>` until someone removes it. The script header and `ARCHITECTURE_CONTRACTS.md` describe the rule as "any **folder** under requirements/", so the code is stricter than its documented contract.

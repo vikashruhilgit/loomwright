@@ -16,3 +16,14 @@
 
 ## Related
 - Separate pending decision: trail-pr timing (fires at the awaiting_merge park, BEFORE the feature merge, committing a `done` stamp for unmerged work) — owner raised 2026-09-30; not yet written up.
+
+## Depends on
+none
+
+## Touches
+loomwright/scripts/automate-trail.sh
+loomwright/scripts/test-automate-trail.sh
+loomwright/scripts/automate-merge-watch.sh
+loomwright/docs/RESULT_SCHEMAS.md
+loomwright/skills/automate-loop/SKILL.md
+changelog.d/automate-followups-20-automate-run-enum-gaps-and-sidecar-nested-check.md

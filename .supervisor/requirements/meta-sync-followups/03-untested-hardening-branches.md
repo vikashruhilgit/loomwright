@@ -1,11 +1,16 @@
 # 03 — meta-sync: pin the iteration-2 hardening branches with tests
 
 ## Depends on
-PR #334 (parallel-automate/02, `meta-sync.sh`) MERGED to `main`, and meta-sync-followups/02 (same two files — keep the queue serial).
+02
 
 ## Touches
 loomwright/scripts/test-meta-sync.sh
-loomwright/scripts/meta-sync.sh (only if a test exposes a defect)
+loomwright/scripts/meta-sync.sh
+changelog.d/meta-sync-followups-03-untested-hardening-branches.md
+
+## Notes on the touched files (conditions moved out of the machine-read section)
+- `loomwright/scripts/meta-sync.sh` is edited only if a test exposes a defect.
+- "PR #334 MERGED" dropped from Depends (merged).
 
 ## Problem
 Four fail-closed or recovery branches added while hardening `loomwright/scripts/meta-sync.sh` on PR #334 have no test. The PR's reviewer verified two of them by scratch repro, but nothing pins any of them in CI, so a later edit can break them silently:

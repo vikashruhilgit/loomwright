@@ -39,3 +39,20 @@ No auto-rebuilds, no schedulers/cron, no new gating, no graph-schema migration, 
 - **What changed since authoring (2026-07-20):** the graphify graph + bridge tier was RETIRED by twin-loop/06 (job `2026-08-17-retire-graphify-tier`, see `skills/brain-context/SKILL.md` §"Retirement note"). Scope items 1–3 and 5 as written target artifacts that no longer exist.
 - **Surviving scope:** (a) basis-stamp + staleness line for the owned repo-map (`build-repo-map.sh` output) and orientation memos; (b) agent-memory decay across the three live `.claude/agent-memory/loomwright-loomwright-{code-reviewer,qa-executor,red-team-reviewer}/` dirs, coordinated with item 02's supersede/decay flags; (c) one `## Freshness` line in `/handoff`. Drop everything naming graph.json, bridge, `/graphify`, `build-bridge.sh`.
 - Rewrite the Scope/AC sections to the surviving scope before dispatching; do not run as-is.
+
+## Depends on
+none
+
+## Touches
+loomwright/scripts/build-repo-map.sh
+loomwright/scripts/test-build-repo-map.sh
+loomwright/scripts/check-derived-freshness.sh
+loomwright/scripts/test-check-derived-freshness.sh
+loomwright/scripts/build-handoff.sh
+loomwright/scripts/test-build-handoff.sh
+loomwright/scripts/build-insights.sh
+loomwright/scripts/test-insights.sh
+loomwright/commands/handoff.md
+loomwright/commands/dreaming.md
+loomwright/skills/brain-context/SKILL.md
+changelog.d/twin-remediation-06-derived-artifact-freshness.md

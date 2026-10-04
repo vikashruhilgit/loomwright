@@ -78,4 +78,11 @@ so two items changing different helpers touch different files. Measured first, b
 - `scripts/check-skills-index-sync.sh` exists.
 
 ## Evidence
-To be filled by Scope 1 (the `--explain` ranking after item 10's backfill).
+Manual backfill done 2026-10-04 (before item 10's tooling; every path checked on disk). Planner over the 31
+dispatchable open items, `--max 10`: **20 waves, largest 7** (before the backfill: 24 waves, largest 2). The most-shared
+declared paths, by number of open items naming them (companion expansion not counted, so the real counts are higher):
+`loomwright/skills/automate-loop/SKILL.md` 11 · `vendor-coupling-manifest.json` 7 · `RESULT_SCHEMAS.md` 7 ·
+`ARCHITECTURE_CONTRACTS.md` 7 · `meta-sync.sh` 6 · `test-meta-sync.sh` 6 · `automate-helpers.sh` 6 ·
+`agents/supervisor.md` 6 · `test-automate-trail.sh` 5 · `test-automate-helpers.sh` 5. Scope 1 still re-ranks with
+`--explain` (companions included) once item 10 lands; the automate-loop SKILL.md is the clear first target, so
+Scope 4's "skill not split here" default needs revisiting.

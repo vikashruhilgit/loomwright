@@ -1,11 +1,16 @@
 # 01 — meta-sync: test the push-retry exhaustion and missing-meta-base-object fallback
 
 ## Depends on
-PR #334 (parallel-automate/02, `meta-sync.sh`) MERGED to `main` — this item tests code that exists only there.
+none
 
 ## Touches
 loomwright/scripts/test-meta-sync.sh
-loomwright/scripts/meta-sync.sh (only if a test exposes a defect)
+loomwright/scripts/meta-sync.sh
+changelog.d/meta-sync-followups-01-untested-push-and-base-fallbacks.md
+
+## Notes on the touched files (conditions moved out of the machine-read section)
+- `loomwright/scripts/meta-sync.sh` is edited only if a test exposes a defect (listed anyway: the planner must be conservative).
+- The old Depends text "PR #334 MERGED" was dropped: #334 merged 2026-10-02.
 
 ## Problem
 Two fail-closed branches of `loomwright/scripts/meta-sync.sh` have no test, so a regression in either would ship silently:

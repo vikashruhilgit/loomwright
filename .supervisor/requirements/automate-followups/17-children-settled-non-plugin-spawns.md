@@ -22,3 +22,16 @@
 - Either emit a terminal `agent_lifecycle` row for every SubagentStop that has an identity row, or scope `--all` to
   agent types whose stop is observed — never silently drop the check. Fixture: a session log with a settled
   general-purpose spawn must read `settled`.
+
+## Depends on
+none
+
+## Touches
+loomwright/hooks/hooks.json
+loomwright/scripts/check-children-settled.sh
+loomwright/scripts/test-check-children-settled.sh
+loomwright/scripts/emit-lifecycle.sh
+loomwright/scripts/test-emit-lifecycle.sh
+loomwright/docs/HOOKS.md
+loomwright/docs/RESULT_SCHEMAS.md
+changelog.d/automate-followups-17-children-settled-non-plugin-spawns.md

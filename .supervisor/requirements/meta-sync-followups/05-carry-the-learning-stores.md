@@ -1,17 +1,35 @@
 # 05 — Branch mode: carry every store the agents learn from, and prove it with a committed rehearsal
 
 ## Depends on
-- M1 complete: PR #361 MERGED (2026-10-03, `36f3730`), step 7 done in the primary, and M1's Verify list passed (including the one real `/automate` cycle).
-- 01–03 merged first. They edit `loomwright/scripts/meta-sync.sh` and `test-meta-sync.sh` too, and this item builds on their test legs.
-- Ships in ONE PR and ONE release together with 04. Both change branch-mode code, so one reinstall and one rehearsal cover both. Part D below is 04's "option A" made executable, so 04's M1 step-1 fix should point at it.
+01
+02
+03
 
 ## Touches
-- loomwright/scripts/meta-sync.sh, loomwright/scripts/test-meta-sync.sh (part B)
-- loomwright/scripts/setup-memory.sh, loomwright/scripts/test-setup-memory.sh, loomwright/commands/setup.md (part A, and part B's consent text)
-- loomwright/commands/dreaming.md, plus any agent or skill prompt that restates its PR-path rule (part C; grep before editing)
-- a new rehearsal script + its self-test under loomwright/scripts/ (part D)
-- .supervisor/requirements/parallel-automate/operator-run/M1-migrate-this-repo.md (Rollback section, part D) and a new operator-run/M2 runbook (part D)
-- docs that state the managed set: the `meta-sync.sh` header, `docs/HOOKS.md` / `ARCHITECTURE_CONTRACTS.md` wherever branch mode is described (grep `requirements/\*\*/\*.md` and `results.jsonl` repo-wide)
+loomwright/scripts/meta-sync.sh
+loomwright/scripts/test-meta-sync.sh
+loomwright/scripts/setup-memory.sh
+loomwright/scripts/test-setup-memory.sh
+loomwright/commands/setup.md
+loomwright/skills/setup/SKILL.md
+.agent/meta-allowlist.txt
+loomwright/commands/dreaming.md
+loomwright/commands/agent-help.md
+loomwright/scripts/meta-sync-rehearsal.sh
+loomwright/scripts/test-meta-sync-rehearsal.sh
+loomwright/docs/ARCHITECTURE_CONTRACTS.md
+loomwright/skills/automate-loop/SKILL.md
+.github/workflows/ci.yml
+loomwright/docs/vendor-coupling-manifest.json
+changelog.d/meta-sync-followups-05-carry-the-learning-stores.md
+
+## Notes on the touched files (conditions moved out of the machine-read section)
+- Part B: `meta-sync.sh`, `test-meta-sync.sh`. Part A (and part B's consent text): `setup-memory.sh`, `test-setup-memory.sh`, `commands/setup.md`; `skills/setup/SKILL.md` line saying the allowlist "does not travel".
+- Part C: `commands/dreaming.md` plus every prompt restating its PR-path rule — grep found only `commands/dreaming.md` and `commands/agent-help.md`.
+- Part D: a new rehearsal script + self-test (proposed names `meta-sync-rehearsal.sh` / `test-meta-sync-rehearsal.sh`); D.3 CI pull step in `.github/workflows/ci.yml`; `vendor-coupling-manifest.json` because the setup-memory scripts carry ratcheted allowances.
+- Docs stating the managed set: the `meta-sync.sh` header, `ARCHITECTURE_CONTRACTS.md`, `automate-loop/SKILL.md` (HOOKS.md never mentions branch mode).
+- Metadata-branch edits, not part of the code PR: M1 runbook Rollback section and a new `operator-run/M2-carry-learning-stores.md`.
+- "Ships in one PR with 04" cannot be expressed in this grammar; it stays in Scope prose. M1 (complete, #361 merged) dropped from Depends.
 
 ## Problem
 After M1, run history travels on `loomwright-meta`, and the memory stores (`.supervisor/memory/`, `.claude/agent-memory/`, `.agent/`, `CLAUDE.md`) travel on `main`. Several stores the agents read back to make better decisions travel nowhere: they live on one machine, and a second machine, a fresh clone or a lost disk starts without them. Verified 2026-10-03 in the primary checkout:
