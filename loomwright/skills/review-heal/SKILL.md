@@ -568,7 +568,8 @@ loop:
   # BYTE-IDENTICAL round — except `unstamped` after a remembered fail (`rules_fail_then_unstamped`): a fix
   # likely edited a bound file. Any remembered id, not only a still-countable one (`unstamped` runs no
   # replay; countability drift reads `unstamped`).
-  rules_escalates = rules.verdict not in RULES_PASSABLE and rules.verdict != "fail" or (rules.verdict == "unstamped" and rules_failed_seen)   # allow-list complement
+  rules_escalates = rules.verdict not in RULES_PASSABLE and rules.verdict != "fail"   # allow-list complement
+  rules_escalates = rules_escalates or (rules.verdict == "unstamped" and rules_failed_seen)   # automate-followups/18 — a remembered countable fail turning unstamped
 
   # Earned fallback gate (AC3) — the ONE exception to heal-only, checked ONLY on a round that would
   # otherwise declare READY, and at most once per drain run (fallback_review_ran). Full contract:

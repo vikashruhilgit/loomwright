@@ -80,7 +80,7 @@ pin() {
          'record_decision(phase: SELF_HEAL, decision: "rules_fail_then_unstamped"' ;;
     10) printf '%s\n' "$RH" \
          'rules_failed_seen |= { id for id in rules.failing if id in rules.countable }' \
-         'rules.verdict != "fail" or (rules.verdict == "unstamped" and rules_failed_seen)' \
+         'rules_escalates = rules_escalates or (rules.verdict == "unstamped" and rules_failed_seen)' \
          'and not (rules_after.verdict == "unstamped" and rules_failed_seen) and rules_after.verdict in RULES_PASSABLE:' \
          '"rules_fail_then_unstamped: <rules_failed_seen ids>' ;;
   esac
