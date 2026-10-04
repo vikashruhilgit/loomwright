@@ -18,6 +18,7 @@
 #        MUTATION CONTROL: drop the ticket-order check ⇒ the fairness check fails.
 #   (D)  a slot whose holder pid is dead is taken over
 #   (M)  a counter mutex left by a dead pid (or pid-less and old) is taken over, not waited on
+#   (I)  TERM to a queued waiter ⇒ exit 1 at once (not after its poll period), its ticket removed
 #   (R)  release is idempotent (nothing held ⇒ exit 0); --slot frees one slot
 #   (U)  usage: acquire without --pid ⇒ exit 2; unknown subcommand ⇒ exit 2; --help = the header
 # run-self-tests: serial
@@ -194,6 +195,27 @@ mkdir "$d1/mutex"; touch -t 202001010000 "$d1/mutex"
 got="$(at "$tmp/c1" -- acquire h5 --pid "$h5" --wait 1 2>"$tmp/m.err")"
 if [ -n "$got" ] && grep -q "no pid file for 30s+" "$tmp/m.err"; then ok "(M) a pid-less mutex older than 30 s is taken over"
 else no "(M) pid-less: got=$got err=$(cat "$tmp/m.err")"; fi
+
+# --- (I) TERM to a queued waiter ---------------------------------------------------------------------
+# Both slots held; a waiter with a 30 s poll period. Its TERM trap must run at once, not after the poll.
+live; h6=$LIVE; live; h7=$LIVE
+at "$tmp/c2" -- acquire h6 --pid "$h6" >/dev/null
+(cd "$tmp/c1" && LOOMWRIGHT_CI_SLOT_POLL=30 exec bash "$SUT" acquire h7 --pid "$h7" --wait 120 >/dev/null 2>&1) &
+ipid=$!
+i=0
+while [ "$(at "$tmp/c1" -- status --json | jq '.waiters | length')" != 1 ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+sleep 0.3   # past the claim attempt, into the poll wait
+kill -TERM "$ipid" 2>/dev/null
+i=0
+while kill -0 "$ipid" 2>/dev/null && [ "$i" -lt 30 ]; do sleep 0.1; i=$((i + 1)); done
+if kill -0 "$ipid" 2>/dev/null; then irc="still-running"; kill -KILL "$ipid" 2>/dev/null; wait "$ipid" 2>/dev/null
+else wait "$ipid"; irc=$?; fi
+if [ "$irc" = 1 ] && [ -z "$(ls "$d1/tickets")" ]; then ok "(I) TERM to a queued waiter: exits 1 within 3s (not after its 30 s poll), ticket gone"
+else no "(I) rc=$irc tickets=[$(ls "$d1/tickets")]"; fi
+# On failure the waiter was SIGKILLed with its ticket in place: drop h7 so that ticket is dead and
+# the later arms are not queued behind it.
+at "$tmp/c2" -- release --pid "$h6"; at "$tmp/c1" -- release --pid "$h7"
+kill "$h7" 2>/dev/null; wait "$h7" 2>/dev/null
 
 # --- (R) release -----------------------------------------------------------------------------------
 at "$tmp/c1" -- release --pid "$h5"; r1=$?

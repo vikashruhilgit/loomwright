@@ -86,7 +86,12 @@ mkdir -p "$state/pass"
 
 tmpd="$(mktemp -d "${TMPDIR:-/tmp}/ci-local.XXXXXX")"
 have_lock=0
+acq_pid=""
 cleanup() {
+  # A queued acquire still running (INT/TERM arrived mid-wait): stop it and reap it BEFORE the
+  # release below, so it can neither claim a slot after that release nor write into $tmpd after the
+  # rm. Its own TERM trap removes its ticket; the release then frees anything recorded under $$.
+  if [ -n "$acq_pid" ]; then kill -TERM "$acq_pid" 2>/dev/null || true; wait "$acq_pid" 2>/dev/null || true; fi
   if [ "$have_lock" -eq 1 ]; then bash "$slot_helper" release --pid "$$" || true; fi
   rm -rf "$tmpd"
 }
@@ -174,11 +179,20 @@ if [ "$force" -eq 0 ] && [ -f "$stamp" ]; then cached_exit; fi
 
 # --- shared CI slot (the helper prints progress on stderr, only `slot=<k> jobs=<j>` on stdout) -------
 # have_lock is set BEFORE acquiring: a run interrupted mid-wait still has its queued ticket released.
+# The acquire runs in the background and is awaited with the `wait` builtin, never inside `$(...)`:
+# bash defers a trapped INT/TERM until a foreground child exits, so a `$(...)` acquire would ignore
+# them for up to CI_LOCAL_LOCK_WAIT seconds, while `wait` returns at once and lets the trap run.
 have_lock=1
-if ! got="$(bash "$slot_helper" acquire ci-local --pid "$$" --wait "$lock_wait")"; then
+bash "$slot_helper" acquire ci-local --pid "$$" --wait "$lock_wait" > "$tmpd/slot" &
+acq_pid=$!
+acq_rc=0
+wait "$acq_pid" || acq_rc=$?
+acq_pid=""
+if [ "$acq_rc" -ne 0 ]; then
   echo "ci-local: no CI slot after ${lock_wait}s — giving up (FAIL). Holders: bash $slot_helper status" >&2
   exit 1
 fi
+got="$(cat "$tmpd/slot")"
 slot="${got#slot=}"; slot="${slot%% *}"; slot_jobs="${got##*jobs=}"
 case "$slot_jobs" in ''|*[!0-9]*) echo "ci-local: unexpected answer from $slot_helper: '$got'" >&2; exit 1 ;; esac
 if [ -n "${SELF_TEST_JOBS:-}" ]; then

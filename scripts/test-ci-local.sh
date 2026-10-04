@@ -22,6 +22,8 @@
 #   (J)  job share                    → SELF_TEST_JOBS = the slot's share; an explicit SELF_TEST_JOBS
 #                                       is passed through unchanged
 #   (Q)  waiter queued behind a holder that stamps the same tree → "PASS (cached)", nothing ran
+#   (T)  TERM to a run queued for a slot → exit 143 within seconds (not after CI_LOCAL_LOCK_WAIT),
+#                                       no ticket and no slot left under its pid, nothing ran
 #   (LS) --list                       → key + cache status, exactly the ci.yml gates (with args) and the
 #                                       plain tests in order, no temp wrapper paths, nothing ran;
 #                                       a changed tree lists "cache: miss"
@@ -223,6 +225,30 @@ if [ -n "$qkey" ] && [ "$(cat "$tmp/q.rc")" = 0 ] && has "waiting for a CI slot"
   ok "(Q) waiter behind a holder that stamped the same tree: PASS (cached), nothing ran"
 else no "(Q) key=$qkey rc=$(cat "$tmp/q.rc") log=[$(tr '\n' ' ' < "$FIXTURE_LOG")] out=$out"; fi
 rm -f "$R/q-probe.txt"
+
+# (T) — TERM to a run queued for a slot exits at once (not after CI_LOCAL_LOCK_WAIT), leaves no ticket.
+echo t > "$R/t-probe.txt"
+sleep 60 & sleeper=$!
+LOOMWRIGHT_CI_SLOTS=1 slot acquire holder --pid "$sleeper" >/dev/null
+: > "$FIXTURE_LOG"
+( cd "$R" && LOOMWRIGHT_CI_SLOTS=1 CI_LOCAL_LOCK_WAIT=60 exec bash scripts/ci-local.sh > "$tmp/t.out" 2>&1 ) &
+tpid=$!
+i=0
+while ! grep -q "\"waiters\":\[{\"ticket\":[0-9]*,\"pid\":$tpid," <<<"$(slot status --json)" && [ "$i" -lt 150 ]; do sleep 0.1; i=$((i + 1)); done
+queued=$i
+kill -TERM "$tpid" 2>/dev/null
+i=0
+while kill -0 "$tpid" 2>/dev/null && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+if kill -0 "$tpid" 2>/dev/null; then trc="still-running"; kill -KILL "$tpid" 2>/dev/null; wait "$tpid" 2>/dev/null
+else wait "$tpid"; trc=$?; fi
+tickets="$(ls "$state/tickets")"
+tslots="$(grep -lx "$tpid" "$state"/slots/*/info 2>/dev/null || true)"
+slot release --pid "$sleeper"
+kill "$sleeper" 2>/dev/null; wait "$sleeper" 2>/dev/null; sleeper=""
+if [ "$queued" -lt 150 ] && [ "$trc" = 143 ] && [ -z "$tickets" ] && [ -z "$tslots" ] && [ ! -s "$FIXTURE_LOG" ]; then
+  ok "(T) TERM to a queued run: exit 143 within 5s, no ticket or slot left, nothing ran"
+else no "(T) queued_polls=$queued rc=$trc tickets=[$tickets] slots=[$tslots] out=$(cat "$tmp/t.out")"; fi
+rm -f "$R/t-probe.txt"
 
 # (H)
 run --help

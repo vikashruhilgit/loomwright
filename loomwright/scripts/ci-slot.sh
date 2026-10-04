@@ -261,7 +261,10 @@ cmd_acquire() {
       warn "waiting for a CI slot — position ${pos:-?}, holders: $(holders_line)"
       next_print=$(( $(now) + every ))
     fi
-    sleep "$POLL"
+    # Background + `wait`, not a foreground sleep: bash defers a trapped TERM until a foreground
+    # child exits, so a caller stopping this waiter would block for up to one poll period.
+    sleep "$POLL" >/dev/null 2>&1 &
+    wait "$!"
   done
 }
 
