@@ -39,3 +39,13 @@ Cleaning the existing tracked hits on `main` — done separately (chore/meta-scr
 Owner request 2026-10-02 (session c72c09d3, resume of run automate-2026-10-01-142337): "queue step 2" after the M1 rehearsal. Rehearsal evidence: first push exit 2 with 218 hits (missing allowlist, a rehearsal artifact), second push exit 2 with 7 real hits (5 `home_path`, 2 `forge_slug` on the `acme/widgets` placeholder) — the same set the 02 brief's Feasibility #5 predicted.
 
 ## Status: pending
+
+## Priority raised (2026-10-04, from S1 v2 — evidence on a real lane)
+Lane v2-b's closeout metadata push FAILED on the scrub: `meta-push FAILED: scrub
+.supervisor/jobs/done/2026-10-04-fail-to-unstamped-escalates.md: home_path`. The brief carried one absolute
+`/Users/<name>/` path, and **the scrub refusing one file blocked the lane's WHOLE push**: run file, sidecars, done
+stamp, check-off and postmortem line all stayed in the clone (carried by hand, with the path rewritten to `~/`). Lane
+v2-a's brief had no such path and pushed fine. This is the brief-template half of this item (the `- **Project:**`
+line and the `/Users/<name>/...` examples), and it is now a **prerequisite for `parallel-automate/05`/`06`**: at
+5–10 lanes, any lane whose brief names a home path loses its closeout records. Still open: the owner's choice of
+option A or B for the rehearsal half.
