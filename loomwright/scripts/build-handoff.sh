@@ -301,7 +301,7 @@ if [ -s "$index" ]; then
         # flag; LC_ALL=C keeps tolower/length byte-wise so the cut offset is exact. The text after
         # the colon is taken from the ORIGINAL line, so the title's own case is preserved. An H2
         # `## Automate Run:` line still does not match (the second `#` is not whitespace).
-        title="$(LC_ALL=C awk -v bom="$(printf '\357\273\277')" '
+        title="$(env LC_ALL=C awk -v bom="$(printf '\357\273\277')" '
           { l = $0
             if (index(l, bom) == 1) l = substr(l, length(bom) + 1)
             if (match(tolower(l), /^[[:space:]]*#[[:space:]]*automate[[:space:]]+run[[:space:]]*:[[:space:]]*/)) {
