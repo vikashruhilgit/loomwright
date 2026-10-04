@@ -45,6 +45,12 @@
 #      timeout) is held alive while A (case H's hung CLI) times out — A's
 #      scoped leftover checks pass with B's live stub on the machine, then B
 #      is released and ends ok, not timed out
+#   L. assert_no_leftovers self-check: forged pid files in this run's $TMP
+#      make each refusal arm fire (missing leader pid, pgid != pid, pgid ==
+#      the test's own group), probed in a subshell so the expected failures
+#      never touch this suite's counters; plus a negative control (gone
+#      record passes) and a positive control (a live setpgrp'd process is
+#      flagged as a leftover, then killed)
 #
 # Exit 0 = all pass, 1 = any failure.
 
@@ -90,6 +96,7 @@ KB_PROVIDER_FILE="$HERE/provider-$KB_PROVIDER_NAME.sh"
 KB_DIR="$TMP/k-b"
 KB_RELEASE="$KB_DIR/release"
 KB_LENS_PID=""
+L_LIVE_PID=""
 TEST_PGID="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')"
 cleanup() {
   # An interrupted case K must not strand B: release its stub, then TERM B's
@@ -100,6 +107,12 @@ cleanup() {
     kill "$KB_LENS_PID" 2>/dev/null
     wait "$KB_LENS_PID" 2>/dev/null
     KB_LENS_PID=""
+  fi
+  # Case L's live positive-control process, if interrupted mid-block.
+  if [ -n "$L_LIVE_PID" ]; then
+    kill "$L_LIVE_PID" 2>/dev/null
+    wait "$L_LIVE_PID" 2>/dev/null
+    L_LIVE_PID=""
   fi
   rm -rf "$TMP"; rm -f "$PROVIDER_FILE" "$KB_PROVIDER_FILE"
 }
@@ -465,7 +478,9 @@ echo ""
 echo "==== K: overlapping lens-run.sh instances -> A's scoped leftover checks ignore live neighbour B ===="
 # B is held alive by a RELEASE FILE the test writes after A's checks, not by a
 # timeout: A's sandbox setup/teardown is unbounded under load, so B's lifetime
-# must not depend on A's wall time. B's 90s timeout is a backstop only.
+# must not depend on A's wall time. The effective limit on B is its stub's own
+# ~60s release-poll loop (300 x 0.2s), after which it self-exits; B's 90s
+# CLI timeout is never reached in practice.
 KB_STUB_DIR="$KB_DIR/stub"; mkdir -p "$KB_STUB_DIR"
 KB_PIDS="$KB_DIR/pids"
 OUT_KB="$KB_DIR/out.json"
@@ -526,6 +541,72 @@ if [ -n "$KB_SELF" ]; then
   while kill -0 "$KB_SELF" 2>/dev/null && [ "$i" -lt 50 ]; do sleep 0.2; i=$((i+1)); done
   assert_eq "K B stub leader is gone after release" "0" "$( kill -0 "$KB_SELF" 2>/dev/null && echo 1 || echo 0 )"
 fi
+
+echo ""
+echo "==== L: assert_no_leftovers self-check -> each refusal arm fires on forged pid files ===="
+# Cases H and K only ever feed the helper a well-formed record, so its refusal
+# arms are never exercised by them. Here it is fed FORGED pid files in this
+# run's own $TMP and must FAIL. Each expected-failure call runs in a subshell
+# (run_leftovers_probe), so its `no` lines bump only the subshell's counters,
+# never this suite's: the probe prints the helper's output plus the subshell's
+# fail delta, and the assertions below run in this shell with the normal helpers.
+# A reaped child's pid stands in for "a process that is gone".
+( : ) & L_DEAD=$!; wait "$L_DEAD" 2>/dev/null
+L_DIR="$TMP/l-selfcheck"; mkdir -p "$L_DIR"
+# run_leftovers_probe <pid-file-prefix> [forged TEST_PGID] -> stdout: the
+# helper's output, then a final line "DELTA <subshell fail increment>".
+run_leftovers_probe() {
+  ( [ -n "${2:-}" ] && TEST_PGID="$2"
+    f0=$fail
+    assert_no_leftovers "L" "$1"
+    echo "DELTA $((fail - f0))" ) 2>&1
+}
+# l_expect_refusal <label> <probe-output> <expected FAIL text>
+l_expect_refusal() {
+  local label="$1" out="$2" want="$3"
+  assert_true "$label: helper reported a failure" "$( printf '%s\n' "$out" | grep -qE '^DELTA [1-9]' && echo 1 || echo 0 )"
+  assert_true "$label: refusal text [$want] fired" "$( printf '%s\n' "$out" | grep -F "FAIL: L " | grep -qF "$want" && echo 1 || echo 0 )"
+}
+# (a) missing leader pid file.
+printf '%s\n' "$L_DEAD" > "$L_DIR/a.child"; printf '%s\n' "$L_DEAD" > "$L_DIR/a.pgid"
+l_expect_refusal "L(a) missing leader pid file" "$(run_leftovers_probe "$L_DIR/a")" "CLI never wrote its pid"
+# (b) recorded pgid != recorded leader pid (not launched via setpgrp).
+printf '%s\n' "$L_DEAD" > "$L_DIR/b.self"; printf '%s\n' "$L_DEAD" > "$L_DIR/b.child"
+printf '%s\n' "$((L_DEAD + 1))" > "$L_DIR/b.pgid"
+l_expect_refusal "L(b) pgid != leader pid" "$(run_leftovers_probe "$L_DIR/b")" "not launched as its own process group"
+# (c) pgid == leader pid == the test's own pgid. With the REAL test pgid this is
+# reachable only by recording a live leader (the test's own group leader), which
+# would spend the 10s kill poll and trip the "still running" arm as well; so the
+# probe forges TEST_PGID to the dead pid instead. The arm is a pure comparison;
+# this pins that it fires and that `pgrep -g` is never run on that group. It is
+# still a defensive backstop: arm (b) already refuses any stub that was not
+# setpgrp'd, since a process that is not a group leader never has pgid == pid.
+printf '%s\n' "$L_DEAD" > "$L_DIR/c.self"; printf '%s\n' "$L_DEAD" > "$L_DIR/c.child"; printf '%s\n' "$L_DEAD" > "$L_DIR/c.pgid"
+L_OUT_C="$(run_leftovers_probe "$L_DIR/c" "$L_DEAD")"
+l_expect_refusal "L(c) pgid is the test's own group" "$L_OUT_C" "is the test's own process group"
+assert_true "L(c) no pgrep -g query was run on the refused group" "$( printf '%s\n' "$L_OUT_C" | grep -q 'pgrep -g' && echo 0 || echo 1 )"
+# Negative control: the same well-formed record of a gone, setpgrp'd process,
+# checked against the REAL test pgid, passes — so the arms above fail for their
+# own reason, not for any input.
+L_OUT_N="$(run_leftovers_probe "$L_DIR/c")"
+assert_true "L negative control: gone own-group record passes (DELTA 0)" "$( printf '%s\n' "$L_OUT_N" | grep -qx 'DELTA 0' && echo 1 || echo 0 )"
+# Positive control: a LIVE setpgrp'd process recorded as leader+child+pgid must
+# be flagged as a leftover (leader still running, and its group non-empty). It
+# is killed right after the probe; cleanup() also kills it on an interrupt.
+if command -v perl >/dev/null 2>&1; then
+  perl -e 'setpgrp(0,0); exec @ARGV' sleep 30 &
+else
+  python3 -c 'import os,sys; os.setpgrp(); os.execvp(sys.argv[1], sys.argv[1:])' sleep 30 &
+fi
+L_LIVE_PID=$!
+i=0
+while [ "$(ps -o pgid= -p "$L_LIVE_PID" 2>/dev/null | tr -d ' ')" != "$L_LIVE_PID" ] && [ "$i" -lt 50 ]; do sleep 0.2; i=$((i+1)); done
+printf '%s\n' "$L_LIVE_PID" > "$L_DIR/p.self"; printf '%s\n' "$L_LIVE_PID" > "$L_DIR/p.child"
+ps -o pgid= -p "$L_LIVE_PID" 2>/dev/null | tr -d ' ' > "$L_DIR/p.pgid"
+L_OUT_P="$(run_leftovers_probe "$L_DIR/p")"
+kill "$L_LIVE_PID" 2>/dev/null; wait "$L_LIVE_PID" 2>/dev/null; L_LIVE_PID=""
+l_expect_refusal "L positive control: live setpgrp'd leftover" "$L_OUT_P" "CLI leader is not still running"
+assert_true "L positive control: its own process group reads non-empty" "$( printf '%s\n' "$L_OUT_P" | grep -qF "FAIL: L no process left in the CLI's own process group" && echo 1 || echo 0 )"
 
 echo ""
 echo "RESULT: $pass passed, $fail failed"
