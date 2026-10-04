@@ -29,11 +29,14 @@
 #   SHARED CI SLOTS    full runs take one of N machine-wide slots from loomwright/scripts/ci-slot.sh
 #                      (default N = max(1, floor(CPUs / 6)); LOOMWRIGHT_CI_SLOTS overrides), keyed
 #                      by the repo's normalised `origin` URL — the git-common-dir only as the
-#                      no-origin fallback. At most N suites run at once across every checkout; the
-#                      rest wait in ticket order and print their position. Each run gets
-#                      SELF_TEST_JOBS = max(2, floor(CPUs / N)) unless SELF_TEST_JOBS is set (an
-#                      explicit value wins); SELF_TEST_JOBS or LOOMWRIGHT_CI_SLOTS=1 restores the
-#                      old every-CPU solo run. A waiter re-checks the cache after it gets a slot, so
+#                      no-origin fallback. A run with N starts only while fewer than N suites run
+#                      across every checkout; the rest wait in ticket order and print their position.
+#                      Each run gets SELF_TEST_JOBS = max(2, floor(CPUs / N)) unless SELF_TEST_JOBS is
+#                      set (an explicit value wins). LOOMWRIGHT_CI_SLOTS=1 makes this run wait until no
+#                      other suite runs, then use every CPU; strict one-at-a-time across sessions needs
+#                      the same value in every session (a larger-N session may still start beside it,
+#                      and a smaller-N waiter can be passed while the pool is at its cap — ci-slot.sh
+#                      CLAIM BY COUNT). A waiter re-checks the cache after it gets a slot, so
 #                      if a holder just verified the same tree it returns at once. A slot whose
 #                      holder pid is dead is taken over. Sharing assumes every checkout's `origin`
 #                      is the same remote URL; a clone whose `origin` is a local path does not share.

@@ -16,8 +16,19 @@
 #        status --json lists holders + the waiter; a release hands it the slot
 #   (F)  fairness: a free slot goes only to the lowest LIVE ticket; a dead queued pid is skipped.
 #        MUTATION CONTROL: drop the ticket-order check ⇒ the fairness check fails.
+#   (X)  mixed N, claim by count: an N=2 holder in slot 1, an N=1 waiter, then an N=2 waiter ⇒ the
+#        N=2 waiter gets slot 2 promptly while the N=1 waiter keeps waiting (status --json shows its
+#        "slots":1); with the only live holder in slot 2 the N=1 waiter still cannot claim slot 1;
+#        once nothing runs it gets slot 1.
+#        MUTATION CONTROL: revert to head-ticket-only + index scan over 1..N ⇒ the (X) check fails.
 #   (D)  a slot whose holder pid is dead is taken over
-#   (M)  a counter mutex left by a dead pid (or pid-less and old) is taken over, not waited on
+#   (M)  a counter mutex (mutex.lnk) left by a dead pid is taken over at once
+#   (P)  no stranded mutex: a pre-planted garbage-target mutex.lnk plus a pid-less legacy mutex/ dir
+#        do not stall an acquire --wait 2 (done within 3 s); TERM to a waiter while its `ln` of the
+#        mutex is in flight (an `ln` shim on PATH delays it 1 s) leaves no mutex.lnk behind, and the
+#        next acquire --wait 2 claims within 3 s
+#   (L)  deadline: a mutex.lnk held by a LIVE unrelated pid makes acquire --wait 2 exit 1 within 6 s
+#        (W + 1 s mutex grace + one poll + 1 s clock granularity), ticket-less — never an unbounded wait on the mutex
 #   (I)  TERM to a queued waiter ⇒ exit 1 at once (not after its poll period), its ticket removed
 #   (R)  release is idempotent (nothing held ⇒ exit 0); --slot frees one slot
 #   (U)  usage: acquire without --pid ⇒ exit 2; unknown subcommand ⇒ exit 2; non-numeric --pid,
@@ -170,15 +181,116 @@ got="$(at "$tmp/c2" -- acquire late --pid "$FN" --wait 5 2>/dev/null)"
 if [ "$got" = "slot=2 jobs=6" ] && [ ! -e "$d1/tickets/0" ]; then ok "(F) the dead queued pid's ticket is skipped and removed; next live ticket gets the slot"
 else no "(F) dead-ticket skip: got=$got tickets=[$(ls "$d1/tickets")]"; fi
 h3=$FN
-# MUTATION CONTROL — drop the lowest-live-ticket check.
+# MUTATION CONTROL — drop the ticket-order (fairness) check.
 mut="$tmp/mut-fair.sh"
-grep -v '\[ "$(live_tickets | head -n 1)" = "$MY_TICKET" \] || return 1' "$SUT" > "$mut"
+grep -v '# FAIR$' "$SUT" > "$mut"
 if [ -s "$mut" ] && ! cmp -s "$mut" "$SUT" && bash -n "$mut"; then
   if fair_blocks "$mut"; then no "(F) MUTATION CONTROL: without ticket order the newcomer was still kept out — (F) proves nothing"
   else ok "(F) MUTATION CONTROL: without ticket order the newcomer jumps the queue"; fi
 else no "(F) MUTATION CONTROL: mutant not built (empty, unchanged or invalid)"; fi
 kill "$FQ" 2>/dev/null; wait "$FQ" 2>/dev/null; rm -f "$d1/tickets/0"
 at "$tmp/c1" -- release --pid "$h3"
+
+# --- (X) mixed N: claim by live count ---------------------------------------------------------------
+# Runs in solo2 (its own repo key), so the c1 pool above is untouched. Every wait is bounded.
+ds="$(at "$tmp/solo2" -- dir)"
+nwait() {   # nwait N — poll (max 10 s) until status --json lists N waiters
+  local i=0
+  while [ "$(at "$tmp/solo2" -- status --json | jq '.waiters | length')" != "$1" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+}
+xwait() {   # xwait FILE — poll (max 3 s) until FILE is non-empty
+  local i=0
+  while [ ! -s "$1" ] && [ "$i" -lt 30 ]; do sleep 0.1; i=$((i + 1)); done
+}
+mixed_ok() {   # mixed_ok SUT — exit 0 iff every (X) property holds; XWHY says which failed
+  local s="$1" ha hb hn w1 rc=0
+  XWHY=""; rm -f "$tmp"/x.*
+  live; ha=$LIVE; live; hb=$LIVE; live; hn=$LIVE
+  at "$tmp/solo2" "$s" -- acquire xa --pid "$ha" --slots 2 >/dev/null 2>&1
+  (cd "$tmp/solo2" && bash "$s" acquire xn --pid "$hn" --slots 1 --wait 30 >"$tmp/x.n" 2>/dev/null) &
+  w1=$!; pids="$pids $w1"
+  nwait 1
+  (cd "$tmp/solo2" && bash "$s" acquire xb --pid "$hb" --slots 2 --wait 10 >"$tmp/x.b" 2>/dev/null) &
+  pids="$pids $!"
+  xwait "$tmp/x.b"
+  if [ "$(cat "$tmp/x.b" 2>/dev/null)" != "slot=2 jobs=6" ]; then rc=1; XWHY="N=2 waiter did not get slot 2 within 3 s (got '$(cat "$tmp/x.b" 2>/dev/null)')"
+  elif [ -s "$tmp/x.n" ] || [ "$(at "$tmp/solo2" -- status --json | jq -c '[.waiters[] | [.pid, .slots]]')" != "[[$hn,1]]" ]; then
+    rc=1; XWHY="N=1 waiter claimed past 1 live holder (out '$(cat "$tmp/x.n")')"
+  else
+    at "$tmp/solo2" -- release --pid "$ha"   # the only live holder is now in slot 2
+    sleep 0.6
+    if [ -s "$tmp/x.n" ]; then rc=1; XWHY="N=1 waiter took a slot while 1 holder (slot 2) was live: '$(cat "$tmp/x.n")'"
+    else
+      at "$tmp/solo2" -- release --pid "$hb"
+      xwait "$tmp/x.n"
+      [ "$(cat "$tmp/x.n")" = "slot=1 jobs=12" ] || { rc=1; XWHY="N=1 waiter did not get slot 1 once idle: '$(cat "$tmp/x.n")'"; }
+    fi
+  fi
+  kill "$w1" 2>/dev/null; wait "$w1" 2>/dev/null
+  for p in $ha $hb $hn; do at "$tmp/solo2" -- release --pid "$p"; kill "$p" 2>/dev/null; wait "$p" 2>/dev/null; done
+  return "$rc"
+}
+if mixed_ok "$SUT"; then ok "(X) mixed N: the N=2 waiter gets slot 2 past a capped N=1 waiter; N=1 never claims while 1 holder is live"
+else no "(X) $XWHY"; fi
+# MUTATION CONTROL — revert claim-by-count to the old rule: head ticket only, index scan over 1..N.
+mut="$tmp/mut-count.sh"
+sed -e '/# COUNT$/d' \
+    -e 's/^    is_uint "\$c" .*# FAIR$/    return 1/' \
+    -e 's/^  k=1; while \[ -e "\$D\/slots\/\$k" \]; do k=\$((k + 1)); done   # LOWEST$/  k=1; while [ -e "$D\/slots\/$k" ]; do k=$((k + 1)); done; [ "$k" -le "$SLOTS" ] || return 1/' \
+    "$SUT" > "$mut"
+if [ -s "$mut" ] && ! cmp -s "$mut" "$SUT" && bash -n "$mut" && ! grep -q '# COUNT$\|# FAIR$\|# LOWEST$' "$mut"; then
+  if mixed_ok "$mut"; then no "(X) MUTATION CONTROL: the index-scan rule still passed (X) — (X) proves nothing"
+  else ok "(X) MUTATION CONTROL: with the index-scan rule (X) fails ($XWHY)"; fi
+else no "(X) MUTATION CONTROL: mutant not built (empty, unchanged, invalid or a tagged line left)"; fi
+rm -rf "$ds/tickets/"* "$ds/slots/"*
+
+# --- (P) no stranded mutex ----------------------------------------------------------------------------
+live; hp=$LIVE
+ln -s garbage "$ds/mutex.lnk"; mkdir "$ds/mutex"
+t0=$(date +%s)
+got="$(at "$tmp/solo2" -- acquire hp --pid "$hp" --wait 2 2>"$tmp/p.err")"; rc=$?
+el=$(( $(date +%s) - t0 ))
+if [ "$rc" = 0 ] && [ "$got" = "slot=1 jobs=6" ] && [ "$el" -le 3 ] && [ ! -L "$ds/mutex.lnk" ]; then
+  ok "(P) a garbage-target mutex.lnk and a pid-less legacy mutex/ dir do not stall acquire --wait 2 (${el}s)"
+else no "(P) planted: rc=$rc got=$got ${el}s err=$(cat "$tmp/p.err")"; fi
+rmdir "$ds/mutex" 2>/dev/null
+# TERM while the waiter's `ln` of the mutex is in flight: bash defers the trap until `ln` returns.
+realln="$(command -v ln)"; mkdir -p "$tmp/shim"
+printf '#!/bin/sh\ncase "$*" in *mutex.lnk*) echo x >> "%s"; sleep 1 ;; esac\nexec "%s" "$@"\n' "$tmp/p.inln" "$realln" > "$tmp/shim/ln"
+chmod +x "$tmp/shim/ln"; rm -f "$tmp/p.inln"
+nlines() { if [ -f "$1" ]; then wc -l < "$1" | tr -d ' '; else echo 0; fi; }
+live; hq=$LIVE; live; hp2=$LIVE
+at "$tmp/solo2" -- acquire hp2 --pid "$hp2" >/dev/null   # both slots held: hq must queue and poll
+(cd "$tmp/solo2" && PATH="$tmp/shim:$PATH" exec bash "$SUT" acquire hq --pid "$hq" --wait 60 >/dev/null 2>&1) &
+qpid=$!; pids="$pids $qpid"
+i=0
+while [ "$(nlines "$tmp/p.inln")" -lt 2 ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+kill -TERM "$qpid" 2>/dev/null
+i=0
+while kill -0 "$qpid" 2>/dev/null && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+kill -KILL "$qpid" 2>/dev/null; wait "$qpid" 2>/dev/null
+at "$tmp/solo2" -- release --pid "$hp"; at "$tmp/solo2" -- release --pid "$hp2"
+live; hr=$LIVE
+t0=$(date +%s)
+got="$(at "$tmp/solo2" -- acquire hr --pid "$hr" --wait 2 2>"$tmp/p.err")"; rc=$?
+el=$(( $(date +%s) - t0 ))
+if [ "$(nlines "$tmp/p.inln")" -ge 2 ] && [ "$rc" = 0 ] && [ -n "$got" ] && [ "$el" -le 3 ] \
+   && ! grep -q 'stale counter mutex' "$tmp/p.err" && [ -z "$(ls "$ds/tickets")" ]; then
+  ok "(P) TERM during the waiter's mutex ln leaves no lock or ticket behind; the next acquire --wait 2 claims in ${el}s"
+else no "(P) interrupted: ln-calls=$(nlines "$tmp/p.inln") rc=$rc got=$got ${el}s tickets=[$(ls "$ds/tickets")] lnk=$(readlink "$ds/mutex.lnk") err=$(cat "$tmp/p.err")"; fi
+at "$tmp/solo2" -- release --pid "$hr"
+
+# --- (L) the acquire deadline holds even with a stuck mutex --------------------------------------------
+live; hl=$LIVE; live; hs=$LIVE
+ln -s "$hs" "$ds/mutex.lnk"
+t0=$(date +%s)
+got="$(at "$tmp/solo2" -- acquire hl --pid "$hl" --wait 2 2>"$tmp/l.err")"; rc=$?
+el=$(( $(date +%s) - t0 ))
+if [ "$rc" = 1 ] && [ -z "$got" ] && [ "$el" -le 6 ] && [ -z "$(ls "$ds/tickets")" ] && [ "$(readlink "$ds/mutex.lnk")" = "$hs" ] \
+   && grep -q "held by pid $hs past the wait deadline" "$tmp/l.err"; then
+  ok "(L) a mutex held by a live pid: acquire --wait 2 exits 1 in ${el}s, no ticket, the live lock untouched"
+else no "(L) rc=$rc got=$got ${el}s tickets=[$(ls "$ds/tickets")] err=$(cat "$tmp/l.err")"; fi
+rm -f "$ds/mutex.lnk"; kill "$hs" "$hl" 2>/dev/null
 
 # --- (D) dead holder -------------------------------------------------------------------------------
 kill "$h1" 2>/dev/null; wait "$h1" 2>/dev/null
@@ -190,17 +302,12 @@ else no "(D) got=$got err=$(cat "$tmp/d.err")"; fi
 at "$tmp/c2" -- release --pid "$h4"
 
 # --- (M) stale counter mutex -------------------------------------------------------------------------
-dead; mkdir "$d1/mutex"; echo "$DEAD" > "$d1/mutex/pid"
+dead; ln -s "$DEAD" "$d1/mutex.lnk"
 live; h5=$LIVE
 got="$(at "$tmp/c1" -- acquire h5 --pid "$h5" --wait 1 2>"$tmp/m.err")"
-if [ -n "$got" ] && grep -q "stale counter mutex (pid $DEAD is gone)" "$tmp/m.err" && [ ! -d "$d1/mutex" ]; then
+if [ -n "$got" ] && grep -q "stale counter mutex (pid $DEAD is gone)" "$tmp/m.err" && [ ! -L "$d1/mutex.lnk" ]; then
   ok "(M) a mutex left by a dead pid is taken over at once"
 else no "(M) got=$got err=$(cat "$tmp/m.err")"; fi
-at "$tmp/c1" -- release --pid "$h5"
-mkdir "$d1/mutex"; touch -t 202001010000 "$d1/mutex"
-got="$(at "$tmp/c1" -- acquire h5 --pid "$h5" --wait 1 2>"$tmp/m.err")"
-if [ -n "$got" ] && grep -q "no pid file for 30s+" "$tmp/m.err"; then ok "(M) a pid-less mutex older than 30 s is taken over"
-else no "(M) pid-less: got=$got err=$(cat "$tmp/m.err")"; fi
 
 # --- (I) TERM to a queued waiter ---------------------------------------------------------------------
 # Both slots held; a waiter with a 30 s poll period. Its TERM trap must run at once, not after the poll.

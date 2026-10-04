@@ -25,20 +25,29 @@
 #                  scp-style `git@host:owner/repo` mapped to `host/owner/repo`, scheme/user/port
 #                  stripped, trailing `.git` and `/` removed. The host stays in, so two hosts never
 #                  collide. No `origin` ⇒ a hash of the absolute git-common-dir path (per-repo only).
-#                  Layout: slots/<k>/info, tickets/<n>, counter, mutex/pid — info and tickets hold
-#                  four lines: pid, checkout path, name, start epoch.
+#                  Layout: slots/<k>/info, tickets/<n>, counter, mutex.lnk — info holds four lines:
+#                  pid, checkout path, name, start epoch; a ticket adds a fifth, the waiter's N.
 # ORIGIN ASSUMPTION  sharing assumes every checkout's `origin` is the same remote URL (lane-create
 #                  sets it so). A clone whose `origin` is a local filesystem path keys separately and
 #                  does NOT share; equality across URL forms (ssh vs https) is best-effort only.
 # N SLOTS          default max(1, floor(CPUs / 6)); LOOMWRIGHT_CI_SLOTS or --slots overrides. Each
 #                  slot's job share is max(2, floor(CPUs / N)). CPUs: getconf _NPROCESSORS_ONLN, else
 #                  sysctl -n hw.ncpu, else 4 (LOOMWRIGHT_CI_CPUS overrides, for tests).
-# FAIR QUEUE       a waiter takes a ticket from a counter guarded by a `mkdir` mutex (no flock); a
-#                  free slot goes only to the LOWEST LIVE ticket, so no run starves. A queued pid that
-#                  died has its ticket skipped and removed; a waiter that gives up removes its own.
-#                  The claim (lowest-ticket check + slot `mkdir`) happens under the mutex too.
-# STALE MUTEX      the mutex records its holder pid; a dead pid (or no pid file and older than 30 s)
-#                  is taken over, so a process SIGKILLed inside it never blocks every checkout.
+# CLAIM BY COUNT   a caller with N may start only while fewer than N LIVE holders exist across ALL
+#                  slot dirs (whatever N they were started with); it then takes the lowest free slot
+#                  index, which may be above its own N. So a caller's N caps how many suites run
+#                  while it starts, and LOOMWRIGHT_CI_SLOTS=1 means "only when nothing else runs".
+# FAIR QUEUE       a waiter takes a ticket from a counter guarded by the mutex (no flock). It may
+#                  claim only when every LIVE ticket ahead of it is at its own cap (live holders >= that
+#                  waiter's N) — with one N everywhere that is exactly "the lowest live ticket goes
+#                  first", so no run starves. A ticket with no recorded N blocks everyone behind it.
+#                  A queued pid that died has its ticket skipped and removed; a waiter that gives up
+#                  removes its own; a waiter whose ticket vanished takes a fresh one. The claim (count
+#                  + fairness check + slot `mkdir`) happens under the mutex, and a claimer re-counts
+#                  after its `mkdir` and backs off if it pushed the count past its N.
+# MUTEX            `ln -s <pid> mutex.lnk` — atomic and carries its holder pid from the instant it
+#                  exists, so a TERM can never leave a pid-less lock; a link whose pid is dead (or
+#                  not a number) is taken over at once. Lock waits honour the acquire --wait deadline.
 # WAITING          stderr, first wait then every LOOMWRIGHT_CI_SLOT_PRINT_EVERY s (default 30):
 #                  `waiting for a CI slot — position <p>, holders: <name> (<age>), …`. Poll period:
 #                  LOOMWRIGHT_CI_SLOT_POLL s (default 2). All diagnostics go to stderr.
@@ -48,8 +57,13 @@
 # Honest limits: (1) pid reuse — a recycled pid makes a dead holder look alive until it exits too
 # (start time is recorded for humans, not checked). (2) `kill -0` on another user's pid fails, so a
 # slot held by another user looks stale. (3) two processes taking over the same dead mutex in the
-# same instant can both enter it; the slot claim is still an atomic `mkdir`, so N is never exceeded
-# — only ticket order can be off for that one claim.
+# same instant can both enter it; the post-`mkdir` re-count still keeps N, only ticket order can be
+# off for that one claim. (4) mixed N trades strict order for liveness: a waiter with a SMALLER N
+# than the others is passed while the live count is at its cap, and waits until the load drops below
+# its N. Use one LOOMWRIGHT_CI_SLOTS value everywhere for strict first-come order. (5) a checkout on
+# an earlier commit of this helper (a `mutex/` dir lock and an index scan over 1..N) does not take
+# `mutex.lnk`, so during that rollout the two can interleave counter bumps and claims: the re-count
+# and the fresh-ticket rule keep this side correct, but the older side can still exceed its N.
 # Self-test: loomwright/scripts/test-ci-slot.sh. Portability: bash 3.2 safe, BSD + GNU userland.
 set -uo pipefail
 shopt -s nullglob
@@ -112,36 +126,34 @@ state_dir() {
   mkdir -p "$D/slots" "$D/tickets" || { echo "ci-slot: cannot create $D" >&2; exit 1; }
 }
 
-mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0; }
-
 # --- counter mutex: held for milliseconds by THIS process ($$ is alive for the whole hold) ---------
+# A symlink, not a dir + pid file: `ln -s` creates the lock and its pid in one atomic step, so there is
+# no window in which a TERM (whose trap bash runs between two commands) can strand a pid-less lock.
+# mutex_lock [DEADLINE] — returns 1 once DEADLINE (epoch s) passes without the lock.
 mutex_lock() {
-  local p stale
-  while ! mkdir "$D/mutex" 2>/dev/null; do
-    p="$(head -n 1 "$D/mutex/pid" 2>/dev/null || true)"
-    stale=""
-    if [ -n "$p" ]; then
-      alive "$p" || stale="pid $p is gone"
-    elif [ -d "$D/mutex" ] && [ $(( $(now) - $(mtime "$D/mutex") )) -ge 30 ]; then
-      stale="no pid file for 30s+"
-    fi
-    if [ -n "$stale" ]; then
-      # Rename first: only one taker can move a given dir, and rm never hits a fresh mutex.
-      if mv "$D/mutex" "$D/mutex.stale.$$" 2>/dev/null; then
-        warn "taking over a stale counter mutex ($stale)"
-        rm -rf "$D/mutex.stale.$$"
+  local p
+  while ! ln -sn "$$" "$LK" 2>/dev/null; do
+    p="$(readlink "$LK" 2>/dev/null || true)"
+    if [ -n "$p" ] && ! alive "$p"; then
+      # Rename first: only one taker can move a given link, and rm never hits a fresh mutex.
+      if mv "$LK" "$D/mutex.stale.$$" 2>/dev/null; then
+        warn "taking over a stale counter mutex (pid $p is gone)"
+        rm -f "$D/mutex.stale.$$"
       fi
       continue
     fi
+    if [ -n "${1:-}" ] && [ "$(now)" -ge "$1" ]; then return 1; fi
     sleep 0.05
   done
-  echo "$$" > "$D/mutex/pid"
+  return 0
 }
-mutex_unlock() { rm -rf "$D/mutex"; }
+mutex_mine() { [ "$(readlink "$LK" 2>/dev/null)" = "$$" ]; }
+mutex_unlock() { mutex_mine && rm -f "$LK"; return 0; }
 
 rec_field() { sed -n "${2}p" "$1" 2>/dev/null; }   # rec_field FILE LINE (1 pid 2 checkout 3 name 4 start)
 
-write_rec() { printf '%s\n%s\n%s\n%s\n' "$PID" "$CHECKOUT" "$NAME" "$(now)" > "$1"; }
+rec() { printf '%s\n%s\n%s\n%s\n' "$PID" "$CHECKOUT" "$NAME" "$(now)"; }
+write_rec() { rec > "$1"; }
 
 # live_tickets — ticket numbers in queue order; tickets of dead pids are removed (call under mutex).
 live_tickets() {
@@ -152,25 +164,58 @@ live_tickets() {
   done | sort -n
 }
 
-# try_claim — under the mutex: claim a slot iff our ticket is the lowest live one. Prints the slot.
-try_claim() {
-  local k s p
-  [ "$(live_tickets | head -n 1)" = "$MY_TICKET" ] || return 1
-  for k in $(seq 1 "$SLOTS"); do
-    s="$D/slots/$k"
-    if [ -d "$s" ]; then
-      p="$(rec_field "$s/info" 1)"
-      alive "$p" && continue
-      warn "taking over slot $k (holder pid ${p:-?} is gone)"
-      rm -rf "$s"
-    fi
-    if mkdir "$s" 2>/dev/null; then
-      write_rec "$s/info"
-      rm -f "$D/tickets/$MY_TICKET"
-      echo "$k"; return 0
-    fi
+# take_ticket — under the mutex: bump the counter and create our ticket exclusively (noclobber), so
+# a ticket number is never shared even with a writer that ignores this mutex.
+take_ticket() {
+  local n
+  n="$(cat "$D/counter" 2>/dev/null || true)"; is_uint "$n" || n=0
+  while :; do
+    n=$((10#$n + 1))
+    MY_TICKET="$n"   # set first: the TERM trap removes it only if it records our --pid
+    if (set -C; { rec; echo "$SLOTS"; } > "$D/tickets/$n") 2>/dev/null; then break; fi
+    # Retry only past a number already taken; an unwritable tickets dir must not spin forever.
+    [ -e "$D/tickets/$n" ] || { MY_TICKET=""; return 1; }
   done
-  return 1
+  echo "$n" > "$D/counter"
+}
+
+drop_my_ticket() {
+  [ -n "$MY_TICKET" ] && [ "$(rec_field "$D/tickets/$MY_TICKET" 1)" = "$PID" ] && rm -f "$D/tickets/$MY_TICKET"
+  return 0
+}
+
+# live_holders — count of LIVE holders across every slot dir; dead holders' slots are removed.
+live_holders() {
+  local s k p h=0
+  for s in "$D"/slots/*; do
+    k="${s##*/}"; is_uint "$k" || continue
+    p="$(rec_field "$s/info" 1)"
+    if alive "$p"; then h=$((h + 1)); else warn "taking over slot $k (holder pid ${p:-?} is gone)"; rm -rf "$s"; fi
+  done
+  echo "$h"
+}
+
+# try_claim — under the mutex: claim iff live holders < our N and every live ticket ahead of ours
+# is at its own cap (see CLAIM BY COUNT / FAIR QUEUE). Sets GOT to the slot index. Runs in the
+# acquiring shell itself (never `$(...)`), so CLAIMING is visible to the TERM trap.
+try_claim() {
+  local k s h t c
+  h="$(live_holders)"
+  [ "$h" -lt "$SLOTS" ] || return 1   # COUNT
+  for t in $(live_tickets); do
+    [ "$t" = "$MY_TICKET" ] && break
+    c="$(rec_field "$D/tickets/$t" 5)"
+    is_uint "$c" && [ "$c" -gt 0 ] && [ "$h" -ge $((10#$c)) ] || return 1   # FAIR
+  done
+  k=1; while [ -e "$D/slots/$k" ]; do k=$((k + 1)); done   # LOWEST
+  s="$D/slots/$k"
+  mkdir "$s" 2>/dev/null || return 1
+  CLAIMING="$s"
+  write_rec "$s/info"
+  # Re-count with ours in: only a writer outside this mutex (see Honest limits) can push it past N.
+  if [ "$(live_holders)" -gt "$SLOTS" ]; then rm -rf "$s"; CLAIMING=""; return 1; fi
+  rm -f "$D/tickets/$MY_TICKET"
+  GOT="$k"; return 0
 }
 
 fmt_age() {
@@ -194,11 +239,14 @@ holders_line() {
 json_str() { local s="$1"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; printf '"%s"' "$s"; }
 
 json_rec() {  # json_rec FILE KEY VALUE
-  local p st
+  local p st c
   p="$(rec_field "$1" 1)"; is_uint "$p" || p=0
   st="$(rec_field "$1" 4)"; is_uint "$st" || st=0
-  printf '{%s:%s,"pid":%s,"checkout":%s,"name":%s,"started":%s}' "$(json_str "$2")" "$3" "$p" \
+  printf '{%s:%s,"pid":%s,"checkout":%s,"name":%s,"started":%s' "$(json_str "$2")" "$3" "$p" \
     "$(json_str "$(rec_field "$1" 2)")" "$(json_str "$(rec_field "$1" 3)")" "$st"
+  # A ticket also carries the waiter's own N (0 = not recorded).
+  if [ "$2" = ticket ]; then c="$(rec_field "$1" 5)"; is_uint "$c" || c=0; printf ',"slots":%s' "$((10#$c))"; fi
+  printf '}'
 }
 
 cmd_status() {
@@ -234,30 +282,34 @@ cmd_status() {
 }
 
 cmd_acquire() {
-  local deadline n k next_print=0 every pos
+  local deadline next_print=0 every pos
   [ -n "$PID" ] || die "acquire needs --pid <holder-pid> (the long-lived caller, never this helper)"
   alive "$PID" || die "--pid $PID is not a live process"
   deadline=$(( $(now) + WAIT ))
   every="${LOOMWRIGHT_CI_SLOT_PRINT_EVERY:-30}"; is_uint "$every" || every=30; every=$((10#$every))
-  mutex_lock
-  n="$(cat "$D/counter" 2>/dev/null || true)"; is_uint "$n" || n=0
-  n=$((10#$n + 1)); echo "$n" > "$D/counter"
-  MY_TICKET="$n"; write_rec "$D/tickets/$n"
-  mutex_unlock
   while :; do
-    mutex_lock
-    if k="$(try_claim)"; then
+    # +1 s: a mutex held for milliseconds right at the deadline (or with --wait 0) is still waited out.
+    if mutex_lock $((deadline + 1)); then
+      # Our ticket vanished or was overwritten (a writer outside this mutex): take a fresh one.
+      if [ -z "$MY_TICKET" ] || [ "$(rec_field "$D/tickets/$MY_TICKET" 1)" != "$PID" ]; then
+        take_ticket || { mutex_unlock; warn "cannot write a ticket under $D/tickets"; return 1; }
+      fi
+      if try_claim; then
+        CLAIMING=""
+        mutex_unlock
+        echo "slot=$GOT jobs=$JOBS"
+        return 0
+      fi
+      pos="$(live_tickets | grep -nx "$MY_TICKET" | cut -d: -f1)"
       mutex_unlock
-      echo "slot=$k jobs=$JOBS"
-      return 0
+    else
+      pos=""; warn "the counter mutex is held by pid $(readlink "$LK" 2>/dev/null || echo '?') past the wait deadline"
     fi
-    pos="$(live_tickets | grep -nx "$MY_TICKET" | cut -d: -f1)"
-    mutex_unlock
     if ! alive "$PID"; then
-      rm -f "$D/tickets/$MY_TICKET"; warn "holder pid $PID is gone — leaving the queue"; return 1
+      drop_my_ticket; warn "holder pid $PID is gone — leaving the queue"; return 1
     fi
     if [ "$(now)" -ge "$deadline" ]; then
-      rm -f "$D/tickets/$MY_TICKET"
+      drop_my_ticket
       warn "no CI slot after ${WAIT}s — giving up (holders: $(holders_line)); see: ci-slot.sh status"
       return 1
     fi
@@ -310,8 +362,11 @@ POLL="${LOOMWRIGHT_CI_SLOT_POLL:-2}"
 case "$POLL" in ''|*[!0-9.]*) POLL=2 ;; esac
 CHECKOUT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 MY_TICKET=""
+CLAIMING=""
+GOT=""
 D=""
 state_dir
+LK="$D/mutex.lnk"
 
 case "$CMD" in
   dir) echo "$D" ;;
@@ -319,6 +374,7 @@ case "$CMD" in
   release) cmd_release ;;
   acquire)
     # A waiter leaving on INT/TERM removes its own ticket (and the mutex, if it was inside it).
-    trap '[ -n "$MY_TICKET" ] && rm -f "$D/tickets/$MY_TICKET"; [ "$(head -n 1 "$D/mutex/pid" 2>/dev/null)" = "$$" ] && rm -rf "$D/mutex"; exit 1' INT TERM
+    # A half-made claim (slot dir made, stdout not yet written) is undone too: the caller sees exit 1.
+    trap 'drop_my_ticket; [ -n "$CLAIMING" ] && rm -rf "$CLAIMING"; mutex_unlock; exit 1' INT TERM
     cmd_acquire ;;
 esac
