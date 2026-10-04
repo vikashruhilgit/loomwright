@@ -107,7 +107,7 @@ carry the fixes.
   Claude-specific add-ons live in the Claude adapter layer (portability core/adapter direction) and count against
   the vendor-coupling ratchet.
 
-- **P10 — usage budget (NEW — owner to decide).** A lane cost about $24–27 per item in S1 v2, so 10 lanes are about
+- **P10 — usage budget. DECIDED 2026-10-04 (owner): "don't worry about budget" — no budget cap on the lane count; S2 still records cost per wave for visibility.** Original note: A lane cost about $24–27 per item in S1 v2, so 10 lanes are about
   $250 of usage per wave, plus a `claude-review` CI run per push on the same subscription (the weekly cap tripped on
   2026-09-15). Code cannot solve this: either lanes get their own billing (API key) or the lane count is capped by
   budget. S2 records cost per wave to inform it.
