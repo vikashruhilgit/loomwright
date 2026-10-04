@@ -20,7 +20,10 @@
 #   (M)  a counter mutex left by a dead pid (or pid-less and old) is taken over, not waited on
 #   (I)  TERM to a queued waiter ⇒ exit 1 at once (not after its poll period), its ticket removed
 #   (R)  release is idempotent (nothing held ⇒ exit 0); --slot frees one slot
-#   (U)  usage: acquire without --pid ⇒ exit 2; unknown subcommand ⇒ exit 2; --help = the header
+#   (U)  usage: acquire without --pid ⇒ exit 2; unknown subcommand ⇒ exit 2; non-numeric --pid,
+#        --slot, --wait, --slots 0 and --slots abc ⇒ exit 2 with that option's own message and no
+#        ticket/slot/counter change; --help = the header.
+#        MUTATION CONTROL: drop the --slots -gt 0 check ⇒ the --slots 0 check fails.
 # run-self-tests: serial
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -231,6 +234,38 @@ if [ ! -d "$d1/slots/1" ]; then ok "(R) release --slot frees that slot"; else no
 at "$tmp/c1" -- acquire nopid >/dev/null 2>&1; r1=$?
 at "$tmp/c1" -- bogus >/dev/null 2>&1; r2=$?
 if [ "$r1" = 2 ] && [ "$r2" = 2 ]; then ok "(U) acquire without --pid and an unknown subcommand exit 2"; else no "(U) r1=$r1 r2=$r2"; fi
+# Malformed option values: each must exit 2 with ITS OWN parser message (the later LOOMWRIGHT_CI_SLOTS
+# guard also exits 2 on a zero slot count, so exit code alone cannot pin the --slots guard) and leave
+# no ticket, slot or counter bump behind. Every call names a live --pid so only the bad value is wrong.
+live; hu=$LIVE
+refuses() {   # refuses SUT MSG -- ARGS: exit 2, stderr names MSG, state untouched
+  local s="$1" m="$2" c0 rc; shift 3
+  c0="$(cat "$d1/counter" 2>/dev/null)"
+  at "$tmp/c1" "$s" -- "$@" >"$tmp/u.out" 2>"$tmp/u.err"; rc=$?
+  [ "$rc" = 2 ] && [ ! -s "$tmp/u.out" ] && grep -qF -- "ci-slot: $m" "$tmp/u.err" \
+    && [ -z "$(ls "$d1/tickets")" ] && [ -z "$(ls "$d1/slots")" ] \
+    && [ "$(cat "$d1/counter" 2>/dev/null)" = "$c0" ]
+}
+uok=1
+for spec in "--pid needs a numeric pid|acquire u --pid abc" \
+            "--slot needs a number|release --slot abc" \
+            "--slots needs a positive integer|acquire u --pid $hu --wait 0 --slots 0" \
+            "--slots needs a positive integer|acquire u --pid $hu --wait 0 --slots abc" \
+            "--wait needs seconds|acquire u --pid $hu --wait abc"; do
+  # shellcheck disable=SC2086  # the arg list is word-split on purpose
+  refuses "$SUT" "${spec%%|*}" -- ${spec#*|} || { uok=0; no "(U) not refused cleanly: ${spec#*|} — rc/err=[$(cat "$tmp/u.err")] tickets=[$(ls "$d1/tickets")] slots=[$(ls "$d1/slots")]"; }
+done
+[ "$uok" -eq 1 ] && ok "(U) non-numeric --pid/--slot/--wait, --slots 0 and --slots abc each exit 2 with their own message, no ticket/slot left"
+# MUTATION CONTROL — drop the --slots -gt 0 check (the later env guard still exits 2, so only the
+# parser message tells them apart).
+mut="$tmp/mut-slots.sh"
+sed 's/is_uint "\$2" && \[ "\$2" -gt 0 \] || die "--slots/is_uint "$2" || die "--slots/' "$SUT" > "$mut"
+if [ -s "$mut" ] && ! cmp -s "$mut" "$SUT" && bash -n "$mut"; then
+  if refuses "$mut" "--slots needs a positive integer" -- acquire u --pid "$hu" --wait 0 --slots 0; then
+    no "(U) MUTATION CONTROL: without the -gt 0 guard --slots 0 was still refused by the parser — (U) proves nothing"
+  else ok "(U) MUTATION CONTROL: without the -gt 0 guard --slots 0 is no longer refused by the parser"; fi
+else no "(U) MUTATION CONTROL: mutant not built (empty, unchanged or invalid)"; fi
+kill "$hu" 2>/dev/null; wait "$hu" 2>/dev/null
 out="$(bash "$SUT" --help)"
 if grep -q '^ci-slot.sh — ' <<<"$out" && grep -q '^Self-test: loomwright/scripts/test-ci-slot.sh' <<<"$out" \
    && ! grep -q 'set -uo' <<<"$out"; then ok "(U) --help prints the de-commented header"
