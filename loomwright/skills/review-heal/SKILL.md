@@ -442,6 +442,7 @@ sub_floor_fixed = []                # findings FIXED (never declined) in a sub_f
 rejected_instruction_like = 0       # count of EXTERNAL_TEXT bodies rejected as instruction-like this run (additive result field, §"Untrusted-Text Envelope") — incremented, never reset, across rounds
 termination_reason = null           # converged | bound_hit | sub_floor_converged | ci_untrusted (AC6, ci-trust-probe-01) — set on exactly one matching exit path
 checks_ever_fixed = {}              # required-check names this drain has attempted to fix — AC13 input for the confirming pass
+rules_failed_seen = {}              # countable rule ids seen FAILING in any round (automate-followups/18) — a later `unstamped` escalates
 fallback_review_ran = false         # run-scoped (AC3); the earned fallback fires at MOST once per drain run —
                                      # this flag is what the mechanized bound cannot re-trigger it through
 round_number = 0                    # this run's own round ordinal (dismissed-findings-01) — incremented once
@@ -560,11 +561,15 @@ loop:
                    for id in rules.failing if id in rules.countable ]
     auto_fixable = [f for f in validated if is_auto_fixable(f)]        # RE-DERIVE from the now-larger
     needs_human  = [f for f in validated if not is_auto_fixable(f)]   # `validated`, exactly as the earned-fallback branch does
+    rules_failed_seen |= { id for id in rules.failing if id in rules.countable }   # remembered across rounds
   # Any verdict NOT in RULES_PASSABLE and not `fail` (unresolved, unreadable, and every shape
   # rules_gate_read normalised to unreadable) ⇒ escalated below, AFTER the dismissed-findings marker (so
   # this round's dismissals still post). ok / none / unstamped / cmd_disabled ⇒ nothing appended —
-  # BYTE-IDENTICAL round.
+  # BYTE-IDENTICAL round — except `unstamped` after a remembered fail (`rules_fail_then_unstamped`): a fix
+  # likely edited a bound file. Any remembered id, not only a still-countable one (`unstamped` runs no
+  # replay; countability drift reads `unstamped`).
   rules_escalates = rules.verdict not in RULES_PASSABLE and rules.verdict != "fail"   # allow-list complement
+  rules_escalates = rules_escalates or (rules.verdict == "unstamped" and rules_failed_seen)   # automate-followups/18 — a remembered countable fail turning unstamped
 
   # Earned fallback gate (AC3) — the ONE exception to heal-only, checked ONLY on a round that would
   # otherwise declare READY, and at most once per drain run (fallback_review_ran). Full contract:
@@ -616,15 +621,17 @@ loop:
   if rules_escalates:
     # FAIL CLOSED — a rules verdict the gate could not compute (or could not be READ) never lets the round reach READY.
     decision = ESCALATED                   # termination_reason left UNSET (like an unreadable ledger)
-    remaining_issues = len(auto_fixable) + len(needs_human) + max(1, len(rules.unresolved))
-    post "rules_gate_unresolved: rules-gate-verdict.sh verdict <verdict> (<unresolved ids>)" to PR (gh pr comment ...); notify (best-effort)
+    remaining_issues = len(auto_fixable) + len(needs_human) + max(1, len(rules.unresolved), len(rules_failed_seen))
+    post "rules_gate_unresolved: rules-gate-verdict.sh verdict <verdict> (<unresolved ids>)" to PR (gh pr comment ...)
+      — on `unstamped`: "rules_fail_then_unstamped: <rules_failed_seen ids> failed earlier, now unstamped"; notify (best-effort)
     break
 
   # READY ⇔ required green AND scoped review-producing checks settled (already true here) AND
   #         no unresolved VALIDATED bot findings remain across ALL channels (fallback findings included)
   #         AND no countable stamped must-rule check fails (a `fail` verdict put a rules_replay finding
   #         in auto_fixable above; every other non-RULES_PASSABLE verdict already escalated — so here
-  #         rules_gate ∈ {ok, none, unstamped, cmd_disabled}, and unstamped/cmd_disabled are advisory at the drain).
+  #         rules_gate ∈ {ok, none, unstamped, cmd_disabled}, and unstamped/cmd_disabled are advisory at the drain
+  #         — an `unstamped` after a remembered fail already escalated above).
   if required_failing == [] and auto_fixable == [] and needs_human == []:
     decision = READY                      # AC6 — see "READY redefinition"
     termination_reason = "converged"      # a genuine empty-yield round — every channel WAS re-scanned this round; distinct from sub_floor_converged (AC6)
@@ -710,7 +717,7 @@ loop:
     # Rules clause of READY, re-read on the PUSHED commit (a sub-floor fix can change a check's outcome):
     rules_after = rules_gate_read(<checkout>)          # the SAME allow-listed read as §U4 (helper from the plugin install root)
     rules_gate = rules_after.verdict
-    if outcome.result == "GREEN" and rules_after.verdict in RULES_PASSABLE:   # AFFIRMATIVE — anything else is NOT READY
+    if outcome.result == "GREEN" and not (rules_after.verdict == "unstamped" and rules_failed_seen) and rules_after.verdict in RULES_PASSABLE:   # AFFIRMATIVE — anything else is NOT READY
       # AC12 — the earned-fallback gate is NOT re-run here, and that is CORRECT rather than an omission.
       # PROOF it cannot be earned on this path: sub_floor_eligible requires `auto_fixable != []` with EVERY
       # element below severity_floor; a `rules_replay` finding is BLOCKING (never below any floor), so none
@@ -734,7 +741,8 @@ loop:
       # required checks green but the rules clause does not hold on the pushed commit — NOT READY. Fall
       # through to the normal next-round bookkeeping below; the next round's RULES GATE step turns a
       # `fail` into a finding or escalates any other non-RULES_PASSABLE verdict (unresolved / unreadable /
-      # anything rules_gate_read normalised to unreadable).
+      # anything rules_gate_read normalised to unreadable) — or an `unstamped` after a remembered fail
+      # (`rules_fail_then_unstamped`).
       pass
     else:   # RED, UNREADABLE, or the bounded SHA-settle wait itself elapsed (still-not-settled) — Hole 1
       decision = ESCALATED                              # NEVER READY on a red/unknown/unbound-checked SHA
@@ -847,14 +855,14 @@ Routing the drain through a Task step in the future would turn this fallback int
 - "Review-producing checks settled" is enforced by §U2.5 — the round cannot even reach the READY test while a scoped check is in flight; an unrelated optional check pending is excluded from the gate.
 - `--max-rounds` is the hard ceiling (mechanized — `scripts/drain-rounds.sh`) and the Anti-Churn Guardrail still governs oscillation; neither weakens this READY definition.
 - **`sub_floor_converged` is a variant READY, not a separate condition.** It holds this SAME definition for a round's fixed findings, confirmed via the SHA-bound confirming required-check pass instead of a fresh all-channel re-scan — see §"Termination-only severity floor (`sub_floor_converged`)". It is READY for terminal-state purposes (PR left open, notified) but explicitly **not** auto-merge-eligible (AC9).
-- **A failing countable human-stamped `must`-rule check blocks READY** (automate-followups/07, owner decisions D1–D4; CLAUDE.md §"Failure-Mode Invariants"). Each round the plugin's `scripts/rules-gate-verdict.sh` (§U4, invoked from the plugin install root via the ALLOW-LISTED `rules_gate_read`) is read: `fail` ⇒ one confirmed, auto-fixable `source: rules_replay` finding per countable failing id, so READY fails and the round fixes; `ok` / `none` / `unstamped` / `cmd_disabled` add nothing; EVERYTHING else — `unresolved`, `unreadable`, and any output the read cannot affirm (helper absent, non-zero exit, non-JSON, missing/unknown verdict) — ⇒ the round terminates `ESCALATED` (fail CLOSED, `termination_reason` unset); `unstamped` / `cmd_disabled` stay advisory at the drain (the merge gate's condition 7 parks on them — D3); an advisory (non-countable) rule never blocks. The parenthetical "verdict `ok` or `none`" is exact at READY because `unstamped`/`cmd_disabled` never reach the READY test as blockers — they add nothing. `sub_floor_converged` re-reads the verdict on the pushed commit before declaring READY. Emitted as `REVIEW_HEAL_RESULT.rules_gate` (`docs/RESULT_SCHEMAS.md`).
+- **A failing countable human-stamped `must`-rule check blocks READY** (automate-followups/07, owner decisions D1–D4; CLAUDE.md §"Failure-Mode Invariants"). Each round the plugin's `scripts/rules-gate-verdict.sh` (§U4, invoked from the plugin install root via the ALLOW-LISTED `rules_gate_read`) is read: `fail` ⇒ one confirmed, auto-fixable `source: rules_replay` finding per countable failing id, so READY fails and the round fixes; `ok` / `none` / `unstamped` / `cmd_disabled` add nothing; EVERYTHING else — `unresolved`, `unreadable`, and any output the read cannot affirm (helper absent, non-zero exit, non-JSON, missing/unknown verdict) — ⇒ the round terminates `ESCALATED` (fail CLOSED, `termination_reason` unset); `unstamped` / `cmd_disabled` stay advisory at the drain (the merge gate's condition 7 parks on them — D3), except an `unstamped` after a countable id FAILED in an earlier round of the same drain (`rules_failed_seen`), which terminates `ESCALATED` as `rules_fail_then_unstamped` (automate-followups/18) at the main step and keeps `sub_floor_converged` unreachable; an advisory (non-countable) rule never blocks. The parenthetical "verdict `ok` or `none`" is exact at READY because `unstamped`/`cmd_disabled` never reach the READY test as blockers — they add nothing. `sub_floor_converged` re-reads the verdict on the pushed commit before declaring READY. Emitted as `REVIEW_HEAL_RESULT.rules_gate` (`docs/RESULT_SCHEMAS.md`).
 - **An `untrusted_infra` required check is not green; READY is unreachable while one exists** (ci-trust-probe-01). `scripts/ci-run-probe.sh` classifying a red required check `untrusted_infra` records it in `checks_untrusted[]` — that check's true state is UNKNOWN, never treated as green, so no round can reach READY while it remains outstanding; the round instead terminates `ESCALATED` with `termination_reason: ci_untrusted` once it is the only remaining blocker (see §U4 and "Terminal states" below).
 
 ### Terminal states (until-mergeable)
 
 - **`READY`** — the READY redefinition above holds: required checks green AND review-producing (scoped) checks settled AND no unresolved validated bot findings across ALL channels AND no countable stamped `must`-rule check failing. Loop done; **PR left open for a human to merge** (merge-identical to `PASS`); "ready to merge" notification fired. `termination_reason: converged` (AC6).
 - **`READY` (`sub_floor_converged`)** — a round whose entire fixed yield was below `--severity-floor` terminates READY without a further all-channel re-scan, PROVIDED the SHA-bound confirming required-check pass (§"Termination-only severity floor") is green for the pushed commit. `termination_reason: sub_floor_converged` (AC6); **not** auto-merge-eligible (AC9).
-- **`ESCALATED`** — `--max-rounds` exhausted with signals remaining (`termination_reason: bound_hit`, AC6); OR only confirmed-but-not-auto-fixable (human-judgment) findings remain; OR a fail-closed condition tripped (any gated channel "unknown" — GraphQL thread query errored / truncated, issue-comment read errored, required-or-review-producing check-output fetch errored; required-check metadata unavailable without `--required-checks all-non-neutral`; the §U2.5 bounded wait elapsed with a required/review-producing check still in flight; OR — new — the AC11 confirming pass found the pushed SHA's required checks red/unreadable, `termination_reason` left unset); OR the round-ledger itself was unreadable (AC5, `termination_reason` left unset); OR the rules gate could not compute a verdict (`rules-gate-verdict.sh` `unresolved`/`unreadable` — `rules_gate_unresolved`, `termination_reason` left unset, automate-followups/07); OR — ci-trust-probe-01 — the only remaining READY-blockers are `untrusted_infra`-classified required checks (`termination_reason: ci_untrusted`), naming each check + its reason + a suggested (never executed) human re-run command. Findings posted to the PR, notifications fired, **PR left open**.
+- **`ESCALATED`** — `--max-rounds` exhausted with signals remaining (`termination_reason: bound_hit`, AC6); OR only confirmed-but-not-auto-fixable (human-judgment) findings remain; OR a fail-closed condition tripped (any gated channel "unknown" — GraphQL thread query errored / truncated, issue-comment read errored, required-or-review-producing check-output fetch errored; required-check metadata unavailable without `--required-checks all-non-neutral`; the §U2.5 bounded wait elapsed with a required/review-producing check still in flight; OR — new — the AC11 confirming pass found the pushed SHA's required checks red/unreadable, `termination_reason` left unset); OR the round-ledger itself was unreadable (AC5, `termination_reason` left unset); OR the rules gate could not compute a verdict (`rules-gate-verdict.sh` `unresolved`/`unreadable` — `rules_gate_unresolved`, `termination_reason` left unset, automate-followups/07) or read `unstamped` after a countable fail earlier in the drain (`rules_fail_then_unstamped`, likewise unset); OR — ci-trust-probe-01 — the only remaining READY-blockers are `untrusted_infra`-classified required checks (`termination_reason: ci_untrusted`), naming each check + its reason + a suggested (never executed) human re-run command. Findings posted to the PR, notifications fired, **PR left open**.
 
 There is **no `READY`-that-merges**. `READY` (either `termination_reason`) is terminal-stop-and-notify, exactly like `PASS`/`ESCALATED` (AC6). **No `gh pr merge` is ever issued (AC8).**
 
