@@ -24,6 +24,10 @@
 #   (Q)  waiter queued behind a holder that stamps the same tree → "PASS (cached)", nothing ran
 #   (T)  TERM to a run queued for a slot → exit 143 within seconds (not after CI_LOCAL_LOCK_WAIT),
 #                                       no ticket and no slot left under its pid, nothing ran
+#   (B)  broken slot helper (stub)    → `dir` exits non-zero or prints nothing: exit 1 with the
+#                                       dir-failure message, no acquire, nothing ran; a malformed
+#                                       acquire answer: exit 1 "unexpected answer from", nothing ran,
+#                                       the EXIT trap still calls `release --pid`; real helper restored
 #   (LS) --list                       → key + cache status, exactly the ci.yml gates (with args) and the
 #                                       plain tests in order, no temp wrapper paths, nothing ran;
 #                                       a changed tree lists "cache: miss"
@@ -249,6 +253,36 @@ if [ "$queued" -lt 150 ] && [ "$trc" = 143 ] && [ -z "$tickets" ] && [ -z "$tslo
   ok "(T) TERM to a queued run: exit 143 within 5s, no ticket or slot left, nothing ran"
 else no "(T) queued_polls=$queued rc=$trc tickets=[$tickets] slots=[$tslots] out=$(cat "$tmp/t.out")"; fi
 rm -f "$R/t-probe.txt"
+
+# (B) — a broken slot helper: the fixture's ci-slot.sh is swapped for a stub that logs every call.
+stub_log="$tmp/stub.log"
+cat > "$R/loomwright/scripts/ci-slot.sh" <<'SH'
+echo "$*" >> "$STUB_LOG"
+case "$1:$STUB_MODE" in
+  dir:dir-fail)  exit 3 ;;
+  dir:dir-empty) exit 0 ;;
+  dir:*)         echo "$STUB_STATE" ;;
+  acquire:*)     echo "slot=1 jobs=abc"; exit 0 ;;
+esac
+exit 0
+SH
+for mode in dir-fail dir-empty; do
+  : > "$stub_log"
+  STUB_LOG="$stub_log" STUB_MODE="$mode" run --force
+  if [ "$rc" -eq 1 ] && has "ci-slot.sh dir failed" && [ ! -s "$FIXTURE_LOG" ] && ! grep -q '^acquire' "$stub_log"; then
+    ok "(B) slot helper 'dir' $mode: exit 1, dir-failure message, nothing ran, no acquire"
+  else no "(B) $mode: rc=$rc calls=[$(tr '\n' ' ' < "$stub_log")] out=$out"; fi
+done
+: > "$stub_log"
+STUB_LOG="$stub_log" STUB_MODE=bad-acquire STUB_STATE="$tmp/stub-state" run --force
+if [ "$rc" -eq 1 ] && has "unexpected answer from loomwright/scripts/ci-slot.sh: 'slot=1 jobs=abc'" \
+   && [ ! -s "$FIXTURE_LOG" ] && grep -qE '^release --pid [0-9]+$' "$stub_log"; then
+  ok "(B) malformed acquire answer: exit 1 'unexpected answer from', nothing ran, EXIT trap released"
+else no "(B) bad-acquire: rc=$rc calls=[$(tr '\n' ' ' < "$stub_log")] out=$out"; fi
+cp "$REPO_ROOT/loomwright/scripts/ci-slot.sh" "$R/loomwright/scripts/ci-slot.sh"
+rm -rf "$tmp/stub-state" "$stub_log"
+if ( cd "$R" && git diff --quiet -- loomwright/scripts/ci-slot.sh ); then ok "(B) real slot helper restored for later arms"
+else no "(B) the fixture's ci-slot.sh was not restored"; fi
 
 # (H)
 run --help
