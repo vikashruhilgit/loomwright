@@ -1,6 +1,6 @@
 # 25 — The children-settled check runs before anything is published, by mechanism, not by prose order
 
-## Status: pending
+## Status: parked (merged 2026-10-05 into `automate-followups/33-children-settled-gate.md` as Part B — do not run this file; work the merged item)
 
 ## Problem
 FINALIZE's pre-merge safety gate (`skills/async-orchestration/SKILL.md` §"Phase 4 FINALIZE procedure", checklist

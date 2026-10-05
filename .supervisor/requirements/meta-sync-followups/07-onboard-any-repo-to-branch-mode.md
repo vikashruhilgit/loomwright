@@ -94,7 +94,7 @@ beyond the rollback in Scope 3.
 ## Depends on
 04-scrub-safe-briefs-and-push-rehearsal.md
 05-carry-the-learning-stores.md
-06-default-branch-from-mode-line.md
+08-meta-sync-hardening.md
 
 ## Touches
 loomwright/scripts/migrate-branch-mode.sh

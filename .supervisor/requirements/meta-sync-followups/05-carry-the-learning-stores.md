@@ -2,8 +2,7 @@
 
 ## Depends on
 01
-02
-03
+08-meta-sync-hardening.md
 
 ## Touches
 loomwright/scripts/meta-sync.sh

@@ -42,4 +42,4 @@ Behaviour changes beyond fixing a defect a new leg exposes. Raising the reclaim 
 ## Provenance
 Promoted 2026-10-02 by the owner from dismissed-finding draft `.supervisor/requirements/proposed/automate-2026-10-01-142337--02-meta-sync-script-b0d4ba--dismissed-5ea27966.md` (run automate-2026-10-01-142337, PR #334, Phase 4.5 code_reviewer iteration 3, MEDIUM, below_severity_floor; owner decision follow-up). Scope narrowed on promotion after verifying on PR head 566b3d3 that the find-failure refusal is already tested.
 
-## Status: pending
+## Status: parked (merged 2026-10-05 into `meta-sync-followups/08-meta-sync-hardening.md` as Part B — do not run this file; work the merged item)

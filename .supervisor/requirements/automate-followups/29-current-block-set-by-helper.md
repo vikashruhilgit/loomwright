@@ -1,6 +1,6 @@
 # 29 — The run file's `## Current` block is set by a helper at PICK, and a stale one is caught
 
-## Status: pending
+## Status: parked (merged 2026-10-05 into `automate-followups/32-run-file-lifecycle.md` as Part C — do not run this file; work the merged item)
 
 ## Problem
 The run file is the contract, the dashboard and the resume state (`skills/automate-loop/SKILL.md`). Its `## Current`

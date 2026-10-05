@@ -1,6 +1,6 @@
 # `check-children-settled.sh` treats a non-plugin (`general-purpose`) spawn as never settled
 
-## Status: pending
+## Status: parked (merged 2026-10-05 into `automate-followups/33-children-settled-gate.md` as Part A — do not run this file; work the merged item)
 
 > **Promoted from `proposed/` 2026-10-01** (owner triage session).
 > **Origin (2026-10-01).** Supervisor FINALIZE pre-merge gate point 5 on item automate-followups/13 (run

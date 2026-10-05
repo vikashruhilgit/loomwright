@@ -1,6 +1,6 @@
 # 28 — A run whose Queue is fully done stops showing up as "incomplete" to every later run
 
-## Status: pending
+## Status: parked (merged 2026-10-05 into `automate-followups/32-run-file-lifecycle.md` as Part B — do not run this file; work the merged item)
 
 ## Problem
 `skills/automate-loop/SKILL.md` §"Run status" says: after a close-out the run is `paused` + `awaiting_go`, and `done`

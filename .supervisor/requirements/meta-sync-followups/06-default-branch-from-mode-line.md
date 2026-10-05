@@ -1,6 +1,6 @@
 # 06 — `meta-sync.sh` takes its default branch from the checkout's mode line, never silently from a constant
 
-## Status: pending
+## Status: parked (merged 2026-10-05 into `meta-sync-followups/08-meta-sync-hardening.md` as Part C — do not run this file; work the merged item)
 
 ## Problem
 `loomwright/scripts/meta-sync.sh` sets `BRANCH="loomwright-meta"` and changes it only with `--branch`. It never

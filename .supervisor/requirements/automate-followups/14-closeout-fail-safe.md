@@ -1,6 +1,6 @@
 # 14 — Close-out fail-safe: nothing a prior item left behind is silently skipped before the next item starts
 
-## Status: pending
+## Status: parked (merged 2026-10-05 into `automate-followups/32-run-file-lifecycle.md` as Part A — do not run this file; work the merged item)
 
 > **Origin (2026-10-01).** After item 12 merged and its close-out ran from the merge watcher, the owner asked whether
 > a forgotten close-out (cleanup + merge) is always taken care of before the next job starts. Within one run it is

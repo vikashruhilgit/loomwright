@@ -7,8 +7,7 @@
 04
 ../agnostic-phase1/04-non-interactive-gates.md
 ../meta-sync-followups/01-untested-push-and-base-fallbacks.md
-../meta-sync-followups/02-symlinked-file-under-requirements.md
-../meta-sync-followups/03-untested-hardening-branches.md
+../meta-sync-followups/08-meta-sync-hardening.md
 ../meta-sync-followups/04-scrub-safe-briefs-and-push-rehearsal.md
 ../meta-sync-followups/05-carry-the-learning-stores.md
 

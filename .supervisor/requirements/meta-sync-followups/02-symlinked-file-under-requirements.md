@@ -42,4 +42,4 @@ Any other symlink rule; the containment checks on pull writes (`path_has_no_syml
 ## Provenance
 Promoted 2026-10-02 by the owner from dismissed-finding draft `.supervisor/requirements/proposed/automate-2026-10-01-142337--02-meta-sync-script-b0d4ba--dismissed-9bd82e20.md` (run automate-2026-10-01-142337, PR #334, Phase 4.5 code_reviewer iteration 3, MEDIUM, below_severity_floor; owner decision follow-up). Verified still present on PR head 566b3d3.
 
-## Status: pending
+## Status: parked (merged 2026-10-05 into `meta-sync-followups/08-meta-sync-hardening.md` as Part A — do not run this file; work the merged item)
