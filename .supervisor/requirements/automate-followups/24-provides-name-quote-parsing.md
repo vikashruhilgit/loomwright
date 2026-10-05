@@ -49,3 +49,9 @@ loomwright/scripts/verify-provides.sh
 loomwright/scripts/test-verify-provides.sh
 loomwright/agents/plan-reviewer.md
 changelog.d/automate-followups-24-provides-name-quote-parsing.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-05T01:05:14Z
+- **Brief:** .supervisor/jobs/done/2026-10-05-provides-name-quote-parsing.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/381
