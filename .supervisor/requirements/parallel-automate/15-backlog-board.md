@@ -46,7 +46,19 @@ never a hand-maintained list, and the counts always add up.
 4. **Hygiene, owner-gated:** `--unknown` lists every item with no or a bad status line, with a suggested fix
    (stamp done with the PR that shipped it, mark abandoned, or add `## Status: pending`). It suggests only; the owner
    applies, or `reconcile-status --apply` does where it has PR evidence.
-5. **Tests:** the reader on fixtures for every state (including first-line `pending` plus an appended done stamp ⇒ `done`;
+5. **Root fix for `brief-shipped` (owner 2026-10-05: "verify-and-stamp flow"; keeps queue-hygiene/01's "never
+   auto-promote" — a landed brief proves the work ran, not that its acceptance criteria were met, and the 2026-10-05
+   validation found 2 of 21 `brief-shipped` items only partial):**
+   - **Nudge:** at SessionStart (`session-resume.sh`, fail-safe, one line, at most once a day) when any `brief-shipped` item
+     has a merged PR: "N shipped items await verification — `/backlog --verify`".
+   - **`/backlog --verify [item…]`:** for each `brief-shipped` (or named) item, read-only: read its acceptance criteria,
+     check each against `main` (named files / functions / flags / docs exist and behave as stated), find its merged PR(s),
+     and propose `done` / `done_with_escalation` (with what is owed) / still `pending` (partial, what is missing) /
+     `ABANDONED` (superseded, by what) — with evidence per item. **Stamps only what the owner approves**, in the engine's
+     shapes (`<!-- loomwright:requirement-closeout -->` + `## Status: …` + `- **Completed:**` + one `- **PR:**` line per PR;
+     ABANDONED as `## Status: done_with_escalation — ABANDONED (reason)`), then pushes via meta-sync with `--branch`.
+     This mechanizes exactly the 2026-10-05 manual pass (4 read-only research agents + owner approval).
+6. **Tests:** the reader on fixtures for every state (including first-line `pending` plus an appended done stamp ⇒ `done`;
    a missing status ⇒ `unknown`; a lane backlog naming the item ⇒ `in_flight`); totals add up; `--json` round-trips;
    `gh` unavailable ⇒ PR fields `unverified`, never silently `open`.
 
@@ -85,6 +97,8 @@ none
 loomwright/scripts/automate-helpers.sh
 loomwright/scripts/test-automate-helpers.sh
 loomwright/scripts/build-floor.sh
+loomwright/scripts/session-resume.sh
+loomwright/scripts/test-session-resume.sh
 loomwright/scripts/test-build-floor.sh
 loomwright/scripts/meta-sync.sh
 loomwright/scripts/test-meta-sync.sh

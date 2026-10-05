@@ -14,14 +14,12 @@ loomwright/commands/orchestrator.md
 loomwright/commands/supervisor.md
 loomwright/commands/code-reviewer.md
 loomwright/commands/product-owner.md
-loomwright/scripts/meta-sync.sh
-loomwright/scripts/test-meta-sync.sh
 changelog.d/meta-sync-followups-04-scrub-safe-briefs-and-push-rehearsal.md
 
 ## Notes on the touched files (conditions moved out of the machine-read section)
 - `supervisor-readiness/SKILL.md`: the brief template's `- **Project:**` line.
 - agents/commands/skills: their `/Users/<name>/...` examples (the acceptance grep also hits orchestrator, supervisor, code-reviewer and product-owner, so they are listed).
-- `meta-sync.sh` + `test-meta-sync.sh` ONLY if the owner picks option B.
+- `meta-sync.sh` + `test-meta-sync.sh` were listed for option B only; the owner chose A (2026-10-05), so they are no longer touched.
 - Metadata-branch edits, not part of the code PR: `parallel-automate/operator-run/M1-migrate-this-repo.md` step 1 (and the runbook convention).
 - PRs #334 and #347 dropped from Depends (both merged).
 
@@ -36,7 +34,7 @@ A brief written from the template passes the `meta-sync.sh` scrub, and M1 step 1
 
 ## Scope
 1. **Template:** change the brief template's `- **Project:**` value to the home-relative form (`~/...`, or the repo name when not under `$HOME`), and the `/Users/<name>/...` examples in the three other files to match. Before changing, confirm nothing consumes the value as an absolute path: no script under `loomwright/scripts`/`hooks` parses it today (checked 2026-10-02 — only test fixtures carry it), but re-check the agent prompts (`context-setup` "Project path identified").
-2. **M1 step 1 — owner picks one (recommended: A):**
+2. **M1 step 1 — OWNER CHOSE A (2026-10-05): the rehearsal recipe, no code.** (Option B is kept below for the record only.)
    - **A. Rehearsal recipe (no code).** Replace step 1 with: clone the repo into a scratch dir, `git init --bare` a scratch remote, point the clone's `origin` at it, **copy `.supervisor/config.json` into the clone** (the scrub's repo allowlist is `setup_memory.repo_allowlist` in that gitignored file — without it every forge slug is a hit, which is how the first rehearsal reported 218 false hits), then `meta-sync.sh init` + `push --root <clone>`. Iterate until `push` exits 0. Nothing is published.
    - **B. Real `--dry-run` on `push`.** Run the plan + scrub, print the candidate list and any hits, publish nothing, exit 0/2 like `push`. Needs a test leg proving nothing is pushed and the meta-base is untouched, a version bump, and a plugin reinstall before M1 can use it.
 3. **Prevention (the class, not just this instance):** add one line to the runbook convention (and to M1/S1 themselves) that every command in an `operator-run/` file is checked against the shipped script's usage text before the runbook is used. Do not build a checker for two files.

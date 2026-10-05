@@ -143,3 +143,4 @@ Acceptance criteria are NOT machine-verified here — review them before promoti
 - **Note:** open owner yes/no from the PR: domain expectations are a fixed 10-entry catalogue that fetched sources must corroborate.
 - **Verified:** Verified 2026-10-05 by a read-only backlog validation (acceptance criteria checked against `main`); owner approved the stamp.
 - **PR:** https://github.com/vikashruhilgit/loomwright/pull/207
+- **Owner decision (2026-10-05):** keep the fixed 10-entry expectation catalogue that fetched sources must corroborate (PR #207's flagged deviation from Scope 3's "fetched from `competitors[]`"). Rationale: vendor text overstates; a fixed catalogue is predictable and testable; `--domain` is a no-op in repos without `.agent/product.json`. Revisit only if a real project's use shows the catalogue is too narrow.
