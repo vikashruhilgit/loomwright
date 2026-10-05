@@ -40,3 +40,9 @@ Any behaviour change to `meta-sync.sh` beyond fixing a defect a new leg exposes.
 Promoted 2026-10-02 by the owner from dismissed-finding draft `.supervisor/requirements/proposed/automate-2026-10-01-142337--02-meta-sync-script-b0d4ba--dismissed-6159f242.md` (run automate-2026-10-01-142337, PR #334, Phase 4.5 code_reviewer, MEDIUM, below_severity_floor; owner decision follow-up). Scope narrowed on promotion after verifying on PR head 566b3d3 that the deny-file and jq-missing branches are already tested.
 
 ## Status: pending
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-05T01:39:20Z
+- **Brief:** .supervisor/jobs/done/2026-10-05-meta-sync-untested-fallbacks.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/382
