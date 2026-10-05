@@ -73,7 +73,7 @@ Owner decision 2026-10-05: stabilize parallel automation, then release it for ot
 wave; S3 is the first run of **several waves in a row**, with a release and reinstall between waves (the
 pa/06 one-bump-per-wave model, by hand) and with the wave runner's own replacement (pa/05) built mid-queue.
 
-## The queue (20 items — owner decision 2026-10-05: "finish parallel automation and everything related"; 19 + `parallel-automate/16` added the same day after wave 1 froze the machine)
+## The queue (22 items — owner decision 2026-10-05: "finish parallel automation and everything related"; 19 + `parallel-automate/16` (after wave 1 froze the machine) + `meta-sync-followups/09, 10` (#391's leftovers), all added the same day)
 Merged on 2026-10-05 (originals parked with pointers; text kept verbatim as parts):
 `meta-sync-followups/08` = ms/02 + 03 + 06 · `automate-followups/32` = af/14 + 28 + 29 · `automate-followups/33` =
 af/17 + 25. New the same day: `meta-sync-followups/07` (onboard any repo to branch mode), `automate-followups/31`
@@ -87,9 +87,9 @@ Out of scope (not parallel work): the rest of the backlog, including the 7 older
 | Wave | Items | Lanes |
 |---|---|---|
 | 1 | af/32 run-file lifecycle · ms/08 meta-sync hardening · ms/04 home-path scrub · pa/09 fewer full CI runs | 4 |
-| 2 | pa/11 split shared hotspot files · **pa/16 machine load guard** (owner decision 2026-10-05: "Wave 2, beside pa/11" — replaces "pa/11 alone"; no Touches overlap, checked) | 2 |
+| 2 | pa/11 split shared hotspot files · **pa/16 machine load guard** (owner decision 2026-10-05: "Wave 2, beside pa/11" — replaces "pa/11 alone"; no Touches overlap, checked) · **ms/10 anchor the `home_path` scrub** (owner 2026-10-05, at #391's park; needs ms/08 merged) | 3 |
 | — | **Re-check every remaining item's `## Touches` against the split layout, then re-plan waves 3+** | — |
-| 3+ (pre-split plan, will widen) | af/33 · ms/05 → ms/07 · agnostic/04 (Milestone A) → pa/05 → pa/06 · pa/14 → af/31 → pa/12 → pa/13 → pa/15 → af/22 → af/23 → pa/07 (Milestone B) | 1–3 |
+| 3+ (pre-split plan, will widen) | ms/09 scrub-safe schema examples (after af/32) · af/33 · ms/05 → ms/07 · agnostic/04 (Milestone A) → pa/05 → pa/06 · pa/14 → af/31 → pa/12 → pa/13 → pa/15 → af/22 → af/23 → pa/07 (Milestone B) | 1–3 |
 
 Milestone A (after ms/07 + agnostic/04): release; any repo can move to branch mode and run sequential `/automate`.
 Milestone B (pa/07 last, so the pilot exercises pa/12–14 and the docs cover them): release; parallel lanes on other
@@ -166,11 +166,23 @@ teardown, machine (load, swap, free) at peak.
 - Owner decision 2026-10-05: resume **two at a time** (s3-c + s3-a 16:07Z via `--resume-run`; s3-b and s3-d when one
   parks). Run ids: s3-a `automate-2026-10-05-114905`, s3-b `automate-2026-10-05-171908` (stamped in local time, the
   others in UTC — record as a gap), s3-c `…-114920`, s3-d `…-114919`.
+- Owner 2026-10-05 ~16:35Z: "start all" — s3-b and s3-d resumed by run id before either running lane parked (load1
+  ~4 at the time); the HIGH-LOAD alert is the only backstop until pa/16.
+- 16:25Z s3-c parked `awaiting_merge` on #391 (cb73aac); merge checks all pass (scope 11/11, ci + claude-review green,
+  AC1 re-run by the operator in a scratch clone: new-template brief exit 0, control exit 2). Owner, on its "Not verified"
+  list: SPIKES home path fixed ON #391 (operator commit `1f0571b`, ci-local 143/143 first, remote head checked; item
+  04's Touches amended) — needs ci + claude-review again; schema/fixture paths → `meta-sync-followups/09`; regex anchor
+  → `meta-sync-followups/10` (wave 2). The operator's own first drafts of 09/10 tripped the scrub (case-insensitive) —
+  more evidence for 10.
+- **Crash orphans hit the children-settled gate:** s3-b (worker died mid-`ci-local`) and s3-a (context-keeper of the
+  crashed session) each asked a FINALIZE "unsettled child" question after the resume; both answered "proceed". A
+  child of a dead session is indistinguishable from a running one → input for af/33 and pa/05's reset recovery.
+- s3-d PR #392 ~17:00Z; s3-b PR #394 17:07Z.
 - **Operator rule until pa/16 + pa/05's load guard merge:** at most 2 lanes building at once; the lane monitor also
   prints `HIGH-LOAD` at load1 ≥ 60, and on it the operator resumes no further lane.
 - Unrecorded follow-up (s3-c, fix-now chosen): anchoring the `meta-sync.sh` `home_path` regex — the draft was deleted
   with the fix-now; owner to decide whether to file it.
 
 ## Done when
-All 20 items merged or closed by the owner, each wave's records on `loomwright-meta`, lanes torn down with `leaks`
+All 22 items merged or closed by the owner, each wave's records on `loomwright-meta`, lanes torn down with `leaks`
 empty, the measures above recorded in this file, and P2 (default lane count) revisited with S2 + S3 evidence.

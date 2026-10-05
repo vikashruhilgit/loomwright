@@ -14,6 +14,7 @@ loomwright/commands/orchestrator.md
 loomwright/commands/supervisor.md
 loomwright/commands/code-reviewer.md
 loomwright/commands/product-owner.md
+loomwright/docs/SPIKES/LOOP_EVIDENCE_2026-07.md
 changelog.d/meta-sync-followups-04-scrub-safe-briefs-and-push-rehearsal.md
 
 ## Notes on the touched files (conditions moved out of the machine-read section)
@@ -22,6 +23,9 @@ changelog.d/meta-sync-followups-04-scrub-safe-briefs-and-push-rehearsal.md
 - `meta-sync.sh` + `test-meta-sync.sh` were listed for option B only; the owner chose A (2026-10-05), so they are no longer touched.
 - Metadata-branch edits, not part of the code PR: `parallel-automate/operator-run/M1-migrate-this-repo.md` step 1 (and the runbook convention).
 - PRs #334 and #347 dropped from Depends (both merged).
+- `docs/SPIKES/LOOP_EVIDENCE_2026-07.md` added 2026-10-05 (owner, at #391's park): its one real absolute home path
+  rewritten to `~/` on #391 (`1f0571b`). The other two "Not verified" leftovers went to `09` (schema/fixture
+  placeholders, overlaps af/32) and `10` (anchor the `home_path` regex, overlaps ms/08).
 
 ## Problem
 Found 2026-10-02 while preparing operator M1, by rehearsing `meta-sync.sh init` + `push` from a scratch clone against a local bare remote (nothing reached GitHub).
