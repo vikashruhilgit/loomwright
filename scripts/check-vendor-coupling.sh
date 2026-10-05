@@ -43,16 +43,35 @@
 #     alias, a `model:` key with an alias), not the bare alias words, so prose
 #     mentioning a model by name is NOT counted. The measurement behind that choice
 #     is recorded in the manifest's `model_names` note.
-#   * Files are enumerated with `git ls-files`, so the scanned set is exactly the
-#     TRACKED tree. Untracked scratch files and gitignored build output
+#   * Files are enumerated with `git -c core.quotePath=false ls-files -z`, so the
+#     scanned set is exactly the TRACKED tree and every name arrives verbatim
+#     (NUL-separated; a non-ASCII or backslash-bearing name is never C-quoted
+#     into a path that does not exist). A listed path that is not a regular file
+#     is an ERROR — unless the work tree simply deleted it (`git ls-files
+#     --deleted`), which is a pending local change, not a hidden file. A path
+#     containing a tab, CR or newline is an ERROR too: it cannot be carried
+#     through the gate's line/tab-separated tables without being misread.
+#     The enumeration is the TRACKED tree. Untracked scratch files and gitignored build output
 #     (node_modules/, dist/, .supervisor/) are never scanned, which is what keeps
 #     a developer's checkout and CI measuring the identical file set. CONSEQUENCE
 #     FOR LOCAL RUNS: a brand-new file is invisible to this gate until it has been
 #     `git add`ed. That is moot in CI, where the checkout is fully committed, but a
 #     developer establishing or re-measuring a baseline must stage first or they
 #     will measure a tree that is missing their own new files.
-#   * Binary files (grep -I's verdict, under LC_ALL=C) are not counted. A file that
-#     cannot be READ is an ERROR, never a silent zero.
+#   * NUL-bearing ("binary") files ARE counted — a NUL byte must not be a way to
+#     make a file invisible. Such a file is read with every NUL turned into a
+#     line break (no token contains a NUL or a newline, so no occurrence is lost
+#     or split) and is always counted WHOLE, never frontmatter-exempt: a NUL must
+#     not be able to manufacture a frontmatter delimiter. A file that cannot be
+#     READ is an ERROR, never a silent zero.
+#   * FRONTMATTER IS BOUNDED. A YAML frontmatter block can carry a block scalar
+#     (`key: |` followed by any amount of indented text), so an unbounded
+#     exemption would let body-style prose — tokens and all — hide in the header.
+#     The manifest declares `classes.adapter_frontmatter.max_frontmatter_lines`
+#     (the lines BETWEEN the two `---` delimiters); a block longer than that is
+#     not frontmatter for this gate and the file is counted WHOLE (fail toward
+#     counting). Within the bound a block scalar is still exempt — that residue is
+#     the bound's size, and raising the bound needs a reason (below).
 #
 # CLASSIFICATION (declared in the manifest, justified there in per-class `note`s):
 #   ADAPTER             — may name any harness freely; NOT counted at all. These
@@ -65,7 +84,8 @@
 #                         line that is exactly `---`. A file whose line 1 is not
 #                         `---` is counted whole; a frontmatter that never closes
 #                         is counted whole too (an unclosed block must not be able
-#                         to hide a whole file). A `---` rule later in the body
+#                         to hide a whole file), and so is one longer than
+#                         max_frontmatter_lines. A `---` rule later in the body
 #                         is body.
 #   CORE                — must be vendor-neutral; ratcheted against a per-path
 #                         allowance.
@@ -93,6 +113,26 @@
 #     manifest (absent there, or a different string). An INHERITED, unchanged
 #     reason does not justify a new raise — otherwise one old reason would
 #     pre-authorise every later raise of that path. Missing ⇒ BREACH.
+#   * Reasons are compared NORMALISED (leading/trailing whitespace trimmed,
+#     internal runs collapsed to one space), so a whitespace-only edit of an old
+#     reason is still INHERITED and never certifies a new raise.
+#   * Coupling can also grow by SHRINKING what is counted rather than by raising
+#     a number, so three policy moves need a reason of their own, in the
+#     manifest's `policy_reasons` map (ADDED or CHANGED versus the base, compared
+#     normalised, exactly like allowance_reasons), keyed by a namespaced id:
+#       `exempt:<path>` — a path that held a base allowance > 0, still exists, and
+#                         is no longer counted the way it was: now ADAPTER, newly
+#                         ADAPTER_FRONTMATTER, or outside the scanned set (a
+#                         narrowed scan root, an untracked file).
+#       `token:<token>` — a token the base declared (in token_classes, or the
+#                         retired flat vendor_tokens list) that the head no
+#                         longer declares in any class.
+#       `bound:max_frontmatter_lines` — the frontmatter bound RAISED versus the
+#                         base's.
+#     Missing or inherited ⇒ BREACH. A policy_reasons entry certifies nothing once
+#     the base carries it unchanged, so a stale one is harmless and may be pruned;
+#     its key must still use one of the three namespaces and its value must be a
+#     non-empty one-line string, or it is an ERROR.
 #   * `raise_check: skipped (<reason>)` is printed, and the run does NOT fail on
 #     that account, when the base does not resolve (`skipped (no base)`: shallow
 #     clone, no remote, ref missing), when the manifest lies outside the scan
@@ -111,13 +151,19 @@
 #   0 = every scanned path at or under its declared allowance, every raise reasoned.
 #   1 = at least one BREACH, or an ERROR (missing/malformed/unreadable manifest,
 #       a wrong-typed manifest field — an allowance that is not a JSON
-#       non-negative integer (the string "3" included), a non-string mode or
+#       integer in 0..999999999 (the string "3", a negative, a fractional and a
+#       larger value are all refused; the cap keeps shell arithmetic far from
+#       overflow), a max_frontmatter_lines that is not a JSON integer in
+#       1..10000 or is missing while adapter_frontmatter declares globs, a
+#       non-string mode or
 #       default, a non-object map, a non-string scan root or glob — in the head
 #       or, for the maps raise_check reads, the base manifest;
 #       empty or duplicated token set, illegal unclassified_default, an allowance
 #       entry for a path that does not exist or is ADAPTER-classified, an orphaned
-#       or malformed reason, an unreadable file or base manifest, an empty scan,
-#       or a missing dependency). An unreadable manifest is a FAILURE, never a
+#       or malformed reason, a policy_reasons entry with an unknown namespace or
+#       a malformed value, a listed path that is not a regular file or carries a
+#       tab/CR/newline, an unreadable file or base manifest, an empty scan, or a
+#       missing dependency). An unreadable manifest is a FAILURE, never a
 #       silent pass.
 #   There is no third state and no `|| true`: this is a correctness gate, not a
 #   runtime emitter (CLAUDE.md §"Failure-Mode Invariants").
@@ -193,12 +239,27 @@ TYPE_ERRS="$(jq -r '
     else ($v[] | select((type != "string") or (. == "") or test("[\t\n\r]")) | "\($name) entries must be non-empty one-line strings (got \(tojson))") end;
   if type != "object" then "the manifest must be a JSON object (got \(type))" else
     strfield("count_mode"), strfield("token_overlap_rule"), strfield("unclassified_default"),
-    objfield("allowances"), objfield("allowance_reasons"), objfield("classes"),
+    objfield("allowances"), objfield("allowance_reasons"), objfield("policy_reasons"), objfield("classes"),
     (if has("scan_roots") then strlist(.scan_roots; "scan_roots") else empty end),
+    # A key that carries a tab, CR or newline cannot travel through the gate s
+    # tab-separated tables intact; refuse it rather than misread it.
+    ((.allowances, .allowance_reasons, .policy_reasons) | select(type == "object") | keys[] |
+       select(test("[\t\n\r]") or (. == "")) | "a map key must be a non-empty one-line string without tabs (got \(tojson))"),
     (if (.classes | type) == "object" then
        (.classes | to_entries[] | .key as $c |
         if (.value | type) != "object" then "classes.\($c) must be an object (got \(.value | type))"
         elif (.value | has("globs")) then strlist(.value.globs; "classes.\($c).globs")
+        else empty end),
+       (if (.classes.adapter_frontmatter | type) == "object" then
+          (.classes.adapter_frontmatter as $f |
+           if ($f | has("max_frontmatter_lines")) then
+             ($f.max_frontmatter_lines |
+              if (type != "number") or (. != floor) or (. < 1) or (. > 10000)
+              then "classes.adapter_frontmatter.max_frontmatter_lines must be a JSON integer in 1..10000 (got \(tojson))"
+              else empty end)
+           elif ((($f.globs // []) | type) == "array") and (($f.globs // []) | length) > 0
+           then "classes.adapter_frontmatter.max_frontmatter_lines is required when adapter_frontmatter declares globs — an unbounded frontmatter exemption could hide a body in a block scalar"
+           else empty end)
         else empty end)
      else empty end)
   end' "$MANIFEST" 2>/dev/null)" || TYPE_ERRS="the manifest field types could not be checked"
@@ -266,6 +327,10 @@ ADAPTER_GLOBS="$(jq -r '.classes.adapter.globs[]? // empty' "$MANIFEST")"
 FRONTMATTER_GLOBS="$(jq -r '.classes.adapter_frontmatter.globs[]? // empty' "$MANIFEST")"
 COUPLED_GLOBS="$(jq -r '.classes.coupled.globs[]? // empty' "$MANIFEST")"
 CORE_GLOBS="$(jq -r '.classes.core.globs[]? // empty'       "$MANIFEST")"
+# The frontmatter bound (type-checked above). With no adapter_frontmatter globs
+# the value is never consulted; 0 keeps the awk pass well-defined regardless.
+FM_MAX="$(jq -r '.classes.adapter_frontmatter.max_frontmatter_lines // 0' "$MANIFEST")"
+case "$FM_MAX" in ''|*[!0-9]*) echo "check-vendor-coupling: could not read max_frontmatter_lines (fail CLOSED)" >&2; exit 1 ;; esac
 
 TMPDIR_GATE="$(mktemp -d "${TMPDIR:-/tmp}/vendor-coupling.XXXXXX")" || exit 1
 trap 'rm -rf "$TMPDIR_GATE"' EXIT
@@ -316,7 +381,9 @@ while IFS="$(printf '\t')" read -r kind tcls tok; do
       echo "check-vendor-coupling: token class name '$tcls' must match [a-z0-9_]+ (it is printed in the per-class report and used as a field key)" >&2
       cfg_err=1; continue ;;
   esac
-  if awk -F'\t' -v t="$tok" '$2 == t { found=1 } END { exit !found }' "$TOKENS_TSV"; then
+  # ENVIRON, not `-v`: awk processes escape sequences in a `-v` value, so a
+  # token carrying a backslash would be compared mangled.
+  if T="$tok" awk -F'\t' '($2 "") == (ENVIRON["T"] "") { found=1 } END { exit !found }' "$TOKENS_TSV"; then
     echo "check-vendor-coupling: token '$tok' is declared more than once (class '$tcls' and an earlier one) — the class it counts for would be ambiguous" >&2
     cfg_err=1; continue
   fi
@@ -380,19 +447,27 @@ classify() {
 }
 
 # allowance_for PATH -> echoes the declared allowance (0 when undeclared).
+# The path travels through ENVIRON, not `-v`: awk would turn a backslash in a
+# `-v` value into an escape sequence and miss a backslash-bearing path's entry.
 allowance_for() {
-  awk -F'\t' -v p="$1" '$1==p { print $2; found=1; exit } END { if (!found) print 0 }' "$ALLOW_TSV"
+  P="$1" awk -F'\t' '($1 "") == (ENVIRON["P"] "") { print $2; found=1; exit } END { if (!found) print 0 }' "$ALLOW_TSV"
 }
 
 # ---------------------------------------------------------------------------
 # Scan
 # ---------------------------------------------------------------------------
-FILES="$TMPDIR_GATE/files.txt"
+FILES="$TMPDIR_GATE/files.z"
+DELETED="$TMPDIR_GATE/deleted.txt"
 # `git ls-files` fixes the scanned set to the TRACKED tree, identically on a dev
 # checkout and in CI. A non-git tree is a hard failure, not a fallback to `find`:
 # a fallback would mean the self-test exercises a different enumeration path from
-# the one CI runs.
-if ! git ls-files -- $SCAN_ROOTS > "$FILES" 2>/dev/null; then
+# the one CI runs. `-z` (with quotePath off for good measure) delivers every name
+# verbatim: without it git C-quotes a non-ASCII or backslash-bearing name into a
+# string that names no file, and such a file used to drop out of the scan
+# silently. `--deleted` lists the paths the WORK TREE removed (still in the
+# index): those are the only listed paths allowed to be missing.
+if ! git -c core.quotePath=false ls-files -z -- $SCAN_ROOTS > "$FILES" 2>/dev/null \
+   || ! git -c core.quotePath=false ls-files -z --deleted -- $SCAN_ROOTS 2>/dev/null | tr '\000' '\n' > "$DELETED"; then
   echo "check-vendor-coupling: 'git ls-files' failed in $SCAN_ROOT — the scan root must be a git work tree" >&2
   exit 1
 fi
@@ -401,15 +476,40 @@ scanned=0
 counted=0
 adapter_files=0
 frontmatter_files=0
-CAND="$TMPDIR_GATE/candidates.tsv"    # path \t class \t mode   (files the prefilter matched)
-UNREAD="$TMPDIR_GATE/unreadable.txt"  # paths grep or awk could not read
+nulfiles=0
+CAND="$TMPDIR_GATE/candidates.tsv"    # path \t class \t mode \t read-from   (files the prefilter matched)
+UNREAD="$TMPDIR_GATE/unreadable.txt"  # paths grep, tr or awk could not read
+BADPATH="$TMPDIR_GATE/badpath.tsv"    # path-ish \t why   (listed paths the gate cannot scan)
+SCANNED="$TMPDIR_GATE/scanned.txt"    # every scanned path (raise_check's exemption arm reads it)
+NULDIR="$TMPDIR_GATE/nul"
+mkdir -p "$NULDIR" || exit 1
 : > "$CAND"
 : > "$UNREAD"
+: > "$BADPATH"
+: > "$SCANNED"
+NL='
+'
+CR="$(printf '\r')"
+TAB="$(printf '\t')"
 
-while IFS= read -r f; do
+while IFS= read -r -d '' f; do
   [ -n "$f" ] || continue
-  [ -f "$f" ] || continue          # deleted-but-still-indexed paths
+  case "$f" in
+    *"$NL"*|*"$CR"*|*"$TAB"*)
+      # Printed with the control bytes made visible; it cannot be scanned or
+      # reported faithfully through the gate's tab/line tables.
+      printf '%s\tpath carries a tab, CR or newline — the gate cannot carry it through its tables; rename it\n' \
+        "$(printf '%s' "$f" | tr '\t\r\n' '???')" >> "$BADPATH"
+      continue ;;
+  esac
+  if [ ! -f "$f" ]; then
+    if [ -e "$f" ] || [ -L "$f" ] || ! grep -qFx -- "$f" "$DELETED"; then
+      printf '%s\tlisted by git ls-files but not a regular file (a directory, gitlink, dangling symlink or unreachable path) — it cannot be scanned, so it is never passed as clean\n' "$f" >> "$BADPATH"
+    fi
+    continue                       # deleted in the work tree, still indexed
+  fi
   scanned=$((scanned + 1))
+  printf '%s\n' "$f" >> "$SCANNED"
   cls="$(classify "$f")"
   if [ "$cls" = "adapter" ]; then
     adapter_files=$((adapter_files + 1))
@@ -422,15 +522,28 @@ while IFS= read -r f; do
     frontmatter_files=$((frontmatter_files + 1))
   fi
   # Prefilter only: does the file mention ANY token (anywhere, frontmatter
-  # included)? The authoritative per-class count is the awk pass below. grep's
-  # rc 2 (unreadable) is an ERROR, never a silent zero.
-  grep -qIF "${GREP_ARGS[@]}" -- "$f" 2>/dev/null
+  # included, NUL-bearing or not — no -I)? The authoritative per-class count is
+  # the awk pass below. grep's rc 2 (unreadable) is an ERROR, never a silent zero.
+  grep -qaF "${GREP_ARGS[@]}" -- "$f" 2>/dev/null
   grc=$?
   case "$grc" in
-    0) printf '%s\t%s\t%s\n' "$f" "$cls" "$mode" >> "$CAND" ;;
-    1) : ;;
-    *) printf '%s\n' "$f" >> "$UNREAD" ;;
+    0) : ;;
+    1) continue ;;
+    *) printf '%s\n' "$f" >> "$UNREAD"; continue ;;
   esac
+  # A NUL-bearing candidate is read through a copy whose NULs are line breaks
+  # (awk implementations disagree about NUL bytes; tokens never contain one),
+  # and is always counted WHOLE (see the header).
+  src="./$f"
+  if ! tr -d '\000' < "$f" 2>/dev/null | cmp -s - "$f" 2>/dev/null; then
+    nulfiles=$((nulfiles + 1))
+    src="$NULDIR/$nulfiles"
+    if ! tr '\000' '\n' < "$f" > "$src" 2>/dev/null; then
+      printf '%s\n' "$f" >> "$UNREAD"; continue
+    fi
+    mode="whole"
+  fi
+  printf '%s\t%s\t%s\t%s\n' "$f" "$cls" "$mode" "$src" >> "$CAND"
 done < "$FILES"
 
 # Anti-drift: a zero-file scan of a fail-closed ratchet is a false green (the
@@ -443,11 +556,14 @@ fi
 # The counting pass: leftmost-longest, non-overlapping, per class (see the
 # header's OVERLAP RULE). Writes HITS (path \t class \t total \t breakdown, only
 # files with total > 0) and CLASS_TOTALS (class \t total, manifest order, every
-# class even at 0). An unreadable file is appended to UNREAD.
+# class even at 0). An unreadable file is appended to UNREAD. A frontmatter
+# block longer than FM_MAX lines (between its delimiters) is not frontmatter: the
+# moment it passes the bound, what was held aside is counted and the rest of the
+# file is read as body (fail toward counting — see the header).
 HITS="$TMPDIR_GATE/hits.tsv"
 CLASS_TOTALS="$TMPDIR_GATE/class-totals.tsv"
 : > "$HITS"
-if ! awk -F'\t' -v hits="$HITS" -v ctot="$CLASS_TOTALS" -v unread="$UNREAD" '
+if ! awk -F'\t' -v hits="$HITS" -v ctot="$CLASS_TOTALS" -v unread="$UNREAD" -v fmmax="$FM_MAX" '
   # scan s, adding one count per non-overlapping leftmost-longest match to arr[class]
   function scan(s, arr,    i, p, best, bl, bi) {
     while (s != "") {
@@ -467,19 +583,25 @@ if ! awk -F'\t' -v hits="$HITS" -v ctot="$CLASS_TOTALS" -v unread="$UNREAD" '
     next
   }
   {
-    path = $1; cls = $2; mode = $3
+    path = $1; cls = $2; mode = $3; src = $4
     split("", cnt); split("", fmcnt)
-    ln = 0; infm = 0
-    while ((rc = (getline line < path)) > 0) {
+    ln = 0; infm = 0; fml = 0
+    while ((rc = (getline line < src)) > 0) {
       ln++
       chk = line; sub(/\r$/, "", chk)
       if (mode == "frontmatter") {
         if (ln == 1 && chk == "---") { infm = 1; continue }
         if (infm && chk == "---")    { infm = 0; split("", fmcnt); continue }
+        if (infm && ++fml > fmmax + 0) {
+          # Over the bound: release what was held aside and stop treating
+          # anything in this file as frontmatter (a later `---` is body).
+          for (c in fmcnt) cnt[c] += fmcnt[c]
+          split("", fmcnt); infm = 0; mode = "whole"
+        }
       }
       if (infm) scan(line, fmcnt); else scan(line, cnt)
     }
-    close(path)
+    close(src)
     if (rc < 0) { print path >> unread; next }
     # A frontmatter block that never closes is counted whole: an unterminated
     # `---` on line 1 must not be able to hide an entire file.
@@ -504,6 +626,10 @@ fi
 if [ "$MODE" = "print" ]; then
   if [ -s "$UNREAD" ]; then
     echo "check-vendor-coupling: cannot measure — unreadable file(s): $(tr '\n' ' ' < "$UNREAD")" >&2
+    exit 1
+  fi
+  if [ -s "$BADPATH" ]; then
+    echo "check-vendor-coupling: cannot measure — listed path(s) the gate cannot scan: $(cut -f1 "$BADPATH" | tr '\n' ' ')" >&2
     exit 1
   fi
   echo "{"
@@ -540,13 +666,20 @@ while IFS= read -r p; do
   exit_code=1
 done < "$UNREAD"
 
+while IFS="$(printf '\t')" read -r p why; do
+  [ -n "$p" ] || continue
+  printf "$ROWFMT" "$p" "-" "-" "-" "ERROR   $why"
+  errors=$((errors + 1))
+  exit_code=1
+done < "$BADPATH"
+
 while IFS="$(printf '\t')" read -r p cls n bd; do
   [ -n "$p" ] || continue
   case "$n" in ''|*[!0-9]*) n=0 ;; esac
   total_refs=$((total_refs + n))
   allow="$(allowance_for "$p")"
   case "$allow" in ''|*[!0-9]*)
-    printf "$ROWFMT" "$p" "$cls" "$n" "${allow#!}" "ERROR   allowance is not a JSON non-negative integer (a quoted \"3\", a negative or a fractional value is refused) [$bd]"
+    printf "$ROWFMT" "$p" "$cls" "$n" "${allow#!}" "ERROR   allowance is not a JSON non-negative integer <= 999999999 (a quoted \"3\", a negative, a fractional or a larger value is refused) [$bd]"
     errors=$((errors + 1))
     exit_code=1
     continue ;;
@@ -590,7 +723,7 @@ while IFS="$(printf '\t')" read -r p allow; do
   # Validating here makes "the manifest stays self-cleaning" true for the whole table
   # rather than for its referenced subset.
   case "$allow" in ''|*[!0-9]*)
-    printf "$ROWFMT" "$p" "$(classify "$p")" "-" "${allow#!}" "ERROR   allowance is not a JSON non-negative integer (a quoted \"3\", a negative or a fractional value is refused)"
+    printf "$ROWFMT" "$p" "$(classify "$p")" "-" "${allow#!}" "ERROR   allowance is not a JSON non-negative integer <= 999999999 (a quoted \"3\", a negative, a fractional or a larger value is refused)"
     errors=$((errors + 1))
     exit_code=1
     continue ;;
@@ -630,11 +763,41 @@ else
   done < "$REASON_ERRS"
 fi
 
+# policy_reasons sanity — the ids are namespaced (see the header's TO RAISE AN
+# ALLOWANCE): an unknown namespace is a typo that would certify nothing while
+# reading as if it did, so it is an ERROR; every value is a non-empty one-line
+# string. (The map's type was checked up front.)
+POLICY_ERRS="$TMPDIR_GATE/policy-errors.tsv"
+if ! jq -r '(.policy_reasons // {}) | to_entries[] |
+    if (.key | test("^(exempt:.+|token:.+|bound:max_frontmatter_lines)$") | not) then "\(.key)\tnamespace"
+    elif (.value | type) != "string" then "\(.key)\tnotstring"
+    elif (.value | test("^[[:space:]]*$")) then "\(.key)\tempty"
+    elif (.value | test("[\n\r]")) then "\(.key)\tmultiline"
+    else empty end' "$MANIFEST" > "$POLICY_ERRS" 2>/dev/null; then
+  printf "$ROWFMT" "policy_reasons" "-" "-" "-" "ERROR   policy_reasons could not be read"
+  errors=$((errors + 1)); exit_code=1; : > "$POLICY_ERRS"
+fi
+while IFS="$(printf '\t')" read -r p why; do
+  [ -n "$p" ] || continue
+  case "$why" in
+    namespace) msg="policy_reasons key must be exempt:<path>, token:<token> or bound:max_frontmatter_lines" ;;
+    notstring) msg="policy_reasons value is not a string" ;;
+    empty)     msg="policy_reasons value is empty — a reason must say why" ;;
+    multiline) msg="policy_reasons value spans lines — a reason is ONE line" ;;
+    *)         msg="policy_reasons value is malformed" ;;
+  esac
+  printf "$ROWFMT" "$p" "-" "-" "-" "ERROR   $msg"
+  errors=$((errors + 1))
+  exit_code=1
+done < "$POLICY_ERRS"
+
 # ---------------------------------------------------------------------------
 # raise_check — every new or raised allowance needs an ADDED or CHANGED reason
 # versus the base manifest (see the header's TO RAISE AN ALLOWANCE).
 # ---------------------------------------------------------------------------
+RAISE_STATE="not-run"
 raise_skip() { # raise_skip <reason>
+  RAISE_STATE="skipped"
   echo "raise_check: skipped ($1)"
   if [ "$REQUIRE_BASE" = "1" ]; then
     echo "raise_check: ERROR — VENDOR_COUPLING_REQUIRE_BASE=1 demands the raise check run here, and it was skipped ($1)"
@@ -644,7 +807,7 @@ raise_skip() { # raise_skip <reason>
 }
 
 raise_check() {
-  local top toplp mdir rel base_sha base_manifest raise_tsv nraised=0 nbad=0 p cur bv state why
+  local top toplp mdir rel base_sha base_manifest raise_tsv policy_ids policy_tsv base_adapter base_fm bcls hcls nraised=0 nbad=0 npolicy=0 npbad=0 p cur bv state why what
   top="$(git rev-parse --show-toplevel 2>/dev/null)" || top=""
   if [ -z "$top" ]; then raise_skip "scan root is not inside a git work tree"; return; fi
   toplp="$(cd "$top" && pwd -P)" || { raise_skip "scan root's work tree is not resolvable"; return; }
@@ -675,15 +838,24 @@ raise_check() {
   # could certify an inherited reason. (A wrong-typed base allowance VALUE is
   # safe by construction: it reads as absent, so the head value counts as a NEW
   # allowance and still needs an added/changed reason.)
+  # The same holds for the policy arms below: a wrong-typed base token list
+  # would read as "the base declared fewer tokens", hiding a removal.
   if ! jq -e 'type == "object"
               and ((has("allowances") | not) or ((.allowances | type) == "object"))
-              and ((has("allowance_reasons") | not) or ((.allowance_reasons | type) == "object"))' "$base_manifest" >/dev/null 2>&1; then
-    echo "raise_check: ERROR — the base manifest ($BASE_REF:$rel) is not an object, or its allowances / allowance_reasons is not an object (fail CLOSED — a wrong-typed base never certifies a raise)"
+              and ((has("allowance_reasons") | not) or ((.allowance_reasons | type) == "object"))
+              and ((has("policy_reasons") | not) or ((.policy_reasons | type) == "object"))
+              and ((has("vendor_tokens") | not) or ((.vendor_tokens | type) == "array"))
+              and ((has("token_classes") | not) or ((.token_classes | type) == "object"
+                   and all(.token_classes[]; (type == "object") and ((.tokens | type) == "array"))))' "$base_manifest" >/dev/null 2>&1; then
+    echo "raise_check: ERROR — the base manifest ($BASE_REF:$rel) is not an object, or its allowances / allowance_reasons / policy_reasons / token_classes / vendor_tokens is wrong-typed (fail CLOSED — a wrong-typed base never certifies a raise)"
     errors=$((errors + 1)); exit_code=1
     return
   fi
   raise_tsv="$TMPDIR_GATE/raises.tsv"
+  # Reasons are compared NORMALISED (trimmed, internal whitespace collapsed), so
+  # a whitespace-only edit of an inherited reason does not read as "changed".
   if ! jq -r --slurpfile b "$base_manifest" '
+      def norm: if type == "string" then gsub("[[:space:]]+"; " ") | sub("^ "; "") | sub(" $"; "") else null end;
       ($b[0].allowances // {}) as $ba |
       ($b[0].allowance_reasons // {}) as $br |
       (.allowance_reasons // {}) as $rs |
@@ -694,8 +866,8 @@ raise_check() {
       select($v > ($bv // 0)) |
       ($rs[$p]) as $r |
       [ $p, ($v | tostring), (if $bv == null then "new" else ($bv | tostring) end),
-        (if ($r | type) != "string" or ($r | test("^[[:space:]]*$")) then "missing"
-         elif (($br | type) == "object") and ($br[$p] == $r) then "inherited"
+        (if ($r | type) != "string" or (($r | norm) == "") then "missing"
+         elif (($br | type) == "object") and (($br[$p] | norm) == ($r | norm)) then "inherited"
          else "ok" end) ] | @tsv' "$MANIFEST" > "$raise_tsv" 2>/dev/null; then
     echo "raise_check: ERROR — could not compare allowances with the base manifest (fail CLOSED)"
     errors=$((errors + 1)); exit_code=1
@@ -715,6 +887,82 @@ raise_check() {
     exit_code=1
   done < "$raise_tsv"
   echo "raise_check: executed against $BASE_REF ($(printf '%.12s' "$base_sha")) — allowances new or raised vs base: $nraised, without an added/changed reason: $nbad"
+
+  # --- policy arms: coupling can also grow by counting LESS (header) --------
+  # Ids are collected one per line; none can carry a newline (paths with one
+  # were refused at enumeration, tokens are one-line by validation).
+  policy_ids="$TMPDIR_GATE/policy-ids.txt"
+  : > "$policy_ids"
+  # exempt:<path> — base allowance > 0, the file still exists, and it is now
+  # ADAPTER, newly ADAPTER_FRONTMATTER, or outside the scanned set. The base
+  # classification uses the BASE globs (a wrong-typed base glob list reads as
+  # empty, which only makes a path look MORE newly exempt — the safe side).
+  base_adapter="$(jq -r '(.classes.adapter.globs // []) | if type == "array" then .[] | strings else empty end' "$base_manifest" 2>/dev/null)"
+  base_fm="$(jq -r '(.classes.adapter_frontmatter.globs // []) | if type == "array" then .[] | strings else empty end' "$base_manifest" 2>/dev/null)"
+  if ! jq -r '(.allowances // {}) | to_entries[] | select(((.value | type) == "number") and (.value > 0)) | .key
+              | select(test("[\t\n\r]") | not)' "$base_manifest" > "$TMPDIR_GATE/base-allowed.txt" 2>/dev/null; then
+    echo "raise_check: ERROR — could not read the base allowances (fail CLOSED)"
+    errors=$((errors + 1)); exit_code=1
+    return
+  fi
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    [ -f "$p" ] || continue          # deleted: its references left with it
+    hcls="$(classify "$p")"
+    if match_any "$p" "$base_adapter"; then bcls="adapter"
+    elif match_any "$p" "$base_fm";    then bcls="adapter_frontmatter"
+    else bcls="counted"; fi
+    if [ "$hcls" = "adapter" ] && [ "$bcls" != "adapter" ]; then
+      printf 'exempt:%s\tnow ADAPTER-classified (whole file uncounted)\n' "$p" >> "$policy_ids"
+    elif [ "$hcls" = "adapter_frontmatter" ] && [ "$bcls" != "adapter_frontmatter" ]; then
+      printf 'exempt:%s\tnewly ADAPTER_FRONTMATTER (its frontmatter uncounted)\n' "$p" >> "$policy_ids"
+    elif ! grep -qFx -- "$p" "$SCANNED"; then
+      printf 'exempt:%s\tno longer in the scanned set (scan_roots narrowed, or the file untracked)\n' "$p" >> "$policy_ids"
+    fi
+  done < "$TMPDIR_GATE/base-allowed.txt"
+  # token:<token> and bound:max_frontmatter_lines — decided in jq.
+  if ! jq -r --slurpfile b "$base_manifest" '
+      ([.token_classes[]?.tokens[]? | strings]) as $head |
+      (([($b[0].token_classes // {})[]?.tokens[]? | strings] + [($b[0].vendor_tokens // [])[]? | strings]) | unique) as $base |
+      ( ($base - $head)[] | select(test("[\t\n\r]") | not)
+        | "token:\(.)\tdeclared at the base, no longer declared in any token class" ),
+      ( ($b[0].classes.adapter_frontmatter.max_frontmatter_lines) as $bb |
+        (.classes.adapter_frontmatter.max_frontmatter_lines) as $hb |
+        if (($bb | type) == "number") and (($hb | type) == "number") and ($hb > $bb)
+        then "bound:max_frontmatter_lines\traised \($bb) -> \($hb)" else empty end )' \
+      "$MANIFEST" >> "$policy_ids" 2>/dev/null; then
+    echo "raise_check: ERROR — could not compare token_classes / the frontmatter bound with the base manifest (fail CLOSED)"
+    errors=$((errors + 1)); exit_code=1
+    return
+  fi
+  policy_tsv="$TMPDIR_GATE/policy.tsv"
+  if ! jq -R -r --slurpfile b "$base_manifest" --slurpfile h "$MANIFEST" '
+      def norm: if type == "string" then gsub("[[:space:]]+"; " ") | sub("^ "; "") | sub(" $"; "") else null end;
+      ($b[0].policy_reasons // {}) as $br | ($h[0].policy_reasons // {}) as $hr |
+      select(length > 0) | (split("\t")) as $f | $f[0] as $id | ($hr[$id]) as $r |
+      [ $id, ($f[1:] | join("\t")),
+        (if ($r | type) != "string" or (($r | norm) == "") then "missing"
+         elif (($br[$id] | norm) == ($r | norm)) then "inherited"
+         else "ok" end) ] | @tsv' "$policy_ids" > "$policy_tsv" 2>/dev/null; then
+    echo "raise_check: ERROR — could not read policy_reasons (fail CLOSED)"
+    errors=$((errors + 1)); exit_code=1
+    return
+  fi
+  while IFS="$(printf '\t')" read -r p what state; do
+    [ -n "$p" ] || continue
+    npolicy=$((npolicy + 1))
+    [ "$state" = "ok" ] && continue
+    case "$state" in
+      inherited) why="its policy_reasons entry is INHERITED unchanged from the base — say why THIS change is needed" ;;
+      *)         why="it has no policy_reasons[\"$p\"] entry — add a one-line reason" ;;
+    esac
+    printf "$ROWFMT" "$p" "-" "-" "-" "BREACH  counted coupling shrank ($what vs $BASE_REF) without an added/changed reason: $why"
+    npbad=$((npbad + 1))
+    breaches=$((breaches + 1))
+    exit_code=1
+  done < "$policy_tsv"
+  echo "raise_check: policy changes that count less vs base (exemptions, removed tokens, a raised frontmatter bound): $npolicy, without an added/changed reason: $npbad"
+  RAISE_STATE="executed"
 }
 raise_check
 
@@ -731,6 +979,10 @@ echo "files scanned: $scanned (counted: $counted, of which frontmatter-exempt: $
 if [ "$exit_code" -ne 0 ]; then
   echo "check-vendor-coupling: FAILED — vendor-coupling ratchet tripped (see BREACH/ERROR rows above)." >&2
 else
-  echo "check-vendor-coupling: OK — no path exceeds its declared vendor-coupling allowance, and every raise carries a reason."
+  if [ "$RAISE_STATE" = "executed" ]; then
+    echo "check-vendor-coupling: OK — no path exceeds its declared vendor-coupling allowance, and every raise or exemption carries a reason."
+  else
+    echo "check-vendor-coupling: OK — no path exceeds its declared vendor-coupling allowance (raise_check did not run, so reasons were NOT verified against a base)."
+  fi
 fi
 exit "$exit_code"

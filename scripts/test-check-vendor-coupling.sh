@@ -18,6 +18,12 @@
 # the identical FRONTMATTER injection must not move the count; a raise without a
 # new reason must fail while the same raise with an added/changed reason passes;
 # an overlapping token must count once, whichever order the manifest lists it in.
+# Later cases keep the pairing: an exemption, a dropped token or a raised
+# frontmatter bound fails without a policy reason and passes with one (24t); an
+# over-bound frontmatter counts while an at-bound one does not (28); a quoted-name
+# or NUL-bearing file breaches while the same file with its allowance passes (30).
+# Where the gate itself is mutated (24s, 28, 30), the mutant is gated non-empty,
+# byte-different and `bash -n` clean before its result is trusted.
 #
 # Fixtures are hermetic: each case builds its own throwaway `git init` tree and
 # its own manifest, driven through the gate's VENDOR_COUPLING_ROOT /
@@ -109,7 +115,7 @@ mk_manifest() {
   "unclassified_default": "$unc",
   "classes": {
     "adapter": { "globs": ["adapter/*", "core/exempt-seam.sh"] },
-    "adapter_frontmatter": { "globs": ["agents/*.md"] },
+    "adapter_frontmatter": { "globs": ["agents/*.md"], "max_frontmatter_lines": 60 },
     "coupled": { "globs": ["coupled/*"] },
     "core":    { "globs": ["core/*"] }
   },
@@ -981,6 +987,305 @@ jq '.allowances["core/gate.sh"] = 3' "$TMP/raise/base-manifest.json" > "$RT/docs
 run_gate_base "$RT" "$RT/docs/m.json" "$RT_SHA"
 check    "case24r2 a string-typed base allowance does not let an inherited-reason raise slip" 1 "$RC"
 contains "case24r2 flags the inherited reason" "$OUT" "INHERITED"
+
+# ---------------------------------------------------------------------------
+# Case 24s — reasons are compared NORMALISED: a whitespace-only edit of an
+# inherited allowance reason is still INHERITED (trailing, leading and internal
+# runs alike), so an old reason cannot certify a new raise by gaining a space.
+# RS carries 3 references in core/gate.sh; its base allows 2 ("original reason").
+# ---------------------------------------------------------------------------
+for ws in 'original reason ' ' original reason' 'original  reason' 'original	reason'; do
+  rs_manifest ".allowances[\"core/gate.sh\"] = 3 | .allowance_reasons[\"core/gate.sh\"] = \"$ws\""
+  run_gate_base "$RS" "$RS/docs/m.json" "$RB_SHA"
+  check    "case24s a whitespace-only edit of the inherited reason ('$ws') does not certify the raise" 1 "$RC"
+  contains "case24s ('$ws') it is reported INHERITED" "$OUT" "INHERITED"
+done
+# Control: a genuinely changed reason still certifies (24d's shape, on RS).
+rs_manifest '.allowances["core/gate.sh"] = 3 | .allowance_reasons["core/gate.sh"] = "original reason, plus the third reference"'
+run_gate_base "$RS" "$RS/docs/m.json" "$RB_SHA"
+check    "case24s control: a changed reason certifies the same raise" 0 "$RC"
+# MUTATION CONTROL — the gate with normalisation removed (norm = identity) must let
+# the trailing-space reason through; otherwise 24s proves nothing about normalising.
+NORM_MUT="$TMP/gate-no-norm.sh"
+sed 's/^\( *\)def norm: .*$/\1def norm: if type == "string" then . else null end;/' "$GATE" > "$NORM_MUT"
+if [ -s "$NORM_MUT" ] && ! cmp -s "$NORM_MUT" "$GATE" && bash -n "$NORM_MUT"; then
+  rs_manifest '.allowances["core/gate.sh"] = 3 | .allowance_reasons["core/gate.sh"] = "original reason "'
+  OUT="$(VENDOR_COUPLING_ROOT="$RS" VENDOR_COUPLING_MANIFEST="$RS/docs/m.json" VENDOR_COUPLING_BASE="$RB_SHA" bash "$NORM_MUT" 2>&1)"; RC=$?
+  check "case24s MUTATION CONTROL: without normalisation the trailing-space reason passes" 0 "$RC"
+else
+  fail=$((fail+1)); echo "FAIL - case24s MUTATION CONTROL: mutant not built (empty, unchanged or invalid)"
+fi
+
+# ---------------------------------------------------------------------------
+# Case 24t — COUNTING LESS needs a reason too (policy_reasons). Coupling growth
+# must not be absorbable by exempting the path instead of raising its number, by
+# narrowing the scan, or by deleting the token. RS: core/gate.sh grown to 4
+# references (the finding's shape), base allowance 2 with a reason.
+# ---------------------------------------------------------------------------
+EXEMPT_GATE='.classes.adapter.globs += ["core/gate.sh"] | del(.allowances["core/gate.sh"]) | del(.allowance_reasons["core/gate.sh"])'
+GROWN='.allowances["core/gate.sh"] = 4 | .allowance_reasons["core/gate.sh"] = "grown to four"'
+printf 'echo "$%s"\n' "$FTOK" >> "$RS/core/gate.sh"; stage "$RS"
+rs_manifest "$EXEMPT_GATE"
+run_gate_base "$RS" "$RS/docs/m.json" "$RB_SHA"
+check    "case24t1 grown path moved into an ADAPTER glob with its allowance deleted, no reason -> exit 1" 1 "$RC"
+contains "case24t1 names the policy id" "$OUT" "exempt:core/gate.sh"
+contains "case24t1 says why" "$OUT" "now ADAPTER-classified"
+lacks    "case24t1 the OK line never claims every exemption is reasoned" "$OUT" "check-vendor-coupling: OK"
+rs_manifest "$EXEMPT_GATE | .policy_reasons = {\"exempt:core/gate.sh\": \"gate.sh became the adapter seam\"}"
+run_gate_base "$RS" "$RS/docs/m.json" "$RB_SHA"
+check    "case24t1 control: the same exemption WITH an added reason -> exit 0" 0 "$RC"
+contains "case24t1 control: the OK line names exemptions" "$OUT" "every raise or exemption carries a reason"
+
+# newly ADAPTER_FRONTMATTER: coupled/skill.md (base allowance 1) joins the frontmatter class.
+rs_manifest "$GROWN"' | .classes.adapter_frontmatter.globs += ["coupled/skill.md"]'
+run_gate_base "$RS" "$RS/docs/m.json" "$RB_SHA"
+check    "case24t2 a path with a base allowance newly ADAPTER_FRONTMATTER, no reason -> exit 1" 1 "$RC"
+contains "case24t2 names it" "$OUT" "exempt:coupled/skill.md"
+rs_manifest "$GROWN"' | .classes.adapter_frontmatter.globs += ["coupled/skill.md"] | .policy_reasons = {"exempt:coupled/skill.md": "skill gains a harness header"}'
+run_gate_base "$RS" "$RS/docs/m.json" "$RB_SHA"
+check    "case24t2 control: the same move WITH a reason -> exit 0" 0 "$RC"
+
+# outside the scanned set: the scan root holding coupled/skill.md is dropped.
+rs_manifest "$GROWN"' | .scan_roots -= ["coupled"]'
+run_gate_base "$RS" "$RS/docs/m.json" "$RB_SHA"
+check    "case24t3 a scan root narrowed past a path with a base allowance, no reason -> exit 1" 1 "$RC"
+contains "case24t3 says why" "$OUT" "no longer in the scanned set"
+rs_manifest "$GROWN"' | .scan_roots -= ["coupled"] | .policy_reasons = {"exempt:coupled/skill.md": "coupled/ moved out of scope"}'
+run_gate_base "$RS" "$RS/docs/m.json" "$RB_SHA"
+check    "case24t3 control: the same narrowing WITH a reason -> exit 0" 0 "$RC"
+
+# token removed: the base token is swapped for another, so nothing counts it now.
+OTHER_TOK="ACME_OTHER_TOOL"
+rs_manifest ".token_classes = {fictional: {tokens: [\"$OTHER_TOK\"]}}"
+run_gate_base "$RS" "$RS/docs/m.json" "$RB_SHA"
+check    "case24t4 a token declared at the base and dropped from token_classes, no reason -> exit 1" 1 "$RC"
+contains "case24t4 names the token id" "$OUT" "token:$FTOK"
+rs_manifest ".token_classes = {fictional: {tokens: [\"$OTHER_TOK\"]}} | .policy_reasons = {\"token:$FTOK\": \"the variable was retired\"}"
+run_gate_base "$RS" "$RS/docs/m.json" "$RB_SHA"
+check    "case24t4 control: the same removal WITH a reason -> exit 0" 0 "$RC"
+# A token MOVED between classes is not a removal.
+rs_manifest "$GROWN | .token_classes = {renamed_class: {tokens: [\"$FTOK\"]}}"
+run_gate_base "$RS" "$RS/docs/m.json" "$RB_SHA"
+check    "case24t4 control: a token moved to another class is not a removal -> exit 0" 0 "$RC"
+
+# frontmatter bound raised vs the base (60 -> 61) needs a reason; lowering does not.
+rs_manifest "$GROWN"' | .classes.adapter_frontmatter.max_frontmatter_lines = 61'
+run_gate_base "$RS" "$RS/docs/m.json" "$RB_SHA"
+check    "case24t5 the frontmatter bound raised without a reason -> exit 1" 1 "$RC"
+contains "case24t5 names the bound id" "$OUT" "bound:max_frontmatter_lines"
+rs_manifest "$GROWN"' | .classes.adapter_frontmatter.max_frontmatter_lines = 61 | .policy_reasons = {"bound:max_frontmatter_lines": "a longer real header"}'
+run_gate_base "$RS" "$RS/docs/m.json" "$RB_SHA"
+check    "case24t5 control: the raise WITH a reason -> exit 0" 0 "$RC"
+rs_manifest "$GROWN"' | .classes.adapter_frontmatter.max_frontmatter_lines = 59'
+run_gate_base "$RS" "$RS/docs/m.json" "$RB_SHA"
+check    "case24t5 control: a LOWERED bound needs no reason -> exit 0" 0 "$RC"
+
+# INHERITED policy reasons certify nothing — compared normalised like allowance reasons.
+RP="$TMP/raisepolicy/tree"; clone_tree "$RS" "$RP"
+jq '.policy_reasons = {"exempt:core/gate.sh": "old exemption reason"} | .vendor_tokens = ["ACME_LEGACY_VAR"]' \
+   "$TMP/raise/base-manifest.json" > "$RP/docs/m.json"
+commit_all "$RP" base-with-policy-reason
+RP_SHA="$(cd "$RP" && git rev-parse HEAD 2>/dev/null)"
+for ws in 'old exemption reason' 'old exemption reason ' 'old  exemption reason'; do
+  jq "$EXEMPT_GATE | .policy_reasons = {\"exempt:core/gate.sh\": \"$ws\", \"token:ACME_LEGACY_VAR\": \"retired flat-list token\"}" \
+     "$TMP/raise/base-manifest.json" > "$RP/docs/m.json"
+  run_gate_base "$RP" "$RP/docs/m.json" "$RP_SHA"
+  check    "case24t6 an INHERITED exemption reason ('$ws') certifies nothing -> exit 1" 1 "$RC"
+  contains "case24t6 ('$ws') it is reported INHERITED" "$OUT" "policy_reasons entry is INHERITED"
+done
+jq "$EXEMPT_GATE | .policy_reasons = {\"exempt:core/gate.sh\": \"why THIS exemption: gate.sh is the seam now\", \"token:ACME_LEGACY_VAR\": \"retired flat-list token\"}" \
+   "$TMP/raise/base-manifest.json" > "$RP/docs/m.json"
+run_gate_base "$RP" "$RP/docs/m.json" "$RP_SHA"
+check    "case24t6 control: a changed exemption reason certifies it -> exit 0" 0 "$RC"
+# The base's RETIRED flat token list counts as declared: dropping one needs a reason.
+jq "$EXEMPT_GATE | .policy_reasons = {\"exempt:core/gate.sh\": \"why THIS exemption: gate.sh is the seam now\"}" \
+   "$TMP/raise/base-manifest.json" > "$RP/docs/m.json"
+run_gate_base "$RP" "$RP/docs/m.json" "$RP_SHA"
+check    "case24t7 a token from the base's retired vendor_tokens list, absent from the head, needs a reason" 1 "$RC"
+contains "case24t7 names it" "$OUT" "token:ACME_LEGACY_VAR"
+
+# policy_reasons format: an unknown namespace, an empty value, a non-object map are ERRORs.
+rs_manifest "$GROWN"' | .policy_reasons = {"exampt:core/gate.sh": "typo"}'
+run_gate_base "$RS" "$RS/docs/m.json" "$RB_SHA"
+check    "case24t8 a policy_reasons key with an unknown namespace exits non-zero" 1 "$RC"
+contains "case24t8 says which namespaces exist" "$OUT" "exempt:<path>, token:<token> or bound:max_frontmatter_lines"
+rs_manifest "$GROWN"' | .policy_reasons = {"exempt:core/gate.sh": "  "}'
+run_gate_base "$RS" "$RS/docs/m.json" "$RB_SHA"
+check    "case24t8 an empty policy_reasons value exits non-zero" 1 "$RC"
+rs_manifest "$GROWN"' | .policy_reasons = []'
+run_gate_base "$RS" "$RS/docs/m.json" "$RB_SHA"
+check    "case24t8 a non-object policy_reasons exits non-zero" 1 "$RC"
+contains "case24t8 reports a type error" "$OUT" "manifest type error"
+rs_manifest "$GROWN"
+run_gate_base "$RS" "$RS/docs/m.json" "$RB_SHA"
+check    "case24t8 control: the grown fixture with a reasoned raise and no policy change exits 0" 0 "$RC"
+
+# ---------------------------------------------------------------------------
+# Case 24u — VENDOR_COUPLING_REQUIRE_BASE=1 turns EVERY skip into a failure, not
+# only "no base": the manifest-outside-the-tree and path-absent-at-base skips too.
+# ---------------------------------------------------------------------------
+run_gate_base "$BASE" "$TMP/base/manifest.json" "$RB_SHA" 1
+check    "case24u require-base with the manifest outside the work tree exits non-zero" 1 "$RC"
+contains "case24u (outside) prints the require-base error" "$OUT" "VENDOR_COUPLING_REQUIRE_BASE=1 demands"
+cp "$TMP/raise/base-manifest.json" "$RB/docs/m-new.json"
+run_gate_base "$RB" "$RB/docs/m-new.json" "$RB_SHA" 1
+check    "case24u require-base with the manifest path absent at the base exits non-zero" 1 "$RC"
+contains "case24u (absent) names the skip" "$OUT" "does not exist at base"
+rm -f "$RB/docs/m-new.json"
+# The OFF path, with the flag scrubbed from the environment (not merely empty).
+OUT="$(env -u VENDOR_COUPLING_REQUIRE_BASE VENDOR_COUPLING_ROOT="$BASE" VENDOR_COUPLING_MANIFEST="$TMP/base/manifest.json" \
+       VENDOR_COUPLING_BASE="$RB_SHA" bash "$GATE" 2>&1)"; RC=$?
+check    "case24u control: the same outside-tree skip with the flag unset exits 0" 0 "$RC"
+contains "case24u control: the OK line admits reasons were not verified" "$OUT" "reasons were NOT verified"
+
+# ---------------------------------------------------------------------------
+# Case 27 — the allowance CAP: 999999999 is the largest accepted value; one more
+# is an ERROR that names the bound (not a misleading "negative or fractional").
+# ---------------------------------------------------------------------------
+mk_manifest "$TMP/base/cap-ok.json" '{"core/gate.sh": 999999999, "coupled/skill.md": 1}'
+run_gate "$BASE" "$TMP/base/cap-ok.json"
+check    "case27a an allowance of 999999999 is accepted" 0 "$RC"
+mk_manifest "$TMP/base/cap-over.json" '{"core/gate.sh": 1000000000, "coupled/skill.md": 1}'
+run_gate "$BASE" "$TMP/base/cap-over.json"
+check    "case27b an allowance of 1000000000 exits non-zero" 1 "$RC"
+contains "case27b the error names the bound" "$OUT" "<= 999999999"
+contains "case27b and says a larger value is refused" "$OUT" "a larger value is refused"
+mk_manifest "$TMP/base/cap-over-clean.json" '{"core/gate.sh": 2, "coupled/skill.md": 1, "core/clean.sh": 1000000000}'
+run_gate "$BASE" "$TMP/base/cap-over-clean.json"
+check    "case27c the cap is enforced on a zero-reference path too" 1 "$RC"
+
+# ---------------------------------------------------------------------------
+# Case 28 — FRONTMATTER IS BOUNDED. A YAML block scalar can carry body-style
+# prose inside the header; past max_frontmatter_lines the file counts WHOLE.
+# The fixture bound is 5 content lines (set with jq; the shipped value is larger).
+# ---------------------------------------------------------------------------
+BF="$TMP/fmbound/tree"; mk_tree "$BF"
+# at the bound: exactly 5 lines between the delimiters, 3 of them carrying a token.
+put "$BF" "agents/at.md"   "---" "name: at" "description: |" "  call $FASK" "  then $FASK" "  and $FASK" "---" "# body" "plain"
+# one over: 6 lines between the delimiters (4 tokens hidden in a block scalar).
+put "$BF" "agents/over.md" "---" "name: over" "description: |" "  call $FASK" "  then $FASK" "  and $FASK" "  more $FASK" "---" "# body" "plain"
+stage "$BF"
+mk_classes_manifest "$TMP/fmbound/m.json" "$FM_CLASSES" '{}'
+jq '.classes.adapter_frontmatter.max_frontmatter_lines = 5' "$TMP/fmbound/m.json" > "$TMP/fmbound/m5.json"
+run_gate "$BF" "$TMP/fmbound/m5.json"
+check    "case28a an over-bound frontmatter is counted (allowance 0 -> exit 1)" 1 "$RC"
+r_over="$(printf '%s\n' "$OUT" | awk '$1 == "agents/over.md" { print $3 }')"
+if [ "$r_over" = "4" ]; then pass=$((pass+1)); echo "ok   - case28a over-bound frontmatter counted WHOLE (4 block-scalar tokens)"
+else fail=$((fail+1)); echo "FAIL - case28a over-bound file counted '$r_over', expected 4"; fi
+lacks    "case28b an at-bound frontmatter stays exempt" "$OUT" "agents/at.md"
+jq '.classes.adapter_frontmatter.max_frontmatter_lines = 6' "$TMP/fmbound/m.json" > "$TMP/fmbound/m6.json"
+run_gate "$BF" "$TMP/fmbound/m6.json"
+check    "case28c control: with the bound at 6 both files are exempt -> exit 0" 0 "$RC"
+# MUTATION CONTROL — the gate with the bound check disabled must hide the 4 tokens again.
+FM_MUT="$TMP/gate-no-bound.sh"
+sed 's/++fml > fmmax + 0/0/' "$GATE" > "$FM_MUT"
+if [ -s "$FM_MUT" ] && ! cmp -s "$FM_MUT" "$GATE" && bash -n "$FM_MUT"; then
+  OUT="$(VENDOR_COUPLING_ROOT="$BF" VENDOR_COUPLING_MANIFEST="$TMP/fmbound/m5.json" bash "$FM_MUT" 2>&1)"; RC=$?
+  check "case28 MUTATION CONTROL: without the bound the block scalar hides its tokens (exit 0)" 0 "$RC"
+else
+  fail=$((fail+1)); echo "FAIL - case28 MUTATION CONTROL: mutant not built (empty, unchanged or invalid)"
+fi
+# After an overflow no later `---` re-opens or closes an exemption: all 3 count.
+put "$BF" "agents/over.md" "---" "a: 1" "b: 2" "c: 3" "d: 4" "e: 5" "f: $FASK" "---" "g $FASK" "---" "h $FASK"
+stage "$BF"
+run_gate "$BF" "$TMP/fmbound/m5.json"
+r_over="$(printf '%s\n' "$OUT" | awk '$1 == "agents/over.md" { print $3 }')"
+if [ "$r_over" = "3" ]; then pass=$((pass+1)); echo "ok   - case28d after an overflow every later line is body (3 counted)"
+else fail=$((fail+1)); echo "FAIL - case28d over-bound file with later rules counted '$r_over', expected 3"; fi
+# The bound is REQUIRED when adapter_frontmatter has globs, and must be a positive integer.
+for filt in 'del(.classes.adapter_frontmatter.max_frontmatter_lines)' '.classes.adapter_frontmatter.max_frontmatter_lines = 0' \
+            '.classes.adapter_frontmatter.max_frontmatter_lines = "60"' '.classes.adapter_frontmatter.max_frontmatter_lines = 2.5'; do
+  jq "$filt" "$TMP/fmbound/m.json" > "$TMP/fmbound/mbad.json"
+  run_gate "$BF" "$TMP/fmbound/mbad.json"
+  check    "case28e ($filt) exits non-zero" 1 "$RC"
+  contains "case28e ($filt) names the field" "$OUT" "max_frontmatter_lines"
+done
+
+# ---------------------------------------------------------------------------
+# Case 29 — CRLF frontmatter: delimiters followed by CR still delimit; the
+# frontmatter token is exempt and the body token counts once.
+# ---------------------------------------------------------------------------
+CRL="$TMP/crlf/tree"; mk_tree "$CRL"; mkdir -p "$CRL/agents"
+printf -- '---\r\nname: c\r\ntools: %s\r\n---\r\n# body\r\nuses $%s\r\n' "$FASK" "$FTOK" > "$CRL/agents/c.md"
+stage "$CRL"
+mk_classes_manifest "$TMP/crlf/m0.json" "$FM_CLASSES" '{}'
+run_gate "$CRL" "$TMP/crlf/m0.json"
+check    "case29 a CRLF agent file with a body token at allowance 0 exits non-zero" 1 "$RC"
+contains "case29 only the body token is counted" "$OUT" "[fict_root=1]"
+lacks    "case29 the CRLF frontmatter token is exempt" "$OUT" "fict_ask="
+mk_classes_manifest "$TMP/crlf/m1.json" "$FM_CLASSES" '{"agents/c.md": 1}'
+run_gate "$CRL" "$TMP/crlf/m1.json"
+check    "case29 control: allowance 1 fits the one body token" 0 "$RC"
+
+# ---------------------------------------------------------------------------
+# Case 30 — ENUMERATION: every tracked name arrives verbatim. A non-ASCII or
+# backslash-bearing name used to be C-quoted by `git ls-files` into a path that
+# names no file and was dropped silently; a NUL-bearing file was skipped as
+# binary. Each is now counted (and breaches when unallowed); a listed path the
+# gate cannot scan is an ERROR; a work-tree deletion is skipped.
+# ---------------------------------------------------------------------------
+UTF_NAME="core/$(printf 'caf\303\251').sh"
+BS_NAME='core/back\slash.sh'
+EN="$TMP/enum/tree"; mk_tree "$EN"
+put "$EN" "$UTF_NAME" "echo \"\$$FTOK\" \"\$$FTOK\""
+put "$EN" "$BS_NAME"  "echo \"\$$FTOK\" \"\$$FTOK\""
+stage "$EN"
+quoted="$(cd "$EN" && git -c core.quotePath=true ls-files -- core | tr '\n' ' ')"
+contains "case30 fixture: git really C-quotes both names by default (the fixture exercises the old bug)" "$quoted" '"core/'
+mk_manifest "$TMP/enum/m0.json" '{}'
+run_gate "$EN" "$TMP/enum/m0.json"
+check    "case30a quoted-name files with tokens and no allowance exit non-zero" 1 "$RC"
+contains "case30a the non-ASCII name is counted" "$OUT" "$UTF_NAME"
+contains "case30a the backslash name is counted"  "$OUT" "$BS_NAME"
+EN_ALLOW="$(jq -cn --arg u "$UTF_NAME" --arg b "$BS_NAME" '{($u): 2, ($b): 2}')"
+mk_manifest "$TMP/enum/m2.json" "$EN_ALLOW"
+run_gate "$EN" "$TMP/enum/m2.json"
+check    "case30b control: with allowances of 2 keyed by the verbatim names -> exit 0" 0 "$RC"
+# MUTATION CONTROL — the gate with the OLD enumeration (C-quoted, newline-separated,
+# a non-file silently skipped) must drop the quoted names again.
+EN_MUT="$TMP/gate-old-enum.sh"
+sed -e 's/git -c core.quotePath=false ls-files -z -- \$SCAN_ROOTS >/git ls-files -- $SCAN_ROOTS >/' \
+    -e "s/^while IFS= read -r -d '' f; do\$/while IFS= read -r f; do/" "$GATE" > "$EN_MUT"
+if [ -s "$EN_MUT" ] && ! cmp -s "$EN_MUT" "$GATE" && bash -n "$EN_MUT" && ! grep -q 'ls-files -z -- \$SCAN_ROOTS >' "$EN_MUT"; then
+  OUT="$(VENDOR_COUPLING_ROOT="$EN" VENDOR_COUPLING_MANIFEST="$TMP/enum/m0.json" bash "$EN_MUT" 2>&1)"
+  lacks "case30 MUTATION CONTROL: the old enumeration never counts the non-ASCII name as such" "$OUT" "$UTF_NAME "
+else
+  fail=$((fail+1)); echo "FAIL - case30 MUTATION CONTROL: mutant not built (empty, unchanged, invalid or not reverted)"
+fi
+# NUL-bearing file: counted, not skipped as binary.
+printf 'x\000$%s y\000$%s\n' "$FTOK" "$FTOK" > "$EN/core/blob.dat"; stage "$EN"
+run_gate "$EN" "$TMP/enum/m2.json"
+check    "case30c a NUL-bearing file with tokens and no allowance exits non-zero" 1 "$RC"
+r_blob="$(printf '%s\n' "$OUT" | awk '$1 == "core/blob.dat" { print $3 }')"
+if [ "$r_blob" = "2" ]; then pass=$((pass+1)); echo "ok   - case30c the NUL-bearing file's two tokens are both counted"
+else fail=$((fail+1)); echo "FAIL - case30c NUL-bearing file counted '$r_blob', expected 2"; fi
+rm -f "$EN/core/blob.dat"; stage "$EN"
+# A NUL cannot manufacture a frontmatter delimiter: such an agent file counts whole.
+mkdir -p "$EN/agents"
+printf -- '---\000x\nname: n\ntools: %s\n---\nbody\n' "$FASK" > "$EN/agents/nul.md"; stage "$EN"
+mk_classes_manifest "$TMP/enum/mc.json" "$FM_CLASSES" "$EN_ALLOW"
+run_gate "$EN" "$TMP/enum/mc.json"
+check    "case30d a NUL-bearing agent file is counted WHOLE (its 'frontmatter' token breaches)" 1 "$RC"
+contains "case30d names it" "$OUT" "agents/nul.md"
+rm -f "$EN/agents/nul.md"; stage "$EN"
+# A tracked dangling symlink is listed but is not a regular file -> ERROR.
+ln -s no-such-target "$EN/core/dangling.sh"; stage "$EN"
+run_gate "$EN" "$TMP/enum/m2.json"
+check    "case30e a tracked path that is not a regular file exits non-zero" 1 "$RC"
+contains "case30e says why" "$OUT" "not a regular file"
+rm -f "$EN/core/dangling.sh"; stage "$EN"
+# A work-tree deletion that is still indexed is a pending change, skipped (control).
+put "$EN" "core/gone.sh" "echo portable"; stage "$EN"; rm -f "$EN/core/gone.sh"
+run_gate "$EN" "$TMP/enum/m2.json"
+check    "case30f control: a work-tree-deleted, still-indexed file is skipped -> exit 0" 0 "$RC"
+stage "$EN"
+# A name carrying a tab cannot ride the gate's tables -> ERROR, never a silent drop.
+TAB_NAME="core/$(printf 'a\tb').sh"
+put "$EN" "$TAB_NAME" "echo \"\$$FTOK\""; stage "$EN"
+run_gate "$EN" "$TMP/enum/m2.json"
+check    "case30g a tracked name carrying a tab exits non-zero" 1 "$RC"
+contains "case30g says why" "$OUT" "tab, CR or newline"
+rm -f "$EN/$TAB_NAME"; stage "$EN"
 
 # ---------------------------------------------------------------------------
 # Case 25 — an UNREADABLE file is an ERROR, not a silent zero. (Skipped when
