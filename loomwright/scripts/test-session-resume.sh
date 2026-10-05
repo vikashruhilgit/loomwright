@@ -45,6 +45,11 @@
 #       gates the TTL the same way test-run-lock.sh case 11 does (z10), the
 #       dead-pid-but-young-age non-reclaimable edge (z11), and no lock dir ⇒
 #       no section at all (z12).
+#   (za)-(zf) /automate surfacing (automate-followups/32 Part A): resume prints the
+#       merged-but-not-closed-out line (za); startup makes zero gh calls (zb); gh
+#       absent/failing/hanging ⇒ `merge state unverified` (zc); ≤5 gh calls (zd); the
+#       live-watcher line on both arms, never for a stale/recycled pid (ze); nothing
+#       to report ⇒ nothing printed, with a mutation control (zf).
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -1555,6 +1560,89 @@ test_branch_mode_single_read() {
   else no "branch mode: mutation self-check counted ${n}x (expected 2)"; fi
 }
 test_branch_mode_single_read
+
+# ============================================================================
+echo "== (za)-(zf) /automate surfacing (automate-followups/32 Part A): merged-not-closed-out + live watcher =="
+# SKILL §6 "Post-merge close-out" → "SessionStart surfacing". A stub gh records
+# every invocation; per-URL states come from files; `exec sleep` simulates a hang.
+AGH="$(mktmp)"; AGHLOG="$AGH/calls.log"; : > "$AGHLOG"
+cat > "$AGH/gh" <<'STUB'
+#!/usr/bin/env bash
+echo "$*" >> "$AGH_DIR/calls.log"
+[ -f "$AGH_DIR/fail" ] && exit 1
+[ -f "$AGH_DIR/hang" ] && exec sleep 30
+n="${3##*/}"; st="$(cat "$AGH_DIR/state.$n" 2>/dev/null || echo OPEN)"
+if [ "$st" = MERGED ]; then printf '{"state":"MERGED","mergedAt":"2026-10-05T00:00:00Z"}\n'; else printf '{"state":"%s","mergedAt":null}\n' "$st"; fi
+STUB
+chmod +x "$AGH/gh"
+au_rf() { # <repo> <run_id> <pr_n> [<status>] [<run status>]
+  mkdir -p "$1/.supervisor/automate"
+  printf '# Automate Run: t\n## Status: %s\n## Queue\n- [ ] q/%s.md\n## Current\n- item: q/%s.md | status: %s | pr: https://github.com/acme/w/pull/%s | branch: b%s\n- pause_reason: awaiting_merge\n## Progress\n- t0 picked q/%s.md\n' \
+    "${5:-paused}" "$3" "$3" "${4:-awaiting_merge}" "$3" "$3" "$3" > "$1/.supervisor/automate/$2.md"
+}
+au_hook() { # <repo> <source> [env…]
+  local r="$1" src="$2"; shift 2
+  ( cd "$r" && printf '{"source":"%s"}' "$src" | env AGH_DIR="$AGH" LOOMWRIGHT_GH_BIN="$AGH/gh" "$@" bash "$HOOK" 2>/dev/null ) | jq -r '.hookSpecificOutput.additionalContext // ""' 2>/dev/null
+  printf '%s' "${PIPESTATUS[0]}" > "$RCFILE"
+}
+MLINE='automate: automate-a item q/7.md PR https://github.com/acme/w/pull/7 merged but not closed out — /automate --resume closes it out'
+# (za) resume: merged ⇒ the line; OPEN / Current done / Status done ⇒ nothing extra.
+R="$(new_repo)"; make_plugin_active "$R"
+au_rf "$R" automate-a 7; au_rf "$R" automate-b 8; au_rf "$R" automate-c 9 done; au_rf "$R" automate-d 10 awaiting_merge done
+echo MERGED > "$AGH/state.7"; echo OPEN > "$AGH/state.8"; echo MERGED > "$AGH/state.9"; echo MERGED > "$AGH/state.10"
+: > "$AGHLOG"; c="$(au_hook "$R" resume)"
+[ "$(lastrc)" = 0 ] && grep -qxF -- "$MLINE" <<<"$c" && ok "(za) resume: a merged, not-done ## Current PR ⇒ the merged-but-not-closed-out line" || no "(za) ctx: $(grep automate: <<<"$c")"
+[ "$(grep -c '^automate: ' <<<"$c")" = 1 ] && ok "(za) OPEN PR / ## Current done / ## Status done ⇒ no line" || no "(za) extra lines: $(grep '^automate: ' <<<"$c" | tr '\n' '|')"
+[ "$(wc -l < "$AGHLOG" | tr -d ' ')" = 2 ] && ok "(za) gh called only for the two in-flight PRs (done items cost nothing)" || no "(za) gh calls: $(wc -l < "$AGHLOG")"
+# (zb) startup: OFFLINE — zero gh calls even with a merged in-flight PR present.
+: > "$AGHLOG"; c="$(au_hook "$R" startup)"
+[ "$(lastrc)" = 0 ] && [ ! -s "$AGHLOG" ] && ! grep -q 'merged but not closed out' <<<"$c" && ok "(zb) startup: zero gh calls, no merge check (the startup arm stays offline)" || no "(zb) startup gh calls: $(wc -l < "$AGHLOG")"
+# (zc) gh absent / failing / hanging ⇒ `merge state unverified`, exit 0.
+ULINE='automate: automate-a item q/7.md PR https://github.com/acme/w/pull/7 merge state unverified'
+c="$(au_hook "$R" resume LOOMWRIGHT_GH_BIN="$AGH/no-such-gh")"
+[ "$(lastrc)" = 0 ] && grep -qxF -- "$ULINE" <<<"$c" && ok "(zc) gh absent ⇒ '… merge state unverified', exit 0" || no "(zc) gh absent: $(grep automate: <<<"$c")"
+touch "$AGH/fail"; c="$(au_hook "$R" resume)"; rm -f "$AGH/fail"
+[ "$(lastrc)" = 0 ] && grep -qxF -- "$ULINE" <<<"$c" && ! grep -q 'merged but not' <<<"$c" && ok "(zc) gh failing ⇒ unverified, never a guess" || no "(zc) gh failing: $(grep automate: <<<"$c")"
+touch "$AGH/hang"; t0="$(date +%s)"; c="$(au_hook "$R" resume LOOMWRIGHT_SR_GH_TIMEOUT=1)"; t1="$(date +%s)"; rm -f "$AGH/hang"
+[ "$(lastrc)" = 0 ] && grep -qxF -- "$ULINE" <<<"$c" && [ $((t1 - t0)) -lt 15 ] && ok "(zc) a hanging gh is killed at the deadline ⇒ unverified ($((t1 - t0))s for two calls at 1s)" || no "(zc) hang: $((t1 - t0))s $(grep automate: <<<"$c")"
+# (zd) cap: 7 merged in-flight runs ⇒ exactly 5 gh calls, 5 merged lines + 2 unverified.
+R2="$(new_repo)"; make_plugin_active "$R2"
+for n in 21 22 23 24 25 26 27; do au_rf "$R2" "automate-$n" "$n"; echo MERGED > "$AGH/state.$n"; done
+: > "$AGHLOG"; c="$(au_hook "$R2" resume)"
+[ "$(wc -l < "$AGHLOG" | tr -d ' ')" = 5 ] && [ "$(grep -c 'merged but not closed out' <<<"$c")" = 5 ] && [ "$(grep -c 'merge state unverified$' <<<"$c")" = 2 ] && [ "$(lastrc)" = 0 ] \
+  && ok "(zd) cap: 5 gh calls per SessionStart; the 2 items past the cap print unverified" || no "(zd) calls=$(wc -l < "$AGHLOG") merged=$(grep -c 'merged but' <<<"$c") unverified=$(grep -c unverified <<<"$c")"
+# (ze) live watcher ⇒ the line on startup AND resume; a stale or recycled-pid marker ⇒ nothing.
+R3="$(new_repo)"; make_plugin_active "$R3"; mkdir -p "$R3/.supervisor/automate"
+WD="$(mktmp)"; printf '#!/usr/bin/env bash\nwhile :; do sleep 1; done\n' > "$WD/automate-merge-watch.sh"
+WPR="https://github.com/acme/w/pull/31"
+bash "$WD/automate-merge-watch.sh" "$R3/.supervisor/automate/automate-w.md" q/31.md "$WPR" & WPID=$!
+sleep 1 & SPID=$!
+printf 'pid\t%s\npr_url\t%s\nstarted\tx\n' "$WPID" "$WPR" > "$R3/.supervisor/automate/automate-w.merge-watch"
+printf 'pid\t%s\npr_url\t%s\nstarted\tx\n' "$SPID" "https://github.com/acme/w/pull/32" > "$R3/.supervisor/automate/automate-recycled.merge-watch"
+printf 'pid\t999999\npr_url\t%s\nstarted\tx\n' "https://github.com/acme/w/pull/33" > "$R3/.supervisor/automate/automate-dead.merge-watch"
+WLINE="automate: merge watcher live pid=$WPID PR $WPR (run automate-w)"
+: > "$AGHLOG"
+for src in startup resume; do
+  c="$(au_hook "$R3" "$src")"
+  [ "$(lastrc)" = 0 ] && grep -qxF -- "$WLINE" <<<"$c" && [ "$(grep -c '^automate: ' <<<"$c")" = 1 ] && ok "(ze) $src: the live-watcher line, and nothing for a recycled or dead pid" || no "(ze) $src: $(grep '^automate' <<<"$c" | tr '\n' '|')"
+done
+[ ! -s "$AGHLOG" ] && ok "(ze) a watcher-only repo makes no gh call (no in-flight run file)" || no "(ze) gh called"
+[ -f "$R3/.supervisor/automate/automate-dead.merge-watch" ] && ok "(ze) stale markers are ignored, never cleaned" || no "(ze) stale marker removed"
+kill "$WPID" "$SPID" 2>/dev/null; wait "$WPID" "$SPID" 2>/dev/null
+# (zf) nothing to report ⇒ no header, no 'none', on either arm.
+R4="$(new_repo)"; make_plugin_active "$R4"; mkdir -p "$R4/.supervisor/automate"
+for src in startup resume; do
+  c="$(au_hook "$R4" "$src")"
+  [ "$(lastrc)" = 0 ] && ! grep -qE '^automate: |/automate in-flight items' <<<"$c" && ok "(zf) $src: nothing in flight ⇒ nothing printed (no header)" || no "(zf) $src printed: $(grep -E 'automate' <<<"$c" | tr '\n' '|')"
+done
+# (zf) mutation control: an unconditional header turns the (zf) assertion red.
+md="$(mktmp)"; copy_hook_full "$md" 2>/dev/null || cp "$HOOK" "$md/session-resume.sh"
+sed 's/^if \[ -n "\$AUTOMATE_SR\$WATCH_SR" \]; then$/if true; then/' "$HOOK" > "$md/session-resume.sh"
+if cmp -s "$HOOK" "$md/session-resume.sh"; then no "(zf) header mutant changed nothing"
+else
+  c="$( cd "$R4" && printf '{"source":"resume"}' | bash "$md/session-resume.sh" 2>/dev/null | jq -r '.hookSpecificOutput.additionalContext // ""' )"
+  grep -q '/automate in-flight items' <<<"$c" && ok "(zf) control: an unconditional header is caught" || no "(zf) control did not discriminate"
+fi
 
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
