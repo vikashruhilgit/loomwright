@@ -57,3 +57,9 @@ none
 ## Touches
 loomwright/scripts/adapters/providers/test-lens-run.sh
 changelog.d/automate-followups-30-lens-run-test-concurrency-safe.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-04T16:52:25Z
+- **Brief:** .supervisor/jobs/done/2026-10-04-lens-run-test-concurrency-safe.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/379
