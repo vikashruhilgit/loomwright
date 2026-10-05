@@ -11,3 +11,14 @@ and the PR only from a later `ran /autonomous` line, and it always sets `status:
 `closeout_leftover` `pause_reason` is added to the SKILL §3 enum and to the RESULT_SCHEMAS §AUTOMATE_RUN enum and
 table. Lane w1-10 (run `automate-2026-10-04-103627`) wrote `## Current` only once, at creation; that is the bug this
 fixes.
+Part B: a finished run now finalizes itself. `closeout` still never writes `done`, even after checking off the last
+Queue item, so every finished single-item run stayed `paused` / `awaiting_go` with an empty Queue and every later
+RESUME listed it. New `finalize-empty <runfile>` (in `automate-trail.sh`, dispatched like `closeout`) acts only on a
+run that is `paused` with `pause_reason: awaiting_go`, has no unchecked Queue row, and whose `## Current` item reads
+`status: done`. Under its own run lock it writes `## Status: done` and `pause_reason: null` in one validated
+`runfile-write`, appends `auto-finalized: queue empty after closeout`, and runs `trail-pr --reason done` (the same call
+the Queue-resolved termination makes). With branch mode off it then un-stages that run's trail paths so they cannot
+ride into the current run's next commit. It always exits 0, and a second call is a no-op. `resume-glob <dir>
+--finalize` (SKILL §4 step 1) runs it on each candidate and lists only the runs it did not finalize; plain
+`resume-glob` output is unchanged. With branch mode off, finalizing N runs can open up to N trail PRs (one per run,
+never merged by the engine). This is accepted and documented in SKILL §4.
