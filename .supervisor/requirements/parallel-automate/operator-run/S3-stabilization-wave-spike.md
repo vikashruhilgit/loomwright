@@ -73,19 +73,21 @@ Owner decision 2026-10-05: stabilize parallel automation, then release it for ot
 wave; S3 is the first run of **several waves in a row**, with a release and reinstall between waves (the
 pa/06 one-bump-per-wave model, by hand) and with the wave runner's own replacement (pa/05) built mid-queue.
 
-## The queue (19 items — owner decision 2026-10-05: "finish parallel automation and everything related")
+## The queue (20 items — owner decision 2026-10-05: "finish parallel automation and everything related"; 19 + `parallel-automate/16` added the same day after wave 1 froze the machine)
 Merged on 2026-10-05 (originals parked with pointers; text kept verbatim as parts):
 `meta-sync-followups/08` = ms/02 + 03 + 06 · `automate-followups/32` = af/14 + 28 + 29 · `automate-followups/33` =
 af/17 + 25. New the same day: `meta-sync-followups/07` (onboard any repo to branch mode), `automate-followups/31`
 (temporary escalations); `parallel-automate/06` amended (watcher on `escalated` parks, targeted `--resume`).
-Added to the scope the same day: `parallel-automate/09, 11, 12, 13, 14, 15`, `automate-followups/22, 23`.
+Added to the scope the same day: `parallel-automate/09, 11, 12, 13, 14, 15`, `automate-followups/22, 23`; later
+`parallel-automate/16` (machine load guard) and an amendment to `parallel-automate/05` Scope 16 (load guard + reset
+recovery), both from the wave 1 crash (§"Wave 1 log").
 Out of scope (not parallel work): the rest of the backlog, including the 7 older items with no Touches / Depends on.
 
 ## Wave plan (`plan-waves --max 5`, companion rule relaxed — see Planner rule)
 | Wave | Items | Lanes |
 |---|---|---|
 | 1 | af/32 run-file lifecycle · ms/08 meta-sync hardening · ms/04 home-path scrub · pa/09 fewer full CI runs | 4 |
-| 2 | pa/11 split shared hotspot files — **alone** (owner decision) | 1 |
+| 2 | pa/11 split shared hotspot files · **pa/16 machine load guard** (owner decision 2026-10-05: "Wave 2, beside pa/11" — replaces "pa/11 alone"; no Touches overlap, checked) | 2 |
 | — | **Re-check every remaining item's `## Touches` against the split layout, then re-plan waves 3+** | — |
 | 3+ (pre-split plan, will widen) | af/33 · ms/05 → ms/07 · agnostic/04 (Milestone A) → pa/05 → pa/06 · pa/14 → af/31 → pa/12 → pa/13 → pa/15 → af/22 → af/23 → pa/07 (Milestone B) | 1–3 |
 
@@ -152,6 +154,23 @@ Lanes, launch → park per lane, questions, escalations and cause, merge order a
 each merge, table-doc and manifest conflicts, release wall-clock, final `total_cost_usd` per lane, leaks after
 teardown, machine (load, swap, free) at peak.
 
+## Wave 1 log
+- 11:47Z launched 4 lanes (s3-a..d); first questions (stale runs + queue) answered 11:48–11:49Z; 4 brief decisions
+  12:05–12:17Z; s3-c PR #391 at 12:29Z (42 min); s3-c fix-now on a MEDIUM (home-path rule widened, `268fc98`).
+- **12:5x–13:29Z machine overload → 13:40Z watchdog reset (crash).** 13:17Z load1 119 / 15-min 37 on 12 CPUs, 3 lanes
+  in `ci-local` at once. Panic `panic-base+socd-2026-10-05-191808.panic` ("SOCD report detected: (iBoot panic)"),
+  reset counter `Boot faults: wdog,…`. All four lanes died (last writes ~13:29Z); `caffeinate`, the operator monitor
+  and the session's scratchpad went with it. Nothing lost: s3-a 8, s3-b 2, s3-d 1 local commits (not pushed), s3-c
+  PR #391 green at `268fc98` + 2 uncommitted lines of a drain fix. No sampler was running, so there is no per-lane
+  attribution; that is item 16's Part 0.
+- Owner decision 2026-10-05: resume **two at a time** (s3-c + s3-a 16:07Z via `--resume-run`; s3-b and s3-d when one
+  parks). Run ids: s3-a `automate-2026-10-05-114905`, s3-b `automate-2026-10-05-171908` (stamped in local time, the
+  others in UTC — record as a gap), s3-c `…-114920`, s3-d `…-114919`.
+- **Operator rule until pa/16 + pa/05's load guard merge:** at most 2 lanes building at once; the lane monitor also
+  prints `HIGH-LOAD` at load1 ≥ 60, and on it the operator resumes no further lane.
+- Unrecorded follow-up (s3-c, fix-now chosen): anchoring the `meta-sync.sh` `home_path` regex — the draft was deleted
+  with the fix-now; owner to decide whether to file it.
+
 ## Done when
-All 19 items merged or closed by the owner, each wave's records on `loomwright-meta`, lanes torn down with `leaks`
+All 20 items merged or closed by the owner, each wave's records on `loomwright-meta`, lanes torn down with `leaks`
 empty, the measures above recorded in this file, and P2 (default lane count) revisited with S2 + S3 evidence.

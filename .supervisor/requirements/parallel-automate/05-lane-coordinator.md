@@ -242,6 +242,16 @@ coordinator. Without the flag, or with `--parallel 1`, no lane code runs at all.
       `memory_pressure`, the coordinator stops launching new work (no new lanes, no new `ci-local` slots beyond the ones
       held), notifies the owner, and never kills a lane by itself. S2 started with ~100 MB free and 4.4 GB swap already
       in use on a 24 GB Mac, so this is the likely first limit at 5–10 lanes.
+    - **Load guard (amended 2026-10-05 after S3 wave 1 froze the machine — watchdog reset at load1 119; item 16):**
+      the coordinator reads item 16's `machine-load.sh` before every launch and resume. On `overloaded` it holds the
+      launch, on `busy` it launches no more than one lane per re-check, and `lane-status` shows `held for load`. Same
+      rules as the memory guard: stop starting, never kill. The memory guard's threshold reads the same reader.
+    - **Reset recovery (amended 2026-10-05, same incident):** `lane-status` marks a lane `lost_to_reset` when its run
+      file says `running`, its pid is dead, and the machine's boot time (`sysctl kern.boottime` / `/proc/stat btime`)
+      is later than the lane's last launch. A coordinator started after a reset lists those lanes with their run ids
+      and, on the owner's yes, resumes them by run id (`--resume <run_id>`, never a bare `--resume`), staggered
+      through the load guard rather than all at once. In S3 this was done by hand: find the reset in the panic and
+      reset reports, map each lane to its run id, resume two at a time.
     - **Keep-awake: SUGGESTED, not run (owner, 2026-10-05: "keep awake should be optional or suggest, might ask user to
       run").** Default: when a wave starts, the coordinator prints a one-line suggestion with the exact command for the owner
       to run themselves — macOS `caffeinate -i -w <coordinator pid>` (ends with the coordinator; never a timer-only hold that

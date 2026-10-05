@@ -35,6 +35,7 @@ carry the fixes.
 | S2 | Five-lane spike (`operator-run/`) | 1 day, operator | Measures CI slots, memory, owner load, merges and cost at 5 lanes; sets P2; go/no-go for 10. |
 | 14 | Lanes pane add-on (opt-in sibling plugin) | medium | The `/lanes` pane prototyped in S1/w1 as an installable, optional Claude-adapter plugin over 05's `lane-status` / `lane-answer`; lanes behave identically without it (P9). |
 | 15 | Backlog board (one derived view of every item's real state) | medium | One canonical status reader (done stamp anywhere, `unknown` as a state) + `/backlog` table/JSON + a Floor surface + `BACKLOG.md` on the meta branch; totals always add up. No dependencies, so it can run in the next wave. |
+| 16 | Machine load guard (added 2026-10-05) | medium | S3 wave 1 froze the machine (load1 119 on 12 CPUs, watchdog reset) although 08's slots cap the suite at ~12 jobs. Attribute the load first, then one machine-wide gate in `ci-slot.sh` that holds new heavy work while overloaded and never kills. The coordinator's side (launch gating, reset recovery) is in 05 Scope 16. No dependencies; plans after 09 (shared `AGENT_GUIDELINES.md`). |
 
 ## Order
 01 → 02 → 03 → M1 (operator) → S1 (operator) → 04 → 05 → 06 → 07.
