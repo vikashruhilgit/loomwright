@@ -551,7 +551,7 @@ run_hook_order() {
   local wd="$1" payload="$2" path
   path="$(build_curated_path)"
   ( cd "$wd" && PATH="$path" LOOMWRIGHT_DESKTOP_NOTIFICATIONS=1 LOOMWRIGHT_NOTIFY_SCOPE=all \
-      LOOMWRIGHT_NOTIFY_DEBOUNCE=0 LOOMWRIGHT_NOTIFY_CLICK=off CLAUDE_CODE_SESSION_ID= \
+      LOOMWRIGHT_NOTIFY_DEBOUNCE=0 LOOMWRIGHT_NOTIFY_CLICK=off \
       DISPLAY= WAYLAND_DISPLAY= "$REALBASH" "$NOTIFY_SUT" < "$payload" ) >/dev/null 2>&1
   run_lifecycle "$wd" "$payload" waiting ask_user >/dev/null
 }

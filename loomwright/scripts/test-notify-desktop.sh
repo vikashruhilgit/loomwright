@@ -450,10 +450,6 @@ else
 fi
 assert_eq "G1 a later payload from session A reuses A's group" "$G1_A" "$G1_A2"
 
-# Case G2: CLAUDE_CODE_SESSION_ID is the fallback when the payload has none.
-run_sut "$SB_BARE" "$(ask_payload "" "toolu_g4")" CLAUDE_CODE_SESSION_ID=envsess1-xyz
-assert_eq "G2 env session id fallback group" "loomwright-envsess1" "$(logged_group "$WD/.supervisor/logs/notifications.log")"
-
 # Case G3: no session id anywhere → loomwright-p<cksum of the checkout path>;
 # two dirs differ, and re-running from the same dir is stable.
 run_sut "$SB_BARE" "$(ask_payload "" "toolu_g5")"
