@@ -474,7 +474,7 @@ if [ "$parse_only" -eq 1 ]; then
     printf '%s: internal jq error while building parse_warnings\n' "$SELF" >&2
     emit_unverifiable "brief_unreadable"
   fi
-  # parse_warnings is additive and present ONLY when a name could not be read faithfully, so a clean
+  # parse_warnings is additive and present ONLY when a field could not be read faithfully, so a clean
   # brief prints the same object byte-for-byte as before the key existed.
   jq -n -c --arg id "$id" --argjson c "$count" --arg s "$SELF" --argjson pw "$warns" \
     '{subtask_id: $id, status: "parsed", provides_count: $c, source: $s}
