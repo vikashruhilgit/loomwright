@@ -960,7 +960,12 @@ never crashes, never invents a value it did not actually read). Whether `agent_i
 the `Notification` seam for a subagent is **UNVERIFIED** (no live sample observed —
 `.supervisor/requirements/orca-derived/01-agent-lifecycle-ledger.md` `## §0 Probe Results`); the
 `PreToolUse[AskUserQuestion]` seam's `agent_id` presence for a subagent IS documented (Claude Code
-hooks reference) and empirically expected.
+hooks reference) and empirically expected. **One `ask_user` row per `tool_use_id`:** a resumed
+session replays the same tool call (same `tool_use_id`) to deliver the answer and the hook fires
+again; the emitter skips an id already listed in its own `.supervisor/logs/.lifecycle-asked-ids`
+ledger (newest 200 ids, recorded only after the row was appended), so a replay writes no second
+row. A payload without `tool_use_id`, and every `Notification`-seam row, is never de-duplicated.
+Rationale and the separate-ledger rule: `emit-lifecycle.sh`'s header (`waiting` paragraph).
 
 **`working`-specific (heartbeat):** no additional fields beyond the common set above. Debounced PER
 DERIVED `agent_id` (never per matcher block) — at most one `working` line per
