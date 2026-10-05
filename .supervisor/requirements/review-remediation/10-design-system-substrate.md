@@ -1,5 +1,7 @@
 # 10 — Design-system substrate: production-quality UI via system, not per-screen improvisation (P1 product bet)
 
+## Status: pending (verified still open 2026-10-05: nothing in its acceptance criteria exists on main)
+
 ## Goal
 Make Loomwright produce coherent, production-grade UI out of the box by mirroring the
 house-rules architecture for design: a committed design-system SUBSTRATE created before any

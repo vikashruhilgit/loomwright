@@ -160,3 +160,10 @@ No new gates: rules stay advisory and subordinate to CLAUDE.md.
 
 Job `.supervisor/jobs/done/2026-08-14-dreaming-triage-to-pr.md` completed (reconciled from the job lifecycle, not self-reported).
 Acceptance criteria are NOT machine-verified here — review them before promoting this to `## Status: done`.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-08-17 (merge 568edc7)
+- **Note:** §7 re-measurement row in RULES_BASELINE.md is overdue (~241 PRs since the first rule batch 3f4bb2e); tracked separately as twin-loop/07.
+- **Verified:** Verified 2026-10-05 by a read-only backlog validation (acceptance criteria checked against `main`); owner approved the stamp.
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/147

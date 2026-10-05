@@ -1,5 +1,7 @@
 # 06 — One arm-2 run on corpus entry 3: can this eval measure quality at all? (Fix 5, D11)
 
+## Status: parked (operator-run, ~$60 arm-2 eval on corpus entry 3; /automate cannot drive it; owner 2026-10-05: keep, park)
+
 **OPERATOR-RUN eval — /automate must NOT drive this** (same class as item 05).
 
 ## Problem

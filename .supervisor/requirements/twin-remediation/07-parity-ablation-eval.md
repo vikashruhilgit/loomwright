@@ -32,3 +32,7 @@ No deletions inside this item (verdicts only). No agent-consolidation arm in rou
 
 Job `.supervisor/jobs/done/2026-07-24-parity-eval-prep.md` completed (reconciled from the job lifecycle, not self-reported).
 Acceptance criteria are NOT machine-verified here — review them before promoting this to `## Status: done`.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done_with_escalation — ABANDONED (reduced to final-state/05 + 06 per final-state/00-overview.md; prep shipped PR #107)
+- **Verified:** Verified 2026-10-05 by a read-only backlog validation (acceptance criteria checked against `main`); owner approved the stamp.

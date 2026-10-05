@@ -141,3 +141,10 @@ Acceptance criteria are NOT machine-verified here — review them before promoti
 Note the follow-up above: criterion "pending counts verified against a hand-counted fixture" passed in
 v15.29.0 while counting the wrong unit — a hand-counted fixture confirms arithmetic, not that the
 quantity is the one the consumer acts on.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-08-09 (merge f3d40ee)
+- **Note:** follow-ups PR #135, #137.
+- **Verified:** Verified 2026-10-05 by a read-only backlog validation (acceptance criteria checked against `main`); owner approved the stamp.
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/134

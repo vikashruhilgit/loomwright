@@ -94,3 +94,9 @@ any entry. Content is otherwise preserved byte-for-byte.
 
 Job `.supervisor/jobs/done/2026-08-07-twin-01b-apply-to-this-repo.md` completed (reconciled from the job lifecycle, not self-reported).
 Acceptance criteria are NOT machine-verified here — review them before promoting this to `## Status: done`.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-08-08 (merge 7e72fbf)
+- **Verified:** Verified 2026-10-05 by a read-only backlog validation (acceptance criteria checked against `main`); owner approved the stamp.
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/129

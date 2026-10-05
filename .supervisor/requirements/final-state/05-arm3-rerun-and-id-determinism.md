@@ -39,3 +39,7 @@ No new metrics (pre-registration rule; any amendment additive + loud). No corpus
 - Deterministic id scheme shipped + tested
 - Second arm-3 row recorded, abort row preserved
 - multi-voter-heal measurement recorded or explicitly still-unmeasured with reason
+
+<!-- loomwright:requirement-closeout -->
+## Status: done_with_escalation — ABANDONED (arm-3 re-run dropped by the owner 2026-10-05 — D1′/D2′ removed its only consumer; the id-determinism half shipped as final-state/11, PR #124)
+- **Verified:** Verified 2026-10-05 by a read-only backlog validation (acceptance criteria checked against `main`); owner approved the stamp.

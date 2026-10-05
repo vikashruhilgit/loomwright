@@ -87,3 +87,9 @@ any change to gate shapes or heal decisions.
 
 Job `.supervisor/jobs/done/2026-07-14-token-ledger-cache-audit.md` completed (reconciled from the job lifecycle, not self-reported).
 Acceptance criteria are NOT machine-verified here — review them before promoting this to `## Status: done`.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-07-16 (merge 1d7b0ae)
+- **Verified:** Verified 2026-10-05 by a read-only backlog validation (acceptance criteria checked against `main`); owner approved the stamp.
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/100

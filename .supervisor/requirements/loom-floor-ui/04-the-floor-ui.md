@@ -140,3 +140,10 @@ with an explicit "liveness unavailable" note rather than animating on inferred a
 
 Job `.supervisor/jobs/done/2026-09-03-the-floor-ui.md` completed (reconciled from the job lifecycle, not self-reported).
 Acceptance criteria are NOT machine-verified here — review them before promoting this to `## Status: done`.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-09-03 (merge 8aa70b0)
+- **Note:** redesigned by PR #185 (floor-ui-redesign/01).
+- **Verified:** Verified 2026-10-05 by a read-only backlog validation (acceptance criteria checked against `main`); owner approved the stamp.
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/176

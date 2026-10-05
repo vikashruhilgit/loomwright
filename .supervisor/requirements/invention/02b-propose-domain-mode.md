@@ -136,3 +136,10 @@ artifact into the same folder under the same contract, so one triage surface ser
 
 Job `.supervisor/jobs/done/2026-09-09-propose-domain-mode.md` completed (reconciled from the job lifecycle, not self-reported).
 Acceptance criteria are NOT machine-verified here — review them before promoting this to `## Status: done`.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-09-10 (merge 2cf4609)
+- **Note:** open owner yes/no from the PR: domain expectations are a fixed 10-entry catalogue that fetched sources must corroborate.
+- **Verified:** Verified 2026-10-05 by a read-only backlog validation (acceptance criteria checked against `main`); owner approved the stamp.
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/207

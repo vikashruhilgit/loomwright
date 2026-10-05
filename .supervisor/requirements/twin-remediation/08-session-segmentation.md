@@ -1,5 +1,7 @@
 # 08 — Session segmentation: fresh contexts per unit of work instead of one endless session
 
+## Status: pending (verified still open 2026-10-05: nothing in its acceptance criteria exists on main)
+
 ## Problem
 2026-07-23 outcome-data audit: ~89% of token spend traces to long-running sessions whose context never resets (autonomous/automate loops and interactive sessions pushed toward 1M tokens; token_ledger proxies show single agent transcripts at 0.9–1.5MB). The loop designs treat "never stops" as a virtue; the additive cost curve is invisible because nothing fails — it just costs more. The resume machinery (state.md, session-resume hook, `--continue`, single-iteration-safe re-runs) already makes segmentation nearly free; nothing exploits it.
 

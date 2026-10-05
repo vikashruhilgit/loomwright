@@ -66,6 +66,15 @@ never a hand-maintained list, and the counts always add up.
 4. A failure this must catch: read only the first `## Status:` line ⇒ the appended-done-stamp fixture fails.
 5. Rollback: `git revert`.
 
+## Root cause found 2026-10-05 (why 21 items sat at `brief-shipped`)
+`loomwright/scripts/stamp-requirement-status.sh` (runs at every SessionStart) stamps `## Status: brief-shipped` when a
+brief lands in `.supervisor/jobs/done/`: by design it records only what it can prove (the work ran), never `done`. **Nothing
+ever upgrades `brief-shipped` to `done`**, so every requirement that went through it stayed "open" to every reader. A
+read-only validation of the 32 status-less / `brief-shipped` items on 2026-10-05 found 19 done, 2 done-with-escalation, 5
+abandoned/superseded, 1 parked and only 5 still open (+1 partial); the owner approved the stamps. Scope addition:
+`brief-shipped` is a first-class board state ("shipped, not verified"), and `/backlog --unknown` lists every
+`brief-shipped` item with its merged PR, so the owner can verify-and-stamp in one pass instead of it rotting silently.
+
 ## Evidence
 The 2026-10-05 one-off board (this session); the 39-vs-26 miscount (S1/S2 records, `parallel-automate/10` Verified premises).
 

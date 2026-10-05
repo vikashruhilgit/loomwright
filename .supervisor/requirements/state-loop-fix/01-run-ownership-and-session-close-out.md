@@ -304,3 +304,10 @@ silence on E fails this criterion.
 
 Job `.supervisor/jobs/done/auto-2026-09-05-121712-run-ownership-and-session-close-out.md` completed (reconciled from the job lifecycle, not self-reported).
 Acceptance criteria are NOT machine-verified here — review them before promoting this to `## Status: done`.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-09-05 (merge 21aa08f)
+- **Note:** follow-ups PR #188, #190; Scope D withdrawn by the owner.
+- **Verified:** Verified 2026-10-05 by a read-only backlog validation (acceptance criteria checked against `main`); owner approved the stamp.
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/186

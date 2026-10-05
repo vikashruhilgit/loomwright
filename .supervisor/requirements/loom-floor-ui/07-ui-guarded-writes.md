@@ -143,3 +143,9 @@ for the actual threat: a hostile page in another tab, not a hostile user at the 
 
 Job `.supervisor/jobs/done/2026-09-04-ui-guarded-writes.md` completed (reconciled from the job lifecycle, not self-reported).
 Acceptance criteria are NOT machine-verified here — review them before promoting this to `## Status: done`.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-09-05 (merge 46911e3)
+- **Verified:** Verified 2026-10-05 by a read-only backlog validation (acceptance criteria checked against `main`); owner approved the stamp.
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/182

@@ -161,3 +161,10 @@ refusal blocks *that write*, never a PR, a run, or a `heal_decision`.
 
 Job `.supervisor/jobs/done/2026-08-10-write-time-validation.md` completed (reconciled from the job lifecycle, not self-reported).
 Acceptance criteria are NOT machine-verified here — review them before promoting this to `## Status: done`.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-08-13 (merge 70710a1)
+- **Note:** dead-reference + cross-repo checks are advisory by owner decision (PR #144 body).
+- **Verified:** Verified 2026-10-05 by a read-only backlog validation (acceptance criteria checked against `main`); owner approved the stamp.
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/144

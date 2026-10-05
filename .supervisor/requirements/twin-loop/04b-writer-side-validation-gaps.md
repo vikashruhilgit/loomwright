@@ -161,3 +161,9 @@ by gating the remaining three writers or by documenting the split as deliberate.
 - 04's two limitation-pinning tests are replaced by positive assertions, with the transition stated
 - The confirm-gate asymmetry is resolved or documented, with the reason recorded
 - Live-corpus replay still yields zero false refusals
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-08-14 (merge 97e721d)
+- **Verified:** Verified 2026-10-05 by a read-only backlog validation (acceptance criteria checked against `main`); owner approved the stamp.
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/146

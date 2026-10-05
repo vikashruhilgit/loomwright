@@ -133,3 +133,9 @@ unchanged; the plugin **version does bump** because capability code changes.
 
 Job `.supervisor/jobs/done/2026-08-08-commit-the-ledger-safely.md` completed (reconciled from the job lifecycle, not self-reported).
 Acceptance criteria are NOT machine-verified here — review them before promoting this to `## Status: done`.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-08-09 (merge 97112cf)
+- **Verified:** Verified 2026-10-05 by a read-only backlog validation (acceptance criteria checked against `main`); owner approved the stamp.
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/132

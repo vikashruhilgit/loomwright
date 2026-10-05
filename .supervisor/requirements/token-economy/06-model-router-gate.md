@@ -1,5 +1,7 @@
 # 06 — Model router gate: complexity-classified routing + gate-fail escalation + analyzer
 
+## Status: pending (verified still open 2026-10-05: nothing in its acceptance criteria exists on main)
+
 > Added 2026-07-19. Today model selection is human-decided and static (`--cheap`
 > all-or-nothing; sdk-spike ROLE_CONFIG per-role but global). Nothing DECIDES per
 > subtask. This job adds a deterministic, auditable router: the Orchestrator classifies

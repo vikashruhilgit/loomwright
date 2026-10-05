@@ -1,5 +1,7 @@
 # 03 — Mechanize rules (Bet 6 Tier 1): executable checks over advisory prose
 
+## Status: pending (partial — seam execution shipped via twin-loop/08 PR #267 + automate-followups/06, 07; classification table, authored checks, layer-fires audit and check-invariants.sh not built; verified 2026-10-05)
+
 ## Problem
 "Self-heal PASS but CI bot finds issues" persists because nearly all enforcement is advisory prose read at seams. North star Bet 6: *"'Please follow the style guide' in a prompt is the weakest enforcement; a failing lint rule is the strongest."* Tier 1 (executable `check:` commands) is the least built-out tier — and it's the only form of teeth compatible with the nothing-gating invariant, because checks run at the EXISTING worker Step-5 verify gate and Phase 4.5, not as new gates.
 

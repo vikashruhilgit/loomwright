@@ -28,3 +28,7 @@ No behavior changes, no gate weakening, no removing information from the repo (r
 - Duplication rule (≤2 surfaces per claim) documented
 
 ## Status: superseded-by final-state/09-claude-md-diet-dreaming.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done_with_escalation — ABANDONED (superseded by final-state/09 (shipped PR #122))
+- **Verified:** Verified 2026-10-05 by a read-only backlog validation (acceptance criteria checked against `main`); owner approved the stamp.

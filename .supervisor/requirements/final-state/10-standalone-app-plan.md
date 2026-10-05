@@ -39,3 +39,7 @@ user identity (D10 — parked; note the hook point only).
 
 ## Status: blocked (final-state 05 — operator-run arm-3 re-run, D1/D11)
 - Not enqueueable until 05's eval row exists. Leave for `/automate` to skip; the engine only honours done/done_with_escalation so this line is informational — the title already says BLOCKED.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done_with_escalation — ABANDONED (superseded by FINAL_STATE_GOAL.md D2′ amendment, 2026-09-30)
+- **Verified:** Verified 2026-10-05 by a read-only backlog validation (acceptance criteria checked against `main`); owner approved the stamp.

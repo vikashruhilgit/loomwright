@@ -61,3 +61,10 @@ Acceptance criteria are NOT machine-verified here — review them before promoti
    collision, and surfaces at Phase 4.5. Criterion 16 catches *declared* lane overlap at brief
    time (real value) but cannot catch this. A cross-lane contract check over the MERGED diff
    ("do siblings define conflicting shapes for the same `provides` name?") is the missing piece.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done_with_escalation
+- **Completed:** 2026-08-03 (merge 9a791e1)
+- **Note:** AC3 re-read/cost measurement and a spawn-time cross-lane `provides` shape check still owed (see the item's Owed list).
+- **Verified:** Verified 2026-10-05 by a read-only backlog validation (acceptance criteria checked against `main`); owner approved the stamp.
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/121

@@ -44,3 +44,10 @@ defense-in-depth).
 
 Job `.supervisor/jobs/done/2026-07-28-one-writer-derived-state.md` completed (reconciled from the job lifecycle, not self-reported).
 Acceptance criteria are NOT machine-verified here — review them before promoting this to `## Status: done`.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done_with_escalation
+- **Completed:** 2026-07-29 (merge 2bef2d9)
+- **Note:** AC4 live re-measurement against the 785-vs-6 baseline never recorded (procedure in docs/TELEMETRY.md).
+- **Verified:** Verified 2026-10-05 by a read-only backlog validation (acceptance criteria checked against `main`); owner approved the stamp.
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/116

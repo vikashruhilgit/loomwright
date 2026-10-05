@@ -24,3 +24,7 @@ No behavior changes, no invariant changes, no deletions in this item. Do not tou
 - Four hypotheses adjudicated with cited data
 - Zero behavior changes in the PR
 - Follow-up stubs exist for every recommended cut
+
+<!-- loomwright:requirement-closeout -->
+## Status: done_with_escalation — ABANDONED (superseded by final-state/01 + 04 per final-state/00-overview.md)
+- **Verified:** Verified 2026-10-05 by a read-only backlog validation (acceptance criteria checked against `main`); owner approved the stamp.
