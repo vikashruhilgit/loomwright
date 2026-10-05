@@ -79,6 +79,28 @@ path, no new drain category, no push onto a PR that is waiting for a merge.
      live process and the command that clears it.
    - Finally run the plugin-wide sweep in dry-run mode (`automate-followups/22`) and report what it WOULD
      remove. The fleet closeout never removes anything outside this run's lanes.
+   **Amended 2026-10-05 (owner, from S2): an `escalated` lane is closed out too.** Today the merge watcher is
+   armed only at an `awaiting_merge` park ("an `escalated` park arms none", `automate-loop/SKILL.md` §6
+   "Post-merge close-out"), and an escalated item is closed out only by `/automate --resume` RECONCILE. A lane
+   exits after it parks and nothing resumes it, so after the owner merges an escalated lane's PR, Scope 6 never
+   runs and Scope 7 waits on it forever.
+   - **Arm the merge watcher at an `escalated` park as well** (the §9 park tail). This is an engine change and it
+     also applies to sequential runs: a sequential `escalated` park gets a watcher too. It is safe because the
+     watcher runs `closeout` only after it reads `MERGED`. A `CLOSED` PR gets one `gone` line, and past the 72 h
+     cap `--resume` still closes the item out. It merges nothing.
+   - **Fleet closeout backstop:** a lane whose `reconcile-item` is `merged`, whose run file is not
+     `## Status: done` and that has no live watcher gets `lane-launch --resume` from the coordinator, so the
+     lane's own RECONCILE runs Scope 6 (the coordinator still never writes into a lane, Scope 2). That runs
+     before `lane-remove`. **`lane-launch --resume` must send `/loomwright:automate --resume <lane run_id>` with
+     the id spelled out, never the lane's launch prompt (`--backlog …`) and never a bare `--resume`.** A lane is a
+     clone of the primary, so it holds every earlier unfinished run file (seven in S2's s2-d: six other runs plus
+     its own). Without the id the engine either asks which run to resume or starts a new one (item 28's
+     stale-runs question), and does not close the parked one out. Validate the targeted form on a real lane
+     first: S2 s2-d is that check.
+   - Evidence, S2 (2026-10-05): s2-c (PR #381 escalated on a `test-ci-local.sh` case (L) CI-slot flake; the
+     rerun was green; merged 03:31Z) and s2-d (PR #386 escalated because `claude-review` settled green 2 min
+     after the drain's 1200 s bound). Neither lane had a watcher. The operator ran s2-c's closeout by hand and
+     resumed s2-d's lane. Why those escalations happened is `automate-followups/31`.
 8. **PR closed unmerged** ⇒ lane is `gone`: no stamp, lane directory kept, human decides.
 9. **Next wave** becomes eligible after fleet closeout of the items it depends on and starts only on the owner's
    explicit go (P6). When the last lane of the last wave is closed out, release the primary's
@@ -91,7 +113,8 @@ path, no new drain category, no push onto a PR that is waiting for a merge.
     conflict at B.a parks only that lane; unstamped release command ⇒ step b skipped and recorded; closeout opens
     no PR, pushes only evidence-gated paths, removes the lane only after its watcher exited, removes the empty
     `<run_id>` directory last and appends the leak summary; unmerged-closed PR ⇒ no stamp, lane kept; the
-    single-item path never enters wave-close code. **Mutation controls:** letting step B run while a sibling is
+    single-item path never enters wave-close code; an `escalated` park arms the watcher and a merge of its PR
+    closes the lane out; a merged escalated lane with no watcher is resumed by the fleet-closeout backstop. **Mutation controls:** letting step B run while a sibling is
     still `awaiting_merge` must fail a test; pushing in step B after the lane is already `awaiting_merge` must
     fail a test.
 
@@ -115,7 +138,8 @@ the next wave.
 1. **Baseline:** full loop on base and branch; `<passed>/<total>` and `SKIP` counts for both.
 2. **Unchanged path:** `test-automate-trail.sh`'s closeout groups and `test-automate-helpers.sh`'s gate groups
    pass with no edit to existing assertions; then ONE real single-item `/automate` on this repo behaves as before
-   (bumped by its own last commit, parked `awaiting_merge`, closeout via push).
+   (bumped by its own last commit, parked `awaiting_merge`, closeout via push). Deliberate change, stated in the
+   PR: a sequential `escalated` park now arms a merge watcher (Scope 7, 2026-10-05 amendment).
 3. **Invariant checks, pasted:** the two greps in Acceptance criteria; `git grep -nE 'gh pr merge|gate-eval'
    loomwright/scripts/automate-lanes.sh` shows no executable use.
 4. **Running system:** a real two-item wave on this repo, owner merging by hand. Paste: the diff stat of the
