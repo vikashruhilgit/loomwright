@@ -15,27 +15,26 @@ Owner decision 2026-10-05: stabilize parallel automation, then release it for ot
 wave; S3 is the first run of **several waves in a row**, with a release and reinstall between waves (the
 pa/06 one-bump-per-wave model, by hand) and with the wave runner's own replacement (pa/05) built mid-queue.
 
-## The queue (11 items, after the 2026-10-05 merges)
+## The queue (19 items — owner decision 2026-10-05: "finish parallel automation and everything related")
 Merged on 2026-10-05 (originals parked with pointers; text kept verbatim as parts):
 `meta-sync-followups/08` = ms/02 + 03 + 06 · `automate-followups/32` = af/14 + 28 + 29 · `automate-followups/33` =
 af/17 + 25. New the same day: `meta-sync-followups/07` (onboard any repo to branch mode), `automate-followups/31`
 (temporary escalations); `parallel-automate/06` amended (watcher on `escalated` parks, targeted `--resume`).
+Added to the scope the same day: `parallel-automate/09, 11, 12, 13, 14, 15`, `automate-followups/22, 23`.
+Out of scope (not parallel work): the rest of the backlog, including the 7 older items with no Touches / Depends on.
 
 ## Wave plan (`plan-waves --max 5`, companion rule relaxed — see Planner rule)
 | Wave | Items | Lanes |
 |---|---|---|
-| 1 | af/32 run-file lifecycle · ms/08 meta-sync hardening · ms/04 home-path scrub | 3 |
-| 2 | af/33 children-settled gate · ms/05 learning stores + rehearsal harness | 2 |
-| 3 | ms/07 onboard any repo · agnostic/04 non-interactive gates | 2 |
-| 4 | pa/05 lane coordinator | 1 |
-| 5 | pa/06 wave close + closeout | 1 |
-| 6 | af/31 temporary escalations | 1 |
-| 7 | pa/07 pilot + docs | 1 |
+| 1 | af/32 run-file lifecycle · ms/08 meta-sync hardening · ms/04 home-path scrub · pa/09 fewer full CI runs | 4 |
+| 2 | pa/11 split shared hotspot files — **alone** (owner decision) | 1 |
+| — | **Re-check every remaining item's `## Touches` against the split layout, then re-plan waves 3+** | — |
+| 3+ (pre-split plan, will widen) | af/33 · ms/05 → ms/07 · agnostic/04 (Milestone A) → pa/05 → pa/06 · pa/14 → af/31 → pa/12 → pa/13 → pa/15 → af/22 → af/23 → pa/07 (Milestone B) | 1–3 |
 
-Milestone A after wave 3: release; any repo can move to branch mode (ms/07) and run sequential `/automate`.
-Milestone B after wave 7: release; parallel lanes on other repos.
-With the strict planner the same queue is 10 waves (1–2 lanes each); merging alone gave 10 → the merges plus the
-relaxed rule give 7.
+Milestone A (after ms/07 + agnostic/04): release; any repo can move to branch mode and run sequential `/automate`.
+Milestone B (pa/07 last, so the pilot exercises pa/12–14 and the docs cover them): release; parallel lanes on other
+repos. Before the merges and the relaxed rule the original 11 items planned to 10 waves; the full 19 plan to 12
+before pa/11's split.
 
 ## Planner rule for this spike (owner decision 2026-10-05: "Allow, measure")
 Companion-only overlaps on the three table docs — `loomwright/docs/ARCHITECTURE_CONTRACTS.md`,
@@ -87,6 +86,8 @@ coordinator may merge into `wave/*` (an owner decision on the single-merge-execu
 4. **Release-per-wave cost:** wall-clock from last merge of a wave to the next wave's launch.
 5. **Lane questions:** count per lane, human vs routine (item 12 input), longest wait.
 6. Anything the operator does by hand that no requirement covers → file it, link it here.
+7. **Touches drift after a split.** Once pa/11 merges, items written before it may name files in a layout that no
+   longer exists. Nothing re-checks a queued item's Touches against the current tree; record what had to change.
 
 ## Measure (per wave)
 Lanes, launch → park per lane, questions, escalations and cause, merge order and each sibling's `mergeable` after
@@ -94,5 +95,5 @@ each merge, table-doc and manifest conflicts, release wall-clock, final `total_c
 teardown, machine (load, swap, free) at peak.
 
 ## Done when
-All 11 items merged or closed by the owner, each wave's records on `loomwright-meta`, lanes torn down with `leaks`
+All 19 items merged or closed by the owner, each wave's records on `loomwright-meta`, lanes torn down with `leaks`
 empty, the measures above recorded in this file, and P2 (default lane count) revisited with S2 + S3 evidence.
