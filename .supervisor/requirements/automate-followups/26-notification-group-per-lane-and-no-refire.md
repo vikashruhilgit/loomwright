@@ -52,3 +52,9 @@ loomwright/scripts/test-notify-desktop.sh
 loomwright/scripts/emit-lifecycle.sh
 loomwright/scripts/test-emit-lifecycle.sh
 changelog.d/automate-followups-26-notification-group-per-lane-and-no-refire.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-05T01:59:01Z
+- **Brief:** .supervisor/jobs/done/2026-10-05-notification-group-per-lane-and-no-refire.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/386
