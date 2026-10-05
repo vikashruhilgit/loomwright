@@ -737,7 +737,43 @@ _ge_pr_parts() {
 #           --root <root>` and reads `.high_risk`/`.reasons` from its own output — no ctx input of
 #           any kind feeds this condition any more. NO override of any kind (owner decision R5):
 #           not `--trust-unprotected` (cond 4 only), not a config key, not an exclude list.
-#   cond 7  evaluated AFTER cond 6: the gate ITSELF invokes `"$(dirname "$0")/rules-gate-verdict.sh"
+#   cond 7  evaluated AFTER cond 6. PIN FIRST (automate-followups/16), before the helper runs:
+#           `git -C <root> rev-parse HEAD` must equal the live head SHA cond 2 confirmed, else
+#           `rules_gate_head_mismatch` (a non-checkout root / unreadable or empty HEAD parks the
+#           same way — never a match); then `git status --porcelain -uall`, read from the repo top
+#           level, must list nothing outside `.supervisor/` and `.claude/agent-memory/` (tracked
+#           edits, staged changes and untracked non-ignored files all count; gitignored files do
+#           not), else `rules_gate_dirty_tree` (a failing `git status` parks the same way).
+#           Local-only git state cannot hide dirt: a tracked file flagged assume-unchanged or
+#           skip-worktree (`git ls-files -v`) parks; ignored-ness is judged from per-directory
+#           `.gitignore` files plus the USER's global excludes file (`core.excludesFile` from
+#           `git config --global --includes`, else `$XDG_CONFIG_HOME/git/ignore` /
+#           `~/.config/git/ignore`; absolute, and PHYSICALLY outside the checkout only —
+#           symlinks and directory aliases resolved, ancestors compared by device + inode), so
+#           `.git/info/exclude` and a repo-local or env-injected `core.excludesFile` cannot hide
+#           an untracked file, and an untracked `.gitignore` git reads (outside an ignored
+#           directory) parks; the GIT_CONFIG_* env injection family is unset and fsmonitor /
+#           untracked-cache are off; a root whose top level cannot be read parks. SUBMODULES:
+#           the status read runs with `--ignore-submodules=none` (a committed `.gitmodules`
+#           `ignore = all` cannot hide a dirty submodule or one checked out at a commit other
+#           than the recorded one), and every checked-out submodule gets the same reads,
+#           recursively. Both are fail-CLOSED with NO override; the helper is not called on a
+#           checkout that fails either. Honest limits: a rule `binds` path under one of the two
+#           excluded engine-owned paths is not covered by the cleanliness pin, and settings in
+#           the repo's own `.git/config` that redefine a modification (`core.fileMode=false`,
+#           `core.autocrlf`, clean filters) are honoured as configured; a globally-ignored file
+#           is trusted not to be a bound file, and a HARD link from the global excludes path to
+#           an in-repo file is not detected (symlinks and aliases are); an un-initialised
+#           submodule (no `.git`) is not descended into, and a submodule path git must quote
+#           parks; the untracked-`.gitignore` park relies on `ls-files -o -i --directory`
+#           listing the contents of a directory no rule ignores rather than collapsing it
+#           (git 2.54 / 2.55 list them; the R11f harness precondition asserts it); a tool
+#           cache's self-ignoring `*` .gitignore (.pytest_cache/, .venv/) parks unless a
+#           committed or global ignore covers its directory. Fix hint for
+#           a clean-checkout `rules_gate_dirty_tree`: a committed or global ignore line (never
+#           `.git/info/exclude`). Normal path: the owned inline `/review-pr`
+#           drain checks the PR branch out on the main-thread checkout, so `<root>` is at the PR
+#           head when GATE runs. Then the gate ITSELF invokes `"$(dirname "$0")/rules-gate-verdict.sh"
 #           --root <root>` (sibling lookup, never PATH) and reads `.verdict` with an explicit
 #           has() + `type == "string"` check. AFFIRMATIVE test: `ok` or `none` (nothing countable
 #           to verify, D3) ⇒ holds; anything else PARKs with a named reason — `fail` ⇒
@@ -770,7 +806,9 @@ _ge_pr_parts() {
 # anyway, exactly like the pre-existing sub_floor_converged guard it sits
 # beside). New reasons added by condition 7 (rule-enforcement-at-review-and-merge):
 # rules_check_failed, rules_check_unresolved, rules_unstamped, rules_cmd_disabled,
-# rules_gate_unreadable.
+# rules_gate_unreadable. New reasons added by condition 7's checkout pin
+# (automate-followups/16, evaluated before the helper call): rules_gate_head_mismatch,
+# rules_gate_dirty_tree.
 gate_eval() {
   local url="$1" ctx="$2"
   shift 2 2>/dev/null || true
@@ -1048,6 +1086,212 @@ GEPARTS
   # form (`ok`, or `none` = nothing countable to verify, D3 — the cond-5 `na`
   # precedent) and the single test is `!= "true"` — never a `= "false"` test, so
   # any verdict this code does not recognise parks.
+  #
+  # PIN FIRST (automate-followups/16) — the verdict is only trusted for the bytes
+  # being merged, so BEFORE the helper runs, the `--root` checkout must be AT the
+  # live head SHA cond 2 confirmed and have no uncommitted change outside the two
+  # engine-owned paths. Both checks fail CLOSED with NO override; neither runs the
+  # helper on a checkout it is about to distrust. Every git call:
+  #   - takes the `cmd || rc=$?` shape (see the helper-call comment below);
+  #   - runs with the repo-redirect and pathspec-mode env vars UNSET — a stray
+  #     GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE would make the pin judge a different
+  #     repo than the files the helper reads at `$root`, and GIT_LITERAL_PATHSPECS
+  #     would turn the `:(exclude)` magic into literal paths.
+  # The porcelain read runs from the REPO TOP LEVEL with a plain `.` positive
+  # pathspec, so a subdirectory `--root` still sees dirt anywhere in the tree,
+  # the excludes stay anchored at the top (a nested `x/.supervisor/` is dirt),
+  # and if magic were ever read literally the failure is over-strict (the excludes
+  # stop excluding), never a fail-open match-nothing positive like `:(top)`.
+  # `-uall` is explicit so a repo's `status.showUntrackedFiles=no` cannot hide
+  # untracked files: untracked non-ignored files count as dirt (a bound check can
+  # read them), gitignored ones do not.
+  # LOCAL-ONLY GIT STATE MUST NOT HIDE DIRT (review iteration 1). `git status` trusts
+  # state that lives only on this machine, so three more reads close it:
+  #   - `ls-files -v`: a tracked file flagged assume-unchanged (lowercase tag) or
+  #     skip-worktree (`S`/`s`) is never compared to the worktree by `git status`, so
+  #     an edit to it is invisible — ANY such flag parks (a sparse checkout therefore
+  #     parks too; `core.ignoreStat` sets the same flag).
+  #   - ignored-ness is judged from per-directory `.gitignore` files plus the USER's
+  #     global excludes file (`ls-files -o --exclude-per-directory=.gitignore
+  #     --exclude-from=<global>`, no `--exclude-standard`), so `.git/info/exclude` and a
+  #     repo-local or env-injected `core.excludesFile` cannot hide an untracked file. Tracked
+  #     `.gitignore`s are already proven unmodified by the two reads above. The global file
+  #     (review iteration 2) is the same user-scope trust anchor as the user running the
+  #     gate, and how Claude Code itself ignores its `settings.local.json`; refusing it
+  #     parked every clean checkout holding a globally-only-ignored file (.DS_Store, .idea/,
+  #     settings.local.json). Honest limit: a globally-ignored file is TRUSTED not to be a
+  #     bound file; the env that runs the gate (HOME / XDG_CONFIG_HOME) chooses that file,
+  #     as it already chooses PATH and so `git` itself.
+  #   - an UNTRACKED `.gitignore` git actually reads (one in a directory the rules do
+  #     not already ignore) is itself non-committed ignore state — a self-ignoring one
+  #     (`*`) hides its whole directory from both reads. `--directory` collapses a
+  #     directory that is ignored as a whole (node_modules/, .venv/) without descending,
+  #     so one nested in an ignored directory is never listed and never parks. Assumed
+  #     git behaviour (honest limit): a directory NO rule ignores, whose contents are all
+  #     ignored by its own `.gitignore`, is listed with its contents (`evil/` AND
+  #     `evil/.gitignore`) rather than collapsed — true on git 2.54 / 2.55, asserted by the
+  #     R11f harness precondition so a collapsing git turns CI red. Liveness
+  #     cost (kept, by design): a tool cache that writes its own `*` .gitignore
+  #     (.pytest_cache/, .mypy_cache/, .ruff_cache/, a Python 3.13 .venv/) parks unless that
+  #     directory is ignored by a committed `.gitignore` or the user's global ignore — the
+  #     fix is one such ignore line, since the park cannot tell a cache from a hiding file.
+  # `_ge_git` also unsets the env config-injection family (GIT_CONFIG_PARAMETERS /
+  # GIT_CONFIG_COUNT / GIT_CONFIG_GLOBAL / GIT_CONFIG_SYSTEM / GIT_CONFIG) so a caller's
+  # environment cannot relax the reads (e.g. `core.fileMode=false`), and pins
+  # `core.fsmonitor=false` / `core.untrackedCache=false` so a cached or hook-supplied
+  # "nothing changed" answer is never trusted; `--no-optional-locks` keeps `git status`
+  # from opportunistically rewriting the index, so the gate writes nothing and never
+  # contends for `index.lock` with a concurrent git process (GIT_OPTIONAL_LOCKS=0 is inherited
+  # by the per-submodule `git status` children too, so no submodule index is refreshed either).
+  # Submodules: `_ge_subs_clean` below. Honest limit: settings in the repo's
+  # OWN `.git/config` that change what git calls a modification (`core.fileMode=false`,
+  # `core.autocrlf`, clean filters) are honoured as configured.
+  # Every read here-strings its output into `grep -q` (never a pipe: under pipefail
+  # an early grep exit could SIGPIPE the producer and read as "no match").
+  _ge_git() {
+    env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_COMMON_DIR \
+        -u GIT_LITERAL_PATHSPECS -u GIT_GLOB_PATHSPECS -u GIT_NOGLOB_PATHSPECS -u GIT_ICASE_PATHSPECS \
+        -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_SYSTEM -u GIT_CONFIG \
+        git --no-optional-locks -c core.fsmonitor=false -c core.untrackedCache=false "$@" </dev/null
+  }
+  # _ge_phys <abs-path> — the PHYSICAL path git would open (owner fix-now B3): a symlinked
+  # final component is followed (bounded, like the kernel's ELOOP) and the directory part is
+  # resolved with `cd -P`/`pwd -P`, so `/tmp` vs `/private/tmp` style aliases and a symlink
+  # that points back into the checkout cannot pass for "outside". Plain `readlink` (no `-f`)
+  # and `cd -P` only — BSD and GNU alike. Non-absolute or unresolvable ⇒ fails (refused).
+  _ge_phys() {
+    local p="$1" n=0 t d b
+    case "$p" in /*) ;; *) return 1 ;; esac
+    while [ -L "$p" ]; do
+      n=$((n + 1)); [ "$n" -le 40 ] || return 1
+      t="$(readlink "$p" 2>/dev/null)" || return 1
+      [ -n "$t" ] || return 1
+      case "$t" in /*) p="$t" ;; *) p="$(dirname "$p")/$t" ;; esac
+    done
+    d="$(dirname "$p")"; b="$(basename "$p")"
+    case "$b" in ""|.|..|/) return 1 ;; esac
+    d="$(CDPATH='' cd -P -- "$d" 2>/dev/null && pwd -P)" || return 1
+    case "$d" in /*) ;; *) return 1 ;; esac
+    if [ "$d" = "/" ]; then printf '/%s' "$b"; else printf '%s/%s' "$d" "$b"; fi
+  }
+  # _ge_inside <physical-path> <top> — 0 iff the path's directory IS <top> or lies beneath
+  # it. Ancestors are compared with `-ef` (device + inode), so a case-variant, firmlink or
+  # bind-mount spelling of the checkout is still the checkout.
+  _ge_inside() {
+    local d n=0; d="$(dirname "$1")"
+    while :; do
+      [ "$d" -ef "$2" ] && return 0
+      case "$d" in /|"") return 1 ;; esac
+      d="$(dirname "$d")"; n=$((n + 1)); [ "$n" -le 256 ] || return 0
+    done
+  }
+  # _ge_subs_clean <dir> <depth> <pathspec...> — SUBMODULES (owner fix-now B1). The top-level
+  # status runs with `--ignore-submodules=none` (overriding a committed `.gitmodules`
+  # `submodule.<n>.ignore` and `diff.ignoreSubmodules`), so a submodule with modified or
+  # untracked content, or checked out at a commit other than the one recorded, is dirt. A
+  # submodule's OWN local-only state (its `info/exclude`, assume-unchanged / skip-worktree
+  # flags, a self-ignoring untracked `.gitignore`) would still hide dirt from that status, so
+  # every checked-out submodule gets the same four reads as the top level, recursively
+  # (depth-capped). Returns 0 iff all are clean; any failed read, a submodule path git had to
+  # quote, a `.git` that does not resolve to that directory, or the depth cap ⇒ non-zero. A
+  # gitlink with no `.git` at all is an un-initialised submodule (its files are absent, not
+  # altered) and is not descended into.
+  _ge_subs_clean() {
+    local d="$1" depth="$2"; shift 2
+    [ "$depth" -lt 8 ] || return 1
+    local st="" st_rc=0 ent sp sd sd_p sd_top="" sd_rc=0 out="" out_rc=0 ge_tab=$'\t' subs; subs=()
+    st="$(_ge_git -C "$d" -c core.quotePath=false ls-files -s -- "$@" 2>/dev/null)" || st_rc=$?
+    [ "$st_rc" -eq 0 ] || return 1
+    while IFS= read -r ent; do
+      case "$ent" in 160000\ *) ;; *) continue ;; esac
+      sp="${ent#*"$ge_tab"}"
+      case "$sp" in \"*|"$ent") return 1 ;; esac
+      subs[${#subs[@]}]="$sp"
+    done <<<"$st"
+    [ "${#subs[@]}" -gt 0 ] || return 0
+    for sp in "${subs[@]}"; do
+      sd="$d/$sp"
+      { [ -e "$sd/.git" ] || [ -L "$sd/.git" ]; } || continue
+      sd_p="$(CDPATH='' cd -P -- "$sd" 2>/dev/null && pwd -P)" || return 1
+      sd_rc=0; sd_top="$(_ge_git -C "$sd_p" rev-parse --show-toplevel 2>/dev/null)" || sd_rc=$?
+      { [ "$sd_rc" -eq 0 ] && [ -n "$sd_top" ] && [ "$sd_top" -ef "$sd_p" ]; } || return 1
+      out_rc=0; out="$(_ge_git -C "$sd_p" status --porcelain -uall --ignore-submodules=none -- . 2>/dev/null)" || out_rc=$?
+      { [ "$out_rc" -eq 0 ] && [ -z "$out" ]; } || return 1
+      out_rc=0; out="$(_ge_git -C "$sd_p" ls-files -v -- . 2>/dev/null)" || out_rc=$?
+      [ "$out_rc" -eq 0 ] || return 1
+      if grep -q '^[a-zS] ' <<<"$out"; then return 1; fi
+      out_rc=0; out="$(_ge_git -C "$sd_p" ls-files -o ${ge_xargs[@]+"${ge_xargs[@]}"} --exclude-per-directory=.gitignore -- . 2>/dev/null)" || out_rc=$?
+      { [ "$out_rc" -eq 0 ] && [ -z "$out" ]; } || return 1
+      out_rc=0; out="$(_ge_git -C "$sd_p" ls-files -o -i --directory ${ge_xargs[@]+"${ge_xargs[@]}"} --exclude-per-directory=.gitignore -- . 2>/dev/null)" || out_rc=$?
+      [ "$out_rc" -eq 0 ] || return 1
+      if grep -qE '(^|/)\.gitignore"?$' <<<"$out"; then return 1; fi
+      _ge_subs_clean "$sd_p" $((depth + 1)) . || return 1
+    done
+    return 0
+  }
+  local root_head="" root_head_rc=0
+  root_head="$(_ge_git -C "$root" rev-parse --verify -q HEAD 2>/dev/null)" || root_head_rc=$?
+  if [ "$root_head_rc" -ne 0 ] || [ -z "$root_head" ] || [ "$root_head" != "$live_head" ]; then
+    echo "PARK: rules_gate_head_mismatch"; return 0
+  fi
+  local root_top="" root_top_rc=0 root_dirt="" root_dirt_rc=0
+  local root_flags="" root_flags_rc=0 root_unt="" root_unt_rc=0 root_ign="" root_ign_rc=0 root_subs_rc=0
+  local ge_ps; ge_ps=(. ':(exclude).supervisor' ':(exclude).claude/agent-memory')  # one pathspec set, all four reads
+  local ge_xf="" ge_xf_p="" ge_xf_rc=0 ge_xargs; ge_xargs=()
+  root_top="$(_ge_git -C "$root" rev-parse --show-toplevel 2>/dev/null)" || root_top_rc=$?
+  if [ "$root_top_rc" -eq 0 ] && [ -n "$root_top" ]; then
+    root_top="$(CDPATH='' cd -P -- "$root_top" 2>/dev/null && pwd -P)" || root_top=""
+  fi
+  if [ "$root_top_rc" -eq 0 ] && [ -n "$root_top" ]; then
+    # USER-SCOPE global excludes (review iteration 2): resolved exactly as git does for the
+    # user — `core.excludesFile` from the user's own global config (`--global --includes`,
+    # so an `[include]` / `[includeIf]` in it is followed as git itself follows it; `--path`
+    # expands `~/`; the GIT_CONFIG_* injection family is still unset by `_ge_git`), else the
+    # default `$XDG_CONFIG_HOME/git/ignore` / `$HOME/.config/git/ignore` — and fed to the
+    # untracked reads as `--exclude-from`. Only an absolute path to a readable regular file
+    # whose PHYSICAL location (`_ge_phys`: symlinks and directory aliases resolved) is
+    # OUTSIDE this checkout (`_ge_inside`: device + inode ancestor walk) is honoured, and git
+    # is handed that resolved path; a relative, unresolvable or in-repo path would make repo
+    # bytes an ignore source and is refused. `.git/info/exclude`, a repo-local
+    # `core.excludesFile` and the system config are still never read. rc 1 = key unset; any
+    # other failure parks.
+    ge_xf="$(_ge_git -C "$root_top" config --global --includes --path --get core.excludesFile 2>/dev/null)" || ge_xf_rc=$?
+    if [ "$ge_xf_rc" -eq 1 ]; then
+      ge_xf_rc=0
+      if [ -n "${XDG_CONFIG_HOME:-}" ]; then ge_xf="$XDG_CONFIG_HOME/git/ignore"
+      elif [ -n "${HOME:-}" ]; then ge_xf="$HOME/.config/git/ignore"
+      else ge_xf=""; fi
+    fi
+    if [ -n "$ge_xf" ]; then
+      ge_xf_p="$(_ge_phys "$ge_xf")" || ge_xf_p=""
+      if [ -z "$ge_xf_p" ] || _ge_inside "$ge_xf_p" "$root_top"; then ge_xf=""; else ge_xf="$ge_xf_p"; fi
+    fi
+    if [ -n "$ge_xf" ] && [ -f "$ge_xf" ] && [ -r "$ge_xf" ]; then ge_xargs=("--exclude-from=$ge_xf"); fi
+    root_dirt="$(_ge_git -C "$root_top" status --porcelain -uall --ignore-submodules=none -- "${ge_ps[@]}" 2>/dev/null)" || root_dirt_rc=$?
+    root_flags="$(_ge_git -C "$root_top" ls-files -v -- "${ge_ps[@]}" 2>/dev/null)" || root_flags_rc=$?
+    root_unt="$(_ge_git -C "$root_top" ls-files -o ${ge_xargs[@]+"${ge_xargs[@]}"} --exclude-per-directory=.gitignore -- "${ge_ps[@]}" 2>/dev/null)" || root_unt_rc=$?
+    root_ign="$(_ge_git -C "$root_top" ls-files -o -i --directory ${ge_xargs[@]+"${ge_xargs[@]}"} --exclude-per-directory=.gitignore -- "${ge_ps[@]}" 2>/dev/null)" || root_ign_rc=$?
+    _ge_subs_clean "$root_top" 0 "${ge_ps[@]}" || root_subs_rc=$?
+    [ "$ge_xf_rc" -eq 0 ] || root_unt_rc="$ge_xf_rc"
+  else
+    root_dirt_rc=1
+  fi
+  if [ "$root_dirt_rc" -ne 0 ] || [ -n "$root_dirt" ]; then
+    echo "PARK: rules_gate_dirty_tree"; return 0
+  fi
+  if [ "$root_flags_rc" -ne 0 ] || grep -q '^[a-zS] ' <<<"$root_flags"; then
+    echo "PARK: rules_gate_dirty_tree"; return 0
+  fi
+  if [ "$root_unt_rc" -ne 0 ] || [ -n "$root_unt" ]; then
+    echo "PARK: rules_gate_dirty_tree"; return 0
+  fi
+  if [ "$root_ign_rc" -ne 0 ] || grep -qE '(^|/)\.gitignore"?$' <<<"$root_ign"; then
+    echo "PARK: rules_gate_dirty_tree"; return 0
+  fi
+  if [ "$root_subs_rc" -ne 0 ]; then
+    echo "PARK: rules_gate_dirty_tree"; return 0
+  fi
+
   local rules_bin; rules_bin="$(dirname "$0")/rules-gate-verdict.sh"
   # `cmd || rc=$?` (the cond-2 read's shape): under `set -e` a failing command
   # substitution in a plain assignment would abort the gate with NO line printed.
