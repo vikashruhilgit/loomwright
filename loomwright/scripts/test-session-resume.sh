@@ -1582,8 +1582,10 @@ au_rf() { # <repo> <run_id> <pr_n> [<status>] [<run status>]
 }
 au_hook() { # <repo> <source> [env…]
   local r="$1" src="$2"; shift 2
-  ( cd "$r" && printf '{"source":"%s"}' "$src" | env AGH_DIR="$AGH" LOOMWRIGHT_GH_BIN="$AGH/gh" "$@" bash "$HOOK" 2>/dev/null ) | jq -r '.hookSpecificOutput.additionalContext // ""' 2>/dev/null
-  printf '%s' "${PIPESTATUS[0]}" > "$RCFILE"
+  local out
+  out="$( cd "$r" && printf '{"source":"%s"}' "$src" | env AGH_DIR="$AGH" LOOMWRIGHT_GH_BIN="$AGH/gh" "$@" bash "$HOOK" 2>/dev/null )"
+  printf '%s' "$?" > "$RCFILE"
+  ctx_of "$out"
 }
 MLINE='automate: automate-a item q/7.md PR https://github.com/acme/w/pull/7 merged but not closed out — /automate --resume closes it out'
 # (za) resume: merged ⇒ the line; OPEN / Current done / Status done ⇒ nothing extra.
@@ -1640,7 +1642,7 @@ md="$(mktmp)"; copy_hook_full "$md" 2>/dev/null || cp "$HOOK" "$md/session-resum
 sed 's/^if \[ -n "\$AUTOMATE_SR\$WATCH_SR" \]; then$/if true; then/' "$HOOK" > "$md/session-resume.sh"
 if cmp -s "$HOOK" "$md/session-resume.sh"; then no "(zf) header mutant changed nothing"
 else
-  c="$( cd "$R4" && printf '{"source":"resume"}' | bash "$md/session-resume.sh" 2>/dev/null | jq -r '.hookSpecificOutput.additionalContext // ""' )"
+  c="$(ctx_of "$( cd "$R4" && printf '{"source":"resume"}' | bash "$md/session-resume.sh" 2>/dev/null )")"
   grep -q '/automate in-flight items' <<<"$c" && ok "(zf) control: an unconditional header is caught" || no "(zf) control did not discriminate"
 fi
 
