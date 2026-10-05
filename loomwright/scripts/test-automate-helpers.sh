@@ -60,7 +60,7 @@
 #      checkout ($E_ROOT, whose HEAD the gh stub reports) — stale HEAD / non-checkout /
 #      no-commit / missing root ⇒ rules_gate_head_mismatch; tracked edit, deletion,
 #      staged file, untracked file (also under status.showUntrackedFiles=no), dirt in
-#      .claude/ outside agent-memory, a nested x/.supervisor/, dirt seen from a
+#      the harness dir outside agent-memory, a nested x/.supervisor/, dirt seen from a
 #      subdirectory --root, and a failing `git status` ⇒ rules_gate_dirty_tree — each
 #      with 0 merges and the helper never called; .supervisor/-only, agent-memory-only
 #      and ignored-only dirt still let the verdict decide; cond 6 still precedes the
@@ -1137,7 +1137,7 @@ export GH_STUB_DIR="$WD/ghstub"; mkdir -p "$GH_STUB_DIR"
 # E_ROOT — the `--root` every gate case hands the gate: a REAL git checkout
 # (automate-followups/16 — condition 7 now pins `--root` to the live PR head and a
 # clean tree before it trusts the rules verdict). Its committed tree tracks one file
-# under each engine-owned path (.supervisor/, .claude/agent-memory/) plus a
+# under each engine-owned path (.supervisor/ and $E_MEM, the agent-memory store) plus a
 # .gitignore, so Section R can dirty them. Every fixture file (ctx.json, stubs, result
 # artifacts) lives in $WD OUTSIDE the checkout, so the harness never dirties it.
 # E_PR_HEAD is the head the stubbed `gh pr view` reports AND pass_ctx's `ready_sha`
@@ -1148,10 +1148,11 @@ export GH_STUB_DIR="$WD/ghstub"; mkdir -p "$GH_STUB_DIR"
 # gate() runs with GIT_CEILING_DIRECTORIES=$WD so a non-checkout root under $WD can
 # never be resolved to some enclosing repo of the temp dir.
 E_ROOT="$WD/checkout"
-mkdir -p "$E_ROOT/sub" "$E_ROOT/.supervisor/automate" "$E_ROOT/.claude/agent-memory/loomwright:code-reviewer"
+E_MEM=".claude/agent-memory"   # the gate's second engine-owned exclusion (repo-relative)
+mkdir -p "$E_ROOT/sub" "$E_ROOT/.supervisor/automate" "$E_ROOT/$E_MEM/loomwright:code-reviewer"
 ( cd "$E_ROOT" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false \
     && echo a > sub/a && echo run > .supervisor/automate/run.md \
-    && echo mem > .claude/agent-memory/loomwright:code-reviewer/MEMORY.md \
+    && echo mem > "$E_MEM/loomwright:code-reviewer/MEMORY.md" \
     && printf 'ignored.log\n' > .gitignore && git add -A && git commit -qm init ) >/dev/null 2>&1
 E_HEAD="$(git -C "$E_ROOT" rev-parse --verify -q HEAD 2>/dev/null)" || E_HEAD=""
 E_TIP="$(git -C "$E_ROOT" commit-tree "HEAD^{tree}" -p HEAD -m tip 2>/dev/null)" || E_TIP=""
@@ -1926,7 +1927,7 @@ reset_live
 
 # R11 (automate-followups/16) — cond 7's CHECKOUT PIN, evaluated BEFORE the rules helper:
 # `--root` must be AT the live head cond 2 confirmed (else rules_gate_head_mismatch) and clean
-# outside .supervisor/ and .claude/agent-memory/ (else rules_gate_dirty_tree). Every PARK leg
+# outside .supervisor/ and $E_MEM (else rules_gate_dirty_tree). Every PARK leg
 # runs with the stub verdict `ok`, so the ONLY thing standing between it and a MERGE is the pin;
 # every leg also asserts the helper was NOT called (the pin runs first). Each leg restores the
 # checkout and r11_restored proves it, so no leg leaks dirt into the next.
@@ -2015,9 +2016,10 @@ r11_dirty "untracked non-ignored file at the top level"
 git -C "$E_ROOT" config status.showUntrackedFiles no
 r11_dirty "untracked file under the repo's status.showUntrackedFiles=no (the pin's -uall overrides it)"
 git -C "$E_ROOT" config --unset status.showUntrackedFiles; rm -f "$E_ROOT/untracked.txt"; r11_restored "untracked file"
-mkdir -p "$E_ROOT/.claude/other"; echo o > "$E_ROOT/.claude/other/o.md"
-r11_dirty "untracked file under .claude/ but OUTSIDE .claude/agent-memory/"
-rm -rf "$E_ROOT/.claude/other"; r11_restored ".claude/other"
+E_MEM_SIB="$E_ROOT/$(dirname "$E_MEM")/other"   # a sibling of the agent-memory dir, same parent
+mkdir -p "$E_MEM_SIB"; echo o > "$E_MEM_SIB/o.md"
+r11_dirty "untracked file beside, but OUTSIDE, $E_MEM"
+rm -rf "$E_MEM_SIB"; r11_restored "agent-memory sibling"
 mkdir -p "$E_ROOT/sub/.supervisor"; echo n > "$E_ROOT/sub/.supervisor/n.md"
 r11_dirty "a NESTED sub/.supervisor/ file (the exclusion is anchored at the repo top level)"
 rm -rf "$E_ROOT/sub/.supervisor"; r11_restored "nested .supervisor"
@@ -2036,10 +2038,10 @@ echo y >> "$E_ROOT/.supervisor/automate/run.md"; echo '{}' > "$E_ROOT/.superviso
 r11_decides ".supervisor/-only dirt (tracked run-file edit + untracked sidecar)"
 E_GATE_ROOT="$E_ROOT/sub"; r11_decides ".supervisor/-only dirt with a SUBDIRECTORY --root (exclusion still anchored at the top)"; E_GATE_ROOT=""
 git -C "$E_ROOT" checkout -q -- .supervisor; rm -f "$E_ROOT/.supervisor/automate/run.sidecar.json"; r11_restored ".supervisor dirt"
-echo y >> "$E_ROOT/.claude/agent-memory/loomwright:code-reviewer/MEMORY.md"
-mkdir -p "$E_ROOT/.claude/agent-memory/loomwright:qa-executor"; echo n > "$E_ROOT/.claude/agent-memory/loomwright:qa-executor/MEMORY.md"
-r11_decides ".claude/agent-memory/-only dirt (tracked memory edit + untracked new agent dir)"
-git -C "$E_ROOT" checkout -q -- .claude; rm -rf "$E_ROOT/.claude/agent-memory/loomwright:qa-executor"; r11_restored ".claude/agent-memory dirt"
+echo y >> "$E_ROOT/$E_MEM/loomwright:code-reviewer/MEMORY.md"
+mkdir -p "$E_ROOT/$E_MEM/loomwright:qa-executor"; echo n > "$E_ROOT/$E_MEM/loomwright:qa-executor/MEMORY.md"
+r11_decides "$E_MEM-only dirt (tracked memory edit + untracked new agent dir)"
+git -C "$E_ROOT" checkout -q -- "$E_MEM"; rm -rf "$E_ROOT/$E_MEM/loomwright:qa-executor"; r11_restored "agent-memory dirt"
 echo i > "$E_ROOT/ignored.log"
 r11_decides "gitignored-only file"
 rm -f "$E_ROOT/ignored.log"; r11_restored "ignored file"
