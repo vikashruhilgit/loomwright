@@ -37,8 +37,10 @@
 #   config-restore   <config_path> <backup_path>      # §7 overwrite-from-backup OR delete-if-absent; deletes backup
 #   config-orig      <config_path> [<backup_path>]     # §7 prints true|false|absent (the ORIGINAL auto_review); pass the backup once suppress has run
 #   runfile-write    <runfile_path> < CONTENT          # §3 atomic temp+rename write, validated before rename: refuses (exit 1, file unchanged) empty / no title / no "## Status:" / no "## Queue" / dropped Progress prefix
-#   progress-append  <runfile_path> <line>             # §3 append-only ## Progress (never rewrites prior lines); refuses a file with no "# Automate Run:" title
+#   progress-append  <runfile_path> <line>             # §3 append-only ## Progress (never rewrites prior lines); refuses a file with no "# Automate Run:" title; exit 3 + `current_not_set: <line>` on stderr (line still appended) when a `picked `/`ran /autonomous`/`owned drain started` line meets a null ## Current item, or `picked <X>` meets a different non-done item
 #   queue-checkoff   <runfile_path> <item> [reason] [mark]  # §3/§5 flip - [ ] -> - [x] (optional "# <skipped|abandoned>: reason"; mark default skipped); refuses a file with no title
+#   current-set      <runfile_path> [--item <path|null> --status <s|null>] [--pr <url|null>] [--branch <b|null>] [--pause-reason <r>]  # §3 the ONLY writer of ## Current's item/pause_reason lines: item form (both --item/--status; null only both-null) or run-level form (--pause-reason only); enum-validated; a changed --item resets an omitted pr/branch to null; refusal = exit 1, file byte-unchanged; identical values ⇒ `current-set: unchanged`
+#   current-rebuild  <runfile_path>                     # §4 RECONCILE repair: ## Current item null/absent + a `picked` Progress line ⇒ item from the LAST picked line (must be a Queue row), pr ONLY from a later `ran /autonomous` line, branch via one gh pr view; always status running; one `current_rebuilt: … state <s>` line (printed + appended); already set ⇒ `skipped — ## Current set`
 #   remaining        <runfile_path>                     # §3 count of "- [ ]" lines only
 #   ceiling-check    <runfile_path> <max_tokens> [--root <checkout>]  # §6 PICK-time token-ceiling check via read-token-ledger.sh --run-id; prints OK/PARK, always exits 0
 #   resolve-folder   <dir>                              # §2 list *.md not done and not proposed|parked
@@ -62,7 +64,8 @@
 #   plan-waves       <runfile|dir|item-list> --max N [--explain] [--root <checkout>]  # parallel-automate/04: READ-ONLY wave planner — `## Depends on` / `## Touches` (strict grammar) + <root>/.agent/companions.json expansion ⇒ `wave <k>: …` + `blocked <item>: …` lines (`--explain`, parallel-automate/10: then one `explain <item> (wave <k>):` block per placed item not in wave 1); exit 1 + empty stdout on usage / item not found / unknown dependency / cycle / companions_malformed; called ONLY by `--parallel N>1` (item 05), never by the sequential loop
 #   plan-waves       <item|dir|runfile|item-list> --lint [--root <checkout>]  # parallel-automate/10: READ-ONLY lint of both sections with the planner's OWN parser — one `<item>: Touches <verdict>; Depends on <verdict>` line per item + two count lines; exit 1 when any section is missing/unparsable (a sole `unknown` Touches is `ok (declared unknown)`); never needs --max
 #
-# Exit codes: 0 success; 1 generic failure; 2 abort (malformed pre-existing config, §7).
+# Exit codes: 0 success; 1 generic failure; 2 abort (malformed pre-existing config, §7);
+# 3 progress-append's `current_not_set` guard (the line WAS appended; ## Current was never set).
 # (learning-emit, brief-repair, reconcile-status, meta-entry and meta-push-failed are the fail-SAFE
 # exceptions: they ALWAYS exit 0 — never die/abort; meta-entry's verdict line carries the outcome.)
 #
@@ -76,6 +79,9 @@ set -euo pipefail
 
 JQ="${LOOMWRIGHT_JQ_BIN:-jq}"
 GH="${LOOMWRIGHT_GH_BIN:-gh}"
+
+NL_CHAR='
+'
 
 die()   { echo "automate-helpers: $*" >&2; exit 1; }
 abort() { echo "automate-helpers: ABORT: $*" >&2; exit 2; }
@@ -279,6 +285,279 @@ progress_append() {
     }
   ' "$out" > "$tmp" || { rm -f "$tmp"; die "progress-append: rewrite failed; $out left unchanged"; }
   _runfile_install "$tmp" "$out" title progress-append
+  _progress_current_guard "$out" "$line"
+}
+
+# _progress_current_guard <runfile> <line> — the D2 `current_not_set` guard (SKILL
+# §3 "`## Current` moves only through `current-set`"). Runs AFTER a successful
+# append, so the line is always recorded (loud, never lossy). A line that says an
+# item is in flight — `[<one token> ]picked …`, `ran /autonomous…`, `owned drain
+# started…` — while `## Current`'s item is `null`, empty or absent means the engine
+# skipped `current-set`: print `current_not_set: <line>` to stderr and exit 3
+# (distinct from the refusal exit 1). A `picked <X>` line while `## Current` names a
+# DIFFERENT non-null item whose status is not `done` exits 3 the same way (PICK
+# skipped `current-set` on a later item). `parked …` is deliberately NOT guarded: a
+# run-level park on a fresh run legitimately has a null item. <X> is the first
+# whitespace-delimited token after `picked ` with trailing `;`/`,` stripped; both
+# sides are compared after stripping a leading `./`.
+_progress_current_guard() {
+  local out="$1" line="$2"
+  local re_g='^([^ ]+ )?(picked |ran /autonomous|owned drain started)'
+  local re_p='^([^ ]+ )?picked ([^ ]+)'
+  [[ "$line" =~ $re_g ]] || return 0
+  local cl ci cs x
+  cl="$(_current_item_line "$out")"
+  ci="$(_current_field "$cl" item)"
+  if [ -z "$ci" ] || [ "$ci" = "null" ]; then
+    echo "current_not_set: $line" >&2; exit 3
+  fi
+  [[ "$line" =~ $re_p ]] || return 0
+  x="${BASH_REMATCH[2]}"
+  while :; do case "$x" in *";"|*",") x="${x%?}" ;; *) break ;; esac; done
+  [ -n "$x" ] || return 0
+  cs="$(_current_field "$cl" status)"
+  if [ "${x#./}" != "${ci#./}" ] && [ "$cs" != "done" ]; then
+    echo "current_not_set: $line" >&2; exit 3
+  fi
+  return 0
+}
+
+# --------------------------------------------------------------------------- #
+# §3 — `## Current` moves only through a helper (current-set / current-rebuild)
+# --------------------------------------------------------------------------- #
+
+# The documented enums (docs/RESULT_SCHEMAS.md §AUTOMATE_RUN "`## Current` fields";
+# SKILL §3 template). Space-delimited so a `case " $ENUM " in *" $v "*)` test is exact.
+CURRENT_STATUS_ENUM=" running awaiting_merge escalated failed rate_limit drain_died done "
+CURRENT_PAUSE_ENUM=" awaiting_merge awaiting_go escalated limit_reached resume_ambiguous rate_limit drain_died token_ceiling run_lock_held meta_unreachable trail_pr_open closeout_leftover null "
+
+# _current_item_line <runfile> — the FIRST `- item: ` line inside `## Current`, or nothing.
+_current_item_line() {
+  awk '/^## Current/{c=1;next} /^## /{c=0} c && /^- item: /{print; exit}' "$1" 2>/dev/null || true
+}
+
+# _current_reason_line <runfile> — the FIRST `- pause_reason:` line inside `## Current`, or nothing.
+_current_reason_line() {
+  awk '/^## Current/{c=1;next} /^## /{c=0} c && /^- pause_reason:/{print; exit}' "$1" 2>/dev/null || true
+}
+
+# _current_field <item_line> <key> — the value of `<key>: <value>` in a
+# `- item: … | status: … | pr: … | branch: …` line (fields split on " | ", the
+# same split closeout's `_co_field` uses). Prints nothing when the key is absent.
+_current_field() {
+  local rest="${1#- }" key="$2" f
+  [ -n "$1" ] || return 0
+  while :; do
+    case "$rest" in
+      *" | "*) f="${rest%% | *}"; rest="${rest#* | }" ;;
+      *) f="$rest"; rest="" ;;
+    esac
+    case "$f" in "$key: "*) printf '%s' "${f#"$key: "}"; return 0 ;; esac
+    [ -n "$rest" ] || return 0
+  done
+}
+
+# _current_build_line <old_line> <item> <status> <has_pr> <pr> <has_branch> <branch>
+# Rebuilds the item line field-by-field: item/status (and pr/branch when given)
+# replace their values in place, every other field keeps its text and position, a
+# missing field is appended in template order. No old line ⇒ the template order.
+_current_build_line() {
+  local old="$1" item="$2" st="$3" hp="$4" pr="$5" hb="$6" br="$7"
+  local rest f out="" si=0 ss=0 sp=0 sb=0
+  if [ -n "$old" ]; then
+    rest="${old#- }"
+    while :; do
+      case "$rest" in
+        *" | "*) f="${rest%% | *}"; rest="${rest#* | }" ;;
+        *) f="$rest"; rest="" ;;
+      esac
+      case "$f" in
+        "item: "*) f="item: $item"; si=1 ;;
+        "status: "*) f="status: $st"; ss=1 ;;
+        "pr: "*) if [ "$hp" = 1 ]; then f="pr: $pr"; fi; sp=1 ;;
+        "branch: "*) if [ "$hb" = 1 ]; then f="branch: $br"; fi; sb=1 ;;
+      esac
+      out="${out:+$out | }$f"
+      [ -n "$rest" ] || break
+    done
+  fi
+  if [ "$si" = 0 ]; then out="item: $item${out:+ | $out}"; fi
+  if [ "$ss" = 0 ]; then out="$out | status: $st"; fi
+  if [ "$sp" = 0 ] && [ "$hp" = 1 ]; then out="$out | pr: $pr"; fi
+  if [ "$sb" = 0 ] && [ "$hb" = 1 ]; then out="$out | branch: $br"; fi
+  printf -- '- %s\n' "$out"
+}
+
+# current-set <runfile> [--item <path|null> --status <s|null>] [--pr <url|null>]
+#             [--branch <b|null>] [--pause-reason <r>]
+# SKILL §3 "`## Current` moves only through `current-set`" is the spec. Two legal forms:
+#   ITEM form      — --item AND --status (the literal `null` only when BOTH are
+#                    `null`: "nothing in flight"); --pr/--branch/--pause-reason optional.
+#   RUN-LEVEL form — neither --item nor --status; --pause-reason required; no
+#                    --pr/--branch (a run-level park never touches the item line).
+# Rewrites ONLY the `## Current` block's first `- item:` line (item form) and/or its
+# `- pause_reason:` line (appended to the block when absent); every other line of
+# the file is byte-unchanged. pr/branch retention: when --item equals the line's
+# current item (compared after a leading `./` strip) an omitted --pr/--branch keeps
+# the stored value; when --item CHANGES, an omitted --pr/--branch resets to `null`
+# (never carry the previous item's PR into a new one). The item is stored exactly
+# as passed. Refusals (exit 1, file byte-unchanged): an unknown status/pause_reason,
+# a half-null item form, an item form missing --item or --status, a run-level form
+# missing --pause-reason (or carrying --pr/--branch), an empty value or one holding
+# `|` or a newline, a missing/non-run file, a file with no `## Current` heading.
+# Values reach awk through the ENVIRONMENT (never awk -v — SKILL Anti-Patterns); the
+# write goes through `_runfile_install … full` (runfile-write's validation).
+# Idempotent: values already present ⇒ `current-set: unchanged`, nothing written.
+current_set() {
+  local out="${1:-}"
+  [ "$#" -gt 0 ] && shift
+  local CS="current-set: refused —"
+  [ -n "$out" ] || die "$CS usage: current-set <runfile> [--item <path|null> --status <s|null>] [--pr <url|null>] [--branch <b|null>] [--pause-reason <r>]"
+  local item="" st="" pr="" br="" reason="" hi=0 hs=0 hp=0 hb=0 hr=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --item|--status|--pr|--branch|--pause-reason)
+        [ "$#" -ge 2 ] || die "$CS $1 needs a value; $out left unchanged"
+        case "$1" in
+          --item) item="$2"; hi=1 ;;
+          --status) st="$2"; hs=1 ;;
+          --pr) pr="$2"; hp=1 ;;
+          --branch) br="$2"; hb=1 ;;
+          --pause-reason) reason="$2"; hr=1 ;;
+        esac
+        case "$2" in
+          "") die "$CS $1 value is empty; $out left unchanged" ;;
+          *"|"*|*"$NL_CHAR"*) die "$CS $1 value contains '|' or a newline; $out left unchanged" ;;
+        esac
+        shift 2 ;;
+      *) die "$CS unknown argument '$1'; $out left unchanged" ;;
+    esac
+  done
+  if [ "$hi" != "$hs" ]; then
+    die "$CS the item form needs both --item and --status; $out left unchanged"
+  fi
+  if [ "$hi" = 0 ]; then
+    [ "$hr" = 1 ] || die "$CS the run-level form needs --pause-reason; $out left unchanged"
+    if [ "$hp" = 1 ] || [ "$hb" = 1 ]; then die "$CS --pr/--branch need the item form (--item + --status); $out left unchanged"; fi
+  else
+    if { [ "$item" = null ] && [ "$st" != null ]; } || { [ "$item" != null ] && [ "$st" = null ]; }; then
+      die "$CS half-null item form (--item $item --status $st) — 'null' only when both are null; $out left unchanged"
+    fi
+    if [ "$st" != null ]; then
+      case "$CURRENT_STATUS_ENUM" in *" $st "*) ;; *) die "$CS unknown status '$st'; $out left unchanged" ;; esac
+    fi
+  fi
+  if [ "$hr" = 1 ]; then
+    case "$CURRENT_PAUSE_ENUM" in *" $reason "*) ;; *) die "$CS unknown pause_reason '$reason'; $out left unchanged" ;; esac
+  fi
+  [ -f "$out" ] || die "$CS run file not found: $out"
+  is_run_file "$out" || die "$CS not a run file (no '# Automate Run:' title): $out; left unchanged [runfile_write_refused]"
+  grep -q '^## Current' "$out" || die "$CS no '## Current' heading in $out; left unchanged"
+
+  local old_line new_line="" old_reason new_reason="" change=0
+  old_line="$(_current_item_line "$out")"
+  if [ "$hi" = 1 ]; then
+    local old_item; old_item="$(_current_field "$old_line" item)"
+    if [ "${old_item#./}" != "${item#./}" ]; then
+      if [ "$hp" = 0 ]; then pr=null; hp=1; fi
+      if [ "$hb" = 0 ]; then br=null; hb=1; fi
+    fi
+    new_line="$(_current_build_line "$old_line" "$item" "$st" "$hp" "$pr" "$hb" "$br")"
+    [ "$new_line" = "$old_line" ] || change=1
+  fi
+  if [ "$hr" = 1 ]; then
+    old_reason="$(_current_reason_line "$out")"
+    new_reason="- pause_reason: $reason"
+    [ "$new_reason" = "$old_reason" ] || change=1
+  fi
+  if [ "$change" = 0 ]; then echo "current-set: unchanged"; return 0; fi
+
+  local have_item=0; [ -n "$old_line" ] && have_item=1
+  local tmp; tmp="$(mktemp "${out}.XXXXXX")"
+  CS_ITEM_ON="$hi" CS_NEW_ITEM="$new_line" CS_HAVE_ITEM="$have_item" \
+  CS_REASON_ON="$hr" CS_NEW_REASON="$new_reason" awk '
+    BEGIN { ion=ENVIRON["CS_ITEM_ON"]; nitem=ENVIRON["CS_NEW_ITEM"]; have=ENVIRON["CS_HAVE_ITEM"]
+            ron=ENVIRON["CS_REASON_ON"]; nreason=ENVIRON["CS_NEW_REASON"] }
+    /^## Current/ && !seen {
+      seen=1; c=1; print
+      if (ion == 1 && have != 1) { print nitem; idone=1 }
+      next
+    }
+    /^## / {
+      if (c && ron == 1 && !rdone) { print nreason; rdone=1 }
+      c=0; print; next
+    }
+    c && ion == 1 && !idone && /^- item: / { print nitem; idone=1; next }
+    c && ron == 1 && !rdone && /^- pause_reason:/ { print nreason; rdone=1; next }
+    { print }
+    END { if (c && ron == 1 && !rdone) print nreason }
+  ' "$out" > "$tmp" || { rm -f "$tmp"; die "current-set: rewrite failed; $out left unchanged"; }
+  _runfile_install "$tmp" "$out" full current-set
+  echo "current-set: written"
+}
+
+# current-rebuild <runfile> — SKILL §4 RECONCILE repair for a `## Current` an
+# engine never set (lane w1-10: one creation write, then Progress-only updates).
+# Acts ONLY when `## Current`'s item is null/empty/absent AND `## Progress` has a
+# `picked ` line. Item: from the LAST Progress line matching `^- ([^ ]+ )?picked `
+# — the first whitespace-delimited token after `picked `, trailing `;`/`,` stripped
+# — and it must be a Queue row (`- [ ] <item>` or `- [x] <item>…`). PR: ONLY from a
+# `ran /autonomous` line AFTER that last `picked` line (its first
+# `https?://…/pull/<n>` token) — never from any other Progress line (closeout step
+# lines, `cross-run closeout` lines, trail and reconcile-status lines carry OTHER
+# PRs' URLs). Branch: one `gh pr view <pr> --json headRefName,state,mergedAt`.
+# Status: ALWAYS `running` (OPEN, MERGED, CLOSED or unreadable) — a rebuild never
+# claims awaiting_merge/READY/escalated and never triggers a close-out; the
+# observed state is named in the line for the owner. Writes via current-set, then
+# progress-appends and prints `current_rebuilt: <item> pr <url|null> state
+# <OPEN|MERGED|CLOSED|unknown|none>` (`none` = no PR found). Already set ⇒
+# `current-rebuild: skipped — ## Current set`. Exit 0 except a refused write (1).
+current_rebuild() {
+  local out="${1:-}" R="current-rebuild: skipped —"
+  [ -n "$out" ] || die "current-rebuild: refused — usage: current-rebuild <runfile>"
+  [ -f "$out" ] || die "current-rebuild: refused — run file not found: $out"
+  is_run_file "$out" || die "current-rebuild: refused — not a run file (no '# Automate Run:' title): $out; left unchanged [runfile_write_refused]"
+  local ci; ci="$(_current_field "$(_current_item_line "$out")" item)"
+  if [ -n "$ci" ] && [ "$ci" != null ]; then echo "$R ## Current set"; return 0; fi
+  local picked_ln item
+  picked_ln="$(_progress_block "$out" | awk '/^- ([^ ]+ )?picked /{n=NR; l=$0} END{if (n) print n "\t" l}')"
+  if [ -z "$picked_ln" ]; then echo "$R no picked line in ## Progress"; return 0; fi
+  local tab=$'\t'
+  local pnum="${picked_ln%%"$tab"*}" pline="${picked_ln#*"$tab"}" re_p='^- ([^ ]+ )?picked ([^ ]+)'
+  if [[ "$pline" =~ $re_p ]]; then item="${BASH_REMATCH[2]}"; else item=""; fi
+  while :; do case "$item" in *";"|*",") item="${item%?}" ;; *) break ;; esac; done
+  if [ -z "$item" ] || ! AH_ITEM="$item" awk '
+      BEGIN { it=ENVIRON["AH_ITEM"] }
+      /^## Queue/ { q=1; next } /^## / { q=0 }
+      q && ($0 == "- [ ] " it || $0 == "- [x] " it || index($0, "- [x] " it " ")==1) { f=1 }
+      END { exit !f }' "$out"; then
+    echo "$R picked item not in Queue"; return 0
+  fi
+  local pr
+  pr="$(_progress_block "$out" | PN="$pnum" awk '
+    NR > ENVIRON["PN"]+0 && /^- ([^ ]+ )?ran \/autonomous/ {
+      if (match($0, /https?:\/\/[^ ]*\/pull\/[0-9]+/)) u=substr($0, RSTART, RLENGTH)
+    }
+    END { if (u != "") print u }')"
+  local state="none" branch="null"
+  if [ -n "$pr" ]; then
+    local view s m h
+    state="unknown"
+    if view="$("$GH" pr view "$pr" --json headRefName,state,mergedAt 2>/dev/null)"; then
+      s="$(printf '%s' "$view" | "$JQ" -r '.state // empty' 2>/dev/null || true)"
+      m="$(printf '%s' "$view" | "$JQ" -r '.mergedAt // empty' 2>/dev/null || true)"
+      h="$(printf '%s' "$view" | "$JQ" -r '.headRefName // empty' 2>/dev/null || true)"
+      if [ "$s" = MERGED ] || [ -n "$m" ]; then state=MERGED
+      elif [ "$s" = OPEN ] || [ "$s" = CLOSED ]; then state="$s"; fi
+      case "$h" in ""|*"|"*|*" "*) ;; *) branch="$h" ;; esac
+    fi
+  else
+    pr=null
+  fi
+  current_set "$out" --item "$item" --status running --pr "$pr" --branch "$branch" >/dev/null
+  local msg="current_rebuilt: $item pr $pr state $state"
+  progress_append "$out" "$msg"
+  echo "$msg"
 }
 
 # queue-checkoff <runfile_path> <item> [reason] [mark]
@@ -2853,6 +3132,8 @@ main() {
     runfile-write)   runfile_write "$@" ;;
     progress-append) progress_append "$@" ;;
     queue-checkoff)  queue_checkoff "$@" ;;
+    current-set)     current_set "$@" ;;
+    current-rebuild) current_rebuild "$@" ;;
     remaining)       remaining "$@" ;;
     ceiling-check)   ceiling_check "$@" ;;
     resolve-folder)  resolve_folder "$@" ;;

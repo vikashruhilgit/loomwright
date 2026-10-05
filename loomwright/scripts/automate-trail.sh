@@ -1135,19 +1135,20 @@ co_release() {
 # the Queue says queued). A `## Current` naming another item/PR is never
 # touched: the merge watcher can fire after the owner already --resumed and a
 # later item was picked. Every other line is byte-unchanged; `## Status` is
-# never rewritten. The write goes through `runfile-write` (validated atomic
-# rename, SKILL §3) from a staged file — never a `generator | runfile-write`
-# pipe, whose failing generator the helper cannot see.
+# never rewritten. The write goes through `automate-helpers.sh current-set`
+# (validated atomic rename through runfile-write's `_runfile_install … full`,
+# SKILL §3) — never a `generator | runfile-write` pipe, whose failing generator
+# the helper cannot see.
 _co_current() {
   local rf="$1" item="$2" pr="$3" S="closeout: skipped —"
   if ! grep -qxF -- "- [x] $item" "$rf" 2>/dev/null; then
     echo "$S ## Current not reconciled ($item not checked off)"; return 0
   fi
-  local cur_line cur_item cur_pr cur_status cur_reason run_status want
+  local cur_line cur_raw cur_item cur_pr cur_status cur_reason run_status want
   cur_line="$(awk '/^## Current/{c=1;next} /^## /{c=0} c && /^- item: /{print; exit}' "$rf" 2>/dev/null)"
   if [ -z "$cur_line" ]; then echo "$S no ## Current item line"; return 0; fi
   _co_field() { printf '%s\n' "$cur_line" | awk -v k="$1" 'BEGIN{FS=" [|] "} {sub(/^- /,""); for(i=1;i<=NF;i++) if (index($i, k ": ")==1) {print substr($i, length(k)+3); exit}}'; }
-  cur_item="$(_co_field item)"; cur_item="${cur_item#./}"
+  cur_raw="$(_co_field item)"; cur_item="${cur_raw#./}"
   cur_pr="$(_co_field pr)"; cur_status="$(_co_field status)"
   if [ "$cur_item" != "$item" ] || [ "$cur_pr" != "$pr" ]; then
     echo "$S ## Current is ${cur_item:-?} (${cur_pr:-no pr}), not this item/PR"; return 0
@@ -1158,30 +1159,14 @@ _co_current() {
   if [ "$cur_status" = "done" ] && [ "$cur_reason" = "$want" ]; then
     echo "$S ## Current already done"; return 0
   fi
-  local tmp; tmp="$(mktemp "${rf}.current.XXXXXX")" || { echo "$S ## Current: cannot stage"; return 0; }
-  if ! CO_WANT="$want" awk '
-    BEGIN { want=ENVIRON["CO_WANT"] }
-    /^## Current/ { c=1; print; next }
-    /^## / {
-      if (c && !reason_done) { print "- pause_reason: " want; reason_done=1 }
-      c=0; print; next
-    }
-    c && /^- item: / && !item_done {
-      n=split($0, f, / [|] /); out=""
-      for (i=1;i<=n;i++) { if (index(f[i], "status: ")==1) f[i]="status: done"; out = out (i>1 ? " | " : "") f[i] }
-      print out; item_done=1; next
-    }
-    c && /^- pause_reason:/ && !reason_done { print "- pause_reason: " want; reason_done=1; next }
-    { print }
-    END { if (c && !reason_done) print "- pause_reason: " want }
-  ' "$rf" > "$tmp" 2>/dev/null; then
-    rm -f "$tmp"; echo "$S ## Current rewrite failed"; return 0
-  fi
-  if bash "$HERE/automate-helpers.sh" runfile-write "$rf" < "$tmp" >/dev/null 2>&1; then
-    rm -f "$tmp"
+  # The write goes through `automate-helpers.sh current-set` (SKILL §3 "`## Current`
+  # moves only through `current-set`"): the RAW stored item of the CURRENT line (not
+  # the `./`-stripped comparison value), status done, the wanted pause_reason — the
+  # item is unchanged, so current-set keeps the line's pr/branch and every other line.
+  if bash "$HERE/automate-helpers.sh" current-set "$rf" --item "$cur_raw" --status done --pause-reason "$want" >/dev/null 2>&1; then
     echo "closeout: reconciled — ## Current $item status done, pause_reason $want"
   else
-    rm -f "$tmp"; echo "$S ## Current runfile-write refused"
+    echo "$S ## Current runfile-write refused"
   fi
   return 0
 }
