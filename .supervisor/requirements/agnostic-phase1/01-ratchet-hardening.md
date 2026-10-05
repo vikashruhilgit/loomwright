@@ -88,3 +88,9 @@ scripts/test-check-vendor-coupling.sh
 loomwright/docs/vendor-coupling-manifest.json
 .github/workflows/ci.yml
 changelog.d/agnostic-phase1-01-ratchet-hardening.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-05T02:43:10Z
+- **Brief:** .supervisor/jobs/done/2026-10-05-agnostic-phase1-01-ratchet-hardening.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/385
