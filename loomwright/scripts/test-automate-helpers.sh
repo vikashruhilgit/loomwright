@@ -1195,6 +1195,18 @@ printf '# Automate Run: r1\n## Status: running\n' > "$AUT/r1.md"
 printf '# Automate Run: r2\n## Status: done\n'    > "$AUT/r2.md"
 run_h bash "$H" resume-glob "$AUT"
 if [ "$RUN_OUT" = "$AUT/r1.md" ]; then ok "resume-glob: only not-done runs (r1; r2 done excluded)"; else no "resume-glob wrong:\n$RUN_OUT"; fi
+# D0f. resume-glob --finalize (automate-followups/32 Part B; SKILL §4 step 1): an
+#      ineligible run (not paused) is listed exactly as the plain form lists it,
+#      untouched, with nothing on stderr; the flag is accepted before the dir too.
+#      The finalize legs themselves (git, trail, lock) live in test-automate-trail.sh §F.
+r1_sum="$(cksum < "$AUT/r1.md")"
+fz_out="$(bash "$H" resume-glob "$AUT" --finalize 2>"$WD/fz.err")"; fz_rc=$?
+fz_out2="$(bash "$H" resume-glob --finalize "$AUT" 2>>"$WD/fz.err")"
+if [ "$fz_rc" -eq 0 ] && [ "$fz_out" = "$AUT/r1.md" ] && [ "$fz_out2" = "$fz_out" ] && [ ! -s "$WD/fz.err" ] && [ "$r1_sum" = "$(cksum < "$AUT/r1.md")" ]; then
+  ok "resume-glob --finalize: an ineligible run is listed as the plain form lists it, byte-untouched, stderr silent"
+else
+  no "resume-glob --finalize ineligible leg wrong (rc=$fz_rc): '$fz_out' / '$fz_out2' / err: $(cat "$WD/fz.err")"
+fi
 
 # D0b. resume-glob lists only RUN FILES (is_run_file, automate-followups/03).
 #      The §6 steps 2-3 per-run result sidecars share the directory and `.md`

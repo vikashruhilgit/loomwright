@@ -1714,6 +1714,115 @@ else
 fi
 unset LOOMWRIGHT_MEMORY_REPO_ALLOWLIST
 
+# =============================================================================
+echo "== F. finalize-empty / resume-glob --finalize (a closed-out run finalizes itself) =="
+# SKILL §1.5 `finalize-empty` row, §3 "`done`", §4 step 1. closeout never writes
+# `done`; a finished lane run stayed paused/awaiting_go and every RESUME listed it.
+AUTD=".supervisor/automate"
+fe_glob() { (cd "$P" && bash "${FE_H:-$SPYD/automate-helpers.sh}" resume-glob "$AUTD" --finalize 2>"$FX/fe.err"); }
+fe_rf() { # <run_id> <status> <pause_reason> <REQ queue box> <current status>
+  cat > "$P/$AUTD/$1.md" <<RF
+# Automate Run: fixture $1
+## Status: $2
+## Queue
+- [$4] $REQ
+- [x] .supervisor/requirements/f/02-b.md  # skipped: owner said so
+## Current
+- item: $REQ | status: $5 | pr: $PRURL | branch: feature/x
+- pause_reason: $3
+## Progress
+- t0 picked $REQ
+RF
+}
+
+# (F0) invariant: a closeout that checks off the LAST Queue item leaves ## Status: paused.
+fe_invariant() { # <fixture-n> <scripts-dir> → 0 when the run stayed paused/awaiting_go with remaining 0
+  closeout_fixture "$1"
+  (cd "$P" && bash "$2/automate-helpers.sh" closeout "$RF_REL" "$REQ" "$PRURL" >/dev/null)
+  [ "$(bash "$H" remaining "$P/$RF_REL")" = 0 ] && grep -qxF -- "## Status: paused" "$P/$RF_REL" && grep -qxF -- "- pause_reason: awaiting_go" "$P/$RF_REL"
+}
+if fe_invariant 200 "$SPYD"; then ok "(F0) closeout checking off the last item leaves ## Status: paused / awaiting_go (remaining 0) — closeout never writes done"; else no "(F0) closeout state: $(grep -E '^## Status|^- pause_reason' "$P/$RF_REL" | tr '\n' '|')"; fi
+MUTF="$TOP/mutd-done"; mkdir -p "$MUTF"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTF/"
+awk '{ print } index($0, "    echo \"closeout: reconciled — ## Current $item status done, pause_reason $want\"")==1 { print "    { sed \"s/^## Status: paused/## Status: done/\" \"$rf\" > \"$rf.m\" && mv \"$rf.m\" \"$rf\"; }" }' "$T" > "$MUTF/automate-trail.sh"
+if cmp -s "$T" "$MUTF/automate-trail.sh" || ! bash -n "$MUTF/automate-trail.sh"; then no "(F0) closeout-writes-done mutant not built"
+elif fe_invariant 201 "$MUTF"; then no "(F0) mutation control REFUTED: a closeout that writes done still passed the invariant leg"
+else ok "(F0) control: a closeout mutant that writes '## Status: done' turns the invariant leg red ($(grep '^## Status' "$P/$RF_REL"))"
+fi
+
+# (F1) branch mode OFF: closeout leaves the eligible state; resume-glob --finalize finalizes it.
+closeout_fixture 202
+run_closeout >/dev/null
+[ -n "$(git -C "$P" diff --cached --name-only)" ] && ok "(F1) precondition: closeout's trail-pr left trail blobs staged in the primary index" || no "(F1) precondition: nothing staged after closeout"
+plain_before="$(cd "$P" && bash "$H" resume-glob "$AUTD")"
+[ "$plain_before" = "$AUTD/$RUN_ID.md" ] && ok "(F1) plain resume-glob lists the closed-out run (the incident)" || no "(F1) plain list: $plain_before"
+spy_reset
+lst="$(fe_glob)"; rc=$?
+sed 's/^/    | /' "$FX/fe.err"
+[ "$rc" -eq 0 ] && [ -z "$lst" ] && ok "(F1) resume-glob --finalize: exit 0 and the finalized run is NOT listed" || no "(F1) rc=$rc list='$lst'"
+grep -qxF -- "## Status: done" "$P/$RF_REL" && grep -qxF -- "- pause_reason: null" "$P/$RF_REL" && ok "(F1) ## Status: done + pause_reason: null" || no "(F1) state: $(grep -E '^## Status|^- pause_reason' "$P/$RF_REL" | tr '\n' '|')"
+grep -qxF -- "- item: $REQ | status: done | pr: $PRURL | branch: feature/x" "$P/$RF_REL" && ok "(F1) ## Current item line byte-unchanged" || no "(F1) item line changed"
+grep -qE '^- [^ ]+ auto-finalized: queue empty after closeout$' "$P/$RF_REL" && ok "(F1) Progress: auto-finalized: queue empty after closeout" || no "(F1) no auto-finalized line"
+grep -qE "^trail-pr $P/$RF_REL --reason done\$" "$SPYLOG" && ok "(F1) trail-pr <runfile> --reason done via the dispatcher (the Termination call)" || no "(F1) trail-pr call: $(tr '\n' '|' < "$SPYLOG" 2>/dev/null)"
+grep -qE '^- [^ ]+ trail-pr: (opened|pushed|skipped)' "$P/$RF_REL" && ok "(F1) the trail line is appended to ## Progress" || no "(F1) trail line not appended"
+head -n1 "$FX/fe.err" | grep -qxF "finalize-empty: finalized $AUTD/$RUN_ID.md" && grep -q '^trail-unstage: ' "$FX/fe.err" && ok "(F1) stderr: finalized line + trail-unstage line" || no "(F1) stderr: $(tr '\n' '|' < "$FX/fe.err")"
+stg="$(git -C "$P" diff --cached --name-only)"
+[ -z "$stg" ] && ok "(F1) mode off: the primary index carries NO staged path of the finalized run" || no "(F1) still staged: $(printf '%s' "$stg" | tr '\n' ' ')"
+[ ! -d "$P/.supervisor/run.lock" ] && ok "(F1) run lock released" || no "(F1) run lock leaked"
+c1="$(cksum < "$P/$RF_REL")"
+o2="$(cd "$P" && bash "$H" finalize-empty "$RF_REL")"
+[ "$o2" = "finalize-empty: skipped — not paused" ] && [ "$c1" = "$(cksum < "$P/$RF_REL")" ] && ok "(F1) a second finalize is a no-op ('$o2')" || no "(F1) second finalize: '$o2'"
+# Control: without the mode-off trail-unstage the finalized run's trail blobs stay staged.
+MUTU="$TOP/mutd-unstage"; mkdir -p "$MUTU"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTU/"
+grep -v 'l="$(bash "$HLP" trail-unstage "$rf_abs"' "$T" > "$MUTU/automate-trail.sh"
+if cmp -s "$T" "$MUTU/automate-trail.sh" || ! bash -n "$MUTU/automate-trail.sh"; then no "(F1) unstage mutant not built"
+else
+  closeout_fixture 203; run_closeout >/dev/null
+  FE_H="$MUTU/automate-helpers.sh" fe_glob >/dev/null
+  grep -qxF -- "## Status: done" "$P/$RF_REL" && [ -n "$(git -C "$P" diff --cached --name-only)" ] \
+    && ok "(F1) control: without trail-unstage the finalized run leaves staged trail paths (the clean-index assertion is load-bearing)" || no "(F1) unstage control did not discriminate"
+fi
+
+# (F2) eligibility + lock: only paused/awaiting_go/remaining-0/Current-done runs finalize.
+new_fixture 204
+( cd "$P" && git checkout -q -- README; rm -f stray.txt; rm -f "$AUTD"/*.md )
+fe_rf automate-a-eligible paused awaiting_go x done
+fe_rf automate-b-unchecked paused awaiting_go ' ' done
+fe_rf automate-c-otherreason paused awaiting_merge x done
+fe_rf automate-d-curnotdone paused awaiting_go x awaiting_merge
+fe_rf automate-e-eligible paused awaiting_go x done
+want_all="$(printf '%s\n' "$AUTD/automate-a-eligible.md" "$AUTD/automate-b-unchecked.md" "$AUTD/automate-c-otherreason.md" "$AUTD/automate-d-curnotdone.md" "$AUTD/automate-e-eligible.md")"
+[ "$(cd "$P" && bash "$H" resume-glob "$AUTD")" = "$want_all" ] && ok "(F2) plain resume-glob output unchanged (all five listed, sorted)" || no "(F2) plain list: $(cd "$P" && bash "$H" resume-glob "$AUTD" | tr '\n' ' ')"
+sums() { (cd "$P/$AUTD" && cksum automate-*.md); }
+s0="$(sums)"
+bash "$HERE/run-lock.sh" acquire --owner fe-test-holder --root "$P" >/dev/null 2>&1
+lst="$(fe_glob)"
+[ "$lst" = "$want_all" ] && [ "$s0" = "$(sums)" ] && ok "(F2) run lock held ⇒ nothing finalized, every run listed, all byte-unchanged" || no "(F2) lock-held list: $(printf '%s' "$lst" | tr '\n' ' ')"
+[ "$(grep -c 'not finalized — finalize-empty: skipped — run lock held by fe-test-holder' "$FX/fe.err")" = 2 ] && ok "(F2) stderr names the lock holder for both eligible runs" || no "(F2) stderr: $(tr '\n' '|' < "$FX/fe.err")"
+bash "$HERE/run-lock.sh" release --owner fe-test-holder --root "$P" >/dev/null 2>&1
+spy_reset
+lst="$(fe_glob)"
+sed 's/^/    | /' "$FX/fe.err"
+want_rest="$(printf '%s\n' "$AUTD/automate-b-unchecked.md" "$AUTD/automate-c-otherreason.md" "$AUTD/automate-d-curnotdone.md")"
+[ "$lst" = "$want_rest" ] && ok "(F2) lock released ⇒ the two eligible runs finalized; unchecked / other pause_reason / Current-not-done listed" || no "(F2) list: $(printf '%s' "$lst" | tr '\n' ' ')"
+for r in automate-a-eligible automate-e-eligible; do grep -qxF -- "## Status: done" "$P/$AUTD/$r.md" || no "(F2) $r not done"; done
+s1="$(sums | grep -v -e '-eligible\.md$')"; s0r="$(printf '%s\n' "$s0" | grep -v -e '-eligible\.md$')"
+[ "$s1" = "$s0r" ] && ok "(F2) ineligible runs byte-untouched" || no "(F2) an ineligible run was modified"
+[ "$(spy_count '^trail-pr .* --reason done$' "$SPYLOG")" = 2 ] && [ "$(count_creates)" = 2 ] && ok "(F2) mode off: one trail-pr --reason done (one trail PR) per finalized run" || no "(F2) trail calls: $(spy_count '^trail-pr' "$SPYLOG") creates: $(count_creates)"
+[ "$(grep -c '^finalize-empty: finalized ' "$FX/fe.err")" = 2 ] && ! grep -q 'not finalized' "$FX/fe.err" && ok "(F2) stderr: two finalized lines, no ineligible noise" || no "(F2) stderr: $(tr '\n' '|' < "$FX/fe.err")"
+
+# (F3) branch mode ON: finalized; trail-pr meta-pushes (no PR), no trail-unstage.
+export LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="acme/widgets,vikashruhilgit/loomwright"
+new_fixture 205; bm_switch
+fe_rf "$RUN_ID" paused awaiting_go x done
+: > "$GH_STUB_DIR/argv.log"
+lst="$(fe_glob)"
+sed 's/^/    | /' "$FX/fe.err"
+[ -z "$lst" ] && grep -qxF -- "## Status: done" "$P/$RF_REL" && ok "(F3) branch mode: finalized and not listed" || no "(F3) list='$lst' status=$(grep '^## Status' "$P/$RF_REL")"
+grep -q "^trail-pr: meta-pushed $BMB" "$FX/fe.err" && ! grep -q '^trail-unstage' "$FX/fe.err" && ok "(F3) trail meta-pushed; no trail-unstage in branch mode" || no "(F3) stderr: $(tr '\n' '|' < "$FX/fe.err")"
+[ "$(count_creates)" = 0 ] && ok "(F3) no gh pr create in branch mode" || no "(F3) a PR was created"
+bm_show "$RF_REL0" | grep -qxF -- "## Status: done" && ok "(F3) the metadata branch holds the finalized run file" || no "(F3) branch run file not done"
+unset LOOMWRIGHT_MEMORY_REPO_ALLOWLIST
+
 echo
 echo "test-automate-trail: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

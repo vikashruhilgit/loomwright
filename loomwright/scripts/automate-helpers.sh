@@ -3187,7 +3187,8 @@ main() {
     plan-waves)      plan_waves "$@" ;;
     # Post-park lifecycle MUTATORS live in the sibling automate-trail.sh (the
     # read-only carve-out named in the header) — one mover per concern.
-    sidecar-check|trail-pr|closeout|trail-unstage|trail-gate|finalize-empty) exec bash "$(dirname "$0")/automate-trail.sh" "$cmd" "$@" ;;
+    sidecar-check|trail-pr|closeout|trail-unstage|trail-gate) exec bash "$(dirname "$0")/automate-trail.sh" "$cmd" "$@" ;;
+    finalize-empty) exec bash "$(dirname "$0")/automate-trail.sh" "$cmd" "$@" ;;
     # Dismissed-finding drafts (propose-only writes, never git) — the sibling
     # automate-dismissed.sh, the second carve-out named in the header.
     dismissed-drafts)  exec bash "$(dirname "$0")/automate-dismissed.sh" "$cmd" "$@" ;;
