@@ -22,6 +22,8 @@
 ## Touches
 loomwright/scripts/automate-lanes.sh
 loomwright/scripts/test-automate-lanes.sh
+loomwright/scripts/lane-sampler.sh
+loomwright/scripts/test-lane-sampler.sh
 loomwright/scripts/automate-helpers.sh
 loomwright/scripts/automate-dismissed.sh
 loomwright/scripts/read-token-ledger.sh
@@ -229,22 +231,28 @@ coordinator. Without the flag, or with `--parallel 1`, no lane code runs at all.
 16. **Fleet health: resource sampling and wave keep-awake** (added 2026-10-05, owner: "is that from you … or from plugin
     side? if from your side we need that in the plugin"). In S2 both were operator-side session tasks (`s2-sampler.sh`,
     `caffeinate`), which died with the session that started them and had to be handed over by hand.
-    - **Resource sampling (core, plain files):** while a wave runs, the coordinator appends one line every 10 s to
-      `<run_id>.fleet.log`: CI-slot holders/waiters (`ci-slot.sh status`), load average, swap used, free memory, and per
-      lane the summed RSS of every process whose working directory is in that lane (match by cwd, NOT argv — `claude -p`'s
-      argv has no lane path; the S2 prototype had to be fixed for this). `lane-status --resources` prints the latest
-      line per lane plus the wave's peak; the merge-readiness / wave-close summary (06) reports peak memory and CI-slot
-      wait. The sampler is a child of the coordinator's own process and stops when the wave closes (no orphan).
+    - **Resource sampling — a SHIPPED plugin script, not an operator script (owner, 2026-10-05: "s2-sampler.sh must be in
+      the plugin"):** `loomwright/scripts/lane-sampler.sh` (port of the S2 prototype `s2-sampler.sh`, bash 3.2 / BSD safe,
+      Linux equivalents for `vm_stat`/`sysctl`), started by the coordinator as its own child when a wave starts and stopped
+      when the wave closes (no orphan, no session dependency). Every 10 s it appends one line to `<run_id>.fleet.log`:
+      CI-slot holders/waiters (`ci-slot.sh status`), load average, swap used, free memory, and per lane the summed RSS of
+      every process whose working directory is in that lane (match by cwd, NOT argv — `claude -p`'s argv has no lane path;
+      the S2 prototype had to be fixed for this). `lane-status --resources` prints the latest line per lane plus the wave's
+      peak; the wave-close summary (06) reports peak memory and CI-slot wait.
     - **Memory guard:** when free memory stays below a threshold (and swap grows) for N samples, `lane-status` shows
       `memory_pressure`, the coordinator stops launching new work (no new lanes, no new `ci-local` slots beyond the ones
       held), notifies the owner, and never kills a lane by itself. S2 started with ~100 MB free and 4.4 GB swap already
       in use on a 24 GB Mac, so this is the likely first limit at 5–10 lanes.
-    - **Keep-awake for the wave (optional add-on, OS-specific, P9):** on macOS the coordinator may hold
-      `caffeinate -i -w <coordinator pid>` for the wave (released automatically when the coordinator exits; never a
-      timer-only hold that outlives it). It requires the owner's consent once per wave and is fail-safe (if refused or
-      unavailable, record it and continue; a closed lid still sleeps). Other OSes: equivalent or nothing.
+    - **Keep-awake: SUGGESTED, not run (owner, 2026-10-05: "keep awake should be optional or suggest, might ask user to
+      run").** Default: when a wave starts, the coordinator prints a one-line suggestion with the exact command for the owner
+      to run themselves — macOS `caffeinate -i -w <coordinator pid>` (ends with the coordinator; never a timer-only hold that
+      outlives the wave), other OSes their equivalent or nothing — plus the reminder that a closed lid still sleeps.
+      `lane-status` shows `keep-awake: not held` until it sees a holder. Opt-in only (`--keep-awake` flag or project config):
+      the coordinator starts it itself as its own child. Never started silently, never required: a wave runs the same without
+      it (P9).
     - **Tests:** sampler attribution by cwd on a fixture process tree; the sampler stops with the coordinator; the memory
-      guard trips on a fixture series and blocks a new launch; keep-awake refused ⇒ the wave still runs and records it.
+      guard trips on a fixture series and blocks a new launch; with no `--keep-awake` the coordinator only prints the suggestion and
+      starts no keep-awake process; with it, the holder is the coordinator's child and exits with it.
 
 ## Non-goals
 Merging and the release bump (item 06). More than one wave at once. Lanes on other machines. A `-runner` agent.
