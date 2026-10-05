@@ -576,6 +576,62 @@ else
 fi
 
 echo ""
+echo "==== Unwritable ledger / audit log: hook stderr stays clean ===="
+
+# A command-level `cmd >> F 2>/dev/null` does NOT silence the shell's own
+# redirect failure (bash opens `>> F` before applying `2>/dev/null` to cmd), so
+# a directory/unwritable ledger or notifications.log leaked
+# `line N: …: Is a directory` / `Permission denied` to hook stderr. The SUT
+# brace-groups each fallible write; these cases pin that. SB_BARE (no notifier)
+# keeps the pre-existing notifier stderr→notifications.log redirects out of play.
+# assert_stderr_clean <label> — $ERRFILE carries no shell redirect diagnostic.
+assert_stderr_clean() {
+  if grep -qE 'Is a directory|Permission denied|line [0-9]+:' "$ERRFILE" 2>/dev/null; then
+    fail "$1  stderr: $(tr '\n' ' ' < "$ERRFILE")"
+  else
+    pass "$1"
+  fi
+}
+
+# Case U1: ledger AND notifications.log are directories → first-sight ledger
+# append and the notify audit append both fail; exit 0, stderr clean.
+U1_WD="$TMP_ROOT/wd-$((CASE_N + 1))"
+mkdir -p "$U1_WD/.supervisor/logs/.notified-ids" "$U1_WD/.supervisor/logs/notifications.log"
+run_sut "$SB_BARE" "$(ask_payload "s2dtest-u1" "toolu_u1")"
+assert_eq "U1 runner reused the seeded dir" "$U1_WD" "$WD"
+assert_eq "U1 directory ledger + directory audit log → exit 0" "0" "$RC"
+assert_stderr_clean "U1 directory ledger + directory audit log → no redirect diagnostic on stderr"
+
+# Case U2: the id IS in a readable ledger (replay path) but notifications.log
+# is a directory → the skip-replay audit append fails; exit 0, stderr clean.
+U2_WD="$TMP_ROOT/wd-$((CASE_N + 1))"
+mkdir -p "$U2_WD/.supervisor/logs/notifications.log"
+printf 'toolu_u2\n' > "$U2_WD/.supervisor/logs/.notified-ids"
+run_sut "$SB_BARE" "$(ask_payload "s2dtest-u2" "toolu_u2")"
+assert_eq "U2 runner reused the seeded dir" "$U2_WD" "$WD"
+assert_eq "U2 replay with a directory audit log → exit 0" "0" "$RC"
+assert_stderr_clean "U2 replay with a directory audit log → no redirect diagnostic on stderr"
+
+# Case U3: the logs dir itself is unwritable (Permission denied on the new
+# ledger and the new audit log). The pre-existing debounce file is seeded
+# writable so its (out-of-scope) write cannot be the source. Root ignores the
+# mode bits, so skip there.
+if [ "$(id -u 2>/dev/null || echo 0)" = "0" ]; then
+  skip "U3 unwritable logs dir (running as root — mode bits not enforced)"
+else
+  U3_WD="$TMP_ROOT/wd-$((CASE_N + 1))"
+  mkdir -p "$U3_WD/.supervisor/logs"
+  : > "$U3_WD/.supervisor/logs/.notify-debounce"
+  chmod 555 "$U3_WD/.supervisor/logs"
+  run_sut "$SB_BARE" "$(ask_payload "s2dtest-u3" "toolu_u3")"
+  chmod 755 "$U3_WD/.supervisor/logs"
+  assert_eq "U3 runner reused the seeded dir" "$U3_WD" "$WD"
+  assert_eq "U3 unwritable logs dir → exit 0" "0" "$RC"
+  assert_stderr_clean "U3 unwritable logs dir → no redirect diagnostic on stderr"
+  assert_file_absent "U3 unwritable logs dir → no ledger written" "$WD/.supervisor/logs/.notified-ids"
+fi
+
+echo ""
 TOTAL=$((PASS_COUNT + FAIL_COUNT))
 echo "=========================================="
 echo "RESULT  total=$TOTAL  passed=$PASS_COUNT  failed=$FAIL_COUNT  skipped=$SKIP_COUNT"

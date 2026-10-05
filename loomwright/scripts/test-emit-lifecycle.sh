@@ -56,6 +56,8 @@
 #   28. REAL HOOK ORDER: notify-desktop.sh THEN emit-lifecycle.sh on the same
 #       payload, same cwd, twice -> one notify audit line + one skip, and one
 #       row (a ledger shared between the two scripts would drop the row)
+#   29. a directory / read-only .lifecycle-asked-ids -> exit 0, the row is
+#       still written, and no shell redirect diagnostic reaches stderr
 #
 # EXIT: 0 on full pass, 1 on any failed assertion.
 
@@ -564,6 +566,44 @@ NLOG28="$REPO28/.supervisor/logs/notifications.log"
 assert_eq "case28 banner decided once (1 notify audit line)" "1" "$(count_fixed ' notify group=loomwright-sid-case tool_use_id=toolu_case28' "$NLOG28")"
 assert_eq "case28 replay skipped by notify-desktop (1 skip line)" "1" "$(count_fixed 'skip replay tool_use_id=toolu_case28' "$NLOG28")"
 assert_eq "case28 exactly 1 waiting/ask_user row (first ask NOT dropped)" "1" "$(ask_rows "$REPO28/.supervisor/logs/sid-case28.jsonl")"
+
+echo "== 29. directory / read-only ask ledger -> exit 0, row written, stderr clean =="
+# A command-level `cmd >> F 2>/dev/null` does NOT silence the shell's own
+# redirect failure, so a directory/unwritable ledger leaked `line N: …: Is a
+# directory` / `Permission denied` to hook stderr. run_lifecycle captures
+# stderr (2>&1) into its output, so the diagnostic would show up there. The
+# logs dir itself stays writable: the ledger append only runs after the row
+# append succeeded, so an unwritable logs dir never reaches the ledger.
+no_redirect_diag() {
+  if grep -qE 'Is a directory|Permission denied|line [0-9]+:' <<<"$2"; then
+    no "$1  output: $(printf '%s' "$2" | tr '\n' ' ')"
+  else
+    ok "$1"
+  fi
+}
+REPO29="$(init_repo "" 1)"
+mkdir -p "$REPO29/.supervisor/logs/.lifecycle-asked-ids"
+P29="$PAYLOAD_DIR/p29.json"
+jq -n '{session_id:"sid-case29", tool_use_id:"toolu_case29"}' > "$P29"
+OUT29="$(run_lifecycle "$REPO29" "$P29" waiting ask_user)"
+assert_eq "case29 directory ledger exit 0" "0" "$(get_rc "$OUT29")"
+no_redirect_diag "case29 directory ledger -> no redirect diagnostic on stderr" "$OUT29"
+assert_eq "case29 directory ledger -> the row is still written" "1" "$(ask_rows "$REPO29/.supervisor/logs/sid-case29.jsonl")"
+if [ "$(id -u 2>/dev/null || echo 0)" = "0" ]; then
+  echo "  skip: case29 read-only ledger (running as root — mode bits not enforced)"
+else
+  REPO29R="$(init_repo "" 1)"
+  mkdir -p "$REPO29R/.supervisor/logs"
+  printf 'toolu_other\n' > "$REPO29R/.supervisor/logs/.lifecycle-asked-ids"
+  chmod 444 "$REPO29R/.supervisor/logs/.lifecycle-asked-ids"
+  P29R="$PAYLOAD_DIR/p29r.json"
+  jq -n '{session_id:"sid-case29r", tool_use_id:"toolu_case29r"}' > "$P29R"
+  OUT29R="$(run_lifecycle "$REPO29R" "$P29R" waiting ask_user)"
+  chmod 644 "$REPO29R/.supervisor/logs/.lifecycle-asked-ids"
+  assert_eq "case29 read-only ledger exit 0" "0" "$(get_rc "$OUT29R")"
+  no_redirect_diag "case29 read-only ledger -> no redirect diagnostic on stderr" "$OUT29R"
+  assert_eq "case29 read-only ledger -> the row is still written" "1" "$(ask_rows "$REPO29R/.supervisor/logs/sid-case29r.jsonl")"
+fi
 
 echo "== real repo .supervisor/logs untouched =="
 assert_eq "real logs snapshot unchanged" "$REAL_BEFORE" "$(snapshot_real)"

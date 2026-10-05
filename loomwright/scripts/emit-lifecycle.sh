@@ -414,12 +414,17 @@ printf '%s\n' "$LINE" >> "$LOG_FILE" 2>/dev/null || exit 0
 
 # Record the ask's id only now that its row exists, then bound the ledger to
 # the newest 200 ids ($$-suffixed temp in the same dir → same-fs rename).
+# Each fallible redirect is brace-grouped: a command-level `2>/dev/null` is
+# applied only AFTER the shell opens `>>`/`>`, so a directory or unwritable
+# ledger would leak bash's own `line N: …: Is a directory` / `Permission
+# denied` to hook stderr. The group's redirect covers the failing open itself
+# (same convention as build-floor.sh's floor.json write).
 if [ -n "$ASK_TOOL_USE_ID" ]; then
-  if printf '%s\n' "$ASK_TOOL_USE_ID" >> "$ASK_IDS_FILE" 2>/dev/null; then
-    if tail -n 200 "$ASK_IDS_FILE" > "$ASK_IDS_FILE.tmp.$$" 2>/dev/null; then
-      mv -f "$ASK_IDS_FILE.tmp.$$" "$ASK_IDS_FILE" 2>/dev/null || true
+  if { printf '%s\n' "$ASK_TOOL_USE_ID" >> "$ASK_IDS_FILE"; } 2>/dev/null; then
+    if { tail -n 200 "$ASK_IDS_FILE" > "$ASK_IDS_FILE.tmp.$$"; } 2>/dev/null; then
+      { mv -f "$ASK_IDS_FILE.tmp.$$" "$ASK_IDS_FILE"; } 2>/dev/null || true
     fi
-    rm -f "$ASK_IDS_FILE.tmp.$$" 2>/dev/null || true
+    { rm -f "$ASK_IDS_FILE.tmp.$$"; } 2>/dev/null || true
   fi
 fi
 

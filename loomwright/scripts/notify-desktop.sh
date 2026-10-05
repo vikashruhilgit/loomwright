@@ -163,16 +163,21 @@ if [ "$HOOK_EVENT" = "PreToolUse" ] && [ "$TOOL_NAME" = "AskUserQuestion" ]; the
 fi
 if [ -n "$TOOL_USE_ID" ]; then
   if [ -f "$NOTIFIED_IDS_FILE" ] && grep -qxF -e "$TOOL_USE_ID" "$NOTIFIED_IDS_FILE" 2>/dev/null; then
-    printf '%s skip replay tool_use_id=%s\n' "$(utc_ts)" "$TOOL_USE_ID" >> "$NOTIFY_LOG" 2>/dev/null || true
+    { printf '%s skip replay tool_use_id=%s\n' "$(utc_ts)" "$TOOL_USE_ID" >> "$NOTIFY_LOG"; } 2>/dev/null || true
     exit 0
   fi
   # Record at first sight, then bound to the newest LEDGER_MAX ids ($$-suffixed
   # temp file in the same dir, so the mv is a same-filesystem rename).
-  if printf '%s\n' "$TOOL_USE_ID" >> "$NOTIFIED_IDS_FILE" 2>/dev/null; then
-    if tail -n "$LEDGER_MAX" "$NOTIFIED_IDS_FILE" > "$NOTIFIED_IDS_FILE.tmp.$$" 2>/dev/null; then
-      mv -f "$NOTIFIED_IDS_FILE.tmp.$$" "$NOTIFIED_IDS_FILE" 2>/dev/null || true
+  # Each fallible redirect is brace-grouped: a command-level `2>/dev/null` is
+  # applied only AFTER the shell opens `>>`/`>`, so a directory or unwritable
+  # ledger would leak bash's own `line N: …: Is a directory` / `Permission
+  # denied` to hook stderr. The group's redirect covers the failing open itself
+  # (same convention as build-floor.sh's floor.json write).
+  if { printf '%s\n' "$TOOL_USE_ID" >> "$NOTIFIED_IDS_FILE"; } 2>/dev/null; then
+    if { tail -n "$LEDGER_MAX" "$NOTIFIED_IDS_FILE" > "$NOTIFIED_IDS_FILE.tmp.$$"; } 2>/dev/null; then
+      { mv -f "$NOTIFIED_IDS_FILE.tmp.$$" "$NOTIFIED_IDS_FILE"; } 2>/dev/null || true
     fi
-    rm -f "$NOTIFIED_IDS_FILE.tmp.$$" 2>/dev/null || true
+    { rm -f "$NOTIFIED_IDS_FILE.tmp.$$"; } 2>/dev/null || true
   fi
 fi
 
@@ -329,8 +334,9 @@ osascript_escape() {
 # Audit line (every host): the decision to notify, the group it lands in and
 # the question id — the observable evidence for the group and replay logic,
 # testable without any notifier installed. NOTIFY_LOG is set above the replay
-# de-duplication block.
-printf '%s notify group=%s tool_use_id=%s\n' "$(utc_ts)" "$TN_GROUP" "${TOOL_USE_ID:--}" >> "$NOTIFY_LOG" 2>/dev/null || true
+# de-duplication block. Brace-grouped so an unwritable/directory log cannot
+# leak the shell's own redirect diagnostic (see the ledger write above).
+{ printf '%s notify group=%s tool_use_id=%s\n' "$(utc_ts)" "$TN_GROUP" "${TOOL_USE_ID:--}" >> "$NOTIFY_LOG"; } 2>/dev/null || true
 
 # Portable timeout guard (v14.1.0 hardening — red-team W4). A wedged notification
 # daemon or a first-run permission interaction must never block the agent loop.
