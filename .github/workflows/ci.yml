@@ -58,8 +58,17 @@ jobs:
       # `scripts/` is not auto-included. A mutation control CI never invokes is not a
       # control — which is the exact failure this gate exists to end. No `|| true`:
       # fail-CLOSED correctness gate (CLAUDE.md §"Failure-Mode Invariants").
+      # The gate's raise_check compares the manifest's allowances with main's, so main must be
+      # resolvable here: actions/checkout fetches only the PR ref at depth 1. The explicit refspec
+      # writes a DEDICATED ref (not refs/remotes/origin/main), so no later step that consults
+      # origin/main changes behaviour, and VENDOR_COUPLING_REQUIRE_BASE=1 makes a skipped raise
+      # check an ERROR, so a broken fetch fails this step instead of skipping it forever.
       - name: Check vendor-coupling ratchet (portability gate)
+        env:
+          VENDOR_COUPLING_BASE: refs/vendor-coupling/base
+          VENDOR_COUPLING_REQUIRE_BASE: "1"
         run: |
+          git fetch --no-tags --depth=1 origin +refs/heads/main:refs/vendor-coupling/base
           bash scripts/test-check-vendor-coupling.sh
           bash scripts/check-vendor-coupling.sh
 

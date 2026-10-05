@@ -238,6 +238,14 @@ make_curation_pending() {
   printf '%s' '{"curation":{"thresholds":{"dreaming":1,"insights":1}}}' > "$r/.supervisor/config.json"
   echo '{"event":"session_end"}' > "$r/.supervisor/logs/s1.jsonl"
   echo '{"event":"session_end"}' > "$r/.supervisor/logs/s2.jsonl"
+  # Pin DISTINCT mtimes. The hook names its "latest" log with `ls -t`, and two
+  # files written back to back can share an mtime (coarse filesystem timestamp
+  # ticks), in which case `ls -t` falls back to name order — so one fresh repo
+  # named s1.jsonl and the next s2.jsonl, and the byte-for-byte old-vs-new
+  # comparisons ((p-b'), (x-b')) flaked (CI run 37255975885). Fixed, distinct
+  # stamps make s2 the latest in every repo.
+  touch -t 202601010000.00 "$r/.supervisor/logs/s1.jsonl"
+  touch -t 202601010000.01 "$r/.supervisor/logs/s2.jsonl"
 }
 
 # Observability-probe tripwire fixture, shared by (i) and (r). VENDOR-COUPLING

@@ -203,15 +203,15 @@ xwait() {   # xwait FILE — poll (max 3 s) until FILE is non-empty
   while [ ! -s "$1" ] && [ "$i" -lt 30 ]; do sleep 0.1; i=$((i + 1)); done
 }
 mixed_ok() {   # mixed_ok SUT — exit 0 iff every (X) property holds; XWHY says which failed
-  local s="$1" ha hb hn w1 rc=0
+  local s="$1" ha hb hn w1 w2 rc=0
   XWHY=""; rm -f "$tmp"/x.*
   live; ha=$LIVE; live; hb=$LIVE; live; hn=$LIVE
   at "$tmp/solo2" "$s" -- acquire xa --pid "$ha" --slots 2 >/dev/null 2>&1
-  (cd "$tmp/solo2" && bash "$s" acquire xn --pid "$hn" --slots 1 --wait 30 >"$tmp/x.n" 2>/dev/null) &
+  (cd "$tmp/solo2" && exec bash "$s" acquire xn --pid "$hn" --slots 1 --wait 30 >"$tmp/x.n" 2>/dev/null) &
   w1=$!; pids="$pids $w1"
   nwait 1
-  (cd "$tmp/solo2" && bash "$s" acquire xb --pid "$hb" --slots 2 --wait 10 >"$tmp/x.b" 2>/dev/null) &
-  pids="$pids $!"
+  (cd "$tmp/solo2" && exec bash "$s" acquire xb --pid "$hb" --slots 2 --wait 10 >"$tmp/x.b" 2>/dev/null) &
+  w2=$!; pids="$pids $w2"
   xwait "$tmp/x.b"
   if [ "$(cat "$tmp/x.b" 2>/dev/null)" != "slot=2 jobs=6" ]; then rc=1; XWHY="N=2 waiter did not get slot 2 within 3 s (got '$(cat "$tmp/x.b" 2>/dev/null)')"
   elif [ -s "$tmp/x.n" ] || [ "$(at "$tmp/solo2" -- status --json | jq -c '[.waiters[] | [.pid, .slots]]')" != "[[$hn,1]]" ]; then
@@ -226,7 +226,13 @@ mixed_ok() {   # mixed_ok SUT — exit 0 iff every (X) property holds; XWHY says
       [ "$(cat "$tmp/x.n")" = "slot=1 jobs=12" ] || { rc=1; XWHY="N=1 waiter did not get slot 1 once idle: '$(cat "$tmp/x.n")'"; }
     fi
   fi
-  kill "$w1" 2>/dev/null; wait "$w1" 2>/dev/null
+  # Reap BOTH waiters before returning — `exec` above makes each $! the acquire
+  # process itself, so the TERM reaches it (killing a plain `( … )` subshell
+  # orphans its child). Against the mutant the N=2 waiter never gets its slot and
+  # used to keep polling (and taking the counter mutex) for the rest of its
+  # --wait 10, into the next leg: (P) then found a live mutex.lnk where it plants
+  # its garbage one (CI run 37252976836, "ln: ... File exists").
+  kill "$w1" "$w2" 2>/dev/null; wait "$w1" 2>/dev/null; wait "$w2" 2>/dev/null
   for p in $ha $hb $hn; do at "$tmp/solo2" -- release --pid "$p"; kill "$p" 2>/dev/null; wait "$p" 2>/dev/null; done
   return "$rc"
 }
@@ -246,6 +252,9 @@ rm -rf "$ds/tickets/"* "$ds/slots/"*
 
 # --- (P) no stranded mutex ----------------------------------------------------------------------------
 live; hp=$LIVE
+# The plant must land: a pre-existing mutex.lnk (a process from an earlier leg
+# still running) would make this leg measure something else entirely.
+if [ -e "$ds/mutex.lnk" ] || [ -L "$ds/mutex.lnk" ]; then no "(P) precondition: a mutex.lnk already exists before the plant ($(readlink "$ds/mutex.lnk"))"; fi
 ln -s garbage "$ds/mutex.lnk"; mkdir "$ds/mutex"
 t0=$(date +%s)
 got="$(at "$tmp/solo2" -- acquire hp --pid "$hp" --wait 2 2>"$tmp/p.err")"; rc=$?
