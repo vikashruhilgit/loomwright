@@ -18,7 +18,7 @@
 # (outside the explicitly-stubbed `gate-eval` MERGE branch) never calls
 # `gh pr merge` — and `brief-repair`, whose only write is the brief lifecycle
 # move performed by `reconcile-jobs.sh --repair` under `.supervisor/jobs/`,
-# never a source-repo or git mutation. The ONE carve-out: `trail-pr`/`closeout`/`trail-unstage`/`trail-gate`/`finalize-empty`
+# never a source-repo or git mutation. The ONE carve-out: `trail-pr`/`closeout`/`closeout-others`/`trail-unstage`/`trail-gate`/`finalize-empty`
 # (and the read-only `sidecar-check` beside them) are delegated to the sibling
 # `automate-trail.sh`, which is a git/`gh pr create` mutator bounded to this
 # run's trail branch, this PR's local branch/worktree, and — in the primary
@@ -54,6 +54,8 @@
 #   sidecar-check    <path>                             # §6 trail: delegated to automate-trail.sh — `ok <path>` / `fail <path>: <reason>` (RESULT_SCHEMAS key-table shape check of a result sidecar); always exits 0
 #   trail-pr         <runfile> [--reason <reason>]      # §6 "Trail PR after merge and at run end": delegated to automate-trail.sh — called only by closeout, at ## Status: done, and on a skip/abandon check-off (never at a park); commits this run's explicit trail paths as ONE PR off fresh origin/main, a done-stamped requirement/done brief only when its PR reads merged; one line (opened|pushed|skipped); always exits 0
 #   closeout         <runfile> <item> <pr_url> [--session-id <sid>]  # §6 post-merge close-out: delegated to automate-trail.sh; always exits 0
+#   closeout-classify [--run <id> --item <p> --pr <u>] [--record <rf>]  # §6 step 1 close-out leftover gate: reads ONE closeout invocation's output on stdin, classifies its `closeout: ` lines against CLOSEOUT_TABLE (a `kept` line is always a leftover; an unknown line is a leftover) ⇒ `complete` or one `leftover\t<run>\t<item>\t<pr>\t<step>\t<detail>` row per leftover; --record appends `closeout: nothing to close out — <item>` (once per item per run) on a complete close-out that changed nothing; exit 0 (usage error 1)
+#   closeout-others  <automate_dir> [--record <runfile>]  # §4 start order: delegated to automate-trail.sh — closeout of every OTHER run whose ## Current names a not-done item with a merged PR (own lock, own trail; mode-off trail-unstage), its classify answer, and one `cross-run closeout <run_id> <item>: …` record line (no PR URL) appended to --record's run file; always exits 0
 #   finalize-empty   <runfile>                          # §3/§4 step 1: delegated to automate-trail.sh — a paused / awaiting_go / remaining-0 / ## Current status-done run ⇒ run lock, `## Status: done` + pause_reason null, `auto-finalized` Progress line, trail-pr --reason done, mode-off trail-unstage; else one `skipped — <reason>` line; always exits 0
 #   dismissed-drafts <runfile> <item> <pr_url> [--after-fix-now]  # §6 "Dismissed-findings decision step (before the park)": delegated to automate-dismissed.sh — one propose-only draft per dismissed finding over the threshold (+ one undecided summary draft per item) in proposed/, content-addressed names, decisions never reset; TSV `draft` rows + one summary line; always exits 0
 #   dismissed-decide <runfile> <draft_path> <fix-now|follow-up|drop>  # §6 decision step / next PICK: delegated to automate-dismissed.sh — records the decision in <run_id>.dismissed-decisions, rewrites (follow-up) or deletes (drop/fix-now) the draft, one Progress line; refuses a foreign path; always exits 0
@@ -916,6 +918,127 @@ reconcile_item() {
   fi
   # CLOSED-unmerged or unknown.
   echo "gone"
+}
+
+# --------------------------------------------------------------------------- #
+# §6 step 1 — close-out leftover gate (closeout-classify)
+# --------------------------------------------------------------------------- #
+
+# CLOSEOUT_TABLE — EVERY `closeout: …` line automate-trail.sh's closeout can print
+# (its guards, _sync_primary's SYNC_SKIP reasons, steps 3a/4/3b/5/7/7b), as
+# `<class>|<step>|<bash case pattern over the text after "closeout: ">`, first
+# match wins. test-automate-trail.sh extracts every closeout string template from
+# automate-trail.sh and fails when one matches no row here (a new string must be
+# classified on purpose, never fall through silently). A line matching NO row is a
+# leftover (`unknown`), and a line containing `kept` anywhere is a leftover
+# whatever its row says (closeout_classify applies that precedence).
+CLOSEOUT_TABLE='complete|worktree|removed — worktree *
+complete|branch|removed — branch *
+complete|sync|synced — *
+complete|stamp|stamped — *
+complete|checkoff|checked — *
+complete|current|reconciled — *
+complete|worktree|skipped — already removed (no worktree on *)
+complete|sync|skipped — already synced (*)
+complete|branch|skipped — already deleted (no local *)
+complete|stamp|skipped — already stamped
+complete|checkoff|skipped — already checked off
+complete|current|skipped — ## Current already done
+complete|current|skipped — ## Current is * not this item/PR
+leftover|worktree|skipped — kept worktree *
+leftover|worktree|skipped — head branch unresolved *
+leftover|worktree|skipped — head branch is the base branch
+leftover|sync|skipped — primary checkout is on *
+leftover|sync|skipped — uncommitted changes outside the trail paths *
+leftover|sync|skipped — git fetch failed
+leftover|sync|skipped — git checkout * refused
+leftover|sync|skipped — git pull --ff-only refused *
+leftover|branch|skipped — branch unresolved
+leftover|branch|skipped — branch checked out in primary *
+leftover|branch|skipped — local tip * != merged head *
+leftover|branch|skipped — git branch -D * refused *
+leftover|stamp|skipped — no done brief
+leftover|stamp|skipped — requirement not writable
+leftover|stamp|skipped — requirement * not found
+leftover|checkoff|skipped — queue-checkoff failed
+leftover|checkoff|skipped — * not in ## Queue
+leftover|current|skipped — ## Current not reconciled *
+leftover|current|skipped — no ## Current item line
+leftover|current|skipped — ## Current runfile-write refused
+leftover|lock|skipped — run lock held by *
+leftover|gate|skipped — pr not merged *
+leftover|guard|skipped — gh unavailable
+leftover|guard|skipped — git unavailable
+leftover|guard|skipped — jq unavailable
+leftover|guard|skipped — missing argument
+leftover|guard|skipped — run file not found
+leftover|guard|skipped — not a git checkout
+leftover|guard|skipped — run file outside the checkout
+leftover|guard|skipped — cannot enter checkout'
+
+# _co_classify_line <text after "closeout: "> — prints `<class><TAB><step>` from
+# the first CLOSEOUT_TABLE row whose pattern matches; `leftover<TAB>unknown` when none.
+_co_classify_line() {
+  local t="$1" cls step pat
+  while IFS='|' read -r cls step pat; do
+    [ -n "$cls" ] || continue
+    # shellcheck disable=SC2254 # the pattern is the point
+    case "$t" in $pat) printf '%s\t%s\n' "$cls" "$step"; return 0 ;; esac
+  done <<EOF
+$CLOSEOUT_TABLE
+EOF
+  printf 'leftover\tunknown\n'
+}
+
+# closeout-classify [--run <run_id> --item <path> --pr <url>] [--record <runfile>]
+# SKILL §1.5 / §6 step 1 "Close-out leftover gate" is the spec. Reads ONE closeout
+# invocation's output on stdin and classifies ONLY its `closeout: ` lines (the
+# passed-through `brief-repair:` / `trail-pr:` lines are ignored, except that a
+# non-skip brief-repair line counts as a change for --record). Prints `complete`
+# or one `leftover<TAB><run>\t<item>\t<pr>\t<step>\t<detail>` row per leftover
+# (`-` for an omitted value). Input with no `closeout:` line ⇒ one leftover row
+# (step `none`): nothing proves the close-out ran. --record <runfile>: on
+# `complete` with no changing step, progress-append `<ts> closeout: nothing to
+# close out — <item>` unless that exact line (after its one leading timestamp
+# token) is already in ## Progress — at most one per item per run. Exit 0; a
+# usage error exits 1 (the caller reads anything but `complete` as a leftover).
+closeout_classify() {
+  local run="-" item="-" pr="-" rec=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --run|--item|--pr|--record)
+        [ "$#" -ge 2 ] && [ -n "$2" ] || die "closeout-classify: $1 needs a value"
+        case "$1" in --run) run="$2" ;; --item) item="$2" ;; --pr) pr="$2" ;; --record) rec="$2" ;; esac
+        shift 2 ;;
+      *) die "closeout-classify: unknown argument '$1' (usage: closeout-classify [--run <run_id> --item <path> --pr <url>] [--record <runfile>])" ;;
+    esac
+  done
+  local tab=$'\t' line t r cls step n=0 changed=0 rows=""
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      "brief-repair: "*) case "$line" in *"skipped —"*) ;; *) changed=1 ;; esac; continue ;;
+      "closeout: "*) ;;
+      *) continue ;;
+    esac
+    n=$((n + 1)); t="${line#closeout: }"
+    r="$(_co_classify_line "$t")"; cls="${r%%"$tab"*}"; step="${r#*"$tab"}"
+    case "$t" in *kept*) cls=leftover ;; esac
+    case "$t" in "removed — "*|"stamped — "*|"checked — "*|"reconciled — "*) changed=1 ;; esac
+    [ "$cls" = leftover ] && rows="${rows}leftover$tab$run$tab$item$tab$pr$tab$step$tab${t//$tab/ }"$'\n'
+  done
+  [ "$n" -gt 0 ] || rows="leftover$tab$run$tab$item$tab$pr${tab}none${tab}no closeout: line in the input"$'\n'
+  if [ -n "$rows" ]; then printf '%s' "$rows"; return 0; fi
+  echo "complete"
+  if [ -n "$rec" ] && [ "$item" != "-" ] && [ "$changed" = 0 ] && [ -f "$rec" ]; then
+    local want="closeout: nothing to close out — $item"
+    if ! _progress_block "$rec" | AH_W="$want" awk '
+        BEGIN { w = ENVIRON["AH_W"] }
+        { l = $0; sub(/^- /, "", l); if (l == w) f = 1; else { sub(/^[^ ]+ /, "", l); if (l == w) f = 1 } }
+        END { exit !f }'; then
+      ( progress_append "$rec" "$(date -u +%Y-%m-%dT%H:%M:%SZ) $want" ) >/dev/null 2>&1 || true
+    fi
+  fi
+  return 0
 }
 
 # --------------------------------------------------------------------------- #
@@ -3172,6 +3295,7 @@ main() {
     queue-checkoff)  queue_checkoff "$@" ;;
     current-set)     current_set "$@" ;;
     current-rebuild) current_rebuild "$@" ;;
+    closeout-classify) closeout_classify "$@" ;;
     remaining)       remaining "$@" ;;
     ceiling-check)   ceiling_check "$@" ;;
     resolve-folder)  resolve_folder "$@" ;;
@@ -3189,6 +3313,7 @@ main() {
     # read-only carve-out named in the header) — one mover per concern.
     sidecar-check|trail-pr|closeout|trail-unstage|trail-gate) exec bash "$(dirname "$0")/automate-trail.sh" "$cmd" "$@" ;;
     finalize-empty) exec bash "$(dirname "$0")/automate-trail.sh" "$cmd" "$@" ;;
+    closeout-others) exec bash "$(dirname "$0")/automate-trail.sh" "$cmd" "$@" ;;
     # Dismissed-finding drafts (propose-only writes, never git) — the sibling
     # automate-dismissed.sh, the second carve-out named in the header.
     dismissed-drafts)  exec bash "$(dirname "$0")/automate-dismissed.sh" "$cmd" "$@" ;;
