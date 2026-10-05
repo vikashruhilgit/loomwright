@@ -20,10 +20,11 @@
 # SAME parser but no disk check, printing {"subtask_id":"<id>","status":"parsed","provides_count":N,
 # "source":"verify-provides.sh"} or the usual `unverifiable` object. It answers "can the gate find
 # this subtask's contract?" before any file exists — the question Plan Reviewer (no Bash) cannot run.
-# When an entry's `name` cannot be read faithfully (an unterminated quote, or non-space text between
-# the closing quote and the next `,`/`}`), the object gains an additive `parse_warnings` array of
-# strings, one per such entry: "<path>: name checked as `<reading>` (<why>)" — Plan Reviewer
-# Criterion 12 blocks on it. With no such entry the key is absent and the object is unchanged.
+# When an entry's `kind`, `path` or `name` cannot be read faithfully (an unterminated quote, or
+# non-space text between the closing quote and the next `,`/`}`), the object gains an additive
+# `parse_warnings` array of strings, one per affected field, in kind/path/name order:
+# "<path>: <field> checked as `<reading>` (<why>)" — Plan Reviewer Criterion 12 blocks on it. With
+# no such field the key is absent and the object is unchanged.
 #
 # Output (ONE JSON object on stdout, always exit 0):
 #   {"subtask_id":"<id>",
@@ -189,8 +190,9 @@ fi
 
 # ---------------------------------------------------------------------------
 # ONE awk pass over the brief. Prints a first status line — FOUND / EMPTY / NOT_FOUND<TAB><anchors
-# seen> / NO_CONTRACTS — then, for FOUND, one `kind<TAB>path<TAB>name<TAB>name-warning` line per
-# provides entry (the warning column is empty unless field() could not read the name faithfully).
+# seen> / NO_CONTRACTS — then, for FOUND, one `kind<TAB>path<TAB>name<TAB>kind-warn<TAB>path-warn<TAB>
+# name-warn` line per provides entry (a warning column is empty unless field() could not read that
+# field faithfully; warnings are fixed texts, never containing a TAB).
 # The id is passed as DATA (-v) and matched with index()/substr(), never interpolated into a regex.
 # ---------------------------------------------------------------------------
 parse_brief() {
@@ -306,9 +308,10 @@ parse_brief() {
         sub(/^[[:space:]]*-[[:space:]]*/, "", entry)
         if (match(entry, /\}[[:space:]]*#/)) entry = substr(entry, 1, RSTART)
         else if (match(entry, /\}[^}]*$/)) entry = substr(entry, 1, RSTART)
-        k = field(entry, "kind"); p = field(entry, "path"); nm = field(entry, "name"); nw = fwarn
+        # every field() call resets fwarn, so read it after EACH call
+        k = field(entry, "kind"); kw = fwarn; p = field(entry, "path"); pw = fwarn; nm = field(entry, "name"); nw = fwarn
         gsub(/\t/, " ", k); gsub(/\t/, " ", p); gsub(/\t/, " ", nm)
-        if (k != "" || p != "") { n++; out[n] = k "\t" p "\t" nm "\t" nw }
+        if (k != "" || p != "") { n++; out[n] = k "\t" p "\t" nm "\t" kw "\t" pw "\t" nw }
         next
       }
       if (line ~ /^[[:space:]]*#/ || line ~ /^[[:space:]]*$/) next   # comment / blank inside the list
@@ -340,6 +343,12 @@ grep_literal() {
 }
 
 TAB="$(printf '\t')"
+# take_col — pop the first TAB-separated column of $cols into $col. Parameter expansion, not
+# `IFS=$TAB read` (tab is IFS-whitespace: read collapses empty columns); a missing column reads empty.
+take_col() {
+  col="${cols%%"$TAB"*}"
+  if [ "$col" = "$cols" ]; then cols=""; else cols="${cols#*"$TAB"}"; fi
+}
 status=""
 anchors=""
 sid_n=0
@@ -375,24 +384,24 @@ while IFS= read -r line; do
     status="${line%%"$TAB"*}"
     continue
   fi
-  kind="${line%%"$TAB"*}"
-  rest="${line#*"$TAB"}"
-  path="${rest%%"$TAB"*}"
-  name="${rest#*"$TAB"}"
-  [ "$rest" = "$path" ] && name=""
-  nwarn="${name#*"$TAB"}"
-  [ "$nwarn" = "$name" ] && nwarn=""
-  name="${name%%"$TAB"*}"
-  if [ -n "$nwarn" ]; then
-    printf '%s: entry %s (%s) name read as `%s` (%s) — check the quoting\n' "$SELF" "$path" "$kind" "$name" "$nwarn" >&2
-  fi
-  if [ "$parse_only" -eq 1 ]; then
-    count=$((count + 1))
-    if [ -n "$nwarn" ]; then
-      warns="$(jq -c --arg w "$path: name checked as \`$name\` ($nwarn)" '. + [$w]' <<<"$warns")" || parse_ok=0
+  cols="$line"
+  take_col; kind="$col"; take_col; path="$col"; take_col; name="$col"
+  take_col; kwarn="$col"; take_col; pwarn="$col"; take_col; nwarn="$col"
+  if [ "$parse_only" -eq 1 ]; then count=$((count + 1)); fi
+  # one stderr note (and, --parse-only, one parse_warnings item) per field read unfaithfully
+  for fld in kind path name; do
+    case "$fld" in
+      kind) fval="$kind"; fwarn="$kwarn" ;;
+      path) fval="$path"; fwarn="$pwarn" ;;
+      *)    fval="$name"; fwarn="$nwarn" ;;
+    esac
+    [ -n "$fwarn" ] || continue
+    printf '%s: entry %s (%s) %s read as `%s` (%s) — check the quoting\n' "$SELF" "$path" "$kind" "$fld" "$fval" "$fwarn" >&2
+    if [ "$parse_only" -eq 1 ]; then
+      warns="$(jq -c --arg w "$path: $fld checked as \`$fval\` ($fwarn)" '. + [$w]' <<<"$warns")" || parse_ok=0
     fi
-    continue
-  fi
+  done
+  if [ "$parse_only" -eq 1 ]; then continue; fi
 
   case "$path" in
     /*) full="$path" ;;

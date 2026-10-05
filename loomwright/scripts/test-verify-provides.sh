@@ -25,9 +25,10 @@
 #             brief anchors as subtask 1, two are ambiguous ⇒ subtask_not_found (H/I); an anchor
 #             with no `provides:` key ⇒ no_contracts, not [] (J); a duplicate anchor resolves to
 #             the one carrying provides (K); `--parse-only` counts entries without disk checks;
-#             quoted names (Q/W, automate-followups-24): `\"` / `\\` escapes in double quotes, none in
+#             quoted names (Q/W/V, automate-followups-24): `\"` / `\\` escapes in double quotes, none in
 #             single quotes, v2-b's PINS= entry verbatim (copy + real file), unterminated quote,
-#             `parse_warnings` present/absent, + a no-escape mutation control.
+#             `parse_warnings` present/absent (one item per unreadable kind/path/name field), + a
+#             no-escape mutation control.
 #   seams   — EM §"v12 outputs_verified gate" cites verify-provides.sh + provides_mismatch +
 #             "regardless of the worker"; Supervisor Single-Agent step 3 AND Sequential gate cite
 #             verify-provides.sh with `--root .` (by anchor, never line number); worker Step 5.5 cites
@@ -484,6 +485,28 @@ valid_json && [ "$(jq_get '.provides_count')" = "3" ] && [ "$(jq_get '.parse_war
 [ "$(jq_get '.parse_warnings[0]')" = 'src/a.ts: name checked as `PINS=` (text after the closing quote)' ] && ok "--parse-only W/1 warning names the path and the parser's reading (trailing text)" || no "--parse-only W/1 warning[0]: $(jq_get '.parse_warnings[0]')"
 [ "$(jq_get '.parse_warnings[1]')" = 'src/a.ts: name checked as `Sym}` (unterminated quote)' ] && ok "--parse-only W/1 warning names the path and the parser's reading (unterminated)" || no "--parse-only W/1 warning[1]: $(jq_get '.parse_warnings[1]')"
 
+# Brief V — kind / path read unfaithfully (review finding: only the name's warning was captured, so an
+# unterminated path quote was counted silently and became a false `missing` at the gate).
+cat > "$TMP/briefV.md" <<'EOF2'
+### Subtask Contracts
+```yaml
+# Subtask 1 — unreadable kind / path
+provides:
+  - {kind: "symbol", path: "src/f.txt\" }
+  - {kind: "symbol"x, path: "src/quote.txt", name: "say"}
+  - {kind: "file",   path: "src/quote.txt"}
+```
+EOF2
+run "$TMP/briefV.md" 1 --parse-only
+valid_json && [ "$(jq_get '.provides_count')" = "3" ] && [ "$(jq_get '.parse_warnings | length')" = "2" ] && ok "--parse-only V/1 ⇒ one parse_warnings item per unreadable kind/path field (the clean entry adds none)" || no "--parse-only V/1: $OUT"
+[ "$(jq_get '.parse_warnings[0]')" = 'src/f.txt\" }: path checked as `src/f.txt\" }` (unterminated quote)' ] && ok "--parse-only V/1 an unterminated path quote ⇒ item naming the path field" || no "--parse-only V/1 warning[0]: $(jq_get '.parse_warnings[0]')"
+[ "$(jq_get '.parse_warnings[1]')" = 'src/quote.txt: kind checked as `symbol` (text after the closing quote)' ] && ok "--parse-only V/1 a broken kind ⇒ item naming the kind field" || no "--parse-only V/1 warning[1]: $(jq_get '.parse_warnings[1]')"
+run "$TMP/briefV.md" 1 --root "$ROOT"
+[ "$(jq_get 'has("parse_warnings")')" = "false" ] && [ "$(jq_get '.outputs_verified | length')" = "3" ] && ok "V/1 the gate object stays parse_warnings-free with kind/path warnings" || no "V/1 gate object: $OUT"
+case "$ERR" in *'path read as `src/f.txt\" }` (unterminated quote)'*'kind read as `symbol` (text after the closing quote)'*) ok "V/1 the gate run names the kind/path quoting problems on stderr" ;; *) no "V/1 stderr: $ERR" ;; esac
+run "$TMP/briefQ.md" 2 --parse-only
+[ "$OUT" = '{"subtask_id":"2","status":"parsed","provides_count":1,"source":"verify-provides.sh"}' ] && ok "--parse-only Q/2 (clean kind/path/name) ⇒ no parse_warnings key" || no "--parse-only Q/2: $OUT"
+
 # MUTATION CONTROL — drop the escape handling in a COPY of the script; the \" case MUST go red.
 MUTQ="$TMP/verify-provides-no-escape.sh"
 sed '/escape-pair (mutation-control anchor)/d' "$SCRIPT" > "$MUTQ"
@@ -631,6 +654,7 @@ grep -q 'verify-provides\.sh' "$FAILDOC" && ok "FAILURE_ESCALATION.md trigger na
 # lines; Criterion 12 blocks an unparseable anchor; both templates name the required anchor.
 lp_1b="$(section "$LAUNCHPAD" '^1b[.] [*][*]Gate-parse check' '^2[.] Spawn Plan Reviewer')"
 grep -q 'verify-provides\.sh.*--parse-only' < <(printf '%s\n' "$lp_1b") && ok "Launch Pad Phase 5.5 action 1b runs verify-provides.sh --parse-only per subtask id" || no "Launch Pad lacks the --parse-only pre-review check"
+grep -q 'parse_warnings' < <(printf '%s\n' "$lp_1b") && ok "Launch Pad Phase 5.5 action 1b fixes a parse_warnings line before spawning" || no "Launch Pad action 1b lacks the parse_warnings pre-spawn fix"
 grep -q -- '--- GATE PARSE ---' "$LAUNCHPAD" && ok "Launch Pad spawn contract carries the GATE PARSE block" || no "Launch Pad spawn contract lacks GATE PARSE"
 c12="$(section "$REVIEWER" '^### 12[.] Inter-Subtask Output Contracts' '^### 13[.]')"
 grep -q 'Gate-parseable anchor' < <(printf '%s\n' "$c12") && grep -q 'GATE PARSE' < <(printf '%s\n' "$c12") && grep -q 'subtask_id: foo-01' < <(printf '%s\n' "$c12") && ok "Criterion 12 requires a gate-parseable anchor, rejects slug keys, and consumes GATE PARSE" || no "Criterion 12 anchor clause missing"
