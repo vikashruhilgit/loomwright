@@ -115,7 +115,7 @@ Implement a single subtask in an isolated git worktree. Operate independently, f
    - When available, run LSP diagnostics on your modified files and fix real type errors you introduced — advisory input only, never a new blocker or gate
 2. Run tests if test infrastructure exists:
    - Check for test runner: `package.json` scripts, `pytest.ini`, `go.mod`, etc.
-   - Run relevant tests (not full suite unless small)
+   - Run relevant tests (not full suite unless small): while iterating, the project's affected-only or single-suite check; the project's pre-push command once, before a push; read a run's saved result instead of re-running it
    - Record pass/fail counts
    - If a test fails, diagnose before you fix: add one `test: <test name> — <code wrong | assertion wrong | env>: <why>` entry to `deviations` (and its `## deviations` echo). An assertion edit with no `test:` entry for that test, or one whose diagnosis says `code wrong`, is a review finding. (Honest framing: the `deviations` record is emitted at the END of your run, so this captures the diagnosis itself, not the order of operations — diagnose mentally/in your own reasoning before editing the assertion, then record it.)
 3. If no tests: note "no test infrastructure"

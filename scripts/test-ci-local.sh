@@ -37,6 +37,25 @@
 #   (A)  unknown argument             → exit 2
 #   (W)  wiring: ci-local.sh's loomwright glob line is the one run-self-tests.sh uses, and the real
 #        ci.yml runs this self-test
+# Run logs, --last, --affected:
+#   (LG) a run's first and last output line name its log (PASS, FAIL, TERM while queued); the log
+#        ends with its verdict line; a FAIL log holds the runner's FAIL banner (stderr captured)
+#   (LA1) after a full run, --last prints that log + "PASS <log>", exit 0
+#   (LA2) the tree changed → --last says stale-key, exit 1, and writes no git object, log or ticket
+#   (LA3) a newer --affected log on the same tree is never what --last prints
+#   (IN) a log cut off without a verdict (the TERMed queued run of (T)) → --last INCOMPLETE, exit 1
+#   (QC) the (Q) waiter's post-slot cache hit leaves a log --last reports as PASS
+#   (AF1) a changed loomwright/scripts/<x>.sh → --affected runs test-<x>.sh + the cheap gates
+#        (check-* and validate-version, with arguments) and NOT the other tests nor test-check-*
+#   (AF2) an unmapped change and a deleted test are listed under "not covered by --affected:"
+#   (AF3) --affected never creates or removes a pass stamp (PASS and FAIL); MUTATION CONTROL: a copy
+#        that stamps on PASS is caught by the same check
+#   (AF4) a changed scripts/check-<x>.sh → its ci.yml-named test-check-<x>.sh runs
+#   (AF5) empty changed set → says so, still runs the cheap gates; (AF7) no origin/main → says so,
+#        diffs against HEAD; (AF6) --affected --list: the
+#        plan, nothing ran, no log; (AX) conflicting flags → exit 2
+#   (PR) 25 seeded logs + one run → 20 remain, the run's own log survives, the oldest are gone;
+#        no logs at all → --last says so, exit 1
 # Slot state lives under a sandboxed XDG_STATE_HOME: an inner fixture run must never queue on the
 # real shared pool that an outer ci-local.sh run is holding (that would deadlock it).
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../loomwright/scripts/hermetic-test-env.sh"
@@ -103,6 +122,15 @@ ran() { grep -qx "$1" "$FIXTURE_LOG"; }
 slot() { (cd "$R" && bash loomwright/scripts/ci-slot.sh "$@"); }
 # has PAT — `grep -q` on a here-string, never a pipe (test-no-pipefail-grep-q.sh).
 has() { grep -q "$1" <<<"$out"; }
+hasf() { grep -qF -- "$1" <<<"$out"; }
+# Run-log helpers: the log path a run named on its first line; its first/last output lines; the
+# log's own last content line (its verdict).
+first_line() { sed -n '1p' <<<"$out"; }
+last_line() { sed -n '$p' <<<"$out"; }
+logpath() { first_line | sed -n 's/^ci-local: log //p'; }
+names_log() { local p; p="$(logpath)"; [ -n "$p" ] && [ -f "$p" ] && [ "$(last_line)" = "ci-local: log $p" ]; }
+log_verdict() { awk 'NF { l = $0 } END { print l }' "$1"; }
+nlogs() { ls "$state/runs" 2>/dev/null | wc -l | tr -d ' '; }
 
 build_fixture
 state="$(slot dir)"
@@ -115,10 +143,40 @@ if [ "$rc" -eq 0 ] && ran "check-a --self-test" && ran "check-a plain" && ran ve
    && has "stamped"; then ok "(P) green: every gate + test ran, stamped"
 else no "(P) rc=$rc log=[$(tr '\n' ' ' < "$FIXTURE_LOG")] out=$out"; fi
 
+# (LG) — the (P) run named its log first and last; the log ends with the verdict line.
+plog="$(logpath)"
+case "$plog" in "$state/runs/"*-[0-9]*T[0-9]*Z-[0-9]*.log) pname_ok=1 ;; *) pname_ok=0 ;; esac
+if names_log && [ "$pname_ok" -eq 1 ] && [ "$(log_verdict "$plog")" = "$(grep '^ci-local: PASS after' <<<"$out")" ] \
+   && grep -q '^ci-local: PASS after .* stamped' "$plog"; then
+  ok "(LG) PASS run: first + last line name <state>/runs/<key>-<ts>-<pid>.log; it ends with the verdict"
+else no "(LG) pass: log=[$plog] verdict=[$( [ -f "$plog" ] && log_verdict "$plog")] out=$out"; fi
+
+# (LA1) — --last reads that log back, runs nothing.
+run --last
+if [ "$rc" -eq 0 ] && [ "$(last_line)" = "ci-local --last: PASS $plog" ] && hasf "stamped; re-running" && [ ! -s "$FIXTURE_LOG" ]; then
+  ok "(LA1) --last after a full run: that log + 'PASS <log>', exit 0, nothing ran"
+else no "(LA1) rc=$rc plog=$plog out=$out"; fi
+
+# (LA2) — the tree changed: stale-key, and --last writes no git object (its key hashing goes to a
+# temp object dir), no log and no slot ticket.
+echo stale > "$R/stale-probe.txt"
+objs_before="$(find "$R/.git/objects" -type f | wc -l | tr -d ' ')"; logs_before="$(nlogs)"
+run --last
+objs_after="$(find "$R/.git/objects" -type f | wc -l | tr -d ' ')"
+if [ "$rc" -eq 1 ] && grep -q "^ci-local --last: stale-key (log key [^ ]*, current key [^ ]*) $plog\$" <<<"$(last_line)" \
+   && [ ! -s "$FIXTURE_LOG" ]; then ok "(LA2) changed tree: --last says stale-key, exit 1, nothing ran"
+else no "(LA2) rc=$rc out=$out"; fi
+if [ "$objs_before" = "$objs_after" ] && [ "$logs_before" = "$(nlogs)" ] && [ -z "$(ls "$state/tickets")" ]; then
+  ok "(LA2) --last wrote no git object, no log, no ticket"
+else no "(LA2) writes: objects $objs_before→$objs_after logs $logs_before→$(nlogs) tickets=[$(ls "$state/tickets")]"; fi
+rm -f "$R/stale-probe.txt"
+
 # (C)
 run
 if [ "$rc" -eq 0 ] && has "PASS (cached)" && [ ! -s "$FIXTURE_LOG" ]; then ok "(C) unchanged tree: cached, nothing ran"
 else no "(C) rc=$rc log=[$(tr '\n' ' ' < "$FIXTURE_LOG")] out=$out"; fi
+if [ "$(nlogs)" = 1 ] && ! has "^ci-local: log "; then ok "(LG) a cached PASS found before the slot writes no log"
+else no "(LG) cached run: logs=$(nlogs) out=$out"; fi
 
 # (X) — a second clone of the same origin on the identical tree shares the pass stamp.
 R2="$tmp/clone"
@@ -149,6 +207,11 @@ else ok "(U) MUTATION CONTROL: same gate against the real index fails"; fi
 FIXTURE_FAIL_A=1 run --force
 if [ "$rc" -eq 1 ] && has "FAIL"; then ok "(F) failing gate under --force: exit 1"
 else no "(F) rc=$rc out=$out"; fi
+flog="$(logpath)"
+if names_log && grep -q '^ci-local: FAIL after' <<<"$(log_verdict "$flog")" \
+   && grep -q '^================ FAIL (exit 1): .*check-a' "$flog"; then
+  ok "(LG) FAIL run: first + last line name the log; it holds the runner's FAIL banner and ends with the FAIL verdict"
+else no "(LG) fail: log=[$flog] out=$out"; fi
 run
 if [ "$rc" -eq 0 ] && ran "check-a plain" && ! has "cached"; then ok "(F) the failure removed the old PASS stamp: next run re-ran"
 else no "(F) next run: rc=$rc out=$out"; fi
@@ -187,6 +250,7 @@ if [ ! -e "$R/.git/loomwright-ci-local" ]; then ok "(L) no per-clone loomwright-
 else no "(L) the per-clone loomwright-ci-local dir still exists"; fi
 
 # (LS) — the (L) run above stamped the current tree.
+ls_logs="$(nlogs)"
 run --list
 if [ "$rc" -eq 0 ] && has "^key: " && has "^cache: PASS stamped" && [ ! -s "$FIXTURE_LOG" ]; then ok "(LS) --list: key + cached status, nothing ran"
 else no "(LS) rc=$rc log=[$(tr '\n' ' ' < "$FIXTURE_LOG")] out=$out"; fi
@@ -196,6 +260,8 @@ if [ "$(grep '^gate: ' <<<"$out")" = "$want_gates" ] && [ "$(grep '^test: ' <<<"
   ok "(LS) --list: exactly the ci.yml gates (with arguments) and the plain tests, in order"
 else no "(LS) plan lines: $out"; fi
 if has "/gates/"; then no "(LS) --list leaked a temp gate-wrapper path: $out"; else ok "(LS) --list hides the temp gate wrappers"; fi
+if [ "$(nlogs)" = "$ls_logs" ] && ! has "^ci-local: log "; then ok "(LS) --list writes no run log"
+else no "(LS) --list wrote a log: $ls_logs→$(nlogs)"; fi
 echo x > "$R/list-probe.txt"
 run --list
 if [ "$rc" -eq 0 ] && has "^cache: miss" && [ ! -s "$FIXTURE_LOG" ]; then ok "(LS) --list on a changed tree: cache miss, nothing ran"
@@ -228,6 +294,14 @@ out="$(cat "$tmp/q.out")"
 if [ -n "$qkey" ] && [ "$(cat "$tmp/q.rc")" = 0 ] && has "waiting for a CI slot" && has "PASS (cached)" && [ ! -s "$FIXTURE_LOG" ]; then
   ok "(Q) waiter behind a holder that stamped the same tree: PASS (cached), nothing ran"
 else no "(Q) key=$qkey rc=$(cat "$tmp/q.rc") log=[$(tr '\n' ' ' < "$FIXTURE_LOG")] out=$out"; fi
+# (QC) — that waiter's log ends with the cached verdict, which --last reports as PASS.
+qlog="$(logpath)"
+if names_log && grep -q '^ci-local: PASS (cached)' <<<"$(log_verdict "$qlog")"; then
+  run --last
+  if [ "$rc" -eq 0 ] && [ "$(last_line)" = "ci-local --last: PASS $qlog" ]; then
+    ok "(QC) post-slot cache hit: log ends 'PASS (cached)', --last reports PASS"
+  else no "(QC) --last: rc=$rc out=$out"; fi
+else no "(QC) waiter log=[$qlog] out=$out"; fi
 rm -f "$R/q-probe.txt"
 
 # (T) — TERM to a run queued for a slot exits at once (not after CI_LOCAL_LOCK_WAIT), leaves no ticket.
@@ -252,6 +326,16 @@ kill "$sleeper" 2>/dev/null; wait "$sleeper" 2>/dev/null; sleeper=""
 if [ "$queued" -lt 150 ] && [ "$trc" = 143 ] && [ -z "$tickets" ] && [ -z "$tslots" ] && [ ! -s "$FIXTURE_LOG" ]; then
   ok "(T) TERM to a queued run: exit 143 within 5s, no ticket or slot left, nothing ran"
 else no "(T) queued_polls=$queued rc=$trc tickets=[$tickets] slots=[$tslots] out=$(cat "$tmp/t.out")"; fi
+# (LG)/(IN) — the TERMed run still named its log first and last; that log has no verdict line, so
+# --last (same tree) reports it INCOMPLETE, never PASS.
+out="$(cat "$tmp/t.out")"
+tlog="$(logpath)"
+if names_log && ! grep -qE '^ci-local: (PASS|FAIL)' "$tlog"; then ok "(LG) TERM while queued: first + last line name the log; no verdict in it"
+else no "(LG) term: log=[$tlog] out=$out"; fi
+run --last
+if [ "$rc" -eq 1 ] && [ "$(last_line)" = "ci-local --last: INCOMPLETE $tlog" ] && ! has "last: PASS"; then
+  ok "(IN) a log cut off without a verdict: --last INCOMPLETE, exit 1"
+else no "(IN) rc=$rc tlog=$tlog out=$out"; fi
 rm -f "$R/t-probe.txt"
 
 # (B) — a broken slot helper: the fixture's ci-slot.sh is swapped for a stub that logs every call.
@@ -289,12 +373,140 @@ run --help
 if [ "$rc" -eq 0 ] && has "^ci-local.sh — " && has "^usage: ci-local.sh" && has "^Self-test: scripts/test-ci-local.sh" \
    && ! has "^#" && ! has "set -euo"; then ok "(H) --help: the whole header, de-commented, no code"
 else no "(H) rc=$rc out=$out"; fi
+if has "^  --affected  " && has "^  --last  " && has "^usage: ci-local.sh .*--affected.*--last"; then ok "(H) --help documents --affected and --last"
+else no "(H) --affected/--last missing from --help: $out"; fi
 # The header ends at the first non-comment line, whatever that line is — not at a literal `set -euo`.
 sed 's/^set -euo pipefail$/set -eu -o pipefail/' "$R/scripts/ci-local.sh" > "$R/scripts/ci-local-variant.sh"
 out="$(cd "$R" && bash scripts/ci-local-variant.sh --help 2>&1)"; rc=$?
 if [ "$rc" -eq 0 ] && has "^Self-test: scripts/test-ci-local.sh" && ! has "set -eu" && ! has "shopt"; then ok "(H) --help survives a changed first code line"
 else no "(H) variant: rc=$rc out=$out"; fi
 rm -f "$R/scripts/ci-local-variant.sh"
+
+# --- --affected, --last selection, pruning ------------------------------------------------------------
+# Setup: a library script with its own suite, an unrelated suite, a cheap validate-version gate and a
+# ci.yml-named test-check-a.sh — committed, and origin/main moved there, so the changed set is empty.
+cat >> "$R/.github/workflows/ci.yml" <<'YML'
+      - run: bash scripts/test-check-a.sh
+      - run: bash scripts/validate-version.sh
+YML
+echo 'echo "test-check-a" >> "$FIXTURE_LOG"' > "$R/scripts/test-check-a.sh"
+echo 'echo "validate" >> "$FIXTURE_LOG"' > "$R/scripts/validate-version.sh"
+echo ': library' > "$R/loomwright/scripts/one.sh"
+echo 'echo "two" >> "$FIXTURE_LOG"' > "$R/loomwright/scripts/test-two.sh"
+( cd "$R" && git add -A && git commit -qm affected-fixture && git update-ref refs/remotes/origin/main HEAD )
+marker="affected-only — not a pre-push gate; run ci-local.sh before pushing"
+cheap_ran() { ran "check-a --self-test" && ran "check-a plain" && ran vendor && ran validate; }
+# The marker is the line right before the closing log-path line.
+marker_last() { [ "$(awk '{ p = c; c = $0 } END { print p }' <<<"$out")" = "$marker" ] && names_log; }
+stamp_free() { [ -z "$(ls "$state/pass")" ]; }
+
+# (AF5)
+run --affected
+if [ "$rc" -eq 0 ] && has "the changed set is empty" && cheap_ran && ! ran one && ! ran two && ! ran extra \
+   && ! ran test-check-a && marker_last; then ok "(AF5) empty changed set: says so, ran the cheap gates only"
+else no "(AF5) rc=$rc log=[$(tr '\n' ' ' < "$FIXTURE_LOG")] out=$out"; fi
+
+# (AF1)
+echo ': edited' >> "$R/loomwright/scripts/one.sh"
+run --affected
+alog="$(logpath)"
+if [ "$rc" -eq 0 ] && hasf "loomwright/scripts/one.sh ⇒ loomwright/scripts/test-one.sh" && ran one && cheap_ran \
+   && ! ran two && ! ran extra && ! ran test-check-a && ! has "not covered by --affected:" && marker_last; then
+  ok "(AF1) changed loomwright script: its test + check-*/validate-version gates ran, no other test"
+else no "(AF1) rc=$rc log=[$(tr '\n' ' ' < "$FIXTURE_LOG")] out=$out"; fi
+case "$alog" in "$state/runs/"*-affected.log) ok "(AF1) the run log is named …-affected.log" ;;
+  *) no "(AF1) affected log name: [$alog]" ;; esac
+
+# (AF6) — same changed tree, --list: the plan only.
+logs_before="$(nlogs)"
+run --affected --list
+want_aplan=$'gate: scripts/check-a.sh --self-test\ngate: scripts/check-a.sh\ngate: scripts/check-vendor-coupling.sh\ngate: scripts/validate-version.sh\ntest: loomwright/scripts/test-one.sh'
+if [ "$rc" -eq 0 ] && hasf "loomwright/scripts/one.sh ⇒ loomwright/scripts/test-one.sh" \
+   && [ "$(grep -E '^(gate|test): ' <<<"$out")" = "$want_aplan" ] && [ ! -s "$FIXTURE_LOG" ] \
+   && [ "$(nlogs)" = "$logs_before" ] && ! has "^ci-local: log "; then
+  ok "(AF6) --affected --list: changed file, mapped plan in full-plan order; nothing ran, no log"
+else no "(AF6) rc=$rc logs=$logs_before→$(nlogs) out=$out"; fi
+
+# (AF7) — no origin/main: says so and diffs against HEAD (the uncommitted edit is still found).
+om="$(cd "$R" && git rev-parse refs/remotes/origin/main)"
+( cd "$R" && git update-ref -d refs/remotes/origin/main )
+run --affected --list
+if [ "$rc" -eq 0 ] && hasf "HEAD (origin/main is absent)" && hasf "loomwright/scripts/one.sh ⇒ loomwright/scripts/test-one.sh"; then
+  ok "(AF7) origin/main absent: says so, falls back to HEAD"
+else no "(AF7) rc=$rc out=$out"; fi
+( cd "$R" && git update-ref refs/remotes/origin/main "$om" )
+
+# (AF3) — never creates (PASS) nor removes (FAIL) a pass stamp.
+rm -f "$state/pass/"*
+run --affected
+if [ "$rc" -eq 0 ] && stamp_free && marker_last; then ok "(AF3) green --affected: no pass stamp written"
+else no "(AF3) green: rc=$rc pass=[$(ls "$state/pass")] out=$out"; fi
+akey="$(cd "$R" && bash scripts/ci-local.sh --list 2>/dev/null | sed -n 's/^key: //p')"
+echo seeded > "$state/pass/$akey"
+FIXTURE_FAIL_A=1 run --affected
+if [ -n "$akey" ] && [ "$rc" -eq 1 ] && [ "$(ls "$state/pass")" = "$akey" ] && [ "$(cat "$state/pass/$akey")" = seeded ] \
+   && has "^ci-local --affected: FAIL" && marker_last; then
+  ok "(AF3) failing --affected: exit 1, the existing stamp left exactly as it was"
+else no "(AF3) fail: key=$akey rc=$rc pass=[$(ls "$state/pass")] out=$out"; fi
+rm -f "$state/pass/"*
+# MUTATION CONTROL: a copy that stamps on an --affected PASS must fail the same stamp_free check.
+awk '/^  verdict="ci-local --affected: PASS after/ { print "  date > \"$stamp\""; n++ } { print } END { exit n != 1 }' \
+  "$R/scripts/ci-local.sh" > "$R/scripts/ci-local-mutant.sh"
+mut_rc=$?
+: > "$FIXTURE_LOG"; out="$(cd "$R" && bash scripts/ci-local-mutant.sh --affected 2>&1)"; rc=$?
+if [ "$mut_rc" -eq 0 ] && [ "$rc" -eq 0 ] && ! stamp_free; then ok "(AF3) MUTATION CONTROL: a stamping --affected is caught"
+else no "(AF3) MUTATION CONTROL: anchor_found=$((1 - mut_rc)) rc=$rc pass=[$(ls "$state/pass")] — the never-stamps check proves nothing"; fi
+rm -f "$R/scripts/ci-local-mutant.sh" "$state/pass/"*
+
+# (AF2) — an untracked unmapped file and a deleted test are uncovered.
+echo readme > "$R/README.md"; rm "$R/loomwright/scripts/test-two.sh"
+run --affected
+if [ "$rc" -eq 0 ] && has "^not covered by --affected:\$" && has "^  README.md\$" \
+   && has "^  loomwright/scripts/test-two.sh\$" && ran one && ! ran two && marker_last; then
+  ok "(AF2) unmapped + deleted files listed under 'not covered by --affected:'"
+else no "(AF2) rc=$rc out=$out"; fi
+rm -f "$R/README.md"; ( cd "$R" && git checkout -q -- loomwright/scripts/test-two.sh loomwright/scripts/one.sh )
+
+# (AF4) — a changed root check-*.sh brings in its ci.yml-named test-check-*.sh.
+echo '# edited' >> "$R/scripts/check-a.sh"
+run --affected
+if [ "$rc" -eq 0 ] && hasf "scripts/check-a.sh ⇒ scripts/test-check-a.sh" && ran test-check-a && cheap_ran \
+   && ! ran one && ! ran extra; then ok "(AF4) changed scripts/check-a.sh: test-check-a.sh ran"
+else no "(AF4) rc=$rc log=[$(tr '\n' ' ' < "$FIXTURE_LOG")] out=$out"; fi
+( cd "$R" && git checkout -q -- scripts/check-a.sh )
+
+# (LA3) — a full run, then a newer --affected run on the same tree: --last still prints the full log.
+run --force
+full_log="$(logpath)"
+run --affected
+run --last
+if [ "$rc" -eq 0 ] && [ "$(last_line)" = "ci-local --last: PASS $full_log" ] && ! hasf "-affected.log" \
+   && ! hasf "$marker"; then ok "(LA3) --last skips a newer --affected log"
+else no "(LA3) rc=$rc full_log=$full_log out=$out"; fi
+
+# (AX)
+for combo in "--affected --force" "--last --affected" "--last --force" "--last --list" "--force --last"; do
+  run $combo
+  if [ "$rc" -eq 2 ] && has "conflicting options" && [ ! -s "$FIXTURE_LOG" ]; then ok "(AX) $combo: exit 2"
+  else no "(AX) $combo: rc=$rc out=$out"; fi
+done
+
+# (PR) — no logs: --last says so; 25 seeded logs + one run: the newest 20 remain.
+rm -f "$state/runs/"*
+run --last
+if [ "$rc" -eq 1 ] && has "no saved full-run log"; then ok "(PR) no logs at all: --last says so, exit 1"
+else no "(PR) empty: rc=$rc out=$out"; fi
+i=0
+while [ "$i" -lt 25 ]; do
+  : > "$state/runs/seedkey-x-Linux-20200101T0000$(printf '%02d' "$i")Z-1.log"; i=$((i + 1))
+done
+run --force
+prlog="$(logpath)"
+gone=0; i=0
+while [ "$i" -lt 6 ]; do [ -e "$state/runs/seedkey-x-Linux-20200101T0000$(printf '%02d' "$i")Z-1.log" ] || gone=$((gone + 1)); i=$((i + 1)); done
+if [ "$rc" -eq 0 ] && [ "$(nlogs)" = 20 ] && [ -f "$prlog" ] && [ "$gone" = 6 ] \
+   && [ -e "$state/runs/seedkey-x-Linux-20200101T000006Z-1.log" ]; then ok "(PR) 25 + 1 logs pruned to 20: the 6 oldest gone, the run's own log kept"
+else no "(PR) logs=$(nlogs) gone=$gone prlog=$prlog"; fi
 
 # (Z)
 printf 'jobs:\n  ci:\n    steps:\n      - run: echo nothing\n' > "$R/.github/workflows/ci.yml"
