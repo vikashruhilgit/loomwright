@@ -45,6 +45,28 @@ with a scratch clone whose `.agent/companions.json` drops just those three entri
 those three files conflicted (S2 evidence: three PRs edited `ARCHITECTURE_CONTRACTS.md` and merged by lines). The
 result is input for `parallel-automate/11` or a planner rule.
 
+## Integration method: a wave branch (owner decision 2026-10-05)
+S2 merged each lane PR into `main` and then updated every sibling and re-ran CI. S3 integrates on a wave branch
+instead, with no plugin change:
+1. Lanes run exactly as in S2 and open PRs against `main` (CI only runs for PRs into `main`, `ci.yml`), drain, and
+   park `awaiting_merge` with their merge watchers armed. Nobody merges a lane PR directly.
+2. When every lane of the wave has parked (or is excluded), the operator creates `wave/s3w<N>` from `main` and
+   merges each lane's exact PR head into it in planner order (`git merge --no-ff <head sha>`). A conflict is
+   resolved in that merge commit on the wave branch; a lane's own branch is never rewritten or pushed to. Then
+   `ci-local`, then `bash scripts/bump-version.sh` as the wave branch's LAST commit (P7, one bump per wave — no
+   release lane), then ONE PR `wave/s3w<N>` → `main`. The operator runs the merge checks on that PR.
+3. The owner merges the wave PR with **"Create a merge commit"** (never squash — squash merges are enabled on this
+   repo). GitHub then marks each lane PR merged, because its head commit is on `main`; each lane's watcher sees
+   `MERGED` and runs closeout itself. **Spike question:** confirm this in wave 1; fallback is the targeted
+   `--resume` closeout proven on S2's s2-d.
+4. A lane found broken by the wave branch's CI is fixed on its own PR branch (its drain or a fix), and its new head
+   is merged into the wave branch again.
+5. Measure: conflicts resolved on the wave branch (files, by hand or clean), wave PR CI and review wall-clock, and
+   whether every lane PR flipped to merged.
+If it holds, amend `parallel-automate/06` (wave close on a wave branch; no release lane) and
+`parallel-automate/13` (conflicts repaired on the wave branch, never on a lane PR), and decide whether the
+coordinator may merge into `wave/*` (an owner decision on the single-merge-executor invariant).
+
 ## Run rules (carried from S2's handover)
 - Owner merges every PR by hand. Questions relayed verbatim, ≤4 per call, never merged; an answer is one label.
 - Merge checks before "safe to merge": the item's must-pass Validation (run any "Not verified" running-system step
@@ -52,8 +74,8 @@ result is input for `parallel-automate/11` or a planner rule.
   dismissed findings decided. A PR that is BEHIND gets `gh pr update-branch` only with the owner's go.
 - Escalated lanes close out with `s1h.sh launch <lane> --resume-run <run_id>` (never the launch prompt, never a
   bare `--resume`). Records carried to `loomwright-meta` (`--branch` always), home paths rewritten before a push.
-- Between waves: release (one bump folding that wave's fragments), owner merges, reinstall, verify the running
-  version, `snapshot`, then launch the next wave on fresh `main`.
+- Between waves: the wave PR carries that wave's release bump; after the owner merges it, reinstall, verify the
+  running version, `snapshot`, then launch the next wave on fresh `main`.
 - Throwaway records branch per wave: `loomwright-meta-s3w<N>`, deleted (owner's yes) after that wave's carry.
 
 ## Gaps to watch (spike questions — not in the requirements)
