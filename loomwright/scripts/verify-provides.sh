@@ -20,6 +20,10 @@
 # SAME parser but no disk check, printing {"subtask_id":"<id>","status":"parsed","provides_count":N,
 # "source":"verify-provides.sh"} or the usual `unverifiable` object. It answers "can the gate find
 # this subtask's contract?" before any file exists — the question Plan Reviewer (no Bash) cannot run.
+# When an entry's `name` cannot be read faithfully (an unterminated quote, or non-space text between
+# the closing quote and the next `,`/`}`), the object gains an additive `parse_warnings` array of
+# strings, one per such entry: "<path>: name checked as `<reading>` (<why>)" — Plan Reviewer
+# Criterion 12 blocks on it. With no such entry the key is absent and the object is unchanged.
 #
 # Output (ONE JSON object on stdout, always exit 0):
 #   {"subtask_id":"<id>",
@@ -60,7 +64,8 @@
 # subtask `1` (the Single-Agent Path's id — unambiguous); two or more such keys with no anchors is
 # ambiguous and stays `subtask_not_found`. An anchor with no `provides:` key under it is
 # `no_contracts`, never an empty list (that was a vacuous `outputs_verified: []` pass). Entries are `- {kind: "file", path: "x", name: "y"}` (quotes optional, trailing
-# `# comment` after the closing `}` stripped). The `provides:` list ends at the next top-level key
+# `# comment` after the closing `}` stripped). Inside double quotes `\"` is a literal `"` and `\\` one
+# `\` (every other backslash is kept as written); single quotes have no escapes. The `provides:` list ends at the next top-level key
 # (`requires:` / `lanes:` / `external_requires:`), the next anchor, a heading, or the fence end.
 # `provides: []` — or a `provides:` with no parsable entries — yields `[]` + `""` (logged to stderr).
 # When the same anchor appears twice (a prose `### Subtask 1` section and a `# Subtask 1` contract
@@ -184,7 +189,8 @@ fi
 
 # ---------------------------------------------------------------------------
 # ONE awk pass over the brief. Prints a first status line — FOUND / EMPTY / NOT_FOUND<TAB><anchors
-# seen> / NO_CONTRACTS — then, for FOUND, one `kind<TAB>path<TAB>name` line per provides entry.
+# seen> / NO_CONTRACTS — then, for FOUND, one `kind<TAB>path<TAB>name<TAB>name-warning` line per
+# provides entry (the warning column is empty unless field() could not read the name faithfully).
 # The id is passed as DATA (-v) and matched with index()/substr(), never interpolated into a regex.
 # ---------------------------------------------------------------------------
 parse_brief() {
@@ -228,15 +234,34 @@ parse_brief() {
       }
       return 0
     }
-    # field(entry, key): value of `key: value` inside a flow mapping; quotes optional.
-    function field(entry, key,   rest, q, e, v) {
+    # field(entry, key): value of `key: value` inside a flow mapping; quotes optional. Double quotes:
+    # `\"` reads as `"`, `\\` as ONE `\`, any other `\x` is kept as both characters, and the value ends
+    # at the first UNESCAPED `"`. Single quotes: no escapes, the value ends at the next `\047`. No
+    # closing quote ⇒ the rest, trimmed. Sets fwarn to "unterminated quote" / "text after the closing
+    # quote" (non-space text before the next `,`/`}`) when the reading may not be what the author meant.
+    function field(entry, key,   rest, q, v, i, L, c, d, tail) {
+      fwarn = ""
       if (!match(entry, "(^|[{,])[[:space:]]*" key "[[:space:]]*:[[:space:]]*")) return ""
       rest = substr(entry, RSTART + RLENGTH)
       q = substr(rest, 1, 1)
       if (q == "\"" || q == "\047") {
-        e = index(substr(rest, 2), q)
-        if (e == 0) return trim(substr(rest, 2))
-        return substr(rest, 2, e - 1)
+        v = ""; L = length(rest)
+        for (i = 2; i <= L; i++) {
+          c = substr(rest, i, 1)
+          if (c == q) {
+            tail = substr(rest, i + 1)
+            if (match(tail, /[,}]/)) tail = substr(tail, 1, RSTART - 1)
+            if (tail ~ /[^[:space:]]/) fwarn = "text after the closing quote"
+            return v
+          }
+          if (q == "\"" && c == "\\" && i < L) {
+            d = substr(rest, i + 1, 1)
+            if (d == "\"" || d == "\\") { v = v d; i++; continue }   # escape-pair (mutation-control anchor)
+          }
+          v = v c
+        }
+        fwarn = "unterminated quote"
+        return trim(substr(rest, 2))
       }
       v = rest
       if (match(v, /[,}]/)) v = substr(v, 1, RSTART - 1)
@@ -281,9 +306,9 @@ parse_brief() {
         sub(/^[[:space:]]*-[[:space:]]*/, "", entry)
         if (match(entry, /\}[[:space:]]*#/)) entry = substr(entry, 1, RSTART)
         else if (match(entry, /\}[^}]*$/)) entry = substr(entry, 1, RSTART)
-        k = field(entry, "kind"); p = field(entry, "path"); nm = field(entry, "name")
+        k = field(entry, "kind"); p = field(entry, "path"); nm = field(entry, "name"); nw = fwarn
         gsub(/\t/, " ", k); gsub(/\t/, " ", p); gsub(/\t/, " ", nm)
-        if (k != "" || p != "") { n++; out[n] = k "\t" p "\t" nm }
+        if (k != "" || p != "") { n++; out[n] = k "\t" p "\t" nm "\t" nw }
         next
       }
       if (line ~ /^[[:space:]]*#/ || line ~ /^[[:space:]]*$/) next   # comment / blank inside the list
@@ -321,6 +346,7 @@ sid_n=0
 sid_list=""
 count=0
 entries='[]'
+warns='[]'
 gap=""
 line_no=0
 parse_ok=1
@@ -349,12 +375,24 @@ while IFS= read -r line; do
     status="${line%%"$TAB"*}"
     continue
   fi
-  if [ "$parse_only" -eq 1 ]; then count=$((count + 1)); continue; fi
   kind="${line%%"$TAB"*}"
   rest="${line#*"$TAB"}"
   path="${rest%%"$TAB"*}"
   name="${rest#*"$TAB"}"
   [ "$rest" = "$path" ] && name=""
+  nwarn="${name#*"$TAB"}"
+  [ "$nwarn" = "$name" ] && nwarn=""
+  name="${name%%"$TAB"*}"
+  if [ -n "$nwarn" ]; then
+    printf '%s: entry %s (%s) name read as `%s` (%s) — check the quoting\n' "$SELF" "$path" "$kind" "$name" "$nwarn" >&2
+  fi
+  if [ "$parse_only" -eq 1 ]; then
+    count=$((count + 1))
+    if [ -n "$nwarn" ]; then
+      warns="$(jq -c --arg w "$path: name checked as \`$name\` ($nwarn)" '. + [$w]' <<<"$warns")" || parse_ok=0
+    fi
+    continue
+  fi
 
   case "$path" in
     /*) full="$path" ;;
@@ -423,8 +461,15 @@ case "$status" in
 esac
 
 if [ "$parse_only" -eq 1 ]; then
-  jq -n -c --arg id "$id" --argjson c "$count" --arg s "$SELF" \
-    '{subtask_id: $id, status: "parsed", provides_count: $c, source: $s}'
+  if [ "$parse_ok" -ne 1 ]; then
+    printf '%s: internal jq error while building parse_warnings\n' "$SELF" >&2
+    emit_unverifiable "brief_unreadable"
+  fi
+  # parse_warnings is additive and present ONLY when a name could not be read faithfully, so a clean
+  # brief prints the same object byte-for-byte as before the key existed.
+  jq -n -c --arg id "$id" --argjson c "$count" --arg s "$SELF" --argjson pw "$warns" \
+    '{subtask_id: $id, status: "parsed", provides_count: $c, source: $s}
+     + (if ($pw | length) > 0 then {parse_warnings: $pw} else {} end)'
   exit 0
 fi
 
