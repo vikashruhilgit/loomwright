@@ -538,7 +538,7 @@ mk_manifest "$TMP/base/nonint-clean.json" '{"core/gate.sh": 2, "coupled/skill.md
 run_gate "$BASE" "$TMP/base/nonint-clean.json"
 check    "case19a non-integer allowance on a zero-reference file exits non-zero" 1 "$RC"
 contains "case19a names the offending path"  "$OUT" "core/clean.sh"
-contains "case19a says why"                  "$OUT" "non-integer allowance"
+contains "case19a says why"                  "$OUT" "not a JSON non-negative integer"
 
 mk_manifest "$TMP/base/nonint-hits.json" '{"core/gate.sh": "TBD", "coupled/skill.md": 1}'
 run_gate "$BASE" "$TMP/base/nonint-hits.json"
@@ -914,6 +914,73 @@ cp "$TMP/raise/base-manifest.json" "$RU/docs/m.json"
 run_gate_base "$RU" "$RU/docs/m.json" "$RU_SHA"
 check    "case24p a base manifest that is not JSON exits non-zero" 1 "$RC"
 contains "case24p says the base could not be read" "$OUT" "could not be read as JSON"
+
+# ---------------------------------------------------------------------------
+# Case 24q — WRONG-TYPED MANIFEST FIELDS fail CLOSED. `jq -r` prints the string
+# "3" as `3`, so a quoted allowance used to pass every shell integer check while
+# raise_check (numbers only) never compared it with the base: a raise with an
+# inherited reason, or a brand-new entry with no reason, slipped through.
+# RS = the raise fixture with core/gate.sh grown from 2 to 3 references; its base
+# (RB_SHA) allows 2 with the reason "original reason".
+# ---------------------------------------------------------------------------
+RS="$TMP/raisestr/tree"; clone_tree "$RB" "$RS"
+printf 'echo "$%s"\n' "$FTOK" >> "$RS/core/gate.sh"
+stage "$RS"
+rs_manifest() { jq "$1" "$TMP/raise/base-manifest.json" > "$RS/docs/m.json"; }
+rs_manifest '.allowances["core/gate.sh"] = "3"'
+run_gate_base "$RS" "$RS/docs/m.json" "$RB_SHA"
+check    "case24q1 a STRING-typed raise with an inherited reason exits non-zero" 1 "$RC"
+contains "case24q1 names the type error" "$OUT" "not a JSON non-negative integer"
+rs_manifest '.allowances["core/gate.sh"] = "3" | .allowance_reasons["core/gate.sh"] = "third reference"'
+run_gate_base "$RS" "$RS/docs/m.json" "$RB_SHA"
+check    "case24q2 a STRING-typed raise exits non-zero even with a changed reason" 1 "$RC"
+rs_manifest '.allowances["core/gate.sh"] = 3 | .allowance_reasons["core/gate.sh"] = "third reference"'
+run_gate_base "$RS" "$RS/docs/m.json" "$RB_SHA"
+check    "case24q2 control: the same raise as a JSON number with a changed reason exits 0" 0 "$RC"
+rs_manifest '.allowances["core/gate.sh"] = 3 | .allowances["core/clean.sh"] = "1" | .allowance_reasons["core/gate.sh"] = "third reference"'
+run_gate_base "$RS" "$RS/docs/m.json" "$RB_SHA"
+check    "case24q3 a STRING-typed NEW entry with no reason exits non-zero" 1 "$RC"
+contains "case24q3 names the new entry" "$OUT" "core/clean.sh"
+rs_manifest '.allowances["core/gate.sh"] = 3 | .allowances["core/clean.sh"] = -1 | .allowance_reasons["core/gate.sh"] = "third reference"'
+run_gate_base "$RS" "$RS/docs/m.json" "$RB_SHA"
+check    "case24q4 a NEGATIVE allowance exits non-zero" 1 "$RC"
+rs_manifest '.allowances["core/gate.sh"] = 3.5 | .allowance_reasons["core/gate.sh"] = "third reference"'
+run_gate_base "$RS" "$RS/docs/m.json" "$RB_SHA"
+check    "case24q5 a FRACTIONAL allowance exits non-zero" 1 "$RC"
+rs_manifest '.allowances["core/gate.sh"] = null'
+run_gate_base "$RS" "$RS/docs/m.json" "$RB_SHA"
+check    "case24q6 a null allowance exits non-zero" 1 "$RC"
+
+# The rest of the both-ways-read fields: each wrong type is an ERROR, never a default.
+for filt in '.count_mode = false' '.token_overlap_rule = 1' '.unclassified_default = ["core"]' \
+            '.allowances = []' '.allowance_reasons = false' '.classes = []' '.classes.core = "core/*"' \
+            '.classes.core.globs = "core/*"' '.classes.core.globs = ["core/*", 7]' \
+            '.scan_roots = "core"' '.scan_roots = ["core", null]'; do
+  rs_manifest ".allowances[\"core/gate.sh\"] = 3 | .allowance_reasons[\"core/gate.sh\"] = \"third reference\" | $filt"
+  run_gate_base "$RS" "$RS/docs/m.json" "$RB_SHA"
+  check    "case24q7 wrong-typed field ($filt) exits non-zero" 1 "$RC"
+  contains "case24q7 ($filt) reports a type error" "$OUT" "manifest type error"
+done
+
+# 24r — a wrong-typed BASE reasons map must not let an inherited reason read as
+# "added": the base is typed as strictly as the head.
+RT="$TMP/raisebasetype/tree"; clone_tree "$RS" "$RT"
+jq '.allowance_reasons = ["original reason"]' "$TMP/raise/base-manifest.json" > "$RT/docs/m.json"
+commit_all "$RT" wrong-typed-base
+RT_SHA="$(cd "$RT" && git rev-parse HEAD 2>/dev/null)"
+jq '.allowances["core/gate.sh"] = 3' "$TMP/raise/base-manifest.json" > "$RT/docs/m.json"
+run_gate_base "$RT" "$RT/docs/m.json" "$RT_SHA"
+check    "case24r a base whose allowance_reasons is not an object exits non-zero" 1 "$RC"
+contains "case24r says the base is wrong-typed" "$OUT" "wrong-typed base never certifies a raise"
+# A string-typed BASE allowance reads as absent, so the head value is a NEW
+# allowance and the inherited reason still does not justify it.
+jq '.allowances["core/gate.sh"] = "2"' "$TMP/raise/base-manifest.json" > "$RT/docs/m.json"
+commit_all "$RT" string-base-allowance
+RT_SHA="$(cd "$RT" && git rev-parse HEAD 2>/dev/null)"
+jq '.allowances["core/gate.sh"] = 3' "$TMP/raise/base-manifest.json" > "$RT/docs/m.json"
+run_gate_base "$RT" "$RT/docs/m.json" "$RT_SHA"
+check    "case24r2 a string-typed base allowance does not let an inherited-reason raise slip" 1 "$RC"
+contains "case24r2 flags the inherited reason" "$OUT" "INHERITED"
 
 # ---------------------------------------------------------------------------
 # Case 25 — an UNREADABLE file is an ERROR, not a silent zero. (Skipped when

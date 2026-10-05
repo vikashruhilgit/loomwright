@@ -110,6 +110,10 @@
 # EXIT CODES
 #   0 = every scanned path at or under its declared allowance, every raise reasoned.
 #   1 = at least one BREACH, or an ERROR (missing/malformed/unreadable manifest,
+#       a wrong-typed manifest field — an allowance that is not a JSON
+#       non-negative integer (the string "3" included), a non-string mode or
+#       default, a non-object map, a non-string scan root or glob — in the head
+#       or, for the maps raise_check reads, the base manifest;
 #       empty or duplicated token set, illegal unclassified_default, an allowance
 #       entry for a path that does not exist or is ADAPTER-classified, an orphaned
 #       or malformed reason, an unreadable file or base manifest, an empty scan,
@@ -170,6 +174,40 @@ MANIFEST="$(cd "$(dirname "$MANIFEST")" && pwd -P)/$(basename "$MANIFEST")"
 [ -d "$SCAN_ROOT" ] || { echo "check-vendor-coupling: scan root not found: $SCAN_ROOT" >&2; exit 1; }
 
 cd "$SCAN_ROOT" || exit 1
+
+# ---------------------------------------------------------------------------
+# Manifest field TYPES — checked once, before anything reads a field.
+# Every field below is read by `jq -r` into the shell AND (for some) compared
+# inside jq. `jq -r` flattens types: the JSON string "3" and the number 3 both
+# print `3`, `false // "default"` silently becomes the default, a non-string
+# array entry prints as JSON text, and `.[]?` on a string yields nothing at all.
+# So a wrong-typed value could mean one thing to the shell path and another to
+# the jq path (a string allowance once passed every shell integer check while
+# raise_check, which compares numbers only, never saw it). Rejecting the wrong
+# type up front makes both paths read the same, validated value — fail CLOSED.
+# ---------------------------------------------------------------------------
+TYPE_ERRS="$(jq -r '
+  def strfield($k): if has($k) and ((.[$k] | type) != "string") then "\($k) must be a string (got \(.[$k] | type))" else empty end;
+  def objfield($k): if has($k) and ((.[$k] | type) != "object") then "\($k) must be an object (got \(.[$k] | type))" else empty end;
+  def strlist($v; $name): if ($v | type) != "array" then "\($name) must be an array of strings (got \($v | type))"
+    else ($v[] | select((type != "string") or (. == "") or test("[\t\n\r]")) | "\($name) entries must be non-empty one-line strings (got \(tojson))") end;
+  if type != "object" then "the manifest must be a JSON object (got \(type))" else
+    strfield("count_mode"), strfield("token_overlap_rule"), strfield("unclassified_default"),
+    objfield("allowances"), objfield("allowance_reasons"), objfield("classes"),
+    (if has("scan_roots") then strlist(.scan_roots; "scan_roots") else empty end),
+    (if (.classes | type) == "object" then
+       (.classes | to_entries[] | .key as $c |
+        if (.value | type) != "object" then "classes.\($c) must be an object (got \(.value | type))"
+        elif (.value | has("globs")) then strlist(.value.globs; "classes.\($c).globs")
+        else empty end)
+     else empty end)
+  end' "$MANIFEST" 2>/dev/null)" || TYPE_ERRS="the manifest field types could not be checked"
+if [ -n "$TYPE_ERRS" ]; then
+  printf '%s\n' "$TYPE_ERRS" | while IFS= read -r e; do
+    echo "check-vendor-coupling: manifest type error: $e (fail CLOSED — a wrong-typed field is never read as a default)" >&2
+  done
+  exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # Manifest -> shell
@@ -296,8 +334,19 @@ nclasses="$(cut -f1 "$TOKENS_TSV" | awk '!seen[$0]++' | wc -l | tr -d '[:space:]
 
 # Allowance table -> a TSV side file, read ONCE. (bash 3.2 has no associative
 # arrays; per-path `jq` calls would be one process per file.)
+# The TYPE is decided HERE, in jq, where it is still visible: only a JSON
+# non-negative integer (bounded, so shell arithmetic cannot overflow) is emitted
+# as its digits. Anything else — the string "3", -1, 1.5, null, an array — is
+# emitted as `!<its JSON>`, which every shell integer check below rejects as an
+# ERROR. Interpolating `.value` directly would print the string "3" as `3` and
+# let it pass the shell checks while raise_check (numbers only) never saw it.
 ALLOW_TSV="$TMPDIR_GATE/allowances.tsv"
-jq -r '(.allowances // {}) | to_entries[] | "\(.key)\t\(.value)"' "$MANIFEST" > "$ALLOW_TSV" 2>/dev/null || : > "$ALLOW_TSV"
+if ! jq -r '(.allowances // {}) | to_entries[] |
+    "\(.key)\t\(if ((.value | type) == "number") and (.value >= 0) and (.value == (.value | floor)) and (.value <= 999999999)
+                then (.value | floor | tostring) else "!" + (.value | tojson) end)"' "$MANIFEST" > "$ALLOW_TSV" 2>/dev/null; then
+  echo "check-vendor-coupling: could not read the allowances table from the manifest (fail CLOSED)" >&2
+  exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -497,7 +546,7 @@ while IFS="$(printf '\t')" read -r p cls n bd; do
   total_refs=$((total_refs + n))
   allow="$(allowance_for "$p")"
   case "$allow" in ''|*[!0-9]*)
-    printf "$ROWFMT" "$p" "$cls" "$n" "$allow" "ERROR   non-integer allowance in manifest (must be a non-negative integer) [$bd]"
+    printf "$ROWFMT" "$p" "$cls" "$n" "${allow#!}" "ERROR   allowance is not a JSON non-negative integer (a quoted \"3\", a negative or a fractional value is refused) [$bd]"
     errors=$((errors + 1))
     exit_code=1
     continue ;;
@@ -541,7 +590,7 @@ while IFS="$(printf '\t')" read -r p allow; do
   # Validating here makes "the manifest stays self-cleaning" true for the whole table
   # rather than for its referenced subset.
   case "$allow" in ''|*[!0-9]*)
-    printf "$ROWFMT" "$p" "$(classify "$p")" "-" "$allow" "ERROR   non-integer allowance in manifest (must be a non-negative integer)"
+    printf "$ROWFMT" "$p" "$(classify "$p")" "-" "${allow#!}" "ERROR   allowance is not a JSON non-negative integer (a quoted \"3\", a negative or a fractional value is refused)"
     errors=$((errors + 1))
     exit_code=1
     continue ;;
@@ -617,6 +666,19 @@ raise_check() {
   base_manifest="$TMPDIR_GATE/base-manifest.json"
   if ! git show "$base_sha:$rel" > "$base_manifest" 2>/dev/null || ! jq -e . "$base_manifest" >/dev/null 2>&1; then
     echo "raise_check: ERROR — the base manifest ($BASE_REF:$rel) could not be read as JSON (fail CLOSED — an unreadable base never certifies a raise)"
+    errors=$((errors + 1)); exit_code=1
+    return
+  fi
+  # The base is typed as strictly as the head: a base whose allowances or
+  # reasons map is not an object would make every base lookup below read as
+  # "absent", and an absent base REASON reads as "added" — so a wrong-typed base
+  # could certify an inherited reason. (A wrong-typed base allowance VALUE is
+  # safe by construction: it reads as absent, so the head value counts as a NEW
+  # allowance and still needs an added/changed reason.)
+  if ! jq -e 'type == "object"
+              and ((has("allowances") | not) or ((.allowances | type) == "object"))
+              and ((has("allowance_reasons") | not) or ((.allowance_reasons | type) == "object"))' "$base_manifest" >/dev/null 2>&1; then
+    echo "raise_check: ERROR — the base manifest ($BASE_REF:$rel) is not an object, or its allowances / allowance_reasons is not an object (fail CLOSED — a wrong-typed base never certifies a raise)"
     errors=$((errors + 1)); exit_code=1
     return
   fi
