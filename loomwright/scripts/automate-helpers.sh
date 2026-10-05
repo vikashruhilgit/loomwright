@@ -18,7 +18,7 @@
 # (outside the explicitly-stubbed `gate-eval` MERGE branch) never calls
 # `gh pr merge` — and `brief-repair`, whose only write is the brief lifecycle
 # move performed by `reconcile-jobs.sh --repair` under `.supervisor/jobs/`,
-# never a source-repo or git mutation. The ONE carve-out: `trail-pr`/`closeout`/`trail-unstage`/`trail-gate`
+# never a source-repo or git mutation. The ONE carve-out: `trail-pr`/`closeout`/`trail-unstage`/`trail-gate`/`finalize-empty`
 # (and the read-only `sidecar-check` beside them) are delegated to the sibling
 # `automate-trail.sh`, which is a git/`gh pr create` mutator bounded to this
 # run's trail branch, this PR's local branch/worktree, and — in the primary
@@ -45,7 +45,7 @@
 #   ceiling-check    <runfile_path> <max_tokens> [--root <checkout>]  # §6 PICK-time token-ceiling check via read-token-ledger.sh --run-id; prints OK/PARK, always exits 0
 #   resolve-folder   <dir>                              # §2 list *.md not done and not proposed|parked
 #   resolve-backlog  <backlog.md>                       # §2 dependency-ordered items honoring done/✅ markers AND the referenced file's own ## Status: done stamp (is_done); dir-fallback path also skips proposed|parked, per is_not_ready
-#   resume-glob      <automate_dir>                     # §4 list run files (is_run_file: a "# Automate Run:" title line anywhere — BOM/0-3-space indent/whitespace/case tolerant, RUN_TITLE_ERE) not "## Status: done"; §6 result sidecars never listed because they carry no such line
+#   resume-glob      <automate_dir> [--finalize]        # §4 (--finalize: run finalize-empty on each candidate first, list the rest; finalize lines on stderr) list run files (is_run_file: a "# Automate Run:" title line anywhere — BOM/0-3-space indent/whitespace/case tolerant, RUN_TITLE_ERE) not "## Status: done"; §6 result sidecars never listed because they carry no such line
 #   reconcile-item   <pr_url> <belief>                  # §4 belief vs gh/git truth -> corrected state
 #   gate-eval        <pr_url> <ctx.json>                # §10 MERGE|PARK fail-closed trusted-merge gate (conditions enumerated in skills/automate-loop/SKILL.md §10; cond 6 = classify-risk.sh high_risk, cond 7 = rules-gate-verdict.sh, NO override)
 #   learning-emit    <ledger_path> <flags...>           # §6 step 3 fail-safe (always exit 0) engine-native ground-truth POSTMORTEM_RESULT line; idempotent on run_id+item+pr_url+source+completeness (a degraded emit never blocks a later complete one)
@@ -54,6 +54,7 @@
 #   sidecar-check    <path>                             # §6 trail: delegated to automate-trail.sh — `ok <path>` / `fail <path>: <reason>` (RESULT_SCHEMAS key-table shape check of a result sidecar); always exits 0
 #   trail-pr         <runfile> [--reason <reason>]      # §6 "Trail PR after merge and at run end": delegated to automate-trail.sh — called only by closeout, at ## Status: done, and on a skip/abandon check-off (never at a park); commits this run's explicit trail paths as ONE PR off fresh origin/main, a done-stamped requirement/done brief only when its PR reads merged; one line (opened|pushed|skipped); always exits 0
 #   closeout         <runfile> <item> <pr_url> [--session-id <sid>]  # §6 post-merge close-out: delegated to automate-trail.sh; always exits 0
+#   finalize-empty   <runfile>                          # §3/§4 step 1: delegated to automate-trail.sh — a paused / awaiting_go / remaining-0 / ## Current status-done run ⇒ run lock, `## Status: done` + pause_reason null, `auto-finalized` Progress line, trail-pr --reason done, mode-off trail-unstage; else one `skipped — <reason>` line; always exits 0
 #   dismissed-drafts <runfile> <item> <pr_url> [--after-fix-now]  # §6 "Dismissed-findings decision step (before the park)": delegated to automate-dismissed.sh — one propose-only draft per dismissed finding over the threshold (+ one undecided summary draft per item) in proposed/, content-addressed names, decisions never reset; TSV `draft` rows + one summary line; always exits 0
 #   dismissed-decide <runfile> <draft_path> <fix-now|follow-up|drop>  # §6 decision step / next PICK: delegated to automate-dismissed.sh — records the decision in <run_id>.dismissed-decisions, rewrites (follow-up) or deletes (drop/fix-now) the draft, one Progress line; refuses a foreign path; always exits 0
 #   dismissed-pending <runfile>                         # §6 step 1 PICK: delegated to automate-dismissed.sh — count of this run's undecided drafts, or `unknown` (treated as non-zero); always exits 0
@@ -828,9 +829,46 @@ resolve_backlog_dir() {
 # or committed — is skipped BEFORE the done check, so it is never reported as an
 # incomplete run (it has no `## Status:` line, so `is_done` alone would list it,
 # and >1 listed run fails RESUME closed as `resume_ambiguous`).
+#
+# resume-glob <automate_dir> --finalize — SKILL §4 step 1: first runs
+# `finalize-empty` (automate-trail.sh — the git/PR mutator carve-out; this helper
+# only dispatches it) on every candidate the plain glob lists, then lists only the
+# ones still not `## Status: done`. stdout keeps the plain form's shape (one path
+# per line, sorted) so a caller's list parse is unchanged; diagnostics go to
+# stderr: a finalized run's output lines verbatim (the first names the run), and
+# `resume-glob: <path> not finalized — <line>` for a candidate that WAS eligible
+# but was not finalized (run lock held, a refused write). An ineligible candidate
+# (not paused / another pause_reason / an unchecked row / ## Current not done)
+# prints nothing extra and is listed exactly as the plain form lists it.
 resume_glob() {
-  local dir="$1" f
+  local dir="" fin=0 a f
+  for a in "$@"; do
+    case "$a" in --finalize) fin=1 ;; *) [ -z "$dir" ] && dir="$a" ;; esac
+  done
   [ -d "$dir" ] || return 0
+  if [ "$fin" = 0 ]; then
+    _resume_glob_list "$dir"; return 0
+  fi
+  local cands out
+  cands="$(_resume_glob_list "$dir")"
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    out="$(bash "$(dirname "$0")/automate-trail.sh" finalize-empty "$f" 2>/dev/null)"
+    case "$out" in
+      "finalize-empty: finalized "*) printf '%s\n' "$out" >&2 ;;
+      "finalize-empty: skipped — not paused"|"finalize-empty: skipped — pause_reason "*|\
+      "finalize-empty: skipped — "[0-9]*" unchecked item(s) remain"|"finalize-empty: skipped — ## Current status "*) ;;
+      *) printf 'resume-glob: %s not finalized — %s\n' "$f" "$(printf '%s\n' "$out" | head -n1)" >&2 ;;
+    esac
+  done <<EOF
+$cands
+EOF
+  _resume_glob_list "$dir"
+}
+
+# _resume_glob_list <dir> — the plain glob (byte-identical to the pre-finalize form).
+_resume_glob_list() {
+  local dir="$1" f
   for f in "$dir"/*.md; do
     [ -e "$f" ] || continue
     is_run_file "$f" || continue
@@ -3149,7 +3187,7 @@ main() {
     plan-waves)      plan_waves "$@" ;;
     # Post-park lifecycle MUTATORS live in the sibling automate-trail.sh (the
     # read-only carve-out named in the header) — one mover per concern.
-    sidecar-check|trail-pr|closeout|trail-unstage|trail-gate) exec bash "$(dirname "$0")/automate-trail.sh" "$cmd" "$@" ;;
+    sidecar-check|trail-pr|closeout|trail-unstage|trail-gate|finalize-empty) exec bash "$(dirname "$0")/automate-trail.sh" "$cmd" "$@" ;;
     # Dismissed-finding drafts (propose-only writes, never git) — the sibling
     # automate-dismissed.sh, the second carve-out named in the header.
     dismissed-drafts)  exec bash "$(dirname "$0")/automate-dismissed.sh" "$cmd" "$@" ;;

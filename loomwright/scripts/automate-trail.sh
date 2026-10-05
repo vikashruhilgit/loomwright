@@ -33,6 +33,11 @@
 #     and `git pull --ff-only`s it (first re-staging the recorded trail blobs
 #     that landed upstream — index only), appends the requirement stamp, checks the
 #     Queue item off, and calls trail-pr. It NEVER commits in the primary.
+#   * `finalize-empty` (under `run-lock.sh --owner automate-finalize:<run_id>`)
+#     rewrites ONLY a closed-out run's `## Status: paused` → `done` and its
+#     `## Current` `pause_reason` → `null` (one validated runfile-write), appends
+#     two Progress lines, calls trail-pr `--reason done` and — branch mode off —
+#     trail-unstage for that run. Nothing else.
 #   * Neither subcommand merges anything (the sole merge executor is `automate-helpers.sh
 #     gate-eval`, SKILL §11), trail-pr never calls `run-lock.sh` (closeout takes it around steps 3–7);
 #     neither runs `git reset`,
@@ -64,6 +69,12 @@
 #       `trail-unstage: skipped — <reason>` (`nothing staged` when clean). Run at
 #       PICK, before RUN: drops the trail entries trail-pr staged so the next
 #       item's branch + commit cannot sweep them.
+#   finalize-empty <runfile>
+#       `finalize-empty: finalized <runfile>` + the trail-pr (+ trail-unstage)
+#       line, or ONE `finalize-empty: skipped — <reason>` line. Finalizes ONLY a
+#       paused / awaiting_go / remaining-0 / `## Current` status-done run (the
+#       state closeout leaves after the last check-off); SKILL §4 step 1 runs it
+#       through `automate-helpers.sh resume-glob <dir> --finalize`.
 #   trail-gate <runfile>
 #       One line: `trail-gate: PARK — trail PR open <url>…` |
 #       `trail-gate: PARK — <unreadable reason>` | `trail-gate: clear — no open
@@ -1390,6 +1401,116 @@ PROGRESS
 }
 
 # --------------------------------------------------------------------------- #
+# finalize-empty (SKILL §1.5 / §3 "`done`" / §4 step 1 — `resume-glob --finalize`)
+# --------------------------------------------------------------------------- #
+# finalize-empty <runfile> — the second writer of `## Status: done` (the first is
+# the §6 "Termination" exit of a live loop). `closeout` never writes `done`, even
+# when it checks off the last Queue item: it leaves `## Status: paused`,
+# `pause_reason: awaiting_go`, `## Current` item `status: done` (§3 "After a
+# close-out"). This finalizes exactly that state and nothing else. Fires ONLY when
+# ALL hold: `## Status: paused`, `pause_reason: awaiting_go`, `remaining` 0 (no
+# `- [ ]` row), and the `## Current` item line's `status: done` — re-checked under
+# the lock. Then, in order: `run-lock.sh acquire --owner automate-finalize:<run_id>`
+# (held ⇒ one skipped line, nothing written); ONE validated rewrite through
+# `runfile-write` (`## Status: done`, `## Current` `- pause_reason: null`; every
+# other byte unchanged); `progress-append "<ts> auto-finalized: queue empty after
+# closeout"`; `trail-pr <runfile> --reason done` (the SAME call the Queue-resolved
+# termination makes) and its line appended; branch mode OFF only, `trail-unstage
+# <runfile>` (this is usually a FOREIGN run finalized from the current run's RESUME:
+# its staged trail blobs would ride into the current run's next commit and make
+# `_sync_primary` see a dirty index); the lock released in a trap.
+# Prints `finalize-empty: finalized <runfile>` + the trail (+ unstage) lines, or ONE
+# `finalize-empty: skipped — <reason>` line. Always exit 0 (fail-SAFE emitter).
+FE_ROOT=""
+FE_OWNER=""
+FE_LOCKED=0
+fe_release() {
+  if [ "$FE_LOCKED" -eq 1 ] && [ -n "$FE_OWNER" ]; then
+    bash "$HERE/run-lock.sh" release --owner "$FE_OWNER" --root "$FE_ROOT" >/dev/null 2>&1
+  fi
+  FE_LOCKED=0
+  return 0
+}
+
+# _fe_ineligible <runfile> — prints why the run is NOT a finalize candidate
+# (nothing when it is). Read-only; the `skipped — <reason>` text.
+_fe_ineligible() {
+  local rf="$1" st reason n cl cs
+  st="$(sed -n 's/^## Status:[[:space:]]*\([A-Za-z_]*\).*/\1/p' "$rf" 2>/dev/null | head -n1)"
+  if [ "$st" != "paused" ]; then echo "not paused"; return 0; fi
+  reason="$(awk '/^## Current/{c=1;next} /^## /{c=0} c && /^- pause_reason:/{sub(/^- pause_reason:[[:space:]]*/,""); sub(/[[:space:]]+$/,""); print; exit}' "$rf" 2>/dev/null)"
+  if [ "$reason" != "awaiting_go" ]; then echo "pause_reason ${reason:-absent}, not awaiting_go"; return 0; fi
+  n="$(grep -c '^- \[ \] ' "$rf" 2>/dev/null)"; n="${n:-0}"
+  if [ "$n" != "0" ]; then echo "$n unchecked item(s) remain"; return 0; fi
+  cl="$(awk '/^## Current/{c=1;next} /^## /{c=0} c && /^- item: /{print; exit}' "$rf" 2>/dev/null)"
+  cs="$(printf '%s\n' "$cl" | awk 'BEGIN{FS=" [|] "} {for(i=1;i<=NF;i++) if (index($i, "status: ")==1) {print substr($i, 9); exit}}')"
+  if [ "$cs" != "done" ]; then echo "## Current status ${cs:-absent}, not done"; return 0; fi
+  return 0
+}
+
+finalize_empty() {
+  local runfile="${1:-}" S="finalize-empty: skipped —"
+  if [ -z "$runfile" ] || [ ! -f "$runfile" ]; then echo "$S run file not found"; return 0; fi
+  if ! command -v git >/dev/null 2>&1; then echo "$S git unavailable"; return 0; fi
+  local rf_dir rf_abs root rf_rel run_id why
+  rf_dir="$(cd "$(dirname "$runfile")" 2>/dev/null && pwd -P)" || { echo "$S run file not found"; return 0; }
+  rf_abs="$rf_dir/$(basename "$runfile")"
+  root="$(git -C "$rf_dir" rev-parse --show-toplevel 2>/dev/null)"
+  if [ -z "$root" ]; then echo "$S not a git checkout"; return 0; fi
+  root="$(cd "$root" && pwd -P)"
+  case "$rf_abs" in "$root"/*) rf_rel="${rf_abs#"$root"/}" ;; *) echo "$S run file outside the checkout"; return 0 ;; esac
+  run_id="$(basename "$runfile" .md)"
+  cd "$root" || { echo "$S cannot enter checkout"; return 0; }
+  why="$(_fe_ineligible "$rf_rel")"
+  if [ -n "$why" ]; then echo "$S $why"; return 0; fi
+  local HLP="$HERE/automate-helpers.sh"
+
+  FE_ROOT="$root"; FE_OWNER="automate-finalize:$run_id"
+  local lk rc holder
+  lk="$(bash "$HERE/run-lock.sh" acquire --owner "$FE_OWNER" --root "$root" 2>/dev/null)"; rc=$?
+  if [ "$rc" -ne 0 ]; then
+    holder="$(printf '%s\n' "$lk" | sed -n 's/.*run_lock_held owner=\([^ ]*\).*/\1/p' | head -n1)"
+    echo "$S run lock held by ${holder:-unknown}"; return 0
+  fi
+  FE_LOCKED=1
+  trap fe_release EXIT
+  # Re-check under the lock: a closeout/PICK may have moved the file in between.
+  why="$(_fe_ineligible "$rf_rel")"
+  if [ -n "$why" ]; then fe_release; trap - EXIT; echo "$S $why"; return 0; fi
+
+  # ONE validated rewrite: the first `## Status:` line's `paused` → `done` (any
+  # trailing text kept) and `## Current`'s `- pause_reason:` → `null`. Staged to a
+  # file and redirected — never a `generator | runfile-write` pipe (§3).
+  local tmp; tmp="$(mktemp "${rf_abs}.fe.XXXXXX")" || { fe_release; trap - EXIT; echo "$S cannot stage the rewrite"; return 0; }
+  if ! awk '
+      !st && /^## Status:/ { sub(/^## Status:[[:space:]]*paused/, "## Status: done"); st=1; print; next }
+      /^## Current/ { c=1; print; next }
+      /^## / { c=0 }
+      c && !pr && /^- pause_reason:/ { print "- pause_reason: null"; pr=1; next }
+      { print }' "$rf_rel" > "$tmp" \
+     || ! grep -q '^## Status: done' "$tmp" \
+     || ! bash "$HLP" runfile-write "$rf_rel" < "$tmp" >/dev/null 2>&1; then
+    rm -f "$tmp"; fe_release; trap - EXIT
+    echo "$S runfile-write refused"; return 0
+  fi
+  rm -f "$tmp"
+  local ts; ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  bash "$HLP" progress-append "$rf_rel" "$ts auto-finalized: queue empty after closeout" >/dev/null 2>&1
+  echo "finalize-empty: finalized $runfile"
+  local l
+  l="$(bash "$HLP" trail-pr "$rf_abs" --reason done 2>/dev/null | tail -n1)"
+  [ -n "$l" ] || l="trail-pr: skipped — no output"
+  echo "$l"
+  bash "$HLP" progress-append "$rf_rel" "$ts $l" >/dev/null 2>&1
+  if [ "$(_branch_mode "$root")" = "off" ]; then
+    l="$(bash "$HLP" trail-unstage "$rf_abs" 2>/dev/null | tail -n1)"
+    echo "${l:-trail-unstage: skipped — no output}"
+  fi
+  fe_release; trap - EXIT
+  return 0
+}
+
+# --------------------------------------------------------------------------- #
 # dispatch
 # --------------------------------------------------------------------------- #
 main() {
@@ -1400,6 +1521,7 @@ main() {
     closeout)      closeout "$@" ;;
     trail-unstage) trail_unstage "$@" ;;
     trail-gate)    trail_gate "$@" ;;
+    finalize-empty) finalize_empty "$@" ;;
     ""|-h|--help)  grep -E '^#   [a-z]' "$0" | sed 's/^#   /  /' ;;
     *) echo "automate-trail: unknown subcommand: $cmd" >&2 ;;
   esac
