@@ -36,3 +36,9 @@ loomwright/scripts/test-automate-helpers.sh
 loomwright/scripts/test-rules-gate-seams.sh
 loomwright/skills/automate-loop/SKILL.md
 changelog.d/automate-followups-16-gate-eval-cond7-pin-head.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-05T03:16:44Z
+- **Brief:** .supervisor/jobs/done/2026-10-05-gate-eval-cond7-pin-head.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/384
