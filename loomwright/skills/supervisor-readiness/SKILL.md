@@ -117,11 +117,13 @@ The `.supervisor/` directory should be gitignored (Supervisor auto-adds this):
 
 ## Supervisor-Ready Brief Template
 
+**Home-path rule (scrub-safe briefs):** an absolute `/Users/<name>/` or `/home/<name>/` path ANYWHERE in a brief (not only on the `Project:` line — the scrub reads the whole file) trips the `meta-sync.sh` `home_path` scrub and blocks the lane's whole trail push, so write `Project:` home-relative (`~/...` when the checkout is under `$HOME`, else the repo directory name) and use the `/Users/<name>/` placeholder in prose. (In branch mode the push fails CLOSED with exit 2, so the lane's done brief, requirement stamp, run file and ledger line all miss the metadata branch, not just the brief.)
+
 ```markdown
 # Supervisor Job: {goal}
 
 ## Environment
-- **Project:** {absolute path}
+- **Project:** {home-relative path — `~/...` when the checkout is under `$HOME`, else the repo directory name; never an absolute home path (home-path rule above)}
 - **CLAUDE.md:** ✓ Found ({fresh|stale})
 - **Git:** {clean|dirty} ({N} files), branch: {branch}
 - **GitHub CLI:** ✓ Authenticated | ⚠ Not authenticated

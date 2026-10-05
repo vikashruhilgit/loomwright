@@ -21,7 +21,7 @@ description: Review code changes with LSP diagnostics, issue categorization, and
   - If omitted, reviews recent changes from git diff
 
 - **--project** (optional): Explicit project path (overrides auto-detect)
-  - Example: `/code-reviewer --project /Users/name/my-project`
+  - Example: `/code-reviewer --project ~/my-project`
 
 ## What This Does
 
@@ -53,7 +53,7 @@ description: Review code changes with LSP diagnostics, issue categorization, and
 
 ```
 ## PROJECT CONTEXT
-Working on: /Users/name/my-app
+Working on: ~/my-app
 Patterns Found: Context API for state, Jest for testing, Tailwind dark: mode
 
 ## Code Review Decision: FAIL

@@ -92,7 +92,7 @@ The Supervisor's context budget gets consumed by Phases 0-2 (planning) before an
 # Supervisor Job: Add JWT Authentication
 
 ## Environment
-- **Project:** /Users/name/my-project
+- **Project:** ~/my-project
 - **CLAUDE.md:** ✓ Found (fresh)
 - **Git:** clean, branch: main
 - **GitHub CLI:** ✓ Authenticated
