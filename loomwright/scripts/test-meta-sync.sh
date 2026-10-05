@@ -76,12 +76,24 @@
 #      exit 2 `deny_pattern_invalid:<line>`; the deny file absent -> the push lands
 #  33. scan_error(<rule>) (failing grep), ledger_unverifiable(jq missing) (a hermetic no-jq PATH)
 #      and unreadable (failing cat-file) -> exit 2, branch and meta-base unchanged
+#  34. push-retry exhaustion: an origin whose pre-receive rejects every push -> exit 1 `push_failed
+#      — rejected <N> times`, N = meta-sync.sh's own MAX_ATTEMPTS (grep-read, never hard-coded); the
+#      hook ran exactly N times; branch tip unchanged, meta-base byte-unchanged; a PATH git shim
+#      logged exactly N push argvs, none with a force form (--force*, -f, a +refspec)
+#  35. a meta-base tree object missing from the object store (a nonexistent 40-hex sha) -> the
+#      `missing from the object store` warning and the no-base derivation: push does not re-add a
+#      branch-deleted file and pushes a new one; pull deletes it locally; an unlisted conflict
+#      still aborts a --paths-from push (branch tip and meta-base unchanged)
 #  --- Mutation controls (sed-patched mutant copies in the temp dir; the shipped script has no
 #      test seam) ---
 #  20. (i) a mutant that drops the base comparison (any local difference is staged) MUST fail the
 #      stale-copy assertion
 #  21. (ii) a mutant whose managed-set predicate accepts every file under .supervisor/ (a directory
 #      add) MUST fail the ignored-file assertion
+#  36. (iii) a mutant whose exhausted-retry path exits 0 instead of dying `push_failed` MUST fail
+#      the push-retry-exhaustion assertion (34)
+#  37. (iv) a mutant whose load_base reads a missing base object as the EMPTY tree MUST fail the
+#      missing-base push assertion (35) by re-adding the branch-deleted file
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -899,6 +911,98 @@ OUT="$(PATH="$W/cshim:$PATH" bash "$SCRIPT" push --root "$W/B" 2>&1)"; RC=$?
 { [ "$RC" -eq 2 ] && grep -qxF "meta_sync: scrub $RQ/ur.md: unreadable" < <(printf '%s\n' "$OUT") && [ "$(br_tip)" = "$tip" ] && [ "$(base_of B)" = "$base_before" ]; }
 check $? "a candidate the scrub cannot read -> exit 2 unreadable, branch and meta-base unchanged (rc=$RC: $OUT)"
 
+echo "== 34. push-retry exhaustion: an origin that rejects every push =="
+# The bound is the script's own MAX_ATTEMPTS (read here, never hard-coded). Attempts are counted by
+# an independent observer (the origin's pre-receive hook), and every `git push` argv the script
+# runs is logged by a PATH git shim (the technique legs 22 and 27 use). The SUT calls
+# `git -C <root> push ...`, so the shim scans every argument for the verb, not just $1.
+PX_N="$(grep -E '^MAX_ATTEMPTS=[0-9]+$' "$SUT" | cut -d= -f2)"
+# push_exhaust_world — synced pair, B holds one local change, origin's pre-receive rejects every push
+# (one log line per invocation), and a git shim dir that logs each push argv as `[arg] [arg] ...`.
+push_exhaust_world() {
+  synced_pair
+  put B "$RQ/y.md" "y v2 (rejected every time)"
+  PX_TIP="$(br_tip)"; cp "$W/B/.git/meta-base" "$W/px-base.before"
+  : > "$W/px-hook.log"; : > "$W/px-push.log"
+  cat > "$W/origin.git/hooks/pre-receive" <<HOOK
+#!/bin/sh
+echo invoked >> "$W/px-hook.log"
+cat > /dev/null
+exit 1
+HOOK
+  chmod +x "$W/origin.git/hooks/pre-receive"
+  mkdir -p "$W/pxshim"
+  cat > "$W/pxshim/git" <<SHIM
+#!/bin/sh
+for a in "\$@"; do
+  if [ "\$a" = "push" ]; then
+    { printf '[%s] ' "\$@"; echo; } >> "$W/px-push.log"
+    break
+  fi
+done
+exec "$REAL_GIT" "\$@"
+SHIM
+  chmod +x "$W/pxshim/git"
+}
+# push_exhaust_run — run the SUT (or the current mutant) push from B through the shim; sets OUT / RC.
+push_exhaust_run() {
+  OUT="$(PATH="$W/pxshim:$PATH" bash "$SCRIPT" push --root "$W/B" 2>&1)"; RC=$?
+  rm -f "$W/origin.git/hooks/pre-receive"
+}
+# px_failed_closed — the AC-1 headline: exit 1 with the exact push_failed line naming N.
+px_failed_closed() {
+  [ "$RC" -eq 1 ] && grep -qF "meta_sync: push_failed — rejected $PX_N times; nothing forced, meta-base untouched" < <(printf '%s\n' "$OUT")
+}
+px_hooks() { wc -l < "$W/px-hook.log" | tr -d ' '; }
+px_pushes() { wc -l < "$W/px-push.log" | tr -d ' '; }
+case "$PX_N" in ''|*[!0-9]*) false ;; *) [ "$PX_N" -ge 2 ] ;; esac
+check $? "fixture: MAX_ATTEMPTS read from meta-sync.sh is a number >= 2 (N='$PX_N'), so retries are exercised"
+push_exhaust_world
+push_exhaust_run
+px_failed_closed
+check $? "exhausted retries -> exit 1 'push_failed — rejected $PX_N times; nothing forced, meta-base untouched' (rc=$RC: $OUT)"
+[ "$(br_tip)" = "$PX_TIP" ]; check $? "exhausted retries -> the branch tip on origin is unchanged"
+cmp -s "$W/px-base.before" "$W/B/.git/meta-base"; check $? "exhausted retries -> B's meta-base is byte-unchanged"
+[ "$(px_hooks)" = "$PX_N" ]; check $? "the origin's pre-receive ran exactly MAX_ATTEMPTS=$PX_N times (hook log: $(px_hooks))"
+{ [ "$(px_pushes)" = "$PX_N" ] \
+  && ! grep -qE '\[(--force[^]]*|-[A-Za-z]*f[A-Za-z]*|\+[^]]*)\]' "$W/px-push.log"; }
+check $? "the git shim logged exactly $PX_N push argvs (got $(px_pushes)), none with --force*, -f or a +refspec (log: $(tr '\n' '|' < "$W/px-push.log"))"
+
+echo "== 35. meta-base object missing from the object store -> no-base (history-aware) derivation =="
+# Fixed fixture: a well-formed but NONEXISTENT tree sha in <gitdir>/meta-base. (Deleting the gc
+# anchor and pruning does not work: the SUT fetches R before load_base, and after a pull the
+# meta-base tree is R's tree — part of branch history — so the fetch restores the object.)
+MB_SHA="deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+MB_WARN="meta_sync: meta-base '$MB_SHA' is missing from the object store — falling back to the no-base (history-aware) derivation"
+# missing_base_world — synced pair; A deletes d.md and pushes, so B's untouched d.md equals a
+# historical blob; B's meta-base then records MB_SHA. Returns 1 when the fixture did not take.
+missing_base_world() {
+  synced_pair
+  rm "$W/A/$RQ/d.md"; ms A push
+  { [ "$RC" -eq 0 ] && ! br_has "$RQ/d.md" && [ "$(get B "$RQ/d.md")" = "d v1" ]; } || return 1
+  printf '%s\n' "$MB_SHA" > "$W/B/.git/meta-base"
+  ! git -C "$W/B" cat-file -e "$MB_SHA^{tree}" 2>/dev/null
+}
+missing_base_world; check $? "fixture: d.md deleted on the branch, B still holds 'd v1', B's meta-base tree $MB_SHA is absent from B's object store"
+put B "$RQ/new35.md" "brand new from B"
+ms B push
+{ [ "$RC" -eq 0 ] && grep -qF "$MB_WARN" < <(printf '%s\n' "$OUT"); }
+check $? "push with a missing meta-base object -> exit 0 and the 'missing from the object store' warning naming the sha (rc=$RC: $OUT)"
+! br_has "$RQ/d.md"; check $? "push (no-base derivation): the branch-deleted d.md is NOT re-added (branch d.md: '$(br_show "$RQ/d.md")')"
+[ "$(br_show "$RQ/new35.md")" = "brand new from B" ]; check $? "push (no-base derivation): the genuinely new local file IS pushed"
+missing_base_world; check $? "fixture (pull): missing meta-base object state rebuilt"
+ms B pull
+{ [ "$RC" -eq 0 ] && grep -qF "$MB_WARN" < <(printf '%s\n' "$OUT") && [ ! -e "$W/B/$RQ/d.md" ]; }
+check $? "pull with a missing meta-base object -> exit 0, the same warning, and d.md deleted locally, not resurrected (rc=$RC: $OUT)"
+missing_base_world; check $? "fixture (conflict): missing meta-base object state rebuilt"
+put B "$RQ/x.md" "x edited away from every historical blob"
+put B "$RQ/new35.md" "listed new file"
+printf '%s\n' "$RQ/new35.md" > "$W/list35.txt"
+tip="$(br_tip)"
+ms B push --paths-from "$W/list35.txt"
+{ [ "$RC" -eq 1 ] && grep -qF "meta_sync: conflict $RQ/x.md" < <(printf '%s\n' "$OUT") && [ "$(br_tip)" = "$tip" ] && [ "$(base_of B)" = "$MB_SHA" ]; }
+check $? "missing meta-base object + an unlisted conflict -> the --paths-from push exits 1 naming it, branch tip and meta-base unchanged (whole-set derivation) (rc=$RC: $OUT)"
+
 # ---------------------------------------------------------------------------------------------
 # Mutation controls — sed-patched copies; the sibling setup-memory.sh is copied beside each.
 # build_mutant <dir> <sed-expr> <must-appear> — 0 = mutant built and differs; 1 = inconclusive.
@@ -941,6 +1045,49 @@ if build_mutant "$MUT_II" 's/^is_managed() {$/is_managed() { return 0/' 'is_mana
   SCRIPT="$SUT"
 else
   no "mutation control (ii): could not build the mutant (sed did not apply or bash -n failed) — control inconclusive"
+fi
+
+echo "== 36. mutation control (iii): exhausted retries exit 0 -> push-retry-exhaustion assertion must turn red =="
+# The mutant replaces only the final `die "push_failed ..."` line; the loop stays bounded.
+MUT_III="$TROOT/mutant-iii"
+if build_mutant "$MUT_III" '/die "push_failed/s/.*/  exit 0  # mutant (iii)/' 'exit 0  # mutant (iii)'; then
+  push_exhaust_world
+  SCRIPT="$MUT_III/meta-sync.sh"
+  push_exhaust_run
+  SCRIPT="$SUT"
+  if px_failed_closed; then
+    no "mutation control (iii) REFUTED: the exit-0 mutant still reported push_failed — the push-retry-exhaustion assertion is not load-bearing"
+  elif [ "$(px_hooks)" != "$PX_N" ] || [ "$(br_tip)" != "$PX_TIP" ]; then
+    no "mutation control (iii): the mutant did not exhaust the same $PX_N rejected attempts (hooks=$(px_hooks), rc=$RC: $OUT) — control inconclusive"
+  else
+    ok "mutation control (iii): the exit-0 mutant turns the push-retry-exhaustion assertion red — rc=$RC after $(px_hooks) rejected attempts, no push_failed line (output: $(printf '%s' "$OUT" | tr '\n' '|'))"
+  fi
+else
+  no "mutation control (iii): could not build the mutant (sed did not apply or bash -n failed) — control inconclusive"
+fi
+
+echo "== 37. mutation control (iv): missing base read as the EMPTY tree -> missing-base push assertion must turn red =="
+MUT_IV="$TROOT/mutant-iv"
+if build_mutant "$MUT_IV" 's/^    BASE_TREE=""$/    HAVE_BASE=1; BASE_TREE=4b825dc642cb6eb9a060e54bf8d69288fbee4904/' 'HAVE_BASE=1; BASE_TREE=4b825dc642cb6eb9a060e54bf8d69288fbee4904'; then
+  if missing_base_world; then
+    put B "$RQ/new35.md" "brand new from B"
+    SCRIPT="$MUT_IV/meta-sync.sh"
+    ms B push
+    SCRIPT="$SUT"
+    if [ "$RC" -eq 0 ] && ! br_has "$RQ/d.md" && [ "$(br_show "$RQ/new35.md")" = "brand new from B" ]; then
+      no "mutation control (iv) REFUTED: the empty-tree mutant did not re-add d.md — the missing-base push assertion is not load-bearing"
+    elif [ "$RC" -ne 0 ] || grep -qF 'could not list the meta-base tree' < <(printf '%s\n' "$OUT"); then
+      no "mutation control (iv): the mutant push crashed instead of re-adding (rc=$RC: $OUT) — control inconclusive"
+    elif br_has "$RQ/d.md"; then
+      ok "mutation control (iv): the empty-tree mutant turns the missing-base push assertion red — it re-added the branch-deleted d.md (branch d.md: '$(br_show "$RQ/d.md")', rc=$RC)"
+    else
+      no "mutation control (iv): the mutant neither re-added d.md nor pushed the new file (rc=$RC: $OUT) — control inconclusive"
+    fi
+  else
+    no "mutation control (iv): the missing-base fixture did not take — control inconclusive"
+  fi
+else
+  no "mutation control (iv): could not build the mutant (sed did not apply or bash -n failed) — control inconclusive"
 fi
 
 echo
