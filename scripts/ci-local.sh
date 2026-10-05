@@ -49,8 +49,12 @@
 #                      A finished log ends with its verdict line (`ci-local: PASS …` / `ci-local:
 #                      FAIL …`; an --affected log with the affected-only marker), so a result is
 #                      read later with --last instead of re-running the suite to see it. The newest
-#                      20 logs are kept (shared by every checkout of the repo); a cached PASS
-#                      found before the slot acquire, and --list, write no log.
+#                      20 logs are kept (shared by every checkout of the repo), PLUS any older log
+#                      still being written: a log with no verdict line whose owner pid is alive is
+#                      never pruned, so a long or queued run keeps its transcript however many runs
+#                      start after it (honest limit: a pid reused after a SIGKILL keeps that
+#                      verdict-less log until the new owner exits). A cached PASS found before the
+#                      slot acquire, and --list, write no log.
 #   --affected         the inner-loop check while iterating — NOT a pre-push gate. The changed set is
 #                      every file differing between `git merge-base origin/main HEAD` and the working
 #                      tree, plus untracked non-ignored files (HEAD when origin/main is absent). Map:
@@ -154,15 +158,23 @@ finish_log() {
   if [ -z "$verdict" ] && [ "$rc" -ne 0 ] && [ "$rc" -ne 130 ] && [ "$rc" -ne 143 ]; then
     verdict="ci-local: FAIL (exit $rc) — see the message above"; verdict_fd=2
   fi
+  # The log can only be gone if something outside the in-flight-aware prune removed it. Appending
+  # would recreate it as a verdict-only stub that --last then trusts — say so instead.
+  local log_gone=0
+  [ -e "$log" ] || log_gone=1
   if [ -n "$verdict" ]; then
     if [ "$verdict_fd" -eq 2 ]; then printf '%s\n' "$verdict" >&2; else printf '%s\n' "$verdict"; fi
-    printf '%s\n' "$verdict" >> "$log"
+    [ "$log_gone" -eq 1 ] || printf '%s\n' "$verdict" >> "$log"
   fi
   if [ "$affected" -eq 1 ]; then
     printf '%s\n' "$affected_marker"
-    printf '%s\n' "$affected_marker" >> "$log"
+    [ "$log_gone" -eq 1 ] || printf '%s\n' "$affected_marker" >> "$log"
   fi
-  printf 'ci-local: log %s\n' "$log"
+  if [ "$log_gone" -eq 1 ]; then
+    printf 'ci-local: log %s was removed while this run wrote it — its transcript is lost (the verdict above is this run'\''s)\n' "$log" >&2
+  else
+    printf 'ci-local: log %s\n' "$log"
+  fi
 }
 
 cleanup() {
@@ -196,8 +208,23 @@ runs_newest_first() {
 }
 # log_key NAME — the content key a log was written for (the name minus -<timestamp>-<pid>[-affected].log).
 log_key() { local s="${1%.log}"; s="${s%-affected}"; s="${s%-*}"; printf '%s\n' "${s%-*}"; }
+# log_in_flight NAME — true when that log is still being written: its owner pid (from the name) is
+# alive AND the log has no verdict line yet. Liveness is checked FIRST: a dead owner has already run
+# its EXIT trap (verdict written, or interrupted), so its log is finished either way; a live owner
+# whose log already ends in a verdict is past finish_log and prunable too.
+log_in_flight() {
+  local s="${1%.log}" pid
+  s="${s%-affected}"; pid="${s##*-}"
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  kill -0 "$pid" 2>/dev/null || return 1
+  case "$(awk 'NF { l = $0 } END { print l }' "$runs/$1" 2>/dev/null)" in
+    "ci-local: PASS"*|"ci-local: FAIL"*|"$affected_marker") return 1 ;;
+  esac
+  return 0
+}
 
-# open_log — creates this run's log (pruning runs/ to the newest $keep_runs), prints its path as the
+# open_log — creates this run's log (pruning runs/ to the newest $keep_runs, never an in-flight log
+# — so the cap is $keep_runs + the runs still writing), prints its path as the
 # first output line, then routes stdout and stderr through one tee each: the terminal keeps its two
 # streams and the log gets both. The tees ignore INT/TERM so a Ctrl-C cannot cut the transcript
 # short; they end on EOF once finish_log restores the real descriptors.
@@ -208,7 +235,9 @@ open_log() {
   log="$runs/$key-$(date -u '+%Y%m%dT%H%M%SZ')-$$$sfx.log"
   printf 'ci-local: log %s\n' "$log" > "$log"
   printf 'ci-local: log %s\n' "$log"
-  runs_newest_first | sed -n "$((keep_runs + 1)),\$p" | while IFS= read -r f; do rm -f "$runs/$f"; done
+  runs_newest_first | sed -n "$((keep_runs + 1)),\$p" | while IFS= read -r f; do
+    log_in_flight "$f" || rm -f "$runs/$f"
+  done
   mkfifo "$tmpd/out.fifo" "$tmpd/err.fifo"
   exec 3>&1 4>&2
   ( trap '' INT TERM; exec tee -a "$log" ) < "$tmpd/out.fifo" >&3 &

@@ -56,6 +56,9 @@
 #        plan, nothing ran, no log; (AX) conflicting flags → exit 2
 #   (PR) 25 seeded logs + one run → 20 remain, the run's own log survives, the oldest are gone;
 #        no logs at all → --last says so, exit 1
+#   (PI) an in-flight log (no verdict, live owner pid) older than 20+ finished logs survives a run's
+#        prune; a verdict-less log with a dead owner is pruned
+#   (PG) the run's own log removed mid-run → no verdict-only stub recreated, the removal is reported
 # Slot state lives under a sandboxed XDG_STATE_HOME: an inner fixture run must never queue on the
 # real shared pool that an outer ci-local.sh run is holding (that would deadlock it).
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../loomwright/scripts/hermetic-test-env.sh"
@@ -110,6 +113,7 @@ SH
   cat > "$R/loomwright/scripts/test-one.sh" <<'SH'
 echo "one" >> "$FIXTURE_LOG"
 [ -z "${FIXTURE_TOUCH:-}" ] || echo "changed $$" > "$(dirname "$0")/../../touched.txt"
+[ -z "${FIXTURE_RMLOGS:-}" ] || rm -f "$FIXTURE_RMLOGS"/*.log
 exit 0
 SH
   ( cd "$R" && git init -q && git config user.email t@t && git config user.name t \
@@ -491,15 +495,20 @@ for combo in "--affected --force" "--last --affected" "--last --force" "--last -
   else no "(AX) $combo: rc=$rc out=$out"; fi
 done
 
-# (PR) — no logs: --last says so; 25 seeded logs + one run: the newest 20 remain.
+# (PR) — no logs: --last says so; 25 seeded finished logs + one run: the newest 20 remain.
 rm -f "$state/runs/"*
 run --last
 if [ "$rc" -eq 1 ] && has "no saved full-run log"; then ok "(PR) no logs at all: --last says so, exit 1"
 else no "(PR) empty: rc=$rc out=$out"; fi
 i=0
-while [ "$i" -lt 25 ]; do
-  : > "$state/runs/seedkey-x-Linux-20200101T0000$(printf '%02d' "$i")Z-1.log"; i=$((i + 1))
-done
+# Seeds are FINISHED logs (verdict line): prunable whatever their name's pid is doing.
+seed_finished() {
+  i=0
+  while [ "$i" -lt 25 ]; do
+    echo "ci-local: PASS after 1s" > "$state/runs/seedkey-x-Linux-20200101T0000$(printf '%02d' "$i")Z-1.log"; i=$((i + 1))
+  done
+}
+seed_finished
 run --force
 prlog="$(logpath)"
 gone=0; i=0
@@ -507,6 +516,29 @@ while [ "$i" -lt 6 ]; do [ -e "$state/runs/seedkey-x-Linux-20200101T0000$(printf
 if [ "$rc" -eq 0 ] && [ "$(nlogs)" = 20 ] && [ -f "$prlog" ] && [ "$gone" = 6 ] \
    && [ -e "$state/runs/seedkey-x-Linux-20200101T000006Z-1.log" ]; then ok "(PR) 25 + 1 logs pruned to 20: the 6 oldest gone, the run's own log kept"
 else no "(PR) logs=$(nlogs) gone=$gone prlog=$prlog"; fi
+
+# (PI) — an in-flight run's log (no verdict yet, owner pid alive) survives another run's prune even
+# with 20+ newer logs present; a verdict-less log whose owner is dead is pruned as usual.
+rm -f "$state/runs/"*
+sleep 60 & sleeper=$!
+deadpid="$(sh -c 'echo $$')"
+live_log="$state/runs/seedkey-x-Linux-20190101T000000Z-$sleeper.log"
+dead_log="$state/runs/seedkey-x-Linux-20190101T000001Z-$deadpid.log"
+echo "ci-local: log $live_log" > "$live_log"
+echo "ci-local: log $dead_log" > "$dead_log"
+seed_finished
+run --force
+kill "$sleeper" 2>/dev/null; wait "$sleeper" 2>/dev/null; sleeper=""
+if [ "$rc" -eq 0 ] && [ -f "$live_log" ] && [ "$(cat "$live_log")" = "ci-local: log $live_log" ] && [ ! -e "$dead_log" ] \
+   && [ "$(nlogs)" = 21 ]; then ok "(PI) in-flight log kept untouched past the cap (20 + 1 live), dead-owner verdict-less log pruned"
+else no "(PI) rc=$rc logs=$(nlogs) live=$([ -f "$live_log" ] && echo kept || echo GONE) dead=$([ -e "$dead_log" ] && echo KEPT || echo gone)"; fi
+
+# (PG) — the run's own log removed mid-run: no verdict-only stub is recreated, the run says so.
+rm -f "$state/runs/"*
+FIXTURE_RMLOGS="$state/runs" run --force
+if [ "$rc" -eq 0 ] && [ "$(nlogs)" = 0 ] && has "was removed while this run wrote it" && has "^ci-local: PASS after"; then
+  ok "(PG) log removed mid-run: no stub recreated, verdict still printed, removal reported"
+else no "(PG) rc=$rc logs=$(nlogs) out=$out"; fi
 
 # (Z)
 printf 'jobs:\n  ci:\n    steps:\n      - run: echo nothing\n' > "$R/.github/workflows/ci.yml"

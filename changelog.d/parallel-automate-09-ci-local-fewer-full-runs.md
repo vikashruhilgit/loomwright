@@ -3,7 +3,8 @@ ci-local.sh keeps every run's log, reads it back with --last, and adds an --affe
 Lanes ran the full local suite several times per push, partly to re-read output a finished run had not kept, partly
 as an inner-loop check after small fixes. Every `scripts/ci-local.sh` run that starts the pool now writes its whole
 transcript (stdout and stderr, FAIL banners included) to `runs/` in the repo-keyed shared state dir, prints the log
-path as its first and last line, and ends the log with its verdict line; the newest 20 logs are kept. `--last`
+path as its first and last line, and ends the log with its verdict line; the newest 20 logs are kept, plus
+any older log a still-running run is writing (never pruned mid-run). `--last`
 prints the newest full-run log for the current tree with PASS, FAIL, INCOMPLETE (no verdict: interrupted or still
 running) or stale-key, and runs nothing. `--affected` maps the files changed since the merge-base with origin/main
 (untracked included) to their suites, adds the cheap check-* and validate-version gates, runs that subset through
