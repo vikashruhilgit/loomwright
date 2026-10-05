@@ -1764,7 +1764,7 @@ grep -qxF -- "- item: $REQ | status: done | pr: $PRURL | branch: feature/x" "$P/
 grep -qE '^- [^ ]+ auto-finalized: queue empty after closeout$' "$P/$RF_REL" && ok "(F1) Progress: auto-finalized: queue empty after closeout" || no "(F1) no auto-finalized line"
 grep -qE "^trail-pr $P/$RF_REL --reason done\$" "$SPYLOG" && ok "(F1) trail-pr <runfile> --reason done via the dispatcher (the Termination call)" || no "(F1) trail-pr call: $(tr '\n' '|' < "$SPYLOG" 2>/dev/null)"
 grep -qE '^- [^ ]+ trail-pr: (opened|pushed|skipped)' "$P/$RF_REL" && ok "(F1) the trail line is appended to ## Progress" || no "(F1) trail line not appended"
-head -n1 "$FX/fe.err" | grep -qxF "finalize-empty: finalized $AUTD/$RUN_ID.md" && grep -q '^trail-unstage: ' "$FX/fe.err" && ok "(F1) stderr: finalized line + trail-unstage line" || no "(F1) stderr: $(tr '\n' '|' < "$FX/fe.err")"
+grep -qxF "finalize-empty: finalized $AUTD/$RUN_ID.md" < <(head -n1 "$FX/fe.err") && grep -q '^trail-unstage: ' "$FX/fe.err" && ok "(F1) stderr: finalized line + trail-unstage line" || no "(F1) stderr: $(tr '\n' '|' < "$FX/fe.err")"
 stg="$(git -C "$P" diff --cached --name-only)"
 [ -z "$stg" ] && ok "(F1) mode off: the primary index carries NO staged path of the finalized run" || no "(F1) still staged: $(printf '%s' "$stg" | tr '\n' ' ')"
 [ ! -d "$P/.supervisor/run.lock" ] && ok "(F1) run lock released" || no "(F1) run lock leaked"
@@ -1820,7 +1820,7 @@ sed 's/^/    | /' "$FX/fe.err"
 [ -z "$lst" ] && grep -qxF -- "## Status: done" "$P/$RF_REL" && ok "(F3) branch mode: finalized and not listed" || no "(F3) list='$lst' status=$(grep '^## Status' "$P/$RF_REL")"
 grep -q "^trail-pr: meta-pushed $BMB" "$FX/fe.err" && ! grep -q '^trail-unstage' "$FX/fe.err" && ok "(F3) trail meta-pushed; no trail-unstage in branch mode" || no "(F3) stderr: $(tr '\n' '|' < "$FX/fe.err")"
 [ "$(count_creates)" = 0 ] && ok "(F3) no gh pr create in branch mode" || no "(F3) a PR was created"
-bm_show "$RF_REL0" | grep -qxF -- "## Status: done" && ok "(F3) the metadata branch holds the finalized run file" || no "(F3) branch run file not done"
+grep -qxF -- "## Status: done" < <(bm_show "$RF_REL0") && ok "(F3) the metadata branch holds the finalized run file" || no "(F3) branch run file not done"
 unset LOOMWRIGHT_MEMORY_REPO_ALLOWLIST
 
 # =============================================================================
@@ -1840,7 +1840,7 @@ co_templates() { # <automate-trail.sh> → one sample line per closeout string t
 cl_unknown() { # <automate-trail.sh> → the templates the classifier reads as unknown
   local t
   while IFS= read -r t; do
-    printf '%s\n' "$t" | cls --run r --item i --pr p | grep -q "	unknown	" && printf '%s\n' "$t"
+    grep -q "	unknown	" < <(printf '%s\n' "$t" | cls --run r --item i --pr p) && printf '%s\n' "$t"
   done <<CLT
 $(co_templates "$1")
 CLT
@@ -1931,14 +1931,14 @@ co_others() { (cd "$P" && bash "${CO_H:-$SPYD/automate-helpers.sh}" closeout-oth
 closeout_fixture 310; mk_rb; spy_reset
 out="$(co_others --record "$RBF")"; rc=$?
 printf '%s\n' "$out" | sed 's/^/    | /'
-[ "$rc" -eq 0 ] && printf '%s\n' "$out" | grep -qxF "closeout-others: $RUN_ID $REQ $PRURL" && ok "(CO1) header names A's run, item and PR; exit 0" || no "(CO1) rc=$rc header missing"
+[ "$rc" -eq 0 ] && grep -qxF "closeout-others: $RUN_ID $REQ $PRURL" <<<"$out" && ok "(CO1) header names A's run, item and PR; exit 0" || no "(CO1) rc=$rc header missing"
 grep -qxF -- "- [x] $REQ" "$P/$RF_REL" && grep -qF -- "- **PR:** $PRURL" "$P/$REQ" && [ ! -d "$FX/wt-pr" ] && ok "(CO1) A closed out: check-off, stamp, PR worktree removed" || no "(CO1) A not closed out"
 grep -qE "^trail-pr $P/$RF_REL --reason closeout\$" "$SPYLOG" && ok "(CO1) A's trail via the dispatcher" || no "(CO1) no trail-pr call for A"
 grep -qE "^closeout $P/$RF_REL $REQ $PRURL\$" "$SPYLOG" && ! grep -q -- '--session-id' "$SPYLOG" && ok "(CO1) closeout called without --session-id (its own lock)" || no "(CO1) closeout call: $(grep '^closeout' "$SPYLOG" | tr '\n' '|')"
 grep -qE '^- .* closeout https://github.com/acme/widgets/pull/7: closeout: checked' "$P/$RF_REL" && ok "(CO1) A's Progress carries its closeout lines" || no "(CO1) A Progress missing closeout lines"
-printf '%s\n' "$out" | grep -qx complete && printf '%s\n' "$out" | grep -qxF "closeout-others: recorded — cross-run closeout $RUN_ID $REQ: complete" && ok "(CO1) classify answer 'complete' + 'recorded — cross-run closeout …' line" || no "(CO1) verdict/record lines missing"
+grep -qx complete <<<"$out" && grep -qxF "closeout-others: recorded — cross-run closeout $RUN_ID $REQ: complete" <<<"$out" && ok "(CO1) classify answer 'complete' + 'recorded — cross-run closeout …' line" || no "(CO1) verdict/record lines missing"
 grep -qE "^- [^ ]+ cross-run closeout $RUN_ID $REQ: complete\$" "$P/$RBF" && ! grep -q 'https\?://' "$P/$RBF" && ok "(CO1) B's Progress records the cross-run close-out and carries NO PR URL" || no "(CO1) B record: $(grep cross-run "$P/$RBF")"
-[ -z "$(git -C "$P" diff --cached --name-only)" ] && printf '%s\n' "$out" | grep -q '^trail-unstage: unstaged' && ok "(CO1) mode off: no A trail path left staged in the primary index" || no "(CO1) staged: $(git -C "$P" diff --cached --name-only | tr '\n' ' ')"
+[ -z "$(git -C "$P" diff --cached --name-only)" ] && grep -q '^trail-unstage: unstaged' <<<"$out" && ok "(CO1) mode off: no A trail path left staged in the primary index" || no "(CO1) staged: $(git -C "$P" diff --cached --name-only | tr '\n' ' ')"
 o2="$(co_others --record "$RBF")"
 [ -z "$o2" ] && ok "(CO1) a second run is silent (A's item is now done)" || no "(CO1) second run: $o2"
 MUTCO="$TOP/mutd-co"; mkdir -p "$MUTCO"; cp "$SPYD"/*.sh "$SPYD"/*.py "$MUTCO/"
@@ -1964,7 +1964,7 @@ done
 # No --record file yet (a new run): the record line is printed for the engine to append once the run file exists.
 closeout_fixture 316
 o="$(co_others --record .supervisor/automate/not-created-yet.md)"
-printf '%s\n' "$o" | grep -qxF "closeout-others: record — cross-run closeout $RUN_ID $REQ: complete" && ok "(CO3) no run file yet ⇒ 'record — …' printed, nothing appended" || no "(CO3) $o"
+grep -qxF "closeout-others: record — cross-run closeout $RUN_ID $REQ: complete" <<<"$o" && ok "(CO3) no run file yet ⇒ 'record — …' printed, nothing appended" || no "(CO3) $o"
 
 echo "== K. SKILL wiring (Part A, automate-followups/32) =="
 s6="$(awk '/^## §6 /{s=1;next} s&&/^## /{exit} s' "$SKILL")"
