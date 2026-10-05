@@ -65,6 +65,11 @@
 #      with 0 merges and the helper never called; .supervisor/-only, agent-memory-only
 #      and ignored-only dirt still let the verdict decide; cond 6 still precedes the
 #      pin; gated mutants (each pin deleted ⇒ its leg MERGEs) with an un-mutated control.
+#      R11f (review iteration 1): local-only git state cannot hide dirt — assume-unchanged
+#      and skip-worktree flags, .git/info/exclude, core.excludesFile, a self-ignoring
+#      untracked .gitignore, env-injected config (GIT_CONFIG_COUNT) and a --root inside
+#      .git/ (show-toplevel fails) all park rules_gate_dirty_tree; an untracked .gitignore
+#      inside a committed-ignored directory does not; each new read has a gated mutant.
 #   F. learning-emit (engine-native ground-truth POSTMORTEM_RESULT line): happy path
 #      (fix_cycles>0 → one drain_churn entry, review_rounds==fix_cycles), the zero-rule
 #      (fix_cycles==0 non-escalated → categories:[] + review_rounds:0), zero-cycle
@@ -1153,7 +1158,7 @@ mkdir -p "$E_ROOT/sub" "$E_ROOT/.supervisor/automate" "$E_ROOT/$E_MEM/loomwright
 ( cd "$E_ROOT" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false \
     && echo a > sub/a && echo run > .supervisor/automate/run.md \
     && echo mem > "$E_MEM/loomwright:code-reviewer/MEMORY.md" \
-    && printf 'ignored.log\n' > .gitignore && git add -A && git commit -qm init ) >/dev/null 2>&1
+    && printf 'ignored.log\nignored-dir/\n' > .gitignore && git add -A && git commit -qm init ) >/dev/null 2>&1
 E_HEAD="$(git -C "$E_ROOT" rev-parse --verify -q HEAD 2>/dev/null)" || E_HEAD=""
 E_TIP="$(git -C "$E_ROOT" commit-tree "HEAD^{tree}" -p HEAD -m tip 2>/dev/null)" || E_TIP=""
 E_PR_HEAD="$E_HEAD"
@@ -2046,6 +2051,43 @@ echo i > "$E_ROOT/ignored.log"
 r11_decides "gitignored-only file"
 rm -f "$E_ROOT/ignored.log"; r11_restored "ignored file"
 
+# R11f (review iteration 1) — LOCAL-ONLY git state must not hide dirt from the pin. Each
+# leg below is invisible to a plain `git status --porcelain -uall` (the pre-fix pin MERGEd
+# every one), so each parks only because of the reads the fix added.
+r11_env_on() { export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.fileMode GIT_CONFIG_VALUE_0=false; }
+r11_env_off() { unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; }
+for R11_FLAG in assume-unchanged skip-worktree; do
+  git -C "$E_ROOT" update-index --"$R11_FLAG" sub/a
+  r11_dirty "tracked file flagged $R11_FLAG, unedited (any hiding flag parks)"
+  echo more >> "$E_ROOT/sub/a"
+  if [ -z "$(git -C "$E_ROOT" status --porcelain -uall 2>/dev/null)" ]; then
+    r11_dirty "tracked edit hidden from git status by $R11_FLAG"
+  else
+    no "R11f $R11_FLAG: git status still shows the edit — the leg does not exercise the hiding flag"
+  fi
+  git -C "$E_ROOT" update-index --no-"$R11_FLAG" sub/a; git -C "$E_ROOT" checkout -q -- sub/a
+  r11_restored "$R11_FLAG"
+done
+cp "$E_ROOT/.git/info/exclude" "$WD/exclude.bak" 2>/dev/null || : > "$WD/exclude.bak"
+echo hid.txt >> "$E_ROOT/.git/info/exclude"; echo h > "$E_ROOT/hid.txt"
+r11_dirty "untracked file hidden by .git/info/exclude"
+cp "$WD/exclude.bak" "$E_ROOT/.git/info/exclude"; rm -f "$E_ROOT/hid.txt"; r11_restored "info/exclude"
+echo hid.txt > "$WD/xfile"; git -C "$E_ROOT" config core.excludesFile "$WD/xfile"; echo h > "$E_ROOT/hid.txt"
+r11_dirty "untracked file hidden by the repo's core.excludesFile"
+git -C "$E_ROOT" config --unset core.excludesFile; rm -f "$E_ROOT/hid.txt"; r11_restored "core.excludesFile"
+mkdir -p "$E_ROOT/evil"; echo '*' > "$E_ROOT/evil/.gitignore"; echo e > "$E_ROOT/evil/f"
+r11_dirty "self-ignoring untracked evil/.gitignore hiding its whole directory"
+rm -rf "$E_ROOT/evil"; r11_restored "self-ignoring .gitignore"
+chmod +x "$E_ROOT/sub/a"; r11_env_on
+r11_dirty "mode change hidden by env-injected core.fileMode=false (GIT_CONFIG_COUNT)"
+r11_env_off; chmod -x "$E_ROOT/sub/a"; r11_restored "env-injected config"
+E_GATE_ROOT="$E_ROOT/.git"; r11_dirty "--root inside .git/ at the live head (rev-parse --show-toplevel fails)"; E_GATE_ROOT=""
+# Control: an untracked .gitignore inside a COMMITTED-ignored directory (node_modules/-style)
+# is never read by git, so it is not dirt — the verdict still decides.
+mkdir -p "$E_ROOT/ignored-dir/pkg"; echo '*' > "$E_ROOT/ignored-dir/pkg/.gitignore"; echo z > "$E_ROOT/ignored-dir/pkg/z"
+r11_decides "untracked .gitignore nested in a committed-ignored directory"
+rm -rf "$E_ROOT/ignored-dir"; r11_restored "ignored-dir"
+
 # R11e (AC6) — GATED mutation controls: delete each pin (its `if` line becomes `if false; then`)
 # ⇒ the leg that pin guards turns into a MERGE, proving each leg can fail. Trusted only if the
 # mutant is non-empty, differs from the original, passes `bash -n`, and carries its marker; the
@@ -2064,8 +2106,9 @@ if [ -n "$M_HEAD" ] && [ -n "$M_DIRTY" ]; then
     no "R11e HEAD-pin mutant did not discriminate (control='$R11_CO'/$R11_CM mutant='$R9_OUT'/$(merges))"
   fi
   E_PR_HEAD="$E_HEAD"; reset_live; rules_fixture ok '["r-lint"]' '[]' '[]'
-  # dirty-tree leg: original parks, mutant merges.
-  echo u > "$E_ROOT/untracked.txt"
+  # dirty-tree leg: original parks, mutant merges. A TRACKED edit (not an untracked file),
+  # because untracked files are now also caught by the ls-files read below the status one.
+  echo more >> "$E_ROOT/sub/a"
   r9_run "$CTRL"; R11_CO="$R9_OUT"; R11_CM="$(merges)"
   r9_run "$M_DIRTY"
   if [ "$R11_CO" = "PARK: rules_gate_dirty_tree" ] && [ "$R11_CM" -eq 0 ] && [ "$R9_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ]; then
@@ -2073,12 +2116,56 @@ if [ -n "$M_HEAD" ] && [ -n "$M_DIRTY" ]; then
   else
     no "R11e dirty-pin mutant did not discriminate (control='$R11_CO'/$R11_CM mutant='$R9_OUT'/$(merges))"
   fi
-  rm -f "$E_ROOT/untracked.txt"; r11_restored "R11e"
+  git -C "$E_ROOT" checkout -q -- sub/a; r11_restored "R11e"
   rm -rf "$CTRL"
 else
   no "R11e pin mutation controls not gated (a mutant was empty, identical to the original, failed bash -n, or lacked its marker)"
 fi
 rm -rf "${M_HEAD:-/nonexistent-r11}" "${M_DIRTY:-/nonexistent-r11}"
+
+# R11g (review iteration 1) — GATED mutants for each read the fix added: disable ONE read's
+# park (or the env unset, or the show-toplevel fail-closed branch) ⇒ the R11f leg that only
+# that read catches MERGEs; the un-mutated copy parks the same leg first (positive control).
+r11g() {  # r11g <mutant-dir> <label> <setup> <undo> — control parks, mutant merges
+  local co cm
+  reset_live; rules_fixture ok '["r-lint"]' '[]' '[]'
+  eval "$3"
+  r9_run "$CTRL"; co="$R9_OUT"; cm="$(merges)"
+  r9_run "$1"
+  if [ "$co" = "PARK: rules_gate_dirty_tree" ] && [ "$cm" -eq 0 ] && [ "$R9_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ]; then
+    ok "R11g (mutant) $2 ⇒ its leg MERGEs (control: the un-mutated gate parks it rules_gate_dirty_tree) — the read is load-bearing"
+  else
+    no "R11g $2 mutant did not discriminate (control='$co'/$cm mutant='$R9_OUT'/$(merges))"
+  fi
+  eval "$4"; r11_restored "R11g $2"
+}
+M_FLAGS="$(r9_dir 's/^  if \[ "\$root_flags_rc" -ne 0 \] .*; then$/  if false; then # R11-MUTANT-FLAGS/' 'R11-MUTANT-FLAGS')"
+M_UNT="$(r9_dir 's/^  if \[ "\$root_unt_rc" -ne 0 \] .*; then$/  if false; then # R11-MUTANT-UNT/' 'R11-MUTANT-UNT')"
+M_IGN="$(r9_dir 's/^  if \[ "\$root_ign_rc" -ne 0 \] .*; then$/  if false; then # R11-MUTANT-IGN/' 'R11-MUTANT-IGN')"
+M_ENV="$(r9_dir 's/ -u GIT_CONFIG_COUNT / -u R11_MUTANT_ENV /' 'R11_MUTANT_ENV')"
+M_TOP="$(r9_dir 's/^    root_dirt_rc=1$/    root_dirt_rc=0 # R11-MUTANT-TOP/' 'R11-MUTANT-TOP')"
+if [ -n "$M_FLAGS" ] && [ -n "$M_UNT" ] && [ -n "$M_IGN" ] && [ -n "$M_ENV" ] && [ -n "$M_TOP" ]; then
+  CTRL="$(mktemp -d)"; cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/rules-gate-verdict.sh" "$CTRL/"
+  r11g "$M_FLAGS" "assume-unchanged read deleted" \
+    'git -C "$E_ROOT" update-index --assume-unchanged sub/a; echo more >> "$E_ROOT/sub/a"' \
+    'git -C "$E_ROOT" update-index --no-assume-unchanged sub/a; git -C "$E_ROOT" checkout -q -- sub/a'
+  r11g "$M_UNT" "committed-.gitignore-only untracked read deleted" \
+    'echo hid.txt >> "$E_ROOT/.git/info/exclude"; echo h > "$E_ROOT/hid.txt"' \
+    'cp "$WD/exclude.bak" "$E_ROOT/.git/info/exclude"; rm -f "$E_ROOT/hid.txt"'
+  r11g "$M_IGN" "untracked-.gitignore read deleted" \
+    'mkdir -p "$E_ROOT/evil"; echo "*" > "$E_ROOT/evil/.gitignore"; echo e > "$E_ROOT/evil/f"' \
+    'rm -rf "$E_ROOT/evil"'
+  r11g "$M_ENV" "GIT_CONFIG_COUNT unset removed" \
+    'chmod +x "$E_ROOT/sub/a"; r11_env_on' \
+    'r11_env_off; chmod -x "$E_ROOT/sub/a"'
+  r11g "$M_TOP" "show-toplevel failure no longer fails closed" \
+    'E_GATE_ROOT="$E_ROOT/.git"' \
+    'E_GATE_ROOT=""'
+  rm -rf "$CTRL"
+else
+  no "R11g read mutation controls not gated (a mutant was empty, identical to the original, failed bash -n, or lacked its marker)"
+fi
+rm -rf "${M_FLAGS:-/nonexistent-r11}" "${M_UNT:-/nonexistent-r11}" "${M_IGN:-/nonexistent-r11}" "${M_ENV:-/nonexistent-r11}" "${M_TOP:-/nonexistent-r11}"
 reset_live
 
 unset GH_STUB_DIR

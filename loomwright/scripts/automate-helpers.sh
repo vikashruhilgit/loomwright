@@ -743,10 +743,18 @@ _ge_pr_parts() {
 #           same way — never a match); then `git status --porcelain -uall`, read from the repo top
 #           level, must list nothing outside `.supervisor/` and `.claude/agent-memory/` (tracked
 #           edits, staged changes and untracked non-ignored files all count; gitignored files do
-#           not), else `rules_gate_dirty_tree` (a failing `git status` parks the same way). Both
+#           not), else `rules_gate_dirty_tree` (a failing `git status` parks the same way).
+#           Local-only git state cannot hide dirt: a tracked file flagged assume-unchanged or
+#           skip-worktree (`git ls-files -v`) parks; ignored-ness is judged from per-directory
+#           `.gitignore` files only, so `.git/info/exclude` / `core.excludesFile` cannot hide an
+#           untracked file, and an untracked `.gitignore` git reads (outside an ignored
+#           directory) parks; the GIT_CONFIG_* env injection family is unset and fsmonitor /
+#           untracked-cache are off; a root whose top level cannot be read parks. Both
 #           are fail-CLOSED with NO override; the helper is not called on a checkout that fails
-#           either. Honest limit: a rule `binds` path under one of the two excluded engine-owned
-#           paths is not covered by the cleanliness pin. Normal path: the owned inline `/review-pr`
+#           either. Honest limits: a rule `binds` path under one of the two excluded engine-owned
+#           paths is not covered by the cleanliness pin, and settings in the repo's own
+#           `.git/config` that redefine a modification (`core.fileMode=false`, `core.autocrlf`,
+#           clean filters) are honoured as configured. Normal path: the owned inline `/review-pr`
 #           drain checks the PR branch out on the main-thread checkout, so `<root>` is at the PR
 #           head when GATE runs. Then the gate ITSELF invokes `"$(dirname "$0")/rules-gate-verdict.sh"
 #           --root <root>` (sibling lookup, never PATH) and reads `.verdict` with an explicit
@@ -1080,10 +1088,37 @@ GEPARTS
   # `-uall` is explicit so a repo's `status.showUntrackedFiles=no` cannot hide
   # untracked files: untracked non-ignored files count as dirt (a bound check can
   # read them), gitignored ones do not.
+  # LOCAL-ONLY GIT STATE MUST NOT HIDE DIRT (review iteration 1). `git status` trusts
+  # state that lives only on this machine, so three more reads close it:
+  #   - `ls-files -v`: a tracked file flagged assume-unchanged (lowercase tag) or
+  #     skip-worktree (`S`/`s`) is never compared to the worktree by `git status`, so
+  #     an edit to it is invisible — ANY such flag parks (a sparse checkout therefore
+  #     parks too; `core.ignoreStat` sets the same flag).
+  #   - ignored-ness is judged from per-directory `.gitignore` files ONLY
+  #     (`ls-files -o --exclude-per-directory=.gitignore`, no `--exclude-standard`), so
+  #     `.git/info/exclude` and `core.excludesFile` cannot hide an untracked file. Tracked
+  #     `.gitignore`s are already proven unmodified by the two reads above.
+  #   - an UNTRACKED `.gitignore` git actually reads (one in a directory the rules do
+  #     not already ignore) is itself non-committed ignore state — a self-ignoring one
+  #     (`*`) hides its whole directory from both reads. `--directory` collapses a
+  #     directory that is ignored as a whole (node_modules/, .venv/) without descending,
+  #     so one nested in an ignored directory is never listed and never parks.
+  # `_ge_git` also unsets the env config-injection family (GIT_CONFIG_PARAMETERS /
+  # GIT_CONFIG_COUNT / GIT_CONFIG_GLOBAL / GIT_CONFIG_SYSTEM / GIT_CONFIG) so a caller's
+  # environment cannot relax the reads (e.g. `core.fileMode=false`), and pins
+  # `core.fsmonitor=false` / `core.untrackedCache=false` so a cached or hook-supplied
+  # "nothing changed" answer is never trusted; `--no-optional-locks` keeps `git status`
+  # from opportunistically rewriting the index, so the gate writes nothing and never
+  # contends for `index.lock` with a concurrent git process. Honest limit: settings in the repo's
+  # OWN `.git/config` that change what git calls a modification (`core.fileMode=false`,
+  # `core.autocrlf`, clean filters) are honoured as configured.
+  # Every read here-strings its output into `grep -q` (never a pipe: under pipefail
+  # an early grep exit could SIGPIPE the producer and read as "no match").
   _ge_git() {
     env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_COMMON_DIR \
         -u GIT_LITERAL_PATHSPECS -u GIT_GLOB_PATHSPECS -u GIT_NOGLOB_PATHSPECS -u GIT_ICASE_PATHSPECS \
-        git "$@"
+        -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_SYSTEM -u GIT_CONFIG \
+        git --no-optional-locks -c core.fsmonitor=false -c core.untrackedCache=false "$@"
   }
   local root_head="" root_head_rc=0
   root_head="$(_ge_git -C "$root" rev-parse --verify -q HEAD 2>/dev/null)" || root_head_rc=$?
@@ -1091,13 +1126,27 @@ GEPARTS
     echo "PARK: rules_gate_head_mismatch"; return 0
   fi
   local root_top="" root_top_rc=0 root_dirt="" root_dirt_rc=0
+  local root_flags="" root_flags_rc=0 root_unt="" root_unt_rc=0 root_ign="" root_ign_rc=0
+  local ge_ps; ge_ps=(. ':(exclude).supervisor' ':(exclude).claude/agent-memory')  # one pathspec set, all four reads
   root_top="$(_ge_git -C "$root" rev-parse --show-toplevel 2>/dev/null)" || root_top_rc=$?
   if [ "$root_top_rc" -eq 0 ] && [ -n "$root_top" ]; then
-    root_dirt="$(_ge_git -C "$root_top" status --porcelain -uall -- . ':(exclude).supervisor' ':(exclude).claude/agent-memory' 2>/dev/null)" || root_dirt_rc=$?
+    root_dirt="$(_ge_git -C "$root_top" status --porcelain -uall -- "${ge_ps[@]}" 2>/dev/null)" || root_dirt_rc=$?
+    root_flags="$(_ge_git -C "$root_top" ls-files -v -- "${ge_ps[@]}" 2>/dev/null)" || root_flags_rc=$?
+    root_unt="$(_ge_git -C "$root_top" ls-files -o --exclude-per-directory=.gitignore -- "${ge_ps[@]}" 2>/dev/null)" || root_unt_rc=$?
+    root_ign="$(_ge_git -C "$root_top" ls-files -o -i --directory --exclude-per-directory=.gitignore -- "${ge_ps[@]}" 2>/dev/null)" || root_ign_rc=$?
   else
     root_dirt_rc=1
   fi
   if [ "$root_dirt_rc" -ne 0 ] || [ -n "$root_dirt" ]; then
+    echo "PARK: rules_gate_dirty_tree"; return 0
+  fi
+  if [ "$root_flags_rc" -ne 0 ] || grep -q '^[a-zS] ' <<<"$root_flags"; then
+    echo "PARK: rules_gate_dirty_tree"; return 0
+  fi
+  if [ "$root_unt_rc" -ne 0 ] || [ -n "$root_unt" ]; then
+    echo "PARK: rules_gate_dirty_tree"; return 0
+  fi
+  if [ "$root_ign_rc" -ne 0 ] || grep -qE '(^|/)\.gitignore"?$' <<<"$root_ign"; then
     echo "PARK: rules_gate_dirty_tree"; return 0
   fi
 
