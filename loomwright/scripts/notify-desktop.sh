@@ -15,11 +15,37 @@
 # Behaviour:
 #   1. If LOOMWRIGHT_DESKTOP_NOTIFICATIONS=0 → silent no-op (opt-out).
 #   2. Read JSON payload from stdin.
-#   3. Build a (title, body) pair per event type. Unknown events → exit 0.
-#   4. Fire OS-native notification (best-effort, never blocking):
-#        macOS  → osascript display notification
+#   3. Scope gate (PreToolUse only — see below).
+#   4. Replay de-duplication (PreToolUse[AskUserQuestion] only): a resumed
+#      session replays the SAME tool call (same `tool_use_id`) to deliver the
+#      answer, and this hook fires again. An id already listed in
+#      `.supervisor/logs/.notified-ids` → append `<ts> skip replay
+#      tool_use_id=<id>` to notifications.log and exit 0 (no banner, debounce
+#      untouched). A new id is recorded at FIRST SIGHT — before the debounce —
+#      so a question whose banner the debounce suppressed still counts as
+#      handled and its replay cannot raise a late banner. The ledger keeps the
+#      newest 200 ids. Missing/empty id or a missing/unreadable ledger → "not
+#      seen" → notify (fail toward notifying). `Notification` events carry no
+#      `tool_use_id` and are never de-duplicated. emit-lifecycle.sh keeps its
+#      OWN ledger (`.lifecycle-asked-ids`) — never share one file: both run in
+#      sequence on the same payload in one hook command, so a shared ledger
+#      would make the second script drop the FIRST ask.
+#   5. Debounce (window LOOMWRIGHT_NOTIFY_DEBOUNCE, default 5s).
+#   6. Build a (title, body) pair per event type. Unknown events → exit 0.
+#   7. Append one audit line `<ts> notify group=<TN_GROUP> tool_use_id=<id|->`
+#      to notifications.log (every host), then fire the OS-native notification
+#      (best-effort, never blocking):
+#        macOS  → terminal-notifier (clickable, `-group loomwright-<key>`) or
+#                 osascript display notification
 #        Linux  → notify-send
-#   5. ALWAYS exit 0.
+#      <key> = first 8 sanitised chars of the session id (one group per Claude
+#      Code session, so parallel lanes never replace each other's banners), or
+#      `p<cksum of the checkout path>` when no session id resolves.
+#   8. ALWAYS exit 0.
+#
+# Accepted LOW risk: two asks fired at the same instant can race the ledger
+# trim (append → tail → mv) and lose one id. A lost id only means a later
+# replay of it notifies again — the failure is toward notifying.
 #
 # Why a `type: command` wrapper instead of `type: http` or `type: prompt`:
 #   - Need access to local OS notification facilities (osascript/notify-send).
@@ -53,6 +79,10 @@ fi
 # ---- Field extraction -------------------------------------------------------
 HOOK_EVENT="$(printf '%s' "$INPUT" | jq -r '.hook_event_name // empty' 2>/dev/null || true)"
 TRANSCRIPT_PATH="$(printf '%s' "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null || true)"
+TOOL_NAME="$(printf '%s' "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null || true)"
+
+# utc_ts — ISO-8601 UTC timestamp for notifications.log audit lines.
+utc_ts() { date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "-"; }
 
 # ---- Scope gate -------------------------------------------------------------
 # LOOMWRIGHT_NOTIFY_SCOPE controls whether non-plugin AskUserQuestion
@@ -117,6 +147,35 @@ if [ "$SCOPE" = "plugin" ] && [ "$HOOK_EVENT" = "PreToolUse" ]; then
   fi
 fi
 
+mkdir -p .supervisor/logs 2>/dev/null || true
+NOTIFY_LOG=".supervisor/logs/notifications.log"
+
+# ---- Replay de-duplication (per tool_use_id) --------------------------------
+# A resumed session replays the same AskUserQuestion tool call (same
+# tool_use_id) to deliver the answer, which re-fires this hook. Sits AFTER the
+# scope gate (an out-of-scope ask is never recorded) and BEFORE the debounce (a
+# replay never touches .notify-debounce). Every step fails toward notifying.
+NOTIFIED_IDS_FILE=".supervisor/logs/.notified-ids"
+LEDGER_MAX=200
+TOOL_USE_ID=""
+if [ "$HOOK_EVENT" = "PreToolUse" ] && [ "$TOOL_NAME" = "AskUserQuestion" ]; then
+  TOOL_USE_ID="$(printf '%s' "$INPUT" | jq -r '.tool_use_id // empty' 2>/dev/null | tr -cd 'A-Za-z0-9_-' 2>/dev/null || true)"
+fi
+if [ -n "$TOOL_USE_ID" ]; then
+  if [ -f "$NOTIFIED_IDS_FILE" ] && grep -qxF -e "$TOOL_USE_ID" "$NOTIFIED_IDS_FILE" 2>/dev/null; then
+    printf '%s skip replay tool_use_id=%s\n' "$(utc_ts)" "$TOOL_USE_ID" >> "$NOTIFY_LOG" 2>/dev/null || true
+    exit 0
+  fi
+  # Record at first sight, then bound to the newest LEDGER_MAX ids ($$-suffixed
+  # temp file in the same dir, so the mv is a same-filesystem rename).
+  if printf '%s\n' "$TOOL_USE_ID" >> "$NOTIFIED_IDS_FILE" 2>/dev/null; then
+    if tail -n "$LEDGER_MAX" "$NOTIFIED_IDS_FILE" > "$NOTIFIED_IDS_FILE.tmp.$$" 2>/dev/null; then
+      mv -f "$NOTIFIED_IDS_FILE.tmp.$$" "$NOTIFIED_IDS_FILE" 2>/dev/null || true
+    fi
+    rm -f "$NOTIFIED_IDS_FILE.tmp.$$" 2>/dev/null || true
+  fi
+fi
+
 # ---- Debounce (v14.2.2) -----------------------------------------------------
 # Coalesce rapid notification bursts (several gates in quick succession, or
 # parallel hook fires) into a single banner: if one fired within the last
@@ -143,7 +202,7 @@ BODY=""
 
 case "$HOOK_EVENT" in
   PreToolUse)
-    TOOL_NAME="$(printf '%s' "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null || true)"
+    # TOOL_NAME is read once in the field-extraction block above.
     if [ "$TOOL_NAME" != "AskUserQuestion" ]; then
       # Only fire for AskUserQuestion. Other PreToolUse events are noise.
       exit 0
@@ -235,6 +294,25 @@ if [ "$CLICK_MODE" != "off" ] && [ -r "$SCRIPT_DIR/notify-click-target.sh" ]; th
   [ -z "$CLICK_ACTION" ] && CLICK_ACTION="none"
 fi
 
+# ---- Notification group (one per Claude Code session) -----------------------
+# terminal-notifier's -group coalesces banners: a new one replaces the prior
+# banner in the SAME group. A single fixed group made every parallel lane's
+# banner remove every other lane's, so the group is per session:
+# `loomwright-<first 8 sanitised chars of SESSION_ID>`. With no session id the
+# key is `p<cksum of the checkout path>` (cksum, not shasum/md5 — present on
+# every Linux too). Computed on every host because the audit line names it.
+GROUP_KEY="$(printf '%s' "$SESSION_ID" | tr -cd 'A-Za-z0-9_-' 2>/dev/null || true)"
+GROUP_KEY="${GROUP_KEY:0:8}"
+if [ -z "$GROUP_KEY" ]; then
+  CHECKOUT_PATH="$(pwd -P 2>/dev/null || true)"
+  [ -z "$CHECKOUT_PATH" ] && CHECKOUT_PATH="${PWD:-}"
+  CKSUM_OUT="$(printf '%s' "$CHECKOUT_PATH" | cksum 2>/dev/null || true)"
+  CKSUM_CRC="${CKSUM_OUT%% *}"
+  case "$CKSUM_CRC" in *[!0-9]*|"") CKSUM_CRC=0 ;; esac
+  GROUP_KEY="p$CKSUM_CRC"
+fi
+TN_GROUP="loomwright-$GROUP_KEY"
+
 # ---- Dispatch ---------------------------------------------------------------
 # Per-platform native notification. Each branch is best-effort and never
 # allowed to bubble a non-zero exit. (A terminal-bell tier was evaluated and
@@ -248,8 +326,11 @@ osascript_escape() {
   printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
 
-mkdir -p .supervisor/logs 2>/dev/null || true
-NOTIFY_LOG=".supervisor/logs/notifications.log"
+# Audit line (every host): the decision to notify, the group it lands in and
+# the question id — the observable evidence for the group and replay logic,
+# testable without any notifier installed. NOTIFY_LOG is set above the replay
+# de-duplication block.
+printf '%s notify group=%s tool_use_id=%s\n' "$(utc_ts)" "$TN_GROUP" "${TOOL_USE_ID:--}" >> "$NOTIFY_LOG" 2>/dev/null || true
 
 # Portable timeout guard (v14.1.0 hardening — red-team W4). A wedged notification
 # daemon or a first-run permission interaction must never block the agent loop.
@@ -309,7 +390,9 @@ case "$(uname -s 2>/dev/null || echo unknown)" in
     CLAUDE_BUNDLE_ID="com.anthropic.claudefordesktop"
     # -group coalesces banners (a new one replaces the prior in the group, which
     # also reaps the prior lingering terminal-notifier process — bounding pileup).
-    TN_GROUP="loomwright"
+    # TN_GROUP is per session (`loomwright-<key>`, computed in the
+    # "Notification group" block above), so a burst within one session still
+    # coalesces while parallel sessions keep their own banners.
     if command -v terminal-notifier >/dev/null 2>&1 && [ "$CLICK_ACTION" != "none" ]; then
       if [ "$CLICK_ACTION" = "open" ] && [ -n "$CLICK_TARGET" ]; then
         fire_detached terminal-notifier \

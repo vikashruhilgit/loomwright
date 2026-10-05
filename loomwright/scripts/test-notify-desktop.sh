@@ -84,7 +84,10 @@ trap 'rm -rf "$TMP_ROOT"' EXIT INT TERM
 # notify-click-target.sh helper it shells out to) legitimately uses on its
 # non-notifier paths. Notifiers (terminal-notifier / osascript / notify-send)
 # and timeout / gtimeout are NEVER linked — only stubbed per-sandbox.
-BASE_TOOLS="bash cat date mkdir find tail grep sed head dirname uname"
+# tr/cksum/mv/rm serve the per-session group key and the bounded replay
+# ledger — without them the SUT would silently skip both and the G*/R* cases
+# below would pass vacuously.
+BASE_TOOLS="bash cat date mkdir find tail grep sed head dirname uname tr cksum mv rm"
 
 # build_sandbox <name> — creates $TMP_ROOT/<name>/ with base tools + jq linked.
 # Echoes the sandbox bin dir path.
@@ -384,6 +387,188 @@ if [ "$HOST_OS" = "Linux" ]; then
   assert_eq "L6 second fire within window suppressed (1 invocation)" "1" "$(marker_lines "$MARKER/notify-send.invoked")"
 else
   skip "Linux dispatch cases L1-L6 (host is $HOST_OS)"
+fi
+
+# ---- Per-session group + per-tool_use_id replay de-duplication ---------------
+# Host-independent assertions read the audit lines the SUT appends to
+# $WD/.supervisor/logs/notifications.log before dispatch:
+#   "<ts> notify group=<TN_GROUP> tool_use_id=<id|->" and
+#   "<ts> skip replay tool_use_id=<id>".
+# SB_BARE has no notifier on any host, so these cases never dispatch; the
+# Darwin-only sub-assertions use the SB_TN / SB_OSA recording stubs.
+
+# count_in <fixed-string> <file> — matching line count (0 if absent). grep -c
+# prints "0" AND exits 1 on no match, so default the captured value instead of
+# `|| echo 0` (which would yield "0\n0").
+count_in() {
+  local n
+  n="$(grep -cF -- "$1" "$2" 2>/dev/null)"
+  printf '%s' "${n:-0}"
+}
+# logged_group <file> — the group named by the LAST notify audit line.
+logged_group() {
+  grep -F ' notify group=' "$1" 2>/dev/null | tail -1 | sed -n 's/.* notify group=\([^ ]*\) .*/\1/p'
+}
+# ask_payload <session_id|""> <tool_use_id|""> — AskUserQuestion payload;
+# an empty argument omits that key entirely.
+ask_payload() {
+  jq -nc --arg s "$1" --arg t "$2" \
+    '{hook_event_name:"PreToolUse", tool_name:"AskUserQuestion",
+      tool_input:{questions:[{question:"Proceed with the plan?"}]}}
+     + (if $s == "" then {} else {session_id:$s} end)
+     + (if $t == "" then {} else {tool_use_id:$t} end)'
+}
+# expected_path_group <dir> — what the SUT's cksum fallback must produce.
+expected_path_group() {
+  local out
+  out="$(printf '%s' "$(cd "$1" && pwd -P)" | cksum)"
+  printf 'loomwright-p%s' "${out%% *}"
+}
+
+echo ""
+echo "==== Per-session notification group (audit line: any host) ===="
+
+# Case G1: two different sessions → two different groups, each
+# loomwright-<first 8 SANITISED chars>. Session A's raw id carries a '.' that
+# sanitisation must drop ("ab.cd-ef_gh…" → "abcd-ef_").
+P_G_A1="$(ask_payload "ab.cd-ef_gh-1111" "toolu_g1")"
+P_G_B="$(ask_payload "zz99yy88-2222" "toolu_g2")"
+P_G_A2="$(ask_payload "ab.cd-ef_gh-1111" "toolu_g3")"
+run_sut "$SB_BARE" "$P_G_A1"
+assert_eq "G1 session A exit 0" "0" "$RC"
+G1_A="$(logged_group "$WD/.supervisor/logs/notifications.log")"
+run_sut "$SB_BARE" "$P_G_B"
+G1_B="$(logged_group "$WD/.supervisor/logs/notifications.log")"
+run_sut "$SB_BARE" "$P_G_A2"
+G1_A2="$(logged_group "$WD/.supervisor/logs/notifications.log")"
+assert_eq "G1 session A group = loomwright-<first 8 sanitised chars>" "loomwright-abcd-ef_" "$G1_A"
+assert_eq "G1 session B group = loomwright-<first 8 sanitised chars>" "loomwright-zz99yy88" "$G1_B"
+if [ -n "$G1_A" ] && [ "$G1_A" != "$G1_B" ]; then
+  pass "G1 two sessions land in two different groups"
+else
+  fail "G1 two sessions land in two different groups  A='$G1_A' B='$G1_B'"
+fi
+assert_eq "G1 a later payload from session A reuses A's group" "$G1_A" "$G1_A2"
+
+# Case G2: CLAUDE_CODE_SESSION_ID is the fallback when the payload has none.
+run_sut "$SB_BARE" "$(ask_payload "" "toolu_g4")" CLAUDE_CODE_SESSION_ID=envsess1-xyz
+assert_eq "G2 env session id fallback group" "loomwright-envsess1" "$(logged_group "$WD/.supervisor/logs/notifications.log")"
+
+# Case G3: no session id anywhere → loomwright-p<cksum of the checkout path>;
+# two dirs differ, and re-running from the same dir is stable.
+run_sut "$SB_BARE" "$(ask_payload "" "toolu_g5")"
+G3_WD1="$WD"
+G3_1="$(logged_group "$WD/.supervisor/logs/notifications.log")"
+run_sut "$SB_BARE" "$(ask_payload "" "toolu_g6")"
+G3_2="$(logged_group "$WD/.supervisor/logs/notifications.log")"
+assert_eq "G3 dir 1 group = loomwright-p<cksum of path>" "$(expected_path_group "$G3_WD1")" "$G3_1"
+assert_eq "G3 dir 2 group = loomwright-p<cksum of path>" "$(expected_path_group "$WD")" "$G3_2"
+if [ -n "$G3_1" ] && [ "$G3_1" != "$G3_2" ]; then
+  pass "G3 two checkout dirs → two different path-hash groups"
+else
+  fail "G3 two checkout dirs → two different path-hash groups  1='$G3_1' 2='$G3_2'"
+fi
+WD="$G3_WD1"
+rerun_sut_same_wd "$SB_BARE" "$(ask_payload "" "toolu_g7")"
+assert_eq "G3 re-run from the same dir → same group" "$G3_1" "$(logged_group "$WD/.supervisor/logs/notifications.log")"
+
+if [ "$HOST_OS" = "Darwin" ]; then
+  # Case G4: the terminal-notifier invocation itself carries the per-session
+  # -group (detached → poll for the marker).
+  run_sut "$SB_TN" "$P_G_A1" LOOMWRIGHT_NOTIFY_CLICK=activate
+  G4_A_MARK="$MARKER/terminal-notifier.invoked"
+  run_sut "$SB_TN" "$P_G_B" LOOMWRIGHT_NOTIFY_CLICK=activate
+  G4_B_MARK="$MARKER/terminal-notifier.invoked"
+  if wait_for_file "$G4_A_MARK" && wait_for_file "$G4_B_MARK"; then
+    assert_file_match "G4 session A banner uses -group loomwright-abcd-ef_" "-group loomwright-abcd-ef_ " "$G4_A_MARK"
+    assert_file_match "G4 session B banner uses -group loomwright-zz99yy88" "-group loomwright-zz99yy88 " "$G4_B_MARK"
+  else
+    fail "G4 terminal-notifier invoked for both sessions  marker never appeared"
+  fi
+else
+  skip "G4 terminal-notifier -group stub assertion (host is $HOST_OS)"
+fi
+
+echo ""
+echo "==== Replay de-duplication per tool_use_id ===="
+
+# Case R1: the same ask (same tool_use_id) fed twice, debounce off → exactly
+# one notify line + one skip-replay line; the ledger holds the id once.
+P_R1="$(ask_payload "s2dtest-r1" "toolu_replay_1")"
+run_sut "$SB_BARE" "$P_R1"
+RC1="$RC"
+rerun_sut_same_wd "$SB_BARE" "$P_R1"
+R1_LOG="$WD/.supervisor/logs/notifications.log"
+assert_eq "R1 first fire exit 0" "0" "$RC1"
+assert_eq "R1 replay exit 0" "0" "$RC"
+assert_eq "R1 same tool_use_id twice → exactly 1 notify line" "1" "$(count_in ' notify group=' "$R1_LOG")"
+assert_eq "R1 same tool_use_id twice → exactly 1 skip replay line" "1" "$(count_in ' skip replay tool_use_id=toolu_replay_1' "$R1_LOG")"
+assert_eq "R1 ledger holds the id once" "1" "$(count_in 'toolu_replay_1' "$WD/.supervisor/logs/.notified-ids")"
+
+# Case R2: two different tool_use_ids → two notify lines, no skip.
+run_sut "$SB_BARE" "$(ask_payload "s2dtest-r2" "toolu_r2_a")"
+rerun_sut_same_wd "$SB_BARE" "$(ask_payload "s2dtest-r2" "toolu_r2_b")"
+assert_eq "R2 two different tool_use_ids → 2 notify lines" "2" "$(count_in ' notify group=' "$WD/.supervisor/logs/notifications.log")"
+assert_eq "R2 two different tool_use_ids → 0 skip lines" "0" "$(count_in 'skip replay' "$WD/.supervisor/logs/notifications.log")"
+
+# Case R3: no tool_use_id → every call fires; nothing is recorded.
+P_R3="$(ask_payload "s2dtest-r3" "")"
+run_sut "$SB_BARE" "$P_R3"
+rerun_sut_same_wd "$SB_BARE" "$P_R3"
+rerun_sut_same_wd "$SB_BARE" "$P_R3"
+assert_eq "R3 no tool_use_id → all 3 calls notify" "3" "$(count_in ' notify group=' "$WD/.supervisor/logs/notifications.log")"
+assert_eq "R3 no tool_use_id → audit line says tool_use_id=-" "3" "$(count_in 'tool_use_id=-' "$WD/.supervisor/logs/notifications.log")"
+assert_file_absent "R3 no tool_use_id → no ledger written" "$WD/.supervisor/logs/.notified-ids"
+
+# Case R4: Notification events are never de-duplicated.
+run_sut "$SB_BARE" "$P_NOTIFICATION"
+rerun_sut_same_wd "$SB_BARE" "$P_NOTIFICATION"
+assert_eq "R4 Notification event twice → 2 notify lines" "2" "$(count_in ' notify group=' "$WD/.supervisor/logs/notifications.log")"
+
+# Case R5: an ask whose banner the DEBOUNCE suppressed is still recorded at
+# first sight, so its replay is a skip — never a late banner.
+run_sut "$SB_BARE" "$(ask_payload "s2dtest-r5" "toolu_r5_a")" LOOMWRIGHT_NOTIFY_DEBOUNCE=60
+rerun_sut_same_wd "$SB_BARE" "$(ask_payload "s2dtest-r5" "toolu_r5_b")" LOOMWRIGHT_NOTIFY_DEBOUNCE=60
+R5_LOG="$WD/.supervisor/logs/notifications.log"
+assert_eq "R5 precondition: 2nd ask debounced (1 notify line so far)" "1" "$(count_in ' notify group=' "$R5_LOG")"
+rerun_sut_same_wd "$SB_BARE" "$(ask_payload "s2dtest-r5" "toolu_r5_b")" LOOMWRIGHT_NOTIFY_DEBOUNCE=0
+assert_eq "R5 replay of a debounced ask → skip replay" "1" "$(count_in 'skip replay tool_use_id=toolu_r5_b' "$R5_LOG")"
+assert_eq "R5 replay of a debounced ask → still only 1 notify line" "1" "$(count_in ' notify group=' "$R5_LOG")"
+
+# Case R6: the ledger is bounded to the newest 200 ids — seed 200, add one,
+# the oldest rolls off, and a re-ask of it notifies again.
+R6_WD="$TMP_ROOT/wd-$((CASE_N + 1))"
+mkdir -p "$R6_WD/.supervisor/logs"
+i=0
+while [ "$i" -lt 200 ]; do
+  printf 'toolu_old_%s\n' "$i" >> "$R6_WD/.supervisor/logs/.notified-ids"
+  i=$((i + 1))
+done
+run_sut "$SB_BARE" "$(ask_payload "s2dtest-r6" "toolu_new_201")"
+assert_eq "R6 runner reused the seeded dir" "$R6_WD" "$WD"
+R6_IDS="$WD/.supervisor/logs/.notified-ids"
+assert_eq "R6 ledger holds at most 200 ids" "200" "$(marker_lines "$R6_IDS")"
+assert_eq "R6 newest id is recorded" "1" "$(count_in 'toolu_new_201' "$R6_IDS")"
+R6_OLD0="$(grep -cxF 'toolu_old_0' "$R6_IDS" 2>/dev/null)"
+assert_eq "R6 oldest id rolled off" "0" "${R6_OLD0:-0}"
+R6_OLD1="$(grep -cxF 'toolu_old_1' "$R6_IDS" 2>/dev/null)"
+assert_eq "R6 second-oldest id kept" "1" "${R6_OLD1:-0}"
+assert_file_absent "R6 trim temp file cleaned up" "$(ls "$WD/.supervisor/logs/".notified-ids.tmp.* 2>/dev/null | head -1)"
+rerun_sut_same_wd "$SB_BARE" "$(ask_payload "s2dtest-r6" "toolu_old_0")"
+assert_eq "R6 re-ask of the rolled-off id notifies again" "1" "$(count_in 'tool_use_id=toolu_old_0' "$WD/.supervisor/logs/notifications.log")"
+assert_eq "R6 re-ask of the rolled-off id is not a skip" "0" "$(count_in 'skip replay' "$WD/.supervisor/logs/notifications.log")"
+
+if [ "$HOST_OS" = "Darwin" ]; then
+  # Case R7: the stub itself fires once for a replayed id (osascript path is
+  # synchronous — no polling), twice for two ids.
+  run_sut "$SB_OSA" "$P_R1"
+  rerun_sut_same_wd "$SB_OSA" "$P_R1"
+  assert_eq "R7 Darwin stub: same tool_use_id twice → 1 notifier invocation" "1" "$(marker_lines "$MARKER/osascript.invoked")"
+  run_sut "$SB_OSA" "$(ask_payload "s2dtest-r7" "toolu_r7_a")"
+  rerun_sut_same_wd "$SB_OSA" "$(ask_payload "s2dtest-r7" "toolu_r7_b")"
+  assert_eq "R7 Darwin stub: two tool_use_ids → 2 notifier invocations" "2" "$(marker_lines "$MARKER/osascript.invoked")"
+else
+  skip "R7 Darwin stub replay count (host is $HOST_OS)"
 fi
 
 echo ""
