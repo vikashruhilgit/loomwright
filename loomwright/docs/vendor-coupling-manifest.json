@@ -121,7 +121,7 @@
     "loomwright/scripts/test-dispatch-pr-review.sh": 8,
     "loomwright/scripts/test-guard-test-integrity.sh": 25,
     "loomwright/scripts/test-harvest-conventions.sh": 4,
-    "loomwright/scripts/test-notify-desktop.sh": 4,
+    "loomwright/scripts/test-notify-desktop.sh": 6,
     "loomwright/scripts/test-product-seam.sh": 3,
     "loomwright/scripts/test-propose-domain.sh": 2,
     "loomwright/scripts/test-resolve-egress-config.sh": 8,

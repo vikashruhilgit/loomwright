@@ -34,7 +34,33 @@
 #                        from the payload defensively (tries a couple of
 #                        candidate field names, falls back to "unknown" —
 #                        never crashes, never invents a value it didn't read).
-#   heartbeat          — PostToolUse[Bash|Write|Edit|Task]. Debounced PER
+#                        ONE ROW PER `tool_use_id` (ask_user only): a resumed
+#                        session replays the same AskUserQuestion tool call
+#                        (same `tool_use_id`) to deliver the answer and the
+#                        hook fires again. An id already listed in this
+#                        script's OWN ledger `$LOG_DIR/.lifecycle-asked-ids`
+#                        → exit 0, no row (de-duplicate). The id is recorded
+#                        only AFTER the row was appended, so a no-op first
+#                        call (no session id, no `.supervisor/`, …) never
+#                        suppresses a later legitimate row. The ledger keeps
+#                        the newest 200 ids; a missing/unreadable ledger or an
+#                        empty id → emit as before. Why de-duplicate rather
+#                        than write a `replay: true` row: build-floor.sh would
+#                        turn a replay row into a duplicate `waiting` feed
+#                        entry, an inflated per-lane question count (v2-a: 8
+#                        `waiting`/`ask_user` rows for 4 questions) and a
+#                        `since_ts` moved to answer time — and its lifecycle
+#                        allowlist and feed filter key on `state` only, so a
+#                        `replay` flag would be ignored. NEVER share this
+#                        ledger with notify-desktop.sh's `.notified-ids`: both
+#                        run in sequence on the same payload in one hook
+#                        command, and a shared file would make this script
+#                        see notify-desktop's fresh record and drop the FIRST
+#                        ask's row. Accepted LOW risk: two asks at the same
+#                        instant can race the ledger trim and lose one id —
+#                        that only lets a later replay of it emit again. The
+#                        Notification seam (no $2) is never de-duplicated.
+#   heartbeat         — PostToolUse[Bash|Write|Edit|Task]. Debounced PER
 #                        DERIVED AGENT ID (never per matcher block) via a
 #                        single shared marker file under `.supervisor/logs/`,
 #                        so an agent whose tool calls hit any mix of the three
@@ -194,6 +220,19 @@ if [ "$LIFECYCLE_SUBCOMMAND" = "heartbeat" ]; then
   # (unresolvable session id, unwritable log dir, ...) still counts against
   # the debounce window rather than retrying every call.
   [ "$NOW_EPOCH" != "0" ] && printf '%s' "$NOW_EPOCH" > "$DEBOUNCE_FILE" 2>/dev/null || true
+fi
+
+# ---- waiting/ask_user: one row per tool_use_id (replay de-duplication) ------
+# See the `waiting` paragraph in the header. Only the CHECK happens here; the
+# id is recorded after the row is appended (bottom of file).
+ASK_IDS_FILE="$LOG_DIR/.lifecycle-asked-ids"
+ASK_TOOL_USE_ID=""
+if [ "$LIFECYCLE_SUBCOMMAND" = "waiting" ] && [ "$LIFECYCLE_EXTRA_ARG" = "ask_user" ]; then
+  ASK_TOOL_USE_ID="$(printf '%s' "$INPUT" | jq -r 'if (.tool_use_id | type) == "string" then .tool_use_id else empty end' 2>/dev/null | tr -cd 'A-Za-z0-9_-' 2>/dev/null || true)"
+  if [ -n "$ASK_TOOL_USE_ID" ] && [ -f "$ASK_IDS_FILE" ] \
+     && grep -qxF -e "$ASK_TOOL_USE_ID" "$ASK_IDS_FILE" 2>/dev/null; then
+    exit 0
+  fi
 fi
 
 # ---- Resolve plugin session id from state.md (active run only) --------------
@@ -372,5 +411,21 @@ mkdir -p "$LOG_DIR" 2>/dev/null || exit 0
 LOG_FILE="$LOG_DIR/${SESSION_ID}.jsonl"
 
 printf '%s\n' "$LINE" >> "$LOG_FILE" 2>/dev/null || exit 0
+
+# Record the ask's id only now that its row exists, then bound the ledger to
+# the newest 200 ids ($$-suffixed temp in the same dir → same-fs rename).
+# Each fallible redirect is brace-grouped: a command-level `2>/dev/null` is
+# applied only AFTER the shell opens `>>`/`>`, so a directory or unwritable
+# ledger would leak bash's own `line N: …: Is a directory` / `Permission
+# denied` to hook stderr. The group's redirect covers the failing open itself
+# (same convention as build-floor.sh's floor.json write).
+if [ -n "$ASK_TOOL_USE_ID" ]; then
+  if { printf '%s\n' "$ASK_TOOL_USE_ID" >> "$ASK_IDS_FILE"; } 2>/dev/null; then
+    if { tail -n 200 "$ASK_IDS_FILE" > "$ASK_IDS_FILE.tmp.$$"; } 2>/dev/null; then
+      { mv -f "$ASK_IDS_FILE.tmp.$$" "$ASK_IDS_FILE"; } 2>/dev/null || true
+    fi
+    { rm -f "$ASK_IDS_FILE.tmp.$$"; } 2>/dev/null || true
+  fi
+fi
 
 exit 0

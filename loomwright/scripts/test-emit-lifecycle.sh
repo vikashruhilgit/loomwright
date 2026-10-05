@@ -44,6 +44,20 @@
 #       `.supervisor/` gets NOTHING written (no dir, no debounce marker, no
 #       log file) for all three subcommands (waiting/heartbeat/failed) — the
 #       claude-review round-4 finding on PR #231 (plugin_present() gate)
+#   24. waiting ask_user: the same tool_use_id fed twice (a resumed session's
+#       replay) -> exactly ONE row; the Notification seam (no $2) is never
+#       de-duplicated even when the payload carries a tool_use_id
+#   25. waiting ask_user: two different tool_use_ids -> two rows; no
+#       tool_use_id -> every call writes a row
+#   26. a first call that wrote NO row (no .supervisor/ yet) does not record
+#       the id — the same ask after .supervisor/ exists still writes its row
+#   27. the .lifecycle-asked-ids ledger keeps the newest 200 ids; the oldest
+#       rolls off and a re-ask of it writes a row again
+#   28. REAL HOOK ORDER: notify-desktop.sh THEN emit-lifecycle.sh on the same
+#       payload, same cwd, twice -> one notify audit line + one skip, and one
+#       row (a ledger shared between the two scripts would drop the row)
+#   29. a directory / read-only .lifecycle-asked-ids -> exit 0, the row is
+#       still written, and no shell redirect diagnostic reaches stderr
 #
 # EXIT: 0 on full pass, 1 on any failed assertion.
 
@@ -121,7 +135,9 @@ init_repo() {
   printf '%s' "$d"
 }
 
-CURATED_TOOLS="cat git sed tr python3 mkdir date dirname jq mktemp awk mv rm wc head bash tail stat chmod rmdir touch"
+# grep: the ask_user ledger membership check. uname/find/cksum: notify-desktop.sh,
+# which case 28 runs in the same curated PATH (the real hook order).
+CURATED_TOOLS="cat git sed tr python3 mkdir date dirname jq mktemp awk mv rm wc head bash tail stat chmod rmdir touch grep uname find cksum"
 build_curated_path() {
   local exclude=" ${1:-} "
   local dir; dir="$(mktemp -d)"
@@ -455,6 +471,139 @@ REPO23B="$(init_repo "" 1)"
 OUT23B="$(run_lifecycle "$REPO23B" "$P23W" waiting ask_user)"
 assert_eq "case23 POSITIVE CONTROL exits 0" "0" "$(get_rc "$OUT23B")"
 [ -f "$REPO23B/.supervisor/logs/sid-case23-waiting.jsonl" ] && ok "case23 POSITIVE CONTROL: with .supervisor/ present, a line IS written" || no "case23 POSITIVE CONTROL: log missing despite pre-existing .supervisor/"
+
+# count_fixed <fixed-string> <file> — matching line count, 0 when absent. grep -c
+# prints "0" and exits 1 on no match, so default the value (never `|| echo 0`).
+count_fixed() {
+  local n
+  n="$(grep -cF -- "$1" "$2" 2>/dev/null)"
+  printf '%s' "${n:-0}"
+}
+ask_rows() { count_fixed '"reason":"ask_user"' "$1"; }
+
+echo "== 24. waiting ask_user: same tool_use_id twice -> exactly one row =="
+REPO24="$(init_repo "" 1)"
+P24="$PAYLOAD_DIR/p24.json"
+jq -n '{session_id:"sid-case24", hook_event_name:"PreToolUse", tool_name:"AskUserQuestion", tool_use_id:"toolu_case24"}' > "$P24"
+OUT24A="$(run_lifecycle "$REPO24" "$P24" waiting ask_user)"
+OUT24B="$(run_lifecycle "$REPO24" "$P24" waiting ask_user)"
+assert_eq "case24 first call exit 0" "0" "$(get_rc "$OUT24A")"
+assert_eq "case24 replay exit 0" "0" "$(get_rc "$OUT24B")"
+LOG24="$REPO24/.supervisor/logs/sid-case24.jsonl"
+assert_eq "case24 same tool_use_id twice -> exactly 1 waiting/ask_user row" "1" "$(ask_rows "$LOG24")"
+assert_eq "case24 id recorded in the lifecycle ledger" "1" "$(count_fixed 'toolu_case24' "$REPO24/.supervisor/logs/.lifecycle-asked-ids")"
+REPO24N="$(init_repo "" 1)"
+P24N="$PAYLOAD_DIR/p24n.json"
+jq -n '{session_id:"sid-case24n", notification_type:"idle_prompt", tool_use_id:"toolu_case24n"}' > "$P24N"
+run_lifecycle "$REPO24N" "$P24N" waiting >/dev/null
+run_lifecycle "$REPO24N" "$P24N" waiting >/dev/null
+assert_eq "case24 Notification seam (no \$2) is never de-duplicated" "2" "$(count_fixed '"reason":"idle_prompt"' "$REPO24N/.supervisor/logs/sid-case24n.jsonl")"
+[ ! -e "$REPO24N/.supervisor/logs/.lifecycle-asked-ids" ] && ok "case24 Notification seam writes no ledger" || no "case24 Notification seam wrote a ledger"
+
+echo "== 25. waiting ask_user: two ids -> two rows; no id -> every call writes =="
+REPO25="$(init_repo "" 1)"
+P25A="$PAYLOAD_DIR/p25a.json"; P25B="$PAYLOAD_DIR/p25b.json"; P25C="$PAYLOAD_DIR/p25c.json"
+jq -n '{session_id:"sid-case25", tool_use_id:"toolu_case25_a"}' > "$P25A"
+jq -n '{session_id:"sid-case25", tool_use_id:"toolu_case25_b"}' > "$P25B"
+jq -n '{session_id:"sid-case25"}' > "$P25C"
+run_lifecycle "$REPO25" "$P25A" waiting ask_user >/dev/null
+run_lifecycle "$REPO25" "$P25B" waiting ask_user >/dev/null
+assert_eq "case25 two different tool_use_ids -> 2 rows" "2" "$(ask_rows "$REPO25/.supervisor/logs/sid-case25.jsonl")"
+run_lifecycle "$REPO25" "$P25C" waiting ask_user >/dev/null
+run_lifecycle "$REPO25" "$P25C" waiting ask_user >/dev/null
+assert_eq "case25 no tool_use_id -> both calls write (4 rows total)" "4" "$(ask_rows "$REPO25/.supervisor/logs/sid-case25.jsonl")"
+
+echo "== 26. a no-op first call does not suppress a later legitimate row =="
+REPO26="$(init_repo)"
+P26="$PAYLOAD_DIR/p26.json"
+jq -n '{session_id:"sid-case26", tool_use_id:"toolu_case26"}' > "$P26"
+OUT26A="$(run_lifecycle "$REPO26" "$P26" waiting ask_user)"
+assert_eq "case26 gated first call exit 0" "0" "$(get_rc "$OUT26A")"
+[ ! -e "$REPO26/.supervisor" ] && ok "case26 precondition: gated call wrote nothing" || no "case26 gated call wrote: $(find "$REPO26/.supervisor" 2>/dev/null | tr '\n' ' ')"
+mkdir -p "$REPO26/.supervisor"
+run_lifecycle "$REPO26" "$P26" waiting ask_user >/dev/null
+assert_eq "case26 the same ask after .supervisor/ exists writes its row" "1" "$(ask_rows "$REPO26/.supervisor/logs/sid-case26.jsonl")"
+
+echo "== 27. ledger keeps the newest 200 ids =="
+REPO27="$(init_repo "" 1)"
+mkdir -p "$REPO27/.supervisor/logs"
+IDS27="$REPO27/.supervisor/logs/.lifecycle-asked-ids"
+i=0
+while [ "$i" -lt 200 ]; do
+  printf 'toolu_old_%s\n' "$i" >> "$IDS27"
+  i=$((i + 1))
+done
+P27NEW="$PAYLOAD_DIR/p27new.json"; P27OLD="$PAYLOAD_DIR/p27old.json"
+jq -n '{session_id:"sid-case27", tool_use_id:"toolu_new_201"}' > "$P27NEW"
+jq -n '{session_id:"sid-case27", tool_use_id:"toolu_old_0"}' > "$P27OLD"
+run_lifecycle "$REPO27" "$P27NEW" waiting ask_user >/dev/null
+assert_eq "case27 ledger holds at most 200 ids" "200" "$(count_fixed '' "$IDS27")"
+OLD0_27="$(grep -cxF 'toolu_old_0' "$IDS27" 2>/dev/null)"
+assert_eq "case27 oldest id rolled off" "0" "${OLD0_27:-0}"
+assert_eq "case27 newest id recorded" "1" "$(count_fixed 'toolu_new_201' "$IDS27")"
+run_lifecycle "$REPO27" "$P27OLD" waiting ask_user >/dev/null
+assert_eq "case27 re-ask of the rolled-off id writes a row again (2 rows)" "2" "$(ask_rows "$REPO27/.supervisor/logs/sid-case27.jsonl")"
+
+echo "== 28. real hook order: notify-desktop.sh THEN emit-lifecycle.sh, fed twice =="
+# Mirrors hooks.json's PreToolUse[AskUserQuestion] re-fan: both leaves, same
+# payload, same cwd (the repo top level). The curated PATH has no notifier, so
+# "banner once" is asserted via notify-desktop.sh's `notify` audit line.
+NOTIFY_SUT="$SCRIPT_DIR/notify-desktop.sh"
+run_hook_order() {
+  local wd="$1" payload="$2" path
+  path="$(build_curated_path)"
+  ( cd "$wd" && PATH="$path" LOOMWRIGHT_DESKTOP_NOTIFICATIONS=1 LOOMWRIGHT_NOTIFY_SCOPE=all \
+      LOOMWRIGHT_NOTIFY_DEBOUNCE=0 LOOMWRIGHT_NOTIFY_CLICK=off \
+      DISPLAY= WAYLAND_DISPLAY= "$REALBASH" "$NOTIFY_SUT" < "$payload" ) >/dev/null 2>&1
+  run_lifecycle "$wd" "$payload" waiting ask_user >/dev/null
+}
+REPO28="$(init_repo "" 1)"
+P28="$PAYLOAD_DIR/p28.json"
+jq -n '{session_id:"sid-case28", hook_event_name:"PreToolUse", tool_name:"AskUserQuestion", tool_use_id:"toolu_case28", tool_input:{questions:[{question:"Ship it?"}]}}' > "$P28"
+run_hook_order "$REPO28" "$P28"
+run_hook_order "$REPO28" "$P28"
+NLOG28="$REPO28/.supervisor/logs/notifications.log"
+assert_eq "case28 banner decided once (1 notify audit line)" "1" "$(count_fixed ' notify group=loomwright-sid-case tool_use_id=toolu_case28' "$NLOG28")"
+assert_eq "case28 replay skipped by notify-desktop (1 skip line)" "1" "$(count_fixed 'skip replay tool_use_id=toolu_case28' "$NLOG28")"
+assert_eq "case28 exactly 1 waiting/ask_user row (first ask NOT dropped)" "1" "$(ask_rows "$REPO28/.supervisor/logs/sid-case28.jsonl")"
+
+echo "== 29. directory / read-only ask ledger -> exit 0, row written, stderr clean =="
+# A command-level `cmd >> F 2>/dev/null` does NOT silence the shell's own
+# redirect failure, so a directory/unwritable ledger leaked `line N: …: Is a
+# directory` / `Permission denied` to hook stderr. run_lifecycle captures
+# stderr (2>&1) into its output, so the diagnostic would show up there. The
+# logs dir itself stays writable: the ledger append only runs after the row
+# append succeeded, so an unwritable logs dir never reaches the ledger.
+no_redirect_diag() {
+  if grep -qE 'Is a directory|Permission denied|line [0-9]+:' <<<"$2"; then
+    no "$1  output: $(printf '%s' "$2" | tr '\n' ' ')"
+  else
+    ok "$1"
+  fi
+}
+REPO29="$(init_repo "" 1)"
+mkdir -p "$REPO29/.supervisor/logs/.lifecycle-asked-ids"
+P29="$PAYLOAD_DIR/p29.json"
+jq -n '{session_id:"sid-case29", tool_use_id:"toolu_case29"}' > "$P29"
+OUT29="$(run_lifecycle "$REPO29" "$P29" waiting ask_user)"
+assert_eq "case29 directory ledger exit 0" "0" "$(get_rc "$OUT29")"
+no_redirect_diag "case29 directory ledger -> no redirect diagnostic on stderr" "$OUT29"
+assert_eq "case29 directory ledger -> the row is still written" "1" "$(ask_rows "$REPO29/.supervisor/logs/sid-case29.jsonl")"
+if [ "$(id -u 2>/dev/null || echo 0)" = "0" ]; then
+  echo "  skip: case29 read-only ledger (running as root — mode bits not enforced)"
+else
+  REPO29R="$(init_repo "" 1)"
+  mkdir -p "$REPO29R/.supervisor/logs"
+  printf 'toolu_other\n' > "$REPO29R/.supervisor/logs/.lifecycle-asked-ids"
+  chmod 444 "$REPO29R/.supervisor/logs/.lifecycle-asked-ids"
+  P29R="$PAYLOAD_DIR/p29r.json"
+  jq -n '{session_id:"sid-case29r", tool_use_id:"toolu_case29r"}' > "$P29R"
+  OUT29R="$(run_lifecycle "$REPO29R" "$P29R" waiting ask_user)"
+  chmod 644 "$REPO29R/.supervisor/logs/.lifecycle-asked-ids"
+  assert_eq "case29 read-only ledger exit 0" "0" "$(get_rc "$OUT29R")"
+  no_redirect_diag "case29 read-only ledger -> no redirect diagnostic on stderr" "$OUT29R"
+  assert_eq "case29 read-only ledger -> the row is still written" "1" "$(ask_rows "$REPO29R/.supervisor/logs/sid-case29r.jsonl")"
+fi
 
 echo "== real repo .supervisor/logs untouched =="
 assert_eq "real logs snapshot unchanged" "$REAL_BEFORE" "$(snapshot_real)"

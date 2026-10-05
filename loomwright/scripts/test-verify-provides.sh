@@ -24,7 +24,11 @@
 #             anchors (brief G, + mutation control); a lone `subtask_id:` block on an anchor-less
 #             brief anchors as subtask 1, two are ambiguous ⇒ subtask_not_found (H/I); an anchor
 #             with no `provides:` key ⇒ no_contracts, not [] (J); a duplicate anchor resolves to
-#             the one carrying provides (K); `--parse-only` counts entries without disk checks.
+#             the one carrying provides (K); `--parse-only` counts entries without disk checks;
+#             quoted names (Q/W/V, automate-followups-24): `\"` / `\\` escapes in double quotes, none in
+#             single quotes, v2-b's PINS= entry verbatim (copy + real file), unterminated quote,
+#             `parse_warnings` present/absent (one item per unreadable kind/path/name field), + a
+#             no-escape mutation control.
 #   seams   — EM §"v12 outputs_verified gate" cites verify-provides.sh + provides_mismatch +
 #             "regardless of the worker"; Supervisor Single-Agent step 3 AND Sequential gate cite
 #             verify-provides.sh with `--root .` (by anchor, never line number); worker Step 5.5 cites
@@ -414,6 +418,108 @@ else
   else ok "MUTATION CONTROL: the pre-fix anchor rule makes brief G lose its provides (G/1 is load-bearing)"; fi
 fi
 
+echo "--- script: quoted names (escapes) ---"
+# automate-followups-24: field() used to end a quoted value at the FIRST matching quote, so v2-b's
+# `name: "PINS=\"1 2 3 4 5 6 7 8 9 10\""` was searched as `PINS=\` and reported missing.
+printf 'say "hi" now\n' > "$ROOT/src/quote.txt"
+printf 'path C:\\dir here\n' > "$ROOT/src/bs.txt"                 # literal: path C:\dir here
+printf 'x A.B = "x y" end\n' > "$ROOT/src/meta.txt"
+printf 'x AXB = "x y" end\n' > "$ROOT/src/meta_mut.txt"
+printf 'raw a\\"b here\n' > "$ROOT/src/sq.txt"                    # literal: raw a\"b here
+mkdir -p "$TMP/v2b-root/loomwright/scripts"
+grep '^PINS="1 2 3 4 5 6 7 8 9 10"$' "$PLUGIN_ROOT/scripts/test-rules-gate-seams.sh" > "$TMP/v2b-root/loomwright/scripts/test-rules-gate-seams.sh"
+[ -s "$TMP/v2b-root/loomwright/scripts/test-rules-gate-seams.sh" ] && ok "Q fixture: the real PINS= line copied from test-rules-gate-seams.sh" || no "Q fixture: PINS= line not found in test-rules-gate-seams.sh"
+cat > "$TMP/briefQ.md" <<'EOF2'
+### Subtask Contracts
+```yaml
+# Subtask 1 — quoted names
+provides:
+  - {kind: "symbol", path: "src/quote.txt",    name: "say \"hi\""}
+  - {kind: "symbol", path: "src/bs.txt",       name: "C:\\dir"}
+  - {kind: "symbol", path: "src/quote.txt",    name: 'say "hi"'}
+  - {kind: "symbol", path: "src/sq.txt",       name: 'a\"b'}
+  - {kind: "symbol", path: "src/meta.txt",     name: "A.B = \"x y\""}
+  - {kind: "symbol", path: "src/meta.txt",     name: "A.B = \"x z\""}
+  - {kind: "symbol", path: "src/meta_mut.txt", name: "A.B = \"x y\""}
+# Subtask 2 — v2-b's entry verbatim
+provides:
+  - {kind: "symbol", path: "loomwright/scripts/test-rules-gate-seams.sh", name: "PINS=\"1 2 3 4 5 6 7 8 9 10\""}
+```
+EOF2
+run "$TMP/briefQ.md" 1 --root "$ROOT"
+valid_json && [ "$(jq_get '.outputs_verified | length')" = "7" ] && ok "Q/1 seven quoted entries parsed, valid JSON" || no "Q/1: $OUT"
+[ "$(jq_get '.outputs_verified[0].name')" = 'say "hi"' ] && [ "$(jq_get '.outputs_verified[0].status')" = "present" ] && ok "Q/1 \\\" reads as a literal \" and the value ends at the first UNESCAPED \" (present)" || no "Q/1 \\\" escape: $(jq_get '.outputs_verified[0]')"
+[ "$(jq_get '.outputs_verified[1].name')" = 'C:\dir' ] && [ "$(jq_get '.outputs_verified[1].status')" = "present" ] && ok "Q/1 \\\\ round-trips as ONE literal backslash (present)" || no "Q/1 \\\\ escape: $(jq_get '.outputs_verified[1]')"
+[ "$(jq_get '.outputs_verified[2].name')" = 'say "hi"' ] && [ "$(jq_get '.outputs_verified[2].status')" = "present" ] && ok "Q/1 single-quoted name: an inner \" is literal (present)" || no "Q/1 single-quoted: $(jq_get '.outputs_verified[2]')"
+[ "$(jq_get '.outputs_verified[3].name')" = 'a\"b' ] && [ "$(jq_get '.outputs_verified[3].status')" = "present" ] && ok "Q/1 single-quoted name: nothing escaped (\\\" kept as both characters)" || no "Q/1 single-quoted no-escape: $(jq_get '.outputs_verified[3]')"
+[ "$(jq_get '.outputs_verified[4].status')" = "present" ] && ok "Q/1 name with = \" space . matches literally (present)" || no "Q/1 metachar literal: $(jq_get '.outputs_verified[4]')"
+[ "$(jq_get '.outputs_verified[5].status')" = "missing" ] && ok "Q/1 one-character mutation of that name ⇒ missing" || no "Q/1 mutated name: $(jq_get '.outputs_verified[5]')"
+[ "$(jq_get '.outputs_verified[6].status')" = "missing" ] && ok "Q/1 '.' is not a wildcard (AXB does not satisfy A.B) ⇒ missing" || no "Q/1 dot wildcard: $(jq_get '.outputs_verified[6]')"
+[ -z "$ERR" ] && ok "Q/1 well-quoted names print no quoting warning on stderr" || no "Q/1 unexpected stderr: $ERR"
+run "$TMP/briefQ.md" 1 --parse-only
+[ "$OUT" = '{"subtask_id":"1","status":"parsed","provides_count":7,"source":"verify-provides.sh"}' ] && ok "--parse-only Q/1 (no unreadable name) ⇒ object byte-identical to the pre-change shape, no parse_warnings key" || no "--parse-only Q/1: $OUT"
+run "$TMP/briefQ.md" 2 --root "$TMP/v2b-root"
+[ "$RC" -eq 0 ] && [ "$(jq_get '.outputs_verified[0].name')" = 'PINS="1 2 3 4 5 6 7 8 9 10"' ] && [ "$(jq_get '.outputs_verified[0].status')" = "present" ] && ok "Q/2 v2-b's entry verbatim ⇒ present against a copy of the PINS= line" || no "Q/2 v2-b (copy): rc=$RC $OUT"
+case "$(jq_get '.outputs_verified[0].check_run')" in *"(exit 0)") ok "Q/2 v2-b check_run exit 0" ;; *) no "Q/2 v2-b check_run: $(jq_get '.outputs_verified[0].check_run')" ;; esac
+run "$TMP/briefQ.md" 2 --root "$REPO_ROOT"
+[ "$(jq_get '.outputs_verified[0].status')" = "present" ] && ok "Q/2 v2-b's entry verbatim ⇒ present against the REAL test-rules-gate-seams.sh" || no "Q/2 v2-b (real file): $OUT"
+
+# Brief W — names the parser still cannot read faithfully.
+cat > "$TMP/briefW.md" <<'EOF2'
+### Subtask Contracts
+```yaml
+# Subtask 1 — unreadable names
+provides:
+  - {kind: "symbol", path: "src/a.ts", name: "PINS="1 2""}
+  - {kind: "symbol", path: "src/a.ts", name: "Sym}
+  - {kind: "file",   path: "src/a.ts"}
+```
+EOF2
+run "$TMP/briefW.md" 1 --root "$ROOT"
+[ "$(jq_get '.outputs_verified[1].name')" = 'Sym}' ] && ok "W/1 unterminated quote ⇒ the rest, trimmed (unchanged reading)" || no "W/1 unterminated: $(jq_get '.outputs_verified[1]')"
+[ "$(jq_get '.outputs_verified[0].name')" = 'PINS=' ] && ok "W/1 unescaped inner quote ⇒ value ends at that quote" || no "W/1 inner quote: $(jq_get '.outputs_verified[0]')"
+[ "$(jq_get 'has("parse_warnings")')" = "false" ] && ok "W/1 the non --parse-only object never carries parse_warnings" || no "W/1 parse_warnings leaked into the gate object: $OUT"
+case "$ERR" in *'name read as `PINS=` (text after the closing quote)'*) ok "W/1 the gate run names the quoting problem on stderr" ;; *) no "W/1 stderr: $ERR" ;; esac
+run "$TMP/briefW.md" 1 --parse-only
+valid_json && [ "$(jq_get '.provides_count')" = "3" ] && [ "$(jq_get '.parse_warnings | length')" = "2" ] && ok "--parse-only W/1 ⇒ parse_warnings with one item per unreadable name (the clean file entry adds none)" || no "--parse-only W/1: $OUT"
+[ "$(jq_get '.parse_warnings[0]')" = 'src/a.ts: name checked as `PINS=` (text after the closing quote)' ] && ok "--parse-only W/1 warning names the path and the parser's reading (trailing text)" || no "--parse-only W/1 warning[0]: $(jq_get '.parse_warnings[0]')"
+[ "$(jq_get '.parse_warnings[1]')" = 'src/a.ts: name checked as `Sym}` (unterminated quote)' ] && ok "--parse-only W/1 warning names the path and the parser's reading (unterminated)" || no "--parse-only W/1 warning[1]: $(jq_get '.parse_warnings[1]')"
+
+# Brief V — kind / path read unfaithfully (review finding: only the name's warning was captured, so an
+# unterminated path quote was counted silently and became a false `missing` at the gate).
+cat > "$TMP/briefV.md" <<'EOF2'
+### Subtask Contracts
+```yaml
+# Subtask 1 — unreadable kind / path
+provides:
+  - {kind: "symbol", path: "src/f.txt\" }
+  - {kind: "symbol"x, path: "src/quote.txt", name: "say"}
+  - {kind: "file",   path: "src/quote.txt"}
+```
+EOF2
+run "$TMP/briefV.md" 1 --parse-only
+valid_json && [ "$(jq_get '.provides_count')" = "3" ] && [ "$(jq_get '.parse_warnings | length')" = "2" ] && ok "--parse-only V/1 ⇒ one parse_warnings item per unreadable kind/path field (the clean entry adds none)" || no "--parse-only V/1: $OUT"
+[ "$(jq_get '.parse_warnings[0]')" = 'src/f.txt\" }: path checked as `src/f.txt\" }` (unterminated quote)' ] && ok "--parse-only V/1 an unterminated path quote ⇒ item naming the path field" || no "--parse-only V/1 warning[0]: $(jq_get '.parse_warnings[0]')"
+[ "$(jq_get '.parse_warnings[1]')" = 'src/quote.txt: kind checked as `symbol` (text after the closing quote)' ] && ok "--parse-only V/1 a broken kind ⇒ item naming the kind field" || no "--parse-only V/1 warning[1]: $(jq_get '.parse_warnings[1]')"
+run "$TMP/briefV.md" 1 --root "$ROOT"
+[ "$(jq_get 'has("parse_warnings")')" = "false" ] && [ "$(jq_get '.outputs_verified | length')" = "3" ] && ok "V/1 the gate object stays parse_warnings-free with kind/path warnings" || no "V/1 gate object: $OUT"
+case "$ERR" in *'path read as `src/f.txt\" }` (unterminated quote)'*'kind read as `symbol` (text after the closing quote)'*) ok "V/1 the gate run names the kind/path quoting problems on stderr" ;; *) no "V/1 stderr: $ERR" ;; esac
+run "$TMP/briefQ.md" 2 --parse-only
+[ "$OUT" = '{"subtask_id":"2","status":"parsed","provides_count":1,"source":"verify-provides.sh"}' ] && ok "--parse-only Q/2 (clean kind/path/name) ⇒ no parse_warnings key" || no "--parse-only Q/2: $OUT"
+
+# MUTATION CONTROL — drop the escape handling in a COPY of the script; the \" case MUST go red.
+MUTQ="$TMP/verify-provides-no-escape.sh"
+sed '/escape-pair (mutation-control anchor)/d' "$SCRIPT" > "$MUTQ"
+if [ ! -s "$MUTQ" ]; then no "no-escape mutant is empty — control invalid"
+elif cmp -s "$MUTQ" "$SCRIPT"; then no "no-escape mutant identical to original — control invalid (escape-pair anchor line changed?)"
+elif ! bash -n "$MUTQ" 2>/dev/null; then no "no-escape mutant is not valid bash — control invalid"
+else
+  MOUT="$(bash "$MUTQ" "$TMP/briefQ.md" 1 --root "$ROOT" 2>/dev/null)"
+  if [ "$(printf '%s' "$MOUT" | jq -r '.outputs_verified[0].status')" = "missing" ]; then
+    ok "MUTATION CONTROL: dropping the escape handling turns the \\\" case missing (Q/1 is load-bearing)"
+  else no "MUTATION CONTROL: the \\\" case still passes without escape handling — Q/1 is vacuous: $MOUT"; fi
+fi
+
 echo "--- script: unverifiable reasons + degenerate list ---"
 run "$TMP/does-not-exist.md" 1 --root "$ROOT"
 [ "$RC" -eq 0 ] && [ "$(jq_get '.reason')" = "brief_unreadable" ] && ok "missing brief ⇒ unverifiable/brief_unreadable, exit 0" || no "brief_unreadable: rc=$RC $OUT"
@@ -548,10 +654,12 @@ grep -q 'verify-provides\.sh' "$FAILDOC" && ok "FAILURE_ESCALATION.md trigger na
 # lines; Criterion 12 blocks an unparseable anchor; both templates name the required anchor.
 lp_1b="$(section "$LAUNCHPAD" '^1b[.] [*][*]Gate-parse check' '^2[.] Spawn Plan Reviewer')"
 grep -q 'verify-provides\.sh.*--parse-only' < <(printf '%s\n' "$lp_1b") && ok "Launch Pad Phase 5.5 action 1b runs verify-provides.sh --parse-only per subtask id" || no "Launch Pad lacks the --parse-only pre-review check"
+grep -q 'parse_warnings' < <(printf '%s\n' "$lp_1b") && ok "Launch Pad Phase 5.5 action 1b fixes a parse_warnings line before spawning" || no "Launch Pad action 1b lacks the parse_warnings pre-spawn fix"
 grep -q -- '--- GATE PARSE ---' "$LAUNCHPAD" && ok "Launch Pad spawn contract carries the GATE PARSE block" || no "Launch Pad spawn contract lacks GATE PARSE"
 c12="$(section "$REVIEWER" '^### 12[.] Inter-Subtask Output Contracts' '^### 13[.]')"
 grep -q 'Gate-parseable anchor' < <(printf '%s\n' "$c12") && grep -q 'GATE PARSE' < <(printf '%s\n' "$c12") && grep -q 'subtask_id: foo-01' < <(printf '%s\n' "$c12") && ok "Criterion 12 requires a gate-parseable anchor, rejects slug keys, and consumes GATE PARSE" || no "Criterion 12 anchor clause missing"
 grep -q 'no gate-parseable `Subtask N` anchor' < <(printf '%s\n' "$c12") && ok "Criterion 12 lists the unparseable anchor as BLOCKING" || no "Criterion 12 severity list lacks the anchor case"
+grep -q 'parse_warnings.*BLOCKING `dep_graph`.*would be checked as' < <(printf '%s\n' "$c12") && grep -q '^- BLOCKING:.*parse_warnings' < <(printf '%s\n' "$c12") && ok "Criterion 12 makes a GATE PARSE parse_warnings item a BLOCKING dep_graph finding quoting the parser's reading" || no "Criterion 12 lacks the parse_warnings BLOCKING clause"
 grep -q 'NOT an anchor' "$READINESS" && grep -q -- '--parse-only' "$READINESS" && ok "supervisor-readiness authoring rules name the required anchor" || no "supervisor-readiness lacks the anchor rule"
 # every contract example in the two templates is itself gate-parseable (a template that violates the rule teaches it)
 tpl_counts() {   # prints "<fenced yaml blocks with provides:> <of those lacking a Subtask N anchor>" for $1
