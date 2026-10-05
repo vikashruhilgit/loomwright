@@ -192,7 +192,7 @@ runs_newest_first() {
     s="${f%.log}"; s="${s%-affected}"; s="${s%-*}"; ts="${s##*-}"
     case "$ts" in [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z) ;; *) ts=00000000T000000Z ;; esac
     printf '%s %s %s\n' "$ts" "$n" "$f"
-  done | LC_ALL=C sort -k1,1r -k2,2n | cut -d' ' -f3-
+  done | env LC_ALL=C sort -k1,1r -k2,2n | cut -d' ' -f3-
 }
 # log_key NAME — the content key a log was written for (the name minus -<timestamp>-<pid>[-affected].log).
 log_key() { local s="${1%.log}"; s="${s%-affected}"; s="${s%-*}"; printf '%s\n' "${s%-*}"; }
@@ -326,7 +326,7 @@ if [ "$affected" -eq 1 ]; then
   fi
   changed=()
   while IFS= read -r f; do if [ -n "$f" ]; then changed+=("$f"); fi; done < <(
-    { git diff --name-only --no-renames "$base" --; git ls-files -o --exclude-standard; } | LC_ALL=C sort -u)
+    { git diff --name-only --no-renames "$base" --; git ls-files -o --exclude-standard; } | env LC_ALL=C sort -u)
   mapped=" "; map_lines=(); uncovered=()
   for f in ${changed[@]+"${changed[@]}"}; do
     d="${f%/*}"; [ "$d" != "$f" ] || d="."
