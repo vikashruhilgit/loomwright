@@ -9,6 +9,64 @@
 - The S1/S2 harness `~/Documents/work/AI/ai-agent-manager-lanes-v2/s1h.sh`, now with `launch <lane> --resume-run
   <run_id>` (added 2026-10-05; backup in `archive/`).
 
+## HANDOVER (2026-10-05 ~11:45Z) — from session 944cda59 to session 6e8f1058
+**Single owner from now: session 6e8f1058.** 944cda59 runs nothing for S3 (no monitor, sampler, watcher or lane)
+and edits no S3 record after this push.
+
+### State at handover
+- Step 0 done: release #390 merged (`3217da0`, v15.122.0); plugin installed at 15.122.0
+  (`~/.claude/plugins/cache/atelier/loomwright/15.122.0`); primary on fresh `main`, clean; `loomwright-meta` synced.
+- **Wave 1 is SET UP, NOT LAUNCHED.** Throwaway records branch `loomwright-meta-s3w1` (seeded by s3-a, `51629ca`).
+  Lanes (in `~/Documents/work/AI/ai-agent-manager-lanes-v2/`): s3-a `automate-followups/32` · s3-b
+  `meta-sync-followups/08` · s3-c `meta-sync-followups/04` · s3-d `parallel-automate/09`. All clean, mode
+  `on loomwright-meta-s3w1`, relay hooks installed. `launch.log` has the wave marker, one aborted-setup note (partial
+  clones from an interrupted command, removed) and the four setup lines. `snapshot-before.txt` is current. S2's
+  snapshots and `s2-measure.log` are in `archive/s2/`.
+- **Not running:** `caffeinate` (the owner starts it in a terminal tab — this session's classifier denied it in S2;
+  do not work around that), lane monitor, sampler, `/lanes` pane.
+
+### Next steps (in order)
+1. Owner starts `caffeinate -i -t 14400`. Confirm with `pgrep -fl caffeinate`.
+2. `export S1H_META_BRANCH=loomwright-meta-s3w1`, then from the primary:
+   `bash ~/Documents/work/AI/ai-agent-manager-lanes-v2/s1h.sh launch s3-a` (… s3-b, s3-c, s3-d) within a minute.
+3. Start the lane monitor (S2 handover recipe in `S2-five-lane-spike.md` §Watching; prime it with the current state and
+   print `PENDING-AT-ARM` lines so no question slips between re-arms; re-arm every 30 min) and, if measuring,
+   `s2-sampler.sh` adapted to s3 lane names (it is hard-coded to `s2-a..e`; copy it to `s3-sampler.sh`). Background
+   commands in a session are capped at 2 h — the owner can run the sampler in a terminal tab instead.
+4. Expect each lane to ask the stale-runs "Start new run?" + "process the 1-item queue?" first (item 28 is not fixed
+   yet — it is in s3-a). Relay verbatim.
+5. At park: merge checks (S2 handover list), then the **wave-branch integration** in §"Integration method" below —
+   lanes are NOT merged directly; one wave PR per wave, merged by the owner with a merge commit.
+
+### Lessons from S2 and this session (apply them)
+- Relay rules: verbatim, ≤4 questions per AskUserQuestion call, never merge two lane questions, one label per answer,
+  free text only as `note`; check a lane's factual claim read-only when cheap; re-read `pending.id` right before
+  `s1h.sh answer` (the owner may answer in the `/lanes` pane).
+- **Escalated parks arm no watcher.** Close them out with `s1h.sh launch <lane> --resume-run <run_id>` (sends
+  `/loomwright:automate --resume <run_id>`; proven on s2-d and s2-a). Never the launch prompt, never a bare `--resume`:
+  a lane clone holds every unfinished run file of the primary.
+- 3 of 5 S2 lanes escalated for temporary reasons (a `test-ci-local.sh` (L) slot-timeout flake; `claude-review`
+  settling ~23 min, past the drain's 1200 s bound). Check the actual check state before telling the owner anything.
+- A BEHIND PR does not need `gh pr update-branch` when the owner merges by admin bypass (S1 Q4); S2's update churn was
+  the operator's choice. With the wave branch it does not arise. Update a branch only with the owner's go.
+- Records: after each closeout carry the lane's records to `loomwright-meta` with
+  `meta-sync.sh push --branch loomwright-meta --paths-from <list>` (ALWAYS `--branch`). Copy new files; for a
+  requirement append ONLY the `<!-- loomwright:requirement-closeout -->` block; append only that PR's
+  `results.jsonl` line; skip the lane's stale copies of other requirements. Rewrite `/Users/<name>/` → `~/` first —
+  the scrub blocked 3 of 5 S2 pushes (briefs' `Project:` line; `reconcile-status` paths in run files).
+- `trail-pr` appends its own "meta-pushed" line after pushing, so a lane reads `local_ahead 1` afterwards; push that
+  run file to the throwaway branch before `teardown` (teardown refuses `local_ahead`).
+- Lane teardown: archive `.supervisor/{s1h-lane.log,s1-questions,s1-answers,logs}` to `archive/<lane>/`, then
+  `S1H_META_BRANCH=… bash s1h.sh teardown <lane>`. Delete the throwaway branch only with the owner's yes.
+- The Bash tool runs zsh: `set -- $pair` and unquoted `$LIST` do not word-split — use explicit calls or `bash -c`.
+  An `rm -rf "$VAR/..."` is blocked by a safety check; use literal paths after inspecting the target.
+- An interrupted or rejected command may already have run part-way (s3-a's clone): inspect side effects before
+  retrying.
+- Hard-coded plugin path for a manual closeout is now
+  `~/.claude/plugins/cache/atelier/loomwright/15.122.0/scripts/automate-helpers.sh closeout <runfile> <item> <pr_url>`.
+- Optional `/lanes` pane: the mod is in `~/.claude/dev-mods/3679fac4-1abb-4fb1-b18d-a49e84d3ddb5/lanes/` (validated);
+  load the `plugin-authoring` skill, copy that folder into the new session's mods folder, enable hot reload, `/lanes`.
+
 ## Purpose
 Owner decision 2026-10-05: stabilize parallel automation, then release it for other repos, and build that queue
 **with waves, the way S2 ran** — as a spike that also looks for gaps the requirements below do not name. S2 had one
