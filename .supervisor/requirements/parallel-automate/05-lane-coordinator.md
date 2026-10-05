@@ -226,6 +226,26 @@ coordinator. Without the flag, or with `--parallel 1`, no lane code runs at all.
       `lane-status --json`, adding a per-lane "Details" toggle with the last ~20 steps, and answers through `lane-answer`.
       Tests: `--watch` output on a fixture fleet; the report's NOT-RUN for a Validation step with no evidence.
 
+16. **Fleet health: resource sampling and wave keep-awake** (added 2026-10-05, owner: "is that from you … or from plugin
+    side? if from your side we need that in the plugin"). In S2 both were operator-side session tasks (`s2-sampler.sh`,
+    `caffeinate`), which died with the session that started them and had to be handed over by hand.
+    - **Resource sampling (core, plain files):** while a wave runs, the coordinator appends one line every 10 s to
+      `<run_id>.fleet.log`: CI-slot holders/waiters (`ci-slot.sh status`), load average, swap used, free memory, and per
+      lane the summed RSS of every process whose working directory is in that lane (match by cwd, NOT argv — `claude -p`'s
+      argv has no lane path; the S2 prototype had to be fixed for this). `lane-status --resources` prints the latest
+      line per lane plus the wave's peak; the merge-readiness / wave-close summary (06) reports peak memory and CI-slot
+      wait. The sampler is a child of the coordinator's own process and stops when the wave closes (no orphan).
+    - **Memory guard:** when free memory stays below a threshold (and swap grows) for N samples, `lane-status` shows
+      `memory_pressure`, the coordinator stops launching new work (no new lanes, no new `ci-local` slots beyond the ones
+      held), notifies the owner, and never kills a lane by itself. S2 started with ~100 MB free and 4.4 GB swap already
+      in use on a 24 GB Mac, so this is the likely first limit at 5–10 lanes.
+    - **Keep-awake for the wave (optional add-on, OS-specific, P9):** on macOS the coordinator may hold
+      `caffeinate -i -w <coordinator pid>` for the wave (released automatically when the coordinator exits; never a
+      timer-only hold that outlives it). It requires the owner's consent once per wave and is fail-safe (if refused or
+      unavailable, record it and continue; a closed lid still sleeps). Other OSes: equivalent or nothing.
+    - **Tests:** sampler attribution by cwd on a fixture process tree; the sampler stops with the coordinator; the memory
+      guard trips on a fixture series and blocks a new launch; keep-awake refused ⇒ the wave still runs and records it.
+
 ## Non-goals
 Merging and the release bump (item 06). More than one wave at once. Lanes on other machines. A `-runner` agent.
 Making the rules stamp or Claude auto-memory follow a clone — record the gap; a lane whose requirement needs a
