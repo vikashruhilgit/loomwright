@@ -1064,7 +1064,7 @@ design_png_sync() {
   [ "$prc" -eq 0 ] && [ "$RC" -eq 0 ] || return 1
   grep -q 'meta_sync: symlink' < <(printf '%s\n%s\n' "$pout" "$OUT") && return 1
   [ "$(get B "$RQ/x.md")" = "x v2 from A" ] && [ "$(br_show "$RQ/y.md")" = "y v2 from B" ] || return 1
-  ! br_names | grep -q 'design\.png'
+  ! grep -q 'design\.png' < <(br_names)
 }
 design_png_world
 design_png_sync
