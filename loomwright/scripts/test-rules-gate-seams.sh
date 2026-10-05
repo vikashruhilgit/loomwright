@@ -12,7 +12,8 @@
 #   P3 review-heal's READY redefinition carries the rules clause
 #   P4 self-heal-advisory's BLOCKING finding synthesis + its routing into the fix loop
 #   P5 CLAUDE.md carries the D4 invariant sentence
-#   P6 automate-loop §10 carries condition 7 and its named PARK reason
+#   P6 automate-loop §10 carries condition 7, its named PARK reason, and the checkout pin's two
+#      PARK reasons (automate-followups/16)
 #   P7 review-heal's rules read is ALLOW-LISTED: everything unaffirmed ⇒ unreadable ⇒ ESCALATED
 #   P8 self-heal-advisory's rules read is ALLOW-LISTED the same way, and Part 2 escalates on the
 #      allow-list complement (never a deny-list of bad verdicts)
@@ -64,7 +65,8 @@ pin() {
          'if i.category == "new" and i.severity in (BLOCKING, HIGH)] + rule_findings' ;;
     5) printf '%s\n' "$CM" \
          'A human-stamped, gate-countable `must`-rule check is a correctness gate, not an advisory emitter' ;;
-    6) printf '%s\n' "$AL" 'PARK: rules_check_failed (' 'rules-gate-verdict.sh' ;;
+    6) printf '%s\n' "$AL" 'PARK: rules_check_failed (' 'rules-gate-verdict.sh' \
+         'PARK: rules_gate_head_mismatch' 'PARK: rules_gate_dirty_tree' ;;
     7) printf '%s\n' "$RH" \
          'or an unrecognised verdict string — is treated as unreadable:' \
          'return {verdict: "unreadable"' \
