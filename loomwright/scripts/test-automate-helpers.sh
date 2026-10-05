@@ -927,6 +927,58 @@ rm -f "$CGH/pr-view-fail"
 cp "$CRB" "$CWD/cr.set"; cr_run "$CRB"
 [ "$RUN_RC" -eq 0 ] && [ "$RUN_OUT" = "current-rebuild: skipped — ## Current set" ] && cmp -s "$CWD/cr.set" "$CRB" \
   && ok "current-rebuild second run: 'skipped — ## Current set', nothing written" || no "current-rebuild second run wrong (rc=$RUN_RC out=$RUN_OUT)"
+# B10j. A `done` ## Current left behind by a PICK that skipped its current-set after a
+# close-out (the guard exempts a done Current, so both lines append with exit 0) is
+# stale: current-rebuild repairs it from the LAST picked line. Before the fix it
+# printed 'skipped — ## Current set' and Current kept naming a.md while b's PR was open.
+A_PR="https://github.com/acme/widgets/pull/3"; B2_PR="https://github.com/acme/widgets/pull/2"
+crd_fixture() {  # crd_fixture <path> <progress line>...
+  local p="$1" l; shift
+  {
+    printf '# Automate Run: crd\n## Status: running\n## Source\n- folder q\n## Run Config\n- mode: safe | limit: 5\n## Queue\n- [x] q/01-a.md\n- [ ] q/02-b.md\n## Current\n'
+    printf '%s\n' "- item: q/01-a.md | status: done | pr: $A_PR | branch: feature/a" '- pause_reason: null' '## Progress'
+    for l in "$@"; do printf -- '- %s\n' "$l"; done
+  } > "$p"
+}
+crd_stale() {  # the reviewer's repro: a done a.md, then 'picked b' + 'ran → PR 2' with no current-set
+  crd_fixture "$CRB" "t0 picked q/01-a.md" "t0 ran /autonomous → PR $A_PR" "t1 closeout $A_PR: closeout: checked — - [x] q/01-a.md"
+  local r1 r2
+  bash "$H" progress-append "$CRB" "t2 picked q/02-b.md; suppressed auto_review" 2>/dev/null; r1=$?
+  bash "$H" progress-append "$CRB" "t3 ran /autonomous → PR $B2_PR" 2>/dev/null; r2=$?
+  CRD_APPEND_RC="$r1/$r2"
+  cr_run "$CRB"
+}
+printf '{"state":"OPEN","mergedAt":null,"headRefName":"feature/b"}\n' > "$CGH/pr-view.json"
+crd_stale
+[ "$CRD_APPEND_RC" = "0/0" ] && ok "(B10j) the guard lets 'picked b' + 'ran /autonomous' over a done a.md through (exit 0/0 — the documented exemption)" || no "(B10j) append rcs: $CRD_APPEND_RC"
+[ "$RUN_RC" -eq 0 ] && [ "$RUN_OUT" = "current_rebuilt: q/02-b.md pr $B2_PR state OPEN" ] \
+  && grep -qxF -- "- item: q/02-b.md | status: running | pr: $B2_PR | branch: feature/b" "$CRB" \
+  && ok "(B10j) current-rebuild repairs a stale done ## Current to the last picked item (b, its PR, running)" \
+  || no "(B10j) stale done Current not rebuilt (rc=$RUN_RC out=$RUN_OUT): $(grep '^- item:' "$CRB")"
+# Mutation control (the before-state): a done Current treated as 'set' ⇒ the repro is skipped.
+CRDM="$CWD/crdm"; mkdir -p "$CRDM"
+sed 's|^    \[ "\$cs" = done \] \|\| { echo "\$R ## Current set"; return 0; }$|    { echo "$R ## Current set"; return 0; }|' "$H" > "$CRDM/automate-helpers.sh"
+if ! cmp -s "$H" "$CRDM/automate-helpers.sh" && bash -n "$CRDM/automate-helpers.sh" 2>/dev/null; then
+  CR_H="$CRDM/automate-helpers.sh" crd_stale
+  [ "$RUN_OUT" = "current-rebuild: skipped — ## Current set" ] && grep -q '^- item: q/01-a.md | status: done' "$CRB" \
+    && ok "(B10j) mutation control: the pre-fix rule skips the repro and leaves a.md named" || no "(B10j) mutant did not reproduce the bug ($RUN_OUT)"
+else
+  no "(B10j) done-exemption mutant not built"
+fi
+# Negatives: a done Current that IS the last picked item (a correct close-out), and a
+# done Current with a './'-prefixed picked token naming it, are never rebuilt.
+crd_fixture "$CRB" "t0 picked q/01-a.md" "t0 ran /autonomous → PR $A_PR" "t1 closeout $A_PR: closeout: checked — - [x] q/01-a.md"
+cp "$CRB" "$CWD/crd.same"; cr_run "$CRB"
+[ "$RUN_RC" -eq 0 ] && [ "$RUN_OUT" = "current-rebuild: skipped — ## Current set" ] && cmp -s "$CWD/crd.same" "$CRB" \
+  && ok "(B10j) a done Current naming the last picked item ⇒ skipped, nothing written" || no "(B10j) same-item done wrong (rc=$RUN_RC out=$RUN_OUT)"
+crd_fixture "$CRB" "t0 picked ./q/01-a.md (run-lock acquired; session x)"
+cp "$CRB" "$CWD/crd.dot"; cr_run "$CRB"
+[ "$RUN_RC" -eq 0 ] && [ "$RUN_OUT" = "current-rebuild: skipped — ## Current set" ] && cmp -s "$CWD/crd.dot" "$CRB" \
+  && ok "(B10j) a done Current vs './'-prefixed picked token of the same item ⇒ skipped" || no "(B10j) ./ compare wrong (rc=$RUN_RC out=$RUN_OUT)"
+crd_fixture "$CRB" "t0 run created"
+cp "$CRB" "$CWD/crd.np"; cr_run "$CRB"
+[ "$RUN_RC" -eq 0 ] && [ "$RUN_OUT" = "current-rebuild: skipped — ## Current set" ] && cmp -s "$CWD/crd.np" "$CRB" \
+  && ok "(B10j) a done Current with no picked line ⇒ skipped, nothing written" || no "(B10j) no-picked done wrong (rc=$RUN_RC out=$RUN_OUT)"
 # Negative: foreign PR URLs on closeout / trail / cross-run lines and no ran
 # /autonomous after the last picked ⇒ pr stays null ('(owner …)' suffix parsed).
 cr_foreign() {

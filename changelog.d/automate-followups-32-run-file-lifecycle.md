@@ -6,7 +6,7 @@ omitted `pr`/`branch` to `null` when the item changes. It refuses bad input with
 byte-unchanged. `closeout`'s `## Current` reconcile now writes through it. `progress-append` exits 3 with
 `current_not_set: <line>` (and still appends the line) when a `picked`, `ran /autonomous` or `owned drain started`
 line lands on an unset `## Current`, or when a `picked` line names a different item while the current one is not
-done. New `current-rebuild` repairs an unset `## Current` at RESUME: it takes the item from the last `picked` line
+done. New `current-rebuild` repairs an unset `## Current` at RESUME, and a `done` one that still names the previous item after a later `picked` line (the case the `progress-append` check lets through): it takes the item from the last `picked` line
 and the PR only from a later `ran /autonomous` line, and it always sets `status: running`. The new
 `closeout_leftover` `pause_reason` is added to the SKILL §3 enum and to the RESULT_SCHEMAS §AUTOMATE_RUN enum and
 table. Lane w1-10 (run `automate-2026-10-04-103627`) wrote `## Current` only once, at creation; that is the bug this

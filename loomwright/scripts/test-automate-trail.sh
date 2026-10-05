@@ -105,8 +105,12 @@ T="$HERE/automate-trail.sh"
 SKILL="$HERE/../skills/automate-loop/SKILL.md"
 
 pass=0; fail=0
-ok() { echo "  ok: $1"; pass=$((pass+1)); }
-no() { echo "  FAIL: $1"; fail=$((fail+1)); }
+# A shadow tally the summary cross-checks: a leg that reuses `pass`/`fail` as a loop
+# variable clobbers the counter silently (CL5's `for pass in 1 2` once printed
+# '40 passed' for 504 ok lines). The `_tally_` prefix keeps it out of any leg's namespace.
+_tally_ok=0; _tally_no=0
+ok() { echo "  ok: $1"; pass=$((pass+1)); _tally_ok=$((_tally_ok+1)); }
+no() { echo "  FAIL: $1"; fail=$((fail+1)); _tally_no=$((_tally_no+1)); }
 
 TOP="$(mktemp -d "${TMPDIR:-/tmp}/test-automate-trail.XXXXXX")"
 TOP="$(cd "$TOP" && pwd -P)"
@@ -1914,11 +1918,11 @@ closeout_fixture 303
 o0="$(run_closeout)"
 [ "$(printf '%s\n' "$o0" | cls --run "$RUN_ID" --item "$REQ" --pr "$PRURL" --record "$P/$RF_REL")" = complete ] && ok "(CL5) the first, real close-out classifies complete" || no "(CL5) first close-out: $(printf '%s\n' "$o0" | cls)"
 grep -q 'nothing to close out' "$P/$RF_REL" && no "(CL5) a close-out that changed things recorded 'nothing to close out'" || ok "(CL5) a close-out that changed things records no 'nothing to close out' line"
-for pass in 1 2; do
+for cl5_pass in 1 2; do
   o="$(run_closeout)"
   v="$(printf '%s\n' "$o" | cls --run "$RUN_ID" --item "$REQ" --pr "$PRURL" --record "$P/$RF_REL")"
-  [ "$v" = complete ] || no "(CL5) pass $pass: $v"
-  [ "$pass" = 1 ] && { cp "$P/$RF_REL" "$FX/rf.p1"; cp "$P/$REQ" "$FX/req.p1"; }
+  [ "$v" = complete ] || no "(CL5) pass $cl5_pass: $v"
+  [ "$cl5_pass" = 1 ] && { cp "$P/$RF_REL" "$FX/rf.p1"; cp "$P/$REQ" "$FX/req.p1"; }
 done
 n_nt="$(grep -c "closeout: nothing to close out — $REQ\$" "$P/$RF_REL")"
 [ "$n_nt" = 1 ] && ok "(CL5) two idempotent passes ⇒ complete both times, exactly ONE 'closeout: nothing to close out' line" || no "(CL5) nothing-to-close-out lines: $n_nt"
@@ -1984,6 +1988,10 @@ done
 grep -qE '^    closeout-others\) exec bash "\$\(dirname "\$0"\)/automate-trail.sh" "\$cmd" "\$@" ;;' "$H" && ok "dispatcher row: closeout-others → automate-trail.sh" || no "closeout-others dispatcher row missing"
 grep -qF 'closeout-classify' "$HERE/../commands/automate.md" && grep -qF 'closeout-others' "$HERE/../commands/automate.md" && ok "commands/automate.md overview names closeout-classify + closeout-others" || no "commands/automate.md surface missing"
 
+if [ "$pass" != "$_tally_ok" ] || [ "$fail" != "$_tally_no" ]; then
+  echo "  FAIL: summary counter clobbered — pass=$pass vs $_tally_ok ok lines, fail=$fail vs $_tally_no FAIL lines (a leg reused pass/fail as a variable)"
+  fail=$((_tally_no+1)); pass=$_tally_ok
+fi
 echo
 echo "test-automate-trail: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

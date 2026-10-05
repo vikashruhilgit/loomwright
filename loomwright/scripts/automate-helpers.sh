@@ -40,7 +40,7 @@
 #   progress-append  <runfile_path> <line>             # §3 append-only ## Progress (never rewrites prior lines); refuses a file with no "# Automate Run:" title; exit 3 + `current_not_set: <line>` on stderr (line still appended) when a `picked `/`ran /autonomous`/`owned drain started` line meets a null ## Current item, or `picked <X>` meets a different non-done item
 #   queue-checkoff   <runfile_path> <item> [reason] [mark]  # §3/§5 flip - [ ] -> - [x] (optional "# <skipped|abandoned>: reason"; mark default skipped); refuses a file with no title
 #   current-set      <runfile_path> [--item <path|null> --status <s|null>] [--pr <url|null>] [--branch <b|null>] [--pause-reason <r>]  # §3 the ONLY writer of ## Current's item/pause_reason lines: item form (both --item/--status; null only both-null) or run-level form (--pause-reason only); enum-validated; a changed --item resets an omitted pr/branch to null; refusal = exit 1, file byte-unchanged; identical values ⇒ `current-set: unchanged`
-#   current-rebuild  <runfile_path>                     # §4 RECONCILE repair: ## Current item null/absent + a `picked` Progress line ⇒ item from the LAST picked line (must be a Queue row), pr ONLY from a later `ran /autonomous` line, branch via one gh pr view; always status running; one `current_rebuilt: … state <s>` line (printed + appended); already set ⇒ `skipped — ## Current set`
+#   current-rebuild  <runfile_path>                     # §4 RECONCILE repair: ## Current item null/absent — or `done` and not the LAST picked item — + a `picked` Progress line ⇒ item from the LAST picked line (must be a Queue row), pr ONLY from a later `ran /autonomous` line, branch via one gh pr view; always status running; one `current_rebuilt: … state <s>` line (printed + appended); set and not done (or done = the last picked item) ⇒ `skipped — ## Current set`
 #   remaining        <runfile_path>                     # §3 count of "- [ ]" lines only
 #   ceiling-check    <runfile_path> <max_tokens> [--root <checkout>]  # §6 PICK-time token-ceiling check via read-token-ledger.sh --run-id; prints OK/PARK, always exits 0
 #   resolve-folder   <dir>                              # §2 list *.md not done and not proposed|parked
@@ -501,8 +501,11 @@ current_set() {
 
 # current-rebuild <runfile> — SKILL §4 RECONCILE repair for a `## Current` an
 # engine never set (lane w1-10: one creation write, then Progress-only updates).
-# Acts ONLY when `## Current`'s item is null/empty/absent AND `## Progress` has a
-# `picked ` line. Item: from the LAST Progress line matching `^- ([^ ]+ )?picked `
+# Acts ONLY when `## Progress` has a `picked ` line AND `## Current`'s item is
+# null/empty/absent — or names an item with `status: done` that differs (after a
+# leading `./` strip) from the LAST `picked` line's item (a PICK after a close-out
+# that skipped its `current-set`; the progress-append guard exempts that case).
+# Item: from the LAST Progress line matching `^- ([^ ]+ )?picked `
 # — the first whitespace-delimited token after `picked `, trailing `;`/`,` stripped
 # — and it must be a Queue row (`- [ ] <item>` or `- [x] <item>…`). PR: ONLY from a
 # `ran /autonomous` line AFTER that last `picked` line (its first
@@ -513,22 +516,39 @@ current_set() {
 # claims awaiting_merge/READY/escalated and never triggers a close-out; the
 # observed state is named in the line for the owner. Writes via current-set, then
 # progress-appends and prints `current_rebuilt: <item> pr <url|null> state
-# <OPEN|MERGED|CLOSED|unknown|none>` (`none` = no PR found). Already set ⇒
-# `current-rebuild: skipped — ## Current set`. Exit 0 except a refused write (1).
+# <OPEN|MERGED|CLOSED|unknown|none>` (`none` = no PR found). Set and not `done`, or
+# `done` and naming the last picked item ⇒ `current-rebuild: skipped — ## Current
+# set`. Exit 0 except a refused write (1).
 current_rebuild() {
   local out="${1:-}" R="current-rebuild: skipped —"
   [ -n "$out" ] || die "current-rebuild: refused — usage: current-rebuild <runfile>"
   [ -f "$out" ] || die "current-rebuild: refused — run file not found: $out"
   is_run_file "$out" || die "current-rebuild: refused — not a run file (no '# Automate Run:' title): $out; left unchanged [runfile_write_refused]"
-  local ci; ci="$(_current_field "$(_current_item_line "$out")" item)"
-  if [ -n "$ci" ] && [ "$ci" != null ]; then echo "$R ## Current set"; return 0; fi
+  local cl ci cs cur_set=0
+  cl="$(_current_item_line "$out")"
+  ci="$(_current_field "$cl" item)"
+  if [ -n "$ci" ] && [ "$ci" != null ]; then
+    cur_set=1; cs="$(_current_field "$cl" status)"
+    # A set item that is not `done` is in flight — never second-guessed here.
+    [ "$cs" = done ] || { echo "$R ## Current set"; return 0; }
+  fi
   local picked_ln item
   picked_ln="$(_progress_block "$out" | awk '/^- ([^ ]+ )?picked /{n=NR; l=$0} END{if (n) print n "\t" l}')"
-  if [ -z "$picked_ln" ]; then echo "$R no picked line in ## Progress"; return 0; fi
+  if [ -z "$picked_ln" ]; then
+    [ "$cur_set" = 1 ] && { echo "$R ## Current set"; return 0; }
+    echo "$R no picked line in ## Progress"; return 0
+  fi
   local tab=$'\t'
   local pnum="${picked_ln%%"$tab"*}" pline="${picked_ln#*"$tab"}" re_p='^- ([^ ]+ )?picked ([^ ]+)'
   if [[ "$pline" =~ $re_p ]]; then item="${BASH_REMATCH[2]}"; else item=""; fi
   while :; do case "$item" in *";"|*",") item="${item%?}" ;; *) break ;; esac; done
+  # A `done` `## Current` is stale only when the LAST `picked` line names a
+  # DIFFERENT item (compared after a leading `./` strip, the guard's rule): the
+  # next PICK skipped its `current-set` after a close-out (progress-append's guard
+  # exempts a `done` Current, so this is the only place that case is caught).
+  if [ "$cur_set" = 1 ] && { [ -z "$item" ] || [ "${item#./}" = "${ci#./}" ]; }; then
+    echo "$R ## Current set"; return 0
+  fi
   if [ -z "$item" ] || ! AH_ITEM="$item" awk '
       BEGIN { it=ENVIRON["AH_ITEM"] }
       /^## Queue/ { q=1; next } /^## / { q=0 }
