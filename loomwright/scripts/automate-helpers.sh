@@ -737,7 +737,18 @@ _ge_pr_parts() {
 #           --root <root>` and reads `.high_risk`/`.reasons` from its own output — no ctx input of
 #           any kind feeds this condition any more. NO override of any kind (owner decision R5):
 #           not `--trust-unprotected` (cond 4 only), not a config key, not an exclude list.
-#   cond 7  evaluated AFTER cond 6: the gate ITSELF invokes `"$(dirname "$0")/rules-gate-verdict.sh"
+#   cond 7  evaluated AFTER cond 6. PIN FIRST (automate-followups/16), before the helper runs:
+#           `git -C <root> rev-parse HEAD` must equal the live head SHA cond 2 confirmed, else
+#           `rules_gate_head_mismatch` (a non-checkout root / unreadable or empty HEAD parks the
+#           same way — never a match); then `git status --porcelain -uall`, read from the repo top
+#           level, must list nothing outside `.supervisor/` and `.claude/agent-memory/` (tracked
+#           edits, staged changes and untracked non-ignored files all count; gitignored files do
+#           not), else `rules_gate_dirty_tree` (a failing `git status` parks the same way). Both
+#           are fail-CLOSED with NO override; the helper is not called on a checkout that fails
+#           either. Honest limit: a rule `binds` path under one of the two excluded engine-owned
+#           paths is not covered by the cleanliness pin. Normal path: the owned inline `/review-pr`
+#           drain checks the PR branch out on the main-thread checkout, so `<root>` is at the PR
+#           head when GATE runs. Then the gate ITSELF invokes `"$(dirname "$0")/rules-gate-verdict.sh"
 #           --root <root>` (sibling lookup, never PATH) and reads `.verdict` with an explicit
 #           has() + `type == "string"` check. AFFIRMATIVE test: `ok` or `none` (nothing countable
 #           to verify, D3) ⇒ holds; anything else PARKs with a named reason — `fail` ⇒
@@ -770,7 +781,9 @@ _ge_pr_parts() {
 # anyway, exactly like the pre-existing sub_floor_converged guard it sits
 # beside). New reasons added by condition 7 (rule-enforcement-at-review-and-merge):
 # rules_check_failed, rules_check_unresolved, rules_unstamped, rules_cmd_disabled,
-# rules_gate_unreadable.
+# rules_gate_unreadable. New reasons added by condition 7's checkout pin
+# (automate-followups/16, evaluated before the helper call): rules_gate_head_mismatch,
+# rules_gate_dirty_tree.
 gate_eval() {
   local url="$1" ctx="$2"
   shift 2 2>/dev/null || true
@@ -1048,6 +1061,46 @@ GEPARTS
   # form (`ok`, or `none` = nothing countable to verify, D3 — the cond-5 `na`
   # precedent) and the single test is `!= "true"` — never a `= "false"` test, so
   # any verdict this code does not recognise parks.
+  #
+  # PIN FIRST (automate-followups/16) — the verdict is only trusted for the bytes
+  # being merged, so BEFORE the helper runs, the `--root` checkout must be AT the
+  # live head SHA cond 2 confirmed and have no uncommitted change outside the two
+  # engine-owned paths. Both checks fail CLOSED with NO override; neither runs the
+  # helper on a checkout it is about to distrust. Every git call:
+  #   - takes the `cmd || rc=$?` shape (see the helper-call comment below);
+  #   - runs with the repo-redirect and pathspec-mode env vars UNSET — a stray
+  #     GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE would make the pin judge a different
+  #     repo than the files the helper reads at `$root`, and GIT_LITERAL_PATHSPECS
+  #     would turn the `:(exclude)` magic into literal paths.
+  # The porcelain read runs from the REPO TOP LEVEL with a plain `.` positive
+  # pathspec, so a subdirectory `--root` still sees dirt anywhere in the tree,
+  # the excludes stay anchored at the top (a nested `x/.supervisor/` is dirt),
+  # and if magic were ever read literally the failure is over-strict (the excludes
+  # stop excluding), never a fail-open match-nothing positive like `:(top)`.
+  # `-uall` is explicit so a repo's `status.showUntrackedFiles=no` cannot hide
+  # untracked files: untracked non-ignored files count as dirt (a bound check can
+  # read them), gitignored ones do not.
+  _ge_git() {
+    env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_COMMON_DIR \
+        -u GIT_LITERAL_PATHSPECS -u GIT_GLOB_PATHSPECS -u GIT_NOGLOB_PATHSPECS -u GIT_ICASE_PATHSPECS \
+        git "$@"
+  }
+  local root_head="" root_head_rc=0
+  root_head="$(_ge_git -C "$root" rev-parse --verify -q HEAD 2>/dev/null)" || root_head_rc=$?
+  if [ "$root_head_rc" -ne 0 ] || [ -z "$root_head" ] || [ "$root_head" != "$live_head" ]; then
+    echo "PARK: rules_gate_head_mismatch"; return 0
+  fi
+  local root_top="" root_top_rc=0 root_dirt="" root_dirt_rc=0
+  root_top="$(_ge_git -C "$root" rev-parse --show-toplevel 2>/dev/null)" || root_top_rc=$?
+  if [ "$root_top_rc" -eq 0 ] && [ -n "$root_top" ]; then
+    root_dirt="$(_ge_git -C "$root_top" status --porcelain -uall -- . ':(exclude).supervisor' ':(exclude).claude/agent-memory' 2>/dev/null)" || root_dirt_rc=$?
+  else
+    root_dirt_rc=1
+  fi
+  if [ "$root_dirt_rc" -ne 0 ] || [ -n "$root_dirt" ]; then
+    echo "PARK: rules_gate_dirty_tree"; return 0
+  fi
+
   local rules_bin; rules_bin="$(dirname "$0")/rules-gate-verdict.sh"
   # `cmd || rc=$?` (the cond-2 read's shape): under `set -e` a failing command
   # substitution in a plain assignment would abort the gate with NO line printed.

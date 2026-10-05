@@ -56,6 +56,15 @@
 #      mutants (PARK test deleted ⇒ MERGE; invocation commented out ⇒ fail-closed
 #      rules_gate_unreadable) + a positive control; and an end-to-end leg against the
 #      REAL rules-gate-verdict.sh / rules-check.sh / rules-replay-lib.sh siblings.
+#      R11 (automate-followups/16): cond 7's checkout pin, on the harness's REAL git
+#      checkout ($E_ROOT, whose HEAD the gh stub reports) — stale HEAD / non-checkout /
+#      no-commit / missing root ⇒ rules_gate_head_mismatch; tracked edit, deletion,
+#      staged file, untracked file (also under status.showUntrackedFiles=no), dirt in
+#      .claude/ outside agent-memory, a nested x/.supervisor/, dirt seen from a
+#      subdirectory --root, and a failing `git status` ⇒ rules_gate_dirty_tree — each
+#      with 0 merges and the helper never called; .supervisor/-only, agent-memory-only
+#      and ignored-only dirt still let the verdict decide; cond 6 still precedes the
+#      pin; gated mutants (each pin deleted ⇒ its leg MERGEs) with an un-mutated control.
 #   F. learning-emit (engine-native ground-truth POSTMORTEM_RESULT line): happy path
 #      (fix_cycles>0 → one drain_churn entry, review_rounds==fix_cycles), the zero-rule
 #      (fix_cycles==0 non-escalated → categories:[] + review_rounds:0), zero-cycle
@@ -1122,8 +1131,37 @@ rm -rf "$WD"
 # =============================================================================
 echo "== E. auto-merge gate (SELF-RESOLVING, red-team-hardening/03): fail CLOSED on EACH condition; ctx-owned-key refusal; all-pass MERGE fires once =="
 
-WD="$(mktemp -d)"; BIN="$WD/bin"; make_stub_bin "$BIN"
+WD="$(mktemp -d)"; WD="$(cd "$WD" && pwd -P)"; BIN="$WD/bin"; make_stub_bin "$BIN"
 export GH_STUB_DIR="$WD/ghstub"; mkdir -p "$GH_STUB_DIR"
+
+# E_ROOT — the `--root` every gate case hands the gate: a REAL git checkout
+# (automate-followups/16 — condition 7 now pins `--root` to the live PR head and a
+# clean tree before it trusts the rules verdict). Its committed tree tracks one file
+# under each engine-owned path (.supervisor/, .claude/agent-memory/) plus a
+# .gitignore, so Section R can dirty them. Every fixture file (ctx.json, stubs, result
+# artifacts) lives in $WD OUTSIDE the checkout, so the harness never dirties it.
+# E_PR_HEAD is the head the stubbed `gh pr view` reports AND pass_ctx's `ready_sha`
+# (cond 2 holds); it defaults to the checkout's own HEAD (E_HEAD), so every
+# pre-existing case reaches cond 7 on an at-head, clean checkout exactly as before.
+# E_TIP is a real child commit the checkout is NOT on (built with commit-tree, so the
+# working tree is untouched) — the "PR moved on, the checkout did not" head.
+# gate() runs with GIT_CEILING_DIRECTORIES=$WD so a non-checkout root under $WD can
+# never be resolved to some enclosing repo of the temp dir.
+E_ROOT="$WD/checkout"
+mkdir -p "$E_ROOT/sub" "$E_ROOT/.supervisor/automate" "$E_ROOT/.claude/agent-memory/loomwright:code-reviewer"
+( cd "$E_ROOT" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false \
+    && echo a > sub/a && echo run > .supervisor/automate/run.md \
+    && echo mem > .claude/agent-memory/loomwright:code-reviewer/MEMORY.md \
+    && printf 'ignored.log\n' > .gitignore && git add -A && git commit -qm init ) >/dev/null 2>&1
+E_HEAD="$(git -C "$E_ROOT" rev-parse --verify -q HEAD 2>/dev/null)" || E_HEAD=""
+E_TIP="$(git -C "$E_ROOT" commit-tree "HEAD^{tree}" -p HEAD -m tip 2>/dev/null)" || E_TIP=""
+E_PR_HEAD="$E_HEAD"
+if [ -n "$E_HEAD" ] && [ -n "$E_TIP" ] && [ "$E_HEAD" != "$E_TIP" ] \
+   && [ -z "$(git -C "$E_ROOT" status --porcelain -uall 2>/dev/null)" ]; then
+  ok "E harness: a real, clean git checkout at E_HEAD plus a distinct child commit E_TIP"
+else
+  no "E harness: could not build the git checkout (head='$E_HEAD' tip='$E_TIP') — every gate case below is meaningless"
+fi
 
 # The gate now finds classify-risk.sh via a SIBLING lookup ($(dirname "$0")), so
 # tests run against a scratch COPY of automate-helpers.sh alongside a STUBBED
@@ -1175,7 +1213,7 @@ printf '## SUPERVISOR_RESULT\n- rubric_score: 6/7\n' > "$SUP_BAD"
 # reset_live — re-baseline every LIVE gh/api/classify-risk fixture to a fully
 # passing state (each test then mutates ONE fixture to its failing shape).
 reset_live() {
-  printf '{"headRefOid":"abc123","baseRefName":"main","statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS"}]}\n' > "$GH_STUB_DIR/pr-view.json"
+  printf '{"headRefOid":"%s","baseRefName":"main","statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS"}]}\n' "$E_PR_HEAD" > "$GH_STUB_DIR/pr-view.json"
   rm -f "$GH_STUB_DIR/pr-view-fail"
   printf '{"reviewDecision":"APPROVED"}\n' > "$GH_STUB_DIR/pr-view-rd.json"
   rm -f "$GH_STUB_DIR/pr-view-rd-fail"
@@ -1194,7 +1232,7 @@ pass_ctx() {
   cat <<EOF
 {
   "drain_result": "READY", "termination_reason": "converged",
-  "ready_sha": "abc123",
+  "ready_sha": "$E_PR_HEAD",
   "trust_unprotected": false,
   "review_heal_result_path": "$RHR",
   "supervisor_result_path": "$SUP_NA"
@@ -1202,10 +1240,10 @@ pass_ctx() {
 EOF
 }
 
-gate() {  # gate <ctx-json-string> -> sets RUN_OUT/RUN_RC, isolates a fresh merge.log
+gate() {  # gate <ctx-json-string> -> sets RUN_OUT/RUN_RC, isolates a fresh merge.log; --root = ${E_GATE_ROOT:-$E_ROOT}
   rm -f "$GH_STUB_DIR/merge.log"
   printf '%s' "$1" > "$WD/ctx.json"
-  RUN_OUT="$( env PATH="$BIN:$PATH" GH_STUB_DIR="$GH_STUB_DIR" HOME="$WD/nohome" bash "$GWD/automate-helpers.sh" gate-eval "$PR" "$WD/ctx.json" --root "$WD" 2>/dev/null )"; RUN_RC=$?
+  RUN_OUT="$( env PATH="$BIN:$PATH" GH_STUB_DIR="$GH_STUB_DIR" HOME="$WD/nohome" GIT_CEILING_DIRECTORIES="$WD" bash "$GWD/automate-helpers.sh" gate-eval "$PR" "$WD/ctx.json" --root "${E_GATE_ROOT:-$E_ROOT}" 2>/dev/null )"; RUN_RC=$?
 }
 merges() { [ -f "$GH_STUB_DIR/merge.log" ] && grep -c MERGE_CALLED "$GH_STUB_DIR/merge.log" || echo 0; }
 
@@ -1290,8 +1328,7 @@ else
 fi
 reset_live
 
-J_BASE='{"headRefOid":"abc123","baseRefName":"develop","statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS"}]}'
-printf '%s\n' "$J_BASE" > "$GH_STUB_DIR/pr-view.json"
+printf '{"headRefOid":"%s","baseRefName":"develop","statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS"}]}\n' "$E_PR_HEAD" > "$GH_STUB_DIR/pr-view.json"
 gate "$(pass_ctx)"
 if [ "$RUN_OUT" = "PARK: base_not_main" ] && [ "$(merges)" -eq 0 ]; then
   ok "gate fail-closed: live baseRefName != main ⇒ PARK: base_not_main, no merge"
@@ -1371,7 +1408,7 @@ mkdir -p "$WD/trustedhome/.claude/loomwright"
 printf '["someone"]\n' > "$WD/trustedhome/.claude/loomwright/trusted-actors.json"
 rm -f "$GH_STUB_DIR/merge.log"
 printf '%s' "$(pass_ctx)" > "$WD/ctx.json"
-RUN_OUT="$( env PATH="$BIN:$PATH" GH_STUB_DIR="$GH_STUB_DIR" HOME="$WD/trustedhome" bash "$GWD/automate-helpers.sh" gate-eval "$PR" "$WD/ctx.json" --root "$WD" 2>/dev/null )"; RUN_RC=$?
+RUN_OUT="$( env PATH="$BIN:$PATH" GH_STUB_DIR="$GH_STUB_DIR" HOME="$WD/trustedhome" bash "$GWD/automate-helpers.sh" gate-eval "$PR" "$WD/ctx.json" --root "${E_GATE_ROOT:-$E_ROOT}" 2>/dev/null )"; RUN_RC=$?
 if [ "$RUN_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ]; then
   ok "gate: unresolved thread whose actor IS exact-listed in the trusted-actor set ⇒ NOT blocking (MERGE)"
 else
@@ -1431,7 +1468,7 @@ reset_live
 # --- Condition 5 — checks (self-resolved from the SAME protection payload's
 # required-context list, cross-referenced against statusCheckRollup) + rubric
 # (now a FILE READ, never caller-asserted). ---
-printf '{"headRefOid":"abc123","baseRefName":"main","statusCheckRollup":[{"name":"ci","conclusion":"FAILURE"}]}\n' > "$GH_STUB_DIR/pr-view.json"
+printf '{"headRefOid":"%s","baseRefName":"main","statusCheckRollup":[{"name":"ci","conclusion":"FAILURE"}]}\n' "$E_PR_HEAD" > "$GH_STUB_DIR/pr-view.json"
 gate "$(pass_ctx)"
 if [ "$RUN_OUT" = "PARK: checks_not_green" ] && [ "$(merges)" -eq 0 ]; then
   ok "gate fail-closed: required check 'ci' not green ⇒ PARK, no merge"
@@ -1550,7 +1587,7 @@ if [ -s "$MUT/automate-helpers.sh" ] && ! cmp -s "$GWD/automate-helpers.sh" "$MU
   rm -f "$WD/classify-risk-called.log"
   rm -f "$GH_STUB_DIR/merge.log"
   printf '%s' "$(pass_ctx)" > "$WD/ctx.json"
-  MUT_OUT="$( env PATH="$BIN:$PATH" GH_STUB_DIR="$GH_STUB_DIR" HOME="$WD/nohome" bash "$MUT/automate-helpers.sh" gate-eval "$PR" "$WD/ctx.json" --root "$WD" 2>/dev/null )"
+  MUT_OUT="$( env PATH="$BIN:$PATH" GH_STUB_DIR="$GH_STUB_DIR" HOME="$WD/nohome" bash "$MUT/automate-helpers.sh" gate-eval "$PR" "$WD/ctx.json" --root "${E_GATE_ROOT:-$E_ROOT}" 2>/dev/null )"
   if [ "$MUT_OUT" != "MERGE" ] && [ "$(merges)" -eq 0 ] && [ ! -f "$WD/classify-risk-called.log" ]; then
     ok "gate (mutant) classify-risk.sh invocation commented out ⇒ the all-green case does NOT merge, and the stub log proves classify-risk.sh was never called — condition 6 is genuinely load-bearing on the call happening"
   else
@@ -1566,7 +1603,7 @@ if [ -s "$MUT/automate-helpers.sh" ] && ! cmp -s "$GWD/automate-helpers.sh" "$MU
   cp "$GWD/rules-gate-verdict.sh" "$CTRL/rules-gate-verdict.sh"
   rm -f "$WD/classify-risk-called.log" "$GH_STUB_DIR/merge.log"
   printf '%s' "$(pass_ctx)" > "$WD/ctx.json"
-  CTRL_OUT="$( env PATH="$BIN:$PATH" GH_STUB_DIR="$GH_STUB_DIR" HOME="$WD/nohome" bash "$CTRL/automate-helpers.sh" gate-eval "$PR" "$WD/ctx.json" --root "$WD" 2>/dev/null )"
+  CTRL_OUT="$( env PATH="$BIN:$PATH" GH_STUB_DIR="$GH_STUB_DIR" HOME="$WD/nohome" bash "$CTRL/automate-helpers.sh" gate-eval "$PR" "$WD/ctx.json" --root "${E_GATE_ROOT:-$E_ROOT}" 2>/dev/null )"
   if [ "$CTRL_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ] && [ -f "$WD/classify-risk-called.log" ]; then
     ok "gate (positive control) the SAME instrumented classify-risk.sh, on the UN-mutated gate, IS called and DOES merge — the mutant's non-merge above is caused by the deleted invocation, not the instrumentation"
   else
@@ -1594,7 +1631,7 @@ rules_fixture() {
 }
 rules_called() { [ -f "$GH_STUB_DIR/rules-called.log" ]; }
 # R_EXP_ROOT — the argv the gate must hand its sibling: `--root <the checkout gate() passed>`.
-R_EXP_ROOT="--root $WD"
+R_EXP_ROOT="--root $E_ROOT"
 
 # R1 (AC1 gate half) — a stamped, countable, FAILING must-check ⇒ PARK: rules_check_failed (<id>).
 reset_live
@@ -1775,7 +1812,7 @@ fi
 r9_run() {  # r9_run <dir> — gate-eval from <dir>'s copy; sets R9_OUT
   rm -f "$GH_STUB_DIR/merge.log" "$GH_STUB_DIR/rules-called.log"
   printf '%s' "$(pass_ctx)" > "$WD/ctx.json"
-  R9_OUT="$( env PATH="$BIN:$PATH" GH_STUB_DIR="$GH_STUB_DIR" HOME="$WD/nohome" bash "$1/automate-helpers.sh" gate-eval "$PR" "$WD/ctx.json" --root "$WD" 2>/dev/null )"
+  R9_OUT="$( env PATH="$BIN:$PATH" GH_STUB_DIR="$GH_STUB_DIR" HOME="$WD/nohome" bash "$1/automate-helpers.sh" gate-eval "$PR" "$WD/ctx.json" --root "${E_GATE_ROOT:-$E_ROOT}" 2>/dev/null )"
 }
 r9_dir() {  # r9_dir <sed-expr> <marker-regex> — prints a gated mutant dir, or nothing
   local d; d="$(mktemp -d)"
@@ -1837,17 +1874,23 @@ cp "$HERE/rules-gate-verdict.sh" "$HERE/rules-check.sh" "$HERE/rules-replay-lib.
 r10_store() {  # r10_store <name> <check> — a committed temp repo + stamped store; prints "<repo>\t<home>"
   local r="$IWD/$1" h="$IWD/home-$1"
   mkdir -p "$r/.agent/rules" "$h"
-  ( cd "$r" && git init -q && git config user.email t@t && git config user.name t \
-      && echo init > f && git add f && git commit -qm init ) >/dev/null 2>&1
   jq -cn --arg id "e2e-$1" --arg c "$2" \
     '[{id:$id, category:"test", statement:("s " + $id), enforcement:"must", check:$c, binds:[], provenance:{source:"test"}}]' \
     > "$r/.agent/rules/r.json"
+  # The store is COMMITTED with `f` (automate-followups/16): an untracked store would leave the
+  # checkout dirty and park every leg rules_gate_dirty_tree before the real helper ever ran.
+  # `--confirm` runs AFTER the commit, on the committed bytes (the stamp lives in HOME).
+  ( cd "$r" && git init -q && git config user.email t@t && git config user.name t && git config commit.gpgsign false \
+      && echo init > f && git add f .agent && git commit -qm init ) >/dev/null 2>&1
   ( cd "$r" && env -u RULES_CHECK_NO_CMD -u RULES_CHECK_STAMP_FILE HOME="$h" bash "$IWD/rules-check.sh" --confirm </dev/null >/dev/null 2>&1 )
   printf '%s\t%s' "$r" "$h"
 }
-r10_gate() {  # r10_gate <repo> <home> — sets R10_OUT
+r10_gate() {  # r10_gate <repo> <home> [<pr-head>] — sets R10_OUT; the stubbed live head (and ctx ready_sha)
+  # is <pr-head>, defaulting to <repo>'s OWN real HEAD so the cond-7 pin sees an at-head checkout.
+  local ph; ph="${3:-$(git -C "$1" rev-parse HEAD 2>/dev/null)}"
   rm -f "$GH_STUB_DIR/merge.log"
-  printf '%s' "$(pass_ctx)" > "$WD/ctx.json"
+  printf '{"headRefOid":"%s","baseRefName":"main","statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS"}]}\n' "$ph" > "$GH_STUB_DIR/pr-view.json"
+  printf '%s' "$(pass_ctx | jq --arg s "$ph" '.ready_sha=$s')" > "$WD/ctx.json"
   R10_OUT="$( cd "$1" && env -u RULES_CHECK_NO_CMD -u RULES_CHECK_STAMP_FILE PATH="$BIN:$PATH" GH_STUB_DIR="$GH_STUB_DIR" HOME="$2" bash "$IWD/automate-helpers.sh" gate-eval "$PR" "$WD/ctx.json" --root "$1" 2>/dev/null )"
 }
 IFS="$TAB_CHAR" read -r R10_REPO R10_HOME <<R10A
@@ -1868,7 +1911,172 @@ if [ "$R10_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ]; then
 else
   no "R10 end-to-end passing case wrong (out='$R10_OUT' merges=$(merges))"
 fi
+# R10 stale-HEAD leg (automate-followups/16) — the SAME passing store, real siblings, but the live
+# PR head is a real child commit the checkout is NOT on ⇒ the pin parks before the real helper
+# runs, even though that helper would have answered `ok` (the leg just above MERGEd on it).
+R10_TIP="$(git -C "$R10_REPO" commit-tree "HEAD^{tree}" -p HEAD -m tip 2>/dev/null)" || R10_TIP=""
+r10_gate "$R10_REPO" "$R10_HOME" "$R10_TIP"
+if [ -n "$R10_TIP" ] && [ "$R10_OUT" = "PARK: rules_gate_head_mismatch" ] && [ "$(merges)" -eq 0 ]; then
+  ok "R10 end-to-end (real siblings): the passing store, but the live PR head is a commit the checkout is not on ⇒ PARK: rules_gate_head_mismatch, 0 merges"
+else
+  no "R10 end-to-end stale-HEAD leg wrong (tip='$R10_TIP' out='$R10_OUT' merges=$(merges))"
+fi
 rm -rf "$IWD"
+reset_live
+
+# R11 (automate-followups/16) — cond 7's CHECKOUT PIN, evaluated BEFORE the rules helper:
+# `--root` must be AT the live head cond 2 confirmed (else rules_gate_head_mismatch) and clean
+# outside .supervisor/ and .claude/agent-memory/ (else rules_gate_dirty_tree). Every PARK leg
+# runs with the stub verdict `ok`, so the ONLY thing standing between it and a MERGE is the pin;
+# every leg also asserts the helper was NOT called (the pin runs first). Each leg restores the
+# checkout and r11_restored proves it, so no leg leaks dirt into the next.
+r11_restored() {  # r11_restored <label> — the shared checkout is back at E_HEAD and clean
+  if [ "$(git -C "$E_ROOT" rev-parse HEAD 2>/dev/null)" != "$E_HEAD" ] \
+     || [ -n "$(git -C "$E_ROOT" status --porcelain -uall --ignored 2>/dev/null)" ]; then
+    no "R11 $1: the shared checkout was NOT restored (head/dirt leaked) — later cases are untrustworthy"
+  fi
+}
+r11_park() {  # r11_park <label> <expected-reason> — assert PARK <reason>, 0 merges, helper never called
+  if [ "$RUN_OUT" = "PARK: $2" ] && [ "$(merges)" -eq 0 ] && ! rules_called; then
+    ok "R11 $1 ⇒ PARK: $2, 0 merges, rules helper never called"
+  else
+    no "R11 $1 wrong (out='$RUN_OUT' merges=$(merges) called=$(rules_called && echo yes || echo no))"
+  fi
+}
+r11_decides() {  # r11_decides <label> — the verdict still decides: fail ⇒ rules_check_failed, ok ⇒ MERGE
+  reset_live; rules_fixture fail '["r-lint"]' '["r-lint"]' '[]'; gate "$(pass_ctx)"
+  local fo="$RUN_OUT" fm; fm="$(merges)"
+  local fargv; fargv="$(cat "$GH_STUB_DIR/rules-called.log" 2>/dev/null)"
+  reset_live; rules_fixture ok '["r-lint"]' '[]' '[]'; gate "$(pass_ctx)"
+  if [ "$fo" = "PARK: rules_check_failed (r-lint)" ] && [ "$fm" -eq 0 ] \
+     && [ "$fargv" = "--root ${E_GATE_ROOT:-$E_ROOT}" ] \
+     && [ "$RUN_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ] && rules_called; then
+    ok "R11 $1 ⇒ pin passes and the verdict decides (fail ⇒ rules_check_failed, ok ⇒ MERGE; helper called with --root unchanged)"
+  else
+    no "R11 $1 wrong (fail-case='$fo'/$fm argv='$fargv' ok-case='$RUN_OUT'/$(merges))"
+  fi
+}
+
+# R11a (AC1) — stale HEAD: the live PR head (and ready_sha, so cond 2 holds) is E_TIP, a real
+# commit the checkout is not on.
+E_PR_HEAD="$E_TIP"; reset_live; rules_fixture ok '["r-lint"]' '[]' '[]'
+gate "$(pass_ctx)"
+r11_park "stale HEAD (checkout at E_HEAD, live PR head E_TIP)" rules_gate_head_mismatch
+# Control — the SAME stubs with the checkout moved ONTO E_TIP ⇒ MERGE: HEAD is the only variable.
+git -C "$E_ROOT" checkout -q --detach "$E_TIP" >/dev/null 2>&1
+rm -f "$GH_STUB_DIR/rules-called.log"; gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ] && rules_called; then
+  ok "R11a control: the same stubs with the checkout AT the PR head ⇒ MERGE (HEAD is the only variable)"
+else
+  no "R11a control wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+git -C "$E_ROOT" checkout -q - >/dev/null 2>&1
+E_PR_HEAD="$E_HEAD"; reset_live
+r11_restored "R11a"
+
+# R11a' — cond 6 still takes precedence over the pin (a high-risk, stale-HEAD PR parks high_risk_diff).
+E_PR_HEAD="$E_TIP"; reset_live; rules_fixture ok '["r-lint"]' '[]' '[]'
+printf '{"high_risk": true, "reasons": ["path: billing/x.ts matched billing/**"], "source":"classify-risk.sh"}\n' > "$GH_STUB_DIR/risk.json"
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: high_risk_diff (path: billing/x.ts matched billing/**)" ] && [ "$(merges)" -eq 0 ] && ! rules_called; then
+  ok "R11a' precedence: cond 6 PARK wins over a stale-HEAD cond 7 pin"
+else
+  no "R11a' cond-6-over-pin precedence wrong (out='$RUN_OUT')"
+fi
+E_PR_HEAD="$E_HEAD"; reset_live
+
+# R11b (AC2) — an unreadable HEAD fails CLOSED, never a match: not a checkout, a repo with no
+# commit, a path that does not exist.
+mkdir -p "$WD/nogit"
+( cd "$WD" && git init -q emptyrepo ) >/dev/null 2>&1
+for R11_ROOT in "$WD/nogit" "$WD/emptyrepo" "$WD/does-not-exist"; do
+  reset_live; rules_fixture ok '["r-lint"]' '[]' '[]'
+  E_GATE_ROOT="$R11_ROOT"; gate "$(pass_ctx)"; E_GATE_ROOT=""
+  r11_park "unreadable HEAD (--root ${R11_ROOT#$WD/})" rules_gate_head_mismatch
+done
+
+# R11c (AC3) — dirt outside the engine-owned paths ⇒ rules_gate_dirty_tree. Each case: dirty, gate, undo.
+r11_dirty() {  # r11_dirty <label> — run the gate on the (already dirtied) checkout, assert the dirty PARK
+  reset_live; rules_fixture ok '["r-lint"]' '[]' '[]'
+  gate "$(pass_ctx)"
+  r11_park "$1" rules_gate_dirty_tree
+}
+echo more >> "$E_ROOT/sub/a"
+r11_dirty "tracked modification (sub/a)"
+git -C "$E_ROOT" checkout -q -- sub/a; r11_restored "tracked modification"
+rm "$E_ROOT/sub/a"
+r11_dirty "tracked deletion (sub/a)"
+git -C "$E_ROOT" checkout -q -- sub/a; r11_restored "tracked deletion"
+echo s > "$E_ROOT/staged.txt"; git -C "$E_ROOT" add staged.txt
+r11_dirty "staged new file"
+git -C "$E_ROOT" rm -q --cached staged.txt >/dev/null 2>&1; rm -f "$E_ROOT/staged.txt"; r11_restored "staged new file"
+echo u > "$E_ROOT/untracked.txt"
+r11_dirty "untracked non-ignored file at the top level"
+git -C "$E_ROOT" config status.showUntrackedFiles no
+r11_dirty "untracked file under the repo's status.showUntrackedFiles=no (the pin's -uall overrides it)"
+git -C "$E_ROOT" config --unset status.showUntrackedFiles; rm -f "$E_ROOT/untracked.txt"; r11_restored "untracked file"
+mkdir -p "$E_ROOT/.claude/other"; echo o > "$E_ROOT/.claude/other/o.md"
+r11_dirty "untracked file under .claude/ but OUTSIDE .claude/agent-memory/"
+rm -rf "$E_ROOT/.claude/other"; r11_restored ".claude/other"
+mkdir -p "$E_ROOT/sub/.supervisor"; echo n > "$E_ROOT/sub/.supervisor/n.md"
+r11_dirty "a NESTED sub/.supervisor/ file (the exclusion is anchored at the repo top level)"
+rm -rf "$E_ROOT/sub/.supervisor"; r11_restored "nested .supervisor"
+# Subdirectory --root: dirt elsewhere in the repo is still seen (the porcelain read is whole-repo).
+echo u > "$E_ROOT/top.txt"
+E_GATE_ROOT="$E_ROOT/sub"; r11_dirty "subdirectory --root (sub/) with an untracked file at the repo top level"; E_GATE_ROOT=""
+rm -f "$E_ROOT/top.txt"; r11_restored "subdirectory root"
+# A FAILING `git status` (corrupt index; `rev-parse HEAD` still reads fine) parks the same way.
+cp "$E_ROOT/.git/index" "$WD/index.bak"; printf 'garbage' > "$E_ROOT/.git/index"
+r11_dirty "git status fails (corrupt index)"
+cp "$WD/index.bak" "$E_ROOT/.git/index"; r11_restored "corrupt index"
+
+# R11d (AC4) — dirt ONLY under the engine-owned paths (tracked edits AND new untracked files)
+# or only gitignored ⇒ the pin passes and the verdict decides exactly as today.
+echo y >> "$E_ROOT/.supervisor/automate/run.md"; echo '{}' > "$E_ROOT/.supervisor/automate/run.sidecar.json"
+r11_decides ".supervisor/-only dirt (tracked run-file edit + untracked sidecar)"
+E_GATE_ROOT="$E_ROOT/sub"; r11_decides ".supervisor/-only dirt with a SUBDIRECTORY --root (exclusion still anchored at the top)"; E_GATE_ROOT=""
+git -C "$E_ROOT" checkout -q -- .supervisor; rm -f "$E_ROOT/.supervisor/automate/run.sidecar.json"; r11_restored ".supervisor dirt"
+echo y >> "$E_ROOT/.claude/agent-memory/loomwright:code-reviewer/MEMORY.md"
+mkdir -p "$E_ROOT/.claude/agent-memory/loomwright:qa-executor"; echo n > "$E_ROOT/.claude/agent-memory/loomwright:qa-executor/MEMORY.md"
+r11_decides ".claude/agent-memory/-only dirt (tracked memory edit + untracked new agent dir)"
+git -C "$E_ROOT" checkout -q -- .claude; rm -rf "$E_ROOT/.claude/agent-memory/loomwright:qa-executor"; r11_restored ".claude/agent-memory dirt"
+echo i > "$E_ROOT/ignored.log"
+r11_decides "gitignored-only file"
+rm -f "$E_ROOT/ignored.log"; r11_restored "ignored file"
+
+# R11e (AC6) — GATED mutation controls: delete each pin (its `if` line becomes `if false; then`)
+# ⇒ the leg that pin guards turns into a MERGE, proving each leg can fail. Trusted only if the
+# mutant is non-empty, differs from the original, passes `bash -n`, and carries its marker; the
+# UN-mutated copy is run on the same two legs first (positive control).
+M_HEAD="$(r9_dir 's/^  if \[ "\$root_head_rc" -ne 0 \] .*; then$/  if false; then # R11-MUTANT-HEAD/' 'R11-MUTANT-HEAD')"
+M_DIRTY="$(r9_dir 's/^  if \[ "\$root_dirt_rc" -ne 0 \] .*; then$/  if false; then # R11-MUTANT-DIRTY/' 'R11-MUTANT-DIRTY')"
+if [ -n "$M_HEAD" ] && [ -n "$M_DIRTY" ]; then
+  CTRL="$(mktemp -d)"; cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/rules-gate-verdict.sh" "$CTRL/"
+  # stale-HEAD leg: original parks, mutant merges.
+  E_PR_HEAD="$E_TIP"; reset_live; rules_fixture ok '["r-lint"]' '[]' '[]'
+  r9_run "$CTRL"; R11_CO="$R9_OUT"; R11_CM="$(merges)"
+  r9_run "$M_HEAD"
+  if [ "$R11_CO" = "PARK: rules_gate_head_mismatch" ] && [ "$R11_CM" -eq 0 ] && [ "$R9_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ]; then
+    ok "R11e (mutant) HEAD pin deleted ⇒ the stale-HEAD leg MERGEs (control: the un-mutated gate parks it rules_gate_head_mismatch) — the leg can fail"
+  else
+    no "R11e HEAD-pin mutant did not discriminate (control='$R11_CO'/$R11_CM mutant='$R9_OUT'/$(merges))"
+  fi
+  E_PR_HEAD="$E_HEAD"; reset_live; rules_fixture ok '["r-lint"]' '[]' '[]'
+  # dirty-tree leg: original parks, mutant merges.
+  echo u > "$E_ROOT/untracked.txt"
+  r9_run "$CTRL"; R11_CO="$R9_OUT"; R11_CM="$(merges)"
+  r9_run "$M_DIRTY"
+  if [ "$R11_CO" = "PARK: rules_gate_dirty_tree" ] && [ "$R11_CM" -eq 0 ] && [ "$R9_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ]; then
+    ok "R11e (mutant) dirty-tree pin deleted ⇒ the dirty-tree leg MERGEs (control: the un-mutated gate parks it rules_gate_dirty_tree) — the leg can fail"
+  else
+    no "R11e dirty-pin mutant did not discriminate (control='$R11_CO'/$R11_CM mutant='$R9_OUT'/$(merges))"
+  fi
+  rm -f "$E_ROOT/untracked.txt"; r11_restored "R11e"
+  rm -rf "$CTRL"
+else
+  no "R11e pin mutation controls not gated (a mutant was empty, identical to the original, failed bash -n, or lacked its marker)"
+fi
+rm -rf "${M_HEAD:-/nonexistent-r11}" "${M_DIRTY:-/nonexistent-r11}"
 reset_live
 
 unset GH_STUB_DIR
