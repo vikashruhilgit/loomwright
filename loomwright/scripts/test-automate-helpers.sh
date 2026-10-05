@@ -70,6 +70,11 @@
 #      untracked .gitignore, env-injected config (GIT_CONFIG_COUNT) and a --root inside
 #      .git/ (show-toplevel fails) all park rules_gate_dirty_tree; an untracked .gitignore
 #      inside a committed-ignored directory does not; each new read has a gated mutant.
+#      R11j-m (owner fix-now): a global excludesFile reached through [include] /
+#      [includeIf] is honoured; one spelled through a directory alias of the checkout, or a
+#      symlink into it, is not; submodules under a committed ignore=all (dirty, stale
+#      commit, own info/exclude, own assume-unchanged) park while a clean pinned one
+#      merges with both index files untouched; gated mutants for each.
 #   F. learning-emit (engine-native ground-truth POSTMORTEM_RESULT line): happy path
 #      (fix_cycles>0 → one drain_churn entry, review_rounds==fix_cycles), the zero-rule
 #      (fix_cycles==0 non-escalated → categories:[] + review_rounds:0), zero-cycle
@@ -2076,6 +2081,15 @@ echo hid.txt > "$WD/xfile"; git -C "$E_ROOT" config core.excludesFile "$WD/xfile
 r11_dirty "untracked file hidden by the repo's core.excludesFile"
 git -C "$E_ROOT" config --unset core.excludesFile; rm -f "$E_ROOT/hid.txt"; r11_restored "core.excludesFile"
 mkdir -p "$E_ROOT/evil"; echo '*' > "$E_ROOT/evil/.gitignore"; echo e > "$E_ROOT/evil/f"
+# The park reads `evil/.gitignore` out of `ls-files -o -i --directory`; it relies on git
+# LISTING the contents of a directory no rule ignores (observed on git 2.54/2.55) rather than
+# collapsing it to `evil/`. Assert that assumption on the harness git, so a git that collapses
+# turns this red with a named cause instead of a bare wrong-outcome leg.
+if grep -qx 'evil/\.gitignore' <<<"$(git -C "$E_ROOT" ls-files -o -i --directory --exclude-per-directory=.gitignore 2>/dev/null)"; then
+  ok "R11f precondition: this git lists evil/.gitignore under ls-files -o -i --directory (no collapse to evil/)"
+else
+  no "R11f precondition: this git ($(git --version 2>/dev/null)) collapses the self-ignoring directory — the untracked-.gitignore park cannot see it"
+fi
 r11_dirty "self-ignoring untracked evil/.gitignore hiding its whole directory"
 rm -rf "$E_ROOT/evil"; r11_restored "self-ignoring .gitignore"
 chmod +x "$E_ROOT/sub/a"; r11_env_on
@@ -2129,6 +2143,88 @@ echo hid.txt >> "$E_ROOT/.git/info/exclude"; echo h > "$E_ROOT/hid.txt"
 r11_dirty "untracked file hidden by .git/info/exclude while a user global ignore is configured"
 cp "$WD/exclude.bak" "$E_ROOT/.git/info/exclude"; rm -f "$E_ROOT/hid.txt"
 unset XDG_CONFIG_HOME; rm -f "$R11_XDG/git/ignore"; r11_restored "info/exclude with global ignore"
+
+# R11j (owner fix-now B2) — LIVENESS: a global core.excludesFile set through an [include] or
+# [includeIf "gitdir:…"] in the user's ~/.gitconfig is followed exactly as git follows it, so
+# the globally-ignored file does not park (the R11h precondition leg proved it is dirt without).
+r11_gfix
+printf '[core]\n\texcludesFile = %s\n' "$WD/gx-ignore" > "$WD/gx-inc"
+printf '[include]\n\tpath = %s\n' "$WD/gx-inc" > "$WD/nohome/.gitconfig"
+r11_decides "global core.excludesFile reached through an [include] in ~/.gitconfig"
+printf '[includeIf "gitdir:%s/"]\n\tpath = %s\n' "$E_ROOT" "$WD/gx-inc" > "$WD/nohome/.gitconfig"
+r11_decides "global core.excludesFile reached through an [includeIf \"gitdir:<checkout>/\"] in ~/.gitconfig"
+rm -f "$WD/nohome/.gitconfig"
+
+# R11k (owner fix-now B3) — the "outside the checkout" test is PHYSICAL: a directory alias of
+# the checkout (a symlinked directory — the /tmp vs /private/tmp class) and a symlink outside
+# the checkout whose target is an in-repo file are both refused, so the in-repo ignore is NOT
+# honoured and the globally-ignorable files park. Control: a symlinked dotfile whose target
+# is OUTSIDE the checkout (how dotfile managers install ~/.gitignore_global) is honoured.
+mkdir -p "$E_ROOT/ignored-dir"; cp "$WD/gx-ignore" "$E_ROOT/ignored-dir/gx"
+ln -s "$E_ROOT" "$WD/alias-co"; ln -s "$E_ROOT/ignored-dir/gx" "$WD/gx-link-in"; ln -s "$WD/gx-ignore" "$WD/gx-link-out"
+printf '[core]\n\texcludesFile = %s\n' "$WD/alias-co/ignored-dir/gx" > "$WD/nohome/.gitconfig"
+r11_dirty "global core.excludesFile spelled through a directory ALIAS of the checkout is not honoured"
+printf '[core]\n\texcludesFile = %s\n' "$WD/gx-link-in" > "$WD/nohome/.gitconfig"
+r11_dirty "global core.excludesFile that is a symlink OUTSIDE the checkout pointing at an in-repo file is not honoured"
+printf '[core]\n\texcludesFile = %s\n' "$WD/gx-link-out" > "$WD/nohome/.gitconfig"
+r11_decides "global core.excludesFile that is a symlink to a file OUTSIDE the checkout (control: honoured)"
+rm -f "$WD/nohome/.gitconfig"; rm -rf "$E_ROOT/ignored-dir"; r11_gundo; r11_restored "global ignore include/physical legs"
+
+# R11l (owner fix-now B1) — SUBMODULES. A separate superproject ($SM_TOP, submodule `lib`
+# from $SM_LIB over a local path, protocol.file.allow only inside this fixture) whose COMMITTED
+# .gitmodules says `ignore = all`. Precondition legs prove a plain `git status` sees nothing,
+# so each PARK is the pin's own doing; the control (clean, correctly-pinned submodule) MERGEs
+# and the gate leaves both index files untouched (it writes nothing, no submodule refresh).
+SM_LIB="$WD/smlib"; SM_TOP="$WD/smtop"
+r11_sm_git() { git -c user.email=t@t -c user.name=t -c commit.gpgsign=false -c protocol.file.allow=always "$@"; }
+( git init -q "$SM_LIB" && cd "$SM_LIB" && echo l > l && git add l && r11_sm_git commit -qm l \
+    && echo l2 > l2 && git add l2 && r11_sm_git commit -qm l2 \
+  && git init -q "$SM_TOP" && cd "$SM_TOP" && echo t > t && git add t && r11_sm_git commit -qm t \
+    && r11_sm_git submodule add -q "$SM_LIB" lib && r11_sm_git commit -qm sub \
+    && git config -f .gitmodules submodule.lib.ignore all && git add .gitmodules && r11_sm_git commit -qm ign ) >/dev/null 2>&1
+SM_HEAD="$(git -C "$SM_TOP" rev-parse --verify -q HEAD 2>/dev/null)" || SM_HEAD=""
+SM_GD="$(cd "$SM_TOP/lib" 2>/dev/null && git rev-parse --absolute-git-dir 2>/dev/null)" || SM_GD=""
+r11_sm_clean() {  # the fixture is back: lib at its recorded commit, nothing dirty anywhere
+  [ -n "$SM_HEAD" ] && [ -n "$SM_GD" ] \
+    && [ -z "$(git -C "$SM_TOP" status --porcelain -uall --ignored --ignore-submodules=none 2>/dev/null)" ] \
+    && [ -z "$(git -C "$SM_TOP/lib" status --porcelain -uall --ignored 2>/dev/null)" ]
+}
+if r11_sm_clean && [ -f "$SM_TOP/lib/l2" ]; then
+  ok "R11l harness: superproject with a checked-out, correctly-pinned submodule and a committed ignore=all"
+else
+  no "R11l harness: could not build the submodule fixture (head='$SM_HEAD' gd='$SM_GD') — the R11l legs are meaningless"
+fi
+E_PR_HEAD="$SM_HEAD"; E_GATE_ROOT="$SM_TOP"
+touch -t 200001010000 "$SM_TOP/.git/index" "$SM_GD/index"; touch -t 200101010000 "$WD/sm-ref"
+r11_decides "clean superproject with a clean, correctly-pinned submodule (control)"
+if [ -z "$(find "$SM_TOP/.git/index" "$SM_GD/index" -newer "$WD/sm-ref" 2>/dev/null)" ] && r11_sm_clean; then
+  ok "R11l the gate wrote neither the superproject's nor the submodule's index (no refresh, no lock)"
+else
+  no "R11l the gate rewrote an index file (gate must write nothing)"
+fi
+echo dirt >> "$SM_TOP/lib/l"
+r11_dirty "tracked edit inside a submodule whose committed .gitmodules says ignore=all"
+git -C "$SM_TOP/lib" checkout -q -- l
+git -C "$SM_TOP/lib" checkout -q HEAD~1 >/dev/null 2>&1
+if [ -z "$(git -C "$SM_TOP" status --porcelain -uall 2>/dev/null)" ] && [ -n "$(git -C "$SM_TOP" status --porcelain --ignore-submodules=none 2>/dev/null)" ]; then
+  r11_dirty "submodule checked out at a commit OTHER than the recorded one (hidden by committed ignore=all)"
+else
+  no "R11l stale-commit precondition: plain git status should be blind and --ignore-submodules=none should see it"
+fi
+git -C "$SM_TOP/lib" checkout -q - >/dev/null 2>&1
+cp "$SM_GD/info/exclude" "$WD/sm-exclude.bak" 2>/dev/null || : > "$WD/sm-exclude.bak"
+echo u >> "$SM_GD/info/exclude"; echo u > "$SM_TOP/lib/u"
+if [ -z "$(git -C "$SM_TOP" status --porcelain -uall --ignore-submodules=none 2>/dev/null)" ]; then
+  r11_dirty "untracked file inside a submodule hidden by the SUBMODULE's own info/exclude"
+else
+  no "R11l submodule info/exclude precondition: the top-level status should be blind to it"
+fi
+cp "$WD/sm-exclude.bak" "$SM_GD/info/exclude"; rm -f "$SM_TOP/lib/u"
+git -C "$SM_TOP/lib" update-index --assume-unchanged l; echo dirt >> "$SM_TOP/lib/l"
+r11_dirty "tracked edit inside a submodule hidden by the submodule's assume-unchanged flag"
+git -C "$SM_TOP/lib" update-index --no-assume-unchanged l; git -C "$SM_TOP/lib" checkout -q -- l
+E_PR_HEAD="$E_HEAD"; E_GATE_ROOT=""; reset_live
+r11_sm_clean || no "R11l: the submodule fixture was NOT restored"
 
 # R11e (AC6) — GATED mutation controls: delete each pin (its `if` line becomes `if false; then`)
 # ⇒ the leg that pin guards turns into a MERGE, proving each leg can fail. Trusted only if the
@@ -2186,8 +2282,16 @@ M_UNT="$(r9_dir 's/^  if \[ "\$root_unt_rc" -ne 0 \] .*; then$/  if false; then 
 M_IGN="$(r9_dir 's/^  if \[ "\$root_ign_rc" -ne 0 \] .*; then$/  if false; then # R11-MUTANT-IGN/' 'R11-MUTANT-IGN')"
 M_ENV="$(r9_dir 's/ -u GIT_CONFIG_COUNT / -u R11_MUTANT_ENV /' 'R11_MUTANT_ENV')"
 M_TOP="$(r9_dir 's/^    root_dirt_rc=1$/    root_dirt_rc=0 # R11-MUTANT-TOP/' 'R11-MUTANT-TOP')"
-M_INREPO="$(r9_dir 's/^      "\$root_top"\/\*) ge_xf="" ;;$/      "$root_top"\/*) ;; # R11-MUTANT-INREPO/' 'R11-MUTANT-INREPO')"
-if [ -n "$M_FLAGS" ] && [ -n "$M_UNT" ] && [ -n "$M_IGN" ] && [ -n "$M_ENV" ] && [ -n "$M_TOP" ] && [ -n "$M_INREPO" ]; then
+M_INREPO="$(r9_dir 's/ || _ge_inside "\$ge_xf_p" "\$root_top"; then / ; then : R11-MUTANT-INREPO; /' 'R11-MUTANT-INREPO')"
+# Owner fix-now mutants: B3 (symlink resolution dropped; physical resolution AND the -ef walk
+# both reverted to the old lexical compare) and B1 (the submodule recursion's park deleted;
+# `--ignore-submodules=none` dropped from the top-level status read).
+M_LINK="$(r9_dir 's/^    while \[ -L "\$p" \]; do$/    while false; do # R11-MUTANT-LINK/' 'R11-MUTANT-LINK')"
+M_LEX="$(r9_dir 's/^      ge_xf_p="\$(_ge_phys "\$ge_xf")" || ge_xf_p=""$/      ge_xf_p="$ge_xf" # R11-MUTANT-LEX/;s/^      \[ "\$d" -ef "\$2" \] \&\& return 0$/      [ "$d" = "$2" ] \&\& return 0/' 'R11-MUTANT-LEX')"
+M_SUBS="$(r9_dir 's/^  if \[ "\$root_subs_rc" -ne 0 \]; then$/  if false; then # R11-MUTANT-SUBS/' 'R11-MUTANT-SUBS')"
+M_SUBFLAG="$(r9_dir 's/^\(    root_dirt=.* status --porcelain -uall\) --ignore-submodules=none \(.*\)$/\1 \2 # R11-MUTANT-SUBFLAG/' 'R11-MUTANT-SUBFLAG')"
+if [ -n "$M_FLAGS" ] && [ -n "$M_UNT" ] && [ -n "$M_IGN" ] && [ -n "$M_ENV" ] && [ -n "$M_TOP" ] && [ -n "$M_INREPO" ] \
+   && [ -n "$M_LINK" ] && [ -n "$M_LEX" ] && [ -n "$M_SUBS" ] && [ -n "$M_SUBFLAG" ]; then
   CTRL="$(mktemp -d)"; cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/rules-gate-verdict.sh" "$CTRL/"
   r11g "$M_FLAGS" "assume-unchanged read deleted" \
     'git -C "$E_ROOT" update-index --assume-unchanged sub/a; echo more >> "$E_ROOT/sub/a"' \
@@ -2207,11 +2311,27 @@ if [ -n "$M_FLAGS" ] && [ -n "$M_UNT" ] && [ -n "$M_IGN" ] && [ -n "$M_ENV" ] &&
   r11g "$M_INREPO" "in-checkout global excludesFile refusal removed" \
     'mkdir -p "$E_ROOT/ignored-dir"; printf "notes.local\n" > "$E_ROOT/ignored-dir/gx"; printf "[core]\n\texcludesFile = %s\n" "$E_ROOT/ignored-dir/gx" > "$WD/nohome/.gitconfig"; echo n > "$E_ROOT/notes.local"' \
     'rm -rf "$E_ROOT/ignored-dir" "$E_ROOT/notes.local" "$WD/nohome/.gitconfig"'
+  r11g "$M_LINK" "symlinked global excludesFile no longer resolved" \
+    'mkdir -p "$E_ROOT/ignored-dir"; printf "notes.local\n" > "$E_ROOT/ignored-dir/gx"; printf "[core]\n\texcludesFile = %s\n" "$WD/gx-link-in" > "$WD/nohome/.gitconfig"; echo n > "$E_ROOT/notes.local"' \
+    'rm -rf "$E_ROOT/ignored-dir" "$E_ROOT/notes.local" "$WD/nohome/.gitconfig"'
+  r11g "$M_LEX" "outside-the-checkout test reverted to a lexical prefix compare" \
+    'mkdir -p "$E_ROOT/ignored-dir"; printf "notes.local\n" > "$E_ROOT/ignored-dir/gx"; printf "[core]\n\texcludesFile = %s\n" "$WD/alias-co/ignored-dir/gx" > "$WD/nohome/.gitconfig"; echo n > "$E_ROOT/notes.local"' \
+    'rm -rf "$E_ROOT/ignored-dir" "$E_ROOT/notes.local" "$WD/nohome/.gitconfig"'
+  E_PR_HEAD="$SM_HEAD"
+  r11g "$M_SUBS" "submodule recursion park deleted" \
+    'E_GATE_ROOT="$SM_TOP"; echo u >> "$SM_GD/info/exclude"; echo u > "$SM_TOP/lib/u"' \
+    'E_GATE_ROOT=""; cp "$WD/sm-exclude.bak" "$SM_GD/info/exclude"; rm -f "$SM_TOP/lib/u"'
+  r11g "$M_SUBFLAG" "--ignore-submodules=none dropped from the top-level status" \
+    'E_GATE_ROOT="$SM_TOP"; git -C "$SM_TOP/lib" checkout -q HEAD~1 >/dev/null 2>&1' \
+    'E_GATE_ROOT=""; git -C "$SM_TOP/lib" checkout -q - >/dev/null 2>&1'
+  E_PR_HEAD="$E_HEAD"; reset_live
+  r11_sm_clean || no "R11g: the submodule fixture was NOT restored after its mutants"
   rm -rf "$CTRL"
 else
   no "R11g read mutation controls not gated (a mutant was empty, identical to the original, failed bash -n, or lacked its marker)"
 fi
-rm -rf "${M_FLAGS:-/nonexistent-r11}" "${M_UNT:-/nonexistent-r11}" "${M_IGN:-/nonexistent-r11}" "${M_ENV:-/nonexistent-r11}" "${M_TOP:-/nonexistent-r11}" "${M_INREPO:-/nonexistent-r11}"
+rm -rf "${M_FLAGS:-/nonexistent-r11}" "${M_UNT:-/nonexistent-r11}" "${M_IGN:-/nonexistent-r11}" "${M_ENV:-/nonexistent-r11}" "${M_TOP:-/nonexistent-r11}" "${M_INREPO:-/nonexistent-r11}" \
+  "${M_LINK:-/nonexistent-r11}" "${M_LEX:-/nonexistent-r11}" "${M_SUBS:-/nonexistent-r11}" "${M_SUBFLAG:-/nonexistent-r11}"
 
 # R11i (review iteration 2) — GATED liveness mutant: drop the global `--exclude-from` ⇒ the
 # R11h XDG leg PARKs again (the iteration-1 behaviour), while the un-mutated copy MERGEs it.
@@ -2233,6 +2353,28 @@ else
   no "R11i global-ignore mutation control not gated (mutant empty, identical to the original, failed bash -n, or lacked its marker)"
 fi
 rm -rf "${M_XF:-/nonexistent-r11}"
+
+# R11m (owner fix-now B2) — GATED liveness mutant: drop `--includes` from the global
+# excludesFile read ⇒ the R11j [include] leg PARKs (git's own lookup would have followed the
+# include), while the un-mutated copy MERGEs it.
+M_INC="$(r9_dir 's/ config --global --includes --path --get core\.excludesFile / config --global --path --get core.excludesFile /;s/^\(    ge_xf=.*core\.excludesFile .*\)$/\1 # R11-MUTANT-INC/' 'R11-MUTANT-INC')"
+if [ -n "$M_INC" ]; then
+  CTRL="$(mktemp -d)"; cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/rules-gate-verdict.sh" "$CTRL/"
+  reset_live; rules_fixture ok '["r-lint"]' '[]' '[]'
+  printf '[include]\n\tpath = %s\n' "$WD/gx-inc" > "$WD/nohome/.gitconfig"; echo n > "$E_ROOT/notes.local"
+  r9_run "$CTRL"; R11_CO="$R9_OUT"; R11_CM="$(merges)"
+  r9_run "$M_INC"
+  if [ "$R11_CO" = "MERGE" ] && [ "$R11_CM" -eq 1 ] && [ "$R9_OUT" = "PARK: rules_gate_dirty_tree" ] && [ "$(merges)" -eq 0 ]; then
+    ok "R11m (mutant) --includes dropped ⇒ the [include]-reached global ignore leg PARKs (control: the un-mutated gate MERGEs it) — the liveness leg can fail"
+  else
+    no "R11m --includes mutant did not discriminate (control='$R11_CO'/$R11_CM mutant='$R9_OUT'/$(merges))"
+  fi
+  rm -f "$WD/nohome/.gitconfig" "$E_ROOT/notes.local"; r11_restored "R11m"
+  rm -rf "$CTRL"
+else
+  no "R11m --includes mutation control not gated (mutant empty, identical to the original, failed bash -n, or lacked its marker)"
+fi
+rm -rf "${M_INC:-/nonexistent-r11}"
 reset_live
 
 unset GH_STUB_DIR
