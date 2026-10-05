@@ -746,15 +746,21 @@ _ge_pr_parts() {
 #           not), else `rules_gate_dirty_tree` (a failing `git status` parks the same way).
 #           Local-only git state cannot hide dirt: a tracked file flagged assume-unchanged or
 #           skip-worktree (`git ls-files -v`) parks; ignored-ness is judged from per-directory
-#           `.gitignore` files only, so `.git/info/exclude` / `core.excludesFile` cannot hide an
-#           untracked file, and an untracked `.gitignore` git reads (outside an ignored
-#           directory) parks; the GIT_CONFIG_* env injection family is unset and fsmonitor /
+#           `.gitignore` files plus the USER's global excludes file (`core.excludesFile` from
+#           `git config --global`, else `$XDG_CONFIG_HOME/git/ignore` / `~/.config/git/ignore`;
+#           absolute and outside the checkout only), so `.git/info/exclude` and a repo-local or
+#           env-injected `core.excludesFile` cannot hide an untracked file, and an untracked
+#           `.gitignore` git reads (outside an ignored directory) parks; the GIT_CONFIG_* env injection family is unset and fsmonitor /
 #           untracked-cache are off; a root whose top level cannot be read parks. Both
 #           are fail-CLOSED with NO override; the helper is not called on a checkout that fails
 #           either. Honest limits: a rule `binds` path under one of the two excluded engine-owned
 #           paths is not covered by the cleanliness pin, and settings in the repo's own
 #           `.git/config` that redefine a modification (`core.fileMode=false`, `core.autocrlf`,
-#           clean filters) are honoured as configured. Normal path: the owned inline `/review-pr`
+#           clean filters) are honoured as configured; a globally-ignored file is trusted not
+#           to be a bound file; a tool cache's self-ignoring `*` .gitignore (.pytest_cache/,
+#           .venv/) parks unless a committed or global ignore covers its directory. Fix hint for
+#           a clean-checkout `rules_gate_dirty_tree`: a committed or global ignore line (never
+#           `.git/info/exclude`). Normal path: the owned inline `/review-pr`
 #           drain checks the PR branch out on the main-thread checkout, so `<root>` is at the PR
 #           head when GATE runs. Then the gate ITSELF invokes `"$(dirname "$0")/rules-gate-verdict.sh"
 #           --root <root>` (sibling lookup, never PATH) and reads `.verdict` with an explicit
@@ -1094,15 +1100,26 @@ GEPARTS
   #     skip-worktree (`S`/`s`) is never compared to the worktree by `git status`, so
   #     an edit to it is invisible — ANY such flag parks (a sparse checkout therefore
   #     parks too; `core.ignoreStat` sets the same flag).
-  #   - ignored-ness is judged from per-directory `.gitignore` files ONLY
-  #     (`ls-files -o --exclude-per-directory=.gitignore`, no `--exclude-standard`), so
-  #     `.git/info/exclude` and `core.excludesFile` cannot hide an untracked file. Tracked
-  #     `.gitignore`s are already proven unmodified by the two reads above.
+  #   - ignored-ness is judged from per-directory `.gitignore` files plus the USER's
+  #     global excludes file (`ls-files -o --exclude-per-directory=.gitignore
+  #     --exclude-from=<global>`, no `--exclude-standard`), so `.git/info/exclude` and a
+  #     repo-local or env-injected `core.excludesFile` cannot hide an untracked file. Tracked
+  #     `.gitignore`s are already proven unmodified by the two reads above. The global file
+  #     (review iteration 2) is the same user-scope trust anchor as the user running the
+  #     gate, and how Claude Code itself ignores its `settings.local.json`; refusing it
+  #     parked every clean checkout holding a globally-only-ignored file (.DS_Store, .idea/,
+  #     settings.local.json). Honest limit: a globally-ignored file is TRUSTED not to be a
+  #     bound file; the env that runs the gate (HOME / XDG_CONFIG_HOME) chooses that file,
+  #     as it already chooses PATH and so `git` itself.
   #   - an UNTRACKED `.gitignore` git actually reads (one in a directory the rules do
   #     not already ignore) is itself non-committed ignore state — a self-ignoring one
   #     (`*`) hides its whole directory from both reads. `--directory` collapses a
   #     directory that is ignored as a whole (node_modules/, .venv/) without descending,
-  #     so one nested in an ignored directory is never listed and never parks.
+  #     so one nested in an ignored directory is never listed and never parks. Liveness
+  #     cost (kept, by design): a tool cache that writes its own `*` .gitignore
+  #     (.pytest_cache/, .mypy_cache/, .ruff_cache/, a Python 3.13 .venv/) parks unless that
+  #     directory is ignored by a committed `.gitignore` or the user's global ignore — the
+  #     fix is one such ignore line, since the park cannot tell a cache from a hiding file.
   # `_ge_git` also unsets the env config-injection family (GIT_CONFIG_PARAMETERS /
   # GIT_CONFIG_COUNT / GIT_CONFIG_GLOBAL / GIT_CONFIG_SYSTEM / GIT_CONFIG) so a caller's
   # environment cannot relax the reads (e.g. `core.fileMode=false`), and pins
@@ -1128,12 +1145,35 @@ GEPARTS
   local root_top="" root_top_rc=0 root_dirt="" root_dirt_rc=0
   local root_flags="" root_flags_rc=0 root_unt="" root_unt_rc=0 root_ign="" root_ign_rc=0
   local ge_ps; ge_ps=(. ':(exclude).supervisor' ':(exclude).claude/agent-memory')  # one pathspec set, all four reads
+  local ge_xf="" ge_xf_rc=0 ge_xargs; ge_xargs=()
   root_top="$(_ge_git -C "$root" rev-parse --show-toplevel 2>/dev/null)" || root_top_rc=$?
   if [ "$root_top_rc" -eq 0 ] && [ -n "$root_top" ]; then
+    # USER-SCOPE global excludes (review iteration 2): resolved exactly as git does for the
+    # user — `core.excludesFile` from the user's own global config (`--global`, with the
+    # GIT_CONFIG_* injection family still unset by `_ge_git`), else the default
+    # `$XDG_CONFIG_HOME/git/ignore` / `$HOME/.config/git/ignore` — and fed to the two
+    # untracked reads as `--exclude-from`. Only an absolute path to a readable regular file
+    # OUTSIDE this checkout is honoured (a relative or in-repo path would make repo bytes an
+    # ignore source); `.git/info/exclude`, a repo-local `core.excludesFile` and the system
+    # config are still never read. rc 1 = key unset; any other failure parks.
+    ge_xf="$(_ge_git -C "$root_top" config --global --path --get core.excludesFile 2>/dev/null)" || ge_xf_rc=$?
+    if [ "$ge_xf_rc" -eq 1 ]; then
+      ge_xf_rc=0
+      if [ -n "${XDG_CONFIG_HOME:-}" ]; then ge_xf="$XDG_CONFIG_HOME/git/ignore"
+      elif [ -n "${HOME:-}" ]; then ge_xf="$HOME/.config/git/ignore"
+      else ge_xf=""; fi
+    fi
+    case "$ge_xf" in
+      "$root_top"/*) ge_xf="" ;;
+      /*) ;;
+      *) ge_xf="" ;;
+    esac
+    if [ -n "$ge_xf" ] && [ -f "$ge_xf" ] && [ -r "$ge_xf" ]; then ge_xargs=("--exclude-from=$ge_xf"); fi
     root_dirt="$(_ge_git -C "$root_top" status --porcelain -uall -- "${ge_ps[@]}" 2>/dev/null)" || root_dirt_rc=$?
     root_flags="$(_ge_git -C "$root_top" ls-files -v -- "${ge_ps[@]}" 2>/dev/null)" || root_flags_rc=$?
-    root_unt="$(_ge_git -C "$root_top" ls-files -o --exclude-per-directory=.gitignore -- "${ge_ps[@]}" 2>/dev/null)" || root_unt_rc=$?
-    root_ign="$(_ge_git -C "$root_top" ls-files -o -i --directory --exclude-per-directory=.gitignore -- "${ge_ps[@]}" 2>/dev/null)" || root_ign_rc=$?
+    root_unt="$(_ge_git -C "$root_top" ls-files -o ${ge_xargs[@]+"${ge_xargs[@]}"} --exclude-per-directory=.gitignore -- "${ge_ps[@]}" 2>/dev/null)" || root_unt_rc=$?
+    root_ign="$(_ge_git -C "$root_top" ls-files -o -i --directory ${ge_xargs[@]+"${ge_xargs[@]}"} --exclude-per-directory=.gitignore -- "${ge_ps[@]}" 2>/dev/null)" || root_ign_rc=$?
+    [ "$ge_xf_rc" -eq 0 ] || root_unt_rc="$ge_xf_rc"
   else
     root_dirt_rc=1
   fi

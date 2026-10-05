@@ -2088,6 +2088,48 @@ mkdir -p "$E_ROOT/ignored-dir/pkg"; echo '*' > "$E_ROOT/ignored-dir/pkg/.gitigno
 r11_decides "untracked .gitignore nested in a committed-ignored directory"
 rm -rf "$E_ROOT/ignored-dir"; r11_restored "ignored-dir"
 
+# R11h (review iteration 2) — LIVENESS: the USER's global excludes file is honoured, so an
+# at-head, otherwise-clean checkout holding a globally-only-ignored file (.DS_Store, .idea/,
+# settings.local.json) still lets the verdict decide. Precondition first: with no global
+# ignore the same file IS dirt (so each MERGE below is caused by the global file, nothing else).
+# Relocated XDG_CONFIG_HOME / HOME fixtures only; the real user config is never read.
+R11_XDG="$WD/xdg"; mkdir -p "$R11_XDG/git" "$WD/nohome/.config/git"
+r11_gfix() { echo n > "$E_ROOT/notes.local"; mkdir -p "$E_ROOT/.idea"; echo i > "$E_ROOT/.idea/ws.xml"; }
+r11_gundo() { rm -rf "$E_ROOT/notes.local" "$E_ROOT/.idea"; }
+r11_gfix
+r11_dirty "globally-ignorable files with NO global ignore configured (precondition: they are dirt)"
+printf 'notes.local\n.idea/\n' > "$R11_XDG/git/ignore"; export XDG_CONFIG_HOME="$R11_XDG"
+r11_decides "untracked files ignored only by \$XDG_CONFIG_HOME/git/ignore (user global ignore)"
+unset XDG_CONFIG_HOME; rm -f "$R11_XDG/git/ignore"
+printf 'notes.local\n.idea/\n' > "$WD/nohome/.config/git/ignore"
+r11_decides "untracked files ignored only by \$HOME/.config/git/ignore (XDG unset fallback)"
+rm -f "$WD/nohome/.config/git/ignore"
+printf 'notes.local\n.idea/\n' > "$WD/gx-ignore"
+printf '[core]\n\texcludesFile = %s\n' "$WD/gx-ignore" > "$WD/nohome/.gitconfig"
+r11_decides "untracked files ignored only by core.excludesFile in the user's ~/.gitconfig"
+# A RELATIVE global excludesFile would resolve against the checkout (repo bytes as ignore source).
+mkdir -p "$E_ROOT/ignored-dir"; cp "$WD/gx-ignore" "$E_ROOT/ignored-dir/gx"
+printf '[core]\n\texcludesFile = ignored-dir/gx\n' > "$WD/nohome/.gitconfig"
+r11_dirty "global core.excludesFile given as a RELATIVE path (resolves into the checkout) is not honoured"
+printf '[core]\n\texcludesFile = %s\n' "$E_ROOT/ignored-dir/gx" > "$WD/nohome/.gitconfig"
+r11_dirty "global core.excludesFile pointing INSIDE the checkout (a committed-ignored file) is not honoured"
+rm -f "$WD/nohome/.gitconfig"; rm -rf "$E_ROOT/ignored-dir"
+# Env-injected excludesFile stays refused: GIT_CONFIG_COUNT and GIT_CONFIG_GLOBAL both unset by _ge_git.
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.excludesFile GIT_CONFIG_VALUE_0="$WD/gx-ignore"
+r11_dirty "env-injected core.excludesFile (GIT_CONFIG_COUNT) is not honoured"
+r11_env_off
+printf '[core]\n\texcludesFile = %s\n' "$WD/gx-ignore" > "$WD/gcfg-injected"
+export GIT_CONFIG_GLOBAL="$WD/gcfg-injected"
+r11_dirty "env-injected global config (GIT_CONFIG_GLOBAL) naming an excludesFile is not honoured"
+unset GIT_CONFIG_GLOBAL
+r11_gundo; rm -f "$WD/gcfg-injected"; r11_restored "global ignore legs"
+# info/exclude stays refused even WITH a global ignore configured (only the user-scope file is read).
+printf 'unrelated\n' > "$R11_XDG/git/ignore"; export XDG_CONFIG_HOME="$R11_XDG"
+echo hid.txt >> "$E_ROOT/.git/info/exclude"; echo h > "$E_ROOT/hid.txt"
+r11_dirty "untracked file hidden by .git/info/exclude while a user global ignore is configured"
+cp "$WD/exclude.bak" "$E_ROOT/.git/info/exclude"; rm -f "$E_ROOT/hid.txt"
+unset XDG_CONFIG_HOME; rm -f "$R11_XDG/git/ignore"; r11_restored "info/exclude with global ignore"
+
 # R11e (AC6) — GATED mutation controls: delete each pin (its `if` line becomes `if false; then`)
 # ⇒ the leg that pin guards turns into a MERGE, proving each leg can fail. Trusted only if the
 # mutant is non-empty, differs from the original, passes `bash -n`, and carries its marker; the
@@ -2144,7 +2186,8 @@ M_UNT="$(r9_dir 's/^  if \[ "\$root_unt_rc" -ne 0 \] .*; then$/  if false; then 
 M_IGN="$(r9_dir 's/^  if \[ "\$root_ign_rc" -ne 0 \] .*; then$/  if false; then # R11-MUTANT-IGN/' 'R11-MUTANT-IGN')"
 M_ENV="$(r9_dir 's/ -u GIT_CONFIG_COUNT / -u R11_MUTANT_ENV /' 'R11_MUTANT_ENV')"
 M_TOP="$(r9_dir 's/^    root_dirt_rc=1$/    root_dirt_rc=0 # R11-MUTANT-TOP/' 'R11-MUTANT-TOP')"
-if [ -n "$M_FLAGS" ] && [ -n "$M_UNT" ] && [ -n "$M_IGN" ] && [ -n "$M_ENV" ] && [ -n "$M_TOP" ]; then
+M_INREPO="$(r9_dir 's/^      "\$root_top"\/\*) ge_xf="" ;;$/      "$root_top"\/*) ;; # R11-MUTANT-INREPO/' 'R11-MUTANT-INREPO')"
+if [ -n "$M_FLAGS" ] && [ -n "$M_UNT" ] && [ -n "$M_IGN" ] && [ -n "$M_ENV" ] && [ -n "$M_TOP" ] && [ -n "$M_INREPO" ]; then
   CTRL="$(mktemp -d)"; cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/rules-gate-verdict.sh" "$CTRL/"
   r11g "$M_FLAGS" "assume-unchanged read deleted" \
     'git -C "$E_ROOT" update-index --assume-unchanged sub/a; echo more >> "$E_ROOT/sub/a"' \
@@ -2161,11 +2204,35 @@ if [ -n "$M_FLAGS" ] && [ -n "$M_UNT" ] && [ -n "$M_IGN" ] && [ -n "$M_ENV" ] &&
   r11g "$M_TOP" "show-toplevel failure no longer fails closed" \
     'E_GATE_ROOT="$E_ROOT/.git"' \
     'E_GATE_ROOT=""'
+  r11g "$M_INREPO" "in-checkout global excludesFile refusal removed" \
+    'mkdir -p "$E_ROOT/ignored-dir"; printf "notes.local\n" > "$E_ROOT/ignored-dir/gx"; printf "[core]\n\texcludesFile = %s\n" "$E_ROOT/ignored-dir/gx" > "$WD/nohome/.gitconfig"; echo n > "$E_ROOT/notes.local"' \
+    'rm -rf "$E_ROOT/ignored-dir" "$E_ROOT/notes.local" "$WD/nohome/.gitconfig"'
   rm -rf "$CTRL"
 else
   no "R11g read mutation controls not gated (a mutant was empty, identical to the original, failed bash -n, or lacked its marker)"
 fi
-rm -rf "${M_FLAGS:-/nonexistent-r11}" "${M_UNT:-/nonexistent-r11}" "${M_IGN:-/nonexistent-r11}" "${M_ENV:-/nonexistent-r11}" "${M_TOP:-/nonexistent-r11}"
+rm -rf "${M_FLAGS:-/nonexistent-r11}" "${M_UNT:-/nonexistent-r11}" "${M_IGN:-/nonexistent-r11}" "${M_ENV:-/nonexistent-r11}" "${M_TOP:-/nonexistent-r11}" "${M_INREPO:-/nonexistent-r11}"
+
+# R11i (review iteration 2) — GATED liveness mutant: drop the global `--exclude-from` ⇒ the
+# R11h XDG leg PARKs again (the iteration-1 behaviour), while the un-mutated copy MERGEs it.
+M_XF="$(r9_dir 's/^    if \[ -n "\$ge_xf" \] && \[ -f "\$ge_xf" \] && \[ -r "\$ge_xf" \]; then ge_xargs=.*$/    : # R11-MUTANT-XF/' 'R11-MUTANT-XF')"
+if [ -n "$M_XF" ]; then
+  CTRL="$(mktemp -d)"; cp "$GWD/automate-helpers.sh" "$GWD/classify-risk.sh" "$GWD/rules-gate-verdict.sh" "$CTRL/"
+  reset_live; rules_fixture ok '["r-lint"]' '[]' '[]'
+  printf 'notes.local\n' > "$R11_XDG/git/ignore"; export XDG_CONFIG_HOME="$R11_XDG"; echo n > "$E_ROOT/notes.local"
+  r9_run "$CTRL"; R11_CO="$R9_OUT"; R11_CM="$(merges)"
+  r9_run "$M_XF"
+  if [ "$R11_CO" = "MERGE" ] && [ "$R11_CM" -eq 1 ] && [ "$R9_OUT" = "PARK: rules_gate_dirty_tree" ] && [ "$(merges)" -eq 0 ]; then
+    ok "R11i (mutant) global --exclude-from dropped ⇒ the globally-ignored-file leg PARKs (control: the un-mutated gate MERGEs it) — the liveness leg can fail"
+  else
+    no "R11i global-ignore mutant did not discriminate (control='$R11_CO'/$R11_CM mutant='$R9_OUT'/$(merges))"
+  fi
+  unset XDG_CONFIG_HOME; rm -f "$R11_XDG/git/ignore" "$E_ROOT/notes.local"; r11_restored "R11i"
+  rm -rf "$CTRL"
+else
+  no "R11i global-ignore mutation control not gated (mutant empty, identical to the original, failed bash -n, or lacked its marker)"
+fi
+rm -rf "${M_XF:-/nonexistent-r11}"
 reset_live
 
 unset GH_STUB_DIR
