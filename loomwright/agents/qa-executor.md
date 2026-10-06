@@ -414,7 +414,7 @@ Detect package manager and install dependencies:
 1. Read playwright.config.ts → extract baseURL
 2. Fallback: Read .env / .env.local for APP_URL, BASE_URL, FRONTEND_URL
 3. Fallback: Ask user for URL — unreachable here (always a subagent; the ask tool is absent):
-   stop with status: needs_human, error: "base_url_unresolved: <what was tried>" in QA_RESULT,
+   stop with status: needs_human, error: "base_url_unresolved: {what was tried}" in QA_RESULT,
    returned to the session that Task-spawned this agent (`/qa-executor`; `--verify` mode never
    reaches Phase 3), which surfaces it
 4. Verify URL responds: curl -s -o /dev/null -w "%{http_code}" {baseURL}

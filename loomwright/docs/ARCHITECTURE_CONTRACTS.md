@@ -669,7 +669,7 @@ Every question gate in `agents/`, `commands/` and `skills/` and what it does whe
 | `/automate` PICK pending-decisions | automate-loop §6 step 1 | as above | interactive runs only: drafts stay undecided, `pending_decisions: <n>` | unchanged |
 | `/automate` dismissed-findings decision | automate-loop §6 "Dismissed-findings decision step" | as above | asks nothing; `pending_decisions: <n>` | unchanged |
 | qa-executor VERIFY sign-in | `agents/qa-executor.md` invocation notes; `skills/verify-walkthrough/SKILL.md` credential rule | SA only (Task-spawned by `/qa-executor`, `/verify`) | `status: paused`, `pause_reason: needs_auth` / `session_expired` | unchanged |
-| qa-executor URL fallback (found by the spawn-site audit; prose names no tool) | `agents/qa-executor.md` Phase 3 DETECT URL | SA only | undefined ("Ask user for URL") | `status: needs_human`, `error: "base_url_unresolved: <what was tried>"` (QA_RESULT, returned to `/qa-executor`) |
+| qa-executor URL fallback (found by the spawn-site audit; prose names no tool) | `agents/qa-executor.md` Phase 3 DETECT URL | SA only | undefined ("Ask user for URL") | `status: needs_human`, `error: "base_url_unresolved: {what was tried}"` (QA_RESULT, returned to `/qa-executor`) |
 | `/verify` queue ambiguous resume | `commands/verify.md` queue mode; `skills/verify-walkthrough/SKILL.md` §10 | MI; MN (`--non-interactive-fallback`) | `pause_reason: resume_ambiguous` | unchanged |
 | `/setup` offers and confirms | `commands/setup.md`; `skills/setup/SKILL.md` | MI only (main-thread command) | writes nothing without an Accept | unchanged |
 | `/telemetry` enable / import offer | `commands/telemetry.md` | MI only | writes nothing without an Accept (never auto-imports) | unchanged |
