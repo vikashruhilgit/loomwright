@@ -165,6 +165,18 @@ depends, the moved pa/06 fragments).
   per-schema files under `docs/result-schemas/`, `RESULT_SCHEMAS.md` kept as the anchor-preserving index, every
   parser of the doc kept working, and every open item's Touches re-pointed after the merge.
 
+## Done directly, not as a lane (owner 2026-10-06: "why do we need a wave for this")
+Small items whose lane overhead (~$20 + 4+ questions) exceeds the work run in the operator session as a plain branch +
+PR (ci-local, then the owner merges); they leave the wave plan.
+- **pa/19** → PR #398 (workflow-only). Root cause measured: the same prompt + `--allowed-tools` reproduced locally on
+  #397's merge commit finished a full review with 0 denials — the review was done, the POST was missed. Fix: review
+  also returned as `--json-schema` structured output; a step posts it (github-actions[bot], marked) when claude[bot]
+  did not. Cannot review itself (workflow PR) — first live check is the next non-workflow PR.
+- **ms/11** → PR #399 (anchored `home_path` scrub, guard, schema placeholders; test-meta-sync 233/0).
+- The locally recovered review of #397 (5 non-blocking findings + notes) is saved for triage at
+  `proposed/s3w1-wave-pr-397-review.md`.
+- Wave 3 in the owner order loses ms/11 (done): wave 3 = ms/07 · af/31 · af/33.
+
 ## Wave plan — OWNER ORDER 2026-10-06 (critical path first; relayed by session 53b1897e; supersedes the planner tables below)
 Wave 2 confirmed by the operator with `plan-waves --max 5 --explain` under the S3 rule on the real files at
 `e141b08`: pa/11 · pa/16 · agnostic/04 share no file. agnostic/04 is on the critical path of both Milestone A
