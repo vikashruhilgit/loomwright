@@ -105,7 +105,8 @@ mk_copy() {
 echo "== 2. no glob: a stray family file is never sourced"
 C="$(mk_copy)"
 printf 'echo STRAY_FAMILY_SOURCED\n' > "$(dirname "$C")/automate-helpers.d/zz-stray.sh"
-if ! bash "$C" --help 2>&1 | grep -q STRAY_FAMILY_SOURCED; then ok "stray automate-helpers.d/zz-stray.sh is not sourced"
+SO="$(bash "$C" --help 2>&1)"
+if [ -n "$SO" ] && ! grep -q STRAY_FAMILY_SOURCED <<<"$SO"; then ok "stray automate-helpers.d/zz-stray.sh is not sourced"
 else no "a stray family file was sourced (glob?)"; fi
 
 echo "== 3. mutant (a): a missing / unreadable family file fails CLOSED, naming it"
