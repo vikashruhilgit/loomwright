@@ -182,7 +182,13 @@
 #       nothing and this fail-CLOSED gate would fail OPEN):
 #         email          e-mail addresses
 #         home_path      absolute home paths: /Users/<name>/ and /home/<name>/ (any letter case —
-#                        macOS paths are case-insensitive)
+#                        macOS paths are case-insensitive), where <name> is any run of letters, digits,
+#                        `.`, `_` or `-`. ANCHORED: the `/` must start the line or follow a character
+#                        that cannot end a path segment (anything but a letter, digit, `_` or `-`), so
+#                        `--state-dir /Users/x/`, `HOME=/Users/x/`, `"/home/x/`, `file:///Users/x/`,
+#                        `C:/Users/x/` and `../Users/x/` hit, while an API route's `/api/users/42/` (the
+#                        `/users` follows the segment `api`) does not. A placeholder in angle brackets
+#                        (`/Users/<name>/`) never hits: `<` is outside the name class.
 #         token_github   gh[pousr]_ + 36+ chars       token_github_pat  github_pat_ + 22+ chars
 #         token_sk       sk- + 20+ chars              token_slack       xox[abp]- + 10+ chars
 #         token_aws      AKIA + 16 upper/digits
@@ -868,7 +874,7 @@ scan_file() {
     fi
   done <<EOF
 email${TAB}i${TAB}[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}
-home_path${TAB}i${TAB}/(Users|home)/[A-Za-z0-9._-]+/
+home_path${TAB}i${TAB}(^|[^A-Za-z0-9_-])/(Users|home)/[A-Za-z0-9._-]+/
 token_github${TAB}s${TAB}${L}gh[pousr]_[A-Za-z0-9]{36,}
 token_github_pat${TAB}s${TAB}${L}github_pat_[A-Za-z0-9_]{22,}
 token_sk${TAB}s${TAB}${L}sk-[A-Za-z0-9_-]{20,}

@@ -18,11 +18,11 @@ EXECUTE_RESULT:
   merge_order: [feature/add-jwt-guard, feature/add-refresh-token]
   worktrees:
     - task_id: add-jwt-guard
-      path: /Users/name/myapp-add-jwt-guard
+      path: /Users/<name>/myapp-add-jwt-guard
       branch: feature/add-jwt-guard
       status: completed
     - task_id: add-refresh-token
-      path: /Users/name/myapp-add-refresh-token
+      path: /Users/<name>/myapp-add-refresh-token
       branch: feature/add-refresh-token
       status: completed
   branches: [feature/add-jwt-guard, feature/add-refresh-token]
