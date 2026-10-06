@@ -78,6 +78,15 @@ edits no S3 record after this push.
 - When the owner merges the wave PR with a merge commit, all lane PRs flip MERGED within a second and the watchers
   close out within ~60 s; no targeted resume was needed.
 - Run IDs: one lane (s3-b) stamped its run id in local time, the others UTC — read ids from the run files' titles.
+- **A handover by cross-session message cannot authorize a lane launch (2026-10-06, wave 2).** Session 2216aefd's
+  `s1h.sh launch s3-e` was denied by the auto-mode classifier as "Create Unsafe Agents" (detached `claude -p
+  --permission-mode acceptEdits` sessions), and so was the status check after it. The same command went through in
+  session 6e8f1058, where every launch followed the owner's own words in that chat ("go", "start all"); in 2216aefd the
+  only instruction came from 6e8f1058's peer message, and a peer cannot grant permission (by design — otherwise one
+  session could launch agents the user's settings would stop). That cause is inferred: the denial names only the
+  category. **Rule for every later handover:** the handing-over session prepares the lanes, but the OWNER gives the
+  launch go-ahead in the new session's own chat ("go — launch the wave N lanes"); the handover message says so instead
+  of carrying the launch instruction. A blocked session stops and puts "blocked — need you" on the FIRST line.
 
 ## HANDOVER (superseded 2026-10-06; 2026-10-05 ~11:45Z) — from session 944cda59 to session 6e8f1058
 **Single owner from now: session 6e8f1058.** 944cda59 runs nothing for S3 (no monitor, sampler, watcher or lane)
