@@ -1,0 +1,3 @@
+<!-- bump: patch -->
+claude-review: a finished review is posted even when the reviewer misses its last step
+The CI reviewer now also returns its review as structured output (`--json-schema`), and a new workflow step posts that returned text (as github-actions[bot], marked) when no substantive claude[bot] comment appeared — the S3 wave PR #397 ended `success` with no comment twice, while the same prompt and tool list reproduced locally finished a full review with 0 permission denials, so the review was done and only the post was missed. The posted-review assertion counts the marked fallback comment. The drain still reads claude[bot] comments only.

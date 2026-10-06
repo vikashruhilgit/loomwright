@@ -119,6 +119,12 @@ jobs:
             It is informational, not a gate: it tells every reader (and the drain that
             consumes this comment) that this lens reads code and never runs it.
 
+            Finally, ALSO return that exact comment body in the structured output field
+            `review` — the same text you posted with `gh pr comment`, ending with the
+            `execution: none` line. Fill it even though you already posted. If a review
+            is ever returned but not posted, the workflow posts the returned text for you,
+            so a finished review is never lost to a missed last step.
+
           # Honest limit of the execution: none marker (v15.108.0): it is ~121 chars of
           # mandated boilerplate, so the assert step's ">200 chars = a substantive review"
           # floor now admits ~80 chars of real content (a bare "Reviewed <sha>: no new
@@ -257,7 +263,7 @@ jobs:
           # Kept on ONE line on purpose: a YAML folded scalar (`>-`) joins its lines
           # with a space, which would inject a leading space into every wrapped tool
           # name (`" Bash(git blame:*)"`) and is not worth betting the allowlist on.
-          claude_args: '--allowed-tools "Read,Grep,Glob,Task,TodoWrite,Bash(git log:*),Bash(git show:*),Bash(git diff:*),Bash(git cat-file:*),Bash(git blame:*),Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git merge-base:*),Bash(git status:*),Bash(jq:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(sort:*),Bash(uniq:*),Bash(cut:*),Bash(tr:*),Bash(diff:*),Bash(ls:*),Bash(grep:*),Bash(cmp:*),Bash(comm:*),Bash(basename:*),Bash(dirname:*),Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'
+          claude_args: '--allowed-tools "Read,Grep,Glob,Task,TodoWrite,Bash(git log:*),Bash(git show:*),Bash(git diff:*),Bash(git cat-file:*),Bash(git blame:*),Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git merge-base:*),Bash(git status:*),Bash(jq:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(sort:*),Bash(uniq:*),Bash(cut:*),Bash(tr:*),Bash(diff:*),Bash(ls:*),Bash(grep:*),Bash(cmp:*),Bash(comm:*),Bash(basename:*),Bash(dirname:*),Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)" --json-schema ''{"type":"object","properties":{"review":{"type":"string"}},"required":["review"]}'''
 
       # ---------------------------------------------------------------------
       # A run that ends without a posted comment is indistinguishable from no
@@ -291,6 +297,65 @@ jobs:
       # during job CANCELLATION, which is routine on this workflow
       # (`cancel-in-progress: true` + `synchronize`), turning a merely superseded
       # run into a spurious "posted NO comment" error.
+      # ---------------------------------------------------------------------
+      # pa/19 (2026-10-06): post the RETURNED review when the reviewer did not post it.
+      # Evidence: the S3 wave PR #397 (34 files) ended `success` with no comment, twice
+      # (run 37407425806, 45 turns, 8 denials). The SAME prompt and SAME --allowed-tools
+      # reproduced locally on #397's merge commit (`claude -p --output-format json`)
+      # finished a 6,954-char review in 5 top-level turns with 0 permission denials — the
+      # review was done; the missing piece was the model's LAST action, the post. That
+      # matches the #177 table above: no telemetry separates posted from silent runs.
+      # So the review is now also RETURNED as structured output (--json-schema above,
+      # `steps.claude-review.outputs.structured_output`), and this step posts it when no
+      # substantive claude[bot] comment exists since this run's start.
+      # It posts as github-actions[bot] (GITHUB_TOKEN; the job has pull-requests: write):
+      # the action REVOKES the Claude app token in its own last step ("Revoke app token"),
+      # so a later step cannot post as claude[bot]. Consequence, stated not hidden: the
+      # drain's classifier reads claude[bot] comments only, so a fallback comment is a
+      # review for the human, not for the drain — the same as today's silence for the
+      # drain, and lane PRs (the drain's PRs) have been posting normally. The assert step
+      # below counts a fallback comment as posted (it carries the FALLBACK_MARK line).
+      # The structured output is passed through env, never interpolated into the script.
+      - name: Post the returned review if the reviewer did not
+        id: fallback
+        if: steps.claude-review.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          SINCE: ${{ steps.stamp.outputs.since }}
+          STRUCTURED: ${{ steps.claude-review.outputs.structured_output }}
+        run: |
+          set -uo pipefail
+          FALLBACK_MARK='<!-- claude-review: posted by the workflow from the returned review (pa/19 fallback) -->'
+          if [ -z "${SINCE}" ] || [ -z "${STRUCTURED}" ]; then
+            echo "no run stamp or no structured output (the action may have self-skipped) — nothing to post"
+            exit 0
+          fi
+          if ! ids="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate --jq \
+                        ".[] | select(.user.login == \"claude[bot]\") | select(.created_at >= \"${SINCE}\") | select(.body | length > 200) | .id" \
+                      2>/dev/null)"; then
+            echo "::warning::could not read PR comments — not posting a fallback blind"
+            exit 0
+          fi
+          if [ -n "$(printf '%s' "$ids" | tr -d '[:space:]')" ]; then
+            echo "the reviewer posted its own review — no fallback needed"
+            exit 0
+          fi
+          body="$(printf '%s' "$STRUCTURED" | jq -r '.review // empty' 2>/dev/null || true)"
+          if [ "${#body}" -le 200 ]; then
+            echo "::warning::the reviewer neither posted nor returned a substantive review (${#body} chars returned)"
+            exit 0
+          fi
+          f="$(mktemp)"
+          { printf '%s\n' "$FALLBACK_MARK"
+            printf '%s\n\n' '> **claude-review returned this review but did not post it itself; the workflow posted it.**'
+            printf '%s\n' "$body"; } > "$f"
+          if gh pr comment "$PR_NUMBER" --body-file "$f"; then
+            echo "::notice::fallback: posted the returned review (${#body} chars) as github-actions[bot]"
+          else
+            echo "::warning::fallback post failed"
+          fi
+
       - name: Assert a review was actually posted
         if: steps.claude-review.outcome == 'success'
         env:
@@ -342,7 +407,7 @@ jobs:
           # this step is measuring; see the header above for what it cost to omit it.
           if ! ids="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
                         --paginate --jq \
-                        ".[] | select(.user.login == \"claude[bot]\") | select(.created_at >= \"${SINCE}\") | select(.body | length > 200) | .id" \
+                        ".[] | select(.user.login == \"claude[bot]\" or (.user.login == \"github-actions[bot]\" and (.body | startswith(\"<!-- claude-review: posted by the workflow\")))) | select(.created_at >= \"${SINCE}\") | select(.body | length > 200) | .id" \
                       2>/dev/null)"; then
             echo "::warning::could not read PR comments to verify a review was posted — not failing on an unreadable check"
             exit 0
@@ -351,7 +416,7 @@ jobs:
           # finding. Keep those two apart, or an outage silently reads as "not reviewed".
           posted="$(printf '%s' "$ids" | grep -c . || true)"
           if [ "${posted:-0}" -gt 0 ]; then
-            echo "review posted: $posted substantive claude[bot] comment(s) since ${SINCE}"
+            echo "review posted: $posted substantive claude[bot] (or workflow-fallback) comment(s) since ${SINCE}"
             exit 0
           fi
           echo "::error::claude-review ran to completion but posted NO comment on PR #${PR_NUMBER}."
