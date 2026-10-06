@@ -28,6 +28,9 @@
 #       agent<->command rule mirror, Supervisor, supervisor-config, autonomous-loop, automate-loop,
 #       qa-executor); the inventory sits right before ## Failure Escalation Summary and no row's NEW
 #       behaviour cell is "undefined".
+#       The RESUME gate names `resume_requires_flag_non_interactive` (skill, command, inventory) and
+#       the withdrawn auto-continue status `resume_continued_non_interactive` appears on no surface;
+#       Launch Pad also names `save_requires_flag_non_interactive` (no flag ⇒ no save).
 #   (h) re-check: subtask 1's PO / automate strings still resolve.
 #   (m) MUTATION CONTROL: delete the can't-ask branch line from a COPY of agents/product-owner.md;
 #       gate the mutant on non-empty + differs-from-original; the (a) predicate MUST fail on it.
@@ -188,8 +191,8 @@ for f in "$LP_AGENT" "$LP_CMD" "$SV_AGENT" "$SV_CFG" "$AL_SKILL" "$QA_AGENT" "$A
   [ -f "$f" ] || no "MISSING surface: $f"
 done
 for s in clarification_needed_non_interactive no_go_non_interactive needs_human_non_interactive \
-         saved_on_pass_non_interactive plan_review_fail_non_interactive \
-         memory_candidates_deferred_non_interactive; do
+         saved_on_pass_non_interactive save_requires_flag_non_interactive \
+         plan_review_fail_non_interactive memory_candidates_deferred_non_interactive; do
   gate_has_status "(g) agents/launch-pad.md" "$LP_AGENT" "$s"
 done
 # agent<->command mirror: the Can't-ask rule bullet is byte-identical in both Launch Pad files.
@@ -214,10 +217,20 @@ for s in non_interactive_without_fallback rubric_gate_closed_non_interactive no_
          review_heal_escalated_non_interactive pr_base_verify_skipped_non_interactive; do
   gate_has_status "(g) skills/autonomous-loop/SKILL.md" "$AL_SKILL" "$s"
 done
-for s in no_source_non_interactive resume_continued_non_interactive resume_ambiguous; do
+for s in no_source_non_interactive resume_requires_flag_non_interactive resume_ambiguous; do
   gate_has_status "(g) skills/automate-loop/SKILL.md" "$AUTO_SKILL" "$s"
 done
 gate_has_status "(g) commands/automate.md bare row" "$AUTO_CMD" 'no_source_non_interactive'
+gate_has_status "(g) commands/automate.md bare row" "$AUTO_CMD" 'resume_requires_flag_non_interactive'
+gate_has_status "(g) ARCHITECTURE_CONTRACTS.md RESUME row" "$ARCH" 'resume_requires_flag_non_interactive'
+# The withdrawn auto-continue branch (a can't-ask path that substituted for --resume) must not come
+# back on any surface. Captured, not piped into grep -q (pipefail-safe).
+auto_continue_hits="$(grep -rlF -- 'resume_continued_non_interactive' "$PLUGIN_ROOT/agents" "$PLUGIN_ROOT/commands" "$PLUGIN_ROOT/skills" "$PLUGIN_ROOT/docs" 2>/dev/null || true)"
+if [ -z "$auto_continue_hits" ]; then
+  ok "(g) no surface names the withdrawn auto-continue status resume_continued_non_interactive"
+else
+  no "(g) the withdrawn auto-continue status resume_continued_non_interactive is still named: $auto_continue_hits"
+fi
 gate_has_status "(g) agents/qa-executor.md URL fallback" "$QA_AGENT" 'base_url_unresolved'
 # The inventory section exists and sits immediately before ## Failure Escalation Summary.
 prev_h2="$(awk '/^## /{ if ($0 == "## Failure Escalation Summary") { print last; exit } last = $0 }' "$ARCH")"
