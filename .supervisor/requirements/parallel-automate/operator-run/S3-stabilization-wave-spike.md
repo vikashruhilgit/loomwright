@@ -2,6 +2,8 @@
 
 ## Status: parked (operator-run: lives in `operator-run/` so folder intake never enqueues it; start after step 0, the release of S2's four fragments, and a plugin reinstall)
 
+**Usage check:** every command in an `operator-run/` runbook is checked against the shipped script's usage text (`<script> --help`) before the runbook is used — by hand, no checker script; a flag `--help` does not list (e.g. the dry-run flag M1 step 1 once named) is a runbook bug to fix first.
+
 ## Depends on
 - S2 closed (all five PRs merged, lanes torn down, `leaks` empty — done 2026-10-05).
 - Step 0: one release bump folding `changelog.d/` (items agnostic-phase1/01, automate-followups/16, 24, 26), merged

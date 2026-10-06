@@ -2,6 +2,8 @@
 
 ## Status: parked (operator-run: lives in `operator-run/` so folder intake never enqueues it; run after 08, 09, 10 and the item-10 backfill are merged and the plugin is reinstalled)
 
+**Usage check:** every command in an `operator-run/` runbook is checked against the shipped script's usage text (`<script> --help`) before the runbook is used — by hand, no checker script; a flag `--help` does not list (e.g. the dry-run flag M1 step 1 once named) is a runbook bug to fix first.
+
 ## Depends on
 - 08 (shared CI slots), 09 (fewer full runs), 10 (+ its backlog backfill) merged, plugin reinstalled.
 - 12 (policy answers) is optional: run S2 once without it if it is not ready, and record the question load.

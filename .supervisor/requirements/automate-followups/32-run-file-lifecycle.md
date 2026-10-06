@@ -203,3 +203,9 @@ loomwright/scripts/test-automate-trail.sh
 loomwright/scripts/test-session-resume.sh
 loomwright/skills/automate-loop/SKILL.md
 changelog.d/automate-followups-32-run-file-lifecycle.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-05T17:56:09Z
+- **Brief:** .supervisor/jobs/done/2026-10-05-run-file-lifecycle.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/395

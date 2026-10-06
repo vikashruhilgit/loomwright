@@ -2,6 +2,8 @@
 
 ## Status: parked (operator-run: lives in `operator-run/` so folder intake never enqueues it; run by hand after 03 is merged AND the plugin is reinstalled)
 
+**Usage check:** every command in an `operator-run/` runbook is checked against the shipped script's usage text (`<script> --help`) before the runbook is used — by hand, no checker script; a flag `--help` does not list (e.g. the dry-run flag M1 step 1 once named) is a runbook bug to fix first.
+
 ## Depends on
 03
 
@@ -18,9 +20,24 @@ The migration also changes GitHub settings and untracks ~370 files — both need
 4. No other checkout or worktree of this repo has uncommitted run-history edits (`git worktree list`; check each).
 
 ## Steps
-1. **Dry-run the scrub.** `meta-sync.sh push --dry-run` (or the scrub alone) over the managed set. Read every hit.
-   Fix or exclude before anything is published — the branch is on a PUBLIC repo and is never force-pushed, so a
-   leak is permanent.
+1. **Rehearse the push on a scratch clone (option A, owner 2026-10-05).** `meta-sync.sh` has no dry-run mode; this
+   uses only `init` / `push` / `--root` from its `--help`. Run from the primary checkout; nothing reaches GitHub:
+   ```bash
+   PRIMARY="$(git rev-parse --show-toplevel)"; S="$(mktemp -d)"; BARE="$S/meta-remote.git"; CLONE="$S/clone"
+   git init -q --bare "$BARE"
+   git clone -q --branch main "$PRIMARY" "$CLONE"
+   git -C "$CLONE" remote set-url origin "$BARE"
+   git -C "$CLONE" remote get-url origin            # MUST print $BARE — stop here otherwise
+   mkdir -p "$CLONE/.supervisor" && cp "$PRIMARY/.supervisor/config.json" "$CLONE/.supervisor/"  # scrub allowlist
+   bash "$CLONE/loomwright/scripts/meta-sync.sh" init --root "$CLONE"
+   bash "$CLONE/loomwright/scripts/meta-sync.sh" push --root "$CLONE"
+   ```
+   `push` exits 2 on a scrub hit and names each one as `meta_sync: scrub <path>: <rule>` (nothing pushed, branch
+   and meta-base unchanged). Read every hit, fix or exclude it in the primary, apply the same fix in `$CLONE`, and
+   re-run `push --root "$CLONE"` until it exits 0; then `rm -rf "$S"`. Fix before anything is published — the
+   branch is on a PUBLIC repo and is never force-pushed, so a leak is permanent. While `main` still tracks the run
+   history the clone carries the whole managed set; on an already-migrated `main` it carries none and `push` prints
+   `meta_sync: no_changes` (exit 0) — copy the primary's managed files into `$CLONE` first to scrub them.
 2. **Create the branch.** `meta-sync.sh init --branch loomwright-meta`.
 3. **Protect it before the first real push.** Add a repository ruleset targeting `loomwright-meta` that blocks
    deletion and non-fast-forward updates (neither blocks normal pushes). Without it any write token can delete the

@@ -146,3 +146,9 @@ loomwright/docs/ARCHITECTURE_CONTRACTS.md
 loomwright/scripts/meta-sync.sh
 loomwright/scripts/test-meta-sync.sh
 changelog.d/meta-sync-followups-08-meta-sync-hardening.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-05T17:15:24Z
+- **Brief:** .supervisor/jobs/done/2026-10-05-meta-sync-hardening.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/394

@@ -67,3 +67,9 @@ v2-a's brief had no such path and pushed fine. This is the brief-template half o
 line and the `/Users/<name>/...` examples), and it is now a **prerequisite for `parallel-automate/05`/`06`**: at
 5–10 lanes, any lane whose brief names a home path loses its closeout records. Still open: the owner's choice of
 option A or B for the rehearsal half.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-05T12:28:12Z
+- **Brief:** .supervisor/jobs/done/2026-10-05-scrub-safe-briefs-and-push-rehearsal.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/391

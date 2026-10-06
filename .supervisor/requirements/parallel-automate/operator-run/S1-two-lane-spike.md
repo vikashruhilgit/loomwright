@@ -2,6 +2,8 @@
 
 ## Status: done (operator-run, closed 2026-10-04 by session 07b3f63c: v1 + v2 run, Q1–Q7 answered, findings written into 05 and 06, P8 = A + relay, all clones and spike branches removed; see the closing note at the end)
 
+**Usage check:** every command in an `operator-run/` runbook is checked against the shipped script's usage text (`<script> --help`) before the runbook is used — by hand, no checker script; a flag `--help` does not list (e.g. the dry-run flag M1 step 1 once named) is a runbook bug to fix first.
+
 ## Depends on
 M1
 

@@ -70,3 +70,9 @@ mapped, affected-only check while iterating.
 
 ## Evidence
 S1 v2 lane logs (`ai-agent-manager-lanes-v2/v2-{a,b}/.supervisor/s1h-lane.log`), S1 run record.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-05T17:17:24Z
+- **Brief:** .supervisor/jobs/done/2026-10-05-ci-local-fewer-full-runs.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/392

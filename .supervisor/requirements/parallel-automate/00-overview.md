@@ -37,6 +37,9 @@ carry the fixes.
 | 15 | Backlog board (one derived view of every item's real state) | medium | One canonical status reader (done stamp anywhere, `unknown` as a state) + `/backlog` table/JSON + a Floor surface + `BACKLOG.md` on the meta branch; totals always add up. No dependencies, so it can run in the next wave. |
 | 16 | Machine load guard (added 2026-10-05) | medium | S3 wave 1 froze the machine (load1 119 on 12 CPUs, watchdog reset) although 08's slots cap the suite at ~12 jobs. Attribute the load first, then one machine-wide gate in `ci-slot.sh` that holds new heavy work while overloaded and never kills. The coordinator's side (launch gating, reset recovery) is in 05 Scope 16. No dependencies; plans after 09 (shared `AGENT_GUIDELINES.md`). |
 
+**Usage check:** every command in an `operator-run/` runbook is checked against the shipped script's usage text (`<script> --help`) before the runbook is used — by hand, no checker script; a flag `--help` does not list (e.g. the dry-run flag M1 step 1 once named) is a runbook bug to fix first.
+
+
 ## Order
 01 → 02 → 03 → M1 (operator) → S1 (operator) → 04 → 05 → 06 → 07.
 - **Amended 2026-10-04 (owner: "at least 5 to 10 lanes"):** 08, 09 and 10 have no dependencies on 05 and can run
