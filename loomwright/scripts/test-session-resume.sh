@@ -45,6 +45,7 @@
 #       gates the TTL the same way test-run-lock.sh case 11 does (z10), the
 #       dead-pid-but-young-age non-reclaimable edge (z11), and no lock dir ⇒
 #       no section at all (z12).
+#   (zg) a BOM/indented run-file title is still surfaced; the title ERE copy matches the helper's
 #   (za)-(zf) /automate surfacing (automate-followups/32 Part A): resume prints the
 #       merged-but-not-closed-out line (za); startup makes zero gh calls (zb); gh
 #       absent/failing/hanging ⇒ `merge state unverified` (zc); ≤5 gh calls (zd); the
@@ -1596,6 +1597,17 @@ echo MERGED > "$AGH/state.7"; echo OPEN > "$AGH/state.8"; echo MERGED > "$AGH/st
 [ "$(lastrc)" = 0 ] && grep -qxF -- "$MLINE" <<<"$c" && ok "(za) resume: a merged, not-done ## Current PR ⇒ the merged-but-not-closed-out line" || no "(za) ctx: $(grep automate: <<<"$c")"
 [ "$(grep -c '^automate: ' <<<"$c")" = 1 ] && ok "(za) OPEN PR / ## Current done / ## Status done ⇒ no line" || no "(za) extra lines: $(grep '^automate: ' <<<"$c" | tr '\n' '|')"
 [ "$(wc -l < "$AGHLOG" | tr -d ' ')" = 2 ] && ok "(za) gh called only for the two in-flight PRs (done items cost nothing)" || no "(za) gh calls: $(wc -l < "$AGHLOG")"
+# (zg) S3 wave-1 review: a run file whose title starts with a BOM and 2 spaces of indent is still a run
+# file (is_run_file's tolerated forms) — the probe must not skip it silently.
+R2="$(new_repo)"; make_plugin_active "$R2"
+au_rf "$R2" automate-a 7
+f="$R2/.supervisor/automate/automate-a.md"; { printf '\357\273\277  '; cat "$f"; } > "$f.tmp" && mv "$f.tmp" "$f"
+echo MERGED > "$AGH/state.7"; : > "$AGHLOG"; c="$(au_hook "$R2" resume)"
+grep -qxF -- "$MLINE" <<<"$c" && ok "(zg) a BOM + indented title is still a run file: the merged-but-not-closed-out line prints" || no "(zg) ctx: $(grep automate: <<<"$c")"
+for v in _RUN_TITLE_BOM RUN_TITLE_ERE; do
+  a="$(grep -E "^${v}=" "$SCRIPT_DIR/automate-helpers.sh")"; b="$(grep -E "^${v}=" "$HOOK")"
+  [ -n "$a" ] && [ "$a" = "$b" ] && ok "(zg) $v is byte-identical in automate-helpers.sh and session-resume.sh" || no "(zg) $v drifted: helpers='$a' hook='$b'"
+done
 # (zb) startup: OFFLINE — zero gh calls even with a merged in-flight PR present.
 : > "$AGHLOG"; c="$(au_hook "$R" startup)"
 [ "$(lastrc)" = 0 ] && [ ! -s "$AGHLOG" ] && ! grep -q 'merged but not closed out' <<<"$c" && ok "(zb) startup: zero gh calls, no merge check (the startup arm stays offline)" || no "(zb) startup gh calls: $(wc -l < "$AGHLOG")"

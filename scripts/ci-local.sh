@@ -231,7 +231,10 @@ log_in_flight() {
 # keeps its two streams and the log gets both. The tees ignore INT/TERM so a Ctrl-C cannot cut the
 # transcript short; they end on EOF once finish_log restores the real descriptors.
 # Prune rule: every in-flight log is kept (a live transcript is never cut, this run's own included);
-# finished logs fill the remaining room newest first; the rest go. So the total is $keep_runs unless
+# finished FULL-run logs fill the remaining room newest first, then finished --affected logs fill
+# what is left, newest first; the rest go. A full-run log is what --last reads, so an --affected log
+# never takes its place (S3 wave-1 review: 20 --affected runs used to push the only full log out and
+# --last then reported `stale-key` for a tree that had passed). So the total is $keep_runs unless
 # more than $keep_runs runs are live at once (then only the live logs remain). Each log is classified
 # ONCE, before any rm: a log seen live may finish meanwhile (kept, harmless); a finished log never
 # becomes live again.
@@ -244,12 +247,20 @@ open_log() {
   printf 'ci-local: log %s\n' "$log"
   : > "$tmpd/runs.lst"
   while IFS= read -r f; do
-    if log_in_flight "$f"; then printf 'L %s\n' "$f"; nlive=$((nlive + 1)); else printf 'F %s\n' "$f"; fi >> "$tmpd/runs.lst"
+    if log_in_flight "$f"; then printf 'L %s\n' "$f"; nlive=$((nlive + 1))
+    else case "$f" in *-affected.log) printf 'A %s\n' "$f" ;; *) printf 'F %s\n' "$f" ;; esac
+    fi >> "$tmpd/runs.lst"
   done < <(runs_newest_first)
   room=$((keep_runs - nlive))
+  # Two passes over the same newest-first list: full logs claim room first, --affected logs get the rest.
   while IFS= read -r line; do
     case "$line" in
       "F "*) if [ "$room" -gt 0 ]; then room=$((room - 1)); else rm -f "$runs/${line#F }"; fi ;;
+    esac
+  done < "$tmpd/runs.lst"
+  while IFS= read -r line; do
+    case "$line" in
+      "A "*) if [ "$room" -gt 0 ]; then room=$((room - 1)); else rm -f "$runs/${line#A }"; fi ;;
     esac
   done < "$tmpd/runs.lst"
   mkfifo "$tmpd/out.fifo" "$tmpd/err.fifo"

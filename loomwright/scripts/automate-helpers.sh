@@ -1042,7 +1042,7 @@ closeout_classify() {
     esac
     n=$((n + 1)); t="${line#closeout: }"
     r="$(_co_classify_line "$t")"; cls="${r%%"$tab"*}"; step="${r#*"$tab"}"
-    case "$t" in *kept*) cls=leftover ;; esac
+    case "$t" in "removed — worktree "*"; kept "*) cls=leftover ;; esac  # partial removal; anchored so a NAME containing "kept" never flips a clean line (S3 wave-1 review)
     case "$t" in "removed — "*|"stamped — "*|"checked — "*|"reconciled — "*) changed=1 ;; esac
     [ "$cls" = leftover ] && rows="${rows}leftover$tab$run$tab$item$tab$pr$tab$step$tab${t//$tab/ }"$'\n'
   done

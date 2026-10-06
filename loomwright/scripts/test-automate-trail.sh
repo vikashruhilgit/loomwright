@@ -1892,6 +1892,11 @@ for l in "closeout: synced — main at abc1234" "closeout: skipped — already s
 done
 want_row() { [ "$(cl_one "$1")" = "leftover	R1	q/01.md	$PRURL	$2	${1#closeout: }" ]; }
 want_row "closeout: removed — worktree /w/a; kept /w/b still dirty after salvage" worktree && ok "(CL2) mixed 'removed — worktree A; kept B' ⇒ ONE worktree leftover row (kept wins over the verb)" || no "(CL2) mixed line: $(cl_one "closeout: removed — worktree /w/a; kept /w/b still dirty after salvage")"
+# (CL2k) S3 wave-1 review: "kept" inside a NAME never flips a clean line — only the partial-removal form counts.
+for l in "closeout: checked — - [x] reqs/kept-sessions.md" "closeout: skipped — already removed (no worktree on feat/kept-x)" \
+         "closeout: removed — branch feat/kept-x (tip == merged head abc123def456)" "closeout: removed — worktree /w/kept-a"; do
+  [ "$(cl_one "$l")" = complete ] && ok "(CL2k) a name containing 'kept' stays complete: ${l#closeout: }" || no "(CL2k) flipped to leftover: $l ⇒ $(cl_one "$l")"
+done
 want_row "closeout: skipped — pr not merged (awaiting_merge)" gate && ok "(CL2) 'skipped — pr not merged …' ⇒ leftover (gate)" || no "(CL2) pr not merged"
 want_row "closeout: frobnicated — something new" unknown && ok "(CL2) an unknown closeout: line ⇒ leftover (unknown)" || no "(CL2) unknown line: $(cl_one 'closeout: frobnicated — something new')"
 want_row "closeout: skipped — uncommitted changes outside the trail paths (README)" sync && ok "(CL2) sync skipped on a dirty primary ⇒ leftover (sync)" || no "(CL2) dirty sync"
@@ -1995,6 +2000,42 @@ done
 closeout_fixture 316
 o="$(co_others --record .supervisor/automate/not-created-yet.md)"
 grep -qxF "closeout-others: record — cross-run closeout $RUN_ID $REQ: complete" <<<"$o" && ok "(CO3) no run file yet ⇒ 'record — …' printed, nothing appended" || no "(CO3) $o"
+
+# (CO4)-(CO6) the LEFTOVER summary path (S3 wave-1 review: CO1-CO3 cover complete / untouched / no record file only).
+# (CO4) real: a dirty primary makes A's close-out a sync leftover; B's Progress records it, no PR URL.
+closeout_fixture 317; mk_rb
+echo "local edit" >> "$P/README"
+o="$(co_others --record "$RBF")"
+git -C "$P" checkout -q -- README
+grep -qE "^leftover	$RUN_ID	" <<<"$o" \
+  && grep -qE "^closeout-others: recorded — cross-run closeout $RUN_ID $REQ: leftover sync — " <<<"$o" \
+  && grep -qE "^- [^ ]+ cross-run closeout $RUN_ID $REQ: leftover sync — " "$P/$RBF" && ! grep -q 'https\?://' "$P/$RBF" \
+  && ok "(CO4) a dirty primary ⇒ A's close-out is a sync leftover; B records 'leftover sync — …' with no PR URL" \
+  || no "(CO4) out=$(printf '%s' "$o" | tr '\n' '|') B=$(grep 'cross-run' "$P/$RBF")"
+# (CO5)/(CO6) a stubbed closeout-classify (everything else is the real helper).
+CLD="$TOP/clstub"; mkdir -p "$CLD"; cp "$SPYD"/* "$CLD/"
+cat > "$CLD/automate-helpers.sh" <<'SHIM'
+#!/usr/bin/env bash
+if [ "${1:-}" = closeout-classify ]; then
+  cat >/dev/null
+  case "${CL_STUB:-}" in
+    empty) exit 0 ;;
+    url) printf 'leftover\t-\t-\t-\tgate\tsee https://github.com/acme/widgets/pull/7 for details\n'; exit 0 ;;
+  esac
+fi
+exec bash "$(dirname "$0")/automate-helpers.real.sh" "$@"
+SHIM
+closeout_fixture 318; mk_rb
+o="$(CL_STUB=empty CO_H="$CLD/automate-helpers.sh" co_others --record "$RBF")"
+grep -qxF "closeout-others: recorded — cross-run closeout $RUN_ID $REQ: leftover classify — closeout-classify printed nothing" <<<"$o" \
+  && ok "(CO5) classify printed nothing ⇒ fallback 'leftover classify — closeout-classify printed nothing' recorded" \
+  || no "(CO5) out=$(printf '%s' "$o" | tr '\n' '|')"
+closeout_fixture 319; mk_rb
+o="$(CL_STUB=url CO_H="$CLD/automate-helpers.sh" co_others --record "$RBF")"
+grep -qxF "closeout-others: recorded — cross-run closeout $RUN_ID $REQ: leftover gate — see <url> for details" <<<"$o" \
+  && ! grep -q 'https\?://' "$P/$RBF" \
+  && ok "(CO6) a leftover detail carrying a PR URL reaches B's Progress as <url> — the record line never carries the URL" \
+  || no "(CO6) out=$(printf '%s' "$o" | tr '\n' '|') B=$(grep 'cross-run' "$P/$RBF")"
 
 echo "== K. SKILL wiring (Part A, automate-followups/32) =="
 s6="$(awk '/^## §6 /{s=1;next} s&&/^## /{exit} s' "$SKILL")"
