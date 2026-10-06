@@ -37,6 +37,11 @@
 # without vm.loadavg, Windows) read as `unknown`.
 # Self-test: loomwright/scripts/test-machine-load.sh. Portability: bash 3.2 safe, BSD + GNU userland.
 set -uo pipefail
+# The C locale for every number this reader parses or prints: under a comma-decimal locale (de_DE,
+# fr_FR) macOS sysctl prints vm.loadavg as `{ 3,05 5,41 9,50 }` and awk's printf writes `2,50`, which
+# would read as unknown and break --json. Only sysctl/awk/tr/getconf/uname run under it; it is this
+# process's own environment and never reaches the caller.
+export LC_ALL=C
 
 is_uint() { case "${1:-}" in ''|*[!0-9]*) return 1 ;; esac; return 0; }
 is_num()  { local re='^[0-9]+(\.[0-9]+)?$'; [[ "${1:-}" =~ $re ]]; }   # no pipe: pipefail + grep -q

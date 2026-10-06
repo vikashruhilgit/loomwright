@@ -13,6 +13,10 @@
 #   (M)  Linux MemAvailable/MemTotal: 20 % ok, 14 % busy, 7 % overloaded
 #   (U)  unreadable ⇒ state=unknown, exit 0: no sysctl at all, an empty /proc, a missing meminfo
 #        next to an ok load; a readable "overloaded" is never hidden behind an unreadable neighbour
+#   (LC) a comma-decimal locale (LC_ALL=de_DE.UTF-8): a locale-sensitive stub sysctl prints
+#        `{ 30,00 … }` unless the numeric locale is C, as macOS's does — still load1=30.00, busy, and
+#        --json stays valid JSON with dot decimals on both readers (awk printf localizes too)
+#        MUTATION CONTROL: drop the `export LC_ALL=C` ⇒ the comma reading is unknown and (LC) fails
 #   (H)  the host: real reader exits 0 with five fields and a state in the set (Linux on CI)
 #   (X)  usage: an unknown argument exits 2; --help prints the de-commented header
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
@@ -47,11 +51,12 @@ chmod +x "$tmp/sysctl"
 mac() { local s="$1" l="$2" v="$3"; shift 3
   FX_LOADAVG="$l" FX_LEVEL="$v" LOOMWRIGHT_MACHINE_LOAD_OS=darwin LOOMWRIGHT_MACHINE_LOAD_SYSCTL="$tmp/sysctl" bash "$s" "$@"; }
 field() { sed -n "s/^$1=//p"; }
-# lin LOAD AVAIL_KB [ARGS] — the linux reader against a fixture /proc (MemTotal 1000000 kB).
+# lin LOAD AVAIL_KB [ARGS] — the linux reader against a fixture /proc (MemTotal 1000000 kB); LIN_SUT
+# names another script to run (a mutant), default $SUT.
 lin() { local l="$1" a="$2" p="$tmp/proc.$RANDOM"; shift 2; mkdir -p "$p"
   [ "$l" = - ] || echo "$l 1.00 1.00 1/100 4242" > "$p/loadavg"
   [ "$a" = - ] || printf 'MemTotal:        1000000 kB\nMemFree:           10000 kB\nMemAvailable:    %s kB\n' "$a" > "$p/meminfo"
-  LOOMWRIGHT_MACHINE_LOAD_OS=linux LOOMWRIGHT_MACHINE_LOAD_PROC="$p" bash "$SUT" "$@"; }
+  LOOMWRIGHT_MACHINE_LOAD_OS=linux LOOMWRIGHT_MACHINE_LOAD_PROC="$p" bash "${LIN_SUT:-$SUT}" "$@"; }
 
 # --- (F) -------------------------------------------------------------------------------------------
 five='has("load1") and has("cpus") and has("load_per_cpu") and has("mem_pressure") and has("state")'
@@ -126,6 +131,42 @@ else no "(U) partial read reported ok"; fi
 if [ "$(lin - 70000 | field state)" = overloaded ] && [ "$(mac "$SUT" 40 "" | field state)" = overloaded ]; then
   ok "(U) a readable overloaded is not hidden behind an unreadable neighbour"
 else no "(U) overloaded hidden: $(lin - 70000 | field state) / $(mac "$SUT" 40 "" | field state)"; fi
+
+# --- (LC) ------------------------------------------------------------------------------------------
+# A stub that localizes like macOS sysctl: ',' decimals unless the effective numeric locale is C/POSIX.
+cat > "$tmp/sysctl-l10n" <<'EOF'
+#!/bin/sh
+loc="${LC_ALL:-${LC_NUMERIC:-${LANG:-C}}}"
+case "$2" in
+  vm.loadavg) [ -n "${FX_LOADAVG:-}" ] || exit 1; v="{ $FX_LOADAVG 1.00 1.00 }"
+    case "$loc" in C|POSIX|C.*) ;; *) v="$(printf '%s' "$v" | tr . ,)" ;; esac; echo "$v" ;;
+  kern.memorystatus_vm_pressure_level) [ -n "${FX_LEVEL:-}" ] || exit 1; echo "$FX_LEVEL" ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod +x "$tmp/sysctl-l10n"
+lcarm() {   # lcarm SUT — exit 0 iff a de_DE run reads the comma loadavg and prints dot decimals
+  local s="$1" o j
+  o="$(LC_ALL=de_DE.UTF-8 LANG=de_DE.UTF-8 FX_LOADAVG=30.00 FX_LEVEL=1 LOOMWRIGHT_MACHINE_LOAD_OS=darwin \
+       LOOMWRIGHT_MACHINE_LOAD_SYSCTL="$tmp/sysctl-l10n" bash "$s" 2>/dev/null)"
+  [ "$(field load1 <<<"$o")" = 30.00 ] && [ "$(field state <<<"$o")" = busy ] \
+    || { LCWHY="darwin plain: $(tr '\n' ' ' <<<"$o")"; return 1; }
+  j="$(LC_ALL=de_DE.UTF-8 LANG=de_DE.UTF-8 FX_LOADAVG=30.00 FX_LEVEL=1 LOOMWRIGHT_MACHINE_LOAD_OS=darwin \
+       LOOMWRIGHT_MACHINE_LOAD_SYSCTL="$tmp/sysctl-l10n" bash "$s" --json 2>/dev/null)"
+  jq -e '.load1 == 30 and .load_per_cpu == 2.5 and .state == "busy"' <<<"$j" >/dev/null 2>&1 \
+    || { LCWHY="darwin --json: $j"; return 1; }
+  j="$(LC_ALL=de_DE.UTF-8 LANG=de_DE.UTF-8 LIN_SUT="$s" lin 30.00 140000 --json 2>/dev/null)"
+  jq -e '.load1 == 30 and .load_per_cpu == 2.5 and .state == "busy" and .mem_source == "linux-memavailable-pct:14.0"' <<<"$j" >/dev/null 2>&1 \
+    || { LCWHY="linux --json: $j"; return 1; }
+}
+if lcarm "$SUT"; then ok "(LC) LC_ALL=de_DE.UTF-8: comma loadavg read as 30.00 busy; --json valid with dot decimals"
+else no "(LC) comma-decimal locale: $LCWHY"; fi
+mut="$tmp/mut-locale.sh"
+sed '/^export LC_ALL=C$/d' "$SUT" > "$mut"
+if [ -s "$mut" ] && ! cmp -s "$mut" "$SUT" && bash -n "$mut"; then
+  if lcarm "$mut"; then no "(LC) MUTATION CONTROL: without export LC_ALL=C (LC) still passed — it proves nothing"
+  else ok "(LC) MUTATION CONTROL: dropping export LC_ALL=C fails (LC) ($LCWHY)"; fi
+else no "(LC) MUTATION CONTROL: mutant not built (empty, unchanged or invalid)"; fi
 
 # --- (H) -------------------------------------------------------------------------------------------
 unset LOOMWRIGHT_CI_CPUS
