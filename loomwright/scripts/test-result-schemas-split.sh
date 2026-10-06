@@ -26,6 +26,7 @@
 # Headings are detected fence-aware: a `## ` line inside a ``` / ~~~ fenced block is not a section.
 # Read-only; scratch files live under `mktemp -d`. Exit 0 = all pass, 1 = any failure.
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 export LC_ALL=C
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
