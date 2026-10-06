@@ -176,6 +176,12 @@ PR (ci-local, then the owner merges); they leave the wave plan.
 - The locally recovered review of #397 (5 non-blocking findings + notes) is saved for triage at
   `proposed/s3w1-wave-pr-397-review.md`.
 - Wave 3 in the owner order loses ms/11 (done): wave 3 = ms/07 · af/31 · af/33.
+- **Merged 2026-10-06:** #400 (`72b6655`, the five #397 review findings, drained READY after 1 round), #399
+  (`1b5adb5`, ms/11, drained READY), #398 (`7bd43ce`, pa/19, drained READY: CI self-skips workflow PRs, so the drain's
+  earned fallback `code-reviewer` reviewed it — 6 findings fixed, incl. the PR's own false claim that the drain reads
+  claude[bot] only). Three `changelog.d/` fragments are unreleased; installed plugin is still 15.122.0.
+- **Pending checks:** the first non-workflow PR after #398 must show a posted claude-review (or the marked fallback);
+  the telemetry `PRIVACY_PATTERNS` note from #399's review is undecided (owner set it aside).
 
 ## Wave plan — OWNER ORDER 2026-10-06 (critical path first; relayed by session 53b1897e; supersedes the planner tables below)
 Wave 2 confirmed by the operator with `plan-waves --max 5 --explain` under the S3 rule on the real files at

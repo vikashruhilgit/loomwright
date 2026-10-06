@@ -1,6 +1,6 @@
 # 11 — Scrub precision: the `home_path` scrub matches home paths only, and the schema examples are scrub-safe
 
-## Status: pending
+## Status: done (2026-10-06, PR #399 merged `1b5adb5`, done directly — not a lane)
 
 ## Merged from (2026-10-06, owner decision: fewer, larger items — a run costs ~$17–20 plus 4+ owner questions even for a tiny change)
 - Part A: `10-anchor-home-path-scrub.md` — 10 — Anchor the `home_path` scrub so it matches home paths, not every `/users/<x>/` segment

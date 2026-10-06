@@ -1,6 +1,6 @@
 # Review of wave PR #397 (S3 wave 1, v15.123.0) — recovered locally 2026-10-06
 
-## Status: pending (triage: each finding needs an owner decision — fix-now / follow-up / drop)
+## Status: done for findings 1–5 (PR #400 merged `72b6655`, 2026-10-06); the "Questions and smaller notes" below are NOT addressed — follow-up candidates
 
 Provenance: claude-review posted nothing on #397 (twice). The same prompt + `--allowed-tools`, run locally with
 `claude -p --output-format json` on #397's merge commit `f0b4b66` (gh pr comment removed so nothing was posted),
