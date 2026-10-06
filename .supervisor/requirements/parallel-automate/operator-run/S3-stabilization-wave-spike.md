@@ -11,7 +11,62 @@
 - The S1/S2 harness `~/Documents/work/AI/ai-agent-manager-lanes-v2/s1h.sh`, now with `launch <lane> --resume-run
   <run_id>` (added 2026-10-05; backup in `archive/`).
 
-## HANDOVER (2026-10-05 ~11:45Z) — from session 944cda59 to session 6e8f1058
+## HANDOVER (2026-10-06) — from session 6e8f1058 to a NEW session for wave 2 (owner: "for next wave use new session")
+**Single owner from now: the new session.** 6e8f1058 runs nothing for S3 (no lane, monitor, sampler, watcher) and
+edits no S3 record after this push.
+
+### State at handover
+- **Wave 1 done.** #397 (`wave/s3w1`) merged with a merge commit (`f0b4b66`, v15.123.0); the four lane PRs flipped
+  MERGED and closed out by their watchers; records carried to `loomwright-meta`; lanes torn down (`leaks` empty);
+  `loomwright-meta-s3w1` deleted (owner yes). Primary on `main` `f0b4b66`, clean; its legacy `meta-base` was adopted
+  by 15.123.0's meta-sync (`synced … on loomwright-meta`). Full numbers: §"Wave 1 result".
+- **Plan restructured twice on 2026-10-06** (§"Restructure 2026-10-06", §"…second pass") and the **owner's wave order**
+  is §"Wave plan — OWNER ORDER 2026-10-06": **wave 2 = pa/11 · pa/16 · agnostic/04**.
+- **New item `parallel-automate/19-review-large-prs.md`** (claude-review posted nothing on #397, twice). Owner "ok"
+  to filing it; **its placement is the owner's call at launch**: before wave 2, or as a 4th wave-2 lane started
+  first so it can merge before pa/11's large move-only PR is reviewed. A PR that edits a workflow file cannot review
+  itself (claude-code-action skips it, green, no comment).
+- **Not done / not running:** 15.123.0 was NOT yet in `~/.claude/plugins/cache/atelier/loomwright/` at handover
+  (owner reinstalling) — lanes run the installed plugin, so check before launch. `caffeinate` not running (owner
+  starts `caffeinate -i -t 14400` in a terminal tab; it expires after 4 h — wave 1's died mid-wave). No lanes, no
+  monitor. `archive/s3-a..d` + `launch.log` hold wave 1's lane logs.
+
+### Next steps
+1. Owner reinstalls; confirm `15.123.0` in the plugin cache. Owner starts `caffeinate`; confirm with `pgrep -fl caffeinate`.
+2. Owner decides pa/19's placement.
+3. `echo "# ---- wave s3w2 starts $(date -u +%FT%TZ) ----" >> launch.log`; move `snapshot-*.txt` into
+   `archive/s3w1/`; `bash s1h.sh snapshot before`; `export S1H_META_BRANCH=loomwright-meta-s3w2`; set up lanes from
+   the primary (first with `--seed`): `bash s1h.sh setup <lane> .supervisor/requirements/<folder>/<item>.md [--seed]`.
+4. **At most 2 lanes building at once until pa/16 merges** (wave 1 froze the machine at load1 119 with 3 lanes in
+   `ci-local`); start the third when one reaches review. Owner may override (they did once: "start all").
+5. Monitor: poll `s1h.sh status --json` every 30 s, print changed lane lines, `PENDING-AT-ARM` question lines at
+   each (re-)arm, and a `HIGH-LOAD` line when `sysctl -n vm.loadavg` load1 ≥ 60; re-arm every 30 min.
+6. At park: merge checks (below), then integrate on `wave/s3w2` exactly as wave 1 (§"Integration method";
+   §"Wave 1 result" has the commands' outcome). After pa/11 merges: re-check every open item's Touches against the
+   split files and re-plan waves 3+ (the owner order for 3+ is a simulation).
+
+### Lessons from wave 1 (apply them)
+- Relay verbatim, ≤4 per AskUserQuestion, never merge two lanes' questions; re-read `pending.id` right before
+  `s1h.sh answer`; check a lane's factual claim read-only when cheap (several were checked in wave 1; all held).
+- Merge checks found real gaps the PR bodies left open: run every "Not verified" running-system step yourself in a
+  scratch clone with a local bare remote (wave 1: #391 scrub, #392 `--affected`/`--last`, #394 data-loss replay,
+  #395 counter + RESUME finalize). A green check can be on a stale head — compare the PR head to the checked sha.
+- A review that lands AFTER a park is drained by nobody: read the latest bot comment on the final head and put any
+  findings to the owner.
+- **Crash recovery:** a machine reset kills every lane; resume each by run id (`s1h.sh launch <lane> --resume-run
+  <run_id>`), staggered. Resumed lanes ask a routine "unsettled child" FINALIZE question for agents of the dead
+  session (s3-a, s3-b); answering "proceed" was correct.
+- **Closeout pushes can fail the scrub** (`meta-push FAILED … home_path`; s3-c, s3-d). Carry by hand: copy new
+  files, append only the requirement's closeout block and new `results.jsonl` lines, rewrite home paths (and the
+  `/api/users/<42>/` false positive) — **check with `grep -iE`, the scrub is case-insensitive**. Then sanitize the
+  lane copy and push it to the throwaway branch so `teardown` (refuses `local_ahead`) can run.
+- `s1h.sh teardown` does NOT refuse a lane whose meta-sync status is `base_branch_mismatch` (s3-b) — confirm its
+  records are carried (diff the lane's managed files against the primary) before tearing it down.
+- When the owner merges the wave PR with a merge commit, all lane PRs flip MERGED within a second and the watchers
+  close out within ~60 s; no targeted resume was needed.
+- Run IDs: one lane (s3-b) stamped its run id in local time, the others UTC — read ids from the run files' titles.
+
+## HANDOVER (superseded 2026-10-06; 2026-10-05 ~11:45Z) — from session 944cda59 to session 6e8f1058
 **Single owner from now: session 6e8f1058.** 944cda59 runs nothing for S3 (no monitor, sampler, watcher or lane)
 and edits no S3 record after this push.
 
