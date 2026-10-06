@@ -1,3 +1,0 @@
-<!-- bump: patch -->
-meta-sync home_path scrub matches home paths only; schema examples are scrub-safe
-The `home_path` scrub rule is anchored: `/Users/<x>/` or `/home/<x>/` counts only at the start of a line or after a character that cannot end a path segment, so `--state-dir`, `HOME=`, quoted, `file:///`, `C:/` and `../` home paths still hit while an API route's `/api/users/42/` (the S3 false positive that blocked a lane's trail push) no longer does. A table test, a mutation control and a guard against literal home-path examples in agents, commands and skills (read off the shipped rule) pin it; the brief template's home-path rule and Launch Pad action 3b describe the new scope, and the result-schema examples and validator fixtures use the `/Users/<name>/` placeholder.
