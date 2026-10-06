@@ -105,8 +105,12 @@ T="$HERE/automate-trail.sh"
 SKILL="$HERE/../skills/automate-loop/SKILL.md"
 
 pass=0; fail=0
-ok() { echo "  ok: $1"; pass=$((pass+1)); }
-no() { echo "  FAIL: $1"; fail=$((fail+1)); }
+# A shadow tally the summary cross-checks: a leg that reuses `pass`/`fail` as a loop
+# variable clobbers the counter silently (CL5's `for pass in 1 2` once printed
+# '40 passed' for 504 ok lines). The `_tally_` prefix keeps it out of any leg's namespace.
+_tally_ok=0; _tally_no=0
+ok() { echo "  ok: $1"; pass=$((pass+1)); _tally_ok=$((_tally_ok+1)); }
+no() { echo "  FAIL: $1"; fail=$((fail+1)); _tally_no=$((_tally_no+1)); }
 
 TOP="$(mktemp -d "${TMPDIR:-/tmp}/test-automate-trail.XXXXXX")"
 TOP="$(cd "$TOP" && pwd -P)"
@@ -1714,6 +1718,306 @@ else
 fi
 unset LOOMWRIGHT_MEMORY_REPO_ALLOWLIST
 
+# =============================================================================
+echo "== F. finalize-empty / resume-glob --finalize (a closed-out run finalizes itself) =="
+# SKILL §1.5 `finalize-empty` row, §3 "`done`", §4 step 1. closeout never writes
+# `done`; a finished lane run stayed paused/awaiting_go and every RESUME listed it.
+AUTD=".supervisor/automate"
+fe_glob() { (cd "$P" && bash "${FE_H:-$SPYD/automate-helpers.sh}" resume-glob "$AUTD" --finalize 2>"$FX/fe.err"); }
+fe_rf() { # <run_id> <status> <pause_reason> <REQ queue box> <current status>
+  cat > "$P/$AUTD/$1.md" <<RF
+# Automate Run: fixture $1
+## Status: $2
+## Queue
+- [$4] $REQ
+- [x] .supervisor/requirements/f/02-b.md  # skipped: owner said so
+## Current
+- item: $REQ | status: $5 | pr: $PRURL | branch: feature/x
+- pause_reason: $3
+## Progress
+- t0 picked $REQ
+RF
+}
+
+# (F0) invariant: a closeout that checks off the LAST Queue item leaves ## Status: paused.
+fe_invariant() { # <fixture-n> <scripts-dir> → 0 when the run stayed paused/awaiting_go with remaining 0
+  closeout_fixture "$1"
+  (cd "$P" && bash "$2/automate-helpers.sh" closeout "$RF_REL" "$REQ" "$PRURL" >/dev/null)
+  [ "$(bash "$H" remaining "$P/$RF_REL")" = 0 ] && grep -qxF -- "## Status: paused" "$P/$RF_REL" && grep -qxF -- "- pause_reason: awaiting_go" "$P/$RF_REL"
+}
+if fe_invariant 200 "$SPYD"; then ok "(F0) closeout checking off the last item leaves ## Status: paused / awaiting_go (remaining 0) — closeout never writes done"; else no "(F0) closeout state: $(grep -E '^## Status|^- pause_reason' "$P/$RF_REL" | tr '\n' '|')"; fi
+MUTF="$TOP/mutd-done"; mkdir -p "$MUTF"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTF/"
+awk '{ print } index($0, "    echo \"closeout: reconciled — ## Current $item status done, pause_reason $want\"")==1 { print "    { sed \"s/^## Status: paused/## Status: done/\" \"$rf\" > \"$rf.m\" && mv \"$rf.m\" \"$rf\"; }" }' "$T" > "$MUTF/automate-trail.sh"
+if cmp -s "$T" "$MUTF/automate-trail.sh" || ! bash -n "$MUTF/automate-trail.sh"; then no "(F0) closeout-writes-done mutant not built"
+elif fe_invariant 201 "$MUTF"; then no "(F0) mutation control REFUTED: a closeout that writes done still passed the invariant leg"
+else ok "(F0) control: a closeout mutant that writes '## Status: done' turns the invariant leg red ($(grep '^## Status' "$P/$RF_REL"))"
+fi
+
+# (F1) branch mode OFF: closeout leaves the eligible state; resume-glob --finalize finalizes it.
+closeout_fixture 202
+run_closeout >/dev/null
+[ -n "$(git -C "$P" diff --cached --name-only)" ] && ok "(F1) precondition: closeout's trail-pr left trail blobs staged in the primary index" || no "(F1) precondition: nothing staged after closeout"
+plain_before="$(cd "$P" && bash "$H" resume-glob "$AUTD")"
+[ "$plain_before" = "$AUTD/$RUN_ID.md" ] && ok "(F1) plain resume-glob lists the closed-out run (the incident)" || no "(F1) plain list: $plain_before"
+spy_reset
+lst="$(fe_glob)"; rc=$?
+sed 's/^/    | /' "$FX/fe.err"
+[ "$rc" -eq 0 ] && [ -z "$lst" ] && ok "(F1) resume-glob --finalize: exit 0 and the finalized run is NOT listed" || no "(F1) rc=$rc list='$lst'"
+grep -qxF -- "## Status: done" "$P/$RF_REL" && grep -qxF -- "- pause_reason: null" "$P/$RF_REL" && ok "(F1) ## Status: done + pause_reason: null" || no "(F1) state: $(grep -E '^## Status|^- pause_reason' "$P/$RF_REL" | tr '\n' '|')"
+grep -qxF -- "- item: $REQ | status: done | pr: $PRURL | branch: feature/x" "$P/$RF_REL" && ok "(F1) ## Current item line byte-unchanged" || no "(F1) item line changed"
+grep -qE '^- [^ ]+ auto-finalized: queue empty after closeout$' "$P/$RF_REL" && ok "(F1) Progress: auto-finalized: queue empty after closeout" || no "(F1) no auto-finalized line"
+grep -qE "^trail-pr $P/$RF_REL --reason done\$" "$SPYLOG" && ok "(F1) trail-pr <runfile> --reason done via the dispatcher (the Termination call)" || no "(F1) trail-pr call: $(tr '\n' '|' < "$SPYLOG" 2>/dev/null)"
+grep -qE '^- [^ ]+ trail-pr: (opened|pushed|skipped)' "$P/$RF_REL" && ok "(F1) the trail line is appended to ## Progress" || no "(F1) trail line not appended"
+grep -qxF "finalize-empty: finalized $AUTD/$RUN_ID.md" < <(head -n1 "$FX/fe.err") && grep -q '^trail-unstage: ' "$FX/fe.err" && ok "(F1) stderr: finalized line + trail-unstage line" || no "(F1) stderr: $(tr '\n' '|' < "$FX/fe.err")"
+stg="$(git -C "$P" diff --cached --name-only)"
+[ -z "$stg" ] && ok "(F1) mode off: the primary index carries NO staged path of the finalized run" || no "(F1) still staged: $(printf '%s' "$stg" | tr '\n' ' ')"
+[ ! -d "$P/.supervisor/run.lock" ] && ok "(F1) run lock released" || no "(F1) run lock leaked"
+c1="$(cksum < "$P/$RF_REL")"
+o2="$(cd "$P" && bash "$H" finalize-empty "$RF_REL")"
+[ "$o2" = "finalize-empty: skipped — not paused" ] && [ "$c1" = "$(cksum < "$P/$RF_REL")" ] && ok "(F1) a second finalize is a no-op ('$o2')" || no "(F1) second finalize: '$o2'"
+# Control: without the mode-off trail-unstage the finalized run's trail blobs stay staged.
+MUTU="$TOP/mutd-unstage"; mkdir -p "$MUTU"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTU/"
+grep -v 'l="$(bash "$HLP" trail-unstage "$rf_abs"' "$T" > "$MUTU/automate-trail.sh"
+if cmp -s "$T" "$MUTU/automate-trail.sh" || ! bash -n "$MUTU/automate-trail.sh"; then no "(F1) unstage mutant not built"
+else
+  closeout_fixture 203; run_closeout >/dev/null
+  FE_H="$MUTU/automate-helpers.sh" fe_glob >/dev/null
+  grep -qxF -- "## Status: done" "$P/$RF_REL" && [ -n "$(git -C "$P" diff --cached --name-only)" ] \
+    && ok "(F1) control: without trail-unstage the finalized run leaves staged trail paths (the clean-index assertion is load-bearing)" || no "(F1) unstage control did not discriminate"
+fi
+# (F1b) the pause_reason line is authored by current-set (SKILL §3 "every write of …
+# its `- pause_reason:` line is ONE current-set call"), run on the STAGED copy — the
+# run file itself still changes in one runfile-write.
+grep -qE "^current-set /[^ ]*/$AUTD/$RUN_ID\.md\.fe\.[A-Za-z0-9]+ --pause-reason null\$" "$SPYLOG" \
+  && ok "(F1b) finalize-empty writes pause_reason via current-set --pause-reason null on the staged copy" \
+  || no "(F1b) current-set call: $(grep '^current-set' "$SPYLOG" 2>/dev/null | tr '\n' '|')"
+[ -z "$(cd "$P/$AUTD" && ls -A | grep -F '.fe.')" ] && ok "(F1b) no staged .fe. copy left behind" || no "(F1b) leftover: $(ls -A "$P/$AUTD" | tr '\n' ' ')"
+# A refusing current-set leaves the run file byte-unchanged and still eligible
+# (still listed; a later --finalize retries) — never a half-finalized done+awaiting_go.
+MUTC="$TOP/mutd-cs"; mkdir -p "$MUTC"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTC/"
+mv "$MUTC/automate-helpers.sh" "$MUTC/automate-helpers.real.sh"
+cat > "$MUTC/automate-helpers.sh" <<'SHIM'
+#!/usr/bin/env bash
+if [ "${1:-}" = current-set ]; then echo "current-set: refused — test" >&2; exit 1; fi
+exec bash "$(dirname "$0")/automate-helpers.real.sh" "$@"
+SHIM
+closeout_fixture 206; run_closeout >/dev/null
+c0="$(cksum < "$P/$RF_REL")"
+lst="$(FE_H="$MUTC/automate-helpers.sh" fe_glob)"
+[ "$lst" = "$AUTD/$RUN_ID.md" ] && [ "$c0" = "$(cksum < "$P/$RF_REL")" ] && grep -q 'not finalized — finalize-empty: skipped — runfile-write refused' "$FX/fe.err" \
+  && [ -z "$(cd "$P/$AUTD" && ls -A | grep -F '.fe.')" ] && [ ! -d "$P/.supervisor/run.lock" ] \
+  && ok "(F1b) current-set refusal ⇒ run file byte-unchanged, still listed, no staged copy, lock released" \
+  || no "(F1b) refusal leg: list='$lst' stderr=$(tr '\n' '|' < "$FX/fe.err")"
+lst="$(fe_glob)"
+[ -z "$lst" ] && grep -qxF -- "## Status: done" "$P/$RF_REL" && grep -qxF -- "- pause_reason: null" "$P/$RF_REL" \
+  && ok "(F1b) the next --finalize retries cleanly and finalizes" || no "(F1b) retry: list='$lst'"
+
+# (F2) eligibility + lock: only paused/awaiting_go/remaining-0/Current-done runs finalize.
+new_fixture 204
+( cd "$P" && git checkout -q -- README; rm -f stray.txt; rm -f "$AUTD"/*.md )
+fe_rf automate-a-eligible paused awaiting_go x done
+fe_rf automate-b-unchecked paused awaiting_go ' ' done
+fe_rf automate-c-otherreason paused awaiting_merge x done
+fe_rf automate-d-curnotdone paused awaiting_go x awaiting_merge
+fe_rf automate-e-eligible paused awaiting_go x done
+want_all="$(printf '%s\n' "$AUTD/automate-a-eligible.md" "$AUTD/automate-b-unchecked.md" "$AUTD/automate-c-otherreason.md" "$AUTD/automate-d-curnotdone.md" "$AUTD/automate-e-eligible.md")"
+[ "$(cd "$P" && bash "$H" resume-glob "$AUTD")" = "$want_all" ] && ok "(F2) plain resume-glob output unchanged (all five listed, sorted)" || no "(F2) plain list: $(cd "$P" && bash "$H" resume-glob "$AUTD" | tr '\n' ' ')"
+sums() { (cd "$P/$AUTD" && cksum automate-*.md); }
+s0="$(sums)"
+bash "$HERE/run-lock.sh" acquire --owner fe-test-holder --root "$P" >/dev/null 2>&1
+lst="$(fe_glob)"
+[ "$lst" = "$want_all" ] && [ "$s0" = "$(sums)" ] && ok "(F2) run lock held ⇒ nothing finalized, every run listed, all byte-unchanged" || no "(F2) lock-held list: $(printf '%s' "$lst" | tr '\n' ' ')"
+[ "$(grep -c 'not finalized — finalize-empty: skipped — run lock held by fe-test-holder' "$FX/fe.err")" = 2 ] && ok "(F2) stderr names the lock holder for both eligible runs" || no "(F2) stderr: $(tr '\n' '|' < "$FX/fe.err")"
+bash "$HERE/run-lock.sh" release --owner fe-test-holder --root "$P" >/dev/null 2>&1
+spy_reset
+lst="$(fe_glob)"
+sed 's/^/    | /' "$FX/fe.err"
+want_rest="$(printf '%s\n' "$AUTD/automate-b-unchecked.md" "$AUTD/automate-c-otherreason.md" "$AUTD/automate-d-curnotdone.md")"
+[ "$lst" = "$want_rest" ] && ok "(F2) lock released ⇒ the two eligible runs finalized; unchecked / other pause_reason / Current-not-done listed" || no "(F2) list: $(printf '%s' "$lst" | tr '\n' ' ')"
+for r in automate-a-eligible automate-e-eligible; do grep -qxF -- "## Status: done" "$P/$AUTD/$r.md" || no "(F2) $r not done"; done
+s1="$(sums | grep -v -e '-eligible\.md$')"; s0r="$(printf '%s\n' "$s0" | grep -v -e '-eligible\.md$')"
+[ "$s1" = "$s0r" ] && ok "(F2) ineligible runs byte-untouched" || no "(F2) an ineligible run was modified"
+[ "$(spy_count '^trail-pr .* --reason done$' "$SPYLOG")" = 2 ] && [ "$(count_creates)" = 2 ] && ok "(F2) mode off: one trail-pr --reason done (one trail PR) per finalized run" || no "(F2) trail calls: $(spy_count '^trail-pr' "$SPYLOG") creates: $(count_creates)"
+[ "$(grep -c '^finalize-empty: finalized ' "$FX/fe.err")" = 2 ] && ! grep -q 'not finalized' "$FX/fe.err" && ok "(F2) stderr: two finalized lines, no ineligible noise" || no "(F2) stderr: $(tr '\n' '|' < "$FX/fe.err")"
+
+# (F3) branch mode ON: finalized; trail-pr meta-pushes (no PR), no trail-unstage.
+export LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="acme/widgets,vikashruhilgit/loomwright"
+new_fixture 205; bm_switch
+fe_rf "$RUN_ID" paused awaiting_go x done
+: > "$GH_STUB_DIR/argv.log"
+lst="$(fe_glob)"
+sed 's/^/    | /' "$FX/fe.err"
+[ -z "$lst" ] && grep -qxF -- "## Status: done" "$P/$RF_REL" && ok "(F3) branch mode: finalized and not listed" || no "(F3) list='$lst' status=$(grep '^## Status' "$P/$RF_REL")"
+grep -q "^trail-pr: meta-pushed $BMB" "$FX/fe.err" && ! grep -q '^trail-unstage' "$FX/fe.err" && ok "(F3) trail meta-pushed; no trail-unstage in branch mode" || no "(F3) stderr: $(tr '\n' '|' < "$FX/fe.err")"
+[ "$(count_creates)" = 0 ] && ok "(F3) no gh pr create in branch mode" || no "(F3) a PR was created"
+grep -qxF -- "## Status: done" < <(bm_show "$RF_REL0") && ok "(F3) the metadata branch holds the finalized run file" || no "(F3) branch run file not done"
+unset LOOMWRIGHT_MEMORY_REPO_ALLOWLIST
+
+# =============================================================================
+echo "== CL. closeout-classify: every closeout string is classified; kept/unknown/refusal ⇒ leftover (automate-followups/32 Part A) =="
+# SKILL §1.5 `closeout-classify` row, §6 step 1 "Close-out leftover gate".
+cls() { bash "$H" closeout-classify "$@"; }
+# (CL1) table drift guard: every closeout string template automate-trail.sh can
+# print (closeout, _co_current, _sync_primary's SYNC_SKIP) matches a CLOSEOUT_TABLE
+# row — a new string must be classified on purpose, never fall through as unknown.
+co_templates() { # <automate-trail.sh> → one sample line per closeout string template
+  awk '/^_sync_primary\(\) \{/{on=1} /^# finalize-empty \(SKILL/{on=0} on && $0 !~ /^[[:space:]]*#/' "$1" \
+    | grep -oE '((echo |=)"(\$S |closeout: )[^"]*"|SYNC_SKIP="[^"]*")' \
+    | sed -E 's/^(echo |=)"//; s/^SYNC_SKIP="/closeout: skipped — /; s/"$//; s/^\$S /closeout: skipped — /' \
+    | sed -E 's/\$\([^)]*\)/X/g; s/\$\{[^}]*\}/X/g; s/\$[A-Za-z_][A-Za-z0-9_]*/X/g' \
+    | grep -vxE 'closeout: skipped —( X)? ?' | sed '/^$/d' | env LC_ALL=C sort -u   # "$S $SYNC_SKIP": the SYNC_SKIP templates carry it
+}
+cl_unknown() { # <automate-trail.sh> → the templates the classifier reads as unknown
+  local t
+  while IFS= read -r t; do
+    grep -q "	unknown	" < <(printf '%s\n' "$t" | cls --run r --item i --pr p) && printf '%s\n' "$t"
+  done <<CLT
+$(co_templates "$1")
+CLT
+  return 0
+}
+ntpl="$(co_templates "$T" | wc -l | tr -d ' ')"
+unk="$(cl_unknown "$T")"
+[ "$ntpl" -ge 30 ] && [ -z "$unk" ] && ok "(CL1) all $ntpl closeout string templates in automate-trail.sh match a CLOSEOUT_TABLE row" || no "(CL1) templates=$ntpl unclassified: $(printf '%s' "$unk" | tr '\n' '|')"
+MUTCL="$TOP/mutd-cl"; mkdir -p "$MUTCL"
+awk '{ print } index($0, "  if [ \"$st\" != \"merged\" ]; then echo \"$S pr not merged")==1 { print "  echo \"$S a brand-new refusal nobody classified\"" }' "$T" > "$MUTCL/automate-trail.sh"
+if cmp -s "$T" "$MUTCL/automate-trail.sh"; then no "(CL1) drift mutant not built"
+else
+  case "$(cl_unknown "$MUTCL/automate-trail.sh")" in *"a brand-new refusal nobody classified"*) ok "(CL1) control: a new unclassified closeout string is caught by the drift guard" ;; *) no "(CL1) control: drift guard missed a new string" ;; esac
+fi
+# (CL2) literal lines.
+cl_one() { printf '%s\n' "$1" | cls --run R1 --item q/01.md --pr "$PRURL"; }
+for l in "closeout: synced — main at abc1234" "closeout: skipped — already synced (main at origin/main)" "closeout: skipped — ## Current is q/02.md (https://x/pull/9), not this item/PR" "closeout: skipped — ## Current already done" "closeout: removed — branch feature/x (tip == merged head abc)"; do
+  [ "$(cl_one "$l")" = complete ] && ok "(CL2) complete: ${l#closeout: }" || no "(CL2) not complete: $l ⇒ $(cl_one "$l")"
+done
+want_row() { [ "$(cl_one "$1")" = "leftover	R1	q/01.md	$PRURL	$2	${1#closeout: }" ]; }
+want_row "closeout: removed — worktree /w/a; kept /w/b still dirty after salvage" worktree && ok "(CL2) mixed 'removed — worktree A; kept B' ⇒ ONE worktree leftover row (kept wins over the verb)" || no "(CL2) mixed line: $(cl_one "closeout: removed — worktree /w/a; kept /w/b still dirty after salvage")"
+want_row "closeout: skipped — pr not merged (awaiting_merge)" gate && ok "(CL2) 'skipped — pr not merged …' ⇒ leftover (gate)" || no "(CL2) pr not merged"
+want_row "closeout: frobnicated — something new" unknown && ok "(CL2) an unknown closeout: line ⇒ leftover (unknown)" || no "(CL2) unknown line: $(cl_one 'closeout: frobnicated — something new')"
+want_row "closeout: skipped — uncommitted changes outside the trail paths (README)" sync && ok "(CL2) sync skipped on a dirty primary ⇒ leftover (sync)" || no "(CL2) dirty sync"
+want_row "closeout: skipped — no done brief" stamp && ok "(CL2) 'skipped — no done brief' ⇒ leftover (stamp)" || no "(CL2) no done brief"
+o="$(printf 'brief-repair: repaired x\ntrail-pr: skipped — gh failed\n' | cls --run R1)"
+[ "$o" = "leftover	R1	-	-	none	no closeout: line in the input" ] && ok "(CL2) no closeout: line at all ⇒ one leftover row (nothing proves the close-out ran); brief-repair/trail-pr lines ignored" || no "(CL2) no closeout line: $o"
+bash "$H" closeout-classify --bogus </dev/null >/dev/null 2>&1; [ $? -eq 1 ] && ok "(CL2) usage error exits 1" || no "(CL2) usage error rc"
+
+echo "== CL. a real close-out that kept a worktree + a branch (tip != merged head); 'Clean up now' never forces =="
+REALGIT="$(command -v git)"
+GSHIM="$TOP/gshim"; mkdir -p "$GSHIM"
+printf '#!/usr/bin/env bash\necho "git $*" >> "$GITLOG"\nexec "%s" "$@"\n' "$REALGIT" > "$GSHIM/git"; chmod +x "$GSHIM/git"
+CUD="$TOP/cud"; mkdir -p "$CUD"; cp "$SPYD"/*.sh "$SPYD"/*.py "$CUD/"
+cat > "$CUD/automate-helpers.sh" <<'SHIM'
+#!/usr/bin/env bash
+if [ "${1:-}" = trail-pr ]; then echo "trail-pr: skipped — stubbed"; exit 0; fi
+exec bash "$(dirname "$0")/automate-helpers.real.sh" "$@"
+SHIM
+mv "$CUD/worktree-salvage.sh" "$CUD/worktree-salvage.real.sh"
+printf '#!/usr/bin/env bash\necho "SALVAGE $1" >> "$GITLOG"\nexec bash "$(dirname "$0")/worktree-salvage.real.sh" "$@"\n' > "$CUD/worktree-salvage.sh"
+export GITLOG="$TOP/git.log"
+cu_closeout() { (cd "$P" && PATH="$GSHIM:$PATH" bash "$CUD/automate-helpers.sh" closeout "$RF_REL" "$REQ" "$PRURL"); }
+closeout_fixture 301
+( cd "$FX/wt-pr" && echo more > more.txt && git add more.txt && git commit -qm "other work, same branch name" )
+moved_tip="$(git -C "$P" rev-parse feature/x)"
+: > "$GITLOG"
+out="$(cu_closeout)"
+rows="$(printf '%s\n' "$out" | cls --run "$RUN_ID" --item "$REQ" --pr "$PRURL")"
+printf '%s\n' "$rows" | sed 's/^/    | /'
+[ "$(printf '%s\n' "$rows" | cut -f5 | tr '\n' ' ')" = "worktree branch " ] && ok "(CL3) one leftover row per kept step: worktree + branch" || no "(CL3) rows: $(printf '%s' "$rows" | cut -f5 | tr '\n' ' ')"
+[ "$(printf '%s\n' "$rows" | cut -f1-4 | env LC_ALL=C sort -u)" = "leftover	$RUN_ID	$REQ	$PRURL" ] && ok "(CL3) every row carries run_id / item / pr (a 'Clean up now' target)" || no "(CL3) row targets: $(printf '%s' "$rows" | cut -f1-4 | tr '\n' '|')"
+# "Clean up now" = re-run closeout, re-classify ONCE.
+out2="$(cu_closeout)"
+rows2="$(printf '%s\n' "$out2" | cls --run "$RUN_ID" --item "$REQ" --pr "$PRURL")"
+[ "$(printf '%s\n' "$rows2" | cut -f5 | tr '\n' ' ')" = "worktree branch " ] && ok "(CL4) 'Clean up now' re-run: both leftovers survive (reported, asked Keep/Stop only)" || no "(CL4) re-run rows: $rows2"
+[ -d "$FX/wt-pr" ] && [ "$(git -C "$P" rev-parse feature/x)" = "$moved_tip" ] && ok "(CL4) the worktree and the branch at a foreign tip are still there" || no "(CL4) foreign-tip worktree/branch removed"
+grep -F "worktree remove $FX/wt-pr" "$GITLOG" >/dev/null && no "(CL4) a foreign-tip worktree was removed" || ok "(CL4) never 'git worktree remove' on the foreign-tip worktree"
+grep -E '^git (.* )?branch -D' "$GITLOG" >/dev/null && no "(CL4) git branch -D ran on a foreign tip" || ok "(CL4) never 'git branch -D' on a foreign tip"
+grep -E '^git (.* )?(reset|stash)( |$)|--force|^git (.* )?push( .*)? (-f|\+)' "$GITLOG" >/dev/null && no "(CL4) a reset/stash/force: $(grep -E 'reset|stash|--force' "$GITLOG" | head -3 | tr '\n' '|')" || ok "(CL4) never a reset, a stash or a force (git argv log)"
+# Matching tip: the worktree is removed, and only AFTER worktree-salvage.sh ran on it.
+closeout_fixture 302
+: > "$GITLOG"
+cu_closeout >/dev/null
+ls_="$(grep -nF "SALVAGE $FX/wt-pr" "$GITLOG" | head -n1 | cut -d: -f1)"
+lr_="$(grep -nF "worktree remove $FX/wt-pr" "$GITLOG" | head -n1 | cut -d: -f1)"
+[ -n "$ls_" ] && [ -n "$lr_" ] && [ "$ls_" -lt "$lr_" ] && [ ! -d "$FX/wt-pr" ] && ok "(CL4) a merged-head worktree is removed only after worktree-salvage.sh ran on it (log lines $ls_ < $lr_)" || no "(CL4) salvage/remove order: salvage=$ls_ remove=$lr_"
+
+echo "== CL. an already closed-out item: complete, nothing asked, ≤1 'nothing to close out' line after two passes =="
+closeout_fixture 303
+o0="$(run_closeout)"
+[ "$(printf '%s\n' "$o0" | cls --run "$RUN_ID" --item "$REQ" --pr "$PRURL" --record "$P/$RF_REL")" = complete ] && ok "(CL5) the first, real close-out classifies complete" || no "(CL5) first close-out: $(printf '%s\n' "$o0" | cls)"
+grep -q 'nothing to close out' "$P/$RF_REL" && no "(CL5) a close-out that changed things recorded 'nothing to close out'" || ok "(CL5) a close-out that changed things records no 'nothing to close out' line"
+for cl5_pass in 1 2; do
+  o="$(run_closeout)"
+  v="$(printf '%s\n' "$o" | cls --run "$RUN_ID" --item "$REQ" --pr "$PRURL" --record "$P/$RF_REL")"
+  [ "$v" = complete ] || no "(CL5) pass $cl5_pass: $v"
+  [ "$cl5_pass" = 1 ] && { cp "$P/$RF_REL" "$FX/rf.p1"; cp "$P/$REQ" "$FX/req.p1"; }
+done
+n_nt="$(grep -c "closeout: nothing to close out — $REQ\$" "$P/$RF_REL")"
+[ "$n_nt" = 1 ] && ok "(CL5) two idempotent passes ⇒ complete both times, exactly ONE 'closeout: nothing to close out' line" || no "(CL5) nothing-to-close-out lines: $n_nt"
+cmp -s "$FX/rf.p1" "$P/$RF_REL" && cmp -s "$FX/req.p1" "$P/$REQ" && ok "(CL5) the second pass mutates nothing (run file + requirement byte-identical)" || no "(CL5) second pass mutated files"
+
+echo "== CO. closeout-others: another run's merged item is closed out before PICK (cross-run close-out) =="
+RB="automate-2026-01-02-000000"; RBF=".supervisor/automate/$RB.md"
+mk_rb() { printf '# Automate Run: current\n## Status: running\n## Queue\n- [ ] .supervisor/requirements/f/02-b.md\n## Current\n- item: null | status: null | pr: null | branch: null\n- pause_reason: null\n## Progress\n- t0 run created\n' > "$P/$RBF"; }
+co_others() { (cd "$P" && bash "${CO_H:-$SPYD/automate-helpers.sh}" closeout-others .supervisor/automate "$@"); }
+closeout_fixture 310; mk_rb; spy_reset
+out="$(co_others --record "$RBF")"; rc=$?
+printf '%s\n' "$out" | sed 's/^/    | /'
+[ "$rc" -eq 0 ] && grep -qxF "closeout-others: $RUN_ID $REQ $PRURL" <<<"$out" && ok "(CO1) header names A's run, item and PR; exit 0" || no "(CO1) rc=$rc header missing"
+grep -qxF -- "- [x] $REQ" "$P/$RF_REL" && grep -qF -- "- **PR:** $PRURL" "$P/$REQ" && [ ! -d "$FX/wt-pr" ] && ok "(CO1) A closed out: check-off, stamp, PR worktree removed" || no "(CO1) A not closed out"
+grep -qE "^trail-pr $P/$RF_REL --reason closeout\$" "$SPYLOG" && ok "(CO1) A's trail via the dispatcher" || no "(CO1) no trail-pr call for A"
+grep -qE "^closeout $P/$RF_REL $REQ $PRURL\$" "$SPYLOG" && ! grep -q -- '--session-id' "$SPYLOG" && ok "(CO1) closeout called without --session-id (its own lock)" || no "(CO1) closeout call: $(grep '^closeout' "$SPYLOG" | tr '\n' '|')"
+grep -qE '^- .* closeout https://github.com/acme/widgets/pull/7: closeout: checked' "$P/$RF_REL" && ok "(CO1) A's Progress carries its closeout lines" || no "(CO1) A Progress missing closeout lines"
+grep -qx complete <<<"$out" && grep -qxF "closeout-others: recorded — cross-run closeout $RUN_ID $REQ: complete" <<<"$out" && ok "(CO1) classify answer 'complete' + 'recorded — cross-run closeout …' line" || no "(CO1) verdict/record lines missing"
+grep -qE "^- [^ ]+ cross-run closeout $RUN_ID $REQ: complete\$" "$P/$RBF" && ! grep -q 'https\?://' "$P/$RBF" && ok "(CO1) B's Progress records the cross-run close-out and carries NO PR URL" || no "(CO1) B record: $(grep cross-run "$P/$RBF")"
+[ -z "$(git -C "$P" diff --cached --name-only)" ] && grep -q '^trail-unstage: unstaged' <<<"$out" && ok "(CO1) mode off: no A trail path left staged in the primary index" || no "(CO1) staged: $(git -C "$P" diff --cached --name-only | tr '\n' ' ')"
+o2="$(co_others --record "$RBF")"
+[ -z "$o2" ] && ok "(CO1) a second run is silent (A's item is now done)" || no "(CO1) second run: $o2"
+MUTCO="$TOP/mutd-co"; mkdir -p "$MUTCO"; cp "$SPYD"/*.sh "$SPYD"/*.py "$MUTCO/"
+grep -vF 'l="$(bash "$HLP" trail-unstage "$f"' "$T" > "$MUTCO/automate-trail.sh"
+if cmp -s "$T" "$MUTCO/automate-trail.sh" || ! bash -n "$MUTCO/automate-trail.sh"; then no "(CO1) unstage mutant not built"
+else
+  closeout_fixture 311; mk_rb
+  CO_H="$MUTCO/automate-helpers.sh" co_others --record "$RBF" >/dev/null
+  grep -qxF -- "- [x] $REQ" "$P/$RF_REL" && [ -n "$(git -C "$P" diff --cached --name-only)" ] && ok "(CO1) control: without trail-unstage A's trail paths stay staged (the clean-index assertion is load-bearing)" || no "(CO1) unstage control did not discriminate"
+fi
+for v in OPEN CLOSED unreadable done; do
+  closeout_fixture "31$(case $v in OPEN) echo 2;; CLOSED) echo 3;; unreadable) echo 4;; done) echo 5;; esac)"; mk_rb
+  case "$v" in
+    OPEN|CLOSED) jq --arg s "$v" '.[0].state = $s' "$GH_STUB_DIR/prs.json" > "$GH_STUB_DIR/p.tmp" && mv "$GH_STUB_DIR/p.tmp" "$GH_STUB_DIR/prs.json" ;;
+    unreadable) touch "$GH_STUB_DIR/pr-view-fail" ;;
+    done) sed "s#^- item: $REQ | status: awaiting_merge#- item: $REQ | status: done#" "$P/$RF_REL" > "$P/rf.t" && mv "$P/rf.t" "$P/$RF_REL" ;;
+  esac
+  a0="$(cksum < "$P/$RF_REL")"; q0="$(cksum < "$P/$REQ")"; b0="$(cksum < "$P/$RBF")"
+  o="$(co_others --record "$RBF")"
+  [ -z "$o" ] && [ "$a0" = "$(cksum < "$P/$RF_REL")" ] && [ "$q0" = "$(cksum < "$P/$REQ")" ] && [ "$b0" = "$(cksum < "$P/$RBF")" ] && [ -d "$FX/wt-pr" ] \
+    && ok "(CO2) A $v ⇒ A, its requirement and B byte-untouched, no line" || no "(CO2) $v: out='$o'"
+done
+# No --record file yet (a new run): the record line is printed for the engine to append once the run file exists.
+closeout_fixture 316
+o="$(co_others --record .supervisor/automate/not-created-yet.md)"
+grep -qxF "closeout-others: record — cross-run closeout $RUN_ID $REQ: complete" <<<"$o" && ok "(CO3) no run file yet ⇒ 'record — …' printed, nothing appended" || no "(CO3) $o"
+
+echo "== K. SKILL wiring (Part A, automate-followups/32) =="
+s6="$(awk '/^## §6 /{s=1;next} s&&/^## /{exit} s' "$SKILL")"
+gate="$(grep -m1 -F '**Close-out leftover gate' <<<"$s6")"
+for t in 'closeout-classify --run <run_id> --item <item> --pr <pr_url> --record <runfile>`' '**Clean up now**' '**Keep and continue**' '**Stop**' 'ONE owner question batching ≤4 leftovers' 'never proceeds silently' '`current-set <runfile> --pause-reason closeout_leftover`' '`worktree-salvage.sh` runs before any `git worktree remove`' 're-classifies ONCE' 'closeout leftover kept: <run_id> <step> <detail>' '`run-lock.sh release`'; do
+  grep -qF -- "$t" <<<"$gate" && ok "§6 step 1 leftover gate names $t" || no "§6 step 1 leftover gate missing $t"
+done
+s4="$(awk '/^## §4 /{s=1;next} s&&/^## /{exit} s' "$SKILL")"
+grep -qF -- '`meta-entry` (branch mode) → **`closeout-others`** → `resume-glob --finalize` (step 1) → list / ask (step 4)' <<<"$s4" && ok "§4 start order: meta-entry → closeout-others → resume-glob --finalize → list/ask" || no "§4 start order missing"
+grep -qF -- '`closeout_leftover`, `limit_reached` write the park state' "$SKILL" && ok "trail no-park list names closeout_leftover" || no "no-park list missing closeout_leftover"
+grep -qF -- '**Other runs'"'"' merged items (`closeout-others`' "$SKILL" && ok "§8 names the cross-run close-out" || no "§8 cross-run bullet missing"
+grep -qF 'nothing surfaces a live watcher at SessionStart' "$SKILL" && no "SKILL still says nothing surfaces a live watcher" || ok "SKILL's SessionStart honest limit updated"
+for s in closeout-classify closeout-others; do
+  grep -q "^| \`$s\` |" "$SKILL" && ok "§1.5 row: $s" || no "§1.5 row missing: $s"
+  grep -q "^  $s " <<<"$(bash "$H" --help)" && ok "--help lists $s" || no "--help missing $s"
+done
+grep -qE '^    closeout-others\) exec bash "\$\(dirname "\$0"\)/automate-trail.sh" "\$cmd" "\$@" ;;' "$H" && ok "dispatcher row: closeout-others → automate-trail.sh" || no "closeout-others dispatcher row missing"
+grep -qF 'closeout-classify' "$HERE/../commands/automate.md" && grep -qF 'closeout-others' "$HERE/../commands/automate.md" && ok "commands/automate.md overview names closeout-classify + closeout-others" || no "commands/automate.md surface missing"
+
+if [ "$pass" != "$_tally_ok" ] || [ "$fail" != "$_tally_no" ]; then
+  echo "  FAIL: summary counter clobbered — pass=$pass vs $_tally_ok ok lines, fail=$fail vs $_tally_no FAIL lines (a leg reused pass/fail as a variable)"
+  fail=$((_tally_no+1)); pass=$_tally_ok
+fi
 echo
 echo "test-automate-trail: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
