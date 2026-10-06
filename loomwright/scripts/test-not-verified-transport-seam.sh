@@ -66,7 +66,8 @@ EXECMGR="$PLUGIN_ROOT/agents/execute-manager.md"
 SUPERVISOR="$PLUGIN_ROOT/agents/supervisor.md"
 ASYNCORCH="$PLUGIN_ROOT/skills/async-orchestration/SKILL.md"
 SELFHEAL="$PLUGIN_ROOT/skills/self-heal-advisory/SKILL.md"
-SCHEMAS="$PLUGIN_ROOT/docs/RESULT_SCHEMAS.md"
+# docs/RESULT_SCHEMAS.md is an index; the EXECUTE_RESULT section lives in its split file.
+SCHEMAS="$PLUGIN_ROOT/docs/result-schemas/execute-result.md"
 
 pass=0; fail=0
 ok() { echo "  ok: $1"; pass=$((pass+1)); }
