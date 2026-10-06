@@ -34,7 +34,7 @@ The Launch Pad agent prepares raw goals for autonomous Supervisor execution. It 
 | `--discovery` | No | Force full product discovery even if goal seems clear |
 | `--skip-validation` | No | Skip environment validation (Phase 1) for speed |
 | `--project` | No | Explicit project path (overrides auto-detect) |
-| `--non-interactive` / `--non-interactive-fallback` | No | No human to ask — forwarded from `/autonomous`'s own `--non-interactive-fallback` flag (accepts either spelling). Gates two Phase 6 NEEDS_HUMAN behaviors: a Criterion 14 `executable_acceptance` escalation auto-strips the flagged `cmd:`/bare bullets instead of asking; any other NEEDS_HUMAN reason aborts (`status_reason: "needs_human_non_interactive"`) instead of asking. See `agents/launch-pad.md` §"7-Phase Workflow" Phase 5.5/Phase 6 for the full contract. |
+| `--non-interactive` / `--non-interactive-fallback` | No | No human to ask — forwarded from `/autonomous`'s own `--non-interactive-fallback` flag (accepts either spelling). Every question gate takes its named branch per the **Can't-ask rule** (Critical Rules): Phase 2 `clarification_needed_non_interactive`; Phase 2.5 `no_go_non_interactive`; Phase 6 — a Criterion 14 `executable_acceptance` escalation auto-strips the flagged `cmd:`/bare bullets, any other NEEDS_HUMAN reason aborts (`status_reason: "needs_human_non_interactive"`), PASS saves (`saved_on_pass_non_interactive`), FAIL × 3 blocks (`plan_review_fail_non_interactive`). Executing as a subagent has the same effect. See `agents/launch-pad.md` §"7-Phase Workflow" Phase 5.5/Phase 6 for the full contract. |
 
 ## What This Does
 
@@ -304,6 +304,7 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 - **Verify every file path** exists before including in impact map
 - **If environment has blockers:** output fix instructions, don't offer save
 - **Max 2 rounds** of AskUserQuestion for requirement clarification
+- **Can't-ask rule:** this run cannot ask when `--non-interactive`/`--non-interactive-fallback` is set OR it is executing as a subagent (the ask tool is absent from its tool set) — never from a stdin-TTY probe alone. Every question gate then takes its named branch and never improvises: Phase 2 clarification (incl. step 0's unusable requirement file) → `status: aborted, status_reason: "clarification_needed_non_interactive"` with the open questions listed; Phase 2.5 NO-GO → `status: aborted, status_reason: "no_go_non_interactive"`; Phase 6 NEEDS_HUMAN → action 2a auto-strip / action 2 `needs_human_non_interactive`; Phase 6 PASS → save the unmutated PASSed brief, noted `saved_on_pass_non_interactive`; Plan Review FAIL × 3 → `status: blocked, status_reason: "plan_review_fail_non_interactive"`; memory candidates → write nothing, list them under `memory_candidates_deferred_non_interactive`. Interactive options are unchanged.
 - **Never invent files/APIs/paths** — ask if unsure
 - **Feasibility gate (Phase 2.5)** — soft gate. NO-GO stops pipeline (user can override); CAUTION findings feed into Risk Assessment
 
@@ -361,6 +362,7 @@ Run 5 grounded checks (CLAUDE.md + grep/glob/read), output GO/CAUTION/NO-GO:
 - GO → proceed silently
 - CAUTION → proceed, findings injected into Risk Assessment (Phase 5) with source "Feasibility (Phase 2.5)"
 - NO-GO → stop, AskUserQuestion: Override / Revise (max 1 loop back to Phase 2) / Abort
+- NO-GO + cannot ask (Can't-ask rule) → `status: aborted, status_reason: "no_go_non_interactive"`, no option auto-picked
 
 **Fallback:** Sparse CLAUDE.md → checks 1-3 default to CAUTION with "insufficient project context".
 

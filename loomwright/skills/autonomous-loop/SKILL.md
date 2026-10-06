@@ -93,6 +93,8 @@ if non_interactive AND multi_iter AND NOT --non-interactive-fallback:
 
 When `--non-interactive-fallback` IS set, gates do not call AskUserQuestion — they fail closed: rubric-gate → `status: aborted, status_reason: "rubric_gate_closed_non_interactive"`; no-rubric-gate → `status: done, status_reason: "no_rubric_in_non_interactive"` (the loop accepts the iteration and exits cleanly); adjudication still fires via Supervisor's session, **and the loop auto-forwards `--non-interactive` to the inlined `/supervisor` invocation** (see EXECUTE step 1 — "Auto-forwarded flags"). The forwarding makes Supervisor's Phase 4 `gh` retry path, adjudication AskUserQuestion, and any other Supervisor-owned interactive gates fail closed consistently with the loop's own policy. A single `--non-interactive-fallback` is therefore sufficient for the CI / unattended case — the user does NOT need to also pass `--non-interactive` to `/autonomous`. (`/supervisor` standalone still accepts the flag explicitly; that's a separate invocation path.)
 
+**Main-thread-only by construction:** `/autonomous` is inline-only — no plugin surface Task-spawns it — so "executing as a subagent" never arises here; its gates key on the explicit `--non-interactive-fallback` flag, with the stdin-TTY / `$CI` probe above as the additional signal (never the only one: it false-positives inside the host's Bash tool). Named statuses per gate: `docs/ARCHITECTURE_CONTRACTS.md` §"Question-gate inventory".
+
 **max-iterations validation (AC-10):** after parsing `--max-iterations`:
 
 ```bash
@@ -408,6 +410,8 @@ if [ $? -ne 0 ]; then
     if [ "$non_interactive" = "true" ]; then
       # AC-14 non-interactive fall-through: log and skip verify
       log "gh pr view --json baseRefName failed twice; non-interactive — skipping PR-base verification."
+      # named record: policy_decisions[].decision = "pr_base_verify_skipped_non_interactive"
+      # (Supervisor FINALIZE, the first line of defense, already verified the base or failed closed)
       goto signal_evaluation
     else
       # AC-14 interactive fallback: AskUserQuestion(retry / skip-verify-once / abort)
@@ -474,7 +478,7 @@ review_heal = Task(
 **Branch on `decision` (per the `review-heal` skill outcome model):**
 
 - **`PASS`** → the PR diff is clean (review-heal made no further-needed fixes, or fixed all new+BLOCKING/HIGH issues across its bounded iterations). The loop **continues normally to Signal evaluation** (Signal 1 rubric gate / Signal 2 / no-rubric gate / default termination) — review-heal PASS does not itself change the iterate-or-stop decision.
-- **`ESCALATED`** → review-heal exhausted its bound or the reviewer returned `NEEDS_HUMAN`; findings were posted to the PR and best-effort notifications fired. Surface this to the user through the loop's **existing `AskUserQuestion` escalation surface** — the same in-session interaction model EVALUATE already uses for adjudication / gate surfacing. **Do NOT invent a new gate or prompt mechanism.** The prompt informs the user that the chained review-and-heal escalated (with `remaining_issues` and `pr_url`) and offers the existing continue / stop choices; record a `policy_decisions` entry `{iteration: N, phase: EVALUATE, decision: "review_heal_escalated", source: "autonomous_review_heal"}`. Under `--non-interactive-fallback` (no TTY), this escalation fails closed consistent with the loop's other gates rather than calling AskUserQuestion.
+- **`ESCALATED`** → review-heal exhausted its bound or the reviewer returned `NEEDS_HUMAN`; findings were posted to the PR and best-effort notifications fired. Surface this to the user through the loop's **existing `AskUserQuestion` escalation surface** — the same in-session interaction model EVALUATE already uses for adjudication / gate surfacing. **Do NOT invent a new gate or prompt mechanism.** The prompt informs the user that the chained review-and-heal escalated (with `remaining_issues` and `pr_url`) and offers the existing continue / stop choices; record a `policy_decisions` entry `{iteration: N, phase: EVALUATE, decision: "review_heal_escalated", source: "autonomous_review_heal"}`. Under `--non-interactive-fallback` (no TTY) it asks nothing and fails closed: `status: aborted, status_reason: "review_heal_escalated_non_interactive"` (the PR stays open with its posted findings).
 - **`READY` / any unrecognized decision** → EVALUATE **never emits `READY`**: it invokes the loop body **without** `--until-mergeable`, and `READY` (with the v2 drain/postmortem fields) is emitted **only** under that opt-in `/review-pr`-only mode (`REVIEW_HEAL_RESULT` schema v2 — see `docs/RESULT_SCHEMAS.md`). Defensively, the parser treats `READY` (or any decision value it does not recognize) as a **terminal, non-re-iterate** state — it does **NOT** loop back to PLAN and does NOT fire the escalation `AskUserQuestion`; it degrades safely by falling through to normal Signal evaluation exactly as it does for `PASS` (a v1 consumer thus continues / lets the cap-check terminate rather than crashing on an unexpected value). This keeps the v2 `READY` value forward-compatible without changing `/autonomous`'s iterate-or-stop behavior.
 - **Forward-compat with the additive v2 drain fields** → the all-channel drain landed four OPTIONAL/additive `REVIEW_HEAL_RESULT` fields (`channels_scanned`, `findings_validated`, `findings_dismissed`, `checks_waited`; see `docs/RESULT_SCHEMAS.md` §"REVIEW_HEAL_RESULT"). EVALUATE keys **only** off `decision` (and the v1 core fields it records into `review_heal`), so these — and any future additive field — are simply **ignored** by the parser: their presence never makes EVALUATE choke or change its iterate-or-stop behavior. They appear only under `--until-mergeable`, which EVALUATE does not pass. The until-mergeable readiness semantics are NOT restated here — `skills/review-heal/SKILL.md` is the single source of truth.
 
@@ -573,7 +577,9 @@ if [ -z "$merged" ] && [ -n "$iter_N_branch_sha" ]; then
 fi
 
 if [ -z "$merged" ]; then
-  # Re-prompt user — don't proceed on premature click or unverifiable merge
+  # Re-prompt user — don't proceed on premature click or unverifiable merge.
+  # Reached only after an INTERACTIVE merge-and-continue pick: a run that cannot ask
+  # already stopped at the rubric gate (rubric_gate_closed_non_interactive).
   AskUserQuestion "PR #$X is not yet showing as merged (gh: ${state:-unknown}; local ancestry: $( [ -n "$iter_N_branch_sha" ] && echo "checked" || echo "branch SHA unresolvable" )). Refresh and pick merge-and-continue again, or pick stop-here / force-continue-anyway."
 fi
 ```
@@ -775,7 +781,7 @@ The status enum is **autonomous-layer-only**: `done | paused_max_iterations | ab
 - **allow_multi_iteration:** true | false
 - **max_iterations:** integer ≥ 1 (`1` for single-iteration runs — the implicit cap; the configured value for multi-iteration runs, default 3)
 - **status:** done | paused_max_iterations | aborted | failed
-- **status_reason:** null | "max_iterations_reached" | "user_discarded_at_phase_6" | "user_aborted_at_no_go" | "user_aborted_at_plan_review_fail" | "user_stopped_at_rubric_gate" | "user_stopped_at_no_rubric_gate" | "supervisor_checkpoint" | "supervisor_failed_other" | "supervisor_base_branch_mismatch" | "rubric_dropped_from_brief" | "concurrent_session_detected" | "invalid_max_iterations" | "non_interactive_without_fallback" | "conflicting_mode_flags" | "iter_pr_base_mismatch" | "rubric_gate_closed_non_interactive" | "no_rubric_in_non_interactive" | "user_aborted_gh_retry" | "preflight_overlap_detected"
+- **status_reason:** null | "max_iterations_reached" | "user_discarded_at_phase_6" | "user_aborted_at_no_go" | "user_aborted_at_plan_review_fail" | "user_stopped_at_rubric_gate" | "user_stopped_at_no_rubric_gate" | "supervisor_checkpoint" | "supervisor_failed_other" | "supervisor_base_branch_mismatch" | "rubric_dropped_from_brief" | "concurrent_session_detected" | "invalid_max_iterations" | "non_interactive_without_fallback" | "conflicting_mode_flags" | "iter_pr_base_mismatch" | "rubric_gate_closed_non_interactive" | "no_rubric_in_non_interactive" | "user_aborted_gh_retry" | "preflight_overlap_detected" | "review_heal_escalated_non_interactive"
 - **total_iterations:** 2
 - **last_phase:** DONE | EVALUATE | PLAN | EXECUTE
 - **started_at:** 2026-05-11T14:30:22Z

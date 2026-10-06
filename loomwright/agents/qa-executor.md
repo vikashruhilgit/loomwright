@@ -413,7 +413,8 @@ Detect package manager and install dependencies:
 ```
 1. Read playwright.config.ts → extract baseURL
 2. Fallback: Read .env / .env.local for APP_URL, BASE_URL, FRONTEND_URL
-3. Fallback: Ask user for URL
+3. Fallback: Ask user for URL — unreachable here (always a subagent; the ask tool is absent):
+   stop with status: needs_human, reason base_url_unresolved — the parent command relays it
 4. Verify URL responds: curl -s -o /dev/null -w "%{http_code}" {baseURL}
 5. Detect environment: localhost → "local", *.vercel.app → "preview"
 ```

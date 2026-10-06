@@ -1961,7 +1961,7 @@ AUTONOMOUS_RUN:
 |---|---|
 | `done` | `null` (rubric satisfied or no rubric present), `"user_stopped_at_rubric_gate"` (user accepted partial rubric; PR exists, run ended on user's terms), `"user_stopped_at_no_rubric_gate"` (v14.0.0+; user picked stop at the no-rubric gate), `"no_rubric_in_non_interactive"` (v14.0.0+; non-interactive fallback at no-rubric gate — see Non-interactive fallback policy in `skills/autonomous-loop/SKILL.md` §"No-rubric gate") |
 | `paused_max_iterations` | `"max_iterations_reached"` |
-| `aborted` | `"user_discarded_at_phase_6"`, `"user_aborted_at_no_go"`, `"user_aborted_at_plan_review_fail"`, `"supervisor_checkpoint"`, `"rubric_dropped_from_brief"`, `"concurrent_session_detected"`, `"invalid_max_iterations"`, **v14.0.0+:** `"non_interactive_without_fallback"`, `"conflicting_mode_flags"`, `"iter_pr_base_mismatch"`, `"rubric_gate_closed_non_interactive"`, `"user_aborted_gh_retry"`, **v14.2.0+:** `"launch_pad_blocked"`, `"user_aborted_at_launch_pad"` |
+| `aborted` | `"user_discarded_at_phase_6"`, `"user_aborted_at_no_go"`, `"user_aborted_at_plan_review_fail"`, `"supervisor_checkpoint"`, `"rubric_dropped_from_brief"`, `"concurrent_session_detected"`, `"invalid_max_iterations"`, **v14.0.0+:** `"non_interactive_without_fallback"`, `"conflicting_mode_flags"`, `"iter_pr_base_mismatch"`, `"rubric_gate_closed_non_interactive"`, `"user_aborted_gh_retry"`, **v14.2.0+:** `"launch_pad_blocked"`, `"user_aborted_at_launch_pad"`, **agnostic-phase1/04:** `"review_heal_escalated_non_interactive"` |
 | `failed` | `"supervisor_failed_other"`, **v14.0.0+:** `"supervisor_base_branch_mismatch"`, **v14.8.0+:** `"preflight_overlap_detected"` |
 
 Reason-string meanings:
@@ -1999,6 +1999,10 @@ Two new `policy_decisions[].decision` values also land in v14.2.0 (both audit-on
 **v14.8.0 status_reason addition** (paired with the Supervisor Phase 1.5 PRE-FLIGHT SYNC gate):
 
 - `"preflight_overlap_detected"` — emitted when the Supervisor's Phase 1.5 PRE-FLIGHT SYNC gate fails closed under `--non-interactive` (or a non-TTY stdin) on an OVERLAP or SUPERSEDED classification, without `--skip-preflight-sync`. The Supervisor aborts before spawning any worker and emits `SUPERVISOR_RESULT.status: failed` with `error: "preflight_overlap_detected"`; the autonomous loop surfaces it as `AUTONOMOUS_RUN.status_reason: "preflight_overlap_detected"`. Pairs with `status: failed` (not `aborted`) because the failure originated below the loop, in the Supervisor's gate — mirroring `"supervisor_base_branch_mismatch"`. The offending iteration reached EXECUTE intake but no worker ran, so its entry (if any) carries the Supervisor's `failed` result. See `agents/supervisor.md` §"Phase 1.5: PRE-FLIGHT SYNC" and `skills/autonomous-loop/SKILL.md` EVALUATE termination table.
+
+**agnostic-phase1/04 status_reason addition** (paired with the question-gate can't-ask branches, `docs/ARCHITECTURE_CONTRACTS.md` §"Question-gate inventory"):
+
+- `"review_heal_escalated_non_interactive"` — EVALUATE's chained review-and-heal returned `ESCALATED` while the loop runs with `--non-interactive-fallback` (no TTY): nobody can pick continue / stop, so the loop asks nothing and aborts. Pairs with `status: aborted`; the PR stays open with its posted findings. See `skills/autonomous-loop/SKILL.md` §"EVALUATE review-heal step".
 
 **Validation rules:**
 - No SubagentStop hook validates this block (autonomous-layer-only). The v1 → v2 bump in v14.0.0 is therefore forward-only — schema-1 emissions remain accepted by downstream tooling. Parsers SHOULD accept either `schema_version: 1` or `schema_version: 2` and SHOULD treat unrecognized `status_reason` values as opaque strings rather than rejecting.

@@ -23,6 +23,12 @@
 #       passes `--non-interactive` to /product-owner.
 #   (f) commands/automate.md's `"<prompt>"` and `--non-interactive-fallback` parameter rows each
 #       reference `needs_owner`.
+#   (g) every other gate in docs/ARCHITECTURE_CONTRACTS.md §"Question-gate inventory" reachable in a
+#       non-interactive / subagent / headless context names its can't-ask status (Launch Pad + its
+#       agent<->command rule mirror, Supervisor, supervisor-config, autonomous-loop, automate-loop,
+#       qa-executor); the inventory sits right before ## Failure Escalation Summary and no row's NEW
+#       behaviour cell is "undefined".
+#   (h) re-check: subtask 1's PO / automate strings still resolve.
 #   (m) MUTATION CONTROL: delete the can't-ask branch line from a COPY of agents/product-owner.md;
 #       gate the mutant on non-empty + differs-from-original; the (a) predicate MUST fail on it.
 #       Without this, (a) could be green while asserting nothing.
@@ -168,6 +174,69 @@ case "$nif_row" in
   *'needs_owner'*) ok "(f) commands/automate.md --non-interactive-fallback row references needs_owner" ;;
   *) no "(f) commands/automate.md --non-interactive-fallback row does not reference needs_owner" ;;
 esac
+
+# ---- (g) every other gate the inventory marks reachable in MN / SA / HP (subtask 2) -------------
+# One assertion per changed gate: its file names its can't-ask status string.
+LP_AGENT="$PLUGIN_ROOT/agents/launch-pad.md"
+LP_CMD="$PLUGIN_ROOT/commands/launch-pad.md"
+SV_AGENT="$PLUGIN_ROOT/agents/supervisor.md"
+SV_CFG="$PLUGIN_ROOT/skills/supervisor-config/SKILL.md"
+AL_SKILL="$PLUGIN_ROOT/skills/autonomous-loop/SKILL.md"
+QA_AGENT="$PLUGIN_ROOT/agents/qa-executor.md"
+ARCH="$PLUGIN_ROOT/docs/ARCHITECTURE_CONTRACTS.md"
+for f in "$LP_AGENT" "$LP_CMD" "$SV_AGENT" "$SV_CFG" "$AL_SKILL" "$QA_AGENT" "$ARCH"; do
+  [ -f "$f" ] || no "MISSING surface: $f"
+done
+for s in clarification_needed_non_interactive no_go_non_interactive needs_human_non_interactive \
+         saved_on_pass_non_interactive plan_review_fail_non_interactive \
+         memory_candidates_deferred_non_interactive; do
+  gate_has_status "(g) agents/launch-pad.md" "$LP_AGENT" "$s"
+done
+# agent<->command mirror: the Can't-ask rule bullet is byte-identical in both Launch Pad files.
+lp_rule() { grep -F -- "- **Can't-ask rule:**" "$1" | head -1; }
+lp_a="$(lp_rule "$LP_AGENT")"; lp_c="$(lp_rule "$LP_CMD")"
+if [ -n "$lp_a" ] && [ "$lp_a" = "$lp_c" ]; then
+  ok "(g) Launch Pad Can't-ask rule is byte-identical in agent and command (mirror)"
+else
+  no "(g) Launch Pad Can't-ask rule missing or differs between agents/ and commands/launch-pad.md"
+fi
+case "$lp_a" in
+  *'executing as a subagent'*'never from a stdin-TTY probe alone'*) ok "(g) Launch Pad rule keys on flag + subagent, not the TTY probe alone" ;;
+  *) no "(g) Launch Pad rule does not name the subagent signal / TTY-not-alone" ;;
+esac
+gate_has_status "(g) commands/launch-pad.md NO-GO" "$LP_CMD" 'no_go_non_interactive'
+for s in init_input_missing_non_interactive adjudication_required_non_interactive \
+         preflight_overlap_detected gh_unavailable_non_interactive children_unsettled; do
+  gate_has_status "(g) agents/supervisor.md" "$SV_AGENT" "$s"
+done
+gate_has_status "(g) skills/supervisor-config/SKILL.md INIT" "$SV_CFG" 'init_input_missing_non_interactive'
+for s in non_interactive_without_fallback rubric_gate_closed_non_interactive no_rubric_in_non_interactive \
+         review_heal_escalated_non_interactive pr_base_verify_skipped_non_interactive; do
+  gate_has_status "(g) skills/autonomous-loop/SKILL.md" "$AL_SKILL" "$s"
+done
+for s in no_source_non_interactive resume_continued_non_interactive resume_ambiguous; do
+  gate_has_status "(g) skills/automate-loop/SKILL.md" "$AUTO_SKILL" "$s"
+done
+gate_has_status "(g) commands/automate.md bare row" "$AUTO_CMD" 'no_source_non_interactive'
+gate_has_status "(g) agents/qa-executor.md URL fallback" "$QA_AGENT" 'base_url_unresolved'
+# The inventory section exists and sits immediately before ## Failure Escalation Summary.
+prev_h2="$(awk '/^## /{ if ($0 == "## Failure Escalation Summary") { print last; exit } last = $0 }' "$ARCH")"
+if [ "$prev_h2" = "## Question-gate inventory" ]; then
+  ok "(g) ARCHITECTURE_CONTRACTS.md has ## Question-gate inventory right before ## Failure Escalation Summary"
+else
+  no "(g) ## Question-gate inventory missing or not immediately before ## Failure Escalation Summary (got: $prev_h2)"
+fi
+inv="$(awk '/^## Question-gate inventory/{p=1; next} p && /^## /{exit} p' "$ARCH")"
+if printf '%s\n' "$inv" | grep -E '^\|' | grep -qiE '\| *undefined *\|$'; then
+  no "(g) an inventory row's NEW can't-ask behaviour cell is 'undefined'"
+else
+  ok "(g) no inventory row's new can't-ask behaviour is 'undefined'"
+fi
+# (h) subtask 1's PO / automate strings still resolve after subtask 2's edits (re-check, not preservation).
+gate_has_status "(h) re-check agents/product-owner.md" "$PO_AGENT" 'po_gate: needs_owner (<n> flags)'
+gate_has_status "(h) re-check commands/product-owner.md" "$PO_CMD" 'po_gate: needs_owner (<n> flags)'
+gate_has_status "(h) re-check skills/automate-loop/SKILL.md" "$AUTO_SKILL" 'needs_owner'
+gate_has_status "(h) re-check commands/automate.md" "$AUTO_CMD" 'needs_owner'
 
 # ---- (further gates append their sections here, above the mutation control) ---------------------
 

@@ -44,6 +44,7 @@ Supervisor prompt.
 3. Ask user (via `AskUserQuestion`) if not resuming:
    - "Max parallel workers?" (default: 2; skip if `--sequential`)
    - "Specific task to work on?" (or user provides via `task:` parameter)
+   - **Cannot ask** (`--non-interactive`, or executing as a subagent — the ask tool is absent): ask nothing; max parallel workers = the default 2 (`--sequential` ⇒ 1), task from `job:`/`task:`. No task source ⇒ fail closed: `SUPERVISOR_RESULT.status: failed`, `error: "init_input_missing_non_interactive"`.
 3a. Parse cost profile flag (fresh start only — the resume path is handled by the resume-state check above):
    - If `--cheap` was passed: set `cost_profile = cheap`.
    - Otherwise: `cost_profile = default`.

@@ -68,6 +68,7 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 - **Verify every file path** exists before including in impact map
 - **If environment has blockers:** output fix instructions, don't offer save
 - **Max 2 rounds** of AskUserQuestion for requirement clarification
+- **Can't-ask rule:** this run cannot ask when `--non-interactive`/`--non-interactive-fallback` is set OR it is executing as a subagent (the ask tool is absent from its tool set) — never from a stdin-TTY probe alone. Every question gate then takes its named branch and never improvises: Phase 2 clarification (incl. step 0's unusable requirement file) → `status: aborted, status_reason: "clarification_needed_non_interactive"` with the open questions listed; Phase 2.5 NO-GO → `status: aborted, status_reason: "no_go_non_interactive"`; Phase 6 NEEDS_HUMAN → action 2a auto-strip / action 2 `needs_human_non_interactive`; Phase 6 PASS → save the unmutated PASSed brief, noted `saved_on_pass_non_interactive`; Plan Review FAIL × 3 → `status: blocked, status_reason: "plan_review_fail_non_interactive"`; memory candidates → write nothing, list them under `memory_candidates_deferred_non_interactive`. Interactive options are unchanged.
 - **Mandatory plan review** — Phase 5.5 is non-skippable. PASS enables save; NEEDS_HUMAN enables save only with explicit user override; FAIL never enables save
 - **Feasibility gate (Phase 2.5)** — soft gate. NO-GO stops pipeline (user can override); CAUTION findings feed into Risk Assessment
 
@@ -151,7 +152,7 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 0. **Resolve requirement-file input (do FIRST):** Auto-resolution is **scoped to the handoff directory** to avoid hijacking a goal that merely names a repo file. If the `goal:`/`feature:`/`problem:` value is a path **under `.supervisor/requirements/`** ending in `.md` that resolves with `test -f` (the Beads-absent Product Owner handoff target), then `Read` that file and use its contents (title, As-a/I-want/so-that, acceptance criteria, priority, assumptions, dependencies, risks) as the requirement source. Carry forward any acceptance criteria the file already defines rather than re-deriving them. If the file resolves but is empty or clearly not a requirement/story, stop and ask rather than planning from its contents. Resolve the path relative to the **project root** (the `--project` value when given, else the auto-detected root), not the current working directory. **Any other value — including a bare path to an existing repo file such as `README.md` or `docs/spec.md` — is treated as a literal goal string** (so "improve `README.md`" is never silently reinterpreted as a spec to plan from). Never invent a file — a `.supervisor/requirements/` path that fails `test -f` falls back to literal-string handling and is noted. **When (and only when) the input resolves to a `.supervisor/requirements/*.md` file, record its repo-root-relative path (e.g. `.supervisor/requirements/{slug}.md`) as `source_requirement` and hold it in session memory for Phase 5 PACKAGE.** A literal-string goal or a repo file outside `.supervisor/requirements/` leaves `source_requirement` unset.
 1. If goal is vague (no clear outcome or acceptance criteria) — and no requirement file supplied them:
    - Apply product discovery framework (`skills/product-discovery/SKILL.md`)
-   - Ask clarifying questions (max 2 rounds via `AskUserQuestion`)
+   - Ask clarifying questions (max 2 rounds via `AskUserQuestion`); cannot ask (Can't-ask rule) ⇒ `status: aborted, status_reason: "clarification_needed_non_interactive"`
 2. If goal is clear (specific outcome described, or a requirement file was read):
    - Extract acceptance criteria directly from goal / requirement file
 3. Write/refine criteria in Given/When/Then format (`skills/user-story-writing/SKILL.md`)
@@ -216,6 +217,7 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
   - **"Override and continue"** → proceed to Phase 3, NO-GO findings become HIGH risks in Phase 5
   - **"Revise goal"** → loop back to Phase 2 DISCOVER (max 1 revision)
   - **"Abort"** → exit Launch Pad
+  - **Cannot ask** (Can't-ask rule) → no option is auto-picked: `status: aborted, status_reason: "no_go_non_interactive"`, NO-GO findings in the output
 
 **Fallback:** If CLAUDE.md is sparse/missing tech stack info, checks 1-3 default to CAUTION (not NO-GO) with "insufficient project context" note.
 
@@ -685,9 +687,11 @@ Check all 17 review criteria. Output a PLAN_REVIEW_RESULT block.",
    - **"Refine further"** — Ask clarifying questions, update sections, **re-run Phase 5 step 9 MATERIALIZE**, then **re-run Plan Review before save** (consumes an attempt from the shared 3-spawn cap; the PASS is void once the brief is mutated)
    - **"Edit sections"** — User specifies what to change, update in-place, **re-run Phase 5 step 9 MATERIALIZE**, then **re-run Plan Review before save** (same rule: any post-PASS mutation voids the PASS and requires re-review; consumes an attempt from the shared cap). **Corner case:** if the PASS landed on the 3rd (final) spawn, no attempts remain — "Refine further"/"Edit sections" are not offered; only "Save and exit" (the unmutated PASSed brief) or "Discard"
    - **"Discard"** — Cancel without saving
+   - **Cannot ask** (Can't-ask rule): "Save and exit" with the unmutated PASSed brief — never Refine/Edit (they need a human's content) — noted `saved_on_pass_non_interactive` in the Phase 6 output. The mandatory Plan Review is this phase's correctness gate and it passed (same precedent as `no_rubric_in_non_interactive`).
 4. If Plan Review returned FAIL (after 3 attempts — the cap is exhausted): use `AskUserQuestion` with 2 options. **FAIL never enables save**, and the 3-spawn cap is never reset within a session:
    - **"Refine offline"** — Exit without saving (`status: blocked`); the user fixes the issues and starts a new Launch Pad session
    - **"Discard"** — Cancel without saving (`status: discarded`)
+   - **Cannot ask** (Can't-ask rule): `status: blocked, status_reason: "plan_review_fail_non_interactive"` (the Refine-offline outcome; nothing saved)
 5. On save:
    - Create `.supervisor/jobs/pending/` directory if not exists:
      ```bash
@@ -703,7 +707,7 @@ Check all 17 review criteria. Output a PLAN_REVIEW_RESULT block.",
    ```bash
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/write-project-memory.sh" --fact "<approved fact>" --source "launch-pad:{slug}" --confirm
    ```
-   **Never auto-write** — memory promotion is human-gated in v1. **`--confirm` is required, not optional:** `.supervisor/memory/` is a committed store, so its sole writer is confirm-gated (`AGENT_GUIDELINES.md` §"Sole-writer confirm gates"); without the flag the writer refuses rather than writing, and the entry passing write-time validation is not a substitute for the human's explicit approval above. Skip entirely if you learned nothing memory-worthy or the user declines. (`{slug}` = the saved brief's basename without the `.md` extension. Safe here: Launch Pad runs at the repo root; the writer refuses any worktree CWD.)
+   **Never auto-write** — memory promotion is human-gated in v1. **`--confirm` is required, not optional:** `.supervisor/memory/` is a committed store, so its sole writer is confirm-gated (`AGENT_GUIDELINES.md` §"Sole-writer confirm gates"); without the flag the writer refuses rather than writing, and the entry passing write-time validation is not a substitute for the human's explicit approval above. Skip entirely if you learned nothing memory-worthy or the user declines. Cannot ask (Can't-ask rule) ⇒ write nothing; list the candidates under `memory_candidates_deferred_non_interactive` in the output. (`{slug}` = the saved brief's basename without the `.md` extension. Safe here: Launch Pad runs at the repo root; the writer refuses any worktree CWD.)
 
 **Save rules:**
 - If environment has BLOCKERS from Phase 1: output fix instructions, don't offer save
@@ -828,7 +832,7 @@ Minimal subagent overhead (up to 3 Plan Reviewer spawns total per session). No s
 | `--discovery` | false | Force full product discovery even if goal seems clear |
 | `--skip-validation` | false | Skip environment validation (Phase 1) for speed |
 | `--project` | auto-detect | Explicit project path |
-| `--non-interactive` / `--non-interactive-fallback` | false | No human to ask — currently wired for exactly TWO Phase 6 gates, both on the NEEDS_HUMAN path: (1) a Criterion 14 `executable_acceptance` escalation (action 2a) auto-strips the flagged `cmd:`/bare bullets instead of calling `AskUserQuestion`; (2) any OTHER NEEDS_HUMAN reason (action 2) aborts cleanly (`status_reason: "needs_human_non_interactive"`) instead of calling `AskUserQuestion` — none of the three generic options (override/refine/discard) can be safely auto-picked. Does NOT (yet) change any OTHER interactive gate outside Phase 6 (Phase 2.5 NO-GO, Plan Review FAIL×3 itself) — those still call `AskUserQuestion` regardless of this flag; see Phase 5.5/Phase 6 for the authoritative behavior. Accepted as either spelling so a caller forwarding `/autonomous`'s own `--non-interactive-fallback` flag name does not need to translate it. |
+| `--non-interactive` / `--non-interactive-fallback` | false | No human to ask — every question gate takes its named branch per the Critical Rules' **Can't-ask rule** (Phase 2 `clarification_needed_non_interactive`; Phase 2.5 `no_go_non_interactive`; Phase 6 action 2a auto-strip of flagged `cmd:`/bare bullets, action 2 `needs_human_non_interactive`, PASS `saved_on_pass_non_interactive`, FAIL × 3 `plan_review_fail_non_interactive`). Executing as a subagent has the same effect. Accepted as either spelling so a caller forwarding `/autonomous`'s own `--non-interactive-fallback` flag name does not need to translate it. |
 
 ---
 
