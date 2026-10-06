@@ -11,9 +11,22 @@
 - The S1/S2 harness `~/Documents/work/AI/ai-agent-manager-lanes-v2/s1h.sh`, now with `launch <lane> --resume-run
   <run_id>` (added 2026-10-05; backup in `archive/`).
 
-## HANDOVER (2026-10-06) — from session 6e8f1058 to a NEW session for wave 2 (owner: "for next wave use new session")
-**Single owner from now: the new session.** 6e8f1058 runs nothing for S3 (no lane, monitor, sampler, watcher) and
+## HANDOVER (2026-10-06, updated ~12:45Z) — from session 6e8f1058 to session 2216aefd for wave 2 (owner: "for next wave use new session")
+**Single owner from now: session 2216aefd.** 6e8f1058 runs nothing for S3 (no lane, monitor, sampler, watcher) and
 edits no S3 record after this push.
+
+### Update since the first version of this handover (read this first — it supersedes "Not done" below)
+- **Released v15.123.1** (#401, `a14db34`) folding #398 (pa/19), #399 (ms/11), #400 (wave-1 review fixes); the owner
+  **reinstalled — 15.123.1 is installed** (`~/.claude/plugins/cache/atelier/loomwright/15.123.1`, install record =
+  15.123.1). `main` = `a14db34`, primary clean, no extra worktrees, `loomwright-meta` synced.
+- **pa/19 is DONE and live-verified** (merged #398; on #401 the run log showed `Set structured_output with 1 field(s)`
+  and `the reviewer posted its own review — no fallback needed`). Its wave-2 placement question is moot.
+- **ms/11 is DONE** (#399) — wave 3 is now ms/07 · af/31 · af/33.
+- **Wave 2 = pa/11 · pa/16 · agnostic/04** (owner order), at most 2 lanes building until pa/16 merges.
+- **Drain every wave PR** (owner-accepted recommendation): `/loomwright:review-pr <wave-PR-url> --until-mergeable`;
+  if claude-review posts nothing, the drain's earned fallback runs a `code-reviewer` diff review.
+- Still open: the telemetry `PRIVACY_PATTERNS` note (owner set it aside); the smaller notes in
+  `proposed/s3w1-wave-pr-397-review.md`.
 
 ### State at handover
 - **Wave 1 done.** #397 (`wave/s3w1`) merged with a merge commit (`f0b4b66`, v15.123.0); the four lane PRs flipped
@@ -22,8 +35,8 @@ edits no S3 record after this push.
   by 15.123.0's meta-sync (`synced … on loomwright-meta`). Full numbers: §"Wave 1 result".
 - **Plan restructured twice on 2026-10-06** (§"Restructure 2026-10-06", §"…second pass") and the **owner's wave order**
   is §"Wave plan — OWNER ORDER 2026-10-06": **wave 2 = pa/11 · pa/16 · agnostic/04**.
-- **New item `parallel-automate/19-review-large-prs.md`** (claude-review posted nothing on #397, twice). Owner "ok"
-  to filing it; **its placement is the owner's call at launch**: before wave 2, or as a 4th wave-2 lane started
+- ~~New item `parallel-automate/19-review-large-prs.md`~~ — DONE (#398), see the update above. (Original note:
+  owner "ok" to filing it; its placement was the owner's call at launch: before wave 2, or as a 4th wave-2 lane started
   first so it can merge before pa/11's large move-only PR is reviewed. A PR that edits a workflow file cannot review
   itself (claude-code-action skips it, green, no comment).
 - **Not done / not running:** 15.123.0 was NOT yet in `~/.claude/plugins/cache/atelier/loomwright/` at handover
@@ -32,8 +45,8 @@ edits no S3 record after this push.
   monitor. `archive/s3-a..d` + `launch.log` hold wave 1's lane logs.
 
 ### Next steps
-1. Owner reinstalls; confirm `15.123.0` in the plugin cache. Owner starts `caffeinate`; confirm with `pgrep -fl caffeinate`.
-2. Owner decides pa/19's placement.
+1. Confirm `15.123.1` in the plugin cache (owner reinstalled 2026-10-06 after #401). Owner starts `caffeinate`; confirm with `pgrep -fl caffeinate`.
+2. (pa/19 done — nothing to decide.)
 3. `echo "# ---- wave s3w2 starts $(date -u +%FT%TZ) ----" >> launch.log`; move `snapshot-*.txt` into
    `archive/s3w1/`; `bash s1h.sh snapshot before`; `export S1H_META_BRANCH=loomwright-meta-s3w2`; set up lanes from
    the primary (first with `--seed`): `bash s1h.sh setup <lane> .supervisor/requirements/<folder>/<item>.md [--seed]`.
