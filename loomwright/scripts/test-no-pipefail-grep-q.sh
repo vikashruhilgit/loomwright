@@ -210,7 +210,7 @@ echo "== rule 2 over every shell script (ratchet) =="
 # WRITER_BASELINE — pre-existing rule-2 sites, `count path` (occurrences, not lines). Lower a count
 # when you convert a site to a here-string; never raise one or add a path — fix the new site instead.
 WRITER_BASELINE='2 loomwright/scripts/add-orientation.sh
-1 loomwright/scripts/automate-helpers.sh
+1 loomwright/scripts/automate-helpers.d/reconcile-status.sh
 1 loomwright/scripts/build-loop-evidence.sh
 4 loomwright/scripts/dispatch-pr-review.sh
 1 loomwright/scripts/notify-click-target.sh

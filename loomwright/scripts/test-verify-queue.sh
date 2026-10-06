@@ -104,6 +104,8 @@ stage() {
   mkdir -p "$T/bin" "$T/repo/$FOLDER"
   cp "$VR_SRC" "$VH_SRC" "$HERE/automate-helpers.sh" "$HERE/validate-verify-evidence.py" \
      "$HERE/read-verify.sh" "$HERE/propose-verify.sh" "$T/bin/"
+  # automate-helpers.sh sources its helper families from automate-helpers.d/ beside it.
+  cp -R "$HERE/automate-helpers.d" "$T/bin/"
   cat > "$T/bin/verify-env.sh" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${STUB_CALLS:?STUB_CALLS unset}"
