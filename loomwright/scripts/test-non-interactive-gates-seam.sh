@@ -227,7 +227,7 @@ else
   no "(g) ## Question-gate inventory missing or not immediately before ## Failure Escalation Summary (got: $prev_h2)"
 fi
 inv="$(awk '/^## Question-gate inventory/{p=1; next} p && /^## /{exit} p' "$ARCH")"
-if printf '%s\n' "$inv" | grep -E '^\|' | grep -qiE '\| *undefined *\|$'; then
+if grep -qiE '^\|.*\| *undefined *\|$' < <(printf '%s\n' "$inv"); then
   no "(g) an inventory row's NEW can't-ask behaviour cell is 'undefined'"
 else
   ok "(g) no inventory row's new can't-ask behaviour is 'undefined'"
