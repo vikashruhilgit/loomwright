@@ -76,6 +76,17 @@ done
 ROOT="$(mktemp -d)"
 trap 'rm -rf "$ROOT" 2>/dev/null' EXIT
 mktmp() { mktemp -d "$ROOT/d.XXXXXX"; }
+# docs/RESULT_SCHEMAS.md is an index (preamble + one `See [result-schemas/<f>](...)` pointer per
+# `## ` heading); each section body lives in docs/result-schemas/<f>.md. Re-assemble the doc from
+# the index preamble + the pointed-to split files in index order, so every check below parses the
+# same text (section, heading order, Version History, intro) in the same order as before.
+SCHEMA_INDEX="$SCHEMA_DOC"
+SCHEMA_DOC="$ROOT/RESULT_SCHEMAS.assembled.md"
+{
+  awk '/^## /{exit} {print}' "$SCHEMA_INDEX"
+  sed -nE 's|^See \[result-schemas/([^]]+)\]\(result-schemas/[^)]+\)\.$|\1|p' "$SCHEMA_INDEX" \
+    | while IFS= read -r f; do cat "$(dirname "$SCHEMA_INDEX")/result-schemas/$f"; done
+} > "$SCHEMA_DOC"
 
 # ---------------------------------------------------------------------------
 # Harness helpers.
