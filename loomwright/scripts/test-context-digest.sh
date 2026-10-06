@@ -356,7 +356,8 @@ fi
 # grep was deleted as dead code (0/73 briefs matched) and the doc kept describing it.
 # This asserts the doc never POSITIVELY claims a source the script no longer reads.
 # ---------------------------------------------------------------------------
-SCHEMA_DOC="$REPO_ROOT/loomwright/docs/RESULT_SCHEMAS.md"
+# docs/RESULT_SCHEMAS.md is an index; the CONTEXT_DIGEST section lives in its split file.
+SCHEMA_DOC="$REPO_ROOT/loomwright/docs/result-schemas/context-digest.md"
 BUILDER_SRC="$REPO_ROOT/loomwright/scripts/build-context-digest.sh"
 TOTAL=$((TOTAL+1))
 if [ ! -f "$SCHEMA_DOC" ] || [ ! -f "$BUILDER_SRC" ]; then
