@@ -631,12 +631,17 @@ README.md|- **Single drain, single open PR:**
 CLAUDE.md|**`/automate` single-drain ownership
 SURF
 unq=0
+# The schema doc is ONE restating surface (index + every split file, concatenated), so a
+# surface with no hit still yields the single empty line the original per-file scan counted.
+RS_CAT="$TOP/result-schemas-all.md"
 # shellcheck disable=SC2086  # RS_ALL is a space-separated path list (no spaces in any path)
-for f in loomwright/skills/automate-loop/SKILL.md $RS_ALL loomwright/commands/automate.md README.md CLAUDE.md; do
+(cd "$REPO" && cat $RS_ALL) > "$RS_CAT"
+for p in "$REPO/loomwright/skills/automate-loop/SKILL.md" "$RS_CAT" "$REPO/loomwright/commands/automate.md" "$REPO/README.md" "$REPO/CLAUDE.md"; do
+  f="${p#"$REPO"/}"; [ "$p" = "$RS_CAT" ] && f="loomwright/docs/RESULT_SCHEMAS.md (+ result-schemas/*.md)"
   while IFS= read -r L; do
     case "$L" in *"$QUAL"*) ;; *) unq=$((unq+1)); echo "    unqualified: $f: ${L:0:120}" ;; esac
   done <<EOF2
-$(grep -E 'exactly ONE\*\* inline|exactly ONE inline|ONE owned inline|ONE inline `/review-pr' "$REPO/$f" 2>/dev/null)
+$(grep -E 'exactly ONE\*\* inline|exactly ONE inline|ONE owned inline|ONE inline `/review-pr' "$p" 2>/dev/null)
 EOF2
 done
 [ "$unq" -eq 0 ] && ok "B: no drain-ownership line on any restating surface lacks the qualifier" || no "B: $unq unqualified drain-ownership line(s)"
