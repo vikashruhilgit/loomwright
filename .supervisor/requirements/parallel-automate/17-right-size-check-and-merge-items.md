@@ -1,6 +1,6 @@
 # 17 — Right-size check: flag items too small to pay a full run, name what to merge them into, and merge them mechanically
 
-## Status: pending
+## Status: parked (merged 2026-10-06 into `parallel-automate/18-backlog-board-and-right-size.md` as Part B — do not run this file; work the merged item)
 
 ## Problem
 Every requirement item that `/automate` runs pays a fixed cost whatever its size: Launch Pad, Plan Review, Supervisor,

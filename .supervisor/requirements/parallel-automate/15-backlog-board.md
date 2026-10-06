@@ -1,6 +1,6 @@
 # 15 — One backlog board: every requirement item's real state, derived, never hand-kept
 
-## Status: pending
+## Status: parked (merged 2026-10-06 into `parallel-automate/18-backlog-board-and-right-size.md` as Part A — do not run this file; work the merged item)
 
 ## Problem
 Owner (2026-10-05): "this lane stuff picking stuff randomly — how can we keep track of all the tasks which are done,

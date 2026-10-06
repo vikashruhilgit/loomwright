@@ -75,7 +75,7 @@ Owner decision 2026-10-05: stabilize parallel automation, then release it for ot
 wave; S3 is the first run of **several waves in a row**, with a release and reinstall between waves (the
 pa/06 one-bump-per-wave model, by hand) and with the wave runner's own replacement (pa/05) built mid-queue.
 
-## The queue (20 items after the 2026-10-06 restructure, §"Restructure 2026-10-06"; was 22 — owner decision 2026-10-05: "finish parallel automation and everything related"; 19 + `parallel-automate/16` (after wave 1 froze the machine) + `meta-sync-followups/09, 10` (#391's leftovers), all added the same day)
+## The queue (19 items after the 2026-10-06 restructures, §"Restructure 2026-10-06"; was 22 — owner decision 2026-10-05: "finish parallel automation and everything related"; 19 + `parallel-automate/16` (after wave 1 froze the machine) + `meta-sync-followups/09, 10` (#391's leftovers), all added the same day)
 Merged on 2026-10-05 (originals parked with pointers; text kept verbatim as parts):
 `meta-sync-followups/08` = ms/02 + 03 + 06 · `automate-followups/32` = af/14 + 28 + 29 · `automate-followups/33` =
 af/17 + 25. New the same day: `meta-sync-followups/07` (onboard any repo to branch mode), `automate-followups/31`
@@ -102,7 +102,38 @@ depends, the moved pa/06 fragments).
 - New: **`parallel-automate/17-right-size-check-and-merge-items.md`** (filed by 53b1897e); owner: keep separate from pa/15.
 - Milestone A unchanged: after ms/07 + agnostic/04.
 
-## Wave plan (re-planned 2026-10-06 after wave 1 + the restructure; S3 planner rule; `plan-waves --max 5`)
+## Restructure 2026-10-06, second pass (owner decisions relayed by session 53b1897e)
+- `parallel-automate/15` + `/17` → **`parallel-automate/18-backlog-board-and-right-size.md`** (A = 15 board, B = 17
+  right-size; the size verdict + merge candidates are a column on the board; the writer/intake line and
+  `merge-items` stay). Lossless check: only the two fragment names differ. 15 items left.
+- **`parallel-automate/11` now splits `loomwright/docs/RESULT_SCHEMAS.md` too** (Scope 4 amended, AC + Touches added):
+  per-schema files under `docs/result-schemas/`, `RESULT_SCHEMAS.md` kept as the anchor-preserving index, every
+  parser of the doc kept working, and every open item's Touches re-pointed after the merge.
+
+## Wave plan (re-planned 2026-10-06, second pass; S3 planner rule; `plan-waves --max 5`; 15 items)
+| Wave | Items | Lanes |
+|---|---|---|
+| 2 | pa/11 split hotspots (+ RESULT_SCHEMAS) · pa/16 machine load guard · ms/05 learning stores (A–C) | 3 |
+| 3 | ms/11 scrub precision | 1 |
+| 4 | af/33 children-settled gate | 1 |
+| 5 | ms/07 onboard any repo (+ Part D) | 1 |
+| 6 | agnostic/04 non-interactive gates (→ Milestone A) | 1 |
+| 7 | pa/05 lane coordinator | 1 |
+| 8 | pa/06 wave close (+ Part S) · pa/14 lanes pane | 2 |
+| 9 | af/31 temporary escalations | 1 |
+| 10 | pa/12 policy answers | 1 |
+| 11 | pa/18 board + right-size | 1 |
+| 12 | af/34 sweep + janitor | 1 |
+| 13 | pa/07 pilot + docs (→ Milestone B) | 1 |
+- **ms/11 left wave 2:** its Part B edits `RESULT_SCHEMAS.md`, which pa/11 now splits; the planner put ms/05 in its
+  place (ms/05 conflicts with ms/11 only on `meta-sync.sh`).
+- **Post-split estimate** (same run with `RESULT_SCHEMAS.md` dropped from every other item's Touches): **10 waves**
+  (wave 2: pa/11 · pa/16 · ms/11 · af/33 · ms/07; then ms/05 → agnostic/04 → pa/05 → pa/06 · pa/14 → af/31 → pa/12 →
+  pa/18 → af/34 → pa/07). Not ~7: after the schema doc, the tail serializes on **`automate-loop/SKILL.md`** and
+  **`commands/automate.md`** (af/31, pa/12, pa/18, af/34, pa/07 all edit one or both) and on pa/05 → pa/12 / pa/06 →
+  pa/07 dependencies. Splitting the skill is the next lever; pa/11 keeps it out (prose engine, state-trace review).
+
+## Wave plan (re-planned 2026-10-06, first pass — superseded by the second pass above)
 16 items left (20 after the restructure, 4 merged in wave 1). **Pre-split plan — re-check Touches after pa/11.**
 | Wave | Items | Lanes |
 |---|---|---|
@@ -260,5 +291,5 @@ teardown, machine (load, swap, free) at peak.
 - **Peak load:** 119 before the crash (3 lanes in `ci-local`); after the resume ≤ 7 observed by the monitor.
 
 ## Done when
-All items in the queue (20 after the 2026-10-06 restructure) merged or closed by the owner, each wave's records on `loomwright-meta`, lanes torn down with `leaks`
+All items in the queue (19 after the 2026-10-06 restructures) merged or closed by the owner, each wave's records on `loomwright-meta`, lanes torn down with `leaks`
 empty, the measures above recorded in this file, and P2 (default lane count) revisited with S2 + S3 evidence.

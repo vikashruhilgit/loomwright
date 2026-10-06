@@ -12,6 +12,8 @@ scripts/check-skills-index-sync.sh
 loomwright/scripts/automate-helpers.sh
 loomwright/scripts/test-automate-helpers.sh
 loomwright/scripts/automate-helpers.d/
+loomwright/docs/RESULT_SCHEMAS.md
+loomwright/docs/result-schemas/
 changelog.d/parallel-automate-11-split-shared-hotspot-files.md
 
 ## Problem
@@ -50,6 +52,21 @@ so two items changing different helpers touch different files. Measured first, b
 4. **The skill and the schema doc are NOT split in this item** unless step 1 ranks them top and a split preserves
    every anchor that prose cites (`test-citation-drift.sh` pins). If ranked top, write the split as a follow-up
    with its own validation; prose engines need a state-trace review, not a mechanical cut.
+   **Amended 2026-10-06 (owner): `loomwright/docs/RESULT_SCHEMAS.md` IS in scope now.** The 2026-10-06 S3 re-plan
+   found it declared by 7 of 16 open items and the main serializer (af/31, af/34 and pa/18 wait on it and on
+   `automate-helpers.sh` only — operator-run S3 §"Wave plan (re-planned 2026-10-06…)"). Step 1's ranking is still
+   recorded first. The split:
+   - one file per schema (or schema family) under `loomwright/docs/result-schemas/`, along the doc's existing
+     per-schema sections; `RESULT_SCHEMAS.md` stays as the index that links them, so its path and every heading a
+     prose citation or `[pins: …]` anchor names still resolves (`test-citation-drift.sh` green, no pin edited to
+     make it pass);
+   - first list every reader that PARSES the doc (as opposed to citing it in a comment) — validators, generators,
+     `check-*.sh` gates, tests — and keep each working on the split, with a test per parser;
+   - prose engines that cite it get the state-trace review the original sentence asks for;
+   - after the merge, every open item whose `## Touches` names `RESULT_SCHEMAS.md` is re-checked and re-pointed to
+     the split file it actually edits (S3 gap 7, "Touches drift after a split") before waves 3+ are re-planned.
+   `automate-loop/SKILL.md` stays out of scope unless step 1 ranks it top (the original sentence above still holds
+   for it).
 5. **Tests:** the existing `test-automate-helpers.sh` passes unchanged against the split (no assertion edited); a
    new case proves every subcommand still dispatches; the index generator round-trips the current index; the
    companion change is covered by a plan-waves fixture (two items editing two different skills' bodies share a
@@ -62,6 +79,8 @@ so two items changing different helpers touch different files. Measured first, b
 - `plan-waves --explain` over the open backlog shows fewer "conflicts with" lines naming `SKILLS_INDEX.md` and
   `automate-helpers.sh` than before; before/after counts recorded.
 - The single-merge-executor grep still resolves to exactly the documented surfaces.
+- (2026-10-06) `plan-waves --explain` over the open backlog shows fewer "conflicts with" lines naming `RESULT_SCHEMAS.md`
+  than before (before/after counts recorded), and every parser of the doc listed in Scope 4 passes on the split.
 
 ## Validation (must pass before merge)
 1. **Baseline:** full loop on base and branch, `<passed>/<total>` and `SKIP` counts; no existing assertion edited.
