@@ -1,6 +1,6 @@
 # 09 — Scrub-safe worktree paths in the result-schema examples and fixtures
 
-## Status: pending
+## Status: parked (merged 2026-10-06 into `meta-sync-followups/11-scrub-precision.md` as Part B — do not run this file; work the merged item)
 
 ## Depends on
 none

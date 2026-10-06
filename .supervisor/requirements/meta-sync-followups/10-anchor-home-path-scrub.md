@@ -1,6 +1,6 @@
 # 10 — Anchor the `home_path` scrub so it matches home paths, not every `/users/<x>/` segment
 
-## Status: pending
+## Status: parked (merged 2026-10-06 into `meta-sync-followups/11-scrub-precision.md` as Part A — do not run this file; work the merged item)
 
 ## Depends on
 08-meta-sync-hardening.md

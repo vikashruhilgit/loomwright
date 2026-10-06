@@ -1,11 +1,24 @@
-# 23 — Process registry + one `/janitor` command: see everything the plugin left running or lying around, act on it safely
+# 34 — Clean up what the plugin left behind: a squash-safe sweep, a process registry and one `/janitor` command
 
-## Status: parked (merged 2026-10-06 into `automate-followups/34-sweep-and-janitor.md` as Part B — do not run this file; work the merged item)
+## Status: pending
+
+## Merged from (2026-10-06, owner decision: fewer, larger items — a run costs ~$17–20 plus 4+ owner questions even for a tiny change)
+- Part A: `22-squash-safe-sweep.md` — 22 — Squash-safe sweep: clean up worktrees and branches the plugin left behind, with closeout's own rule
+- Part B: `23-process-registry-and-janitor-command.md` — 23 — Process registry + one `/janitor` command: see everything the plugin left running or lying around, act on it safely
+
+The originals are parked with a pointer here. Their text is kept below VERBATIM as parts (headings
+demoted, their Status / Depends on / Touches folded into this file's own sections). Nothing was paraphrased.
 
 ## Depends on
-22-squash-safe-sweep.md
+none
 
 ## Touches
+loomwright/scripts/automate-helpers.sh
+loomwright/scripts/automate-trail.sh
+loomwright/scripts/test-automate-trail.sh
+loomwright/skills/automate-loop/SKILL.md
+loomwright/commands/automate.md
+loomwright/docs/RESULT_SCHEMAS.md
 loomwright/scripts/proc-registry.sh
 loomwright/scripts/test-proc-registry.sh
 loomwright/scripts/automate-merge-watch.sh
@@ -17,11 +30,104 @@ loomwright/scripts/test-setup-ui.sh
 loomwright/scripts/run-self-tests.sh
 scripts/ci-local.sh
 loomwright/commands/janitor.md
-loomwright/skills/automate-loop/SKILL.md
 loomwright/commands/agent-help.md
-changelog.d/automate-followups-23-process-registry-and-janitor.md
+changelog.d/automate-followups-34-sweep-and-janitor.md
 
-## Problem
+## Goal
+One change set for leftovers: the squash-safe sweep of worktrees and branches with closeout's own rule (A), and the process registry plus `/janitor`, which uses that sweep (B).
+
+## Acceptance criteria
+- Every part's own acceptance criteria hold, on one branch and one PR.
+
+## Validation (must pass before merge)
+1. Baseline full loop once for the merged branch, `<passed>/<total>` and `SKIP` counts, base and branch.
+2. Every part's own Validation steps, labelled by part in the PR body. A part with no Validation section is
+   checked by running its acceptance criteria, and the PR body says so.
+3. Any "Running system" step a part names is run, or listed under "Not verified" with the reason.
+4. Rollback: `git revert`.
+
+## Parts
+
+### Part A — 22 — Squash-safe sweep: clean up worktrees and branches the plugin left behind, with closeout's own rule
+
+#### Problem
+`closeout` (`automate-trail.sh`) cleans up exactly one PR, the one it was called for. It removes that PR-head
+worktree only when it is clean after `worktree-salvage.sh`, and deletes the local head branch only when its tip
+equals the PR's `headRefOid` (squash merges make ancestry useless, so `-d` and "0 commits outside main" are never
+used). Nothing else in the plugin cleans up, so anything that never went through `closeout` stays forever:
+- **PRs merged outside `/automate`** (`/supervisor`, `/review-pr` or a hand session). On 2026-10-03 the primary
+  carried 5 worktrees whose PRs (#362, #363, #364, #368, and one detached checkout already on `main`) were merged
+  and clean. The owner removed them by hand.
+- **Old local branches.** 20 local branches (`feature/v12-S1…S5`, `pr-12`, `pr-24`, `release/v13.1.0`, `dev-temp`,
+  …) are not ancestors of `origin/main`. Most are probably squash-merged, which no ancestry check can see, so
+  each needs the `headRefOid` test to decide.
+- **Supervisor's parallel-path worktrees** (`../<project>-<subtask>`, `async-orchestration` FINALIZE) left by a
+  run that died before FINALIZE's own cleanup.
+
+#### Goal
+One command reports, and on request removes, exactly the worktrees and local branches that are provably done:
+the same proof `closeout` already trusts. Anything uncertain is reported and kept.
+
+#### Scope
+1. **`automate-helpers.sh sweep [--apply] [--root <checkout>]`** (delegated to `automate-trail.sh`, beside
+   `closeout`). Without `--apply`, a DRY RUN: it prints and changes nothing. One line per candidate:
+   `sweep: would-remove|removed|kept <kind> <path-or-branch> — <reason>`, then one summary line. Always exit 0
+   (fail-SAFE, like `closeout`).
+2. **The rule is exactly closeout's**, with no new heuristic. For a local branch `B`:
+   - find its PR (`gh pr list --state merged --head B`, the newest);
+   - the candidate is removable ONLY when that PR is `MERGED` AND `B`'s tip equals the PR's `headRefOid`;
+   - a branch with no PR, an open or closed-unmerged PR, a tip that moved after the merge, or a `gh` failure is
+     `kept` with that reason (fail CLOSED toward keeping).
+   - Never the current branch, the base branch, or a branch checked out in any worktree that is itself kept.
+3. **Worktrees, by owner:**
+   - **Plugin-made** (Supervisor's sibling `../<project>-<subtask>` worktrees, `trail-pr`'s temporary worktrees,
+     `<primary>-lanes/**` lane clones): removable under rule 2 applied to the worktree's branch, only when clean
+     after `worktree-salvage.sh`, and through `git worktree remove` (never `--force`, never `rm -rf`).
+     **Lane clones are never swept here.** They belong to `lane-remove` (`parallel-automate/05`), which also
+     checks live processes and pending questions. `sweep` reports them as `kept lane — use lane-remove`.
+   - **App-made** (`.claude/worktrees/*`, created by the Claude desktop app for its sessions): **report only**,
+     never removed, even with `--apply`. The app owns them and has its own cleanup (Settings › Storage). The
+     report says which are clean and merged, so the owner can remove them there.
+4. **Live processes:** a worktree whose path is the cwd of a live process (`lsof` where available) is `kept`
+   with the pid named. No kill.
+5. **Where it runs:**
+   - on demand (`/automate --sweep`, a flag of the existing command; no new command, so the counts don't move);
+   - in dry-run mode at the `## Status: done` run end, with one summary line appended to `## Progress`;
+   - by item 06's fleet closeout, in dry-run mode.
+   It never runs `--apply` unattended.
+6. **Tests** (`test-automate-trail.sh`, new group, `gh` stubbed, real git repos in `mktemp -d`):
+   - a merged PR whose tip equals `headRefOid` ⇒ `would-remove`, and `removed` with `--apply`;
+   - tip moved after merge ⇒ `kept`;
+   - an open PR, a closed-unmerged PR, no PR, a `gh` failure ⇒ `kept`, each with its reason;
+   - a dirty worktree ⇒ `kept`;
+   - an app-made `.claude/worktrees/x` that is clean and merged ⇒ reported, NOT removed with `--apply`;
+   - a lane clone ⇒ `kept lane`;
+   - the dry run changes nothing (a checksum of `git worktree list` + `git branch` before and after);
+   - always exit 0.
+   **Mutation controls:** dropping the `headRefOid` comparison must fail the moved-tip leg; dropping the
+   app-made exclusion must fail its leg.
+
+#### Non-goals
+Remote branches (GitHub's "delete branch on merge" owns those). Session transcripts (Claude Code's 30-day
+`cleanupPeriodDays` owns those). Lane teardown (`parallel-automate/05` `lane-remove`). Any `--force`.
+
+#### Acceptance criteria
+- Given this repo's 20 non-ancestor local branches, when `sweep` runs dry, then each is listed as `would-remove`
+  or `kept` with a reason, and nothing changes (pasted output + the unchanged `git branch` checksum).
+- Given `--apply`, then only `would-remove` items go, and a second dry run lists none of them.
+- Given a clean, merged app-made worktree, then `--apply` reports it and leaves it in place.
+- `bash scripts/ci-local.sh` green; ship a `changelog.d/` fragment (bump with `scripts/bump-version.sh` as the
+  last commit, never by hand).
+
+#### Provenance
+Owner, 2026-10-03, during S1 (session 0d556d54): "the cleanup should be handled by the plugin like we are doing
+in closeout". The lane-specific half was amended into `parallel-automate/05` (`lane-remove` refusals) and `/06`
+(fleet closeout teardown + leak summary) the same day. Evidence: 5 stale worktrees in the primary, removed by hand
+with `git worktree remove` after checking each was clean and merged; 20 old local branches still open.
+
+### Part B — 23 — Process registry + one `/janitor` command: see everything the plugin left running or lying around, act on it safely
+
+#### Problem
 Every kind of process the plugin starts in the background is tracked separately, if at all, and nothing shows
 them together or cleans up orphans. Each mechanism today:
 - merge watcher: a marker plus a pid with a command-line check and a 72h cap;
@@ -49,15 +155,15 @@ The owner stopped the four strays by hand after each command line was re-checked
 background tasks; I don't want any orphaned or stray task or session running", and "a command which shows all with
 all the details, and the user can take action based on your suggestions".
 
-## Goal
+#### Goal
 One registry knows every detached process the plugin starts. One command shows the owner everything the plugin
 has running or left behind — processes, locks, lanes, worktrees, branches, stale markers — with a suggested action
 per row, and executes only the actions the owner picks, each through a guarded helper. Things the plugin did not
 start are shown, never touched.
 
-## Scope
+#### Scope
 
-### A. Registry (`proc-registry.sh`, per user: processes span repos)
+##### A. Registry (`proc-registry.sh`, per user: processes span repos)
 1. **`register`** — called by every detached launcher. It records an entry under
    `~/.claude/loomwright/procs/<id>.json`: pid, start time (`ps -o lstart`), a hash of the full command line, the
    owning repo root, run id and lane (if any), purpose, `max_lifetime_s`, the launching session id, and
@@ -81,7 +187,7 @@ start are shown, never touched.
    one line per process. It never kills by pid alone, and never kills anything that is not in the registry
    (`unregistered` rows need the explicit `/janitor` choice below, re-verified at the moment of the kill).
 
-### B. The command: `/janitor` (owner-chosen name, 2026-10-04)
+##### B. The command: `/janitor` (owner-chosen name, 2026-10-04)
 5. **Report first, read-only.** One screen, grouped. Each row shows what it is, the owner (repo / run / lane /
    "not the plugin"), its age, its state with evidence, and the **suggested action** with the reason:
    - **Processes:** the registry `list`, plus `unregistered` look-alikes, plus a REPORT-ONLY "not the plugin's"
@@ -102,7 +208,7 @@ start are shown, never touched.
    command-line re-check. "Not the plugin's" rows have no action.
 7. **Non-interactive** (`--report`, CI, or a headless lane): report only, exit 0, never act.
 
-### C. Surfacing and prevention
+##### C. Surfacing and prevention
 8. **SessionStart:** one line when anything is `overdue`, `orphaned` or `unregistered`
    (`N background item(s) need attention — run /janitor`). No network, no `ps` storm (one `ps` call).
 9. **Run end and fleet close-out:** `/automate`'s `## Status: done` termination and item 06's fleet close-out
@@ -125,11 +231,11 @@ start are shown, never touched.
     **Mutation controls:** dropping the command-line check must fail the recycled-pid leg; dropping the
     non-interactive guard must fail its leg.
 
-## Non-goals
+#### Non-goals
 Managing Claude Code's own sessions or daemon (report and point to the app). Killing anything the plugin did not
 start without an explicit per-item owner choice. Remote resources (GitHub branches, PRs).
 
-## Acceptance criteria
+#### Acceptance criteria
 - Given today's machine state (or a fixture reproducing it: a leaked fixture server, an old watcher, a dead lock
   holder, a merged clean worktree), when `/janitor` runs, then every item appears once with owner, age, state,
   evidence and a suggested action, and nothing changes.
@@ -140,7 +246,7 @@ start without an explicit per-item owner choice. Remote resources (GitHub branch
 - `bash scripts/ci-local.sh` green; command count and docs updated by the usual surfaces (`plugin.json`, doc
   currency); a `changelog.d/` fragment; `scripts/bump-version.sh` as the last commit.
 
-## Provenance
+#### Provenance
 Owner, 2026-10-04, during S1 (session 0d556d54): "we need a way to track background tasks, I don't want any
 orphaned or stray task/session running" and "add a command which shows all with all the details and the user can
 take action based on your suggestions". Evidence from the same session's `ps` inventory, recorded above.

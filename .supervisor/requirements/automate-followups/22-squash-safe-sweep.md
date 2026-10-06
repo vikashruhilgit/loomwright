@@ -1,6 +1,6 @@
 # 22 — Squash-safe sweep: clean up worktrees and branches the plugin left behind, with closeout's own rule
 
-## Status: pending
+## Status: parked (merged 2026-10-06 into `automate-followups/34-sweep-and-janitor.md` as Part A — do not run this file; work the merged item)
 
 ## Depends on
 none

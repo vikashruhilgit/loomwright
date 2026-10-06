@@ -28,7 +28,7 @@ failing". No merge path changes, and no new automatic rerun unless the owner dec
    id and head sha. `check_red_unrelated` means every failing test file named in the log is outside the PR's
    `files`. If that can't be read, the cause is `check_red` (fail closed).
 2. **Re-check after it settles.** For `check_pending` and `check_red_unrelated` parks, the merge watcher, which is
-   armed at `escalated` parks under item 06's amendment, also polls the named check on the recorded head sha. When
+   armed at `escalated` parks by this item's Part "Escalated parks arm the merge watcher", also polls the named check on the recorded head sha. When
    it settles, it appends one `## Progress` line and notifies once: `now mergeable: <check> green on <sha>` or
    `still failing: <check> <conclusion>`. It never merges, pushes, approves or reruns anything.
 3. **Owner decision needed before design:** `harness-port/07` forbids the drain to rerun CI ("`gh run rerun` is
@@ -64,10 +64,12 @@ S2 run record `parallel-automate/operator-run/S2-five-lane-spike.md`; lane archi
 `automate-2026-10-05-002749.md` and s2-d's `automate-2026-10-05-002748.md` on `loomwright-meta`.
 
 ## Depends on
-../parallel-automate/06-wave-close-and-closeout.md
+none
 
 ## Touches
 loomwright/scripts/automate-merge-watch.sh
+loomwright/scripts/test-automate-trail.sh
+loomwright/commands/automate.md
 loomwright/scripts/wait-for-checks.sh
 loomwright/scripts/test-wait-for-checks.sh
 loomwright/scripts/automate-helpers.sh
@@ -76,3 +78,28 @@ loomwright/skills/review-heal/SKILL.md
 loomwright/skills/automate-loop/SKILL.md
 loomwright/docs/RESULT_SCHEMAS.md
 changelog.d/automate-followups-31-transient-escalation-recheck.md
+
+## Part — Escalated parks arm the merge watcher (moved 2026-10-06 from `parallel-automate/06` Scope 7, verbatim)
+Owner decision 2026-10-06: this engine change does not need the coordinator, so it lives here and this item no
+longer depends on `parallel-automate/06`. It also fixes the sequential case: a merged escalated item is
+closed out without a manual `--resume`. Watcher tests live in `test-automate-trail.sh`; the park tail is
+documented in `automate-loop/SKILL.md` §6/§9 and `commands/automate.md` ("an `awaiting_merge` park arms").
+
+### Context (pa/06 Scope 7, 2026-10-05 amendment intro — also kept there)
+   **Amended 2026-10-05 (owner, from S2): an `escalated` lane is closed out too.** Today the merge watcher is
+   armed only at an `awaiting_merge` park ("an `escalated` park arms none", `automate-loop/SKILL.md` §6
+   "Post-merge close-out"), and an escalated item is closed out only by `/automate --resume` RECONCILE. A lane
+   exits after it parks and nothing resumes it, so after the owner merges an escalated lane's PR, Scope 6 never
+   runs and Scope 7 waits on it forever.
+
+### The change (verbatim)
+   - **Arm the merge watcher at an `escalated` park as well** (the §9 park tail). This is an engine change and it
+     also applies to sequential runs: a sequential `escalated` park gets a watcher too. It is safe because the
+     watcher runs `closeout` only after it reads `MERGED`. A `CLOSED` PR gets one `gone` line, and past the 72 h
+     cap `--resume` still closes the item out. It merges nothing.
+
+### Its test (from pa/06 Scope 11, verbatim)
+- an `escalated` park arms the watcher and a merge of its PR closes the lane out;
+
+### Its validation note (from pa/06 Validation step 2, verbatim)
+- Deliberate change, stated in the PR: a sequential `escalated` park now arms a merge watcher (Scope 7, 2026-10-05 amendment).

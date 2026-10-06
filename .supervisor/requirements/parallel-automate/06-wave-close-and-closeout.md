@@ -15,6 +15,20 @@ loomwright/skills/automate-loop/SKILL.md
 loomwright/skills/SKILLS_INDEX.md
 loomwright/commands/automate.md
 loomwright/docs/RESULT_SCHEMAS.md
+loomwright/scripts/automate-merge-watch.sh
+
+## Amended 2026-10-06 — wave close on a wave branch, no release lane (S3 wave 1 evidence; owner decisions 2026-10-05/06)
+S3 wave 1 integrated four lanes on `wave/s3w1` (operator-run S3 §"Integration method"): each lane PR's exact parked
+head merged `--no-ff` in planner order, `ci-local`, then `bump-version.sh` as the wave branch's LAST commit, ONE PR
+into `main`, merged by the owner with "Create a merge commit". GitHub marked all four lane PRs merged and every lane's
+merge watcher closed out by itself (#397, 2026-10-06). So:
+- **The release lane (Scope Step B: merge `origin/main` into the last lane's PR, bump there) is superseded.** The bump
+  is the wave branch's last commit; no lane PR carries it and no lane PR is updated from `main`.
+- **Lane PRs are never merged one by one.** Conflict repair is part of integration (Part S below, from item 13).
+- Closeout (Scope 6/7), the learning line (Scope 10) and the fleet-closeout backstop are unchanged.
+- The text below that describes the release lane is kept for history. The brief must re-derive the steps from
+  this amendment, and the tests that pin release-lane behaviour change with it.
+- Open owner decision: whether the coordinator may run the integration merges into `wave/*` (Part S item 4).
 
 ## Problem
 After item 05 a wave ends with N READY PRs parked `ready_for_release`. Three things are still unsolved:
@@ -84,10 +98,7 @@ path, no new drain category, no push onto a PR that is waiting for a merge.
    "Post-merge close-out"), and an escalated item is closed out only by `/automate --resume` RECONCILE. A lane
    exits after it parks and nothing resumes it, so after the owner merges an escalated lane's PR, Scope 6 never
    runs and Scope 7 waits on it forever.
-   - **Arm the merge watcher at an `escalated` park as well** (the §9 park tail). This is an engine change and it
-     also applies to sequential runs: a sequential `escalated` park gets a watcher too. It is safe because the
-     watcher runs `closeout` only after it reads `MERGED`. A `CLOSED` PR gets one `gone` line, and past the 72 h
-     cap `--resume` still closes the item out. It merges nothing.
+   - **Arm the merge watcher at an `escalated` park as well:** moved 2026-10-06 to `automate-followups/31` (Part "Escalated parks arm the merge watcher" there, verbatim). The fleet-closeout backstop below stays here: only the coordinator can run it.
    - **Fleet closeout backstop:** a lane whose `reconcile-item` is `merged`, whose run file is not
      `## Status: done` and that has no live watcher gets `lane-launch --resume` from the coordinator, so the
      lane's own RECONCILE runs Scope 6 (the coordinator still never writes into a lane, Scope 2). That runs
@@ -113,8 +124,7 @@ path, no new drain category, no push onto a PR that is waiting for a merge.
     conflict at B.a parks only that lane; unstamped release command ⇒ step b skipped and recorded; closeout opens
     no PR, pushes only evidence-gated paths, removes the lane only after its watcher exited, removes the empty
     `<run_id>` directory last and appends the leak summary; unmerged-closed PR ⇒ no stamp, lane kept; the
-    single-item path never enters wave-close code; an `escalated` park arms the watcher and a merge of its PR
-    closes the lane out; a merged escalated lane with no watcher is resumed by the fleet-closeout backstop. **Mutation controls:** letting step B run while a sibling is
+    single-item path never enters wave-close code; (the escalated-park watcher test moved to `automate-followups/31`); a merged escalated lane with no watcher is resumed by the fleet-closeout backstop. **Mutation controls:** letting step B run while a sibling is
     still `awaiting_merge` must fail a test; pushing in step B after the lane is already `awaiting_merge` must
     fail a test.
 
@@ -138,8 +148,8 @@ the next wave.
 1. **Baseline:** full loop on base and branch; `<passed>/<total>` and `SKIP` counts for both.
 2. **Unchanged path:** `test-automate-trail.sh`'s closeout groups and `test-automate-helpers.sh`'s gate groups
    pass with no edit to existing assertions; then ONE real single-item `/automate` on this repo behaves as before
-   (bumped by its own last commit, parked `awaiting_merge`, closeout via push). Deliberate change, stated in the
-   PR: a sequential `escalated` park now arms a merge watcher (Scope 7, 2026-10-05 amendment).
+   (bumped by its own last commit, parked `awaiting_merge`, closeout via push) (the escalated-park watcher change and its PR
+   statement moved to `automate-followups/31`).
 3. **Invariant checks, pasted:** the two greps in Acceptance criteria; `git grep -nE 'gh pr merge|gate-eval'
    loomwright/scripts/automate-lanes.sh` shows no executable use.
 4. **Running system:** a real two-item wave on this repo, owner merging by hand. Paste: the diff stat of the
@@ -175,3 +185,109 @@ check off, reconcile `## Current`, watcher exits). One gap: v2-b's closeout meta
 
 ## Status note
 Parked until S1 is run and item 05 has merged. Do not start from this file as written.
+
+## Part S — merged 2026-10-06 from `13-sibling-merge-conflict-repair.md`, REWRITTEN for wave-branch integration
+Owner decision 2026-10-06 (fewer, larger items) plus the S3 integration-method decision (2026-10-05: "if it holds,
+amend 06 and 13"). It held in S3 wave 1 (see the 2026-10-06 amendment at the top of this file).
+
+### The rewrite (this is the scope; the original below is kept verbatim for its reasoning and tests)
+13's premise was that lane PRs merge into `main` one by one, so a sibling can turn `CONFLICTING` after each merge.
+With a wave branch nothing merges into `main` until the wave PR, so that premise no longer applies. What survives:
+1. **Conflicts are repaired during wave integration, on the wave branch, never on a lane PR.** Lane heads are
+   merged into `wave/<id>` in planner order (`--no-ff`, exact parked head). A textual conflict confined to the
+   markers and resolved without changing either side's intent is resolved in that merge commit. Anything larger
+   stops integration and goes to the owner with the diff. A lane branch is never rewritten or pushed to by
+   integration (13's "no push onto a PR with a live watcher" guard, kept).
+2. **A lane the wave branch's CI finds broken** is fixed on its own PR branch (its drain, or a fix the owner
+   approves), and its new head is merged into the wave branch again. Identify the lane by testing the wave branch
+   at each lane-merge commit.
+3. **A red `main` after a wave PR merges pauses the next wave** (13 Scope 4, now per wave PR; no automatic revert).
+4. **Open owner decision:** who executes the merges into `wave/*`. In S3 the operator does it by hand. A
+   coordinator doing it touches the single-merge-executor invariant (CLAUDE.md §"Failure-Mode Invariants"); do not
+   build it without a recorded decision.
+5. **Tests (replacing 13 Scope 5):** a fixture wave whose two lanes overlap by one line ⇒ conflict resolved on the
+   wave branch, both lane branches untouched; a semantic conflict ⇒ integration stops with the diff; a lane fix ⇒
+   new head re-merged, wave CI re-run; a guard test that integration never pushes a lane branch.
+
+### Original text of 13 (verbatim; superseded where the rewrite above says so)
+#### Depends on (folded into this file's own)
+05
+
+#### Touches (folded into this file's own)
+loomwright/scripts/automate-lanes.sh
+loomwright/scripts/test-automate-lanes.sh
+loomwright/scripts/automate-merge-watch.sh
+loomwright/scripts/test-automate-merge-watch.sh
+loomwright/skills/automate-loop/SKILL.md
+loomwright/commands/automate.md
+loomwright/docs/RESULT_SCHEMAS.md
+changelog.d/parallel-automate-13-sibling-merge-conflict-repair.md
+
+### Part S original — 13 — After each merge, keep the other parked PRs mergeable (conflict repair, not a merge train)
+#### Problem
+Owner goal: 5–10 lanes at once, so 5–10 PRs parked `awaiting_merge` at the same time. Decisions P1/P5 and item 06
+already settle that **no merge train is built**: the owner merges by admin bypass, a bypass merge does not need an
+up-to-date branch, and file-disjoint PRs need nothing. (A train was proposed in this session's first draft and
+withdrawn for that reason.) What is NOT covered:
+- **Textual conflicts.** Wave items are file-disjoint by `Touches`, but a `Touches` list can be incomplete, and
+  shared files still exist until item 11 lands. After one merge, a sibling can turn `CONFLICTING`, and a bypass
+  merge cannot merge a conflicting PR. Nothing today notices this until the owner tries.
+- **A red `main`.** Several bypass merges in a row, each green on its own stale base, can leave `main` red. Nothing
+  stops the next merge or tells the owner which merge broke it.
+- **The invariant that makes repair delicate:** no push onto a PR that is `awaiting_merge` with a watcher armed
+  (overview invariants; skill §6). Repair must first take the PR out of that state.
+
+#### Goal
+After every merge in a wave, the coordinator checks the other parked PRs and `main`. A PR that became conflicting
+is repaired through a proper handshake (watcher stopped, lane resumed, conflict merged or escalated, CI, re-parked);
+a red `main` pauses the wave with the suspect merge named. No new merge path, no push onto an armed PR.
+
+#### Scope
+1. **Post-merge sweep** (coordinator, on the merge watcher's `merged` event or the owner's `--resume`): for each
+   other lane parked `awaiting_merge`, read GitHub's `mergeable` / `mergeStateStatus`; for `main`, read the latest
+   `ci` run on the merge commit.
+2. **`CONFLICTING` ⇒ repair handshake:**
+   a. stop that lane's merge watcher and record `watch_stopped: sibling_conflict` (the PR is no longer
+      `awaiting_merge`; its park state becomes `repairing`);
+   b. resume the lane (`lane-launch --resume`) with a single task: merge `origin/main` into the branch;
+   c. a conflict confined to the conflict markers and resolved without changing either side's intent ⇒ commit,
+      `ci-local` (item 08 slot), push, wait for required checks, re-park `awaiting_merge`, re-arm the watcher,
+      notify; anything larger (a semantic clash, a test now failing) ⇒ park `escalated` with the diff, never guess;
+   d. the "one owned drain per pass" invariant holds: a pure merge-from-main commit gets CI and the static CI lens,
+      not a new drain (item 06 Step B's precedent); a resolution that edits code beyond the markers is escalated.
+3. **`BEHIND` but clean ⇒ nothing** (bypass merges do not need it; P1).
+4. **`main` red after a merge ⇒ wave pause:** write `wave_paused: main_red after <PR>` to the coordinator run file,
+   notify, and mark every parked PR "hold — main is red" in `lane-status` and the pane until `main` is green again.
+   No automatic revert.
+5. **Tests:** a fixture where merging lane 1 makes lane 2 conflicting ⇒ watcher stopped, lane resumed, clean
+   resolution re-parks with a re-armed watcher; a semantic conflict ⇒ `escalated`; `BEHIND`-only ⇒ untouched; a red
+   `main` ⇒ wave paused; and a guard test that no push ever happens while a watcher marker for that PR is live.
+
+#### Non-goals
+- No merge train, no merge queue, no auto-merge, no CI job with merge authority (P1, P5).
+- No automatic revert of a merge that turned `main` red.
+
+#### Acceptance criteria
+- In S2, every PR that turned conflicting after a sibling merge is either re-parked green or escalated with its
+  diff, and no push was made onto a PR with a live watcher marker.
+
+#### Validation (must pass before merge)
+1. **Baseline:** full loop on base and branch, `<passed>/<total>` and `SKIP` counts.
+2. **Unchanged path:** a wave whose PRs stay mergeable produces no repair activity (item 06's tests unchanged).
+3. **Running system:** two lanes with a deliberate one-line overlap; merge one; paste the sweep, the handshake
+   lines and the re-parked PR's checks.
+4. **A failure this must catch:** skip step 2a (push while the watcher is armed) ⇒ the guard test fails.
+5. **Rollback:** `git revert`; parked PRs keep working as in item 06.
+
+#### Spike findings
+(S1 Q4: record #374's `mergeable` / `mergeStateStatus` and what its lane and watcher did after #372 merged.
+Items 18 and 19 are in different waves by `plan-waves`, so they are the overlap case on purpose.)
+
+#### Verified premises (re-check before starting)
+- `main` protection: 1 approving review, required check `ci`, `strict: true`; repo owner type `User`, so GitHub's
+  merge queue is unavailable (`mergeQueue: null`), checked 2026-10-04. P5 rules it out anyway.
+- Item 06 §Problem: "A bypass merge also does not need the branch to be up to date, so file-disjoint lane PRs need
+  no train at all."
+
+#### Evidence
+This session's scale-up analysis (2026-10-04) and S1 Q4 once recorded.

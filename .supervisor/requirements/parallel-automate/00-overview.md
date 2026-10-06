@@ -31,11 +31,12 @@ carry the fixes.
 | 10 | `Touches` / `Depends on` backfill, lint, `--explain` | medium | Today 26 open items plan into 24 waves (max 2 per wave); most items predate item 04's sections. |
 | 11 | Split shared hotspot files | medium | Generated skills index; `automate-helpers.sh` split along its subcommand seams; measured by 10's `--explain`. |
 | 12 | Policy answers for routine lane questions | medium | Stable gate ids + a human-stamped policy; 8 of S1 v2's 15 questions were routine. |
-| 13 | Sibling-merge conflict repair | medium | After each merge, repair a parked PR that turned CONFLICTING via a watcher handshake; pause on a red `main`. Not a train. |
+| 13 | Sibling-merge conflict repair | medium | After each merge, repair a parked PR that turned CONFLICTING via a watcher handshake; pause on a red `main`. Not a train. **Merged 2026-10-06 into 06 as Part S, rewritten for wave-branch integration.** |
 | S2 | Five-lane spike (`operator-run/`) | 1 day, operator | Measures CI slots, memory, owner load, merges and cost at 5 lanes; sets P2; go/no-go for 10. |
 | 14 | Lanes pane add-on (opt-in sibling plugin) | medium | The `/lanes` pane prototyped in S1/w1 as an installable, optional Claude-adapter plugin over 05's `lane-status` / `lane-answer`; lanes behave identically without it (P9). |
 | 15 | Backlog board (one derived view of every item's real state) | medium | One canonical status reader (done stamp anywhere, `unknown` as a state) + `/backlog` table/JSON + a Floor surface + `BACKLOG.md` on the meta branch; totals always add up. No dependencies, so it can run in the next wave. |
 | 16 | Machine load guard (added 2026-10-05) | medium | S3 wave 1 froze the machine (load1 119 on 12 CPUs, watchdog reset) although 08's slots cap the suite at ~12 jobs. Attribute the load first, then one machine-wide gate in `ci-slot.sh` that holds new heavy work while overloaded and never kills. The coordinator's side (launch gating, reset recovery) is in 05 Scope 16. No dependencies; plans after 09 (shared `AGENT_GUIDELINES.md`). |
+| 17 | Right-size check + `merge-items` helper (added 2026-10-06) | medium | Advisory size signal and merge candidates at writing and intake time, an `automate-helpers.sh merge-items` helper, and user-story-writing's INVEST "Small" wording. Owner: kept separate from 15. |
 
 **Usage check:** every command in an `operator-run/` runbook is checked against the shipped script's usage text (`<script> --help`) before the runbook is used — by hand, no checker script; a flag `--help` does not list (e.g. the dry-run flag M1 step 1 once named) is a runbook bug to fix first.
 

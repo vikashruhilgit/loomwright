@@ -9,11 +9,12 @@
 ../meta-sync-followups/01-untested-push-and-base-fallbacks.md
 ../meta-sync-followups/08-meta-sync-hardening.md
 ../meta-sync-followups/04-scrub-safe-briefs-and-push-rehearsal.md
-../meta-sync-followups/05-carry-the-learning-stores.md
+../meta-sync-followups/07-onboard-any-repo-to-branch-mode.md
 
 ## Also waits on (operator-run — not machine-read)
 - S1 (two-lane spike) — its answers go under "Spike findings" before this item is un-parked.
 - M2 (carry the learning stores to `loomwright-meta`) — its runbook is written by `meta-sync-followups/05` part D.
+  (2026-10-06: part D moved to `meta-sync-followups/07`; `## Depends on` re-pointed from 05 to 07 — 05 A–C are off this item's path.)
 - Why the `meta-sync-followups/*` lines above were added (owner, 2026-10-03): lanes are separate clones, all
   pushing to `loomwright-meta`. They need the travelling allowlist, the two-writer conflict rules and the
   hardened push paths first. See `00-overview.md` § Order, amendment.

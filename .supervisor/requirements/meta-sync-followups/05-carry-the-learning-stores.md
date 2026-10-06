@@ -14,18 +14,15 @@ loomwright/skills/setup/SKILL.md
 .agent/meta-allowlist.txt
 loomwright/commands/dreaming.md
 loomwright/commands/agent-help.md
-loomwright/scripts/meta-sync-rehearsal.sh
-loomwright/scripts/test-meta-sync-rehearsal.sh
 loomwright/docs/ARCHITECTURE_CONTRACTS.md
 loomwright/skills/automate-loop/SKILL.md
-.github/workflows/ci.yml
 loomwright/docs/vendor-coupling-manifest.json
 changelog.d/meta-sync-followups-05-carry-the-learning-stores.md
 
 ## Notes on the touched files (conditions moved out of the machine-read section)
 - Part B: `meta-sync.sh`, `test-meta-sync.sh`. Part A (and part B's consent text): `setup-memory.sh`, `test-setup-memory.sh`, `commands/setup.md`; `skills/setup/SKILL.md` line saying the allowlist "does not travel".
 - Part C: `commands/dreaming.md` plus every prompt restating its PR-path rule — grep found only `commands/dreaming.md` and `commands/agent-help.md`.
-- Part D: a new rehearsal script + self-test (proposed names `meta-sync-rehearsal.sh` / `test-meta-sync-rehearsal.sh`); D.3 CI pull step in `.github/workflows/ci.yml`; `vendor-coupling-manifest.json` because the setup-memory scripts carry ratcheted allowances.
+- Part D: moved to `07-onboard-any-repo-to-branch-mode.md` (2026-10-06).
 - Docs stating the managed set: the `meta-sync.sh` header, `ARCHITECTURE_CONTRACTS.md`, `automate-loop/SKILL.md` (HOOKS.md never mentions branch mode).
 - Metadata-branch edits, not part of the code PR: M1 runbook Rollback section and a new `operator-run/M2-carry-learning-stores.md`.
 - "Ships in one PR with 04" cannot be expressed in this grammar; it stays in Scope prose. M1 (complete, #361 merged) dropped from Depends.
@@ -87,21 +84,9 @@ Every store that improves how the agents work travels with the repo, guarded by 
 2. Two gates, as for the rules PR: per-item Accept (content), then a separate Pre-push confirmation (push). It never merges: `gh pr create`, then stop.
 3. Amend the documented PR-path rule in `commands/dreaming.md` (today: "carries **only** `.agent/rules/*.json` … never any other store"), and every prompt that restates it. Decide and state whether the memory PR and the rules PR are one branch or two. `CLAUDE.md` stays out of scope: its edits remain a hand PR, and the doc says so.
 
-### D. Committed rehearsal harness + M2 runbook (the testing method, made repeatable)
-1. A rehearsal script under `loomwright/scripts/` that, given a checkout, builds a scratch clone and a local bare remote and runs the full migration and drill against them. Nothing reaches the real remote. It copies `config.json` (the allowlist) by default and can run without it (`--no-config`). It runs:
-   - `init` → `push` → verify: every managed path present, blob-identical, nothing extra, file types as declared;
-   - a second checkout: `git pull` removes the copies, `meta-sync pull` restores them byte-identical;
-   - the corrected rollback (#361's PR body) after a post-migration edit, add and delete: all kept, `.gitignore` back to the pre-migration content;
-   - the twin reader verifying the same contract count after a round trip.
-
-   It prints one PASS/FAIL line per check, exits non-zero on any FAIL, and cleans up after itself.
-2. Its self-test proves each check can go red (mutants: a dropped file, a changed blob, the runbook's old rollback order, a contract without provenance).
-3. **CI sees run history again (M1 Verify follow-up, owner 2026-10-03).** Since M1, CI's checkout has no
-   `.supervisor/jobs/done/`, so `loomwright/sdk-spike/test/digest-lanes.test.sh`'s optional corpus sweep prints
-   `SKIP` (before M1 it swept 132 real briefs). Add a CI step that runs `meta-sync.sh pull` before the suite.
-   Read-only: CI never pushes, and a failed pull is reported and leaves the suite as today. The PR edits a workflow
-   file, so `claude-review` skips itself on it; the owner reviews that PR by hand.
-4. Fix M1's Rollback section to the corrected recipe (the runbook's own recipe silently loses post-migration edits — drill evidence 2026-10-03). Write `operator-run/M2-carry-learning-stores.md`, with the same shape as M1: backup → rehearsal (this script) → real push → verify → consent recorded. Pause for the owner at each step.
+### D. Moved 2026-10-06 to `07-onboard-any-repo-to-branch-mode.md` (Part D there, verbatim)
+Owner decision (owner decision: fewer, larger items — a run costs ~$17–20 plus 4+ owner questions even for a tiny change): the rehearsal harness and the M2 runbook belong to onboarding, which already
+uses the harness (its Scope 2c). Parts A–C stay here.
 
 ## Stays local (non-goals — decided 2026-10-03, owner: "session-level things we can ignore")
 - Session traces: `.supervisor/logs/` (683 files, 13 MB, 35 with home paths, prompt traces), `state.md`, `.current-session*`, `history/`. Their durable output (worker summaries, ledger lines, lessons, memory) travels instead. Honest cost: a second machine's `/dreaming` reflects only on that machine's own logs.
@@ -120,9 +105,7 @@ Every store that improves how the agents work travels with the repo, guarded by 
 - **B4** Given an injected home path or token in a `.jsonl` file and in a `.dismissed-decisions` file, when `push` runs, then the scrub refuses it (exit 2) and nothing is pushed.
 - **B5** Given no recorded consent, when `push` would add part-B paths, then it asks (or, non-interactively, skips and names them), and run history still syncs.
 - **C1** Given an accepted memory change and no Pre-push confirmation, then no branch is created and nothing is pushed. Given both gates, then the PR carries only `.supervisor/memory/` and `.claude/agent-memory/` paths, and `/dreaming` never merges it.
-- **D1** The rehearsal script passes on this repo with config and with `--no-config` + the request file. Its self-test shows each check going red under its mutant, including the old rollback order losing a post-migration edit.
-- **D3** On `main`'s CI after this lands, the corpus sweep reports `parseBrief threw on …/N` (or its NOTE) instead of `SKIP`, and the self-test count of real skips is back to the pre-M1 one (the Linux-host Darwin cases only).
-- **D2** M1's Rollback section is the corrected recipe. M2's runbook names only commands and flags that exist in the shipped scripts' `--help`.
+- **D1–D3:** moved with Part D to `07-onboard-any-repo-to-branch-mode.md`.
 - `bash scripts/ci-local.sh` is green. Bump with a `changelog.d/` fragment + `scripts/bump-version.sh` as the last commit, never by hand.
 
 ## Provenance

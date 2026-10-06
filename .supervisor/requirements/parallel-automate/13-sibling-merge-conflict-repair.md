@@ -1,6 +1,6 @@
 # 13 — After each merge, keep the other parked PRs mergeable (conflict repair, not a merge train)
 
-## Status: parked (waits on S1 Q4's evidence — the owner merges #372 first, then #374's state is recorded — and on item 05)
+## Status: parked (merged 2026-10-06 into `06-wave-close-and-closeout.md` as Part S, rewritten for wave-branch integration — do not run this file; work the merged item)
 
 ## Depends on
 05

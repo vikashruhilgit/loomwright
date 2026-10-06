@@ -15,7 +15,7 @@
 **Single owner from now: session 6e8f1058.** 944cda59 runs nothing for S3 (no monitor, sampler, watcher or lane)
 and edits no S3 record after this push.
 
-### State at handover
+### State at handover (superseded 2026-10-06 — current state: §"Wave 1 log" and §"Wave 1 result")
 - Step 0 done: release #390 merged (`3217da0`, v15.122.0); plugin installed at 15.122.0
   (`~/.claude/plugins/cache/atelier/loomwright/15.122.0`); primary on fresh `main`, clean; `loomwright-meta` synced.
 - **Wave 1 is SET UP, NOT LAUNCHED.** Throwaway records branch `loomwright-meta-s3w1` (seeded by s3-a, `51629ca`).
@@ -75,7 +75,7 @@ Owner decision 2026-10-05: stabilize parallel automation, then release it for ot
 wave; S3 is the first run of **several waves in a row**, with a release and reinstall between waves (the
 pa/06 one-bump-per-wave model, by hand) and with the wave runner's own replacement (pa/05) built mid-queue.
 
-## The queue (22 items — owner decision 2026-10-05: "finish parallel automation and everything related"; 19 + `parallel-automate/16` (after wave 1 froze the machine) + `meta-sync-followups/09, 10` (#391's leftovers), all added the same day)
+## The queue (20 items after the 2026-10-06 restructure, §"Restructure 2026-10-06"; was 22 — owner decision 2026-10-05: "finish parallel automation and everything related"; 19 + `parallel-automate/16` (after wave 1 froze the machine) + `meta-sync-followups/09, 10` (#391's leftovers), all added the same day)
 Merged on 2026-10-05 (originals parked with pointers; text kept verbatim as parts):
 `meta-sync-followups/08` = ms/02 + 03 + 06 · `automate-followups/32` = af/14 + 28 + 29 · `automate-followups/33` =
 af/17 + 25. New the same day: `meta-sync-followups/07` (onboard any repo to branch mode), `automate-followups/31`
@@ -85,7 +85,44 @@ Added to the scope the same day: `parallel-automate/09, 11, 12, 13, 14, 15`, `au
 recovery), both from the wave 1 crash (§"Wave 1 log").
 Out of scope (not parallel work): the rest of the backlog, including the 7 older items with no Touches / Depends on.
 
-## Wave plan (`plan-waves --max 5`, companion rule relaxed — see Planner rule)
+## Restructure 2026-10-06 (owner decisions relayed by session 53b1897e: fewer, larger items)
+Why: a run costs ~$17–20 plus 4+ owner questions even for a tiny change (S2 lanes $17–40; S3 wave 1 $20–42).
+Same lossless procedure as af/32, af/33, ms/08 (originals verbatim as parts, originals parked with a pointer,
+dependents re-pointed; a line check found no original line lost — only deliberate edits: fragment names, re-pointed
+depends, the moved pa/06 fragments).
+- `meta-sync-followups/09` + `/10` → **`meta-sync-followups/11-scrub-precision.md`** (A = 10 anchor, B = 09 schema examples).
+- `automate-followups/22` + `/23` → **`automate-followups/34-sweep-and-janitor.md`** (A = 22 sweep, B = 23 registry + `/janitor`).
+- `parallel-automate/13` → **`parallel-automate/06` Part S**, REWRITTEN for wave-branch integration (13's premise —
+  lane PRs merging into `main` one by one — no longer applies); pa/06 also amended: wave close on a wave branch, no
+  release lane (wave 1 evidence). Open owner decision recorded there: may the coordinator run the merges into `wave/*`.
+- `meta-sync-followups/05` Part D (rehearsal harness + M2 runbook, AC D1–D3) → **`meta-sync-followups/07` Part D**;
+  ms/07 no longer depends on ms/05; **`parallel-automate/05`'s Depends re-pointed ms/05 → ms/07**.
+- `parallel-automate/06`'s 2026-10-05 "arm the merge watcher at an `escalated` park" (bullet, its test, its validation
+  note) → **`automate-followups/31`**, which no longer depends on pa/06 (also fixes the sequential case).
+- New: **`parallel-automate/17-right-size-check-and-merge-items.md`** (filed by 53b1897e); owner: keep separate from pa/15.
+- Milestone A unchanged: after ms/07 + agnostic/04.
+
+## Wave plan (re-planned 2026-10-06 after wave 1 + the restructure; S3 planner rule; `plan-waves --max 5`)
+16 items left (20 after the restructure, 4 merged in wave 1). **Pre-split plan — re-check Touches after pa/11.**
+| Wave | Items | Lanes |
+|---|---|---|
+| 2 | pa/11 split hotspots · pa/16 machine load guard · ms/11 scrub precision | 3 |
+| 3 | af/33 children-settled gate · ms/05 learning stores (A–C) | 2 |
+| 4 | ms/07 onboard any repo (+ Part D harness) | 1 |
+| 5 | agnostic/04 non-interactive gates (→ Milestone A) | 1 |
+| 6 | pa/05 lane coordinator | 1 |
+| 7 | pa/06 wave close (+ Part S) · pa/14 lanes pane | 2 |
+| 8 | af/31 temporary escalations (+ escalated-park watcher) | 1 |
+| 9 | pa/12 policy answers | 1 |
+| 10 | pa/15 backlog board | 1 |
+| 11 | af/34 sweep + janitor | 1 |
+| 12 | pa/17 right-size + merge-items | 1 |
+| 13 | pa/07 pilot + docs (→ Milestone B) | 1 |
+**Finding:** `loomwright/docs/RESULT_SCHEMAS.md` (declared by 7 of 16 items) is now the main serializer — af/31,
+af/34 and pa/17 have no dependency on the items they wait for, only this file and `automate-helpers.sh`
+(which pa/11 splits). Input for pa/11's scope or a planner rule, like the three table docs.
+
+## Wave plan, original (2026-10-05 — superseded by the re-plan above)
 | Wave | Items | Lanes |
 |---|---|---|
 | 1 | af/32 run-file lifecycle · ms/08 meta-sync hardening · ms/04 home-path scrub · pa/09 fewer full CI runs | 4 |
@@ -195,6 +232,33 @@ teardown, machine (load, swap, free) at peak.
 - Unrecorded follow-up (s3-c, fix-now chosen): anchoring the `meta-sync.sh` `home_path` regex — the draft was deleted
   with the fix-now; owner to decide whether to file it.
 
+### Wave 1 result (closed 2026-10-06 ~03:40Z)
+- **Integration on a wave branch works (spike question answered: yes).** `wave/s3w1` = `main` + the four parked heads
+  `--no-ff` in planner order (#395 `68e2aa9`, #394 `65e5586`, #391 `1f0571b`, #392 `3e4be57`), all clean (0 conflicts,
+  incl. the three table docs and `vendor-coupling-manifest.json`), ci-local PASS 496 s, bump `bd5557d` (v15.123.0) last.
+  Wave PR #397 merged by the owner with a merge commit (`f0b4b66`, 03:20:10Z); GitHub marked all four lane PRs MERGED at
+  03:20:11Z and every lane's merge watcher closed out by itself within 60 s. No `gh pr update-branch`, no sibling
+  re-CI, no targeted `--resume` needed.
+- **claude-review FAILED on #397** (not a finding): 45 turns, $1.86, 8 permission denials, `success` with no comment ⇒
+  the workflow's "a review was actually posted" assert failed. A 34-file / ~3,100-line wave diff is the likely cause
+  (tool starvation per the assert's own hint; output hidden). The owner merged anyway. Gap: a wave PR needs a review
+  budget/tool set sized for it, or per-lane reviews are its only review (they were all green).
+- **Closeout pushes:** s3-a, s3-b pushed to the throwaway branch; s3-c and s3-d `meta-push FAILED … home_path` (lanes
+  ran 15.122.0, before #391's template fix; s3-c's own run file quoted `/api/users/<42>/` literally — ms/10's false
+  positive). Operator rewrote home paths and carried all four to `loomwright-meta` (`f53181e`, 29 paths) incl. s3-c's
+  runbook usage-check line (M1/S1/S2/S3/00-overview) and M1 step 1.
+- **Teardown:** s3-b's legacy `meta-base` matched no throwaway-branch tree ⇒ the new 15.123.0 code reports
+  `base_branch_mismatch`, and `s1h.sh teardown` does not refuse on it (only `local_ahead`/`conflict`) — a mismatched
+  lane could hide unpushed records; its records were verified carried by diff first. `leaks` empty after teardown.
+  Primary's legacy base was adopted cleanly by 15.123.0 (`synced … on loomwright-meta`).
+- **Cost (sum of each lane session's final `total_cost_usd`):** s3-a $42.32 · s3-b $25.39 · s3-c $20.58 · s3-d $20.25 ·
+  wave ≈ **$108.5** (+ $1.86 for the wave PR's review).
+- **Questions:** 29 relayed (s3-a 9, s3-b 6, s3-c 5, s3-d 9); routine 6 (startup) + 2 (crash orphans); the rest were
+  brief / dismissed-finding decisions. Longest wait: ~8.5 h overnight (17:24Z → 01:44Z).
+- **Launch → park:** s3-c 4 h 39 m, s3-d / s3-b / s3-a ~15 h — wall-clock dominated by the crash (13:40Z, resume 16:07Z)
+  and the overnight wait, not by work.
+- **Peak load:** 119 before the crash (3 lanes in `ci-local`); after the resume ≤ 7 observed by the monitor.
+
 ## Done when
-All 22 items merged or closed by the owner, each wave's records on `loomwright-meta`, lanes torn down with `leaks`
+All items in the queue (20 after the 2026-10-06 restructure) merged or closed by the owner, each wave's records on `loomwright-meta`, lanes torn down with `leaks`
 empty, the measures above recorded in this file, and P2 (default lane count) revisited with S2 + S3 evidence.

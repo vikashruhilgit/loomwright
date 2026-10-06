@@ -93,13 +93,45 @@ beyond the rollback in Scope 3.
 
 ## Depends on
 04-scrub-safe-briefs-and-push-rehearsal.md
-05-carry-the-learning-stores.md
 08-meta-sync-hardening.md
 
 ## Touches
 loomwright/scripts/migrate-branch-mode.sh
 loomwright/scripts/test-migrate-branch-mode.sh
+loomwright/scripts/meta-sync-rehearsal.sh
+loomwright/scripts/test-meta-sync-rehearsal.sh
+.github/workflows/ci.yml
+loomwright/docs/vendor-coupling-manifest.json
 loomwright/commands/setup.md
 loomwright/skills/setup/SKILL.md
 loomwright/docs/RESULT_SCHEMAS.md
 changelog.d/meta-sync-followups-07-onboard-any-repo-to-branch-mode.md
+
+## Part D — moved 2026-10-06 from `05-carry-the-learning-stores.md` (verbatim; owner decision: fewer, larger items — a run costs ~$17–20 plus 4+ owner questions even for a tiny change)
+Scope 2c above names "`meta-sync-followups/05` Scope D's harness": that harness is now this part, so this
+item no longer depends on 05. The M2 runbook (D.4) still describes carrying 05's part-B stores; it can be
+written here, and M2 itself runs after 05 merges.
+
+#### D. Committed rehearsal harness + M2 runbook (the testing method, made repeatable)
+1. A rehearsal script under `loomwright/scripts/` that, given a checkout, builds a scratch clone and a local bare remote and runs the full migration and drill against them. Nothing reaches the real remote. It copies `config.json` (the allowlist) by default and can run without it (`--no-config`). It runs:
+   - `init` → `push` → verify: every managed path present, blob-identical, nothing extra, file types as declared;
+   - a second checkout: `git pull` removes the copies, `meta-sync pull` restores them byte-identical;
+   - the corrected rollback (#361's PR body) after a post-migration edit, add and delete: all kept, `.gitignore` back to the pre-migration content;
+   - the twin reader verifying the same contract count after a round trip.
+
+   It prints one PASS/FAIL line per check, exits non-zero on any FAIL, and cleans up after itself.
+2. Its self-test proves each check can go red (mutants: a dropped file, a changed blob, the runbook's old rollback order, a contract without provenance).
+3. **CI sees run history again (M1 Verify follow-up, owner 2026-10-03).** Since M1, CI's checkout has no
+   `.supervisor/jobs/done/`, so `loomwright/sdk-spike/test/digest-lanes.test.sh`'s optional corpus sweep prints
+   `SKIP` (before M1 it swept 132 real briefs). Add a CI step that runs `meta-sync.sh pull` before the suite.
+   Read-only: CI never pushes, and a failed pull is reported and leaves the suite as today. The PR edits a workflow
+   file, so `claude-review` skips itself on it; the owner reviews that PR by hand.
+4. Fix M1's Rollback section to the corrected recipe (the runbook's own recipe silently loses post-migration edits — drill evidence 2026-10-03). Write `operator-run/M2-carry-learning-stores.md`, with the same shape as M1: backup → rehearsal (this script) → real push → verify → consent recorded. Pause for the owner at each step.
+
+#### Notes on the touched files (moved with Part D)
+- Part D: a new rehearsal script + self-test (proposed names `meta-sync-rehearsal.sh` / `test-meta-sync-rehearsal.sh`); D.3 CI pull step in `.github/workflows/ci.yml`; `vendor-coupling-manifest.json` because the setup-memory scripts carry ratcheted allowances.
+
+#### Acceptance criteria (moved with Part D)
+- **D1** The rehearsal script passes on this repo with config and with `--no-config` + the request file. Its self-test shows each check going red under its mutant, including the old rollback order losing a post-migration edit.
+- **D3** On `main`'s CI after this lands, the corpus sweep reports `parseBrief threw on …/N` (or its NOTE) instead of `SKIP`, and the self-test count of real skips is back to the pre-M1 one (the Linux-host Darwin cases only).
+- **D2** M1's Rollback section is the corrected recipe. M2's runbook names only commands and flags that exist in the shipped scripts' `--help`.
