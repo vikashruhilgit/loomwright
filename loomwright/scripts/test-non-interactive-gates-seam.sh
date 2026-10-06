@@ -35,6 +35,10 @@
 #       Launch Pad only under `--non-interactive-fallback`, separate from the four-flag /supervisor
 #       set, and commands/autonomous.md (forward-set note, flag row, flow diagram) says so.
 #   (h) re-check: subtask 1's PO / automate strings still resolve.
+#   (r) no unapproved rubric: autonomous-loop PLAN step 2 requests rubric auto-authoring only when
+#       `--non-interactive-fallback` was NOT passed (the run then ends at `no_rubric_in_non_interactive`
+#       and step 7 freezes nothing); Launch Pad Phase 5 step 7, its Can't-ask rule (agent + command
+#       mirror) and the inventory say so. Each predicate was checked red on the pre-fix files.
 #   (m) MUTATION CONTROL: delete the can't-ask branch line from a COPY of agents/product-owner.md;
 #       gate the mutant on non-empty + differs-from-original; the (a) predicate MUST fail on it.
 #       Without this, (a) could be green while asserting nothing.
@@ -292,6 +296,51 @@ gate_has_status "(h) re-check agents/product-owner.md" "$PO_AGENT" 'po_gate: nee
 gate_has_status "(h) re-check commands/product-owner.md" "$PO_CMD" 'po_gate: needs_owner (<n> flags)'
 gate_has_status "(h) re-check skills/automate-loop/SKILL.md" "$AUTO_SKILL" 'needs_owner'
 gate_has_status "(h) re-check commands/automate.md" "$AUTO_CMD" 'needs_owner'
+
+# ---- (r) no unapproved rubric: auto-authoring is gated off under --non-interactive-fallback --------
+# An auto-authored Outcomes Rubric's only approval is the human approve/edit at Launch Pad Phase 6;
+# under the Launch Pad forward Phase 6 saves on PASS unattended, so the loop must not request one.
+# Silent predicates over captured text (no `| grep -q` under pipefail), reused on 7a402cb copies.
+al_rubric_gate_ok() {
+  plan="$(awk '/^## PLAN/{p=1; next} p && /^## /{exit} p' "$1")"
+  directive="$(printf '%s\n' "$plan" | grep -F -- '**Conditional auto-authoring directive' | head -1 || true)"
+  case "$directive" in *'AND `--non-interactive-fallback` was NOT passed at INIT, the inlined directive ALSO'*) ;; *) return 1 ;; esac
+  never="$(printf '%s\n' "$plan" | grep -F -- '**Never under `--non-interactive-fallback`:**' | head -1 || true)"
+  case "$never" in *'requests NO authoring'*"step 7's freeze cannot fire"*'`status: done, status_reason: "no_rubric_in_non_interactive"`'*) ;; *) return 1 ;; esac
+  freeze="$(printf '%s\n' "$plan" | grep -F -- '**Non-interactive no-op:**' | head -1 || true)"
+  case "$freeze" in *'never freezes a rubric that no human approved'*) ;; *) return 1 ;; esac
+  return 0
+}
+lp_rubric_gate_ok() {
+  step7="$(grep -F -- '**Outcomes Rubric auto-authoring (guarded' "$1" | head -1 || true)"
+  case "$step7" in *'**Never when this run cannot ask**'*'`no_rubric_in_non_interactive`'*) ;; *) return 1 ;; esac
+  return 0
+}
+lp_rule_rubric_ok() {
+  rule="$(grep -F -- "- **Can't-ask rule:**" "$1" | head -1 || true)"
+  case "$rule" in *'no Outcomes Rubric is auto-authored when the run cannot ask'*) ;; *) return 1 ;; esac
+  return 0
+}
+if al_rubric_gate_ok "$AL_SKILL"; then
+  ok "(r) autonomous-loop PLAN step 2 requests no rubric authoring under --non-interactive-fallback (no-rubric outcome named; step 7 freeze skipped)"
+else
+  no "(r) autonomous-loop PLAN step 2/7 do not gate rubric auto-authoring off under --non-interactive-fallback"
+fi
+if lp_rubric_gate_ok "$LP_AGENT"; then
+  ok "(r) agents/launch-pad.md Phase 5 step 7 authors no rubric when the run cannot ask"
+else
+  no "(r) agents/launch-pad.md Phase 5 step 7 still authors a rubric a can't-ask Phase 6 would save unapproved"
+fi
+if lp_rule_rubric_ok "$LP_AGENT" && lp_rule_rubric_ok "$LP_CMD"; then
+  ok "(r) the Launch Pad Can't-ask rule (agent + command mirror) states no rubric is auto-authored"
+else
+  no "(r) the Launch Pad Can't-ask rule (agent or command) does not state that no rubric is auto-authored"
+fi
+inv_rubric="$(printf '%s\n' "$inv" | grep -F -- '| Launch Pad Outcomes Rubric auto-authoring' | head -1 || true)"
+case "$inv_rubric" in
+  *'no_rubric_in_non_interactive'*) ok "(r) the Question-gate inventory has the rubric auto-authoring row naming no_rubric_in_non_interactive" ;;
+  *) no "(r) the Question-gate inventory has no rubric auto-authoring row naming no_rubric_in_non_interactive" ;;
+esac
 
 # ---- (further gates append their sections here, above the mutation control) ---------------------
 
