@@ -60,7 +60,7 @@ drift, not progress.
 
 ```
 bash loomwright/scripts/build-loop-evidence.sh \
-  --state-dir /Users/vikashruhil/Documents/work/AI/ai-agent-manager/.supervisor [--jsonl]
+  --state-dir ~/Documents/work/AI/ai-agent-manager/.supervisor [--jsonl]
 ```
 
 **n = 27 deduplicated runs** (from 41 log files), joined against 74 postmortem lines

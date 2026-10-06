@@ -228,7 +228,7 @@ Examples:
 ```markdown
 ## Context Read
 
-**Project Location:** /Users/name/my-app
+**Project Location:** ~/my-app
 **CLAUDE.md Status:** ✓ Found
 
 **Architecture:** NestJS + PostgreSQL + Drizzle ORM

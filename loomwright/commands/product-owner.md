@@ -53,7 +53,7 @@ description: Translate business problems into user stories (Beads-optional) with
 
 ```
 ## CONTEXT READ
-Project: /Users/name/venue-app
+Project: ~/venue-app
 Domain: Sports venue management
 Key Roles: Venue Manager, Staff Supervisor, Event Coordinator
 
