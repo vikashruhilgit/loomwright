@@ -207,12 +207,16 @@ read_load() {
 }
 
 # ancestry PID — " PID ppid ppid… " up to init: a live machine holder in it means we are nested.
+# ONE `ps` for the whole walk (a per-level `ps` cost seconds on a loaded machine, past a short --wait).
 ancestry() {
-  local p="$1" out=" " i=0
-  while is_uint "$p" && [ "$p" -gt 1 ] && [ "$i" -lt 64 ]; do
-    out="$out$p "; p="$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')"; i=$((i + 1))
-  done
-  echo "$out"
+  ps -A -o pid= -o ppid= 2>/dev/null | awk -v p="$1" '{ pp[$1] = $2 }
+    END { out = " "; i = 0; while (p > 1 && i < 64) { out = out p " "; p = pp[p]; i++ }; print out }'
+}
+# need_ancestry — walk once, and only when a machine holder exists (none ⇒ nothing to nest in).
+need_ancestry() {
+  [ -n "$ANCESTRY" ] && return 0
+  local r; for r in "$MD"/holders/*; do ANCESTRY="$(ancestry "$PID")"; return 0; done
+  return 0
 }
 
 # machine_holders — under the machine mutex: MH = count of LIVE holders (dead records removed);
@@ -419,11 +423,10 @@ cmd_acquire() {
   [ -n "$PID" ] || die "acquire needs --pid <holder-pid> (the long-lived caller, never this helper)"
   alive "$PID" || die "--pid $PID is not a live process"
   deadline=$(( $(now) + WAIT ))
-  ANCESTRY="$(ancestry "$PID")"
   every="${LOOMWRIGHT_CI_SLOT_PRINT_EVERY:-30}"; is_uint "$every" || every=30; every=$((10#$every))
   while :; do
     # +1 s: a mutex held for milliseconds right at the deadline (or with --wait 0) is still waited out.
-    read_load   # outside every mutex: a slow reader never holds anyone else up
+    read_load; need_ancestry   # outside every mutex: a slow reader never holds anyone else up
     if mutex_lock $((deadline + 1)); then
       # Our ticket vanished or was overwritten (a writer outside this mutex): take a fresh one.
       if [ -z "$MY_TICKET" ] || [ "$(rec_field "$D/tickets/$MY_TICKET" 1)" != "$PID" ]; then
@@ -443,6 +446,11 @@ cmd_acquire() {
     fi
     if ! alive "$PID"; then
       drop_my_ticket; warn "holder pid $PID is gone — leaving the queue"; return 1
+    fi
+    # The first waiting line comes before any give-up, so even a --wait shorter than one round says why.
+    if [ "$next_print" -eq 0 ]; then
+      warn "waiting for a CI slot — position ${pos:-?}, ${HELD:+$HELD, }holders: $(holders_line)"
+      next_print=$(( $(now) + every ))
     fi
     if [ "$(now)" -ge "$deadline" ]; then
       drop_my_ticket
@@ -515,7 +523,7 @@ MD="${LOOMWRIGHT_MACHINE_STATE_DIR:-$HOME/.local/state/loomwright/machine}"
 MLK="$MD/mutex.lnk"
 LOAD_CMD="${LOOMWRIGHT_MACHINE_LOAD_CMD:-$HERE/machine-load.sh}"
 RECHECK="${LOOMWRIGHT_MACHINE_LOAD_RECHECK:-15}"; is_uint "$RECHECK" || RECHECK=15; RECHECK=$((10#$RECHECK))
-LOAD_STATE=unknown; LOAD1=unknown; LOAD_AT=""; HELD=""; MACHINE_REC=""; NESTED_IN=""; MH=0; ANCESTRY=" "
+LOAD_STATE=unknown; LOAD1=unknown; LOAD_AT=""; HELD=""; MACHINE_REC=""; NESTED_IN=""; MH=0; ANCESTRY=""
 MACHINE_OK=0
 D=""
 state_dir
