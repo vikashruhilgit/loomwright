@@ -35,7 +35,8 @@
 #     Queue item off, and calls trail-pr. It NEVER commits in the primary.
 #   * `finalize-empty` (under `run-lock.sh --owner automate-finalize:<run_id>`)
 #     rewrites ONLY a closed-out run's `## Status: paused` → `done` and its
-#     `## Current` `pause_reason` → `null` (one validated runfile-write), appends
+#     `## Current` `pause_reason` → `null` (`current-set` on a staged copy, then
+#     one validated runfile-write), appends
 #     two Progress lines, calls trail-pr `--reason done` and — branch mode off —
 #     trail-unstage for that run. Nothing else.
 #   * `closeout-others` runs `closeout` (and, branch mode off, `trail-unstage`)
@@ -1421,7 +1422,8 @@ PROGRESS
 # `- [ ]` row), and the `## Current` item line's `status: done` — re-checked under
 # the lock. Then, in order: `run-lock.sh acquire --owner automate-finalize:<run_id>`
 # (held ⇒ one skipped line, nothing written); ONE validated rewrite through
-# `runfile-write` (`## Status: done`, `## Current` `- pause_reason: null`; every
+# `runfile-write` (`## Status: done`, `## Current` `- pause_reason: null` — that
+# line authored by `current-set --pause-reason null` on the staged copy; every
 # other byte unchanged); `progress-append "<ts> auto-finalized: queue empty after
 # closeout"`; `trail-pr <runfile> --reason done` (the SAME call the Queue-resolved
 # termination makes) and its line appended; branch mode OFF only, `trail-unstage
@@ -1491,17 +1493,20 @@ finalize_empty() {
   why="$(_fe_ineligible "$rf_rel")"
   if [ -n "$why" ]; then fe_release; trap - EXIT; echo "$S $why"; return 0; fi
 
-  # ONE validated rewrite: the first `## Status:` line's `paused` → `done` (any
-  # trailing text kept) and `## Current`'s `- pause_reason:` → `null`. Staged to a
-  # file and redirected — never a `generator | runfile-write` pipe (§3).
+  # ONE validated rewrite of the real file: the first `## Status:` line's `paused`
+  # → `done` (any trailing text kept) and `## Current`'s `- pause_reason:` → `null`.
+  # The pause_reason line is authored by `current-set --pause-reason null` (the
+  # run-level form — SKILL §3: every pause_reason write is a current-set call),
+  # run against the STAGED copy so the run file still changes in one atomic
+  # `runfile-write`: a failure at any step leaves it byte-unchanged and the run
+  # still eligible, so a later `--finalize` retries cleanly. Staged to a file and
+  # redirected — never a `generator | runfile-write` pipe (§3).
   local tmp; tmp="$(mktemp "${rf_abs}.fe.XXXXXX")" || { fe_release; trap - EXIT; echo "$S cannot stage the rewrite"; return 0; }
   if ! awk '
       !st && /^## Status:/ { sub(/^## Status:[[:space:]]*paused/, "## Status: done"); st=1; print; next }
-      /^## Current/ { c=1; print; next }
-      /^## / { c=0 }
-      c && !pr && /^- pause_reason:/ { print "- pause_reason: null"; pr=1; next }
       { print }' "$rf_rel" > "$tmp" \
      || ! grep -q '^## Status: done' "$tmp" \
+     || ! bash "$HLP" current-set "$tmp" --pause-reason null >/dev/null 2>&1 \
      || ! bash "$HLP" runfile-write "$rf_rel" < "$tmp" >/dev/null 2>&1; then
     rm -f "$tmp"; fe_release; trap - EXIT
     echo "$S runfile-write refused"; return 0

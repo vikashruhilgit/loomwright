@@ -1785,6 +1785,32 @@ else
   grep -qxF -- "## Status: done" "$P/$RF_REL" && [ -n "$(git -C "$P" diff --cached --name-only)" ] \
     && ok "(F1) control: without trail-unstage the finalized run leaves staged trail paths (the clean-index assertion is load-bearing)" || no "(F1) unstage control did not discriminate"
 fi
+# (F1b) the pause_reason line is authored by current-set (SKILL §3 "every write of …
+# its `- pause_reason:` line is ONE current-set call"), run on the STAGED copy — the
+# run file itself still changes in one runfile-write.
+grep -qE "^current-set /[^ ]*/$AUTD/$RUN_ID\.md\.fe\.[A-Za-z0-9]+ --pause-reason null\$" "$SPYLOG" \
+  && ok "(F1b) finalize-empty writes pause_reason via current-set --pause-reason null on the staged copy" \
+  || no "(F1b) current-set call: $(grep '^current-set' "$SPYLOG" 2>/dev/null | tr '\n' '|')"
+[ -z "$(cd "$P/$AUTD" && ls -A | grep -F '.fe.')" ] && ok "(F1b) no staged .fe. copy left behind" || no "(F1b) leftover: $(ls -A "$P/$AUTD" | tr '\n' ' ')"
+# A refusing current-set leaves the run file byte-unchanged and still eligible
+# (still listed; a later --finalize retries) — never a half-finalized done+awaiting_go.
+MUTC="$TOP/mutd-cs"; mkdir -p "$MUTC"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTC/"
+mv "$MUTC/automate-helpers.sh" "$MUTC/automate-helpers.real.sh"
+cat > "$MUTC/automate-helpers.sh" <<'SHIM'
+#!/usr/bin/env bash
+if [ "${1:-}" = current-set ]; then echo "current-set: refused — test" >&2; exit 1; fi
+exec bash "$(dirname "$0")/automate-helpers.real.sh" "$@"
+SHIM
+closeout_fixture 206; run_closeout >/dev/null
+c0="$(cksum < "$P/$RF_REL")"
+lst="$(FE_H="$MUTC/automate-helpers.sh" fe_glob)"
+[ "$lst" = "$AUTD/$RUN_ID.md" ] && [ "$c0" = "$(cksum < "$P/$RF_REL")" ] && grep -q 'not finalized — finalize-empty: skipped — runfile-write refused' "$FX/fe.err" \
+  && [ -z "$(cd "$P/$AUTD" && ls -A | grep -F '.fe.')" ] && [ ! -d "$P/.supervisor/run.lock" ] \
+  && ok "(F1b) current-set refusal ⇒ run file byte-unchanged, still listed, no staged copy, lock released" \
+  || no "(F1b) refusal leg: list='$lst' stderr=$(tr '\n' '|' < "$FX/fe.err")"
+lst="$(fe_glob)"
+[ -z "$lst" ] && grep -qxF -- "## Status: done" "$P/$RF_REL" && grep -qxF -- "- pause_reason: null" "$P/$RF_REL" \
+  && ok "(F1b) the next --finalize retries cleanly and finalizes" || no "(F1b) retry: list='$lst'"
 
 # (F2) eligibility + lock: only paused/awaiting_go/remaining-0/Current-done runs finalize.
 new_fixture 204
