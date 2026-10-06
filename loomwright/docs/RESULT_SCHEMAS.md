@@ -140,3 +140,13 @@ See [result-schemas/verify-queue.md](result-schemas/verify-queue.md).
 ## Validation Location
 
 See [result-schemas/validation-location.md](result-schemas/validation-location.md).
+
+## Cited sub-section anchors
+
+Sub-sections that committed prose cites by name as a section of this file but that are not top-level headings above. Each lives inside the split file named here — open it and search for the anchor text. `scripts/test-result-schemas-split.sh` (check F) derives the cited set from the tracked tree and fails when a cited sub-section is missing from this table or the named file does not hold it.
+
+| Anchor | Split file |
+|---|---|
+| `## Executable Acceptance` | [result-schemas/ground-truth-json.md](result-schemas/ground-truth-json.md) |
+| Completion authority join | [result-schemas/agent-lifecycle-jsonl.md](result-schemas/agent-lifecycle-jsonl.md) |
+| `worker_checkpoint` | [result-schemas/agent-lifecycle-jsonl.md](result-schemas/agent-lifecycle-jsonl.md) |
