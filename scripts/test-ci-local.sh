@@ -52,12 +52,15 @@
 #        that stamps on PASS is caught by the same check
 #   (AF4) a changed scripts/check-<x>.sh → its ci.yml-named test-check-<x>.sh runs
 #   (AF5) empty changed set → says so, still runs the cheap gates; (AF7) no origin/main → says so,
-#        diffs against HEAD; (AF6) --affected --list: the
-#        plan, nothing ran, no log; (AX) conflicting flags → exit 2
+#        diffs against HEAD; (AF6) --affected --list: the plan, nothing ran, no log;
+#        (AX) conflicting flags → exit 2
+#   (UV) the (M) run's tree restored (its touched file removed) → --last reads that run's "NOT
+#        cached" verdict as UNVERIFIED, exit 1 — never PASS
 #   (PR) 25 seeded logs + one run → 20 remain, the run's own log survives, the oldest are gone;
 #        no logs at all → --last says so, exit 1
 #   (PI) an in-flight log (no verdict, live owner pid) older than 20+ finished logs survives a run's
-#        prune; a verdict-less log with a dead owner is pruned
+#        prune and the total is still 20 (one more finished log goes instead); a verdict-less log
+#        with a dead owner is pruned
 #   (PG) the run's own log removed mid-run → no verdict-only stub recreated, the removal is reported
 # Slot state lives under a sandboxed XDG_STATE_HOME: an inner fixture run must never queue on the
 # real shared pool that an outer ci-local.sh run is holding (that would deadlock it).
@@ -234,9 +237,17 @@ else no "(O) rc=$rc out=$out"; fi
 FIXTURE_TOUCH=1 run --force
 if [ "$rc" -eq 0 ] && has "NOT cached"; then ok "(M) tree changed mid-run: PASS not cached"
 else no "(M) rc=$rc out=$out"; fi
+mlog="$(logpath)"
 run
 if [ "$rc" -eq 0 ] && ran one && ! has "PASS (cached)"; then ok "(M) next run re-ran"
 else no "(M) next run: rc=$rc out=$out"; fi
+# (UV) — back on the (M) run's starting tree (the next run above logged the touched tree, so the (M)
+# log is the newest for this key): its "NOT cached" verdict is not a PASS --last may report.
+rm -f "$R/touched.txt"
+run --last
+if [ "$rc" -eq 1 ] && [ "$(last_line)" = "ci-local --last: UNVERIFIED (tree changed during the run — result not cached) $mlog" ] \
+   && ! has "last: PASS" && [ ! -s "$FIXTURE_LOG" ]; then ok "(UV) --last on a tree-moved run's log: UNVERIFIED, exit 1"
+else no "(UV) rc=$rc mlog=$mlog out=$out"; fi
 
 # (L) — one slot, held by a live process whose own acquire call has already exited.
 sleep 30 & sleeper=$!
@@ -518,7 +529,9 @@ if [ "$rc" -eq 0 ] && [ "$(nlogs)" = 20 ] && [ -f "$prlog" ] && [ "$gone" = 6 ] 
 else no "(PR) logs=$(nlogs) gone=$gone prlog=$prlog"; fi
 
 # (PI) — an in-flight run's log (no verdict yet, owner pid alive) survives another run's prune even
-# with 20+ newer logs present; a verdict-less log whose owner is dead is pruned as usual.
+# with 20+ newer logs present, and the total stays 20 (own + live + 18 newest finished): the cap
+# gives way to live logs only, never to extra finished ones; a verdict-less log whose owner is dead
+# is pruned as usual.
 rm -f "$state/runs/"*
 sleep 60 & sleeper=$!
 deadpid="$(sh -c 'echo $$')"
@@ -529,9 +542,12 @@ echo "ci-local: log $dead_log" > "$dead_log"
 seed_finished
 run --force
 kill "$sleeper" 2>/dev/null; wait "$sleeper" 2>/dev/null; sleeper=""
+kept_seeds=0; i=0
+while [ "$i" -lt 25 ]; do [ ! -e "$state/runs/seedkey-x-Linux-20200101T0000$(printf '%02d' "$i")Z-1.log" ] || kept_seeds=$((kept_seeds + 1)); i=$((i + 1)); done
 if [ "$rc" -eq 0 ] && [ -f "$live_log" ] && [ "$(cat "$live_log")" = "ci-local: log $live_log" ] && [ ! -e "$dead_log" ] \
-   && [ "$(nlogs)" = 21 ]; then ok "(PI) in-flight log kept untouched past the cap (20 + 1 live), dead-owner verdict-less log pruned"
-else no "(PI) rc=$rc logs=$(nlogs) live=$([ -f "$live_log" ] && echo kept || echo GONE) dead=$([ -e "$dead_log" ] && echo KEPT || echo gone)"; fi
+   && [ "$(nlogs)" = 20 ] && [ "$kept_seeds" = 18 ] && [ -e "$state/runs/seedkey-x-Linux-20200101T000024Z-1.log" ]; then
+  ok "(PI) in-flight log kept untouched, total still 20 (own + live + 18 newest finished), dead-owner verdict-less log pruned"
+else no "(PI) rc=$rc logs=$(nlogs) seeds_kept=$kept_seeds live=$([ -f "$live_log" ] && echo kept || echo GONE) dead=$([ -e "$dead_log" ] && echo KEPT || echo gone)"; fi
 
 # (PG) — the run's own log removed mid-run: no verdict-only stub is recreated, the run says so.
 rm -f "$state/runs/"*

@@ -48,13 +48,14 @@
 #                      prints that path as its first and its last line (on FAIL and INT/TERM too).
 #                      A finished log ends with its verdict line (`ci-local: PASS …` / `ci-local:
 #                      FAIL …`; an --affected log with the affected-only marker), so a result is
-#                      read later with --last instead of re-running the suite to see it. The newest
-#                      20 logs are kept (shared by every checkout of the repo), PLUS any older log
-#                      still being written: a log with no verdict line whose owner pid is alive is
-#                      never pruned, so a long or queued run keeps its transcript however many runs
-#                      start after it (honest limit: a pid reused after a SIGKILL keeps that
-#                      verdict-less log until the new owner exits). A cached PASS found before the
-#                      slot acquire, and --list, write no log.
+#                      read later with --last instead of re-running the suite to see it. At most 20
+#                      logs are kept (shared by every checkout of the repo): every log still being
+#                      written (no verdict line, owner pid alive) is kept — never pruned mid-run, so
+#                      a long or queued run keeps its transcript however many runs start after it —
+#                      and the newest finished logs fill the rest. Only when more than 20 runs are
+#                      live at once do more than 20 (all live) remain (honest limit: a pid reused
+#                      after a SIGKILL keeps that verdict-less log until the new owner exits). A
+#                      cached PASS found before the slot acquire, and --list, write no log.
 #   --affected         the inner-loop check while iterating — NOT a pre-push gate. The changed set is
 #                      every file differing between `git merge-base origin/main HEAD` and the working
 #                      tree, plus untracked non-ignored files (HEAD when origin/main is absent). Map:
@@ -70,7 +71,9 @@
 #   --last             prints the newest saved FULL-run log for the current content key and its
 #                      verdict (`ci-local --last: PASS|FAIL <log>`); `stale-key` (newest full log of
 #                      another tree) when none matches; `INCOMPLETE` for a log with no verdict line
-#                      (interrupted, or still being written by another checkout). Runs no gate.
+#                      (interrupted, or still being written by another checkout); `UNVERIFIED` for a
+#                      run that passed while the tree changed under it (its verdict says NOT cached —
+#                      it vouches for no tree, so --last exits 1). Runs no gate.
 #
 # usage: ci-local.sh [--force] [--list] | --affected [--list] | --last
 #   --force     ignore the pass cache and run everything
@@ -83,7 +86,7 @@
 #        CI_LOCAL_LOCK_WAIT   seconds to wait for a CI slot before failing (default 1800)
 #        LOOMWRIGHT_CI_SLOTS  number of shared slots (see SHARED CI SLOTS; never raise it to "go faster")
 # exit:  0 = every gate passed (fresh or cached) · 1 = a gate failed / fail-closed condition · 2 = usage
-#        --last: 0 = PASS · 1 = FAIL / INCOMPLETE / stale-key / no log
+#        --last: 0 = PASS · 1 = FAIL / UNVERIFIED / INCOMPLETE / stale-key / no log
 #
 # Honest limits: (1) .gitignore'd files are outside the key — a test that reads one is not
 # re-run when only it changes (none should; tests build their fixtures in mktemp dirs).
@@ -223,21 +226,32 @@ log_in_flight() {
   return 0
 }
 
-# open_log — creates this run's log (pruning runs/ to the newest $keep_runs, never an in-flight log
-# — so the cap is $keep_runs + the runs still writing), prints its path as the
-# first output line, then routes stdout and stderr through one tee each: the terminal keeps its two
-# streams and the log gets both. The tees ignore INT/TERM so a Ctrl-C cannot cut the transcript
-# short; they end on EOF once finish_log restores the real descriptors.
+# open_log — creates this run's log, prunes runs/ to at most $keep_runs logs in total, prints its
+# path as the first output line, then routes stdout and stderr through one tee each: the terminal
+# keeps its two streams and the log gets both. The tees ignore INT/TERM so a Ctrl-C cannot cut the
+# transcript short; they end on EOF once finish_log restores the real descriptors.
+# Prune rule: every in-flight log is kept (a live transcript is never cut, this run's own included);
+# finished logs fill the remaining room newest first; the rest go. So the total is $keep_runs unless
+# more than $keep_runs runs are live at once (then only the live logs remain). Each log is classified
+# ONCE, before any rm: a log seen live may finish meanwhile (kept, harmless); a finished log never
+# becomes live again.
 open_log() {
-  local sfx="" f
+  local sfx="" f line nlive=0 room
   [ "$affected" -eq 0 ] || sfx="-affected"
   mkdir -p "$runs"
   log="$runs/$key-$(date -u '+%Y%m%dT%H%M%SZ')-$$$sfx.log"
   printf 'ci-local: log %s\n' "$log" > "$log"
   printf 'ci-local: log %s\n' "$log"
-  runs_newest_first | sed -n "$((keep_runs + 1)),\$p" | while IFS= read -r f; do
-    log_in_flight "$f" || rm -f "$runs/$f"
-  done
+  : > "$tmpd/runs.lst"
+  while IFS= read -r f; do
+    if log_in_flight "$f"; then printf 'L %s\n' "$f"; nlive=$((nlive + 1)); else printf 'F %s\n' "$f"; fi >> "$tmpd/runs.lst"
+  done < <(runs_newest_first)
+  room=$((keep_runs - nlive))
+  while IFS= read -r line; do
+    case "$line" in
+      "F "*) if [ "$room" -gt 0 ]; then room=$((room - 1)); else rm -f "$runs/${line#F }"; fi ;;
+    esac
+  done < "$tmpd/runs.lst"
   mkfifo "$tmpd/out.fifo" "$tmpd/err.fifo"
   exec 3>&1 4>&2
   ( trap '' INT TERM; exec tee -a "$log" ) < "$tmpd/out.fifo" >&3 &
@@ -291,7 +305,11 @@ if [ "$last" -eq 1 ]; then
   fi
   cat "$runs/$sel"
   vline="$(awk 'NF { l = $0 } END { print l }' "$runs/$sel")"
+  # The tree-moved verdict starts with "ci-local: PASS" too, but that run refused to vouch for its
+  # tree (nothing cached) — match it BEFORE the generic PASS so --last never reports it as PASS.
   case "$vline" in
+    "ci-local: PASS"*"result NOT cached"*)
+       echo "ci-local --last: UNVERIFIED (tree changed during the run — result not cached) $runs/$sel"; exit 1 ;;
     "ci-local: PASS"*) echo "ci-local --last: PASS $runs/$sel"; exit 0 ;;
     "ci-local: FAIL"*) echo "ci-local --last: FAIL $runs/$sel"; exit 1 ;;
     *) echo "ci-local --last: (no verdict line: the run was interrupted, or is still running in another checkout)"
