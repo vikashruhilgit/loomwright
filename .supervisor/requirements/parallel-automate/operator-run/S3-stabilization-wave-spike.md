@@ -180,8 +180,9 @@ PR (ci-local, then the owner merges); they leave the wave plan.
   (`1b5adb5`, ms/11, drained READY), #398 (`7bd43ce`, pa/19, drained READY: CI self-skips workflow PRs, so the drain's
   earned fallback `code-reviewer` reviewed it — 6 findings fixed, incl. the PR's own false claim that the drain reads
   claude[bot] only). Three `changelog.d/` fragments are unreleased; installed plugin is still 15.122.0.
-- **Pending checks:** the first non-workflow PR after #398 must show a posted claude-review (or the marked fallback);
-  the telemetry `PRIVACY_PATTERNS` note from #399's review is undecided (owner set it aside).
+- **#398 live check PASSED** on release PR #401 (v15.123.1, 2026-10-06): run log `Set structured_output with 1 field(s)`,
+  `the reviewer posted its own review — no fallback needed`, claude-review green, claude[bot] review posted (no findings).
+- **Pending:**   the telemetry `PRIVACY_PATTERNS` note from #399's review is undecided (owner set it aside).
 
 ## Wave plan — OWNER ORDER 2026-10-06 (critical path first; relayed by session 53b1897e; supersedes the planner tables below)
 Wave 2 confirmed by the operator with `plan-waves --max 5 --explain` under the S3 rule on the real files at

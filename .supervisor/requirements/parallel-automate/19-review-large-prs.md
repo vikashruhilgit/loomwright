@@ -1,6 +1,6 @@
 # 19 — The CI reviewer reviews large PRs (wave PRs, hotspot splits) instead of ending with no comment
 
-## Status: done (2026-10-06, PR #398 merged `7bd43ce`, done directly — not a lane; first live check: the next non-workflow PR)
+## Status: done (2026-10-06, PR #398 merged `7bd43ce`, done directly — not a lane; live check PASSED on #401: structured_output set, reviewer posted itself, fallback idle)
 
 ## Depends on
 none
