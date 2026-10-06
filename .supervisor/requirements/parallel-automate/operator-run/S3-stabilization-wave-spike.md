@@ -213,7 +213,7 @@ Wave 2 confirmed by the operator with `plan-waves --max 5 --explain` under the S
 | Wave | Items | Lanes | Note |
 |---|---|---|---|
 | 2 | pa/11 (+ `RESULT_SCHEMAS.md` split) · pa/16 machine load guard · agnostic/04 non-interactive gates | 3 | at most 2 building at once until pa/16 merges; the third starts when one reaches review |
-| 3 | ms/07 · ms/11 · af/31 · af/33 | 4 | relies on pa/11's split (only `RESULT_SCHEMAS.md` keeps them apart today) → **Milestone A** |
+| 3 | ms/07 · ms/11 · af/31 · af/33 · **host-contract (01 → 02, one lane)** | 4–5 | relies on pa/11's split (only `RESULT_SCHEMAS.md` keeps them apart today) → **Milestone A**. host-contract added 2026-10-06 (owner: "prep now, lane at wave 3"; Touches/Depends added, fragment-only, on `loomwright-meta` `b52bc13`); its 01 edits `ci.yml` ⇒ claude-review skips the wave PR |
 | 4 | pa/05 lane coordinator | 1 | |
 | 5 | pa/06 (+ Part S) · pa/14 | 2 | |
 | 6 | af/34 sweep + janitor | 1 | |
