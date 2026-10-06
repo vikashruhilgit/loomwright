@@ -39,7 +39,7 @@
 set -uo pipefail
 
 is_uint() { case "${1:-}" in ''|*[!0-9]*) return 1 ;; esac; return 0; }
-is_num()  { printf '%s' "${1:-}" | grep -Eq '^[0-9]+(\.[0-9]+)?$'; }
+is_num()  { local re='^[0-9]+(\.[0-9]+)?$'; [[ "${1:-}" =~ $re ]]; }   # no pipe: pipefail + grep -q
 
 cpus() {
   local c="${LOOMWRIGHT_CI_CPUS:-}"
