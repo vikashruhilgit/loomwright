@@ -81,7 +81,8 @@
 #
 # 3-WAY RULE (per path; equality is by blob SHA — `git hash-object --no-filters` vs tree entries,
 # never mtime). L = this checkout, R = the remote branch tip, B = the merge base read from
-# `<gitdir>/meta-base` (a tree SHA; `<gitdir>` = `git rev-parse --git-dir` of the resolved root):
+# `<gitdir>/meta-base` (a tree SHA bound to its branch — see BRANCH BINDING; `<gitdir>` =
+# `git rev-parse --git-dir` of the resolved root):
 #   L == R             -> nothing
 #   L == B             -> take R   (R absent => delete locally)
 #   R == B             -> take L   (L absent => delete on the branch)
@@ -102,7 +103,28 @@
 #                       (stale copy); results.jsonl with L != R => line-union; otherwise conflict
 # The derivation always covers the WHOLE managed set (even under --paths-from) and any conflict
 # anywhere aborts, because the meta-base written afterwards must cover every managed path. The
-# history walk runs only while meta-base is absent.
+# history walk runs only while meta-base is absent (or to verify a legacy base, below).
+#
+# BRANCH BINDING — meta-base is two lines: the agreed-state tree SHA, then `branch <name>`, the
+# branch it was recorded against (written together by one atomic rename, under the lock). A base
+# is only ever used to plan a sync of ITS OWN branch:
+#   - bound to another branch (a mode-line switch, or a forced --branch X --allow-branch-mismatch)
+#     => pull / push exit 1 `meta_sync: base_branch_mismatch` naming both branches, up front (after
+#     the lock, before any fetch); nothing written, nothing published, meta-base untouched; status
+#     prints `base_branch_mismatch`. Refused, never treated as "no base": the no-base derivation
+#     itself deletes (a path the target branch once held at L's blob), so it must not run silently
+#     over a working folder that was synced against a different branch. Recovery is a human act:
+#     sync the base's own branch with --branch, or remove meta-base by hand to make the target
+#     branch a first sync.
+#   - LEGACY single-line meta-base (written before the binding existed; no branch recorded) =>
+#     adopted for the target branch only when EVERY (path, blob) entry it holds is one the target
+#     branch's own history held (it then provably was not taken from another branch), and the
+#     next write binds it; otherwise `base_branch_mismatch`, nothing changed. Honest limit: a
+#     legacy base whose last push wrote a ledger union holds the LOCAL ledger blob, which the
+#     branch never held, so it is refused too (remove it by hand once).
+#   - unreadable, or in no recognised format (a third line, a line 2 that is not `branch <name>`)
+#     => `base_branch_mismatch`, nothing changed. An empty file, or a bound / legacy base whose
+#     tree object is missing, keeps the missing-object fallback below (the no-base derivation).
 #
 # WHAT meta-base RECORDS — the per-path state local and remote are KNOWN to agree on, written as its
 # own tree (a second, per-run index file under this run's temp dir + write-tree). This deliberately
@@ -184,9 +206,10 @@
 #
 # STATUS prints exactly one line and always exits 0 once the branch is resolved: `synced <sha> on
 # <branch>` | `local_ahead <n>` | `remote_ahead` | `conflict <n>` | `no_remote_branch` |
-# `unreachable` | `never_synced`. (A branch_mismatch / mode_unknown / usage refusal happens before
-# status runs and exits 1.)
-# Precedence: unreachable > no_remote_branch > never_synced > conflict > local_ahead > remote_ahead.
+# `unreachable` | `never_synced` | `base_branch_mismatch`. (A branch_mismatch / mode_unknown /
+# usage refusal happens before status runs and exits 1.)
+# Precedence: unreachable > no_remote_branch > never_synced > base_branch_mismatch > conflict >
+# local_ahead > remote_ahead.
 #
 # META-BASE NOT A REGULAR FILE: pull and push refuse up front — after the lock, before any fetch,
 # write or publish — when <gitdir>/meta-base exists but is not a regular file (e.g. a directory):
@@ -194,9 +217,10 @@
 # directory guard stays as defence in depth). Without this a push would publish and only then fail.
 #
 # EXIT: 0 ok / no_changes; 1 conflict, no_remote_branch, fetch failure, init refusal, exhausted push
-# retries, tree_guard, locked, not_a_file, newline_in_path, branch_mismatch, mode_unknown, a meta-base
-# that is not a regular file, usage error; 2 scrub hit. `init` is the ONLY command that may create
-# the branch (an empty orphan commit); it refuses when the branch already exists.
+# retries, tree_guard, locked, not_a_file, newline_in_path, branch_mismatch, mode_unknown,
+# base_branch_mismatch, a meta-base that is not a regular file, usage error; 2 scrub hit. `init`
+# is the ONLY command that may create the branch (an empty orphan commit); it refuses when the
+# branch already exists.
 #
 # Callers: automate-helpers.sh `meta-entry` (pull) and automate-trail.sh `trail-pr` (push
 # --paths-from) — both pass `--branch <the mode's branch>`, which the mode check accepts.
@@ -621,15 +645,43 @@ list_history() {
 }
 
 # ---- base ----
-HAVE_BASE=0; BASE_TREE=""
+# load_base — reads <gitdir>/meta-base: line 1 the agreed-state tree, line 2 `branch <name>` (the
+# branch it was recorded against; see the header's BRANCH BINDING). Sets HAVE_BASE / BASE_TREE /
+# BASE_LEGACY, and BASE_REFUSAL (non-empty = refuse the sync, nothing changed) when the base is
+# bound to ANOTHER branch, is unreadable, or is in no recognised format. The branch check runs
+# BEFORE the object check, so a mismatched base never degrades to the no-base derivation.
+HAVE_BASE=0; BASE_TREE=""; BASE_LEGACY=0; BASE_REFUSAL=""
 load_base() {
-  HAVE_BASE=0; BASE_TREE=""
+  local l1="" l2="" l3="" nl bb=""
+  HAVE_BASE=0; BASE_TREE=""; BASE_LEGACY=0; BASE_REFUSAL=""
   [ -f "$META_BASE" ] || return 0
-  BASE_TREE="$(tr -d ' \t\r\n' < "$META_BASE")"
+  if [ ! -r "$META_BASE" ]; then
+    BASE_REFUSAL="base_branch_mismatch — meta-base $META_BASE is unreadable, so the branch it was recorded against is unknown; nothing was changed (no file written, no ref moved, meta-base untouched). Fix its permissions by hand."
+    return 0
+  fi
+  { IFS= read -r l1; IFS= read -r l2; IFS= read -r l3; } < "$META_BASE"
+  nl="$(awk 'END { print NR }' "$META_BASE")"
+  BASE_TREE="$(printf '%s' "$l1" | tr -d ' \t\r')"
+  l2="${l2%$'\r'}"
+  case "$l2" in
+    "") BASE_LEGACY=1 ;;
+    "branch "?*) bb="${l2#branch }" ;;
+    *) nl=99 ;;
+  esac
+  if [ "$nl" -gt 2 ] || [ -n "$l3" ] || { [ -z "$BASE_TREE" ] && [ -n "$bb" ]; }; then
+    BASE_REFUSAL="base_branch_mismatch — meta-base $META_BASE is not in a recognised format (line 1 a tree, line 2 'branch <name>'), so the branch it was recorded against is unknown; nothing was changed (no file written, no ref moved, meta-base untouched). Repair or remove it by hand."
+    BASE_TREE=""; BASE_LEGACY=0
+    return 0
+  fi
+  if [ -n "$bb" ] && [ "$bb" != "$BRANCH" ]; then
+    BASE_REFUSAL="base_branch_mismatch — meta-base was recorded against branch '$bb' but this sync targets '$BRANCH'; nothing was changed (no file written, no ref moved, meta-base untouched). Planning '$BRANCH' against another branch's base would delete local or branch files '$BRANCH' never removed. Sync '$bb' with --branch '$bb' (plus --allow-branch-mismatch when the mode line names another branch), or remove $META_BASE by hand to treat '$BRANCH' as never synced (the history-aware first-sync derivation)."
+    BASE_TREE=""; return 0
+  fi
   if [ -n "$BASE_TREE" ] && g cat-file -e "$BASE_TREE^{tree}" 2>/dev/null; then
     HAVE_BASE=1
   else
     warn "meta-base '$BASE_TREE' is missing from the object store — falling back to the no-base (history-aware) derivation"
+    BASE_LEGACY=0
     BASE_TREE=""
   fi
 }
@@ -644,8 +696,22 @@ compute_plan() {
   list_tree "$R" "$Rf" || { warn "could not list the remote tree $R"; return 1; }
   : > "$Bf" && : > "$Hf" && : > "$Sf" || return 1
   load_base
+  [ -z "$BASE_REFUSAL" ] || return 2
   if [ "$HAVE_BASE" = "1" ]; then
     list_tree "$BASE_TREE" "$Bf" || { warn "could not list the meta-base tree $BASE_TREE"; return 1; }
+    if [ "$BASE_LEGACY" = "1" ]; then
+      # A legacy base (no branch line) is adopted for $BRANCH only when EVERY entry it holds is a
+      # (path, blob) $BRANCH's own history held — i.e. it provably was not taken from another branch.
+      local stray
+      list_history "$R" "$Hf" || { warn "could not read the history of $R"; return 1; }
+      stray="$(awk -F'\t' -v HF="$Hf" 'FILENAME == HF { h[$0] = 1; next } !($0 in h) { n++ } END { print n + 0 }' "$Hf" "$Bf")" \
+        || { warn "could not check the legacy meta-base against the history of $R"; return 1; }
+      if [ "$stray" != "0" ]; then
+        BASE_REFUSAL="base_branch_mismatch — the legacy meta-base $META_BASE records no branch and holds $stray entr(y/ies) '$BRANCH''s history never held, so it may have been taken from another branch; nothing was changed (no file written, no ref moved, meta-base untouched). Sync the branch it came from with --branch <that branch>, or remove $META_BASE by hand to treat '$BRANCH' as never synced (the history-aware first-sync derivation)."
+        return 2
+      fi
+      : > "$Hf" || return 1
+    fi
   else
     list_history "$R" "$Hf" || { warn "could not read the history of $R"; return 1; }
   fi
@@ -756,13 +822,23 @@ refuse_bad_base() {
   die "refusing — meta-base $META_BASE is not a regular file$kind; remove or replace it by hand. Nothing was changed (no fetch, no file written, nothing published)."
 }
 
+# refuse_foreign_base — pull / push refuse UP FRONT (after the lock, before any fetch) when
+# meta-base is bound to another branch, unreadable or malformed (load_base's BASE_REFUSAL). A
+# LEGACY base is checked later, in compute_plan, because that check needs the fetched R.
+refuse_foreign_base() {
+  load_base 2>/dev/null
+  [ -z "$BASE_REFUSAL" ] || die "$BASE_REFUSAL"
+}
+
 # write_base_file <tree> — atomic replace via a mktemp'd (O_EXCL, never a pre-existing symlink)
-# sibling + rename; a meta-base that is a directory (mv would move INTO it) fails closed.
+# sibling + rename; a meta-base that is a directory (mv would move INTO it) fails closed. Writes
+# both lines in ONE file (tree, then `branch $BRANCH`), so the binding can never be torn from the
+# tree; the lock (pull / push) means the branch checked by load_base is the branch written here.
 write_base_file() {
   local tmp
   [ -d "$META_BASE" ] && { warn "$META_BASE is a directory"; return 1; }
   tmp="$(mktemp "$META_BASE.tmp.XXXXXX" 2>/dev/null)" || return 1
-  chmod "$FILE_MODE" "$tmp" && printf '%s\n' "$1" > "$tmp" && mv -f "$tmp" "$META_BASE" || { rm -f "$tmp"; return 1; }
+  chmod "$FILE_MODE" "$tmp" && printf '%s\nbranch %s\n' "$1" "$BRANCH" > "$tmp" && mv -f "$tmp" "$META_BASE" || { rm -f "$tmp"; return 1; }
   g update-ref "$BASE_REF" "$1" >/dev/null 2>&1 || warn "could not update the gc anchor $BASE_REF (meta-base itself was written)"
   return 0
 }
@@ -891,9 +967,13 @@ fetch_or_exit() {
 }
 
 cmd_pull() {
+  local rc
   refuse_bad_base
+  refuse_foreign_base
   fetch_or_exit
-  compute_plan 0 || exit 1
+  compute_plan 0; rc=$?
+  [ "$rc" -eq 2 ] && die "$BASE_REFUSAL"
+  [ "$rc" -eq 0 ] || exit 1
   report_conflicts 0 || exit 1
   report_not_a_file 0 || exit 1
   local o p l r nb sel written=0 deleted=0 dst tmp phase
@@ -955,11 +1035,14 @@ build_agreed_base() {
 
 cmd_push() {
   [ -z "$PATHS_FROM" ] || [ -f "$PATHS_FROM" ] || die "usage: --paths-from '$PATHS_FROM' is not a file"
-  local attempt=1 o p l r nb sel s newtree commit changed abort_sel
+  local attempt=1 o p l r nb sel s newtree commit changed abort_sel rc
   refuse_bad_base
+  refuse_foreign_base
   while [ "$attempt" -le "$MAX_ATTEMPTS" ]; do
     fetch_or_exit
-    compute_plan 1 || exit 1
+    compute_plan 1; rc=$?
+    [ "$rc" -eq 2 ] && die "$BASE_REFUSAL"
+    [ "$rc" -eq 0 ] || exit 1
     # With a base, an unlisted path is ignored entirely; without one the derivation covers the
     # whole managed set and any conflict anywhere aborts (meta-base must cover every path).
     abort_sel=1
@@ -1037,7 +1120,9 @@ cmd_status() {
     *) echo "unreachable"; exit 0 ;;
   esac
   [ -f "$META_BASE" ] || { echo "never_synced"; exit 0; }
-  compute_plan 0 >/dev/null 2>&1 || { echo "unreachable"; exit 0; }
+  compute_plan 0 >/dev/null 2>&1; rc=$?
+  [ "$rc" -eq 2 ] && { echo "base_branch_mismatch"; exit 0; }
+  [ "$rc" -eq 0 ] || { echo "unreachable"; exit 0; }
   [ "$HAVE_BASE" = "1" ] || { echo "never_synced"; exit 0; }
   n="$(count_outcome CONFLICT)"
   [ "$n" -gt 0 ] && { echo "conflict $n"; exit 0; }

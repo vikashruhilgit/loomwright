@@ -12,3 +12,4 @@ used to publish and only then fail to record it). Part C: with no `--branch`, th
 checkout's mode line, read through `setup-memory.sh mode` (`off` keeps `loomwright-meta`). A `--branch` that
 disagrees is refused `branch_mismatch`; an unknown mode, or a failed reader, is refused `mode_unknown`.
 `--allow-branch-mismatch` forces an explicit `--branch`. `status` now prints `synced <sha> on <branch>`.
+`meta-base` now records the branch it was taken from (a second line `branch <name>`), so a sync against any other branch — a mode-line switch, or a forced `--branch` — is refused `base_branch_mismatch` with nothing changed instead of deleting local run history (a legacy single-line base is adopted only when the target branch's own history holds every entry it records).
