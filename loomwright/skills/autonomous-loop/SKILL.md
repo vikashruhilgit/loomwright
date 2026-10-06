@@ -417,7 +417,7 @@ if [ $? -ne 0 ]; then
     if [ "$non_interactive" = "true" ]; then
       # AC-14 non-interactive fall-through: log and skip verify
       log "gh pr view --json baseRefName failed twice; non-interactive — skipping PR-base verification."
-      # named record: policy_decisions[].decision = "pr_base_verify_skipped_non_interactive"
+      record policy_decisions[] += {iteration: N, phase: EVALUATE, decision: "pr_base_verify_skipped_non_interactive", source: "autonomous_pr_base_verify"}
       # (Supervisor FINALIZE, the first line of defense, already verified the base or failed closed)
       goto signal_evaluation
     else

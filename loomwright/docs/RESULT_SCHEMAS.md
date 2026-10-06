@@ -1947,9 +1947,10 @@ AUTONOMOUS_RUN:
         "user_picked_merge_and_continue",
         "user_picked_stop_here",
         "user_picked_force_continue_anyway",
-        "supervisor_option_c_detected"
+        "supervisor_option_c_detected",
+        "pr_base_verify_skipped_non_interactive"
       ]
-      source: enum [launch_pad_phase_6, launch_pad_no_go, launch_pad_plan_review, autonomous_rubric_gate, supervisor_adjudication]
+      source: enum [launch_pad_phase_6, launch_pad_no_go, launch_pad_plan_review, autonomous_rubric_gate, supervisor_adjudication, autonomous_pr_base_verify]
   rubric_final_score: string | null    # required — last iteration's rubric_score (null when no rubric in requirement OR when total_iterations == 0)
 ```
 
@@ -2025,6 +2026,7 @@ Two new `policy_decisions[].decision` values also land in v14.2.0 (both audit-on
 | `"user_picked_stop_here"` | `autonomous_rubric_gate` | User accepted partial rubric (terminal — produces `status: done, status_reason: user_stopped_at_rubric_gate`) |
 | `"user_picked_force_continue_anyway"` | `autonomous_rubric_gate` | User bypassed merge verification (loop continues; conflict risk recorded for audit) |
 | `"supervisor_option_c_detected"` | `supervisor_adjudication` | **Loop-inferred from filesystem evidence** after Supervisor's own adjudication AskUserQuestion concluded. Unlike the `user_picked_*` entries, this decision was made inside Supervisor's session — the autonomous loop only records that it observed the result (failed brief in `.supervisor/jobs/failed/` + `inter_subtask_gap` substring). The `_detected` suffix is a deliberate naming convention to flag this distinction for future tooling. |
+| `"pr_base_verify_skipped_non_interactive"` | `autonomous_pr_base_verify` | **Loop-recorded, no user choice** (agnostic-phase1/04): EVALUATE's PR-base verification could not read the PR's base (`gh pr view` failed twice) while running with `--non-interactive-fallback`, so the loop asked nothing and skipped the check for this iteration. Not a correctness bypass — Supervisor FINALIZE already verified the base or failed closed. See `skills/autonomous-loop/SKILL.md` §"EVALUATE PR-base verification (AC-3 + AC-15)". |
 
 **Example — single-iteration successful run:**
 
