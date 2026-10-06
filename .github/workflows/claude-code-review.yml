@@ -121,9 +121,9 @@ jobs:
 
             Finally, ALSO return that exact comment body in the structured output field
             `review` — the same text you posted with `gh pr comment`, ending with the
-            `execution: none` line. Fill it even though you already posted. If a review
-            is ever returned but not posted, the workflow posts the returned text for you,
-            so a finished review is never lost to a missed last step.
+            `execution: none` line. Fill it even though you already posted. Returning the
+            review does NOT replace posting it: `gh pr comment` stays mandatory on every
+            run, and the returned field is only a backup copy, not a second way to deliver.
 
           # Honest limit of the execution: none marker (v15.108.0): it is ~121 chars of
           # mandated boilerplate, so the assert step's ">200 chars = a substantive review"
@@ -265,39 +265,6 @@ jobs:
           # name (`" Bash(git blame:*)"`) and is not worth betting the allowlist on.
           claude_args: '--allowed-tools "Read,Grep,Glob,Task,TodoWrite,Bash(git log:*),Bash(git show:*),Bash(git diff:*),Bash(git cat-file:*),Bash(git blame:*),Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git merge-base:*),Bash(git status:*),Bash(jq:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(sort:*),Bash(uniq:*),Bash(cut:*),Bash(tr:*),Bash(diff:*),Bash(ls:*),Bash(grep:*),Bash(cmp:*),Bash(comm:*),Bash(basename:*),Bash(dirname:*),Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)" --json-schema ''{"type":"object","properties":{"review":{"type":"string"}},"required":["review"]}'''
 
-      # ---------------------------------------------------------------------
-      # A run that ends without a posted comment is indistinguishable from no
-      # review at all — the prompt above says so, and until now nothing enforced
-      # it: the action exits `is_error: false` and the check goes green whether
-      # or not a review was delivered. Measured on PR #147, nine runs all
-      # concluded `success` and only THREE posted; the six silent ones cost
-      # ~$21 and produced nothing a human could read. Silence read as "clean".
-      #
-      # This step makes that visible. It is deliberately NOT a required check
-      # (branch protection on `main` requires `ci` only), so a red mark here
-      # reports "this PR was not actually reviewed" without blocking a merge —
-      # the human decides what to do about it.
-      #
-      # A comment counts only if it was authored by `claude[bot]` (the reviewer's
-      # own login, confirmed against the live comments API on PR #147), postdates
-      # this run's own start stamp (so an earlier run's review cannot satisfy a
-      # later run), and is longer than 200 characters — PR #147 collected a
-      # literal 4-character "test" comment from a reviewer probing its tool
-      # permissions, which must not count as review. The 200-char floor is
-      # RESTATED in the review prompt above (its no-findings paragraph tells the
-      # reviewer a one-liner won't count) — change both together, or a compliant
-      # short comment under a raised floor re-creates the false red PR #150 fixed. The author clause is not
-      # cosmetic: without it ANY actor satisfies the assertion. On PR #147 a
-      # 5418-character human comment (`vikashruhilgit`, 2026-08-15T04:11:02Z)
-      # sat between two `claude[bot]` comments and would have covered for a
-      # silent run.
-      #
-      # No `always()` here. It was redundant on the failure path — the outcome
-      # test already excludes a failed reviewer — but it also made this step run
-      # during job CANCELLATION, which is routine on this workflow
-      # (`cancel-in-progress: true` + `synchronize`), turning a merely superseded
-      # run into a spurious "posted NO comment" error.
-      # ---------------------------------------------------------------------
       # pa/19 (2026-10-06): post the RETURNED review when the reviewer did not post it.
       # Evidence: the S3 wave PR #397 (34 files) ended `success` with no comment, twice
       # (run 37407425806, 45 turns, 8 denials). The SAME prompt and SAME --allowed-tools
@@ -310,11 +277,16 @@ jobs:
       # substantive claude[bot] comment exists since this run's start.
       # It posts as github-actions[bot] (GITHUB_TOKEN; the job has pull-requests: write):
       # the action REVOKES the Claude app token in its own last step ("Revoke app token"),
-      # so a later step cannot post as claude[bot]. Consequence, stated not hidden: the
-      # drain's classifier reads claude[bot] comments only, so a fallback comment is a
-      # review for the human, not for the drain — the same as today's silence for the
-      # drain, and lane PRs (the drain's PRs) have been posting normally. The assert step
+      # so a later step cannot post as claude[bot]. Consequence for the drain, stated not
+      # hidden: with no user-scope ~/.claude/loomwright/trusted-actors.json the drain falls
+      # back to classify-bot-review.sh's bot_author_re, which matches github-actions[bot],
+      # so it classifies a fallback comment like any bot review; with an exact-login
+      # allowlist it reads one only if github-actions[bot] is listed. The assert step
       # below counts a fallback comment as posted (it carries the FALLBACK_MARK line).
+      # Failure mode (pinned action, base-action/src/run-claude-sdk.ts @ cfc3eb22): --json-schema
+      # with no structured_output => core.setFailed + throw, so the review step fails red and this
+      # step and the assert step are skipped even if the reviewer posted — visible, not silent. A
+      # local `claude -p --json-schema` (restricted --allowed-tools) returned it, no denial (2026-10-06).
       # The structured output is passed through env, never interpolated into the script.
       - name: Post the returned review if the reviewer did not
         id: fallback
@@ -326,6 +298,7 @@ jobs:
           STRUCTURED: ${{ steps.claude-review.outputs.structured_output }}
         run: |
           set -uo pipefail
+          # Change together: the Assert step's jq `startswith(...)` prefix matches this marker.
           FALLBACK_MARK='<!-- claude-review: posted by the workflow from the returned review (pa/19 fallback) -->'
           if [ -z "${SINCE}" ] || [ -z "${STRUCTURED}" ]; then
             echo "no run stamp or no structured output (the action may have self-skipped) — nothing to post"
@@ -356,6 +329,43 @@ jobs:
             echo "::warning::fallback post failed"
           fi
 
+      # ---------------------------------------------------------------------
+      # A run that ends without a posted comment is indistinguishable from no
+      # review at all — the prompt above says so, and until now nothing enforced
+      # it: the action exits `is_error: false` and the check goes green whether
+      # or not a review was delivered. Measured on PR #147, nine runs all
+      # concluded `success` and only THREE posted; the six silent ones cost
+      # ~$21 and produced nothing a human could read. Silence read as "clean".
+      #
+      # This step makes that visible. It is deliberately NOT a required check
+      # (branch protection on `main` requires `ci` only), so a red mark here
+      # reports "this PR was not actually reviewed" without blocking a merge —
+      # the human decides what to do about it.
+      #
+      # A comment counts only if it was authored by `claude[bot]` (the reviewer's
+      # own login, confirmed against the live comments API on PR #147) — or is a
+      # `github-actions[bot]` comment starting with the pa/19 fallback marker
+      # (FALLBACK_MARK in the fallback step above) — postdates
+      # this run's own start stamp (so an earlier run's review cannot satisfy a
+      # later run), and is longer than 200 characters — PR #147 collected a
+      # literal 4-character "test" comment from a reviewer probing its tool
+      # permissions, which must not count as review. The 200-char floor lives in
+      # FIVE places that must change together: the review prompt above (its
+      # no-findings paragraph tells the reviewer a one-liner won't count), the
+      # fallback step's jq `length > 200` and its `-le 200` check, and this step's
+      # jq `length > 200` and its "longer than 200" error text — or a compliant
+      # short comment under a raised floor re-creates the false red PR #150 fixed. The author clause is not
+      # cosmetic: without it ANY actor satisfies the assertion. On PR #147 a
+      # 5418-character human comment (`vikashruhilgit`, 2026-08-15T04:11:02Z)
+      # sat between two `claude[bot]` comments and would have covered for a
+      # silent run.
+      #
+      # No `always()` here. It was redundant on the failure path — the outcome
+      # test already excludes a failed reviewer — but it also made this step run
+      # during job CANCELLATION, which is routine on this workflow
+      # (`cancel-in-progress: true` + `synchronize`), turning a merely superseded
+      # run into a spurious "posted NO comment" error.
+      # ---------------------------------------------------------------------
       - name: Assert a review was actually posted
         if: steps.claude-review.outcome == 'success'
         env:
@@ -405,6 +415,7 @@ jobs:
           # total. Emit one id per line and count lines instead — correct at any comment count.
           # The author clause comes FIRST because it is the one that decides whose silence
           # this step is measuring; see the header above for what it cost to omit it.
+          # Change together: the startswith() prefix below matches the fallback step's FALLBACK_MARK.
           if ! ids="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
                         --paginate --jq \
                         ".[] | select(.user.login == \"claude[bot]\" or (.user.login == \"github-actions[bot]\" and (.body | startswith(\"<!-- claude-review: posted by the workflow\")))) | select(.created_at >= \"${SINCE}\") | select(.body | length > 200) | .id" \
@@ -420,7 +431,8 @@ jobs:
             exit 0
           fi
           echo "::error::claude-review ran to completion but posted NO comment on PR #${PR_NUMBER}."
-          echo "Only comments authored by claude[bot], newer than ${SINCE}, and longer than 200"
+          echo "Only comments authored by claude[bot] (or a github-actions[bot] comment starting"
+          echo "with the pa/19 fallback marker), newer than ${SINCE}, and longer than 200"
           echo "characters count — a human comment on the PR does not satisfy this check. If the"
           echo "action's posting identity ever changes, this reports a false negative (visible and"
           echo "non-blocking) rather than a false green; confirm with:"
