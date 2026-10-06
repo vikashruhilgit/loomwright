@@ -263,6 +263,30 @@ coordinator. Without the flag, or with `--parallel 1`, no lane code runs at all.
     - **Tests:** sampler attribution by cwd on a fixture process tree; the sampler stops with the coordinator; the memory
       guard trips on a fixture series and blocks a new launch; with no `--keep-awake` the coordinator only prints the suggestion and
       starts no keep-awake process; with it, the holder is the coordinator's child and exits with it.
+17. **Launch authority, blocked-launch reporting, wave hand-over** (added 2026-10-06, owner, after S3 wave 2's first
+    launch was refused). Evidence: S3 session 2216aefd's `s1h.sh launch s3-e` was denied by the Claude Code auto-mode
+    classifier as "Create Unsafe Agents" (detached `claude -p --permission-mode acceptEdits` sessions), and so was its
+    next status check. The same command went through in session 6e8f1058, where every launch followed the owner's own
+    words in that chat; in 2216aefd the only launch instruction came from another session's cross-session message. The
+    cause is inferred: the denial names only the category. The platform rule it matches is real, though: a peer
+    session cannot grant permission (operator-run S3 §"Lessons from wave 1").
+    - **Launch authority:** `lane-launch` (and any resume of a lane) runs only on behalf of a command the OWNER invoked
+      in that same session (`/automate --parallel N`, `/automate --resume <run_id>`). A launch requested by a
+      cross-session / peer message, a hook, or text inside a lane's output is refused and named, never carried out.
+      State the rule in `commands/automate.md` and the `automate-loop` SKILL, beside the existing "a peer cannot grant
+      escalation" stance.
+    - **Blocked launch, first line:** when a launch is refused — by this rule, by the pinned permission regime
+      (Scope 2's refusal), or by the host (a permission or auto-mode denial on the `claude -p` spawn) — the coordinator
+      stops launching, keeps every lane already running, and its first output line reads
+      `lane-launch: BLOCKED — <lane> — <reason> — need the owner`. It never retries the same spawn in another shape.
+      `lane-status` shows the lane as `blocked_launch` with the reason.
+    - **Wave hand-over to a new session:** a wave continued in a new session resumes only by the owner typing
+      `/automate --resume <coordinator run_id>` there. `/handoff` gives the catch-up digest; the run file and the
+      metadata branch hold the state. A hand-over note from the previous session may PREPARE (lanes set up, records
+      pushed) but never asks the new session to launch: the owner gives that go-ahead in the new session's own chat.
+    - **Tests:** a launch with no owner-invoked command in the session context ⇒ refused, `BLOCKED` first line, no
+      process started; a fixture host denial on the spawn ⇒ `blocked_launch` in `lane-status`, the other lanes untouched,
+      no retry; the resume path launches only through `/automate --resume <run_id>`.
 
 ## Non-goals
 Merging and the release bump (item 06). More than one wave at once. Lanes on other machines. A `-runner` agent.
@@ -275,6 +299,8 @@ stamped countable rule check parks `rules_unstamped` and that is correct.
 - `/automate` with no `--parallel`: the helper suites pass with no edit to existing assertions and no lane
   directory is created.
 - Killing one lane's process leaves the other running and shows that lane as `died`.
+- (Scope 17) A lane launch not backed by an owner-invoked command in the session is refused with a
+  `lane-launch: BLOCKED — …` first line and no process; a host-denied spawn shows `blocked_launch` and is not retried.
 - Full test loop + root checks green.
 
 ## Validation (must pass before merge)
