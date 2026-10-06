@@ -33,6 +33,15 @@
 #     and `git pull --ff-only`s it (first re-staging the recorded trail blobs
 #     that landed upstream — index only), appends the requirement stamp, checks the
 #     Queue item off, and calls trail-pr. It NEVER commits in the primary.
+#   * `finalize-empty` (under `run-lock.sh --owner automate-finalize:<run_id>`)
+#     rewrites ONLY a closed-out run's `## Status: paused` → `done` and its
+#     `## Current` `pause_reason` → `null` (`current-set` on a staged copy, then
+#     one validated runfile-write), appends
+#     two Progress lines, calls trail-pr `--reason done` and — branch mode off —
+#     trail-unstage for that run. Nothing else.
+#   * `closeout-others` runs `closeout` (and, branch mode off, `trail-unstage`)
+#     for OTHER runs' merged in-flight items and appends ONE record line to the
+#     --record run file. Nothing else.
 #   * Neither subcommand merges anything (the sole merge executor is `automate-helpers.sh
 #     gate-eval`, SKILL §11), trail-pr never calls `run-lock.sh` (closeout takes it around steps 3–7);
 #     neither runs `git reset`,
@@ -64,6 +73,18 @@
 #       `trail-unstage: skipped — <reason>` (`nothing staged` when clean). Run at
 #       PICK, before RUN: drops the trail entries trail-pr staged so the next
 #       item's branch + commit cannot sweep them.
+#   finalize-empty <runfile>
+#       `finalize-empty: finalized <runfile>` + the trail-pr (+ trail-unstage)
+#       line, or ONE `finalize-empty: skipped — <reason>` line. Finalizes ONLY a
+#       paused / awaiting_go / remaining-0 / `## Current` status-done run (the
+#       state closeout leaves after the last check-off); SKILL §4 step 1 runs it
+#       through `automate-helpers.sh resume-glob <dir> --finalize`.
+#   closeout-others <automate_dir> [--record <runfile>]
+#       The cross-run close-out (SKILL §4 "Start order"): closeout of every OTHER
+#       run whose ## Current names a not-done item with a merged PR, mode-off
+#       trail-unstage, that closeout's closeout-classify answer, one
+#       `closeout-others: record(ed) — cross-run closeout <run_id> <item>: …` line
+#       (no PR URL). Untouched runs print nothing.
 #   trail-gate <runfile>
 #       One line: `trail-gate: PARK — trail PR open <url>…` |
 #       `trail-gate: PARK — <unreadable reason>` | `trail-gate: clear — no open
@@ -1135,19 +1156,20 @@ co_release() {
 # the Queue says queued). A `## Current` naming another item/PR is never
 # touched: the merge watcher can fire after the owner already --resumed and a
 # later item was picked. Every other line is byte-unchanged; `## Status` is
-# never rewritten. The write goes through `runfile-write` (validated atomic
-# rename, SKILL §3) from a staged file — never a `generator | runfile-write`
-# pipe, whose failing generator the helper cannot see.
+# never rewritten. The write goes through `automate-helpers.sh current-set`
+# (validated atomic rename through runfile-write's `_runfile_install … full`,
+# SKILL §3) — never a `generator | runfile-write` pipe, whose failing generator
+# the helper cannot see.
 _co_current() {
   local rf="$1" item="$2" pr="$3" S="closeout: skipped —"
   if ! grep -qxF -- "- [x] $item" "$rf" 2>/dev/null; then
     echo "$S ## Current not reconciled ($item not checked off)"; return 0
   fi
-  local cur_line cur_item cur_pr cur_status cur_reason run_status want
+  local cur_line cur_raw cur_item cur_pr cur_status cur_reason run_status want
   cur_line="$(awk '/^## Current/{c=1;next} /^## /{c=0} c && /^- item: /{print; exit}' "$rf" 2>/dev/null)"
   if [ -z "$cur_line" ]; then echo "$S no ## Current item line"; return 0; fi
   _co_field() { printf '%s\n' "$cur_line" | awk -v k="$1" 'BEGIN{FS=" [|] "} {sub(/^- /,""); for(i=1;i<=NF;i++) if (index($i, k ": ")==1) {print substr($i, length(k)+3); exit}}'; }
-  cur_item="$(_co_field item)"; cur_item="${cur_item#./}"
+  cur_raw="$(_co_field item)"; cur_item="${cur_raw#./}"
   cur_pr="$(_co_field pr)"; cur_status="$(_co_field status)"
   if [ "$cur_item" != "$item" ] || [ "$cur_pr" != "$pr" ]; then
     echo "$S ## Current is ${cur_item:-?} (${cur_pr:-no pr}), not this item/PR"; return 0
@@ -1158,30 +1180,14 @@ _co_current() {
   if [ "$cur_status" = "done" ] && [ "$cur_reason" = "$want" ]; then
     echo "$S ## Current already done"; return 0
   fi
-  local tmp; tmp="$(mktemp "${rf}.current.XXXXXX")" || { echo "$S ## Current: cannot stage"; return 0; }
-  if ! CO_WANT="$want" awk '
-    BEGIN { want=ENVIRON["CO_WANT"] }
-    /^## Current/ { c=1; print; next }
-    /^## / {
-      if (c && !reason_done) { print "- pause_reason: " want; reason_done=1 }
-      c=0; print; next
-    }
-    c && /^- item: / && !item_done {
-      n=split($0, f, / [|] /); out=""
-      for (i=1;i<=n;i++) { if (index(f[i], "status: ")==1) f[i]="status: done"; out = out (i>1 ? " | " : "") f[i] }
-      print out; item_done=1; next
-    }
-    c && /^- pause_reason:/ && !reason_done { print "- pause_reason: " want; reason_done=1; next }
-    { print }
-    END { if (c && !reason_done) print "- pause_reason: " want }
-  ' "$rf" > "$tmp" 2>/dev/null; then
-    rm -f "$tmp"; echo "$S ## Current rewrite failed"; return 0
-  fi
-  if bash "$HERE/automate-helpers.sh" runfile-write "$rf" < "$tmp" >/dev/null 2>&1; then
-    rm -f "$tmp"
+  # The write goes through `automate-helpers.sh current-set` (SKILL §3 "`## Current`
+  # moves only through `current-set`"): the RAW stored item of the CURRENT line (not
+  # the `./`-stripped comparison value), status done, the wanted pause_reason — the
+  # item is unchanged, so current-set keeps the line's pr/branch and every other line.
+  if bash "$HERE/automate-helpers.sh" current-set "$rf" --item "$cur_raw" --status done --pause-reason "$want" >/dev/null 2>&1; then
     echo "closeout: reconciled — ## Current $item status done, pause_reason $want"
   else
-    rm -f "$tmp"; echo "$S ## Current runfile-write refused"
+    echo "$S ## Current runfile-write refused"
   fi
   return 0
 }
@@ -1405,6 +1411,210 @@ PROGRESS
 }
 
 # --------------------------------------------------------------------------- #
+# finalize-empty (SKILL §1.5 / §3 "`done`" / §4 step 1 — `resume-glob --finalize`)
+# --------------------------------------------------------------------------- #
+# finalize-empty <runfile> — the second writer of `## Status: done` (the first is
+# the §6 "Termination" exit of a live loop). `closeout` never writes `done`, even
+# when it checks off the last Queue item: it leaves `## Status: paused`,
+# `pause_reason: awaiting_go`, `## Current` item `status: done` (§3 "After a
+# close-out"). This finalizes exactly that state and nothing else. Fires ONLY when
+# ALL hold: `## Status: paused`, `pause_reason: awaiting_go`, `remaining` 0 (no
+# `- [ ]` row), and the `## Current` item line's `status: done` — re-checked under
+# the lock. Then, in order: `run-lock.sh acquire --owner automate-finalize:<run_id>`
+# (held ⇒ one skipped line, nothing written); ONE validated rewrite through
+# `runfile-write` (`## Status: done`, `## Current` `- pause_reason: null` — that
+# line authored by `current-set --pause-reason null` on the staged copy; every
+# other byte unchanged); `progress-append "<ts> auto-finalized: queue empty after
+# closeout"`; `trail-pr <runfile> --reason done` (the SAME call the Queue-resolved
+# termination makes) and its line appended; branch mode OFF only, `trail-unstage
+# <runfile>` (this is usually a FOREIGN run finalized from the current run's RESUME:
+# its staged trail blobs would ride into the current run's next commit and make
+# `_sync_primary` see a dirty index); the lock released in a trap.
+# Prints `finalize-empty: finalized <runfile>` + the trail (+ unstage) lines, or ONE
+# `finalize-empty: skipped — <reason>` line. Always exit 0 (fail-SAFE emitter).
+FE_ROOT=""
+FE_OWNER=""
+FE_LOCKED=0
+fe_release() {
+  if [ "$FE_LOCKED" -eq 1 ] && [ -n "$FE_OWNER" ]; then
+    bash "$HERE/run-lock.sh" release --owner "$FE_OWNER" --root "$FE_ROOT" >/dev/null 2>&1
+  fi
+  FE_LOCKED=0
+  return 0
+}
+
+# _fe_ineligible <runfile> — prints why the run is NOT a finalize candidate
+# (nothing when it is). Read-only; the `skipped — <reason>` text.
+_fe_ineligible() {
+  local rf="$1" st reason n cl cs
+  st="$(sed -n 's/^## Status:[[:space:]]*\([A-Za-z_]*\).*/\1/p' "$rf" 2>/dev/null | head -n1)"
+  if [ "$st" != "paused" ]; then echo "not paused"; return 0; fi
+  reason="$(awk '/^## Current/{c=1;next} /^## /{c=0} c && /^- pause_reason:/{sub(/^- pause_reason:[[:space:]]*/,""); sub(/[[:space:]]+$/,""); print; exit}' "$rf" 2>/dev/null)"
+  if [ "$reason" != "awaiting_go" ]; then echo "pause_reason ${reason:-absent}, not awaiting_go"; return 0; fi
+  n="$(grep -c '^- \[ \] ' "$rf" 2>/dev/null)"; n="${n:-0}"
+  if [ "$n" != "0" ]; then echo "$n unchecked item(s) remain"; return 0; fi
+  cl="$(awk '/^## Current/{c=1;next} /^## /{c=0} c && /^- item: /{print; exit}' "$rf" 2>/dev/null)"
+  cs="$(printf '%s\n' "$cl" | awk 'BEGIN{FS=" [|] "} {for(i=1;i<=NF;i++) if (index($i, "status: ")==1) {print substr($i, 9); exit}}')"
+  if [ "$cs" != "done" ]; then echo "## Current status ${cs:-absent}, not done"; return 0; fi
+  return 0
+}
+
+finalize_empty() {
+  local runfile="${1:-}" S="finalize-empty: skipped —"
+  if [ -z "$runfile" ] || [ ! -f "$runfile" ]; then echo "$S run file not found"; return 0; fi
+  local rf_dir rf_abs root rf_rel run_id why
+  # Eligibility first (read-only): an ineligible run is a plain skip whatever the
+  # checkout looks like, so resume-glob --finalize stays silent about it.
+  why="$(_fe_ineligible "$runfile")"
+  if [ -n "$why" ]; then echo "$S $why"; return 0; fi
+  if ! command -v git >/dev/null 2>&1; then echo "$S git unavailable"; return 0; fi
+  rf_dir="$(cd "$(dirname "$runfile")" 2>/dev/null && pwd -P)" || { echo "$S run file not found"; return 0; }
+  rf_abs="$rf_dir/$(basename "$runfile")"
+  root="$(git -C "$rf_dir" rev-parse --show-toplevel 2>/dev/null)"
+  if [ -z "$root" ]; then echo "$S not a git checkout"; return 0; fi
+  root="$(cd "$root" && pwd -P)"
+  case "$rf_abs" in "$root"/*) rf_rel="${rf_abs#"$root"/}" ;; *) echo "$S run file outside the checkout"; return 0 ;; esac
+  run_id="$(basename "$runfile" .md)"
+  cd "$root" || { echo "$S cannot enter checkout"; return 0; }
+  why="$(_fe_ineligible "$rf_rel")"
+  if [ -n "$why" ]; then echo "$S $why"; return 0; fi
+  local HLP="$HERE/automate-helpers.sh"
+
+  FE_ROOT="$root"; FE_OWNER="automate-finalize:$run_id"
+  local lk rc holder
+  lk="$(bash "$HERE/run-lock.sh" acquire --owner "$FE_OWNER" --root "$root" 2>/dev/null)"; rc=$?
+  if [ "$rc" -ne 0 ]; then
+    holder="$(printf '%s\n' "$lk" | sed -n 's/.*run_lock_held owner=\([^ ]*\).*/\1/p' | head -n1)"
+    echo "$S run lock held by ${holder:-unknown}"; return 0
+  fi
+  FE_LOCKED=1
+  trap fe_release EXIT
+  # Re-check under the lock: a closeout/PICK may have moved the file in between.
+  why="$(_fe_ineligible "$rf_rel")"
+  if [ -n "$why" ]; then fe_release; trap - EXIT; echo "$S $why"; return 0; fi
+
+  # ONE validated rewrite of the real file: the first `## Status:` line's `paused`
+  # → `done` (any trailing text kept) and `## Current`'s `- pause_reason:` → `null`.
+  # The pause_reason line is authored by `current-set --pause-reason null` (the
+  # run-level form — SKILL §3: every pause_reason write is a current-set call),
+  # run against the STAGED copy so the run file still changes in one atomic
+  # `runfile-write`: a failure at any step leaves it byte-unchanged and the run
+  # still eligible, so a later `--finalize` retries cleanly. Staged to a file and
+  # redirected — never a `generator | runfile-write` pipe (§3).
+  local tmp; tmp="$(mktemp "${rf_abs}.fe.XXXXXX")" || { fe_release; trap - EXIT; echo "$S cannot stage the rewrite"; return 0; }
+  if ! awk '
+      !st && /^## Status:/ { sub(/^## Status:[[:space:]]*paused/, "## Status: done"); st=1; print; next }
+      { print }' "$rf_rel" > "$tmp" \
+     || ! grep -q '^## Status: done' "$tmp" \
+     || ! bash "$HLP" current-set "$tmp" --pause-reason null >/dev/null 2>&1 \
+     || ! bash "$HLP" runfile-write "$rf_rel" < "$tmp" >/dev/null 2>&1; then
+    rm -f "$tmp"; fe_release; trap - EXIT
+    echo "$S runfile-write refused"; return 0
+  fi
+  rm -f "$tmp"
+  local ts; ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  bash "$HLP" progress-append "$rf_rel" "$ts auto-finalized: queue empty after closeout" >/dev/null 2>&1
+  echo "finalize-empty: finalized $runfile"
+  local l
+  l="$(bash "$HLP" trail-pr "$rf_abs" --reason done 2>/dev/null | tail -n1)"
+  [ -n "$l" ] || l="trail-pr: skipped — no output"
+  echo "$l"
+  bash "$HLP" progress-append "$rf_rel" "$ts $l" >/dev/null 2>&1
+  if [ "$(_branch_mode "$root")" = "off" ]; then
+    l="$(bash "$HLP" trail-unstage "$rf_abs" 2>/dev/null | tail -n1)"
+    echo "${l:-trail-unstage: skipped — no output}"
+  fi
+  fe_release; trap - EXIT
+  return 0
+}
+
+# --------------------------------------------------------------------------- #
+# closeout-others (SKILL §1.5 / §4 "Start order" / §8 — the cross-run close-out)
+# --------------------------------------------------------------------------- #
+# closeout-others <automate_dir> [--record <runfile>] — at start, BEFORE the PICK
+# lock: for every `resume-glob` run file other than --record's whose `## Current`
+# item line names a non-null item, a non-null `…/pull/<n>` pr, a status other than
+# `done`, and whose PR `reconcile-item` reads `merged`, runs `closeout <that
+# runfile> <item> <pr>` through the dispatcher (NO --session-id: its own
+# `automate-closeout:<run_id>` lock and its own trail), then — branch mode OFF only
+# — `trail-unstage <that runfile>` (a foreign run's staged trail blobs would ride
+# into the current run's next commit and make `_sync_primary` see a dirty index).
+# Per close-out: `closeout-others: <run_id> <item> <pr>`, that closeout's lines, the
+# unstage line, that closeout's own `closeout-classify` answer (`complete` or its
+# `leftover` rows — classified per invocation, never interleaved), and ONE record
+# line `cross-run closeout <run_id> <item>: <complete | leftover <step> — <detail>>`
+# — `closeout-others: recorded — …` when appended to --record's run file,
+# `closeout-others: record — …` when there is no such file yet. The record line
+# carries NO PR URL (a URL in a leftover detail becomes `<url>`), so
+# `current-rebuild` can never attach another run's PR. Anything else (OPEN,
+# closed-unmerged, unreadable, done, null) ⇒ that run is untouched and prints
+# nothing. Never touches another run's Queue beyond closeout's own check-off.
+# Always exit 0.
+closeout_others() {
+  local dir="" rec="" S="closeout-others: skipped —"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --record) rec="${2:-}"; shift 2 || shift ;;
+      *) [ -z "$dir" ] && dir="$1"; shift ;;
+    esac
+  done
+  if [ -z "$dir" ] || [ ! -d "$dir" ]; then echo "$S automate dir not found"; return 0; fi
+  if ! command -v git >/dev/null 2>&1; then echo "$S git unavailable"; return 0; fi
+  local d_abs root rec_abs="" HLP="$HERE/automate-helpers.sh"
+  d_abs="$(cd "$dir" 2>/dev/null && pwd -P)" || { echo "$S automate dir not found"; return 0; }
+  root="$(git -C "$d_abs" rev-parse --show-toplevel 2>/dev/null)"
+  if [ -z "$root" ]; then echo "$S not a git checkout"; return 0; fi
+  root="$(cd "$root" && pwd -P)"
+  if [ -n "$rec" ] && [ -f "$rec" ]; then
+    rec_abs="$(cd "$(dirname "$rec")" 2>/dev/null && pwd -P)/$(basename "$rec")"
+  fi
+  cd "$root" || { echo "$S cannot enter checkout"; return 0; }
+  local bm; bm="$(_branch_mode "$root")"
+  local cands f cl item pr st run_id out verdict first summ rl l tab=$'\t'
+  cands="$(bash "$HLP" resume-glob "$d_abs" 2>/dev/null)"
+  while IFS= read -r f; do
+    [ -n "$f" ] && [ -f "$f" ] || continue
+    if [ -n "$rec_abs" ] && [ "$f" = "$rec_abs" ]; then continue; fi
+    cl="$(awk '/^## Current/{c=1;next} /^## /{c=0} c && /^- item: /{print; exit}' "$f" 2>/dev/null)"
+    [ -n "$cl" ] || continue
+    item="$(printf '%s\n' "$cl" | awk 'BEGIN{FS=" [|] "} {sub(/^- /,""); for(i=1;i<=NF;i++) if (index($i, "item: ")==1) {print substr($i, 7); exit}}')"
+    pr="$(printf '%s\n' "$cl" | awk 'BEGIN{FS=" [|] "} {for(i=1;i<=NF;i++) if (index($i, "pr: ")==1) {print substr($i, 5); exit}}')"
+    st="$(printf '%s\n' "$cl" | awk 'BEGIN{FS=" [|] "} {for(i=1;i<=NF;i++) if (index($i, "status: ")==1) {print substr($i, 9); exit}}')"
+    [ -n "$item" ] && [ "$item" != null ] || continue
+    case "$pr" in http://*/pull/*|https://*/pull/*) ;; *) continue ;; esac
+    [ "$st" != done ] || continue
+    [ "$(bash "$HLP" reconcile-item "$pr" 2>/dev/null | tail -n1)" = merged ] || continue
+    run_id="$(basename "$f" .md)"
+    echo "closeout-others: $run_id $item $pr"
+    out="$(bash "$HLP" closeout "$f" "$item" "$pr" 2>/dev/null)"
+    [ -n "$out" ] && printf '%s\n' "$out"
+    if [ "$bm" = off ]; then
+      l="$(bash "$HLP" trail-unstage "$f" 2>/dev/null | tail -n1)"
+      echo "${l:-trail-unstage: skipped — no output}"
+    fi
+    verdict="$(printf '%s\n' "$out" | bash "$HLP" closeout-classify --run "$run_id" --item "$item" --pr "$pr" 2>/dev/null)"
+    [ -n "$verdict" ] || verdict="leftover$tab$run_id$tab$item$tab$pr${tab}classify${tab}closeout-classify printed nothing"
+    printf '%s\n' "$verdict"
+    if [ "$verdict" = complete ]; then
+      summ="complete"
+    else
+      first="$(printf '%s\n' "$verdict" | grep -m1 "^leftover$tab")"
+      summ="leftover $(printf '%s' "$first" | cut -f5) — $(printf '%s' "$first" | cut -f6-)"
+      summ="$(printf '%s' "$summ" | sed -E 's#https?://[^[:space:]]+#<url>#g')"
+    fi
+    rl="cross-run closeout $run_id $item: $summ"
+    if [ -n "$rec_abs" ] && bash "$HLP" progress-append "$rec_abs" "$(date -u +%Y-%m-%dT%H:%M:%SZ) $rl" >/dev/null 2>&1; then
+      echo "closeout-others: recorded — $rl"
+    else
+      echo "closeout-others: record — $rl"
+    fi
+  done <<EOF
+$cands
+EOF
+  return 0
+}
+
+# --------------------------------------------------------------------------- #
 # dispatch
 # --------------------------------------------------------------------------- #
 main() {
@@ -1415,6 +1625,8 @@ main() {
     closeout)      closeout "$@" ;;
     trail-unstage) trail_unstage "$@" ;;
     trail-gate)    trail_gate "$@" ;;
+    finalize-empty) finalize_empty "$@" ;;
+    closeout-others) closeout_others "$@" ;;
     ""|-h|--help)  grep -E '^#   [a-z]' "$0" | sed 's/^#   /  /' ;;
     *) echo "automate-trail: unknown subcommand: $cmd" >&2 ;;
   esac

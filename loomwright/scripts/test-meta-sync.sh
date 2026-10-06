@@ -84,6 +84,45 @@
 #      `missing from the object store` warning and the no-base derivation: push does not re-add a
 #      branch-deleted file and pushes a new one; pull deletes it locally; an unlisted conflict
 #      still aborts a --paths-from push (branch tip and meta-base unchanged)
+#  38. symlinks under requirements/: a symlinked non-managed FILE (requirements/q/design.png -> a
+#      file outside .supervisor/) -> pull and push exit 0, no `meta_sync: symlink` line, no
+#      design.png on the branch; a DANGLING symlink -> pull and push exit 1 naming it (branch tip,
+#      branch names and meta-base unchanged); a symlinked managed .md -> pull exits 1 too (leg 26
+#      keeps the symlinked-folder and push-side managed-file shapes)
+#  39. fetch fallback: a PATH git shim rejecting any --no-write-fetch-head invocation (exit 129,
+#      git's "unknown option" text) -> pull and push still succeed with the right content; the
+#      shim log shows the flagged fetch, then the plain retry, for each
+#  40. changed during the sync: the pull plans a UNION on the ledger and a TAKE_R on an automate
+#      run file that sorts before it; a git shim appends a ledger line right after the planning
+#      `hash-object --stdin-paths` returns -> pull exits non-zero `changed during the sync`, the
+#      ledger = pre-pull bytes + the injected line, meta-base byte-unchanged, no other managed
+#      file written or deleted (the take-R file keeps its bytes — the union now runs first)
+#  41. nested reclaim: a dead holder's meta-sync.lock AND a dead reclaimer's lock.reclaim.<pid>
+#      marker -> a concurrent push + pull reclaim both (no lock directory left), both exit 0, the
+#      push lands, never two holders (leg 27's holder log)
+#  42. a DIRECTORY at <gitdir>/meta-base: push (a local change) and pull (a remote change) refuse
+#      UP FRONT — exit 1 naming meta-base `not a regular file (it is a directory)`, nothing
+#      published, nothing written locally, the directory left empty in place
+#  43. default branch from the mode line (setup-memory.sh mode): a clone whose mode line names a
+#      throwaway branch inits / pushes / pulls it with no flag (the real loomwright-meta ref
+#      untouched) and `status` prints `synced <sha> on <branch>`; a mismatched --branch ->
+#      exit 1 `branch_mismatch` for pull / push / status / init, nothing changed; an equal
+#      --branch proceeds; --allow-branch-mismatch overrides (and alone is a usage error); no mode
+#      line -> loomwright-meta; a mode line naming loomwright-meta accepts --branch
+#      loomwright-meta; an `unknown` mode -> exit 1 `mode_unknown` with no flag and with a bare
+#      --branch (the override proceeds); a failed reader (no sibling setup-memory.sh, a non-zero
+#      exit, a multi-line or unrecognised answer) -> `mode_unknown`, never the default branch
+#  50. meta-base is bound to its branch (line 2 `branch <name>`): a clone synced on loomwright-meta
+#      switches its mode line to lane-z (setup-memory.sh apply) and inits it -> status prints
+#      `base_branch_mismatch`; a plain pull, a push and the forced --branch lane-z
+#      --allow-branch-mismatch path each exit 1 `base_branch_mismatch` naming both branches, with
+#      NOTHING deleted locally or on either branch and meta-base byte-unchanged; the base's own
+#      branch still syncs; with meta-base removed by hand the lane-z pull deletes nothing and
+#      rebinds meta-base to lane-z
+#  51. legacy single-line meta-base: taken from the SAME branch it is adopted (a local edit pushes
+#      as take-L) and the rewrite adds the branch line; taken from another branch (an entry the
+#      target's history never held) pull / push exit 1 `base_branch_mismatch`, nothing changed,
+#      status says so; a meta-base in no recognised format (a third line) is refused the same way
 #  --- Mutation controls (sed-patched mutant copies in the temp dir; the shipped script has no
 #      test seam) ---
 #  20. (i) a mutant that drops the base comparison (any local difference is staged) MUST fail the
@@ -94,6 +133,20 @@
 #      the push-retry-exhaustion assertion (34)
 #  37. (iv) a mutant whose load_base reads a missing base object as the EMPTY tree MUST fail the
 #      missing-base push assertion (35) by re-adding the branch-deleted file
+#  44. (v) a mutant restoring the unconditional `is_managed "$1" || is_managed "$1/x.md"` probe MUST
+#      fail the design.png assertion (38) with `meta_sync: symlink`
+#  45. (vi) a mutant whose fetch fallback returns 1 instead of retrying MUST fail the fetch-fallback
+#      assertion (39) with fetch_failed
+#  46. (vii) a mutant without the union's hash re-check MUST fail the changed-during-the-sync
+#      assertion (40) — proves the hook fires inside the window
+#  47. (viii) a mutant without the one-level-up reclaim MUST fail the nested-reclaim assertion (41)
+#      by waiting out META_SYNC_LOCK_WAIT_SECS and dying `locked`
+#  48. (ix) a mutant without the up-front meta-base check MUST fail the directory-meta-base
+#      assertion (42) — it publishes before failing to write meta-base
+#  49. (x) a mutant that ignores the mode line (the default stays loomwright-meta) MUST fail the
+#      throwaway-clone assertion (43) by pushing the real loomwright-meta
+#  52. (xi) a mutant without load_base's branch-binding check MUST fail the branch-switch
+#      assertion (50) by deleting the switched clone's a.md + b.md
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -220,8 +273,8 @@ diff -r "$W/A/.supervisor/requirements/q/x.md" "$W/B/.supervisor/requirements/q/
   && [ "$(get B .supervisor/jobs/done/2026-01-01-brief.md)" = "brief" ] \
   && [ ! -e "$W/B/$RQ/notes.log" ] && [ ! -e "$W/B/.supervisor/jobs/failed" ]
 check $? "B received the managed files (and only those); absent jobs/failed/ was not an error"
-ms A status; { [ "$RC" -eq 0 ] && [ "$OUT" = "synced $(br_tip)" ]; }; check $? "status after push -> synced <tip> (got '$OUT')"
-ms B status; [ "$OUT" = "synced $(br_tip)" ]; check $? "status after pull -> synced <tip> (got '$OUT')"
+ms A status; { [ "$RC" -eq 0 ] && [ "$OUT" = "synced $(br_tip) on $BR" ]; }; check $? "status after push -> synced <tip> on <branch> (got '$OUT')"
+ms B status; [ "$OUT" = "synced $(br_tip) on $BR" ]; check $? "status after pull -> synced <tip> on <branch> (got '$OUT')"
 
 echo "== 4. stale copy =="
 STALE_DETAIL=""
@@ -453,8 +506,8 @@ check $? "a truly parallel pair of pushes both land (a=$(cat "$W/par-a.rc") b=$(
 
 echo "== 18. status vocabulary always exits 0 =="
 synced_pair
-ms A status; { [ "$RC" -eq 0 ] && [ "$OUT" = "synced $(br_tip)" ]; }; check $? "synced (got '$OUT')"
-ms B push; ms A status; { [ "$RC" -eq 0 ] && [ "$OUT" = "synced $(br_tip)" ]; }; check $? "push with nothing to send -> still synced"
+ms A status; { [ "$RC" -eq 0 ] && [ "$OUT" = "synced $(br_tip) on $BR" ]; }; check $? "synced (got '$OUT')"
+ms B push; ms A status; { [ "$RC" -eq 0 ] && [ "$OUT" = "synced $(br_tip) on $BR" ]; }; check $? "push with nothing to send -> still synced"
 ms B push; grep -q 'meta_sync: no_changes' < <(printf '%s' "$OUT"); check $? "push with nothing to send -> meta_sync: no_changes, exit 0 (rc=$RC)"
 
 echo "== 19. static: forbidden forms absent from meta-sync.sh =="
@@ -490,7 +543,7 @@ check $? "push still publishes the full tree with only x.md changed (rc=$RC: $OU
 ms B pull
 { [ "$RC" -eq 0 ] && [ "$(get B "$RQ/y.md")" = "y v1" ] && [ "$(get B "$RQ/x.md")" = "x raced" ]; }
 check $? "the sibling's pull writes x.md and deletes nothing (rc=$RC: $OUT)"
-ms A status; [ "$OUT" = "synced $(br_tip)" ]; check $? "the pusher's own status -> synced (got '$OUT')"
+ms A status; [ "$OUT" = "synced $(br_tip) on $BR" ]; check $? "the pusher's own status -> synced (got '$OUT')"
 echo "-- an index lost mid-push trips tree_guard --"
 synced_pair
 tip="$(br_tip)"; base_before="$(base_of A)"
@@ -532,7 +585,7 @@ put A "$RQ/w.md" "w same-root parallel"; put B "$RQ/z.md" "z for the same-root p
 wait
 { [ "$(cat "$W/sr-push.rc")" = "0" ] && [ "$(cat "$W/sr-pull.rc")" = "0" ] && [ "$(br_show "$RQ/w.md")" = "w same-root parallel" ] && [ "$(get A "$RQ/z.md")" = "z for the same-root pull" ] && br_has "$RQ/y.md" && no_leftovers A; }
 check $? "a same-root push + pull pair both succeed, serialised (push=$(cat "$W/sr-push.rc") pull=$(cat "$W/sr-pull.rc"))"
-ms A pull; ms A status; [ "$OUT" = "synced $(br_tip)" ]; check $? "and the root converges to synced (got '$OUT')"
+ms A pull; ms A status; [ "$OUT" = "synced $(br_tip) on $BR" ]; check $? "and the root converges to synced (got '$OUT')"
 
 echo "== 24. untrusted tree paths (mktree '..' entries) =="
 synced_pair
@@ -1003,6 +1056,418 @@ ms B push --paths-from "$W/list35.txt"
 { [ "$RC" -eq 1 ] && grep -qF "meta_sync: conflict $RQ/x.md" < <(printf '%s\n' "$OUT") && [ "$(br_tip)" = "$tip" ] && [ "$(base_of B)" = "$MB_SHA" ]; }
 check $? "missing meta-base object + an unlisted conflict -> the --paths-from push exits 1 naming it, branch tip and meta-base unchanged (whole-set derivation) (rc=$RC: $OUT)"
 
+echo "== 38. symlinks under requirements/: a non-managed FILE syncs; a dangling or managed-.md one refuses =="
+# design_png_world — synced pair; B holds requirements/q/design.png -> a regular file OUTSIDE
+# .supervisor/, a pending take-R (A's x.md v2) and a genuinely local change (B's y.md v2).
+design_png_world() {
+  synced_pair
+  mkdir -p "$W/outside"; printf 'png bytes\n' > "$W/outside/design.png"
+  ln -s "$W/outside/design.png" "$W/B/$RQ/design.png"
+  put A "$RQ/x.md" "x v2 from A"; ms A push
+  put B "$RQ/y.md" "y v2 from B"
+}
+# design_png_sync — pull then push from B through $SCRIPT; 0 iff both exit 0, neither prints a
+# `meta_sync: symlink` line, x.md arrived, y.md was published and the branch holds no design.png.
+DP_DETAIL=""
+design_png_sync() {
+  local prc pout
+  ms B pull; prc=$RC; pout="$OUT"
+  ms B push
+  DP_DETAIL="pull rc=$prc: $(printf '%s' "$pout" | tr '\n' '|'); push rc=$RC: $(printf '%s' "$OUT" | tr '\n' '|')"
+  [ "$prc" -eq 0 ] && [ "$RC" -eq 0 ] || return 1
+  grep -q 'meta_sync: symlink' < <(printf '%s\n%s\n' "$pout" "$OUT") && return 1
+  [ "$(get B "$RQ/x.md")" = "x v2 from A" ] && [ "$(br_show "$RQ/y.md")" = "y v2 from B" ] || return 1
+  ! grep -q 'design\.png' < <(br_names)
+}
+design_png_world
+design_png_sync
+check $? "a symlinked non-managed FILE (requirements/q/design.png -> a file outside .supervisor/) -> pull and push exit 0, no 'meta_sync: symlink' line, the branch carries no design.png ($DP_DETAIL)"
+[ "$(cat "$W/outside/design.png")" = "png bytes" ] && [ -L "$W/B/$RQ/design.png" ]
+check $? "... and the symlink and its target are left exactly as they were"
+echo "-- a DANGLING symlink under requirements/ still refuses (it could become a folder of .md files) --"
+synced_pair
+ln -s "$W/nowhere/gone" "$W/B/$RQ/gone"
+put A "$RQ/x.md" "x v2 from A"; ms A push
+tip="$(br_tip)"; base_before="$(base_of B)"; names_before="$(br_names)"
+ms B pull
+{ [ "$RC" -eq 1 ] && grep -qxF "meta_sync: symlink $RQ/gone" < <(printf '%s\n' "$OUT") && [ "$(get B "$RQ/x.md")" = "x v1" ] && [ "$(base_of B)" = "$base_before" ] && [ "$(br_tip)" = "$tip" ]; }
+check $? "pull with a dangling symlink -> exit 1 'meta_sync: symlink $RQ/gone', pending x.md not written, branch tip and meta-base unchanged (rc=$RC: $OUT)"
+put B "$RQ/y.md" "y v2 from B"; ms B push
+{ [ "$RC" -eq 1 ] && grep -qxF "meta_sync: symlink $RQ/gone" < <(printf '%s\n' "$OUT") && [ "$(br_tip)" = "$tip" ] && [ "$(br_names)" = "$names_before" ] && [ "$(base_of B)" = "$base_before" ]; }
+check $? "push with a dangling symlink -> exit 1 naming it, branch tip unchanged, nothing deleted from the branch, meta-base unchanged (rc=$RC: $OUT)"
+rm -f "$W/B/$RQ/gone"
+echo "-- a symlinked managed .md (to a regular file) still refuses on pull too --"
+mkdir -p "$W/outside"; printf 'victim\n' > "$W/outside/victim.md"
+ln -s "$W/outside/victim.md" "$W/B/$RQ/link.md"
+ms B pull
+{ [ "$RC" -eq 1 ] && grep -qxF "meta_sync: symlink $RQ/link.md" < <(printf '%s\n' "$OUT") && [ "$(get B "$RQ/x.md")" = "x v1" ] && [ "$(base_of B)" = "$base_before" ] && [ "$(cat "$W/outside/victim.md")" = "victim" ]; }
+check $? "pull with a symlinked managed .md -> exit 1 naming it, nothing written (target untouched), meta-base unchanged (rc=$RC: $OUT)"
+rm -f "$W/B/$RQ/link.md"
+
+echo "== 39. fetch fallback: a git that rejects --no-write-fetch-head (git < 2.29) =="
+# mk_ff_shim <dir> <log> — a `git` that rejects ANY invocation carrying --no-write-fetch-head the
+# way git's own parse-options does (exit 129, "error: unknown option \`no-write-fetch-head'"),
+# logging FLAGGED; every other fetch is logged PLAIN; everything is otherwise the real git. The
+# SUT calls `git -C <root> fetch ...`, so the shim scans every argument, not just $1.
+mk_ff_shim() {
+  mkdir -p "$1"
+  cat > "$1/git" <<SHIM
+#!/bin/sh
+fetch=0
+for a in "\$@"; do
+  if [ "\$a" = "--no-write-fetch-head" ]; then
+    echo FLAGGED >> "$2"
+    echo "error: unknown option \\\`no-write-fetch-head'" >&2
+    echo "usage: git fetch [<options>] [<repository> [<refspec>...]]" >&2
+    exit 129
+  fi
+  [ "\$a" = "fetch" ] && fetch=1
+done
+[ "\$fetch" = 1 ] && echo PLAIN >> "$2"
+exec "$REAL_GIT" "\$@"
+SHIM
+  chmod +x "$1/git"
+}
+FF_LOG=""
+# fetch_fallback_ok — B pulls A's x.md v2 then pushes y.md v2, both through the shim; 0 iff both
+# exit 0 with the content right AND each run's log reads exactly FLAGGED then PLAIN.
+FF_DETAIL=""
+fetch_fallback_ok() {
+  local prc pout plog
+  synced_pair
+  put A "$RQ/x.md" "x v2 from A"; ms A push
+  mk_ff_shim "$W/ffshim" "$W/ff-pull.log"; : > "$W/ff-pull.log"
+  OUT="$(PATH="$W/ffshim:$PATH" bash "$SCRIPT" pull --root "$W/B" 2>&1)"; prc=$?; pout="$OUT"
+  plog="$(tr '\n' ' ' < "$W/ff-pull.log")"
+  put B "$RQ/y.md" "y v2 from B"
+  mk_ff_shim "$W/ffshim" "$W/ff-push.log"; : > "$W/ff-push.log"
+  OUT="$(PATH="$W/ffshim:$PATH" bash "$SCRIPT" push --root "$W/B" 2>&1)"; RC=$?
+  FF_LOG="pull: $plog/ push: $(tr '\n' ' ' < "$W/ff-push.log")"
+  FF_DETAIL="pull rc=$prc: $(printf '%s' "$pout" | tr '\n' '|'); push rc=$RC: $(printf '%s' "$OUT" | tr '\n' '|'); shim log $FF_LOG"
+  [ "$prc" -eq 0 ] && [ "$(get B "$RQ/x.md")" = "x v2 from A" ] && [ "$plog" = "FLAGGED PLAIN " ] || return 1
+  [ "$RC" -eq 0 ] && [ "$(br_show "$RQ/y.md")" = "y v2 from B" ] && [ "$(tr '\n' ' ' < "$W/ff-push.log")" = "FLAGGED PLAIN " ]
+}
+fetch_fallback_ok
+check $? "a git rejecting --no-write-fetch-head (exit 129) -> pull and push retry with a plain fetch and succeed with the right content ($FF_DETAIL)"
+
+echo "== 40. pull: the ledger changed during the sync -> refused, NOTHING changed =="
+LG=".supervisor/postmortem/results.jsonl"
+AUTO=".supervisor/automate/automate-2026-01-01-000000.md"
+CDS_LINE='{"repo":"owner/repo","n":99}'
+# cds_world — synced pair; A appends n:3 to the ledger and changes the automate run file, then
+# pushes; B appends its own unpushed n:5. So B's pull plans a UNION on the ledger and a TAKE_R on
+# $AUTO, which sorts BEFORE the ledger. A git shim appends $CDS_LINE to B's ledger right AFTER the
+# real git returns on the planning `hash-object --stdin-paths` (list_local hashes the ledger there;
+# bare git, paths on STDIN) — inside the window, before union_into copies the working file.
+cds_world() {
+  synced_pair
+  printf '%s\n' '{"repo":"owner/repo","n":3}' >> "$W/A/$LG"; put A "$AUTO" "run v2 from A"; ms A push
+  printf '%s\n' '{"repo":"owner/repo","n":5}' >> "$W/B/$LG"
+  cp "$W/B/$LG" "$W/cds-ledger.before"; cp "$W/B/.git/meta-base" "$W/cds-base.before"
+  CDS_SNAP_BEFORE="$(cds_snapshot)"
+  mkdir -p "$W/cdsshim"; touch "$W/cds.mark"
+  cat > "$W/cdsshim/git" <<SHIM
+#!/bin/sh
+hit=0
+for a in "\$@"; do [ "\$a" = "--stdin-paths" ] && hit=1; done
+if [ "\$hit" = 1 ] && [ -f "$W/cds.mark" ]; then
+  rm -f "$W/cds.mark"
+  "$REAL_GIT" "\$@"; rc=\$?
+  printf '%s\n' '$CDS_LINE' >> "$W/B/$LG"
+  exit \$rc
+fi
+exec "$REAL_GIT" "\$@"
+SHIM
+  chmod +x "$W/cdsshim/git"
+}
+# cds_snapshot — every regular file under B's .supervisor/ EXCEPT the ledger, with its checksum.
+cds_snapshot() {
+  (cd "$W/B" && find .supervisor -type f ! -path "./$LG" ! -path "$LG" | env LC_ALL=C sort | while IFS= read -r f; do printf '%s %s\n' "$(cksum < "$f")" "$f"; done)
+}
+cds_run() { OUT="$(PATH="$W/cdsshim:$PATH" bash "$SCRIPT" pull --root "$W/B" 2>&1)"; RC=$?; }
+# blob_at <tree-ish> <path> — the blob SHA B's meta-base tree holds at <path> (B's object store);
+# br_blob <path> — the blob SHA the branch tip holds at <path> (origin's object store).
+blob_at() { git -C "$W/B" rev-parse -q --verify "$1:$2" 2>/dev/null; }
+br_blob() { git --git-dir="$W/origin.git" rev-parse -q --verify "refs/heads/$BR:$1" 2>/dev/null; }
+cds_world
+b_base="$(sed -n 1p "$W/B/.git/meta-base")"   # line 1 = the tree (line 2 = `branch <name>`)
+{ [ -n "$(blob_at "$b_base" "$AUTO")" ] && [ -n "$(br_blob "$AUTO")" ] && [ -n "$(br_blob "$LG")" ] \
+  && [ "$(blob_at "$b_base" "$AUTO")" = "$(git -C "$W/B" hash-object --no-filters "$AUTO")" ] && [ "$(br_blob "$AUTO")" != "$(blob_at "$b_base" "$AUTO")" ] \
+  && [ "$(git -C "$W/B" hash-object --no-filters "$LG")" != "$(blob_at "$b_base" "$LG")" ] && [ "$(br_blob "$LG")" != "$(blob_at "$b_base" "$LG")" ] \
+  && [ "$(printf '%s\n' "$AUTO" "$LG" | env LC_ALL=C sort | head -n1)" = "$AUTO" ]; } 2>/dev/null
+check $? "fixture: B's pull plans TAKE_R on $AUTO (L == B != R) and UNION on the ledger (L != B, R != B), and $AUTO sorts before the ledger"
+cds_run
+{ [ ! -e "$W/cds.mark" ] && [ "$RC" -ne 0 ] && grep -qF 'changed during the sync' < <(printf '%s\n' "$OUT"); }
+check $? "the hook fired inside the window and pull exits non-zero with 'changed during the sync' (rc=$RC: $OUT)"
+{ cat "$W/cds-ledger.before"; printf '%s\n' "$CDS_LINE"; } > "$W/cds-ledger.want"
+cmp -s "$W/cds-ledger.want" "$W/B/$LG"; check $? "the local ledger = its pre-pull bytes + the injected line only (ledger: $(tr '\n' ' ' < "$W/B/$LG"))"
+cmp -s "$W/cds-base.before" "$W/B/.git/meta-base"; check $? "meta-base is byte-unchanged"
+{ [ "$(cds_snapshot)" = "$CDS_SNAP_BEFORE" ] && [ "$(get B "$AUTO")" = "run" ]; }
+check $? "NO other managed file was written or deleted: the take-R $AUTO keeps its pre-pull bytes (now: '$(get B "$AUTO")')"
+
+echo "== 41. nested stale-lock reclaim: a dead holder's lock AND a dead reclaimer's marker =="
+# nested_lock_world — synced pair; A's gitdir holds meta-sync.lock (pid file = dead pid P) AND
+# meta-sync.lock.reclaim.P (pid file = dead pid Q: a reclaimer that died inside its marker). A has
+# one change to push. A `git` shim logs ENTER/LEAVE around the first git call inside the lock (the
+# remote probe), leg 27's holder-log technique.
+nested_lock_world() {
+  local p q
+  synced_pair
+  ( exit 0 ) & p=$!; wait "$p" 2>/dev/null
+  ( exit 0 ) & q=$!; wait "$q" 2>/dev/null
+  NL_LOCK="$W/A/.git/meta-sync.lock"; NL_P="$p"
+  mkdir "$NL_LOCK" "$NL_LOCK.reclaim.$p"
+  printf '%s\n' "$p" > "$NL_LOCK/pid"; printf '%s\n' "$q" > "$NL_LOCK.reclaim.$p/pid"
+  put A "$RQ/x.md" "x after a nested reclaim"
+  NL_D="$W/nestlock"; mkdir -p "$NL_D/shim"; : > "$NL_D/holders.log"
+  cat > "$NL_D/shim/git" <<SHIM
+#!/bin/sh
+if [ "\$3" = "ls-remote" ]; then
+  echo "ENTER \$MS_WHO" >> "$NL_D/holders.log"; sleep "\$MS_HOLD"; echo "LEAVE \$MS_WHO" >> "$NL_D/holders.log"
+fi
+exec "$REAL_GIT" "\$@"
+SHIM
+  chmod +x "$NL_D/shim/git"
+}
+# nested_lock_run <wait-secs> — a push and a pull contend for A's root at once through $SCRIPT.
+nested_lock_run() {
+  ( MS_WHO=PUSH MS_HOLD=1 META_SYNC_LOCK_WAIT_SECS="$1" PATH="$NL_D/shim:$PATH" bash "$SCRIPT" push --root "$W/A" > "$NL_D/push.out" 2>&1; echo $? > "$NL_D/push.rc" ) &
+  ( MS_WHO=PULL MS_HOLD=1 META_SYNC_LOCK_WAIT_SECS="$1" PATH="$NL_D/shim:$PATH" bash "$SCRIPT" pull --root "$W/A" > "$NL_D/pull.out" 2>&1; echo $? > "$NL_D/pull.rc" ) &
+  wait
+  NL_RCS="$(cat "$NL_D/push.rc" "$NL_D/pull.rc" | tr '\n' ' ')"
+  NL_MAX="$(awk '$1 == "ENTER" { n++; if (n > m) m = n } $1 == "LEAVE" { n-- } END { print m + 0 }' "$NL_D/holders.log")"
+  NL_ENTERS="$(grep -c ENTER "$NL_D/holders.log")"
+  NL_LEFT="$(ls -a "$W/A/.git" | grep '^meta-sync\.lock' | tr '\n' ' ')"
+  NL_DETAIL="rcs=$NL_RCS max=$NL_MAX enters=$NL_ENTERS left=[$NL_LEFT] push: $(tr '\n' '|' < "$NL_D/push.out") pull: $(tr '\n' '|' < "$NL_D/pull.out")"
+}
+nested_lock_ok() {
+  [ "$NL_RCS" = "0 0 " ] && [ "$NL_MAX" = "1" ] && [ "$NL_ENTERS" = "2" ] && [ -z "$NL_LEFT" ] && [ "$(br_show "$RQ/x.md")" = "x after a nested reclaim" ]
+}
+nested_lock_world
+{ [ -d "$NL_LOCK" ] && [ -d "$NL_LOCK.reclaim.$NL_P" ]; }; check $? "fixture: the dead holder's lock and the dead reclaimer's marker are both planted"
+nested_lock_run 30
+nested_lock_ok
+check $? "both are reclaimed (neither directory remains), push and pull both exit 0, the push lands, never two holders ($NL_DETAIL)"
+
+echo "== 42. a DIRECTORY at <gitdir>/meta-base: pull and push refuse up front, nothing changed =="
+# dirbase_world — synced pair; A pushes x.md v2 (a remote change B would pull); B adds a genuinely
+# new file (a local change B would push — new, so the no-base derivation a directory meta-base
+# reads as pushes it rather than calling it a conflict); B's meta-base is then a directory.
+dirbase_world() {
+  synced_pair
+  put A "$RQ/x.md" "x v2 from A"; ms A push
+  put B "$RQ/new42.md" "new from B"
+  rm -f "$W/B/.git/meta-base"; mkdir "$W/B/.git/meta-base"
+  DB_TIP="$(br_tip)"
+}
+db_refused() {
+  [ "$RC" -eq 1 ] && grep -q 'meta_sync: .*meta-base.*not a regular file.*is a directory' < <(printf '%s\n' "$OUT") \
+    && [ -d "$W/B/.git/meta-base" ] && [ -z "$(ls -A "$W/B/.git/meta-base")" ] && [ "$(br_tip)" = "$DB_TIP" ] \
+    && [ "$(get B "$RQ/x.md")" = "x v1" ] && [ "$(get B "$RQ/new42.md")" = "new from B" ]
+}
+dirbase_world
+ms B push
+db_refused && ! br_has "$RQ/new42.md"
+check $? "push against a directory meta-base -> exit 1 naming meta-base 'not a regular file (it is a directory)', nothing published (tip unchanged), the directory left empty in place, no local file touched (rc=$RC: $OUT)"
+ms B pull
+db_refused
+check $? "pull against a directory meta-base -> exit 1 the same, the pending take-R x.md NOT written, the directory left empty in place (rc=$RC: $OUT)"
+
+echo "== 43. the default branch comes from the checkout's mode line =="
+TW="throwaway-meta"
+# tw_world — origin with BOTH metadata branches: loomwright-meta (initialised from clone Z, which
+# has no mode line) and $TW (initialised from clone T, whose mode line names $TW — written by
+# `setup-memory.sh apply --branch-mode`, the real writer). World building always runs the shipped
+# $SUT; the subject under test is $SCRIPT.
+mode_line() {
+  (cd "$W/$1" && bash "$HERE/setup-memory.sh" --root "$W/$1" apply --branch-mode "$2" >/dev/null 2>&1; rm -f .gitignore.backup.*)
+}
+br_tip_of() { git --git-dir="$W/origin.git" rev-parse -q --verify "refs/heads/$1" 2>/dev/null; }
+br_show_of() { git --git-dir="$W/origin.git" show "refs/heads/$1:$2" 2>/dev/null; }
+tw_world() {
+  mkworld; clone Z; clone T
+  bash "$SUT" init --root "$W/Z" >/dev/null 2>&1
+  mode_line T "$TW"
+  bash "$SUT" init --root "$W/T" >/dev/null 2>&1
+  LM_TIP="$(br_tip_of "$BR")"
+}
+# tw_push_ok — T pushes a new file with NO flag through $SCRIPT; 0 iff it lands on $TW and the
+# real loomwright-meta ref is untouched.
+tw_push_ok() {
+  put T "$RQ/tw.md" "on the throwaway branch"
+  ms T push
+  [ "$RC" -eq 0 ] && [ "$(br_show_of "$TW" "$RQ/tw.md")" = "on the throwaway branch" ] && [ "$(br_tip_of "$BR")" = "$LM_TIP" ]
+}
+tw_world
+{ [ "$(bash "$HERE/setup-memory.sh" --root "$W/T" mode)" = "on $TW" ] && [ "$(bash "$HERE/setup-memory.sh" --root "$W/Z" mode)" = "off" ] \
+  && [ -n "$(br_tip_of "$TW")" ] && [ -n "$LM_TIP" ]; }
+check $? "fixture: T's mode line reads 'on $TW' (written by setup-memory.sh apply), Z reads off; a plain 'init' in each created $TW and $BR"
+tw_push_ok
+check $? "a clone whose mode line names $TW pushes it with NO flag; the real $BR ref is untouched (rc=$RC: $OUT)"
+ms T status
+[ "$OUT" = "synced $(br_tip_of "$TW") on $TW" ]; check $? "status names the branch: 'synced <tip> on $TW' (got '$OUT')"
+clone T2; mode_line T2 "$TW"
+ms T2 pull
+{ [ "$RC" -eq 0 ] && [ "$(get T2 "$RQ/tw.md")" = "on the throwaway branch" ] && [ "$(br_tip_of "$BR")" = "$LM_TIP" ]; }
+check $? "a second clone with the same mode line pulls $TW with no flag (rc=$RC: $OUT)"
+echo "-- a --branch that disagrees with the mode line is refused, for every subcommand --"
+tw_tip="$(br_tip_of "$TW")"; base_before="$(base_of T)"; fh_before="$(cksum < "$W/T/.git/FETCH_HEAD" 2>/dev/null)"
+put T "$RQ/tw.md" "a change that must not move"
+for sc in pull push status init; do
+  ms T "$sc" --branch "$BR"
+  { [ "$RC" -eq 1 ] && grep -q "^meta_sync: branch_mismatch — --branch '$BR' but this checkout's mode line names '$TW'" < <(printf '%s\n' "$OUT") \
+    && [ "$(br_tip_of "$TW")" = "$tw_tip" ] && [ "$(br_tip_of "$BR")" = "$LM_TIP" ] && [ "$(base_of T)" = "$base_before" ] \
+    && [ ! -e "$W/T/.git/meta-sync.lock" ] && [ "$(cksum < "$W/T/.git/FETCH_HEAD" 2>/dev/null)" = "$fh_before" ] && [ "$(get T "$RQ/tw.md")" = "a change that must not move" ]; }
+  check $? "$sc --branch $BR under mode 'on $TW' -> exit 1 branch_mismatch naming both, nothing changed (no fetch result, no lock, both branches and meta-base untouched) (rc=$RC: $OUT)"
+done
+ms T push --branch "$TW"
+{ [ "$RC" -eq 0 ] && [ "$(br_show_of "$TW" "$RQ/tw.md")" = "a change that must not move" ]; }; check $? "--branch equal to the mode's branch proceeds (rc=$RC: $OUT)"
+ms T pull --allow-branch-mismatch
+{ [ "$RC" -eq 1 ] && grep -qF 'meta_sync: usage: --allow-branch-mismatch requires --branch' < <(printf '%s\n' "$OUT"); }
+check $? "--allow-branch-mismatch without --branch -> usage error exit 1 (rc=$RC: $OUT)"
+clone T3; mode_line T3 "$TW"
+ms T3 pull --branch "$BR" --allow-branch-mismatch
+{ [ "$RC" -eq 0 ] && [ -f "$W/T3/.git/meta-base" ] && [ ! -e "$W/T3/$RQ/tw.md" ]; }
+check $? "--branch $BR --allow-branch-mismatch overrides the mode line and pulls $BR (rc=$RC: $OUT)"
+ms T3 status --branch "$BR" --allow-branch-mismatch
+[ "$OUT" = "synced $LM_TIP on $BR" ]; check $? "... and status under the override names $BR (got '$OUT')"
+echo "-- no mode line => loomwright-meta; a mode line naming loomwright-meta behaves the same --"
+put Z "$RQ/z.md" "on the default branch"
+tw_tip="$(br_tip_of "$TW")"
+ms Z push
+{ [ "$RC" -eq 0 ] && [ "$(br_show_of "$BR" "$RQ/z.md")" = "on the default branch" ] && [ "$(br_tip_of "$TW")" = "$tw_tip" ]; }
+check $? "a clone with NO mode line pushes $BR with no flag, $TW untouched (rc=$RC: $OUT)"
+LM_TIP="$(br_tip_of "$BR")"
+ms Z status; [ "$OUT" = "synced $LM_TIP on $BR" ]; check $? "status (mode off) -> 'synced <tip> on $BR' (got '$OUT')"
+clone P; mode_line P "$BR"
+[ "$(bash "$HERE/setup-memory.sh" --root "$W/P" mode)" = "on $BR" ]; check $? "fixture: P's mode line reads 'on $BR'"
+ms P pull
+{ [ "$RC" -eq 0 ] && [ "$(get P "$RQ/z.md")" = "on the default branch" ]; }; check $? "mode 'on $BR' with no flag pulls $BR (rc=$RC: $OUT)"
+put P "$RQ/p.md" "from P"; ms P push --branch "$BR"
+{ [ "$RC" -eq 0 ] && [ "$(br_show_of "$BR" "$RQ/p.md")" = "from P" ] && [ "$(br_tip_of "$TW")" = "$tw_tip" ]; }
+check $? "mode 'on $BR' accepts --branch $BR (the primary's unchanged path) (rc=$RC: $OUT)"
+echo "-- an unknown mode is refused, with no flag and with a bare --branch --"
+clone U; mode_line U "$TW"
+sed "s/^# loomwright-meta-branch: .*/# loomwright-meta-branch: off/" "$W/U/.gitignore" > "$W/U/.gitignore.new" && mv "$W/U/.gitignore.new" "$W/U/.gitignore"
+um="$(bash "$HERE/setup-memory.sh" --root "$W/U" mode)"
+case "$um" in "unknown "*) true ;; *) false ;; esac; check $? "fixture: U's mode reads unknown (got '$um')"
+lm_tip="$(br_tip_of "$BR")"; tw_tip="$(br_tip_of "$TW")"
+for args in "pull" "status" "push --branch $BR" "pull --branch $TW"; do
+  # shellcheck disable=SC2086
+  ms U $args
+  { [ "$RC" -eq 1 ] && grep -qxF "meta_sync: mode_unknown — ${um#unknown }; nothing was changed (repair the mode line with setup-memory.sh apply --branch-mode <branch>|off, or pass --branch <name> --allow-branch-mismatch)" < <(printf '%s\n' "$OUT") \
+    && [ ! -e "$W/U/.git/meta-base" ] && [ ! -e "$W/U/.git/meta-sync.lock" ] && [ ! -e "$W/U/.supervisor/requirements" ] && [ "$(br_tip_of "$BR")" = "$lm_tip" ] && [ "$(br_tip_of "$TW")" = "$tw_tip" ]; }
+  check $? "'$args' under an unknown mode -> exit 1 'meta_sync: mode_unknown — <reason>; nothing was changed', nothing changed (rc=$RC: $OUT)"
+done
+ms U pull --branch "$BR" --allow-branch-mismatch
+{ [ "$RC" -eq 0 ] && [ "$(get U "$RQ/z.md")" = "on the default branch" ]; }; check $? "the override proceeds under an unknown mode (rc=$RC: $OUT)"
+echo "-- a failed reader (no sibling setup-memory.sh) fails closed, even in a mode-off clone --"
+NORD="$TROOT/no-reader"; mkdir -p "$NORD"; cp "$SUT" "$NORD/meta-sync.sh"
+lm_tip="$(br_tip_of "$BR")"; base_before="$(base_of Z)"
+put Z "$RQ/z.md" "must not be pushed"
+OUT="$(bash "$NORD/meta-sync.sh" push --root "$W/Z" 2>&1)"; RC=$?
+{ [ "$RC" -eq 1 ] && grep -qF 'meta_sync: mode_unknown — setup-memory.sh (the mode-line reader) is missing beside meta-sync.sh; nothing was changed' < <(printf '%s\n' "$OUT") \
+  && [ "$(br_tip_of "$BR")" = "$lm_tip" ] && [ "$(base_of Z)" = "$base_before" ]; }
+check $? "a copy with no sibling setup-memory.sh -> exit 1 mode_unknown, never the default branch (rc=$RC: $OUT)"
+printf '#!/bin/sh\nexit 3\n' > "$NORD/setup-memory.sh"
+OUT="$(bash "$NORD/meta-sync.sh" status --root "$W/Z" 2>&1)"; RC=$?
+{ [ "$RC" -eq 1 ] && grep -qF 'meta_sync: mode_unknown — setup-memory.sh mode exited 3; nothing was changed' < <(printf '%s\n' "$OUT"); }
+check $? "a reader that exits non-zero with no line -> exit 1 mode_unknown (rc=$RC: $OUT)"
+printf '#!/bin/sh\nprintf "on a\\\\non b\\\\n"\n' > "$NORD/setup-memory.sh"
+OUT="$(bash "$NORD/meta-sync.sh" status --root "$W/Z" 2>&1)"; RC=$?
+{ [ "$RC" -eq 1 ] && grep -qF "meta_sync: mode_unknown — setup-memory.sh mode returned a multi-line answer (first line 'on a')" < <(printf '%s\n' "$OUT"); }
+check $? "a multi-line reader answer -> exit 1 mode_unknown (rc=$RC: $OUT)"
+printf '#!/bin/sh\necho maybe\n' > "$NORD/setup-memory.sh"
+OUT="$(bash "$NORD/meta-sync.sh" status --root "$W/Z" 2>&1)"; RC=$?
+{ [ "$RC" -eq 1 ] && grep -qF "meta_sync: mode_unknown — setup-memory.sh mode printed 'maybe'" < <(printf '%s\n' "$OUT"); }
+check $? "an unrecognised reader answer -> exit 1 mode_unknown (rc=$RC: $OUT)"
+
+echo "== 50. meta-base is bound to its branch: a branch switch never plans against the old base =="
+LZ="lane-z"
+# bsw_world — clone A syncs loomwright-meta (mode off; meta-base bound to it), then switches its
+# mode line to $LZ with the real writer and inits $LZ (empty). World building always runs $SUT.
+bsw_world() {
+  mkworld; clone A
+  bash "$SUT" init --root "$W/A" >/dev/null 2>&1
+  put A "$RQ/a.md" "a v1"; put A "$RQ/b.md" "b v1"
+  bash "$SUT" push --root "$W/A" >/dev/null 2>&1
+  mode_line A "$LZ"
+  bash "$SUT" init --root "$W/A" >/dev/null 2>&1
+  BSW_LM_TIP="$(br_tip_of "$BR")"; BSW_LZ_TIP="$(br_tip_of "$LZ")"
+  BSW_LM_NAMES="$(git --git-dir="$W/origin.git" ls-tree -r --name-only "refs/heads/$BR" 2>/dev/null)"
+  BSW_BASE="$(base_of A)"
+}
+# bsw_untouched — 0 iff A's local files, both branches and meta-base are exactly as bsw_world left them.
+bsw_untouched() {
+  [ "$(get A "$RQ/a.md")" = "a v1" ] && [ "$(get A "$RQ/b.md")" = "b v1" ] \
+    && [ "$(br_tip_of "$BR")" = "$BSW_LM_TIP" ] && [ "$(br_tip_of "$LZ")" = "$BSW_LZ_TIP" ] \
+    && [ "$(base_of A)" = "$BSW_BASE" ] && [ ! -e "$W/A/.git/meta-sync.lock" ]
+}
+BSW_MSG="meta_sync: base_branch_mismatch — meta-base was recorded against branch '$BR' but this sync targets '$LZ'; nothing was changed"
+bsw_world
+{ [ "$(bash "$HERE/setup-memory.sh" --root "$W/A" mode)" = "on $LZ" ] && [ -n "$BSW_LZ_TIP" ] && [ -z "$(git --git-dir="$W/origin.git" ls-tree -r --name-only "refs/heads/$LZ")" ] \
+  && [ "$(sed -n 2p "$W/A/.git/meta-base")" = "branch $BR" ] && [ "$BSW_LM_NAMES" = "$(printf '%s\n' "$RQ/a.md" "$RQ/b.md")" ]; }
+check $? "fixture: A's mode line reads 'on $LZ', $LZ is an empty fresh branch, A's meta-base line 2 is 'branch $BR', $BR holds a.md + b.md"
+ms A status
+{ [ "$RC" -eq 0 ] && [ "$OUT" = "base_branch_mismatch" ]; }; check $? "status after the switch -> base_branch_mismatch, exit 0 (got '$OUT' rc=$RC)"
+ms A pull
+{ [ "$RC" -eq 1 ] && grep -qF "$BSW_MSG" < <(printf '%s\n' "$OUT") && ! grep -qF 'pulled' < <(printf '%s\n' "$OUT") && bsw_untouched; }
+check $? "plain pull after the switch -> exit 1 base_branch_mismatch naming both; a.md / b.md NOT deleted, both branches and meta-base unchanged (rc=$RC: $OUT)"
+put A "$RQ/n.md" "new after switch"
+ms A push
+{ [ "$RC" -eq 1 ] && grep -qF "$BSW_MSG" < <(printf '%s\n' "$OUT") && bsw_untouched; }
+check $? "push after the switch -> exit 1 base_branch_mismatch, nothing published to either branch, meta-base unchanged (rc=$RC: $OUT)"
+ms A pull --branch "$LZ" --allow-branch-mismatch
+{ [ "$RC" -eq 1 ] && grep -qF "$BSW_MSG" < <(printf '%s\n' "$OUT") && bsw_untouched; }
+check $? "the forced-branch path (--branch $LZ --allow-branch-mismatch) is refused the same way (rc=$RC: $OUT)"
+rm -f "$W/A/$RQ/n.md"
+ms A pull --branch "$BR" --allow-branch-mismatch
+{ [ "$RC" -eq 0 ] && grep -qF 'meta_sync: pulled' < <(printf '%s\n' "$OUT") && bsw_untouched; }
+check $? "the base's own branch still syncs (--branch $BR --allow-branch-mismatch): exit 0, nothing deleted (rc=$RC: $OUT)"
+rm -f "$W/A/.git/meta-base"
+ms A pull
+{ [ "$RC" -eq 0 ] && grep -qF '(0 written, 0 deleted)' < <(printf '%s\n' "$OUT") && [ "$(get A "$RQ/a.md")" = "a v1" ] && [ "$(get A "$RQ/b.md")" = "b v1" ] \
+  && [ "$(sed -n 2p "$W/A/.git/meta-base")" = "branch $LZ" ]; }
+check $? "with meta-base removed by hand, the plain pull of $LZ is a first sync: nothing deleted, meta-base now bound to $LZ (rc=$RC: $OUT)"
+ms A push
+{ [ "$RC" -eq 0 ] && [ "$(br_show_of "$LZ" "$RQ/a.md")" = "a v1" ] && [ "$(br_show_of "$LZ" "$RQ/b.md")" = "b v1" ] && [ "$(br_tip_of "$BR")" = "$BSW_LM_TIP" ]; }
+check $? "... and the next push carries a.md / b.md onto $LZ, $BR untouched (rc=$RC: $OUT)"
+
+echo "== 51. a legacy (single-line) meta-base: adopted only when the target branch's history holds every entry =="
+mkworld; clone A
+bash "$SUT" init --root "$W/A" >/dev/null 2>&1
+put A "$RQ/a.md" "a v1"; put A "$RQ/b.md" "b v1"
+bash "$SUT" push --root "$W/A" >/dev/null 2>&1
+sed -n 1p "$W/A/.git/meta-base" > "$W/A/.git/meta-base.legacy" && mv "$W/A/.git/meta-base.legacy" "$W/A/.git/meta-base"
+[ "$(awk 'END { print NR }' "$W/A/.git/meta-base")" = "1" ]; check $? "fixture: A's meta-base rewritten to the legacy single-line form"
+put A "$RQ/a.md" "a v2 local"
+ms A push
+{ [ "$RC" -eq 0 ] && [ "$(br_show "$RQ/a.md")" = "a v2 local" ] && [ "$(br_show "$RQ/b.md")" = "b v1" ] && [ "$(sed -n 2p "$W/A/.git/meta-base")" = "branch $BR" ]; }
+check $? "a legacy base taken from the SAME branch is adopted (a local edit pushes as take-L, not a no-base conflict) and the rewrite binds it to $BR (rc=$RC: $OUT)"
+sed -n 1p "$W/A/.git/meta-base" > "$W/A/.git/meta-base.legacy" && mv "$W/A/.git/meta-base.legacy" "$W/A/.git/meta-base"
+LEG_BASE="$(base_of A)"
+mode_line A "$LZ"
+bash "$SUT" init --root "$W/A" >/dev/null 2>&1
+lm_tip="$(br_tip_of "$BR")"; lz_tip="$(br_tip_of "$LZ")"
+ms A status
+{ [ "$RC" -eq 0 ] && [ "$OUT" = "base_branch_mismatch" ]; }; check $? "status with a legacy base from another branch -> base_branch_mismatch (got '$OUT' rc=$RC)"
+ms A pull
+{ [ "$RC" -eq 1 ] && grep -qF "meta_sync: base_branch_mismatch — the legacy meta-base " < <(printf '%s\n' "$OUT") && grep -qF "/.git/meta-base records no branch and holds 2 entr(y/ies) '$LZ''s history never held" < <(printf '%s\n' "$OUT") \
+  && [ "$(get A "$RQ/a.md")" = "a v2 local" ] && [ "$(get A "$RQ/b.md")" = "b v1" ] && [ "$(base_of A)" = "$LEG_BASE" ] \
+  && [ "$(br_tip_of "$BR")" = "$lm_tip" ] && [ "$(br_tip_of "$LZ")" = "$lz_tip" ]; }
+check $? "pull with a legacy base from another branch -> exit 1, a.md / b.md NOT deleted, meta-base and both branches unchanged (rc=$RC: $OUT)"
+ms A push
+{ [ "$RC" -eq 1 ] && grep -qF 'meta_sync: base_branch_mismatch — the legacy meta-base' < <(printf '%s\n' "$OUT") && [ "$(base_of A)" = "$LEG_BASE" ] \
+  && [ "$(br_tip_of "$BR")" = "$lm_tip" ] && [ "$(br_tip_of "$LZ")" = "$lz_tip" ]; }
+check $? "push with a legacy base from another branch -> exit 1, nothing published, meta-base unchanged (rc=$RC: $OUT)"
+printf '%s\nbranch %s\nextra\n' "$(sed -n 1p "$W/A/.git/meta-base")" "$LZ" > "$W/A/.git/meta-base"
+bad_base="$(base_of A)"
+ms A pull
+{ [ "$RC" -eq 1 ] && grep -qF 'meta_sync: base_branch_mismatch — meta-base' < <(printf '%s\n' "$OUT") && grep -qF 'is not in a recognised format' < <(printf '%s\n' "$OUT") \
+  && [ "$(get A "$RQ/a.md")" = "a v2 local" ] && [ "$(base_of A)" = "$bad_base" ]; }
+check $? "a meta-base in no recognised format (a third line) -> exit 1, nothing changed (rc=$RC: $OUT)"
+ms A status; [ "$OUT" = "base_branch_mismatch" ]; check $? "... and status says base_branch_mismatch (got '$OUT')"
+
 # ---------------------------------------------------------------------------------------------
 # Mutation controls — sed-patched copies; the sibling setup-memory.sh is copied beside each.
 # build_mutant <dir> <sed-expr> <must-appear> — 0 = mutant built and differs; 1 = inconclusive.
@@ -1088,6 +1553,133 @@ if build_mutant "$MUT_IV" 's/^    BASE_TREE=""$/    HAVE_BASE=1; BASE_TREE=4b825
   fi
 else
   no "mutation control (iv): could not build the mutant (sed did not apply or bash -n failed) — control inconclusive"
+fi
+
+echo "== 44. mutation control (v): the old unconditional x.md probe -> the design.png assertion (38) must turn red =="
+MUT_V="$TROOT/mutant-v"
+if build_mutant "$MUT_V" '/^  if \[ -d "\$ROOT\/\$1" \] || \[ ! -e "\$ROOT\/\$1" \]; then is_managed "\$1\/x.md"; else return 1; fi$/s#.*#  is_managed "$1" || is_managed "$1/x.md"#' '  is_managed "$1" || is_managed "$1/x.md"'; then
+  design_png_world
+  SCRIPT="$MUT_V/meta-sync.sh"
+  design_png_sync; mv_rc=$?
+  SCRIPT="$SUT"
+  if [ "$mv_rc" -eq 0 ]; then
+    no "mutation control (v) REFUTED: the unconditional-probe mutant still synced past design.png — the assertion is not load-bearing"
+  elif grep -qF "meta_sync: symlink $RQ/design.png" < <(printf '%s' "$DP_DETAIL" | tr '|' '\n'); then
+    ok "mutation control (v): the unconditional-probe mutant turns the design.png assertion red — $DP_DETAIL"
+  else
+    no "mutation control (v): the mutant failed for another reason ($DP_DETAIL) — control inconclusive"
+  fi
+else
+  no "mutation control (v): could not build the mutant (sed did not apply or bash -n failed) — control inconclusive"
+fi
+
+echo "== 45. mutation control (vi): drop the plain-fetch retry -> the fetch-fallback assertion (39) must turn red =="
+MUT_VI="$TROOT/mutant-vi"
+if build_mutant "$MUT_VI" 's@^    g fetch -q --no-tags origin "refs/heads/\$BRANCH" >/dev/null 2>"\$WORK/fetch.err" || return 1$@    return 1  # mutant (vi)@' 'return 1  # mutant (vi)'; then
+  SCRIPT="$MUT_VI/meta-sync.sh"
+  fetch_fallback_ok; mvi_rc=$?
+  SCRIPT="$SUT"
+  if [ "$mvi_rc" -eq 0 ]; then
+    no "mutation control (vi) REFUTED: the no-retry mutant still pulled and pushed — the fetch-fallback assertion is not load-bearing"
+  elif grep -qF 'fetch_failed' < <(printf '%s' "$FF_DETAIL"); then
+    ok "mutation control (vi): the no-retry mutant turns the fetch-fallback assertion red — $FF_DETAIL"
+  else
+    no "mutation control (vi): the mutant failed for another reason ($FF_DETAIL) — control inconclusive"
+  fi
+else
+  no "mutation control (vi): could not build the mutant (sed did not apply or bash -n failed) — control inconclusive"
+fi
+
+echo "== 46. mutation control (vii): drop the union's hash re-check -> the changed-during-the-sync assertion (40) must turn red =="
+MUT_VII="$TROOT/mutant-vii"
+if build_mutant "$MUT_VII" 's@|| { warn "\$4 changed during the sync"; return 1; }@|| :  # mutant (vii)@' '|| :  # mutant (vii)'; then
+  cds_world
+  SCRIPT="$MUT_VII/meta-sync.sh"
+  cds_run
+  SCRIPT="$SUT"
+  if [ -e "$W/cds.mark" ]; then
+    no "mutation control (vii): the hook never fired (rc=$RC: $OUT) — control inconclusive"
+  elif [ "$RC" -ne 0 ] && grep -qF 'changed during the sync' < <(printf '%s\n' "$OUT"); then
+    no "mutation control (vii) REFUTED: the no-re-check mutant still refused — the assertion is not load-bearing"
+  elif [ "$RC" -eq 0 ]; then
+    ok "mutation control (vii): the no-re-check mutant turns the changed-during-the-sync assertion red — rc=0 ($(printf '%s' "$OUT" | tr '\n' '|')), meta-base rewritten: $(cmp -s "$W/cds-base.before" "$W/B/.git/meta-base" && echo no || echo yes), $AUTO now '$(get B "$AUTO")'"
+  else
+    no "mutation control (vii): the mutant failed for another reason (rc=$RC: $OUT) — control inconclusive"
+  fi
+else
+  no "mutation control (vii): could not build the mutant (sed did not apply or bash -n failed) — control inconclusive"
+fi
+
+echo "== 47. mutation control (viii): drop the one-level-up reclaim -> the nested-reclaim assertion (41) must turn red =="
+MUT_VIII="$TROOT/mutant-viii"
+if build_mutant "$MUT_VIII" 's/^  if lock_is_stale "\$m" "\$w"; then reclaim_lock "\$m" "\$w" \$((depth + 1)); fi$/  :  # mutant (viii)/' ':  # mutant (viii)'; then
+  nested_lock_world
+  SCRIPT="$MUT_VIII/meta-sync.sh"
+  nested_lock_run 3
+  SCRIPT="$SUT"
+  if nested_lock_ok; then
+    no "mutation control (viii) REFUTED: the no-nested-reclaim mutant still reclaimed both — the assertion is not load-bearing"
+  elif grep -qF 'meta_sync: locked' "$NL_D/push.out"; then
+    ok "mutation control (viii): the no-nested-reclaim mutant turns the nested-reclaim assertion red — it waited out the lock and died locked ($NL_DETAIL)"
+  else
+    no "mutation control (viii): the mutant failed for another reason ($NL_DETAIL) — control inconclusive"
+  fi
+else
+  no "mutation control (viii): could not build the mutant (sed did not apply or bash -n failed) — control inconclusive"
+fi
+
+echo "== 48. mutation control (ix): drop the up-front meta-base check -> the directory-meta-base assertion (42) must turn red =="
+MUT_IX="$TROOT/mutant-ix"
+if build_mutant "$MUT_IX" 's/^refuse_bad_base() {$/refuse_bad_base() { return 0  # mutant (ix)/' 'refuse_bad_base() { return 0  # mutant (ix)'; then
+  dirbase_world
+  SCRIPT="$MUT_IX/meta-sync.sh"
+  ms B push
+  SCRIPT="$SUT"
+  if db_refused && ! br_has "$RQ/new42.md"; then
+    no "mutation control (ix) REFUTED: the no-up-front-check mutant still refused before publishing — the assertion is not load-bearing"
+  elif br_has "$RQ/new42.md" && [ "$(br_tip)" != "$DB_TIP" ]; then
+    ok "mutation control (ix): the no-up-front-check mutant turns the directory-meta-base assertion red — it PUBLISHED new42.md, then: $(printf '%s' "$OUT" | tr '\n' '|')"
+  else
+    no "mutation control (ix): the mutant failed for another reason (rc=$RC: $OUT) — control inconclusive"
+  fi
+else
+  no "mutation control (ix): could not build the mutant (sed did not apply or bash -n failed) — control inconclusive"
+fi
+
+echo "== 49. mutation control (x): ignore the mode line (default stays the constant) -> the throwaway-clone assertion (43) must turn red =="
+MUT_X="$TROOT/mutant-x"
+if build_mutant "$MUT_X" '/^  \[ "\$BRANCH_SET" = "1" \] || \[ "\$MODE_STATE" != "on" \] || BRANCH="\$MODE_BRANCH"$/s/.*/  :  # mutant (x)/' ':  # mutant (x)'; then
+  tw_world
+  SCRIPT="$MUT_X/meta-sync.sh"
+  tw_push_ok; mx_rc=$?
+  SCRIPT="$SUT"
+  if [ "$mx_rc" -eq 0 ]; then
+    no "mutation control (x) REFUTED: the mode-blind mutant still pushed $TW — the throwaway-clone assertion is not load-bearing"
+  elif [ "$RC" -eq 0 ] && [ "$(br_show_of "$BR" "$RQ/tw.md")" = "on the throwaway branch" ]; then
+    ok "mutation control (x): the mode-blind mutant turns the throwaway-clone assertion red — it pushed the REAL $BR instead ($BR tip moved off $LM_TIP; $TW lacks tw.md)"
+  else
+    no "mutation control (x): the mutant failed for another reason (rc=$RC: $OUT) — control inconclusive"
+  fi
+else
+  no "mutation control (x): could not build the mutant (sed did not apply or bash -n failed) — control inconclusive"
+fi
+
+echo "== 52. mutation control (xi): drop the meta-base branch check -> the branch-switch assertion (50) must turn red =="
+MUT_XI="$TROOT/mutant-xi"
+if build_mutant "$MUT_XI" 's@^  if \[ -n "\$bb" \] && \[ "\$bb" != "\$BRANCH" \]; then$@  if false; then  # mutant (xi)@' 'if false; then  # mutant (xi)'; then
+  bsw_world
+  SCRIPT="$MUT_XI/meta-sync.sh"
+  ms A pull
+  SCRIPT="$SUT"
+  if [ "$RC" -eq 1 ] && bsw_untouched; then
+    no "mutation control (xi) REFUTED: the branch-blind mutant still refused the switched pull — the branch-switch assertion is not load-bearing"
+  elif [ "$RC" -eq 0 ] && [ ! -e "$W/A/$RQ/a.md" ] && [ ! -e "$W/A/$RQ/b.md" ]; then
+    ok "mutation control (xi): the branch-blind mutant turns the branch-switch assertion red — it planned $LZ against $BR's base and DELETED a.md + b.md: $(printf '%s' "$OUT" | tr '\n' '|')"
+  else
+    no "mutation control (xi): the mutant failed for another reason (rc=$RC: $OUT) — control inconclusive"
+  fi
+else
+  no "mutation control (xi): could not build the mutant (sed did not apply or bash -n failed) — control inconclusive"
 fi
 
 echo

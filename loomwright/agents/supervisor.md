@@ -639,7 +639,7 @@ All flags in the "Flags and Options" table above combine with these shapes; the 
 ## SUPERVISOR v4: Starting Parallel Workflow
 
 ## ENVIRONMENT
-**Path:** /Users/name/my-project
+**Path:** ~/my-project
 **CLAUDE.md:** ✓ Found
 **Git:** clean
 **Branch:** main

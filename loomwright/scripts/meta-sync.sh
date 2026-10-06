@@ -6,13 +6,25 @@
 # (a SEPARATE index file, write-tree, commit-tree, a refspec push).
 #
 # Usage:
-#   meta-sync.sh init   [--branch <name>] [--root <checkout>]
-#   meta-sync.sh pull   [--branch <name>] [--root <checkout>]
-#   meta-sync.sh push   [--branch <name>] [--root <checkout>] [--paths-from <file>] [--message <m>]
-#   meta-sync.sh status [--branch <name>] [--root <checkout>]
+#   meta-sync.sh init   [--branch <name> [--allow-branch-mismatch]] [--root <checkout>]
+#   meta-sync.sh pull   [--branch <name> [--allow-branch-mismatch]] [--root <checkout>]
+#   meta-sync.sh push   [--branch <name> [--allow-branch-mismatch]] [--root <checkout>] [--paths-from <file>] [--message <m>]
+#   meta-sync.sh status [--branch <name> [--allow-branch-mismatch]] [--root <checkout>]
 #   meta-sync.sh -h | --help
 #
-#   --branch      metadata branch on `origin` (default: loomwright-meta)
+#   --branch      metadata branch on `origin`. Default: the branch the checkout's MODE LINE names,
+#                 read through the sibling `setup-memory.sh --root <root> mode` (the ONE mode-line
+#                 reader; this script never parses .gitignore itself): `on <Y>` => Y; `off` =>
+#                 loomwright-meta; `unknown <reason>` — or ANY other reader answer (empty output, a
+#                 non-zero exit, a missing sibling, a multi-line or unrecognised line) => exit 1
+#                 `meta_sync: mode_unknown — <reason>; nothing was changed` (fail closed).
+#                 Given explicitly, it must AGREE with the mode: `on Y` with Y != <name> => exit 1
+#                 `meta_sync: branch_mismatch` naming both; `off` => <name> is used; `unknown` =>
+#                 exit 1 `mode_unknown`. The check runs for every subcommand, right after the root
+#                 is resolved and BEFORE any lock, fetch or write (nothing is changed on a refusal).
+#   --allow-branch-mismatch
+#                 use the given --branch even when the mode line disagrees or reads `unknown` (the
+#                 mode is then not consulted). Without --branch it is a usage error (exit 1).
 #   --root        checkout to sync (default: the FIRST `git worktree list --porcelain` entry, i.e. the
 #                 main checkout, with a --show-toplevel sanity check and a $PWD fallback — the same
 #                 "resolve root" block run-lock.sh uses)
@@ -43,10 +55,14 @@
 # a nested `.supervisor/` tree that .gitignore hides can never reach the branch: the separate index
 # never consults .gitignore, which is exactly why the list — not .gitignore — decides membership.
 # SYMLINKS fail closed: a symlink where run history lives (`.supervisor` itself, a folder on the
-# way to a managed folder, any folder under requirements/, or a managed file) makes pull and push
+# way to a managed folder, a managed file, or — under requirements/ — any symlink that resolves to
+# a DIRECTORY or is DANGLING, since either could hold managed .md files) makes pull and push
 # exit 1 naming it (`meta_sync: symlink <path>`), nothing changed — find does not descend it, so its
 # files would read as deleted (a push would delete them from the branch) and a pull would write
-# through it out of .supervisor/. Pull also re-checks every path it writes or deletes (no symlinked
+# through it out of .supervisor/. A symlink under requirements/ that resolves to a regular FILE at a
+# non-managed path (e.g. `requirements/q/design.png`) can neither hide managed files nor be written
+# through, so it is ignored like any other non-managed file (never synced, never refused). Pull
+# also re-checks every path it writes or deletes (no symlinked
 # component; the parent resolves physically under <physical root>/.supervisor/). Symlinks elsewhere
 # under .supervisor/ (logs, nested .supervisor/ trees) are not managed and are ignored. Every git
 # read that feeds a decision or a write (ls-tree, log, hash-object, cat-file) fails closed: a read
@@ -65,7 +81,8 @@
 #
 # 3-WAY RULE (per path; equality is by blob SHA — `git hash-object --no-filters` vs tree entries,
 # never mtime). L = this checkout, R = the remote branch tip, B = the merge base read from
-# `<gitdir>/meta-base` (a tree SHA; `<gitdir>` = `git rev-parse --git-dir` of the resolved root):
+# `<gitdir>/meta-base` (a tree SHA bound to its branch — see BRANCH BINDING; `<gitdir>` =
+# `git rev-parse --git-dir` of the resolved root):
 #   L == R             -> nothing
 #   L == B             -> take R   (R absent => delete locally)
 #   R == B             -> take L   (L absent => delete on the branch)
@@ -86,7 +103,28 @@
 #                       (stale copy); results.jsonl with L != R => line-union; otherwise conflict
 # The derivation always covers the WHOLE managed set (even under --paths-from) and any conflict
 # anywhere aborts, because the meta-base written afterwards must cover every managed path. The
-# history walk runs only while meta-base is absent.
+# history walk runs only while meta-base is absent (or to verify a legacy base, below).
+#
+# BRANCH BINDING — meta-base is two lines: the agreed-state tree SHA, then `branch <name>`, the
+# branch it was recorded against (written together by one atomic rename, under the lock). A base
+# is only ever used to plan a sync of ITS OWN branch:
+#   - bound to another branch (a mode-line switch, or a forced --branch X --allow-branch-mismatch)
+#     => pull / push exit 1 `meta_sync: base_branch_mismatch` naming both branches, up front (after
+#     the lock, before any fetch); nothing written, nothing published, meta-base untouched; status
+#     prints `base_branch_mismatch`. Refused, never treated as "no base": the no-base derivation
+#     itself deletes (a path the target branch once held at L's blob), so it must not run silently
+#     over a working folder that was synced against a different branch. Recovery is a human act:
+#     sync the base's own branch with --branch, or remove meta-base by hand to make the target
+#     branch a first sync.
+#   - LEGACY single-line meta-base (written before the binding existed; no branch recorded) =>
+#     adopted for the target branch only when EVERY (path, blob) entry it holds is one the target
+#     branch's own history held (it then provably was not taken from another branch), and the
+#     next write binds it; otherwise `base_branch_mismatch`, nothing changed. Honest limit: a
+#     legacy base whose last push wrote a ledger union holds the LOCAL ledger blob, which the
+#     branch never held, so it is refused too (remove it by hand once).
+#   - unreadable, or in no recognised format (a third line, a line 2 that is not `branch <name>`)
+#     => `base_branch_mismatch`, nothing changed. An empty file, or a bound / legacy base whose
+#     tree object is missing, keeps the missing-object fallback below (the no-base derivation).
 #
 # WHAT meta-base RECORDS — the per-path state local and remote are KNOWN to agree on, written as its
 # own tree (a second, per-run index file under this run's temp dir + write-tree). This deliberately
@@ -104,6 +142,12 @@
 #   leaves meta-base untouched. refs/meta-sync/base points at the same tree purely as a gc anchor
 #   (the tree and its blobs are otherwise unreachable and `git gc` would prune them); if the object
 #   is ever missing anyway, the script falls back to the no-base derivation with a warning.
+#
+# PULL — fetch, decide per path, refuse on any conflict / not_a_file / containment failure, then
+# write. The ledger UNION is built and renamed into place BEFORE any take-R write or delete: the
+# union re-reads the working ledger and fails closed when it no longer hashes to the planned L
+# (`<path> changed during the sync`), and because it runs first such a refusal leaves every other
+# managed file untouched and meta-base unchanged.
 #
 # PUSH — fetch, decide per path, build the new tree in a SEPARATE index (a per-run GIT_INDEX_FILE
 # under this run's temp dir — never a fixed name in the shared gitdir — seeded from R's tree via
@@ -160,22 +204,36 @@
 #   Note: loomwright/scripts/test-committed-twin-scrub.sh is a TEST with placeholder deny terms over
 #   the committed Twin stores — it is not a scrub and does not gate this branch.
 #
-# STATUS prints exactly one line and always exits 0: `synced <sha>` | `local_ahead <n>` |
-# `remote_ahead` | `conflict <n>` | `no_remote_branch` | `unreachable` | `never_synced`.
-# Precedence: unreachable > no_remote_branch > never_synced > conflict > local_ahead > remote_ahead.
+# STATUS prints exactly one line and always exits 0 once the branch is resolved: `synced <sha> on
+# <branch>` | `local_ahead <n>` | `remote_ahead` | `conflict <n>` | `no_remote_branch` |
+# `unreachable` | `never_synced` | `base_branch_mismatch`. (A branch_mismatch / mode_unknown /
+# usage refusal happens before status runs and exits 1.)
+# Precedence: unreachable > no_remote_branch > never_synced > base_branch_mismatch > conflict >
+# local_ahead > remote_ahead.
+#
+# META-BASE NOT A REGULAR FILE: pull and push refuse up front — after the lock, before any fetch,
+# write or publish — when <gitdir>/meta-base exists but is not a regular file (e.g. a directory):
+# exit 1 naming meta-base, nothing changed, the directory left in place (write_base_file's own
+# directory guard stays as defence in depth). Without this a push would publish and only then fail.
 #
 # EXIT: 0 ok / no_changes; 1 conflict, no_remote_branch, fetch failure, init refusal, exhausted push
-# retries, tree_guard, locked, not_a_file, newline_in_path, usage error; 2 scrub hit. `init` is the ONLY command that may create the branch (an empty
-# orphan commit); it refuses when the branch already exists.
+# retries, tree_guard, locked, not_a_file, newline_in_path, branch_mismatch, mode_unknown,
+# base_branch_mismatch, a meta-base that is not a regular file, usage error; 2 scrub hit. `init`
+# is the ONLY command that may create the branch (an empty orphan commit); it refuses when the
+# branch already exists.
 #
-# Nothing calls this script yet (parallel-automate items 03 / M1 wire it in).
+# Callers: automate-helpers.sh `meta-entry` (pull) and automate-trail.sh `trail-pr` (push
+# --paths-from) — both pass `--branch <the mode's branch>`, which the mode check accepts.
 
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TAB="$(printf '\t')"
 SUBCMD=""
-BRANCH="loomwright-meta"
+DEFAULT_BRANCH="loomwright-meta"   # the target when the mode reads `off` (an unmigrated repo)
+BRANCH=""
+BRANCH_SET=0                       # 1 iff --branch was given (never inferred from its value)
+ALLOW_MISMATCH=0
 ROOT=""
 PATHS_FROM=""
 PATHS_FROM_SET=0
@@ -201,7 +259,8 @@ while [ $# -gt 0 ]; do
     init|pull|push|status)
       [ -z "$SUBCMD" ] || die "usage: more than one subcommand given"
       SUBCMD="$1"; shift ;;
-    --branch)     need_val "$1" "$#"; BRANCH="$2"; shift 2 ;;
+    --branch)     need_val "$1" "$#"; BRANCH="$2"; BRANCH_SET=1; shift 2 ;;
+    --allow-branch-mismatch) ALLOW_MISMATCH=1; shift ;;
     --root)       need_val "$1" "$#"; ROOT="$2"; shift 2 ;;
     --paths-from) need_val "$1" "$#"; PATHS_FROM="$2"; PATHS_FROM_SET=1; shift 2 ;;
     --message)    need_val "$1" "$#"; MESSAGE="$2"; shift 2 ;;
@@ -213,6 +272,9 @@ done
 # --paths-from restricts a PUSH; pull never reads it, so accepting it elsewhere would be a silent no-op.
 [ "$PATHS_FROM_SET" = "0" ] || [ "$SUBCMD" = "push" ] \
   || die "usage: --paths-from applies to push only, not '$SUBCMD'; nothing was changed (try --help)"
+# --allow-branch-mismatch only qualifies an explicit --branch; alone it would be a silent no-op.
+[ "$ALLOW_MISMATCH" = "0" ] || [ "$BRANCH_SET" = "1" ] \
+  || die "usage: --allow-branch-mismatch requires --branch <name>; nothing was changed (try --help)"
 
 # ---- resolve root (mirrors run-lock.sh's "resolve root" block) ----
 if [ -z "$ROOT" ]; then
@@ -232,6 +294,49 @@ ROOT="$(cd "$ROOT" && pwd)"
 ROOT_P="$(cd -P "$ROOT" && pwd -P)" || die "usage: cannot resolve the physical path of '$ROOT'"
 GITDIR="$(git -C "$ROOT" rev-parse --absolute-git-dir 2>/dev/null)" \
   || die "usage: '$ROOT' is not inside a git work tree"
+
+# ---- target branch: the checkout's mode line (runs before any lock, fetch or write) ----
+# read_branch_mode — asks the sibling setup-memory.sh (`mode`, the ONE mode-line reader; this
+# script never parses .gitignore) and sets MODE_STATE (off|on|unknown), MODE_BRANCH, MODE_REASON.
+# FAIL-CLOSED on the answer's shape: only an exact `off` or a single `on <non-empty>` line passes;
+# a missing reader, a non-zero exit, empty output, a multi-line or unrecognised answer is `unknown`.
+MODE_STATE=""; MODE_BRANCH=""; MODE_REASON=""
+read_branch_mode() {
+  local out rc=0 nl='
+'
+  if [ ! -f "$HERE/setup-memory.sh" ]; then
+    MODE_STATE="unknown"; MODE_REASON="setup-memory.sh (the mode-line reader) is missing beside meta-sync.sh"
+    return 0
+  fi
+  out="$(bash "$HERE/setup-memory.sh" --root "$ROOT" mode 2>/dev/null)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    MODE_STATE="unknown"; MODE_REASON="setup-memory.sh mode exited $rc"
+    return 0
+  fi
+  case "$out" in
+    *"$nl"*)      MODE_STATE="unknown"; MODE_REASON="setup-memory.sh mode returned a multi-line answer (first line '${out%%"$nl"*}')" ;;
+    off)          MODE_STATE="off" ;;
+    "on "?*)      MODE_STATE="on"; MODE_BRANCH="${out#on }" ;;
+    "unknown "?*) MODE_STATE="unknown"; MODE_REASON="${out#unknown }" ;;
+    "")           MODE_STATE="unknown"; MODE_REASON="setup-memory.sh mode printed nothing" ;;
+    *)            MODE_STATE="unknown"; MODE_REASON="setup-memory.sh mode printed '$out'" ;;
+  esac
+}
+# --branch X --allow-branch-mismatch is the explicit override: the mode is not consulted.
+if [ "$BRANCH_SET" = "0" ] || [ "$ALLOW_MISMATCH" = "0" ]; then
+  read_branch_mode
+  case "$MODE_STATE" in
+    on)
+      if [ "$BRANCH_SET" = "1" ] && [ "$BRANCH" != "$MODE_BRANCH" ]; then
+        die "branch_mismatch — --branch '$BRANCH' but this checkout's mode line names '$MODE_BRANCH'; nothing was changed. Drop --branch to target '$MODE_BRANCH', or add --allow-branch-mismatch to force '$BRANCH'."
+      fi ;;
+    off) : ;;
+    *) die "mode_unknown — $MODE_REASON; nothing was changed (repair the mode line with setup-memory.sh apply --branch-mode <branch>|off, or pass --branch <name> --allow-branch-mismatch)" ;;
+  esac
+  [ "$BRANCH_SET" = "1" ] || BRANCH="$DEFAULT_BRANCH"
+  [ "$BRANCH_SET" = "1" ] || [ "$MODE_STATE" != "on" ] || BRANCH="$MODE_BRANCH"
+fi
+# Validated AFTER the final choice, so a branch named by the mode line is checked too.
 git check-ref-format "refs/heads/$BRANCH" 2>/dev/null || die "usage: invalid branch name '$BRANCH'"
 
 META_BASE="$GITDIR/meta-base"
@@ -363,12 +468,16 @@ is_managed() {
 # ---- symlink containment (a symlink can redirect a write out of .supervisor/ or hide a file) ----
 # symlink_hazard <repo-relative path of a local symlink> — 0 when a symlink there could redirect
 # or hide managed run history: a managed path itself, a directory on the way to a managed folder,
-# or any directory under .supervisor/requirements/ that could hold managed .md files.
+# or a symlink under .supervisor/requirements/ that could hold managed .md files — one that
+# resolves to a DIRECTORY, or a DANGLING one (its target may become a directory; it cannot be ruled
+# out). A symlink resolving to a regular file at a non-managed path (requirements/q/design.png) can
+# neither hide managed files nor be written through: it is not a hazard (and never synced).
 symlink_hazard() {
   case "$1" in
     .supervisor|.supervisor/requirements|.supervisor/jobs|.supervisor/jobs/done|.supervisor/jobs/failed|.supervisor/automate|.supervisor/postmortem) return 0 ;;
   esac
-  is_managed "$1" || is_managed "$1/x.md"
+  is_managed "$1" && return 0
+  if [ -d "$ROOT/$1" ] || [ ! -e "$ROOT/$1" ]; then is_managed "$1/x.md"; else return 1; fi
 }
 # path_has_no_symlink <managed path> — 0 when no EXISTING component of the path, from .supervisor
 # down to the leaf, is a symlink.
@@ -536,15 +645,43 @@ list_history() {
 }
 
 # ---- base ----
-HAVE_BASE=0; BASE_TREE=""
+# load_base — reads <gitdir>/meta-base: line 1 the agreed-state tree, line 2 `branch <name>` (the
+# branch it was recorded against; see the header's BRANCH BINDING). Sets HAVE_BASE / BASE_TREE /
+# BASE_LEGACY, and BASE_REFUSAL (non-empty = refuse the sync, nothing changed) when the base is
+# bound to ANOTHER branch, is unreadable, or is in no recognised format. The branch check runs
+# BEFORE the object check, so a mismatched base never degrades to the no-base derivation.
+HAVE_BASE=0; BASE_TREE=""; BASE_LEGACY=0; BASE_REFUSAL=""
 load_base() {
-  HAVE_BASE=0; BASE_TREE=""
+  local l1="" l2="" l3="" nl bb=""
+  HAVE_BASE=0; BASE_TREE=""; BASE_LEGACY=0; BASE_REFUSAL=""
   [ -f "$META_BASE" ] || return 0
-  BASE_TREE="$(tr -d ' \t\r\n' < "$META_BASE")"
+  if [ ! -r "$META_BASE" ]; then
+    BASE_REFUSAL="base_branch_mismatch — meta-base $META_BASE is unreadable, so the branch it was recorded against is unknown; nothing was changed (no file written, no ref moved, meta-base untouched). Fix its permissions by hand."
+    return 0
+  fi
+  { IFS= read -r l1; IFS= read -r l2; IFS= read -r l3; } < "$META_BASE"
+  nl="$(awk 'END { print NR }' "$META_BASE")"
+  BASE_TREE="$(printf '%s' "$l1" | tr -d ' \t\r')"
+  l2="${l2%$'\r'}"
+  case "$l2" in
+    "") BASE_LEGACY=1 ;;
+    "branch "?*) bb="${l2#branch }" ;;
+    *) nl=99 ;;
+  esac
+  if [ "$nl" -gt 2 ] || [ -n "$l3" ] || { [ -z "$BASE_TREE" ] && [ -n "$bb" ]; }; then
+    BASE_REFUSAL="base_branch_mismatch — meta-base $META_BASE is not in a recognised format (line 1 a tree, line 2 'branch <name>'), so the branch it was recorded against is unknown; nothing was changed (no file written, no ref moved, meta-base untouched). Repair or remove it by hand."
+    BASE_TREE=""; BASE_LEGACY=0
+    return 0
+  fi
+  if [ -n "$bb" ] && [ "$bb" != "$BRANCH" ]; then
+    BASE_REFUSAL="base_branch_mismatch — meta-base was recorded against branch '$bb' but this sync targets '$BRANCH'; nothing was changed (no file written, no ref moved, meta-base untouched). Planning '$BRANCH' against another branch's base would delete local or branch files '$BRANCH' never removed. Sync '$bb' with --branch '$bb' (plus --allow-branch-mismatch when the mode line names another branch), or remove $META_BASE by hand to treat '$BRANCH' as never synced (the history-aware first-sync derivation)."
+    BASE_TREE=""; return 0
+  fi
   if [ -n "$BASE_TREE" ] && g cat-file -e "$BASE_TREE^{tree}" 2>/dev/null; then
     HAVE_BASE=1
   else
     warn "meta-base '$BASE_TREE' is missing from the object store — falling back to the no-base (history-aware) derivation"
+    BASE_LEGACY=0
     BASE_TREE=""
   fi
 }
@@ -559,8 +696,22 @@ compute_plan() {
   list_tree "$R" "$Rf" || { warn "could not list the remote tree $R"; return 1; }
   : > "$Bf" && : > "$Hf" && : > "$Sf" || return 1
   load_base
+  [ -z "$BASE_REFUSAL" ] || return 2
   if [ "$HAVE_BASE" = "1" ]; then
     list_tree "$BASE_TREE" "$Bf" || { warn "could not list the meta-base tree $BASE_TREE"; return 1; }
+    if [ "$BASE_LEGACY" = "1" ]; then
+      # A legacy base (no branch line) is adopted for $BRANCH only when EVERY entry it holds is a
+      # (path, blob) $BRANCH's own history held — i.e. it provably was not taken from another branch.
+      local stray
+      list_history "$R" "$Hf" || { warn "could not read the history of $R"; return 1; }
+      stray="$(awk -F'\t' -v HF="$Hf" 'FILENAME == HF { h[$0] = 1; next } !($0 in h) { n++ } END { print n + 0 }' "$Hf" "$Bf")" \
+        || { warn "could not check the legacy meta-base against the history of $R"; return 1; }
+      if [ "$stray" != "0" ]; then
+        BASE_REFUSAL="base_branch_mismatch — the legacy meta-base $META_BASE records no branch and holds $stray entr(y/ies) '$BRANCH''s history never held, so it may have been taken from another branch; nothing was changed (no file written, no ref moved, meta-base untouched). Sync the branch it came from with --branch <that branch>, or remove $META_BASE by hand to treat '$BRANCH' as never synced (the history-aware first-sync derivation)."
+        return 2
+      fi
+      : > "$Hf" || return 1
+    fi
   else
     list_history "$R" "$Hf" || { warn "could not read the history of $R"; return 1; }
   fi
@@ -659,13 +810,35 @@ union_into() {
   awk 'FNR == NR { inR[$0] = 1; print; next } !($0 in inR) && !seen[$0]++ { print }' "$WORK/u.r" "$WORK/u.l" > "$3"
 }
 
+# refuse_bad_base — pull / push refuse UP FRONT (after the lock, before any fetch, write or
+# publish) when <gitdir>/meta-base exists but is not a regular file. load_base reads such a path as
+# "no base", so without this a push would publish and only then fail to record meta-base, and a
+# pull would write local files first. The path is left exactly as found (nothing moved into it).
+refuse_bad_base() {
+  local kind=""
+  { [ -e "$META_BASE" ] || [ -L "$META_BASE" ]; } || return 0
+  [ -f "$META_BASE" ] && return 0
+  [ -d "$META_BASE" ] && kind=" (it is a directory)"
+  die "refusing — meta-base $META_BASE is not a regular file$kind; remove or replace it by hand. Nothing was changed (no fetch, no file written, nothing published)."
+}
+
+# refuse_foreign_base — pull / push refuse UP FRONT (after the lock, before any fetch) when
+# meta-base is bound to another branch, unreadable or malformed (load_base's BASE_REFUSAL). A
+# LEGACY base is checked later, in compute_plan, because that check needs the fetched R.
+refuse_foreign_base() {
+  load_base 2>/dev/null
+  [ -z "$BASE_REFUSAL" ] || die "$BASE_REFUSAL"
+}
+
 # write_base_file <tree> — atomic replace via a mktemp'd (O_EXCL, never a pre-existing symlink)
-# sibling + rename; a meta-base that is a directory (mv would move INTO it) fails closed.
+# sibling + rename; a meta-base that is a directory (mv would move INTO it) fails closed. Writes
+# both lines in ONE file (tree, then `branch $BRANCH`), so the binding can never be torn from the
+# tree; the lock (pull / push) means the branch checked by load_base is the branch written here.
 write_base_file() {
   local tmp
   [ -d "$META_BASE" ] && { warn "$META_BASE is a directory"; return 1; }
   tmp="$(mktemp "$META_BASE.tmp.XXXXXX" 2>/dev/null)" || return 1
-  chmod "$FILE_MODE" "$tmp" && printf '%s\n' "$1" > "$tmp" && mv -f "$tmp" "$META_BASE" || { rm -f "$tmp"; return 1; }
+  chmod "$FILE_MODE" "$tmp" && printf '%s\nbranch %s\n' "$1" "$BRANCH" > "$tmp" && mv -f "$tmp" "$META_BASE" || { rm -f "$tmp"; return 1; }
   g update-ref "$BASE_REF" "$1" >/dev/null 2>&1 || warn "could not update the gc anchor $BASE_REF (meta-base itself was written)"
   return 0
 }
@@ -794,11 +967,16 @@ fetch_or_exit() {
 }
 
 cmd_pull() {
+  local rc
+  refuse_bad_base
+  refuse_foreign_base
   fetch_or_exit
-  compute_plan 0 || exit 1
+  compute_plan 0; rc=$?
+  [ "$rc" -eq 2 ] && die "$BASE_REFUSAL"
+  [ "$rc" -eq 0 ] || exit 1
   report_conflicts 0 || exit 1
   report_not_a_file 0 || exit 1
-  local o p l r nb sel written=0 deleted=0 dst tmp
+  local o p l r nb sel written=0 deleted=0 dst tmp phase
   # Containment pre-pass: nothing is written or deleted unless EVERY path the plan touches is a
   # canonical managed path with no symlinked component (list_local already refused symlinks where
   # run history lives; this re-checks the exact plan paths before the first write).
@@ -809,34 +987,39 @@ cmd_pull() {
         path_has_no_symlink "$p" || die "refusing — a component of $p is a symlink (nothing was changed)" ;;
     esac
   done < "$WORK/plan"
-  while IFS="$TAB" read -r o p l r nb sel; do
-    case "$o" in TAKE_R|UNION) ;; *) continue ;; esac
-    dst="$ROOT/$p"
-    # Defence in depth (a symlink planted after the pre-pass): re-check right before the act, and
-    # after any mkdir -p confirm the parent resolves physically under .supervisor/.
-    path_has_no_symlink "$p" || die "refusing — a component of $p is a symlink (meta-base untouched)"
-    if [ -e "$dst" ] && [ ! -f "$dst" ]; then
-      die "refusing — $p exists locally but is not a regular file (meta-base untouched)"
-    fi
-    if [ "$o" = "TAKE_R" ] && [ "$r" = "-" ]; then
+  # UNION rows first, then TAKE_R: the union re-reads the working ledger and refuses when it no
+  # longer hashes to the planned L (`changed during the sync`). Run first, that refusal happens
+  # before any other managed file is written or deleted — so it really changes nothing.
+  for phase in UNION TAKE_R; do
+    while IFS="$TAB" read -r o p l r nb sel; do
+      [ "$o" = "$phase" ] || continue
+      dst="$ROOT/$p"
+      # Defence in depth (a symlink planted after the pre-pass): re-check right before the act, and
+      # after any mkdir -p confirm the parent resolves physically under .supervisor/.
+      path_has_no_symlink "$p" || die "refusing — a component of $p is a symlink (meta-base untouched)"
+      if [ -e "$dst" ] && [ ! -f "$dst" ]; then
+        die "refusing — $p exists locally but is not a regular file (meta-base untouched)"
+      fi
+      if [ "$o" = "TAKE_R" ] && [ "$r" = "-" ]; then
+        parent_inside "$p" || die "refusing — $p does not resolve under .supervisor/ (meta-base untouched)"
+        rm -f "$dst" || die "could not delete $p (meta-base untouched)"
+        deleted=$((deleted + 1))
+        continue
+      fi
+      mkdir -p "$(dirname "$dst")" || die "could not create the folder for $p (meta-base untouched)"
       parent_inside "$p" || die "refusing — $p does not resolve under .supervisor/ (meta-base untouched)"
-      rm -f "$dst" || die "could not delete $p (meta-base untouched)"
-      deleted=$((deleted + 1))
-      continue
-    fi
-    mkdir -p "$(dirname "$dst")" || die "could not create the folder for $p (meta-base untouched)"
-    parent_inside "$p" || die "refusing — $p does not resolve under .supervisor/ (meta-base untouched)"
-    tmp="$(mktemp "$dst.meta-sync.tmp.XXXXXX" 2>/dev/null)" || die "could not create a temp file for $p (meta-base untouched)"
-    chmod "$FILE_MODE" "$tmp" || { rm -f "$tmp"; die "could not set the mode of a temp file for $p (meta-base untouched)"; }
-    if [ "$o" = "TAKE_R" ]; then
-      g cat-file blob "$r" > "$tmp" 2>/dev/null && mv -f "$tmp" "$dst" \
-        || { rm -f "$tmp"; die "could not write $p (meta-base untouched)"; }
-    else
-      union_into "$r" "$l" "$tmp" "$dst" && mv -f "$tmp" "$dst" \
-        || { rm -f "$tmp"; die "could not write the union of $p (meta-base untouched)"; }
-    fi
-    written=$((written + 1))
-  done < "$WORK/plan"
+      tmp="$(mktemp "$dst.meta-sync.tmp.XXXXXX" 2>/dev/null)" || die "could not create a temp file for $p (meta-base untouched)"
+      chmod "$FILE_MODE" "$tmp" || { rm -f "$tmp"; die "could not set the mode of a temp file for $p (meta-base untouched)"; }
+      if [ "$o" = "TAKE_R" ]; then
+        g cat-file blob "$r" > "$tmp" 2>/dev/null && mv -f "$tmp" "$dst" \
+          || { rm -f "$tmp"; die "could not write $p (meta-base untouched)"; }
+      else
+        union_into "$r" "$l" "$tmp" "$dst" && mv -f "$tmp" "$dst" \
+          || { rm -f "$tmp"; die "could not write the union of $p (it runs first: nothing was changed, meta-base untouched)"; }
+      fi
+      written=$((written + 1))
+    done < "$WORK/plan"
+  done
   write_base_file "$RT" || die "could not write meta-base"
   say "pulled $R ($written written, $deleted deleted)"
 }
@@ -852,10 +1035,14 @@ build_agreed_base() {
 
 cmd_push() {
   [ -z "$PATHS_FROM" ] || [ -f "$PATHS_FROM" ] || die "usage: --paths-from '$PATHS_FROM' is not a file"
-  local attempt=1 o p l r nb sel s newtree commit changed abort_sel
+  local attempt=1 o p l r nb sel s newtree commit changed abort_sel rc
+  refuse_bad_base
+  refuse_foreign_base
   while [ "$attempt" -le "$MAX_ATTEMPTS" ]; do
     fetch_or_exit
-    compute_plan 1 || exit 1
+    compute_plan 1; rc=$?
+    [ "$rc" -eq 2 ] && die "$BASE_REFUSAL"
+    [ "$rc" -eq 0 ] || exit 1
     # With a base, an unlisted path is ignored entirely; without one the derivation covers the
     # whole managed set and any conflict anywhere aborts (meta-base must cover every path).
     abort_sel=1
@@ -933,14 +1120,16 @@ cmd_status() {
     *) echo "unreachable"; exit 0 ;;
   esac
   [ -f "$META_BASE" ] || { echo "never_synced"; exit 0; }
-  compute_plan 0 >/dev/null 2>&1 || { echo "unreachable"; exit 0; }
+  compute_plan 0 >/dev/null 2>&1; rc=$?
+  [ "$rc" -eq 2 ] && { echo "base_branch_mismatch"; exit 0; }
+  [ "$rc" -eq 0 ] || { echo "unreachable"; exit 0; }
   [ "$HAVE_BASE" = "1" ] || { echo "never_synced"; exit 0; }
   n="$(count_outcome CONFLICT)"
   [ "$n" -gt 0 ] && { echo "conflict $n"; exit 0; }
   n=$(( $(count_outcome TAKE_L) + $(count_outcome UNION) ))
   [ "$n" -gt 0 ] && { echo "local_ahead $n"; exit 0; }
   [ "$(count_outcome TAKE_R)" -gt 0 ] && { echo "remote_ahead"; exit 0; }
-  echo "synced $R"
+  echo "synced $R on $BRANCH"
   exit 0
 }
 

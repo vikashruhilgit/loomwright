@@ -17,7 +17,7 @@ description: Break a goal into minimal actionable tasks with clear acceptance cr
   - Example: "Refactor authentication to use OAuth instead of JWT"
 
 - **--project** (optional): Explicit path to project (overrides auto-detect)
-  - Example: `/orchestrator goal: "fix bug" --project /Users/name/my-project`
+  - Example: `/orchestrator goal: "fix bug" --project ~/my-project`
 
 ## What This Does
 
@@ -32,7 +32,7 @@ description: Break a goal into minimal actionable tasks with clear acceptance cr
 
 ```
 ## PROJECT CONTEXT
-Working on: /Users/name/my-app
+Working on: ~/my-app
 Architecture: React + Next.js + Tailwind CSS
 Current Beads: BD-12 (in progress), BD-10-BD-11 (open)
 
@@ -204,7 +204,7 @@ Before outputting plan, verify:
 
 ```markdown
 ## PROJECT CONTEXT
-Working on: `/Users/name/my-app`
+Working on: `~/my-app`
 Tech Stack: React 18 + Next.js 14 + Tailwind CSS
 Patterns Found: Context API for state, Jest for testing, Conventional Commits for git
 

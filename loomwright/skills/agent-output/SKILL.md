@@ -190,7 +190,7 @@ Before outputting:
 
 ```markdown
 ## Context Read
-**Project:** /Users/name/my-app
+**Project:** ~/my-app
 **Architecture:** NestJS + PostgreSQL
 
 ## Current State

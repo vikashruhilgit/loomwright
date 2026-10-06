@@ -12,7 +12,9 @@
 # Stays under SessionStart's documented 10,000-char additionalContext cap.
 #
 # When `source` is `startup` (fresh session) the hook runs ONLY its dedicated
-# `startup)` arm, which composes at most THREE advisory blocks into ONE envelope:
+# `startup)` arm, which composes at most FIVE advisory blocks into ONE envelope
+# (items 4 and 5 are described further down — meta_branch_hint_line and
+# automate_watch_lines):
 #   1. the curation-cadence nudge (curation_nudge_line, below),
 #   2. the stranded-brief line (stranded_briefs_startup_line, below): the
 #      offline sibling reconcile-jobs.sh --porcelain classifies every brief in
@@ -25,6 +27,9 @@
 #      resume/clear/compact): the sibling worktree-audit.sh `report` lists Bash-
 #      tool worktree adds in a plugin-run repo that were recorded, never seen
 #      removed, and git still lists. Empty report ⇒ no section.
+#   4. the branch-mode run-history hint (meta_branch_hint_line, below), and
+#   5. the live /automate merge-watcher lines (automate_watch_lines, below —
+#      also on resume/clear/compact): LOCAL ONLY (a marker file, `kill -0`, `ps`).
 # When no block has anything to say, startup emits NOTHING — byte-for-byte
 # the pre-existing behaviour — so a fresh launch with no plugin work in flight
 # stays noise-free. Sections 1–5, the observability probe, the prior-session
@@ -95,6 +100,18 @@
 #   The rules nudge's firing surface is UNCHANGED by this: it stays below the
 #   gate and still does NOT fire on startup. So does Section 1's full stranded /
 #   UNVERIFIED listing — the startup line is its bounded, stranded-only sibling.
+#
+# Also surfaces /automate in-flight state (automate-followups/32 Part A,
+# skills/automate-loop/SKILL.md §6 "Post-merge close-out"): automate_watch_lines
+# on BOTH arms (local only, so startup stays offline), and — on resume/clear/
+# compact ONLY — automate_inflight_lines, the ONE place this hook calls the forge:
+# one `gh pr view` per run file whose `## Current` names a not-done item with a
+# PR, at most 5 per SessionStart, each time-bounded (background + bounded poll +
+# kill; LOOMWRIGHT_SR_GH_TIMEOUT seconds, default 5); a MERGED answer prints the
+# merged-but-not-closed-out line, an absent / failing / slow gh or an item past
+# the cap prints `… merge state unverified` (never a guess). NEW TEST SEAM in this
+# file (not reused from elsewhere here): LOOMWRIGHT_GH_BIN names the gh binary
+# (default `gh`), the same seam name automate-helpers.sh uses.
 #
 # INVARIANT: ALWAYS exits 0. Hook output is JSON via stdout. Silent-pass
 # on any failure (no .supervisor/, no state, missing tools) so the session
@@ -360,17 +377,104 @@ load_meta_hint() {
   META_HINT_LOADED=1
 }
 
+# automate_watch_lines — one `automate: merge watcher live pid=<p> PR <url> (run
+# <run_id>)` line per `.supervisor/automate/<run_id>.merge-watch` marker whose pid
+# is alive AND whose `ps -ww -p <pid> -o command=` shows automate-merge-watch.sh
+# carrying the marker's pr_url — the watcher's own liveness test (is_our_watcher).
+# LOCAL ONLY (no forge call), so the startup arm may run it. A stale marker (dead
+# or recycled pid) is ignored, never cleaned; no `ps` ⇒ nothing (unverifiable).
+# DEFINED ABOVE THE CASE (startup_arm_emit calls it). Prints nothing when none.
+automate_watch_lines() {
+  [ -d ".supervisor/automate" ] || return 0
+  command -v ps >/dev/null 2>&1 || return 0
+  local m pid pr cmd out=""
+  for m in .supervisor/automate/*.merge-watch; do
+    [ -f "$m" ] || continue
+    pid="$(awk -F'\t' '$1=="pid"{print $2; exit}' "$m" 2>/dev/null)"
+    pr="$(awk -F'\t' '$1=="pr_url"{print $2; exit}' "$m" 2>/dev/null)"
+    case "$pid" in ''|*[!0-9]*) continue ;; esac
+    [ -n "$pr" ] || continue
+    kill -0 "$pid" 2>/dev/null || continue
+    cmd="$(ps -ww -p "$pid" -o command= 2>/dev/null)"
+    case "$cmd" in *automate-merge-watch.sh*) ;; *) continue ;; esac
+    case "$cmd" in *" $pr"|*" $pr "*) ;; *) continue ;; esac
+    out="${out}automate: merge watcher live pid=$pid PR $pr (run $(basename "$m" .merge-watch))"$'\n'
+  done
+  printf '%s' "${out%$'\n'}"
+  return 0
+}
+
+# sr_pr_state <url> — MERGED | OPEN | CLOSED | unverified, from ONE time-bounded
+# `gh pr view` (bash 3.2 has no `timeout`: background it, poll every 0.1s up to
+# LOOMWRIGHT_SR_GH_TIMEOUT seconds, kill it on the deadline). Absent gh, a failing
+# or slow call, unparsable output ⇒ unverified. Resume/clear/compact only.
+sr_pr_state() {
+  local url="$1" gh="${LOOMWRIGHT_GH_BIN:-gh}" tmo="${LOOMWRIGHT_SR_GH_TIMEOUT:-5}" tmp pid i=0 rc st mg
+  case "$tmo" in ''|*[!0-9]*) tmo=5 ;; esac
+  command -v "$gh" >/dev/null 2>&1 || { echo unverified; return 0; }
+  tmp="$(mktemp "${TMPDIR:-/tmp}/sr-gh.XXXXXX" 2>/dev/null)" || { echo unverified; return 0; }
+  "$gh" pr view "$url" --json state,mergedAt > "$tmp" 2>/dev/null < /dev/null &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$i" -ge $((tmo * 10)) ]; then
+      kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; rm -f "$tmp"; echo unverified; return 0
+    fi
+    sleep 0.1; i=$((i + 1))
+  done
+  wait "$pid"; rc=$?
+  st="$(jq -r '.state // empty' "$tmp" 2>/dev/null)"; mg="$(jq -r '.mergedAt // empty' "$tmp" 2>/dev/null)"
+  rm -f "$tmp"
+  if [ "$rc" -ne 0 ]; then echo unverified
+  elif [ "$st" = MERGED ] || [ -n "$mg" ]; then echo MERGED
+  elif [ "$st" = OPEN ] || [ "$st" = CLOSED ]; then echo "$st"
+  else echo unverified; fi
+  return 0
+}
+
+# automate_inflight_lines — RESUME/CLEAR/COMPACT ONLY (it calls the forge): for
+# each run file (`# Automate Run:` title, not `## Status: done`) whose `## Current`
+# item line names a non-null item, a `…/pull/<n>` pr and a status other than
+# `done`: MERGED ⇒ `automate: <run_id> item <item> PR <url> merged but not closed
+# out — /automate --resume closes it out`; unverified (gh absent/failing/slow, or
+# past the 5-call cap) ⇒ `automate: <run_id> item <item> PR <url> merge state
+# unverified`; OPEN/CLOSED ⇒ nothing. No in-flight PR ⇒ no call, nothing printed.
+automate_inflight_lines() {
+  [ -d ".supervisor/automate" ] || return 0
+  local f cl item st pr state calls=0 out=""
+  for f in .supervisor/automate/*.md; do
+    [ -f "$f" ] || continue
+    grep -qiE '^#[[:space:]]*automate[[:space:]]+run[[:space:]]*:' "$f" 2>/dev/null || continue
+    grep -qE '^## Status:[[:space:]]*done' "$f" 2>/dev/null && continue
+    cl="$(awk '/^## Current/{c=1;next} /^## /{c=0} c && /^- item: /{print; exit}' "$f" 2>/dev/null)"
+    [ -n "$cl" ] || continue
+    item="$(printf '%s\n' "$cl" | awk 'BEGIN{FS=" [|] "} {sub(/^- /,""); for(i=1;i<=NF;i++) if (index($i, "item: ")==1) {print substr($i, 7); exit}}')"
+    st="$(printf '%s\n' "$cl" | awk 'BEGIN{FS=" [|] "} {for(i=1;i<=NF;i++) if (index($i, "status: ")==1) {print substr($i, 9); exit}}')"
+    pr="$(printf '%s\n' "$cl" | awk 'BEGIN{FS=" [|] "} {for(i=1;i<=NF;i++) if (index($i, "pr: ")==1) {print substr($i, 5); exit}}')"
+    [ -n "$item" ] && [ "$item" != null ] && [ "$st" != done ] || continue
+    case "$pr" in http://*/pull/*|https://*/pull/*) ;; *) continue ;; esac
+    if [ "$calls" -ge 5 ]; then state=unverified; else calls=$((calls + 1)); state="$(sr_pr_state "$pr")"; fi
+    case "$state" in
+      MERGED) out="${out}automate: $(basename "$f" .md) item $item PR $pr merged but not closed out — /automate --resume closes it out"$'\n' ;;
+      unverified) out="${out}automate: $(basename "$f" .md) item $item PR $pr merge state unverified"$'\n' ;;
+    esac
+  done
+  printf '%s' "${out%$'\n'}"
+  return 0
+}
+
 startup_arm_emit() {
-  local curation="" stranded="" orphans="" metahint="" body="" nl
+  local curation="" stranded="" orphans="" metahint="" watchers="" body="" nl
   nl=$'\n'
   curation="$(curation_nudge_line)"
   stranded="$(stranded_briefs_startup_line)"
   orphans="$(orphaned_worktrees_block)"
   load_meta_hint; metahint="$META_HINT"
+  watchers="$(automate_watch_lines 2>/dev/null)"
   body="$curation"
   [ -n "$stranded" ] && body="${body:+$body$nl}$stranded"
   [ -n "$orphans" ] && body="${body:+$body$nl}$orphans"
   [ -n "$metahint" ] && body="${body:+$body$nl}$metahint"
+  [ -n "$watchers" ] && body="${body:+$body$nl}$watchers"
   [ -n "$body" ] || return 0
   printf '%s' "$body" \
     | { iconv -c -f UTF-8 -t UTF-8 2>/dev/null || cat; } \
@@ -659,6 +763,18 @@ fi
 # startup arm; silent unless the sibling reader prints a live orphan.
 ORPHANS_SR="$(orphaned_worktrees_block)"
 [ -n "$ORPHANS_SR" ] && append "$ORPHANS_SR"$'\n\n'
+
+# Section 1.6: /automate in-flight items (automate-followups/32) — the bounded
+# forge read (≤5 time-bounded gh calls) + the local live-watcher lines. Nothing to
+# report ⇒ no header. stderr swallowed: a killed background gh prints "Terminated".
+AUTOMATE_SR="$(automate_inflight_lines 2>/dev/null)"
+WATCH_SR="$(automate_watch_lines 2>/dev/null)"
+if [ -n "$AUTOMATE_SR$WATCH_SR" ]; then
+  append "### /automate in-flight items (advisory)"$'\n'
+  [ -n "$AUTOMATE_SR" ] && append "$AUTOMATE_SR"$'\n'
+  [ -n "$WATCH_SR" ] && append "$WATCH_SR"$'\n'
+  append $'\n'
+fi
 
 # Section 2: recent failed jobs (last 5 by mtime) ----
 if compgen -G ".supervisor/jobs/failed/*.md" > /dev/null 2>&1; then

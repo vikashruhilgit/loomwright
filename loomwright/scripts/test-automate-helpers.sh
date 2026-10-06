@@ -20,6 +20,13 @@
 #      queue-checkoff fail CLOSED — empty stdin, no title, no Status/Queue, a dropped
 #      Progress prefix, the failed-awk pipe shape and a titleless target all leave the
 #      run file byte-unchanged, with positive controls and a validation-removed mutant.
+#      (B10, automate-followups/32 Part C) `## Current` moves only through a helper:
+#      current-set's byte-diff (only the item/pause_reason lines move), every refusal
+#      (exit 1, byte-unchanged), idempotency, pr/branch retention vs reset, the
+#      run-level form; progress-append's current_not_set guard (exit 3, line kept;
+#      `parked ` not guarded; the picked-mismatch arm with `./` and suffix forms) and
+#      a w1-10 replay; current-rebuild against a stubbed gh (OPEN/MERGED/CLOSED/failing)
+#      with foreign-PR, not-in-Queue and no-picked negatives; three gated mutants.
 #   C. folder / backlog-doc resolvers (skip ## Status: done; documented order).
 #   D. resume-glob lists only run files (is_run_file: `# Automate Run:` title) not
 #      done — §6 result sidecars excluded, with a validated is_run_file mutant;
@@ -696,6 +703,319 @@ fi
 rm -rf "$MUTDIR"
 
 # =============================================================================
+echo "== B10. ## Current moves only through a helper (current-set / progress-append current_not_set guard / current-rebuild) =="
+# automate-followups/32 Part C: lane w1-10 (run automate-2026-10-04-103627) wrote
+# ## Current once at creation and never again — every later event was a
+# progress-append — so a RESUME mid-drain would have read "nothing in flight".
+CWD="$(mktemp -d)"
+# cs_fixture <path> <first ## Current line> [<pause_reason line | "-" for none>]
+cs_fixture() {
+  local p="$1" il="$2" pl="${3:-- pause_reason: awaiting_go}"
+  {
+    printf '# Automate Run: cs\n## Status: running\n## Source\n- folder f\n## Run Config\n- mode: safe | limit: 5\n## Queue\n- [ ] a.md\n- [ ] b.md\n## Current\n'
+    printf '%s\n' "$il"
+    if [ "$pl" != "-" ]; then printf '%s\n' "$pl"; fi
+    printf '%s\n' '- owned_drain_started: t9 | owned_drain_result: READY | suppressed_default_dispatch: true'
+    printf '%s\n' '- pending_decisions: 2 | fix_now_reentered: false'
+    printf '## Progress\n- t0 run created\n'
+  } > "$p"
+}
+CRF="$CWD/r.md"
+NULL_ITEM="- item: null | status: null | pr: null | branch: null"
+
+# B10a. byte-diff: only the item + pause_reason lines change; owned_drain_*/pending_decisions untouched.
+cs_fixture "$CRF" "$NULL_ITEM"; cp "$CRF" "$CWD/before"
+run_h bash "$H" current-set "$CRF" --item a.md --status running --pr null --branch null --pause-reason null
+if [ "$RUN_RC" -eq 0 ] && grep -qxF -- '- item: a.md | status: running | pr: null | branch: null' "$CRF" \
+   && grep -qxF -- '- pause_reason: null' "$CRF" \
+   && [ "$(diff "$CWD/before" "$CRF" | grep -c '^[<>]')" = 4 ] \
+   && cmp -s <(grep -vE '^- (item|pause_reason):' "$CWD/before") <(grep -vE '^- (item|pause_reason):' "$CRF"); then
+  ok "current-set: only the ## Current item + pause_reason lines change (owned_drain_*/pending_decisions and every other line byte-unchanged)"
+else
+  no "current-set byte-diff wrong (rc=$RUN_RC): $(diff "$CWD/before" "$CRF" | tr '\n' '|')"
+fi
+# B10b. idempotent: re-setting the identical values rewrites nothing.
+cp "$CRF" "$CWD/set1"
+run_h bash "$H" current-set "$CRF" --item a.md --status running --pr null --branch null --pause-reason null
+if [ "$RUN_RC" -eq 0 ] && [ "$RUN_OUT" = "current-set: unchanged" ] && cmp -s "$CWD/set1" "$CRF"; then
+  ok "current-set: identical values ⇒ 'current-set: unchanged', file byte-identical"
+else
+  no "current-set re-set not idempotent (rc=$RUN_RC out=$RUN_OUT)"
+fi
+# B10c. refusals: exit 1, file byte-unchanged.
+cs_fixture "$CWD/base" "- item: a.md | status: running | pr: https://github.com/acme/widgets/pull/1 | branch: f/a"
+cs_refuse() {
+  local label="$1"; shift
+  cp "$CWD/base" "$CRF"
+  bash "$H" current-set "$CRF" "$@" >/dev/null 2>&1; local rc=$?
+  if [ "$rc" -eq 1 ] && cmp -s "$CWD/base" "$CRF"; then ok "current-set refuses $label (exit 1, byte-unchanged)"; else no "current-set $label: rc=$rc or the file changed"; fi
+}
+cs_refuse "an unknown status" --item a.md --status parked
+cs_refuse "an unknown pause_reason (run-level form)" --pause-reason bogus
+cs_refuse "an unknown pause_reason (item form)" --item a.md --status running --pause-reason parked
+cs_refuse "a half-null item form (item null, status set)" --item null --status running
+cs_refuse "a half-null item form (item set, status null)" --item a.md --status null
+cs_refuse "an item form missing --status" --item a.md
+cs_refuse "an item form missing --item" --status running
+cs_refuse "a run-level form missing --pause-reason" --pr https://github.com/acme/widgets/pull/2
+cs_refuse "no arguments at all"
+cs_refuse "a '|'-bearing item" --item 'a.md | status: done' --status running
+cs_refuse "a '|'-bearing pr" --item a.md --status running --pr 'x|y'
+cs_refuse "a newline-bearing item" --item "$(printf 'a.md\nb.md')" --status running
+cs_refuse "an empty value" --item a.md --status running --branch ''
+cs_refuse "an unknown flag" --item a.md --status running --owner me
+printf '## Status: running\n## Queue\n## Current\n- item: null | status: null\n## Progress\n' > "$CWD/norun.md"; cp "$CWD/norun.md" "$CWD/norun.before"
+bash "$H" current-set "$CWD/norun.md" --item a.md --status running >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 1 ] && cmp -s "$CWD/norun.before" "$CWD/norun.md" && ok "current-set refuses a non-run file (no title; exit 1, byte-unchanged)" || no "current-set on a non-run file: rc=$rc"
+printf '# Automate Run: x\n## Status: running\n## Queue\n- [ ] a.md\n## Progress\n- t0\n' > "$CWD/nocur.md"; cp "$CWD/nocur.md" "$CWD/nocur.before"
+bash "$H" current-set "$CWD/nocur.md" --pause-reason null >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 1 ] && cmp -s "$CWD/nocur.before" "$CWD/nocur.md" && ok "current-set refuses a run file with no ## Current heading (exit 1, byte-unchanged)" || no "current-set on a Current-less file: rc=$rc"
+# B10d. pr/branch retention: same item keeps them; a CHANGED item resets omitted ones to null.
+cs_retention() {  # cs_retention <helper> — prints the two item lines it produced, '|'-joined
+  local h="$1"
+  cs_fixture "$CRF" "$NULL_ITEM"
+  bash "$h" current-set "$CRF" --item a.md --status running --pr https://github.com/acme/widgets/pull/1 --branch f/a >/dev/null 2>&1
+  bash "$h" current-set "$CRF" --item a.md --status awaiting_merge >/dev/null 2>&1
+  printf '%s' "$(grep '^- item: ' "$CRF")"
+  bash "$h" current-set "$CRF" --item b.md --status running >/dev/null 2>&1
+  printf ' || %s' "$(grep '^- item: ' "$CRF")"
+}
+CS_WANT='- item: a.md | status: awaiting_merge | pr: https://github.com/acme/widgets/pull/1 | branch: f/a || - item: b.md | status: running | pr: null | branch: null'
+cs_got="$(cs_retention "$H")"
+[ "$cs_got" = "$CS_WANT" ] && ok "current-set: same --item keeps pr/branch; a changed --item resets omitted pr/branch to null" || no "current-set retention wrong: $cs_got"
+# mutation control: without the reset, the previous item's PR rides into the new item.
+CSM="$CWD/mut"; mkdir -p "$CSM"
+sed '/^      if \[ "\$hp" = 0 \]; then pr=null; hp=1; fi$/d' "$H" > "$CSM/automate-helpers.sh"
+if ! cmp -s "$H" "$CSM/automate-helpers.sh" && bash -n "$CSM/automate-helpers.sh" 2>/dev/null; then
+  case "$(cs_retention "$CSM/automate-helpers.sh")" in
+    *"- item: b.md | status: running | pr: https://github.com/acme/widgets/pull/1 |"*) ok "mutation control: without the item-change reset the old PR rides into b.md (the retention leg is load-bearing)" ;;
+    *) no "pr-reset mutant did not carry the PR — the retention leg may be vacuous" ;;
+  esac
+else
+  no "pr-reset mutant not built"
+fi
+# B10e. run-level form: --pause-reason closeout_leftover leaves the item line byte-unchanged.
+cp "$CWD/base" "$CRF"
+run_h bash "$H" current-set "$CRF" --pause-reason closeout_leftover
+if [ "$RUN_RC" -eq 0 ] && grep -qxF -- '- pause_reason: closeout_leftover' "$CRF" \
+   && cmp -s <(grep -v '^- pause_reason:' "$CWD/base") <(grep -v '^- pause_reason:' "$CRF"); then
+  ok "current-set run-level form (--pause-reason closeout_leftover): item line and every other line byte-unchanged"
+else
+  no "run-level form wrong (rc=$RUN_RC): $(diff "$CWD/base" "$CRF" | tr '\n' '|')"
+fi
+# B10f. a block with no pause_reason line gets one appended INSIDE ## Current; a block
+#       with no item line gets one right under the heading.
+cs_fixture "$CRF" "- reason_hint: rate_limit" "-"
+bash "$H" current-set "$CRF" --item a.md --status running --pause-reason awaiting_merge >/dev/null 2>&1
+cs_blk="$(awk '/^## Current/{c=1;next} /^## /{c=0} c' "$CRF" | tr '\n' '|')"
+[ "$cs_blk" = "- item: a.md | status: running | pr: null | branch: null|- reason_hint: rate_limit|- owned_drain_started: t9 | owned_drain_result: READY | suppressed_default_dispatch: true|- pending_decisions: 2 | fix_now_reentered: false|- pause_reason: awaiting_merge|" ] \
+  && ok "current-set: absent item line inserted under the heading, absent pause_reason appended inside the block" || no "current-set insertion wrong: $cs_blk"
+
+# B10g. progress-append current_not_set guard (exit 3, line still appended).
+PRF="$CWD/g.md"
+pg_case() {  # pg_case <label> <## Current item line> <line> <want rc>
+  cs_fixture "$PRF" "$2"
+  local err rc; err="$(bash "$H" progress-append "$PRF" "$3" 2>&1 >/dev/null)"; rc=$?
+  if [ "$rc" -ne "$4" ]; then no "guard $1: rc=$rc want $4 (stderr: $err)"; return; fi
+  if ! grep -qxF -- "- $3" "$PRF"; then no "guard $1: line not appended"; return; fi
+  if [ "$4" -eq 3 ] && [ "$err" != "current_not_set: $3" ]; then no "guard $1: stderr '$err'"; return; fi
+  ok "guard $1 ⇒ exit $4, line appended"
+}
+SET_A="- item: a.md | status: running | pr: null | branch: null"
+pg_case "null item + '<ts> picked a.md'" "$NULL_ITEM" "t1 picked a.md" 3
+pg_case "null item + 'picked a.md' (no ts)" "$NULL_ITEM" "picked a.md" 3
+pg_case "null item + 'ran /autonomous → PR <url>'" "$NULL_ITEM" "t1 ran /autonomous → PR $PR" 3
+pg_case "null item + 'owned drain started: …'" "$NULL_ITEM" "t1 owned drain started: /review-pr $PR --until-mergeable" 3
+pg_case "absent item line + picked" "- reason_hint: x" "t1 picked a.md" 3
+pg_case "empty item value + picked" "- item:  | status: running" "t1 picked a.md" 3
+pg_case "null item + '<ts> parked …' (not guarded)" "$NULL_ITEM" "t1 parked limit_reached — remaining 2" 0
+pg_case "null item + a run-level run_lock_held park line" "$NULL_ITEM" "t1 run_lock_held owner=automate:x pid=1 age=3 — paused" 0
+pg_case "null item + a closeout step line" "$NULL_ITEM" "t1 closeout $PR: closeout: checked — - [x] a.md" 0
+pg_case "Current set + picked a.md" "$SET_A" "t1 picked a.md" 0
+pg_case "Current set + ran /autonomous" "$SET_A" "t1 ran /autonomous → PR $PR" 0
+pg_case "Current set + owned drain started" "$SET_A" "t1 owned drain started: x" 0
+pg_case "picked b.md while ## Current names non-done a.md" "$SET_A" "t5 picked b.md" 3
+pg_case "picked b.md, (comma suffix) while a.md running" "$SET_A" "t5 picked b.md, owner go" 3
+pg_case "picked b.md while a.md is done" "- item: a.md | status: done | pr: $PR | branch: f/a" "t5 picked b.md" 0
+pg_case "'picked a.md (run-lock acquired; …)' with Current a.md" "$SET_A" "t5 picked a.md (run-lock acquired; session x)" 0
+pg_case "'picked a.md (run-lock acquired; …)' with Current ./a.md" "- item: ./a.md | status: running | pr: null | branch: null" "t5 picked a.md (run-lock acquired; session x)" 0
+pg_case "'picked ./a.md; suppressed …' with Current a.md" "$SET_A" "t5 picked ./a.md; suppressed auto_review" 0
+# mutation control: the guard call deleted ⇒ the null-item picked case exits 0.
+PGM="$CWD/pgm"; mkdir -p "$PGM"
+sed '/^  _progress_current_guard "\$out" "\$line"$/d' "$H" > "$PGM/automate-helpers.sh"
+if ! cmp -s "$H" "$PGM/automate-helpers.sh" && bash -n "$PGM/automate-helpers.sh" 2>/dev/null; then
+  cs_fixture "$PRF" "$NULL_ITEM"
+  bash "$PGM/automate-helpers.sh" progress-append "$PRF" "t1 picked a.md" >/dev/null 2>&1 \
+    && ok "mutation control: without the guard a null-Current picked line exits 0 (the exit-3 legs are load-bearing)" || no "guard mutant still refused"
+else
+  no "guard mutant not built"
+fi
+# B10h. w1-10 replay (automate-2026-10-04-103627): the creation write, then its
+#       Progress-only history — the guard refuses at the FIRST picked line.
+W10="$CWD/w10.md"
+W10_ITEM=".supervisor/requirements/parallel-automate/10-touches-backfill-lint-and-explain.md"
+W10_PR="https://github.com/vikashruhilgit/loomwright/pull/377"
+bash "$H" runfile-write "$W10" <<EOF
+# Automate Run: S1 v2 lane w1-10 — item 10
+## Status: running
+## Source
+- backlog .supervisor/s1-backlog.md
+## Run Config
+- mode: safe | limit: 5 | trust_unprotected: false
+- auto_review_original: absent | config_backup: automate-2026-10-04-103627.config-backup.json
+## Queue
+- [ ] $W10_ITEM
+## Current
+- item: null | status: null | pr: null | branch: null
+- pause_reason: null
+## Progress
+- 2026-10-04T10:36:27Z run created; queue confirmed by owner (1 item, start new — other incomplete runs left untouched)
+EOF
+w10_first=""; w10_n=0
+while IFS= read -r l; do
+  w10_n=$((w10_n+1))
+  bash "$H" progress-append "$W10" "$l" >/dev/null 2>&1; rc=$?
+  if [ "$rc" -ne 0 ] && [ -z "$w10_first" ]; then w10_first="$w10_n:$rc:$l"; fi
+done <<EOF
+trail-gate: clear — no open trail PR; sync skipped — already synced (main at origin/main)
+trail-unstage: skipped — branch mode
+2026-10-04T10:39:26Z picked $W10_ITEM
+reconcile-status: would stamp .supervisor/requirements/token-economy/07-verify-spec-replay.md (done (PR #269, merge e319536))
+2026-10-04T11:44:52Z session_id fa3574db (.supervisor/requirements/parallel-automate/10-touches-backfill-lint-and-explain.md)
+2026-10-04T11:44:52Z ran /autonomous → PR $W10_PR (heal PASS after 1 fix iteration)
+2026-10-04T11:45:12Z owned drain started: /review-pr $W10_PR --until-mergeable --no-auto-postmortem (suppressed_default_dispatch: true)
+2026-10-04T14:19:45Z gate (safe mode): parked awaiting_merge — PR $W10_PR READY, left open for a human merge
+2026-10-04T14:27:00Z closeout $W10_PR: closeout: synced — main at 2bdb2b7
+EOF
+[ "$w10_first" = "3:3:2026-10-04T10:39:26Z picked $W10_ITEM" ] \
+  && ok "w1-10 replay: the guard refuses (exit 3) at the first picked line, every earlier line exits 0" || no "w1-10 replay first refusal wrong: $w10_first"
+grep -qxF -- "- 2026-10-04T14:27:00Z closeout $W10_PR: closeout: synced — main at 2bdb2b7" "$W10" \
+  && ok "w1-10 replay: every line is still appended (loud, not lossy)" || no "w1-10 replay lost a line"
+
+# B10i. current-rebuild (stubbed gh: OPEN / MERGED / CLOSED / failing).
+CBIN="$CWD/bin"; make_stub_bin "$CBIN"; CGH="$CWD/ghstub"; mkdir -p "$CGH"
+cr_fixture() {  # cr_fixture <path> <progress line>...
+  local p="$1" l; shift
+  {
+    printf '# Automate Run: cr\n## Status: paused\n## Source\n- folder q\n## Run Config\n- mode: safe | limit: 5\n## Queue\n- [x] q/01-a.md\n- [ ] q/02-b.md\n## Current\n'
+    printf '%s\n' "$NULL_ITEM" '- pause_reason: awaiting_merge' '## Progress'
+    for l in "$@"; do printf -- '- %s\n' "$l"; done
+  } > "$p"
+}
+cr_run() { RUN_OUT="$(PATH="$CBIN:$PATH" GH_STUB_DIR="$CGH" bash "${CR_H:-$H}" current-rebuild "$1" 2>/dev/null)"; RUN_RC=$?; }
+CRB="$CWD/cr.md"; B_PR="https://github.com/acme/widgets/pull/9"
+for st in OPEN MERGED CLOSED fail; do
+  rm -f "$CGH/pr-view-fail"
+  case "$st" in
+    fail) : > "$CGH/pr-view-fail"; want_state=unknown; want_br=null ;;
+    MERGED) printf '{"state":"MERGED","mergedAt":"2026-10-05T00:00:00Z","headRefName":"feature/b"}\n' > "$CGH/pr-view.json"; want_state=MERGED; want_br=feature/b ;;
+    *) printf '{"state":"%s","mergedAt":null,"headRefName":"feature/b"}\n' "$st" > "$CGH/pr-view.json"; want_state="$st"; want_br=feature/b ;;
+  esac
+  cr_fixture "$CRB" "t0 picked q/01-a.md" "t0 ran /autonomous → PR https://github.com/acme/widgets/pull/3" \
+    "t1 picked q/02-b.md; suppressed auto_review (backup cr.config-backup.json)" "t2 ran /autonomous → PR $B_PR (heal PASS)"
+  cr_run "$CRB"
+  want_line="current_rebuilt: q/02-b.md pr $B_PR state $want_state"
+  if [ "$RUN_RC" -eq 0 ] && [ "$RUN_OUT" = "$want_line" ] \
+     && grep -qxF -- "- item: q/02-b.md | status: running | pr: $B_PR | branch: $want_br" "$CRB" \
+     && [ "$(tail -n1 "$CRB")" = "- $want_line" ]; then
+    ok "current-rebuild ($st): ## Current rebuilt status running + pr + branch $want_br, '$want_line' printed and appended"
+  else
+    no "current-rebuild ($st) wrong (rc=$RUN_RC out=$RUN_OUT): $(grep '^- item:' "$CRB")"
+  fi
+done
+rm -f "$CGH/pr-view-fail"
+cp "$CRB" "$CWD/cr.set"; cr_run "$CRB"
+[ "$RUN_RC" -eq 0 ] && [ "$RUN_OUT" = "current-rebuild: skipped — ## Current set" ] && cmp -s "$CWD/cr.set" "$CRB" \
+  && ok "current-rebuild second run: 'skipped — ## Current set', nothing written" || no "current-rebuild second run wrong (rc=$RUN_RC out=$RUN_OUT)"
+# B10j. A `done` ## Current left behind by a PICK that skipped its current-set after a
+# close-out (the guard exempts a done Current, so both lines append with exit 0) is
+# stale: current-rebuild repairs it from the LAST picked line. Before the fix it
+# printed 'skipped — ## Current set' and Current kept naming a.md while b's PR was open.
+A_PR="https://github.com/acme/widgets/pull/3"; B2_PR="https://github.com/acme/widgets/pull/2"
+crd_fixture() {  # crd_fixture <path> <progress line>...
+  local p="$1" l; shift
+  {
+    printf '# Automate Run: crd\n## Status: running\n## Source\n- folder q\n## Run Config\n- mode: safe | limit: 5\n## Queue\n- [x] q/01-a.md\n- [ ] q/02-b.md\n## Current\n'
+    printf '%s\n' "- item: q/01-a.md | status: done | pr: $A_PR | branch: feature/a" '- pause_reason: null' '## Progress'
+    for l in "$@"; do printf -- '- %s\n' "$l"; done
+  } > "$p"
+}
+crd_stale() {  # the reviewer's repro: a done a.md, then 'picked b' + 'ran → PR 2' with no current-set
+  crd_fixture "$CRB" "t0 picked q/01-a.md" "t0 ran /autonomous → PR $A_PR" "t1 closeout $A_PR: closeout: checked — - [x] q/01-a.md"
+  local r1 r2
+  bash "$H" progress-append "$CRB" "t2 picked q/02-b.md; suppressed auto_review" 2>/dev/null; r1=$?
+  bash "$H" progress-append "$CRB" "t3 ran /autonomous → PR $B2_PR" 2>/dev/null; r2=$?
+  CRD_APPEND_RC="$r1/$r2"
+  cr_run "$CRB"
+}
+printf '{"state":"OPEN","mergedAt":null,"headRefName":"feature/b"}\n' > "$CGH/pr-view.json"
+crd_stale
+[ "$CRD_APPEND_RC" = "0/0" ] && ok "(B10j) the guard lets 'picked b' + 'ran /autonomous' over a done a.md through (exit 0/0 — the documented exemption)" || no "(B10j) append rcs: $CRD_APPEND_RC"
+[ "$RUN_RC" -eq 0 ] && [ "$RUN_OUT" = "current_rebuilt: q/02-b.md pr $B2_PR state OPEN" ] \
+  && grep -qxF -- "- item: q/02-b.md | status: running | pr: $B2_PR | branch: feature/b" "$CRB" \
+  && ok "(B10j) current-rebuild repairs a stale done ## Current to the last picked item (b, its PR, running)" \
+  || no "(B10j) stale done Current not rebuilt (rc=$RUN_RC out=$RUN_OUT): $(grep '^- item:' "$CRB")"
+# Mutation control (the before-state): a done Current treated as 'set' ⇒ the repro is skipped.
+CRDM="$CWD/crdm"; mkdir -p "$CRDM"
+sed 's|^    \[ "\$cs" = done \] \|\| { echo "\$R ## Current set"; return 0; }$|    { echo "$R ## Current set"; return 0; }|' "$H" > "$CRDM/automate-helpers.sh"
+if ! cmp -s "$H" "$CRDM/automate-helpers.sh" && bash -n "$CRDM/automate-helpers.sh" 2>/dev/null; then
+  CR_H="$CRDM/automate-helpers.sh" crd_stale
+  [ "$RUN_OUT" = "current-rebuild: skipped — ## Current set" ] && grep -q '^- item: q/01-a.md | status: done' "$CRB" \
+    && ok "(B10j) mutation control: the pre-fix rule skips the repro and leaves a.md named" || no "(B10j) mutant did not reproduce the bug ($RUN_OUT)"
+else
+  no "(B10j) done-exemption mutant not built"
+fi
+# Negatives: a done Current that IS the last picked item (a correct close-out), and a
+# done Current with a './'-prefixed picked token naming it, are never rebuilt.
+crd_fixture "$CRB" "t0 picked q/01-a.md" "t0 ran /autonomous → PR $A_PR" "t1 closeout $A_PR: closeout: checked — - [x] q/01-a.md"
+cp "$CRB" "$CWD/crd.same"; cr_run "$CRB"
+[ "$RUN_RC" -eq 0 ] && [ "$RUN_OUT" = "current-rebuild: skipped — ## Current set" ] && cmp -s "$CWD/crd.same" "$CRB" \
+  && ok "(B10j) a done Current naming the last picked item ⇒ skipped, nothing written" || no "(B10j) same-item done wrong (rc=$RUN_RC out=$RUN_OUT)"
+crd_fixture "$CRB" "t0 picked ./q/01-a.md (run-lock acquired; session x)"
+cp "$CRB" "$CWD/crd.dot"; cr_run "$CRB"
+[ "$RUN_RC" -eq 0 ] && [ "$RUN_OUT" = "current-rebuild: skipped — ## Current set" ] && cmp -s "$CWD/crd.dot" "$CRB" \
+  && ok "(B10j) a done Current vs './'-prefixed picked token of the same item ⇒ skipped" || no "(B10j) ./ compare wrong (rc=$RUN_RC out=$RUN_OUT)"
+crd_fixture "$CRB" "t0 run created"
+cp "$CRB" "$CWD/crd.np"; cr_run "$CRB"
+[ "$RUN_RC" -eq 0 ] && [ "$RUN_OUT" = "current-rebuild: skipped — ## Current set" ] && cmp -s "$CWD/crd.np" "$CRB" \
+  && ok "(B10j) a done Current with no picked line ⇒ skipped, nothing written" || no "(B10j) no-picked done wrong (rc=$RUN_RC out=$RUN_OUT)"
+# Negative: foreign PR URLs on closeout / trail / cross-run lines and no ran
+# /autonomous after the last picked ⇒ pr stays null ('(owner …)' suffix parsed).
+cr_foreign() {
+  cr_fixture "$CRB" "t0 picked q/01-a.md" "t0 ran /autonomous → PR https://github.com/acme/widgets/pull/3" \
+    "t1 picked q/02-b.md (owner go)" "t2 closeout https://github.com/acme/widgets/pull/5: closeout: checked — - [x] q/01-a.md" \
+    "trail-pr: opened https://github.com/acme/widgets/pull/6 (chore/cr-trail-1)" \
+    "t3 cross-run closeout automate-x q/01-a.md https://github.com/acme/widgets/pull/4: complete"
+  cr_run "$CRB"
+}
+cr_foreign
+[ "$RUN_RC" -eq 0 ] && [ "$RUN_OUT" = "current_rebuilt: q/02-b.md pr null state none" ] \
+  && grep -qxF -- "- item: q/02-b.md | status: running | pr: null | branch: null" "$CRB" \
+  && ok "current-rebuild: foreign PR URLs (closeout/trail/cross-run lines, an earlier item's ran line) never attach — pr null" || no "current-rebuild attached a foreign PR (out=$RUN_OUT): $(grep '^- item:' "$CRB")"
+# mutation control: reading the PR from ANY later Progress line attaches a foreign one.
+CRM="$CWD/crm"; mkdir -p "$CRM"
+sed 's|^    NR > ENVIRON\["PN"\]+0 && /^- (\[^ \]+ )?ran \\/autonomous/ {$|    NR > ENVIRON["PN"]+0 {|' "$H" > "$CRM/automate-helpers.sh"
+if ! cmp -s "$H" "$CRM/automate-helpers.sh" && bash -n "$CRM/automate-helpers.sh" 2>/dev/null; then
+  CR_H="$CRM/automate-helpers.sh" cr_foreign
+  case "$RUN_OUT" in *"pr null"*) no "foreign-PR mutant still null — the negative leg may be vacuous ($RUN_OUT)" ;; *) ok "mutation control: reading any Progress line attaches a foreign PR ($RUN_OUT)" ;; esac
+else
+  no "foreign-PR mutant not built"
+fi
+cr_fixture "$CRB" "t1 picked q/09-z.md" "t2 ran /autonomous → PR $B_PR"; cp "$CRB" "$CWD/cr.nq"; cr_run "$CRB"
+[ "$RUN_RC" -eq 0 ] && [ "$RUN_OUT" = "current-rebuild: skipped — picked item not in Queue" ] && cmp -s "$CWD/cr.nq" "$CRB" \
+  && ok "current-rebuild: picked item not in the Queue ⇒ skipped, nothing written" || no "current-rebuild not-in-Queue wrong (rc=$RUN_RC out=$RUN_OUT)"
+cr_fixture "$CRB" "t1 run created"; cp "$CRB" "$CWD/cr.np"; cr_run "$CRB"
+[ "$RUN_RC" -eq 0 ] && [ "$RUN_OUT" = "current-rebuild: skipped — no picked line in ## Progress" ] && cmp -s "$CWD/cr.np" "$CRB" \
+  && ok "current-rebuild: no picked line ⇒ skipped, nothing written" || no "current-rebuild no-picked wrong (rc=$RUN_RC out=$RUN_OUT)"
+# The w1-10 replay above, rebuilt (gh says MERGED): the ran line names PR 377.
+printf '{"state":"MERGED","mergedAt":"2026-10-04T14:26:00Z","headRefName":"feature/parallel-automate-10-touches-lint-and-explain"}\n' > "$CGH/pr-view.json"
+cr_run "$W10"
+[ "$RUN_OUT" = "current_rebuilt: $W10_ITEM pr $W10_PR state MERGED" ] \
+  && grep -qxF -- "- item: $W10_ITEM | status: running | pr: $W10_PR | branch: feature/parallel-automate-10-touches-lint-and-explain" "$W10" \
+  && ok "current-rebuild on the w1-10 replay: item + PR 377 + branch, status running (never awaiting_merge)" || no "w1-10 rebuild wrong: $RUN_OUT"
+rm -rf "$CWD"
+
+# =============================================================================
 echo "== C. folder / backlog-doc resolvers (skip ## Status: done) =="
 
 WD="$(mktemp -d)"; DIR="$WD/reqs"; mkdir -p "$DIR"
@@ -927,6 +1247,18 @@ printf '# Automate Run: r1\n## Status: running\n' > "$AUT/r1.md"
 printf '# Automate Run: r2\n## Status: done\n'    > "$AUT/r2.md"
 run_h bash "$H" resume-glob "$AUT"
 if [ "$RUN_OUT" = "$AUT/r1.md" ]; then ok "resume-glob: only not-done runs (r1; r2 done excluded)"; else no "resume-glob wrong:\n$RUN_OUT"; fi
+# D0f. resume-glob --finalize (automate-followups/32 Part B; SKILL §4 step 1): an
+#      ineligible run (not paused) is listed exactly as the plain form lists it,
+#      untouched, with nothing on stderr; the flag is accepted before the dir too.
+#      The finalize legs themselves (git, trail, lock) live in test-automate-trail.sh §F.
+r1_sum="$(cksum < "$AUT/r1.md")"
+fz_out="$(bash "$H" resume-glob "$AUT" --finalize 2>"$WD/fz.err")"; fz_rc=$?
+fz_out2="$(bash "$H" resume-glob --finalize "$AUT" 2>>"$WD/fz.err")"
+if [ "$fz_rc" -eq 0 ] && [ "$fz_out" = "$AUT/r1.md" ] && [ "$fz_out2" = "$fz_out" ] && [ ! -s "$WD/fz.err" ] && [ "$r1_sum" = "$(cksum < "$AUT/r1.md")" ]; then
+  ok "resume-glob --finalize: an ineligible run is listed as the plain form lists it, byte-untouched, stderr silent"
+else
+  no "resume-glob --finalize ineligible leg wrong (rc=$fz_rc): '$fz_out' / '$fz_out2' / err: $(cat "$WD/fz.err")"
+fi
 
 # D0b. resume-glob lists only RUN FILES (is_run_file, automate-followups/03).
 #      The §6 steps 2-3 per-run result sidecars share the directory and `.md`
