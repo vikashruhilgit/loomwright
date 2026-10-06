@@ -30,7 +30,10 @@
 #       behaviour cell is "undefined".
 #       The RESUME gate names `resume_requires_flag_non_interactive` (skill, command, inventory) and
 #       the withdrawn auto-continue status `resume_continued_non_interactive` appears on no surface;
-#       Launch Pad also names `save_requires_flag_non_interactive` (no flag ⇒ no save).
+#       Launch Pad also names `save_requires_flag_non_interactive` (no flag ⇒ no save), so the
+#       flag must be DELIVERED: autonomous-loop PLAN forwards `--non-interactive` to the inlined
+#       Launch Pad only under `--non-interactive-fallback`, separate from the four-flag /supervisor
+#       set, and commands/autonomous.md (forward-set note, flag row, flow diagram) says so.
 #   (h) re-check: subtask 1's PO / automate strings still resolve.
 #   (m) MUTATION CONTROL: delete the can't-ask branch line from a COPY of agents/product-owner.md;
 #       gate the mutant on non-empty + differs-from-original; the (a) predicate MUST fail on it.
@@ -232,6 +235,45 @@ else
   no "(g) the withdrawn auto-continue status resume_continued_non_interactive is still named: $auto_continue_hits"
 fi
 gate_has_status "(g) agents/qa-executor.md URL fallback" "$QA_AGENT" 'base_url_unresolved'
+# The Launch Pad can't-ask rule keys on a flag (inline on the main thread it is not a subagent), so
+# the /autonomous PLAN step must actually DELIVER that flag — and only under --non-interactive-fallback.
+# Captured, not piped into grep -q (pipefail-safe).
+AUT_CMD="$PLUGIN_ROOT/commands/autonomous.md"
+[ -f "$AUT_CMD" ] || no "MISSING surface: $AUT_CMD"
+al_plan="$(awk '/^## PLAN/{p=1; next} p && /^## /{exit} p' "$AL_SKILL")"
+lp_fwd="$(printf '%s\n' "$al_plan" | grep -F -- '**Launch Pad forward' | head -1 || true)"
+case "$lp_fwd" in
+  *'`--non-interactive-fallback` was passed at INIT'*'`<requirement_path> --non-interactive`'*'ONLY flag'*'an interactive run'*'requirement path alone'*)
+    ok "(g) autonomous-loop PLAN forwards --non-interactive to Launch Pad, only under --non-interactive-fallback" ;;
+  '') no "(g) autonomous-loop PLAN has no Launch Pad forward (the Can't-ask rule's flag never reaches the inlined Launch Pad)" ;;
+  *) no "(g) autonomous-loop PLAN Launch Pad forward misses the condition / the flag / the interactive-unchanged clause" ;;
+esac
+case "$lp_fwd" in
+  *'still exactly four flags'*) ok "(g) the Launch Pad forward is stated as separate from the four-flag /supervisor set" ;;
+  *) no "(g) the Launch Pad forward does not keep the /supervisor set at exactly four flags" ;;
+esac
+sv_set="$(grep -F -- '**Auto-forwarded flags (the complete `/supervisor` forward set):**' "$AL_SKILL" | head -1 || true)"
+case "$sv_set" in
+  *'exactly four flags to the inlined `/supervisor`'*) ok "(g) autonomous-loop EXECUTE step 1 still forwards exactly four flags to /supervisor" ;;
+  *) no "(g) autonomous-loop EXECUTE step 1 /supervisor forward-set line missing or changed" ;;
+esac
+cheap_note="$(grep -F -- '`--cheap` interaction note' "$AUT_CMD" | head -1 || true)"
+case "$cheap_note" in
+  *'**No other flag is forwarded to `/supervisor`.**'*'one other forward is to Launch Pad'*'only when `--non-interactive-fallback` was passed at INIT'*)
+    ok "(g) commands/autonomous.md forward-set note names the separate Launch Pad forward" ;;
+  *) no "(g) commands/autonomous.md forward-set note does not name the separate Launch Pad forward" ;;
+esac
+diagram_fwd="$(grep -F -- '▶ + --non-interactive under --non-interactive-fallback' "$AUT_CMD" | head -1 || true)"
+if [ -n "$diagram_fwd" ]; then
+  ok "(g) commands/autonomous.md flow diagram shows the PLAN-step Launch Pad forward"
+else
+  no "(g) commands/autonomous.md flow diagram does not show the PLAN-step Launch Pad forward"
+fi
+nif_aut_row="$(grep -E '^\| `--non-interactive-fallback` \|' "$AUT_CMD" | head -1 || true)"
+case "$nif_aut_row" in
+  *'separately to the inlined Launch Pad'*) ok "(g) commands/autonomous.md --non-interactive-fallback row names the Launch Pad forward" ;;
+  *) no "(g) commands/autonomous.md --non-interactive-fallback row does not name the Launch Pad forward" ;;
+esac
 # The inventory section exists and sits immediately before ## Failure Escalation Summary.
 prev_h2="$(awk '/^## /{ if ($0 == "## Failure Escalation Summary") { print last; exit } last = $0 }' "$ARCH")"
 if [ "$prev_h2" = "## Question-gate inventory" ]; then
