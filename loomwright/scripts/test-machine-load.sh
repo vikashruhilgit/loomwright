@@ -17,6 +17,8 @@
 #        `{ 30,00 … }` unless the numeric locale is C, as macOS's does — still load1=30.00, busy, and
 #        --json stays valid JSON with dot decimals on both readers (awk printf localizes too)
 #        MUTATION CONTROL: drop the `export LC_ALL=C` ⇒ the comma reading is unknown and (LC) fails
+#   (O)  any other OS (LOOMWRIGHT_MACHINE_LOAD_OS=other) ⇒ state=unknown, exit 0, null load1 and
+#        load_per_cpu in --json
 #   (H)  the host: real reader exits 0 with five fields and a state in the set (Linux on CI)
 #   (X)  usage: an unknown argument exits 2; --help prints the de-commented header
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
@@ -147,15 +149,17 @@ EOF
 chmod +x "$tmp/sysctl-l10n"
 lcarm() {   # lcarm SUT — exit 0 iff a de_DE run reads the comma loadavg and prints dot decimals
   local s="$1" o j
-  o="$(LC_ALL=de_DE.UTF-8 LANG=de_DE.UTF-8 FX_LOADAVG=30.00 FX_LEVEL=1 LOOMWRIGHT_MACHINE_LOAD_OS=darwin \
+  o="$(env LC_ALL=de_DE.UTF-8 LANG=de_DE.UTF-8 FX_LOADAVG=30.00 FX_LEVEL=1 LOOMWRIGHT_MACHINE_LOAD_OS=darwin \
        LOOMWRIGHT_MACHINE_LOAD_SYSCTL="$tmp/sysctl-l10n" bash "$s" 2>/dev/null)"
   [ "$(field load1 <<<"$o")" = 30.00 ] && [ "$(field state <<<"$o")" = busy ] \
     || { LCWHY="darwin plain: $(tr '\n' ' ' <<<"$o")"; return 1; }
-  j="$(LC_ALL=de_DE.UTF-8 LANG=de_DE.UTF-8 FX_LOADAVG=30.00 FX_LEVEL=1 LOOMWRIGHT_MACHINE_LOAD_OS=darwin \
+  j="$(env LC_ALL=de_DE.UTF-8 LANG=de_DE.UTF-8 FX_LOADAVG=30.00 FX_LEVEL=1 LOOMWRIGHT_MACHINE_LOAD_OS=darwin \
        LOOMWRIGHT_MACHINE_LOAD_SYSCTL="$tmp/sysctl-l10n" bash "$s" --json 2>/dev/null)"
   jq -e '.load1 == 30 and .load_per_cpu == 2.5 and .state == "busy"' <<<"$j" >/dev/null 2>&1 \
     || { LCWHY="darwin --json: $j"; return 1; }
-  j="$(LC_ALL=de_DE.UTF-8 LANG=de_DE.UTF-8 LIN_SUT="$s" lin 30.00 140000 --json 2>/dev/null)"
+  # lin is a shell function, so `env` cannot exec it: export the locale as the subshell's first
+  # statement (never restored, so never the bash 5.3 restore segfault; it cannot leak out of the $( )).
+  j="$( { export LC_ALL=de_DE.UTF-8 LANG=de_DE.UTF-8; } 2>/dev/null; LIN_SUT="$s" lin 30.00 140000 --json 2>/dev/null)"
   jq -e '.load1 == 30 and .load_per_cpu == 2.5 and .state == "busy" and .mem_source == "linux-memavailable-pct:14.0"' <<<"$j" >/dev/null 2>&1 \
     || { LCWHY="linux --json: $j"; return 1; }
 }
@@ -167,6 +171,13 @@ if [ -s "$mut" ] && ! cmp -s "$mut" "$SUT" && bash -n "$mut"; then
   if lcarm "$mut"; then no "(LC) MUTATION CONTROL: without export LC_ALL=C (LC) still passed — it proves nothing"
   else ok "(LC) MUTATION CONTROL: dropping export LC_ALL=C fails (LC) ($LCWHY)"; fi
 else no "(LC) MUTATION CONTROL: mutant not built (empty, unchanged or invalid)"; fi
+
+# --- (O) -------------------------------------------------------------------------------------------
+out="$(FX_LOADAVG=40.00 FX_LEVEL=4 LOOMWRIGHT_MACHINE_LOAD_OS=other LOOMWRIGHT_MACHINE_LOAD_SYSCTL="$tmp/sysctl" \
+       LOOMWRIGHT_MACHINE_LOAD_PROC="$tmp/no-such-proc" bash "$SUT" --json 2>/dev/null)"; rc=$?
+if [ "$rc" = 0 ] && jq -e "$five and .state == \"unknown\" and .load1 == null and .load_per_cpu == null" <<<"$out" >/dev/null 2>&1; then
+  ok "(O) OS=other: state=unknown, exit 0, null load1/load_per_cpu"
+else no "(O) OS=other: rc=$rc out=$out"; fi
 
 # --- (H) -------------------------------------------------------------------------------------------
 unset LOOMWRIGHT_CI_CPUS

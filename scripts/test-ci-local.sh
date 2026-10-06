@@ -273,7 +273,7 @@ LOOMWRIGHT_CI_SLOTS=1 CI_LOCAL_LOCK_WAIT=1 run --force
 if [ "$rc" -eq 1 ] && has "giving up" && has "waiting for a CI slot — position 1, holders: holder (" \
    && [ ! -s "$FIXTURE_LOG" ]; then ok "(L) live holder: waited with a progress line, then exit 1, nothing ran"
 else no "(L) live: rc=$rc out=$out"; fi
-kill "$lm_holder" 2>/dev/null; wait "$lm_holder" 2>/dev/null
+kill "$sleeper" 2>/dev/null; wait "$sleeper" 2>/dev/null; sleeper=""
 LOOMWRIGHT_CI_SLOTS=1 run --force
 held="$(ls "$state/slots")"
 if [ "$rc" -eq 0 ] && has "is gone" && ran one && [ -z "$held" ]; then ok "(L) dead holder: slot taken over, run passed, slot released"
@@ -321,7 +321,7 @@ while ! grep -q '"waiters":\[{' <<<"$(slot status --json)" && [ "$i" -lt 150 ]; 
 [ -n "$qkey" ] && date '+%Y-%m-%dT%H:%M:%S%z' > "$state/pass/$qkey"
 slot release --pid "$sleeper"
 wait "$qpid"
-kill "$lm_holder" 2>/dev/null; wait "$lm_holder" 2>/dev/null
+kill "$sleeper" 2>/dev/null; wait "$sleeper" 2>/dev/null; sleeper=""
 out="$(cat "$tmp/q.out")"
 if [ -n "$qkey" ] && [ "$(cat "$tmp/q.rc")" = 0 ] && has "waiting for a CI slot" && has "PASS (cached)" && [ ! -s "$FIXTURE_LOG" ]; then
   ok "(Q) waiter behind a holder that stamped the same tree: PASS (cached), nothing ran"
@@ -354,7 +354,7 @@ else wait "$tpid"; trc=$?; fi
 tickets="$(ls "$state/tickets")"
 tslots="$(grep -lx "$tpid" "$state"/slots/*/info 2>/dev/null || true)"
 slot release --pid "$sleeper"
-kill "$lm_holder" 2>/dev/null; wait "$lm_holder" 2>/dev/null
+kill "$sleeper" 2>/dev/null; wait "$sleeper" 2>/dev/null; sleeper=""
 if [ "$queued" -lt 150 ] && [ "$trc" = 143 ] && [ -z "$tickets" ] && [ -z "$tslots" ] && [ ! -s "$FIXTURE_LOG" ]; then
   ok "(T) TERM to a queued run: exit 143 within 5s, no ticket or slot left, nothing ran"
 else no "(T) queued_polls=$queued rc=$trc tickets=[$tickets] slots=[$tslots] out=$(cat "$tmp/t.out")"; fi
@@ -558,7 +558,7 @@ echo "ci-local: log $live_log" > "$live_log"
 echo "ci-local: log $dead_log" > "$dead_log"
 seed_finished
 run --force
-kill "$lm_holder" 2>/dev/null; wait "$lm_holder" 2>/dev/null
+kill "$sleeper" 2>/dev/null; wait "$sleeper" 2>/dev/null; sleeper=""
 kept_seeds=0; i=0
 while [ "$i" -lt 25 ]; do [ ! -e "$state/runs/seedkey-x-Linux-20200101T0000$(printf '%02d' "$i")Z-1.log" ] || kept_seeds=$((kept_seeds + 1)); i=$((i + 1)); done
 if [ "$rc" -eq 0 ] && [ -f "$live_log" ] && [ "$(cat "$live_log")" = "ci-local: log $live_log" ] && [ ! -e "$dead_log" ] \
