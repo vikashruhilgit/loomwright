@@ -1548,7 +1548,7 @@ grep -qF 'automate-merge-watch.sh' "$SKILL" && ok "SKILL names automate-merge-wa
 step1="$(grep -m1 -E '^1\. \*\*RECONCILE' "$SKILL")"
 a="${step1%%closeout*}"; b="${step1%%PICK*}"
 if [ -n "$step1" ] && [ "$a" != "$step1" ] && grep -qF -- '--session-id' <<<"$step1" && [ "${#a}" -lt "${#b}" ]; then ok "AC14: §6 step 1 runs closeout --session-id before PICK"; else no "AC14: §6 step 1 closeout wiring"; fi
-hits="$(grep -nE 're-checks the PR each tick|resumes once|resume[sd]? on merge' "$SKILL" "$HERE/../commands/automate.md" "$HERE/../docs/RESULT_SCHEMAS.md" || true)"
+hits="$(grep -nE 're-checks the PR each tick|resumes once|resume[sd]? on merge' "$SKILL" "$HERE/../commands/automate.md" "$HERE/../docs/RESULT_SCHEMAS.md" "$HERE"/../docs/result-schemas/*.md || true)"
 [ -z "$hits" ] && ok "AC14: decision-9 grep has no per-tick/auto-resume claim" || no "decision-9 hits: $hits"
 grep -qF '/loop` re-invokes `/automate` each tick' "$SKILL" && ok "§12's accurate /loop tick sentence kept" || no "§12 /loop sentence changed"
 grep -qF 'closeout' "$HERE/../commands/automate.md" && grep -qF 'trail-pr' "$HERE/../commands/automate.md" && ok "commands/automate.md mirrors the surface" || no "commands/automate.md surface missing"
