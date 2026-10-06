@@ -4,11 +4,15 @@
 
 > **Origin (2026-10-06).** Loomwright Studio's probe p9, on Loomwright 15.123.0 in a throwaway git repo, found that one SDK session with Loomwright loaded **added** three files: `.claude/settings.local.json` (with `env.OTEL_RESOURCE_ATTRIBUTES`, from `set-otel-resource-attrs.sh`), `.supervisor/logs/<session>.jsonl` (`agent_identity`, `agent_lifecycle` and `token_ledger` events) and a lifecycle heartbeat file. Studio's agents work in the owner's real repos. Studio's own sessions don't read that `settings.local.json`, but the owner's own Claude Code sessions in the repo do. So a background agent silently changes the environment of the owner's later sessions, and leaves untracked files in every repo it touches.
 
-## Wave notes (added 2026-10-06 by the S3 operator; owner decision "prep now, lane at wave 3")
-- Runs after 01 in the same lane.
+## Wave notes (added 2026-10-06 by the S3 operator; owner decisions "prep now, lane at wave 3" and "split")
+- **Split 2026-10-06 so 01 and 02 run as parallel wave-3 lanes:** declaring host mode in the contract (the former
+  `host_switch` / per-hook `host_mode` scope bullet and AC6) moved to `03-declare-host-mode-in-contract.md`, which
+  runs after 01 and 02 merge. This item touches no contract file; it does not depend on 01.
+- Reason: an `/automate` run parks `awaiting_merge` after each item's PR and picks the next only after a merge, and
+  wave lanes are merged only at wave close — so "01 then 02 in one lane" would have pushed 02 to wave 4.
 
 ## Depends on
-01
+none
 
 ## Touches
 loomwright/scripts/set-otel-resource-attrs.sh
@@ -27,10 +31,7 @@ loomwright/scripts/guard-test-integrity.sh
 loomwright/scripts/notify-desktop.sh
 loomwright/scripts/send-telemetry.sh
 loomwright/scripts/validate-worker-result.py
-loomwright/scripts/build-capabilities.sh
 loomwright/scripts/test-host-mode.sh
-loomwright/capabilities.json
-loomwright/docs/CAPABILITIES_CONTRACT.md
 loomwright/docs/HOOKS.md
 changelog.d/host-contract-02-host-mode-no-repo-writes.md
 
@@ -55,7 +56,7 @@ One **host-neutral** environment switch. Loomwright picks the name, for example 
 
   `set-otel-resource-attrs.sh` must not touch `.claude/settings.local.json` at all under host mode. It may still export through `CLAUDE_ENV_FILE`, which is session-scoped and not a repo file.
 - **Blocking gates are NOT weakened.** The fail-CLOSED `guard-test-integrity.sh` hooks keep enforcing. If one of them persists state into the repo, redirect that state; never turn the gate into a no-op. Validators keep returning their decisions.
-- Item 01's contract gains `host_switch: {env, state_dir_env, effect}`, and each hook entry gains `host_mode: "redirects" | "skips" | "unaffected"`.
+- ~~Item 01's contract gains `host_switch: {env, state_dir_env, effect}`, and each hook entry gains `host_mode: "redirects" | "skips" | "unaffected"`.~~ Moved to item 03 (split 2026-10-06). This item records each hook's classification (redirects / skips / unaffected) in `docs/HOOKS.md`, which 03 reads.
 - Tests:
   - With host mode on and a state dir, a session-start, a SubagentStop and a Stop hook run against a throwaway git repo. Afterwards, `git status --porcelain --ignored` shows **nothing new** in the repo, and the events are in the state dir.
   - With host mode on and no state dir, nothing new is written anywhere, and every hook exits 0.
@@ -68,7 +69,7 @@ One **host-neutral** environment switch. Loomwright picks the name, for example 
 3. With the switch unset, behaviour and every existing test are unchanged.
 4. Fail-CLOSED gates still enforce under host mode; only their on-disk state moves.
 5. Every repo-writing hook keeps its fail-SAFE `exit 0` under host mode. That includes the cases where the state dir is invalid or missing: the hook skips, never errors.
-6. The contract (`capabilities.json`) declares `host_switch` and each hook's `host_mode`, and is regenerated, so the staleness check passes.
+6. ~~The contract (`capabilities.json`) declares `host_switch` and each hook's `host_mode`, and is regenerated, so the staleness check passes.~~ Moved to item 03 (split 2026-10-06). Instead: `docs/HOOKS.md`'s host-mode section lists every hook with its classification (redirects / skips / unaffected) and the switch's env names, so 03 can declare them without re-auditing.
 7. `docs/HOOKS.md` documents host mode in one place. Ships a `changelog.d` fragment only — no version bump in the item's PR (wave lane; the wave branch carries the one bump, S3 run rule P7; amended 2026-10-06, owner decision).
 
 ## Non-goals
