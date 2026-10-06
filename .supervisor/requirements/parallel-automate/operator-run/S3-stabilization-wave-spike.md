@@ -178,6 +178,16 @@ teardown, machine (load, swap, free) at peak.
   crashed session) each asked a FINALIZE "unsettled child" question after the resume; both answered "proceed". A
   child of a dead session is indistinguishable from a running one → input for af/33 and pa/05's reset recovery.
 - s3-d PR #392 ~17:00Z; s3-b PR #394 17:07Z.
+- s3-a PR #395. Owner decisions on dismissed findings (2026-10-05/06): s3-b #394 fix-now on a pre-existing HIGH
+  (`meta-base` not keyed by branch → a plain pull after a mode-line switch deletes local run history; the S2 harness
+  already drops `meta-base` at lane setup, which is why lanes never hit it) + LOW summary kept; s3-d #392 fix-now on all
+  four (incl. `--last` reporting PASS for a NOT-cached run) + LOW summary dropped; s3-a #395 fix-now on F1 + F2, F3
+  dropped, LOW summary kept. Owner answered ~01:44Z after an overnight gap; lanes waited parked on questions meanwhile.
+- `caffeinate -i -t 14400` (started ~16:05Z) expired ~20:05Z with lanes still live: a timer-only hold outlives nothing
+  useful and dies mid-wave — pa/05 Scope 16 already says `-w <coordinator pid>`, not `-t`.
+- claude-review on #391's operator push (`1f0571b`) posted 3 comments AFTER the lane parked — nobody drains a review
+  that lands after the park (known: drain-dies-before-review). Owner: 1 (CI guard for 04's example grep) + 2
+  (`meta-sync.sh` header wording) folded into ms/10; 3 (changelog wording nit) dropped.
 - **Operator rule until pa/16 + pa/05's load guard merge:** at most 2 lanes building at once; the lane monitor also
   prints `HIGH-LOAD` at load1 ≥ 60, and on it the operator resumes no further lane.
 - Unrecorded follow-up (s3-c, fix-now chosen): anchoring the `meta-sync.sh` `home_path` regex — the draft was deleted

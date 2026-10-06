@@ -30,7 +30,12 @@ still over-matches. Out of `04`'s scope because `meta-sync.sh` is in `08`'s Touc
    (In this file `<x>` and `<42>` stand for a real name or id: written literally they would trip today's scrub and
    block this record's own push. The test uses the real forms.)
 2. A table test in `test-meta-sync.sh`: every case above, plus the S3 false positive verbatim.
-3. Update `04`'s home-path rule sentence in `supervisor-readiness/SKILL.md` and `launch-pad.md` (Phase 5 action 3b)
+3. **Folded in 2026-10-06 (owner, from claude-review's review of #391 at `1f0571b`):**
+   - a CI guard that re-runs `04`'s acceptance grep (no literal home-path examples in `loomwright/agents`,
+     `loomwright/commands`, `loomwright/skills`) so a later PR cannot silently reintroduce one — as a leg in
+     `test-meta-sync.sh` or a `check-*.sh` gate, whichever the repo's existing guards use (decide in the brief);
+   - `meta-sync.sh`'s scrub-table header comment (the `home_path` row) rewritten to describe the shipped regex exactly.
+4. Update `04`'s home-path rule sentence in `supervisor-readiness/SKILL.md` and `launch-pad.md` (Phase 5 action 3b)
    to the new, narrower scope — the "any `/users/<x>/` segment, anywhere" wording is true only for the old regex.
 
 ## Non-goals
@@ -39,7 +44,8 @@ Other scrub rules. Rewriting history already on `loomwright-meta`.
 ## Acceptance criteria
 - The table test passes; `/api/users/<42>/orders` pushes (exit 0), `--state-dir /Users/<x>/.supervisor` is refused
   (exit 2, `home_path`).
-- The rule sentence in both files matches the shipped regex.
+- The rule sentence in both files and the `meta-sync.sh` header comment match the shipped regex.
+- The example-grep guard fails on a fixture that reintroduces a literal home-path example.
 - `bash scripts/ci-local.sh` green; a `changelog.d/` fragment.
 
 ## Validation (must pass before merge)
