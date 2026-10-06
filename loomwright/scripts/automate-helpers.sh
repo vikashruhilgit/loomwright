@@ -54,7 +54,7 @@
 #   sidecar-check    <path>                             # §6 trail: delegated to automate-trail.sh — `ok <path>` / `fail <path>: <reason>` (RESULT_SCHEMAS key-table shape check of a result sidecar); always exits 0
 #   trail-pr         <runfile> [--reason <reason>]      # §6 "Trail PR after merge and at run end": delegated to automate-trail.sh — called only by closeout, at ## Status: done, and on a skip/abandon check-off (never at a park); commits this run's explicit trail paths as ONE PR off fresh origin/main, a done-stamped requirement/done brief only when its PR reads merged; one line (opened|pushed|skipped); always exits 0
 #   closeout         <runfile> <item> <pr_url> [--session-id <sid>]  # §6 post-merge close-out: delegated to automate-trail.sh; always exits 0
-#   closeout-classify [--run <id> --item <p> --pr <u>] [--record <rf>]  # §6 step 1 close-out leftover gate: reads ONE closeout invocation's output on stdin, classifies its `closeout: ` lines against CLOSEOUT_TABLE (a `kept` line is always a leftover; an unknown line is a leftover) ⇒ `complete` or one `leftover\t<run>\t<item>\t<pr>\t<step>\t<detail>` row per leftover; --record appends `closeout: nothing to close out — <item>` (once per item per run) on a complete close-out that changed nothing; exit 0 (usage error 1)
+#   closeout-classify [--run <id> --item <p> --pr <u>] [--record <rf>]  # §6 step 1 close-out leftover gate: reads ONE closeout invocation's output on stdin, classifies its `closeout: ` lines against CLOSEOUT_TABLE (only the partial-removal form `removed — worktree …; kept …` is forced to a leftover; an unknown line is a leftover) ⇒ `complete` or one `leftover\t<run>\t<item>\t<pr>\t<step>\t<detail>` row per leftover; --record appends `closeout: nothing to close out — <item>` (once per item per run) on a complete close-out that changed nothing; exit 0 (usage error 1)
 #   closeout-others  <automate_dir> [--record <runfile>]  # §4 start order: delegated to automate-trail.sh — closeout of every OTHER run whose ## Current names a not-done item with a merged PR (own lock, own trail; mode-off trail-unstage), its classify answer, and one `cross-run closeout <run_id> <item>: …` record line (no PR URL) appended to --record's run file; always exits 0
 #   finalize-empty   <runfile>                          # §3/§4 step 1: delegated to automate-trail.sh — a paused / awaiting_go / remaining-0 / ## Current status-done run ⇒ run lock, `## Status: done` + pause_reason null, `auto-finalized` Progress line, trail-pr --reason done, mode-off trail-unstage; else one `skipped — <reason>` line; always exits 0
 #   dismissed-drafts <runfile> <item> <pr_url> [--after-fix-now]  # §6 "Dismissed-findings decision step (before the park)": delegated to automate-dismissed.sh — one propose-only draft per dismissed finding over the threshold (+ one undecided summary draft per item) in proposed/, content-addressed names, decisions never reset; TSV `draft` rows + one summary line; always exits 0
@@ -950,8 +950,8 @@ reconcile_item() {
 # match wins. test-automate-trail.sh extracts every closeout string template from
 # automate-trail.sh and fails when one matches no row here (a new string must be
 # classified on purpose, never fall through silently). A line matching NO row is a
-# leftover (`unknown`), and a line containing `kept` anywhere is a leftover
-# whatever its row says (closeout_classify applies that precedence).
+# leftover (`unknown`), and the partial-removal form `removed — worktree …; kept …` is a leftover even though
+# its verb row says complete (closeout_classify applies that precedence); a name that merely contains "kept" is classified by its row like any other line.
 CLOSEOUT_TABLE='complete|worktree|removed — worktree *
 complete|branch|removed — branch *
 complete|sync|synced — *
@@ -1042,7 +1042,7 @@ closeout_classify() {
     esac
     n=$((n + 1)); t="${line#closeout: }"
     r="$(_co_classify_line "$t")"; cls="${r%%"$tab"*}"; step="${r#*"$tab"}"
-    case "$t" in *kept*) cls=leftover ;; esac
+    case "$t" in "removed — worktree "*"; kept "*) cls=leftover ;; esac  # partial removal; anchored so a NAME containing "kept" never flips a clean line (S3 wave-1 review)
     case "$t" in "removed — "*|"stamped — "*|"checked — "*|"reconciled — "*) changed=1 ;; esac
     [ "$cls" = leftover ] && rows="${rows}leftover$tab$run$tab$item$tab$pr$tab$step$tab${t//$tab/ }"$'\n'
   done

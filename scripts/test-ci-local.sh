@@ -58,6 +58,7 @@
 #        cached" verdict as UNVERIFIED, exit 1 — never PASS
 #   (PR) 25 seeded logs + one run → 20 remain, the run's own log survives, the oldest are gone;
 #        no logs at all → --last says so, exit 1
+#   (PA) 25 newer finished --affected logs never push the one full-run log out; --last still finds it
 #   (PI) an in-flight log (no verdict, live owner pid) older than 20+ finished logs survives a run's
 #        prune and the total is still 20 (one more finished log goes instead); a verdict-less log
 #        with a dead owner is pruned
@@ -548,6 +549,24 @@ if [ "$rc" -eq 0 ] && [ -f "$live_log" ] && [ "$(cat "$live_log")" = "ci-local: 
    && [ "$(nlogs)" = 20 ] && [ "$kept_seeds" = 18 ] && [ -e "$state/runs/seedkey-x-Linux-20200101T000024Z-1.log" ]; then
   ok "(PI) in-flight log kept untouched, total still 20 (own + live + 18 newest finished), dead-owner verdict-less log pruned"
 else no "(PI) rc=$rc logs=$(nlogs) seeds_kept=$kept_seeds live=$([ -f "$live_log" ] && echo kept || echo GONE) dead=$([ -e "$dead_log" ] && echo KEPT || echo gone)"; fi
+
+# (PA) — --affected logs never push the full-run log out (S3 wave-1 review of #397): one full run,
+# then 25 NEWER finished --affected logs and another --affected run; the full log survives, the total
+# is still 20, and --last still finds it.
+rm -f "$state/runs/"*
+run --force
+pa_full="$(logpath)"
+i=0
+while [ "$i" -lt 25 ]; do
+  echo "ci-local --affected: PASS after 1s" > "$state/runs/seedkey-x-Linux-20990101T0000$(printf '%02d' "$i")Z-1-affected.log"; i=$((i + 1))
+done
+run --affected
+pa_aff="$(logpath)"
+run --last
+if [ -f "$pa_full" ] && [ -f "$pa_aff" ] && [ "$(nlogs)" = 20 ] && [ "$rc" -eq 0 ] \
+   && [ "$(last_line)" = "ci-local --last: PASS $pa_full" ]; then
+  ok "(PA) 25 newer --affected logs + an --affected run: the full-run log survives, total 20, --last finds it"
+else no "(PA) full=$([ -f "$pa_full" ] && echo kept || echo GONE) logs=$(nlogs) rc=$rc last=$(last_line)"; fi
 
 # (PG) — the run's own log removed mid-run: no verdict-only stub is recreated, the run says so.
 rm -f "$state/runs/"*

@@ -438,12 +438,18 @@ sr_pr_state() {
 # out — /automate --resume closes it out`; unverified (gh absent/failing/slow, or
 # past the 5-call cap) ⇒ `automate: <run_id> item <item> PR <url> merge state
 # unverified`; OPEN/CLOSED ⇒ nothing. No in-flight PR ⇒ no call, nothing printed.
+# /automate run-file title ERE — a byte-identical COPY of automate-helpers.sh's _RUN_TITLE_BOM and
+# RUN_TITLE_ERE (is_run_file; its header states the tolerated forms: leading BOM, up to 3 spaces of
+# indent, any case). This hook does not source the helper; test-session-resume.sh asserts the copies
+# match (S3 wave-1 review: a narrower private pattern here skipped BOM run files silently).
+_RUN_TITLE_BOM="$(printf '\357\273\277')"
+RUN_TITLE_ERE="^(${_RUN_TITLE_BOM})? {0,3}#[[:blank:]]*[Aa][Uu][Tt][Oo][Mm][Aa][Tt][Ee][[:blank:]]+[Rr][Uu][Nn][[:blank:]]*:"
 automate_inflight_lines() {
   [ -d ".supervisor/automate" ] || return 0
   local f cl item st pr state calls=0 out=""
   for f in .supervisor/automate/*.md; do
     [ -f "$f" ] || continue
-    grep -qiE '^#[[:space:]]*automate[[:space:]]+run[[:space:]]*:' "$f" 2>/dev/null || continue
+    env LC_ALL=C grep -qE "$RUN_TITLE_ERE" "$f" 2>/dev/null || continue
     grep -qE '^## Status:[[:space:]]*done' "$f" 2>/dev/null && continue
     cl="$(awk '/^## Current/{c=1;next} /^## /{c=0} c && /^- item: /{print; exit}' "$f" 2>/dev/null)"
     [ -n "$cl" ] || continue
