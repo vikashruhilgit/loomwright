@@ -147,6 +147,10 @@
 #      throwaway-clone assertion (43) by pushing the real loomwright-meta
 #  52. (xi) a mutant without load_base's branch-binding check MUST fail the branch-switch
 #      assertion (50) by deleting the switched clone's a.md + b.md
+#  53. home_path is anchored: ten home-path forms hit; the S3 false positive /api/users/42/, a /v1 route,
+#      a URL's /home/ segment and the angle-bracket placeholders do not, and push once the positives go
+#  54. guard: no literal home-path example in loomwright/agents|commands|skills, read off the shipped rule
+#  55. (xii) a mutant with the old unanchored home_path rule MUST fail the API-route assertion (53)
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -1680,6 +1684,71 @@ if build_mutant "$MUT_XI" 's@^  if \[ -n "\$bb" \] && \[ "\$bb" != "\$BRANCH" \]
   fi
 else
   no "mutation control (xi): could not build the mutant (sed did not apply or bash -n failed) — control inconclusive"
+fi
+
+echo "== 53. home_path is ANCHORED: real home paths hit, an API route's users/<id>/ segment does not (ms/11) =="
+synced_pair
+put B "$RQ/h-start.md" "/Users/alice/project/notes"
+put B "$RQ/h-tick.md" 'see `/Users/alice/x` for the path'
+put B "$RQ/h-flag.md" "bash x.sh --state-dir /Users/alice/.supervisor --jsonl"
+put B "$RQ/h-dq.md" 'path "/home/bob/src" in the config'
+put B "$RQ/h-file.md" "open file:///Users/alice/doc.md"
+put B "$RQ/h-env.md" "HOME=/Users/alice/"
+put B "$RQ/h-win.md" "C:/Users/alice/proj"
+put B "$RQ/h-rel.md" "../Users/alice/x"
+put B "$RQ/h-paren.md" "(/home/bob/)"
+put B "$RQ/h-lower.md" "/users/alice/lower-case volume"
+# negatives in the SAME push: the S3 false positive verbatim (s3-c's run file), plus other routes/URLs
+put B "$RQ/n-api.md" 'after rewriting the sidecar'"'"'s literal /api/users/42/ example to a scrub-safe place'
+put B "$RQ/n-v1.md" "GET /v1/users/abc/profile"
+put B "$RQ/n-url.md" "https://example.com/home/page/"
+put B "$RQ/n-ph.md" 'write /Users/<name>/myapp and /api/users/<id>/orders'
+tip="$(br_tip)"; base_before="$(base_of B)"
+ms B push
+{ [ "$RC" -eq 2 ] && [ "$(br_tip)" = "$tip" ] && [ "$(base_of B)" = "$base_before" ]; }
+check $? "home-path positives -> exit 2, branch tip and meta-base unchanged (rc=$RC)"
+for h in h-start h-tick h-flag h-dq h-file h-env h-win h-rel h-paren h-lower; do
+  grep -qxF "meta_sync: scrub $RQ/$h.md: home_path" < <(printf '%s\n' "$OUT")
+  check $? "home path still hits: $h ($(get B "$RQ/$h.md"))"
+done
+for n in n-api n-v1 n-url n-ph; do
+  ! grep -qF "meta_sync: scrub $RQ/$n.md:" < <(printf '%s' "$OUT")
+  check $? "not a home path, not named: $n ($(get B "$RQ/$n.md"))"
+done
+rm -f "$W/B/$RQ"/h-*.md
+ms B push
+{ [ "$RC" -eq 0 ] && br_has "$RQ/n-api.md" && br_has "$RQ/n-v1.md" && br_has "$RQ/n-url.md" && br_has "$RQ/n-ph.md"; }
+check $? "the S3 false positive (/api/users/42/) and the other routes push (rc=$RC: $OUT)"
+
+echo "== 54. no literal home-path example in the shipped prompts (ms/04's acceptance grep, now a guard) =="
+# The guard reads the SHIPPED home_path rule out of meta-sync.sh, so it can never drift from the scrub.
+HP_RE="$(sed -n 's/^home_path\${TAB}i\${TAB}//p' "$SUT")"
+REPO_ROOT="$(cd "$HERE/../.." && pwd)"
+home_examples() { env LC_ALL=C grep -rniE -e "$HP_RE" "$1/loomwright/agents" "$1/loomwright/commands" "$1/loomwright/skills" 2>/dev/null; }
+[ -n "$HP_RE" ]; check $? "the home_path rule was read from meta-sync.sh ($HP_RE)"
+hits="$(home_examples "$REPO_ROOT")"
+[ -z "$hits" ]; check $? "agents/commands/skills carry no literal home-path example — use /Users/<name>/ (got: $(printf '%s' "$hits" | head -3 | tr '\n' '|'))"
+FX="$TROOT/guard-fixture"; mkdir -p "$FX/loomwright/agents" "$FX/loomwright/commands" "$FX/loomwright/skills/x"
+printf '%s\n' '- **Project:** /Users/name/my-project' > "$FX/loomwright/skills/x/SKILL.md"
+[ -n "$(home_examples "$FX")" ]; check $? "the guard fires on a fixture that reintroduces a literal example (/Users/name/)"
+
+echo "== 55. mutation control (xii): the old unanchored home_path rule -> the API-route assertion (53) must turn red =="
+MUT_XII="$TROOT/mutant-xii"
+if build_mutant "$MUT_XII" 's@^home_path\${TAB}i\${TAB}(^|\[^A-Za-z0-9_-\])/(Users|home)/@home_path${TAB}i${TAB}/(Users|home)/@' 'home_path${TAB}i${TAB}/(Users|home)/[A-Za-z0-9._-]+/'; then
+  synced_pair
+  put B "$RQ/n-api.md" 'the literal /api/users/42/ example'
+  SCRIPT="$MUT_XII/meta-sync.sh"
+  ms B push
+  SCRIPT="$SUT"
+  if [ "$RC" -eq 0 ]; then
+    no "mutation control (xii) REFUTED: the unanchored mutant pushed the API route — the anchoring assertion is not load-bearing"
+  elif [ "$RC" -eq 2 ] && grep -qxF "meta_sync: scrub $RQ/n-api.md: home_path" < <(printf '%s\n' "$OUT"); then
+    ok "mutation control (xii): the unanchored mutant refuses /api/users/42/ as home_path — the anchoring assertion is load-bearing"
+  else
+    no "mutation control (xii): the mutant failed for another reason (rc=$RC: $OUT) — control inconclusive"
+  fi
+else
+  no "mutation control (xii): could not build the mutant (sed did not apply or bash -n failed) — control inconclusive"
 fi
 
 echo

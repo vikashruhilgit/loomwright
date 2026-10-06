@@ -15,7 +15,7 @@ EXECUTE_CHECKPOINT:
       dependencies: [add-jwt-guard]
   resume_context:
     tool_calls_used: 58
-    active_worktrees: [/Users/name/myapp-add-refresh-token]
+    active_worktrees: [/Users/<name>/myapp-add-refresh-token]
     feature_branch: feature/auth-hardening
   reason: "Tool-call budget exhausted at 58/60 with one subtask still pending."
   adjudication_required: true
