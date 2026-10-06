@@ -110,7 +110,26 @@ depends, the moved pa/06 fragments).
   per-schema files under `docs/result-schemas/`, `RESULT_SCHEMAS.md` kept as the anchor-preserving index, every
   parser of the doc kept working, and every open item's Touches re-pointed after the merge.
 
-## Wave plan (re-planned 2026-10-06, second pass; S3 planner rule; `plan-waves --max 5`; 15 items)
+## Wave plan — OWNER ORDER 2026-10-06 (critical path first; relayed by session 53b1897e; supersedes the planner tables below)
+Wave 2 confirmed by the operator with `plan-waves --max 5 --explain` under the S3 rule on the real files at
+`e141b08`: pa/11 · pa/16 · agnostic/04 share no file. agnostic/04 is on the critical path of both Milestone A
+(ms/07 + agnostic/04) and pa/05; ms/05 is on neither since pa/05 depends on ms/07. Milestone A moves to after wave 3.
+| Wave | Items | Lanes | Note |
+|---|---|---|---|
+| 2 | pa/11 (+ `RESULT_SCHEMAS.md` split) · pa/16 machine load guard · agnostic/04 non-interactive gates | 3 | at most 2 building at once until pa/16 merges; the third starts when one reaches review |
+| 3 | ms/07 · ms/11 · af/31 · af/33 | 4 | relies on pa/11's split (only `RESULT_SCHEMAS.md` keeps them apart today) → **Milestone A** |
+| 4 | pa/05 lane coordinator | 1 | |
+| 5 | pa/06 (+ Part S) · pa/14 | 2 | |
+| 6 | af/34 sweep + janitor | 1 | |
+| 7 | ms/05 learning stores (A–C) | 1 | |
+| 8 | pa/12 policy answers | 1 | |
+| 9 | pa/18 board + right-size | 1 | |
+| 10 | pa/07 pilot + docs | 1 | → **Milestone B** |
+Waves 3+ are a simulation, to be confirmed by the post-pa/11 re-plan (Touches re-checked against the split files).
+Waves 6–9 serialize on `automate-loop/SKILL.md` and `commands/automate.md` (not split by pa/11) and on
+`automate-helpers.sh` (split by pa/11, not modelled), so the re-plan may join some of them.
+
+## Wave plan (planner, 2026-10-06 second pass — superseded by the owner order above; S3 planner rule; `plan-waves --max 5`; 15 items)
 | Wave | Items | Lanes |
 |---|---|---|
 | 2 | pa/11 split hotspots (+ RESULT_SCHEMAS) · pa/16 machine load guard · ms/05 learning stores (A–C) | 3 |
