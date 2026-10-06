@@ -287,6 +287,18 @@ coordinator. Without the flag, or with `--parallel 1`, no lane code runs at all.
     - **Tests:** a launch with no owner-invoked command in the session context ⇒ refused, `BLOCKED` first line, no
       process started; a fixture host denial on the spawn ⇒ `blocked_launch` in `lane-status`, the other lanes untouched,
       no retry; the resume path launches only through `/automate --resume <run_id>`.
+17b. **`lane-status --json` fields for the pane** (added 2026-10-06, owner; item 14 reads them, it never reads lane
+    files). Add to the JSON:
+    - top level `machine`: `{state, load1, cpus, mem_pressure, keep_awake}` — `state`/`load1`/`mem_pressure` from item
+      16's `machine-load.sh` (`unknown` when it is absent or unreadable — fail-SAFE, never blocks `lane-status`),
+      `keep_awake` from Scope 16 (`held` / `not held`);
+    - per pending question: `asked_at` (UTC, ISO 8601), written by the ask-user relay when the question is recorded,
+      and `waiting_s` computed by `lane-status` at read time;
+    - per lane: `last_message` — the lane's most recent assistant text, trimmed to 300 chars, read from the lane's
+      stream log; empty when none.
+    - **Tests:** a fixture lane with a question recorded at a known time ⇒ `asked_at` echoed and `waiting_s` grows;
+      a missing `machine-load.sh` ⇒ `machine.state: "unknown"` and exit 0; `last_message` is the last assistant text,
+      not a tool-use line, and is trimmed.
 
 ## Non-goals
 Merging and the release bump (item 06). More than one wave at once. Lanes on other machines. A `-runner` agent.
@@ -301,6 +313,8 @@ stamped countable rule check parks `rules_unstamped` and that is correct.
 - Killing one lane's process leaves the other running and shows that lane as `died`.
 - (Scope 17) A lane launch not backed by an owner-invoked command in the session is refused with a
   `lane-launch: BLOCKED — …` first line and no process; a host-denied spawn shows `blocked_launch` and is not retried.
+- (Scope 17b) `lane-status --json` carries `machine`, each pending question's `asked_at` / `waiting_s`, and each
+  lane's `last_message`; an unreadable machine reader yields `machine.state: "unknown"`, never an error.
 - Full test loop + root checks green.
 
 ## Validation (must pass before merge)

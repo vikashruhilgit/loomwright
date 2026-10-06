@@ -31,6 +31,16 @@ questions — while the lanes, the core scripts and every other harness behave i
   branch, last progress, last 3 actions, a Details toggle with the last ~20 steps, merge-readiness (`ready 5/5` or the
   failing checks), and the question with one button per option plus a send button that refuses until every question
   has exactly one option picked. Refresh every 15 s; an action refreshes at once.
+- **Added 2026-10-06 (owner, from the S3 wave-2 operator rebuild of the prototype):** three more things in the pane,
+  each read from `lane-status --json` only (item 05 Scope 17b supplies the fields; the pane computes nothing from lane
+  files):
+  - **a machine-health line** at the top: load state (`ok` / `busy` / `overloaded` from item 16's `machine-load.sh`,
+    with load1 and memory pressure), keep-awake (`held` / `not held`), and a visible HIGH-LOAD alert when the state is
+    `overloaded` (wave 1 froze the machine at load1 119 with nothing on screen saying so);
+  - **a wait time on every pending question** ("waiting 12 m"), from the question's `asked_at`, oldest first — the
+    longest wait in S3 wave 1 was ~8.5 h overnight and nothing showed it;
+  - **each lane's latest message**: the lane's own most recent assistant text, one or two lines, beside the last
+    actions (which are tool steps, not what the lane said).
 - **Failure is fail-safe:** a failing `lane-status` call shows "status unavailable" and changes nothing; a refused
   answer shows `lane-answer`'s refusal text verbatim.
 
@@ -66,6 +76,8 @@ questions — while the lanes, the core scripts and every other harness behave i
 - Installing `loomwright-lanes` from the marketplace in a fresh session gives a working `/lanes` pane over a real
   two-lane run; uninstalling it changes nothing about that run.
 - `grep` over the plugin shows no read of lane files and no command other than the three core lane commands.
+- (2026-10-06) A fixture `lane-status --json` renders the machine-health line (incl. the HIGH-LOAD alert on
+  `overloaded`), a wait time on each pending question, and each lane's latest message.
 
 ## Validation (must pass before merge)
 1. Baseline full loop on base and branch, `<passed>/<total>` and `SKIP` counts.
