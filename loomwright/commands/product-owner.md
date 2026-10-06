@@ -35,6 +35,9 @@ description: Translate business problems into user stories (Beads-optional) with
 - **--brainstorm deep** (optional): Deep ideation with 2 debate rounds and market research via WebSearch
   - Example: `/product-owner feature: "new pricing model" --brainstorm deep`
 
+- **--non-interactive** (optional): No human to ask — passed by `/automate --non-interactive-fallback` or any CI / headless caller. If the Assumption Check raises prerequisite flags or architecture conflicts, nothing is persisted (no Beads tasks, no requirements file) and the output ends with `po_gate: needs_owner (<n> flags)`; with no flags, behaviour is unchanged. Running as a subagent takes the same branch (the ask tool is absent there).
+  - Example: `/product-owner feature: "order export" --non-interactive`
+
 - **--project** (optional): Explicit path to project (overrides auto-detect)
   - Example: `/product-owner feature: "..." --project /path/to/project`
 
@@ -42,7 +45,7 @@ description: Translate business problems into user stories (Beads-optional) with
 
 1. **Reads domain context** from project's CLAUDE.md (roles, workflows, terminology)
 2. **Checks existing stories** — Beads when active, else prior `.supervisor/requirements/*.md` — for conflicts or overlap
-3. **Runs Assumption Check (standard flow)** — grounded feasibility against the codebase (domain entities, architecture alignment, prerequisites). If prerequisites or architecture conflicts are found, asks for confirmation before persisting any stories.
+3. **Runs Assumption Check (standard flow)** — grounded feasibility against the codebase (domain entities, architecture alignment, prerequisites). If prerequisites or architecture conflicts are found, asks for confirmation before persisting any stories; when it cannot ask (`--non-interactive`, or running as a subagent) it persists nothing and emits `po_gate: needs_owner (<n> flags)`.
 4. **(If --brainstorm) Runs multi-mind ideation** — 5 expert lenses generate options independently, debate each other, score ideas on Impact/Feasibility/Revenue/Uniqueness (1-10). Then runs **Reality Check (Phase 3.5)** — grounded validation of top 2-3 ideas against the codebase, capping Feasibility scores for ideas that need foundation work (≤5) or are blocked (≤2). Recommends a winner based on post-check ranking.
 5. **Runs product discovery** to understand the problem before solutions
 6. **Writes user stories** with testable acceptance criteria
@@ -345,6 +348,8 @@ Wherever this prompt says `bd create` / `bd list` / `BD-XX`, apply the resolved 
    - "Refine requirements" — Loop back to Discovery (max 1 iteration)
    - "Abort" — Exit without creating Beads stories
 
+   **Can't-ask branch (`--non-interactive`, or running as a subagent):** you cannot ask when the run carries `--non-interactive` (e.g. passed by `/automate --non-interactive-fallback`) OR you are executing as a spawned subagent — the ask tool is absent from your tool set, because Claude Code removes it from every subagent. Decide from that flag and your spawn context, never from a stdin-TTY probe alone (it false-positives inside the Bash tool). If you cannot ask and flags exist: create no Beads tasks and persist no requirements file; output the flags and the draft stories, then end with the machine-readable line `po_gate: needs_owner (<n> flags)` (`<n>` = prerequisite flags + architecture conflicts). Never choose an option on the owner's behalf.
+
    **If no flags:** Proceed silently to story writing.
 
    **Rule:** NEVER run `bd create` (or persist a requirements file in file-fallback mode) when flags exist without explicit user confirmation.
@@ -432,7 +437,7 @@ If `--brainstorm deep` is used, also run WebSearch for market context during Pha
 - Reference skills by path — don't duplicate skill content
 - Persist stories per Persistence Mode — `bd create --type story` when `beads_active`, else one `.supervisor/requirements/*.md` file per story
 - Provide explicit handoff to `/orchestrator`
-- **NEVER run `bd create`** (or, in file-fallback mode, persist a requirements file) if Assumption Check flagged prerequisites or architecture conflicts without explicit user confirmation via `AskUserQuestion` (Proceed / Refine / Abort)
+- **NEVER run `bd create`** (or, in file-fallback mode, persist a requirements file) if Assumption Check flagged prerequisites or architecture conflicts without explicit user confirmation via `AskUserQuestion` (Proceed / Refine / Abort) — cannot ask ⇒ the can't-ask branch (`po_gate: needs_owner`, nothing persisted)
 
 **DO NOT:**
 - Jump straight to technical implementation
@@ -449,7 +454,7 @@ Before outputting stories, verify:
 - [ ] Discovery questions answered (or explicitly skipped with rationale)
 - [ ] Domain context loaded from CLAUDE.md
 - [ ] Assumption Check performed — entities verified, prerequisites/conflicts flagged
-- [ ] If Assumption Check flagged concerns, user confirmation obtained via AskUserQuestion BEFORE any `bd create`
+- [ ] If Assumption Check flagged concerns, user confirmation obtained via AskUserQuestion BEFORE any `bd create` (cannot ask ⇒ nothing persisted, `po_gate: needs_owner (<n> flags)` emitted)
 - [ ] User stories follow "As a [role], I want [X], so that [Y]" format
 - [ ] Acceptance criteria are testable (Given/When/Then)
 - [ ] Edge cases and error scenarios covered
@@ -501,7 +506,7 @@ Before outputting stories, verify:
 - [!] Prerequisites flagged: [list or "None"]
 - [!] Architecture conflicts: [list or "None"]
 
-**If any flags:** User confirmation obtained via AskUserQuestion before proceeding to story writing.
+**If any flags:** User confirmation obtained via AskUserQuestion before proceeding to story writing. Cannot ask ⇒ flags + draft stories, nothing persisted, last line `po_gate: needs_owner (<n> flags)`.
 
 ---
 
