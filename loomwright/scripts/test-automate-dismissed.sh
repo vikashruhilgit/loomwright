@@ -730,6 +730,28 @@ t12_has src/app.ts && ok "A12 containment (e): a normal existing path is still a
 ! t12_has .git/config && ! t12_has .GIT/config && ! t12_has .git/HEAD && ok "A12 containment (d): .git/ paths are rejected (any case)" || no "A12 containment (d): .git path leaked into Touches: '$T12'"
 [ "$T12" = "$(printf 'indir/app.ts\nsrc/app.ts')" ] && ok "A12 Touches is exactly the two contained paths" || no "A12 Touches set: '$(tr '\n' '|' <<<"$T12")'"
 
+echo "== LN. parallel-automate/05 Scope 7: the PARENT run file sees and decides its lanes' drafts =="
+fx 90 par-5; mkdir -p "$PROP"
+ln_draft() { printf '# Dismissed finding: %s\n\n- **Decision:** undecided\n' "$1" > "$PROP/$1"; }
+ln_draft par-5-L1--a-111111--dismissed-0123abcd.md
+ln_draft par-5-L2--b-222222--dismissed-summary.md
+ln_draft par-5-Lx--c-333333--dismissed-89abcdef.md
+ln_draft par-5--d-444444--dismissed-fedcba98.md
+[ "$(bash "$H" dismissed-pending "$RF")" = "3" ] && ok "LN dismissed-pending on the parent counts its own draft + both -L<n> lane drafts (not the -Lx look-alike)" || no "LN pending: $(bash "$H" dismissed-pending "$RF")"
+: > "$AD/par-5-L1.dismissed-decisions"
+ln_o="$(bash "$H" dismissed-decide "$RF" "$PROP/par-5-L1--a-111111--dismissed-0123abcd.md" drop)"
+{ [ "$ln_o" = "dismissed-decide: drop par-5-L1--a-111111--dismissed-0123abcd.md" ] && [ ! -e "$PROP/par-5-L1--a-111111--dismissed-0123abcd.md" ] \
+  && grep -q "^par-5-L1--a-111111--dismissed-0123abcd.md	drop	" "$AD/par-5-L1.dismissed-decisions" && [ ! -e "$AD/par-5.dismissed-decisions" ]; } \
+  && ok "LN dismissed-decide accepts a lane draft; with the lane's ledger present the row goes THERE, not to the parent's" || no "LN decide lane draft (lane ledger): '$ln_o'"
+ln_o="$(bash "$H" dismissed-decide "$RF" "$PROP/par-5-L2--b-222222--dismissed-summary.md" follow-up)"
+{ [ "$ln_o" = "dismissed-decide: follow-up par-5-L2--b-222222--dismissed-summary.md" ] && grep -q "^par-5-L2--b-222222--dismissed-summary.md	follow-up	" "$AD/par-5.dismissed-decisions"; } \
+  && ok "LN dismissed-decide: a lane draft with no lane ledger is decided against the parent's ledger" || no "LN decide lane draft (parent ledger): '$ln_o'"
+[ "$(bash "$H" dismissed-pending "$RF")" = "1" ] && ok "LN dismissed-pending after both lane decisions = 1 (the parent's own)" || no "LN pending after: $(bash "$H" dismissed-pending "$RF")"
+ln_o="$(bash "$H" dismissed-decide "$RF" "$PROP/par-5-Lx--c-333333--dismissed-89abcdef.md" drop)"
+{ [ "$ln_o" = "dismissed-decide: refused — not a draft of run par-5" ] && [ -e "$PROP/par-5-Lx--c-333333--dismissed-89abcdef.md" ]; } && ok "LN dismissed-decide refuses a -Lx look-alike (not a lane id), file kept" || no "LN look-alike: '$ln_o'"
+printf '# Automate Run: lane\n## Status: running\n## Queue\n- [ ] %s\n## Progress\n- t0\n' "$ITEM" > "$AD/par-5-L2.md"
+[ "$(bash "$H" dismissed-pending "$AD/par-5-L2.md")" = "0" ] && ok "LN a lane's own run file does not see the parent's or a sibling lane's drafts" || no "LN lane pending: $(bash "$H" dismissed-pending "$AD/par-5-L2.md")"
+
 echo
 echo "test-automate-dismissed: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

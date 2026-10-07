@@ -283,6 +283,32 @@ else
 fi
 rm -rf "$MUTDIR"
 
+echo "== 15. parallel-automate/05 Scope 8: --root repeated sums across roots (one line) =="
+MR="$(mktemp -d)"
+for mr_r in P L1 L2; do mkdir -p "$MR/$mr_r/.supervisor/logs" "$MR/$mr_r/.supervisor/automate"; done
+mr_ev() { printf '{"event":"token_ledger","input_tokens":%s,"output_tokens":%s,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}\n' "$2" "$3" >> "$1"; }
+mr_ev "$MR/P/.supervisor/logs/s9.jsonl" 100 10
+mr_ev "$MR/L1/.supervisor/logs/s9.jsonl" 20 2
+mr_out="$(bash "$SUT" --session s9 --root "$MR/P" --root "$MR/L1" --root "$MR/L2")"
+[ "$mr_out" = "INPUT=120 OUTPUT=12 CACHE_READ=0 CACHE_CREATE=0 TOTAL=132 EVENTS=2" ] && ok "--session over three roots sums the two readable ledgers into ONE line (a root with no log adds 0)" || no "multi-root --session: $mr_out"
+mr_out="$(bash "$SUT" --session s9 --root "$MR/P" --root "$MR/P")"
+[ "$mr_out" = "INPUT=100 OUTPUT=10 CACHE_READ=0 CACHE_CREATE=0 TOTAL=110 EVENTS=1" ] && ok "a root named twice is read once (no double count)" || no "duplicate root: $mr_out"
+# --run-id <parent>: the parent's run file in the primary + each lane's own <parent>-L<n>.md via lane.json.
+printf '# Automate Run: par-7\n## Progress\n- t session_id sp (x)\n' > "$MR/P/.supervisor/automate/par-7.md"
+mr_ev "$MR/P/.supervisor/logs/sp.jsonl" 1000 0
+for mr_n in 1 2; do
+  printf '{"schema_version":1,"lane":"L%s","run_id":"par-7-L%s","parent_run_id":"par-7"}\n' "$mr_n" "$mr_n" > "$MR/L$mr_n/.supervisor/lane.json"
+  printf '# Automate Run: par-7-L%s — x\n## Progress\n- t session_id sl%s (x)\n' "$mr_n" "$mr_n" > "$MR/L$mr_n/.supervisor/automate/par-7-L$mr_n.md"
+  mr_ev "$MR/L$mr_n/.supervisor/logs/sl$mr_n.jsonl" "${mr_n}00" 0
+done
+mr_out="$(bash "$SUT" --run-id par-7 --root "$MR/P" --root "$MR/L1" --root "$MR/L2")"
+[ "$mr_out" = "INPUT=1300 OUTPUT=0 CACHE_READ=0 CACHE_CREATE=0 TOTAL=1300 EVENTS=3" ] && ok "--run-id <parent> over the primary + two lanes sums every lane's own run sessions (parent total)" || no "multi-root --run-id: $mr_out"
+mr_out="$(bash "$SUT" --run-id par-7 --root "$MR/P")"
+[ "$mr_out" = "INPUT=1000 OUTPUT=0 CACHE_READ=0 CACHE_CREATE=0 TOTAL=1000 EVENTS=1" ] && ok "one --root is unchanged: only that root's run is summed" || no "single root: $mr_out"
+mr_out="$(bash "$SUT" --session nope --root "$MR/L1" --root "$MR/L2")"
+[ "$mr_out" = "INPUT=0 OUTPUT=0 CACHE_READ=0 CACHE_CREATE=0 TOTAL=0 EVENTS=0 LEDGER_UNREADABLE=1" ] && ok "no root readable ⇒ LEDGER_UNREADABLE=1 (never a silent 0)" || no "none readable: $mr_out"
+rm -rf "$MR"
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
