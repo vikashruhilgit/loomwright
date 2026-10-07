@@ -2,7 +2,8 @@
 # guard-test-integrity.sh — PreToolUse[Bash] + PreToolUse[Write|Edit] fail-CLOSED deny
 # gate. The plugin's FIRST blocking `type: command` hook (see CLAUDE.md's
 # `|| true` convention — the two hooks.json leaves that invoke this script
-# carry NO `|| true`, unlike every other command hook in the plugin).
+# carry NO `|| true`, unlike the fail-SAFE command hooks; guard-finalize-publish.sh's
+# PreToolUse[Bash] leaf is the other fail-CLOSED leaf without it).
 #
 # Companion: guard-arm.sh (writes/removes the per-session marker files this
 # script reads). Source spec:
