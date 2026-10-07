@@ -577,6 +577,29 @@ teardown, machine (load, swap, free) at peak.
 - s3-k (hc/01) asked "Start new run?" but NOT the queue-confirm question the other three lanes asked (pa/12
   evidence: a gate firing inconsistently, this time the queue gate).
 
+### Merge checks — #410 (af/33, lane s3-j, parked `awaiting_merge` 09:42Z, head `6d802cf`)
+- `ci` + `claude-review` success ON `6d802cf`; latest bot review "no new findings"; every dismissed finding decided
+  (owner: 5 fix-now incl. the guard-evasion class against the lane's follow-up recommendation, 1 follow-up, 1 drop,
+  1 summary kept). Scope: 33 files, 21 outside af/33's `## Touches` (hook-count docs, schemas, the new guard +
+  `loom-log-owner.sh`, `self-heal-advisory` heal push, `vendor-coupling-manifest.json`).
+- **Live probe of the "Not verified" items (owner yes; $0.55):** `claude -p --plugin-dir <#410 head>/loomwright` in a
+  scratch clone with a local bare remote and a running `## Session` in `state.md`. Only the inline loomwright loaded.
+  (1) `git push` before the marker → **denied** by the `PreToolUse[Bash]` hook
+  (`finalize_publish_guard: denied — run FINALIZE point 5 first …`); `write-marker` → marker on HEAD; the same push
+  → **allowed**. (3) a `general-purpose` Task stop writes `ended` rows **with `agent_type: general-purpose`** at both
+  seams (`subagent_stop`, `task_return`) on CLI 2.1.288. Item (2) (background child at its turn limit) stays the PR's
+  documented honest limit.
+- Probe observations (not blockers): the same `PostToolUse[Task]` leaf list runs identity + heartbeat + ended in
+  parallel, so a `working` heartbeat row can land AFTER the `ended` rows (same second). `check-children-settled.sh`
+  is order-insensitive (synthetic identity + 2×ended + late working ⇒ `settled`), but a "last row = current state"
+  reader (e.g. a floor/pane) would show the agent as running. Also: `emit-agent-identity.sh` writes to the
+  `<cc_session_id>.jsonl` log while lifecycle rows go to the plugin session's log; equal in a normal run (s3-j:
+  `state.md` session_id = the CC UUID), different only when they differ (the probe; a `/supervisor --continue`
+  resume in a new CC session would make point 5 read `no_identity_rows` for post-resume children). Pre-existing
+  (identity emitter unchanged by #410) — follow-up candidate.
+- Wave-branch overlaps (from the four PRs' file lists): `vendor-coupling-manifest.json` (#410, #412, #417),
+  `CLAUDE.md` (#410, #412), `TELEMETRY.md` (#410, #415), `ci.yml` + `ARCHITECTURE_CONTRACTS.md` (#412, #417).
+
 ## Done when
 All items in the queue (19 after the 2026-10-06 restructures) merged or closed by the owner, each wave's records on `loomwright-meta`, lanes torn down with `leaks`
 empty, the measures above recorded in this file, and P2 (default lane count) revisited with S2 + S3 evidence.
