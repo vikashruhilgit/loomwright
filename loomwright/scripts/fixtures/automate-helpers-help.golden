@@ -43,6 +43,9 @@
   init-check       --parallel N [--auto-merge]        # parallel-automate/05: delegated to automate-lanes.sh — INIT refusals: `ok` | `refuse: <reason>` (exit 1)
   pick-guard       <automate_dir>                     # parallel-automate/05: delegated to automate-lanes.sh — PICK guard: `ok` | `refuse: live_lane <run_id> <lane>` (exit 1)
   branch-check     <lane_dir> <branch>                # parallel-automate/05: delegated to automate-lanes.sh — remote branch-name check; prints the name to use (suffix -L<n>) or refuses
+  lane-status      [<parent_runfile>] [--json] [--watch] [--leaks [--snapshot]] [--resources | --tokens]  # parallel-automate/05: delegated to automate-lanes.sh — one line per lane (state, item, PR, question, CI slot, readiness); --json adds machine state; fail-SAFE observer (exit 0)
+  lane-feed        <lane_dir|L<n>> [--follow]         # parallel-automate/05: delegated to automate-lanes.sh — readable narration of the lane's stream log
+  lane-readiness   <lane_dir|L<n>>                    # parallel-automate/05: delegated to automate-lanes.sh — writes <run_id>.merge-readiness.md (PASS/FAIL/NOT-RUN per check; advisory, never merges)
   merged          — PR is MERGED (gh state==MERGED or mergedAt non-null);
   awaiting_merge  — PR is OPEN/unmerged; item stays awaiting_merge even if the
   gone            — PR is CLOSED-unmerged (neither merged nor open).

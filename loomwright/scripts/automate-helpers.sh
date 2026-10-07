@@ -32,9 +32,11 @@
 # one `## Progress` line per decision — never git, never `gh`. A third carve-out
 # (parallel-automate/05, reached ONLY by `/automate --parallel N>1` — never by the
 # sequential loop): `lane-create`/`lane-launch`/`relay-hook`/`lane-answer`/
-# `lane-remove`/`lane-info`/`init-check`/`pick-guard`/`branch-check` are delegated
-# to the sibling `automate-lanes.sh`, which clones lanes under `<primary>-lanes/`,
-# launches/resumes them headless, writes the lane table sidecar and the lane inbox,
+# `lane-remove`/`lane-info`/`init-check`/`pick-guard`/`branch-check` and the
+# observers `lane-status`/`lane-feed`/`lane-readiness` are delegated to the sibling
+# `automate-lanes.sh`, which clones lanes under `<primary>-lanes/`, launches/resumes
+# them headless, writes the lane table sidecar, the lane inbox and the advisory
+# `<run_id>.merge-readiness.md` report (never a merge),
 # and removes a lane only through its own fail-CLOSED refusals — never `gh pr merge`,
 # never a force-push, never a write into a launched lane beyond the inbox answer file.
 # UNCOUNTED by the
@@ -86,6 +88,9 @@
 #   init-check       --parallel N [--auto-merge]        # parallel-automate/05: delegated to automate-lanes.sh — INIT refusals: `ok` | `refuse: <reason>` (exit 1)
 #   pick-guard       <automate_dir>                     # parallel-automate/05: delegated to automate-lanes.sh — PICK guard: `ok` | `refuse: live_lane <run_id> <lane>` (exit 1)
 #   branch-check     <lane_dir> <branch>                # parallel-automate/05: delegated to automate-lanes.sh — remote branch-name check; prints the name to use (suffix -L<n>) or refuses
+#   lane-status      [<parent_runfile>] [--json] [--watch] [--leaks [--snapshot]] [--resources | --tokens]  # parallel-automate/05: delegated to automate-lanes.sh — one line per lane (state, item, PR, question, CI slot, readiness); --json adds machine state; fail-SAFE observer (exit 0)
+#   lane-feed        <lane_dir|L<n>> [--follow]         # parallel-automate/05: delegated to automate-lanes.sh — readable narration of the lane's stream log
+#   lane-readiness   <lane_dir|L<n>>                    # parallel-automate/05: delegated to automate-lanes.sh — writes <run_id>.merge-readiness.md (PASS/FAIL/NOT-RUN per check; advisory, never merges)
 #
 # Exit codes: 0 success; 1 generic failure; 2 abort (malformed pre-existing config, §7);
 # 3 progress-append's `current_not_set` guard (the line WAS appended; ## Current was never set).
@@ -1040,6 +1045,7 @@ main() {
     # automate-lanes.sh, the third carve-out named in the header.
     lane-create|lane-launch|relay-hook|lane-answer|lane-remove) exec bash "$(dirname "$0")/automate-lanes.sh" "$cmd" "$@" ;;
     lane-info|init-check|pick-guard|branch-check) exec bash "$(dirname "$0")/automate-lanes.sh" "$cmd" "$@" ;;
+    lane-status|lane-feed|lane-readiness) exec bash "$(dirname "$0")/automate-lanes.sh" "$cmd" "$@" ;;
     ""|-h|--help)
       _ah_bundle | grep -E '^#   [a-z]' | sed 's/^#   /  /'
       ;;
