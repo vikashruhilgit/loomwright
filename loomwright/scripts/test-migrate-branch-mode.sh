@@ -46,6 +46,10 @@
 #      duplicate state keys; mutation control: dropping the merge proof MUST turn it red
 #  16. followup lifecycle: a preflight while after_merge is FAIL keeps it (fresh-case recovery), a
 #      preflight starting a new migration drops it, rollback drops it
+#  17. after-merge checks branch paths verbatim: a managed path with a space PASSes when present and
+#      FAILs naming it when missing after pull; "a b.md" missing while a_b.md is present FAILs (no
+#      `?`-glob false PASS, run from inside the checkout); mutation control: the old
+#      `tr ' ' '?'` word-split loop MUST turn the leg red
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -434,6 +438,47 @@ mb A preflight --repo owner/repo
 printf 'followup=1\n' >> "$W/A/.supervisor/migrate-branch-mode/state"
 mb A rollback --commit "$M16"
 { [ "$RC" -eq 0 ] && ! grep -q '^followup=' "$W/A/.supervisor/migrate-branch-mode/state"; }; check $? "rollback drops followup (rc=$RC)"
+
+echo "== 17. after-merge checks managed paths containing a space verbatim =="
+SP=".supervisor/jobs/done/my brief.md"; SG=".supervisor/jobs/done/a b.md"; SS=".supervisor/jobs/done/a_b.md"
+# spaced_merged — a history migration whose run history holds spaced names (and a sibling a_b.md
+# that a `?` glob of "a b.md" would match), run to the owner's merge; leaves verify_pr PASS
+spaced_merged() {
+  mkworld history
+  ( cd "$W/A" && echo '# spaced' > "$SP" && echo '# a b' > "$SG" && echo '# a_b' > "$SS" \
+    && git add -f -- "$SP" "$SG" "$SS" && git commit -qm spaced && git push -q origin main )
+  to_protected A && mb A seed && mb A untrack-pr && mb A verify-pr "$(pr_n pr_untrack)" || return 1
+  owner_merge "$(st A untrack_branch)"
+}
+# am_in_root — after-merge with cwd = the checkout, where an unquoted `?` word would glob
+am_in_root() { local here="$PWD"; cd "$W/A" || return 1; mb A after-merge; cd "$here" || return 1; }
+# spaced_leg — 0 = PASS with spaced names, FAIL naming a genuinely missing spaced path, FAIL on
+# "a b.md" missing while its glob sibling a_b.md is present; detail in SPACED_DETAIL
+spaced_leg() {
+  local r1 r2 r3 r4 n2=no n3=no
+  spaced_merged || { SPACED_DETAIL="setup failed (rc=$RC)"; return 1; }
+  mb A after-merge; r1="$RC"
+  rm -f "$W/A/$SP"; mb A after-merge; r2="$RC"; has "missing after pull: $SP" && n2=yes
+  git -C "$W/A" cat-file blob "origin/$BR:$SP" > "$W/A/$SP"
+  rm -f "$W/A/$SG"; am_in_root; r3="$RC"; has "missing after pull: $SG" && n3=yes
+  git -C "$W/A" cat-file blob "origin/$BR:$SG" > "$W/A/$SG"
+  mb A after-merge; r4="$RC"
+  SPACED_DETAIL="pass=$r1 missing=$r2 named=$n2 sibling=$r3 named=$n3 recovered=$r4"
+  [ "$r1" -eq 0 ] && [ "$r2" -eq 1 ] && [ "$n2" = yes ] && [ "$r3" -eq 1 ] && [ "$n3" = yes ] && [ "$r4" -eq 0 ]
+}
+spaced_leg; check $? "after-merge: spaced paths PASS when present, FAIL naming a missing one, no glob-sibling false PASS ($SPACED_DETAIL)"
+MUT="$TROOT/mut-spaced"
+# restores the pre-fix loop verbatim: for p in $(... | tr ' ' '?'); do ... done
+MSED='/keeps .miss. in this shell/,/^  done < <(g ls-tree/{
+s/^  while IFS= read -r p; do$/  for p in $(g ls-tree -r --name-only "refs\/remotes\/origin\/$b" | tr '\'' '\'' '\''?'\''); do/
+/^    \[ -n "\$p" \] || continue$/d
+s/^  done < <(g ls-tree.*$/  done/
+}'
+if build_mutant "$MUT" "$MSED" "| tr ' ' '?'); do"; then
+  SCRIPT="$MUT/migrate-branch-mode.sh"
+  if spaced_leg; then no "mutation control REFUTED: the old tr ' ' '?' loop still passed the spaced leg"; else ok "mutation control: the old tr ' ' '?' loop turns the spaced leg red ($SPACED_DETAIL)"; fi
+  SCRIPT="$SUT"
+else no "mutation control (after-merge spaced paths) did not build — counts as FAIL"; fi
 
 echo
 echo "$pass passed, $fail failed"

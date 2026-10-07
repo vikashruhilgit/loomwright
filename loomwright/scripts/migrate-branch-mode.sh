@@ -553,9 +553,12 @@ cmd_after_merge() {
   done
   bash "$MS" pull --branch "$b" --root "$ROOT" || { state_set after_merge FAIL; die "after-merge: FAIL — meta-sync.sh pull --branch $b"; }
   fetch_meta "$b"
-  for p in $(g ls-tree -r --name-only "refs/remotes/origin/$b" | tr ' ' '?'); do
+  # One path per line, verbatim (a space is part of the name; no word-split, no glob); the
+  # process substitution keeps `miss` in this shell so it still gates the FAIL below.
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
     [ -f "$ROOT/$p" ] || { echo "migrate-branch-mode: missing after pull: $p" >&2; miss=$((miss+1)); }
-  done
+  done < <(g ls-tree -r --name-only "refs/remotes/origin/$b")
   [ "$miss" -eq 0 ] || { state_set after_merge FAIL; die "after-merge: FAIL — $miss branch file(s) not back"; }
   # Re-read the ground truth, not verify-pr's snapshot: a managed file committed to $d between
   # verify-pr and the merge is still TRACKED (the PR never untracked it) and absent from $b, yet the
