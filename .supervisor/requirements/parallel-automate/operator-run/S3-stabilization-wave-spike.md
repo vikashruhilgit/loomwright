@@ -720,6 +720,27 @@ teardown, machine (load, swap, free) at peak.
   lists 8 family files: add it at the post-merge re-point), `automate-trail.sh`, `TELEMETRY.md` (shared with #410), and
   5 replay fixtures under `fixtures/escalation-cause/`.
 
+### Integration — `wave/s3w3` (2026-10-07 ~13:20Z, scratch clone, origin = GitHub)
+- `main` `f4b0732` + `--no-ff` merges in planner order: #410 `6d802cf` → #415 `d95303c` → #417 `677b0e8` → #412 `ec9388e`
+  (`f2fc1b6`, `ff060f4`, `aa7e063`, `50d1922`). **0 textual conflicts** — incl. `ci.yml` (#412, #417; the owner's
+  allowed overlap merged by lines), `vendor-coupling-manifest.json` (#410, #412, #417; JSON valid), `CLAUDE.md`,
+  `TELEMETRY.md`, `ARCHITECTURE_CONTRACTS.md`. `check-doc-currency.sh` green (46 hooks).
+- **Two semantic conflicts, fixed on the wave branch (never on a lane branch):** (1) `4832579` — `capabilities.json`
+  stale on the merged tree (#410's 3 hook leaves arrived after #412 generated it); regenerated, no hand edits.
+  (2) `ae35b4c` — found by `ci-local`: `test-build-capabilities.sh` (H) failed 2 — #412 pinned the blocking set to the
+  test-integrity guard and needs an audit entry per hook script; #410 adds the second fail-CLOSED guard. Audit entry
+  `guard-finalize-publish.sh -` (guard mode writes nothing; the marker only via `write-marker`), expected set = both
+  guards, contract regenerated (that leaf's `writes` `["unknown"]` → `[]`); 90/0. **Lesson:** a contract generated
+  from the tree (`capabilities.json`) plus a test that pins the tree's current shape is a cross-lane semantic-conflict
+  magnet — any lane adding a hook breaks it; gap for pa/21 Part S (integration) and for hc/01's own test design.
+- **`test-ci-slot.sh` (G10) fails locally — pre-existing on `main`, macOS-only, ROOT CAUSE FOUND:** `ci-slot.sh`'s
+  `read_load` bounds a slow reader by ITERATIONS (`while alive && i < 100; do sleep 0.05`), not wall time; on this Mac
+  each iteration costs ~8.5 ms extra (process spawn) ⇒ the "5 s" wait measures **5.85 s idle** (measured), more under
+  load, so G10's 6 s fixture reader answers first and the interim `busy … (reader still running after 5s)` line never
+  appears. Fails identically on clean `main` `f4b0732` in the primary; passes on GitHub CI (faster spawn). It passed
+  here earlier today only because the margin is ~0.15 s. s3-i reached the same "fails on clean main" observation.
+  Fix (follow-up, outside the wave's files): bound the wait by wall clock (`date +%s` / `SECONDS`, or a deadline).
+
 ## Done when
 All items in the queue merged or closed by the owner — as of 2026-10-07 after the tail restructure, 13 open items: wave 3 ms/07 · af/31 · af/33 · hc/01; wave 4 pa/05 · hc/02; then pa/22 split, pa/21 fleet operations ∥ pa/14, af/34, af/36 S3 engine fixes, pa/18, pa/07 last (Milestone B) — plus hc/03 done directly after hc/01 + hc/02 (done earlier in S3: af/32, ms/08, ms/04, pa/09, pa/19, ms/11, pa/11, pa/16, agnostic/04), each wave's records on `loomwright-meta`, lanes torn down with `leaks`
 empty, the measures above recorded in this file, and P2 (default lane count) revisited with S2 + S3 evidence.
