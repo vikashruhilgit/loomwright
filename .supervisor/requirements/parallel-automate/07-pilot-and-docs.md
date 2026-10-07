@@ -1,9 +1,13 @@
 # 07 — Pilot on a real queue + documentation close-out
 
-## Status: parked (waits on item 06 — set `## Status: pending` once 06 has merged)
+## Status: parked (runs LAST — waits on every item in `## Depends on`: 21 fleet operations (06 is parked inside it as Part A), 14, automate-followups/34, automate-followups/36, 18; set `## Status: pending` once all have merged)
 
 ## Depends on
 21-fleet-operations.md
+14-lanes-pane-addon.md
+../automate-followups/34-sweep-and-janitor.md
+../automate-followups/36-s3-engine-fixes.md
+18-backlog-board-and-right-size.md
 
 ## Touches
 CLAUDE.md
@@ -80,3 +84,6 @@ Parked until item 06 has merged.
 ## Depends re-pointed 2026-10-07 (S3 operator f849e0cc)
 - `06` → `21-fleet-operations.md`: item 06 was merged into 21 (Part A) with item 12 (Part B), owner decision relayed by S3
   session 2216aefd. Nothing else in this file changed.
+- **Amended 2026-10-07 (owner, relayed by S3 session 2216aefd): pa/07 really runs last.** Milestone B is "pa/07 last, so the
+  pilot exercises pa/12–14 and the docs cover them", but `## Depends on` named only 21, so the planner could have
+  placed it before 14 / af/34 / af/36 / 18. All four added; the status line re-pointed (06 is parked inside 21).

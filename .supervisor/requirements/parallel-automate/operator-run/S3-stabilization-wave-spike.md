@@ -652,6 +652,16 @@ teardown, machine (load, swap, free) at peak.
   it is discipline). Each sequential item ships a `changelog.d/` fragment; a release PR (`bump-version.sh`) follows each
   item or batch, then a reinstall.
 
+### Owner decisions 2026-10-07 (relayed by 2216aefd after checking the post-merge plan `a0b0e4f`)
+- **Fixes applied:** pa/07's `## Depends on` now names 21, 14, af/34, af/36 and 18 so the pilot truly runs last
+  (Milestone B); its status line no longer says "waits on item 06". "## Done when" names the current queue.
+- **pa/05 stays WHOLE in wave 4** (468 lines, 31 files — the biggest lane yet). The owner chose not to split out
+  Scope 16, so the hardware protection is not delayed. Expect a long lane.
+- **Open work outside the S3 queue waits until after Milestone B** — no action now, and the next planner pass must not
+  pull it in: agnostic-phase1 02/03/05; automate-followups 15/20/21/27; churn-ledger 01/02; final-state 03;
+  floor-ui-redesign/01; loom-floor-ui 05/06; twin-loop 07 (both files); twin-remediation 08/09/10; and the four
+  never-stamped "ABANDONED" items (review-remediation/10, token-economy/06, twin-remediation/03 and /06).
+
 ## Done when
-All items in the queue (19 after the 2026-10-06 restructures) merged or closed by the owner, each wave's records on `loomwright-meta`, lanes torn down with `leaks`
+All items in the queue merged or closed by the owner — as of 2026-10-07 after the tail restructure, 13 open items: wave 3 ms/07 · af/31 · af/33 · hc/01; wave 4 pa/05 · hc/02; then pa/22 split, pa/21 fleet operations ∥ pa/14, af/34, af/36 S3 engine fixes, pa/18, pa/07 last (Milestone B) — plus hc/03 done directly after hc/01 + hc/02 (done earlier in S3: af/32, ms/08, ms/04, pa/09, pa/19, ms/11, pa/11, pa/16, agnostic/04), each wave's records on `loomwright-meta`, lanes torn down with `leaks`
 empty, the measures above recorded in this file, and P2 (default lane count) revisited with S2 + S3 evidence.
