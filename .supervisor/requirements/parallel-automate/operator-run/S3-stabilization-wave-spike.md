@@ -683,6 +683,9 @@ teardown, machine (load, swap, free) at peak.
   `/automate --parallel 2` on two small disjoint items BEFORE merge — use two throwaway items, never real queue
   items; who drives the sequential run (this session after wave-3 release + reinstall, or a fresh one) is the owner's
   call; step 2 could run on pa/05's own `--parallel 2` if released first, else on the `s1h.sh` harness.
+- **Owner decision 2026-10-07: step 1 (pa/05 sequential) runs in a FRESH session**, after wave 3 is merged, released
+  and reinstalled. The owner confirmed the claude-review skip rule: only a PR that edits the review workflow
+  (`claude-code-review.yml`) skips; `ci.yml` edits are reviewed (global CLAUDE.md line narrowed accordingly).
 
 ## Done when
 All items in the queue merged or closed by the owner — as of 2026-10-07 after the tail restructure, 13 open items: wave 3 ms/07 · af/31 · af/33 · hc/01; wave 4 pa/05 · hc/02; then pa/22 split, pa/21 fleet operations ∥ pa/14, af/34, af/36 S3 engine fixes, pa/18, pa/07 last (Milestone B) — plus hc/03 done directly after hc/01 + hc/02 (done earlier in S3: af/32, ms/08, ms/04, pa/09, pa/19, ms/11, pa/11, pa/16, agnostic/04), each wave's records on `loomwright-meta`, lanes torn down with `leaks`
