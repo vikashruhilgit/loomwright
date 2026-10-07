@@ -134,3 +134,8 @@ documented in `automate-loop/SKILL.md` §6/§9 and `commands/automate.md` ("an `
   print the exact `gh run rerun <id> --failed` for the owner. `harness-port/07`'s rule stands.
 - **Scope 4: run file only.** The cause and re-check verdict go into the run file's `## Current` / `## Progress`
   (read by `/automate` status); `lane-status` (not built yet — `parallel-automate/05`) picks them up when it exists.
+- **Correction to the 2026-10-07 watcher amendment above (same day, operator-verified):** the s3-g evidence was a
+  process-count artifact. One watcher launch only (one tool call; one `merge-watch: started pid=86028` in its log).
+  `automate-merge-watch.sh` already refuses a second watcher for the same PR (`already running`). So the change is the
+  test, not new arming code: two parks of the same item leave one live watcher and one closeout, asserted on the
+  `already running` line, the first pid still alive, and the marker pid unchanged.

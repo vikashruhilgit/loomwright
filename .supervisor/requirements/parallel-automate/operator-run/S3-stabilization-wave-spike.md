@@ -568,6 +568,14 @@ teardown, machine (load, swap, free) at peak.
   the `Next:` hint). No other wave-3 item declares them. D.4's docs go to the metadata branch, not the code PR.
 - s3-j / af/33's brief passed Plan Review on attempt 2/3 (attempt 1 caught a guard joining two different session
   ids, so it never would have blocked); one MEDIUM advisory left to the worker's repo-wide grep (owner: save and run).
+- **Wave-2 gap 6 CORRECTED (2026-10-07, lane s3-i's re-diagnosis, operator-verified):** s3-g did NOT arm two merge
+  watchers. Its archived log has exactly ONE tool call that ran `nohup bash $S/automate-merge-watch.sh …`
+  (`toolu_01Limuj6waQTJxd4iGVhVXXZ`; the command string appears twice only because the stream log repeats it), and
+  `archive/s3-g/automate-2026-10-06-154217.merge-watch.log` shows one `merge-watch: started pid=86028`. The "two" was
+  a process-count artifact. af/31 keeps the idempotency TEST (its AC9: a second launch prints `already running`,
+  the first pid stays alive, the marker pid is unchanged) but needs no new arming code.
+- s3-k (hc/01) asked "Start new run?" but NOT the queue-confirm question the other three lanes asked (pa/12
+  evidence: a gate firing inconsistently, this time the queue gate).
 
 ## Done when
 All items in the queue (19 after the 2026-10-06 restructures) merged or closed by the owner, each wave's records on `loomwright-meta`, lanes torn down with `leaks`
