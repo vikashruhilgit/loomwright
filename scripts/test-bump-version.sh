@@ -322,6 +322,69 @@ D="$TMP/t11b"; make_fixture "$D"; mutate "$D" 0; frag "$D" x.md 'X\n'; before="$
 run_bump "$D"; rc=$?
 [ "$rc" -eq 1 ] && [ "$(tree_sum "$D")" = "$before" ]; check $? "jq control: the script's own self-check refuses a jq round-trip and writes nothing"
 
+# ---- 9b. the generated capability contract (loomwright/capabilities.json) is refreshed by the bump --
+# capabilities.json restates plugin_version; bump-version.sh is the version's sole writer, so it must
+# regenerate the contract (with the REAL generator) in the same bump, and restore it on any failure.
+CJ="loomwright/capabilities.json"
+GEN_SRC="$repo_root/loomwright/scripts/build-capabilities.sh"
+# make_caps_fixture <dir> — make_fixture + a minimal plugin tree, the real generator, and a current contract.
+make_caps_fixture() {
+  local d="$1"
+  make_fixture "$d"
+  mkdir -p "$d/loomwright/scripts" "$d/loomwright/hooks" "$d/loomwright/agents" "$d/loomwright/commands" \
+           "$d/loomwright/skills/s" "$d/loomwright/docs/result-schemas"
+  cp "$GEN_SRC" "$d/loomwright/scripts/build-capabilities.sh"
+  printf '{"hooks": {}}\n' > "$d/loomwright/hooks/hooks.json"
+  printf '# Index\n\n## FIX_RESULT\n\nSee [result-schemas/fix.md](result-schemas/fix.md).\n' > "$d/loomwright/docs/RESULT_SCHEMAS.md"
+  printf '# FIX_RESULT\n\nschema_version: 1\n' > "$d/loomwright/docs/result-schemas/fix.md"
+  printf -- '---\nname: loomwright:a\ntools: Read, Bash\n---\nFIX_RESULT:\n' > "$d/loomwright/agents/a.md"
+  printf -- '---\ndescription: c\n---\nbody\n' > "$d/loomwright/commands/c.md"
+  printf -- '---\nname: s\n---\nbody\n' > "$d/loomwright/skills/s/SKILL.md"
+  ( cd "$d" && bash loomwright/scripts/build-capabilities.sh ) || return 1
+  g "$d" add -A && g "$d" commit -q -m "capability contract"
+}
+caps_snap() { cat "$1/$PJ" "$1/$MJ" "$1/$CL" "$1/$CJ" | cksum; }
+
+D="$TMP/t12"; make_caps_fixture "$D"
+[ "$(jq -r .plugin_version "$D/$CJ")" = "1.2.3" ]; check $? "caps precondition: the fixture contract is generated and at 1.2.3"
+frag "$D" x.md 'X\n'; g "$D" add -A && g "$D" commit -q -m "feature PR carries only its fragment"
+run_bump "$D"; rc=$?
+check $rc "caps: a bump with a capability contract present succeeds (exit 0)"
+[ "$(jq -r .plugin_version "$D/$CJ")" = "1.2.4" ]; check $? "caps: capabilities.json plugin_version follows the bump (1.2.4)"
+( cd "$D" && bash loomwright/scripts/build-capabilities.sh --check ) >/dev/null 2>&1; check $? "caps: build-capabilities.sh --check passes right after the bump (no red CI on release)"
+[ "$(g "$D" diff --numstat HEAD -- "$CJ" | awk '{print $1 "+" $2}')" = "1+1" ]; check $? "caps: capabilities.json diff is exactly one line (plugin_version)"
+[ "$(g "$D" status --porcelain | awk '{print $2}' | sort | tr '\n' ' ')" = ".claude-plugin/marketplace.json CHANGELOG.md changelog.d/x.md loomwright/.claude-plugin/plugin.json loomwright/capabilities.json " ]
+check $? "caps: the bump touches the two manifests, CHANGELOG.md, the contract and the fragment — nothing else"
+grep -qF 'CHANGELOG.md, capabilities.json, removed fragments' "$TMP/last.out"; check $? "caps: the 'next:' line tells the operator to commit capabilities.json too"
+[ -z "$(find "$D" -maxdepth 1 -name '.bump-version.*')" ]; check $? "caps: no scratch dir (or shadow-root symlink) left behind"
+
+# A contract that is ALREADY stale before the bump is refused, never silently folded into the bump commit.
+D="$TMP/t13"; make_caps_fixture "$D"
+printf -- '---\nname: loomwright:b\ntools: Read\n---\nbody\n' > "$D/loomwright/agents/b.md"
+g "$D" add -A && g "$D" commit -q -m "agent added without regenerating the contract"; frag "$D" x.md 'X\n'
+before="$(tree_sum "$D")"; run_bump "$D"; rc=$?
+[ "$rc" -eq 1 ] && [ "$(tree_sum "$D")" = "$before" ] && [ -z "$(find "$D" -maxdepth 1 -name '.bump-version.*')" ]
+check $? "caps: a contract stale BEFORE the bump: exit 1, nothing written"
+grep -qF 'the committed contract is stale' "$TMP/last.out"; check $? "caps: the stale-contract refusal names the cause"
+
+# Exactly one of contract / generator present => refused (the restated copy cannot drop out of the bump).
+D="$TMP/t14"; make_caps_fixture "$D"; g "$D" rm -q "$CJ" && g "$D" commit -q -m "contract lost"; frag "$D" x.md 'X\n'
+refusal "$D" "exactly one of $CJ" "generator present, capabilities.json missing"
+
+# A validator failing AFTER the rename restores capabilities.json byte-identical too.
+D="$TMP/t15"; make_caps_fixture "$D"; frag "$D" x.md 'X\n'
+printf '#!/usr/bin/env bash\nexit 1\n' > "$D/scripts/bad-validator.sh"; g "$D" add -A && g "$D" commit -q -m bad
+snap="$(caps_snap "$D")"; fsum="$(cksum < "$D/changelog.d/x.md")"
+( cd "$D" && BUMP_VERSION_VALIDATORS="scripts/bad-validator.sh" bash scripts/bump-version.sh ) > "$TMP/last.out" 2>&1; rc=$?
+[ "$rc" -eq 1 ] && [ "$(caps_snap "$D")" = "$snap" ] && [ "$(cksum < "$D/changelog.d/x.md" 2>/dev/null)" = "$fsum" ] && [ -z "$(g "$D" status --porcelain)" ]
+check $? "caps: validator failure restores plugin.json, marketplace.json, CHANGELOG.md AND capabilities.json byte-identical"
+
+# --dry-run names the contract and writes nothing.
+D="$TMP/t16"; make_caps_fixture "$D"; frag "$D" x.md 'X\n'; before="$(tree_sum "$D")"
+run_bump "$D" --dry-run; rc=$?
+[ "$rc" -eq 0 ] && [ "$(tree_sum "$D")" = "$before" ] && grep -qF "also regenerates: $CJ" "$TMP/last.out"
+check $? "caps: --dry-run names the regenerated contract and writes nothing"
+
 # ---- 10. check-doc-currency.sh bump-without-script guard (AC5) ----------------------------------
 echo "# check-doc-currency.sh bump-fragment-guard"
 G="$TMP/guard"; mkdir -p "$G"

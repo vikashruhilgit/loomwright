@@ -35,8 +35,8 @@ Counts are not restated here: read them from `capabilities.json` itself (or from
 | `name` | string | Frontmatter `name` (already carries the `loomwright:` prefix). |
 | `runtime_agent_type` | string | `<plugin.json name>:<frontmatter name>` — e.g. `loomwright:loomwright:worker`. This is the doubled prefix the runtime reports as `agent_type` in hook payloads; observed evidence: `loomwright/scripts/fixtures/subagentstop-decision-shape-probe.json` (`agent_type_observed: "loomwright:loomwright:worker"`). Derived for every agent, never hard-coded. |
 | `model` | string \| null | Frontmatter `model`, verbatim (e.g. `inherit`, `haiku`); `null` when absent. |
-| `tools` | string[] | Frontmatter `tools` (comma-separated) minus `disallowedTools`, trimmed, sorted. A disallowed name absent from `tools` is ignored. |
-| `result_blocks` | string[] | Every result-block name the agent prompt **emits**, sorted: a body line that is exactly a `result_schemas[]` name, optionally as a `#` heading and/or with a trailing `:` (an emission template such as `QA_RESULT:` or `## WORKER_RESULT`). A prose mention ("Output the X block") is not an emission template and is not listed. |
+| `tools` | string[] \| null | Frontmatter `tools` (comma-separated) minus `disallowedTools`, trimmed, sorted. A disallowed name absent from `tools` is ignored. `null` when the agent declares no `tools` key — it inherits every tool, which is NOT the same as `[]`. A `tools`/`disallowedTools` key in a form the generator does not parse (e.g. a YAML block list) fails generation rather than publishing a guess. |
+| `result_blocks` | string[] | Every result-block name the agent prompt **emits**, sorted: a body line that is exactly a `result_schemas[]` name, optionally as a `#` heading and/or with a trailing `:` (an emission template such as `QA_RESULT:` or `## WORKER_RESULT`). A prose mention ("Output the X block") is not an emission template and is not listed. An emission template naming a `*_RESULT` block the index does not list fails generation (never a silent drop). |
 | `result_block` | string \| null | The PRIMARY block: the only one when there is one; `null` when there are none. |
 
 **Multi-mode agents.** When an agent emits several blocks, `result_block` is chosen by a precedence rule keyed by the **set** of blocks (never by agent name), each rule taken from the block's own validator/schema doc:
@@ -60,7 +60,7 @@ A set with no documented rule gets `result_block: null` (never a guess); `result
 
 - **Source:** the `## …` headings of the `docs/RESULT_SCHEMAS.md` index whose first non-blank body line is `See [result-schemas/<x>.md](result-schemas/<x>.md).`. The index sections `Schema Versioning` and `Validation Location` have that shape but are not schemas and are excluded by an explicit list in the generator; `Cited sub-section anchors` has a prose body and never matches.
 - **Name normalization (contract surface — changing it is a breaking change):** strip backticks and any trailing parenthetical from the heading, then take the leading identifier token. `EVAL_RESULT (System Twin eval harness)` ⇒ `EVAL_RESULT`; `` `session_end` JSONL hard-signal fields (System Twin) `` ⇒ `session_end`.
-- **`schema_version`:** the highest `schema_version: N` recorded in the linked `result-schemas/<x>.md` (that file is authoritative). `null` means **no version recorded in the schema doc** — e.g. per-project state files and JSONL event records that deliberately carry none. It does not mean "version 1".
+- **`schema_version`:** the highest `schema_version: N` recorded in the linked `result-schemas/<x>.md` (that file is authoritative). `null` means **no version recorded in the schema doc** — e.g. per-project state files and JSONL event records that deliberately carry none. It does not mean "version 1". A version recorded in a form the generator does not parse (e.g. `schema_version = 3`) fails generation rather than publishing `null`.
 - **Fail-closed cross-check:** when the index's opening paragraph names a schema explicitly as `NAME at schema_version: N` and the linked file records a different current version, the generator exits non-zero naming the schema. The paragraph's "all others at schema_version 1" catch-all names no schema and is not checked.
 
 ### `hooks[]`
@@ -71,9 +71,9 @@ A set with no documented rule gets `result_block: null` (never a guess); `result
 | `matcher` | string \| null | The leaf's group `matcher`, or `null` when the group has none. |
 | `type` | string | `command` or `prompt`. |
 | `source` | string | Position in `hooks.json`, e.g. `hooks.StopFailure[0].hooks[0]` — traces the entry back; changes if `hooks.json` is reordered. |
-| `script` | string \| null | The first plugin script the command invokes, as `scripts/<file>` relative to the plugin root; `null` for a prompt leaf or a leaf that invokes none. |
+| `script` | string \| null | The first plugin script the command invokes, as `scripts/<file>` relative to the plugin root (the install-root variable may be spelled `$VAR/scripts/`, `${VAR}/scripts/` or `"${VAR}"/scripts/`); `null` for a prompt leaf or a leaf that invokes none. |
 | `scripts` | string[] | Every plugin script the command invokes, in invocation order (several for leaves such as the telemetry + token-ledger leaf or the SessionStart resume leaf). |
-| `blocking` | bool | `true` only for a `command` leaf whose command carries no `\|\| true` — a fail-CLOSED gate that can stop the tool call. Every other leaf is fail-safe. |
+| `blocking` | bool | `false` only for a `command` leaf whose command ENDS in `\|\| true` (a `\|\| true` earlier in the command does not make the last command's exit status fail-safe), and for a `prompt` leaf. `true` marks a fail-CLOSED gate that can stop the tool call. |
 | `writes` | string[] | What the leaf may create, modify or delete in the session's working directory (see below). |
 
 **Sort key:** `event`, then `matcher` (null sorts as the empty string), then the group's position, then the leaf's position in `hooks.json`.
@@ -82,9 +82,9 @@ A set with no documented rule gets `result_block: null` (never a guess); `result
 
 - Paths are repo-relative with `<placeholders>` (e.g. `.supervisor/logs/<session>.jsonl`); a settings key is written `<file>#<json.path>` (e.g. the OTEL resource-attributes key in the project's local settings file).
 - Scope is the session's working directory (for scripts that resolve the main checkout, that checkout). Writes under `~/` or `$TMPDIR`, the harness's own env file, network egress and desktop notifications are out of scope. Directory creation is not a write; a same-directory temp file renamed onto a listed path (or removed) before exit is not listed separately.
-- `/dev/null` and file-descriptor duplications (`2>&1`) are never writes.
+- `/dev/null` and file-descriptor duplications (`2>&1`) are never writes; `>`, `>>`, `N>`, `&>` and `>|` to a literal path are.
 - `[]` means **audited: writes nothing in scope** (or a prompt leaf).
-- `["unknown"]` means the writes could not be determined: the script has no audit entry, an inline redirect target is not a literal path, or the audit says the script's writes are decided at run time (e.g. a script that launches a detached agent). **Unknown wins** — a leaf with any unknown part is exactly `["unknown"]`, never a partial list that looks complete.
+- `["unknown"]` means the writes could not be determined: the script has no audit entry, an inline redirect target is empty or not a literal path, the command contains something the parser does not model (an install-root mention that is not a parsed script path, a `<>` open, or a simple command whose first word is not on the generator's non-writing allowlist — so `tee`, `cp`, `mv`, `rm`, `touch`, `sed -i`, `eval`, `bash -c` and any unknown program are unknown), or the audit says the script's writes are decided at run time (e.g. a script that launches a detached agent). **Unknown wins** — a leaf with any unknown part is exactly `["unknown"]`, never a partial list that looks complete.
 
 **Honest limit:** the audit is a hand audit recorded in the generator. The staleness gate re-runs the generator; it does not re-read the scripts, so a script that starts writing a new file without its audit entry being updated is not caught mechanically. Review the audit entry whenever a hook script's write paths change.
 

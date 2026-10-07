@@ -14,6 +14,11 @@
 #   (H)   hooks: blocking only on the guard leaves; StopFailure writes pinned; no /dev/null or &N target;
 #         the four audited scripts non-empty; unknown only where audited unknown
 #   (U)   a hook script with no audit entry => writes ["unknown"]
+#   (P)   fail-CLOSED hook parser: every script-path spelling, write construct (&>, >|, tee, cp, sed -i,
+#         bash -c, rm) and unmodelled command => ["unknown"] or the literal target, never a silent [];
+#         blocking is decided by a TRAILING `|| true` only
+#   (F)   fail-CLOSED agent / schema parsing: absent tools => null (inherits all), an unparseable tools
+#         key, an unindexed *_RESULT emission, or a schema_version in an unparsed form => exit 1
 #   (X)   fail-CLOSED: the index naming a different current schema_version than the split file => exit 1
 #   (M)   mutation control: delete an agent in a fixture copy => mutant VALID (non-empty, differs) and
 #         --check exits 1 with exactly ONE line telling the developer what to run
@@ -146,7 +151,7 @@ else no "(R) non-schema heading(s) listed: $bad"; fi
 # (H)
 blk="$(q '[.hooks[] | select(.blocking) | .script] | unique | join(",")')"
 nblk="$(q '[.hooks[] | select(.blocking)] | length')"
-want_nblk="$(jq '[.hooks[][] | .hooks[] | select(.type == "command" and (.command | test("\\|\\|[ \\t]*true") | not))] | length' "$PLUGIN/hooks/hooks.json")"
+want_nblk="$(jq '[.hooks[][] | .hooks[] | select(.type == "command" and (.command | test("\\|\\|[ \\t]*true[ \\t]*$") | not))] | length' "$PLUGIN/hooks/hooks.json")"
 if [ "$blk" = "scripts/guard-test-integrity.sh" ] && [ "$nblk" = "$want_nblk" ] && [ "$nblk" -gt 0 ]; then
   ok "(H) blocking only on command leaves without || true (the guard-test-integrity leaves, $nblk)"
 else no "(H) blocking=[$blk] n=$nblk want=$want_nblk"; fi
@@ -180,6 +185,71 @@ bash "$SUT" --root "$tmp/fu" --out "$tmp/fu.json"
 if [ "$(jq -c '[.hooks[] | select(.script == "scripts/never-audited.sh") | .writes]' "$tmp/fu.json")" = '[["unknown"]]' ]; then
   ok "(U) a script with no audit entry gets writes [\"unknown\"], never a silent []"
 else no "(U) unaudited script writes = $(jq -c '[.hooks[] | select(.script == "scripts/never-audited.sh") | .writes]' "$tmp/fu.json")"; fi
+
+# (P) — the hook parser fails closed. One single-leaf hooks.json per case, built inside $tmp only.
+fixture_copy "$tmp/fp"
+# leaf CMD -> the generated entry as [script, writes, blocking] (or "rc=N" when the generator failed)
+# Commands spell the install-root variable as @R@; leaf() substitutes the real name (named once here).
+leaf() {
+  local c="${1//@R@/CLAUDE_PLUGIN_ROOT}"
+  jq --arg c "$c" '.hooks = {"SessionStart": [{"hooks": [{"type": "command", "command": $c}]}]}' \
+    "$PLUGIN/hooks/hooks.json" > "$tmp/fp/hooks/hooks.json"
+  bash "$SUT" --root "$tmp/fp" --out "$tmp/fp.json" 2>/dev/null || { echo "rc=$?"; return; }
+  jq -c '.hooks[0] | [.script, .writes, .blocking]' "$tmp/fp.json"
+}
+pcase() { # pcase <label> <command> <expected [script, writes, blocking]>
+  local got; got="$(leaf "$2")"
+  if [ "$got" = "$3" ]; then ok "(P) $1"; else no "(P) $1: got $got want $3"; fi
+}
+pcase 'quoted-root spelling "${ROOT}"/scripts/x of an unaudited script => unknown' \
+  'bash "${@R@}"/scripts/never-audited.sh || true' '["scripts/never-audited.sh",["unknown"],false]'
+pcase 'brace-less $ROOT/scripts/x spelling of an unaudited script => unknown' \
+  'bash "$@R@/scripts/never-audited.sh" || true' '["scripts/never-audited.sh",["unknown"],false]'
+pcase 'quoted-root spelling of an AUDITED script resolves to its audit entry (not unknown)' \
+  'bash "${@R@}"/scripts/stamp-requirement-status.sh || true' '["scripts/stamp-requirement-status.sh",[".supervisor/requirements/<requirement>.md"],false]'
+pcase 'a root mention that is not a parsed script path => unknown' \
+  'bash "${@R@}/scripts/send-webhook.sh" || true; cd "${@R@}" || true' '["scripts/send-webhook.sh",["unknown"],false]'
+pcase '&> <literal> is a write of that path (never [])' \
+  'echo x &> .supervisor/logs/x.log || true' '[null,[".supervisor/logs/x.log"],false]'
+pcase '>| <literal> is a write of that path (never [])' \
+  'echo x >| .supervisor/logs/y.log || true' '[null,[".supervisor/logs/y.log"],false]'
+pcase 'tee => unknown' 'echo x | tee -a .supervisor/logs/x.log || true' '[null,["unknown"],false]'
+pcase 'cp => unknown' 'cp a .supervisor/b || true' '[null,["unknown"],false]'
+pcase 'sed -i => unknown' 'sed -i s/a/b/ f || true' '[null,["unknown"],false]'
+pcase 'bash -c <inline code> => unknown' 'bash -c "echo hi > z" || true' '[null,["unknown"],false]'
+pcase 'rm after an audited script => unknown (unknown wins)' \
+  'bash "${@R@}/scripts/send-webhook.sh" || true; rm -f x || true' '["scripts/send-webhook.sh",["unknown"],false]'
+pcase 'a redirect to a non-literal target => unknown' 'echo x > "$F" || true' '[null,["unknown"],false]'
+pcase 'a <> read-write open => unknown' 'exec 3<>f || true' '[null,["unknown"],false]'
+pcase 'fd duplication and /dev/null stay non-writes (control: the parser is not unknown-on-everything)' \
+  'X=1 bash "${@R@}/scripts/send-webhook.sh" >/dev/null 2>&1 || true' '["scripts/send-webhook.sh",[],false]'
+pcase 'a non-trailing `|| true` does not make the leaf fail-safe (blocking)' \
+  'bash "${@R@}/scripts/send-webhook.sh" || true; bash "${@R@}/scripts/guard-test-integrity.sh"' '["scripts/send-webhook.sh",[],true]'
+
+# (F) — agent / schema parsing fails closed, or publishes null — never a silent empty answer.
+fixture_copy "$tmp/ff"
+awk '!/^tools:/' "$PLUGIN/agents/worker.md" > "$tmp/ff/agents/worker.md"
+bash "$SUT" --root "$tmp/ff" --out "$tmp/ff.json"
+if ! grep -q '^tools:' "$tmp/ff/agents/worker.md" \
+   && [ "$(jq -c '.agents[] | select(.name == "loomwright:worker") | .tools' "$tmp/ff.json")" = null ]; then
+  ok "(F) an agent with no tools key publishes tools: null (inherits every tool), never []"
+else no "(F) tools-absent agent: $(jq -c '.agents[] | select(.name == "loomwright:worker") | .tools' "$tmp/ff.json")"; fi
+fcase() { # fcase <label> <stderr substring> — the current $tmp/ff fixture must make the generator exit 1
+  bash "$SUT" --root "$tmp/ff" --out "$tmp/ff.json" 2>"$tmp/ff.err"; local rc=$?
+  if [ "$rc" -eq 1 ] && grep -qF "$2" "$tmp/ff.err"; then ok "(F) $1"; else no "(F) $1: rc=$rc err=$(cat "$tmp/ff.err")"; fi
+}
+awk '!/^tools:/ { print; next } { print "tools:"; print "  - Read"; print "  - Bash" }' "$PLUGIN/agents/worker.md" > "$tmp/ff/agents/worker.md"
+fcase "a tools key in block-list form (unparsed) exits 1 instead of publishing []" "has a 'tools:' key the generator cannot parse"
+cp "$PLUGIN/agents/worker.md" "$tmp/ff/agents/worker.md"
+printf '\nNEVER_INDEXED_RESULT:\n' >> "$tmp/ff/agents/worker.md"
+fcase "an emitted *_RESULT block the index does not know exits 1 instead of being dropped" "NEVER_INDEXED_RESULT"
+cp "$PLUGIN/agents/worker.md" "$tmp/ff/agents/worker.md"
+# product-context.md is indexed and records no schema_version (pinned null in (R) above).
+sf="product-context.md"
+if [ -f "$tmp/ff/docs/result-schemas/$sf" ] && ! grep -q 'schema_version' "$tmp/ff/docs/result-schemas/$sf"; then
+  printf '\nschema_version = 4\n' >> "$tmp/ff/docs/result-schemas/$sf"
+  fcase "a schema_version in an unparsed form exits 1 instead of publishing null" "does not parse"
+else no "(F) $sf missing or already records schema_version — the control would prove nothing"; fi
 
 # (X) — fail-CLOSED index cross-check.
 fixture_copy "$tmp/fx2"

@@ -212,6 +212,11 @@ while IFS="$US" read -r heading file; do
   linked="$ROOT/docs/result-schemas/$file"
   [ -f "$linked" ] || { echo "build-capabilities: RESULT_SCHEMAS.md §$name links result-schemas/$file, which does not exist" >&2; exit 1; }
   ver="$(grep -oE 'schema_version"?:[[:space:]]*`?[0-9]+' "$linked" | grep -oE '[0-9]+$' | env LC_ALL=C sort -n | tail -n1)"
+  # Fail-CLOSED: a looser read (`schema_version` then up to 8 non-alphanumerics then digits) must find
+  # the same highest version. A version recorded in a form the strict pattern misses (e.g.
+  # `schema_version = 3`, `"schema_version": "3"`) would otherwise publish null ("none recorded").
+  loose="$(grep -oE 'schema_version[^A-Za-z0-9]{0,8}[0-9]+' "$linked" | grep -oE '[0-9]+$' | env LC_ALL=C sort -n | tail -n1)"
+  [ "$loose" = "$ver" ] || { echo "build-capabilities: result-schemas/$file records schema_version in a form the generator does not parse (strict '${ver:-none}', loose '${loose:-none}') — write it as \`schema_version: N\`" >&2; exit 1; }
   printf '%s%s%s\n' "$name" "$US" "${ver:-null}" >> "$tmpd/schemas.tsv"
 done < "$tmpd/schema-headings.tsv"
 [ -s "$tmpd/schemas.tsv" ] || { echo "build-capabilities: no result schemas parsed from RESULT_SCHEMAS.md" >&2; exit 1; }
@@ -262,23 +267,37 @@ while IFS= read -r rel; do
   f="$ROOT/agents/$rel"
   name="$(fmval "$f" name)"
   [ -n "$name" ] || { echo "build-capabilities: agents/$rel has no frontmatter name" >&2; exit 1; }
+  # Emission-template lines naming a *_RESULT block the index does not know are printed with a `?`
+  # prefix and fail the run closed — a silent drop would publish "emits no block".
   blocks="$(awk -v names=" $SCHEMA_NAMES " '
     NR == 1 && $0 == "---" { fm = 1; next }
     fm { if ($0 == "---") fm = 0; next }
     { l = $0; sub(/^[ \t]+/, "", l); sub(/^#+[ \t]*/, "", l); sub(/[ \t]+$/, "", l); sub(/:$/, "", l)
-      if (l ~ /^[A-Z][A-Z0-9_]*$/ && index(names, " " l " ")) print l }' "$f" | env LC_ALL=C sort -u | paste -s -d, -)"
-  printf '%s%s%s%s%s%s%s%s%s%s%s\n' "$name" "$US" "$(fmval "$f" model)" "$US" "$(fmval "$f" tools)" "$US" \
+      if (l ~ /^[A-Z][A-Z0-9_]*$/) { if (index(names, " " l " ")) print l; else if (l ~ /_RESULT$/) print "?" l } }' "$f" | env LC_ALL=C sort -u | paste -s -d, -)"
+  case ",$blocks" in *",?"*)
+    echo "build-capabilities: agents/$rel emits result block(s) RESULT_SCHEMAS.md does not index: $(printf '%s' "$blocks" | tr ',' '\n' | grep '^?' | tr -d '?' | paste -s -d, -)" >&2; exit 1 ;;
+  esac
+  # tools: a key that is ABSENT means the agent inherits every tool (published as null, never []);
+  # a key that is PRESENT but has no inline comma list (e.g. a YAML block list) is not parsed => fail closed.
+  for k in tools disallowedTools; do
+    if frontmatter "$f" | grep -qE "^$k:"; then
+      [ -n "$(fmval "$f" "$k")" ] || { echo "build-capabilities: agents/$rel has a '$k:' key the generator cannot parse (write it as an inline comma-separated list)" >&2; exit 1; }
+    fi
+  done
+  tools_v="$(fmval "$f" tools)"
+  frontmatter "$f" | grep -qE '^tools:' || tools_v="$(printf '\002')"   # sentinel: key absent
+  printf '%s%s%s%s%s%s%s%s%s%s%s\n' "$name" "$US" "$(fmval "$f" model)" "$US" "$tools_v" "$US" \
     "$(fmval "$f" disallowedTools)" "$US" "$blocks" "$US" "$rel" >> "$tmpd/agents.tsv"
 done < <(sorted_glob "$ROOT/agents" '*.md')
 
 jq -R -s --arg us "$US" --arg plugin "$PLUGIN_NAME" --argjson rules "$PRIMARY_RULES" '
   def csv: split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0));
   split("\n") | map(select(length > 0) | split($us)
-    | (.[2] | csv) as $tools | (.[3] | csv) as $deny | (.[4] | csv) as $blocks
+    | (if .[2] == "\u0002" then null else (.[2] | csv) end) as $tools | (.[3] | csv) as $deny | (.[4] | csv) as $blocks
     | {name: .[0],
        runtime_agent_type: ($plugin + ":" + .[0]),
        model: (if .[1] == "" then null else .[1] end),
-       tools: ($tools - $deny | unique),
+       tools: (if $tools == null then null else ($tools - $deny | unique) end),
        result_blocks: $blocks,
        result_block: (if ($blocks | length) == 0 then null
                       elif ($blocks | length) == 1 then $blocks[0]
@@ -307,25 +326,64 @@ jq -R -s --arg us "$US" 'split("\n") | map(select(length > 0) | split($us) | {na
 # ---------------------------------------------------------------------------------------------------
 # hooks[] — one entry per hooks.json leaf (.hooks.<Event>[g].hooks[l]).
 #   script    first plugin script the command references (scripts/<x>), null when none
-#   scripts   every plugin script referenced, in invocation order
-#   blocking  true only for a `type: command` leaf whose command carries no `|| true`
+#   scripts   every plugin script referenced, in invocation order — matched, with ROOT_VAR the
+#             install-root variable below, as `$ROOT_VAR/scripts/<x>`, `${ROOT_VAR}/scripts/<x>` or
+#             `"${ROOT_VAR}"/scripts/<x>`
+#   blocking  false only for a `type: command` leaf whose command ENDS in `|| true` (a `|| true`
+#             earlier in the command does not make the last command's exit status fail-safe)
 #   writes    sorted union of the leaf's inline redirect targets and each script's audited writes;
 #             ["unknown"] when ANY part is unaudited or unparseable (unknown wins). /dev/null and fd
 #             duplications (2>&1) are not writes; `mkdir -p <dir>` is a directory, not a write.
+#             FAIL-CLOSED PARSER: the leaf is ["unknown"] whenever the parser meets something it does
+#             not model — an install-root-variable mention that is not a parsed script path; a redirect
+#             whose target is empty or not a literal path (`&>`, `>|` and `N>` are parsed as writes);
+#             a `<>` read-write open; or a simple command whose first word is not on the
+#             non-writing allowlist below (so tee, cp, mv, rm, touch, sed -i, eval, `bash -c`, … are
+#             unknown), or an interpreter not followed by a plugin script path.
+NONWRITING_CMDS='cat printf echo mkdir date true false : test ['
+INTERPRETERS='bash sh python3 python'
+ROOT_VAR='CLAUDE_PLUGIN_ROOT'   # the one place the generator names the install-root variable
+
 # Sorted by (event, matcher with null as "", group position, leaf position); `source` records the
 # position so an entry can be traced back to hooks.json.
 # ---------------------------------------------------------------------------------------------------
-jq -S --slurpfile audit "$tmpd/audit.json" '
+jq -S --slurpfile audit "$tmpd/audit.json" \
+  --arg nonwriting "$NONWRITING_CMDS" --arg interp "$INTERPRETERS" --arg rv "$ROOT_VAR" '
   ($audit[0]) as $a
-  | [ .hooks | to_entries[] | .key as $ev | .value | to_entries[] | .key as $g | .value as $grp
+  | ("\\$\\{?" + $rv + "\\}?\"?/scripts/([A-Za-z0-9_.-]+)") as $script_re
+  | ($nonwriting | split(" ")) as $okcmds | ($interp | split(" ")) as $interps
+  # simple_cmds: the command text split into simple commands. `$(` opens one, and the operators
+  # ; & && || | ( and newline separate them; fd duplications are blanked and &> / >| normalised to >
+  # first so their `&` / `|` does not split. Leading VAR=value assignments and `!` are dropped. Over-splitting inside a
+  # quoted string can only yield an unrecognised first word, i.e. unknown — never a false [].
+  | def simple_cmds: gsub("[0-9]*>&[0-9-]*"; " ") | gsub("&>"; ">") | gsub(">\\|"; ">") | gsub("\\$\\("; ";")
+      | [splits("&&|\\|\\||[;&|(\n]")]
+      | map(sub("^[ \t]+"; "") | sub("^!+[ \t]*"; "")
+            | until(test("^[A-Za-z_][A-Za-z0-9_]*=[^ \t]*([ \t]+|$)") | not;
+                    sub("^[A-Za-z_][A-Za-z0-9_]*=[^ \t]*[ \t]*"; "")))
+      | map(select(length > 0));
+    # a simple command is understood iff its first word is a non-writing builtin/utility, or an
+    # interpreter whose next word is a plugin script path (whose writes come from the audit).
+    def understood: ([splits("[ \t]+")] | map(select(length > 0))) as $w
+      | ($w[0] | sub("\\)+$"; "")) as $c
+      | if ($okcmds | index([$c])) then true
+        elif ($interps | index([$c])) then (($w[1] // "") | test($script_re))
+        else false end;
+  [ .hooks | to_entries[] | .key as $ev | .value | to_entries[] | .key as $g | .value as $grp
       | $grp.hooks | to_entries[] | .key as $l | .value as $h
       | ($h.command // "") as $cmd
-      | [ $cmd | scan("\\$\\{CLAUDE_PLUGIN_ROOT\\}/scripts/([A-Za-z0-9_.-]+)") | .[0] ] as $s
-      | [ $cmd | scan("(?<![<>&0-9])[0-9]?>>?[ \\t]*([^ \\t;|&)]+)") | .[0]
-          | select(. != "/dev/null" and . != "\"/dev/null\"") ] as $inline
-      | ($inline | map(if test("[$\"`]") then "unknown" else . end)) as $iw
+      | [ $cmd | scan($script_re) | .[0] ] as $s
+      | ([ $cmd | scan($rv) ] | length) as $mentions
+      | [ $cmd | scan("(?<![<>&0-9])(?:[0-9]*|&)(?:>\\||>>?)[ \\t]*(&[0-9-]*|[^ \\t;|&)<>]*)") | .[0]
+          | select(. != "/dev/null" and . != "\"/dev/null\"" and (startswith("&") | not)) ] as $inline
+      | ($inline | map(if (length == 0) or test("[$\"\u0027`(){}*?~\\\\]") then "unknown" else . end)) as $iw
       | ($s | map($a[.] // ["unknown"]) | add // []) as $sw
-      | (($iw + $sw) | unique) as $all
+      | (if ($h.type == "command")
+           and (($mentions != ($s | length))
+                or ($cmd | test("<>"))
+                or ([$cmd | simple_cmds[] | understood] | all | not))
+         then ["unknown"] else [] end) as $uw
+      | (($iw + $sw + $uw) | unique) as $all
       | {event: $ev,
          matcher: ($grp.matcher // null),
          type: $h.type,
@@ -333,7 +391,7 @@ jq -S --slurpfile audit "$tmpd/audit.json" '
          _g: $g, _l: $l,
          script: (if ($s | length) > 0 then ("scripts/" + $s[0]) else null end),
          scripts: ($s | map("scripts/" + .)),
-         blocking: ($h.type == "command" and ($cmd | test("\\|\\|[ \\t]*true") | not)),
+         blocking: ($h.type == "command" and ($cmd | test("\\|\\|[ \\t]*true[ \\t]*$") | not)),
          writes: (if ($all | index("unknown")) then ["unknown"] else $all end)} ]
   | sort_by(.event, (.matcher // ""), ._g, ._l) | map(del(._g, ._l))' "$HOOKS" > "$tmpd/hooks.json" \
   || { echo "build-capabilities: hooks.json did not parse" >&2; exit 1; }
