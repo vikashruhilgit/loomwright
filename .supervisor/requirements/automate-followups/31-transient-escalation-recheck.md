@@ -139,3 +139,10 @@ documented in `automate-loop/SKILL.md` §6/§9 and `commands/automate.md` ("an `
   `automate-merge-watch.sh` already refuses a second watcher for the same PR (`already running`). So the change is the
   test, not new arming code: two parks of the same item leave one live watcher and one closeout, asserted on the
   `already running` line, the first pid still alive, and the marker pid unchanged.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done_with_escalation
+- **Completed:** 2026-10-07T11:13:04Z
+- **Brief:** .supervisor/jobs/done/2026-10-07-automate-followups-31-transient-escalation-recheck.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/415
+- **Heal:** max_iterations_reached — 2 remaining

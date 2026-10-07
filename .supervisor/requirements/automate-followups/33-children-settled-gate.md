@@ -1,6 +1,5 @@
 # 33 — Children-settled gate: non-plugin spawns settle, and the check runs before anything is published
 
-## Status: pending
 
 ## Merged from (2026-10-05, owner decision before the S3 wave spike)
 - Part A: `17-children-settled-non-plugin-spawns.md` — `check-children-settled.sh` treats a non-plugin (`general-purpose`) spawn as never settled
@@ -131,3 +130,9 @@ changelog.d/automate-followups-33-children-settled-gate.md
   turn-limit-stopped agents** as unsettled — 5 `worker`s stopped at 40 turns and 2 `context-keeper`s at 3 — each
   with no terminal lifecycle row. The owner answered "proceed". Fourth occurrence of Part A's "second cause"; still
   a gate question that carries no signal. (S3 record §"Wave 2 result", Questions.)
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-07T06:49:46Z
+- **Brief:** .supervisor/jobs/done/2026-10-07-automate-followups-33-children-settled-gate.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/410

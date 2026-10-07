@@ -69,9 +69,40 @@ The migration also changes GitHub settings and untracks ~370 files — both need
   ledger line are on `loomwright-meta`.
 
 ## Rollback (try once in a scratch clone BEFORE step 5)
-`git revert` the untrack PR (restores the old gitignore block) → `meta-sync.sh pull` → `git add` the managed paths
-→ commit. This re-tracks the CURRENT files, so nothing written since the migration is lost. The metadata branch is
-left in place.
+The corrected recipe from #361 (drill evidence 2026-10-03). The old order — revert the untrack PR, then
+`meta-sync.sh pull`, then add the managed paths — **silently loses post-migration edits**: in branch mode the run
+history is gitignored, so the revert overwrites the newer files with pre-migration bytes, and the pull then writes
+nothing because it reads the stale bytes as a local edit. Never use that order.
+
+**Preferred — the shipped subcommand** (`migrate-branch-mode.sh --help`): on the default branch, clean and equal to
+`origin/<default>`:
+```bash
+bash <plugin>/scripts/migrate-branch-mode.sh rollback --commit <sha of the merged untrack commit>
+```
+It pushes local run-history edits to the branch first, reverts the untrack commit without committing, re-tracks the
+CURRENT branch files, drops paths deleted on the branch since the migration, commits on a NEW branch, pushes it and
+opens a PR — it never merges. The owner merges the PR, then `git checkout <default> && git pull`.
+**Limit for THIS repo:** `rollback` reads the metadata branch from `.supervisor/migrate-branch-mode/state`, which only
+`migrate-branch-mode.sh init` writes. M1 ran by hand, so this checkout has no recorded branch and `rollback` refuses
+(`no metadata branch recorded`). Use the manual recipe below here; do not hand-write the state file.
+
+**Manual recipe** (the #361 recipe, made BSD/GNU-portable — no `xargs -r`, no `/tmp` literals). Run on a NEW branch
+off an up-to-date `main`, in the primary checkout:
+```bash
+BR_NAME=loomwright-meta; S="$(mktemp -d)"
+bash <plugin>/scripts/meta-sync.sh push --branch "$BR_NAME"   # publish every post-migration local edit first
+git fetch origin "$BR_NAME" && BR="$(git rev-parse "origin/$BR_NAME")"
+git checkout -b chore/rollback-branch-mode
+git revert --no-commit -m 1 <merge commit of the untrack PR>   # squash-merged: drop "-m 1"
+git ls-tree -r --name-only "$BR" > "$S/onbranch"
+[ -s "$S/onbranch" ] && tr '\n' '\0' < "$S/onbranch" | xargs -0 git checkout "$BR" --   # newest bytes for every branch path
+git diff --cached --name-only --diff-filter=A HEAD -- .supervisor | grep -vxF -f "$S/onbranch" > "$S/gone"
+while IFS= read -r p; do [ -n "$p" ] && git rm -q --cached -- "$p" && rm -f -- "$p"; done < "$S/gone"   # deleted on the branch since migration
+git commit -m "Revert M1 untrack; re-track run history at $BR_NAME $BR"
+```
+Then push the branch, open a PR, and let the owner merge it. Check before the PR: every tracked file under the
+managed patterns equals the branch tip (`git rev-parse HEAD:<p>` = `git rev-parse "$BR:<p>"`), `.gitignore` is back
+to the pre-migration content, and `git status --porcelain` is empty. The metadata branch is left in place.
 
 ## Stop conditions
 Any scrub hit you cannot explain; any path in A missing from B; a non-empty non-`.md` listing on the branch; CI

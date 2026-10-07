@@ -143,3 +143,10 @@ written here, and M2 itself runs after 05 merges.
 - **D1** The rehearsal script passes on this repo with config and with `--no-config` + the request file. Its self-test shows each check going red under its mutant, including the old rollback order losing a post-migration edit.
 - **D3** On `main`'s CI after this lands, the corpus sweep reports `parseBrief threw on …/N` (or its NOTE) instead of `SKIP`, and the self-test count of real skips is back to the pre-M1 one (the Linux-host Darwin cases only).
 - **D2** M1's Rollback section is the corrected recipe. M2's runbook names only commands and flags that exist in the shipped scripts' `--help`.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done_with_escalation
+- **Completed:** 2026-10-07T09:35:10Z
+- **Brief:** .supervisor/jobs/done/2026-10-07-onboard-any-repo-to-branch-mode.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/417
+- **Heal:** max_iterations_reached — 1 remaining

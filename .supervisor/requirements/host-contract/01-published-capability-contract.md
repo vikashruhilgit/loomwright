@@ -60,3 +60,9 @@ Every release ships `loomwright/capabilities.json`. It is generated from the plu
 
 ## Non-goals
 Anything Studio-specific in Loomwright, beyond being a generic "host" consumer. Reading the contract from Studio, which is Studio's phase 2. The host switch, which is item 02.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-07T08:47:52Z
+- **Brief:** .supervisor/jobs/done/2026-10-07-published-capability-contract.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/412
