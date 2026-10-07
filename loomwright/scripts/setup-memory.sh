@@ -1321,7 +1321,7 @@ DISCLOSURE
   cat <<'DISCLOSURE'
 repo-allowlist ledger gate does not apply: the ledger is never un-ignored here).
 Run history ALREADY committed on this branch stays tracked — switching only rewrites .gitignore.
-Untracking it is a separate, deliberate operator step (the migration runbook, M1), never this
+Untracking it is a separate, deliberate operator step (migrate-branch-mode.sh plan), never this
 helper: it never runs git add / git rm / git commit.
 
 Read this before saying yes:
@@ -1786,7 +1786,7 @@ do_apply() {
     echo "  git status --short .claude/agent-memory .supervisor/memory"
     echo "and commit deliberately. Run history lives on the metadata branch '$EFFECTIVE_BRANCH' (meta-sync.sh),"
     echo "not on this branch — there is nothing to commit for it here. Untracking run history ALREADY"
-    echo "committed on this branch is a separate operator step (the migration runbook, M1), never this"
+    echo "committed on this branch is a separate operator step (migrate-branch-mode.sh plan), never this"
     echo "helper. This helper never runs git add / git rm / git commit."
     exit 0
   fi

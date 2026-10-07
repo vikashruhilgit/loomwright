@@ -1884,14 +1884,14 @@ for o_lbl in "apply:$oa" "check:$oc"; do
   lbl="${o_lbl%%:*}"; o="${o_lbl#*:}"
   if hasF 'What becomes VERSION-CONTROLLED if you apply this (BRANCH MODE — metadata branch `loomwright-meta`):' "$o" \
      && hasF 'so there is nothing to commit for run history on this branch' "$o" \
-     && hasF 'Untracking it is a separate, deliberate operator step (the migration runbook, M1), never this' "$o" \
+     && hasF 'Untracking it is a separate, deliberate operator step (migrate-branch-mode.sh plan), never this' "$o" \
      && ! hasF '.supervisor/requirements/** — the intake' "$o" && ! hasF 'GATED: it is un-ignored only while' "$o"; then
-    ok "(fn-1) $lbl prints the BRANCH-MODE disclosure (memory stores only; run history on the metadata branch; untracking is M1, not this helper)"
+    ok "(fn-1) $lbl prints the BRANCH-MODE disclosure (memory stores only; run history on the metadata branch; untracking starts at migrate-branch-mode.sh plan, not this helper)"
   else no "(fn-1) $lbl disclosure still describes the default block"; fi
 done
 if hasF '  git status --short .claude/agent-memory .supervisor/memory' "$oa" && ! hasF '.supervisor/memory .supervisor/requirements' "$oa" \
    && hasF "Run history lives on the metadata branch 'loomwright-meta' (meta-sync.sh)," "$oa" \
-   && hasF 'not on this branch — there is nothing to commit for it here.' "$oa" && hasF '(the migration runbook, M1), never this' "$oa"; then
+   && hasF 'not on this branch — there is nothing to commit for it here.' "$oa" && hasF '(migrate-branch-mode.sh plan), never this' "$oa"; then
   ok "(fn-1) apply --branch-mode Next: hint names only the two memory stores and says run history lives on the metadata branch"
 else no "(fn-1) apply --branch-mode Next: hint: $(grep -A5 '^Next:' <<< "$oa")"; fi
 o="$(mem "$Bfn" apply 2>/dev/null)"
