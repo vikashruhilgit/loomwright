@@ -1,0 +1,44 @@
+ci	Check the local pre-push runner (ci-local.sh)	﻿2026-10-05T02:08:39.8646799Z ##[group]Run bash scripts/test-ci-local.sh
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:39.8647178Z ^[[36;1mbash scripts/test-ci-local.sh^[[0m
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:39.8685321Z shell: /usr/bin/bash -e {0}
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:39.8685679Z env:
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:39.8686089Z   LOOMWRIGHT_VERIFY_TEST_CACHE: /tmp/loomwright-verify-walkthrough
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:39.8686477Z ##[endgroup]
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:39.9413162Z ok   (S) slot state is inside the sandboxed XDG_STATE_HOME
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:41.1089459Z ok   (P) green: every gate + test ran, stamped
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:41.1594219Z ok   (C) unchanged tree: cached, nothing ran
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:41.4758321Z ok   (X) another clone, same origin: PASS (cached), nothing ran
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:42.6454389Z ok   (X) same clone, different origin: own cache, re-ran
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:43.8122465Z ok   (U) untracked file: cache miss, vendor gate saw it via the temp index
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:43.8148464Z ok   (U) real index untouched (file still untracked, nothing staged)
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:43.8177294Z ok   (U) MUTATION CONTROL: same gate against the real index fails
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:44.9777024Z ok   (F) failing gate under --force: exit 1
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:46.1421383Z ok   (F) the failure removed the old PASS stamp: next run re-ran
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:48.5260852Z ok   (O) origin/main moved: cache miss, re-ran
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:49.6969532Z ok   (M) tree changed mid-run: PASS not cached
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:50.8844596Z ok   (M) next run re-ran
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:51.0477239Z FAIL (L) live: rc=1 out=ci-slot: no CI slot after 1s — giving up (holders: holder (1s)); see: ci-slot.sh status
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:51.0478109Z ci-local: no CI slot after 1s — giving up (FAIL). Holders: bash loomwright/scripts/ci-slot.sh status
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:52.2593319Z ok   (L) dead holder: slot taken over, run passed, slot released
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:52.2594002Z ok   (L) no per-clone loomwright-ci-local dir is created
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:52.3235581Z ok   (LS) --list: key + cached status, nothing ran
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:52.3261000Z ok   (LS) --list: exactly the ci.yml gates (with arguments) and the plain tests, in order
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:52.3272147Z ok   (LS) --list hides the temp gate wrappers
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:52.4261394Z ok   (LS) --list on a changed tree: cache miss, nothing ran
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:53.3673092Z ok   (J) SELF_TEST_JOBS = the slot's share (12 CPUs / 2 slots = 6)
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:54.8496960Z ok   (J) an explicit SELF_TEST_JOBS is passed through unchanged
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:55.7957772Z ok   (Q) waiter behind a holder that stamped the same tree: PASS (cached), nothing ran
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:56.2145149Z ok   (T) TERM to a queued run: exit 143 within 5s, no ticket or slot left, nothing ran
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:56.2230933Z ok   (B) slot helper 'dir' dir-fail: exit 1, dir-failure message, nothing ran, no acquire
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:56.2295587Z ok   (B) slot helper 'dir' dir-empty: exit 1, dir-failure message, nothing ran, no acquire
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:56.2667921Z ok   (B) malformed acquire answer: exit 1 'unexpected answer from', nothing ran, EXIT trap released
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:56.2713210Z ok   (B) real slot helper restored for later arms
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:56.2801822Z ok   (H) --help: the whole header, de-commented, no code
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:56.2878144Z ok   (H) --help survives a changed first code line
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:56.3346427Z ok   (Z) no gates in ci.yml: exit 1
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:56.3362950Z ok   (A) unknown argument: exit 2
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:56.3385054Z ok   (W) suite glob matches run-self-tests.sh
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:56.3395831Z ok   (W) ci.yml runs this self-test
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:56.3396300Z 
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:56.3396563Z test-ci-local: 33 passed, 1 failed
+ci	Check the local pre-push runner (ci-local.sh)	2026-10-05T02:08:56.3459778Z ##[error]Process completed with exit code 1.

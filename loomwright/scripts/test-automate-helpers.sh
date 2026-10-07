@@ -27,6 +27,11 @@
 #      `parked ` not guarded; the picked-mismatch arm with `./` and suffix forms) and
 #      a w1-10 replay; current-rebuild against a stubbed gh (OPEN/MERGED/CLOSED/failing)
 #      with foreign-PR, not-in-Queue and no-picked negatives; three gated mutants.
+#      (ESC, automate-followups/31) escalation-cause: the s2-c/s2-d replays
+#      (check_red_unrelated / check_pending), the related-file and tested-script
+#      cases, every unreadable case failing closed to check_red, `other`, a gated
+#      name-only-classifier mutant, a no-rerun/merge/push static scan; and
+#      current-escalation's placement, idempotency, null removal and refusals.
 #   C. folder / backlog-doc resolvers (skip ## Status: done; documented order).
 #   D. resume-glob lists only run files (is_run_file: `# Automate Run:` title) not
 #      done — §6 result sidecars excluded, with a validated is_run_file mutant;
@@ -4927,6 +4932,186 @@ print(1 if sys.argv[2] in touches_of({"source": sys.argv[2], "finding": ""}) els
   done
 fi
 rm -rf "$W_T"
+
+# =============================================================================
+echo "== ESC. escalation-cause classifier + current-escalation writer (automate-followups/31) =="
+# Replay fixtures (fixtures/escalation-cause/) through a stubbed gh: s2-c (`ci` red only in
+# scripts/test-ci-local.sh, which PR #381 does not touch) and s2-d (`claude-review` still
+# IN_PROGRESS). The stub reads its answers from files in $ESC_D so each leg edits one input.
+ESC_FX="$HERE/fixtures/escalation-cause"
+ESC_T="$(mktemp -d)"
+ESC_C_SHA="a7f995344bbb9c33663b58fb7d0f691ddd9d513f"
+ESC_C_URL="https://github.com/vikashruhilgit/loomwright/pull/381"
+ESC_D_URL="https://github.com/vikashruhilgit/loomwright/pull/386"
+cat > "$ESC_T/gh" <<'ESC_GH'
+#!/usr/bin/env bash
+d="$ESC_D"
+case "$*" in
+  *"--json baseRefName"*) printf '{"baseRefName":"main"}\n'; exit 0 ;;
+  *"--json headRefOid,statusCheckRollup"*|*"--json statusCheckRollup"*)
+    [ -f "$d/rollup.json" ] || exit 1; cat "$d/rollup.json"; exit 0 ;;
+  *"--json changedFiles,files"*) [ -f "$d/files.json" ] || exit 1; cat "$d/files.json"; exit 0 ;;
+  *"--paginate"*) [ -f "$d/paginate.txt" ] || exit 1; cat "$d/paginate.txt"; exit 0 ;;
+  "api repos/"*"/protection")
+    [ -f "$d/prot.err" ] && { cat "$d/prot.err" >&2; exit 1; }
+    printf '{"required_status_checks":{"contexts":["ci"]}}\n'; exit 0 ;;
+  "run view "*" --json attempt") printf '{"attempt":%s}\n' "$(cat "$d/attempt" 2>/dev/null || echo 1)"; exit 0 ;;
+  "run view "*" --log-failed")
+    f="$d/log-$3.txt"; [ -f "$f" ] || exit 1; cat "$f"; exit 0 ;;
+esac
+exit 1
+ESC_GH
+chmod +x "$ESC_T/gh"
+# esc_case <name> — a fresh answer dir seeded with the s2-c replay.
+esc_case() {
+  ESC_D="$ESC_T/$1"; mkdir -p "$ESC_D"
+  cp "$ESC_FX/s2c-rollup.json" "$ESC_D/rollup.json"
+  cp "$ESC_FX/s2c-files.json" "$ESC_D/files.json"
+  cp "$ESC_FX/s2c-log-failed.txt" "$ESC_D/log-37254186674.txt"
+  echo 1 > "$ESC_D/attempt"
+}
+# esc_run <helper> <url> <sha> — sets ESC_OUT / ESC_RC.
+esc_run() {
+  ESC_OUT="$(ESC_D="$ESC_D" LOOMWRIGHT_GH_BIN="$ESC_T/gh" bash "$1" escalation-cause "$2" --sha "$3" 2>/dev/null)"; ESC_RC=$?
+}
+# esc_expect <label> <want_line>
+esc_expect() {
+  if [ "$ESC_RC" -eq 0 ] && [ "$ESC_OUT" = "$2" ]; then ok "ESC $1: $ESC_OUT"; else no "ESC $1 (rc=$ESC_RC): got '$ESC_OUT' want '$2'"; fi
+}
+ESC_RED_C="escalation_cause: check_red check=ci run_id=37254186674 attempt=1 sha=$ESC_C_SHA"
+ESC_RED_NULL="escalation_cause: check_red check=null run_id=null attempt=null sha=$ESC_C_SHA"
+
+esc_case e1; esc_run "$H" "$ESC_C_URL" "$ESC_C_SHA"
+esc_expect "AC1 s2-c replay ⇒ check_red_unrelated" "escalation_cause: check_red_unrelated check=ci run_id=37254186674 attempt=1 sha=$ESC_C_SHA"
+
+esc_case e2; cp "$ESC_FX/s2d-rollup.json" "$ESC_D/rollup.json"; echo 1 > "$ESC_D/attempt"
+esc_run "$H" "$ESC_D_URL" "1e35336"
+esc_expect "AC2 s2-d replay ⇒ check_pending" "escalation_cause: check_pending check=claude-review run_id=37259136927 attempt=1 sha=1e35336"
+
+# AC3: the failing test file, or its tested script, is in the PR's files ⇒ check_red.
+esc_case e3a
+jq -c '.changedFiles += 1 | .files += [{"path":"scripts/test-ci-local.sh"}]' "$ESC_FX/s2c-files.json" > "$ESC_D/files.json"
+esc_run "$H" "$ESC_C_URL" "$ESC_C_SHA"; esc_expect "AC3 failing test file in the PR ⇒ check_red" "$ESC_RED_C"
+esc_case e3b
+jq -c '.changedFiles += 1 | .files += [{"path":"scripts/ci-local.sh"}]' "$ESC_FX/s2c-files.json" > "$ESC_D/files.json"
+esc_run "$H" "$ESC_C_URL" "$ESC_C_SHA"; esc_expect "AC3 tested script <stem>.sh in the PR ⇒ check_red" "$ESC_RED_C"
+esc_case e3c; echo 2 > "$ESC_D/attempt"
+esc_run "$H" "$ESC_C_URL" "$ESC_C_SHA"
+esc_expect "attempt is read from gh run view (attempt 2)" "escalation_cause: check_red_unrelated check=ci run_id=37254186674 attempt=2 sha=$ESC_C_SHA"
+
+# AC4: every unreadable case fails CLOSED to check_red.
+esc_case e4a; rm -f "$ESC_D/log-37254186674.txt"
+esc_run "$H" "$ESC_C_URL" "$ESC_C_SHA"; esc_expect "AC4 unreadable --log-failed ⇒ check_red" "$ESC_RED_C"
+esc_case e4b; rm -f "$ESC_D/files.json"
+esc_run "$H" "$ESC_C_URL" "$ESC_C_SHA"; esc_expect "AC4 unreadable PR file list ⇒ check_red" "$ESC_RED_C"
+esc_case e4c; jq -c '.changedFiles = 9' "$ESC_FX/s2c-files.json" > "$ESC_D/files.json"
+esc_run "$H" "$ESC_C_URL" "$ESC_C_SHA"; esc_expect "AC4 incomplete PR file list (8 of 9, paginated re-read fails) ⇒ check_red" "$ESC_RED_C"
+esc_case e4d; grep -v 'group\]Run bash' "$ESC_FX/s2c-log-failed.txt" > "$ESC_D/log-37254186674.txt"
+esc_run "$H" "$ESC_C_URL" "$ESC_C_SHA"; esc_expect "AC4 no extractable failing test file ⇒ check_red" "$ESC_RED_C"
+esc_case e4e; rm -f "$ESC_D/rollup.json"
+esc_run "$H" "$ESC_C_URL" "$ESC_C_SHA"; esc_expect "AC4 gh snapshot read fails ⇒ check_red" "$ESC_RED_NULL"
+esc_case e4f; echo 'gh: Resource not accessible by integration (HTTP 403)' > "$ESC_D/prot.err"
+esc_run "$H" "$ESC_C_URL" "$ESC_C_SHA"; esc_expect "required=unknown (protection read 403) ⇒ check_red" "$ESC_RED_NULL"
+esc_case e4g; jq -c 'del(.statusCheckRollup[0].detailsUrl)' "$ESC_FX/s2c-rollup.json" > "$ESC_D/rollup.json"
+esc_run "$H" "$ESC_C_URL" "$ESC_C_SHA"
+esc_expect "AC4 red check with no run id ⇒ check_red" "escalation_cause: check_red check=ci run_id=null attempt=null sha=$ESC_C_SHA"
+esc_case e4h; esc_run "$H" "$ESC_C_URL" "0000000000"
+esc_expect "AC4 snapshot for a different sha ⇒ check_red" "escalation_cause: check_red check=null run_id=null attempt=null sha=0000000000"
+esc_case e5; jq -c '.statusCheckRollup[0].conclusion = "SUCCESS"' "$ESC_FX/s2c-rollup.json" > "$ESC_D/rollup.json"
+esc_run "$H" "$ESC_C_URL" "$ESC_C_SHA"; esc_expect "nothing pending, nothing red ⇒ other" "escalation_cause: other check=null run_id=null attempt=null sha=$ESC_C_SHA"
+esc_case e6; ESC_OUT="$(LOOMWRIGHT_GH_BIN="$ESC_T/gh" bash "$H" escalation-cause "$ESC_C_URL" 2>/dev/null)"; ESC_RC=$?
+esc_expect "missing --sha ⇒ check_red, exit 0" "escalation_cause: check_red check=null run_id=null attempt=null sha=null"
+
+# AC5 MUTATION CONTROL: a classifier that decides by test name alone (no PR-files comparison —
+# every failing test file read as unrelated) must turn the AC3 related legs red.
+ESC_MUT="$(mktemp -d)"
+for e in "$(dirname "$H")"/*; do [ "$e" = "$H" ] || ln -s "$e" "$ESC_MUT/$(basename "$e")"; done
+sed 's/^_esc_related() {$/_esc_related() { return 1/' "$H" > "$ESC_MUT/automate-helpers.sh"
+if [ -s "$ESC_MUT/automate-helpers.sh" ] && ! cmp -s "$H" "$ESC_MUT/automate-helpers.sh" && bash -n "$ESC_MUT/automate-helpers.sh" 2>/dev/null \
+   && grep -qxF '_esc_related() { return 1' "$ESC_MUT/automate-helpers.sh"; then
+  ESC_D="$ESC_T/e3a"; esc_run "$ESC_MUT/automate-helpers.sh" "$ESC_C_URL" "$ESC_C_SHA"; esc_m1="$ESC_OUT"
+  ESC_D="$ESC_T/e3b"; esc_run "$ESC_MUT/automate-helpers.sh" "$ESC_C_URL" "$ESC_C_SHA"; esc_m2="$ESC_OUT"
+  if [ "$esc_m1" != "$ESC_RED_C" ] && [ "$esc_m2" != "$ESC_RED_C" ]; then
+    ok "ESC AC5 mutation control: a name-only classifier fails both AC3 legs ($esc_m1)"
+  else
+    no "ESC AC5 mutation control did NOT discriminate (m1='$esc_m1' m2='$esc_m2')"
+  fi
+else
+  no "ESC AC5 mutation control: could not build a valid mutant -- control inconclusive"
+fi
+rm -rf "$ESC_MUT"
+
+# AC13 (classifier half): no executed rerun / merge / push / approval in the family file.
+ESC_CODE="$(grep -vE '^[[:space:]]*#' "$HERE/automate-helpers.d/escalation.sh")"
+if [ -n "$ESC_CODE" ] && ! grep -qE 'run rerun|pr merge|git push|--approve|pr review' <<<"$ESC_CODE"; then
+  ok "ESC AC13: escalation.sh executes no gh run rerun / gh pr merge / git push / approval (comments excluded)"
+else
+  no "ESC AC13: escalation.sh code mentions a rerun/merge/push/approval"
+fi
+
+# AC7: current-escalation — the ONLY writer of ## Current's escalation_cause line.
+ESC_RF="$ESC_T/r.md"
+esc_rf() { # esc_rf [with_pause=1]
+  {
+    printf '# Automate Run: esc\n## Status: paused\n## Source\n- folder f\n## Run Config\n- mode: safe | limit: 5\n## Queue\n- [ ] a.md\n## Current\n'
+    printf '%s\n' '- item: a.md | status: escalated | pr: https://github.com/acme/widgets/pull/1 | branch: f/a'
+    [ "${1:-1}" = 1 ] && printf '%s\n' '- pause_reason: null'
+    printf '%s\n' '- owned_drain_started: t9 | owned_drain_result: ESCALATED | suppressed_default_dispatch: true'
+    printf '## Progress\n- t0 run created\n'
+  } > "$ESC_RF"
+}
+ESC_LINE="- escalation_cause: check_pending | check: claude-review | run_id: 37259136927 | attempt: 1 | sha: 1e35336"
+esc_rf; cp "$ESC_RF" "$ESC_T/before"
+run_h bash "$H" current-escalation "$ESC_RF" --cause check_pending --check claude-review --run-id 37259136927 --attempt 1 --sha 1e35336
+if [ "$RUN_RC" -eq 0 ] && [ "$(grep -A1 -xF -- '- pause_reason: null' "$ESC_RF" | tail -1)" = "$ESC_LINE" ] \
+   && [ "$(diff "$ESC_T/before" "$ESC_RF" | grep -c '^[<>]')" = 1 ] \
+   && cmp -s "$ESC_T/before" <(grep -vxF -- "$ESC_LINE" "$ESC_RF"); then
+  ok "ESC current-escalation: one line inserted right after pause_reason, every other line byte-unchanged"
+else
+  no "ESC current-escalation insert wrong (rc=$RUN_RC): $(diff "$ESC_T/before" "$ESC_RF" | tr '\n' '|')"
+fi
+cp "$ESC_RF" "$ESC_T/set1"
+run_h bash "$H" current-escalation "$ESC_RF" --cause check_pending --check claude-review --run-id 37259136927 --attempt 1 --sha 1e35336
+if [ "$RUN_RC" -eq 0 ] && [ "$RUN_OUT" = "current-escalation: unchanged" ] && cmp -s "$ESC_T/set1" "$ESC_RF"; then
+  ok "ESC current-escalation: identical values ⇒ unchanged, byte-identical"
+else
+  no "ESC current-escalation not idempotent (rc=$RUN_RC out=$RUN_OUT)"
+fi
+run_h bash "$H" current-escalation "$ESC_RF" --cause findings
+if [ "$RUN_RC" -eq 0 ] && [ "$(grep -c '^- escalation_cause:' "$ESC_RF")" = 1 ] \
+   && grep -qxF -- '- escalation_cause: findings | check: null | run_id: null | attempt: null | sha: null' "$ESC_RF"; then
+  ok "ESC current-escalation: replaces in place; omitted fields are null"
+else
+  no "ESC current-escalation replace wrong (rc=$RUN_RC): $(grep -n escalation_cause "$ESC_RF" | tr '\n' '|')"
+fi
+run_h bash "$H" current-escalation "$ESC_RF" --cause null
+if [ "$RUN_RC" -eq 0 ] && cmp -s "$ESC_T/before" "$ESC_RF"; then
+  ok "ESC current-escalation: --cause null removes the line (file back to byte-identical)"
+else
+  no "ESC current-escalation --cause null wrong (rc=$RUN_RC)"
+fi
+run_h bash "$H" current-escalation "$ESC_RF" --cause null
+if [ "$RUN_RC" -eq 0 ] && [ "$RUN_OUT" = "current-escalation: unchanged" ]; then ok "ESC current-escalation: --cause null on an absent line ⇒ unchanged"; else no "ESC null-absent wrong (rc=$RUN_RC out=$RUN_OUT)"; fi
+esc_rf 0; cp "$ESC_RF" "$ESC_T/nopause"
+run_h bash "$H" current-escalation "$ESC_RF" --cause other
+if [ "$RUN_RC" -eq 0 ] && [ "$(grep -B1 -xF '## Progress' "$ESC_RF" | head -1)" = "- escalation_cause: other | check: null | run_id: null | attempt: null | sha: null" ] \
+   && [ "$(diff "$ESC_T/nopause" "$ESC_RF" | grep -c '^[<>]')" = 1 ]; then
+  ok "ESC current-escalation: no pause_reason line ⇒ appended at the end of the ## Current block"
+else
+  no "ESC current-escalation append wrong (rc=$RUN_RC): $(diff "$ESC_T/nopause" "$ESC_RF" | tr '\n' '|')"
+fi
+esc_rf; cp "$ESC_RF" "$ESC_T/ref"
+esc_bad=""
+for args in "--cause bogus" "--check x" "--cause check_red --check a|b" \
+            "--cause check_red --attempt two" "--cause check_red --run-id 12x" "--cause null --check ci" "--cause"; do
+  # shellcheck disable=SC2086
+  run_h bash "$H" current-escalation "$ESC_RF" $args
+  { [ "$RUN_RC" -eq 1 ] && cmp -s "$ESC_T/ref" "$ESC_RF"; } || esc_bad="$esc_bad [$args rc=$RUN_RC]"
+done
+run_h bash "$H" current-escalation "$ESC_RF" --cause check_red --sha "$(printf 'a\nb')"
+{ [ "$RUN_RC" -eq 1 ] && cmp -s "$ESC_T/ref" "$ESC_RF"; } || esc_bad="$esc_bad [newline sha rc=$RUN_RC]"
+if [ -z "$esc_bad" ]; then ok "ESC current-escalation: every refusal exits 1 with the file byte-unchanged"; else no "ESC current-escalation refusals wrong:$esc_bad"; fi
+rm -rf "$ESC_T"
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

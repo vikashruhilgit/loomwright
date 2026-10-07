@@ -236,6 +236,15 @@ case "$r" in "fail $SD/sup-noreasons.md: risk_classification present without rea
 printf '%s\n' "$RH_GOOD" | sed 's/^- channels_scanned: .*/- channels_scanned: [checks, reviews, review_threads]/' > "$SD/rh-chan.md"
 r="$(bash "$H" sidecar-check "$SD/rh-chan.md")"
 case "$r" in "fail $SD/rh-chan.md: non-canonical channels_scanned token checks") ok "non-canonical channel fails" ;; *) no "channel: $r" ;; esac
+# automate-followups/31: the five escalation_* keys are schema keys (RH_V2_ALLOWED), so a
+# sidecar carrying them passes; a genuinely non-schema key still fails (ready_sha above).
+{ printf '%s\n' "$RH_GOOD"; printf '%s\n' '- escalation_cause: check_pending' '- escalation_check: claude-review' \
+    '- escalation_run_id: 37259136927' '- escalation_attempt: 1' '- escalation_sha: 1e35336'; } > "$SD/rh-escalation.md"
+r="$(bash "$H" sidecar-check "$SD/rh-escalation.md")"
+[ "$r" = "ok $SD/rh-escalation.md" ] && ok "escalation_* keys pass sidecar-check" || no "rh-escalation: $r"
+{ printf '%s\n' "$RH_GOOD"; echo '- escalation_reason: check_pending'; } > "$SD/rh-escreason.md"
+r="$(bash "$H" sidecar-check "$SD/rh-escreason.md")"
+case "$r" in "fail $SD/rh-escreason.md: "*"non-schema key escalation_reason") ok "a non-schema escalation_reason key still fails" ;; *) no "escalation_reason: $r" ;; esac
 r="$(bash "$H" sidecar-check "$SD/absent.md")"; rc=$?
 [ "$r" = "fail $SD/absent.md: file not found" ] && [ "$rc" -eq 0 ] && ok "missing file ⇒ fail line, exit 0" || no "absent: $r rc=$rc"
 

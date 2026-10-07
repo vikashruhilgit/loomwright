@@ -171,7 +171,10 @@ RH_V2_ALLOWED = set(RH_V2_REQUIRED + [
     "postmortem_dispatched", "channels_scanned", "findings_validated",
     "findings_dismissed", "checks_waited", "termination_reason",
     "severity_floor", "sub_floor_fixed", "rejected_instruction_like",
-    "dismissed", "rules_gate", "checks_untrusted"])
+    "dismissed", "rules_gate", "checks_untrusted",
+    # automate-followups/31: the escalation cause (present only on ESCALATED).
+    "escalation_cause", "escalation_check", "escalation_run_id",
+    "escalation_attempt", "escalation_sha"])
 RH_V1_ALLOWED = set(RH_V1_REQUIRED)
 # channels_scanned vocabulary — mirrors skills/review-heal/SKILL.md
 # §"Step U1 — All-Channel Read" (RESULT_SCHEMAS lists channels only as "e.g.").

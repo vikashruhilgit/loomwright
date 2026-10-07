@@ -45,6 +45,7 @@ These names are **coined here**. Treat this section as authoritative; all other 
 | Rejected-instruction counter | **`rejected_instruction_like`** | Count of envelope bodies that asked the agent to act outside validate-then-fix (run/fetch/install/change permissions/act outside the PR branch) — rejected, never obeyed (§"Untrusted-Text Envelope"). Additive `REVIEW_HEAL_RESULT` field — `docs/RESULT_SCHEMAS.md`. |
 | CI trust probe | **`scripts/ci-run-probe.sh`** | Fail-safe, read-only, bounded (`--max-probes`, default 5, no pagination) live-infra probe for a single RED REQUIRED check-run — classifies `ran` \| `untrusted_infra` \| `unknown` from evidence (zero steps / no runner ever assigned / a job conclusion of `startup_failure` — a REAL, DOCUMENTED GitHub Actions job-conclusion enum value, never a free-text name/message match), never from a timestamp (ci-trust-probe-01). |
 | Untrusted-check terminal state | **`ci_untrusted`** (`termination_reason`) | A fourth `termination_reason` value (§U4, "READY redefinition", "Terminal states") — the round's only remaining READY-blockers are `checks_untrusted[]` entries; terminates `ESCALATED`, never READY, never auto-fixed (ci-trust-probe-01). |
+| Escalation cause | **`escalation_cause`** (`check_pending` \| `check_red_unrelated` \| `check_red` \| `findings` \| `other`) | WHY an `ESCALATED` drain stopped (automate-followups/31, §"Escalation cause"); check-driven values come from `automate-helpers.sh escalation-cause`. Informational — never a gate input, never a merge permission. |
 
 ### `REVIEW_HEAL_RESULT` block
 
@@ -59,7 +60,7 @@ These names are **coined here**. Treat this section as authoritative; all other 
 - notified: <bool>                  # true if a NEEDS_HUMAN notification was attempted
 ```
 
-Under `--until-mergeable` the block stays **`schema_version: 2`** (adds `decision: READY` plus the ADDITIVE/OPTIONAL drain fields — e.g. `channels_scanned`, `findings_validated`, `findings_dismissed`, `checks_waited`, `termination_reason` (`converged` | `bound_hit` | `sub_floor_converged` | `ci_untrusted`, AC6, ci-trust-probe-01), `severity_floor`, `sub_floor_fixed[]`, `rejected_instruction_like` (int; count of envelope bodies rejected as instruction-like, §"Untrusted-Text Envelope", red-team-hardening item 01), `dismissed` (the itemised `{finding, reason, source}` list, dismissed-findings-01, §"Dismissed-findings marker comment"), `checks_untrusted` (the itemised `{check, reason, run_id}` list of required checks classified `untrusted_infra` by `scripts/ci-run-probe.sh`, ci-trust-probe-01), and `rules_gate` (the LAST round's `scripts/rules-gate-verdict.sh` verdict, automate-followups/07 — absent ⇒ unspecified)). These new fields are additive only; the **authoritative schema text lives in `docs/RESULT_SCHEMAS.md`** — there is **no schema_version bump beyond 2**, and no `gh pr merge` field/path ever exists (never-auto-merge invariant).
+Under `--until-mergeable` the block stays **`schema_version: 2`** (adds `decision: READY` plus the ADDITIVE/OPTIONAL drain fields — e.g. `channels_scanned`, `findings_validated`, `findings_dismissed`, `checks_waited`, `termination_reason` (`converged` | `bound_hit` | `sub_floor_converged` | `ci_untrusted`, AC6, ci-trust-probe-01), `severity_floor`, `sub_floor_fixed[]`, `rejected_instruction_like` (int; count of envelope bodies rejected as instruction-like, §"Untrusted-Text Envelope", red-team-hardening item 01), `dismissed` (the itemised `{finding, reason, source}` list, dismissed-findings-01, §"Dismissed-findings marker comment"), `checks_untrusted` (the itemised `{check, reason, run_id}` list of required checks classified `untrusted_infra` by `scripts/ci-run-probe.sh`, ci-trust-probe-01), `rules_gate` (the LAST round's `scripts/rules-gate-verdict.sh` verdict, automate-followups/07 — absent ⇒ unspecified), and — on `decision: ESCALATED` only — `escalation_cause` + `escalation_check` / `escalation_run_id` / `escalation_attempt` / `escalation_sha` (§"Escalation cause", automate-followups/31)). These new fields are additive only; the **authoritative schema text lives in `docs/RESULT_SCHEMAS.md`** — there is **no schema_version bump beyond 2**, and no `gh pr merge` field/path ever exists (never-auto-merge invariant).
 
 **Decision enum is exactly `PASS | ESCALATED`** — there is no `FAIL` in the *result* block. A reviewer `FAIL` is an internal loop signal that drives a fix iteration; it only becomes a terminal outcome as `ESCALATED` (when the loop exhausts or the reviewer escalates).
 
@@ -459,11 +460,12 @@ loop:
   if gate != "OK":                            # AC1 — ceiling reached; AC5 — fail CLOSED, never loop/pass silently on an unreadable ledger
     decision = ESCALATED
     termination_reason = "bound_hit" if gate == "BOUND_HIT" else null   # an unreadable ledger is a hard stop, not a "bound"
+    escalation = escalation_cause(pr_url, head_sha) if gate == "BOUND_HIT" else "other"   # §"Escalation cause"
     post remaining findings to PR (gh pr comment ...); notify (best-effort)
     break
 
   required = discover_required_checks()   # Step U2 — ESCALATED (fail closed) if unavailable & not --required-checks all-non-neutral
-  wait_for_scoped_checks_to_settle()      # Step U2.5 — bounded; ESCALATED if a required/review-producing check is still in flight at the bound (optional pending never escalates)
+  wait_for_scoped_checks_to_settle()      # Step U2.5 — bounded; ESCALATED (escalation = escalation_cause(pr_url, head_sha), §"Escalation cause") if a required/review-producing check is still in flight at the bound (optional pending never escalates)
   scan = read_all_channels()             # Step U1 — re-scans ALL channels AFTER the scoped set settles; ESCALATED if any gated channel is "unknown"
   bot_findings = classify_all_channels(scan)   # Step U1 — UNION across reviews/latestReviews/reviewThreads/issue-comments/check-outputs via scripts/classify-bot-review.sh
   # NOTE (AC1): this loop deliberately spawns NO Task(loomwright:code-reviewer) of its own — the drain is
@@ -621,6 +623,7 @@ loop:
   if rules_escalates:
     # FAIL CLOSED — a rules verdict the gate could not compute (or could not be READ) never lets the round reach READY.
     decision = ESCALATED                   # termination_reason left UNSET (like an unreadable ledger)
+    escalation = "other"                   # §"Escalation cause" — a rules gate is never check-driven
     remaining_issues = len(auto_fixable) + len(needs_human) + max(1, len(rules.unresolved), len(rules_failed_seen))
     post "rules_gate_unresolved: rules-gate-verdict.sh verdict <verdict> (<unresolved ids>)" to PR (gh pr comment ...)
       — on `unstamped`: "rules_fail_then_unstamped: <rules_failed_seen ids> failed earlier, now unstamped"; notify (best-effort)
@@ -649,6 +652,7 @@ loop:
   if required_failing_fixable == [] and auto_fixable == [] and needs_human == [] and checks_untrusted_this_round != []:
     decision = ESCALATED
     termination_reason = "ci_untrusted"   # AC6 — see docs/RESULT_SCHEMAS.md §REVIEW_HEAL_RESULT
+    escalation = "other"                  # §"Escalation cause" — ci_untrusted keeps its own termination_reason
     remaining_issues = len(checks_untrusted_this_round)
     # Notification names each check + its reason + a suggested (never
     # executed) human re-run command — see the Non-goals: the drain never
@@ -662,6 +666,7 @@ loop:
   if auto_fixable == [] and needs_human != []:
     # only human-judgment findings remain (can't auto-fix) → surface + stop
     decision = ESCALATED
+    escalation = "findings"               # §"Escalation cause"
     remaining_issues = len(needs_human)
     post findings to PR (gh pr comment ...); notify (best-effort)
     break
@@ -746,6 +751,7 @@ loop:
       pass
     else:   # RED, UNREADABLE, or the bounded SHA-settle wait itself elapsed (still-not-settled) — Hole 1
       decision = ESCALATED                              # NEVER READY on a red/unknown/unbound-checked SHA
+      escalation = escalation_cause(pr_url, pushed_sha) # §"Escalation cause" — check-driven site
       if outcome.result == "RED" and (outcome.failing_names & checks_ever_fixed) != {}:
         repeat_check_failure = true                      # AC13 — a check that HAD been fixed re-failed; there
                                                            # is no later round to catch this otherwise (Hole 2)
@@ -863,6 +869,18 @@ Routing the drain through a Task step in the future would turn this fallback int
 - **`READY`** — the READY redefinition above holds: required checks green AND review-producing (scoped) checks settled AND no unresolved validated bot findings across ALL channels AND no countable stamped `must`-rule check failing. Loop done; **PR left open for a human to merge** (merge-identical to `PASS`); "ready to merge" notification fired. `termination_reason: converged` (AC6).
 - **`READY` (`sub_floor_converged`)** — a round whose entire fixed yield was below `--severity-floor` terminates READY without a further all-channel re-scan, PROVIDED the SHA-bound confirming required-check pass (§"Termination-only severity floor") is green for the pushed commit. `termination_reason: sub_floor_converged` (AC6); **not** auto-merge-eligible (AC9).
 - **`ESCALATED`** — `--max-rounds` exhausted with signals remaining (`termination_reason: bound_hit`, AC6); OR only confirmed-but-not-auto-fixable (human-judgment) findings remain; OR a fail-closed condition tripped (any gated channel "unknown" — GraphQL thread query errored / truncated, issue-comment read errored, required-or-review-producing check-output fetch errored; required-check metadata unavailable without `--required-checks all-non-neutral`; the §U2.5 bounded wait elapsed with a required/review-producing check still in flight; OR — new — the AC11 confirming pass found the pushed SHA's required checks red/unreadable, `termination_reason` left unset); OR the round-ledger itself was unreadable (AC5, `termination_reason` left unset); OR the rules gate could not compute a verdict (`rules-gate-verdict.sh` `unresolved`/`unreadable` — `rules_gate_unresolved`, `termination_reason` left unset, automate-followups/07) or read `unstamped` after a countable fail earlier in the drain (`rules_fail_then_unstamped`, likewise unset); OR — ci-trust-probe-01 — the only remaining READY-blockers are `untrusted_infra`-classified required checks (`termination_reason: ci_untrusted`), naming each check + its reason + a suggested (never executed) human re-run command. Findings posted to the PR, notifications fired, **PR left open**.
+
+### Escalation cause (automate-followups/31)
+
+Every `ESCALATED` v2 exit also sets `escalation_cause` + `escalation_check`/`_run_id`/`_attempt`/`_sha` (values and meaning: `docs/result-schemas/review-heal-result.md`):
+
+| ESCALATED site | `escalation_cause` |
+|---|---|
+| bound hit; §U2.5 wait elapsed; confirming pass red/unreadable/unsettled (on `pushed_sha`) | the classifier's fields |
+| only human-judgment findings | `findings` |
+| rules gate, round ledger, `ci_untrusted` (keeps its `termination_reason`), channel-unknown, fork, required-check metadata unavailable | `other` |
+
+`findings`/`other` set the four companions to `null`. The classifier is one fail-safe call, `scripts/automate-helpers.sh escalation-cause <pr_url> --sha <sha>`: it prints one `escalation_cause: <cause> check=… run_id=… attempt=… sha=…` line; copy each field as-is. The cause is informational — it never changes `decision`, and nothing here reruns a check (`gh run rerun` stays human), merges, pushes or approves.
 
 There is **no `READY`-that-merges**. `READY` (either `termination_reason`) is terminal-stop-and-notify, exactly like `PASS`/`ESCALATED` (AC6). **No `gh pr merge` is ever issued (AC8).**
 
