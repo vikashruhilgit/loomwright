@@ -83,6 +83,11 @@
 #             its release leaves the holder's slot in place; a sibling (not nested) caller still
 #             waits and times out. This is the shape of ci-local.sh running run-self-tests.sh, which
 #             asks for admission too. MUTATION CONTROL: drop the fold ⇒ the nested caller waits.
+#        (G15) NESTED + boot time (the repo-pool twin of G11): a repo slot record started before
+#             boot (fixture LOOMWRIGHT_MACHINE_BOOT_TIME) whose pid is now an ANCESTOR of the caller
+#             is never folded into — the caller is counted and waits (N=1) — while an unreadable
+#             boot time keeps today's fold. MUTATION CONTROL: drop repo_fold's boot-time skip ⇒ the
+#             caller folds into the pre-boot record and (G15) fails.
 # run-self-tests: serial
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -816,6 +821,37 @@ if [ -s "$mut" ] && ! cmp -s "$mut" "$SUT" && bash -n "$mut"; then
   if repofold_ok "$mut"; then no "(G14) MUTATION CONTROL: without the repo-pool fold (G14) still passed — it proves nothing"
   else ok "(G14) MUTATION CONTROL: without the repo-pool fold (G14) fails ($GWHY)"; fi
 else no "(G14) MUTATION CONTROL: mutant not built (empty, unchanged or invalid)"; fi
+
+# (G15) repo_fold skips a slot record started before this boot, like machine_holders (G11): its pid
+# belongs to a process of this boot that never wrote it, so folding into it would hand the caller a
+# slot nobody holds. The test shell ($$) is the parent of --pid $c, so a record naming it is an
+# ancestor record; with N=1 a caller that is NOT folded is counted against it and times out.
+repoboot_ok() {   # repoboot_ok SUT — exit 0 iff (G15) holds; GWHY says which failed
+  local s="$1" c out rc
+  GWHY=""; setload ok; rm -rf "$MDIR/holders/"* "$d1/slots/"* "$d1/tickets/"*
+  live; c=$LIVE
+  mkdir -p "$d1/slots/1"; printf '%s\n%s\n%s\n%s\n' "$$" "$tmp/c1" old-outer 1700000000 > "$d1/slots/1/info"
+  out="$(cd "$tmp/c1" && LOOMWRIGHT_CI_SLOTS=1 LOOMWRIGHT_MACHINE_BOOT_TIME=1700000100 bash "$s" acquire g15 --pid "$c" --wait 1 2>/dev/null)"; rc=$?
+  if [ "$rc" != 1 ] || [ -n "$out" ]; then GWHY="folded into a pre-boot ancestor slot record: rc=$rc out=[$out]"; fi
+  (cd "$tmp/c1" && bash "$s" release --pid "$c") >/dev/null 2>&1
+  if [ -z "$GWHY" ]; then
+    mkdir -p "$d1/slots/1"; printf '%s\n%s\n%s\n%s\n' "$$" "$tmp/c1" old-outer 1700000000 > "$d1/slots/1/info"
+    out="$(cd "$tmp/c1" && LOOMWRIGHT_CI_SLOTS=1 LOOMWRIGHT_MACHINE_BOOT_TIME=garbage bash "$s" acquire g15 --pid "$c" --wait 1 2>/dev/null)"; rc=$?
+    case "$rc:$out" in "0:slot=1 "*) ;; *) GWHY="unreadable boot time did not keep the fold: rc=$rc out=[$out]" ;; esac
+    (cd "$tmp/c1" && bash "$s" release --pid "$c") >/dev/null 2>&1
+  fi
+  rm -rf "$d1/slots/"* "$d1/tickets/"* "$MDIR/holders/"*
+  kill "$c" 2>/dev/null; wait "$c" 2>/dev/null
+  [ -z "$GWHY" ]
+}
+if repoboot_ok "$SUT"; then ok "(G15) a pre-boot repo slot record naming an ancestor is never folded into (counted, the caller waits); unreadable boot time keeps the fold"
+else no "(G15) $GWHY"; fi
+mut="$tmp/mut-repoboot.sh"
+grep -v '# REPOBOOT$' "$SUT" > "$mut"
+if [ -s "$mut" ] && ! cmp -s "$mut" "$SUT" && bash -n "$mut"; then
+  if repoboot_ok "$mut"; then no "(G15) MUTATION CONTROL: without repo_fold's boot-time skip (G15) still passed — it proves nothing"
+  else ok "(G15) MUTATION CONTROL: without repo_fold's boot-time skip (G15) fails ($GWHY)"; fi
+else no "(G15) MUTATION CONTROL: mutant not built (empty, unchanged or invalid)"; fi
 
 echo
 echo "test-ci-slot: $pass passed, $fail failed"

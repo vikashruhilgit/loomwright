@@ -12,6 +12,10 @@
 #   M liveness + pick-guard (AC12) · N lane-remove refusals (AC3) + mutation controls (AC16)
 #   O lane-info · P branch-check · Q lane-status classification (AC7) · R lane-status --json (AC8)
 #   S keep-awake · T --watch + lane-feed · U merge-readiness (AC9) · V --leaks / --resources / --tokens
+#   W drain-round-1 hardening: one-call token total (D8) + mutation control · trailing value flags
+#     exit promptly · unpushed count unreadable refuses + mutation control · lock holder records
+#     (dead holder reclaimed, live holder waited on, foreign lock never unlocked, holder-less lock
+#     reclaimed) · two concurrent launches spawn once · multiSelect labels containing commas
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -562,7 +566,9 @@ has "V9 wave peak" "$out" "peak: load1=9 L1_rss=200M L2_rss=300M nonlane_load=20
 has "V10 machine part of the latest line" "$out" "machine: load1=9 load=busy nonlane_load=20%"
 cat > "$T/ledger.sh" <<'EOF'
 #!/usr/bin/env bash
-echo "INPUT=1 OUTPUT=2 CACHE_READ=0 CACHE_CREATE=0 TOTAL=3 EVENTS=1"
+# argument-aware like the real reader: every --root adds one root's sums into the one line
+n=0; for a in "$@"; do [ "$a" = "--root" ] && n=$((n + 1)); done; [ "$n" -gt 0 ] || n=1
+echo "INPUT=$((1 * n)) OUTPUT=$((2 * n)) CACHE_READ=0 CACHE_CREATE=0 TOTAL=$((3 * n)) EVENTS=$n"
 EOF
 out="$(LOOMWRIGHT_LANES_TOKEN_LEDGER="$T/ledger.sh" run lane-status "$RF2" --tokens)"
 has "V11 per-lane tokens" "$out" "L1 INPUT=1 OUTPUT=2"
@@ -571,6 +577,135 @@ check "V13 total sums parent + lanes" "$(printf '%s\n' "$out" | sed -n 's/.* TOT
 out="$(LOOMWRIGHT_LANES_TOKEN_LEDGER="$T/absent.sh" run lane-status "$RF2" --tokens)"; rc=$?
 check "V14 ledger absent ⇒ unknown, exit 0" "$rc:$out" "0:tokens: unknown — read-token-ledger.sh absent"
 for p in $(pgrep -f "_lane-run $LR2" 2>/dev/null); do kill -TERM "$p" 2>/dev/null; done
+
+# ---- W: drain round 1 hardening -------------------------------------------------------------------------
+# W1 (D8) the total is ONE read-token-ledger.sh call over every root: a parent that ran no session of its
+# own (its root alone is unreadable) with readable lanes is NOT LEDGER_UNREADABLE. The stub models the
+# real reader: roots add up, LEDGER_UNREADABLE=1 only when no root reads.
+export LEDGER_CALLS="$T/ledger.calls"; : > "$LEDGER_CALLS"
+cat > "$T/ledger-arg.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "$*" >> "$LEDGER_CALLS"
+n=0; prev=""
+for a in "$@"; do { [ "$prev" = "--root" ] && [ "$a" != "$LEDGER_EMPTY_ROOT" ]; } && n=$((n + 1)); prev="$a"; done
+if [ "$n" = 0 ]; then echo "INPUT=0 OUTPUT=0 CACHE_READ=0 CACHE_CREATE=0 TOTAL=0 EVENTS=0 LEDGER_UNREADABLE=1"
+else echo "INPUT=$n OUTPUT=$((2 * n)) CACHE_READ=0 CACHE_CREATE=0 TOTAL=$((3 * n)) EVENTS=$n"; fi
+EOF
+tokens_arg() { LOOMWRIGHT_LANES_TOKEN_LEDGER="$T/ledger-arg.sh" LEDGER_EMPTY_ROOT="$P" bash "${1:-$S}" lane-status "$RF2" --tokens 2>&1; }
+out="$(tokens_arg)"; TOT="$(printf '%s\n' "$out" | grep '^total (parent + lanes):')"
+has "W1 the parent alone is unreadable (no session of its own)" "$(printf '%s\n' "$out" | grep '^parent ')" "LEDGER_UNREADABLE=1"
+hasnt "W1b readable lanes ⇒ the total is not LEDGER_UNREADABLE" "$TOT" "LEDGER_UNREADABLE"
+has "W1c the total adds the 7 readable lane roots" "$TOT" "TOTAL=21"
+check "W1d the total is one call: --run-id <parent> with the primary + 7 lane roots" \
+  "$(grep "^--run-id $PARENT2 " "$LEDGER_CALLS" | awk '{ n = 0; for (i = 1; i <= NF; i++) if ($i == "--root") n++; if (n > 1) print n }')" 8
+cat > "$T/mut-total.line" <<'EOF'
+  to="$(for r in "${roots[@]}"; do [ "$r" = --root ] || bash "$rtl" --run-id "$3" --root "$r" 2>/dev/null | head -1; done | awk '{ for (i = 1; i <= NF; i++) { k = $i; v = $i; sub(/=.*/, "", k); sub(/^[^=]*=/, "", v); if (k == "LEDGER_UNREADABLE") u = 1; else if (v ~ /^[0-9]+$/) { if (!(k in s)) o[++n] = k; s[k] += v } } } END { for (j = 1; j <= n; j++) printf "%s%s=%s", (j > 1 ? " " : ""), o[j], s[o[j]]; if (u) printf " LEDGER_UNREADABLE=1"; print "" }')"
+EOF
+awk -v f="$T/mut-total.line" '/# TOTAL-CALL$/ { while ((getline l < f) > 0) print l; next } { print }' "$S" > "$MUT/automate-lanes.sh"
+if ! cmp -s "$S" "$MUT/automate-lanes.sh" && bash -n "$MUT/automate-lanes.sh"; then
+  has "W1e mutation (independent per-root calls, ORed) trips W1b" "$(tokens_arg "$MUT/automate-lanes.sh" | grep '^total')" "LEDGER_UNREADABLE=1"
+else bad "W1e mutation control not built"; fi
+
+# W2 a value-taking flag given last exits promptly non-zero (never a `shift 2` loop), per subcommand family
+bounded() { # bounded <secs> <args...> — run the script; 124 when still alive after <secs> (then killed)
+  local s="$1" p i=0; shift
+  bash "$S" "$@" > "$T/bounded.out" 2>&1 < /dev/null & p=$!
+  while kill -0 "$p" 2>/dev/null && [ "$i" -lt $((s * 10)) ]; do sleep 0.1; i=$((i + 1)); done
+  if kill -0 "$p" 2>/dev/null; then kill -KILL "$p" 2>/dev/null; wait "$p" 2>/dev/null; return 124; fi
+  wait "$p"
+}
+prompt_nz() { case "$1" in 0) echo "rc=0" ;; 124) echo "still running after 5s" ;; *) echo prompt-nonzero ;; esac; }
+for spec in "lane-create|$RF reqs/a.md 7 --parallel" "lane-create|$RF reqs/a.md 7 --max-tokens" \
+            "lane-launch|$LR/L6 --owner-command" "lane-launch|$LR/L6 --host-denied" "lane-launch|$LR/L6 --resume-run" \
+            "lane-answer|$LR/L6 toolu_x --owner-command" "lane-answer|$LR/L6 toolu_x --via"; do
+  sub="${spec%%|*}"; args="${spec#*|}"; flag="${args##* }"
+  # shellcheck disable=SC2086
+  bounded 5 "$sub" $args; rc=$?
+  check "W2 $sub trailing $flag exits promptly non-zero" "$(prompt_nz "$rc")" prompt-nonzero
+  has "W2b $sub trailing $flag names the missing value" "$(cat "$T/bounded.out")" "$flag needs a value"
+done
+check "W2c lane-create left no lane behind" "$([ -e "$LR/L7" ] && echo present || echo absent)" absent
+bounded 5 init-check --parallel; rc=$?
+check "W2d init-check trailing --parallel keeps its refuse contract (exit 1, promptly)" "$rc:$(cat "$T/bounded.out")" "1:refuse: parallel_out_of_range"
+
+# W3 lane-remove: an unreadable unpushed-commit count refuses (fail CLOSED), never reads as 0
+run lane-create "$RF" reqs/a.md 7 >/dev/null; L7="$LR/L7"
+REAL_GIT="$(command -v git)"; mkdir -p "$T/gitshim"
+cat > "$T/gitshim/git" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  if [ "\$a" = rev-list ]; then [ "\${GITSHIM_MODE:-fail}" = empty ] && exit 0; echo "fatal: shim" >&2; exit 128; fi
+done
+exec "$REAL_GIT" "\$@"
+EOF
+chmod +x "$T/gitshim/git"
+out="$(PATH="$T/gitshim:$PATH" run lane-remove "$L7")"; rc=$?
+check "W3 failed rev-list count ⇒ refused" "$rc:$([ -d "$L7" ] && echo kept || echo removed)" "1:kept"
+has "W3b names the unreadable count" "$out" "branch main: unpushed-commit count unreadable"
+out="$(GITSHIM_MODE=empty PATH="$T/gitshim:$PATH" run lane-remove "$L7")"; rc=$?
+check "W3c empty count ⇒ refused" "$rc:$([ -d "$L7" ] && echo kept || echo removed)" "1:kept"
+grep -v '# UNPUSHED-UNREADABLE$' "$S" > "$MUT/automate-lanes.sh"
+if ! cmp -s "$S" "$MUT/automate-lanes.sh" && bash -n "$MUT/automate-lanes.sh"; then
+  PATH="$T/gitshim:$PATH" bash "$MUT/automate-lanes.sh" lane-remove "$L7" >/dev/null 2>&1
+  check "W3d mutation (count guard deleted) fails OPEN — the lane is removed" "$([ -d "$L7" ] && echo kept || echo removed)" removed
+else bad "W3d mutation control not built"; fi
+
+# W4 lock holder records: a dead holder is reclaimed, a live one waited on (bounded) and never stolen,
+# a foreign lock is never unlocked, a holder-less lock is reclaimed after its grace
+lst() { env LC_ALL=C ps -o lstart= -p "$1" 2>/dev/null | tr -s ' ' | sed 's/^ //; s/ $//'; }
+sleep 0 & DPID=$!; wait "$DPID" 2>/dev/null
+mkdir -p "$TABLE.lock"; printf '%s Mon Jan  1 00:00:00 2001\n' "$DPID" > "$TABLE.lock/holder"
+bounded 10 lane-launch "$LR/L6" --host-denied 'w4 dead holder'; rc=$?
+check "W4 dead holder's lock reclaimed promptly (the table write lands)" "$rc:$(tcol L6 10)" "3:w4 dead holder"
+check "W4b no lock left behind" "$([ -e "$TABLE.lock" ] && echo present || echo absent)" absent
+sleep 300 & HPID=$!; BG_PIDS="$BG_PIDS $HPID"
+mkdir -p "$TABLE.lock"; printf '%s %s\n' "$HPID" "$(lst "$HPID")" > "$TABLE.lock/holder"
+LOOMWRIGHT_LANES_LOCK_WAIT_S=2 bounded 10 lane-launch "$LR/L6" --host-denied 'w4 live holder'; rc=$?
+check "W4c live holder: the waiter gives up at its bound (not still running)" "$([ "$rc" != 124 ] && echo bounded || echo hung)" bounded
+check "W4d live holder's lock is never stolen" "$(tcol L6 10):$(sed -n 1p "$TABLE.lock/holder" | cut -d' ' -f1)" "w4 dead holder:$HPID"
+has "W4e the waiter says the lock is busy" "$(cat "$T/bounded.out")" "lock busy"
+( . "$S"; _lt_unlock "$TABLE" )
+check "W4f _lt_unlock leaves another process's lock alone" "$(sed -n 1p "$TABLE.lock/holder" 2>/dev/null | cut -d' ' -f1)" "$HPID"
+bash "$S" lane-launch "$LR/L6" --host-denied 'w4 after holder died' > /dev/null 2>&1 & WPID=$!
+sleep 1
+check "W4g a live holder is waited on" "$(kill -0 "$WPID" 2>/dev/null && echo waiting || echo done):$(tcol L6 10)" "waiting:w4 dead holder"
+kill "$HPID" 2>/dev/null; wait "$HPID" 2>/dev/null
+i=0; while kill -0 "$WPID" 2>/dev/null && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+check "W4h once the holder dies the waiter reclaims and writes" "$(kill -0 "$WPID" 2>/dev/null && echo hung || echo done):$(tcol L6 10)" "done:w4 after holder died"
+mkdir -p "$TABLE.lock"
+bounded 15 lane-launch "$LR/L6" --host-denied 'w4 holder-less'; rc=$?
+check "W4i a holder-less lock (creator died before recording) is reclaimed after its grace" "$rc:$(tcol L6 10)" "3:w4 holder-less"
+rm -rf "$TABLE.lock" "$TABLE.lock.reclaim"
+
+# W5 two overlapping launches of one lane spawn exactly once (launch lock spans check → pid write)
+run lane-create "$RF" reqs/b.md 8 >/dev/null; L8="$LR/L8"
+n5="$(claude_calls)"
+STUB_MODE=sleep LOOMWRIGHT_LANE_RECHECK_S=0 bash "$S" lane-launch "$L8" --owner-command "$OWN" > "$T/w5a.out" 2>&1 & A5=$!
+STUB_MODE=sleep LOOMWRIGHT_LANE_RECHECK_S=0 bash "$S" lane-launch "$L8" --owner-command "$OWN" > "$T/w5b.out" 2>&1 & B5=$!
+wait "$A5"; ra=$?; wait "$B5"; rb=$?
+check "W5 two concurrent launches ⇒ exactly one spawn" "$(( $(claude_calls) - n5 ))" 1
+check "W5b one launched, one refused" "$(printf '%s\n%s\n' "$ra" "$rb" | env LC_ALL=C sort | tr '\n' ' ')" "0 1 "
+has "W5c the second sees the lane running" "$(cat "$T/w5a.out" "$T/w5b.out")" "already running"
+check "W5d no launch lock left behind" "$(ls -d "$TABLE".L8.launch.lock 2>/dev/null | wc -l | tr -d ' ')" 0
+for p in $(pgrep -f "_lane-run $L8" 2>/dev/null); do kill -TERM "$p" 2>/dev/null; done; wait_gone "$L8"
+
+# W6 multiSelect labels that contain commas
+run lane-create "$RF" reqs/b.md 9 >/dev/null; L9="$LR/L9"
+Q7='[{"question":"Which shades?","header":"Shades","multiSelect":true,"options":[{"label":"Red, dark","description":"r"},{"label":"Blue","description":"b"},{"label":"Green","description":"g"}]},{"question":"Which parts?","header":"Parts","multiSelect":true,"options":[{"label":"A","description":"a"},{"label":"B","description":"b"},{"label":"A, B","description":"ab"},{"label":"C","description":"c"}]}]'
+jq -n -c --argjson q "$Q7" '{id: "toolu_w6", asked_at: "2026-10-07T00:00:00Z", questions: $q}' > "$L9/.supervisor/inbox/questions/toolu_w6.json"
+jq -n -c --argjson q "$Q7" '{type: "result", subtype: "success", stop_reason: "tool_deferred", session_id: "sess-w6", deferred_tool_use: {id: "toolu_w6", name: "AskUserQuestion", input: {questions: $q}}}' >> "$LR/L9.stream.log"
+ans6() { printf '%s' "$1" | LOOMWRIGHT_LANE_RECHECK_S=0 bash "$S" lane-answer "$L9" toolu_w6 --owner-command "$OWN" 2>&1; }
+out="$(ans6 '{"answers":{"0":"Red, dark","1":"A, B,C"}}')"; rc=$?
+check "W6 an answer that splits into known labels two ways is refused" "$rc" 1
+has "W6b the refusal says ambiguous" "$out" '"A, B,C" is ambiguous'
+out="$(ans6 '{"answers":{"0":"Red, dark, Purple","1":"C"}}')"; rc=$?
+check "W6c one unknown label still refuses the whole answer" "$rc:$(printf '%s' "$out" | grep -c '"Red, dark, Purple" is not one of its options' | tr -d ' ')" "1:1"
+out="$(ans6 '{"answers":{"0":"Red","1":"C"}}')"; check "W6d half of a comma label is not a label" "$?" 1
+check "W6e nothing recorded by the refusals" "$([ -e "$L9/.supervisor/inbox/answers/toolu_w6.json" ] && echo written || echo none)" none
+out="$(ans6 '{"answers":{"0":"Red, dark, Blue","1":"A, B"}}')"; rc=$?
+check "W6f a comma label plus another label, and a whole-answer label, are accepted" "$rc" 0
+check "W6g recorded labels" "$(jq -c '[.answers["Which shades?"], .answers["Which parts?"]]' "$L9/.supervisor/inbox/answers/toolu_w6.json" 2>/dev/null)" '["Red, dark,Blue","A, B"]'
+wait_gone "$L9"
 
 hasnt "Z1 gh never called" "$(cat "$GH_CALLS" 2>/dev/null)" "gh"
 echo "passed: $PASS  failed: $FAIL"

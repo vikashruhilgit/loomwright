@@ -335,7 +335,7 @@ repo_fold() {
     p="$(rec_field "$s/info" 1)"; alive "$p" || continue
     if [ -n "$BOOT" ]; then
       st="$(rec_field "$s/info" 4)"
-      if is_uint "$st" && [ "$((10#$st))" -lt "$BOOT" ]; then continue; fi
+      if is_uint "$st" && [ "$((10#$st))" -lt "$BOOT" ]; then continue; fi   # REPOBOOT
     fi
     [ -n "$ANCESTRY" ] || ANCESTRY="$(ancestry "$PID")"
     case "$ANCESTRY" in *" $p "*) FOLDED="$k"; return 0 ;; esac

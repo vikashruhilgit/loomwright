@@ -95,7 +95,8 @@
 # (default 60: TERM→KILL grace for --stop), LOOMWRIGHT_MACHINE_LOAD_CMD, LOOMWRIGHT_LANE_RECHECK_S,
 # LOOMWRIGHT_GH_BIN, LOOMWRIGHT_LANES_CI_SLOT, LOOMWRIGHT_LANES_PGREP, LOOMWRIGHT_LANES_CAFFEINATE,
 # LOOMWRIGHT_LANES_UNAME, LOOMWRIGHT_LANES_COORDINATOR_PID, LOOMWRIGHT_LANES_BOOT_EPOCH,
-# LOOMWRIGHT_LANES_TOKEN_LEDGER, LOOMWRIGHT_LANES_WATCH_ITERATIONS, LOOMWRIGHT_LANES_WATCH_INTERVAL_S.
+# LOOMWRIGHT_LANES_TOKEN_LEDGER, LOOMWRIGHT_LANES_WATCH_ITERATIONS, LOOMWRIGHT_LANES_WATCH_INTERVAL_S,
+# LOOMWRIGHT_LANES_LOCK_WAIT_S (default 30: the bound on waiting for a live lock holder).
 set -uo pipefail
 
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
@@ -118,20 +119,76 @@ now_utc() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 _trim_ws() { tr -s ' ' | sed 's/^ //; s/ $//'; }
 _clean() { local v="${1:-}"; [ -n "$v" ] || v="-"; printf '%s' "$v" | tr '\t\n' '  '; }
 
+# _lanes_need <argc> <subcmd> <flag> — a value-taking flag given last dies instead of `shift 2` looping.
+_lanes_need() { [ "$1" -ge 2 ] || die "$2: $3 needs a value"; }
+
 # ---- lane table (D6) ----------------------------------------------------------------------------
-_lt_lock() {
-  local i=0
-  while ! mkdir "$1.lock" 2>/dev/null; do
-    i=$((i + 1)); if [ "$i" -gt 100 ]; then rmdir "$1.lock" 2>/dev/null; i=0; fi; sleep 0.1
-  done
+# Locks are `mkdir <file>.lock` dirs whose `holder` file (written atomically right after the mkdir)
+# names the holder: this script's pid and its `ps -o lstart=` (read in the C locale, so a waiter
+# with another LC_TIME never misreads a live holder as recycled). A lock is reclaimed ONLY when that
+# holder is dead (pid gone, or a recycled pid with another start time), or when it has carried no
+# holder for ~5 s (its creator died between the mkdir and the holder write, which takes
+# milliseconds). A live holder is waited on, bounded by LOOMWRIGHT_LANES_LOCK_WAIT_S (default 30):
+# past it _lt_lock returns 1 and the caller fails rather than steal the lock. A reclaim happens under
+# a second `<file>.lock.reclaim` dir and re-reads the holder there, so two waiters never both remove
+# the same stale lock (the second one would otherwise remove the first one's fresh lock). _lt_unlock
+# removes a lock only when this process holds it. One process never takes the same lock twice.
+_LT_ME=""
+_lt_me() { # this process's holder line: "<pid> <lstart>"
+  [ -n "$_LT_ME" ] || _LT_ME="$$ $(env LC_ALL=C ps -o lstart= -p "$$" 2>/dev/null | _trim_ws)"
+  printf '%s' "$_LT_ME"
 }
-_lt_unlock() { rmdir "$1.lock" 2>/dev/null || true; }
+_lt_holder() { sed -n 1p "$1/holder" 2>/dev/null; }
+_lt_holder_dead() { # <holder line> — 0 only for a holder that is VERIFIED gone
+  local p="${1%% *}" s="" cur
+  case "$1" in *" "*) s="${1#* }" ;; esac
+  case "$p" in ''|*[!0-9]*) return 1 ;; esac
+  command -v ps >/dev/null 2>&1 || return 1   # cannot verify ⇒ never steal
+  cur="$(env LC_ALL=C ps -o lstart= -p "$p" 2>/dev/null | _trim_ws)"
+  [ -z "$cur" ] && return 0
+  [ -n "$s" ] && [ "$cur" != "$s" ] && return 0
+  return 1
+}
+_lt_reclaim() { # <lockdir> <holder line seen ('' = holder-less)> — remove it iff still that stale state
+  local d="$1" g="$1.reclaim" i=0
+  while ! mkdir "$g" 2>/dev/null; do
+    i=$((i + 1)); [ "$i" -gt 50 ] && { rmdir "$g" 2>/dev/null; i=0; }   # a reclaim takes milliseconds
+    sleep 0.1
+  done
+  if [ -d "$d" ] && [ "$(_lt_holder "$d")" = "$2" ]; then rm -rf "$d"; fi
+  rmdir "$g" 2>/dev/null
+  return 0
+}
+_lt_lock() {
+  local d="$1.lock" w="${LOOMWRIGHT_LANES_LOCK_WAIT_S:-30}" i=0 orphan=0 h
+  case "$w" in ''|*[!0-9]*) w=30 ;; esac
+  while ! mkdir "$d" 2>/dev/null; do
+    h="$(_lt_holder "$d")"
+    if [ -n "$h" ]; then
+      orphan=0
+      if _lt_holder_dead "$h"; then _lt_reclaim "$d" "$h"; continue; fi
+    elif [ -d "$d" ]; then
+      orphan=$((orphan + 1))
+      if [ "$orphan" -ge 50 ]; then _lt_reclaim "$d" ""; orphan=0; continue; fi
+    fi
+    i=$((i + 1)); [ "$i" -ge $((w * 10)) ] && return 1
+    sleep 0.1
+  done
+  printf '%s\n' "$(_lt_me)" > "$d/holder.tmp.$$" && mv "$d/holder.tmp.$$" "$d/holder"
+  return 0
+}
+_lt_unlock() {
+  local d="$1.lock"
+  [ "$(_lt_holder "$d")" = "$(_lt_me)" ] || return 0
+  rm -f "$d/holder"; rmdir "$d" 2>/dev/null
+  return 0
+}
 
 # _lt_set <table> <lane> <col> <val> [<col> <val> ...] — rewrite one row's columns (1-based).
 _lt_set() {
   local f="$1" lane="$2" spec="" rc; shift 2
   [ -f "$f" ] || return 1
-  _lt_lock "$f"
+  _lt_lock "$f" || { echo "automate-lanes: lane table lock busy (live holder): $f.lock" >&2; return 1; }
   (
     while [ "$#" -ge 2 ]; do export "LT_C$1=$(_clean "$2")"; spec="$spec $1"; shift 2; done
     LT_SPEC="$spec" LT_LANE="$lane" awk -F'\t' -v OFS='\t' '
@@ -244,8 +301,8 @@ lanes_create() {
   local runfile="" item="" n="" par="" maxt="" a
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --parallel) par="${2:-}"; shift 2 ;;
-      --max-tokens) maxt="${2:-}"; shift 2 ;;
+      --parallel) _lanes_need "$#" lane-create "$1"; par="$2"; shift 2 ;;
+      --max-tokens) _lanes_need "$#" lane-create "$1"; maxt="$2"; shift 2 ;;
       *) if [ -z "$runfile" ]; then runfile="$1"; elif [ -z "$item" ]; then item="$1"; elif [ -z "$n" ]; then n="$1"
          else die "lane-create: unexpected argument '$1'"; fi; shift ;;
     esac
@@ -310,7 +367,7 @@ lanes_create() {
     || { _abort "cannot merge the relay hooks"; return 1; }
   local porc; porc="$(git -C "$C" status --porcelain 2>/dev/null)"
   [ -z "$porc" ] || { _abort "lane is not clean after setup: $(printf '%s' "$porc" | head -3 | tr '\n' ' ')"; return 1; }
-  _lt_lock "$table"
+  _lt_lock "$table" || { _abort "lane table lock busy (live holder): $table.lock"; return 1; }
   if [ ! -s "$table" ]; then
     { printf '%s\n' "$LT_HEADER"
       printf '# not carried into lanes: .claude/settings.local.json (relay hooks only), the rules stamp, Claude auto-memory\n'; } > "$table"
@@ -350,6 +407,15 @@ _lanes_admission() {
   esac
   return 0
 }
+
+# Launch lock (one per lane: <table>.<lane>.launch.lock, the _lt_lock helper): held from _lanes_gate's
+# "not already running" check until _lanes_spawn has recorded the new pid in the lane table and that
+# pid reads alive (lanes_proc_alive), so two overlapping lane-launch / lane-answer calls for one lane
+# never both spawn: the second waits, then sees the lane running and is refused. Never held across
+# the session-id wait, and never taken twice by one process.
+LN_LAUNCH_LOCKED=0
+_lanes_launch_lock() { _lt_lock "$LN_TABLE.$LN_LANE.launch" || return 1; LN_LAUNCH_LOCKED=1; }   # LAUNCHLOCK
+_lanes_launch_unlock() { [ "$LN_LAUNCH_LOCKED" = 1 ] || return 0; _lt_unlock "$LN_TABLE.$LN_LANE.launch"; LN_LAUNCH_LOCKED=0; }
 
 # _lanes_gate <owner_cmd> — authority, liveness, regime, admission. Prints the first line; returns the exit code.
 _lanes_gate() {
@@ -396,6 +462,11 @@ _lanes_spawn() {
   # <<< spawn
   st="$(ps -o lstart= -p "$pid" 2>/dev/null | _trim_ws)"
   _lt_set "$LN_TABLE" "$LN_LANE" 5 "$pid" 6 "$st" 8 launched 9 "$(now_utc)" 10 -
+  # the launch lock is released only once a second caller's liveness check would see this process
+  # (until nohup has exec'd the wrapper its command line is still this script's)
+  i=0
+  while [ "$i" -lt 25 ] && kill -0 "$pid" 2>/dev/null && ! lanes_proc_alive "$pid" "$st" "$LN_DIR"; do sleep 0.1; i=$((i + 1)); done
+  _lanes_launch_unlock
   local w="${LOOMWRIGHT_LANES_INIT_WAIT_S:-15}"; case "$w" in ''|*[!0-9]*) w=15 ;; esac
   i=0
   while [ "$i" -lt $((w * 5)) ]; do
@@ -430,10 +501,10 @@ lanes_launch() {
   local dir="" owner="" resume_run="" cont=0 denied="" denied_set=0
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --owner-command) owner="${2:-}"; shift 2 ;;
-      --resume-run) resume_run="${2:-}"; [ -n "$resume_run" ] || die "lane-launch: --resume-run needs a run id"; shift 2 ;;
+      --owner-command) _lanes_need "$#" lane-launch "$1"; owner="$2"; shift 2 ;;
+      --resume-run) _lanes_need "$#" lane-launch "$1"; resume_run="$2"; [ -n "$resume_run" ] || die "lane-launch: --resume-run needs a run id"; shift 2 ;;
       --continue) cont=1; shift ;;
-      --host-denied) denied="${2:-host denied the spawn}"; denied_set=1; shift 2 ;;
+      --host-denied) _lanes_need "$#" lane-launch "$1"; denied="${2:-host denied the spawn}"; denied_set=1; shift 2 ;;
       *) [ -z "$dir" ] || die "lane-launch: unexpected argument '$1'"; dir="$1"; shift ;;
     esac
   done
@@ -442,7 +513,16 @@ lanes_launch() {
     echo "lane-launch: BLOCKED — $LN_LANE — $denied — need the owner"
     _lt_set "$LN_TABLE" "$LN_LANE" 8 blocked_launch 10 "$denied"; return 3
   fi
-  local rc; _lanes_gate "$owner"; rc=$?; [ "$rc" = 0 ] || return "$rc"
+  _lanes_launch_lock || { echo "lane-launch: refused — $LN_LANE — launch lock busy (another launch of this lane is in flight)"; return 1; }
+  local rc; _lanes_gate "$owner"; rc=$?
+  [ "$rc" = 0 ] && { _lanes_launch_go "$resume_run" "$cont"; rc=$?; }
+  _lanes_launch_unlock
+  return "$rc"
+}
+
+# _lanes_launch_go <resume_run|''> <continue 0|1> — the launch proper (caller holds the launch lock).
+_lanes_launch_go() {
+  local resume_run="$1" cont="$2"
   if [ -n "$resume_run" ]; then
     [ "$resume_run" = "$LN_RUN" ] || { echo "lane-launch: refused — $LN_LANE resumes only its own run ($LN_RUN), not '$resume_run'"; return 1; }
     [ -f "$LN_DIR/.supervisor/automate/$LN_RUN.md" ] || { echo "lane-launch: refused — no run file $LN_RUN.md in $LN_LANE"; return 1; }
@@ -508,8 +588,8 @@ lanes_answer() {
   local dir="" id="" owner="" via=cli
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --owner-command) owner="${2:-}"; shift 2 ;;
-      --via) via="${2:-cli}"; shift 2 ;;
+      --owner-command) _lanes_need "$#" lane-answer "$1"; owner="$2"; shift 2 ;;
+      --via) _lanes_need "$#" lane-answer "$1"; via="${2:-cli}"; shift 2 ;;
       *) if [ -z "$dir" ]; then dir="$1"; elif [ -z "$id" ]; then id="$1"; else die "lane-answer: unexpected argument '$1'"; fi; shift ;;
     esac
   done
@@ -523,27 +603,46 @@ lanes_answer() {
   [ "$(jq -r '.deferred_tool_use.id // empty' <<<"$last" 2>/dev/null)" = "$id" ] || die "lane-answer: refused — $LN_LANE is parked on another question"
   in="$(cat)"
   jq -e 'type == "object"' >/dev/null 2>&1 <<<"$in" || die "lane-answer: refused — answers are not a JSON object"
-  out="$(jq -c --argjson in "$in" '.questions as $qs | ($qs | length) as $n
+  # multiSelect: the whole answer equal to one label is that label; otherwise every way of cutting the
+  # answer at its commas into known labels is tried (a label may itself contain a comma) — exactly
+  # one cut ⇒ accepted; none ⇒ unknown label (refuses the whole answer); more than one ⇒ ambiguous.
+  out="$(jq -c --argjson in "$in" '
+    def cuts($labels): if length == 0 then [[]] else
+      [range(1; length + 1) as $k | (.[0:$k] | join(",") | sub("^ +"; "") | sub(" +$"; "")) as $h
+        | select(any($labels[]; . == $h)) | (.[$k:] | cuts($labels))[] | [$h] + .] end;
+    .questions as $qs | ($qs | length) as $n
     | if ($in.answers | type) != "object" then error("an answer is one of the question'"'"'s own option labels per question (a note alone is never the decision)") else . end
     | if ([$in.answers | keys[]] | map(tonumber? // -1) | sort) != [range(0; $n)] then error("need exactly one answer for each of the \($n) question(s)") else . end
     | reduce range(0; $n) as $i ({}; ($in.answers[($i | tostring)]) as $a
         | [$qs[$i].options[].label] as $labels
-        | (if ($a | type) != "string" then [] elif $qs[$i].multiSelect == true then ($a | split(",") | map(sub("^ +"; "") | sub(" +$"; ""))) else [$a] end) as $parts
+        | (if ($a | type) != "string" then []
+           elif $qs[$i].multiSelect != true then [$a]
+           elif any($labels[]; . == $a) then [$a]
+           else ($a | split(",") | cuts($labels)) as $c
+             | if ($c | length) > 1 then error("question \($i + 1): \"\($a)\" is ambiguous — its labels contain commas and it splits into known labels \($c | length) ways (\($c | map(map("\"" + . + "\"") | join(" + ")) | join(" | "))), so no one reading can be chosen") else ($c[0] // []) end
+           end) as $parts
         | if ($parts | length) == 0 or any($parts[]; . as $p | ($labels | index($p)) == null)
           then error("question \($i + 1): \"\($a)\" is not one of its options\(if $qs[$i].multiSelect == true then " (multiSelect: comma-joined labels)" else "" end)")
           else . end
         | . + {($qs[$i].question): ($parts | join(","))})' "$qf" 2>&1)" \
     || die "lane-answer: refused — $(sed -E 's/^jq: error \(at [^)]*\): //' <<<"$out")"
-  # authority + admission BEFORE the answer is recorded, so a HELD resume leaves nothing half-written
-  _lanes_gate "$owner"; rc=$?; [ "$rc" = 0 ] || return "$rc"
-  local note; note="$(jq -r '.note // ""' <<<"$in")"
-  jq -n --argjson a "$out" --arg note "$note" --arg via "$via" --arg at "$(now_utc)" \
-    '{answers: $a, note: (if $note == "" then null else $note end), source: "human", via: $via, at: $at}' > "$af.tmp.$$" \
-    && mv "$af.tmp.$$" "$af" || die "lane-answer: cannot write the answer file"
   local sid; sid="$(jq -r '.session_id // empty' <<<"$last")"; [ -n "$sid" ] || sid="$(_lanes_session_id)"
   [ -n "$sid" ] || die "lane-answer: refused — no session id to resume"
+  # authority + admission BEFORE the answer is recorded, so a HELD resume leaves nothing half-written;
+  # under the launch lock, so an overlapping answer for the same question sees it answered / running.
+  _lanes_launch_lock || die "lane-answer: refused — $LN_LANE — launch lock busy (another launch of this lane is in flight)"
+  if [ -e "$af" ]; then _lanes_launch_unlock; die "lane-answer: refused — $id already answered"; fi
+  _lanes_gate "$owner"; rc=$?; [ "$rc" = 0 ] || { _lanes_launch_unlock; return "$rc"; }
+  local note; note="$(jq -r '.note // ""' <<<"$in")"
+  if ! { jq -n --argjson a "$out" --arg note "$note" --arg via "$via" --arg at "$(now_utc)" \
+      '{answers: $a, note: (if $note == "" then null else $note end), source: "human", via: $via, at: $at}' > "$af.tmp.$$" \
+      && mv "$af.tmp.$$" "$af"; }; then
+    rm -f "$af.tmp.$$"; _lanes_launch_unlock; die "lane-answer: cannot write the answer file"
+  fi
   [ -n "$note" ] && echo "lane-answer: note recorded and delivered to the lane as an annotation (never the decision)"
-  _lanes_spawn "" "$sid" "(resume after answer $id via $via)"
+  _lanes_spawn "" "$sid" "(resume after answer $id via $via)"; rc=$?
+  _lanes_launch_unlock
+  return "$rc"
 }
 
 # ==================================================================================================
@@ -606,10 +705,15 @@ lanes_remove() {
     ms="$(bash "$META_SYNC" status --branch "$mb" --root "$LN_DIR" 2>/dev/null)" || { _refuse "metadata status unreadable"; return 1; }
     case "$ms" in local_ahead*|conflict*|*local_ahead*|*conflict*) _refuse "metadata not pushed ($ms)"; return 1 ;; esac
   fi
-  for b in $(git -C "$LN_DIR" for-each-ref --format='%(refname:short)' refs/heads); do
-    u="$(git -C "$LN_DIR" rev-list --count "$b" --not --remotes=origin 2>/dev/null)"
-    [ "${u:-0}" -gt 0 ] && { _refuse "branch $b has $u commit(s) not on origin"; return 1; }
+  # >>> unpushed-commit check (fail CLOSED: an unreadable branch list or count refuses, never reads 0)
+  local heads; heads="$(git -C "$LN_DIR" for-each-ref --format='%(refname:short)' refs/heads 2>/dev/null)" \
+    || { _refuse "local branch list unreadable"; return 1; }
+  for b in $heads; do
+    u="$(git -C "$LN_DIR" rev-list --count "$b" --not --remotes=origin 2>/dev/null)" || u=""
+    case "$u" in ''|*[!0-9]*) _refuse "branch $b: unpushed-commit count unreadable"; return 1 ;; esac   # UNPUSHED-UNREADABLE
+    [ "$u" -gt 0 ] && { _refuse "branch $b has $u commit(s) not on origin"; return 1; }
   done
+  # <<< unpushed-commit check
   local sv; sv="$(_lanes_salvage "$LN_DIR" "$LN_ROOT/salvage" "$L-removed")" || { _refuse "salvage failed"; return 1; }
   rm -rf "$LN_DIR" || { echo "lane-remove: could not remove $LN_DIR" >&2; return 1; }
   _lt_set "$LN_TABLE" "$L" 8 "$([ "$abandon" = 1 ] && echo abandoned || echo removed)"
@@ -637,7 +741,7 @@ lanes_init_check() {
   local n="" am=0
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --parallel) n="${2:-}"; shift 2 ;;
+      --parallel) [ "$#" -ge 2 ] || { echo "refuse: parallel_out_of_range"; return 1; }; n="$2"; shift 2 ;;
       --auto-merge) am=1; shift ;;
       *) echo "refuse: unknown_argument $1"; return 1 ;;
     esac
@@ -966,22 +1070,26 @@ _lanes_resources() {
 }
 
 # _lanes_tokens <table> <primary> <parent> — per-lane and parent token totals (read-token-ledger.sh).
+# The per-lane and parent lines are one call each; the total is ONE call over every root (D8:
+# `--run-id <parent> --root <primary> --root <lane1> …`), so the reader adds the roots itself and
+# says LEDGER_UNREADABLE=1 only when NO root yields a readable ledger — never because one root (a
+# parent that ran no session of its own) had nothing.
 _lanes_tokens() {
-  local rtl="${LOOMWRIGHT_LANES_TOKEN_LEDGER:-$HERE/read-token-ledger.sh}" tab lane path run out all="" po
+  local rtl="${LOOMWRIGHT_LANES_TOKEN_LEDGER:-$HERE/read-token-ledger.sh}" tab lane path run out po to
   [ -f "$rtl" ] || { echo "tokens: unknown — read-token-ledger.sh absent"; return 0; }
+  local -a roots=(--root "$2")
   tab="$(printf '\t')"
   while IFS="$tab" read -r lane path _ run _; do
     case "$lane" in L[0-9]|L[0-9][0-9]) ;; *) continue ;; esac
-    if [ -d "$path" ]; then out="$(bash "$rtl" --run-id "$run" --root "$path" 2>/dev/null | head -1)"; else out=""; fi
+    if [ -d "$path" ]; then
+      out="$(bash "$rtl" --run-id "$run" --root "$path" 2>/dev/null | head -1)"; roots+=(--root "$path")
+    else out=""; fi
     echo "$lane ${out:-unknown}"
-    [ -n "$out" ] && all="$all$out
-"
   done < "$1"
   po="$(bash "$rtl" --run-id "$3" --root "$2" 2>/dev/null | head -1)"
   echo "parent ${po:-unknown}"
-  printf '%s%s\n' "$all" "$po" | awk '{ for (i = 1; i <= NF; i++) { k = $i; v = $i; sub(/=.*/, "", k); sub(/^[^=]*=/, "", v)
-      if (k == "LEDGER_UNREADABLE") u = 1; else if (v ~ /^[0-9]+$/) { if (!(k in s)) o[++n] = k; s[k] += v } } }
-    END { printf "total (parent + lanes):"; for (j = 1; j <= n; j++) printf " %s=%s", o[j], s[o[j]]; if (u) printf " LEDGER_UNREADABLE=1"; print "" }'
+  to="$(bash "$rtl" --run-id "$3" "${roots[@]}" 2>/dev/null | head -1)"   # TOTAL-CALL
+  echo "total (parent + lanes): ${to:-unknown}"
 }
 
 # ---- leak check (Validation 5) ----------------------------------------------------------------------
