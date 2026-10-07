@@ -8,16 +8,21 @@
 # pushes, approves, or reruns anything, and ALWAYS exits 0 with EXACTLY ONE line:
 #   escalation_cause: <cause> check=<name|null> run_id=<id|null> attempt=<n|null> sha=<sha>
 # Causes (fail-CLOSED throughout — any doubt resolves to `check_red`):
-#   check_pending        a scoped (required ∪ review-producing) check has not completed.
-#   check_red_unrelated  every red scoped check's every failing test file (from the
-#                        failed steps' `##[group]Run bash <path>` lines of
-#                        `gh run view <id> --log-failed`) is unrelated to the PR: neither
-#                        the test file nor its tested script `<dir>/<stem>.sh` (for
+#   check_pending        NO scoped check is red and a scoped (required ∪ review-producing)
+#                        check has not completed (red is examined first — a red check
+#                        beside a pending one is classified as red).
+#   check_red_unrelated  every red scoped check's every failed step ran ONLY
+#                        `bash <path>/test-*.sh` commands (every script line of each failed
+#                        step's `##[group]Run` block in `gh run view <id> --log-failed`,
+#                        _esc_failing_tests) and every such test file is unrelated to the
+#                        PR: neither it nor its tested script `<dir>/<stem>.sh` (for
 #                        `<dir>/test-<stem>.sh`) is among the PR's changed files.
 #   check_red            anything else red — and every unreadable case: a snapshot
 #                        that is not a sha-matched `--names` line, `required=unknown`
 #                        (the required set is then unknown), a red check with no run
-#                        id, an unreadable log, no extractable test file, an
+#                        id, an unreadable log, a failed step with no `Run` block or
+#                        running any non-test command (e.g. a step's second command
+#                        `bash scripts/<x>.sh`), an
 #                        unreadable/incomplete PR file list (_rs_pr_changed_paths —
 #                        called, not copied), or any other `gh` failure.
 #   other                nothing pending, nothing red — the escalation was not check-driven.
@@ -61,14 +66,15 @@ _esc_classify() (
   fi
 
   local c rid att
-  if [ -n "$pnames" ] && [ "$pnames" != none ]; then
-    c="${pnames%%,*}"
-    rid="$(_esc_run_id_for "$url" "$c")"
-    att=null; [ "$rid" != null ] && att="$(_esc_attempt "$rid")"
-    _esc_out check_pending "$c" "$rid" "$att" "$sha"; exit 0
-  fi
-
+  # Red is examined BEFORE pending (the more severe signal wins): check_pending only
+  # when NO scoped check is red — a red check beside a pending one is classified as red.
   if [ -z "$rnames" ] || [ "$rnames" = none ]; then
+    if [ -n "$pnames" ] && [ "$pnames" != none ]; then
+      c="${pnames%%,*}"
+      rid="$(_esc_run_id_for "$url" "$c")"
+      att=null; [ "$rid" != null ] && att="$(_esc_attempt "$rid")"
+      _esc_out check_pending "$c" "$rid" "$att" "$sha"; exit 0
+    fi
     # Nothing pending, nothing red: a required=red claim with no named red check is inconsistent.
     if [ "$req" = red ]; then _esc_out check_red null null null "$sha"; else _esc_out other null null null "$sha"; fi
     exit 0
@@ -94,7 +100,7 @@ _esc_classify() (
     name="${entry%@*}"; rid="${entry##*@}"
     case "$rid" in ''|-|*[!0-9]*) verdict=check_red; break ;; esac
     log="$("$GH" run view "$rid" --log-failed 2>/dev/null)" || { verdict=check_red; break; }
-    tests="$(_esc_failing_tests "$log")"
+    tests="$(_esc_failing_tests "$log")" || { verdict=check_red; break; }
     [ -n "$tests" ] || { verdict=check_red; break; }
     while IFS= read -r t; do
       [ -n "$t" ] || continue
@@ -132,12 +138,42 @@ _esc_attempt() {
   case "$a" in ''|*[!0-9]*) echo null ;; *) echo "$a" ;; esac
 }
 
-# _esc_failing_tests <log> — the unique test-file paths a failed step ran, from its
-# `##[group]Run bash <path>` header (the `--log-failed` line is `<job>\t<step>\t<ts> <text>`).
+# _esc_failing_tests <log> — the unique test-file paths the failed steps ran. A
+# `--log-failed` line is `<job>\t<step>\t<ts> <text>`; each failed (job, step) must
+# carry a `##[group]Run …` header whose script lines (the `ESC[36;1m…ESC[0m` lines, ESC or `^[`,
+# before `##[endgroup]` — ALL of a multi-command step's commands) are EVERY one a
+# `bash <path>/test-*.sh [args]` command. Exit 1 (⇒ check_red) when any failed
+# (job, step) has no header or no script line, or any script line is anything else
+# (a non-test `bash scripts/<x>.sh`, another command) — never a partial answer.
 _esc_failing_tests() {
-  printf '%s\n' "$1" \
-    | grep -oE '##\[group\]Run bash (loomwright/)?scripts/([A-Za-z0-9._-]+/)*test-[A-Za-z0-9._-]+\.sh' \
-    | sed -E 's/^##\[group\]Run bash //' | sort -u
+  local r
+  r="$(printf '%s\n' "$1" | awk -F'\t' -v esc="$(printf '\033')" '
+    BEGIN { bad = 0; n = 0 }
+    NF < 3 { next }
+    {
+      k = $1 FS $2; t = $3; for (i = 4; i <= NF; i++) t = t FS $i
+      sub(/\r$/, "", t); sub(/^[^ ]* /, "", t)
+      if (!(k in seen)) { seen[k] = 1; ord[++n] = k }
+      if (index(t, "##[group]Run ") == 1) { hdr[k] = 1; grp[k] = 1; next }
+      if (index(t, "##[endgroup]") == 1) { grp[k] = 0; next }
+      if (!grp[k]) next
+      # the ESC byte, or its caret form `^[` (as some log captures carry it)
+      if (index(t, esc "[36;1m") == 1) { e = esc } else if (index(t, "^[[36;1m") == 1) { e = "^[" } else next
+      l = substr(t, length(e) + 7); suf = e "[0m"
+      if (length(l) >= length(suf) && substr(l, length(l) - length(suf) + 1) == suf) l = substr(l, 1, length(l) - length(suf))
+      gsub(/^[ ]+|[ ]+$/, "", l)
+      if (l == "") next
+      cnt[k]++
+      if (l ~ /^bash (\.\/)?([A-Za-z0-9._-]+\/)*test-[A-Za-z0-9._-]+\.sh( |$)/) {
+        p = l; sub(/^bash (\.\/)?/, "", p); sub(/ .*$/, "", p); out[p] = 1
+      } else bad = 1
+    }
+    END {
+      for (i = 1; i <= n; i++) if (!hdr[ord[i]] || !cnt[ord[i]]) bad = 1
+      if (bad || n == 0) exit 1
+      for (p in out) print p
+    }')" || return 1
+  printf '%s\n' "$r" | sort -u
 }
 
 # _esc_related <test_path> <pr_paths> — 0 when the test file OR its tested script

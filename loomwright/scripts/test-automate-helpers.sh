@@ -32,6 +32,9 @@
 #      cases, every unreadable case failing closed to check_red, `other`, a gated
 #      name-only-classifier mutant, a no-rerun/merge/push static scan; and
 #      current-escalation's placement, idempotency, null removal and refusals.
+#      Review iteration 1: every command of a failed step counts (two-command step,
+#      mixed failed steps, no Run block ⇒ check_red; valid mutant), red before pending,
+#      and current-set dropping the line on leaving `escalated` / a changed item.
 #   C. folder / backlog-doc resolvers (skip ## Status: done; documented order).
 #   D. resume-glob lists only run files (is_run_file: `# Automate Run:` title) not
 #      done — §6 result sidecars excluded, with a validated is_run_file mutant;
@@ -5022,6 +5025,61 @@ esc_run "$H" "$ESC_C_URL" "$ESC_C_SHA"; esc_expect "nothing pending, nothing red
 esc_case e6; ESC_OUT="$(LOOMWRIGHT_GH_BIN="$ESC_T/gh" bash "$H" escalation-cause "$ESC_C_URL" 2>/dev/null)"; ESC_RC=$?
 esc_expect "missing --sha ⇒ check_red, exit 0" "escalation_cause: check_red check=null run_id=null attempt=null sha=null"
 
+# Review iteration 1 (fail-open on incomplete evidence): EVERY command of each failed
+# (job, step) counts — a two-command step whose SECOND (non-test) command failed, an
+# extra failed step running a non-test script, and a failed step with no Run block all
+# fail CLOSED to check_red, even though the s2-c test file is unrelated.
+esc_l() { printf '%s\t%s\t2026-10-07T00:00:00.0000000Z %s\n' "ci" "$1" "$2"; }
+ESC_E=$'\033'
+esc_case e7a
+{ esc_l "Doc currency" "##[group]Run bash scripts/test-check-doc-currency.sh"
+  esc_l "Doc currency" "${ESC_E}[36;1mbash scripts/test-check-doc-currency.sh${ESC_E}[0m"
+  esc_l "Doc currency" "${ESC_E}[36;1mbash scripts/check-doc-currency.sh${ESC_E}[0m"
+  esc_l "Doc currency" "##[endgroup]"
+  esc_l "Doc currency" "FAIL: README claims 13 agents"; } > "$ESC_D/log-37254186674.txt"
+esc_run "$H" "$ESC_C_URL" "$ESC_C_SHA"; esc_expect "two-command step (test-X.sh then X.sh) ⇒ check_red" "$ESC_RED_C"
+esc_case e7b
+{ cat "$ESC_FX/s2c-log-failed.txt"
+  esc_l "Command sync" "##[group]Run bash scripts/check-command-sync.sh"
+  esc_l "Command sync" "${ESC_E}[36;1mbash scripts/check-command-sync.sh${ESC_E}[0m"
+  esc_l "Command sync" "##[endgroup]"; } > "$ESC_D/log-37254186674.txt"
+esc_run "$H" "$ESC_C_URL" "$ESC_C_SHA"; esc_expect "mixed failed steps (unrelated test + non-test check) ⇒ check_red" "$ESC_RED_C"
+esc_case e7c
+{ cat "$ESC_FX/s2c-log-failed.txt"; esc_l "Set up job" "##[error]runner lost"; } > "$ESC_D/log-37254186674.txt"
+esc_run "$H" "$ESC_C_URL" "$ESC_C_SHA"; esc_expect "a failed step with no Run block ⇒ check_red" "$ESC_RED_C"
+esc_case e7d
+{ esc_l "Doc currency" "##[group]Run bash scripts/test-check-doc-currency.sh"
+  esc_l "Doc currency" "${ESC_E}[36;1mbash scripts/test-check-doc-currency.sh${ESC_E}[0m"
+  esc_l "Doc currency" "${ESC_E}[36;1mbash scripts/test-check-token-budget.sh --self-test${ESC_E}[0m"
+  esc_l "Doc currency" "##[endgroup]"; } > "$ESC_D/log-37254186674.txt"
+esc_run "$H" "$ESC_C_URL" "$ESC_C_SHA"
+esc_expect "control: a two-command step of only unrelated test files ⇒ check_red_unrelated" "escalation_cause: check_red_unrelated check=ci run_id=37254186674 attempt=1 sha=$ESC_C_SHA"
+# MUTATION CONTROL: a parser that ignores a step's non-test commands (the pre-fix
+# header-only behaviour) must turn the two-command leg check_red_unrelated.
+ESC_MUT="$(mktemp -d)"
+for e in "$(dirname "$H")"/*; do [ "$e" = "$H" ] || ln -s "$e" "$ESC_MUT/$(basename "$e")"; done
+sed 's/^      } else bad = 1$/      }/' "$H" > "$ESC_MUT/automate-helpers.sh"
+if [ -s "$ESC_MUT/automate-helpers.sh" ] && ! cmp -s "$H" "$ESC_MUT/automate-helpers.sh" && bash -n "$ESC_MUT/automate-helpers.sh" 2>/dev/null \
+   && [ "$(diff "$H" "$ESC_MUT/automate-helpers.sh" | grep -c '^[<>]')" = 2 ]; then
+  ESC_D="$ESC_T/e7a"; esc_run "$ESC_MUT/automate-helpers.sh" "$ESC_C_URL" "$ESC_C_SHA"
+  case "$ESC_OUT" in "escalation_cause: check_red_unrelated "*) ok "ESC mutation control: ignoring a step's non-test command flips the two-command leg ($ESC_OUT)" ;;
+    *) no "ESC mutation control did NOT discriminate: '$ESC_OUT'" ;; esac
+else
+  no "ESC mutation control (multi-command): could not build a valid mutant -- control inconclusive"
+fi
+rm -rf "$ESC_MUT"
+
+# Review iteration 1 (verdict before a more-severe signal): red is examined BEFORE
+# pending — a red check beside an IN_PROGRESS one is never check_pending.
+esc_case e8a
+jq -c '.statusCheckRollup[1].status = "IN_PROGRESS" | .statusCheckRollup[1].conclusion = ""' "$ESC_FX/s2c-rollup.json" > "$ESC_D/rollup.json"
+jq -c '.changedFiles += 1 | .files += [{"path":"scripts/test-ci-local.sh"}]' "$ESC_FX/s2c-files.json" > "$ESC_D/files.json"
+esc_run "$H" "$ESC_C_URL" "$ESC_C_SHA"; esc_expect "related red ci + pending claude-review ⇒ check_red (not check_pending)" "$ESC_RED_C"
+esc_case e8b
+jq -c '.statusCheckRollup[1].status = "IN_PROGRESS" | .statusCheckRollup[1].conclusion = ""' "$ESC_FX/s2c-rollup.json" > "$ESC_D/rollup.json"
+esc_run "$H" "$ESC_C_URL" "$ESC_C_SHA"
+esc_expect "unrelated red ci + pending claude-review ⇒ check_red_unrelated on ci (not check_pending)" "escalation_cause: check_red_unrelated check=ci run_id=37254186674 attempt=1 sha=$ESC_C_SHA"
+
 # AC5 MUTATION CONTROL: a classifier that decides by test name alone (no PR-files comparison —
 # every failing test file read as unrelated) must turn the AC3 related legs red.
 ESC_MUT="$(mktemp -d)"
@@ -5111,6 +5169,26 @@ done
 run_h bash "$H" current-escalation "$ESC_RF" --cause check_red --sha "$(printf 'a\nb')"
 { [ "$RUN_RC" -eq 1 ] && cmp -s "$ESC_T/ref" "$ESC_RF"; } || esc_bad="$esc_bad [newline sha rc=$RUN_RC]"
 if [ -z "$esc_bad" ]; then ok "ESC current-escalation: every refusal exits 1 with the file byte-unchanged"; else no "ESC current-escalation refusals wrong:$esc_bad"; fi
+# Review iteration 1 (stale per-item state): the escalation line is per-item park state.
+esc_rf; run_h bash "$H" current-escalation "$ESC_RF" --cause check_pending --check claude-review --run-id 37259136927 --attempt 1 --sha 1e35336
+cp "$ESC_RF" "$ESC_T/esc-on"
+run_h bash "$H" current-set "$ESC_RF" --item a.md --status escalated --pause-reason escalated
+run_h bash "$H" current-set "$ESC_RF" --pause-reason awaiting_go
+if grep -qxF -- "$ESC_LINE" "$ESC_RF"; then ok "ESC current-set: the same item staying escalated (and the run-level form) keeps the escalation line"; else no "ESC current-set dropped a live escalated park's line"; fi
+cp "$ESC_T/esc-on" "$ESC_RF"
+run_h bash "$H" current-set "$ESC_RF" --item a.md --status done --pause-reason awaiting_go
+cp "$ESC_RF" "$ESC_T/esc-done"
+if [ "$RUN_RC" -eq 0 ] && ! grep -q '^- escalation_cause:' "$ESC_RF" && grep -qF -- '- item: a.md | status: done | pr: https://github.com/acme/widgets/pull/1 | branch: f/a' "$ESC_RF" \
+   && [ "$(diff "$ESC_T/esc-on" "$ESC_RF" | grep -c '^[<>]')" = 5 ]; then
+  ok "ESC current-set: status done (closeout) removes the escalation line; item keeps pr/branch"
+else
+  no "ESC current-set done did not clear (rc=$RUN_RC): $(diff "$ESC_T/esc-on" "$ESC_RF" | tr '\n' '|')"
+fi
+run_h bash "$H" current-set "$ESC_RF" --item a.md --status done --pause-reason awaiting_go
+if [ "$RUN_OUT" = "current-set: unchanged" ] && cmp -s "$ESC_T/esc-done" "$ESC_RF"; then ok "ESC current-set: a second identical done write is unchanged, byte-identical"; else no "ESC current-set done not idempotent: $RUN_OUT"; fi
+cp "$ESC_T/esc-on" "$ESC_RF"
+run_h bash "$H" current-set "$ESC_RF" --item b.md --status escalated --pr https://github.com/acme/widgets/pull/2
+if [ "$RUN_RC" -eq 0 ] && ! grep -q '^- escalation_cause:' "$ESC_RF"; then ok "ESC current-set: a changed item (PICK of the next item) removes the previous item's escalation line"; else no "ESC current-set changed item kept a stale line"; fi
 rm -rf "$ESC_T"
 echo
 echo "RESULT: $pass passed, $fail failed"

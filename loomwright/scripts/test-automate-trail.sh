@@ -85,7 +85,10 @@
 #      check-runs API path when no run id; a same-PR double arm keeps ONE
 #      watcher (already-running line, first pid alive, marker pid unchanged,
 #      one closeout) with a valid mutant deleting that branch; static scan: no
-#      executed gh run rerun / gh pr merge / git push.
+#      executed gh run rerun / gh pr merge / git push. Review iteration 1: a
+#      recorded sha that is not the PR head ⇒ silent; closeout clears the line
+#      (idempotent); another rollup check pending/red/unreadable, or a run view
+#      without headSha ⇒ no 'now mergeable'.
 #   E. evidence-gated stamps (decision 2) — a sentinel-led done /
 #      done_with_escalation requirement stamp (and a done/ brief's Outcome PR)
 #      rides only when its PR reads MERGED: OPEN, CLOSED, gh failing, a stamp
@@ -1584,7 +1587,10 @@ we_park() { # <cause> [current-escalation flags…] — turn the fixture's park 
   (cd "$P" && bash "$H" current-set "$RF_REL" --item "$REQ" --status escalated --pr "$PRURL" --branch feature/x --pause-reason escalated >/dev/null \
     && bash "$H" current-escalation "$RF_REL" --cause "$c" "$@" >/dev/null)
 }
-we_open() { jq '.[0].state = "OPEN"' "$GH_STUB_DIR/prs.json" > "$GH_STUB_DIR/p.tmp" && mv "$GH_STUB_DIR/p.tmp" "$GH_STUB_DIR/prs.json"; }
+# we_open: the PR is OPEN at head $ESHA with an empty rollup (review iteration 1: the
+# watcher reports only when the recorded sha IS the PR's current headRefOid and every
+# OTHER rollup check is settled green — both read from the poll's own `gh pr view`).
+we_open() { jq --arg h "$ESHA" '.[0].state = "OPEN" | .[0].headRefOid = $h | .[0].statusCheckRollup = []' "$GH_STUB_DIR/prs.json" > "$GH_STUB_DIR/p.tmp" && mv "$GH_STUB_DIR/p.tmp" "$GH_STUB_DIR/prs.json"; }
 we_watch() { (cd "$P" && LOOMWRIGHT_MERGE_WATCH_INTERVAL=0 LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=60 bash "$WATCH" "$RF_REL" "$REQ" "$PRURL" </dev/null 2>&1); }
 we_n() { grep -c -- "$1" "$P/$RF_REL" 2>/dev/null || true; }
 we_calls() { grep -cE '^(run view|api )' "$GH_STUB_DIR/argv.log" 2>/dev/null || true; }
@@ -1713,6 +1719,66 @@ for wf in "$HERE/automate-merge-watch.sh" "$HERE/automate-helpers.d/escalation.s
 done
 [ "$(printf '%s\n' '  "$GH" run rerun "$rid" --failed' 'gh pr merge --squash "$u"' '  then git push origin x' | grep -cE "$we_exec_re")" = 3 ] && ok "(E8) the scan's positive control matches executed forms" || no "(E8) scan regex vacuous"
 grep -qF 'rerun: gh run rerun' "$HERE/automate-merge-watch.sh" && ok "(E8) the rerun command is printed for the owner (string), never run" || no "(E8) rerun string missing"
+
+# (E9, review iteration 1 — stale per-item state) a recorded sha that is NOT the PR's
+# current headRefOid (a later push, or a line left over from an earlier item) ⇒ no
+# check polling, no report.
+closeout_fixture 410; spy_reset; we_open; : > "$GH_STUB_DIR/argv.log"
+we_park check_pending --check claude-review --run-id 555 --attempt 1 --sha aaaaaaa
+printf 'OPEN\nOPEN\nCLOSED\n' > "$GH_STUB_DIR/state-seq"; rj 1 completed success aaaaaaa > "$GH_STUB_DIR/run-seq"
+we_watch >/dev/null
+[ "$(we_calls)" = "0" ] && [ "$(we_n 'merge-watch: now mergeable:')" = "0" ] && [ "$(spy_count automate_escalation_recheck "$SPYLOG.webhook")" = "0" ] && ok "(E9) recorded sha != PR head ⇒ no polling, no 'now mergeable', no recheck notify" || no "(E9) stale sha reported: calls=$(we_calls) $(grep 'mergeable' "$P/$RF_REL")"
+grep -q -- '--json state,headRefOid,statusCheckRollup' "$GH_STUB_DIR/argv.log" && [ "$(grep -c '^pr view ' "$GH_STUB_DIR/argv.log")" = "3" ] && ok "(E9) head + rollup come from the poll's own gh pr view (3 polls = 3 calls, no extra one)" || no "(E9) argv: $(tr '\n' '|' < "$GH_STUB_DIR/argv.log")"
+# mutation control: delete EXACTLY the head-mismatch latch ⇒ the stale line reports.
+MUT10="$TOP/mut10"; mkdir -p "$MUT10"; cp -R "$SPYD"/* "$MUT10/"
+grep -vxF '  case "$head" in "$sha"*) ;; *) case "$sha" in "$head"*) ;; *) recheck_done=1; return 0 ;; esac ;; esac' "$WATCH" > "$MUT10/automate-merge-watch.sh"
+if [ -s "$MUT10/automate-merge-watch.sh" ] && ! cmp -s "$WATCH" "$MUT10/automate-merge-watch.sh" && bash -n "$MUT10/automate-merge-watch.sh" \
+   && [ "$(( $(wc -l < "$WATCH") - $(wc -l < "$MUT10/automate-merge-watch.sh") ))" = "1" ]; then
+  closeout_fixture 413; spy_reset; we_open
+  we_park check_pending --check claude-review --run-id 555 --attempt 1 --sha aaaaaaa
+  printf 'OPEN\nOPEN\nCLOSED\n' > "$GH_STUB_DIR/state-seq"; rj 1 completed success aaaaaaa > "$GH_STUB_DIR/run-seq"
+  (cd "$P" && LOOMWRIGHT_MERGE_WATCH_INTERVAL=0 LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=60 bash "$MUT10/automate-merge-watch.sh" "$RF_REL" "$REQ" "$PRURL" </dev/null >/dev/null 2>&1)
+  [ "$(we_n 'merge-watch: now mergeable: claude-review green on aaaaaaa')" = "1" ] && ok "(E9) mutant (head check deleted) reports the stale sha — the latch is load-bearing" || no "(E9) mutant did not discriminate"
+else no "(E9) head-check mutant invalid (empty / identical / bash -n / not exactly 1 line)"; fi
+# (E9b) the escalated item's merge: closeout's `current-set --status done` clears the
+# line; a second closeout leaves the run file byte-identical.
+closeout_fixture 411; spy_reset; we_open
+we_park check_pending --check claude-review --run-id 555 --attempt 1 --sha "$ESHA"
+jq '.[0].state = "MERGED"' "$GH_STUB_DIR/prs.json" > "$GH_STUB_DIR/p.tmp" && mv "$GH_STUB_DIR/p.tmp" "$GH_STUB_DIR/prs.json"
+run_closeout >/dev/null
+if ! grep -q '^- escalation_cause:' "$P/$RF_REL" && grep -q 'status: done' < <(cur_block "$P/$RF_REL"); then ok "(E9b) closeout clears the escalated item's escalation_cause line"; else no "(E9b) line survived closeout: $(cur_block "$P/$RF_REL" | tr '\n' '|')"; fi
+we_ck="$(cksum < "$P/$RF_REL")"; run_closeout >/dev/null
+[ "$(cksum < "$P/$RF_REL")" = "$we_ck" ] && ok "(E9b) a second closeout leaves the run file byte-identical" || no "(E9b) second closeout changed the run file"
+
+# (E10, review iteration 1 — verdict before a more-severe signal) the recorded check
+# completes green but ANOTHER rollup check is still pending / red / the rollup is
+# unreadable ⇒ no 'now mergeable'; control: only the recorded check itself in the rollup ⇒ reported.
+for wo in pending red unreadable self; do
+  closeout_fixture 412; spy_reset; we_open
+  case "$wo" in
+    pending) rl='[{"name":"ci","status":"IN_PROGRESS","conclusion":""}]' ;;
+    red) rl='[{"name":"ci","status":"COMPLETED","conclusion":"FAILURE"},{"context":"lint","state":"SUCCESS"}]' ;;
+    unreadable) rl='null' ;;
+    self) rl='[{"name":"claude-review","status":"IN_PROGRESS","conclusion":""},{"name":"ci","status":"COMPLETED","conclusion":"SUCCESS"},{"context":"lint","state":"SUCCESS"}]' ;;
+  esac
+  jq --argjson r "$rl" '.[0].statusCheckRollup = $r' "$GH_STUB_DIR/prs.json" > "$GH_STUB_DIR/p.tmp" && mv "$GH_STUB_DIR/p.tmp" "$GH_STUB_DIR/prs.json"
+  we_park check_pending --check claude-review --run-id 555 --attempt 1 --sha "$ESHA"
+  printf 'OPEN\nOPEN\nOPEN\nCLOSED\n' > "$GH_STUB_DIR/state-seq"; rj 1 completed success > "$GH_STUB_DIR/run-seq"
+  we_watch >/dev/null
+  if [ "$wo" = self ]; then
+    [ "$(we_n "merge-watch: now mergeable: claude-review green on $ESHA")" = "1" ] && ok "(E10) control: other rollup checks settled green (recorded check excluded by name) ⇒ one now-mergeable" || no "(E10) control did not report: $(grep -E 'mergeable|failing' "$P/$RF_REL" | tr '\n' '|')"
+  else
+    [ "$(we_n 'merge-watch: now mergeable:')" = "0" ] && [ "$(spy_count automate_escalation_recheck "$SPYLOG.webhook")" = "0" ] && ok "(E10) recorded check green but another check $wo ⇒ no 'now mergeable'" || no "(E10) $wo reported now mergeable"
+  fi
+done
+
+# (E11, review iteration 1 — fail-open on incomplete evidence) a run view with no
+# headSha is no evidence the run is for the recorded sha ⇒ no report.
+closeout_fixture 414; spy_reset; we_open
+we_park check_pending --check claude-review --run-id 555 --attempt 1 --sha "$ESHA"
+printf 'OPEN\nOPEN\nCLOSED\n' > "$GH_STUB_DIR/state-seq"; jq -cn '{attempt:1,status:"completed",conclusion:"success"}' > "$GH_STUB_DIR/run-seq"
+we_watch >/dev/null
+[ "$(we_n 'merge-watch: now mergeable:')" = "0" ] && [ "$(spy_count automate_escalation_recheck "$SPYLOG.webhook")" = "0" ] && ok "(E11) a run view without headSha ⇒ no 'now mergeable'" || no "(E11) headSha-less run reported"
 
 echo "== K. SKILL wiring (Part B) =="
 grep -qF 'automate-merge-watch.sh' "$SKILL" && ok "SKILL names automate-merge-watch.sh" || no "SKILL lacks the watcher"

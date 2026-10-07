@@ -48,8 +48,8 @@
   stamped\t<repo-relative file>\t<status line just written>\t<evidence>
   info\t<repo-relative file>\tbrief-shipped\t<job path> (<PR url or "no PR recorded">)
   escalation_cause: <cause> check=<name|null> run_id=<id|null> attempt=<n|null> sha=<sha>
-  check_pending        a scoped (required ∪ review-producing) check has not completed.
-  check_red_unrelated  every red scoped check's every failing test file (from the
+  check_pending        NO scoped check is red and a scoped (required ∪ review-producing)
+  check_red_unrelated  every red scoped check's every failed step ran ONLY
   check_red            anything else red — and every unreadable case: a snapshot
   other                nothing pending, nothing red — the escalation was not check-driven.
   meta-entry: off                              mode off — proceed exactly as today, no network

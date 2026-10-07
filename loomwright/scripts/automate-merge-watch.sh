@@ -13,7 +13,8 @@
 #     <runfile> <item> <pr_url> </dev/null >"<runfile dir>/<run_id>.merge-watch.log" 2>&1 &
 # (NOT setsid — absent on stock macOS). Polls `gh pr view <pr_url> --json
 # state` every LOOMWRIGHT_MERGE_WATCH_INTERVAL seconds (default 60), doubling
-# the wait on a gh error up to 900s and resetting on success.
+# the wait on a gh error up to 900s and resetting on success (the same read
+# carries headRefOid + statusCheckRollup for the settle re-check below).
 #   MERGED ⇒ `automate-helpers.sh closeout <runfile> <item> <pr_url>` (NO
 #            --session-id: it takes the run lock as `automate-closeout:<run_id>`).
 #            Its output is classified, never assumed a success:
@@ -35,14 +36,16 @@
 #            reason (never "resume after the merge" — the merge was observed).
 #   SETTLE RE-CHECK (automate-followups/31): while OPEN, when ## Current names
 #            THIS item + PR and carries `- escalation_cause: check_pending` or
-#            `check_red_unrelated` with a non-null check + sha (written by
-#            `automate-helpers.sh current-escalation`), each poll also reads
-#            that ONE check — `gh run view <run_id> --json
+#            `check_red_unrelated` with a non-null check + a sha equal to the
+#            PR's current headRefOid (read by the poll's own `gh pr view --json
+#            state,headRefOid,statusCheckRollup`; a different head latches it
+#            silent), each poll also reads that ONE check — `gh run view <run_id> --json
 #            attempt,status,conclusion,headSha` when a run id is recorded, else
 #            `gh api repos/<o>/<r>/commits/<sha>/check-runs` by name (never an
 #            extra `gh pr view`). check_pending reports at the first completed
 #            attempt >= the recorded one; check_red_unrelated only at a NEWER
-#            attempt (> recorded — a human rerun). The report is ONE ## Progress
+#            attempt (> recorded — a human rerun); `now mergeable` also needs
+#            every OTHER rollup check completed and non-red. The report is ONE ## Progress
 #            line — `now mergeable: <check> green on <sha>` or `still failing:
 #            <check> <conclusion> — rerun: gh run rerun <run_id> --failed` (the
 #            command is PRINTED for the owner, never executed) — plus ONE
@@ -205,14 +208,21 @@ esc_fields() {
   ' "$rf_abs" 2>/dev/null
 }
 recheck_done=0
-# esc_recheck — one settle poll of the recorded check; reports at most once.
+# esc_recheck <pr_view_json> — one settle poll of the recorded check; reports at most
+# once. <pr_view_json> is THIS poll's `gh pr view --json state,headRefOid,statusCheckRollup`
+# (no extra call): the recorded sha must be the PR's CURRENT head (a stale line — a
+# later push, or a line left from another item — is latched silent), and `now
+# mergeable` additionally needs every OTHER rollup entry completed and non-red.
 esc_recheck() {
-  local f cause chk rid att sha rec owner_repo j st concl a hs
+  local pv="$1" f cause chk rid att sha rec owner_repo j st concl a hs head others
   f="$(esc_fields)"; [ -n "$f" ] || { recheck_done=1; return 0; }
   IFS='|' read -r cause chk rid att sha <<<"$f"
   case "$cause" in check_pending|check_red_unrelated) ;; *) recheck_done=1; return 0 ;; esac
   case "$chk" in ''|null) recheck_done=1; return 0 ;; esac
   case "$sha" in ''|null|*[!0-9a-fA-F]*) recheck_done=1; return 0 ;; esac
+  head="$(printf '%s' "$pv" | "$JQ" -r '.headRefOid // empty' 2>/dev/null)"
+  case "$head" in ''|*[!0-9a-fA-F]*) return 0 ;; esac   # unreadable head ⇒ no report this poll
+  case "$head" in "$sha"*) ;; *) case "$sha" in "$head"*) ;; *) recheck_done=1; return 0 ;; esac ;; esac
   case "$rid" in ''|null|*[!0-9]*) rid="" ;; esac
   case "$att" in ''|null|*[!0-9]*) att="" ;; esac
   # check_red_unrelated reports only on a NEWER attempt: no run id/attempt ⇒ nothing to compare
@@ -223,7 +233,8 @@ esc_recheck() {
     hs="$(printf '%s' "$j" | "$JQ" -r '.headSha // empty' 2>/dev/null)"
     st="$(printf '%s' "$j" | "$JQ" -r '.status // empty | ascii_downcase' 2>/dev/null)"
     concl="$(printf '%s' "$j" | "$JQ" -r '.conclusion // empty | ascii_downcase' 2>/dev/null)"
-    case "$hs" in ''|"$sha"*) ;; *) case "$sha" in "$hs"*) ;; *) return 0 ;; esac ;; esac
+    # the run must be for the recorded sha — an absent headSha is no evidence (no report)
+    case "$hs" in ''|*[!0-9a-fA-F]*) return 0 ;; "$sha"*) ;; *) case "$sha" in "$hs"*) ;; *) return 0 ;; esac ;; esac
   else
     owner_repo="$(printf '%s' "$pr_url" | sed -n 's#^https://[^/]*/\([^/]*/[^/]*\)/pull/[0-9][0-9]*.*#\1#p')"
     [ -n "$owner_repo" ] || { recheck_done=1; return 0; }
@@ -240,6 +251,19 @@ esc_recheck() {
   rec="${att:-1}"
   if [ "$cause" = check_pending ]; then [ "$a" -ge "$rec" ] || return 0
   else [ "$a" -gt "$rec" ] || return 0; fi
+  if [ "$concl" = success ]; then
+    # every OTHER rollup check must be completed and non-red (an unreadable rollup,
+    # or any pending/red/unknown entry, ⇒ no report this poll — re-read next poll)
+    others="$(printf '%s' "$pv" | "$JQ" -r --arg c "$chk" '
+      if (.statusCheckRollup | type) != "array" then "unreadable" else
+      [ .statusCheckRollup[] | select((.name // .context // "") != $c)
+        | if has("state") and (has("status") | not)
+            then (.state // "" | ascii_upcase | select(. != "SUCCESS"))
+            else ((.status // "" | ascii_upcase) as $s | (.conclusion // "" | ascii_upcase) as $k
+                  | select($s != "COMPLETED" or ($k | IN("SUCCESS","NEUTRAL","SKIPPED") | not)) | "x")
+          end ] | length | tostring end' 2>/dev/null)"
+    [ "$others" = 0 ] || return 0
+  fi
   recheck_done=1
   # idempotent across a restart: this sha's / run's report is already in ## Progress
   if awk -v a="merge-watch: now mergeable: $chk green on $sha" -v b="merge-watch: still failing: $chk " \
@@ -275,7 +299,7 @@ while :; do
     progress "lifetime cap (${max}s) reached watching $pr_url — stopped; run /automate --resume after the merge"
     echo "merge-watch: lifetime cap reached"; exit 0
   fi
-  view="$("$GH" pr view "$pr_url" --json state 2>/dev/null)"; rc=$?
+  view="$("$GH" pr view "$pr_url" --json state,headRefOid,statusCheckRollup 2>/dev/null)"; rc=$?
   state="$(printf '%s' "$view" | "$JQ" -r '.state // empty' 2>/dev/null)"
   if [ "$rc" -ne 0 ] || [ -z "$state" ]; then
     wait_s=$(( wait_s * 2 )); [ "$wait_s" -ge 1 ] || wait_s=1
@@ -320,7 +344,7 @@ while :; do
       progress "$item gone — $pr_url closed unmerged (no cleanup; §4 gone rules)"
       notify "$pr_url closed unmerged — /automate item $item is gone (run $run_id)"
       echo "merge-watch: pr closed unmerged"; exit 0 ;;
-    *) [ "$recheck_done" -eq 1 ] || esc_recheck
+    *) [ "$recheck_done" -eq 1 ] || esc_recheck "$view"
        nap "$interval" ;;
   esac
 done
