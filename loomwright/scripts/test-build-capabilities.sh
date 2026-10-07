@@ -9,16 +9,19 @@
 #   (N)   one entry per source (agents/*.md, commands/*.md, skills/*/SKILL.md, hooks.json leaves), no
 #         duplicate names — expected counts derived from the source dirs NOW, never hard-coded
 #   (A)   agents: runtime_agent_type derived + matches the probe fixture; tools = tools - disallowedTools;
-#         model verbatim; result_block / result_blocks pins
+#         model verbatim; result_block / result_blocks pins (template AND emission-verb rule; audited
+#         consumption mentions are not emissions)
 #   (R)   result_schemas: version pins, a decorated heading's normalised name, exclusions, null versions
 #   (H)   hooks: blocking only on the guard leaves; StopFailure writes pinned; no /dev/null or &N target;
 #         the four audited scripts non-empty; unknown only where audited unknown
 #   (U)   a hook script with no audit entry => writes ["unknown"]
-#   (P)   fail-CLOSED hook parser: every script-path spelling, write construct (&>, >|, tee, cp, sed -i,
-#         bash -c, rm) and unmodelled command => ["unknown"] or the literal target, never a silent [];
+#   (P)   fail-CLOSED hook parser: every script-path spelling, write construct (&>, >|, >&word, tee, cp,
+#         sed -i, bash -c, rm, exec N>, dd, install, ln) and unmodelled construct (backticks, >(...), >>&,
+#         heredoc) => ["unknown"] or the literal target, never a silent []; real fd dups stay non-writes;
 #         blocking is decided by a TRAILING `|| true` only
 #   (F)   fail-CLOSED agent / schema parsing: absent tools => null (inherits all), an unparseable tools
-#         key, an unindexed *_RESULT emission, or a schema_version in an unparsed form => exit 1
+#         key, an unindexed *_RESULT emission (template or EMIT verb), a stale NOT_EMITTED audit entry, or a
+#         schema_version in an unparsed form => exit 1; emission-vs-consumption control on a fixture
 #   (X)   fail-CLOSED: the index naming a different current schema_version than the split file => exit 1
 #   (M)   mutation control: delete an agent in a fixture copy => mutant VALID (non-empty, differs) and
 #         --check exits 1 with exactly ONE line telling the developer what to run
@@ -130,10 +133,20 @@ for pin in worker:WORKER_RESULT code-reviewer:CODE_REVIEW_RESULT plan-reviewer:P
   got="$(q '.agents[] | select(.name == $a) | .result_block' --arg a "$a")"
   if [ "$got" = "$want" ]; then ok "(A) $a result_block = $want"; else no "(A) $a result_block = $got, want $want"; fi
 done
-if [ "$(q '.agents[] | select(.name == "loomwright:qa-executor") | .result_blocks | join(",")')" = "QA_RESULT,VERIFY_RESULT" ] \
+if [ "$(q '.agents[] | select(.name == "loomwright:qa-executor") | .result_blocks | join(",")')" = "MISSING_FUNCTIONALITY_REPORT,QA_RESULT,VERIFY_RESULT" ] \
    && [ "$(q '.agents[] | select(.name == "loomwright:execute-manager") | .result_blocks | join(",")')" = "EXECUTE_CHECKPOINT,EXECUTE_RESULT" ]; then
-  ok "(A) multi-block agents list every emitted block in result_blocks[]"
+  ok "(A) multi-block agents list every emitted block in result_blocks[] (incl. qa-executor's 'ALWAYS emit MISSING_FUNCTIONALITY_REPORT')"
 else no "(A) result_blocks for qa-executor / execute-manager wrong"; fi
+# Emission-verb rule: qa-strategist's "Step 4: EMIT GATE_VERDICT" is its only indexed block.
+if [ "$(q '.agents[] | select(.name == "loomwright:qa-strategist") | [.result_block, (.result_blocks | join(","))] | join("|")')" = "GATE_VERDICT|GATE_VERDICT" ]; then
+  ok "(A) qa-strategist result_block = result_blocks = GATE_VERDICT (an EMIT instruction, not only a template line)"
+else no "(A) qa-strategist = $(q '.agents[] | select(.name == "loomwright:qa-strategist") | [.result_block, .result_blocks]' -c)"; fi
+# Consumption is not emission: launch-pad's child spawn prompt says "Output a PLAN_REVIEW_RESULT block",
+# supervisor's completion tail "emit[s] a session_end event" into the log — neither is listed.
+if [ "$(q '.agents[] | select(.name == "loomwright:launch-pad-runner") | .result_blocks | join(",")')" = LAUNCH_PAD_RESULT ] \
+   && [ "$(q '.agents[] | select(.name == "loomwright:supervisor-runner") | .result_blocks | join(",")')" = SUPERVISOR_RESULT ]; then
+  ok "(A) an audited consumption mention (child spawn prompt / log event) is not listed as an emission"
+else no "(A) launch-pad-runner / supervisor-runner result_blocks include a consumed block"; fi
 if [ "$(q '[.agents[] | select((.result_blocks | length) == 0 and .result_block != null)] | length')" = 0 ]; then
   ok "(A) no result_block without a result_blocks[] entry"
 else no "(A) result_block set with empty result_blocks[]"; fi
@@ -223,6 +236,25 @@ pcase 'a redirect to a non-literal target => unknown' 'echo x > "$F" || true' '[
 pcase 'a <> read-write open => unknown' 'exec 3<>f || true' '[null,["unknown"],false]'
 pcase 'fd duplication and /dev/null stay non-writes (control: the parser is not unknown-on-everything)' \
   'X=1 bash "${@R@}/scripts/send-webhook.sh" >/dev/null 2>&1 || true' '["scripts/send-webhook.sh",[],false]'
+pcase 'a backtick command substitution (never split into simple commands) => unknown' \
+  'echo `rm -f victim` || true' '[null,["unknown"],false]'
+pcase '>&<word> with a non-numeric word is a write of that path (bash opens it as a file)' \
+  'echo hi >&out.log || true' '[null,["out.log"],false]'
+pcase '>& <word> (space before the word) is a write of that path' \
+  'echo hi >& out.log || true' '[null,["out.log"],false]'
+pcase '>&<non-literal> => unknown (may name a file at run time)' 'echo hi >&"$F" || true' '[null,["unknown"],false]'
+pcase 'real fd duplications >&2, 3>&2-, >&- and >& 2 stay non-writes (control)' \
+  'echo hi >&2 3>&2- >&- || true; echo b >& 2 || true' '[null,[],false]'
+pcase '>>& (a bash syntax error, unmodelled) => unknown' 'echo hi >>& f || true' '[null,["unknown"],false]'
+pcase 'a >(...) process substitution => unknown' 'echo x >(cat) || true' '[null,["unknown"],false]'
+pcase 'exec N>file => unknown' 'exec 3>f || true' '[null,["unknown"],false]'
+pcase 'dd of= => unknown' 'dd if=a of=b || true' '[null,["unknown"],false]'
+pcase 'install => unknown' 'install a b || true' '[null,["unknown"],false]'
+pcase 'ln => unknown' 'ln -s a b || true' '[null,["unknown"],false]'
+pcase 'a here-string redirected to a literal file is a write of that file' \
+  'cat <<< hi > f || true' '[null,["f"],false]'
+pcase 'a heredoc (its body lines are not understood commands) => unknown' \
+  "$(printf 'cat <<EOF > f\nhi\nEOF')" '[null,["unknown"],true]'
 pcase 'a non-trailing `|| true` does not make the leaf fail-safe (blocking)' \
   'bash "${@R@}/scripts/send-webhook.sh" || true; bash "${@R@}/scripts/guard-test-integrity.sh"' '["scripts/send-webhook.sh",[],true]'
 
@@ -243,6 +275,21 @@ fcase "a tools key in block-list form (unparsed) exits 1 instead of publishing [
 cp "$PLUGIN/agents/worker.md" "$tmp/ff/agents/worker.md"
 printf '\nNEVER_INDEXED_RESULT:\n' >> "$tmp/ff/agents/worker.md"
 fcase "an emitted *_RESULT block the index does not know exits 1 instead of being dropped" "NEVER_INDEXED_RESULT"
+cp "$PLUGIN/agents/worker.md" "$tmp/ff/agents/worker.md"
+printf '\nStep 9: EMIT `NEVER_INDEXED_RESULT` with the outcome.\n' >> "$tmp/ff/agents/worker.md"
+fcase "an EMIT instruction naming an unindexed *_RESULT exits 1 instead of being dropped" "NEVER_INDEXED_RESULT"
+cp "$PLUGIN/agents/worker.md" "$tmp/ff/agents/worker.md"
+# A NOT_EMITTED audit exception whose prompt line is gone must fail — it would mask a real emission.
+grep -v 'Output a PLAN_REVIEW_RESULT block' "$PLUGIN/agents/launch-pad.md" > "$tmp/ff/agents/launch-pad.md"
+if cmp -s "$PLUGIN/agents/launch-pad.md" "$tmp/ff/agents/launch-pad.md"; then no "(F) mutant invalid: launch-pad.md has no 'Output a PLAN_REVIEW_RESULT block' line"
+else fcase "a stale NOT_EMITTED audit exception exits 1" "NOT_EMITTED audit entry 'launch-pad PLAN_REVIEW_RESULT'"; fi
+cp "$PLUGIN/agents/launch-pad.md" "$tmp/ff/agents/launch-pad.md"
+# Positive + negative control on one fixture: an emission verb lists the block, consumption prose does not.
+printf '\nALWAYS emit MISSING_FUNCTIONALITY_REPORT.\nParse the GATE_VERDICT block and read RED_TEAM_RESULT.\n' >> "$tmp/ff/agents/worker.md"
+bash "$SUT" --root "$tmp/ff" --out "$tmp/ff.json" 2>/dev/null
+if [ "$(jq -r '.agents[] | select(.name == "loomwright:worker") | [(.result_block // "null"), (.result_blocks | join(","))] | join("|")' "$tmp/ff.json")" = "null|MISSING_FUNCTIONALITY_REPORT,WORKER_RESULT" ]; then
+  ok "(F) 'ALWAYS emit X' lists X; 'parse the Y block' / 'read Z' do not; a set with no primary rule => result_block null"
+else no "(F) emission/consumption control: $(jq -c '.agents[] | select(.name == "loomwright:worker") | [.result_block, .result_blocks]' "$tmp/ff.json")"; fi
 cp "$PLUGIN/agents/worker.md" "$tmp/ff/agents/worker.md"
 # product-context.md is indexed and records no schema_version (pinned null in (R) above).
 sf="product-context.md"

@@ -245,19 +245,42 @@ SCHEMA_NAMES="$(cut -d "$US" -f1 "$tmpd/schemas.tsv" | tr '\n' ' ')"
 # ---------------------------------------------------------------------------------------------------
 # agents[] — frontmatter name/model/tools/disallowedTools; runtime_agent_type = <plugin name>:<name>
 # (the frontmatter name already carries the plugin prefix, so the runtime reports it doubled).
-# result_blocks[] = every result-schema name the body EMITS: a line that is exactly the block name,
-# optionally as a `#` heading and/or with a trailing `:` (an emission template), never a prose mention.
+# result_blocks[] = every result-schema name the body EMITS, by either of two rules:
+#   (template) a line that is exactly the block name, optionally as a `#` heading and/or with a
+#              trailing `:` (an emission template);
+#   (verb)     an emission instruction: EMIT / emit / emits / emitting / OUTPUT / Output / output /
+#              outputs, optionally followed by a/an/the/one/its/exactly one and a backtick, then the
+#              block name ("Step 4: EMIT GATE_VERDICT", "ALWAYS emit MISSING_FUNCTIONALITY_REPORT",
+#              "Output a WORKER_RESULT ..."). Past-tense `emitted` describes, it does not instruct.
+# A verb hit is NOT always the agent's own emission: a spawn prompt the agent writes for a CHILD, or a
+# session-log event, uses the same words. Each such hit is hand-audited in the NOT_EMITTED table below
+# (agent file stem + block name + where it was read) — the agent CONSUMES that block or writes it
+# elsewhere. Fail-CLOSED both ways: a verb or template hit naming an unindexed *_RESULT exits 1, and a
+# NOT_EMITTED entry whose hit no longer exists exits 1 (a stale exception would mask a real emission).
+# Other prose mentions ("parse the X block", "read X", "Report in X") are consumption, not emission.
 # result_block = the only block, or — for several — the one the documented precedence below picks
 # (keyed by the block SET, never by agent name); several with no rule => null.
 # ---------------------------------------------------------------------------------------------------
+NOT_EMITTED=""
+ne() { NOT_EMITTED="$NOT_EMITTED$1 $2
+"; }
+# launch-pad.md Phase 5 — "Output a PLAN_REVIEW_RESULT block." is the last line of the prompt it hands
+# the spawned Plan Reviewer; launch-pad parses the child's block, the Plan Reviewer emits it.
+ne launch-pad PLAN_REVIEW_RESULT
+# supervisor.md — "Phase 4.5's completion tail MUST emit a `session_end` event": a JSONL event written to
+# the session log (.supervisor/logs/<session>.jsonl), not a block in the agent's output.
+ne supervisor session_end
 PRIMARY_RULES='{
   "EXECUTE_CHECKPOINT,EXECUTE_RESULT": "EXECUTE_RESULT",
+  "MISSING_FUNCTIONALITY_REPORT,QA_RESULT,VERIFY_RESULT": "QA_RESULT",
   "QA_RESULT,VERIFY_RESULT": "QA_RESULT"
 }'
 # EXECUTE_RESULT: the Execute Manager's FINAL block; EXECUTE_CHECKPOINT is the mid-run resume handoff
 #   (both validated by validate-execute-result.py — docs/result-schemas/execute-checkpoint.md).
 # QA_RESULT: validate-qa-result.py's documented rule — "QA_RESULT wins whenever present"; VERIFY_RESULT
 #   is the --verify mode's block (docs/RESULT_SCHEMAS.md opening paragraph, §VERIFY_RESULT).
+#   MISSING_FUNCTIONALITY_REPORT is emitted BESIDE QA_RESULT (qa-executor.md "STEP 4 — EMIT: ALWAYS
+#   emit MISSING_FUNCTIONALITY_REPORT ... Emit QA_RESULT"), a companion report, never the final block.
 PLUGIN_NAME="$(jq -r '.name // empty' "$MANIFEST")"
 PLUGIN_VERSION="$(jq -r '.version // empty' "$MANIFEST")"
 [ -n "$PLUGIN_NAME" ] && [ -n "$PLUGIN_VERSION" ] || { echo "build-capabilities: plugin.json lacks .name or .version" >&2; exit 1; }
@@ -267,16 +290,34 @@ while IFS= read -r rel; do
   f="$ROOT/agents/$rel"
   name="$(fmval "$f" name)"
   [ -n "$name" ] || { echo "build-capabilities: agents/$rel has no frontmatter name" >&2; exit 1; }
-  # Emission-template lines naming a *_RESULT block the index does not know are printed with a `?`
-  # prefix and fail the run closed — a silent drop would publish "emits no block".
-  blocks="$(awk -v names=" $SCHEMA_NAMES " '
+  # A template or verb hit naming a *_RESULT block the index does not know is printed with a `?`
+  # prefix and fails the run closed — a silent drop would publish "emits no block". A verb hit the
+  # NOT_EMITTED audit covers is printed with a `!` prefix (consumed, not emitted).
+  stem="${rel%.md}"
+  notemit="$(printf '%s' "$NOT_EMITTED" | awk -v a="$stem" '$1 == a { printf " %s", $2 } END { printf " " }')"
+  hits="$(awk -v names=" $SCHEMA_NAMES " -v notemit="$notemit" '
+    function classify(n, verb) {
+      if (index(names, " " n " ")) { if (verb && index(notemit, " " n " ")) print "!" n; else print n }
+      else if (n ~ /_RESULT$/) print "?" n
+    }
     NR == 1 && $0 == "---" { fm = 1; next }
     fm { if ($0 == "---") fm = 0; next }
     { l = $0; sub(/^[ \t]+/, "", l); sub(/^#+[ \t]*/, "", l); sub(/[ \t]+$/, "", l); sub(/:$/, "", l)
-      if (l ~ /^[A-Z][A-Z0-9_]*$/) { if (index(names, " " l " ")) print l; else if (l ~ /_RESULT$/) print "?" l } }' "$f" | env LC_ALL=C sort -u | paste -s -d, -)"
+      if (l ~ /^[A-Z][A-Z0-9_]*$/) classify(l, 0)
+      s = $0
+      while (match(s, /(EMIT|[Ee]mit|[Ee]mits|[Ee]mitting|OUTPUT|[Oo]utput|[Oo]utputs)[ \t]+((a|an|the|one|its|exactly one)[ \t]+)?`?[A-Za-z_][A-Za-z0-9_]*/)) {
+        m = substr(s, RSTART, RLENGTH); pre = (RSTART > 1) ? substr(s, RSTART - 1, 1) : ""
+        s = substr(s, RSTART + RLENGTH)
+        if (pre ~ /[A-Za-z0-9_]/) continue        # inside a longer word, e.g. "remit"
+        n = m; sub(/^.*[ \t`]/, "", n); classify(n, 1)
+      } }' "$f" | env LC_ALL=C sort -u)"
+  blocks="$(printf '%s\n' "$hits" | grep -v '^!' | grep -v '^$' | paste -s -d, -)"
   case ",$blocks" in *",?"*)
     echo "build-capabilities: agents/$rel emits result block(s) RESULT_SCHEMAS.md does not index: $(printf '%s' "$blocks" | tr ',' '\n' | grep '^?' | tr -d '?' | paste -s -d, -)" >&2; exit 1 ;;
   esac
+  for n in $notemit; do
+    grep -qx "!$n" <<<"$hits" || { echo "build-capabilities: NOT_EMITTED audit entry '$stem $n' matches no emission-verb mention in agents/$rel — remove or re-audit it" >&2; exit 1; }
+  done
   # tools: a key that is ABSENT means the agent inherits every tool (published as null, never []);
   # a key that is PRESENT but has no inline comma list (e.g. a YAML block list) is not parsed => fail closed.
   for k in tools disallowedTools; do
@@ -336,8 +377,10 @@ jq -R -s --arg us "$US" 'split("\n") | map(select(length > 0) | split($us) | {na
 #             duplications (2>&1) are not writes; `mkdir -p <dir>` is a directory, not a write.
 #             FAIL-CLOSED PARSER: the leaf is ["unknown"] whenever the parser meets something it does
 #             not model — an install-root-variable mention that is not a parsed script path; a redirect
-#             whose target is empty or not a literal path (`&>`, `>|` and `N>` are parsed as writes);
-#             a `<>` read-write open; or a simple command whose first word is not on the
+#             whose target is empty or not a literal path (`&>`, `>|`, `N>` and `>&<word>` are parsed as
+#             writes — only `>&<fd number>` / `>&-` is a duplication); `>>&`; a `<>` read-write open; a
+#             backtick command substitution (never split into simple commands); a `>(...)` process
+#             substitution; or a simple command whose first word is not on the
 #             non-writing allowlist below (so tee, cp, mv, rm, touch, sed -i, eval, `bash -c`, … are
 #             unknown), or an interpreter not followed by a plugin script path.
 NONWRITING_CMDS='cat printf echo mkdir date true false : test ['
@@ -353,10 +396,13 @@ jq -S --slurpfile audit "$tmpd/audit.json" \
   | ("\\$\\{?" + $rv + "\\}?\"?/scripts/([A-Za-z0-9_.-]+)") as $script_re
   | ($nonwriting | split(" ")) as $okcmds | ($interp | split(" ")) as $interps
   # simple_cmds: the command text split into simple commands. `$(` opens one, and the operators
-  # ; & && || | ( and newline separate them; fd duplications are blanked and &> / >| normalised to >
-  # first so their `&` / `|` does not split. Leading VAR=value assignments and `!` are dropped. Over-splitting inside a
-  # quoted string can only yield an unrecognised first word, i.e. unknown — never a false [].
-  | def simple_cmds: gsub("[0-9]*>&[0-9-]*"; " ") | gsub("&>"; ">") | gsub(">\\|"; ">") | gsub("\\$\\("; ";")
+  # ; & && || | ( and newline separate them. Only REAL fd duplications (`N>&M`, `>&-`, `N>&M-`, the
+  # target ending at a word boundary) are blanked; every other `>&word` is a redirect to a FILE in bash
+  # (like `&>`), so it is normalised to `>` along with &> / >| — first, so their `&` / `|` does not split.
+  # Leading VAR=value assignments and `!` are dropped. Over-splitting inside a quoted string can only
+  # yield an unrecognised first word, i.e. unknown — never a false [].
+  | ("[0-9]*>&[ \\t]*([0-9]+-?|-)(?=$|[ \\t;|&)<>\n])") as $fd_dup_re
+  | def simple_cmds: gsub($fd_dup_re; " ") | gsub(">&"; ">") | gsub("&>"; ">") | gsub(">\\|"; ">") | gsub("\\$\\("; ";")
       | [splits("&&|\\|\\||[;&|(\n]")]
       | map(sub("^[ \t]+"; "") | sub("^!+[ \t]*"; "")
             | until(test("^[A-Za-z_][A-Za-z0-9_]*=[^ \t]*([ \t]+|$)") | not;
@@ -374,13 +420,17 @@ jq -S --slurpfile audit "$tmpd/audit.json" \
       | ($h.command // "") as $cmd
       | [ $cmd | scan($script_re) | .[0] ] as $s
       | ([ $cmd | scan($rv) ] | length) as $mentions
-      | [ $cmd | scan("(?<![<>&0-9])(?:[0-9]*|&)(?:>\\||>>?)[ \\t]*(&[0-9-]*|[^ \\t;|&)<>]*)") | .[0]
-          | select(. != "/dev/null" and . != "\"/dev/null\"" and (startswith("&") | not)) ] as $inline
+      # inline redirects as [operator, target]. `>&` followed by an fd number / `-` is a duplication
+      # (not a write); `>&word` writes <word>; `>>&` is a bash syntax error (unmodelled => unknown).
+      | [ $cmd | scan("(?<![<>&0-9])(?:[0-9]*|&)(>\\||>>?&?)[ \\t]*([^ \\t;|&)<>]*)")
+          | select((.[0] | endswith("&") and . != ">>&") and (.[1] | test("^([0-9]+-?|-)$")) | not)
+          | if .[0] == ">>&" then "" else .[1] end
+          | select(. != "/dev/null" and . != "\"/dev/null\"") ] as $inline
       | ($inline | map(if (length == 0) or test("[$\"\u0027`(){}*?~\\\\]") then "unknown" else . end)) as $iw
       | ($s | map($a[.] // ["unknown"]) | add // []) as $sw
       | (if ($h.type == "command")
            and (($mentions != ($s | length))
-                or ($cmd | test("<>"))
+                or ($cmd | test("<>|`|>\\("))
                 or ([$cmd | simple_cmds[] | understood] | all | not))
          then ["unknown"] else [] end) as $uw
       | (($iw + $sw + $uw) | unique) as $all

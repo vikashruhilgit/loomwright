@@ -114,6 +114,7 @@
       "name": "loomwright:qa-executor",
       "result_block": "QA_RESULT",
       "result_blocks": [
+        "MISSING_FUNCTIONALITY_REPORT",
         "QA_RESULT",
         "VERIFY_RESULT"
       ],
@@ -132,8 +133,10 @@
     {
       "model": "inherit",
       "name": "loomwright:qa-strategist",
-      "result_block": null,
-      "result_blocks": [],
+      "result_block": "GATE_VERDICT",
+      "result_blocks": [
+        "GATE_VERDICT"
+      ],
       "runtime_agent_type": "loomwright:loomwright:qa-strategist",
       "tools": [
         "Bash",
