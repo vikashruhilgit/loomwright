@@ -26,8 +26,10 @@ entry's one paragraph.
 
 The fragments fold, in filename order, into ONE new top entry of `CHANGELOG.md`:
 `**vX.Y.Z — <headline 1>; <headline 2>:** <body 1> <body 2>`. The script then deletes them. It also bumps
-`plugin.json` and the loomwright entry of `marketplace.json`, nothing else, and runs `scripts/validate-version.sh` and
-`scripts/check-doc-currency.sh`. Any failure restores every file and exits 1. Preview with `--dry-run`.
+`plugin.json` and the loomwright entry of `marketplace.json`, regenerates `loomwright/capabilities.json` (its
+`plugin_version` is a generated copy of the version, and nothing else in it may change), and runs
+`scripts/validate-version.sh`, `scripts/check-doc-currency.sh` and `build-capabilities.sh --check`. Any failure
+restores every file and exits 1. Preview with `--dry-run`.
 
 ## Who runs the bump (decision P7)
 

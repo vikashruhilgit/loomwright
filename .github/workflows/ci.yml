@@ -100,8 +100,16 @@ jobs:
           bash scripts/test-check-locale-prefix.sh
           bash scripts/check-locale-prefix.sh
 
+      # loomwright/capabilities.json is the generated, versioned contract a host reads instead of
+      # parsing plugin internals (loomwright/docs/CAPABILITIES_CONTRACT.md). Regenerate it and fail on
+      # any byte of drift, so a release can never ship a stale contract. scripts/ci-local.sh picks this
+      # line up too (it derives `bash loomwright/scripts/<x>.sh --check` lines as gates). The
+      # generator's own self-test runs in the self-test suite below. No `|| true`: fail-CLOSED gate.
+      - name: Check the capability contract is current (capabilities.json staleness gate)
+        run: bash loomwright/scripts/build-capabilities.sh --check
+
       # scripts/ci-local.sh is the local mirror of this job (it derives its gate list from the
-      # `bash scripts/…` lines in THIS file). Its self-test drives fixture repos only, never the
+      # `bash scripts/…` lines and the `bash loomwright/scripts/<x>.sh --check` lines in THIS file). Its self-test drives fixture repos only, never the
       # real suite. Root scripts/test-*.sh are not globbed by run-self-tests.sh, hence explicit.
       - name: Check the local pre-push runner (ci-local.sh)
         run: bash scripts/test-ci-local.sh

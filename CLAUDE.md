@@ -162,5 +162,5 @@ Update the project's CLAUDE.md with concrete patterns and references — descrip
 - User-facing: `README.md`, `.claude-plugin/README.md`
 - Standards: `AGENT_GUIDELINES.md`
 - Manifests: `.claude-plugin/marketplace.json`, `loomwright/.claude-plugin/plugin.json`
-- Schemas / contracts / failure modes: `loomwright/docs/{RESULT_SCHEMAS,ARCHITECTURE_CONTRACTS,FAILURE_ESCALATION,ARCHITECTURE,QA_SYSTEM_BLUEPRINT,TELEMETRY,OBSERVABILITY,POINTER_AUDIT,PITFALLS,HOOKS}.md`
+- Schemas / contracts / failure modes: `loomwright/docs/{RESULT_SCHEMAS,ARCHITECTURE_CONTRACTS,FAILURE_ESCALATION,ARCHITECTURE,QA_SYSTEM_BLUEPRINT,TELEMETRY,OBSERVABILITY,POINTER_AUDIT,PITFALLS,HOOKS,CAPABILITIES_CONTRACT}.md`
 - Skills index: `loomwright/skills/SKILLS_INDEX.md`
