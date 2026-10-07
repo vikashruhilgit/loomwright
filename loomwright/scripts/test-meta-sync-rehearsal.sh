@@ -73,9 +73,9 @@ mkworld() {
 }
 fp() { git -C "$W/src" for-each-ref --format='%(refname) %(objectname)'; git -C "$W/src" config --get-regexp '^remote\.'; git --git-dir="$W/origin.git" for-each-ref --format='%(refname) %(objectname)'; }
 run() { OUT="$(bash "$SCRIPT" --root "$W/src" "$@" 2>&1)"; RC=$?; }
-has() { printf '%s\n' "$OUT" | grep -qF -- "$1"; }
-all_pass() { local c; for c in $CHECKS; do printf '%s\n' "$OUT" | grep -qx "PASS: $c" || { echo "    missing PASS: $c"; return 1; }; done; ! printf '%s\n' "$OUT" | grep -q '^FAIL'; }
-red() { printf '%s\n' "$OUT" | grep -q "^FAIL: $1\( \|$\)"; }
+has() { grep -qF -- "$1" <<<"$OUT"; }
+all_pass() { local c; for c in $CHECKS; do grep -qx "PASS: $c" <<<"$OUT" || { echo "    missing PASS: $c"; return 1; }; done; ! grep -q '^FAIL' <<<"$OUT"; }
+red() { grep -q "^FAIL: $1\( \|$\)" <<<"$OUT"; }
 scratch_gone() { local d; d="$(printf '%s\n' "$OUT" | sed -n 's/^info: scratch \([^ ]*\) .*/\1/p')"; [ -n "$d" ] && [ ! -e "$d" ]; }
 
 echo "== 1. history fixture: every check passes, the real remote is untouched =="

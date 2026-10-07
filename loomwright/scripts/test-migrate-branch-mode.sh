@@ -102,7 +102,7 @@ mkworld() {
   git clone -q "$W/origin.git" "$W/A" 2>/dev/null
 }
 mb() { local d="$1"; shift; OUT="$(bash "$SCRIPT" "$@" --root "$W/$d" 2>&1)"; RC=$?; }
-has() { printf '%s' "$OUT" | grep -qF -- "$1"; }
+has() { grep -qF -- "$1" <<<"$OUT"; }
 st() { sed -n "s/^$2=//p" "$W/$1/.supervisor/migrate-branch-mode/state" 2>/dev/null | tail -n 1; }
 porcelain() { git -C "$W/$1" status --porcelain 2>/dev/null; }
 remote_has() { git --git-dir="$W/origin.git" rev-parse -q --verify "refs/heads/$1" >/dev/null 2>&1; }
@@ -186,9 +186,9 @@ NB="$(st A mode_pr_branch)"
 { [ "$RC" -eq 0 ] && [ -n "$NB" ] && remote_has "$NB"; }; check $? "mode-pr pushes a NEW branch and opens a PR (rc=$RC, $NB)"
 [ "$(git --git-dir="$W/origin.git" rev-list --count "main..$NB")" = 1 ] && [ "$(git --git-dir="$W/origin.git" diff --name-only "main" "$NB")" = ".gitignore" ]; check $? "the PR is one commit of .gitignore only"
 [ "$(git --git-dir="$W/origin.git" rev-parse main)" = "$MAIN0" ]; check $? "the default branch is untouched (PR never merged)"
-git --git-dir="$W/origin.git" show "$NB:.gitignore" | grep -qx "# loomwright-meta-branch: $BR"; check $? "the PR's .gitignore carries the mode line for $BR"
+grep -qx "# loomwright-meta-branch: $BR" < <(git --git-dir="$W/origin.git" show "$NB:.gitignore"); check $? "the PR's .gitignore carries the mode line for $BR"
 BK="$(st A backup_mode_pr)"
-{ [ -f "$BK" ] && case "$BK" in "$(cd "$W/A" && pwd -P)/.supervisor/migrate-branch-mode/"*) true ;; *) false ;; esac && [ -z "$(ls "$W/A" | grep 'gitignore.backup' )" ] && ! ls -a "$W/A" | grep -q '^.gitignore.backup'; }; check $? "apply's .gitignore.backup.<ts> moved under .supervisor/migrate-branch-mode/ and recorded"
+{ [ -f "$BK" ] && case "$BK" in "$(cd "$W/A" && pwd -P)/.supervisor/migrate-branch-mode/"*) true ;; *) false ;; esac && [ -z "$(ls "$W/A" | grep 'gitignore.backup' )" ] && ! grep -q '^.gitignore.backup' < <(ls -a "$W/A"); }; check $? "apply's .gitignore.backup.<ts> moved under .supervisor/migrate-branch-mode/ and recorded"
 [ -z "$(porcelain A)" ]; check $? "git status --porcelain empty after mode-pr ($(porcelain A | tr '\n' ' '))"
 { [ "$(grep -c 'pr create' "$STUBD/log")" = 1 ] && gh_never_writes; }; check $? "exactly one PR opened (no untrack PR); gh never merges nor writes a ruleset"
 has "merge"; check $? "the owner is told to merge it"
@@ -200,7 +200,7 @@ echo "== 5. history flow end to end on $BR =="
 hist_to_untrack
 { [ "$(st A seed)" = PASS ] && [ "$(st A seed_a)" = 3 ] && [ "$(st A seed_b)" = 3 ]; }; check $? "seed PASS: A = B = 3"
 UB="$(st A untrack_branch)"; N1="$(pr_n pr_untrack)"
-git --git-dir="$W/origin.git" ls-tree -r --name-only "$BR" | grep -q 'salvage' && no "salvage reached the branch" || ok "non-managed tracked path never reaches the branch"
+grep -q 'salvage' < <(git --git-dir="$W/origin.git" ls-tree -r --name-only "$BR") && no "salvage reached the branch" || ok "non-managed tracked path never reaches the branch"
 B1="$STUBD/body.$N1"
 { grep -q 'A (tracked managed paths on `main`): 3' "$B1" && grep -q 'B (`team-meta` tree): 3' "$B1" && grep -q 'path-list diff A vs B: empty' "$B1" && grep -q "pre-migration SHA: $(st A pre_migration_sha)" "$B1" && grep -q 'verify-pr' "$B1"; }; check $? "untrack PR body: A/B counts, empty diffs, pre-migration SHA, verify-pr instruction"
 UD="$(git --git-dir="$W/origin.git" diff --name-status main "$UB" | env LC_ALL=C sort | tr '\t\n' ' ')"
