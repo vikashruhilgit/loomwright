@@ -29,7 +29,17 @@
 # sibling `automate-dismissed.sh`, which writes ONLY this run's dismissed-finding
 # drafts under `.supervisor/requirements/proposed/` (through propose-common.sh's
 # `pc_guarded_write`), its gitignored `<run_id>.dismissed-decisions` ledger and
-# one `## Progress` line per decision — never git, never `gh`. UNCOUNTED by the
+# one `## Progress` line per decision — never git, never `gh`. A third carve-out
+# (parallel-automate/05, reached ONLY by `/automate --parallel N>1` — never by the
+# sequential loop): `lane-create`/`lane-launch`/`relay-hook`/`lane-answer`/
+# `lane-remove`/`lane-info`/`init-check`/`pick-guard`/`branch-check` and the
+# observers `lane-status`/`lane-feed`/`lane-readiness` are delegated to the sibling
+# `automate-lanes.sh`, which clones lanes under `<primary>-lanes/`, launches/resumes
+# them headless, writes the lane table sidecar, the lane inbox and the advisory
+# `<run_id>.merge-readiness.md` report (never a merge),
+# and removes a lane only through its own fail-CLOSED refusals — never `gh pr merge`,
+# never a force-push, never a write into a launched lane beyond the inbox answer file.
+# UNCOUNTED by the
 # doc-currency gate (it is a plain script, not an agent/command/skill/hook).
 #
 # Subcommands:
@@ -41,6 +51,7 @@
 #   queue-checkoff   <runfile_path> <item> [reason] [mark]  # §3/§5 flip - [ ] -> - [x] (optional "# <skipped|abandoned>: reason"; mark default skipped); refuses a file with no title
 #   current-set      <runfile_path> [--item <path|null> --status <s|null>] [--pr <url|null>] [--branch <b|null>] [--pause-reason <r>]  # §3 the ONLY writer of ## Current's item/pause_reason lines: item form (both --item/--status; null only both-null) or run-level form (--pause-reason only); enum-validated; a changed --item resets an omitted pr/branch to null; refusal = exit 1, file byte-unchanged; identical values ⇒ `current-set: unchanged`
 #   current-escalation <runfile_path> --cause <c> [--check <c> --run-id <id> --attempt <n> --sha <sha>]  # automate-followups/31: the ONLY writer of ## Current's `- escalation_cause: <cause> | check: … | run_id: … | attempt: … | sha: …` line (after `- pause_reason:`, else at the end of the block; replaced if present; `--cause null` removes it); cause enum check_pending|check_red_unrelated|check_red|findings|other|null; an omitted field is `null`; refusal (unknown cause, `|`/newline, non-numeric run id/attempt) = exit 1, file byte-unchanged; identical values ⇒ `current-escalation: unchanged`
+#   current-wave     <runfile_path> --wave <k|null> [--items <i1,i2,…>]  # parallel-automate/05 (--parallel N>1 parent only): the ONLY writer of ## Current's `- wave: <k> | items: <i1>, <i2>` line (replaced if present, else appended at the block end; `--wave null` removes it); refusal (non-positive-integer wave, `|`/newline, --items with null) = exit 1, file byte-unchanged; identical values ⇒ `current-wave: unchanged`
 #   current-rebuild  <runfile_path>                     # §4 RECONCILE repair: ## Current item null/absent — or `done` and not the LAST picked item — + a `picked` Progress line ⇒ item from the LAST picked line (must be a Queue row), pr ONLY from a later `ran /autonomous` line, branch via one gh pr view; always status running; one `current_rebuilt: … state <s>` line (printed + appended); set and not done (or done = the last picked item) ⇒ `skipped — ## Current set`
 #   remaining        <runfile_path>                     # §3 count of "- [ ]" lines only
 #   ceiling-check    <runfile_path> <max_tokens> [--root <checkout>]  # §6 PICK-time token-ceiling check via read-token-ledger.sh --run-id; prints OK/PARK, always exits 0
@@ -68,6 +79,18 @@
 #   meta-push-failed <runfile>                          # §"Branch mode": read-only — prints the first line of this run's gitignored `<run_id>.meta-push-failed` marker (a failed mode-on trail push), or nothing; always exits 0
 #   plan-waves       <runfile|dir|item-list> --max N [--explain] [--root <checkout>]  # parallel-automate/04: READ-ONLY wave planner — `## Depends on` / `## Touches` (strict grammar) + <root>/.agent/companions.json expansion ⇒ `wave <k>: …` + `blocked <item>: …` lines (`--explain`, parallel-automate/10: then one `explain <item> (wave <k>):` block per placed item not in wave 1); exit 1 + empty stdout on usage / item not found / unknown dependency / cycle / companions_malformed; called ONLY by `--parallel N>1` (item 05), never by the sequential loop
 #   plan-waves       <item|dir|runfile|item-list> --lint [--root <checkout>]  # parallel-automate/10: READ-ONLY lint of both sections with the planner's OWN parser — one `<item>: Touches <verdict>; Depends on <verdict>` line per item + two count lines; exit 1 when any section is missing/unparsable (a sole `unknown` Touches is `ok (declared unknown)`); never needs --max
+#   lane-create      <parent_runfile> <item> <n> [--parallel N] [--max-tokens T]  # parallel-automate/05 (--parallel N>1 only): delegated to automate-lanes.sh — clone at <primary>-lanes/<run_id>/L<n>/ (origin before fetch), carried configs, .supervisor/lane.json, one-line backlog, relay hooks
+#   lane-launch      <lane_dir> --owner-command '<cmd>' [--resume-run <run_id> | --continue]  # parallel-automate/05: delegated to automate-lanes.sh — detached headless launch/resume; no owner command ⇒ `BLOCKED` (exit 3); load/memory admission ⇒ `HELD` (exit 4)
+#   relay-hook                                          # parallel-automate/05: delegated to automate-lanes.sh — the lane's PreToolUse/PermissionRequest[AskUserQuestion] hook (stdin: hook JSON) ⇒ inbox question file + defer
+#   lane-answer      <lane_dir> <tool_use_id> --owner-command '<cmd>' [--via <client>]  # parallel-automate/05: delegated to automate-lanes.sh — validates the answer against the question's own labels, records it, resumes the lane
+#   lane-remove      <lane_dir> [--stop] [--abandon]    # parallel-automate/05: delegated to automate-lanes.sh — guarded removal (fail-CLOSED refusals; salvages first)
+#   lane-info        [--root <dir>]                     # parallel-automate/05: delegated to automate-lanes.sh — prints .supervisor/lane.json; exit 1 when absent (not a lane)
+#   init-check       --parallel N [--auto-merge]        # parallel-automate/05: delegated to automate-lanes.sh — INIT refusals: `ok` | `refuse: <reason>` (exit 1)
+#   pick-guard       <automate_dir>                     # parallel-automate/05: delegated to automate-lanes.sh — PICK guard: `ok` | `refuse: live_lane <run_id> <lane>` (exit 1)
+#   branch-check     <lane_dir> <branch>                # parallel-automate/05: delegated to automate-lanes.sh — remote branch-name check; prints the name to use (suffix -L<n>) or refuses
+#   lane-status      [<parent_runfile>] [--json] [--watch] [--leaks [--snapshot]] [--resources | --tokens]  # parallel-automate/05: delegated to automate-lanes.sh — one line per lane (state, item, PR, question, CI slot, readiness); --json adds machine state; fail-SAFE observer (exit 0)
+#   lane-feed        <lane_dir|L<n>> [--follow]         # parallel-automate/05: delegated to automate-lanes.sh — readable narration of the lane's stream log
+#   lane-readiness   <lane_dir|L<n>>                    # parallel-automate/05: delegated to automate-lanes.sh — writes <run_id>.merge-readiness.md (PASS/FAIL/NOT-RUN per check; advisory, never merges)
 #
 # Exit codes: 0 success; 1 generic failure; 2 abort (malformed pre-existing config, §7);
 # 3 progress-append's `current_not_set` guard (the line WAS appended; ## Current was never set).
@@ -992,6 +1015,7 @@ main() {
     current-set)     current_set "$@" ;;
     current-rebuild) current_rebuild "$@" ;;
     current-escalation) current_escalation "$@" ;;
+    current-wave)    current_wave "$@" ;;
     escalation-cause) escalation_cause "$@" ;;
     closeout-classify) closeout_classify "$@" ;;
     remaining)       remaining "$@" ;;
@@ -1017,6 +1041,11 @@ main() {
     dismissed-drafts)  exec bash "$(dirname "$0")/automate-dismissed.sh" "$cmd" "$@" ;;
     dismissed-decide)  exec bash "$(dirname "$0")/automate-dismissed.sh" "$cmd" "$@" ;;
     dismissed-pending) exec bash "$(dirname "$0")/automate-dismissed.sh" "$cmd" "$@" ;;
+    # Lane lifecycle for `/automate --parallel N>1` only — the sibling
+    # automate-lanes.sh, the third carve-out named in the header.
+    lane-create|lane-launch|relay-hook|lane-answer|lane-remove) exec bash "$(dirname "$0")/automate-lanes.sh" "$cmd" "$@" ;;
+    lane-info|init-check|pick-guard|branch-check) exec bash "$(dirname "$0")/automate-lanes.sh" "$cmd" "$@" ;;
+    lane-status|lane-feed|lane-readiness) exec bash "$(dirname "$0")/automate-lanes.sh" "$cmd" "$@" ;;
     ""|-h|--help)
       _ah_bundle | grep -E '^#   [a-z]' | sed 's/^#   /  /'
       ;;

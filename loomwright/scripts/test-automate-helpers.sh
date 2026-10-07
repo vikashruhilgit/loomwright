@@ -5255,6 +5255,70 @@ cp "$ESC_T/esc-on" "$ESC_RF"
 run_h bash "$H" current-set "$ESC_RF" --item b.md --status escalated --pr https://github.com/acme/widgets/pull/2
 if [ "$RUN_RC" -eq 0 ] && ! grep -q '^- escalation_cause:' "$ESC_RF"; then ok "ESC current-set: a changed item (PICK of the next item) removes the previous item's escalation line"; else no "ESC current-set changed item kept a stale line"; fi
 rm -rf "$ESC_T"
+echo "== LANE. parallel-automate/05 engine seams: resume-glob -L<n> skip, lane self-resume, ready_for_release, current-wave, lane dispatch arms =="
+LN_T="$(mktemp -d)"; LN_A="$LN_T/p/.supervisor/automate"; mkdir -p "$LN_A"
+printf '# Automate Run: par-1 — queue\n## Status: running\n' > "$LN_A/par-1.md"
+printf '# Automate Run: par-1-L1 — .supervisor/requirements/q/a.md\n## Status: running\n' > "$LN_A/par-1-L1.md"
+printf '# Automate Run: par-1-L2 — .supervisor/requirements/q/b.md\n## Status: done\n' > "$LN_A/par-1-L2.md"
+printf '# Automate Run: par-1-Lx — not-a-lane-id\n## Status: running\n' > "$LN_A/par-1-Lx.md"
+run_h bash "$H" resume-glob "$LN_A"
+ln_exp="$(printf '%s\n' "$LN_A/par-1-Lx.md" "$LN_A/par-1.md" | env LC_ALL=C sort)"
+if [ "$RUN_RC" -eq 0 ] && [ "$RUN_OUT" = "$ln_exp" ]; then ok "LANE resume-glob (primary): an unfinished AND a finished -L<n> lane run file are never listed; a non-digit -Lx id is"; else no "LANE resume-glob primary wrong (rc=$RUN_RC):\n$RUN_OUT"; fi
+run_h bash "$H" resume-glob "$LN_A" --finalize
+if [ "$RUN_OUT" = "$ln_exp" ]; then ok "LANE resume-glob --finalize (primary): lane run files are not candidates either"; else no "LANE resume-glob --finalize primary wrong:\n$RUN_OUT"; fi
+# Mutation control (AC16, Scope 11): the same bundle without the -L<n> skip lists the lane files.
+LN_MUT="$(dirname "$H")/lane-skip-mutant.sh"
+sed '/^    _resume_lane_skip "\$f" "\$own" && continue$/d' "$H" > "$LN_MUT"
+if ! cmp -s "$H" "$LN_MUT" && bash -n "$LN_MUT"; then
+  ln_mo="$(bash "$LN_MUT" resume-glob "$LN_A" 2>/dev/null)"
+  if [ "$ln_mo" != "$ln_exp" ] && grep -qxF "$LN_A/par-1-L1.md" <<<"$ln_mo"; then ok "LANE mutation control: dropping the -L<n> skip lists the lane run file — the primary assertion is load-bearing"; else no "LANE mutation control inconclusive: '$ln_mo'"; fi
+else
+  no "LANE mutation control: could not build the mutant (sed did not apply / bash -n failed)"
+fi
+rm -f "$LN_MUT"
+# Inside a lane clone: its own run IS listed, nothing else (other lanes, the parent's run).
+printf '{"schema_version":1,"lane":"L1","run_id":"par-1-L1","parent_run_id":"par-1"}\n' > "$LN_T/p/.supervisor/lane.json"
+run_h bash "$H" resume-glob "$LN_A"
+if [ "$RUN_OUT" = "$LN_A/par-1-L1.md" ]; then ok "LANE resume-glob (lane clone): exactly its own run is listed"; else no "LANE resume-glob lane wrong:\n$RUN_OUT"; fi
+run_h bash "$H" resume-glob "$LN_A" --finalize
+if [ "$RUN_OUT" = "$LN_A/par-1-L1.md" ]; then ok "LANE resume-glob --finalize (lane clone): only its own run is a candidate"; else no "LANE resume-glob --finalize lane wrong:\n$RUN_OUT"; fi
+printf '{}\n' > "$LN_T/p/.supervisor/lane.json"
+run_h bash "$H" resume-glob "$LN_A"
+if [ "$RUN_RC" -eq 0 ] && [ -z "$RUN_OUT" ]; then ok "LANE resume-glob: a lane.json with no run_id lists nothing (fail closed — never another run)"; else no "LANE unreadable lane.json listed: $RUN_OUT"; fi
+# ready_for_release + current-wave (Scope 2, Scope 5)
+LN_RF="$LN_T/r.md"
+printf '# Automate Run: par-1-L1 — a.md\n## Status: running\n## Queue\n- [ ] a.md\n## Current\n- item: a.md | status: running | pr: null | branch: null\n- pause_reason: null\n\n## Progress\n- t0 run created\n' > "$LN_RF"
+run_h bash "$H" current-set "$LN_RF" --item a.md --status ready_for_release --pr https://github.com/acme/widgets/pull/9 --pause-reason ready_for_release
+if [ "$RUN_RC" -eq 0 ] && grep -qxF -- "- item: a.md | status: ready_for_release | pr: https://github.com/acme/widgets/pull/9 | branch: null" "$LN_RF" && grep -qxF -- "- pause_reason: ready_for_release" "$LN_RF"; then ok "LANE current-set accepts ready_for_release as status AND pause_reason"; else no "LANE current-set ready_for_release refused (rc=$RUN_RC): $(tr '\n' '|' < "$LN_RF")"; fi
+run_h bash "$H" current-wave "$LN_RF" --wave 1 --items "a.md,b.md"
+if [ "$RUN_RC" -eq 0 ] && [ "$(grep -c '^- wave:' "$LN_RF")" = 1 ] && grep -qxF -- "- wave: 1 | items: a.md, b.md" "$LN_RF" \
+   && [ "$(awk '/^## Current/{c=1;next} /^## /{c=0} c && NF' "$LN_RF" | tail -n1)" = "- wave: 1 | items: a.md, b.md" ]; then ok "LANE current-wave writes one '- wave:' line at the end of ## Current"; else no "LANE current-wave wrong (rc=$RUN_RC): $(tr '\n' '|' < "$LN_RF")"; fi
+cp "$LN_RF" "$LN_T/ref"
+run_h bash "$H" current-wave "$LN_RF" --wave 1 --items "a.md, b.md"
+if [ "$RUN_OUT" = "current-wave: unchanged" ] && cmp -s "$LN_T/ref" "$LN_RF"; then ok "LANE current-wave: the same wave (either comma spelling) is unchanged, byte-identical"; else no "LANE current-wave not idempotent: $RUN_OUT"; fi
+run_h bash "$H" current-wave "$LN_RF" --wave 2 --items c.md
+if [ "$(grep -c '^- wave:' "$LN_RF")" = 1 ] && grep -qxF -- "- wave: 2 | items: c.md" "$LN_RF"; then ok "LANE current-wave replaces the line in place"; else no "LANE current-wave replace wrong: $(tr '\n' '|' < "$LN_RF")"; fi
+cp "$LN_RF" "$LN_T/ref"; ln_bad=""
+for ln_args in "--wave 0" "--wave x" "--wave 1 --items a|b" "--wave null --items a.md" "--items a.md" "--wave"; do
+  # shellcheck disable=SC2086
+  run_h bash "$H" current-wave "$LN_RF" $ln_args
+  { [ "$RUN_RC" -eq 1 ] && cmp -s "$LN_T/ref" "$LN_RF"; } || ln_bad="$ln_bad [$ln_args rc=$RUN_RC]"
+done
+if [ -z "$ln_bad" ]; then ok "LANE current-wave: every refusal exits 1 with the file byte-unchanged"; else no "LANE current-wave refusals wrong:$ln_bad"; fi
+run_h bash "$H" current-wave "$LN_RF" --wave null
+if [ "$RUN_RC" -eq 0 ] && ! grep -q '^- wave:' "$LN_RF"; then ok "LANE current-wave --wave null removes the line"; else no "LANE current-wave null did not remove"; fi
+# Dispatch: every Subtask-1 lane subcommand reaches automate-lanes.sh (help lines present, never 'unknown subcommand').
+ln_bad=""
+for ln_s in lane-create lane-launch relay-hook lane-answer lane-remove lane-info init-check pick-guard branch-check current-wave; do
+  grep -q "^  $ln_s " <<<"$(bash "$H" --help)" || ln_bad="$ln_bad help:$ln_s"
+done
+for ln_s in lane-create lane-launch lane-answer lane-remove lane-info init-check pick-guard branch-check; do
+  awk -v w="$ln_s" 'index($0, "/automate-lanes.sh\" \"$cmd\" \"$@\" ;;") && /^    [a-z|-]+\) exec bash / { l=$1; sub(/\)$/, "", l); n=split(l, a, "|"); for (i=1;i<=n;i++) if (a[i]==w) f=1 } END { exit !f }' "$H" || ln_bad="$ln_bad arm:$ln_s"
+done
+(cd "$LN_T" && bash "$H" lane-info --root "$LN_T" </dev/null >/dev/null 2>"$LN_T/li.err"); ln_rc=$?
+grep -q 'unknown subcommand' "$LN_T/li.err" && ln_bad="$ln_bad lane-info-unrouted"
+if [ -z "$ln_bad" ] && [ "$ln_rc" -eq 1 ]; then ok "LANE dispatch: lane subcommands have help lines + exec arms to automate-lanes.sh; lane-info outside a lane exits 1"; else no "LANE dispatch wrong (lane-info rc=$ln_rc):$ln_bad"; fi
+rm -rf "$LN_T"
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
