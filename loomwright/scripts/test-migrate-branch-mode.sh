@@ -28,6 +28,11 @@
 #  10. rehearse: no harness -> exit 1 (not available); the harness gets `--root <checkout> --branch
 #      <recorded name>` after init (team-meta, never loomwright-meta) and a disagreeing --branch is
 #      refused; the REAL harness passes on a history fixture before init and never touches its origin
+#  11. after-merge re-checks tracked managed paths: a managed file committed AFTER verify-pr and
+#      before the owner's merge -> after-merge FAIL naming it; the named recovery (seed -> untrack-pr
+#      -> verify-pr -> merge -> after-merge) completes; a re-run is idempotent; mutation control:
+#      after-merge without the re-check MUST fail the leg
+#  12. a step with no recorded metadata branch (rollback) refuses before any push / branch / state
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -300,6 +305,39 @@ O0="$(git --git-dir="$W/origin.git" for-each-ref --format='%(refname) %(objectna
 mb A rehearse --branch "$BR"
 { [ "$RC" -eq 0 ] && has "rehearse: PASS" && has "PASS: rollback-edit-kept" && has "PASS: twin-contracts" && ! has "FAIL:" && [ "$(st A rehearse)" = PASS ]; }; check $? "the real harness passes on a history fixture before init (rc=$RC)"
 { [ "$O0" = "$(git --git-dir="$W/origin.git" for-each-ref --format='%(refname) %(objectname)')" ] && ! remote_has "$BR" && [ -z "$(st A branch)" ]; }; check $? "rehearse never touches the real remote and records no branch"
+
+echo "== 11. after-merge re-checks tracked managed paths (verify-pr -> merge race) =="
+# race_late — verify-pr PASS, THEN a managed file lands on main, THEN the owner merges the (now
+# stale) untrack PR; 0 = after-merge refused, naming the still-tracked path
+race_late() {
+  hist_to_untrack; mb A verify-pr "$(pr_n pr_untrack)"
+  rm -rf "$W/O"; git clone -q "$W/origin.git" "$W/O" 2>/dev/null
+  ( cd "$W/O" && echo '# late' > .supervisor/jobs/done/late.md && git add -f .supervisor/jobs/done/late.md && git commit -qm late && git push -q origin main )
+  owner_merge "$(st A untrack_branch)"; mb A after-merge
+  RACE_DETAIL="rc=$RC; tracked: $(bash "$HERE/meta-sync.sh" list-managed --tracked --root "$W/A" 2>/dev/null | tr '\n' ' ')"
+  [ "$RC" -eq 1 ] && has "still tracked on main: .supervisor/jobs/done/late.md" && has "seed" && [ "$(st A after_merge)" = FAIL ]
+}
+race_late; check $? "after-merge FAILs naming a managed path committed after verify-pr ($RACE_DETAIL)"
+mb A seed; S1="$RC"; mb A untrack-pr; S2="$RC"; mb A verify-pr "$(pr_n pr_untrack)"; S3="$RC"
+owner_merge "$(st A untrack_branch)"; mb A after-merge
+{ [ "$S1$S2$S3" = 000 ] && [ "$RC" -eq 0 ] && [ -z "$(bash "$HERE/meta-sync.sh" list-managed --tracked --root "$W/A")" ] \
+  && git --git-dir="$W/origin.git" cat-file -e "$BR:.supervisor/jobs/done/late.md" 2>/dev/null && [ -z "$(porcelain A)" ]; }
+check $? "the named recovery (seed -> untrack-pr -> verify-pr -> merge -> after-merge) completes the migration (seed=$S1 untrack=$S2 verify=$S3 after=$RC)"
+mb A after-merge; { [ "$RC" -eq 0 ] && [ "$(grep -c '^after_merge=' "$W/A/.supervisor/migrate-branch-mode/state")" = 1 ]; }; check $? "after-merge re-run is idempotent: PASS again, one state line (rc=$RC)"
+MUT="$TROOT/mut-race"
+if build_mutant "$MUT" 's/^  if \[ -n "\$tm" \]; then$/  if false \&\& [ -n "$tm" ]; then/' 'if false && [ -n "$tm" ]; then'; then
+  SCRIPT="$MUT/migrate-branch-mode.sh"
+  if race_late; then no "mutation control REFUTED: after-merge without the tracked re-check still refused"; else ok "mutation control: without the tracked re-check, after-merge passes an incomplete migration ($RACE_DETAIL)"; fi
+  SCRIPT="$SUT"
+else no "mutation control (after-merge tracked re-check) did not build — counts as FAIL"; fi
+
+echo "== 12. a step with no recorded metadata branch refuses (rec_branch in a command substitution) =="
+mkworld history; mb A preflight --repo owner/repo
+O0="$(git --git-dir="$W/origin.git" for-each-ref --format='%(refname) %(objectname)')"
+mb A rollback --commit HEAD
+{ [ "$RC" -eq 1 ] && has "no metadata branch recorded" && [ -z "$(st A rollback)" ] && [ "$(git -C "$W/A" symbolic-ref --short HEAD)" = main ] \
+  && [ "$O0" = "$(git --git-dir="$W/origin.git" for-each-ref --format='%(refname) %(objectname)')" ]; }
+check $? "rollback with no recorded branch exits 1 before any push, branch or state write (rc=$RC)"
 
 echo
 echo "$pass passed, $fail failed"

@@ -43,8 +43,11 @@
 #                       the PR untracks every tracked managed path.
 #   after-merge         `git pull`, put back the run-history files the pull deleted (from the
 #                       pre-pull commit, which verify-pr proved equal to the branch), `meta-sync.sh
-#                       pull --branch <b>`, confirm the files are back and `git status --porcelain`
-#                       is empty; prints the two commands every other checkout must run.
+#                       pull --branch <b>`, confirm the files are back, NO managed path is still
+#                       tracked (`list-managed --tracked` — catches a file committed after verify-pr;
+#                       recover with seed -> untrack-pr -> verify-pr, where the A/B check accepts
+#                       A ⊆ B once <default> is already on <b>) and `git status --porcelain` is
+#                       empty; prints the two commands every other checkout must run.
 #   rollback --commit <sha>
 #                       the corrected #361 recipe on a NEW branch: push local edits to the branch,
 #                       `git revert --no-commit` the untrack commit, re-track the CURRENT branch files
@@ -206,9 +209,16 @@ ab_check() {
   g ls-tree -r --full-tree HEAD | awk -F'\t' 'NR==FNR { want[$0] = 1; next } ($2 in want) { split($1, m, " "); print m[3] "\t" $2 }' "$SD/a.list" - | env LC_ALL=C sort > "$SD/a.ent"
   g ls-tree -r "refs/remotes/origin/$b" | awk -F'\t' '{ split($1, m, " "); print m[3] "\t" $2 }' | env LC_ALL=C sort > "$SD/b.ent"
   cut -f2 "$SD/b.ent" | env LC_ALL=C sort > "$SD/b.list"
-  diff "$SD/a.list" "$SD/b.list" > "$SD/ab-names.diff"; diff "$SD/a.ent" "$SD/b.ent" > "$SD/ab-blobs.diff"
   an="$(wc -l < "$SD/a.list" | tr -d ' ')"; bn="$(wc -l < "$SD/b.list" | tr -d ' ')"
   say "A (tracked managed on origin/$d) = $an; B (origin/$b tree) = $bn"
+  if [ "$(read_mode)" = "on $b" ]; then
+    # follow-up round (after-merge found paths committed after verify-pr): $d is ALREADY in branch
+    # mode on $b, so B legitimately holds every earlier-migrated path too — require A ⊆ B, blob-equal
+    comm -23 "$SD/a.list" "$SD/b.list" > "$SD/ab-names.diff"; comm -23 "$SD/a.ent" "$SD/b.ent" > "$SD/ab-blobs.diff"
+    say "follow-up round ($d already on $b): checking A is a subset of B"
+  else
+    diff "$SD/a.list" "$SD/b.list" > "$SD/ab-names.diff"; diff "$SD/a.ent" "$SD/b.ent" > "$SD/ab-blobs.diff"
+  fi
   if [ -s "$SD/ab-names.diff" ]; then echo "migrate-branch-mode: A != B — path lists differ:" >&2; sed 's/^/  /' "$SD/ab-names.diff" >&2; rc=1; else say "path lists equal (empty diff)"; fi
   if [ -s "$SD/ab-blobs.diff" ]; then echo "migrate-branch-mode: blob mismatch:" >&2; sed 's/^/  /' "$SD/ab-blobs.diff" >&2; rc=1; else say "every blob equal (empty diff)"; fi
   nonmd="$(grep -v -E '\.md$|(^|/)results\.jsonl$' "$SD/b.list")"
@@ -317,7 +327,7 @@ cmd_init() {
 cmd_protect() {
   need_preflight; need init PASS
   local b r rid ok=0 j
-  b="$(rec_branch)"; r="$(repo_slug)"
+  b="$(rec_branch)" || exit 1; r="$(repo_slug)"
   if [ "$OPT_VERIFY" -eq 0 ]; then
     cat > "$SD/ruleset.json" <<EOF
 {
@@ -354,7 +364,7 @@ cmd_mode_pr() {
   need_preflight; need protect PASS
   [ "$(state_get case)" = fresh ] || die "refused: mode-pr is the fresh-case step; the history case writes the block in untrack-pr"
   local b d nb url
-  b="$(rec_branch)"; d="$(default_branch)"
+  b="$(rec_branch)" || exit 1; d="$(default_branch)"
   on_default_clean "$d"
   nb="$(new_branch_name "chore/loomwright-branch-mode-$b")"
   g checkout -q -b "$nb" || die "could not create $nb"
@@ -388,7 +398,7 @@ EOF
 cmd_seed() {
   need_preflight; need protect PASS
   [ "$(state_get case)" = history ] || die "refused: seed is the history-case step"
-  local b d; b="$(rec_branch)"; d="$(default_branch)"
+  local b d; b="$(rec_branch)" || exit 1; d="$(default_branch)"
   on_default_clean "$d"
   bash "$MS" push --branch "$b" --root "$ROOT" || { state_set seed FAIL; die "seed: FAIL — meta-sync.sh push --branch $b"; }
   if ab_check "$b" "$d"; then
@@ -400,7 +410,7 @@ cmd_seed() {
 cmd_untrack_pr() {
   need_preflight; need seed PASS
   local b d nb url n
-  b="$(rec_branch)"; d="$(default_branch)"
+  b="$(rec_branch)" || exit 1; d="$(default_branch)"
   on_default_clean "$d"
   [ "$(g rev-parse HEAD)" = "$(state_get seed_sha)" ] || die "refused: origin/$d moved since seed — run seed again"
   [ -s "$SD/a.list" ] || die "refused: the seeded A set ($SD/a.list) is missing or empty"
@@ -441,7 +451,7 @@ cmd_verify_pr() {
   need_preflight; need untrack_pr PASS
   [ -n "$POS" ] || { echo "migrate-branch-mode: verify-pr needs the PR number" >&2; exit 2; }
   local b d nb st head missing mbase
-  b="$(rec_branch)"; d="$(default_branch)"; nb="$(state_get untrack_branch)"
+  b="$(rec_branch)" || exit 1; d="$(default_branch)"; nb="$(state_get untrack_branch)"
   st="$(ghr pr view "$POS" --json state,headRefName --jq '.state + " " + .headRefName' 2>/dev/null)" || die "verify-pr: gh pr view $POS failed"
   head="${st#* }"
   [ "${st%% *}" = OPEN ] || { state_set verify_pr FAIL; die "verify-pr: FAIL — PR $POS is '${st%% *}', not OPEN"; }
@@ -461,8 +471,8 @@ cmd_verify_pr() {
 cmd_after_merge() {
   need_preflight
   case "$(state_get case)" in fresh) need mode_pr PASS ;; *) need verify_pr PASS ;; esac
-  local b d pre p miss=0 deleted
-  b="$(rec_branch)"; d="$(default_branch)"
+  local b d pre p miss=0 deleted tm
+  b="$(rec_branch)" || exit 1; d="$(default_branch)"
   [ "$(g symbolic-ref -q --short HEAD)" = "$d" ] || die "refused: not on $d"
   pre="$(g rev-parse HEAD)"
   g pull -q --ff-only origin "$d" || { state_set after_merge FAIL; die "after-merge: git pull failed"; }
@@ -480,6 +490,15 @@ cmd_after_merge() {
     [ -f "$ROOT/$p" ] || { echo "migrate-branch-mode: missing after pull: $p" >&2; miss=$((miss+1)); }
   done
   [ "$miss" -eq 0 ] || { state_set after_merge FAIL; die "after-merge: FAIL — $miss branch file(s) not back"; }
+  # Re-read the ground truth, not verify-pr's snapshot: a managed file committed to $d between
+  # verify-pr and the merge is still TRACKED (the PR never untracked it) and absent from $b, yet the
+  # mode block ignores it, so `git status --porcelain` stays empty. Any tracked managed path = not done.
+  tm="$(tracked_managed)" || { state_set after_merge FAIL; die "after-merge: FAIL — list-managed --tracked failed"; }
+  if [ -n "$tm" ]; then
+    printf '%s\n' "$tm" | sed 's/^/  still tracked on '"$d"': /' >&2
+    state_set after_merge FAIL
+    die "after-merge: FAIL — the managed path(s) above are still tracked on $d (committed after verify-pr; the merged PR did not untrack them) — run seed, then a follow-up untrack-pr (verify-pr before its merge), then after-merge again$([ "$(state_get case)" = fresh ] && printf ' (fresh case: re-run preflight first — it re-detects the case as history)')"
+  fi
   [ -z "$(g status --porcelain)" ] || { g status --porcelain >&2; state_set after_merge FAIL; die "after-merge: FAIL — git status --porcelain is not empty"; }
   state_set after_merge PASS
   say "after-merge: PASS — run history is back from $b and the working tree is clean"
@@ -491,7 +510,7 @@ cmd_after_merge() {
 cmd_rollback() {
   [ -n "$OPT_COMMIT" ] || { echo "migrate-branch-mode: rollback needs --commit <sha of the merged untrack PR commit>" >&2; exit 2; }
   local b d c br_sha nb url par
-  b="$(rec_branch)"; d="$(default_branch)"
+  b="$(rec_branch)" || exit 1; d="$(default_branch)"
   on_default_clean "$d"
   c="$(g rev-parse -q --verify "$OPT_COMMIT^{commit}")" || die "refused: '$OPT_COMMIT' is not a commit"
   # 1. publish every post-migration local edit / addition / deletion, so the branch tip is newest
