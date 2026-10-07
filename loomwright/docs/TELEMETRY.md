@@ -1993,13 +1993,14 @@ arrive as empty strings — correlate on the `run_id` inside `context`.
 | `automate_merge_watch`  | `automate-merge-watch.sh` `notify()`, `MERGED` branch — closeout ran | The PR merged and `automate-helpers.sh closeout` got past its guards. `"<pr_url> merged — /automate closeout ran for <item> (run <run_id>); the next item waits for your go"` | once per watcher |
 | `automate_merge_watch`  | `automate-merge-watch.sh` `notify()`, `MERGED` branch — terminal closeout guard | The PR merged but closeout stopped at a non-transient `closeout: skipped — <guard>` line (a `## Progress` line is also appended; the operator runs `/automate --resume`). `"<pr_url> merged but /automate closeout could not run for <item> (run <run_id>): <guard>"` | once per watcher |
 | `automate_merge_watch`  | `automate-merge-watch.sh` `notify()`, `CLOSED` branch | The PR was closed unmerged; the item is `gone` (no cleanup). `"<pr_url> closed unmerged — /automate item <item> is gone (run <run_id>)"` | once per watcher |
-| `automate_escalation_recheck` | `automate-merge-watch.sh` `esc_recheck()`, `OPEN` poll (automate-followups/31) | An `escalated` park's `## Current` names a `check_pending` / `check_red_unrelated` cause and that check completed (any attempt ≥ recorded for `check_pending`; a NEWER attempt for `check_red_unrelated`) on a recorded sha that is still the PR's head; `now mergeable` also needs every other rollup check settled green. `"<pr_url> now mergeable — <check> green on <sha>; …"` or `"<pr_url> still failing — <check> <conclusion> on <sha>; rerun: gh run rerun <run_id> --failed (…)"` (the command is printed, never run). The watcher keeps watching for the merge. | once per watcher |
+| `automate_escalation_recheck` | `automate-merge-watch.sh` `esc_recheck()`, `OPEN` poll (automate-followups/31) | An `escalated` park's `## Current` names a `check_pending` / `check_red_unrelated` cause and that check completed (any attempt ≥ recorded for `check_pending`; a NEWER attempt for `check_red_unrelated`) on a recorded sha that is still the PR's head; `now mergeable` also needs every other rollup check settled green. `"<pr_url> now mergeable — <check> green on <sha> (attempt <n>); …"` or `"<pr_url> still failing — <check> <conclusion> on <sha> (attempt <n>); rerun: gh run rerun <run_id> --failed (…)"` (the command is printed, never run). The watcher keeps watching for the merge. | at most once per escalation-line content (a re-park's fresh line re-arms it) |
 
 The three `automate_merge_watch` rows are mutually exclusive — each is
 followed by the watcher's exit — so a watcher emits at most ONE
-`automate_merge_watch` event, plus at most ONE `automate_escalation_recheck`
-event (latched; an existing report line in `## Progress` suppresses it after
-a restart). It
+`automate_merge_watch` event, plus at most one `automate_escalation_recheck`
+event per escalation-line content (a re-park's fresh line re-arms it; the
+`<run_id>.merge-watch-reported` sidecar keeps a restart silent on the same
+line). It
 deliberately does NOT notify on: a TRANSIENT closeout skip (`run lock held`,
 `gh unavailable`, `pr not merged (…)`, or no output — retried on a later poll
 with backoff), a `gh pr view` error (backoff retry), a still-`OPEN` PR, a

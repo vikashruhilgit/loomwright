@@ -46,14 +46,17 @@
 #            attempt >= the recorded one; check_red_unrelated only at a NEWER
 #            attempt (> recorded — a human rerun); `now mergeable` also needs
 #            every OTHER rollup check completed and non-red. The report is ONE ## Progress
-#            line — `now mergeable: <check> green on <sha>` or `still failing:
-#            <check> <conclusion> — rerun: gh run rerun <run_id> --failed` (the
-#            command is PRINTED for the owner, never executed) — plus ONE
-#            notify of gate type `automate_escalation_recheck`, then a latch
-#            keyed on the line's content (a re-park's fresh line re-arms it; also
-#            across a restart: an existing report line in ## Progress suppresses
-#            it); the watcher keeps watching for the merge. Any other cause, or no
-#            line ⇒ no check polling at all (today's behavior).
+#            line — `now mergeable: <check> green on <sha> (attempt <n>)` or `still
+#            failing: <check> <conclusion> — rerun: gh run rerun <run_id> --failed
+#            (attempt <n>)` (the command is PRINTED for the owner, never
+#            executed) — plus ONE
+#            notify of gate type `automate_escalation_recheck` (both name the
+#            attempt observed), then a latch keyed on the line's content (a
+#            re-park's fresh line re-arms it; across a restart the gitignored
+#            sidecar `<run_id>.merge-watch-reported` — the item, PR and line content
+#            last reported — silences only that identical line); the watcher keeps
+#            watching for the merge. Any other cause, or no line ⇒ no check
+#            polling at all (today's behavior).
 # It never merges, pushes, approves or reruns anything, never picks/RUNs a
 # Queue item, never invokes `/autonomous`.
 #
@@ -103,6 +106,9 @@ rf_dir="$(cd "$(dirname "$runfile")" 2>/dev/null && pwd -P)" || { echo "merge-wa
 rf_abs="$rf_dir/$(basename "$runfile")"
 run_id="$(basename "$runfile" .md)"
 MARKER="$rf_dir/$run_id.merge-watch"
+# the settle re-check's restart latch (not `*.md` ⇒ gitignored, never in a trail);
+# kept across exits on purpose: a stale one silences only a byte-identical line.
+REPORTED="$rf_dir/$run_id.merge-watch-reported"
 root="$(git -C "$rf_dir" rev-parse --show-toplevel 2>/dev/null)"
 [ -n "$root" ] && cd "$root" 2>/dev/null
 
@@ -221,7 +227,7 @@ esc_seen=""
 # another item — is latched silent for that line), and `now mergeable` additionally
 # needs every OTHER rollup entry completed and non-red.
 esc_recheck() {
-  local pv="$1" f="${2:-}" cause chk rid att sha rec owner_repo j st concl a hs head others
+  local pv="$1" f="${2:-}" cause chk rid att sha rec owner_repo j st concl a hs head others key
   [ -n "$f" ] || { recheck_done=1; return 0; }
   IFS='|' read -r cause chk rid att sha <<<"$f"
   case "$cause" in check_pending|check_red_unrelated) ;; *) recheck_done=1; return 0 ;; esac
@@ -273,19 +279,20 @@ esc_recheck() {
     [ "$others" = 0 ] || return 0
   fi
   recheck_done=1
-  # idempotent across a restart: this sha's / run's report is already in ## Progress
-  if awk -v a="merge-watch: now mergeable: $chk green on $sha" -v b="merge-watch: still failing: $chk " \
-       -v r="gh run rerun ${rid:-<run_id>} --failed" 'index($0, a) || (index($0, b) && index($0, r)) { f = 1 } END { exit !f }' "$rf_abs" 2>/dev/null; then
-    return 0
-  fi
+  # idempotent across a restart, keyed on the escalation line itself: silent only
+  # when THIS item + PR + line content was already reported (recorded before the
+  # report, so a crash between the two loses a report rather than doubling it).
+  key="$(printf '%s\t%s\t%s' "$item" "$pr_url" "$f")"
+  [ "$(cat "$REPORTED" 2>/dev/null)" = "$key" ] && return 0
+  printf '%s\n' "$key" > "$REPORTED" 2>/dev/null
   if [ "$concl" = success ]; then
-    progress "now mergeable: $chk green on $sha"
-    notify_as automate_escalation_recheck "$pr_url now mergeable — $chk green on $sha; /automate item $item (run $run_id) still waits for a human merge"
-    echo "merge-watch: now mergeable: $chk green on $sha"
+    progress "now mergeable: $chk green on $sha (attempt $a)"
+    notify_as automate_escalation_recheck "$pr_url now mergeable — $chk green on $sha (attempt $a); /automate item $item (run $run_id) still waits for a human merge"
+    echo "merge-watch: now mergeable: $chk green on $sha (attempt $a)"
   else
-    progress "still failing: $chk ${concl:-unknown} — rerun: gh run rerun ${rid:-<run_id>} --failed"
-    notify_as automate_escalation_recheck "$pr_url still failing — $chk ${concl:-unknown} on $sha; rerun: gh run rerun ${rid:-<run_id>} --failed (/automate item $item, run $run_id)"
-    echo "merge-watch: still failing: $chk ${concl:-unknown}"
+    progress "still failing: $chk ${concl:-unknown} — rerun: gh run rerun ${rid:-<run_id>} --failed (attempt $a)"
+    notify_as automate_escalation_recheck "$pr_url still failing — $chk ${concl:-unknown} on $sha (attempt $a); rerun: gh run rerun ${rid:-<run_id>} --failed (/automate item $item, run $run_id)"
+    echo "merge-watch: still failing: $chk ${concl:-unknown} (attempt $a)"
   fi
   return 0
 }

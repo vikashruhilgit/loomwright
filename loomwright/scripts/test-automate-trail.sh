@@ -93,6 +93,11 @@
 #      fresh check_pending line, `already running`) ⇒ the kept watcher reports
 #      once (content-keyed latch; mutant restoring the permanent latch fails);
 #      a restart over the same line never re-reports.
+#      Review iteration 3 (E14): a re-park recording a newer attempt, then a
+#      still newer failing attempt ⇒ a SECOND still-failing line (the restart
+#      latch is the reported-line sidecar, keyed on item + PR + line content);
+#      the same line across a restart, or another item's sidecar ⇒ as keyed;
+#      mutant restoring the whole-run-file search fails.
 #   E. evidence-gated stamps (decision 2) — a sentinel-led done /
 #      done_with_escalation requirement stamp (and a done/ brief's Outcome PR)
 #      rides only when its PR reads MERGED: OPEN, CLOSED, gh failing, a stamp
@@ -1837,6 +1842,51 @@ we_watch >/dev/null
 spy_reset; printf 'OPEN\nOPEN\nCLOSED\n' > "$GH_STUB_DIR/state-seq"
 we_watch >/dev/null
 [ "$(we_n "merge-watch: now mergeable: claude-review green on $ESHA")" = "1" ] && [ "$(spy_count automate_escalation_recheck "$SPYLOG.webhook")" = "0" ] && ok "(E13) one line, two watchers (restart) ⇒ still exactly one now-mergeable report" || no "(E13) restart re-reported: $(we_n 'now mergeable')"
+
+# (E14, review iteration 3 — restart latch keyed on text that does not identify the
+# event) check_red_unrelated park (ci, run 777, attempt 1) → attempt 2 fails ⇒ one
+# still-failing line → re-park (running → escalated) recording attempt 2 → attempt 3
+# fails ⇒ a SECOND still-failing line. The restart latch is the gitignored
+# `<run_id>.merge-watch-reported` sidecar (item + PR + line content), never a search
+# of the whole run file. e14_flow <watcher> <fixture_n> → E14_A (lines after the
+# first watcher), E14_B (after the re-parked one), E14_R (its recheck notifies).
+E14_SC=".supervisor/automate/$RUN_ID.merge-watch-reported"
+E14_FAIL='merge-watch: still failing: ci failure — rerun: gh run rerun 777 --failed'
+e14_run() { (cd "$P" && LOOMWRIGHT_MERGE_WATCH_INTERVAL=0 LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=60 bash "$1" "$RF_REL" "$REQ" "$PRURL" </dev/null >/dev/null 2>&1); }
+e14_flow() {
+  closeout_fixture "$2"; spy_reset; we_open; rm -f "$GH_STUB_DIR/run-seq"
+  we_park check_red_unrelated --check ci --run-id 777 --attempt 1 --sha "$ESHA"
+  printf 'OPEN\nOPEN\nOPEN\nCLOSED\n' > "$GH_STUB_DIR/state-seq"; rj 2 completed failure > "$GH_STUB_DIR/run-seq"
+  e14_run "$1"; E14_A="$(we_n "$E14_FAIL")"
+  (cd "$P" && bash "$H" current-set "$RF_REL" --item "$REQ" --status running >/dev/null)
+  we_park check_red_unrelated --check ci --run-id 777 --attempt 2 --sha "$ESHA"
+  spy_reset; printf 'OPEN\nOPEN\nOPEN\nCLOSED\n' > "$GH_STUB_DIR/state-seq"; rj 3 completed failure > "$GH_STUB_DIR/run-seq"
+  e14_run "$1"; E14_B="$(we_n "$E14_FAIL")"; E14_R="$(spy_count automate_escalation_recheck "$SPYLOG.webhook")"
+  return 0
+}
+e14_flow "$WATCH" 418
+[ "$E14_A" = 1 ] && [ "$E14_B" = 2 ] && [ "$E14_R" = 1 ] && [ "$(we_n "$E14_FAIL (attempt 3)")" = 1 ] && ok "(E14) AC11 after a re-park: attempt 3 red ⇒ a second still-failing line naming its attempt + one recheck notify" || no "(E14) lines=$E14_A/$E14_B notifies=$E14_R: $(grep 'still failing' "$P/$RF_REL" | tr '\n' '|')"
+git -C "$P" check-ignore -q "$E14_SC" && ok "(E14) the reported-line sidecar is gitignored (not *.md ⇒ never in a trail)" || no "(E14) sidecar not gitignored"
+spy_reset; printf 'OPEN\nOPEN\nCLOSED\n' > "$GH_STUB_DIR/state-seq"
+e14_run "$WATCH"
+[ "$(we_n "$E14_FAIL")" = 2 ] && [ "$(spy_count automate_escalation_recheck "$SPYLOG.webhook")" = 0 ] && ok "(E14) the same line across a restart ⇒ no repeat (sidecar)" || no "(E14) restart re-reported: $(we_n "$E14_FAIL")"
+printf 'other-item\t%s\t%s\n' "$PRURL" "$(cut -f3- "$P/$E14_SC")" > "$P/$E14_SC"
+spy_reset; printf 'OPEN\nOPEN\nCLOSED\n' > "$GH_STUB_DIR/state-seq"
+e14_run "$WATCH"
+[ "$(we_n "$E14_FAIL")" = 3 ] && [ "$(spy_count automate_escalation_recheck "$SPYLOG.webhook")" = 1 ] && ok "(E14) another item's sidecar entry never silences this item's line" || no "(E14) foreign sidecar suppressed: $(we_n "$E14_FAIL")"
+# mutation control: replace EXACTLY the sidecar comparison with the old whole-run-file search.
+MUT14="$TOP/mut14"; mkdir -p "$MUT14"; cp -R "$SPYD"/* "$MUT14/"
+cat > "$TOP/mut14.line" <<'ML'
+  awk -v b="merge-watch: still failing: $chk " -v r="gh run rerun ${rid:-<run_id>} --failed" 'index($0, b) && index($0, r) { f = 1 } END { exit !f }' "$rf_abs" 2>/dev/null && return 0
+ML
+E14_T='  [ "$(cat "$REPORTED" 2>/dev/null)" = "$key" ] && return 0'
+T="$E14_T" awk 'NR == FNR { r = $0; next } $0 == ENVIRON["T"] { print r; next } { print }' "$TOP/mut14.line" "$WATCH" > "$MUT14/automate-merge-watch.sh"
+if [ -s "$MUT14/automate-merge-watch.sh" ] && ! cmp -s "$WATCH" "$MUT14/automate-merge-watch.sh" && bash -n "$MUT14/automate-merge-watch.sh" \
+   && [ "$(grep -cxF "$E14_T" "$WATCH")" = 1 ] && [ "$(grep -cxF "$E14_T" "$MUT14/automate-merge-watch.sh")" = 0 ] \
+   && [ "$(wc -l < "$WATCH")" = "$(wc -l < "$MUT14/automate-merge-watch.sh")" ]; then
+  e14_flow "$MUT14/automate-merge-watch.sh" 419
+  [ "$E14_A" = 1 ] && [ "$E14_B" = 1 ] && ok "(E14) mutant (whole-run-file search restored) swallows attempt 3's report — the line-keyed sidecar is load-bearing" || no "(E14) mutant did not discriminate: lines=$E14_A/$E14_B"
+else no "(E14) whole-file-search mutant invalid (empty / identical / bash -n / not a 1-for-1 line swap)"; fi
 
 echo "== K. SKILL wiring (Part B) =="
 grep -qF 'automate-merge-watch.sh' "$SKILL" && ok "SKILL names automate-merge-watch.sh" || no "SKILL lacks the watcher"
