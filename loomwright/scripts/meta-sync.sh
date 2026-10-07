@@ -58,6 +58,9 @@
 #   .supervisor/jobs/done/*.md
 #   .supervisor/jobs/failed/*.md
 #   .supervisor/automate/*.md
+#   .supervisor/automate/<name>.dismissed-decisions   (top level only; the dismissed-findings decision
+#     ledger — TSV of draft names, no home paths — so a lane's decisions survive lane-remove;
+#     parallel-automate/05 D9; scrubbed like every other added file)
 #   .supervisor/postmortem/results.jsonl
 #   minus anything under a NESTED .supervisor/ (.supervisor/requirements/**/.supervisor/**),
 #   and minus every NON-CANONICAL path (an absolute path, or one with a `.` / `..` / empty segment).
@@ -512,6 +515,7 @@ is_managed() {
       return 0 ;;
     .supervisor/jobs/done/*/*|.supervisor/jobs/failed/*/*|.supervisor/automate/*/*) return 1 ;;
     .supervisor/jobs/done/*.md|.supervisor/jobs/failed/*.md|.supervisor/automate/*.md) return 0 ;;
+    .supervisor/automate/?*.dismissed-decisions) return 0 ;;
     .supervisor/postmortem/results.jsonl) return 0 ;;
   esac
   return 1

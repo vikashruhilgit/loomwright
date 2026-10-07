@@ -78,13 +78,17 @@
 #       line, or ONE `finalize-empty: skipped — <reason>` line. Finalizes ONLY a
 #       paused / awaiting_go / remaining-0 / `## Current` status-done run (the
 #       state closeout leaves after the last check-off); SKILL §4 step 1 runs it
-#       through `automate-helpers.sh resume-glob <dir> --finalize`.
+#       through `automate-helpers.sh resume-glob <dir> --finalize`. In a lane
+#       clone (`.supervisor/lane.json` present, parallel-automate/05) any run but
+#       the lane's own ⇒ `skipped — lane clone (not this lane's run)`.
 #   closeout-others <automate_dir> [--record <runfile>]
 #       The cross-run close-out (SKILL §4 "Start order"): closeout of every OTHER
 #       run whose ## Current names a not-done item with a merged PR, mode-off
 #       trail-unstage, that closeout's closeout-classify answer, one
 #       `closeout-others: record(ed) — cross-run closeout <run_id> <item>: …` line
-#       (no PR URL). Untouched runs print nothing.
+#       (no PR URL). Untouched runs print nothing. In a lane clone ONE line
+#       `closeout-others: skipped — lane clone` (the coordinator closes other runs
+#       out once, in the primary — parallel-automate/05 Scope 3 amendment).
 #   trail-gate <runfile>
 #       One line: `trail-gate: PARK — trail PR open <url>…` |
 #       `trail-gate: PARK — <unreadable reason>` | `trail-gate: clear — no open
@@ -331,7 +335,9 @@ EOF
   # propose-only requirement files with no done heading (every finding line is
   # `> `-quoted), so the evidence gate never calls gh for them. A dropped /
   # fix-now draft is deleted on disk and so is no longer a candidate.
-  for p in "$DRAFT_DIR/$run_id"--*--dismissed-*.md; do
+  # A `--parallel` parent also carries its lanes' drafts (`<run_id>-L<n>--…`,
+  # mirroring automate-dismissed.sh's _dismissed_lane_drafts — parallel-automate/05).
+  for p in "$DRAFT_DIR/$run_id"--*--dismissed-*.md "$DRAFT_DIR/$run_id"-L[0-9]*--*--dismissed-*.md; do
     [ -f "$p" ] && [ ! -L "$p" ] && cands="$cands"$'\n'"$p"
   done
 
@@ -583,7 +589,7 @@ _trail_meta_push() {
     while IFS= read -r dn; do
       [ -n "$dn" ] || continue
       dp="$DRAFT_DIR/$dn"
-      case "$dp" in "$DRAFT_DIR/$run_id"--*--dismissed-*.md) ;; *) continue ;; esac
+      case "$dp" in "$DRAFT_DIR/$run_id"--*--dismissed-*.md|"$DRAFT_DIR/$run_id"-L[0-9]*--*--dismissed-*.md) ;; *) continue ;; esac
       case "$dn" in */*) continue ;; esac
       [ -e "$dp" ] && continue
       _in_list "$dp" "$list" && continue
@@ -772,7 +778,7 @@ RETRACT
   if [ "$base_ref" != "$origin_base" ] && [ -f "$dl" ]; then
     while IFS= read -r dp; do
       [ -n "$dp" ] || continue
-      case "$dp" in "$DRAFT_DIR/$run_id"--*--dismissed-*.md) ;; *) continue ;; esac
+      case "$dp" in "$DRAFT_DIR/$run_id"--*--dismissed-*.md|"$DRAFT_DIR/$run_id"-L[0-9]*--*--dismissed-*.md) ;; *) continue ;; esac
       _in_list "$dp" "$dretract" && continue
       [ -e "$dp" ] && continue
       dn="${dp##*/}"
@@ -1462,6 +1468,18 @@ _fe_ineligible() {
   return 0
 }
 
+# _in_lane_clone <root> — succeeds when <root> is a lane clone of `/automate
+# --parallel N` (parallel-automate/05, D2): its `.supervisor/lane.json` marker is
+# present (the file `automate-lanes.sh lane-info` prints; absent ⇒ not a lane —
+# never guessed from the path or the run id).
+_in_lane_clone() { [ -f "$1/.supervisor/lane.json" ]; }
+
+# _lane_run_id <root> — the lane marker's `run_id`, or empty when absent/unreadable.
+_lane_run_id() {
+  [ -f "$1/.supervisor/lane.json" ] || return 0
+  jq -r '.run_id // empty | strings' "$1/.supervisor/lane.json" 2>/dev/null | head -n1
+}
+
 finalize_empty() {
   local runfile="${1:-}" S="finalize-empty: skipped —"
   if [ -z "$runfile" ] || [ ! -f "$runfile" ]; then echo "$S run file not found"; return 0; fi
@@ -1479,6 +1497,11 @@ finalize_empty() {
   case "$rf_abs" in "$root"/*) rf_rel="${rf_abs#"$root"/}" ;; *) echo "$S run file outside the checkout"; return 0 ;; esac
   run_id="$(basename "$runfile" .md)"
   cd "$root" || { echo "$S cannot enter checkout"; return 0; }
+  # parallel-automate/05: inside a lane clone only the lane's OWN run (lane.json
+  # run_id) may be finalized; another run's file (or an unreadable run_id) is refused.
+  if _in_lane_clone "$root" && [ "$(_lane_run_id "$root")" != "$run_id" ]; then
+    echo "$S lane clone (not this lane's run)"; return 0
+  fi
   why="$(_fe_ineligible "$rf_rel")"
   if [ -n "$why" ]; then echo "$S $why"; return 0; fi
   local HLP="$HERE/automate-helpers.sh"
@@ -1572,6 +1595,9 @@ closeout_others() {
     rec_abs="$(cd "$(dirname "$rec")" 2>/dev/null && pwd -P)/$(basename "$rec")"
   fi
   cd "$root" || { echo "$S cannot enter checkout"; return 0; }
+  # parallel-automate/05 (Scope 3 amendment): a lane clone never closes out other
+  # runs — the coordinator does that ONCE, in the primary, before the wave launches.
+  if _in_lane_clone "$root"; then echo "$S lane clone"; return 0; fi
   local bm; bm="$(_branch_mode "$root")"
   local cands f cl item pr st run_id out verdict first summ rl l tab=$'\t'
   cands="$(bash "$HLP" resume-glob "$d_abs" 2>/dev/null)"

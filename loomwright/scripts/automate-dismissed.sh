@@ -81,7 +81,9 @@
 #       entry that inherits a kept summary's follow-up counts in m, not in n).
 #   dismissed-decide <runfile> <draft_path> <fix-now|follow-up|drop>
 #       Refuses (`dismissed-decide: refused — <reason>`) a path that is not a
-#       regular file directly under `proposed/` named `<this run_id>--*--dismissed-*.md`,
+#       regular file directly under `proposed/` named `<this run_id>--*--dismissed-*.md`
+#       (or, given a `--parallel` PARENT run file, `<run_id>-L<n>--*--dismissed-*.md` —
+#       a lane draft, decided against that lane's ledger when present, else this one),
 #       and `fix-now` on a summary draft (Keep / Drop only there), and any
 #       decision while the ledger EXISTS but cannot be read back (a row nobody
 #       can read is no record, and drop / fix-now delete the draft on it).
@@ -91,7 +93,8 @@
 #       draft (drop / fix-now), then progress-appends ONE line
 #       `dismissed: <decision> <draft_name> — <first 80 chars of finding>`.
 #   dismissed-pending <runfile>
-#       Prints the count of this run's drafts whose first `- **Decision:**` value
+#       Prints the count of this run's drafts (and its lanes' `<run_id>-L<n>--…`
+#       drafts — parallel-automate/05) whose first `- **Decision:**` value
 #       STARTS WITH `undecided` (so `undecided (fix-now unconfirmed)` counts), or
 #       `unknown` when it cannot tell — including a draft with no readable
 #       `- **Decision:**` value and an existing but unreadable ledger (the
@@ -609,6 +612,48 @@ PY
 }
 
 # --------------------------------------------------------------------------- #
+# lane drafts (parallel-automate/05, Scope 7)
+# --------------------------------------------------------------------------- #
+# A lane of a `--parallel N>1` parent run `<parent>` has run id `<parent>-L<n>`, so
+# its drafts are named `<parent>-L<n>--…--dismissed-*.md` — invisible to the
+# parent's own `<parent>--*` glob. dismissed-pending / dismissed-decide given the
+# PARENT run file also see them; each lane draft is decided against its lane's
+# ledger `<parent>-L<n>.dismissed-decisions` beside the parent run file when that
+# file exists (a managed metadata path, D9 — it reaches the primary on the pull),
+# else the parent's. A lane run file (or any non-parent run) has no `-L<n>` lanes,
+# so nothing changes for it.
+
+# _dismissed_lane_id <run_id> <draft_name> — prints `<run_id>-L<digits>` when the
+# name is a lane draft of <run_id> (`<run_id>-L<digits>--*--dismissed-*.md`), else nothing.
+_dismissed_lane_id() {
+  local rid="$1" n="$2" rest num
+  case "$n" in "$rid"-L[0-9]*--*--dismissed-*.md) ;; *) return 0 ;; esac
+  rest="${n#"$rid"-L}"; num="${rest%%--*}"
+  case "$num" in ""|*[!0-9]*) return 0 ;; esac
+  printf '%s-L%s\n' "$rid" "$num"
+}
+
+# _dismissed_lane_drafts <proposed_dir> <run_id> — one path per line: every
+# regular, non-symlink lane draft of <run_id> in <proposed_dir> (sorted).
+_dismissed_lane_drafts() {
+  local d="$1" rid="$2" f
+  for f in "$d/$rid"-L[0-9]*--*--dismissed-*.md; do
+    [ -f "$f" ] && [ ! -L "$f" ] || continue
+    [ -n "$(_dismissed_lane_id "$rid" "${f##*/}")" ] && printf '%s\n' "$f"
+  done | env LC_ALL=C sort
+}
+
+# _dismissed_lane_ledger <rf_dir> <run_id> <lane_id> — the ledger a lane draft is
+# decided against: the lane's own when it exists (or is a dangling entry), else the parent's.
+_dismissed_lane_ledger() {
+  if [ -e "$1/$3.dismissed-decisions" ] || [ -L "$1/$3.dismissed-decisions" ]; then
+    printf '%s\n' "$1/$3.dismissed-decisions"
+  else
+    printf '%s\n' "$1/$2.dismissed-decisions"
+  fi
+}
+
+# --------------------------------------------------------------------------- #
 # dismissed-decide
 # --------------------------------------------------------------------------- #
 dismissed_decide() {
@@ -627,9 +672,11 @@ dismissed_decide() {
   d_dir="$(_abs_dir "$(dirname "$draft")")"
   name="$(basename "$draft")"
   if [ "$d_dir" != "$prop_abs" ]; then echo "$refuse not under $prop_abs"; return 0; fi
+  local lane_id=""
   case "$name" in
     "$run_id"--*--dismissed-*.md) ;;
-    *) echo "$refuse not a draft of run $run_id"; return 0 ;;
+    *) lane_id="$(_dismissed_lane_id "$run_id" "$name")"
+       [ -n "$lane_id" ] || { echo "$refuse not a draft of run $run_id"; return 0; } ;;
   esac
   if [ -L "$prop_abs/$name" ] || [ ! -f "$prop_abs/$name" ]; then echo "$refuse draft not found (or not a regular file)"; return 0; fi
   local is_summary=0
@@ -639,6 +686,9 @@ dismissed_decide() {
   fi
 
   local ledger="$rf_dir/$run_id.dismissed-decisions" f="$prop_abs/$name" snippet rows="" ts
+  # A lane draft (parallel-automate/05) is decided against ITS lane's ledger when
+  # present beside the parent run file, else the parent's.
+  [ -n "$lane_id" ] && ledger="$(_dismissed_lane_ledger "$rf_dir" "$run_id" "$lane_id")"
   # A row appended to a ledger that cannot be read back is no record at all
   # (dismissed-drafts skips the whole pass on it), yet drop / fix-now would
   # delete the draft on its strength — so refuse, touching nothing.
@@ -701,7 +751,18 @@ dismissed_pending() {
   dir="$root/.supervisor/requirements/proposed"
   if [ ! -e "$dir" ]; then echo 0; return 0; fi
   if [ ! -d "$dir" ] || [ ! -r "$dir" ] || [ ! -x "$dir" ]; then echo unknown; return 0; fi
-  for f in "$dir/$run_id"--*--dismissed-*.md; do
+  local lanes l
+  lanes="$(_dismissed_lane_drafts "$dir" "$run_id")"
+  # A lane's ledger that exists but cannot be read ⇒ unknown, as for the parent's.
+  while IFS= read -r l; do
+    [ -n "$l" ] || continue
+    if _ledger_unreadable "$rf_dir/$(_dismissed_lane_id "$run_id" "${l##*/}").dismissed-decisions"; then echo unknown; return 0; fi
+  done <<LANES
+$lanes
+LANES
+  local ifs0="$IFS"; IFS=$'\n'   # $lanes splits on newlines only (paths may hold spaces)
+  for f in "$dir/$run_id"--*--dismissed-*.md $lanes; do
+    IFS="$ifs0"
     [ -e "$f" ] || continue
     if [ ! -r "$f" ]; then echo unknown; return 0; fi
     v="$(awk '/^- \*\*Decision:\*\* /{ sub(/^- \*\*Decision:\*\* /, ""); print; exit }' "$f" 2>/dev/null)"
@@ -709,6 +770,7 @@ dismissed_pending() {
     if [ -z "$v" ]; then echo unknown; return 0; fi
     case "$v" in undecided*) c=$((c+1)) ;; esac
   done
+  IFS="$ifs0"
   echo "$c"
   return 0
 }
