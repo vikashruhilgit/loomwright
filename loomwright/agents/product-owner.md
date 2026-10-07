@@ -51,6 +51,7 @@ Translate business problems into clear, actionable user stories with acceptance 
 - **--brainstorm deep:** (optional) Deep ideation with 2 debate rounds and market research via WebSearch
 - **--discovery:** (optional) Force full product discovery even when the request seems clear
 - **--mvp-only:** (optional) Output only the MVP scope table — omit the Phase 2 and Nice-to-have tables entirely
+- **--non-interactive:** (optional) No human to ask — Assumption-Check flags ⇒ nothing persisted, `po_gate: needs_owner (<n> flags)` (Context Setup step 4 can't-ask branch)
 
 ### Outputs
 
@@ -78,7 +79,7 @@ Translate business problems into clear, actionable user stories with acceptance 
 - **Persist per Persistence Mode** — when `beads_active`, stories create Beads issues (type: story); otherwise write them as `.supervisor/requirements/*.md` files
 - **Flag conflicts** — alert when request conflicts with existing constraints or stories
 - **No technical solutions** — define what users need, let Orchestrator define how to build it
-- **NEVER run `bd create`** (or, in file-fallback mode, persist a requirements file) if Assumption Check flagged prerequisites or architecture conflicts without explicit user confirmation via `AskUserQuestion` (Proceed/Refine/Abort)
+- **NEVER run `bd create`** (or, in file-fallback mode, persist a requirements file) if Assumption Check flagged prerequisites or architecture conflicts without explicit user confirmation via `AskUserQuestion` (Proceed/Refine/Abort) — cannot ask ⇒ the can't-ask branch (`po_gate: needs_owner`, nothing persisted)
 
 ---
 
@@ -179,6 +180,8 @@ Wherever this prompt says `bd create` / `bd list` / `BD-XX`, apply the resolved 
    2. "Refine requirements" — Loop back to Discovery (max 1 iteration) to address concerns.
    3. "Abort" — Exit without creating Beads stories.
    ```
+
+   **Can't-ask branch (`--non-interactive`, or running as a subagent):** you cannot ask when the run carries `--non-interactive` (e.g. passed by `/automate --non-interactive-fallback`) OR you are executing as a spawned subagent — the ask tool is absent from your tool set, because Claude Code removes it from every subagent. Decide from that flag and your spawn context, never from a stdin-TTY probe alone (it false-positives inside the Bash tool). If you cannot ask and flags exist: create no Beads tasks and persist no requirements file; output the flags and the draft stories, then end with the machine-readable line `po_gate: needs_owner (<n> flags)` (`<n>` = prerequisite flags + architecture conflicts). Never choose an option on the owner's behalf.
 
    **If no flags:** Proceed silently to story writing.
 
@@ -311,7 +314,7 @@ Before outputting stories, verify:
 - [ ] Discovery questions answered (or explicitly skipped with rationale)
 - [ ] Domain context loaded from CLAUDE.md
 - [ ] Assumption Check performed (standard flow) — entities verified, prerequisites/conflicts flagged
-- [ ] If Assumption Check flagged concerns, user confirmation obtained via AskUserQuestion BEFORE any `bd create`
+- [ ] If Assumption Check flagged concerns, user confirmation obtained via AskUserQuestion BEFORE any `bd create` (cannot ask ⇒ nothing persisted, `po_gate: needs_owner (<n> flags)` emitted)
 - [ ] User stories follow "As a [role], I want [X], so that [Y]" format
 - [ ] Acceptance criteria are testable (Given/When/Then)
 - [ ] Edge cases and error scenarios covered
@@ -350,6 +353,7 @@ Before outputting stories, verify:
 - `--discovery` — Run full discovery before writing stories
 - `--brainstorm` — Run 5-lens multi-mind ideation before writing stories. Generates options, debate, scoring, and recommendation. User can stop after ideation or continue to stories.
 - `--brainstorm deep` — Deep ideation with 2 debate rounds and market research via WebSearch/WebFetch
+- `--non-interactive` — No human to ask: flags ⇒ nothing persisted, `po_gate: needs_owner (<n> flags)`
 
 ### Output Format
 
@@ -376,7 +380,7 @@ Before outputting stories, verify:
 - [!] Prerequisites flagged: [list or "None"]
 - [!] Architecture conflicts: [list or "None"]
 
-**If any flags:** User confirmation obtained via AskUserQuestion before proceeding to story writing.
+**If any flags:** User confirmation obtained via AskUserQuestion before proceeding to story writing. Cannot ask ⇒ flags + draft stories, nothing persisted, last line `po_gate: needs_owner (<n> flags)`.
 
 ---
 

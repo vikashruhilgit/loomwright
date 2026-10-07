@@ -44,9 +44,10 @@ AUTONOMOUS_RUN:
         "user_picked_merge_and_continue",
         "user_picked_stop_here",
         "user_picked_force_continue_anyway",
-        "supervisor_option_c_detected"
+        "supervisor_option_c_detected",
+        "pr_base_verify_skipped_non_interactive"
       ]
-      source: enum [launch_pad_phase_6, launch_pad_no_go, launch_pad_plan_review, autonomous_rubric_gate, supervisor_adjudication]
+      source: enum [launch_pad_phase_6, launch_pad_no_go, launch_pad_plan_review, autonomous_rubric_gate, supervisor_adjudication, autonomous_pr_base_verify]
   rubric_final_score: string | null    # required — last iteration's rubric_score (null when no rubric in requirement OR when total_iterations == 0)
 ```
 
@@ -58,7 +59,7 @@ AUTONOMOUS_RUN:
 |---|---|
 | `done` | `null` (rubric satisfied or no rubric present), `"user_stopped_at_rubric_gate"` (user accepted partial rubric; PR exists, run ended on user's terms), `"user_stopped_at_no_rubric_gate"` (v14.0.0+; user picked stop at the no-rubric gate), `"no_rubric_in_non_interactive"` (v14.0.0+; non-interactive fallback at no-rubric gate — see Non-interactive fallback policy in `skills/autonomous-loop/SKILL.md` §"No-rubric gate") |
 | `paused_max_iterations` | `"max_iterations_reached"` |
-| `aborted` | `"user_discarded_at_phase_6"`, `"user_aborted_at_no_go"`, `"user_aborted_at_plan_review_fail"`, `"supervisor_checkpoint"`, `"rubric_dropped_from_brief"`, `"concurrent_session_detected"`, `"invalid_max_iterations"`, **v14.0.0+:** `"non_interactive_without_fallback"`, `"conflicting_mode_flags"`, `"iter_pr_base_mismatch"`, `"rubric_gate_closed_non_interactive"`, `"user_aborted_gh_retry"`, **v14.2.0+:** `"launch_pad_blocked"`, `"user_aborted_at_launch_pad"` |
+| `aborted` | `"user_discarded_at_phase_6"`, `"user_aborted_at_no_go"`, `"user_aborted_at_plan_review_fail"`, `"supervisor_checkpoint"`, `"rubric_dropped_from_brief"`, `"concurrent_session_detected"`, `"invalid_max_iterations"`, **v14.0.0+:** `"non_interactive_without_fallback"`, `"conflicting_mode_flags"`, `"iter_pr_base_mismatch"`, `"rubric_gate_closed_non_interactive"`, `"user_aborted_gh_retry"`, **v14.2.0+:** `"launch_pad_blocked"`, `"user_aborted_at_launch_pad"`, **agnostic-phase1/04:** `"review_heal_escalated_non_interactive"`, `"launch_pad_cant_ask_non_interactive"` |
 | `failed` | `"supervisor_failed_other"`, **v14.0.0+:** `"supervisor_base_branch_mismatch"`, **v14.8.0+:** `"preflight_overlap_detected"` |
 
 Reason-string meanings:
@@ -97,6 +98,11 @@ Two new `policy_decisions[].decision` values also land in v14.2.0 (both audit-on
 
 - `"preflight_overlap_detected"` — emitted when the Supervisor's Phase 1.5 PRE-FLIGHT SYNC gate fails closed under `--non-interactive` (or a non-TTY stdin) on an OVERLAP or SUPERSEDED classification, without `--skip-preflight-sync`. The Supervisor aborts before spawning any worker and emits `SUPERVISOR_RESULT.status: failed` with `error: "preflight_overlap_detected"`; the autonomous loop surfaces it as `AUTONOMOUS_RUN.status_reason: "preflight_overlap_detected"`. Pairs with `status: failed` (not `aborted`) because the failure originated below the loop, in the Supervisor's gate — mirroring `"supervisor_base_branch_mismatch"`. The offending iteration reached EXECUTE intake but no worker ran, so its entry (if any) carries the Supervisor's `failed` result. See `agents/supervisor.md` §"Phase 1.5: PRE-FLIGHT SYNC" and `skills/autonomous-loop/SKILL.md` EVALUATE termination table.
 
+**agnostic-phase1/04 status_reason addition** (paired with the question-gate can't-ask branches, `docs/ARCHITECTURE_CONTRACTS.md` §"Question-gate inventory"):
+
+- `"review_heal_escalated_non_interactive"` — EVALUATE's chained review-and-heal returned `ESCALATED` while the loop runs with `--non-interactive-fallback` (no TTY): nobody can pick continue / stop, so the loop asks nothing and aborts. Pairs with `status: aborted`; the PR stays open with its posted findings. See `skills/autonomous-loop/SKILL.md` §"EVALUATE review-heal step".
+- `"launch_pad_cant_ask_non_interactive"` — the inlined Launch Pad stopped at a question gate it could not ask (it runs with `--non-interactive` under `--non-interactive-fallback`): `LAUNCH_PAD_RESULT.status` is `blocked` or `aborted` and its `summary` leads with the gate's named `*_non_interactive` status (the block has no key for it). Replaces `launch_pad_blocked` / `user_aborted_at_launch_pad` for that case, since no user aborted; summary.md keeps Launch Pad's `summary` verbatim on its `launch_pad_summary` line. Pairs with `status: aborted`. Pre-EXECUTE; `total_iterations: 0`.
+
 **Validation rules:**
 - No SubagentStop hook validates this block (autonomous-layer-only). The v1 → v2 bump in v14.0.0 is therefore forward-only — schema-1 emissions remain accepted by downstream tooling. Parsers SHOULD accept either `schema_version: 1` or `schema_version: 2` and SHOULD treat unrecognized `status_reason` values as opaque strings rather than rejecting.
 - `iterations.length == total_iterations` (when `total_iterations == 0`, `iterations` MUST be an empty array `[]`; this is the pre-EXECUTE-abort case).
@@ -118,6 +124,7 @@ Two new `policy_decisions[].decision` values also land in v14.2.0 (both audit-on
 | `"user_picked_stop_here"` | `autonomous_rubric_gate` | User accepted partial rubric (terminal — produces `status: done, status_reason: user_stopped_at_rubric_gate`) |
 | `"user_picked_force_continue_anyway"` | `autonomous_rubric_gate` | User bypassed merge verification (loop continues; conflict risk recorded for audit) |
 | `"supervisor_option_c_detected"` | `supervisor_adjudication` | **Loop-inferred from filesystem evidence** after Supervisor's own adjudication AskUserQuestion concluded. Unlike the `user_picked_*` entries, this decision was made inside Supervisor's session — the autonomous loop only records that it observed the result (failed brief in `.supervisor/jobs/failed/` + `inter_subtask_gap` substring). The `_detected` suffix is a deliberate naming convention to flag this distinction for future tooling. |
+| `"pr_base_verify_skipped_non_interactive"` | `autonomous_pr_base_verify` | **Loop-recorded, no user choice** (agnostic-phase1/04): EVALUATE's PR-base verification could not read the PR's base (`gh pr view` failed twice) while running with `--non-interactive-fallback`, so the loop asked nothing and skipped the check for this iteration. Not a correctness bypass — Supervisor FINALIZE already verified the base or failed closed. See `skills/autonomous-loop/SKILL.md` §"EVALUATE PR-base verification (AC-3 + AC-15)". |
 
 **Example — single-iteration successful run:**
 
