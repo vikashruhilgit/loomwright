@@ -15,6 +15,13 @@
 **Single owner from now: session 2216aefd.** 6e8f1058 runs nothing for S3 (no lane, monitor, sampler, watcher) and
 edits no S3 record after this push.
 
+### WAVE 2 CLOSED 2026-10-07 ~04:13Z (session 2216aefd) — read §"Wave 2 result" first
+- #409 merged (`f4b0732`, **v15.124.0**). Lanes s3-e/f/g torn down, `leaks` empty, records on `loomwright-meta`,
+  caffeinate + monitors stopped. `wave/s3w2` and `loomwright-meta-s3w2` still exist (deletion awaits the owner's yes).
+- **Next:** owner reinstalls 15.124.0; then the post-pa/11 step — re-check every open item's Touches against
+  `docs/result-schemas/` and `automate-helpers.d/`, and re-plan waves 3+ (wave 3 now also holds **hc/01 · hc/02**,
+  host-contract, split 2026-10-06 so they run in parallel; hc/03 joins after them, done directly).
+
 ### Update since the first version of this handover (read this first — it supersedes "Not done" below)
 - **Released v15.123.1** (#401, `a14db34`) folding #398 (pa/19), #399 (ms/11), #400 (wave-1 review fixes); the owner
   **reinstalled — 15.123.1 is installed** (`~/.claude/plugins/cache/atelier/loomwright/15.123.1`, install record =
@@ -404,6 +411,49 @@ teardown, machine (load, swap, free) at peak.
 - **Launch → park:** s3-c 4 h 39 m, s3-d / s3-b / s3-a ~15 h — wall-clock dominated by the crash (13:40Z, resume 16:07Z)
   and the overnight wait, not by work.
 - **Peak load:** 119 before the crash (3 lanes in `ci-local`); after the resume ≤ 7 observed by the monitor.
+
+### Wave 2 result (closed 2026-10-07 ~04:13Z, operator session 2216aefd)
+- **Merged:** wave PR #409 (`wave/s3w2`) by the owner with a merge commit, `f4b0732` (v15.124.0), 04:07:16Z; #408 (pa/11),
+  #403 (agnostic/04), #402 (pa/16) flipped MERGED at 04:07:18Z; all three merge watchers closed out within ~60 s.
+  Integration order #408 → #403 → #402 (`000b8e5`, `4e7fc8d`, `f67a6e8`), bump `88c3c02` last; ci-local 148/148 on the
+  integrated tree. Drain of #409: READY in round 0 (claude-review posted "no new findings"; no fix cycle).
+- **One conflict:** `RESULT_SCHEMAS.md` (#408 split it, #403 edited its AUTONOMOUS_RUN schema). Resolved in the merge
+  commit: index kept, #403's four hunks applied verbatim to `result-schemas/autonomous-run.md` (+10/−3). **Touches gap:**
+  agnostic/04 never declared `RESULT_SCHEMAS.md` (plus 5 other files outside its Touches, incl. a new `CLAUDE.md`
+  Failure-Mode rule), so the planner's "wave 2 shares no file" was wrong — gap 7's sibling: Touches drift *during* a run.
+  Table docs / `vendor-coupling-manifest.json`: no conflict.
+- **pa/16 failed its own running-system Validation; operator fixed it on #402.** Three `ci-local --force` runs from three
+  clones (2 GitHub-origin, 1 local-bare), staggered 30 s, were ALL admitted on a lagging `ok` (load1 3.5 → 13 at the
+  grants) and drove load1 to **63.6** (operator kill switch at 60). Root cause: admission on load1 alone; load1 lags a
+  suite's ramp ~1 min, and `ok` had no machine-wide cap. Fix `cd5f400`: committed-work cap in `machine_admit` (live
+  holders' jobs + own ≤ CPUs, sole caller always admitted ⇒ ≤ 2 six-job suites on 12 CPUs) + test G12 with mutation
+  control; (X)/(G7)/(G10) clear the machine list first. **Re-run:** C held 22 polls (`committed 12+6 jobs > 12 CPUs`),
+  **peak load1 24.05**, all three PASS. `e9a3977` docs the cap (claude-review finding on `cd5f400`). The wave-2 "≤2
+  lanes building" rule's premise is now enforced by the gate itself for `ci-local`.
+- **Merge checks the operator ran (wave-1 lesson held: every PR's "Not verified" hid something):** #408 — both
+  Validation-4 failure controls and the `revert -m 1` rollback re-run; #403 — AC1–4 + a **live probe** of the PO
+  can't-ask branch (`claude -p --plugin-dir`, writes allowed: `po_gate: needs_owner`, nothing written, $0.37); #402 — the
+  three-clone test above. Still unverified (in #409's body): #408's live sequential `/automate` on the split (first lane
+  run on 15.124.0), #403's end-to-end `/automate` can't-ask stop, #402's Linux reader on a real host.
+- **Cost (final `total_cost_usd` per lane session — it is cumulative across resumes, take the LAST value, never sum):**
+  s3-e $38.80 · s3-f $55.24 · s3-g $52.24 · wave ≈ **$146.3** (+ $0.37 probe).
+- **Questions:** 12 relayed calls (s3-e 3, s3-f 5, s3-g 4), ~40 individual answers; 3 brief decisions, 1 FINALIZE
+  children-settled (7 turn-limit-stopped agents with no terminal lifecycle row — logging gap), 1 adjudication, the rest
+  dismissed-finding decisions (s3-g alone: 12 in three batches). Longest wait: ~6.5 h overnight (~18:30Z → 00:26Z).
+- **Launch → park:** s3-f 9 h 53 m, s3-g 9 h 52 m, s3-e 10 h 27 m — dominated by the overnight wait, not work.
+- **Peak load:** 73 at 18:01Z (two lanes in `ci-local` + a lane worktree), 66 at 16:13Z (mostly an unrelated
+  `Tray/hub` jest run, 11 workers). No crash. s3-g was started early on the owner's override (3 lanes building).
+- **New gaps (file or fold into the queue):** (1) **start-up closeout race:** all three lanes finalized the SAME 13 old
+  run files at start-up ~5 s apart; the first push won and the rest hit 13 `meta-push` conflicts each (records were
+  duplicates; resolved by taking the branch copy before teardown) — pa/05 input. (2) the harness's `answer` refused valid
+  **multiSelect** answers (fixed in `s1h.sh`: comma-joined labels, each validated; backup
+  `archive/s1h.sh.backup-2026-10-07-pre-multiselect`). (3) relayed `note` text never reaches the lane (the hook passes
+  only labels). (4) lane `ci-local` (~620 s) exceeds a lane's 600 s single-command limit (s3-e re-ran it). (5) the
+  "Start new run?" question is asked inconsistently (s3-f asked, s3-e/s3-g did not). (6) s3-g armed two merge watchers
+  (one per park); both exited cleanly, one closeout. (7) `caffeinate -t 14400` expired mid-wave again (16:50Z); the
+  operator restarted it detached with `-t 28800` on the owner's go.
+- **Records:** carried to `loomwright-meta` `f7709f0` (32 paths; s3-f by hand — its push failed the `home_path` scrub on
+  `reconcile-status` lines and its brief). Lanes torn down, `leaks` empty, primary clean on `f4b0732`.
 
 ## Done when
 All items in the queue (19 after the 2026-10-06 restructures) merged or closed by the owner, each wave's records on `loomwright-meta`, lanes torn down with `leaks`
