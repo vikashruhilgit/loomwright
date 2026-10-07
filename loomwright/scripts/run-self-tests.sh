@@ -15,18 +15,19 @@
 #          loomwright/scripts/adapters/*/test-*.sh (adapter self-tests live one directory deeper
 #          than the flat glob reaches — without the second glob they are committed tests nothing
 #          runs). Future tests are auto-included — anti-drift.
-#   env:   SELF_TEST_JOBS  concurrency (default: CPU count, fallback 4)
+#   env:   SELF_TEST_JOBS  concurrency (default: the job share of the CI slot it is admitted with)
 #          SELF_TEST_TIMEOUT  per-test wall-clock limit in seconds (default 900). A test still
 #          running at the limit is a FAILURE (exit 124 in its banner): its process tree and log
 #          tail are printed to stderr THE MOMENT it times out (so a CI log names the hung test
 #          even if the job is later killed), then the whole tree is killed. Before this, one test
 #          that never exited held the step until GitHub's 6-hour default (15 CI runs, 2026-09-27
 #          → 2026-10-01, each cancelled at ~361 min with no test named in the log).
+#          SELF_TEST_SLOT_WAIT  seconds to wait for machine admission (a ci-slot.sh slot; see below)
 #   marker: a test carrying the exact line `# run-self-tests: serial` runs ALONE, after the
 #          concurrent batch — for tests that measure wall-clock time and need an idle machine
 #   exit 0 = every test ran AND exited 0
 #   exit 1 = FAIL CLOSED: any test exited non-zero or timed out, any test left no result (its worker died), or
-#            the glob matched nothing (a moved/renamed scripts dir fails LOUDLY, never green)
+#            the glob matched nothing (a moved/renamed scripts dir fails LOUDLY, never green), or no admission
 #
 # Unlike the serial `set -e` loop, a red test does not hide the ones after it: every test runs,
 # then each failure's full log is printed at the end. Passing logs are printed too (collapsed in
@@ -71,17 +72,73 @@ if [ "${#tests[@]}" -eq 0 ]; then
   exit 1
 fi
 
+# Unset/empty SELF_TEST_JOBS = the admitted slot's job share (set after admission, below).
 jobs="${SELF_TEST_JOBS:-}"
-if [ -z "$jobs" ]; then
-  jobs="$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+if [ -n "$jobs" ]; then
+  case "$jobs" in *[!0-9]*|0) echo "SELF_TEST_JOBS must be a positive integer, got '$jobs'" >&2; exit 1 ;; esac
 fi
-case "$jobs" in ''|*[!0-9]*|0) echo "SELF_TEST_JOBS must be a positive integer, got '$jobs'" >&2; exit 1 ;; esac
 limit="${SELF_TEST_TIMEOUT:-900}"
 case "$limit" in ''|*[!0-9]*|0) echo "SELF_TEST_TIMEOUT must be a positive integer (seconds), got '$limit'" >&2; exit 1 ;; esac
 export SELF_TEST_TIMEOUT="$limit"
+slot_wait="${SELF_TEST_SLOT_WAIT:-1800}"
+case "$slot_wait" in ''|*[!0-9]*) echo "SELF_TEST_SLOT_WAIT must be a non-negative integer (seconds), got '$slot_wait'" >&2; exit 1 ;; esac
+slot_helper="$here/ci-slot.sh"
+if [ ! -f "$slot_helper" ]; then
+  echo "run-self-tests: $slot_helper is missing — refusing to run the suite without machine admission" >&2
+  exit 1
+fi
 
 out="$(mktemp -d "${TMPDIR:-/tmp}/self-tests.XXXXXX")"
-trap 'rm -rf "$out"' EXIT
+have_slot=0; acq_pid=""
+cleanup() {
+  # A queued acquire still running (INT/TERM arrived mid-wait): stop and reap it BEFORE the release,
+  # so it cannot claim a slot after that release. Its own TERM trap drops its ticket; the release
+  # then frees anything recorded under $$. A failed release only warns: the run's verdict stands,
+  # and a slot whose holder pid is gone is taken over by the next caller anyway.
+  if [ -n "$acq_pid" ]; then
+    kill -TERM "$acq_pid" 2>/dev/null || :
+    wait "$acq_pid" 2>/dev/null || :
+  fi
+  if [ "$have_slot" -eq 1 ] && ! ( cd "$here" && bash "$slot_helper" release --pid "$$" ); then
+    echo "run-self-tests: warning: releasing the CI slot failed — the next caller takes it over once pid $$ is gone" >&2
+  fi
+  rm -rf "$out"
+}
+trap cleanup EXIT
+# INT/TERM become a normal exit so the EXIT trap releases the slot.
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# --- machine admission: before scheduling anything the runner takes a slot from ci-slot.sh (beside
+# it), as scripts/ci-local.sh does, recorded under the runner's own pid and released by the EXIT trap
+# — so a bare run (a lane worker, an owner's terminal, CI) waits behind the repo's slot pool and the
+# machine gate (load, committed work) instead of piling onto a loaded machine. Under a live holder
+# (ci-local.sh running this runner as its pool) the call FOLDS into that holder at once: no second
+# slot, no second machine record (ci-slot.sh NESTED). No slot within SELF_TEST_SLOT_WAIT (default
+# 1800 s), a missing ci-slot.sh, or a malformed answer = exit 1. Not covered: a single test-*.sh run
+# directly never asks the gate (ci-slot.sh honest limit 9). stderr: the helper's waiting lines;
+# stdout: ONLY `slot=<k> jobs=<j>`. It runs from this script's own checkout, so it is keyed to this
+# repo wherever the caller's cwd is. Backgrounded and awaited with the `wait` builtin, never `$(...)`: bash defers a
+# trapped INT/TERM until a foreground child exits, while `wait` returns at once and lets the trap run.
+# have_slot is set BEFORE acquiring: a run interrupted mid-wait still has its queued ticket dropped.
+have_slot=1
+( cd "$here" && exec bash "$slot_helper" acquire self-tests --pid "$$" --wait "$slot_wait" ) > "$out/slot" &   # ADMISSION
+acq_pid=$!
+acq_rc=0
+wait "$acq_pid" || acq_rc=$?
+acq_pid=""
+if [ "$acq_rc" -ne 0 ]; then
+  echo "run-self-tests: no CI slot after ${slot_wait}s (machine admission) — giving up (FAIL). Holders: bash $slot_helper status" >&2
+  exit 1
+fi
+got="$(cat "$out/slot")"
+slot="${got#slot=}"; slot="${slot%% *}"; slot_jobs="${got##* jobs=}"
+case "$got" in slot=*" jobs="*) ;; *) slot="" ;; esac
+case "$slot:$slot_jobs" in
+  :*|*[!0-9:]*|*:) echo "run-self-tests: unexpected answer from $slot_helper: '$got'" >&2; exit 1 ;;
+esac
+[ "$slot_jobs" -gt 0 ] || { echo "run-self-tests: unexpected answer from $slot_helper: '$got'" >&2; exit 1; }
+[ -n "$jobs" ] || jobs="$slot_jobs"
 
 # One worker per test. It ALWAYS exits 0 so xargs keeps scheduling; the verdict is the per-test
 # `<idx>.rc` file it writes LAST. A missing rc file therefore means the worker never finished,
@@ -159,7 +216,7 @@ schedule() {
     | xargs -0 -n 2 -P "$n" bash "$out/worker.sh" || xargs_rc=$?
 }
 
-echo "running ${#tests[@]} self-tests: ${#par_idx[@]} concurrently ($jobs at a time), then ${#ser_idx[@]} serially"
+echo "running ${#tests[@]} self-tests: ${#par_idx[@]} concurrently ($jobs at a time), then ${#ser_idx[@]} serially — CI slot $slot"
 wall_start=$(date +%s)
 xargs_rc=0
 schedule "$jobs" ${par_idx[@]+"${par_idx[@]}"}
