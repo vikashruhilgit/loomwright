@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # check-children-settled.sh — the ONE join between agent_identity/spawn rows and the terminal
-# lifecycle events (subtask_complete | token_ledger | agent_lifecycle:failed) that "settle" an
+# lifecycle events (subtask_complete | token_ledger | agent_lifecycle:failed | agent_lifecycle:ended)
+# that "settle" an
 # agent_id in a session's JSONL log (.supervisor/logs/{session_id}.jsonl).
 #
 # WHY THIS EXISTS (.supervisor/requirements/orca-derived/02-completion-authority.md): completion of a
@@ -54,10 +55,25 @@
 #     event carries no `result_block_present` field yet — see docs/RESULT_SCHEMAS.md §agent_lifecycle
 #     "forward-reference" note — so presence alone settles it)
 #   - {"event":"agent_lifecycle", "state":"failed", "agent_id":"<id>", ...}
+#   - {"event":"agent_lifecycle", "state":"ended", "agent_id":"<id>", ...} (automate-followups/33,
+#     emit-lifecycle.sh `ended`: written for EVERY child stop — the SubagentStop catch-all leaf and the
+#     blocking PostToolUse[Task] return — so a non-plugin spawn and a turn-limit-stopped blocking child
+#     settle). Lower tier: it decides `ended_without_result` only when none of the three rows above
+#     exists for the id. EXCEPTION (A5): a SubagentStop-seam `ended` row (`seam` "subagent_stop" or
+#     absent) does not settle an id whose LATEST `subtask_complete` is `rejected: true` — it came from
+#     the same validator-blocked firing and the worker is still running. A `task_return` row does.
+#     A hung or still-running child has NO stop row and stays `unsettled` — silence is never settled;
+#     a BACKGROUND child stopped at its turn limit fires neither seam (fixtures/subagentstop-maxturns-
+#     probe.json) and so also stays `unsettled` (honest limit).
 #
 # `ended_without_result` (docs/RESULT_SCHEMAS.md §agent_lifecycle "Reader-derived states") is `true`
-# when the FIRST terminal row found for that agent_id is EITHER a `subtask_complete` with
-# `result_block_present: false` OR an `agent_lifecycle:failed` row — surfaced so an operator can
+# when the deciding terminal row for that agent_id is a `subtask_complete` with
+# `result_block_present: false`, an `agent_lifecycle:failed` row, or — only when neither those nor a
+# `token_ledger` row exists — an `agent_lifecycle:ended` row whose `reason` marks a turn limit
+# (`max_turns` / `maxTurns` / `turn_limit`, case-insensitive) OR whose agent is a worker (any row for
+# the id carries an `agent_type` ending in `worker`: a worker that left no `subtask_complete` ended
+# without a result by definition). A plain `ended` for a non-worker reads `false`. Note: on Claude Code
+# 2.1.286 neither seam carries a turn-limit marker, so in practice the worker rule is what fires — surfaced so an operator can
 # SendMessage the `agent_id` to resume (memory `subagents-hit-turn-limit-resume-via-sendmessage`)
 # instead of re-running the subtask cold. This script does not implement the resume — it only
 # surfaces the id (via `ended_without_result` / `ended_without_result_ids`).
@@ -135,24 +151,57 @@ if [ ! -f "$log" ] || [ ! -r "$log" ]; then
   exit 0
 fi
 
-# terminal_for <agent_id> — prints "0" or "1" (ended_without_result) for the FIRST terminal row
-# matching <agent_id>, or nothing when no terminal row exists for it. A `subtask_complete` row with
-# `rejected == true` is NOT a terminal row and never matches (header: "REJECTED STOPS ARE NOT
-# TERMINAL"). `head -1` on a jq pipe under
-# `pipefail` can raise SIGPIPE(141) in $?, which is harmless here: this script has no `set -e`, and
-# every caller inspects the CAPTURED VALUE (`[ -n "$ewr" ]`), never the exit code of the substitution.
+# terminal_for <agent_id> — prints "0" or "1" (ended_without_result) for the deciding terminal row of
+# <agent_id>, or nothing when no terminal row exists for it. Two tiers (automate-followups/33):
+#   tier P — the three result-bearing rows (subtask_complete non-rejected | token_ledger |
+#            agent_lifecycle:failed); the FIRST one in file order decides, exactly as before.
+#   tier E — agent_lifecycle:ended rows; consulted ONLY when tier P is empty, so a worker's
+#            `subtask_complete` always decides its `ended_without_result` even when the `ended` row
+#            (a sibling hook leaf, order not guaranteed) landed first.
+# A `subtask_complete` with `rejected == true` is NOT terminal (header: "REJECTED STOPS ARE NOT
+# TERMINAL"), and — A5 — an `ended` row from the SubagentStop seam (`seam` "subagent_stop" or absent)
+# does NOT settle an id whose LATEST `subtask_complete` is rejected: that ended row came from the same
+# validator-blocked firing, and the worker is still running. A `task_return` ended row DOES settle it:
+# the blocking Task has returned, so the child is finished whatever its last stop looked like.
+# `head -1` on a jq pipe under `pipefail` can raise SIGPIPE(141) in $?, which is harmless here: this
+# script has no `set -e`, and every caller inspects the CAPTURED VALUE (`[ -n "$ewr" ]`), never the
+# exit code of the substitution.
 terminal_for() {
-  jq -R -r --arg id "$1" '
+  local latest_rej is_worker rows
+  latest_rej="$(jq -R -r --arg id "$1" '
     (fromjson? // empty) as $l
-    | select(
-        ($l.event == "subtask_complete" and $l.agent_id == $id and ($l.rejected? == true | not)) or
-        ($l.event == "token_ledger" and $l.agent_id == $id) or
-        ($l.event == "agent_lifecycle" and $l.state == "failed" and $l.agent_id == $id)
-      )
-    | ( if ($l.event == "subtask_complete" and ($l.result_block_present? == false))
-          or ($l.event == "agent_lifecycle" and $l.state == "failed")
-        then "1" else "0" end )
-  ' "$log" 2>/dev/null | head -1
+    | select($l.event == "subtask_complete" and $l.agent_id == $id)
+    | if $l.rejected? == true then "1" else "0" end
+  ' "$log" 2>/dev/null | tail -1)"
+  [ "$latest_rej" = "1" ] || latest_rej=0
+  is_worker="$(jq -R -r --arg id "$1" '
+    (fromjson? // empty) as $l
+    | select($l.agent_id == $id and (($l.agent_type? // "") | type) == "string"
+             and (($l.agent_type? // "") | test("(^|:)worker$")))
+    | "1"
+  ' "$log" 2>/dev/null | head -1)"
+  [ "$is_worker" = "1" ] || is_worker=0
+  rows="$(jq -R -r --arg id "$1" --argjson rej "$latest_rej" --argjson wk "$is_worker" '
+    (fromjson? // empty) as $l
+    | select($l.agent_id == $id)
+    | if ($l.event == "subtask_complete" and ($l.rejected? == true | not))
+         or ($l.event == "token_ledger")
+         or ($l.event == "agent_lifecycle" and $l.state == "failed") then
+        "P" + ( if ($l.event == "subtask_complete" and ($l.result_block_present? == false))
+                     or ($l.event == "agent_lifecycle" and $l.state == "failed")
+                then "1" else "0" end )
+      elif ($l.event == "agent_lifecycle" and $l.state == "ended")
+           and (($rej == 1 and (($l.seam? // "subagent_stop") == "subagent_stop")) | not) then
+        "E" + ( if $wk == 1
+                     or ((($l.reason? // "") | tostring | ascii_downcase) | test("max_?turns|turn_?limit"))
+                then "1" else "0" end )
+      else empty end
+  ' "$log" 2>/dev/null)"
+  local first
+  first="$(printf '%s\n' "$rows" | grep '^P' | head -1)"
+  [ -n "$first" ] || first="$(printf '%s\n' "$rows" | grep '^E' | head -1)"
+  [ -n "$first" ] && printf '%s' "${first#?}"
+  return 0
 }
 
 # rejected_stops_for <agent_id> — prints the count of `subtask_complete` rows with `rejected: true`

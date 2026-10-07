@@ -85,6 +85,38 @@
 #                        `agent_id` is absent, because there is no comparable
 #                        grounded evidence for a main-thread fallback on
 #                        those two seams (never guess).
+#   ended              — automate-followups/33: a TERMINAL row for EVERY child
+#                        stop, any agent_type (plugin or not). Two seams, told
+#                        apart by the payload's `hook_event_name` (falling back
+#                        to its shape):
+#                        * SubagentStop (matcher-less catch-all leaf): agent_id
+#                          / agent_type from the top-level payload; `seam:
+#                          "subagent_stop"`; `reason` is the literal `stop`
+#                          (no recorded SubagentStop payload carries a stop-
+#                          reason key to copy — never derived). Covers the NON-PLUGIN normal
+#                          stop (general-purpose / Explore have no per-type
+#                          matcher, so they never wrote a terminal row).
+#                        * PostToolUse[Task] — the BLOCKING Task return: agent_id
+#                          from `.tool_response.agentId`, agent_type from
+#                          `.tool_response.agentType` else `.tool_input.
+#                          subagent_type`; `seam: "task_return"`; `reason` is
+#                          `.tool_response.status` VERBATIM. Emitted ONLY when
+#                          that status is a string other than `async_launched`
+#                          (a `run_in_background` LAUNCH fires PostToolUse while
+#                          the child is still running — never a terminal fact).
+#                          This seam exists because a turn-limit (maxTurns) stop
+#                          does NOT fire SubagentStop on Claude Code 2.1.286
+#                          (probe: fixtures/subagentstop-maxturns-probe.json),
+#                          while the blocking Task return still fires
+#                          PostToolUse[Task] — with `status: "completed"`, i.e.
+#                          the payload carries NO turn-limit marker, so none is
+#                          recorded (never derived, never invented).
+#                        HONEST LIMIT: a BACKGROUND child stopped at its turn
+#                        limit fires neither seam, so it keeps reading
+#                        `unsettled` in check-children-settled.sh — silence is
+#                        never treated as settled. More than one `ended` row per
+#                        agent_id is legal (one per seam, one per SendMessage
+#                        resume); the join reads any of them.
 #
 # This is an ADDITIONAL emitter wired as a SECOND (or later) `command` hook
 # alongside the existing ones on each matcher — `notify-desktop.sh`,
@@ -129,7 +161,7 @@ trap 'exit 0' EXIT
 # ---- Subcommand dispatch ------------------------------------------------------
 LIFECYCLE_SUBCOMMAND="${1:-}"
 case "$LIFECYCLE_SUBCOMMAND" in
-  waiting|heartbeat|failed) ;;
+  waiting|heartbeat|failed|ended) ;;
   *) exit 0 ;;
 esac
 LIFECYCLE_EXTRA_ARG="${2:-}"
@@ -163,7 +195,7 @@ STATE_MD="$main_root/.supervisor/state.md"
 # heartbeat debounce marker below, and the shared write path at the bottom)
 # and before the debounce marker file is touched, so a repo where
 # Loomwright/Supervisor has never run is left completely untouched by all
-# three subcommands (waiting/heartbeat/failed) on all six hook wirings.
+# subcommands (waiting/heartbeat/failed/ended) on every hook wiring.
 plugin_present() { [ -d "$1/.supervisor" ]; }
 plugin_present "$main_root" || exit 0
 
@@ -307,7 +339,7 @@ if not log_session_id:
 subcommand = os.environ.get("LIFECYCLE_SUBCOMMAND", "")
 extra_arg = os.environ.get("LIFECYCLE_EXTRA_ARG", "")
 
-STATE_BY_SUBCOMMAND = {"waiting": "waiting", "heartbeat": "working", "failed": "failed"}
+STATE_BY_SUBCOMMAND = {"waiting": "waiting", "heartbeat": "working", "failed": "failed", "ended": "ended"}
 state = STATE_BY_SUBCOMMAND.get(subcommand)
 if not state:
     sys.exit(0)
@@ -333,8 +365,37 @@ if cc_session_id:
 # key and the emitted row disagreeing on which agent this is. `waiting`/
 # `failed` never fire on the Task matcher, so they keep reading the
 # top-level payload field directly.
+# `ended` resolves its seam first (see header): a Task-return payload carries
+# the CHILD id only at nested `.tool_response.agentId`, a SubagentStop payload
+# at top level. A background LAUNCH (`async_launched`) or a Task payload with
+# no status string is not a terminal fact -> no row.
+ended_seam = ""
+ended_reason = ""
+tool_response = payload.get("tool_response")
+if subcommand == "ended":
+    hook_event = payload.get("hook_event_name")
+    if hook_event == "PostToolUse" or (hook_event is None and isinstance(tool_response, dict)):
+        if not isinstance(tool_response, dict):
+            sys.exit(0)
+        tr_status = tool_response.get("status")
+        if not (isinstance(tr_status, str) and tr_status) or tr_status == "async_launched":
+            sys.exit(0)
+        ended_seam = "task_return"
+        ended_reason = tr_status
+    elif hook_event == "SubagentStop" or hook_event is None:
+        ended_seam = "subagent_stop"
+        # No recorded SubagentStop payload carries a stop-reason key (pinned key list:
+        # fixtures/subagentstop-maxturns-probe.json), so nothing is copied — the literal
+        # `stop` names the seam firing, never a derived cause. The hook-payload field
+        # contract test fails any field read that no recorded fixture carries.
+        ended_reason = "stop"
+    else:
+        sys.exit(0)
+
 if subcommand == "heartbeat":
     agent_id = os.environ.get("AGENT_ID_RAW", "")
+elif ended_seam == "task_return":
+    agent_id = tool_response.get("agentId")
 else:
     agent_id = payload.get("agent_id")
 has_agent_id = isinstance(agent_id, str) and bool(agent_id)
@@ -342,7 +403,15 @@ if has_agent_id:
     event["agent_id"] = agent_id
     event["agent_scope"] = "subagent"
 
-agent_type = payload.get("agent_type")
+if ended_seam == "task_return":
+    agent_type = tool_response.get("agentType")
+    if not (isinstance(agent_type, str) and agent_type):
+        tool_input = payload.get("tool_input")
+        agent_type = tool_input.get("subagent_type") if isinstance(tool_input, dict) else None
+else:
+    agent_type = payload.get("agent_type")
+if subcommand == "ended" and not has_agent_id:
+    sys.exit(0)   # a terminal row nobody can join to an agent is noise, never written
 if isinstance(agent_type, str) and agent_type:
     event["agent_type"] = agent_type
 
@@ -371,6 +440,9 @@ elif subcommand == "failed":
     # captures carry agent_id; the rest are main-thread) — see header note.
     if not has_agent_id:
         event["agent_scope"] = "main"
+elif subcommand == "ended":
+    event["seam"] = ended_seam
+    event["reason"] = ended_reason
 # heartbeat carries no additional fields beyond state/session/agent identity.
 
 branch = os.environ.get("SESSION_BRANCH", "")
