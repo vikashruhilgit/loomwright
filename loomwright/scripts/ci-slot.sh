@@ -53,17 +53,60 @@
 #                  LOOMWRIGHT_CI_SLOT_POLL s (default 2). All diagnostics go to stderr.
 # NUMBERS          integer options and env values may be zero-padded; they are read as decimal
 #                  (--slots 010 = 10 slots, never octal 8).
+# MACHINE GATE     the per-repo pool above caps one repository; this gate caps the MACHINE. Before a
+#                  claim is granted (under the repo mutex, after the count and fairness checks, so a
+#                  held caller keeps its ticket and its place), the caller reads machine-load.sh:
+#                  `overloaded` ⇒ held (nothing machine-wide is granted); `busy` ⇒ granted only while
+#                  no other machine-wide holder is live. At EVERY state a caller also waits while the
+#                  jobs its live machine holders run plus its own exceed the CPUs (COMMITTED WORK — a
+#                  sole caller is always admitted): load1 lags a suite's ramp by about a minute, so
+#                  load alone admits a burst of close starts (12 CPUs, 6 jobs a slot ⇒ at most two
+#                  suites machine-wide). A holder record's 6th line is its jobs; a record without
+#                  one counts as the caller's. Otherwise `ok` and `unknown` ⇒ granted (fail-SAFE: a
+#                  reader that exits non-zero, prints garbage or is missing reads as `unknown`, so a
+#                  broken reader never stalls a lane). A reader still running after 5 s is not broken
+#                  but slow — what deep overload looks like — so it is never read as `unknown`: until
+#                  it answers, the last answered reading stands in when it is ok/busy/overloaded and
+#                  under 60 s old, else `busy`. It is never signalled, no second reader starts while
+#                  it runs, and its answer is used on the next poll after it ends. The reading is
+#                  refreshed every LOOMWRIGHT_MACHINE_LOAD_RECHECK s (default 15); the holder count is
+#                  re-read every poll. Holders are listed in ONE machine state dir shared by every
+#                  repo key and every XDG_STATE_HOME: LOOMWRIGHT_MACHINE_STATE_DIR, default
+#                  $HOME/.local/state/loomwright/machine/ (holders/<pid>, mutex.lnk, load = the last
+#                  reading). So a clone with a local-path origin keeps its own repo pool but joins the
+#                  machine count. A caller whose --pid descends from a live machine holder (an outer
+#                  ci-local.sh running the self-tests that call acquire again) FOLDS into it: granted
+#                  at any machine state, no second holder recorded. A holder record whose start epoch
+#                  predates this boot (kern.boottime / /proc/stat btime; LOOMWRIGHT_MACHINE_BOOT_TIME
+#                  overrides it, for tests) is dropped before it is counted or folded into: records
+#                  survive the hard reboot a freeze forces, and their pids then name unrelated
+#                  processes. Unreadable boot time ⇒ nothing dropped. A self-test that sets
+#                  LOOMWRIGHT_MACHINE_STATE_DIR to a sandbox is isolated from the real list by design;
+#                  one that sets neither is an ordinary caller and counts once. LOOMWRIGHT_MACHINE_
+#                  LOAD_CMD names another reader script (tests). `status` shows a held waiter as
+#                  `held for load: <state> load1=<n>`; a held caller still times out at --wait.
+#                  The gate never signals any process; `status`, `dir` and `release` never take its
+#                  mutex or run its reader. Lock order is always repo mutex, then machine mutex.
 #
 # Honest limits: (1) pid reuse — a recycled pid makes a dead holder look alive until it exits too
-# (start time is recorded for humans, not checked). (2) `kill -0` on another user's pid fails, so a
-# slot held by another user looks stale. (3) two processes taking over the same dead mutex in the
-# same instant can both enter it; the post-`mkdir` re-count still keeps N, only ticket order can be
-# off for that one claim. (4) mixed N trades strict order for liveness: a waiter with a SMALLER N
+# (a slot's start time is recorded for humans, not checked). The machine list and the nested-holder
+# fold check a record's start only against boot time, so a record written THIS boot whose pid was
+# recycled still counts as a holder, and still folds a caller that descends from the new owner; a
+# wall-clock step shortly after boot can also move boot time past a record written just before it.
+# (2) `kill -0` on another user's pid fails, so a slot held by another user looks stale. (3) two
+# processes taking over the same dead mutex in the same instant can both enter it; the post-`mkdir`
+# re-count still keeps N, only ticket order can be off for that one claim. (4) mixed N trades strict order for liveness: a waiter with a SMALLER N
 # than the others is passed while the live count is at its cap, and waits until the load drops below
 # its N. Use one LOOMWRIGHT_CI_SLOTS value everywhere for strict first-come order. (5) a checkout on
 # an earlier commit of this helper (a `mutex/` dir lock and an index scan over 1..N) does not take
 # `mutex.lnk`, so during that rollout the two can interleave counter bumps and claims: the re-count
 # and the fresh-ticket rule keep this side correct, but the older side can still exceed its N.
+# (6) a checkout on a commit before the MACHINE GATE neither reads the load nor joins the machine
+# list: its runs are invisible to `busy` until it updates. (7) the machine gate has no cross-repo
+# ticket queue: when the load falls, held callers of different repos race for the first grant (order
+# inside each repo is kept). (8) nesting is detected by --pid ancestry: a holder whose child was
+# re-parented (setsid / nohup to launchd) is not recognised, and that child counts as a new caller.
+# (9) suites started outside ci-local (a bare run-self-tests.sh) never ask the gate at all.
 # Self-test: loomwright/scripts/test-ci-slot.sh. Portability: bash 3.2 safe, BSD + GNU userland.
 set -uo pipefail
 shopt -s nullglob
@@ -130,27 +173,166 @@ state_dir() {
 # A symlink, not a dir + pid file: `ln -s` creates the lock and its pid in one atomic step, so there is
 # no window in which a TERM (whose trap bash runs between two commands) can strand a pid-less lock.
 # mutex_lock [DEADLINE] — returns 1 once DEADLINE (epoch s) passes without the lock.
-mutex_lock() {
+mutex_lock() { link_lock "$LK" "counter" "${1:-}"; }
+# link_lock LINK WHAT [DEADLINE] — the one lock routine, for the repo mutex and the machine mutex.
+link_lock() {
   local p
-  while ! ln -sn "$$" "$LK" 2>/dev/null; do
-    p="$(readlink "$LK" 2>/dev/null || true)"
+  while ! ln -sn "$$" "$1" 2>/dev/null; do
+    p="$(readlink "$1" 2>/dev/null || true)"
     if [ -n "$p" ] && ! alive "$p"; then
       # Rename first: only one taker can move a given link, and rm never hits a fresh mutex.
-      if mv "$LK" "$D/mutex.stale.$$" 2>/dev/null; then
-        warn "taking over a stale counter mutex (pid $p is gone)"
-        rm -f "$D/mutex.stale.$$"
+      if mv "$1" "$1.stale.$$" 2>/dev/null; then
+        warn "taking over a stale $2 mutex (pid $p is gone)"
+        rm -f "$1.stale.$$"
       fi
       continue
     fi
-    if [ -n "${1:-}" ] && [ "$(now)" -ge "$1" ]; then return 1; fi
+    if [ -n "${3:-}" ] && [ "$(now)" -ge "$3" ]; then return 1; fi
     sleep 0.05
   done
   return 0
 }
 mutex_mine() { [ "$(readlink "$LK" 2>/dev/null)" = "$$" ]; }
 mutex_unlock() { mutex_mine && rm -f "$LK"; return 0; }
+link_unlock() { [ "$(readlink "$1" 2>/dev/null)" = "$$" ] && rm -f "$1"; return 0; }
 
-rec_field() { sed -n "${2}p" "$1" 2>/dev/null; }   # rec_field FILE LINE (1 pid 2 checkout 3 name 4 start)
+# --- MACHINE GATE ------------------------------------------------------------------------------------
+# read_load — refresh LOAD_STATE / LOAD1 when the cached reading is older than RECHECK. Never under a
+# mutex. The reader runs in the background and is waited for at most 5 s. One still running then is
+# left alone (never signalled) and NOT read as unknown: a slow reader is what deep overload looks like.
+# load_timed_out stands in for it, no second reader starts while it runs, and its answer is taken on
+# the first call after it ends. Only an answered reading is written to $MD/load (a rename, so a reader
+# outside the mutex never sees a half line); a stand-in never refreshes the cache's age.
+read_load() {
+  local t i rc out st l
+  t="$(now)"
+  if [ -n "$RP" ]; then
+    if alive "$RP"; then load_timed_out "$t"; return 0; fi
+    wait "$RP"; rc=$?
+  else
+    [ -n "$LOAD_AT" ] && [ $((t - LOAD_AT)) -lt "$RECHECK" ] && return 0
+    RF="$MD/.reading.$$"
+    [ -d "$MD" ] || RF="${TMPDIR:-/tmp}/ci-slot-reading.$$"
+    LOOMWRIGHT_CI_CPUS="$CPUS" bash "$LOAD_CMD" > "$RF" 2>/dev/null &
+    RP=$!; i=0
+    while alive "$RP" && [ "$i" -lt 100 ]; do sleep 0.05; i=$((i + 1)); done
+    if alive "$RP"; then load_timed_out "$t"; return 0; fi   # SLOW
+    wait "$RP"; rc=$?
+  fi
+  out="$(cat "$RF" 2>/dev/null)"; rm -f "$RF"; RP=""; RF=""
+  st="$(printf '%s\n' "$out" | sed -n 's/^state=//p' | head -n 1)"
+  l="$(printf '%s\n' "$out" | sed -n 's/^load1=//p' | head -n 1)"
+  case "$st" in ok|busy|overloaded|unknown) ;; *) st=unknown ;; esac
+  [ "$rc" -eq 0 ] || st=unknown
+  case "$l" in ''|*[!0-9.]*) l=unknown ;; esac
+  LOAD_STATE="$st"; LOAD1="$l"; LOAD_AT="$t"
+  [ -d "$MD" ] && printf '%s %s %s\n' "$t" "$st" "$l" > "$MD/load.$$" 2>/dev/null && mv "$MD/load.$$" "$MD/load"
+  rm -f "$MD/load.$$"
+  return 0
+}
+
+# load_timed_out T — the reading while a reader is still running: the last answered machine-wide
+# reading when it is ok/busy/overloaded and under LOAD_STALE s old, else busy (one holder at most).
+load_timed_out() {
+  set -- "$1" $(cat "$MD/load" 2>/dev/null)
+  if is_uint "${2:-}" && [ "$1" -ge "$2" ] && [ $(( $1 - $2 )) -lt "$LOAD_STALE" ]; then
+    case "${3:-}" in ok|busy|overloaded) LOAD_STATE="$3"; LOAD1="${4:-unknown}"; return 0 ;; esac
+  fi
+  LOAD_STATE=busy; LOAD1="unknown (reader still running after 5s)"
+}
+# drop_reading — at exit: unlink a timed-out reader's output file (the reader itself is left running)
+# and a cache write cut short by a signal.
+drop_reading() { [ -n "$RF" ] && rm -f "$RF"; rm -f "$MD/load.$$"; return 0; }
+
+# ancestry PID — " PID ppid ppid… " up to init: a live machine holder in it means we are nested.
+# ONE `ps` for the whole walk (a per-level `ps` cost seconds on a loaded machine, past a short --wait).
+ancestry() {
+  ps -A -o pid= -o ppid= 2>/dev/null | awk -v p="$1" '{ pp[$1] = $2 }
+    END { out = " "; i = 0; while (p > 1 && i < 64) { out = out p " "; p = pp[p]; i++ }; print out }'
+}
+# need_ancestry — walk once, and only when a machine holder exists (none ⇒ nothing to nest in).
+need_ancestry() {
+  [ -n "$ANCESTRY" ] && return 0
+  local r; for r in "$MD"/holders/*; do ANCESTRY="$(ancestry "$PID")"; return 0; done
+  return 0
+}
+
+# boot_epoch — the kernel's boot time (epoch s) into BOOT, read once; empty when unreadable.
+# LOOMWRIGHT_MACHINE_BOOT_TIME, when set, replaces the OS reading (tests; a non-number = unreadable).
+boot_epoch() {
+  local b
+  [ "$BOOT_READ" -eq 1 ] && return 0
+  BOOT_READ=1
+  if [ -n "${LOOMWRIGHT_MACHINE_BOOT_TIME+x}" ]; then b="$LOOMWRIGHT_MACHINE_BOOT_TIME"
+  elif [ -r /proc/stat ]; then b="$(awk '$1 == "btime" { print $2; exit }' /proc/stat 2>/dev/null)"
+  else b="$(sysctl -n kern.boottime 2>/dev/null | sed -n 's/^{ *sec *= *\([0-9][0-9]*\).*/\1/p')"; fi
+  is_uint "$b" && BOOT="$((10#$b))"
+  return 0
+}
+
+# machine_holders — under the machine mutex: MH = count of LIVE holders (dead records removed);
+# NESTED_IN = the holder pid our --pid descends from, if any. Runs in this shell, never `$(...)`.
+# A record whose start epoch predates this boot is dropped before its pid is even looked at: that
+# pid belongs to a process of this boot that never wrote it (a holder from before a hard reboot),
+# and trusting it would make a phantom holder or a false fold. Unreadable boot time ⇒ no pruning.
+# Records are written only under this mutex, so the read-then-remove cannot drop a fresh rewrite.
+machine_holders() {
+  local r p s j h=0 mj=0
+  NESTED_IN=""
+  boot_epoch
+  for r in "$MD"/holders/*; do
+    p="$(rec_field "$r" 1)"
+    if [ -n "$BOOT" ]; then
+      s="$(rec_field "$r" 4)"
+      if is_uint "$s" && [ "$((10#$s))" -lt "$BOOT" ]; then rm -f "$r"; continue; fi   # BOOT
+    fi
+    if ! alive "$p"; then rm -f "$r"; continue; fi
+    h=$((h + 1))
+    j="$(rec_field "$r" 6)"; is_uint "$j" && [ "$((10#$j))" -gt 0 ] || j="$JOBS"   # no 6th line: an older record
+    mj=$((mj + 10#$j))
+    case "$ANCESTRY" in *" $p "*) NESTED_IN="$p" ;; esac
+  done
+  MJ="$mj"
+  MH="$h"
+}
+
+# machine_admit — under the repo mutex: 0 = admitted (MACHINE_REC = our record, empty when folded or
+# the gate is off), 1 = held (HELD says why). Records are written under the machine mutex, so two
+# repos never both pass `busy`.
+machine_admit() {
+  local h
+  HELD=""; MACHINE_REC=""
+  [ "$MACHINE_OK" -eq 1 ] || return 0
+  if ! link_lock "$MLK" machine $(( $(now) + 2 )); then HELD="machine mutex busy"; return 1; fi
+  machine_holders; h="$MH"
+  if [ -n "$NESTED_IN" ]; then link_unlock "$MLK"; return 0; fi   # FOLD: the same real holder
+  case "$LOAD_STATE" in
+    overloaded) HELD="held for load: overloaded load1=$LOAD1"; link_unlock "$MLK"; return 1 ;;
+    busy) if [ "$h" -ge 1 ]; then HELD="held for load: busy load1=$LOAD1 ($h machine-wide holder(s))"; link_unlock "$MLK"; return 1; fi ;;
+  esac
+  # COMMITTED WORK, at every load state: load1 lags a suite's ramp by about a minute, so suites that
+  # start close together all read `ok` (S3 wave 2: three started 30 s apart, all granted below load1
+  # 14, peak 63.6). A suite starts only while the jobs live holders already run plus its own fit the
+  # CPUs; a sole caller is always admitted, so one suite never waits on this.
+  if [ "$h" -ge 1 ] && [ $(( MJ + JOBS )) -gt "$CPUS" ]; then HELD="held for load: committed $MJ+$JOBS jobs > $CPUS CPUs ($h machine-wide holder(s))"; link_unlock "$MLK"; return 1; fi   # COMMIT
+  MACHINE_REC="$MD/holders/$PID"
+  { rec; echo "$D"; echo "$JOBS"; } > "$MACHINE_REC" 2>/dev/null || MACHINE_REC=""
+  link_unlock "$MLK"
+  return 0
+}
+
+# set_held — under the repo mutex: keep our ticket's 6th line in step with why we wait (status reads
+# it). Lines 1-5 are kept byte for byte; the swap is a rename, so a reader never sees a half file.
+set_held() {
+  local t="$D/tickets/$MY_TICKET" cur
+  [ -n "$MY_TICKET" ] && [ -f "$t" ] || return 0
+  cur="$(rec_field "$t" 6)"
+  [ "$cur" = "$1" ] && return 0
+  { sed -n '1,5p' "$t"; [ -n "$1" ] && echo "$1"; } > "$t.tmp.$$" 2>/dev/null && mv "$t.tmp.$$" "$t"
+  rm -f "$t.tmp.$$"
+}
+
+rec_field() { sed -n "${2}p" "$1" 2>/dev/null; }   # rec_field FILE LINE (1 pid 2 checkout 3 name 4 start; machine records: 5 repo dir 6 jobs)
 
 rec() { printf '%s\n%s\n%s\n%s\n' "$PID" "$CHECKOUT" "$NAME" "$(now)"; }
 write_rec() { rec > "$1"; }
@@ -207,16 +389,19 @@ try_claim() {
     c="$(rec_field "$D/tickets/$t" 5)"
     is_uint "$c" && [ "$c" -gt 0 ] && [ "$h" -ge $((10#$c)) ] || return 1   # FAIR
   done
+  machine_admit || return 1   # MACHINE
   k=1; while [ -e "$D/slots/$k" ]; do k=$((k + 1)); done   # LOWEST
   s="$D/slots/$k"
-  mkdir "$s" 2>/dev/null || return 1
+  mkdir "$s" 2>/dev/null || { drop_machine_rec; return 1; }
   CLAIMING="$s"
   write_rec "$s/info"
   # Re-count with ours in: only a writer outside this mutex (see Honest limits) can push it past N.
-  if [ "$(live_holders)" -gt "$SLOTS" ]; then rm -rf "$s"; CLAIMING=""; return 1; fi
+  if [ "$(live_holders)" -gt "$SLOTS" ]; then rm -rf "$s"; CLAIMING=""; drop_machine_rec; return 1; fi
   rm -f "$D/tickets/$MY_TICKET"
   GOT="$k"; return 0
 }
+
+drop_machine_rec() { [ -n "$MACHINE_REC" ] && rm -f "$MACHINE_REC"; MACHINE_REC=""; return 0; }
 
 fmt_age() {
   local a="$1"
@@ -245,7 +430,10 @@ json_rec() {  # json_rec FILE KEY VALUE
   printf '{%s:%s,"pid":%s,"checkout":%s,"name":%s,"started":%s' "$(json_str "$2")" "$3" "$p" \
     "$(json_str "$(rec_field "$1" 2)")" "$(json_str "$(rec_field "$1" 3)")" "$st"
   # A ticket also carries the waiter's own N (0 = not recorded).
-  if [ "$2" = ticket ]; then c="$(rec_field "$1" 5)"; is_uint "$c" || c=0; printf ',"slots":%s' "$((10#$c))"; fi
+  if [ "$2" = ticket ]; then
+    c="$(rec_field "$1" 5)"; is_uint "$c" || c=0; printf ',"slots":%s' "$((10#$c))"
+    c="$(rec_field "$1" 6)"; if [ -n "$c" ]; then printf ',"held":%s' "$(json_str "$c")"; else printf ',"held":null'; fi
+  fi
   printf '}'
 }
 
@@ -266,7 +454,14 @@ cmd_status() {
       alive "$(rec_field "$t" 1)" || continue
       printf '%s%s' "$sep" "$(json_rec "$t" ticket "$n")"; sep=","
     done
-    printf ']}\n'
+    printf '],"machine":{"dir":%s,"holders":[' "$(json_str "$MD")"; sep=""
+    for s in "$MD"/holders/*; do
+      alive "$(rec_field "$s" 1)" || continue
+      printf '%s%s' "$sep" "$(json_rec "$s" holder "$(rec_field "$s" 1)")"; sep=","
+    done
+    set -- $(cat "$MD/load" 2>/dev/null)
+    if is_uint "${1:-}"; then printf '],"last_reading":{"at":%s,"state":%s,"load1":%s}}}\n' "$1" "$(json_str "${2:-unknown}")" "$(json_str "${3:-unknown}")"
+    else printf '],"last_reading":null}}\n'; fi
     return 0
   fi
   echo "dir: $D"
@@ -277,7 +472,17 @@ cmd_status() {
   done
   for n in $(ls "$D/tickets" 2>/dev/null | sort -n); do
     alive "$(rec_field "$D/tickets/$n" 1)" || continue
-    echo "waiter: ticket $n pid $(rec_field "$D/tickets/$n" 1) $(rec_field "$D/tickets/$n" 3) $(rec_field "$D/tickets/$n" 2)"
+    t="$(rec_field "$D/tickets/$n" 6)"
+    echo "waiter: ticket $n pid $(rec_field "$D/tickets/$n" 1) $(rec_field "$D/tickets/$n" 3) $(rec_field "$D/tickets/$n" 2)${t:+ — $t}"
+  done
+  # Machine-wide view: read-only (no machine mutex, no reader run), so status never waits on the gate.
+  n=0; for s in "$MD"/holders/*; do alive "$(rec_field "$s" 1)" && n=$((n + 1)); done
+  set -- $(cat "$MD/load" 2>/dev/null)
+  if is_uint "${1:-}"; then t="last reading: ${2:-unknown} load1=${3:-unknown} ($(fmt_age $(( $(now) - $1 ))) ago)"; else t="last reading: none"; fi
+  echo "machine: $MD  holders: $n  $t"
+  for s in "$MD"/holders/*; do
+    alive "$(rec_field "$s" 1)" || continue
+    echo "machine holder: pid $(rec_field "$s" 1) $(rec_field "$s" 3) $(rec_field "$s" 2)"
   done
 }
 
@@ -289,17 +494,19 @@ cmd_acquire() {
   every="${LOOMWRIGHT_CI_SLOT_PRINT_EVERY:-30}"; is_uint "$every" || every=30; every=$((10#$every))
   while :; do
     # +1 s: a mutex held for milliseconds right at the deadline (or with --wait 0) is still waited out.
+    read_load; need_ancestry; boot_epoch   # outside every mutex: a slow reader never holds anyone else up
     if mutex_lock $((deadline + 1)); then
       # Our ticket vanished or was overwritten (a writer outside this mutex): take a fresh one.
       if [ -z "$MY_TICKET" ] || [ "$(rec_field "$D/tickets/$MY_TICKET" 1)" != "$PID" ]; then
         take_ticket || { mutex_unlock; warn "cannot write a ticket under $D/tickets"; return 1; }
       fi
       if try_claim; then
-        CLAIMING=""
+        CLAIMING=""; MACHINE_REC=""
         mutex_unlock
         echo "slot=$GOT jobs=$JOBS"
         return 0
       fi
+      set_held "$HELD"
       pos="$(live_tickets | grep -nx "$MY_TICKET" | cut -d: -f1)"
       mutex_unlock
     else
@@ -308,13 +515,18 @@ cmd_acquire() {
     if ! alive "$PID"; then
       drop_my_ticket; warn "holder pid $PID is gone — leaving the queue"; return 1
     fi
+    # The first waiting line comes before any give-up, so even a --wait shorter than one round says why.
+    if [ "$next_print" -eq 0 ]; then
+      warn "waiting for a CI slot — position ${pos:-?}, ${HELD:+$HELD, }holders: $(holders_line)"
+      next_print=$(( $(now) + every ))
+    fi
     if [ "$(now)" -ge "$deadline" ]; then
       drop_my_ticket
-      warn "no CI slot after ${WAIT}s — giving up (holders: $(holders_line)); see: ci-slot.sh status"
+      warn "no CI slot after ${WAIT}s — giving up (${HELD:+$HELD, }holders: $(holders_line)); see: ci-slot.sh status"
       return 1
     fi
     if [ "$(now)" -ge "$next_print" ]; then
-      warn "waiting for a CI slot — position ${pos:-?}, holders: $(holders_line)"
+      warn "waiting for a CI slot — position ${pos:-?}, ${HELD:+$HELD, }holders: $(holders_line)"
       next_print=$(( $(now) + every ))
     fi
     # Background + `wait`, not a foreground sleep: bash defers a trapped TERM until a foreground
@@ -324,10 +536,20 @@ cmd_acquire() {
   done
 }
 
+# release_machine PID — drop PID's machine-wide record (no mutex: a remove never waits on the gate).
+release_machine() {
+  is_uint "${1:-}" || return 0
+  [ "$(rec_field "$MD/holders/$1" 1)" = "$1" ] && rm -f "$MD/holders/$1"
+  return 0
+}
+
 cmd_release() {
   local s t
-  if [ -n "$SLOT" ]; then rm -rf "$D/slots/$SLOT"; return 0; fi
+  if [ -n "$SLOT" ]; then
+    release_machine "$(rec_field "$D/slots/$SLOT/info" 1)"; rm -rf "$D/slots/$SLOT"; return 0
+  fi
   [ -n "$PID" ] || die "release needs --pid <holder-pid> or --slot <k>"
+  release_machine "$PID"
   for s in "$D"/slots/*; do [ "$(rec_field "$s/info" 1)" = "$PID" ] && rm -rf "$s"; done
   for t in "$D"/tickets/*; do [ "$(rec_field "$t" 1)" = "$PID" ] && rm -f "$t"; done
   return 0
@@ -364,6 +586,14 @@ CHECKOUT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 MY_TICKET=""
 CLAIMING=""
 GOT=""
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MD="${LOOMWRIGHT_MACHINE_STATE_DIR:-$HOME/.local/state/loomwright/machine}"
+MLK="$MD/mutex.lnk"
+LOAD_CMD="${LOOMWRIGHT_MACHINE_LOAD_CMD:-$HERE/machine-load.sh}"
+RECHECK="${LOOMWRIGHT_MACHINE_LOAD_RECHECK:-15}"; is_uint "$RECHECK" || RECHECK=15; RECHECK=$((10#$RECHECK))
+LOAD_STATE=unknown; LOAD1=unknown; LOAD_AT=""; HELD=""; MACHINE_REC=""; NESTED_IN=""; MH=0; MJ=0; ANCESTRY=""
+RP=""; RF=""; LOAD_STALE=60; BOOT=""; BOOT_READ=0
+MACHINE_OK=0
 D=""
 state_dir
 LK="$D/mutex.lnk"
@@ -375,6 +605,9 @@ case "$CMD" in
   acquire)
     # A waiter leaving on INT/TERM removes its own ticket (and the mutex, if it was inside it).
     # A half-made claim (slot dir made, stdout not yet written) is undone too: the caller sees exit 1.
-    trap 'drop_my_ticket; [ -n "$CLAIMING" ] && rm -rf "$CLAIMING"; mutex_unlock; exit 1' INT TERM
+    trap 'drop_my_ticket; [ -n "$CLAIMING" ] && rm -rf "$CLAIMING"; drop_machine_rec; link_unlock "$MLK"; mutex_unlock; exit 1' INT TERM
+    trap 'drop_reading' EXIT
+    # Only acquire creates the machine dir; a dir that cannot be made turns the gate off (fail-SAFE).
+    if mkdir -p "$MD/holders" 2>/dev/null; then MACHINE_OK=1; else warn "machine gate off: cannot create $MD"; fi
     cmd_acquire ;;
 esac

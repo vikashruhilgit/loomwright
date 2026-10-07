@@ -38,6 +38,41 @@
 #        --pid 0<pid> / --slot 01 / PRINT_EVERY=08 neither crash nor read as octal.
 #        MUTATION CONTROL: drop the --slots -gt 0 check ⇒ the --slots 0 check fails.
 #        MUTATION CONTROL: drop the --slots normalisation ⇒ the --slots 010 check fails.
+#   (G)  machine gate — every arm uses a sandboxed LOOMWRIGHT_MACHINE_STATE_DIR and a fixture reader
+#        (LOOMWRIGHT_MACHINE_LOAD_CMD, never the real machine-load.sh), so a loaded dev machine cannot
+#        hold this suite and the real machine list is never touched:
+#        (G1) busy: a second machine-wide holder waits ("held for load: busy"), from a clone with a
+#             local-path origin and its own XDG_STATE_HOME; under ok both are listed in ONE machine
+#             holders list, seen from either repo's status (AC3)
+#        (G2) overloaded: two queued callers keep their tickets in order, status shows
+#             `held for load: overloaded load1=<n>`; flipped to ok ⇒ the first is granted within one
+#             re-check, then the second. MUTATION CONTROL: drop the admission call ⇒ (G2) fails.
+#        (G3) a held caller still times out at --wait, ticket gone
+#        (G4) fail-SAFE: a reader answering unknown, exiting non-zero, printing garbage or missing
+#             grants exactly as ok (with a live holder present, so busy would have held)
+#        (G5) nested: an acquire whose --pid descends from a live machine holder folds into it —
+#             granted at once under busy AND overloaded, no second machine record (bypass (a))
+#        (G6) a caller whose machine-state-dir override points at another sandbox is isolated from
+#             this list (bypass (b)); (G7) a bare caller adds exactly one record, release (--pid and
+#             --slot) removes it (bypass (c))
+#        (G8) status, status --json, dir and release never wait on the gate: a held machine mutex
+#             and a hanging reader do not slow them
+#        (G9) no signal: code lines of ci-slot.sh and machine-load.sh send none (`kill -0` liveness
+#             probes only, no pkill / killall). MUTATION CONTROL: an injected `kill` is caught.
+#        (G10) a SLOW reader is not a broken one: one that answers overloaded after 6 s (past the 5 s
+#             wait) holds a caller while a live holder exists (read as busy meanwhile, then its own
+#             overloaded answer is taken: one reader run, the cached reading never 'unknown'); a
+#             hanging reader with an answered overloaded reading under 60 s old holds even with no
+#             holder; with that reading older than 60 s it reads busy and grants a sole caller.
+#             MUTATION CONTROL: a timed-out reader read as unknown ⇒ the slow-reader check fails.
+#        (G11) boot time: a holder record started before boot (fixture LOOMWRIGHT_MACHINE_BOOT_TIME)
+#             whose pid is now an ANCESTOR of the caller is dropped, not folded into (held under
+#             overloaded); one whose pid is an unrelated live process is dropped, not a phantom
+#             holder (granted under busy); an unreadable boot time keeps both (fail-SAFE, today's
+#             behaviour). MUTATION CONTROL: drop the boot-time prune ⇒ the fold check fails.
+#        (G12) committed work: at load ok, 12 CPUs / 2 slots (6 jobs a suite), three callers from
+#             three repo keys ⇒ two granted, the third held ("held for load: committed 12+6 jobs >
+#             12 CPUs") and granted once a holder releases. MUTATION CONTROL: drop the cap ⇒ fails.
 # run-self-tests: serial
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -54,6 +89,20 @@ trap 'for p in $pids; do kill "$p" 2>/dev/null; done; rm -rf "$tmp"' EXIT
 export XDG_STATE_HOME="$tmp/state"
 unset LOOMWRIGHT_CI_SLOTS LOOMWRIGHT_CI_CPUS
 export LOOMWRIGHT_CI_SLOT_POLL=0.1 LOOMWRIGHT_CI_SLOT_PRINT_EVERY=1
+# Machine gate: a sandboxed holders list and a fixture reader (machine-load.sh is never run here);
+# load.state picks its answer, default ok.
+MDIR="$tmp/machine"
+export LOOMWRIGHT_MACHINE_STATE_DIR="$MDIR" LOOMWRIGHT_MACHINE_LOAD_CMD="$tmp/load.sh" LOOMWRIGHT_MACHINE_LOAD_RECHECK=1
+cat > "$tmp/load.sh" <<'EOF'
+m="$(cat "$(dirname "$0")/load.state" 2>/dev/null || echo ok)"
+case "$m" in
+  fail) echo "state=busy"; exit 3 ;;
+  garbage) echo "%%% nonsense" ;;
+  hang) sleep 8; echo "state=overloaded" ;;
+  slow) sleep 6; echo "load1=40.00"; echo "state=overloaded" ;;
+  *) echo "load1=40.00"; echo "state=$m" ;;
+esac
+EOF
 
 pass=0; fail=0
 ok() { pass=$((pass + 1)); echo "ok   $1"; }
@@ -193,6 +242,9 @@ at "$tmp/c1" -- release --pid "$h3"
 
 # --- (X) mixed N: claim by live count ---------------------------------------------------------------
 # Runs in solo2 (its own repo key), so the c1 pool above is untouched. Every wait is bounded.
+# Holders left live by the sections above stay in the machine list; clear it so the committed-work
+# cap (G12) does not count them against this repo-pool test.
+rm -rf "$MDIR/holders/"*
 ds="$(at "$tmp/solo2" -- dir)"
 nwait() {   # nwait N — poll (max 10 s) until status --json lists N waiters
   local i=0
@@ -413,6 +465,280 @@ out="$(bash "$SUT" --help)"
 if grep -q '^ci-slot.sh — ' <<<"$out" && grep -q '^Self-test: loomwright/scripts/test-ci-slot.sh' <<<"$out" \
    && ! grep -q 'set -uo' <<<"$out"; then ok "(U) --help prints the de-commented header"
 else no "(U) --help: $out"; fi
+
+# --- (G) machine gate ------------------------------------------------------------------------------
+setload() { echo "$1" > "$tmp/load.state"; }
+mrecs() { ls "$MDIR/holders" 2>/dev/null | wc -l | tr -d ' '; }
+git clone -q "$tmp/base" "$tmp/lp"   # origin = a local path ⇒ a repo key of its own
+lpat() { (cd "$tmp/lp" && XDG_STATE_HOME="$tmp/state2" bash "$SUT" "$@"); }
+rm -rf "$MDIR/holders/"* "$d1/slots/"* "$d1/tickets/"*
+unset LOOMWRIGHT_CI_SLOTS
+export LOOMWRIGHT_CI_SLOTS=2
+# (G1) busy + AC3
+setload busy
+live; gx=$LIVE; live; gy=$LIVE
+gxo="$(at "$tmp/c1" -- acquire gx --pid "$gx" 2>/dev/null)"
+gyo="$(lpat acquire gy --pid "$gy" --wait 1 2>"$tmp/g1.err")"; rc=$?
+if [ -n "$gxo" ] && [ "$rc" = 1 ] && [ -z "$gyo" ] && [ "$(lpat dir)" != "$d1" ] \
+   && grep -q "held for load: busy load1=40.00 (1 machine-wide holder(s))" "$tmp/g1.err"; then
+  ok "(G1) busy: the first machine-wide holder is granted, a second (local-path origin, own XDG_STATE_HOME) waits"
+else no "(G1) busy: gx=[$gxo] gy rc=$rc out=[$gyo] err=$(cat "$tmp/g1.err")"; fi
+setload ok
+gyo="$(lpat acquire gy --pid "$gy" --wait 5 2>/dev/null)"
+if [ -n "$gyo" ] && [ "$(mrecs)" = 2 ] \
+   && [ "$(at "$tmp/c1" -- status --json | jq -c '[.machine.holders[].pid] | sort')" = "$(printf '[%s]' "$(printf '%s\n' "$gx" "$gy" | sort -n | paste -sd, -)")" ] \
+   && [ "$(lpat status --json | jq '.machine.holders | length')" = 2 ] \
+   && [ "$(at "$tmp/c1" -- status --json | jq -r .machine.dir)" = "$MDIR" ]; then
+  ok "(G1) two repo keys (one a local-path origin) and two XDG_STATE_HOMEs share ONE machine holders list (AC3)"
+else no "(G1) shared list: gy=[$gyo] recs=$(mrecs) status=$(at "$tmp/c1" -- status --json | jq -c .machine)"; fi
+at "$tmp/c1" -- release --pid "$gx"; lpat release --pid "$gy"
+[ "$(mrecs)" = 0 ] && ok "(G1) release --pid drops the machine record" || no "(G1) release left $(mrecs) machine records"
+
+# (G2) overloaded: held in order, released within one re-check
+held_ok() {   # held_ok SUT — exit 0 iff every (G2) property holds; GWHY says which failed
+  local s="$1" ga gb wa wb i t0 el st
+  GWHY=""; rm -f "$tmp"/g2.*
+  setload overloaded
+  live; ga=$LIVE; live; gb=$LIVE
+  (cd "$tmp/c1" && exec bash "$s" acquire ga --pid "$ga" --wait 30 >"$tmp/g2.a" 2>"$tmp/g2.aerr") & wa=$!; pids="$pids $wa"
+  i=0; while [ "$(at "$tmp/c1" -- status --json | jq '.waiters | length')" != 1 ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+  (cd "$tmp/c1" && exec bash "$s" acquire gb --pid "$gb" --wait 30 >"$tmp/g2.b" 2>/dev/null) & wb=$!; pids="$pids $wb"
+  i=0; while [ "$(at "$tmp/c1" -- status --json | jq '.waiters | length')" != 2 ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+  sleep 1.5   # past one re-check: still held
+  st="$(at "$tmp/c1" -- status --json)"
+  if [ -s "$tmp/g2.a" ] || [ -s "$tmp/g2.b" ]; then GWHY="granted while overloaded (a=[$(cat "$tmp/g2.a")] b=[$(cat "$tmp/g2.b")])"
+  elif [ "$(jq -c '[.waiters[].pid]' <<<"$st")" != "[$ga,$gb]" ]; then GWHY="tickets not kept in order: $st"
+  elif [ "$(jq -r '.waiters[0].held' <<<"$st")" != "held for load: overloaded load1=40.00" ]; then GWHY="status --json waiter not marked held: $st"
+  elif ! grep -q "waiter: ticket .* pid $ga .* — held for load: overloaded load1=40.00$" <<<"$(at "$tmp/c1" -- status)"; then GWHY="status text lacks 'held for load': $(at "$tmp/c1" -- status)"
+  elif ! grep -q "held for load: overloaded load1=40.00" "$tmp/g2.aerr"; then GWHY="waiting line lacks the hold reason: $(cat "$tmp/g2.aerr")"
+  else
+    setload ok; t0=$(date +%s)
+    i=0; while [ ! -s "$tmp/g2.b" ] && [ "$i" -lt 60 ]; do sleep 0.1; i=$((i + 1)); done
+    el=$(( $(date +%s) - t0 ))
+    if [ "$(cat "$tmp/g2.a")" != "slot=1 jobs=6" ] || [ "$(cat "$tmp/g2.b")" != "slot=2 jobs=6" ] || [ "$el" -gt 3 ]; then
+      GWHY="after ok: a=[$(cat "$tmp/g2.a")] b=[$(cat "$tmp/g2.b")] in ${el}s (want slot 1 then 2, within one 1 s re-check + poll)"
+    fi
+  fi
+  kill "$wa" "$wb" 2>/dev/null; wait "$wa" 2>/dev/null; wait "$wb" 2>/dev/null
+  for p in $ga $gb; do at "$tmp/c1" -- release --pid "$p"; kill "$p" 2>/dev/null; wait "$p" 2>/dev/null; done
+  rm -f "$d1/tickets/"*
+  [ -z "$GWHY" ]
+}
+if held_ok "$SUT"; then ok "(G2) overloaded: both held with tickets in order and 'held for load: overloaded load1=40.00'; ok ⇒ slot 1 then slot 2 within one re-check"
+else no "(G2) $GWHY"; fi
+mut="$tmp/mut-machine.sh"
+grep -v '# MACHINE$' "$SUT" > "$mut"
+if [ -s "$mut" ] && ! cmp -s "$mut" "$SUT" && bash -n "$mut"; then
+  if held_ok "$mut"; then no "(G2) MUTATION CONTROL: without the admission call the callers were still held — (G2) proves nothing"
+  else ok "(G2) MUTATION CONTROL: without the admission call (G2) fails ($GWHY)"; fi
+else no "(G2) MUTATION CONTROL: mutant not built (empty, unchanged or invalid)"; fi
+
+# (G3) a held caller still times out at --wait
+setload overloaded; live; gt=$LIVE
+t0=$(date +%s)
+out="$(at "$tmp/c1" -- acquire gt --pid "$gt" --wait 2 2>"$tmp/g3.err")"; rc=$?
+el=$(( $(date +%s) - t0 ))
+if [ "$rc" = 1 ] && [ -z "$out" ] && [ "$el" -le 5 ] && [ -z "$(ls "$d1/tickets")" ] \
+   && grep -q "giving up (held for load: overloaded load1=40.00, holders:" "$tmp/g3.err"; then
+  ok "(G3) a caller held for load times out at --wait 2 (${el}s), its ticket removed"
+else no "(G3) rc=$rc out=[$out] ${el}s tickets=[$(ls "$d1/tickets")] err=$(cat "$tmp/g3.err")"; fi
+
+# (G4) fail-SAFE reader: a live holder is present, so a reader read as busy would hold the caller
+setload ok; at "$tmp/c1" -- acquire gx --pid "$gx" >/dev/null 2>&1
+fok=1
+for m in unknown fail garbage missing; do
+  live; gz=$LIVE; setload "$m"; cmd="$tmp/load.sh"; [ "$m" = missing ] && cmd="$tmp/no-such-reader.sh"
+  t0=$(date +%s)
+  out="$(cd "$tmp/lp" && XDG_STATE_HOME="$tmp/state2" LOOMWRIGHT_MACHINE_LOAD_CMD="$cmd" bash "$SUT" acquire gz --pid "$gz" --wait 10 2>/dev/null)"
+  el=$(( $(date +%s) - t0 ))
+  if [ -z "$out" ] || [ "$el" -gt 7 ]; then fok=0; no "(G4) reader '$m' was not read as ok: out=[$out] ${el}s"; fi
+  lpat release --pid "$gz"
+done
+[ "$fok" -eq 1 ] && ok "(G4) a reader answering unknown / exiting 3 / printing garbage / missing grants as ok"
+at "$tmp/c1" -- release --pid "$gx"
+
+# (G5) nested inside a live machine holder: folds, under busy and overloaded
+cat > "$tmp/outer.sh" <<'EOF'
+cd "$1/c1" && bash "$2" acquire outer --pid $$ >/dev/null 2>&1 || { echo "outer-not-granted"; exit 1; }
+sleep 60 & c=$!
+for m in busy overloaded; do
+  echo "$m" > "$1/load.state"
+  t0=$(date +%s)
+  o="$(cd "$1/lp" && XDG_STATE_HOME="$1/state3" bash "$2" acquire inner --pid "$c" --wait 10 2>/dev/null)"
+  echo "$m:$o:$(( $(date +%s) - t0 )):$(ls "$1/machine/holders" | wc -l | tr -d ' ')"
+  (cd "$1/lp" && XDG_STATE_HOME="$1/state3" bash "$2" release --pid "$c")
+done
+kill "$c" 2>/dev/null
+cd "$1/c1" && bash "$2" release --pid $$
+EOF
+setload ok; live; gx=$LIVE; at "$tmp/c1" -- acquire gx --pid "$gx" >/dev/null 2>&1   # a second live holder: busy would hold anyone new
+out="$(bash "$tmp/outer.sh" "$tmp" "$SUT")"
+if [ "$(printf '%s\n' "$out" | grep -cE '^(busy|overloaded):slot=1 jobs=6:[01]:2$')" = 2 ]; then
+  ok "(G5) an acquire nested in a live machine holder is granted at once under busy and overloaded, no record added"
+else no "(G5) nested: $out"; fi
+
+# (G6) another machine-state-dir sandbox is isolated; (G7) a bare caller counts once
+setload busy; live; gi=$LIVE
+out="$(cd "$tmp/lp" && XDG_STATE_HOME="$tmp/state2" LOOMWRIGHT_MACHINE_STATE_DIR="$tmp/machine-sb" bash "$SUT" acquire gi --pid "$gi" --wait 2 2>/dev/null)"
+if [ -n "$out" ] && [ "$(mrecs)" = 1 ] && [ -f "$tmp/machine-sb/holders/$gi" ]; then
+  ok "(G6) a caller whose LOOMWRIGHT_MACHINE_STATE_DIR is another sandbox is isolated: granted under busy, this list untouched"
+else no "(G6) out=[$out] recs=$(mrecs) sb=[$(ls "$tmp/machine-sb/holders" 2>/dev/null)]"; fi
+lpat release --pid "$gi"
+rm -rf "$MDIR/holders/"*   # earlier live holders: two bare callers must fit the committed-work cap (G12)
+setload ok; live; gc=$LIVE; live; gc2=$LIVE
+n0="$(mrecs)"; at "$tmp/solo2" -- acquire gc --pid "$gc" >/dev/null 2>&1
+n1="$(mrecs)"; k="$(at "$tmp/solo2" -- acquire gc2 --pid "$gc2" 2>/dev/null)"; k="${k#slot=}"; k="${k%% *}"
+n2="$(mrecs)"; at "$tmp/solo2" -- release --slot "$k"; n3="$(mrecs)"; at "$tmp/solo2" -- release --pid "$gc"
+if [ "$n1" = $((n0 + 1)) ] && [ "$(sed -n 1p "$MDIR/holders/$gc" 2>/dev/null || echo "$gc")" = "$gc" ] && [ "$n2" = $((n0 + 2)) ] \
+   && [ "$n3" = $((n0 + 1)) ] && [ "$(mrecs)" = "$n0" ]; then
+  ok "(G7) a bare caller adds exactly one machine record; release --slot and --pid remove it"
+else no "(G7) records: before=$n0 +gc=$n1 +gc2=$n2 after --slot=$n3 after --pid=$(mrecs)"; fi
+at "$tmp/c1" -- release --pid "$gx"
+
+# (G8) read-only commands never wait on the gate
+live; gm=$LIVE; ln -s "$gm" "$MDIR/mutex.lnk"; setload hang
+t0=$(date +%s)
+at "$tmp/c1" -- status >/dev/null; at "$tmp/c1" -- status --json >/dev/null; at "$tmp/c1" -- dir >/dev/null
+at "$tmp/c1" -- release --pid 999999; rc=$?
+el=$(( $(date +%s) - t0 ))
+if [ "$el" -le 2 ] && [ "$rc" = 0 ] && [ "$(readlink "$MDIR/mutex.lnk")" = "$gm" ]; then
+  ok "(G8) status, status --json, dir and release return in ${el}s with the machine mutex held and a hanging reader"
+else no "(G8) read-only commands took ${el}s (rc=$rc)"; fi
+rm -f "$MDIR/mutex.lnk"; setload ok
+
+# (G9) no code path sends a signal (AC4): code lines only, `kill -0` allowed
+signals() {   # signals FILE… — print each code line that could signal another process
+  awk '/^[[:space:]]*#/ { next }
+       { l = $0; gsub(/kill -0/, "", l)
+         if (l ~ /(^|[^[:alnum:]_-])(pkill|killall|kill)([^[:alnum:]_-]|$)/) print FILENAME ":" FNR ": " $0 }' "$@"
+}
+hits="$(signals "$SUT" "$HERE/machine-load.sh")"
+if [ -z "$hits" ]; then ok "(G9) ci-slot.sh and machine-load.sh send no signal (kill -0 probes only)"
+else no "(G9) signal-sending code: $hits"; fi
+mut="$tmp/mut-kill.sh"
+sed 's/^  MH="\$h"$/  MH="$h"; kill "$NESTED_IN" 2>\/dev\/null/' "$SUT" > "$mut"
+if [ -s "$mut" ] && ! cmp -s "$mut" "$SUT" && bash -n "$mut"; then
+  if [ -n "$(signals "$mut")" ]; then ok "(G9) MUTATION CONTROL: an injected kill is caught"
+  else no "(G9) MUTATION CONTROL: an injected kill was not caught — (G9) proves nothing"; fi
+else no "(G9) MUTATION CONTROL: mutant not built (empty, unchanged or invalid)"; fi
+
+# (G10) a slow reader is not read as unknown
+slow_held() {   # slow_held SUT — exit 0 iff a 6 s overloaded reader holds a caller beside a live holder
+  local s="$1" h c rc out n
+  GWHY=""
+  cat > "$tmp/load-slow.sh" <<'EOS'
+echo start >> "$(dirname "$0")/g10.n"; sleep 6; echo end >> "$(dirname "$0")/g10.n"; echo "load1=40.00"; echo "state=overloaded"
+EOS
+  rm -rf "$MDIR/holders/"*   # exactly ONE machine holder (h): earlier live holders would trip the committed-work cap (G12)
+  setload ok; live; h=$LIVE; at "$tmp/c1" -- acquire g10h --pid "$h" >/dev/null 2>&1
+  rm -f "$MDIR/load" "$tmp/g10.n"   # no answered reading to stand in: the slow reader alone decides
+  live; c=$LIVE
+  # RECHECK 30: after the slow answer is taken no fresh reader starts inside this --wait.
+  out="$(cd "$tmp/lp" && XDG_STATE_HOME="$tmp/state2" LOOMWRIGHT_MACHINE_LOAD_CMD="$tmp/load-slow.sh" \
+    LOOMWRIGHT_MACHINE_LOAD_RECHECK=30 bash "$s" acquire g10c --pid "$c" --wait 9 2>"$tmp/g10.err")"; rc=$?
+  n="$(paste -sd' ' "$tmp/g10.n" 2>/dev/null)"
+  if [ "$rc" != 1 ] || [ -n "$out" ]; then GWHY="granted: rc=$rc out=[$out]"
+  elif ! grep -q "held for load: busy load1=unknown (reader still running after 5s) (1 machine-wide holder(s))" "$tmp/g10.err"; then GWHY="not held as busy while the reader ran: $(cat "$tmp/g10.err")"
+  elif ! grep -q "held for load: overloaded load1=40.00" "$tmp/g10.err"; then GWHY="the slow reader's own answer was never taken: $(cat "$tmp/g10.err")"
+  elif [ "$n" != "start end" ]; then GWHY="want one reader run start to end, got [$n]"
+  elif [ "$(cut -d' ' -f2- "$MDIR/load" 2>/dev/null)" != "overloaded 40.00" ]; then GWHY="cached reading [$(cat "$MDIR/load" 2>/dev/null)], want 'overloaded 40.00'"
+  fi
+  at "$tmp/c1" -- release --pid "$h"; lpat release --pid "$c"
+  [ -z "$GWHY" ]
+}
+if slow_held "$SUT"; then ok "(G10) a reader answering overloaded after 6 s holds the caller (busy meanwhile, then its own answer; one reader run)"
+else no "(G10) $GWHY"; fi
+mut="$tmp/mut-slow.sh"
+sed 's/then load_timed_out "\$t"; return 0; fi   # SLOW$/then LOAD_STATE=unknown; LOAD1=unknown; LOAD_AT="$t"; RP=""; return 0; fi/' "$SUT" > "$mut"
+if [ -s "$mut" ] && ! cmp -s "$mut" "$SUT" && bash -n "$mut"; then
+  if slow_held "$mut"; then no "(G10) MUTATION CONTROL: with a timed-out reader read as unknown the caller was still held — (G10) proves nothing"
+  else ok "(G10) MUTATION CONTROL: a timed-out reader read as unknown fails (G10) ($GWHY)"; fi
+else no "(G10) MUTATION CONTROL: mutant not built (empty, unchanged or invalid)"; fi
+# A hanging reader: a fresh answered reading stands in; a stale one does not (busy, sole caller granted).
+setload hang; live; c=$LIVE
+echo "$(date +%s) overloaded 40.00" > "$MDIR/load"
+out="$(lpat acquire g10f --pid "$c" --wait 2 2>"$tmp/g10.err")"; rc=$?
+if [ "$rc" = 1 ] && [ -z "$out" ] && grep -q "held for load: overloaded load1=40.00" "$tmp/g10.err"; then
+  ok "(G10) a hanging reader with an answered overloaded reading under 60 s old holds a caller with no other holder"
+else no "(G10) fresh stand-in: rc=$rc out=[$out] err=$(cat "$tmp/g10.err")"; fi
+echo "$(( $(date +%s) - 61 )) overloaded 40.00" > "$MDIR/load"
+out="$(lpat acquire g10f --pid "$c" --wait 2 2>/dev/null)"
+if [ -n "$out" ] && [ "$(cut -d' ' -f2- "$MDIR/load")" = "overloaded 40.00" ]; then
+  ok "(G10) with that reading 61 s old a hanging reader reads busy: a sole caller is granted, the cache untouched"
+else no "(G10) stale stand-in: out=[$out] cache=[$(cat "$MDIR/load")]"; fi
+lpat release --pid "$c"; setload ok
+
+# (G11) records from before this boot are dropped, never counted or folded into
+boot_ok() {   # boot_ok SUT — exit 0 iff every (G11) property holds; GWHY says which failed
+  local s="$1" c u out rc
+  GWHY=""; rm -f "$MDIR/holders/"*
+  live; c=$LIVE; live; u=$LIVE
+  # The test shell ($$) is the parent of --pid $c: a record naming it is an ancestor record.
+  printf '%s\n%s\n%s\n%s\n%s\n' "$$" "$tmp/c1" old-outer 1700000000 "$d1" > "$MDIR/holders/$$"
+  setload overloaded
+  out="$(cd "$tmp/lp" && XDG_STATE_HOME="$tmp/state2" LOOMWRIGHT_MACHINE_BOOT_TIME=1700000100 bash "$s" acquire g11 --pid "$c" --wait 2 2>/dev/null)"; rc=$?
+  if [ "$rc" != 1 ] || [ -n "$out" ]; then GWHY="folded into a pre-boot ancestor record: rc=$rc out=[$out]"
+  elif [ -e "$MDIR/holders/$$" ]; then GWHY="the pre-boot ancestor record was kept"
+  fi
+  lpat release --pid "$c"; rm -f "$MDIR/holders/"*
+  if [ -z "$GWHY" ]; then
+    printf '%s\n%s\n%s\n%s\n%s\n' "$u" "$tmp/c1" old-other 1700000000 "$d1" > "$MDIR/holders/$u"
+    setload busy
+    out="$(cd "$tmp/lp" && XDG_STATE_HOME="$tmp/state2" LOOMWRIGHT_MACHINE_BOOT_TIME=1700000100 bash "$s" acquire g11 --pid "$c" --wait 2 2>/dev/null)"
+    if [ -z "$out" ] || [ -e "$MDIR/holders/$u" ]; then GWHY="a pre-boot record with a live unrelated pid held the caller under busy: out=[$out]"; fi
+    lpat release --pid "$c"; rm -f "$MDIR/holders/"*
+  fi
+  if [ -z "$GWHY" ]; then
+    printf '%s\n%s\n%s\n%s\n%s\n' "$u" "$tmp/c1" old-other 1700000000 "$d1" > "$MDIR/holders/$u"
+    out="$(cd "$tmp/lp" && XDG_STATE_HOME="$tmp/state2" LOOMWRIGHT_MACHINE_BOOT_TIME=garbage bash "$s" acquire g11 --pid "$c" --wait 1 2>/dev/null)"; rc=$?
+    if [ "$rc" != 1 ] || [ ! -e "$MDIR/holders/$u" ]; then GWHY="unreadable boot time did not keep the record: rc=$rc out=[$out]"; fi
+    lpat release --pid "$c"; rm -f "$MDIR/holders/"*
+  fi
+  for p in $c $u; do kill "$p" 2>/dev/null; wait "$p" 2>/dev/null; done
+  setload ok
+  [ -z "$GWHY" ]
+}
+if boot_ok "$SUT"; then ok "(G11) pre-boot holder records are dropped (no false fold under overloaded, no phantom under busy); unreadable boot time keeps them"
+else no "(G11) $GWHY"; fi
+mut="$tmp/mut-boot.sh"
+grep -v '# BOOT$' "$SUT" > "$mut"
+if [ -s "$mut" ] && ! cmp -s "$mut" "$SUT" && bash -n "$mut"; then
+  if boot_ok "$mut"; then no "(G11) MUTATION CONTROL: without the boot-time prune (G11) still passed — it proves nothing"
+  else ok "(G11) MUTATION CONTROL: without the boot-time prune (G11) fails ($GWHY)"; fi
+else no "(G11) MUTATION CONTROL: mutant not built (empty, unchanged or invalid)"; fi
+
+# (G12) committed work at load ok: 12 CPUs and 2 slots ⇒ 6 jobs a suite ⇒ two suites machine-wide.
+# Three callers from three repo keys (so no repo pool holds anyone): the third waits although the
+# reader says ok, and is granted once a holder releases. This is the S3 wave-2 burst (three suites
+# 30 s apart all read ok on a lagging load1 and drove it to 63.6).
+commit_ok() {   # commit_ok SUT — exit 0 iff (G12) holds; GWHY says which failed
+  local s="$1" a b c ao bo co rc
+  GWHY=""; setload ok; rm -rf "$MDIR/holders/"*
+  live; a=$LIVE; live; b=$LIVE; live; c=$LIVE
+  ao="$(cd "$tmp/c1" && LOOMWRIGHT_CI_CPUS=12 LOOMWRIGHT_CI_SLOTS=2 bash "$s" acquire ca --pid "$a" 2>/dev/null)"
+  bo="$(cd "$tmp/lp" && XDG_STATE_HOME="$tmp/state2" LOOMWRIGHT_CI_CPUS=12 LOOMWRIGHT_CI_SLOTS=2 bash "$s" acquire cb --pid "$b" 2>/dev/null)"
+  co="$(cd "$tmp/c3" && LOOMWRIGHT_CI_CPUS=12 LOOMWRIGHT_CI_SLOTS=2 bash "$s" acquire cc --pid "$c" --wait 1 2>"$tmp/g12.err")"; rc=$?
+  if [ -z "$ao" ] || [ -z "$bo" ]; then GWHY="first two not granted: a=[$ao] b=[$bo]"
+  elif [ "$rc" != 1 ] || [ -n "$co" ]; then GWHY="third granted at load ok: rc=$rc out=[$co]"
+  elif ! grep -q "held for load: committed 12+6 jobs > 12 CPUs (2 machine-wide holder(s))" "$tmp/g12.err"; then GWHY="no committed-work hold line: $(tr '\n' ' ' < "$tmp/g12.err")"
+  fi
+  (cd "$tmp/c1" && bash "$s" release --pid "$a") >/dev/null 2>&1
+  if [ -z "$GWHY" ]; then
+    co="$(cd "$tmp/c3" && LOOMWRIGHT_CI_CPUS=12 LOOMWRIGHT_CI_SLOTS=2 bash "$s" acquire cc --pid "$c" --wait 5 2>/dev/null)"
+    [ -n "$co" ] || GWHY="third not granted after a holder released"
+  fi
+  (cd "$tmp/lp" && XDG_STATE_HOME="$tmp/state2" bash "$s" release --pid "$b") >/dev/null 2>&1
+  (cd "$tmp/c3" && bash "$s" release --pid "$c") >/dev/null 2>&1
+  [ -z "$GWHY" ]
+}
+if commit_ok "$SUT"; then ok "(G12) committed work: at load ok a third suite (3 repo keys, 12 CPUs, 6 jobs each) waits, and starts when a holder releases"
+else no "(G12) $GWHY"; fi
+mut="$tmp/mut-commit.sh"
+grep -v '# COMMIT$' "$SUT" > "$mut"
+if [ -s "$mut" ] && ! cmp -s "$mut" "$SUT" && bash -n "$mut"; then
+  if commit_ok "$mut"; then no "(G12) MUTATION CONTROL: without the committed-work cap (G12) still passed — it proves nothing"
+  else ok "(G12) MUTATION CONTROL: without the committed-work cap (G12) fails ($GWHY)"; fi
+else no "(G12) MUTATION CONTROL: mutant not built (empty, unchanged or invalid)"; fi
 
 echo
 echo "test-ci-slot: $pass passed, $fail failed"
