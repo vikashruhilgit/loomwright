@@ -77,6 +77,11 @@ kills anything. Lanes get slower under load; the machine stays responsive.
      (a fixture run is still one real holder);
    - `AGENT_GUIDELINES.md`: workers run suites through `ci-local` (or `ci-local --affected`, item 09), never a bare
      `run-self-tests.sh` in a loop.
+4b. **(Amended 2026-10-06 from Part 0.)** A cause outside candidates 1–4 was confirmed: **non-Loomwright work on
+   the same machine** (another project's `nest build` / `jest` workers, browser) and the macOS security daemons that
+   exec churn wakes (`syspolicyd`, `trustd`, `tccd`). The gate cannot hold work it does not start, so it must read
+   machine-wide load and pressure (Scope 2), never only its own holder count. No extra closure: recorded as a limit
+   (Loomwright backs off; it cannot stop the rest).
 5. **Never kill, never block reads.** The gate holds only new heavy starts. It never signals a running process, and
    `status`, `--last` and read-only commands never wait on it.
 
@@ -86,7 +91,8 @@ Per-agent CPU limits (`nice`, cgroups), killing or pausing running work, other m
 
 ## Acceptance criteria
 - AC1: `machine-load.sh --json` reports its five fields on macOS and on Linux (CI), maps pressure levels 1/2/4 to
-  ok/busy/overloaded on a fixture, and reports `state=unknown` with exit 0 when a value cannot be read.
+  ok/busy/overloaded on a fixture, and exits 0 when a value cannot be read, reporting `state=unknown` only when no
+  readable component says busy/overloaded (a readable busy/overloaded wins over an unreadable neighbour).
 - AC2: with a fixture load reader reporting `overloaded`, `ci-slot.sh acquire` holds the caller (ticket kept, order
   kept) and grants it within one re-check after the reader flips to `ok`. With `busy`, a second machine-wide holder
   waits.
@@ -115,3 +121,59 @@ Per-agent CPU limits (`nice`, cgroups), killing or pausing running work, other m
   reports under `/Library/Logs/DiagnosticReports/` (`panic-base+socd-2026-10-05-191808.panic`,
   `ResetCounter-2026-10-05-191809.diag`).
 - Item 08's own evidence: two clones with a per-checkout lock pushed load to 27 (one: 10).
+- **Part 0 attribution (2026-10-06, 16:04–16:14Z, base `a14db34`, before any gate code).** Setup in the session
+  scratchpad: clones `g1`, `g2` (`origin` = the GitHub URL) and `l1` (cloned from a local bare `bare.git`). Pre-start
+  check: load1 3.3, pressure level 1 (an earlier check read level 2, and I waited). ONE `ci-local --force` in `g1`
+  (slot 1 of 2, 6 jobs), `ps -A -o pid,ppid,pcpu,rss,command` every 10 s, and a self-stop at load1 ≥ 36.
+  - Load trace (load1, every 10 s): 2.9 → 9.6 by +150 s, 21.8 by +170 s, then 22–35 with pressure 1↔2. It hit
+    **36.3 at +400 s** and the watchdog TERMed my run (rc 143). One minute later load1 was **67.9**, 15-min 16.8.
+  - The same window also held: three other headless lanes (`claude -p --resume …`), lane **s3-g** running its own plain
+    `ci-local` (the shared pool's second slot: two suites ran at once on one repo key, which the pool allows), and
+    non-Loomwright work: a Tray/hub `nest build` (178 % CPU in one sample), then a Tray/hub `jest` run with 11
+    `jest-worker`s. That jest run kept load1 at 64–68 **after all my processes were gone**.
+  - Per-tree CPU (pcpu summed by nearest ancestor: `ci-local`, `claude`, other): my ci-local tree 20–90 %, the
+    s3-g ci-local 20–90 %, claude sessions 50–330 %, "other" (system daemons, the Tray/hub build, browser) 90–380 %.
+    The total sampled pcpu was 160–680 %, i.e. 1.6–6.8 CPUs, while load1 sat at 22–36. **Most of the load is not
+    visible as steady CPU in a 10 s snapshot.** It is short-lived process churn (each self-test forks thousands of
+    `bash`/`sed`/`awk`/`git`) plus I/O wait, and the security daemons that churn wakes (`syspolicyd` 13–46 %,
+    `trustd` up to 31 %, `tccd` up to 38 %). That is why the gate reads load1 and pressure, not a process count.
+  - Leftover finding: a TERM to `ci-local` (its direct children) left `run-self-tests` worker grandchildren running
+    (3 orphaned test shells, which I stopped by hand). Noted for item 09 / `ci-local`; out of scope here (the gate
+    never signals).
+  - **Candidate 1 confirmed** (state-dir inspection): `ci-slot.sh dir` gives `g1` = `g2` = pool `dd8a9612…`, and
+    `l1` (local bare origin) its own pool `e181ca8d…`. A third pool `ad034503…` (created 2026-10-04) already exists
+    on this machine from an earlier local-origin checkout. Each such pool had its own 2 slots.
+  - **Candidate 2 confirmed** (inspection): `test-ci-slot.sh` and `test-ci-local.sh` both export
+    `XDG_STATE_HOME=$tmp/state`, and `ci-slot.sh dir` under an `XDG_STATE_HOME` override resolves to a different
+    pool. Their fixture suites are light (stub gates), so this bypass is about counting, not load.
+  - **Candidate 3 confirmed** (inspection): `run-self-tests.sh` has no reference to `ci-slot.sh`. A bare runner takes
+    no slot, and a caller-set `SELF_TEST_JOBS` is passed through `ci-local` unchanged.
+  - **Candidate 4 confirmed** (samples): claude lane sessions were a steady 0.5–3.3 CPUs.
+  - **New cause outside 1–4:** non-Loomwright work plus the exec-churn security daemons. Scope amended (4b).
+
+- **Validation, 2026-10-06 (guard active, commit `4b7eade`).** `bash scripts/ci-local.sh` PASS after 674 s (CI slot 2
+  of 2: another lane held slot 1). Sampled load1 peaked at 24.6 (pre-start 8.4, pressure 1). Two earlier full runs
+  were not green, and neither was a gate deadlock: run 1 had its runner TERMed from outside (`Terminated: 15`, no
+  test FAIL banner). Run 2 found a real regression, now fixed: the nested-holder ancestry walk cost one `ps` per
+  level before the first poll, which on a loaded pool took longer than `test-ci-local` (L)'s
+  `CI_LOCAL_LOCK_WAIT=1`, so the waiter gave up before its first progress line. Fix: one `ps` per walk, run only
+  when a machine holder exists, and the first waiting line printed before any give-up. Run 2's apparent "stall"
+  was its long tail (`test-automate-trail.sh` 367 s, `test-meta-sync.sh` 266 s, alone at low load). No nested
+  acquire waited and no self-test read the real reader (all acquiring suites pin a fixture reader and sandbox
+  `LOOMWRIGHT_MACHINE_STATE_DIR`). A third run was cut by my own 600 s tool limit.
+- **AC7 not run (deliberately).** Threshold: overloaded = 36 on 12 CPUs, plus one 15 s re-check. S3 baseline 119
+  (not re-run). Other lanes were active all session: three headless lanes, s3-g's own `ci-local`, and a Tray/hub
+  `jest` run that alone held load1 at 64–82 earlier. One guarded `ci-local` beside them already sampled 24.6, and
+  the unguarded Part 0 run passed 36. Design note for the owner: the gate decides at START. Three runs started in
+  the same instant all read the same `ok` reading and are all admitted (1-minute load lags), so AC7's simultaneous
+  start would mostly measure that lag, not the gate. A staggered start, or a machine-wide cap even when `ok`, would
+  close it. Proposed as a follow-up, not done here. AC7 stays open for a run on a quiet machine.
+- 2026-10-07, owner fix-now: AC1's unknown clause reworded to the implemented rule (`state=unknown` only when no
+  readable component says busy/overloaded; a readable busy/overloaded wins over an unreadable neighbour). The safer
+  behaviour stays; only the wording changed, after the Phase 4.5 reviewer flagged the conflict.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-06T17:36:35Z
+- **Brief:** .supervisor/jobs/done/2026-10-06-machine-load-guard.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/402

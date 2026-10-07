@@ -105,3 +105,9 @@ declared paths, by number of open items naming them (companion expansion not cou
 `agents/supervisor.md` 6 · `test-automate-trail.sh` 5 · `test-automate-helpers.sh` 5. Scope 1 still re-ranks with
 `--explain` (companions included) once item 10 lands; the automate-loop SKILL.md is the clear first target, so
 Scope 4's "skill not split here" default needs revisiting.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-07T00:47:52Z
+- **Brief:** .supervisor/jobs/done/2026-10-06-split-shared-hotspot-files.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/408

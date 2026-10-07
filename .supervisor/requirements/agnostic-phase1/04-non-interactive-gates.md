@@ -99,3 +99,10 @@ loomwright/docs/prompt-token-budgets.json
 loomwright/docs/vendor-coupling-manifest.json
 loomwright/scripts/test-non-interactive-gates-seam.sh
 changelog.d/agnostic-phase1-04-non-interactive-gates.md
+
+<!-- loomwright:requirement-closeout -->
+## Status: done_with_escalation
+- **Completed:** 2026-10-06T18:32:39Z
+- **Brief:** .supervisor/jobs/done/2026-10-06-non-interactive-question-gates.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/403
+- **Heal:** max_iterations_reached — 1 remaining
