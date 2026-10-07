@@ -24,6 +24,7 @@
 #   6. rollback after a post-migration edit, add and delete: nothing lost, .gitignore restored
 #   7. mutation control: verify-pr without its re-check MUST fail (5)
 #   8. mutation control: the old M1 rollback order (revert -> meta-sync pull -> git add) MUST fail (6)
+#   9. mutation control: after-merge without its put-back of the files `git pull` deleted MUST fail
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -267,6 +268,16 @@ if build_mutant "$MUT" 's/^  rb_retrack_from_branch "\$br_sha" || /  bash "$MS" 
   if rollback_scenario "$MERGE_SHA"; then no "mutation control REFUTED: the M1 order kept the post-migration edit"; else ok "mutation control: the M1 order loses the post-migration edit ($ROLLBACK_DETAIL)"; fi
   SCRIPT="$SUT"
 else no "mutation control (M1 rollback) did not build — counts as FAIL"; fi
+
+echo "== 9. mutation control: after-merge without putting back what git pull deleted =="
+# In the seeding checkout meta-base exists, so a file `git pull` deleted reads as a LOCAL deletion:
+# meta-sync pull leaves it absent (and a later push would delete it from the branch).
+MUT="$TROOT/mut-restore"
+if build_mutant "$MUT" 's/^    mkdir -p "\$(dirname "\$ROOT\/\$p")" \&\& g cat-file blob/    : \&\& true || g cat-file blob/' ': && true || g cat-file blob'; then
+  hist_to_untrack; mb A verify-pr "$(pr_n pr_untrack)"; owner_merge "$(st A untrack_branch)"
+  SCRIPT="$MUT/migrate-branch-mode.sh"; mb A after-merge; SCRIPT="$SUT"
+  if [ "$RC" -eq 0 ] && [ -f "$W/A/.supervisor/jobs/done/a.md" ]; then no "mutation control REFUTED: after-merge restored the files without the put-back step"; else ok "mutation control: without the put-back, after-merge fails closed (rc=$RC)"; fi
+else no "mutation control (after-merge put-back) did not build — counts as FAIL"; fi
 
 echo
 echo "$pass passed, $fail failed"
