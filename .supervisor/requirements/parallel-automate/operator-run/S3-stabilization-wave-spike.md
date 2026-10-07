@@ -551,6 +551,24 @@ teardown, machine (load, swap, free) at peak.
   earned-fallback `code-reviewer` reviews it (assert on posted reviews, never on the check colour). hc/02 ↔ af/33
   (`emit-lifecycle.sh`, code) stays serialized.
 
+### Launch (2026-10-07, owner "go ahead, start caffeinate and launch the lanes" + "also setup the lanes" + "setup /lanes")
+- `caffeinate -i` (no timer) pid 46247, started 05:20Z by the operator on the owner's go. Throwaway records branch
+  `loomwright-meta-s3w3` (seeded by s3-h). Lanes: **s3-h** ms/07 · **s3-i** af/31 · **s3-j** af/33 launched 05:22Z;
+  **s3-k** hc/01 set up, held until one lane reaches review. Monitor = `s3-monitor.sh`; `/lanes` pane v0.4.0 copied
+  into this session's mods folder.
+- **Start-up closeout race, third wave in a row (pa/05 Scope 3, 2026-10-07 amendment):** s3-i finalized the same
+  three wave-2 run files (`automate-2026-10-06-154117/154217/154514`) as another lane within ~2 s; the other push
+  won, s3-i's three pushes failed, and its `meta-entry` pull then aborted the new run on 3 conflicts (correctly —
+  fail closed). Diff = timestamps + s3-i's own `meta-push FAILED` lines only. Operator fix 05:25Z: took the branch
+  copies, removed the 3 `.meta-push-failed` markers, relaunched s3-i. s3-i also said it ran closeout/finalize
+  before `meta-entry` (out of the skill's order) — by its own reading the race would have happened anyway.
+- **"Start new run?" asked by all three lanes this wave** (pa/12 evidence: consistent this time, wave 2 was not).
+- **Touches drift during a run (gap 7's sibling), s3-h / ms/07:** owner answers add `meta-sync.sh`,
+  `test-meta-sync.sh` (new `scrub` + `list-managed` subcommands), `setup-memory.sh`, `test-setup-memory.sh` (re-point
+  the `Next:` hint). No other wave-3 item declares them. D.4's docs go to the metadata branch, not the code PR.
+- s3-j / af/33's brief passed Plan Review on attempt 2/3 (attempt 1 caught a guard joining two different session
+  ids, so it never would have blocked); one MEDIUM advisory left to the worker's repo-wide grep (owner: save and run).
+
 ## Done when
 All items in the queue (19 after the 2026-10-06 restructures) merged or closed by the owner, each wave's records on `loomwright-meta`, lanes torn down with `leaks`
 empty, the measures above recorded in this file, and P2 (default lane count) revisited with S2 + S3 evidence.
