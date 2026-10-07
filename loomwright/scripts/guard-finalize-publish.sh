@@ -29,10 +29,11 @@
 # GUARD EVALUATION ORDER (cheap-first; no jq on the inert path — mirrors guard-test-integrity.sh):
 #   (i)   no `.supervisor/state.md`, no `## Session` block, or its status is not running|checkpoint
 #                                                         -> allow (non-Supervisor / finished run)
-#   (ii)  raw payload contains neither `push` nor `pr create`     -> allow, no jq
+#   (ii)  raw payload contains neither `push` nor `create`         -> allow, no jq
 #   (iii) jq missing / payload unparseable                         -> deny guard_unavailable
 #   (iv)  no `git push` / `gh pr create` simple command in the command string (split on && || ; |
-#         and newlines; leading `VAR=x` assignments and `git -C <dir>` / `-c <k=v>` tolerated)
+#         and newlines; leading `VAR=x` assignments, `command`, and git/gh GLOBAL options before
+#         the subcommand tolerated, e.g. `git --no-pager push`, `gh -R o/r pr create`)
 #                                                                  -> allow
 #   (v)   state.md records a `- branch:` and the checkout is on a different branch -> allow
 #         (a drain fix push / human push from another branch is never this run's publish)
@@ -145,7 +146,8 @@ read_session_block || allow
 PAYLOAD="$(cat 2>/dev/null || true)"
 # (ii) cheap substring pre-filter -> allow (no jq)
 case "$PAYLOAD" in
-  *push*|*"pr create"*) ;;
+  # `*create*`, not `*"pr create"*`: a gh global flag may sit between `pr` and `create`
+  *push*|*create*) ;;
   *) allow ;;
 esac
 
@@ -155,14 +157,46 @@ printf '%s' "$PAYLOAD" | jq -e 'type == "object"' >/dev/null 2>&1 || deny "guard
 CMD="$(printf '%s' "$PAYLOAD" | jq -r '.tool_input.command // empty' 2>/dev/null)"
 
 # (iv) is any simple command a publish?
+# A token walk, not a fixed regex: git and gh both accept GLOBAL options between the program and its
+# subcommand (`git --no-pager push`, `git --git-dir .git push`, `gh -R o/r pr create`,
+# `gh pr --repo o/r create`), and a regex that tolerates only a named few silently allows the rest.
+# Mirrors guard-test-integrity.sh's git-subcommand walk (the same bypass class, fixed there first):
+# skip `-*` / `--*=*` tokens, and consume the following value for the value-taking globals.
+# read -a word-splits without pathname expansion; bash 3.2 safe.
+# skip_global_opts <prog> <start idx> — echoes the index of the first non-option word in $words.
+skip_global_opts() {
+  local prog="$1" i="$2"
+  while [ "$i" -lt "${#words[@]}" ]; do
+    case "$prog:${words[$i]}" in
+      git:-C|git:-c|git:--git-dir|git:--work-tree|git:--namespace|git:--exec-path|git:--config-env|git:--super-prefix|git:--attr-source)
+        i=$((i + 2)) ;;
+      gh:-R|gh:--repo|gh:--hostname)
+        i=$((i + 2)) ;;
+      *:--*=*|*:-*)
+        i=$((i + 1)) ;;
+      *) break ;;
+    esac
+  done
+  printf '%s' "$i"
+}
 is_publish_segment() {
-  local seg="$1"
-  local re_assign='^[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+'
-  while [[ "$seg" =~ $re_assign ]]; do seg="${seg#"${BASH_REMATCH[0]}"}"; done
-  local re_git='^(command[[:space:]]+)?git([[:space:]]+(-C|-c)[[:space:]]+[^[:space:]]+)*[[:space:]]+push([[:space:]]|$)'
-  local re_gh='^(command[[:space:]]+)?gh[[:space:]]+pr[[:space:]]+create([[:space:]]|$)'
-  [[ "$seg" =~ $re_git ]] && return 0
-  [[ "$seg" =~ $re_gh ]] && return 0
+  local words=() i=0 prog
+  read -r -a words <<<"$1"
+  # leading VAR=x assignments, then an optional `command` builtin prefix
+  while [ "$i" -lt "${#words[@]}" ] && [[ "${words[$i]}" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; do i=$((i + 1)); done
+  [ "${words[$i]:-}" = "command" ] && i=$((i + 1))
+  prog="${words[$i]:-}"
+  case "$prog" in
+    git)
+      i="$(skip_global_opts git $((i + 1)))"
+      [ "${words[$i]:-}" = "push" ] && return 0 ;;
+    gh)
+      i="$(skip_global_opts gh $((i + 1)))"
+      [ "${words[$i]:-}" = "pr" ] || return 1
+      # gh's persistent flags (-R/--repo) are also accepted between `pr` and `create`
+      i="$(skip_global_opts gh $((i + 1)))"
+      [ "${words[$i]:-}" = "create" ] && return 0 ;;
+  esac
   return 1
 }
 publish=0

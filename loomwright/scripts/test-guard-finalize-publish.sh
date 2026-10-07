@@ -7,8 +7,9 @@
 # stdin. No network, no gh, no Docker. bash 3.2 / BSD userland safe.
 #
 # Covers (V3): push before the check -> denied (exit 2 + permissionDecision deny); gh pr create and
-# chained `cd … && git push` / `git -C … push` forms -> denied; after a passing check -> allowed; HEAD
-# moved after the check -> denied; --skip-children-check -> allowed and recorded `skipped`;
+# chained `cd … && git push` / `git -C … push` forms and git/gh GLOBAL options before the subcommand
+# (`git --no-pager push`, `gh -R o/r pr create`) -> denied, with a fixed-regex mutation control;
+# after a passing check -> allowed; HEAD moved after the check -> denied; --skip-children-check -> allowed and recorded `skipped`;
 # non-Supervisor session / terminal session / drain push from another branch / non-publish command
 # -> allowed; the inert path needs no jq; session join via the log-owner cc_session_id (state.md
 # plugin id != payload id, owner == payload id -> ACTIVE); a resumed run (owner != payload id) ->
@@ -83,6 +84,22 @@ run_guard "$RS" "cd /tmp && git push origin HEAD"; expect "chained cd && git pus
 run_guard "$RS" "GIT_TRACE=0 git -C . push"; expect "VAR= git -C . push -> denied" 2
 run_guard "$RS" "git push" "cc-uuid-1"; expect "join: owner == payload sid -> active, reason names this session" 2 "this session"
 
+echo "== global options before the publish subcommand -> still denied =="
+GLOBAL_DENY_CASES=(
+  "git --no-pager push origin main"
+  "git -p push"
+  "git --git-dir=.git push"
+  "git --git-dir .git push"
+  "command git --no-pager -C . push"
+  "gh -R o/r pr create --fill"
+  "gh --repo o/r pr create --fill"
+  "gh pr --repo o/r create --fill"
+)
+for c in "${GLOBAL_DENY_CASES[@]}"; do run_guard "$RS" "$c"; expect "$c -> denied" 2; done
+run_guard "$RS" "git --no-pager stash push"; expect "git --no-pager stash push -> allowed" 0
+run_guard "$RS" "git stash push -m x"; expect "git stash push -> allowed" 0
+run_guard "$RS" "gh --repo o/r pr view 1"; expect "gh --repo o/r pr view -> allowed" 0
+
 echo "== marker writer =="
 hang_child "$RS"
 write_marker "$RS"
@@ -140,6 +157,38 @@ else
   run_guard "$RM" "git push" cc-uuid-1 "$MUT"
   [ "$RC" = 0 ] && ok "mutation control: removing the marker check flips 'push before check' to allowed" \
     || no "mutation control: mutant still rc=$RC — the marker check is vacuous"
+fi
+# The pre-fix fixed-regex detector (only `-C`/`-c` tolerated after git, nothing after gh) must FAIL
+# the global-option deny cases above — proves those cases exercise the token walk.
+MUT2="$TMP/mutant-regex.sh"
+awk '
+  /^is_publish_segment\(\) \{/ {
+    print "is_publish_segment() {"
+    print "  local seg=\"$1\""
+    print "  local re_assign='"'"'^[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+'"'"'"
+    print "  while [[ \"$seg\" =~ $re_assign ]]; do seg=\"${seg#\"${BASH_REMATCH[0]}\"}\"; done"
+    print "  local re_git='"'"'^(command[[:space:]]+)?git([[:space:]]+(-C|-c)[[:space:]]+[^[:space:]]+)*[[:space:]]+push([[:space:]]|$)'"'"'"
+    print "  local re_gh='"'"'^(command[[:space:]]+)?gh[[:space:]]+pr[[:space:]]+create([[:space:]]|$)'"'"'"
+    print "  [[ \"$seg\" =~ $re_git ]] && return 0"
+    print "  [[ \"$seg\" =~ $re_gh ]] && return 0"
+    print "  return 1"
+    print "}"
+    skip = 1; next
+  }
+  skip && /^\}/ { skip = 0; next }
+  !skip { print }
+' "$GUARD" > "$MUT2"
+if cmp -s "$MUT2" "$GUARD" || ! grep -q 're_git=' "$MUT2"; then
+  no "mutation control (regex): is_publish_segment not found, control inconclusive"
+else
+  RM2="$(new_repo running)"
+  run_guard "$RM2" "git push" cc-uuid-1 "$MUT2"
+  [ "$RC" = 2 ] || no "mutation control (regex): mutant does not deny plain git push (rc=$RC) — mutant broken"
+  missed=0
+  for c in "${GLOBAL_DENY_CASES[@]}"; do run_guard "$RM2" "$c" cc-uuid-1 "$MUT2"; [ "$RC" = 0 ] && missed=$((missed+1)); done
+  [ "$missed" = "${#GLOBAL_DENY_CASES[@]}" ] \
+    && ok "mutation control (regex): the fixed-regex detector allows all $missed global-option publish forms" \
+    || no "mutation control (regex): fixed-regex detector allowed only $missed/${#GLOBAL_DENY_CASES[@]} — a case does not exercise the walk"
 fi
 
 echo
