@@ -840,6 +840,7 @@ Each basis is tuned by env vars read by its own script, all optional. Ledger bas
 /automate --resume [<run_id>]                     # reconcile + continue a prior incomplete run
 /automate ... --auto-merge                        # opt-in, default-OFF, fail-closed merge gate (conditions: skills/automate-loop/SKILL.md §10)
 /automate ... --trust-unprotected                 # with --auto-merge: allow merge onto an unprotected branch (condition 4 ONLY — never overrides condition 6, the high-risk park)
+/automate ... --parallel N                        # opt-in lanes: up to N independent items at once, each in its own local clone (refused with --auto-merge)
 ```
 
 **Parameters:**
@@ -847,6 +848,7 @@ Each basis is tuned by env vars read by its own script, all optional. Ledger bas
 - `--limit N` — cap PROCESSED items this run (default 5); the FULL resolved Queue is still materialized in the run file
 - `--resume [<run_id>]` — reconcile + continue a prior incomplete run (most-recent incomplete if id omitted)
 - `--auto-merge` — opt-in (default OFF) trusted auto-merge behind the fail-closed trusted-merge gate (conditions enumerated in `skills/automate-loop/SKILL.md` §10); the **only** place in the plugin that executes `gh pr merge --squash`. Condition 6 re-classifies the PR head with `scripts/classify-risk.sh` and parks any high-risk or unclassifiable diff — nothing overrides it
+- `--parallel N` — opt-in lanes: N > 1 runs up to N independent items at once, each in its own local clone; a READY lane parks `ready_for_release` (do not merge yet — wave open); a lane launches only on a command the owner typed in this session; absent or N = 1 ⇒ unchanged (`skills/automate-loop/SKILL.md` §14)
 - `--trust-unprotected` — with `--auto-merge`: allow merge onto a branch without enforceable protection. Scoped to condition 4 ONLY; it does not override condition 6, and no flag, config key, or project file does
 - `--notify` / `--non-interactive-fallback` — passthrough to the inner `/autonomous`
 
@@ -856,7 +858,7 @@ Each basis is tuned by env vars read by its own script, all optional. Ledger bas
 
 **When NOT to Use:**
 - A single requirement → `/autonomous` directly
-- Two concurrent `/automate` runs in one repo (they collide on the repo-global `.auto_review` toggle)
+- Two concurrent `/automate` runs in one checkout (they collide on the repo-global `.auto_review` toggle) — use `--parallel N`, which runs each item in its own lane clone
 
 **Learn More:** see `loomwright/commands/automate.md`; the protocol authority is `loomwright/skills/automate-loop/SKILL.md`, and the run-file layout is documented as `AUTOMATE_RUN` in `loomwright/docs/RESULT_SCHEMAS.md`.
 
