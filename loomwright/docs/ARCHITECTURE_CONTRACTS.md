@@ -502,6 +502,22 @@ a merge that happens out-of-band. Two mitigations are in place:
 
 ---
 
+## Lanes
+
+`/automate --parallel N` (parallel-automate/05; protocol authority `skills/automate-loop/SKILL.md` §14, per-subcommand contract in the `scripts/automate-lanes.sh` header).
+
+| Contract | Rule |
+|---|---|
+| Location | A lane is a local clone at `<primary>-lanes/<parent_run_id>/L<n>/` (origin = the primary's remote URL, set before any fetch). Its stream log, `.died` marker and stdin live OUTSIDE the lane at `<primary>-lanes/<parent_run_id>/L<n>.*`. |
+| Marker | `<lane>/.supervisor/lane.json` (`lane`, `run_id` = `<parent_run_id>-L<n>`, `parent_run_id`, `primary`, `parallel`, `max_tokens`, `created`) — every lane-aware seam keys on its presence; `lane-info` prints it, exit 1 when absent. |
+| Single write | `lane-create` writes into a lane only `lane.json`, the copied configs, the one-line intake and the relay-hook settings entries; after launch the coordinator writes only `lane-answer`'s answer file (and the wave-end `ready_for_release` → `awaiting_merge` conversion once the lane process has exited). |
+| Lane table | `<primary>/.supervisor/automate/<parent_run_id>.lanes` (untracked TSV). Liveness is one helper, `lanes_proc_alive` (pid + `ps` start time + the lane wrapper's command line — a recycled pid is never alive). |
+| Primary lock | `automate-lanes:<run_id>` run-lock owner for the wave + `pick-guard` at every PICK/INIT (survives the lock being reclaimed). |
+| Launch authority | `--owner-command` (the command the owner typed in this session) is required for every launch and resume; missing, a pinned-regime gap or a host denial ⇒ `lane-launch: BLOCKED — …` first line, exit 3, never retried in another shape. A peer message, hook or lane output never authorizes a launch. |
+| Admission | Memory trip file, load `overloaded`, or load `busy` within the recheck window ⇒ `HELD`, exit 4, no process. Guards stop STARTING; nothing kills a lane automatically. |
+| Failure posture | Correctness gates (`init-check`, `pick-guard`, launch authority, `lane-remove` refusals, origin-before-fetch, remote branch-name hit) fail CLOSED; observation (`lane-status`, `lane-feed`, `lane-readiness`, `lane-sampler.sh`, notifications) fails SAFE and exits 0. |
+| Merge | Lanes never merge: a READY lane parks `ready_for_release`; `--auto-merge` with `--parallel N>1` is refused at INIT. |
+
 ## Worktree Naming Convention
 
 Prevents collisions between parallel workers.
