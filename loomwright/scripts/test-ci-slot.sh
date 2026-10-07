@@ -77,6 +77,12 @@
 #        (G12) committed work: at load ok, 12 CPUs / 2 slots (6 jobs a suite), three callers from
 #             three repo keys ⇒ two granted, the third held ("held for load: committed 12+6 jobs >
 #             12 CPUs") and granted once a holder releases. MUTATION CONTROL: drop the cap ⇒ fails.
+#        (G14) NESTED (repo-pool fold): with N=1 and its holder alive, a caller whose --pid descends
+#             from that holder — from a linked worktree of the same origin, at load overloaded — is
+#             granted at once with the holder's slot, records no ticket, slot or machine record, and
+#             its release leaves the holder's slot in place; a sibling (not nested) caller still
+#             waits and times out. This is the shape of ci-local.sh running run-self-tests.sh, which
+#             asks for admission too. MUTATION CONTROL: drop the fold ⇒ the nested caller waits.
 # run-self-tests: serial
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -764,6 +770,52 @@ if [ -s "$mut" ] && ! cmp -s "$mut" "$SUT" && bash -n "$mut"; then
   if commit_ok "$mut"; then no "(G12) MUTATION CONTROL: without the committed-work cap (G12) still passed — it proves nothing"
   else ok "(G12) MUTATION CONTROL: without the committed-work cap (G12) fails ($GWHY)"; fi
 else no "(G12) MUTATION CONTROL: mutant not built (empty, unchanged or invalid)"; fi
+
+# (G14) NESTED: a caller nested in a live holder of THIS repo's pool folds into it before the count
+# (N=1 here: without the fold the child would wait on its own parent until --wait).
+repofold_ok() {   # repofold_ok SUT — exit 0 iff (G14) holds; GWHY says which failed
+  local s="$1" out
+  GWHY=""; setload ok; rm -rf "$MDIR/holders/"*
+  cat > "$tmp/g14.sh" <<'EOF'
+export LOOMWRIGHT_CI_SLOTS=1 LOOMWRIGHT_CI_CPUS=12
+o="$(cd "$1/c1" && bash "$2" acquire g14outer --pid $$ 2>/dev/null)" || { echo "outer-not-granted"; exit 1; }
+ok_slot="${o#slot=}"; ok_slot="${ok_slot%% *}"
+echo overloaded > "$1/load.state"
+sleep 60 & c=$!
+sib="$3"   # a live pid of the test shell's: NOT a descendant of this holder
+d="$(cd "$1/c1" && bash "$2" dir)"
+t0=$(date +%s)
+in="$(cd "$1/wt1" && bash "$2" acquire g14inner --pid "$c" --wait 2 2>/dev/null)"; irc=$?
+el=$(( $(date +%s) - t0 ))
+nt="$(ls "$d/tickets" | wc -l | tr -d ' ')"; ns="$(ls "$d/slots" | wc -l | tr -d ' ')"
+nm="$(ls "$1/machine/holders" | wc -l | tr -d ' ')"
+(cd "$1/wt1" && bash "$2" release --pid "$c")
+kept="$( [ -d "$d/slots/$ok_slot" ] && echo kept || echo gone )"
+echo ok > "$1/load.state"
+sout="$(cd "$1/wt1" && bash "$2" acquire g14sib --pid "$sib" --wait 1 2>/dev/null)"; src=$?
+kill "$c" 2>/dev/null
+cd "$1/c1" && bash "$2" release --pid $$
+if [ "$in" = "slot=$ok_slot jobs=12" ]; then same=holder-slot; else same="other-slot[$in]"; fi
+echo "inner=$irc $same ${el}s tickets=$nt slots=$ns mrecs=$nm $kept sibling=$src:$sout"
+EOF
+  live
+  out="$(bash "$tmp/g14.sh" "$tmp" "$s" "$LIVE")"
+  (cd "$tmp/wt1" && bash "$s" release --pid "$LIVE") >/dev/null 2>&1; kill "$LIVE" 2>/dev/null
+  case "$out" in
+    "inner=0 holder-slot "[01]"s tickets=0 slots=1 mrecs=1 kept sibling=1:") ;;
+    *) GWHY="nested caller not folded at once into its holder's slot (or the fold left a record / passed a sibling): $out" ;;
+  esac
+  setload ok
+  [ -z "$GWHY" ]
+}
+if repofold_ok "$SUT"; then ok "(G14) a caller nested in a live holder of this repo's pool (N=1, overloaded) gets the holder's slot at once, records nothing; a sibling still waits"
+else no "(G14) $GWHY"; fi
+mut="$tmp/mut-repofold.sh"
+grep -v '# REPOFOLD$' "$SUT" > "$mut"
+if [ -s "$mut" ] && ! cmp -s "$mut" "$SUT" && bash -n "$mut"; then
+  if repofold_ok "$mut"; then no "(G14) MUTATION CONTROL: without the repo-pool fold (G14) still passed — it proves nothing"
+  else ok "(G14) MUTATION CONTROL: without the repo-pool fold (G14) fails ($GWHY)"; fi
+else no "(G14) MUTATION CONTROL: mutant not built (empty, unchanged or invalid)"; fi
 
 echo
 echo "test-ci-slot: $pass passed, $fail failed"
