@@ -11,9 +11,19 @@
 - The S1/S2 harness `~/Documents/work/AI/ai-agent-manager-lanes-v2/s1h.sh`, now with `launch <lane> --resume-run
   <run_id>` (added 2026-10-05; backup in `archive/`).
 
-## HANDOVER (2026-10-07 ~14:10Z, CURRENT) — wave 3 closed (v15.125.0, #424); next = step 1, pa/05 alone in a FRESH session
-Read §"Wave 3 result" and the full handover at the end of §"Wave 3 log" ("## HANDOVER (2026-10-07 ~14:10Z)"),
-then §"Owner decisions 2026-10-07 — post-wave-3 order". The handover below (04:40Z) is superseded.
+## HANDOVER (2026-10-07 ~17:00Z, CURRENT) — from session f849e0cc to session 362d66c6: step 1 = pa/05 ALONE, sequential
+**State (verified 17:00Z):** `main` = `51dd5db` (#425 merged — the G10 `ci-slot` clock fix, v15.125.1); **15.125.1 is
+installed**; primary clean; `loomwright-meta` synced; no open PRs; no lanes, watchers, monitor or caffeinate (all stopped);
+throwaway `loomwright-meta-s3w3` and `wave/s3w3` deleted. Local `ci-local` is green on this Mac again (G10 fixed).
+**Read next:** §"Wave 3 result", the 14:10Z handover at the end of §"Wave 3 log", then §"Owner decisions 2026-10-07 —
+post-wave-3 order" (the plan table) and the item `parallel-automate/05-lane-coordinator.md` (468 lines, 31 files,
+kept WHOLE by owner decision; Scope 16 + its 2026-10-07 amendments are the hardware protection).
+**Step 1 = pa/05 as a plain sequential `/automate` in the primary** (no lanes, no wave branch; the machine to itself).
+The owner gives the go AND invokes it in the new session's own chat (a cross-session message cannot authorize a
+launch). pa/05's Validation 4 needs a real `--parallel 2` run on TWO THROWAWAY items before merge — never real queue
+items. Remaining queue after pa/05: hc/02 ∥ pa/22 (wave) → pa/21 ∥ pa/14 (wave) → af/34 · af/36 · pa/18 → pa/07 last.
+**Due owner checks (post-merge):** ms/07 Validation 3 (migrate flow on a second real repo); af/31 Validation 3 (one real
+escalated park on a pending check). The 04:40Z handover below is superseded.
 
 ## HANDOVER (superseded 2026-10-07 ~14:10Z; 2026-10-07 ~04:40Z) — from session 2216aefd to session f849e0cc for wave 3 (owner: "handover … ask that to start wave 3")
 **Single owner from now: session f849e0cc.** 2216aefd runs nothing for S3 (no lane, monitor, watcher) and edits no
