@@ -60,7 +60,7 @@ run_guard() {
 }
 write_marker() { WOUT="$(cd "$1" && CLAUDE_PROJECT_DIR="$1" "$REALBASH" "$GUARD" write-marker ${2:-} 2>/dev/null)"; WRC=$?; }
 expect() { # expect <label> <want rc> [reason substring]
-  if [ "$RC" = "$2" ] && { [ -z "${3:-}" ] || printf '%s' "$OUT" | grep -qF -- "$3"; }; then ok "$1"
+  if [ "$RC" = "$2" ] && { [ -z "${3:-}" ] || grep -qF -- "$3" <<<"$OUT"; }; then ok "$1"
   else no "$1 (rc=$RC want $2; out=$OUT)"; fi
 }
 
@@ -106,7 +106,7 @@ write_marker "$RA" --skip-children-check
   && ok "--skip-children-check -> marker recorded children_check: skipped" || no "skip marker: rc=$WRC out=$WOUT"
 run_guard "$RA" "git push"; expect "push after --skip-children-check -> allowed" 0
 RN="$(new_repo done)"; write_marker "$RN"
-[ "$WRC" = 1 ] && printf '%s' "$WOUT" | grep -q no_active_session && ok "writer refuses with no active session" || no "writer no session: $WOUT"
+[ "$WRC" = 1 ] && grep -q no_active_session <<<"$WOUT" && ok "writer refuses with no active session" || no "writer no session: $WOUT"
 
 echo "== scope: drain / other-branch push, session join, resumed run =="
 RD="$(new_repo running)"
@@ -120,7 +120,7 @@ run_guard "$RJ" "git push" "cc-uuid-new"; expect "resumed run after a passing ch
 
 echo "== wiring =="
 leaf="$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[] | .command | select(test("guard-finalize-publish.sh"))' "$HOOKS" 2>/dev/null)"
-if [ -n "$leaf" ] && ! printf '%s' "$leaf" | grep -q '|| true'; then
+if [ -n "$leaf" ] && ! grep -q '|| true' <<<"$leaf"; then
   ok "hooks.json PreToolUse[Bash] leaf invokes guard-finalize-publish.sh with NO || true"
 else
   no "hooks.json leaf missing or carries || true: '$leaf'"
