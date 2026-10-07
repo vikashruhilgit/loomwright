@@ -145,6 +145,31 @@ jobs:
         # in the script so the same command runs locally; test-run-self-tests.sh covers them.
         run: bash loomwright/scripts/run-self-tests.sh
 
+      # Read-only run-history pull (meta-sync-followups/07, D.3). Since this repo moved its run
+      # history to a metadata branch, a CI checkout has no .supervisor/jobs/done/, so the sdk-spike
+      # corpus sweep below prints SKIP. Placement is deliberate: AFTER the self-test suite (two of
+      # its tests change behaviour when real run history is present) and BEFORE the sdk-spike
+      # steps. `meta-sync.sh pull` never pushes. The branch comes from the COMMITTED .gitignore
+      # mode line (`setup-memory.sh mode`); default mode, a missing remote branch, or any failure
+      # is reported and leaves the job exactly as before — this step can never fail the job.
+      - name: Pull run history from the metadata branch (read-only, never fails the job)
+        continue-on-error: true
+        run: |
+          mode="$(bash loomwright/scripts/setup-memory.sh --root "$GITHUB_WORKSPACE" mode 2>/dev/null | head -n 1)"
+          case "$mode" in
+            "on "*) branch="${mode#on }" ;;
+            *) echo "meta-sync pull skipped: mode is '${mode:-<unreadable>}', not branch mode"; exit 0 ;;
+          esac
+          if ! git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            echo "meta-sync pull skipped: origin has no branch '$branch' (or origin is unreachable)"
+            exit 0
+          fi
+          if bash loomwright/scripts/meta-sync.sh pull --branch "$branch" --root "$GITHUB_WORKSPACE"; then
+            echo "meta-sync pull: run history restored from '$branch'"
+          else
+            echo "::warning::meta-sync.sh pull --branch $branch failed; continuing without run history"
+          fi
+
       # The sdk-spike suite is NOT matched by the `loomwright/scripts/test-*.sh` glob above
       # (it lives under `loomwright/sdk-spike/test/`), so until v15.20.0 it never ran in CI at
       # all — while `src/runner.ts` absorbed 13 fix commits on this feature's branch alone.

@@ -118,6 +118,10 @@
 #        `git add`ed, remove reports the THIRD tracked count for the ledger path (non-zero, so it
 #        cannot pass trivially), re-ignores the ledger (probed with git, not a .gitignore grep) and
 #        names all three stores in its `git rm -r --cached` remediation
+#   (vb) `valid-branch <name>`: exit 0 iff the ONE valid_branch_name predicate accepts (accept, `off`,
+#        `HEAD`, `@`, a `-`-leading name, an invalid ref …), one stderr reason line on refusal, no
+#        file changed; its verdict agrees with `apply --branch-mode`, and a refuse-all mutant of
+#        the predicate turns its accept red (it calls the predicate, never a copy)
 #   (k)  the suite never touched the plugin repo's own .gitignore
 #
 # EVERY LEDGER ASSERTION IN THIS FILE USES jq, NEVER grep. A findings ledger mixes compact
@@ -1880,14 +1884,14 @@ for o_lbl in "apply:$oa" "check:$oc"; do
   lbl="${o_lbl%%:*}"; o="${o_lbl#*:}"
   if hasF 'What becomes VERSION-CONTROLLED if you apply this (BRANCH MODE — metadata branch `loomwright-meta`):' "$o" \
      && hasF 'so there is nothing to commit for run history on this branch' "$o" \
-     && hasF 'Untracking it is a separate, deliberate operator step (the migration runbook, M1), never this' "$o" \
+     && hasF 'Untracking it is a separate, deliberate operator step (migrate-branch-mode.sh plan), never this' "$o" \
      && ! hasF '.supervisor/requirements/** — the intake' "$o" && ! hasF 'GATED: it is un-ignored only while' "$o"; then
-    ok "(fn-1) $lbl prints the BRANCH-MODE disclosure (memory stores only; run history on the metadata branch; untracking is M1, not this helper)"
+    ok "(fn-1) $lbl prints the BRANCH-MODE disclosure (memory stores only; run history on the metadata branch; untracking starts at migrate-branch-mode.sh plan, not this helper)"
   else no "(fn-1) $lbl disclosure still describes the default block"; fi
 done
 if hasF '  git status --short .claude/agent-memory .supervisor/memory' "$oa" && ! hasF '.supervisor/memory .supervisor/requirements' "$oa" \
    && hasF "Run history lives on the metadata branch 'loomwright-meta' (meta-sync.sh)," "$oa" \
-   && hasF 'not on this branch — there is nothing to commit for it here.' "$oa" && hasF '(the migration runbook, M1), never this' "$oa"; then
+   && hasF 'not on this branch — there is nothing to commit for it here.' "$oa" && hasF '(migrate-branch-mode.sh plan), never this' "$oa"; then
   ok "(fn-1) apply --branch-mode Next: hint names only the two memory stores and says run history lives on the metadata branch"
 else no "(fn-1) apply --branch-mode Next: hint: $(grep -A5 '^Next:' <<< "$oa")"; fi
 o="$(mem "$Bfn" apply 2>/dev/null)"
@@ -1974,6 +1978,50 @@ if cmp -s "$MEM" "$FN_D/mut5.sh"; then no "(fn-5) mutation self-check: the patch
 elif [ -s "$FN_D/mark" ]; then ok "(fn-5) mutation self-check: without the subcommand scope 'allowlist' runs read_mode (the probe is load-bearing)"
 else no "(fn-5) mutation self-check: unscoped copy still shows no read_mode for allowlist"; fi
 rm -rf "$FN_D"
+
+echo "== (vb) valid-branch <name>: the SAME valid_branch_name predicate apply uses, exit code = answer, writes nothing =="
+# A caller (migrate-branch-mode.sh) must vet a branch name BEFORE anything is written; `apply`
+# exits 0 on a refusal, so only this predicate's exit code can answer. It must be the one
+# predicate `apply --branch-mode` uses (a copy could drift), and it must write nothing.
+Vb="$(newgit https://github.com/acme/widgets.git)"; printf 'node_modules/\n.supervisor/\n' > "$Vb/.gitignore"
+vb_snap() { (cd "$1" && find . -path ./.git -prune -o -type f -print | env LC_ALL=C sort | while IFS= read -r f; do printf '%s %s\n' "$f" "$(cksum < "$f")"; done; git status --porcelain; git rev-parse HEAD) 2>/dev/null; }
+vb_before="$(vb_snap "$Vb")"
+# vb_run <name> — run valid-branch with the fixture as BOTH the cwd and --root; sets VB_RC / VB_ERR / VB_OUT.
+vb_run() { VB_ERR="$(cd "$Vb" && bash "$MEM" --root "$Vb" valid-branch "$1" 2>&1 >"$FIXTURE_ROOT/vb.out")"; VB_RC=$?; VB_OUT="$(cat "$FIXTURE_ROOT/vb.out")"; }
+for good in loomwright-meta team-meta lane/z; do
+  vb_run "$good"
+  if [ "$VB_RC" -eq 0 ] && [ -z "$VB_ERR" ] && [ -z "$VB_OUT" ]; then ok "(vb) '$good' is accepted: exit 0, silent"; else no "(vb) '$good' ⇒ rc=$VB_RC err='$VB_ERR' out='$VB_OUT'"; fi
+done
+for bad in off HEAD @ -x --root 'a..b' '@{-1}' 'bad name' ''; do
+  vb_run "$bad"
+  nl="$(printf '%s\n' "$VB_ERR" | awk 'END { print NR }')"
+  if [ "$VB_RC" -eq 1 ] && [ "$nl" -eq 1 ] && hasF "valid-branch: '$bad' is not a valid metadata branch name" "$VB_ERR" && [ -z "$VB_OUT" ]; then ok "(vb) '$bad' is refused: exit 1, ONE reason line on stderr"; else no "(vb) '$bad' ⇒ rc=$VB_RC lines=$nl err='$VB_ERR' out='$VB_OUT'"; fi
+done
+VB_ERR="$(bash "$MEM" --root "$Vb" valid-branch 2>&1 >/dev/null)"; VB_RC=$?
+[ "$VB_RC" -eq 1 ] && ok "(vb) a missing name is refused (exit 1)" || no "(vb) missing name ⇒ rc=$VB_RC ($VB_ERR)"
+VB_ERR="$(bash "$MEM" --root "$Vb" valid-branch loomwright-meta --branch-mode loomwright-meta 2>&1 >/dev/null)"; VB_RC=$?
+if [ "$VB_RC" -eq 1 ] && hasF 'valid-branch takes only a name' "$VB_ERR"; then ok "(vb) a flag it could only ignore (--branch-mode) is refused (exit 1)"; else no "(vb) valid-branch + --branch-mode ⇒ rc=$VB_RC ($VB_ERR)"; fi
+[ "$(vb_snap "$Vb")" = "$vb_before" ] && ok "(vb) no file changed: every fixture file, git status and HEAD byte-identical" || no "(vb) valid-branch changed the fixture"
+if [ ! -e "$Vb/.supervisor/config.json" ] && [ -z "$(ls "$Vb"/.gitignore.backup.* 2>/dev/null)" ]; then ok "(vb) no .supervisor/config.json and no .gitignore.backup.* were created"; else no "(vb) valid-branch left a config or a backup"; fi
+# Parity with the writer: for the names apply's predicate judges, valid-branch's verdict equals
+# whether `apply --branch-mode <name>` records the mode line (a fresh fixture per name).
+for nm in loomwright-meta team-meta HEAD @ 'a..b' '@{-1}'; do
+  bash "$MEM" valid-branch "$nm" 2>/dev/null; vrc=$?
+  Vp="$(newgit)"; printf '.supervisor/\n' > "$Vp/.gitignore"; mem "$Vp" apply --branch-mode "$nm" >/dev/null 2>&1
+  if grep -qxF -e "${MLINE}${nm}" "$Vp/.gitignore"; then arc=0; else arc=1; fi
+  if [ "$vrc" -eq "$arc" ]; then ok "(vb) parity: valid-branch '$nm' (rc=$vrc) agrees with apply --branch-mode (mode line recorded: rc=$arc)"; else no "(vb) parity broken for '$nm': valid-branch rc=$vrc, apply recorded rc=$arc"; fi
+done
+# Same predicate, never a copy: exactly one definition, and a mutant whose valid_branch_name
+# refuses everything turns valid-branch's accept red (the subcommand really calls it).
+vbdefs="$(grep -c '^valid_branch_name() {$' "$MEM")"
+[ "$vbdefs" -eq 1 ] && ok "(vb) setup-memory.sh defines valid_branch_name exactly once" || no "(vb) valid_branch_name is defined $vbdefs times"
+VB_D="$(mkfix)"
+sed 's/^valid_branch_name() {$/valid_branch_name() { return 1/' "$MEM" > "$VB_D/mut.sh"
+bash "$VB_D/mut.sh" valid-branch loomwright-meta >/dev/null 2>&1; mrc=$?
+if cmp -s "$MEM" "$VB_D/mut.sh"; then no "(vb) mutation self-check: the patch changed nothing — inconclusive"
+elif [ "$mrc" -eq 1 ]; then ok "(vb) mutation self-check: a refuse-all valid_branch_name makes valid-branch refuse 'loomwright-meta' (it calls the one predicate)"
+else no "(vb) mutation self-check: a refuse-all predicate still accepted (rc=$mrc) — valid-branch does not call valid_branch_name"; fi
+rm -rf "$VB_D"
 
 echo "== (k) the suite never touched the plugin repo's own .gitignore =="
 PLUGIN_GI_SUM_AFTER="$(sum "$PLUGIN_GI")"

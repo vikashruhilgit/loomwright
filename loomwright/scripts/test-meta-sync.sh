@@ -71,7 +71,7 @@
 #      nothing written, branch and meta-base unchanged; with the entry gone the same clone syncs
 #      again; a fresh clone refuses while it is in R's history; a LOCAL newline name under a
 #      managed root likewise refuses, one under unmanaged .supervisor/logs does not
-#  31. --paths-from on pull / status / init -> usage error exit 1, nothing changed
+#  31. --paths-from on pull / status / init / list-managed -> usage error exit 1, nothing changed
 #  32. project deny patterns: a matching ERE -> exit 2 `deny_pattern:<line>`; an invalid ERE ->
 #      exit 2 `deny_pattern_invalid:<line>`; the deny file absent -> the push lands
 #  33. scan_error(<rule>) (failing grep), ledger_unverifiable(jq missing) (a hermetic no-jq PATH)
@@ -151,6 +151,19 @@
 #      a URL's /home/ segment and the angle-bracket placeholders do not, and push once the positives go
 #  54. guard: no literal home-path example in loomwright/agents|commands|skills, read off the shipped rule
 #  55. (xii) a mutant with the old unanchored home_path rule MUST fail the API-route assertion (53)
+#  56. list-managed: prints exactly the managed local paths (no log / nested .supervisor/ / pending /
+#      sidecar), equal to the set a whole-set push publishes, no lock / meta-base / publish;
+#      --tracked prints only the tracked managed paths (force-added unmanaged ones excluded); a
+#      symlinked folder under requirements/ fails closed like push; --tracked elsewhere and
+#      --branch on list-managed are usage errors; under an UNKNOWN mode list-managed and scrub
+#      still run (status still refuses), no lock, no meta-base, no branch created
+#  57. scrub --paths-from: one stderr `meta_sync: scrub-hit <path>:<line>: <rule>` per hit — the
+#      first matching line for email / home_path / token_github / deny_pattern:<n>, `-` for
+#      forge_slug / ledger_repo / unreadable (a missing path, a directory) — exit 2; stdout empty,
+#      no push-style `meta_sync: scrub ` line; nothing written; a `push` over the SAME planted
+#      files names the same (path, rule) pairs; a clean list -> exit 0 `meta_sync: clean (<n>
+#      file(s) scanned)`; no --paths-from / a missing list / --branch -> usage error exit 1
+#  58. (xiii) a mutant whose line lookup always yields `-` MUST fail the line assertion (57)
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -875,14 +888,14 @@ ms B push
 { [ "$rc_pull" -eq 0 ] && [ "$RC" -eq 0 ] && [ "$(get B "$RQ/x.md")" = "x v2 from A" ] && [ "$(br_show "$RQ/w.md")" = "w v2 from B" ]; }
 check $? "with it removed (a newline name under unmanaged .supervisor/logs is ignored) pull and push land (pull rc=$rc_pull: $out_pull; push rc=$RC: $OUT)"
 
-echo "== 31. --paths-from is push-only (usage error elsewhere, nothing changed) =="
+echo "== 31. --paths-from is push/scrub-only (usage error elsewhere, nothing changed) =="
 synced_pair
 put A "$RQ/x.md" "x v2 from A"; ms A push
 printf '%s\n' "$RQ/x.md" > "$W/pf.txt"
 tip="$(br_tip)"; base_before="$(base_of B)"
-for sc in pull status init; do
+for sc in pull status init list-managed; do
   ms B "$sc" --paths-from "$W/pf.txt"
-  { [ "$RC" -eq 1 ] && grep -q "meta_sync: usage: --paths-from applies to push only, not '$sc'" < <(printf '%s' "$OUT") \
+  { [ "$RC" -eq 1 ] && grep -q "meta_sync: usage: --paths-from applies to push and scrub only, not '$sc'" < <(printf '%s' "$OUT") \
     && [ "$(get B "$RQ/x.md")" = "x v1" ] && [ "$(br_tip)" = "$tip" ] && [ "$(base_of B)" = "$base_before" ]; }
   check $? "$sc --paths-from -> usage error exit 1, nothing written, branch and meta-base unchanged (rc=$RC: $OUT)"
 done
@@ -1749,6 +1762,114 @@ if build_mutant "$MUT_XII" 's@^home_path\${TAB}i\${TAB}(^|\[^A-Za-z0-9_-\])/(Use
   fi
 else
   no "mutation control (xii): could not build the mutant (sed did not apply or bash -n failed) — control inconclusive"
+fi
+
+echo "== 56. list-managed: exactly the is_managed set (local tree / --tracked), no branch, no lock =="
+roundtrip_world   # A: managed files + every ignored / unmanaged fixture (logs, nested .supervisor/, pending, sidecars)
+exp_lm="$(printf '%s\n' "$RQ/sub/deep.md" "$RQ/x.md" .supervisor/automate/automate-2026-01-01-000000.md \
+  .supervisor/jobs/done/2026-01-01-brief.md .supervisor/postmortem/results.jsonl | env LC_ALL=C sort)"
+OUT="$(bash "$SCRIPT" list-managed --root "$W/A" 2>"$W/lm.err")"; RC=$?
+{ [ "$RC" -eq 0 ] && [ "$OUT" = "$exp_lm" ] && [ ! -s "$W/lm.err" ]; }
+check $? "list-managed prints exactly the managed local paths, sorted, on stdout, exit 0 — no log, nested .supervisor/, pending or sidecar (rc=$RC: $(printf '%s' "$OUT" | tr '\n' '|'))"
+lm_local="$OUT"
+{ [ ! -e "$W/A/.git/meta-sync.lock" ] && [ ! -e "$W/A/.git/meta-base" ] && [ -z "$(br_names)" ]; }
+check $? "list-managed takes no lock, writes no meta-base and publishes nothing"
+ms A push
+[ "$(br_names | env LC_ALL=C sort)" = "$lm_local" ]; check $? "list-managed equals the set a whole-set push publishes (branch: $(br_names | tr '\n' '|'))"
+git -C "$W/A" add -f "$RQ/x.md" "$RQ/notes.log" "$RQ/.supervisor/logs/nested.md" .supervisor/jobs/pending/2026-01-02-pending.md \
+  .supervisor/logs/session.jsonl .supervisor/jobs/done/2026-01-01-brief.md
+ms A list-managed --tracked
+{ [ "$RC" -eq 0 ] && [ "$OUT" = "$(printf '%s\n' .supervisor/jobs/done/2026-01-01-brief.md "$RQ/x.md" | env LC_ALL=C sort)" ]; }
+check $? "list-managed --tracked prints only the TRACKED managed paths (index), none of the force-added unmanaged ones (rc=$RC: $(printf '%s' "$OUT" | tr '\n' '|'))"
+git -C "$W/A" reset -q
+ms A list-managed --tracked; { [ "$RC" -eq 0 ] && [ -z "$OUT" ]; }; check $? "nothing tracked -> --tracked prints nothing, exit 0 (rc=$RC: $OUT)"
+ln -s "$W/A/.supervisor/jobs/done" "$W/A/$RQ/linkdir"
+ms A list-managed
+{ [ "$RC" -eq 1 ] && grep -qF "meta_sync: symlink $RQ/linkdir" < <(printf '%s\n' "$OUT"); }
+check $? "list-managed fails closed on a symlinked folder where run history lives, exactly like push (rc=$RC: $OUT)"
+rm -f "$W/A/$RQ/linkdir"
+for args in "pull --tracked" "push --tracked" "status --tracked" "list-managed --branch $BR" "list-managed --branch $BR --allow-branch-mismatch"; do
+  # shellcheck disable=SC2086
+  ms A $args
+  [ "$RC" -eq 1 ] && grep -q '^meta_sync: usage: ' < <(printf '%s\n' "$OUT")
+  check $? "'$args' -> usage error exit 1 (rc=$RC: $OUT)"
+done
+echo "-- an unknown mode: list-managed and scrub still run (no branch resolution); status still refuses --"
+mkworld; clone M
+(cd "$W/M" && bash "$HERE/setup-memory.sh" --root "$W/M" apply --branch-mode team-meta >/dev/null 2>&1; rm -f .gitignore.backup.*)
+sed "s/^# loomwright-meta-branch: .*/# loomwright-meta-branch: off/" "$W/M/.gitignore" > "$W/M/.gitignore.new" && mv "$W/M/.gitignore.new" "$W/M/.gitignore"
+mm="$(bash "$HERE/setup-memory.sh" --root "$W/M" mode)"
+case "$mm" in "unknown "*) true ;; *) false ;; esac; check $? "fixture: M's mode reads unknown (got '$mm')"
+put M "$RQ/m.md" "see /home/bob/x"
+ms M status; [ "$RC" -eq 1 ] && grep -q 'meta_sync: mode_unknown' < <(printf '%s\n' "$OUT"); check $? "control: status under the unknown mode -> exit 1 mode_unknown (rc=$RC)"
+ms M list-managed; { [ "$RC" -eq 0 ] && [ "$OUT" = "$RQ/m.md" ]; }; check $? "list-managed under an unknown mode -> exit 0, lists $RQ/m.md (rc=$RC: $OUT)"
+printf '%s\n' "$RQ/m.md" > "$W/m.list"
+ms M scrub --paths-from "$W/m.list"
+{ [ "$RC" -eq 2 ] && grep -qxF "meta_sync: scrub-hit $RQ/m.md:1: home_path" < <(printf '%s\n' "$OUT"); }
+check $? "scrub under an unknown mode -> runs, exit 2 naming the hit (rc=$RC: $OUT)"
+{ [ ! -e "$W/M/.git/meta-sync.lock" ] && [ ! -e "$W/M/.git/meta-base" ] && [ -z "$(git --git-dir="$W/origin.git" for-each-ref refs/heads/team-meta refs/heads/$BR)" ]; }
+check $? "neither took a lock, wrote meta-base or created a branch"
+
+echo "== 57. scrub --paths-from: one scrub-hit line per hit (path:line: rule), same rules as push, writes nothing =="
+synced_pair
+mkdir -p "$W/B/.agent"; printf '%s\n' '# project deny terms' 'ACME-SECRET-[0-9]+' > "$W/B/.agent/meta-sync-deny.txt"
+git -C "$W/B" add .agent/meta-sync-deny.txt && git -C "$W/B" commit -qm 'deny patterns'
+put B "$RQ/p-email.md" "$(printf '%s\n' 'clean first line' 'clean second' 'contact someone@example.org')"
+put B "$RQ/p-home.md" "$(printf '%s\n' 'x' '/Users/alice/notes')"
+put B "$RQ/p-tok.md" "token ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij"
+put B "$RQ/p-slug.md" "$(printf '%s\n' 'a' 'b' 'https://github.com/evilcorp/secret-repo/pull/3')"
+put B "$RQ/p-deny.md" "$(printf '%s\n' 'one' 'two' 'ticket ACME-SECRET-42')"
+put B "$RQ/p-clean.md" "nothing to see here"
+printf '%s\n' '{"repo":"evilcorp/private","n":9}' >> "$W/B/.supervisor/postmortem/results.jsonl"
+printf '%s\n' '# would-be-pushed files' "$RQ/p-email.md" "./$RQ/p-home.md" "$RQ/p-tok.md" "$RQ/p-slug.md" "$RQ/p-deny.md" \
+  "$RQ/p-clean.md" '' .supervisor/postmortem/results.jsonl "$RQ/p-tok.md" > "$W/scrub.list"
+tip="$(br_tip)"; base_before="$(base_of B)"; por_before="$(porcelain B)"
+SOUT="$(bash "$SCRIPT" scrub --paths-from "$W/scrub.list" --root "$W/B" 2>"$W/scrub.err")"; RC=$?
+SERR="$(cat "$W/scrub.err")"
+exp_hits="$(printf '%s\n' "meta_sync: scrub-hit $RQ/p-email.md:3: email" "meta_sync: scrub-hit $RQ/p-home.md:2: home_path" \
+  "meta_sync: scrub-hit $RQ/p-tok.md:1: token_github" "meta_sync: scrub-hit $RQ/p-slug.md:-: forge_slug" \
+  "meta_sync: scrub-hit $RQ/p-deny.md:3: deny_pattern:2" "meta_sync: scrub-hit .supervisor/postmortem/results.jsonl:-: forge_slug" \
+  "meta_sync: scrub-hit .supervisor/postmortem/results.jsonl:-: ledger_repo" | env LC_ALL=C sort)"
+got_hits="$(printf '%s\n' "$SERR" | grep '^meta_sync: scrub-hit ' | env LC_ALL=C sort)"
+[ "$RC" -eq 2 ]; check $? "a planted hit -> scrub exits 2 (rc=$RC)"
+[ "$got_hits" = "$exp_hits" ]; check $? "exactly one scrub-hit line per hit with the first matching line (line rules) or '-' (whole-file rules); the duplicate listing is scanned once (got: $(printf '%s' "$got_hits" | tr '\n' '|'))"
+{ [ -z "$SOUT" ] && grep -q '^meta_sync: aborted — scrub hit(s) above in 6 of 7 file(s)' < <(printf '%s\n' "$SERR"); }
+check $? "hit lines and the 'aborted' summary go to stderr; stdout is empty (stdout: '$SOUT')"
+! grep -q '^meta_sync: scrub ' < <(printf '%s\n' "$SERR"); check $? "no line starts with push's 'meta_sync: scrub ' prefix (that contract is untouched)"
+{ [ "$(br_tip)" = "$tip" ] && [ "$(base_of B)" = "$base_before" ] && [ "$(porcelain B)" = "$por_before" ] && [ ! -e "$W/B/.git/meta-sync.lock" ]; }
+check $? "scrub writes nothing: branch tip, meta-base, code-branch status unchanged, no lock"
+echo "-- the same planted files through push report the same (path, rule) pairs --"
+ms B push
+push_pairs="$(printf '%s\n' "$OUT" | sed -n 's/^meta_sync: scrub //p' | env LC_ALL=C sort)"
+scrub_pairs="$(printf '%s\n' "$got_hits" | sed -E 's/^meta_sync: scrub-hit ([^:]*):[^:]*: /\1: /' | env LC_ALL=C sort)"
+{ [ "$RC" -eq 2 ] && [ -n "$push_pairs" ] && [ "$push_pairs" = "$scrub_pairs" ] && [ "$(br_tip)" = "$tip" ]; }
+check $? "push (exit 2) and scrub name the same rule for every planted file (push: $(printf '%s' "$push_pairs" | tr '\n' '|'))"
+echo "-- clean / unreadable / usage --"
+printf '%s\n' "$RQ/p-clean.md" "$RQ/x.md" > "$W/clean.list"
+SOUT="$(bash "$SCRIPT" scrub --paths-from "$W/clean.list" --root "$W/B" 2>"$W/scrub.err")"; RC=$?
+{ [ "$RC" -eq 0 ] && [ "$SOUT" = "meta_sync: clean (2 file(s) scanned)" ] && [ ! -s "$W/scrub.err" ]; }
+check $? "a clean list -> exit 0, 'meta_sync: clean (2 file(s) scanned)' on stdout, nothing on stderr (rc=$RC: $SOUT)"
+mkdir -p "$W/B/$RQ/adir"
+printf '%s\n' "$RQ/nope.md" "$RQ/adir" > "$W/miss.list"
+ms B scrub --paths-from "$W/miss.list"
+{ [ "$RC" -eq 2 ] && grep -qxF "meta_sync: scrub-hit $RQ/nope.md:-: unreadable" < <(printf '%s\n' "$OUT") \
+  && grep -qxF "meta_sync: scrub-hit $RQ/adir:-: unreadable" < <(printf '%s\n' "$OUT"); }
+check $? "a missing path and a directory -> 'unreadable' hits with line '-', exit 2 (rc=$RC: $OUT)"
+ms B scrub; { [ "$RC" -eq 1 ] && grep -qF 'meta_sync: usage: scrub requires --paths-from' < <(printf '%s\n' "$OUT"); }; check $? "scrub without --paths-from -> usage error exit 1 (rc=$RC: $OUT)"
+ms B scrub --paths-from "$W/no-such-list"; [ "$RC" -eq 1 ]; check $? "scrub --paths-from <missing file> -> exit 1 (rc=$RC: $OUT)"
+ms B scrub --paths-from "$W/clean.list" --branch "$BR"; [ "$RC" -eq 1 ]; check $? "scrub --branch -> usage error exit 1, never silently ignored (rc=$RC: $OUT)"
+
+echo "== 58. mutation control (xiii): scrub-hit never locates the line -> the line assertion (57) must turn red =="
+MUT_XIII="$TROOT/mutant-xiii"
+if build_mutant "$MUT_XIII" 's/^  case "\$n" in .*) n="-" ;; esac$/  n="-"  # mutant (xiii)/' 'n="-"  # mutant (xiii)'; then
+  OUT="$(bash "$MUT_XIII/meta-sync.sh" scrub --paths-from "$W/scrub.list" --root "$W/B" 2>&1)"; RC=$?
+  if [ "$RC" -eq 2 ] && grep -qxF "meta_sync: scrub-hit $RQ/p-email.md:-: email" < <(printf '%s\n' "$OUT"); then
+    ok "mutation control (xiii): the mutant reports 'p-email.md:-: email' instead of ':3:' — the line assertion is load-bearing"
+  else
+    no "mutation control (xiii): the mutant failed for another reason (rc=$RC: $OUT) — control inconclusive"
+  fi
+else
+  no "mutation control (xiii): could not build the mutant (sed did not apply or bash -n failed) — control inconclusive"
 fi
 
 echo
