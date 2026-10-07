@@ -15,7 +15,8 @@
 #   W drain-round-1 hardening: one-call token total (D8) + mutation control · trailing value flags
 #     exit promptly · unpushed count unreadable refuses + mutation control · lock holder records
 #     (dead holder reclaimed, live holder waited on, foreign lock never unlocked, holder-less lock
-#     reclaimed) · two concurrent launches spawn once · multiSelect labels containing commas
+#     reclaimed) · two concurrent launches spawn once · multiSelect labels containing commas ·
+#     lane-remove --stop refuses before stopping + mutation control
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -706,6 +707,28 @@ out="$(ans6 '{"answers":{"0":"Red, dark, Blue","1":"A, B"}}')"; rc=$?
 check "W6f a comma label plus another label, and a whole-answer label, are accepted" "$rc" 0
 check "W6g recorded labels" "$(jq -c '[.answers["Which shades?"], .answers["Which parts?"]]' "$L9/.supervisor/inbox/answers/toolu_w6.json" 2>/dev/null)" '["Red, dark,Blue","A, B"]'
 wait_gone "$L9"
+
+# W7 lane-remove --stop runs every non-liveness refusal BEFORE stopping anything: a live lane with a
+# dirty tree is refused for the dirty tree and its process is left running (never stopped-but-refused)
+run lane-create "$RF" reqs/a.md 10 >/dev/null; L10="$LR/L10"
+STUB_MODE=sleep LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$L10" --owner-command "$OWN" >/dev/null
+L10P="$(tcol L10 5)"; L10S="$(tcol L10 6)"
+echo dirty >> "$L10/reqs/a.md"
+out="$(run lane-remove "$L10" --stop)"; rc=$?
+check "W7 --stop on a dirty live lane ⇒ refused, lane kept" "$rc:$([ -d "$L10" ] && echo kept || echo removed)" "1:kept"
+has "W7b refused with the dirty-tree reason" "$out" "refused — L10 — dirty working tree"
+hasnt "W7c nothing was stopped" "$out" "lane-remove: stopped"
+( . "$S"; lanes_proc_alive "$L10P" "$L10S" "$L10" ); check "W7d the lane process is still alive" "$?" 0
+grep -v '# REFUSE-BEFORE-STOP$' "$S" > "$MUT/automate-lanes.sh"
+if ! cmp -s "$S" "$MUT/automate-lanes.sh" && bash -n "$MUT/automate-lanes.sh"; then
+  out="$(bash "$MUT/automate-lanes.sh" lane-remove "$L10" --stop 2>&1)"
+  has "W7e mutation (pre-stop refusal pass deleted) stops the process first" "$out" "lane-remove: stopped"
+  has "W7f … and is then refused anyway (the old stopped-but-refused order)" "$out" "dirty working tree"
+  check "W7g … leaving the lane process dead" "$(kill -0 "$L10P" 2>/dev/null && echo alive || echo dead)" dead
+else bad "W7e mutation control not built"; fi
+wait_gone "$L10"
+git -C "$L10" checkout -q -- reqs/a.md
+out="$(run lane-remove "$L10" --stop)"; check "W7h once clean, the stopped lane is removed" "$?:$([ -d "$L10" ] && echo kept || echo removed)" "0:removed"
 
 hasnt "Z1 gh never called" "$(cat "$GH_CALLS" 2>/dev/null)" "gh"
 echo "passed: $PASS  failed: $FAIL"

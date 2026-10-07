@@ -656,33 +656,23 @@ _lanes_stop_pid() { # <pid> <label> — TERM, then KILL after the grace period
   echo "lane-remove: stopped $2 (pid $p)"
 }
 
-lanes_remove() {
-  local dir="" stop=0 abandon=0
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --stop) stop=1; shift ;;
-      --abandon) abandon=1; shift ;;
-      *) [ -z "$dir" ] || die "lane-remove: unexpected argument '$1'"; dir="$1"; shift ;;
-    esac
-  done
-  _lane_ctx "$dir" || die "lane-remove: not a lane: ${dir:-<none>}"
-  local L="$LN_LANE" pid st m mp mu q state rf b u mb ms
-  _refuse() { echo "lane-remove: refused — $L — $1"; return 1; }
-  # >>> live-process check
-  pid="$(_lt_get "$LN_TABLE" "$L" 5)"; st="$(_lt_get "$LN_TABLE" "$L" 6)"
-  if lanes_proc_alive "$pid" "$st" "$LN_DIR"; then
-    if [ "$stop" = 1 ]; then _lanes_stop_pid "$pid" "claude -p"; else _refuse "live claude -p process (pid $pid); use --stop"; return 1; fi
-  fi
-  # <<< live-process check
-  for m in "$LN_DIR"/.supervisor/automate/*.merge-watch; do
+# _lanes_live_watchers <lane_dir> — prints "<pid>\t<pr_url>" for each live merge watcher of the lane
+# (its marker's pid still runs automate-merge-watch for that marker's PR — a recycled pid is not live).
+_lanes_live_watchers() {
+  local m mp mu
+  for m in "$1"/.supervisor/automate/*.merge-watch; do
     [ -f "$m" ] || continue
     mp="$(awk -F'\t' '$1 == "pid" { print $2 }' "$m")"; mu="$(awk -F'\t' '$1 == "pr_url" { print $2 }' "$m")"
     case "$mp" in ''|*[!0-9]*) continue ;; esac
     case "$(ps -ww -o command= -p "$mp" 2>/dev/null)" in
-      *automate-merge-watch*"$mu"*)
-        if [ "$stop" = 1 ]; then _lanes_stop_pid "$mp" "merge watcher"; else _refuse "live merge watcher (pid $mp, $mu); use --stop"; return 1; fi ;;
+      *automate-merge-watch*"$mu"*) printf '%s\t%s\n' "$mp" "$mu" ;;
     esac
   done
+}
+
+# _lanes_remove_refusals — every lane-remove refusal that does not depend on process liveness. Runs
+# in lanes_remove's dynamic scope (reads/sets its locals L, abandon, state, rf, q, b, u, mb, ms).
+_lanes_remove_refusals() {
   # >>> awaiting-input check
   rf="$LN_DIR/.supervisor/automate/$LN_RUN.md"
   if q="$(_lanes_pending_question "$LN_INBOX")"; then _refuse "awaiting_input — unanswered question $q"; return 1; fi
@@ -714,6 +704,53 @@ lanes_remove() {
     [ "$u" -gt 0 ] && { _refuse "branch $b has $u commit(s) not on origin"; return 1; }
   done
   # <<< unpushed-commit check
+  return 0
+}
+
+# Order: without --stop a live process refuses first (naming it). With --stop, EVERY non-liveness
+# refusal runs BEFORE anything is stopped, so a lane that is unremovable for another reason is refused
+# with its processes untouched (never left stopped-but-refused); only then are the live processes
+# TERMed (KILL after the grace), liveness is re-evaluated, and the non-liveness refusals run once more
+# (the stopped process may have changed the lane in between) before salvage and removal.
+lanes_remove() {
+  local dir="" stop=0 abandon=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --stop) stop=1; shift ;;
+      --abandon) abandon=1; shift ;;
+      *) [ -z "$dir" ] || die "lane-remove: unexpected argument '$1'"; dir="$1"; shift ;;
+    esac
+  done
+  _lane_ctx "$dir" || die "lane-remove: not a lane: ${dir:-<none>}"
+  local L="$LN_LANE" pid st mp mu q state rf b u mb ms live_pid="" watchers=""
+  _refuse() { echo "lane-remove: refused — $L — $1"; return 1; }
+  # >>> live-process check
+  pid="$(_lt_get "$LN_TABLE" "$L" 5)"; st="$(_lt_get "$LN_TABLE" "$L" 6)"
+  if lanes_proc_alive "$pid" "$st" "$LN_DIR"; then
+    if [ "$stop" = 1 ]; then live_pid="$pid"; else _refuse "live claude -p process (pid $pid); use --stop"; return 1; fi
+  fi
+  # <<< live-process check
+  watchers="$(_lanes_live_watchers "$LN_DIR")"
+  if [ -n "$watchers" ] && [ "$stop" = 0 ]; then
+    IFS="$(printf '\t')" read -r mp mu <<<"$watchers"   # the first live watcher
+    _refuse "live merge watcher (pid $mp, $mu); use --stop"; return 1
+  fi
+  _lanes_remove_refusals || return 1   # REFUSE-BEFORE-STOP
+  if [ -n "$live_pid$watchers" ]; then
+    [ -n "$live_pid" ] && _lanes_stop_pid "$live_pid" "claude -p"
+    while IFS="$(printf '\t')" read -r mp mu; do
+      [ -n "$mp" ] && _lanes_stop_pid "$mp" "merge watcher"
+    done <<<"$watchers"
+    if [ -n "$live_pid" ] && lanes_proc_alive "$pid" "$st" "$LN_DIR"; then
+      _refuse "lane process (pid $pid) still alive after --stop"; return 1
+    fi
+    watchers="$(_lanes_live_watchers "$LN_DIR")"
+    if [ -n "$watchers" ]; then
+      IFS="$(printf '\t')" read -r mp mu <<<"$watchers"   # the first live watcher
+      _refuse "merge watcher (pid $mp, $mu) still alive after --stop"; return 1
+    fi
+    _lanes_remove_refusals || return 1
+  fi
   local sv; sv="$(_lanes_salvage "$LN_DIR" "$LN_ROOT/salvage" "$L-removed")" || { _refuse "salvage failed"; return 1; }
   rm -rf "$LN_DIR" || { echo "lane-remove: could not remove $LN_DIR" >&2; return 1; }
   _lt_set "$LN_TABLE" "$L" 8 "$([ "$abandon" = 1 ] && echo abandoned || echo removed)"
