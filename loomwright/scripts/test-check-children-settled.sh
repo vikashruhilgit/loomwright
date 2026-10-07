@@ -49,7 +49,9 @@ EM="$PLUGIN_ROOT/agents/execute-manager.md"
 SUP="$PLUGIN_ROOT/agents/supervisor.md"
 ASYNC="$PLUGIN_ROOT/skills/async-orchestration/SKILL.md"
 CMD="$PLUGIN_ROOT/commands/supervisor.md"
-SCHEMAS="$PLUGIN_ROOT/docs/RESULT_SCHEMAS.md"
+# docs/RESULT_SCHEMAS.md is an index; the agent_lifecycle section (which documents the
+# children-settled join) lives in its split file.
+SCHEMAS="$PLUGIN_ROOT/docs/result-schemas/agent-lifecycle-jsonl.md"
 FAILDOC="$PLUGIN_ROOT/docs/FAILURE_ESCALATION.md"
 
 pass=0; fail=0

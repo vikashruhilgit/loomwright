@@ -36,7 +36,10 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 S="$HERE/classify-risk.sh"
-SCHEMAS="$HERE/../docs/RESULT_SCHEMAS.md"
+# docs/RESULT_SCHEMAS.md is an index; the risk table lives in the SUPERVISOR_RESULT split
+# file. E2's one-copy count runs over the index AND every split file (the whole schema doc).
+SCHEMAS="$HERE/../docs/result-schemas/supervisor-result.md"
+SCHEMAS_ALL_DOC="$HERE/../docs/RESULT_SCHEMAS.md $(ls "$HERE"/../docs/result-schemas/*.md 2>/dev/null | tr '\n' ' ')"
 VALIDATOR="$HERE/validate-supervisor-result.py"
 BASH_BIN="$(command -v bash)"
 
@@ -257,7 +260,8 @@ if [ "$RC" -eq 0 ] && [ -s "$TMP/table" ] && [ -s "$TMP/doc" ] && cmp -s "$TMP/t
 else
   no "E1 risk-table drift (regenerate the block from \`classify-risk.sh --kind-table\`):"; diff "$TMP/doc" "$TMP/table" | head -10
 fi
-[ "$(grep -c '^<!-- risk-table:begin -->$' "$SCHEMAS")" -eq 1 ] && ok "E2 exactly ONE committed copy of the table" || no "E2 marker count != 1"
+# shellcheck disable=SC2086  # SCHEMAS_ALL_DOC is a space-separated path list (no spaces in any path)
+[ "$(cat $SCHEMAS_ALL_DOC | grep -c '^<!-- risk-table:begin -->$')" -eq 1 ] && ok "E2 exactly ONE committed copy of the table" || no "E2 marker count != 1"
 grep -q '`\*token\*`' "$TMP/table" && grep -q 'changed_lines > 400' "$TMP/table" && grep -q 'changed_files > 15' "$TMP/table" \
   && grep -q '`skills/`' "$TMP/table" && grep -q 'NO `exclude` key' "$TMP/table" \
   && ok "E3 the table names every branch's data (a/b/c + project, no exclude)" || no "E3 table content incomplete"

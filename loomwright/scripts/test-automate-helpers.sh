@@ -156,7 +156,21 @@
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-H="$HERE/automate-helpers.sh"
+# $H is ONE file: the dispatcher's own _ah_bundle expansion of automate-helpers.sh with its
+# automate-helpers.d/ family files inlined (parallel-automate/11), written beside a symlink to
+# every other scripts/ entry — so each mutation `sed … "$H"` finds its text and every
+# `$(dirname "$0")` sibling lookup resolves. Fails the whole suite if the bundle cannot be built.
+ah_build_bundle() {
+  local d e
+  d="$(mktemp -d)" || return 1
+  eval "$(awk '/^_ah_bundle\(\) \{$/,/^}$/' "$HERE/automate-helpers.sh")"
+  for e in "$HERE"/*; do
+    [ "$e" = "$HERE/automate-helpers.sh" ] || ln -s "$e" "$d/$(basename "$e")" || return 1
+  done
+  _ah_bundle "$HERE/automate-helpers.sh" > "$d/automate-helpers.sh" && [ -s "$d/automate-helpers.sh" ] || return 1
+  echo "$d/automate-helpers.sh"
+}
+H="$(ah_build_bundle)" || { echo "FAIL: could not build the automate-helpers.sh bundle"; exit 1; }
 
 pass=0; fail=0
 ok() { echo "  ok: $1"; pass=$((pass+1)); }
