@@ -445,6 +445,22 @@
     {
       "blocking": false,
       "event": "PostToolUse",
+      "matcher": "Task",
+      "script": "scripts/emit-lifecycle.sh",
+      "scripts": [
+        "scripts/emit-lifecycle.sh"
+      ],
+      "source": "hooks.PostToolUse[2].hooks[2]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/.lifecycle-asked-ids",
+        ".supervisor/logs/.lifecycle-heartbeat-debounce-<agent>",
+        ".supervisor/logs/<session>.jsonl"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "PostToolUse",
       "matcher": "Write|Edit",
       "script": "scripts/seed-run-owner.sh",
       "scripts": [
@@ -529,6 +545,20 @@
       "source": "hooks.PreToolUse[1].hooks[0]",
       "type": "command",
       "writes": []
+    },
+    {
+      "blocking": true,
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "script": "scripts/guard-finalize-publish.sh",
+      "scripts": [
+        "scripts/guard-finalize-publish.sh"
+      ],
+      "source": "hooks.PreToolUse[1].hooks[1]",
+      "type": "command",
+      "writes": [
+        "unknown"
+      ]
     },
     {
       "blocking": true,
@@ -643,168 +673,26 @@
     {
       "blocking": false,
       "event": "SubagentStop",
+      "matcher": null,
+      "script": "scripts/emit-lifecycle.sh",
+      "scripts": [
+        "scripts/emit-lifecycle.sh"
+      ],
+      "source": "hooks.SubagentStop[0].hooks[0]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/.lifecycle-asked-ids",
+        ".supervisor/logs/.lifecycle-heartbeat-debounce-<agent>",
+        ".supervisor/logs/<session>.jsonl"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
       "matcher": "loomwright:code-reviewer",
       "script": "scripts/validate-code-review-result.py",
       "scripts": [
         "scripts/validate-code-review-result.py"
-      ],
-      "source": "hooks.SubagentStop[0].hooks[0]",
-      "type": "command",
-      "writes": []
-    },
-    {
-      "blocking": false,
-      "event": "SubagentStop",
-      "matcher": "loomwright:code-reviewer",
-      "script": "scripts/send-telemetry.sh",
-      "scripts": [
-        "scripts/send-telemetry.sh",
-        "scripts/emit-token-ledger.sh"
-      ],
-      "source": "hooks.SubagentStop[0].hooks[1]",
-      "type": "command",
-      "writes": [
-        ".supervisor/logs/<session>.jsonl",
-        ".supervisor/logs/telemetry-pending-shown-<key>.flag",
-        ".supervisor/logs/telemetry-repo-unset-shown-<key>.flag",
-        ".supervisor/logs/telemetry-sent.log",
-        ".supervisor/logs/telemetry.log",
-        ".supervisor/logs/token-ledger-python3-missing.flag"
-      ]
-    },
-    {
-      "blocking": false,
-      "event": "SubagentStop",
-      "matcher": "loomwright:context-keeper",
-      "script": "scripts/emit-token-ledger.sh",
-      "scripts": [
-        "scripts/emit-token-ledger.sh"
-      ],
-      "source": "hooks.SubagentStop[7].hooks[0]",
-      "type": "command",
-      "writes": [
-        ".supervisor/logs/<session>.jsonl",
-        ".supervisor/logs/token-ledger-python3-missing.flag"
-      ]
-    },
-    {
-      "blocking": false,
-      "event": "SubagentStop",
-      "matcher": "loomwright:execute-manager",
-      "script": "scripts/validate-execute-result.py",
-      "scripts": [
-        "scripts/validate-execute-result.py"
-      ],
-      "source": "hooks.SubagentStop[3].hooks[0]",
-      "type": "command",
-      "writes": []
-    },
-    {
-      "blocking": false,
-      "event": "SubagentStop",
-      "matcher": "loomwright:execute-manager",
-      "script": "scripts/emit-token-ledger.sh",
-      "scripts": [
-        "scripts/emit-token-ledger.sh"
-      ],
-      "source": "hooks.SubagentStop[3].hooks[1]",
-      "type": "command",
-      "writes": [
-        ".supervisor/logs/<session>.jsonl",
-        ".supervisor/logs/token-ledger-python3-missing.flag"
-      ]
-    },
-    {
-      "blocking": false,
-      "event": "SubagentStop",
-      "matcher": "loomwright:launch-pad-runner",
-      "script": "scripts/validate-launch-pad-result.py",
-      "scripts": [
-        "scripts/validate-launch-pad-result.py"
-      ],
-      "source": "hooks.SubagentStop[6].hooks[0]",
-      "type": "command",
-      "writes": []
-    },
-    {
-      "blocking": false,
-      "event": "SubagentStop",
-      "matcher": "loomwright:launch-pad-runner",
-      "script": "scripts/emit-token-ledger.sh",
-      "scripts": [
-        "scripts/emit-token-ledger.sh"
-      ],
-      "source": "hooks.SubagentStop[6].hooks[1]",
-      "type": "command",
-      "writes": [
-        ".supervisor/logs/<session>.jsonl",
-        ".supervisor/logs/token-ledger-python3-missing.flag"
-      ]
-    },
-    {
-      "blocking": false,
-      "event": "SubagentStop",
-      "matcher": "loomwright:orchestrator",
-      "script": "scripts/emit-token-ledger.sh",
-      "scripts": [
-        "scripts/emit-token-ledger.sh"
-      ],
-      "source": "hooks.SubagentStop[8].hooks[0]",
-      "type": "command",
-      "writes": [
-        ".supervisor/logs/<session>.jsonl",
-        ".supervisor/logs/token-ledger-python3-missing.flag"
-      ]
-    },
-    {
-      "blocking": false,
-      "event": "SubagentStop",
-      "matcher": "loomwright:plan-reviewer",
-      "script": "scripts/validate-plan-review-result.py",
-      "scripts": [
-        "scripts/validate-plan-review-result.py"
-      ],
-      "source": "hooks.SubagentStop[5].hooks[0]",
-      "type": "command",
-      "writes": []
-    },
-    {
-      "blocking": false,
-      "event": "SubagentStop",
-      "matcher": "loomwright:plan-reviewer",
-      "script": "scripts/emit-token-ledger.sh",
-      "scripts": [
-        "scripts/emit-token-ledger.sh"
-      ],
-      "source": "hooks.SubagentStop[5].hooks[1]",
-      "type": "command",
-      "writes": [
-        ".supervisor/logs/<session>.jsonl",
-        ".supervisor/logs/token-ledger-python3-missing.flag"
-      ]
-    },
-    {
-      "blocking": false,
-      "event": "SubagentStop",
-      "matcher": "loomwright:product-owner",
-      "script": "scripts/emit-token-ledger.sh",
-      "scripts": [
-        "scripts/emit-token-ledger.sh"
-      ],
-      "source": "hooks.SubagentStop[9].hooks[0]",
-      "type": "command",
-      "writes": [
-        ".supervisor/logs/<session>.jsonl",
-        ".supervisor/logs/token-ledger-python3-missing.flag"
-      ]
-    },
-    {
-      "blocking": false,
-      "event": "SubagentStop",
-      "matcher": "loomwright:qa-executor",
-      "script": "scripts/validate-qa-result.py",
-      "scripts": [
-        "scripts/validate-qa-result.py"
       ],
       "source": "hooks.SubagentStop[1].hooks[0]",
       "type": "command",
@@ -813,7 +701,7 @@
     {
       "blocking": false,
       "event": "SubagentStop",
-      "matcher": "loomwright:qa-executor",
+      "matcher": "loomwright:code-reviewer",
       "script": "scripts/send-telemetry.sh",
       "scripts": [
         "scripts/send-telemetry.sh",
@@ -833,7 +721,118 @@
     {
       "blocking": false,
       "event": "SubagentStop",
-      "matcher": "loomwright:qa-strategist",
+      "matcher": "loomwright:context-keeper",
+      "script": "scripts/emit-token-ledger.sh",
+      "scripts": [
+        "scripts/emit-token-ledger.sh"
+      ],
+      "source": "hooks.SubagentStop[8].hooks[0]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/<session>.jsonl",
+        ".supervisor/logs/token-ledger-python3-missing.flag"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
+      "matcher": "loomwright:execute-manager",
+      "script": "scripts/validate-execute-result.py",
+      "scripts": [
+        "scripts/validate-execute-result.py"
+      ],
+      "source": "hooks.SubagentStop[4].hooks[0]",
+      "type": "command",
+      "writes": []
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
+      "matcher": "loomwright:execute-manager",
+      "script": "scripts/emit-token-ledger.sh",
+      "scripts": [
+        "scripts/emit-token-ledger.sh"
+      ],
+      "source": "hooks.SubagentStop[4].hooks[1]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/<session>.jsonl",
+        ".supervisor/logs/token-ledger-python3-missing.flag"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
+      "matcher": "loomwright:launch-pad-runner",
+      "script": "scripts/validate-launch-pad-result.py",
+      "scripts": [
+        "scripts/validate-launch-pad-result.py"
+      ],
+      "source": "hooks.SubagentStop[7].hooks[0]",
+      "type": "command",
+      "writes": []
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
+      "matcher": "loomwright:launch-pad-runner",
+      "script": "scripts/emit-token-ledger.sh",
+      "scripts": [
+        "scripts/emit-token-ledger.sh"
+      ],
+      "source": "hooks.SubagentStop[7].hooks[1]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/<session>.jsonl",
+        ".supervisor/logs/token-ledger-python3-missing.flag"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
+      "matcher": "loomwright:orchestrator",
+      "script": "scripts/emit-token-ledger.sh",
+      "scripts": [
+        "scripts/emit-token-ledger.sh"
+      ],
+      "source": "hooks.SubagentStop[9].hooks[0]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/<session>.jsonl",
+        ".supervisor/logs/token-ledger-python3-missing.flag"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
+      "matcher": "loomwright:plan-reviewer",
+      "script": "scripts/validate-plan-review-result.py",
+      "scripts": [
+        "scripts/validate-plan-review-result.py"
+      ],
+      "source": "hooks.SubagentStop[6].hooks[0]",
+      "type": "command",
+      "writes": []
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
+      "matcher": "loomwright:plan-reviewer",
+      "script": "scripts/emit-token-ledger.sh",
+      "scripts": [
+        "scripts/emit-token-ledger.sh"
+      ],
+      "source": "hooks.SubagentStop[6].hooks[1]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/<session>.jsonl",
+        ".supervisor/logs/token-ledger-python3-missing.flag"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
+      "matcher": "loomwright:product-owner",
       "script": "scripts/emit-token-ledger.sh",
       "scripts": [
         "scripts/emit-token-ledger.sh"
@@ -848,7 +847,39 @@
     {
       "blocking": false,
       "event": "SubagentStop",
-      "matcher": "loomwright:red-team-reviewer",
+      "matcher": "loomwright:qa-executor",
+      "script": "scripts/validate-qa-result.py",
+      "scripts": [
+        "scripts/validate-qa-result.py"
+      ],
+      "source": "hooks.SubagentStop[2].hooks[0]",
+      "type": "command",
+      "writes": []
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
+      "matcher": "loomwright:qa-executor",
+      "script": "scripts/send-telemetry.sh",
+      "scripts": [
+        "scripts/send-telemetry.sh",
+        "scripts/emit-token-ledger.sh"
+      ],
+      "source": "hooks.SubagentStop[2].hooks[1]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/<session>.jsonl",
+        ".supervisor/logs/telemetry-pending-shown-<key>.flag",
+        ".supervisor/logs/telemetry-repo-unset-shown-<key>.flag",
+        ".supervisor/logs/telemetry-sent.log",
+        ".supervisor/logs/telemetry.log",
+        ".supervisor/logs/token-ledger-python3-missing.flag"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
+      "matcher": "loomwright:qa-strategist",
       "script": "scripts/emit-token-ledger.sh",
       "scripts": [
         "scripts/emit-token-ledger.sh"
@@ -863,7 +894,7 @@
     {
       "blocking": false,
       "event": "SubagentStop",
-      "matcher": "loomwright:review-pr-runner",
+      "matcher": "loomwright:red-team-reviewer",
       "script": "scripts/emit-token-ledger.sh",
       "scripts": [
         "scripts/emit-token-ledger.sh"
@@ -878,7 +909,7 @@
     {
       "blocking": false,
       "event": "SubagentStop",
-      "matcher": "loomwright:rubric-grader",
+      "matcher": "loomwright:review-pr-runner",
       "script": "scripts/emit-token-ledger.sh",
       "scripts": [
         "scripts/emit-token-ledger.sh"
@@ -893,12 +924,27 @@
     {
       "blocking": false,
       "event": "SubagentStop",
+      "matcher": "loomwright:rubric-grader",
+      "script": "scripts/emit-token-ledger.sh",
+      "scripts": [
+        "scripts/emit-token-ledger.sh"
+      ],
+      "source": "hooks.SubagentStop[14].hooks[0]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/<session>.jsonl",
+        ".supervisor/logs/token-ledger-python3-missing.flag"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
       "matcher": "loomwright:supervisor-runner",
       "script": "scripts/validate-supervisor-result.py",
       "scripts": [
         "scripts/validate-supervisor-result.py"
       ],
-      "source": "hooks.SubagentStop[4].hooks[0]",
+      "source": "hooks.SubagentStop[5].hooks[0]",
       "type": "command",
       "writes": []
     },
@@ -912,7 +958,7 @@
         "scripts/emit-token-ledger.sh",
         "scripts/stamp-requirement-status.sh"
       ],
-      "source": "hooks.SubagentStop[4].hooks[1]",
+      "source": "hooks.SubagentStop[5].hooks[1]",
       "type": "command",
       "writes": [
         ".supervisor/logs/<session>.jsonl",
@@ -932,7 +978,7 @@
       "scripts": [
         "scripts/send-webhook.sh"
       ],
-      "source": "hooks.SubagentStop[4].hooks[2]",
+      "source": "hooks.SubagentStop[5].hooks[2]",
       "type": "command",
       "writes": []
     },
@@ -944,7 +990,7 @@
       "scripts": [
         "scripts/validate-worker-result.py"
       ],
-      "source": "hooks.SubagentStop[2].hooks[0]",
+      "source": "hooks.SubagentStop[3].hooks[0]",
       "type": "command",
       "writes": []
     },
@@ -956,7 +1002,7 @@
       "scripts": [
         "scripts/emit-progress-event.sh"
       ],
-      "source": "hooks.SubagentStop[2].hooks[1]",
+      "source": "hooks.SubagentStop[3].hooks[1]",
       "type": "command",
       "writes": [
         ".supervisor/logs/<session>.jsonl",
@@ -1033,6 +1079,10 @@
     {
       "name": "LAUNCH_PAD_RESULT",
       "schema_version": 1
+    },
+    {
+      "name": "MIGRATE_BRANCH_MODE_STATE",
+      "schema_version": null
     },
     {
       "name": "MISSING_FUNCTIONALITY_REPORT",
