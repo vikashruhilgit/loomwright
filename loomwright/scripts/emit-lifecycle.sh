@@ -283,18 +283,11 @@ fi
 # ---- Run ownership gate -------------------------------------------------------
 # Byte-parallel with emit-progress-event.sh's/emit-token-ledger.sh's gate of the
 # same name — see that file's comment for the full rationale. UNKNOWN OWNER
-# MEANS ADOPT (non-negotiable): an absent, empty, or unreadable log, an
-# unparseable first line, or a first line with no `cc_session_id` all yield an
-# empty owner, which ADOPTS the plugin session id exactly as before.
-loom_log_owner() {
-  local _log="${1:-}" _first=""
-  [ -n "$_log" ] && [ -f "$_log" ] && [ -r "$_log" ] || return 0
-  _first="$(head -1 "$_log" 2>/dev/null || true)"
-  [ -n "$_first" ] || return 0
-  printf '{}' | jq -e . >/dev/null 2>&1 || return 0
-  printf '%s' "$_first" | jq -r '.cc_session_id // empty' 2>/dev/null || true
-  return 0
-}
+# MEANS ADOPT (non-negotiable). The rule itself lives in loom-log-owner.sh
+# (shared with guard-finalize-publish.sh's session join — one rule, never
+# restated); a missing helper is a silent no-op like every other failure here.
+# shellcheck source=loom-log-owner.sh
+. "${BASH_SOURCE[0]%/*}/loom-log-owner.sh" 2>/dev/null || exit 0
 
 if [ -n "$PLUGIN_SESSION_ID" ]; then
   _log_owner="$(loom_log_owner "${LOG_DIR}/${PLUGIN_SESSION_ID}.jsonl" || true)"
