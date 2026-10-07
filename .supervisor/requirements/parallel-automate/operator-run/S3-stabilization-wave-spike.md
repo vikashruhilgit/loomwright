@@ -543,6 +543,13 @@ teardown, machine (load, swap, free) at peak.
   so at most 3 run together. hc/02 shares no file with pa/05, so `wave 4 = pa/05 · hc/02` keeps pa/05 next after
   wave 3; hc/01 then follows pa/05 unless the owner allows its declared `ARCHITECTURE_CONTRACTS.md` overlap (a table
   doc, which merged by lines in waves 1–2). Owner to confirm.
+- **Owner decision 2026-10-07 (in this session): "Allow ci.yml overlap".** **Wave 3 = ms/07 · af/31 · af/33 ·
+  hc/01** (≤ 3 building at once; the 4th starts when one reaches review). **Wave 4 = pa/05 · hc/02** (pa/05 stays next
+  after wave 3). hc/03 is done directly after both hc/01 and hc/02 merge. The ms/07 ↔ hc/01 `ci.yml` overlap is
+  allowed: both add a CI step; any conflict is resolved in the wave-branch merge commit. **Measure:** whether
+  `ci.yml` conflicted. ms/07 already edits `ci.yml`, so `claude-review` skips the wave-3 PR regardless; the drain's
+  earned-fallback `code-reviewer` reviews it (assert on posted reviews, never on the check colour). hc/02 ↔ af/33
+  (`emit-lifecycle.sh`, code) stays serialized.
 
 ## Done when
 All items in the queue (19 after the 2026-10-06 restructures) merged or closed by the owner, each wave's records on `loomwright-meta`, lanes torn down with `leaks`
