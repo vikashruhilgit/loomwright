@@ -400,7 +400,8 @@ check "real repo tree passes" 0 bash "$GUARD" --root "$REPO_ROOT"
 # row omits `not_verified` while RESULT_SCHEMAS.md still documents it" is a REAL, catchable
 # divergence rather than a silent no-op — the two files are meant to move together even
 # though nothing mechanically forces it today.
-RESULT_SCHEMAS="$REPO_ROOT/loomwright/docs/RESULT_SCHEMAS.md"
+# docs/RESULT_SCHEMAS.md is an index; the WORKER_RESULT section lives in its split file.
+RESULT_SCHEMAS="$REPO_ROOT/loomwright/docs/result-schemas/worker-result.md"
 # No separate existence pre-check here: a missing RESULT_SCHEMAS.md makes the
 # grep below fail on its own, which the counted check at line ~403 already
 # treats as a real FAIL (an uncounted pre-check here previously printed a

@@ -893,7 +893,7 @@ while heal_iterations < max_heal_iterations:
   # iterations whose review.issues can still carry pre_existing/nit/drift entries (a PASS decision
   # means zero new+BLOCKING/HIGH issues — it does NOT mean review.issues is empty). `reason` is a
   # CLOSED enum here (unlike review-heal's free-text dismissed.reason): the finding's own `category`
-  # when it is pre_existing/nit/drift (docs/RESULT_SCHEMAS.md:614 [pins: `category: enum [new, pre_existing, nit, drift]`]), else "below_severity_floor" for a
+  # when it is pre_existing/nit/drift (docs/result-schemas/code-review-result.md:29 [pins: `category: enum [new, pre_existing, nit, drift]`]), else "below_severity_floor" for a
   # `new` finding whose severity is below the fix-time BLOCKING/HIGH floor. `source` is "code_reviewer"
   # for every item accumulated here — the single-voter loop's one review lens (see docs/RESULT_SCHEMAS.md
   # §SUPERVISOR_RESULT for the full `source` enum, including the multi-voter `red_team`/`voter:<provider>`

@@ -68,8 +68,8 @@ Comprehensive index of all skills available in the Loomwright plugin.
 |------------|-----------|-----------------|------------|---------|--------------|
 | Playwright E2E | `playwright-e2e/` | QA Executor (preload) | ~1,500 | 1.0.0 | 2026-03 |
 | QA Strategy | `qa-strategy/` | QA Strategist (preload), QA Executor (preload) | ~1,100 | 1.0.0 | 2026-03 |
-| QA Gates | `qa-gates/` | QA Executor (preload), QA Strategist (preload) | ~1,400 | 1.0.0 | 2026-06-10 |
-| QA Test Patterns | `qa-test-patterns/` | QA Executor (preload) | ~1,800 | 1.0.0 | 2026-06-10 |
+| QA Gates | `qa-gates/` | QA Executor (preload), QA Strategist (preload) | ~1,400 | 1.0.0 | 2026-03 |
+| QA Test Patterns | `qa-test-patterns/` | QA Executor (preload) | ~1,800 | 1.0.0 | 2026-03 |
 | QA Orchestration | `qa-orchestration/` | QA Executor (reference) | ~900 | 1.0.0 | 2026-03 |
 | Verify Walkthrough | `verify-walkthrough/` | QA Executor (reference — Read on demand in `--verify` mode), `/verify` (reference) | ~3,600 | 1.4.0 | 2026-09-26 |
 
