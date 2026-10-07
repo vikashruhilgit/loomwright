@@ -68,6 +68,7 @@
 #        (G13) the reader wait is bounded by the clock, not by a count of `sleep` calls: with a PATH
 #             `sleep` that adds 0.1 s per call, G10's slow-reader check still holds busy. MUTATION
 #             CONTROL: the old 100 x `sleep 0.05` loop restored ⇒ the check fails under that sleep.
+#             The same check also passes on a copy forced onto clock_ms's SECONDS fallback.
 #        (G11) boot time: a holder record started before boot (fixture LOOMWRIGHT_MACHINE_BOOT_TIME)
 #             whose pid is now an ANCESTOR of the caller is dropped, not folded into (held under
 #             overloaded); one whose pid is an unrelated live process is dropped, not a phantom
@@ -682,6 +683,14 @@ if [ -s "$mut" ] && ! cmp -s "$mut" "$SUT" && bash -n "$mut"; then
   if PATH="$tmp/slowsleep:$PATH" slow_held "$mut"; then no "(G13) MUTATION CONTROL: the iteration-bounded wait still passed under a slow sleep — (G13) proves nothing"
   else ok "(G13) MUTATION CONTROL: the iteration-bounded wait fails (G13) under a slow sleep ($GWHY)"; fi
 else no "(G13) MUTATION CONTROL: mutant not built (empty, unchanged or invalid)"; fi
+# clock_ms's SECONDS fallback (bash 3.2's branch) never runs in CI (bash 5 populates EPOCHREALTIME):
+# force it on any bash with a copy whose clock_ms never sees EPOCHREALTIME, and run the same check.
+sec="$tmp/sut-seconds.sh"
+sed 's/^  local e="\${EPOCHREALTIME:-}"$/  local e=""/' "$SUT" > "$sec"
+if [ -s "$sec" ] && ! cmp -s "$sec" "$SUT" && bash -n "$sec"; then
+  if PATH="$tmp/slowsleep:$PATH" slow_held "$sec"; then ok "(G13) the SECONDS fallback (bash 3.2's branch, forced) also bounds the reader wait by the clock"
+  else no "(G13) SECONDS fallback: $GWHY"; fi
+else no "(G13) SECONDS fallback: forced copy not built (empty, unchanged or invalid)"; fi
 lpat release --pid "$c"; setload ok
 
 # (G11) records from before this boot are dropped, never counted or folded into
