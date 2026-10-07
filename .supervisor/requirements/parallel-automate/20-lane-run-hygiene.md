@@ -1,6 +1,6 @@
 # 20 — Lane-run hygiene: an unrun running-system check blocks READY, run files carry no home paths, ci-local fits a lane's command limit
 
-## Status: pending
+## Status: parked (merged 2026-10-07 into `automate-followups/36-s3-engine-fixes.md` as Part B — do not run this file; work the merged item)
 
 > **Origin (2026-10-07).** Owner decision relayed by S3 session 2216aefd, from S3 waves 1 and 2 (operator-run
 > `S3-stabilization-wave-spike.md` §"Wave 1 result", §"Wave 2 result"). Three parts in one item (owner prefers

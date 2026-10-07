@@ -1,6 +1,6 @@
 # 35 — Wave-1 review leftovers: the seven open notes from the #397 review
 
-## Status: pending
+## Status: parked (merged 2026-10-07 into `automate-followups/36-s3-engine-fixes.md` as Part A — do not run this file; work the merged item)
 
 > **Origin (2026-10-07).** Owner decision relayed by S3 session 2216aefd: file the "Questions and smaller notes" of
 > `proposed/s3w1-wave-pr-397-review.md` as ONE item (owner prefers fewer, larger items). That review's five findings

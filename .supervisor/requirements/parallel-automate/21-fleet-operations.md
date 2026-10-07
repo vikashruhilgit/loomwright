@@ -1,10 +1,18 @@
-# 06 — Wave close: one release bump per wave + split closeout (no extra PR, no merge train)
+# 21 — Fleet operations: wave close + split closeout, and policy answers for routine lane questions
 
-## Status: parked (merged 2026-10-07 into `parallel-automate/21-fleet-operations.md` as Part A — do not run this file; work the merged item)
+## Status: pending
+
+## Merged from (2026-10-07, owner decision relayed by S3 session 2216aefd: merge the serialized tail into fewer, larger items — every remaining item except pa/14 shares `automate-loop/SKILL.md` with every other, so separate items buy no parallelism and cost a wave each)
+- Part A: `parallel-automate/06-wave-close-and-closeout.md` — 06 — Wave close: one release bump per wave + split closeout (no extra PR, no merge train)
+- Part B: `parallel-automate/12-lane-policy-answers.md` — 12 — Policy answers for routine lane questions, so the owner answers decisions, not formalities
+
+The originals are parked with a pointer here. Their text is kept below VERBATIM as parts (headings
+demoted, their Status / Depends on / Touches folded into this file's own sections). Nothing was paraphrased.
+Their changelog.d fragment names are replaced by this item's one fragment.
 
 ## Depends on
-01
-05
+01-version-bump-script.md
+05-lane-coordinator.md
 
 ## Touches
 loomwright/scripts/automate-lanes.sh
@@ -16,8 +24,45 @@ loomwright/skills/SKILLS_INDEX.md
 loomwright/commands/automate.md
 loomwright/docs/result-schemas/automate-run.md
 loomwright/scripts/automate-merge-watch.sh
+loomwright/scripts/lane-policy.sh
+loomwright/scripts/test-lane-policy.sh
+loomwright/docs/LANE_GATES.md
+changelog.d/21-fleet-operations.md
 
-## Amended 2026-10-06 — wave close on a wave branch, no release lane (S3 wave 1 evidence; owner decisions 2026-10-05/06)
+## Goal
+One change set for running a wave of lanes after item 05: the wave closes on a wave branch with one release bump and a split closeout (A), and routine lane questions are removed at the source or pre-answered by an owner-stamped per-wave policy, so the owner answers decisions, not formalities (B, amended 2026-10-07 below).
+
+## Acceptance criteria
+- Every part's own acceptance criteria hold, on one branch and one PR.
+
+## Validation (must pass before merge)
+1. Baseline full loop once for the merged branch, `<passed>/<total>` and `SKIP` counts, base and branch.
+2. Every part's own Validation steps, labelled by part in the PR body. A part with no Validation section is
+   checked by running its acceptance criteria, and the PR body says so.
+3. Any "Running system" step a part names is run, or listed under "Not verified" with the reason.
+4. Rollback: `git revert`.
+
+## Amended 2026-10-07 — Part B (policy answers): remove pointless questions at the source, and a per-wave policy (owner, relayed by S3 session 2216aefd)
+Folded here, not into Part B's verbatim text. Part B's design stays: an exact-lookup policy the owner stamps,
+human-only classes, no model-judged answers.
+1. **Remove pointless questions at the source, not just auto-answer them.** Example: the 1-item queue confirm when
+   the owner launched exactly that list (`--backlog` / a lane backlog of one item the owner chose). Where the engine
+   can show the answer is already given by the owner's own invocation, it does not ask; the run file records why
+   (`## Progress`: `skipped <gate_id>: <reason>`). A gate that is removed never needs a policy entry.
+2. **A per-wave policy, settled during wave planning.** Before launch the owner answers the predictable routine
+   questions ONCE for all lanes of the wave — start a new run over a stale paused run, the queue confirm, save the
+   brief on a 0-issue Plan Review PASS, keep or drop LOW summaries — and that answer set is the wave's stamped policy
+   (Part B Scope 3's store and valve, scoped to the wave's run id). Anything outside it still reaches the owner.
+3. **S3 evidence:** wave 1 had 29 relayed questions and wave 2 about 40, roughly a third routine. Wave 3 (2026-10-07):
+   all four lanes asked "Start new run?" over the same paused run `automate-2026-09-30-054439` (12th time across S3),
+   three asked the 1-item queue confirm and **s3-k skipped it** — the same gate fires inconsistently, so it cannot be
+   pre-answered reliably until it is pinned or removed.
+
+## Parts
+
+### Part A — 06 — Wave close: one release bump per wave + split closeout (no extra PR, no merge train)
+
+#### Amended 2026-10-06 — wave close on a wave branch, no release lane (S3 wave 1 evidence; owner decisions 2026-10-05/06)
 S3 wave 1 integrated four lanes on `wave/s3w1` (operator-run S3 §"Integration method"): each lane PR's exact parked
 head merged `--no-ff` in planner order, `ci-local`, then `bump-version.sh` as the wave branch's LAST commit, ONE PR
 into `main`, merged by the owner with "Create a merge commit". GitHub marked all four lane PRs merged and every lane's
@@ -30,7 +75,7 @@ merge watcher closed out by itself (#397, 2026-10-06). So:
   this amendment, and the tests that pin release-lane behaviour change with it.
 - Open owner decision: whether the coordinator may run the integration merges into `wave/*` (Part S item 4).
 
-## Problem
+#### Problem
 After item 05 a wave ends with N READY PRs parked `ready_for_release`. Three things are still unsolved:
 - **The version.** Lanes carry changelog fragments only (decision P7); something must fold them and bump once.
 - **Closeout.** It was written for one checkout (brief repair, worktree cleanup, sync `main`, branch removal,
@@ -41,12 +86,12 @@ After item 05 a wave ends with N READY PRs parked `ready_for_release`. Three thi
   zero reviews — the owner merges by admin bypass, and an author cannot approve their own PR. A bypass merge also
   does not need the branch to be up to date, so file-disjoint lane PRs need no train at all.
 
-## Goal
+#### Goal
 A wave closes with at most ONE extra commit (the release bump on the release lane), the owner merges the PRs by
 hand as today, and each merge is followed by a closeout that opens no PR and leaves no lane behind. No new merge
 path, no new drain category, no push onto a PR that is waiting for a merge.
 
-## Scope
+#### Scope
 1. **Wave close is stepwise and resumable** — each `/automate --resume` performs the next step and stops; nothing
    waits inside a session. Every step names its executor.
 2. **Step A — release the ordinary lanes (bash, coordinator).** Every `ready_for_release` lane EXCEPT the last in
@@ -128,12 +173,12 @@ path, no new drain category, no push onto a PR that is waiting for a merge.
     still `awaiting_merge` must fail a test; pushing in step B after the lane is already `awaiting_merge` must
     fail a test.
 
-## Non-goals
+#### Non-goals
 Any automatic merge, `gate-eval` call, approval wait, or merge train for parallel runs (decision P1). GitHub
 native auto-merge, merge queue, a CI job that merges (P5). Relaxing branch protection or the ruleset. Auto-starting
 the next wave.
 
-## Acceptance criteria
+#### Acceptance criteria
 - A two-item wave merges as two PRs total — no trail PR, no release PR — with ONE version bump folding both
   fragments, landed by the release lane.
 - `grep -rn "gh pr merge --squash" loomwright/ | grep -viE "no |never |not "` resolves to the same five surfaces
@@ -144,7 +189,7 @@ the next wave.
   briefs / lane run files (each `## Status: done`) on `loomwright-meta`.
 - Full test loop + root checks green.
 
-## Validation (must pass before merge)
+#### Validation (must pass before merge)
 1. **Baseline:** full loop on base and branch; `<passed>/<total>` and `SKIP` counts for both.
 2. **Unchanged path:** `test-automate-trail.sh`'s closeout groups and `test-automate-helpers.sh`'s gate groups
    pass with no edit to existing assertions; then ONE real single-item `/automate` on this repo behaves as before
@@ -161,7 +206,7 @@ the next wave.
    A wave mid-close is finished by hand: merge the remaining PRs, run `scripts/bump-version.sh` in a small PR,
    push metadata from each lane, remove the lanes.
 
-## Spike findings
+#### Spike findings
 Filled 2026-10-04 from S1 Q4. The owner merged #372 (item 18) at 10:17:51Z by hand; the sibling #374 (item 19)
 went `BEHIND` but stayed `MERGEABLE` and merged by hand two minutes later with **no branch update**. The two PRs
 were a deliberately overlapping pair (separate `plan-waves` waves) sharing one file, `RESULT_SCHEMAS.md`, in
@@ -171,7 +216,7 @@ check off, reconcile `## Current`, watcher exits). One gap: v2-b's closeout meta
 (an absolute home path in its brief), so the fleet closeout must surface a lane's `meta-push-failed` marker and
 `meta-sync-followups/04` must land before 06 runs. Real `CONFLICTING` siblings are item 13's job.
 
-## Verified premises (re-check before starting)
+#### Verified premises (re-check before starting)
 - `gh pr list --state merged --limit 25 --json reviewDecision,reviews` on 2026-10-01: 25 × `REVIEW_REQUIRED`,
   zero reviews.
 - `gh api repos/vikashruhilgit/loomwright/branches/main/protection`: `strict: true`, required check `ci`, 1
@@ -183,14 +228,14 @@ check off, reconcile `## Current`, watcher exits). One gap: v2-b's closeout meta
 - `automate-merge-watch.sh` only detects a merge and runs closeout; its header says it never merges anything.
 - Closeout's step order and lock (`automate-loop/SKILL.md` §6 "Post-merge close-out").
 
-## Status note
+#### Status note
 Parked until S1 is run and item 05 has merged. Do not start from this file as written.
 
-## Part S — merged 2026-10-06 from `13-sibling-merge-conflict-repair.md`, REWRITTEN for wave-branch integration
+#### Part S — merged 2026-10-06 from `13-sibling-merge-conflict-repair.md`, REWRITTEN for wave-branch integration
 Owner decision 2026-10-06 (fewer, larger items) plus the S3 integration-method decision (2026-10-05: "if it holds,
 amend 06 and 13"). It held in S3 wave 1 (see the 2026-10-06 amendment at the top of this file).
 
-### The rewrite (this is the scope; the original below is kept verbatim for its reasoning and tests)
+##### The rewrite (this is the scope; the original below is kept verbatim for its reasoning and tests)
 13's premise was that lane PRs merge into `main` one by one, so a sibling can turn `CONFLICTING` after each merge.
 With a wave branch nothing merges into `main` until the wave PR, so that premise no longer applies. What survives:
 1. **Conflicts are repaired during wave integration, on the wave branch, never on a lane PR.** Lane heads are
@@ -209,11 +254,11 @@ With a wave branch nothing merges into `main` until the wave PR, so that premise
    wave branch, both lane branches untouched; a semantic conflict ⇒ integration stops with the diff; a lane fix ⇒
    new head re-merged, wave CI re-run; a guard test that integration never pushes a lane branch.
 
-### Original text of 13 (verbatim; superseded where the rewrite above says so)
-#### Depends on (folded into this file's own)
+##### Original text of 13 (verbatim; superseded where the rewrite above says so)
+###### Depends on (folded into this file's own)
 05
 
-#### Touches (folded into this file's own)
+###### Touches (folded into this file's own)
 loomwright/scripts/automate-lanes.sh
 loomwright/scripts/test-automate-lanes.sh
 loomwright/scripts/automate-merge-watch.sh
@@ -223,8 +268,8 @@ loomwright/commands/automate.md
 loomwright/docs/RESULT_SCHEMAS.md
 changelog.d/parallel-automate-13-sibling-merge-conflict-repair.md
 
-### Part S original — 13 — After each merge, keep the other parked PRs mergeable (conflict repair, not a merge train)
-#### Problem
+##### Part S original — 13 — After each merge, keep the other parked PRs mergeable (conflict repair, not a merge train)
+###### Problem
 Owner goal: 5–10 lanes at once, so 5–10 PRs parked `awaiting_merge` at the same time. Decisions P1/P5 and item 06
 already settle that **no merge train is built**: the owner merges by admin bypass, a bypass merge does not need an
 up-to-date branch, and file-disjoint PRs need nothing. (A train was proposed in this session's first draft and
@@ -237,12 +282,12 @@ withdrawn for that reason.) What is NOT covered:
 - **The invariant that makes repair delicate:** no push onto a PR that is `awaiting_merge` with a watcher armed
   (overview invariants; skill §6). Repair must first take the PR out of that state.
 
-#### Goal
+###### Goal
 After every merge in a wave, the coordinator checks the other parked PRs and `main`. A PR that became conflicting
 is repaired through a proper handshake (watcher stopped, lane resumed, conflict merged or escalated, CI, re-parked);
 a red `main` pauses the wave with the suspect merge named. No new merge path, no push onto an armed PR.
 
-#### Scope
+###### Scope
 1. **Post-merge sweep** (coordinator, on the merge watcher's `merged` event or the owner's `--resume`): for each
    other lane parked `awaiting_merge`, read GitHub's `mergeable` / `mergeStateStatus`; for `main`, read the latest
    `ci` run on the merge commit.
@@ -263,15 +308,15 @@ a red `main` pauses the wave with the suspect merge named. No new merge path, no
    resolution re-parks with a re-armed watcher; a semantic conflict ⇒ `escalated`; `BEHIND`-only ⇒ untouched; a red
    `main` ⇒ wave paused; and a guard test that no push ever happens while a watcher marker for that PR is live.
 
-#### Non-goals
+###### Non-goals
 - No merge train, no merge queue, no auto-merge, no CI job with merge authority (P1, P5).
 - No automatic revert of a merge that turned `main` red.
 
-#### Acceptance criteria
+###### Acceptance criteria
 - In S2, every PR that turned conflicting after a sibling merge is either re-parked green or escalated with its
   diff, and no push was made onto a PR with a live watcher marker.
 
-#### Validation (must pass before merge)
+###### Validation (must pass before merge)
 1. **Baseline:** full loop on base and branch, `<passed>/<total>` and `SKIP` counts.
 2. **Unchanged path:** a wave whose PRs stay mergeable produces no repair activity (item 06's tests unchanged).
 3. **Running system:** two lanes with a deliberate one-line overlap; merge one; paste the sweep, the handshake
@@ -279,20 +324,104 @@ a red `main` pauses the wave with the suspect merge named. No new merge path, no
 4. **A failure this must catch:** skip step 2a (push while the watcher is armed) ⇒ the guard test fails.
 5. **Rollback:** `git revert`; parked PRs keep working as in item 06.
 
-#### Spike findings
+###### Spike findings
 (S1 Q4: record #374's `mergeable` / `mergeStateStatus` and what its lane and watcher did after #372 merged.
 Items 18 and 19 are in different waves by `plan-waves`, so they are the overlap case on purpose.)
 
-#### Verified premises (re-check before starting)
+###### Verified premises (re-check before starting)
 - `main` protection: 1 approving review, required check `ci`, `strict: true`; repo owner type `User`, so GitHub's
   merge queue is unavailable (`mergeQueue: null`), checked 2026-10-04. P5 rules it out anyway.
 - Item 06 §Problem: "A bypass merge also does not need the branch to be up to date, so file-disjoint lane PRs need
   no train at all."
 
-#### Evidence
+###### Evidence
 This session's scale-up analysis (2026-10-04) and S1 Q4 once recorded.
 
-## Touches re-pointed 2026-10-07 (S3 operator f849e0cc, after pa/11's split — #408, v15.124.0)
+#### Touches re-pointed 2026-10-07 (S3 operator f849e0cc, after pa/11's split — #408, v15.124.0)
 - Top-level `## Touches`: `RESULT_SCHEMAS.md` → `result-schemas/automate-run.md` (wave-close park and closeout fields
   live in §AUTOMATE_RUN). The folded `#### Touches` of item 13 inside Part S is verbatim history, not machine-read,
   and is left as written.
+
+### Part B — 12 — Policy answers for routine lane questions, so the owner answers decisions, not formalities
+
+#### Problem
+Owner goal: 5–10 lanes at once. In S1 v2, two lanes asked **15 questions in 10 deferred calls over about 2 hours**
+(one every ~8 minutes). At 10 lanes that is about 75 questions per wave. Classifying v2's 15 by what the owner
+actually decided:
+- **Routine (8):** "start a new run" over a stale paused run (2); confirm a one-item queue (1); save a brief that
+  Plan Review passed with 0 issues (1); keep or drop a LOW-only summary draft (3); proceed past the children-settled
+  check when the only unsettled child is a finished non-plugin `Explore` agent, the known gap in
+  `automate-followups/17` (1). The owner picked the recommended option every time.
+- **Real decisions (7):** refine a brief carrying a MEDIUM finding; save-with-notes vs re-review on 4 LOW notes;
+  an output-gate gap; four fix-now / follow-up picks on MEDIUM findings.
+
+A second problem blocks any automation of the first: **the same gate is phrased differently each time.** v2-a's
+resume gate had header `Resume` and option `Start new (Recommended)`; v2-b's had `Resume?` and `Start new run
+(Recommended)`. Nothing stable identifies a gate or its options today.
+
+#### Goal
+Each engine gate carries a stable id and canonical option labels. The owner can write a small, human-stamped
+policy that pre-answers named routine gates; such answers are recorded as `source: policy`, listed for review, and
+never cover a decision class the gate catalog marks human-only. Real decisions still reach the owner, batched.
+
+#### Scope
+1. **Gate catalog** `loomwright/docs/LANE_GATES.md`: every `AskUserQuestion` the engine can raise in a lane
+   (resume, queue confirm, Launch Pad Phase 6 save/refine, output gap, children-settled, pre-flight overlap,
+   dismissed findings per severity, summary keep/drop, …) with a stable `gate_id`, its canonical option labels, and
+   `policy: allowed | human-only`. Human-only, always: Plan Review FAIL or any MEDIUM-or-higher finding, an output
+   gap, pre-flight OVERLAP, fix-now/follow-up/drop on MEDIUM-or-higher, anything that merges, deletes or pushes.
+2. **Gates say who they are:** the engine's prose asks every catalogued gate with `header` = its short gate code
+   and the catalog's exact labels (a `(Recommended)` marker stays allowed), so the defer hook can read
+   `gate_id` and the options deterministically. A question with no known code is always human.
+3. **Policy file** — tracked project config, the same store and the same human-stamp valve that `rules-check.sh`
+   applies to a rule's `check` command (read `skills/rules/SKILL.md` §8; do not invent a second valve). Shape:
+   `{gate_id: label}` for `policy: allowed` gates only. Unstamped, malformed or naming a human-only gate ⇒ ignored
+   and reported, never partially applied (fail CLOSED toward asking the human).
+4. **`lane-policy.sh decide <question.json>`**: prints the policy label or `human`. Item 05's defer hook calls it;
+   on a label it writes the answer file through the same guarded `lane-answer` path with `source: policy`,
+   `policy_sha`, and resumes the lane; on `human` the question goes to the inbox as today.
+5. **Visible and revocable:** `lane-status` and the lanes pane show policy answers in a digest ("3 answered by
+   policy since 09:00"), each with gate, label and time; the run file's `## Progress` records each one; removing the
+   stamp turns all policy answering off at the next question.
+6. **Batched inbox:** `lane-status` groups every lane's pending human questions in one list (oldest first), so the
+   owner answers a round at a time.
+7. **Tests:** a policy label is applied for an allowed gate and recorded `source: policy`; a human-only gate in the
+   policy is ignored and reported; unstamped policy ⇒ every question goes to the human; an unknown header ⇒ human;
+   a label not in the catalog ⇒ refused; the drifted v2 phrasings map to one gate id after Scope 2.
+
+#### Non-goals
+- No model-judged answers: policy is an exact lookup, never an LLM decision.
+- No policy for anything that merges, deletes, pushes or changes a finding's fate at MEDIUM or above.
+
+#### Acceptance criteria
+- Replaying v2's 15 questions through `lane-policy.sh` with a policy covering the 8 routine gates sends exactly the
+  7 real decisions to the human.
+- With no stamped policy, behaviour is identical to item 05 (every question to the human).
+
+#### Validation (must pass before merge)
+1. **Baseline:** full loop on base and branch, `<passed>/<total>` and `SKIP` counts.
+2. **Unchanged path:** no policy file ⇒ the lane inbox round trip from item 05's tests passes unchanged.
+3. **Running system:** one real lane with a stamped two-gate policy; paste the run file's policy lines and the
+   inbox showing only the remaining human questions.
+4. **A failure this must catch:** let a policy name a human-only gate and apply it ⇒ the test fails.
+5. **Rollback:** `git revert`, or remove the stamp (instant off).
+
+#### Verified premises (re-check before starting)
+- The 15 v2 questions and their answers: S1 run record, relays 1–8, and `ai-agent-manager-lanes-v2/v2-*/.supervisor/
+  s1-questions/` + `s1-answers/` (answer files carry `source: human`, `via`).
+- Item 05 Scope 13 already defines the answer file with `source: human|policy`.
+
+#### Evidence
+S1 v2 run record (relays 1–8 and the v1/v2 comparison table).
+- **Wave w1 (2026-10-04) adds a routine gate:** Phase 1.5 pre-flight returned OVERLAP with **0 open PRs**, only because 4 of the last 20 commits on `main` (all merged, all in the lane's own base `95e8601`) touched files the brief edits. The owner picked "Proceed anyway". A pre-flight OVERLAP whose every hit is already contained in the branch's base and has no open PR is a candidate for `policy: allowed`, or better, for pre-flight itself to classify as CLEAR, since "overlap with your own base" is not competing work. A pre-flight OVERLAP against an OPEN PR stays human-only.
+- **Wave w1, more routine gates:** w1-10 asked about 3 dismissed-finding drafts whose findings were **already fixed on the PR** (named commits, regression tests added), each with "Drop (Recommended)". The owner dropped all three. A draft whose finding the lane can show fixed on the current head (commit plus test named) is a `policy: allowed` drop candidate. A draft whose fix cannot be shown stays human.
+- **S3 wave 2 (2026-10-07, owner, relayed by S3 session 2216aefd) — the same gate asked inconsistently:** the
+  stale-runs "Start new run?" question was asked by lane s3-f but NOT by s3-e or s3-g, all three in the same state
+  (one other incomplete run). Evidence only; operator note for the brief: a policy can pre-answer only a gate that
+  fires predictably, so whether this gate fires may need the same pinning as its phrasing (S3 record §"Wave 2
+  result", gap 5).
+
+#### Touches re-pointed 2026-10-07 (S3 operator f849e0cc, after pa/11's split — #408, v15.124.0)
+- `RESULT_SCHEMAS.md` → `result-schemas/automate-run.md`: the Scope names no block of its own; its schema text is the
+  run file's `## Progress` policy-answer lines (Scope 5) and the `source: policy` answer record item 05 defines
+  under §AUTOMATE_RUN.

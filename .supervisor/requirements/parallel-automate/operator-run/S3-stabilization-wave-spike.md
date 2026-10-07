@@ -615,6 +615,43 @@ teardown, machine (load, swap, free) at peak.
   wave PR body. Integration: merge #410 before #412, then `build-capabilities.sh --check` on the integrated tree and
   regenerate if af/33's three new hook leaves make it stale.
 
+### Restructure 2026-10-07 — the serialized tail (owner decision relayed by 2216aefd; scope widened by the owner in f849e0cc)
+- **Why:** every remaining item except pa/14 shares `automate-loop/SKILL.md` with every other (and most pairs also
+  `commands/automate.md` / `result-schemas/automate-run.md`), so separate items buy no parallelism and cost a wave each.
+- **Merged (2026-10-06 lossless method; originals verbatim as parts with headings demoted two levels, their
+  Status / Depends on / Touches folded, originals parked with a pointer; a scripted line check found no original
+  line missing):**
+  - `parallel-automate/21-fleet-operations.md` (428 lines) = Part A pa/06 + Part B pa/12, plus a dated amendment to
+    Part B: remove pointless questions at the source (e.g. the 1-item queue confirm for an owner-launched list), a
+    per-wave policy settled at wave planning (start new run · queue confirm · save on a 0-issue PASS · keep/drop LOW
+    summaries), S3 question-count evidence. Part B's design kept (stamped exact lookup, human-only classes).
+  - `automate-followups/36-s3-engine-fixes.md` (305 lines) = Part A af/35 + Part B pa/20 + Part C ms/05; keeps
+    pa/20's depend on af/31 and ms/05's on ms/01 + ms/08.
+  - Dependents re-pointed: pa/07 `06` → `21-fleet-operations.md` (dated note). No other item depended on the five.
+    af/34, pa/18, pa/14, pa/07 stay separate. The four wave-3 items were not touched.
+- **New:** `parallel-automate/22-split-automate-engine-surfaces.md` (depends on pa/05). The relayed scope was "split
+  `automate-loop/SKILL.md`"; the operator measured that with `SKILL.md` removed af/34, pa/18 and af/36 still share 5–9
+  files per pair (`automate-helpers.sh` + its `--help` golden, `automate-run.md`, `commands/automate.md`,
+  `session-resume.sh`, `agent-help.md`, …), so the owner widened it to four surfaces: the skill, `commands/automate.md`,
+  `result-schemas/automate-run.md`, and the helpers usage header + golden (per-family usage text). Required: a
+  step-by-step state-trace review in the PR body (the engine is prose).
+- `plan-waves --lint`: 13/13 ok. `plan-waves --max 5 --explain` (S3 rule, scratch clone of `f4b0732`, Touches as they
+  are TODAY, i.e. before pa/22 re-points them):
+  | Planner wave | Items |
+  |---|---|
+  | 1 | ms/07 · af/31 · af/33 (S3 wave 3, running; hc/01 runs with them by owner decision) |
+  | 2 | hc/01 · hc/02 (→ in practice wave 4 = pa/05 ∥ hc/02) |
+  | 3 | pa/05 (depends on ms/07) |
+  | 4 | pa/22 split (depends on pa/05; shares the engine surfaces with everything) |
+  | 5 | pa/21 fleet operations ∥ pa/14 lanes pane (both depend on pa/05; disjoint) |
+  | 6–8 | af/34 · af/36 · pa/18 — serialized today; pa/22's acceptance criterion is to let at least two share a wave after the re-point |
+  | 9 | pa/07 pilot (depends on pa/21) |
+- **How the chain runs (owner):** waves only where real parallelism exists — wave 3 now, wave 4 = pa/05 ∥ hc/02,
+  later pa/21 ∥ pa/14 and whatever pa/22 frees. Single-item steps run as plain sequential `/automate` in the primary
+  BETWEEN waves, never while a wave runs (pa/05 Scope 4's primary lock + PICK/INIT refusal will enforce it; until then
+  it is discipline). Each sequential item ships a `changelog.d/` fragment; a release PR (`bump-version.sh`) follows each
+  item or batch, then a reinstall.
+
 ## Done when
 All items in the queue (19 after the 2026-10-06 restructures) merged or closed by the owner, each wave's records on `loomwright-meta`, lanes torn down with `leaks`
 empty, the measures above recorded in this file, and P2 (default lane count) revisited with S2 + S3 evidence.

@@ -111,4 +111,4 @@ uses the harness (its Scope 2c). Parts A–C stay here.
 ## Provenance
 Owner direction, 2026-10-03, session cc4eaee3 (after M1): carry everything that makes the plugin perform best on the metadata branch; ignore session-level state. Same session: test it the way M1 was tested, step by step. Store inventory and counts were verified in the primary checkout on 2026-10-03, after M1 step 7. The allowlist failure (218 hits without `config.json`) and the rollback defect come from the M1 rehearsal and drill the same day. The draft prompt the owner supplied was reviewed first; its counts held, and its design gaps (allowlist grant rule, curation-state, new file types, chain conflicts, consent, the rules-only PR rule) are resolved above.
 
-## Status: pending
+## Status: parked (merged 2026-10-07 into `automate-followups/36-s3-engine-fixes.md` as Part C — do not run this file; work the merged item)

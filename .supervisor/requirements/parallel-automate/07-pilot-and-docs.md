@@ -3,7 +3,7 @@
 ## Status: parked (waits on item 06 — set `## Status: pending` once 06 has merged)
 
 ## Depends on
-06
+21-fleet-operations.md
 
 ## Touches
 CLAUDE.md
@@ -76,3 +76,7 @@ New features. Enabling `--auto-merge` for parallel runs.
 
 ## Status note
 Parked until item 06 has merged.
+
+## Depends re-pointed 2026-10-07 (S3 operator f849e0cc)
+- `06` → `21-fleet-operations.md`: item 06 was merged into 21 (Part A) with item 12 (Part B), owner decision relayed by S3
+  session 2216aefd. Nothing else in this file changed.

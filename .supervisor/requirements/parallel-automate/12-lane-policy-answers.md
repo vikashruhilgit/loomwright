@@ -1,6 +1,6 @@
 # 12 — Policy answers for routine lane questions, so the owner answers decisions, not formalities
 
-## Status: parked (waits on item 05's lane inbox — Scope 13 `lane-answer` and `source: human|policy`)
+## Status: parked (merged 2026-10-07 into `parallel-automate/21-fleet-operations.md` as Part B — do not run this file; work the merged item)
 
 ## Depends on
 05
