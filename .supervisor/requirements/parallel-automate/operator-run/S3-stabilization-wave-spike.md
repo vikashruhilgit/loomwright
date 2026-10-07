@@ -753,6 +753,45 @@ teardown, machine (load, swap, free) at peak.
   round 0, 0 fix cycles** — the claude-review ran on a PR that edits `ci.yml` (narrowed skip rule confirmed again).
 - Owner merges with "Create a merge commit" (branch protection: 1 approving review + `ci`).
 
+### Wave 3 result (closed 2026-10-07 ~14:10Z, operator session f849e0cc)
+- **Merged:** wave PR #424 (`wave/s3w3`) by the owner with a merge commit, `e6b90c4` (**v15.125.0**), 14:01:43Z; #410,
+  #415, #417, #412 flipped MERGED at 14:01:46Z; all four merge watchers closed out by 14:02:51Z (~70 s).
+- **Integration:** 0 textual conflicts (incl. the owner-allowed `ci.yml` overlap); 2 semantic conflicts fixed on the
+  wave branch (`4832579`, `ae35b4c` — see §"Integration"); `ci-local` 152/153 (G10 pre-existing, macOS, root cause
+  found); drain of #424 READY round 0 (claude-review posted "no new findings" on a `ci.yml`-editing PR).
+- **Operator checks beyond the lanes:** #410 live probe (guard denies/allows a real push; `ended` rows carry
+  `agent_type`); #415 real `gh` JSON shapes; #417 D3 verified on a real runner (150 briefs swept). All held.
+- **Cost (last `total_cost_usd` per lane session):** s3-h $61.93 · s3-i $64.98 (second session; its aborted first
+  start is not counted) · s3-j $39.37 · s3-k $43.20 · wave ≈ **$209.5** (+ $0.55 probe).
+- **Questions:** 29 relayed calls (s3-h 10, s3-i 7, s3-j 6, s3-k 6). Routine: start-new ×4, queue confirm ×3 (s3-k
+  skipped it), children-settled false alarms ×3 (af/33's own target). Owner overrode a lane recommendation 3 times
+  (5 fix-now on #410 incl. the evasion class; 5 fix-now on #417; all on findings the lanes proposed to defer).
+- **Launch → park:** s3-k 3 h 50 m · s3-j 4 h 20 m · s3-h 5 h 50 m · s3-i 7 h 51 m. No overnight wait this wave.
+- **Peak load:** 78 at 08:08Z (two `ci-local` suites, both admitted at load1 ~7.5 — the admission-lag pa/05 Scope 16
+  addresses — plus a 2.8 GB non-lane VM and XProtect). No crash; pa/16's 2-suite cap held.
+- **Closeout carry:** the lanes' start-up race left 3 conflicted wave-2 run files again (s3-i at launch, s3-h at
+  closeout) — branch copies taken, diffs were timestamps + own failure lines. 35 paths carried to `loomwright-meta`
+  `db3c0b9` (4 run files + sidecars, 4 briefs, 9 dismissed drafts, 3 finalized wave-2 runs, results.jsonl, 4
+  requirement closeouts — af/31 by appending only its closeout block — and ms/07's D.4 docs: M1 rollback fix + new M2
+  runbook). No home-path scrub failures this wave.
+- **New live evidence:** every lane's closeout left `## Current` reading `status done, pause_reason awaiting_go`
+  (af/36 Part A item 3, `current-rebuild`/reconcile leaving a stale `pause_reason`) — seen on all four lanes.
+- Teardown: 4 lanes archived (`archive/s3-h..k`) and removed; `leaks` empty; primary on `e6b90c4`, clean; snapshot
+  after differs only in HEAD + meta tip.
+
+## HANDOVER (2026-10-07 ~14:10Z) — wave 3 closed; next = step 1 (pa/05 ALONE, sequential, FRESH session per owner)
+- **State:** `main` = `e6b90c4` (v15.125.0) — **not yet installed** (installed: 15.124.0). No lanes, no watchers, no
+  monitor. `caffeinate -i` (pid 46247) and the throwaway branch `loomwright-meta-s3w3` + remote `wave/s3w3` are left
+  for the owner's call (see below).
+- **Before step 1:** (1) owner reinstalls the plugin to 15.125.0; (2) RECOMMENDED small direct PR first: fix
+  `ci-slot.sh`'s reader wait to a wall-clock bound (G10 root cause, §"Integration") — pa/05's own lane runs `ci-local`
+  on this Mac and will otherwise hit the same red; (3) re-point Touches for the new family file
+  `automate-helpers.d/escalation.sh` (from #415) in pa/22 and any item that edits escalation causes.
+- **Step 1 = pa/05 alone** as a plain sequential `/automate` in the primary (§"Owner decisions — post-wave-3 order").
+  Its Validation 4 needs a real `--parallel 2` run on two THROWAWAY items before merge — never real queue items.
+- **Owner post-merge checks now due:** ms/07 Validation 3 (full migrate flow on a second real repo; owner does
+  `protect` + PR merges); af/31 Validation 3 (one real escalated park on a pending `claude-review`).
+
 ## Done when
 All items in the queue merged or closed by the owner — as of 2026-10-07 after the tail restructure, 13 open items: wave 3 ms/07 · af/31 · af/33 · hc/01; wave 4 pa/05 · hc/02; then pa/22 split, pa/21 fleet operations ∥ pa/14, af/34, af/36 S3 engine fixes, pa/18, pa/07 last (Milestone B) — plus hc/03 done directly after hc/01 + hc/02 (done earlier in S3: af/32, ms/08, ms/04, pa/09, pa/19, ms/11, pa/11, pa/16, agnostic/04), each wave's records on `loomwright-meta`, lanes torn down with `leaks`
 empty, the measures above recorded in this file, and P2 (default lane count) revisited with S2 + S3 evidence.
