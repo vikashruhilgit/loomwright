@@ -181,7 +181,7 @@ Success looks like {measurable outcome}.
 
 ### Auto-Authoring (multi-iteration)
 
-This is the rubric's **producer** path. When `/autonomous` runs in **multi-iteration mode** AND the requirement file has **no `## Outcomes Rubric`**, the inlined Launch Pad auto-authors one (guarded step — see `agents/launch-pad.md` Phase 5).
+This is the rubric's **producer** path. When `/autonomous` runs in **multi-iteration mode** AND the requirement file has **no `## Outcomes Rubric`** AND the run can ask (never under `--non-interactive-fallback`, where nobody could approve it — that run takes the no-rubric gate), the inlined Launch Pad auto-authors one (guarded step — see `agents/launch-pad.md` Phase 5).
 
 - Authored bullets **derive from the brief's Acceptance Criteria plus the Phase 3 codebase analysis** (file impact map), and MUST obey the **Authoring rules** above (3-7 bullets, observable, **diff-checkable from the PR diff alone**, positive assertions). *(At plan-review time no diff exists yet, so Plan Reviewer applies "diff-checkable" as a phrasing/observability heuristic — see `agents/plan-reviewer.md` Criterion 3.)*
 - **Human-gated:** the authored rubric appears in the assembled brief and is surfaced for approve/edit at Launch Pad Phase 6 — never blind-written. Plan Reviewer (Phase 5.5) validates the auto-authored *draft* against these rules. Per Launch Pad's standard Phase 6 mutation rule (`agents/launch-pad.md` Phase 6), if the human edits the rubric (or any section) the prior PASS is voided and Plan Review re-runs before save (consuming an attempt from the shared 3-spawn cap) — so human edits re-enter validation rather than bypassing it; only an unedited approve-as-is skips a re-review.

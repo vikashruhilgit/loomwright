@@ -413,7 +413,10 @@ Detect package manager and install dependencies:
 ```
 1. Read playwright.config.ts → extract baseURL
 2. Fallback: Read .env / .env.local for APP_URL, BASE_URL, FRONTEND_URL
-3. Fallback: Ask user for URL
+3. Fallback: Ask user for URL — unreachable here (always a subagent; the ask tool is absent):
+   stop with status: needs_human, error: "base_url_unresolved: {what was tried}" in QA_RESULT,
+   returned to the session that Task-spawned this agent (`/qa-executor`; `--verify` mode never
+   reaches Phase 3), which surfaces it
 4. Verify URL responds: curl -s -o /dev/null -w "%{http_code}" {baseURL}
 5. Detect environment: localhost → "local", *.vercel.app → "preview"
 ```
@@ -903,6 +906,7 @@ Split scopes are added to plan.json. Original scope marked "split".
 | No playwright.config.* found (ui_present: true) | status: skipped, error: "No Playwright config found. Required for UI testing." |
 | No playwright.config.* found (ui_present: false) | Auto-generate minimal API-only config in Phase 3.6, proceed normally |
 | App not running | status: needs_human, error: "App not running at {URL}" |
+| No base URL resolved (Phase 3 DETECT URL: no Playwright `baseURL`, no env URL) | status: needs_human, error: "base_url_unresolved: {what was tried}" — never asks (always a subagent) |
 | Dependency install failed | status: needs_human, error: "Install failed: {output}" |
 | Dry-run gate failed | status: needs_human, error: "Dry-run failed: {summary}" |
 | Discovery confidence LOW | Halt unless --auto-discover |

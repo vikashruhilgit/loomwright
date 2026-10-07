@@ -104,7 +104,11 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 BUILD="$HERE/build-floor.sh"
-SCHEMA_MD="$(cd "$HERE/../docs" && pwd)/RESULT_SCHEMAS.md"
+# docs/RESULT_SCHEMAS.md is an index (preamble + one `See [result-schemas/<f>](...)` pointer per
+# `## ` heading); each section body lives in docs/result-schemas/<f>.md. SCHEMA_MD (set below,
+# once $ROOT exists) is the doc re-assembled from the index preamble + the pointed-to split
+# files in index order, so every check below parses the same text, in the same order, as before.
+SCHEMA_INDEX="$(cd "$HERE/../docs" && pwd)/RESULT_SCHEMAS.md"
 SESS_FIXTURE="$HERE/fixtures/floor-sessions.jsonl"
 SESS_CUR_FIXTURE="$HERE/fixtures/floor-sessions-current.jsonl"
 AGENTS_FIXTURE_DIR="$HERE/fixtures/floor-agents"
@@ -123,6 +127,14 @@ ROOT="$(mktemp -d)"
 # in-block, but a mid-case abort must not strand a 000 directory that `rm -rf` cannot enter.
 trap 'chmod -R u+rwX "$ROOT" >/dev/null 2>&1; rm -rf "$ROOT" 2>/dev/null' EXIT
 mktmp() { mktemp -d "$ROOT/d.XXXXXX"; }
+SCHEMA_MD="$ROOT/RESULT_SCHEMAS.assembled.md"
+if [ -f "$SCHEMA_INDEX" ]; then
+  {
+    awk '/^## /{exit} {print}' "$SCHEMA_INDEX"
+    sed -nE 's|^See \[result-schemas/([^]]+)\]\(result-schemas/[^)]+\)\.$|\1|p' "$SCHEMA_INDEX" \
+      | while IFS= read -r f; do cat "$(dirname "$SCHEMA_INDEX")/result-schemas/$f"; done
+  } > "$SCHEMA_MD"
+fi
 
 csum() {
   if   command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" 2>/dev/null | cut -d' ' -f1
@@ -256,7 +268,9 @@ sessions insights_runs postmortem drain_rounds worker_summaries rules agents"
 
 command -v jq >/dev/null 2>&1 || { echo "test-build-floor: jq required to run these tests" >&2; exit 1; }
 [ -f "$BUILD" ]        || { echo "test-build-floor: $BUILD missing" >&2; exit 1; }
-[ -f "$SCHEMA_MD" ]    || { echo "test-build-floor: $SCHEMA_MD missing" >&2; exit 1; }
+[ -f "$SCHEMA_INDEX" ] || { echo "test-build-floor: $SCHEMA_INDEX missing" >&2; exit 1; }
+grep -q '^## FLOOR_PROJECTION$' "$SCHEMA_MD" 2>/dev/null \
+  || { echo "test-build-floor: could not assemble $SCHEMA_INDEX from its result-schemas/ split" >&2; exit 1; }
 [ -f "$SESS_FIXTURE" ] || { echo "test-build-floor: committed fixture $SESS_FIXTURE missing" >&2; exit 1; }
 [ -f "$SESS_CUR_FIXTURE" ] || { echo "test-build-floor: committed fixture $SESS_CUR_FIXTURE missing" >&2; exit 1; }
 [ -d "$AGENTS_FIXTURE_DIR" ] || { echo "test-build-floor: committed fixture dir $AGENTS_FIXTURE_DIR missing" >&2; exit 1; }

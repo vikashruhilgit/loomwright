@@ -571,7 +571,10 @@ fi
 # ---- B. SKILL-text legs (Part B prose) ---------------------------------------
 REPO="$(cd "$HERE/../.." && pwd)"
 SK="$REPO/loomwright/skills/automate-loop/SKILL.md"
-RS="$REPO/loomwright/docs/RESULT_SCHEMAS.md"
+# docs/RESULT_SCHEMAS.md is an index; each schema's text lives in docs/result-schemas/<file>.md.
+RSD="$REPO/loomwright/docs/result-schemas"
+# Every schema-doc surface (index + split files), repo-relative, for whole-doc absence scans.
+RS_ALL="loomwright/docs/RESULT_SCHEMAS.md $(cd "$REPO" && ls loomwright/docs/result-schemas/*.md 2>/dev/null | tr '\n' ' ')"
 QUAL="at most one owner-requested fix-now re-drain per item"
 SUBH="### Dismissed-findings decision step (before the park)"
 # first_line <file> <fixed anchor> — the first line containing the anchor (empty if none)
@@ -622,23 +625,29 @@ loomwright/skills/automate-loop/SKILL.md|suppresses the default dispatch and own
 loomwright/skills/automate-loop/SKILL.md|After suppression, DRAIN owns **exactly ONE** inline
 loomwright/skills/automate-loop/SKILL.md|- **Double until-mergeable drain.**
 loomwright/skills/automate-loop/SKILL.md|- Single drain: `.auto_review:false` set before
-loomwright/docs/RESULT_SCHEMAS.md|| `suppressed_default_dispatch` | `true` |
+loomwright/docs/result-schemas/automate-run.md|| `suppressed_default_dispatch` | `true` |
 loomwright/commands/automate.md|4. **Per-item loop.**
 README.md|- **Single drain, single open PR:**
 CLAUDE.md|**`/automate` single-drain ownership
 SURF
 unq=0
-for f in loomwright/skills/automate-loop/SKILL.md loomwright/docs/RESULT_SCHEMAS.md loomwright/commands/automate.md README.md CLAUDE.md; do
+# The schema doc is ONE restating surface (index + every split file, concatenated), so a
+# surface with no hit still yields the single empty line the original per-file scan counted.
+RS_CAT="$TOP/result-schemas-all.md"
+# shellcheck disable=SC2086  # RS_ALL is a space-separated path list (no spaces in any path)
+(cd "$REPO" && cat $RS_ALL) > "$RS_CAT"
+for p in "$REPO/loomwright/skills/automate-loop/SKILL.md" "$RS_CAT" "$REPO/loomwright/commands/automate.md" "$REPO/README.md" "$REPO/CLAUDE.md"; do
+  f="${p#"$REPO"/}"; [ "$p" = "$RS_CAT" ] && f="loomwright/docs/RESULT_SCHEMAS.md (+ result-schemas/*.md)"
   while IFS= read -r L; do
     case "$L" in *"$QUAL"*) ;; *) unq=$((unq+1)); echo "    unqualified: $f: ${L:0:120}" ;; esac
   done <<EOF2
-$(grep -E 'exactly ONE\*\* inline|exactly ONE inline|ONE owned inline|ONE inline `/review-pr' "$REPO/$f" 2>/dev/null)
+$(grep -E 'exactly ONE\*\* inline|exactly ONE inline|ONE owned inline|ONE inline `/review-pr' "$p" 2>/dev/null)
 EOF2
 done
 [ "$unq" -eq 0 ] && ok "B: no drain-ownership line on any restating surface lacks the qualifier" || no "B: $unq unqualified drain-ownership line(s)"
 # optional severity: schema + three producers
-n="$(grep -cF 'severity?: string}]' "$RS" 2>/dev/null)"; [ "${n:-0}" -ge 2 ] && ok "B: RESULT_SCHEMAS field lines carry optional severity (heal_dismissed + dismissed)" || no "B: RESULT_SCHEMAS severity field lines: ${n:-0}"
-grep -qF '`[{finding, reason, source, severity?}]`' "$RS" && ok "B: REVIEW_HEAL_RESULT table row carries severity?" || no "B: dismissed table row lacks severity?"
+n="$(cat "$RSD/supervisor-result.md" "$RSD/review-heal-result.md" 2>/dev/null | grep -cF 'severity?: string}]')"; [ "${n:-0}" -ge 2 ] && ok "B: RESULT_SCHEMAS field lines carry optional severity (heal_dismissed + dismissed)" || no "B: RESULT_SCHEMAS severity field lines: ${n:-0}"
+grep -qF '`[{finding, reason, source, severity?}]`' "$RSD/review-heal-result.md" && ok "B: REVIEW_HEAL_RESULT table row carries severity?" || no "B: dismissed table row lacks severity?"
 grep -qF 'severity: i.severity' "$REPO/loomwright/skills/self-heal-advisory/SKILL.md" && ok "B: self-heal-advisory Part 2 producer carries severity" || no "B: self-heal-advisory producer lacks severity"
 grep -qF '({severity: stated_severity(f)} if stated_severity(f) else {})' "$REPO/loomwright/skills/review-heal/SKILL.md" && ok "B: review-heal §U3.5 main pass carries severity only when stated" || no "B: review-heal main pass severity"
 grep -qF 'severity: f.severity}' "$REPO/loomwright/skills/review-heal/SKILL.md" && ok "B: review-heal Earned Fallback pass carries f.severity" || no "B: review-heal fallback severity"
@@ -648,7 +657,7 @@ for sc in dismissed-drafts dismissed-decide dismissed-pending; do
   grep -qF "| \`$sc\` |" "$SK" && ok "B: §1.5 row for $sc" || no "B: §1.5 lacks a $sc row"
 done
 grep -qF -- '- pending_decisions: <n> | fix_now_reentered: <true|false>' "$SK" && ok "B: §3 template carries the pending_decisions line" || no "B: §3 template lacks pending_decisions"
-grep -qF -- '- pending_decisions: <n> | fix_now_reentered: <true|false>' "$RS" && ok "B: AUTOMATE_RUN template carries the pending_decisions line" || no "B: AUTOMATE_RUN lacks pending_decisions"
+grep -qF -- '- pending_decisions: <n> | fix_now_reentered: <true|false>' "$RSD/automate-run.md" && ok "B: AUTOMATE_RUN template carries the pending_decisions line" || no "B: AUTOMATE_RUN lacks pending_decisions"
 # proposed/ README: the generator template and the committed file are byte-identical
 PW="$REPO/loomwright/scripts/propose-work.sh"
 awk "/^printf '%s\\\\n' \\\\\$/{f=1} f{print} /guarded_write \"README.md\"/{exit}" "$PW" | sed '$d' | sed '$s/ \\$//' > "$TOP/readme-tpl.sh"

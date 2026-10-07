@@ -784,7 +784,7 @@ Each basis is tuned by env vars read by its own script, all optional. Ledger bas
 
 **Purpose:** Chain `/launch-pad → /supervisor` to drive a requirement to completion. Default mode is **multi-iteration** (cap 10, default 3) with **stacked PRs** — iteration N+1 branches from `iterations[N].branch` — and re-plans on two specific `SUPERVISOR_RESULT` signals. Pass `--single-iteration` (or `--max-iterations 1`) for v13's run-once behavior; `--no-stacked-branches` for the v13 branch-from-`main` cadence.
 
-> **Foreground-assisted automation, not fire-and-forget.** The loop pauses at every existing interactive boundary (Launch Pad Phase 6 save, NO-GO override, Plan Review FAIL × 3, Supervisor adjudication 4-option, and the loop's own rubric gate). You must be at the terminal to answer them — unless you pass `--non-interactive-fallback` (CI / non-TTY: gates fail closed). `--notify` posts a gate-event webhook (resolved from `LOOMWRIGHT_WEBHOOK_URL` or `.supervisor/config.json`; legacy `.supervisor/notify-config.json` is still read as a fallback, new path wins) so an out-of-band notifier can ping you.
+> **Foreground-assisted automation, not fire-and-forget.** The loop pauses at every existing interactive boundary (Launch Pad Phase 6 save, NO-GO override, Plan Review FAIL × 3, Supervisor adjudication 4-option, and the loop's own rubric gate). You must be at the terminal to answer them — unless you pass `--non-interactive-fallback` (CI / non-TTY: each gate takes its named can't-ask branch instead of asking — a Launch Pad Phase 6 PASS saves the brief (`saved_on_pass_non_interactive`), the others fail closed; full map in `docs/ARCHITECTURE_CONTRACTS.md` §"Question-gate inventory"). `--notify` posts a gate-event webhook (resolved from `LOOMWRIGHT_WEBHOOK_URL` or `.supervisor/config.json`; legacy `.supervisor/notify-config.json` is still read as a fallback, new path wins) so an out-of-band notifier can ping you.
 
 **Usage:**
 ```bash
@@ -793,7 +793,7 @@ Each basis is tuned by env vars read by its own script, all optional. Ledger bas
 /autonomous "<...>" --max-iterations N                                   # cap iterations at N (max 10)
 /autonomous "<...>" --single-iteration                                   # v13 run-once (no loop)
 /autonomous "<...>" --no-stacked-branches                                # each iteration branches from main (v13 cadence)
-/autonomous "<...>" --non-interactive-fallback --notify                  # CI: gates fail closed + webhook pings
+/autonomous "<...>" --non-interactive-fallback --notify                  # CI: named can't-ask branches + webhook pings
 ```
 
 **Parameters:**
@@ -801,7 +801,7 @@ Each basis is tuned by env vars read by its own script, all optional. Ledger bas
 - `--max-iterations N` — cap for multi-iteration mode (default 3, max 10)
 - `--single-iteration` — disable the loop; run Launch Pad → Supervisor once (v13-compat)
 - `--no-stacked-branches` — each iteration branches from `main` instead of the prior iteration's branch
-- `--non-interactive-fallback` — permit multi-iter in CI / non-TTY; gates fail closed instead of prompting
+- `--non-interactive-fallback` — permit multi-iter in CI / non-TTY; each gate takes its named can't-ask branch instead of prompting (Phase 6 PASS saves, the no-rubric gate accepts, the rest fail closed — see the Question-gate inventory)
 - `--notify` — POST gate-event webhooks (fails loud at INIT if no URL resolvable). `--allow-multi-iteration` is **deprecated** (multi-iter is the default now; accepted as a silent no-op)
 
 **Multi-iteration re-plan signals (read from `SUPERVISOR_RESULT` plus iteration-scoped job artifacts):**

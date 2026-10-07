@@ -66,7 +66,9 @@ EM="$PLUGIN_ROOT/agents/execute-manager.md"
 SUP="$PLUGIN_ROOT/agents/supervisor.md"
 WORKER="$PLUGIN_ROOT/agents/worker.md"
 ORCH="$PLUGIN_ROOT/agents/orchestrator.md"
-SCHEMAS="$PLUGIN_ROOT/docs/RESULT_SCHEMAS.md"
+# docs/RESULT_SCHEMAS.md is an index; the kind-table block and provides_mismatch live in the
+# WORKER_RESULT split file.
+SCHEMAS="$PLUGIN_ROOT/docs/result-schemas/worker-result.md"
 ASYNC="$PLUGIN_ROOT/skills/async-orchestration/SKILL.md"
 FAILDOC="$PLUGIN_ROOT/docs/FAILURE_ESCALATION.md"
 LAUNCHPAD="$PLUGIN_ROOT/agents/launch-pad.md"
