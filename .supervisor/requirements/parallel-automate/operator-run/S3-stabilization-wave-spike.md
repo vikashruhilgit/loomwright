@@ -687,6 +687,22 @@ teardown, machine (load, swap, free) at peak.
   and reinstalled. The owner confirmed the claude-review skip rule: only a PR that edits the review workflow
   (`claude-code-review.yml`) skips; `ci.yml` edits are reviewed (global CLAUDE.md line narrowed accordingly).
 
+### Merge checks — #417 (ms/07, lane s3-h, parked `awaiting_merge` 11:12Z, head `677b0e8`)
+- `ci` + `claude-review` success on `677b0e8`; claude[bot] reviewed every round (last: "no new findings" on `677b0e8`)
+  although the PR edits `ci.yml` — the PR body's "claude-review skips itself" owner note is WRONG (see the narrowed
+  rule) and its "agent-help omits `migrate`" known gap is STALE (fixed in `0048f53`); correct both in the wave PR body.
+  Dismissed findings all decided (owner: 5 fix-now in one re-pass, 6 drop, LOW summary kept).
+- **D3 verified pre-merge on a real runner:** #417's own CI (run 37610178363) ran the new step 17 "Pull run history
+  from the metadata branch" → `meta_sync: pulled 6b3f5a6 (510 written)`, BEFORE the sdk-spike suites (step 19), whose
+  corpus sweep then read **150 real briefs** (2 known throwers: `2026-07-18-sdk-runner-token-levers.md`,
+  `2026-09-26-verify-spec-replay.md`) — `main`'s CI (run 37569930200) has no sweep line (skipped).
+- Scope: 19 files, 8 outside ms/07's `## Touches` — the 4 owner-approved (meta-sync.sh + test, setup-memory.sh +
+  test) plus `agent-help.md`, `ARCHITECTURE_CONTRACTS.md`, `test-committed-twin-scrub.sh`, `test-validate-entry.sh`.
+- Not verified (carried to the wave PR body): real `gh` / rulesets paths (stubbed `gh` only); Validation 3 (the full
+  flow on a second real repo, owner-driven, after merge). **D.4 docs** (`operator-run/M1-migrate-this-repo.md`
+  Rollback fix, new `operator-run/M2-carry-learning-stores.md`) exist only in lane s3-h's `.supervisor/` — carry them
+  to the real `loomwright-meta` at closeout (they are managed paths).
+
 ## Done when
 All items in the queue merged or closed by the owner — as of 2026-10-07 after the tail restructure, 13 open items: wave 3 ms/07 · af/31 · af/33 · hc/01; wave 4 pa/05 · hc/02; then pa/22 split, pa/21 fleet operations ∥ pa/14, af/34, af/36 S3 engine fixes, pa/18, pa/07 last (Milestone B) — plus hc/03 done directly after hc/01 + hc/02 (done earlier in S3: af/32, ms/08, ms/04, pa/09, pa/19, ms/11, pa/11, pa/16, agnostic/04), each wave's records on `loomwright-meta`, lanes torn down with `leaks`
 empty, the measures above recorded in this file, and P2 (default lane count) revisited with S2 + S3 evidence.
