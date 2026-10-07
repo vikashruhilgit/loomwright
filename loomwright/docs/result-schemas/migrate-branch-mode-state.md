@@ -25,7 +25,7 @@ file's location is gitignored, so the state never becomes tracked.
 | `seed_a`, `seed_b` | counts: A = managed paths tracked on `origin/<default>` (`meta-sync.sh list-managed --tracked`), B = paths on the metadata branch | `seed` |
 | `seed_sha` | the `origin/<default>` commit the seed check ran against | `seed` |
 | `seed_check` | `equal` (A = B) \| `subset` (A ⊆ B, follow-up round only) — the relation the seed check proved; the untrack PR body states it | `seed` |
-| `followup` | `1` once `after-merge` found managed paths still tracked after a merged untrack PR; the A/B check accepts A ⊆ B only when this is recorded AND the mode line reads `on <b>` (never on the mode line alone) | `after-merge` |
+| `followup` | `1` once `after-merge` found managed paths still tracked after a merged untrack PR — merge proven, not inferred from the mode line: no path of this round's A set (`a.list`) is still tracked, or the PR's head commit is in `HEAD`; otherwise `after-merge` refuses ("untrack PR not merged yet") and records nothing. The A/B check accepts A ⊆ B only when this is recorded AND the mode line reads `on <b>` (never on the mode line alone). Deleted by `rollback`, and by `preflight` unless `after_merge` is still `FAIL` (the fresh-case recovery re-runs `preflight` mid-round) | `after-merge` (deleted: `rollback`, `preflight`) |
 | `mode_pr_branch`, `untrack_branch`, `rollback_branch` | the NEW branch the step committed on | `mode-pr`, `untrack-pr`, `rollback` |
 | `pr_mode`, `pr_untrack`, `pr_rollback` | the URL of the PR the step opened (never merged) | `mode-pr`, `untrack-pr`, `rollback` |
 | `backup_mode_pr`, `backup_untrack_pr` | the path the `.gitignore.backup.<ts>` was moved to | `mode-pr`, `untrack-pr` |

@@ -41,7 +41,11 @@
 #   verify-pr <n>       run IMMEDIATELY before merging PR <n>: fast-forward to the then-current
 #                       default, push anything new to the branch, repeat the seed check, and check
 #                       the PR untracks every tracked managed path.
-#   after-merge         `git pull`, put back the run-history files the pull deleted (from the
+#   after-merge         `git pull`; (history) PROVE the untrack PR merged before anything else — a
+#                       path of this round's A set (a.list) still tracked, with the PR's head commit
+#                       not in HEAD, means it is still open: refuse, recording nothing (verify_pr
+#                       PASS stays; no followup) — the mode line alone is no proof. Then put back
+#                       the run-history files the pull deleted (from the
 #                       pre-pull commit, which verify-pr proved equal to the branch), `meta-sync.sh
 #                       pull --branch <b>`, confirm the files are back, NO managed path is still
 #                       tracked (`list-managed --tracked` — catches a file committed after verify-pr;
@@ -74,8 +78,10 @@
 #                 an after-merge tracked-path FAIL staled all three)
 #   seed_a / seed_b=<counts>  seed_sha=<origin/<default> the seed check ran against>
 #   seed_check=equal | subset (the A/B relation seed proved)   verify_pr_sha=<HEAD at verify-pr PASS>
-#   followup=1  after-merge found managed paths still tracked after a merged untrack PR (the only
-#               evidence that enables the A ⊆ B follow-up check)
+#   followup=1  after-merge found managed paths still tracked after a merged untrack PR (merge
+#               proven: no a.list path still tracked, or the PR head is in HEAD) — the only
+#               evidence that enables the A ⊆ B follow-up check. Deleted by rollback, and by a
+#               preflight unless after_merge is still FAIL (the fresh-case mid-round re-preflight)
 #   mode_pr_branch / untrack_branch / rollback_branch=<new branch>  pr_mode / pr_untrack /
 #   pr_rollback=<PR url>  backup_mode_pr / backup_untrack_pr=<moved .gitignore.backup.<ts> path>
 # Side files in the same folder: a.list (the A set), ab-names.diff, ab-blobs.diff, extra.list,
@@ -128,6 +134,10 @@ state_get() { [ -f "$SF" ] && sed -n "s/^$1=//p" "$SF" | tail -n 1; return 0; }
 state_set() {
   mkdir -p "$SD" || die "cannot create $SD"
   { [ -f "$SF" ] && grep -v "^$1=" "$SF"; printf '%s=%s\n' "$1" "$2"; } > "$SF.tmp.$$" && mv "$SF.tmp.$$" "$SF"
+}
+state_del() { # state_del <key> — drop every line of <key> (a no-op when absent)
+  [ -f "$SF" ] || return 0
+  { grep -v "^$1=" "$SF"; true; } > "$SF.tmp.$$" && mv "$SF.tmp.$$" "$SF"
 }
 need() { # need <key> <accepted value>... — refuse (nothing changed) unless the recorded result matches
   local k="$1" v; shift; v="$(state_get "$k")"
@@ -305,6 +315,10 @@ cmd_preflight() {
   fi
   state_set preflight PASS; state_set case "$c"; state_set default "$d"
   state_set repo "$(repo_slug)"; state_set pre_migration_sha "$(g rev-parse HEAD)"
+  # followup=1 survives a preflight ONLY while the after-merge that recorded it is still the open
+  # FAIL (the fresh-case recovery re-runs preflight mid-round); any other preflight starts a new
+  # migration, which needs A = B
+  [ "$(state_get followup)" = 1 ] && [ "$(state_get after_merge)" = FAIL ] || state_del followup
   say "preflight: PASS"
 }
 
@@ -502,15 +516,34 @@ cmd_verify_pr() {
   say "verify-pr: PASS — PR $POS is safe to merge now ($rel against origin/$d $(g rev-parse --short HEAD))"
 }
 
+untrack_head_merged() { # 0 = the untrack PR's head commit is an ancestor of HEAD (a merge commit; a squash never is)
+  local nb t; nb="$(state_get untrack_branch)"; [ -n "$nb" ] || return 1
+  t="$(g rev-parse -q --verify "refs/remotes/origin/$nb^{commit}")" || return 1
+  g merge-base --is-ancestor "$t" HEAD
+}
+
 cmd_after_merge() {
   need_preflight
   case "$(state_get case)" in fresh) need mode_pr PASS ;; *) need verify_pr PASS ;; esac
-  local b d pre p miss=0 deleted tm
+  local b d pre p miss=0 deleted tm open
   b="$(rec_branch)" || exit 1; d="$(default_branch)"
   [ "$(g symbolic-ref -q --short HEAD)" = "$d" ] || die "refused: not on $d"
   pre="$(g rev-parse HEAD)"
   g pull -q --ff-only origin "$d" || { state_set after_merge FAIL; die "after-merge: git pull failed"; }
   [ "$(read_mode)" = "on $b" ] || { state_set after_merge FAIL; die "after-merge: FAIL — mode line is '$(read_mode)', not 'on $b' (is the PR merged?)"; }
+  # The mode line is NOT proof the untrack PR merged (a half-migrated repo reads `on $b` before it).
+  # Proof: no path this round's PR untracks ($SD/a.list, the A set verify-pr just checked the PR
+  # deletes) is still tracked — or the PR's head commit is in HEAD. Otherwise the PR is still open:
+  # refuse and write NOTHING, so verify_pr PASS stays valid and no follow-up round is recorded.
+  if [ "$(state_get case)" != fresh ]; then
+    [ -s "$SD/a.list" ] || die "refused: this round's untracked set ($SD/a.list) is missing — re-run verify-pr <n>; nothing was changed"
+    tm="$(tracked_managed)" || die "after-merge: list-managed --tracked failed; nothing was recorded"
+    open="$(printf '%s\n' "$tm" | env LC_ALL=C sort | env LC_ALL=C comm -12 "$SD/a.list" -)"
+    if [ -n "$open" ] && ! untrack_head_merged; then
+      printf '%s\n' "$open" | sed 's/^/  still tracked (this round untracks it): /' >&2
+      die "after-merge: refused — untrack PR not merged yet — merge PR $(state_get pr_untrack | sed 's|.*/||'), then re-run after-merge (nothing was recorded)"
+    fi
+  fi
   # The pull deletes the untracked run history from disk. Put back exactly what it deleted, from the
   # pre-pull commit (verify-pr proved those blobs equal the branch), so meta-sync pull sees L == R.
   deleted="$(g diff --name-only --diff-filter=D "$pre" HEAD -- .supervisor)"
@@ -566,6 +599,7 @@ cmd_rollback() {
   printf 'Rolls back branch mode: reverts %s and re-tracks run history at %s %s (the corrected #361 recipe: nothing written since migration is lost).\n' "$c" "$b" "$br_sha" > "$SD/rollback.body"
   url="$(pr_create "$nb" "$d" "chore(memory): roll back branch mode" "$SD/rollback.body")" || { state_set rollback FAIL; die "gh pr create failed (branch $nb is pushed)"; }
   state_set pr_rollback "$url"; state_set rollback PASS
+  state_del followup # the rolled-back migration's follow-up round is over; a new one needs A = B
   say "rollback: PASS — opened $url (NOT merged); you are on $nb"
   say "OWNER STEP — merge it, then: git checkout $d && git pull"
 }

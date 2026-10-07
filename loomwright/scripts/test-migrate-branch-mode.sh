@@ -40,6 +40,12 @@
 #      mutation control: subset mode keyed on the mode line alone MUST turn it red
 #  14. a re-cut untrack PR stales the earlier verify-pr PASS: `state` says next verify-pr and
 #      after-merge refuses until verify-pr runs against the new PR
+#  15. after-merge proves the untrack PR merged: on a half-migrated repo (exact A = B seed PASS) an
+#      after-merge run BEFORE the owner merges refuses ("not merged yet"), records no followup and
+#      keeps untrack_pr / verify_pr PASS; after the real merge it PASSes (and again on re-run), no
+#      duplicate state keys; mutation control: dropping the merge proof MUST turn it red
+#  16. followup lifecycle: a preflight while after_merge is FAIL keeps it (fresh-case recovery), a
+#      preflight starting a new migration drops it, rollback drops it
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -385,6 +391,49 @@ owner_merge "$(st A untrack_branch)"; mb A after-merge
 { [ "$RC" -eq 1 ] && has "refused: step 'verify_pr' is 'STALE'"; }; check $? "after-merge refuses: the PASS was for the earlier PR (rc=$RC)"
 mb A seed; { [ "$(st A untrack_pr)" = STALE ] && [ "$(st A verify_pr)" = STALE ]; }; check $? "a re-run seed stales untrack-pr and verify-pr"
 [ "$(grep -c '^verify_pr=' "$W/A/.supervisor/migrate-branch-mode/state")" = 1 ]; check $? "state file keeps one verify_pr line"
+
+echo "== 15. after-merge proves the untrack PR merged (half-migrated, premature after-merge) =="
+# premature_after_merge — a half-migrated first migration (main already `on $BR`, history tracked,
+# no extra local file) seeds A = B, cuts + verifies the untrack PR, then after-merge runs BEFORE the
+# owner merges. 0 = refused, nothing recorded (no followup, untrack_pr/verify_pr still PASS)
+premature_after_merge() {
+  mkworld history
+  rm -rf "$W/O"; git clone -q "$W/origin.git" "$W/O" 2>/dev/null
+  ( cd "$W/O" && bash "$HERE/setup-memory.sh" --root "$W/O" apply --branch-mode "$BR" >/dev/null && git add .gitignore && git commit -qm mode && git push -q origin main )
+  git -C "$W/A" pull -q --ff-only origin main
+  to_protected A || { PREM_DETAIL="to_protected failed: $OUT"; return 2; }
+  mb A seed; PREM_SEED="$RC"; PREM_SEED_OUT="$OUT"
+  mb A untrack-pr; mb A verify-pr "$(pr_n pr_untrack)"; PREM_VERIFY="$RC"
+  mb A after-merge
+  PREM_DETAIL="seed=$PREM_SEED verify=$PREM_VERIFY after=$RC followup=$(st A followup) untrack_pr=$(st A untrack_pr) verify_pr=$(st A verify_pr) seed_state=$(st A seed)"
+  [ "$RC" -ne 0 ] && has "untrack PR not merged yet" && [ -z "$(st A followup)" ] \
+    && [ "$(st A untrack_pr)" = PASS ] && [ "$(st A verify_pr)" = PASS ] && [ "$(st A seed)" = PASS ] \
+    && ! grep -q '^followup=' "$W/A/.supervisor/migrate-branch-mode/state"
+}
+premature_after_merge; check $? "premature after-merge on a half-migrated repo refuses, records no followup, keeps untrack_pr/verify_pr PASS ($PREM_DETAIL)"
+{ [ "$PREM_SEED" = 0 ] && [ "$(st A seed_check)" = equal ] && grep -qF "path lists equal" <<<"$PREM_SEED_OUT" && ! grep -qF "A ⊆ B" <<<"$PREM_SEED_OUT"; }; check $? "a half-migrated first migration with exact A = B seeds PASS as 'equal' (seed=$PREM_SEED)"
+owner_merge "$(st A untrack_branch)"; mb A after-merge
+{ [ "$RC" -eq 0 ] && [ -z "$(st A followup)" ] && [ -z "$(bash "$HERE/meta-sync.sh" list-managed --tracked --root "$W/A")" ] && [ -z "$(porcelain A)" ]; }; check $? "after the owner's real merge, after-merge PASS (rc=$RC)"
+mb A after-merge; [ "$RC" -eq 0 ]; check $? "after-merge re-run after the real merge PASSes again (rc=$RC)"
+DUPS="$(sed 's/=.*//' "$W/A/.supervisor/migrate-branch-mode/state" | env LC_ALL=C sort | uniq -d | tr '\n' ' ')"
+[ -z "$DUPS" ]; check $? "state file has no duplicate keys (${DUPS:-none})"
+MUT="$TROOT/mut-merge-proof"
+if build_mutant "$MUT" 's/^    if \[ -n "\$open" \] \&\& ! untrack_head_merged; then$/    if false; then/' '    if false; then'; then
+  SCRIPT="$MUT/migrate-branch-mode.sh"
+  if premature_after_merge; then no "mutation control REFUTED: after-merge without the merge proof still refused"; else ok "mutation control: without the merge proof, a premature after-merge records a false follow-up ($PREM_DETAIL)"; fi
+  SCRIPT="$SUT"
+else no "mutation control (after-merge merge proof) did not build — counts as FAIL"; fi
+
+echo "== 16. followup lifecycle: kept by a mid-round preflight, dropped by a new preflight and by rollback =="
+race_late; R16="$RC"; M16="$MERGE_SHA"
+mb A preflight --repo owner/repo; P16="$RC"
+{ [ "$R16" = 1 ] && [ "$P16" = 0 ] && [ "$(st A followup)" = 1 ]; }; check $? "preflight while after_merge is FAIL keeps followup=1 (race=$R16 preflight=$P16 followup=$(st A followup))"
+printf 'after_merge=PASS\n' >> "$W/A/.supervisor/migrate-branch-mode/state"
+mb A preflight --repo owner/repo
+{ [ "$RC" -eq 0 ] && ! grep -q '^followup=' "$W/A/.supervisor/migrate-branch-mode/state"; }; check $? "a preflight that starts a new migration drops followup (rc=$RC)"
+printf 'followup=1\n' >> "$W/A/.supervisor/migrate-branch-mode/state"
+mb A rollback --commit "$M16"
+{ [ "$RC" -eq 0 ] && ! grep -q '^followup=' "$W/A/.supervisor/migrate-branch-mode/state"; }; check $? "rollback drops followup (rc=$RC)"
 
 echo
 echo "$pass passed, $fail failed"
