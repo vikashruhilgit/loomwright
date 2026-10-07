@@ -69,7 +69,7 @@ SM="$HERE/setup-memory.sh"
 MB="$HERE/migrate-branch-mode.sh"
 RSC="$HERE/read-system-contract.sh"
 
-usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { awk 'NR > 1 && !/^#/ { exit } NR > 1' "$0" | sed 's/^# \{0,1\}//'; }
 die() { printf 'meta-sync-rehearsal: %s\n' "$*" >&2; exit 1; }
 
 ROOT=""; B="loomwright-meta"; NOCFG=0

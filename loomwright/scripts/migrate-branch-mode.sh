@@ -19,8 +19,9 @@
 #                       refuses (exit 1, nothing changed) while the recorded result is not PASS.
 #   scrub               dry-run meta-sync.sh's scrub over every would-be-pushed file (list-managed);
 #                       a hit stops the flow BEFORE init with file, line and rule.
-#   rehearse            defers to the sibling meta-sync-rehearsal.sh when present (passing the
-#                       recorded --branch); otherwise says the harness is not available (exit 1).
+#   rehearse [--branch <b>] run the sibling meta-sync-rehearsal.sh (scratch clone + local bare remote)
+#                       with the RECORDED --branch (before init: <b>, else init's default); a <b>
+#                       disagreeing with the recorded name is refused. No harness -> exit 1.
 #   init [--branch <b>] vet <b> (default loomwright-meta) with `setup-memory.sh valid-branch` BEFORE
 #                       anything is written, then `meta-sync.sh init --branch <b>`; records <b>.
 #   protect [--verify]  print the exact ruleset JSON (target the branch; block deletion and
@@ -52,7 +53,7 @@
 #   state               print the state file and the next step (resume point).
 #
 #   --root    checkout (default: `git rev-parse --show-toplevel` of $PWD)
-#   --branch  metadata branch; `init` only (later steps use the RECORDED name, passed as --branch
+#   --branch  metadata branch; `init` / `rehearse` only (later steps use the RECORDED name, passed as --branch
 #             to EVERY meta-sync.sh call — never a fallback to loomwright-meta)
 #   --repo    owner/repo for `gh` (default: parsed from the origin URL); recorded once given
 #
@@ -83,7 +84,7 @@ GH="${LOOMWRIGHT_GH_BIN:-gh}"
 
 say() { printf 'migrate-branch-mode: %s\n' "$*"; }
 die() { printf 'migrate-branch-mode: %s\n' "$*" >&2; exit 1; }
-usage() { sed -n '2,70p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,/^# Portability/p' "$0" | sed 's/^# \{0,1\}//'; }
 
 STEP="${1:-}"; [ $# -gt 0 ] && shift
 ROOT=""; OPT_BRANCH=""; OPT_REPO=""; OPT_VERIFY=0; OPT_COMMIT=""; POS=""
@@ -290,7 +291,11 @@ cmd_scrub() {
 cmd_rehearse() {
   need_preflight
   if [ ! -f "$REH" ]; then state_set rehearse FAIL; die "rehearse: the harness is not available ($(basename "$REH") missing)"; fi
-  local b; b="${OPT_BRANCH:-$(state_get branch)}"; b="${b:-loomwright-meta}"
+  local b rec; rec="$(state_get branch)"; b="${OPT_BRANCH:-$rec}"
+  [ -z "$rec" ] || [ "$b" = "$rec" ] || die "refused: --branch '$b' disagrees with the recorded branch '$rec' — nothing was run"
+  b="${b:-loomwright-meta}" # before init nothing is recorded: rehearse the name init would default to
+  bash "$SM" valid-branch "$b" || die "refused: '$b' is not a valid metadata branch name — nothing was run"
+  say "rehearsing on a scratch clone + local bare remote with --branch $b (the real remote is never touched)"
   if bash "$REH" --root "$ROOT" --branch "$b"; then state_set rehearse PASS; say "rehearse: PASS"
   else state_set rehearse FAIL; die "rehearse: FAIL"; fi
 }

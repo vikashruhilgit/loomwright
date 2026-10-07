@@ -25,6 +25,9 @@
 #   7. mutation control: verify-pr without its re-check MUST fail (5)
 #   8. mutation control: the old M1 rollback order (revert -> meta-sync pull -> git add) MUST fail (6)
 #   9. mutation control: after-merge without its put-back of the files `git pull` deleted MUST fail
+#  10. rehearse: no harness -> exit 1 (not available); the harness gets `--root <checkout> --branch
+#      <recorded name>` after init (team-meta, never loomwright-meta) and a disagreeing --branch is
+#      refused; the REAL harness passes on a history fixture before init and never touches its origin
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -278,6 +281,25 @@ if build_mutant "$MUT" 's/^    mkdir -p "\$(dirname "\$ROOT\/\$p")" \&\& g cat-f
   SCRIPT="$MUT/migrate-branch-mode.sh"; mb A after-merge; SCRIPT="$SUT"
   if [ "$RC" -eq 0 ] && [ -f "$W/A/.supervisor/jobs/done/a.md" ]; then no "mutation control REFUTED: after-merge restored the files without the put-back step"; else ok "mutation control: without the put-back, after-merge fails closed (rc=$RC)"; fi
 else no "mutation control (after-merge put-back) did not build — counts as FAIL"; fi
+
+echo "== 10. rehearse: wired to meta-sync-rehearsal.sh with the recorded branch =="
+RD="$TROOT/reh-none"; mkdir -p "$RD"; for f in "$HERE"/*; do [ -f "$f" ] && cp "$f" "$RD/"; done; rm -f "$RD/meta-sync-rehearsal.sh"
+mkworld history; mb A preflight --repo owner/repo
+SCRIPT="$RD/migrate-branch-mode.sh"; mb A rehearse; SCRIPT="$SUT"
+{ [ "$RC" -eq 1 ] && has "not available" && [ "$(st A rehearse)" = FAIL ]; }; check $? "no harness -> rehearse exit 1, not available, FAIL recorded (rc=$RC)"
+RL="$TROOT/reh-log"; mkdir -p "$RL"; for f in "$HERE"/*; do [ -f "$f" ] && cp "$f" "$RL/"; done
+printf '#!/bin/bash\necho "$*" > "%s/args"\nexit 0\n' "$TROOT" > "$RL/meta-sync-rehearsal.sh"
+mkworld history; mb A preflight --repo owner/repo; mb A scrub; mb A init --branch "$BR"
+SCRIPT="$RL/migrate-branch-mode.sh"; mb A rehearse
+{ [ "$RC" -eq 0 ] && [ "$(cat "$TROOT/args")" = "--root $(cd "$W/A" && pwd -P) --branch $BR" ] && [ "$(st A rehearse)" = PASS ]; }; check $? "after init: the harness gets --root <checkout> --branch $BR ($(cat "$TROOT/args" 2>/dev/null))"
+rm -f "$TROOT/args"; mb A rehearse --branch loomwright-meta
+{ [ "$RC" -eq 1 ] && has "disagrees" && [ ! -f "$TROOT/args" ]; }; check $? "a --branch disagreeing with the recorded name is refused, harness not run (rc=$RC)"
+SCRIPT="$SUT"
+mkworld history; mb A preflight --repo owner/repo; mb A scrub
+O0="$(git --git-dir="$W/origin.git" for-each-ref --format='%(refname) %(objectname)')"
+mb A rehearse --branch "$BR"
+{ [ "$RC" -eq 0 ] && has "rehearse: PASS" && has "PASS: rollback-edit-kept" && has "PASS: twin-contracts" && ! has "FAIL:" && [ "$(st A rehearse)" = PASS ]; }; check $? "the real harness passes on a history fixture before init (rc=$RC)"
+{ [ "$O0" = "$(git --git-dir="$W/origin.git" for-each-ref --format='%(refname) %(objectname)')" ] && ! remote_has "$BR" && [ -z "$(st A branch)" ]; }; check $? "rehearse never touches the real remote and records no branch"
 
 echo
 echo "$pass passed, $fail failed"
