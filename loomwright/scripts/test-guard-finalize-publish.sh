@@ -16,6 +16,12 @@
 # still denied (the documented B2 choice); the writer refuses on `unsettled` (no marker) and removes
 # a stale marker; the hooks.json leaf exists with NO `|| true`; MUTATION CONTROL: removing the marker
 # check flips "push before check" to allowed.
+# Hardening (fix-now re-pass): F2 a missing session log -> writer refuses, no marker; zero identity
+# rows -> marker `no_identity_rows` (never `settled`) that the guard accepts. F3 a linked-worktree
+# project dir finds the main worktree's `.supervisor/` (guard ACTIVE, write-marker writes there); the
+# detached review-drain sibling stays allowed; bold-format state.md is read. F4 wrapper / nesting /
+# quoting / continuation forms of a publish -> denied, non-publish look-alikes -> allowed. Each fix
+# has a mutation control that removes it and watches its cases flip.
 #
 # HARNESS RULE: never pipe a producer into the guard — the inert paths exit 0 without reading stdin,
 # so a piped `jq` can hit EPIPE and pipefail turns that race into a spurious rc 2/141; build the
@@ -141,6 +147,130 @@ run_guard "$RJ" "git push" "cc-uuid-new"; expect "resumed run (owner != payload 
 settle_children "$RJ"; write_marker "$RJ"
 run_guard "$RJ" "git push" "cc-uuid-new"; expect "resumed run after a passing check -> allowed" 0
 
+echo "== F2: write-marker never turns 'nothing to check' or 'no log' into settled =="
+RL="$(new_repo running)"; rm -f "$RL/.supervisor/logs/$PSID.jsonl"
+write_marker "$RL"
+[ "$WRC" = 1 ] && grep -q session_log_missing <<<"$WOUT" && [ ! -e "$RL/.supervisor/logs/$PSID.finalize-gate" ] \
+  && ok "missing session log -> writer refuses session_log_missing, no marker" || no "missing log: rc=$WRC out=$WOUT"
+RI="$(new_repo running)"    # session_start only: zero agent_identity rows
+write_marker "$RI"
+[ "$WRC" = 0 ] && [ "$(jq -r .children_check "$RI/.supervisor/logs/$PSID.finalize-gate" 2>/dev/null)" = "no_identity_rows" ] \
+  && ok "no identity rows -> marker children_check: no_identity_rows (never settled)" || no "no_identity_rows marker: rc=$WRC out=$WOUT"
+run_guard "$RI" "git push"; expect "guard accepts a no_identity_rows marker at HEAD" 0
+
+echo "== F3: .supervisor/ is found from a linked worktree; detached sibling + bold state.md =="
+RW="$(new_repo running)"; WT="$TMP/wt-linked.$$"; SIB="$TMP/wt-sibling.$$"
+( cd "$RW" && git checkout -qb other && git worktree add -q "$WT" "$BR" && git worktree add -q --detach "$SIB" HEAD ) >/dev/null 2>&1
+[ -d "$WT/.git" ] || [ -f "$WT/.git" ] || no "fixture: linked worktree not created"
+[ ! -e "$WT/.supervisor" ] && ok "fixture: linked worktree has no .supervisor of its own" || no "fixture: linked worktree has .supervisor"
+run_guard "$WT" "git push -u origin $BR"; expect "linked-worktree project dir on the run branch -> guard ACTIVE, denied without marker" 2 "run FINALIZE point 5 first"
+run_guard "$SIB" "git push origin HEAD:$BR"; expect "detached sibling worktree (review drain) -> allowed" 0
+settle_children "$RW"
+WOUT="$(cd "$WT" && CLAUDE_PROJECT_DIR="$WT" "$REALBASH" "$GUARD" write-marker 2>/dev/null)"; WRC=$?
+[ "$WRC" = 0 ] && [ -f "$RW/.supervisor/logs/$PSID.finalize-gate" ] && [ ! -e "$WT/.supervisor" ] \
+  && ok "write-marker from the linked worktree writes into the main worktree's .supervisor/logs" || no "linked write-marker: rc=$WRC out=$WOUT"
+run_guard "$WT" "git push -u origin $BR"; expect "linked worktree after a passing check -> allowed" 0
+RB="$(new_repo running)"
+printf '# State\n\n## Session\n- **session_id:** %s\n- **Branch:** %s\n- **Status:** Running\n' "$PSID" "$BR" > "$RB/.supervisor/state.md"
+run_guard "$RB" "git push"; expect "bold-format ## Session block -> guard ACTIVE, denied" 2 "run FINALIZE point 5 first"
+RBN="$(new_repo running)"
+printf '# State\n- **session_id:** %s\n- **branch:** %s\n- **status:** running\n' "$PSID" "$BR" > "$RBN/.supervisor/state.md"
+run_guard "$RBN" "git push"; expect "bold-format state.md with no ## Session header -> guard ACTIVE, denied" 2
+printf '# State\n- **session_id:** %s\n- **status:** completed\n' "$PSID" > "$RBN/.supervisor/state.md"
+run_guard "$RBN" "git push"; expect "bold-format terminal status -> allowed" 0
+
+echo "== F4: wrapper / nesting / quoting forms of a publish -> denied =="
+EVASION_CASES=(
+  "env X=1 git push"
+  "env -u FOO git push"
+  "time git push"
+  "nohup git push"
+  "exec git push"
+  "sudo -u me git push"
+  "echo x | xargs git push"
+  "xargs -I{} git push"
+  "timeout 60 git push"
+  'bash -c "git push"'
+  "sh -c 'cd x && git push'"
+  'zsh -lc "git push origin HEAD"'
+  'eval "git push"'
+  'echo $(git push)'
+  'echo `git push`'
+  "(cd repo && git push)"
+  "git push&"
+  "gh pr create --fill &"
+  '"git" push'
+  "'git' push"
+  "/usr/bin/git push"
+  "/opt/homebrew/bin/gh pr create --fill"
+  'GIT_SSH_COMMAND="ssh -i k" git push'
+  'git -C "my dir" push'
+  "$(printf 'git \\\npush')"
+  "if true; then git push; fi"
+  "! git push"
+)
+for c in "${EVASION_CASES[@]}"; do run_guard "$RS" "$c"; expect "[${c//$'\n'/\\n}] -> denied" 2; done
+ALLOW_CASES=(
+  "git stash push"
+  "echo push"
+  'git commit -m "push it"'
+  'echo "git push"'
+  "printf '%s' 'git push'"
+  'bash -c "echo push"'
+  "git log --grep push"
+  "gh pr view 1 --json title # create"
+)
+for c in "${ALLOW_CASES[@]}"; do run_guard "$RS" "$c"; expect "[$c] -> allowed" 0; done
+
+echo "== (m) mutation controls for the F2-F4 hardening =="
+cp "$HERE/loom-log-owner.sh" "$TMP/" ; cp "$HERE/check-children-settled.sh" "$TMP/"
+# mutant <name> <sed program> — writes $TMP/<name>.sh; MUTOK=1 only when sed changed the guard
+mutant() { MUTF="$TMP/$1.sh"; sed "$2" "$GUARD" > "$MUTF"; if cmp -s "$MUTF" "$GUARD"; then MUTOK=0; else MUTOK=1; fi; }
+# F2: drop the session-log existence refusal -> a missing log writes a marker again
+mutant m-f2 '/|| refuse "session_log_missing"/d'
+RML="$(new_repo running)"; rm -f "$RML/.supervisor/logs/$PSID.jsonl"
+WRC="$(cd "$RML" && CLAUDE_PROJECT_DIR="$RML" "$REALBASH" "$MUTF" write-marker >/dev/null 2>&1; echo $?)"
+[ "$MUTOK" = 1 ] && [ "$WRC" = 0 ] && [ -f "$RML/.supervisor/logs/$PSID.finalize-gate" ] \
+  && ok "mutation (F2): without the log check a missing log writes a marker — the case is load-bearing" \
+  || no "mutation (F2): inconclusive (changed=$MUTOK rc=$WRC)"
+# F3a: resolve .supervisor/ from the project dir only -> the linked worktree reads inert
+mutant m-f3a 's/ROOT="\$(loom_main_root "\$PROJ" 2>\/dev\/null)"/ROOT=""/'
+RML2="$(new_repo running)"; WT2="$TMP/wt-linked2.$$"
+( cd "$RML2" && git checkout -qb other && git worktree add -q "$WT2" "$BR" ) >/dev/null 2>&1
+run_guard "$WT2" "git push" cc-uuid-1 "$MUTF"
+[ "$MUTOK" = 1 ] && [ "$RC" = 0 ] && ok "mutation (F3): project-dir-only root lets the linked-worktree push through" \
+  || no "mutation (F3): inconclusive (changed=$MUTOK rc=$RC)"
+# F3b: no bold stripping -> the bold state.md reads inert
+mutant m-f3b '/line="\${line\/\/\\\*\\\*\/}"/d'
+run_guard "$RB" "git push" cc-uuid-1 "$MUTF"
+[ "$MUTOK" = 1 ] && [ "$RC" = 0 ] && ok "mutation (F3): without bold stripping the bold state.md push goes through" \
+  || no "mutation (F3 bold): inconclusive (changed=$MUTOK rc=$RC)"
+# F3c: no detached-sibling allow -> the review-drain sibling push is denied
+mutant m-f3c '/\[ -z "\$cur_branch" \] && \[ -n "\$CHECKOUT" \]/d'
+RMS="$(new_repo running)"; SIB2="$TMP/wt-sibling2.$$"    # no marker anywhere: only the sibling rule allows
+( cd "$RMS" && git worktree add -q --detach "$SIB2" HEAD ) >/dev/null 2>&1
+run_guard "$SIB2" "git push origin HEAD:$BR"; expect "detached sibling with no marker -> allowed by the sibling rule alone" 0
+run_guard "$SIB2" "git push origin HEAD:$BR" cc-uuid-1 "$MUTF"
+[ "$MUTOK" = 1 ] && [ "$RC" = 2 ] && ok "mutation (F3): without the detached-sibling rule the drain sibling push is denied" \
+  || no "mutation (F3 sibling): inconclusive (changed=$MUTOK rc=$RC)"
+# F4: each hardening piece removed -> its evasion forms are allowed again
+f4_mut() { # f4_mut <label> <sed program> <case...>
+  local label="$1" prog="$2" missed=0 total=0 c; shift 2
+  mutant m-f4 "$prog"
+  for c in "$@"; do total=$((total+1)); run_guard "$RS" "$c" cc-uuid-1 "$MUTF"; [ "$RC" = 0 ] && missed=$((missed+1)); done
+  [ "$MUTOK" = 1 ] && [ "$missed" = "$total" ] && ok "mutation (F4 $label): mutant allows all $total forms" \
+    || no "mutation (F4 $label): changed=$MUTOK, mutant allowed only $missed/$total"
+}
+f4_mut "separators" "s/for sep in '&&' '||' ';' '|' '&' '(' ')' '\`'; do/for sep in '\&\&' '||' ';' '|'; do/" \
+  'echo $(git push)' 'echo `git push`' "git push&" "(cd repo && git push)"
+f4_mut "prefix words" '/^      command|exec|time|env|sudo|doas|xargs|nice)$/,/continue ;;$/d' \
+  "env -u FOO git push" "sudo -u me git push" "echo x | xargs git push" "exec git push"
+f4_mut "line continuation" '/s="\${s\/\/\\\\\$NL\/ }"/d' "$(printf 'git \\\npush')"
+f4_mut "path basename" '/prog="\${prog##\*\/}"/d' "/usr/bin/git push" "/opt/homebrew/bin/gh pr create --fill"
+f4_mut "shell -c unwrap" 's/^    bash|sh|zsh|dash|ksh)$/    no-such-shell)/' 'bash -c "git push"' 'zsh -lc "git push origin HEAD"'
+f4_mut "quote-aware tokens" "s/\"'\"|'\"') q=\"\$c\"; have=1 ;;/\"'\"|'\"') w=\"\$w\$c\"; have=1 ;;/" \
+  '"git" push' 'GIT_SSH_COMMAND="ssh -i k" git push' 'git -C "my dir" push'
+
 echo "== wiring =="
 leaf="$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[] | .command | select(test("guard-finalize-publish.sh"))' "$HOOKS" 2>/dev/null)"
 if [ -n "$leaf" ] && ! grep -q '|| true' <<<"$leaf"; then
@@ -151,6 +281,9 @@ fi
 grep -q 'loom-log-owner.sh' "$GUARD" && grep -q 'loom-log-owner.sh' "$HERE/emit-lifecycle.sh" \
   && ! grep -q '_first="\$(head -1' "$GUARD" \
   && ok "session join sources the shared loom_log_owner rule (not restated)" || no "loom_log_owner not shared"
+grep -q 'loom_main_root' "$GUARD" && grep -q 'loom_main_root' "$HERE/emit-lifecycle.sh" \
+  && ! grep -q 'worktree list --porcelain' "$GUARD" \
+  && ok "main-worktree anchoring sources the shared loom_main_root rule (not restated)" || no "loom_main_root not shared"
 
 echo "== (m) mutation control =="
 MUT="$TMP/mutant.sh"
@@ -168,8 +301,8 @@ fi
 # the global-option deny cases above — proves those cases exercise the token walk.
 MUT2="$TMP/mutant-regex.sh"
 awk '
-  /^is_publish_segment\(\) \{/ {
-    print "is_publish_segment() {"
+  /^seg_is_publish\(\) \{/ {
+    print "seg_is_publish() {"
     print "  local seg=\"$1\""
     print "  local re_assign='"'"'^[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+'"'"'"
     print "  while [[ \"$seg\" =~ $re_assign ]]; do seg=\"${seg#\"${BASH_REMATCH[0]}\"}\"; done"
@@ -185,7 +318,7 @@ awk '
   !skip { print }
 ' "$GUARD" > "$MUT2"
 if cmp -s "$MUT2" "$GUARD" || ! grep -q 're_git=' "$MUT2"; then
-  no "mutation control (regex): is_publish_segment not found, control inconclusive"
+  no "mutation control (regex): seg_is_publish not found, control inconclusive"
 else
   RM2="$(new_repo running)"
   run_guard "$RM2" "git push" cc-uuid-1 "$MUT2"

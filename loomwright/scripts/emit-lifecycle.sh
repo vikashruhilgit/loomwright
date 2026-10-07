@@ -179,11 +179,14 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 0
 fi
 
-# ---- Worktree-safe anchoring (identical to emit-progress-event.sh) -----------
-main_root="$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')"
-[ -n "$main_root" ] && [ -d "$main_root" ] || exit 0        # fail SAFE, never guess
-top="$(git -C "$main_root" rev-parse --path-format=absolute --show-toplevel 2>/dev/null)"
-[ "$top" = "$main_root" ] || exit 0
+# ---- Worktree-safe anchoring (same rule as emit-progress-event.sh) -----------
+# loom-log-owner.sh carries both shared rules this script needs — loom_main_root
+# (the main-worktree anchoring, also used by guard-finalize-publish.sh) and
+# loom_log_owner (the run-ownership gate below). A missing helper is a silent
+# no-op like every other failure here.
+# shellcheck source=loom-log-owner.sh
+. "${BASH_SOURCE[0]%/*}/loom-log-owner.sh" 2>/dev/null || exit 0
+main_root="$(loom_main_root)" || exit 0                     # fail SAFE, never guess
 session_branch="$(git -C "$main_root" branch --show-current 2>/dev/null || true)"
 LOG_DIR="$main_root/.supervisor/logs"
 STATE_MD="$main_root/.supervisor/state.md"
@@ -285,9 +288,7 @@ fi
 # same name — see that file's comment for the full rationale. UNKNOWN OWNER
 # MEANS ADOPT (non-negotiable). The rule itself lives in loom-log-owner.sh
 # (shared with guard-finalize-publish.sh's session join — one rule, never
-# restated); a missing helper is a silent no-op like every other failure here.
-# shellcheck source=loom-log-owner.sh
-. "${BASH_SOURCE[0]%/*}/loom-log-owner.sh" 2>/dev/null || exit 0
+# restated); sourced at the anchoring block above.
 
 if [ -n "$PLUGIN_SESSION_ID" ]; then
   _log_owner="$(loom_log_owner "${LOG_DIR}/${PLUGIN_SESSION_ID}.jsonl" || true)"
