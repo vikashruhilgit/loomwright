@@ -328,7 +328,7 @@ Local files are enumerated with `find` over the **managed roots only** — `requ
 
 - **A conflict needs a human.** The script never picks a side for a non-ledger path; it reports every conflicted path and changes nothing.
 - **Slug detection is forge-context only** — `github.com` / `gitlab.com` / `bitbucket.org` URLs (host in any letter case) and `repo` fields (key in any letter case; key and value bare or in double, single or back quotes). Home paths match in any letter case; token prefixes are matched case-sensitively because issuers emit exactly one case. A bare `owner/repo` elsewhere in prose is not detected (a bare `a/b` rule would match every relative path). The scrub is a pre-publication gate over named patterns, not complete PII coverage; `test-committed-twin-scrub.sh` is a test with placeholder deny terms, not a scrub.
-- **On this repo's own history the whole-set push fails closed** (absolute home paths in some run files and done briefs, a placeholder forge slug in a requirement) until those files are cleaned or excluded with `--paths-from` — correct behaviour, recorded for the migration (item M1).
+- **On this repo's own history the whole-set push fails closed** (absolute home paths in some run files and done briefs, a placeholder forge slug in a requirement) until those files are cleaned or excluded with `--paths-from` — correct behaviour, cleared by `migrate-branch-mode.sh scrub` before a migration.
 
 Self-tests: `scripts/test-meta-sync.sh` (hermetic bare origin + clones; includes sed-patched mutation controls — see the script header's `# Covers` list).
 

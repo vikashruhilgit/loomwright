@@ -55,6 +55,13 @@
 #      no --branch records team-meta; the REAL rehearse passes on it (scratch reset to off) and never
 #      touches the real remote; a fresh repo still defaults to loomwright-meta; mutation control:
 #      init ignoring the mode line MUST turn the leg red
+#  19. non-C locale (en_US UTF-8, when `locale -a` lists it; else a visible SKIP): with managed
+#      names whose C and en_US collation differ (case, '-', '_'), seed lists only the real
+#      non-managed path for the owner, verify-pr names EXACTLY the one managed path a stale PR
+#      leaves tracked, and a re-cut PR verifies PASS; mutation control: the verify-pr `comm`
+#      without `env LC_ALL=C` MUST turn the leg red
+#  20. rollback of an untrack PR merged as a real 2-parent `--no-ff` merge commit keeps a
+#      post-migration edit, add and delete; mutation control: dropping `-m 1` MUST turn it red
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -128,7 +135,9 @@ mkworld() {
   )
   git clone -q "$W/origin.git" "$W/A" 2>/dev/null
 }
-mb() { local d="$1"; shift; OUT="$(bash "$SCRIPT" "$@" --root "$W/$d" 2>&1)"; RC=$?; }
+# MB_LOCALE set -> the SUT runs under that locale (leg 19); empty -> the inherited environment
+MB_LOCALE=""
+mb() { local d="$1"; shift; OUT="$(${MB_LOCALE:+env LC_ALL=$MB_LOCALE} bash "$SCRIPT" "$@" --root "$W/$d" 2>&1)"; RC=$?; }
 has() { grep -qF -- "$1" <<<"$OUT"; }
 st() { sed -n "s/^$2=//p" "$W/$1/.supervisor/migrate-branch-mode/state" 2>/dev/null | tail -n 1; }
 porcelain() { git -C "$W/$1" status --porcelain 2>/dev/null; }
@@ -424,7 +433,7 @@ premature_after_merge; check $? "premature after-merge on a half-migrated repo r
 owner_merge "$(st A untrack_branch)"; mb A after-merge
 { [ "$RC" -eq 0 ] && [ -z "$(st A followup)" ] && [ -z "$(bash "$HERE/meta-sync.sh" list-managed --tracked --root "$W/A")" ] && [ -z "$(porcelain A)" ]; }; check $? "after the owner's real merge, after-merge PASS (rc=$RC)"
 mb A after-merge; [ "$RC" -eq 0 ]; check $? "after-merge re-run after the real merge PASSes again (rc=$RC)"
-DUPS="$(sed 's/=.*//' "$W/A/.supervisor/migrate-branch-mode/state" | env LC_ALL=C sort | uniq -d | tr '\n' ' ')"
+DUPS="$(sed 's/=.*//' "$W/A/.supervisor/migrate-branch-mode/state" | env LC_ALL=C sort | env LC_ALL=C uniq -d | tr '\n' ' ')"
 [ -z "$DUPS" ]; check $? "state file has no duplicate keys (${DUPS:-none})"
 MUT="$TROOT/mut-merge-proof"
 if build_mutant "$MUT" 's/^    if \[ -n "\$open" \] \&\& ! untrack_head_merged; then$/    if false; then/' '    if false; then'; then
@@ -513,6 +522,66 @@ if build_mutant "$MUT" 's/^  mb="\$(mode_branch)"; b="\${OPT_BRANCH:-\$(init_def
   if half_init; then no "mutation control REFUTED: init ignoring the mode line still passed the leg"; else ok "mutation control: init ignoring the mode line turns the leg red ($HI_DETAIL)"; fi
   SCRIPT="$SUT"
 else no "mutation control (init default) did not build — counts as FAIL"; fi
+
+echo "== 19. A/B check + verify-pr under a non-C locale (every comm pinned to env LC_ALL=C) =="
+NCL=""
+for l in en_US.UTF-8 en_US.utf8; do grep -qx "$l" < <(locale -a 2>/dev/null) && { NCL="$l"; break; }; done
+LX=".supervisor/jobs/done"
+# locale_leg — the SUT runs under $NCL on managed names whose C and en_US order differ; 0 = seed
+# PASS listing only the salvage path for the owner, verify-pr names exactly the one managed path the
+# stale PR leaves tracked, and the re-cut PR verifies PASS. Detail in LOC_DETAIL.
+locale_leg() {
+  local s1 v1 v2 x1=no m1=no
+  mkworld history
+  ( cd "$W/A" && for n in B.md a-x.md a_x.md Zeta-1.md zeta_1.md; do echo "# $n" > "$LX/$n"; done \
+    && git add -f -- "$LX" && git commit -qm names && git push -q origin main )
+  MB_LOCALE="$NCL"
+  to_protected A; mb A seed; s1="$RC"
+  has "OWNER DECISION: 1 tracked .supervisor/ path(s)" && x1=yes
+  mb A untrack-pr
+  # Zz-new.md sorts before a-x.md in C but after it in en_US: an unguarded comm misaligns there and
+  # reports a-x.md .. zeta_1.md (all untracked by the PR) as missing too
+  rm -rf "$W/O"; git clone -q "$W/origin.git" "$W/O" 2>/dev/null
+  ( cd "$W/O" && echo '# new' > "$LX/Zz-new.md" && git add -f -- "$LX/Zz-new.md" && git commit -qm new && git push -q origin main )
+  mb A verify-pr "$(pr_n pr_untrack)"; v1="$RC"
+  has "leaves tracked managed path(s) tracked: $LX/Zz-new.md — re-cut" && m1=yes
+  mb A seed; mb A untrack-pr; mb A verify-pr "$(pr_n pr_untrack)"; v2="$RC"
+  MB_LOCALE=""
+  LOC_DETAIL="locale=$NCL seed=$s1 owner-list-salvage-only=$x1 stale-verify=$v1 named-exactly=$m1 recut-verify=$v2"
+  [ "$s1" -eq 0 ] && [ "$x1" = yes ] && [ "$v1" -eq 1 ] && [ "$m1" = yes ] && [ "$v2" -eq 0 ]
+}
+if [ -z "$NCL" ]; then
+  echo "  SKIP: no en_US UTF-8 locale in 'locale -a' — leg 19 and its mutation control are INCONCLUSIVE on this host"
+else
+  locale_leg; check $? "under $NCL: owner list, exact missing path and re-cut PASS all hold ($LOC_DETAIL)"
+  MUT="$TROOT/mut-comm-locale"
+  if build_mutant "$MUT" 's/env LC_ALL=C sort | env LC_ALL=C comm -13 - /env LC_ALL=C sort | comm -13 - /' 'env LC_ALL=C sort | comm -13 - '; then
+    SCRIPT="$MUT/migrate-branch-mode.sh"
+    if locale_leg; then no "mutation control REFUTED: the unguarded verify-pr comm still passed under $NCL"; else ok "mutation control: the verify-pr comm without env LC_ALL=C turns the leg red ($LOC_DETAIL)"; fi
+    SCRIPT="$SUT"
+  else no "mutation control (verify-pr comm locale) did not build — counts as FAIL"; fi
+fi
+
+echo "== 20. rollback of an untrack PR merged as a real 2-parent merge commit =="
+# merge_rollback_leg — leg 5's flow (c.md lands on main mid-flight), the owner merges with --no-ff,
+# then rollback --commit <the merge commit>; 0 = a 2-parent commit and nothing lost. Detail in MR_DETAIL.
+merge_rollback_leg() {
+  local am rb np=0
+  hist_to_untrack; verify_newfile
+  mb A seed; mb A untrack-pr; mb A verify-pr "$(pr_n pr_untrack)"
+  owner_merge "$(st A untrack_branch)"; mb A after-merge; am="$RC"
+  np="$(git --git-dir="$W/origin.git" rev-list --parents -n 1 "$MERGE_SHA" | wc -w | tr -d ' ')"
+  rollback_scenario "$MERGE_SHA"; rb=$?
+  MR_DETAIL="after-merge=$am parents=$((np - 1)) $ROLLBACK_DETAIL"
+  [ "$am" -eq 0 ] && [ "$np" -eq 3 ] && [ "$rb" -eq 0 ]
+}
+merge_rollback_leg; check $? "rollback --commit <2-parent merge> keeps the edit, add and delete ($MR_DETAIL)"
+MUT="$TROOT/mut-revert-m1"
+if build_mutant "$MUT" 's/then g revert --no-commit -m 1 "\$c"; else/then g revert --no-commit "$c"; else/' 'then g revert --no-commit "$c"; else'; then
+  SCRIPT="$MUT/migrate-branch-mode.sh"
+  if merge_rollback_leg; then no "mutation control REFUTED: rollback without -m 1 still reverted the merge commit"; else ok "mutation control: rollback without -m 1 turns the 2-parent leg red ($MR_DETAIL)"; fi
+  SCRIPT="$SUT"
+else no "mutation control (rollback -m 1) did not build — counts as FAIL"; fi
 
 echo
 echo "$pass passed, $fail failed"

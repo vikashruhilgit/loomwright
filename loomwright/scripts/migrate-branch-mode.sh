@@ -253,7 +253,7 @@ ab_check() {
   if [ "$(state_get followup)" = 1 ] && [ "$(read_mode)" = "on $b" ]; then
     AB_REL=subset
     # $d is ALREADY in branch mode on $b, so B legitimately holds every earlier-migrated path too
-    comm -23 "$SD/a.list" "$SD/b.list" > "$SD/ab-names.diff"; comm -23 "$SD/a.ent" "$SD/b.ent" > "$SD/ab-blobs.diff"
+    env LC_ALL=C comm -23 "$SD/a.list" "$SD/b.list" > "$SD/ab-names.diff"; env LC_ALL=C comm -23 "$SD/a.ent" "$SD/b.ent" > "$SD/ab-blobs.diff"
     say "follow-up round (recorded after-merge FAIL; $d already on $b): checking A is a subset of B"
   else
     diff "$SD/a.list" "$SD/b.list" > "$SD/ab-names.diff"; diff "$SD/a.ent" "$SD/b.ent" > "$SD/ab-blobs.diff"
@@ -267,7 +267,7 @@ ab_check() {
   if [ -s "$SD/ab-blobs.diff" ]; then echo "migrate-branch-mode: blob mismatch:" >&2; sed 's/^/  /' "$SD/ab-blobs.diff" >&2; rc=1; else say "every blob equal (empty diff)"; fi
   nonmd="$(grep -v -E '\.md$|(^|/)results\.jsonl$' "$SD/b.list")"
   if [ -n "$nonmd" ]; then echo "migrate-branch-mode: non-.md / results.jsonl entries on $b:" >&2; printf '  %s\n' $nonmd >&2; rc=1; fi
-  g ls-files -- .supervisor | env LC_ALL=C sort | comm -23 - "$SD/a.list" > "$SD/extra.list"
+  g ls-files -- .supervisor | env LC_ALL=C sort | env LC_ALL=C comm -23 - "$SD/a.list" > "$SD/extra.list"
   extra="$(wc -l < "$SD/extra.list" | tr -d ' ')"
   if [ "$extra" -gt 0 ]; then
     say "OWNER DECISION: $extra tracked .supervisor/ path(s) are OUTSIDE the managed set; they stay tracked and are NOT moved to $b:"
@@ -529,7 +529,7 @@ cmd_verify_pr() {
   g fetch -q origin "+refs/heads/$nb:refs/remotes/origin/$nb" || die "could not fetch $nb"
   # every tracked managed path must be in the PR's deletion set, or it stays tracked after the merge
   mbase="$(g merge-base HEAD "refs/remotes/origin/$nb")" || die "verify-pr: no merge base between $d and $nb"
-  missing="$(g diff --name-only --diff-filter=D "$mbase" "refs/remotes/origin/$nb" | env LC_ALL=C sort | comm -13 - "$SD/a.list" | tr '\n' ' ')"
+  missing="$(g diff --name-only --diff-filter=D "$mbase" "refs/remotes/origin/$nb" | env LC_ALL=C sort | env LC_ALL=C comm -13 - "$SD/a.list" | tr '\n' ' ')"
   if [ -n "$missing" ]; then state_set verify_pr FAIL; die "verify-pr: FAIL — PR $POS leaves tracked managed path(s) tracked: $missing— re-cut it (untrack-pr after seed); do NOT merge"; fi
   state_set verify_pr PASS; state_set verify_pr_sha "$(g rev-parse HEAD)"
   local rel="A = B = $AB_A"; [ "$AB_REL" = subset ] && rel="A ⊆ B (A = $AB_A, B = $AB_B; B has $((AB_B - AB_A)) extra)"
