@@ -11,7 +11,11 @@
 - The S1/S2 harness `~/Documents/work/AI/ai-agent-manager-lanes-v2/s1h.sh`, now with `launch <lane> --resume-run
   <run_id>` (added 2026-10-05; backup in `archive/`).
 
-## HANDOVER (2026-10-07 ~04:40Z) — from session 2216aefd to session f849e0cc for wave 3 (owner: "handover … ask that to start wave 3")
+## HANDOVER (2026-10-07 ~14:10Z, CURRENT) — wave 3 closed (v15.125.0, #424); next = step 1, pa/05 alone in a FRESH session
+Read §"Wave 3 result" and the full handover at the end of §"Wave 3 log" ("## HANDOVER (2026-10-07 ~14:10Z)"),
+then §"Owner decisions 2026-10-07 — post-wave-3 order". The handover below (04:40Z) is superseded.
+
+## HANDOVER (superseded 2026-10-07 ~14:10Z; 2026-10-07 ~04:40Z) — from session 2216aefd to session f849e0cc for wave 3 (owner: "handover … ask that to start wave 3")
 **Single owner from now: session f849e0cc.** 2216aefd runs nothing for S3 (no lane, monitor, watcher) and edits no
 S3 record after this push. Wave 2 is fully closed — §"Wave 2 result" has the numbers, the operator's #402 fix and seven
 new gaps; read it, and §"Lessons from wave 1" below (they all held again).
