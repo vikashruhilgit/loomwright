@@ -89,6 +89,10 @@
 #      recorded sha that is not the PR head ⇒ silent; closeout clears the line
 #      (idempotent); another rollup check pending/red/unreadable, or a run view
 #      without headSha ⇒ no 'now mergeable'.
+#      Review iteration 2: the AC9 re-park flow (line dropped by `running`, a
+#      fresh check_pending line, `already running`) ⇒ the kept watcher reports
+#      once (content-keyed latch; mutant restoring the permanent latch fails);
+#      a restart over the same line never re-reports.
 #   E. evidence-gated stamps (decision 2) — a sentinel-led done /
 #      done_with_escalation requirement stamp (and a done/ brief's Outcome PR)
 #      rides only when its PR reads MERGED: OPEN, CLOSED, gh failing, a stamp
@@ -1779,6 +1783,60 @@ we_park check_pending --check claude-review --run-id 555 --attempt 1 --sha "$ESH
 printf 'OPEN\nOPEN\nCLOSED\n' > "$GH_STUB_DIR/state-seq"; jq -cn '{attempt:1,status:"completed",conclusion:"success"}' > "$GH_STUB_DIR/run-seq"
 we_watch >/dev/null
 [ "$(we_n 'merge-watch: now mergeable:')" = "0" ] && [ "$(spy_count automate_escalation_recheck "$SPYLOG.webhook")" = "0" ] && ok "(E11) a run view without headSha ⇒ no 'now mergeable'" || no "(E11) headSha-less run reported"
+
+# (E12, review iteration 2 — permanent latch on an absent/stale line) the brief's AC9
+# flow end to end: park (check_red line) arms the watcher → PICK's `running` drops the
+# line → the re-park writes a FRESH check_pending line and its launch prints `already
+# running` ⇒ the KEPT watcher still reports exactly once (the latch is keyed on the
+# line's content, never permanent). we_pr <n> — `pr view` calls so far.
+we_pr() { grep -c '^pr view ' "$GH_STUB_DIR/argv.log" 2>/dev/null || true; }
+we_until_polls() { local n0 i=0; n0="$(we_pr)"; while [ "$(we_pr)" -lt $((n0 + $1)) ] && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i+1)); done; }
+# repark_flow <watcher> <fixture_n> <tag> → RP_ALREADY (second launch line ok), RP_N (now-mergeable lines), RP_R (recheck notifies)
+repark_flow() {
+  local w="$1" i pid lg2="$TOP/rp2-$3.log"
+  closeout_fixture "$2"; spy_reset; we_open; : > "$GH_STUB_DIR/argv.log"; rm -f "$GH_STUB_DIR/state-seq" "$GH_STUB_DIR/run-seq"
+  we_park check_red --check ci --run-id 555 --attempt 1 --sha "$ESHA"
+  rj 1 completed success > "$GH_STUB_DIR/run-seq"
+  ( cd "$P" && LOOMWRIGHT_MERGE_WATCH_INTERVAL=1 LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=120 nohup bash "$w" "$RF_REL" "$REQ" "$PRURL" </dev/null >"$TOP/rp1-$3.log" 2>&1 & )
+  i=0; while [ ! -s "$P/$MARK" ] && [ "$i" -lt 200 ]; do sleep 0.1; i=$((i+1)); done
+  pid="$(awk -F'\t' '$1=="pid"{print $2}' "$P/$MARK" 2>/dev/null)"
+  we_until_polls 2
+  (cd "$P" && bash "$H" current-set "$RF_REL" --item "$REQ" --status running >/dev/null)   # PICK drops the line
+  we_until_polls 2
+  we_park check_pending --check claude-review --run-id 555 --attempt 1 --sha "$ESHA"
+  ( cd "$P" && LOOMWRIGHT_MERGE_WATCH_INTERVAL=1 LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=120 nohup bash "$w" "$RF_REL" "$REQ" "$PRURL" </dev/null >"$lg2" 2>&1 & )
+  i=0; while ! grep -qE 'already running|started|replaced' "$lg2" 2>/dev/null && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i+1)); done
+  RP_ALREADY=0; [ -n "$pid" ] && [ "$(cat "$lg2")" = "merge-watch: already running pid=$pid" ] && RP_ALREADY=1
+  i=0; while [ "$(we_n 'merge-watch: now mergeable:')" = 0 ] && [ "$i" -lt 6 ]; do we_until_polls 1; i=$((i+1)); done
+  we_until_polls 3   # further polls after any report must stay silent
+  RP_N="$(we_n "merge-watch: now mergeable: claude-review green on $ESHA")"
+  RP_R="$(spy_count automate_escalation_recheck "$SPYLOG.webhook")"
+  jq '.[0].state = "MERGED"' "$GH_STUB_DIR/prs.json" > "$GH_STUB_DIR/p.tmp" && mv "$GH_STUB_DIR/p.tmp" "$GH_STUB_DIR/prs.json"
+  i=0; while [ -e "$P/$MARK" ] && [ "$i" -lt 400 ]; do sleep 0.1; i=$((i+1)); done
+  [ -n "$pid" ] && kill "$pid" 2>/dev/null
+  return 0
+}
+repark_flow "$WATCH" 415 fixed
+[ "$RP_ALREADY" = 1 ] && ok "(E12) AC9: the re-park's launch prints 'already running pid=<kept watcher>'" || no "(E12) second launch: $(cat "$TOP/rp2-fixed.log")"
+[ "$RP_N" = 1 ] && [ "$RP_R" = 1 ] && ok "(E12) AC10 after a re-park: the kept watcher reads the fresh check_pending line ⇒ exactly one now-mergeable + one recheck notify" || no "(E12) kept watcher: now-mergeable=$RP_N notifies=$RP_R"
+# mutation control: delete EXACTLY the content-change reset ⇒ the latch is permanent again.
+MUT12="$TOP/mut12"; mkdir -p "$MUT12"; cp -R "$SPYD"/* "$MUT12/"
+grep -vxF '       [ "$esc_now" = "$esc_seen" ] || { esc_seen="$esc_now"; recheck_done=0; }' "$WATCH" > "$MUT12/automate-merge-watch.sh"
+if [ -s "$MUT12/automate-merge-watch.sh" ] && ! cmp -s "$WATCH" "$MUT12/automate-merge-watch.sh" && bash -n "$MUT12/automate-merge-watch.sh" \
+   && [ "$(( $(wc -l < "$WATCH") - $(wc -l < "$MUT12/automate-merge-watch.sh") ))" = "1" ]; then
+  repark_flow "$MUT12/automate-merge-watch.sh" 416 mut
+  [ "$RP_N" = 0 ] && ok "(E12) mutant (permanent latch restored) misses the re-park's fresh line — the reset is load-bearing" || no "(E12) mutant did not discriminate: now-mergeable=$RP_N"
+else no "(E12) permanent-latch mutant invalid (empty / identical / bash -n / not exactly 1 line)"; fi
+
+# (E13) the content-keyed latch never re-reports one line: a restarted watcher over the
+# SAME check_pending line finds its now-mergeable report in ## Progress and stays silent.
+closeout_fixture 417; spy_reset; we_open; rm -f "$GH_STUB_DIR/run-seq"
+we_park check_pending --check claude-review --run-id 555 --attempt 1 --sha "$ESHA"
+printf 'OPEN\nOPEN\nOPEN\nCLOSED\n' > "$GH_STUB_DIR/state-seq"; rj 1 completed success > "$GH_STUB_DIR/run-seq"
+we_watch >/dev/null
+spy_reset; printf 'OPEN\nOPEN\nCLOSED\n' > "$GH_STUB_DIR/state-seq"
+we_watch >/dev/null
+[ "$(we_n "merge-watch: now mergeable: claude-review green on $ESHA")" = "1" ] && [ "$(spy_count automate_escalation_recheck "$SPYLOG.webhook")" = "0" ] && ok "(E13) one line, two watchers (restart) ⇒ still exactly one now-mergeable report" || no "(E13) restart re-reported: $(we_n 'now mergeable')"
 
 echo "== K. SKILL wiring (Part B) =="
 grep -qF 'automate-merge-watch.sh' "$SKILL" && ok "SKILL names automate-merge-watch.sh" || no "SKILL lacks the watcher"

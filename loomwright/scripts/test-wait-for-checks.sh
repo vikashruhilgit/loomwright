@@ -26,6 +26,7 @@
 #  11-16. (automate-followups/31) the opt-in --names flag: default line byte-
 #      unchanged; pending_names (required included, absent required = pending,
 #      sha_mismatch) and red_names (name@run_id, '-' without a run id); scope.
+#  17. (review iteration 2) --names green needs EACH of conclusion/state green.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -423,6 +424,28 @@ case "$OUT16" in
   *) no "--required-only --names scope wrong: '$OUT16'" ;;
 esac
 rm -rf "$D16"
+
+echo "== 17. (review iteration 2) --names: green only when EACH of conclusion/state is a green value — never a prefix of their concatenation =="
+D17="$(fresh_stub_dir)"
+N_ROLL_MIX='{"headRefOid":"deadbeef00","statusCheckRollup":[{"name":"ci","status":"COMPLETED","conclusion":"SUCCESS"},{"name":"claude-review","status":"COMPLETED","conclusion":"SUCCESS","state":"FAILURE"}]}'
+write_names_stub "$D17" "$N_ROLL_MIX"
+OUT17="$(GH="$D17/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 0 --interval 1 --names)"
+case "$OUT17" in
+  *" pending_names=none red_names=claude-review@-") ok "--names SUCCESS conclusion + FAILURE state is red ($OUT17)" ;;
+  *) no "--names mixed conclusion/state wrong: '$OUT17'" ;;
+esac
+# MUTATION CONTROL: drop the per-field state check (back to the concatenated-prefix
+# reading) ⇒ claude-review reads green.
+M17="$D17/mut-wait-for-checks.sh"
+grep -vxF "    case \"\$_up_sta\" in ''|SUCCESS) ;; *) _g=0 ;; esac" "$SUT" > "$M17"
+if [ -s "$M17" ] && ! cmp -s "$SUT" "$M17" && bash -n "$M17" && [ "$(( $(wc -l < "$SUT") - $(wc -l < "$M17") ))" = 1 ]; then
+  OUT17M="$(GH="$D17/gh" bash "$M17" "$PR" --sha "$SHA" --bound 0 --interval 1 --names)"
+  case "$OUT17M" in *" red_names=none") ok "mutation control: without the per-field state check the mixed entry reads green ($OUT17M)" ;;
+    *) no "mutation control did NOT discriminate: '$OUT17M'" ;; esac
+else
+  no "case 17 mutant invalid (empty / identical / bash -n / not exactly 1 line)"
+fi
+rm -rf "$D17"
 
 echo
 echo "RESULT: $pass passed, $fail failed"

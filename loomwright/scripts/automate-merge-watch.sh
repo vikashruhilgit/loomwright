@@ -38,8 +38,8 @@
 #            THIS item + PR and carries `- escalation_cause: check_pending` or
 #            `check_red_unrelated` with a non-null check + a sha equal to the
 #            PR's current headRefOid (read by the poll's own `gh pr view --json
-#            state,headRefOid,statusCheckRollup`; a different head latches it
-#            silent), each poll also reads that ONE check — `gh run view <run_id> --json
+#            state,headRefOid,statusCheckRollup`; a different head latches that
+#            line silent), each poll also reads that ONE check — `gh run view <run_id> --json
 #            attempt,status,conclusion,headSha` when a run id is recorded, else
 #            `gh api repos/<o>/<r>/commits/<sha>/check-runs` by name (never an
 #            extra `gh pr view`). check_pending reports at the first completed
@@ -50,9 +50,10 @@
 #            <check> <conclusion> — rerun: gh run rerun <run_id> --failed` (the
 #            command is PRINTED for the owner, never executed) — plus ONE
 #            notify of gate type `automate_escalation_recheck`, then a latch
-#            (also across a restart: an existing report line in ## Progress
-#            suppresses it); the watcher keeps watching for the merge. Any other
-#            cause, or no line ⇒ no check polling at all (today's behavior).
+#            keyed on the line's content (a re-park's fresh line re-arms it; also
+#            across a restart: an existing report line in ## Progress suppresses
+#            it); the watcher keeps watching for the merge. Any other cause, or no
+#            line ⇒ no check polling at all (today's behavior).
 # It never merges, pushes, approves or reruns anything, never picks/RUNs a
 # Queue item, never invokes `/autonomous`.
 #
@@ -207,19 +208,26 @@ esc_fields() {
     END { if (mine && e != "") printf "%s|%s|%s|%s|%s\n", fld(e, "escalation_cause"), fld(e, "check"), fld(e, "run_id"), fld(e, "attempt"), fld(e, "sha") }
   ' "$rf_abs" 2>/dev/null
 }
+# recheck_done latches for ONE line content only: esc_seen holds the esc_fields
+# output it applies to, and the poll loop resets the latch whenever that content
+# changes (a re-park's fresh line, a line appearing after PICK's `running` dropped
+# it) — never a permanent latch on an absent or stale line.
 recheck_done=0
-# esc_recheck <pr_view_json> — one settle poll of the recorded check; reports at most
-# once. <pr_view_json> is THIS poll's `gh pr view --json state,headRefOid,statusCheckRollup`
-# (no extra call): the recorded sha must be the PR's CURRENT head (a stale line — a
-# later push, or a line left from another item — is latched silent), and `now
-# mergeable` additionally needs every OTHER rollup entry completed and non-red.
+esc_seen=""
+# esc_recheck <pr_view_json> <esc_fields_line> — one settle poll of the recorded
+# check; reports at most once per line content. <pr_view_json> is THIS poll's `gh pr
+# view --json state,headRefOid,statusCheckRollup` (no extra call): the recorded sha
+# must be the PR's CURRENT head (a stale line — a later push, or a line left from
+# another item — is latched silent for that line), and `now mergeable` additionally
+# needs every OTHER rollup entry completed and non-red.
 esc_recheck() {
-  local pv="$1" f cause chk rid att sha rec owner_repo j st concl a hs head others
-  f="$(esc_fields)"; [ -n "$f" ] || { recheck_done=1; return 0; }
+  local pv="$1" f="${2:-}" cause chk rid att sha rec owner_repo j st concl a hs head others
+  [ -n "$f" ] || { recheck_done=1; return 0; }
   IFS='|' read -r cause chk rid att sha <<<"$f"
   case "$cause" in check_pending|check_red_unrelated) ;; *) recheck_done=1; return 0 ;; esac
   case "$chk" in ''|null) recheck_done=1; return 0 ;; esac
   case "$sha" in ''|null|*[!0-9a-fA-F]*) recheck_done=1; return 0 ;; esac
+  [ "${#sha}" -ge 7 ] || { recheck_done=1; return 0; }   # the sha is prefix-compared below
   head="$(printf '%s' "$pv" | "$JQ" -r '.headRefOid // empty' 2>/dev/null)"
   case "$head" in ''|*[!0-9a-fA-F]*) return 0 ;; esac   # unreadable head ⇒ no report this poll
   case "$head" in "$sha"*) ;; *) case "$sha" in "$head"*) ;; *) recheck_done=1; return 0 ;; esac ;; esac
@@ -344,7 +352,9 @@ while :; do
       progress "$item gone — $pr_url closed unmerged (no cleanup; §4 gone rules)"
       notify "$pr_url closed unmerged — /automate item $item is gone (run $run_id)"
       echo "merge-watch: pr closed unmerged"; exit 0 ;;
-    *) [ "$recheck_done" -eq 1 ] || esc_recheck "$view"
+    *) esc_now="$(esc_fields)"
+       [ "$esc_now" = "$esc_seen" ] || { esc_seen="$esc_now"; recheck_done=0; }
+       [ "$recheck_done" -eq 1 ] || esc_recheck "$view" "$esc_now"
        nap "$interval" ;;
   esac
 done

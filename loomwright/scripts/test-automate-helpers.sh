@@ -5080,6 +5080,71 @@ jq -c '.statusCheckRollup[1].status = "IN_PROGRESS" | .statusCheckRollup[1].conc
 esc_run "$H" "$ESC_C_URL" "$ESC_C_SHA"
 esc_expect "unrelated red ci + pending claude-review ⇒ check_red_unrelated on ci (not check_pending)" "escalation_cause: check_red_unrelated check=ci run_id=37254186674 attempt=1 sha=$ESC_C_SHA"
 
+# Review iteration 2 (fail-open parse trusting a PREFIX of log text): the WHOLE script
+# line must be the test command — a shell operator / substitution / redirect after
+# the test path is a non-test command ⇒ check_red; plain-word args stay a test line.
+# esc_sub <case> <replacement for the s2-c script line's command> — one edited replay.
+esc_sub() {
+  esc_case "$1"
+  ESC_SUB_R="$2" awk 'BEGIN { r = ENVIRON["ESC_SUB_R"] }
+    { i = index($0, "mbash scripts/test-ci-local.sh"); if (i) $0 = substr($0, 1, i) r substr($0, i + 30) } { print }' \
+    "$ESC_FX/s2c-log-failed.txt" > "$ESC_D/log-37254186674.txt"
+}
+ESC_UNREL_C="escalation_cause: check_red_unrelated check=ci run_id=37254186674 attempt=1 sha=$ESC_C_SHA"
+esc_n=0
+for esc_cmd in 'bash scripts/test-ci-local.sh && bash scripts/ci-local.sh' 'bash scripts/test-ci-local.sh || true' \
+               'bash scripts/test-ci-local.sh | tee out.log' 'bash scripts/test-ci-local.sh & wait' \
+               'bash scripts/test-ci-local.sh > out.log' 'bash scripts/test-ci-local.sh < in.txt' \
+               'bash scripts/test-ci-local.sh $(cat args)' 'bash scripts/test-ci-local.sh `cat args`' \
+               'bash scripts/test-ci-local.sh "a b"'; do
+  esc_n=$((esc_n + 1)); esc_sub "e9op$esc_n" "$esc_cmd"
+  esc_run "$H" "$ESC_C_URL" "$ESC_C_SHA"; esc_expect "a chained/redirected script line ($esc_cmd) ⇒ check_red" "$ESC_RED_C"
+done
+esc_sub e9plain 'bash scripts/test-ci-local.sh --self-test -v name=x'
+esc_run "$H" "$ESC_C_URL" "$ESC_C_SHA"; esc_expect "control: a test line with plain-word args ⇒ check_red_unrelated" "$ESC_UNREL_C"
+# MUTATION CONTROL: restore the prefix-only match (path then ` ` or end) ⇒ the `&&` leg
+# turns check_red_unrelated.
+ESC_MUT="$(mktemp -d)"
+for e in "$(dirname "$H")"/*; do [ "$e" = "$H" ] || ln -s "$e" "$ESC_MUT/$(basename "$e")"; done
+sed 's#test-\[A-Za-z0-9._-\]+\\\.sh( +\[A-Za-z0-9._\\/=:,@%+-\]+)\*\$/#test-[A-Za-z0-9._-]+\\.sh( |$)/#' "$H" > "$ESC_MUT/automate-helpers.sh"
+if [ -s "$ESC_MUT/automate-helpers.sh" ] && ! cmp -s "$H" "$ESC_MUT/automate-helpers.sh" && bash -n "$ESC_MUT/automate-helpers.sh" 2>/dev/null \
+   && [ "$(diff "$H" "$ESC_MUT/automate-helpers.sh" | grep -c '^[<>]')" = 2 ]; then
+  ESC_D="$ESC_T/e9op1"; esc_run "$ESC_MUT/automate-helpers.sh" "$ESC_C_URL" "$ESC_C_SHA"
+  [ "$ESC_OUT" = "$ESC_UNREL_C" ] && ok "ESC mutation control: a prefix-only test-line match flips the && leg ($ESC_OUT)" \
+    || no "ESC prefix-only mutation control did NOT discriminate: '$ESC_OUT'"
+else
+  no "ESC prefix-only mutation control: could not build a valid mutant -- control inconclusive"
+fi
+rm -rf "$ESC_MUT"
+
+# Review iteration 2 (path arithmetic assuming a `/`): AC3 for a BARE / `./` test path —
+# `bash test-ci-local.sh` tests `ci-local.sh`, so a PR changing <dir>/ci-local.sh ⇒
+# check_red; a `.`/`..` segment cannot be resolved ⇒ check_red (fail CLOSED).
+for esc_bp in 'bash test-ci-local.sh' 'bash ./test-ci-local.sh' 'bash ./scripts/test-ci-local.sh'; do
+  esc_n=$((esc_n + 1)); esc_sub "e10b$esc_n" "$esc_bp"
+  jq -c '.changedFiles += 1 | .files += [{"path":"loomwright/scripts/ci-local.sh"}]' "$ESC_FX/s2c-files.json" > "$ESC_D/files.json"
+  [ -n "${ESC_BARE_D:-}" ] || ESC_BARE_D="$ESC_D"
+  esc_run "$H" "$ESC_C_URL" "$ESC_C_SHA"; esc_expect "AC3 '$esc_bp' + PR changes loomwright/scripts/ci-local.sh ⇒ check_red" "$ESC_RED_C"
+  esc_n=$((esc_n + 1)); esc_sub "e10c$esc_n" "$esc_bp"
+  esc_run "$H" "$ESC_C_URL" "$ESC_C_SHA"; esc_expect "control: '$esc_bp' with the tested script NOT in the PR ⇒ check_red_unrelated" "$ESC_UNREL_C"
+done
+esc_sub e10dot 'bash ../scripts/test-ci-local.sh'
+esc_run "$H" "$ESC_C_URL" "$ESC_C_SHA"; esc_expect "a '..' test path (unresolvable) ⇒ check_red" "$ESC_RED_C"
+# MUTATION CONTROL: restore the unconditional `${t%/*}/…` arithmetic ⇒ the bare leg
+# (e10b first case) turns check_red_unrelated.
+ESC_MUT="$(mktemp -d)"
+for e in "$(dirname "$H")"/*; do [ "$e" = "$H" ] || ln -s "$e" "$ESC_MUT/$(basename "$e")"; done
+sed 's#^  case "\$t" in \*/\*) script="\${t%/\*}/\${base\#test-}" ;; \*) script="\${base\#test-}" ;; esac$#  script="${t%/*}/${base\#test-}"#' "$H" > "$ESC_MUT/automate-helpers.sh"
+if [ -s "$ESC_MUT/automate-helpers.sh" ] && ! cmp -s "$H" "$ESC_MUT/automate-helpers.sh" && bash -n "$ESC_MUT/automate-helpers.sh" 2>/dev/null \
+   && [ "$(diff "$H" "$ESC_MUT/automate-helpers.sh" | grep -c '^[<>]')" = 2 ]; then
+  ESC_D="$ESC_BARE_D"; esc_run "$ESC_MUT/automate-helpers.sh" "$ESC_C_URL" "$ESC_C_SHA"
+  [ "$ESC_OUT" = "$ESC_UNREL_C" ] && ok "ESC mutation control: slash-assuming path arithmetic flips the bare-path AC3 leg ($ESC_OUT)" \
+    || no "ESC bare-path mutation control did NOT discriminate: '$ESC_OUT'"
+else
+  no "ESC bare-path mutation control: could not build a valid mutant -- control inconclusive"
+fi
+rm -rf "$ESC_MUT"
+
 # AC5 MUTATION CONTROL: a classifier that decides by test name alone (no PR-files comparison —
 # every failing test file read as unrelated) must turn the AC3 related legs red.
 ESC_MUT="$(mktemp -d)"

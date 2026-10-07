@@ -142,7 +142,8 @@ _esc_attempt() {
 # `--log-failed` line is `<job>\t<step>\t<ts> <text>`; each failed (job, step) must
 # carry a `##[group]Run …` header whose script lines (the `ESC[36;1m…ESC[0m` lines, ESC or `^[`,
 # before `##[endgroup]` — ALL of a multi-command step's commands) are EVERY one a
-# `bash <path>/test-*.sh [args]` command. Exit 1 (⇒ check_red) when any failed
+# `bash <path>/test-*.sh [args]` command, the args plain words only (no shell
+# operator, substitution, quote or redirect — the whole line is matched). Exit 1 (⇒ check_red) when any failed
 # (job, step) has no header or no script line, or any script line is anything else
 # (a non-test `bash scripts/<x>.sh`, another command) — never a partial answer.
 _esc_failing_tests() {
@@ -164,7 +165,10 @@ _esc_failing_tests() {
       gsub(/^[ ]+|[ ]+$/, "", l)
       if (l == "") next
       cnt[k]++
-      if (l ~ /^bash (\.\/)?([A-Za-z0-9._-]+\/)*test-[A-Za-z0-9._-]+\.sh( |$)/) {
+      # the WHOLE line is the test command: its arguments are plain words only (a
+      # shell operator / substitution / quote / redirect after the path — e.g.
+      # `bash scripts/test-x.sh && bash scripts/x.sh` — is a non-test command ⇒ bad)
+      if (l ~ /^bash (\.\/)?([A-Za-z0-9._-]+\/)*test-[A-Za-z0-9._-]+\.sh( +[A-Za-z0-9._\/=:,@%+-]+)*$/) {
         p = l; sub(/^bash (\.\/)?/, "", p); sub(/ .*$/, "", p); out[p] = 1
       } else bad = 1
     }
@@ -181,9 +185,15 @@ _esc_failing_tests() {
 # path ENDING in `/<path>` also counts (the CI step may run from a subdirectory) —
 # the over-match errs toward `check_red`, never toward `check_red_unrelated`.
 _esc_related() {
-  local t="$1" paths="$2" dir base script p
-  dir="${t%/*}"; base="${t##*/}"
-  script="$dir/${base#test-}"
+  local t="$1" paths="$2" base script p
+  while :; do case "$t" in ./*) t="${t#./}" ;; *) break ;; esac; done
+  # a `.`/`..` segment cannot be resolved against the PR's repo-relative paths ⇒
+  # treated as related (fail CLOSED toward check_red)
+  case "/$t/" in */./*|*/../*) return 0 ;; esac
+  base="${t##*/}"
+  # a bare `test-<stem>.sh` (no `/`) tests the bare `<stem>.sh` — never `${t%/*}`,
+  # which is the whole name when no `/` is present
+  case "$t" in */*) script="${t%/*}/${base#test-}" ;; *) script="${base#test-}" ;; esac
   while IFS= read -r p; do
     [ -n "$p" ] || continue
     case "$p" in

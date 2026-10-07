@@ -247,7 +247,7 @@ fi
 names_pending=""
 names_red=""
 compute_names() {
-  local _n _st _sta _con _url _req _up_st _up_sta _up_con _rid _in _nrows _missing
+  local _n _st _sta _con _url _req _up_st _up_sta _up_con _rid _in _nrows _missing _g
   names_pending=""
   names_red=""
   _nrows="$(printf '%s' "$rollup" | "$JQ_BIN" -r --argjson req "$required_contexts_json" '
@@ -273,14 +273,16 @@ compute_names() {
       names_pending="${names_pending:+$names_pending,}$_n"
       continue
     fi
-    case "$_up_con$_up_sta" in
-      SUCCESS*|NEUTRAL*|SKIPPED*|SUCCESS) ;;
-      *)
+    # green only when EACH field is exactly a green value (or empty) and one is
+    # set — never a prefix of the concatenation (`SUCCESS`+`FAILURE` is red)
+    case "$_up_con" in ''|SUCCESS|NEUTRAL|SKIPPED) _g=1 ;; *) _g=0 ;; esac
+    case "$_up_sta" in ''|SUCCESS) ;; *) _g=0 ;; esac
+    [ -n "$_up_con$_up_sta" ] || _g=0
+    if [ "$_g" -eq 0 ]; then
         _rid="$(printf '%s' "$_url" | sed -nE 's#.*/actions/runs/([0-9]+)/.*#\1#p')"
         [ -n "$_rid" ] || _rid="-"
         names_red="${names_red:+$names_red,}$_n@$_rid"
-        ;;
-    esac
+    fi
   done <<EOF_NROWS
 $_nrows
 EOF_NROWS
