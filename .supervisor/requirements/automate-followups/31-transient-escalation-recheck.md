@@ -73,11 +73,36 @@ loomwright/commands/automate.md
 loomwright/scripts/wait-for-checks.sh
 loomwright/scripts/test-wait-for-checks.sh
 loomwright/scripts/automate-helpers.sh
+loomwright/scripts/automate-helpers.d/runfile.sh
+loomwright/scripts/fixtures/automate-helpers-help.golden
 loomwright/scripts/test-automate-helpers.sh
 loomwright/skills/review-heal/SKILL.md
 loomwright/skills/automate-loop/SKILL.md
-loomwright/docs/RESULT_SCHEMAS.md
+loomwright/docs/result-schemas/review-heal-result.md
+loomwright/docs/result-schemas/automate-run.md
 changelog.d/automate-followups-31-transient-escalation-recheck.md
+
+## Touches re-pointed 2026-10-07 (S3 operator f849e0cc, after pa/11's split — #408, v15.124.0)
+- `RESULT_SCHEMAS.md` → `result-schemas/review-heal-result.md` (Scope 1: the drain's ESCALATED result carries
+  `escalation_cause`) + `result-schemas/automate-run.md` (Scope 1: the park's `## Current` fields).
+- `automate-helpers.sh` kept (its usage header documents `current-set`'s flags) + `automate-helpers.d/runfile.sh`
+  (`current_set`, "the ONLY writer of `## Current`", enum-validated, gains the new fields) +
+  `fixtures/automate-helpers-help.golden` (the dispatcher's `--help` golden; any usage-header change regenerates it,
+  `test-automate-helpers-dispatch.sh` check 5).
+
+## Amended 2026-10-07 — arm the merge watcher idempotently (owner, relayed by S3 session 2216aefd)
+- **Evidence (S3 wave 2, lane s3-g, agnostic/04 #403):** s3-g armed TWO merge watchers for the same PR — one at its
+  first park and one at the re-park after the owner-requested fix-now re-drain. Both exited cleanly at the merge and
+  only one closeout ran, but nothing prevents a double closeout. (S3 record §"Wave 2 result", new gap 6.)
+- **Change:** arming is idempotent. Before arming, the park tail reads the run's `<run_id>.merge-watch` marker; a
+  live watcher for the same `pr_url` (checked the way `automate-merge-watch.sh` already checks liveness: `ps -ww`
+  shows that script carrying the marker's `pr_url`, so a recycled pid is never trusted) is kept and no second one
+  starts; a dead or different-PR marker is replaced as today. Applies to every park that arms (`awaiting_merge` and,
+  with this item's Part above, `escalated`).
+- **Test:** two parks of the same item in one run (park → fix-now re-drain → re-park) leave exactly one live watcher
+  and produce exactly one closeout. **Mutation control:** removing the liveness check before arming must fail it.
+- Placement note (operator): this is a watcher-arming change, not a transient-escalation one; it sits here because
+  this item already owns the park-tail arming change (Part above) and `automate-merge-watch.sh`.
 
 ## Part — Escalated parks arm the merge watcher (moved 2026-10-06 from `parallel-automate/06` Scope 7, verbatim)
 Owner decision 2026-10-06: this engine change does not need the coordinator, so it lives here and this item no

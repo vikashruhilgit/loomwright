@@ -503,6 +503,47 @@ teardown, machine (load, swap, free) at peak.
 - **Records:** carried to `loomwright-meta` `f7709f0` (32 paths; s3-f by hand — its push failed the `home_path` scrub on
   `reconcile-status` lines and its brief). Lanes torn down, `leaks` empty, primary clean on `f4b0732`.
 
+## Wave 3 log (operator session f849e0cc)
+### Pre-plan pass (2026-10-07 ~04:55Z, owner "go ahead"; on `main` `f4b0732`, v15.124.0 installed)
+- **Touches re-pointed (gap 7 record)** — each item carries a dated `## Touches re-pointed 2026-10-07` note saying why:
+  | Item | `RESULT_SCHEMAS.md` → | `automate-helpers.sh` / other changes |
+  |---|---|---|
+  | ms/07 | NEW `result-schemas/migrate-branch-mode-state.md` + index kept (Scope 4 state file; no existing block named) | — |
+  | af/31 | `review-heal-result.md` + `automate-run.md` | kept + `.d/runfile.sh` + help golden |
+  | af/33 | `agent-lifecycle-jsonl.md` + `supervisor-result.md` | + `CLAUDE.md` (Part B's no-`|| true` hook falsifies "the ONLY two" leaves) |
+  | pa/05 | `automate-run.md` | kept + `.d/resume.sh`, `.d/runfile.sh`, help golden, dispatch test; + `test-automate-helpers.sh`, `automate-trail.sh` + test, `run-self-tests.sh` + test, `ci-slot.sh` + test |
+  | pa/06 | `automate-run.md` (folded item-13 `#### Touches` left verbatim) | — |
+  | af/34 | `automate-run.md` | kept + help golden |
+  | pa/12 | `automate-run.md` | — |
+  | pa/18 | `automate-run.md` | kept + help golden, dispatch test, `.d/plan-waves.sh`, `.d/intake.sh` |
+  New hidden shared file found: `loomwright/scripts/fixtures/automate-helpers-help.golden` — any `automate-helpers.sh`
+  usage-header change regenerates it (`test-automate-helpers-dispatch.sh` check 5), so every item that changes a
+  subcommand's usage declares it.
+- **Amendments (owner, relayed by 2216aefd, lossless, dated):** pa/05 Scope 3 (coordinator owns cross-run closeout
+  once — wave-2 gap 1), Scope 13 (multiSelect `lane-answer`, the `note` delivered or declared dropped — gaps 2, 3),
+  Scope 15c (agnostic/04 scope-fence evidence), Scope 16 (fleet health 1–4: `run-self-tests.sh` admission, in-flight
+  guard, load attribution, crossing notifications); pa/12 evidence (gap 5); af/31 idempotent watcher arming (gap 6 —
+  placed there because af/31 owns the park-tail arming change); af/33 evidence (7 turn-limit stops at #408).
+- **New items:** `automate-followups/35-wave1-review-leftovers.md` (the 7 notes of
+  `proposed/s3w1-wave-pr-397-review.md`, code anchors re-checked on `f4b0732`) and
+  `parallel-automate/20-lane-run-hygiene.md` (A: an unrun must-pass running-system step parks `escalated`
+  `validation_unrun` — owner policy; B: `reconcile-status` home paths; C: `ci-local` vs the 600 s limit; depends on
+  af/31 for `escalation_cause`).
+- `plan-waves --lint`: 15/15 `Touches ok; Depends on ok`. `plan-waves --max 5 --explain` under the S3 planner rule
+  (scratch clone of `f4b0732`; the one non-`new` companions rule loses `prompt-token-budgets.json` and
+  `ARCHITECTURE_CONTRACTS.md` and so drops out):
+  | Planner wave | Items | Why later |
+  |---|---|---|
+  | 1 (= S3 wave 3) | ms/07 · af/31 · af/33 | — |
+  | 2 | hc/01 · hc/02 | hc/01 ↔ ms/07 on `.github/workflows/ci.yml`; hc/02 ↔ af/33 on `docs/HOOKS.md` + `scripts/emit-lifecycle.sh` |
+  | 3 | pa/05 | depends on ms/07; ↔ hc/01 on `ARCHITECTURE_CONTRACTS.md` (declared by both, so the rule does not drop it) |
+  | 4 | pa/06 · pa/14 | depend on pa/05 |
+  | 5–11 | af/34 · ms/05 · pa/12 · pa/18 · pa/07 · af/35 · pa/20 | serialize on `automate-loop/SKILL.md`, `commands/automate.md`, `automate-run.md`, the help golden |
+  **The owner order (ms/07 · af/31 · af/33 + hc/01 · hc/02) is not conflict-free:** the five form two conflicting pairs,
+  so at most 3 run together. hc/02 shares no file with pa/05, so `wave 4 = pa/05 · hc/02` keeps pa/05 next after
+  wave 3; hc/01 then follows pa/05 unless the owner allows its declared `ARCHITECTURE_CONTRACTS.md` overlap (a table
+  doc, which merged by lines in waves 1–2). Owner to confirm.
+
 ## Done when
 All items in the queue (19 after the 2026-10-06 restructures) merged or closed by the owner, each wave's records on `loomwright-meta`, lanes torn down with `leaks`
 empty, the measures above recorded in this file, and P2 (default lane count) revisited with S2 + S3 evidence.

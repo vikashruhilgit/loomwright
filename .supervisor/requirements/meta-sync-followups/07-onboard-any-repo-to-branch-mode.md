@@ -104,8 +104,16 @@ loomwright/scripts/test-meta-sync-rehearsal.sh
 loomwright/docs/vendor-coupling-manifest.json
 loomwright/commands/setup.md
 loomwright/skills/setup/SKILL.md
+loomwright/docs/result-schemas/migrate-branch-mode-state.md
 loomwright/docs/RESULT_SCHEMAS.md
 changelog.d/meta-sync-followups-07-onboard-any-repo-to-branch-mode.md
+
+## Touches re-pointed 2026-10-07 (S3 operator f849e0cc, after pa/11 split `RESULT_SCHEMAS.md` — #408, v15.124.0)
+- The Scope names no existing result block; the only schema text it plausibly adds is Scope 4's resumable state
+  file. Declared as a NEW per-schema file `docs/result-schemas/migrate-branch-mode-state.md` plus the
+  `RESULT_SCHEMAS.md` index (its one-line link). If the brief documents the state file elsewhere, drop both lines.
+- Shares `.github/workflows/ci.yml` with `host-contract/01` (D.3 adds a CI pull step; hc/01 adds its own step), so
+  the planner keeps the two apart.
 
 ## Part D — moved 2026-10-06 from `05-carry-the-learning-stores.md` (verbatim; owner decision: fewer, larger items — a run costs ~$17–20 plus 4+ owner questions even for a tiny change)
 Scope 2c above names "`meta-sync-followups/05` Scope D's harness": that harness is now this part, so this

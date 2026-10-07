@@ -106,7 +106,9 @@ none
 ## Touches
 loomwright/agents/supervisor.md
 loomwright/docs/HOOKS.md
-loomwright/docs/RESULT_SCHEMAS.md
+loomwright/docs/result-schemas/agent-lifecycle-jsonl.md
+loomwright/docs/result-schemas/supervisor-result.md
+CLAUDE.md
 loomwright/hooks/hooks.json
 loomwright/scripts/check-children-settled.sh
 loomwright/scripts/emit-lifecycle.sh
@@ -114,3 +116,18 @@ loomwright/scripts/test-check-children-settled.sh
 loomwright/scripts/test-emit-lifecycle.sh
 loomwright/skills/async-orchestration/SKILL.md
 changelog.d/automate-followups-33-children-settled-gate.md
+
+## Touches re-pointed 2026-10-07 (S3 operator f849e0cc, after pa/11's split — #408, v15.124.0)
+- `RESULT_SCHEMAS.md` → `result-schemas/agent-lifecycle-jsonl.md` (Part A's terminal `agent_lifecycle` row for
+  every SubagentStop; this file already documents the children-settled join — `test-check-children-settled.sh`
+  reads it as `$SCHEMAS`) + `result-schemas/supervisor-result.md` (documents `error: "children_unsettled: …"`;
+  Part B's FINALIZE gate marker).
+- **Added (undeclared but obvious, wave-2 lesson):** `CLAUDE.md` — Part B adds a fail-CLOSED blocking
+  `PreToolUse[Bash]` hook with no `|| true`, which falsifies CLAUDE.md §"Plugin Hooks"' statement that the
+  test-integrity guard's two leaves are "the ONLY two command-hook leaves in `hooks.json` that carry NO `|| true`".
+
+## Amended 2026-10-07 — evidence only (owner, relayed by S3 session 2216aefd)
+- **S3 wave 2, #408 (parallel-automate/11, lane s3-f):** at FINALIZE the children-settled check read **7
+  turn-limit-stopped agents** as unsettled — 5 `worker`s stopped at 40 turns and 2 `context-keeper`s at 3 — each
+  with no terminal lifecycle row. The owner answered "proceed". Fourth occurrence of Part A's "second cause"; still
+  a gate question that carries no signal. (S3 record §"Wave 2 result", Questions.)

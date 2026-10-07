@@ -14,7 +14,7 @@ loomwright/scripts/test-automate-trail.sh
 loomwright/skills/automate-loop/SKILL.md
 loomwright/skills/SKILLS_INDEX.md
 loomwright/commands/automate.md
-loomwright/docs/RESULT_SCHEMAS.md
+loomwright/docs/result-schemas/automate-run.md
 loomwright/scripts/automate-merge-watch.sh
 
 ## Amended 2026-10-06 — wave close on a wave branch, no release lane (S3 wave 1 evidence; owner decisions 2026-10-05/06)
@@ -291,3 +291,8 @@ Items 18 and 19 are in different waves by `plan-waves`, so they are the overlap 
 
 #### Evidence
 This session's scale-up analysis (2026-10-04) and S1 Q4 once recorded.
+
+## Touches re-pointed 2026-10-07 (S3 operator f849e0cc, after pa/11's split — #408, v15.124.0)
+- Top-level `## Touches`: `RESULT_SCHEMAS.md` → `result-schemas/automate-run.md` (wave-close park and closeout fields
+  live in §AUTOMATE_RUN). The folded `#### Touches` of item 13 inside Part S is verbatim history, not machine-read,
+  and is left as written.

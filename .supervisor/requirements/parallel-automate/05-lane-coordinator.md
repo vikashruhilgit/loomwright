@@ -25,14 +25,37 @@ loomwright/scripts/test-automate-lanes.sh
 loomwright/scripts/lane-sampler.sh
 loomwright/scripts/test-lane-sampler.sh
 loomwright/scripts/automate-helpers.sh
+loomwright/scripts/automate-helpers.d/resume.sh
+loomwright/scripts/automate-helpers.d/runfile.sh
+loomwright/scripts/fixtures/automate-helpers-help.golden
+loomwright/scripts/test-automate-helpers.sh
+loomwright/scripts/test-automate-helpers-dispatch.sh
+loomwright/scripts/automate-trail.sh
+loomwright/scripts/test-automate-trail.sh
 loomwright/scripts/automate-dismissed.sh
 loomwright/scripts/read-token-ledger.sh
+loomwright/scripts/run-self-tests.sh
+loomwright/scripts/test-run-self-tests.sh
+loomwright/scripts/ci-slot.sh
+loomwright/scripts/test-ci-slot.sh
 loomwright/skills/automate-loop/SKILL.md
 loomwright/skills/SKILLS_INDEX.md
 loomwright/commands/automate.md
 loomwright/commands/agent-help.md
-loomwright/docs/RESULT_SCHEMAS.md
+loomwright/docs/result-schemas/automate-run.md
 loomwright/docs/ARCHITECTURE_CONTRACTS.md
+
+## Touches re-pointed 2026-10-07 (S3 operator f849e0cc, after pa/11's split — #408, v15.124.0)
+- `RESULT_SCHEMAS.md` → `result-schemas/automate-run.md` (Scope 12 names §AUTOMATE_RUN: `ready_for_release`,
+  `parallel`).
+- `automate-helpers.sh` kept (dispatcher arm for `automate-lanes.sh`) + `automate-helpers.d/resume.sh` (Scope 3:
+  `resume-glob` skips `-L<n>` titles) + `automate-helpers.d/runfile.sh` (Scope 2: `## Current` names the wave) +
+  `fixtures/automate-helpers-help.golden` and `test-automate-helpers-dispatch.sh` (new arm ⇒ regenerated `--help`
+  golden, check 5).
+- **Added (undeclared but obvious, wave-2 lesson):** `test-automate-helpers.sh` (Validation 2 expects ADDED groups
+  there), `automate-trail.sh` + `test-automate-trail.sh` (the 2026-10-07 closeout amendment below moves
+  `closeout-others` to the coordinator), `run-self-tests.sh` + `test-run-self-tests.sh` + `ci-slot.sh` +
+  `test-ci-slot.sh` (Scope 16's 2026-10-07 amendment 1: every full-suite entry point takes machine admission).
 
 ## Problem
 One `/automate` run processes one item at a time: RUN took 1h14–4h37 per item across the last four run files, and
@@ -104,6 +127,17 @@ coordinator. Without the flag, or with `--parallel 1`, no lane code runs at all.
    `## Status: done` to the lane run file BEFORE its metadata push, and `resume-glob` skips any run file whose
    title carries a lane id (`-L<n>`) — both, pinned by a test that a finished AND an unfinished lane file are
    never listed as a resumable run.
+   **Amended 2026-10-07 (owner, relayed by S3 session 2216aefd) — the coordinator owns cross-run closeout, once.**
+   Evidence: in S3 wave 2 all three lanes ran the start-up cross-run closeout (`closeout-others`) on the SAME 13 old
+   run files ~5 s apart; the first lane's metadata push won and each other lane hit 13 `meta-push FAILED: conflict`
+   lines (the records were duplicates; the operator resolved them by taking the branch copy before teardown — S3
+   record §"Wave 2 result", gap 1). So:
+   - a lane clone neither carries nor finalizes other runs' files: lane start-up skips `closeout-others` (or
+     `lane-create` leaves the lane nothing to close out), and a lane's metadata push carries only its own run's paths;
+   - the coordinator runs the cross-run closeout ONCE, in the primary, before it launches the wave's lanes.
+   - **Tests:** a two-lane fixture fleet with old unfinished run files on the metadata branch ⇒ exactly one closeout
+     of each old file (by the coordinator), zero closeout lines in either lane, and no lane meta-push touching a file
+     outside its own run. **Mutation control:** letting a lane run `closeout-others` at start-up must fail it.
 4. **The loop, per wave:** `meta-sync pull` → RECONCILE every lane → `plan-waves --max N` → (shape B: Launch Pad
    per item, interactive, in the primary) → `lane-create` + `lane-launch` per item → poll `lane-status`.
    - **The primary is locked for the whole wave**: hold `automate-lanes:<run_id>` in the primary's run lock so a
@@ -169,6 +203,16 @@ coordinator. Without the flag, or with `--parallel 1`, no lane code runs at all.
       options is refused; the bundled-call deny; a `lane-remove` refusal while a question is pending (Scope 1).
     - Evidence: the S1 run record. Lane B relayed 5 deferred calls carrying 10 questions (resume path, pre-flight overlap, unsettled join,
       dismissed findings 1–7) through exactly this shape.
+    - **Amended 2026-10-07 (owner, relayed by S3 session 2216aefd; S3 wave 2 evidence):**
+      - **multiSelect answers:** `lane-answer` accepts a multiSelect question's answer as several of its own option
+        labels (comma-joined on the CLI), each label validated against the question's options; one unknown label
+        refuses the whole answer. The S1 harness's `answer` refused valid multiSelect answers until session 2216aefd
+        patched `s1h.sh` on 2026-10-07 (backup `archive/s1h.sh.backup-2026-10-07-pre-multiselect`).
+      - **The free-text `note`:** either deliver it to the lane with the answer (still never the decision), or state
+        in the docs and in `lane-answer`'s output that it is never delivered. Today the relay hook passes labels only,
+        so a relayed note silently never reaches the lane (S3 record §"Wave 2 result", gap 3).
+      - **Tests:** a multiSelect answer with two valid labels round-trips; one invalid label among valid ones is
+        refused; the note's documented behaviour holds (delivered and visible to the lane, or reported as dropped).
 14. **What a lane is doing, and lane hygiene at scale** (added 2026-10-04, owner, from S1 v2 and the 5–10-lane goal).
     - **Live view:** `lane-status` adds each lane's last progress line and its last 3 actions (read from the lane's
       session log and run file); `lane-feed <lane> [--follow]` prints a readable narration of the lane's session
@@ -217,6 +261,11 @@ coordinator. Without the flag, or with `--parallel 1`, no lane code runs at all.
          failure).
       c. **Scope fence:** `gh pr diff --name-only` ⊆ the brief's declared files plus `changelog.d/`; anything else is
          listed.
+         **Evidence added 2026-10-07 (owner, relayed by S3 session 2216aefd):** in S3 wave 2, agnostic/04 (#403)
+         edited `RESULT_SCHEMAS.md` plus 5 other files outside its `## Touches` (incl. a new `CLAUDE.md`
+         Failure-Mode rule), so the planner's "wave 2 shares no file" was wrong and the wave branch hit a
+         `RESULT_SCHEMAS.md` conflict with #408. This fence is what would have shown it before integration (S3 record
+         §"Wave 2 result", One conflict).
       d. **Gates:** required checks green on the CURRENT head; every dismissed finding has an owner decision;
          children-settled result (with any override recorded).
       e. **Repro of the item's headline claim** where the Validation names one (e.g. a mutation that must fail).
@@ -263,6 +312,32 @@ coordinator. Without the flag, or with `--parallel 1`, no lane code runs at all.
     - **Tests:** sampler attribution by cwd on a fixture process tree; the sampler stops with the coordinator; the memory
       guard trips on a fixture series and blocks a new launch; with no `--keep-awake` the coordinator only prints the suggestion and
       starts no keep-awake process; with it, the holder is the coordinator's child and exits with it.
+    - **Amended 2026-10-07 (owner, relayed by S3 session 2216aefd: "I don't want all of it to shut down due to
+      hardware") — S3 wave 2 evidence.** Same rule as above throughout: stop starting, never kill.
+      1. **Close item 16's honest limit (9).** `ci-slot.sh`'s header states it: "suites started outside ci-local (a
+         bare run-self-tests.sh) never ask the gate at all". A worker running `run-self-tests.sh` or a single
+         `test-*.sh` directly bypasses the machine gate. Require that `run-self-tests.sh` (and any full-suite entry
+         point) takes machine admission through `ci-slot.sh` as `ci-local` does; a nested call under a live holder
+         folds, as today. Evidence: the gate covers only `ci-local`, and lanes ran single test files directly
+         throughout wave 2.
+      2. **Guard work in flight, not only starts.** The load and memory guards above act only before a launch or
+         resume. Wave 2 peaked at **load1 73 at 18:01Z mid-run** (two lanes' `ci-local` plus a lane worktree). While a
+         lane runs, its heavy steps (suite runs, worker fan-out) go through the same admission, and `lane-status`
+         names a lane that is held for load.
+      3. **Attribute load.** The sampler's line shows the share of load and of RSS that is NOT from lane cwds. Wave
+         2's **load-66 spike at 16:13Z** was mostly an unrelated `Tray/hub` jest run (11 workers); the owner must be
+         able to see whether the lanes or something else caused a hold.
+      4. **Notify on crossings.** Push-notify the owner when load1 crosses `busy` and `overloaded`, when the memory
+         guard trips, and when keep-awake is lost. In waves 1 and 2 these alerts existed only in the operator
+         session's ad-hoc monitor (now `~/Documents/work/AI/ai-agent-manager-lanes-v2/s3-monitor.sh`: `HIGH-LOAD` ≥ 60,
+         `VERY-HIGH-LOAD` ≥ 90, `NO-CAFFEINATE` / `CAFFEINATE back`).
+      - **Tests:** a bare `run-self-tests.sh` waits behind two live 6-job holders and folds under a live parent
+        holder; a fixture lane whose suite run is held shows `held for load` in `lane-status`; the sampler line splits
+        lane vs non-lane load/RSS on a fixture process tree; each crossing (busy, overloaded, memory, keep-awake lost)
+        notifies exactly once per crossing. **Mutation control:** removing the admission call from
+        `run-self-tests.sh` must fail its leg.
+      - **Until this item ships** (it is the wave after S3 wave 3), the manual protection stays: ≤ 3 lanes building,
+        the operator's HIGH-LOAD monitor, and `caffeinate -i` with no timer.
 17. **Launch authority, blocked-launch reporting, wave hand-over** (added 2026-10-06, owner, after S3 wave 2's first
     launch was refused). Evidence: S3 session 2216aefd's `s1h.sh launch s3-e` was denied by the Claude Code auto-mode
     classifier as "Create Unsafe Agents" (detached `claude -p --permission-mode acceptEdits` sessions), and so was its

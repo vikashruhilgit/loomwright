@@ -14,11 +14,12 @@ none
 
 ## Touches
 loomwright/scripts/automate-helpers.sh
+loomwright/scripts/fixtures/automate-helpers-help.golden
 loomwright/scripts/automate-trail.sh
 loomwright/scripts/test-automate-trail.sh
 loomwright/skills/automate-loop/SKILL.md
 loomwright/commands/automate.md
-loomwright/docs/RESULT_SCHEMAS.md
+loomwright/docs/result-schemas/automate-run.md
 loomwright/scripts/proc-registry.sh
 loomwright/scripts/test-proc-registry.sh
 loomwright/scripts/automate-merge-watch.sh
@@ -250,3 +251,10 @@ start without an explicit per-item owner choice. Remote resources (GitHub branch
 Owner, 2026-10-04, during S1 (session 0d556d54): "we need a way to track background tasks, I don't want any
 orphaned or stray task/session running" and "add a command which shows all with all the details and the user can
 take action based on your suggestions". Evidence from the same session's `ps` inventory, recorded above.
+
+## Touches re-pointed 2026-10-07 (S3 operator f849e0cc, after pa/11's split — #408, v15.124.0)
+- `RESULT_SCHEMAS.md` → `result-schemas/automate-run.md` (the sweep's and registry's run-file / `## Progress` lines).
+  If Part B's process registry gets its own documented format, add a new `result-schemas/<name>.md` plus the index.
+- `automate-helpers.sh` kept (Part A adds the `sweep` dispatcher arm, delegated to `automate-trail.sh`) +
+  `fixtures/automate-helpers-help.golden` (a new subcommand regenerates the `--help` golden,
+  `test-automate-helpers-dispatch.sh` check 5).

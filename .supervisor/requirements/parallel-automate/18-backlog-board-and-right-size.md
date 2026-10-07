@@ -15,6 +15,10 @@ demoted, their Status / Depends on / Touches folded into this file's own section
 
 ## Touches
 loomwright/scripts/automate-helpers.sh
+loomwright/scripts/fixtures/automate-helpers-help.golden
+loomwright/scripts/automate-helpers.d/plan-waves.sh
+loomwright/scripts/automate-helpers.d/intake.sh
+loomwright/scripts/test-automate-helpers-dispatch.sh
 loomwright/scripts/test-automate-helpers.sh
 loomwright/scripts/build-floor.sh
 loomwright/scripts/session-resume.sh
@@ -25,7 +29,7 @@ loomwright/scripts/test-meta-sync.sh
 loomwright/commands/backlog.md
 loomwright/commands/agent-help.md
 loomwright/skills/automate-loop/SKILL.md
-loomwright/docs/RESULT_SCHEMAS.md
+loomwright/docs/result-schemas/automate-run.md
 loomwright/scripts/automate-dismissed.sh
 loomwright/scripts/propose-common.sh
 loomwright/skills/user-story-writing/SKILL.md
@@ -233,3 +237,11 @@ already in flight.
 S2 lane logs (costs above); S3 record `operator-run/S3-stabilization-wave-spike.md`; the three hand merges of
 2026-10-05; owner request 2026-10-06: "I don't want to run automate for small requirements — not worth it … do we have
 any check while writing a requirement whether it's good to run the full process?" Answer: no.
+
+## Touches re-pointed 2026-10-07 (S3 operator f849e0cc, after pa/11's split — #408, v15.124.0)
+- `RESULT_SCHEMAS.md` → `result-schemas/automate-run.md` (item states read `## Current` / closeout stamps).
+- `automate-helpers.sh` kept (new dispatcher arms `item-state`, `right-size`, `merge-items`) + `fixtures/automate-helpers-help.golden`
+  and `test-automate-helpers-dispatch.sh` (new arms + regenerated golden) + `automate-helpers.d/plan-waves.sh`
+  (Part B 3: `--explain`'s `small` note) + `automate-helpers.d/intake.sh` (Part B 3: intake prints right-size). Where
+  the new functions live (an existing family file or a new one) is the brief's call; a new family file is added to
+  the loader's list and to this section.

@@ -11,7 +11,7 @@ loomwright/scripts/test-lane-policy.sh
 loomwright/docs/LANE_GATES.md
 loomwright/skills/automate-loop/SKILL.md
 loomwright/commands/automate.md
-loomwright/docs/RESULT_SCHEMAS.md
+loomwright/docs/result-schemas/automate-run.md
 changelog.d/parallel-automate-12-lane-policy-answers.md
 
 ## Problem
@@ -85,3 +85,13 @@ never cover a decision class the gate catalog marks human-only. Real decisions s
 S1 v2 run record (relays 1–8 and the v1/v2 comparison table).
 - **Wave w1 (2026-10-04) adds a routine gate:** Phase 1.5 pre-flight returned OVERLAP with **0 open PRs**, only because 4 of the last 20 commits on `main` (all merged, all in the lane's own base `95e8601`) touched files the brief edits. The owner picked "Proceed anyway". A pre-flight OVERLAP whose every hit is already contained in the branch's base and has no open PR is a candidate for `policy: allowed`, or better, for pre-flight itself to classify as CLEAR, since "overlap with your own base" is not competing work. A pre-flight OVERLAP against an OPEN PR stays human-only.
 - **Wave w1, more routine gates:** w1-10 asked about 3 dismissed-finding drafts whose findings were **already fixed on the PR** (named commits, regression tests added), each with "Drop (Recommended)". The owner dropped all three. A draft whose finding the lane can show fixed on the current head (commit plus test named) is a `policy: allowed` drop candidate. A draft whose fix cannot be shown stays human.
+- **S3 wave 2 (2026-10-07, owner, relayed by S3 session 2216aefd) — the same gate asked inconsistently:** the
+  stale-runs "Start new run?" question was asked by lane s3-f but NOT by s3-e or s3-g, all three in the same state
+  (one other incomplete run). Evidence only; operator note for the brief: a policy can pre-answer only a gate that
+  fires predictably, so whether this gate fires may need the same pinning as its phrasing (S3 record §"Wave 2
+  result", gap 5).
+
+## Touches re-pointed 2026-10-07 (S3 operator f849e0cc, after pa/11's split — #408, v15.124.0)
+- `RESULT_SCHEMAS.md` → `result-schemas/automate-run.md`: the Scope names no block of its own; its schema text is the
+  run file's `## Progress` policy-answer lines (Scope 5) and the `source: policy` answer record item 05 defines
+  under §AUTOMATE_RUN.
