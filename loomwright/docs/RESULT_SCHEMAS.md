@@ -137,6 +137,10 @@ See [result-schemas/verify-result.md](result-schemas/verify-result.md).
 
 See [result-schemas/verify-queue.md](result-schemas/verify-queue.md).
 
+## MIGRATE_BRANCH_MODE_STATE
+
+See [result-schemas/migrate-branch-mode-state.md](result-schemas/migrate-branch-mode-state.md).
+
 ## Validation Location
 
 See [result-schemas/validation-location.md](result-schemas/validation-location.md).
