@@ -31,8 +31,9 @@ file's location is gitignored, so the state never becomes tracked.
 | `backup_mode_pr`, `backup_untrack_pr` | the path the `.gitignore.backup.<ts>` was moved to | `mode-pr`, `untrack-pr` |
 | `verify_pr_sha` | `HEAD` (the fast-forwarded default) when `verify-pr` passed | `verify-pr` |
 
-**Gate.** Every step after `preflight` refuses (exit 1, nothing changed) while the recorded `preflight`
-result is not `PASS`; later steps also require the result of the step they follow.
+**Gate.** Every step except `plan`, `state` and `rollback` refuses (exit 1, nothing changed) while the
+recorded `preflight` result is not `PASS`; later steps also require the result of the step they follow.
+The script header's `preflight` entry is the one authoritative statement of these exemptions and why.
 
 **Side files** in the same folder (never tracked): `a.list` (the A set), `ab-names.diff`,
 `ab-blobs.diff`, `extra.list`, `ruleset.json`, `*.body` (PR bodies), and backups.

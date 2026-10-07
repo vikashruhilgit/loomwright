@@ -24,7 +24,13 @@
 #
 # CHECKS (stable names — the self-test greps them):
 #   scratch-remote        the scratch clone's ONLY remote is `origin` = the local bare repo
-#   scratch-mode-off      the scratch clone reads mode `off` (a migrated checkout cannot be rehearsed)
+#   scratch-mode-off      the scratch clone reads mode `off` (a fully migrated checkout cannot be
+#                         rehearsed). A HALF-MIGRATED checkout — mode line `on <b>` with <b> equal to
+#                         --branch AND managed paths still tracked — is rehearsed: the scratch clone's
+#                         mode block is reset with `setup-memory.sh apply --branch-mode off` in a
+#                         scratch-only commit (an `info:` line says so) before this check, so the drill
+#                         still runs init -> push -> verify -> migrate -> pull -> rollback. `on <b>` with
+#                         nothing tracked, or `on <other>` (<other> != --branch), stays a FAIL here.
 #   init                  `meta-sync.sh init --branch <b>` created origin/<b> (scratch bare repo)
 #   push                  `meta-sync.sh push --branch <b>` succeeded
 #   verify-present        every managed path (list-managed) is on the branch
@@ -135,6 +141,19 @@ EXC="$(ga rev-parse --git-path info/exclude)"; case "$EXC" in /*) ;; *) EXC="$A/
 SEXC="$(git -C "$ROOT" rev-parse --git-path info/exclude 2>/dev/null)"; case "$SEXC" in /*) ;; *) SEXC="$ROOT/$SEXC" ;; esac
 mkdir -p "$(dirname "$EXC")"
 { [ -f "$SEXC" ] && cat "$SEXC"; printf '/.supervisor/migrate-branch-mode/\n/.gitignore.backup.*\n'; } >> "$EXC"
+
+# a half-migrated checkout (mode line `on $B`, run history still tracked): reset the SCRATCH clone's
+# block to off in a scratch-only commit, so the drill exercises the full migration it still needs.
+# Only for the rehearsed branch and only while something is tracked — a fully migrated checkout
+# (nothing tracked) or a mode line naming another branch is left as is and fails scratch-mode-off.
+if [ "$(bash "$SM" --root "$A" mode 2>/dev/null | head -n 1)" = "on $B" ] \
+  && bash "$MS" list-managed --tracked --root "$A" > "$S/T0.list" 2>/dev/null && [ -s "$S/T0.list" ]; then
+  bash "$SM" --root "$A" apply --branch-mode off > "$S/reset.out" 2>&1
+  rm -f "$A"/.gitignore.backup.*
+  { ga add -- .gitignore && ga commit -q -m "rehearsal: reset the half-migrated mode block to off" && ga push -q origin "$DEF"; } >/dev/null 2>&1 \
+    || die "could not reset the half-migrated mode block in the scratch clone: $(grep -E '^ *apply:' "$S/reset.out" | head -n 1)"
+  echo "info: half-migrated checkout (mode on $B, $(wc -l < "$S/T0.list" | tr -d ' ') managed path(s) still tracked) — the scratch clone's mode block was reset to off (scratch-only commit)"
+fi
 
 # untracked run history, the twin store and (unless --no-config) the configuration
 bash "$MS" list-managed --root "$ROOT" > "$S/src.list" 2>"$S/err" || die "meta-sync.sh list-managed failed on the checkout: $(tail -n 1 "$S/err")"

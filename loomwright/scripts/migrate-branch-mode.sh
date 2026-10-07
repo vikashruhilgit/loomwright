@@ -15,15 +15,26 @@
 #                         history  managed paths tracked (whatever the mode line says)
 #                         already  mode `on <b>` and nothing tracked -> `already in branch mode on <b>`
 #                         refused  mode `unknown <reason>` -> exit 1 naming the reason
-#   preflight           print every precondition with its result; record PASS/FAIL. Every later step
-#                       refuses (exit 1, nothing changed) while the recorded result is not PASS.
+#                       It also prints the metadata branch init defaults to (see init).
+#   preflight           print every precondition with its result; record PASS/FAIL. THE GATE: every
+#                       step EXCEPT `plan`, `state` and `rollback` refuses (exit 1, nothing changed)
+#                       while the recorded preflight result is not PASS. `plan` and `state` are
+#                       read-only; `rollback` undoes an already-merged migration (possibly after a
+#                       later preflight FAILed) and carries its own guards instead: a recorded
+#                       branch, on <default>, clean, fast-forwarded, --commit a real commit. This
+#                       paragraph is the one authoritative statement of the gate's exemptions.
 #   scrub               dry-run meta-sync.sh's scrub over every would-be-pushed file (list-managed);
 #                       a hit stops the flow BEFORE init with file, line and rule.
 #   rehearse [--branch <b>] run the sibling meta-sync-rehearsal.sh (scratch clone + local bare remote)
 #                       with the RECORDED --branch (before init: <b>, else init's default); a <b>
-#                       disagreeing with the recorded name is refused. No harness -> exit 1.
-#   init [--branch <b>] vet <b> (default loomwright-meta) with `setup-memory.sh valid-branch` BEFORE
-#                       anything is written, then `meta-sync.sh init --branch <b>`; records <b>.
+#                       disagreeing with the recorded name is refused. No harness -> exit 1. A
+#                       half-migrated checkout (mode line `on <b>`, history still tracked) is
+#                       rehearsed too: the harness resets its SCRATCH clone's mode block to off.
+#   init [--branch <b>] vet <b> with `setup-memory.sh valid-branch` BEFORE anything is written, then
+#                       `meta-sync.sh init --branch <b>`; records <b>. Default <b>: the mode line's
+#                       branch when `setup-memory.sh mode` reads `on <x>` (a half-migrated repo),
+#                       else loomwright-meta. An explicit --branch disagreeing with `on <x>` is
+#                       refused (nothing written) — never silently overridden.
 #   protect [--verify]  print the exact ruleset JSON (target the branch; block deletion and
 #                       non-fast-forward; no bypass) and the `gh api` command the OWNER runs.
 #                       --verify reads `gh api repos/<o>/<r>/rulesets` (+ each ruleset) and records
@@ -170,6 +181,8 @@ ghr() { # ghr <gh args...> — gh in the checkout, scoped to the recorded repo w
   if [ -n "$r" ] && [ "$1" = "pr" ]; then local sub="$2"; shift 2; (cd "$ROOT" && "$GH" pr "$sub" --repo "$r" "$@"); else (cd "$ROOT" && "$GH" "$@"); fi
 }
 read_mode() { bash "$SM" --root "$ROOT" mode 2>/dev/null | head -n 1; }
+mode_branch() { local m; m="$(read_mode)"; case "$m" in "on "*) printf '%s' "${m#on }" ;; esac; return 0; } # <x> of `on <x>`, else empty
+init_default_branch() { local x; x="$(mode_branch)"; printf '%s' "${x:-loomwright-meta}"; } # what init records without --branch
 tracked_managed() { bash "$MS" list-managed --tracked --root "$ROOT"; }
 detect_case() { # prints fresh | history | already <b> | unknown <reason>; exit 1 when unreadable
   local mode tm
@@ -274,6 +287,9 @@ cmd_plan() {
   esac
   say "case: $c"
   say "default branch: $(default_branch)"
+  local mb; mb="$(mode_branch)"
+  if [ -n "$mb" ]; then say "metadata branch: $mb (init's default, from the mode line 'on $mb'; init refuses any other --branch)"
+  else say "metadata branch: $(init_default_branch) (init's default; init --branch <name> chooses another)"; fi
   say "steps: $(steps_for "$c")"
   [ -f "$SF" ] && say "state file present — run 'state' to see the resume point"
   return 0
@@ -338,7 +354,7 @@ cmd_rehearse() {
   if [ ! -f "$REH" ]; then state_set rehearse FAIL; die "rehearse: the harness is not available ($(basename "$REH") missing)"; fi
   local b rec; rec="$(state_get branch)"; b="${OPT_BRANCH:-$rec}"
   [ -z "$rec" ] || [ "$b" = "$rec" ] || die "refused: --branch '$b' disagrees with the recorded branch '$rec' — nothing was run"
-  b="${b:-loomwright-meta}" # before init nothing is recorded: rehearse the name init would default to
+  b="${b:-$(init_default_branch)}" # before init nothing is recorded: rehearse the name init would default to
   bash "$SM" valid-branch "$b" || die "refused: '$b' is not a valid metadata branch name — nothing was run"
   say "rehearsing on a scratch clone + local bare remote with --branch $b (the real remote is never touched)"
   if bash "$REH" --root "$ROOT" --branch "$b"; then state_set rehearse PASS; say "rehearse: PASS"
@@ -347,8 +363,12 @@ cmd_rehearse() {
 
 cmd_init() {
   need_preflight; need scrub PASS
-  local b="${OPT_BRANCH:-loomwright-meta}" rec
+  local b mb rec
+  mb="$(mode_branch)"; b="${OPT_BRANCH:-$(init_default_branch)}"
   bash "$SM" valid-branch "$b" || die "refused: '$b' is not a valid metadata branch name — nothing was written"
+  # a half-migrated repo already names its branch in the tracked mode line: a different name would
+  # seed one branch while the merged block points every checkout at another
+  [ -z "$mb" ] || [ "$b" = "$mb" ] || die "refused: --branch '$b' disagrees with the mode line 'on $mb' already in .gitignore — use --branch $mb (or omit it); nothing was written"
   rec="$(state_get branch)"
   if [ -n "$(g ls-remote --heads origin "$b" 2>/dev/null)" ]; then
     [ "$rec" = "$b" ] && [ "$(state_get init)" = PASS ] && { say "init: PASS (origin/$b already created by this flow)"; return 0; }

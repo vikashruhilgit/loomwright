@@ -50,6 +50,11 @@
 #      FAILs naming it when missing after pull; "a b.md" missing while a_b.md is present FAILs (no
 #      `?`-glob false PASS, run from inside the checkout); mutation control: the old
 #      `tr ' ' '?'` word-split loop MUST turn the leg red
+#  18. half-migrated init default (mode line `on team-meta`, history tracked): plan prints team-meta
+#      as init's default; an explicit mismatching --branch is refused with nothing written; init with
+#      no --branch records team-meta; the REAL rehearse passes on it (scratch reset to off) and never
+#      touches the real remote; a fresh repo still defaults to loomwright-meta; mutation control:
+#      init ignoring the mode line MUST turn the leg red
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -479,6 +484,35 @@ if build_mutant "$MUT" "$MSED" "| tr ' ' '?'); do"; then
   if spaced_leg; then no "mutation control REFUTED: the old tr ' ' '?' loop still passed the spaced leg"; else ok "mutation control: the old tr ' ' '?' loop turns the spaced leg red ($SPACED_DETAIL)"; fi
   SCRIPT="$SUT"
 else no "mutation control (after-merge spaced paths) did not build — counts as FAIL"; fi
+
+echo "== 18. half-migrated: init defaults to the mode line's branch; rehearse works =="
+# half_init — main already `on $BR`, history tracked; 0 = plan + init (+ refusal) behave; detail in HI_DETAIL
+half_init() {
+  mkworld history
+  rm -rf "$W/O"; git clone -q "$W/origin.git" "$W/O" 2>/dev/null
+  ( cd "$W/O" && bash "$HERE/setup-memory.sh" --root "$W/O" apply --branch-mode "$BR" >/dev/null && git add .gitignore && git commit -qm mode && git push -q origin main )
+  git -C "$W/A" pull -q --ff-only origin main
+  local p1 r1 r2 n1=no
+  mb A plan; p1="$RC"; has "metadata branch: $BR (init's default, from the mode line 'on $BR'" || p1="no-default:$p1"
+  mb A preflight --repo owner/repo; mb A scrub
+  mb A init --branch other-meta; r1="$RC"; has "disagrees with the mode line 'on $BR'" && n1=yes
+  { [ -z "$(st A branch)" ] && [ -z "$(st A init)" ] && ! remote_has other-meta; } || n1="wrote:$n1"
+  mb A init; r2="$RC"
+  HI_DETAIL="plan=$p1 mismatch=$r1 named=$n1 init=$r2 branch=$(st A branch)"
+  [ "$p1" = 0 ] && [ "$r1" -eq 1 ] && [ "$n1" = yes ] && [ "$r2" -eq 0 ] && [ "$(st A branch)" = "$BR" ] && remote_has "$BR" && ! remote_has loomwright-meta
+}
+half_init; check $? "half-migrated: plan names $BR, a mismatching --branch is refused (nothing written), init records $BR ($HI_DETAIL)"
+O0="$(git --git-dir="$W/origin.git" for-each-ref --format='%(refname) %(objectname)')"
+mb A rehearse
+{ [ "$RC" -eq 0 ] && has "rehearse: PASS" && has "info: half-migrated checkout" && ! has "FAIL:" && [ "$(st A rehearse)" = PASS ]; }; check $? "half-migrated: the real rehearse passes (scratch reset to off) with the recorded $BR (rc=$RC)"
+[ "$O0" = "$(git --git-dir="$W/origin.git" for-each-ref --format='%(refname) %(objectname)')" ]; check $? "half-migrated rehearse never touches the real remote"
+mkworld history; mb A plan; has "metadata branch: loomwright-meta (init's default"; check $? "no mode line: plan prints loomwright-meta as init's default"
+MUT="$TROOT/mut-init-default"
+if build_mutant "$MUT" 's/^  mb="\$(mode_branch)"; b="\${OPT_BRANCH:-\$(init_default_branch)}"$/  mb=""; b="${OPT_BRANCH:-loomwright-meta}"/' '  mb=""; b="${OPT_BRANCH:-loomwright-meta}"'; then
+  SCRIPT="$MUT/migrate-branch-mode.sh"
+  if half_init; then no "mutation control REFUTED: init ignoring the mode line still passed the leg"; else ok "mutation control: init ignoring the mode line turns the leg red ($HI_DETAIL)"; fi
+  SCRIPT="$SUT"
+else no "mutation control (init default) did not build — counts as FAIL"; fi
 
 echo
 echo "$pass passed, $fail failed"

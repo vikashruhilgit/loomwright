@@ -17,6 +17,10 @@
 #   5. mutation controls — each check goes red under its mutant (and the run exits 1):
 #      a dropped file (verify-present), a changed blob (verify-blobs), the old M1 rollback order
 #      (rollback-edit-kept), a contract without provenance (twin-contracts)
+#   6. half-migrated checkout (mode line `on <b>` committed, run history still tracked): the scratch
+#      clone is reset to off, every check passes, the real remote is untouched; a mode line naming
+#      ANOTHER branch -> FAIL scratch-mode-off; mutation control: without the reset the half-migrated
+#      run goes red at scratch-mode-off
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -111,7 +115,7 @@ run --branch 'bad..name'; [ "$RC" -eq 2 ]; check $? "invalid branch name -> exit
 git -C "$W/src" checkout -q --detach; run; [ "$RC" -eq 1 ] && has "detached"; check $? "detached HEAD -> exit 1"
 git -C "$W/src" checkout -q main
 ( cd "$W/src" && bash "$HERE/setup-memory.sh" --root "$W/src" apply --branch-mode "$BR" >/dev/null 2>&1 && rm -f .gitignore.backup.* && git commit -qam mode && git push -q origin main )
-run --branch "$BR"; { [ "$RC" -eq 1 ] && red scratch-mode-off && red init; }; check $? "already in branch mode -> FAIL scratch-mode-off, later checks not reached (rc=$RC)"
+run --branch "$BR"; { [ "$RC" -eq 1 ] && red scratch-mode-off && red init && ! has "info: half-migrated"; }; check $? "fully migrated (mode on, nothing tracked) -> FAIL scratch-mode-off, later checks not reached (rc=$RC)"
 
 # ---- mutation controls ---------------------------------------------------------------------------
 # build_mutant <dir> <file> <sed-script> <must-appear> — copies every sibling script, seds <file>
@@ -144,6 +148,31 @@ mkworld
 printf 'SYSTEM_CONTRACT: rogue\ninvariants: [no provenance]\n' > "$W/src/.supervisor/twin/contracts/rogue.md"
 run --branch "$BR"
 { [ "$RC" -eq 1 ] && red twin-contracts; }; check $? "mutation control: a contract without provenance turns 'twin-contracts' red (rc=$RC)"
+
+echo "== 6. half-migrated checkout: mode line on <b>, run history still tracked =="
+# half_world <b> — the history fixture with the branch-mode block for <b> committed and pushed while
+# the run history stays tracked (the state setup-memory.sh apply --branch-mode alone leaves behind)
+half_world() {
+  mkworld
+  ( cd "$W/src" && bash "$HERE/setup-memory.sh" --root "$W/src" apply --branch-mode "$1" >/dev/null 2>&1 && rm -f .gitignore.backup.* && git commit -qam mode && git push -q origin main )
+}
+half_world "$BR"; FP0="$(fp)"
+[ "$(bash "$HERE/setup-memory.sh" --root "$W/src" mode)" = "on $BR" ] && [ -n "$(bash "$HERE/meta-sync.sh" list-managed --tracked --root "$W/src")" ]
+check $? "fixture: mode line 'on $BR' with managed paths still tracked"
+run --branch "$BR"
+{ [ "$RC" -eq 0 ] && all_pass && has "info: half-migrated checkout"; }; check $? "half-migrated: scratch reset to off, every named check PASSes (rc=$RC)"
+[ "$RC" -eq 0 ] || printf '%s\n' "$OUT" | grep -E '^(FAIL|info)' | sed 's/^/    /'
+{ [ "$FP0" = "$(fp)" ] && ! git --git-dir="$W/origin.git" rev-parse -q --verify "refs/heads/$BR" >/dev/null && [ "$(bash "$HERE/setup-memory.sh" --root "$W/src" mode)" = "on $BR" ]; }
+check $? "half-migrated: fixture refs, remotes, origin and mode line unchanged; no metadata branch on the real remote"
+half_world other-meta
+run --branch "$BR"; { [ "$RC" -eq 1 ] && red scratch-mode-off && red init && ! has "info: half-migrated"; }; check $? "mode line naming another branch -> FAIL scratch-mode-off, no reset (rc=$RC)"
+cat > "$TROOT/no-reset.sed" <<'SED'
+s|^if \[ "\$(bash "\$SM" --root "\$A" mode 2>/dev/null \| head -n 1)" = "on \$B" \] \\$|if false \&\& [ "$(bash "$SM" --root "$A" mode 2>/dev/null \| head -n 1)" = "on $B" ] \\|
+SED
+if build_mutant "$TROOT/mut-no-reset" meta-sync-rehearsal.sh "$TROOT/no-reset.sed" 'if false && [ "$(bash "$SM" --root "$A" mode'; then
+  half_world "$BR"; SCRIPT="$TROOT/mut-no-reset/meta-sync-rehearsal.sh"; run --branch "$BR"; SCRIPT="$SUT"
+  if [ "$RC" -eq 1 ] && red scratch-mode-off; then ok "mutation control: without the reset a half-migrated checkout goes red at scratch-mode-off"; else no "mutation control REFUTED: no-reset left scratch-mode-off green (rc=$RC)"; fi
+else no "mutation control (no-reset) did not build — counts as FAIL"; fi
 
 echo
 echo "$pass passed, $fail failed"
