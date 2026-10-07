@@ -13,8 +13,9 @@
 # usage: build-capabilities.sh [--root <plugin-root>] [--out <file>] [--check]
 #   (default)   write <plugin-root>/capabilities.json
 #   --out FILE  write FILE instead (the self-test uses it to build a mutant without touching a tree)
-#   --check     regenerate to a temp file and compare byte-for-byte with <plugin-root>/capabilities.json;
-#               exit 1 with ONE line when they differ (the CI / ci-local staleness gate)
+#   --check     regenerate to a temp file and compare byte-for-byte with <plugin-root>/capabilities.json
+#               (or with FILE when --out FILE is also given — the flags compose); exit 1 with ONE line
+#               when they differ (the CI / ci-local staleness gate). --check NEVER writes any file.
 #   --root DIR  the plugin root to read (default: this script's parent dir) — lets the test run on a
 #               fixture copy of the plugin tree
 # exit: 0 ok · 1 stale (--check) or a fail-CLOSED source inconsistency · 2 usage
@@ -32,7 +33,7 @@ while [ $# -gt 0 ]; do
     --root) [ $# -ge 2 ] || { echo "build-capabilities: --root needs a directory" >&2; exit 2; }; ROOT="$2"; shift 2 ;;
     --out) [ $# -ge 2 ] || { echo "build-capabilities: --out needs a file" >&2; exit 2; }; OUT="$2"; shift 2 ;;
     --check) CHECK=1; shift ;;
-    -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
     *) echo "build-capabilities: unknown argument '$1' (usage: [--root DIR] [--out FILE] [--check])" >&2; exit 2 ;;
   esac
 done
@@ -460,10 +461,16 @@ jq -n -S \
    host_switch: null}' > "$tmpd/capabilities.json" || { echo "build-capabilities: assembly failed" >&2; exit 1; }
 
 if [ "$CHECK" -eq 1 ]; then
-  if [ -f "$ROOT/capabilities.json" ] && cmp -s "$tmpd/capabilities.json" "$ROOT/capabilities.json"; then
+  # Compare-only: the target is --out FILE when given, else <plugin-root>/capabilities.json.
+  target="${OUT:-$ROOT/capabilities.json}"
+  if [ -f "$target" ] && cmp -s "$tmpd/capabilities.json" "$target"; then
     exit 0
   fi
-  echo "capabilities.json is stale — run: bash loomwright/scripts/build-capabilities.sh and commit" >&2
+  if [ -n "$OUT" ]; then
+    echo "$OUT is stale — run: bash loomwright/scripts/build-capabilities.sh --out $OUT" >&2
+  else
+    echo "capabilities.json is stale — run: bash loomwright/scripts/build-capabilities.sh and commit" >&2
+  fi
   exit 1
 fi
 dest="${OUT:-$ROOT/capabilities.json}"

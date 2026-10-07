@@ -25,6 +25,8 @@
 #   (X)   fail-CLOSED: the index naming a different current schema_version than the split file => exit 1
 #   (M)   mutation control: delete an agent in a fixture copy => mutant VALID (non-empty, differs) and
 #         --check exits 1 with exactly ONE line telling the developer what to run
+#   (O)   --check composes with --out FILE: compares against FILE (match => 0; differ => 1, ONE line),
+#         and writes nothing
 #   (Z)   usage: an unknown argument => exit 2
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -323,6 +325,21 @@ if [ -s "$tmp/mutant.json" ] && ! cmp -s "$tmp/mutant.json" "$COMMITTED" \
     ok "(M) deleting an agent makes --check exit non-zero with ONE line naming the fix"
   else no "(M) rc=$rc lines=$lines err=$(cat "$tmp/m.err")"; fi
 else no "(M) mutant invalid — the staleness assertion would not be trustworthy"; fi
+
+# (O) — --check --out FILE compares against FILE and never writes it.
+cp "$tmp/a.json" "$tmp/o-match.json"
+if bash "$SUT" --out "$tmp/o-match.json" --check 2>"$tmp/o.err"; then ok "(O) --check --out FILE: a matching FILE exits 0"
+else no "(O) matching --out FILE failed --check: $(cat "$tmp/o.err")"; fi
+printf '{}\n' > "$tmp/o-differ.json"
+bash "$SUT" --check --out "$tmp/o-differ.json" 2>"$tmp/o.err" >/dev/null; rc=$?
+lines="$(wc -l < "$tmp/o.err" | tr -d ' ')"
+if [ "$rc" -eq 1 ] && [ "$lines" = 1 ] && grep -qF "$tmp/o-differ.json is stale" "$tmp/o.err" \
+   && [ "$(cat "$tmp/o-differ.json")" = "{}" ]; then
+  ok "(O) --check --out FILE: a differing FILE exits 1 with ONE line and is left untouched"
+else no "(O) differing --out FILE: rc=$rc lines=$lines err=$(cat "$tmp/o.err")"; fi
+bash "$SUT" --check --out "$tmp/o-absent.json" 2>/dev/null; rc=$?
+if [ "$rc" -eq 1 ] && [ ! -e "$tmp/o-absent.json" ]; then ok "(O) --check --out of an absent FILE exits 1 and creates nothing"
+else no "(O) absent --out FILE: rc=$rc or the file was created"; fi
 
 # (Z)
 bash "$SUT" --bogus >/dev/null 2>&1; rc=$?
