@@ -17,6 +17,10 @@
 # a stale marker; the hooks.json leaf exists with NO `|| true`; MUTATION CONTROL: removing the marker
 # check flips "push before check" to allowed.
 #
+# HARNESS RULE: never pipe a producer into the guard — the inert paths exit 0 without reading stdin,
+# so a piped `jq` can hit EPIPE and pipefail turns that race into a spurious rc 2/141; build the
+# payload into a variable and feed it with a here-string (`<<<"$p"`).
+#
 # EXPLICIT LIMIT: this pins the script and its wiring; it cannot prove the installed runtime loads the
 # leaf (hooks load from the installed plugin version).
 
@@ -56,8 +60,9 @@ hang_child() { printf '{"event":"agent_identity","agent_id":"c2"}\n' >> "$1/.sup
 payload() { jq -n -c --arg c "$1" --arg s "${2:-cc-uuid-1}" '{session_id:$s, hook_event_name:"PreToolUse", tool_name:"Bash", tool_input:{command:$c}}'; }
 # run_guard <repo> <command> [payload_sid] [script] -> sets RC / OUT
 run_guard() {
-  local s="${4:-$GUARD}"
-  OUT="$(payload "$2" "${3:-cc-uuid-1}" | CLAUDE_PROJECT_DIR="$1" "$REALBASH" "$s" 2>/dev/null)"; RC=$?
+  local s="${4:-$GUARD}" p
+  p="$(payload "$2" "${3:-cc-uuid-1}")"
+  OUT="$(CLAUDE_PROJECT_DIR="$1" "$REALBASH" "$s" 2>/dev/null <<<"$p")"; RC=$?
 }
 write_marker() { WOUT="$(cd "$1" && CLAUDE_PROJECT_DIR="$1" "$REALBASH" "$GUARD" write-marker ${2:-} 2>/dev/null)"; WRC=$?; }
 expect() { # expect <label> <want rc> [reason substring]
@@ -68,7 +73,8 @@ expect() { # expect <label> <want rc> [reason substring]
 echo "== non-Supervisor / inert paths =="
 R0="$(mktemp -d "$TMP/plain.XXXXXX")"
 run_guard "$R0" "git push origin main"; expect "no state.md -> push allowed" 0
-OUT="$(payload "git push" | CLAUDE_PROJECT_DIR="$R0" PATH="/nonexistent" "$REALBASH" "$GUARD" 2>/dev/null)"; RC=$?
+P0="$(payload "git push")"
+OUT="$(CLAUDE_PROJECT_DIR="$R0" PATH="/nonexistent" "$REALBASH" "$GUARD" 2>/dev/null <<<"$P0")"; RC=$?
 expect "inert path needs no jq (empty PATH) -> allowed" 0
 RT="$(new_repo done)"
 run_guard "$RT" "git push"; expect "terminal session status -> allowed" 0

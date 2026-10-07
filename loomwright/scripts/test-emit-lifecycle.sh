@@ -60,10 +60,10 @@
 #       still written, and no shell redirect diagnostic reaches stderr
 #   30. ended: SubagentStop seam, NON-PLUGIN agent_type (real committed
 #       fixture subagentstop-1.json) -> one row, seam subagent_stop, reason stop
-#   32. ended: PostToolUse[Task] blocking turn-limit return (pinned probe
+#   31. ended: PostToolUse[Task] blocking turn-limit return (pinned probe
 #       fixture) -> one row, seam task_return, reason = tool_response.status
-#   33. ended: PostToolUse[Task] background LAUNCH (async_launched) -> NO row
-#   34. ended: no agent_id resolvable -> NO row (never an unjoinable terminal row)
+#   32. ended: PostToolUse[Task] background LAUNCH (async_launched) -> NO row
+#   33. ended: no agent_id resolvable -> NO row (never an unjoinable terminal row)
 #
 # EXIT: 0 on full pass, 1 on any failed assertion.
 
@@ -625,7 +625,7 @@ assert_eq "case30 exactly one ended row" "1" "$(printf '%s\n' "$ROWS30" | grep -
 assert_eq "case30 agent_id/type from payload, seam+reason" "a8c9742552b5ba8ec|probe-alpha|subagent_stop|stop" \
   "$(printf '%s' "$ROWS30" | jq -r '[.agent_id,.agent_type,.seam,.reason]|join("|")')"
 
-echo "== 32. ended: PostToolUse[Task] blocking turn-limit return -> task_return row =="
+echo "== 31. ended: PostToolUse[Task] blocking turn-limit return -> task_return row =="
 REPO32="$(init_repo "" 1)"
 P32="$PAYLOAD_DIR/p32.json"
 jq '.posttooluse_task_turn_limit_return' "$MAXTURNS_PROBE" > "$P32"
@@ -634,7 +634,7 @@ assert_eq "case32 exit 0" "0" "$(get_rc "$OUT32")"
 assert_eq "case32 row from nested tool_response" "a3a900c6391132581|loomwright:loomwright:plan-reviewer|task_return|completed" \
   "$(ended_rows "$REPO32/.supervisor/logs/fixture-maxturns-probe-session-0001.jsonl" | jq -r '[.agent_id,.agent_type,.seam,.reason]|join("|")')"
 
-echo "== 33. ended: PostToolUse[Task] background launch (async_launched) -> no row =="
+echo "== 32. ended: PostToolUse[Task] background launch (async_launched) -> no row =="
 REPO33="$(init_repo "" 1)"
 P33="$PAYLOAD_DIR/p33.json"
 jq '.posttooluse_task_background_launch' "$MAXTURNS_PROBE" > "$P33"
@@ -642,7 +642,7 @@ run_lifecycle "$REPO33" "$P33" ended >/dev/null
 assert_eq "case33 no ended row for a still-running background child" "" \
   "$(ended_rows "$REPO33/.supervisor/logs/fixture-maxturns-probe-session-0001.jsonl")"
 
-echo "== 34. ended: no agent_id -> no row =="
+echo "== 33. ended: no agent_id -> no row =="
 REPO34="$(init_repo "" 1)"
 P34="$PAYLOAD_DIR/p34.json"
 jq -n '{session_id:"sid-case34", hook_event_name:"SubagentStop"}' > "$P34"

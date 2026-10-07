@@ -11,8 +11,9 @@
 # stale artifact, or a still-running worker that happens to write its files early would otherwise be
 # marked complete regardless. This script is the SECOND, independent condition.
 #
-# WHY A SCRIPT, NOT RESTATED jq (the verify-provides.sh precedent): the 3-way OR across event shapes
-# (`subtask_complete.agent_id` | `token_ledger.agent_id` | `agent_lifecycle{state:failed}.agent_id`)
+# WHY A SCRIPT, NOT RESTATED jq (the verify-provides.sh precedent): the 4-way OR across event shapes
+# (`subtask_complete.agent_id` | `token_ledger.agent_id` | `agent_lifecycle{state:failed}.agent_id`
+# | `agent_lifecycle{state:ended}.agent_id`)
 # is consumed at FOUR call sites — agents/execute-manager.md's v12 outputs_verified gate (per-subtask),
 # agents/supervisor.md's Single-Agent Path step 3 AND Sequential Path step (per-subtask, same join),
 # and agents/supervisor.md's Phase 4 FINALIZE pre-merge safety gate (per-session aggregate, `--all`).
