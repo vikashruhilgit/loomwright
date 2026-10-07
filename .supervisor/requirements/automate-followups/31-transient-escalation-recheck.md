@@ -128,3 +128,9 @@ documented in `automate-loop/SKILL.md` §6/§9 and `commands/automate.md` ("an `
 
 ### Its validation note (from pa/06 Validation step 2, verbatim)
 - Deliberate change, stated in the PR: a sequential `escalated` park now arms a merge watcher (Scope 7, 2026-10-05 amendment).
+
+## Owner decisions 2026-10-07 (relayed from lane s3-i, S3 wave 3)
+- **Scope 3: option (a), keep human-only.** The engine never reruns CI; the park and the watcher name the cause and
+  print the exact `gh run rerun <id> --failed` for the owner. `harness-port/07`'s rule stands.
+- **Scope 4: run file only.** The cause and re-check verdict go into the run file's `## Current` / `## Progress`
+  (read by `/automate` status); `lane-status` (not built yet — `parallel-automate/05`) picks them up when it exists.
