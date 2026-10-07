@@ -3180,10 +3180,19 @@ RZZZ="$(new_repo)"; mkdir -p "$RZZZ/.supervisor/logs" "$RZZZ/agents"
   # all, so NO lifecycle key (unknown), never `done`, never a defaulted `quiet`.
   printf '{"event":"agent_identity","cc_session_id":"zzz","agent_id":"ao","agent_type":"loomwright:loomwright:worker","recorded_at":"2026-09-17T09:00:00Z"}\n'
   printf '{"ts":"2026-09-17T09:23:00Z","event":"subtask_complete","cc_session_id":"zzz","agent_id":"ao","result_block_present":true,"rejected":true}\n'
+  # ended (automate-followups/33): a general-purpose spawn whose heartbeat is followed by the
+  # catch-all `agent_lifecycle: ended` row - a finished spawn must stop reading `working`.
+  printf '{"event":"agent_identity","cc_session_id":"zzz","agent_id":"ae","agent_type":"general-purpose","recorded_at":"2026-09-17T09:00:00Z"}\n'
+  printf '{"event":"agent_lifecycle","state":"working","ts":"2026-09-17T09:21:00Z","cc_session_id":"zzz","agent_id":"ae"}\n'
+  printf '{"event":"agent_lifecycle","state":"ended","seam":"subagent_stop","reason":"stop","ts":"2026-09-17T09:22:00Z","cc_session_id":"zzz","agent_id":"ae","agent_type":"general-purpose"}\n'
 } > "$RZZZ/.supervisor/logs/zzz.jsonl"
 ( cd "$RZZZ" && FLOOR_AGENTS_DIR="$RZZZ/agents" FLOOR_SOURCE_DATE_EPOCH="$NOW_EP" bash "$BUILD" >/dev/null 2>&1 )
 JZZZ="$RZZZ/.supervisor/floor/floor.json"
 zzzq() { jq -r "$1" "$JZZZ" 2>/dev/null; }
+
+[ "$(zzzq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="ae") | .lifecycle.state')" = "quiet" ] \
+  && ok "(zzz) ae: an agent_lifecycle ended row after a heartbeat reads quiet, never working (automate-followups/33)" \
+  || no "(zzz) ae lifecycle" "$(zzzq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="ae") | .lifecycle')"
 
 [ "$(zzzq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="aw") | .lifecycle.state')" = "waiting" ] \
   && [ "$(zzzq '.surfaces.sessions.detail.current.agents[] | select(.agent_id=="aw") | .lifecycle.reason')" = "ask_user" ] \

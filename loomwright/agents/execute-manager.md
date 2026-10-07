@@ -486,7 +486,9 @@ for iteration in 1..max_iterations:
       # exists) → BOTH conditions now hold; proceed exactly as pre-this-change.
       if settle.ended_without_result == true:
         # This worker's terminal row was a `subtask_complete` with
-        # `result_block_present: false` or an `agent_lifecycle: failed` row —
+        # `result_block_present: false`, an `agent_lifecycle: failed` row, or
+        # (automate-followups/33) only an `agent_lifecycle: ended` row for a
+        # worker — e.g. a turn-limit stop on a blocking return —
         # log it with the agent_id VISIBLE so an operator can SendMessage it to
         # resume (memory `subagents-hit-turn-limit-resume-via-sendmessage`)
         # instead of re-running the subtask cold. Record-only: this item only

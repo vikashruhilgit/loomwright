@@ -58,6 +58,12 @@
 #       row (a ledger shared between the two scripts would drop the row)
 #   29. a directory / read-only .lifecycle-asked-ids -> exit 0, the row is
 #       still written, and no shell redirect diagnostic reaches stderr
+#   30. ended: SubagentStop seam, NON-PLUGIN agent_type (real committed
+#       fixture subagentstop-1.json) -> one row, seam subagent_stop, reason stop
+#   31. ended: PostToolUse[Task] blocking turn-limit return (pinned probe
+#       fixture) -> one row, seam task_return, reason = tool_response.status
+#   32. ended: PostToolUse[Task] background LAUNCH (async_launched) -> NO row
+#   33. ended: no agent_id resolvable -> NO row (never an unjoinable terminal row)
 #
 # EXIT: 0 on full pass, 1 on any failed assertion.
 
@@ -604,6 +610,44 @@ else
   no_redirect_diag "case29 read-only ledger -> no redirect diagnostic on stderr" "$OUT29R"
   assert_eq "case29 read-only ledger -> the row is still written" "1" "$(ask_rows "$REPO29R/.supervisor/logs/sid-case29r.jsonl")"
 fi
+
+MAXTURNS_PROBE="$SCRIPT_DIR/fixtures/subagentstop-maxturns-probe.json"
+FIXTURE_STOP="$SCRIPT_DIR/progress-event-fixtures/spawn-probe-2026-09-02/subagentstop-1.json"
+ended_rows() { jq -c 'select(.event=="agent_lifecycle" and .state=="ended")' "$1" 2>/dev/null; }
+
+echo "== 30. ended: SubagentStop seam, non-plugin agent_type -> one ended row =="
+REPO30="$(init_repo "" 1)"
+SID30="$(jq -r .session_id "$FIXTURE_STOP")"
+OUT30="$(run_lifecycle "$REPO30" "$FIXTURE_STOP" ended)"
+assert_eq "case30 exit 0" "0" "$(get_rc "$OUT30")"
+ROWS30="$(ended_rows "$REPO30/.supervisor/logs/$SID30.jsonl")"
+assert_eq "case30 exactly one ended row" "1" "$(printf '%s\n' "$ROWS30" | grep -c '"ended"')"
+assert_eq "case30 agent_id/type from payload, seam+reason" "a8c9742552b5ba8ec|probe-alpha|subagent_stop|stop" \
+  "$(printf '%s' "$ROWS30" | jq -r '[.agent_id,.agent_type,.seam,.reason]|join("|")')"
+
+echo "== 31. ended: PostToolUse[Task] blocking turn-limit return -> task_return row =="
+REPO32="$(init_repo "" 1)"
+P32="$PAYLOAD_DIR/p32.json"
+jq '.posttooluse_task_turn_limit_return' "$MAXTURNS_PROBE" > "$P32"
+OUT32="$(run_lifecycle "$REPO32" "$P32" ended)"
+assert_eq "case32 exit 0" "0" "$(get_rc "$OUT32")"
+assert_eq "case32 row from nested tool_response" "a3a900c6391132581|loomwright:loomwright:plan-reviewer|task_return|completed" \
+  "$(ended_rows "$REPO32/.supervisor/logs/fixture-maxturns-probe-session-0001.jsonl" | jq -r '[.agent_id,.agent_type,.seam,.reason]|join("|")')"
+
+echo "== 32. ended: PostToolUse[Task] background launch (async_launched) -> no row =="
+REPO33="$(init_repo "" 1)"
+P33="$PAYLOAD_DIR/p33.json"
+jq '.posttooluse_task_background_launch' "$MAXTURNS_PROBE" > "$P33"
+run_lifecycle "$REPO33" "$P33" ended >/dev/null
+assert_eq "case33 no ended row for a still-running background child" "" \
+  "$(ended_rows "$REPO33/.supervisor/logs/fixture-maxturns-probe-session-0001.jsonl")"
+
+echo "== 33. ended: no agent_id -> no row =="
+REPO34="$(init_repo "" 1)"
+P34="$PAYLOAD_DIR/p34.json"
+jq -n '{session_id:"sid-case34", hook_event_name:"SubagentStop"}' > "$P34"
+run_lifecycle "$REPO34" "$P34" ended >/dev/null
+assert_eq "case34 no row without an agent_id" "" "$(ended_rows "$REPO34/.supervisor/logs/sid-case34.jsonl")"
 
 echo "== real repo .supervisor/logs untouched =="
 assert_eq "real logs snapshot unchanged" "$REAL_BEFORE" "$(snapshot_real)"

@@ -86,8 +86,8 @@
 # every candidate name is taken the write is REFUSED outright rather than clobbering one), and (b)
 # `.supervisor/config.json` `.setup_memory.repo_allowlist` (backup-first jq merge that preserves
 # every unrelated key). It writes NOTHING under `~/.claude/`, and it NEVER runs `git add`,
-# `git rm`, `git commit` or any other history-touching command. `check`, `allowlist` and
-# `filter-ledger` write nothing at all.
+# `git rm`, `git commit` or any other history-touching command. `check`, `allowlist`,
+# `filter-ledger` and `valid-branch` write nothing at all.
 #
 # TRACKED-WRITE RISK (stated here, deliberately NOT fixed here): once `.claude/agent-memory/` is
 # tracked, every memory write becomes a working-tree modification — it shows in `git status`, can
@@ -104,6 +104,7 @@
 #   setup-memory.sh apply --branch-mode <branch>   # BRANCH MODE: run history lives on <branch> (meta-sync.sh)
 #   setup-memory.sh apply --branch-mode off        # back to the default block (`off` is RESERVED — never a branch name)
 #   setup-memory.sh mode                           # print ONE line: off | on <branch> | unknown <reason>
+#   setup-memory.sh valid-branch <name>            # exit 0 iff <name> is a valid metadata branch (no writes)
 #   setup-memory.sh allowlist                      # print the resolved allowlist, one entry per line
 #   setup-memory.sh filter-ledger --ledger F       # print ledger records whose .repo is in the allowlist
 #   setup-memory.sh filter-ledger --ledger F --allow owner/repo --allow owner/old-name
@@ -131,7 +132,15 @@
 # `.gitignore`; it NEVER runs `git add` / `git rm` / `git commit`, so it never untracks the run
 # history already committed (that is a separate, deliberate operator step).
 #
-# Exit: 0 in every normal path.
+# VALID-BRANCH: `valid-branch <name>` asks that SAME valid_branch_name predicate — the one
+# `apply --branch-mode` uses, never a copy — so a caller can vet a name BEFORE anything is written
+# (`apply` itself exits 0 on a refusal, so its exit code cannot answer the question). The argument
+# right after `valid-branch` is always the name, even when it starts with `-` (so `-x` is judged,
+# and refused, rather than parsed as a flag). It runs before the repo root is resolved, reads no
+# file and writes nothing; on acceptance it prints nothing.
+#
+# Exit: 0 in every normal path — EXCEPT `valid-branch`, a predicate whose exit code IS its answer:
+# 0 accepted, 1 refused (one reason line on stderr; also for a missing name or an extra flag).
 
 set -uo pipefail
 
@@ -170,6 +179,7 @@ LEDGER=""
 ALLOW_FLAGS=""     # newline-separated (bash-3.2-safe: no arrays needed downstream)
 BRANCH_MODE_SET=0  # 1 when --branch-mode was given (its value is REQUIRED: <branch> | off)
 BRANCH_MODE_VAL=""
+VB_NAME=""         # valid-branch: the name to judge (the argument right after the subcommand)
 
 # reject_option_value <flag> <noun> <value> — an EMPTY or option-shaped (`-…`) value is the NEXT
 # flag (or nothing), never the value: `--root --branch-mode apply` must not resolve a root named
@@ -192,6 +202,14 @@ while [ $# -gt 0 ]; do
   case "$1" in
     check|apply|remove|allowlist|filter-ledger|mode)
       [ -z "$SUBCMD" ] && SUBCMD="$1"; shift ;;
+    valid-branch)
+      # The NEXT argument is the name, verbatim — even an option-shaped one, which the predicate
+      # then refuses (`valid-branch -x` judges `-x`; it never parses it as a flag).
+      if [ -z "$SUBCMD" ]; then
+        SUBCMD="$1"
+        [ $# -ge 2 ] && { VB_NAME="$2"; shift; }
+      fi
+      shift ;;
     --root)
       # Require a following value. Shift the flag first, then the value ONLY if present — a bare
       # trailing `--root` must NOT `shift 2` (that underflows when $#<2 and would re-process the
@@ -238,6 +256,19 @@ while [ $# -gt 0 ]; do
 done
 
 [ -z "$SUBCMD" ] && usage
+
+# ---- valid-branch: the predicate alone (before root resolution — it reads and writes nothing) ----
+# Exit 0 iff valid_branch_name accepts the name; 1 otherwise, with ONE reason line on stderr. A flag
+# that could only be silently ignored here (--branch-mode, --ledger, --allow) is refused too.
+if [ "$SUBCMD" = "valid-branch" ]; then
+  if [ "$BRANCH_MODE_SET" = 1 ] || [ -n "$LEDGER" ] || [ -n "$ALLOW_FLAGS" ]; then
+    echo "setup-memory: valid-branch takes only a name (got --branch-mode / --ledger / --allow); nothing was judged" >&2
+    exit 1
+  fi
+  if valid_branch_name "$VB_NAME"; then exit 0; fi
+  echo "setup-memory: valid-branch: '$VB_NAME' is not a valid metadata branch name (must pass git check-ref-format --branch unchanged AND refs/heads/<name>, and not be empty, option-shaped, HEAD/@ or the reserved word off)" >&2
+  exit 1
+fi
 
 # ---- repo root resolution ---------------------------------------------------
 # When --root is given, use it verbatim and do NOT require it to be a git repo (testability).
@@ -1290,7 +1321,7 @@ DISCLOSURE
   cat <<'DISCLOSURE'
 repo-allowlist ledger gate does not apply: the ledger is never un-ignored here).
 Run history ALREADY committed on this branch stays tracked — switching only rewrites .gitignore.
-Untracking it is a separate, deliberate operator step (the migration runbook, M1), never this
+Untracking it is a separate, deliberate operator step (migrate-branch-mode.sh plan), never this
 helper: it never runs git add / git rm / git commit.
 
 Read this before saying yes:
@@ -1755,7 +1786,7 @@ do_apply() {
     echo "  git status --short .claude/agent-memory .supervisor/memory"
     echo "and commit deliberately. Run history lives on the metadata branch '$EFFECTIVE_BRANCH' (meta-sync.sh),"
     echo "not on this branch — there is nothing to commit for it here. Untracking run history ALREADY"
-    echo "committed on this branch is a separate operator step (the migration runbook, M1), never this"
+    echo "committed on this branch is a separate operator step (migrate-branch-mode.sh plan), never this"
     echo "helper. This helper never runs git add / git rm / git commit."
     exit 0
   fi

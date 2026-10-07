@@ -1,0 +1,1282 @@
+{
+  "agents": [
+    {
+      "model": "inherit",
+      "name": "loomwright:code-reviewer",
+      "result_block": "CODE_REVIEW_RESULT",
+      "result_blocks": [
+        "CODE_REVIEW_RESULT"
+      ],
+      "runtime_agent_type": "loomwright:loomwright:code-reviewer",
+      "tools": [
+        "Bash",
+        "Glob",
+        "Grep",
+        "LSP",
+        "Read"
+      ]
+    },
+    {
+      "model": "haiku",
+      "name": "loomwright:context-keeper",
+      "result_block": null,
+      "result_blocks": [],
+      "runtime_agent_type": "loomwright:loomwright:context-keeper",
+      "tools": [
+        "Edit",
+        "Read",
+        "Write"
+      ]
+    },
+    {
+      "model": "inherit",
+      "name": "loomwright:execute-manager",
+      "result_block": "EXECUTE_RESULT",
+      "result_blocks": [
+        "EXECUTE_CHECKPOINT",
+        "EXECUTE_RESULT"
+      ],
+      "runtime_agent_type": "loomwright:loomwright:execute-manager",
+      "tools": [
+        "Bash",
+        "Glob",
+        "Grep",
+        "Read",
+        "Task",
+        "TaskOutput"
+      ]
+    },
+    {
+      "model": "inherit",
+      "name": "loomwright:launch-pad-runner",
+      "result_block": "LAUNCH_PAD_RESULT",
+      "result_blocks": [
+        "LAUNCH_PAD_RESULT"
+      ],
+      "runtime_agent_type": "loomwright:loomwright:launch-pad-runner",
+      "tools": [
+        "Bash",
+        "Edit",
+        "Glob",
+        "Grep",
+        "LSP",
+        "Read",
+        "Task",
+        "Write"
+      ]
+    },
+    {
+      "model": "inherit",
+      "name": "loomwright:orchestrator",
+      "result_block": null,
+      "result_blocks": [],
+      "runtime_agent_type": "loomwright:loomwright:orchestrator",
+      "tools": [
+        "Bash",
+        "Glob",
+        "Grep",
+        "Read"
+      ]
+    },
+    {
+      "model": "inherit",
+      "name": "loomwright:plan-reviewer",
+      "result_block": "PLAN_REVIEW_RESULT",
+      "result_blocks": [
+        "PLAN_REVIEW_RESULT"
+      ],
+      "runtime_agent_type": "loomwright:loomwright:plan-reviewer",
+      "tools": [
+        "Glob",
+        "Grep",
+        "Read"
+      ]
+    },
+    {
+      "model": "inherit",
+      "name": "loomwright:product-owner",
+      "result_block": null,
+      "result_blocks": [],
+      "runtime_agent_type": "loomwright:loomwright:product-owner",
+      "tools": [
+        "Bash",
+        "Edit",
+        "Glob",
+        "Grep",
+        "Read",
+        "WebFetch",
+        "WebSearch",
+        "Write"
+      ]
+    },
+    {
+      "model": "inherit",
+      "name": "loomwright:qa-executor",
+      "result_block": "QA_RESULT",
+      "result_blocks": [
+        "MISSING_FUNCTIONALITY_REPORT",
+        "QA_RESULT",
+        "VERIFY_RESULT"
+      ],
+      "runtime_agent_type": "loomwright:loomwright:qa-executor",
+      "tools": [
+        "Bash",
+        "Edit",
+        "Glob",
+        "Grep",
+        "LSP",
+        "Read",
+        "Task",
+        "Write"
+      ]
+    },
+    {
+      "model": "inherit",
+      "name": "loomwright:qa-strategist",
+      "result_block": "GATE_VERDICT",
+      "result_blocks": [
+        "GATE_VERDICT"
+      ],
+      "runtime_agent_type": "loomwright:loomwright:qa-strategist",
+      "tools": [
+        "Bash",
+        "Edit",
+        "Glob",
+        "Grep",
+        "Read",
+        "Write"
+      ]
+    },
+    {
+      "model": "inherit",
+      "name": "loomwright:red-team-reviewer",
+      "result_block": "RED_TEAM_RESULT",
+      "result_blocks": [
+        "RED_TEAM_RESULT"
+      ],
+      "runtime_agent_type": "loomwright:loomwright:red-team-reviewer",
+      "tools": [
+        "Bash",
+        "Edit",
+        "Glob",
+        "Grep",
+        "Read",
+        "WebFetch",
+        "WebSearch",
+        "Write"
+      ]
+    },
+    {
+      "model": "inherit",
+      "name": "loomwright:review-pr-runner",
+      "result_block": "REVIEW_HEAL_RESULT",
+      "result_blocks": [
+        "REVIEW_HEAL_RESULT"
+      ],
+      "runtime_agent_type": "loomwright:loomwright:review-pr-runner",
+      "tools": [
+        "Bash",
+        "Glob",
+        "Grep",
+        "Read",
+        "Task"
+      ]
+    },
+    {
+      "model": "haiku",
+      "name": "loomwright:rubric-grader",
+      "result_block": null,
+      "result_blocks": [],
+      "runtime_agent_type": "loomwright:loomwright:rubric-grader",
+      "tools": [
+        "Bash",
+        "Glob",
+        "Grep",
+        "Read"
+      ]
+    },
+    {
+      "model": "inherit",
+      "name": "loomwright:supervisor-runner",
+      "result_block": "SUPERVISOR_RESULT",
+      "result_blocks": [
+        "SUPERVISOR_RESULT"
+      ],
+      "runtime_agent_type": "loomwright:loomwright:supervisor-runner",
+      "tools": [
+        "Bash",
+        "Edit",
+        "Glob",
+        "Grep",
+        "Read",
+        "Task",
+        "TaskOutput",
+        "Write"
+      ]
+    },
+    {
+      "model": "inherit",
+      "name": "loomwright:worker",
+      "result_block": "WORKER_RESULT",
+      "result_blocks": [
+        "WORKER_RESULT"
+      ],
+      "runtime_agent_type": "loomwright:loomwright:worker",
+      "tools": [
+        "Bash",
+        "Edit",
+        "Glob",
+        "Grep",
+        "LSP",
+        "Read",
+        "Write"
+      ]
+    }
+  ],
+  "commands": [
+    {
+      "description": "List all available agent commands and usage examples",
+      "name": "agent-help"
+    },
+    {
+      "description": "Generic automation engine — turn any source (prompt / folder / backlog-doc) into a Queue and drive each item through /autonomous + an owned /review-pr drain to a reviewed PR (opt-in trusted auto-merge)",
+      "name": "automate"
+    },
+    {
+      "description": "Continuous autonomous mode — chain Launch Pad → Supervisor and loop by default with stacked PRs; rubric / Option-C signals drive re-planning, gate firings can ping a webhook",
+      "name": "autonomous"
+    },
+    {
+      "description": "On-demand scan for Claude Code adoptions (default) or differentiated product directions (--strategy) — propose-only, bounded, human-gated, never self-applies",
+      "name": "capability-check"
+    },
+    {
+      "description": "Review code changes with LSP diagnostics, issue categorization, and pattern detection",
+      "name": "code-reviewer"
+    },
+    {
+      "description": "Reflect on past session logs + worker summaries, collect memory candidates, propose bounded LESSONS, harvest convention findings into proposed .agent/rules/, and write accepted items on per-item approval (read-only until you Accept; nothing reaches the remote without a separate Pre-push confirmation)",
+      "name": "dreaming"
+    },
+    {
+      "description": "Catch up / hand off in 2 minutes — a unified, read-only digest (decision · why · tried/rejected · current state · provenance, with freshness) over the plugin's continuity surfaces",
+      "name": "handoff"
+    },
+    {
+      "description": "Generate a local, Obsidian-friendly insights dashboard (work · quality · session performance) from the plugin's session logs — read-only, no data leaves your machine",
+      "name": "insights"
+    },
+    {
+      "description": "Prepare a raw goal for autonomous Supervisor execution with codebase analysis, environment validation, file impact estimation, and save to jobs folder",
+      "name": "launch-pad"
+    },
+    {
+      "description": "Project this repo's accumulated knowledge (runs, Twin contracts, lessons, project memory) into a local, fully-linked Obsidian vault — read-only one-way projection, no data leaves your machine",
+      "name": "obsidian"
+    },
+    {
+      "description": "Break a goal into minimal actionable tasks with clear acceptance criteria",
+      "name": "orchestrator"
+    },
+    {
+      "description": "Read-only post-hoc analysis of an existing PR — categorize each review round into one of 6 root-cause classes, attribute it to a flow stage, print a root-cause report, and append one fail-safe trend line to .supervisor/postmortem/results.jsonl",
+      "name": "pr-postmortem"
+    },
+    {
+      "description": "Translate business problems into user stories (Beads-optional) with acceptance criteria",
+      "name": "product-owner"
+    },
+    {
+      "description": "Turn the recorded churn ledger, a /verify run's FAIL/issue lines (--from-verify), or what competent apps in this project's domain do (--domain) into candidate work items; a propose-only pass that writes evidence-carrying requirement drafts to .supervisor/requirements/proposed/ for a human to promote or delete",
+      "name": "propose"
+    },
+    {
+      "description": "Discover app structure, generate and run Playwright tests with risk-based strategy",
+      "name": "qa-executor"
+    },
+    {
+      "description": "Plan risk-based QA test strategy and audit QA Executor results",
+      "name": "qa-strategist"
+    },
+    {
+      "description": "Adversarial review - break, stress-test, find real-world failures",
+      "name": "red-team-reviewer"
+    },
+    {
+      "description": "Run a bounded review→fix→re-review heal loop against an existing PR URL; never auto-merges",
+      "name": "review-pr"
+    },
+    {
+      "description": "Maintain the committed .agent/rules/ house-rules substrate — list / suggest / add / retract / check / audit project conventions an implementer can read on the DO side, not only get caught on the REVIEW side. Advisory enforcement is wired (never-gating) at the worker / Phase 4.5 / Code Reviewer / SessionStart-nudge seams; `add` (with optional `--supersedes` and repeatable `--applies-to` path routing) and `retract` are both mechanized in add-rule.sh, `check` in rules-check.sh (unattended `check` execution gated via --no-cmd), and `audit` in audit-rules.sh (read-only, re-validates the standing store over time).",
+      "name": "rules"
+    },
+    {
+      "description": "Umbrella setup command — status dashboard plus guided configuration for every optional plugin capability — observability (local Langfuse + OTel collector), memory in version control, portable house-rule seeding, telemetry, notifications, webhook, Beads, MySQL MCP, opt-in status line, opt-in local run view",
+      "name": "setup"
+    },
+    {
+      "description": "Autonomously manage development workflow with parallel execution from task pickup to PR creation",
+      "name": "supervisor"
+    },
+    {
+      "description": "Manage opt-in GitHub Issues telemetry — status, enable, disable, test",
+      "name": "telemetry"
+    },
+    {
+      "description": "The Floor, directly — start, stop and inspect the local loopback-only run view, and manage the project registry that decides which projects the picker can show (check | serve | stop | add | list | forget | scan). Configuration (apply / remove) stays with /setup ui.",
+      "name": "ui"
+    },
+    {
+      "description": "Walk a ticket's acceptance criteria through the RUNNING app — one evidenced PASS / FAIL / BLOCKED / NOT_VERIFIABLE verdict per criterion, advisory only",
+      "name": "verify"
+    }
+  ],
+  "contract_schema_version": 1,
+  "generated_by": "loomwright/scripts/build-capabilities.sh",
+  "hooks": [
+    {
+      "blocking": false,
+      "event": "Notification",
+      "matcher": "permission_prompt|idle_prompt|elicitation_dialog|elicitation_complete|elicitation_response",
+      "script": "scripts/notify-desktop.sh",
+      "scripts": [
+        "scripts/notify-desktop.sh",
+        "scripts/emit-lifecycle.sh"
+      ],
+      "source": "hooks.Notification[0].hooks[0]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/.lifecycle-asked-ids",
+        ".supervisor/logs/.lifecycle-heartbeat-debounce-<agent>",
+        ".supervisor/logs/.notified-ids",
+        ".supervisor/logs/.notify-debounce",
+        ".supervisor/logs/<session>.jsonl",
+        ".supervisor/logs/notifications.log"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "PostToolUse",
+      "matcher": "Bash",
+      "script": "scripts/hook-dispatch-on-pr-create.sh",
+      "scripts": [
+        "scripts/hook-dispatch-on-pr-create.sh"
+      ],
+      "source": "hooks.PostToolUse[0].hooks[0]",
+      "type": "command",
+      "writes": [
+        "unknown"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "PostToolUse",
+      "matcher": "Bash",
+      "script": "scripts/reproject-state-on-terminal.sh",
+      "scripts": [
+        "scripts/reproject-state-on-terminal.sh"
+      ],
+      "source": "hooks.PostToolUse[0].hooks[1]",
+      "type": "command",
+      "writes": [
+        ".supervisor/state.md"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "PostToolUse",
+      "matcher": "Bash",
+      "script": "scripts/worktree-audit.sh",
+      "scripts": [
+        "scripts/worktree-audit.sh"
+      ],
+      "source": "hooks.PostToolUse[0].hooks[2]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/worktrees.log"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "PostToolUse",
+      "matcher": "Bash",
+      "script": "scripts/emit-lifecycle.sh",
+      "scripts": [
+        "scripts/emit-lifecycle.sh"
+      ],
+      "source": "hooks.PostToolUse[0].hooks[3]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/.lifecycle-asked-ids",
+        ".supervisor/logs/.lifecycle-heartbeat-debounce-<agent>",
+        ".supervisor/logs/<session>.jsonl"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "PostToolUse",
+      "matcher": "Task",
+      "script": "scripts/emit-agent-identity.sh",
+      "scripts": [
+        "scripts/emit-agent-identity.sh"
+      ],
+      "source": "hooks.PostToolUse[2].hooks[0]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/<session>.jsonl"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "PostToolUse",
+      "matcher": "Task",
+      "script": "scripts/emit-lifecycle.sh",
+      "scripts": [
+        "scripts/emit-lifecycle.sh"
+      ],
+      "source": "hooks.PostToolUse[2].hooks[1]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/.lifecycle-asked-ids",
+        ".supervisor/logs/.lifecycle-heartbeat-debounce-<agent>",
+        ".supervisor/logs/<session>.jsonl"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "PostToolUse",
+      "matcher": "Task",
+      "script": "scripts/emit-lifecycle.sh",
+      "scripts": [
+        "scripts/emit-lifecycle.sh"
+      ],
+      "source": "hooks.PostToolUse[2].hooks[2]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/.lifecycle-asked-ids",
+        ".supervisor/logs/.lifecycle-heartbeat-debounce-<agent>",
+        ".supervisor/logs/<session>.jsonl"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "PostToolUse",
+      "matcher": "Write|Edit",
+      "script": "scripts/seed-run-owner.sh",
+      "scripts": [
+        "scripts/seed-run-owner.sh"
+      ],
+      "source": "hooks.PostToolUse[1].hooks[0]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/<session>.owner"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "PostToolUse",
+      "matcher": "Write|Edit",
+      "script": "scripts/emit-lifecycle.sh",
+      "scripts": [
+        "scripts/emit-lifecycle.sh"
+      ],
+      "source": "hooks.PostToolUse[1].hooks[1]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/.lifecycle-asked-ids",
+        ".supervisor/logs/.lifecycle-heartbeat-debounce-<agent>",
+        ".supervisor/logs/<session>.jsonl"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "PreToolUse",
+      "matcher": "Agent|Task",
+      "script": "scripts/guard-arm.sh",
+      "scripts": [
+        "scripts/guard-arm.sh"
+      ],
+      "source": "hooks.PreToolUse[3].hooks[0]",
+      "type": "command",
+      "writes": [
+        ".supervisor/guard/<session>.json"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "PreToolUse",
+      "matcher": "AskUserQuestion",
+      "script": "scripts/notify-desktop.sh",
+      "scripts": [
+        "scripts/notify-desktop.sh",
+        "scripts/emit-lifecycle.sh"
+      ],
+      "source": "hooks.PreToolUse[0].hooks[0]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/.lifecycle-asked-ids",
+        ".supervisor/logs/.lifecycle-heartbeat-debounce-<agent>",
+        ".supervisor/logs/.notified-ids",
+        ".supervisor/logs/.notify-debounce",
+        ".supervisor/logs/<session>.jsonl",
+        ".supervisor/logs/notifications.log"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "PreToolUse",
+      "matcher": "AskUserQuestion",
+      "script": "scripts/send-webhook.sh",
+      "scripts": [
+        "scripts/send-webhook.sh"
+      ],
+      "source": "hooks.PreToolUse[0].hooks[1]",
+      "type": "command",
+      "writes": []
+    },
+    {
+      "blocking": true,
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "script": "scripts/guard-test-integrity.sh",
+      "scripts": [
+        "scripts/guard-test-integrity.sh"
+      ],
+      "source": "hooks.PreToolUse[1].hooks[0]",
+      "type": "command",
+      "writes": []
+    },
+    {
+      "blocking": true,
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "script": "scripts/guard-finalize-publish.sh",
+      "scripts": [
+        "scripts/guard-finalize-publish.sh"
+      ],
+      "source": "hooks.PreToolUse[1].hooks[1]",
+      "type": "command",
+      "writes": []
+    },
+    {
+      "blocking": true,
+      "event": "PreToolUse",
+      "matcher": "Write|Edit",
+      "script": "scripts/guard-test-integrity.sh",
+      "scripts": [
+        "scripts/guard-test-integrity.sh"
+      ],
+      "source": "hooks.PreToolUse[2].hooks[0]",
+      "type": "command",
+      "writes": []
+    },
+    {
+      "blocking": false,
+      "event": "SessionEnd",
+      "matcher": "logout|prompt_input_exit|other",
+      "script": "scripts/close-stranded-run.sh",
+      "scripts": [
+        "scripts/close-stranded-run.sh"
+      ],
+      "source": "hooks.SessionEnd[0].hooks[0]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/<session>.jsonl",
+        ".supervisor/run.lock/meta",
+        ".supervisor/state.md"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "SessionEnd",
+      "matcher": "logout|prompt_input_exit|other",
+      "script": "scripts/guard-arm.sh",
+      "scripts": [
+        "scripts/guard-arm.sh"
+      ],
+      "source": "hooks.SessionEnd[0].hooks[1]",
+      "type": "command",
+      "writes": [
+        ".supervisor/guard/<session>.json"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "SessionStart",
+      "matcher": null,
+      "script": "scripts/session-resume.sh",
+      "scripts": [
+        "scripts/session-resume.sh",
+        "scripts/stamp-requirement-status.sh"
+      ],
+      "source": "hooks.SessionStart[0].hooks[0]",
+      "type": "command",
+      "writes": [
+        ".supervisor/.curation-nudge-shown",
+        ".supervisor/.rules-nudge-shown",
+        ".supervisor/.stranded-nudge-shown",
+        ".supervisor/jobs/done/<brief>.md",
+        ".supervisor/jobs/in-progress/<brief>.md",
+        ".supervisor/logs/.notified-ids",
+        ".supervisor/logs/.notify-debounce",
+        ".supervisor/logs/memory.log",
+        ".supervisor/logs/notifications.log",
+        ".supervisor/logs/twin.log",
+        ".supervisor/requirements/<requirement>.md"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "SessionStart",
+      "matcher": null,
+      "script": "scripts/set-otel-resource-attrs.sh",
+      "scripts": [
+        "scripts/set-otel-resource-attrs.sh"
+      ],
+      "source": "hooks.SessionStart[1].hooks[0]",
+      "type": "command",
+      "writes": [
+        ".claude/settings.local.json#env.OTEL_RESOURCE_ATTRIBUTES"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "Stop",
+      "matcher": null,
+      "script": "scripts/validate-code-review-result.py",
+      "scripts": [
+        "scripts/validate-code-review-result.py"
+      ],
+      "source": "hooks.Stop[0].hooks[0]",
+      "type": "command",
+      "writes": []
+    },
+    {
+      "blocking": false,
+      "event": "StopFailure",
+      "matcher": null,
+      "script": "scripts/emit-lifecycle.sh",
+      "scripts": [
+        "scripts/emit-lifecycle.sh"
+      ],
+      "source": "hooks.StopFailure[0].hooks[0]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/.lifecycle-asked-ids",
+        ".supervisor/logs/.lifecycle-heartbeat-debounce-<agent>",
+        ".supervisor/logs/<session>.jsonl",
+        ".supervisor/logs/failures.log"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
+      "matcher": null,
+      "script": "scripts/emit-lifecycle.sh",
+      "scripts": [
+        "scripts/emit-lifecycle.sh"
+      ],
+      "source": "hooks.SubagentStop[0].hooks[0]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/.lifecycle-asked-ids",
+        ".supervisor/logs/.lifecycle-heartbeat-debounce-<agent>",
+        ".supervisor/logs/<session>.jsonl"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
+      "matcher": "loomwright:code-reviewer",
+      "script": "scripts/validate-code-review-result.py",
+      "scripts": [
+        "scripts/validate-code-review-result.py"
+      ],
+      "source": "hooks.SubagentStop[1].hooks[0]",
+      "type": "command",
+      "writes": []
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
+      "matcher": "loomwright:code-reviewer",
+      "script": "scripts/send-telemetry.sh",
+      "scripts": [
+        "scripts/send-telemetry.sh",
+        "scripts/emit-token-ledger.sh"
+      ],
+      "source": "hooks.SubagentStop[1].hooks[1]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/<session>.jsonl",
+        ".supervisor/logs/telemetry-pending-shown-<key>.flag",
+        ".supervisor/logs/telemetry-repo-unset-shown-<key>.flag",
+        ".supervisor/logs/telemetry-sent.log",
+        ".supervisor/logs/telemetry.log",
+        ".supervisor/logs/token-ledger-python3-missing.flag"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
+      "matcher": "loomwright:context-keeper",
+      "script": "scripts/emit-token-ledger.sh",
+      "scripts": [
+        "scripts/emit-token-ledger.sh"
+      ],
+      "source": "hooks.SubagentStop[8].hooks[0]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/<session>.jsonl",
+        ".supervisor/logs/token-ledger-python3-missing.flag"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
+      "matcher": "loomwright:execute-manager",
+      "script": "scripts/validate-execute-result.py",
+      "scripts": [
+        "scripts/validate-execute-result.py"
+      ],
+      "source": "hooks.SubagentStop[4].hooks[0]",
+      "type": "command",
+      "writes": []
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
+      "matcher": "loomwright:execute-manager",
+      "script": "scripts/emit-token-ledger.sh",
+      "scripts": [
+        "scripts/emit-token-ledger.sh"
+      ],
+      "source": "hooks.SubagentStop[4].hooks[1]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/<session>.jsonl",
+        ".supervisor/logs/token-ledger-python3-missing.flag"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
+      "matcher": "loomwright:launch-pad-runner",
+      "script": "scripts/validate-launch-pad-result.py",
+      "scripts": [
+        "scripts/validate-launch-pad-result.py"
+      ],
+      "source": "hooks.SubagentStop[7].hooks[0]",
+      "type": "command",
+      "writes": []
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
+      "matcher": "loomwright:launch-pad-runner",
+      "script": "scripts/emit-token-ledger.sh",
+      "scripts": [
+        "scripts/emit-token-ledger.sh"
+      ],
+      "source": "hooks.SubagentStop[7].hooks[1]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/<session>.jsonl",
+        ".supervisor/logs/token-ledger-python3-missing.flag"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
+      "matcher": "loomwright:orchestrator",
+      "script": "scripts/emit-token-ledger.sh",
+      "scripts": [
+        "scripts/emit-token-ledger.sh"
+      ],
+      "source": "hooks.SubagentStop[9].hooks[0]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/<session>.jsonl",
+        ".supervisor/logs/token-ledger-python3-missing.flag"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
+      "matcher": "loomwright:plan-reviewer",
+      "script": "scripts/validate-plan-review-result.py",
+      "scripts": [
+        "scripts/validate-plan-review-result.py"
+      ],
+      "source": "hooks.SubagentStop[6].hooks[0]",
+      "type": "command",
+      "writes": []
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
+      "matcher": "loomwright:plan-reviewer",
+      "script": "scripts/emit-token-ledger.sh",
+      "scripts": [
+        "scripts/emit-token-ledger.sh"
+      ],
+      "source": "hooks.SubagentStop[6].hooks[1]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/<session>.jsonl",
+        ".supervisor/logs/token-ledger-python3-missing.flag"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
+      "matcher": "loomwright:product-owner",
+      "script": "scripts/emit-token-ledger.sh",
+      "scripts": [
+        "scripts/emit-token-ledger.sh"
+      ],
+      "source": "hooks.SubagentStop[10].hooks[0]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/<session>.jsonl",
+        ".supervisor/logs/token-ledger-python3-missing.flag"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
+      "matcher": "loomwright:qa-executor",
+      "script": "scripts/validate-qa-result.py",
+      "scripts": [
+        "scripts/validate-qa-result.py"
+      ],
+      "source": "hooks.SubagentStop[2].hooks[0]",
+      "type": "command",
+      "writes": []
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
+      "matcher": "loomwright:qa-executor",
+      "script": "scripts/send-telemetry.sh",
+      "scripts": [
+        "scripts/send-telemetry.sh",
+        "scripts/emit-token-ledger.sh"
+      ],
+      "source": "hooks.SubagentStop[2].hooks[1]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/<session>.jsonl",
+        ".supervisor/logs/telemetry-pending-shown-<key>.flag",
+        ".supervisor/logs/telemetry-repo-unset-shown-<key>.flag",
+        ".supervisor/logs/telemetry-sent.log",
+        ".supervisor/logs/telemetry.log",
+        ".supervisor/logs/token-ledger-python3-missing.flag"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
+      "matcher": "loomwright:qa-strategist",
+      "script": "scripts/emit-token-ledger.sh",
+      "scripts": [
+        "scripts/emit-token-ledger.sh"
+      ],
+      "source": "hooks.SubagentStop[11].hooks[0]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/<session>.jsonl",
+        ".supervisor/logs/token-ledger-python3-missing.flag"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
+      "matcher": "loomwright:red-team-reviewer",
+      "script": "scripts/emit-token-ledger.sh",
+      "scripts": [
+        "scripts/emit-token-ledger.sh"
+      ],
+      "source": "hooks.SubagentStop[12].hooks[0]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/<session>.jsonl",
+        ".supervisor/logs/token-ledger-python3-missing.flag"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
+      "matcher": "loomwright:review-pr-runner",
+      "script": "scripts/emit-token-ledger.sh",
+      "scripts": [
+        "scripts/emit-token-ledger.sh"
+      ],
+      "source": "hooks.SubagentStop[13].hooks[0]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/<session>.jsonl",
+        ".supervisor/logs/token-ledger-python3-missing.flag"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
+      "matcher": "loomwright:rubric-grader",
+      "script": "scripts/emit-token-ledger.sh",
+      "scripts": [
+        "scripts/emit-token-ledger.sh"
+      ],
+      "source": "hooks.SubagentStop[14].hooks[0]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/<session>.jsonl",
+        ".supervisor/logs/token-ledger-python3-missing.flag"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
+      "matcher": "loomwright:supervisor-runner",
+      "script": "scripts/validate-supervisor-result.py",
+      "scripts": [
+        "scripts/validate-supervisor-result.py"
+      ],
+      "source": "hooks.SubagentStop[5].hooks[0]",
+      "type": "command",
+      "writes": []
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
+      "matcher": "loomwright:supervisor-runner",
+      "script": "scripts/send-telemetry.sh",
+      "scripts": [
+        "scripts/send-telemetry.sh",
+        "scripts/emit-token-ledger.sh",
+        "scripts/stamp-requirement-status.sh"
+      ],
+      "source": "hooks.SubagentStop[5].hooks[1]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/<session>.jsonl",
+        ".supervisor/logs/telemetry-pending-shown-<key>.flag",
+        ".supervisor/logs/telemetry-repo-unset-shown-<key>.flag",
+        ".supervisor/logs/telemetry-sent.log",
+        ".supervisor/logs/telemetry.log",
+        ".supervisor/logs/token-ledger-python3-missing.flag",
+        ".supervisor/requirements/<requirement>.md"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
+      "matcher": "loomwright:supervisor-runner",
+      "script": "scripts/send-webhook.sh",
+      "scripts": [
+        "scripts/send-webhook.sh"
+      ],
+      "source": "hooks.SubagentStop[5].hooks[2]",
+      "type": "command",
+      "writes": []
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
+      "matcher": "loomwright:worker",
+      "script": "scripts/validate-worker-result.py",
+      "scripts": [
+        "scripts/validate-worker-result.py"
+      ],
+      "source": "hooks.SubagentStop[3].hooks[0]",
+      "type": "command",
+      "writes": []
+    },
+    {
+      "blocking": false,
+      "event": "SubagentStop",
+      "matcher": "loomwright:worker",
+      "script": "scripts/emit-progress-event.sh",
+      "scripts": [
+        "scripts/emit-progress-event.sh"
+      ],
+      "source": "hooks.SubagentStop[3].hooks[1]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/<session>.jsonl",
+        ".supervisor/state.md"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "TaskCompleted",
+      "matcher": null,
+      "script": null,
+      "scripts": [],
+      "source": "hooks.TaskCompleted[0].hooks[0]",
+      "type": "prompt",
+      "writes": []
+    }
+  ],
+  "host_switch": null,
+  "plugin_name": "loomwright",
+  "plugin_version": "15.125.0",
+  "result_schemas": [
+    {
+      "name": "AUTOMATE_RUN",
+      "schema_version": 1
+    },
+    {
+      "name": "AUTONOMOUS_RUN",
+      "schema_version": 2
+    },
+    {
+      "name": "CODE_REVIEW_RESULT",
+      "schema_version": 3
+    },
+    {
+      "name": "CONTEXT_DIGEST",
+      "schema_version": null
+    },
+    {
+      "name": "CONTEXT_KEEPER_STATE",
+      "schema_version": null
+    },
+    {
+      "name": "EVAL_RESULT",
+      "schema_version": 1
+    },
+    {
+      "name": "EXECUTE_CHECKPOINT",
+      "schema_version": 1
+    },
+    {
+      "name": "EXECUTE_RESULT",
+      "schema_version": 1
+    },
+    {
+      "name": "FIX_RESULT",
+      "schema_version": 1
+    },
+    {
+      "name": "FLOOR_PROJECTION",
+      "schema_version": 1
+    },
+    {
+      "name": "GATE_VERDICT",
+      "schema_version": 1
+    },
+    {
+      "name": "GRAPHQL_RISK_OVERRIDES",
+      "schema_version": null
+    },
+    {
+      "name": "GROUND_TRUTH_JSON",
+      "schema_version": 1
+    },
+    {
+      "name": "LAUNCH_PAD_RESULT",
+      "schema_version": 1
+    },
+    {
+      "name": "MIGRATE_BRANCH_MODE_STATE",
+      "schema_version": null
+    },
+    {
+      "name": "MISSING_FUNCTIONALITY_REPORT",
+      "schema_version": 1
+    },
+    {
+      "name": "PLAN_REVIEW_RESULT",
+      "schema_version": 1
+    },
+    {
+      "name": "POSTMORTEM_RESULT",
+      "schema_version": 1
+    },
+    {
+      "name": "PRODUCT_CONTEXT",
+      "schema_version": null
+    },
+    {
+      "name": "QA_RESULT",
+      "schema_version": 1
+    },
+    {
+      "name": "QA_SESSION",
+      "schema_version": 1
+    },
+    {
+      "name": "RED_TEAM_RESULT",
+      "schema_version": 1
+    },
+    {
+      "name": "REVIEW_HEAL_RESULT",
+      "schema_version": 2
+    },
+    {
+      "name": "SUPERVISOR_RESULT",
+      "schema_version": 1
+    },
+    {
+      "name": "SYSTEM_CONTRACT",
+      "schema_version": 1
+    },
+    {
+      "name": "VERIFY_ENV",
+      "schema_version": null
+    },
+    {
+      "name": "VERIFY_EVIDENCE",
+      "schema_version": 1
+    },
+    {
+      "name": "VERIFY_QUEUE",
+      "schema_version": null
+    },
+    {
+      "name": "VERIFY_RESULT",
+      "schema_version": 1
+    },
+    {
+      "name": "WORKER_RESULT",
+      "schema_version": 2
+    },
+    {
+      "name": "agent_lifecycle",
+      "schema_version": null
+    },
+    {
+      "name": "session_end",
+      "schema_version": null
+    }
+  ],
+  "skills": [
+    {
+      "name": "agent-output"
+    },
+    {
+      "name": "agent-teams"
+    },
+    {
+      "name": "async-orchestration"
+    },
+    {
+      "name": "automate-loop"
+    },
+    {
+      "name": "autonomous-loop"
+    },
+    {
+      "name": "beads-workflow"
+    },
+    {
+      "name": "brain-context"
+    },
+    {
+      "name": "brainstorming"
+    },
+    {
+      "name": "ci-cd"
+    },
+    {
+      "name": "claude-md-validation"
+    },
+    {
+      "name": "commit-skill"
+    },
+    {
+      "name": "context-setup"
+    },
+    {
+      "name": "context-summarization"
+    },
+    {
+      "name": "context7-lookup"
+    },
+    {
+      "name": "domain-knowledge"
+    },
+    {
+      "name": "error-handling"
+    },
+    {
+      "name": "frontend-ui"
+    },
+    {
+      "name": "memory-tool"
+    },
+    {
+      "name": "monitoring-observability"
+    },
+    {
+      "name": "mvp-scoping"
+    },
+    {
+      "name": "pattern-detector"
+    },
+    {
+      "name": "playwright-e2e"
+    },
+    {
+      "name": "pr-postmortem"
+    },
+    {
+      "name": "preflight-sync"
+    },
+    {
+      "name": "product-discovery"
+    },
+    {
+      "name": "qa-gates"
+    },
+    {
+      "name": "qa-orchestration"
+    },
+    {
+      "name": "qa-strategy"
+    },
+    {
+      "name": "qa-test-patterns"
+    },
+    {
+      "name": "quality-checklist"
+    },
+    {
+      "name": "review-heal"
+    },
+    {
+      "name": "rules"
+    },
+    {
+      "name": "self-heal-advisory"
+    },
+    {
+      "name": "setup"
+    },
+    {
+      "name": "state-management"
+    },
+    {
+      "name": "supervisor-config"
+    },
+    {
+      "name": "supervisor-readiness"
+    },
+    {
+      "name": "telemetry"
+    },
+    {
+      "name": "unit-testing"
+    },
+    {
+      "name": "user-story-writing"
+    },
+    {
+      "name": "verify-walkthrough"
+    },
+    {
+      "name": "workflow-management"
+    }
+  ]
+}

@@ -486,10 +486,13 @@ else
                      # derivation contract): the READER derives state from the MOST RECENT
                      # RECOGNIZED lifecycle-relevant row for this agent_id - never written by
                      # any emitter. Recognized rows are (a) `agent_lifecycle` rows whose
-                     # `state` is one of the three the emitter ever writes (waiting/working/
-                     # failed - a defensive allowlist, not just `has("state")`), and (b)
-                     # terminal rows (`subtask_complete` for workers, `token_ledger` for every
-                     # other role). Only ts-bearing rows compete for "most recent" - an
+                     # `state` is waiting/working/failed (a defensive allowlist, not just
+                     # `has("state")`), and (b) terminal rows (`subtask_complete` for workers,
+                     # `token_ledger` for every other role, and - automate-followups/33 -
+                     # `agent_lifecycle` state `ended`, which emit-lifecycle.sh writes for EVERY
+                     # child stop incl. non-plugin types and blocking turn-limit returns, so a
+                     # finished spawn stops showing as `working`; it carries no
+                     # `result_block_present`, so it reads `quiet`, never `done`). Only ts-bearing rows compete for "most recent" - an
                      # untimed row cannot be ordered, though its mere existence still counts
                      # toward "a lifecycle WAS recorded" below. A `subtask_complete` with
                      # `rejected: true` (v15.83.0) is EXCLUDED from the terminal set: the
@@ -503,7 +506,9 @@ else
                                         or (.state // "") == "failed")))) as $lc
                      | (map(select(((.event // "") == "subtask_complete"
                                     and ((.rejected? == true) | not))
-                                   or (.event // "") == "token_ledger"))) as $term
+                                   or (.event // "") == "token_ledger"
+                                   or ((.event // "") == "agent_lifecycle"
+                                       and (.state // "") == "ended")))) as $term
                      | ($lc | map(select(has("ts"))) | sort_by(.ts) | last) as $lc_latest
                      | ($term | map(select(has("ts"))) | sort_by(.ts) | last) as $term_latest
                      | (if $lc_latest == null and $term_latest == null then null

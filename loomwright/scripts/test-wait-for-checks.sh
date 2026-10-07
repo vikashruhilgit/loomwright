@@ -23,6 +23,10 @@
 #   9/10. (PR #251 review finding 2) a branch-protection read that fails with
 #      a non-404 error => required=unknown, NEVER a vacuous green; a genuine
 #      404 (real unprotected branch) => required=green (verified empty).
+#  11-16. (automate-followups/31) the opt-in --names flag: default line byte-
+#      unchanged; pending_names (required included, absent required = pending,
+#      sha_mismatch) and red_names (name@run_id, '-' without a run id); scope.
+#  17. (review iteration 2) --names green needs EACH of conclusion/state green.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -337,6 +341,111 @@ else
   no "genuinely unprotected (404) wrong (rc=$RC10 out='$OUT10') -- a verified-empty required set must not be punished as unknown"
 fi
 rm -rf "$D10"
+
+# ----------------------------------------------------------------------------
+# Cases 11-16 (automate-followups/31): the OPT-IN --names flag. Without it the
+# line is byte-unchanged (11); with it two trailing fields name the scoped set.
+# ----------------------------------------------------------------------------
+# write_names_stub <dir> <rollup_json> [<protection_contexts_json>] — one fixed
+# rollup for every poll; branch protection names the given contexts (default ["ci"]).
+write_names_stub() {
+  local dir="$1" rollup="$2" ctx="${3:-[\"ci\"]}"
+  printf '%s\n' "$rollup" > "$dir/rollup.json"
+  printf '{"required_status_checks":{"contexts":%s}}\n' "$ctx" > "$dir/prot.json"
+  cat > "$dir/gh" <<EOF
+#!/usr/bin/env bash
+case "\$*" in
+  *baseRefName*) printf '{"baseRefName":"main"}\n'; exit 0 ;;
+  *headRefOid*) cat "$dir/rollup.json"; exit 0 ;;
+esac
+[ "\$1" = "api" ] && { cat "$dir/prot.json"; exit 0; }
+exit 0
+EOF
+  chmod +x "$dir/gh"
+}
+N_ROLL_PEND='{"headRefOid":"deadbeef00","statusCheckRollup":[{"name":"ci","status":"IN_PROGRESS","conclusion":"","state":""},{"name":"claude-review","status":"IN_PROGRESS","conclusion":"","state":""},{"name":"lint","status":"IN_PROGRESS","conclusion":"","state":""}]}'
+
+echo "== 11. no --names => the output line is byte-unchanged (no pending_names/red_names fields) =="
+D11="$(fresh_stub_dir)"; write_names_stub "$D11" "$N_ROLL_PEND"
+OUT11="$(GH="$D11/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 0 --interval 1)"
+if [ "$OUT11" = "ELAPSED sha=deadbeef00 required=pending review_producing=elapsed pending=claude-review" ]; then
+  ok "default output unchanged without --names ($OUT11)"
+else
+  no "default output changed without --names: '$OUT11'"
+fi
+rm -rf "$D11"
+
+echo "== 12. --names: pending_names lists every scoped pending check, REQUIRED included (pending= omits it); unscoped 'lint' excluded =="
+D12="$(fresh_stub_dir)"; write_names_stub "$D12" "$N_ROLL_PEND"
+OUT12="$(GH="$D12/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 0 --interval 1 --names)"
+if [ "$OUT12" = "ELAPSED sha=deadbeef00 required=pending review_producing=elapsed pending=claude-review pending_names=ci,claude-review red_names=none" ]; then
+  ok "--names pending: $OUT12"
+else
+  no "--names pending wrong: '$OUT12'"
+fi
+rm -rf "$D12"
+
+echo "== 13. --names: red_names carries name@run_id parsed from detailsUrl, '-' when absent; neutral/skipped are not red =="
+D13="$(fresh_stub_dir)"
+write_names_stub "$D13" '{"headRefOid":"deadbeef00","statusCheckRollup":[{"name":"ci","status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://github.com/acme/widgets/actions/runs/777/job/9"},{"name":"claude-review","status":"COMPLETED","conclusion":"CANCELLED"},{"name":"review-lint","status":"COMPLETED","conclusion":"NEUTRAL"},{"name":"claude-x","status":"COMPLETED","conclusion":"SKIPPED"}]}'
+OUT13="$(GH="$D13/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 0 --interval 1 --names)"
+if [ "$OUT13" = "SETTLED sha=deadbeef00 required=red review_producing=settled pending_names=none red_names=ci@777,claude-review@-" ]; then
+  ok "--names red: $OUT13"
+else
+  no "--names red wrong: '$OUT13'"
+fi
+rm -rf "$D13"
+
+echo "== 14. --names: a required context ABSENT from the rollup is pending (never read as green) =="
+D14="$(fresh_stub_dir)"
+write_names_stub "$D14" '{"headRefOid":"deadbeef00","statusCheckRollup":[{"name":"claude-review","status":"COMPLETED","conclusion":"SUCCESS"}]}' '["ci"]'
+OUT14="$(GH="$D14/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 0 --interval 1 --names)"
+case "$OUT14" in
+  *" pending_names=ci red_names=none") ok "--names absent required context is pending ($OUT14)" ;;
+  *) no "--names absent required context wrong: '$OUT14'" ;;
+esac
+rm -rf "$D14"
+
+echo "== 15. --names: a rollup for a DIFFERENT sha => pending_names=sha_mismatch =="
+D15="$(fresh_stub_dir)"
+write_names_stub "$D15" '{"headRefOid":"other00","statusCheckRollup":[{"name":"ci","status":"COMPLETED","conclusion":"SUCCESS"}]}'
+OUT15="$(GH="$D15/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 0 --interval 1 --names)"
+case "$OUT15" in
+  *" pending=sha_mismatch pending_names=sha_mismatch red_names=none") ok "--names sha mismatch: $OUT15" ;;
+  *) no "--names sha mismatch wrong: '$OUT15'" ;;
+esac
+rm -rf "$D15"
+
+echo "== 16. --required-only --names: review-producing checks are out of scope =="
+D16="$(fresh_stub_dir)"; write_names_stub "$D16" "$N_ROLL_PEND"
+OUT16="$(GH="$D16/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 0 --interval 1 --required-only --names)"
+case "$OUT16" in
+  *" pending_names=ci red_names=none") ok "--required-only --names scope: $OUT16" ;;
+  *) no "--required-only --names scope wrong: '$OUT16'" ;;
+esac
+rm -rf "$D16"
+
+echo "== 17. (review iteration 2) --names: green only when EACH of conclusion/state is a green value — never a prefix of their concatenation =="
+D17="$(fresh_stub_dir)"
+N_ROLL_MIX='{"headRefOid":"deadbeef00","statusCheckRollup":[{"name":"ci","status":"COMPLETED","conclusion":"SUCCESS"},{"name":"claude-review","status":"COMPLETED","conclusion":"SUCCESS","state":"FAILURE"}]}'
+write_names_stub "$D17" "$N_ROLL_MIX"
+OUT17="$(GH="$D17/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 0 --interval 1 --names)"
+case "$OUT17" in
+  *" pending_names=none red_names=claude-review@-") ok "--names SUCCESS conclusion + FAILURE state is red ($OUT17)" ;;
+  *) no "--names mixed conclusion/state wrong: '$OUT17'" ;;
+esac
+# MUTATION CONTROL: drop the per-field state check (back to the concatenated-prefix
+# reading) ⇒ claude-review reads green.
+M17="$D17/mut-wait-for-checks.sh"
+grep -vxF "    case \"\$_up_sta\" in ''|SUCCESS) ;; *) _g=0 ;; esac" "$SUT" > "$M17"
+if [ -s "$M17" ] && ! cmp -s "$SUT" "$M17" && bash -n "$M17" && [ "$(( $(wc -l < "$SUT") - $(wc -l < "$M17") ))" = 1 ]; then
+  OUT17M="$(GH="$D17/gh" bash "$M17" "$PR" --sha "$SHA" --bound 0 --interval 1 --names)"
+  case "$OUT17M" in *" red_names=none") ok "mutation control: without the per-field state check the mixed entry reads green ($OUT17M)" ;;
+    *) no "mutation control did NOT discriminate: '$OUT17M'" ;; esac
+else
+  no "case 17 mutant invalid (empty / identical / bash -n / not exactly 1 line)"
+fi
+rm -rf "$D17"
 
 echo
 echo "RESULT: $pass passed, $fail failed"

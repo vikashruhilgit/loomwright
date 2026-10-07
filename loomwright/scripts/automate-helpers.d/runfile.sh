@@ -218,8 +218,11 @@ _current_build_line() {
 #   RUN-LEVEL form — neither --item nor --status; --pause-reason required; no
 #                    --pr/--branch (a run-level park never touches the item line).
 # Rewrites ONLY the `## Current` block's first `- item:` line (item form) and/or its
-# `- pause_reason:` line (appended to the block when absent); every other line of
-# the file is byte-unchanged. pr/branch retention: when --item equals the line's
+# `- pause_reason:` line (appended to the block when absent), and — item form only —
+# REMOVES a `- escalation_cause:` line when the new status is not `escalated` or the
+# item changes (per-item park state, automate-followups/31: closeout's `done`, PICK's
+# `running` and every non-escalated park clear it); every other line of the file is
+# byte-unchanged. pr/branch retention: when --item equals the line's
 # current item (compared after a leading `./` strip) an omitted --pr/--branch keeps
 # the stored value; when --item CHANGES, an omitted --pr/--branch resets to `null`
 # (never carry the previous item's PR into a new one). The item is stored exactly
@@ -276,7 +279,7 @@ current_set() {
   is_run_file "$out" || die "$CS not a run file (no '# Automate Run:' title): $out; left unchanged [runfile_write_refused]"
   grep -q '^## Current' "$out" || die "$CS no '## Current' heading in $out; left unchanged"
 
-  local old_line new_line="" old_reason new_reason="" change=0
+  local old_line new_line="" old_reason new_reason="" change=0 drop_esc=0
   old_line="$(_current_item_line "$out")"
   if [ "$hi" = 1 ]; then
     local old_item; old_item="$(_current_field "$old_line" item)"
@@ -286,6 +289,12 @@ current_set() {
     fi
     new_line="$(_current_build_line "$old_line" "$item" "$st" "$hp" "$pr" "$hb" "$br")"
     [ "$new_line" = "$old_line" ] || change=1
+    # automate-followups/31: the `- escalation_cause:` line is per-item park state —
+    # dropped by an item-form write that leaves `escalated` or changes the item.
+    if { [ "$st" != escalated ] || [ "${old_item#./}" != "${item#./}" ]; } \
+       && awk '/^## Current/ && !s { s=1; c=1; next } /^## / { c=0 } c && /^- escalation_cause:/ { f=1 } END { exit !f }' "$out"; then
+      drop_esc=1; change=1
+    fi
   fi
   if [ "$hr" = 1 ]; then
     old_reason="$(_current_reason_line "$out")"
@@ -297,9 +306,9 @@ current_set() {
   local have_item=0; [ -n "$old_line" ] && have_item=1
   local tmp; tmp="$(mktemp "${out}.XXXXXX")"
   CS_ITEM_ON="$hi" CS_NEW_ITEM="$new_line" CS_HAVE_ITEM="$have_item" \
-  CS_REASON_ON="$hr" CS_NEW_REASON="$new_reason" awk '
+  CS_REASON_ON="$hr" CS_NEW_REASON="$new_reason" CS_DROP_ESC="$drop_esc" awk '
     BEGIN { ion=ENVIRON["CS_ITEM_ON"]; nitem=ENVIRON["CS_NEW_ITEM"]; have=ENVIRON["CS_HAVE_ITEM"]
-            ron=ENVIRON["CS_REASON_ON"]; nreason=ENVIRON["CS_NEW_REASON"] }
+            ron=ENVIRON["CS_REASON_ON"]; nreason=ENVIRON["CS_NEW_REASON"]; desc=ENVIRON["CS_DROP_ESC"] }
     /^## Current/ && !seen {
       seen=1; c=1; print
       if (ion == 1 && have != 1) { print nitem; idone=1 }
@@ -311,11 +320,93 @@ current_set() {
     }
     c && ion == 1 && !idone && /^- item: / { print nitem; idone=1; next }
     c && ron == 1 && !rdone && /^- pause_reason:/ { print nreason; rdone=1; next }
+    c && desc == 1 && /^- escalation_cause:/ { next }
     { print }
     END { if (c && ron == 1 && !rdone) print nreason }
   ' "$out" > "$tmp" || { rm -f "$tmp"; die "current-set: rewrite failed; $out left unchanged"; }
   _runfile_install "$tmp" "$out" full current-set
   echo "current-set: written"
+}
+
+# current-escalation <runfile> --cause <c> [--check <c>] [--run-id <id>] [--attempt <n>] [--sha <sha>]
+# automate-followups/31: the ONLY writer of `## Current`'s optional line
+#   - escalation_cause: <cause> | check: <c|null> | run_id: <id|null> | attempt: <n|null> | sha: <sha|null>
+# recorded at an `escalated` park (the cause comes from `escalation-cause` for a
+# check-driven escalation, else `findings`/`other`). Placement: replaces an existing
+# `- escalation_cause:` line in the block; else inserted right after the block's
+# `- pause_reason:` line; else appended at the end of the block (current-set's own
+# append rule). `--cause null` removes the line (absent ⇒ unchanged). An omitted
+# field is `null`. Refusals (exit 1, file byte-unchanged): an unknown cause, a
+# missing --cause, an empty value or one holding `|` or a newline, a non-numeric
+# --run-id/--attempt (other than `null`), field flags with `--cause null`, a
+# missing/non-run file, no `## Current` heading. Values reach awk through the
+# ENVIRONMENT (never awk -v); the write goes through `_runfile_install … full`.
+# Idempotent: the identical line already present ⇒ `current-escalation: unchanged`.
+# The only OTHER thing that removes the line is an item-form current-set leaving
+# `escalated` or changing the item (the line is per-item state, never carried over).
+ESCALATION_CAUSE_ENUM=" check_pending check_red_unrelated check_red findings other null "
+current_escalation() {
+  local out="${1:-}"
+  [ "$#" -gt 0 ] && shift
+  local CE="current-escalation: refused —"
+  [ -n "$out" ] || die "$CE usage: current-escalation <runfile> --cause <c> [--check <c>] [--run-id <id>] [--attempt <n>] [--sha <sha>]"
+  local cause="" chk=null rid=null att=null sha=null hc=0 hf=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --cause|--check|--run-id|--attempt|--sha)
+        [ "$#" -ge 2 ] || die "$CE $1 needs a value; $out left unchanged"
+        case "$2" in
+          "") die "$CE $1 value is empty; $out left unchanged" ;;
+          *"|"*|*"$NL_CHAR"*) die "$CE $1 value contains '|' or a newline; $out left unchanged" ;;
+        esac
+        case "$1" in
+          --cause) cause="$2"; hc=1 ;;
+          --check) chk="$2"; hf=1 ;;
+          --run-id) rid="$2"; hf=1 ;;
+          --attempt) att="$2"; hf=1 ;;
+          --sha) sha="$2"; hf=1 ;;
+        esac
+        shift 2 ;;
+      *) die "$CE unknown argument '$1'; $out left unchanged" ;;
+    esac
+  done
+  [ "$hc" = 1 ] || die "$CE --cause is required; $out left unchanged"
+  case "$ESCALATION_CAUSE_ENUM" in *" $cause "*) ;; *) die "$CE unknown cause '$cause'; $out left unchanged" ;; esac
+  case "$rid" in null) ;; *[!0-9]*) die "$CE --run-id '$rid' is not numeric; $out left unchanged" ;; esac
+  case "$att" in null) ;; *[!0-9]*) die "$CE --attempt '$att' is not numeric; $out left unchanged" ;; esac
+  if [ "$cause" = null ] && [ "$hf" = 1 ]; then die "$CE --cause null takes no field flags; $out left unchanged"; fi
+  [ -f "$out" ] || die "$CE run file not found: $out"
+  is_run_file "$out" || die "$CE not a run file (no '# Automate Run:' title): $out; left unchanged [runfile_write_refused]"
+  grep -q '^## Current' "$out" || die "$CE no '## Current' heading in $out; left unchanged"
+
+  local old_line new_line=""
+  old_line="$(awk '/^## Current/ && !s { s=1; c=1; next } /^## / { c=0 } c && /^- escalation_cause:/ { print; exit }' "$out")"
+  [ "$cause" = null ] || new_line="- escalation_cause: $cause | check: $chk | run_id: $rid | attempt: $att | sha: $sha"
+  if [ "$new_line" = "$old_line" ]; then echo "current-escalation: unchanged"; return 0; fi
+
+  local tmp; tmp="$(mktemp "${out}.XXXXXX")"
+  CE_NEW="$new_line" awk '
+    BEGIN { nl=ENVIRON["CE_NEW"]; have=0 }
+    { lines[NR]=$0 }
+    END {
+      # pass 1: locate the block, an existing line, and the pause_reason line
+      for (i=1; i<=NR; i++) {
+        if (!seen && lines[i] ~ /^## Current/) { seen=1; c=1; start=i; continue }
+        if (c && lines[i] ~ /^## /) { c=0; endb=i; continue }
+        if (c && !ex && lines[i] ~ /^- escalation_cause:/) ex=i
+        if (c && !pr && lines[i] ~ /^- pause_reason:/) pr=i
+      }
+      for (i=1; i<=NR; i++) {
+        if (ex && i == ex) { if (nl != "") print nl; continue }
+        if (!ex && nl != "" && !endb_done && endb && i == endb && !pr) { print nl; endb_done=1 }
+        print lines[i]
+        if (!ex && nl != "" && pr && i == pr) print nl
+      }
+      if (!ex && nl != "" && !pr && !endb) print nl
+    }
+  ' "$out" > "$tmp" || { rm -f "$tmp"; die "current-escalation: rewrite failed; $out left unchanged"; }
+  _runfile_install "$tmp" "$out" full current-escalation
+  echo "current-escalation: written"
 }
 
 # current-rebuild <runfile> — SKILL §4 RECONCILE repair for a `## Current` an
