@@ -1020,7 +1020,7 @@
   ],
   "host_switch": null,
   "plugin_name": "loomwright",
-  "plugin_version": "15.125.0",
+  "plugin_version": "15.125.1",
   "result_schemas": [
     {
       "name": "AUTOMATE_RUN",
