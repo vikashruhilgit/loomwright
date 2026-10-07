@@ -179,7 +179,7 @@ new_branch_name() { # new_branch_name <base> — a name free locally and on orig
 apply_mode_block() { # apply_mode_block <b> <state key for the backup> — on the CURRENT (new) branch
   local b="$1" out bk dest
   out="$(bash "$SM" --root "$ROOT" apply --branch-mode "$b" 2>&1)"
-  printf '%s\n' "$out" | sed 's/^/  /'
+  printf '%s\n' "$out" | grep -E '^ *(apply|backup):' | sed 's/^ */  /'
   [ "$(read_mode)" = "on $b" ] || { echo "migrate-branch-mode: apply did not leave the mode line at 'on $b'" >&2; return 1; }
   bk="$(printf '%s\n' "$out" | sed -n 's/^  backup:  \(.*\)   (delete it.*$/\1/p' | head -n 1)"
   if [ -n "$bk" ]; then
@@ -201,10 +201,10 @@ pr_create() { # pr_create <head> <base> <title> <body file> — prints the PR ur
 ab_check() {
   local b="$1" d="$2" an bn rc=0 nonmd extra
   fetch_meta "$b"
-  tracked_managed > "$SD/a.list" || { echo "migrate-branch-mode: list-managed --tracked failed" >&2; return 1; }
+  tracked_managed | env LC_ALL=C sort > "$SD/a.list" || { echo "migrate-branch-mode: list-managed --tracked failed" >&2; return 1; }
   g ls-tree -r --full-tree HEAD | awk -F'\t' 'NR==FNR { want[$0] = 1; next } ($2 in want) { split($1, m, " "); print m[3] "\t" $2 }' "$SD/a.list" - | env LC_ALL=C sort > "$SD/a.ent"
   g ls-tree -r "refs/remotes/origin/$b" | awk -F'\t' '{ split($1, m, " "); print m[3] "\t" $2 }' | env LC_ALL=C sort > "$SD/b.ent"
-  cut -f2 "$SD/b.ent" > "$SD/b.list"
+  cut -f2 "$SD/b.ent" | env LC_ALL=C sort > "$SD/b.list"
   diff "$SD/a.list" "$SD/b.list" > "$SD/ab-names.diff"; diff "$SD/a.ent" "$SD/b.ent" > "$SD/ab-blobs.diff"
   an="$(wc -l < "$SD/a.list" | tr -d ' ')"; bn="$(wc -l < "$SD/b.list" | tr -d ' ')"
   say "A (tracked managed on origin/$d) = $an; B (origin/$b tree) = $bn"
@@ -435,7 +435,7 @@ EOF
 cmd_verify_pr() {
   need_preflight; need untrack_pr PASS
   [ -n "$POS" ] || { echo "migrate-branch-mode: verify-pr needs the PR number" >&2; exit 2; }
-  local b d nb st head missing
+  local b d nb st head missing mbase
   b="$(rec_branch)"; d="$(default_branch)"; nb="$(state_get untrack_branch)"
   st="$(ghr pr view "$POS" --json state,headRefName --jq '.state + " " + .headRefName' 2>/dev/null)" || die "verify-pr: gh pr view $POS failed"
   head="${st#* }"
@@ -445,7 +445,9 @@ cmd_verify_pr() {
   bash "$MS" push --branch "$b" --root "$ROOT" || { state_set verify_pr FAIL; die "verify-pr: FAIL — meta-sync.sh push --branch $b"; }
   ab_check "$b" "$d" || { state_set verify_pr FAIL; die "verify-pr: FAIL — A != B against the current origin/$d; do NOT merge"; }
   g fetch -q origin "+refs/heads/$nb:refs/remotes/origin/$nb" || die "could not fetch $nb"
-  missing="$(g ls-tree -r --name-only "refs/remotes/origin/$nb" | env LC_ALL=C sort | comm -12 - "$SD/a.list" | tr '\n' ' ')"
+  # every tracked managed path must be in the PR's deletion set, or it stays tracked after the merge
+  mbase="$(g merge-base HEAD "refs/remotes/origin/$nb")" || die "verify-pr: no merge base between $d and $nb"
+  missing="$(g diff --name-only --diff-filter=D "$mbase" "refs/remotes/origin/$nb" | env LC_ALL=C sort | comm -13 - "$SD/a.list" | tr '\n' ' ')"
   if [ -n "$missing" ]; then state_set verify_pr FAIL; die "verify-pr: FAIL — PR $POS leaves tracked managed path(s) tracked: $missing— re-cut it (untrack-pr after seed); do NOT merge"; fi
   state_set verify_pr PASS; state_set verify_pr_sha "$(g rev-parse HEAD)"
   say "verify-pr: PASS — PR $POS is safe to merge now (A = B = $AB_A against origin/$d $(g rev-parse --short HEAD))"

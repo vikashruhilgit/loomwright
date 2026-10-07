@@ -56,7 +56,8 @@ case "$1 $2" in
     n=$(( $(cat "$D/n" 2>/dev/null || echo 40) + 1 )); echo "$n" > "$D/n"
     while [ $# -gt 0 ]; do case "$1" in --head) echo "$2" > "$D/head.$n" ;; --body-file) cp "$2" "$D/body.$n" ;; esac; shift; done
     echo "https://github.com/owner/repo/pull/$n"; exit 0 ;;
-  "pr view") echo "OPEN $(cat "$D/head.$3" 2>/dev/null)"; exit 0 ;;
+  "pr view") n=""; for a in "$@"; do case "$a" in [0-9]*) n="$a"; break ;; esac; done
+    echo "OPEN $(cat "$D/head.$n" 2>/dev/null)"; exit 0 ;;
   "api repos/owner/repo/rulesets")
     case "$(cat "$D/ruleset_mode" 2>/dev/null)" in none|'') echo '[]' ;; *) echo '[{"id":7,"name":"x","target":"branch","enforcement":"active"}]' ;; esac; exit 0 ;;
   "api repos/owner/repo/rulesets/7")
@@ -183,7 +184,7 @@ NB="$(st A mode_pr_branch)"
 [ "$(git --git-dir="$W/origin.git" rev-parse main)" = "$MAIN0" ]; check $? "the default branch is untouched (PR never merged)"
 git --git-dir="$W/origin.git" show "$NB:.gitignore" | grep -qx "# loomwright-meta-branch: $BR"; check $? "the PR's .gitignore carries the mode line for $BR"
 BK="$(st A backup_mode_pr)"
-{ [ -f "$BK" ] && case "$BK" in "$W/A/.supervisor/migrate-branch-mode/"*) true ;; *) false ;; esac && [ -z "$(ls "$W/A" | grep 'gitignore.backup' )" ] && ! ls -a "$W/A" | grep -q '^.gitignore.backup'; }; check $? "apply's .gitignore.backup.<ts> moved under .supervisor/migrate-branch-mode/ and recorded"
+{ [ -f "$BK" ] && case "$BK" in "$(cd "$W/A" && pwd -P)/.supervisor/migrate-branch-mode/"*) true ;; *) false ;; esac && [ -z "$(ls "$W/A" | grep 'gitignore.backup' )" ] && ! ls -a "$W/A" | grep -q '^.gitignore.backup'; }; check $? "apply's .gitignore.backup.<ts> moved under .supervisor/migrate-branch-mode/ and recorded"
 [ -z "$(porcelain A)" ]; check $? "git status --porcelain empty after mode-pr ($(porcelain A | tr '\n' ' '))"
 { [ "$(grep -c 'pr create' "$STUBD/log")" = 1 ] && gh_never_writes; }; check $? "exactly one PR opened (no untrack PR); gh never merges nor writes a ruleset"
 has "merge"; check $? "the owner is told to merge it"
@@ -238,7 +239,7 @@ rollback_scenario() { # on clone A after after-merge; 0 = nothing lost
 }
 rollback_scenario "$MERGED"; check $? "rollback re-tracks the CURRENT branch files: edit kept, add kept, delete honoured, .gitignore restored, clean ($ROLLBACK_DETAIL)"
 gh_never_writes; check $? "rollback never merges"
-grep -qE 'xargs[^|]* -r' "$SUT" && no "SUT uses GNU-only xargs -r" || ok "no GNU-only xargs -r in the SUT"
+grep -qE 'xargs +(-[a-zA-Z0-9]+ +)*-r( |$)' "$SUT" && no "SUT uses GNU-only xargs -r" || ok "no GNU-only xargs -r in the SUT"
 
 # ---- mutation controls ---------------------------------------------------------------------------
 # build_mutant <dir> <sed-expr> <must-appear> — copies every sibling script, seds the SUT; 0 = built
