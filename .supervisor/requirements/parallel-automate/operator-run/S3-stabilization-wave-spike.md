@@ -741,6 +741,18 @@ teardown, machine (load, swap, free) at peak.
   here earlier today only because the margin is ~0.15 s. s3-i reached the same "fails on clean main" observation.
   Fix (follow-up, outside the wave's files): bound the wait by wall clock (`date +%s` / `SECONDS`, or a deadline).
 
+### Wave PR #424 (`wave/s3w3` → `main`, v15.125.0) — drain READY round 0
+- Bump `d3d0701` last (15.124.0 → 15.125.0, minor, 4 fragments folded; `capabilities.json` `plugin_version` regenerated
+  by #412's new bump step). Branch pushed, PR #424 opened ~13:55Z, bound to this session.
+- Drain (`/loomwright:review-pr … --until-mergeable`, inline, scratch clone on the PR head, installed 15.124.0 scripts):
+  ledger 0/5; `wait-for-checks` SETTLED on `d3d0701` (`ci` green, review-producing settled); all channels read —
+  0 formal reviews, 0 threads, 1 issue comment: claude[bot] "Reviewed `d3d0701`: no new findings" (it verified both
+  integration fixes and the release commit; `execution: none`); no `review_producing_checks[]` user list, so check
+  output is context only; `trusted-actors.json` absent ⇒ classifier fell back to `bot_author_re`. 0 findings validated,
+  0 dismissed, 0 rejected; rules gate `none`; earned fallback NOT earned (a review lens posted). **READY, converged,
+  round 0, 0 fix cycles** — the claude-review ran on a PR that edits `ci.yml` (narrowed skip rule confirmed again).
+- Owner merges with "Create a merge commit" (branch protection: 1 approving review + `ci`).
+
 ## Done when
 All items in the queue merged or closed by the owner — as of 2026-10-07 after the tail restructure, 13 open items: wave 3 ms/07 · af/31 · af/33 · hc/01; wave 4 pa/05 · hc/02; then pa/22 split, pa/21 fleet operations ∥ pa/14, af/34, af/36 S3 engine fixes, pa/18, pa/07 last (Milestone B) — plus hc/03 done directly after hc/01 + hc/02 (done earlier in S3: af/32, ms/08, ms/04, pa/09, pa/19, ms/11, pa/11, pa/16, agnostic/04), each wave's records on `loomwright-meta`, lanes torn down with `leaks`
 empty, the measures above recorded in this file, and P2 (default lane count) revisited with S2 + S3 evidence.
