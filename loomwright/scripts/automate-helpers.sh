@@ -40,6 +40,7 @@
 #   progress-append  <runfile_path> <line>             # §3 append-only ## Progress (never rewrites prior lines); refuses a file with no "# Automate Run:" title; exit 3 + `current_not_set: <line>` on stderr (line still appended) when a `picked `/`ran /autonomous`/`owned drain started` line meets a null ## Current item, or `picked <X>` meets a different non-done item
 #   queue-checkoff   <runfile_path> <item> [reason] [mark]  # §3/§5 flip - [ ] -> - [x] (optional "# <skipped|abandoned>: reason"; mark default skipped); refuses a file with no title
 #   current-set      <runfile_path> [--item <path|null> --status <s|null>] [--pr <url|null>] [--branch <b|null>] [--pause-reason <r>]  # §3 the ONLY writer of ## Current's item/pause_reason lines: item form (both --item/--status; null only both-null) or run-level form (--pause-reason only); enum-validated; a changed --item resets an omitted pr/branch to null; refusal = exit 1, file byte-unchanged; identical values ⇒ `current-set: unchanged`
+#   current-escalation <runfile_path> --cause <c> [--check <c> --run-id <id> --attempt <n> --sha <sha>]  # automate-followups/31: the ONLY writer of ## Current's `- escalation_cause: <cause> | check: … | run_id: … | attempt: … | sha: …` line (after `- pause_reason:`, else at the end of the block; replaced if present; `--cause null` removes it); cause enum check_pending|check_red_unrelated|check_red|findings|other|null; an omitted field is `null`; refusal (unknown cause, `|`/newline, non-numeric run id/attempt) = exit 1, file byte-unchanged; identical values ⇒ `current-escalation: unchanged`
 #   current-rebuild  <runfile_path>                     # §4 RECONCILE repair: ## Current item null/absent — or `done` and not the LAST picked item — + a `picked` Progress line ⇒ item from the LAST picked line (must be a Queue row), pr ONLY from a later `ran /autonomous` line, branch via one gh pr view; always status running; one `current_rebuilt: … state <s>` line (printed + appended); set and not done (or done = the last picked item) ⇒ `skipped — ## Current set`
 #   remaining        <runfile_path>                     # §3 count of "- [ ]" lines only
 #   ceiling-check    <runfile_path> <max_tokens> [--root <checkout>]  # §6 PICK-time token-ceiling check via read-token-ledger.sh --run-id; prints OK/PARK, always exits 0
@@ -50,6 +51,7 @@
 #   gate-eval        <pr_url> <ctx.json>                # §10 MERGE|PARK fail-closed trusted-merge gate (conditions enumerated in skills/automate-loop/SKILL.md §10; cond 6 = classify-risk.sh high_risk, cond 7 = rules-gate-verdict.sh, NO override)
 #   learning-emit    <ledger_path> <flags...>           # §6 step 3 fail-safe (always exit 0) engine-native ground-truth POSTMORTEM_RESULT line; idempotent on run_id+item+pr_url+source+completeness (a degraded emit never blocks a later complete one)
 #   brief-repair     <item> <pr_url>                    # §6 steps 1/5 fail-safe (always exit 0) evidence-positive brief lifecycle repair: `gh pr view` says MERGED (or a non-empty mergedAt) ⇒ sibling reconcile-jobs.sh --repair --evidence <item>=<pr_url>; prints ONE line for ## Progress
+#   escalation-cause <pr_url> --sha <sha>              # automate-followups/31: fail-SAFE READ-ONLY classifier (always exit 0) of why a drain ESCALATED — one `escalation_cause: <check_pending|check_red_unrelated|check_red|other> check=<name|null> run_id=<id|null> attempt=<n|null> sha=<sha>` line from a `wait-for-checks.sh --bound 0 --names` snapshot; red is examined before pending; check_red_unrelated only when every failed step of every red check ran nothing but plain `bash <path>/test-*.sh` commands whose test files and tested `<stem>.sh` are all outside the PR's changed files (full rule: the automate-helpers.d/escalation.sh header); every unreadable case ⇒ check_red (fail CLOSED); never reruns, merges, pushes or approves
 #   reconcile-status <requirements_root> [--apply]      # queue-hygiene/01: dry-run-default requirement `## Status:` reconciler — a `pending`/absent-status *.md under <requirements_root> (skips `00-*`, `_*`, `README*`, `operator-run/`) whose PR is MERGED (state via reconcile-item) and whose body cites the file's repo-relative path, OR whose head branch matches the slug on its `.supervisor/jobs/done/` brief (never the engine's own `chore/<run_id>-trail-<n>` PR, never a PR whose changed files are ALL under `.supervisor/`, and never a body citation from a PR whose own diff adds or modifies that requirement file; an unreadable or incomplete diff is no evidence), is stamped the §6 shape byte-for-byte; a `.supervisor/automate/*.md` Queue row carrying `# abandoned:` and naming a requirement stamps `done_with_escalation — ABANDONED (<row verbatim>)`; NEVER downgrades an existing `done`/`done_with_escalation`; prints one `plan\t…` row per file it WOULD stamp (or `stamped\t…` under `--apply`) plus one `info\t…` row per `brief-shipped` file (never promoted); writes nothing without `--apply`.
 #   sidecar-check    <path>                             # §6 trail: delegated to automate-trail.sh — `ok <path>` / `fail <path>: <reason>` (RESULT_SCHEMAS key-table shape check of a result sidecar); always exits 0
 #   trail-pr         <runfile> [--reason <reason>]      # §6 "Trail PR after merge and at run end": delegated to automate-trail.sh — called only by closeout, at ## Status: done, and on a skip/abandon check-off (never at a park); commits this run's explicit trail paths as ONE PR off fresh origin/main, a done-stamped requirement/done brief only when its PR reads merged; one line (opened|pushed|skipped); always exits 0
@@ -69,7 +71,7 @@
 #
 # Exit codes: 0 success; 1 generic failure; 2 abort (malformed pre-existing config, §7);
 # 3 progress-append's `current_not_set` guard (the line WAS appended; ## Current was never set).
-# (learning-emit, brief-repair, reconcile-status, meta-entry and meta-push-failed are the fail-SAFE
+# (learning-emit, brief-repair, reconcile-status, escalation-cause, meta-entry and meta-push-failed are the fail-SAFE
 # exceptions: they ALWAYS exit 0 — never die/abort; meta-entry's verdict line carries the outcome.)
 #
 # TEST SEAM (tests only — never set it in a real run): LOOMWRIGHT_META_SYNC_BIN names the meta-sync
@@ -965,6 +967,9 @@ _ah_source learning
 # >>> automate-helpers.d/reconcile-status.sh
 _ah_source reconcile-status
 # <<< automate-helpers.d/reconcile-status.sh
+# >>> automate-helpers.d/escalation.sh
+_ah_source escalation
+# <<< automate-helpers.d/escalation.sh
 # --------------------------------------------------------------------------- #
 # dispatch
 # --------------------------------------------------------------------------- #
@@ -986,6 +991,8 @@ main() {
     queue-checkoff)  queue_checkoff "$@" ;;
     current-set)     current_set "$@" ;;
     current-rebuild) current_rebuild "$@" ;;
+    current-escalation) current_escalation "$@" ;;
+    escalation-cause) escalation_cause "$@" ;;
     closeout-classify) closeout_classify "$@" ;;
     remaining)       remaining "$@" ;;
     ceiling-check)   ceiling_check "$@" ;;

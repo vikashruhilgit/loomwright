@@ -24,7 +24,8 @@
 #
 # USAGE
 #   wait-for-checks.sh <pr_url> --sha <sha> --bound <seconds> \
-#       [--interval <s>] [--required-only | --review-check-pattern <glob>]
+#       [--interval <s>] [--required-only | --review-check-pattern <glob>] \
+#       [--names]
 #
 #   <pr_url>       the PR being waited on (any bare positional argument).
 #   --sha <sha>    the commit the caller is waiting for. A rollup reported
@@ -46,6 +47,20 @@
 #                  §U2.5's scoped wait). Default when NEITHER flag is passed:
 #                  `*review*,claude*` (skills/review-heal/SKILL.md's own
 #                  documented default).
+#   --names        OPT-IN (automate-followups/31). Appends two trailing fields
+#                  to the ONE output line, covering the SAME scoped set
+#                  (required ∪ review-producing, or required only):
+#                    pending_names=<comma-list|none>  every scoped check not
+#                      yet completed — required checks INCLUDED (today's
+#                      `pending=` lists review-pattern checks only), and a
+#                      required context absent from the rollup counts as
+#                      pending; `sha_mismatch` when the rollup's sha differs.
+#                    red_names=<name@run_id,...|none>  every scoped check
+#                      completed non-success/non-neutral/non-skipped; run_id
+#                      parsed from `detailsUrl` with the `/actions/runs/(N)/`
+#                      regex skills/review-heal/SKILL.md §U4 uses, `-` absent.
+#                  WITHOUT the flag the output line is byte-unchanged. Consumer:
+#                  `automate-helpers.sh escalation-cause`.
 #
 # CONTRACT
 #   - Foreground and BLOCKING. This script NEVER backgrounds itself — that is
@@ -94,6 +109,7 @@ INTERVAL="15"
 REQUIRED_ONLY=0
 REVIEW_PATTERN=""
 HAVE_PATTERN=0
+NAMES=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -111,6 +127,8 @@ while [ $# -gt 0 ]; do
       INTERVAL="${1#--interval=}"; shift ;;
     --required-only)
       REQUIRED_ONLY=1; shift ;;
+    --names)
+      NAMES=1; shift ;;
     --review-check-pattern)
       REVIEW_PATTERN="${2:-}"; HAVE_PATTERN=1; shift; [ $# -gt 0 ] && shift ;;
     --review-check-pattern=*)
@@ -222,6 +240,71 @@ if [ -n "$OWNER" ] && [ -n "$REPO" ]; then
   fi
 fi
 
+# compute_names — (--names only) fill names_pending / names_red over the
+# scoped set: required contexts (by exact name) ∪ review-pattern matches
+# (unless --required-only). A required context ABSENT from the rollup is
+# pending (not yet materialized for this sha — never read as green).
+names_pending=""
+names_red=""
+compute_names() {
+  local _n _st _sta _con _url _req _up_st _up_sta _up_con _rid _in _nrows _missing _g
+  names_pending=""
+  names_red=""
+  _nrows="$(printf '%s' "$rollup" | "$JQ_BIN" -r --argjson req "$required_contexts_json" '
+    .[] | (.name // .context // "") as $n
+    | [ $n, (.status // ""), (.state // ""), (.conclusion // ""),
+        (.detailsUrl // .targetUrl // ""),
+        (if ($req | index($n)) != null then "1" else "0" end) ] | join("\u001f")
+  ' 2>/dev/null || true)"
+  # \x1f, not a tab: IFS whitespace (tab) would COLLAPSE empty fields and shift columns.
+  while IFS=$'\x1f' read -r _n _st _sta _con _url _req; do
+    [ -n "$_n" ] || continue
+    _in=0
+    [ "$_req" = "1" ] && _in=1
+    if [ "$_in" -eq 0 ] && [ "$REQUIRED_ONLY" -eq 0 ] && review_pattern_match "$_n" "$REVIEW_PATTERN"; then
+      _in=1
+    fi
+    [ "$_in" -eq 1 ] || continue
+    _up_st="$(printf '%s' "$_st" | tr '[:lower:]' '[:upper:]')"
+    _up_sta="$(printf '%s' "$_sta" | tr '[:lower:]' '[:upper:]')"
+    _up_con="$(printf '%s' "$_con" | tr '[:lower:]' '[:upper:]')"
+    if [ "$_up_st" = "QUEUED" ] || [ "$_up_st" = "IN_PROGRESS" ] || [ "$_up_sta" = "PENDING" ] \
+       || { [ -z "$_up_st$_up_sta$_up_con" ]; }; then
+      names_pending="${names_pending:+$names_pending,}$_n"
+      continue
+    fi
+    # green only when EACH field is exactly a green value (or empty) and one is
+    # set — never a prefix of the concatenation (`SUCCESS`+`FAILURE` is red)
+    case "$_up_con" in ''|SUCCESS|NEUTRAL|SKIPPED) _g=1 ;; *) _g=0 ;; esac
+    case "$_up_sta" in ''|SUCCESS) ;; *) _g=0 ;; esac
+    [ -n "$_up_con$_up_sta" ] || _g=0
+    if [ "$_g" -eq 0 ]; then
+        _rid="$(printf '%s' "$_url" | sed -nE 's#.*/actions/runs/([0-9]+)/.*#\1#p')"
+        [ -n "$_rid" ] || _rid="-"
+        names_red="${names_red:+$names_red,}$_n@$_rid"
+    fi
+  done <<EOF_NROWS
+$_nrows
+EOF_NROWS
+  # Required contexts absent from the rollup entirely => pending.
+  _missing="$(printf '%s' "$rollup" | "$JQ_BIN" -r --argjson req "$required_contexts_json" '
+    [ .[] | (.name // .context // "") ] as $have | $req[] as $r | select(($have | index($r)) == null) | $r
+  ' 2>/dev/null || true)"
+  while IFS= read -r _n; do
+    [ -n "$_n" ] || continue
+    names_pending="${names_pending:+$names_pending,}$_n"
+  done <<EOF_NMISS
+$_missing
+EOF_NMISS
+}
+
+# names_suffix — the trailing ` pending_names=… red_names=…` fields, or ""
+# when --names was not passed (default output byte-unchanged).
+names_suffix() {
+  [ "$NAMES" -eq 1 ] || return 0
+  printf ' pending_names=%s red_names=%s' "${names_pending:-none}" "${names_red:-none}"
+}
+
 # ---- Bounded, foreground poll loop (§U2.5 + confirming-pass, mechanized) ----
 SECONDS=0   # bash builtin wall-clock counter — reset here so $SECONDS is the
             # elapsed time since THIS script started, never a `date`-diff
@@ -296,16 +379,19 @@ EOF_STATS
 $_rows_tsv
 EOF_ROWS
     fi
+    [ "$NAMES" -eq 1 ] && compute_names
   else
     # Unknown/mismatched sha — never settled. Surface it plainly.
     pending_names="sha_mismatch"
+    names_pending="sha_mismatch"
+    names_red=""
   fi
 
   if [ "$required_settled" -eq 1 ] && [ "$rp_settled" -eq 1 ]; then
     _req_field="red"
     [ "$required_green" -eq 1 ] && _req_field="green"
     [ "$protection_unknown" -eq 1 ] && _req_field="unknown"
-    printf 'SETTLED sha=%s required=%s review_producing=settled\n' "$SHA" "$_req_field"
+    printf 'SETTLED sha=%s required=%s review_producing=settled%s\n' "$SHA" "$_req_field" "$(names_suffix)"
     exit 0
   fi
 
@@ -319,7 +405,7 @@ EOF_ROWS
     _rp_field="elapsed"
     [ "$rp_settled" -eq 1 ] && _rp_field="settled"
     [ -n "$pending_names" ] || pending_names="none"
-    printf 'ELAPSED sha=%s required=%s review_producing=%s pending=%s\n' "$SHA" "$_req_field" "$_rp_field" "$pending_names"
+    printf 'ELAPSED sha=%s required=%s review_producing=%s pending=%s%s\n' "$SHA" "$_req_field" "$_rp_field" "$pending_names" "$(names_suffix)"
     exit 0
   fi
 
