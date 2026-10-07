@@ -703,6 +703,23 @@ teardown, machine (load, swap, free) at peak.
   Rollback fix, new `operator-run/M2-carry-learning-stores.md`) exist only in lane s3-h's `.supervisor/` — carry them
   to the real `loomwright-meta` at closeout (they are managed paths).
 
+### Merge checks — #415 (af/31, lane s3-i, parked `awaiting_merge` 13:13Z, head `d95303c`)
+- `ci` + `claude-review` success on `d95303c`; claude[bot]'s last review is on `d95303c`. Dismissed findings all decided
+  (owner: 2 follow-up — check names with spaces, the watcher's per-poll `statusCheckRollup` read; 4 drop — already
+  fixed on the branch, `9047e06` / `bc47a2e` / `d95303c` verified ancestors; LOW summary kept). Owner Scope-3/4
+  decisions recorded in the item. The lane met a `test-ci-slot.sh` failure and compared it against `origin/main`.
+- **Operator check of a "Not verified" item:** the real `gh` JSON shapes the new watcher code parses, read on #415's
+  own runs — `gh run view --json attempt,status,conclusion,headSha` ⇒ `attempt` numeric, `headSha` full sha, lowercase
+  status/conclusion; `commits/<sha>/check-runs` ⇒ `name/status/conclusion/started_at/details_url` with
+  `/runs/<id>` capturable; `statusCheckRollup` CheckRun entries carry `status`/`conclusion`, NO `state` key (the code's
+  non-`state` branch). All match. Still not verified: a live escalated drain / park on a real pending or unrelated-red
+  check (post-merge owner check, requirement Validation 3).
+- Minor drift (follow-up, not a blocker): `agents/review-pr.md` and `commands/review-pr.md` restate the v1
+  REVIEW_HEAL_RESULT block without the new optional `escalation_*` fields; both name the skill as the authority.
+- Scope: 22 files, 8 outside af/31's `## Touches` — a NEW family file `automate-helpers.d/escalation.sh` (pa/22's Touches
+  lists 8 family files: add it at the post-merge re-point), `automate-trail.sh`, `TELEMETRY.md` (shared with #410), and
+  5 replay fixtures under `fixtures/escalation-cause/`.
+
 ## Done when
 All items in the queue merged or closed by the owner — as of 2026-10-07 after the tail restructure, 13 open items: wave 3 ms/07 · af/31 · af/33 · hc/01; wave 4 pa/05 · hc/02; then pa/22 split, pa/21 fleet operations ∥ pa/14, af/34, af/36 S3 engine fixes, pa/18, pa/07 last (Milestone B) — plus hc/03 done directly after hc/01 + hc/02 (done earlier in S3: af/32, ms/08, ms/04, pa/09, pa/19, ms/11, pa/11, pa/16, agnostic/04), each wave's records on `loomwright-meta`, lanes torn down with `leaks`
 empty, the measures above recorded in this file, and P2 (default lane count) revisited with S2 + S3 evidence.
