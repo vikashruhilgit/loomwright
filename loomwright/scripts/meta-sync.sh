@@ -10,7 +10,23 @@
 #   meta-sync.sh pull   [--branch <name> [--allow-branch-mismatch]] [--root <checkout>]
 #   meta-sync.sh push   [--branch <name> [--allow-branch-mismatch]] [--root <checkout>] [--paths-from <file>] [--message <m>]
 #   meta-sync.sh status [--branch <name> [--allow-branch-mismatch]] [--root <checkout>]
+#   meta-sync.sh scrub  --paths-from <file> [--root <checkout>]
+#   meta-sync.sh list-managed [--tracked] [--root <checkout>]
 #   meta-sync.sh -h | --help
+#
+#   scrub         a DRY RUN of push's scrub over the files listed in --paths-from (read from the
+#                 working tree under --root; required). One stderr line per hit (`scrub-hit`, see
+#                 SCRUB below); exit 2 on any hit, 0 when clean (`meta_sync: clean (<n> file(s)
+#                 scanned)` on stdout), 1 on a usage error. Writes nothing, takes no lock, fetches
+#                 nothing.
+#   list-managed  print every path the managed-set predicate (is_managed) accepts, one per line,
+#                 LC_ALL=C-sorted, exit 0. Default: the local working folder, enumerated exactly as
+#                 pull / push enumerate it (so it fails closed — exit 1 — on the same symlink /
+#                 unsearchable-root / newline-name hazards). --tracked: the paths `git ls-files`
+#                 lists instead (the index). Writes nothing, takes no lock, fetches nothing.
+#   scrub and list-managed need NO branch: they skip the mode / branch check below (so they work in
+#   a checkout whose mode reads `unknown`), and --branch / --allow-branch-mismatch given to them is
+#   a usage error (exit 1) — never silently accepted and ignored.
 #
 #   --branch      metadata branch on `origin`. Default: the branch the checkout's MODE LINE names,
 #                 read through the sibling `setup-memory.sh --root <root> mode` (the ONE mode-line
@@ -20,8 +36,9 @@
 #                 `meta_sync: mode_unknown — <reason>; nothing was changed` (fail closed).
 #                 Given explicitly, it must AGREE with the mode: `on Y` with Y != <name> => exit 1
 #                 `meta_sync: branch_mismatch` naming both; `off` => <name> is used; `unknown` =>
-#                 exit 1 `mode_unknown`. The check runs for every subcommand, right after the root
-#                 is resolved and BEFORE any lock, fetch or write (nothing is changed on a refusal).
+#                 exit 1 `mode_unknown`. The check runs for init, pull, push and status (never for
+#                 scrub / list-managed), right after the root is resolved and BEFORE any lock, fetch
+#                 or write (nothing is changed on a refusal).
 #   --allow-branch-mismatch
 #                 use the given --branch even when the mode line disagrees or reads `unknown` (the
 #                 mode is then not consulted). Without --branch it is a usage error (exit 1).
@@ -30,8 +47,10 @@
 #                 "resolve root" block run-lock.sh uses)
 #   --paths-from  push only the managed paths listed in <file> (one repo-relative path per line;
 #                 blank and `#` lines ignored; unlisted or non-managed paths are never pushed).
-#                 push ONLY: given to init / pull / status it is a usage error (exit 1, nothing
-#                 changed) — never silently accepted and ignored
+#                 For scrub: the files to scan (same format; every listed path is scanned, managed
+#                 or not). push and scrub ONLY: given to init / pull / status / list-managed it is a
+#                 usage error (exit 1, nothing changed) — never silently accepted and ignored
+#   --tracked     list-managed ONLY (a usage error elsewhere): list from `git ls-files`
 #   --message     commit message for the metadata-branch commit
 #
 # MANAGED SET — the ONE declared list (is_managed below); everything else is invisible to this script:
@@ -169,13 +188,24 @@
 # up to META_SYNC_LOCK_WAIT_SECS (default 120), then exit 1 `locked`, nothing changed. A live
 # lock is released only by its holder, on every exit path (EXIT trap; HUP/INT/TERM exit through
 # it). Residual assumption: a pid is not recycled while its dead lock is being reclaimed.
-# `status` and `init` take no lock: status reads meta-base (always replaced by an atomic rename)
-# and writes nothing shared; all scratch state (index files, temp files) is per-run.
+# `status`, `init`, `scrub` and `list-managed` take no lock: status reads meta-base (always
+# replaced by an atomic rename), scrub and list-managed read only the working tree / index, and
+# none writes anything shared; all scratch state (index files, temp files) is per-run.
 #
-# SCRUB (push only, fail CLOSED: exit 2, branch and meta-base unchanged). EVERY file being added or
+# SCRUB (push, fail CLOSED: exit 2, branch and meta-base unchanged; also the `scrub` dry run, below). EVERY file being added or
 # changed is scanned before deciding and EVERY hit is named in one run, one line per hit:
 #   `meta_sync: scrub <path>: <rule>` — so a caller can build a --paths-from exclusion list from it
 #   (no other output line starts with `meta_sync: scrub `; the final summary starts `meta_sync: aborted`).
+#   The `scrub` SUBCOMMAND (a dry run over --paths-from, working-tree files) runs the SAME rule table
+#   through the same scan_file — the hit/no-hit decision is the same grep push runs — and names
+#   each hit on stderr with a NEW prefix, so the push line above stays byte-for-byte:
+#     `meta_sync: scrub-hit <path>:<line>: <rule>`
+#   <line> is the first matching 1-based line for the line-based rules (email, home_path, token_*,
+#   deny_pattern:<n>) and a literal `-` for the whole-file rules (forge_slug, ledger_repo,
+#   ledger_unverifiable…, unreadable — a listed path that is missing or not a readable regular file
+#   —, scan_error(<rule>), deny_pattern_invalid:<n>). `meta_sync: scrub-hit` does not start with
+#   `meta_sync: scrub ` (a hyphen, not a space), so a parser of push's line never sees it. The
+#   summary on a hit starts `meta_sync: aborted`; exit 2.
 #   (a) ledger: every results.jsonl record's `.repo` must be in the repo allowlist resolved by the
 #       sibling setup-memory.sh (`allowlist`); a missing/unparseable `.repo` is a hit;
 #   (b) prose, portable POSIX ERE only (no GNU-only escapes — on BSD grep those would silently match
@@ -224,7 +254,8 @@
 #
 # EXIT: 0 ok / no_changes; 1 conflict, no_remote_branch, fetch failure, init refusal, exhausted push
 # retries, tree_guard, locked, not_a_file, newline_in_path, branch_mismatch, mode_unknown,
-# base_branch_mismatch, a meta-base that is not a regular file, usage error; 2 scrub hit. `init`
+# base_branch_mismatch, a meta-base that is not a regular file, usage error, a list-managed
+# enumeration refusal; 2 scrub hit (push and scrub). `init`
 # is the ONLY command that may create the branch (an empty orphan commit); it refuses when the
 # branch already exists.
 #
@@ -243,6 +274,7 @@ ALLOW_MISMATCH=0
 ROOT=""
 PATHS_FROM=""
 PATHS_FROM_SET=0
+TRACKED=0
 MESSAGE="meta-sync: run history"
 MAX_ATTEMPTS=5
 LEDGER_PATH=".supervisor/postmortem/results.jsonl"
@@ -262,22 +294,34 @@ need_val() { [ "$2" -ge 2 ] || die "usage: $1 requires a value (try --help)"; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    init|pull|push|status)
+    init|pull|push|status|scrub|list-managed)
       [ -z "$SUBCMD" ] || die "usage: more than one subcommand given"
       SUBCMD="$1"; shift ;;
     --branch)     need_val "$1" "$#"; BRANCH="$2"; BRANCH_SET=1; shift 2 ;;
     --allow-branch-mismatch) ALLOW_MISMATCH=1; shift ;;
     --root)       need_val "$1" "$#"; ROOT="$2"; shift 2 ;;
     --paths-from) need_val "$1" "$#"; PATHS_FROM="$2"; PATHS_FROM_SET=1; shift 2 ;;
+    --tracked)    TRACKED=1; shift ;;
     --message)    need_val "$1" "$#"; MESSAGE="$2"; shift 2 ;;
     -h|--help)    usage ;;
     *) die "usage: unknown argument '$1' (try --help)" ;;
   esac
 done
-[ -n "$SUBCMD" ] || die "usage: a subcommand is required: init | pull | push | status (try --help)"
-# --paths-from restricts a PUSH; pull never reads it, so accepting it elsewhere would be a silent no-op.
-[ "$PATHS_FROM_SET" = "0" ] || [ "$SUBCMD" = "push" ] \
-  || die "usage: --paths-from applies to push only, not '$SUBCMD'; nothing was changed (try --help)"
+[ -n "$SUBCMD" ] || die "usage: a subcommand is required: init | pull | push | status | scrub | list-managed (try --help)"
+# --paths-from restricts a PUSH and names what a SCRUB scans; nothing else reads it, so accepting it
+# elsewhere would be a silent no-op.
+[ "$PATHS_FROM_SET" = "0" ] || [ "$SUBCMD" = "push" ] || [ "$SUBCMD" = "scrub" ] \
+  || die "usage: --paths-from applies to push and scrub only, not '$SUBCMD'; nothing was changed (try --help)"
+[ "$SUBCMD" != "scrub" ] || [ "$PATHS_FROM_SET" = "1" ] \
+  || die "usage: scrub requires --paths-from <file> (the files to scan); nothing was changed (try --help)"
+[ "$TRACKED" = "0" ] || [ "$SUBCMD" = "list-managed" ] \
+  || die "usage: --tracked applies to list-managed only, not '$SUBCMD'; nothing was changed (try --help)"
+# scrub and list-managed need no branch and skip the mode / branch check, so a --branch given to
+# them could only be silently ignored.
+NEEDS_BRANCH=1
+case "$SUBCMD" in scrub|list-managed) NEEDS_BRANCH=0 ;; esac
+[ "$NEEDS_BRANCH" = "1" ] || { [ "$BRANCH_SET" = "0" ] && [ "$ALLOW_MISMATCH" = "0" ]; } \
+  || die "usage: --branch / --allow-branch-mismatch do not apply to '$SUBCMD' (it needs no branch); nothing was changed (try --help)"
 # --allow-branch-mismatch only qualifies an explicit --branch; alone it would be a silent no-op.
 [ "$ALLOW_MISMATCH" = "0" ] || [ "$BRANCH_SET" = "1" ] \
   || die "usage: --allow-branch-mismatch requires --branch <name>; nothing was changed (try --help)"
@@ -329,7 +373,8 @@ read_branch_mode() {
   esac
 }
 # --branch X --allow-branch-mismatch is the explicit override: the mode is not consulted.
-if [ "$BRANCH_SET" = "0" ] || [ "$ALLOW_MISMATCH" = "0" ]; then
+# scrub / list-managed (NEEDS_BRANCH=0) skip this whole block, including the ref-format check.
+if [ "$NEEDS_BRANCH" = "1" ] && { [ "$BRANCH_SET" = "0" ] || [ "$ALLOW_MISMATCH" = "0" ]; }; then
   read_branch_mode
   case "$MODE_STATE" in
     on)
@@ -343,7 +388,8 @@ if [ "$BRANCH_SET" = "0" ] || [ "$ALLOW_MISMATCH" = "0" ]; then
   [ "$BRANCH_SET" = "1" ] || [ "$MODE_STATE" != "on" ] || BRANCH="$MODE_BRANCH"
 fi
 # Validated AFTER the final choice, so a branch named by the mode line is checked too.
-git check-ref-format "refs/heads/$BRANCH" 2>/dev/null || die "usage: invalid branch name '$BRANCH'"
+[ "$NEEDS_BRANCH" = "0" ] || git check-ref-format "refs/heads/$BRANCH" 2>/dev/null \
+  || die "usage: invalid branch name '$BRANCH'"
 
 META_BASE="$GITDIR/meta-base"
 LOCK_DIR="$GITDIR/meta-sync.lock"
@@ -859,9 +905,34 @@ load_allowlist() {
 
 RESERVED_OWNERS=' about apps blog collections contact enterprise events explore features issues login logout marketplace new notifications organizations orgs pricing pulls readme search security settings site sponsors topics trending users '
 
-# scan_file <file> <path> — prints `meta_sync: scrub <path>: <rule>` per hit; returns 1 when any hit.
+# scrub_report <path> <rule> <line|-> <with-line:0|1> — ONE hit line: push's `meta_sync: scrub
+# <path>: <rule>` (with-line 0, byte-for-byte the pre-existing contract) or the scrub subcommand's
+# `meta_sync: scrub-hit <path>:<line>: <rule>` (with-line 1).
+scrub_report() {
+  if [ "$4" = "1" ]; then echo "meta_sync: scrub-hit $1:$3: $2"; else echo "meta_sync: scrub $1: $2"; fi
+}
+
+# first_match_line <i|s> <ERE> <file> — the 1-based number of the first line matching <ERE> (i = any
+# letter case), or `-` when none can be read back. Only ever called AFTER the -q decision grep
+# matched, so it never decides a hit — it only locates one. -a: a NUL byte would otherwise make grep
+# print "Binary file … matches" instead of a numbered line; only the number leaves the pipe.
+first_match_line() {
+  local n
+  if [ "$1" = "i" ]; then
+    n="$(env LC_ALL=C grep -a -i -n -m 1 -E -e "$2" "$3" 2>/dev/null | cut -d: -f1)"
+  else
+    n="$(env LC_ALL=C grep -a -n -m 1 -E -e "$2" "$3" 2>/dev/null | cut -d: -f1)"
+  fi
+  case "$n" in ''|*[!0-9]*) n="-" ;; esac
+  printf '%s' "$n"
+}
+
+# scan_file <file> <path> [with-line:0|1] — prints one hit line per hit (scrub_report: push's
+# `meta_sync: scrub <path>: <rule>` by default; with-line 1 = the scrub subcommand's `scrub-hit`
+# line carrying the first matching line, `-` for whole-file rules); returns 1 when any hit. The
+# hit/no-hit DECISION is the same `grep -q` in both modes — with-line only adds the line lookup.
 scan_file() {
-  local f="$1" p="$2" hits=0 L='(^|[^A-Za-z0-9_])' rule re rc icase
+  local f="$1" p="$2" wl="${3:-0}" hits=0 L='(^|[^A-Za-z0-9_])' rule re rc icase ln
   # rule<TAB>case(i = any letter case, s = exact)<TAB>ERE
   while IFS="$TAB" read -r rule icase re; do
     if [ "$icase" = "i" ]; then
@@ -869,8 +940,10 @@ scan_file() {
     else
       env LC_ALL=C grep -E -q -e "$re" "$f" 2>/dev/null; rc=$?
     fi
-    if [ "$rc" -eq 0 ]; then echo "meta_sync: scrub $p: $rule"; hits=1
-    elif [ "$rc" -gt 1 ]; then echo "meta_sync: scrub $p: scan_error($rule)"; hits=1
+    if [ "$rc" -eq 0 ]; then
+      ln="-"; [ "$wl" = "1" ] && ln="$(first_match_line "$icase" "$re" "$f")"
+      scrub_report "$p" "$rule" "$ln" "$wl"; hits=1
+    elif [ "$rc" -gt 1 ]; then scrub_report "$p" "scan_error($rule)" - "$wl"; hits=1
     fi
   done <<EOF
 email${TAB}i${TAB}[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}
@@ -901,7 +974,7 @@ EOF
     case "${s#*/}" in *[!.]*) : ;; *) continue ;; esac
     grep -F -x -q -e "$s" "$ALLOW_FILE" 2>/dev/null || { bad=1; break; }
   done < "$slugs"
-  [ "$bad" -eq 1 ] && { echo "meta_sync: scrub $p: forge_slug"; hits=1; }
+  [ "$bad" -eq 1 ] && { scrub_report "$p" forge_slug - "$wl"; hits=1; }
   # project deny patterns — tracked DATA, handed to grep -E, never executed.
   if [ -f "$ROOT/$DENY_CONFIG" ]; then
     local n=0 pat
@@ -910,8 +983,10 @@ EOF
       pat="${pat%$'\r'}"
       case "$pat" in ''|'#'*) continue ;; esac
       env LC_ALL=C grep -E -q -e "$pat" "$f" 2>/dev/null; rc=$?
-      if [ "$rc" -eq 0 ]; then echo "meta_sync: scrub $p: deny_pattern:$n"; hits=1
-      elif [ "$rc" -gt 1 ]; then echo "meta_sync: scrub $p: deny_pattern_invalid:$n"; hits=1
+      if [ "$rc" -eq 0 ]; then
+        ln="-"; [ "$wl" = "1" ] && ln="$(first_match_line s "$pat" "$f")"
+        scrub_report "$p" "deny_pattern:$n" "$ln" "$wl"; hits=1
+      elif [ "$rc" -gt 1 ]; then scrub_report "$p" "deny_pattern_invalid:$n" - "$wl"; hits=1
       fi
     done < "$ROOT/$DENY_CONFIG"
   fi
@@ -919,7 +994,7 @@ EOF
   if [ "$p" = "$LEDGER_PATH" ]; then
     local out
     if ! command -v jq >/dev/null 2>&1; then
-      echo "meta_sync: scrub $p: ledger_unverifiable(jq missing)"; hits=1
+      scrub_report "$p" "ledger_unverifiable(jq missing)" - "$wl"; hits=1
     else
       out="$(jq -R -r --arg allow "$(cat "$ALLOW_FILE")" '
               ($allow | split("\n") | map(select(length > 0))) as $a
@@ -928,8 +1003,8 @@ EOF
               | if ($o | type) == "object" and ($o.repo | type) == "string"
                    and (($o.repo | ascii_downcase) as $r | $a | any(.[]; . == $r))
                 then empty else "hit" end' "$f" 2>/dev/null)"; rc=$?
-      if [ "$rc" -ne 0 ]; then echo "meta_sync: scrub $p: ledger_unverifiable"; hits=1
-      elif [ -n "$out" ]; then echo "meta_sync: scrub $p: ledger_repo"; hits=1
+      if [ "$rc" -ne 0 ]; then scrub_report "$p" ledger_unverifiable - "$wl"; hits=1
+      elif [ -n "$out" ]; then scrub_report "$p" ledger_repo - "$wl"; hits=1
       fi
     fi
   fi
@@ -942,7 +1017,7 @@ scrub_candidates() {
   load_allowlist
   while IFS="$TAB" read -r p s; do
     [ -n "$p" ] || continue
-    g cat-file blob "$s" > "$WORK/scan.blob" 2>/dev/null || { echo "meta_sync: scrub $p: unreadable"; any=1; continue; }
+    g cat-file blob "$s" > "$WORK/scan.blob" 2>/dev/null || { scrub_report "$p" unreadable - 0; any=1; continue; }
     scan_file "$WORK/scan.blob" "$p" || any=1
   done < "$1"
   [ "$any" -eq 0 ]
@@ -1139,9 +1214,59 @@ cmd_status() {
   exit 0
 }
 
+# cmd_scrub — push's scrub as a DRY RUN over the --paths-from list (working-tree files under the
+# root; blank / `#` lines ignored, a leading `./` and a trailing CR stripped, duplicates scanned
+# once). Every listed path goes through the SAME scan_file (with-line mode); a path that is missing
+# or not a readable regular file is the `unreadable` hit, printed here. Hits go to stderr; exit 2
+# on any hit, 0 when clean. Writes nothing, takes no lock, needs no branch.
+cmd_scrub() {
+  local p n=0 bad=0 any
+  { [ -f "$PATHS_FROM" ] && [ -r "$PATHS_FROM" ]; } \
+    || die "usage: --paths-from '$PATHS_FROM' is not a readable file; nothing was scanned"
+  sed -e 's/\r$//' -e 's|^\./||' < "$PATHS_FROM" | awk 'NF && $0 !~ /^#/ && !seen[$0]++' > "$WORK/scrub.list" \
+    || die "could not read --paths-from '$PATHS_FROM'; nothing was scanned"
+  load_allowlist
+  while IFS= read -r p; do
+    n=$((n + 1)); any=0
+    if [ -f "$ROOT/$p" ] && [ -r "$ROOT/$p" ]; then
+      scan_file "$ROOT/$p" "$p" 1 >&2 || any=1
+    else
+      scrub_report "$p" unreadable - 1 >&2; any=1
+    fi
+    [ "$any" -eq 0 ] || bad=$((bad + 1))
+  done < "$WORK/scrub.list"
+  if [ "$bad" -gt 0 ]; then
+    warn "aborted — scrub hit(s) above in $bad of $n file(s); nothing was changed (clean or exclude the named paths before a push)"
+    exit 2
+  fi
+  say "clean ($n file(s) scanned)"
+}
+
+# cmd_list_managed — every path is_managed accepts, one per line, LC_ALL=C-sorted. Default: the
+# local working folder through list_local (the exact enumeration pull / push use, so its symlink,
+# unsearchable-root and newline-name refusals apply: exit 1). --tracked: `git ls-files` (the index)
+# under .supervisor/, read NUL-delimited (a newline name is refused, as everywhere else).
+cmd_list_managed() {
+  local p
+  if [ "$TRACKED" = "1" ]; then
+    g ls-files -z -- .supervisor > "$WORK/lm.z" 2>/dev/null \
+      || die "could not list the tracked files (git ls-files failed); nothing was changed"
+    no_newline_in "$WORK/lm.z" "the tracked files under .supervisor/" || exit 1
+    tr '\0' '\n' < "$WORK/lm.z" \
+      | while IFS= read -r p; do if is_managed "$p"; then printf '%s\n' "$p"; fi; done \
+      | env LC_ALL=C sort -u > "$WORK/lm.out" || die "could not filter the tracked files"
+  else
+    list_local "$WORK/lm.tsv" 0 || die "could not enumerate the local managed files; nothing was changed"
+    cut -f1 "$WORK/lm.tsv" > "$WORK/lm.out" || die "could not read the local managed-file list"
+  fi
+  cat "$WORK/lm.out"
+}
+
 case "$SUBCMD" in
   init)   cmd_init ;;
   pull)   acquire_lock; cmd_pull ;;
   push)   acquire_lock; cmd_push ;;
   status) cmd_status ;;
+  scrub)  cmd_scrub ;;
+  list-managed) cmd_list_managed ;;
 esac
