@@ -48,8 +48,8 @@
 #             `held for load: overloaded load1=<n>`; flipped to ok ⇒ the first is granted within one
 #             re-check, then the second. MUTATION CONTROL: drop the admission call ⇒ (G2) fails.
 #        (G3) a held caller still times out at --wait, ticket gone
-#        (G4) fail-SAFE: a reader answering unknown, exiting non-zero, printing garbage, hanging or
-#             missing grants exactly as ok (with a live holder present, so busy would have held)
+#        (G4) fail-SAFE: a reader answering unknown, exiting non-zero, printing garbage or missing
+#             grants exactly as ok (with a live holder present, so busy would have held)
 #        (G5) nested: an acquire whose --pid descends from a live machine holder folds into it —
 #             granted at once under busy AND overloaded, no second machine record (bypass (a))
 #        (G6) a caller whose machine-state-dir override points at another sandbox is isolated from
@@ -59,6 +59,17 @@
 #             and a hanging reader do not slow them
 #        (G9) no signal: code lines of ci-slot.sh and machine-load.sh send none (`kill -0` liveness
 #             probes only, no pkill / killall). MUTATION CONTROL: an injected `kill` is caught.
+#        (G10) a SLOW reader is not a broken one: one that answers overloaded after 6 s (past the 5 s
+#             wait) holds a caller while a live holder exists (read as busy meanwhile, then its own
+#             overloaded answer is taken: one reader run, the cached reading never 'unknown'); a
+#             hanging reader with an answered overloaded reading under 60 s old holds even with no
+#             holder; with that reading older than 60 s it reads busy and grants a sole caller.
+#             MUTATION CONTROL: a timed-out reader read as unknown ⇒ the slow-reader check fails.
+#        (G11) boot time: a holder record started before boot (fixture LOOMWRIGHT_MACHINE_BOOT_TIME)
+#             whose pid is now an ANCESTOR of the caller is dropped, not folded into (held under
+#             overloaded); one whose pid is an unrelated live process is dropped, not a phantom
+#             holder (granted under busy); an unreadable boot time keeps both (fail-SAFE, today's
+#             behaviour). MUTATION CONTROL: drop the boot-time prune ⇒ the fold check fails.
 # run-self-tests: serial
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -85,6 +96,7 @@ case "$m" in
   fail) echo "state=busy"; exit 3 ;;
   garbage) echo "%%% nonsense" ;;
   hang) sleep 8; echo "state=overloaded" ;;
+  slow) sleep 6; echo "load1=40.00"; echo "state=overloaded" ;;
   *) echo "load1=40.00"; echo "state=$m" ;;
 esac
 EOF
@@ -528,7 +540,7 @@ else no "(G3) rc=$rc out=[$out] ${el}s tickets=[$(ls "$d1/tickets")] err=$(cat "
 # (G4) fail-SAFE reader: a live holder is present, so a reader read as busy would hold the caller
 setload ok; at "$tmp/c1" -- acquire gx --pid "$gx" >/dev/null 2>&1
 fok=1
-for m in unknown fail garbage hang missing; do
+for m in unknown fail garbage missing; do
   live; gz=$LIVE; setload "$m"; cmd="$tmp/load.sh"; [ "$m" = missing ] && cmd="$tmp/no-such-reader.sh"
   t0=$(date +%s)
   out="$(cd "$tmp/lp" && XDG_STATE_HOME="$tmp/state2" LOOMWRIGHT_MACHINE_LOAD_CMD="$cmd" bash "$SUT" acquire gz --pid "$gz" --wait 10 2>/dev/null)"
@@ -536,7 +548,7 @@ for m in unknown fail garbage hang missing; do
   if [ -z "$out" ] || [ "$el" -gt 7 ]; then fok=0; no "(G4) reader '$m' was not read as ok: out=[$out] ${el}s"; fi
   lpat release --pid "$gz"
 done
-[ "$fok" -eq 1 ] && ok "(G4) a reader answering unknown / exiting 3 / printing garbage / hanging / missing grants as ok"
+[ "$fok" -eq 1 ] && ok "(G4) a reader answering unknown / exiting 3 / printing garbage / missing grants as ok"
 at "$tmp/c1" -- release --pid "$gx"
 
 # (G5) nested inside a live machine holder: folds, under busy and overloaded
@@ -602,6 +614,90 @@ if [ -s "$mut" ] && ! cmp -s "$mut" "$SUT" && bash -n "$mut"; then
   if [ -n "$(signals "$mut")" ]; then ok "(G9) MUTATION CONTROL: an injected kill is caught"
   else no "(G9) MUTATION CONTROL: an injected kill was not caught — (G9) proves nothing"; fi
 else no "(G9) MUTATION CONTROL: mutant not built (empty, unchanged or invalid)"; fi
+
+# (G10) a slow reader is not read as unknown
+slow_held() {   # slow_held SUT — exit 0 iff a 6 s overloaded reader holds a caller beside a live holder
+  local s="$1" h c rc out n
+  GWHY=""
+  cat > "$tmp/load-slow.sh" <<'EOS'
+echo start >> "$(dirname "$0")/g10.n"; sleep 6; echo end >> "$(dirname "$0")/g10.n"; echo "load1=40.00"; echo "state=overloaded"
+EOS
+  setload ok; live; h=$LIVE; at "$tmp/c1" -- acquire g10h --pid "$h" >/dev/null 2>&1
+  rm -f "$MDIR/load" "$tmp/g10.n"   # no answered reading to stand in: the slow reader alone decides
+  live; c=$LIVE
+  # RECHECK 30: after the slow answer is taken no fresh reader starts inside this --wait.
+  out="$(cd "$tmp/lp" && XDG_STATE_HOME="$tmp/state2" LOOMWRIGHT_MACHINE_LOAD_CMD="$tmp/load-slow.sh" \
+    LOOMWRIGHT_MACHINE_LOAD_RECHECK=30 bash "$s" acquire g10c --pid "$c" --wait 9 2>"$tmp/g10.err")"; rc=$?
+  n="$(paste -sd' ' "$tmp/g10.n" 2>/dev/null)"
+  if [ "$rc" != 1 ] || [ -n "$out" ]; then GWHY="granted: rc=$rc out=[$out]"
+  elif ! grep -q "held for load: busy load1=unknown (reader still running after 5s) (1 machine-wide holder(s))" "$tmp/g10.err"; then GWHY="not held as busy while the reader ran: $(cat "$tmp/g10.err")"
+  elif ! grep -q "held for load: overloaded load1=40.00" "$tmp/g10.err"; then GWHY="the slow reader's own answer was never taken: $(cat "$tmp/g10.err")"
+  elif [ "$n" != "start end" ]; then GWHY="want one reader run start to end, got [$n]"
+  elif [ "$(cut -d' ' -f2- "$MDIR/load" 2>/dev/null)" != "overloaded 40.00" ]; then GWHY="cached reading [$(cat "$MDIR/load" 2>/dev/null)], want 'overloaded 40.00'"
+  fi
+  at "$tmp/c1" -- release --pid "$h"; lpat release --pid "$c"
+  [ -z "$GWHY" ]
+}
+if slow_held "$SUT"; then ok "(G10) a reader answering overloaded after 6 s holds the caller (busy meanwhile, then its own answer; one reader run)"
+else no "(G10) $GWHY"; fi
+mut="$tmp/mut-slow.sh"
+sed 's/then load_timed_out "\$t"; return 0; fi   # SLOW$/then LOAD_STATE=unknown; LOAD1=unknown; LOAD_AT="$t"; RP=""; return 0; fi/' "$SUT" > "$mut"
+if [ -s "$mut" ] && ! cmp -s "$mut" "$SUT" && bash -n "$mut"; then
+  if slow_held "$mut"; then no "(G10) MUTATION CONTROL: with a timed-out reader read as unknown the caller was still held — (G10) proves nothing"
+  else ok "(G10) MUTATION CONTROL: a timed-out reader read as unknown fails (G10) ($GWHY)"; fi
+else no "(G10) MUTATION CONTROL: mutant not built (empty, unchanged or invalid)"; fi
+# A hanging reader: a fresh answered reading stands in; a stale one does not (busy, sole caller granted).
+setload hang; live; c=$LIVE
+echo "$(date +%s) overloaded 40.00" > "$MDIR/load"
+out="$(lpat acquire g10f --pid "$c" --wait 2 2>"$tmp/g10.err")"; rc=$?
+if [ "$rc" = 1 ] && [ -z "$out" ] && grep -q "held for load: overloaded load1=40.00" "$tmp/g10.err"; then
+  ok "(G10) a hanging reader with an answered overloaded reading under 60 s old holds a caller with no other holder"
+else no "(G10) fresh stand-in: rc=$rc out=[$out] err=$(cat "$tmp/g10.err")"; fi
+echo "$(( $(date +%s) - 61 )) overloaded 40.00" > "$MDIR/load"
+out="$(lpat acquire g10f --pid "$c" --wait 2 2>/dev/null)"
+if [ -n "$out" ] && [ "$(cut -d' ' -f2- "$MDIR/load")" = "overloaded 40.00" ]; then
+  ok "(G10) with that reading 61 s old a hanging reader reads busy: a sole caller is granted, the cache untouched"
+else no "(G10) stale stand-in: out=[$out] cache=[$(cat "$MDIR/load")]"; fi
+lpat release --pid "$c"; setload ok
+
+# (G11) records from before this boot are dropped, never counted or folded into
+boot_ok() {   # boot_ok SUT — exit 0 iff every (G11) property holds; GWHY says which failed
+  local s="$1" c u out rc
+  GWHY=""; rm -f "$MDIR/holders/"*
+  live; c=$LIVE; live; u=$LIVE
+  # The test shell ($$) is the parent of --pid $c: a record naming it is an ancestor record.
+  printf '%s\n%s\n%s\n%s\n%s\n' "$$" "$tmp/c1" old-outer 1700000000 "$d1" > "$MDIR/holders/$$"
+  setload overloaded
+  out="$(cd "$tmp/lp" && XDG_STATE_HOME="$tmp/state2" LOOMWRIGHT_MACHINE_BOOT_TIME=1700000100 bash "$s" acquire g11 --pid "$c" --wait 2 2>/dev/null)"; rc=$?
+  if [ "$rc" != 1 ] || [ -n "$out" ]; then GWHY="folded into a pre-boot ancestor record: rc=$rc out=[$out]"
+  elif [ -e "$MDIR/holders/$$" ]; then GWHY="the pre-boot ancestor record was kept"
+  fi
+  lpat release --pid "$c"; rm -f "$MDIR/holders/"*
+  if [ -z "$GWHY" ]; then
+    printf '%s\n%s\n%s\n%s\n%s\n' "$u" "$tmp/c1" old-other 1700000000 "$d1" > "$MDIR/holders/$u"
+    setload busy
+    out="$(cd "$tmp/lp" && XDG_STATE_HOME="$tmp/state2" LOOMWRIGHT_MACHINE_BOOT_TIME=1700000100 bash "$s" acquire g11 --pid "$c" --wait 2 2>/dev/null)"
+    if [ -z "$out" ] || [ -e "$MDIR/holders/$u" ]; then GWHY="a pre-boot record with a live unrelated pid held the caller under busy: out=[$out]"; fi
+    lpat release --pid "$c"; rm -f "$MDIR/holders/"*
+  fi
+  if [ -z "$GWHY" ]; then
+    printf '%s\n%s\n%s\n%s\n%s\n' "$u" "$tmp/c1" old-other 1700000000 "$d1" > "$MDIR/holders/$u"
+    out="$(cd "$tmp/lp" && XDG_STATE_HOME="$tmp/state2" LOOMWRIGHT_MACHINE_BOOT_TIME=garbage bash "$s" acquire g11 --pid "$c" --wait 1 2>/dev/null)"; rc=$?
+    if [ "$rc" != 1 ] || [ ! -e "$MDIR/holders/$u" ]; then GWHY="unreadable boot time did not keep the record: rc=$rc out=[$out]"; fi
+    lpat release --pid "$c"; rm -f "$MDIR/holders/"*
+  fi
+  for p in $c $u; do kill "$p" 2>/dev/null; wait "$p" 2>/dev/null; done
+  setload ok
+  [ -z "$GWHY" ]
+}
+if boot_ok "$SUT"; then ok "(G11) pre-boot holder records are dropped (no false fold under overloaded, no phantom under busy); unreadable boot time keeps them"
+else no "(G11) $GWHY"; fi
+mut="$tmp/mut-boot.sh"
+grep -v '# BOOT$' "$SUT" > "$mut"
+if [ -s "$mut" ] && ! cmp -s "$mut" "$SUT" && bash -n "$mut"; then
+  if boot_ok "$mut"; then no "(G11) MUTATION CONTROL: without the boot-time prune (G11) still passed — it proves nothing"
+  else ok "(G11) MUTATION CONTROL: without the boot-time prune (G11) fails ($GWHY)"; fi
+else no "(G11) MUTATION CONTROL: mutant not built (empty, unchanged or invalid)"; fi
 
 echo
 echo "test-ci-slot: $pass passed, $fail failed"

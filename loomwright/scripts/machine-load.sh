@@ -10,10 +10,11 @@
 #        machine-load.sh --help   this header
 #
 # STATE            ok | busy | overloaded | unknown — the worst of the load verdict and the memory
-#                  verdict. A component that cannot be read is `unknown`; the state is `unknown` when
-#                  nothing readable says busy/overloaded (a readable "overloaded" is never hidden
-#                  behind an unreadable neighbour). Every caller treats `unknown` as `ok` (fail-SAFE:
-#                  a broken reader never stalls a lane).
+#                  verdict. A component that cannot be read is `unknown`. state=unknown only when no
+#                  readable component says busy/overloaded; a readable busy/overloaded wins over an
+#                  unreadable neighbour (and a readable `ok` beside an unreadable one is `unknown`).
+#                  Every caller treats `unknown` as `ok` (fail-SAFE: a broken reader never stalls a
+#                  lane).
 # LOAD             per CPU, not absolute: load1 >= BUSY x CPUs ⇒ busy, load1 >= OVERLOADED x CPUs ⇒
 #                  overloaded. Defaults 2 and 3 (24 / 36 on 12 CPUs); LOOMWRIGHT_LOAD_BUSY /
 #                  LOOMWRIGHT_LOAD_OVERLOADED override them (per-CPU multipliers, decimals allowed; a

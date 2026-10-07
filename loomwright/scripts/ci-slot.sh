@@ -58,8 +58,12 @@
 #                  held caller keeps its ticket and its place), the caller reads machine-load.sh:
 #                  `overloaded` ⇒ held (nothing machine-wide is granted); `busy` ⇒ granted only while
 #                  no other machine-wide holder is live; `ok` and `unknown` ⇒ granted (fail-SAFE: a
-#                  reader that exits non-zero, prints garbage, is missing or answers nothing within
-#                  5 s reads as `unknown`, so a broken reader never stalls a lane). The reading is
+#                  reader that exits non-zero, prints garbage or is missing reads as `unknown`, so a
+#                  broken reader never stalls a lane). A reader still running after 5 s is not broken
+#                  but slow — what deep overload looks like — so it is never read as `unknown`: until
+#                  it answers, the last answered reading stands in when it is ok/busy/overloaded and
+#                  under 60 s old, else `busy`. It is never signalled, no second reader starts while
+#                  it runs, and its answer is used on the next poll after it ends. The reading is
 #                  refreshed every LOOMWRIGHT_MACHINE_LOAD_RECHECK s (default 15); the holder count is
 #                  re-read every poll. Holders are listed in ONE machine state dir shared by every
 #                  repo key and every XDG_STATE_HOME: LOOMWRIGHT_MACHINE_STATE_DIR, default
@@ -67,7 +71,11 @@
 #                  reading). So a clone with a local-path origin keeps its own repo pool but joins the
 #                  machine count. A caller whose --pid descends from a live machine holder (an outer
 #                  ci-local.sh running the self-tests that call acquire again) FOLDS into it: granted
-#                  at any machine state, no second holder recorded. A self-test that sets
+#                  at any machine state, no second holder recorded. A holder record whose start epoch
+#                  predates this boot (kern.boottime / /proc/stat btime; LOOMWRIGHT_MACHINE_BOOT_TIME
+#                  overrides it, for tests) is dropped before it is counted or folded into: records
+#                  survive the hard reboot a freeze forces, and their pids then name unrelated
+#                  processes. Unreadable boot time ⇒ nothing dropped. A self-test that sets
 #                  LOOMWRIGHT_MACHINE_STATE_DIR to a sandbox is isolated from the real list by design;
 #                  one that sets neither is an ordinary caller and counts once. LOOMWRIGHT_MACHINE_
 #                  LOAD_CMD names another reader script (tests). `status` shows a held waiter as
@@ -76,10 +84,13 @@
 #                  mutex or run its reader. Lock order is always repo mutex, then machine mutex.
 #
 # Honest limits: (1) pid reuse — a recycled pid makes a dead holder look alive until it exits too
-# (start time is recorded for humans, not checked). (2) `kill -0` on another user's pid fails, so a
-# slot held by another user looks stale. (3) two processes taking over the same dead mutex in the
-# same instant can both enter it; the post-`mkdir` re-count still keeps N, only ticket order can be
-# off for that one claim. (4) mixed N trades strict order for liveness: a waiter with a SMALLER N
+# (a slot's start time is recorded for humans, not checked). The machine list and the nested-holder
+# fold check a record's start only against boot time, so a record written THIS boot whose pid was
+# recycled still counts as a holder, and still folds a caller that descends from the new owner; a
+# wall-clock step shortly after boot can also move boot time past a record written just before it.
+# (2) `kill -0` on another user's pid fails, so a slot held by another user looks stale. (3) two
+# processes taking over the same dead mutex in the same instant can both enter it; the post-`mkdir`
+# re-count still keeps N, only ticket order can be off for that one claim. (4) mixed N trades strict order for liveness: a waiter with a SMALLER N
 # than the others is passed while the live count is at its cap, and waits until the load drops below
 # its N. Use one LOOMWRIGHT_CI_SLOTS value everywhere for strict first-come order. (5) a checkout on
 # an earlier commit of this helper (a `mutex/` dir lock and an index scan over 1..N) does not take
@@ -182,29 +193,51 @@ link_unlock() { [ "$(readlink "$1" 2>/dev/null)" = "$$" ] && rm -f "$1"; return 
 
 # --- MACHINE GATE ------------------------------------------------------------------------------------
 # read_load — refresh LOAD_STATE / LOAD1 when the cached reading is older than RECHECK. Never under a
-# mutex. The reader runs in the background and is waited for at most 5 s; one that is still running is
-# left alone (never signalled) and reads as unknown.
+# mutex. The reader runs in the background and is waited for at most 5 s. One still running then is
+# left alone (never signalled) and NOT read as unknown: a slow reader is what deep overload looks like.
+# load_timed_out stands in for it, no second reader starts while it runs, and its answer is taken on
+# the first call after it ends. Only an answered reading is written to $MD/load (a rename, so a reader
+# outside the mutex never sees a half line); a stand-in never refreshes the cache's age.
 read_load() {
-  local t f rp i rc out st l
+  local t i rc out st l
   t="$(now)"
-  [ -n "$LOAD_AT" ] && [ $((t - LOAD_AT)) -lt "$RECHECK" ] && return 0
-  f="$MD/.reading.$$"
-  [ -d "$MD" ] || f="${TMPDIR:-/tmp}/ci-slot-reading.$$"
-  LOOMWRIGHT_CI_CPUS="$CPUS" bash "$LOAD_CMD" > "$f" 2>/dev/null &
-  rp=$!; i=0
-  while alive "$rp" && [ "$i" -lt 100 ]; do sleep 0.05; i=$((i + 1)); done
-  if alive "$rp"; then rc=124; out=""
-  else wait "$rp"; rc=$?; out="$(cat "$f" 2>/dev/null)"; fi
-  rm -f "$f"
+  if [ -n "$RP" ]; then
+    if alive "$RP"; then load_timed_out "$t"; return 0; fi
+    wait "$RP"; rc=$?
+  else
+    [ -n "$LOAD_AT" ] && [ $((t - LOAD_AT)) -lt "$RECHECK" ] && return 0
+    RF="$MD/.reading.$$"
+    [ -d "$MD" ] || RF="${TMPDIR:-/tmp}/ci-slot-reading.$$"
+    LOOMWRIGHT_CI_CPUS="$CPUS" bash "$LOAD_CMD" > "$RF" 2>/dev/null &
+    RP=$!; i=0
+    while alive "$RP" && [ "$i" -lt 100 ]; do sleep 0.05; i=$((i + 1)); done
+    if alive "$RP"; then load_timed_out "$t"; return 0; fi   # SLOW
+    wait "$RP"; rc=$?
+  fi
+  out="$(cat "$RF" 2>/dev/null)"; rm -f "$RF"; RP=""; RF=""
   st="$(printf '%s\n' "$out" | sed -n 's/^state=//p' | head -n 1)"
   l="$(printf '%s\n' "$out" | sed -n 's/^load1=//p' | head -n 1)"
   case "$st" in ok|busy|overloaded|unknown) ;; *) st=unknown ;; esac
   [ "$rc" -eq 0 ] || st=unknown
   case "$l" in ''|*[!0-9.]*) l=unknown ;; esac
   LOAD_STATE="$st"; LOAD1="$l"; LOAD_AT="$t"
-  [ -d "$MD" ] && printf '%s %s %s\n' "$t" "$st" "$l" > "$MD/load" 2>/dev/null
+  [ -d "$MD" ] && printf '%s %s %s\n' "$t" "$st" "$l" > "$MD/load.$$" 2>/dev/null && mv "$MD/load.$$" "$MD/load"
+  rm -f "$MD/load.$$"
   return 0
 }
+
+# load_timed_out T — the reading while a reader is still running: the last answered machine-wide
+# reading when it is ok/busy/overloaded and under LOAD_STALE s old, else busy (one holder at most).
+load_timed_out() {
+  set -- "$1" $(cat "$MD/load" 2>/dev/null)
+  if is_uint "${2:-}" && [ "$1" -ge "$2" ] && [ $(( $1 - $2 )) -lt "$LOAD_STALE" ]; then
+    case "${3:-}" in ok|busy|overloaded) LOAD_STATE="$3"; LOAD1="${4:-unknown}"; return 0 ;; esac
+  fi
+  LOAD_STATE=busy; LOAD1="unknown (reader still running after 5s)"
+}
+# drop_reading — at exit: unlink a timed-out reader's output file (the reader itself is left running)
+# and a cache write cut short by a signal.
+drop_reading() { [ -n "$RF" ] && rm -f "$RF"; rm -f "$MD/load.$$"; return 0; }
 
 # ancestry PID — " PID ppid ppid… " up to init: a live machine holder in it means we are nested.
 # ONE `ps` for the whole walk (a per-level `ps` cost seconds on a loaded machine, past a short --wait).
@@ -219,13 +252,35 @@ need_ancestry() {
   return 0
 }
 
+# boot_epoch — the kernel's boot time (epoch s) into BOOT, read once; empty when unreadable.
+# LOOMWRIGHT_MACHINE_BOOT_TIME, when set, replaces the OS reading (tests; a non-number = unreadable).
+boot_epoch() {
+  local b
+  [ "$BOOT_READ" -eq 1 ] && return 0
+  BOOT_READ=1
+  if [ -n "${LOOMWRIGHT_MACHINE_BOOT_TIME+x}" ]; then b="$LOOMWRIGHT_MACHINE_BOOT_TIME"
+  elif [ -r /proc/stat ]; then b="$(awk '$1 == "btime" { print $2; exit }' /proc/stat 2>/dev/null)"
+  else b="$(sysctl -n kern.boottime 2>/dev/null | sed -n 's/^{ *sec *= *\([0-9][0-9]*\).*/\1/p')"; fi
+  is_uint "$b" && BOOT="$((10#$b))"
+  return 0
+}
+
 # machine_holders — under the machine mutex: MH = count of LIVE holders (dead records removed);
 # NESTED_IN = the holder pid our --pid descends from, if any. Runs in this shell, never `$(...)`.
+# A record whose start epoch predates this boot is dropped before its pid is even looked at: that
+# pid belongs to a process of this boot that never wrote it (a holder from before a hard reboot),
+# and trusting it would make a phantom holder or a false fold. Unreadable boot time ⇒ no pruning.
+# Records are written only under this mutex, so the read-then-remove cannot drop a fresh rewrite.
 machine_holders() {
-  local r p h=0
+  local r p s h=0
   NESTED_IN=""
+  boot_epoch
   for r in "$MD"/holders/*; do
     p="$(rec_field "$r" 1)"
+    if [ -n "$BOOT" ]; then
+      s="$(rec_field "$r" 4)"
+      if is_uint "$s" && [ "$((10#$s))" -lt "$BOOT" ]; then rm -f "$r"; continue; fi   # BOOT
+    fi
     if ! alive "$p"; then rm -f "$r"; continue; fi
     h=$((h + 1))
     case "$ANCESTRY" in *" $p "*) NESTED_IN="$p" ;; esac
@@ -426,7 +481,7 @@ cmd_acquire() {
   every="${LOOMWRIGHT_CI_SLOT_PRINT_EVERY:-30}"; is_uint "$every" || every=30; every=$((10#$every))
   while :; do
     # +1 s: a mutex held for milliseconds right at the deadline (or with --wait 0) is still waited out.
-    read_load; need_ancestry   # outside every mutex: a slow reader never holds anyone else up
+    read_load; need_ancestry; boot_epoch   # outside every mutex: a slow reader never holds anyone else up
     if mutex_lock $((deadline + 1)); then
       # Our ticket vanished or was overwritten (a writer outside this mutex): take a fresh one.
       if [ -z "$MY_TICKET" ] || [ "$(rec_field "$D/tickets/$MY_TICKET" 1)" != "$PID" ]; then
@@ -524,6 +579,7 @@ MLK="$MD/mutex.lnk"
 LOAD_CMD="${LOOMWRIGHT_MACHINE_LOAD_CMD:-$HERE/machine-load.sh}"
 RECHECK="${LOOMWRIGHT_MACHINE_LOAD_RECHECK:-15}"; is_uint "$RECHECK" || RECHECK=15; RECHECK=$((10#$RECHECK))
 LOAD_STATE=unknown; LOAD1=unknown; LOAD_AT=""; HELD=""; MACHINE_REC=""; NESTED_IN=""; MH=0; ANCESTRY=""
+RP=""; RF=""; LOAD_STALE=60; BOOT=""; BOOT_READ=0
 MACHINE_OK=0
 D=""
 state_dir
@@ -537,6 +593,7 @@ case "$CMD" in
     # A waiter leaving on INT/TERM removes its own ticket (and the mutex, if it was inside it).
     # A half-made claim (slot dir made, stdout not yet written) is undone too: the caller sees exit 1.
     trap 'drop_my_ticket; [ -n "$CLAIMING" ] && rm -rf "$CLAIMING"; drop_machine_rec; link_unlock "$MLK"; mutex_unlock; exit 1' INT TERM
+    trap 'drop_reading' EXIT
     # Only acquire creates the machine dir; a dir that cannot be made turns the gate off (fail-SAFE).
     if mkdir -p "$MD/holders" 2>/dev/null; then MACHINE_OK=1; else warn "machine gate off: cannot create $MD"; fi
     cmd_acquire ;;
