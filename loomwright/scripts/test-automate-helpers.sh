@@ -5319,6 +5319,46 @@ done
 grep -q 'unknown subcommand' "$LN_T/li.err" && ln_bad="$ln_bad lane-info-unrouted"
 if [ -z "$ln_bad" ] && [ "$ln_rc" -eq 1 ]; then ok "LANE dispatch: lane subcommands have help lines + exec arms to automate-lanes.sh; lane-info outside a lane exits 1"; else no "LANE dispatch wrong (lane-info rc=$ln_rc):$ln_bad"; fi
 rm -rf "$LN_T"
+echo "== LANEGUARD. parallel-automate/05 AC12: the lane guard is wired into the DEFAULT path (sequential PICK + new-run start), not only §14 =="
+LG_T="$(mktemp -d)"; mkdir -p "$LG_T/auto"
+run_h bash "$H" pick-guard "$LG_T/auto"
+if [ "$RUN_RC" -eq 0 ] && [ "$RUN_OUT" = "ok" ]; then ok "LANEGUARD pick-guard on a dir with no *.lanes table prints exactly 'ok', exit 0 (the no-flag path's output is unchanged)"; else no "LANEGUARD pick-guard no-table wrong (rc=$RUN_RC): '$RUN_OUT'"; fi
+# live_lane is a RUN-level pause_reason current-set accepts (run-level form: item line byte-unchanged).
+LG_RF="$LG_T/r.md"
+printf '# Automate Run: seq-1 — queue\n## Status: paused\n## Queue\n- [ ] a.md\n## Current\n- item: a.md | status: running | pr: null | branch: null\n- pause_reason: null\n\n## Progress\n- t0 run created\n' > "$LG_RF"
+lg_item0="$(grep '^- item: ' "$LG_RF")"
+run_h bash "$H" current-set "$LG_RF" --pause-reason live_lane
+if [ "$RUN_RC" -eq 0 ] && grep -qxF -- '- pause_reason: live_lane' "$LG_RF" && [ "$(grep '^- item: ' "$LG_RF")" = "$lg_item0" ]; then ok "LANEGUARD current-set accepts --pause-reason live_lane (run-level form, item line unchanged)"; else no "LANEGUARD current-set live_lane refused (rc=$RUN_RC): $(tr '\n' '|' < "$LG_RF")"; fi
+# Every enum copy carries live_lane (runfile.sh validator, SKILL §3 template, automate-run.md template).
+lg_bad=""
+grep -q '^CURRENT_PAUSE_ENUM=.* live_lane ' "$HERE/automate-helpers.d/runfile.sh" || lg_bad="$lg_bad runfile.sh"
+grep -q '^- pause_reason: .*|live_lane|null' "$SKILL_FILE" || lg_bad="$lg_bad SKILL§3"
+grep -q '^- pause_reason: .*|live_lane|null' "$HERE/../docs/result-schemas/automate-run.md" || lg_bad="$lg_bad automate-run.md"
+grep -qF -- '`meta_unreachable`, `closeout_leftover`, `live_lane` | `current-set <rf> --pause-reason <reason>`' "$SKILL_FILE" || lg_bad="$lg_bad SKILL-transition-table"
+if [ -z "$lg_bad" ]; then ok "LANEGUARD live_lane is in every pause_reason enum copy"; else no "LANEGUARD live_lane missing from:$lg_bad"; fi
+# Prose seams (same helper on the real SKILL and on a mutant, like G7): §6 step 1's PICK-time run-lock
+# paragraph runs pick-guard AFTER the acquire and parks live_lane with the lock released; §4's start
+# order runs init-check before meta-entry and pick-guard for a new run.
+lg_pick_seam() {  # <skill_path> — 0 when the PICK-time run-lock paragraph wires the lane guard after the acquire
+  local line; line="$(grep -F -- '**PICK-time run-lock acquire' "$1" | head -1)"
+  [ -n "$line" ] || return 1
+  case "$line" in *'run-lock.sh acquire'*'automate-helpers.sh pick-guard .supervisor/automate'*'--pause-reason live_lane'*'run-lock.sh release'*'no `trail-pr`'*) return 0 ;; *) return 1 ;; esac
+}
+lg_start_seam() {  # <skill_path> — 0 when §4's start order runs init-check first and pick-guard for a new run
+  local line; line="$(grep -F -- '**Start order (automate-followups/32):**' "$1" | head -1)"
+  [ -n "$line" ] || return 1
+  case "$line" in *'`init-check` (only when `--parallel` was passed) → `meta-entry`'*'`pick-guard` (a NEW run only, before §2'"'"'s intake)'*'automate-helpers.sh pick-guard .supervisor/automate'*) return 0 ;; *) return 1 ;; esac
+}
+lg_pick_seam "$SKILL_FILE" && ok "LANEGUARD prose seam: SKILL §6 step 1 PICK runs pick-guard after the run-lock acquire, parks live_lane, releases the lock, no trail-pr" || no "LANEGUARD §6 step 1 PICK does not wire pick-guard"
+lg_start_seam "$SKILL_FILE" && ok "LANEGUARD prose seam: SKILL §4 start order runs init-check first (with --parallel) and pick-guard before a new run's intake" || no "LANEGUARD §4 start order does not wire init-check/pick-guard"
+awk 'index($0,"**PICK-time run-lock acquire") {gsub(/pick-guard/,"guard_removed")} {print}' "$SKILL_FILE" > "$LG_T/no-pick.md"
+awk 'index($0,"**Start order (automate-followups/32):**") {gsub(/pick-guard/,"guard_removed")} {print}' "$SKILL_FILE" > "$LG_T/no-start.md"
+if ! cmp -s "$SKILL_FILE" "$LG_T/no-pick.md" && ! lg_pick_seam "$LG_T/no-pick.md" && lg_start_seam "$LG_T/no-pick.md"; then ok "LANEGUARD (mutant) pick-guard gone from §6 PICK only ⇒ PICK pin red, start pin green"; else no "LANEGUARD PICK mutant not discriminated"; fi
+if ! cmp -s "$SKILL_FILE" "$LG_T/no-start.md" && ! lg_start_seam "$LG_T/no-start.md" && lg_pick_seam "$LG_T/no-start.md"; then ok "LANEGUARD (mutant) pick-guard gone from §4 start only ⇒ start pin red, PICK pin green"; else no "LANEGUARD start mutant not discriminated"; fi
+# §14's intro no longer claims "no automate-lanes.sh call" without naming the pick-guard exception.
+lg_intro="$(grep -F -- '**Without the flag, or with N = 1, no lane code path is entered**' "$SKILL_FILE" | head -1)"
+case "$lg_intro" in *'except the read-only `pick-guard`'*) ok "LANEGUARD §14 intro names the pick-guard exception" ;; *) no "LANEGUARD §14 intro contradicts the default-path pick-guard: $lg_intro" ;; esac
+rm -rf "$LG_T"
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

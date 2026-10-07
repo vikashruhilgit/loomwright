@@ -151,7 +151,7 @@ _progress_current_guard() {
 # The documented enums (docs/RESULT_SCHEMAS.md §AUTOMATE_RUN "`## Current` fields";
 # SKILL §3 template). Space-delimited so a `case " $ENUM " in *" $v "*)` test is exact.
 CURRENT_STATUS_ENUM=" running awaiting_merge ready_for_release escalated failed rate_limit drain_died done "
-CURRENT_PAUSE_ENUM=" awaiting_merge ready_for_release awaiting_go escalated limit_reached resume_ambiguous rate_limit drain_died token_ceiling run_lock_held meta_unreachable trail_pr_open closeout_leftover null "
+CURRENT_PAUSE_ENUM=" awaiting_merge ready_for_release awaiting_go escalated limit_reached resume_ambiguous rate_limit drain_died token_ceiling run_lock_held meta_unreachable trail_pr_open closeout_leftover live_lane null "
 
 # _current_item_line <runfile> — the FIRST `- item: ` line inside `## Current`, or nothing.
 _current_item_line() {

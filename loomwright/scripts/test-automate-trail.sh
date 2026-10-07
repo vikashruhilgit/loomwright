@@ -645,6 +645,7 @@ no_trail_on() { # <regex identifying the park line> <label>
 no_trail_on '^   \*\*PICK-time token-ceiling check' "token_ceiling park"
 no_trail_on '^- \*\*Classified hit' "rate_limit park"
 no_trail_on '^   \*\*PICK-time trail gate' "trail_pr_open park"
+no_trail_on '^   \*\*PICK-time run-lock acquire' "live_lane park (PICK-time lane guard)"
 no_trail_on '^- \*\*Safe mode \(default\):' "§9 awaiting_merge park"
 no_trail_on '^\*\*`ESCALATED` never merges' "§9 escalated park"
 grep -qE '^On the \*\*`## Status: done`\*\* exit ONLY.*the `limit_reached` exit is a park and releases the lock without a trail' "$SKILL" && ok "Termination limit_reached: no trail-pr at this park" || no "Termination limit_reached still trails"
@@ -660,6 +661,7 @@ nopark="${when#*No park calls it:\*\*}"
 for pr in awaiting_merge escalated rate_limit drain_died token_ceiling trail_pr_open limit_reached run_lock_held resume_ambiguous; do
   grep -qF -- "\`$pr\`" <<<"$nopark" && ok "no-park list names $pr" || no "no-park list missing $pr"
 done
+grep -qF -- '`live_lane`' <<<"$nopark" && ok "no-park list names live_lane" || no "no-park list missing live_lane"
 grep -qF -- '- **Evidence-gated stamps' <<<"$sect" && ok "trail section documents the evidence gate" || no "evidence-gate bullet missing"
 eg="$(grep -m1 -F -- '- **Evidence-gated stamps' <<<"$sect")"
 for t in '`is_done`' '`## Status: done_with_escalation — ABANDONED (- [x] <path>  # abandoned: <reason>)`' 'merely contains' '### Outcome' 'Outcomes Rubric' '`[]()<>`' '`; retracted <path>`' 'never stages a gate-excluded path' 'transient `gh pr view` failure'; do
