@@ -57,7 +57,12 @@
 #                  claim is granted (under the repo mutex, after the count and fairness checks, so a
 #                  held caller keeps its ticket and its place), the caller reads machine-load.sh:
 #                  `overloaded` ⇒ held (nothing machine-wide is granted); `busy` ⇒ granted only while
-#                  no other machine-wide holder is live; `ok` and `unknown` ⇒ granted (fail-SAFE: a
+#                  no other machine-wide holder is live. At EVERY state a caller also waits while the
+#                  jobs its live machine holders run plus its own exceed the CPUs (COMMITTED WORK — a
+#                  sole caller is always admitted): load1 lags a suite's ramp by about a minute, so
+#                  load alone admits a burst of close starts (12 CPUs, 6 jobs a slot ⇒ at most two
+#                  suites machine-wide). A holder record's 6th line is its jobs; a record without
+#                  one counts as the caller's. Otherwise `ok` and `unknown` ⇒ granted (fail-SAFE: a
 #                  reader that exits non-zero, prints garbage or is missing reads as `unknown`, so a
 #                  broken reader never stalls a lane). A reader still running after 5 s is not broken
 #                  but slow — what deep overload looks like — so it is never read as `unknown`: until
@@ -272,7 +277,7 @@ boot_epoch() {
 # and trusting it would make a phantom holder or a false fold. Unreadable boot time ⇒ no pruning.
 # Records are written only under this mutex, so the read-then-remove cannot drop a fresh rewrite.
 machine_holders() {
-  local r p s h=0
+  local r p s j h=0 mj=0
   NESTED_IN=""
   boot_epoch
   for r in "$MD"/holders/*; do
@@ -283,8 +288,11 @@ machine_holders() {
     fi
     if ! alive "$p"; then rm -f "$r"; continue; fi
     h=$((h + 1))
+    j="$(rec_field "$r" 6)"; is_uint "$j" && [ "$((10#$j))" -gt 0 ] || j="$JOBS"   # no 6th line: an older record
+    mj=$((mj + 10#$j))
     case "$ANCESTRY" in *" $p "*) NESTED_IN="$p" ;; esac
   done
+  MJ="$mj"
   MH="$h"
 }
 
@@ -302,8 +310,13 @@ machine_admit() {
     overloaded) HELD="held for load: overloaded load1=$LOAD1"; link_unlock "$MLK"; return 1 ;;
     busy) if [ "$h" -ge 1 ]; then HELD="held for load: busy load1=$LOAD1 ($h machine-wide holder(s))"; link_unlock "$MLK"; return 1; fi ;;
   esac
+  # COMMITTED WORK, at every load state: load1 lags a suite's ramp by about a minute, so suites that
+  # start close together all read `ok` (S3 wave 2: three started 30 s apart, all granted below load1
+  # 14, peak 63.6). A suite starts only while the jobs live holders already run plus its own fit the
+  # CPUs; a sole caller is always admitted, so one suite never waits on this.
+  if [ "$h" -ge 1 ] && [ $(( MJ + JOBS )) -gt "$CPUS" ]; then HELD="held for load: committed $MJ+$JOBS jobs > $CPUS CPUs ($h machine-wide holder(s))"; link_unlock "$MLK"; return 1; fi   # COMMIT
   MACHINE_REC="$MD/holders/$PID"
-  { rec; echo "$D"; } > "$MACHINE_REC" 2>/dev/null || MACHINE_REC=""
+  { rec; echo "$D"; echo "$JOBS"; } > "$MACHINE_REC" 2>/dev/null || MACHINE_REC=""
   link_unlock "$MLK"
   return 0
 }
@@ -319,7 +332,7 @@ set_held() {
   rm -f "$t.tmp.$$"
 }
 
-rec_field() { sed -n "${2}p" "$1" 2>/dev/null; }   # rec_field FILE LINE (1 pid 2 checkout 3 name 4 start)
+rec_field() { sed -n "${2}p" "$1" 2>/dev/null; }   # rec_field FILE LINE (1 pid 2 checkout 3 name 4 start; machine records: 5 repo dir 6 jobs)
 
 rec() { printf '%s\n%s\n%s\n%s\n' "$PID" "$CHECKOUT" "$NAME" "$(now)"; }
 write_rec() { rec > "$1"; }
@@ -578,7 +591,7 @@ MD="${LOOMWRIGHT_MACHINE_STATE_DIR:-$HOME/.local/state/loomwright/machine}"
 MLK="$MD/mutex.lnk"
 LOAD_CMD="${LOOMWRIGHT_MACHINE_LOAD_CMD:-$HERE/machine-load.sh}"
 RECHECK="${LOOMWRIGHT_MACHINE_LOAD_RECHECK:-15}"; is_uint "$RECHECK" || RECHECK=15; RECHECK=$((10#$RECHECK))
-LOAD_STATE=unknown; LOAD1=unknown; LOAD_AT=""; HELD=""; MACHINE_REC=""; NESTED_IN=""; MH=0; ANCESTRY=""
+LOAD_STATE=unknown; LOAD1=unknown; LOAD_AT=""; HELD=""; MACHINE_REC=""; NESTED_IN=""; MH=0; MJ=0; ANCESTRY=""
 RP=""; RF=""; LOAD_STALE=60; BOOT=""; BOOT_READ=0
 MACHINE_OK=0
 D=""

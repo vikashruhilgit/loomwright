@@ -70,6 +70,9 @@
 #             overloaded); one whose pid is an unrelated live process is dropped, not a phantom
 #             holder (granted under busy); an unreadable boot time keeps both (fail-SAFE, today's
 #             behaviour). MUTATION CONTROL: drop the boot-time prune ⇒ the fold check fails.
+#        (G12) committed work: at load ok, 12 CPUs / 2 slots (6 jobs a suite), three callers from
+#             three repo keys ⇒ two granted, the third held ("held for load: committed 12+6 jobs >
+#             12 CPUs") and granted once a holder releases. MUTATION CONTROL: drop the cap ⇒ fails.
 # run-self-tests: serial
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -239,6 +242,9 @@ at "$tmp/c1" -- release --pid "$h3"
 
 # --- (X) mixed N: claim by live count ---------------------------------------------------------------
 # Runs in solo2 (its own repo key), so the c1 pool above is untouched. Every wait is bounded.
+# Holders left live by the sections above stay in the machine list; clear it so the committed-work
+# cap (G12) does not count them against this repo-pool test.
+rm -rf "$MDIR/holders/"*
 ds="$(at "$tmp/solo2" -- dir)"
 nwait() {   # nwait N — poll (max 10 s) until status --json lists N waiters
   local i=0
@@ -578,6 +584,7 @@ if [ -n "$out" ] && [ "$(mrecs)" = 1 ] && [ -f "$tmp/machine-sb/holders/$gi" ]; 
   ok "(G6) a caller whose LOOMWRIGHT_MACHINE_STATE_DIR is another sandbox is isolated: granted under busy, this list untouched"
 else no "(G6) out=[$out] recs=$(mrecs) sb=[$(ls "$tmp/machine-sb/holders" 2>/dev/null)]"; fi
 lpat release --pid "$gi"
+rm -rf "$MDIR/holders/"*   # earlier live holders: two bare callers must fit the committed-work cap (G12)
 setload ok; live; gc=$LIVE; live; gc2=$LIVE
 n0="$(mrecs)"; at "$tmp/solo2" -- acquire gc --pid "$gc" >/dev/null 2>&1
 n1="$(mrecs)"; k="$(at "$tmp/solo2" -- acquire gc2 --pid "$gc2" 2>/dev/null)"; k="${k#slot=}"; k="${k%% *}"
@@ -622,6 +629,7 @@ slow_held() {   # slow_held SUT — exit 0 iff a 6 s overloaded reader holds a c
   cat > "$tmp/load-slow.sh" <<'EOS'
 echo start >> "$(dirname "$0")/g10.n"; sleep 6; echo end >> "$(dirname "$0")/g10.n"; echo "load1=40.00"; echo "state=overloaded"
 EOS
+  rm -rf "$MDIR/holders/"*   # exactly ONE machine holder (h): earlier live holders would trip the committed-work cap (G12)
   setload ok; live; h=$LIVE; at "$tmp/c1" -- acquire g10h --pid "$h" >/dev/null 2>&1
   rm -f "$MDIR/load" "$tmp/g10.n"   # no answered reading to stand in: the slow reader alone decides
   live; c=$LIVE
@@ -698,6 +706,39 @@ if [ -s "$mut" ] && ! cmp -s "$mut" "$SUT" && bash -n "$mut"; then
   if boot_ok "$mut"; then no "(G11) MUTATION CONTROL: without the boot-time prune (G11) still passed — it proves nothing"
   else ok "(G11) MUTATION CONTROL: without the boot-time prune (G11) fails ($GWHY)"; fi
 else no "(G11) MUTATION CONTROL: mutant not built (empty, unchanged or invalid)"; fi
+
+# (G12) committed work at load ok: 12 CPUs and 2 slots ⇒ 6 jobs a suite ⇒ two suites machine-wide.
+# Three callers from three repo keys (so no repo pool holds anyone): the third waits although the
+# reader says ok, and is granted once a holder releases. This is the S3 wave-2 burst (three suites
+# 30 s apart all read ok on a lagging load1 and drove it to 63.6).
+commit_ok() {   # commit_ok SUT — exit 0 iff (G12) holds; GWHY says which failed
+  local s="$1" a b c ao bo co rc
+  GWHY=""; setload ok; rm -rf "$MDIR/holders/"*
+  live; a=$LIVE; live; b=$LIVE; live; c=$LIVE
+  ao="$(cd "$tmp/c1" && LOOMWRIGHT_CI_CPUS=12 LOOMWRIGHT_CI_SLOTS=2 bash "$s" acquire ca --pid "$a" 2>/dev/null)"
+  bo="$(cd "$tmp/lp" && XDG_STATE_HOME="$tmp/state2" LOOMWRIGHT_CI_CPUS=12 LOOMWRIGHT_CI_SLOTS=2 bash "$s" acquire cb --pid "$b" 2>/dev/null)"
+  co="$(cd "$tmp/c3" && LOOMWRIGHT_CI_CPUS=12 LOOMWRIGHT_CI_SLOTS=2 bash "$s" acquire cc --pid "$c" --wait 1 2>"$tmp/g12.err")"; rc=$?
+  if [ -z "$ao" ] || [ -z "$bo" ]; then GWHY="first two not granted: a=[$ao] b=[$bo]"
+  elif [ "$rc" != 1 ] || [ -n "$co" ]; then GWHY="third granted at load ok: rc=$rc out=[$co]"
+  elif ! grep -q "held for load: committed 12+6 jobs > 12 CPUs (2 machine-wide holder(s))" "$tmp/g12.err"; then GWHY="no committed-work hold line: $(tr '\n' ' ' < "$tmp/g12.err")"
+  fi
+  (cd "$tmp/c1" && bash "$s" release --pid "$a") >/dev/null 2>&1
+  if [ -z "$GWHY" ]; then
+    co="$(cd "$tmp/c3" && LOOMWRIGHT_CI_CPUS=12 LOOMWRIGHT_CI_SLOTS=2 bash "$s" acquire cc --pid "$c" --wait 5 2>/dev/null)"
+    [ -n "$co" ] || GWHY="third not granted after a holder released"
+  fi
+  (cd "$tmp/lp" && XDG_STATE_HOME="$tmp/state2" bash "$s" release --pid "$b") >/dev/null 2>&1
+  (cd "$tmp/c3" && bash "$s" release --pid "$c") >/dev/null 2>&1
+  [ -z "$GWHY" ]
+}
+if commit_ok "$SUT"; then ok "(G12) committed work: at load ok a third suite (3 repo keys, 12 CPUs, 6 jobs each) waits, and starts when a holder releases"
+else no "(G12) $GWHY"; fi
+mut="$tmp/mut-commit.sh"
+grep -v '# COMMIT$' "$SUT" > "$mut"
+if [ -s "$mut" ] && ! cmp -s "$mut" "$SUT" && bash -n "$mut"; then
+  if commit_ok "$mut"; then no "(G12) MUTATION CONTROL: without the committed-work cap (G12) still passed — it proves nothing"
+  else ok "(G12) MUTATION CONTROL: without the committed-work cap (G12) fails ($GWHY)"; fi
+else no "(G12) MUTATION CONTROL: mutant not built (empty, unchanged or invalid)"; fi
 
 echo
 echo "test-ci-slot: $pass passed, $fail failed"
