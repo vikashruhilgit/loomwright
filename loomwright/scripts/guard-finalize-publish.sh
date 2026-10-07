@@ -40,8 +40,11 @@
 #   (iii) jq missing / payload unparseable                         -> deny guard_unavailable
 #   (iv)  no `git push` / `gh pr create` simple command anywhere in the command string -> allow.
 #         Backslash-newlines are joined; segments are cut on && || ; | & ( ) backticks and newlines
-#         (so `$(…)`, subshells, `cmd&` cut); words are read quote-aware (`"git"`, `-C "my dir"`,
-#         `X="a b"`); then skipped: VAR=x assignments, redirections, shell keywords (if/then/do/!/{),
+#         (so `$(…)`, subshells, `cmd&` cut) — but NOT on the `&` of a redirection operator (`2>&1`,
+#         `>&2`, `<&3`, `&>f`, `&>>f`, `>&-`), so `git 2>&1 push` stays one command; words are read
+#         quote-aware (`"git"`, `-C "my dir"`, `X="a b"`) and unquoted redirections are dropped
+#         whole, operator + fd + target, spaced or glued (`git >/dev/null push`, `git push>log`);
+#         then skipped: VAR=x assignments, shell keywords (if/then/do/!/{),
 #         wrapper words env/time/nohup/exec/sudo/doas/xargs/nice/timeout/command/builtin and their
 #         options; the program's basename is matched (`/usr/bin/git`); git/gh GLOBAL options before
 #         the subcommand are walked (`git --no-pager push`, `gh -R o/r pr create`); `bash|sh|zsh|dash|
@@ -56,7 +59,8 @@
 # as `git -c alias.p=push p`, a shell function); a script file (`bash publish.sh`, `make release`);
 # other wrappers (`ssh host git push`, `watch`, `parallel`, `caffeinate`, `script`, `env -S "…"`);
 # nesting deeper than 3; other publish channels (`gh api …/pulls -X POST`, `git send-pack`, `curl` to
-# the API, `hub`); a push from a detached linked worktree. Splitting inside quotes is deliberate and
+# the API, `hub`); a push from a detached linked worktree; a redirection whose target is itself a
+# command substitution (`git >"$(…)" push` is cut at `(`). Splitting inside quotes is deliberate and
 # deny-leaning: `git commit -m "a && git push"` is denied, `git commit -m "push it"` is not.
 #
 # WHICH PUBLISHES ARE GATED (decision): every push from the run's feature-branch checkout while
@@ -231,30 +235,80 @@ CMD="$(printf '%s' "$PAYLOAD" | jq -r '.tool_input.command // empty' 2>/dev/null
 # `sudo`, `xargs` …), and shells nest (`bash -c "git push"`, `$(git push)`); a regex that tolerates
 # only a named few silently allows the rest. Mirrors guard-test-integrity.sh's git-subcommand walk.
 
+# AMP stands in for an `&` that belongs to a redirection operator (`2>&1`, `>&2`, `<&3`, `&>f`,
+# `&>>f`, `>&-`): cmd_has_publish swaps it in BEFORE the segment split, so only a control-operator
+# `&` (background) cuts a segment, and tokenize below reads it back as part of the redirection.
+AMP=$'\001'
+RE_FD='^([0-9]+|[{][A-Za-z_][A-Za-z0-9_]*[}])$'
+
 # tokenize <segment> -> TOK: shell-ish words with quotes removed and quoted spaces kept, so
 # `"git"` -> git, `-C "my dir"` -> -C + `my dir`, `X="a b"` -> one assignment word. An unterminated
 # quote just ends at the segment end (segments are cut before quotes are read — see split below).
+# UNQUOTED redirections are dropped whole, wherever they sit and whether or not they are spaced:
+# the operator (`>` `>>` `<` `<<` `<<<` `<>` `>&` `<&` `&>` `&>>`), an fd word glued in front of it
+# (`2>`, `{fd}>`), and its target (`/dev/null`, `err.log`, the `1` of `2>&1`, the `-` of `>&-`).
+# So `git 2>&1 push`, `git >/dev/null push` and `git push>/dev/null` all read as `git push`.
 TOK=()
 tokenize() {
-  local s="$1" i=0 n="${#1}" c q="" w="" have=0
+  local s="$1" i=0 n="${#1}" c q="" w="" have=0 wq=0 drop=0 op nx
   TOK=()
   while [ "$i" -lt "$n" ]; do
     c="${s:$i:1}"
     if [ -n "$q" ]; then
       if [ "$c" = "$q" ]; then q=""
       elif [ "$q" = '"' ] && [ "$c" = '\' ]; then i=$((i + 1)); w="$w${s:$i:1}"
+      elif [ "$c" = "$AMP" ]; then w="$w&"
       else w="$w$c"; fi
     else
+      nx="${s:$((i + 1)):1}"
       case "$c" in
-        "'"|'"') q="$c"; have=1 ;;
-        '\') i=$((i + 1)); w="$w${s:$i:1}"; have=1 ;;
-        ' '|'	') [ "$have" = 1 ] && TOK[${#TOK[@]}]="$w"; w=""; have=0 ;;
+        "'"|'"') q="$c"; have=1; wq=1 ;;
+        '\') i=$((i + 1)); w="$w${s:$i:1}"; have=1; wq=1 ;;
+        ' '|'	')
+          if [ "$have" = 1 ]; then
+            if [ "$drop" = 1 ]; then drop=0; else TOK[${#TOK[@]}]="$w"; fi
+          fi
+          w=""; have=0; wq=0 ;;
+        '>'|'<'|"$AMP")
+          if [ "$c" = "$AMP" ] && [ "$nx" != '>' ]; then
+            w="$w&"; have=1             # an AMP not opening `&>`: keep it as a literal `&`
+          else
+            # a redirection: an unquoted fd word glued in front (`2`, `{fd}`) is dropped with it
+            if [ "$have" = 1 ] && [ "$wq" = 0 ] && [[ "$w" =~ $RE_FD ]] && [ "$drop" = 0 ]; then have=0; fi
+            if [ "$have" = 1 ]; then
+              if [ "$drop" = 1 ]; then drop=0; else TOK[${#TOK[@]}]="$w"; fi
+            fi
+            w=""; have=0; wq=0
+            # read the whole operator: any run of `<` `>` AMP (`>>`, `<<<`, `<>`, `>&`, `&>>` …)
+            op="$c"
+            while :; do
+              nx="${s:$((i + 1)):1}"
+              case "$nx" in
+                '>'|'<'|"$AMP") op="$op$nx"; i=$((i + 1)) ;;
+                *) break ;;
+              esac
+            done
+            drop=1                      # the next word is the redirection's target
+            if [ "${op%"$AMP"}" != "$op" ]; then
+              # dup/close (`>&1`, `<&3`, `>&-`, `>&3-`): an fd target is glued on; `>&file` (no
+              # digits) falls through to the next-word target like `&>file`
+              nx="${s:$((i + 1)):1}"
+              if [ "$nx" = '-' ]; then i=$((i + 1)); drop=0
+              else
+                while :; do
+                  nx="${s:$((i + 1)):1}"
+                  case "$nx" in [0-9]) i=$((i + 1)); drop=0 ;; *) break ;; esac
+                done
+                if [ "$drop" = 0 ] && [ "${s:$((i + 1)):1}" = '-' ]; then i=$((i + 1)); fi
+              fi
+            fi
+          fi ;;
         *) w="$w$c"; have=1 ;;
       esac
     fi
     i=$((i + 1))
   done
-  [ "$have" = 1 ] && TOK[${#TOK[@]}]="$w"
+  [ "$have" = 1 ] && [ "$drop" = 0 ] && TOK[${#TOK[@]}]="$w"
   return 0
 }
 
@@ -293,8 +347,7 @@ seg_is_publish() {
   while [ "$i" -lt "${#words[@]}" ]; do
     w="${words[$i]}"
     case "$w" in
-      '>'|'>>'|'<'|[0-9]'>'|[0-9]'>>'|[0-9]'<'|'&>') i=$((i + 2)); continue ;;
-      '>'*|'<'*|[0-9]'>'*|[0-9]'<'*) i=$((i + 1)); continue ;;
+      # (unquoted redirections never reach here — tokenize drops them, operator + target)
       '{'|'!'|if|then|else|elif|do|while|until|nohup|builtin) i=$((i + 1)); continue ;;
       command|exec|time|env|sudo|doas|xargs|nice)
         i="$(skip_opts "$w" $((i + 1)))"; continue ;;
@@ -339,13 +392,20 @@ seg_is_publish() {
 }
 
 # cmd_has_publish <command string> <depth> — split into simple-command segments and walk each.
-# The split runs BEFORE quotes are read, on && || ; | & ( ) and backticks (so `$(…)`, subshells,
-# background `&` and `2>&1` all cut cleanly) plus newlines, after joining backslash-newlines. It also
-# cuts inside quotes: a quoted `a && git push` is then treated as a command (deny-leaning, accepted),
-# while a quoted bare word such as `-m "push it"` stays an argument.
+# The split runs BEFORE quotes are read, on && || ; | & ( ) and backticks (so `$(…)`, subshells and
+# a background `&` cut cleanly) plus newlines, after joining backslash-newlines. An `&` that belongs
+# to a redirection operator (`>&` `<&` `&>`) is first swapped for AMP so it does NOT cut: splitting
+# `git 2>&1 push` there would shear the program from its subcommand. `>|` (noclobber override) is
+# folded to `>` for the same reason. It also cuts inside quotes: a quoted `a && git push` is then
+# treated as a command (deny-leaning, accepted), while a quoted bare word such as `-m "push it"`
+# stays an argument.
 cmd_has_publish() {
-  local s="$1" depth="${2:-0}" sep seg
+  local s="$1" depth="${2:-0}" sep seg GT='>' LT='<'
   s="${s//\\$NL/ }"
+  # replacements are plain variable expansions: bash 3.2 keeps literal quotes in a quoted replacement
+  s="${s//">|"/$GT}"
+  s="${s//"&&"/$NL}"            # before the redirect swap: `x&&>f` is `x && >f`, never `x & &>f`
+  s="${s//">&"/$GT$AMP}"; s="${s//"<&"/$LT$AMP}"; s="${s//"&>"/$AMP$GT}"
   for sep in '&&' '||' ';' '|' '&' '(' ')' '`'; do s="${s//"$sep"/$NL}"; done
   while IFS= read -r seg; do
     seg="${seg#"${seg%%[![:space:]]*}"}"

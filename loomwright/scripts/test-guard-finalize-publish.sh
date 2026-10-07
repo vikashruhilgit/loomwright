@@ -22,6 +22,10 @@
 # detached review-drain sibling stays allowed; bold-format state.md is read. F4 wrapper / nesting /
 # quoting / continuation forms of a publish -> denied, non-publish look-alikes -> allowed. Each fix
 # has a mutation control that removes it and watches its cases flip.
+# Re-drain round 1: redirections — a redirect's `&` (`2>&1`, `>&2`, `&>f`) never cuts a segment and
+# redirect words (`>/dev/null`, `2>err.log`) never stand in for the subcommand, so `git 2>&1 push` /
+# `gh 2>&1 pr create` are denied while a real background `x & git push` still splits and
+# `git stash push 2>&1` stays allowed; two mutation controls (no AMP swap, no redirect tokenizing).
 #
 # HARNESS RULE: never pipe a producer into the guard — the inert paths exit 0 without reading stdin,
 # so a piped `jq` can hit EPIPE and pipefail turns that race into a spurious rc 2/141; build the
@@ -222,6 +226,43 @@ ALLOW_CASES=(
 )
 for c in "${ALLOW_CASES[@]}"; do run_guard "$RS" "$c"; expect "[$c] -> allowed" 0; done
 
+echo "== redirections: a redirect's & never cuts, redirect words never hide the subcommand =="
+# re-drain round 1: splitting on the `&` of `2>&1` sheared `git 2>&1 push` into `git 2>` + `1 push`.
+REDIRECT_DENY_CASES=(
+  "git 2>&1 push"
+  "gh 2>&1 pr create --fill"
+  "git >&2 push"
+  "git &>/dev/null push"
+  "git &>>log push"
+  "git >/dev/null push"
+  "git 2>err.log push"
+  "git 2> err.log push"
+  "git > /dev/null push"
+  "git <&0 push"
+  "git >&- push"
+  "git {fd}>&1 push"
+  ">out git push"
+  "2>&1 git push"
+  "cat <<EOF >f; git push"
+  "gh pr 2>&1 create"
+  "git push>/dev/null"
+  "git push 2>&1"
+  "git push &>/dev/null"
+  "git push 2>&1 | tee log"
+  "git push &"
+  "x & git push"
+  "x 2>&1 & git push"
+)
+for c in "${REDIRECT_DENY_CASES[@]}"; do run_guard "$RS" "$c"; expect "[$c] -> denied" 2; done
+REDIRECT_ALLOW_CASES=(
+  "git stash push 2>&1"
+  "git stash push >/dev/null 2>&1"
+  "git 2>&1 stash push"
+  "echo push >&2"
+  "git log --grep push 2>&1"
+)
+for c in "${REDIRECT_ALLOW_CASES[@]}"; do run_guard "$RS" "$c"; expect "[$c] -> allowed" 0; done
+
 echo "== (m) mutation controls for the F2-F4 hardening =="
 cp "$HERE/loom-log-owner.sh" "$TMP/" ; cp "$HERE/check-children-settled.sh" "$TMP/"
 # mutant <name> <sed program> — writes $TMP/<name>.sh; MUTOK=1 only when sed changed the guard
@@ -268,8 +309,14 @@ f4_mut "prefix words" '/^      command|exec|time|env|sudo|doas|xargs|nice)$/,/co
 f4_mut "line continuation" '/s="\${s\/\/\\\\\$NL\/ }"/d' "$(printf 'git \\\npush')"
 f4_mut "path basename" '/prog="\${prog##\*\/}"/d' "/usr/bin/git push" "/opt/homebrew/bin/gh pr create --fill"
 f4_mut "shell -c unwrap" 's/^    bash|sh|zsh|dash|ksh)$/    no-such-shell)/' 'bash -c "git push"' 'zsh -lc "git push origin HEAD"'
-f4_mut "quote-aware tokens" "s/\"'\"|'\"') q=\"\$c\"; have=1 ;;/\"'\"|'\"') w=\"\$w\$c\"; have=1 ;;/" \
+f4_mut "quote-aware tokens" "s/\"'\"|'\"') q=\"\$c\"; have=1; wq=1 ;;/\"'\"|'\"') w=\"\$w\$c\"; have=1 ;;/" \
   '"git" push' 'GIT_SSH_COMMAND="ssh -i k" git push' 'git -C "my dir" push'
+# redirect-aware split: without the AMP swap, the redirect's `&` cuts and the subcommand is sheared off
+f4_mut "redirect-aware split" '/s="\${s\/\/">&"\/\$GT\$AMP}"/d' \
+  "git 2>&1 push" "gh 2>&1 pr create --fill" "git >&2 push" "git &>/dev/null push"
+# redirect-dropping tokenizer: treating `<` `>` as ordinary word chars keeps `>/dev/null` as the "subcommand"
+f4_mut "redirect tokens" "s/^        '>'|'<'|\"\$AMP\")\$/        no-redirect-chars)/" \
+  "git >/dev/null push" "git 2>err.log push" "git > /dev/null push" "git push>/dev/null"
 
 echo "== wiring =="
 leaf="$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[] | .command | select(test("guard-finalize-publish.sh"))' "$HOOKS" 2>/dev/null)"
