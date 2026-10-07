@@ -3,6 +3,14 @@
   "hooks": {
     "SubagentStop": [
       {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/emit-lifecycle.sh\" ended || true"
+          }
+        ]
+      },
+      {
         "matcher": "loomwright:code-reviewer",
         "hooks": [
           {
@@ -237,6 +245,10 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/emit-lifecycle.sh\" heartbeat || true"
+          },
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/emit-lifecycle.sh\" ended || true"
           }
         ]
       }
@@ -261,6 +273,10 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/guard-test-integrity.sh\""
+          },
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/guard-finalize-publish.sh\""
           }
         ]
       },

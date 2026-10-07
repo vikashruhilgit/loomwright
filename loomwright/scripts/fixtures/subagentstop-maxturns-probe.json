@@ -1,0 +1,34 @@
+{
+  "_comment": "Runtime probe pinned for automate-followups/33 (A6). Observed on Claude Code 2.1.286, 2026-10-07, in the Supervisor session that produced the change (plugin session log + parent/subagent transcripts read directly; nothing below is inferred). Consumers: emit-lifecycle.sh `ended` (seam choice) and test-emit-lifecycle.sh (the task_return / async_launched payload cases). Re-probe on a runtime upgrade before relying on `maxturns_stop_fires_subagentstop: false`.",
+  "runtime": "claude-code 2.1.286",
+  "observed_at": "2026-10-07",
+  "findings": {
+    "maxturns_stop_fires_subagentstop": false,
+    "maxturns_stop_evidence": "plan-reviewer agent a3a900c6391132581 (blocking Task, maxTurns 20) stopped at its turn limit at ~05:33:26Z. Its own transcript holds exactly ONE attachment.type=hook_success with hookEvent SubagentStop, at 05:34:04Z — AFTER a SendMessage resume of the same agent ended normally (stop_reason end_turn). No SubagentStop fired for the turn-limit stop itself. Session log: agent_identity at 05:33:26 (PostToolUse[Task] -> emit-agent-identity.sh when the blocking Task returned) and the agent's only token_ledger row at 05:34:04 (the resumed run's normal stop).",
+    "blocking_task_return_fires_posttooluse_task": true,
+    "turn_limit_marker_in_task_return": false,
+    "turn_limit_marker_evidence": "The parent transcript's toolUseResult for that turn-limit return reads status \"completed\" — byte-identical in shape to a normal blocking return. The hook payload's tool_response mirrors toolUseResult (compare progress-event-fixtures/spawn-probe-2026-09-02/posttooluse-task-*.json). So no turn-limit reason is recordable from either seam on this runtime.",
+    "background_launch_task_status": "async_launched",
+    "background_launch_evidence": "Across this machine's transcripts every run_in_background Task result carries status \"async_launched\" with keys agentId,canReadOutputFile,description,isAsync,outputFile,prompt,resolvedModel,status — PostToolUse[Task] for a background spawn fires at LAUNCH, while the child still runs.",
+    "subagentstop_payload_keys": ["agent_id", "agent_transcript_path", "agent_type", "background_tasks", "cwd", "effort", "hook_event_name", "last_assistant_message", "permission_mode", "prompt_id", "session_crons", "session_id", "stop_hook_active", "transcript_path"],
+    "subagentstop_payload_keys_source": "progress-event-fixtures/spawn-probe-2026-09-02/subagentstop-1.json — no stop-reason key; agent_type present for a non-plugin type (probe-alpha)."
+  },
+  "not_verified": [
+    "Whether a BACKGROUND child stopped at its turn limit fires any hook at all (neither seam observed) — treated as uncoverable; the join keeps it unsettled.",
+    "Whether a general-purpose / Explore SubagentStop payload carries agent_type on 2.1.286 specifically — the committed evidence is a custom non-plugin type (probe-alpha) on an earlier runtime."
+  ],
+  "posttooluse_task_turn_limit_return": {
+    "session_id": "fixture-maxturns-probe-session-0001",
+    "hook_event_name": "PostToolUse",
+    "tool_name": "Agent",
+    "tool_input": {"subagent_type": "loomwright:plan-reviewer", "run_in_background": false},
+    "tool_response": {"status": "completed", "agentId": "a3a900c6391132581", "agentType": "loomwright:loomwright:plan-reviewer", "totalToolUseCount": 32}
+  },
+  "posttooluse_task_background_launch": {
+    "session_id": "fixture-maxturns-probe-session-0001",
+    "hook_event_name": "PostToolUse",
+    "tool_name": "Agent",
+    "tool_input": {"subagent_type": "general-purpose", "run_in_background": true},
+    "tool_response": {"status": "async_launched", "agentId": "abg00000000000001", "isAsync": true}
+  }
+}

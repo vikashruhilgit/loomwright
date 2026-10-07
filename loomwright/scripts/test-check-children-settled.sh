@@ -33,6 +33,15 @@
 #             `result_block_present: false` never decides `ended_without_result`); a rejected-only
 #             worker stays `unsettled`; `rejected_stops` / `rejected_stop_ids` count/name them; a
 #             `rejected: false` or absent key is terminal exactly as before.
+#   ended   — (automate-followups/33) fixtures/children-settled-ended.jsonl: a settled general-purpose
+#             spawn and a turn-limit blocking return (task_return) read settled; a non-worker ended
+#             reads ended_without_result false unless its reason marks a turn limit; a worker whose
+#             only terminal row is `ended` reads ended_without_result true; a worker's
+#             subtask_complete decides over an earlier ended row; A5 — a SubagentStop-seam ended row
+#             does not settle a worker whose latest subtask_complete is rejected, a task_return row
+#             does; A4 — an identity row with no stop row stays unsettled in --all.
+#   (m3)    — MUTATION CONTROL: renaming the `ended` state in a COPY of `terminal_for` must turn the
+#             general-purpose and turn-limit fixtures unsettled — otherwise the ended arm is vacuous.
 #   (m2)    — MUTATION CONTROL: deleting the `rejected` guard from a COPY of `terminal_for` must
 #             flip the rejected-only worker to settled — otherwise the guard is vacuous.
 #
@@ -287,7 +296,7 @@ grep -q "children_unsettled" "$FAILDOC" && grep -q -- "--skip-children-check" "$
 #    of the script must turn worker-failed's settled verdict into unsettled.
 # ---------------------------------------------------------------------------
 MUT="$TMP/mutant.sh"
-sed '/agent_lifecycle" and \$l.state == "failed" and \$l.agent_id == \$id)/d' "$SCRIPT" > "$MUT"
+sed 's/^\( *\)or (\$l\.event == "agent_lifecycle" and \$l\.state == "failed") then/\1then/' "$SCRIPT" > "$MUT"
 chmod +x "$MUT"
 mut_out="$(bash "$MUT" --log "$LOG" --agent-id worker-failed 2>/dev/null)"
 if [ "$(get "$mut_out" .status)" != "settled" ]; then
@@ -314,6 +323,51 @@ else
     ok "mutation control (rejected): removing the rejected guard flips worker-rejected-only to settled — the guard is load-bearing"
   else
     no "mutation control (rejected): mutant still reports worker-rejected-only as $(get "$mut_out" .status) — the guard is vacuous or the mutant missed it"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# ended) automate-followups/33 — the agent_lifecycle:ended tier
+# ---------------------------------------------------------------------------
+EFX="$HERE/fixtures/children-settled-ended.jsonl"
+agent_v() { bash "$SCRIPT" --log "${2:-$EFX}" --agent-id "$1" 2>/dev/null | jq -r '.status + "/" + (.ended_without_result|tostring)'; }
+expect_agent() {
+  local id="$1" want="$2" got; got="$(agent_v "$id")"
+  if [ "$got" = "$want" ]; then ok "ended: $id -> $want"; else no "ended: $id expected $want, got $got"; fi
+}
+expect_agent gp-settled settled/false
+expect_agent pr-turnlimit settled/false
+expect_agent explore-maxturns settled/true
+expect_agent worker-turnlimit settled/true
+expect_agent worker-clean settled/false
+expect_agent worker-rejected-ended unsettled/false
+expect_agent worker-rejected-returned settled/true
+expect_agent hung-child unsettled/false
+all_out="$(bash "$SCRIPT" --log "$EFX" --all 2>/dev/null)"
+if [ "$(get "$all_out" '.status')" = "unsettled" ] \
+   && [ "$(get "$all_out" '.unsettled_agent_ids | sort | join(",")')" = "hung-child,worker-rejected-ended" ] \
+   && [ "$(get "$all_out" '.ended_without_result_ids | sort | join(",")')" = "explore-maxturns,worker-rejected-returned,worker-turnlimit" ]; then
+  ok "ended: --all keeps the hung child + the rejected-stop worker unsettled and names the ended_without_result ids"
+else
+  no "ended: --all aggregate wrong: $all_out"
+fi
+SETTLED_ONLY="$TMP/ended-settled-only.jsonl"
+grep -E '"(gp-settled|pr-turnlimit)"' "$EFX" > "$SETTLED_ONLY"
+if [ "$(get "$(bash "$SCRIPT" --log "$SETTLED_ONLY" --all 2>/dev/null)" .status)" = "settled" ]; then
+  ok "ended: a log holding only a finished general-purpose spawn + a turn-limit return reads settled (--all)"
+else
+  no "ended: settled-only log did not read settled"
+fi
+MUT3="$TMP/mutant-ended.sh"
+sed 's/\$l\.state == "ended")/$l.state == "ended-MUTANT")/' "$SCRIPT" > "$MUT3"
+if cmp -s "$MUT3" "$SCRIPT"; then
+  no "mutation control (ended): could not build the mutant — the ended arm was not found, control inconclusive"
+else
+  m3a="$(bash "$MUT3" --log "$SETTLED_ONLY" --all 2>/dev/null)"
+  if [ "$(get "$m3a" .status)" = "unsettled" ] && [ "$(get "$m3a" '.unsettled_agent_ids | length')" = "2" ]; then
+    ok "mutation control (ended): removing the ended arm turns both the general-purpose and turn-limit fixtures unsettled"
+  else
+    no "mutation control (ended): mutant still reads $(get "$m3a" .status) — the ended arm is vacuous"
   fi
 fi
 

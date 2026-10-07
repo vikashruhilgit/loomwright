@@ -14,6 +14,7 @@ Three states, one per `emit-lifecycle.sh` subcommand:
 {"event":"agent_lifecycle","state":"waiting","session_id":"<id>","cc_session_id":"<id>","agent_id":"agent-fixture-full","agent_scope":"subagent","agent_type":"loomwright:worker","reason":"ask_user","branch":"main","ts":"2026-09-17T00:00:00Z"}
 {"event":"agent_lifecycle","state":"working","session_id":"<id>","cc_session_id":"<id>","agent_id":"agent-fixture-full","agent_scope":"subagent","branch":"main","ts":"2026-09-17T00:00:00Z"}
 {"event":"agent_lifecycle","state":"failed","session_id":"<id>","cc_session_id":"<id>","agent_id":"agent-fixture-full","agent_scope":"subagent","reason":"rate_limit","branch":"main","ts":"2026-09-17T00:00:00Z"}
+{"event":"agent_lifecycle","state":"ended","session_id":"<id>","cc_session_id":"<id>","agent_id":"agent-fixture-full","agent_scope":"subagent","agent_type":"general-purpose","seam":"subagent_stop","reason":"stop","branch":"main","ts":"2026-10-07T00:00:00Z"}
 ```
 
 > **Illustrative field values above are frozen, not current claims** — same convention as the
@@ -22,7 +23,7 @@ Three states, one per `emit-lifecycle.sh` subcommand:
 
 **Common fields (all three states):**
 - `event` — always the literal string `"agent_lifecycle"`.
-- `state` — one of `waiting` / `working` / `failed`. This is the ONLY vocabulary this file writes;
+- `state` — one of `waiting` / `working` / `failed` / `ended`. This is the ONLY vocabulary this file writes;
   `stalled` and `ended_without_result` are NEVER written by any emitter — they are DERIVED by a
   reader (`build-floor.sh` / `build-state.sh`) from these rows plus `agent_identity.recorded_at` and
   `subtask_complete.result_block_present` (below), never by a writer. A future writer emitting either
@@ -126,9 +127,43 @@ close that:
 > sequence from `scripts/fixtures/subagentstop-decision-shape-probe.json`: the first stop rejected,
 > the retry accepted. Only the second row is terminal.
 
+**`ended` (automate-followups/33) — a terminal row for EVERY child stop, any `agent_type`.** Written by
+`emit-lifecycle.sh ended` from two seams: a matcher-less `SubagentStop` leaf (`seam: "subagent_stop"`,
+`reason: "stop"` — no recorded SubagentStop payload carries a stop-reason key, so none is copied) and
+`PostToolUse[Task]` on a BLOCKING Task return (`seam: "task_return"`, `reason` = `tool_response.status`
+verbatim, `agent_id`/`agent_type` from `tool_response.agentId`/`agentType`). A background LAUNCH
+(`tool_response.status: "async_launched"`) writes nothing — the child is still running. Why two seams:
+on Claude Code 2.1.286 a turn-limit (`maxTurns`) stop does NOT fire `SubagentStop`, while the blocking
+Task return still fires `PostToolUse[Task]` with `status: "completed"` and no turn-limit marker
+(`scripts/fixtures/subagentstop-maxturns-probe.json`). An agent may carry several `ended` rows (one per
+seam, one per SendMessage resume). **Honest limit:** a BACKGROUND child stopped at its turn limit fires
+neither seam and keeps reading `unsettled` — silence is never treated as settled; a hung child (identity
+row, no stop row) likewise stays `unsettled`.
+
+In the children-settled join, `ended` is a LOWER-TIER terminal row: it settles the id, but decides
+`ended_without_result` only when no `subtask_complete` (non-rejected) / `token_ledger` /
+`agent_lifecycle: failed` row exists. Then `ended_without_result` is `true` when the row's `reason`
+marks a turn limit (`max_turns` / `maxTurns` / `turn_limit`, case-insensitive — forward-compatible; no
+seam carries one on 2.1.286) OR the agent is a worker (any row for the id carries an `agent_type`
+ending in `worker` — a worker that left no `subtask_complete` ended without a result by definition);
+a plain `ended` for a non-worker reads `false`. **Rejected stops (A5):** a `subagent_stop`-seam `ended`
+row (or one with no `seam`) does NOT settle an id whose LATEST `subtask_complete` is `rejected: true` —
+the validator-blocked firing wrote both rows and the worker is still running; a `task_return` row does
+settle it (the blocking Task has returned). Non-worker validated roles (code-reviewer, qa-executor,
+execute-manager, supervisor-runner, plan-reviewer, launch-pad-runner) whose stop a validator rejects
+are settled by the `ended` row exactly as their `token_ledger` row already settles them — a
+pre-existing gap, accepted, not widened.
+
+**Accepted semantic change (A3b, stated, not hidden):** `ended_without_result` is record-only at every
+consumer (execute-manager's outputs_verified gate, supervisor Single-Agent step 3b and the Sequential
+Path surface it; none blocks on it). So a worker stopped at its turn limit on a blocking Task now reads
+`settled` with `ended_without_result: true` and completes through `outputs_verified` whenever its
+`provides` are on disk — the SAME class as `result_block_present: false` today, still gated by
+`verify-provides.sh`.
+
 **Reader-derived states (NOT written here — documented for completeness, not implemented by this
 schema section):** `stalled` = the newest `working` row for an `agent_id` is older than a reader's own
-staleness threshold; `ended_without_result` = a NON-REJECTED terminal row (`subtask_complete` today;
+staleness threshold; `ended_without_result` = (also: an `ended`-only agent per the `ended` paragraph above) a NON-REJECTED terminal row (`subtask_complete` today;
 `token_ledger` once `emit-token-ledger.sh` gains the same field — see the forward-reference note above)
 for that `agent_id` whose `result_block_present` is `false` (absent ⇒ `unknown`, never either terminal
 state). Spawn time for either derivation comes from the EXISTING `agent_identity.recorded_at` field
@@ -224,15 +259,16 @@ event (worker role) **that does not carry `rejected: true`** (v15.83.0 — a val
 not terminal, the worker was told to continue; see `rejected` under `## agent_lifecycle` above), a
 `token_ledger` event (non-worker roles — see the `token_ledger` note above this section; it carries no
 `result_block_present` field yet, so presence alone settles it), or an `agent_lifecycle` event with
-`state: "failed"`. Fail-SAFE emitter (always exits 0, JSON on stdout); consumers fail CLOSED on its
+`state: "failed"` or `state: "ended"` (lower tier — see the `ended` paragraph above). Fail-SAFE emitter (always exits 0, JSON on stdout); consumers fail CLOSED on its
 verdict, exactly as they do on `verify-provides.sh`'s `missing` / `unverifiable`. Two modes:
 
 - **`--agent-id <id>`** (per-subtask join): `{"agent_id":"<id>","status":"settled"|"unsettled","ended_without_result":true|false,"rejected_stops":N,"source":"check-children-settled.sh"}`. Consumed by `agents/execute-manager.md`'s v12 outputs_verified gate (per-subtask, Parallel path) and `agents/supervisor.md`'s Single-Agent Path step 3b / Sequential Path (per-subtask, inline). `unsettled` (provides present on disk, no terminal row yet) records `record_decision(... "provides_present_agent_unsettled: ...")` — **distinct from `provides_mismatch`** (disk/self-report disagreement, unchanged) — and does NOT mark the subtask complete; this is the expected transient state for a worker whose files land before its result message does, not an error or an escalation. `rejected_stops` (additive, v15.83.0, DIAGNOSTIC ONLY — always present, `0` when none) counts the `subtask_complete` rows with `rejected: true` for that id: an `unsettled` verdict with `rejected_stops > 0` means the worker's stop was rejected by `validate-worker-result.py` and it is still running (or was forced to stop at the runtime's continuation cap with a malformed result) — readable from the join output instead of only from the subagent transcript. Consumers decide on `status` alone; this never changes the verdict.
 - **`--all`** (per-session aggregate): `{"status":"settled"|"unsettled"|"no_identity_rows","unsettled_agent_ids":[...],"ended_without_result_ids":[...],"rejected_stop_ids":[...],"source":"check-children-settled.sh"}`. `rejected_stop_ids` (additive, v15.83.0, diagnostic only) names every identity-row id with at least one rejected row, settled or not. Consumed by `agents/supervisor.md`'s Phase 4 FINALIZE pre-merge safety gate as its 5th checklist point (`skills/async-orchestration/SKILL.md` §"Phase 4 FINALIZE procedure" step 1, Point 5). `no_identity_rows` (zero `agent_identity` rows this session — pre-2026-09-07 logs, or a session that never spawned a Task) PASSES and is reported `children_check: no_identity_rows` — **never** `settled`. `unsettled` FAILS the gate: interactively `AskUserQuestion`; under `--non-interactive` / CI / stdin-not-a-TTY, fails CLOSED with `SUPERVISOR_RESULT.error = "children_unsettled: {unsettled_agent_ids}"` — same shape as `preflight_overlap_detected` below. The **`--skip-children-check`** flag (mirrors `--skip-preflight-sync`) short-circuits this one point, recording `record_decision(phase: FINALIZE, decision: "user_skipped_children_check")` and `children_check: skipped` in the run summary.
 
 `ended_without_result` / `ended_without_result_ids` (the same reader-derived state defined above: a
-NON-REJECTED terminal row that is a `subtask_complete` with `result_block_present: false`, or an
-`agent_lifecycle: failed` row) is surfaced by BOTH consumers alongside the settled/unsettled verdict so
+NON-REJECTED terminal row that is a `subtask_complete` with `result_block_present: false`, an
+`agent_lifecycle: failed` row, or — only when none of those nor a `token_ledger` row exists — an
+`agent_lifecycle: ended` row for a worker or with a turn-limit `reason`) is surfaced by BOTH consumers alongside the settled/unsettled verdict so
 an operator can `SendMessage` that `agent_id` to resume it (memory
 `subagents-hit-turn-limit-resume-via-sendmessage`) instead of re-running the subtask cold — this join
 only surfaces the id; it does not implement the resume. Schema_version of `WORKER_RESULT` /

@@ -160,7 +160,7 @@ Phase 4 FINALIZE pre-merge safety gate, Point 5 (children settled)
     ↓
 scripts/check-children-settled.sh --all finds ≥1 agent_identity row
 with NO matching terminal row (subtask_complete / token_ledger /
-agent_lifecycle: failed) for that agent_id
+agent_lifecycle: failed / agent_lifecycle: ended) for that agent_id
     ↓
 Interactive session → AskUserQuestion (proceed anyway / investigate / abort)
     OR

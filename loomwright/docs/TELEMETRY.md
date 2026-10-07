@@ -1415,7 +1415,7 @@ No issue is created, no network call is made, the wrapper exits 0.
 
 The wrapper extracts `session_id` from the hook's stdin JSON payload
 (Claude Code provides this on every hook payload — see the existing
-`StopFailure` block in `hooks.json:187` [pins: `"StopFailure"`] for the stdin parsing
+`StopFailure` block in `hooks.json:193` [pins: `"StopFailure"`] for the stdin parsing
 pattern). The pending-notice marker is then a **per-session** flag file:
 
 ```

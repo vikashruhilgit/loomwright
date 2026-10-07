@@ -998,6 +998,11 @@ while heal_iterations < max_heal_iterations:
     fixer_deviations += [f"fix-{heal_iterations+1}: {entry}" for entry in FIX_RESULT.deviations]
     record_decision(phase: SELF_HEAL, decision: f"fixer_deviations: appended {len(FIX_RESULT.deviations)} from fix-{heal_iterations+1}", rationale: "carriage for step 1g's Deviations advisory — FIX_RESULT bypasses Context-Keeper")
 
+  # finalize-gate (automate-followups/33): the fix commit moved HEAD, so the PreToolUse[Bash] guard
+  # denies this push until the marker names the new HEAD. Re-write it in its OWN Bash call first —
+  # it re-runs the children-settled check (the fix worker above must have returned). A refusal is
+  # the Point 5 failure path (unsettled children), never a reason to hand-write the marker.
+  bash "${CLAUDE_PLUGIN_ROOT}/scripts/guard-finalize-publish.sh" write-marker   # append --skip-children-check when that flag is set
   git push  # update PR (regular push, NEVER --force)
   record_decision(phase: SELF_HEAL, decision: "fix iteration {heal_iterations+1}", rationale: FIX_RESULT.summary)
 
@@ -1323,6 +1328,7 @@ Emit the contract-conformance, benchmark, and ground-truth results as the SAME d
 | CODE_REVIEW_RESULT malformed or missing | Retry review once; if still malformed, pause with resume |
 | Fix Task() crashes or returns no FIX_RESULT | Pause phase — emit `SUPERVISOR_RESULT` with `status: checkpoint` (no `paused` status exists in the schema); the resume counter increments at Phase 4.5 entry of the next `--continue` run |
 | `git push` fails inside loop | Pause phase; report auth/network error in checkpoint |
+| finalize-gate `write-marker` refuses before a heal push | Same as a failed push: pause phase, report the refusal reason (`children_unsettled` names the ids) in the checkpoint. Never hand-write the marker |
 | `gh pr comment` fails at escalation | Record findings in `.supervisor/state.md` decisions log; do NOT fail the task — escalation still succeeds, just without PR comment |
 | Resume counter ≥ 3 | Abort loop, mark ESCALATED with `self_heal_resume_thrash` reason, run completion tail |
 | Tool budget exceeded mid-loop | Checkpoint with `current_phase: SELF_HEAL`, exit with resume command |
