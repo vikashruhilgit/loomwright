@@ -167,8 +167,8 @@ else no "(R) non-schema heading(s) listed: $bad"; fi
 blk="$(q '[.hooks[] | select(.blocking) | .script] | unique | join(",")')"
 nblk="$(q '[.hooks[] | select(.blocking)] | length')"
 want_nblk="$(jq '[.hooks[][] | .hooks[] | select(.type == "command" and (.command | test("\\|\\|[ \\t]*true[ \\t]*$") | not))] | length' "$PLUGIN/hooks/hooks.json")"
-if [ "$blk" = "scripts/guard-test-integrity.sh" ] && [ "$nblk" = "$want_nblk" ] && [ "$nblk" -gt 0 ]; then
-  ok "(H) blocking only on command leaves without || true (the guard-test-integrity leaves, $nblk)"
+if [ "$blk" = "scripts/guard-finalize-publish.sh,scripts/guard-test-integrity.sh" ] && [ "$nblk" = "$want_nblk" ] && [ "$nblk" -gt 0 ]; then
+  ok "(H) blocking only on command leaves without || true (the guard-test-integrity + guard-finalize-publish leaves, $nblk)"
 else no "(H) blocking=[$blk] n=$nblk want=$want_nblk"; fi
 el_writes="$(q '[.hooks[] | select(.scripts == ["scripts/emit-lifecycle.sh"] and .event == "PostToolUse")][0].writes')"
 sf_want="$(jq -c --argjson el "$el_writes" -n '($el + [".supervisor/logs/failures.log"]) | unique')"

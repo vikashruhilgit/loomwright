@@ -556,9 +556,7 @@
       ],
       "source": "hooks.PreToolUse[1].hooks[1]",
       "type": "command",
-      "writes": [
-        "unknown"
-      ]
+      "writes": []
     },
     {
       "blocking": true,

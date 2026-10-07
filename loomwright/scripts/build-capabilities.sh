@@ -130,6 +130,11 @@ w notify-desktop.sh '.supervisor/logs/.notify-debounce'
 # guard-test-integrity.sh — a PreToolUse gate: reads the .supervisor/guard/ markers and prints a
 # decision; its `>`/`>>` tokens are the command TOKENISER's literals, not redirections.
 w guard-test-integrity.sh -
+# guard-finalize-publish.sh — the hook leaf runs it with NO argument (PreToolUse[Bash] guard mode): it reads
+# .supervisor/state.md, the session log and the finalize-gate marker and prints a decision; no write construct
+# after the write-marker block. Its marker write (`> "$tmp"; mv -f "$tmp" "$MARKER"`, `rm -f "$MARKER"`) is
+# reached ONLY through `write-marker`, which FINALIZE / self-heal invoke explicitly, never the hook.
+w guard-finalize-publish.sh -
 # guard-arm.sh — arm: `printf ... > "$tmp"; mv -f "$tmp" "$marker"`, marker="$GUARD_DIR/$sid.json";
 # disarm-session / stale sweep: `rm -f "$GUARD_DIR/$sid.json"`. GUARD_DIR=<project>/.supervisor/guard.
 w guard-arm.sh '.supervisor/guard/<session>.json'
