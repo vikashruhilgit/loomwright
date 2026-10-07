@@ -10,7 +10,8 @@
 #   F launch authority / regime / host denial · G admission (AC10 launch-hold half) · H launch shape
 #   I checksum + mutation control (AC16) · J relay hook (AC6) · K lane-answer (AC6) · L .died marker
 #   M liveness + pick-guard (AC12) · N lane-remove refusals (AC3) + mutation controls (AC16)
-#   O lane-info · P branch-check
+#   O lane-info · P branch-check · Q lane-status classification (AC7) · R lane-status --json (AC8)
+#   S keep-awake · T --watch + lane-feed · U merge-readiness (AC9) · V --leaks / --resources / --tokens
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -371,6 +372,205 @@ git -C "$P" push -q origin main:refs/heads/feature/taken 2>/dev/null
 check "P2 remote-only hit ⇒ suffixed" "$(run branch-check "$L6" feature/taken)" feature/taken-L6
 git -C "$P" push -q origin main:refs/heads/feature/taken-L6 2>/dev/null
 out="$(run branch-check "$L6" feature/taken)"; check "P3 both taken ⇒ refused" "$?:$out" "1:refuse: remote_branch_exists feature/taken"
+
+# ---- Q: lane-status classification (AC7) ---------------------------------------------------------------
+PARENT2=automate-2026-10-07-130000; RF2="$P/.supervisor/automate/$PARENT2.md"
+TABLE2="$P/.supervisor/automate/$PARENT2.lanes"; LR2="$T/work/primary-lanes/$PARENT2"
+printf '# Automate Run: %s\n\n## Progress\n' "$PARENT2" > "$RF2"
+for n in 1 2 3 4 5 6 7; do run lane-create "$RF2" reqs/a.md "$n" --parallel 8 >/dev/null; done
+t2set() { awk -F'\t' -v OFS='\t' -v l="$1" -v c="$2" -v v="$3" '$1 == l { $c = v } { print }' "$TABLE2" > "$TABLE2.t" && mv "$TABLE2.t" "$TABLE2"; }
+cat > "$T/pgrep-stub" <<'EOF'
+#!/usr/bin/env bash
+case "$*" in
+  *caffeinate*) [ -n "${STUB_CAFF_HELD:-}" ] && { echo 777; exit 0; }; exit 1 ;;
+  *"claude -p"*) [ -s "$PGREP_CLAUDE" ] && { cat "$PGREP_CLAUDE"; exit 0; }; exit 1 ;;
+  *) exit 1 ;;
+esac
+EOF
+cat > "$T/ci-stub.sh" <<'EOF'
+#!/usr/bin/env bash
+[ "${1:-}" = status ] && [ -n "${STUB_CI_JSON:-}" ] && printf '%s\n' "$STUB_CI_JSON"; exit 0
+EOF
+cat > "$T/caff-stub" <<'EOF'
+#!/usr/bin/env bash
+echo "caffeinate $*" >> "$CAFF_LOG"
+EOF
+chmod +x "$T/pgrep-stub" "$T/ci-stub.sh" "$T/caff-stub"
+export LOOMWRIGHT_LANES_PGREP="$T/pgrep-stub" LOOMWRIGHT_LANES_CI_SLOT="$T/ci-stub.sh" PGREP_CLAUDE="$T/pgrep.claude"
+export LOOMWRIGHT_LANES_CAFFEINATE="$T/caff-stub" CAFF_LOG="$T/caff.log" LOOMWRIGHT_LANES_BOOT_EPOCH=1000000000
+export LOOMWRIGHT_LANES_UNAME=Darwin LOOMWRIGHT_LANES_COORDINATOR_PID=4242
+: > "$PGREP_CLAUDE"; : > "$CAFF_LOG"
+sj() { bash "$S" lane-status "$RF2" --json 2>/dev/null; }
+lf() { jq -r --arg l "$1" ".lanes[] | select(.lane == \$l) | $2" <<<"$J"; }
+STUB_MODE=sleep LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$LR2/L1" --owner-command "$OWN" >/dev/null
+STUB_MODE=sleep LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$LR2/L2" --owner-command "$OWN" >/dev/null
+t2set L3 8 launched; t2set L3 5 99999998; t2set L3 6 "Mon Jan  1 00:00:00 2001"; t2set L3 9 "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+run lane-launch "$LR2/L4" --host-denied 'auto-mode classifier denied the spawn' >/dev/null
+STUB_LOAD=overloaded run lane-launch "$LR2/L5" --owner-command "$OWN" >/dev/null
+J="$(sj)"; rc=$?
+check "Q1 lane-status --json exits 0 and parses" "$rc:$(jq -r '.lanes | length' <<<"$J")" "0:7"
+check "Q2 launched lane is running" "$(lf L1 .state)" running
+check "Q3 process gone, not parked, no question ⇒ stalled" "$(lf L3 .state)" stalled
+check "Q4 host-denied spawn ⇒ blocked_launch with the reason" "$(lf L4 '.state + "|" + .reason')" "blocked_launch|auto-mode classifier denied the spawn"
+check "Q5 HELD launch ⇒ held_for_load" "$(lf L5 '.state + "|" + .held_for_load')" "held_for_load|load overloaded"
+check "Q6 never-launched lane ⇒ created" "$(lf L7 .state)" created
+J="$(LOOMWRIGHT_LANES_BOOT_EPOCH="$(( $(date -u +%s) + 60 ))" sj)"
+check "Q7 boot later than the last launch ⇒ lost_to_reset" "$(lf L3 .state)" lost_to_reset
+has "Q7b lost_to_reset names the resume by run id" "$(lf L3 .reason)" "--resume-run $PARENT2-L3"
+L1P="$(awk -F'\t' '$1 == "L1" { print $5 }' "$TABLE2")"; L1C="$(pgrep -P "$L1P" 2>/dev/null | head -1)"
+kill -TERM "$L1C" 2>/dev/null; wait_gone "$LR2/L1"
+J="$(sj)"
+check "Q8 killed lane (no terminal result) ⇒ died" "$(lf L1 .state)" died
+check "Q9 the other lane is unchanged (running)" "$(lf L2 .state)" running
+out="$(run lane-status "$RF2")"
+has "Q10 plain view: one line per lane with state and item" "$out" "L4  blocked_launch (auto-mode classifier denied the spawn)  item=reqs/a.md"
+has "Q10b plain view shows held for load" "$out" "held for load: load overloaded"
+check "Q11 liveness is not redefined (one lanes_proc_alive)" "$(grep -c '^lanes_proc_alive()' "$S")" 1
+out="$(run lane-status "$P/.supervisor/automate/none.md" --json)"; rc=$?
+check "Q12 no lane table ⇒ empty lanes, exit 0" "$rc:$(jq -r '.lanes | length' <<<"$out")" "0:0"
+
+# ---- R: lane-status --json fields (AC8: machine, asked_at / waiting_s, last_message, CI slot) -----------
+L6="$LR2/L6"; t2set L6 8 launched; t2set L6 9 "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+printf '{"id":"toolu_r1","asked_at":"2026-10-07T00:00:00Z","questions":[{"question":"Which path?","options":[{"label":"A"}]}]}\n' > "$L6/.supervisor/inbox/questions/toolu_r1.json"
+LONG="$(printf 'x%.0s' $(seq 1 400))"
+{ echo '{"type":"system","subtype":"init","session_id":"sess-r"}'
+  printf '{"type":"assistant","message":{"content":[{"type":"text","text":"first words"}]}}\n'
+  printf '{"type":"assistant","message":{"content":[{"type":"text","text":"line one\\nline two %s"}]}}\n' "$LONG"
+  echo '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Task","input":{"subagent_type":"loomwright:worker","description":"implement subtask 1"}}]}}'
+  echo '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"bash automate-helpers.sh current-set rf --pause ready_for_release"}}]}}'
+  echo '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"AskUserQuestion","input":{"questions":[{"question":"Which path?"}]}}]}}'
+  echo '{"type":"result","subtype":"success","stop_reason":"tool_deferred","deferred_tool_use":{"id":"toolu_r1"},"session_id":"sess-r"}'
+} > "$LR2/L6.stream.log"
+J="$(LOOMWRIGHT_MACHINE_LOAD_CMD="$T/absent-load.sh" sj)"; rc=$?
+check "R1 machine-load absent ⇒ machine.state unknown, exit 0" "$rc:$(jq -r .machine.state <<<"$J")" "0:unknown"
+check "R2 pending question ⇒ awaiting_input" "$(lf L6 .state)" awaiting_input
+check "R3 asked_at echoed" "$(lf L6 '.questions[0].asked_at')" "2026-10-07T00:00:00Z"
+W1="$(lf L6 '.questions[0].waiting_s')"
+check "R4 waiting_s computed at read time" "$([ "$W1" -ge $(( $(date -u +%s) - $(jq -n '"2026-10-07T00:00:00Z" | fromdateiso8601') - 5 )) ] && echo yes)" yes
+sleep 1; J="$(sj)"; W2="$(lf L6 '.questions[0].waiting_s')"
+check "R5 waiting_s grows" "$([ "$W2" -gt "$W1" ] && echo yes)" yes
+LM="$(lf L6 .last_message)"
+check "R6 last_message is the last assistant text, trimmed to 300" "${#LM}:$(printf '%s' "$LM" | head -c 17)" "300:line one line two"
+hasnt "R7 last_message is never a tool-use line" "$LM" "AskUserQuestion"
+check "R8 last 3 actions" "$(lf L6 '.last_actions | length'):$(lf L6 '.last_actions[2]')" "3:AskUserQuestion"
+check "R9 machine from machine-load.sh" "$(jq -r '.machine | "\(.state) \(.load1) \(.cpus) \(.keep_awake)"' <<<"$J")" "ok 1 8 not held"
+J="$(STUB_CI_JSON="{\"holders\":[{\"checkout\":\"$T/elsewhere\"}],\"waiters\":[{\"checkout\":\"$T/other\",\"held\":null},{\"checkout\":\"$LR2/L2\",\"held\":\"machine busy\"}]}" sj)"
+check "R10 CI-slot queue position" "$(lf L2 '.ci_slot.state + " " + (.ci_slot.position | tostring)')" "waiting 2"
+check "R11 a running lane held by machine admission ⇒ held for load" "$(lf L2 .held_for_load)" "machine busy"
+check "R12 no CI slot record ⇒ ci_slot none" "$(lf L6 .ci_slot.state)" none
+
+# ---- S: keep-awake (suggest, never silently start) --------------------------------------------------
+out="$(run lane-status "$RF2")"
+has "S1 macOS: one-line caffeinate suggestion with the coordinator pid" "$out" "caffeinate -i -w 4242"
+has "S2 keep-awake: not held" "$out" "keep-awake: not held"
+check "S3 no keep-awake process started without --keep-awake" "$(wc -l < "$CAFF_LOG" | tr -d ' ')" 0
+hasnt "S4 other OS: no suggestion" "$(LOOMWRIGHT_LANES_UNAME=Linux run lane-status "$RF2")" "caffeinate -i -w"
+out="$(STUB_CAFF_HELD=1 run lane-status "$RF2")"
+check "S5 holder seen ⇒ held, no suggestion" "$(printf '%s' "$out" | grep -c 'keep-awake: held'):$(printf '%s' "$out" | grep -c 'suggestion')" "1:0"
+out="$(run lane-status "$RF2" --keep-awake)"; sleep 0.3
+has "S6 --keep-awake starts it, tied to the coordinator" "$(cat "$CAFF_LOG")" "caffeinate -i -w 4242"
+has "S6b and says so" "$out" "keep-awake: started (opt-in --keep-awake)"
+
+# ---- T: --watch, lane-feed ----------------------------------------------------------------------------
+out="$(LOOMWRIGHT_LANES_WATCH_ITERATIONS=1 run lane-status "$RF2" --watch)"; rc=$?
+check "T1 --watch one iteration exits 0" "$rc" 0
+has "T1b frame header" "$out" "lane-status --watch"
+has "T1c frame carries the fleet" "$out" "L6  awaiting_input"
+out="$(LOOMWRIGHT_LANES_WATCH_ITERATIONS=2 LOOMWRIGHT_LANES_WATCH_INTERVAL_S=0 run lane-status "$RF2" --watch)"
+check "T2 --watch refreshes" "$(printf '%s\n' "$out" | grep -c '^lane-status --watch')" 2
+out="$(run lane-feed "$L6")"
+has "T3 feed prints spawns" "$out" "[spawn] loomwright:worker: implement subtask 1"
+has "T4 feed prints the park write" "$out" "[park] bash automate-helpers.sh current-set"
+has "T5 feed prints the deferred park" "$out" "[park] deferred toolu_r1 — awaiting input"
+has "T6 feed prints messages and asks" "$out" "[ask] Which path?"
+has "T7 feed resolves L<n>" "$(cd "$P" && bash "$S" lane-feed L6 2>&1)" "[init] session sess-r"
+bash "$S" lane-feed "$L6" --follow > "$T/follow.out" 2>&1 & FP=$!
+sleep 1.5; pkill -f "tail -n +1 -f $LR2/L6.stream.log" 2>/dev/null; kill "$FP" 2>/dev/null; wait "$FP" 2>/dev/null
+has "T8 --follow narrates" "$(cat "$T/follow.out")" "[spawn] loomwright:worker"
+has "T9 died lane: feed reports it" "$(run lane-feed "$LR2/L1")" "[died]"
+
+# ---- U: merge-readiness report (AC9) -------------------------------------------------------------------
+L3="$LR2/L3"
+cat > "$L3/reqs/a.md" <<'EOF'
+# a
+## Touches
+- `reqs/a.md`
+- `src/`
+## Validation (must pass before merge)
+1. **Baseline:** full loop on base and branch.
+2. **Running system:** run it for real and paste the output.
+3. **A failure this must catch:** the mutation control, shown failing.
+## Notes
+EOF
+printf '# Automate Run: %s\n\n## Current\n- item: reqs/a.md | status: awaiting_merge | pr: https://github.com/o/r/pull/5 | branch: f\n- pause_reason: ready_for_release\n\n## Progress\n- 2026-10-07T01:00:00Z children-settled: settled\n' "$PARENT2-L3" > "$L3/.supervisor/automate/$PARENT2-L3.md"
+mkdir -p "$L3/.supervisor/jobs/in-progress"
+printf '# brief for reqs/a.md\n- carried LOW: name the flag in the help text\n' > "$L3/.supervisor/jobs/in-progress/b.md"
+cat > "$T/gh-ready" <<'EOF'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "pr view") jq -n --arg b "$(printf 'Validation 1 baseline\n```\npassed: 5 failed: 0\n```\nValidation 2: will run later\nValidation 3 mutation\n```\nFAIL - leg x\n```\n')" '{body: $b, headRefOid: "abc123"}' ;;
+  "pr diff") printf 'reqs/a.md\nsrc/x.sh\nchangelog.d/x.md\ndocs/other.md\n' ;;
+  "pr checks") echo '[{"name":"ci","bucket":"pass"}]' ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod +x "$T/gh-ready"
+out="$(LOOMWRIGHT_GH_BIN="$T/gh-ready" run lane-readiness "$L3")"; rc=$?
+RD="$L3/.supervisor/automate/$PARENT2-L3.merge-readiness.md"
+check "U1 lane-readiness exits 0 and writes the report" "$rc:$([ -f "$RD" ] && echo yes)" "0:yes"
+has "U2 a Validation step with pasted output ⇒ PASS" "$(cat "$RD")" "V1 Baseline: PASS"
+has "U3 a running-system step with no pasted output ⇒ NOT-RUN, never PASS" "$(cat "$RD")" "V2 Running system: NOT-RUN — mentioned in the PR body without pasted output"
+has "U4 scope fence lists the file outside the brief" "$(cat "$RD")" "  - docs/other.md"
+has "U4b scope fence FAIL" "$(cat "$RD")" "- scope-fence: FAIL"
+has "U5 carried note listed, NOT-RUN without accounting" "$(cat "$RD")" "carried-notes: NOT-RUN — 1 carried note(s)"
+has "U6 gates PASS (checks green on head, decisions, children settled)" "$(cat "$RD")" "- gates: PASS"
+has "U7 headline repro evidenced" "$(cat "$RD")" "V3 A failure this must catch: PASS"
+has "U8 score line" "$(cat "$RD")" "- score: 2/5 | summary: ready (2/5: running-system NOT-RUN, carried-notes NOT-RUN, scope-fence FAIL)"
+J="$(sj)"
+check "U9 lane-status --json exposes the readiness score" "$(lf L3 '.readiness.score')" "2/5"
+check "U10 parked ready lane state" "$(lf L3 .state)" ready_for_release
+cat > "$T/helpers-merged.sh" <<'EOF'
+#!/usr/bin/env bash
+[ "$1" = reconcile-item ] && echo merged
+EOF
+chmod +x "$T/helpers-merged.sh"
+J="$(LOOMWRIGHT_LANES_HELPERS="$T/helpers-merged.sh" sj)"
+check "U11 parked lane reconciled against gh (reconcile-item)" "$(lf L3 '.state + "|" + .pr_state')" "merged|merged"
+out="$(LOOMWRIGHT_GH_BIN="$T/absent-gh" run lane-readiness "$L3")"
+has "U12 gh unreadable ⇒ every Validation step NOT-RUN" "$(cat "$RD")" "V1 Baseline: NOT-RUN — PR body unreadable"
+out="$(LOOMWRIGHT_GH_BIN="$T/gh-ready" run lane-status "$RF2" --refresh-readiness)"
+has "U13 lane-status --refresh-readiness re-writes it" "$(cat "$RD")" "V1 Baseline: PASS"
+has "U13b plain view shows the score" "$out" "readiness: ready (2/5:"
+
+# ---- V: --leaks, --resources, --tokens -----------------------------------------------------------------
+out="$(run lane-status "$RF2" --leaks)"; has "V1 no snapshot ⇒ unknown, exit 0" "$out" "leaks: unknown — no snapshot"
+out="$(run lane-status "$RF2" --leaks --snapshot)"; has "V2 snapshot written" "$out" "leaks: snapshot written"
+check "V3 unchanged ⇒ leaks: none" "$(run lane-status "$RF2" --leaks | head -1 | cut -c1-11)" "leaks: none"
+cp "$P/.supervisor/config.json" "$T/config.bak"
+echo "4321 claude -p --resume x" > "$PGREP_CLAUDE"; echo '{"auto_review": false}' > "$P/.supervisor/config.json"
+git -C "$P" worktree add -q "$T/wt-leak" -b leak-wt 2>/dev/null
+out="$(run lane-status "$RF2" --leaks)"
+check "V4 leaks found names each section" "$(printf '%s\n' "$out" | head -1)" "leaks: found — worktrees, claude-p, config-checksum"
+has "V5 the leaked process is listed" "$out" "  + 4321 claude -p --resume x"
+has "V6 unchanged sections say same" "$out" "- merge-watch: same"
+cp "$T/config.bak" "$P/.supervisor/config.json"; : > "$PGREP_CLAUDE"; git -C "$P" worktree remove --force "$T/wt-leak" 2>/dev/null
+out="$(run lane-status "$RF2" --resources)"; has "V7 no fleet.log ⇒ resources unknown" "$out" "resources: unknown"
+printf '2026-10-07T10:00:00Z load1=5 load=ok L1_rss=100M L2_rss=300M nonlane_load=10%%\n2026-10-07T10:00:10Z load1=9 load=busy L1_rss=200M L2_rss=150M nonlane_load=20%%\n' > "$P/.supervisor/automate/$PARENT2.fleet.log"
+out="$(run lane-status "$RF2" --resources)"
+has "V8 latest line per lane" "$out" "L1: L1_rss=200M"
+has "V9 wave peak" "$out" "peak: load1=9 L1_rss=200M L2_rss=300M nonlane_load=20%"
+has "V10 machine part of the latest line" "$out" "machine: load1=9 load=busy nonlane_load=20%"
+cat > "$T/ledger.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "INPUT=1 OUTPUT=2 CACHE_READ=0 CACHE_CREATE=0 TOTAL=3 EVENTS=1"
+EOF
+out="$(LOOMWRIGHT_LANES_TOKEN_LEDGER="$T/ledger.sh" run lane-status "$RF2" --tokens)"
+has "V11 per-lane tokens" "$out" "L1 INPUT=1 OUTPUT=2"
+has "V12 parent tokens" "$out" "parent INPUT=1"
+check "V13 total sums parent + lanes" "$(printf '%s\n' "$out" | sed -n 's/.* TOTAL=\([0-9]*\).*/\1/p' | tail -1)" 24
+out="$(LOOMWRIGHT_LANES_TOKEN_LEDGER="$T/absent.sh" run lane-status "$RF2" --tokens)"; rc=$?
+check "V14 ledger absent ⇒ unknown, exit 0" "$rc:$out" "0:tokens: unknown — read-token-ledger.sh absent"
+for p in $(pgrep -f "_lane-run $LR2" 2>/dev/null); do kill -TERM "$p" 2>/dev/null; done
 
 hasnt "Z1 gh never called" "$(cat "$GH_CALLS" 2>/dev/null)" "gh"
 echo "passed: $PASS  failed: $FAIL"

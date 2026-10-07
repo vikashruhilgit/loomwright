@@ -20,6 +20,12 @@
 #   init-check --parallel N [--auto-merge]               INIT refusals: `ok` | `refuse: <reason>` (exit 1)
 #   pick-guard <automate_dir>                            PICK guard: `ok` | `refuse: live_lane <run_id> <lane>`
 #   branch-check <lane_dir> <branch>                     remote branch-name check: prints the name to use
+#   lane-status [<parent_runfile>] [--json] [--watch] [--refresh-readiness] [--keep-awake]
+#        one line per lane: state, item, PR, progress, last 3 actions, question, CI slot, readiness
+#   lane-status [<parent_runfile>] --leaks [--snapshot]  Validation 5 leak check vs the wave-start snapshot
+#   lane-status [<parent_runfile>] --resources | --tokens  latest fleet.log line + peak | per-lane + parent tokens
+#   lane-feed <lane_dir|L<n>> [--follow]                 readable narration of the lane's stream log
+#   lane-readiness <lane_dir|L<n>>                       write <run_id>.merge-readiness.md (advisory, never merges)
 #
 # Files (all paths derived; nothing hard-coded):
 #   <lane>/.supervisor/lane.json        D2 marker — the ONE marker lane-create writes (plus the copied
@@ -37,6 +43,10 @@
 #                                       exits with no terminal `result` line since its launch
 #   <primary>-lanes/<parent_run_id>/salvage/                lane-create / lane-remove salvage copies
 #   <primary>/.supervisor/automate/<parent_run_id>.memory-pressure   trip file (lane-sampler.sh); read only
+#   <primary>/.supervisor/automate/<parent_run_id>.fleet.log         lane-sampler.sh samples; read only
+#   <primary>/.supervisor/automate/<parent_run_id>.leaks-snapshot    `lane-status --leaks --snapshot` (wave start)
+#   <lane>/.supervisor/automate/<run_id>.merge-readiness.md          lane-readiness (written at the lane's
+#                                       ready_for_release park, when the lane is no longer running)
 #
 # Launch contract (lane-launch and every resume, incl. lane-answer's):
 #   1. Launch authority: `--owner-command` is REQUIRED — the command the OWNER typed in this session
@@ -72,10 +82,20 @@
 # origin-before-fetch, remote branch-name hit) fail CLOSED; relay-hook outside a lane emits `{}`.
 # Every meta-sync call passes `--branch` explicitly (the mode line's branch).
 #
+# Observation (lane-status, lane-feed, lane-readiness) fails SAFE: an absent or unreadable source reads
+# `unknown` and the command exits 0. lane-status state, first match wins: removed/abandoned,
+# blocked_launch, held_for_load, created, missing, running (lanes_proc_alive), awaiting_input, the run
+# file's park (merged / gone after reconcile-item), lost_to_reset (boot later than the last launch),
+# died (.died marker), stalled (process gone, not parked, no question). Keep-awake is SUGGESTED on macOS
+# (`caffeinate -i -w <coordinator pid>`); only `lane-status --keep-awake` starts it.
+#
 # Test seams: LOOMWRIGHT_LANES_META_SYNC (meta-sync.sh path), LOOMWRIGHT_LANES_SETUP_MEMORY
 # (setup-memory.sh path), LOOMWRIGHT_LANES_HELPERS (automate-helpers.sh path),
 # LOOMWRIGHT_LANES_INIT_WAIT_S (default 15: wait for the session id), LOOMWRIGHT_LANES_STOP_GRACE_S
-# (default 60: TERM→KILL grace for --stop), LOOMWRIGHT_MACHINE_LOAD_CMD, LOOMWRIGHT_LANE_RECHECK_S.
+# (default 60: TERM→KILL grace for --stop), LOOMWRIGHT_MACHINE_LOAD_CMD, LOOMWRIGHT_LANE_RECHECK_S,
+# LOOMWRIGHT_GH_BIN, LOOMWRIGHT_LANES_CI_SLOT, LOOMWRIGHT_LANES_PGREP, LOOMWRIGHT_LANES_CAFFEINATE,
+# LOOMWRIGHT_LANES_UNAME, LOOMWRIGHT_LANES_COORDINATOR_PID, LOOMWRIGHT_LANES_BOOT_EPOCH,
+# LOOMWRIGHT_LANES_TOKEN_LEDGER, LOOMWRIGHT_LANES_WATCH_ITERATIONS, LOOMWRIGHT_LANES_WATCH_INTERVAL_S.
 set -uo pipefail
 
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
@@ -659,6 +679,635 @@ lanes_branch_check() {
   echo "refuse: remote_branch_exists $b"; return 1
 }
 
+# ==================================================================================================
+# OBSERVATION — lane-status, lane-feed, lane-readiness, lane-status --leaks. Every reader fails SAFE:
+# an absent or unreadable source prints `unknown` and the command exits 0. Nothing here starts, stops
+# or kills a lane; the only process it may start is the opt-in `--keep-awake` holder.
+LANES_GH="${LOOMWRIGHT_GH_BIN:-gh}"
+
+_lanes_dash() { case "${1:-}" in -|null) ;; *) printf '%s' "${1:-}" ;; esac; }
+
+_lanes_epoch() { # <UTC ISO 8601> — epoch seconds; returns 1 when unparseable
+  local e; e="$(jq -n --arg t "${1:-}" '$t | fromdateiso8601' 2>/dev/null)"
+  case "$e" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s' "$e"
+}
+
+_lanes_boot_epoch() { # machine boot time (epoch); returns 1 when unknown
+  local b="${LOOMWRIGHT_LANES_BOOT_EPOCH:-}"
+  if [ -z "$b" ]; then
+    case "$(uname -s 2>/dev/null)" in
+      Darwin) b="$(sysctl -n kern.boottime 2>/dev/null | sed -n 's/^{ *sec = \([0-9][0-9]*\).*/\1/p' | head -1)" ;;
+      *) b="$(awk '$1 == "btime" { print $2 }' /proc/stat 2>/dev/null | head -1)" ;;
+    esac
+  fi
+  case "$b" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s' "$b"
+}
+
+# _lanes_runfile_fields <runfile> — status<TAB>pause_reason<TAB>pr<TAB>last_progress<TAB>pending_decisions
+# (`-` for each value that is absent; the whole line is `-`s when the run file is absent).
+_lanes_runfile_fields() {
+  [ -f "${1:-}" ] || { printf -- '-\t-\t-\t-\t-'; return 0; }
+  awk '
+    function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+    function d(s) { return (s == "" ? "-" : s) }
+    /^## / { sec = $0; next }
+    sec == "## Current" && /^- item:/ {
+      n = split($0, a, / \| /)
+      for (i = 1; i <= n; i++) { kv = a[i]; sub(/^- /, "", kv); k = kv; sub(/:.*/, "", k); v = kv; sub(/^[^:]*: */, "", v)
+        if (k == "status") st = trim(v); else if (k == "pr") pr = trim(v) } }
+    sec == "## Current" && /^- pause_reason:/ { v = $0; sub(/^- pause_reason: */, "", v); sub(/ \|.*/, "", v); pa = trim(v) }
+    sec == "## Current" && /pending_decisions:/ { v = $0; sub(/.*pending_decisions: */, "", v); sub(/[ |].*/, "", v); pd = v }
+    sec == "## Progress" && /^- / { lp = substr($0, 3); gsub(/\t/, " ", lp) }
+    END { printf "%s\t%s\t%s\t%s\t%s", d(st), d(pa), d(pr), d(lp), d(pd) }' "$1" 2>/dev/null | tr -d '\r'
+}
+
+# _lanes_parked <status> <pause_reason> — prints the park reason; returns 1 when the run is not parked.
+_lanes_parked() {
+  case "${2:-}" in -|null|'') ;; *) printf '%s' "$2"; return 0 ;; esac
+  case "${1:-}" in awaiting_merge|ready_for_release|escalated|failed|rate_limit|drain_died|done|gone) printf '%s' "$1"; return 0 ;; esac
+  return 1
+}
+
+# _lanes_last_message <stream_log> — the most recent assistant TEXT (never a tool-use line), ≤300 chars.
+_lanes_last_message() {
+  grep '^{' "$1" 2>/dev/null | jq -r -R 'fromjson? | select(.type == "assistant")
+    | [.message.content[]? | select(.type == "text") | .text] | join(" ")
+    | gsub("[\\r\\n\\t]+"; " ") | gsub("^ +| +$"; "") | select(length > 0) | .[0:300]' 2>/dev/null | tail -1
+}
+
+# _lanes_last_actions <stream_log> — the last 3 tool calls, one per line.
+_lanes_last_actions() {
+  grep '^{' "$1" 2>/dev/null | jq -r -R 'fromjson? | select(.type == "assistant") | .message.content[]?
+    | select(.type == "tool_use")
+    | (.name + " " + ((.input.command // .input.description // .input.file_path // .input.pattern // "") | tostring
+        | gsub("[\\r\\n\\t]+"; " ") | .[0:80])) | gsub(" +$"; "")' 2>/dev/null | tail -3
+}
+
+# _lanes_questions_json <inbox> <now_epoch> — JSON array of unanswered questions (asked_at, waiting_s).
+_lanes_questions_json() {
+  local q id at e w out="[]" nx
+  for q in "$1"/questions/*.json; do
+    [ -f "$q" ] || continue
+    id="$(basename "$q" .json)"
+    [ -e "$1/answers/$id.json" ] && continue
+    at="$(jq -r '.asked_at // empty' "$q" 2>/dev/null)"
+    w=null; if e="$(_lanes_epoch "$at")"; then w=$(( $2 - e )); fi
+    nx="$(jq -c --slurpfile Q "$q" --arg id "$id" --arg at "$at" --argjson w "$w" \
+      '. + [{id: $id, asked_at: (if $at == "" then null else $at end), waiting_s: $w,
+             question: (($Q[0].questions // [])[0].question // null)}]' <<<"$out" 2>/dev/null)" \
+      || nx="$(jq -c --arg id "$id" '. + [{id: $id, asked_at: null, waiting_s: null, question: null}]' <<<"$out")"
+    out="$nx"
+  done
+  printf '%s' "$out"
+}
+
+_lanes_keep_awake_state() {
+  if "${LOOMWRIGHT_LANES_PGREP:-pgrep}" -x caffeinate >/dev/null 2>&1; then printf 'held'; else printf 'not held'; fi
+}
+
+# _lanes_coordinator_pid — LOOMWRIGHT_LANES_COORDINATOR_PID, else the nearest `claude` ancestor, else $PPID.
+_lanes_coordinator_pid() {
+  local p="${LOOMWRIGHT_LANES_COORDINATOR_PID:-}" i=0 c
+  case "$p" in ''|*[!0-9]*) ;; *) printf '%s' "$p"; return 0 ;; esac
+  p="$PPID"
+  while [ "$i" -lt 12 ]; do
+    case "$p" in ''|*[!0-9]*|0|1) break ;; esac
+    c="$(ps -o comm= -p "$p" 2>/dev/null)"
+    case "${c##*/}" in claude) printf '%s' "$p"; return 0 ;; esac
+    p="$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')"; i=$((i + 1))
+  done
+  printf '%s' "$PPID"
+}
+
+# _lanes_keep_awake_hint — the macOS suggestion (the owner runs it); nothing on other OSes.
+_lanes_keep_awake_hint() {
+  case "${LOOMWRIGHT_LANES_UNAME:-$(uname -s 2>/dev/null)}" in
+    Darwin) printf 'caffeinate -i -w %s' "$(_lanes_coordinator_pid)" ;;
+  esac
+}
+
+# _lanes_keep_awake_start — `--keep-awake` opt-in ONLY: starts the holder tied to the coordinator pid.
+_lanes_keep_awake_start() {
+  local cf="${LOOMWRIGHT_LANES_CAFFEINATE:-caffeinate}" cp hp
+  case "${LOOMWRIGHT_LANES_UNAME:-$(uname -s 2>/dev/null)}" in
+    Darwin) ;;
+    *) echo "keep-awake: not started — no keep-awake holder known on this OS"; return 0 ;;
+  esac
+  [ "$(_lanes_keep_awake_state)" = held ] && { echo "keep-awake: already held"; return 0; }
+  cp="$(_lanes_coordinator_pid)"
+  nohup "$cf" -i -w "$cp" >/dev/null 2>&1 &
+  hp=$!
+  echo "keep-awake: started (opt-in --keep-awake) — $cf -i -w $cp (pid $hp); it ends with the coordinator"
+}
+
+# _lanes_machine_json — {state, load1, cpus, mem_pressure, keep_awake}; `unknown` when the reader is
+# absent or unreadable (never an error).
+_lanes_machine_json() {
+  local cmd="${LOOMWRIGHT_MACHINE_LOAD_CMD:-$HERE/machine-load.sh}" j="" ka
+  ka="$(_lanes_keep_awake_state)"
+  [ -f "$cmd" ] && j="$(bash "$cmd" --json 2>/dev/null | jq -c 'select(type == "object")' 2>/dev/null | head -1)"
+  [ -n "$j" ] || j='{}'
+  jq -c --arg ka "$ka" '{state: ((.state // "unknown") | tostring), load1: (.load1 // "unknown"),
+    cpus: (.cpus // "unknown"), mem_pressure: (.mem_pressure // "unknown"), keep_awake: $ka}' <<<"$j" 2>/dev/null \
+    || printf '{"state":"unknown","load1":"unknown","cpus":"unknown","mem_pressure":"unknown","keep_awake":"%s"}' "$ka"
+}
+
+_lanes_ci_json() { # `ci-slot.sh status --json`, or nothing
+  local c="${LOOMWRIGHT_LANES_CI_SLOT:-$HERE/ci-slot.sh}"
+  [ -f "$c" ] || return 0
+  bash "$c" status --json 2>/dev/null | jq -c 'select(type == "object")' 2>/dev/null | head -1
+}
+
+# _lanes_table_for [<parent_runfile>|<table>] — the D6 lane table; returns 1 when none.
+_lanes_table_for() {
+  local rf="${1:-}" top t
+  if [ -n "$rf" ]; then
+    case "$rf" in *.lanes) t="$rf" ;; *) t="${rf%.md}.lanes" ;; esac
+    [ -f "$t" ] && { printf '%s' "$t"; return 0; }
+    return 1
+  fi
+  top="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+  t="$(ls -t "$top"/.supervisor/automate/*.lanes 2>/dev/null | head -1)"
+  [ -n "$t" ] && [ -f "$t" ] && { printf '%s' "$t"; return 0; }
+  return 1
+}
+
+# _lanes_resolve <lane_dir|L<n>> — a lane directory (L<n> through the newest lane table).
+_lanes_resolve() {
+  case "${1:-}" in
+    L[0-9]|L[0-9][0-9])
+      local t; t="$(_lanes_table_for "")" || return 1
+      awk -F'\t' -v l="$1" '$1 == l { p = $2 } END { if (p != "") print p }' "$t" ;;
+    *) printf '%s' "${1:-}" ;;
+  esac
+}
+
+# _lanes_lane_json <10 lane-table columns> <now_epoch> <ci_json> — one lane's status object.
+# Classification order (first match wins): removed/abandoned · blocked_launch · held_for_load · created
+# · missing · running (lanes_proc_alive) · awaiting_input · parked (merged / gone after reconcile) ·
+# lost_to_reset (boot later than the last launch) · died (.died marker) · stalled.
+_lanes_lane_json() {
+  local lane="$1" path="$2" item="$3" run="$4" pid="$5" st="$6" sid="$7" ts="$8" llu="$9" why="${10}" now="${11}" ci="${12}"
+  local root log died rf status pause pr lp pd state reason="" held="" qs nq pk prs="" le be rdf rds="" rdsum="" lm la cij
+  root="$(dirname "$path")"; log="$root/$lane.stream.log"; died="$root/$lane.died"
+  rf="$path/.supervisor/automate/$run.md"
+  IFS="$(printf '\t')" read -r status pause pr lp pd <<<"$(_lanes_runfile_fields "$rf")"
+  qs="$(_lanes_questions_json "$path/.supervisor/inbox" "$now")"; nq="$(jq 'length' <<<"$qs" 2>/dev/null)"; nq="${nq:-0}"
+  cij='{"state":"unknown","position":null,"held":null}'
+  if [ -n "$ci" ]; then
+    cij="$(jq -c --arg d "$path" 'def m: ((.checkout // "") as $c | ($c == $d or ($c | startswith($d + "/"))));
+      if ((.holders // []) | any(m)) then {state: "holding", position: null, held: null}
+      else ([(.waiters // []) | to_entries[] | select(.value | m)] | first) as $w
+        | if $w == null then {state: "none", position: null, held: null}
+          else {state: "waiting", position: ($w.key + 1), held: $w.value.held} end end' <<<"$ci" 2>/dev/null)" \
+      || cij='{"state":"unknown","position":null,"held":null}'
+  fi
+  case "$ts" in
+    removed|abandoned) state="$ts" ;;
+    blocked_launch) state=blocked_launch; reason="$(_lanes_dash "$why")" ;;
+    held_for_load) state=held_for_load; reason="held for load: $(_lanes_dash "$why")"; held="$(_lanes_dash "$why")" ;;
+    created) state=created; reason="not launched" ;;
+    *)
+      if [ ! -d "$path" ]; then state=missing; reason="lane directory vanished"
+      elif lanes_proc_alive "$pid" "$st" "$path"; then
+        state=running
+        held="$(jq -r '.held // empty' <<<"$cij" 2>/dev/null)"
+        if [ "$(jq -r .state <<<"$cij")" = waiting ]; then reason="waiting for a CI slot — position $(jq -r .position <<<"$cij")"; fi
+        [ -n "$held" ] && reason="${reason:+$reason; }held for load: $held"
+      elif [ "$nq" -gt 0 ]; then state=awaiting_input; reason="question $(jq -r '.[0].id' <<<"$qs")"
+      elif pk="$(_lanes_parked "$status" "$pause")"; then
+        state="$pk"
+        if [ -n "$(_lanes_dash "$pr")" ]; then
+          case "$pk" in
+            awaiting_merge|ready_for_release)
+              prs="$(bash "$HELPERS" reconcile-item "$pr" "$pk" 2>/dev/null | head -1)"
+              case "$prs" in merged) state=merged ;; gone) state=gone; reason="PR closed unmerged" ;; awaiting_merge) ;; *) prs="" ;; esac ;;
+          esac
+        fi
+      elif be="$(_lanes_boot_epoch)" && le="$(_lanes_epoch "$(_lanes_dash "$llu")")" && [ "$be" -gt "$le" ]; then
+        state=lost_to_reset; reason="machine booted after the last launch ($llu); resume with lane-launch --resume-run $run"
+      elif [ -e "$died" ]; then
+        state=died; reason="process exited with no terminal result ($(awk -F'\t' '$1 == "died_at" { print $2 }' "$died" 2>/dev/null))"
+      else
+        state=stalled; reason="process gone, run file not parked, no pending question — resume once with lane-launch --continue"
+      fi ;;
+  esac
+  rdf="$path/.supervisor/automate/$run.merge-readiness.md"
+  if [ -f "$rdf" ]; then
+    rds="$(sed -n 's/^- score: \([0-9]*\/[0-9]*\).*/\1/p' "$rdf" | head -1)"
+    rdsum="$(sed -n 's/^- score: .* | summary: //p' "$rdf" | head -1)"
+  fi
+  lm="$(_lanes_last_message "$log")"; la="$(_lanes_last_actions "$log")"
+  jq -n -c --arg lane "$lane" --arg path "$path" --arg item "$(_lanes_dash "$item")" --arg run "$run" \
+    --arg state "$state" --arg reason "$reason" --arg pid "$(_lanes_dash "$pid")" --arg sid "$(_lanes_dash "$sid")" \
+    --arg llu "$(_lanes_dash "$llu")" --arg status "$(_lanes_dash "$status")" --arg pause "$(_lanes_dash "$pause")" \
+    --arg pr "$(_lanes_dash "$pr")" --arg prs "$prs" --arg lp "$(_lanes_dash "$lp")" --arg lm "$lm" --arg la "$la" \
+    --argjson qs "$qs" --argjson ci "$cij" --arg held "$held" --arg rdf "$rdf" --arg rds "$rds" --arg rdsum "$rdsum" \
+    'def n: if . == "" then null else . end;
+     {lane: $lane, path: $path, item: $item, run_id: $run, state: $state, reason: $reason, pid: ($pid | n),
+      session_id: ($sid | n), last_launch_utc: ($llu | n), run_status: ($status | n), pause_reason: ($pause | n),
+      pr: ($pr | n), pr_state: ($prs | n), last_progress: $lp, last_actions: ($la | split("\n") | map(select(. != ""))),
+      last_message: $lm, questions: $qs, ci_slot: $ci, held_for_load: ($held | n),
+      readiness: (if $rds == "" then null else {score: $rds, summary: $rdsum, file: $rdf} end)}'
+}
+
+# _lanes_status_doc <table> <parent> <primary> — the full lane-status JSON document.
+_lanes_status_doc() {
+  local table="$1" parent="$2" primary="$3" now ci m hint lanes="" row tab
+  tab="$(printf '\t')"; now="$(date -u +%s)"; ci="$(_lanes_ci_json)"; m="$(_lanes_machine_json)"; hint="$(_lanes_keep_awake_hint)"
+  local lane path item run pid st sid ts llu why
+  while IFS="$tab" read -r lane path item run pid st sid ts llu why; do
+    case "$lane" in L[0-9]|L[0-9][0-9]) ;; *) continue ;; esac
+    row="$(_lanes_lane_json "$lane" "$path" "$item" "$run" "$pid" "$st" "$sid" "$ts" "$llu" "${why:--}" "$now" "$ci")" || continue
+    lanes="$lanes$row
+"
+  done < "$table"
+  printf '%s' "$lanes" | jq -s -c --arg parent "$parent" --arg primary "$primary" --arg at "$(now_utc)" --argjson m "$m" \
+    --arg hint "$hint" --arg mp "$([ -e "$primary/.supervisor/automate/$parent.memory-pressure" ] && echo true || echo false)" \
+    '{schema_version: 1, parent_run_id: $parent, primary: $primary, generated_at: $at, machine: $m,
+      memory_pressure: ($mp == "true"), keep_awake_suggestion: (if $hint == "" then null else $hint end), lanes: .}'
+}
+
+_lanes_render() { # <status JSON> — the plain view
+  jq -r '"lane-status: \(.parent_run_id) — \(.lanes | length) lane(s) — \(.generated_at)",
+    (.lanes[] | "\(.lane)  \(.state)\(if .reason != "" then " (" + .reason + ")" else "" end)  item=\(.item)  pr=\(.pr // "-")  path=\(.path)",
+      (if .last_progress != "" then "    progress: \(.last_progress)" else empty end),
+      (if (.last_actions | length) > 0 then "    actions: \(.last_actions | join("; "))" else empty end),
+      (.questions[] | "    question: \(.id) asked_at=\(.asked_at // "unknown") waiting_s=\(.waiting_s // "unknown") — \(.question // "")"),
+      (if .ci_slot.state == "waiting" then "    ci-slot: waiting — position \(.ci_slot.position)"
+       elif .ci_slot.state == "holding" then "    ci-slot: holding a slot" else empty end),
+      (if .held_for_load != null then "    held for load: \(.held_for_load)" else empty end),
+      (if .readiness != null then "    readiness: \(.readiness.summary)" else empty end),
+      (if .last_message != "" then "    last: \(.last_message)" else empty end)),
+    "machine: state=\(.machine.state) load1=\(.machine.load1) cpus=\(.machine.cpus) mem_pressure=\(.machine.mem_pressure)\(if .memory_pressure then " — memory_pressure: new launches held" else "" end)",
+    "keep-awake: \(.machine.keep_awake)",
+    (if .keep_awake_suggestion != null and .machine.keep_awake != "held"
+     then "keep-awake suggestion (run it yourself): \(.keep_awake_suggestion) — a closed lid still sleeps" else empty end)' <<<"$1"
+}
+
+# _lanes_resources <primary> <parent> — the latest fleet.log line per lane plus the wave's peak.
+_lanes_resources() {
+  local f="$1/.supervisor/automate/$2.fleet.log" last
+  [ -s "$f" ] || { echo "resources: unknown — no fleet.log ($f)"; return 0; }
+  last="$(tail -1 "$f")"
+  printf '%s\n' "$last" | awk '{
+      printf "resources: latest %s\n", $1; m = ""
+      for (i = 2; i <= NF; i++) { k = $i; sub(/=.*/, "", k)
+        if (k ~ /(^|[_.])L[0-9]+([_.]|$)/) { match(k, /L[0-9]+/); l = substr(k, RSTART, RLENGTH)
+          if (!(l in seen)) { seen[l] = 1; order[++n] = l }; lines[l] = lines[l] " " $i }
+        else m = m " " $i }
+      printf "machine:%s\n", (m == "" ? " unknown" : m)
+      for (j = 1; j <= n; j++) printf "%s:%s\n", order[j], lines[order[j]] }'
+  awk '{ for (i = 2; i <= NF; i++) { k = $i; v = $i; sub(/=.*/, "", k); sub(/^[^=]*=/, "", v)
+          if (v ~ /^[0-9]+(\.[0-9]+)?/ && (!(k in pk) || v + 0 > pk[k] + 0)) { if (!(k in pk)) ord[++n] = k; pk[k] = v } } }
+       END { printf "peak:"; for (j = 1; j <= n; j++) printf " %s=%s", ord[j], pk[ord[j]]; print "" }' "$f"
+}
+
+# _lanes_tokens <table> <primary> <parent> — per-lane and parent token totals (read-token-ledger.sh).
+_lanes_tokens() {
+  local rtl="${LOOMWRIGHT_LANES_TOKEN_LEDGER:-$HERE/read-token-ledger.sh}" tab lane path run out all="" po
+  [ -f "$rtl" ] || { echo "tokens: unknown — read-token-ledger.sh absent"; return 0; }
+  tab="$(printf '\t')"
+  while IFS="$tab" read -r lane path _ run _; do
+    case "$lane" in L[0-9]|L[0-9][0-9]) ;; *) continue ;; esac
+    if [ -d "$path" ]; then out="$(bash "$rtl" --run-id "$run" --root "$path" 2>/dev/null | head -1)"; else out=""; fi
+    echo "$lane ${out:-unknown}"
+    [ -n "$out" ] && all="$all$out
+"
+  done < "$1"
+  po="$(bash "$rtl" --run-id "$3" --root "$2" 2>/dev/null | head -1)"
+  echo "parent ${po:-unknown}"
+  printf '%s%s\n' "$all" "$po" | awk '{ for (i = 1; i <= NF; i++) { k = $i; v = $i; sub(/=.*/, "", k); sub(/^[^=]*=/, "", v)
+      if (k == "LEDGER_UNREADABLE") u = 1; else if (v ~ /^[0-9]+$/) { if (!(k in s)) o[++n] = k; s[k] += v } } }
+    END { printf "total (parent + lanes):"; for (j = 1; j <= n; j++) printf " %s=%s", o[j], s[o[j]]; if (u) printf " LEDGER_UNREADABLE=1"; print "" }'
+}
+
+# ---- leak check (Validation 5) ----------------------------------------------------------------------
+_lanes_leak_sections() { # <primary>
+  local p="$1" pg="${LOOMWRIGHT_LANES_PGREP:-pgrep}"
+  echo "## worktrees"; git -C "$p" worktree list --porcelain 2>/dev/null | awk '/^worktree /'
+  echo "## lanes-dir"; ls -1 "$p-lanes" 2>/dev/null
+  echo "## claude-p"; "$pg" -lf 'claude -p' 2>/dev/null
+  echo "## merge-watch"; "$pg" -lf automate-merge-watch 2>/dev/null
+  echo "## config-checksum"
+  if [ -f "$p/.supervisor/config.json" ]; then cksum < "$p/.supervisor/config.json" | awk '{ print $1, $2 }'; else echo absent; fi
+  echo "## git-status"; git -C "$p" status --porcelain 2>/dev/null | awk '!/\.leaks-snapshot$/'
+  return 0
+}
+
+# lanes_leaks <primary> <parent> [snapshot 0|1] — `--snapshot` records the wave-start state; otherwise
+# compares now against it. First line: `leaks: none` | `leaks: found — <sections>` | `leaks: unknown — …`.
+lanes_leaks() {
+  local p="$1" parent="$2" snap="${3:-0}" sf tmp sec found="" body="" d
+  sf="$p/.supervisor/automate/$parent.leaks-snapshot"
+  if [ "$snap" = 1 ]; then
+    if { echo "# leaks snapshot $(now_utc)"; _lanes_leak_sections "$p"; } > "$sf.tmp.$$" 2>/dev/null && mv "$sf.tmp.$$" "$sf"; then
+      echo "leaks: snapshot written — $sf"
+    else rm -f "$sf.tmp.$$"; echo "leaks: snapshot not written (unwritable) — $sf"; fi
+    return 0
+  fi
+  if [ ! -f "$sf" ]; then
+    echo "leaks: unknown — no snapshot (take one at wave start: lane-status --leaks --snapshot)"
+    _lanes_leak_sections "$p" | sed 's/^/  /'; return 0
+  fi
+  tmp="$(mktemp -d 2>/dev/null)" || { echo "leaks: unknown — no temp dir"; return 0; }
+  _lanes_leak_sections "$p" > "$tmp/now"
+  for sec in worktrees lanes-dir claude-p merge-watch config-checksum git-status; do
+    awk -v s="## $sec" '/^## / { on = ($0 == s); next } on' "$sf" | env LC_ALL=C sort > "$tmp/a"
+    awk -v s="## $sec" '/^## / { on = ($0 == s); next } on' "$tmp/now" | env LC_ALL=C sort > "$tmp/b"
+    if cmp -s "$tmp/a" "$tmp/b"; then body="$body- $sec: same
+"
+    else
+      found="$found${found:+, }$sec"
+      d="$(env LC_ALL=C comm -13 "$tmp/a" "$tmp/b" | sed 's/^/  + /'; env LC_ALL=C comm -23 "$tmp/a" "$tmp/b" | sed 's/^/  - /')"
+      body="$body- $sec: changed
+$d
+"
+    fi
+  done
+  rm -rf "$tmp"
+  if [ -z "$found" ]; then echo "leaks: none (vs snapshot $sf)"; else echo "leaks: found — $found"; fi
+  printf '%s' "$body"
+  return 0
+}
+
+# ==================================================================================================
+# lane-status [<parent_runfile>] [--json] [--watch] [--leaks [--snapshot]] [--resources] [--tokens]
+#             [--refresh-readiness] [--keep-awake]
+lanes_status() {
+  local rf="" json=0 watch=0 leaks=0 snap=0 res=0 tok=0 ka=0 refresh=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --json) json=1 ;; --watch) watch=1 ;; --leaks) leaks=1 ;; --snapshot) leaks=1; snap=1 ;;
+      --resources) res=1 ;; --tokens) tok=1 ;; --keep-awake) ka=1 ;; --refresh-readiness) refresh=1 ;;
+      -*) echo "lane-status: unknown flag '$1'" >&2; return 2 ;;
+      *) [ -z "$rf" ] || { echo "lane-status: unexpected argument '$1'" >&2; return 2; }; rf="$1" ;;
+    esac
+    shift
+  done
+  if [ "$watch" = 1 ]; then _lanes_watch "$rf"; return 0; fi
+  local table parent primary doc tab lane path ts
+  if ! table="$(_lanes_table_for "$rf")"; then
+    if [ "$json" = 1 ]; then
+      jq -n -c --argjson m "$(_lanes_machine_json)" '{schema_version: 1, parent_run_id: null, machine: $m, lanes: []}'
+    else echo "lane-status: no lane table (${rf:-none found}) — no lanes"; fi
+    return 0
+  fi
+  parent="$(basename "$table" .lanes)"; primary="$(cd "$(dirname "$table")/../.." && pwd -P)"
+  [ "$leaks" = 1 ] && { lanes_leaks "$primary" "$parent" "$snap"; return 0; }
+  [ "$res" = 1 ] && { _lanes_resources "$primary" "$parent"; return 0; }
+  [ "$tok" = 1 ] && { _lanes_tokens "$table" "$primary" "$parent"; return 0; }
+  [ "$ka" = 1 ] && _lanes_keep_awake_start
+  if [ "$refresh" = 1 ]; then
+    tab="$(printf '\t')"
+    while IFS="$tab" read -r lane path _; do
+      case "$lane" in L[0-9]|L[0-9][0-9]) ;; *) continue ;; esac
+      [ -d "$path" ] && _lane_ctx "$path" || continue
+      ts="$(_lanes_runfile_fields "$path/.supervisor/automate/$LN_RUN.md" | cut -f1-2)"
+      case "$ts" in *ready_for_release*|*awaiting_merge*) lanes_readiness "$path" >/dev/null ;; esac
+    done < "$table"
+  fi
+  doc="$(_lanes_status_doc "$table" "$parent" "$primary")"
+  if [ -z "$doc" ]; then echo "lane-status: unknown — status unreadable"; return 0; fi
+  if [ "$json" = 1 ]; then printf '%s\n' "$doc"; else _lanes_render "$doc"; fi
+  return 0
+}
+
+# _lanes_watch [<parent_runfile>] — the plain view every LOOMWRIGHT_LANES_WATCH_INTERVAL_S (default 15)
+# seconds; LOOMWRIGHT_LANES_WATCH_ITERATIONS (default 0 = until interrupted) is the test seam.
+_lanes_watch() {
+  local n="${LOOMWRIGHT_LANES_WATCH_ITERATIONS:-0}" iv="${LOOMWRIGHT_LANES_WATCH_INTERVAL_S:-15}" i=0
+  case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  case "$iv" in ''|*[!0-9]*) iv=15 ;; esac
+  while :; do
+    [ -t 1 ] && printf '\033[H\033[2J'
+    echo "lane-status --watch — $(now_utc) — every ${iv}s (interrupt to stop)"
+    if [ -n "${1:-}" ]; then lanes_status "$1"; else lanes_status; fi
+    i=$((i + 1)); [ "$n" -gt 0 ] && [ "$i" -ge "$n" ] && return 0
+    sleep "$iv"
+  done
+}
+
+# ==================================================================================================
+# lane-feed <lane_dir|L<n>> [--follow] — a readable narration of the lane's stream log.
+_LANES_FEED_JQ='fromjson? |
+  if .type == "system" and .subtype == "init" then "[init] session \(.session_id // "?")"
+  elif .type == "assistant" then (.message.content[]? |
+    if .type == "text" then ((.text // "") | gsub("[\\r\\n\\t]+"; " ") | gsub("^ +| +$"; "")) as $t
+      | select($t != "") | "[say] \($t[0:200])"
+    elif .type == "tool_use" then
+      if (.name == "Task" or .name == "Agent") then "[spawn] \(.input.subagent_type // "agent"): \((.input.description // "") | tostring | .[0:120])"
+      elif .name == "AskUserQuestion" then "[ask] \(((.input.questions // [])[0].question // "") | tostring | .[0:160])"
+      elif .name == "Bash" and ((.input.command // "") | test("current-set")) and ((.input.command // "") | test("ready_for_release|awaiting_merge|escalated"))
+        then "[park] \((.input.command // "") | gsub("[\\r\\n\\t]+"; " ") | .[0:160])"
+      else "[tool] \(.name) \((.input.command // .input.description // .input.file_path // .input.pattern // "") | tostring | gsub("[\\r\\n\\t]+"; " ") | .[0:120])" end
+    else empty end)
+  elif .type == "result" then
+    if .stop_reason == "tool_deferred" then "[park] deferred \(.deferred_tool_use.id // "?") — awaiting input"
+    else "[end] \(.subtype // "?") stop_reason=\(.stop_reason // "?")" end
+  else empty end'
+
+lanes_feed() {
+  local target="" follow=0 dir
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --follow) follow=1 ;;
+      *) [ -z "$target" ] || die "lane-feed: unexpected argument '$1'"; target="$1" ;;
+    esac
+    shift
+  done
+  dir="$(_lanes_resolve "$target")"
+  _lane_ctx "$dir" || die "lane-feed: not a lane: ${target:-<none>}"
+  if [ ! -f "$LN_LOG" ] && [ "$follow" = 0 ]; then echo "lane-feed: $LN_LANE — no stream log yet ($LN_LOG)"; return 0; fi
+  echo "lane-feed: $LN_LANE ($LN_RUN) — $LN_LOG"
+  if [ "$follow" = 1 ]; then
+    touch "$LN_LOG" 2>/dev/null
+    tail -n +1 -f "$LN_LOG" | grep --line-buffered '^{' | jq --unbuffered -r -R "$_LANES_FEED_JQ" 2>/dev/null
+    return 0
+  fi
+  grep '^{' "$LN_LOG" 2>/dev/null | jq -r -R "$_LANES_FEED_JQ" 2>/dev/null
+  [ -f "$LN_DIED" ] && echo "[died] $(awk -F'\t' '$1 == "died_at" { print $2 }' "$LN_DIED" 2>/dev/null) — no terminal result"
+  return 0
+}
+
+# ==================================================================================================
+# lane-readiness <lane_dir|L<n>> — writes <lane>/.supervisor/automate/<run_id>.merge-readiness.md
+# (advisory, never a merge executor). Five checks, each PASS / FAIL / NOT-RUN with its evidence:
+#   validation     each `## Validation` entry of the item: PASS only with pasted output (a fenced block)
+#                  in the PR body's matching section; mentioned without output, or absent ⇒ NOT-RUN
+#   carried-notes  the brief's carried MEDIUM/LOW Plan Review notes, accounted for in the PR body
+#   scope-fence    `gh pr diff --name-only` ⊆ the item's `## Touches` / the brief's lanes + changelog.d/
+#   gates          required checks on the current head, dismissed-finding decisions, children-settled
+#   headline-repro the Validation entry naming a mutation / repro (PASS n/a when none is named)
+# Called by the lane at its ready_for_release park; re-written on demand (`lane-status --refresh-readiness`).
+_lanes_rd_section() { # <n> <title> <body_file> — the PR body's lines for Validation entry n
+  awk -v n="$1" -v t="$2" '
+    BEGIN { t = tolower(t) }
+    { l = tolower($0) }
+    on && (l ~ /^#/ || (l ~ /validation[ #]*[0-9]/ && l !~ ("validation[ #]*" n "([^0-9]|$)"))) { on = 0 }
+    !on && (l ~ ("validation[ #]*" n "([^0-9]|$)") || (t != "" && index(l, t) > 0)) { on = 1 }
+    on { print }' "$3"
+}
+
+lanes_readiness() {
+  local target="${1:-}" dir
+  dir="$(_lanes_resolve "$target")"
+  _lane_ctx "$dir" || die "lane-readiness: not a lane: ${target:-<none>}"
+  local rf="$LN_DIR/.supervisor/automate/$LN_RUN.md" out="$LN_DIR/.supervisor/automate/$LN_RUN.merge-readiness.md"
+  local status pause pr lp pd item itemf tmp view="" head=unknown gh_ok=0 brief=""
+  IFS="$(printf '\t')" read -r status pause pr lp pd <<<"$(_lanes_runfile_fields "$rf")"
+  pr="$(_lanes_dash "$pr")"; pd="$(_lanes_dash "$pd")"
+  item="$(sed -n 's/^- \[.\] //p' "$LN_DIR/.supervisor/lane-backlog.md" 2>/dev/null | head -1)"
+  itemf="$LN_DIR/$item"
+  tmp="$(mktemp -d 2>/dev/null)" || die "lane-readiness: no temp dir"
+  : > "$tmp/body"; : > "$tmp/files"
+  if [ -n "$pr" ] && view="$("$LANES_GH" pr view "$pr" --json body,headRefOid 2>/dev/null)" && jq -e 'type == "object"' >/dev/null 2>&1 <<<"$view"; then
+    gh_ok=1; jq -r '.body // ""' <<<"$view" > "$tmp/body"; head="$(jq -r '.headRefOid // "unknown"' <<<"$view")"
+  fi
+  # ---- a + e: Validation entries
+  local vrows="" erows="" n title sec st ev rs=0 vworst=PASS eworst=PASS vlabel="" isrepro
+  awk '/^## /{ on = ($0 ~ /^## Validation/); next } on && /^[0-9]+\. / {
+         n = $0; sub(/\..*/, "", n); t = $0
+         if (match(t, /\*\*[^*]+\*\*/)) t = substr(t, RSTART + 2, RLENGTH - 4); else { sub(/^[0-9]+\. */, "", t); t = substr(t, 1, 60) }
+         sub(/:$/, "", t); full = $0; gsub(/\t/, " ", full); print n "\t" t "\t" full }' "$itemf" 2>/dev/null > "$tmp/val"
+  while IFS="$(printf '\t')" read -r n title full; do
+    [ -n "$n" ] || continue
+    isrepro=0; case "$(printf '%s %s' "$title" "$full" | tr '[:upper:]' '[:lower:]')" in *mutation*|*"must catch"*|*repro*|*"must fail"*) isrepro=1 ;; esac
+    if [ "$gh_ok" = 0 ]; then st=NOT-RUN; ev="PR body unreadable${pr:+ ($pr)}${pr:-: no PR recorded}"
+    else
+      sec="$(_lanes_rd_section "$n" "$title" "$tmp/body")"
+      if [ -z "$sec" ]; then st=NOT-RUN; ev="no evidence in the PR body"
+      elif ! printf '%s\n' "$sec" | grep -q '```'; then st=NOT-RUN; ev="mentioned in the PR body without pasted output"
+      elif [ "$isrepro" = 0 ] && printf '%s\n' "$sec" | grep -qw 'FAIL'; then st=FAIL; ev="pasted output shows FAIL"
+      else st=PASS; ev="pasted output in the PR body"; fi
+    fi
+    if [ "$isrepro" = 1 ]; then
+      erows="$erows  - V$n $title: $st — $ev
+"
+      case "$st" in FAIL) eworst=FAIL ;; NOT-RUN) [ "$eworst" = FAIL ] || eworst=NOT-RUN ;; esac
+    else
+      vrows="$vrows  - V$n $title: $st — $ev
+"
+      case "$st" in
+        FAIL) vworst=FAIL ;;
+        NOT-RUN) [ "$vworst" = FAIL ] || vworst=NOT-RUN ;;
+      esac
+      if [ "$st" != PASS ]; then
+        case "$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]')" in
+          *"running system"*) case "$vlabel" in ''|running-system) vlabel=running-system ;; *) vlabel=validation ;; esac ;;
+          *) vlabel=validation ;;
+        esac
+      fi
+    fi
+  done < "$tmp/val"
+  local vline eline
+  if [ ! -s "$tmp/val" ]; then vworst=NOT-RUN; vlabel=validation; vline="validation: NOT-RUN — no ## Validation section in $item"
+  else vline="validation: $vworst — $(printf '%s' "$vrows" | grep -c ' PASS ' | tr -d ' ') of $(printf '%s' "$vrows" | grep -c '^  - ' | tr -d ' ') entr(ies) evidenced"; fi
+  if [ -z "$erows" ]; then eworst=PASS; eline="headline-repro: PASS — n/a (the Validation names no repro)"
+  else eline="headline-repro: $eworst — the Validation's named repro"; fi
+  # ---- b: carried Plan Review notes
+  local cline crows="" nc
+  local bl; bl="$(grep -l -F "$item" "$LN_DIR"/.supervisor/jobs/*/*.md 2>/dev/null)"
+  [ -n "$item" ] && [ -n "$bl" ] && brief="$(printf '%s\n' "$bl" | while IFS= read -r f; do ls -t "$f"; done 2>/dev/null | head -1)"
+  local cworst
+  if [ -z "$item" ] || [ -z "$brief" ]; then cworst=NOT-RUN; cline="carried-notes: NOT-RUN — no brief naming $item found in the lane"
+  else
+    grep -iE 'carried' "$brief" | grep -E 'MEDIUM|LOW' | sed 's/^[[:space:]-]*//' > "$tmp/carried"
+    nc="$(wc -l < "$tmp/carried" | tr -d ' ')"
+    if [ "$nc" = 0 ]; then cworst=PASS; cline="carried-notes: PASS — none carried ($(basename "$brief"))"
+    elif grep -qi 'carried' "$tmp/body"; then cworst=PASS; cline="carried-notes: PASS — $nc carried note(s), accounted for in the PR body"
+    else cworst=NOT-RUN; cline="carried-notes: NOT-RUN — $nc carried note(s), no accounting in the PR body"; fi
+    crows="$(sed 's/^/  - /' "$tmp/carried")"
+  fi
+  # ---- c: scope fence
+  local fline frows="" fworst f dcl outside=""
+  {
+    awk '/^## /{ on = ($0 ~ /^## Touches/); next } on' "$itemf" 2>/dev/null | grep -o '`[^`]*`' | tr -d '`'
+    [ -n "$brief" ] && sed -n 's/.*path: *"\([^"]*\)".*/\1/p; s/^ *- *"\([^"]*\)" *$/\1/p' "$brief"
+  } 2>/dev/null | sed 's#^\./##' | awk 'index($0, "/") || index($0, ".")' | env LC_ALL=C sort -u > "$tmp/declared"
+  if [ -z "$pr" ] || ! "$LANES_GH" pr diff "$pr" --name-only > "$tmp/files" 2>/dev/null; then
+    fworst=NOT-RUN; fline="scope-fence: NOT-RUN — gh pr diff unreadable${pr:+ ($pr)}${pr:-: no PR recorded}"
+  else
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      case "$f" in changelog.d/*) continue ;; esac
+      local okf=0
+      while IFS= read -r dcl; do
+        [ -n "$dcl" ] || continue
+        case "$f" in "$dcl"|*/"$dcl") okf=1; break ;; esac
+        case "$dcl" in */) case "$f" in "$dcl"*) okf=1; break ;; esac ;; esac
+        case "$dcl" in *'*'*) case "$f" in $dcl) okf=1; break ;; esac ;; esac
+      done < "$tmp/declared"
+      [ "$okf" = 1 ] || outside="$outside$f
+"
+    done < "$tmp/files"
+    if [ -z "$outside" ]; then fworst=PASS; fline="scope-fence: PASS — $(grep -c . "$tmp/files" | tr -d ' ') file(s) within the declared files + changelog.d/"
+    else fworst=FAIL; fline="scope-fence: FAIL — file(s) outside the declared files + changelog.d/"; frows="$(printf '%s' "$outside" | sed '/^$/d; s/^/  - /')"; fi
+  fi
+  # ---- d: gates
+  local gline grows="" gworst=PASS cj cs
+  if [ -z "$pr" ]; then gworst=NOT-RUN; grows="  - required checks: NOT-RUN — no PR recorded"
+  else
+    cj="$("$LANES_GH" pr checks "$pr" --required --json name,bucket 2>/dev/null)" || true
+    if ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$cj"; then gworst=NOT-RUN; grows="  - required checks: NOT-RUN — unreadable"
+    else
+      cs="$(jq -r --arg h "$head" 'if length == 0 then "NOT-RUN — no required checks reported"
+        elif any(.[]; .bucket == "fail" or .bucket == "cancel") then "FAIL — " + ([.[] | select(.bucket == "fail" or .bucket == "cancel") | .name] | join(", "))
+        elif all(.[]; .bucket == "pass" or .bucket == "skipping") then "PASS — \(length) required check(s) green on \($h)"
+        else "NOT-RUN — pending: " + ([.[] | select(.bucket != "pass" and .bucket != "skipping") | .name] | join(", ")) end' <<<"$cj")"
+      grows="  - required checks: $cs"
+      case "$cs" in FAIL*) gworst=FAIL ;; NOT-RUN*) gworst=NOT-RUN ;; esac
+    fi
+  fi
+  case "$pd" in
+    ''|0) grows="$grows
+  - dismissed findings: PASS — none pending an owner decision" ;;
+    *[!0-9]*) grows="$grows
+  - dismissed findings: NOT-RUN — pending_decisions unreadable ($pd)"; [ "$gworst" = FAIL ] || gworst=NOT-RUN ;;
+    *) grows="$grows
+  - dismissed findings: FAIL — $pd without an owner decision"; gworst=FAIL ;;
+  esac
+  if grep -qiE 'children[-_ ]settled' "$rf" 2>/dev/null; then
+    grows="$grows
+  - children-settled: PASS — $(grep -iE 'children[-_ ]settled' "$rf" | tail -1 | sed 's/^- //' | cut -c1-160)"
+  else
+    grows="$grows
+  - children-settled: NOT-RUN — not recorded in the run file"; [ "$gworst" = FAIL ] || gworst=NOT-RUN
+  fi
+  gline="gates: $gworst"
+  # ---- score
+  local pass=0 total=5 bad="" w lbl
+  for w in "validation:$vworst" "carried-notes:$cworst" "scope-fence:$fworst" "gates:$gworst" "headline-repro:$eworst"; do
+    lbl="${w%%:*}"; st="${w#*:}"
+    if [ "$st" = PASS ]; then pass=$((pass + 1)); else
+      [ "$lbl" = validation ] && lbl="${vlabel:-validation}"
+      bad="$bad${bad:+, }$lbl $st"
+    fi
+  done
+  local summary="ready ($pass/$total)"; [ -n "$bad" ] && summary="ready ($pass/$total: $bad)"
+  {
+    echo "# Merge readiness: $LN_RUN"
+    echo
+    echo "- item: ${item:-unknown} | pr: ${pr:-none} | head: $head | written: $(now_utc)"
+    echo "- score: $pass/$total | summary: $summary"
+    echo "- advisory only: this report never merges; the owner merges by hand."
+    echo
+    echo "## Checks"
+    echo "- $vline"; [ -n "$vrows" ] && printf '%s' "$vrows"
+    echo "- $cline"; [ -n "$crows" ] && printf '%s\n' "$crows"
+    echo "- $fline"; [ -n "$frows" ] && printf '%s\n' "$frows"
+    echo "- $gline"; printf '%s\n' "$grows"
+    echo "- $eline"; [ -n "$erows" ] && printf '%s' "$erows"
+  } > "$out.tmp.$$" 2>/dev/null && mv "$out.tmp.$$" "$out" || { rm -f "$out.tmp.$$"; rm -rf "$tmp"; echo "lane-readiness: $LN_LANE — report not written (unwritable): $out"; return 0; }
+  rm -rf "$tmp"
+  echo "lane-readiness: $LN_LANE ($LN_RUN) — $summary — $out"
+  return 0
+}
+
+_lanes_usage() { awk 'NR >= 9 && /^#$/ { exit } NR >= 9' "$SELF"; }
+
 lanes_main() {
   local sub="${1:-}"; shift 2>/dev/null || true
   case "$sub" in
@@ -671,10 +1320,13 @@ lanes_main() {
     init-check) lanes_init_check "$@" ;;
     pick-guard) lanes_pick_guard "$@" ;;
     branch-check) lanes_branch_check "$@" ;;
+    lane-status) lanes_status "$@" ;;
+    lane-feed) lanes_feed "$@" ;;
+    lane-readiness) lanes_readiness "$@" ;;
     _lane-run) lanes_run_wrapper "$@" ;;
     _merge-hooks) _lanes_merge_hooks "$@" ;;
-    -h|--help|help) sed -n '9,23p' "$SELF" ;;
-    *) sed -n '9,23p' "$SELF" >&2; return 2 ;;
+    -h|--help|help) _lanes_usage ;;
+    *) _lanes_usage >&2; return 2 ;;
   esac
 }
 
