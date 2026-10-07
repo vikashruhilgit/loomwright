@@ -600,6 +600,21 @@ teardown, machine (load, swap, free) at peak.
 - Wave-branch overlaps (from the four PRs' file lists): `vendor-coupling-manifest.json` (#410, #412, #417),
   `CLAUDE.md` (#410, #412), `TELEMETRY.md` (#410, #415), `ci.yml` + `ARCHITECTURE_CONTRACTS.md` (#412, #417).
 
+### Merge checks — #412 (hc/01, lane s3-k, parked `awaiting_merge` 09:45Z, head `ec9388e`)
+- `ci` + `claude-review` success on `ec9388e`; claude[bot] posted a review on EVERY round, the last "No new
+  findings" on `ec9388e` (static: `execution: none`). Dismissed findings all decided (2 follow-up, 2 drop, LOW summary
+  kept). Scope: 14 files, 6 outside hc/01's `## Touches` (`CLAUDE.md`, `changelog.d/README.md`,
+  `vendor-coupling-manifest.json`, `scripts/bump-version.sh` + test, `scripts/test-ci-local.sh`) — the PR body's
+  operator note names two of them. `bump-version.sh` now regenerates the contract, so the wave branch's last commit
+  (the bump) exercises it.
+- **Correction to a standing belief:** #412 edits `.github/workflows/ci.yml` and claude-review still ran and posted.
+  The action's self-skip is NOT "any PR that modifies a workflow file" — observed so far only when the PR changes the
+  review workflow itself (#398 edited `claude-review.yml` and skipped). The wave-3 PR will therefore likely get a real
+  claude-review despite ms/07 + hc/01 editing `ci.yml`; assert on posted comments either way.
+- Not verified (PR body): the `hooks[].writes` audit was done by reading scripts, not by running hooks — carried to the
+  wave PR body. Integration: merge #410 before #412, then `build-capabilities.sh --check` on the integrated tree and
+  regenerate if af/33's three new hook leaves make it stale.
+
 ## Done when
 All items in the queue (19 after the 2026-10-06 restructures) merged or closed by the owner, each wave's records on `loomwright-meta`, lanes torn down with `leaks`
 empty, the measures above recorded in this file, and P2 (default lane count) revisited with S2 + S3 evidence.
