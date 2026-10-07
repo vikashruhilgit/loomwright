@@ -609,7 +609,7 @@ teardown, machine (load, swap, free) at peak.
   (the bump) exercises it.
 - **Correction to a standing belief:** #412 edits `.github/workflows/ci.yml` and claude-review still ran and posted.
   The action's self-skip is NOT "any PR that modifies a workflow file" — observed so far only when the PR changes the
-  review workflow itself (#398 edited `claude-review.yml` and skipped). The wave-3 PR will therefore likely get a real
+  review workflow itself (#398 edited `claude-code-review.yml` and skipped). The wave-3 PR will therefore likely get a real
   claude-review despite ms/07 + hc/01 editing `ci.yml`; assert on posted comments either way.
 - Not verified (PR body): the `hooks[].writes` audit was done by reading scripts, not by running hooks — carried to the
   wave PR body. Integration: merge #410 before #412, then `build-capabilities.sh --check` on the integrated tree and
