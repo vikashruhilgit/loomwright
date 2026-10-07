@@ -75,12 +75,13 @@
   "glob_syntax_note": "Globs are shell `case` patterns evaluated against the repo-relative path, where `*` DOES match `/`. So `loomwright/skills/*` covers the whole subtree, and no `**` form is needed. ADAPTER is matched first, then COUPLED, then CORE \u2014 which is what lets a single-file adapter exemption win over the broader CORE glob that contains it.",
   "classes": {
     "adapter": {
-      "note": "Adapter surfaces may name any harness freely and are NOT counted at all. loomwright/hooks is the hook manifest and its prompt surfaces \u2014 hooks.json IS the Claude adapter, and demanding neutrality from it would be demanding it stop working. Agents and commands USED to be listed here as whole files; they are adapter_frontmatter now (only their frontmatter is exempt), because their bodies are the prose a non-Claude harness would have to run. The two .claude-plugin MANIFESTS (.claude-plugin/marketplace.json and loomwright/.claude-plugin/plugin.json) are literally the vendor's packaging format, and are named individually rather than by a directory glob ON PURPOSE: a `.claude-plugin/*` glob also swept in .claude-plugin/README.md, which is prose rather than a manifest, silently exempting its references while this note claimed to be exempting only manifests. That prose file is now COUPLED and ratcheted like any other doc. loomwright/scripts/resolve-loomwright-root.sh is exempt DELIBERATELY and load-bearingly: its entire job is to name the harness variable ONCE so that nothing else has to, and a gate that flagged it would be flagging the seam that exists to remove the coupling everywhere else.",
+      "note": "Adapter surfaces may name any harness freely and are NOT counted at all. loomwright/hooks is the hook manifest and its prompt surfaces \u2014 hooks.json IS the Claude adapter, and demanding neutrality from it would be demanding it stop working. Agents and commands USED to be listed here as whole files; they are adapter_frontmatter now (only their frontmatter is exempt), because their bodies are the prose a non-Claude harness would have to run. The two .claude-plugin MANIFESTS (.claude-plugin/marketplace.json and loomwright/.claude-plugin/plugin.json) are literally the vendor's packaging format, and are named individually rather than by a directory glob ON PURPOSE: a `.claude-plugin/*` glob also swept in .claude-plugin/README.md, which is prose rather than a manifest, silently exempting its references while this note claimed to be exempting only manifests. That prose file is now COUPLED and ratcheted like any other doc. loomwright/scripts/resolve-loomwright-root.sh is exempt DELIBERATELY and load-bearingly: its entire job is to name the harness variable ONCE so that nothing else has to, and a gate that flagged it would be flagging the seam that exists to remove the coupling everywhere else. loomwright/capabilities.json is ADAPTER for the same reason as the hook manifest: it is the generated, host-facing capability contract, and it has to name the harness's hook events, tool names, model aliases and settings-file keys verbatim, because those exact strings are what a host matches on; it is never hand-edited (the build-capabilities.sh staleness gate regenerates and diffs it).",
       "globs": [
         "loomwright/hooks/*",
         ".claude-plugin/marketplace.json",
         "loomwright/.claude-plugin/plugin.json",
-        "loomwright/scripts/resolve-loomwright-root.sh"
+        "loomwright/scripts/resolve-loomwright-root.sh",
+        "loomwright/capabilities.json"
       ]
     },
     "adapter_frontmatter": {
@@ -197,6 +198,7 @@
     "loomwright/scripts/audit-rules.sh": 5,
     "loomwright/scripts/automate-helpers.sh": 4,
     "loomwright/scripts/automate-merge-watch.sh": 6,
+    "loomwright/scripts/build-capabilities.sh": 5,
     "loomwright/scripts/build-floor.sh": 3,
     "loomwright/scripts/build-handoff.sh": 5,
     "loomwright/scripts/build-insights.sh": 5,
@@ -278,6 +280,7 @@
     "loomwright/scripts/test-automate-helpers.sh": 3,
     "loomwright/scripts/test-automate-trail.sh": 2,
     "loomwright/scripts/test-brief-conformance-seam.sh": 1,
+    "loomwright/scripts/test-build-capabilities.sh": 1,
     "loomwright/scripts/test-build-floor.sh": 7,
     "loomwright/scripts/test-build-handoff.sh": 14,
     "loomwright/scripts/test-check-children-settled.sh": 5,
@@ -439,6 +442,7 @@
     "loomwright/docs/vendor-coupling-manifest.json": "re-baseline (agnostic-phase1/01): this manifest now declares every token of all seven token classes literally, and its class notes describe them; measured, not hand-typed",
     "loomwright/scripts/automate-helpers.sh": "merge of main into this PR: PR #384 (merged) added 2 reference(s); measured 4 under schema 2",
     "loomwright/scripts/automate-merge-watch.sh": "re-baseline (agnostic-phase1/01): newly counted token classes: runtime_identity; measured, no reference added",
+    "loomwright/scripts/build-capabilities.sh": "new (host-contract/01): the capability-contract generator must match the install-root variable literally in hooks.json commands to find each leaf's scripts, and names the settings-file path in its writes-audit comments; measured, all install_root",
     "loomwright/scripts/build-floor.sh": "re-baseline (agnostic-phase1/01): newly counted token classes: orchestration, hook_protocol; measured, no reference added",
     "loomwright/scripts/build-insights.sh": "re-baseline (agnostic-phase1/01): newly counted token classes: hook_protocol; measured, no reference added",
     "loomwright/scripts/capture-task-spawn-payload.sh": "re-baseline (agnostic-phase1/01): newly counted token classes: hook_protocol, model_names; measured, no reference added",
@@ -498,6 +502,7 @@
     "loomwright/scripts/test-automate-helpers.sh": "merge of main into this PR: PR #384 (merged) added 1 reference(s); measured 3 under schema 2",
     "loomwright/scripts/test-automate-trail.sh": "re-baseline (agnostic-phase1/01): newly counted token classes: runtime_identity; measured, no reference added",
     "loomwright/scripts/test-brief-conformance-seam.sh": "re-baseline (agnostic-phase1/01): newly counted token classes: hook_protocol; measured, no reference added",
+    "loomwright/scripts/test-build-capabilities.sh": "new (host-contract/01): the (U) arm injects a hooks.json leaf that invokes an unaudited script through the install-root variable, exactly as real leaves do; measured, install_root=1",
     "loomwright/scripts/test-build-floor.sh": "re-baseline (agnostic-phase1/01): newly counted token classes: orchestration, hook_protocol, model_names; measured, no reference added",
     "loomwright/scripts/test-check-children-settled.sh": "re-baseline (agnostic-phase1/01): newly counted token classes: hook_protocol; measured, no reference added",
     "loomwright/scripts/test-check-contract-parity.sh": "re-baseline (agnostic-phase1/01): newly counted token classes: hook_protocol; measured, no reference added",

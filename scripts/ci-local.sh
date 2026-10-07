@@ -8,6 +8,7 @@
 # all contending for the same CPUs. This script fixes each of those by construction:
 #
 #   SAME GATES AS CI   every `bash scripts/<gate>.sh [--self-test]` line in .github/workflows/ci.yml
+#                      and every `bash loomwright/scripts/<gate>.sh --check` line
 #                      (derived, not hand-listed — a gate added to ci.yml is picked up automatically)
 #                      + every root scripts/test-*.sh + the loomwright self-test suite. All of them
 #                      go into ONE pool run by loomwright/scripts/run-self-tests.sh (concurrency,
@@ -330,10 +331,13 @@ fi
 
 # --- plan: ci.yml gates (as wrappers, so arguments survive the runner's `bash "$t"`), root tests
 # ci.yml does not already name, then the loomwright suite (the same two globs run-self-tests.sh
-# uses with no arguments — test-ci-local.sh pins that they match). ---------------------------------
+# uses with no arguments — test-ci-local.sh pins that they match). A `bash loomwright/scripts/<x>.sh
+# --check` line is a gate too (the capability-contract staleness check); other `bash loomwright/…`
+# lines in ci.yml (the suite runner, the playwright pin, the fitness report) are not, which is why
+# only the `--check` form is matched. --------------------------------------------------------------
 gates=()
 while IFS= read -r g; do gates+=("$g"); done < <(
-  grep -oE 'bash scripts/[A-Za-z0-9_.-]+\.sh( --self-test)?' .github/workflows/ci.yml \
+  grep -oE 'bash (scripts/[A-Za-z0-9_.-]+\.sh( --self-test)?|loomwright/scripts/[A-Za-z0-9_.-]+\.sh --check)' .github/workflows/ci.yml \
     | sed 's/^bash //' | awk '!seen[$0]++')
 if [ "${#gates[@]}" -eq 0 ]; then
   echo "ci-local: found no \`bash scripts/<gate>.sh\` lines in .github/workflows/ci.yml — refusing to report green on zero gates" >&2

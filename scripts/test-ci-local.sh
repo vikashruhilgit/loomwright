@@ -597,6 +597,15 @@ run
 if [ "$rc" -eq 1 ] && has "zero gates"; then ok "(Z) no gates in ci.yml: exit 1"
 else no "(Z) rc=$rc out=$out"; fi
 
+# (LC) — a `bash loomwright/scripts/<x>.sh --check` line is a gate; other loomwright lines are not.
+printf 'jobs:\n  ci:\n    steps:\n      - run: bash scripts/check-a.sh\n      - run: bash loomwright/scripts/check-l.sh --check\n      - run: bash loomwright/scripts/run-self-tests.sh\n' > "$R/.github/workflows/ci.yml"
+printf 'echo "check-l ${1:-plain}" >> "$FIXTURE_LOG"\n' > "$R/loomwright/scripts/check-l.sh"
+run --list
+want_lc=$'gate: scripts/check-a.sh\ngate: loomwright/scripts/check-l.sh --check'
+if [ "$rc" -eq 0 ] && [ "$(grep '^gate: ' <<<"$out")" = "$want_lc" ]; then ok "(LC) a loomwright --check line is a gate; the suite runner line is not"
+else no "(LC) rc=$rc out=$out"; fi
+rm -f "$R/loomwright/scripts/check-l.sh"
+
 # (A)
 run --bogus
 if [ "$rc" -eq 2 ]; then ok "(A) unknown argument: exit 2"; else no "(A) rc=$rc"; fi
@@ -607,6 +616,8 @@ if grep -q "($glob)" "$SUT" && grep -q "($glob)" "$REPO_ROOT/loomwright/scripts/
 else no "(W) ci-local.sh's loomwright glob drifted from run-self-tests.sh's"; fi
 if grep -q 'bash scripts/test-ci-local.sh' "$REPO_ROOT/.github/workflows/ci.yml"; then ok "(W) ci.yml runs this self-test"
 else no "(W) .github/workflows/ci.yml does not run scripts/test-ci-local.sh"; fi
+if grep -q 'bash loomwright/scripts/build-capabilities.sh --check' "$REPO_ROOT/.github/workflows/ci.yml"; then ok "(W) ci.yml runs the capability-contract staleness gate (so ci-local does too)"
+else no "(W) .github/workflows/ci.yml does not run loomwright/scripts/build-capabilities.sh --check"; fi
 
 echo
 echo "test-ci-local: $pass passed, $fail failed"
