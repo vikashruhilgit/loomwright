@@ -27,7 +27,10 @@
 #       non-interactive / subagent / headless context names its can't-ask status (Launch Pad + its
 #       agent<->command rule mirror, Supervisor, supervisor-config, autonomous-loop, automate-loop,
 #       qa-executor); the inventory sits right before ## Failure Escalation Summary and no row's NEW
-#       behaviour cell is "undefined".
+#       behaviour cell (the LAST cell) contains "undefined" (case-insensitive substring).
+#       Launch Pad's per-gate statuses and Supervisor's adjudication status are matched INSIDE their
+#       gate's own section (heading → next heading of the same or higher level), not file-wide, so
+#       deleting one gate's branch cannot hide behind the Critical Rules summary or the flag table.
 #       The RESUME gate names `resume_requires_flag_non_interactive` (skill, command, inventory) and
 #       the withdrawn auto-continue status `resume_continued_non_interactive` appears on no surface;
 #       Launch Pad also names `save_requires_flag_non_interactive` (no flag ⇒ no save), so the
@@ -42,6 +45,9 @@
 #   (m) MUTATION CONTROL: delete the can't-ask branch line from a COPY of agents/product-owner.md;
 #       gate the mutant on non-empty + differs-from-original; the (a) predicate MUST fail on it.
 #       Without this, (a) could be green while asserting nothing.
+#   (m2) MUTATION CONTROL: delete the Phase 2.5 NO-GO can't-ask branch from a COPY of
+#       agents/launch-pad.md (gated non-empty + differs); the section-scoped NO-GO predicate MUST fail
+#       on it, although the file still names `no_go_non_interactive` in its Critical Rules and table.
 #
 # EXTENDING: further gates append their own section ABOVE the `---- (m)` block using
 # `gate_has_status <label> <file> <status-string>` (one named status per gate) — keep each gate's
@@ -118,6 +124,36 @@ section_body() {
     in_sec && (/^### / || /^## /) { in_sec = 0 }
     in_sec { print }
   ' "$1"
+}
+
+# heading_section <file> <heading-prefix> — prints the lines after the first heading line starting
+# with <heading-prefix>, up to the next heading of the SAME OR HIGHER level (fewer-or-equal `#`).
+# Silent: used on the real files AND the mutants.
+heading_section() {
+  awk -v h="$2" '
+    function level(line,   n) { n = 0; while (substr(line, n + 1, 1) == "#") n++; return n }
+    !in_sec && index($0, h) == 1 { in_sec = 1; lvl = level($0); next }
+    in_sec && /^#+ / && level($0) <= lvl { exit }
+    in_sec { print }
+  ' "$1"
+}
+
+# section_names <file> <heading-prefix> <status> — exit 0 iff the gate's own section names <status>.
+# Captured text + case (no `| grep -q` under pipefail).
+section_names() {
+  body="$(heading_section "$1" "$2")"
+  [ -n "$body" ] || return 1
+  case "$body" in *"$3"*) return 0 ;; esac
+  return 1
+}
+
+# section_has_status <label> <file> <heading-prefix> <status> — reporting wrapper.
+section_has_status() {
+  if section_names "$2" "$3" "$4"; then
+    ok "$1 names its can't-ask status \`$4\` inside its own section ($3)"
+  else
+    no "$1 does not name its can't-ask status \`$4\` inside its own section ($3 in $2)"
+  fi
 }
 
 # ---- (a) PO agent: the can't-ask branch inside the soft gate -------------------------------------
@@ -197,10 +233,14 @@ ARCH="$PLUGIN_ROOT/docs/ARCHITECTURE_CONTRACTS.md"
 for f in "$LP_AGENT" "$LP_CMD" "$SV_AGENT" "$SV_CFG" "$AL_SKILL" "$QA_AGENT" "$ARCH"; do
   [ -f "$f" ] || no "MISSING surface: $f"
 done
-for s in clarification_needed_non_interactive no_go_non_interactive needs_human_non_interactive \
-         saved_on_pass_non_interactive save_requires_flag_non_interactive \
+LP_P2='### Phase 2: DISCOVER'; LP_P25='### Phase 2.5: FEASIBILITY'
+LP_P55='### Phase 5.5: PLAN REVIEW'; LP_P6='### Phase 6: REFINE & SAVE'
+section_has_status "(g) agents/launch-pad.md Phase 2 clarification" "$LP_AGENT" "$LP_P2" 'clarification_needed_non_interactive'
+section_has_status "(g) agents/launch-pad.md Phase 2.5 NO-GO" "$LP_AGENT" "$LP_P25" 'no_go_non_interactive'
+section_has_status "(g) agents/launch-pad.md Phase 5.5 NEEDS_HUMAN" "$LP_AGENT" "$LP_P55" 'needs_human_non_interactive'
+for s in needs_human_non_interactive saved_on_pass_non_interactive save_requires_flag_non_interactive \
          plan_review_fail_non_interactive memory_candidates_deferred_non_interactive; do
-  gate_has_status "(g) agents/launch-pad.md" "$LP_AGENT" "$s"
+  section_has_status "(g) agents/launch-pad.md Phase 6" "$LP_AGENT" "$LP_P6" "$s"
 done
 # agent<->command mirror: the Can't-ask rule bullet is byte-identical in both Launch Pad files.
 lp_rule() { grep -F -- "- **Can't-ask rule:**" "$1" | head -1; }
@@ -214,14 +254,16 @@ case "$lp_a" in
   *'executing as a subagent'*'never from a stdin-TTY probe alone'*) ok "(g) Launch Pad rule keys on flag + subagent, not the TTY probe alone" ;;
   *) no "(g) Launch Pad rule does not name the subagent signal / TTY-not-alone" ;;
 esac
-gate_has_status "(g) commands/launch-pad.md NO-GO" "$LP_CMD" 'no_go_non_interactive'
-for s in init_input_missing_non_interactive adjudication_required_non_interactive \
+section_has_status "(g) commands/launch-pad.md NO-GO" "$LP_CMD" "$LP_P25" 'no_go_non_interactive'
+section_has_status "(g) agents/supervisor.md adjudication" "$SV_AGENT" '#### Adjudication Handling' 'adjudication_required_non_interactive'
+for s in init_input_missing_non_interactive \
          preflight_overlap_detected gh_unavailable_non_interactive children_unsettled; do
   gate_has_status "(g) agents/supervisor.md" "$SV_AGENT" "$s"
 done
 gate_has_status "(g) skills/supervisor-config/SKILL.md INIT" "$SV_CFG" 'init_input_missing_non_interactive'
 for s in non_interactive_without_fallback rubric_gate_closed_non_interactive no_rubric_in_non_interactive \
-         review_heal_escalated_non_interactive pr_base_verify_skipped_non_interactive; do
+         review_heal_escalated_non_interactive pr_base_verify_skipped_non_interactive \
+         launch_pad_cant_ask_non_interactive; do
   gate_has_status "(g) skills/autonomous-loop/SKILL.md" "$AL_SKILL" "$s"
 done
 for s in no_source_non_interactive resume_requires_flag_non_interactive resume_ambiguous; do
@@ -286,10 +328,16 @@ else
   no "(g) ## Question-gate inventory missing or not immediately before ## Failure Escalation Summary (got: $prev_h2)"
 fi
 inv="$(awk '/^## Question-gate inventory/{p=1; next} p && /^## /{exit} p' "$ARCH")"
-if grep -qiE '^\|.*\| *undefined *\|$' < <(printf '%s\n' "$inv"); then
-  no "(g) an inventory row's NEW can't-ask behaviour cell is 'undefined'"
+# inv_undefined_rows <text> — prints every table row whose LAST cell contains "undefined"
+# (case-insensitive substring: catches 'undefined', 'undefined ' and 'undefined (TBD)'). Silent.
+inv_undefined_rows() {
+  printf '%s\n' "$1" | awk -F'|' '/^\|/ && NF > 2 { c = tolower($(NF-1)); if (index(c, "undefined") > 0) print }'
+}
+inv_undef="$(inv_undefined_rows "$inv")"
+if [ -n "$inv_undef" ]; then
+  no "(g) an inventory row's NEW can't-ask behaviour cell contains 'undefined': $inv_undef"
 else
-  ok "(g) no inventory row's new can't-ask behaviour is 'undefined'"
+  ok "(g) no inventory row's new can't-ask behaviour cell contains 'undefined'"
 fi
 # (h) subtask 1's PO / automate strings still resolve after subtask 2's edits (re-check, not preservation).
 gate_has_status "(h) re-check agents/product-owner.md" "$PO_AGENT" 'po_gate: needs_owner (<n> flags)'
@@ -358,6 +406,20 @@ if [ -s "$MUT" ] && ! cmp -s "$PO_AGENT" "$MUT"; then
   fi
 else
   no "(m) mutant invalid (empty, or identical to the original) — the mutation control cannot be trusted"
+fi
+
+# ---- (m2) MUTATION CONTROL: the scoped NO-GO predicate must go RED when that branch is deleted ---
+MUT2="$MUT_DIR/launch-pad.md"
+grep -vF "**Cannot ask** (Can't-ask rule) → no option is auto-picked" "$LP_AGENT" > "$MUT2"
+if [ -s "$MUT2" ] && ! cmp -s "$LP_AGENT" "$MUT2"; then
+  ok "(m2) Launch Pad mutant is non-empty and differs from the original (a valid mutant)"
+  if section_names "$MUT2" "$LP_P25" 'no_go_non_interactive'; then
+    no "(m2) scoped NO-GO assertion PASSED against the mutant — the section scoping is vacuous"
+  else
+    ok "(m2) scoped NO-GO assertion fails against the mutant (the section scoping is load-bearing)"
+  fi
+else
+  no "(m2) Launch Pad mutant invalid (empty, or identical to the original) — the mutation control cannot be trusted"
 fi
 
 echo

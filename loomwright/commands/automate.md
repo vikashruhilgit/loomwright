@@ -40,7 +40,8 @@ The intake is **source-agnostic** — only the *intake* differs, and intake is j
 
 # Driven continuously by Claude's /loop — use the NAMESPACED form headless (bare /automate is "Unknown command" under detached claude -p):
 /loop /loomwright:automate [...]
-# A headless tick that continues an existing run passes --resume [<run_id>] (else: resume_requires_flag_non_interactive)
+# A headless tick that continues an existing run passes --resume [<run_id>] (else: resume_requires_flag_non_interactive —
+# that stop, like resume_ambiguous, also stops the /loop driver; the owner re-invokes with --resume)
 ```
 
 ## Parameters
