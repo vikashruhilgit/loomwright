@@ -21,13 +21,15 @@ file's location is gitignored, so the state never becomes tracked.
 | `repo` | `<owner/repo>` for `gh` (from `--repo`, else parsed from the origin URL); recorded once given | `preflight` |
 | `branch` | the metadata branch (vetted with `setup-memory.sh valid-branch`); every later `meta-sync.sh` call passes it as `--branch` — never a fallback to `loomwright-meta` | `init` (`rehearse` before `init` uses `--branch` without recording it) |
 | `pre_migration_sha` | `HEAD` at preflight | `preflight` |
-| `preflight`, `scrub`, `rehearse`, `init`, `protect`, `mode_pr`, `seed`, `untrack_pr`, `verify_pr`, `after_merge`, `rollback` | step result: `PASS` \| `FAIL`; `protect` may also read `PRINTED` (ruleset printed, `protect --verify` not yet passed) | the step of the same name |
+| `preflight`, `scrub`, `rehearse`, `init`, `protect`, `mode_pr`, `seed`, `untrack_pr`, `verify_pr`, `after_merge`, `rollback` | step result: `PASS` \| `FAIL`; `protect` may also read `PRINTED` (ruleset printed, `protect --verify` not yet passed); `seed`, `untrack_pr`, `verify_pr` may also read `STALE` (a later step invalidated them: a re-run `seed` stales `untrack_pr` + `verify_pr`, a re-cut `untrack-pr` stales `verify_pr`, an `after-merge` tracked-path FAIL stales all three) — `STALE` never satisfies a gate | the step of the same name (`STALE`: `seed`, `untrack-pr`, `after-merge`) |
 | `seed_a`, `seed_b` | counts: A = managed paths tracked on `origin/<default>` (`meta-sync.sh list-managed --tracked`), B = paths on the metadata branch | `seed` |
 | `seed_sha` | the `origin/<default>` commit the seed check ran against | `seed` |
+| `seed_check` | `equal` (A = B) \| `subset` (A ⊆ B, follow-up round only) — the relation the seed check proved; the untrack PR body states it | `seed` |
+| `followup` | `1` once `after-merge` found managed paths still tracked after a merged untrack PR; the A/B check accepts A ⊆ B only when this is recorded AND the mode line reads `on <b>` (never on the mode line alone) | `after-merge` |
 | `mode_pr_branch`, `untrack_branch`, `rollback_branch` | the NEW branch the step committed on | `mode-pr`, `untrack-pr`, `rollback` |
 | `pr_mode`, `pr_untrack`, `pr_rollback` | the URL of the PR the step opened (never merged) | `mode-pr`, `untrack-pr`, `rollback` |
 | `backup_mode_pr`, `backup_untrack_pr` | the path the `.gitignore.backup.<ts>` was moved to | `mode-pr`, `untrack-pr` |
-| `verify_pr_sha` | `HEAD` (the fast-forwarded default) when `verify-pr` passed. Written by the code but NOT listed in the script's header — the header should gain it | `verify-pr` |
+| `verify_pr_sha` | `HEAD` (the fast-forwarded default) when `verify-pr` passed | `verify-pr` |
 
 **Gate.** Every step after `preflight` refuses (exit 1, nothing changed) while the recorded `preflight`
 result is not `PASS`; later steps also require the result of the step they follow.

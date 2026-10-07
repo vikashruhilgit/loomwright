@@ -32,7 +32,14 @@
 #      before the owner's merge -> after-merge FAIL naming it; the named recovery (seed -> untrack-pr
 #      -> verify-pr -> merge -> after-merge) completes; a re-run is idempotent; mutation control:
 #      after-merge without the re-check MUST fail the leg
+#      after the FAIL `state` points at seed and after-merge refuses until a round-2 verify-pr ran;
+#      the round-2 seed / verify-pr say A ⊆ B (never "equal") and the PR body does too
 #  12. a step with no recorded metadata branch (rollback) refuses before any push / branch / state
+#  13. a half-migrated FIRST migration (mode line already `on <b>`, history still tracked, no recorded
+#      after-merge) with an extra local managed file -> seed FAIL (A = B required, never A ⊆ B);
+#      mutation control: subset mode keyed on the mode line alone MUST turn it red
+#  14. a re-cut untrack PR stales the earlier verify-pr PASS: `state` says next verify-pr and
+#      after-merge refuses until verify-pr runs against the new PR
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -318,7 +325,16 @@ race_late() {
   [ "$RC" -eq 1 ] && has "still tracked on main: .supervisor/jobs/done/late.md" && has "seed" && [ "$(st A after_merge)" = FAIL ]
 }
 race_late; check $? "after-merge FAILs naming a managed path committed after verify-pr ($RACE_DETAIL)"
-mb A seed; S1="$RC"; mb A untrack-pr; S2="$RC"; mb A verify-pr "$(pr_n pr_untrack)"; S3="$RC"
+mb A state; { has "next: seed" && [ "$(st A followup)" = 1 ] && [ "$(st A verify_pr)" = STALE ]; }; check $? "after the tracked-path FAIL, state points at seed (round 1's seed/untrack/verify are STALE)"
+mb A after-merge; { [ "$RC" -eq 1 ] && has "refused: step 'verify_pr' is 'STALE'"; }; check $? "after-merge refuses on round 1's stale verify-pr PASS (rc=$RC)"
+mb A seed; S1="$RC"; SEED2="$OUT"; mb A untrack-pr; S2="$RC"
+mb A state; has "next: verify-pr"; check $? "round 2 after seed + untrack-pr: state says next: verify-pr"
+mb A after-merge; { [ "$RC" -eq 1 ] && has "refused: step 'verify_pr'"; }; check $? "after-merge refuses until round-2 verify-pr has run (rc=$RC)"
+{ grep -qF "A ⊆ B (B has 3 extra)" <<<"$SEED2" && ! grep -qF "path lists equal" <<<"$SEED2" && [ "$(st A seed_check)" = subset ]; }; check $? "round-2 seed reports A ⊆ B (B has 3 extra), never 'equal'"
+B2="$STUBD/body.$(pr_n pr_untrack)"
+{ grep -qF 'A ⊆ B (B has 3 extra' "$B2" && ! grep -qF 'path-list diff A vs B: empty' "$B2"; }; check $? "round-2 untrack PR body claims A ⊆ B, not an empty A/B diff"
+mb A verify-pr "$(pr_n pr_untrack)"; S3="$RC"
+{ has "A ⊆ B (A = 1, B = 4; B has 3 extra)" && ! has "A = B ="; }; check $? "round-2 verify-pr reports A ⊆ B, never A = B"
 owner_merge "$(st A untrack_branch)"; mb A after-merge
 { [ "$S1$S2$S3" = 000 ] && [ "$RC" -eq 0 ] && [ -z "$(bash "$HERE/meta-sync.sh" list-managed --tracked --root "$W/A")" ] \
   && git --git-dir="$W/origin.git" cat-file -e "$BR:.supervisor/jobs/done/late.md" 2>/dev/null && [ -z "$(porcelain A)" ]; }
@@ -338,6 +354,37 @@ mb A rollback --commit HEAD
 { [ "$RC" -eq 1 ] && has "no metadata branch recorded" && [ -z "$(st A rollback)" ] && [ "$(git -C "$W/A" symbolic-ref --short HEAD)" = main ] \
   && [ "$O0" = "$(git --git-dir="$W/origin.git" for-each-ref --format='%(refname) %(objectname)')" ]; }
 check $? "rollback with no recorded branch exits 1 before any push, branch or state write (rc=$RC)"
+
+echo "== 13. half-migrated FIRST migration: A ⊆ B is never accepted on the mode line alone =="
+# half_migrated — main already carries the branch-mode block (setup-memory apply committed) while the
+# history is still tracked; A also holds one untracked local managed file. 0 = seed refused (A != B)
+half_migrated() {
+  mkworld history
+  rm -rf "$W/O"; git clone -q "$W/origin.git" "$W/O" 2>/dev/null
+  ( cd "$W/O" && bash "$HERE/setup-memory.sh" --root "$W/O" apply --branch-mode "$BR" >/dev/null && git add .gitignore && git commit -qm mode && git push -q origin main )
+  git -C "$W/A" pull -q --ff-only origin main
+  echo '# local only' > "$W/A/.supervisor/jobs/done/local.md"
+  to_protected A || { HALF_DETAIL="to_protected failed: $OUT"; return 2; }
+  mb A seed
+  HALF_DETAIL="rc=$RC mode=$(bash "$HERE/setup-memory.sh" --root "$W/A" mode) followup=$(st A followup) seed=$(st A seed)"
+  [ "$RC" -eq 1 ] && [ "$(st A seed)" = FAIL ] && has "A != B" && ! has "A ⊆ B"
+}
+half_migrated; check $? "mode line 'on $BR' + tracked history + extra local file, no recorded after-merge -> seed FAIL ($HALF_DETAIL)"
+MUT="$TROOT/mut-subset-mode-line"
+if build_mutant "$MUT" 's/^  if \[ "\$(state_get followup)" = 1 \] && \[ "\$(read_mode)" = "on \$b" \]; then$/  if [ "$(read_mode)" = "on $b" ]; then/' '  if [ "$(read_mode)" = "on $b" ]; then'; then
+  SCRIPT="$MUT/migrate-branch-mode.sh"
+  if half_migrated; then no "mutation control REFUTED: subset mode on the mode line alone still failed seed"; else ok "mutation control: subset mode keyed on the mode line alone passes the half-migrated seed ($HALF_DETAIL)"; fi
+  SCRIPT="$SUT"
+else no "mutation control (subset mode on the mode line) did not build — counts as FAIL"; fi
+
+echo "== 14. a re-cut untrack PR stales the earlier verify-pr PASS =="
+hist_to_untrack; mb A verify-pr "$(pr_n pr_untrack)"; V1="$RC"
+mb A untrack-pr; U2="$RC"
+mb A state; { [ "$V1$U2" = 00 ] && has "next: verify-pr" && [ "$(st A verify_pr)" = STALE ]; }; check $? "re-cut untrack-pr -> verify_pr STALE, state next: verify-pr (verify=$V1 untrack=$U2)"
+owner_merge "$(st A untrack_branch)"; mb A after-merge
+{ [ "$RC" -eq 1 ] && has "refused: step 'verify_pr' is 'STALE'"; }; check $? "after-merge refuses: the PASS was for the earlier PR (rc=$RC)"
+mb A seed; { [ "$(st A untrack_pr)" = STALE ] && [ "$(st A verify_pr)" = STALE ]; }; check $? "a re-run seed stales untrack-pr and verify-pr"
+[ "$(grep -c '^verify_pr=' "$W/A/.supervisor/migrate-branch-mode/state")" = 1 ]; check $? "state file keeps one verify_pr line"
 
 echo
 echo "$pass passed, $fail failed"
