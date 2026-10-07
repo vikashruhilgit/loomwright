@@ -119,8 +119,9 @@ is_uint() { case "${1:-}" in ''|*[!0-9]*) return 1 ;; esac; return 0; }
 alive() { is_uint "${1:-}" && [ "$1" -gt 0 ] && kill -0 "$1" 2>/dev/null; }
 now() { date +%s; }
 # clock_ms — wall-clock milliseconds into CLOCK_MS, without a fork: bash >= 5's EPOCHREALTIME
-# (microseconds; `.` or `,` by locale), else SECONDS (bash 3.2: whole seconds, so a 5 s bound waits
-# between 4 and 5 s — never past it). Only differences of two readings are meaningful.
+# (microseconds; `.` or `,` by locale), else SECONDS (bash 3.2: whole seconds, so a 5 s bound ends
+# after just over 4 s to 5 s). Either way a polling caller can overshoot by one poll step (one
+# `sleep` plus its process start). Only differences of two readings are meaningful.
 clock_ms() {
   local e="${EPOCHREALTIME:-}"
   case "$e" in
@@ -227,7 +228,8 @@ read_load() {
     RP=$!; clock_ms; i="$CLOCK_MS"
     # bounded by the CLOCK, not by a loop count: each `sleep` is a process start, which costs ~8 ms
     # extra on macOS, so 100 x `sleep 0.05` took 5.85 s idle (more under load) and a reader that
-    # answered at 6 s was taken as answered instead of still running (test-ci-slot G10, G13).
+    # answered at 6 s was taken as answered instead of still running (test-ci-slot G10, G13). The
+    # wait now ends at 5 s plus at most one poll step (bash 3.2: just over 4 s to 5 s, plus that step).
     while alive "$RP"; do clock_ms; [ $((CLOCK_MS - i)) -ge 5000 ] && break; sleep 0.05; done
     if alive "$RP"; then load_timed_out "$t"; return 0; fi   # SLOW
     wait "$RP"; rc=$?
