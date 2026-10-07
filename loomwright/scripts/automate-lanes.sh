@@ -1179,8 +1179,8 @@ lanes_readiness() {
     else
       sec="$(_lanes_rd_section "$n" "$title" "$tmp/body")"
       if [ -z "$sec" ]; then st=NOT-RUN; ev="no evidence in the PR body"
-      elif ! printf '%s\n' "$sec" | grep -q '```'; then st=NOT-RUN; ev="mentioned in the PR body without pasted output"
-      elif [ "$isrepro" = 0 ] && printf '%s\n' "$sec" | grep -qw 'FAIL'; then st=FAIL; ev="pasted output shows FAIL"
+      elif ! grep -q '```' <<<"$sec"; then st=NOT-RUN; ev="mentioned in the PR body without pasted output"
+      elif [ "$isrepro" = 0 ] && grep -qw 'FAIL' <<<"$sec"; then st=FAIL; ev="pasted output shows FAIL"
       else st=PASS; ev="pasted output in the PR body"; fi
     fi
     if [ "$isrepro" = 1 ]; then

@@ -77,7 +77,7 @@ _resume_lane_own() {
 _resume_lane_skip() {
   local id
   id="$(_resume_title_run_id "$1")"
-  printf '%s\n' "$id" | grep -Eq -- '-L[0-9]+$' || return 1
+  grep -Eq -- '-L[0-9]+$' <<<"$id" || return 1
   [ -n "$2" ] && [ "$id" = "$2" ] && return 1
   return 0
 }
