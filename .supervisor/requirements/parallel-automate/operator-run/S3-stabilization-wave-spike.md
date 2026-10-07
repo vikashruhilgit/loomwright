@@ -662,6 +662,28 @@ teardown, machine (load, swap, free) at peak.
   floor-ui-redesign/01; loom-floor-ui 05/06; twin-loop 07 (both files); twin-remediation 08/09/10; and the four
   never-stamped "ABANDONED" items (review-remediation/10, token-economy/06, twin-remediation/03 and /06).
 
+### Owner decisions 2026-10-07 — post-wave-3 order and pa/22 anchor index (relayed by 2216aefd)
+- **New order (replaces "wave 4 = pa/05 ∥ hc/02"):**
+  | Step | What | How |
+  |---|---|---|
+  | 1 | pa/05 ALONE (468 lines, 31 files) | plain sequential `/automate` in the primary, between waves; the machine to itself |
+  | 2 | hc/02 ∥ pa/22 | a wave (pa/22 depends on pa/05 either way); hc/03 done directly after hc/02 merges |
+  | 3 | pa/21 fleet operations ∥ pa/14 lanes pane | a wave |
+  | 4 | af/34 · af/36 · pa/18 | serial, or partly parallel if pa/22 frees them |
+  | 5 | pa/07 pilot (Milestone B) | last |
+  Same number of steps as before; only hc/03 moves one step later. Operator check: `plan-waves --explain` places
+  hc/02 and pa/22 in ONE wave with no conflict (declared + companion expansion, pa/22's depend set aside).
+- **pa/22 amended (owner choice (a)):** keep an anchor-preserving index at every split surface (pa/11's
+  `RESULT_SCHEMAS.md` method); re-point only references inside its own `## Touches`; other citations resolve through the
+  index (re-pointing them is follow-up for each file's owner). Evidence: `session-resume.sh` (edited by hc/02) cites
+  `SKILL.md §6 "Post-merge close-out"` and `§"Branch mode"`. Added acceptance: every pre-split citation still resolves,
+  with a test (and mutation control) that fails on a dangling one. Scope 6 marked superseded, text kept.
+- `plan-waves --lint` 13/13 ok after both changes.
+- **Operator notes for step 1 (raised to the owner 2026-10-07):** pa/05's own Validation 4 needs a real
+  `/automate --parallel 2` on two small disjoint items BEFORE merge — use two throwaway items, never real queue
+  items; who drives the sequential run (this session after wave-3 release + reinstall, or a fresh one) is the owner's
+  call; step 2 could run on pa/05's own `--parallel 2` if released first, else on the `s1h.sh` harness.
+
 ## Done when
 All items in the queue merged or closed by the owner — as of 2026-10-07 after the tail restructure, 13 open items: wave 3 ms/07 · af/31 · af/33 · hc/01; wave 4 pa/05 · hc/02; then pa/22 split, pa/21 fleet operations ∥ pa/14, af/34, af/36 S3 engine fixes, pa/18, pa/07 last (Milestone B) — plus hc/03 done directly after hc/01 + hc/02 (done earlier in S3: af/32, ms/08, ms/04, pa/09, pa/19, ms/11, pa/11, pa/16, agnostic/04), each wave's records on `loomwright-meta`, lanes torn down with `leaks`
 empty, the measures above recorded in this file, and P2 (default lane count) revisited with S2 + S3 evidence.

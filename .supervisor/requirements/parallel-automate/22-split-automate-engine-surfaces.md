@@ -57,7 +57,7 @@ move-only split plus generated indexes, like `parallel-automate/11`.
    `--auto-merge` gate (all seven conditions), the dismissed-findings decision step, and closeout (watcher +
    `closeout-others` + finalize-empty). Each trace names the file and section it reads at every step; no step may
    point at a section that moved without its index entry. Paste the traces in the PR body.
-6. **Every reference re-pointed:** the 44 script references, agent/command/skill cross-links, CLAUDE.md /
+6. **Every reference re-pointed** *(superseded 2026-10-07 by the anchor-index amendment below — re-point only references inside this item's own `## Touches`)*: the 44 script references, agent/command/skill cross-links, CLAUDE.md /
    ARCHITECTURE_CONTRACTS mentions, the `vendor-coupling-manifest.json` entries, and `check-doc-currency.sh` /
    `test-citation-drift.sh` pins. Then re-point every open item's `## Touches` (the post-pa/11 step, done by the
    operator after merge, as on 2026-10-07).
@@ -84,6 +84,21 @@ Changing any engine behaviour, any gate, or any schema field. Splitting other fi
    file's `## Current` and the lines showing the split files were read.
 4. A failure this must catch: the two mutation controls in Scope 7.
 5. Rollback: `git revert` (move-only).
+
+## Amended 2026-10-07 — keep an ANCHOR INDEX; re-point only inside this item's Touches (owner choice (a), relayed by S3 session 2216aefd)
+- **Why:** Scope 6 said "the 44 script references … re-pointed", but those scripts are not in this item's `## Touches`.
+  One of them, `loomwright/scripts/session-resume.sh` (edited by `host-contract/02`), cites
+  `skills/automate-loop/SKILL.md §6 "Post-merge close-out"` and `§"Branch mode"` in comments (verified 2026-10-07 on
+  `main` `f4b0732`). Editing them would be undeclared Touches drift — the class agnostic/04 hit in S3 wave 2.
+- **Change:** every split surface keeps an **anchor-preserving index** at its current path, the way
+  `parallel-automate/11` kept `RESULT_SCHEMAS.md`: each pre-split `§N` / heading anchor stays resolvable at the old
+  path (an index entry pointing to the new file, or the anchor left unchanged). This item re-points ONLY references
+  inside its own `## Touches`; every other citation keeps resolving through the index. Re-pointing outside citations
+  is follow-up work for each file's owner (pa/11's precedent). It does not edit the citing scripts and docs.
+- **Acceptance (added):** after the split, every pre-split citation of the four surfaces (SKILL.md, commands/automate.md,
+  result-schemas/automate-run.md, the helpers usage header) still resolves — an index entry or an unchanged anchor —
+  checked by a test that collects the citations repo-wide and fails on a dangling one. **Mutation control:** removing
+  one index entry that a citation uses makes that test fail.
 
 ## Evidence
 Overlap table above (S3 operator session f849e0cc, 2026-10-07, from the `## Touches` of af/34, pa/18,
