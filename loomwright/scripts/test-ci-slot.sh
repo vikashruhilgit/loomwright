@@ -65,6 +65,9 @@
 #             hanging reader with an answered overloaded reading under 60 s old holds even with no
 #             holder; with that reading older than 60 s it reads busy and grants a sole caller.
 #             MUTATION CONTROL: a timed-out reader read as unknown ⇒ the slow-reader check fails.
+#        (G13) the reader wait is bounded by the clock, not by a count of `sleep` calls: with a PATH
+#             `sleep` that adds 0.1 s per call, G10's slow-reader check still holds busy. MUTATION
+#             CONTROL: the old 100 x `sleep 0.05` loop restored ⇒ the check fails under that sleep.
 #        (G11) boot time: a holder record started before boot (fixture LOOMWRIGHT_MACHINE_BOOT_TIME)
 #             whose pid is now an ANCESTOR of the caller is dropped, not folded into (held under
 #             overloaded); one whose pid is an unrelated live process is dropped, not a phantom
@@ -666,6 +669,19 @@ out="$(lpat acquire g10f --pid "$c" --wait 2 2>/dev/null)"
 if [ -n "$out" ] && [ "$(cut -d' ' -f2- "$MDIR/load")" = "overloaded 40.00" ]; then
   ok "(G10) with that reading 61 s old a hanging reader reads busy: a sole caller is granted, the cache untouched"
 else no "(G10) stale stand-in: out=[$out] cache=[$(cat "$MDIR/load")]"; fi
+# (G13) the 5 s reader wait is bounded by the CLOCK, not by a count of `sleep` calls: with a `sleep` on
+# PATH that costs 0.1 s extra per call (process start cost, exaggerated), the old 100 x `sleep 0.05`
+# loop ran ~15 s, so G10's 6 s reader answered first and the interim busy line never showed.
+mkdir -p "$tmp/slowsleep"
+printf '#!/bin/sh\n/bin/sleep 0.1\nexec /bin/sleep "$@"\n' > "$tmp/slowsleep/sleep"; chmod +x "$tmp/slowsleep/sleep"
+if PATH="$tmp/slowsleep:$PATH" slow_held "$SUT"; then ok "(G13) a slow \`sleep\` does not stretch the 5 s reader wait (busy shown while the 6 s reader runs)"
+else no "(G13) slow sleep: $GWHY"; fi
+mut="$tmp/mut-count.sh"
+sed 's/^    while alive "\$RP"; do clock_ms; \[ \$((CLOCK_MS - i)) -ge 5000 \] \&\& break; sleep 0\.05; done$/    i=0; while alive "$RP" \&\& [ "$i" -lt 100 ]; do sleep 0.05; i=$((i + 1)); done/' "$SUT" > "$mut"
+if [ -s "$mut" ] && ! cmp -s "$mut" "$SUT" && bash -n "$mut"; then
+  if PATH="$tmp/slowsleep:$PATH" slow_held "$mut"; then no "(G13) MUTATION CONTROL: the iteration-bounded wait still passed under a slow sleep — (G13) proves nothing"
+  else ok "(G13) MUTATION CONTROL: the iteration-bounded wait fails (G13) under a slow sleep ($GWHY)"; fi
+else no "(G13) MUTATION CONTROL: mutant not built (empty, unchanged or invalid)"; fi
 lpat release --pid "$c"; setload ok
 
 # (G11) records from before this boot are dropped, never counted or folded into

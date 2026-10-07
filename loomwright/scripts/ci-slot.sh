@@ -118,6 +118,16 @@ warn() { echo "ci-slot: $*" >&2; }
 is_uint() { case "${1:-}" in ''|*[!0-9]*) return 1 ;; esac; return 0; }
 alive() { is_uint "${1:-}" && [ "$1" -gt 0 ] && kill -0 "$1" 2>/dev/null; }
 now() { date +%s; }
+# clock_ms — wall-clock milliseconds into CLOCK_MS, without a fork: bash >= 5's EPOCHREALTIME
+# (microseconds; `.` or `,` by locale), else SECONDS (bash 3.2: whole seconds, so a 5 s bound waits
+# between 4 and 5 s — never past it). Only differences of two readings are meaningful.
+clock_ms() {
+  local e="${EPOCHREALTIME:-}"
+  case "$e" in
+    *[.,]*) e="${e/[.,]/}"; CLOCK_MS=$(( 10#$e / 1000 )) ;;
+    *) CLOCK_MS=$(( SECONDS * 1000 )) ;;
+  esac
+}
 
 cpus() {
   local c="${LOOMWRIGHT_CI_CPUS:-}"
@@ -214,8 +224,11 @@ read_load() {
     RF="$MD/.reading.$$"
     [ -d "$MD" ] || RF="${TMPDIR:-/tmp}/ci-slot-reading.$$"
     LOOMWRIGHT_CI_CPUS="$CPUS" bash "$LOAD_CMD" > "$RF" 2>/dev/null &
-    RP=$!; i=0
-    while alive "$RP" && [ "$i" -lt 100 ]; do sleep 0.05; i=$((i + 1)); done
+    RP=$!; clock_ms; i="$CLOCK_MS"
+    # bounded by the CLOCK, not by a loop count: each `sleep` is a process start, which costs ~8 ms
+    # extra on macOS, so 100 x `sleep 0.05` took 5.85 s idle (more under load) and a reader that
+    # answered at 6 s was taken as answered instead of still running (test-ci-slot G10, G13).
+    while alive "$RP"; do clock_ms; [ $((CLOCK_MS - i)) -ge 5000 ] && break; sleep 0.05; done
     if alive "$RP"; then load_timed_out "$t"; return 0; fi   # SLOW
     wait "$RP"; rc=$?
   fi
