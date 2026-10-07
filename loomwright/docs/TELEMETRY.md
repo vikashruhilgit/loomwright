@@ -1974,15 +1974,16 @@ exit 0, the run completes unaffected.
 
 ### `/automate` merge-watch gate event (v-next)
 
-A SEPARATE, ADDITIVE closed set of one value — the autonomous-loop table and
+A SEPARATE, ADDITIVE closed set of two values — the autonomous-loop table and
 the `/verify --notify` table above are UNCHANGED by this addition. The
 `/automate` merge watcher (`scripts/automate-merge-watch.sh`, armed at the
-safe-mode `awaiting_merge` park — protocol authority
+`awaiting_merge` and `escalated` parks — protocol authority
 `skills/automate-loop/SKILL.md` §6 "Post-merge close-out") fires the same
-`send-webhook.sh --event-type gate` seam with a single `gate_type`. Every
-emission goes through the watcher's one `notify()` helper, which ALSO pipes a
-synthetic `Notification`-shaped payload (`notification_type:
-"automate_merge_watch"`, `message` = the same string as `--context`) into
+`send-webhook.sh --event-type gate` seam with `gate_type`
+`automate_merge_watch` or `automate_escalation_recheck`. Every emission goes
+through the watcher's one `notify_as()` helper, which ALSO pipes a synthetic
+`Notification`-shaped payload (`notification_type` = the same gate type,
+`message` = the same string as `--context`) into
 `notify-desktop.sh`; both calls are fail-safe (output discarded, exit status
 ignored). `--iteration` and `--session-id` are NOT passed, so both fields
 arrive as empty strings — correlate on the `run_id` inside `context`.
@@ -1992,9 +1993,13 @@ arrive as empty strings — correlate on the `run_id` inside `context`.
 | `automate_merge_watch`  | `automate-merge-watch.sh` `notify()`, `MERGED` branch — closeout ran | The PR merged and `automate-helpers.sh closeout` got past its guards. `"<pr_url> merged — /automate closeout ran for <item> (run <run_id>); the next item waits for your go"` | once per watcher |
 | `automate_merge_watch`  | `automate-merge-watch.sh` `notify()`, `MERGED` branch — terminal closeout guard | The PR merged but closeout stopped at a non-transient `closeout: skipped — <guard>` line (a `## Progress` line is also appended; the operator runs `/automate --resume`). `"<pr_url> merged but /automate closeout could not run for <item> (run <run_id>): <guard>"` | once per watcher |
 | `automate_merge_watch`  | `automate-merge-watch.sh` `notify()`, `CLOSED` branch | The PR was closed unmerged; the item is `gone` (no cleanup). `"<pr_url> closed unmerged — /automate item <item> is gone (run <run_id>)"` | once per watcher |
+| `automate_escalation_recheck` | `automate-merge-watch.sh` `esc_recheck()`, `OPEN` poll (automate-followups/31) | An `escalated` park's `## Current` names a `check_pending` / `check_red_unrelated` cause and that check completed (any attempt ≥ recorded for `check_pending`; a NEWER attempt for `check_red_unrelated`). `"<pr_url> now mergeable — <check> green on <sha>; …"` or `"<pr_url> still failing — <check> <conclusion> on <sha>; rerun: gh run rerun <run_id> --failed (…)"` (the command is printed, never run). The watcher keeps watching for the merge. | once per watcher |
 
-The three rows are mutually exclusive — each is followed by the watcher's
-exit — so a watcher emits at most ONE `automate_merge_watch` event. It
+The three `automate_merge_watch` rows are mutually exclusive — each is
+followed by the watcher's exit — so a watcher emits at most ONE
+`automate_merge_watch` event, plus at most ONE `automate_escalation_recheck`
+event (latched; an existing report line in `## Progress` suppresses it after
+a restart). It
 deliberately does NOT notify on: a TRANSIENT closeout skip (`run lock held`,
 `gh unavailable`, `pr not merged (…)`, or no output — retried on a later poll
 with backoff), a `gh pr view` error (backoff retry), a still-`OPEN` PR, a
@@ -2008,7 +2013,8 @@ the desktop half by `notify-desktop.sh`'s own opt-out
 
 **Cross-references:** `scripts/automate-merge-watch.sh` (header + `notify()`),
 `skills/automate-loop/SKILL.md` §6, `scripts/test-automate-trail.sh` (asserts
-exactly one desktop + one `automate_merge_watch` webhook per watcher).
+exactly one desktop + one `automate_merge_watch` webhook per watcher, and
+counts `automate_escalation_recheck` separately — legs WE).
 
 ---
 

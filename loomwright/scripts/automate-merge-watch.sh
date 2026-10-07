@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # automate-merge-watch.sh — the `/automate` merge watcher. PROTOCOL AUTHORITY:
 # `skills/automate-loop/SKILL.md` §6 "Post-merge close-out" (armed at §9's
-# safe-mode `awaiting_merge` park, before the lock release; that park runs no
-# trail-pr — closeout's own trail commits the item once its PR has merged).
+# `awaiting_merge` park AND at its `escalated` park — both modes, the SAME
+# launch line below — after the park state is written and before the lock
+# release; neither park runs trail-pr — closeout's own trail commits the item
+# once its PR has merged).
 #
 # Usage: automate-merge-watch.sh <runfile> <item> <pr_url>
 #
@@ -31,8 +33,25 @@
 #            closeout kept returning a transient skip until the cap, the line
 #            and a failure-style notify both say so and name the last skip
 #            reason (never "resume after the merge" — the merge was observed).
-# It never merges anything, never picks/RUNs a Queue item, never invokes
-# `/autonomous`.
+#   SETTLE RE-CHECK (automate-followups/31): while OPEN, when ## Current names
+#            THIS item + PR and carries `- escalation_cause: check_pending` or
+#            `check_red_unrelated` with a non-null check + sha (written by
+#            `automate-helpers.sh current-escalation`), each poll also reads
+#            that ONE check — `gh run view <run_id> --json
+#            attempt,status,conclusion,headSha` when a run id is recorded, else
+#            `gh api repos/<o>/<r>/commits/<sha>/check-runs` by name (never an
+#            extra `gh pr view`). check_pending reports at the first completed
+#            attempt >= the recorded one; check_red_unrelated only at a NEWER
+#            attempt (> recorded — a human rerun). The report is ONE ## Progress
+#            line — `now mergeable: <check> green on <sha>` or `still failing:
+#            <check> <conclusion> — rerun: gh run rerun <run_id> --failed` (the
+#            command is PRINTED for the owner, never executed) — plus ONE
+#            notify of gate type `automate_escalation_recheck`, then a latch
+#            (also across a restart: an existing report line in ## Progress
+#            suppresses it); the watcher keeps watching for the merge. Any other
+#            cause, or no line ⇒ no check polling at all (today's behavior).
+# It never merges, pushes, approves or reruns anything, never picks/RUNs a
+# Queue item, never invokes `/autonomous`.
 #
 # SINGLE INSTANCE PER RUN: marker `<runfile dir>/<run_id>.merge-watch` (TSV
 # pid/pr_url/started; gitignored under `.supervisor/automate/*` because it is
@@ -49,6 +68,10 @@
 # A dead pid ⇒ reclaimed. The marker is removed on every exit of the owning
 # watcher (EXIT trap; TERM/INT/HUP exit through it), and a launch only ever
 # removes the marker it inspected.
+# Count watchers by the marker pid (or `ps -o ppid` lineage), NEVER by `pgrep -f`:
+# every `$(…)` command substitution here forks a subshell carrying the same argv,
+# so `pgrep -f automate-merge-watch` mid-poll shows two processes for ONE
+# watcher (the s3-g "two watchers" observation was this counting artifact).
 #
 # CLAUDE_PID / CLAUDECODE are unset HERE as well as by the launcher: with them
 # set, run-lock.sh would record the launching Claude session as the lock
@@ -89,13 +112,15 @@ now() { date +%s; }
 iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 progress() { bash "$HERE/automate-helpers.sh" progress-append "$rf_abs" "$(iso) merge-watch: $1" >/dev/null 2>&1; return 0; }
-notify() {
-  local msg="$1" payload
-  payload="$("$JQ" -cn --arg m "$msg" '{hook_event_name:"Notification",notification_type:"automate_merge_watch",message:$m}' 2>/dev/null)"
+# notify_as <gate_type> <msg> — desktop + webhook, both fail-safe.
+notify_as() {
+  local gt="$1" msg="$2" payload
+  payload="$("$JQ" -cn --arg t "$gt" --arg m "$msg" '{hook_event_name:"Notification",notification_type:$t,message:$m}' 2>/dev/null)"
   [ -n "$payload" ] && printf '%s' "$payload" | bash "$HERE/notify-desktop.sh" >/dev/null 2>&1 </dev/null
-  bash "$HERE/send-webhook.sh" --event-type gate --gate-type automate_merge_watch --context "$msg" >/dev/null 2>&1 </dev/null
+  bash "$HERE/send-webhook.sh" --event-type gate --gate-type "$gt" --context "$msg" >/dev/null 2>&1 </dev/null
   return 0
 }
+notify() { notify_as automate_merge_watch "$1"; }
 marker_field() { awk -F'\t' -v k="$1" '$1==k{print $2; exit}' "$MARKER" 2>/dev/null; }
 
 # is_our_watcher <pid> <pr_url> — 0: <pid> is an automate-merge-watch.sh process
@@ -162,6 +187,77 @@ if [ -n "$replaced" ]; then
   echo "merge-watch: replaced pid=$replaced watching $opr"
 fi
 
+# ---- settle re-check (automate-followups/31) --------------------------------
+# esc_fields — prints `<cause>|<check>|<run_id>|<attempt>|<sha>` when the run
+# file's ## Current names THIS item + PR and carries an `- escalation_cause:` line.
+esc_fields() {
+  awk -v it="$item" -v pr="$pr_url" '
+    function fld(l, k,   n, a, i) {
+      n = split(l, a, / \| /)
+      for (i = 1; i <= n; i++) { sub(/^- /, "", a[i]); if (index(a[i], k ": ") == 1) return substr(a[i], length(k) + 3) }
+      return ""
+    }
+    /^## Current/ && !s { s = 1; c = 1; next }
+    /^## / { c = 0 }
+    c && /^- item: / { mine = (fld($0, "item") == it && fld($0, "pr") == pr) }
+    c && /^- escalation_cause: / { e = $0 }
+    END { if (mine && e != "") printf "%s|%s|%s|%s|%s\n", fld(e, "escalation_cause"), fld(e, "check"), fld(e, "run_id"), fld(e, "attempt"), fld(e, "sha") }
+  ' "$rf_abs" 2>/dev/null
+}
+recheck_done=0
+# esc_recheck — one settle poll of the recorded check; reports at most once.
+esc_recheck() {
+  local f cause chk rid att sha rec owner_repo j st concl a hs
+  f="$(esc_fields)"; [ -n "$f" ] || { recheck_done=1; return 0; }
+  IFS='|' read -r cause chk rid att sha <<<"$f"
+  case "$cause" in check_pending|check_red_unrelated) ;; *) recheck_done=1; return 0 ;; esac
+  case "$chk" in ''|null) recheck_done=1; return 0 ;; esac
+  case "$sha" in ''|null|*[!0-9a-fA-F]*) recheck_done=1; return 0 ;; esac
+  case "$rid" in ''|null|*[!0-9]*) rid="" ;; esac
+  case "$att" in ''|null|*[!0-9]*) att="" ;; esac
+  # check_red_unrelated reports only on a NEWER attempt: no run id/attempt ⇒ nothing to compare
+  if [ "$cause" = check_red_unrelated ] && { [ -z "$rid" ] || [ -z "$att" ]; }; then recheck_done=1; return 0; fi
+  if [ -n "$rid" ]; then
+    j="$("$GH" run view "$rid" --json attempt,status,conclusion,headSha 2>/dev/null)" || return 0
+    a="$(printf '%s' "$j" | "$JQ" -r '.attempt // empty' 2>/dev/null)"
+    hs="$(printf '%s' "$j" | "$JQ" -r '.headSha // empty' 2>/dev/null)"
+    st="$(printf '%s' "$j" | "$JQ" -r '.status // empty | ascii_downcase' 2>/dev/null)"
+    concl="$(printf '%s' "$j" | "$JQ" -r '.conclusion // empty | ascii_downcase' 2>/dev/null)"
+    case "$hs" in ''|"$sha"*) ;; *) case "$sha" in "$hs"*) ;; *) return 0 ;; esac ;; esac
+  else
+    owner_repo="$(printf '%s' "$pr_url" | sed -n 's#^https://[^/]*/\([^/]*/[^/]*\)/pull/[0-9][0-9]*.*#\1#p')"
+    [ -n "$owner_repo" ] || { recheck_done=1; return 0; }
+    j="$("$GH" api "repos/$owner_repo/commits/$sha/check-runs?per_page=100" 2>/dev/null)" || return 0
+    j="$(printf '%s' "$j" | "$JQ" -c --arg c "$chk" '[.check_runs[]? | select(.name == $c)] | sort_by(.started_at // "") | last // empty' 2>/dev/null)"
+    [ -n "$j" ] || return 0
+    st="$(printf '%s' "$j" | "$JQ" -r '.status // empty | ascii_downcase' 2>/dev/null)"
+    concl="$(printf '%s' "$j" | "$JQ" -r '.conclusion // empty | ascii_downcase' 2>/dev/null)"
+    rid="$(printf '%s' "$j" | "$JQ" -r '(.details_url // "") | capture("/runs/(?<id>[0-9]+)").id // empty' 2>/dev/null)"
+    a="${att:-1}"
+  fi
+  case "$a" in ''|*[!0-9]*) return 0 ;; esac
+  [ "$st" = completed ] || return 0
+  rec="${att:-1}"
+  if [ "$cause" = check_pending ]; then [ "$a" -ge "$rec" ] || return 0
+  else [ "$a" -gt "$rec" ] || return 0; fi
+  recheck_done=1
+  # idempotent across a restart: this sha's / run's report is already in ## Progress
+  if awk -v a="merge-watch: now mergeable: $chk green on $sha" -v b="merge-watch: still failing: $chk " \
+       -v r="gh run rerun ${rid:-<run_id>} --failed" 'index($0, a) || (index($0, b) && index($0, r)) { f = 1 } END { exit !f }' "$rf_abs" 2>/dev/null; then
+    return 0
+  fi
+  if [ "$concl" = success ]; then
+    progress "now mergeable: $chk green on $sha"
+    notify_as automate_escalation_recheck "$pr_url now mergeable — $chk green on $sha; /automate item $item (run $run_id) still waits for a human merge"
+    echo "merge-watch: now mergeable: $chk green on $sha"
+  else
+    progress "still failing: $chk ${concl:-unknown} — rerun: gh run rerun ${rid:-<run_id>} --failed"
+    notify_as automate_escalation_recheck "$pr_url still failing — $chk ${concl:-unknown} on $sha; rerun: gh run rerun ${rid:-<run_id>} --failed (/automate item $item, run $run_id)"
+    echo "merge-watch: still failing: $chk ${concl:-unknown}"
+  fi
+  return 0
+}
+
 echo "merge-watch: started pid=$$ pr=$pr_url interval=${interval}s cap=${max}s"
 start="$(now)"
 wait_s="$interval"
@@ -224,6 +320,7 @@ while :; do
       progress "$item gone — $pr_url closed unmerged (no cleanup; §4 gone rules)"
       notify "$pr_url closed unmerged — /automate item $item is gone (run $run_id)"
       echo "merge-watch: pr closed unmerged"; exit 0 ;;
-    *) nap "$interval" ;;
+    *) [ "$recheck_done" -eq 1 ] || esc_recheck
+       nap "$interval" ;;
   esac
 done

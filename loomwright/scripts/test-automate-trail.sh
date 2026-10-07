@@ -76,6 +76,16 @@
 #      watcher is never signalled (reclaimed as stale); MERGED seen + transient
 #      closeout skips until the cap ⇒ failure notify + a Progress line naming
 #      the merge and the last skip reason.
+#   WE. escalated park (automate-followups/31) — the watcher armed at an
+#      `escalated` park closes out on merge; check_red/findings/other/another
+#      PR ⇒ no check polling; check_pending → green ⇒ one `now mergeable` line +
+#      one `automate_escalation_recheck` notify (latched, also across a
+#      restart), non-green ⇒ one `still failing … rerun: gh run rerun <id>
+#      --failed`; check_red_unrelated reports only at a NEWER attempt; the
+#      check-runs API path when no run id; a same-PR double arm keeps ONE
+#      watcher (already-running line, first pid alive, marker pid unchanged,
+#      one closeout) with a valid mutant deleting that branch; static scan: no
+#      executed gh run rerun / gh pr merge / git push.
 #   E. evidence-gated stamps (decision 2) — a sentinel-led done /
 #      done_with_escalation requirement stamp (and a done/ brief's Outcome PR)
 #      rides only when its PR reads MERGED: OPEN, CLOSED, gh failing, a stamp
@@ -150,6 +160,17 @@ case "${1:-} ${2:-}" in
     jq -e --arg h "$key" '[.[] | select(.headRefName == $h or .url == $h)] | last' "$d/prs.json" || exit 1
     exit 0 ;;
   "pr merge") echo "MERGE_CALLED $*" >> "$d/merge.log"; exit 0 ;;
+  "run view"|"api "*)
+    # automate-followups/31 settle re-check: run-seq / api-seq hold one JSON
+    # document per line, popped per call (the last line is sticky). Absent ⇒
+    # the stub's old silent `exit 0`, so no earlier leg changes behavior.
+    if [ "${1:-}" = run ]; then sq="$d/run-seq"; else sq="$d/api-seq"; fi
+    [ -f "$sq" ] || exit 0
+    [ -f "$sq-fail" ] && exit 1
+    if [ "$(wc -l < "$sq" | tr -d ' ')" -gt 1 ]; then
+      head -n1 "$sq"; tail -n +2 "$sq" > "$sq.tmp"; mv "$sq.tmp" "$sq"
+    else cat "$sq"; fi
+    exit 0 ;;
   "auth status")
     # auth-fail-once: one transient `gh auth status` failure (closeout's gh guard)
     if [ -f "$d/auth-fail-once" ]; then rm -f "$d/auth-fail-once"; exit 1; fi
@@ -1553,6 +1574,145 @@ wout="$(cd "$P" && SPYD_REAL="$SPYD" LOOMWRIGHT_MERGE_WATCH_INTERVAL=0 LOOMWRIGH
 [ "$(spy_count '^closeout ' "$SPYLOG")" = "1" ] && case "$wout" in *"merge-watch: closeout skipped — not a git checkout"*) true ;; *) false ;; esac && ok "W: terminal guard ⇒ one closeout call, exit" || no "W terminal: $wout"
 grep -qE "^- .* merge-watch: closeout for $PRURL could not run — skipped: not a git checkout" "$P/$RF_REL" && ok "W: terminal guard ⇒ a Progress line naming it" || no "W terminal Progress line missing"
 [ "$(spy_count notify "$SPYLOG.notify")" = "1" ] && grep -q 'could not run' "$SPYLOG.webhook" && ! grep -q 'closeout ran' "$SPYLOG.webhook" && ok "W: terminal guard ⇒ failure notify, never the success notify" || no "W terminal notify: $(cat "$SPYLOG.webhook" 2>/dev/null)"
+
+echo "== WE. escalated park: watcher armed + settle re-check (automate-followups/31) =="
+# Every leg runs the watcher against an `escalated` park whose ## Current carries
+# the `- escalation_cause:` line Subtask 1's `current-escalation` writes.
+ESHA="1e35336aaaabbbbccccddddeeeeffff000011112"
+we_park() { # <cause> [current-escalation flags…] — turn the fixture's park into an escalated one
+  local c="$1"; shift
+  (cd "$P" && bash "$H" current-set "$RF_REL" --item "$REQ" --status escalated --pr "$PRURL" --branch feature/x --pause-reason escalated >/dev/null \
+    && bash "$H" current-escalation "$RF_REL" --cause "$c" "$@" >/dev/null)
+}
+we_open() { jq '.[0].state = "OPEN"' "$GH_STUB_DIR/prs.json" > "$GH_STUB_DIR/p.tmp" && mv "$GH_STUB_DIR/p.tmp" "$GH_STUB_DIR/prs.json"; }
+we_watch() { (cd "$P" && LOOMWRIGHT_MERGE_WATCH_INTERVAL=0 LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=60 bash "$WATCH" "$RF_REL" "$REQ" "$PRURL" </dev/null 2>&1); }
+we_n() { grep -c -- "$1" "$P/$RF_REL" 2>/dev/null || true; }
+we_calls() { grep -cE '^(run view|api )' "$GH_STUB_DIR/argv.log" 2>/dev/null || true; }
+rj() { jq -cn --argjson a "$1" --arg s "$2" --arg c "$3" --arg h "${4:-$ESHA}" '{attempt:$a,status:$s,conclusion:$c,headSha:$h}'; }
+
+# (E1, AC8 + AC12) escalated park, cause check_red ⇒ armed, merge closes it out,
+# no check polling at all.
+closeout_fixture 401; spy_reset; we_open
+we_park check_red --check ci --run-id 555 --attempt 1 --sha "$ESHA"
+grep -qE '^- escalation_cause: check_red \| check: ci' "$P/$RF_REL" && ok "(E1) fixture: ## Current carries the current-escalation line" || no "(E1) fixture line: $(cur_block "$P/$RF_REL" | tr '\n' '|')"
+printf 'OPEN\nOPEN\nMERGED\n' > "$GH_STUB_DIR/state-seq"; rj 2 completed success > "$GH_STUB_DIR/run-seq"
+wout="$(we_watch)"
+[ "$(spy_count '^closeout ' "$SPYLOG")" = "1" ] && grep -qxF -- "- [x] $REQ" "$P/$RF_REL" && ok "(E1) AC8: an escalated park's watcher closes the item out on merge (one closeout)" || no "(E1) closeout: $wout"
+[ "$(we_calls)" = "0" ] && [ "$(we_n 'merge-watch: now mergeable:')" = "0" ] && [ "$(spy_count automate_escalation_recheck "$SPYLOG.webhook")" = "0" ] && ok "(E1) AC12: check_red ⇒ no check polling, no re-check report" || no "(E1) check_red polled: calls=$(we_calls)"
+[ "$(spy_count notify "$SPYLOG.notify")" = "1" ] && [ "$(spy_count automate_merge_watch "$SPYLOG.webhook")" = "1" ] && ok "(E1) one merge notify, as for awaiting_merge" || no "(E1) notify count"
+
+# (E2, AC12) findings / other / a re-checkable cause naming ANOTHER PR ⇒ no polling.
+closeout_fixture 402
+for wc in findings other foreign; do
+  spy_reset; we_open; : > "$GH_STUB_DIR/argv.log"
+  if [ "$wc" = foreign ]; then
+    we_park check_pending --check ci --run-id 555 --attempt 1 --sha "$ESHA"
+    (cd "$P" && bash "$H" current-set "$RF_REL" --item "$REQ" --status escalated --pr "https://github.com/acme/widgets/pull/70" --branch feature/x --pause-reason escalated >/dev/null)
+  else we_park "$wc"; fi
+  printf 'OPEN\nOPEN\nCLOSED\n' > "$GH_STUB_DIR/state-seq"; rj 1 completed success > "$GH_STUB_DIR/run-seq"
+  we_watch >/dev/null
+  [ "$(we_calls)" = "0" ] && [ "$(spy_count automate_escalation_recheck "$SPYLOG.webhook")" = "0" ] && ok "(E2) AC12: $wc ⇒ no check polling" || no "(E2) $wc polled: $(we_calls)"
+done
+
+# (E3, AC10) check_pending → completes green ⇒ exactly one now-mergeable line +
+# one recheck notify, then keeps watching and closes out on the merge.
+closeout_fixture 403; spy_reset; we_open
+we_park check_pending --check claude-review --run-id 555 --attempt 1 --sha "$ESHA"
+printf 'OPEN\nOPEN\nOPEN\nOPEN\nMERGED\n' > "$GH_STUB_DIR/state-seq"
+{ rj 1 in_progress ""; rj 1 completed success; } > "$GH_STUB_DIR/run-seq"
+wout="$(we_watch)"
+[ "$(we_n "merge-watch: now mergeable: claude-review green on $ESHA")" = "1" ] && ok "(E3) AC10: exactly one 'now mergeable: claude-review green on <sha>' Progress line" || no "(E3) now-mergeable lines: $(we_n 'now mergeable')"
+[ "$(spy_count automate_escalation_recheck "$SPYLOG.webhook")" = "1" ] && [ "$(spy_count automate_merge_watch "$SPYLOG.webhook")" = "1" ] && [ "$(spy_count notify "$SPYLOG.notify")" = "2" ] && ok "(E3) AC10: one automate_escalation_recheck notify (distinct type) + the one merge notify" || no "(E3) webhook: $(cat "$SPYLOG.webhook" 2>/dev/null | tr '\n' '|')"
+[ "$(we_calls)" = "2" ] && [ "$(spy_count '^closeout ' "$SPYLOG")" = "1" ] && ok "(E3) latched after the report (2 run-view polls), then the merge closed it out" || no "(E3) calls=$(we_calls) closeouts=$(spy_count '^closeout ' "$SPYLOG")"
+grep -q '^run view 555 --json attempt,status,conclusion,headSha$' "$GH_STUB_DIR/argv.log" && ! grep -q '^run rerun\|^pr merge' "$GH_STUB_DIR/argv.log" && ok "(E3) polls via gh run view <run_id>; no rerun, no merge call" || no "(E3) argv: $(tr '\n' '|' < "$GH_STUB_DIR/argv.log")"
+
+# (E4, AC10) check_pending → completes non-green ⇒ one still-failing line carrying
+# the rerun command; a restarted watcher does not report it again.
+closeout_fixture 404; spy_reset; we_open
+we_park check_pending --check claude-review --run-id 555 --attempt 1 --sha "$ESHA"
+printf 'OPEN\nOPEN\nOPEN\nCLOSED\n' > "$GH_STUB_DIR/state-seq"; rj 1 completed failure > "$GH_STUB_DIR/run-seq"
+we_watch >/dev/null
+[ "$(we_n 'merge-watch: still failing: claude-review failure — rerun: gh run rerun 555 --failed')" = "1" ] && [ "$(spy_count automate_escalation_recheck "$SPYLOG.webhook")" = "1" ] && ok "(E4) AC10: one 'still failing … — rerun: gh run rerun 555 --failed' line + one recheck notify" || no "(E4) still-failing: $(grep 'still failing' "$P/$RF_REL")"
+spy_reset; printf 'OPEN\nCLOSED\n' > "$GH_STUB_DIR/state-seq"
+we_watch >/dev/null
+[ "$(we_n 'merge-watch: still failing:')" = "1" ] && [ "$(spy_count automate_escalation_recheck "$SPYLOG.webhook")" = "0" ] && ok "(E4) a restarted watcher finds the report in ## Progress and stays silent" || no "(E4) restart re-reported"
+
+# (E5, AC11) check_red_unrelated: the recorded red attempt never reports; a NEWER
+# attempt (a human rerun) green ⇒ one now-mergeable; non-green ⇒ one still-failing.
+for wv in green red; do
+  if [ "$wv" = green ]; then closeout_fixture 405; fin=success; else closeout_fixture 406; fin=failure; fi
+  spy_reset; we_open
+  we_park check_red_unrelated --check ci --run-id 777 --attempt 1 --sha "$ESHA"
+  printf 'OPEN\nOPEN\nOPEN\nOPEN\nOPEN\nOPEN\nOPEN\nCLOSED\n' > "$GH_STUB_DIR/state-seq"
+  { rj 1 completed failure; rj 1 completed failure; rj 1 completed failure; rj 2 in_progress ""; rj 2 completed "$fin"; } > "$GH_STUB_DIR/run-seq"
+  we_watch >/dev/null
+  if [ "$wv" = green ]; then
+    [ "$(we_n "merge-watch: now mergeable: ci green on $ESHA")" = "1" ] && [ "$(we_n 'merge-watch: still failing:')" = "0" ] && ok "(E5) AC11: red attempt 1 silent; attempt 2 green ⇒ one now-mergeable" || no "(E5) green: $(grep -E 'mergeable|failing' "$P/$RF_REL" | tr '\n' '|')"
+    [ "$(we_calls)" = "5" ] && ok "(E5) reported on the 5th poll (the first completed attempt 2), then latched" || no "(E5) calls=$(we_calls)"
+  else
+    [ "$(we_n 'merge-watch: still failing: ci failure — rerun: gh run rerun 777 --failed')" = "1" ] && [ "$(we_n 'merge-watch: now mergeable:')" = "0" ] && [ "$(spy_count automate_escalation_recheck "$SPYLOG.webhook")" = "1" ] && ok "(E5) AC11: attempt 2 red ⇒ one still-failing line with the rerun command" || no "(E5) red: $(grep -E 'mergeable|failing' "$P/$RF_REL" | tr '\n' '|')"
+  fi
+done
+
+# (E6) no run id recorded ⇒ the check-runs API by name, on the recorded sha.
+closeout_fixture 407; spy_reset; we_open
+we_park check_pending --check claude-review --sha "$ESHA"
+printf 'OPEN\nOPEN\nCLOSED\n' > "$GH_STUB_DIR/state-seq"
+jq -cn '{check_runs:[{name:"ci",status:"completed",conclusion:"success",started_at:"t1"},{name:"claude-review",status:"completed",conclusion:"success",started_at:"t2",details_url:"https://github.com/acme/widgets/actions/runs/999/job/1"}]}' > "$GH_STUB_DIR/api-seq"
+we_watch >/dev/null
+grep -q "^api repos/acme/widgets/commits/$ESHA/check-runs" "$GH_STUB_DIR/argv.log" && [ "$(we_n "merge-watch: now mergeable: claude-review green on $ESHA")" = "1" ] && ok "(E6) no run id ⇒ gh api commits/<sha>/check-runs by name ⇒ one now-mergeable" || no "(E6) argv: $(tr '\n' '|' < "$GH_STUB_DIR/argv.log")"
+
+# (E7, AC9) park → fix-now re-drain → re-park of the SAME PR: both parks run the
+# documented launch line (`nohup bash <watcher> <runfile> <item> <pr_url> </dev/null >log &`;
+# its env-unset prefix is omitted — the watcher unsets those vars itself, first line).
+# dbl_arm <watcher> → DA1/DA2/DA3 = the three assertions.
+dbl_arm() {
+  local w="$1" i lg1 lg2
+  lg1="$TOP/da1-$2.log"; lg2="$TOP/da2-$2.log"
+  ( cd "$P" && LOOMWRIGHT_MERGE_WATCH_INTERVAL=1 LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=60 nohup bash "$w" "$RF_REL" "$REQ" "$PRURL" </dev/null >"$lg1" 2>&1 & )
+  i=0; while [ ! -s "$P/$MARK" ] && [ "$i" -lt 200 ]; do sleep 0.1; i=$((i+1)); done
+  DPID="$(awk -F'\t' '$1=="pid"{print $2}' "$P/$MARK" 2>/dev/null)"
+  ( cd "$P" && LOOMWRIGHT_MERGE_WATCH_INTERVAL=1 LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=60 nohup bash "$w" "$RF_REL" "$REQ" "$PRURL" </dev/null >"$lg2" 2>&1 & )
+  i=0; while ! grep -qE 'already running|started|replaced' "$lg2" 2>/dev/null && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i+1)); done
+  sleep 0.3
+  DA1=1; DA2=1; DA3=1
+  [ -n "$DPID" ] && [ "$(cat "$lg2")" = "merge-watch: already running pid=$DPID" ] || DA1=0
+  [ -n "$DPID" ] && kill -0 "$DPID" 2>/dev/null || DA2=0
+  [ -n "$DPID" ] && [ "$(awk -F'\t' '$1=="pid"{print $2}' "$P/$MARK" 2>/dev/null)" = "$DPID" ] || DA3=0
+}
+closeout_fixture 408; spy_reset; we_open
+we_park check_red --check ci --run-id 555 --attempt 1 --sha "$ESHA"
+dbl_arm "$WATCH" fixed
+[ "$DA1" = 1 ] && ok "(E7) AC9 (1): the second launch prints 'merge-watch: already running pid=<first pid>'" || no "(E7) second launch: $(cat "$TOP/da2-fixed.log")"
+[ "$DA2" = 1 ] && ok "(E7) AC9 (2): the first watcher is still alive after the second launch" || no "(E7) first watcher pid=$DPID gone"
+[ "$DA3" = 1 ] && ok "(E7) AC9 (3): the marker's pid field is unchanged" || no "(E7) marker: $(tr '\n' '|' < "$P/$MARK" 2>/dev/null)"
+jq '.[0].state = "MERGED"' "$GH_STUB_DIR/prs.json" > "$GH_STUB_DIR/p.tmp" && mv "$GH_STUB_DIR/p.tmp" "$GH_STUB_DIR/prs.json"
+i=0; while [ -e "$P/$MARK" ] && [ "$i" -lt 400 ]; do sleep 0.1; i=$((i+1)); done
+[ ! -e "$P/$MARK" ] && [ "$(spy_count '^closeout ' "$SPYLOG")" = "1" ] && [ "$(spy_count automate_merge_watch "$SPYLOG.webhook")" = "1" ] && grep -qxF -- "- [x] $REQ" "$P/$RF_REL" && ok "(E7) AC9: the merge then yields exactly one closeout + one merge notify" || no "(E7) closeouts=$(spy_count '^closeout ' "$SPYLOG") marker=$([ -e "$P/$MARK" ] && echo left)"
+[ -n "$DPID" ] && kill "$DPID" 2>/dev/null
+# mutation control: delete EXACTLY the same-pr_url `already running` branch.
+MUT9="$TOP/mut9"; mkdir -p "$MUT9"; cp -R "$SPYD"/* "$MUT9/"
+awk 'skip { skip = 0; next } /elif \[ "\$v" -eq 0 \] && \[ "\$opr" = "\$pr_url" \]; then/ { skip = 1; next } { print }' "$WATCH" > "$MUT9/automate-merge-watch.sh"
+if [ -s "$MUT9/automate-merge-watch.sh" ] && ! cmp -s "$WATCH" "$MUT9/automate-merge-watch.sh" && bash -n "$MUT9/automate-merge-watch.sh" \
+   && [ "$(( $(wc -l < "$WATCH") - $(wc -l < "$MUT9/automate-merge-watch.sh") ))" = "2" ]; then
+  ok "(E7) AC9 mutant is valid (non-empty, differs by exactly the 2-line branch, bash -n clean)"
+  closeout_fixture 409; spy_reset; we_open
+  we_park check_red --check ci --run-id 555 --attempt 1 --sha "$ESHA"
+  dbl_arm "$MUT9/automate-merge-watch.sh" mut
+  [ "$DA1$DA2$DA3" != 111 ] && ok "(E7) AC9 mutant (same-pr_url branch deleted) is detected: (1)(2)(3)=$DA1$DA2$DA3" || no "(E7) AC9 mutant survived the double-arm assertions"
+  for kp in "$DPID" "$(awk -F'\t' '$1=="pid"{print $2}' "$P/$MARK" 2>/dev/null)"; do [ -n "$kp" ] && kill "$kp" 2>/dev/null; done
+  i=0; while [ -e "$P/$MARK" ] && [ "$i" -lt 200 ]; do sleep 0.1; i=$((i+1)); done
+else no "(E7) AC9 mutant invalid (empty / identical / bash -n / not exactly 2 lines)"; fi
+
+# (E8, AC13 watcher half) no executed `gh run rerun` / `gh pr merge` / `git push`
+# / approval in the watcher (or the classifier); comment and string mentions excluded.
+we_exec_re='(^|[;&|({]|then|do|else|&&|\|\|)[[:space:]]*("?\$\{?GH\}?"?|gh)[[:space:]]+(run[[:space:]]+rerun|pr[[:space:]]+merge|pr[[:space:]]+review)|(^|[;&|({]|then|do|else)[[:space:]]*git[[:space:]]+push'
+for wf in "$HERE/automate-merge-watch.sh" "$HERE/automate-helpers.d/escalation.sh"; do
+  bad="$(grep -vE '^[[:space:]]*#' "$wf" | grep -nE "$we_exec_re" || true)"
+  [ -z "$bad" ] && ok "(E8) AC13: $(basename "$wf") executes no gh run rerun / gh pr merge / git push / approval" || no "(E8) $(basename "$wf"): $bad"
+done
+[ "$(printf '%s\n' '  "$GH" run rerun "$rid" --failed' 'gh pr merge --squash "$u"' '  then git push origin x' | grep -cE "$we_exec_re")" = 3 ] && ok "(E8) the scan's positive control matches executed forms" || no "(E8) scan regex vacuous"
+grep -qF 'rerun: gh run rerun' "$HERE/automate-merge-watch.sh" && ok "(E8) the rerun command is printed for the owner (string), never run" || no "(E8) rerun string missing"
 
 echo "== K. SKILL wiring (Part B) =="
 grep -qF 'automate-merge-watch.sh' "$SKILL" && ok "SKILL names automate-merge-watch.sh" || no "SKILL lacks the watcher"
