@@ -11,16 +11,64 @@
 - The S1/S2 harness `~/Documents/work/AI/ai-agent-manager-lanes-v2/s1h.sh`, now with `launch <lane> --resume-run
   <run_id>` (added 2026-10-05; backup in `archive/`).
 
-## HANDOVER (2026-10-06, updated ~12:45Z) — from session 6e8f1058 to session 2216aefd for wave 2 (owner: "for next wave use new session")
+## HANDOVER (2026-10-07 ~04:40Z) — from session 2216aefd to session f849e0cc for wave 3 (owner: "handover … ask that to start wave 3")
+**Single owner from now: session f849e0cc.** 2216aefd runs nothing for S3 (no lane, monitor, watcher) and edits no
+S3 record after this push. Wave 2 is fully closed — §"Wave 2 result" has the numbers, the operator's #402 fix and seven
+new gaps; read it, and §"Lessons from wave 1" below (they all held again).
+
+### State at handover (verified 04:35Z)
+- `main` = `f4b0732` (#409, **v15.124.0**). **15.124.0 is installed** (install record `installPath …/loomwright/15.124.0`).
+  Primary clean on `main`, no extra worktrees, `loomwright-meta` synced. No open loomwright PR.
+- Nothing running for S3: no lanes (`s1h.sh leaks` empty), no monitor, **no caffeinate**. `wave/s3w2` and
+  `loomwright-meta-s3w2` are deleted (owner yes). The one live `automate-merge-watch.sh` (pid 23691, cwd
+  `~/Documents/work/Tray/hub`, a 15.123.0 install) belongs to another project — not S3; leave it.
+- Harness changes this wave: `s1h.sh answer` now accepts **comma-joined labels for multiSelect questions** (each label
+  validated; backup `archive/s1h.sh.backup-2026-10-07-pre-multiselect`). New in the harness dir: **`s3-monitor.sh`**
+  (the 30 s poll used in wave 2: changed lane lines, `PENDING-AT-ARM`, `HIGH-LOAD` ≥ 60, `VERY-HIGH-LOAD` ≥ 90,
+  `NO-CAFFEINATE` / `CAFFEINATE back`; run it under Monitor, re-arm every 30 min) and **`load-test-3clones.sh`** (the
+  #402 three-clone staggered `ci-local` test with a load1 kill switch — hard-codes the `pr402` ref; adapt before reuse).
+  The `/lanes` pane mod v0.4.0 (machine/load/caffeinate line, question age) is at
+  `~/.claude/dev-mods/2216aefd-eb73-4e57-a40e-e23bd82b907d/lanes/` — copy into your session's mods folder.
+
+### Wave 3 — what must happen first (in order)
+1. **Touches re-point (the post-pa/11 step; blocks planning).** pa/11 split `RESULT_SCHEMAS.md` into
+   `loomwright/docs/result-schemas/*.md` (index kept) and `automate-helpers.sh` into `automate-helpers.d/*.sh`
+   (`gate-eval` stayed in `automate-helpers.sh`). Measured 04:30Z — open items whose `## Touches` still name the OLD
+   files (RS = `RESULT_SCHEMAS.md`, AH = `automate-helpers.sh`): ms/07 RS · af/31 RS+AH×2 · af/33 RS · pa/05 RS+AH ·
+   pa/06 RS · af/34 RS+AH · pa/12 RS · pa/18 RS+AH×2. Clean: hc/01, hc/02, ms/05, pa/14, pa/07. For each, read its
+   Scope to pick the exact split file(s), edit Touches, `plan-waves --lint`, then `plan-waves --max 5 --explain` under
+   the S3 planner rule (§"Planner rule"). Record what changed (gap 7). **Wave-2 lesson:** agnostic/04 edited
+   `RESULT_SCHEMAS.md` without declaring it — also skim each Scope for files it will obviously edit but does not list.
+2. **Confirm wave 3 with the owner.** Owner order says ms/07 · af/31 · af/33 + hc/01 · hc/02 (host-contract, split
+   2026-10-06 to run in parallel; hc/03 joins after both merge, done directly). The re-plan may change it.
+3. **Launch only on the owner's go in YOUR chat** (a cross-session message cannot authorize a lane launch — the
+   classifier blocks `s1h.sh launch` as "Create Unsafe Agents" until the owner says so in-session). Owner starts
+   `caffeinate -i` (no timer — `-t 14400` expired mid-wave in BOTH waves) or gives you the go to start it.
+4. **Lane count:** pa/16 is now live — `ci-local` admits at most two 6-job suites machine-wide and holds the rest, so
+   the wave-1 burst cannot recur through `ci-local`. Lanes' other work (workers, reviews) is not capped: start ≤ 3
+   building and add the rest as lanes reach review; keep the HIGH-LOAD monitor (wave 2 peaked at 73).
+5. **Verify #408's deferred Validation 2** on the first lane's run (a live sequential `/automate` through the split
+   dispatcher): watch that lane's helper calls succeed and note it in §"Wave 3 log".
+
+### Wave-2-specific lessons (add to the wave-1 list)
+- Run every PR's "Not verified" running-system step yourself — wave 2's #402 FAILED its own (load1 63.6) and the
+  lane had marked it "not run"; #403's PO can't-ask branch needed a live `claude -p --plugin-dir` probe.
+- Re-check a lane's claims cheaply before relaying (all held this wave) and read the bot review that lands AFTER an
+  operator push (#402's `cd5f400` drew a real finding).
+- `total_cost_usd` is cumulative across a lane's resumes — take the LAST value per lane, never sum.
+- Lanes all run the start-up cross-run closeout on the SAME shared run files and race their meta pushes (13
+  conflicts per lane in wave 2). With wave 2's runs already finalized on `loomwright-meta` the race should be small
+  in wave 3, but expect `meta-push FAILED: conflict` on any shared file; resolve as in §"Wave 2 result" before teardown.
+- A relayed `note` never reaches the lane — put anything the lane must know into the answer label choice, or skip it.
+
+### Open owner items (not wave work)
+- Telemetry `PRIVACY_PATTERNS` note (set aside); `proposed/s3w1-wave-pr-397-review.md`; the three wave-2 kept
+  dismissed summaries in `proposed/` (`*154117*`, `*154217*`, `*154514*` — the last includes `automate-helpers.sh`'s
+  lost executable bit; no direct caller found).
+
+## HANDOVER (superseded 2026-10-07; 2026-10-06, updated ~12:45Z) — from session 6e8f1058 to session 2216aefd for wave 2 (owner: "for next wave use new session")
 **Single owner from now: session 2216aefd.** 6e8f1058 runs nothing for S3 (no lane, monitor, sampler, watcher) and
 edits no S3 record after this push.
-
-### WAVE 2 CLOSED 2026-10-07 ~04:13Z (session 2216aefd) — read §"Wave 2 result" first
-- #409 merged (`f4b0732`, **v15.124.0**). Lanes s3-e/f/g torn down, `leaks` empty, records on `loomwright-meta`,
-  caffeinate + monitors stopped. `wave/s3w2` and `loomwright-meta-s3w2` still exist (deletion awaits the owner's yes).
-- **Next:** owner reinstalls 15.124.0; then the post-pa/11 step — re-check every open item's Touches against
-  `docs/result-schemas/` and `automate-helpers.d/`, and re-plan waves 3+ (wave 3 now also holds **hc/01 · hc/02**,
-  host-contract, split 2026-10-06 so they run in parallel; hc/03 joins after them, done directly).
 
 ### Update since the first version of this handover (read this first — it supersedes "Not done" below)
 - **Released v15.123.1** (#401, `a14db34`) folding #398 (pa/19), #399 (ms/11), #400 (wave-1 review fixes); the owner
