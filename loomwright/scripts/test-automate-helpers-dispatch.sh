@@ -14,9 +14,11 @@
 #   4. mutant (b): a family copy with the case-table function it holds renamed (each family in
 #      turn) ⇒ check 1 FAILS on that copy. Every mutant is gated on non-empty + differs + bash -n.
 #   5. the loader block (_ah_source / _ah_bundle) carries no `#   <lower>` line (the --help
-#      filter), and the real dispatcher's --help / -h / no-arg output (stdout, stderr, exit)
-#      equals the pre-split monolith's, read from git (skipped with a named reason when that
-#      commit is unreachable, e.g. a shallow clone). Override with AH_DISPATCH_BASE_REV.
+#      filter), and the real dispatcher's --help / -h / no-arg stdout equals the committed golden
+#      fixture fixtures/automate-helpers-help.golden byte-for-byte (exit 0, empty stderr). Needs
+#      no git history, so it never skips. Mutation control: the golden minus one line must fail.
+#      ADDING A SUBCOMMAND? Regenerate the golden in the same change, from the repo root:
+#        bash loomwright/scripts/automate-helpers.sh --help > loomwright/scripts/fixtures/automate-helpers-help.golden
 # Exit 0 = all pass, 1 = any failure.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
@@ -24,8 +26,8 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 D="$HERE/automate-helpers.sh"
 FAM_DIR="$HERE/automate-helpers.d"
-# The commit the split was cut from: the last single-file automate-helpers.sh.
-BASE_REV="${AH_DISPATCH_BASE_REV:-a14db34}"
+# Golden --help output (seeded from the last single-file automate-helpers.sh, a14db34).
+GOLDEN="$HERE/fixtures/automate-helpers-help.golden"
 
 pass=0; fail=0; skip=0
 ok()   { echo "  ok: $1"; pass=$((pass+1)); }
@@ -151,24 +153,34 @@ while read -r f; do
   else no "mutant (b) $f.sh: $fn renamed but the dispatch check stayed green"; fi
 done <<<"$FAMS"
 
-echo "== 5. --help is byte-identical to the pre-split monolith"
+echo "== 5. --help / -h / no-arg output equals the committed golden fixture"
 LOADER="$(awk '/^# >>> family-file loader/,/^# <<< family-file loader/' "$D")"
 if [ -n "$LOADER" ] && ! grep -qE '^#   [a-z]' <<<"$LOADER"; then
   ok "loader block (_ah_source/_ah_bundle) carries no '#   <lower>' line the --help filter could pick up"
 else no "loader block missing, or it carries a '#   <lower>' line that would leak into --help"; fi
-BASE="$T/base-helpers.sh"
-if git -C "$HERE" cat-file -e "$BASE_REV^{commit}" 2>/dev/null \
-   && git -C "$HERE" show "$BASE_REV:loomwright/scripts/automate-helpers.sh" > "$BASE" 2>/dev/null \
-   && [ -s "$BASE" ] && ! grep -q '^_ah_source ' "$BASE"; then
-  for a in --help -h ""; do
-    bo="$(bash "$BASE" $a 2>"$T/be")"; be=$?
-    do_="$(bash "$D" $a 2>"$T/de")"; de=$?
-    if [ -n "$do_" ] && [ "$bo" = "$do_" ] && cmp -s "$T/be" "$T/de" && [ "$be" = "$de" ]; then
-      ok "'${a:-<no-arg>}' output equals $BASE_REV's monolith byte-for-byte ($(grep -c . <<<"$do_") lines, exit $de)"
-    else no "'${a:-<no-arg>}' output differs from $BASE_REV's monolith (exit $be vs $de)"; fi
-  done
+# help_matches <dispatcher> <arg> <golden> — stdout == golden byte-for-byte (files + cmp, so
+# trailing newlines count), stderr empty, exit 0.
+help_matches() {
+  ( cd "$T/cwd" && bash "$1" $2 >"$T/ho" 2>"$T/he" ); local rc=$?
+  [ "$rc" -eq 0 ] && [ -s "$T/ho" ] && [ ! -s "$T/he" ] && cmp -s "$T/ho" "$3"
+}
+if [ ! -s "$GOLDEN" ]; then
+  no "golden help fixture missing or empty: $GOLDEN"
 else
-  skp "base-vs-branch --help diff: commit $BASE_REV unreachable or not a pre-split monolith (shallow clone?)"
+  for a in --help -h ""; do
+    if help_matches "$D" "$a" "$GOLDEN"; then
+      ok "'${a:-<no-arg>}' output equals the golden fixture byte-for-byte ($(grep -c . "$GOLDEN") lines, exit 0, empty stderr)"
+    else no "'${a:-<no-arg>}' output differs from $(basename "$GOLDEN") — regenerate it if you added a subcommand (see header)"; fi
+  done
+  # Mutation control: a golden with ONE help line removed must make the comparison fail.
+  MG="$T/help.golden.mutant"
+  sed '1d' "$GOLDEN" > "$MG"
+  if [ ! -s "$MG" ] || cmp -s "$GOLDEN" "$MG" \
+     || [ "$(wc -l <"$MG")" -ne "$(( $(wc -l <"$GOLDEN") - 1 ))" ]; then
+    no "golden mutant not built (empty, identical, or not exactly one line shorter)"
+  elif help_matches "$D" --help "$MG"; then
+    no "golden mutant (one help line removed) still compared equal — the comparison is vacuous"
+  else ok "golden mutant (one help line removed) ⇒ the --help comparison fails"; fi
 fi
 
 echo
