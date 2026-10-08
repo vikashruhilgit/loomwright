@@ -22,8 +22,9 @@
 #   Z Validation 4/5 fixes (parallel-automate/23): F5 readiness report · F9 leak check after removal ·
 #     F1 snapshot before the lane table · F10 no absolute path / real state · F4 resume in the last
 #     session · F2 HELD answer kept + delivered under an owner command · F11 gated wave-end push + ABANDONED
-#   AA Validation 4/5 fixes B (parallel-automate/24): F12 lane-feed --follow leaves no pipeline behind on
-#     TERM / HUP / INT, and no process naming the suite dir outlives the suite
+#   AA Validation 4/5 fixes B (parallel-automate/24): F6 lane-park-notify (truthful per-channel delivery)
+#     · F12 lane-feed --follow leaves no pipeline behind on TERM / HUP / INT, and no process naming the
+#     suite dir outlives the suite
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -1141,6 +1142,59 @@ has "AA-F12d the follow still narrates" "$(cat "$T/aa-follow.TERM")" "[spawn] lo
 check "AA-F12e the unescaped pattern T8 used never matched a live tail (the root cause, not the path)" \
   "$(bash "$S" lane-feed "$L6" --follow >/dev/null 2>&1 & fp=$!; sleep 1; pgrep -f "tail -n +1 -f $LR2/L6.stream.log" >/dev/null 2>&1 && echo matched || echo unmatched; kill "$fp" 2>/dev/null; wait "$fp" 2>/dev/null)" unmatched
 
+# AA fixture: one lane (L1) of a fresh parent run, its run file at the ready_for_release park.
+PARENT6=automate-2026-10-08-110000; RF6="$P/.supervisor/automate/$PARENT6.md"; LR6="$T/work/primary-lanes/$PARENT6"
+printf '# Automate Run: %s\n\n## Progress\n' "$PARENT6" > "$RF6"
+run lane-create "$RF6" reqs/a.md 1 --parallel 2 --max-tokens 200 >/dev/null; L61="$LR6/L1"; LRF6="$L61/.supervisor/automate/$PARENT6-L1.md"
+PR6="https://github.com/o/r/pull/66"
+printf '# Automate Run: %s-L1\n\n## Status: paused\n\n## Queue\n- [ ] reqs/a.md\n\n## Current\n- item: reqs/a.md | status: ready_for_release | pr: %s | branch: f\n- pause_reason: ready_for_release\n\n## Progress\n- 2026-10-08T11:00:00Z session_id sess-aa (reqs/a.md)\n' \
+  "$PARENT6" "$PR6" > "$LRF6"
+# AA-F6 lane-park-notify: desktop + automate_ready_for_release webhook, one truthful ## Progress line.
+cat > "$T/aa-nd.sh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$(cat)" >> "$AA_ND_LOG"
+[ -n "${STUB_ND_AUDIT:-}" ] && { mkdir -p .supervisor/logs; echo "2026-10-08T11:00:00Z notify group=loomwright-x tool_use_id=-" >> .supervisor/logs/notifications.log; }
+exit 0
+EOF
+cat > "$T/aa-sw.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "dry=${LOOMWRIGHT_WEBHOOK_DRY_RUN:-} $*" >> "$AA_SW_LOG"
+case "${STUB_SW:-none}" in
+  ignored) echo "repo_webhook_ignored slug=o/r" >&2 ;;
+  configured) [ -n "${LOOMWRIGHT_WEBHOOK_DRY_RUN:-}" ] && echo '{"event_type":"gate"}' ;;
+esac
+exit 0
+EOF
+chmod +x "$T/aa-nd.sh" "$T/aa-sw.sh"; export AA_ND_LOG="$T/aa-nd.log" AA_SW_LOG="$T/aa-sw.log"
+pn() { : > "$AA_ND_LOG"; : > "$AA_SW_LOG"; LOOMWRIGHT_LANES_HELPERS="$HERE/automate-helpers.sh" LOOMWRIGHT_LANES_NOTIFY_DESKTOP="$T/aa-nd.sh" \
+  LOOMWRIGHT_LANES_SEND_WEBHOOK="$T/aa-sw.sh" bash "$S" lane-park-notify "$@" 2>&1; }
+pcount() { grep -c 'lane park notify: ready_for_release' "$LRF6" | tr -d ' '; }
+out="$(STUB_SW=ignored STUB_ND_AUDIT=1 LOOMWRIGHT_DESKTOP_NOTIFICATIONS=1 pn "$LRF6")"; rc=$?
+check "AA-F6a webhook ignored ⇒ exit 0, ONE ## Progress line" "$rc:$(pcount)" "0:1"
+has "AA-F6b … the line names the delivered desktop channel" "$(grep 'lane park notify' "$LRF6")" "desktop: sent;"
+has "AA-F6c … and says the webhook was ignored, with the reason" "$(grep 'lane park notify' "$LRF6")" "webhook: ignored (repo_webhook_ignored slug=o/r — no user-scope egress grant)"
+check "AA-F6d the desktop payload: automate_ready_for_release, the do-not-merge message" \
+  "$(jq -r '"\(.hook_event_name) \(.notification_type) \(.message | test("^https://github.com/o/r/pull/66 READY — do not merge yet — wave open"))"' "$AA_ND_LOG")" \
+  "Notification automate_ready_for_release true"
+check "AA-F6e an ignored webhook is only probed (dry run), never posted" "$(grep -c '^dry= ' "$AA_SW_LOG" | tr -d ' ')" 0
+has "AA-F6f … with gate type automate_ready_for_release" "$(cat "$AA_SW_LOG")" "--gate-type automate_ready_for_release --context https://github.com/o/r/pull/66 READY — do not merge yet — wave open"
+out="$(STUB_SW=configured STUB_ND_AUDIT=1 LOOMWRIGHT_DESKTOP_NOTIFICATIONS=1 LOOMWRIGHT_NOTIFY_DEBOUNCE=0 pn "$LRF6")"
+has "AA-F6g webhook configured ⇒ posted once, reported as attempted (never 'sent': its HTTP result is unreported)" \
+  "$(grep -c '^dry= --event-type gate --gate-type automate_ready_for_release' "$AA_SW_LOG" | tr -d ' '):$out" "1:lane-park-notify: lane park notify: ready_for_release ($PARENT6-L1) — desktop: sent; webhook: attempted"
+out="$(STUB_SW=none LOOMWRIGHT_DESKTOP_NOTIFICATIONS=0 pn "$LRF6")"
+check "AA-F6h desktop opted out ⇒ disabled, the notifier not run; no webhook ⇒ not configured" \
+  "$(wc -l < "$AA_ND_LOG" | tr -d ' '):${out#*— }" "0:desktop: disabled (LOOMWRIGHT_DESKTOP_NOTIFICATIONS=0); webhook: not configured"
+out="$(STUB_SW=none LOOMWRIGHT_DESKTOP_NOTIFICATIONS=1 pn "$LRF6")"
+has "AA-F6i the notifier wrote no audit line ⇒ suppressed, never sent" "$out" "desktop: suppressed (no audit line"
+check "AA-F6j one ## Progress line per run (four runs, four lines)" "$(pcount)" 4
+out="$(LOOMWRIGHT_LANES_NOTIFY_DESKTOP="$T/aa-nd.sh" LOOMWRIGHT_LANES_SEND_WEBHOOK="$T/aa-sw.sh" LOOMWRIGHT_DESKTOP_NOTIFICATIONS=0 \
+  bash "$HERE/automate-helpers.sh" lane-park-notify "$LRF6" 2>&1)"; rc=$?
+check "AA-F6k dispatched through automate-helpers.sh" "$rc:$(printf '%s' "$out" | grep -c '^lane-park-notify: lane park notify:' | tr -d ' ')" "0:1"
+sed 's/status: ready_for_release/status: awaiting_merge/; s/pause_reason: ready_for_release/pause_reason: awaiting_merge/' "$LRF6" > "$T/aa-notpark.md"
+mkdir -p "$L61/.supervisor/automate"; cp "$T/aa-notpark.md" "$L61/.supervisor/automate/aa-notpark.md"
+out="$(STUB_SW=configured LOOMWRIGHT_DESKTOP_NOTIFICATIONS=1 pn "$L61/.supervisor/automate/aa-notpark.md")"; rc=$?
+check "AA-F6l not at the ready_for_release park ⇒ skipped: exit 0, nothing sent, no line written" \
+  "$rc:$(wc -l < "$AA_ND_LOG" | tr -d ' '):$(wc -l < "$AA_SW_LOG" | tr -d ' '):$(cmp -s "$T/aa-notpark.md" "$L61/.supervisor/automate/aa-notpark.md" && echo unchanged)" "0:0:0:unchanged"
 
 hasnt "Z1 gh never called" "$(cat "$GH_CALLS" 2>/dev/null)" "gh"
 # AA-F12z (final leg): nothing this suite started may outlive it — no process whose command line names

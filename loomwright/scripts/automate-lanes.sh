@@ -32,6 +32,8 @@
 #   lane-status [<parent_runfile>] --resources | --tokens  latest fleet.log line + peak | per-lane + parent tokens
 #   lane-feed <lane_dir|L<n>> [--follow]                 readable narration of the lane's stream log
 #   lane-readiness <lane_dir|L<n>>                       write <run_id>.merge-readiness.md (advisory, never merges)
+#   lane-park-notify <runfile>                           the ready_for_release park's ONE notify step: desktop +
+#        `automate_ready_for_release` webhook (fail-SAFE) + one ## Progress line naming each channel's real outcome
 #
 # Files (all paths derived; nothing hard-coded):
 #   <lane>/.supervisor/lane.json        D2 marker — the ONE marker lane-create writes (plus the copied
@@ -116,7 +118,8 @@
 # LOOMWRIGHT_LANES_UNAME, LOOMWRIGHT_LANES_COORDINATOR_PID, LOOMWRIGHT_LANES_BOOT_EPOCH,
 # LOOMWRIGHT_LANES_TOKEN_LEDGER, LOOMWRIGHT_LANES_WATCH_ITERATIONS, LOOMWRIGHT_LANES_WATCH_INTERVAL_S,
 # LOOMWRIGHT_LANES_LOCK_WAIT_S (default 30: the bound on waiting for a live lock holder),
-# LOOMWRIGHT_LANES_TRAIL (default: the helpers path — whose `trail-pr` runs the lane's gated push).
+# LOOMWRIGHT_LANES_TRAIL (default: the helpers path — whose `trail-pr` runs the lane's gated push),
+# LOOMWRIGHT_LANES_NOTIFY_DESKTOP / LOOMWRIGHT_LANES_SEND_WEBHOOK (lane-park-notify's two notifiers).
 set -uo pipefail
 
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
@@ -1076,6 +1079,86 @@ lanes_convert_ready() {
 }
 
 # ==================================================================================================
+# lane-park-notify <runfile> — the ONE notify step of a lane's ready_for_release park (§14 "Terminal
+# park"; parallel-automate/24 F6). Sends the desktop notification and the `automate_ready_for_release`
+# webhook ("do not merge yet — wave open"), both fail-SAFE, then appends ONE `## Progress` line naming
+# what each channel actually did. Both notifiers are silent on stdout, so delivery is read from their
+# observable outcomes only — never assumed:
+#   desktop  `sent` (notify-desktop.sh wrote its `notify group=` audit line to <root>/.supervisor/logs/
+#            notifications.log — the OS banner itself is best-effort and not observable) · `disabled
+#            (LOOMWRIGHT_DESKTOP_NOTIFICATIONS=0)` · `suppressed (no audit line …)` (debounce, or the
+#            notifier skipped it) · `failed (<why>)`
+#   webhook  a LOOMWRIGHT_WEBHOOK_DRY_RUN=1 probe of send-webhook.sh first says whether a webhook URL
+#            resolves (it prints the payload only then): none ⇒ `ignored (repo_webhook_ignored slug=…
+#            — no user-scope egress grant)` or `not configured`; one ⇒ the real call, then `attempted
+#            (POST sent; delivery not reported by send-webhook.sh)` — it never reports the HTTP result,
+#            so never `sent` — or `failed (<its stderr line>)`; `dry-run …` when the caller already set
+#            LOOMWRIGHT_WEBHOOK_DRY_RUN
+# Not at the ready_for_release park ⇒ `lane-park-notify: skipped — …`, nothing sent, nothing written.
+# Always exits 0 except a usage error. Seams: LOOMWRIGHT_LANES_NOTIFY_DESKTOP, LOOMWRIGHT_LANES_SEND_WEBHOOK.
+lanes_park_notify() {
+  local rf="${1:-}" nd="${LOOMWRIGHT_LANES_NOTIFY_DESKTOP:-$HERE/notify-desktop.sh}"
+  local sw="${LOOMWRIGHT_LANES_SEND_WEBHOOK:-$HERE/send-webhook.sh}"
+  local root run status pause pr item msg payload nlog before after desk web probe perr err line
+  [ -n "$rf" ] && [ "$#" -le 1 ] || die "usage: lane-park-notify <runfile>"
+  [ -f "$rf" ] || die "lane-park-notify: run file not found: $rf"
+  root="$(cd "$(dirname "$rf")/../.." 2>/dev/null && pwd -P)" || die "lane-park-notify: cannot resolve the checkout of $rf"
+  run="$(basename "$rf" .md)"
+  IFS="$(printf '\t')" read -r status pause pr _ <<<"$(_lanes_runfile_fields "$rf")"
+  if [ "$status/$pause" != "ready_for_release/ready_for_release" ]; then
+    echo "lane-park-notify: skipped — $run — run file reads status ${status:--} / pause_reason ${pause:--}, not the ready_for_release park; nothing sent"
+    return 0
+  fi
+  item="$(_lanes_current_item "$rf")"
+  case "$pr" in ''|-|null) pr="(no PR recorded)" ;; esac
+  msg="$pr READY — do not merge yet — wave open (/automate item ${item:--}, run $run)"
+  # desktop — the merge watcher's notify_as payload shape, judged by the notifier's own audit line.
+  nlog="$root/.supervisor/logs/notifications.log"
+  if [ "${LOOMWRIGHT_DESKTOP_NOTIFICATIONS:-1}" = 0 ]; then desk="disabled (LOOMWRIGHT_DESKTOP_NOTIFICATIONS=0)"
+  elif [ ! -f "$nd" ]; then desk="failed (notify-desktop.sh absent)"
+  elif ! payload="$(jq -cn --arg t automate_ready_for_release --arg m "$msg" \
+      '{hook_event_name:"Notification",notification_type:$t,message:$m}' 2>/dev/null)" || [ -z "$payload" ]; then
+    desk="failed (payload not built — jq)"
+  else
+    before="$(grep -c ' notify group=' "$nlog" 2>/dev/null)"; before="${before:-0}"
+    printf '%s' "$payload" | (cd "$root" && bash "$nd" >/dev/null 2>&1) || true
+    after="$(grep -c ' notify group=' "$nlog" 2>/dev/null)"; after="${after:-0}"
+    if [ "$after" -gt "$before" ] 2>/dev/null; then desk="sent"
+    else desk="suppressed (no audit line in .supervisor/logs/notifications.log — debounced or skipped by notify-desktop.sh)"; fi
+  fi
+  # webhook — probe first (dry run prints the payload only when a URL resolves), then the real call.
+  if [ ! -f "$sw" ]; then web="failed (send-webhook.sh absent)"
+  else
+    perr="$root/.supervisor/logs/.lane-park-notify.$$.err"; mkdir -p "$root/.supervisor/logs" 2>/dev/null
+    probe="$(cd "$root" && LOOMWRIGHT_WEBHOOK_DRY_RUN=1 bash "$sw" --event-type gate --gate-type automate_ready_for_release \
+      --context "$msg" 2>"$perr" </dev/null)" || true
+    err="$(grep -m1 -E '^(repo_webhook_ignored|send-webhook:)' "$perr" 2>/dev/null)"
+    case "$probe" in
+      "{"*)
+        if [ -n "${LOOMWRIGHT_WEBHOOK_DRY_RUN:-}" ]; then web="dry-run (LOOMWRIGHT_WEBHOOK_DRY_RUN set — nothing posted)"
+        else
+          (cd "$root" && bash "$sw" --event-type gate --gate-type automate_ready_for_release --context "$msg" \
+            >/dev/null 2>"$perr" </dev/null) || true
+          err="$(grep -m1 '^send-webhook:' "$perr" 2>/dev/null)"
+          if [ -n "$err" ]; then web="failed ($err)"; else web="attempted (POST sent; delivery not reported by send-webhook.sh)"; fi
+        fi ;;
+      *)
+        case "$err" in
+          repo_webhook_ignored*) web="ignored ($err — no user-scope egress grant)" ;;
+          send-webhook:*) web="failed ($err)" ;;
+          *) web="not configured" ;;
+        esac ;;
+    esac
+    rm -f "$perr" 2>/dev/null
+  fi
+  line="lane park notify: ready_for_release ($run) — desktop: $desk; webhook: $web"
+  bash "$HELPERS" progress-append "$rf" "$(now_utc) $line" >/dev/null 2>&1 \
+    || echo "lane-park-notify: WARNING — the ## Progress line could not be appended to $rf" >&2
+  echo "lane-park-notify: $line"
+  return 0
+}
+
+# ==================================================================================================
 # lane-info [--root <dir>]
 lanes_info() {
   local root=""
@@ -1890,6 +1973,7 @@ lanes_main() {
     lane-status) lanes_status "$@" ;;
     lane-feed) lanes_feed "$@" ;;
     lane-readiness) lanes_readiness "$@" ;;
+    lane-park-notify) lanes_park_notify "$@" ;;
     _lane-run) lanes_run_wrapper "$@" ;;
     _merge-hooks) _lanes_merge_hooks "$@" ;;
     -h|--help|help) _lanes_usage ;;
