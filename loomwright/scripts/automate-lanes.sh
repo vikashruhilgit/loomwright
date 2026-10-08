@@ -10,13 +10,18 @@
 #   lane-create <parent_runfile> <item> <n> [--parallel N] [--max-tokens T]
 #        clone + origin-before-fetch + meta pull + carried configs + lane.json + one-line backlog + relay hooks
 #   lane-launch <lane_dir> --owner-command '<cmd the owner typed>' [--resume-run <run_id> | --continue]
-#        detached headless launch (or resume by run id / fixed decision-free continue message)
+#        detached headless launch (or resume by run id — in the lane's LAST session, a fresh one only
+#        when that cannot be resumed — / fixed decision-free continue message)
 #   lane-launch <lane_dir> --host-denied '<reason>'      record a host-refused spawn as blocked_launch
 #   relay-hook                                           PreToolUse / PermissionRequest hook (stdin: hook JSON)
 #   lane-answer <lane_dir> <tool_use_id> --owner-command '<cmd>' [--via <client>]
 #        stdin: {"answers":{"0":"<label>"},"note":"<optional free text>"}; validates, records, resumes
-#   lane-remove <lane_dir> [--stop] [--abandon]          guarded removal (salvages first)
-#   lane-convert-ready <lane_dir>                        wave end: ready_for_release → awaiting_merge + push that run file
+#        (HELD ⇒ the validated answer is kept coordinator-side, the lane reads answer_pending)
+#   lane-answer <lane_dir> --deliver-pending --owner-command '<cmd>'   deliver a kept answer (the poll)
+#   lane-remove <lane_dir> [--stop] [--abandon]          guarded removal (salvages first); --abandon on a
+#        `gone` lane stamps ABANDONED and pushes the lane's metadata through trail-pr's evidence gate
+#   lane-convert-ready <lane_dir>                        wave end: ready_for_release → awaiting_merge, then
+#        push the lane's metadata (non-claim files by exact list + trail-pr's evidence-gated list)
 #   lane-info [--root <dir>]                             print .supervisor/lane.json (exit 1 when absent)
 #   init-check --parallel N [--auto-merge]               INIT refusals: `ok` | `refuse: <reason>` (exit 1)
 #   pick-guard <automate_dir>                            PICK guard: `ok` | `refuse: live_lane <run_id> <lane>`
@@ -33,9 +38,12 @@
 #                                       configs, the intake `lane-backlog.md`, and the relay-hook entries
 #                                       merged into `<lane>/.claude/settings.local.json`). After launch the
 #                                       coordinator never writes into the lane again, EXCEPT (1) the answer
-#                                       file of the inbox protocol (`lane-answer`, below) and (2) the
-#                                       wave-end `lane-convert-ready` run-file conversion, which pushes that
-#                                       run file to the metadata branch in the same call.
+#                                       file of the inbox protocol (`lane-answer`, below), (2) the
+#                                       wave-end `lane-convert-ready` run-file conversion and its metadata
+#                                       push (trail-pr's failure marker / Progress line included), and
+#                                       (3) `lane-remove --abandon` on a `gone` lane: the ABANDONED stamp,
+#                                       the done/ → failed/ brief move and the same push, just before the
+#                                       lane is salvaged and deleted.
 #   <lane>/.supervisor/inbox/questions/<tool_use_id>.json   written by relay-hook (the lane's own hook)
 #   <lane>/.supervisor/inbox/answers/<tool_use_id>.json     written by lane-answer only
 #   <primary>/.supervisor/automate/<parent_run_id>.lanes    D6 lane table (TSV, untracked): lane, path, item,
@@ -45,6 +53,10 @@
 #   <primary>-lanes/<parent_run_id>/L<n>.died               written by the nohup wrapper when the process
 #                                       exits with no terminal `result` line since its launch
 #   <primary>-lanes/<parent_run_id>/salvage/                lane-create / lane-remove salvage copies
+#                                       (kept; with the L<n>.* logs it is excluded BY EXACT NAME from the
+#                                       --leaks lanes-dir section, so a clean wave reads `leaks: none`)
+#   <primary>/.supervisor/automate/<parent_run_id>.<lane>.answer-pending.json   a HELD lane-answer's
+#                                       validated answers + note + via (never an owner command)
 #   <primary>/.supervisor/automate/<parent_run_id>.memory-pressure   trip file (lane-sampler.sh); read only
 #   <primary>/.supervisor/automate/<parent_run_id>.fleet.log         lane-sampler.sh samples; read only
 #   <primary>/.supervisor/automate/<parent_run_id>.leaks-snapshot    `lane-status --leaks --snapshot` (wave start)
@@ -86,8 +98,12 @@
 # Every meta-sync call passes `--branch` explicitly (the mode line's branch).
 #
 # Observation (lane-status, lane-feed, lane-readiness) fails SAFE: an absent or unreadable source reads
-# `unknown` and the command exits 0. lane-status state, first match wins: removed/abandoned,
-# blocked_launch, held_for_load, created, missing, running (lanes_proc_alive), awaiting_input, the run
+# `unknown` and the command exits 0 — EXCEPT `lane-status --leaks --snapshot`, which exits 1 naming why
+# when it wrote no snapshot. With no lane table yet (§14 step 5 precedes step 6), `--leaks` derives the
+# parent run id and the primary from <parent_runfile>. lane-status state, first match wins:
+# removed/abandoned, answer_pending, blocked_launch, held_for_load (awaiting_input instead while the
+# lane holds an unanswered question and no process runs), created, missing, running
+# (lanes_proc_alive), awaiting_input, the run
 # file's park (merged / gone after reconcile-item), lost_to_reset (boot later than the last launch),
 # died (.died marker), stalled (process gone, not parked, no question). Keep-awake is SUGGESTED on macOS
 # (`caffeinate -i -w <coordinator pid>`); only `lane-status --keep-awake` starts it.
@@ -99,7 +115,8 @@
 # LOOMWRIGHT_GH_BIN, LOOMWRIGHT_LANES_CI_SLOT, LOOMWRIGHT_LANES_PGREP, LOOMWRIGHT_LANES_CAFFEINATE,
 # LOOMWRIGHT_LANES_UNAME, LOOMWRIGHT_LANES_COORDINATOR_PID, LOOMWRIGHT_LANES_BOOT_EPOCH,
 # LOOMWRIGHT_LANES_TOKEN_LEDGER, LOOMWRIGHT_LANES_WATCH_ITERATIONS, LOOMWRIGHT_LANES_WATCH_INTERVAL_S,
-# LOOMWRIGHT_LANES_LOCK_WAIT_S (default 30: the bound on waiting for a live lock holder).
+# LOOMWRIGHT_LANES_LOCK_WAIT_S (default 30: the bound on waiting for a live lock holder),
+# LOOMWRIGHT_LANES_TRAIL (default: the helpers path — whose `trail-pr` runs the lane's gated push).
 set -uo pipefail
 
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
@@ -108,6 +125,7 @@ PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$HERE/.." && pwd)}"
 META_SYNC="${LOOMWRIGHT_LANES_META_SYNC:-$HERE/meta-sync.sh}"
 SETUP_MEMORY="${LOOMWRIGHT_LANES_SETUP_MEMORY:-$HERE/setup-memory.sh}"
 HELPERS="${LOOMWRIGHT_LANES_HELPERS:-$HERE/automate-helpers.sh}"
+TRAIL="${LOOMWRIGHT_LANES_TRAIL:-$HELPERS}"   # whose `trail-pr` runs the lane's evidence-gated push (F11)
 
 # The lane allowlist (the minimum S1 found sufficient) and the DISALLOW list. These two are the only
 # lines in this file that may name the merge / admin tokens (Validation 3 greps for them). The list
@@ -448,6 +466,10 @@ _lanes_gate() {
 }
 
 # _lanes_spawn <prompt|''> <session_id|''> <label> — the detached nohup wrapper around `claude -p`.
+# Sets LN_SPAWN_PID and LN_SPAWN_SID (the `system/init` session id, '' when none appeared). The env
+# carries LOOMWRIGHT_LANE_RESUME_PATH = LN_RESUME_PATH (set only by a `--resume-run` launch; empty
+# otherwise) — how the lane's own engine learns which resume path it is on (§14 INIT).
+LN_RESUME_PATH=""; LN_SPAWN_PID=""; LN_SPAWN_SID=""
 _lanes_spawn() {
   local prompt="$1" sid="$2" label="$3" base disallow in pid st off i s=""
   base="$(git -C "$LN_DIR" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)"; base="${base#origin/}"; [ -n "$base" ] || base=main
@@ -466,8 +488,9 @@ _lanes_spawn() {
   off="$(wc -c < "$LN_LOG" | tr -d ' ')"
   # >>> spawn (the only process start; it writes nothing into the lane directory)
   nohup bash "$SELF" _lane-run "$LN_DIR" "$LN_LOG" "$LN_DIED" "$in" -- \
-    env -u CLAUDECODE -u CLAUDE_PID CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 claude "${flags[@]}" >> "$LN_LOG" 2>&1 &
-  pid=$!
+    env -u CLAUDECODE -u CLAUDE_PID CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 \
+    LOOMWRIGHT_LANE_RESUME_PATH="${LN_RESUME_PATH:-}" claude "${flags[@]}" >> "$LN_LOG" 2>&1 &
+  pid=$!; LN_SPAWN_PID="$pid"; LN_SPAWN_SID=""
   # <<< spawn
   st="$(ps -o lstart= -p "$pid" 2>/dev/null | _trim_ws)"
   _lt_set "$LN_TABLE" "$LN_LANE" 5 "$pid" 6 "$st" 8 launched 9 "$(now_utc)" 10 -
@@ -485,6 +508,7 @@ _lanes_spawn() {
     sleep 0.2; i=$((i + 1))
   done
   [ -n "$s" ] && _lt_set "$LN_TABLE" "$LN_LANE" 7 "$s"
+  LN_SPAWN_SID="$s"
   echo "lane-launch: launched $LN_LANE (pid $pid, session ${s:-unknown}) $label"
 }
 
@@ -535,7 +559,26 @@ _lanes_launch_go() {
   if [ -n "$resume_run" ]; then
     [ "$resume_run" = "$LN_RUN" ] || { echo "lane-launch: refused — $LN_LANE resumes only its own run ($LN_RUN), not '$resume_run'"; return 1; }
     [ -f "$LN_DIR/.supervisor/automate/$LN_RUN.md" ] || { echo "lane-launch: refused — no run file $LN_RUN.md in $LN_LANE"; return 1; }
-    _lanes_spawn "/loomwright:automate --resume $LN_RUN" "" "(resume $LN_RUN)"
+    # F4: resume the lane's LAST session, so its own run.lock (session-id re-entrant) never stalls the
+    # resume of a lane that died after its PICK took the lock. A fresh session is the fallback only
+    # when no session is recorded, or the resume of it exited at once with no session (`claude
+    # --resume` refused it). The coordinator never writes the lane's run file or lock: the lane's
+    # engine records the path from LOOMWRIGHT_LANE_RESUME_PATH on entry.
+    local rsid; rsid="$(_lanes_session_id)"
+    if [ -n "$rsid" ]; then
+      LN_RESUME_PATH="session $rsid"
+      _lanes_spawn "/loomwright:automate --resume $LN_RUN" "$rsid" "(resume $LN_RUN in its last session $rsid)" || return 1
+      if [ -n "$LN_SPAWN_SID" ] || kill -0 "$LN_SPAWN_PID" 2>/dev/null; then return 0; fi
+      echo "lane-launch: $LN_LANE — session $rsid could not be resumed (exited with no session); falling back to a fresh session"
+      _lanes_launch_lock || { echo "lane-launch: refused — $LN_LANE — launch lock busy (another launch of this lane is in flight)"; return 1; }
+      if lanes_proc_alive "$(_lt_get "$LN_TABLE" "$LN_LANE" 5)" "$(_lt_get "$LN_TABLE" "$LN_LANE" 6)" "$LN_DIR"; then
+        echo "lane-launch: refused — $LN_LANE — already running (pid $(_lt_get "$LN_TABLE" "$LN_LANE" 5))"; return 1
+      fi
+      LN_RESUME_PATH="fresh session (last session $rsid not resumable)"
+    else
+      LN_RESUME_PATH="fresh session (no recorded session)"
+    fi
+    _lanes_spawn "/loomwright:automate --resume $LN_RUN" "" "(resume $LN_RUN in a fresh session)"
   elif [ "$cont" = 1 ]; then
     local sid; sid="$(_lanes_session_id)"
     [ -n "$sid" ] || { echo "lane-launch: refused — $LN_LANE has no recorded session to continue"; return 1; }
@@ -617,29 +660,31 @@ lanes_relay_hook() {
 
 # ==================================================================================================
 # lane-answer <lane_dir> <tool_use_id> --owner-command '<cmd>' [--via <client>]  (stdin: answers JSON)
-lanes_answer() {
-  local dir="" id="" owner="" via=cli
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --owner-command) _lanes_need "$#" lane-answer "$1"; owner="$2"; shift 2 ;;
-      --via) _lanes_need "$#" lane-answer "$1"; via="${2:-cli}"; shift 2 ;;
-      *) if [ -z "$dir" ]; then dir="$1"; elif [ -z "$id" ]; then id="$1"; else die "lane-answer: unexpected argument '$1'"; fi; shift ;;
-    esac
-  done
-  _lane_ctx "$dir" || die "lane-answer: not a lane: ${dir:-<none>}"
-  case "$id" in ''|*[!A-Za-z0-9_-]*) die "lane-answer: bad tool_use_id '$id'" ;; esac
-  local qf="$LN_INBOX/questions/$id.json" af="$LN_INBOX/answers/$id.json" last in out rc
-  [ -s "$qf" ] || die "lane-answer: refused — no recorded question $id"
-  [ -e "$af" ] && die "lane-answer: refused — $id already answered"
-  last="$(_lanes_last_result "$LN_LOG")"
-  [ "$(jq -r '.stop_reason // empty' <<<"$last" 2>/dev/null)" = "tool_deferred" ] || die "lane-answer: refused — $LN_LANE did not park on a question"
-  [ "$(jq -r '.deferred_tool_use.id // empty' <<<"$last" 2>/dev/null)" = "$id" ] || die "lane-answer: refused — $LN_LANE is parked on another question"
-  in="$(cat)"
-  jq -e 'type == "object"' >/dev/null 2>&1 <<<"$in" || die "lane-answer: refused — answers are not a JSON object"
-  # multiSelect: the whole answer equal to one label is that label; otherwise every way of cutting the
-  # answer at its commas into known labels is tried (a label may itself contain a comma) — exactly
-  # one cut ⇒ accepted; none ⇒ unknown label (refuses the whole answer); more than one ⇒ ambiguous.
-  out="$(jq -c --argjson in "$in" '
+# lane-answer <lane_dir> --deliver-pending --owner-command '<cmd>'
+#
+# A HELD answer is never lost (parallel-automate/23 F2): when admission holds the resume (exit 4), the
+# VALIDATED answers, the note and `via` — never an owner command — are kept coordinator-side in
+# <primary>/.supervisor/automate/<parent_run_id>.<lane>.answer-pending.json and nothing is written
+# into the lane. lane-status only SHOWS that lane as `answer_pending`. Delivery is the second form,
+# run by the coordinator's `/automate --resume <run_id>` poll with the command the owner typed in
+# THAT session: it re-runs the full _lanes_gate (authority, liveness, regime, admission) and re-checks
+# the stored answers against the recorded question's labels AND the lane's still-deferred tool_use_id
+# (a mismatch refuses and discards the pending file). Honest limit: the re-check proves the stored
+# answer is a VALID label for the question still pending — not that the owner chose it. That is the
+# same trust level as the lane inbox's answer file relay-hook reads; the pending file is not
+# owner-authenticated, which is why it can never carry, or stand in for, an owner command. One pending
+# file per lane, last write wins: a second HELD lane-answer for the same question replaces the first
+# (how the owner corrects a kept answer). A discard leaves the question unanswered, so lane-status
+# reads that lane awaiting_input again — never held_for_load.
+_lanes_pending_file() { printf '%s' "$LN_PRIMARY/.supervisor/automate/$LN_PARENT.$LN_LANE.answer-pending.json"; }
+
+# _lanes_validate_answers <question_file> <input JSON> — prints {<question>: "<label[,label…]>"} or
+# fails with the refusal text: exactly the question's own option labels (multiSelect: comma-joined,
+# every way of cutting the answer at its commas into known labels is tried — a label may itself
+# contain a comma — exactly one cut ⇒ accepted; none ⇒ unknown label, refusing the whole answer;
+# more than one ⇒ ambiguous).
+_lanes_validate_answers() {
+  jq -c --argjson in "$2" '
     def cuts($labels): if length == 0 then [[]] else
       [range(1; length + 1) as $k | (.[0:$k] | join(",") | sub("^ +"; "") | sub(" +$"; "")) as $h
         | select(any($labels[]; . == $h)) | (.[$k:] | cuts($labels))[] | [$h] + .] end;
@@ -657,25 +702,110 @@ lanes_answer() {
         | if ($parts | length) == 0 or any($parts[]; . as $p | ($labels | index($p)) == null)
           then error("question \($i + 1): \"\($a)\" is not one of its options\(if $qs[$i].multiSelect == true then " (multiSelect: comma-joined labels)" else "" end)")
           else . end
-        | . + {($qs[$i].question): ($parts | join(","))})' "$qf" 2>&1)" \
-    || die "lane-answer: refused — $(sed -E 's/^jq: error \(at [^)]*\): //' <<<"$out")"
-  local sid; sid="$(jq -r '.session_id // empty' <<<"$last")"; [ -n "$sid" ] || sid="$(_lanes_session_id)"
-  [ -n "$sid" ] || die "lane-answer: refused — no session id to resume"
-  # authority + admission BEFORE the answer is recorded, so a HELD resume leaves nothing half-written;
-  # under the launch lock, so an overlapping answer for the same question sees it answered / running.
-  _lanes_launch_lock || die "lane-answer: refused — $LN_LANE — launch lock busy (another launch of this lane is in flight)"
-  if [ -e "$af" ]; then _lanes_launch_unlock; die "lane-answer: refused — $id already answered"; fi
-  _lanes_gate "$owner"; rc=$?; [ "$rc" = 0 ] || { _lanes_launch_unlock; return "$rc"; }
-  local note; note="$(jq -r '.note // ""' <<<"$in")"
+        | . + {($qs[$i].question): ($parts | join(","))})' "$1" 2>&1
+}
+
+# _lanes_answer_parked <tool_use_id> — 0 when the lane's last result parked on exactly that deferred
+# question (prints it), else prints the refusal reason and returns 1.
+_lanes_answer_parked() {
+  local last; last="$(_lanes_last_result "$LN_LOG")"
+  [ "$(jq -r '.stop_reason // empty' <<<"$last" 2>/dev/null)" = "tool_deferred" ] || { echo "$LN_LANE did not park on a question"; return 1; }
+  [ "$(jq -r '.deferred_tool_use.id // empty' <<<"$last" 2>/dev/null)" = "$1" ] || { echo "$LN_LANE is parked on another question"; return 1; }
+  printf '%s' "$last"
+}
+
+# _lanes_answer_write_resume <id> <validated> <note> <via> <sid> — caller holds the launch lock and
+# passed _lanes_gate: writes the lane's answer file, drops any pending copy, resumes the session.
+_lanes_answer_write_resume() {
+  local id="$1" out="$2" note="$3" via="$4" sid="$5" af="$LN_INBOX/answers/$1.json" rc
   if ! { jq -n --argjson a "$out" --arg note "$note" --arg via "$via" --arg at "$(now_utc)" \
       '{answers: $a, note: (if $note == "" then null else $note end), source: "human", via: $via, at: $at}' > "$af.tmp.$$" \
       && mv "$af.tmp.$$" "$af"; }; then
     rm -f "$af.tmp.$$"; _lanes_launch_unlock; die "lane-answer: cannot write the answer file"
   fi
+  rm -f "$(_lanes_pending_file)"
   [ -n "$note" ] && echo "lane-answer: note recorded and delivered to the lane as an annotation (never the decision)"
   _lanes_spawn "" "$sid" "(resume after answer $id via $via)"; rc=$?
   _lanes_launch_unlock
   return "$rc"
+}
+
+lanes_answer() {
+  local dir="" id="" owner="" via=cli deliver=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --owner-command) _lanes_need "$#" lane-answer "$1"; owner="$2"; shift 2 ;;
+      --via) _lanes_need "$#" lane-answer "$1"; via="${2:-cli}"; shift 2 ;;
+      --deliver-pending) deliver=1; shift ;;
+      *) if [ -z "$dir" ]; then dir="$1"; elif [ -z "$id" ]; then id="$1"; else die "lane-answer: unexpected argument '$1'"; fi; shift ;;
+    esac
+  done
+  _lane_ctx "$dir" || die "lane-answer: not a lane: ${dir:-<none>}"
+  if [ "$deliver" = 1 ]; then
+    [ -z "$id" ] || die "lane-answer: --deliver-pending takes no tool_use_id (it delivers the stored one)"
+    _lanes_deliver_pending "$owner"; return $?
+  fi
+  case "$id" in ''|*[!A-Za-z0-9_-]*) die "lane-answer: bad tool_use_id '$id'" ;; esac
+  local qf="$LN_INBOX/questions/$id.json" af="$LN_INBOX/answers/$id.json" last in out rc pf
+  [ -s "$qf" ] || die "lane-answer: refused — no recorded question $id"
+  [ -e "$af" ] && die "lane-answer: refused — $id already answered"
+  last="$(_lanes_answer_parked "$id")" || die "lane-answer: refused — $last"
+  in="$(cat)"
+  jq -e 'type == "object"' >/dev/null 2>&1 <<<"$in" || die "lane-answer: refused — answers are not a JSON object"
+  out="$(_lanes_validate_answers "$qf" "$in")" || die "lane-answer: refused — $(sed -E 's/^jq: error \(at [^)]*\): //' <<<"$out")"
+  local sid; sid="$(jq -r '.session_id // empty' <<<"$last")"; [ -n "$sid" ] || sid="$(_lanes_session_id)"
+  [ -n "$sid" ] || die "lane-answer: refused — no session id to resume"
+  local note; note="$(jq -r '.note // ""' <<<"$in")"
+  # authority + admission BEFORE the answer is written into the lane, so a refused resume leaves
+  # nothing half-written there; under the launch lock, so an overlapping answer sees it answered.
+  _lanes_launch_lock || die "lane-answer: refused — $LN_LANE — launch lock busy (another launch of this lane is in flight)"
+  if [ -e "$af" ]; then _lanes_launch_unlock; die "lane-answer: refused — $id already answered"; fi
+  _lanes_gate "$owner"; rc=$?
+  if [ "$rc" = 4 ]; then
+    # HELD (admission): keep the VALIDATED answer coordinator-side — never the owner command.
+    pf="$(_lanes_pending_file)"; case "$via" in *[!A-Za-z0-9_.-]*) via=cli ;; esac
+    if jq -n -c --arg lane "$LN_LANE" --arg id "$id" --argjson a "$(jq -c '.answers' <<<"$in")" --arg note "$note" \
+        --arg via "$via" --arg at "$(now_utc)" \
+        '{schema_version: 1, lane: $lane, tool_use_id: $id, answers: $a, note: (if $note == "" then null else $note end), via: $via, held_at: $at}' \
+        > "$pf.tmp.$$" 2>/dev/null && mv "$pf.tmp.$$" "$pf"; then
+      echo "lane-answer: answer kept pending ($(basename "$pf")) — $LN_LANE reads answer_pending; the next /automate --resume poll delivers it (lane-answer <lane_dir> --deliver-pending --owner-command '<cmd>')"
+    else
+      rm -f "$pf.tmp.$$"; echo "lane-answer: answer NOT kept — cannot write $(basename "$pf"); re-send it at the next poll"
+    fi
+    _lanes_launch_unlock; return 4
+  fi
+  [ "$rc" = 0 ] || { _lanes_launch_unlock; return "$rc"; }
+  _lanes_answer_write_resume "$id" "$out" "$note" "$via" "$sid"
+}
+
+# _lanes_deliver_pending <owner_cmd> — the delivery form (see lanes_answer). Nothing is written into
+# the lane before every re-check and the full _lanes_gate pass.
+_lanes_deliver_pending() {
+  local owner="$1" pf id qf af last in out sid note via rc
+  pf="$(_lanes_pending_file)"
+  [ -s "$pf" ] || die "lane-answer: refused — no pending answer for $LN_LANE ($(basename "$pf"))"
+  _discard() { rm -f "$pf"; die "lane-answer: refused — the pending answer for $LN_LANE no longer matches ($1); discarded — the question is shown again"; }
+  id="$(jq -r '.tool_use_id // empty' "$pf" 2>/dev/null)"
+  case "$id" in ''|*[!A-Za-z0-9_-]*) _discard "bad tool_use_id" ;; esac
+  [ "$(jq -r '.lane // empty' "$pf" 2>/dev/null)" = "$LN_LANE" ] || _discard "recorded for another lane"
+  qf="$LN_INBOX/questions/$id.json"; af="$LN_INBOX/answers/$id.json"
+  [ -s "$qf" ] || _discard "no recorded question $id"
+  [ -e "$af" ] && _discard "$id already answered"
+  last="$(_lanes_answer_parked "$id")" || _discard "$last"
+  in="$(jq -c '{answers: .answers, note: .note}' "$pf" 2>/dev/null)" || _discard "pending file unreadable"
+  out="$(_lanes_validate_answers "$qf" "$in")" || _discard "$(sed -E 's/^jq: error \(at [^)]*\): //' <<<"$out")"
+  note="$(jq -r '.note // ""' <<<"$in")"; via="$(jq -r '.via // "cli"' "$pf")"; case "$via" in ''|*[!A-Za-z0-9_.-]*) via=cli ;; esac
+  sid="$(jq -r '.session_id // empty' <<<"$last")"; [ -n "$sid" ] || sid="$(_lanes_session_id)"
+  [ -n "$sid" ] || die "lane-answer: refused — no session id to resume"
+  _lanes_launch_lock || die "lane-answer: refused — $LN_LANE — launch lock busy (another launch of this lane is in flight)"
+  if [ -e "$af" ]; then _lanes_launch_unlock; _discard "$id already answered"; fi
+  _lanes_gate "$owner"; rc=$?
+  if [ "$rc" != 0 ]; then
+    _lanes_launch_unlock
+    echo "lane-answer: pending answer kept for $LN_LANE — not delivered"
+    return "$rc"
+  fi
+  _lanes_answer_write_resume "$id" "$out" "$note" "$via (delivered pending)" "$sid"
 }
 
 # ==================================================================================================
@@ -706,6 +836,7 @@ _lanes_live_watchers() {
 # _lanes_remove_refusals — every lane-remove refusal that does not depend on process liveness. Runs
 # in lanes_remove's dynamic scope (reads/sets its locals L, abandon, state, rf, q, b, u, mb, ms).
 _lanes_remove_refusals() {
+  rstate="$(_lanes_state_of "$L")"   # the lane's real state, from lane-status's own reader (F10)
   # >>> awaiting-input check
   rf="$LN_DIR/.supervisor/automate/$LN_RUN.md"
   if q="$(_lanes_pending_question "$LN_INBOX")"; then _refuse "awaiting_input — unanswered question $q"; return 1; fi
@@ -722,6 +853,10 @@ _lanes_remove_refusals() {
     fi
   fi
   [ -z "$(git -C "$LN_DIR" status --porcelain 2>/dev/null)" ] || { _refuse "dirty working tree"; return 1; }
+  if [ "$abandon" = 1 ] && [ "$ab_ok" = 1 ] && [ "$rstate" = gone ]; then   # F11
+    if ! mb="$(_lanes_meta_branch "$LN_DIR")"; then _refuse "metadata mode unknown (cannot record the abandon)"; return 1; fi
+    _lanes_abandon_meta || return 1
+  fi
   [ -e "$LN_DIR/.supervisor/automate/$LN_RUN.meta-push-failed" ] && { _refuse "meta-push failure marker is set"; return 1; }
   if ! mb="$(_lanes_meta_branch "$LN_DIR")"; then _refuse "metadata mode unknown (cannot prove the metadata was pushed)"; return 1; fi
   if [ -n "$mb" ]; then
@@ -755,7 +890,7 @@ lanes_remove() {
     esac
   done
   _lane_ctx "$dir" || die "lane-remove: not a lane: ${dir:-<none>}"
-  local L="$LN_LANE" pid st mp mu q state rf b u mb ms live_pid="" watchers=""
+  local L="$LN_LANE" pid st mp mu q state rstate="" rf b u mb ms live_pid="" watchers="" ab_ok=0
   _refuse() { echo "lane-remove: refused — $L — $1"; return 1; }
   # >>> live-process check
   pid="$(_lt_get "$LN_TABLE" "$L" 5)"; st="$(_lt_get "$LN_TABLE" "$L" 6)"
@@ -768,6 +903,7 @@ lanes_remove() {
     IFS="$(printf '\t')" read -r mp mu <<<"$watchers"   # the first live watcher
     _refuse "live merge watcher (pid $mp, $mu); use --stop"; return 1
   fi
+  [ -z "$live_pid$watchers" ] && ab_ok=1   # the abandon record is written only once nothing runs
   _lanes_remove_refusals || return 1   # REFUSE-BEFORE-STOP
   if [ -n "$live_pid$watchers" ]; then
     [ -n "$live_pid" ] && _lanes_stop_pid "$live_pid" "claude -p"
@@ -782,30 +918,116 @@ lanes_remove() {
       IFS="$(printf '\t')" read -r mp mu <<<"$watchers"   # the first live watcher
       _refuse "merge watcher (pid $mp, $mu) still alive after --stop"; return 1
     fi
+    ab_ok=1
     _lanes_remove_refusals || return 1
   fi
   local sv; sv="$(_lanes_salvage "$LN_DIR" "$LN_ROOT/salvage" "$L-removed")" || { _refuse "salvage failed"; return 1; }
   rm -rf "$LN_DIR" || { echo "lane-remove: could not remove $LN_DIR" >&2; return 1; }
   _lt_set "$LN_TABLE" "$L" 8 "$([ "$abandon" = 1 ] && echo abandoned || echo removed)"
   if [ "$abandon" = 1 ]; then
+    # A run-file line never carries an absolute path (the branch-mode trail push scrubs home paths and
+    # would fail the parent's push — F10): the salvage is named in the `<primary>-lanes/…` form.
     bash "$HELPERS" progress-append "$LN_PRIMARY/.supervisor/automate/$LN_PARENT.md" \
-      "lane abandoned: $L ($LN_RUN) — state ${state:-unknown}; salvaged to $sv" >/dev/null 2>&1 || true
+      "lane abandoned: $L ($LN_RUN) — state ${rstate:-unknown}; salvage kept at <primary>-lanes/$LN_PARENT/salvage/${sv##*/}" >/dev/null 2>&1 || true
   fi
   echo "lane-remove: removed $L ($LN_DIR); salvage $sv"
 }
 
 # ==================================================================================================
+# ---- the lane's metadata at the wave end (F11) --------------------------------------------------
+# _lanes_meta_extras <branch> <message> — pushes the lane's own NON-claim metadata, exactly listed:
+# its run file, `<run_id>.merge-readiness.md` and `<run_id>.dismissed-decisions` (each when present).
+# None of them is a done claim. Prints meta-sync's reason and returns 1 on failure.
+_lanes_meta_extras() {
+  local mb="$1" msg="$2" list f out rc=0
+  list="$(mktemp "${TMPDIR:-/tmp}/lane-meta.XXXXXX" 2>/dev/null)" || { echo "could not stage the push list"; return 1; }
+  for f in "$LN_RUN.md" "$LN_RUN.merge-readiness.md" "$LN_RUN.dismissed-decisions"; do
+    if [ -f "$LN_DIR/.supervisor/automate/$f" ]; then printf '%s\n' ".supervisor/automate/$f"; fi
+  done > "$list" || { rm -f "$list"; echo "could not stage the push list"; return 1; }
+  out="$(bash "$META_SYNC" push --branch "$mb" --root "$LN_DIR" --paths-from "$list" --message "$msg" 2>&1)" || rc=$?
+  rm -f "$list"
+  if [ "$rc" != 0 ]; then
+    printf 'meta-sync exit %s\n%s' "$rc" "$out"; return 1
+  fi
+  return 0
+}
+
+# _lanes_meta_trail <branch> <lane_runfile> <reason> — the rest of the lane's metadata (requirement,
+# done/failed briefs, result sidecars, the postmortem ledger, its dismissed drafts) goes through
+# `trail-pr`'s OWN evidence-gated candidate list, run on the lane's run file inside the lane: a done
+# stamp or a `jobs/done/` brief rides only when its PR reads MERGED (`; excluded <path> — pr not
+# merged` otherwise). Branch mode only. trail-pr reads the mode through its sibling setup-memory.sh;
+# when that reader does not say `on <branch>` too, nothing runs (a PR-mode trail must never start
+# from here). Prints trail-pr's line; returns 1 unless it reads meta-pushed / meta no_changes.
+# Pass-through, not a new seam: META_SYNC is forwarded as trail-pr's LOOMWRIGHT_META_SYNC_BIN so the
+# push uses the same meta-sync this script's other calls use — in a real run that is the sibling
+# meta-sync.sh (trail-pr's own default); only the LOOMWRIGHT_LANES_META_SYNC test seam changes it.
+_lanes_meta_trail() {
+  local mb="$1" rf="$2" reason="$3" tm out
+  tm="$(bash "$(dirname "$TRAIL")/setup-memory.sh" --root "$LN_DIR" mode 2>/dev/null | head -1)"
+  [ "$tm" = "on $mb" ] || { echo "trail-pr's mode reader says '${tm:-nothing}', not 'on $mb' — trail not run"; return 1; }
+  out="$(LOOMWRIGHT_META_SYNC_BIN="$META_SYNC" bash "$TRAIL" trail-pr "$rf" --reason "$reason" 2>/dev/null | tail -1)"
+  printf '%s' "${out:-trail-pr printed nothing}"
+  case "$out" in "trail-pr: meta-pushed "*|"trail-pr: skipped — meta no_changes"*) return 0 ;; esac
+  return 1
+}
+
+# _lanes_abandon_meta — lane-remove --abandon on a lane lane-status reads `gone` (its PR closed
+# unmerged), in lanes_remove's scope. The owner's abandon decision is recorded the way
+# `reconcile-status --apply` records an `# abandoned:` Queue row: every done heading of the lane's
+# requirement (Phase 4.5's closeout stamp for the unmerged PR) becomes `## Status:
+# done_with_escalation — ABANDONED (- [x] <item>  # abandoned: <reason>)` (appended when it has none),
+# and a `jobs/done/` brief pointing at that requirement moves to `jobs/failed/`. Then, in branch mode,
+# the lane's metadata is pushed (_lanes_meta_extras + _lanes_meta_trail --reason abandoned), so the
+# lane is removable with no hand step and nothing pushed claims the unmerged work done.
+_lanes_abandon_meta() {
+  local arf="$LN_DIR/.supervisor/automate/$LN_RUN.md" item req row em b ptr out
+  item="$(_lanes_current_item "$arf")"; item="${item#./}"
+  case "$item" in .supervisor/requirements/*.md) ;; *) item="" ;; esac
+  case "$item" in *..*) item="" ;; esac
+  if [ -n "$item" ] && [ -f "$LN_DIR/$item" ]; then
+    req="$LN_DIR/$item"; em="$(printf '\342\200\224')"
+    row="- [x] $item  # abandoned: PR closed unmerged $em lane-remove --abandon"
+    if ! AB_HEAD="## Status: done_with_escalation $em ABANDONED ($row)" AB_PFX="## Status: done_with_escalation $em ABANDONED (- [x] " awk '
+        /^## Status:[[:space:]]*done(_with_escalation)?([^A-Za-z0-9_]|$)/ && index($0, ENVIRON["AB_PFX"]) != 1 { print ENVIRON["AB_HEAD"]; n++; next }
+        index($0, ENVIRON["AB_PFX"]) == 1 { n++ }
+        { print }
+        END { if (!n) { print ""; print ENVIRON["AB_HEAD"] } }' "$req" > "$req.tmp.$$" || ! mv "$req.tmp.$$" "$req"; then
+      rm -f "$req.tmp.$$"; _refuse "could not write the ABANDONED stamp on $item"; return 1
+    fi
+    if [ -r "$HERE/brief-pointer.sh" ]; then
+      # shellcheck source=/dev/null
+      . "$HERE/brief-pointer.sh"
+      for b in "$LN_DIR"/.supervisor/jobs/done/*.md; do
+        [ -f "$b" ] || continue
+        ptr="$(brief_requirement_pointer "$b" 2>/dev/null)" || continue
+        [ "${ptr#./}" = "$item" ] || continue
+        mkdir -p "$LN_DIR/.supervisor/jobs/failed" && mv "$b" "$LN_DIR/.supervisor/jobs/failed/" \
+          || { _refuse "could not move $(basename "$b") to jobs/failed/"; return 1; }
+      done
+    fi
+  fi
+  [ -n "$mb" ] || return 0
+  out="$(_lanes_meta_extras "$mb" "chore(supervisor): $LN_RUN abandoned (lane-remove --abandon)")" || { _refuse "metadata push failed ($(printf '%s\n' "$out" | head -1))"; return 1; }
+  out="$(_lanes_meta_trail "$mb" "$arf" abandoned)" || { _refuse "evidence-gated trail push failed: $out"; return 1; }
+  echo "lane-remove: $L abandoned — $out"
+}
+
 # lane-convert-ready <lane_dir> — the wave-end `ready_for_release` → `awaiting_merge` conversion: the
-# coordinator's one run-file write into a launched lane, and it PUSHES what it wrote, so the primary's
-# next meta pull reads awaiting_merge and lane-remove's metadata check (`meta-sync status`) passes.
-# Under the lane's launch lock (no launch or resume can start mid-conversion). Refusals (exit 1,
-# nothing written): a live lane process (lanes_proc_alive), no run file, a `## Current` that does not
-# read status + pause_reason `ready_for_release`, or an unknown metadata mode. Already converted
-# (both `awaiting_merge` — a re-run after a failed push) ⇒ current-set answers `unchanged` and only
-# the push runs again, so a re-run is idempotent. Branch mode (`on <Y>`) then pushes exactly the lane
-# run file: `meta-sync push --branch <Y> --root <lane> --paths-from <a list holding only it>`; mode
-# `off` has no metadata branch to push. A failed push ⇒ `lane-convert-ready: FAILED — …` and exit 2:
-# the lane then reads `local_ahead` (lane-remove keeps refusing) until a re-run pushes it.
+# coordinator's one run-file write into a launched lane, and it PUSHES the lane's metadata, so the
+# primary's next meta pull reads awaiting_merge and lane-remove's metadata check (`meta-sync status`)
+# can pass. Under the lane's launch lock (no launch or resume can start mid-conversion). Refusals (exit
+# 1, nothing written): a live lane process (lanes_proc_alive), no run file, a `## Current` that does
+# not read status + pause_reason `ready_for_release`, or an unknown metadata mode. Already converted
+# (both `awaiting_merge` — a re-run after a failed push, or after the PR merged) ⇒ current-set answers
+# `unchanged` and only the pushes run again, so a re-run is idempotent. Branch mode (`on <Y>`) then
+# pushes (1) the lane's non-claim files by exact list (_lanes_meta_extras: the run file, its
+# merge-readiness report, its dismissed-decisions ledger) and (2) everything else through trail-pr's
+# evidence-gated candidate list (_lanes_meta_trail, `--reason wave-end`): a done stamp or a jobs/done/
+# brief whose PR is not MERGED is excluded and named, so while the PR is open the lane keeps reading
+# `local_ahead` and lane-remove keeps refusing — after the owner merges, a re-run pushes the stamp;
+# if the PR closes unmerged, `lane-remove --abandon` records it (F11). Mode `off` has no metadata
+# branch to push. A failed push ⇒ `lane-convert-ready: FAILED — …` and exit 2 (re-run to retry).
 _lanes_current_item() { # <runfile> — the `## Current` item path, or nothing
   awk '/^## / { sec = $0; next }
     sec == "## Current" && /^- item:/ { v = $0; sub(/^- item: */, "", v); sub(/ *\|.*/, "", v); print v; exit }' "$1" 2>/dev/null
@@ -837,21 +1059,20 @@ lanes_convert_ready() {
     echo "lane-convert-ready: converted $L to awaiting_merge (metadata mode off — no metadata branch to push)"
     return 0
   fi
-  list="$(mktemp "${TMPDIR:-/tmp}/lane-convert.XXXXXX" 2>/dev/null)" || list=""
-  if [ -z "$list" ] || ! printf '%s\n' ".supervisor/automate/$LN_RUN.md" > "$list"; then
-    [ -n "$list" ] && rm -f "$list"; _lanes_launch_unlock
-    echo "lane-convert-ready: FAILED — $L — converted to awaiting_merge but could not stage the push list; NOT pushed (lane-remove refuses until it is) — re-run lane-convert-ready $LN_DIR"
-    return 2
-  fi
-  rc=0
-  out="$(bash "$META_SYNC" push --branch "$mb" --root "$LN_DIR" --paths-from "$list" --message "chore(supervisor): $LN_RUN ready_for_release -> awaiting_merge (wave end)" 2>&1)" || rc=$?
-  rm -f "$list"; _lanes_launch_unlock
+  rc=0; out="$(_lanes_meta_extras "$mb" "chore(supervisor): $LN_RUN ready_for_release -> awaiting_merge (wave end)")" || rc=$?
   if [ "$rc" != 0 ]; then
-    echo "lane-convert-ready: FAILED — $L — converted to awaiting_merge but the metadata push to $mb failed (meta-sync exit $rc); NOT pushed (lane-remove refuses until it is) — re-run lane-convert-ready $LN_DIR"
-    [ -n "$out" ] && printf '%s\n' "$out" | sed 's/^/  /'
+    _lanes_launch_unlock
+    echo "lane-convert-ready: FAILED — $L — converted to awaiting_merge but the metadata push to $mb failed ($(printf '%s\n' "$out" | head -1)); NOT pushed (lane-remove refuses until it is) — re-run lane-convert-ready $LN_DIR"
+    printf '%s\n' "$out" | sed '1d; /^$/d; s/^/  /'
     return 2
   fi
-  echo "lane-convert-ready: converted $L to awaiting_merge; metadata pushed to $mb"
+  rc=0; out="$(_lanes_meta_trail "$mb" "$rf" wave-end)" || rc=$?
+  _lanes_launch_unlock
+  if [ "$rc" != 0 ]; then
+    echo "lane-convert-ready: FAILED — $L — converted to awaiting_merge and its run file pushed, but the evidence-gated trail push failed: $out — re-run lane-convert-ready $LN_DIR"
+    return 2
+  fi
+  echo "lane-convert-ready: converted $L to awaiting_merge; metadata pushed to $mb — $out"
 }
 
 # ==================================================================================================
@@ -1068,6 +1289,35 @@ _lanes_table_for() {
   return 1
 }
 
+# _lanes_state_of <lane> — that lane's `state` exactly as lane-status reports it (_lanes_lane_json over
+# its lane-table row, LN_TABLE); `unknown` when the row or the reader is unreadable.
+_lanes_state_of() {
+  local tab lane path item run pid st sid ts llu why s
+  tab="$(printf '\t')"
+  IFS="$tab" read -r lane path item run pid st sid ts llu why <<<"$(awk -F'\t' -v l="$1" '$1 == l' "$LN_TABLE" 2>/dev/null | tail -1)"
+  [ -n "$lane" ] || { printf 'unknown'; return 0; }
+  s="$(_lanes_lane_json "$lane" "$path" "$item" "$run" "$pid" "$st" "$sid" "$ts" "$llu" "${why:--}" "$(date -u +%s)" "" \
+    "$LN_PRIMARY/.supervisor/automate/$LN_PARENT.$lane.answer-pending.json" 2>/dev/null | jq -r '.state // empty' 2>/dev/null)"
+  printf '%s' "${s:-unknown}"
+}
+
+# _lanes_parent_of <parent_runfile> — sets LP_PARENT / LP_PRIMARY from a parent run file at
+# <primary>/.supervisor/automate/<run_id>.md (no lane table needed); returns 1 with LP_WHY otherwise.
+_lanes_parent_of() {
+  local rf="${1:-}" d
+  LP_PARENT=""; LP_PRIMARY=""; LP_WHY=""
+  [ -n "$rf" ] || { LP_WHY="no lane table found and no <parent_runfile> given"; return 1; }
+  case "$rf" in *.md) ;; *) LP_WHY="no lane table for $rf (pass the parent run file)"; return 1 ;; esac
+  [ -f "$rf" ] || { LP_WHY="parent run file not found: $rf"; return 1; }
+  d="$(cd "$(dirname "$rf")" 2>/dev/null && pwd -P)" || { LP_WHY="parent run file directory unreadable: $rf"; return 1; }
+  [ "$(basename "$d")" = automate ] && [ "$(basename "$(dirname "$d")")" = .supervisor ] \
+    || { LP_WHY="parent run file must live in <primary>/.supervisor/automate/: $rf"; return 1; }
+  LP_PARENT="$(basename "$rf" .md)"
+  case "$LP_PARENT" in ''|.*|*-L[0-9]|*-L[0-9][0-9]) LP_WHY="not a parent run file: $rf"; return 1 ;; esac
+  LP_PRIMARY="$(cd "$d/../.." && pwd -P)" || { LP_WHY="primary unreadable for $rf"; return 1; }
+  return 0
+}
+
 # _lanes_resolve <lane_dir|L<n>> — a lane directory (L<n> through the newest lane table).
 _lanes_resolve() {
   case "${1:-}" in
@@ -1078,12 +1328,15 @@ _lanes_resolve() {
   esac
 }
 
-# _lanes_lane_json <10 lane-table columns> <now_epoch> <ci_json> — one lane's status object.
-# Classification order (first match wins): removed/abandoned · blocked_launch · held_for_load · created
-# · missing · running (lanes_proc_alive) · awaiting_input · parked (merged / gone after reconcile) ·
-# lost_to_reset (boot later than the last launch) · died (.died marker) · stalled.
+# _lanes_lane_json <10 lane-table columns> <now_epoch> <ci_json> [<answer-pending file>] — one lane's
+# status object. Classification order (first match wins): removed/abandoned · answer_pending (a HELD
+# answer kept coordinator-side for a question the lane still holds, the process not running — shown,
+# never delivered here) · blocked_launch · held_for_load (a lane holding an unanswered question,
+# no process running, reads awaiting_input instead) · created · missing · running
+# (lanes_proc_alive) · awaiting_input · parked (merged / gone after reconcile) · lost_to_reset (boot
+# later than the last launch) · died (.died marker) · stalled.
 _lanes_lane_json() {
-  local lane="$1" path="$2" item="$3" run="$4" pid="$5" st="$6" sid="$7" ts="$8" llu="$9" why="${10}" now="${11}" ci="${12}"
+  local lane="$1" path="$2" item="$3" run="$4" pid="$5" st="$6" sid="$7" ts="$8" llu="$9" why="${10}" now="${11}" ci="${12}" apf="${13:-}"
   local root log died rf status pause pr lp pd state reason="" held="" qs nq pk prs="" le be rdf rds="" rdsum="" lm la cij
   root="$(dirname "$path")"; log="$root/$lane.stream.log"; died="$root/$lane.died"
   rf="$path/.supervisor/automate/$run.md"
@@ -1098,10 +1351,30 @@ _lanes_lane_json() {
           else {state: "waiting", position: ($w.key + 1), held: $w.value.held} end end' <<<"$ci" 2>/dev/null)" \
       || cij='{"state":"unknown","position":null,"held":null}'
   fi
+  local pend=""
+  if [ -n "$apf" ] && [ -s "$apf" ] && [ "$nq" -gt 0 ]; then
+    pend="$(jq -r '.tool_use_id // empty' "$apf" 2>/dev/null)"
+    [ -n "$pend" ] && jq -e --arg id "$pend" 'any(.[]; .id == $id)' >/dev/null 2>&1 <<<"$qs" || pend=""
+  fi
+  case "$ts" in removed|abandoned) pend="" ;; esac
+  [ -n "$pend" ] && lanes_proc_alive "$pid" "$st" "$path" && pend=""
+  if [ -n "$pend" ]; then
+    state=answer_pending
+    reason="answer to $pend held $(jq -r '.held_at // "?"' "$apf" 2>/dev/null) (last launch state: $ts$(w="$(_lanes_dash "$why")"; [ -n "$w" ] && printf ' — %s' "$w")); the next /automate --resume poll delivers it: lane-answer $path --deliver-pending --owner-command '<cmd>'"
+  else
   case "$ts" in
     removed|abandoned) state="$ts" ;;
     blocked_launch) state=blocked_launch; reason="$(_lanes_dash "$why")" ;;
-    held_for_load) state=held_for_load; reason="held for load: $(_lanes_dash "$why")"; held="$(_lanes_dash "$why")" ;;
+    held_for_load)
+      # The column records the last launch attempt; a HELD resume (or a discarded pending answer)
+      # leaves the lane's question unanswered, and that question — not the hold — is what the
+      # owner must see: a held_for_load label would hide it and invite a fresh-launch retry.
+      if [ "$nq" -gt 0 ] && [ -d "$path" ] && ! lanes_proc_alive "$pid" "$st" "$path"; then
+        state=awaiting_input; reason="question $(jq -r '.[0].id' <<<"$qs") (last launch held for load: $(_lanes_dash "$why"))"
+      else
+        state=held_for_load; reason="held for load: $(_lanes_dash "$why")"
+      fi
+      held="$(_lanes_dash "$why")" ;;
     created) state=created; reason="not launched" ;;
     *)
       if [ ! -d "$path" ]; then state=missing; reason="lane directory vanished"
@@ -1128,6 +1401,7 @@ _lanes_lane_json() {
         state=stalled; reason="process gone, run file not parked, no pending question — resume once with lane-launch --continue"
       fi ;;
   esac
+  fi
   rdf="$path/.supervisor/automate/$run.merge-readiness.md"
   if [ -f "$rdf" ]; then
     rds="$(sed -n 's/^- score: \([0-9]*\/[0-9]*\).*/\1/p' "$rdf" | head -1)"
@@ -1154,7 +1428,8 @@ _lanes_status_doc() {
   local lane path item run pid st sid ts llu why
   while IFS="$tab" read -r lane path item run pid st sid ts llu why; do
     case "$lane" in L[0-9]|L[0-9][0-9]) ;; *) continue ;; esac
-    row="$(_lanes_lane_json "$lane" "$path" "$item" "$run" "$pid" "$st" "$sid" "$ts" "$llu" "${why:--}" "$now" "$ci")" || continue
+    row="$(_lanes_lane_json "$lane" "$path" "$item" "$run" "$pid" "$st" "$sid" "$ts" "$llu" "${why:--}" "$now" "$ci" \
+      "$primary/.supervisor/automate/$parent.$lane.answer-pending.json")" || continue
     lanes="$lanes$row
 "
   done < "$table"
@@ -1223,10 +1498,37 @@ _lanes_tokens() {
 }
 
 # ---- leak check (Validation 5) ----------------------------------------------------------------------
-_lanes_leak_sections() { # <primary>
+# _lanes_leak_lanes_dir <primary> <parent> — the `## lanes-dir` section: one line per entry of
+# <primary>-lanes/, except that THIS run's own directory is listed by its contents minus the run's
+# kept artifacts, matched by EXACT name (never a glob): `salvage` (lane-create / lane-remove salvage)
+# and, for every lane in this run's table, `L<n>.stream.log`, `L<n>.stdin.json`, `L<n>.died`. A lane
+# directory still present (`<parent>/L<n>`) or any other file there is listed, so it reads as a leak.
+# After a clean wave this run's directory contributes nothing — the same as at wave start, when it
+# does not exist yet, and the same once item 21 removes it (parallel-automate/23 F9).
+_lanes_leak_lanes_dir() {
+  local p="$1" parent="${2:-}" e f keep="salvage" l nl
+  nl="$(printf '\nx')"; nl="${nl%x}"
+  [ -d "$p-lanes" ] || return 0
+  if [ -n "$parent" ] && [ -f "$p/.supervisor/automate/$parent.lanes" ]; then
+    for l in $(awk -F'\t' '$1 ~ /^L[0-9][0-9]?$/ { print $1 }' "$p/.supervisor/automate/$parent.lanes"); do
+      keep="$keep$nl$l.stream.log$nl$l.stdin.json$nl$l.died"
+    done
+  fi
+  ls -1 "$p-lanes" 2>/dev/null | while IFS= read -r e; do
+    if [ -n "$parent" ] && [ "$e" = "$parent" ] && [ -d "$p-lanes/$e" ]; then
+      ls -1 "$p-lanes/$e" 2>/dev/null | while IFS= read -r f; do
+        grep -qxF -- "$f" <<<"$keep" || printf '%s/%s\n' "$e" "$f"
+      done
+    else
+      printf '%s\n' "$e"
+    fi
+  done
+}
+
+_lanes_leak_sections() { # <primary> <parent>
   local p="$1" pg="${LOOMWRIGHT_LANES_PGREP:-pgrep}"
   echo "## worktrees"; git -C "$p" worktree list --porcelain 2>/dev/null | awk '/^worktree /'
-  echo "## lanes-dir"; ls -1 "$p-lanes" 2>/dev/null
+  echo "## lanes-dir"; _lanes_leak_lanes_dir "$p" "${2:-}"
   echo "## claude-p"; "$pg" -lf 'claude -p' 2>/dev/null
   echo "## merge-watch"; "$pg" -lf automate-merge-watch 2>/dev/null
   echo "## config-checksum"
@@ -1241,17 +1543,19 @@ lanes_leaks() {
   local p="$1" parent="$2" snap="${3:-0}" sf tmp sec found="" body="" d
   sf="$p/.supervisor/automate/$parent.leaks-snapshot"
   if [ "$snap" = 1 ]; then
-    if { echo "# leaks snapshot $(now_utc)"; _lanes_leak_sections "$p"; } > "$sf.tmp.$$" 2>/dev/null && mv "$sf.tmp.$$" "$sf"; then
+    # The ONE exception to observation's exit 0: a snapshot request that wrote nothing exits 1 naming
+    # why, because the end-of-wave check against a missing baseline can never read `none`.
+    if { echo "# leaks snapshot $(now_utc)"; _lanes_leak_sections "$p" "$parent"; } > "$sf.tmp.$$" 2>/dev/null && mv "$sf.tmp.$$" "$sf"; then
       echo "leaks: snapshot written — $sf"
-    else rm -f "$sf.tmp.$$"; echo "leaks: snapshot not written (unwritable) — $sf"; fi
+    else rm -f "$sf.tmp.$$"; echo "leaks: snapshot not written (unwritable) — $sf"; return 1; fi
     return 0
   fi
   if [ ! -f "$sf" ]; then
     echo "leaks: unknown — no snapshot (take one at wave start: lane-status --leaks --snapshot)"
-    _lanes_leak_sections "$p" | sed 's/^/  /'; return 0
+    _lanes_leak_sections "$p" "$parent" | sed 's/^/  /'; return 0
   fi
   tmp="$(mktemp -d 2>/dev/null)" || { echo "leaks: unknown — no temp dir"; return 0; }
-  _lanes_leak_sections "$p" > "$tmp/now"
+  _lanes_leak_sections "$p" "$parent" > "$tmp/now"
   for sec in worktrees lanes-dir claude-p merge-watch config-checksum git-status; do
     awk -v s="## $sec" '/^## / { on = ($0 == s); next } on' "$sf" | env LC_ALL=C sort > "$tmp/a"
     awk -v s="## $sec" '/^## / { on = ($0 == s); next } on' "$tmp/now" | env LC_ALL=C sort > "$tmp/b"
@@ -1288,13 +1592,22 @@ lanes_status() {
   if [ "$watch" = 1 ]; then _lanes_watch "$rf"; return 0; fi
   local table parent primary doc tab lane path ts
   if ! table="$(_lanes_table_for "$rf")"; then
+    if [ "$leaks" = 1 ]; then
+      # §14 step 5 takes the wave-start snapshot BEFORE step 6's first lane-create, so no lane table
+      # exists yet: the parent run id and the primary come from <parent_runfile> itself (F1).
+      if ! _lanes_parent_of "$rf"; then
+        if [ "$snap" = 1 ]; then echo "leaks: snapshot not written — $LP_WHY"; return 1; fi
+        echo "leaks: unknown — $LP_WHY"; return 0
+      fi
+      lanes_leaks "$LP_PRIMARY" "$LP_PARENT" "$snap"; return $?
+    fi
     if [ "$json" = 1 ]; then
       jq -n -c --argjson m "$(_lanes_machine_json)" '{schema_version: 1, parent_run_id: null, machine: $m, lanes: []}'
     else echo "lane-status: no lane table (${rf:-none found}) — no lanes"; fi
     return 0
   fi
   parent="$(basename "$table" .lanes)"; primary="$(cd "$(dirname "$table")/../.." && pwd -P)"
-  [ "$leaks" = 1 ] && { lanes_leaks "$primary" "$parent" "$snap"; return 0; }
+  [ "$leaks" = 1 ] && { lanes_leaks "$primary" "$parent" "$snap"; return $?; }
   [ "$res" = 1 ] && { _lanes_resources "$primary" "$parent"; return 0; }
   [ "$tok" = 1 ] && { _lanes_tokens "$table" "$primary" "$parent"; return 0; }
   [ "$ka" = 1 ] && _lanes_keep_awake_start
@@ -1525,7 +1838,10 @@ lanes_readiness() {
     fi
   done
   local summary="ready ($pass/$total)"; [ -n "$bad" ] && summary="ready ($pass/$total: $bad)"
-  {
+  # The group's status is its LAST command's, so every optional row is an `if` (never `[ -n … ] &&`,
+  # which exits 1 on an empty row and read as a write failure — parallel-automate/23 F5). A non-zero
+  # status here now means a real write failure (the redirect, or a printf into a full disk).
+  if {
     echo "# Merge readiness: $LN_RUN"
     echo
     echo "- item: ${item:-unknown} | pr: ${pr:-none} | head: $head | written: $(now_utc)"
@@ -1533,12 +1849,13 @@ lanes_readiness() {
     echo "- advisory only: this report never merges; the owner merges by hand."
     echo
     echo "## Checks"
-    echo "- $vline"; [ -n "$vrows" ] && printf '%s' "$vrows"
-    echo "- $cline"; [ -n "$crows" ] && printf '%s\n' "$crows"
-    echo "- $fline"; [ -n "$frows" ] && printf '%s\n' "$frows"
+    echo "- $vline"; if [ -n "$vrows" ]; then printf '%s' "$vrows"; fi
+    echo "- $cline"; if [ -n "$crows" ]; then printf '%s\n' "$crows"; fi
+    echo "- $fline"; if [ -n "$frows" ]; then printf '%s\n' "$frows"; fi
     echo "- $gline"; printf '%s\n' "$grows"
-    echo "- $eline"; [ -n "$erows" ] && printf '%s' "$erows"
-  } > "$out.tmp.$$" 2>/dev/null && mv "$out.tmp.$$" "$out" || { rm -f "$out.tmp.$$"; rm -rf "$tmp"; echo "lane-readiness: $LN_LANE — report not written (unwritable): $out"; return 0; }
+    echo "- $eline"; if [ -n "$erows" ]; then printf '%s' "$erows"; fi
+  } > "$out.tmp.$$" 2>/dev/null && mv "$out.tmp.$$" "$out"; then :
+  else rm -f "$out.tmp.$$"; rm -rf "$tmp"; echo "lane-readiness: $LN_LANE — report not written (unwritable): $out"; return 0; fi
   rm -rf "$tmp"
   echo "lane-readiness: $LN_LANE ($LN_RUN) — $summary — $out"
   return 0

@@ -19,6 +19,9 @@
 #     lane-remove --stop refuses before stopping + mutation control
 #   X relay hook from a linked worktree of the lane (git common dir; older git) + mutation control
 #   Y lane-convert-ready: refusals, convert + single-path push, idempotent re-run, failed push, removal
+#   Z Validation 4/5 fixes (parallel-automate/23): F5 readiness report · F9 leak check after removal ·
+#     F1 snapshot before the lane table · F10 no absolute path / real state · F4 resume in the last
+#     session · F2 HELD answer kept + delivered under an owner command · F11 gated wave-end push + ABANDONED
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -54,7 +57,11 @@ if [ "${1:-}" = "--help" ]; then
 fi
 { printf 'ARGS'; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\n'
   printf 'ENV CEIL=%s CC=%s PID=%s\n' "${CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS-unset}" "${CLAUDECODE-unset}" "${CLAUDE_PID-unset}"
-  printf 'STDIN %s\n' "$(cat)"; printf 'CWD %s\n' "$PWD"; } >> "$STUB_LOG"
+  printf 'STDIN %s\n' "$(cat)"; printf 'CWD %s\n' "$PWD"
+  printf 'RESUMEPATH %s\n' "${LOOMWRIGHT_LANE_RESUME_PATH-unset}"; } >> "$STUB_LOG"
+if [ -n "${STUB_RESUME_FAIL:-}" ]; then
+  for a in "$@"; do [ "$a" = --resume ] && { echo "No conversation found with session ID" >&2; exit 1; }; done
+fi
 echo '{"type":"system","subtype":"init","session_id":"sess-123"}'
 case "${STUB_MODE:-ok}" in
   sleep) trap 'kill $! 2>/dev/null; exit 143' TERM; sleep 60 & wait $! ;;
@@ -94,6 +101,12 @@ export META_LOG="$T/meta.log" HELPERS_LOG="$T/helpers.log"; : > "$META_LOG"; : >
 export LOOMWRIGHT_LANES_META_SYNC="$T/meta-sync.sh" LOOMWRIGHT_LANES_SETUP_MEMORY="$T/setup-memory.sh"
 export LOOMWRIGHT_LANES_HELPERS="$T/helpers.sh" LOOMWRIGHT_MACHINE_LOAD_CMD="$T/load.sh"
 export LOOMWRIGHT_LANES_INIT_WAIT_S=5 LOOMWRIGHT_LANES_STOP_GRACE_S=2
+# the wave-end evidence-gated trail (F11) runs through this seam; a no-op stub everywhere but Z-F11
+cat > "$T/trail-stub.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "trail $*" >> "$T_TRAIL_LOG"; echo "trail-pr: skipped — meta no_changes"
+EOF
+chmod +x "$T/trail-stub.sh"; export LOOMWRIGHT_LANES_TRAIL="$T/trail-stub.sh" T_TRAIL_LOG="$T/trail.log"
 
 # ---- fixture ----------------------------------------------------------------------------------------
 ORIGIN="$T/origin.git"; P="$T/work/primary"
@@ -864,6 +877,237 @@ has "Y10b … reported as such" "$out" "converted L10 to awaiting_merge (metadat
 out="$(conv "$LR/nope")"; check "Y11 not a lane ⇒ exit 1" "$?" 1
 out="$(bash "$HERE/automate-helpers.sh" lane-convert-ready 2>&1)"; rc=$?
 check "Y12 automate-helpers.sh dispatches lane-convert-ready (no lane ⇒ not-a-lane refusal)" "$rc:$(printf '%s' "$out" | grep -c 'lane-convert-ready: not a lane' | tr -d ' ')" "1:1"
+
+# ---- Z: Validation 4/5 fixes (parallel-automate/23) ---------------------------------------------------
+# Each leg fails against the pre-fix lane code at 91adff5 (identical to #426's head 8226dfe) and passes here.
+# Z-F5 lane-readiness writes its report when the Validation names no repro (empty erows / vrows)
+run lane-create "$RF" reqs/a.md 2 >/dev/null; LZ5="$LR/L2"; RDZ="$LZ5/.supervisor/automate/$PARENT-L2.merge-readiness.md"
+out="$(LOOMWRIGHT_GH_BIN="$T/absent-gh" run lane-readiness "$LZ5")"; rc=$?
+check "Z-F5a no named repro (empty erows) ⇒ the report IS written" "$rc:$([ -f "$RDZ" ] && echo written || echo missing)" "0:written"
+has "Z-F5b … with the headline-repro n/a line" "$(cat "$RDZ" 2>/dev/null)" "headline-repro: PASS — n/a (the Validation names no repro)"
+hasnt "Z-F5c … and never says unwritable" "$out" "report not written"
+check "Z-F5d no stray temp file left" "$(ls "$LZ5/.supervisor/automate/" | grep -c '\.tmp\.' | tr -d ' ')" 0
+chmod 555 "$LZ5/.supervisor/automate"
+out="$(LOOMWRIGHT_GH_BIN="$T/absent-gh" run lane-readiness "$LZ5")"; rc=$?
+chmod 755 "$LZ5/.supervisor/automate"
+check "Z-F5e a genuine write failure still says unwritable (exit 0, observation)" "$rc:$(printf '%s' "$out" | grep -c 'report not written (unwritable)' | tr -d ' ')" "0:1"
+check "Z-F5f … leaving no temp file" "$(ls "$LZ5/.supervisor/automate/" | grep -c '\.tmp\.' | tr -d ' ')" 0
+
+# Z-F9 a clean wave whose lanes were all removed reads `leaks: none`; salvage + stream logs are kept.
+# The wave-start snapshot is taken through lanes_leaks directly (same signature before and after the
+# fix) so this leg isolates F9 from F1.
+PARENT4=automate-2026-10-08-090000; RF4="$P/.supervisor/automate/$PARENT4.md"; LR4="$T/work/primary-lanes/$PARENT4"
+printf '# Automate Run: %s\n\n## Progress\n' "$PARENT4" > "$RF4"
+( . "$S"; lanes_leaks "$P" "$PARENT4" 1 ) >/dev/null
+run lane-create "$RF4" reqs/a.md 1 --parallel 2 >/dev/null; run lane-create "$RF4" reqs/b.md 2 --parallel 2 >/dev/null
+LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$LR4/L1" --owner-command "$OWN" >/dev/null; wait_gone "$LR4/L1"
+LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$LR4/L2" --owner-command "$OWN" >/dev/null; wait_gone "$LR4/L2"
+out="$(run lane-remove "$LR4/L1")$(run lane-remove "$LR4/L2")"
+check "Z-F9a both lanes removed" "$([ -e "$LR4/L1" ] || [ -e "$LR4/L2" ] && echo present || echo absent)" absent
+out="$(run lane-status "$RF4" --leaks)"
+check "Z-F9b after a clean wave lane-status --leaks reads none" "$(printf '%s\n' "$out" | head -1 | cut -c1-11)" "leaks: none"
+hasnt "Z-F9c … and lanes-dir is not changed" "$out" "lanes-dir: changed"
+check "Z-F9d salvage kept at <primary>-lanes/<run_id>/salvage/" "$(ls -d "$LR4"/salvage/L1-removed-* "$LR4"/salvage/L2-removed-* 2>/dev/null | wc -l | tr -d ' ')" 2
+check "Z-F9e stream logs kept at <primary>-lanes/<run_id>/L<n>.stream.log" "$([ -s "$LR4/L1.stream.log" ] && [ -s "$LR4/L2.stream.log" ] && echo kept)" kept
+mkdir -p "$LR4/L3"; : > "$LR4/stray.txt"
+out="$(run lane-status "$RF4" --leaks)"
+has "Z-F9f a lane directory left behind is still a leak" "$out" "  + $PARENT4/L3"
+has "Z-F9g … and so is any other file in the run directory (exact names only)" "$out" "  + $PARENT4/stray.txt"
+rm -rf "$LR4/L3" "$LR4/stray.txt"
+
+# Z-F1 §14 step 5 (snapshot) runs BEFORE step 6 (first lane-create): no <run_id>.lanes table yet
+PARENT3=automate-2026-10-08-080000; RF3="$P/.supervisor/automate/$PARENT3.md"
+SF3="$P/.supervisor/automate/$PARENT3.leaks-snapshot"
+printf '# Automate Run: %s\n\n## Progress\n' "$PARENT3" > "$RF3"
+check "Z-F1a fixture: no lane table yet" "$([ -e "$P/.supervisor/automate/$PARENT3.lanes" ] && echo table || echo none)" none
+out="$(run lane-status "$RF3" --leaks --snapshot)"; rc=$?
+check "Z-F1b snapshot with no lane table is written (exit 0)" "$rc:$([ -s "$SF3" ] && echo written || echo missing)" "0:written"
+has "Z-F1c … and says so (never a silent 'no lanes')" "$out" "leaks: snapshot written — $SF3"
+hasnt "Z-F1d … no 'no lanes' line" "$out" "no lanes"
+run lane-create "$RF3" reqs/a.md 1 >/dev/null
+check "Z-F1e the snapshot is the baseline the end-of-wave check reads" "$(run lane-status "$RF3" --leaks | head -1 | cut -c1-6)" "leaks:"
+rm -f "$SF3"; chmod 555 "$P/.supervisor/automate"
+out="$(run lane-status "$RF3" --leaks --snapshot)"; rc=$?
+chmod 755 "$P/.supervisor/automate"
+check "Z-F1f an unwritable snapshot exits non-zero (the one fail-SAFE exception)" "$([ "$rc" != 0 ] && echo nonzero || echo zero)" nonzero
+has "Z-F1g … naming why" "$out" "leaks: snapshot not written (unwritable)"
+rm -rf "$T/work/primary-lanes/$PARENT3/L1"; rm -f "$P/.supervisor/automate/$PARENT3.lanes"
+chmod 555 "$P/.supervisor/automate"
+out="$(run lane-status "$RF3" --leaks --snapshot)"; rc=$?
+chmod 755 "$P/.supervisor/automate"
+check "Z-F1h … with no lane table too" "$([ "$rc" != 0 ] && echo nonzero || echo zero):$(printf '%s' "$out" | grep -c 'snapshot not written' | tr -d ' ')" "nonzero:1"
+out="$(run lane-status "$P/.supervisor/automate/absent-run.md" --leaks --snapshot)"; rc=$?
+check "Z-F1i a parent run file that does not exist ⇒ non-zero, named" "$([ "$rc" != 0 ] && echo nonzero || echo zero):$(printf '%s' "$out" | grep -c 'parent run file not found' | tr -d ' ')" "nonzero:1"
+
+# Z-F10 lane-remove --abandon writes no absolute path into the parent run file, and reports the lane's
+# REAL state (lane-status's reader: a parked lane whose PR closed unmerged reads `gone`). progress-append
+# is the real helper; HOME is set to the fixture root so every absolute fixture path is a $HOME path.
+PARENT5=automate-2026-10-08-100000; RF5="$P/.supervisor/automate/$PARENT5.md"; LR5="$T/work/primary-lanes/$PARENT5"
+printf '# Automate Run: %s\n\n## Progress\n' "$PARENT5" > "$RF5"
+cat > "$T/helpers-gone.sh" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in reconcile-item) echo gone ;; *) exec bash "$REAL_HELPERS" "$@" ;; esac
+EOF
+chmod +x "$T/helpers-gone.sh"; export REAL_HELPERS="$HERE/automate-helpers.sh"
+run lane-create "$RF5" reqs/a.md 1 >/dev/null; L51="$LR5/L1"
+LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$L51" --owner-command "$OWN" >/dev/null; wait_gone "$L51"
+printf '# Automate Run: %s-L1\n\n## Current\n- item: reqs/a.md | status: awaiting_merge | pr: https://github.com/o/r/pull/51 | branch: f\n- pause_reason: awaiting_merge\n\n## Progress\n' "$PARENT5" > "$L51/.supervisor/automate/$PARENT5-L1.md"
+check "Z-F10a fixture: lane-status reads the lane gone" \
+  "$(LOOMWRIGHT_LANES_HELPERS="$T/helpers-gone.sh" bash "$S" lane-status "$RF5" --json 2>/dev/null | jq -r '.lanes[] | select(.lane == "L1") | .state')" gone
+out="$(HOME="$T" LOOMWRIGHT_LANES_HELPERS="$T/helpers-gone.sh" run lane-remove "$L51" --abandon)"; rc=$?
+check "Z-F10b lane-remove --abandon removes the gone lane" "$rc:$([ -d "$L51" ] && echo kept || echo removed)" "0:removed"
+ABL="$(grep 'lane abandoned: L1' "$RF5")"
+has "Z-F10c the abandoned line reports the real state (gone, not the table's launched)" "$ABL" "— state gone;"
+has "Z-F10d … and names the salvage in the <primary>-lanes/… form" "$ABL" "salvage kept at <primary>-lanes/$PARENT5/salvage/L1-removed-"
+check "Z-F10e no line in the parent run file contains \$HOME" "$(grep -cF "$T" "$RF5" | tr -d ' ')" 0
+check "Z-F10f no token in the parent run file starts with /" "$(grep -cE '(^|[[:space:]])/' "$RF5" | tr -d ' ')" 0
+
+# Z-F4 a lane that died after its PICK resumes in its LAST session (its run.lock is session-id
+# re-entrant), never a fresh one that waits out the dead session's lock; fresh only as the fallback
+run lane-create "$RF5" reqs/b.md 2 >/dev/null; L52="$LR5/L2"
+STUB_MODE=die LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$L52" --owner-command "$OWN" >/dev/null; wait_gone "$L52"
+printf '# Automate Run: %s-L2\n\n## Progress\n- picked reqs/b.md\n' "$PARENT5" > "$L52/.supervisor/automate/$PARENT5-L2.md"
+check "Z-F4a fixture: the lane reads died with a recorded session" \
+  "$(bash "$S" lane-status "$RF5" --json 2>/dev/null | jq -r '.lanes[] | select(.lane == "L2") | .state + " " + .session_id')" "died sess-123"
+SUM52="$(lane_sum "$L52")"; n4="$(claude_calls)"
+out="$(LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$L52" --owner-command "/automate --resume $PARENT5" --resume-run "$PARENT5-L2")"; rc=$?
+wait_gone "$L52"
+check "Z-F4b --resume-run launches once (exit 0)" "$rc:$(( $(claude_calls) - n4 ))" "0:1"
+has "Z-F4c … resuming the lane's last session (the run lock's re-entrant path)" "$(grep '^ARGS' "$STUB_LOG" | tail -1)" "[--resume] [sess-123]"
+has "Z-F4d … with the lane's own resume command" "$(grep '^STDIN' "$STUB_LOG" | tail -1)" "/loomwright:automate --resume $PARENT5-L2"
+check "Z-F4e … telling the lane which path it is on (it records it in ## Progress itself)" "$(grep '^RESUMEPATH' "$STUB_LOG" | tail -1)" "RESUMEPATH session sess-123"
+check "Z-F4f the coordinator wrote nothing into the lane (run file, lock)" "$(lane_sum "$L52")" "$SUM52"
+n4="$(claude_calls)"
+out="$(STUB_RESUME_FAIL=1 LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$L52" --owner-command "/automate --resume $PARENT5" --resume-run "$PARENT5-L2")"; rc=$?
+wait_gone "$L52"
+check "Z-F4g an unresumable session falls back to ONE fresh session (two spawns)" "$rc:$(( $(claude_calls) - n4 ))" "0:2"
+has "Z-F4h … saying so" "$out" "could not be resumed"
+hasnt "Z-F4i … the fallback carries no --resume" "$(grep '^ARGS' "$STUB_LOG" | tail -1)" "[--resume]"
+check "Z-F4j … and tells the lane it is on the fresh path" "$(grep '^RESUMEPATH' "$STUB_LOG" | tail -1)" "RESUMEPATH fresh session (last session sess-123 not resumable)"
+has "Z-F4k a normal launch carries an empty resume path" "$(grep '^RESUMEPATH' "$STUB_LOG" | head -1)" "RESUMEPATH "
+
+# Z-F2 a HELD answer is kept coordinator-side (validated answers + note + via, never an owner command),
+# shown as answer_pending, and delivered ONLY by the delivery form under a current-session owner command
+zq() { # <lane_dir> <tool_use_id> <session> — a recorded question the lane parked on (deferred)
+  jq -n -c --argjson q "$Q2" --arg id "$2" '{id: $id, asked_at: "2026-10-08T00:00:00Z", questions: $q}' > "$1/.supervisor/inbox/questions/$2.json"
+  jq -n -c --argjson q "$Q2" --arg id "$2" --arg s "$3" '{type: "result", subtype: "success", stop_reason: "tool_deferred", session_id: $s, deferred_tool_use: {id: $id, input: {questions: $q}}}' >> "$(dirname "$1")/$(basename "$1").stream.log"
+}
+t5set() { awk -F'\t' -v OFS='\t' -v l="$1" -v c="$2" -v v="$3" '$1 == l { $c = v } { print }' "$P/.supervisor/automate/$PARENT5.lanes" > "$T/t5" && mv "$T/t5" "$P/.supervisor/automate/$PARENT5.lanes"; }
+run lane-create "$RF5" reqs/a.md 3 >/dev/null; L53="$LR5/L3"; zq "$L53" toolu_z2 sess-z2
+t5set L3 8 launched; t5set L3 9 "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+PF53="$P/.supervisor/automate/$PARENT5.L3.answer-pending.json"; AF53="$L53/.supervisor/inbox/answers/toolu_z2.json"
+z2() { printf '%s' "$1" | bash "$S" lane-answer "$L53" toolu_z2 "${@:2}" 2>&1; }
+n2="$(claude_calls)"
+out="$(STUB_LOAD=busy z2 '{"answers":{"0":"Red","1":"A,B"},"note":"small diff"}' --owner-command "$OWN" --via test)"; rc=$?
+check "Z-F2a load busy ⇒ HELD (exit 4)" "$rc:$(printf '%s\n' "$out" | head -1)" "4:lane-launch: HELD — L3 — load busy"
+check "Z-F2b the validated answer is KEPT coordinator-side (answers, note, via)" \
+  "$(jq -c '[.tool_use_id, .answers["0"], .answers["1"], .note, .via]' "$PF53" 2>/dev/null)" '["toolu_z2","Red","A,B","small diff","test"]'
+check "Z-F2c … and the pending file holds no owner command" "$(grep -cF "$OWN" "$PF53" 2>/dev/null | tr -d ' '):$(jq -r 'keys | map(select(test("owner"))) | length' "$PF53" 2>/dev/null)" "0:0"
+check "Z-F2d nothing written into the lane, nothing spawned" "$([ -e "$AF53" ] && echo written || echo none):$(( $(claude_calls) - n2 ))" "none:0"
+J="$(bash "$S" lane-status "$RF5" --json 2>/dev/null)"
+check "Z-F2e lane-status shows the lane as answer_pending" "$(jq -r '.lanes[] | select(.lane == "L3") | .state' <<<"$J")" answer_pending
+out="$(run lane-status "$RF5")"
+has "Z-F2f … plain view names the delivery form" "$out" "L3  answer_pending"
+check "Z-F2g lane-status (observation) delivered nothing, spawned nothing" "$([ -e "$AF53" ] && echo written || echo none):$(( $(claude_calls) - n2 ))" "none:0"
+out="$(LOOMWRIGHT_LANE_RECHECK_S=0 run lane-answer "$L53" --deliver-pending)"; rc=$?
+check "Z-F2h a pending file with NO current-session owner command is NOT delivered (BLOCKED, exit 3)" "$rc:$(printf '%s\n' "$out" | head -1)" "3:lane-launch: BLOCKED — L3 — no owner-invoked command — need the owner"
+check "Z-F2i … nothing written into the lane, nothing spawned, the answer still pending" \
+  "$([ -e "$AF53" ] && echo written || echo none):$(( $(claude_calls) - n2 )):$([ -s "$PF53" ] && echo kept || echo gone)" "none:0:kept"
+out="$(STUB_LOAD=busy run lane-answer "$L53" --deliver-pending --owner-command "/automate --resume $PARENT5")"; rc=$?
+check "Z-F2j still busy at delivery ⇒ HELD again, pending kept" "$rc:$([ -s "$PF53" ] && echo kept || echo gone):$([ -e "$AF53" ] && echo written || echo none)" "4:kept:none"
+out="$(LOOMWRIGHT_LANE_RECHECK_S=0 run lane-answer "$L53" --deliver-pending --owner-command "/automate --resume $PARENT5")"; rc=$?
+check "Z-F2k the delivery form under the poll's owner command delivers (exit 0)" "$rc:$(( $(claude_calls) - n2 ))" "0:1"
+check "Z-F2l … the answer file carries the stored labels and note" "$(jq -c '[.answers["Which color?"], .answers["Which extras?"], .note]' "$AF53" 2>/dev/null)" '["Red","A,B","small diff"]'
+check "Z-F2m … the pending file is gone" "$([ -e "$PF53" ] && echo kept || echo gone)" gone
+has "Z-F2n … and resumes the deferred session" "$(grep '^ARGS' "$STUB_LOG" | tail -1)" "[--resume] [sess-z2]"
+wait_gone "$L53"
+# a planted pending file (any process that can write the primary's .supervisor/automate/) is re-checked
+run lane-create "$RF5" reqs/b.md 4 >/dev/null; L54="$LR5/L4"; zq "$L54" toolu_z3 sess-z3
+PF54="$P/.supervisor/automate/$PARENT5.L4.answer-pending.json"; n2="$(claude_calls)"
+printf '{"lane":"L4","tool_use_id":"toolu_z3","answers":{"0":"Purple","1":"A"},"note":null,"via":"x"}\n' > "$PF54"
+out="$(LOOMWRIGHT_LANE_RECHECK_S=0 run lane-answer "$L54" --deliver-pending --owner-command "$OWN")"; rc=$?
+check "Z-F2o a stored answer that is not one of the question's labels is refused" "$rc:$(printf '%s' "$out" | grep -c 'no longer matches' | tr -d ' ')" "1:1"
+check "Z-F2p … nothing written into the lane, nothing spawned, the stale file discarded" \
+  "$([ -e "$L54/.supervisor/inbox/answers/toolu_z3.json" ] && echo written || echo none):$(( $(claude_calls) - n2 )):$([ -e "$PF54" ] && echo kept || echo gone)" "none:0:gone"
+printf '{"lane":"L4","tool_use_id":"toolu_zz","answers":{"0":"Red","1":"A"},"note":null,"via":"x"}\n' > "$PF54"
+out="$(LOOMWRIGHT_LANE_RECHECK_S=0 run lane-answer "$L54" --deliver-pending --owner-command "$OWN")"; rc=$?
+check "Z-F2q a stored answer for a tool_use_id the lane is not deferred on is refused" "$rc:$([ -e "$L54/.supervisor/inbox/answers/toolu_zz.json" ] && echo written || echo none):$(( $(claude_calls) - n2 ))" "1:none:0"
+# Z-F2r..w (fix-now F-1/F-4) a HELD answer sets the table's state column to held_for_load; after its
+# pending file is DISCARDED the lane's question is unanswered again, so lane-status must read
+# awaiting_input (the question relayed), never held_for_load (which hides it and invites a fresh launch).
+t5set L4 8 launched; t5set L4 9 "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; n2="$(claude_calls)"
+z4() { printf '%s' "$1" | bash "$S" lane-answer "$L54" toolu_z3 "${@:2}" 2>&1; }
+out="$(STUB_LOAD=busy z4 '{"answers":{"0":"Red","1":"A"}}' --owner-command "$OWN" --via 'a b;c')"; rc=$?
+check "Z-F2r fixture: HELD keeps the answer; a via that is not a short client token is stored as cli" "$rc:$(jq -r '.via' "$PF54" 2>/dev/null)" "4:cli"
+out="$(STUB_LOAD=busy z4 '{"answers":{"0":"Blue","1":"B"}}' --owner-command "$OWN")"; rc=$?
+check "Z-F2s a second HELD answer for the same question replaces the kept one (last write wins)" "$rc:$(jq -c '[.answers["0"], .answers["1"]]' "$PF54" 2>/dev/null)" '4:["Blue","B"]'
+check "Z-F2t fixture: the table's state column reads held_for_load" "$(awk -F'\t' '$1 == "L4" { print $8 }' "$P/.supervisor/automate/$PARENT5.lanes")" held_for_load
+jq -c '.answers["0"] = "Purple"' "$PF54" > "$PF54.t" && mv "$PF54.t" "$PF54"
+out="$(LOOMWRIGHT_LANE_RECHECK_S=0 run lane-answer "$L54" --deliver-pending --owner-command "$OWN")"; rc=$?
+check "Z-F2u fixture: the stale pending answer is discarded" "$rc:$([ -e "$PF54" ] && echo kept || echo gone):$(( $(claude_calls) - n2 ))" "1:gone:0"
+J="$(bash "$S" lane-status "$RF5" --json 2>/dev/null)"
+check "Z-F2v after the discard lane-status reads awaiting_input (the question shows again), not held_for_load" \
+  "$(jq -r '.lanes[] | select(.lane == "L4") | .state + " " + (.questions | map(.id) | join(","))' <<<"$J")" "awaiting_input toolu_z3"
+has "Z-F2w … the reason still names the last launch's hold" "$(jq -r '.lanes[] | select(.lane == "L4") | .reason' <<<"$J")" "last launch held for load: load busy"
+
+# Z-F11 wave end with an UNMERGED done stamp: convert → PR closed unmerged → lane-remove --abandon.
+# The lane is removable with no hand step, and the metadata branch (a fake remote the meta-sync stub
+# keeps) never receives a done claim or a jobs/done/ brief for the unmerged work. trail-pr and its
+# evidence gate are the REAL scripts (a copy whose setup-memory.sh reads branch mode on).
+SC="$T/scripts-copy"; cp -R "$HERE" "$SC"
+printf '#!/usr/bin/env bash\necho "on test-meta"\n' > "$SC/setup-memory.sh"
+export REMOTE11="$T/remote11"; mkdir -p "$REMOTE11"
+cat > "$T/meta-f11.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "meta-sync $*" >> "$META_LOG"
+root=""; pf=""; prev=""
+for a in "$@"; do case "$prev" in --root) root="$a" ;; --paths-from) pf="$a" ;; esac; prev="$a"; done
+managed() { (cd "$root" && find .supervisor/requirements .supervisor/jobs/done .supervisor/jobs/failed .supervisor/automate .supervisor/postmortem \
+  -type f \( -name '*.md' -o -name '*.dismissed-decisions' -o -name results.jsonl \) 2>/dev/null | env LC_ALL=C sort); }
+case "$1" in
+  push) while IFS= read -r p; do [ -n "$p" ] || continue
+          if [ -f "$root/$p" ]; then mkdir -p "$REMOTE11/$(dirname "$p")"; cp "$root/$p" "$REMOTE11/$p"; else rm -f "$REMOTE11/$p"; fi
+        done < "$pf"; echo "meta_sync: pushed abc"; exit 0 ;;
+  status) n=0; for p in $(managed); do cmp -s "$root/$p" "$REMOTE11/$p" || n=$((n + 1)); done
+          if [ "$n" = 0 ]; then echo "synced abc on test-meta"; else echo "local_ahead $n"; fi; exit 0 ;;
+  pull) exit 0 ;;
+esac
+EOF
+cat > "$T/gh-f11" <<'EOF'
+#!/usr/bin/env bash
+echo "gh $*" >> "$T_GH11"
+case "$1 $2" in "pr view") printf '{"state":"%s","mergedAt":null}\n' "${STUB_PR_STATE:-OPEN}" ;; *) exit 1 ;; esac
+EOF
+chmod +x "$T/meta-f11.sh" "$T/gh-f11"; export T_GH11="$T/gh-f11.calls"
+f11() { LOOMWRIGHT_LANES_META_SYNC="$T/meta-f11.sh" LOOMWRIGHT_LANES_HELPERS="$SC/automate-helpers.sh" LOOMWRIGHT_LANES_TRAIL="$SC/automate-helpers.sh" \
+  LOOMWRIGHT_GH_BIN="$T/gh-f11" bash "$S" "$@" 2>&1; }
+run lane-create "$RF5" reqs/a.md 5 >/dev/null; L55="$LR5/L5"; R11=".supervisor/requirements/t/x.md"; PR11="https://github.com/o/r/pull/55"
+LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$L55" --owner-command "$OWN" >/dev/null; wait_gone "$L55"
+mkdir -p "$L55/.supervisor/requirements/t" "$L55/.supervisor/jobs/done"
+printf '# x\n\n## Status: pending\n\n## Status: done\n<!-- loomwright:requirement-closeout -->\n- **PR:** %s\n' "$PR11" > "$L55/$R11"
+printf '# brief\n- **Source requirement:** %s\n\n## Outcome\n- **PR:** %s\n' "$R11" "$PR11" > "$L55/.supervisor/jobs/done/2026-10-08-x.md"
+printf '# Automate Run: %s-L5\n\n## Status: paused\n\n## Queue\n- [ ] %s\n\n## Current\n- item: %s | status: ready_for_release | pr: %s | branch: f\n- pause_reason: ready_for_release\n\n## Progress\n- drain READY\n' \
+  "$PARENT5" "$R11" "$R11" "$PR11" > "$L55/.supervisor/automate/$PARENT5-L5.md"
+printf '# Merge readiness\n- score: 3/5\n' > "$L55/.supervisor/automate/$PARENT5-L5.merge-readiness.md"
+out="$(STUB_PR_STATE=OPEN f11 lane-convert-ready "$L55")"; rc=$?
+check "Z-F11a wave-end conversion with the PR still open exits 0" "$rc" 0
+has "Z-F11b … the gated trail names the unmerged done stamp as excluded" "$out" "excluded $R11 — pr not merged"
+check "Z-F11c … and nothing on the metadata branch carries it or a done/ brief" \
+  "$([ -e "$REMOTE11/$R11" ] && echo req || echo noreq):$(ls "$REMOTE11/.supervisor/jobs/done" 2>/dev/null | wc -l | tr -d ' ')" "noreq:0"
+check "Z-F11d … the run file and the readiness report were pushed" \
+  "$([ -f "$REMOTE11/.supervisor/automate/$PARENT5-L5.md" ] && [ -f "$REMOTE11/.supervisor/automate/$PARENT5-L5.merge-readiness.md" ] && echo pushed)" pushed
+out="$(STUB_PR_STATE=OPEN f11 lane-remove "$L55")"
+has "Z-F11e an open PR's lane still refuses removal (its done stamp is unpushed by design)" "$out" "metadata not pushed"
+out="$(STUB_PR_STATE=CLOSED f11 lane-remove "$L55" --abandon)"; rc=$?
+check "Z-F11f PR closed unmerged ⇒ lane-remove --abandon removes the lane with no hand step" "$rc:$([ -d "$L55" ] && echo kept || echo removed)" "0:removed"
+EMD="$(printf '\342\200\224')"
+check "Z-F11g the metadata branch holds the reconcile-status ABANDONED stamp shape" \
+  "$(grep -c "^## Status: done_with_escalation $EMD ABANDONED (- \[x\] $R11  # abandoned: " "$REMOTE11/$R11" 2>/dev/null | tr -d ' ')" 1
+check "Z-F11h … and no other done heading (no done claim for the unmerged PR)" \
+  "$(grep -E '^## Status:[[:space:]]*done' "$REMOTE11/$R11" 2>/dev/null | grep -vc "ABANDONED (- \[x\] " | tr -d ' ')" 0
+check "Z-F11i … no jobs/done/ brief; the brief rides under jobs/failed/" \
+  "$(ls "$REMOTE11/.supervisor/jobs/done" 2>/dev/null | wc -l | tr -d ' '):$(ls "$REMOTE11/.supervisor/jobs/failed" 2>/dev/null | tr '\n' ' ')" "0:2026-10-08-x.md "
+has "Z-F11j the parent run file records the abandon with the real state" "$(cat "$RF5")" "lane abandoned: L5 ($PARENT5-L5) — state gone;"
 
 hasnt "Z1 gh never called" "$(cat "$GH_CALLS" 2>/dev/null)" "gh"
 echo "passed: $PASS  failed: $FAIL"

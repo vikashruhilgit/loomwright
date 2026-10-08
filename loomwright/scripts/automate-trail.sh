@@ -3,7 +3,8 @@
 # PROTOCOL AUTHORITY: `skills/automate-loop/SKILL.md` §6 "Trail PR after merge
 # and at run end" (and §1.5's rows for each subcommand). trail-pr is called only
 # by closeout (after its merge evidence gate), at `## Status: done`, and on a
-# skip/abandon check-off — never at a park; its _evidence_gate drops a
+# skip/abandon check-off — never at a park (§14's lane wave end and
+# `lane-remove --abandon` run it inside a parked lane; the same gate); its _evidence_gate drops a
 # done-stamped requirement / done brief whose PR is not merged regardless. Dispatched from
 # `automate-helpers.sh` (`exec bash "$(dirname "$0")/automate-trail.sh" <subcmd>`)
 # so the helper itself stays read-only toward git; THIS script is the carve-out.
