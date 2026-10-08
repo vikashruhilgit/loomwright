@@ -171,7 +171,8 @@ unreadable one, or one with no usage lines ⇒ the proxy line); the emitter stil
 always exits 0. **Honest limits:** output tokens of a message whose final line
 is absent (common in older transcripts) are UNDER-counted (its max placeholder
 is counted); a resumed agent whose earlier line landed in a different log is
-counted again; and the ledger still does not see the main thread's own tokens,
+counted again; and the ledger still does not see Claude Code's own
+`general-purpose` subagents (no matcher of this plugin's), the main thread's own tokens,
 CI-side `claude-review` spend, or a `--parallel` coordinator's own run.
 `TOTAL` includes cache-read tokens, usually its largest part
 (`docs/ARCHITECTURE_CONTRACTS.md` §"Token ceiling").
@@ -241,20 +242,28 @@ by the **plugin** session id (e.g. `supervisor-2026-07-07-fable-parity`). To kee
 job 04 (graph/brain context attribution). Leave room in readers; the emitter
 MUST NOT write this key today.
 
-**Hook coverage:** the emitter is chained on the **same** `type: command`
-hook lines that already run `send-telemetry.sh` (stdin fan-out — both scripts
-see the payload; chaining onto an existing hook line adds no new hook
-entry — see `loomwright/docs/HOOKS.md` §"Hook Table" for the authoritative,
-current count):
+**Hook coverage:** every agent this plugin ships runs the emitter on its own
+`SubagentStop` matcher (`loomwright/docs/HOOKS.md` §"Hook Table" is the
+authoritative wiring; `scripts/test-token-ledger.sh` case 26 asserts the
+coverage against `agents/*.md` frontmatter `name:`, so an agent added without it
+fails CI). It is chained onto an existing `type: command` line where one already
+reads the payload (stdin fan-out, `payload=$(cat)`), else it is that matcher's
+own line:
 
-| Matcher | Emits `token_ledger`? |
-|---------|----------------------|
-| `loomwright:code-reviewer` | yes |
-| `loomwright:qa-executor` | yes |
-| `loomwright:supervisor-runner` | yes |
-| `loomwright:worker` | **no** — its SubagentStop hooks are validator/progress-event command hooks; no telemetry command hook |
-| `loomwright:execute-manager` | **no** — its only SubagentStop hook is the validator command hook; no telemetry command hook (and no progress-event hook either — `emit-progress-event.sh` is on the `loomwright:worker` matcher above, not this one) |
-| `loomwright:plan-reviewer` / `loomwright:launch-pad-runner` | no |
+| Matcher | Emits `token_ledger`? | How |
+|---------|----------------------|-----|
+| `loomwright:code-reviewer`, `loomwright:qa-executor`, `loomwright:supervisor-runner` | yes | chained after `send-telemetry.sh` |
+| `loomwright:worker` | yes (since the PR #435 fix-now — before it worker spend, usually the largest share, was never ledgered) | chained after `emit-progress-event.sh`, in the leaf AFTER `validate-worker-result.py`'s own leaf |
+| the other ten (`context-keeper`, `execute-manager`, `launch-pad-runner`, `orchestrator`, `plan-reviewer`, `product-owner`, `qa-strategist`, `red-team-reviewer`, `review-pr-runner`, `rubric-grader`) | yes | the matcher's own line (v15.60.0) |
+
+Claude Code's own `general-purpose` subagents have no matcher here and are not
+ledgered. **A rejected worker stop still writes its line:** the runtime runs a
+matcher's hooks concurrently, so the ledger never waits on (or blocks) the
+validator's `decision: block`; the tokens of the rejected attempt were spent,
+and the retried stop counts only the messages after that line's watermark
+(above), so a reject-and-retry is counted once. The emitter's bounded lock wait
+(at most ~3 s, then it appends unguarded) is the only latency it can add to a
+stop.
 
 Self-test: `scripts/test-token-ledger.sh` (fixtures under
 `scripts/token-ledger-fixtures/`).
@@ -1034,9 +1043,10 @@ typed agents were never duplicated.
 
 **Open question — why 2 and not 3, ASKED OF A TOPOLOGY THAT NO LONGER EXISTS.**
 Everything in this subsection was measured when three blocks were registered;
-since v15.60.0 there are thirteen, so the ratio it investigates does not
+since v15.60.0 there were thirteen, and fourteen since the PR #435 fix-now
+added `loomwright:worker`, so the ratio it investigates does not
 describe the current system and the question is not re-answered here — nobody
-has re-measured at thirteen. It is kept rather than deleted because the
+has re-measured at fourteen. It is kept rather than deleted because the
 reasoning below is still the best account of how these blocks interact, and
 because the guard it belongs to never depended on the answer: it keys on
 byte-identity, not on a duplicate count. At three blocks, only two
@@ -2069,11 +2079,24 @@ park"). Same two channels as the merge watcher's `notify_as()`: a synthetic
 
 Unlike the merge watcher, the helper then appends ONE `## Progress` line naming
 what each channel actually did, read from observable outcomes only (both
-notifiers are silent on stdout): `desktop: sent` only when `notify-desktop.sh`
-wrote its `notify group=` audit line to `.supervisor/logs/notifications.log`
-(the OS banner itself is best-effort), `disabled` under
-`LOOMWRIGHT_DESKTOP_NOTIFICATIONS=0`, `suppressed` when no audit line appeared
-(debounce), `failed (<why>)`; `webhook:` — a `LOOMWRIGHT_WEBHOOK_DRY_RUN=1` probe
+notifiers are silent on stdout). `desktop:` is exactly one of —
+
+- `sent` — `notify-desktop.sh` wrote its `notify group=` audit line to
+  `.supervisor/logs/notifications.log` **and** the platform notifier it
+  dispatches to is present (Darwin: `terminal-notifier` or `osascript` on
+  `PATH`; Linux: `notify-send` on `PATH` plus `DISPLAY` or `WAYLAND_DISPLAY`).
+  The audit line alone proves nothing: `notify-desktop.sh` writes it on every
+  host BEFORE its platform dispatch. The OS banner itself stays best-effort.
+- `disabled (LOOMWRIGHT_DESKTOP_NOTIFICATIONS=0)`
+- `suppressed (no audit line in .supervisor/logs/notifications.log — debounced or skipped by notify-desktop.sh)`
+- `failed (no OS notifier on PATH)` — the audit line appeared but no notifier
+  exists for this OS (Darwin without `terminal-notifier`/`osascript`, Linux
+  without `notify-send`, any other OS)
+- `failed (no display for notify-send)` — Linux, `notify-send` present, neither
+  `DISPLAY` nor `WAYLAND_DISPLAY` set (`notify-desktop.sh` skips it there)
+- `failed (notify-desktop.sh absent)` / `failed (payload not built — jq)`
+
+`webhook:` — a `LOOMWRIGHT_WEBHOOK_DRY_RUN=1` probe
 first (the payload prints only when a URL resolves) — `ignored
 (repo_webhook_ignored slug=… — no user-scope egress grant)`, `not configured`,
 `attempted` (POST sent; `send-webhook.sh` never reports the HTTP result, so the

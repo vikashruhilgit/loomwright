@@ -1341,17 +1341,17 @@ echo "== 23. the guard still holds at the REAL matcher fan-out, not just at two 
 # Case 21 fires TWO invocations because that was the fan-out when it was written. Registering a
 # lane emitter for every agent this plugin ships takes the matchers that run THIS script from 3
 # to 13 — and an UNTYPED payload matches all of them at once, because a matcher only
-# discriminates when the payload carries an `agent_type`. So one untyped completion now fans out
-# to THIRTEEN concurrent invocations of this script against one file. (A fourteenth SubagentStop
-# emitter exists — `worker`'s `emit-progress-event.sh` — but it is a different script appending a
-# different line, so it is not part of this fan-out. The count here is of THIS script's callers.)
-# FAN_N is 14 rather than 13 on purpose: one more than production can produce, because headroom
+# discriminates when the payload carries an `agent_type`. The `loomwright:worker` matcher joined
+# them (parallel-automate/24 fix-now: worker spend was never ledgered), so one untyped completion
+# now fans out to FOURTEEN concurrent invocations of this script against one file — every agent
+# this plugin ships; case 26 pins that coverage against hooks.json.
+# FAN_N is 15 rather than 14 on purpose: one more than production can produce, because headroom
 # above the real figure is the safe direction for a control and an under-count is not. The dedupe is supposed to
-# collapse them to a single line; at two invocations that was never in doubt, at fourteen the
+# collapse them to a single line; at two invocations that was never in doubt, at fifteen the
 # bounded lock wait (20 x 50ms) is a real budget that could be exhausted, and every invocation
 # that gives up appends UNGUARDED by design. Asserted rather than reasoned about, because the
 # failure mode is a partial collapse — some duplicates, not all — which no smaller case can see.
-FAN_N=14
+FAN_N=15
 FAN_SID="fixture-token-ledger-fanout-001"
 FAN_TP="$SANDBOX/fanout-transcript.jsonl"
 printf 'FFFFFFFF' > "$FAN_TP"
@@ -1490,6 +1490,61 @@ assert_eq "case24j $CC_N concurrent firings with differing ts sum the transcript
   "$(bash "$SCRIPT_DIR/read-token-ledger.sh" --session "$CC_SID" --root "$SANDBOX")"
 if [ -e "$CC_LOG.lock" ]; then no "case24j the lock handed from the python step to the shell is released — $CC_LOG.lock remains"
 else ok "case24j the lock handed from the python step to the shell is released — no .lock left behind"; fi
+
+
+echo "== 25. take_log_lock's two failure branches: a held lock times out, a stale lock is broken =="
+# Case 24j pins only the happy hand-off. These are the two directions every failure goes, and both
+# must still append exactly one line and exit 0 (the always-exit-0 invariant).
+# 25a TIMEOUT: a live (fresh) lock held by someone else. The python step waits its bound
+# (LOCK_WAIT_TRIES x LOCK_WAIT_S), returns "timeout", hands NOTHING over, and the shell skips its own
+# wait (PY_LOCK=timeout) and appends unguarded — and must NOT remove a lock it never took.
+LK_T="$SANDBOX/subagents/agent-lk001.jsonl"
+printf '%s\n' '{"type":"assistant","message":{"id":"k1","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":2,"cache_read_input_tokens":3,"cache_creation_input_tokens":4}}}' > "$LK_T"
+LK_SID="fixture-token-ledger-lock-timeout-001"; LK_LOG="$SANDBOX/.supervisor/logs/${LK_SID}.jsonl"
+mkdir -p "$SANDBOX/.supervisor/logs"; rm -rf "$LK_LOG.lock"; mkdir "$LK_LOG.lock"
+tu_payload "$LK_T" "$LK_SID" lk001 > "$SANDBOX/lk.json"
+OUT25A="$(run_sut "$SANDBOX/lk.json")"
+assert_eq "case25a a held lock: exit 0" "0" "$(printf '%s\n' "$OUT25A" | grep '^RC=' | tail -1 | cut -d= -f2)"
+assert_eq "case25a … the wait times out and the line is appended UNGUARDED (one transcript line, not silence)" \
+  "1 transcript" "$(wc -l < "$LK_LOG" 2>/dev/null | tr -d ' ') $(jq -r '.usage_source' "$LK_LOG" 2>/dev/null)"
+if [ -d "$LK_LOG.lock" ]; then ok "case25a … and the other holder's lock is left in place (a timed-out wait owns nothing)"
+else no "case25a … the other holder's lock was removed — a timed-out wait adopted or broke a live lock"; fi
+rm -rf "$LK_LOG.lock"
+# 25b STALE: a lock older than LOCK_STALE_S (a holder that died). The python step breaks it, takes
+# the lock, hands it to the shell, and the shell releases it after its append — nothing left behind.
+LS_SID="fixture-token-ledger-lock-stale-001"; LS_LOG="$SANDBOX/.supervisor/logs/${LS_SID}.jsonl"
+rm -rf "$LS_LOG.lock"; mkdir "$LS_LOG.lock"; touch -t 202601010000 "$LS_LOG.lock"
+tu_payload "$LK_T" "$LS_SID" ls001 > "$SANDBOX/ls.json"
+OUT25B="$(run_sut "$SANDBOX/ls.json")"
+assert_eq "case25b a stale lock: exit 0, one transcript line" "0 1 transcript" \
+  "$(printf '%s\n' "$OUT25B" | grep '^RC=' | tail -1 | cut -d= -f2) $(wc -l < "$LS_LOG" 2>/dev/null | tr -d ' ') $(jq -r '.usage_source' "$LS_LOG" 2>/dev/null)"
+if [ -e "$LS_LOG.lock" ]; then no "case25b the stale lock was not broken (or the taken lock not released) — $LS_LOG.lock remains"
+else ok "case25b … the stale lock is broken, taken, handed over and released — no .lock left behind"; fi
+
+echo "== 26. hooks.json: every agent this plugin ships runs THIS emitter on its own matcher =="
+# The ledger is only as complete as its registrations: `loomwright:worker` — the largest spender —
+# had none, so --max-tokens and lane-status --tokens never saw worker spend. The set of agents is
+# read from agents/*.md frontmatter `name:`, never restated here.
+HOOKS_JSON="$SCRIPT_DIR/../hooks/hooks.json"
+_stop_entries="$(jq -c '.hooks.SubagentStop' "$HOOKS_JSON" 2>/dev/null)"
+for _af in "$SCRIPT_DIR"/../agents/*.md; do
+  [ -f "$_af" ] || continue
+  _an="$(sed -n 's/^name:[[:space:]]*//p' "$_af" | head -1)"
+  [ -n "$_an" ] || { no "case26 no frontmatter name in $_af"; continue; }
+  _cmds="$(printf '%s' "$_stop_entries" | jq -r --arg m "$_an" '.[] | select(.matcher == $m) | .hooks[].command // empty' 2>/dev/null)"
+  case "$_cmds" in
+    *'/scripts/emit-token-ledger.sh" || true'*) ok "case26 $_an runs emit-token-ledger.sh (fail-safe, || true)" ;;
+    *) no "case26 $_an has no matcher running emit-token-ledger.sh — its spend is never ledgered" ;;
+  esac
+done
+# The worker leaf keeps its validator FIRST and the ledger AFTER emit-progress-event.sh in the same
+# command — appending the ledger must not reorder or merge the blocking validator's leaf.
+_wk="$(printf '%s' "$_stop_entries" | jq -r '.[] | select(.matcher == "loomwright:worker") | [.hooks[].command] | join("\n")' 2>/dev/null)"
+case "$_wk" in
+  'python3 "'*'/scripts/validate-worker-result.py" || true'*emit-progress-event.sh*emit-token-ledger.sh*)
+    ok "case26w loomwright:worker: validator leaf first and alone, then progress event, then the ledger" ;;
+  *) no "case26w loomwright:worker leaf order changed: $_wk" ;;
+esac
 
 echo ""
 echo "RESULT  pass=$PASS_COUNT  fail=$FAIL_COUNT"

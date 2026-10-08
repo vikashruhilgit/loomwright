@@ -1183,7 +1183,14 @@ esac
 exit 0
 EOF
 chmod +x "$T/aa-nd.sh" "$T/aa-sw.sh"; export AA_ND_LOG="$T/aa-nd.log" AA_SW_LOG="$T/aa-sw.log"
-pn() { : > "$AA_ND_LOG"; : > "$AA_SW_LOG"; LOOMWRIGHT_LANES_HELPERS="$HERE/automate-helpers.sh" LOOMWRIGHT_LANES_NOTIFY_DESKTOP="$T/aa-nd.sh" \
+# `desktop: sent` also needs the platform notifier notify-desktop.sh dispatches to, so the host's own
+# PATH must not decide these legs: pn pins the OS (AA_UNAME, default Darwin) and prepends a stub
+# osascript + notify-send (never executed — only probed with `command -v`). AA_PATH replaces the
+# whole PATH for the no-notifier leg (AA-F6m).
+mkdir -p "$T/aa-bin"; printf '#!/usr/bin/env bash\nexit 0\n' > "$T/aa-bin/osascript"; cp "$T/aa-bin/osascript" "$T/aa-bin/notify-send"
+chmod +x "$T/aa-bin/osascript" "$T/aa-bin/notify-send"
+pn() { : > "$AA_ND_LOG"; : > "$AA_SW_LOG"; PATH="${AA_PATH:-$T/aa-bin:$PATH}" LOOMWRIGHT_LANES_UNAME="${AA_UNAME:-Darwin}" \
+  LOOMWRIGHT_LANES_HELPERS="$HERE/automate-helpers.sh" LOOMWRIGHT_LANES_NOTIFY_DESKTOP="$T/aa-nd.sh" \
   LOOMWRIGHT_LANES_SEND_WEBHOOK="$T/aa-sw.sh" bash "$S" lane-park-notify "$@" 2>&1; }
 pcount() { grep -c 'lane park notify: ready_for_release' "$LRF6" | tr -d ' '; }
 out="$(STUB_SW=ignored STUB_ND_AUDIT=1 LOOMWRIGHT_DESKTOP_NOTIFICATIONS=1 pn "$LRF6")"; rc=$?
@@ -1204,6 +1211,31 @@ check "AA-F6h desktop opted out ⇒ disabled, the notifier not run; no webhook �
 out="$(STUB_SW=none LOOMWRIGHT_DESKTOP_NOTIFICATIONS=1 pn "$LRF6")"
 has "AA-F6i the notifier wrote no audit line ⇒ suppressed, never sent" "$out" "desktop: suppressed (no audit line"
 check "AA-F6j one ## Progress line per run (four runs, four lines)" "$(pcount)" 4
+# AA-F6m..p `sent` is claimed only when a platform notifier exists: notify-desktop.sh writes its audit
+# line on EVERY host before its platform dispatch, so the audit line alone proves no banner.
+# The no-notifier PATH is a symlink farm of the host's PATH minus the three notifiers it can dispatch to.
+mkdir -p "$T/aa-nonotify-bin"
+_aa_ifs="$IFS"; IFS=:
+for _aa_d in $PATH; do
+  [ -d "$_aa_d" ] || continue
+  for _aa_f in "$_aa_d"/*; do
+    _aa_n="${_aa_f##*/}"
+    case "$_aa_n" in osascript|terminal-notifier|notify-send) continue ;; esac
+    [ -x "$_aa_f" ] && [ ! -e "$T/aa-nonotify-bin/$_aa_n" ] && ln -s "$_aa_f" "$T/aa-nonotify-bin/$_aa_n" 2>/dev/null
+  done
+done
+IFS="$_aa_ifs"
+out="$(AA_PATH="$T/aa-nonotify-bin" STUB_SW=none STUB_ND_AUDIT=1 LOOMWRIGHT_DESKTOP_NOTIFICATIONS=1 pn "$LRF6")"; rc=$?
+check "AA-F6m audit line written but no OS notifier on PATH (Darwin) ⇒ failed, never sent; exit 0" \
+  "$rc:${out#*— }" "0:desktop: failed (no OS notifier on PATH); webhook: not configured"
+has "AA-F6n … and the ## Progress line says the same" "$(grep 'lane park notify' "$LRF6" | tail -1)" "desktop: failed (no OS notifier on PATH);"
+out="$(AA_PATH="$T/aa-nonotify-bin" AA_UNAME=Linux STUB_SW=none STUB_ND_AUDIT=1 LOOMWRIGHT_DESKTOP_NOTIFICATIONS=1 pn "$LRF6")"
+has "AA-F6o Linux without notify-send ⇒ failed (no OS notifier on PATH)" "$out" "desktop: failed (no OS notifier on PATH);"
+out="$(AA_UNAME=Linux STUB_SW=none STUB_ND_AUDIT=1 LOOMWRIGHT_DESKTOP_NOTIFICATIONS=1 DISPLAY= WAYLAND_DISPLAY= pn "$LRF6")"
+has "AA-F6p Linux notify-send present but no display ⇒ failed (no display for notify-send) — notify-desktop.sh skips it there" \
+  "$out" "desktop: failed (no display for notify-send);"
+out="$(AA_UNAME=Linux STUB_SW=none STUB_ND_AUDIT=1 LOOMWRIGHT_DESKTOP_NOTIFICATIONS=1 DISPLAY=:0 pn "$LRF6")"
+has "AA-F6q Linux notify-send + DISPLAY ⇒ sent" "$out" "desktop: sent;"
 out="$(LOOMWRIGHT_LANES_NOTIFY_DESKTOP="$T/aa-nd.sh" LOOMWRIGHT_LANES_SEND_WEBHOOK="$T/aa-sw.sh" LOOMWRIGHT_DESKTOP_NOTIFICATIONS=0 \
   bash "$HERE/automate-helpers.sh" lane-park-notify "$LRF6" 2>&1)"; rc=$?
 check "AA-F6k dispatched through automate-helpers.sh" "$rc:$(printf '%s' "$out" | grep -c '^lane-park-notify: lane park notify:' | tr -d ' ')" "0:1"

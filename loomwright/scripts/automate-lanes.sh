@@ -1078,6 +1078,22 @@ lanes_convert_ready() {
   echo "lane-convert-ready: converted $L to awaiting_merge; metadata pushed to $mb — $out"
 }
 
+# _lanes_os_notifier — prints NOTHING when the platform notifier notify-desktop.sh dispatches to is
+# present, else the `failed (…)` reason. Mirrors that script's own dispatch conditions (its Darwin
+# and Linux branches); any other OS has no notifier there either. LOOMWRIGHT_LANES_UNAME is the
+# existing uname seam of this file.
+_lanes_os_notifier() {
+  case "${LOOMWRIGHT_LANES_UNAME:-$(uname -s 2>/dev/null)}" in
+    Darwin)
+      command -v terminal-notifier >/dev/null 2>&1 || command -v osascript >/dev/null 2>&1 \
+        || echo "no OS notifier on PATH" ;;
+    Linux)
+      if ! command -v notify-send >/dev/null 2>&1; then echo "no OS notifier on PATH"
+      elif [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then echo "no display for notify-send"; fi ;;
+    *) echo "no OS notifier on PATH" ;;
+  esac
+}
+
 # ==================================================================================================
 # lane-park-notify <runfile> — the ONE notify step of a lane's ready_for_release park (§14 "Terminal
 # park"; parallel-automate/24 F6). Sends the desktop notification and the `automate_ready_for_release`
@@ -1085,9 +1101,13 @@ lanes_convert_ready() {
 # what each channel actually did. Both notifiers are silent on stdout, so delivery is read from their
 # observable outcomes only — never assumed:
 #   desktop  `sent` (notify-desktop.sh wrote its `notify group=` audit line to <root>/.supervisor/logs/
-#            notifications.log — the OS banner itself is best-effort and not observable) · `disabled
+#            notifications.log AND the platform notifier it dispatches to is present — Darwin:
+#            terminal-notifier or osascript on PATH; Linux: notify-send on PATH plus DISPLAY or
+#            WAYLAND_DISPLAY — the OS banner itself is best-effort and not observable) · `disabled
 #            (LOOMWRIGHT_DESKTOP_NOTIFICATIONS=0)` · `suppressed (no audit line …)` (debounce, or the
-#            notifier skipped it) · `failed (<why>)`
+#            notifier skipped it) · `failed (<why>)` — incl. `failed (no OS notifier on PATH)` and
+#            `failed (no display for notify-send)`, because notify-desktop.sh writes its audit line on
+#            EVERY host BEFORE its platform dispatch, so the audit line alone cannot prove a banner
 #   webhook  a LOOMWRIGHT_WEBHOOK_DRY_RUN=1 probe of send-webhook.sh first says whether a webhook URL
 #            resolves (it prints the payload only then): none ⇒ `ignored (repo_webhook_ignored slug=…
 #            — no user-scope egress grant)` or `not configured`; one ⇒ the real call, then `attempted
@@ -1099,7 +1119,7 @@ lanes_convert_ready() {
 lanes_park_notify() {
   local rf="${1:-}" nd="${LOOMWRIGHT_LANES_NOTIFY_DESKTOP:-$HERE/notify-desktop.sh}"
   local sw="${LOOMWRIGHT_LANES_SEND_WEBHOOK:-$HERE/send-webhook.sh}"
-  local root run status pause pr item msg payload nlog before after desk web probe perr err line
+  local root run status pause pr item msg payload nlog before after desk web probe perr err line osn
   [ -n "$rf" ] && [ "$#" -le 1 ] || die "usage: lane-park-notify <runfile>"
   [ -f "$rf" ] || die "lane-park-notify: run file not found: $rf"
   root="$(cd "$(dirname "$rf")/../.." 2>/dev/null && pwd -P)" || die "lane-park-notify: cannot resolve the checkout of $rf"
@@ -1123,7 +1143,9 @@ lanes_park_notify() {
     before="$(grep -c ' notify group=' "$nlog" 2>/dev/null)"; before="${before:-0}"
     printf '%s' "$payload" | (cd "$root" && bash "$nd" >/dev/null 2>&1) || true
     after="$(grep -c ' notify group=' "$nlog" 2>/dev/null)"; after="${after:-0}"
-    if [ "$after" -gt "$before" ] 2>/dev/null; then desk="sent"
+    osn="$(_lanes_os_notifier)"
+    if [ "$after" -gt "$before" ] 2>/dev/null; then
+      if [ -z "$osn" ]; then desk="sent"; else desk="failed ($osn)"; fi
     else desk="suppressed (no audit line in .supervisor/logs/notifications.log — debounced or skipped by notify-desktop.sh)"; fi
   fi
   # webhook — probe first (dry run prints the payload only when a URL resolves), then the real call.
