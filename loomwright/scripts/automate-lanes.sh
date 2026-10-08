@@ -1223,10 +1223,37 @@ _lanes_tokens() {
 }
 
 # ---- leak check (Validation 5) ----------------------------------------------------------------------
-_lanes_leak_sections() { # <primary>
+# _lanes_leak_lanes_dir <primary> <parent> — the `## lanes-dir` section: one line per entry of
+# <primary>-lanes/, except that THIS run's own directory is listed by its contents minus the run's
+# kept artifacts, matched by EXACT name (never a glob): `salvage` (lane-create / lane-remove salvage)
+# and, for every lane in this run's table, `L<n>.stream.log`, `L<n>.stdin.json`, `L<n>.died`. A lane
+# directory still present (`<parent>/L<n>`) or any other file there is listed, so it reads as a leak.
+# After a clean wave this run's directory contributes nothing — the same as at wave start, when it
+# does not exist yet, and the same once item 21 removes it (parallel-automate/23 F9).
+_lanes_leak_lanes_dir() {
+  local p="$1" parent="${2:-}" e f keep="salvage" l nl
+  nl="$(printf '\nx')"; nl="${nl%x}"
+  [ -d "$p-lanes" ] || return 0
+  if [ -n "$parent" ] && [ -f "$p/.supervisor/automate/$parent.lanes" ]; then
+    for l in $(awk -F'\t' '$1 ~ /^L[0-9][0-9]?$/ { print $1 }' "$p/.supervisor/automate/$parent.lanes"); do
+      keep="$keep$nl$l.stream.log$nl$l.stdin.json$nl$l.died"
+    done
+  fi
+  ls -1 "$p-lanes" 2>/dev/null | while IFS= read -r e; do
+    if [ -n "$parent" ] && [ "$e" = "$parent" ] && [ -d "$p-lanes/$e" ]; then
+      ls -1 "$p-lanes/$e" 2>/dev/null | while IFS= read -r f; do
+        printf '%s\n' "$keep" | grep -qxF -- "$f" || printf '%s/%s\n' "$e" "$f"
+      done
+    else
+      printf '%s\n' "$e"
+    fi
+  done
+}
+
+_lanes_leak_sections() { # <primary> <parent>
   local p="$1" pg="${LOOMWRIGHT_LANES_PGREP:-pgrep}"
   echo "## worktrees"; git -C "$p" worktree list --porcelain 2>/dev/null | awk '/^worktree /'
-  echo "## lanes-dir"; ls -1 "$p-lanes" 2>/dev/null
+  echo "## lanes-dir"; _lanes_leak_lanes_dir "$p" "${2:-}"
   echo "## claude-p"; "$pg" -lf 'claude -p' 2>/dev/null
   echo "## merge-watch"; "$pg" -lf automate-merge-watch 2>/dev/null
   echo "## config-checksum"
@@ -1241,17 +1268,17 @@ lanes_leaks() {
   local p="$1" parent="$2" snap="${3:-0}" sf tmp sec found="" body="" d
   sf="$p/.supervisor/automate/$parent.leaks-snapshot"
   if [ "$snap" = 1 ]; then
-    if { echo "# leaks snapshot $(now_utc)"; _lanes_leak_sections "$p"; } > "$sf.tmp.$$" 2>/dev/null && mv "$sf.tmp.$$" "$sf"; then
+    if { echo "# leaks snapshot $(now_utc)"; _lanes_leak_sections "$p" "$parent"; } > "$sf.tmp.$$" 2>/dev/null && mv "$sf.tmp.$$" "$sf"; then
       echo "leaks: snapshot written — $sf"
     else rm -f "$sf.tmp.$$"; echo "leaks: snapshot not written (unwritable) — $sf"; fi
     return 0
   fi
   if [ ! -f "$sf" ]; then
     echo "leaks: unknown — no snapshot (take one at wave start: lane-status --leaks --snapshot)"
-    _lanes_leak_sections "$p" | sed 's/^/  /'; return 0
+    _lanes_leak_sections "$p" "$parent" | sed 's/^/  /'; return 0
   fi
   tmp="$(mktemp -d 2>/dev/null)" || { echo "leaks: unknown — no temp dir"; return 0; }
-  _lanes_leak_sections "$p" > "$tmp/now"
+  _lanes_leak_sections "$p" "$parent" > "$tmp/now"
   for sec in worktrees lanes-dir claude-p merge-watch config-checksum git-status; do
     awk -v s="## $sec" '/^## / { on = ($0 == s); next } on' "$sf" | env LC_ALL=C sort > "$tmp/a"
     awk -v s="## $sec" '/^## / { on = ($0 == s); next } on' "$tmp/now" | env LC_ALL=C sort > "$tmp/b"

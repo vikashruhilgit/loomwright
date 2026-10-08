@@ -880,6 +880,28 @@ chmod 755 "$LZ5/.supervisor/automate"
 check "Z-F5e a genuine write failure still says unwritable (exit 0, observation)" "$rc:$(printf '%s' "$out" | grep -c 'report not written (unwritable)' | tr -d ' ')" "0:1"
 check "Z-F5f … leaving no temp file" "$(ls "$LZ5/.supervisor/automate/" | grep -c '\.tmp\.' | tr -d ' ')" 0
 
+# Z-F9 a clean wave whose lanes were all removed reads `leaks: none`; salvage + stream logs are kept.
+# The wave-start snapshot is taken through lanes_leaks directly (same signature before and after the
+# fix) so this leg isolates F9 from F1.
+PARENT4=automate-2026-10-08-090000; RF4="$P/.supervisor/automate/$PARENT4.md"; LR4="$T/work/primary-lanes/$PARENT4"
+printf '# Automate Run: %s\n\n## Progress\n' "$PARENT4" > "$RF4"
+( . "$S"; lanes_leaks "$P" "$PARENT4" 1 ) >/dev/null
+run lane-create "$RF4" reqs/a.md 1 --parallel 2 >/dev/null; run lane-create "$RF4" reqs/b.md 2 --parallel 2 >/dev/null
+LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$LR4/L1" --owner-command "$OWN" >/dev/null; wait_gone "$LR4/L1"
+LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$LR4/L2" --owner-command "$OWN" >/dev/null; wait_gone "$LR4/L2"
+out="$(run lane-remove "$LR4/L1")$(run lane-remove "$LR4/L2")"
+check "Z-F9a both lanes removed" "$([ -e "$LR4/L1" ] || [ -e "$LR4/L2" ] && echo present || echo absent)" absent
+out="$(run lane-status "$RF4" --leaks)"
+check "Z-F9b after a clean wave lane-status --leaks reads none" "$(printf '%s\n' "$out" | head -1 | cut -c1-11)" "leaks: none"
+hasnt "Z-F9c … and lanes-dir is not changed" "$out" "lanes-dir: changed"
+check "Z-F9d salvage kept at <primary>-lanes/<run_id>/salvage/" "$(ls -d "$LR4"/salvage/L1-removed-* "$LR4"/salvage/L2-removed-* 2>/dev/null | wc -l | tr -d ' ')" 2
+check "Z-F9e stream logs kept at <primary>-lanes/<run_id>/L<n>.stream.log" "$([ -s "$LR4/L1.stream.log" ] && [ -s "$LR4/L2.stream.log" ] && echo kept)" kept
+mkdir -p "$LR4/L3"; : > "$LR4/stray.txt"
+out="$(run lane-status "$RF4" --leaks)"
+has "Z-F9f a lane directory left behind is still a leak" "$out" "  + $PARENT4/L3"
+has "Z-F9g … and so is any other file in the run directory (exact names only)" "$out" "  + $PARENT4/stray.txt"
+rm -rf "$LR4/L3" "$LR4/stray.txt"
+
 hasnt "Z1 gh never called" "$(cat "$GH_CALLS" 2>/dev/null)" "gh"
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]
