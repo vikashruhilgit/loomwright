@@ -15,22 +15,9 @@
 #   uuid-named files do not become the sole join key.
 #
 # Usage fields on SubagentStop are EXPECTED ABSENT (see docs/TELEMETRY.md
-# §Token ledger). When absent, the REAL usage is read from the subagent's own
-# transcript (`agent_transcript_path` ONLY — never `transcript_path`, which is
-# the main session's transcript): its `type:"assistant"` lines carry
-# `message.usage`, repeated once per streamed content block and NOT identical
-# across the repeats (`output_tokens` is a stream-start placeholder until the
-# final line, the one with a non-null `message.stop_reason`). Each distinct
-# `message.id` is counted ONCE — that final line when present, else the
-# per-field MAX over the id's lines, never the first line — and written as the
-# four TOP-LEVEL integer fields read-token-ledger.sh sums, marked
-# `"usage_source":"transcript"` (parallel-automate/24 F8). A resumed agent's
-# next stop counts only the ids AFTER `usage_last_message_id` of the last
-# transcript-sourced line this agent_id wrote to the same log, so earlier
-# messages are not counted twice. Only when no usage can be read (no/unreadable
-# agent transcript, no usage lines) does it record a transcript-byte PROXY —
-# never an invented token count, and never labelled as tokens.
-#
+# §Token ledger). Real usage is then read from the agent's own transcript (see
+# transcript_usage() below); only when none is readable, a transcript-byte PROXY.
+
 # No-op (exit 0) when: empty stdin, missing/empty session_id (both sources),
 # unreadable proxy paths, missing python3, or any parse/write failure.
 #
@@ -311,10 +298,17 @@ def last_counted_message_id(log_path, agent_id):
     return last
 
 def transcript_usage(path, log_path, agent_id):
-    """Real usage from a subagent transcript, or None when there is none to
-    read. Per distinct message.id: the line with a non-null stop_reason (the
-    last such line) when one exists, else the per-field max over the lines of that
-    id. Returns (totals, ids_counted, last_message_id)."""
+    """Real usage from the OWN transcript of a subagent (parallel-automate/24
+    F8), or None when there is none to read. Its assistant lines carry
+    message.usage repeated once per streamed content block, and the repeats
+    are NOT identical: output_tokens is a stream-start placeholder until the
+    final line, the one with a non-null message.stop_reason. Per distinct
+    message.id: that final line (the last such) when one exists, else the
+    per-field max over the lines of that id, never the first line. Written as
+    the four TOP-LEVEL integer fields read-token-ledger.sh sums, marked
+    usage_source transcript. A resumed agent counts only the ids AFTER the
+    usage_last_message_id its last transcript line in the same log recorded.
+    Returns (totals, ids_counted, last_message_id)."""
     if not isinstance(path, str) or not path:
         return None
     try:
@@ -463,12 +457,12 @@ if usage_present(payload):
                 break
 else:
     # The payload carries no usage (the expected case): read the real usage
-    # from the OWN transcript of the subagent — agent_transcript_path only; the
-    # session transcript (`transcript_path`) belongs to the main thread and is never
+    # from the OWN transcript of the subagent (_apath, above) only; the session
+    # transcript (`transcript_path`) belongs to the main thread and is never
     # summed here. Any read/parse failure falls through to the proxy line.
     _log_path = os.path.join(os.environ.get("LOG_DIR", ""), log_session_id + ".jsonl")
     try:
-        _tu = transcript_usage(payload.get("agent_transcript_path"), _log_path,
+        _tu = transcript_usage(_apath, _log_path,
                                agent_id if isinstance(agent_id, str) else "")
     except Exception:
         _tu = None

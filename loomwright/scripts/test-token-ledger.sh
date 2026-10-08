@@ -1378,8 +1378,10 @@ TU_T="$SANDBOX/subagents/agent-tu001.jsonl"; mkdir -p "$SANDBOX/subagents"
   printf '%s\n' '{"type":"assistant","message":{"id":"msg_B","stop_reason":null,"usage":{"input_tokens":7,"output_tokens":40,"cache_read_input_tokens":200,"cache_creation_input_tokens":0}}}'
   printf '%s\n' '{"type":"assistant", "message": not json "usage"'
 } > "$TU_T"
+# tu_payload <agent transcript> <session id> <agent id> — the case-24 payload, built once (no usage fields).
+tu_payload() { jq -n --arg a "$1" --arg sid "$2" --arg aid "$3" '{session_id: $sid, agent_id: $aid, agent_transcript_path: $a}'; }
 TU_PAYLOAD="$SANDBOX/tu.json"
-jq -n --arg a "$TU_T" --arg sid "$TU_SID" '{session_id: $sid, agent_id: "tu001", agent_transcript_path: $a}' > "$TU_PAYLOAD"
+tu_payload "$TU_T" "$TU_SID" tu001 > "$TU_PAYLOAD"
 TU_LOG="$SANDBOX/.supervisor/logs/${TU_SID}.jsonl"
 OUT24="$(run_sut "$TU_PAYLOAD")"
 assert_eq "case24 exit 0" "0" "$(printf '%s\n' "$OUT24" | grep '^RC=' | tail -1 | cut -d= -f2)"
@@ -1409,7 +1411,7 @@ assert_eq "case24e a repeat stop with no new message counts 0 — the total is u
 # 24f: an agent transcript with no usage lines → the existing proxy line.
 NU_SID="fixture-token-ledger-transcript-nousage-001"; NU_T="$SANDBOX/subagents/agent-nu001.jsonl"
 printf '%s\n' '{"type":"user","message":{"content":"x"}}' '{"type":"assistant","message":{"id":"m","content":[]}}' > "$NU_T"
-jq -n --arg a "$NU_T" --arg sid "$NU_SID" '{session_id: $sid, agent_id: "nu001", agent_transcript_path: $a}' > "$SANDBOX/nu.json"
+tu_payload "$NU_T" "$NU_SID" nu001 > "$SANDBOX/nu.json"
 OUT24F="$(run_sut "$SANDBOX/nu.json")"
 assert_eq "case24f no usage in the agent transcript ⇒ exit 0 + the proxy line (bytes, no usage_source)" \
   "0 true $(wc -c < "$NU_T" | tr -d ' ') false" \
@@ -1424,7 +1426,7 @@ assert_eq "case24g transcript_path alone ⇒ proxy line, the main thread is not 
 NN_SID="fixture-token-ledger-transcript-nonnum-001"; NN_T="$SANDBOX/subagents/agent-nn001.jsonl"
 printf '%s\n' '{"type":"assistant","message":{"id":"n1","stop_reason":"end_turn","usage":{"input_tokens":"12","output_tokens":4.5,"cache_read_input_tokens":true,"cache_creation_input_tokens":-3}}}' \
   '{"type":"assistant","message":{"id":"n2","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":2,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}' > "$NN_T"
-jq -n --arg a "$NN_T" --arg sid "$NN_SID" '{session_id: $sid, agent_id: "nn001", agent_transcript_path: $a}' > "$SANDBOX/nn.json"
+tu_payload "$NN_T" "$NN_SID" nn001 > "$SANDBOX/nn.json"
 run_sut "$SANDBOX/nn.json" >/dev/null
 assert_eq "case24h non-numeric values count 0, the numeric message still counts" "1 2 0 0 2" \
   "$(tail -1 "$SANDBOX/.supervisor/logs/${NN_SID}.jsonl" | jq -r '"\(.input_tokens) \(.output_tokens) \(.cache_read_input_tokens) \(.cache_creation_input_tokens) \(.usage_messages)"')"

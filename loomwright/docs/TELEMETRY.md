@@ -146,7 +146,7 @@ Until this landed every ledger line was a proxy (the payload never carries
 usage), so `read-token-ledger.sh` summed `TOTAL=0` on every run, sequential and
 lane alike, and `--max-tokens` could never park (evidence: the 43 most recent
 `token_ledger` lines on the primary checkout were all `proxy:true`; pa/23's run
-read `TOTAL=0 EVENTS=7`). The emitter now reads `agent_transcript_path` — the
+read `TOTAL=0 EVENTS=7`). The emitter now reads the payload's agent transcript path — the
 subagent's own `subagents/agent-<id>.jsonl`, **never** `transcript_path` (the
 main session's transcript) — whose `type:"assistant"` lines carry
 `message.usage`. Those lines repeat once per streamed content block and are
@@ -218,7 +218,7 @@ by the **plugin** session id (e.g. `supervisor-2026-07-07-fable-parity`). To kee
 | `cc_session_id` | when SubagentStop carries `session_id` | Claude Code UUID retained for debug / cross-tool correlation |
 | `proxy` | always | `false` when any real usage signal is present (payload or transcript); `true` for the transcript-byte fallback |
 | `usage` / `input_tokens` / `output_tokens` / `cache_*` | payload usage present only | Copied from the payload as-is — never invented |
-| `usage_source` | transcript usage only | `"transcript"` — the four top-level integer fields were summed from `agent_transcript_path`, once per `message.id` (see "Transcript usage" above) |
+| `usage_source` | transcript usage only | `"transcript"` — the four top-level integer fields were summed from the agent's own transcript, once per `message.id` (see "Transcript usage" above) |
 | `input_tokens` / `output_tokens` / `cache_read_input_tokens` / `cache_creation_input_tokens` | transcript usage only | Integers — the per-id sum for the messages counted at this stop |
 | `usage_messages`, `usage_last_message_id` | transcript usage only | How many message ids this stop counted, and the last id seen (the resume watermark) |
 | `token_proxy_kind` | proxy path only | Closed value today: `"transcript_bytes"` |
