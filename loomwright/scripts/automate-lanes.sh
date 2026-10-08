@@ -101,7 +101,8 @@
 # `unknown` and the command exits 0 — EXCEPT `lane-status --leaks --snapshot`, which exits 1 naming why
 # when it wrote no snapshot. With no lane table yet (§14 step 5 precedes step 6), `--leaks` derives the
 # parent run id and the primary from <parent_runfile>. lane-status state, first match wins:
-# removed/abandoned, answer_pending, blocked_launch, held_for_load, created, missing, running
+# removed/abandoned, answer_pending, blocked_launch, held_for_load (awaiting_input instead while the
+# lane holds an unanswered question and no process runs), created, missing, running
 # (lanes_proc_alive), awaiting_input, the run
 # file's park (merged / gone after reconcile-item), lost_to_reset (boot later than the last launch),
 # died (.died marker), stalled (process gone, not parked, no question). Keep-awake is SUGGESTED on macOS
@@ -671,7 +672,10 @@ lanes_relay_hook() {
 # (a mismatch refuses and discards the pending file). Honest limit: the re-check proves the stored
 # answer is a VALID label for the question still pending — not that the owner chose it. That is the
 # same trust level as the lane inbox's answer file relay-hook reads; the pending file is not
-# owner-authenticated, which is why it can never carry, or stand in for, an owner command.
+# owner-authenticated, which is why it can never carry, or stand in for, an owner command. One pending
+# file per lane, last write wins: a second HELD lane-answer for the same question replaces the first
+# (how the owner corrects a kept answer). A discard leaves the question unanswered, so lane-status
+# reads that lane awaiting_input again — never held_for_load.
 _lanes_pending_file() { printf '%s' "$LN_PRIMARY/.supervisor/automate/$LN_PARENT.$LN_LANE.answer-pending.json"; }
 
 # _lanes_validate_answers <question_file> <input JSON> — prints {<question>: "<label[,label…]>"} or
@@ -759,7 +763,7 @@ lanes_answer() {
   _lanes_gate "$owner"; rc=$?
   if [ "$rc" = 4 ]; then
     # HELD (admission): keep the VALIDATED answer coordinator-side — never the owner command.
-    pf="$(_lanes_pending_file)"
+    pf="$(_lanes_pending_file)"; case "$via" in *[!A-Za-z0-9_.-]*) via=cli ;; esac
     if jq -n -c --arg lane "$LN_LANE" --arg id "$id" --argjson a "$(jq -c '.answers' <<<"$in")" --arg note "$note" \
         --arg via "$via" --arg at "$(now_utc)" \
         '{schema_version: 1, lane: $lane, tool_use_id: $id, answers: $a, note: (if $note == "" then null else $note end), via: $via, held_at: $at}' \
@@ -790,7 +794,7 @@ _lanes_deliver_pending() {
   last="$(_lanes_answer_parked "$id")" || _discard "$last"
   in="$(jq -c '{answers: .answers, note: .note}' "$pf" 2>/dev/null)" || _discard "pending file unreadable"
   out="$(_lanes_validate_answers "$qf" "$in")" || _discard "$(sed -E 's/^jq: error \(at [^)]*\): //' <<<"$out")"
-  note="$(jq -r '.note // ""' <<<"$in")"; via="$(jq -r '.via // "cli"' "$pf")"
+  note="$(jq -r '.note // ""' <<<"$in")"; via="$(jq -r '.via // "cli"' "$pf")"; case "$via" in ''|*[!A-Za-z0-9_.-]*) via=cli ;; esac
   sid="$(jq -r '.session_id // empty' <<<"$last")"; [ -n "$sid" ] || sid="$(_lanes_session_id)"
   [ -n "$sid" ] || die "lane-answer: refused — no session id to resume"
   _lanes_launch_lock || die "lane-answer: refused — $LN_LANE — launch lock busy (another launch of this lane is in flight)"
@@ -955,6 +959,9 @@ _lanes_meta_extras() {
 # merged` otherwise). Branch mode only. trail-pr reads the mode through its sibling setup-memory.sh;
 # when that reader does not say `on <branch>` too, nothing runs (a PR-mode trail must never start
 # from here). Prints trail-pr's line; returns 1 unless it reads meta-pushed / meta no_changes.
+# Pass-through, not a new seam: META_SYNC is forwarded as trail-pr's LOOMWRIGHT_META_SYNC_BIN so the
+# push uses the same meta-sync this script's other calls use — in a real run that is the sibling
+# meta-sync.sh (trail-pr's own default); only the LOOMWRIGHT_LANES_META_SYNC test seam changes it.
 _lanes_meta_trail() {
   local mb="$1" rf="$2" reason="$3" tm out
   tm="$(bash "$(dirname "$TRAIL")/setup-memory.sh" --root "$LN_DIR" mode 2>/dev/null | head -1)"
@@ -1324,7 +1331,8 @@ _lanes_resolve() {
 # _lanes_lane_json <10 lane-table columns> <now_epoch> <ci_json> [<answer-pending file>] — one lane's
 # status object. Classification order (first match wins): removed/abandoned · answer_pending (a HELD
 # answer kept coordinator-side for a question the lane still holds, the process not running — shown,
-# never delivered here) · blocked_launch · held_for_load · created · missing · running
+# never delivered here) · blocked_launch · held_for_load (a lane holding an unanswered question,
+# no process running, reads awaiting_input instead) · created · missing · running
 # (lanes_proc_alive) · awaiting_input · parked (merged / gone after reconcile) · lost_to_reset (boot
 # later than the last launch) · died (.died marker) · stalled.
 _lanes_lane_json() {
@@ -1357,7 +1365,16 @@ _lanes_lane_json() {
   case "$ts" in
     removed|abandoned) state="$ts" ;;
     blocked_launch) state=blocked_launch; reason="$(_lanes_dash "$why")" ;;
-    held_for_load) state=held_for_load; reason="held for load: $(_lanes_dash "$why")"; held="$(_lanes_dash "$why")" ;;
+    held_for_load)
+      # The column records the last launch attempt; a HELD resume (or a discarded pending answer)
+      # leaves the lane's question unanswered, and that question — not the hold — is what the
+      # owner must see: a held_for_load label would hide it and invite a fresh-launch retry.
+      if [ "$nq" -gt 0 ] && [ -d "$path" ] && ! lanes_proc_alive "$pid" "$st" "$path"; then
+        state=awaiting_input; reason="question $(jq -r '.[0].id' <<<"$qs") (last launch held for load: $(_lanes_dash "$why"))"
+      else
+        state=held_for_load; reason="held for load: $(_lanes_dash "$why")"
+      fi
+      held="$(_lanes_dash "$why")" ;;
     created) state=created; reason="not launched" ;;
     *)
       if [ ! -d "$path" ]; then state=missing; reason="lane directory vanished"

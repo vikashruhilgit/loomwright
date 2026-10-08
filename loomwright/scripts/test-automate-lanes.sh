@@ -1032,6 +1032,23 @@ check "Z-F2p … nothing written into the lane, nothing spawned, the stale file 
 printf '{"lane":"L4","tool_use_id":"toolu_zz","answers":{"0":"Red","1":"A"},"note":null,"via":"x"}\n' > "$PF54"
 out="$(LOOMWRIGHT_LANE_RECHECK_S=0 run lane-answer "$L54" --deliver-pending --owner-command "$OWN")"; rc=$?
 check "Z-F2q a stored answer for a tool_use_id the lane is not deferred on is refused" "$rc:$([ -e "$L54/.supervisor/inbox/answers/toolu_zz.json" ] && echo written || echo none):$(( $(claude_calls) - n2 ))" "1:none:0"
+# Z-F2r..w (fix-now F-1/F-4) a HELD answer sets the table's state column to held_for_load; after its
+# pending file is DISCARDED the lane's question is unanswered again, so lane-status must read
+# awaiting_input (the question relayed), never held_for_load (which hides it and invites a fresh launch).
+t5set L4 8 launched; t5set L4 9 "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; n2="$(claude_calls)"
+z4() { printf '%s' "$1" | bash "$S" lane-answer "$L54" toolu_z3 "${@:2}" 2>&1; }
+out="$(STUB_LOAD=busy z4 '{"answers":{"0":"Red","1":"A"}}' --owner-command "$OWN" --via 'a b;c')"; rc=$?
+check "Z-F2r fixture: HELD keeps the answer; a via that is not a short client token is stored as cli" "$rc:$(jq -r '.via' "$PF54" 2>/dev/null)" "4:cli"
+out="$(STUB_LOAD=busy z4 '{"answers":{"0":"Blue","1":"B"}}' --owner-command "$OWN")"; rc=$?
+check "Z-F2s a second HELD answer for the same question replaces the kept one (last write wins)" "$rc:$(jq -c '[.answers["0"], .answers["1"]]' "$PF54" 2>/dev/null)" '4:["Blue","B"]'
+check "Z-F2t fixture: the table's state column reads held_for_load" "$(awk -F'\t' '$1 == "L4" { print $8 }' "$P/.supervisor/automate/$PARENT5.lanes")" held_for_load
+jq -c '.answers["0"] = "Purple"' "$PF54" > "$PF54.t" && mv "$PF54.t" "$PF54"
+out="$(LOOMWRIGHT_LANE_RECHECK_S=0 run lane-answer "$L54" --deliver-pending --owner-command "$OWN")"; rc=$?
+check "Z-F2u fixture: the stale pending answer is discarded" "$rc:$([ -e "$PF54" ] && echo kept || echo gone):$(( $(claude_calls) - n2 ))" "1:gone:0"
+J="$(bash "$S" lane-status "$RF5" --json 2>/dev/null)"
+check "Z-F2v after the discard lane-status reads awaiting_input (the question shows again), not held_for_load" \
+  "$(jq -r '.lanes[] | select(.lane == "L4") | .state + " " + (.questions | map(.id) | join(","))' <<<"$J")" "awaiting_input toolu_z3"
+has "Z-F2w … the reason still names the last launch's hold" "$(jq -r '.lanes[] | select(.lane == "L4") | .reason' <<<"$J")" "last launch held for load: load busy"
 
 # Z-F11 wave end with an UNMERGED done stamp: convert → PR closed unmerged → lane-remove --abandon.
 # The lane is removable with no hand step, and the metadata branch (a fake remote the meta-sync stub
