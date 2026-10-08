@@ -1525,7 +1525,10 @@ lanes_readiness() {
     fi
   done
   local summary="ready ($pass/$total)"; [ -n "$bad" ] && summary="ready ($pass/$total: $bad)"
-  {
+  # The group's status is its LAST command's, so every optional row is an `if` (never `[ -n … ] &&`,
+  # which exits 1 on an empty row and read as a write failure — parallel-automate/23 F5). A non-zero
+  # status here now means a real write failure (the redirect, or a printf into a full disk).
+  if {
     echo "# Merge readiness: $LN_RUN"
     echo
     echo "- item: ${item:-unknown} | pr: ${pr:-none} | head: $head | written: $(now_utc)"
@@ -1533,12 +1536,13 @@ lanes_readiness() {
     echo "- advisory only: this report never merges; the owner merges by hand."
     echo
     echo "## Checks"
-    echo "- $vline"; [ -n "$vrows" ] && printf '%s' "$vrows"
-    echo "- $cline"; [ -n "$crows" ] && printf '%s\n' "$crows"
-    echo "- $fline"; [ -n "$frows" ] && printf '%s\n' "$frows"
+    echo "- $vline"; if [ -n "$vrows" ]; then printf '%s' "$vrows"; fi
+    echo "- $cline"; if [ -n "$crows" ]; then printf '%s\n' "$crows"; fi
+    echo "- $fline"; if [ -n "$frows" ]; then printf '%s\n' "$frows"; fi
     echo "- $gline"; printf '%s\n' "$grows"
-    echo "- $eline"; [ -n "$erows" ] && printf '%s' "$erows"
-  } > "$out.tmp.$$" 2>/dev/null && mv "$out.tmp.$$" "$out" || { rm -f "$out.tmp.$$"; rm -rf "$tmp"; echo "lane-readiness: $LN_LANE — report not written (unwritable): $out"; return 0; }
+    echo "- $eline"; if [ -n "$erows" ]; then printf '%s' "$erows"; fi
+  } > "$out.tmp.$$" 2>/dev/null && mv "$out.tmp.$$" "$out"; then :
+  else rm -f "$out.tmp.$$"; rm -rf "$tmp"; echo "lane-readiness: $LN_LANE — report not written (unwritable): $out"; return 0; fi
   rm -rf "$tmp"
   echo "lane-readiness: $LN_LANE ($LN_RUN) — $summary — $out"
   return 0

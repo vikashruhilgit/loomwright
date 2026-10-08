@@ -865,6 +865,21 @@ out="$(conv "$LR/nope")"; check "Y11 not a lane ⇒ exit 1" "$?" 1
 out="$(bash "$HERE/automate-helpers.sh" lane-convert-ready 2>&1)"; rc=$?
 check "Y12 automate-helpers.sh dispatches lane-convert-ready (no lane ⇒ not-a-lane refusal)" "$rc:$(printf '%s' "$out" | grep -c 'lane-convert-ready: not a lane' | tr -d ' ')" "1:1"
 
+# ---- Z: Validation 4/5 fixes (parallel-automate/23) ---------------------------------------------------
+# Each leg fails against the pre-fix lane code at 91adff5 (identical to #426's head 8226dfe) and passes here.
+# Z-F5 lane-readiness writes its report when the Validation names no repro (empty erows / vrows)
+run lane-create "$RF" reqs/a.md 2 >/dev/null; LZ5="$LR/L2"; RDZ="$LZ5/.supervisor/automate/$PARENT-L2.merge-readiness.md"
+out="$(LOOMWRIGHT_GH_BIN="$T/absent-gh" run lane-readiness "$LZ5")"; rc=$?
+check "Z-F5a no named repro (empty erows) ⇒ the report IS written" "$rc:$([ -f "$RDZ" ] && echo written || echo missing)" "0:written"
+has "Z-F5b … with the headline-repro n/a line" "$(cat "$RDZ" 2>/dev/null)" "headline-repro: PASS — n/a (the Validation names no repro)"
+hasnt "Z-F5c … and never says unwritable" "$out" "report not written"
+check "Z-F5d no stray temp file left" "$(ls "$LZ5/.supervisor/automate/" | grep -c '\.tmp\.' | tr -d ' ')" 0
+chmod 555 "$LZ5/.supervisor/automate"
+out="$(LOOMWRIGHT_GH_BIN="$T/absent-gh" run lane-readiness "$LZ5")"; rc=$?
+chmod 755 "$LZ5/.supervisor/automate"
+check "Z-F5e a genuine write failure still says unwritable (exit 0, observation)" "$rc:$(printf '%s' "$out" | grep -c 'report not written (unwritable)' | tr -d ' ')" "0:1"
+check "Z-F5f … leaving no temp file" "$(ls "$LZ5/.supervisor/automate/" | grep -c '\.tmp\.' | tr -d ' ')" 0
+
 hasnt "Z1 gh never called" "$(cat "$GH_CALLS" 2>/dev/null)" "gh"
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]
