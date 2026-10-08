@@ -990,7 +990,7 @@ has "Z-F4k a normal launch carries an empty resume path" "$(grep '^RESUMEPATH' "
 # shown as answer_pending, and delivered ONLY by the delivery form under a current-session owner command
 zq() { # <lane_dir> <tool_use_id> <session> — a recorded question the lane parked on (deferred)
   jq -n -c --argjson q "$Q2" --arg id "$2" '{id: $id, asked_at: "2026-10-08T00:00:00Z", questions: $q}' > "$1/.supervisor/inbox/questions/$2.json"
-  jq -n -c --argjson q "$Q2" --arg id "$2" --arg s "$3" '{type: "result", subtype: "success", stop_reason: "tool_deferred", session_id: $s, deferred_tool_use: {id: $id, name: "AskUserQuestion", input: {questions: $q}}}' >> "$(dirname "$1")/$(basename "$1").stream.log"
+  jq -n -c --argjson q "$Q2" --arg id "$2" --arg s "$3" '{type: "result", subtype: "success", stop_reason: "tool_deferred", session_id: $s, deferred_tool_use: {id: $id, input: {questions: $q}}}' >> "$(dirname "$1")/$(basename "$1").stream.log"
 }
 t5set() { awk -F'\t' -v OFS='\t' -v l="$1" -v c="$2" -v v="$3" '$1 == l { $c = v } { print }' "$P/.supervisor/automate/$PARENT5.lanes" > "$T/t5" && mv "$T/t5" "$P/.supervisor/automate/$PARENT5.lanes"; }
 run lane-create "$RF5" reqs/a.md 3 >/dev/null; L53="$LR5/L3"; zq "$L53" toolu_z2 sess-z2

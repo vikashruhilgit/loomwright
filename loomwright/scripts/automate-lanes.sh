@@ -1500,7 +1500,7 @@ _lanes_leak_lanes_dir() {
   ls -1 "$p-lanes" 2>/dev/null | while IFS= read -r e; do
     if [ -n "$parent" ] && [ "$e" = "$parent" ] && [ -d "$p-lanes/$e" ]; then
       ls -1 "$p-lanes/$e" 2>/dev/null | while IFS= read -r f; do
-        printf '%s\n' "$keep" | grep -qxF -- "$f" || printf '%s/%s\n' "$e" "$f"
+        grep -qxF -- "$f" <<<"$keep" || printf '%s/%s\n' "$e" "$f"
       done
     else
       printf '%s\n' "$e"
