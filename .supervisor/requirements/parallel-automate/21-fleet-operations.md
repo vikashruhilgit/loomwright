@@ -57,6 +57,10 @@ human-only classes, no model-judged answers.
    all four lanes asked "Start new run?" over the same paused run `automate-2026-09-30-054439` (12th time across S3),
    three asked the 1-item queue confirm and **s3-k skipped it** — the same gate fires inconsistently, so it cannot be
    pre-answered reliably until it is pinned or removed.
+4. **pa/05 Validation 4 evidence (2026-10-08, run `automate-2026-10-08-033739`, F3):** the gate still fires
+   inconsistently on pa/05's engine — L1 asked the 1-item queue confirm, L2 skipped it. 4 questions were relayed for 2
+   one-file items (queue confirm, 2× save brief, 1 dismissed-finding decision); the two save-brief asks were 0-issue
+   Plan Review PASSes — both are Part B policy candidates.
 
 ## Parts
 
