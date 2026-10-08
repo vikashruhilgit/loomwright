@@ -47,8 +47,8 @@
 #   `.supervisor/logs/` lives.
 #
 # HONEST LIMITS (documented, not silently "fixed" by inventing a number):
-#   - A `token_ledger` line written when the SubagentStop payload carried no
-#     real usage fields is a PROXY line (`"proxy":true`, see
+#   - A `token_ledger` line written when neither the SubagentStop payload nor
+#     the agent transcript yielded real usage is a PROXY line (`"proxy":true`, see
 #     `emit-token-ledger.sh`'s `usage_present()`), carrying a
 #     transcript-byte count instead of `input_tokens`/etc. This reader counts
 #     a proxy line in EVENTS but its MISSING usage fields contribute exactly
@@ -57,8 +57,11 @@
 #     There is no dollar or token estimate derived from transcript bytes
 #     here — the plugin has no price table (see docs/PITFALLS.md).
 #   - The ledger only knows what a SubagentStop hook actually saw. It does
-#     NOT include the main thread's own tokens, and it does NOT include any
-#     CI-side (GitHub Actions `claude-review`) spend.
+#     NOT include the main thread's own tokens, any CI-side (GitHub Actions
+#     `claude-review`) spend, or a `--parallel` coordinator's own run; output
+#     tokens of a message whose final transcript line is absent are
+#     under-counted (parallel-automate/24 F8, emit-token-ledger.sh header).
+#     TOTAL includes cache-read tokens.
 #   - `--run-id` sums only the sessions the run file NAMED. A session whose
 #     `session_id <id>` line was written but whose log file is missing is
 #     silently skipped (contributes 0, does not itself set
