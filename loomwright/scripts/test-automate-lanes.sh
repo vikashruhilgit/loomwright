@@ -19,6 +19,9 @@
 #     lane-remove --stop refuses before stopping + mutation control
 #   X relay hook from a linked worktree of the lane (git common dir; older git) + mutation control
 #   Y lane-convert-ready: refusals, convert + single-path push, idempotent re-run, failed push, removal
+#   Z Validation 4/5 fixes (parallel-automate/23): F5 readiness report · F9 leak check after removal ·
+#     F1 snapshot before the lane table · F10 no absolute path / real state · F4 resume in the last
+#     session · F2 HELD answer kept + delivered under an owner command · F11 gated wave-end push + ABANDONED
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

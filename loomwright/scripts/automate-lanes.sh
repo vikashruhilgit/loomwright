@@ -10,13 +10,18 @@
 #   lane-create <parent_runfile> <item> <n> [--parallel N] [--max-tokens T]
 #        clone + origin-before-fetch + meta pull + carried configs + lane.json + one-line backlog + relay hooks
 #   lane-launch <lane_dir> --owner-command '<cmd the owner typed>' [--resume-run <run_id> | --continue]
-#        detached headless launch (or resume by run id / fixed decision-free continue message)
+#        detached headless launch (or resume by run id — in the lane's LAST session, a fresh one only
+#        when that cannot be resumed — / fixed decision-free continue message)
 #   lane-launch <lane_dir> --host-denied '<reason>'      record a host-refused spawn as blocked_launch
 #   relay-hook                                           PreToolUse / PermissionRequest hook (stdin: hook JSON)
 #   lane-answer <lane_dir> <tool_use_id> --owner-command '<cmd>' [--via <client>]
 #        stdin: {"answers":{"0":"<label>"},"note":"<optional free text>"}; validates, records, resumes
-#   lane-remove <lane_dir> [--stop] [--abandon]          guarded removal (salvages first)
-#   lane-convert-ready <lane_dir>                        wave end: ready_for_release → awaiting_merge + push that run file
+#        (HELD ⇒ the validated answer is kept coordinator-side, the lane reads answer_pending)
+#   lane-answer <lane_dir> --deliver-pending --owner-command '<cmd>'   deliver a kept answer (the poll)
+#   lane-remove <lane_dir> [--stop] [--abandon]          guarded removal (salvages first); --abandon on a
+#        `gone` lane stamps ABANDONED and pushes the lane's metadata through trail-pr's evidence gate
+#   lane-convert-ready <lane_dir>                        wave end: ready_for_release → awaiting_merge, then
+#        push the lane's metadata (non-claim files by exact list + trail-pr's evidence-gated list)
 #   lane-info [--root <dir>]                             print .supervisor/lane.json (exit 1 when absent)
 #   init-check --parallel N [--auto-merge]               INIT refusals: `ok` | `refuse: <reason>` (exit 1)
 #   pick-guard <automate_dir>                            PICK guard: `ok` | `refuse: live_lane <run_id> <lane>`
@@ -33,9 +38,12 @@
 #                                       configs, the intake `lane-backlog.md`, and the relay-hook entries
 #                                       merged into `<lane>/.claude/settings.local.json`). After launch the
 #                                       coordinator never writes into the lane again, EXCEPT (1) the answer
-#                                       file of the inbox protocol (`lane-answer`, below) and (2) the
-#                                       wave-end `lane-convert-ready` run-file conversion, which pushes that
-#                                       run file to the metadata branch in the same call.
+#                                       file of the inbox protocol (`lane-answer`, below), (2) the
+#                                       wave-end `lane-convert-ready` run-file conversion and its metadata
+#                                       push (trail-pr's failure marker / Progress line included), and
+#                                       (3) `lane-remove --abandon` on a `gone` lane: the ABANDONED stamp,
+#                                       the done/ → failed/ brief move and the same push, just before the
+#                                       lane is salvaged and deleted.
 #   <lane>/.supervisor/inbox/questions/<tool_use_id>.json   written by relay-hook (the lane's own hook)
 #   <lane>/.supervisor/inbox/answers/<tool_use_id>.json     written by lane-answer only
 #   <primary>/.supervisor/automate/<parent_run_id>.lanes    D6 lane table (TSV, untracked): lane, path, item,
@@ -45,6 +53,10 @@
 #   <primary>-lanes/<parent_run_id>/L<n>.died               written by the nohup wrapper when the process
 #                                       exits with no terminal `result` line since its launch
 #   <primary>-lanes/<parent_run_id>/salvage/                lane-create / lane-remove salvage copies
+#                                       (kept; with the L<n>.* logs it is excluded BY EXACT NAME from the
+#                                       --leaks lanes-dir section, so a clean wave reads `leaks: none`)
+#   <primary>/.supervisor/automate/<parent_run_id>.<lane>.answer-pending.json   a HELD lane-answer's
+#                                       validated answers + note + via (never an owner command)
 #   <primary>/.supervisor/automate/<parent_run_id>.memory-pressure   trip file (lane-sampler.sh); read only
 #   <primary>/.supervisor/automate/<parent_run_id>.fleet.log         lane-sampler.sh samples; read only
 #   <primary>/.supervisor/automate/<parent_run_id>.leaks-snapshot    `lane-status --leaks --snapshot` (wave start)
@@ -86,8 +98,11 @@
 # Every meta-sync call passes `--branch` explicitly (the mode line's branch).
 #
 # Observation (lane-status, lane-feed, lane-readiness) fails SAFE: an absent or unreadable source reads
-# `unknown` and the command exits 0. lane-status state, first match wins: removed/abandoned,
-# blocked_launch, held_for_load, created, missing, running (lanes_proc_alive), awaiting_input, the run
+# `unknown` and the command exits 0 — EXCEPT `lane-status --leaks --snapshot`, which exits 1 naming why
+# when it wrote no snapshot. With no lane table yet (§14 step 5 precedes step 6), `--leaks` derives the
+# parent run id and the primary from <parent_runfile>. lane-status state, first match wins:
+# removed/abandoned, answer_pending, blocked_launch, held_for_load, created, missing, running
+# (lanes_proc_alive), awaiting_input, the run
 # file's park (merged / gone after reconcile-item), lost_to_reset (boot later than the last launch),
 # died (.died marker), stalled (process gone, not parked, no question). Keep-awake is SUGGESTED on macOS
 # (`caffeinate -i -w <coordinator pid>`); only `lane-status --keep-awake` starts it.
@@ -99,7 +114,8 @@
 # LOOMWRIGHT_GH_BIN, LOOMWRIGHT_LANES_CI_SLOT, LOOMWRIGHT_LANES_PGREP, LOOMWRIGHT_LANES_CAFFEINATE,
 # LOOMWRIGHT_LANES_UNAME, LOOMWRIGHT_LANES_COORDINATOR_PID, LOOMWRIGHT_LANES_BOOT_EPOCH,
 # LOOMWRIGHT_LANES_TOKEN_LEDGER, LOOMWRIGHT_LANES_WATCH_ITERATIONS, LOOMWRIGHT_LANES_WATCH_INTERVAL_S,
-# LOOMWRIGHT_LANES_LOCK_WAIT_S (default 30: the bound on waiting for a live lock holder).
+# LOOMWRIGHT_LANES_LOCK_WAIT_S (default 30: the bound on waiting for a live lock holder),
+# LOOMWRIGHT_LANES_TRAIL (default: the helpers path — whose `trail-pr` runs the lane's gated push).
 set -uo pipefail
 
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
@@ -991,16 +1007,20 @@ _lanes_abandon_meta() {
 }
 
 # lane-convert-ready <lane_dir> — the wave-end `ready_for_release` → `awaiting_merge` conversion: the
-# coordinator's one run-file write into a launched lane, and it PUSHES what it wrote, so the primary's
-# next meta pull reads awaiting_merge and lane-remove's metadata check (`meta-sync status`) passes.
-# Under the lane's launch lock (no launch or resume can start mid-conversion). Refusals (exit 1,
-# nothing written): a live lane process (lanes_proc_alive), no run file, a `## Current` that does not
-# read status + pause_reason `ready_for_release`, or an unknown metadata mode. Already converted
-# (both `awaiting_merge` — a re-run after a failed push) ⇒ current-set answers `unchanged` and only
-# the push runs again, so a re-run is idempotent. Branch mode (`on <Y>`) then pushes exactly the lane
-# run file: `meta-sync push --branch <Y> --root <lane> --paths-from <a list holding only it>`; mode
-# `off` has no metadata branch to push. A failed push ⇒ `lane-convert-ready: FAILED — …` and exit 2:
-# the lane then reads `local_ahead` (lane-remove keeps refusing) until a re-run pushes it.
+# coordinator's one run-file write into a launched lane, and it PUSHES the lane's metadata, so the
+# primary's next meta pull reads awaiting_merge and lane-remove's metadata check (`meta-sync status`)
+# can pass. Under the lane's launch lock (no launch or resume can start mid-conversion). Refusals (exit
+# 1, nothing written): a live lane process (lanes_proc_alive), no run file, a `## Current` that does
+# not read status + pause_reason `ready_for_release`, or an unknown metadata mode. Already converted
+# (both `awaiting_merge` — a re-run after a failed push, or after the PR merged) ⇒ current-set answers
+# `unchanged` and only the pushes run again, so a re-run is idempotent. Branch mode (`on <Y>`) then
+# pushes (1) the lane's non-claim files by exact list (_lanes_meta_extras: the run file, its
+# merge-readiness report, its dismissed-decisions ledger) and (2) everything else through trail-pr's
+# evidence-gated candidate list (_lanes_meta_trail, `--reason wave-end`): a done stamp or a jobs/done/
+# brief whose PR is not MERGED is excluded and named, so while the PR is open the lane keeps reading
+# `local_ahead` and lane-remove keeps refusing — after the owner merges, a re-run pushes the stamp;
+# if the PR closes unmerged, `lane-remove --abandon` records it (F11). Mode `off` has no metadata
+# branch to push. A failed push ⇒ `lane-convert-ready: FAILED — …` and exit 2 (re-run to retry).
 _lanes_current_item() { # <runfile> — the `## Current` item path, or nothing
   awk '/^## / { sec = $0; next }
     sec == "## Current" && /^- item:/ { v = $0; sub(/^- item: */, "", v); sub(/ *\|.*/, "", v); print v; exit }' "$1" 2>/dev/null
