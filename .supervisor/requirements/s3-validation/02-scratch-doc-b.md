@@ -29,8 +29,4 @@ Create one new file with one line, nothing else.
 ## Non-goals
 Everything else. Do not edit any existing file.
 
-<!-- loomwright:requirement-closeout -->
-## Status: done
-- **Completed:** 2026-10-08T03:49:42Z
-- **Brief:** .supervisor/jobs/done/2026-10-08-s3-validation-scratch-doc-b.md
-- **PR:** https://github.com/vikashruhilgit/loomwright/pull/428
+## Status: done_with_escalation — ABANDONED (- [x] .supervisor/requirements/s3-validation/02-scratch-doc-b.md  # abandoned: throwaway — PR closed unmerged after pa/05 Validation 4)
