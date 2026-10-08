@@ -17,6 +17,8 @@
 #     (dead holder reclaimed, live holder waited on, foreign lock never unlocked, holder-less lock
 #     reclaimed) · two concurrent launches spawn once · multiSelect labels containing commas ·
 #     lane-remove --stop refuses before stopping + mutation control
+#   X relay hook from a linked worktree of the lane (git common dir; older git) + mutation control
+#   Y lane-convert-ready: refusals, convert + single-path push, idempotent re-run, failed push, removal
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -729,6 +731,135 @@ else bad "W7e mutation control not built"; fi
 wait_gone "$L10"
 git -C "$L10" checkout -q -- reqs/a.md
 out="$(run lane-remove "$L10" --stop)"; check "W7h once clean, the stopped lane is removed" "$?:$([ -d "$L10" ] && echo kept || echo removed)" "0:removed"
+
+# ---- X: relay hook from a linked worktree of the lane (owner fix-now FN1) -----------------------------
+# A worker's worktree sits OUTSIDE the lane dir (../{repo}-{task_id}-{slug}) and holds no lane.json; the
+# hook resolves the lane through the git common dir, so the question still lands in the LANE's inbox.
+run lane-create "$RF" reqs/a.md 1 >/dev/null; L1="$LR/L1"
+xhook() { hook_in PreToolUse "$1" "$2" | bash "${3:-$S}" relay-hook; }   # <cwd> <tool_use_id> [<script>]
+xdec() { jq -r '.hookSpecificOutput.permissionDecision' <<<"$1" 2>/dev/null; }
+WT="$LR/L1-42-slug"
+git -C "$L1" worktree add -q -b feature/42-slug "$WT" 2>/dev/null
+out="$(xhook "$WT" toolu_x1)"
+check "X1 question asked from a linked worktree of the lane ⇒ defer" "$(xdec "$out")" defer
+check "X2 … recorded in the LANE's inbox" "$(jq -r .id "$L1/.supervisor/inbox/questions/toolu_x1.json" 2>/dev/null)" toolu_x1
+check "X3 … nothing written under the worktree" "$([ -e "$WT/.supervisor" ] && echo written || echo none)" none
+out="$(xhook "$WT/reqs" toolu_x2)"
+check "X4 a subdirectory of the worktree resolves to the lane too" \
+  "$(xdec "$out"):$([ -s "$L1/.supervisor/inbox/questions/toolu_x2.json" ] && echo lane || echo missing)" "defer:lane"
+# git < 2.31 has no --path-format: the shim echoes the flag back (as an older rev-parse does) ahead of
+# the plain answer, so the hook must fall back to the toplevel-relative resolution
+REAL_GIT="$(command -v git)"; mkdir -p "$T/oldgit"
+cat > "$T/oldgit/git" <<EOF
+#!/usr/bin/env bash
+a=(); f=0
+for x in "\$@"; do if [ "\$x" = --path-format=absolute ]; then f=1; else a+=("\$x"); fi; done
+[ "\$f" = 1 ] && echo --path-format=absolute
+exec "$REAL_GIT" "\${a[@]}"
+EOF
+chmod +x "$T/oldgit/git"
+out="$(PATH="$T/oldgit:$PATH" xhook "$WT" toolu_x3)"
+check "X5 older git (no --path-format): worktree question still reaches the lane inbox" \
+  "$(xdec "$out"):$([ -s "$L1/.supervisor/inbox/questions/toolu_x3.json" ] && echo lane || echo missing)" "defer:lane"
+out="$(PATH="$T/oldgit:$PATH" xhook "$L1/reqs" toolu_x4)"
+check "X6 older git: a question from a lane subdirectory still reaches the lane inbox" \
+  "$(xdec "$out"):$([ -s "$L1/.supervisor/inbox/questions/toolu_x4.json" ] && echo lane || echo missing)" "defer:lane"
+PWT="$T/work/primary-42-slug"
+git -C "$P" worktree add -q -b feature/p42 "$PWT" 2>/dev/null
+check "X7 a linked worktree of a NON-lane checkout ⇒ no decision" "$(xhook "$PWT" toolu_x5)" "{}"
+check "X7b … and nothing recorded anywhere" "$(ls "$PWT/.supervisor" "$P/.supervisor/inbox" 2>/dev/null | wc -l | tr -d ' ')" 0
+git -C "$P" worktree remove --force "$PWT" 2>/dev/null; git -C "$P" branch -q -D feature/p42 2>/dev/null
+check "X8 path-unsafe id from the worktree still ignored" "$(xhook "$WT" '../x')" "{}"
+awk '/# HOOK-ROOT$/ { print "  root=\"$(git -C \"$cwd\" rev-parse --show-toplevel 2>/dev/null)\"; [ -n \"$root\" ] || root=\"$cwd\""; next } { print }' "$S" > "$MUT/automate-lanes.sh"
+if ! cmp -s "$S" "$MUT/automate-lanes.sh" && bash -n "$MUT/automate-lanes.sh"; then
+  check "X9 mutation (old show-toplevel resolution) ⇒ the worktree question escapes ({})" "$(xhook "$WT" toolu_x9 "$MUT/automate-lanes.sh")" "{}"
+  check "X9b … and the lane inbox never sees it" "$([ -e "$L1/.supervisor/inbox/questions/toolu_x9.json" ] && echo recorded || echo none)" none
+else bad "X9 mutation control not built"; fi
+git -C "$L1" worktree remove --force "$WT" 2>/dev/null; git -C "$L1" branch -q -D feature/42-slug 2>/dev/null
+
+# ---- Y: lane-convert-ready — wave-end conversion pushes the lane run file (owner fix-now FN2) ----------
+# The meta-sync stub models the real status: `synced` iff the lane's run files still hash to what the
+# last push recorded, else `local_ahead 1`. current-set is the REAL automate-helpers.sh.
+cat > "$T/meta-conv.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "meta-sync $*" >> "$META_LOG"
+root=""; pf=""; prev=""
+for a in "$@"; do case "$prev" in --root) root="$a" ;; --paths-from) pf="$a" ;; esac; prev="$a"; done
+sum() { cat "$root"/.supervisor/automate/*.md 2>/dev/null | cksum; }
+case "$1" in
+  push)
+    echo "paths: $(tr '\n' ' ' < "$pf" 2>/dev/null)" >> "$META_LOG"
+    [ -n "${STUB_PUSH_FAIL:-}" ] && { echo "meta_sync: push_failed — rejected 5 times; nothing forced, meta-base untouched" >&2; exit 1; }
+    sum > "$root.pushed-sum"; echo "meta_sync: pushed abc123 (1 path(s))"; exit 0 ;;
+  status) if [ "$(sum)" = "$(cat "$root.pushed-sum" 2>/dev/null)" ]; then echo "synced abc123 on test-meta"; else echo "local_ahead 1"; fi; exit 0 ;;
+  pull) exit 0 ;;
+esac
+EOF
+chmod +x "$T/meta-conv.sh"
+conv_rf() { # <lane_dir> <status> <pause_reason> — a lane run file parked as given, recorded as pushed
+  local id; id="$(jq -r .run_id "$1/.supervisor/lane.json")"
+  printf '# Automate Run: %s\n\n## Status: paused\n\n## Source\n- backlog: lane\n\n## Run Config\n- limit: 1\n\n## Queue\n- [ ] reqs/b.md\n\n## Current\n- item: reqs/b.md | status: %s | pr: https://github.com/o/r/pull/12 | branch: feature/b\n- pause_reason: %s\n\n## Progress\n- 2026-10-08T00:00:00Z drain READY → %s\n' \
+    "$id" "$2" "$3" "$2" > "$1/.supervisor/automate/$id.md"
+  cat "$1"/.supervisor/automate/*.md | cksum > "$1.pushed-sum"
+}
+conv() { LOOMWRIGHT_LANES_META_SYNC="$T/meta-conv.sh" LOOMWRIGHT_LANES_HELPERS="$HERE/automate-helpers.sh" bash "$S" lane-convert-ready "$@" 2>&1; }
+rmv() { LOOMWRIGHT_LANES_META_SYNC="$T/meta-conv.sh" bash "$S" lane-remove "$@" 2>&1; }
+cur_line() { awk '/^## Current/ { c = 1; next } /^## / { c = 0 } c && /^- (item|pause_reason):/' "$1" | tr '\n' '|'; }
+run lane-create "$RF" reqs/b.md 4 >/dev/null; L4="$LR/L4"; RF12="$L4/.supervisor/automate/$PARENT-L4.md"
+conv_rf "$L4" escalated escalated; SUM12="$(cksum < "$RF12")"; : > "$META_LOG"
+out="$(conv "$L4")"; rc=$?
+check "Y1 a run file not reading ready_for_release is refused (exit 1)" "$rc" 1
+has "Y1b … naming what it reads" "$out" "refused — L4 — run file reads status escalated / pause_reason escalated, not ready_for_release"
+check "Y1c … nothing written, nothing pushed" "$(cksum < "$RF12"):$(grep -c ' push ' "$META_LOG" | tr -d ' ')" "$SUM12:0"
+conv_rf "$L4" ready_for_release ready_for_release; SUM12="$(cksum < "$RF12")"
+STUB_MODE=sleep LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$L4" --owner-command "$OWN" >/dev/null
+L4P="$(tcol L4 5)"
+out="$(conv "$L4")"; rc=$?
+check "Y2 a live lane is refused (exit 1)" "$rc" 1
+has "Y2b … naming the process" "$out" "refused — L4 — live lane process (pid $L4P)"
+check "Y2c … nothing written, nothing pushed" "$(cksum < "$RF12"):$(grep -c ' push ' "$META_LOG" | tr -d ' ')" "$SUM12:0"
+kill -TERM "$L4P" 2>/dev/null; wait_gone "$L4"
+out="$(conv "$L4")"; rc=$?
+check "Y3 a stopped ready_for_release lane converts (exit 0)" "$rc" 0
+has "Y3b … and reports the push" "$out" "converted L4 to awaiting_merge; metadata pushed to test-meta"
+check "Y3c ## Current now awaiting_merge (item, PR and branch kept)" "$(cur_line "$RF12")" \
+  "- item: reqs/b.md | status: awaiting_merge | pr: https://github.com/o/r/pull/12 | branch: feature/b|- pause_reason: awaiting_merge|"
+has "Y3d push passes the lane's metadata branch explicitly and its root" "$(grep ' push ' "$META_LOG")" "meta-sync push --branch test-meta --root $L4 --paths-from "
+check "Y3e … and pushes exactly the lane run file" "$(grep '^paths:' "$META_LOG")" "paths: .supervisor/automate/$PARENT-L4.md "
+has "Y3f ## Progress kept" "$(cat "$RF12")" "drain READY → ready_for_release"
+SUM12="$(cksum < "$RF12")"
+out="$(conv "$L4")"; rc=$?
+check "Y4 a re-run is idempotent (exit 0, run file byte-unchanged)" "$rc:$(cksum < "$RF12")" "0:$SUM12"
+has "Y4b … saying it only retries the push" "$out" "already reads awaiting_merge — retrying the metadata push"
+check "Y4c no launch lock left behind" "$(ls -d "$TABLE".L4.launch.lock 2>/dev/null | wc -l | tr -d ' ')" 0
+out="$(rmv "$L4")"; rc=$?
+check "Y5 afterwards lane-remove's metadata check passes and the lane is removed" "$rc:$([ -d "$L4" ] && echo kept || echo removed)" "0:removed"
+# a failed push: loud, exit 2, the lane never looks converted-and-pushed (lane-remove refuses), re-run heals
+run lane-create "$RF" reqs/b.md 5 >/dev/null; L5="$LR/L5"; RF13="$L5/.supervisor/automate/$PARENT-L5.md"
+conv_rf "$L5" ready_for_release ready_for_release
+out="$(STUB_PUSH_FAIL=1 conv "$L5")"; rc=$?
+check "Y6 a failed push exits 2" "$rc" 2
+has "Y6b … with a FAILED line naming the lane and the retry" "$out" "lane-convert-ready: FAILED — L5 — converted to awaiting_merge but the metadata push to test-meta failed (meta-sync exit 1); NOT pushed"
+has "Y6c … relaying meta-sync's own reason" "$out" "meta_sync: push_failed"
+has "Y6d … and naming the re-run" "$out" "re-run lane-convert-ready $L5"
+check "Y6e no launch lock left behind" "$(ls -d "$TABLE".L5.launch.lock 2>/dev/null | wc -l | tr -d ' ')" 0
+out="$(rmv "$L5")"; rc=$?
+check "Y7 after a failed push lane-remove refuses (metadata not pushed)" "$rc:$(printf '%s' "$out" | grep -c 'metadata not pushed (local_ahead 1)' | tr -d ' ')" "1:1"
+out="$(conv "$L5")"; rc=$?
+check "Y8 the re-run pushes (exit 0)" "$rc:$(printf '%s' "$out" | grep -c 'metadata pushed to test-meta' | tr -d ' ')" "0:1"
+out="$(rmv "$L5")"; rc=$?
+check "Y8b … and lane-remove then passes" "$rc:$([ -d "$L5" ] && echo kept || echo removed)" "0:removed"
+# metadata mode: unknown refuses before any write; off converts with nothing to push
+run lane-create "$RF" reqs/b.md 10 >/dev/null; L10="$LR/L10"; RF14="$L10/.supervisor/automate/$PARENT-L10.md"
+conv_rf "$L10" ready_for_release ready_for_release; SUM14="$(cksum < "$RF14")"; : > "$META_LOG"
+out="$(STUB_MODE_LINE='unknown no mode line' conv "$L10")"; rc=$?
+check "Y9 metadata mode unknown ⇒ refused before any write" "$rc:$(cksum < "$RF14"):$(printf '%s' "$out" | grep -c 'metadata mode unknown' | tr -d ' ')" "1:$SUM14:1"
+out="$(STUB_MODE_LINE=off conv "$L10")"; rc=$?
+check "Y10 mode off ⇒ converted, nothing to push" "$rc:$(grep -c ' push ' "$META_LOG" | tr -d ' ')" "0:0"
+has "Y10b … reported as such" "$out" "converted L10 to awaiting_merge (metadata mode off — no metadata branch to push)"
+out="$(conv "$LR/nope")"; check "Y11 not a lane ⇒ exit 1" "$?" 1
+out="$(bash "$HERE/automate-helpers.sh" lane-convert-ready 2>&1)"; rc=$?
+check "Y12 automate-helpers.sh dispatches lane-convert-ready (no lane ⇒ not-a-lane refusal)" "$rc:$(printf '%s' "$out" | grep -c 'lane-convert-ready: not a lane' | tr -d ' ')" "1:1"
 
 hasnt "Z1 gh never called" "$(cat "$GH_CALLS" 2>/dev/null)" "gh"
 echo "passed: $PASS  failed: $FAIL"

@@ -32,13 +32,14 @@
 # one `## Progress` line per decision — never git, never `gh`. A third carve-out
 # (parallel-automate/05, reached ONLY by `/automate --parallel N>1` — never by the
 # sequential loop): `lane-create`/`lane-launch`/`relay-hook`/`lane-answer`/
-# `lane-remove`/`lane-info`/`init-check`/`pick-guard`/`branch-check` and the
+# `lane-remove`/`lane-convert-ready`/`lane-info`/`init-check`/`pick-guard`/`branch-check` and the
 # observers `lane-status`/`lane-feed`/`lane-readiness` are delegated to the sibling
 # `automate-lanes.sh`, which clones lanes under `<primary>-lanes/`, launches/resumes
 # them headless, writes the lane table sidecar, the lane inbox and the advisory
 # `<run_id>.merge-readiness.md` report (never a merge),
 # and removes a lane only through its own fail-CLOSED refusals — never `gh pr merge`,
-# never a force-push, never a write into a launched lane beyond the inbox answer file.
+# never a force-push, never a write into a launched lane beyond the inbox answer file
+# and the wave-end `lane-convert-ready` run-file conversion (which pushes that file).
 # UNCOUNTED by the
 # doc-currency gate (it is a plain script, not an agent/command/skill/hook).
 #
@@ -84,6 +85,7 @@
 #   relay-hook                                          # parallel-automate/05: delegated to automate-lanes.sh — the lane's PreToolUse/PermissionRequest[AskUserQuestion] hook (stdin: hook JSON) ⇒ inbox question file + defer
 #   lane-answer      <lane_dir> <tool_use_id> --owner-command '<cmd>' [--via <client>]  # parallel-automate/05: delegated to automate-lanes.sh — validates the answer against the question's own labels, records it, resumes the lane
 #   lane-remove      <lane_dir> [--stop] [--abandon]    # parallel-automate/05: delegated to automate-lanes.sh — guarded removal (fail-CLOSED refusals; salvages first)
+#   lane-convert-ready <lane_dir>                       # parallel-automate/05: delegated to automate-lanes.sh — wave end: a stopped lane's ready_for_release ⇒ awaiting_merge (current-set) + meta-sync push of that run file; refusal exit 1, failed push exit 2
 #   lane-info        [--root <dir>]                     # parallel-automate/05: delegated to automate-lanes.sh — prints .supervisor/lane.json; exit 1 when absent (not a lane)
 #   init-check       --parallel N [--auto-merge]        # parallel-automate/05: delegated to automate-lanes.sh — INIT refusals: `ok` | `refuse: <reason>` (exit 1)
 #   pick-guard       <automate_dir>                     # parallel-automate/05: delegated to automate-lanes.sh — PICK guard: `ok` | `refuse: live_lane <run_id> <lane>` (exit 1)
@@ -1044,6 +1046,7 @@ main() {
     # Lane lifecycle for `/automate --parallel N>1` only — the sibling
     # automate-lanes.sh, the third carve-out named in the header.
     lane-create|lane-launch|relay-hook|lane-answer|lane-remove) exec bash "$(dirname "$0")/automate-lanes.sh" "$cmd" "$@" ;;
+    lane-convert-ready) exec bash "$(dirname "$0")/automate-lanes.sh" "$cmd" "$@" ;;
     lane-info|init-check|pick-guard|branch-check) exec bash "$(dirname "$0")/automate-lanes.sh" "$cmd" "$@" ;;
     lane-status|lane-feed|lane-readiness) exec bash "$(dirname "$0")/automate-lanes.sh" "$cmd" "$@" ;;
     ""|-h|--help)

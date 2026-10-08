@@ -16,6 +16,7 @@
 #   lane-answer <lane_dir> <tool_use_id> --owner-command '<cmd>' [--via <client>]
 #        stdin: {"answers":{"0":"<label>"},"note":"<optional free text>"}; validates, records, resumes
 #   lane-remove <lane_dir> [--stop] [--abandon]          guarded removal (salvages first)
+#   lane-convert-ready <lane_dir>                        wave end: ready_for_release → awaiting_merge + push that run file
 #   lane-info [--root <dir>]                             print .supervisor/lane.json (exit 1 when absent)
 #   init-check --parallel N [--auto-merge]               INIT refusals: `ok` | `refuse: <reason>` (exit 1)
 #   pick-guard <automate_dir>                            PICK guard: `ok` | `refuse: live_lane <run_id> <lane>`
@@ -31,8 +32,10 @@
 #   <lane>/.supervisor/lane.json        D2 marker — the ONE marker lane-create writes (plus the copied
 #                                       configs, the intake `lane-backlog.md`, and the relay-hook entries
 #                                       merged into `<lane>/.claude/settings.local.json`). After launch the
-#                                       coordinator never writes into the lane again, EXCEPT the answer file
-#                                       of the inbox protocol (`lane-answer`, below).
+#                                       coordinator never writes into the lane again, EXCEPT (1) the answer
+#                                       file of the inbox protocol (`lane-answer`, below) and (2) the
+#                                       wave-end `lane-convert-ready` run-file conversion, which pushes that
+#                                       run file to the metadata branch in the same call.
 #   <lane>/.supervisor/inbox/questions/<tool_use_id>.json   written by relay-hook (the lane's own hook)
 #   <lane>/.supervisor/inbox/answers/<tool_use_id>.json     written by lane-answer only
 #   <primary>/.supervisor/automate/<parent_run_id>.lanes    D6 lane table (TSV, untracked): lane, path, item,
@@ -549,6 +552,30 @@ _lanes_session_id() {
 
 _lanes_last_result() { grep '^{' "$1" 2>/dev/null | jq -c -R 'fromjson? | select(.type == "result")' 2>/dev/null | tail -1; }
 
+# _lanes_hook_root <cwd> — prints the lane checkout a hook's cwd belongs to; returns 1 when none.
+# A question asked from a worker's linked worktree (../{repo}-{task_id}-{slug}: OUTSIDE the lane dir,
+# no lane.json) must still reach the LANE's inbox, so the cwd's own toplevel is not enough: the lane is
+# the MAIN checkout of the cwd's repository, the parent of its git common dir. `--path-format=absolute`
+# needs git >= 2.31; an older git (no absolute answer) is asked again from the toplevel, where its
+# relative answer resolves unambiguously. Candidates, first holding a non-empty lane.json wins: that
+# main checkout, the cwd's toplevel, the cwd itself.
+_lanes_hook_root() {
+  local cwd="$1" top gcd main="" c nl
+  nl="$(printf '\nx')"; nl="${nl%x}"
+  top="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)"
+  gcd="$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+  case "$gcd" in *"$nl"*|"") gcd="" ;; /*) ;; *) gcd="" ;; esac
+  if [ -z "$gcd" ] && [ -n "$top" ]; then
+    gcd="$(git -C "$top" rev-parse --git-common-dir 2>/dev/null)"
+    case "$gcd" in *"$nl"*|"") gcd="" ;; /*) ;; *) gcd="$(cd "$top" 2>/dev/null && cd "$gcd" 2>/dev/null && pwd -P)" ;; esac
+  fi
+  [ -n "$gcd" ] && [ "$(basename "$gcd")" = .git ] && main="$(dirname "$gcd")"
+  for c in "$main" "$top" "$cwd"; do
+    [ -n "$c" ] && [ -s "$c/.supervisor/lane.json" ] && { printf '%s' "$c"; return 0; }
+  done
+  return 1
+}
+
 # ==================================================================================================
 # relay-hook — PreToolUse[AskUserQuestion]: answer recorded ⇒ allow + updatedInput, else record + defer.
 #              PermissionRequest[AskUserQuestion] (bundled call, defer ignored) ⇒ deny with a re-ask.
@@ -562,7 +589,7 @@ lanes_relay_hook() {
   fi
   [ "$ev" = "PreToolUse" ] || { echo '{}'; return 0; }
   cwd="$(jq -r '.cwd // empty' <<<"$in" 2>/dev/null)"; [ -n "$cwd" ] || cwd="${CLAUDE_PROJECT_DIR:-$PWD}"
-  root="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)"; [ -n "$root" ] || root="$cwd"
+  root="$(_lanes_hook_root "$cwd")" || { echo '{}'; return 0; }   # HOOK-ROOT
   [ -s "$root/.supervisor/lane.json" ] || { echo '{}'; return 0; }
   id="$(jq -r '.tool_use_id // empty' <<<"$in" 2>/dev/null)"
   case "$id" in ''|*[!A-Za-z0-9_-]*) echo '{}'; return 0 ;; esac
@@ -759,6 +786,66 @@ lanes_remove() {
       "lane abandoned: $L ($LN_RUN) — state ${state:-unknown}; salvaged to $sv" >/dev/null 2>&1 || true
   fi
   echo "lane-remove: removed $L ($LN_DIR); salvage $sv"
+}
+
+# ==================================================================================================
+# lane-convert-ready <lane_dir> — the wave-end `ready_for_release` → `awaiting_merge` conversion: the
+# coordinator's one run-file write into a launched lane, and it PUSHES what it wrote, so the primary's
+# next meta pull reads awaiting_merge and lane-remove's metadata check (`meta-sync status`) passes.
+# Under the lane's launch lock (no launch or resume can start mid-conversion). Refusals (exit 1,
+# nothing written): a live lane process (lanes_proc_alive), no run file, a `## Current` that does not
+# read status + pause_reason `ready_for_release`, or an unknown metadata mode. Already converted
+# (both `awaiting_merge` — a re-run after a failed push) ⇒ current-set answers `unchanged` and only
+# the push runs again, so a re-run is idempotent. Branch mode (`on <Y>`) then pushes exactly the lane
+# run file: `meta-sync push --branch <Y> --root <lane> --paths-from <a list holding only it>`; mode
+# `off` has no metadata branch to push. A failed push ⇒ `lane-convert-ready: FAILED — …` and exit 2:
+# the lane then reads `local_ahead` (lane-remove keeps refusing) until a re-run pushes it.
+_lanes_current_item() { # <runfile> — the `## Current` item path, or nothing
+  awk '/^## / { sec = $0; next }
+    sec == "## Current" && /^- item:/ { v = $0; sub(/^- item: */, "", v); sub(/ *\|.*/, "", v); print v; exit }' "$1" 2>/dev/null
+}
+lanes_convert_ready() {
+  local dir="${1:-}"
+  [ "$#" -le 1 ] || die "lane-convert-ready: unexpected argument '$2'"
+  _lane_ctx "$dir" || die "lane-convert-ready: not a lane: ${dir:-<none>}"
+  local L="$LN_LANE" rf pid st status pause item mb out rc list
+  rf="$LN_DIR/.supervisor/automate/$LN_RUN.md"
+  _cr_refuse() { _lanes_launch_unlock; echo "lane-convert-ready: refused — $L — $1"; return 1; }
+  _lanes_launch_lock || { echo "lane-convert-ready: refused — $L — launch lock busy (a launch or resume of this lane is in flight)"; return 1; }
+  pid="$(_lt_get "$LN_TABLE" "$L" 5)"; st="$(_lt_get "$LN_TABLE" "$L" 6)"
+  if lanes_proc_alive "$pid" "$st" "$LN_DIR"; then _cr_refuse "live lane process (pid $pid); convert only after it exits"; return 1; fi
+  [ -f "$rf" ] || { _cr_refuse "no run file $LN_RUN.md"; return 1; }
+  IFS="$(printf '\t')" read -r status pause _ <<<"$(_lanes_runfile_fields "$rf")"
+  case "$status/$pause" in
+    ready_for_release/ready_for_release) ;;
+    awaiting_merge/awaiting_merge) echo "lane-convert-ready: $L already reads awaiting_merge — retrying the metadata push" ;;
+    *) _cr_refuse "run file reads status ${status:--} / pause_reason ${pause:--}, not ready_for_release"; return 1 ;;
+  esac
+  item="$(_lanes_current_item "$rf")"
+  case "$item" in ''|null|-) _cr_refuse "run file has no ## Current item"; return 1 ;; esac
+  if ! mb="$(_lanes_meta_branch "$LN_DIR")"; then _cr_refuse "metadata mode unknown (the conversion could not be pushed)"; return 1; fi
+  out="$(bash "$HELPERS" current-set "$rf" --item "$item" --status awaiting_merge --pause-reason awaiting_merge 2>&1)" \
+    || { _cr_refuse "current-set failed: $(printf '%s' "$out" | tr '\n' ' ')"; return 1; }
+  if [ -z "$mb" ]; then
+    _lanes_launch_unlock
+    echo "lane-convert-ready: converted $L to awaiting_merge (metadata mode off — no metadata branch to push)"
+    return 0
+  fi
+  list="$(mktemp "${TMPDIR:-/tmp}/lane-convert.XXXXXX" 2>/dev/null)" || list=""
+  if [ -z "$list" ] || ! printf '%s\n' ".supervisor/automate/$LN_RUN.md" > "$list"; then
+    [ -n "$list" ] && rm -f "$list"; _lanes_launch_unlock
+    echo "lane-convert-ready: FAILED — $L — converted to awaiting_merge but could not stage the push list; NOT pushed (lane-remove refuses until it is) — re-run lane-convert-ready $LN_DIR"
+    return 2
+  fi
+  rc=0
+  out="$(bash "$META_SYNC" push --branch "$mb" --root "$LN_DIR" --paths-from "$list" --message "chore(supervisor): $LN_RUN ready_for_release -> awaiting_merge (wave end)" 2>&1)" || rc=$?
+  rm -f "$list"; _lanes_launch_unlock
+  if [ "$rc" != 0 ]; then
+    echo "lane-convert-ready: FAILED — $L — converted to awaiting_merge but the metadata push to $mb failed (meta-sync exit $rc); NOT pushed (lane-remove refuses until it is) — re-run lane-convert-ready $LN_DIR"
+    [ -n "$out" ] && printf '%s\n' "$out" | sed 's/^/  /'
+    return 2
+  fi
+  echo "lane-convert-ready: converted $L to awaiting_merge; metadata pushed to $mb"
 }
 
 # ==================================================================================================
@@ -1461,6 +1548,7 @@ lanes_main() {
     relay-hook) lanes_relay_hook "$@" ;;
     lane-answer) lanes_answer "$@" ;;
     lane-remove) lanes_remove "$@" ;;
+    lane-convert-ready) lanes_convert_ready "$@" ;;
     lane-info) lanes_info "$@" ;;
     init-check) lanes_init_check "$@" ;;
     pick-guard) lanes_pick_guard "$@" ;;
