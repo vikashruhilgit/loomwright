@@ -1675,7 +1675,18 @@ lanes_feed() {
   echo "lane-feed: $LN_LANE ($LN_RUN) — $LN_LOG"
   if [ "$follow" = 1 ]; then
     touch "$LN_LOG" 2>/dev/null
-    tail -n +1 -f "$LN_LOG" | grep --line-buffered '^{' | jq --unbuffered -r -R "$_LANES_FEED_JQ" 2>/dev/null
+    # The pipeline never ends by itself (`tail -f`), so it runs in the BACKGROUND and this process
+    # blocks on `wait`: bash defers a trapped signal until a FOREGROUND command returns, but a trapped
+    # signal interrupts `wait`. On TERM / INT / HUP the trap kills the pipeline it started — `jobs -p`
+    # names its first process (tail), `$!` its last (jq); grep then reads EOF — and exits, so killing
+    # the lane-feed process alone leaves nothing behind (parallel-automate/24 F12). Async children of a
+    # non-interactive bash start with SIGINT ignored, hence TERM to them whatever signal arrived here.
+    _LANES_FEED_PIDS=""
+    trap 'kill -TERM $(jobs -p) $_LANES_FEED_PIDS 2>/dev/null; exit 0' TERM INT HUP
+    tail -n +1 -f "$LN_LOG" | grep --line-buffered '^{' | jq --unbuffered -r -R "$_LANES_FEED_JQ" 2>/dev/null &
+    _LANES_FEED_PIDS="$(jobs -p) $!"
+    wait
+    trap - TERM INT HUP
     return 0
   fi
   grep '^{' "$LN_LOG" 2>/dev/null | jq -r -R "$_LANES_FEED_JQ" 2>/dev/null

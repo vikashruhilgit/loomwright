@@ -22,15 +22,21 @@
 #   Z Validation 4/5 fixes (parallel-automate/23): F5 readiness report · F9 leak check after removal ·
 #     F1 snapshot before the lane table · F10 no absolute path / real state · F4 resume in the last
 #     session · F2 HELD answer kept + delivered under an owner command · F11 gated wave-end push + ABANDONED
+#   AA Validation 4/5 fixes B (parallel-automate/24): F12 lane-feed --follow leaves no pipeline behind on
+#     TERM / HUP / INT, and no process naming the suite dir outlives the suite
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 S="$HERE/automate-lanes.sh"
 T="$(cd "$(mktemp -d)" && pwd -P)"
 BG_PIDS=""
+# ere <text> — <text> as a literal extended regex (pgrep / pkill -f take an ERE: an unescaped `+` in
+# `tail -n +1` means "one or more spaces", so the literal never matched — parallel-automate/24 F12).
+ere() { printf '%s' "$1" | sed 's/[][\.*^$+?(){}|]/\\&/g'; }
 cleanup() {
   local p
   for p in $BG_PIDS $(pgrep -f "_lane-run $T" 2>/dev/null); do kill -TERM "$p" 2>/dev/null; done
+  pkill -TERM -f "$(ere "$T")" 2>/dev/null   # safety net only — the AA-F12z leg is the assertion
   rm -rf "$T"
 }
 trap cleanup EXIT
@@ -509,7 +515,7 @@ has "T5 feed prints the deferred park" "$out" "[park] deferred toolu_r1 — awai
 has "T6 feed prints messages and asks" "$out" "[ask] Which path?"
 has "T7 feed resolves L<n>" "$(cd "$P" && bash "$S" lane-feed L6 2>&1)" "[init] session sess-r"
 bash "$S" lane-feed "$L6" --follow > "$T/follow.out" 2>&1 & FP=$!
-sleep 1.5; pkill -f "tail -n +1 -f $LR2/L6.stream.log" 2>/dev/null; kill "$FP" 2>/dev/null; wait "$FP" 2>/dev/null
+sleep 1.5; kill "$FP" 2>/dev/null; wait "$FP" 2>/dev/null   # lane-feed kills its own pipeline (F12)
 has "T8 --follow narrates" "$(cat "$T/follow.out")" "[spawn] loomwright:worker"
 has "T9 died lane: feed reports it" "$(run lane-feed "$LR2/L1")" "[died]"
 
@@ -1109,6 +1115,39 @@ check "Z-F11i … no jobs/done/ brief; the brief rides under jobs/failed/" \
   "$(ls "$REMOTE11/.supervisor/jobs/done" 2>/dev/null | wc -l | tr -d ' '):$(ls "$REMOTE11/.supervisor/jobs/failed" 2>/dev/null | tr '\n' ' ')" "0:2026-10-08-x.md "
 has "Z-F11j the parent run file records the abandon with the real state" "$(cat "$RF5")" "lane abandoned: L5 ($PARENT5-L5) — state gone;"
 
+# ---- AA: Validation 4/5 fixes B (parallel-automate/24) ------------------------------------------------
+# Each leg fails against the pre-fix code at 9a65ecb and passes here.
+# AA-F12 lane-feed --follow: signalling the lane-feed process ALONE leaves no tail | grep | jq behind.
+AA_TAIL="tail -n \\+1 -f $(ere "$LR2/L6.stream.log")"
+aa_feed() { # <signal> — prints "<seen|unseen> <none|survivor>"; kills any survivor afterwards
+  local sig="$1" fp i=0 seen=unseen
+  if [ "$sig" = INT ]; then   # an async child starts with SIGINT ignored — reset it, as a terminal's Ctrl-C would find it
+    python3 -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])' \
+      bash "$S" lane-feed "$L6" --follow > "$T/aa-follow.$sig" 2>&1 & fp=$!
+  else
+    bash "$S" lane-feed "$L6" --follow > "$T/aa-follow.$sig" 2>&1 & fp=$!
+  fi
+  while [ "$i" -lt 50 ]; do pgrep -f "$AA_TAIL" >/dev/null 2>&1 && { seen=seen; break; }; sleep 0.1; i=$((i + 1)); done
+  sleep 0.3; kill -"$sig" "$fp" 2>/dev/null
+  i=0; while kill -0 "$fp" 2>/dev/null && [ "$i" -lt 30 ]; do sleep 0.1; i=$((i + 1)); done
+  kill -KILL "$fp" 2>/dev/null; wait "$fp" 2>/dev/null   # bounded: a lane-feed that ignores the signal never hangs the suite
+  i=0; while pgrep -f "$AA_TAIL" >/dev/null 2>&1 && [ "$i" -lt 30 ]; do sleep 0.1; i=$((i + 1)); done
+  if pgrep -f "$AA_TAIL" >/dev/null 2>&1; then echo "$seen survivor"; pkill -TERM -f "$AA_TAIL" 2>/dev/null; else echo "$seen none"; fi
+}
+check "AA-F12a TERM to lane-feed --follow alone ⇒ its tail pipeline is gone (and the escaped pattern did see it)" "$(aa_feed TERM)" "seen none"
+check "AA-F12b HUP ⇒ the same" "$(aa_feed HUP)" "seen none"
+check "AA-F12c INT ⇒ the same" "$(aa_feed INT)" "seen none"
+has "AA-F12d the follow still narrates" "$(cat "$T/aa-follow.TERM")" "[spawn] loomwright:worker"
+check "AA-F12e the unescaped pattern T8 used never matched a live tail (the root cause, not the path)" \
+  "$(bash "$S" lane-feed "$L6" --follow >/dev/null 2>&1 & fp=$!; sleep 1; pgrep -f "tail -n +1 -f $LR2/L6.stream.log" >/dev/null 2>&1 && echo matched || echo unmatched; kill "$fp" 2>/dev/null; wait "$fp" 2>/dev/null)" unmatched
+
+
 hasnt "Z1 gh never called" "$(cat "$GH_CALLS" 2>/dev/null)" "gh"
+# AA-F12z (final leg): nothing this suite started may outlive it — no process whose command line names
+# the suite dir $T (pgrep -f on the ERE-escaped path), after the same stop the EXIT trap performs.
+for p in $BG_PIDS $(pgrep -f "_lane-run $T" 2>/dev/null); do kill -TERM "$p" 2>/dev/null; done
+i=0; while pgrep -f "$(ere "$T")" >/dev/null 2>&1 && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+AA_LEFT="$(for p in $(pgrep -f "$(ere "$T")" 2>/dev/null); do ps -o pid= -o command= -p "$p" 2>/dev/null; done)"
+check "AA-F12z no process naming the suite dir survives the suite" "${AA_LEFT:-none}" none
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]
