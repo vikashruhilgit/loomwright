@@ -23,8 +23,8 @@
 #     F1 snapshot before the lane table · F10 no absolute path / real state · F4 resume in the last
 #     session · F2 HELD answer kept + delivered under an owner command · F11 gated wave-end push + ABANDONED
 #   AA Validation 4/5 fixes B (parallel-automate/24): F6 lane-park-notify (truthful per-channel delivery)
-#     · F12 lane-feed --follow leaves no pipeline behind on TERM / HUP / INT, and no process naming the
-#     suite dir outlives the suite
+#     · F8 real transcript usage ⇒ non-zero lane TOTAL + a ceiling-check PARK · F12 lane-feed --follow leaves
+#     no pipeline behind on TERM / HUP / INT, and no process naming the suite dir outlives the suite
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -1149,6 +1149,23 @@ run lane-create "$RF6" reqs/a.md 1 --parallel 2 --max-tokens 200 >/dev/null; L61
 PR6="https://github.com/o/r/pull/66"
 printf '# Automate Run: %s-L1\n\n## Status: paused\n\n## Queue\n- [ ] reqs/a.md\n\n## Current\n- item: reqs/a.md | status: ready_for_release | pr: %s | branch: f\n- pause_reason: ready_for_release\n\n## Progress\n- 2026-10-08T11:00:00Z session_id sess-aa (reqs/a.md)\n' \
   "$PARENT6" "$PR6" > "$LRF6"
+# AA-F8 a lane whose log holds a real (transcript-usage) ledger line reads a non-zero TOTAL, and its share parks.
+AAT="$T/aa-transcript.jsonl"
+{ for o in 8 8; do printf '{"type":"assistant","message":{"id":"msg_A","stop_reason":null,"usage":{"input_tokens":10,"output_tokens":%s,"cache_read_input_tokens":100,"cache_creation_input_tokens":50,"cache_creation":{"ephemeral_5m_input_tokens":50}}}}\n' "$o"; done
+  echo '{"type":"assistant","message":{"id":"msg_A","stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":263,"cache_read_input_tokens":100,"cache_creation_input_tokens":50}}}'
+  echo '{"type":"assistant","message":{"id":"msg_B","stop_reason":null,"usage":{"input_tokens":7,"output_tokens":40,"cache_read_input_tokens":200,"cache_creation_input_tokens":0}}}'
+} > "$AAT"
+jq -n --arg a "$AAT" '{session_id: "sess-aa", agent_id: "aa1", agent_transcript_path: $a}' \
+  | (cd "$L61" && env -u LOOMWRIGHT_ORIENTATION_SOURCE -u LOOMWRIGHT_SHARED_PREFIX -u LOOMWRIGHT_ADVISORY_TOTAL_BYTES bash "$HERE/emit-token-ledger.sh")
+check "AA-F8a the real emitter wrote a transcript-usage line into the lane's log" \
+  "$(jq -r '"\(.usage_source) \(.output_tokens)"' "$L61/.supervisor/logs/sess-aa.jsonl" 2>/dev/null)" "transcript 303"
+out="$(run lane-status "$RF6" --tokens)"
+check "AA-F8b lane-status --tokens: the lane's TOTAL is non-zero (the real reader)" \
+  "$(printf '%s\n' "$out" | awk '$1 == "L1"' | grep -oE 'TOTAL=[0-9]+')" "TOTAL=670"
+check "AA-F8c ceiling-check on the lane run file with a share below that total ⇒ PARK" \
+  "$(cd "$L61" && bash "$HERE/automate-helpers.sh" ceiling-check "$LRF6" 100)" "PARK: token_ceiling total=670 max=100"
+
+
 # AA-F6 lane-park-notify: desktop + automate_ready_for_release webhook, one truthful ## Progress line.
 cat > "$T/aa-nd.sh" <<'EOF'
 #!/usr/bin/env bash
