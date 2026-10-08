@@ -272,37 +272,122 @@ def _usage_int(val):
         return 0
     return val
 
+def _line_mark(raw, agent_id):
+    """The watermark ONE log line records for agent_id, as (usage_last_message_id
+    or None, usage_anon_after), or None when the line is not a positioned
+    transcript-sourced token_ledger line of agent_id. A line written by a build
+    without usage_anon_after that also lacks the id carries no position and is
+    None, as that build skipped it; a malformed line is None. A cheap substring
+    test rejects every line that cannot be one before any JSON parse."""
+    if agent_id not in raw or "\"usage_source\"" not in raw:
+        return None
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return None
+    if not (isinstance(obj, dict) and obj.get("event") == "token_ledger"
+            and obj.get("usage_source") == "transcript"
+            and obj.get("agent_id") == agent_id):
+        return None
+    mid = obj.get("usage_last_message_id")
+    mid = mid if isinstance(mid, str) and mid else None
+    after = _usage_int(obj.get("usage_anon_after"))
+    if mid is not None or after > 0:
+        return (mid, after)
+    return None
+
+# The log is read BACKWARDS in chunks of this many bytes: the watermark is the
+# LAST positioned line of the agent, which sits near EOF, so a long session log
+# costs a few chunks rather than a full scan — inside the lock, where every
+# millisecond is a sibling firing waiting.
+MARK_CHUNK_BYTES = 64 * 1024
+
+def _text_lines(seg, terminated):
+    """The lines a text-mode read (utf-8, errors=replace, universal newlines)
+    yields for one \\n-delimited byte segment, LAST first, each with the "\\n"
+    that read gives it (none on an unterminated final line). Universal newlines
+    also end a line at a lone \\r and fold \\r\\n into one \\n, so the segment is
+    split on \\r too and a trailing \\r is the end of the last line, not an
+    empty line of its own."""
+    pieces = seg.decode("utf-8", "replace").split("\r")
+    if len(pieces) > 1 and pieces[-1] == "":
+        pieces.pop()
+        terminated = True
+    out = [p + "\n" for p in pieces[:-1]]
+    if pieces[-1] or terminated:
+        out.append(pieces[-1] + ("\n" if terminated else ""))
+    return reversed(out)
+
+def _lines_backward(fh, needles=()):
+    """Every line of the binary file fh, LAST first, exactly as a forward
+    text-mode read yields it — never more than one chunk plus one line in
+    memory. A line straddling a chunk boundary is carried until its start is
+    read; the first line of the file is yielded last. needles are byte strings
+    EVERY line the caller can use contains: a span of complete lines lacking
+    one is skipped without splitting or decoding it, so a log in which the
+    agent never appears (its first stop) costs one substring search per chunk.
+    The chunk size is read at call time, so a test can shrink it to make every
+    line straddle one. A read that comes back short (the log shrank under it)
+    is an OSError, the same "cannot tell" every other read failure is."""
+    chunk = MARK_CHUNK_BYTES
+    fh.seek(0, os.SEEK_END)
+    pos = fh.tell()
+    carry, carry_terminated = b"", False
+    while pos > 0:
+        step = min(chunk, pos)
+        pos -= step
+        fh.seek(pos)
+        data = fh.read(step)
+        if len(data) != step:
+            raise OSError("log changed size under the backward read")
+        buf = data + carry
+        if not all(n in buf for n in needles):
+            # No complete line in buf can be a match; keep only the (possibly
+            # partial) first line, whose start may still be in an earlier chunk.
+            nl = buf.find(b"\n")
+            if nl >= 0:
+                carry, carry_terminated = buf[:nl], True
+            else:
+                carry = buf
+            continue
+        parts = buf.split(b"\n")
+        for i in range(len(parts) - 1, 0, -1):
+            seg = parts[i]
+            if not all(n in seg for n in needles):
+                continue
+            for line in _text_lines(seg, True if i < len(parts) - 1 else carry_terminated):
+                yield line
+        if len(parts) > 1:
+            carry_terminated = True
+        carry = parts[0]
+    if all(n in carry for n in needles):
+        for line in _text_lines(carry, carry_terminated):
+            yield line
+
 def last_counted_mark(log_path, agent_id):
     """The resume WATERMARK of agent_id: the position its LAST transcript-sourced
-    token_ledger line in log_path counted up to, as (usage_last_message_id or
-    None, usage_anon_after), or None when there is no such line. A line written
-    by a build without usage_anon_after that also lacks the id carries no
-    position and is skipped, as that build skipped it. Streaming; a cheap
-    substring test skips every line that cannot be one before any JSON parse."""
+    token_ledger line in log_path counted up to (_line_mark above), or None when
+    there is no such line. Reads from EOF backwards and stops at the first match,
+    which is the last one in the file — the same answer a forward scan to EOF
+    gives, without one."""
     if not agent_id or not log_path:
         return None
-    last = None
     try:
-        with open(log_path, "r", encoding="utf-8", errors="replace") as fh:
-            for raw in fh:
-                if agent_id not in raw or "\"usage_source\"" not in raw:
-                    continue
-                try:
-                    obj = json.loads(raw)
-                except Exception:
-                    continue
-                if not (isinstance(obj, dict) and obj.get("event") == "token_ledger"
-                        and obj.get("usage_source") == "transcript"
-                        and obj.get("agent_id") == agent_id):
-                    continue
-                mid = obj.get("usage_last_message_id")
-                mid = mid if isinstance(mid, str) and mid else None
-                after = _usage_int(obj.get("usage_anon_after"))
-                if mid is not None or after > 0:
-                    last = (mid, after)
+        # Byte needles that are EXACT prefilters for _line_mark: its literal
+        # "usage_source" substring is ASCII, which decoding with errors=replace
+        # never alters; the agent id is one too only when it is ASCII with no
+        # line break (else a decoded line could hold it where the bytes do not).
+        needles = [b"\"usage_source\""]
+        if agent_id.isascii() and "\r" not in agent_id and "\n" not in agent_id:
+            needles.append(agent_id.encode("ascii"))
+        with open(log_path, "rb") as fh:
+            for raw in _lines_backward(fh, needles):
+                mark = _line_mark(raw, agent_id)
+                if mark is not None:
+                    return mark
     except OSError:
         return None
-    return last
+    return None
 
 def read_transcript(path):
     """Per-message usage from the OWN transcript of a subagent (parallel-automate/24

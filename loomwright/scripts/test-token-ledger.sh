@@ -91,6 +91,20 @@
 #          DIFFERENT ts (so the byte-identity guard cannot collapse them), sum the
 #          transcript exactly once in exactly one line — the watermark is read
 #          inside the same critical section as the append — and leave no lock
+#  27. the watermark lookup reads the log BACKWARDS from EOF in chunks and
+#      stops at the first match — it must return exactly what the old forward
+#      scan to EOF returned:
+#      27a an equivalence harness runs the SUT's own last_counted_mark (lifted
+#          out of the inline program with ast) against a verbatim copy of the
+#          forward scan on fixtures with the match far from EOF behind many
+#          other agents' lines, a line straddling the 64 KiB chunk boundary,
+#          no trailing newline, malformed / CRLF / lone-\r / invalid-UTF-8 lines
+#          interleaved, and the legacy shapes (id without usage_anon_after, a
+#          position-less line that must not shadow an earlier mark, proxy
+#          lines, an agent id that is a substring of another) — at the real
+#          chunk size and at tiny ones that make every line straddle, plus a
+#          seeded fuzz; 27b end to end, a watermark 3,000 foreign lines from
+#          EOF still keeps a resume from recounting
 
 # EXIT: 0 on full pass, 1 on any failed assertion.
 # Style mirrors test-insights.sh / test-send-telemetry-core.sh.
@@ -1545,6 +1559,208 @@ case "$_wk" in
     ok "case26w loomwright:worker: validator leaf first and alone, then progress event, then the ledger" ;;
   *) no "case26w loomwright:worker leaf order changed: $_wk" ;;
 esac
+
+echo "== 27. the watermark is read BACKWARDS from EOF — same answer as the old forward scan =="
+# 27a: the SUT's own functions, lifted out of its inline python program (the text between
+# `python3 -c '` and the closing `'`) with ast — imports, function defs and UPPER_CASE constants
+# only, so none of the program's top-level code runs — compared against a verbatim copy of the
+# forward scan it replaced.
+# Written to a file first, never a heredoc inside $(...): bash 3.2 mis-parses quotes in one.
+cat > "$SANDBOX/watermark-eq.py" <<'PYEOF'
+import ast, json, os, random, sys, tempfile
+
+src = open(os.environ["SUT_PATH"], encoding="utf-8").read().split("\n")
+start = next(i for i, l in enumerate(src) if l.rstrip().endswith("python3 -c '")) + 1
+end = next(i for i in range(start, len(src)) if src[i].startswith("'"))
+tree = ast.parse("\n".join(src[start:end]))
+keep = [n for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom, ast.FunctionDef))
+        or (isinstance(n, ast.Assign) and all(isinstance(t, ast.Name) and t.id.lstrip("_").isupper()
+                                              for t in n.targets))]
+ns = {}
+exec(compile(ast.Module(body=keep, type_ignores=[]), "sut", "exec"), ns)
+new = ns["last_counted_mark"]
+REAL_CHUNK = ns["MARK_CHUNK_BYTES"]
+
+def _usage_int(val):
+    if isinstance(val, bool) or not isinstance(val, int) or val < 0:
+        return 0
+    return val
+
+def old(log_path, agent_id):
+    # VERBATIM the forward scan last_counted_mark used before the backward read.
+    if not agent_id or not log_path:
+        return None
+    last = None
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                if agent_id not in raw or "\"usage_source\"" not in raw:
+                    continue
+                try:
+                    obj = json.loads(raw)
+                except Exception:
+                    continue
+                if not (isinstance(obj, dict) and obj.get("event") == "token_ledger"
+                        and obj.get("usage_source") == "transcript"
+                        and obj.get("agent_id") == agent_id):
+                    continue
+                mid = obj.get("usage_last_message_id")
+                mid = mid if isinstance(mid, str) and mid else None
+                after = _usage_int(obj.get("usage_anon_after"))
+                if mid is not None or after > 0:
+                    last = (mid, after)
+    except OSError:
+        return None
+    return last
+
+def L(aid, **kw):
+    d = {"event": "token_ledger", "session_id": "s", "agent_id": aid, "usage_source": "transcript"}
+    d.update(kw)
+    return json.dumps(d).encode()
+
+def foreign(i, pad=150):
+    return L("other%d" % (i % 7), usage_last_message_id="x%d" % i, pad="p" * pad)
+
+T = "aX"
+POOL = [
+    L(T, usage_last_message_id="m_new", usage_anon_after=2),
+    L(T, usage_last_message_id="m_legacy"),                    # legacy: id, no usage_anon_after
+    L(T, usage_anon_after=3),                                  # id-less position
+    L(T),                                                      # legacy, no position: never shadows
+    L(T, usage_last_message_id="", usage_anon_after=0),        # empty id, zero after: no position
+    L(T, usage_last_message_id="m_neg", usage_anon_after=-4),  # negative after counts 0
+    L(T + "0", usage_last_message_id="m_superstring"),         # agent id contains T: substring hit, not a match
+    json.dumps({"event": "token_ledger", "agent_id": T, "proxy": True, "token_proxy_transcript_bytes": 9}).encode(),
+    json.dumps({"event": "token_ledger", "agent_id": T, "usage_source": "payload", "usage_last_message_id": "m_payload"}).encode(),
+    json.dumps({"event": "subtask_complete", "agent_id": T, "usage_source": "transcript", "usage_last_message_id": "m_ev"}).encode(),
+    b'{"event":"token_ledger","agent_id":"aX","usage_source":"transcript","usage_last_message_id":"m_trunc"',  # malformed
+    b'\xef\xbb\xbf' + L(T, usage_last_message_id="m_bom"),    # BOM: json.loads rejects it
+    L(T, usage_last_message_id="m_\u00e9"),                    # non-ASCII id (escaped by json)
+    b'{"event":"token_ledger","agent_id":"aX","usage_source":"transcript","usage_last_message_id":"m_\xff\xfe"}',  # invalid utf-8 -> U+FFFD
+    b'{"event":"token_ledger",\r"agent_id":"aX","usage_source":"transcript","usage_last_message_id":"m_cr_ws"}',  # \r splits it
+    b"not json at all aX \"usage_source\"",
+    b"",
+    foreign(1), foreign(2, 10), foreign(3, 3000),
+]
+
+def write(path, lines, terms, final_term):
+    with open(path, "wb") as fh:
+        for i, ln in enumerate(lines):
+            fh.write(ln)
+            if i < len(lines) - 1:
+                fh.write(terms[i])
+            else:
+                fh.write(final_term)
+
+fails, checks = [], 0
+tmp = tempfile.mkdtemp()
+
+def check(label, path, chunks=(None, 1, 2, 3, 7, 64), aid=T):
+    global checks
+    want = old(path, aid)
+    for c in chunks:
+        ns["MARK_CHUNK_BYTES"] = REAL_CHUNK if c is None else c
+        got = new(path, aid)
+        checks += 1
+        if got != want:
+            fails.append("%s chunk=%s: forward=%r backward=%r" % (label, c or REAL_CHUNK, want, got))
+    ns["MARK_CHUNK_BYTES"] = REAL_CHUNK
+    return want
+
+p = os.path.join(tmp, "log.jsonl")
+# (a) the match far from EOF behind many other agents' lines — ~5,000 lines, many chunks.
+lines = [L(T, usage_last_message_id="m_far", usage_anon_after=1)] + [foreign(i) for i in range(5000)]
+write(p, lines, [b"\n"] * len(lines), b"\n")
+w = check("far-from-EOF", p, chunks=(None, 4096))
+if w != ("m_far", 1):
+    fails.append("far-from-EOF fixture returned %r, expected the seeded mark" % (w,))
+# (a2) the newest of SEVERAL marks wins, with a position-less legacy line AFTER it that must not shadow it.
+lines = [L(T, usage_last_message_id="m_old")] + [foreign(i) for i in range(800)] \
+    + [L(T, usage_last_message_id="m_newest")] + [foreign(i) for i in range(800)] + [L(T)]
+write(p, lines, [b"\n"] * len(lines), b"")
+w = check("newest-wins+legacy-no-position", p, chunks=(None, 4096))
+if w != ("m_newest", 0):
+    fails.append("newest-wins fixture returned %r, expected ('m_newest', 0)" % (w,))
+# (b) a match line straddling the real 64 KiB chunk boundary (the boundary is counted from EOF).
+target = L(T, usage_last_message_id="m_straddle", pad="s" * 2000)
+filler = foreign(9, REAL_CHUNK - 1000)          # one line ~64 KiB - 1 KiB after the target
+write(p, [foreign(1), target, filler], [b"\n", b"\n"], b"\n")
+size = os.path.getsize(p)
+t_start = len(foreign(1)) + 1
+boundary = size - REAL_CHUNK
+if not (t_start < boundary < t_start + len(target)):
+    fails.append("straddle fixture does not straddle: target [%d,%d) boundary %d" % (t_start, t_start + len(target), boundary))
+w = check("straddle-64KiB", p, chunks=(None,))
+if w != ("m_straddle", 0):
+    fails.append("straddle fixture returned %r" % (w,))
+# (c) no trailing newline — the match is the unterminated last line, and the last line otherwise.
+write(p, [foreign(1), L(T, usage_last_message_id="m_eof")], [b"\n"], b"")
+check("no-trailing-newline/match", p)
+write(p, [L(T, usage_last_message_id="m_first"), foreign(1)], [b"\n"], b"")
+check("no-trailing-newline/foreign", p)
+# (d) malformed / CRLF / lone-\r / invalid-UTF-8 / BOM lines interleaved — every POOL kind, each
+# as the last match candidate, under each terminator.
+for i, ln in enumerate(POOL):
+    for term in (b"\n", b"\r\n", b"\r"):
+        for fin in (b"", b"\n", b"\r\n", b"\r"):
+            write(p, [L(T, usage_last_message_id="m_base"), foreign(4), ln], [term, term], fin)
+            check("pool[%d] term=%r fin=%r" % (i, term, fin), p)
+# (e) degenerate files: empty, only newlines, absent.
+for body in (b"", b"\n", b"\n\n\r\n", b"\r"):
+    with open(p, "wb") as fh:
+        fh.write(body)
+    check("degenerate %r" % body, p)
+missing = os.path.join(tmp, "absent.jsonl")
+if new(missing, T) is not None or old(missing, T) is not None:
+    fails.append("absent log is not None on both sides")
+checks += 1
+# (f) agent ids the byte prefilter must NOT be applied to (non-ASCII), incl. one that only an
+# errors=replace decode produces: bytes "a\xff" decode to "a\ufffd", which the forward scan matches.
+for aid, raw in (("a\u00e9", json.dumps({"event": "token_ledger", "agent_id": "a\u00e9", "usage_source": "transcript",
+                                       "usage_last_message_id": "m_nonascii"}, ensure_ascii=False).encode()),
+                 ("a\ufffd", b'{"event":"token_ledger","agent_id":"a\xff","usage_source":"transcript","usage_last_message_id":"m_repl"}')):
+    for fin in (b"", b"\n"):
+        write(p, [raw] + [foreign(i) for i in range(300)], [b"\n"] * 301, fin)
+        w = check("non-ascii agent %r fin=%r" % (aid, fin), p, chunks=(None, 1, 5, 4096), aid=aid)
+        if w is None:
+            fails.append("non-ascii agent %r fixture: the forward scan found no mark (vacuous)" % aid)
+# seeded fuzz over the pool, random terminators, random chunk sizes.
+rng = random.Random(24)
+for n in range(400):
+    k = rng.randint(1, 12)
+    lines = [rng.choice(POOL) for _ in range(k)]
+    terms = [rng.choice((b"\n", b"\r\n", b"\r", b"\n\n")) for _ in range(k)]
+    write(p, lines, terms, rng.choice((b"", b"\n", b"\r\n", b"\r")))
+    check("fuzz#%d" % n, p, chunks=(None, rng.randint(1, 40), rng.randint(41, 400)))
+
+for f in fails[:20]:
+    print("FAIL " + f)
+print("CHECKS %d FAILS %d" % (checks, len(fails)))
+PYEOF
+_eq_out="$(SUT_PATH="$SUT" python3 "$SANDBOX/watermark-eq.py" 2>&1)"
+_eq_checks="$(printf '%s\n' "$_eq_out" | sed -n 's/^CHECKS \([0-9]*\) FAILS \([0-9]*\)$/\1 \2/p')"
+case "$_eq_checks" in
+  *' 0')
+    if [ "${_eq_checks%% *}" -ge 1000 ]; then
+      ok "case27a backward watermark read == forward scan on ${_eq_checks%% *} fixture x chunk-size checks (far from EOF, 64 KiB straddle, no trailing newline, malformed/CRLF/lone-CR/invalid-UTF-8, legacy shapes, fuzz)"
+    else
+      no "case27a the equivalence harness ran only ${_eq_checks%% *} checks — vacuous"
+    fi ;;
+  *) no "case27a backward watermark read DIFFERS from the forward scan: $(printf '%s' "$_eq_out" | head -8 | tr '\n' ' ')" ;;
+esac
+# 27b end to end: a watermark 3,000 foreign lines from EOF still keeps the resume from recounting.
+FE_SID="fixture-token-ledger-watermark-far-001"; FE_T="$SANDBOX/subagents/agent-fe001.jsonl"
+FE_LOG="$SANDBOX/.supervisor/logs/${FE_SID}.jsonl"; mkdir -p "$SANDBOX/.supervisor/logs"
+printf '%s\n' '{"type":"assistant","message":{"id":"f1","stop_reason":"end_turn","usage":{"input_tokens":0,"output_tokens":500,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}' \
+  '{"type":"assistant","message":{"id":"f2","stop_reason":"end_turn","usage":{"input_tokens":0,"output_tokens":9,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}' > "$FE_T"
+{
+  printf '{"event":"token_ledger","session_id":"%s","agent_id":"fe001","usage_source":"transcript","proxy":false,"output_tokens":500,"usage_messages":1,"usage_last_message_id":"f1","usage_anon_after":0}\n' "$FE_SID"
+  awk -v sid="$FE_SID" 'BEGIN { for (i = 0; i < 3000; i++) printf "{\"event\":\"token_ledger\",\"session_id\":\"%s\",\"agent_id\":\"other%d\",\"usage_source\":\"transcript\",\"usage_last_message_id\":\"o%d\",\"output_tokens\":0}\n", sid, i % 5, i }'
+} > "$FE_LOG"
+tu_payload "$FE_T" "$FE_SID" fe001 > "$SANDBOX/fe.json"
+OUT27B="$(run_sut "$SANDBOX/fe.json")"
+assert_eq "case27b a watermark 3,000 lines from EOF: exit 0, the resume counts f2 only" "0 9 1 f2" \
+  "$(printf '%s\n' "$OUT27B" | grep '^RC=' | tail -1 | cut -d= -f2) $(tail -1 "$FE_LOG" | jq -r '"\(.output_tokens) \(.usage_messages) \(.usage_last_message_id)"')"
 
 echo ""
 echo "RESULT  pass=$PASS_COUNT  fail=$FAIL_COUNT"
