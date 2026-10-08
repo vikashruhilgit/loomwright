@@ -977,6 +977,53 @@ hasnt "Z-F4i … the fallback carries no --resume" "$(grep '^ARGS' "$STUB_LOG" |
 check "Z-F4j … and tells the lane it is on the fresh path" "$(grep '^RESUMEPATH' "$STUB_LOG" | tail -1)" "RESUMEPATH fresh session (last session sess-123 not resumable)"
 has "Z-F4k a normal launch carries an empty resume path" "$(grep '^RESUMEPATH' "$STUB_LOG" | head -1)" "RESUMEPATH "
 
+# Z-F2 a HELD answer is kept coordinator-side (validated answers + note + via, never an owner command),
+# shown as answer_pending, and delivered ONLY by the delivery form under a current-session owner command
+zq() { # <lane_dir> <tool_use_id> <session> — a recorded question the lane parked on (deferred)
+  jq -n -c --argjson q "$Q2" --arg id "$2" '{id: $id, asked_at: "2026-10-08T00:00:00Z", questions: $q}' > "$1/.supervisor/inbox/questions/$2.json"
+  jq -n -c --argjson q "$Q2" --arg id "$2" --arg s "$3" '{type: "result", subtype: "success", stop_reason: "tool_deferred", session_id: $s, deferred_tool_use: {id: $id, name: "AskUserQuestion", input: {questions: $q}}}' >> "$(dirname "$1")/$(basename "$1").stream.log"
+}
+t5set() { awk -F'\t' -v OFS='\t' -v l="$1" -v c="$2" -v v="$3" '$1 == l { $c = v } { print }' "$P/.supervisor/automate/$PARENT5.lanes" > "$T/t5" && mv "$T/t5" "$P/.supervisor/automate/$PARENT5.lanes"; }
+run lane-create "$RF5" reqs/a.md 3 >/dev/null; L53="$LR5/L3"; zq "$L53" toolu_z2 sess-z2
+t5set L3 8 launched; t5set L3 9 "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+PF53="$P/.supervisor/automate/$PARENT5.L3.answer-pending.json"; AF53="$L53/.supervisor/inbox/answers/toolu_z2.json"
+z2() { printf '%s' "$1" | bash "$S" lane-answer "$L53" toolu_z2 "${@:2}" 2>&1; }
+n2="$(claude_calls)"
+out="$(STUB_LOAD=busy z2 '{"answers":{"0":"Red","1":"A,B"},"note":"small diff"}' --owner-command "$OWN" --via test)"; rc=$?
+check "Z-F2a load busy ⇒ HELD (exit 4)" "$rc:$(printf '%s\n' "$out" | head -1)" "4:lane-launch: HELD — L3 — load busy"
+check "Z-F2b the validated answer is KEPT coordinator-side (answers, note, via)" \
+  "$(jq -c '[.tool_use_id, .answers["0"], .answers["1"], .note, .via]' "$PF53" 2>/dev/null)" '["toolu_z2","Red","A,B","small diff","test"]'
+check "Z-F2c … and the pending file holds no owner command" "$(grep -cF "$OWN" "$PF53" 2>/dev/null | tr -d ' '):$(jq -r 'keys | map(select(test("owner"))) | length' "$PF53" 2>/dev/null)" "0:0"
+check "Z-F2d nothing written into the lane, nothing spawned" "$([ -e "$AF53" ] && echo written || echo none):$(( $(claude_calls) - n2 ))" "none:0"
+J="$(bash "$S" lane-status "$RF5" --json 2>/dev/null)"
+check "Z-F2e lane-status shows the lane as answer_pending" "$(jq -r '.lanes[] | select(.lane == "L3") | .state' <<<"$J")" answer_pending
+out="$(run lane-status "$RF5")"
+has "Z-F2f … plain view names the delivery form" "$out" "L3  answer_pending"
+check "Z-F2g lane-status (observation) delivered nothing, spawned nothing" "$([ -e "$AF53" ] && echo written || echo none):$(( $(claude_calls) - n2 ))" "none:0"
+out="$(LOOMWRIGHT_LANE_RECHECK_S=0 run lane-answer "$L53" --deliver-pending)"; rc=$?
+check "Z-F2h a pending file with NO current-session owner command is NOT delivered (BLOCKED, exit 3)" "$rc:$(printf '%s\n' "$out" | head -1)" "3:lane-launch: BLOCKED — L3 — no owner-invoked command — need the owner"
+check "Z-F2i … nothing written into the lane, nothing spawned, the answer still pending" \
+  "$([ -e "$AF53" ] && echo written || echo none):$(( $(claude_calls) - n2 )):$([ -s "$PF53" ] && echo kept || echo gone)" "none:0:kept"
+out="$(STUB_LOAD=busy run lane-answer "$L53" --deliver-pending --owner-command "/automate --resume $PARENT5")"; rc=$?
+check "Z-F2j still busy at delivery ⇒ HELD again, pending kept" "$rc:$([ -s "$PF53" ] && echo kept || echo gone):$([ -e "$AF53" ] && echo written || echo none)" "4:kept:none"
+out="$(LOOMWRIGHT_LANE_RECHECK_S=0 run lane-answer "$L53" --deliver-pending --owner-command "/automate --resume $PARENT5")"; rc=$?
+check "Z-F2k the delivery form under the poll's owner command delivers (exit 0)" "$rc:$(( $(claude_calls) - n2 ))" "0:1"
+check "Z-F2l … the answer file carries the stored labels and note" "$(jq -c '[.answers["Which color?"], .answers["Which extras?"], .note]' "$AF53" 2>/dev/null)" '["Red","A,B","small diff"]'
+check "Z-F2m … the pending file is gone" "$([ -e "$PF53" ] && echo kept || echo gone)" gone
+has "Z-F2n … and resumes the deferred session" "$(grep '^ARGS' "$STUB_LOG" | tail -1)" "[--resume] [sess-z2]"
+wait_gone "$L53"
+# a planted pending file (any process that can write the primary's .supervisor/automate/) is re-checked
+run lane-create "$RF5" reqs/b.md 4 >/dev/null; L54="$LR5/L4"; zq "$L54" toolu_z3 sess-z3
+PF54="$P/.supervisor/automate/$PARENT5.L4.answer-pending.json"; n2="$(claude_calls)"
+printf '{"lane":"L4","tool_use_id":"toolu_z3","answers":{"0":"Purple","1":"A"},"note":null,"via":"x"}\n' > "$PF54"
+out="$(LOOMWRIGHT_LANE_RECHECK_S=0 run lane-answer "$L54" --deliver-pending --owner-command "$OWN")"; rc=$?
+check "Z-F2o a stored answer that is not one of the question's labels is refused" "$rc:$(printf '%s' "$out" | grep -c 'no longer matches' | tr -d ' ')" "1:1"
+check "Z-F2p … nothing written into the lane, nothing spawned, the stale file discarded" \
+  "$([ -e "$L54/.supervisor/inbox/answers/toolu_z3.json" ] && echo written || echo none):$(( $(claude_calls) - n2 )):$([ -e "$PF54" ] && echo kept || echo gone)" "none:0:gone"
+printf '{"lane":"L4","tool_use_id":"toolu_zz","answers":{"0":"Red","1":"A"},"note":null,"via":"x"}\n' > "$PF54"
+out="$(LOOMWRIGHT_LANE_RECHECK_S=0 run lane-answer "$L54" --deliver-pending --owner-command "$OWN")"; rc=$?
+check "Z-F2q a stored answer for a tool_use_id the lane is not deferred on is refused" "$rc:$([ -e "$L54/.supervisor/inbox/answers/toolu_zz.json" ] && echo written || echo none):$(( $(claude_calls) - n2 ))" "1:none:0"
+
 hasnt "Z1 gh never called" "$(cat "$GH_CALLS" 2>/dev/null)" "gh"
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

@@ -642,29 +642,28 @@ lanes_relay_hook() {
 
 # ==================================================================================================
 # lane-answer <lane_dir> <tool_use_id> --owner-command '<cmd>' [--via <client>]  (stdin: answers JSON)
-lanes_answer() {
-  local dir="" id="" owner="" via=cli
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --owner-command) _lanes_need "$#" lane-answer "$1"; owner="$2"; shift 2 ;;
-      --via) _lanes_need "$#" lane-answer "$1"; via="${2:-cli}"; shift 2 ;;
-      *) if [ -z "$dir" ]; then dir="$1"; elif [ -z "$id" ]; then id="$1"; else die "lane-answer: unexpected argument '$1'"; fi; shift ;;
-    esac
-  done
-  _lane_ctx "$dir" || die "lane-answer: not a lane: ${dir:-<none>}"
-  case "$id" in ''|*[!A-Za-z0-9_-]*) die "lane-answer: bad tool_use_id '$id'" ;; esac
-  local qf="$LN_INBOX/questions/$id.json" af="$LN_INBOX/answers/$id.json" last in out rc
-  [ -s "$qf" ] || die "lane-answer: refused — no recorded question $id"
-  [ -e "$af" ] && die "lane-answer: refused — $id already answered"
-  last="$(_lanes_last_result "$LN_LOG")"
-  [ "$(jq -r '.stop_reason // empty' <<<"$last" 2>/dev/null)" = "tool_deferred" ] || die "lane-answer: refused — $LN_LANE did not park on a question"
-  [ "$(jq -r '.deferred_tool_use.id // empty' <<<"$last" 2>/dev/null)" = "$id" ] || die "lane-answer: refused — $LN_LANE is parked on another question"
-  in="$(cat)"
-  jq -e 'type == "object"' >/dev/null 2>&1 <<<"$in" || die "lane-answer: refused — answers are not a JSON object"
-  # multiSelect: the whole answer equal to one label is that label; otherwise every way of cutting the
-  # answer at its commas into known labels is tried (a label may itself contain a comma) — exactly
-  # one cut ⇒ accepted; none ⇒ unknown label (refuses the whole answer); more than one ⇒ ambiguous.
-  out="$(jq -c --argjson in "$in" '
+# lane-answer <lane_dir> --deliver-pending --owner-command '<cmd>'
+#
+# A HELD answer is never lost (parallel-automate/23 F2): when admission holds the resume (exit 4), the
+# VALIDATED answers, the note and `via` — never an owner command — are kept coordinator-side in
+# <primary>/.supervisor/automate/<parent_run_id>.<lane>.answer-pending.json and nothing is written
+# into the lane. lane-status only SHOWS that lane as `answer_pending`. Delivery is the second form,
+# run by the coordinator's `/automate --resume <run_id>` poll with the command the owner typed in
+# THAT session: it re-runs the full _lanes_gate (authority, liveness, regime, admission) and re-checks
+# the stored answers against the recorded question's labels AND the lane's still-deferred tool_use_id
+# (a mismatch refuses and discards the pending file). Honest limit: the re-check proves the stored
+# answer is a VALID label for the question still pending — not that the owner chose it. That is the
+# same trust level as the lane inbox's answer file relay-hook reads; the pending file is not
+# owner-authenticated, which is why it can never carry, or stand in for, an owner command.
+_lanes_pending_file() { printf '%s' "$LN_PRIMARY/.supervisor/automate/$LN_PARENT.$LN_LANE.answer-pending.json"; }
+
+# _lanes_validate_answers <question_file> <input JSON> — prints {<question>: "<label[,label…]>"} or
+# fails with the refusal text: exactly the question's own option labels (multiSelect: comma-joined,
+# every way of cutting the answer at its commas into known labels is tried — a label may itself
+# contain a comma — exactly one cut ⇒ accepted; none ⇒ unknown label, refusing the whole answer;
+# more than one ⇒ ambiguous).
+_lanes_validate_answers() {
+  jq -c --argjson in "$2" '
     def cuts($labels): if length == 0 then [[]] else
       [range(1; length + 1) as $k | (.[0:$k] | join(",") | sub("^ +"; "") | sub(" +$"; "")) as $h
         | select(any($labels[]; . == $h)) | (.[$k:] | cuts($labels))[] | [$h] + .] end;
@@ -682,25 +681,110 @@ lanes_answer() {
         | if ($parts | length) == 0 or any($parts[]; . as $p | ($labels | index($p)) == null)
           then error("question \($i + 1): \"\($a)\" is not one of its options\(if $qs[$i].multiSelect == true then " (multiSelect: comma-joined labels)" else "" end)")
           else . end
-        | . + {($qs[$i].question): ($parts | join(","))})' "$qf" 2>&1)" \
-    || die "lane-answer: refused — $(sed -E 's/^jq: error \(at [^)]*\): //' <<<"$out")"
-  local sid; sid="$(jq -r '.session_id // empty' <<<"$last")"; [ -n "$sid" ] || sid="$(_lanes_session_id)"
-  [ -n "$sid" ] || die "lane-answer: refused — no session id to resume"
-  # authority + admission BEFORE the answer is recorded, so a HELD resume leaves nothing half-written;
-  # under the launch lock, so an overlapping answer for the same question sees it answered / running.
-  _lanes_launch_lock || die "lane-answer: refused — $LN_LANE — launch lock busy (another launch of this lane is in flight)"
-  if [ -e "$af" ]; then _lanes_launch_unlock; die "lane-answer: refused — $id already answered"; fi
-  _lanes_gate "$owner"; rc=$?; [ "$rc" = 0 ] || { _lanes_launch_unlock; return "$rc"; }
-  local note; note="$(jq -r '.note // ""' <<<"$in")"
+        | . + {($qs[$i].question): ($parts | join(","))})' "$1" 2>&1
+}
+
+# _lanes_answer_parked <tool_use_id> — 0 when the lane's last result parked on exactly that deferred
+# question (prints it), else prints the refusal reason and returns 1.
+_lanes_answer_parked() {
+  local last; last="$(_lanes_last_result "$LN_LOG")"
+  [ "$(jq -r '.stop_reason // empty' <<<"$last" 2>/dev/null)" = "tool_deferred" ] || { echo "$LN_LANE did not park on a question"; return 1; }
+  [ "$(jq -r '.deferred_tool_use.id // empty' <<<"$last" 2>/dev/null)" = "$1" ] || { echo "$LN_LANE is parked on another question"; return 1; }
+  printf '%s' "$last"
+}
+
+# _lanes_answer_write_resume <id> <validated> <note> <via> <sid> — caller holds the launch lock and
+# passed _lanes_gate: writes the lane's answer file, drops any pending copy, resumes the session.
+_lanes_answer_write_resume() {
+  local id="$1" out="$2" note="$3" via="$4" sid="$5" af="$LN_INBOX/answers/$1.json" rc
   if ! { jq -n --argjson a "$out" --arg note "$note" --arg via "$via" --arg at "$(now_utc)" \
       '{answers: $a, note: (if $note == "" then null else $note end), source: "human", via: $via, at: $at}' > "$af.tmp.$$" \
       && mv "$af.tmp.$$" "$af"; }; then
     rm -f "$af.tmp.$$"; _lanes_launch_unlock; die "lane-answer: cannot write the answer file"
   fi
+  rm -f "$(_lanes_pending_file)"
   [ -n "$note" ] && echo "lane-answer: note recorded and delivered to the lane as an annotation (never the decision)"
   _lanes_spawn "" "$sid" "(resume after answer $id via $via)"; rc=$?
   _lanes_launch_unlock
   return "$rc"
+}
+
+lanes_answer() {
+  local dir="" id="" owner="" via=cli deliver=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --owner-command) _lanes_need "$#" lane-answer "$1"; owner="$2"; shift 2 ;;
+      --via) _lanes_need "$#" lane-answer "$1"; via="${2:-cli}"; shift 2 ;;
+      --deliver-pending) deliver=1; shift ;;
+      *) if [ -z "$dir" ]; then dir="$1"; elif [ -z "$id" ]; then id="$1"; else die "lane-answer: unexpected argument '$1'"; fi; shift ;;
+    esac
+  done
+  _lane_ctx "$dir" || die "lane-answer: not a lane: ${dir:-<none>}"
+  if [ "$deliver" = 1 ]; then
+    [ -z "$id" ] || die "lane-answer: --deliver-pending takes no tool_use_id (it delivers the stored one)"
+    _lanes_deliver_pending "$owner"; return $?
+  fi
+  case "$id" in ''|*[!A-Za-z0-9_-]*) die "lane-answer: bad tool_use_id '$id'" ;; esac
+  local qf="$LN_INBOX/questions/$id.json" af="$LN_INBOX/answers/$id.json" last in out rc pf
+  [ -s "$qf" ] || die "lane-answer: refused — no recorded question $id"
+  [ -e "$af" ] && die "lane-answer: refused — $id already answered"
+  last="$(_lanes_answer_parked "$id")" || die "lane-answer: refused — $last"
+  in="$(cat)"
+  jq -e 'type == "object"' >/dev/null 2>&1 <<<"$in" || die "lane-answer: refused — answers are not a JSON object"
+  out="$(_lanes_validate_answers "$qf" "$in")" || die "lane-answer: refused — $(sed -E 's/^jq: error \(at [^)]*\): //' <<<"$out")"
+  local sid; sid="$(jq -r '.session_id // empty' <<<"$last")"; [ -n "$sid" ] || sid="$(_lanes_session_id)"
+  [ -n "$sid" ] || die "lane-answer: refused — no session id to resume"
+  local note; note="$(jq -r '.note // ""' <<<"$in")"
+  # authority + admission BEFORE the answer is written into the lane, so a refused resume leaves
+  # nothing half-written there; under the launch lock, so an overlapping answer sees it answered.
+  _lanes_launch_lock || die "lane-answer: refused — $LN_LANE — launch lock busy (another launch of this lane is in flight)"
+  if [ -e "$af" ]; then _lanes_launch_unlock; die "lane-answer: refused — $id already answered"; fi
+  _lanes_gate "$owner"; rc=$?
+  if [ "$rc" = 4 ]; then
+    # HELD (admission): keep the VALIDATED answer coordinator-side — never the owner command.
+    pf="$(_lanes_pending_file)"
+    if jq -n -c --arg lane "$LN_LANE" --arg id "$id" --argjson a "$(jq -c '.answers' <<<"$in")" --arg note "$note" \
+        --arg via "$via" --arg at "$(now_utc)" \
+        '{schema_version: 1, lane: $lane, tool_use_id: $id, answers: $a, note: (if $note == "" then null else $note end), via: $via, held_at: $at}' \
+        > "$pf.tmp.$$" 2>/dev/null && mv "$pf.tmp.$$" "$pf"; then
+      echo "lane-answer: answer kept pending ($(basename "$pf")) — $LN_LANE reads answer_pending; the next /automate --resume poll delivers it (lane-answer <lane_dir> --deliver-pending --owner-command '<cmd>')"
+    else
+      rm -f "$pf.tmp.$$"; echo "lane-answer: answer NOT kept — cannot write $(basename "$pf"); re-send it at the next poll"
+    fi
+    _lanes_launch_unlock; return 4
+  fi
+  [ "$rc" = 0 ] || { _lanes_launch_unlock; return "$rc"; }
+  _lanes_answer_write_resume "$id" "$out" "$note" "$via" "$sid"
+}
+
+# _lanes_deliver_pending <owner_cmd> — the delivery form (see lanes_answer). Nothing is written into
+# the lane before every re-check and the full _lanes_gate pass.
+_lanes_deliver_pending() {
+  local owner="$1" pf id qf af last in out sid note via rc
+  pf="$(_lanes_pending_file)"
+  [ -s "$pf" ] || die "lane-answer: refused — no pending answer for $LN_LANE ($(basename "$pf"))"
+  _discard() { rm -f "$pf"; die "lane-answer: refused — the pending answer for $LN_LANE no longer matches ($1); discarded — the question is shown again"; }
+  id="$(jq -r '.tool_use_id // empty' "$pf" 2>/dev/null)"
+  case "$id" in ''|*[!A-Za-z0-9_-]*) _discard "bad tool_use_id" ;; esac
+  [ "$(jq -r '.lane // empty' "$pf" 2>/dev/null)" = "$LN_LANE" ] || _discard "recorded for another lane"
+  qf="$LN_INBOX/questions/$id.json"; af="$LN_INBOX/answers/$id.json"
+  [ -s "$qf" ] || _discard "no recorded question $id"
+  [ -e "$af" ] && _discard "$id already answered"
+  last="$(_lanes_answer_parked "$id")" || _discard "$last"
+  in="$(jq -c '{answers: .answers, note: .note}' "$pf" 2>/dev/null)" || _discard "pending file unreadable"
+  out="$(_lanes_validate_answers "$qf" "$in")" || _discard "$(sed -E 's/^jq: error \(at [^)]*\): //' <<<"$out")"
+  note="$(jq -r '.note // ""' <<<"$in")"; via="$(jq -r '.via // "cli"' "$pf")"
+  sid="$(jq -r '.session_id // empty' <<<"$last")"; [ -n "$sid" ] || sid="$(_lanes_session_id)"
+  [ -n "$sid" ] || die "lane-answer: refused — no session id to resume"
+  _lanes_launch_lock || die "lane-answer: refused — $LN_LANE — launch lock busy (another launch of this lane is in flight)"
+  if [ -e "$af" ]; then _lanes_launch_unlock; _discard "$id already answered"; fi
+  _lanes_gate "$owner"; rc=$?
+  if [ "$rc" != 0 ]; then
+    _lanes_launch_unlock
+    echo "lane-answer: pending answer kept for $LN_LANE — not delivered"
+    return "$rc"
+  fi
+  _lanes_answer_write_resume "$id" "$out" "$note" "$via (delivered pending)" "$sid"
 }
 
 # ==================================================================================================
@@ -1103,7 +1187,8 @@ _lanes_state_of() {
   tab="$(printf '\t')"
   IFS="$tab" read -r lane path item run pid st sid ts llu why <<<"$(awk -F'\t' -v l="$1" '$1 == l' "$LN_TABLE" 2>/dev/null | tail -1)"
   [ -n "$lane" ] || { printf 'unknown'; return 0; }
-  s="$(_lanes_lane_json "$lane" "$path" "$item" "$run" "$pid" "$st" "$sid" "$ts" "$llu" "${why:--}" "$(date -u +%s)" "" 2>/dev/null | jq -r '.state // empty' 2>/dev/null)"
+  s="$(_lanes_lane_json "$lane" "$path" "$item" "$run" "$pid" "$st" "$sid" "$ts" "$llu" "${why:--}" "$(date -u +%s)" "" \
+    "$LN_PRIMARY/.supervisor/automate/$LN_PARENT.$lane.answer-pending.json" 2>/dev/null | jq -r '.state // empty' 2>/dev/null)"
   printf '%s' "${s:-unknown}"
 }
 
@@ -1134,12 +1219,14 @@ _lanes_resolve() {
   esac
 }
 
-# _lanes_lane_json <10 lane-table columns> <now_epoch> <ci_json> — one lane's status object.
-# Classification order (first match wins): removed/abandoned · blocked_launch · held_for_load · created
-# · missing · running (lanes_proc_alive) · awaiting_input · parked (merged / gone after reconcile) ·
-# lost_to_reset (boot later than the last launch) · died (.died marker) · stalled.
+# _lanes_lane_json <10 lane-table columns> <now_epoch> <ci_json> [<answer-pending file>] — one lane's
+# status object. Classification order (first match wins): removed/abandoned · answer_pending (a HELD
+# answer kept coordinator-side for a question the lane still holds, the process not running — shown,
+# never delivered here) · blocked_launch · held_for_load · created · missing · running
+# (lanes_proc_alive) · awaiting_input · parked (merged / gone after reconcile) · lost_to_reset (boot
+# later than the last launch) · died (.died marker) · stalled.
 _lanes_lane_json() {
-  local lane="$1" path="$2" item="$3" run="$4" pid="$5" st="$6" sid="$7" ts="$8" llu="$9" why="${10}" now="${11}" ci="${12}"
+  local lane="$1" path="$2" item="$3" run="$4" pid="$5" st="$6" sid="$7" ts="$8" llu="$9" why="${10}" now="${11}" ci="${12}" apf="${13:-}"
   local root log died rf status pause pr lp pd state reason="" held="" qs nq pk prs="" le be rdf rds="" rdsum="" lm la cij
   root="$(dirname "$path")"; log="$root/$lane.stream.log"; died="$root/$lane.died"
   rf="$path/.supervisor/automate/$run.md"
@@ -1154,6 +1241,17 @@ _lanes_lane_json() {
           else {state: "waiting", position: ($w.key + 1), held: $w.value.held} end end' <<<"$ci" 2>/dev/null)" \
       || cij='{"state":"unknown","position":null,"held":null}'
   fi
+  local pend=""
+  if [ -n "$apf" ] && [ -s "$apf" ] && [ "$nq" -gt 0 ]; then
+    pend="$(jq -r '.tool_use_id // empty' "$apf" 2>/dev/null)"
+    [ -n "$pend" ] && jq -e --arg id "$pend" 'any(.[]; .id == $id)' >/dev/null 2>&1 <<<"$qs" || pend=""
+  fi
+  case "$ts" in removed|abandoned) pend="" ;; esac
+  [ -n "$pend" ] && lanes_proc_alive "$pid" "$st" "$path" && pend=""
+  if [ -n "$pend" ]; then
+    state=answer_pending
+    reason="answer to $pend held $(jq -r '.held_at // "?"' "$apf" 2>/dev/null) (last launch state: $ts$(w="$(_lanes_dash "$why")"; [ -n "$w" ] && printf ' — %s' "$w")); the next /automate --resume poll delivers it: lane-answer $path --deliver-pending --owner-command '<cmd>'"
+  else
   case "$ts" in
     removed|abandoned) state="$ts" ;;
     blocked_launch) state=blocked_launch; reason="$(_lanes_dash "$why")" ;;
@@ -1184,6 +1282,7 @@ _lanes_lane_json() {
         state=stalled; reason="process gone, run file not parked, no pending question — resume once with lane-launch --continue"
       fi ;;
   esac
+  fi
   rdf="$path/.supervisor/automate/$run.merge-readiness.md"
   if [ -f "$rdf" ]; then
     rds="$(sed -n 's/^- score: \([0-9]*\/[0-9]*\).*/\1/p' "$rdf" | head -1)"
@@ -1210,7 +1309,8 @@ _lanes_status_doc() {
   local lane path item run pid st sid ts llu why
   while IFS="$tab" read -r lane path item run pid st sid ts llu why; do
     case "$lane" in L[0-9]|L[0-9][0-9]) ;; *) continue ;; esac
-    row="$(_lanes_lane_json "$lane" "$path" "$item" "$run" "$pid" "$st" "$sid" "$ts" "$llu" "${why:--}" "$now" "$ci")" || continue
+    row="$(_lanes_lane_json "$lane" "$path" "$item" "$run" "$pid" "$st" "$sid" "$ts" "$llu" "${why:--}" "$now" "$ci" \
+      "$primary/.supervisor/automate/$parent.$lane.answer-pending.json")" || continue
     lanes="$lanes$row
 "
   done < "$table"
