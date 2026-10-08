@@ -926,6 +926,29 @@ check "Z-F1h … with no lane table too" "$([ "$rc" != 0 ] && echo nonzero || ec
 out="$(run lane-status "$P/.supervisor/automate/absent-run.md" --leaks --snapshot)"; rc=$?
 check "Z-F1i a parent run file that does not exist ⇒ non-zero, named" "$([ "$rc" != 0 ] && echo nonzero || echo zero):$(printf '%s' "$out" | grep -c 'parent run file not found' | tr -d ' ')" "nonzero:1"
 
+# Z-F10 lane-remove --abandon writes no absolute path into the parent run file, and reports the lane's
+# REAL state (lane-status's reader: a parked lane whose PR closed unmerged reads `gone`). progress-append
+# is the real helper; HOME is set to the fixture root so every absolute fixture path is a $HOME path.
+PARENT5=automate-2026-10-08-100000; RF5="$P/.supervisor/automate/$PARENT5.md"; LR5="$T/work/primary-lanes/$PARENT5"
+printf '# Automate Run: %s\n\n## Progress\n' "$PARENT5" > "$RF5"
+cat > "$T/helpers-gone.sh" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in reconcile-item) echo gone ;; *) exec bash "$REAL_HELPERS" "$@" ;; esac
+EOF
+chmod +x "$T/helpers-gone.sh"; export REAL_HELPERS="$HERE/automate-helpers.sh"
+run lane-create "$RF5" reqs/a.md 1 >/dev/null; L51="$LR5/L1"
+LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$L51" --owner-command "$OWN" >/dev/null; wait_gone "$L51"
+printf '# Automate Run: %s-L1\n\n## Current\n- item: reqs/a.md | status: awaiting_merge | pr: https://github.com/o/r/pull/51 | branch: f\n- pause_reason: awaiting_merge\n\n## Progress\n' "$PARENT5" > "$L51/.supervisor/automate/$PARENT5-L1.md"
+check "Z-F10a fixture: lane-status reads the lane gone" \
+  "$(LOOMWRIGHT_LANES_HELPERS="$T/helpers-gone.sh" bash "$S" lane-status "$RF5" --json 2>/dev/null | jq -r '.lanes[] | select(.lane == "L1") | .state')" gone
+out="$(HOME="$T" LOOMWRIGHT_LANES_HELPERS="$T/helpers-gone.sh" run lane-remove "$L51" --abandon)"; rc=$?
+check "Z-F10b lane-remove --abandon removes the gone lane" "$rc:$([ -d "$L51" ] && echo kept || echo removed)" "0:removed"
+ABL="$(grep 'lane abandoned: L1' "$RF5")"
+has "Z-F10c the abandoned line reports the real state (gone, not the table's launched)" "$ABL" "— state gone;"
+has "Z-F10d … and names the salvage in the <primary>-lanes/… form" "$ABL" "salvage kept at <primary>-lanes/$PARENT5/salvage/L1-removed-"
+check "Z-F10e no line in the parent run file contains \$HOME" "$(grep -cF "$T" "$RF5" | tr -d ' ')" 0
+check "Z-F10f no token in the parent run file starts with /" "$(grep -cE '(^|[[:space:]])/' "$RF5" | tr -d ' ')" 0
+
 hasnt "Z1 gh never called" "$(cat "$GH_CALLS" 2>/dev/null)" "gh"
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

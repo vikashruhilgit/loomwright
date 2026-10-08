@@ -706,6 +706,7 @@ _lanes_live_watchers() {
 # _lanes_remove_refusals — every lane-remove refusal that does not depend on process liveness. Runs
 # in lanes_remove's dynamic scope (reads/sets its locals L, abandon, state, rf, q, b, u, mb, ms).
 _lanes_remove_refusals() {
+  rstate="$(_lanes_state_of "$L")"   # the lane's real state, from lane-status's own reader (F10)
   # >>> awaiting-input check
   rf="$LN_DIR/.supervisor/automate/$LN_RUN.md"
   if q="$(_lanes_pending_question "$LN_INBOX")"; then _refuse "awaiting_input — unanswered question $q"; return 1; fi
@@ -755,7 +756,7 @@ lanes_remove() {
     esac
   done
   _lane_ctx "$dir" || die "lane-remove: not a lane: ${dir:-<none>}"
-  local L="$LN_LANE" pid st mp mu q state rf b u mb ms live_pid="" watchers=""
+  local L="$LN_LANE" pid st mp mu q state rstate="" rf b u mb ms live_pid="" watchers=""
   _refuse() { echo "lane-remove: refused — $L — $1"; return 1; }
   # >>> live-process check
   pid="$(_lt_get "$LN_TABLE" "$L" 5)"; st="$(_lt_get "$LN_TABLE" "$L" 6)"
@@ -788,8 +789,10 @@ lanes_remove() {
   rm -rf "$LN_DIR" || { echo "lane-remove: could not remove $LN_DIR" >&2; return 1; }
   _lt_set "$LN_TABLE" "$L" 8 "$([ "$abandon" = 1 ] && echo abandoned || echo removed)"
   if [ "$abandon" = 1 ]; then
+    # A run-file line never carries an absolute path (the branch-mode trail push scrubs home paths and
+    # would fail the parent's push — F10): the salvage is named in the `<primary>-lanes/…` form.
     bash "$HELPERS" progress-append "$LN_PRIMARY/.supervisor/automate/$LN_PARENT.md" \
-      "lane abandoned: $L ($LN_RUN) — state ${state:-unknown}; salvaged to $sv" >/dev/null 2>&1 || true
+      "lane abandoned: $L ($LN_RUN) — state ${rstate:-unknown}; salvage kept at <primary>-lanes/$LN_PARENT/salvage/${sv##*/}" >/dev/null 2>&1 || true
   fi
   echo "lane-remove: removed $L ($LN_DIR); salvage $sv"
 }
@@ -1066,6 +1069,17 @@ _lanes_table_for() {
   t="$(ls -t "$top"/.supervisor/automate/*.lanes 2>/dev/null | head -1)"
   [ -n "$t" ] && [ -f "$t" ] && { printf '%s' "$t"; return 0; }
   return 1
+}
+
+# _lanes_state_of <lane> — that lane's `state` exactly as lane-status reports it (_lanes_lane_json over
+# its lane-table row, LN_TABLE); `unknown` when the row or the reader is unreadable.
+_lanes_state_of() {
+  local tab lane path item run pid st sid ts llu why s
+  tab="$(printf '\t')"
+  IFS="$tab" read -r lane path item run pid st sid ts llu why <<<"$(awk -F'\t' -v l="$1" '$1 == l' "$LN_TABLE" 2>/dev/null | tail -1)"
+  [ -n "$lane" ] || { printf 'unknown'; return 0; }
+  s="$(_lanes_lane_json "$lane" "$path" "$item" "$run" "$pid" "$st" "$sid" "$ts" "$llu" "${why:--}" "$(date -u +%s)" "" 2>/dev/null | jq -r '.state // empty' 2>/dev/null)"
+  printf '%s' "${s:-unknown}"
 }
 
 # _lanes_parent_of <parent_runfile> — sets LP_PARENT / LP_PRIMARY from a parent run file at
