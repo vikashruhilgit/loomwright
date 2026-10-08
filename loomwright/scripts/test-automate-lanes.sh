@@ -54,7 +54,11 @@ if [ "${1:-}" = "--help" ]; then
 fi
 { printf 'ARGS'; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\n'
   printf 'ENV CEIL=%s CC=%s PID=%s\n' "${CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS-unset}" "${CLAUDECODE-unset}" "${CLAUDE_PID-unset}"
-  printf 'STDIN %s\n' "$(cat)"; printf 'CWD %s\n' "$PWD"; } >> "$STUB_LOG"
+  printf 'STDIN %s\n' "$(cat)"; printf 'CWD %s\n' "$PWD"
+  printf 'RESUMEPATH %s\n' "${LOOMWRIGHT_LANE_RESUME_PATH-unset}"; } >> "$STUB_LOG"
+if [ -n "${STUB_RESUME_FAIL:-}" ]; then
+  for a in "$@"; do [ "$a" = --resume ] && { echo "No conversation found with session ID" >&2; exit 1; }; done
+fi
 echo '{"type":"system","subtype":"init","session_id":"sess-123"}'
 case "${STUB_MODE:-ok}" in
   sleep) trap 'kill $! 2>/dev/null; exit 143' TERM; sleep 60 & wait $! ;;
@@ -948,6 +952,30 @@ has "Z-F10c the abandoned line reports the real state (gone, not the table's lau
 has "Z-F10d … and names the salvage in the <primary>-lanes/… form" "$ABL" "salvage kept at <primary>-lanes/$PARENT5/salvage/L1-removed-"
 check "Z-F10e no line in the parent run file contains \$HOME" "$(grep -cF "$T" "$RF5" | tr -d ' ')" 0
 check "Z-F10f no token in the parent run file starts with /" "$(grep -cE '(^|[[:space:]])/' "$RF5" | tr -d ' ')" 0
+
+# Z-F4 a lane that died after its PICK resumes in its LAST session (its run.lock is session-id
+# re-entrant), never a fresh one that waits out the dead session's lock; fresh only as the fallback
+run lane-create "$RF5" reqs/b.md 2 >/dev/null; L52="$LR5/L2"
+STUB_MODE=die LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$L52" --owner-command "$OWN" >/dev/null; wait_gone "$L52"
+printf '# Automate Run: %s-L2\n\n## Progress\n- picked reqs/b.md\n' "$PARENT5" > "$L52/.supervisor/automate/$PARENT5-L2.md"
+check "Z-F4a fixture: the lane reads died with a recorded session" \
+  "$(bash "$S" lane-status "$RF5" --json 2>/dev/null | jq -r '.lanes[] | select(.lane == "L2") | .state + " " + .session_id')" "died sess-123"
+SUM52="$(lane_sum "$L52")"; n4="$(claude_calls)"
+out="$(LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$L52" --owner-command "/automate --resume $PARENT5" --resume-run "$PARENT5-L2")"; rc=$?
+wait_gone "$L52"
+check "Z-F4b --resume-run launches once (exit 0)" "$rc:$(( $(claude_calls) - n4 ))" "0:1"
+has "Z-F4c … resuming the lane's last session (the run lock's re-entrant path)" "$(grep '^ARGS' "$STUB_LOG" | tail -1)" "[--resume] [sess-123]"
+has "Z-F4d … with the lane's own resume command" "$(grep '^STDIN' "$STUB_LOG" | tail -1)" "/loomwright:automate --resume $PARENT5-L2"
+check "Z-F4e … telling the lane which path it is on (it records it in ## Progress itself)" "$(grep '^RESUMEPATH' "$STUB_LOG" | tail -1)" "RESUMEPATH session sess-123"
+check "Z-F4f the coordinator wrote nothing into the lane (run file, lock)" "$(lane_sum "$L52")" "$SUM52"
+n4="$(claude_calls)"
+out="$(STUB_RESUME_FAIL=1 LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$L52" --owner-command "/automate --resume $PARENT5" --resume-run "$PARENT5-L2")"; rc=$?
+wait_gone "$L52"
+check "Z-F4g an unresumable session falls back to ONE fresh session (two spawns)" "$rc:$(( $(claude_calls) - n4 ))" "0:2"
+has "Z-F4h … saying so" "$out" "could not be resumed"
+hasnt "Z-F4i … the fallback carries no --resume" "$(grep '^ARGS' "$STUB_LOG" | tail -1)" "[--resume]"
+check "Z-F4j … and tells the lane it is on the fresh path" "$(grep '^RESUMEPATH' "$STUB_LOG" | tail -1)" "RESUMEPATH fresh session (last session sess-123 not resumable)"
+has "Z-F4k a normal launch carries an empty resume path" "$(grep '^RESUMEPATH' "$STUB_LOG" | head -1)" "RESUMEPATH "
 
 hasnt "Z1 gh never called" "$(cat "$GH_CALLS" 2>/dev/null)" "gh"
 echo "passed: $PASS  failed: $FAIL"

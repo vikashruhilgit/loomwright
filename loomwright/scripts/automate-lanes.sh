@@ -448,6 +448,10 @@ _lanes_gate() {
 }
 
 # _lanes_spawn <prompt|''> <session_id|''> <label> — the detached nohup wrapper around `claude -p`.
+# Sets LN_SPAWN_PID and LN_SPAWN_SID (the `system/init` session id, '' when none appeared). The env
+# carries LOOMWRIGHT_LANE_RESUME_PATH = LN_RESUME_PATH (set only by a `--resume-run` launch; empty
+# otherwise) — how the lane's own engine learns which resume path it is on (§14 INIT).
+LN_RESUME_PATH=""; LN_SPAWN_PID=""; LN_SPAWN_SID=""
 _lanes_spawn() {
   local prompt="$1" sid="$2" label="$3" base disallow in pid st off i s=""
   base="$(git -C "$LN_DIR" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)"; base="${base#origin/}"; [ -n "$base" ] || base=main
@@ -466,8 +470,9 @@ _lanes_spawn() {
   off="$(wc -c < "$LN_LOG" | tr -d ' ')"
   # >>> spawn (the only process start; it writes nothing into the lane directory)
   nohup bash "$SELF" _lane-run "$LN_DIR" "$LN_LOG" "$LN_DIED" "$in" -- \
-    env -u CLAUDECODE -u CLAUDE_PID CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 claude "${flags[@]}" >> "$LN_LOG" 2>&1 &
-  pid=$!
+    env -u CLAUDECODE -u CLAUDE_PID CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 \
+    LOOMWRIGHT_LANE_RESUME_PATH="${LN_RESUME_PATH:-}" claude "${flags[@]}" >> "$LN_LOG" 2>&1 &
+  pid=$!; LN_SPAWN_PID="$pid"; LN_SPAWN_SID=""
   # <<< spawn
   st="$(ps -o lstart= -p "$pid" 2>/dev/null | _trim_ws)"
   _lt_set "$LN_TABLE" "$LN_LANE" 5 "$pid" 6 "$st" 8 launched 9 "$(now_utc)" 10 -
@@ -485,6 +490,7 @@ _lanes_spawn() {
     sleep 0.2; i=$((i + 1))
   done
   [ -n "$s" ] && _lt_set "$LN_TABLE" "$LN_LANE" 7 "$s"
+  LN_SPAWN_SID="$s"
   echo "lane-launch: launched $LN_LANE (pid $pid, session ${s:-unknown}) $label"
 }
 
@@ -535,7 +541,26 @@ _lanes_launch_go() {
   if [ -n "$resume_run" ]; then
     [ "$resume_run" = "$LN_RUN" ] || { echo "lane-launch: refused — $LN_LANE resumes only its own run ($LN_RUN), not '$resume_run'"; return 1; }
     [ -f "$LN_DIR/.supervisor/automate/$LN_RUN.md" ] || { echo "lane-launch: refused — no run file $LN_RUN.md in $LN_LANE"; return 1; }
-    _lanes_spawn "/loomwright:automate --resume $LN_RUN" "" "(resume $LN_RUN)"
+    # F4: resume the lane's LAST session, so its own run.lock (session-id re-entrant) never stalls the
+    # resume of a lane that died after its PICK took the lock. A fresh session is the fallback only
+    # when no session is recorded, or the resume of it exited at once with no session (`claude
+    # --resume` refused it). The coordinator never writes the lane's run file or lock: the lane's
+    # engine records the path from LOOMWRIGHT_LANE_RESUME_PATH on entry.
+    local rsid; rsid="$(_lanes_session_id)"
+    if [ -n "$rsid" ]; then
+      LN_RESUME_PATH="session $rsid"
+      _lanes_spawn "/loomwright:automate --resume $LN_RUN" "$rsid" "(resume $LN_RUN in its last session $rsid)" || return 1
+      if [ -n "$LN_SPAWN_SID" ] || kill -0 "$LN_SPAWN_PID" 2>/dev/null; then return 0; fi
+      echo "lane-launch: $LN_LANE — session $rsid could not be resumed (exited with no session); falling back to a fresh session"
+      _lanes_launch_lock || { echo "lane-launch: refused — $LN_LANE — launch lock busy (another launch of this lane is in flight)"; return 1; }
+      if lanes_proc_alive "$(_lt_get "$LN_TABLE" "$LN_LANE" 5)" "$(_lt_get "$LN_TABLE" "$LN_LANE" 6)" "$LN_DIR"; then
+        echo "lane-launch: refused — $LN_LANE — already running (pid $(_lt_get "$LN_TABLE" "$LN_LANE" 5))"; return 1
+      fi
+      LN_RESUME_PATH="fresh session (last session $rsid not resumable)"
+    else
+      LN_RESUME_PATH="fresh session (no recorded session)"
+    fi
+    _lanes_spawn "/loomwright:automate --resume $LN_RUN" "" "(resume $LN_RUN in a fresh session)"
   elif [ "$cont" = 1 ]; then
     local sid; sid="$(_lanes_session_id)"
     [ -n "$sid" ] || { echo "lane-launch: refused — $LN_LANE has no recorded session to continue"; return 1; }
