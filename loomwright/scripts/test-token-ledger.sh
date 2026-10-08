@@ -78,10 +78,19 @@
 #      24c read-token-ledger.sh sums it into a non-zero TOTAL
 #      24d a resumed agent (same agent_id, transcript grown) counts only the
 #          new ids at its next stop — earlier messages are not counted again
-#      24e a repeat stop with no new message counts 0 (no double count)
+#      24e a repeat stop with no new message appends NOTHING (no double count,
+#          no empty event)
 #      24f an agent transcript with no usage lines still writes the proxy line
 #      24g transcript_path alone (the main thread) is never summed — proxy line
 #      24h non-numeric usage values count 0; malformed lines are skipped
+#      24i the watermark is a POSITION: a transcript whose newest line has no
+#          message.id still records one (the last id + the id-less lines after
+#          it), so a resume counts neither the earlier ids nor that id-less line
+#          again — and a transcript with NO id at all resumes by position too
+#      24j N CONCURRENT firings of one transcript completion, each with a
+#          DIFFERENT ts (so the byte-identity guard cannot collapse them), sum the
+#          transcript exactly once in exactly one line — the watermark is read
+#          inside the same critical section as the append — and leave no lock
 
 # EXIT: 0 on full pass, 1 on any failed assertion.
 # Style mirrors test-insights.sh / test-send-telemetry-core.sh.
@@ -1406,8 +1415,8 @@ assert_eq "case24d … so the reader's TOTAL is the transcript's true sum, nothi
   "$(bash "$SCRIPT_DIR/read-token-ledger.sh" --session "$TU_SID" --root "$SANDBOX" | grep -oE 'TOTAL=[0-9]+')"
 sleep 1   # a different ts, so the repeat below is not removed by the adjacent byte-identity guard
 run_sut "$TU_PAYLOAD" >/dev/null
-assert_eq "case24e a repeat stop with no new message counts 0 — the total is unchanged" "0 0 TOTAL=1112" \
-  "$(tail -1 "$TU_LOG" | jq -r '"\(.output_tokens) \(.usage_messages)"') $(bash "$SCRIPT_DIR/read-token-ledger.sh" --session "$TU_SID" --root "$SANDBOX" | grep -oE 'TOTAL=[0-9]+')"
+assert_eq "case24e a repeat stop with no new message appends nothing — same line count, same total" "2 TOTAL=1112" \
+  "$(wc -l < "$TU_LOG" | tr -d ' ') $(bash "$SCRIPT_DIR/read-token-ledger.sh" --session "$TU_SID" --root "$SANDBOX" | grep -oE 'TOTAL=[0-9]+')"
 # 24f: an agent transcript with no usage lines → the existing proxy line.
 NU_SID="fixture-token-ledger-transcript-nousage-001"; NU_T="$SANDBOX/subagents/agent-nu001.jsonl"
 printf '%s\n' '{"type":"user","message":{"content":"x"}}' '{"type":"assistant","message":{"id":"m","content":[]}}' > "$NU_T"
@@ -1430,6 +1439,57 @@ tu_payload "$NN_T" "$NN_SID" nn001 > "$SANDBOX/nn.json"
 run_sut "$SANDBOX/nn.json" >/dev/null
 assert_eq "case24h non-numeric values count 0, the numeric message still counts" "1 2 0 0 2" \
   "$(tail -1 "$SANDBOX/.supervisor/logs/${NN_SID}.jsonl" | jq -r '"\(.input_tokens) \(.output_tokens) \(.cache_read_input_tokens) \(.cache_creation_input_tokens) \(.usage_messages)"')"
+
+# 24i: the newest transcript line has NO message.id — the watermark must still be a position.
+# m1 (output 100) + one id-less line (1) → stop; resumed, + m2 (7) → stop. True OUTPUT sum: 108.
+AN_SID="fixture-token-ledger-transcript-anon-001"; AN_T="$SANDBOX/subagents/agent-an001.jsonl"
+AN_LOG="$SANDBOX/.supervisor/logs/${AN_SID}.jsonl"
+printf '%s\n' '{"type":"assistant","message":{"id":"m1","stop_reason":"end_turn","usage":{"input_tokens":0,"output_tokens":100,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}' \
+  '{"type":"assistant","message":{"stop_reason":"end_turn","usage":{"input_tokens":0,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}' > "$AN_T"
+tu_payload "$AN_T" "$AN_SID" an001 > "$SANDBOX/an.json"
+run_sut "$SANDBOX/an.json" >/dev/null
+assert_eq "case24i a trailing id-less line still records a watermark: the last id + the id-less lines after it" "101 m1 1" \
+  "$(tail -1 "$AN_LOG" | jq -r '"\(.output_tokens) \(.usage_last_message_id) \(.usage_anon_after)"')"
+printf '%s\n' '{"type":"assistant","message":{"id":"m2","stop_reason":"end_turn","usage":{"input_tokens":0,"output_tokens":7,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}' >> "$AN_T"
+run_sut "$SANDBOX/an.json" >/dev/null
+assert_eq "case24i … so the resume counts m2 only — neither m1 nor the id-less line again (OUTPUT 108, not 209 or 109)" "OUTPUT=108" \
+  "$(bash "$SCRIPT_DIR/read-token-ledger.sh" --session "$AN_SID" --root "$SANDBOX" | grep -oE 'OUTPUT=[0-9]+')"
+# … and a transcript with no message.id at all resumes by position (5, then + 3 → 8, not 13).
+NI_SID="fixture-token-ledger-transcript-noid-001"; NI_T="$SANDBOX/subagents/agent-ni001.jsonl"
+printf '%s\n' '{"type":"assistant","message":{"stop_reason":"end_turn","usage":{"input_tokens":0,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}' > "$NI_T"
+tu_payload "$NI_T" "$NI_SID" ni001 > "$SANDBOX/ni.json"
+run_sut "$SANDBOX/ni.json" >/dev/null
+printf '%s\n' '{"type":"assistant","message":{"stop_reason":"end_turn","usage":{"input_tokens":0,"output_tokens":3,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}' >> "$NI_T"
+run_sut "$SANDBOX/ni.json" >/dev/null
+assert_eq "case24i a transcript with no message.id at all resumes by position too" "OUTPUT=8 EVENTS=2" \
+  "$(bash "$SCRIPT_DIR/read-token-ledger.sh" --session "$NI_SID" --root "$SANDBOX" | grep -oE '(OUTPUT|EVENTS)=[0-9]+' | tr '\n' ' ' | sed 's/ $//')"
+# 24j: N concurrent firings of ONE transcript completion, each seeing a DIFFERENT ts (a `date`
+# shim per firing), so no two lines can be byte-identical — only the watermark read under the
+# lock can keep the transcript from being summed more than once.
+CC_N=6
+CC_SID="fixture-token-ledger-transcript-concurrent-001"; CC_T="$SANDBOX/subagents/agent-cc001.jsonl"
+CC_LOG="$SANDBOX/.supervisor/logs/${CC_SID}.jsonl"
+printf '%s\n' '{"type":"assistant","message":{"id":"c1","stop_reason":"tool_use","usage":{"input_tokens":4,"output_tokens":40,"cache_read_input_tokens":400,"cache_creation_input_tokens":0}}}' \
+  '{"type":"assistant","message":{"id":"c2","stop_reason":"end_turn","usage":{"input_tokens":2,"output_tokens":20,"cache_read_input_tokens":200,"cache_creation_input_tokens":0}}}' > "$CC_T"
+tu_payload "$CC_T" "$CC_SID" cc001 > "$SANDBOX/cc.json"
+cc_i=0
+while [ "$cc_i" -lt "$CC_N" ]; do
+  mkdir -p "$SANDBOX/datebin-$cc_i"
+  printf '#!/bin/sh\necho 2026-01-01T00:00:0%sZ\n' "$cc_i" > "$SANDBOX/datebin-$cc_i/date"
+  chmod +x "$SANDBOX/datebin-$cc_i/date"
+  cc_i=$((cc_i + 1))
+done
+cc_i=0
+while [ "$cc_i" -lt "$CC_N" ]; do
+  ( cd "$SANDBOX" && PATH="$SANDBOX/datebin-$cc_i:$PATH" env -u LOOMWRIGHT_ORIENTATION_SOURCE -u LOOMWRIGHT_SHARED_PREFIX \
+      -u LOOMWRIGHT_ADVISORY_TOTAL_BYTES -u LOOMWRIGHT_AGENT_TYPE bash "$SUT" < "$SANDBOX/cc.json" >/dev/null 2>&1 ) &
+  cc_i=$((cc_i + 1))
+done
+wait
+assert_eq "case24j $CC_N concurrent firings with differing ts sum the transcript exactly ONCE, in ONE line" "INPUT=6 OUTPUT=60 CACHE_READ=600 CACHE_CREATE=0 TOTAL=666 EVENTS=1" \
+  "$(bash "$SCRIPT_DIR/read-token-ledger.sh" --session "$CC_SID" --root "$SANDBOX")"
+if [ -e "$CC_LOG.lock" ]; then no "case24j the lock handed from the python step to the shell is released — $CC_LOG.lock remains"
+else ok "case24j the lock handed from the python step to the shell is released — no .lock left behind"; fi
 
 echo ""
 echo "RESULT  pass=$PASS_COUNT  fail=$FAIL_COUNT"

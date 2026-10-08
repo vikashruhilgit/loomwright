@@ -157,11 +157,16 @@ the id's lines (never the first line), and writes the four TOP-LEVEL integers
 `input_tokens`, `output_tokens`, `cache_read_input_tokens`,
 `cache_creation_input_tokens` (the reader ignores a nested `usage` object; the
 transcript's non-numeric sub-objects are dropped), plus `usage_source`,
-`usage_messages` (ids counted) and `usage_last_message_id`. A **resumed**
-agent's next stop counts only the ids after `usage_last_message_id` of the last
-transcript-sourced line the same `agent_id` wrote to the same log, so earlier
-messages are not counted again (a repeat stop with no new message writes a
-0-count line). Streaming, bounded parse (a transcript over 256 MiB, an
+`usage_messages` (ids counted), `usage_last_message_id` (the last entry WITH a
+`message.id`) and, when id-less lines follow it, `usage_anon_after` (how many).
+Those two are the resume watermark — a POSITION, so a transcript whose newest
+line has no id still records one. A **resumed** agent's next stop counts only
+the entries after the watermark of the last transcript-sourced line the same
+`agent_id` wrote to the same log, so earlier messages are not counted again (a
+repeat stop with no new message writes no line). The watermark read, the count
+and the append are ONE critical section under the per-log lock, so concurrent
+firings of one completion sum its transcript once, in one line, whatever their
+`ts`. Streaming, bounded parse (a transcript over 256 MiB, an
 unreadable one, or one with no usage lines ⇒ the proxy line); the emitter still
 always exits 0. **Honest limits:** output tokens of a message whose final line
 is absent (common in older transcripts) are UNDER-counted (its max placeholder
@@ -220,7 +225,7 @@ by the **plugin** session id (e.g. `supervisor-2026-07-07-fable-parity`). To kee
 | `usage` / `input_tokens` / `output_tokens` / `cache_*` | payload usage present only | Copied from the payload as-is — never invented |
 | `usage_source` | transcript usage only | `"transcript"` — the four top-level integer fields were summed from the agent's own transcript, once per `message.id` (see "Transcript usage" above) |
 | `input_tokens` / `output_tokens` / `cache_read_input_tokens` / `cache_creation_input_tokens` | transcript usage only | Integers — the per-id sum for the messages counted at this stop |
-| `usage_messages`, `usage_last_message_id` | transcript usage only | How many message ids this stop counted, and the last id seen (the resume watermark) |
+| `usage_messages`, `usage_last_message_id`, `usage_anon_after` | transcript usage only | How many entries this stop counted; the last entry with a `message.id`, and the count of id-less entries after it (omitted when 0) — together the resume watermark |
 | `token_proxy_kind` | proxy path only | Closed value today: `"transcript_bytes"` |
 | `token_proxy_transcript_bytes` | proxy path only | Byte size of `agent_transcript_path` (preferred) or `transcript_path` via `os.path.getsize` only |
 | `agent_type`, `agent_id`, `ts` | optional / when present | Identity + UTC ISO timestamp; **omitted when absent** (never the literal `"unknown"`) |
