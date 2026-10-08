@@ -1068,6 +1068,23 @@ _lanes_table_for() {
   return 1
 }
 
+# _lanes_parent_of <parent_runfile> — sets LP_PARENT / LP_PRIMARY from a parent run file at
+# <primary>/.supervisor/automate/<run_id>.md (no lane table needed); returns 1 with LP_WHY otherwise.
+_lanes_parent_of() {
+  local rf="${1:-}" d
+  LP_PARENT=""; LP_PRIMARY=""; LP_WHY=""
+  [ -n "$rf" ] || { LP_WHY="no lane table found and no <parent_runfile> given"; return 1; }
+  case "$rf" in *.md) ;; *) LP_WHY="no lane table for $rf (pass the parent run file)"; return 1 ;; esac
+  [ -f "$rf" ] || { LP_WHY="parent run file not found: $rf"; return 1; }
+  d="$(cd "$(dirname "$rf")" 2>/dev/null && pwd -P)" || { LP_WHY="parent run file directory unreadable: $rf"; return 1; }
+  [ "$(basename "$d")" = automate ] && [ "$(basename "$(dirname "$d")")" = .supervisor ] \
+    || { LP_WHY="parent run file must live in <primary>/.supervisor/automate/: $rf"; return 1; }
+  LP_PARENT="$(basename "$rf" .md)"
+  case "$LP_PARENT" in ''|.*|*-L[0-9]|*-L[0-9][0-9]) LP_WHY="not a parent run file: $rf"; return 1 ;; esac
+  LP_PRIMARY="$(cd "$d/../.." && pwd -P)" || { LP_WHY="primary unreadable for $rf"; return 1; }
+  return 0
+}
+
 # _lanes_resolve <lane_dir|L<n>> — a lane directory (L<n> through the newest lane table).
 _lanes_resolve() {
   case "${1:-}" in
@@ -1268,9 +1285,11 @@ lanes_leaks() {
   local p="$1" parent="$2" snap="${3:-0}" sf tmp sec found="" body="" d
   sf="$p/.supervisor/automate/$parent.leaks-snapshot"
   if [ "$snap" = 1 ]; then
+    # The ONE exception to observation's exit 0: a snapshot request that wrote nothing exits 1 naming
+    # why, because the end-of-wave check against a missing baseline can never read `none`.
     if { echo "# leaks snapshot $(now_utc)"; _lanes_leak_sections "$p" "$parent"; } > "$sf.tmp.$$" 2>/dev/null && mv "$sf.tmp.$$" "$sf"; then
       echo "leaks: snapshot written — $sf"
-    else rm -f "$sf.tmp.$$"; echo "leaks: snapshot not written (unwritable) — $sf"; fi
+    else rm -f "$sf.tmp.$$"; echo "leaks: snapshot not written (unwritable) — $sf"; return 1; fi
     return 0
   fi
   if [ ! -f "$sf" ]; then
@@ -1315,13 +1334,22 @@ lanes_status() {
   if [ "$watch" = 1 ]; then _lanes_watch "$rf"; return 0; fi
   local table parent primary doc tab lane path ts
   if ! table="$(_lanes_table_for "$rf")"; then
+    if [ "$leaks" = 1 ]; then
+      # §14 step 5 takes the wave-start snapshot BEFORE step 6's first lane-create, so no lane table
+      # exists yet: the parent run id and the primary come from <parent_runfile> itself (F1).
+      if ! _lanes_parent_of "$rf"; then
+        if [ "$snap" = 1 ]; then echo "leaks: snapshot not written — $LP_WHY"; return 1; fi
+        echo "leaks: unknown — $LP_WHY"; return 0
+      fi
+      lanes_leaks "$LP_PRIMARY" "$LP_PARENT" "$snap"; return $?
+    fi
     if [ "$json" = 1 ]; then
       jq -n -c --argjson m "$(_lanes_machine_json)" '{schema_version: 1, parent_run_id: null, machine: $m, lanes: []}'
     else echo "lane-status: no lane table (${rf:-none found}) — no lanes"; fi
     return 0
   fi
   parent="$(basename "$table" .lanes)"; primary="$(cd "$(dirname "$table")/../.." && pwd -P)"
-  [ "$leaks" = 1 ] && { lanes_leaks "$primary" "$parent" "$snap"; return 0; }
+  [ "$leaks" = 1 ] && { lanes_leaks "$primary" "$parent" "$snap"; return $?; }
   [ "$res" = 1 ] && { _lanes_resources "$primary" "$parent"; return 0; }
   [ "$tok" = 1 ] && { _lanes_tokens "$table" "$primary" "$parent"; return 0; }
   [ "$ka" = 1 ] && _lanes_keep_awake_start

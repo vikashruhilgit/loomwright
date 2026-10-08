@@ -902,6 +902,30 @@ has "Z-F9f a lane directory left behind is still a leak" "$out" "  + $PARENT4/L3
 has "Z-F9g … and so is any other file in the run directory (exact names only)" "$out" "  + $PARENT4/stray.txt"
 rm -rf "$LR4/L3" "$LR4/stray.txt"
 
+# Z-F1 §14 step 5 (snapshot) runs BEFORE step 6 (first lane-create): no <run_id>.lanes table yet
+PARENT3=automate-2026-10-08-080000; RF3="$P/.supervisor/automate/$PARENT3.md"
+SF3="$P/.supervisor/automate/$PARENT3.leaks-snapshot"
+printf '# Automate Run: %s\n\n## Progress\n' "$PARENT3" > "$RF3"
+check "Z-F1a fixture: no lane table yet" "$([ -e "$P/.supervisor/automate/$PARENT3.lanes" ] && echo table || echo none)" none
+out="$(run lane-status "$RF3" --leaks --snapshot)"; rc=$?
+check "Z-F1b snapshot with no lane table is written (exit 0)" "$rc:$([ -s "$SF3" ] && echo written || echo missing)" "0:written"
+has "Z-F1c … and says so (never a silent 'no lanes')" "$out" "leaks: snapshot written — $SF3"
+hasnt "Z-F1d … no 'no lanes' line" "$out" "no lanes"
+run lane-create "$RF3" reqs/a.md 1 >/dev/null
+check "Z-F1e the snapshot is the baseline the end-of-wave check reads" "$(run lane-status "$RF3" --leaks | head -1 | cut -c1-6)" "leaks:"
+rm -f "$SF3"; chmod 555 "$P/.supervisor/automate"
+out="$(run lane-status "$RF3" --leaks --snapshot)"; rc=$?
+chmod 755 "$P/.supervisor/automate"
+check "Z-F1f an unwritable snapshot exits non-zero (the one fail-SAFE exception)" "$([ "$rc" != 0 ] && echo nonzero || echo zero)" nonzero
+has "Z-F1g … naming why" "$out" "leaks: snapshot not written (unwritable)"
+rm -rf "$T/work/primary-lanes/$PARENT3/L1"; rm -f "$P/.supervisor/automate/$PARENT3.lanes"
+chmod 555 "$P/.supervisor/automate"
+out="$(run lane-status "$RF3" --leaks --snapshot)"; rc=$?
+chmod 755 "$P/.supervisor/automate"
+check "Z-F1h … with no lane table too" "$([ "$rc" != 0 ] && echo nonzero || echo zero):$(printf '%s' "$out" | grep -c 'snapshot not written' | tr -d ' ')" "nonzero:1"
+out="$(run lane-status "$P/.supervisor/automate/absent-run.md" --leaks --snapshot)"; rc=$?
+check "Z-F1i a parent run file that does not exist ⇒ non-zero, named" "$([ "$rc" != 0 ] && echo nonzero || echo zero):$(printf '%s' "$out" | grep -c 'parent run file not found' | tr -d ' ')" "nonzero:1"
+
 hasnt "Z1 gh never called" "$(cat "$GH_CALLS" 2>/dev/null)" "gh"
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]
