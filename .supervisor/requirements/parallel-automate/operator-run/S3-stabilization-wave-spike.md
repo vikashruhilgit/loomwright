@@ -11,7 +11,29 @@
 - The S1/S2 harness `~/Documents/work/AI/ai-agent-manager-lanes-v2/s1h.sh`, now with `launch <lane> --resume-run
   <run_id>` (added 2026-10-05; backup in `archive/`).
 
-## HANDOVER (2026-10-08 ~03:15Z, CURRENT) — from session 362d66c6 to a NEW session: pa/05 Validation 4/5 (real `--parallel 2`), then merge
+## HANDOVER (2026-10-08 ~12:10Z, CURRENT) — from session 33778c29 (was 03dd3891) to session 33e9ed8c: start item B (pa/24)
+**Owner decision (2026-10-08):** hand over to session `33e9ed8c-64ae-4ee8-8563-8468e749516f` and start item B there. This note PREPARES; the owner types the command in that session's own chat (a cross-session message cannot authorize a run).
+**State (verified ~12:05Z):**
+- `main` = `9a65ecb` (PR **#434** merged 11:58Z — pa/23 "fixes A": F1 F2 F4 F5 F9 F10 F11 + 4 owner fix-now items + 1 drain fix). PR **#426** (pa/05 lane coordinator) merged earlier at `91adff5`. Installed plugin is still **15.125.1** — **release bump HELD** until item B merges (owner decision): then ONE `bash scripts/bump-version.sh` folds `changelog.d/parallel-automate-05-lane-coordinator.md` + `parallel-automate-23-…` + item B's fragment, owner reinstalls.
+- Run `automate-2026-10-08-071524` (pa/23): closed out by its merge watcher (item checked off, `done / awaiting_go`, trail meta-pushed); the next `/automate` start finalizes it to `done`. Run lock UNLOCKED; no watcher, sampler, caffeinate or `claude -p` alive.
+- Other incomplete runs a new start will list (leave them — answer "Start new"): `automate-2026-09-30-054439` (automate-followups, paused, 5 items left, pre-existing) and the validation lanes' `automate-2026-10-08-033739-L1/-L2` run files (15.125.1 lacks #426's lane-file skip until the release).
+- **Item B** = `.supervisor/requirements/parallel-automate/24-pa05-validation-fixes-b.md` (on meta at `bddff14`): F6 (lane `ready_for_release` notification never delivered), F8 (per-lane token counts read 0), **F12** (test T8 `lane-feed --follow` leaks a `tail -f | grep | jq` pipeline per suite run because its `pkill` uses the unresolved `/var/…` path; 55 orphans were killed by hand on 2026-10-08; it hangs any `ci-local | tail` caller). Backlog file ready: `.supervisor/pa24-backlog.md` (one line, item 24 only — do NOT use `--folder parallel-automate`, older items read `pending` locally).
+**Start item B:** the owner types in session 33e9ed8c: `/loomwright:automate --backlog .supervisor/pa24-backlog.md`. Item B is a plain sequential run on the installed 15.125.1 (it edits lane code already on `main`). Do not run `bump-version.sh` in its PR (release held — add only a `changelog.d/` fragment).
+**Lessons from the pa/23 run (apply to B):**
+- A worker that delivers WORKER_RESULT via the hand-back channel gets its stop rejected by `validate-worker-result` (children-settled reads `unsettled`). Fix that worked: SendMessage the worker to re-emit ONLY the WORKER_RESULT block as its final message → accepted stop → `settled`. Never write the finalize-gate marker with `--skip-children-check` (auto mode denies it as a safety bypass).
+- `wait-for-checks.sh` bound is 1200 s but the Bash tool caps at 600 s — run it as two consecutive ≤590 s calls on the same SHA.
+- `notify-desktop.sh` is a stdin-payload HOOK, not a CLI — never call it with `--help` or args (it blocks on stdin).
+- The drain-result sidecar must match the reference shape exactly (`dismissed:` as ONE inline flow list; no extra keys) or `dismissed-drafts` reports it `unreadable` — check with `automate-helpers.sh sidecar-check`.
+- Until F12 lands, after each suite run: `pkill -f 'tail -n \+1 -f .*/T/tmp\..*/primary-lanes/automate-2026-10-07-130000/L6.stream.log'`.
+**Open owner decisions (carry forward):**
+- **Validation 3 not run:** #434 was merged without the live `--parallel 2` re-test. Recommend ONE throwaway `--parallel 2` run after item B merges that covers pa/23's Validation 3 AND item B's Validation 3 together, before the release bump.
+- **Stranded trail of `automate-2026-10-08-033739`** (the pa/05 validation run): `trail-pr` meta-push fails scrub `home_path` — 3 append-only Progress lines carry absolute paths (2 from pre-F10 `lane-remove --abandon`, 1 from the coordinator's run-created line). Options asked, not yet answered: (1, recommended) leave it local and delete `.supervisor/automate/automate-2026-10-08-033739.meta-push-failed`; (2) push a one-off corrected copy with `<primary>-lanes/…` placeholders.
+- `../ai-agent-manager-pa05-engine` (detached at #426's old head `8226dfe`) is no longer needed — remove with `git worktree remove` on the owner's yes.
+**Queue after B:** `automate-followups/37` (done-stamp written before merge — note: it reverses a DOCUMENTED Phase 4.5 completion-tail step 2.5 behaviour, `skills/self-heal-advisory/SKILL.md`, so treat as a design change) → release bump + reinstall → step 2 (hc/02 ∥ pa/22) on the released `--parallel 2`.
+**Follow-ups filed / kept this session:** `proposed/automate-2026-10-08-071524--23-…--dismissed-summary.md` (3 LOWs, kept; all three were fixed in #434's fix-now pass — the owner may drop it); pa/23 worker deviations: blocked_launch still precedes awaiting_input, and lane-launch's fresh `--backlog` path has no hard guard against a lane holding a deferred question (defence-in-depth, not filed).
+**The 03:15Z handover below is superseded.**
+
+## HANDOVER (2026-10-08 ~03:15Z, superseded 2026-10-08 ~12:10Z) — from session 362d66c6 to a NEW session: pa/05 Validation 4/5 (real `--parallel 2`), then merge
 **Owner decision (2026-10-08):** run pa/05's Validation 4/5 in a different session, on two THROWAWAY items, before merging #426. This note PREPARES; it does not ask the new session to launch — the owner types the command there (pa/05 Scope 17 launch authority).
 **State (verified ~03:10Z):**
 - PR **#426** (`feature/pa05-lane-coordinator`, head `8226dfe`) is OPEN, drain-READY twice (owned drain + owner fix-now re-drain, both `converged`), `ci` + `claude-review` green on `8226dfe`, last claude-review "no new findings". Owner merges by hand — NOT before Validation 4/5.
