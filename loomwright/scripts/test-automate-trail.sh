@@ -645,6 +645,7 @@ no_trail_on() { # <regex identifying the park line> <label>
 no_trail_on '^   \*\*PICK-time token-ceiling check' "token_ceiling park"
 no_trail_on '^- \*\*Classified hit' "rate_limit park"
 no_trail_on '^   \*\*PICK-time trail gate' "trail_pr_open park"
+no_trail_on '^   \*\*PICK-time run-lock acquire' "live_lane park (PICK-time lane guard)"
 no_trail_on '^- \*\*Safe mode \(default\):' "§9 awaiting_merge park"
 no_trail_on '^\*\*`ESCALATED` never merges' "§9 escalated park"
 grep -qE '^On the \*\*`## Status: done`\*\* exit ONLY.*the `limit_reached` exit is a park and releases the lock without a trail' "$SKILL" && ok "Termination limit_reached: no trail-pr at this park" || no "Termination limit_reached still trails"
@@ -660,6 +661,7 @@ nopark="${when#*No park calls it:\*\*}"
 for pr in awaiting_merge escalated rate_limit drain_died token_ceiling trail_pr_open limit_reached run_lock_held resume_ambiguous; do
   grep -qF -- "\`$pr\`" <<<"$nopark" && ok "no-park list names $pr" || no "no-park list missing $pr"
 done
+grep -qF -- '`live_lane`' <<<"$nopark" && ok "no-park list names live_lane" || no "no-park list missing live_lane"
 grep -qF -- '- **Evidence-gated stamps' <<<"$sect" && ok "trail section documents the evidence gate" || no "evidence-gate bullet missing"
 eg="$(grep -m1 -F -- '- **Evidence-gated stamps' <<<"$sect")"
 for t in '`is_done`' '`## Status: done_with_escalation — ABANDONED (- [x] <path>  # abandoned: <reason>)`' 'merely contains' '### Outcome' 'Outcomes Rubric' '`[]()<>`' '`; retracted <path>`' 'never stages a gate-excluded path' 'transient `gh pr view` failure'; do
@@ -1264,6 +1266,17 @@ out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason done)"
 case "$out" in *"retracted $XD"*) ok "moved: next trail-pr retracts the stale own-draft blob ($out)" ;; *) no "moved retract: $out" ;; esac
 tip_has "$XD" && no "moved: the stale own draft is still on the trail tip" || ok "moved: the stale own draft is removed from the trail tip"
 tip_has "$XS" && ok "moved: the summary carrying the finding rides the trail (listed once)" || no "moved: summary not on tip: $(trail_names)"
+# Lane drafts use ONE digits-only definition (automate-dismissed.sh's _dismissed_lane_id):
+# `<run_id>-L2--…` is a lane draft and rides; `<run_id>-L2x--…` is not and never does.
+new_fixture 198
+XL=".supervisor/requirements/proposed/$RUN_ID-L2--01-a-abc123--dismissed-1.md"
+XLX=".supervisor/requirements/proposed/$RUN_ID-L2x--01-a-abc123--dismissed-1.md"
+mkdir -p "$P/.supervisor/requirements/proposed"
+printf '# Dismissed finding\n\n> lane finding\n' > "$P/$XL"; printf '# Dismissed finding\n\n> not a lane\n' > "$P/$XLX"
+out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason done)"
+case "$out" in "trail-pr: opened "*) ok "lane-draft shape: trail-pr opened ($out)" ;; *) no "lane-draft shape trail-pr: $out" ;; esac
+tip_has "$XL" && ok "a <run_id>-L<digits>--… draft is a lane draft and rides the trail" || no "lane draft did not ride: $(trail_names)"
+tip_has "$XLX" && no "a <run_id>-L2x--… draft rode the trail as a lane draft" || ok "a <run_id>-L2x--… draft is NOT a lane draft (digits-only definition)"
 
 echo "== D3. checkout contract re-examined for trail-after-merge (decision 3) =="
 # With trail-pr only after merge / at run end, the trail that matters is closeout's
@@ -2399,6 +2412,57 @@ for s in closeout-classify closeout-others; do
 done
 grep -qE '^    closeout-others\) exec bash "\$\(dirname "\$0"\)/automate-trail.sh" "\$cmd" "\$@" ;;' "$H" && ok "dispatcher row: closeout-others → automate-trail.sh" || no "closeout-others dispatcher row missing"
 grep -qF 'closeout-classify' "$HERE/../commands/automate.md" && grep -qF 'closeout-others' "$HERE/../commands/automate.md" && ok "commands/automate.md overview names closeout-classify + closeout-others" || no "commands/automate.md surface missing"
+
+echo "== LN. parallel-automate/05: a lane clone never closes out / finalizes another run (Scope 3 amendment, D2) =="
+# Two-lane fleet against the same old unfinished run A (merged PR): each lane skips with ONE line and
+# touches nothing; the coordinator (no lane.json — the primary) then closes A out exactly once.
+closeout_fixture 340; mk_rb; spy_reset
+a0="$(cksum < "$P/$RF_REL")"; q0="$(cksum < "$P/$REQ")"; ln_lane_out=""
+for ln_l in L1 L2; do
+  printf '{"schema_version":1,"lane":"%s","run_id":"par-9-%s","parent_run_id":"par-9"}\n' "$ln_l" "$ln_l" > "$P/.supervisor/lane.json"
+  ln_o="$(co_others --record "$RBF")"; ln_lane_out="$ln_lane_out$ln_o"$'\n'
+  [ "$ln_o" = "closeout-others: skipped — lane clone" ] && ok "(LN1) lane $ln_l: closeout-others prints ONE 'skipped — lane clone' line" || no "(LN1) lane $ln_l: '$ln_o'"
+done
+{ [ "$a0" = "$(cksum < "$P/$RF_REL")" ] && [ "$q0" = "$(cksum < "$P/$REQ")" ] && [ -d "$FX/wt-pr" ] && [ -z "$(grep -v '^closeout-others ' "$SPYLOG" 2>/dev/null)" ]; } \
+  && ok "(LN1) neither lane touched A, its requirement or its PR worktree, and made no dispatcher call beyond closeout-others itself" || no "(LN1) a lane mutated A / called out: $(tr '\n' '|' < "$SPYLOG" 2>/dev/null)"
+[ "$(grep -c '^closeout-others: '"$RUN_ID " <<<"$ln_lane_out")" = 0 ] && ok "(LN1) zero closeout lines in either lane" || no "(LN1) lane closeout lines: $ln_lane_out"
+rm -f "$P/.supervisor/lane.json"
+ln_o="$(co_others --record "$RBF")"
+[ "$(grep -c "^closeout-others: $RUN_ID $REQ $PRURL\$" <<<"$ln_o")" = 1 ] && grep -qxF -- "- [x] $REQ" "$P/$RF_REL" \
+  && ok "(LN1) the coordinator (primary, no lane.json) closes A out exactly once" || no "(LN1) coordinator closeout: $ln_o"
+# Mutation control: TWO independent layers keep a lane out of the cross-run closeout — the
+# `_in_lane_clone` guard in closeout_others and resume-glob's lane scoping (a lane clone lists only
+# its own run). Dropping the guard alone leaves the lane silent (defense in depth, LN2a); dropping
+# both lets the lane close A out, so the LN1 assertion is load-bearing (LN2b).
+closeout_fixture 341; mk_rb; spy_reset
+MUTLN="$TOP/mutln"; mkdir -p "$MUTLN"; cp -R "$SPYD"/* "$MUTLN/"
+sed '/^  if _in_lane_clone "\$root"; then echo "\$S lane clone"; return 0; fi$/d' "$SPYD/automate-trail.sh" > "$MUTLN/automate-trail.sh"
+printf '{"schema_version":1,"lane":"L1","run_id":"par-9-L1","parent_run_id":"par-9"}\n' > "$P/.supervisor/lane.json"
+if ! cmp -s "$SPYD/automate-trail.sh" "$MUTLN/automate-trail.sh" && bash -n "$MUTLN/automate-trail.sh"; then
+  ln_o="$(CO_H="$MUTLN/automate-helpers.sh" co_others --record "$RBF")"
+  [ -z "$ln_o" ] && ok "(LN2a) guard dropped alone: resume-glob's lane scoping still keeps A out of the lane (empty output)" || no "(LN2a) guard-only mutant: '$ln_o'"
+  sed '/^    if \[ -f "\$dir\/\.\.\/lane\.json" \]; then \[ -n "\$own" \]/d' "$SPYD/automate-helpers.d/resume.sh" > "$MUTLN/automate-helpers.d/resume.sh"
+  if ! cmp -s "$SPYD/automate-helpers.d/resume.sh" "$MUTLN/automate-helpers.d/resume.sh" && bash -n "$MUTLN/automate-helpers.d/resume.sh"; then
+    ln_o="$(CO_H="$MUTLN/automate-helpers.sh" co_others --record "$RBF")"
+    grep -qxF "closeout-others: $RUN_ID $REQ $PRURL" <<<"$ln_o" && ok "(LN2b) mutation control: both layers dropped ⇒ the lane closes out A — the lane assertion is load-bearing" || no "(LN2b) mutation control inconclusive: '$ln_o'"
+  else
+    no "(LN2b) mutation control: could not build the resume.sh mutant"
+  fi
+else
+  no "(LN2) mutation control: could not build the mutant"
+fi
+rm -f "$P/.supervisor/lane.json"
+# finalize-empty in a lane clone: another run's eligible file is refused untouched; the lane's own run is not refused.
+closeout_fixture 342
+fe_rf other-run paused awaiting_go x done; fe_rf par-9-L1 paused awaiting_go x done
+printf '{"schema_version":1,"lane":"L1","run_id":"par-9-L1","parent_run_id":"par-9"}\n' > "$P/.supervisor/lane.json"
+ln_c="$(cksum < "$P/$AUTD/other-run.md")"
+ln_o="$(cd "$P" && bash "$H" finalize-empty "$AUTD/other-run.md")"
+[ "$ln_o" = "finalize-empty: skipped — lane clone (not this lane's run)" ] && [ "$ln_c" = "$(cksum < "$P/$AUTD/other-run.md")" ] \
+  && ok "(LN3) finalize-empty in a lane: another run's eligible file ⇒ 'skipped — lane clone (not this lane's run)', byte-untouched" || no "(LN3) other run: '$ln_o'"
+ln_o="$(cd "$P" && bash "$H" finalize-empty "$AUTD/par-9-L1.md" 2>/dev/null | head -n1)"
+case "$ln_o" in *"lane clone"*) no "(LN3) the lane's own run was refused: '$ln_o'" ;; *) ok "(LN3) finalize-empty in a lane: its own run is not refused by the lane guard ('$ln_o')" ;; esac
+rm -f "$P/.supervisor/lane.json" "$P/$AUTD/other-run.md" "$P/$AUTD/par-9-L1.md"
 
 if [ "$pass" != "$_tally_ok" ] || [ "$fail" != "$_tally_no" ]; then
   echo "  FAIL: summary counter clobbered — pass=$pass vs $_tally_ok ok lines, fail=$fail vs $_tally_no FAIL lines (a leg reused pass/fail as a variable)"

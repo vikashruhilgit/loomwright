@@ -164,6 +164,11 @@
 #      files names the same (path, rule) pairs; a clean list -> exit 0 `meta_sync: clean (<n>
 #      file(s) scanned)`; no --paths-from / a missing list / --branch -> usage error exit 1
 #  58. (xiii) a mutant whose line lookup always yields `-` MUST fail the line assertion (57)
+#  59. parallel-automate/05 D9: a top-level `.supervisor/automate/<name>.dismissed-decisions` ledger is
+#      managed (list-managed lists it; a whole-set push publishes it); a nested one, a bare
+#      `.dismissed-decisions`, a `.lanes` sidecar and a `<name>.dismissed-decisions.bak` are not; a
+#      ledger carrying a home path is refused by push's scrub (exit 2), nothing published
+#  60. mutation control (xiv): a mutant without the D9 is_managed arm drops the ledger -> (59) turns red
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -1870,6 +1875,47 @@ if build_mutant "$MUT_XIII" 's/^  case "\$n" in .*) n="-" ;; esac$/  n="-"  # mu
   fi
 else
   no "mutation control (xiii): could not build the mutant (sed did not apply or bash -n failed) — control inconclusive"
+fi
+
+echo "== 59. D9: the top-level <name>.dismissed-decisions ledger is managed (and scrubbed); look-alikes are not =="
+D9_LEDGER=".supervisor/automate/automate-2026-10-07-000000-L1.dismissed-decisions"
+d9_world() {
+  mkworld; clone A
+  ms A init
+  put A ".supervisor/automate/automate-2026-10-07-000000.md" "# Automate Run: automate-2026-10-07-000000"
+  printf 'automate-2026-10-07-000000-L1--a-1a2b3c--dismissed-0123abcd.md\tdrop\t2026-10-07T00:00:00Z\n' > "$W/A/$D9_LEDGER"
+  put A ".supervisor/automate/sub/nested.dismissed-decisions" "x"
+  put A ".supervisor/automate/.dismissed-decisions" "x"
+  put A ".supervisor/automate/automate-2026-10-07-000000.lanes" "L1"
+  put A ".supervisor/automate/automate-2026-10-07-000000.dismissed-decisions.bak" "x"
+}
+d9_world
+d9_exp="$(printf '%s\n' .supervisor/automate/automate-2026-10-07-000000.md "$D9_LEDGER" | env LC_ALL=C sort)"
+ms A list-managed
+{ [ "$RC" -eq 0 ] && [ "$OUT" = "$d9_exp" ]; }
+check $? "list-managed lists the top-level ledger and the run file only — no nested / bare / .lanes / .bak look-alike (rc=$RC: $(printf '%s' "$OUT" | tr '\n' '|'))"
+D9_LM="$OUT"
+ms A push
+{ [ "$RC" -eq 0 ] && [ "$(br_names | env LC_ALL=C sort)" = "$d9_exp" ] && [ "$(br_show "$D9_LEDGER")" = "$(cat "$W/A/$D9_LEDGER")" ]; }
+check $? "a whole-set push publishes the ledger byte-for-byte beside the run file, nothing else (rc=$RC: $(br_names | tr '\n' '|'))"
+d9_world
+printf 'note\t/Users/bob/x\n' >> "$W/A/$D9_LEDGER"
+ms A push
+{ [ "$RC" -eq 2 ] && grep -qF "meta_sync: scrub $D9_LEDGER: home_path" < <(printf '%s\n' "$OUT") && [ -z "$(br_names)" ]; }
+check $? "a ledger carrying a home path is refused by push's scrub (exit 2), nothing published (rc=$RC: $OUT)"
+
+echo "== 60. mutation control (xiv): drop the D9 is_managed arm -> the list-managed assertion (59) must turn red =="
+MUT_XIV="$TROOT/mutant-xiv"
+if build_mutant "$MUT_XIV" 's/^    \.supervisor\/automate\/?\*\.dismissed-decisions) return 0 ;;$/    # mutant (xiv) D9 arm dropped/' '# mutant (xiv) D9 arm dropped'; then
+  d9_world
+  OUT="$(bash "$MUT_XIV/meta-sync.sh" list-managed --root "$W/A" 2>&1)"; RC=$?
+  if [ "$RC" -eq 0 ] && [ "$OUT" != "$D9_LM" ] && [ "$OUT" = ".supervisor/automate/automate-2026-10-07-000000.md" ]; then
+    ok "mutation control (xiv): the mutant drops the ledger from list-managed — the D9 assertion is load-bearing"
+  else
+    no "mutation control (xiv): the mutant failed for another reason (rc=$RC: $OUT) — control inconclusive"
+  fi
+else
+  no "mutation control (xiv): could not build the mutant (sed did not apply or bash -n failed) — control inconclusive"
 fi
 
 echo

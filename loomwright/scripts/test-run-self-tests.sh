@@ -32,6 +32,17 @@
 #   (TJ) SELF_TEST_TIMEOUT not a positive integer  → exit 1
 #   (W)  wiring: ci.yml's self-test step invokes run-self-tests.sh, and the ci job is capped
 #        with timeout-minutes
+#   (AD) machine admission through ci-slot.sh (12 CPUs, 2 slots ⇒ 6 jobs a suite): with two live
+#        6-job holders in two OTHER repos, a bare runner gives up after SELF_TEST_SLOT_WAIT=1
+#        (exit 1, nothing ran); with a longer wait it is queued ("held for load: committed") and
+#        runs nothing until a holder releases, then passes with the slot's job share; under a live
+#        parent holder of its own pool (N=1, load overloaded — ci-local.sh's shape) it FOLDS: runs
+#        at once, adds no slot or machine record.
+#        MUTATION CONTROL: the admission call replaced by a fake grant ⇒ the wait check fails.
+#   (AD2) ci-slot.sh missing beside the runner → exit 1, "refusing", no fixture test ran
+#
+# Admission sandbox: every runner call here takes its ci-slot.sh slot from a sandboxed pool and
+# machine list, with a fixture load reader, so neither a real holder nor a loaded machine holds it.
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
 
@@ -46,6 +57,12 @@ no() { echo "  FAIL: $1"; fail=$((fail+1)); }
 
 T="$(mktemp -d "${TMPDIR:-/tmp}/test-run-self-tests.XXXXXX")" || { echo "mktemp failed" >&2; exit 1; }
 trap 'rm -rf "$T"' EXIT
+export XDG_STATE_HOME="$T/state" LOOMWRIGHT_MACHINE_STATE_DIR="$T/machine" LOOMWRIGHT_MACHINE_LOAD_CMD="$T/load.sh"
+export LOOMWRIGHT_CI_SLOT_POLL=0.2 LOOMWRIGHT_MACHINE_LOAD_RECHECK=1
+unset LOOMWRIGHT_CI_SLOTS LOOMWRIGHT_CI_CPUS SELF_TEST_SLOT_WAIT
+cat > "$T/load.sh" <<'EOF'
+echo "load1=1.00"; echo "state=$(cat "$(dirname "$0")/load.state" 2>/dev/null || echo ok)"
+EOF
 
 # run <outfile> <runner args...> — runs the runner with GitHub grouping OFF, returns its exit code
 run() {
@@ -139,6 +156,7 @@ G="$T/fake-repo"
 mkdir -p "$G/loomwright/scripts/adapters/tool"
 cp "$RUNNER" "$G/loomwright/scripts/run-self-tests.sh"
 cp "$HERE/hermetic-test-env.sh" "$G/loomwright/scripts/hermetic-test-env.sh"
+cp "$HERE/ci-slot.sh" "$G/loomwright/scripts/ci-slot.sh"; git init -q "$G"   # machine admission needs both
 printf 'echo flat > "%s/flat.ran"\n' "$T" > "$G/loomwright/scripts/test-flat.sh"
 printf 'echo adapter > "%s/adapter.ran"\n' "$T" > "$G/loomwright/scripts/adapters/tool/test-adapter.sh"
 ( cd / && GITHUB_ACTIONS= bash "$G/loomwright/scripts/run-self-tests.sh" > "$T/g.out" 2>&1 ); rc=$?
@@ -256,6 +274,102 @@ if [ -f "$CI_YML" ]; then
 else
   no "(W) ci.yml not found at $CI_YML"
 fi
+
+echo "== (AD) machine admission: a bare run waits behind two live 6-job holders, folds under a live parent =="
+# adm_layout DIR RUNNER — a git checkout holding RUNNER with the helpers it needs beside it.
+adm_layout() {
+  rm -rf "$1"; mkdir -p "$1/loomwright/scripts"
+  cp "$2" "$1/loomwright/scripts/run-self-tests.sh"
+  cp "$HERE/hermetic-test-env.sh" "$HERE/ci-slot.sh" "$1/loomwright/scripts/"
+  git init -q "$1"
+}
+cat > "$T/adm-probe.sh" <<'EOF'
+echo ran >> "$(dirname "$0")/adm.ran"
+EOF
+git init -q "$T/adm-other1"; git init -q "$T/adm-other2"
+# admission_holds RUNNER — exit 0 iff RUNNER waits for machine admission; ADWHY says what failed.
+admission_holds() {
+  local d="$T/adm-run" h1 h2 rp i rc
+  ADWHY=""; rm -f "$T/adm.ran" "$T/adm.rc" "$T/load.state"; rm -rf "$T/machine" "$T/state"
+  adm_layout "$d" "$1"
+  sleep 120 & h1=$!; sleep 120 & h2=$!
+  ( cd "$T/adm-other1" && LOOMWRIGHT_CI_CPUS=12 LOOMWRIGHT_CI_SLOTS=2 bash "$HERE/ci-slot.sh" acquire h1 --pid "$h1" ) >/dev/null 2>&1
+  ( cd "$T/adm-other2" && LOOMWRIGHT_CI_CPUS=12 LOOMWRIGHT_CI_SLOTS=2 bash "$HERE/ci-slot.sh" acquire h2 --pid "$h2" ) >/dev/null 2>&1
+  [ "$(ls "$T/machine/holders" 2>/dev/null | wc -l | tr -d ' ')" = 2 ] || ADWHY="precondition: two machine holders not recorded"
+  if [ -z "$ADWHY" ]; then
+    LOOMWRIGHT_CI_CPUS=12 LOOMWRIGHT_CI_SLOTS=2 SELF_TEST_SLOT_WAIT=1 GITHUB_ACTIONS= \
+      bash "$d/loomwright/scripts/run-self-tests.sh" "$T/adm-probe.sh" > "$T/adm1.out" 2>&1; rc=$?
+    if [ "$rc" -ne 1 ] || [ -f "$T/adm.ran" ] || ! grep -q "no CI slot after 1s" "$T/adm1.out"; then
+      ADWHY="SELF_TEST_SLOT_WAIT=1 behind two 6-job holders: rc=$rc ran=$([ -f "$T/adm.ran" ] && echo y || echo n): $(cat "$T/adm1.out")"
+    fi
+  fi
+  if [ -z "$ADWHY" ]; then
+    rm -f "$T/adm.ran"
+    ( LOOMWRIGHT_CI_CPUS=12 LOOMWRIGHT_CI_SLOTS=2 SELF_TEST_SLOT_WAIT=30 GITHUB_ACTIONS= \
+        bash "$d/loomwright/scripts/run-self-tests.sh" "$T/adm-probe.sh" > "$T/adm2.out" 2>&1; echo "$?" > "$T/adm.rc" ) &
+    rp=$!
+    i=0
+    while ! grep -q '"waiters":\[{' <<<"$(cd "$d" && bash loomwright/scripts/ci-slot.sh status --json 2>/dev/null)" && [ "$i" -lt 50 ]; do
+      sleep 0.1; i=$((i + 1))
+    done
+    sleep 1
+    if [ "$i" -ge 50 ]; then ADWHY="the runner never queued for a slot (ran=$([ -f "$T/adm.ran" ] && echo y || echo n)): $(cat "$T/adm2.out")"
+    elif [ -f "$T/adm.ran" ] || [ -f "$T/adm.rc" ]; then ADWHY="the runner did not wait while both holders lived: $(cat "$T/adm2.out")"
+    fi
+    ( cd "$T/adm-other1" && bash "$HERE/ci-slot.sh" release --pid "$h1" )
+    i=0; while [ ! -f "$T/adm.rc" ] && [ "$i" -lt 200 ]; do sleep 0.1; i=$((i + 1)); done
+    if [ -z "$ADWHY" ]; then
+      if [ "$(cat "$T/adm.rc" 2>/dev/null)" != 0 ] || [ ! -f "$T/adm.ran" ]; then
+        ADWHY="after a holder released the runner did not pass: rc=$(cat "$T/adm.rc" 2>/dev/null): $(cat "$T/adm2.out")"
+      elif ! grep -q "held for load: committed 12+6 jobs > 12 CPUs" "$T/adm2.out" || ! grep -q "(6 at a time)" "$T/adm2.out"; then
+        ADWHY="no committed-work hold line, or not the slot's 6-job share: $(cat "$T/adm2.out")"
+      fi
+    fi
+    kill "$rp" 2>/dev/null; wait "$rp" 2>/dev/null
+  fi
+  ( cd "$T/adm-other2" && bash "$HERE/ci-slot.sh" release --pid "$h2" )
+  kill "$h1" "$h2" 2>/dev/null; wait "$h1" "$h2" 2>/dev/null
+  [ -z "$ADWHY" ]
+}
+if admission_holds "$RUNNER"; then
+  ok "(AD) behind two live 6-job holders: gives up at SELF_TEST_SLOT_WAIT=1 (nothing ran); queued and idle until a holder releases, then passes 6-way"
+else no "(AD) $ADWHY"; fi
+mut="$T/mut-run-self-tests.sh"
+sed 's|^( cd "$here" \&\& exec bash "$slot_helper" acquire .*# ADMISSION$|echo "slot=0 jobs=2" > "$out/slot" \&|' "$RUNNER" > "$mut"
+if [ -s "$mut" ] && ! cmp -s "$mut" "$RUNNER" && bash -n "$mut" && ! grep -q '# ADMISSION$' "$mut"; then
+  if admission_holds "$mut"; then no "(AD) MUTATION CONTROL: without the admission call the runner still waited — (AD) proves nothing"
+  else ok "(AD) MUTATION CONTROL: the admission call replaced by a fake grant fails (AD) ($ADWHY)"; fi
+else no "(AD) MUTATION CONTROL: mutant not built (empty, unchanged or invalid)"; fi
+
+# Fold: a parent holding the ONLY slot of the runner's own pool runs the runner as its child, at load
+# overloaded — without the fold the child would wait on its own parent until SELF_TEST_SLOT_WAIT.
+adm_layout "$T/adm-fold" "$RUNNER"; rm -rf "$T/machine" "$T/state"; rm -f "$T/adm.ran" "$T/load.state"
+cat > "$T/adm-parent.sh" <<'EOF'
+cd "$1" || exit 1
+export LOOMWRIGHT_CI_CPUS=12 LOOMWRIGHT_CI_SLOTS=1
+bash loomwright/scripts/ci-slot.sh acquire parent --pid $$ >/dev/null 2>&1 || { echo "parent-not-granted"; exit 1; }
+echo overloaded > "$2/load.state"
+GITHUB_ACTIONS= SELF_TEST_SLOT_WAIT=3 bash loomwright/scripts/run-self-tests.sh "$2/adm-probe.sh" > "$2/fold.out" 2>&1; rc=$?
+echo ok > "$2/load.state"
+slots="$(ls "$(bash loomwright/scripts/ci-slot.sh dir)/slots" | wc -l | tr -d ' ')"
+mrecs="$(ls "$2/machine/holders" | wc -l | tr -d ' ')"
+bash loomwright/scripts/ci-slot.sh release --pid $$
+echo "rc=$rc slots=$slots mrecs=$mrecs"
+EOF
+fold="$(bash "$T/adm-parent.sh" "$T/adm-fold" "$T")"
+if [ "$fold" = "rc=0 slots=1 mrecs=1" ] && [ -f "$T/adm.ran" ] && grep -q "CI slot 1$" "$T/fold.out"; then
+  ok "(AD) under a live parent holder of its own pool (N=1, overloaded) the runner folds: ran at once, parent's slot 1, no second slot or machine record"
+else no "(AD) fold: $fold ran=$([ -f "$T/adm.ran" ] && echo y || echo n): $(cat "$T/fold.out" 2>/dev/null)"; fi
+
+echo "== (AD2) ci-slot.sh missing beside the runner: refuses to run without admission =="
+A2="$T/no-slot-repo"
+mkdir -p "$A2/loomwright/scripts"
+cp "$RUNNER" "$HERE/hermetic-test-env.sh" "$A2/loomwright/scripts/"
+rm -f "$T/adm.ran"
+GITHUB_ACTIONS= bash "$A2/loomwright/scripts/run-self-tests.sh" "$T/adm-probe.sh" > "$T/a2.out" 2>&1; rc=$?
+[ "$rc" -eq 1 ] && grep -q "refusing to run the suite without machine admission" "$T/a2.out" && [ ! -f "$T/adm.ran" ] \
+  && ok "(AD2) no ci-slot.sh beside the runner → exit 1, 'refusing', the fixture test never ran" \
+  || no "(AD2) rc=$rc ran=$([ -f "$T/adm.ran" ] && echo y || echo n): $(cat "$T/a2.out")"
 
 echo
 echo "test-run-self-tests: $pass passed, $fail failed"

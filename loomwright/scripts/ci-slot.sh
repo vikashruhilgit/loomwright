@@ -8,7 +8,8 @@
 #
 # usage: ci-slot.sh acquire <name> --pid <holder-pid> [--slots N] [--wait S]
 #          stdout: ONLY `slot=<k> jobs=<j>` on success (safe inside `$(...)`); exit 1 on timeout or
-#          when the holder pid dies while queued; exit 2 on usage (`--pid` is REQUIRED).
+#          when the holder pid dies while queued; exit 2 on usage (`--pid` is REQUIRED). A caller
+#          nested in a live holder of this pool gets that holder's slot back at once (NESTED).
 #        ci-slot.sh release --pid <holder-pid> | --slot <k>
 #          frees that holder's slot and its queued ticket; idempotent — exit 0 when it holds nothing.
 #        ci-slot.sh status [--json]   holders (slot, pid, checkout, name, started) + waiters in order
@@ -37,6 +38,15 @@
 #                  slot dirs (whatever N they were started with); it then takes the lowest free slot
 #                  index, which may be above its own N. So a caller's N caps how many suites run
 #                  while it starts, and LOOMWRIGHT_CI_SLOTS=1 means "only when nothing else runs".
+# NESTED           a caller whose --pid descends from a LIVE holder of THIS repo's pool (ci-local.sh
+#                  runs run-self-tests.sh as its pool, and the runner asks for admission too) FOLDS
+#                  into that holder before any count, queue or machine check: it gets
+#                  `slot=<that holder's slot>` and nothing is recorded (no ticket, no slot, no machine
+#                  record), so its `release --pid` frees nothing. Checked first because the outer run
+#                  cannot end while its own child waits: counting the child (N=1) or queueing it
+#                  behind a waiter that waits on the outer run would hold it until --wait. A slot
+#                  record started before this boot is never folded into (same rule as the machine
+#                  list below).
 # FAIR QUEUE       a waiter takes a ticket from a counter guarded by the mutex (no flock). It may
 #                  claim only when every LIVE ticket ahead of it is at its own cap (live holders >= that
 #                  waiter's N) — with one N everywhere that is exactly "the lowest live ticket goes
@@ -104,9 +114,11 @@
 # (6) a checkout on a commit before the MACHINE GATE neither reads the load nor joins the machine
 # list: its runs are invisible to `busy` until it updates. (7) the machine gate has no cross-repo
 # ticket queue: when the load falls, held callers of different repos race for the first grant (order
-# inside each repo is kept). (8) nesting is detected by --pid ancestry: a holder whose child was
-# re-parented (setsid / nohup to launchd) is not recognised, and that child counts as a new caller.
-# (9) suites started outside ci-local (a bare run-self-tests.sh) never ask the gate at all.
+# inside each repo is kept). (8) nesting (NESTED, and the machine gate's fold) is detected by
+# --pid ancestry: a holder whose child was re-parented (setsid / nohup to launchd) is not recognised,
+# and that child counts as a new caller. (9) only callers that ask are gated: ci-local.sh and
+# run-self-tests.sh (every full-suite entry point) take a slot, but a single test-*.sh run directly
+# — or any other heavy command — never asks the gate at all, so it is neither counted nor held.
 # Self-test: loomwright/scripts/test-ci-slot.sh. Portability: bash 3.2 safe, BSD + GNU userland.
 set -uo pipefail
 shopt -s nullglob
@@ -311,6 +323,26 @@ machine_holders() {
   MH="$h"
 }
 
+# repo_fold — NESTED (see the header): FOLDED = the slot of a live holder of this repo's pool that
+# our --pid descends from (0 = folded, 1 = not nested). Read-only, outside every mutex; runs in this
+# shell, never `$(...)`. Skips a slot record started before this boot, like machine_holders.
+repo_fold() {
+  local s k p st
+  FOLDED=""
+  boot_epoch
+  for s in "$D"/slots/*; do
+    k="${s##*/}"; is_uint "$k" || continue
+    p="$(rec_field "$s/info" 1)"; alive "$p" || continue
+    if [ -n "$BOOT" ]; then
+      st="$(rec_field "$s/info" 4)"
+      if is_uint "$st" && [ "$((10#$st))" -lt "$BOOT" ]; then continue; fi   # REPOBOOT
+    fi
+    [ -n "$ANCESTRY" ] || ANCESTRY="$(ancestry "$PID")"
+    case "$ANCESTRY" in *" $p "*) FOLDED="$k"; return 0 ;; esac
+  done
+  return 1
+}
+
 # machine_admit — under the repo mutex: 0 = admitted (MACHINE_REC = our record, empty when folded or
 # the gate is off), 1 = held (HELD says why). Records are written under the machine mutex, so two
 # repos never both pass `busy`.
@@ -505,6 +537,7 @@ cmd_acquire() {
   local deadline next_print=0 every pos
   [ -n "$PID" ] || die "acquire needs --pid <holder-pid> (the long-lived caller, never this helper)"
   alive "$PID" || die "--pid $PID is not a live process"
+  if repo_fold; then echo "slot=$FOLDED jobs=$JOBS"; return 0; fi   # REPOFOLD
   deadline=$(( $(now) + WAIT ))
   every="${LOOMWRIGHT_CI_SLOT_PRINT_EVERY:-30}"; is_uint "$every" || every=30; every=$((10#$every))
   while :; do
@@ -607,7 +640,7 @@ MLK="$MD/mutex.lnk"
 LOAD_CMD="${LOOMWRIGHT_MACHINE_LOAD_CMD:-$HERE/machine-load.sh}"
 RECHECK="${LOOMWRIGHT_MACHINE_LOAD_RECHECK:-15}"; is_uint "$RECHECK" || RECHECK=15; RECHECK=$((10#$RECHECK))
 LOAD_STATE=unknown; LOAD1=unknown; LOAD_AT=""; HELD=""; MACHINE_REC=""; NESTED_IN=""; MH=0; MJ=0; ANCESTRY=""
-RP=""; RF=""; LOAD_STALE=60; BOOT=""; BOOT_READ=0
+RP=""; RF=""; LOAD_STALE=60; BOOT=""; BOOT_READ=0; FOLDED=""
 MACHINE_OK=0
 D=""
 state_dir

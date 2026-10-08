@@ -150,8 +150,8 @@ _progress_current_guard() {
 
 # The documented enums (docs/RESULT_SCHEMAS.md §AUTOMATE_RUN "`## Current` fields";
 # SKILL §3 template). Space-delimited so a `case " $ENUM " in *" $v "*)` test is exact.
-CURRENT_STATUS_ENUM=" running awaiting_merge escalated failed rate_limit drain_died done "
-CURRENT_PAUSE_ENUM=" awaiting_merge awaiting_go escalated limit_reached resume_ambiguous rate_limit drain_died token_ceiling run_lock_held meta_unreachable trail_pr_open closeout_leftover null "
+CURRENT_STATUS_ENUM=" running awaiting_merge ready_for_release escalated failed rate_limit drain_died done "
+CURRENT_PAUSE_ENUM=" awaiting_merge ready_for_release awaiting_go escalated limit_reached resume_ambiguous rate_limit drain_died token_ceiling run_lock_held meta_unreachable trail_pr_open closeout_leftover live_lane null "
 
 # _current_item_line <runfile> — the FIRST `- item: ` line inside `## Current`, or nothing.
 _current_item_line() {
@@ -407,6 +407,77 @@ current_escalation() {
   ' "$out" > "$tmp" || { rm -f "$tmp"; die "current-escalation: rewrite failed; $out left unchanged"; }
   _runfile_install "$tmp" "$out" full current-escalation
   echo "current-escalation: written"
+}
+
+# current-wave <runfile> --wave <k> [--items <i1,i2,…>] | --wave null
+# parallel-automate/05 (Scope 2 "`## Current` names the wave"): the ONLY writer of
+# `## Current`'s optional run-level line
+#   - wave: <k> | items: <i1>, <i2>, …
+# written by a `--parallel N>1` parent run only (a sequential run never calls it, so
+# its file never carries the line). `ready_for_release` (a lane's terminal park,
+# Scope 5) is the matching `## Current` status/pause_reason enum value above.
+# Placement: replaces an existing `- wave:` line in the block; else appended at the
+# end of the block. `--wave null` removes it (absent ⇒ unchanged). `--items` omitted
+# ⇒ `items: null`. Refusals (exit 1, file byte-unchanged): a missing --wave, a wave
+# that is not a positive integer (other than `null`), an empty value or one holding
+# `|` or a newline, `--items` with `--wave null`, a missing/non-run file, no
+# `## Current` heading. Values reach awk through the ENVIRONMENT; the write goes
+# through `_runfile_install … full`. Identical line ⇒ `current-wave: unchanged`.
+current_wave() {
+  local out="${1:-}"
+  [ "$#" -gt 0 ] && shift
+  local CW="current-wave: refused —"
+  [ -n "$out" ] || die "$CW usage: current-wave <runfile> --wave <k|null> [--items <i1,i2,…>]"
+  local wave="" items=null hw=0 hi=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --wave|--items)
+        [ "$#" -ge 2 ] || die "$CW $1 needs a value; $out left unchanged"
+        case "$2" in
+          "") die "$CW $1 value is empty; $out left unchanged" ;;
+          *"|"*|*"$NL_CHAR"*) die "$CW $1 value contains '|' or a newline; $out left unchanged" ;;
+        esac
+        case "$1" in --wave) wave="$2"; hw=1 ;; --items) items="$2"; hi=1 ;; esac
+        shift 2 ;;
+      *) die "$CW unknown argument '$1'; $out left unchanged" ;;
+    esac
+  done
+  [ "$hw" = 1 ] || die "$CW --wave is required; $out left unchanged"
+  case "$wave" in null) ;; ""|0|*[!0-9]*) die "$CW --wave '$wave' is not a positive integer; $out left unchanged" ;; esac
+  if [ "$wave" = null ] && [ "$hi" = 1 ]; then die "$CW --wave null takes no --items; $out left unchanged"; fi
+  [ -f "$out" ] || die "$CW run file not found: $out"
+  is_run_file "$out" || die "$CW not a run file (no '# Automate Run:' title): $out; left unchanged [runfile_write_refused]"
+  grep -q '^## Current' "$out" || die "$CW no '## Current' heading in $out; left unchanged"
+  # `a,b` and `a, b` both render as `a, b` (one canonical spelling ⇒ idempotent).
+  [ "$items" = null ] || items="$(printf '%s' "$items" | awk -F',' '{ o=""; for (i=1;i<=NF;i++) { v=$i; gsub(/^[ ]+|[ ]+$/, "", v); if (v != "") o = (o == "" ? v : o ", " v) } print o }')"
+  [ -n "$items" ] || die "$CW --items holds no item; $out left unchanged"
+
+  local old_line new_line=""
+  old_line="$(awk '/^## Current/ && !s { s=1; c=1; next } /^## / { c=0 } c && /^- wave:/ { print; exit }' "$out")"
+  [ "$wave" = null ] || new_line="- wave: $wave | items: $items"
+  if [ "$new_line" = "$old_line" ]; then echo "current-wave: unchanged"; return 0; fi
+
+  local tmp; tmp="$(mktemp "${out}.XXXXXX")"
+  CW_NEW="$new_line" awk '
+    BEGIN { nl=ENVIRON["CW_NEW"] }
+    { lines[NR]=$0 }
+    END {
+      for (i=1; i<=NR; i++) {
+        if (!seen && lines[i] ~ /^## Current/) { seen=1; c=1; continue }
+        if (c && lines[i] ~ /^## /) { c=0; endb=i; continue }
+        if (c && !ex && lines[i] ~ /^- wave:/) ex=i
+      }
+      # the append point: after the block'"'"'s last non-blank line (before trailing blanks)
+      if (!ex) { last = (endb ? endb - 1 : NR); while (last > 0 && lines[last] ~ /^[ \t]*$/) last--; }
+      for (i=1; i<=NR; i++) {
+        if (ex && i == ex) { if (nl != "") print nl; continue }
+        print lines[i]
+        if (!ex && nl != "" && i == last) print nl
+      }
+    }
+  ' "$out" > "$tmp" || { rm -f "$tmp"; die "current-wave: rewrite failed; $out left unchanged"; }
+  _runfile_install "$tmp" "$out" full current-wave
+  echo "current-wave: written"
 }
 
 # current-rebuild <runfile> — SKILL §4 RECONCILE repair for a `## Current` an

@@ -20,6 +20,16 @@
 # but was not finalized (run lock held, a refused write). An ineligible candidate
 # (not paused / another pause_reason / an unchecked row / ## Current not done)
 # prints nothing extra and is listed exactly as the plain form lists it.
+#
+# LANE RUNS (parallel-automate/05, D3): a lane's run file (title run-id token
+# `<parent_run_id>-L<digits>`) reaches the primary on the next metadata pull, so
+# both forms skip it (`_resume_lane_skip`) — finished or not — EXCEPT the run
+# named by a present `<dir>/../lane.json` (`.supervisor/lane.json`: this checkout
+# IS that lane, and a lane must still resume itself). Inside a lane clone (a
+# present lane.json) both forms list ONLY that lane's own run file, so `--finalize`
+# never offers finalize-empty another run's file (the coordinator closes those out,
+# once, in the primary); an unreadable lane.json run_id lists nothing. With no
+# lane.json and no `-L<n>` run files the output is unchanged.
 resume_glob() {
   local dir="" fin=0 a f
   for a in "$@"; do
@@ -46,13 +56,56 @@ EOF
   _resume_glob_list "$dir"
 }
 
-# _resume_glob_list <dir> — the plain glob (byte-identical to the pre-finalize form).
+# _resume_title_run_id <runfile> — the run-id token of the `# Automate Run: <id> — …`
+# title (first whitespace-delimited word after the prefix); empty when absent.
+_resume_title_run_id() {
+  awk '/^# Automate Run:/ { sub(/^# Automate Run:[ ]*/, ""); split($0, w, /[ \t]+/); print w[1]; exit }' "$1" 2>/dev/null
+}
+
+# _resume_lane_own <automate_dir> — the `run_id` of `<dir>/../lane.json` (the
+# D2 lane marker, `.supervisor/lane.json`), or empty when absent/unreadable.
+_resume_lane_own() {
+  local lj="$1/../lane.json"
+  [ -f "$lj" ] || return 0
+  "$JQ" -r '.run_id // empty | strings' "$lj" 2>/dev/null | head -n1
+}
+
+# _resume_lane_skip <runfile> <own_run_id> — succeeds (skip the file) when its
+# title run-id token is a lane id that is not <own_run_id> (the present
+# lane.json's run; empty when this checkout is not a lane). A lane id is
+# `<parent_run_id>-L<digits>` (D2/D3) of a REAL parent: either the parent is an
+# engine-minted id (`automate-YYYY-MM-DD-HHMMSS`), or a run file titled with the
+# parent id sits in the same directory (the coordinator's own run, finished or
+# not). A hand-made run whose id merely ends `-L<digits>` (e.g. `nightly-L3`
+# with no `nightly` run beside it) is not a lane run and stays listed. A
+# non-lane run file is never skipped here.
+_resume_lane_skip() {
+  local id parent g
+  id="$(_resume_title_run_id "$1")"
+  grep -Eq -- '-L[0-9]+$' <<<"$id" || return 1
+  [ -n "$2" ] && [ "$id" = "$2" ] && return 1
+  grep -Eq -- '^automate-[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{6}-L[0-9]+$' <<<"$id" && return 0
+  parent="${id%-L*}"
+  [ -n "$parent" ] || return 1
+  for g in "$(dirname "$1")"/*.md; do
+    [ -e "$g" ] && [ "$g" != "$1" ] || continue
+    is_run_file "$g" || continue
+    [ "$(_resume_title_run_id "$g")" = "$parent" ] && return 0
+  done
+  return 1
+}
+
+# _resume_glob_list <dir> — the plain glob (byte-identical to the pre-finalize form
+# when no lane run file is present).
 _resume_glob_list() {
-  local dir="$1" f
+  local dir="$1" f own
+  own="$(_resume_lane_own "$dir")"
   for f in "$dir"/*.md; do
     [ -e "$f" ] || continue
     is_run_file "$f" || continue
     is_done "$f" && continue
+    _resume_lane_skip "$f" "$own" && continue
+    if [ -f "$dir/../lane.json" ]; then [ -n "$own" ] && [ "$(_resume_title_run_id "$f")" = "$own" ] || continue; fi
     echo "$f"
   done | env LC_ALL=C sort
 }

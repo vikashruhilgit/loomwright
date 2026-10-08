@@ -5,8 +5,8 @@
 # always prints all-zero sums plus LEDGER_UNREADABLE=1 and exits 0.
 #
 # Usage:
-#   read-token-ledger.sh --session <id>  [--root <checkout>]
-#   read-token-ledger.sh --run-id  <run_id | run-file path> [--root <checkout>]
+#   read-token-ledger.sh --session <id>  [--root <checkout>]...
+#   read-token-ledger.sh --run-id  <run_id | run-file path> [--root <checkout>]...
 #
 # Prints exactly ONE line to stdout:
 #   INPUT=<n> OUTPUT=<n> CACHE_READ=<n> CACHE_CREATE=<n> TOTAL=<n> EVENTS=<n> [LEDGER_UNREADABLE=1]
@@ -27,7 +27,18 @@
 #   `<run_id>` may be given bare (resolved to
 #   `<root>/.supervisor/automate/<run_id>.md`) or as an existing path.
 #
-# --root <checkout>
+# --root <checkout>   (repeatable — parallel-automate/05, Scope 8)
+#   Given more than once, every root is read and the sums are ADDED into the
+#   same one line (a root named twice is read once). `--session` reads
+#   `<root>/.supervisor/logs/<id>.jsonl` under each root; `--run-id` resolves
+#   the run file under each root (a bare id: `<root>/.supervisor/automate/<id>.md`,
+#   else — when that root is a lane clone whose `.supervisor/lane.json` names
+#   `parent_run_id` = <id> — the lane's own `<lane run_id>.md`; a literal path
+#   is one file whose sessions are read under every root) and sums that root's
+#   sessions from that root's logs. So the parent total of a `--parallel` run is
+#   `--run-id <parent> --root <primary> --root <lane1> …`. A root with nothing
+#   readable contributes 0; LEDGER_UNREADABLE=1 only when NO root yielded a
+#   readable ledger. With one (or no) --root the behavior is unchanged.
 #   Overrides the checkout root `.supervisor/` is resolved under (mirrors
 #   `automate-helpers.sh gate-eval`'s `--root`). Default: resolve the MAIN
 #   worktree the same way `emit-token-ledger.sh` does (`git worktree list
@@ -64,19 +75,24 @@ set -u
 JQ="${LOOMWRIGHT_JQ_BIN:-jq}"
 
 die_usage() {
-  echo "usage: read-token-ledger.sh --session <id> | --run-id <run_id> [--root <checkout>]" >&2
+  echo "usage: read-token-ledger.sh --session <id> | --run-id <run_id> [--root <checkout>]..." >&2
   exit 1
 }
 
 MODE=""
 ID=""
+NL='
+'
 ROOT=""
+ROOTS=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --session) MODE="session"; ID="${2:-}"; shift 2 ;;
     --run-id)  MODE="run-id"; ID="${2:-}"; shift 2 ;;
-    --root)    ROOT="${2:-}"; shift 2 ;;
+    --root)    ROOT="${2:-}"
+               case "$NL$ROOTS$NL" in *"$NL$ROOT$NL"*) ;; *) ROOTS="${ROOTS:+$ROOTS$NL}$ROOT" ;; esac
+               shift 2 ;;
     -h|--help) die_usage ;;
     *) die_usage ;;
   esac
@@ -85,7 +101,7 @@ done
 [ -n "$MODE" ] && [ -n "$ID" ] || die_usage
 
 # ---- resolve root (mirrors emit-token-ledger.sh's worktree-safe anchoring) --
-if [ -z "$ROOT" ]; then
+if [ -z "$ROOTS" ]; then
   main_root="$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')"
   if [ -n "$main_root" ] && [ -d "$main_root" ]; then
     top="$(git -C "$main_root" rev-parse --path-format=absolute --show-toplevel 2>/dev/null || true)"
@@ -93,6 +109,7 @@ if [ -z "$ROOT" ]; then
   fi
   [ -n "$main_root" ] || main_root="$PWD"
   ROOT="$main_root"
+  ROOTS="$ROOT"
 fi
 
 LOG_DIR="${ROOT}/.supervisor/logs"
@@ -156,34 +173,50 @@ print_result() {
   echo "INPUT=$TOTAL_INPUT OUTPUT=$TOTAL_OUTPUT CACHE_READ=$TOTAL_CACHE_READ CACHE_CREATE=$TOTAL_CACHE_CREATE TOTAL=$total EVENTS=$TOTAL_EVENTS"
 }
 
-case "$MODE" in
-  session)
-    if sum_session_file "${LOG_DIR}/${ID}.jsonl"; then
-      print_result
-    else
-      emit_zero
-    fi
-    ;;
-  run-id)
-    RUNFILE=""
-    if [ -f "$ID" ]; then
-      RUNFILE="$ID"
-    elif [ -f "${ROOT}/.supervisor/automate/${ID}.md" ]; then
-      RUNFILE="${ROOT}/.supervisor/automate/${ID}.md"
-    fi
-    [ -n "$RUNFILE" ] && [ -r "$RUNFILE" ] || emit_zero
-    SESSIONS="$(grep -oE 'session_id [A-Za-z0-9_-]+' "$RUNFILE" 2>/dev/null | awk '{print $2}' | env LC_ALL=C sort -u || true)"
-    [ -n "$SESSIONS" ] || emit_zero
-    while IFS= read -r sid; do
-      [ -n "$sid" ] || continue
-      sum_session_file "${LOG_DIR}/${sid}.jsonl" || true
-    done <<< "$SESSIONS"
-    if [ "$ANY_READABLE" -eq 1 ]; then
-      print_result
-    else
-      emit_zero
-    fi
-    ;;
-esac
+# lane_run_file <root> <id> — parallel-automate/05: when <root> is a lane clone
+# whose lane.json names parent_run_id = <id>, print the lane's own run file path.
+lane_run_file() {
+  local lj="$1/.supervisor/lane.json" par rid
+  [ -f "$lj" ] || return 0
+  par="$("$JQ" -r '.parent_run_id // empty | strings' "$lj" 2>/dev/null)"
+  rid="$("$JQ" -r '.run_id // empty | strings' "$lj" 2>/dev/null)"
+  [ -n "$par" ] && [ "$par" = "$2" ] && [ -n "$rid" ] || return 0
+  case "$rid" in */*|.*) return 0 ;; esac
+  printf '%s\n' "$1/.supervisor/automate/$rid.md"
+}
+
+while IFS= read -r ROOT; do
+  [ -n "$ROOT" ] || continue
+  LOG_DIR="${ROOT}/.supervisor/logs"
+  case "$MODE" in
+    session)
+      sum_session_file "${LOG_DIR}/${ID}.jsonl" || true
+      ;;
+    run-id)
+      RUNFILE=""
+      if [ -f "$ID" ]; then
+        RUNFILE="$ID"
+      elif [ -f "${ROOT}/.supervisor/automate/${ID}.md" ]; then
+        RUNFILE="${ROOT}/.supervisor/automate/${ID}.md"
+      else
+        RUNFILE="$(lane_run_file "$ROOT" "$ID")"
+        [ -f "$RUNFILE" ] || RUNFILE=""
+      fi
+      [ -n "$RUNFILE" ] && [ -r "$RUNFILE" ] || continue
+      SESSIONS="$(grep -oE 'session_id [A-Za-z0-9_-]+' "$RUNFILE" 2>/dev/null | awk '{print $2}' | env LC_ALL=C sort -u || true)"
+      [ -n "$SESSIONS" ] || continue
+      while IFS= read -r sid; do
+        [ -n "$sid" ] || continue
+        sum_session_file "${LOG_DIR}/${sid}.jsonl" || true
+      done <<< "$SESSIONS"
+      ;;
+  esac
+done <<< "$ROOTS"
+
+if [ "$ANY_READABLE" -eq 1 ]; then
+  print_result
+else
+  emit_zero
+fi
 
 exit 0
