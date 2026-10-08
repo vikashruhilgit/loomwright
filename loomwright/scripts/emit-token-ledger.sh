@@ -15,8 +15,21 @@
 #   uuid-named files do not become the sole join key.
 #
 # Usage fields on SubagentStop are EXPECTED ABSENT (see docs/TELEMETRY.md
-# §Token ledger). When absent, records a transcript-byte PROXY — never an
-# invented token count, and never labelled as tokens.
+# §Token ledger). When absent, the REAL usage is read from the subagent's own
+# transcript (`agent_transcript_path` ONLY — never `transcript_path`, which is
+# the main session's transcript): its `type:"assistant"` lines carry
+# `message.usage`, repeated once per streamed content block and NOT identical
+# across the repeats (`output_tokens` is a stream-start placeholder until the
+# final line, the one with a non-null `message.stop_reason`). Each distinct
+# `message.id` is counted ONCE — that final line when present, else the
+# per-field MAX over the id's lines, never the first line — and written as the
+# four TOP-LEVEL integer fields read-token-ledger.sh sums, marked
+# `"usage_source":"transcript"` (parallel-automate/24 F8). A resumed agent's
+# next stop counts only the ids AFTER `usage_last_message_id` of the last
+# transcript-sourced line this agent_id wrote to the same log, so earlier
+# messages are not counted twice. Only when no usage can be read (no/unreadable
+# agent transcript, no usage lines) does it record a transcript-byte PROXY —
+# never an invented token count, and never labelled as tokens.
 #
 # No-op (exit 0) when: empty stdin, missing/empty session_id (both sources),
 # unreadable proxy paths, missing python3, or any parse/write failure.
@@ -112,7 +125,7 @@ case "$UTC_TS" in
 esac
 
 LOG_DIR="${main_root}/.supervisor/logs"
-export UTC_TS
+export UTC_TS LOG_DIR
 
 # ---- Resolve plugin session id from state.md (active run only) --------------
 # Match build-handoff.sh / Supervisor Session block: `- session_id: …`
@@ -255,6 +268,103 @@ def transcript_bytes(payload):
             continue
     return None
 
+USAGE_INT_FIELDS = (
+    "input_tokens",
+    "output_tokens",
+    "cache_read_input_tokens",
+    "cache_creation_input_tokens",
+)
+# A transcript larger than this is not parsed (the proxy line is written
+# instead) — the read is streaming, but a hook must stay bounded.
+TRANSCRIPT_MAX_BYTES = 256 * 1024 * 1024
+
+def _usage_int(val):
+    """A usage count is a non-negative int (never a bool, a float, a string or
+    one of the sub-objects real transcript usage also carries) — else 0."""
+    if isinstance(val, bool) or not isinstance(val, int) or val < 0:
+        return 0
+    return val
+
+def last_counted_message_id(log_path, agent_id):
+    """`usage_last_message_id` of the LAST transcript-sourced token_ledger line
+    this agent_id wrote to log_path, or None. Streaming; a cheap substring test
+    skips every line that cannot be one before any JSON parse."""
+    if not agent_id or not log_path:
+        return None
+    last = None
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                if agent_id not in raw or "usage_last_message_id" not in raw:
+                    continue
+                try:
+                    obj = json.loads(raw)
+                except Exception:
+                    continue
+                if (isinstance(obj, dict) and obj.get("event") == "token_ledger"
+                        and obj.get("usage_source") == "transcript"
+                        and obj.get("agent_id") == agent_id
+                        and isinstance(obj.get("usage_last_message_id"), str)):
+                    last = obj["usage_last_message_id"]
+    except OSError:
+        return None
+    return last
+
+def transcript_usage(path, log_path, agent_id):
+    """Real usage from a subagent transcript, or None when there is none to
+    read. Per distinct message.id: the line with a non-null stop_reason (the
+    last such line) when one exists, else the per-field max over the lines of that
+    id. Returns (totals, ids_counted, last_message_id)."""
+    if not isinstance(path, str) or not path:
+        return None
+    try:
+        if not os.path.isfile(path) or os.path.getsize(path) > TRANSCRIPT_MAX_BYTES:
+            return None
+        order, per, anon = [], {}, 0
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                if "\"usage\"" not in raw or "\"assistant\"" not in raw:
+                    continue
+                try:
+                    obj = json.loads(raw)
+                except Exception:
+                    continue
+                if not isinstance(obj, dict) or obj.get("type") != "assistant":
+                    continue
+                msg = obj.get("message")
+                if not isinstance(msg, dict) or not isinstance(msg.get("usage"), dict):
+                    continue
+                vals = {k: _usage_int(msg["usage"].get(k)) for k in USAGE_INT_FIELDS}
+                mid = msg.get("id")
+                if not isinstance(mid, str) or not mid:
+                    anon += 1               # no id to dedupe on: the line stands alone
+                    mid = "\0anon-%d" % anon
+                rec = per.get(mid)
+                if rec is None:
+                    rec = per[mid] = {"final": None, "max": dict.fromkeys(USAGE_INT_FIELDS, 0)}
+                    order.append(mid)
+                for k in USAGE_INT_FIELDS:
+                    if vals[k] > rec["max"][k]:
+                        rec["max"][k] = vals[k]
+                if msg.get("stop_reason") is not None:
+                    rec["final"] = vals
+    except (OSError, ValueError):
+        return None
+    if not order:
+        return None
+    start = 0
+    prior = last_counted_message_id(log_path, agent_id)
+    if prior and prior in per:
+        start = order.index(prior) + 1
+    counted = order[start:]
+    totals = dict.fromkeys(USAGE_INT_FIELDS, 0)
+    for m in counted:
+        src = per[m]["final"] if per[m]["final"] is not None else per[m]["max"]
+        for k in USAGE_INT_FIELDS:
+            totals[k] += src[k]
+    last_id = order[-1] if not order[-1].startswith("\0") else None
+    return totals, len(counted), last_id
+
 try:
     payload = json.loads(sys.stdin.read())
 except Exception:
@@ -352,13 +462,33 @@ if usage_present(payload):
                 event["usage"] = val["usage"]
                 break
 else:
-    nbytes = transcript_bytes(payload)
-    if nbytes is None:
-        # Unreadable / missing proxy paths → silent no-op.
-        sys.exit(0)
-    event["proxy"] = True
-    event["token_proxy_kind"] = "transcript_bytes"
-    event["token_proxy_transcript_bytes"] = int(nbytes)
+    # The payload carries no usage (the expected case): read the real usage
+    # from the OWN transcript of the subagent — agent_transcript_path only; the
+    # session transcript (`transcript_path`) belongs to the main thread and is never
+    # summed here. Any read/parse failure falls through to the proxy line.
+    _log_path = os.path.join(os.environ.get("LOG_DIR", ""), log_session_id + ".jsonl")
+    try:
+        _tu = transcript_usage(payload.get("agent_transcript_path"), _log_path,
+                               agent_id if isinstance(agent_id, str) else "")
+    except Exception:
+        _tu = None
+    if _tu is not None:
+        _totals, _n_ids, _last_id = _tu
+        event["proxy"] = False
+        event["usage_source"] = "transcript"
+        for key in USAGE_INT_FIELDS:
+            event[key] = int(_totals[key])
+        event["usage_messages"] = int(_n_ids)
+        if _last_id:
+            event["usage_last_message_id"] = _last_id
+    else:
+        nbytes = transcript_bytes(payload)
+        if nbytes is None:
+            # Unreadable / missing proxy paths → silent no-op.
+            sys.exit(0)
+        event["proxy"] = True
+        event["token_proxy_kind"] = "transcript_bytes"
+        event["token_proxy_transcript_bytes"] = int(nbytes)
 
 # Additive-if-present: orientation_source from the LOOMWRIGHT_ORIENTATION_SOURCE
 # env var (inherited from the hook invocation environment). Only the four known

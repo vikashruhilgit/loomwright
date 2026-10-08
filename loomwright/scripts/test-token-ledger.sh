@@ -68,6 +68,20 @@
 #      20f the SAME absence on the main arm still records "main" - that arm
 #          compares the path against cc_session_id and needs no agent_id, so a
 #          blanket "omitted when agent_id is absent" claim would be false
+#  24. REAL USAGE FROM THE AGENT TRANSCRIPT (parallel-automate/24 F8) — the
+#      payload carries no usage, the agent transcript does (repeated per
+#      message.id with a GROWING output_tokens, as real transcripts are):
+#      24a one id read 8, 8, 263 (stop_reason only on the last) counts 263
+#          exactly once; an id with no final line counts the per-field MAX
+#      24b the four TOP-LEVEL integer fields + usage_source:"transcript",
+#          proxy:false, no proxy fields
+#      24c read-token-ledger.sh sums it into a non-zero TOTAL
+#      24d a resumed agent (same agent_id, transcript grown) counts only the
+#          new ids at its next stop — earlier messages are not counted again
+#      24e a repeat stop with no new message counts 0 (no double count)
+#      24f an agent transcript with no usage lines still writes the proxy line
+#      24g transcript_path alone (the main thread) is never summed — proxy line
+#      24h non-numeric usage values count 0; malformed lines are skipped
 
 # EXIT: 0 on full pass, 1 on any failed assertion.
 # Style mirrors test-insights.sh / test-send-telemetry-core.sh.
@@ -1346,6 +1360,74 @@ wait
 FAN_LINES="$(wc -l < "$SANDBOX/.supervisor/logs/${FAN_SID}.jsonl" 2>/dev/null | tr -d ' ')"
 assert_eq "case23 $FAN_N concurrent firings of ONE completion still append exactly one line (seed + 1 = 2) — the lock budget survives the fan-out registering every agent creates" "2" "$FAN_LINES"
 
+
+echo "== 24. real usage from the agent transcript (parallel-automate/24 F8) =="
+TU_SID="fixture-token-ledger-transcript-usage-001"
+TU_T="$SANDBOX/subagents/agent-tu001.jsonl"; mkdir -p "$SANDBOX/subagents"
+# msg_A: three streamed lines, output 8, 8, 263 — stop_reason ONLY on the last (the real count).
+# msg_B: no final line (older transcripts) — the per-field MAX (output 40) is counted.
+# Plus the sub-objects real usage carries (cache_creation, service_tier) and a non-assistant line.
+{
+  printf '%s\n' '{"type":"user","message":{"role":"user","content":"go"}}'
+  for o in 8 8; do
+    printf '{"type":"assistant","message":{"id":"msg_A","stop_reason":null,"usage":{"input_tokens":10,"output_tokens":%s,"cache_read_input_tokens":100,"cache_creation_input_tokens":50,"cache_creation":{"ephemeral_5m_input_tokens":50},"service_tier":"standard"}}}\n' "$o"
+  done
+  printf '%s\n' '{"type":"assistant","message":{"id":"msg_A","stop_reason":"tool_use","usage":{"input_tokens":10,"output_tokens":263,"cache_read_input_tokens":100,"cache_creation_input_tokens":50,"server_tool_use":{"web_search_requests":0}}}}'
+  printf '%s\n' '{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"ok"}]}}'
+  printf '%s\n' '{"type":"assistant","message":{"id":"msg_B","stop_reason":null,"usage":{"input_tokens":7,"output_tokens":5,"cache_read_input_tokens":200,"cache_creation_input_tokens":0}}}'
+  printf '%s\n' '{"type":"assistant","message":{"id":"msg_B","stop_reason":null,"usage":{"input_tokens":7,"output_tokens":40,"cache_read_input_tokens":200,"cache_creation_input_tokens":0}}}'
+  printf '%s\n' '{"type":"assistant", "message": not json "usage"'
+} > "$TU_T"
+TU_PAYLOAD="$SANDBOX/tu.json"
+jq -n --arg a "$TU_T" --arg sid "$TU_SID" '{session_id: $sid, agent_id: "tu001", agent_transcript_path: $a}' > "$TU_PAYLOAD"
+TU_LOG="$SANDBOX/.supervisor/logs/${TU_SID}.jsonl"
+OUT24="$(run_sut "$TU_PAYLOAD")"
+assert_eq "case24 exit 0" "0" "$(printf '%s\n' "$OUT24" | grep '^RC=' | tail -1 | cut -d= -f2)"
+LINE24="$(tail -1 "$TU_LOG" 2>/dev/null)"
+assert_eq "case24a output_tokens: msg_A's 263 counted ONCE + msg_B's max 40 (first line per id would read 13, every line 324)" \
+  "303" "$(printf '%s' "$LINE24" | jq -r '.output_tokens')"
+assert_eq "case24a input / cache_read / cache_create counted once per id" "17 300 50" \
+  "$(printf '%s' "$LINE24" | jq -r '"\(.input_tokens) \(.cache_read_input_tokens) \(.cache_creation_input_tokens)"')"
+assert_eq "case24b top-level INTEGER fields, transcript marker, real usage" "number number number number transcript false 2 msg_B" \
+  "$(printf '%s' "$LINE24" | jq -r '"\(.input_tokens|type) \(.output_tokens|type) \(.cache_read_input_tokens|type) \(.cache_creation_input_tokens|type) \(.usage_source) \(.proxy) \(.usage_messages) \(.usage_last_message_id)"')"
+assert_eq "case24b no proxy fields and no nested usage object" "false" \
+  "$(printf '%s' "$LINE24" | jq -r 'has("token_proxy_kind") or has("token_proxy_transcript_bytes") or has("usage")')"
+assert_eq "case24c read-token-ledger.sh sums it into a non-zero TOTAL" "INPUT=17 OUTPUT=303 CACHE_READ=300 CACHE_CREATE=50 TOTAL=670 EVENTS=1" \
+  "$(bash "$SCRIPT_DIR/read-token-ledger.sh" --session "$TU_SID" --root "$SANDBOX")"
+# 24d: the agent is resumed — its transcript grows by msg_C; the next stop counts msg_C only.
+printf '%s\n' '{"type":"assistant","message":{"id":"msg_C","stop_reason":null,"usage":{"input_tokens":3,"output_tokens":2,"cache_read_input_tokens":400,"cache_creation_input_tokens":9}}}' >> "$TU_T"
+printf '%s\n' '{"type":"assistant","message":{"id":"msg_C","stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":30,"cache_read_input_tokens":400,"cache_creation_input_tokens":9}}}' >> "$TU_T"
+run_sut "$TU_PAYLOAD" >/dev/null
+assert_eq "case24d resumed agent: the next stop counts only the new id (msg_C)" "3 30 400 9 1 msg_C" \
+  "$(tail -1 "$TU_LOG" | jq -r '"\(.input_tokens) \(.output_tokens) \(.cache_read_input_tokens) \(.cache_creation_input_tokens) \(.usage_messages) \(.usage_last_message_id)"')"
+assert_eq "case24d … so the reader's TOTAL is the transcript's true sum, nothing counted twice" "TOTAL=1112" \
+  "$(bash "$SCRIPT_DIR/read-token-ledger.sh" --session "$TU_SID" --root "$SANDBOX" | grep -oE 'TOTAL=[0-9]+')"
+sleep 1   # a different ts, so the repeat below is not removed by the adjacent byte-identity guard
+run_sut "$TU_PAYLOAD" >/dev/null
+assert_eq "case24e a repeat stop with no new message counts 0 — the total is unchanged" "0 0 TOTAL=1112" \
+  "$(tail -1 "$TU_LOG" | jq -r '"\(.output_tokens) \(.usage_messages)"') $(bash "$SCRIPT_DIR/read-token-ledger.sh" --session "$TU_SID" --root "$SANDBOX" | grep -oE 'TOTAL=[0-9]+')"
+# 24f: an agent transcript with no usage lines → the existing proxy line.
+NU_SID="fixture-token-ledger-transcript-nousage-001"; NU_T="$SANDBOX/subagents/agent-nu001.jsonl"
+printf '%s\n' '{"type":"user","message":{"content":"x"}}' '{"type":"assistant","message":{"id":"m","content":[]}}' > "$NU_T"
+jq -n --arg a "$NU_T" --arg sid "$NU_SID" '{session_id: $sid, agent_id: "nu001", agent_transcript_path: $a}' > "$SANDBOX/nu.json"
+OUT24F="$(run_sut "$SANDBOX/nu.json")"
+assert_eq "case24f no usage in the agent transcript ⇒ exit 0 + the proxy line (bytes, no usage_source)" \
+  "0 true $(wc -c < "$NU_T" | tr -d ' ') false" \
+  "$(printf '%s\n' "$OUT24F" | grep '^RC=' | tail -1 | cut -d= -f2) $(tail -1 "$SANDBOX/.supervisor/logs/${NU_SID}.jsonl" | jq -r '"\(.proxy) \(.token_proxy_transcript_bytes) \(has("usage_source"))"')"
+# 24g: only transcript_path (the main session's own transcript) — never summed here.
+MT_SID="fixture-token-ledger-transcript-main-001"
+jq -n --arg t "$TU_T" --arg sid "$MT_SID" '{session_id: $sid, transcript_path: $t}' > "$SANDBOX/mt.json"
+run_sut "$SANDBOX/mt.json" >/dev/null
+assert_eq "case24g transcript_path alone ⇒ proxy line, the main thread is not summed" "true null" \
+  "$(tail -1 "$SANDBOX/.supervisor/logs/${MT_SID}.jsonl" | jq -r '"\(.proxy) \(.output_tokens)"')"
+# 24h: non-numeric usage values count 0 (a string, a float, a bool, a negative).
+NN_SID="fixture-token-ledger-transcript-nonnum-001"; NN_T="$SANDBOX/subagents/agent-nn001.jsonl"
+printf '%s\n' '{"type":"assistant","message":{"id":"n1","stop_reason":"end_turn","usage":{"input_tokens":"12","output_tokens":4.5,"cache_read_input_tokens":true,"cache_creation_input_tokens":-3}}}' \
+  '{"type":"assistant","message":{"id":"n2","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":2,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}' > "$NN_T"
+jq -n --arg a "$NN_T" --arg sid "$NN_SID" '{session_id: $sid, agent_id: "nn001", agent_transcript_path: $a}' > "$SANDBOX/nn.json"
+run_sut "$SANDBOX/nn.json" >/dev/null
+assert_eq "case24h non-numeric values count 0, the numeric message still counts" "1 2 0 0 2" \
+  "$(tail -1 "$SANDBOX/.supervisor/logs/${NN_SID}.jsonl" | jq -r '"\(.input_tokens) \(.output_tokens) \(.cache_read_input_tokens) \(.cache_creation_input_tokens) \(.usage_messages)"')"
 
 echo ""
 echo "RESULT  pass=$PASS_COUNT  fail=$FAIL_COUNT"
