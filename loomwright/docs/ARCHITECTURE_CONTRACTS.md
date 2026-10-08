@@ -284,6 +284,7 @@ One recorded verdict per directory (v15.68.0): **tracked** (committed; never tou
 - `.supervisor/requirements/**/*.md`
 - `.supervisor/jobs/done/*.md`, `.supervisor/jobs/failed/*.md`
 - `.supervisor/automate/*.md`
+- `.supervisor/automate/<name>.dismissed-decisions` (top level only; the dismissed-findings decision ledger — TSV of draft names, no home paths — so a lane's decisions survive lane-remove; scrubbed like every other added file)
 - `.supervisor/postmortem/results.jsonl`
 - minus anything under a NESTED `.supervisor/` (`.supervisor/requirements/**/.supervisor/**`).
 - minus every non-canonical path (absolute, or with a `.` / `..` / empty segment). Branch trees are untrusted input — anyone who can push the branch can `mktree` any entry name — so an entry like `.supervisor/requirements/../../CLAUDE.md` is never joined to the root for a write or delete: `pull` ignores it, and `push` fails closed because git's `read-tree` refuses such a tree.

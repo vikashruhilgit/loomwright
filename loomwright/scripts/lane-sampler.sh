@@ -162,6 +162,11 @@ cwd_map() {
       for d in "$PROC"/[0-9]*; do
         [ -L "$d/cwd" ] || continue
         c="$(readlink "$d/cwd" 2>/dev/null)" || continue
+        # A cwd removed under a live process reads back as "<path> (deleted)". Strip the suffix so
+        # the process still attributes to the lane whose path prefixes it (e.g. a straggler left
+        # after lane-remove is still lane-owned memory, not non-lane load). A real directory whose
+        # name ends in " (deleted)" is indistinguishable here; that is accepted.
+        c="${c% (deleted)}"
         [ -n "$c" ] && printf '%s\t%s\n' "${d##*/}" "$c" >> "$out"
       done ;;
   esac
@@ -231,9 +236,12 @@ notify() {   # notify <gate_type> <message> — desktop + webhook, both fail-saf
   return 0
 }
 
-# parent_alive — the parent pid lives AND still has the start time read at startup.
+# parent_alive — the parent pid lives (and is not a zombie) AND still has the start time read at
+# startup. `kill -0` also succeeds for an exited-but-unreaped zombie, so a `ps` stat beginning with
+# Z counts as dead; an unreadable stat stays neutral (the pid + start-time check still decides).
 parent_alive() {
   kill -0 "$PARENT_PID" 2>/dev/null || return 1
+  case "$("$PS" -o stat= -p "$PARENT_PID" 2>/dev/null | tr -d ' ')" in Z*) return 1 ;; esac
   [ -z "$PARENT_START" ] && return 0
   [ "$("$PS" -o lstart= -p "$PARENT_PID" 2>/dev/null)" = "$PARENT_START" ]
 }

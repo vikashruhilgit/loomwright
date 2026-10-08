@@ -110,9 +110,15 @@ SETUP_MEMORY="${LOOMWRIGHT_LANES_SETUP_MEMORY:-$HERE/setup-memory.sh}"
 HELPERS="${LOOMWRIGHT_LANES_HELPERS:-$HERE/automate-helpers.sh}"
 
 # The lane allowlist (the minimum S1 found sufficient) and the DISALLOW list. These two are the only
-# lines in this file that may name the merge / admin tokens (Validation 3 greps for them).
+# lines in this file that may name the merge / admin tokens (Validation 3 greps for them). The list
+# also denies the GitHub merge endpoints reachable through `gh api` (the REST pulls/<n>/merge PUT and
+# the GraphQL merge / auto-merge mutations); `gh api graphql` itself stays allowed because a lane's
+# own drain reads review threads through it. Honest limit: a deny list is a TRIPWIRE, not a sandbox —
+# any other route to the merge API (e.g. a raw HTTP client carrying a token) is not covered. The
+# merge invariant's real backstop is that a lane parks at ready_for_release and only the
+# coordinator's automate-loop §10 gate ever executes a merge.
 LANE_ALLOWED_TOOLS="Bash,Read,Edit,Write,Glob,Grep,Task,Agent,AskUserQuestion"
-LANE_DISALLOWED_FIXED="Bash(gh pr merge:*),Bash(gh pr merge *),Bash(*--admin*),Bash(git push --force:*),Bash(git push -f:*),Bash(git push --force-with-lease:*),Bash(git push *--force*)"
+LANE_DISALLOWED_FIXED="Bash(gh pr merge:*),Bash(gh pr merge *),Bash(*--admin*),Bash(gh api *pulls/*/merge*),Bash(gh api *mergePullRequest*),Bash(gh api *enablePullRequestAutoMerge*),Bash(git push --force:*),Bash(git push -f:*),Bash(git push --force-with-lease:*),Bash(git push *--force*)"
 LANE_SYS="You are running as a HEADLESS lane (claude -p). Ending your turn ENDS this process and stops any background task. Never end your turn to wait for background work (CI, checks, subagents, long commands): wait in the FOREGROUND with a blocking Bash call or a Monitor you wait on. End your turn only when the item is parked, or when you must ask the owner via AskUserQuestion."
 LANE_CONTINUE_MSG="continue where you left off; wait in the foreground"
 LT_HEADER="$(printf '#lane\tpath\titem\trun_id\tpid\tpid_start\tsession_id\tstate\tlast_launch_utc\tblocked_reason')"

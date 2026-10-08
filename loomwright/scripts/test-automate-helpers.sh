@@ -5276,6 +5276,16 @@ else
   no "LANE mutation control: could not build the mutant (sed did not apply / bash -n failed)"
 fi
 rm -f "$LN_MUT"
+# Lane-id shape (D2/D3: <parent_run_id>-L<n> of a real parent): an engine-minted parent id is a lane
+# run even with no parent file beside it; a hand-made id merely ending -L<n> with no such parent stays listed.
+LN_B="$LN_T/b/.supervisor/automate"; mkdir -p "$LN_B"
+printf '# Automate Run: nightly-L3 — hand-made run\n## Status: running\n' > "$LN_B/nightly-L3.md"
+printf '# Automate Run: automate-2026-10-07-170659-L1 — .supervisor/requirements/q/a.md\n## Status: running\n' > "$LN_B/automate-2026-10-07-170659-L1.md"
+run_h bash "$H" resume-glob "$LN_B"
+if [ "$RUN_RC" -eq 0 ] && [ "$RUN_OUT" = "$LN_B/nightly-L3.md" ]; then ok "LANE resume-glob: a hand-made nightly-L3 (no nightly run beside it) is listed; an automate-YYYY-MM-DD-HHMMSS-L1 lane run is skipped"; else no "LANE resume-glob lane-id shape wrong (rc=$RUN_RC):\n$RUN_OUT"; fi
+printf '# Automate Run: nightly — the parent\n## Status: done\n' > "$LN_B/nightly.md"
+run_h bash "$H" resume-glob "$LN_B"
+if [ "$RUN_RC" -eq 0 ] && [ -z "$RUN_OUT" ]; then ok "LANE resume-glob: nightly-L3 IS skipped once a run titled nightly (its parent, even finished) sits beside it"; else no "LANE resume-glob parent-present shape wrong (rc=$RUN_RC):\n$RUN_OUT"; fi
 # Inside a lane clone: its own run IS listed, nothing else (other lanes, the parent's run).
 printf '{"schema_version":1,"lane":"L1","run_id":"par-1-L1","parent_run_id":"par-1"}\n' > "$LN_T/p/.supervisor/lane.json"
 run_h bash "$H" resume-glob "$LN_A"

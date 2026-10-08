@@ -289,6 +289,24 @@ EOF
 # trail-pr (what to commit) and, via _trail_owned, by trail-unstage and closeout.
 TRAIL_LEDGER=".supervisor/postmortem/results.jsonl"
 DRAFT_DIR=".supervisor/requirements/proposed"
+
+# _trail_is_run_draft <run_id> <path> — 0 when <path> is "$DRAFT_DIR/<name>" and <name> is a
+# dismissed-finding draft of <run_id>: its own (`<run_id>--*--dismissed-*.md`) or a lane's
+# (`<run_id>-L<digits>--*--dismissed-*.md`). The lane form uses the SAME digits-only definition as
+# automate-dismissed.sh's _dismissed_lane_id, so `<run_id>-L2x--…` is never a lane draft (the bare
+# glob `-L[0-9]*--` would accept it). Every lane-draft match in this file goes through here.
+_trail_is_run_draft() {
+  local rid="$1" n rest num
+  case "$2" in "$DRAFT_DIR/"*) n="${2#"$DRAFT_DIR/"}" ;; *) return 1 ;; esac
+  case "$n" in
+    "$rid"--*--dismissed-*.md) return 0 ;;
+    "$rid"-L[0-9]*--*--dismissed-*.md) ;;
+    *) return 1 ;;
+  esac
+  rest="${n#"$rid"-L}"; num="${rest%%--*}"
+  case "$num" in ""|*[!0-9]*) return 1 ;; esac
+  return 0
+}
 TRAIL_KEPT=""
 TRAIL_EXCLUDED=""
 TRAIL_SKIP_IGNORE_DROP=0   # 1 only on the branch-mode push path (_trail_meta_push)
@@ -338,6 +356,7 @@ EOF
   # A `--parallel` parent also carries its lanes' drafts (`<run_id>-L<n>--…`,
   # mirroring automate-dismissed.sh's _dismissed_lane_drafts — parallel-automate/05).
   for p in "$DRAFT_DIR/$run_id"--*--dismissed-*.md "$DRAFT_DIR/$run_id"-L[0-9]*--*--dismissed-*.md; do
+    _trail_is_run_draft "$run_id" "$p" || continue
     [ -f "$p" ] && [ ! -L "$p" ] && cands="$cands"$'\n'"$p"
   done
 
@@ -589,7 +608,7 @@ _trail_meta_push() {
     while IFS= read -r dn; do
       [ -n "$dn" ] || continue
       dp="$DRAFT_DIR/$dn"
-      case "$dp" in "$DRAFT_DIR/$run_id"--*--dismissed-*.md|"$DRAFT_DIR/$run_id"-L[0-9]*--*--dismissed-*.md) ;; *) continue ;; esac
+      _trail_is_run_draft "$run_id" "$dp" || continue
       case "$dn" in */*) continue ;; esac
       [ -e "$dp" ] && continue
       _in_list "$dp" "$list" && continue
@@ -778,7 +797,7 @@ RETRACT
   if [ "$base_ref" != "$origin_base" ] && [ -f "$dl" ]; then
     while IFS= read -r dp; do
       [ -n "$dp" ] || continue
-      case "$dp" in "$DRAFT_DIR/$run_id"--*--dismissed-*.md|"$DRAFT_DIR/$run_id"-L[0-9]*--*--dismissed-*.md) ;; *) continue ;; esac
+      _trail_is_run_draft "$run_id" "$dp" || continue
       _in_list "$dp" "$dretract" && continue
       [ -e "$dp" ] && continue
       dn="${dp##*/}"

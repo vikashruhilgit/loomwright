@@ -1266,6 +1266,17 @@ out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason done)"
 case "$out" in *"retracted $XD"*) ok "moved: next trail-pr retracts the stale own-draft blob ($out)" ;; *) no "moved retract: $out" ;; esac
 tip_has "$XD" && no "moved: the stale own draft is still on the trail tip" || ok "moved: the stale own draft is removed from the trail tip"
 tip_has "$XS" && ok "moved: the summary carrying the finding rides the trail (listed once)" || no "moved: summary not on tip: $(trail_names)"
+# Lane drafts use ONE digits-only definition (automate-dismissed.sh's _dismissed_lane_id):
+# `<run_id>-L2--…` is a lane draft and rides; `<run_id>-L2x--…` is not and never does.
+new_fixture 198
+XL=".supervisor/requirements/proposed/$RUN_ID-L2--01-a-abc123--dismissed-1.md"
+XLX=".supervisor/requirements/proposed/$RUN_ID-L2x--01-a-abc123--dismissed-1.md"
+mkdir -p "$P/.supervisor/requirements/proposed"
+printf '# Dismissed finding\n\n> lane finding\n' > "$P/$XL"; printf '# Dismissed finding\n\n> not a lane\n' > "$P/$XLX"
+out="$(cd "$P" && bash "$H" trail-pr "$RF_REL0" --reason done)"
+case "$out" in "trail-pr: opened "*) ok "lane-draft shape: trail-pr opened ($out)" ;; *) no "lane-draft shape trail-pr: $out" ;; esac
+tip_has "$XL" && ok "a <run_id>-L<digits>--… draft is a lane draft and rides the trail" || no "lane draft did not ride: $(trail_names)"
+tip_has "$XLX" && no "a <run_id>-L2x--… draft rode the trail as a lane draft" || ok "a <run_id>-L2x--… draft is NOT a lane draft (digits-only definition)"
 
 echo "== D3. checkout contract re-examined for trail-after-merge (decision 3) =="
 # With trail-pr only after merge / at run end, the trail that matters is closeout's

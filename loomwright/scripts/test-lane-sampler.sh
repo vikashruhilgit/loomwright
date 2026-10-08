@@ -18,7 +18,10 @@
 #        MUTATION CONTROL: drop the swap-growth condition ⇒ low free alone trips (the leg fails)
 #   (X)  crossings notify exactly once each: busy, overloaded (latched until ok), keep-awake lost
 #        (never at start)
-#   (P)  the loop stops when the parent dies, and when the parent pid's start time changes
+#   (P)  the loop stops when the parent dies, and when the parent pid's start time changes, and
+#        when the parent is an unreaped zombie (ps stat Z — `kill -0` alone still succeeds)
+#   (B2) Linux: a /proc cwd link reading "<lane path> (deleted)" (the lane root removed under a
+#        live process) still attributes to that lane, not to non-lane
 #   (L)  every fleet.log line is a sample line (no comment lines), at the default path
 #   (U)  usage: missing --parent-run-id / --parent-pid, a run id with "/", bad --interval ⇒ exit 2;
 #        --help prints the header
@@ -52,6 +55,7 @@ EOF
 cat > "$ST/ps" <<'EOF'
 #!/bin/sh
 case "$*" in *lstart=*) cat "$FX/lstart" 2>/dev/null; exit 0 ;; esac
+case "$*" in *stat=*) cat "$FX/stat" 2>/dev/null; exit 0 ;; esac
 [ -f "$FX/ps.fail" ] && exit 1
 cat "$FX/ps"
 EOF
@@ -163,6 +167,20 @@ check "(B) Linux swap_used_mb = SwapTotal - SwapFree" "$(fld swap_used_mb "$line
 check "(B) Linux free_mb = MemAvailable" "$(fld free_mb "$line")" 2000
 check "(B) keep_awake na off macOS" "$(fld keep_awake "$line")" na
 
+# ---- (B2) Linux: a removed cwd ("<path> (deleted)") still attributes to its lane ---------------
+reset_fx
+P2="$tmp/proc2"; mkdir -p "$P2/301" "$P2/302"
+# 301: the lane ROOT itself was removed (the suffix breaks both the exact and the "<path>/" match);
+# 303: a removed subdirectory of L2; 302: a removed dir outside every lane.
+mkdir -p "$P2/303"
+ln -s "$lin/L1 (deleted)" "$P2/301/cwd"; ln -s "$lin/other (deleted)" "$P2/302/cwd"; ln -s "$lin/L2/gone (deleted)" "$P2/303/cwd"
+printf '301 40960 1.0\n302 5120 1.0\n303 2048 1.0\n' > "$FX/ps"
+printf 'L1\t%s\tq/a.md\nL2\t%s\tq/b.md\n' "$tmp/lin/L1" "$tmp/lin/L2" > "$AD/$RID.lanes"
+line="$(LOOMWRIGHT_LANE_SAMPLER_OS=linux LOOMWRIGHT_LANE_SAMPLER_PROC="$P2" once)"
+check "(B2) deleted lane-root cwd attributes to L1" "$(fld rss_mb.L1 "$line")" 40
+check "(B2) deleted subdir cwd attributes to L2" "$(fld rss_mb.L2 "$line")" 2
+check "(B2) deleted cwd outside every lane stays non-lane" "$(fld nonlane_rss_mb "$line")" 5
+
 # ---- (C) unreadable ---------------------------------------------------------------------------
 reset_fx
 : > "$FX/ps.fail"; : > "$FX/load.fail"; : > "$FX/slot.fail"; : > "$FX/swap.fail"; : > "$FX/free.fail"
@@ -253,6 +271,14 @@ bash "$SUT" --parent-run-id "$RID" --parent-pid "$PARENT" --root "$ROOT" --inter
 sleep 1; echo "OTHER-START" > "$FX/lstart"
 if wait_gone "$SPID"; then ok "(P) a recycled parent pid (start time changed) stops the sampler"; else no "(P) sampler kept running on a recycled pid"; kill "$SPID" 2>/dev/null; fi
 wait "$SPID" 2>/dev/null; kill "$PARENT" 2>/dev/null; wait "$PARENT" 2>/dev/null
+sleep 60 & PARENT=$!
+echo S > "$FX/stat"
+bash "$SUT" --parent-run-id "$RID" --parent-pid "$PARENT" --root "$ROOT" --interval 1 2>/dev/null & SPID=$!
+sleep 1
+check "(P) a live (non-zombie) parent keeps the sampler running" "$(kill -0 "$SPID" 2>/dev/null && echo yes || echo no)" yes
+echo Z > "$FX/stat"
+if wait_gone "$SPID"; then ok "(P) a zombie parent (ps stat Z, kill -0 still succeeds) stops the sampler"; else no "(P) sampler kept running on a zombie parent"; kill "$SPID" 2>/dev/null; fi
+wait "$SPID" 2>/dev/null; kill "$PARENT" 2>/dev/null; wait "$PARENT" 2>/dev/null; rm -f "$FX/stat"
 dead=$PARENT
 bash "$SUT" --parent-run-id "$RID" --parent-pid "$dead" --root "$ROOT" --interval 0 2>/dev/null; rc=$?
 check "(P) a parent already gone ⇒ exit 0 at once" "$rc" 0

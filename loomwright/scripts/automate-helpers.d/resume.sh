@@ -71,15 +71,28 @@ _resume_lane_own() {
 }
 
 # _resume_lane_skip <runfile> <own_run_id> — succeeds (skip the file) when its
-# title run-id token is a lane id (ends `-L<digits>`, D3) that is not <own_run_id>
-# (the present lane.json's run; empty when this checkout is not a lane). A
+# title run-id token is a lane id that is not <own_run_id> (the present
+# lane.json's run; empty when this checkout is not a lane). A lane id is
+# `<parent_run_id>-L<digits>` (D2/D3) of a REAL parent: either the parent is an
+# engine-minted id (`automate-YYYY-MM-DD-HHMMSS`), or a run file titled with the
+# parent id sits in the same directory (the coordinator's own run, finished or
+# not). A hand-made run whose id merely ends `-L<digits>` (e.g. `nightly-L3`
+# with no `nightly` run beside it) is not a lane run and stays listed. A
 # non-lane run file is never skipped here.
 _resume_lane_skip() {
-  local id
+  local id parent g
   id="$(_resume_title_run_id "$1")"
   grep -Eq -- '-L[0-9]+$' <<<"$id" || return 1
   [ -n "$2" ] && [ "$id" = "$2" ] && return 1
-  return 0
+  grep -Eq -- '^automate-[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{6}-L[0-9]+$' <<<"$id" && return 0
+  parent="${id%-L*}"
+  [ -n "$parent" ] || return 1
+  for g in "$(dirname "$1")"/*.md; do
+    [ -e "$g" ] && [ "$g" != "$1" ] || continue
+    is_run_file "$g" || continue
+    [ "$(_resume_title_run_id "$g")" = "$parent" ] && return 0
+  done
+  return 1
 }
 
 # _resume_glob_list <dir> — the plain glob (byte-identical to the pre-finalize form
