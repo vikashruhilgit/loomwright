@@ -1078,15 +1078,33 @@ lanes_convert_ready() {
   echo "lane-convert-ready: converted $L to awaiting_merge; metadata pushed to $mb — $out"
 }
 
-# _lanes_os_notifier — prints NOTHING when the platform notifier notify-desktop.sh dispatches to is
-# present, else the `failed (…)` reason. Mirrors that script's own dispatch conditions (its Darwin
-# and Linux branches); any other OS has no notifier there either. LOOMWRIGHT_LANES_UNAME is the
-# existing uname seam of this file.
+# _lanes_click_action <notify-desktop.sh path> <checkout root> — the click action notify-desktop.sh
+# resolves for this call, derived its own way: LOOMWRIGHT_NOTIFY_CLICK (default activate), `off` or no
+# readable notify-click-target.sh beside the notifier ⇒ `none`, else that resolver's ACTION= line, fed
+# the same session-id / entrypoint env inputs (the park payload carries no session id, so the env wins).
+# The notifier's dir is resolved from <root>, the cwd it runs in; an unresolvable dir reads `none`.
+_lanes_click_action() {
+  local nd="$1" root="$2" mode="${LOOMWRIGHT_NOTIFY_CLICK:-activate}" dir out act=""
+  dir="$(cd "$root" 2>/dev/null && cd "$(dirname "$nd")" 2>/dev/null && pwd)" || dir=""
+  if [ "$mode" != off ] && [ -n "$dir" ] && [ -r "$dir/notify-click-target.sh" ]; then
+    out="$(bash "$dir/notify-click-target.sh" "$mode" "${CLAUDE_CODE_SESSION_ID:-}" "${CLAUDE_CODE_ENTRYPOINT:-}" 2>/dev/null)" || true
+    act="$(printf '%s\n' "$out" | sed -n 's/^ACTION=//p' | head -1)" || act=""
+  fi
+  echo "${act:-none}"
+}
+
+# _lanes_os_notifier <notify-desktop.sh path> <checkout root> — prints NOTHING when the platform
+# notifier notify-desktop.sh dispatches to is present, else the `failed (…)` reason. Mirrors that
+# script's own dispatch conditions: Darwin uses terminal-notifier ONLY with a click action other than
+# `none` (else it falls through to osascript), Linux needs notify-send plus a display; any other OS has
+# no notifier there either. LOOMWRIGHT_LANES_UNAME is the existing uname seam of this file.
 _lanes_os_notifier() {
+  local nd="${1:-}" root="${2:-.}"
   case "${LOOMWRIGHT_LANES_UNAME:-$(uname -s 2>/dev/null)}" in
     Darwin)
-      command -v terminal-notifier >/dev/null 2>&1 || command -v osascript >/dev/null 2>&1 \
-        || echo "no OS notifier on PATH" ;;
+      if command -v terminal-notifier >/dev/null 2>&1 && [ "$(_lanes_click_action "$nd" "$root")" != none ]; then :
+      elif command -v osascript >/dev/null 2>&1; then :
+      else echo "no OS notifier on PATH"; fi ;;
     Linux)
       if ! command -v notify-send >/dev/null 2>&1; then echo "no OS notifier on PATH"
       elif [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then echo "no display for notify-send"; fi ;;
@@ -1102,7 +1120,8 @@ _lanes_os_notifier() {
 # observable outcomes only — never assumed:
 #   desktop  `sent` (notify-desktop.sh wrote its `notify group=` audit line to <root>/.supervisor/logs/
 #            notifications.log AND the platform notifier it dispatches to is present — Darwin:
-#            terminal-notifier or osascript on PATH; Linux: notify-send on PATH plus DISPLAY or
+#            osascript, or terminal-notifier with a click action other than `none` (LOOMWRIGHT_NOTIFY_CLICK
+#            not `off` and notify-click-target.sh beside it), on PATH; Linux: notify-send on PATH plus DISPLAY or
 #            WAYLAND_DISPLAY — the OS banner itself is best-effort and not observable) · `disabled
 #            (LOOMWRIGHT_DESKTOP_NOTIFICATIONS=0)` · `suppressed (no audit line …)` (debounce, or the
 #            notifier skipped it) · `failed (<why>)` — incl. `failed (no OS notifier on PATH)` and
@@ -1143,7 +1162,7 @@ lanes_park_notify() {
     before="$(grep -c ' notify group=' "$nlog" 2>/dev/null)"; before="${before:-0}"
     printf '%s' "$payload" | (cd "$root" && bash "$nd" >/dev/null 2>&1) || true
     after="$(grep -c ' notify group=' "$nlog" 2>/dev/null)"; after="${after:-0}"
-    osn="$(_lanes_os_notifier)"
+    osn="$(_lanes_os_notifier "$nd" "$root")"
     if [ "$after" -gt "$before" ] 2>/dev/null; then
       if [ -z "$osn" ]; then desk="sent"; else desk="failed ($osn)"; fi
     else desk="suppressed (no audit line in .supervisor/logs/notifications.log — debounced or skipped by notify-desktop.sh)"; fi

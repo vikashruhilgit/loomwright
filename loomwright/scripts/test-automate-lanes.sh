@@ -1186,11 +1186,11 @@ chmod +x "$T/aa-nd.sh" "$T/aa-sw.sh"; export AA_ND_LOG="$T/aa-nd.log" AA_SW_LOG=
 # `desktop: sent` also needs the platform notifier notify-desktop.sh dispatches to, so the host's own
 # PATH must not decide these legs: pn pins the OS (AA_UNAME, default Darwin) and prepends a stub
 # osascript + notify-send (never executed — only probed with `command -v`). AA_PATH replaces the
-# whole PATH for the no-notifier leg (AA-F6m).
+# whole PATH for the no-notifier leg (AA-F6m); AA_ND swaps the notifier stub (AA-F6r/s).
 mkdir -p "$T/aa-bin"; printf '#!/usr/bin/env bash\nexit 0\n' > "$T/aa-bin/osascript"; cp "$T/aa-bin/osascript" "$T/aa-bin/notify-send"
 chmod +x "$T/aa-bin/osascript" "$T/aa-bin/notify-send"
 pn() { : > "$AA_ND_LOG"; : > "$AA_SW_LOG"; PATH="${AA_PATH:-$T/aa-bin:$PATH}" LOOMWRIGHT_LANES_UNAME="${AA_UNAME:-Darwin}" \
-  LOOMWRIGHT_LANES_HELPERS="$HERE/automate-helpers.sh" LOOMWRIGHT_LANES_NOTIFY_DESKTOP="$T/aa-nd.sh" \
+  LOOMWRIGHT_LANES_HELPERS="$HERE/automate-helpers.sh" LOOMWRIGHT_LANES_NOTIFY_DESKTOP="${AA_ND:-$T/aa-nd.sh}" \
   LOOMWRIGHT_LANES_SEND_WEBHOOK="$T/aa-sw.sh" bash "$S" lane-park-notify "$@" 2>&1; }
 pcount() { grep -c 'lane park notify: ready_for_release' "$LRF6" | tr -d ' '; }
 out="$(STUB_SW=ignored STUB_ND_AUDIT=1 LOOMWRIGHT_DESKTOP_NOTIFICATIONS=1 pn "$LRF6")"; rc=$?
@@ -1236,6 +1236,23 @@ has "AA-F6p Linux notify-send present but no display ⇒ failed (no display for 
   "$out" "desktop: failed (no display for notify-send);"
 out="$(AA_UNAME=Linux STUB_SW=none STUB_ND_AUDIT=1 LOOMWRIGHT_DESKTOP_NOTIFICATIONS=1 DISPLAY=:0 pn "$LRF6")"
 has "AA-F6q Linux notify-send + DISPLAY ⇒ sent" "$out" "desktop: sent;"
+# AA-F6r..t Darwin with terminal-notifier but NO osascript: notify-desktop.sh uses terminal-notifier only
+# when its click action is not `none` (resolved by the notify-click-target.sh beside it), else falls
+# through to the osascript branch — so terminal-notifier alone counts only with a click action.
+mkdir -p "$T/aa-tn-bin" "$T/aa-ndc"; cp "$T/aa-bin/osascript" "$T/aa-tn-bin/terminal-notifier"
+cp "$T/aa-nd.sh" "$T/aa-ndc/notify-desktop.sh"; ln -s "$HERE/notify-click-target.sh" "$T/aa-ndc/notify-click-target.sh"
+chmod +x "$T/aa-tn-bin/terminal-notifier" "$T/aa-ndc/notify-desktop.sh"
+out="$(AA_PATH="$T/aa-tn-bin:$T/aa-nonotify-bin" AA_ND="$T/aa-ndc/notify-desktop.sh" LOOMWRIGHT_NOTIFY_CLICK=off \
+  STUB_SW=none STUB_ND_AUDIT=1 LOOMWRIGHT_DESKTOP_NOTIFICATIONS=1 pn "$LRF6")"
+has "AA-F6r Darwin terminal-notifier only, click action none (LOOMWRIGHT_NOTIFY_CLICK=off) ⇒ failed (no OS notifier on PATH), never sent" \
+  "$out" "desktop: failed (no OS notifier on PATH);"
+out="$(AA_PATH="$T/aa-tn-bin:$T/aa-nonotify-bin" AA_ND="$T/aa-ndc/notify-desktop.sh" LOOMWRIGHT_NOTIFY_CLICK=activate \
+  STUB_SW=none STUB_ND_AUDIT=1 LOOMWRIGHT_DESKTOP_NOTIFICATIONS=1 pn "$LRF6")"
+has "AA-F6s Darwin terminal-notifier only, click action set (activate) ⇒ sent" "$out" "desktop: sent;"
+out="$(AA_PATH="$T/aa-tn-bin:$T/aa-nonotify-bin" LOOMWRIGHT_NOTIFY_CLICK=activate \
+  STUB_SW=none STUB_ND_AUDIT=1 LOOMWRIGHT_DESKTOP_NOTIFICATIONS=1 pn "$LRF6")"
+has "AA-F6t Darwin terminal-notifier only, no notify-click-target.sh beside the notifier (action none) ⇒ failed" \
+  "$out" "desktop: failed (no OS notifier on PATH);"
 out="$(LOOMWRIGHT_LANES_NOTIFY_DESKTOP="$T/aa-nd.sh" LOOMWRIGHT_LANES_SEND_WEBHOOK="$T/aa-sw.sh" LOOMWRIGHT_DESKTOP_NOTIFICATIONS=0 \
   bash "$HERE/automate-helpers.sh" lane-park-notify "$LRF6" 2>&1)"; rc=$?
 check "AA-F6k dispatched through automate-helpers.sh" "$rc:$(printf '%s' "$out" | grep -c '^lane-park-notify: lane park notify:' | tr -d ' ')" "0:1"

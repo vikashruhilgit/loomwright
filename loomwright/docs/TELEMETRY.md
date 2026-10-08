@@ -2083,15 +2083,19 @@ notifiers are silent on stdout). `desktop:` is exactly one of —
 
 - `sent` — `notify-desktop.sh` wrote its `notify group=` audit line to
   `.supervisor/logs/notifications.log` **and** the platform notifier it
-  dispatches to is present (Darwin: `terminal-notifier` or `osascript` on
-  `PATH`; Linux: `notify-send` on `PATH` plus `DISPLAY` or `WAYLAND_DISPLAY`).
+  dispatches to is present (Darwin: `osascript` on `PATH`, or `terminal-notifier`
+  on `PATH` with a click action other than `none` — `notify-desktop.sh` uses it
+  only then, so `LOOMWRIGHT_NOTIFY_CLICK=off` or a missing `notify-click-target.sh`
+  leaves only `osascript`; Linux: `notify-send` on `PATH` plus `DISPLAY` or
+  `WAYLAND_DISPLAY`).
   The audit line alone proves nothing: `notify-desktop.sh` writes it on every
   host BEFORE its platform dispatch. The OS banner itself stays best-effort.
 - `disabled (LOOMWRIGHT_DESKTOP_NOTIFICATIONS=0)`
 - `suppressed (no audit line in .supervisor/logs/notifications.log — debounced or skipped by notify-desktop.sh)`
 - `failed (no OS notifier on PATH)` — the audit line appeared but no notifier
-  exists for this OS (Darwin without `terminal-notifier`/`osascript`, Linux
-  without `notify-send`, any other OS)
+  exists for this OS (Darwin without `osascript` and without a usable
+  `terminal-notifier` — absent, or click action `none` — Linux without
+  `notify-send`, any other OS)
 - `failed (no display for notify-send)` — Linux, `notify-send` present, neither
   `DISPLAY` nor `WAYLAND_DISPLAY` set (`notify-desktop.sh` skips it there)
 - `failed (notify-desktop.sh absent)` / `failed (payload not built — jq)`

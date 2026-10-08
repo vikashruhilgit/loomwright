@@ -368,7 +368,7 @@
     "loomwright/scripts/fixtures/subagentstop-maxturns-probe.json": 12,
     "loomwright/scripts/guard-finalize-publish.sh": 3,
     "loomwright/scripts/test-guard-finalize-publish.sh": 1,
-    "loomwright/scripts/automate-lanes.sh": 32,
+    "loomwright/scripts/automate-lanes.sh": 34,
     "loomwright/scripts/fixtures/automate-helpers-help.golden": 1,
     "loomwright/scripts/lane-sampler.sh": 1,
     "loomwright/scripts/test-automate-lanes.sh": 34
@@ -568,7 +568,7 @@
     "loomwright/scripts/fixtures/subagentstop-maxturns-probe.json": "new by automate-followups/33: a pinned runtime probe fixture \u2014 it records the hook payload shapes it observed, so it names them by design; measured",
     "loomwright/scripts/guard-finalize-publish.sh": "new by automate-followups/33: a pre-tool-use deny gate must emit the runtime's documented deny shape; measured",
     "loomwright/scripts/test-guard-finalize-publish.sh": "new by automate-followups/33: asserts the guard's documented deny shape; measured",
-    "loomwright/scripts/automate-lanes.sh": "new file, parallel-automate/05 lane coordinator: pins --plugin-dir to the coordinator's plugin root, merges the lane's ask-user relay hook entries, and spawns/parses the headless lane session (measured)",
+    "loomwright/scripts/automate-lanes.sh": "new file, parallel-automate/05 lane coordinator: pins --plugin-dir to the coordinator's plugin root, merges the lane's ask-user relay hook entries, and spawns/parses the headless lane session (measured); +2 parallel-automate/24 re-drain round 1: lane-park-notify's click-action mirror passes the session-id and entrypoint env inputs to notify-click-target.sh exactly as notify-desktop.sh does, so `desktop: sent` matches its real Darwin dispatch",
     "loomwright/scripts/fixtures/automate-helpers-help.golden": "new allowance, parallel-automate/05: golden copy of automate-helpers.sh --help, which now carries the relay-hook arm's ask-user tool name (ask_user=1)",
     "loomwright/scripts/lane-sampler.sh": "new file, parallel-automate/05 fleet sampler: one plugin-root reference to resolve its sibling helpers (install_root=1, measured)",
     "loomwright/scripts/test-automate-lanes.sh": "new file, parallel-automate/05 hermetic lane tests: stub the headless session, the ask-user relay hook payloads and the plugin root (measured); +1 drain round 1: the comma-label multiSelect leg (W6) names the deferred ask-user tool in its stub result line; +1 owner fix-now FN1: the linked-worktree relay-hook leg (X) builds its own hook payload once (xhook); +1 parallel-automate/24 F8: the lane-ledger leg (AA-F8) builds its transcript-usage hook payload once"
