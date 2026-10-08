@@ -28,3 +28,9 @@ Create one new file with one line, nothing else.
 
 ## Non-goals
 Everything else. Do not edit any existing file.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-08T03:49:42Z
+- **Brief:** .supervisor/jobs/done/2026-10-08-s3-validation-scratch-doc-b.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/428
