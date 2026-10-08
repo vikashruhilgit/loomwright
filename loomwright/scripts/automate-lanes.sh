@@ -108,6 +108,7 @@ PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$HERE/.." && pwd)}"
 META_SYNC="${LOOMWRIGHT_LANES_META_SYNC:-$HERE/meta-sync.sh}"
 SETUP_MEMORY="${LOOMWRIGHT_LANES_SETUP_MEMORY:-$HERE/setup-memory.sh}"
 HELPERS="${LOOMWRIGHT_LANES_HELPERS:-$HERE/automate-helpers.sh}"
+TRAIL="${LOOMWRIGHT_LANES_TRAIL:-$HELPERS}"   # whose `trail-pr` runs the lane's evidence-gated push (F11)
 
 # The lane allowlist (the minimum S1 found sufficient) and the DISALLOW list. These two are the only
 # lines in this file that may name the merge / admin tokens (Validation 3 greps for them). The list
@@ -832,6 +833,10 @@ _lanes_remove_refusals() {
     fi
   fi
   [ -z "$(git -C "$LN_DIR" status --porcelain 2>/dev/null)" ] || { _refuse "dirty working tree"; return 1; }
+  if [ "$abandon" = 1 ] && [ "$ab_ok" = 1 ] && [ "$rstate" = gone ]; then   # F11
+    if ! mb="$(_lanes_meta_branch "$LN_DIR")"; then _refuse "metadata mode unknown (cannot record the abandon)"; return 1; fi
+    _lanes_abandon_meta || return 1
+  fi
   [ -e "$LN_DIR/.supervisor/automate/$LN_RUN.meta-push-failed" ] && { _refuse "meta-push failure marker is set"; return 1; }
   if ! mb="$(_lanes_meta_branch "$LN_DIR")"; then _refuse "metadata mode unknown (cannot prove the metadata was pushed)"; return 1; fi
   if [ -n "$mb" ]; then
@@ -865,7 +870,7 @@ lanes_remove() {
     esac
   done
   _lane_ctx "$dir" || die "lane-remove: not a lane: ${dir:-<none>}"
-  local L="$LN_LANE" pid st mp mu q state rstate="" rf b u mb ms live_pid="" watchers=""
+  local L="$LN_LANE" pid st mp mu q state rstate="" rf b u mb ms live_pid="" watchers="" ab_ok=0
   _refuse() { echo "lane-remove: refused — $L — $1"; return 1; }
   # >>> live-process check
   pid="$(_lt_get "$LN_TABLE" "$L" 5)"; st="$(_lt_get "$LN_TABLE" "$L" 6)"
@@ -878,6 +883,7 @@ lanes_remove() {
     IFS="$(printf '\t')" read -r mp mu <<<"$watchers"   # the first live watcher
     _refuse "live merge watcher (pid $mp, $mu); use --stop"; return 1
   fi
+  [ -z "$live_pid$watchers" ] && ab_ok=1   # the abandon record is written only once nothing runs
   _lanes_remove_refusals || return 1   # REFUSE-BEFORE-STOP
   if [ -n "$live_pid$watchers" ]; then
     [ -n "$live_pid" ] && _lanes_stop_pid "$live_pid" "claude -p"
@@ -892,6 +898,7 @@ lanes_remove() {
       IFS="$(printf '\t')" read -r mp mu <<<"$watchers"   # the first live watcher
       _refuse "merge watcher (pid $mp, $mu) still alive after --stop"; return 1
     fi
+    ab_ok=1
     _lanes_remove_refusals || return 1
   fi
   local sv; sv="$(_lanes_salvage "$LN_DIR" "$LN_ROOT/salvage" "$L-removed")" || { _refuse "salvage failed"; return 1; }
@@ -907,6 +914,82 @@ lanes_remove() {
 }
 
 # ==================================================================================================
+# ---- the lane's metadata at the wave end (F11) --------------------------------------------------
+# _lanes_meta_extras <branch> <message> — pushes the lane's own NON-claim metadata, exactly listed:
+# its run file, `<run_id>.merge-readiness.md` and `<run_id>.dismissed-decisions` (each when present).
+# None of them is a done claim. Prints meta-sync's reason and returns 1 on failure.
+_lanes_meta_extras() {
+  local mb="$1" msg="$2" list f out rc=0
+  list="$(mktemp "${TMPDIR:-/tmp}/lane-meta.XXXXXX" 2>/dev/null)" || { echo "could not stage the push list"; return 1; }
+  for f in "$LN_RUN.md" "$LN_RUN.merge-readiness.md" "$LN_RUN.dismissed-decisions"; do
+    if [ -f "$LN_DIR/.supervisor/automate/$f" ]; then printf '%s\n' ".supervisor/automate/$f"; fi
+  done > "$list" || { rm -f "$list"; echo "could not stage the push list"; return 1; }
+  out="$(bash "$META_SYNC" push --branch "$mb" --root "$LN_DIR" --paths-from "$list" --message "$msg" 2>&1)" || rc=$?
+  rm -f "$list"
+  if [ "$rc" != 0 ]; then
+    printf 'meta-sync exit %s\n%s' "$rc" "$out"; return 1
+  fi
+  return 0
+}
+
+# _lanes_meta_trail <branch> <lane_runfile> <reason> — the rest of the lane's metadata (requirement,
+# done/failed briefs, result sidecars, the postmortem ledger, its dismissed drafts) goes through
+# `trail-pr`'s OWN evidence-gated candidate list, run on the lane's run file inside the lane: a done
+# stamp or a `jobs/done/` brief rides only when its PR reads MERGED (`; excluded <path> — pr not
+# merged` otherwise). Branch mode only. trail-pr reads the mode through its sibling setup-memory.sh;
+# when that reader does not say `on <branch>` too, nothing runs (a PR-mode trail must never start
+# from here). Prints trail-pr's line; returns 1 unless it reads meta-pushed / meta no_changes.
+_lanes_meta_trail() {
+  local mb="$1" rf="$2" reason="$3" tm out
+  tm="$(bash "$(dirname "$TRAIL")/setup-memory.sh" --root "$LN_DIR" mode 2>/dev/null | head -1)"
+  [ "$tm" = "on $mb" ] || { echo "trail-pr's mode reader says '${tm:-nothing}', not 'on $mb' — trail not run"; return 1; }
+  out="$(LOOMWRIGHT_META_SYNC_BIN="$META_SYNC" bash "$TRAIL" trail-pr "$rf" --reason "$reason" 2>/dev/null | tail -1)"
+  printf '%s' "${out:-trail-pr printed nothing}"
+  case "$out" in "trail-pr: meta-pushed "*|"trail-pr: skipped — meta no_changes"*) return 0 ;; esac
+  return 1
+}
+
+# _lanes_abandon_meta — lane-remove --abandon on a lane lane-status reads `gone` (its PR closed
+# unmerged), in lanes_remove's scope. The owner's abandon decision is recorded the way
+# `reconcile-status --apply` records an `# abandoned:` Queue row: every done heading of the lane's
+# requirement (Phase 4.5's closeout stamp for the unmerged PR) becomes `## Status:
+# done_with_escalation — ABANDONED (- [x] <item>  # abandoned: <reason>)` (appended when it has none),
+# and a `jobs/done/` brief pointing at that requirement moves to `jobs/failed/`. Then, in branch mode,
+# the lane's metadata is pushed (_lanes_meta_extras + _lanes_meta_trail --reason abandoned), so the
+# lane is removable with no hand step and nothing pushed claims the unmerged work done.
+_lanes_abandon_meta() {
+  local arf="$LN_DIR/.supervisor/automate/$LN_RUN.md" item req row em b ptr out
+  item="$(_lanes_current_item "$arf")"; item="${item#./}"
+  case "$item" in .supervisor/requirements/*.md) ;; *) item="" ;; esac
+  case "$item" in *..*) item="" ;; esac
+  if [ -n "$item" ] && [ -f "$LN_DIR/$item" ]; then
+    req="$LN_DIR/$item"; em="$(printf '\342\200\224')"
+    row="- [x] $item  # abandoned: PR closed unmerged $em lane-remove --abandon"
+    if ! AB_HEAD="## Status: done_with_escalation $em ABANDONED ($row)" AB_PFX="## Status: done_with_escalation $em ABANDONED (- [x] " awk '
+        /^## Status:[[:space:]]*done(_with_escalation)?([^A-Za-z0-9_]|$)/ && index($0, ENVIRON["AB_PFX"]) != 1 { print ENVIRON["AB_HEAD"]; n++; next }
+        index($0, ENVIRON["AB_PFX"]) == 1 { n++ }
+        { print }
+        END { if (!n) { print ""; print ENVIRON["AB_HEAD"] } }' "$req" > "$req.tmp.$$" || ! mv "$req.tmp.$$" "$req"; then
+      rm -f "$req.tmp.$$"; _refuse "could not write the ABANDONED stamp on $item"; return 1
+    fi
+    if [ -r "$HERE/brief-pointer.sh" ]; then
+      # shellcheck source=/dev/null
+      . "$HERE/brief-pointer.sh"
+      for b in "$LN_DIR"/.supervisor/jobs/done/*.md; do
+        [ -f "$b" ] || continue
+        ptr="$(brief_requirement_pointer "$b" 2>/dev/null)" || continue
+        [ "${ptr#./}" = "$item" ] || continue
+        mkdir -p "$LN_DIR/.supervisor/jobs/failed" && mv "$b" "$LN_DIR/.supervisor/jobs/failed/" \
+          || { _refuse "could not move $(basename "$b") to jobs/failed/"; return 1; }
+      done
+    fi
+  fi
+  [ -n "$mb" ] || return 0
+  out="$(_lanes_meta_extras "$mb" "chore(supervisor): $LN_RUN abandoned (lane-remove --abandon)")" || { _refuse "metadata push failed ($(printf '%s\n' "$out" | head -1))"; return 1; }
+  out="$(_lanes_meta_trail "$mb" "$arf" abandoned)" || { _refuse "evidence-gated trail push failed: $out"; return 1; }
+  echo "lane-remove: $L abandoned — $out"
+}
+
 # lane-convert-ready <lane_dir> — the wave-end `ready_for_release` → `awaiting_merge` conversion: the
 # coordinator's one run-file write into a launched lane, and it PUSHES what it wrote, so the primary's
 # next meta pull reads awaiting_merge and lane-remove's metadata check (`meta-sync status`) passes.
@@ -949,21 +1032,20 @@ lanes_convert_ready() {
     echo "lane-convert-ready: converted $L to awaiting_merge (metadata mode off — no metadata branch to push)"
     return 0
   fi
-  list="$(mktemp "${TMPDIR:-/tmp}/lane-convert.XXXXXX" 2>/dev/null)" || list=""
-  if [ -z "$list" ] || ! printf '%s\n' ".supervisor/automate/$LN_RUN.md" > "$list"; then
-    [ -n "$list" ] && rm -f "$list"; _lanes_launch_unlock
-    echo "lane-convert-ready: FAILED — $L — converted to awaiting_merge but could not stage the push list; NOT pushed (lane-remove refuses until it is) — re-run lane-convert-ready $LN_DIR"
-    return 2
-  fi
-  rc=0
-  out="$(bash "$META_SYNC" push --branch "$mb" --root "$LN_DIR" --paths-from "$list" --message "chore(supervisor): $LN_RUN ready_for_release -> awaiting_merge (wave end)" 2>&1)" || rc=$?
-  rm -f "$list"; _lanes_launch_unlock
+  rc=0; out="$(_lanes_meta_extras "$mb" "chore(supervisor): $LN_RUN ready_for_release -> awaiting_merge (wave end)")" || rc=$?
   if [ "$rc" != 0 ]; then
-    echo "lane-convert-ready: FAILED — $L — converted to awaiting_merge but the metadata push to $mb failed (meta-sync exit $rc); NOT pushed (lane-remove refuses until it is) — re-run lane-convert-ready $LN_DIR"
-    [ -n "$out" ] && printf '%s\n' "$out" | sed 's/^/  /'
+    _lanes_launch_unlock
+    echo "lane-convert-ready: FAILED — $L — converted to awaiting_merge but the metadata push to $mb failed ($(printf '%s\n' "$out" | head -1)); NOT pushed (lane-remove refuses until it is) — re-run lane-convert-ready $LN_DIR"
+    printf '%s\n' "$out" | sed '1d; /^$/d; s/^/  /'
     return 2
   fi
-  echo "lane-convert-ready: converted $L to awaiting_merge; metadata pushed to $mb"
+  rc=0; out="$(_lanes_meta_trail "$mb" "$rf" wave-end)" || rc=$?
+  _lanes_launch_unlock
+  if [ "$rc" != 0 ]; then
+    echo "lane-convert-ready: FAILED — $L — converted to awaiting_merge and its run file pushed, but the evidence-gated trail push failed: $out — re-run lane-convert-ready $LN_DIR"
+    return 2
+  fi
+  echo "lane-convert-ready: converted $L to awaiting_merge; metadata pushed to $mb — $out"
 }
 
 # ==================================================================================================

@@ -98,6 +98,12 @@ export META_LOG="$T/meta.log" HELPERS_LOG="$T/helpers.log"; : > "$META_LOG"; : >
 export LOOMWRIGHT_LANES_META_SYNC="$T/meta-sync.sh" LOOMWRIGHT_LANES_SETUP_MEMORY="$T/setup-memory.sh"
 export LOOMWRIGHT_LANES_HELPERS="$T/helpers.sh" LOOMWRIGHT_MACHINE_LOAD_CMD="$T/load.sh"
 export LOOMWRIGHT_LANES_INIT_WAIT_S=5 LOOMWRIGHT_LANES_STOP_GRACE_S=2
+# the wave-end evidence-gated trail (F11) runs through this seam; a no-op stub everywhere but Z-F11
+cat > "$T/trail-stub.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "trail $*" >> "$T_TRAIL_LOG"; echo "trail-pr: skipped — meta no_changes"
+EOF
+chmod +x "$T/trail-stub.sh"; export LOOMWRIGHT_LANES_TRAIL="$T/trail-stub.sh" T_TRAIL_LOG="$T/trail.log"
 
 # ---- fixture ----------------------------------------------------------------------------------------
 ORIGIN="$T/origin.git"; P="$T/work/primary"
@@ -1023,6 +1029,65 @@ check "Z-F2p … nothing written into the lane, nothing spawned, the stale file 
 printf '{"lane":"L4","tool_use_id":"toolu_zz","answers":{"0":"Red","1":"A"},"note":null,"via":"x"}\n' > "$PF54"
 out="$(LOOMWRIGHT_LANE_RECHECK_S=0 run lane-answer "$L54" --deliver-pending --owner-command "$OWN")"; rc=$?
 check "Z-F2q a stored answer for a tool_use_id the lane is not deferred on is refused" "$rc:$([ -e "$L54/.supervisor/inbox/answers/toolu_zz.json" ] && echo written || echo none):$(( $(claude_calls) - n2 ))" "1:none:0"
+
+# Z-F11 wave end with an UNMERGED done stamp: convert → PR closed unmerged → lane-remove --abandon.
+# The lane is removable with no hand step, and the metadata branch (a fake remote the meta-sync stub
+# keeps) never receives a done claim or a jobs/done/ brief for the unmerged work. trail-pr and its
+# evidence gate are the REAL scripts (a copy whose setup-memory.sh reads branch mode on).
+SC="$T/scripts-copy"; cp -R "$HERE" "$SC"
+printf '#!/usr/bin/env bash\necho "on test-meta"\n' > "$SC/setup-memory.sh"
+export REMOTE11="$T/remote11"; mkdir -p "$REMOTE11"
+cat > "$T/meta-f11.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "meta-sync $*" >> "$META_LOG"
+root=""; pf=""; prev=""
+for a in "$@"; do case "$prev" in --root) root="$a" ;; --paths-from) pf="$a" ;; esac; prev="$a"; done
+managed() { (cd "$root" && find .supervisor/requirements .supervisor/jobs/done .supervisor/jobs/failed .supervisor/automate .supervisor/postmortem \
+  -type f \( -name '*.md' -o -name '*.dismissed-decisions' -o -name results.jsonl \) 2>/dev/null | env LC_ALL=C sort); }
+case "$1" in
+  push) while IFS= read -r p; do [ -n "$p" ] || continue
+          if [ -f "$root/$p" ]; then mkdir -p "$REMOTE11/$(dirname "$p")"; cp "$root/$p" "$REMOTE11/$p"; else rm -f "$REMOTE11/$p"; fi
+        done < "$pf"; echo "meta_sync: pushed abc"; exit 0 ;;
+  status) n=0; for p in $(managed); do cmp -s "$root/$p" "$REMOTE11/$p" || n=$((n + 1)); done
+          if [ "$n" = 0 ]; then echo "synced abc on test-meta"; else echo "local_ahead $n"; fi; exit 0 ;;
+  pull) exit 0 ;;
+esac
+EOF
+cat > "$T/gh-f11" <<'EOF'
+#!/usr/bin/env bash
+echo "gh $*" >> "$T_GH11"
+case "$1 $2" in "pr view") printf '{"state":"%s","mergedAt":null}\n' "${STUB_PR_STATE:-OPEN}" ;; *) exit 1 ;; esac
+EOF
+chmod +x "$T/meta-f11.sh" "$T/gh-f11"; export T_GH11="$T/gh-f11.calls"
+f11() { LOOMWRIGHT_LANES_META_SYNC="$T/meta-f11.sh" LOOMWRIGHT_LANES_HELPERS="$SC/automate-helpers.sh" LOOMWRIGHT_LANES_TRAIL="$SC/automate-helpers.sh" \
+  LOOMWRIGHT_GH_BIN="$T/gh-f11" bash "$S" "$@" 2>&1; }
+run lane-create "$RF5" reqs/a.md 5 >/dev/null; L55="$LR5/L5"; R11=".supervisor/requirements/t/x.md"; PR11="https://github.com/o/r/pull/55"
+LOOMWRIGHT_LANE_RECHECK_S=0 run lane-launch "$L55" --owner-command "$OWN" >/dev/null; wait_gone "$L55"
+mkdir -p "$L55/.supervisor/requirements/t" "$L55/.supervisor/jobs/done"
+printf '# x\n\n## Status: pending\n\n## Status: done\n<!-- loomwright:requirement-closeout -->\n- **PR:** %s\n' "$PR11" > "$L55/$R11"
+printf '# brief\n- **Source requirement:** %s\n\n## Outcome\n- **PR:** %s\n' "$R11" "$PR11" > "$L55/.supervisor/jobs/done/2026-10-08-x.md"
+printf '# Automate Run: %s-L5\n\n## Status: paused\n\n## Queue\n- [ ] %s\n\n## Current\n- item: %s | status: ready_for_release | pr: %s | branch: f\n- pause_reason: ready_for_release\n\n## Progress\n- drain READY\n' \
+  "$PARENT5" "$R11" "$R11" "$PR11" > "$L55/.supervisor/automate/$PARENT5-L5.md"
+printf '# Merge readiness\n- score: 3/5\n' > "$L55/.supervisor/automate/$PARENT5-L5.merge-readiness.md"
+out="$(STUB_PR_STATE=OPEN f11 lane-convert-ready "$L55")"; rc=$?
+check "Z-F11a wave-end conversion with the PR still open exits 0" "$rc" 0
+has "Z-F11b … the gated trail names the unmerged done stamp as excluded" "$out" "excluded $R11 — pr not merged"
+check "Z-F11c … and nothing on the metadata branch carries it or a done/ brief" \
+  "$([ -e "$REMOTE11/$R11" ] && echo req || echo noreq):$(ls "$REMOTE11/.supervisor/jobs/done" 2>/dev/null | wc -l | tr -d ' ')" "noreq:0"
+check "Z-F11d … the run file and the readiness report were pushed" \
+  "$([ -f "$REMOTE11/.supervisor/automate/$PARENT5-L5.md" ] && [ -f "$REMOTE11/.supervisor/automate/$PARENT5-L5.merge-readiness.md" ] && echo pushed)" pushed
+out="$(STUB_PR_STATE=OPEN f11 lane-remove "$L55")"
+has "Z-F11e an open PR's lane still refuses removal (its done stamp is unpushed by design)" "$out" "metadata not pushed"
+out="$(STUB_PR_STATE=CLOSED f11 lane-remove "$L55" --abandon)"; rc=$?
+check "Z-F11f PR closed unmerged ⇒ lane-remove --abandon removes the lane with no hand step" "$rc:$([ -d "$L55" ] && echo kept || echo removed)" "0:removed"
+EMD="$(printf '\342\200\224')"
+check "Z-F11g the metadata branch holds the reconcile-status ABANDONED stamp shape" \
+  "$(grep -c "^## Status: done_with_escalation $EMD ABANDONED (- \[x\] $R11  # abandoned: " "$REMOTE11/$R11" 2>/dev/null | tr -d ' ')" 1
+check "Z-F11h … and no other done heading (no done claim for the unmerged PR)" \
+  "$(grep -E '^## Status:[[:space:]]*done' "$REMOTE11/$R11" 2>/dev/null | grep -vc "ABANDONED (- \[x\] " | tr -d ' ')" 0
+check "Z-F11i … no jobs/done/ brief; the brief rides under jobs/failed/" \
+  "$(ls "$REMOTE11/.supervisor/jobs/done" 2>/dev/null | wc -l | tr -d ' '):$(ls "$REMOTE11/.supervisor/jobs/failed" 2>/dev/null | tr '\n' ' ')" "0:2026-10-08-x.md "
+has "Z-F11j the parent run file records the abandon with the real state" "$(cat "$RF5")" "lane abandoned: L5 ($PARENT5-L5) — state gone;"
 
 hasnt "Z1 gh never called" "$(cat "$GH_CALLS" 2>/dev/null)" "gh"
 echo "passed: $PASS  failed: $FAIL"
