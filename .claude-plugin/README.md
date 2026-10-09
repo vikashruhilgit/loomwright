@@ -445,7 +445,7 @@ loomwright/                            # Marketplace wrapper repo
     │   ├── telemetry.md, dreaming.md, autonomous.md, automate.md, capability-check.md, insights.md, obsidian.md, pr-postmortem.md
     │   └── setup.md, agent-help.md
     ├── hooks/
-    │   └── hooks.json                       # 46 quality gate hooks (centralized)
+    │   └── hooks.json                       # 47 quality gate hooks (centralized)
     ├── skills/                              # 42 focused skill modules
     │   ├── SKILLS_INDEX.md                  # Skill catalog with agent mapping
     │   └── [skill-name]/SKILL.md            # Individual skills
@@ -507,9 +507,9 @@ Agents with `memory: project` build knowledge across sessions:
 
 ### Quality Gate Hooks
 
-46 hooks centralized in `hooks.json` validate agent output and surface notifications:
+47 hooks centralized in `hooks.json` validate agent output and surface notifications:
 - **SubagentStop:** Worker, Execute Manager, Code Reviewer, Supervisor, QA Executor, Plan Reviewer — **6 `type: command` validator scripts** (`validate-worker-result.py`, `validate-execute-result.py`, `validate-code-review-result.py`, `validate-supervisor-result.py`, `validate-qa-result.py`, `validate-plan-review-result.py`, all sharing `result_block_parser.py` and exit-0-by-contract; five converted from prompt hooks in v15.17.0, Code Reviewer's after the 2026-09-27 probe showed its prompt model never saw the block it judged) + 3 `type: command` telemetry hooks on Code Reviewer, QA Executor, Supervisor + 1 `type: command` opt-in webhook hook (v12.2.0) + `launch-pad-runner` `LAUNCH_PAD_RESULT` validator (v14.2.0) + 1 `type: command` progress-event hook (`emit-progress-event.sh`, v15.16.0) on the Worker matcher + **10 `type: command` lane emitters** (`emit-token-ledger.sh`, v15.60.0) on `context-keeper`, `execute-manager`, `launch-pad-runner`, `orchestrator`, `plan-reviewer`, `product-owner`, `qa-strategist`, `red-team-reviewer`, `review-pr-runner` and `rubric-grader` — so every agent this plugin ships records a lane, because an agent with no emitter can never record an event
-- **PreToolUse (AskUserQuestion):** desktop banner + paused-event webhook (v14.1.0)
+- **PreToolUse / PostToolUse (AskUserQuestion):** on the ask (PreToolUse), desktop banner + paused-event webhook (v14.1.0); on the answer (PostToolUse), an answered-event lifecycle row via `emit-lifecycle.sh answered` — one `agent_lifecycle`/`state:working`/`reason:answered` line carrying the question's `tool_use_id`, so `phase-timing.sh` pairs each ask with its answer; one row per id, fail-safe, always exits 0
 - **Notification:** desktop banner on permission/idle/elicitation prompts, `auth_success` excluded (v14.1.0)
 - **SessionStart:** crash/compact recovery context via `session-resume.sh` (v14.2.0) + per-project OpenTelemetry resource-attribute labeling via `set-otel-resource-attrs.sh` — telemetry-gated, fail-safe (v14.47.0)
 - **PostToolUse (Bash):** PR-create backstop for the until-mergeable review drain — fires on `gh pr create`, session-scope gated, fail-safe (v14.34.0) + 1 `type: command` progress-state re-projection hook (`reproject-state-on-terminal.sh`, PR #116 review round, v15.16.0) that mechanically re-invokes `build-state.sh` once a `session_end` event lands in the session log — or, when a run has no log at all, once its run-creation seed is older than `LOOMWRIGHT_STALE_RUN_SECONDS`, the only path that reaches a run stranded before its first event + the worktree observer `worktree-audit.sh record` (v15.66.0) — the third entry on that matcher, recording the plugin's own `git worktree add/remove/prune` calls to `.supervisor/logs/worktrees.log` with a ground-truth `confirmed` from `git worktree list`; `worktree-audit.sh report` reads it back (read-only) and `session-resume.sh` surfaces orphans

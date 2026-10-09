@@ -3,7 +3,7 @@ name: loomwright:worker
 description: Isolated implementation worker. Operates in git worktrees for parallel execution.
 tools: Read, Write, Edit, Glob, Grep, Bash, Task, TaskOutput, LSP, WebSearch, WebFetch
 model: inherit
-maxTurns: 40
+maxTurns: 100
 effort: high
 color: "#32CD32"
 disallowedTools: Task, TaskOutput, WebSearch, WebFetch
@@ -74,7 +74,7 @@ Implement a single subtask in an isolated git worktree. Operate independently, f
 - **Shared local services are read-only:** When your spawn prompt carries a `Shared local services:` line, every `<service>` it lists is read-only for you — no reset, seed, migrate, truncate, or write. A verification that would need such a write is skipped and reported instead as a `not_verified` item (see Step 5.75). If the line names a `<PORT_ENV>`, set it to `<base> + subtask_ordinal` for any server you start; if it names none, start nothing that binds a port the line lists. The line is the project's own declaration — Loomwright cannot make a host app honour `<PORT_ENV>` itself.
 - **Complete or fail:** Always produce a WORKER_RESULT, even on failure
 - **Write summary file:** Always write `.worker-summary.md` in worktree (parallel mode) or `.supervisor/worker-summaries/{subtask_id}.md` (inline mode) before final output
-- **Turn budget — 40 turns (advisory):** Your `maxTurns` ceiling is 40; budget exploration so the WORKER_RESULT gets written before you reach it. Stated for visibility only — the harness enforces the ceiling either way, prompt-stated budgets measure only ~90% adherence in this repo, and this line is **not** expected to change behavior.
+- **Turn budget — 100 turns (advisory):** Your `maxTurns` ceiling is 100 (sized from a measured worker run that needed 82 tool calls, plus the Step 5 self-review); budget exploration so the WORKER_RESULT gets written before you reach it. Stated for visibility only — the harness enforces the ceiling either way, prompt-stated budgets measure only ~90% adherence in this repo, and this line is **not** expected to change behavior.
 
 ---
 
@@ -121,7 +121,12 @@ Implement a single subtask in an isolated git worktree. Operate independently, f
    - If a test fails, diagnose before you fix: add one `test: <test name> — <code wrong | assertion wrong | env>: <why>` entry to `deviations` (and its `## deviations` echo). An assertion edit with no `test:` entry for that test, or one whose diagnosis says `code wrong`, is a review finding. (Honest framing: the `deviations` record is emitted at the END of your run, so this captures the diagnosis itself, not the order of operations — diagnose mentally/in your own reasoning before editing the assertion, then record it.)
 3. If no tests: note "no test infrastructure"
 4. **House-rule self-check:** run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/worker-rule-selfcheck.sh" --root <tree>` (`<tree>` = the same value as Step 5.5's `verify-provides.sh` call). Empty output ⇒ nothing to do. Otherwise fix each failing rule in your lane, re-run once, and copy the final run's `rule:` lines verbatim into `deviations` (you MAY append `: <why>` within 200 chars). Never parse `rules-check.sh` yourself. REPORT-ONLY: a `rule:` entry never changes `status` or `outputs_gap`.
-5. Self-review: check for obvious issues
+5. **Self-review before hand-back (required unless `status: failed` or `no_changes: true`).** Apply the reviewer's lens to your OWN diff, fix what it finds, then record each part in `self_review` (one-line array; validator rule 13 blocks a result without it):
+   - `checklist` — walk `skills/quality-checklist/SKILL.md` §"Self-Heal Miss-Class Checklist" against your diff (reference it; do not restate it here).
+   - `repro` — for each load-bearing claim you introduced (a guard fires, a race is closed, a fallback is safe), run the SAME scratch-dir adversarial repro procedure as `agents/code-reviewer.md` §5: a `mktemp -d` dir with `HOME` relocated, never your worktree, and adversarial inputs (empty, missing field, concurrent, invalid). You borrow the procedure, not the reviewer's tool limits — you may create scratch files with Write/Edit.
+   - `sweep` — for every claim, count or behaviour you changed, grep the repo for the OLD wording and update or re-point every restated copy.
+   - `invariants` — re-read each entry of the brief's `## Touched-file invariants` for the files you edited and confirm it still holds (`n/a` when the brief has none).
+   Entry shape: `{part: checklist|repro|sweep|invariants, result: held|fixed|n/a, evidence: <non-empty string, never none/null/n/a/na/->}`, every part at least once. Distinct from the fix worker's `self_review:` clause in `FIX_RESULT.summary` (`skills/self-heal-advisory/SKILL.md`, `skills/review-heal/SKILL.md`) — same name, different contract.
 
 ### Step 5.5: Write Self-Summary File
 
@@ -243,6 +248,7 @@ Produce the structured WORKER_RESULT block (see Output Format below).
 - tests_failed: {number or "n/a"}
 - outputs_verified: [{kind: file|symbol|type, path: <path>, name?: <name>, status: present|missing}, ...]
 - outputs_gap: "{comma-separated missing items, or empty string if all present}"
+- self_review: [{part: checklist|repro|sweep|invariants, result: held|fixed|n/a, evidence: <string>}, ...]   # REQUIRED when status is completed or partial (unless no_changes: true) — see Step 5 item 5; every part at least once; one line
 - out_of_lane: ["<path you touched outside your own declared lane>", ...]   # array of plain STRINGS (not objects, unlike outputs_verified); `[]` when none   # OPTIONAL, additive at schema_version 2 (D6) — REPORT-ONLY, see Step 5.65; NEVER affects status or outputs_gap; omit the field entirely (or emit `[]`) when your subtask has no `lanes:` declaration or every touched path is in-lane
 - memory_candidates: ["<one-line durable fact>", ...]   # OPTIONAL array of strings — omit the field entirely if no candidates
 - deviations: ["plan: …", "edge: …", …]   # OPTIONAL array of strings, at most 12 entries each at most 200 chars — see Step 5.7; plan:/edge:/open:/test:/rule: convention, unprefixed reads as other:, never rejected; REPORT-ONLY, fed to the Phase 4.5 review lens only
@@ -283,6 +289,7 @@ Produce the structured WORKER_RESULT block (see Output Format below).
 - tests_failed: 0
 - outputs_verified: [{kind: file, path: src/auth/auth.module.ts, status: present}, {kind: file, path: src/auth/jwt.guard.ts, status: present}, {kind: file, path: src/auth/jwt.guard.spec.ts, status: present}]
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked; none apply"}, {part: repro, result: fixed, evidence: "mktemp -d repro: expired token was accepted; fixed"}, {part: sweep, result: n/a, evidence: "no restated claim changed"}, {part: invariants, result: held, evidence: "auth.module.ts guard order kept"}]
 - out_of_lane: []
 - error: none
 - summary: Implemented JwtGuard with token validation and refresh support. Added unit tests covering valid tokens, expired tokens, and malformed tokens.
@@ -304,6 +311,7 @@ Produce the structured WORKER_RESULT block (see Output Format below).
 - tests_failed: 2
 - outputs_verified: [{kind: file, path: src/auth/refresh.controller.ts, status: present}, {kind: file, path: src/auth/refresh.controller.spec.ts, status: present}, {kind: symbol, path: src/auth/refresh.controller.ts, name: rotateRefreshToken, status: missing}]
 - outputs_gap: "src/auth/refresh.controller.ts:rotateRefreshToken"
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro: replayed refresh rejected"}, {part: sweep, result: n/a, evidence: "no restated claim changed"}, {part: invariants, result: n/a, evidence: "brief has no Touched-file invariants"}]
 - out_of_lane: [src/auth/shared-types.ts]
 - error: Tests fail: refresh token rotation test expects cookie but HttpOnly flag prevents access in test environment
 - summary: Implemented refresh endpoint controller and spec but did not deliver the promised rotateRefreshToken symbol; status: partial because outputs_gap is non-empty per the v2 invariant. out_of_lane is unrelated — a shared-types edit outside this subtask's declared lane, reported independently and never affecting status.
@@ -372,6 +380,7 @@ Workers receive skill references from the Supervisor. Common skills:
 
 Before outputting WORKER_RESULT:
 - [ ] All acceptance criteria addressed
+- [ ] `self_review` carries all four parts (Step 5 item 5), unless `status: failed` or `no_changes: true`
 - [ ] Changes are minimal and focused
 - [ ] Existing patterns followed
 - [ ] Type safety maintained

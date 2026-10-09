@@ -50,21 +50,28 @@ for f in "${files[@]}"; do
   # the session_end event (see docs/RESULT_SCHEMAS.md §"session_end JSONL hard-signal fields").
   # Field names are a hard contract with ST3 (writer) — do NOT rename. Older logs lack them, so
   # each defaults to null and renders as "not reported this session".
-  jq -c --arg sid "$sid" '
-    select(.event=="session_end")
+  # -R + fromjson?: a malformed / non-object line anywhere in the log is skipped per line — a plain
+  # `jq -c` aborts at it and drops the session_end after it (and the metrics it carries).
+  # num: every field the Summary SUMS is coerced here, once — a number stays, a numeric string
+  # becomes its number, anything else is null (excluded, "not recorded"). One non-numeric value
+  # in one session once made `add` throw and blanked the WHOLE Summary table.
+  jq -Rc --arg sid "$sid" '
+    def num: if type == "number" then . elif type == "string" then (tonumber? // null) else null end;
+    fromjson? | select(type=="object" and .event=="session_end")
     | {sid:$sid, ts:(.ts//""), status:(.status//"unknown"), branch:(.branch//""),
        pr_url:(.pr_url//""), heal_decision:(.heal_decision//""),
-       heal_iterations:(.heal_iterations//null), rubric_score:(.rubric_score//null),
-       subtasks_completed:(.subtasks_completed//null), files_changed:(.files_changed//null),
-       duration_seconds:(.duration_seconds//null),
+       heal_iterations:(.heal_iterations|num), rubric_score:(.rubric_score//null),
+       subtasks_completed:(.subtasks_completed|num), files_changed:(.files_changed|num),
        plugin_version:(.plugin_version//"unknown"),
        contract_conformance_status:(.contract_conformance_status//null),
-       contract_violations:(.contract_violations//null),
+       contract_violations:(.contract_violations|num),
        benchmark_status:(.benchmark_status//null),
        benchmark_metric:(.benchmark_metric//null),
        benchmark_value:(.benchmark_value//null),
        benchmark_delta:(.benchmark_delta//null),
-       knowledge_sources_used:(.knowledge_sources_used//[])}
+       knowledge_sources_used:(.knowledge_sources_used//[]),
+       heal_first_decision:(.heal_first_decision//null),
+       heal_new_findings:(.heal_new_findings|num)}
   ' "$f" 2>/dev/null | tail -1 >> "$records"
 done
 
@@ -91,7 +98,6 @@ while IFS= read -r r; do
       (if .rubric_score!=null      then "rubric_score: \"\(.rubric_score)\""         else empty end),
       (if .subtasks_completed!=null then "subtasks_completed: \(.subtasks_completed)" else empty end),
       (if .files_changed!=null     then "files_changed: \(.files_changed)"           else empty end),
-      (if .duration_seconds!=null  then "duration_seconds: \(.duration_seconds)"     else empty end),
       "plugin_version: \(.plugin_version)",
       (if .contract_conformance_status!=null then "contract_conformance_status: \(.contract_conformance_status)" else empty end),
       (if .contract_violations!=null then "contract_violations: \(.contract_violations)" else empty end),
@@ -137,6 +143,11 @@ agg="$(jq -s '{
               / ((map(select(.heal_iterations != null)) | length) | if . == 0 then 1 else . end)),
   subtasks:  (map(.subtasks_completed // 0) | add),
   files:     (map(.files_changed // 0) | add),
+  # --- findings-per-item metric (iq02 IQ01; additive; absent => not counted) ---
+  first_runs:  (map(select(.heal_first_decision != null)) | length),
+  first_pass:  (map(select(.heal_first_decision == "PASS")) | length),
+  find_runs:   (map(select(.heal_new_findings != null)) | length),
+  find_total:  ((map(select(.heal_new_findings != null) | .heal_new_findings) | add) // 0),
   # --- System Twin hard signal (additive; treats absent fields as null) ---
   twin_runs:            (map(select(.contract_conformance_status != null)) | length),
   contract_violations:  (map(.contract_violations // 0) | add),
@@ -170,11 +181,62 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
     "| Self-heal PASS | \(.heal_pass) |",
     "| Self-heal runs (with heal data) | \(.healed) |",
     "| Avg heal iterations (per healed run) | \(if .healed>0 then ((.avg_heal*100|floor)/100) else "—" end) |",
+    "| First-pass PASS rate (Phase 4.5 iteration 1) | \(if .first_runs>0 then "\(.first_pass)/\(.first_runs) (\((.first_pass*100/.first_runs)|floor)%)" else "not recorded" end) |",
+    "| Findings per item (new, all iterations) | \(if .find_runs>0 then ((.find_total*100/.find_runs|floor)/100) else "not recorded" end) |",
     "| Subtasks completed (total) | \(.subtasks) |",
     "| Files changed (total) | \(.files) |"
   '
   echo "| **Completion rate** | **${pass_rate}%** |"
   echo
+  # Wall-clock (iq02 T04) — derived by phase-timing.sh from logged timestamps only
+  # (hook-/script-written rows; no model-written duration). session_end's
+  # never-written duration_seconds slot is no longer read. A null span renders
+  # "not recorded", never 0. Fail-SAFE: a missing helper renders the empty notes.
+  echo "## Wall-clock (phases · machine vs owner)"
+  echo "_Derived by \`phase-timing.sh\` from hook- and script-written log rows. A span with a missing endpoint shows \"not recorded\", never 0._"
+  echo
+  wc_tmp="$(mktemp 2>/dev/null)" || wc_tmp=""
+  if [ -n "$wc_tmp" ] && [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/phase-timing.sh" ]; then
+    for wc_sid in $(jq -r '.sid' "$records" 2>/dev/null | sort -u); do
+      bash "$SCRIPT_DIR/phase-timing.sh" --session "$wc_sid" --logs-dir "$LOGS_DIR" 2>/dev/null \
+        | jq -c --arg sid "$wc_sid" '. + {sid:$sid}' >> "$wc_tmp" 2>/dev/null
+    done
+  fi
+  jq -rs '
+    def fmt(s): if s == null then "not recorded" else "\((s/60)|floor)m \(s % 60)s" end;
+    def med(a): (a | map(select(. != null)) | sort) as $x
+      | if ($x|length) == 0 then null else $x[((($x|length) - 1) / 2) | floor] end;
+    def p45: (.supervisor.phase45_iterations // []) as $i
+      | if ($i|length) == 0 or ($i|any(.seconds == null)) then null else ($i|map(.seconds)|add) end;
+    (sort_by([.supervisor.completion.end // "", .supervisor.execute.start // ""] | max)) as $r
+    | ($r | last // {}) as $L
+    | "| Phase | Median (\($r|length) session(s)) | Latest run |", "|---|---|---|",
+      "| Execute (first worker → last subtask_complete) | \(fmt(med($r|map(.supervisor.execute.seconds)))) | \(fmt($L.supervisor.execute.seconds)) |",
+      "| Finalize (→ PR created) | \(fmt(med($r|map(.supervisor.finalize.seconds)))) | \(fmt($L.supervisor.finalize.seconds)) |",
+      "| Phase 4.5 reviewer iterations (sum) | \(fmt(med($r|map(p45)))) | \(fmt($L|p45)) |",
+      "| Completion (→ session_end) | \(fmt(med($r|map(.supervisor.completion.seconds)))) | \(fmt($L.supervisor.completion.seconds)) |"
+  ' "${wc_tmp:-/dev/null}" 2>/dev/null
+  echo
+  # Per-line tolerant (fromjson?): a truncated / non-object line (a killed session's last line)
+  # is skipped, never an abort that drops every later item_timing row.
+  wc_items="$(cat "$LOGS_DIR"/*.jsonl 2>/dev/null | jq -Rc 'fromjson? | select(type=="object" and .event=="item_timing")' 2>/dev/null)"
+  if [ -n "$wc_items" ]; then
+    printf '%s\n' "$wc_items" | jq -rs '
+      def fmt(s): if s == null then "not recorded" else "\((s/60)|floor)m \(s % 60)s" end;
+      # one row per PR: a repeated item_timing for the same pr_url (a log written before closeout
+      # became idempotent, or two racing closeouts) keeps its NEWEST row by ts — never by input
+      # position, which is `cat *.jsonl` glob order (UUID log names, unrelated to time); pr_url-less
+      # rows stay.
+      (map(select(.pr_url == null)) + (map(select(.pr_url != null)) | group_by(.pr_url) | map(max_by(.ts // "")))
+       | sort_by(.ts // "")) as $items |
+      "| /automate item (PR) | Pick → park | Owner | Machine | Owner time exact |", "|---|---|---|---|---|",
+      ($items[] | "| \(.pr_url // "—") | \(fmt(.item.pick_to_park.seconds)) | \(fmt(.item.owner_seconds)) | \(fmt(.item.machine_seconds)) | \(if .item.owner_exact_share == null then "not recorded" else "\((.item.owner_exact_share * 100) | floor)%" end) |")
+    ' 2>/dev/null
+  else
+    echo "_No \`item_timing\` events yet — \`/automate\`'s close-out writes one per merged item._"
+  fi
+  echo
+  [ -n "$wc_tmp" ] && rm -f "$wc_tmp" 2>/dev/null
   # System Twin hard signal — only render the section when at least one run reported it.
   twin_runs="$(printf '%s' "$agg" | jq -r '.twin_runs')"
   if [ "${twin_runs:-0}" -gt 0 ]; then

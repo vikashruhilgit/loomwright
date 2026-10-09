@@ -1,8 +1,8 @@
 ---
 name: self-heal-advisory
 description: Supervisor Phase 4.5 protocol authority. Part 1 — advisory-only machinery (pre-review enrichments, System Twin conformance/benchmark/ground-truth, contract-builder WRITE path, delta line, hard-signal dual emission; never changes heal_decision or blocks the PR). Part 2 — the full Phase 4.5 SELF_HEAL loop protocol (on-entry actions, base-mismatch cleanup, bounded review-and-fix loop, rubric grading, red-team lens, completion-tail procedure), Read on demand at Phase 4.5 entry, deliberately not preloaded.
-version: "1.9.1"
-lastUpdated: "2026-10-01"
+version: "1.10.0"
+lastUpdated: "2026-10-09"
 ---
 
 # Self-Heal Protocol (Supervisor Phase 4.5)
@@ -718,6 +718,8 @@ The contract-conformance result, the benchmark result, and the ground-truth resu
    | `ground_truth_checks_passed` | `ground_truth.checks_passed` |
    | `ground_truth_pass_rate` (string "M/N") | the runner's `pass_rate` |
 
+   **Findings-per-item fields (iq02 IQ01, additive, same value in both shapes, same names):** `heal_first_decision` (the review-and-fix loop's first `iter_decision` — `PASS` / `FAIL` / `NEEDS_HUMAN`) and `heal_new_findings` (integer — `category: new` `review.issues` summed over every iteration) go on `SUPERVISOR_RESULT` AND on the flat `session_end` line; both are `null` when `heal_loop_ran == false`. They are REPORT-ONLY: never read by the loop, never change `heal_decision` (whose enum is unchanged), and are what `/insights` turns into the first-pass PASS rate and findings per item.
+
    See the `session_end` log line in `skills/state-management/SKILL.md` §"Session Logging (moved from agents/supervisor.md)" for the exact shape. The flat fields are additive — a `session_end` event without them remains valid (a reader treats absent fields as "not reported this session"; for the `ground_truth_*` fields a reader treats absent as `skipped`).
 
 ---
@@ -799,6 +801,8 @@ always execute.
         heal_loop_ran: false
         heal_iterations: null
         heal_decision: null
+        heal_first_decision: null
+        heal_new_findings: null
         heal_fixable_issues_fixed: 0
         heal_remaining_issues: 0
         error: "base_branch_mismatch: expected ${mismatch.expected}, found ${mismatch.actual} (reason: ${mismatch.reason})"
@@ -821,6 +825,8 @@ always execute.
 ```
 heal_iterations = 0
 heal_fixable_issues_fixed = 0
+heal_first_decision = null         # findings-per-item metric (iq02 IQ01): the FIRST iteration's iter_decision
+heal_new_findings = 0               # findings-per-item metric: total category=new review.issues across ALL iterations
 max_heal_iterations = {--heal-iterations value, default 3}
 heal_dismissed = []                 # ITEMISED {finding, reason, source, severity} list (dismissed-findings-01) — review.issues
                                      # entries excluded from fixable_issues each iteration (pre_existing / nit / drift /
@@ -836,7 +842,7 @@ while heal_iterations < max_heal_iterations:
 
              **DIFFERENT-LENS DIRECTIVE (non-stacked / BASE_BRANCH == \"main\" only — v14.21.0 self-heal hardening):** when BASE_BRANCH == \"main\" (the DIFF-SCOPE OVERRIDE above does NOT apply), this is the holistic post-PR review whose blind spots motivated this directive — a plain re-run of the same diff-scoped reviewer rubber-stamps its own blind spots on repeated iterations of this same review. Apply a DIFFERENT lens, not the same one again:
                1. **Run `consistency_audit` mode when self-repo trigger paths match.** If the integrated diff touches any of the `consistency_audit` trigger surfaces defined in `agents/code-reviewer.md`'s **Trigger rule** table (the single authoritative review-trigger taxonomy — do NOT restate the list here; a restated copy is exactly the cross-file drift this phase exists to catch), you MUST run in `review_mode: consistency_audit` (exhaustive cross-file analysis: every count, version string, mirrored prompt, and cross-reference), NOT a plain `diff_review`.
-               2. **ALWAYS apply the Self-Heal Miss-Class Checklist regardless of repo.** On EVERY non-stacked heal review — plugin-self OR any external repo where the consistency_audit triggers do not fire — additionally apply the repo-agnostic \"Self-Heal Miss-Class Checklist\" in `skills/quality-checklist/SKILL.md` (backend/API validation mirrors every frontend-schema rule; no `||`/falsy coercion on numeric fields; no positional args to options-object functions; missing branch test coverage; count/version/restated-list drift; cross-reference precision drift; `brief_conformance` — a stated acceptance criterion with no corresponding change in the integrated diff, checkable only when the BRIEF-CONFORMANCE ADVISORY line below is present; `deviations` — a worker- or fixer-recorded deviation that contradicts a stated criterion or rubric bullet, checkable only when the DEVIATIONS ADVISORY line below is present). These are the classes that today only surface in 3–6 rounds of post-PR review; catch them here.
+               2. **ALWAYS apply the Self-Heal Miss-Class Checklist regardless of repo.** On EVERY non-stacked heal review — plugin-self OR any external repo where the consistency_audit triggers do not fire — additionally apply the repo-agnostic \"Self-Heal Miss-Class Checklist\" in `skills/quality-checklist/SKILL.md` (backend/API validation mirrors every frontend-schema rule; no `||`/falsy coercion on numeric fields; no positional args to options-object functions; missing branch test coverage; count/version/restated-list drift; cross-reference precision drift; `own conventions` — a new check / read loop / lock / output path that bypasses the file's own existing one; `brief_conformance` — a stated acceptance criterion with no corresponding change in the integrated diff, checkable only when the BRIEF-CONFORMANCE ADVISORY line below is present; `deviations` — a worker- or fixer-recorded deviation that contradicts a stated criterion or rubric bullet, checkable only when the DEVIATIONS ADVISORY line below is present). These are the classes that today only surface in 3–6 rounds of post-PR review; catch them here.
 
              **ANTI-OVERLAP (every iteration, applies whether or not the DIFF-SCOPE OVERRIDE above is in force):** do not re-derive what a prior gate already found — an issue that a deterministic gate or an earlier heal iteration of this run already surfaced AND that is already fixed on this branch must not be re-reported; spend the pass on what the integrated view newly exposes. This never licenses skipping a check class or deferring to a prior lens: a prior finding still open in the diff is squarely in scope, and the DIFFERENT-LENS DIRECTIVE above still governs, **where it applies**, WHICH classes you sweep. (There is no per-subtask review to overlap with — see `AGENT_GUIDELINES.md` §"Review Counter-Pressure Rule".)
 
@@ -886,6 +892,10 @@ while heal_iterations < max_heal_iterations:
   iter_decision = review.decision
   if rule_findings != [] and iter_decision == PASS:
     iter_decision = FAIL
+  # findings-per-item metric (REPORT-ONLY — never read by any branch below): copy, do not compute.
+  if heal_first_decision == null:
+    heal_first_decision = iter_decision          # PASS | FAIL | NEEDS_HUMAN
+  heal_new_findings += count(review.issues where category=new)   # every severity
 
   # dismissed-findings-01: itemise EVERY review.issues entry excluded from the fix-time filter
   # (the SAME filter the FAIL branch's `fixable_issues` computes below — new+BLOCKING/HIGH). Computed

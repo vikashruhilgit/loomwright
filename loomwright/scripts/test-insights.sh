@@ -15,7 +15,8 @@
 # headline counting over the all-runs denominator plus the measured-subset parenthetical
 # + era table + pointer line and NO inlined per-run table; no-usable-records,
 # builder-absent, and garbage-emitting-builder degradations — all rendering the one-line
-# "no data" note without ever failing the dashboard build).
+# "no data" note without ever failing the dashboard build), and per-line tolerance of a
+# truncated / non-object session-log line (session_end + item_timing readers).
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -814,6 +815,77 @@ else
   ok "'(no corpora found)' does NOT co-render with a populated rules/orientation line (HIGH-3 fixed)"
 fi
 rm -rf "$CR"
+
+echo "== T04. Wall-clock (phases · machine vs owner) =="
+WC="$(mktemp -d)"; ( cd "$WC" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$WC/.supervisor/logs"
+printf '%s\n' '{"event":"agent_lifecycle","ts":"2026-10-01T10:00:00Z","state":"working","agent_id":"w1","agent_type":"loomwright:worker"}' \
+  '{"event":"subtask_complete","ts":"2026-10-01T10:10:00Z","agent_id":"w1"}' \
+  '{"event":"agent_lifecycle","ts":"2026-10-01T10:12:00Z","state":"working","agent_id":"r1","agent_type":"loomwright:code-reviewer"}' \
+  '{"event":"agent_lifecycle","ts":"2026-10-01T10:17:00Z","state":"ended","agent_id":"r1"}' \
+  '{"event":"session_end","ts":"2026-10-01T10:18:30Z","status":"completed","heal_decision":"PASS","heal_iterations":0}' \
+  '{"event":"item_timing","ts":"2026-10-01T12:00:00Z","pr_url":"https://x/9","item":{"pick_to_park":{"seconds":3600},"owner_seconds":null,"machine_seconds":null,"owner_exact_share":null}}' \
+  '{"event":"item_timing","ts":"2026-10-01T12:00:00Z","pr_url":"https://x/9","item":{"pick_to_park":{"seconds":3600},"owner_seconds":null,"machine_seconds":null,"owner_exact_share":null}}' > "$WC/.supervisor/logs/wc-a.jsonl"
+# ^ the same PR's item_timing twice (a closeout re-run on a pre-idempotence log): ONE dashboard row
+# Cross-file duplicate whose LEXICAL file order is the reverse of chronology (log names are UUIDs,
+# unrelated to time): the NEWER row sits in wc-a.jsonl, the OLDER — different content — in
+# wc-b.jsonl, so `cat *.jsonl` yields newest-first and a plain `group_by | last` keeps the stale one.
+printf '%s\n' '{"event":"item_timing","ts":"2026-10-02T09:00:00Z","pr_url":"https://x/10","item":{"pick_to_park":{"seconds":7200},"owner_seconds":600,"machine_seconds":6600,"owner_exact_share":1}}' >> "$WC/.supervisor/logs/wc-a.jsonl"
+printf '%s\n' '{"event":"item_timing","ts":"2026-10-01T09:00:00Z","pr_url":"https://x/10","item":{"pick_to_park":{"seconds":1800},"owner_seconds":null,"machine_seconds":null,"owner_exact_share":null}}' > "$WC/.supervisor/logs/wc-b.jsonl"
+( cd "$WC" && bash "$BUILD" >/dev/null 2>&1 ); rc=$?
+wd="$WC/.supervisor/insights/dashboard.md"
+grep -qF "## Wall-clock (phases · machine vs owner)" "$wd" 2>/dev/null && ok "wall-clock section rendered" || no "wall-clock section missing"
+grep -qF "| Execute (first worker → last subtask_complete) | 10m 0s | 10m 0s |" "$wd" 2>/dev/null && ok "execute span derived from the log (10m 0s)" || no "execute row: $(grep -F 'Execute (' "$wd" 2>/dev/null)"
+grep -qF "| Phase 4.5 reviewer iterations (sum) | 5m 0s | 5m 0s |" "$wd" 2>/dev/null && ok "Phase 4.5 reviewer span (5m 0s)" || no "phase 4.5 row: $(grep -F 'Phase 4.5 reviewer' "$wd" 2>/dev/null)"
+grep -qF "| Finalize (→ PR created) | not recorded | not recorded |" "$wd" 2>/dev/null && ok "null span (no pr_created row) renders 'not recorded', never 0" || no "finalize row: $(grep -F 'Finalize' "$wd" 2>/dev/null)"
+grep -qF "| https://x/9 | 60m 0s | not recorded | not recorded | not recorded |" "$wd" 2>/dev/null && ok "item_timing row: pick→park shown, null owner/machine/exact 'not recorded'" || no "item row: $(grep -F 'https://x/9' "$wd" 2>/dev/null)"
+[ "$(grep -cF '| https://x/9 |' "$wd" 2>/dev/null)" = 1 ] && ok "item_timing: a repeated row for one pr_url renders ONCE (deduped by pr_url)" || no "item_timing rows for https://x/9: $(grep -cF '| https://x/9 |' "$wd" 2>/dev/null)"
+[ "$(grep -cF '| https://x/10 |' "$wd" 2>/dev/null)" = 1 ] && grep -qF "| https://x/10 | 120m 0s | 10m 0s | 110m 0s | 100% |" "$wd" 2>/dev/null && ok "item_timing: a cross-file duplicate keeps the NEWER row by ts, not the later file in glob order" || no "cross-file dedupe kept: $(grep -F 'https://x/10' "$wd" 2>/dev/null)"
+[ "$rc" -eq 0 ] && ok "build-insights exits 0 with the wall-clock section" || no "rc=$rc"
+rm -rf "$WC"
+
+echo "== IQ01. findings-per-item metric (first-pass PASS rate + findings per item) =="
+FM="$(mktemp -d)"; ( cd "$FM" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$FM/.supervisor/logs"
+printf '%s\n' '{"ts":"2026-10-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS","heal_iterations":0,"heal_first_decision":"PASS","heal_new_findings":0}' > "$FM/.supervisor/logs/fm-a.jsonl"
+printf '%s\n' '{"ts":"2026-10-02T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS","heal_iterations":2,"heal_first_decision":"FAIL","heal_new_findings":5}' > "$FM/.supervisor/logs/fm-b.jsonl"
+# fm-c: an older event with neither field — must not count as a first-pass FAIL nor as 0 findings
+printf '%s\n' '{"ts":"2026-10-03T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS","heal_iterations":1}' > "$FM/.supervisor/logs/fm-c.jsonl"
+( cd "$FM" && bash "$BUILD" >/dev/null 2>&1 )
+fd="$FM/.supervisor/insights/dashboard.md"
+grep -qF "| First-pass PASS rate (Phase 4.5 iteration 1) | 1/2 (50%) |" "$fd" 2>/dev/null && ok "first-pass PASS rate = 1/2 (absent-field run not counted)" || no "first-pass PASS rate wrong: $(grep -F 'First-pass' "$fd" 2>/dev/null)"
+grep -qF "| Findings per item (new, all iterations) | 2.5 |" "$fd" 2>/dev/null && ok "findings per item = 2.5 (a 0 survives, absent run excluded)" || no "findings per item wrong: $(grep -F 'Findings per item' "$fd" 2>/dev/null)"
+# a non-integer heal_new_findings (string / object) in ONE session must not blank the Summary table:
+# a numeric string counts as its number, anything else is excluded (it once made `add` throw).
+printf '%s\n' '{"ts":"2026-10-04T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS","heal_iterations":"1","heal_first_decision":"PASS","heal_new_findings":"1","subtasks_completed":"x","files_changed":{"n":1}}' > "$FM/.supervisor/logs/fm-d.jsonl"
+printf '%s\n' '{"ts":"2026-10-05T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS","heal_first_decision":"PASS","heal_new_findings":"three","contract_violations":"two"}' > "$FM/.supervisor/logs/fm-e.jsonl"
+( cd "$FM" && bash "$BUILD" >/dev/null 2>&1 )
+grep -qF "| Sessions | 5 |" "$fd" 2>/dev/null && grep -qF "| Findings per item (new, all iterations) | 2 |" "$fd" 2>/dev/null \
+  && grep -qF "| Files changed (total) | 0 |" "$fd" 2>/dev/null \
+  && ok "non-integer heal_new_findings / counts: the Summary still renders (numeric string counted, junk excluded ⇒ (0+5+1)/3 = 2)" \
+  || no "Summary blanked or wrong by a non-integer field: $(sed -n '/## Summary/,/Completion/p' "$fd" 2>/dev/null | tr '\n' '~')"
+rm -f "$FM/.supervisor/logs/fm-d.jsonl" "$FM/.supervisor/logs/fm-e.jsonl"
+# a corpus carrying neither field → both render "not recorded", never 0
+rm -f "$FM/.supervisor/logs/fm-a.jsonl" "$FM/.supervisor/logs/fm-b.jsonl"; ( cd "$FM" && bash "$BUILD" >/dev/null 2>&1 )
+grep -qF "| First-pass PASS rate (Phase 4.5 iteration 1) | not recorded |" "$fd" 2>/dev/null && grep -qF "| Findings per item (new, all iterations) | not recorded |" "$fd" 2>/dev/null && ok "metric absent ⇒ 'not recorded'" || no "absent metric not rendered as 'not recorded'"
+rm -rf "$FM"
+
+echo "== E. malformed / non-object session-log lines are skipped per line (fix-now E) =="
+# A killed session's truncated last line, or a bare non-object line, must not abort the whole read:
+# it once dropped the session_end after it (Sessions undercounted) and every later item_timing row.
+ML="$(mktemp -d)"; ( cd "$ML" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$ML/.supervisor/logs"
+printf '%s\n' '{"event":"item_timing","ts":"2026-10-0' \
+  '{"ts":"2026-10-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS","heal_iterations":0}' > "$ML/.supervisor/logs/ml-a.jsonl"
+printf '%s\n' '{"ts":"2026-10-02T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS","heal_iterations":0}' \
+  '42' \
+  '{"event":"item_timing","ts":"2026-10-02T12:00:00Z","pr_url":"https://x/12","item":{"pick_to_park":{"seconds":600},"owner_seconds":null,"machine_seconds":null,"owner_exact_share":null}}' > "$ML/.supervisor/logs/ml-b.jsonl"
+( cd "$ML" && bash "$BUILD" >/dev/null 2>&1 ); rc=$?
+md="$ML/.supervisor/insights/dashboard.md"
+grep -qF "| Sessions | 2 |" "$md" 2>/dev/null && ok "a truncated line BEFORE a session_end does not drop that session (2 sessions)" || no "sessions after a malformed line: $(grep -F '| Sessions |' "$md" 2>/dev/null)"
+grep -qF "| https://x/12 | 10m 0s | not recorded | not recorded | not recorded |" "$md" 2>/dev/null && ok "item_timing after a truncated + a non-object line still renders" || no "item_timing lost after malformed lines: $(grep -F 'item_timing' "$md" 2>/dev/null | head -2)"
+[ "$rc" -eq 0 ] && ok "build-insights exits 0 over malformed lines" || no "rc=$rc"
+rm -rf "$ML"
 
 echo
 echo "RESULT: $pass passed, $fail failed"

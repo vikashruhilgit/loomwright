@@ -216,6 +216,7 @@ wr_fixture() {
     # outputs_gap is a STRING at schema_version 2 (the validator blocks the `[]` array form), so the
     # "empty gap" fixture value is the empty string.
     echo "- outputs_gap: ${4:-\"\"}"
+    echo "- self_review: [{part: checklist, result: held, evidence: walked}, {part: repro, result: held, evidence: repro}, {part: sweep, result: n/a, evidence: unchanged}, {part: invariants, result: n/a, evidence: absent}]"
     [ -n "$2" ] && echo "- deviations: $2"
     echo "- summary: fixture for the worker rule self-check"
   } > "$1"

@@ -8,18 +8,21 @@
 #   PART 1  Launch Pad's Phase 3 action 0c shape (reader invoked with `--with-ids`, paths as
 #           ARGUMENTS, empty ⇒ omit), Phase 5 action 6a (House Rules section with the demoted
 #           banner, `- rule: <id>` bullets, empty ⇒ emit neither) and the Phase 5.5 APPLICABLE
-#           RULES block's conditional emission; the 16 ⇒ 17 count in the command mirror.
+#           RULES block's conditional emission; the criteria count (now 18) in the command mirror.
 #   PART 2  Plan Reviewer Criterion 17: skip clause, 17a / 17b FAIL conditions, the
 #           `rule_conformance` category (criterion body AND output-format enum), the count, and
 #           Criterion 14's classifier naming `rule:` as a non-cmd prefix.
+#   PART 2b Plan Reviewer Criterion 18 (touched-file invariants, iq01): gate, 18a/18b/18c, the
+#           `touched_file_invariants` category, and the template ↔ Launch Pad agent ↔ command
+#           mirror that produces the section it checks.
 #   PART 3  Fixture well-formedness: the fixture store parses under `read-rules.sh --with-ids`
 #           in a sandbox `git init` repo (copied in, never the live store — the FIXREPO pattern of
 #           test-rules-seams.sh PART 2), routes by `applies_to`, each brief's `## House Rules`
 #           section is exactly that reader output with its banner demoted, and each brief's
 #           `## Executable Acceptance` classifies through exec-acceptance-lib.sh's classify_kind
 #           as its role requires.
-#   PART 4  Mutation control (lesson fa32a308): deleting Criterion 17's 17b sentence, or Launch
-#           Pad's action 0c, from a TEMP copy must make this test fail. Each mutant is gated on
+#   PART 4  Mutation control (lesson fa32a308): deleting Criterion 17's 17b sentence, Criterion
+#           18's 18a sentence, or Launch Pad's action 0c, from a TEMP copy must make this test fail. Each mutant is gated on
 #           non-empty + differs-from-original, and a positive control (unmutated temp copies)
 #           must pass first, so a vacuous or broken harness cannot report a false kill.
 #
@@ -78,14 +81,14 @@ bhas "$SPAWN" '--- APPLICABLE RULES ---' && bhas "$SPAWN" '--- APPLICABLE RULES 
   && ok "spawn carries the APPLICABLE RULES block" || no "spawn APPLICABLE RULES markers"
 bhas "$SPAWN" 'OMIT this whole block, both markers included, when applicable_rules is empty' \
   && ok "spawn: block omitted when empty" || no "spawn conditional-emission clause"
-bhas "$SPAWN" 'Check all 17 review criteria.' && ok "spawn: Check all 17" || no "spawn criteria count"
-lacks "$LP" 'Check all 16' && ok "no stale 'Check all 16'" || no "stale 'Check all 16' in launch-pad agent"
-has "$LPC" 'checks all 17 criteria' && lacks "$LPC" 'all 16 criteria' \
-  && ok "command mirror: all 17 criteria" || no "command mirror criteria count"
+bhas "$SPAWN" 'Check all 18 review criteria.' && ok "spawn: Check all 18" || no "spawn criteria count"
+lacks "$LP" 'Check all 17' && ok "no stale 'Check all 17'" || no "stale 'Check all 17' in launch-pad agent"
+has "$LPC" 'checks all 18 criteria' && lacks "$LPC" 'all 17 criteria' \
+  && ok "command mirror: all 18 criteria" || no "command mirror criteria count"
 
 echo "PART 2 — Plan Reviewer Criterion 17"
 [ -s "$PR" ] || no "missing or empty: $PR"
-C17="$(block "$PR" '^### 17\. Rule Conformance' '^## Decision Matrix')"
+C17="$(block "$PR" '^### 17\. Rule Conformance' '^### 18\. ')"
 if [ -n "$C17" ]; then ok "### 17. Rule Conformance present"; else no "Criterion 17 block not found"; fi
 bhas "$C17" 'no `--- APPLICABLE RULES ---` block in the spawn prompt, or a block that lists no rules → skip silently' \
   && ok "17: skip clause" || no "17 skip clause"
@@ -97,9 +100,32 @@ bhas "$C17" '**Advisory rules never FAIL.**' && ok "17: advisory never FAILs" ||
 bhas "$C17" '**Issue category:** `rule_conformance`' && ok "17: rule_conformance category" || no "17 category"
 bhas "$C17" 'HIGH for 17a and 17b' && ok "17: HIGH severity" || no "17 severity"
 has "$PR" '| lane_overlap | rule_conformance |' && ok "output-format category enum lists rule_conformance" || no "category enum"
-has "$PR" '## 17 Review Criteria' && lacks "$PR" '## 16 Review Criteria' && has "$PR" 'All 17 review criteria must be checked' \
-  && has "$PR" '(17 total, Criteria 11, 12, 13, 14, 15, 16, and 17 conditional)' && has "$PR" 'All 17 criteria checked' \
-  && ok "criteria count 17 at heading / never-skip / matrix / checklist" || no "criteria count surfaces"
+has "$PR" '## 18 Review Criteria' && lacks "$PR" '## 17 Review Criteria' && has "$PR" 'All 18 review criteria must be checked' \
+  && has "$PR" '(18 total, Criteria 11, 12, 13, 14, 15, 16, 17, and 18 conditional)' && has "$PR" 'All 18 criteria checked' \
+  && ok "criteria count 18 at heading / never-skip / matrix / checklist" || no "criteria count surfaces"
+
+echo "PART 2b — Plan Reviewer Criterion 18 + the section it checks"
+C18="$(block "$PR" '^### 18\. Touched-File Invariants' '^## Decision Matrix')"
+if [ -n "$C18" ]; then ok "### 18. Touched-File Invariants present"; else no "Criterion 18 block not found"; fi
+bhas "$C18" 'Only creates, or only non-script edits → skip silently' && ok "18: skip clause" || no "18 skip clause"
+bhas "$C18" '**18a — absence.** The gate fires and the brief has no `## Touched-file invariants` section.' \
+  && ok "18a absence condition" || no "18a absence condition"
+bhas "$C18" '**18b — coverage.**' && bhas "$C18" 'which matchers/callers fire it' && ok "18b coverage incl. hook callers" || no "18b coverage"
+bhas "$C18" '**18c — grounding.**' && bhas "$C18" '`Grep` at least one quoted anchor' && ok "18c grounding by grep" || no "18c grounding"
+bhas "$C18" '**Issue category:** `touched_file_invariants`' && ok "18: category" || no "18 category"
+bhas "$C18" 'HIGH for 18a' && ok "18: 18a is HIGH (FAIL)" || no "18 severity"
+bhas "$C18" '§"Touched-file invariants"' && ok "18 points at the template" || no "18 template pointer"
+has "$PR" '| touched_file_invariants |' && ok "output-format enum lists touched_file_invariants" || no "output enum missing touched_file_invariants"
+SKILL="$PLUGIN/skills/supervisor-readiness/SKILL.md"
+TFI="$(block "$SKILL" '^## Touched-file invariants$' '^## Subtask Structure')"
+bhas "$TFI" '**Grounded:**' && bhas "$TFI" 'backticked literal that `grep -F` finds' && ok "template: grounding rule" || no "template grounding rule"
+bhas "$TFI" 'fired by:' && bhas "$TFI" 'mirror:' && bhas "$TFI" 'pinned by:' && ok "template: entry fields" || no "template entry fields"
+A11="$(block "$LP" '^11\. \*\*Touched-file invariants' '^\*\*Output:\*\*')"
+bhas "$A11" 'Plan Reviewer Criterion 18' && bhas "$A11" '§"Touched-file invariants"' && ok "launch-pad action 11 ties template + Criterion 18" || no "launch-pad action 11"
+has "$LP" '4c. **Touched-file invariants' && ok "launch-pad Phase 5 emits the section" || no "launch-pad Phase 5 emission"
+has "$LPC" '8. Touched-file invariants' && has "$LPC" 'Criterion 18 runs only when the brief modifies an existing script' \
+  && ok "command mirror: step 8 + Criterion 18 gate" || no "command mirror touched-file invariants"
+has "$PLUGIN/docs/result-schemas/plan-review-result.md" '`touched_file_invariants` for Criterion 18' && ok "schema doc: category" || no "schema doc category"
 has "$PR" '`corpus-task:` / `qa-executor:` / `rule:` prefix' && ok "Criterion 14 classifier names rule:" || no "Criterion 14 rule: prefix"
 
 echo "PART 3 — fixtures"
@@ -187,12 +213,13 @@ if [ "${SEAM_NO_MUTATION:-0}" != "1" ]; then
   if child "$WORK/lp.md" "$WORK/pr.md"; then ok "positive control: unmutated temp copies pass"
   else no "positive control failed — mutation results would be meaningless"; fi
   awk '!/^- \*\*17b — omission\.\*\*/' "$WORK/pr.md" > "$WORK/pr-m.md"
+  awk '!/^- \*\*18a — absence\.\*\*/' "$WORK/pr.md" > "$WORK/pr18-m.md"
   awk 'f && /^1\. Parse CLAUDE\.md/ {f=0} /^0c\. / {f=1} !f' "$WORK/lp.md" > "$WORK/lp-m.md"
-  for m in pr-m lp-m; do
-    src="${m%-m}"
+  for m in pr-m pr18-m lp-m; do
+    src="${m%-m}"; src="${src%18}"
     if [ ! -s "$WORK/$m.md" ]; then no "mutant $m is empty"; continue; fi
     if cmp -s "$WORK/$m.md" "$WORK/$src.md"; then no "mutant $m is identical to its original"; continue; fi
-    if [ "$m" = pr-m ]; then child "$WORK/lp.md" "$WORK/pr-m.md"; else child "$WORK/lp-m.md" "$WORK/pr.md"; fi
+    if [ "$src" = pr ]; then child "$WORK/lp.md" "$WORK/$m.md"; else child "$WORK/lp-m.md" "$WORK/pr.md"; fi
     [ $? -ne 0 ] && ok "mutant $m (${m%%-*}) is killed" || no "mutant $m survived"
   done
 fi

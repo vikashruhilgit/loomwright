@@ -120,6 +120,7 @@
 #      before PICK, decision-9 grep clean, commands/automate.md surface.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/wait-lib.sh"   # bounded condition waits (iq02 T07)
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 H="$HERE/automate-helpers.sh"
@@ -726,6 +727,12 @@ run_closeout() { (cd "$P" && bash "$SPYD/automate-helpers.sh" closeout "$RF_REL"
 
 echo "== C. closeout =="
 closeout_fixture 4
+# iq02 T04: seed the item's session id + pick/park so closeout's item_timing has a record to write.
+# An EARLIER item (20 min, its own session) precedes it: the record must be THIS item's segment
+# (closeout passes --item), never the run's first pick/park (which read 1200 s, not 3600 s).
+printf -- '- 2026-10-01T08:00:00Z picked earlier.md\n- 2026-10-01T08:10:00Z session_id sess-early (earlier.md)\n- 2026-10-01T08:20:00Z parked awaiting_merge\n' >> "$P/$RF_REL"
+printf -- '- 2026-10-01T10:00:00Z picked %s\n- 2026-10-01T10:30:00Z session_id sess-it (%s)\n- 2026-10-01T11:00:00Z parked awaiting_merge\n' "$REQ" "$REQ" >> "$P/$RF_REL"
+mkdir -p "$P/.supervisor/logs"
 (cd "$P" && bash "$H" trail-pr "$RF_REL" --reason closeout >/dev/null)   # stages trail blobs in the primary index
 spy_reset
 out="$(run_closeout)"; rc=$?
@@ -743,6 +750,9 @@ grep -qF '<!-- loomwright:requirement-closeout -->' "$P/$REQ" && grep -qF -- "- 
 grep -q '^owner	automate-closeout:'"$RUN_ID"'$' "$SPYLOG.meta" && ok "trail-pr ran under the closeout's run lock" || no "lock meta during trail-pr: $(cat "$SPYLOG.meta" 2>/dev/null | tr '\n' '|')"
 [ ! -d "$P/.supervisor/run.lock" ] && ok "run lock released after closeout" || no "run lock leaked"
 grep -qE '^- .* closeout https://github.com/acme/widgets/pull/7: closeout: checked' "$P/$RF_REL" && ok "## Progress carries the step lines" || no "Progress lines missing"
+IT="$(jq -c 'select(.event=="item_timing")' "$P/.supervisor/logs/sess-it.jsonl" 2>/dev/null)"
+[ "$(printf '%s' "$IT" | jq -r '"\(.pr_url) \(.item.pick_to_park.seconds) \(has("ts"))"' 2>/dev/null)" = "$PRURL 3600 true" ] && ok "T04: closeout appends ONE item_timing event (phase-timing.sh --run --item: this item's segment, not the earlier item's) to the item's session log" || no "T04: item_timing missing/wrong: $IT"
+case "$out" in *item_timing*|*phase-timing*) no "T04: item_timing step printed output (closeout prints only closeout: lines)" ;; *) ok "T04: the item_timing append is silent" ;; esac
 
 echo "== C. closeout idempotent (AC11) =="
 before_rf="$(cksum < "$P/$RF_REL")"; before_req="$(cksum < "$P/$REQ")"
@@ -754,7 +764,25 @@ badl="$(printf '%s\n' "$out2" | grep -v 'skipped — ' || true)"
 [ -z "$badl" ] && [ "$rc" -eq 0 ] && ok "AC11: second run is all skipped lines, exit 0" || no "AC11: non-skipped line(s): $badl"
 [ "$before_rf" = "$(cksum < "$P/$RF_REL")" ] && [ "$before_req" = "$(cksum < "$P/$REQ")" ] && ok "AC11: run file + requirement unchanged" || no "AC11: second run mutated files"
 [ "$before_trail" = "$(git -C "$FX/origin.git" for-each-ref --format='%(objectname)' 'refs/heads/chore/*')" ] && [ "$creates_before" = "$(count_creates)" ] && ok "AC11: no push, no PR create on the second run" || no "AC11: second run pushed/created"
+it_count() { jq -c 'select(.event=="item_timing")' "$1" 2>/dev/null | wc -l | tr -d ' '; }
+[ "$(it_count "$P/.supervisor/logs/sess-it.jsonl")" = 1 ] && ok "AC11: the session log holds exactly ONE item_timing after the second closeout (the append is idempotent)" || no "AC11: item_timing rows after the re-run: $(it_count "$P/.supervisor/logs/sess-it.jsonl")"
 grep -q '^pr merge' "$GH_STUB_DIR/argv.log" && no "gh pr merge called" || ok "closeout never calls gh pr merge"
+# Control: the same two closeouts through a gated copy WITHOUT the idempotence guard append a
+# second item_timing — so the exactly-ONE assertion above is load-bearing (red on the pre-fix code).
+MUTI="$TOP/mutd-itiming"; mkdir -p "$MUTI"; cp "$HERE"/*.sh "$HERE"/*.py "$MUTI/"; cp -R "$HERE/automate-helpers.d" "$MUTI/"
+if [ "$(grep -c 'item_timing-idempotence guard' "$T")" != 1 ]; then no "item_timing mutant anchor is not unique"
+else
+  grep -v 'item_timing-idempotence guard' "$T" > "$MUTI/automate-trail.sh"
+  if [ ! -s "$MUTI/automate-trail.sh" ] || cmp -s "$T" "$MUTI/automate-trail.sh" || ! bash -n "$MUTI/automate-trail.sh"; then no "item_timing mutant not built"
+  else
+    closeout_fixture 112
+    printf -- '- 2026-10-01T10:00:00Z picked %s\n- 2026-10-01T10:30:00Z session_id sess-it (%s)\n- 2026-10-01T11:00:00Z parked awaiting_merge\n' "$REQ" "$REQ" >> "$P/$RF_REL"
+    mkdir -p "$P/.supervisor/logs"
+    (cd "$P" && bash "$MUTI/automate-helpers.sh" closeout "$RF_REL" "$REQ" "$PRURL" >/dev/null 2>&1)
+    (cd "$P" && bash "$MUTI/automate-helpers.sh" closeout "$RF_REL" "$REQ" "$PRURL" >/dev/null 2>&1)
+    [ "$(it_count "$P/.supervisor/logs/sess-it.jsonl")" = 2 ] && ok "control: without the guard the re-run appends a second item_timing (the AC11 exactly-ONE assertion is load-bearing)" || no "control: unguarded re-run left $(it_count "$P/.supervisor/logs/sess-it.jsonl") item_timing row(s), expected 2 — the control does not exercise the guard"
+  fi
+fi
 
 echo "== C. closeout idempotent AFTER its own trail PR merged (the sync moves; nothing else may) =="
 # Run automate-2026-10-01-142337: the watcher's closeout opened trail PR #329,
@@ -1498,7 +1526,9 @@ out="$(cd "$P" && bash "$WATCH" "$RF_REL" "$REQ" "$PRURL" </dev/null 2>&1)"
 [ -n "$wpid" ] && kill "$wpid" 2>/dev/null
 i=0; while [ -e "$P/$MARK" ] && [ "$i" -lt 200 ]; do sleep 0.1; i=$((i+1)); done
 [ ! -e "$P/$MARK" ] && ok "AC13: marker gone after the watcher is terminated" || no "marker left after TERM"
-( sleep 0 & echo $! > "$TOP/deadpid" ); sleep 0.2
+( sleep 0 & echo $! > "$TOP/deadpid" )   # fixed-sleep-ok: `sleep 0` is the short-lived process whose pid goes dead, not a wait
+# Wait until that pid IS dead before writing the marker — a fixed `sleep 0.2` assumed it (iq02 T07).
+wait_for_pid_gone "$(cat "$TOP/deadpid")" 10 || no "dead-pid fixture: pid $(cat "$TOP/deadpid") never exited within 10 s"
 printf 'pid\t%s\npr_url\t%s\nstarted\tx\n' "$(cat "$TOP/deadpid")" "$PRURL" > "$P/$MARK"
 out="$(cd "$P" && LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=0 bash "$WATCH" "$RF_REL" "$REQ" "$PRURL" </dev/null 2>&1)"
 case "$out" in *"merge-watch: started pid="*) ok "dead-pid marker is reclaimed" ;; *) no "dead-pid reclaim: $out" ;; esac
@@ -1513,7 +1543,7 @@ jq --arg u "$PRURL2" '.[0].state = "OPEN" | . + [{number:8,url:$u,state:"OPEN",h
 ( cd "$P" && LOOMWRIGHT_MERGE_WATCH_INTERVAL=30 LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=600 nohup bash "$WATCH" "$RF_REL" "$REQ" "$PRURL" </dev/null >"$TOP/wa.log" 2>&1 & )
 i=0; while [ ! -s "$P/$MARK" ] && [ "$i" -lt 200 ]; do sleep 0.1; i=$((i+1)); done
 apid="$(awk -F'\t' '$1=="pid"{print $2}' "$P/$MARK" 2>/dev/null)"
-sleep 0.5   # A is now inside its 30s interval nap
+sleep 0.5   # fixed-sleep-ok: settle — A is now inside its 30s interval nap (too short ⇒ B replaces A before its nap, a different path)
 t0="$(date +%s)"
 ( cd "$P" && LOOMWRIGHT_MERGE_WATCH_INTERVAL=30 LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=600 nohup bash "$WATCH" "$RF_REL" "$REQ2" "$PRURL2" </dev/null >"$TOP/wb.log" 2>&1 & )
 i=0; while [ "$(awk -F'\t' '$1=="pr_url"{print $2}' "$P/$MARK" 2>/dev/null)" != "$PRURL2" ] && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i+1)); done
@@ -1700,9 +1730,15 @@ dbl_arm() {
   ( cd "$P" && LOOMWRIGHT_MERGE_WATCH_INTERVAL=1 LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=60 nohup bash "$w" "$RF_REL" "$REQ" "$PRURL" </dev/null >"$lg1" 2>&1 & )
   i=0; while [ ! -s "$P/$MARK" ] && [ "$i" -lt 200 ]; do sleep 0.1; i=$((i+1)); done
   DPID="$(awk -F'\t' '$1=="pid"{print $2}' "$P/$MARK" 2>/dev/null)"
-  ( cd "$P" && LOOMWRIGHT_MERGE_WATCH_INTERVAL=1 LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=60 nohup bash "$w" "$RF_REL" "$REQ" "$PRURL" </dev/null >"$lg2" 2>&1 & )
+  # The second launcher's own pid is kept, and its EXIT is awaited before its log is read — it exits right
+  # after `already running`. This replaced a fixed `sleep 0.3` quiet period (iq02 T07). Bounded: a
+  # mutant whose second launch keeps running as a watcher is read after 5 s, its log then is not the
+  # one-line `already running`, so DA1 still goes red.
+  ( cd "$P" && LOOMWRIGHT_MERGE_WATCH_INTERVAL=1 LOOMWRIGHT_MERGE_WATCH_MAX_SECONDS=60 nohup bash "$w" "$RF_REL" "$REQ" "$PRURL" </dev/null >"$lg2" 2>&1 ) &
+  DA_L2=$!
   i=0; while ! grep -qE 'already running|started|replaced' "$lg2" 2>/dev/null && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i+1)); done
-  sleep 0.3
+  wait_for_pid_gone "$DA_L2" 5 2>/dev/null || :
+  disown "$DA_L2" 2>/dev/null || :
   DA1=1; DA2=1; DA3=1
   [ -n "$DPID" ] && [ "$(cat "$lg2")" = "merge-watch: already running pid=$DPID" ] || DA1=0
   [ -n "$DPID" ] && kill -0 "$DPID" 2>/dev/null || DA2=0

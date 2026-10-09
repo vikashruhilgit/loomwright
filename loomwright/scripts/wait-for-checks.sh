@@ -14,9 +14,9 @@
 # IS process exit. The drain process died mid-wait, and the dispatcher's
 # cleanup trap salvaged + removed the worktree/lock as if the run had
 # completed normally, leaving no record that no result was ever produced.
-# A single foreground, blocking script call the model cannot background (and
+# Foreground, blocking script calls the model cannot background (and
 # cannot "wait for a notification" on, because there is no other turn left to
-# receive one) closes that hole. See the call sites in
+# receive one) close that hole. See the call sites in
 # skills/review-heal/SKILL.md and agents/review-pr.md, each marked with:
 #   "Never run this wait in the background and never end the turn while
 #    waiting — under `claude -p` ending the turn ends the process and the
@@ -25,7 +25,7 @@
 # USAGE
 #   wait-for-checks.sh <pr_url> --sha <sha> --bound <seconds> \
 #       [--interval <s>] [--required-only | --review-check-pattern <glob>] \
-#       [--names]
+#       [--names] [--call-max <s> [--continue | --restart]]
 #
 #   <pr_url>       the PR being waited on (any bare positional argument).
 #   --sha <sha>    the commit the caller is waiting for. A rollup reported
@@ -61,6 +61,28 @@
 #                      regex skills/review-heal/SKILL.md §U4 uses, `-` absent.
 #                  WITHOUT the flag the output line is byte-unchanged. Consumer:
 #                  `automate-helpers.sh escalation-cause`.
+#   --call-max <s> OPT-IN RESUMABLE MODE (implementation-quality/02 T03). A
+#                  per-CALL ceiling (positive integer, clamped to 570) so no
+#                  single foreground call outlives the host's 600 s foreground
+#                  cap, while --bound stays the TOTAL budget across calls. The
+#                  total is a persisted absolute deadline (epoch seconds,
+#                  `date +%s`) in ${CHECK_WAIT_DIR:-.supervisor/check-wait}/
+#                  <key-hash>.json, key = (pr_url, --sha, scope), hashed like
+#                  drain-rounds.sh's pr_hash. A call WITHOUT --continue starts a
+#                  fresh deadline (now + --bound) — UNLESS an unexpired deadline
+#                  for the same key is already persisted: then it KEEPS that
+#                  deadline and warns on stderr (a caller that drops --continue
+#                  mid-loop must never earn a fresh total; fail-CLOSED toward
+#                  the bound). --restart deliberately replaces an unexpired
+#                  deadline; an expired or unreadable one is always replaced. A
+#                  call WITH --continue reads the deadline and NEVER rewrites it
+#                  (--restart is ignored there) — missing/garbage state there is
+#                  fail-CLOSED: `ELAPSED … pending=unreadable_deadline`, never a
+#                  fresh budget. A different --sha is a different key. The state
+#                  file is removed on SETTLED/ELAPSED. A non-numeric --call-max
+#                  or --bound in this mode ⇒ `pending=bad_usage`.
+#                  WITHOUT --call-max: output byte-unchanged, no state written,
+#                  CONTINUE never printed.
 #
 # CONTRACT
 #   - Foreground and BLOCKING. This script NEVER backgrounds itself — that is
@@ -68,7 +90,9 @@
 #   - Bash 3.2 / BSD-safe: NO `timeout` binary dependency (per this repo's
 #     documented macOS/BSD portability convention — `timeout` may be absent).
 #     The bound is tracked via the bash builtin `$SECONDS` (reset to 0 at
-#     script start), never a `date`-diff or a subprocess timer.
+#     script start), never a `date`-diff or a subprocess timer. Exception:
+#     under --call-max the per-call ceiling uses `$SECONDS` and the TOTAL
+#     bound is the persisted `date +%s` deadline (it must survive calls).
 #   - ALWAYS exits 0 — mirrors dispatch-pr-review.sh / send-webhook.sh's
 #     fire-and-forget convention. A malformed invocation or an unreadable `gh`
 #     read degrades to an ELAPSED-shaped line, never a non-zero exit the
@@ -76,6 +100,10 @@
 #   - Prints EXACTLY ONE final line to stdout:
 #       SETTLED sha=<sha> required=<green|red|unknown> review_producing=<settled|elapsed>
 #       ELAPSED sha=<sha> required=<green|red|pending|unknown> review_producing=<settled|elapsed> pending=<comma-list|none>
+#       CONTINUE sha=<sha> remaining=<s> pending=<comma-list|none>   (--call-max only)
+#     CONTINUE is NOT a result: the per-call ceiling was reached with total
+#     budget left — the caller calls again at once, same --sha, with
+#     --continue, as a new foreground call, and never ends its turn on it.
 #     The caller (the model, per the skill prose) is responsible for turning
 #     this line into a READY/ESCALATED decision — this script only reports
 #     scoped-settlement fact, it never decides drain readiness itself.
@@ -110,6 +138,9 @@ REQUIRED_ONLY=0
 REVIEW_PATTERN=""
 HAVE_PATTERN=0
 NAMES=0
+CALL_MAX=""
+CONTINUE=0
+RESTART=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -129,6 +160,14 @@ while [ $# -gt 0 ]; do
       REQUIRED_ONLY=1; shift ;;
     --names)
       NAMES=1; shift ;;
+    --call-max)
+      CALL_MAX="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
+    --call-max=*)
+      CALL_MAX="${1#--call-max=}"; shift ;;
+    --continue)
+      CONTINUE=1; shift ;;
+    --restart)
+      RESTART=1; shift ;;
     --review-check-pattern)
       REVIEW_PATTERN="${2:-}"; HAVE_PATTERN=1; shift; [ $# -gt 0 ] && shift ;;
     --review-check-pattern=*)
@@ -159,6 +198,71 @@ if ! command -v "$JQ_BIN" >/dev/null 2>&1; then
   log "jq not found — cannot parse gh output"
   printf 'ELAPSED sha=%s required=pending review_producing=elapsed pending=no_jq\n' "$SHA"
   exit 0
+fi
+
+# ---- Resumable mode (--call-max): validate, then resolve the TOTAL deadline.
+# Everything here is skipped without --call-max (byte-unchanged default path).
+DEADLINE=""
+STATE_FILE=""
+if [ -n "$CALL_MAX" ]; then
+  case "$CALL_MAX" in ''|*[!0-9]*) CALL_MAX="bad" ;; esac
+  case "$BOUND" in ''|*[!0-9]*) CALL_MAX="bad" ;; esac
+  if [ "$CALL_MAX" = "bad" ] || [ "$CALL_MAX" -lt 1 ] 2>/dev/null; then
+    log "--call-max and --bound must be non-negative integers (call-max >= 1)"
+    printf 'ELAPSED sha=%s required=pending review_producing=elapsed pending=bad_usage\n' "$SHA"
+    exit 0
+  fi
+  [ "$CALL_MAX" -gt 570 ] && CALL_MAX=570   # stay under the host's 600 s foreground cap
+  _scope="required"
+  [ "$REQUIRED_ONLY" -eq 0 ] && _scope="review:$REVIEW_PATTERN"
+  _key="$PR_URL|$SHA|$_scope"
+  _h=""
+  if command -v shasum >/dev/null 2>&1; then
+    _h="$(printf '%s' "$_key" | shasum 2>/dev/null | cut -d' ' -f1 || true)"
+  elif command -v sha1sum >/dev/null 2>&1; then
+    _h="$(printf '%s' "$_key" | sha1sum 2>/dev/null | cut -d' ' -f1 || true)"
+  elif command -v cksum >/dev/null 2>&1; then
+    _h="$(printf '%s' "$_key" | cksum 2>/dev/null | cut -d' ' -f1 || true)"
+  fi
+  [ -n "$_h" ] || _h="$(printf '%s' "$_key" | tr -c 'A-Za-z0-9' '-')"
+  _dir="${CHECK_WAIT_DIR:-.supervisor/check-wait}"
+  STATE_FILE="$_dir/$_h.json"
+  _now="$(date +%s)"
+  if [ "$CONTINUE" -eq 1 ]; then
+    # Continuation: read the persisted deadline, NEVER rewrite it. Missing or
+    # garbage state is fail-CLOSED — never a fresh (unbounded) budget.
+    DEADLINE="$("$JQ_BIN" -r '.deadline | select(type == "number" and . == floor) | tostring' "$STATE_FILE" 2>/dev/null || true)"
+    case "$DEADLINE" in
+      ''|*[!0-9]*)
+        log "no readable deadline for this (pr, sha, scope) — refusing a fresh budget"
+        printf 'ELAPSED sha=%s required=pending review_producing=elapsed pending=unreadable_deadline\n' "$SHA"
+        exit 0 ;;
+    esac
+  else
+    # A first call. An UNEXPIRED deadline already persisted for this key means
+    # a resumable wait is in flight (most likely the caller dropped --continue):
+    # keep it — a fresh total would make the wait unbounded. Only --restart
+    # replaces it; an expired or unreadable one is replaced as before.
+    _kept=""
+    if [ "$RESTART" -eq 0 ]; then
+      _kept="$("$JQ_BIN" -r '.deadline | select(type == "number" and . == floor) | tostring' "$STATE_FILE" 2>/dev/null || true)"
+      case "$_kept" in ''|*[!0-9]*) _kept="" ;; esac
+      [ -n "$_kept" ] && [ "$_kept" -le "$_now" ] && _kept=""
+    fi
+    if [ -n "$_kept" ]; then
+      DEADLINE="$_kept"
+      log "an unexpired deadline for this (pr, sha, scope) is in flight — keeping it ($((DEADLINE - _now)) s left); pass --continue to resume, --restart to replace it"
+    else
+      DEADLINE=$((_now + BOUND))
+      mkdir -p "$_dir" 2>/dev/null || true
+      # jq -n --arg, never printf: --sha and the review pattern are free text, and a quote or
+      # backslash in either made the file unreadable — every --continue then failed closed and the
+      # TOTAL budget shrank to a single call.
+      "$JQ_BIN" -nc --argjson d "$DEADLINE" --arg sha "$SHA" --arg scope "$_scope" \
+          '{deadline: $d, sha: $sha, scope: $scope}' > "$STATE_FILE" 2>/dev/null \
+        || log "could not persist the deadline to $STATE_FILE (a --continue call will fail closed)"
+    fi
+  fi
 fi
 
 # ---- owner/repo from the PR URL ----------------------------------------------
@@ -391,11 +495,18 @@ EOF_ROWS
     _req_field="red"
     [ "$required_green" -eq 1 ] && _req_field="green"
     [ "$protection_unknown" -eq 1 ] && _req_field="unknown"
+    [ -n "$STATE_FILE" ] && rm -f "$STATE_FILE" 2>/dev/null   # terminal ⇒ a later --continue fails closed
     printf 'SETTLED sha=%s required=%s review_producing=settled%s\n' "$SHA" "$_req_field" "$(names_suffix)"
     exit 0
   fi
 
-  if [ "$SECONDS" -ge "$BOUND" ] 2>/dev/null; then
+  _elapsed=0
+  if [ -n "$DEADLINE" ]; then
+    [ "$(date +%s)" -ge "$DEADLINE" ] && _elapsed=1
+  elif [ "$SECONDS" -ge "$BOUND" ] 2>/dev/null; then
+    _elapsed=1
+  fi
+  if [ "$_elapsed" -eq 1 ]; then
     _req_field="pending"
     if [ "$required_settled" -eq 1 ]; then
       _req_field="red"
@@ -405,7 +516,16 @@ EOF_ROWS
     _rp_field="elapsed"
     [ "$rp_settled" -eq 1 ] && _rp_field="settled"
     [ -n "$pending_names" ] || pending_names="none"
+    [ -n "$STATE_FILE" ] && rm -f "$STATE_FILE" 2>/dev/null
     printf 'ELAPSED sha=%s required=%s review_producing=%s pending=%s%s\n' "$SHA" "$_req_field" "$_rp_field" "$pending_names" "$(names_suffix)"
+    exit 0
+  fi
+
+  # Resumable mode: per-call ceiling reached with total budget left ⇒ CONTINUE
+  # (not a result — the caller calls again with --continue on the same sha).
+  if [ -n "$DEADLINE" ] && [ "$SECONDS" -ge "$CALL_MAX" ]; then
+    [ -n "$pending_names" ] || pending_names="none"
+    printf 'CONTINUE sha=%s remaining=%s pending=%s%s\n' "$SHA" "$((DEADLINE - $(date +%s)))" "$pending_names" "$(names_suffix)"
     exit 0
   fi
 

@@ -653,6 +653,39 @@ echo "== real repo .supervisor/logs untouched =="
 assert_eq "real logs snapshot unchanged" "$REAL_BEFORE" "$(snapshot_real)"
 
 echo ""
+echo "== 40. answered (iq02 T04 3a): question answered -> working/answered row paired by tool_use_id =="
+REPO40="$(init_repo "" 1)"
+P40A="$PAYLOAD_DIR/p40a.json"; P40B="$PAYLOAD_DIR/p40b.json"
+jq -n '{session_id:"sid-case40", tool_use_id:"toolu_case40"}' > "$P40A"
+jq -n '{session_id:"sid-case40", tool_use_id:"toolu_case40"}' > "$P40B"
+OUT40W="$(run_lifecycle "$REPO40" "$P40A" waiting ask_user)"
+OUT40A="$(run_lifecycle "$REPO40" "$P40B" answered)"
+OUT40R="$(run_lifecycle "$REPO40" "$P40B" answered)"
+LOG40="$REPO40/.supervisor/logs/sid-case40.jsonl"
+assert_eq "case40 answered exit 0" "0" "$(get_rc "$OUT40A")"
+assert_eq "case40 replayed answered exit 0" "0" "$(get_rc "$OUT40R")"
+assert_eq "case40 exactly one working/answered row (own ledger de-dups the replay)" "1" \
+  "$(jq -c 'select(.event=="agent_lifecycle" and .state=="working" and .reason=="answered")' "$LOG40" 2>/dev/null | grep -c .)"
+assert_eq "case40 answered row carries the payload tool_use_id" "toolu_case40" \
+  "$(jq -r 'select(.reason=="answered") | .tool_use_id' "$LOG40" 2>/dev/null)"
+assert_eq "case40 ask_user waiting row carries the SAME tool_use_id (pairing key)" "toolu_case40" \
+  "$(jq -r 'select(.reason=="ask_user") | .tool_use_id' "$LOG40" 2>/dev/null)"
+assert_eq "case40 answered uses its OWN ledger, never the ask ledger" "1" \
+  "$(count_fixed 'toolu_case40' "$REPO40/.supervisor/logs/.lifecycle-answered-ids")"
+assert_eq "case40 ask ledger holds the id once (not touched by answered)" "1" \
+  "$(count_fixed 'toolu_case40' "$REPO40/.supervisor/logs/.lifecycle-asked-ids")"
+# not debounced: a heartbeat just before must not suppress the answered row
+REPO40D="$(init_repo "" 1)"
+jq -n '{session_id:"sid-case40d"}' > "$PAYLOAD_DIR/p40hb.json"
+jq -n '{session_id:"sid-case40d"}' > "$PAYLOAD_DIR/p40d.json"
+run_lifecycle "$REPO40D" "$PAYLOAD_DIR/p40hb.json" heartbeat >/dev/null
+run_lifecycle "$REPO40D" "$PAYLOAD_DIR/p40d.json" answered >/dev/null
+assert_eq "case40 answered bypasses the heartbeat debounce (id-less payload -> row, no tool_use_id)" "1|null" \
+  "$(jq -sr '[.[]|select(.reason=="answered")] | "\(length)|\(.[0].tool_use_id // null)"' "$REPO40D/.supervisor/logs/sid-case40d.jsonl" 2>/dev/null)"
+printf 'not json' > "$PAYLOAD_DIR/p40bad.json"
+assert_eq "case40 malformed payload -> exit 0" "0" "$(get_rc "$(run_lifecycle "$REPO40" "$PAYLOAD_DIR/p40bad.json" answered)")"
+assert_eq "case40 empty payload -> exit 0" "0" "$(get_rc "$(run_lifecycle "$REPO40" --empty answered)")"
+
 echo "RESULT  pass=$PASS_COUNT  fail=$FAIL_COUNT"
 if [ "$FAIL_COUNT" -eq 0 ]; then
   exit 0

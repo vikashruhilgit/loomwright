@@ -86,10 +86,13 @@ w validate-worker-result.py -
 w set-otel-resource-attrs.sh '.claude/settings.local.json#env.OTEL_RESOURCE_ATTRIBUTES'
 # emit-lifecycle.sh — `printf '%s\n' "$LINE" >> "$LOG_FILE"`, LOG_FILE="$LOG_DIR/${SESSION_ID}.jsonl",
 # LOG_DIR="$main_root/.supervisor/logs"; heartbeat debounce `printf ... > "$DEBOUNCE_FILE"`
-# ($LOG_DIR/.lifecycle-heartbeat-debounce-<agent>); ask ledger `>> "$ASK_IDS_FILE"` + tail/mv.
+# ($LOG_DIR/.lifecycle-heartbeat-debounce-<agent>); ask ledger `>> "$ASK_IDS_FILE"` + tail/mv;
+# answer ledger `>> "$ANSWERED_IDS_FILE"` + tail/mv. Writes are registered per SCRIPT, not per
+# subcommand, so every leaf running this script lists the union.
 w emit-lifecycle.sh '.supervisor/logs/<session>.jsonl'
 w emit-lifecycle.sh '.supervisor/logs/.lifecycle-heartbeat-debounce-<agent>'
 w emit-lifecycle.sh '.supervisor/logs/.lifecycle-asked-ids'
+w emit-lifecycle.sh '.supervisor/logs/.lifecycle-answered-ids'
 # emit-token-ledger.sh — `printf '%s\n' "$LINE" >> "$LOG_FILE"` ($LOG_DIR/${SESSION_ID}.jsonl under
 # the main checkout); one-time `: > "$_flag"` when python3 is missing. `mkdir "$_lock"` is a dir lock.
 w emit-token-ledger.sh '.supervisor/logs/<session>.jsonl'

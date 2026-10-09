@@ -2,8 +2,8 @@
 name: async-orchestration
 description: Background dispatch patterns, non-blocking polling, parallelism decisions, and git worktree lifecycle. Use when running parallel workers in Supervisor workflows. Part 2 — the Supervisor Phase 4 FINALIZE protocol (pre-merge safety gate, sequential merge, worktree cleanup, commit/push/PR creation, PR-base self-verify), the verbatim Subagent Spawn Contracts, and the worktree-lifecycle phase sequence, moved from agents/supervisor.md.
 allowed-tools: [Read, Bash]
-version: "1.6.1"
-lastUpdated: "2026-09-23"
+version: "1.6.2"
+lastUpdated: "2026-10-09"
 ---
 
 # Async Orchestration Skill
@@ -744,7 +744,7 @@ Task(
     Title: {title}
     Subtask ordinal: {N}   # 1-based position in the brief's ## Subtask Structure table row order (subtask_ordinal — distinct from the Execute Manager-facing "Subtask index" ids/titles/deps list above; consumed by the worker's shared-local-services rule only)
     Shared local services: {shared_local_services line}   # OPTIONAL — paste verbatim from the brief's `## Environment` `- **Shared local services:**` line ONLY when the brief carries one; omit this line entirely when the brief has none (docs/POINTER_AUDIT.md row 6c — a deliberate small, bounded, producer-side paste exception). Consumed by the worker's shared-local-services rule (agents/worker.md §"Critical Rules") together with `subtask_ordinal` above.
-    Brief: {brief_path} — read only your subtask's sections (## Task, ## Acceptance Criteria, your row of ## Subtask Structure, your subtask's `lanes:`). Gitignored `.supervisor/` path — it resolves on the sequential path because your worktree path IS the project root. When no brief file exists (`/supervisor task:` no-brief mode), point at `.supervisor/requirements/{slug}-plan.md` (Beads-absent) or `bd show {id}` (Beads) instead, or pass the criteria inline — a documented exception, see docs/POINTER_AUDIT.md.
+    Brief: {brief_path} — read only your subtask's sections (## Task, ## Acceptance Criteria, your row of ## Subtask Structure, your subtask's `lanes:`, and ## Touched-file invariants when present — your Step 5 self-review re-checks it). Gitignored `.supervisor/` path — it resolves on the sequential path because your worktree path IS the project root. When no brief file exists (`/supervisor task:` no-brief mode), point at `.supervisor/requirements/{slug}-plan.md` (Beads-absent) or `bd show {id}` (Beads) instead, or pass the criteria inline — a documented exception, see docs/POINTER_AUDIT.md.
     Context digest: {context_digest_path} — repo-relative (`.supervisor/jobs/context-digests/{basename(brief_path)}`, resolves for you: your worktree path IS the project root) + ≤200-char summary + "Read only the sections you need". Advisory only — proceed without it if the file does not exist.
     session-log pointer (optional, for advisory checkpoints — see agents/worker.md): {session_log_path} — repo-relative `.supervisor/logs/{session_id}.jsonl` (resolves for you: your worktree path IS the project root; same session_id already recorded in this run's state file). Pass this as `checkpoint.sh`'s first argument if you choose to emit a worker_checkpoint event. Never required — proceed without it if you don't need it.
     Acceptance-criteria summary (≤200 chars): {bounded summary}

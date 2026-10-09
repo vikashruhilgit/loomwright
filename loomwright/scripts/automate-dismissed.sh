@@ -23,7 +23,8 @@
 #     decisions), and ONE `## Progress` line per decision via
 #     `automate-helpers.sh progress-append`.
 # It never runs `gh`, `git commit`, `git push` or any other git mutation (only
-# `git rev-parse --show-toplevel`), and never merges anything.
+# `git rev-parse --show-toplevel`), and never merges anything. `dismissed-cost`
+# writes NOTHING (read-only advisory estimator).
 #
 # Subcommands:
 #   dismissed-drafts <runfile> <item> <pr_url> [--after-fix-now]
@@ -99,6 +100,26 @@
 #       `unknown` when it cannot tell — including a draft with no readable
 #       `- **Decision:**` value and an existing but unreadable ledger (the
 #       caller treats `unknown` as non-zero — fail closed toward asking).
+#   dismissed-cost <runfile>
+#       READ-ONLY advisory estimate of what a fix-now costs (Part T02; never feeds
+#       a gate). Prints exactly ONE line `fix_now_cost: <estimate> (<basis>)`.
+#       Samples: every `*.dismissed-decisions` ledger in the run file's directory
+#       with its sibling `<run_id>.md`. Its `fix-now` rows group into decision
+#       batches (a row within 600 s of the previous one joins its batch; start =
+#       the batch's earliest ts). End = the first fix-now re-drain TERMINAL line
+#       in that run's `## Progress` after the batch's own `dismissed: fix-now
+#       <draft>` line (none ⇒ after the previous batch's terminal; each terminal
+#       ends at most one batch): the pinned `<ts> fix-now re-drain READY|ESCALATED`
+#       (SKILL §6 step 3), or a legacy `<ts> [fix-now ]re-drain …` line carrying
+#       READY / ESCALATED / `SETTLED required=green`. A span with end <= start
+#       (an out-of-order pairing) or > 12 h (owner think-time, an overnight
+#       stall) is dropped. With samples the basis is `median of <n> recorded
+#       fix-now re-drains in this repo, range <min>–<max>`; with none (or an
+#       unreadable ledger / run file, which only skips that run, or no python3)
+#       the line is loomwright's own 2026-10 baseline, labelled as such. A row
+#       whose date is out of range (2026-13-40) is skipped alone (a terminal
+#       line still ends its batch, with no sample); any other parse error
+#       skips only that run.
 #
 # Every draft carries the planner's `## Depends on` (`none`) and `## Touches` sections (parallel-
 # automate/10) before its `## Finding(s)` heading: Touches = the existing repo files the finding's
@@ -728,7 +749,10 @@ print(t[:80])' "$f" 2>/dev/null)" || snippet=""
       fi ;;
     drop|fix-now) rm -f -- "$f" 2>/dev/null ;;
   esac
-  bash "$SCRIPT_DIR/automate-helpers.sh" progress-append "$runfile" "dismissed: $decision $name — $snippet" >/dev/null 2>&1 \
+  # iq02 T04 3b: the same leading UTC `<ts>` every other Progress line carries —
+  # the moment the owner's decision was recorded (phase-timing.sh reads it).
+  local dts; dts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
+  bash "$SCRIPT_DIR/automate-helpers.sh" progress-append "$runfile" "${dts:+$dts }dismissed: $decision $name — $snippet" >/dev/null 2>&1 \
     || echo "dismissed-decide: warning — progress line not appended"
   echo "dismissed-decide: $decision $name"
   return 0
@@ -775,13 +799,138 @@ LANES
   return 0
 }
 
+# The zero-sample default (Part T02 Scope 2): loomwright's own measured
+# baseline — the six fix-now re-drains of 2026-09-30 → 10-08 — never a bare
+# number, and it says whose baseline it is.
+DISMISSED_COST_DEFAULT="fix_now_cost: ≈ 1h06m (default: loomwright's own 2026-10 baseline; no fix-now re-drain recorded here yet — median of 6 fix-now re-drains 2026-09-30 → 10-08, range 14m–2h53m)"
+
+# _dismissed_cost_py <dir> — prints the derived line, or nothing when no sample
+# survives. Kept in its own function: no heredoc inside a `$( )` (bash 3.2).
+_dismissed_cost_py() {
+  python3 - "$1" <<'PY'
+import calendar, glob, os, re, sys, time
+d = sys.argv[1]
+TS = re.compile(r'^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$')
+def epoch(ts):
+    # The TS / LINE regexes accept out-of-range dates (2026-13-40): such a row is
+    # skipped (None), never an exception that discards every other run's samples.
+    try:
+        return calendar.timegm(time.strptime(ts, '%Y-%m-%dT%H:%M:%SZ'))
+    except (ValueError, OverflowError):
+        return None
+ANCHOR = re.compile(r'^- (?:\S+ )?dismissed: fix-now (\S+)')
+LINE = re.compile(r'^- (\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ) (.*)$')
+PINNED = re.compile(r'^fix-now re-drain (READY|ESCALATED)\b')
+LEGACY = re.compile(r'^(fix-now )?re-drain\b')
+STARTED = re.compile(r'^(fix-now )?re-drain started\b')
+def terminal(text):
+    if PINNED.match(text):
+        return True
+    if not LEGACY.match(text) or STARTED.match(text):
+        return False
+    return 'READY' in text or 'ESCALATED' in text or 'SETTLED required=green' in text
+def run_spans(led):
+    # One run's samples. Any exception here (an unreadable ledger or run file, a
+    # row this parser did not anticipate) skips THAT run only — the caller's try.
+    run = led[:-len('.dismissed-decisions')] + '.md'
+    out = []
+    with open(led, encoding='utf-8') as f:
+        rows = f.read().splitlines()
+    with open(run, encoding='utf-8') as f:
+        body = f.read().splitlines()
+    fix = []
+    for r in rows:
+        p = r.split('\t')
+        if len(p) == 3 and p[1] == 'fix-now' and TS.match(p[2]):
+            t = epoch(p[2])
+            if t is not None:         # an out-of-range date: skip that row only
+                fix.append((t, p[0]))
+    if not fix:
+        return out
+    fix.sort()
+    batches = []                      # a row within 600 s of the previous = the same decision batch
+    for t, name in fix:
+        if batches and t - batches[-1]['last'] <= 600:
+            batches[-1]['last'] = t
+            batches[-1]['names'].add(name)
+        else:
+            batches.append({'start': t, 'last': t, 'names': {name}})
+    prog, inside = [], False
+    for l in body:
+        if l.startswith('## '):
+            inside = l.split()[1:2] == ['Progress']
+            continue
+        if inside:
+            prog.append(l)
+    cursor = -1                       # each terminal line ends at most one batch
+    for b in batches:
+        lo = cursor
+        for i, l in enumerate(prog):
+            m = ANCHOR.match(l)
+            if m and m.group(1) in b['names']:
+                lo = max(lo, i)
+                break
+        end = None
+        for i in range(lo + 1, len(prog)):
+            m = LINE.match(prog[i])
+            if m and terminal(m.group(2)):
+                end = (i, epoch(m.group(1)))
+                break
+        if end is None:
+            continue
+        cursor = end[0]
+        if end[1] is None:
+            continue                  # an out-of-range terminal date: this batch's end, untimeable
+        span = end[1] - b['start']
+        if span <= 0:
+            continue                  # end before start: an out-of-order pairing, never a sample
+        if span > 12 * 3600:
+            continue                  # owner think-time or an overnight stall
+        out.append(span)
+    return out
+spans = []
+for led in sorted(glob.glob(os.path.join(d, '*.dismissed-decisions'))):
+    try:
+        spans.extend(run_spans(led))
+    except Exception:
+        continue                      # an unreadable / unparseable ledger or run file: skip that run
+def fmt(s):
+    m = int((s + 30) // 60)
+    return '%dh%02dm' % (m // 60, m % 60) if m >= 60 else '%dm' % m
+if spans:
+    spans.sort()
+    n = len(spans)
+    med = spans[n // 2] if n % 2 else (spans[n // 2 - 1] + spans[n // 2]) / 2.0
+    print('fix_now_cost: \u2248 %s (median of %d recorded fix-now re-drain%s in this repo, range %s\u2013%s)'
+          % (fmt(med), n, '' if n == 1 else 's', fmt(spans[0]), fmt(spans[-1])))
+PY
+}
+
+# dismissed_cost <runfile> — READ-ONLY advisory estimator (never feeds a gate).
+# Prints exactly ONE `fix_now_cost:` line; every failure path prints the default.
+dismissed_cost() {
+  local runfile="${1:-}" dir="" line=""
+  [ -n "$runfile" ] && dir="$(_abs_dir "$(dirname "$runfile")")"
+  if [ -n "$dir" ] && command -v python3 >/dev/null 2>&1; then
+    line="$(_dismissed_cost_py "$dir" 2>/dev/null)" || line=""
+  fi
+  case "$line" in
+    *$'\n'*) line="" ;;
+    "fix_now_cost: "*) ;;
+    *) line="" ;;
+  esac
+  printf '%s\n' "${line:-$DISMISSED_COST_DEFAULT}"
+  return 0
+}
+
 main() {
   local cmd="${1:-}"; shift || true
   case "$cmd" in
     dismissed-drafts)  dismissed_drafts "$@" ;;
     dismissed-decide)  dismissed_decide "$@" ;;
     dismissed-pending) dismissed_pending "$@" ;;
-    *) echo "automate-dismissed: unknown subcommand: ${cmd:-<none>} (dismissed-drafts|dismissed-decide|dismissed-pending)" ;;
+    dismissed-cost)    dismissed_cost "$@" ;;
+    *) echo "automate-dismissed: unknown subcommand: ${cmd:-<none>} (dismissed-drafts|dismissed-decide|dismissed-pending|dismissed-cost)" ;;
   esac
   return 0
 }

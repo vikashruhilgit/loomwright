@@ -51,6 +51,18 @@
 #   (AF3) --affected never creates or removes a pass stamp (PASS and FAIL); MUTATION CONTROL: a copy
 #        that stamps on PASS is caught by the same check
 #   (AF4) a changed scripts/check-<x>.sh → its ci.yml-named test-check-<x>.sh runs
+#   (E*) iq02 T05 early phase: (EL) the early set is DERIVED — non-test-*.sh ci.yml gates (a new
+#        check-new.sh and a loomwright gen.sh --check join with no ci-local edit) + `# run-self-tests:
+#        early` tests; a test-*.sh gate stays in the pool; (EM) MUTATION CONTROL: the marker removed ⇒
+#        that test is in the pool; (ER) two early gates red ⇒ exit 1, every red early entry named, no
+#        pool entry ran, the existing stamp removed, verdict `ci-local: FAIL … early gates failed`
+#        last, --last says FAIL; (EG) green ⇒ every entry ran exactly once, early before pool,
+#        stamped; (EX) MUTATION CONTROL: a copy that skips the early-red exit is caught; (AFC)
+#        --affected runs the --check gate and the early-marked test; (AF8) early set and mapped set
+#        both empty ⇒ the empty-plan refusal
+#   (MJ) iq02 T08: the same gates written as a static / suite-matrix / aggregating-`ci` multi-job
+#        ci.yml derive the SAME gate list; the shard and --list runner lines are never gates; an
+#        aggregator `bash scripts/agg.sh` line WOULD be derived (the hazard the real file avoids)
 #   (AF5) empty changed set → says so, still runs the cheap gates; (AF7) no origin/main → says so,
 #        diffs against HEAD; (AF6) --affected --list: the plan, nothing ran, no log;
 #        (AX) conflicting flags → exit 2
@@ -162,6 +174,9 @@ run
 if [ "$rc" -eq 0 ] && ran "check-a --self-test" && ran "check-a plain" && ran vendor && ran extra && ran one \
    && has "stamped"; then ok "(P) green: every gate + test ran, stamped"
 else no "(P) rc=$rc log=[$(tr '\n' ' ' < "$FIXTURE_LOG")] out=$out"; fi
+if [ -z "$(sort "$FIXTURE_LOG" | uniq -d)" ] && [ "$(wc -l < "$FIXTURE_LOG" | tr -d ' ')" = 5 ]; then
+  ok "(P) every full-plan entry ran exactly once across the early phase and the pool"
+else no "(P) duplicate or missing entries: [$(tr '\n' ' ' < "$FIXTURE_LOG")]"; fi
 
 # (LG) — the (P) run named its log first and last; the log ends with the verdict line.
 plog="$(logpath)"
@@ -170,6 +185,11 @@ if names_log && [ "$pname_ok" -eq 1 ] && [ "$(log_verdict "$plog")" = "$(grep '^
    && grep -q '^ci-local: PASS after .* stamped' "$plog"; then
   ok "(LG) PASS run: first + last line name <state>/runs/<key>-<ts>-<pid>.log; it ends with the verdict"
 else no "(LG) pass: log=[$plog] verdict=[$( [ -f "$plog" ] && log_verdict "$plog")] out=$out"; fi
+# (3D) iq02 T04 3d: the run log's line 2 names HEAD sha + branch; stdout never carries it
+_hsha="$(cd "$R" && git rev-parse HEAD 2>/dev/null)"; _hbr="$(cd "$R" && git symbolic-ref --short -q HEAD 2>/dev/null || echo detached)"
+if [ "$(sed -n '2p' "$plog" 2>/dev/null)" = "ci-local: head $_hsha $_hbr" ] && ! has '^ci-local: head '; then
+  ok "(3D) run log line 2 = 'ci-local: head <HEAD sha> <branch>'; not on stdout"
+else no "(3D) head line: [$(sed -n '2p' "$plog" 2>/dev/null)] want [ci-local: head $_hsha $_hbr]"; fi
 
 # (LA1) — --last reads that log back, runs nothing.
 run --last
@@ -633,6 +653,108 @@ FIXTURE_RMLOGS="$state/runs" run --force
 if [ "$rc" -eq 0 ] && [ "$(nlogs)" = 0 ] && has "was removed while this run wrote it" && has "^ci-local: PASS after"; then
   ok "(PG) log removed mid-run: no stub recreated, verdict still printed, removal reported"
 else no "(PG) rc=$rc logs=$(nlogs) out=$out"; fi
+
+# --- early phase (iq02 T05) -----------------------------------------------------------------------------
+build_fixture
+cat >> "$R/.github/workflows/ci.yml" <<'YML'
+      - run: bash scripts/test-check-a.sh
+      - run: bash scripts/check-new.sh
+      - run: bash loomwright/scripts/gen.sh --check
+YML
+echo 'echo "test-check-a" >> "$FIXTURE_LOG"' > "$R/scripts/test-check-a.sh"
+echo 'echo "check-new" >> "$FIXTURE_LOG"' > "$R/scripts/check-new.sh"
+printf '%s\n' 'echo "gen ${1:-plain}" >> "$FIXTURE_LOG"' 'exit "${FIXTURE_FAIL_GEN:-0}"' > "$R/loomwright/scripts/gen.sh"
+printf '%s\n' '#!/usr/bin/env bash' '# run-self-tests: early' 'echo "mark" >> "$FIXTURE_LOG"' > "$R/loomwright/scripts/test-mark.sh"
+( cd "$R" && git add -A && git commit -qm early-fixture && git update-ref refs/remotes/origin/main HEAD )
+early_lines() { grep '^early: ' <<<"$out"; }
+want_early=$'early: scripts/check-a.sh --self-test\nearly: scripts/check-a.sh\nearly: scripts/check-vendor-coupling.sh\nearly: scripts/check-new.sh\nearly: loomwright/scripts/gen.sh --check\nearly: loomwright/scripts/test-mark.sh'
+
+# (EL)
+run --list
+if [ "$rc" -eq 0 ] && [ "$(early_lines)" = "$want_early" ] && has "^phases: 6 early, 3 in the pool$" && ! has "/gates/"; then
+  ok "(EL) early set derived: new check-new.sh + gen.sh --check + the marked test; test-check-a.sh gate stays in the pool"
+else no "(EL) rc=$rc out=$out"; fi
+# (EM) MUTATION CONTROL — the same test without its marker line runs in the pool.
+cp "$R/loomwright/scripts/test-mark.sh" "$tmp/mark.bak"
+grep -vx '# run-self-tests: early' "$tmp/mark.bak" > "$R/loomwright/scripts/test-mark.sh"
+run --list
+if ! cmp -s "$tmp/mark.bak" "$R/loomwright/scripts/test-mark.sh" && [ "$rc" -eq 0 ] && ! has "^early: loomwright/scripts/test-mark.sh$" \
+   && has "^phases: 5 early, 4 in the pool$"; then ok "(EM) MUTATION CONTROL: marker removed ⇒ the test moves to the pool"
+else no "(EM) the early set ignores the marker: rc=$rc out=$out"; fi
+cp "$tmp/mark.bak" "$R/loomwright/scripts/test-mark.sh"
+
+# (ER) — two early gates red (check-a, gen --check): early phase only, all named, stamp removed.
+run --list; ekey="$(sed -n 's/^key: //p' <<<"$out")"
+[ -n "$ekey" ] && echo seeded > "$state/pass/$ekey"
+FIXTURE_FAIL_A=1 FIXTURE_FAIL_GEN=1 run --force
+elog="$(logpath)"
+if [ "$rc" -eq 1 ] && [ -n "$ekey" ] && [ ! -e "$state/pass/$ekey" ] && ran mark && ran vendor && ran "check-new" \
+   && ! ran one && ! ran extra && ! ran test-check-a && has "FAIL (exit 1): .*/gates/[0-9]*-check-a.sh" \
+   && has "FAIL (exit 1): .*/gates/[0-9]*-gen.sh" && has "run-self-tests: FAIL (exit 1, " \
+   && case "$(log_verdict "$elog")" in "ci-local: FAIL after "*"early gates failed; pool skipped"*) true ;; *) false ;; esac \
+   && names_log; then ok "(ER) early red: exit 1, every red early gate named, no pool entry ran, stamp removed, FAIL verdict last"
+else no "(ER) rc=$rc stamp=$([ -e "$state/pass/$ekey" ] && echo kept || echo gone) log=[$(tr '\n' ' ' < "$FIXTURE_LOG")] out=$out"; fi
+run --last
+if [ "$rc" -eq 1 ] && hasf "ci-local --last: FAIL $elog"; then ok "(ER) --last reports the early-red run as FAIL"
+else no "(ER) --last: rc=$rc out=$out"; fi
+
+# (EG) — green: every entry exactly once, the early set first, stamped.
+run --force
+want_all=$'check-a --self-test\ncheck-a plain\ncheck-new\nextra\ngen --check\nmark\none\ntest-check-a\nvendor'
+want_first=$'check-a --self-test\ncheck-a plain\ncheck-new\ngen --check\nmark\nvendor'
+if [ "$rc" -eq 0 ] && has "stamped" && [ "$(sort "$FIXTURE_LOG")" = "$want_all" ] \
+   && [ "$(sed -n '1,6p' "$FIXTURE_LOG" | sort)" = "$want_first" ] && has "early phase green after"; then
+  ok "(EG) green: every full-plan entry exactly once, the early set before the pool, stamped"
+else no "(EG) rc=$rc log=[$(tr '\n' ' ' < "$FIXTURE_LOG")] out=$out"; fi
+
+# (EX) MUTATION CONTROL — a copy that skips the early-red exit runs the pool on a red early phase.
+awk '/^    exit 1   # early-red exit$/ { print "    :"; n++; next } { print } END { exit n != 1 }' \
+  "$R/scripts/ci-local.sh" > "$R/scripts/ci-local-mutant.sh"
+mut_rc=$?
+if [ "$mut_rc" -eq 0 ] && [ -s "$R/scripts/ci-local-mutant.sh" ] && ! cmp -s "$R/scripts/ci-local.sh" "$R/scripts/ci-local-mutant.sh" \
+   && bash -n "$R/scripts/ci-local-mutant.sh"; then
+  : > "$FIXTURE_LOG"; out="$(cd "$R" && FIXTURE_FAIL_A=1 bash scripts/ci-local-mutant.sh --force 2>&1)"; rc=$?
+  if ran one; then ok "(EX) MUTATION CONTROL: a copy skipping the early-red exit starts the pool — (ER)'s ! ran one catches it"
+  else no "(EX) the mutant did not reach the pool — (ER) proves nothing: out=$out"; fi
+else no "(EX) MUTATION CONTROL: mutant not built (anchor_found=$((1 - mut_rc)))"; fi
+rm -f "$R/scripts/ci-local-mutant.sh"
+
+# (AFC) — --affected on an empty changed set runs the whole early set (the --check gate included).
+run --affected
+if [ "$rc" -eq 0 ] && has "the early set only" && ran "gen --check" && ran mark && ran "check-new" && ran vendor \
+   && ! ran one && ! ran extra && ! ran test-check-a; then ok "(AFC) --affected runs the --check gate and the early-marked test"
+else no "(AFC) rc=$rc log=[$(tr '\n' ' ' < "$FIXTURE_LOG")] out=$out"; fi
+
+# (AF8) — no early entry and nothing mapped ⇒ the empty-plan refusal still fires.
+printf 'jobs:\n  ci:\n    steps:\n      - run: bash scripts/test-check-a.sh\n' > "$R/.github/workflows/ci.yml"
+rm -f "$R/loomwright/scripts/test-mark.sh"
+( cd "$R" && git add -A && git commit -qm only-test-gate && git update-ref refs/remotes/origin/main HEAD )
+run --affected
+if [ "$rc" -eq 1 ] && has "refusing to report green on an empty plan" && [ ! -s "$FIXTURE_LOG" ]; then
+  ok "(AF8) early set and mapped set both empty: --affected refuses an empty plan"
+else no "(AF8) rc=$rc out=$out"; fi
+
+# (MJ) — iq02 T08: one job vs. the static / suite-matrix / aggregating-ci shape: identical gate lines.
+printf '%s\n' 'jobs:' '  ci:' '    steps:' '      - run: |' '          bash scripts/check-a.sh --self-test' '          bash scripts/check-a.sh' \
+  '      - run: bash scripts/test-check-a.sh' '      - run: bash loomwright/scripts/gen.sh --check' \
+  '      - run: bash loomwright/scripts/run-self-tests.sh' > "$R/.github/workflows/ci.yml"
+run --list; mj_one="$(grep '^gate: ' <<<"$out")"
+printf '%s\n' 'jobs:' '  static:' '    timeout-minutes: 20' '    steps:' '      - run: |' '          bash scripts/check-a.sh --self-test' '          bash scripts/check-a.sh' \
+  '      - run: bash scripts/test-check-a.sh' '      - run: bash loomwright/scripts/gen.sh --check' \
+  '  suite:' '    strategy:' '      fail-fast: false' '      matrix:' '        shard: [1, 2, 3]' '    steps:' \
+  '      - run: bash loomwright/scripts/run-self-tests.sh --shard ${{ matrix.shard }}/3' \
+  '  ci:' '    needs: [static, suite]' '    if: always()' '    steps:' '      - run: |' \
+  '          bash loomwright/scripts/run-self-tests.sh --list | env LC_ALL=C sort > want.lst' > "$R/.github/workflows/ci.yml"
+run --list; mj_multi="$(grep '^gate: ' <<<"$out")"
+want_mj=$'gate: scripts/check-a.sh --self-test\ngate: scripts/check-a.sh\ngate: scripts/test-check-a.sh\ngate: loomwright/scripts/gen.sh --check'
+if [ "$rc" -eq 0 ] && [ "$mj_one" = "$want_mj" ] && [ "$mj_multi" = "$mj_one" ] && ! has "run-self-tests"; then
+  ok "(MJ) the multi-job ci.yml derives exactly the single-job gate lines; shard/--list runner lines are not gates"
+else no "(MJ) one=[$mj_one] multi=[$mj_multi] out=$out"; fi
+printf '%s\n' '      - run: bash scripts/agg.sh' >> "$R/.github/workflows/ci.yml"; echo 'exit 0' > "$R/scripts/agg.sh"
+run --list
+if [ "$rc" -eq 0 ] && has "^gate: scripts/agg.sh$"; then ok "(MJ) HAZARD shown: an aggregator \`bash scripts/agg.sh\` line becomes a ci-local gate — the real ci job stays inline"
+else no "(MJ) agg line not derived: $out"; fi
+rm -f "$R/scripts/agg.sh"
 
 # (Z)
 printf 'jobs:\n  ci:\n    steps:\n      - run: echo nothing\n' > "$R/.github/workflows/ci.yml"

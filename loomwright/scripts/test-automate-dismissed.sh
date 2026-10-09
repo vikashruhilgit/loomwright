@@ -113,7 +113,8 @@ nfiles() { find "$PROP" -maxdepth 1 -type f -name '*--dismissed-*.md' 2>/dev/nul
 path_of() { printf '%s\n' "$dd_out" | awk -F'\t' -v k="$1" '$1 == "draft" && $2 == k { print $4; exit }'; }
 # find the draft whose quoted body contains <text>
 draft_with() { grep -lF -- "> $1" "$PROP"/*--dismissed-*.md 2>/dev/null | head -n1; }
-progress_n() { grep -c '^- dismissed: ' "$RF" 2>/dev/null || true; }
+# 3b (iq02 T04): every dismissed: Progress line carries a leading UTC ts
+progress_n() { grep -cE '^- [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z dismissed: ' "$RF" 2>/dev/null || true; }
 tree_sum() { (cd "$PROP" 2>/dev/null && for f in *; do [ -f "$f" ] && printf '%s %s\n' "$f" "$(cksum < "$f")"; done); }
 
 # =============================================================================
@@ -218,7 +219,7 @@ out="$(bash "$H" dismissed-decide "$RF" "$FB" drop)"
 [ ! -e "$FB" ] && ok "drop deletes the draft" || no "drop left the file: $out"
 LED="$AD/$RUN_ID.dismissed-decisions"
 [ "$(awk -F'\t' -v n="$(basename "$FA")" '$1==n{print $2}' "$LED")" = "follow-up" ] && [ "$(awk -F'\t' -v n="$(basename "$FB")" '$1==n{print $2}' "$LED")" = "drop" ] && ok "ledger keyed by draft name records both decisions" || no "ledger: $(cat "$LED" 2>/dev/null)"
-[ "$(( $(progress_n) - p0 ))" = "2" ] && grep -qF -- "- dismissed: drop $(basename "$FB") — beta high" "$RF" && ok "exactly one Progress line per decision, naming the draft and the finding" || no "progress lines: $(grep '^- dismissed' "$RF")"
+[ "$(( $(progress_n) - p0 ))" = "2" ] && grep -qE -- "^- [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z dismissed: drop $(basename "$FB") — beta high" "$RF" && ok "exactly one Progress line per decision, naming the draft and the finding" || no "progress lines: $(grep '^- dismissed' "$RF")"
 # refusals
 p1="$(progress_n)"; l1="$(wc -l < "$LED" | tr -d ' ')"
 mkdir -p "$TOP/elsewhere"; cp "$FG" "$TOP/elsewhere/$(basename "$FG")"
@@ -751,6 +752,145 @@ ln_o="$(bash "$H" dismissed-decide "$RF" "$PROP/par-5-Lx--c-333333--dismissed-89
 { [ "$ln_o" = "dismissed-decide: refused — not a draft of run par-5" ] && [ -e "$PROP/par-5-Lx--c-333333--dismissed-89abcdef.md" ]; } && ok "LN dismissed-decide refuses a -Lx look-alike (not a lane id), file kept" || no "LN look-alike: '$ln_o'"
 printf '# Automate Run: lane\n## Status: running\n## Queue\n- [ ] %s\n## Progress\n- t0\n' "$ITEM" > "$AD/par-5-L2.md"
 [ "$(bash "$H" dismissed-pending "$AD/par-5-L2.md")" = "0" ] && ok "LN a lane's own run file does not see the parent's or a sibling lane's drafts" || no "LN lane pending: $(bash "$H" dismissed-pending "$AD/par-5-L2.md")"
+
+echo "== C. dismissed-cost (implementation-quality/02 Part T02): derived fix-now cost, fail-safe, read-only =="
+# Fixtures: TRIMMED copies of this repo's real run files / ledgers (2026-09-30 → 10-08,
+# `.supervisor/automate/`, gitignored), embedded here so the test never reads the main
+# checkout. Each `## Progress` line keeps its ts and the opening words the matcher reads.
+# The six spans are the Part T02 Problem table's: 26m, 14m, 59m, 1h13m, 2h53m, 2h21m.
+# The 09-30-054439 item-12 re-drain predates the ledger: its one row is RECONSTRUCTED
+# from the `owner decisions … fix-now` Progress line's ts (15:21:55Z).
+CD="$TOP/cost"; mkdir -p "$CD/six" "$CD/ooo" "$CD/long" "$CD/pin" "$CD/leg" "$CD/esc" "$CD/non" "$CD/empty"
+# cost_run <dir> <run_id> — writes <run_id>.md from stdin (the ## Progress lines)
+cost_run() { { printf '# Automate Run: fixture\n## Status: paused\n## Queue\n- [x] q.md\n## Progress\n'; cat; printf '## Notes\n- 2026-12-31T00:00:00Z re-drain READY (outside Progress: never read)\n'; } > "$1/$2.md"; }
+# cost_led <dir> <run_id> <draft> <decision> <ts> — one ledger row (TAB-separated)
+cost_led() { printf '%s\t%s\t%s\n' "$3" "$4" "$5" >> "$1/$2.dismissed-decisions"; }
+cost_of() { bash "$H" dismissed-cost "$1/x.md" 2>/dev/null; }
+R1=automate-2026-09-30-054439; R2=automate-2026-10-01-142337; R3=automate-2026-10-07-170659
+R4=automate-2026-10-08-071524; R5=automate-2026-10-08-121222
+cost_led "$CD/six" $R1 $R1--12-dismissed-findings-decisions-000000--dismissed-0000aaaa.md fix-now 2026-09-30T15:21:55Z
+cost_run "$CD/six" $R1 <<'P'
+- 2026-09-30T15:21:55Z drain round 4 (36e3e72): SETTLED required=green (ci + claude-review SUCCESS); claude[bot] 'no new findings' → READY / converged
+- 2026-09-30T15:21:55Z owner decisions (gate, before park): ALL remaining dismissed findings → fix-now on #314
+- 2026-09-30T15:36:21Z fix-now pass → f409c98 pushed
+- 2026-09-30T15:36:21Z owned re-drain started (fix-now re-pass, the one allowed per item): inline /review-pr --until-mergeable (head f409c98)
+- 2026-09-30T15:47:43Z re-drain round 1 (f409c98): SETTLED required=green (ci + claude-review SUCCESS); claude[bot] 'no new findings'; rules_gate none → READY / converged (0 fix cycles)
+P
+cost_led "$CD/six" $R2 $R2--01-version-bump-script-a1dff1--dismissed-1d298aa6.md fix-now 2026-10-01T18:30:30Z
+for h in f815d6dc 30388dfd 2fee8e87 caac5f34; do cost_led "$CD/six" $R2 $R2--03-branch-mode-engine-76373b--dismissed-$h.md fix-now 2026-10-02T12:12:15Z; done
+cost_led "$CD/six" $R2 $R2--03-branch-mode-engine-76373b--dismissed-9aabd870.md fix-now 2026-10-02T12:12:16Z
+cost_run "$CD/six" $R2 <<'P'
+- dismissed: fix-now automate-2026-10-01-142337--01-version-bump-script-a1dff1--dismissed-1d298aa6.md — check-doc-currency.sh bump-fragment guard
+- 2026-10-01T18:34:56Z fix-now pass → 7c4bc75 (guard DRIFT message + header name the drop/revert-stale-bump remedy)
+- 2026-10-01T18:44:18Z re-drain (918470a): SETTLED required=green (ci + claude-review SUCCESS); 0 reviews/threads; claude[bot] 'no new findings'
+- 2026-10-02T11:58:37Z drain READY / converged on 8ae07a8: round 1 ci red
+- dismissed: fix-now automate-2026-10-01-142337--03-branch-mode-engine-76373b--dismissed-f815d6dc.md — In branch mode, check lists the ledger
+- dismissed: fix-now automate-2026-10-01-142337--03-branch-mode-engine-76373b--dismissed-9aabd870.md — resolve_effective_branch / read_mode
+- 2026-10-02T13:00:37Z fix-now pass (owner: 5 fix-now, 2 drop, summary follow-up) → fc398f6 merge of origin/main
+- 2026-10-02T13:11:15Z re-drain (cc21b20, after merging origin/main): SETTLED required=green (ci + claude-review SUCCESS); 0 reviews/threads
+P
+cost_led "$CD/six" $R3 $R3--05-lane-coordinator-b02cea--dismissed-eb49bf6a.md fix-now 2026-10-08T00:38:39Z
+cost_led "$CD/six" $R3 $R3--05-lane-coordinator-b02cea--dismissed-8469313f.md fix-now 2026-10-08T00:38:40Z
+cost_run "$CD/six" $R3 <<'P'
+- 2026-10-07T21:37:59Z drain READY (converged; 2 fix rounds — 0baf8c0 F1–F7, 87bf801 lane-remove --stop order; ci green on 87bf801)
+- dismissed: fix-now automate-2026-10-07-170659--05-lane-coordinator-b02cea--dismissed-eb49bf6a.md — relay-hook resolves the lane via git
+- dismissed: fix-now automate-2026-10-07-170659--05-lane-coordinator-b02cea--dismissed-8469313f.md — SKILL §14 wave-end ready_for_release
+- 2026-10-08T00:57:41Z fix-now re-pass: 7346458e91d3dbe677bcd968c39b93010a9d0d59 (relay-hook common-dir resolution)
+- 2026-10-08T00:57:41Z owned drain started (fix-now re-drain) — /review-pr --until-mergeable --no-auto-postmortem
+- 2026-10-08T01:51:59Z re-drain READY (converged; 1 fix round 8226dfe — gh-api merge deny, managed-set doc)
+P
+for h in 99dbbad8 1518e6fe 8867c3b5 fb5a7b7f; do cost_led "$CD/six" $R4 $R4--23-pa05-validation-fixes-a-e7d0f7--dismissed-$h.md fix-now 2026-10-08T09:02:57Z; done
+cost_run "$CD/six" $R4 <<'P'
+- 2026-10-08T09:01:30Z drain READY (converged; 1 round, 0 fix cycles; ci + claude-review green on 5b5d85f; 1 dismissed)
+- dismissed: fix-now automate-2026-10-08-071524--23-pa05-validation-fixes-a-e7d0f7--dismissed-99dbbad8.md — After a HELD lane-answer
+- 2026-10-08T10:52:11Z fix-now: owner chose fix-now for 4 dismissed findings; fix 21a61d1 pushed
+- 2026-10-08T10:52:19Z owned drain started (fix-now re-drain) — /review-pr --until-mergeable --no-auto-postmortem
+- 2026-10-08T11:55:42Z re-drain READY (converged; round 1 fixed 1 validated claude-review finding; round 2 'no new findings')
+P
+for h in f8e73f22 ae4ffc68 2ee49f7a 5f6dd26d; do cost_led "$CD/six" $R5 $R5--24-pa05-validation-fixes-b-07341e--dismissed-$h.md fix-now 2026-10-08T14:20:07Z; done
+cost_run "$CD/six" $R5 <<'P'
+- 2026-10-08T14:17:25Z drain READY (converged, 1 round, 0 fix cycles, 1 dismissed already-addressed)
+- dismissed: fix-now automate-2026-10-08-121222--24-pa05-validation-fixes-b-07341e--dismissed-f8e73f22.md — hooks.json has no matcher
+- 2026-10-08T15:08:30Z owned drain started (fix-now re-drain, owner decision) — /review-pr --until-mergeable --no-auto-postmortem @ 842cbe7
+- 2026-10-08T16:41:29Z fix-now re-drain READY (sub_floor_converged, 2 rounds, 2 fix cycles 77fc06b/783b00b, confirming pass green on 783b00b)
+- 2026-10-08T17:24:50Z parked awaiting_merge
+P
+# A > 12 h span (decision 2026-10-05T00:00:00Z → terminal 13:30:00Z) sits beside the six: dropped.
+cost_led "$CD/six" automate-2026-10-05-000000 automate-2026-10-05-000000--l-000000--dismissed-0000bbbb.md fix-now 2026-10-05T00:00:00Z
+printf '%s\n' '- 2026-10-05T13:30:00Z fix-now re-drain READY (converged, 1 rounds, 0 fix cycles)' | cost_run "$CD/six" automate-2026-10-05-000000
+cp "$CD/six/automate-2026-10-05-000000".* "$CD/long/"
+# The 09-30 out-of-order ledger row (REAL: item 13's 2026-10-01T03:15:17Z fix-now) beside
+# item 12's progress lines, with no `dismissed:` anchor ⇒ pairs with 09-30T15:47:43Z ⇒ end < start.
+cost_led "$CD/ooo" $R1 $R1--13-dismissed-findings-triage-sweep-ce364e--dismissed-76e17399.md fix-now 2026-10-01T03:15:17Z
+sed -n '/^## Progress$/,/^## Notes$/p' "$CD/six/$R1.md" | sed '1d;$d' | cost_run "$CD/ooo" $R1
+cp "$CD/six/$R5".* "$CD/pin/"; cp "$CD/six/$R3".* "$CD/leg/"
+cost_led "$CD/esc" automate-2026-11-01-000000 automate-2026-11-01-000000--e-000000--dismissed-0000cccc.md fix-now 2026-11-01T10:00:00Z
+printf '%s\n' '- 2026-11-01T10:30:00Z owned drain started (fix-now re-drain) — /review-pr @ abc1234' '- 2026-11-01T10:40:00Z re-drain round 1 (abc1234): SETTLED required=red (ci FAIL)' '- 2026-11-01T11:15:00Z fix-now re-drain ESCALATED (max_rounds_reached, 5 rounds, 4 fix cycles)' | cost_run "$CD/esc" automate-2026-11-01-000000
+cost_led "$CD/non" automate-2026-11-02-000000 automate-2026-11-02-000000--n-000000--dismissed-0000dddd.md fix-now 2026-11-02T10:00:00Z
+printf '%s\n' '- 2026-11-02T10:30:00Z owned drain started (fix-now re-drain) — /review-pr @ abc1234' '- 2026-11-02T10:40:00Z re-drain round 1 (abc1234): SETTLED required=red (ci FAIL)' '- 2026-11-02T10:41:00Z owner decisions (dismissed): 1 fix-now, 0 follow-up, 0 drop (est. fix_now_cost ≈ 1h06m, n=default)' | cost_run "$CD/non" automate-2026-11-02-000000
+COST_DEF="fix_now_cost: ≈ 1h06m (default: loomwright's own 2026-10 baseline; no fix-now re-drain recorded here yet — median of 6 fix-now re-drains 2026-09-30 → 10-08, range 14m–2h53m)"
+c_six="$(cost_of "$CD/six")"
+[ "$c_six" = "fix_now_cost: ≈ 1h06m (median of 6 recorded fix-now re-drains in this repo, range 14m–2h53m)" ] \
+  && ok "C1 the six Problem-table spans (+ a > 12 h one beside them) ⇒ median ≈ 66 min, range 14m–2h53m, n=6" || no "C1 six spans: '$c_six'"
+[ "$(cost_of "$CD/long")" = "$COST_DEF" ] && ok "C2 a > 12 h span alone is dropped ⇒ the default line" || no "C2 long: '$(cost_of "$CD/long")'"
+[ "$(cost_of "$CD/ooo")" = "$COST_DEF" ] && ok "C3 the 09-30 out-of-order ledger row (end before start) is dropped ⇒ the default line" || no "C3 out-of-order: '$(cost_of "$CD/ooo")'"
+[ "$(cost_of "$CD/pin")" = "fix_now_cost: ≈ 2h21m (median of 1 recorded fix-now re-drain in this repo, range 2h21m–2h21m)" ] && ok "C4 the pinned terminal 'fix-now re-drain READY (…)' matches" || no "C4 pinned: '$(cost_of "$CD/pin")'"
+[ "$(cost_of "$CD/leg")" = "fix_now_cost: ≈ 1h13m (median of 1 recorded fix-now re-drain in this repo, range 1h13m–1h13m)" ] && ok "C4 the legacy terminal 're-drain READY (…)' matches" || no "C4 legacy: '$(cost_of "$CD/leg")'"
+[ "$(cost_of "$CD/esc")" = "fix_now_cost: ≈ 1h15m (median of 1 recorded fix-now re-drain in this repo, range 1h15m–1h15m)" ] && ok "C4 the pinned ESCALATED terminal matches; a red round line and the start line are not terminals" || no "C4 escalated: '$(cost_of "$CD/esc")'"
+[ "$(cost_of "$CD/non")" = "$COST_DEF" ] && ok "C4 start / red-round / decision-batch lines alone are never a terminal ⇒ the default line" || no "C4 non-terminals: '$(cost_of "$CD/non")'"
+# C5 — exactly one line, exit 0 and the default on every degenerate input.
+mkdir -p "$CD/garb" "$CD/unr" "$CD/unrun"
+printf 'not\ta ledger\n\x00\xff\n' > "$CD/garb/automate-x.dismissed-decisions"; printf '\xff\xfe' > "$CD/garb/automate-x.md"
+cp "$CD/six/$R5".* "$CD/unr/"; chmod 000 "$CD/unr/$R5.dismissed-decisions"
+cp "$CD/six/$R5".* "$CD/unrun/"; chmod 000 "$CD/unrun/$R5.md"
+cost_ok=1
+for a in "" "$TOP/no/such/dir/x.md" "$CD/empty/x.md" "$CD/garb/x.md" "$CD/unr/x.md" "$CD/unrun/x.md"; do
+  o="$(bash "$H" dismissed-cost $a 2>/dev/null)"; rc=$?
+  [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$o" | wc -l | tr -d ' ')" = "1" ] || { cost_ok=0; no "C5 '${a:-<no arg>}': rc=$rc, lines=$(printf '%s\n' "$o" | wc -l)"; }
+  if [ -r "$CD/unr/$R5.dismissed-decisions" ] && [ "$a" = "$CD/unr/x.md" ]; then continue; fi   # root reads mode-000 files
+  [ "$o" = "$COST_DEF" ] || { cost_ok=0; no "C5 '${a:-<no arg>}' not the default: '$o'"; }
+done
+[ "$cost_ok" -eq 1 ] && ok "C5 no arg / missing dir / empty dir / garbage ledger / unreadable ledger / unreadable run file ⇒ ONE default line, exit 0" || true
+chmod 644 "$CD/unr/$R5.dismissed-decisions" "$CD/unrun/$R5.md"
+case "$COST_DEF" in *"default: loomwright's own 2026-10 baseline; no fix-now re-drain recorded here yet"*) ok "C5 the default names its basis (another repo's baseline), never a bare number" ;; *) no "C5 default basis" ;; esac
+# C6 — read-only: the fixture tree is byte-identical after every call above.
+cs_before="$(cd "$CD/six" && cksum * | sort)"; cost_of "$CD/six" >/dev/null; cost_of "$CD/six" >/dev/null
+[ "$cs_before" = "$(cd "$CD/six" && cksum * | sort)" ] && [ "$(ls "$CD/six" | wc -l | tr -d ' ')" = "12" ] && ok "C6 dismissed-cost writes nothing (fixture dir byte-identical, no new file)" || no "C6 dismissed-cost wrote into its directory"
+# C7 — mutation controls against COPIES (gated non-empty + differs + bash -n).
+cost_mut() { # <label> <pattern of the drop line> <dir> — the drop's guard line + its `continue` deleted
+  local m="$TOP/mut-$1.sh"
+  awk -v p="$2" 'skip { skip = 0; next } index($0, p) { skip = 1; next } { print }' "$SUT" > "$m"
+  if [ ! -s "$m" ] || cmp -s "$SUT" "$m" || ! bash -n "$m"; then no "C7 mutant $1 not built (empty / identical / syntax)"; return; fi
+  local o; o="$(bash "$m" dismissed-cost "$3/x.md" 2>/dev/null)"
+  [ "$o" != "$4" ] && ok "C7 mutant: $1 removed ⇒ the fixture goes red ('$o')" || no "C7 mutant $1 survived"
+}
+cost_mut end-before-start-drop 'if span <= 0:' "$CD/ooo" "$COST_DEF"
+cost_mut over-12h-drop 'if span > 12 * 3600:' "$CD/six" "$c_six"
+# C9 (fix-now D) — an out-of-range date (the TS / LINE regexes accept 2026-13-40) in ONE sibling
+# ledger or run file skips that row / batch only; it never raises and discards every other run's sample.
+mkdir -p "$CD/badrow" "$CD/badend" "$CD/badmix"
+cp "$CD/six/$R5".* "$CD/badrow/"; cp "$CD/six/$R5".* "$CD/badend/"; cp "$CD/six/$R5".* "$CD/badmix/"
+cost_led "$CD/badrow" automate-2026-11-03-000000 automate-2026-11-03-000000--b-000000--dismissed-0000eeee.md fix-now 2026-13-40T00:00:00Z
+printf '%s\n' '- 2026-11-03T11:00:00Z fix-now re-drain READY (converged, 1 rounds, 0 fix cycles)' | cost_run "$CD/badrow" automate-2026-11-03-000000
+cost_led "$CD/badend" automate-2026-11-03-000000 automate-2026-11-03-000000--b-000000--dismissed-0000eeee.md fix-now 2026-11-03T10:00:00Z
+printf '%s\n' '- 2026-10-99T11:00:00Z fix-now re-drain READY (converged, 1 rounds, 0 fix cycles)' | cost_run "$CD/badend" automate-2026-11-03-000000
+cost_led "$CD/badmix" automate-2026-11-04-000000 automate-2026-11-04-000000--m-000000--dismissed-0000ffff.md fix-now 2026-13-40T00:00:00Z
+cost_led "$CD/badmix" automate-2026-11-04-000000 automate-2026-11-04-000000--m-000000--dismissed-0000ffff.md fix-now 2026-11-04T10:00:00Z
+printf '%s\n' '- 2026-11-04T11:00:00Z fix-now re-drain READY (converged, 1 rounds, 0 fix cycles)' | cost_run "$CD/badmix" automate-2026-11-04-000000
+C_R5="fix_now_cost: ≈ 2h21m (median of 1 recorded fix-now re-drain in this repo, range 2h21m–2h21m)"
+[ "$(cost_of "$CD/badrow")" = "$C_R5" ] && ok "C9 a bad-date ledger row in a sibling ledger is skipped; the good run's sample survives" || no "C9 bad row: '$(cost_of "$CD/badrow")'"
+[ "$(cost_of "$CD/badend")" = "$C_R5" ] && ok "C9 a bad-date terminal line ends its batch with no sample; the good run's sample survives" || no "C9 bad terminal: '$(cost_of "$CD/badend")'"
+[ "$(cost_of "$CD/badmix")" = "fix_now_cost: ≈ 1h41m (median of 2 recorded fix-now re-drains in this repo, range 1h00m–2h21m)" ] \
+  && ok "C9 a bad-date row beside a good row in ONE ledger skips the row only (both runs sampled)" || no "C9 mixed ledger: '$(cost_of "$CD/badmix")'"
+# C8 — the prose the loop executes (SKILL §6 steps 2/3, §1.5 row, the schema mirror, the command bullet).
+SUB2="$(first_line "$SUBF" "2. **Interactive**")"; SUB3="$(first_line "$SUBF" "3. **Any \`fix-now\` answer")"
+case "$SUB2" in *"automate-helpers.sh dismissed-cost <runfile>"*"≈ <estimate> wall-clock: ONE owner-requested fix pass + full re-drain + re-park (<basis>)"*"0 min now (+ a future queue item)"*'**Drop** reads "0 min"'*) ok "C8 §6 step 2 runs dismissed-cost and puts the cost in every fix-now option; follow-up '0 min now', drop '0 min'" ;; *) no "C8 §6 step 2 cost prose missing" ;; esac
+before "$SUB2" "**Follow-up (keep draft)** (recommended, first)" "**Fix now on this PR**" && ok "C8 §6 step 2 keeps Follow-up recommended and first" || no "C8 recommended order changed"
+case "$SUB2" in *"est. fix_now_cost ≈"*) ok "C8 §6 step 2 records the estimate as data on a Progress line" ;; *) no "C8 no recorded estimate" ;; esac
+case "$SUB3" in *'start `<ts> owned drain started (fix-now re-drain) — '*'terminal `<ts> fix-now re-drain <READY|ESCALATED> ('*) ok "C8 §6 step 3 pins the re-drain start and terminal lines" ;; *) no "C8 §6 step 3 pinned lines missing" ;; esac
+grep -qF 'owned drain started (fix-now re-drain) — ' "$RSD/automate-run.md" && grep -qF 'fix-now re-drain <READY\|ESCALATED> (' "$RSD/automate-run.md" && ok "C8 automate-run.md mirrors both pinned lines beside owned_drain_started" || no "C8 automate-run.md mirror missing"
+grep -qF '| `dismissed-cost` |' "$SK" && ok "C8 §1.5 helper table has a dismissed-cost row" || no "C8 §1.5 row missing"
+grep -qF '(each fix-now option shows its derived wall-clock cost)' "$REPO/loomwright/commands/automate.md" && ok "C8 commands/automate.md bullet mirrors the cost" || no "C8 automate.md mirror missing"
 
 echo
 echo "test-automate-dismissed: $pass passed, $fail failed"

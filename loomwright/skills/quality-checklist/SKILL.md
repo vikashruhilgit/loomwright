@@ -2,8 +2,8 @@
 name: quality-checklist
 description: Pre-task and post-task quality gates extracted from AGENT_GUIDELINES.md. Use when starting implementation, during development, or before completing code review.
 allowed-tools: Read
-version: "1.2.0"
-lastUpdated: "2026-06-27"
+version: "1.3.0"
+lastUpdated: "2026-10-09"
 ---
 
 # Quality Checklist Skill
@@ -146,7 +146,7 @@ The plugin hook enforces these caps — an issue violating a cap is rejected at 
 
 ## Self-Heal Miss-Class Checklist (Supervisor Phase 4.5 — repo-agnostic)
 
-Applied by the Code Reviewer during Supervisor Phase 4.5 self-heal (and any standalone `/review-pr` heal). Unlike the **Repo Consistency Checks** above — which only fire on this plugin's own trigger surfaces — these classes are **repo-agnostic**: they catch the issue classes that historically only surfaced across 3–6 rounds of post-PR human review, on external app repos as well as this one. The holistic re-run of a diff-scoped reviewer inherits the same blind spots it had per-subtask; this checklist is the *different lens* that breaks that loop. Advisory severity follows the standard matrix — a `new` HIGH/BLOCKING instance FAILs the heal review; lesser instances are reported. It never introduces a new gate.
+Applied by the Code Reviewer during Supervisor Phase 4.5 self-heal (and any standalone `/review-pr` heal), and by the Worker to its own diff before hand-back (`agents/worker.md` Step 5 item 5, `self_review` part `checklist`). Unlike the **Repo Consistency Checks** above — which only fire on this plugin's own trigger surfaces — these classes are **repo-agnostic**: they catch the issue classes that historically only surfaced across 3–6 rounds of post-PR human review, on external app repos as well as this one. The holistic re-run of a diff-scoped reviewer inherits the same blind spots it had per-subtask; this checklist is the *different lens* that breaks that loop. Advisory severity follows the standard matrix — a `new` HIGH/BLOCKING instance FAILs the heal review; lesser instances are reported. It never introduces a new gate.
 
 Check each class against the integrated diff:
 
@@ -157,6 +157,7 @@ Check each class against the integrated diff:
 - [ ] **Branch coverage for new conditionals.** Every new `if`/`else`/`switch`/ternary/error path introduced by the diff has at least one test exercising each branch (success AND failure). Class signal: a new conditional or early-return with no corresponding test.
 - [ ] **Count / version / restated-list drift.** When the change alters a count (N agents/commands/items), a version string, a mirrored prompt, or any restated list, EVERY place that restates that count/version/list is updated in the same change. Class signal: a number/version/canonical name that appears in more than one file, changed in one but not the others.
 - [ ] **Cross-reference precision drift.** When the change moves, renames, or removes a target, EVERY "see X" / `file:line` / canonical-name cross-reference that pointed at it is updated in the same change so it still points where it claims. Class signal: a reference whose target moved, was renamed, or no longer exists.
+- [ ] **Reuse the file's own conventions and guards (`own conventions` — every modified file).** Before adding a mechanism to an existing file, read how that file already solves the same problem — its exit-code / fail-safe rule, identity or scope checks, locking, O(1) tail reads, output helper, naming — and reuse or extend it instead of writing a parallel one; a new path that bypasses an existing guard is a regression even when its own tests pass. Class signal: the diff adds a check, read loop, lock or output path to a file that already contains an equivalent one (a full-log scan beside the file's O(1)-tail reader; a transcript summed without the file's existing identity check).
 - [ ] **Brief conformance (`brief_conformance` — Supervisor Phase 4.5 only).** When the spawn prompt carries the brief's acceptance criteria (the BRIEF-CONFORMANCE ADVISORY line, `skills/self-heal-advisory/SKILL.md`), every stated criterion is `addressed` by the integrated diff, or reported: `not_addressed` ⇒ one `new` HIGH finding quoting the criterion verbatim; `cannot_determine` (runtime-only) ⇒ named in a one-line summary, not a finding. Rubric bullets never produce findings. Class signal: a stated acceptance criterion with no corresponding change in the integrated diff. Absent the line (standalone `/review-pr`, no-brief `/supervisor task:`), the class does not apply.
 - [ ] **Deviations conformance (`deviations` — Supervisor Phase 4.5 only).** When the spawn prompt carries worker- or fixer-recorded plan drift (the DEVIATIONS ADVISORY line, `skills/self-heal-advisory/SKILL.md` step 1g), each listed deviation is checked against the brief's stated acceptance criteria and `## Outcomes Rubric` bullets: a deviation that CONTRADICTS one ⇒ one `new` finding quoting both the deviation and the contradicted criterion/bullet; a deviation that is merely unexpected (not a contradiction) is NOT a finding. Class signal: a `plan:`/`edge:`/`open:`/`test:`/`rule:` (or unprefixed `other:`) entry whose stated departure conflicts with what the brief asked for; a `rule:` entry (worker-only) names a failing human-stamped `must` house rule — cite it as such; it is not an acceptance-criterion contradiction by default. Absent the line (no `state.md` deviations recorded this run), the class does not apply.
 
@@ -171,7 +172,7 @@ Check each class against the integrated diff:
 - Checklist invocation: 60 tokens
 - Framework-specific variations: 100-200 tokens
 - Repo consistency section (audit mode only): +150 tokens
-- Self-Heal Miss-Class Checklist (Phase 4.5 / review-pr heal only): +180 tokens
+- Self-Heal Miss-Class Checklist (Phase 4.5 / review-pr heal; worker self-review reads it on demand): +180 tokens
 - Total: ~250-400 tokens
 - Context7: Not required
 

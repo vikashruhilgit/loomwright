@@ -197,7 +197,8 @@ SUP_ALLOWED = set(SUP_REQUIRED + [
     "error", "cost_profile", "rubric_score", "branch_base", "pr_state",
     "contract_conformance", "benchmark_result", "ground_truth",
     "preflight_sync", "knowledge_sources_used", "until_mergeable_dispatched",
-    "until_mergeable_log", "risk_classification", "heal_dismissed"])
+    "until_mergeable_log", "risk_classification", "heal_dismissed",
+    "heal_first_decision", "heal_new_findings"])
 
 try:
     with open(path, encoding="utf-8") as fh:
@@ -1430,6 +1431,27 @@ WTLIST
 $lines
 PROGRESS
   fi
+
+  # ---- item_timing (iq02 T04): ONE script-written event per PR, appended to the
+  # item's session log (a gitignored .supervisor/logs/ file — never a trail path,
+  # so trail-pr does not carry it; /insights reads it locally). IDEMPOTENT like
+  # every other closeout step: a re-run (AC11, the post-trail-merge RECONCILE)
+  # finds this PR's item_timing already in the log and appends nothing. SILENT
+  # and fail-SAFE — closeout prints only `closeout:` lines (CLOSEOUT_TABLE), so
+  # no output here, and nothing here can change a step's verb or this
+  # function's exit status.
+  # --item scopes the record to THIS item's Progress segment: without it a multi-item
+  # run's second close-out read the first item's pick/park/drains.
+  ( _pt="$(bash "$(dirname "$HLP")/phase-timing.sh" --run "$rf_abs" --item "$item" 2>/dev/null)" || exit 0
+    _sid="$(printf '%s' "$_pt" | jq -r '.session_id // empty' 2>/dev/null | tr -cd 'A-Za-z0-9_-')"
+    [ -n "$_sid" ] || exit 0
+    _logs="$(dirname "$(dirname "$rf_abs")")/logs"; [ -d "$_logs" ] || exit 0
+    _lf="$_logs/$_sid.jsonl"
+    [ -f "$_lf" ] && jq -Rne --arg pr "$pr_url" '[inputs | fromjson? | select(type == "object" and .event == "item_timing" and .pr_url == (if $pr == "" then null else $pr end))] | length > 0' < "$_lf" && exit 0   # item_timing-idempotence guard: this PR's row is already logged
+    _line="$(printf '%s' "$_pt" | jq -c --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg pr "$pr_url" \
+      '{event:"item_timing",ts:$ts,pr_url:(if $pr=="" then null else $pr end)} + .' 2>/dev/null)" || exit 0
+    [ -n "$_line" ] && { printf '%s\n' "$_line" >> "$_lf"; } 2>/dev/null
+  ) >/dev/null 2>&1 || true
 
   # ---- 6. trail (runs LAST, after 7; via the dispatcher — stub-able, spy-visible)
   l="$(bash "$HLP" trail-pr "$rf_abs" --reason closeout 2>/dev/null | tail -n1)"
