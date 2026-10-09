@@ -18,6 +18,10 @@
 - [ ] **AC2:** a refund larger than the remaining refundable amount is rejected with `RefundExceedsCaptureError`.
 - [ ] **AC3:** `src/payments/refund.spec.ts` covers AC1–AC2 and passes.
 
+## Touched-file invariants
+
+- **`src/payments/refund.ts`** — keep: the exported `refund(` function's signature; pinned by: `src/payments/refund.spec.ts`, which this change creates.
+
 ## Subtask Structure
 
 | # | Title | Acceptance Criteria Subset | Est. Files (modify/create) | Skills | Status |
