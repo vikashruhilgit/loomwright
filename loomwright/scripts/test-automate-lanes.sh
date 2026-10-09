@@ -1150,7 +1150,7 @@ PR6="https://github.com/o/r/pull/66"
 printf '# Automate Run: %s-L1\n\n## Status: paused\n\n## Queue\n- [ ] reqs/a.md\n\n## Current\n- item: reqs/a.md | status: ready_for_release | pr: %s | branch: f\n- pause_reason: ready_for_release\n\n## Progress\n- 2026-10-08T11:00:00Z session_id sess-aa (reqs/a.md)\n' \
   "$PARENT6" "$PR6" > "$LRF6"
 # AA-F8 a lane whose log holds a real (transcript-usage) ledger line reads a non-zero TOTAL, and its share parks.
-AAT="$T/aa-transcript.jsonl"
+mkdir -p "$T/subagents"; AAT="$T/subagents/agent-aa1.jsonl"   # the agent's OWN transcript name — the emitter sums only agent-<agent_id>.jsonl
 { for o in 8 8; do printf '{"type":"assistant","message":{"id":"msg_A","stop_reason":null,"usage":{"input_tokens":10,"output_tokens":%s,"cache_read_input_tokens":100,"cache_creation_input_tokens":50,"cache_creation":{"ephemeral_5m_input_tokens":50}}}}\n' "$o"; done
   echo '{"type":"assistant","message":{"id":"msg_A","stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":263,"cache_read_input_tokens":100,"cache_creation_input_tokens":50}}}'
   echo '{"type":"assistant","message":{"id":"msg_B","stop_reason":null,"usage":{"input_tokens":7,"output_tokens":40,"cache_read_input_tokens":200,"cache_creation_input_tokens":0}}}'
