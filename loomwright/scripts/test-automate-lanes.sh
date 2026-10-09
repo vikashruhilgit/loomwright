@@ -1140,12 +1140,12 @@ has "Z-F11j the parent run file records the abandon with the real state" "$(cat 
 AA_TAIL="tail -n \\+1 -f $(ere "$LR2/L6.stream.log")"
 aa_feed() { # <signal> — prints "<seen|unseen> <none|survivor>"; kills any survivor afterwards
   local sig="$1" fp i=0 seen=unseen
-  if [ "$sig" = INT ]; then   # an async child starts with SIGINT ignored — reset it, as a terminal's Ctrl-C would find it
-    python3 -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])' \
-      bash "$S" lane-feed "$L6" --follow > "$T/aa-follow.$sig" 2>&1 & fp=$!
-  else
+  # An async child starts with SIGINT ignored, and a suite launched under `nohup` (a detached
+  # ci-local / harness run) passes SIGHUP down ignored too — and bash cannot trap a signal that was
+  # ignored on entry, so HUP then never reached lane-feed's trap and AA-F12b read "survivor" 50/50
+  # (iq02 T07). Reset BOTH to default before exec, as a terminal would deliver them.
+  python3 -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); signal.signal(signal.SIGHUP, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])' \
     bash "$S" lane-feed "$L6" --follow > "$T/aa-follow.$sig" 2>&1 & fp=$!
-  fi
   # Clock-bounded (wait-lib), not count-bounded: AA-F12b went red under a loaded pool (iq02 T07).
   wait_for_cmd 15 pgrep -f "$AA_TAIL" 2>/dev/null && seen=seen
   sleep 0.3; kill -"$sig" "$fp" 2>/dev/null   # fixed-sleep-ok: settle — the pipeline's traps installed before the signal (too short ⇒ a different, earlier-kill path is tested)
