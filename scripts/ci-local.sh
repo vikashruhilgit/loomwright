@@ -75,19 +75,35 @@
 #                      (interrupted, or still being written by another checkout); `UNVERIFIED` for a
 #                      run that passed while the tree changed under it (its verdict says NOT cached —
 #                      it vouches for no tree, so --last exits 1). Runs no gate.
+#   --wait             --last that first BLOCKS while that log is still being written (its owner pid
+#                      alive, no verdict line — the same in-flight test the prune uses), polling every
+#                      CI_LOCAL_WAIT_POLL s for at most CI_LOCAL_WAIT_MAX s (default 540: under the 600 s
+#                      a single agent tool call may block), then prints what --last prints. Still
+#                      running at the deadline ⇒ `ci-local --wait: STILL-RUNNING …`, exit 3: call it
+#                      again. This is the wait primitive for a run that outlived its caller's tool call
+#                      (a full run takes ~10 min, so an agent's foreground call is moved to the
+#                      background): it waits on the run's own pid, never on a process NAME — a
+#                      `pgrep -f scripts/ci-local.sh` loop matches the waiting shell itself (the agent's
+#                      Bash tool runs the whole command line as one `zsh -c "<command>"`), so it never
+#                      exits. Honest limit: a run that has not yet printed its `ci-local: log` line has
+#                      no log to wait on — --wait then reports the previous state at once.
 #
-# usage: ci-local.sh [--force] [--list] | --affected [--list] | --last
+# usage: ci-local.sh [--force] [--list] | --affected [--list] | --last | --wait
 #   --force     ignore the pass cache and run everything
 #   --list      print the planned gate/test list and the content key, run nothing
 #               (with --affected: the changed files, the affected plan and the uncovered files)
 #   --affected  run only the suites mapped from the changed files + the cheap gates (never stamps)
 #   --last      show the newest saved full-run log for this tree and its verdict, run nothing
-#   --last takes no other flag, and --affected does not take --force (exit 2)
+#   --wait      --last, after blocking while this tree's newest run is still in flight
+#   --last/--wait take no other flag, and --affected does not take --force (exit 2)
 # env:   SELF_TEST_JOBS / SELF_TEST_TIMEOUT   passed through to run-self-tests.sh
 #        CI_LOCAL_LOCK_WAIT   seconds to wait for a CI slot before failing (default 1800)
+#        CI_LOCAL_WAIT_MAX / CI_LOCAL_WAIT_POLL   --wait's deadline (default 540) and poll interval
+#                             in seconds (default 5)
 #        LOOMWRIGHT_CI_SLOTS  number of shared slots (see SHARED CI SLOTS; never raise it to "go faster")
 # exit:  0 = every gate passed (fresh or cached) · 1 = a gate failed / fail-closed condition · 2 = usage
 #        --last: 0 = PASS · 1 = FAIL / UNVERIFIED / INCOMPLETE / stale-key / no log
+#        --wait: as --last, plus 3 = still running at the deadline (call --wait again)
 #
 # Honest limits: (1) .gitignore'd files are outside the key — a test that reads one is not
 # re-run when only it changes (none should; tests build their fixtures in mktemp dirs).
@@ -97,13 +113,14 @@
 set -euo pipefail
 shopt -s nullglob
 
-force=0; list=0; affected=0; last=0
+force=0; list=0; affected=0; last=0; wait=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --force) force=1; shift ;;
     --list)  list=1; shift ;;
     --affected) affected=1; shift ;;
     --last)  last=1; shift ;;
+    --wait)  last=1; wait=1; shift ;;
     # --help = the header comment block: every line after the shebang up to the first line that is
     # not a comment. Anchored on comment-ness, not on whatever code follows the header.
     -h|--help) awk 'NR == 1 { next } !/^#/ { exit } { sub(/^# ?/, ""); print }' "${BASH_SOURCE[0]}"; exit 0 ;;
@@ -112,10 +129,14 @@ while [ "$#" -gt 0 ]; do
 done
 # --affected and --last are modes of their own: neither consults the pass cache (so --force means
 # nothing to them) and they exclude each other. Refuse a mix rather than guess which was meant.
+# --wait is --last plus a blocking wait (it sets last=1), so it inherits --last's exclusions.
 if { [ "$last" -eq 1 ] && [ $((force + list + affected)) -gt 0 ]; } || { [ "$affected" -eq 1 ] && [ "$force" -eq 1 ]; }; then
-  echo "ci-local: conflicting options — use [--force] [--list], --affected [--list], or --last alone (try --help)" >&2
+  echo "ci-local: conflicting options — use [--force] [--list], --affected [--list], --last or --wait alone (try --help)" >&2
   exit 2
 fi
+wait_max="${CI_LOCAL_WAIT_MAX:-540}"; wait_poll="${CI_LOCAL_WAIT_POLL:-5}"
+case "$wait_max" in ''|*[!0-9]*) echo "ci-local: CI_LOCAL_WAIT_MAX must be a non-negative integer, got '$wait_max'" >&2; exit 2 ;; esac
+case "$wait_poll" in ''|.|*[!0-9.]*|*.*.*) echo "ci-local: CI_LOCAL_WAIT_POLL must be a positive number of seconds, got '$wait_poll'" >&2; exit 2 ;; esac
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo"
@@ -315,6 +336,20 @@ if [ "$last" -eq 1 ]; then
     echo "ci-local --last: stale-key (log key $(log_key "$newest"), current key $key) $runs/$newest"
     exit 1
   fi
+  # --wait: block on the run's OWN pid via log_in_flight (never on a process name — see --wait in
+  # the header), bounded so one call fits inside a single agent tool call.
+  if [ "$wait" -eq 1 ] && log_in_flight "$sel"; then
+    echo "ci-local --wait: waiting (at most ${wait_max}s) for the run writing $runs/$sel"
+    wait_from=$SECONDS
+    while log_in_flight "$sel"; do
+      if [ $((SECONDS - wait_from)) -ge "$wait_max" ]; then
+        echo "ci-local --wait: STILL-RUNNING after ${wait_max}s — call --wait again $runs/$sel"
+        exit 3
+      fi
+      sleep "$wait_poll"
+    done
+  fi
+  [ -f "$runs/$sel" ] || { echo "ci-local --last: $runs/$sel was removed before it could be read"; exit 1; }
   cat "$runs/$sel"
   vline="$(awk 'NF { l = $0 } END { print l }' "$runs/$sel")"
   # The tree-moved verdict starts with "ci-local: PASS" too, but that run refused to vouch for its

@@ -158,7 +158,7 @@ while heal_iterations < max_heal_iterations:
     # (the fix worker may not dispatch further subagents).
     prompt: "Address ONLY these new+BLOCKING/HIGH review findings: {fixable}.
              Do NOT touch pre_existing issues or nits. Update tests if behaviour
-             changes. Run type-check + tests locally before finishing. Before pushing,
+             changes. Run type-check + tests locally before finishing. WAITING: redirect long test output to a file, never pipe it into `tail`; block on a run moved to the background with the project's own wait command (see its CLAUDE.md) or a bounded loop on a line the run writes when it ends — never `pgrep -f`/`pkill -f <pattern>` with <pattern> in your own command (the whole command line is one `<shell> -c` process, so the waiter matches itself and never exits). Before pushing,
              PRE-PUSH SELF-REGRESSION REVIEW: re-read your own diff and confirm it introduces no
              downstream regression in persistence/state/lifecycle/idempotency/concurrency (duplicated
              writes, changed ordering, cross-session collisions, broken run-once guards, check-then-act
@@ -693,7 +693,8 @@ loop:
              hold on this branch and do NOT edit a file the rule binds.
              Do NOT touch human-authored / unknown-author findings, optional-check items,
              or dismissed/stale findings. Update tests if behaviour changes; run
-             type-check + tests locally. Before pushing, PRE-PUSH SELF-REGRESSION REVIEW:
+             type-check + tests locally. WAITING: redirect long test output to a file, never pipe it into `tail`; block on a run moved to the background with the project's own wait command (see its CLAUDE.md) or a bounded loop on a line the run writes when it ends — never `pgrep -f`/`pkill -f <pattern>` with <pattern> in your own command (the whole command line is one `<shell> -c` process, so the waiter matches itself and never exits).
+             Before pushing, PRE-PUSH SELF-REGRESSION REVIEW:
              re-read your own diff and confirm it introduces no downstream regression in
              persistence/state/lifecycle/idempotency/concurrency (duplicated writes, changed ordering,
              cross-session collisions, broken run-once guards, check-then-act races); fix any in this same
