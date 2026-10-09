@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # run-self-tests: serial
-# ^ run alone, after the concurrent batch (run-self-tests.sh): case (x) is a calibrated wall-clock runtime ratio; under a loaded concurrent run it measured 183-222 units against its 180 bound.
+# ^ STILL serial pending proof: (x) now measures interleaved child CPU time (iq02 T06); unmark only after 10/10 green loaded-pool runs (evidence iq02/T06.md).
 # test-build-floor.sh - self-tests for build-floor.sh, the read-only floor projector.
 #
 # HERMETIC BY CONSTRUCTION, and that is the load-bearing property of this file.
@@ -2733,8 +2733,16 @@ PERF_MAX_UNITS=180           # primary arm: see the calibration note below
 # "a claim no check backs" class this repo keeps recording. So the arm that must always run
 # is measured against a UNIT calibrated in the same run:
 #
-#   unit  = wall time for ONE full `jq` scan of the synthesized ledger
-#   bound = projector wall time / unit
+#   unit  = child CPU time (user+sys) for ONE full `jq` scan of the synthesized ledger
+#   bound = projector child CPU time / unit   (both the minimum of 5 INTERLEAVED samples)
+#
+# iq02 T06: this used to be WALL time, unit and projector each sampled 3x at different moments. In a
+# loaded concurrent pool that measured 183-222 units against the 180 bound, so the file ran `serial`.
+# CPU time does not count the time other processes hold the CPU, and interleaving puts both samples
+# under the same load, so the file now runs in the concurrent pool. CPU-time calibration (this
+# machine, 2026-10-09): consolidated readers 87 units idle; pre-consolidation code (2b41286) ~460
+# units (2800 ms vs 528 ms CPU in the historical arm). The loaded-pool range is in the iq02 T06
+# evidence. The 180 bound is unchanged: it still sits well above the first and well below the second.
 #
 # Both numbers move with the machine, so a slow or loaded runner cancels out - exactly what
 # an absolute millisecond ceiling cannot do. Measured on the maintainer tree: the
@@ -2757,34 +2765,36 @@ iperf=0
 while [ "$iperf" -lt 200 ]; do cat "$PM_FIXTURE" >> "$RPERF/.supervisor/postmortem/results.jsonl"; iperf=$((iperf+1)); done
 perf_lines="$(awk 'NF{n++} END{print n+0}' "$RPERF/.supervisor/postmortem/results.jsonl")"
 
-perf_units="$(python3 - "$RPERF" "$BUILD" 2>/dev/null <<'__PY1__'
-import subprocess, sys, time, os
-repo, script = sys.argv[1], sys.argv[2]
+# perf_cpu <script> <repo> — prints "<unit_us> <run_us>": CHILD CPU time (user+sys, getrusage
+# RUSAGE_CHILDREN deltas), never wall time, for one full `jq` scan (the unit) and one projector run,
+# INTERLEAVED over 5 pairs and the minimum of each kept. CPU time is what the multi-scan regression
+# costs; wall time also counts the time a loaded machine spends running OTHER processes, and the unit
+# and the projector used to be timed at different moments, so load that varied between them moved the
+# ratio (183-222 units against 180 in a loaded pool — the reason this file was `serial`; iq02 T06).
+perf_cpu() {
+  python3 - "$1" "$2" 2>/dev/null <<'__PY1__'
+import subprocess, sys, os, resource
+script, repo = sys.argv[1], sys.argv[2]
 led = repo + "/.supervisor/postmortem/results.jsonl"
 env = dict(os.environ); env["FLOOR_AGENTS_DIR"] = repo + "/agents"
-
-def best(fn, n=3):
-    return min(fn() for _ in range(n))
-
-def unit():
-    t = time.time()
-    subprocess.run(["jq", "-s", "[.[]|.categories]|length", led],
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return time.time() - t
-
-def run():
-    t = time.time()
-    subprocess.run(["bash", script], cwd=repo, env=env,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return time.time() - t
-
-u = best(unit)
-if u <= 0:
-    print("ERR")
-else:
-    print(int(best(run) / u))
+def cpu(cmd, cwd=None):
+    a = resource.getrusage(resource.RUSAGE_CHILDREN)
+    subprocess.run(cmd, cwd=cwd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    b = resource.getrusage(resource.RUSAGE_CHILDREN)
+    return (b.ru_utime - a.ru_utime) + (b.ru_stime - a.ru_stime)
+us, rs = [], []
+for _ in range(5):
+    us.append(cpu(["jq", "-s", "[.[]|.categories]|length", led]))
+    rs.append(cpu(["bash", script], cwd=repo))
+print(int(min(us) * 1e6), int(min(rs) * 1e6))
 __PY1__
-)"
+}
+read -r perf_unit_us perf_run_us <<<"$(perf_cpu "$BUILD" "$RPERF")"
+perf_units=""
+case "$perf_unit_us:$perf_run_us" in
+  *[!0-9:]*|:*|*:) ;;
+  *) [ "$perf_unit_us" -gt 0 ] && perf_units=$(( perf_run_us / perf_unit_us )) ;;
+esac
 case "$perf_units" in
   ''|*[!0-9]*) no "(x) could not calibrate the runtime bound (got '$perf_units') - PRIMARY arm inconclusive" ;;
   *)
@@ -2806,24 +2816,9 @@ if git -C "$HERE/../.." cat-file -e "$PERF_PRE_SHA:loomwright/scripts/build-floo
    && git -C "$HERE/../.." show "$PERF_PRE_SHA:loomwright/scripts/build-floor.sh" > "$perf_pre" 2>/dev/null \
    && [ -s "$perf_pre" ] && bash -n "$perf_pre" 2>/dev/null; then
 
-  perf_ms() {
-    python3 - "$1" "$2" <<'__PY2__'
-import subprocess, sys, time, os
-script, cwd = sys.argv[1], sys.argv[2]
-env = dict(os.environ); env["FLOOR_AGENTS_DIR"] = cwd + "/agents"
-best = None
-for _ in range(3):
-    t = time.time()
-    subprocess.run(["bash", script], cwd=cwd, env=env,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    d = int((time.time() - t) * 1000)
-    best = d if best is None else min(best, d)
-print(best)
-__PY2__
-  }
-
-  ms_now="$(perf_ms "$BUILD" "$RPERF")"
-  ms_pre="$(perf_ms "$perf_pre" "$RPERF")"
+  # Same CPU-time helper as the primary arm (child user+sys, min of 5 interleaved samples), in ms.
+  read -r _ ms_now <<<"$(perf_cpu "$BUILD" "$RPERF")"; ms_now=$(( ${ms_now:-0} / 1000 ))
+  read -r _ ms_pre <<<"$(perf_cpu "$perf_pre" "$RPERF")"; ms_pre=$(( ${ms_pre:-0} / 1000 ))
 
   case "$ms_now$ms_pre" in
     ''|*[!0-9]*) no "(x) HISTORICAL: could not measure (now='$ms_now' pre='$ms_pre') - inconclusive" ;;
