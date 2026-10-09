@@ -152,19 +152,20 @@ verdict="$(eligible_json "$round")"
 # exactly --sha is RED/UNREADABLE ⇒ ESCALATED (never READY on an unknown SHA).
 [ "$HAVE_WAIT" -eq 1 ] && [ -n "$WAIT_LINE" ] || { reason "no wait line"; say "ESCALATED repeat_check_failure=false"; }
 [ -n "$SHA" ] || { reason "no --sha"; say "ESCALATED repeat_check_failure=false"; }
-set -f
-# shellcheck disable=SC2086
-set -- $WAIT_LINE
-set +f
-kind="${1:-}"
+# Parse WITHOUT splitting on whitespace: a check name is free text (matrix
+# contexts like `build (ubuntu-latest)`). kind / sha= / required= are scalars
+# printed BEFORE any name field, so each comes from its FIRST occurrence (a
+# name containing ` required=` cannot override it). wait-for-checks.sh's
+# names_suffix prints ` pending_names=… red_names=…` LAST, so red_names is the
+# REMAINDER of the line after the ` red_names=` that follows ` pending_names=`.
+_wl="${WAIT_LINE#"${WAIT_LINE%%[![:space:]]*}"}"
+kind="${_wl%% *}"
 line_sha=""; required=""; red_names=""
-for tok in "$@"; do
-  case "$tok" in
-    sha=*) line_sha="${tok#sha=}" ;;
-    required=*) required="${tok#required=}" ;;
-    red_names=*) red_names="${tok#red_names=}" ;;
-  esac
-done
+case "$_wl" in *' sha='*) _v="${_wl#* sha=}"; line_sha="${_v%% *}" ;; esac
+case "$_wl" in *' required='*) _v="${_wl#* required=}"; required="${_v%% *}" ;; esac
+_names="$_wl"
+case "$_names" in *' pending_names='*) _names="${_names#* pending_names=}" ;; esac
+case "$_names" in *' red_names='*) red_names="${_names#* red_names=}" ;; esac   # RED-NAMES-REMAINDER
 [ "$kind" = "SETTLED" ] || { reason "wait line is not SETTLED (${kind:-empty})"; say "ESCALATED repeat_check_failure=false"; }
 [ "$line_sha" = "$SHA" ] || { reason "sha mismatch (${line_sha:-none} != $SHA)"; say "ESCALATED repeat_check_failure=false"; }
 

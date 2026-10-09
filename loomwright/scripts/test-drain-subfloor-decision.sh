@@ -16,8 +16,11 @@
 #       unstamped after a remembered fail) and the passable verdicts.
 #   T.  a two-round drain: `sub_floor_fixed` holds the FINAL round's findings only.
 #   X.  exit codes: unknown subcommand ⇒ 2 with empty stdout.
+#       Free-text names: a space-named red check round-trips (D18/D20), and a
+#       pending name containing ` required=`/` sha=` cannot override them (D19).
 #   M.  MUTATION CONTROLS against COPIES (gated non-empty + differs + bash -n):
-#       `<` → `<=` in the severity comparison; dropping the required=green test.
+#       `<` → `<=` in the severity comparison; dropping the required=green test;
+#       restoring the whitespace `set --` split of the wait line.
 
 set -uo pipefail
 
@@ -114,6 +117,14 @@ run_table() {
   done
   dec "$s" "D17 decide on a non-eligible round ⇒ continue" continue \
     "$(rf d17 '{"required_failing":[],"needs_human":[],"auto_fixable":[{"severity":"HIGH"}],"severity_floor":"HIGH"}')" "$GREEN" none
+  local RED_SP="SETTLED sha=$SHA_OK required=red review_producing=settled pending_names=none red_names=lint@7,build (ubuntu-latest)@99"
+  dec "$s" "D18 space-named red check in checks_ever_fixed ⇒ ESCALATED true" "ESCALATED repeat_check_failure=true" \
+    "$r_low" "$RED_SP" none --checks-ever-fixed "build (ubuntu-latest)"
+  dec "$s" "D19 pending name containing ' required=' / ' sha=' cannot override them ⇒ READY" \
+    "READY sub_floor_converged sub_floor_fixed=[{\"id\":\"darwin-click-action\",\"title\":\"Darwin CLICK_ACTION mirror in lane-park-notify\",\"severity\":\"LOW\"}]" \
+    "$r_low" "SETTLED sha=$SHA_OK required=green review_producing=settled pending_names=odd required=red sha=0bad red_names=none" none
+  dec "$s" "D20 only the first word of a space-named red check was fixed ⇒ ESCALATED false" "ESCALATED repeat_check_failure=false" \
+    "$r_low" "$RED_SP" none --checks-ever-fixed "build"
 }
 
 run_table "$SCRIPT"
@@ -148,7 +159,8 @@ mutant() {
   printf '%s' "$m"
 }
 for spec in 'le|s/all(\. < \$floor)/all(. <= $floor)/' \
-            'nogreen|s/^if \[ "\$required" != "green" \]; then   # GREEN-REQUIRED.*/if false; then/'; do
+            'nogreen|s/^if \[ "\$required" != "green" \]; then   # GREEN-REQUIRED.*/if false; then/' \
+            'wsplit|s/   # RED-NAMES-REMAINDER$/; set -f; set -- $_wl; set +f; for tok in "$@"; do case "$tok" in sha=*) line_sha="${tok#sha=}" ;; required=*) required="${tok#required=}" ;; red_names=*) red_names="${tok#red_names=}" ;; esac; done/'; do
   name="${spec%%|*}"; expr="${spec#*|}"
   m="$(mutant "$name" "$expr")" || continue
   [ -n "$m" ] || continue
