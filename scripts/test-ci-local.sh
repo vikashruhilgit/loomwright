@@ -65,6 +65,10 @@
 #   (PG) the run's own log removed mid-run → no verdict-only stub recreated, the removal is reported
 #   (LM) --last never waits on the machine gate: a held machine mutex and a hanging load reader do
 #        not slow it (still PASS, within 2 s)
+#   (WT) --wait: nothing in flight → --last's answer at once; this tree's newest log in flight (live
+#        owner pid, no verdict) → STILL-RUNNING exit 3 at CI_LOCAL_WAIT_MAX; the verdict lands while
+#        it waits → that PASS, exit 0; the owner dies with no verdict → INCOMPLETE exit 1, no hang;
+#        a bad CI_LOCAL_WAIT_MAX → exit 2; ci-local.sh never waits by process name (no pgrep/pkill)
 # Slot state lives under a sandboxed XDG_STATE_HOME: an inner fixture run must never queue on the
 # real shared pool that an outer ci-local.sh run is holding (that would deadlock it). The machine
 # gate is sandboxed the same way (LOOMWRIGHT_MACHINE_STATE_DIR) and its reader pinned to a fixture
@@ -83,7 +87,8 @@ sleeper=""
 trap '[ -n "$sleeper" ] && kill "$sleeper" 2>/dev/null; rm -rf "$tmp"' EXIT
 export XDG_STATE_HOME="$tmp/state"
 # The outer run exports its own job share / slot knobs; every arm here starts from a clean slate.
-unset SELF_TEST_JOBS LOOMWRIGHT_CI_SLOTS LOOMWRIGHT_CI_CPUS LOOMWRIGHT_CI_SLOT_PRINT_EVERY CI_LOCAL_LOCK_WAIT
+unset SELF_TEST_JOBS LOOMWRIGHT_CI_SLOTS LOOMWRIGHT_CI_CPUS LOOMWRIGHT_CI_SLOT_PRINT_EVERY CI_LOCAL_LOCK_WAIT \
+  CI_LOCAL_WAIT_MAX CI_LOCAL_WAIT_POLL
 export LOOMWRIGHT_CI_SLOT_POLL=0.2
 export LOOMWRIGHT_MACHINE_STATE_DIR="$tmp/machine" LOOMWRIGHT_MACHINE_LOAD_CMD="$tmp/load.sh"
 printf '%s\n' 'if [ -f "$(dirname "$0")/load.hang" ]; then sleep 8; fi' 'echo load1=1.00' 'echo state=ok' > "$tmp/load.sh"
@@ -180,6 +185,43 @@ if [ "$rc" -eq 0 ] && [ "$el" -le 2 ] && [ "$(last_line)" = "ci-local --last: PA
   ok "(LM) --last with the machine mutex held and a hanging reader: PASS in ${el}s"
 else no "(LM) rc=$rc ${el}s out=$out"; fi
 rm -f "$tmp/machine/mutex.lnk" "$tmp/load.hang"; kill "$lm_holder" 2>/dev/null; wait "$lm_holder" 2>/dev/null
+
+# (WT) --wait. A seeded log for the (P) tree's key, newer than every real log, plays a run still in
+# flight: its owner pid is a live sleeper and it has no verdict line yet.
+b="${plog##*/}"; b="${b%.log}"; b="${b%-*}"; pkey="${b%-*}"
+t0=$(date +%s); run --wait; el=$(( $(date +%s) - t0 ))
+if [ "$rc" -eq 0 ] && [ "$el" -le 2 ] && [ "$(last_line)" = "ci-local --last: PASS $plog" ] && ! has "waiting" \
+   && [ ! -s "$FIXTURE_LOG" ]; then ok "(WT) --wait with nothing in flight: --last's PASS at once, nothing ran"
+else no "(WT) idle: rc=$rc ${el}s out=$out"; fi
+sleep 60 & sleeper=$!
+wlog="$state/runs/$pkey-29990101T000000Z-$sleeper.log"
+echo "ci-local: log $wlog" > "$wlog"
+t0=$(date +%s); CI_LOCAL_WAIT_MAX=1 CI_LOCAL_WAIT_POLL=0.2 run --wait; el=$(( $(date +%s) - t0 ))
+if [ "$rc" -eq 3 ] && [ "$el" -le 4 ] && [ "$(last_line)" = "ci-local --wait: STILL-RUNNING after 1s — call --wait again $wlog" ]; then
+  ok "(WT) --wait on an in-flight run: STILL-RUNNING, exit 3 at the deadline (${el}s)"
+else no "(WT) deadline: rc=$rc ${el}s out=$out"; fi
+( sleep 1; echo "ci-local: PASS after 1s — stamped; re-running on this exact tree is instant" >> "$wlog" ) &
+wt_writer=$!
+CI_LOCAL_WAIT_MAX=20 CI_LOCAL_WAIT_POLL=0.2 run --wait
+wait "$wt_writer" 2>/dev/null
+if [ "$rc" -eq 0 ] && has "^ci-local --wait: waiting" && [ "$(last_line)" = "ci-local --last: PASS $wlog" ]; then
+  ok "(WT) --wait while the verdict lands: waits, then that run's PASS, exit 0"
+else no "(WT) lands: rc=$rc out=$out"; fi
+echo "ci-local: log $wlog" > "$wlog"
+( sleep 1; kill "$sleeper" ) &
+wt_killer=$!
+t0=$(date +%s); CI_LOCAL_WAIT_MAX=20 CI_LOCAL_WAIT_POLL=0.2 run --wait; el=$(( $(date +%s) - t0 ))
+wait "$wt_killer" 2>/dev/null; wait "$sleeper" 2>/dev/null; sleeper=""
+if [ "$rc" -eq 1 ] && [ "$el" -le 6 ] && [ "$(last_line)" = "ci-local --last: INCOMPLETE $wlog" ]; then
+  ok "(WT) --wait when the owner dies with no verdict: INCOMPLETE, exit 1, no hang (${el}s)"
+else no "(WT) owner died: rc=$rc ${el}s out=$out"; fi
+rm -f "$wlog"
+CI_LOCAL_WAIT_MAX=soon run --wait
+if [ "$rc" -eq 2 ] && has "CI_LOCAL_WAIT_MAX must be"; then ok "(WT) a non-integer CI_LOCAL_WAIT_MAX: exit 2"
+else no "(WT) bad deadline: rc=$rc out=$out"; fi
+# Code lines only: the header names the `pgrep -f` trap it avoids.
+if ! grep -qE 'pgrep|pkill' <<<"$(grep -v '^[[:space:]]*#' "$SUT")"; then ok "(WT) ci-local.sh never waits on a process name (no pgrep/pkill in code)"
+else no "(WT) ci-local.sh uses pgrep/pkill — a name match can match its own waiter"; fi
 
 # (LA2) — the tree changed: stale-key, and --last writes no git object (its key hashing goes to a
 # temp object dir), no log and no slot ticket.
@@ -517,7 +559,8 @@ if [ "$rc" -eq 0 ] && [ "$(last_line)" = "ci-local --last: PASS $full_log" ] && 
 else no "(LA3) rc=$rc full_log=$full_log out=$out"; fi
 
 # (AX)
-for combo in "--affected --force" "--last --affected" "--last --force" "--last --list" "--force --last"; do
+for combo in "--affected --force" "--last --affected" "--last --force" "--last --list" "--force --last" \
+             "--wait --force" "--wait --list" "--affected --wait"; do
   run $combo
   if [ "$rc" -eq 2 ] && has "conflicting options" && [ ! -s "$FIXTURE_LOG" ]; then ok "(AX) $combo: exit 2"
   else no "(AX) $combo: rc=$rc out=$out"; fi
