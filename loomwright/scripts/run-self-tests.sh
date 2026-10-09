@@ -38,6 +38,8 @@
 #          SELF_TEST_SLOT_WAIT  seconds to wait for machine admission (a ci-slot.sh slot; see below)
 #   marker: a test carrying the exact line `# run-self-tests: serial` runs ALONE, after the
 #          concurrent batch — for tests that measure wall-clock time and need an idle machine.
+#          No committed test carries it today (iq02 T06 repaired and unmarked the last three); the
+#          mechanism stays for a future wall-clock test, and test-run-self-tests.sh (S) covers it.
 #          A test carrying the exact line `# run-self-tests: early` is a cheap, deterministic test
 #          that scripts/ci-local.sh runs in its EARLY phase (before the pool, so a red one fails the
 #          run in seconds). In this runner's own run the `early` marker changes NOTHING: the test
@@ -303,6 +305,10 @@ export SELF_TEST_OUT="$out"
 # (x), test-harvest-conventions.sh (M1a). Serial is a mitigation, not a fix: test-write-agent-memory.sh
 # (j5/X) was marked too and STILL flaked under outside load, then was made deterministic (barriers
 # instead of sleeps) and unmarked — prefer that repair whenever the ordering can be pinned.
+# iq02 T06 did that for the last three: test-build-floor.sh (x) now measures child CPU time,
+# test-harvest-conventions.sh (M1) feeds its PTY on the prompt, and test-ci-slot.sh (marked with no
+# stated reason) passed as-is; each went 10/10 green in a loaded 6-job pool before its marker was
+# removed. No committed test is serial now.
 par_idx=(); ser_idx=()
 i=0
 for t in "${tests[@]}"; do

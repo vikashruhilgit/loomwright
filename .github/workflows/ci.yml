@@ -195,9 +195,10 @@ jobs:
     # Each shard is ~1/3 of the suite's weight (fixtures/self-test-weights.tsv: 1846 test-seconds on
     # run 37809076650 ⇒ ~615 per shard, ~160 s at 4-way) with a floor of the longest single test
     # (test-automate-trail.sh, 235 s on the runner) — a green shard takes ~4-5 min. The cap is the
-    # backstop for anything outside run-self-tests.sh's per-test watchdog (SELF_TEST_TIMEOUT 900 s):
-    # one hang in the concurrent batch plus one in a serial tail is 2 x 900 s, on top of the shard.
-    timeout-minutes: 45
+    # backstop for anything outside run-self-tests.sh's per-test watchdog (SELF_TEST_TIMEOUT 900 s).
+    # No test is `serial` any more (iq02 T06), so hangs overlap inside the concurrent batch: one
+    # 900 s watchdog window + the shard's own ~5 min + setup fits in 30.
+    timeout-minutes: 30
     strategy:
       # Every shard reports even when one is red: the `ci` job needs ALL manifests to name each test.
       fail-fast: false
