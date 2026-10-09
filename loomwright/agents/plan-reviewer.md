@@ -49,15 +49,15 @@ Validate a Supervisor-Ready Brief for quality, completeness, and correctness bef
 
 - **Always verify file paths** — Glob/Read every path in the File Impact Map
 - **Always check CLAUDE.md patterns** — Read CLAUDE.md and compare against brief's approach
-- **Never skip criteria** — All 17 review criteria must be checked (Criteria 11, 13, 14, 15, 16, and 17 are conditional: skip silently when their gating section/field/claim is absent; Criterion 12 is conditional only on an explicit `legacy_brief: true` marker, and Criterion 16 shares that same gate)
+- **Never skip criteria** — All 18 review criteria must be checked (Criteria 11, 13, 14, 15, 16, 17, and 18 are conditional: skip silently when their gating section/field/claim is absent; Criterion 12 is conditional only on an explicit `legacy_brief: true` marker, and Criterion 16 shares that same gate)
 - **FAIL requires evidence** — Every BLOCKING/HIGH issue must cite what was checked and what was wrong
 - **NEEDS_HUMAN is for ambiguity** — Use only when the brief's approach could be valid but you can't confirm
 
 ---
 
-## 17 Review Criteria
+## 18 Review Criteria
 
-Check ALL criteria in order. For each, note whether it passes or has issues. Criterion 11 is conditional: skip silently if the optional `## Feasibility` section is absent. Criterion 13 is conditional: skip silently if no `Base Branch:` line appears in the `## Configuration` block (defaults to `main`). Criterion 14 is conditional: skip silently if the optional `## Executable Acceptance` section is absent. Criterion 15 is conditional: skip silently if the brief asserts no canonical-source claim (no canonical phrasing such as "single source of truth"/"canonical list"/"exact names"/"authoritative", or no cited source). Criterion 12: briefs MUST contain `provides:` / `requires:` contract YAML blocks per subtask — absence is a BLOCKING violation. The only exception is an explicit top-level `legacy_brief: true` marker in the Environment section (the marker is the sole observable signal; the producing runtime's version cannot be inferred from brief text). Without that marker, missing contracts are a BLOCKING `dep_graph` violation. Criterion 16 is conditional: skip silently under the same `legacy_brief: true` / no-contract-blocks gate as Criterion 12 (it validates the `lanes:` declarations inside those same contract blocks, so it has nothing to check when they are absent). Criterion 17 is conditional: skip silently when the spawn prompt carries no `--- APPLICABLE RULES ---` block, or the block lists no rules.
+Check ALL criteria in order. For each, note whether it passes or has issues. Criterion 11 is conditional: skip silently if the optional `## Feasibility` section is absent. Criterion 13 is conditional: skip silently if no `Base Branch:` line appears in the `## Configuration` block (defaults to `main`). Criterion 14 is conditional: skip silently if the optional `## Executable Acceptance` section is absent. Criterion 15 is conditional: skip silently if the brief asserts no canonical-source claim (no canonical phrasing such as "single source of truth"/"canonical list"/"exact names"/"authoritative", or no cited source). Criterion 12: briefs MUST contain `provides:` / `requires:` contract YAML blocks per subtask — absence is a BLOCKING violation. The only exception is an explicit top-level `legacy_brief: true` marker in the Environment section (the marker is the sole observable signal; the producing runtime's version cannot be inferred from brief text). Without that marker, missing contracts are a BLOCKING `dep_graph` violation. Criterion 16 is conditional: skip silently under the same `legacy_brief: true` / no-contract-blocks gate as Criterion 12 (it validates the `lanes:` declarations inside those same contract blocks, so it has nothing to check when they are absent). Criterion 17 is conditional: skip silently when the spawn prompt carries no `--- APPLICABLE RULES ---` block, or the block lists no rules. Criterion 18 is conditional: skip silently when the brief modifies no existing script.
 
 ### 1. File Path Verification
 
@@ -94,7 +94,7 @@ Check ALL criteria in order. For each, note whether it passes or has issues. Cri
 
 **Severity if failed:** MEDIUM (vague criteria), LOW (missing edge cases)
 
-**Sub-check (conditional — `## Outcomes Rubric` quality):** Run this ONLY when the brief contains a `## Outcomes Rubric` section. **Skip it silently when the section is absent** (same convention as the conditional Criteria 11, 13, 14, and 15, which skip silently when their gating section/claim is absent — but this stays part of Criterion 3, not a new numbered criterion). When the section is present, validate the rubric against the authoring rules in `skills/supervisor-readiness/SKILL.md` §"Outcomes Rubric":
+**Sub-check (conditional — `## Outcomes Rubric` quality):** Run this ONLY when the brief contains a `## Outcomes Rubric` section. **Skip it silently when the section is absent** (same convention as the conditional Criteria 11, 13, 14, 15, 17, and 18, which skip silently when their gating section/claim is absent — but this stays part of Criterion 3, not a new numbered criterion). When the section is present, validate the rubric against the authoring rules in `skills/supervisor-readiness/SKILL.md` §"Outcomes Rubric":
 - **3–7 bullets** (flag fewer than 3 or more than 7)
 - Each bullet is a **positive, observable assertion** — not an aspiration (e.g. "should be nice", "works well")
 - Each bullet is **diff-checkable from the PR diff alone** — no reliance on external state, runtime behavior, or manual steps. **At plan-review time no diff exists yet, so this is a phrasing/observability heuristic, not a literal check:** judge whether the bullet is the *kind* of assertion a future PR diff could confirm (e.g. "function X validates input Y" — yes; "the UX feels faster" — no), rather than attempting to evaluate it against a diff.
@@ -353,13 +353,28 @@ Check ALL criteria in order. For each, note whether it passes or has issues. Cri
 
 **Severity if failed:** HIGH for 17a and 17b (so the decision is FAIL); LOW for an ignored advisory rule.
 
+### 18. Touched-File Invariants (conditional)
+
+**Check:** When the brief modifies existing scripts, does it carry a `## Touched-file invariants` section whose entries are grounded — each names a real file and quotes an anchor present in it?
+
+**How:** the format is `skills/supervisor-readiness/SKILL.md` §"Touched-file invariants" — read it, do not re-derive it here.
+
+- **Conditional gate:** run only when the brief modifies ≥1 existing **script** — a File Impact Map "Files to Modify" path, or a `lanes:` path Criterion 16 resolved to an existing file, that is code (`.sh`, `.py`, `.js`/`.ts`, …) or a file a hook, CI step or test runs or pins. Only creates, or only non-script edits → skip silently.
+- **18a — absence.** The gate fires and the brief has no `## Touched-file invariants` section.
+- **18b — coverage.** A modified script has no entry, or a modified hook/emitter's entry does not name which matchers/callers fire it.
+- **18c — grounding.** Each entry names a file and quotes an anchor (a backticked literal). `Glob` the file and `Grep` at least one quoted anchor in it, or in the test/consumer the entry names as pinning it. File missing, or no quoted anchor, or the anchor not found → ungrounded.
+
+**Issue category:** `touched_file_invariants` — use it for every Criterion 18 finding.
+
+**Severity if failed:** HIGH for 18a and for an entry whose file does not exist (so the decision is FAIL); MEDIUM for 18b and any other 18c finding.
+
 ---
 
 ## Decision Matrix
 
 | Condition | Decision |
 |-----------|----------|
-| All criteria satisfied (17 total, Criteria 11, 12, 13, 14, 15, 16, and 17 conditional), no BLOCKING/HIGH issues | **PASS** |
+| All criteria satisfied (18 total, Criteria 11, 12, 13, 14, 15, 16, 17, and 18 conditional), no BLOCKING/HIGH issues | **PASS** |
 | Criterion 17 finds an applicable `must` rule contradicted (17a) or its checkable `rule: <id>` bullet missing (17b) | **FAIL** (HIGH `rule_conformance` issue) |
 | Only MEDIUM/LOW issues, design approach unambiguous, AND no Criterion 14 NEEDS_HUMAN escalation (see row below) | **PASS** (all issues recorded for visibility — e.g. a stamped Criterion 14 `executable_acceptance` finding — but the save is not blocked) |
 | Any BLOCKING or HIGH severity issue found | **FAIL** |
@@ -377,7 +392,7 @@ PLAN_REVIEW_RESULT:
   issues:
     - severity: {BLOCKING | HIGH | MEDIUM | LOW}
       section: "{brief section name}"
-      category: "{dep_graph | missing_field | executable_acceptance | canonical_source | lane_overlap | rule_conformance | ...}"  # optional — emit when a criterion mandates it (12, 13, 14, 15, 16, 17)
+      category: "{dep_graph | missing_field | executable_acceptance | canonical_source | lane_overlap | rule_conformance | touched_file_invariants | ...}"  # optional — emit when a criterion mandates it (12, 13, 14, 15, 16, 17, 18)
       description: "{what's wrong}"
       suggestion: "{how to fix}"
   summary: "{concise review summary}"
@@ -431,7 +446,7 @@ PLAN_REVIEW_RESULT:
 ## Quality Checklist
 
 Before producing PLAN_REVIEW_RESULT:
-- [ ] All 17 criteria checked (Criterion 11 conditional on `## Feasibility` section presence; Criterion 12 skipped only when the brief's Environment section declares `legacy_brief: true` — otherwise missing `provides:` / `requires:` blocks are a BLOCKING `dep_graph` violation; Criterion 13 skipped silently when `Base Branch:` is absent from `## Configuration`; Criterion 14 skipped silently when `## Executable Acceptance` is absent — when present with `cmd:`/bare bullets, emit a LOW `executable_acceptance` issue listing them; Criterion 15 skipped silently when the brief asserts no canonical-source claim — when present, verify the brief's restated values against the cited source and emit a `canonical_source` finding on mismatch; Criterion 16 skipped under the same `legacy_brief: true` / no-contract-blocks gate as Criterion 12 — when present, verify every subtask declares `lanes:`, every lane path resolves, and no same-wave lane overlap exists, emitting a `lane_overlap` finding on violation; Criterion 17 skipped silently when no `--- APPLICABLE RULES ---` block lists a rule — when present, emit a HIGH `rule_conformance` finding for a contradicted `must` rule (17a) or a checkable `must` rule with no `- rule: <id>` bullet (17b))
+- [ ] All 18 criteria checked (Criterion 11 conditional on `## Feasibility` section presence; Criterion 12 skipped only when the brief's Environment section declares `legacy_brief: true` — otherwise missing `provides:` / `requires:` blocks are a BLOCKING `dep_graph` violation; Criterion 13 skipped silently when `Base Branch:` is absent from `## Configuration`; Criterion 14 skipped silently when `## Executable Acceptance` is absent — when present with `cmd:`/bare bullets, emit a LOW `executable_acceptance` issue listing them; Criterion 15 skipped silently when the brief asserts no canonical-source claim — when present, verify the brief's restated values against the cited source and emit a `canonical_source` finding on mismatch; Criterion 16 skipped under the same `legacy_brief: true` / no-contract-blocks gate as Criterion 12 — when present, verify every subtask declares `lanes:`, every lane path resolves, and no same-wave lane overlap exists, emitting a `lane_overlap` finding on violation; Criterion 17 skipped silently when no `--- APPLICABLE RULES ---` block lists a rule — when present, emit a HIGH `rule_conformance` finding for a contradicted `must` rule (17a) or a checkable `must` rule with no `- rule: <id>` bullet (17b); Criterion 18 skipped silently when the brief modifies no existing script — when it does, emit a `touched_file_invariants` finding for a missing section (18a, HIGH), an uncovered script (18b) or an ungrounded entry (18c))
 - [ ] Every file path in File Impact Map verified via Read or Glob
 - [ ] CLAUDE.md patterns compared against brief approach
 - [ ] Dependency graph traced for cycles

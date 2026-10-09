@@ -664,7 +664,8 @@ n_bk_ec="$(ls "$Ec"/.gitignore.backup.* 2>/dev/null | wc -l | tr -d ' ')"
 # Fractional `sleep` is a GNU/BSD extension, not POSIX, so it is PROBED once rather than assumed —
 # a shell without it falls back to whole seconds with a proportionally smaller cap, never to a
 # spin that would exhaust the bound instantly and fail spuriously.
-if sleep 0.05 2>/dev/null; then gate_unit=0.05; gate_max=1200; else gate_unit=1; gate_max=60; fi
+if sleep 0.05 2>/dev/null; then   # fixed-sleep-ok: capability probe (does this sleep take fractions?), not a wait
+  gate_unit=0.05; gate_max=1200; else gate_unit=1; gate_max=60; fi
 Ex="$(newgit https://github.com/acme/widget.git)"
 printf '# junk\n.claude/\n' > "$Ex/.gitignore"
 ex_pristine="$(sum "$Ex/.gitignore")"

@@ -718,6 +718,8 @@ The contract-conformance result, the benchmark result, and the ground-truth resu
    | `ground_truth_checks_passed` | `ground_truth.checks_passed` |
    | `ground_truth_pass_rate` (string "M/N") | the runner's `pass_rate` |
 
+   **Findings-per-item fields (iq02 IQ01, additive, same value in both shapes, same names):** `heal_first_decision` (the review-and-fix loop's first `iter_decision` — `PASS` / `FAIL` / `NEEDS_HUMAN`) and `heal_new_findings` (integer — `category: new` `review.issues` summed over every iteration) go on `SUPERVISOR_RESULT` AND on the flat `session_end` line; both are `null` when `heal_loop_ran == false`. They are REPORT-ONLY: never read by the loop, never change `heal_decision` (whose enum is unchanged), and are what `/insights` turns into the first-pass PASS rate and findings per item.
+
    See the `session_end` log line in `skills/state-management/SKILL.md` §"Session Logging (moved from agents/supervisor.md)" for the exact shape. The flat fields are additive — a `session_end` event without them remains valid (a reader treats absent fields as "not reported this session"; for the `ground_truth_*` fields a reader treats absent as `skipped`).
 
 ---
@@ -799,6 +801,8 @@ always execute.
         heal_loop_ran: false
         heal_iterations: null
         heal_decision: null
+        heal_first_decision: null
+        heal_new_findings: null
         heal_fixable_issues_fixed: 0
         heal_remaining_issues: 0
         error: "base_branch_mismatch: expected ${mismatch.expected}, found ${mismatch.actual} (reason: ${mismatch.reason})"
@@ -821,6 +825,8 @@ always execute.
 ```
 heal_iterations = 0
 heal_fixable_issues_fixed = 0
+heal_first_decision = null         # findings-per-item metric (iq02 IQ01): the FIRST iteration's iter_decision
+heal_new_findings = 0               # findings-per-item metric: total category=new review.issues across ALL iterations
 max_heal_iterations = {--heal-iterations value, default 3}
 heal_dismissed = []                 # ITEMISED {finding, reason, source, severity} list (dismissed-findings-01) — review.issues
                                      # entries excluded from fixable_issues each iteration (pre_existing / nit / drift /
@@ -886,6 +892,10 @@ while heal_iterations < max_heal_iterations:
   iter_decision = review.decision
   if rule_findings != [] and iter_decision == PASS:
     iter_decision = FAIL
+  # findings-per-item metric (REPORT-ONLY — never read by any branch below): copy, do not compute.
+  if heal_first_decision == null:
+    heal_first_decision = iter_decision          # PASS | FAIL | NEEDS_HUMAN
+  heal_new_findings += count(review.issues where category=new)   # every severity
 
   # dismissed-findings-01: itemise EVERY review.issues entry excluded from the fix-time filter
   # (the SAME filter the FAIL branch's `fixable_issues` computes below — new+BLOCKING/HIGH). Computed

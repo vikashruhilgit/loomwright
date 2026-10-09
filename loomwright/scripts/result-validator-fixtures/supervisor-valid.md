@@ -14,6 +14,8 @@ SUPERVISOR_RESULT:
   heal_decision: PASS
   heal_fixable_issues_fixed: 4
   heal_remaining_issues: 0
+  heal_first_decision: FAIL
+  heal_new_findings: 4
   error: null
   summary: "3/3 subtasks completed, 4 blocking issues auto-fixed across 2 heal iterations."
   cost_profile: cheap

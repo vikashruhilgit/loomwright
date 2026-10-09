@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# run-self-tests: early
+# (ci-local.sh early phase: deterministic, 9 s alone on 2026-10-09 — a stale --help golden fails the run in seconds)
 # test-automate-helpers-dispatch.sh — self-tests for the automate-helpers.sh family-file
 # split (parallel-automate/11). Runs against the REAL dispatcher (never the single-file
 # bundle test-automate-helpers.sh uses), in temp dirs only. UNCOUNTED by the doc-currency gate.

@@ -382,8 +382,15 @@ reap_fixture_pids() {
     sleep 0.25; i=$((i + 1))
   done
   for pid in $pids; do kill_if_fixture "$pid" KILL; done
-  sleep 0.25
-  pids="$(fixture_pids "$root")" || return 1
+  # A KILLed, reparented process can stay listed until it is reaped: poll the table (clock-bounded,
+  # 10 s) until it clears, instead of reading it once after a fixed 0.25 s (iq02 T07). Whatever is
+  # still listed at the bound is REAP_LEFT, which (p6) asserts empty.
+  local end=$(( $(date +%s) + 10 ))
+  while :; do
+    pids="$(fixture_pids "$root")" || return 1
+    [ -n "$pids" ] && [ "$(date +%s)" -lt "$end" ] || break
+    sleep 0.1
+  done
   REAP_LEFT="$(printf '%s\n' "$pids" | tr '\n' ' ' | sed 's/ *$//')"
   return 0
 }

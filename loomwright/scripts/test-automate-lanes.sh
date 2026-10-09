@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/wait-lib.sh"   # bounded condition waits (iq02 T07)
 # test-automate-lanes.sh — hermetic self-tests for automate-lanes.sh (parallel-automate/05, lane
 # lifecycle). Fixture: a bare fake origin + a "primary" clone of it holding two items and a parent run
 # file, all under one mktemp dir. `claude` is a PATH stub that records argv / env / stdin and prints
@@ -373,7 +374,10 @@ cat > "$T/automate-merge-watch.sh" <<'EOF'
 trap 'kill $! 2>/dev/null; exit 0' TERM; sleep 300 & wait $!
 EOF
 bash "$T/automate-merge-watch.sh" rf item https://github.com/o/r/pull/9 & WPID=$!; BG_PIDS="$BG_PIDS $WPID"
-sleep 0.3
+# Wait until the watcher's own command line is visible to ps (lane-remove's _lanes_live_watchers
+# matches it) — a fixed sleep raced the exec under load (iq02 T07).
+_n8_up() { case "$(ps -o command= -p "$WPID" 2>/dev/null)" in *automate-merge-watch*pull/9*) return 0 ;; esac; return 1; }
+wait_for_cmd 15 _n8_up || bad "N8 setup: the merge-watch stub (pid $WPID) never showed its command line in ps" "within 15 s"
 printf 'pid\t%s\npr_url\thttps://github.com/o/r/pull/9\nstarted\tx\n' "$WPID" > "$L4/.supervisor/automate/$PARENT-L4.merge-watch"
 out="$(run lane-remove "$L4")"; has "N8 live merge watcher refused" "$out" "live merge watcher (pid $WPID"
 printf 'pid\t%s\npr_url\thttps://github.com/o/r/pull/77\n' "$WPID" > "$L4/.supervisor/automate/$PARENT-L4.merge-watch"
@@ -498,8 +502,22 @@ check "S3 no keep-awake process started without --keep-awake" "$(wc -l < "$CAFF_
 hasnt "S4 other OS: no suggestion" "$(LOOMWRIGHT_LANES_UNAME=Linux run lane-status "$RF2")" "caffeinate -i -w"
 out="$(STUB_CAFF_HELD=1 run lane-status "$RF2")"
 check "S5 holder seen ⇒ held, no suggestion" "$(printf '%s' "$out" | grep -c 'keep-awake: held'):$(printf '%s' "$out" | grep -c 'suggestion')" "1:0"
-out="$(run lane-status "$RF2" --keep-awake)"; sleep 0.3
+out="$(run lane-status "$RF2" --keep-awake)"
+# The stub is started in the background: wait for its write, never a fixed sleep (the S6 flake, iq02 T07).
+wait_for_file_content "$CAFF_LOG" "caffeinate -i -w 4242" 15 \
+  || bad "S6 wait: '$CAFF_LOG' never received 'caffeinate -i -w 4242'" "within 15 s"
 has "S6 --keep-awake starts it, tied to the coordinator" "$(cat "$CAFF_LOG")" "caffeinate -i -w 4242"
+# S6 controls: a stub that writes 0.5 s late still passes (the old 0.3 s sleep lost this race every
+# time); a stub that never writes makes the wait FAIL, naming the condition.
+printf '%s\n' '#!/usr/bin/env bash' 'sleep 0.5   # fixed-sleep-ok: the delayed-writer fixture itself' 'echo "caffeinate $*" >> "$CAFF_LOG"' > "$T/caff-slow"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$T/caff-mute"
+chmod +x "$T/caff-slow" "$T/caff-mute"
+: > "$CAFF_LOG"; LOOMWRIGHT_LANES_CAFFEINATE="$T/caff-slow" run lane-status "$RF2" --keep-awake >/dev/null
+if wait_for_file_content "$CAFF_LOG" "caffeinate -i -w 4242" 15; then ok "S6c a 0.5 s-late keep-awake write is still seen"
+else bad "S6c delayed stub" "the wait missed a write that arrived 0.5 s late"; fi
+: > "$CAFF_LOG"; LOOMWRIGHT_LANES_CAFFEINATE="$T/caff-mute" run lane-status "$RF2" --keep-awake >/dev/null
+werr="$(wait_for_file_content "$CAFF_LOG" "caffeinate -i -w 4242" 1 2>&1)"; wrc=$?
+check "S6d a stub that never writes ⇒ the wait fails, naming the condition" "$wrc:$(case "$werr" in *"waiting for: 'caffeinate -i -w 4242' in $CAFF_LOG"*) echo named ;; esac)" "1:named"
 has "S6b and says so" "$out" "keep-awake: started (opt-in --keep-awake)"
 
 # ---- T: --watch, lane-feed ----------------------------------------------------------------------------
@@ -1122,17 +1140,19 @@ has "Z-F11j the parent run file records the abandon with the real state" "$(cat 
 AA_TAIL="tail -n \\+1 -f $(ere "$LR2/L6.stream.log")"
 aa_feed() { # <signal> — prints "<seen|unseen> <none|survivor>"; kills any survivor afterwards
   local sig="$1" fp i=0 seen=unseen
-  if [ "$sig" = INT ]; then   # an async child starts with SIGINT ignored — reset it, as a terminal's Ctrl-C would find it
-    python3 -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])' \
-      bash "$S" lane-feed "$L6" --follow > "$T/aa-follow.$sig" 2>&1 & fp=$!
-  else
+  # An async child starts with SIGINT ignored, and a suite launched under `nohup` (a detached
+  # ci-local / harness run) passes SIGHUP down ignored too — and bash cannot trap a signal that was
+  # ignored on entry, so HUP then never reached lane-feed's trap and AA-F12b read "survivor" 50/50
+  # (iq02 T07). Reset BOTH to default before exec, as a terminal would deliver them.
+  python3 -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); signal.signal(signal.SIGHUP, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])' \
     bash "$S" lane-feed "$L6" --follow > "$T/aa-follow.$sig" 2>&1 & fp=$!
-  fi
-  while [ "$i" -lt 50 ]; do pgrep -f "$AA_TAIL" >/dev/null 2>&1 && { seen=seen; break; }; sleep 0.1; i=$((i + 1)); done
-  sleep 0.3; kill -"$sig" "$fp" 2>/dev/null
-  i=0; while kill -0 "$fp" 2>/dev/null && [ "$i" -lt 30 ]; do sleep 0.1; i=$((i + 1)); done
+  # Clock-bounded (wait-lib), not count-bounded: AA-F12b went red under a loaded pool (iq02 T07).
+  wait_for_cmd 15 pgrep -f "$AA_TAIL" 2>/dev/null && seen=seen
+  sleep 0.3; kill -"$sig" "$fp" 2>/dev/null   # fixed-sleep-ok: settle — the pipeline's traps installed before the signal (too short ⇒ a different, earlier-kill path is tested)
+  wait_for_pid_gone "$fp" 10 2>/dev/null
   kill -KILL "$fp" 2>/dev/null; wait "$fp" 2>/dev/null   # bounded: a lane-feed that ignores the signal never hangs the suite
-  i=0; while pgrep -f "$AA_TAIL" >/dev/null 2>&1 && [ "$i" -lt 30 ]; do sleep 0.1; i=$((i + 1)); done
+  _aa_no_tail() { ! pgrep -f "$AA_TAIL" >/dev/null 2>&1; }
+  wait_for_cmd 10 _aa_no_tail 2>/dev/null
   if pgrep -f "$AA_TAIL" >/dev/null 2>&1; then echo "$seen survivor"; pkill -TERM -f "$AA_TAIL" 2>/dev/null; else echo "$seen none"; fi
 }
 check "AA-F12a TERM to lane-feed --follow alone ⇒ its tail pipeline is gone (and the escaped pattern did see it)" "$(aa_feed TERM)" "seen none"
@@ -1140,7 +1160,12 @@ check "AA-F12b HUP ⇒ the same" "$(aa_feed HUP)" "seen none"
 check "AA-F12c INT ⇒ the same" "$(aa_feed INT)" "seen none"
 has "AA-F12d the follow still narrates" "$(cat "$T/aa-follow.TERM")" "[spawn] loomwright:worker"
 check "AA-F12e the unescaped pattern T8 used never matched a live tail (the root cause, not the path)" \
-  "$(bash "$S" lane-feed "$L6" --follow >/dev/null 2>&1 & fp=$!; sleep 1; pgrep -f "tail -n +1 -f $LR2/L6.stream.log" >/dev/null 2>&1 && echo matched || echo unmatched; kill "$fp" 2>/dev/null; wait "$fp" 2>/dev/null)" unmatched
+  "$(bash "$S" lane-feed "$L6" --follow >/dev/null 2>&1 & fp=$!
+     # first prove the tail IS up (the escaped pattern sees it), so `unmatched` cannot pass on a slow start
+     if wait_for_cmd 15 pgrep -f "$AA_TAIL" 2>/dev/null; then
+       pgrep -f "tail -n +1 -f $LR2/L6.stream.log" >/dev/null 2>&1 && echo matched || echo unmatched
+     else echo "tail-never-up"; fi
+     kill "$fp" 2>/dev/null; wait "$fp" 2>/dev/null; pkill -TERM -f "$AA_TAIL" 2>/dev/null)" unmatched
 
 # AA fixture: one lane (L1) of a fresh parent run, its run file at the ready_for_release park.
 PARENT6=automate-2026-10-08-110000; RF6="$P/.supervisor/automate/$PARENT6.md"; LR6="$T/work/primary-lanes/$PARENT6"

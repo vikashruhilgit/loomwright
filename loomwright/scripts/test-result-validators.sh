@@ -917,6 +917,7 @@ mk worker-malformed-block.md <<'EOF'
 - files_modified: [a.py, b.py
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - summary: broken flow sequence above
 EOF
 run_v "$V_WORKER" "$F"
@@ -930,6 +931,7 @@ mk worker-missing-key.md <<'EOF'
 - files_modified: [a.py]
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 EOF
 run_v "$V_WORKER" "$F"
 assert_fail "worker: MISSING required key (summary) [rule 1]" "missing required field(s): summary"
@@ -942,6 +944,7 @@ mk worker-null-key.md <<'EOF'
 - files_modified: [a.py]
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - summary:
 EOF
 run_v "$V_WORKER" "$F"
@@ -956,6 +959,7 @@ mk worker-no-files.md <<'EOF'
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - summary: claims completion but touched nothing
 EOF
 run_v "$V_WORKER" "$F"
@@ -977,6 +981,7 @@ mk worker-no-changes.md <<'EOF'
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - no_changes: true
 - error: none
 - summary: Read-only subtask — counted 42 files under src/; changed nothing, as instructed.
@@ -993,6 +998,7 @@ mk worker-no-changes-false.md <<'EOF'
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - no_changes: false
 - summary: claims completion, touched nothing, and says so is NOT intended
 EOF
@@ -1007,6 +1013,7 @@ mk worker-no-changes-contradiction.md <<'EOF'
 - files_modified: [a.py]
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - no_changes: true
 - summary: says it changed nothing but lists a modified file
 EOF
@@ -1022,6 +1029,7 @@ mk worker-no-changes-contradiction-failed.md <<'EOF'
 - files_created: [b.py]
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - no_changes: true
 - error: build broke
 - summary: contradiction is rejected at ANY status, not only completed
@@ -1037,6 +1045,7 @@ mk worker-no-changes-nonbool.md <<'EOF'
 - files_modified: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - no_changes: yes
 - summary: non-boolean spelling must be told, not bounced by rule 2
 EOF
@@ -1051,6 +1060,7 @@ mk worker-no-changes-null.md <<'EOF'
 - files_modified: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - no_changes:
 - summary: explicit null is not false
 EOF
@@ -1065,6 +1075,7 @@ mk worker-no-changes-gap.md <<'EOF'
 - files_modified: []
 - outputs_verified: [{kind: file, path: src/x.ts, status: missing}]
 - outputs_gap: "src/x.ts"
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - no_changes: true
 - summary: no_changes exempts rule 2 only — the outputs_gap invariant still bites
 EOF
@@ -1079,6 +1090,7 @@ mk worker-no-changes-no-summary-file.md <<'EOF'
 - files_modified: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - no_changes: true
 - summary: no_changes exempts rule 2 only — rule 3 still needs summary evidence
 EOF
@@ -1103,6 +1115,7 @@ mk worker-delete-only.md <<'EOF'
 - files_deleted: [src/legacy/old_auth.ts]
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - error: none
 - summary: Delete-only subtask — removed the dead legacy auth module, as instructed.
 EOF
@@ -1119,6 +1132,7 @@ mk worker-delete-none-placeholder.md <<'EOF'
 - files_deleted: none
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - summary: the `none` placeholder is not a deletion — rule 2 still applies
 EOF
 run_v "$V_WORKER" "$F"
@@ -1134,6 +1148,7 @@ mk worker-no-changes-deleted-contradiction.md <<'EOF'
 - files_deleted: [src/legacy/old_auth.ts]
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - no_changes: true
 - summary: says it changed nothing but lists a deleted file
 EOF
@@ -1150,6 +1165,7 @@ mk worker-no-changes-deleted-none.md <<'EOF'
 - files_deleted: none
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - no_changes: true
 - summary: Read-only subtask — the default `files_deleted: none` is not a contradiction.
 EOF
@@ -1169,6 +1185,7 @@ Could not write the summary file (read-only worktree): summary_file_write_failed
 - files_modified: [a.py]
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - summary: summary_file_write_failed recorded in place of the summary file
 EOF
 run_v "$V_WORKER" "$F" "$BARE"
@@ -1182,6 +1199,7 @@ mk worker-unresolved-error.md <<'EOF'
 - files_modified: [a.py]
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - error: the migration step still throws on startup
 - summary: mostly done
 EOF
@@ -1196,6 +1214,7 @@ mk worker-failed-no-error.md <<'EOF'
 - files_modified: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - summary: it did not work
 EOF
 run_v "$V_WORKER" "$F"
@@ -1213,6 +1232,7 @@ Cleaning the tree before handing off:
 - files_modified: [a.py]
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - summary: reset the tree
 EOF
 run_v "$V_WORKER" "$F"
@@ -1238,6 +1258,7 @@ mk worker-v2-missing-verified.md <<'EOF'
 - status: completed
 - files_modified: [a.py]
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - summary: outputs_verified is absent
 EOF
 run_v "$V_WORKER" "$F"
@@ -1263,6 +1284,7 @@ mk worker-bad-entry.md <<'EOF'
 - files_modified: [a.py]
 - outputs_verified: [{kind: file, status: present}]
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - summary: the entry has no path
 EOF
 run_v "$V_WORKER" "$F"
@@ -1277,6 +1299,7 @@ mk worker-bad-kind.md <<'EOF'
 - files_modified: [a.py]
 - outputs_verified: [{kind: module, path: a.py, status: present}]
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - summary: kind is out of enum
 EOF
 run_v "$V_WORKER" "$F"
@@ -1291,6 +1314,7 @@ mk worker-bad-entry-status.md <<'EOF'
 - files_modified: [a.py]
 - outputs_verified: [{kind: file, path: a.py, status: verified}]
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - summary: entry status is out of enum
 EOF
 run_v "$V_WORKER" "$F"
@@ -1305,6 +1329,7 @@ mk worker-gap-invariant.md <<'EOF'
 - files_modified: [a.py]
 - outputs_verified: [{kind: file, path: b.py, status: missing}]
 - outputs_gap: "b.py"
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - summary: claims completed while an output is missing
 EOF
 run_v "$V_WORKER" "$F"
@@ -1319,6 +1344,7 @@ mk worker-gap-partial.md <<'EOF'
 - files_modified: [a.py]
 - outputs_verified: [{kind: file, path: b.py, status: missing}]
 - outputs_gap: "b.py"
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - summary: correctly reports partial alongside a non-empty gap
 EOF
 run_v "$V_WORKER" "$F"
@@ -1339,6 +1365,7 @@ mk worker-null-verified.md <<'EOF'
 - files_modified: [a.py]
 - outputs_verified: null
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - summary: outputs_verified is EXPLICITLY null, not absent
 EOF
 run_v "$V_WORKER" "$F"
@@ -1353,6 +1380,7 @@ mk worker-null-gap.md <<'EOF'
 - files_modified: [a.py]
 - outputs_verified: []
 - outputs_gap: null
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - summary: outputs_gap is EXPLICITLY null, which used to satisfy "(string)"
 EOF
 run_v "$V_WORKER" "$F"
@@ -1368,6 +1396,7 @@ mk worker-null-verified-bad-entry.md <<'EOF'
 - files_modified: [a.py]
 - outputs_verified:
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - summary: empty-after-colon is one of the five null spellings
 EOF
 run_v "$V_WORKER" "$F"
@@ -1399,6 +1428,7 @@ mk worker-partial-error.md <<'EOF'
 - files_modified: [a.py]
 - outputs_verified: [{kind: symbol, path: a.py, name: Foo, status: missing}]
 - outputs_gap: "a.py:Foo"
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - error: Tests fail — the rotation test expects a cookie the HttpOnly flag hides
 - summary: partial legitimately carries an outstanding error
 EOF
@@ -1415,6 +1445,7 @@ mk worker-blank-after-heading.md <<'EOF'
 - files_modified: [a.py]
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - summary: a blank line after the heading is conventional markdown
 EOF
 run_v "$V_WORKER" "$F"
@@ -1446,6 +1477,7 @@ mk worker-c7-rule2-comment.md <<'EOF'
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - error: none
 - summary: claims completion having touched no files
 EOF
@@ -1462,6 +1494,7 @@ mk worker-c7-rule2-control.md <<'EOF'
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - error: none
 - summary: claims completion having touched no files
 EOF
@@ -1479,6 +1512,7 @@ mk worker-c7-rule4-comment.md <<'EOF'
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - error: the migration step never completed
 - summary: completed with an unresolved error still recorded
 EOF
@@ -1495,6 +1529,7 @@ mk worker-c7-rule4-control.md <<'EOF'
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - error: the migration step never completed
 - summary: completed with an unresolved error still recorded
 EOF
@@ -1512,6 +1547,7 @@ mk worker-c7-rule8-comment.md <<'EOF'
 - files_created: []
 - outputs_verified: [{kind: file, path: a.py, status: present}]
 - outputs_gap: "src/x.py:Foo"
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - error: none
 - summary: completed while a promised output is still missing
 EOF
@@ -1528,6 +1564,7 @@ mk worker-c7-rule8-control.md <<'EOF'
 - files_created: []
 - outputs_verified: [{kind: file, path: a.py, status: present}]
 - outputs_gap: "src/x.py:Foo"
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - error: none
 - summary: completed while a promised output is still missing
 EOF
@@ -1550,6 +1587,7 @@ mk worker-c7-spurious.md <<'EOF'
       path: a.py
       status: present  # verified on disk
 - outputs_gap: ""  # nothing missing
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - error: none
 - summary: "a conforming block that annotates itself — including a # inside quotes"
 EOF
@@ -1565,6 +1603,7 @@ mk worker-c7-hash-in-value.md <<'EOF'
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - error: none
 - summary: "closes #118 — the '#' must survive inside a quoted scalar"
 EOF
@@ -1593,6 +1632,7 @@ mk worker-f8-rule4-blank-comment.md <<'EOF'
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - summary: an annotated block whose error field follows a blank line and a comment
 
 # addendum from the worker
@@ -1611,6 +1651,7 @@ mk worker-f8-rule4-noblank-comment.md <<'EOF'
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - summary: an annotated block whose error field follows a comment with no blank line
 # addendum from the worker
 - error: the migration step never completed
@@ -1628,6 +1669,7 @@ mk worker-f8-rule4-unbroken.md <<'EOF'
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - summary: the same block with no comment at all
 - error: the migration step never completed
 EOF
@@ -2095,7 +2137,7 @@ run_v_cwd "$V_EXECUTE" "$F" "$WT_PROJ" "$WT_PARENT"
 assert_pass "execute: relative ../{project}-{subtask} path accepted (absolute demand dropped) [rule 4]"
 
 # ── D. supervisor-runner validator ───────────────────────────────────────────
-echo "== D. validate-supervisor-result.py — 13 rules =="
+echo "== D. validate-supervisor-result.py — 14 rules =="
 
 run_v "$V_SUPERVISOR" "$FIXDIR/supervisor-valid.md"
 assert_pass "supervisor: valid block (committed fixture)"
@@ -2313,6 +2355,43 @@ cat_mk sup-ran-null-iters.md sup-ran-base <<'EOF'
 EOF
 run_v "$V_SUPERVISOR" "$F"
 assert_fail "supervisor: EXPLICIT-NULL heal_iterations with heal_loop_ran=true [rule 7]" "(rule 7)"
+
+# ── rule 14: findings-per-item metric (iq02 IQ01) ──
+cat_mk sup-metric-ok.md sup-ran-base <<'EOF'
+  heal_iterations: 1
+  heal_decision: PASS
+  heal_fixable_issues_fixed: 2
+  heal_remaining_issues: 0
+  heal_first_decision: FAIL
+  heal_new_findings: 3
+  summary: first iteration FAILed with 3 new findings, healed to PASS
+EOF
+run_v "$V_SUPERVISOR" "$F"
+assert_pass "supervisor: heal_first_decision=FAIL + heal_new_findings=3 [rule 14]"
+
+cat_mk sup-metric-bad-enum.md sup-ran-base <<'EOF'
+  heal_iterations: 1
+  heal_decision: PASS
+  heal_fixable_issues_fixed: 2
+  heal_remaining_issues: 0
+  heal_first_decision: ESCALATED
+  heal_new_findings: 3
+  summary: ESCALATED is heal_decision's vocabulary, not the first iteration's
+EOF
+run_v "$V_SUPERVISOR" "$F"
+assert_fail "supervisor: heal_first_decision=ESCALATED [rule 14]" "heal_first_decision must be one of"
+
+cat_mk sup-metric-neg.md sup-ran-base <<'EOF'
+  heal_iterations: 1
+  heal_decision: PASS
+  heal_fixable_issues_fixed: 2
+  heal_remaining_issues: 0
+  heal_first_decision: PASS
+  heal_new_findings: -1
+  summary: negative findings count
+EOF
+run_v "$V_SUPERVISOR" "$F"
+assert_fail "supervisor: heal_new_findings=-1 [rule 14]" "heal_new_findings must be a non-negative"
 
 cat_mk sup-pass-remaining.md sup-ran-base <<'EOF'
   heal_iterations: 3
@@ -3439,6 +3518,7 @@ mk worker-r9-absent.md <<'EOF'
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - summary: out_of_lane absent entirely — optional/additive, must still validate
 EOF
 run_v "$V_WORKER" "$F"
@@ -3453,6 +3533,7 @@ mk worker-r9-empty.md <<'EOF'
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - out_of_lane: []
 - summary: explicit empty list — the in-lane case
 EOF
@@ -3468,6 +3549,7 @@ mk worker-r9-populated.md <<'EOF'
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - out_of_lane: [shared/types.ts]
 - summary: REPORT-ONLY — a populated out_of_lane must NOT flip status away from completed
 EOF
@@ -3483,6 +3565,7 @@ mk worker-r9-nonlist.md <<'EOF'
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - out_of_lane: "shared/types.ts"
 - summary: present but a bare string, not an array
 EOF
@@ -3498,6 +3581,7 @@ mk worker-r9-emptystring.md <<'EOF'
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - out_of_lane: ["", "shared/types.ts"]
 - summary: present list containing an empty-string entry
 EOF
@@ -3519,6 +3603,7 @@ mk worker-r9-null.md <<'EOF'
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - out_of_lane: null
 - summary: explicit null is PRESENT with a None value — rejected, unlike an omitted key
 EOF
@@ -3544,6 +3629,7 @@ mk worker-r9-nonstring-item.md <<'EOF'
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - out_of_lane: [123, "shared/types.ts"]
 - summary: 123 normalizes to the string "123" on this carrier — a valid non-empty path string
 EOF
@@ -3569,6 +3655,7 @@ mk worker-r10-absent.md <<'EOF'
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - summary: deviations absent entirely — optional/additive, must still validate
 EOF
 run_v "$V_WORKER" "$F"
@@ -3583,6 +3670,7 @@ mk worker-r10-empty.md <<'EOF'
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - deviations: []
 - summary: explicit empty list — nothing to report
 EOF
@@ -3598,6 +3686,7 @@ mk worker-r10-prefixed.md <<'EOF'
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - deviations: ["plan: skipped migration down-direction — brief did not ask; flagged open", "edge: empty CSV upload — treated as 0 rows, not an error", "open: retry backoff — chose exponential, brief did not specify", "test: audit-log format — assertion wrong: asserted the pre-change format"]
 - summary: four correctly-prefixed entries — one per kind
 EOF
@@ -3613,6 +3702,7 @@ mk worker-r10-unprefixed.md <<'EOF'
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - deviations: ["skipped the migration"]
 - summary: an unprefixed entry — read as other: by consumers, never rejected for lacking a prefix
 EOF
@@ -3628,6 +3718,7 @@ mk worker-r10-null.md <<'EOF'
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - deviations: null
 - summary: explicit null is PRESENT with a None value — rejected, unlike an omitted key
 EOF
@@ -3643,6 +3734,7 @@ mk worker-r10-nonlist.md <<'EOF'
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - deviations: "plan: x"
 - summary: present but a bare string, not an array
 EOF
@@ -3658,6 +3750,7 @@ mk worker-r10-emptystring.md <<'EOF'
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - deviations: [""]
 - summary: present list containing an empty-string entry
 EOF
@@ -3673,6 +3766,7 @@ mk worker-r10-overcount.md <<'EOF'
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - deviations: ["plan: 1", "plan: 2", "plan: 3", "plan: 4", "plan: 5", "plan: 6", "plan: 7", "plan: 8", "plan: 9", "plan: 10", "plan: 11", "plan: 12", "plan: 13"]
 - summary: 13 entries — one over the 12-entry cap
 EOF
@@ -3690,6 +3784,7 @@ mk worker-r10-overlength.md <<EOF
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - deviations: ["$LONG_201"]
 - summary: a 201-character entry — one over the 200-char cap
 EOF
@@ -3742,6 +3837,7 @@ mk worker-r11-absent.md <<'EOF'
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - summary: not_verified absent entirely — optional/additive, must still validate
 EOF
 run_v "$V_WORKER" "$F"
@@ -3756,6 +3852,7 @@ mk worker-r11-empty.md <<'EOF'
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - not_verified: []
 - summary: explicit empty list — nothing unverified (prompt convention prefers omitting the field, but the validator does not reject [])
 EOF
@@ -3771,6 +3868,7 @@ mk worker-r11-valid.md <<'EOF'
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - not_verified: [{surface: "/settings route", reason: "no local runtime"}, {surface: "CLI --dry-run path", reason: "needs a write to a shared service"}]
 - summary: two valid entries, each with non-empty surface and reason
 EOF
@@ -3786,6 +3884,7 @@ mk worker-r11-null.md <<'EOF'
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - not_verified: null
 - summary: explicit null is PRESENT with a None value — rejected, unlike an omitted key
 EOF
@@ -3801,6 +3900,7 @@ mk worker-r11-nonlist.md <<'EOF'
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - not_verified: "no local runtime"
 - summary: present but a bare string, not an array
 EOF
@@ -3816,6 +3916,7 @@ mk worker-r11-missing-reason.md <<'EOF'
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - not_verified: [{surface: "/settings route"}]
 - summary: an entry missing the required reason key
 EOF
@@ -3832,6 +3933,7 @@ mk worker-r11-blank-surface.md <<'EOF'
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - not_verified: [{surface: "", reason: "no local runtime"}]
 - summary: an entry with a blank surface
 EOF
@@ -3862,6 +3964,7 @@ mk worker-r11-nonstring-values.md <<'EOF'
 - files_created: []
 - outputs_verified: []
 - outputs_gap: ""
+- self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
 - not_verified: [{surface: 42, reason: true}]
 - summary: surface/reason LOOK non-string but normalize to strings "42"/"true" on this carrier
 EOF
@@ -3903,6 +4006,106 @@ assert_pass "worker: rule 11 mutation control — with the required-key check de
 # produces the SAME "accepted" result either way, which would make a mutation
 # control here vacuously pass without proving anything real. Recording that
 # reasoning here rather than constructing a control that cannot fail.
+
+# ── rule 13: self_review — CONDITIONALLY REQUIRED (implementation-quality/02 Part IQ01) ──
+# A completed/partial v2 block without self_review is blocked with a reason that
+# spells out the exact shape (a block costs a runtime continuation). RED ON BASE:
+# before rule 13 the first case below was accepted.
+R13_HEAD='## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []'
+r13() {  # r13 <fixture-name> <status line> <outputs_gap> <extra lines (may be empty)>
+  F="$TMPROOT/$1"
+  printf '%s\n- %s\n- outputs_gap: %s\n%s- summary: rule 13 fixture\n' "$R13_HEAD" "$2" "$3" "$4" > "$F"
+}
+R13_FULL='- self_review: [{part: checklist, result: held, evidence: "walked"}, {part: repro, result: fixed, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim changed"}, {part: invariants, result: held, evidence: "kept"}]
+'
+r13 worker-r13-absent-completed.md "status: completed" '""' ""
+R13_ABSENT_FILE="$F"
+run_v "$V_WORKER" "$F"
+assert_fail "worker: rule 13 — completed v2 block WITHOUT self_review is blocked (red on base)" "requires self_review"
+assert_fail "worker: rule 13 — the block reason spells out the exact entry shape" "part in checklist|repro|sweep|invariants, result in held|fixed|n/a"
+r13 worker-r13-absent-partial.md "status: partial" '"a.py:Foo"' ""
+run_v "$V_WORKER" "$F"
+assert_fail "worker: rule 13 — partial v2 block WITHOUT self_review is blocked" "WORKER_RESULT status=partial requires self_review"
+r13 worker-r13-full.md "status: completed" '""' "$R13_FULL"
+run_v "$V_WORKER" "$F"
+assert_pass "worker: rule 13 — all four parts with valid result/evidence is accepted"
+r13 worker-r13-failed-absent.md "status: failed" '""' "- error: build crashed
+"
+run_v "$V_WORKER" "$F"
+assert_pass "worker: rule 13 — status=failed without self_review is EXEMPT (nothing reviewed)"
+r13 worker-r13-failed-malformed.md "status: failed" '""' "- error: build crashed
+- self_review: [{part: checklist, result: maybe, evidence: x}]
+"
+run_v "$V_WORKER" "$F"
+assert_fail "worker: rule 13 — a PRESENT self_review is shape-checked even when exempt (failed)" "self_review must be"
+F="$TMPROOT/worker-r13-nochanges.md"
+printf '%s\n' '## WORKER_RESULT' '- schema_version: 2' '- task_id: st1' '- status: completed' '- files_modified: []' '- files_created: []' '- files_deleted: none' '- no_changes: true' '- outputs_verified: []' '- outputs_gap: ""' '- summary: counted 3 files; changed nothing' > "$F"
+run_v "$V_WORKER" "$F"
+assert_pass "worker: rule 13 — no_changes: true without self_review is EXEMPT (no diff to review)"
+r13 worker-r13-missing-part.md "status: completed" '""' '- self_review: [{part: checklist, result: held, evidence: a}, {part: repro, result: held, evidence: b}, {part: sweep, result: held, evidence: c}]
+'
+R13_MISSING_PART_FILE="$F"
+run_v "$V_WORKER" "$F"
+assert_fail "worker: rule 13 — a part never recorded (invariants) is blocked, naming it" "missing part(s) invariants"
+r13 worker-r13-bad-result.md "status: completed" '""' '- self_review: [{part: checklist, result: ok, evidence: a}, {part: repro, result: held, evidence: b}, {part: sweep, result: held, evidence: c}, {part: invariants, result: held, evidence: d}]
+'
+run_v "$V_WORKER" "$F"
+assert_fail "worker: rule 13 — result outside held|fixed|n/a is blocked" "self_review must be"
+r13 worker-r13-bad-part.md "status: completed" '""' '- self_review: [{part: lint, result: held, evidence: a}, {part: checklist, result: held, evidence: a}, {part: repro, result: held, evidence: b}, {part: sweep, result: held, evidence: c}, {part: invariants, result: held, evidence: d}]
+'
+run_v "$V_WORKER" "$F"
+assert_fail "worker: rule 13 — an unknown part is blocked" "self_review must be"
+r13 worker-r13-empty-evidence.md "status: completed" '""' '- self_review: [{part: checklist, result: held, evidence: ""}, {part: repro, result: held, evidence: b}, {part: sweep, result: held, evidence: c}, {part: invariants, result: held, evidence: d}]
+'
+run_v "$V_WORKER" "$F"
+assert_fail "worker: rule 13 — an empty evidence string is blocked" "self_review must be"
+r13 worker-r13-none-evidence.md "status: completed" '""' '- self_review: [{part: checklist, result: held, evidence: none}, {part: repro, result: held, evidence: b}, {part: sweep, result: held, evidence: c}, {part: invariants, result: held, evidence: d}]
+'
+run_v "$V_WORKER" "$F"
+assert_fail "worker: rule 13 — evidence: none is not evidence (the parser's empty-scalar set)" "not none/null"
+r13 worker-r13-empty-list.md "status: completed" '""' '- self_review: []
+'
+run_v "$V_WORKER" "$F"
+assert_fail "worker: rule 13 — self_review: [] is blocked (an empty review is not a review)" "self_review must be"
+F="$TMPROOT/worker-r13-v1.md"
+printf '%s\n' '## WORKER_RESULT' '- schema_version: 1' '- task_id: st1' '- status: completed' '- files_modified: [a.py]' '- summary: legacy v1 block' > "$F"
+run_v "$V_WORKER" "$F"
+assert_pass "worker: rule 13 [CONTROL] — a legacy v1 block is exempt (version-gated like rules 6/8)"
+
+# MUTATION CONTROLS against COPIES (gated non-empty + differs + parses): drop the
+# presence requirement, then drop the part-coverage check; each case must FLIP.
+for r13_mut in presence coverage; do
+  V_R13="$TMPROOT/r13-$r13_mut/validate-worker-result.py"
+  mkdir -p "$(dirname "$V_R13")"
+  cp "$V_WORKER" "$V_R13"
+  cp "$(dirname "$V_WORKER")/result_block_parser.py" "$(dirname "$V_R13")/result_block_parser.py"
+  python3 - "$V_R13" "$r13_mut" <<'PY'
+import sys
+p, which = sys.argv[1], sys.argv[2]
+src = open(p, encoding="utf-8").read()
+target = {
+    "presence": '        emit(False, REASON_SELF_REVIEW_MISSING % status)\n',
+    "coverage": '            emit(False, REASON_SELF_REVIEW_PARTS % ", ".join(missing_parts))\n',
+}[which]
+mutated = src.replace(target, "        pass\n" if which == "presence" else "            pass\n", 1)
+assert mutated != src, "mutation target not found — validator source shape changed"
+open(p, "w", encoding="utf-8").write(mutated)
+PY
+  if [ -s "$V_R13" ] && ! cmp -s "$V_WORKER" "$V_R13" && python3 -m py_compile "$V_R13" 2>/dev/null; then
+    ok "worker: rule 13 mutation control ($r13_mut) — mutant is non-empty, differs and compiles"
+  else
+    no "worker: rule 13 mutation control ($r13_mut) — mutant invalid, cannot be trusted"
+  fi
+done
+run_v "$TMPROOT/r13-presence/validate-worker-result.py" "$R13_ABSENT_FILE"
+assert_pass "worker: rule 13 mutation control — without the presence check the absent case FLIPS to accepted"
+run_v "$TMPROOT/r13-coverage/validate-worker-result.py" "$R13_MISSING_PART_FILE"
+assert_pass "worker: rule 13 mutation control — without the coverage check the missing-part case FLIPS to accepted"
 
 echo "== K. documented SubagentStop decision shape — exact bytes, every validator =="
 # WHY THIS EXISTS. Until 2026-09-21 every validator printed `{"ok": true}` /
