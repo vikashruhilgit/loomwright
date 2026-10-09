@@ -2,8 +2,8 @@
 name: state-management
 description: State file schema, .supervisor/ directory setup, checkpoint and resume protocols. Use when managing Supervisor session state across phases.
 allowed-tools: [Read, Write, Edit, Bash]
-version: "1.5.0"
-lastUpdated: "2026-08-02"
+version: "1.6.0"
+lastUpdated: "2026-10-09"
 ---
 
 # State Management Skill

@@ -8,10 +8,10 @@ Comprehensive index of all skills available in the Loomwright plugin.
 
 | Skill Name | Directory | Agent Consumers | Token Est. | Version | Last Updated |
 |------------|-----------|-----------------|------------|---------|--------------|
-| Supervisor Readiness | `supervisor-readiness/` | Launch Pad (preload) | ~800 | 1.6.0 | 2026-09-26 |
+| Supervisor Readiness | `supervisor-readiness/` | Launch Pad (preload) | ~800 | 1.7.0 | 2026-10-09 |
 | Workflow Management | `workflow-management/` | — (removed outright, no replacement Read — see `agents/supervisor.md` §"Preloaded Skill Routing (4f)") | ~1,200 | 1.2.2 | 2026-09-28 |
-| Async Orchestration | `async-orchestration/` | Supervisor (on-demand Read at Phase 2 PLAN entry, refreshed at Phase 4 FINALIZE entry — deliberately NOT preloaded) | ~1,600 | 1.6.1 | 2026-09-23 |
-| State Management | `state-management/` | Supervisor (on-demand Read at Phase 4.5 entry — deliberately NOT preloaded) | ~1,500 | 1.5.0 | 2026-08-02 |
+| Async Orchestration | `async-orchestration/` | Supervisor (on-demand Read at Phase 2 PLAN entry, refreshed at Phase 4 FINALIZE entry — deliberately NOT preloaded) | ~1,600 | 1.6.2 | 2026-10-09 |
+| State Management | `state-management/` | Supervisor (on-demand Read at Phase 4.5 entry — deliberately NOT preloaded) | ~1,500 | 1.6.0 | 2026-10-09 |
 | Context Summarization | `context-summarization/` | — (removed outright, no replacement Read — see `agents/supervisor.md` §"Preloaded Skill Routing (4f)") | ~600 | 1.0.0 | 2026-03 |
 | Context Setup | `context-setup/` | Launch Pad (preload) | ~500 | 1.1.0 | 2026-08-17 |
 | Claude MD Validation | `claude-md-validation/` | Launch Pad (preload) | ~400 | 1.0.0 | 2026-03 |
@@ -21,9 +21,9 @@ Comprehensive index of all skills available in the Loomwright plugin.
 | Telemetry | `telemetry/` | — (reference, shell-script-driven) | ~600 | 1.0.0 | 2026-04 |
 | Memory Tool | `memory-tool/` | — (reference) | ~500 | 1.0.0 | 2026-05-10 |
 | Autonomous Loop | `autonomous-loop/` | `/autonomous` (slash command, reference) | ~2,800 [^al-tokens] | 1.5.0 | 2026-09-22 |
-| Automate Loop | `automate-loop/` | `/automate` (slash command, reference) | ~3,200 | 1.13.0 | 2026-10-08 |
-| Review Heal | `review-heal/` | `review-pr-runner` (preload), `/review-pr` + Supervisor + `/autonomous` (reference) | ~3,000 | 1.10.0 | 2026-09-30 |
-| Self-Heal Advisory | `self-heal-advisory/` | Supervisor (on-demand Read at Phase 4.5 entry — deliberately NOT preloaded; Part 1 advisory machinery + Part 2 full Phase 4.5 loop protocol) | ~7,000 | 1.9.1 | 2026-10-01 |
+| Automate Loop | `automate-loop/` | `/automate` (slash command, reference) | ~3,200 | 1.14.0 | 2026-10-09 |
+| Review Heal | `review-heal/` | `review-pr-runner` (preload), `/review-pr` + Supervisor + `/autonomous` (reference) | ~3,000 | 1.11.0 | 2026-10-09 |
+| Self-Heal Advisory | `self-heal-advisory/` | Supervisor (on-demand Read at Phase 4.5 entry — deliberately NOT preloaded; Part 1 advisory machinery + Part 2 full Phase 4.5 loop protocol) | ~7,000 | 1.10.0 | 2026-10-09 |
 | Preflight Sync | `preflight-sync/` | Supervisor (on-demand Read at Phase 1.5 entry — deliberately NOT preloaded) | ~1,900 | 1.3.0 | 2026-09-24 |
 | Supervisor Config | `supervisor-config/` | Supervisor (on-demand Read at Phase 0 entry — deliberately NOT preloaded) | ~2,400 | 1.3.0 | 2026-09-22 |
 | PR Postmortem | `pr-postmortem/` | `/pr-postmortem` (slash command, reference) | ~1,400 | 1.3.0 | 2026-06-13 |
@@ -37,7 +37,7 @@ Comprehensive index of all skills available in the Loomwright plugin.
 
 | Skill Name | Directory | Agent Consumers | Token Est. | Version | Last Updated |
 |------------|-----------|-----------------|------------|---------|--------------|
-| Quality Checklist | `quality-checklist/` | Orchestrator (preload), Code Reviewer (preload), QA Strategist (preload), QA Executor (preload) | ~500 | 1.2.0 | 2026-06-27 |
+| Quality Checklist | `quality-checklist/` | Orchestrator (preload), Code Reviewer (preload), QA Strategist (preload), QA Executor (preload) | ~500 | 1.3.0 | 2026-10-09 |
 | Commit | `commit/` | Supervisor (on-demand Read at Phase 4 FINALIZE entry — deliberately NOT preloaded) | ~600 | 1.1.0 | 2026-06 |
 | Pattern Detector | `pattern-detector/` | Code Reviewer (reference) | ~500 | 1.0.0 | 2026-03 |
 | Context7 Lookup | `context7-lookup/` | Launch Pad (preload), Code Reviewer (preload), Red Team Reviewer (preload) | ~300 | 1.0.0 | 2026-03 |
