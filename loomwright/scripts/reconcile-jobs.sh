@@ -5,10 +5,11 @@
 #
 # WHY THIS EXISTS
 # ---------------
-# The brief lifecycle move `in-progress/` -> `done/` is completion-tail step 2,
-# and the originating-requirement stamp is step 2.5 (authority:
-# skills/self-heal-advisory/SKILL.md). Both are PROMPT-INSTRUCTED steps executed
-# by the agent, not code. When the agent dies before reaching them — e.g. a
+# The brief lifecycle move `in-progress/` -> `done/` is completion-tail step 2
+# (authority: skills/self-heal-advisory/SKILL.md; its step 2.5 stamped the
+# originating requirement until automate-followups/37 and now writes nothing).
+# It is a PROMPT-INSTRUCTED step executed by the agent, not code. When the
+# agent dies before reaching it — e.g. a
 # Phase 4.5 reviewer failing with a server error, observed 2026-08-30 on PR #160
 # — the brief is stranded in `in-progress/` even though its PR merged and
 # shipped. Nothing else reconciles that, so the strand is permanent until a
@@ -21,14 +22,14 @@
 # NOT THE FIRST RECONCILER — AND DELIBERATELY DOWNSTREAM OF NOTHING
 # -----------------------------------------------------------------
 # The repo already reconciles the OTHER half. `stamp-requirement-status.sh`
-# (2026-08-04, wired at SessionStart and SubagentStop) closes out step 2.5 by
+# (2026-08-04, wired at SessionStart and SubagentStop) closes out the requirement by
 # keying on a byproduct — a brief landing in `.supervisor/jobs/done/` — for
 # exactly the reason argued above, and its header states the general lesson:
 # prompt-instructed bookkeeping is unreliable.
 #
 # But it reads `.supervisor/jobs/done/` EXCLUSIVELY. A brief stranded in
 # `in-progress/` is therefore invisible to it: the strand does not merely skip
-# step 2, it structurally blocks the existing step-2.5 reconciler from ever
+# step 2, it structurally blocks that existing requirement reconciler from ever
 # firing. This script repairs the move that unblocks it. The two compose and do
 # NOT overlap — this one never stamps a requirement, that one never moves a
 # brief — and both run from the same SessionStart, so a repair here is picked up
@@ -117,8 +118,9 @@
 #                    stay `unknown`, never guessed.
 #   stranded_closed  The source requirement is already stamped done, but the
 #                    brief is still in `in-progress/`. That combination can only
-#                    mean a partially-executed completion tail (step 2.5 ran,
-#                    step 2 did not, or a human stamped it). REPAIRABLE, and the
+#                    mean a post-merge stamp (closeout / reconcile-status) or a
+#                    human stamp with step 2 never run (historically also step
+#                    2.5 running without step 2). REPAIRABLE, and the
 #                    emitted `## Outcome` says the PR was not determinable.
 #   unknown          No offline evidence either way. Reported, NEVER repaired.
 #
@@ -594,9 +596,9 @@ repair() {
   # Consult the requirement for BOTH repairable states, NOT just stranded_closed.
   # classify() checks the automate run file BEFORE is_done(), so a brief can be
   # stranded_merged while its source requirement is ALSO already stamped
-  # done_with_escalation — step 2.5 can stamp without step 2 having moved the
-  # brief (skills/self-heal-advisory/SKILL.md step 3 says so explicitly: "in
-  # done/ when step 2 performed the move; otherwise wherever it remains").
+  # done_with_escalation — a requirement can carry a stamp while step 2 never
+  # moved the brief (historically self-heal-advisory step 2.5 stamped without
+  # it; requirements stamped that way before automate-followups/37 still exist).
   # Gating this on `state` therefore re-created the exact failure it was added to
   # remove: asserting a cleaner result than a file we can already read supports.
   # Only the MESSAGE differs between the arms.

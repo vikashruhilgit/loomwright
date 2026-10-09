@@ -30,7 +30,7 @@
 #       omitted-entirely-when-empty rule; AND a cross-reference sentence exists naming
 #       `agents/supervisor.md` as the actual Sequential/Single-Agent recording site.
 #   (f) skills/self-heal-advisory/SKILL.md step 2 (the step that appends `## Outcome` to the BRIEF,
-#       NOT step 2.5 which stamps the separate REQUIREMENT file) appends the same `## Not verified`
+#       NOT step 2.5, the separate REQUIREMENT close-out step) appends the same `## Not verified`
 #       section to the brief, on both the PASS/loop-skipped and ESCALATED outcomes, omitted when
 #       empty, and states it (not the PR body) is what `/verify` reads.
 #   (g) docs/RESULT_SCHEMAS.md's §EXECUTE_RESULT blockquote states `not_verified` is NOT an

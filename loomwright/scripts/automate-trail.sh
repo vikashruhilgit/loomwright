@@ -1371,7 +1371,9 @@ WTLIST
   fi
   echo "$br"; lines="$lines"$'\n'"$br"
 
-  # ---- 5. requirement stamp (runs 4th; PASS shape — self-heal-advisory tail) -
+  # ---- 5. requirement stamp (runs 4th; the ONLY engine done-stamp writer) ---
+  # This printf IS the block's byte-shape authority; Phase 4.5 writes nothing to
+  # the requirement (automate-followups/37), so the stamp lands only past step 1.
   local sp done_brief="" b ptr
   if [ ! -f "$item" ]; then
     sp="$S requirement $item not found"

@@ -118,6 +118,10 @@
 #      ⇒ clear; gh list failing / gh absent / missing run file ⇒ PARK, exit 0.
 #   K. SKILL text (Part B) — watcher named, §6 step 1 closeout --session-id
 #      before PICK, decision-9 grep clean, commands/automate.md surface.
+#   DS. done stamp only post-merge (automate-followups/37) — a requirement at
+#      `## Status: pending` after Phase 4.5 (its step-2.5 stamp block, if any,
+#      applied) + closeout with the PR OPEN is byte-identical; MERGED ⇒ exactly
+#      one closeout-printf block; the self-heal skill instructs no stamp.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/wait-lib.sh"   # bounded condition waits (iq02 T07)
@@ -1037,7 +1041,9 @@ names="$(git -C "$FX/origin.git" show --name-only --format= "refs/heads/chore/$R
 case "$names" in *src/app.py*) no "L5: source file's local WIP committed into the trail: $names" ;; *"$REQ"*) ok "L5: source-file Queue item not committed; requirement still is" ;; *) no "L5: trail names: $names" ;; esac
 
 echo "== E. evidence-gated stamps: a done claim rides only when its PR merged (decision 2) =="
-# The requirement (and the done/ brief) Phase 4.5 stamps BEFORE any merge. trail-pr
+# A done stamp on the requirement (and the done/ brief's Outcome) that can exist BEFORE
+# any merge — Phase 4.5 wrote one until automate-followups/37; older runs, older
+# installed plugins and hand edits still can. trail-pr
 # must commit such a stamp only when the PR it names reads MERGED; everything else
 # is excluded, named in the one output line, and fails CLOSED.
 stamp_req() { # <path> <status> <pr-line or empty>
@@ -2499,6 +2505,64 @@ ln_o="$(cd "$P" && bash "$H" finalize-empty "$AUTD/other-run.md")"
 ln_o="$(cd "$P" && bash "$H" finalize-empty "$AUTD/par-9-L1.md" 2>/dev/null | head -n1)"
 case "$ln_o" in *"lane clone"*) no "(LN3) the lane's own run was refused: '$ln_o'" ;; *) ok "(LN3) finalize-empty in a lane: its own run is not refused by the lane guard ('$ln_o')" ;; esac
 rm -f "$P/.supervisor/lane.json" "$P/$AUTD/other-run.md" "$P/$AUTD/par-9-L1.md"
+
+echo "== DS. automate-followups/37: a requirement's done stamp is written only by the post-merge closeout =="
+# The fixture mirrors the end state of a sequential `/autonomous` + owned drain whose PR is still
+# OPEN: the requirement at `## Status: pending`, its done brief in jobs/done/ pointing at it (with
+# the `## Outcome` Phase 4.5 writes), the PR stubbed OPEN. Phase 4.5's completion tail is prose, so
+# it is simulated by APPLYING whatever requirement stamp block the self-heal skill's step 2.5
+# instructs (extracted, never hand-typed): on the base commit that block is a sentinel-led
+# `## Status: done` and DS1 fails; since this item the step instructs none and the file is untouched.
+DS_SKILL="$HERE/../skills/self-heal-advisory/SKILL.md"
+# ds_tail_stamp <skill> — the first requirement stamp block the completion tail's step 2.5 tells the
+# agent to write: the lines from an un-backticked sentinel line to the closing code fence, de-indented.
+ds_tail_stamp() {
+  awk '/^2\.5\. /{s=1} /^2\.6\. /{s=0} s' "$1" | awk '
+    !d && /<!-- loomwright:requirement-closeout -->/ && !/`/ { b = 1 }
+    b && /^[[:space:]]*```/ { b = 0; d = 1; next }
+    b { sub(/^[[:space:]]+/, ""); print }'
+}
+# (control) the extractor is not vacuous: a step 2.5 shaped like the base commit's yields its block.
+printf '%s\n' '2.5. **Requirement close-out:**' '      ```markdown' '      <!-- loomwright:requirement-closeout -->' \
+  '      ## Status: done' '      - **PR:** {PR URL}' '      ```' '2.6. **Next**' > "$TOP/ds-base-shape.md"
+[ "$(ds_tail_stamp "$TOP/ds-base-shape.md" | sed -n 2p)" = "## Status: done" ] \
+  && ok "(DS0) control: the step-2.5 stamp extractor finds a base-shaped sentinel block" || no "(DS0) extractor is vacuous: $(ds_tail_stamp "$TOP/ds-base-shape.md" | tr '\n' '|')"
+closeout_fixture 370
+printf '# req a\n\n## Status: pending\n' > "$P/$REQ"
+printf '\n## Outcome\n- **Status:** completed\n- **PR:** %s\n- **Heal decision:** PASS\n' "$PRURL" >> "$P/.supervisor/jobs/done/brief-a.md"
+rm -f "$P/.supervisor/jobs/in-progress/brief-live.md"   # step 2 moved the run's brief; none is left in progress
+ds_stamp="$(ds_tail_stamp "$DS_SKILL")"
+[ -z "$ds_stamp" ] || printf '\n%s\n' "$ds_stamp" >> "$P/$REQ"   # the simulated completion tail
+jq '.[0].state = "OPEN"' "$GH_STUB_DIR/prs.json" > "$GH_STUB_DIR/p.tmp" && mv "$GH_STUB_DIR/p.tmp" "$GH_STUB_DIR/prs.json"
+printf '# req a\n\n## Status: pending\n' > "$TOP/ds-req-pending"
+out="$(run_closeout)"
+[ "$out" = "closeout: skipped — pr not merged (awaiting_merge)" ] && ok "(DS1) PR OPEN ⇒ closeout prints one 'pr not merged' line" || no "(DS1) OPEN closeout: $out"
+cmp -s "$P/$REQ" "$TOP/ds-req-pending" && ! grep -qE '^## Status:[[:space:]]*done' "$P/$REQ" \
+  && ok "(DS1) PR OPEN after Phase 4.5 + closeout ⇒ the requirement is byte-identical (## Status: pending) and carries no ## Status: done" \
+  || no "(DS1) PR OPEN: requirement changed or claims done: $(tr '\n' '|' < "$P/$REQ")"
+jq '.[0].state = "MERGED"' "$GH_STUB_DIR/prs.json" > "$GH_STUB_DIR/p.tmp" && mv "$GH_STUB_DIR/p.tmp" "$GH_STUB_DIR/prs.json"
+out="$(run_closeout)"
+case "$out" in *"closeout: stamped — $REQ (## Status: done, brief .supervisor/jobs/done/brief-a.md)"*) ok "(DS2) PR MERGED ⇒ closeout stamps the requirement" ;; *) no "(DS2) MERGED closeout: $(printf '%s' "$out" | tr '\n' '|')" ;; esac
+[ "$(grep -cF '<!-- loomwright:requirement-closeout -->' "$P/$REQ")" = 1 ] && [ "$(grep -cE '^## Status:[[:space:]]*done' "$P/$REQ")" = 1 ] \
+  && ok "(DS2) exactly one sentinel-led done block" || no "(DS2) sentinel/done count: $(tr '\n' '|' < "$P/$REQ")"
+grep -qE '^- \*\*Completed:\*\* [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' "$P/$REQ" && ok "(DS2) Completed is a UTC ISO-8601 timestamp" || no "(DS2) Completed line malformed"
+{ cat "$TOP/ds-req-pending"
+  printf '\n<!-- loomwright:requirement-closeout -->\n## Status: done\n- **Completed:** <TS>\n- **Brief:** .supervisor/jobs/done/brief-a.md\n- **PR:** %s\n' "$PRURL"; } > "$TOP/ds-req-want"
+sed -E 's/^(- \*\*Completed:\*\* ).*/\1<TS>/' "$P/$REQ" > "$TOP/ds-req-got"
+cmp -s "$TOP/ds-req-got" "$TOP/ds-req-want" && ok "(DS2) the requirement is the pending bytes + the closeout printf block, byte for byte (Completed normalised)" \
+  || no "(DS2) stamped bytes differ: $(diff "$TOP/ds-req-want" "$TOP/ds-req-got" | tr '\n' '|')"
+grep -qF "printf '\n<!-- loomwright:requirement-closeout -->\n## Status: done\n- **Completed:** %s\n- **Brief:** %s\n- **PR:** %s\n'" "$T" \
+  && ok "(DS2) closeout's step-5 printf is unchanged in automate-trail.sh" || no "(DS2) closeout printf changed"
+# Contract: the completion tail instructs no requirement `## Status:` stamp (fails on the base commit).
+[ -z "$(grep -A1 -F '<!-- loomwright:requirement-closeout -->' "$DS_SKILL" | grep '## Status')" ] \
+  && ok "(DS3) contract: self-heal-advisory carries no sentinel-led requirement ## Status block" || no "(DS3) self-heal-advisory still carries a requirement stamp block"
+ds25="$(awk '/^2\.5\. /{s=1} /^2\.6\. /{s=0} s' "$DS_SKILL")"
+if grep -q '^2\.5\. \*\*Requirement close-out' <<<"$ds25" && ! grep -qE '^[[:space:]]*## Status:' <<<"$ds25" \
+   && grep -qF 'writes NOTHING to the requirement' <<<"$ds25" && grep -qF '`automate-helpers.sh closeout`' <<<"$ds25"; then
+  ok "(DS3) contract: step 2.5 (Requirement close-out) defers to closeout and stamps no ## Status: line"
+else
+  no "(DS3) step 2.5 still stamps, or no longer names the deferral to closeout"
+fi
 
 if [ "$pass" != "$_tally_ok" ] || [ "$fail" != "$_tally_no" ]; then
   echo "  FAIL: summary counter clobbered — pass=$pass vs $_tally_ok ok lines, fail=$fail vs $_tally_no FAIL lines (a leg reused pass/fail as a variable)"

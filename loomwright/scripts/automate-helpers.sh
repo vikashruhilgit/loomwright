@@ -170,8 +170,9 @@ _ah_source runfile
 # work still SHIPPED, so re-picking it would redo merged work. (The `\b` after a
 # bare `done` does NOT match `done_with_escalation` — `_` is a word character —
 # which is why the escalated arm is spelled out rather than left to the boundary.)
-# Authority for what the completion tail writes here: skills/self-heal-advisory/SKILL.md
-# step 2.5, which stamps the value ON this heading for exactly this reason.
+# Authority for what is written here: automate-trail.sh closeout step 5 (post-merge),
+# which stamps the value ON this heading for exactly this reason. (Before
+# automate-followups/37, self-heal-advisory step 2.5 stamped it pre-merge.)
 is_done() { grep -qE '^## Status:[[:space:]]*done(_with_escalation)?\b' "$1" 2>/dev/null; }
 
 # is_not_ready <file> — true when the file carries a not-ready-to-run stamp on
