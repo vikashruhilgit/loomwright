@@ -92,3 +92,9 @@ are real, so a lane's `--max-tokens` share can park the lane.
 ## Non-goals
 F3: lanes inconsistently asking the 1-item queue confirm. This is already item 21's Part B amendment 1 ("Remove
 pointless questions at the source"). This run's evidence was added there. F7 is `automate-followups/37`.
+
+<!-- loomwright:requirement-closeout -->
+## Status: done
+- **Completed:** 2026-10-08T14:14:22Z
+- **Brief:** .supervisor/jobs/done/2026-10-08-pa24-lane-validation-fixes-b.md
+- **PR:** https://github.com/vikashruhilgit/loomwright/pull/435
