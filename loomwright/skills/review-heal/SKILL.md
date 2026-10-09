@@ -439,7 +439,7 @@ checks_untrusted = []                # ITEMISED {check, reason, run_id} list (ci
                                      # blocks READY exactly like any other red required check (see the READY test below)
 channels_scanned = []               # which channels were read this run (additive result field)
 checks_waited = []                  # scoped checks the loop waited on to settle (additive result field)
-sub_floor_fixed = []                # findings FIXED (never declined) in a sub_floor_converged terminal round (additive result field)
+sub_floor_fixed = []                # set ONLY from drain-subfloor-decision.sh decide's READY line (this round's findings; additive result field)
 rejected_instruction_like = 0       # count of EXTERNAL_TEXT bodies rejected as instruction-like this run (additive result field, §"Untrusted-Text Envelope") — incremented, never reset, across rounds
 termination_reason = null           # converged | bound_hit | sub_floor_converged | ci_untrusted (AC6, ci-trust-probe-01) — set on exactly one matching exit path
 checks_ever_fixed = {}              # required-check names this drain has attempted to fix — AC13 input for the confirming pass
@@ -486,7 +486,7 @@ loop:
   # checks_untrusted[] (additive result field) and excluded from the FIX
   # target pool below — but it is deliberately left IN `required_failing`
   # itself, so every gate downstream that reads `required_failing == []`
-  # (the READY test, the earned-fallback gate, sub_floor_eligible) keeps
+  # (the READY test, the earned-fallback gate, drain-subfloor-decision.sh `eligible`) keeps
   # treating an untrusted_infra required check as "not green" — its true
   # state is UNKNOWN, not green, so READY stays unreachable while one exists.
   checks_untrusted_this_round = []
@@ -716,49 +716,46 @@ loop:
   # i.e. this round's ENTIRE yield was sub-floor bot findings, all of which WERE fixed (reading B, never
   # declined). A round that also fixed a required-check failure or left a needs_human finding is NEVER
   # sub-floor-eligible, regardless of the bot findings' severities.
-  sub_floor_eligible = (required_failing == []) and (needs_human == []) and (auto_fixable != [])
-                       and all(severity_rank(f) < severity_rank(severity_floor) for f in auto_fixable)
-  if sub_floor_eligible:
-    outcome = confirming_required_check_pass(pushed_sha, required)   # SHA-BOUND — full contract below (AC11, R1)
-    # Rules clause of READY, re-read on the PUSHED commit (a sub-floor fix can change a check's outcome):
+  # MECHANIZED (implementation-quality/02 T01) — the stop decision is `scripts/drain-subfloor-decision.sh`'s
+  # ONE printed line, never a model-evaluated expression. round.json = this round's classified
+  # {required_failing, needs_human, auto_fixable (each with its severity), severity_floor}.
+  # Its decision table (header) mirrors the former rule exactly: confirm iff required_failing == [] and
+  # needs_human == [] and auto_fixable != [] and every severity ranks strictly below severity_floor; READY iff
+  # GREEN and not (rules_after.verdict == "unstamped" and rules_failed_seen) and rules_after.verdict in RULES_PASSABLE:
+  # anything unreadable fails CLOSED (eligible ⇒ continue; decide ⇒ ESCALATED on a non-SETTLED/sha-mismatched/
+  # non-green line).
+  step = drain-subfloor-decision.sh eligible <round.json>            # prints `confirm` | `continue`
+  if step == "confirm":
+    line = confirming_required_check_pass(pushed_sha, required)      # SHA-BOUND — full contract below (AC11, R1); its ONE line
     rules_after = rules_gate_read(<checkout>)          # the SAME allow-listed read as §U4 (helper from the plugin install root)
     rules_gate = rules_after.verdict
-    if outcome.result == "GREEN" and not (rules_after.verdict == "unstamped" and rules_failed_seen) and rules_after.verdict in RULES_PASSABLE:   # AFFIRMATIVE — anything else is NOT READY
-      # AC12 — the earned-fallback gate is NOT re-run here, and that is CORRECT rather than an omission.
-      # PROOF it cannot be earned on this path: sub_floor_eligible requires `auto_fixable != []` with EVERY
-      # element below severity_floor; a `rules_replay` finding is BLOCKING (never below any floor), so none
-      # is in auto_fixable here, hence auto_fixable ⊆ (validated − rules_replay) ⊆ bot_findings, and
-      # reaching this branch GUARANTEES bot_findings != [].
-      # But `no_review_lens_posted`'s condition 1 (§"Earned Fallback Review") requires bot_findings to be
-      # EMPTY. The two are mutually exclusive by construction — so on a sub-floor termination a review lens
-      # demonstrably DID post (that non-empty union IS the evidence), and the fallback is by definition
-      # unearned. Plan Review's "Hole 3" is therefore VACUOUS on this path, not unhandled.
-      # Do NOT "fix" this by calling compute_no_review_lens_posted() here: it can only ever return false,
-      # which is unreachable dead code that falsely advertises a guard (a drain review round caught exactly
-      # that shipped in an earlier cut of this change). If a future edit ever lets sub_floor_eligible hold
-      # with bot_findings == [], this proof breaks and the gate must be reinstated.
-      decision = READY
-      termination_reason = "sub_floor_converged"   # NOT auto-merge-eligible (AC9) — see automate-loop §10 cond 1
-      sub_floor_fixed += auto_fixable
-      notify "ready to merge" (best-effort)
-      drain-rounds.sh bump <pr_url>                # this round still counts against the ceiling
-      break
-    elif outcome.result == "GREEN":
-      # required checks green but the rules clause does not hold on the pushed commit — NOT READY. Fall
-      # through to the normal next-round bookkeeping below; the next round's RULES GATE step turns a
-      # `fail` into a finding or escalates any other non-RULES_PASSABLE verdict (unresolved / unreadable /
-      # anything rules_gate_read normalised to unreadable) — or an `unstamped` after a remembered fail
-      # (`rules_fail_then_unstamped`).
-      pass
-    else:   # RED, UNREADABLE, or the bounded SHA-settle wait itself elapsed (still-not-settled) — Hole 1
-      decision = ESCALATED                              # NEVER READY on a red/unknown/unbound-checked SHA
-      escalation = escalation_cause(pr_url, pushed_sha) # §"Escalation cause" — check-driven site
-      if outcome.result == "RED" and (outcome.failing_names & checks_ever_fixed) != {}:
-        repeat_check_failure = true                      # AC13 — a check that HAD been fixed re-failed; there
-                                                           # is no later round to catch this otherwise (Hole 2)
-      post remaining findings to PR (gh pr comment ...); notify (best-effort)
-      drain-rounds.sh bump <pr_url>
-      break
+    out = drain-subfloor-decision.sh decide <round.json> --sha <pushed_sha> --wait-line "<line>" \
+            --rules <rules_after.verdict> --rules-failed-seen <ids,…> --checks-ever-fixed <names,…>
+    # ACT ON THE PRINTED LINE ONLY — exactly one of:
+    #   READY sub_floor_converged sub_floor_fixed=<json>  ⇒ decision = READY; termination_reason = "sub_floor_converged"
+    #       (NOT auto-merge-eligible, AC9 — automate-loop §10 cond 1); sub_floor_fixed = <json> VERBATIM (this round
+    #       only — never a hand-accumulated list); notify "ready to merge" (best-effort);
+    #       drain-rounds.sh bump <pr_url> (this round still counts against the ceiling); break
+    #   continue  ⇒ GREEN but the rules clause does not hold on the pushed commit — fall through to the normal
+    #       next-round bookkeeping below (the next round's RULES GATE step turns a `fail` into a finding or
+    #       escalates any other non-RULES_PASSABLE verdict, or `rules_fail_then_unstamped`)
+    #   ESCALATED repeat_check_failure=<bool>  ⇒ decision = ESCALATED (NEVER READY on a red/unknown/unbound-checked
+    #       SHA — Hole 1); repeat_check_failure = <bool> (AC13 — a check that HAD been fixed re-failed; Hole 2);
+    #       escalation = escalation_cause(pr_url, pushed_sha) (§"Escalation cause" — check-driven site);
+    #       post remaining findings to PR (gh pr comment ...); notify (best-effort); drain-rounds.sh bump <pr_url>; break
+    # AC12 — the earned-fallback gate is NOT re-run here, and that is CORRECT rather than an omission.
+    # PROOF it cannot be earned on this path: `eligible` ⇒ `confirm` requires `auto_fixable != []` with EVERY
+    # element below severity_floor; a `rules_replay` finding is BLOCKING (never below any floor), so none
+    # is in auto_fixable here, hence auto_fixable ⊆ (validated − rules_replay) ⊆ bot_findings, and
+    # reaching this branch GUARANTEES bot_findings != [].
+    # But `no_review_lens_posted`'s condition 1 (§"Earned Fallback Review") requires bot_findings to be
+    # EMPTY. The two are mutually exclusive by construction — so on a sub-floor termination a review lens
+    # demonstrably DID post (that non-empty union IS the evidence), and the fallback is by definition
+    # unearned. Plan Review's "Hole 3" is therefore VACUOUS on this path, not unhandled.
+    # Do NOT "fix" this by calling compute_no_review_lens_posted() here: it can only ever return false,
+    # which is unreachable dead code that falsely advertises a guard (a drain review round caught exactly
+    # that shipped in an earlier cut of this change). If a future edit ever lets `eligible` print `confirm`
+    # with bot_findings == [], this proof breaks and the gate must be reinstated.
 
   # --- anti-churn bookkeeping (see "Anti-Churn Guardrail" for the rationale) ---
   fingerprints_now = { fingerprint(f) for f in fixable }   # {file, issue_category, rule} per finding
@@ -789,13 +786,16 @@ iterations = rounds        # the back-compat v1 analogue — same value as `roun
 
 > **PINNED SEMANTICS — reading B (fix-then-stop) only; reading A (find-then-defer) is FORBIDDEN.** Round N runs Validate-Then-Fix **completely** — every validated finding, at every severity including sub-floor, **is fixed and pushed**. `--severity-floor` decides ONLY that round N+1's re-scan does not start. No finding is ever declined a fix on severity grounds; §U3.5 ("A confirmed MEDIUM/LOW is fixed exactly like a confirmed HIGH — there is no severity floor") and its §Anti-Patterns counterpart (§U3.5, "no severity floor") and the Anti-Pattern below all remain true statements after this change — see AC4.
 
+**The stop decision — MECHANIZED via `scripts/drain-subfloor-decision.sh` (implementation-quality/02 T01).** `eligible` and `decide` evaluate this section's rule (decision table in the script header, fail-CLOSED on any unreadable input); the drain acts on the one printed line and takes `sub_floor_fixed` verbatim from `decide`'s READY line — this round's `auto_fixable` only, never a list accumulated across rounds.
+
 **WHERE the check sits (mandatory shape — split the skipped work, never skip the whole round).** A `sub_floor_converged` termination still runs the **confirming required-check pass** against the **pushed** SHA; it skips ONLY the expensive all-channel bot-finding re-scan + validate pass (§U4's `read_all_channels()`/`classify_all_channels()` re-scan and the §U3.5 Validate-Then-Fix pass that follows it). Wiring the check at the *bottom* of a round (after `push_fix_to_pr()`, as in the pseudocode above) — rather than declining the fix up front — is what keeps this compatible with reading B and with the earned-fallback gate (AC12, which the pseudocode re-evaluates FOR the skipped round rather than bypassing it).
 
 **`confirming_required_check_pass(pushed_sha, required)` (AC11, R1 — SHA-BINDING IS LOAD-BEARING) — MECHANIZED via `scripts/wait-for-checks.sh --required-only` (red-team-hardening item 04):**
 
 ```
 wait-for-checks.sh <pr-url> --sha <pushed_sha> --bound <check_wait_timeout> \
-    --interval 15 --required-only
+    --interval 15 --required-only --names
+# NOTE: --names adds red_names=, from which `decide` reads the failing names (AC13).
 # NOTE: --required-only scopes the wait to required checks ONLY (no
 # review-producing checks) — this pass never waits on anything else.
 # The script itself implements the sha-binding (a rollup for a DIFFERENT
@@ -804,7 +804,8 @@ wait-for-checks.sh <pr-url> --sha <pushed_sha> --bound <check_wait_timeout> \
 # entirely — NOT-YET-CREATED — is NOT-settled, distinguished from
 # CREATED-BUT-PENDING; an absent entry is never silently read as the PRIOR
 # commit's SUCCESS — this is the exact race R1 names).
-result = parse(wait-for-checks.sh output)
+return <its ONE final line>   # handed VERBATIM to drain-subfloor-decision.sh decide --wait-line,
+                              # which implements this mapping (shown for reference, never model-evaluated):
 if result starts with "SETTLED":
   # result.required == "unknown" (unreadable branch-protection metadata,
   # PR #251 review finding 2) intentionally falls into the else branch here —
@@ -993,6 +994,7 @@ The tail's exit status is **ignored** — the dispatcher always exits 0 and the 
 
 ## Anti-Patterns
 
+- **`prose_subfloor_stop` — deciding sub-floor termination in prose instead of from `drain-subfloor-decision.sh`'s line (implementation-quality/02 T01).** Never evaluate the eligibility or READY/ESCALATED test yourself, and never build `sub_floor_fixed` by hand: run `eligible`/`decide` (§U4) and act on the one printed line. On PR #435 a prose evaluation ran a whole extra round (~33 min) past a GREEN confirming pass and listed both rounds' findings in `sub_floor_fixed`.
 - **`background_wait` — backgrounding the scoped check-wait (red-team-hardening item 04).** Never run `wait-for-checks.sh` in the background, poll it asynchronously, or end the turn "while it runs" — under `claude -p` (a headless, non-interactive session) ending the turn IS process exit, and the drain dies mid-wait with no `REVIEW_HEAL_RESULT` ever produced. `wait-for-checks.sh` is foreground and blocking by construction (see §U2.5 and §"Termination-only severity floor"); the model must invoke it as an ordinary awaited Bash call and read its one final line before continuing.
 - **Force-pushing the PR branch.** Never `git push --force` — clobbers concurrent author commits. Regular push only (same-repo via explicit refspec `git push origin HEAD:<head_ref>`).
 - **Pushing to `origin` for a fork/cross-repo PR.** The head ref is NOT on `origin`, so `git push origin HEAD:<head_ref>` updates the wrong ref or fails. Degrade to review-only `ESCALATED` instead (see "Fork-aware push").
