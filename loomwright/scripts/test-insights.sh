@@ -815,6 +815,25 @@ else
 fi
 rm -rf "$CR"
 
+echo "== T04. Wall-clock (phases · machine vs owner) =="
+WC="$(mktemp -d)"; ( cd "$WC" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$WC/.supervisor/logs"
+printf '%s\n' '{"event":"agent_lifecycle","ts":"2026-10-01T10:00:00Z","state":"working","agent_id":"w1","agent_type":"loomwright:worker"}' \
+  '{"event":"subtask_complete","ts":"2026-10-01T10:10:00Z","agent_id":"w1"}' \
+  '{"event":"agent_lifecycle","ts":"2026-10-01T10:12:00Z","state":"working","agent_id":"r1","agent_type":"loomwright:code-reviewer"}' \
+  '{"event":"agent_lifecycle","ts":"2026-10-01T10:17:00Z","state":"ended","agent_id":"r1"}' \
+  '{"event":"session_end","ts":"2026-10-01T10:18:30Z","status":"completed","heal_decision":"PASS","heal_iterations":0}' \
+  '{"event":"item_timing","ts":"2026-10-01T12:00:00Z","pr_url":"https://x/9","item":{"pick_to_park":{"seconds":3600},"owner_seconds":null,"machine_seconds":null,"owner_exact_share":null}}' > "$WC/.supervisor/logs/wc-a.jsonl"
+( cd "$WC" && bash "$BUILD" >/dev/null 2>&1 ); rc=$?
+wd="$WC/.supervisor/insights/dashboard.md"
+grep -qF "## Wall-clock (phases · machine vs owner)" "$wd" 2>/dev/null && ok "wall-clock section rendered" || no "wall-clock section missing"
+grep -qF "| Execute (first worker → last subtask_complete) | 10m 0s | 10m 0s |" "$wd" 2>/dev/null && ok "execute span derived from the log (10m 0s)" || no "execute row: $(grep -F 'Execute (' "$wd" 2>/dev/null)"
+grep -qF "| Phase 4.5 reviewer iterations (sum) | 5m 0s | 5m 0s |" "$wd" 2>/dev/null && ok "Phase 4.5 reviewer span (5m 0s)" || no "phase 4.5 row: $(grep -F 'Phase 4.5 reviewer' "$wd" 2>/dev/null)"
+grep -qF "| Finalize (→ PR created) | not recorded | not recorded |" "$wd" 2>/dev/null && ok "null span (no pr_created row) renders 'not recorded', never 0" || no "finalize row: $(grep -F 'Finalize' "$wd" 2>/dev/null)"
+grep -qF "| https://x/9 | 60m 0s | not recorded | not recorded | not recorded |" "$wd" 2>/dev/null && ok "item_timing row: pick→park shown, null owner/machine/exact 'not recorded'" || no "item row: $(grep -F 'https://x/9' "$wd" 2>/dev/null)"
+[ "$rc" -eq 0 ] && ok "build-insights exits 0 with the wall-clock section" || no "rc=$rc"
+rm -rf "$WC"
+
 echo "== IQ01. findings-per-item metric (first-pass PASS rate + findings per item) =="
 FM="$(mktemp -d)"; ( cd "$FM" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
 mkdir -p "$FM/.supervisor/logs"
