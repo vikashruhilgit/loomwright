@@ -2,7 +2,7 @@
 # test-phase-timing.sh — phase-timing.sh (iq02 Part T04): the 2026-10-08 replay
 # (committed trimmed fixtures), owner-wait exact / fallback / null / 0, missing
 # endpoints ⇒ null, ci-local attribution by tree key only, fail-SAFE input, and
-# four mutation controls run against COPIES (gated non-empty + differs + bash -n).
+# five mutation controls run against COPIES (gated non-empty + differs + bash -n).
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -29,6 +29,10 @@ near "$(q '.item.pick_to_autonomous_start.plan_review.seconds')" 480 && ok "  �
 near "$(q '.item.pick_to_autonomous_start.owner_seconds')" 600 && [ "$(q '.item.pick_to_autonomous_start.owner_waits[0].exact')" = "false" ] && ok "  … owner ≈ 10 m, exact: false" || no "pre-start owner: $(q '.item.pick_to_autonomous_start.owner_waits')"
 [ "$(q '[.supervisor.phase45_iterations[]|"\(.start)-\(.end)"]|join(" ")')" = "2026-10-08T13:23:02Z-2026-10-08T13:31:07Z 2026-10-08T14:01:15Z-2026-10-08T14:07:54Z 2026-10-08T14:10:09Z-2026-10-08T14:13:23Z" ] && ok "three Phase 4.5 reviewer spans exactly as the hand derivation" || no "reviewer spans: $(q '.supervisor.phase45_iterations')"
 near "$(q '.item.post_ready.owner_waits[0].seconds')" 120 && near "$(q '.item.post_ready.owner_waits[1].seconds')" 2580 && [ "$(q '[.item.post_ready.owner_waits[].exact]|unique|join(",")')" = "false" ] && ok "two post-READY owner waits ≈ 2 m and ≈ 43 m, exact: false" || no "post-READY waits: $(q '.item.post_ready.owner_waits')"
+# the second post-READY wait's fallback working row lands 1 s AFTER the park (17:24:51 vs 17:24:50):
+# it is clamped to the window end exactly — the 60 s tolerance above cannot see a 1 s overflow.
+[ "$(q '.item.post_ready.owner_waits[1]|"\(.end) \(.seconds)"')" = "2026-10-08T17:24:50Z 2589" ] && ok "post-READY owner wait clamped to the park (ends 17:24:50, 2589 s)" || no "post-READY clamp: $(q '.item.post_ready.owner_waits[1]')"
+[ "$(q '[.item.pick_to_park, .item.pick_to_autonomous_start, .item.post_ready] | map(. as $w | $w.owner_seconds <= $w.seconds and $w.machine_seconds >= 0 and ($w.owner_seconds + $w.machine_seconds) == $w.seconds and ([$w.owner_waits[].end] | all(. <= $w.end))) | all')" = "true" ] && ok "every split window: owner ≤ wall, machine ≥ 0, no owner wait ends past the window" || no "window bound: $(q '[.item.pick_to_park, .item.post_ready]|map({seconds,owner_seconds,machine_seconds,owner_waits})')"
 [ "$(q '.supervisor.finalize.seconds')" = "null" ] && [ "$(q '.supervisor.pr_created')" = "null" ] && ok "no pr_created row in a pre-3c log ⇒ finalize null, not 0" || no "finalize: $(q '.supervisor.finalize')"
 [ "$(q '.supervisor.order|join(",")')" = "plan,execute,finalize,phase45_1,phase45_2,phase45_3,completion" ] || [ "$(q '.supervisor.order|index("execute") < index("phase45_1")')" = "true" ] && ok "phases ordered by timestamp" || no "order: $(q '.supervisor.order')"
 REPLAY="$OUT"
@@ -57,6 +61,14 @@ mkrun "$T/o4" '{"event":"agent_lifecycle","ts":"2026-10-01T10:30:00Z","state":"w
 OUT="$(bash "$PT" --run "$T/o4/automate/r.md" 2>/dev/null)"
 [ "$(q '.item.owner_seconds')" = "null" ] && [ "$(q '.item.machine_seconds')" = "null" ] && ok "no ask but the log does NOT span the item ⇒ owner null (never 0)" || no "no-ask non-spanning: $(q '.item.owner_seconds')"
 
+mkrun "$T/o5" "$L" '{"event":"agent_lifecycle","ts":"2026-10-01T10:50:00Z","state":"waiting","reason":"ask_user","tool_use_id":"tu5"}' \
+  '{"event":"agent_lifecycle","ts":"2026-10-01T11:10:00Z","state":"working","reason":"answered","tool_use_id":"tu5"}' "$E"
+OUT="$(bash "$PT" --run "$T/o5/automate/r.md" 2>/dev/null)"
+[ "$(q '.item.owner_seconds')" = "600" ] && [ "$(q '.item.machine_seconds')" = "3000" ] && [ "$(q '.item.pick_to_park.owner_waits[0]|"\(.end) \(.exact)"')" = "2026-10-01T11:00:00Z true" ] && ok "answer 10 m after the park ⇒ clamped to the window: owner 600, machine 3000, exact kept" || no "clamp exact: $(q '.item.pick_to_park')"
+mkrun "$T/o6" "$L" '{"event":"agent_lifecycle","ts":"2026-10-01T10:50:00Z","state":"waiting","reason":"ask_user"}' "$E"
+OUT="$(bash "$PT" --run "$T/o6/automate/r.md" 2>/dev/null)"
+[ "$(q '.item.owner_seconds')" = "600" ] && [ "$(q '.item.machine_seconds')" = "3000" ] && [ "$(q '.item.pick_to_park.owner_waits[0].exact')" = "false" ] && ok "fallback working row after the park ⇒ clamped too: owner 600, machine 3000" || no "clamp fallback: $(q '.item.pick_to_park')"
+O5="$T/o5/automate/r.md"
 echo "== N. missing endpoint ⇒ null, never 0; stranded close-out ⇒ null completion =="
 mkdir -p "$T/n/automate" "$T/n/logs"
 printf '## Progress\n- 2026-10-01T10:00:00Z picked x.md\n- 2026-10-01T10:05:00Z session_id s-n\n' > "$T/n/automate/r.md"
@@ -133,6 +145,11 @@ if [ -n "$M4" ]; then
   if last_flag_exits "$M4" --run 3; then no "M4 unguarded \`shift 2\` with --run last stayed green"; else ok "M4 unguarded \`shift 2\` ⇒ --run as the last argument hangs — red"; fi
 else no "M4 mutant not built"; fi
 
+M5="$(mutant noclamp '            end = hi' '            end = ans')"
+if [ -n "$M5" ]; then
+  OUT="$(bash "$M5" --run "$O5" 2>/dev/null)"
+  [ "$(q '.item.machine_seconds')" = "3000" ] && no "M5 unclamped owner interval stayed green" || ok "M5 drop the window clamp ⇒ owner overflows the park, machine $(q '.item.machine_seconds') — red"
+else no "M5 mutant not built"; fi
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

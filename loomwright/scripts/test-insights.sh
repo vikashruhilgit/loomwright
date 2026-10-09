@@ -826,6 +826,11 @@ printf '%s\n' '{"event":"agent_lifecycle","ts":"2026-10-01T10:00:00Z","state":"w
   '{"event":"item_timing","ts":"2026-10-01T12:00:00Z","pr_url":"https://x/9","item":{"pick_to_park":{"seconds":3600},"owner_seconds":null,"machine_seconds":null,"owner_exact_share":null}}' \
   '{"event":"item_timing","ts":"2026-10-01T12:00:00Z","pr_url":"https://x/9","item":{"pick_to_park":{"seconds":3600},"owner_seconds":null,"machine_seconds":null,"owner_exact_share":null}}' > "$WC/.supervisor/logs/wc-a.jsonl"
 # ^ the same PR's item_timing twice (a closeout re-run on a pre-idempotence log): ONE dashboard row
+# Cross-file duplicate whose LEXICAL file order is the reverse of chronology (log names are UUIDs,
+# unrelated to time): the NEWER row sits in wc-a.jsonl, the OLDER — different content — in
+# wc-b.jsonl, so `cat *.jsonl` yields newest-first and a plain `group_by | last` keeps the stale one.
+printf '%s\n' '{"event":"item_timing","ts":"2026-10-02T09:00:00Z","pr_url":"https://x/10","item":{"pick_to_park":{"seconds":7200},"owner_seconds":600,"machine_seconds":6600,"owner_exact_share":1}}' >> "$WC/.supervisor/logs/wc-a.jsonl"
+printf '%s\n' '{"event":"item_timing","ts":"2026-10-01T09:00:00Z","pr_url":"https://x/10","item":{"pick_to_park":{"seconds":1800},"owner_seconds":null,"machine_seconds":null,"owner_exact_share":null}}' > "$WC/.supervisor/logs/wc-b.jsonl"
 ( cd "$WC" && bash "$BUILD" >/dev/null 2>&1 ); rc=$?
 wd="$WC/.supervisor/insights/dashboard.md"
 grep -qF "## Wall-clock (phases · machine vs owner)" "$wd" 2>/dev/null && ok "wall-clock section rendered" || no "wall-clock section missing"
@@ -834,6 +839,7 @@ grep -qF "| Phase 4.5 reviewer iterations (sum) | 5m 0s | 5m 0s |" "$wd" 2>/dev/
 grep -qF "| Finalize (→ PR created) | not recorded | not recorded |" "$wd" 2>/dev/null && ok "null span (no pr_created row) renders 'not recorded', never 0" || no "finalize row: $(grep -F 'Finalize' "$wd" 2>/dev/null)"
 grep -qF "| https://x/9 | 60m 0s | not recorded | not recorded | not recorded |" "$wd" 2>/dev/null && ok "item_timing row: pick→park shown, null owner/machine/exact 'not recorded'" || no "item row: $(grep -F 'https://x/9' "$wd" 2>/dev/null)"
 [ "$(grep -cF '| https://x/9 |' "$wd" 2>/dev/null)" = 1 ] && ok "item_timing: a repeated row for one pr_url renders ONCE (deduped by pr_url)" || no "item_timing rows for https://x/9: $(grep -cF '| https://x/9 |' "$wd" 2>/dev/null)"
+[ "$(grep -cF '| https://x/10 |' "$wd" 2>/dev/null)" = 1 ] && grep -qF "| https://x/10 | 120m 0s | 10m 0s | 110m 0s | 100% |" "$wd" 2>/dev/null && ok "item_timing: a cross-file duplicate keeps the NEWER row by ts, not the later file in glob order" || no "cross-file dedupe kept: $(grep -F 'https://x/10' "$wd" 2>/dev/null)"
 [ "$rc" -eq 0 ] && ok "build-insights exits 0 with the wall-clock section" || no "rc=$rc"
 rm -rf "$WC"
 

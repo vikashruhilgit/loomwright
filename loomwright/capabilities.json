@@ -346,6 +346,7 @@
       "source": "hooks.Notification[0].hooks[0]",
       "type": "command",
       "writes": [
+        ".supervisor/logs/.lifecycle-answered-ids",
         ".supervisor/logs/.lifecycle-asked-ids",
         ".supervisor/logs/.lifecycle-heartbeat-debounce-<agent>",
         ".supervisor/logs/.notified-ids",
@@ -365,6 +366,7 @@
       "source": "hooks.PostToolUse[0].hooks[0]",
       "type": "command",
       "writes": [
+        ".supervisor/logs/.lifecycle-answered-ids",
         ".supervisor/logs/.lifecycle-asked-ids",
         ".supervisor/logs/.lifecycle-heartbeat-debounce-<agent>",
         ".supervisor/logs/<session>.jsonl"
@@ -423,6 +425,7 @@
       "source": "hooks.PostToolUse[1].hooks[3]",
       "type": "command",
       "writes": [
+        ".supervisor/logs/.lifecycle-answered-ids",
         ".supervisor/logs/.lifecycle-asked-ids",
         ".supervisor/logs/.lifecycle-heartbeat-debounce-<agent>",
         ".supervisor/logs/<session>.jsonl"
@@ -453,6 +456,7 @@
       "source": "hooks.PostToolUse[3].hooks[1]",
       "type": "command",
       "writes": [
+        ".supervisor/logs/.lifecycle-answered-ids",
         ".supervisor/logs/.lifecycle-asked-ids",
         ".supervisor/logs/.lifecycle-heartbeat-debounce-<agent>",
         ".supervisor/logs/<session>.jsonl"
@@ -469,6 +473,7 @@
       "source": "hooks.PostToolUse[3].hooks[2]",
       "type": "command",
       "writes": [
+        ".supervisor/logs/.lifecycle-answered-ids",
         ".supervisor/logs/.lifecycle-asked-ids",
         ".supervisor/logs/.lifecycle-heartbeat-debounce-<agent>",
         ".supervisor/logs/<session>.jsonl"
@@ -499,6 +504,7 @@
       "source": "hooks.PostToolUse[2].hooks[1]",
       "type": "command",
       "writes": [
+        ".supervisor/logs/.lifecycle-answered-ids",
         ".supervisor/logs/.lifecycle-asked-ids",
         ".supervisor/logs/.lifecycle-heartbeat-debounce-<agent>",
         ".supervisor/logs/<session>.jsonl"
@@ -530,6 +536,7 @@
       "source": "hooks.PreToolUse[0].hooks[0]",
       "type": "command",
       "writes": [
+        ".supervisor/logs/.lifecycle-answered-ids",
         ".supervisor/logs/.lifecycle-asked-ids",
         ".supervisor/logs/.lifecycle-heartbeat-debounce-<agent>",
         ".supervisor/logs/.notified-ids",
@@ -678,6 +685,7 @@
       "source": "hooks.StopFailure[0].hooks[0]",
       "type": "command",
       "writes": [
+        ".supervisor/logs/.lifecycle-answered-ids",
         ".supervisor/logs/.lifecycle-asked-ids",
         ".supervisor/logs/.lifecycle-heartbeat-debounce-<agent>",
         ".supervisor/logs/<session>.jsonl",
@@ -695,6 +703,7 @@
       "source": "hooks.SubagentStop[0].hooks[0]",
       "type": "command",
       "writes": [
+        ".supervisor/logs/.lifecycle-answered-ids",
         ".supervisor/logs/.lifecycle-asked-ids",
         ".supervisor/logs/.lifecycle-heartbeat-debounce-<agent>",
         ".supervisor/logs/<session>.jsonl"

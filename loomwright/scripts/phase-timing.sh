@@ -35,7 +35,9 @@
 #     `working` row of ANY scope ⇒ `exact: false` (an upper bound — a background
 #     subagent heartbeat during a pending question would shorten it). Asks with
 #     no working row between them form ONE interval. Owner time = sum of
-#     intervals; machine = wall − owner; each `null` when its inputs are missing.
+#     intervals, each clamped to end no later than the span's window end (an
+#     answer after a phase boundary never counts in that phase); machine =
+#     wall − owner; each `null` when its inputs are missing.
 #     With NO ask, owner time is 0 only when the joined logs provably span the
 #     window; otherwise `null`.
 #   * ci-local runs are attributed by TREE KEY only (the log name's first field
@@ -211,7 +213,14 @@ def owner_wait(lo, hi):
             break
         if ans is None:
             ans = next((r["ts"] for r in lc if r.get("state") == "working" and r["ts"] > a["ts"]), None)
-        iv = span(a["ts"], ans)
+        # Clamp to the window: an answer (or fallback working row) landing after `hi` must not
+        # stretch owner time past the phase it is split from — that would deflate or negate
+        # machine_seconds and double-count the overflow in the next phase. `last_end` keeps the
+        # unclamped answer so a later ask before it still merges into this interval.
+        end = ans
+        if end is not None and ep(end) is not None and ep(hi) is not None and ep(end) > ep(hi):
+            end = hi
+        iv = span(a["ts"], end)
         iv["exact"] = exact
         out.append(iv)
         last_end = ans or "9999"

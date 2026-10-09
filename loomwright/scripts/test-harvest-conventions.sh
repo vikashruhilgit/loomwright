@@ -99,6 +99,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HARVEST="$SCRIPT_DIR/harvest-conventions.sh"
 ADD_RULE="$SCRIPT_DIR/add-rule.sh"
+. "$SCRIPT_DIR/wait-lib.sh"   # clock-bounded condition waits (pty_feed)
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." 2>/dev/null && pwd)"
 
 pass=0; fail=0
@@ -458,7 +459,8 @@ grep -q 'PLANNED WRITE (not written)' "$ROOT/d.txt" \
 # prompting (the (d3)/(M1b) path). A caller that REQUIRES the prompt checks pty_prompt_missed: a
 # deadline miss is a FAIL naming the missing prompt, never a vacuous pass.
 PTY_PROMPT='Confirm write?'
-PTY_DEADLINE_TICKS=600   # 0.1 s ticks: 60 s for the child to reach its prompt (or exit)
+PTY_DEADLINE_S=60   # wall-clock seconds for the child to reach its prompt (or exit) — bounded by the
+                    # clock (wait-lib.sh), never a tick count, which a loaded pool stretches
 YFEED="$ROOT/yfeed.txt"
 i=0; : > "$YFEED"; while [ "$i" -lt 50 ]; do printf 'y\n' >> "$YFEED"; i=$((i+1)); done
 # Availability is probed BY OUTPUT, never by exit status: MEASURED on this host, BSD `script -q
@@ -497,13 +499,13 @@ esac
 # pty_feed — the stdin of `script`: waits (bounded) until the transcript shows $PTY_PROMPT, then
 # feeds the `y` answers; stops early when the child has exited without prompting ($ROOT/_pty.done).
 # A deadline with neither leaves $ROOT/_pty.missed (read by pty_prompt_missed).
+_pty_prompt_or_done() { grep -qF -- "$PTY_PROMPT" "$ROOT/_pty.out" 2>/dev/null || [ -f "$ROOT/_pty.done" ]; }
 pty_feed() {
-  local n=0
-  while ! grep -qF "$PTY_PROMPT" "$ROOT/_pty.out" 2>/dev/null; do
-    [ -f "$ROOT/_pty.done" ] && return 0
-    n=$((n + 1)); [ "$n" -le "$PTY_DEADLINE_TICKS" ] || { : > "$ROOT/_pty.missed"; return 0; }
-    sleep 0.1   # fixed-sleep-ok: poll interval of a bounded wait on the prompt, not a timing assumption
-  done
+  if ! WAIT_LIB_WHAT="'$PTY_PROMPT' in the pty transcript, or the child's exit" \
+       wait_for_cmd "$PTY_DEADLINE_S" _pty_prompt_or_done; then
+    : > "$ROOT/_pty.missed"; return 0
+  fi
+  grep -qF -- "$PTY_PROMPT" "$ROOT/_pty.out" 2>/dev/null || return 0   # exited without prompting
   cat "$YFEED"
 }
 pty_prompt_missed() { [ -f "$ROOT/_pty.missed" ]; }
@@ -554,7 +556,7 @@ else
   pty_run "cd '$RW1' && bash '$ADD_RULE' $ARGS" > "$ROOT/w1.txt" 2>&1 || true
   SW1b="$(store_sum "$RW1")"
   if pty_prompt_missed; then
-    no "(M1a) the writer never showed its '$PTY_PROMPT' prompt within $((PTY_DEADLINE_TICKS / 10)) s — the control did not run: $(head -3 "$ROOT/w1.txt")"
+    no "(M1a) the writer never showed its '$PTY_PROMPT' prompt within $PTY_DEADLINE_S s — the control did not run: $(head -3 "$ROOT/w1.txt")"
   elif [ "$SW1" != "$SW1b" ]; then
     ok "(M1a) CONFIRMED the hazard is real: add-rule.sh under a PTY with 'y' fed in and NO stdin detachment WRITES"
   else

@@ -216,8 +216,10 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
     printf '%s\n' "$wc_items" | jq -rs '
       def fmt(s): if s == null then "not recorded" else "\((s/60)|floor)m \(s % 60)s" end;
       # one row per PR: a repeated item_timing for the same pr_url (a log written before closeout
-      # became idempotent, or two racing closeouts) keeps its LAST occurrence; pr_url-less rows stay.
-      (map(select(.pr_url == null)) + (map(select(.pr_url != null)) | group_by(.pr_url) | map(last))
+      # became idempotent, or two racing closeouts) keeps its NEWEST row by ts — never by input
+      # position, which is `cat *.jsonl` glob order (UUID log names, unrelated to time); pr_url-less
+      # rows stay.
+      (map(select(.pr_url == null)) + (map(select(.pr_url != null)) | group_by(.pr_url) | map(max_by(.ts // "")))
        | sort_by(.ts // "")) as $items |
       "| /automate item (PR) | Pick → park | Owner | Machine | Owner time exact |", "|---|---|---|---|---|",
       ($items[] | "| \(.pr_url // "—") | \(fmt(.item.pick_to_park.seconds)) | \(fmt(.item.owner_seconds)) | \(fmt(.item.machine_seconds)) | \(if .item.owner_exact_share == null then "not recorded" else "\((.item.owner_exact_share * 100) | floor)%" end) |")
