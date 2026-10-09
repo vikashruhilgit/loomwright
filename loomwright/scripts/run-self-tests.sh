@@ -14,6 +14,16 @@
 #          run-self-tests.sh --select-marked early|serial <test.sh> ...
 #          (prints, in input order, the tests carrying that marker, and runs nothing — the ONE marker
 #          parser: scripts/ci-local.sh derives its early phase from it instead of re-implementing it)
+#          run-self-tests.sh [--shard K/N] [--list]
+#          --shard K/N (1 <= K <= N): run only shard K of the canonical no-argument suite. The split is
+#          a deterministic greedy longest-first partition by the weights in
+#          fixtures/self-test-weights.tsv (a test absent from it gets weight 20 — never dropped); the
+#          union of shards 1..N is exactly the suite, with no duplicates (test-run-self-tests.sh).
+#          --list: print the selected tests (the whole suite, or one shard), one per line, run nothing.
+#          Either flag with explicit test arguments, or a malformed K/N, is a usage error (exit 1).
+#          A shard keeps every per-test rule below (serial tail, watchdog, admission, hermetic layer).
+#   env:   SELF_TEST_MANIFEST  when set, a result manifest is written there: one `<rc>\t<secs>\t<test>`
+#          line per selected test (`no-result` for a worker that died) — CI's `ci` job aggregates them
 #          no arguments = the canonical suite: loomwright/scripts/test-*.sh plus
 #          loomwright/scripts/adapters/*/test-*.sh (adapter self-tests live one directory deeper
 #          than the flat glob reaches — without the second glob they are committed tests nothing
@@ -96,6 +106,28 @@ if [ -z "${HERMETIC_SHIM_DIR:-}" ] || [ ! -d "$HERMETIC_SHIM_DIR" ]; then
   exit 1
 fi
 
+shard=""; list=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --shard) [ "$#" -ge 2 ] || { echo "run-self-tests: --shard wants K/N" >&2; exit 1; }; shard="$2"; shift 2 ;;
+    --list) list=1; shift ;;
+    *) break ;;
+  esac
+done
+if [ -n "$shard" ] || [ "$list" -eq 1 ]; then
+  if [ "$#" -gt 0 ]; then echo "run-self-tests: --shard/--list select from the canonical suite — they take no test arguments" >&2; exit 1; fi
+fi
+shard_k=0; shard_n=0
+if [ -n "$shard" ]; then
+  case "$shard" in
+    [1-9]*/[1-9]*) shard_k="${shard%%/*}"; shard_n="${shard#*/}" ;;
+  esac
+  case "$shard_k:$shard_n" in
+    *[!0-9:]*|0:*|*:0) echo "run-self-tests: --shard wants K/N with 1 <= K <= N, got '$shard'" >&2; exit 1 ;;
+  esac
+  if [ "$shard_k" -gt "$shard_n" ]; then echo "run-self-tests: --shard wants K/N with 1 <= K <= N, got '$shard'" >&2; exit 1; fi
+fi
+
 if [ "$#" -gt 0 ]; then
   tests=("$@")
 else
@@ -106,6 +138,38 @@ fi
 if [ "${#tests[@]}" -eq 0 ]; then
   echo "no self-tests found (loomwright/scripts/test-*.sh, loomwright/scripts/adapters/*/test-*.sh) — the suite matched nothing" >&2
   exit 1
+fi
+
+# --shard: greedy longest-first by weight (ties: path order), each test to the least-loaded shard
+# (ties: the lowest shard). Deterministic for a given file set + weights file; the kept tests stay in
+# suite order.
+if [ "$shard_n" -gt 0 ]; then
+  weights="$here/fixtures/self-test-weights.tsv"
+  sel="$(printf '%s\n' "${tests[@]}" | awk -F'\t' -v k="$shard_k" -v n="$shard_n" -v wf="$weights" '
+    BEGIN { while ((getline l < wf) > 0) { if (l ~ /^#/ || l == "") continue; split(l, a, "\t"); w[a[2]] = a[1] + 0 } }
+    { t[NR] = $0; wt[NR] = ($0 in w) ? w[$0] : 20 }
+    END {
+      m = NR
+      for (i = 1; i <= m; i++) o[i] = i
+      for (i = 2; i <= m; i++) { x = o[i]; j = i - 1
+        while (j >= 1 && (wt[o[j]] < wt[x] || (wt[o[j]] == wt[x] && t[o[j]] > t[x]))) { o[j + 1] = o[j]; j-- }
+        o[j + 1] = x }
+      for (s = 1; s <= n; s++) load[s] = 0
+      for (i = 1; i <= m; i++) { b = 1; for (s = 2; s <= n; s++) if (load[s] < load[b]) b = s
+        own[o[i]] = b; load[b] += wt[o[i]] }
+      for (i = 1; i <= m; i++) if (own[i] == k) print t[i]
+    }')"
+  tests=()
+  while IFS= read -r t; do [ -n "$t" ] && tests+=("$t"); done <<<"$sel"
+fi
+if [ "$list" -eq 1 ]; then
+  for t in ${tests[@]+"${tests[@]}"}; do printf '%s\n' "$t"; done
+  exit 0
+fi
+if [ "$shard_n" -gt 0 ] && [ "${#tests[@]}" -eq 0 ]; then
+  echo "run-self-tests: shard $shard selected no tests (more shards than tests) — nothing to run"
+  [ -z "${SELF_TEST_MANIFEST:-}" ] || : > "$SELF_TEST_MANIFEST"
+  exit 0
 fi
 
 # Unset/empty SELF_TEST_JOBS = the admitted slot's job share (set after admission, below).
@@ -279,6 +343,7 @@ for t in "${tests[@]}"; do
     rc="no-result"; secs="?"
   fi
   timings="$timings$secs $t"$'\n'
+  [ -z "${SELF_TEST_MANIFEST:-}" ] || printf '%s\t%s\t%s\n' "$rc" "$secs" "$t" >> "$out/manifest"
   if [ "$rc" = "0" ]; then
     if [ "$gh_groups" -eq 1 ]; then
       echo "::group::PASS ${secs}s $t"; cat "$out/$i.log" 2>/dev/null; echo "::endgroup::"
@@ -291,6 +356,8 @@ for t in "${tests[@]}"; do
   i=$((i + 1))
 done
 
+# The manifest is copied out before any exit below, so a red shard still reports every test.
+if [ -n "${SELF_TEST_MANIFEST:-}" ]; then cp "$out/manifest" "$SELF_TEST_MANIFEST" 2>/dev/null || : > "$SELF_TEST_MANIFEST"; fi
 echo
 echo "slowest tests:"
 printf '%s' "$timings" | sort -rn | sed -n '1,10s/^/  /p'

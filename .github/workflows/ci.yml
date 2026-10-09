@@ -7,21 +7,15 @@ on:
     branches: [main]
 
 jobs:
-  ci:
+  # Three jobs (iq02 T08). Branch protection requires the context `ci`, so exactly ONE job is named
+  # `ci`: the aggregator at the end. `static` runs every gate step; `suite` shards the self-test suite
+  # over a matrix. A job skipped because a `needs:` failed reports `skipped`, which a required check
+  # treats as passing — so `ci` runs with `if: always()` and fails unless both needs succeeded.
+  static:
     runs-on: ubuntu-latest
-    # A green run takes ~8 min. Without a cap, one self-test that never exits held the job to
-    # GitHub's 6-hour default (15 runs cancelled at ~361 min, 2026-09-27 → 2026-10-01).
-    # run-self-tests.sh's per-test watchdog (SELF_TEST_TIMEOUT, default 900 s) is the primary
-    # guard and names the hung test; this cap is the backstop for anything outside it. 45, not
-    # 30: the watchdog alone can spend 2 x 900 s (one hang in the concurrent batch, one in the
-    # serial phase after it) on top of the ~8 min of normal work.
-    timeout-minutes: 45
-    env:
-      # test-verify-walkthrough.sh's Playwright cache (its LOOMWRIGHT_VERIFY_TEST_CACHE
-      # override) — defined ONCE here so the actions/cache step below and the self-test
-      # step that fills it cannot disagree about the path. (`runner.temp` is not
-      # available in job-level env, hence the literal.)
-      LOOMWRIGHT_VERIFY_TEST_CACHE: /tmp/loomwright-verify-walkthrough
+    # The static gates + test-ci-local.sh + the sdk-spike build take ~3 min (run 37809076650: gates
+    # 31 s, test-ci-local 40 s, sdk-spike 8 s, plus setup). 20 is a backstop for a hung gate step.
+    timeout-minutes: 20
 
     steps:
       - name: Checkout repository
@@ -108,55 +102,17 @@ jobs:
       - name: Check the capability contract is current (capabilities.json staleness gate)
         run: bash loomwright/scripts/build-capabilities.sh --check
 
-      # scripts/ci-local.sh is the local mirror of this job (it derives its gate list from the
+      # scripts/ci-local.sh is the local mirror of the static + suite jobs (it derives its gate list from the
       # `bash scripts/…` lines and the `bash loomwright/scripts/<x>.sh --check` lines in THIS file). Its self-test drives fixture repos only, never the
       # real suite. Root scripts/test-*.sh are not globbed by run-self-tests.sh, hence explicit.
       - name: Check the local pre-push runner (ci-local.sh)
         run: bash scripts/test-ci-local.sh
 
-      # test-verify-walkthrough.sh installs @playwright/test + a chromium build (~150 MB from
-      # the Playwright CDN) into $LOOMWRIGHT_VERIFY_TEST_CACHE, and under CI=1 an install
-      # failure is a HARD red (its AC11i arm) — so every run of the required `ci` check
-      # carried a fresh download and a network dependency it did not need (measured on
-      # PR #223: ~24 s of the step, and the one part of the suite that can fail on a CDN
-      # hiccup). Restore that cache instead. The key is DERIVED from the script's own
-      # PW_TEST_VERSION pin — the single source of truth — so bumping the pin is the only
-      # thing that turns the cache over. Deliberately NO restore-keys: a near-miss cache
-      # would just be re-downloaded over by the script's version-mismatch guard, saving
-      # nothing. The derivation is mechanized in loomwright/scripts/read-playwright-pin.sh
-      # (NOT an inline sed here — the same code the committed test exercises) and fails
-      # CLOSED when the pin line cannot be read exactly once as `x.y.z` (an empty key would
-      # cache nothing, silently — the same "gate that passes vacuously" this file forbids
-      # elsewhere). Its pin-line mutations (range / quoted / trailing comment / missing /
-      # duplicated) are committed arms of test-read-playwright-pin.sh, which the self-test
-      # loop below auto-includes; no `|| true` on the call, under `set -e` a non-zero exit
-      # stops the step before an empty version can be written.
-      - name: Resolve the @playwright/test pin (test-verify-walkthrough.sh cache key)
-        id: pw-pin
-        run: |
-          set -euo pipefail
-          pin="$(bash loomwright/scripts/read-playwright-pin.sh)"
-          echo "version=$pin" >> "$GITHUB_OUTPUT"
-
-      - name: Cache @playwright/test + chromium for test-verify-walkthrough.sh
-        uses: actions/cache@v6
-        with:
-          path: ${{ env.LOOMWRIGHT_VERIFY_TEST_CACHE }}
-          key: verify-walkthrough-pw-${{ runner.os }}-${{ steps.pw-pin.outputs.version }}
-
-      - name: Run full deterministic self-test suite (hard gate)
-        # Runs the WHOLE suite as a hard gate, CONCURRENTLY (one test per vCPU): every test-*.sh
-        # and adapters/*/test-*.sh runs — future tests are auto-included, anti-drift — then every
-        # failure's full log is printed and the step fails. The serial `for … bash "$t"` loop this
-        # replaced used 1 of the runner's 4 vCPUs (~13.5 of a ~14 min job) and stopped at the
-        # first red test, hiding the rest. Glob, fail-closed rules and the zero-tests check live
-        # in the script so the same command runs locally; test-run-self-tests.sh covers them.
-        run: bash loomwright/scripts/run-self-tests.sh
-
       # Read-only run-history pull (meta-sync-followups/07, D.3). Since this repo moved its run
       # history to a metadata branch, a CI checkout has no .supervisor/jobs/done/, so the sdk-spike
-      # corpus sweep below prints SKIP. Placement is deliberate: AFTER the self-test suite (two of
-      # its tests change behaviour when real run history is present) and BEFORE the sdk-spike
+      # corpus sweep below prints SKIP. Placement is deliberate: AFTER every test step of THIS job
+      # (two suite tests change behaviour when real run history is present — the suite now runs in
+      # the `suite` job's own fresh checkouts, so the pull cannot reach it) and BEFORE the sdk-spike
       # steps. `meta-sync.sh pull` never pushes. The branch comes from the COMMITTED .gitignore
       # mode line (`setup-memory.sh mode`); default mode, a missing remote branch, or any failure
       # is reported and leaves the job exactly as before — this step can never fail the job.
@@ -178,7 +134,7 @@ jobs:
             echo "::warning::meta-sync.sh pull --branch $branch failed; continuing without run history"
           fi
 
-      # The sdk-spike suite is NOT matched by the `loomwright/scripts/test-*.sh` glob above
+      # The sdk-spike suite is NOT matched by the `loomwright/scripts/test-*.sh` glob of the suite job
       # (it lives under `loomwright/sdk-spike/test/`), so until v15.20.0 it never ran in CI at
       # all — while `src/runner.ts` absorbed 13 fix commits on this feature's branch alone.
       # Its two suites additionally self-SKIP unless `dist/runner.js` exists, and `dist/` is
@@ -233,3 +189,130 @@ jobs:
           name: eval-results
           path: .supervisor/eval/results.jsonl
           if-no-files-found: ignore
+
+  suite:
+    runs-on: ubuntu-latest
+    # Each shard is ~1/3 of the suite's weight (fixtures/self-test-weights.tsv: 1846 test-seconds on
+    # run 37809076650 ⇒ ~615 per shard, ~160 s at 4-way) with a floor of the longest single test
+    # (test-automate-trail.sh, 235 s on the runner) — a green shard takes ~4-5 min. The cap is the
+    # backstop for anything outside run-self-tests.sh's per-test watchdog (SELF_TEST_TIMEOUT 900 s):
+    # one hang in the concurrent batch plus one in a serial tail is 2 x 900 s, on top of the shard.
+    timeout-minutes: 45
+    strategy:
+      # Every shard reports even when one is red: the `ci` job needs ALL manifests to name each test.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    env:
+      # test-verify-walkthrough.sh's Playwright cache (its LOOMWRIGHT_VERIFY_TEST_CACHE
+      # override) — defined ONCE here so the actions/cache step below and the self-test
+      # step that fills it cannot disagree about the path. (`runner.temp` is not
+      # available in job-level env, hence the literal.) Every shard restores it: which shard
+      # owns test-verify-walkthrough.sh follows the weights file, and a restore is cheap.
+      LOOMWRIGHT_VERIFY_TEST_CACHE: /tmp/loomwright-verify-walkthrough
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      # test-verify-walkthrough.sh installs @playwright/test + a chromium build (~150 MB from
+      # the Playwright CDN) into $LOOMWRIGHT_VERIFY_TEST_CACHE, and under CI=1 an install
+      # failure is a HARD red (its AC11i arm) — so every run of the required `ci` check
+      # carried a fresh download and a network dependency it did not need (measured on
+      # PR #223: ~24 s of the step, and the one part of the suite that can fail on a CDN
+      # hiccup). Restore that cache instead. The key is DERIVED from the script's own
+      # PW_TEST_VERSION pin — the single source of truth — so bumping the pin is the only
+      # thing that turns the cache over. Deliberately NO restore-keys: a near-miss cache
+      # would just be re-downloaded over by the script's version-mismatch guard, saving
+      # nothing. The derivation is mechanized in loomwright/scripts/read-playwright-pin.sh
+      # (NOT an inline sed here — the same code the committed test exercises) and fails
+      # CLOSED when the pin line cannot be read exactly once as `x.y.z` (an empty key would
+      # cache nothing, silently — the same "gate that passes vacuously" this file forbids
+      # elsewhere). Its pin-line mutations (range / quoted / trailing comment / missing /
+      # duplicated) are committed arms of test-read-playwright-pin.sh, which the self-test
+      # loop below auto-includes; no `|| true` on the call, under `set -e` a non-zero exit
+      # stops the step before an empty version can be written.
+      - name: Resolve the @playwright/test pin (test-verify-walkthrough.sh cache key)
+        id: pw-pin
+        run: |
+          set -euo pipefail
+          pin="$(bash loomwright/scripts/read-playwright-pin.sh)"
+          echo "version=$pin" >> "$GITHUB_OUTPUT"
+
+      - name: Cache @playwright/test + chromium for test-verify-walkthrough.sh
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.LOOMWRIGHT_VERIFY_TEST_CACHE }}
+          key: verify-walkthrough-pw-${{ runner.os }}-${{ steps.pw-pin.outputs.version }}
+
+      - name: Run deterministic self-test suite, shard ${{ matrix.shard }}/3 (hard gate)
+        # Runs ONE shard of the WHOLE suite as a hard gate, CONCURRENTLY (one test per vCPU): the
+        # shard is a deterministic greedy split of every test-*.sh and adapters/*/test-*.sh by the
+        # committed weights — future tests are auto-included (default weight), anti-drift — and the
+        # union of the three shards is the whole suite (test-run-self-tests.sh pins it). Every
+        # failure's full log is printed and the step fails. The manifest (each test + its rc) is
+        # what the `ci` job checks for a missing or duplicated test.
+        env:
+          SELF_TEST_MANIFEST: ${{ runner.temp }}/self-test-manifest.tsv
+        run: bash loomwright/scripts/run-self-tests.sh --shard ${{ matrix.shard }}/3
+
+      - name: Upload this shard's result manifest
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: self-test-manifest-${{ matrix.shard }}
+          path: ${{ runner.temp }}/self-test-manifest.tsv
+          if-no-files-found: error
+
+  # The ONE job named `ci` (branch protection's required context). Inline `run:` on purpose: a
+  # `bash scripts/<x>.sh` line here would become a gate in scripts/ci-local.sh, which derives its
+  # gates from this file's text. Fails CLOSED: a needed job that did not succeed, a missing
+  # manifest, a test missing from or duplicated across the manifests (against the runner's own
+  # `--list`), or any non-zero rc.
+  ci:
+    needs: [static, suite]
+    if: always()
+    runs-on: ubuntu-latest
+    # Checkout + artifact download + a list compare: under a minute. 10 is the backstop.
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Download every shard manifest
+        uses: actions/download-artifact@v7
+        with:
+          pattern: self-test-manifest-*
+          path: ${{ runner.temp }}/manifests
+
+      - name: Aggregate static + every shard (fails closed)
+        env:
+          STATIC_RESULT: ${{ needs.static.result }}
+          SUITE_RESULT: ${{ needs.suite.result }}
+          MDIR: ${{ runner.temp }}/manifests
+          SHARDS: "3"
+        run: |
+          set -euo pipefail
+          bad=0
+          [ "$STATIC_RESULT" = success ] || { echo "::error::job static: $STATIC_RESULT"; bad=1; }
+          [ "$SUITE_RESULT" = success ] || { echo "::error::job suite: $SUITE_RESULT"; bad=1; }
+          : > "$RUNNER_TEMP/ran.tsv"
+          for k in $(seq 1 "$SHARDS"); do
+            m="$MDIR/self-test-manifest-$k/self-test-manifest.tsv"
+            if [ -f "$m" ]; then cat "$m" >> "$RUNNER_TEMP/ran.tsv"
+            else echo "::error::shard $k left no result manifest"; bad=1; fi
+          done
+          bash loomwright/scripts/run-self-tests.sh --list | env LC_ALL=C sort > "$RUNNER_TEMP/want.lst"
+          [ -s "$RUNNER_TEMP/want.lst" ] || { echo "::error::run-self-tests.sh --list printed nothing"; bad=1; }
+          cut -f3 "$RUNNER_TEMP/ran.tsv" | env LC_ALL=C sort > "$RUNNER_TEMP/ran.lst"
+          dup="$(uniq -d "$RUNNER_TEMP/ran.lst")"
+          [ -z "$dup" ] || { echo "::error::tests run by more than one shard:"; echo "$dup"; bad=1; }
+          missing="$(env LC_ALL=C comm -23 "$RUNNER_TEMP/want.lst" "$RUNNER_TEMP/ran.lst")"
+          [ -z "$missing" ] || { echo "::error::tests no shard ran:"; echo "$missing"; bad=1; }
+          extra="$(env LC_ALL=C comm -13 "$RUNNER_TEMP/want.lst" "$RUNNER_TEMP/ran.lst" | uniq)"
+          [ -z "$extra" ] || { echo "::error::manifest names tests outside the suite:"; echo "$extra"; bad=1; }
+          red="$(awk -F'\t' '$1 != "0"' "$RUNNER_TEMP/ran.tsv")"
+          [ -z "$red" ] || { echo "::error::non-zero results:"; echo "$red"; bad=1; }
+          echo "ci: $(wc -l < "$RUNNER_TEMP/ran.lst" | tr -d ' ') test results from $SHARDS shards against $(wc -l < "$RUNNER_TEMP/want.lst" | tr -d ' ') listed"
+          exit "$bad"

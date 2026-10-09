@@ -60,6 +60,9 @@
 #        stamped; (EX) MUTATION CONTROL: a copy that skips the early-red exit is caught; (AFC)
 #        --affected runs the --check gate and the early-marked test; (AF8) early set and mapped set
 #        both empty ⇒ the empty-plan refusal
+#   (MJ) iq02 T08: the same gates written as a static / suite-matrix / aggregating-`ci` multi-job
+#        ci.yml derive the SAME gate list; the shard and --list runner lines are never gates; an
+#        aggregator `bash scripts/agg.sh` line WOULD be derived (the hazard the real file avoids)
 #   (AF5) empty changed set → says so, still runs the cheap gates; (AF7) no origin/main → says so,
 #        diffs against HEAD; (AF6) --affected --list: the plan, nothing ran, no log;
 #        (AX) conflicting flags → exit 2
@@ -730,6 +733,28 @@ run --affected
 if [ "$rc" -eq 1 ] && has "refusing to report green on an empty plan" && [ ! -s "$FIXTURE_LOG" ]; then
   ok "(AF8) early set and mapped set both empty: --affected refuses an empty plan"
 else no "(AF8) rc=$rc out=$out"; fi
+
+# (MJ) — iq02 T08: one job vs. the static / suite-matrix / aggregating-ci shape: identical gate lines.
+printf '%s\n' 'jobs:' '  ci:' '    steps:' '      - run: |' '          bash scripts/check-a.sh --self-test' '          bash scripts/check-a.sh' \
+  '      - run: bash scripts/test-check-a.sh' '      - run: bash loomwright/scripts/gen.sh --check' \
+  '      - run: bash loomwright/scripts/run-self-tests.sh' > "$R/.github/workflows/ci.yml"
+run --list; mj_one="$(grep '^gate: ' <<<"$out")"
+printf '%s\n' 'jobs:' '  static:' '    timeout-minutes: 20' '    steps:' '      - run: |' '          bash scripts/check-a.sh --self-test' '          bash scripts/check-a.sh' \
+  '      - run: bash scripts/test-check-a.sh' '      - run: bash loomwright/scripts/gen.sh --check' \
+  '  suite:' '    strategy:' '      fail-fast: false' '      matrix:' '        shard: [1, 2, 3]' '    steps:' \
+  '      - run: bash loomwright/scripts/run-self-tests.sh --shard ${{ matrix.shard }}/3' \
+  '  ci:' '    needs: [static, suite]' '    if: always()' '    steps:' '      - run: |' \
+  '          bash loomwright/scripts/run-self-tests.sh --list | env LC_ALL=C sort > want.lst' > "$R/.github/workflows/ci.yml"
+run --list; mj_multi="$(grep '^gate: ' <<<"$out")"
+want_mj=$'gate: scripts/check-a.sh --self-test\ngate: scripts/check-a.sh\ngate: scripts/test-check-a.sh\ngate: loomwright/scripts/gen.sh --check'
+if [ "$rc" -eq 0 ] && [ "$mj_one" = "$want_mj" ] && [ "$mj_multi" = "$mj_one" ] && ! has "run-self-tests"; then
+  ok "(MJ) the multi-job ci.yml derives exactly the single-job gate lines; shard/--list runner lines are not gates"
+else no "(MJ) one=[$mj_one] multi=[$mj_multi] out=$out"; fi
+printf '%s\n' '      - run: bash scripts/agg.sh' >> "$R/.github/workflows/ci.yml"; echo 'exit 0' > "$R/scripts/agg.sh"
+run --list
+if [ "$rc" -eq 0 ] && has "^gate: scripts/agg.sh$"; then ok "(MJ) HAZARD shown: an aggregator \`bash scripts/agg.sh\` line becomes a ci-local gate — the real ci job stays inline"
+else no "(MJ) agg line not derived: $out"; fi
+rm -f "$R/scripts/agg.sh"
 
 # (Z)
 printf 'jobs:\n  ci:\n    steps:\n      - run: echo nothing\n' > "$R/.github/workflows/ci.yml"
