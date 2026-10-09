@@ -28,18 +28,33 @@
 # Usage:
 #   check-children-settled.sh --log <path> --agent-id <id>   # single-agent join (per-subtask gate)
 #   check-children-settled.sh --log <path> --all             # per-session aggregate (FINALIZE gate)
+#   check-children-settled.sh --log <path> --all --expect-id <id> [--expect-id <id> ...]
+#                                                            # aggregate + ids the caller KNOWS it spawned
 #
 # Output (ONE JSON object on stdout, always exit 0):
 #   single-agent: {"agent_id":"<id>","status":"settled"|"unsettled","ended_without_result":true|false,"rejected_stops":N,"source":"check-children-settled.sh"}
 #   --all:        {"status":"settled"|"unsettled"|"no_identity_rows","unsettled_agent_ids":[...],"ended_without_result_ids":[...],"rejected_stop_ids":[...],"source":"check-children-settled.sh"}
+#   `--expect-id <id>` (repeatable, `--all` only; agnostic-phase1/02): every expected id is checked by
+#   the SAME `terminal_for` join as the `agent_identity` ids — the checked set is their union, deduped —
+#   whether or not any identity row landed. An expected id with no terminal row (an identity row alone,
+#   no row at all, an empty log, or NO LOG) is `unsettled` and named in `unsettled_agent_ids`. WHY: an
+#   identity row is written by a PostToolUse[Task] hook; when that hook never fired (log dir
+#   unresolvable, non-Claude host) a run that DID spawn workers read `no_identity_rows` — the same answer
+#   as a run that spawned nothing — while the per-subtask `--agent-id` gates failed closed on the same
+#   absence. With at least one `--expect-id`, `no_identity_rows` is unreachable. Without the flag the
+#   `--all` output is byte-identical to before. Callers: FINALIZE Point 5 and
+#   guard-finalize-publish.sh write-marker, both passing the ids recorded under state.md's
+#   `## Worker Results` headings. `--expect-id` with `--agent-id`, a missing value, an empty value or a
+#   value carrying a newline ⇒ `bad_args`.
 #   `rejected_stops` / `rejected_stop_ids` (additive, v15.83.0) are DIAGNOSTIC ONLY — the count of
 #   `subtask_complete` rows carrying `rejected: true` for that agent_id / the identity-row ids with at
 #   least one such row — so an `unsettled` verdict caused by a validator-rejected stop is readable
 #   from the join output instead of only from the subagent transcript. Consumers decide on `status`
 #   alone; these never change the verdict.
-#   A missing/unreadable `--log` in `--all` mode is the documented `no_identity_rows` case (a session
-#   that never wrote a log trivially has zero `agent_identity` rows) — never `unverifiable`, never a
-#   false `settled`. The SAME condition in single-agent mode is `unsettled` (no evidence of settlement
+#   A missing/unreadable `--log` in `--all` mode with NO `--expect-id` is the documented
+#   `no_identity_rows` case (a session that never wrote a log trivially has zero `agent_identity`
+#   rows) — never `unverifiable`, never a false `settled`; WITH `--expect-id` it is `unsettled` naming
+#   every expected id. The SAME condition in single-agent mode is `unsettled` (no evidence of settlement
 #   is not evidence of absence of the agent — fail closed toward "not done yet", never toward "done").
 #   Malformed invocation (missing `--log`, or neither `--agent-id` nor `--all`) or a missing `jq` ⇒
 #   `{"status":"unverifiable","reason":"bad_args"|"jq_missing","source":"check-children-settled.sh"}` —
@@ -100,6 +115,18 @@ log=""
 agent_id=""
 mode=""   # "agent" | "all"
 bad_args=""
+expect_ids=""   # newline-separated --expect-id values (order of arrival; deduped at use)
+NL='
+'
+
+# add_expect <value> — record one --expect-id value, or set bad_args for an empty / multi-line one.
+add_expect() {
+  case "$1" in
+    '') bad_args="--expect-id needs a non-empty value" ;;
+    *"$NL"*) bad_args="--expect-id value must not contain a newline" ;;
+    *) expect_ids="$expect_ids$1$NL" ;;
+  esac
+}
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -112,8 +139,12 @@ while [ $# -gt 0 ]; do
       agent_id="$2"; mode="agent"; shift 2 ;;
     --agent-id=*) agent_id="${1#--agent-id=}"; mode="agent"; shift ;;
     --all) mode="all"; shift ;;
+    --expect-id)
+      if [ $# -lt 2 ]; then bad_args="--expect-id needs a value argument"; break; fi
+      add_expect "$2"; shift 2 ;;
+    --expect-id=*) add_expect "${1#--expect-id=}"; shift ;;
     -h|--help)
-      printf 'usage: %s --log <path> (--agent-id <id> | --all)\n' "$SELF" >&2
+      printf 'usage: %s --log <path> (--agent-id <id> | --all [--expect-id <id>]...)\n' "$SELF" >&2
       exit 0 ;;
     *)
       printf '%s: unexpected argument %s (ignored)\n' "$SELF" "$1" >&2
@@ -124,6 +155,7 @@ done
 [ -z "$bad_args" ] && [ -z "$mode" ] && bad_args="one of --agent-id <id> or --all is required"
 [ -z "$bad_args" ] && [ "$mode" = "agent" ] && [ -z "$agent_id" ] && bad_args="--agent-id needs a non-empty value"
 [ -z "$bad_args" ] && [ -z "$log" ] && bad_args="--log is required"
+[ -z "$bad_args" ] && [ "$mode" = "agent" ] && [ -n "$expect_ids" ] && bad_args="--expect-id is only valid with --all"
 
 if [ -n "$bad_args" ]; then
   printf '%s: unverifiable — bad_args (%s)\n' "$SELF" "$bad_args" >&2
@@ -138,18 +170,21 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 if [ ! -f "$log" ] || [ ! -r "$log" ]; then
-  if [ "$mode" = "all" ]; then
+  if [ "$mode" = "all" ] && [ -z "$expect_ids" ]; then
     # No log at all ⇒ trivially zero agent_identity rows — this IS the documented no_identity_rows
     # case (a session that never wrote a log has nothing to check), never `unverifiable`, never a
-    # false `settled`.
+    # false `settled`. With --expect-id there IS something to check: fall through to the join below,
+    # whose every jq read of the absent log yields nothing, so each expected id reads `unsettled`.
     jq -n -c --arg s "$SELF" \
       '{status: "no_identity_rows", unsettled_agent_ids: [], ended_without_result_ids: [], rejected_stop_ids: [], source: $s}'
     exit 0
   fi
-  # Single-agent mode: no log ⇒ no evidence of settlement ⇒ unsettled (fail closed toward "not done").
-  jq -n -c --arg id "$agent_id" --arg s "$SELF" \
-    '{agent_id: $id, status: "unsettled", ended_without_result: false, source: $s}'
-  exit 0
+  if [ "$mode" = "agent" ]; then
+    # Single-agent mode: no log ⇒ no evidence of settlement ⇒ unsettled (fail closed toward "not done").
+    jq -n -c --arg id "$agent_id" --arg s "$SELF" \
+      '{agent_id: $id, status: "unsettled", ended_without_result: false, source: $s}'
+    exit 0
+  fi
 fi
 
 # terminal_for <agent_id> — prints "0" or "1" (ended_without_result) for the deciding terminal row of
@@ -235,8 +270,9 @@ if [ "$mode" = "agent" ]; then
   exit 0
 fi
 
-# --all: every distinct agent_id that ever appeared on an agent_identity row.
-ids="$(jq -R -r '(fromjson? // empty) | select(.event == "agent_identity" and (.agent_id? // "") != "") | .agent_id' "$log" 2>/dev/null | sort -u)"
+# --all: every distinct agent_id that ever appeared on an agent_identity row, UNION every --expect-id
+# (deduped). An expected id goes through the SAME terminal_for join below — never a second copy.
+ids="$( { jq -R -r '(fromjson? // empty) | select(.event == "agent_identity" and (.agent_id? // "") != "") | .agent_id' "$log" 2>/dev/null; printf '%s' "$expect_ids"; } | sort -u)"
 
 if [ -z "$ids" ]; then
   jq -n -c --arg s "$SELF" \

@@ -102,7 +102,7 @@ _The Phase 1.5 PRE-FLIGHT SYNC outcome is recorded here as an ordinary Decisions
 | # | Phase | Decision | Rationale |
 
 ## Worker Results
-### {worker-id} ({subtask-id})
+### {worker-id} ({subtask-id})   # {worker-id} = the worker's Task-returned agent id — FINALIZE Point 5 and guard-finalize-publish.sh write-marker pass each one as `--expect-id`
 - files_modified: [{paths}]
 - lines: +{added} -{removed}
 - tests: pass/fail ({count})

@@ -229,12 +229,14 @@ Phase 4 (FINALIZE):
 Task(
   description: "Implement {subtask_id}",
   prompt: "Worker prompt...",
-  subagent_type: "general-purpose",
+  subagent_type: "loomwright:worker",
   run_in_background: true
 )
 → Returns: { task_id, output_file }
 → Track: worker_id, subtask_id, output_file, worktree_path
 ```
+
+A worker is always `loomwright:worker` — the worker hooks match that type only (`skills/async-orchestration/SKILL.md` §"Spawning a Worker").
 
 ### Non-Blocking Poll Loop
 

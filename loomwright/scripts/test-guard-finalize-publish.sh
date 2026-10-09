@@ -26,6 +26,10 @@
 # redirect words (`>/dev/null`, `2>err.log`) never stand in for the subcommand, so `git 2>&1 push` /
 # `gh 2>&1 pr create` are denied while a real background `x & git push` still splits and
 # `git stash push 2>&1` stays allowed; two mutation controls (no AMP swap, no redirect tokenizing).
+# expect-id (agnostic-phase1/02): a worker id recorded under state.md's `## Worker Results` with no
+# terminal row -> writer refuses children_unsettled, no marker, even with no agent_identity row; its
+# terminal row -> settled; an explicit `--expect-id` arg is checked too; `--skip-children-check` works
+# in any position; an unknown argument refuses bad_args; a mutation control drops the recorded ids.
 #
 # HARNESS RULE: never pipe a producer into the guard — the inert paths exit 0 without reading stdin,
 # so a piped `jq` can hit EPIPE and pipefail turns that race into a spurious rc 2/141; build the
@@ -162,6 +166,33 @@ write_marker "$RI"
   && ok "no identity rows -> marker children_check: no_identity_rows (never settled)" || no "no_identity_rows marker: rc=$WRC out=$WOUT"
 run_guard "$RI" "git push"; expect "guard accepts a no_identity_rows marker at HEAD" 0
 
+echo "== expect-id: recorded worker ids are checked even with no agent_identity row (agnostic-phase1/02) =="
+# record_worker <repo> <worker-id> — a `## Worker Results` entry as Context-Keeper's record_worker_result writes it
+record_worker() { printf '\n## Worker Results\n### %s (1)\n- files_modified: [a]\n- lines: +1 -0\n' "$2" >> "$1/.supervisor/state.md"; }
+REX="$(new_repo running)"; record_worker "$REX" "w-recorded"     # session_start only: no identity row, no terminal row
+write_marker "$REX"
+[ "$WRC" = 1 ] && grep -q children_unsettled <<<"$WOUT" && grep -q '"w-recorded"' <<<"$WOUT" \
+  && [ ! -e "$REX/.supervisor/logs/$PSID.finalize-gate" ] \
+  && ok "expect-id: a recorded worker id with no terminal row -> writer refuses children_unsettled naming it, no marker (never no_identity_rows)" \
+  || no "expect-id: recorded unsettled worker: rc=$WRC out=$WOUT"
+printf '{"event":"subtask_complete","agent_id":"w-recorded","result_block_present":true}\n' >> "$REX/.supervisor/logs/$PSID.jsonl"
+write_marker "$REX"
+[ "$WRC" = 0 ] && [ "$(jq -r .children_check "$REX/.supervisor/logs/$PSID.finalize-gate" 2>/dev/null)" = "settled" ] \
+  && ok "expect-id: the recorded worker's terminal row lands (still no identity row) -> marker settled" \
+  || no "expect-id: recorded settled worker: rc=$WRC out=$WOUT"
+WOUT="$(cd "$RI" && CLAUDE_PROJECT_DIR="$RI" "$REALBASH" "$GUARD" write-marker --expect-id w-explicit 2>/dev/null)"; WRC=$?
+[ "$WRC" = 1 ] && grep -q children_unsettled <<<"$WOUT" && grep -q '"w-explicit"' <<<"$WOUT" \
+  && ok "expect-id: an explicit --expect-id arg with no terminal row -> writer refuses children_unsettled" \
+  || no "expect-id: explicit --expect-id: rc=$WRC out=$WOUT"
+WOUT="$(cd "$RI" && CLAUDE_PROJECT_DIR="$RI" "$REALBASH" "$GUARD" write-marker --expect-id w-explicit --skip-children-check 2>/dev/null)"; WRC=$?
+[ "$WRC" = 0 ] && [ "$(jq -r .children_check "$RI/.supervisor/logs/$PSID.finalize-gate" 2>/dev/null)" = "skipped" ] \
+  && ok "expect-id: --skip-children-check after another flag still skips (any argument position)" \
+  || no "expect-id: skip in second position: rc=$WRC out=$WOUT"
+WOUT="$(cd "$RI" && CLAUDE_PROJECT_DIR="$RI" "$REALBASH" "$GUARD" write-marker --skip-children-chek 2>/dev/null)"; WRC=$?
+[ "$WRC" = 1 ] && grep -q bad_args <<<"$WOUT" \
+  && ok "expect-id: an unknown write-marker argument (a misspelt flag) refuses bad_args instead of being ignored" \
+  || no "expect-id: unknown arg: rc=$WRC out=$WOUT"
+
 echo "== F3: .supervisor/ is found from a linked worktree; detached sibling + bold state.md =="
 RW="$(new_repo running)"; WT="$TMP/wt-linked.$$"; SIB="$TMP/wt-sibling.$$"
 ( cd "$RW" && git checkout -qb other && git worktree add -q "$WT" "$BR" && git worktree add -q --detach "$SIB" HEAD ) >/dev/null 2>&1
@@ -274,6 +305,14 @@ WRC="$(cd "$RML" && CLAUDE_PROJECT_DIR="$RML" "$REALBASH" "$MUTF" write-marker >
 [ "$MUTOK" = 1 ] && [ "$WRC" = 0 ] && [ -f "$RML/.supervisor/logs/$PSID.finalize-gate" ] \
   && ok "mutation (F2): without the log check a missing log writes a marker — the case is load-bearing" \
   || no "mutation (F2): inconclusive (changed=$MUTOK rc=$WRC)"
+# expect-id: stop feeding the recorded worker ids -> a recorded unsettled worker writes no_identity_rows again
+mutant m-expect 's/^\$(read_worker_result_ids)$//'
+RMX="$(new_repo running)"; record_worker "$RMX" "w-recorded"
+WRC="$(cd "$RMX" && CLAUDE_PROJECT_DIR="$RMX" "$REALBASH" "$MUTF" write-marker >/dev/null 2>&1; echo $?)"
+[ "$MUTOK" = 1 ] && [ -s "$MUTF" ] && bash -n "$MUTF" 2>/dev/null && [ "$WRC" = 0 ] \
+  && [ "$(jq -r .children_check "$RMX/.supervisor/logs/$PSID.finalize-gate" 2>/dev/null)" = "no_identity_rows" ] \
+  && ok "mutation (expect-id): without the recorded ids the unsettled worker passes as no_identity_rows — the wiring is load-bearing" \
+  || no "mutation (expect-id): inconclusive (changed=$MUTOK rc=$WRC)"
 # F3a: resolve .supervisor/ from the project dir only -> the linked worktree reads inert
 mutant m-f3a 's/ROOT="\$(loom_main_root "\$PROJ" 2>\/dev\/null)"/ROOT=""/'
 RML2="$(new_repo running)"; WT2="$TMP/wt-linked2.$$"

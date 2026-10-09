@@ -7,8 +7,10 @@
 #                                                  hooks.json leaf carries NO `|| true` (CLAUDE.md
 #                                                  §"Plugin Hooks"; the second fail-CLOSED command
 #                                                  hook after guard-test-integrity.sh).
-#   guard-finalize-publish.sh write-marker [--skip-children-check]
+#   guard-finalize-publish.sh write-marker [--skip-children-check] [--expect-id <id>]...
 #                                                  The ONLY writer of the finalize-gate marker.
+#                                                  Flags in any order; an unknown one refuses
+#                                                  (`bad_args`).
 #
 # WHY: FINALIZE point 5 (the children-settled check) was a numbered prose step, and a lane ran it
 # AFTER pushing and opening its PR — nothing refused that. Now a Supervisor run cannot `git push` /
@@ -24,6 +26,11 @@
 # evidence of settlement), or when `--skip-children-check` is given (recorded as `skipped`). It
 # refuses (`session_log_missing`) when the session log is absent or unreadable: the check reports
 # that as `no_identity_rows` for its own fail-SAFE callers, and a gate must not consume it as a pass.
+# EXPECTED IDS (agnostic-phase1/02): the check is run with one `--expect-id` per worker id this run
+# recorded — the `### {worker-id} ({subtask-id})` headings under state.md's `## Worker Results`
+# (read_worker_result_ids) plus any explicit `--expect-id <id>` argument — so a recorded worker with
+# no terminal row refuses `children_unsettled` even when its agent_identity row never landed, instead
+# of recording `no_identity_rows`. No recorded id and no argument ⇒ the check runs exactly as before.
 # Any other outcome (unsettled / unverifiable / no active session / no HEAD) writes nothing and
 # exits 1. HEAD moving after the marker invalidates it: re-run write-marker before every publish
 # (Phase 4.5 heal pushes included) — it re-checks the children each time.
@@ -152,13 +159,51 @@ read_session_block() {
   return 1
 }
 
+# ---- write-marker: the worker ids this run recorded (no jq) --------------------------------------
+# One id per line: the first word of every `### {worker-id} ({subtask-id})` heading inside state.md's
+# `## Worker Results` section — the heading Context-Keeper's `record_worker_result` writes, whose
+# {worker-id} is the worker's Task-returned agent id (the same id the per-subtask `--agent-id` gates
+# join on). `**` / backticks / CR are stripped. No section, or no heading, prints nothing.
+read_worker_result_ids() {
+  [ -f "$STATE_MD" ] || return 0
+  local line in_block=0 tok
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      "## Worker Results"*) in_block=1; continue ;;
+      "## "*) [ "$in_block" = 1 ] && break; continue ;;
+    esac
+    [ "$in_block" = 1 ] || continue
+    case "$line" in
+      "### "*)
+        tok="$(printf '%s' "${line#\#\#\# }" | tr -d '`*\r')"
+        tok="${tok#"${tok%%[![:space:]]*}"}"
+        tok="${tok%%[[:space:]]*}"
+        [ -n "$tok" ] && printf '%s\n' "$tok" ;;
+    esac
+  done < "$STATE_MD"
+  return 0
+}
+
 # ======================================================================================
 # write-marker mode
 # ======================================================================================
 if [ "${1:-}" = "write-marker" ]; then
-  skip=0
-  [ "${2:-}" = "--skip-children-check" ] && skip=1
   refuse() { printf '{"status":"refused","reason":"%s"}\n' "$1"; exit 1; }
+  shift
+  skip=0
+  EXPECT_ARGS=()   # explicit `--expect-id <id>` args, forwarded verbatim to the join
+  # Flags in any order. An unknown argument refuses (`bad_args`) rather than being ignored: a
+  # misspelt `--expect-id` silently dropped would pass the check on less evidence than asked for.
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --skip-children-check) skip=1; shift ;;
+      --expect-id)
+        { [ $# -ge 2 ] && [ -n "$2" ]; } || refuse "bad_args"
+        EXPECT_ARGS[${#EXPECT_ARGS[@]}]="--expect-id"; EXPECT_ARGS[${#EXPECT_ARGS[@]}]="$2"; shift 2 ;;
+      --expect-id=?*) EXPECT_ARGS[${#EXPECT_ARGS[@]}]="--expect-id"; EXPECT_ARGS[${#EXPECT_ARGS[@]}]="${1#--expect-id=}"; shift ;;
+      *) refuse "bad_args" ;;
+    esac
+  done
   command -v jq >/dev/null 2>&1 || refuse "jq_missing"
   [ "$HELPER_OK" = 1 ] || refuse "helper_missing"
   resolve_root
@@ -176,7 +221,17 @@ if [ "${1:-}" = "write-marker" ]; then
     # check-children-settled.sh reads a missing/unreadable log as `no_identity_rows` (fail-SAFE for
     # its own callers). A gate must not consume that as a pass: no log is no evidence at all.
     [ -f "$SESSION_LOG" ] && [ -r "$SESSION_LOG" ] || refuse "session_log_missing"
-    res="$(bash "$HERE/check-children-settled.sh" --log "$SESSION_LOG" --all 2>/dev/null)"
+    # The ids this run spawned and recorded (`## Worker Results` headings) are EXPECTED: each must
+    # have a terminal row even when its agent_identity row never landed. None recorded => no
+    # --expect-id => the join runs exactly as before.
+    while IFS= read -r wid; do
+      [ -n "$wid" ] || continue
+      EXPECT_ARGS[${#EXPECT_ARGS[@]}]="--expect-id"; EXPECT_ARGS[${#EXPECT_ARGS[@]}]="$wid"
+    done <<EOF
+$(read_worker_result_ids)
+EOF
+    # `${arr[@]+…}`: an empty array under `set -u` is an unbound-variable error on bash 3.2
+    res="$(bash "$HERE/check-children-settled.sh" --log "$SESSION_LOG" --all ${EXPECT_ARGS[@]+"${EXPECT_ARGS[@]}"} 2>/dev/null)"
     children_status="$(printf '%s' "$res" | jq -r '.status // empty' 2>/dev/null)"
     case "$children_status" in
       # recorded verbatim — `no_identity_rows` is a pass, never `settled` (async-orchestration point 5)
