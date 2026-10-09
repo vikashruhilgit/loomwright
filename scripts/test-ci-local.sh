@@ -170,6 +170,11 @@ if names_log && [ "$pname_ok" -eq 1 ] && [ "$(log_verdict "$plog")" = "$(grep '^
    && grep -q '^ci-local: PASS after .* stamped' "$plog"; then
   ok "(LG) PASS run: first + last line name <state>/runs/<key>-<ts>-<pid>.log; it ends with the verdict"
 else no "(LG) pass: log=[$plog] verdict=[$( [ -f "$plog" ] && log_verdict "$plog")] out=$out"; fi
+# (3D) iq02 T04 3d: the run log's line 2 names HEAD sha + branch; stdout never carries it
+_hsha="$(cd "$R" && git rev-parse HEAD 2>/dev/null)"; _hbr="$(cd "$R" && git symbolic-ref --short -q HEAD 2>/dev/null || echo detached)"
+if [ "$(sed -n '2p' "$plog" 2>/dev/null)" = "ci-local: head $_hsha $_hbr" ] && ! has '^ci-local: head '; then
+  ok "(3D) run log line 2 = 'ci-local: head <HEAD sha> <branch>'; not on stdout"
+else no "(3D) head line: [$(sed -n '2p' "$plog" 2>/dev/null)] want [ci-local: head $_hsha $_hbr]"; fi
 
 # (LA1) — --last reads that log back, runs nothing.
 run --last

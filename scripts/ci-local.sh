@@ -266,6 +266,10 @@ open_log() {
   mkdir -p "$runs"
   log="$runs/$key-$(date -u '+%Y%m%dT%H%M%SZ')-$$$sfx.log"
   printf 'ci-local: log %s\n' "$log" > "$log"
+  # iq02 T04 3d: HEAD sha + branch, LOG FILE ONLY (stdout line 1 stays the log path) —
+  # attributes a run on an uncommitted tree by HEAD, never by time window.
+  printf 'ci-local: head %s %s\n' "$(git rev-parse HEAD 2>/dev/null || echo unknown)" \
+    "$(git symbolic-ref --short -q HEAD 2>/dev/null || echo detached)" >> "$log"
   printf 'ci-local: log %s\n' "$log"
   : > "$tmpd/runs.lst"
   while IFS= read -r f; do
