@@ -15,5 +15,6 @@ WORKER_RESULT:
       path: src/auth/jwt.guard.spec.ts
       status: missing
   outputs_gap: "src/auth/jwt.guard.spec.ts"
+  self_review: [{part: checklist, result: held, evidence: "miss-classes walked"}, {part: repro, result: held, evidence: "mktemp -d repro"}, {part: sweep, result: n/a, evidence: "no restated claim"}, {part: invariants, result: n/a, evidence: "no invariants section"}]
   summary: Guard implemented but the spec file was deferred; status partial because outputs_gap names the missing spec.
 ```

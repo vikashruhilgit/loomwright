@@ -50,7 +50,7 @@ import json,sys
 def prompt(fields): return "Verify block contains " + ", ".join(fields) + " fields."
 mk=lambda m,f:{"matcher":f"loomwright:{m}","hooks":[{"type":"prompt","prompt":prompt(f),"timeout":30}]}
 h={"hooks":{"SubagentStop":[
-  mk("worker",["schema_version","task_id","status","files_modified","summary","outputs_verified","outputs_gap","out_of_lane","deviations","not_verified","no_changes"]),
+  mk("worker",["schema_version","task_id","status","files_modified","summary","outputs_verified","outputs_gap","out_of_lane","deviations","not_verified","no_changes","self_review"]),
   mk("execute-manager",["schema_version","subtasks_completed","worktrees","merge_order","summary","completed_so_far","remaining","resume_context","reason","adjudication_required","missing_outputs","adjudication_options","adjudication_kind","colliding_lanes"]),
   mk("qa-executor",["schema_version","tests_generated","tests_passed","summary","coverage_estimate","run_id","run_dir","counts","pause_reason"]),
   mk("supervisor-runner",["schema_version","status","pr_url","heal_loop_ran","heal_iterations","heal_decision","heal_fixable_issues_fixed","heal_remaining_issues","error","summary"]),
@@ -67,6 +67,7 @@ out_of_lane (optional, additive at schema_version 2 — report-only),
 deviations (optional, additive at schema_version 2 — report-only),
 not_verified (optional, additive at schema_version 2 — report-only),
 no_changes (optional, additive at schema_version 2 — read-only subtasks).
+self_review (required for completed/partial at schema_version 2 — rule 13).
 Other statuses: status: failed, status: partial.
 EOF
   cat >"$d/loomwright/agents/execute-manager.md" <<'EOF'
@@ -444,6 +445,26 @@ else
   else
     echo "FAIL  negation check: RESULT_SCHEMAS.md no longer documents not_verified — cannot demonstrate the divergence"
   fi
+fi
+
+# self_review (rule 13, implementation-quality/02 Part IQ01) — same pairing as
+# not_verified above: the MANIFEST row names it AND worker-result.md documents it.
+SR_ROW_RE='^worker\|worker\.md\|WORKER_RESULT\|.*,self_review(,[a-z_]+)*$'
+total=$((total+1))
+if grep -qE "$SR_ROW_RE" "$GUARD" && grep -q 'self_review: object\[\]' "$RESULT_SCHEMAS"; then
+  echo "ok    WORKER_RESULT MANIFEST row carries self_review AND worker-result.md documents it (paired)"
+  pass=$((pass+1))
+else
+  echo "FAIL  WORKER_RESULT MANIFEST row / worker-result.md self_review pairing missing"
+fi
+SR_REVERTED="$TMP/check-contract-parity-sr-reverted.sh"
+sed -E '/^worker\|worker\.md\|WORKER_RESULT\|/s/,self_review//' "$GUARD" > "$SR_REVERTED"
+total=$((total+1))
+if [ -s "$SR_REVERTED" ] && ! cmp -s "$GUARD" "$SR_REVERTED" && bash -n "$SR_REVERTED" && ! grep -qE "$SR_ROW_RE" "$SR_REVERTED"; then
+  echo "ok    self_review negation mutant is valid (non-empty, differs, parses) and the pairing check no longer matches it"
+  pass=$((pass+1))
+else
+  echo "FAIL  self_review negation mutant invalid or still matched — the pairing check is vacuous"
 fi
 
 echo "----"
