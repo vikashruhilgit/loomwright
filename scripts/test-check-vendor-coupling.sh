@@ -1375,7 +1375,7 @@ contains "case31d ready-to-paste reason row carries the sentinel" "$OUT" "allowa
 BLOCK="$(printf '%s\n' "$OUT" | awk '/^    detail: /{on=1} on{print} /^      allowance_reasons: /{on=0}')"
 case "$BLOCK" in *"ways out, in this order"*) pass=$((pass+1)); echo "ok   - case31e block extracted for the advice check";;
   *) fail=$((fail+1)); echo "FAIL - case31e could not extract the detail block";; esac
-if printf '%s\n' "$BLOCK" | grep -qiE 'concatenat|indirect|lookup|assembl|at runtime|split the token|build the (token|name)'; then
+if grep -qiE 'concatenat|indirect|lookup|assembl|at runtime|split the token|build the (token|name)' <<<"$BLOCK"; then
   fail=$((fail+1)); echo "FAIL - case31e the block suggests hiding a reference from the literal count"
 else pass=$((pass+1)); echo "ok   - case31e the block never suggests runtime assembly"; fi
 contains "case31e the rule is stated positively" "$BLOCK" "rule: every reference stays a literal this gate can count"
