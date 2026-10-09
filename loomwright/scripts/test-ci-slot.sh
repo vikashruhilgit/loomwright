@@ -215,7 +215,7 @@ if [ "$(jq -c '[.waiters[] | [.pid, .name, .checkout]]' <<<"$st")" = "[[$h3,\"h3
    && [ "$(jq -c '[.holders[] | [.name, .checkout, (.started > 0)]]' <<<"$st")" = "[[\"h1\",\"$tmp/c1\",true],[\"h2\",\"$tmp/c2\",true]]" ]; then
   ok "(W) status --json: holders (pid, checkout, name, started) and the queued waiter"
 else no "(W) status=$st"; fi
-sleep 1.2   # at least one more progress period
+sleep 1.2   # fixed-sleep-ok: quiet period — at least one more progress period must pass with nothing printed (an absence check; too short ⇒ vacuous)
 at "$tmp/c2" -- release --pid "$h2"
 wait "$wpid"
 if [ "$(cat "$tmp/w.rc")" = 0 ] && [ "$(cat "$tmp/w.out")" = "slot=2 jobs=6" ] \
@@ -285,7 +285,7 @@ mixed_ok() {   # mixed_ok SUT — exit 0 iff every (X) property holds; XWHY says
     rc=1; XWHY="N=1 waiter claimed past 1 live holder (out '$(cat "$tmp/x.n")')"
   else
     at "$tmp/solo2" -- release --pid "$ha"   # the only live holder is now in slot 2
-    sleep 0.6
+    sleep 0.6   # fixed-sleep-ok: quiet period (mixed_ok) — the N=1 waiter must NOT take a slot within it; an absence check (too short ⇒ vacuous)
     if [ -s "$tmp/x.n" ]; then rc=1; XWHY="N=1 waiter took a slot while 1 holder (slot 2) was live: '$(cat "$tmp/x.n")'"
     else
       at "$tmp/solo2" -- release --pid "$hb"
@@ -393,7 +393,7 @@ at "$tmp/c2" -- acquire h6 --pid "$h6" >/dev/null
 ipid=$!
 i=0
 while [ "$(at "$tmp/c1" -- status --json | jq '.waiters | length')" != 1 ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
-sleep 0.3   # past the claim attempt, into the poll wait
+sleep 0.3   # fixed-sleep-ok: settle — past the claim attempt, into the poll wait (too short ⇒ the interrupt lands before the claim, a different path)
 kill -TERM "$ipid" 2>/dev/null
 i=0
 while kill -0 "$ipid" 2>/dev/null && [ "$i" -lt 30 ]; do sleep 0.1; i=$((i + 1)); done
