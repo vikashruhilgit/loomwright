@@ -251,7 +251,14 @@ heading line**, opened by the namespaced HTML-comment sentinel the idempotency g
   `stamp-requirement-status.sh` writes `## Status: brief-shipped`, deliberately not a done value.
 - **Honest limit:** a plain `/supervisor` / `/autonomous` run outside `/automate` gets no automatic done
   stamp — until a human runs `reconcile-status --apply`, or `/automate --resume` / the merge watcher
-  runs `closeout`, the requirement reads `brief-shipped` (or nothing).
+  runs `closeout`, the requirement reads `brief-shipped` (or nothing). `stamp-requirement-status.sh`
+  (SessionStart and `SubagentStop[loomwright:supervisor-runner]`) writes that `brief-shipped` heading on
+  a status-less requirement once its brief lands in `done/`. **Caveat:** `reconcile-status --apply`
+  promotes only a `pending`/status-less requirement; one already marked `brief-shipped` is listed as an
+  `info` row and left unchanged, so it needs a hand-written `## Status: done` (or `/automate --resume` /
+  the merge watcher running `closeout`, which appends its block regardless of an earlier
+  `brief-shipped` heading — its guard keys only on the sentinel). Promoting a merged `brief-shipped`
+  requirement in `reconcile-status` is an open follow-up, an explicit non-goal today.
 - **Vocabulary (intentional):** the requirement uses `done`, the brief `## Outcome` uses `completed` /
   `completed_with_escalation`. The split is deliberate — the requirement is "done", the brief is
   "completed" — do **not** harmonize them.
