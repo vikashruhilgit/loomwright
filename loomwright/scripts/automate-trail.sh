@@ -197,7 +197,8 @@ SUP_ALLOWED = set(SUP_REQUIRED + [
     "error", "cost_profile", "rubric_score", "branch_base", "pr_state",
     "contract_conformance", "benchmark_result", "ground_truth",
     "preflight_sync", "knowledge_sources_used", "until_mergeable_dispatched",
-    "until_mergeable_log", "risk_classification", "heal_dismissed"])
+    "until_mergeable_log", "risk_classification", "heal_dismissed",
+    "heal_first_decision", "heal_new_findings"])
 
 try:
     with open(path, encoding="utf-8") as fh:

@@ -64,7 +64,9 @@ for f in "${files[@]}"; do
        benchmark_metric:(.benchmark_metric//null),
        benchmark_value:(.benchmark_value//null),
        benchmark_delta:(.benchmark_delta//null),
-       knowledge_sources_used:(.knowledge_sources_used//[])}
+       knowledge_sources_used:(.knowledge_sources_used//[]),
+       heal_first_decision:(.heal_first_decision//null),
+       heal_new_findings:(.heal_new_findings//null)}
   ' "$f" 2>/dev/null | tail -1 >> "$records"
 done
 
@@ -137,6 +139,11 @@ agg="$(jq -s '{
               / ((map(select(.heal_iterations != null)) | length) | if . == 0 then 1 else . end)),
   subtasks:  (map(.subtasks_completed // 0) | add),
   files:     (map(.files_changed // 0) | add),
+  # --- findings-per-item metric (iq02 IQ01; additive; absent => not counted) ---
+  first_runs:  (map(select(.heal_first_decision != null)) | length),
+  first_pass:  (map(select(.heal_first_decision == "PASS")) | length),
+  find_runs:   (map(select(.heal_new_findings != null)) | length),
+  find_total:  ((map(select(.heal_new_findings != null) | .heal_new_findings) | add) // 0),
   # --- System Twin hard signal (additive; treats absent fields as null) ---
   twin_runs:            (map(select(.contract_conformance_status != null)) | length),
   contract_violations:  (map(.contract_violations // 0) | add),
@@ -170,6 +177,8 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
     "| Self-heal PASS | \(.heal_pass) |",
     "| Self-heal runs (with heal data) | \(.healed) |",
     "| Avg heal iterations (per healed run) | \(if .healed>0 then ((.avg_heal*100|floor)/100) else "—" end) |",
+    "| First-pass PASS rate (Phase 4.5 iteration 1) | \(if .first_runs>0 then "\(.first_pass)/\(.first_runs) (\((.first_pass*100/.first_runs)|floor)%)" else "not recorded" end) |",
+    "| Findings per item (new, all iterations) | \(if .find_runs>0 then ((.find_total*100/.find_runs|floor)/100) else "not recorded" end) |",
     "| Subtasks completed (total) | \(.subtasks) |",
     "| Files changed (total) | \(.files) |"
   '

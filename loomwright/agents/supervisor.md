@@ -823,6 +823,8 @@ SUPERVISOR_RESULT:
   heal_decision: enum [PASS, ESCALATED] | null  # null when heal_loop_ran=false
   heal_fixable_issues_fixed: integer        # 0 when heal_loop_ran=false
   heal_remaining_issues: integer            # 0 when heal_loop_ran=false or heal_decision=PASS
+  heal_first_decision: enum [PASS, FAIL, NEEDS_HUMAN] | null  # optional, additive — the loop's FIRST iteration decision; null when heal_loop_ran=false
+  heal_new_findings: integer | null         # optional, additive — category=new review findings summed over all iterations; null when heal_loop_ran=false
   error: string | null                      # required when status=failed
   summary: string
   cost_profile: enum [default, cheap] | null  # optional — null when flag not passed (equivalent to default)

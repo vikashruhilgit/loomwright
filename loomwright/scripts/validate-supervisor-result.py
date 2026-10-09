@@ -29,6 +29,9 @@ that exact string is reproduced below.
   (13) rubric_score: absent accepted, null accepted; when present and non-null
        it must be "N/M" with N >= 0, M >= 1, digits only with no leading zeros,
        and M >= N
+  (14) heal_first_decision / heal_new_findings (iq02 IQ01, additive): absent
+       or null accepted; present => PASS|FAIL|NEEDS_HUMAN / non-negative int;
+       non-null with heal_loop_ran=false is rejected
 
 NULLABLE-BUT-REQUIRED: rule (6) demands heal_iterations and heal_decision be
 NULL, not absent. This validator therefore asserts key PRESENCE via
@@ -84,6 +87,8 @@ VALID_STATUS = ("completed", "completed_with_escalation", "failed", "checkpoint"
 PR_REQUIRED_STATUS = ("completed", "completed_with_escalation")
 VALID_HEAL_DECISION = ("PASS", "ESCALATED")
 VALID_COST_PROFILE = ("default", "cheap")
+# rule 14: the review loop's first iter_decision — NOT heal_decision's enum.
+VALID_FIRST_DECISION = ("PASS", "FAIL", "NEEDS_HUMAN")
 
 MISSING_BLOCK = (
     "missing SUPERVISOR_RESULT block — exactly one is emitted per task from "
@@ -288,6 +293,30 @@ def main():
             total = int(match.group(2))
             if total < scored:
                 emit(False, REASON_RUBRIC_SCORE)
+
+    # ── (14) findings-per-item metric (iq02 IQ01) — absent OK; present ⇒ shape ─
+    # Additive, report-only. heal_first_decision is the loop's FIRST
+    # iter_decision (never heal_decision's enum, which is NOT extended);
+    # heal_new_findings is a non-negative count. Both null when the loop
+    # did not run. Absent stays valid (pre-metric runs).
+    for _key in ("heal_first_decision", "heal_new_findings"):
+        if not present(fields, _key):
+            continue
+        _raw = fields.get(_key)
+        if _raw is None:
+            continue
+        if heal_loop_ran is False:
+            emit(False, "heal_loop_ran=false requires %s=null; got %r (rule 14)"
+                 % (_key, as_text(_raw)))
+        if _key == "heal_first_decision":
+            if as_text(_raw).strip() not in VALID_FIRST_DECISION:
+                emit(False, "heal_first_decision must be one of [PASS, FAIL, "
+                     "NEEDS_HUMAN, null]; got %r (rule 14)" % as_text(_raw))
+        else:
+            _n, _bad = as_int(_raw)
+            if _bad or _n < 0:
+                emit(False, "heal_new_findings must be a non-negative integer "
+                     "or null; got %r (rule 14)" % as_text(_raw))
 
     emit(True)
 

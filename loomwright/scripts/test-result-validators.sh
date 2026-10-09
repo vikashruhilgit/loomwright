@@ -2137,7 +2137,7 @@ run_v_cwd "$V_EXECUTE" "$F" "$WT_PROJ" "$WT_PARENT"
 assert_pass "execute: relative ../{project}-{subtask} path accepted (absolute demand dropped) [rule 4]"
 
 # ── D. supervisor-runner validator ───────────────────────────────────────────
-echo "== D. validate-supervisor-result.py — 13 rules =="
+echo "== D. validate-supervisor-result.py — 14 rules =="
 
 run_v "$V_SUPERVISOR" "$FIXDIR/supervisor-valid.md"
 assert_pass "supervisor: valid block (committed fixture)"
@@ -2355,6 +2355,43 @@ cat_mk sup-ran-null-iters.md sup-ran-base <<'EOF'
 EOF
 run_v "$V_SUPERVISOR" "$F"
 assert_fail "supervisor: EXPLICIT-NULL heal_iterations with heal_loop_ran=true [rule 7]" "(rule 7)"
+
+# ── rule 14: findings-per-item metric (iq02 IQ01) ──
+cat_mk sup-metric-ok.md sup-ran-base <<'EOF'
+  heal_iterations: 1
+  heal_decision: PASS
+  heal_fixable_issues_fixed: 2
+  heal_remaining_issues: 0
+  heal_first_decision: FAIL
+  heal_new_findings: 3
+  summary: first iteration FAILed with 3 new findings, healed to PASS
+EOF
+run_v "$V_SUPERVISOR" "$F"
+assert_pass "supervisor: heal_first_decision=FAIL + heal_new_findings=3 [rule 14]"
+
+cat_mk sup-metric-bad-enum.md sup-ran-base <<'EOF'
+  heal_iterations: 1
+  heal_decision: PASS
+  heal_fixable_issues_fixed: 2
+  heal_remaining_issues: 0
+  heal_first_decision: ESCALATED
+  heal_new_findings: 3
+  summary: ESCALATED is heal_decision's vocabulary, not the first iteration's
+EOF
+run_v "$V_SUPERVISOR" "$F"
+assert_fail "supervisor: heal_first_decision=ESCALATED [rule 14]" "heal_first_decision must be one of"
+
+cat_mk sup-metric-neg.md sup-ran-base <<'EOF'
+  heal_iterations: 1
+  heal_decision: PASS
+  heal_fixable_issues_fixed: 2
+  heal_remaining_issues: 0
+  heal_first_decision: PASS
+  heal_new_findings: -1
+  summary: negative findings count
+EOF
+run_v "$V_SUPERVISOR" "$F"
+assert_fail "supervisor: heal_new_findings=-1 [rule 14]" "heal_new_findings must be a non-negative"
 
 cat_mk sup-pass-remaining.md sup-ran-base <<'EOF'
   heal_iterations: 3
