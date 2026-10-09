@@ -126,6 +126,31 @@ hooks.json prompt string:
       summary file, rule 8's outputs_gap/status invariant, etc. all still
       apply.
 
+ADDITIONAL RULE (13), added post-hoc for the worker pre-hand-back self-review
+(`.supervisor/requirements/implementation-quality/02-iq01-and-throughput-merged.md`
+Part IQ01) — NOT sourced from any hooks.json prompt string, and UNLIKE rules
+(9)-(12) it is CONDITIONALLY REQUIRED, not optional:
+
+  (13) self_review — REQUIRED when status is `completed` or `partial` and the
+      block does not declare `no_changes: true` (rule 12), at schema_version
+      >= 2 (a legacy v1 block is exempt, like rules 6/8): an array of dicts,
+      each `{part, result, evidence}` with part in checklist|repro|sweep|
+      invariants, result in held|fixed|n/a, evidence a non-empty string, and
+      every one of the four parts present at least once (agents/worker.md
+      Step 5 item 5). `failed` and `no_changes: true` blocks are exempt from
+      the requirement (a crashed or read-only worker has no diff to review),
+      but WHEN PRESENT there the entry shape is still checked. Appended LAST,
+      so every older rule's reason still wins on a block that breaks both.
+      R4 DISCLOSURE: this is a strengthening the original eight-rule prompt
+      never stated — added on purpose, by an owner-decided requirement, with
+      its own REASON_* strings that spell out the exact shape (a block costs
+      a runtime continuation, capped at 8, so the reason must be enough to
+      fix the block in one retry). schema_version stays 2 — see the
+      `self_review` rationale in docs/result-schemas/worker-result.md. Not to
+      be confused with the fix worker's `self_review:` clause inside
+      FIX_RESULT.summary (prompt-contract only, no validator) — same word,
+      distinct convention.
+
 DELIBERATE NON-ADDITIONS / NARROWINGS (recorded, not accidental):
   * The prompt does NOT constrain WORKER_RESULT.status to an enum, so neither
     does this script (R4: transcribe, do not silently strengthen).
@@ -239,6 +264,24 @@ REASON_NO_CHANGES_CONTRADICTION = (
     "no_changes: true contradicts a non-empty files_modified/files_created/"
     "files_deleted — "
     "declare no_changes only when the subtask changed nothing (rule 12)"
+)
+
+SELF_REVIEW_PARTS = ("checklist", "repro", "sweep", "invariants")
+SELF_REVIEW_RESULTS = ("held", "fixed", "n/a")
+_SELF_REVIEW_SHAPE = (
+    "a one-line array of {part, result, evidence} entries, part in "
+    "checklist|repro|sweep|invariants, result in held|fixed|n/a, evidence a "
+    "non-empty string (not none/null), every part at least once — e.g. self_review: "
+    "[{part: checklist, result: held, evidence: \"...\"}, {part: repro, ...}, "
+    "{part: sweep, ...}, {part: invariants, ...}] (agents/worker.md Step 5 "
+    "item 5; rule 13)"
+)
+REASON_SELF_REVIEW_MISSING = (
+    "WORKER_RESULT status=%s requires self_review: " + _SELF_REVIEW_SHAPE
+)
+REASON_SELF_REVIEW_SHAPE = "self_review must be " + _SELF_REVIEW_SHAPE
+REASON_SELF_REVIEW_PARTS = (
+    "self_review is missing part(s) %s — it must be " + _SELF_REVIEW_SHAPE
 )
 
 MISSING_BLOCK = (
@@ -484,6 +527,35 @@ def main():
                 value = item.get(required)
                 if required not in item or not isinstance(value, str) or is_empty_scalar(value):
                     emit(False, REASON_NOT_VERIFIED_SHAPE)
+
+    # ── (13) self_review — CONDITIONALLY REQUIRED (completed|partial, not
+    # no_changes: true); shape-checked whenever present. Appended LAST.
+    self_review_required = (
+        schema_version >= 2 and status in ("completed", "partial") and not no_changes
+    )
+    if self_review_required and not present(fields, "self_review"):
+        emit(False, REASON_SELF_REVIEW_MISSING % status)
+    if present(fields, "self_review"):
+        self_review = fields.get("self_review")
+        if not isinstance(self_review, list) or not self_review:
+            emit(False, REASON_SELF_REVIEW_SHAPE)
+        seen_parts = set()
+        for item in self_review:
+            if not isinstance(item, dict):
+                emit(False, REASON_SELF_REVIEW_SHAPE)
+            part = item.get("part")
+            result = item.get("result")
+            evidence = item.get("evidence")
+            if not isinstance(part, str) or part.strip() not in SELF_REVIEW_PARTS:
+                emit(False, REASON_SELF_REVIEW_SHAPE)
+            if not isinstance(result, str) or result.strip() not in SELF_REVIEW_RESULTS:
+                emit(False, REASON_SELF_REVIEW_SHAPE)
+            if not isinstance(evidence, str) or is_empty_scalar(evidence):
+                emit(False, REASON_SELF_REVIEW_SHAPE)
+            seen_parts.add(part.strip())
+        missing_parts = [p for p in SELF_REVIEW_PARTS if p not in seen_parts]
+        if self_review_required and missing_parts:
+            emit(False, REASON_SELF_REVIEW_PARTS % ", ".join(missing_parts))
 
     emit(True)
 
