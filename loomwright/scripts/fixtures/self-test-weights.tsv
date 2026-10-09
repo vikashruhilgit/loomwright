@@ -2,7 +2,7 @@
 # Source: the PASS times of GitHub CI run 37809076650 (783b00b, 2026-10-08, ubuntu-latest, 4-way): 134 tests,
 # 1846 test-seconds. A test absent from this file gets the runner's default weight — it is never dropped.
 # Re-measure from a later CI run's PASS lines when the balance drifts. Format: <secs><TAB><path>.
-3	loomwright/scripts/adapters/orca/test-orca-mirror.sh
+# One 3 s adapter test is deliberately absent (an adapter-boundary scan forbids its name in non-doc files outside adapters/); it takes the default weight.
 1	loomwright/scripts/adapters/providers/test-lens-compare.sh
 24	loomwright/scripts/adapters/providers/test-lens-run.sh
 37	loomwright/scripts/test-add-orientation.sh

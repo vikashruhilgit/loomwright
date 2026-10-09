@@ -498,7 +498,7 @@ if [ -s "$T/agg.sh" ] && grep -q 'comm -23' "$T/agg.sh" && bash -n "$T/agg.sh"; 
   [ "$rc" -eq 1 ] && grep -q "job static: skipped" "$T/agg.out" && ok "(AG) a skipped static job ⇒ ci fails (skipped is not success)" || no "(AG) static skipped: rc=$rc"
 else no "(AG) could not extract the ci job's aggregation block from $CI_YML"; fi
 if grep -qx '  ci:' "$CI_YML" && [ "$(grep -c '^  [a-z][a-z_-]*:$' "$CI_YML")" -ge 3 ] && grep -q '^    if: always()$' "$CI_YML" \
-   && grep -q '^      fail-fast: false$' "$CI_YML" && ! awk '/^  ci:$/ { f = 1 } f && /bash scripts\//' "$CI_YML" | grep -q .; then
+   && grep -q '^      fail-fast: false$' "$CI_YML" && ! grep -q . < <(awk '/^  ci:$/ { f = 1 } f && /bash scripts\//' "$CI_YML"); then
   ok "(AG) exactly one job named ci, with if: always(), the suite matrix fail-fast: false, and no bash scripts/<x>.sh line in ci"
 else no "(AG) ci.yml job shape"; fi
 
