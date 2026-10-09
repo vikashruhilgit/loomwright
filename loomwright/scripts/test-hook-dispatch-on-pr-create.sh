@@ -572,7 +572,7 @@ EV3C="$(jq -c 'select(.event=="pr_created")' "$WD3C/.supervisor/logs/sess-3c.jso
 [ "$RUN_RC" -eq 0 ] && [ "$(printf '%s' "$EV3C" | jq -r '.url' 2>/dev/null)" = "$PR" ] \
   && printf '%s' "$EV3C" | jq -e 'has("ts")' >/dev/null 2>&1 \
   && ok "3c: one pr_created {event, ts, url} in the active session log" || no "3c: pr_created missing/wrong ($EV3C)"
-printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD3C")" -eq 1 ] \
+grep -q 'DRY_RUN_DISPATCH' <<<"$RUN_OUT" && [ "$(marker_count "$WD3C")" -eq 1 ] \
   && ok "3c: dispatch unchanged (DRY_RUN_DISPATCH + 1 marker)" || no "3c: dispatch altered"
 # not a git repo / no .supervisor → no event, exit 0 (fail SAFE)
 WD3N="$(make_wd "running" "feature/example")"
