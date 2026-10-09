@@ -166,7 +166,11 @@ the entries after the watermark of the last transcript-sourced line the same
 repeat stop with no new message writes no line). The watermark read, the count
 and the append are ONE critical section under the per-log lock, so concurrent
 firings of one completion sum its transcript once, in one line, whatever their
-`ts`. Streaming, bounded parse (a transcript over 256 MiB, an
+`ts`. The transcript is read ONLY when it is this agent's own — its basename is
+`agent-<agent_id>.jsonl` for the payload's `agent_id`, the same test that sets
+`agent_scope: "subagent"`; a payload with no `agent_id`, or a path naming another
+agent's transcript, gets the proxy line, never another transcript's tokens.
+Streaming, bounded parse (a transcript over 256 MiB, an
 unreadable one, or one with no usage lines ⇒ the proxy line); the emitter still
 always exits 0. **Honest limits:** output tokens of a message whose final line
 is absent (common in older transcripts) are UNDER-counted (its max placeholder

@@ -621,12 +621,20 @@ else:
     # The payload carries no usage (the expected case): read the real usage
     # from the OWN transcript of the subagent (_apath, above) only; the session
     # transcript (`transcript_path`) belongs to the main thread and is never
-    # summed here. Any read/parse failure falls through to the proxy line.
+    # summed here. "Own" is the SAME positive identification `agent_scope` uses:
+    # the basename is `agent-<agent_id>.jsonl` for the agent_id of THIS payload
+    # (_scope == "subagent"). A payload with no agent_id has no watermark key
+    # (repeat stops would re-sum the whole transcript), and a path naming the
+    # transcript of another agent would book its tokens to this one - both take
+    # the proxy line instead. Any read/parse failure falls through to it too.
+    # (No apostrophes in this program: it is a single-quoted python3 -c string.)
     _log_path = os.path.join(os.environ.get("LOG_DIR", ""), log_session_id + ".jsonl")
-    try:
-        _parsed = read_transcript(_apath)
-    except Exception:
-        _parsed = None
+    _parsed = None
+    if _scope == "subagent":
+        try:
+            _parsed = read_transcript(_apath)
+        except Exception:
+            _parsed = None
     _tu = None
     if _parsed is not None:
         # The critical section starts HERE (see take_log_lock above): the

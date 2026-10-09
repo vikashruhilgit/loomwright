@@ -1528,7 +1528,10 @@ rm -rf "$LK_LOG.lock"
 # the lock, hands it to the shell, and the shell releases it after its append — nothing left behind.
 LS_SID="fixture-token-ledger-lock-stale-001"; LS_LOG="$SANDBOX/.supervisor/logs/${LS_SID}.jsonl"
 rm -rf "$LS_LOG.lock"; mkdir "$LS_LOG.lock"; touch -t 202601010000 "$LS_LOG.lock"
-tu_payload "$LK_T" "$LS_SID" ls001 > "$SANDBOX/ls.json"
+# Its OWN transcript (agent-ls001.jsonl): the emitter sums a transcript only when the basename
+# names this payload's agent_id (case 28) — reusing 25a's agent-lk001.jsonl here would be foreign.
+LS_T="$SANDBOX/subagents/agent-ls001.jsonl"; cp "$LK_T" "$LS_T"
+tu_payload "$LS_T" "$LS_SID" ls001 > "$SANDBOX/ls.json"
 OUT25B="$(run_sut "$SANDBOX/ls.json")"
 assert_eq "case25b a stale lock: exit 0, one transcript line" "0 1 transcript" \
   "$(printf '%s\n' "$OUT25B" | grep '^RC=' | tail -1 | cut -d= -f2) $(wc -l < "$LS_LOG" 2>/dev/null | tr -d ' ') $(jq -r '.usage_source' "$LS_LOG" 2>/dev/null)"
@@ -1761,6 +1764,35 @@ tu_payload "$FE_T" "$FE_SID" fe001 > "$SANDBOX/fe.json"
 OUT27B="$(run_sut "$SANDBOX/fe.json")"
 assert_eq "case27b a watermark 3,000 lines from EOF: exit 0, the resume counts f2 only" "0 9 1 f2" \
   "$(printf '%s\n' "$OUT27B" | grep '^RC=' | tail -1 | cut -d= -f2) $(tail -1 "$FE_LOG" | jq -r '"\(.output_tokens) \(.usage_messages) \(.usage_last_message_id)"')"
+
+# Case 28 — the transcript is summed ONLY when it is this agent's own: its basename is
+# agent-<agent_id>.jsonl for the payload's agent_id (the same test that sets
+# agent_scope "subagent"). Anything else takes the proxy line (0 tokens), never another
+# transcript's usage. Follow-ups 2f32897a (no agent_id ⇒ no watermark key ⇒ every repeat
+# stop re-summed the whole transcript) and 3200c62f (a foreign path booked another agent's
+# real tokens to this agent) — one gate closes both.
+ID_U='{"type":"assistant","message":{"id":"g1","stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":11,"cache_read_input_tokens":5,"cache_creation_input_tokens":2}}}'
+# 28a: no agent_id at all — two stops of the same completion must not count anything twice.
+NA_SID="fixture-token-ledger-identity-noagent-001"; NA_T="$SANDBOX/subagents/agent-na001.jsonl"
+printf '%s\n' "$ID_U" > "$NA_T"
+tu_payload "$NA_T" "$NA_SID" na001 | jq 'del(.agent_id)' > "$SANDBOX/na.json"
+run_sut "$SANDBOX/na.json" >/dev/null; run_sut "$SANDBOX/na.json" >/dev/null
+assert_eq "case28a no agent_id ⇒ proxy lines only: two stops sum to TOTAL 0 (pre-gate: summed as real usage with no watermark key, TOTAL 21+)" "TOTAL=0 true false" \
+  "$(bash "$SCRIPT_DIR/read-token-ledger.sh" --session "$NA_SID" --root "$SANDBOX" | grep -oE 'TOTAL=[0-9]+') $(tail -1 "$SANDBOX/.supervisor/logs/${NA_SID}.jsonl" | jq -r '"\(.proxy) \(has("usage_source"))"')"
+# 28b: a path naming ANOTHER agent's transcript — its tokens are never booked to this agent.
+FT_SID="fixture-token-ledger-identity-foreign-001"; FT_T="$SANDBOX/subagents/agent-someoneelse001.jsonl"
+printf '%s\n' "$ID_U" > "$FT_T"
+tu_payload "$FT_T" "$FT_SID" ft001 > "$SANDBOX/ft.json"
+run_sut "$SANDBOX/ft.json" >/dev/null
+assert_eq "case28b foreign transcript basename ⇒ proxy line, TOTAL 0, no agent_scope (pre-gate: TOTAL 21 booked to ft001)" "TOTAL=0 true null ft001" \
+  "$(bash "$SCRIPT_DIR/read-token-ledger.sh" --session "$FT_SID" --root "$SANDBOX" | grep -oE 'TOTAL=[0-9]+') $(tail -1 "$SANDBOX/.supervisor/logs/${FT_SID}.jsonl" | jq -r '"\(.proxy) \(.agent_scope) \(.agent_id)"')"
+# 28c: control — the agent's OWN transcript is still summed (the gate is not a blanket refusal).
+OW_SID="fixture-token-ledger-identity-own-001"; OW_T="$SANDBOX/subagents/agent-ow001.jsonl"
+printf '%s\n' "$ID_U" > "$OW_T"
+tu_payload "$OW_T" "$OW_SID" ow001 > "$SANDBOX/ow.json"
+run_sut "$SANDBOX/ow.json" >/dev/null
+assert_eq "case28c own transcript basename ⇒ real usage, transcript-sourced, agent_scope subagent" "TOTAL=21 false transcript subagent" \
+  "$(bash "$SCRIPT_DIR/read-token-ledger.sh" --session "$OW_SID" --root "$SANDBOX" | grep -oE 'TOTAL=[0-9]+') $(tail -1 "$SANDBOX/.supervisor/logs/${OW_SID}.jsonl" | jq -r '"\(.proxy) \(.usage_source) \(.agent_scope)"')"
 
 echo ""
 echo "RESULT  pass=$PASS_COUNT  fail=$FAIL_COUNT"
