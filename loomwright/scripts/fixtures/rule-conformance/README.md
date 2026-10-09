@@ -10,6 +10,9 @@ Every brief pairs with `rules/must.json` (one checkable `must` rule routed to `s
 The APPLICABLE RULES block a probe pastes is the output of `read-rules.sh --with-ids src/payments/refund.ts`
 run in a sandbox repo that holds that store.
 
+Each brief also carries the same one-entry `## Touched-file invariants` section (it modifies an existing
+script), so Plan Reviewer Criterion 18 has no absence finding to add and the verdicts below stay Criterion 17's.
+
 | Fixture | Expected Plan Reviewer verdict |
 |---|---|
 | `brief-conforming.md` | PASS: no `rule_conformance` issue (honors the rule and carries its `rule:` bullet) |

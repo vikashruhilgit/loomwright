@@ -375,6 +375,7 @@ Run 5 grounded checks (CLAUDE.md + grep/glob/read), output GO/CAUTION/NO-GO:
 5. Detect file overlap between groups (overlap = must serialize)
 6. Identify relevant skills per group
 7. Mark confidence: HIGH / MEDIUM / LOW
+8. Touched-file invariants (conditional — the File Impact Map modifies ≥1 existing script): per modified file, the guards, conventions, mirrored producer/consumer contracts, firing matchers/callers and pinning tests the change must keep, each grounded as file + quoted anchor (format: `skills/supervisor-readiness/SKILL.md` §"Touched-file invariants")
 
 ### Phase 4: DECOMPOSE (Subtask Structure)
 
@@ -391,12 +392,13 @@ Run 5 grounded checks (CLAUDE.md + grep/glob/read), output GO/CAUTION/NO-GO:
 1. Assemble Supervisor-Ready Brief from `skills/supervisor-readiness/SKILL.md` template
 2. Fill all 9 sections from Phases 1-4 (plus optional Feasibility section from Phase 2.5)
 3. Include configuration and risk assessment. For each Phase 2.5 CAUTION finding, add a Risk Assessment row with source "Feasibility (Phase 2.5)". Overridden NO-GO findings become HIGH risks.
+   When Phase 3 step 8 ran, emit `## Touched-file invariants` immediately before `## Subtask Structure`; otherwise emit no section.
 4. Present to user
 
 ### Phase 5.5: PLAN REVIEW (Mandatory Gate)
 
 1. Spawn Plan Reviewer subagent with brief + CLAUDE.md context
-2. Plan Reviewer checks all 17 criteria (file paths, patterns, dependencies, parallelism, subtask contracts, lane declarations, house-rule conformance, etc.) — Criteria 11, 13, 14, 15, 16, and 17 are conditional (skip silently when their gating section/field/claim is absent; Criterion 17 runs only when Launch Pad pasted a non-empty `--- APPLICABLE RULES ---` block from its `read-rules.sh --with-ids` consult); Criterion 12 requires `provides:`/`requires:` contracts unless `legacy_brief: true`
+2. Plan Reviewer checks all 18 criteria (file paths, patterns, dependencies, parallelism, subtask contracts, lane declarations, house-rule conformance, touched-file invariants, etc.) — Criteria 11, 13, 14, 15, 16, 17, and 18 are conditional (skip silently when their gating section/field/claim is absent; Criterion 17 runs only when Launch Pad pasted a non-empty `--- APPLICABLE RULES ---` block from its `read-rules.sh --with-ids` consult; Criterion 18 runs only when the brief modifies an existing script); Criterion 12 requires `provides:`/`requires:` contracts unless `legacy_brief: true`
 3. Decision handling:
    - PASS → proceed to Phase 6 (save enabled)
    - FAIL (attempt < 3) → fix issues, re-assemble, re-spawn reviewer
