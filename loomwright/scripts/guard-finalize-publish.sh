@@ -164,9 +164,14 @@ read_session_block() {
 # `## Worker Results` section — the heading Context-Keeper's `record_worker_result` writes, whose
 # {worker-id} is the worker's Task-returned agent id (the same id the per-subtask `--agent-id` gates
 # join on). `**` / backticks / CR are stripped. No section, or no heading, prints nothing.
+# A leading LABEL word is tolerated (case-insensitive `worker` / `agent`, optionally followed by `:`,
+# spaced or glued — `### Worker agent-xxx (1)`, `### worker: a0fef8ff (1)`, `### agent:a0fef8ff`):
+# the id is the word after it. Fail direction kept: a label with no id word after it (`### Worker (1)`)
+# and any other unrecognised heading still yields its FIRST word — a recorded heading is never
+# silently dropped (an unmatched expected id refuses; it never passes).
 read_worker_result_ids() {
   [ -f "$STATE_MD" ] || return 0
-  local line in_block=0 tok
+  local line in_block=0 tok rest nxt
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
       "## Worker Results"*) in_block=1; continue ;;
@@ -175,9 +180,17 @@ read_worker_result_ids() {
     [ "$in_block" = 1 ] || continue
     case "$line" in
       "### "*)
-        tok="$(printf '%s' "${line#\#\#\# }" | tr -d '`*\r')"
-        tok="${tok#"${tok%%[![:space:]]*}"}"
-        tok="${tok%%[[:space:]]*}"
+        rest="$(printf '%s' "${line#\#\#\# }" | tr -d '`*\r')"
+        rest="${rest#"${rest%%[![:space:]]*}"}"
+        tok="${rest%%[[:space:]]*}"
+        case "$tok" in
+          [Ww][Oo][Rr][Kk][Ee][Rr]|[Ww][Oo][Rr][Kk][Ee][Rr]:|[Aa][Gg][Ee][Nn][Tt]|[Aa][Gg][Ee][Nn][Tt]:)
+            nxt="${rest#"$tok"}"
+            nxt="${nxt#"${nxt%%[![:space:]]*}"}"
+            nxt="${nxt%%[[:space:]]*}"
+            case "$nxt" in ""|"("*) ;; *) tok="$nxt" ;; esac ;;
+          [Ww][Oo][Rr][Kk][Ee][Rr]:?*|[Aa][Gg][Ee][Nn][Tt]:?*) tok="${tok#*:}" ;;
+        esac
         [ -n "$tok" ] && printf '%s\n' "$tok" ;;
     esac
   done < "$STATE_MD"
@@ -190,18 +203,23 @@ read_worker_result_ids() {
 if [ "${1:-}" = "write-marker" ]; then
   refuse() { printf '{"status":"refused","reason":"%s"}\n' "$1"; exit 1; }
   shift
-  skip=0
+  skip=0; bad_args=0
   EXPECT_ARGS=()   # explicit `--expect-id <id>` args, forwarded verbatim to the join
   # Flags in any order. An unknown argument refuses (`bad_args`) rather than being ignored: a
   # misspelt `--expect-id` silently dropped would pass the check on less evidence than asked for.
+  # The refusal is only RECORDED here and issued after the stale marker is removed below, so a
+  # refused call never leaves an earlier run's marker in place.
   while [ $# -gt 0 ]; do
     case "$1" in
       --skip-children-check) skip=1; shift ;;
       --expect-id)
-        { [ $# -ge 2 ] && [ -n "$2" ]; } || refuse "bad_args"
-        EXPECT_ARGS[${#EXPECT_ARGS[@]}]="--expect-id"; EXPECT_ARGS[${#EXPECT_ARGS[@]}]="$2"; shift 2 ;;
+        if [ $# -ge 2 ] && [ -n "$2" ]; then
+          EXPECT_ARGS[${#EXPECT_ARGS[@]}]="--expect-id"; EXPECT_ARGS[${#EXPECT_ARGS[@]}]="$2"; shift 2
+        else
+          bad_args=1; break
+        fi ;;
       --expect-id=?*) EXPECT_ARGS[${#EXPECT_ARGS[@]}]="--expect-id"; EXPECT_ARGS[${#EXPECT_ARGS[@]}]="${1#--expect-id=}"; shift ;;
-      *) refuse "bad_args" ;;
+      *) bad_args=1; break ;;
     esac
   done
   command -v jq >/dev/null 2>&1 || refuse "jq_missing"
@@ -212,6 +230,7 @@ if [ "${1:-}" = "write-marker" ]; then
   SESSION_LOG="$LOG_DIR/$SESSION_ID.jsonl"
   rm -f "$MARKER" 2>/dev/null
   [ -e "$MARKER" ] && refuse "stale_marker_unremovable"
+  [ "$bad_args" = 1 ] && refuse "bad_args"
   # HEAD of the session's OWN checkout (the one the publish runs from), not the main worktree's.
   head_sha="$(git -C "$PROJ" rev-parse HEAD 2>/dev/null)"
   [ -n "$head_sha" ] || refuse "no_head"

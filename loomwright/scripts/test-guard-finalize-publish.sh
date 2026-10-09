@@ -189,9 +189,39 @@ WOUT="$(cd "$RI" && CLAUDE_PROJECT_DIR="$RI" "$REALBASH" "$GUARD" write-marker -
   && ok "expect-id: --skip-children-check after another flag still skips (any argument position)" \
   || no "expect-id: skip in second position: rc=$WRC out=$WOUT"
 WOUT="$(cd "$RI" && CLAUDE_PROJECT_DIR="$RI" "$REALBASH" "$GUARD" write-marker --skip-children-chek 2>/dev/null)"; WRC=$?
-[ "$WRC" = 1 ] && grep -q bad_args <<<"$WOUT" \
-  && ok "expect-id: an unknown write-marker argument (a misspelt flag) refuses bad_args instead of being ignored" \
+# the previous call left a valid `skipped` marker: a bad_args refusal must still remove it first
+[ "$WRC" = 1 ] && grep -q bad_args <<<"$WOUT" && [ ! -e "$RI/.supervisor/logs/$PSID.finalize-gate" ] \
+  && ok "expect-id: an unknown write-marker argument (a misspelt flag) refuses bad_args AND removes the stale marker" \
   || no "expect-id: unknown arg: rc=$WRC out=$WOUT"
+WOUT="$(cd "$RI" && CLAUDE_PROJECT_DIR="$RI" "$REALBASH" "$GUARD" write-marker --skip-children-check 2>/dev/null)"; WRC=$?
+[ "$WRC" = 0 ] && [ -f "$RI/.supervisor/logs/$PSID.finalize-gate" ] || no "fixture: re-seed skipped marker: rc=$WRC out=$WOUT"
+WOUT="$(cd "$RI" && CLAUDE_PROJECT_DIR="$RI" "$REALBASH" "$GUARD" write-marker --expect-id 2>/dev/null)"; WRC=$?
+[ "$WRC" = 1 ] && grep -q bad_args <<<"$WOUT" && [ ! -e "$RI/.supervisor/logs/$PSID.finalize-gate" ] \
+  && ok "expect-id: a trailing --expect-id with no value refuses bad_args AND removes the stale marker" \
+  || no "expect-id: valueless --expect-id: rc=$WRC out=$WOUT"
+
+echo "== expect-id: a labelled Worker Results heading yields the id, not the label =="
+# heading text after `### ` (record_worker appends ` (1)`) | the id the writer must name
+LABEL_CASES=(
+  "Worker w-lab1|w-lab1"
+  "worker: w-lab2|w-lab2"
+  "AGENT w-lab3|w-lab3"
+  "agent:w-lab4|w-lab4"
+  "**Worker** \`w-lab5\`|w-lab5"
+  "w-plain|w-plain"
+  "Worker|Worker"
+)
+for lc in "${LABEL_CASES[@]}"; do
+  head_txt="${lc%|*}"; want="${lc##*|}"
+  RLB="$(new_repo running)"; record_worker "$RLB" "$head_txt"
+  write_marker "$RLB"
+  if [ "$WRC" = 1 ] && grep -q children_unsettled <<<"$WOUT" && grep -q "\"$want\"" <<<"$WOUT" \
+     && { [ "$want" = Worker ] || ! grep -q '"Worker"\|"worker:"\|"AGENT"\|"agent:' <<<"$WOUT"; }; then
+    ok "labelled heading '### $head_txt (1)' -> expected id $want"
+  else
+    no "labelled heading '### $head_txt (1)': rc=$WRC out=$WOUT"
+  fi
+done
 
 echo "== F3: .supervisor/ is found from a linked worktree; detached sibling + bold state.md =="
 RW="$(new_repo running)"; WT="$TMP/wt-linked.$$"; SIB="$TMP/wt-sibling.$$"
