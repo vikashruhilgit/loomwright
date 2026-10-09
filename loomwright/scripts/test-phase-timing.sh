@@ -2,7 +2,7 @@
 # test-phase-timing.sh — phase-timing.sh (iq02 Part T04): the 2026-10-08 replay
 # (committed trimmed fixtures), owner-wait exact / fallback / null / 0, missing
 # endpoints ⇒ null, ci-local attribution by tree key only, fail-SAFE input, and
-# three mutation controls run against COPIES (gated non-empty + differs + bash -n).
+# four mutation controls run against COPIES (gated non-empty + differs + bash -n).
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -14,6 +14,7 @@ pass=0; fail=0
 ok() { echo "  ok: $1"; pass=$((pass+1)); }
 no() { echo "  FAIL: $1"; fail=$((fail+1)); }
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+. "$HERE/wait-lib.sh"   # bounded condition waits (iq02 T07)
 # near <actual> <expected> — within 60 s (and never null)
 near() { [ -n "$1" ] && [ "$1" != "null" ] && [ $(( $1 > $2 ? $1 - $2 : $2 - $1 )) -le 60 ]; }
 q() { printf '%s' "$OUT" | jq -r "$1" 2>/dev/null; }
@@ -88,6 +89,18 @@ OUT="$(bash "$PT" --run "$T/does-not-exist.md" 2>/dev/null)"; rc=$?
 [ "$rc" = 0 ] && [ "$(q '.item.pick_to_park.seconds')" = "null" ] && ok "unreadable run file ⇒ exit 0, null fields" || no "fail-safe rc=$rc out=$OUT"
 OUT="$(bash "$PT" 2>/dev/null)"; rc=$?
 [ "$rc" = 0 ] && printf '%s' "$OUT" | jq -e . >/dev/null 2>&1 && ok "no arguments ⇒ exit 0, valid JSON" || no "no-arg rc=$rc"
+# last_flag_exits <script> <flag> <timeout_s> — run <script> with <flag> as the LAST argument in the
+# background; 0 when it exits 0 within the bounded wait. A hung run is killed and returns 1. (The old
+# unguarded `shift 2` never shifted with one argument left, so `while [ $# -gt 0 ]` spun forever.)
+last_flag_exits() {
+  local pid rc
+  bash "$1" "$2" >/dev/null 2>&1 & pid=$!
+  if wait_for_pid_gone "$pid" "$3" 2>/dev/null; then wait "$pid"; rc=$?; [ "$rc" = 0 ]; return; fi
+  kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; return 1
+}
+for flag in --run --session --logs-dir --ci-runs --trees --git-range --branch; do
+  last_flag_exits "$PT" "$flag" 10 && ok "$flag as the last argument ⇒ exit 0 within a bounded wait" || no "$flag as the last argument hung or exited non-zero"
+done
 
 echo "== M. mutation controls (copies; each must turn a leg red) =="
 mutant() {  # mutant <name> <python-old> <python-new>
@@ -115,6 +128,10 @@ if [ -n "$M3" ]; then
   OUT="$(bash "$M3" --run "$RUNF" --logs-dir "$FX/session-logs" $CIOUT_ARGS 2>/dev/null)"
   if q '[.ci_runs[].log]|join(",")' | grep -q '^.*5bdf5a4'; then ok "M3 time-window attribution ⇒ the 5bdf5a4 (#438) run appears — red"; else no "M3 time-window attribution stayed green"; fi
 else no "M3 mutant not built"; fi
+M4="$(mutant shift2 '--run) RUN="${2:-}"; shift; [ $# -gt 0 ] && shift ;;' '--run) RUN="${2:-}"; shift 2 ;;')"
+if [ -n "$M4" ]; then
+  if last_flag_exits "$M4" --run 3; then no "M4 unguarded \`shift 2\` with --run last stayed green"; else ok "M4 unguarded \`shift 2\` ⇒ --run as the last argument hangs — red"; fi
+else no "M4 mutant not built"; fi
 
 echo
 echo "RESULT: $pass passed, $fail failed"

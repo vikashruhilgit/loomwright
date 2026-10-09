@@ -50,13 +50,13 @@ trap 'exit 0' EXIT
 RUN="" SESSION="" LOGS="" CI_RUNS="" TREES="" GIT_RANGE="" BRANCH=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --run) RUN="${2:-}"; shift 2 ;;
-    --session) SESSION="${2:-}"; shift 2 ;;
-    --logs-dir) LOGS="${2:-}"; shift 2 ;;
-    --ci-runs) CI_RUNS="${2:-}"; shift 2 ;;
-    --trees) TREES="${2:-}"; shift 2 ;;
-    --git-range) GIT_RANGE="${2:-}"; shift 2 ;;
-    --branch) BRANCH="${2:-}"; shift 2 ;;
+    --run) RUN="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
+    --session) SESSION="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
+    --logs-dir) LOGS="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
+    --ci-runs) CI_RUNS="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
+    --trees) TREES="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
+    --git-range) GIT_RANGE="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
+    --branch) BRANCH="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
     *) shift ;;
   esac
 done
