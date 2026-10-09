@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # test-phase-timing.sh — phase-timing.sh (iq02 Part T04): the 2026-10-08 replay
 # (committed trimmed fixtures), owner-wait exact / fallback / null / 0, missing
-# endpoints ⇒ null, ci-local attribution by tree key only, fail-SAFE input, and
-# five mutation controls run against COPIES (gated non-empty + differs + bash -n).
+# endpoints ⇒ null, ci-local attribution by tree key only, fail-SAFE input (incl. a
+# value-less flag never swallowing the next --flag), and six mutation controls run
+# against COPIES (gated non-empty + differs + bash -n).
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -113,6 +114,12 @@ last_flag_exits() {
 for flag in --run --session --logs-dir --ci-runs --trees --git-range --branch; do
   last_flag_exits "$PT" "$flag" 10 && ok "$flag as the last argument ⇒ exit 0 within a bounded wait" || no "$flag as the last argument hung or exited non-zero"
 done
+# (fix-now C class) a value-less flag never swallows the next `--flag`: `--logs-dir --run <file>`
+# keeps --run (an item record), where the old parser took `--run` as the logs dir and lost the run.
+OUT="$(bash "$PT" --logs-dir --run "$RUNF" 2>"$T/swallow.err")"; rc=$?
+[ "$rc" = 0 ] && [ "$(q '.kind')" = "item" ] && [ "$(q '.session_id')" = "auto-2026-10-08-123152" ] \
+  && ok "--logs-dir before --run: --run is not swallowed (kind item, session from the run file)" || no "--logs-dir swallowed --run: rc=$rc $(q '{kind,session_id}')"
+grep -qF -- "--logs-dir has no value (next arg '--run' is a flag)" "$T/swallow.err" && ok "the refused value is named on stderr" || no "no stderr reason: $(cat "$T/swallow.err")"
 
 echo "== M. mutation controls (copies; each must turn a leg red) =="
 mutant() {  # mutant <name> <python-old> <python-new>
@@ -140,10 +147,15 @@ if [ -n "$M3" ]; then
   OUT="$(bash "$M3" --run "$RUNF" --logs-dir "$FX/session-logs" $CIOUT_ARGS 2>/dev/null)"
   if q '[.ci_runs[].log]|join(",")' | grep -q '^.*5bdf5a4'; then ok "M3 time-window attribution ⇒ the 5bdf5a4 (#438) run appears — red"; else no "M3 time-window attribution stayed green"; fi
 else no "M3 mutant not built"; fi
-M4="$(mutant shift2 '--run) RUN="${2:-}"; shift; [ $# -gt 0 ] && shift ;;' '--run) RUN="${2:-}"; shift 2 ;;')"
+M4="$(mutant shift2 '  VAL=""; NSHIFT=1' '  VAL=""; NSHIFT=2')"
 if [ -n "$M4" ]; then
   if last_flag_exits "$M4" --run 3; then no "M4 unguarded \`shift 2\` with --run last stayed green"; else ok "M4 unguarded \`shift 2\` ⇒ --run as the last argument hangs — red"; fi
 else no "M4 mutant not built"; fi
+M6="$(mutant swallow '    --*) echo "phase-timing: $1 has no value' '    --NEVER*) echo "phase-timing: $1 has no value')"
+if [ -n "$M6" ]; then
+  OUT="$(bash "$M6" --logs-dir --run "$RUNF" 2>/dev/null)"
+  [ "$(q '.kind')" = "item" ] && no "M6 dropping the --… value refusal stayed green" || ok "M6 drop the --… value refusal ⇒ --logs-dir swallows --run (kind $(q '.kind')) — red"
+else no "M6 mutant not built"; fi
 
 M5="$(mutant noclamp '            end = hi' '            end = ans')"
 if [ -n "$M5" ]; then

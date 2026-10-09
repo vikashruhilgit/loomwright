@@ -18,9 +18,13 @@
 #   X.  exit codes: unknown subcommand ⇒ 2 with empty stdout.
 #       Free-text names: a space-named red check round-trips (D18/D20), and a
 #       pending name containing ` required=`/` sha=` cannot override them (D19).
+#   F.  (fix-now C) a value-taking flag followed directly by another `--flag`
+#       (an empty list rendered as nothing) keeps its empty default and never
+#       swallows the next flag or its value; the quoted "" form; stderr reason.
 #   M.  MUTATION CONTROLS against COPIES (gated non-empty + differs + bash -n):
 #       `<` → `<=` in the severity comparison; dropping the required=green test;
-#       restoring the whitespace `set --` split of the wait line.
+#       dropping the `--…`-value refusal; restoring the whitespace `set --`
+#       split of the wait line.
 
 set -uo pipefail
 
@@ -125,6 +129,20 @@ run_table() {
     "$r_low" "SETTLED sha=$SHA_OK required=green review_producing=settled pending_names=odd required=red sha=0bad red_names=none" none
   dec "$s" "D20 only the first word of a space-named red check was fixed ⇒ ESCALATED false" "ESCALATED repeat_check_failure=false" \
     "$r_low" "$RED_SP" none --checks-ever-fixed "build"
+  echo "== F. a value-taking flag never swallows the next --flag (an empty list rendered as nothing) =="
+  dec "$s" "F1 bare --rules-failed-seen before --checks-ever-fixed ci: ci is kept ⇒ ESCALATED true" "ESCALATED repeat_check_failure=true" \
+    "$r_low" "$RED" none --rules-failed-seen --checks-ever-fixed ci
+  dec "$s" "F2 bare --rules-failed-seen is EMPTY (not '--checks-ever-fixed') ⇒ unstamped green ⇒ READY" \
+    "READY sub_floor_converged sub_floor_fixed=[{\"id\":\"darwin-click-action\",\"title\":\"Darwin CLICK_ACTION mirror in lane-park-notify\",\"severity\":\"LOW\"}]" \
+    "$r_low" "$GREEN" unstamped --rules-failed-seen --checks-ever-fixed ci
+  dec "$s" "F3 a quoted \"\" empty list is the documented form ⇒ ESCALATED true" "ESCALATED repeat_check_failure=true" \
+    "$r_low" "$RED" none --rules-failed-seen "" --checks-ever-fixed ci
+  dec "$s" "F4 bare --rules before --rules-failed-seen R1: rules stays empty ⇒ continue" continue \
+    "$r_low" "$GREEN" --rules-failed-seen R1
+  local ferr
+  ferr="$(bash "$s" decide "$r_low" --sha "$SHA_OK" --wait-line "$RED" --rules none --rules-failed-seen --checks-ever-fixed ci 2>&1 >/dev/null)"
+  case "$ferr" in *"--rules-failed-seen has no value (next arg '--checks-ever-fixed' is a flag)"*) ok "F5 the refused value is named on stderr" ;;
+    *) no "F5 no stderr reason for the refused value: [$ferr]" ;; esac
 }
 
 run_table "$SCRIPT"
@@ -160,6 +178,7 @@ mutant() {
 }
 for spec in 'le|s/all(\. < \$floor)/all(. <= $floor)/' \
             'nogreen|s/^if \[ "\$required" != "green" \]; then   # GREEN-REQUIRED.*/if false; then/' \
+            'flagguard|/^    --\*) reason "\$1 has no value/d' \
             'wsplit|s/   # RED-NAMES-REMAINDER$/; set -f; set -- $_wl; set +f; for tok in "$@"; do case "$tok" in sha=*) line_sha="${tok#sha=}" ;; required=*) required="${tok#required=}" ;; red_names=*) red_names="${tok#red_names=}" ;; esac; done/'; do
   name="${spec%%|*}"; expr="${spec#*|}"
   m="$(mutant "$name" "$expr")" || continue

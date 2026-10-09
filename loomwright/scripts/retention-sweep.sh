@@ -144,7 +144,7 @@ policy_rows() {
   row capability consumed - '/capability-check --save reports; no runtime reader — retained as provenance' 'never'
   row logs 'consumed → partial exhaust' '*.jsonl,pr-postmortem-dispatch-*.log' 'curation-status.sh, build-insights.sh, build-floor.sh, build-handoff.sh, build-loop-evidence.sh, session-resume.sh, status-line.sh, telemetry' 'sweep ONLY *.jsonl older than threshold whose id is NOT in curation-status.sh pending-ids, and pr-postmortem-dispatch-*.log older than threshold; review-pr-dispatch-*.log is CONSUMED (build-insights.sh opt-out evidence) and kept; everything else untouched'
   row drain-rounds exhaust '*.json' 'drain-rounds.sh during a drain only (init resets at every drain start); build-floor.sh counts files' 'sweep *.json older than threshold'
-  row check-wait exhaust '*.json' 'wait-for-checks.sh --call-max during one scoped wait only (a first call rewrites, SETTLED/ELAPSED removes)' 'sweep *.json older than threshold'
+  row check-wait exhaust '*.json' 'wait-for-checks.sh --call-max during one scoped wait only (a first call writes, keeping an unexpired one unless --restart; SETTLED/ELAPSED removes)' 'sweep *.json older than threshold'
   row . consumed - 'Supervisor/engine state and config (config.json, curation-state.json, notify-config.json, state.md) and the session-resume.sh dotfile markers' 'never (top-level entries are never listed as candidates)'
 }
 

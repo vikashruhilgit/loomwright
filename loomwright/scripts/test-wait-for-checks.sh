@@ -30,6 +30,9 @@
 #  18-24. (implementation-quality/02 T03) resumable --call-max mode: CONTINUE,
 #      persisted total deadline, --continue fail-closed, new-sha key, mutation
 #      control (deadline reset), no state leak into the cwd.
+#  25-27. (fix-now A) a first call that finds an UNEXPIRED deadline for its key
+#      keeps it (a dropped --continue never earns a fresh total) and warns;
+#      --restart replaces it; an expired one is replaced; gated mutant.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -555,7 +558,9 @@ case "$OUT22B" in *"pending=bad_usage") ok "non-numeric --call-max ⇒ bad_usage
 
 echo "== 23. MUTATION CONTROL: a copy that re-writes the deadline on every call fails case 19 =="
 M23="$D18/mut-reset.sh"
-sed -e 's/^  if \[ "\$CONTINUE" -eq 1 \]; then$/  if false; then/' "$SUT" > "$M23"
+# Both reads are disabled: the --continue read AND the keep-unexpired read a first call does.
+sed -e 's/^  if \[ "\$CONTINUE" -eq 1 \]; then$/  if false; then/' \
+    -e 's/^    if \[ "\$RESTART" -eq 0 \]; then$/    if false; then/' "$SUT" > "$M23"
 if [ -s "$M23" ] && ! cmp -s "$SUT" "$M23" && bash -n "$M23"; then
   wfc "$D18" "$M23" "$PR" --sha "$SHA" --bound 4 --call-max 2 --interval 1 --required-only >/dev/null
   OUT23="$(wfc "$D18" "$M23" "$PR" --sha "$SHA" --bound 4 --call-max 2 --interval 1 --required-only --continue)"
@@ -565,9 +570,59 @@ else
   no "case 23 mutant invalid (empty / identical / bash -n)"
 fi
 
+echo "== 25. a first call that finds an UNEXPIRED deadline keeps it (a dropped --continue) and warns =="
+# Call 1: --bound 3 --call-max 1 ⇒ CONTINUE with ~2 s left. Call 2 DROPS --continue and asks for
+# --bound 100: keeping the persisted deadline ELAPSES within ~2 s; a fresh budget would CONTINUE at
+# call-max 5 with ~95 s left — the unbounded-wait signature.
+D25="$(fresh_stub_dir)"; write_never_settles_stub "$D25"
+wfc "$D25" "$SUT" "$PR" --sha "$SHA" --bound 3 --call-max 1 --interval 1 --required-only >/dev/null
+ERR25="$( (cd "$D25" && GH="$D25/gh" bash "$SUT" "$PR" --sha "$SHA" --bound 100 --call-max 5 --interval 1 --required-only > "$D25/out25") 2>&1 )"
+OUT25="$(cat "$D25/out25" 2>/dev/null)"
+case "$OUT25" in
+  "ELAPSED sha=$SHA required=pending review_producing=settled pending=none") ok "dropped --continue ELAPSES on the kept deadline ($OUT25)" ;;
+  *) no "dropped --continue should ELAPSE on the kept deadline, got: '$OUT25'" ;;
+esac
+case "$ERR25" in *"unexpired deadline for this (pr, sha, scope) is in flight — keeping it"*) ok "dropped --continue: stderr names the kept deadline" ;; *) no "no keep warning on stderr: '$ERR25'" ;; esac
+[ "$(state_count "$D25")" = 0 ] && ok "the kept deadline elapsed ⇒ state removed" || no "state left: $(state_count "$D25")"
+
+echo "== 26. --restart replaces an unexpired deadline; an EXPIRED one is replaced without it =="
+D26="$(fresh_stub_dir)"; write_never_settles_stub "$D26"
+wfc "$D26" "$SUT" "$PR" --sha "$SHA" --bound 4 --call-max 1 --interval 1 --required-only >/dev/null
+OUT26="$(wfc "$D26" "$SUT" "$PR" --sha "$SHA" --bound 100 --call-max 1 --interval 1 --required-only --restart)"
+R26="${OUT26#CONTINUE sha=$SHA remaining=}"; R26="${R26%% *}"
+case "$OUT26" in
+  "CONTINUE sha=$SHA remaining="*) if [ "$R26" -ge 90 ] 2>/dev/null; then ok "--restart got a fresh full budget ($OUT26)"; else no "--restart budget not fresh: '$OUT26'"; fi ;;
+  *) no "--restart: '$OUT26'" ;;
+esac
+for f in $(find "$D26/.supervisor/check-wait" -name '*.json'); do printf '{"deadline":1,"sha":"%s","scope":"required"}\n' "$SHA" > "$f"; done
+OUT26B="$(wfc "$D26" "$SUT" "$PR" --sha "$SHA" --bound 100 --call-max 1 --interval 1 --required-only)"
+R26B="${OUT26B#CONTINUE sha=$SHA remaining=}"; R26B="${R26B%% *}"
+case "$OUT26B" in
+  "CONTINUE sha=$SHA remaining="*) if [ "$R26B" -ge 90 ] 2>/dev/null; then ok "an expired deadline is replaced by a fresh one ($OUT26B)"; else no "expired deadline not replaced: '$OUT26B'"; fi ;;
+  *) no "expired deadline: '$OUT26B'" ;;
+esac
+OUT26C="$(wfc "$D26" "$SUT" "$PR" --sha "$SHA" --bound 4 --call-max 1 --interval 1 --required-only --continue --restart)"
+R26C="${OUT26C#CONTINUE sha=$SHA remaining=}"; R26C="${R26C%% *}"
+case "$OUT26C" in
+  "CONTINUE sha=$SHA remaining="*) if [ "$R26C" -ge 80 ] 2>/dev/null; then ok "--restart is ignored with --continue (deadline read, never rewritten: $OUT26C)"; else no "--continue --restart rewrote the deadline: '$OUT26C'"; fi ;;
+  *) no "--continue --restart: '$OUT26C'" ;;
+esac
+
+echo "== 27. MUTATION CONTROL: a copy without the keep-unexpired read hands a dropped --continue a fresh budget =="
+M27="$D25/mut-nokeep.sh"
+sed -e 's/^    if \[ "\$RESTART" -eq 0 \]; then$/    if false; then/' "$SUT" > "$M27"
+if [ -s "$M27" ] && ! cmp -s "$SUT" "$M27" && bash -n "$M27"; then
+  wfc "$D25" "$M27" "$PR" --sha "$SHA" --bound 3 --call-max 1 --interval 1 --required-only >/dev/null
+  OUT27="$(wfc "$D25" "$M27" "$PR" --sha "$SHA" --bound 100 --call-max 5 --interval 1 --required-only)"
+  case "$OUT27" in ELAPSED*) no "mutation control did NOT discriminate: '$OUT27'" ;;
+    *) ok "mutation control: without the keep read the second first-call CONTINUEs on a fresh budget ($OUT27)" ;; esac
+else
+  no "case 27 mutant invalid (empty / identical / bash -n)"
+fi
+
 echo "== 24. no state leaked into this test's cwd =="
 if [ "$LEAK_BEFORE" -eq 1 ] || [ ! -d .supervisor/check-wait ]; then ok "cwd has no new .supervisor/check-wait"; else no "state LEAKED into $(pwd)/.supervisor/check-wait"; fi
-rm -rf "$D18" "$D20" "$D21" "$D22"
+rm -rf "$D18" "$D20" "$D21" "$D22" "$D25" "$D26"
 
 echo
 echo "RESULT: $pass passed, $fail failed"

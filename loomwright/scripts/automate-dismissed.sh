@@ -116,7 +116,10 @@
 #       stall) is dropped. With samples the basis is `median of <n> recorded
 #       fix-now re-drains in this repo, range <min>–<max>`; with none (or an
 #       unreadable ledger / run file, which only skips that run, or no python3)
-#       the line is loomwright's own 2026-10 baseline, labelled as such.
+#       the line is loomwright's own 2026-10 baseline, labelled as such. A row
+#       whose date is out of range (2026-13-40) is skipped alone (a terminal
+#       line still ends its batch, with no sample); any other parse error
+#       skips only that run.
 #
 # Every draft carries the planner's `## Depends on` (`none`) and `## Touches` sections (parallel-
 # automate/10) before its `## Finding(s)` heading: Touches = the existing repo files the finding's
@@ -809,7 +812,12 @@ import calendar, glob, os, re, sys, time
 d = sys.argv[1]
 TS = re.compile(r'^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$')
 def epoch(ts):
-    return calendar.timegm(time.strptime(ts, '%Y-%m-%dT%H:%M:%SZ'))
+    # The TS / LINE regexes accept out-of-range dates (2026-13-40): such a row is
+    # skipped (None), never an exception that discards every other run's samples.
+    try:
+        return calendar.timegm(time.strptime(ts, '%Y-%m-%dT%H:%M:%SZ'))
+    except (ValueError, OverflowError):
+        return None
 ANCHOR = re.compile(r'^- (?:\S+ )?dismissed: fix-now (\S+)')
 LINE = re.compile(r'^- (\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ) (.*)$')
 PINNED = re.compile(r'^fix-now re-drain (READY|ESCALATED)\b')
@@ -821,23 +829,24 @@ def terminal(text):
     if not LEGACY.match(text) or STARTED.match(text):
         return False
     return 'READY' in text or 'ESCALATED' in text or 'SETTLED required=green' in text
-spans = []
-for led in sorted(glob.glob(os.path.join(d, '*.dismissed-decisions'))):
+def run_spans(led):
+    # One run's samples. Any exception here (an unreadable ledger or run file, a
+    # row this parser did not anticipate) skips THAT run only — the caller's try.
     run = led[:-len('.dismissed-decisions')] + '.md'
-    try:
-        with open(led, encoding='utf-8') as f:
-            rows = f.read().splitlines()
-        with open(run, encoding='utf-8') as f:
-            body = f.read().splitlines()
-    except Exception:
-        continue                      # an unreadable ledger or run file: skip that run
+    out = []
+    with open(led, encoding='utf-8') as f:
+        rows = f.read().splitlines()
+    with open(run, encoding='utf-8') as f:
+        body = f.read().splitlines()
     fix = []
     for r in rows:
         p = r.split('\t')
         if len(p) == 3 and p[1] == 'fix-now' and TS.match(p[2]):
-            fix.append((epoch(p[2]), p[0]))
+            t = epoch(p[2])
+            if t is not None:         # an out-of-range date: skip that row only
+                fix.append((t, p[0]))
     if not fix:
-        continue
+        return out
     fix.sort()
     batches = []                      # a row within 600 s of the previous = the same decision batch
     for t, name in fix:
@@ -870,12 +879,21 @@ for led in sorted(glob.glob(os.path.join(d, '*.dismissed-decisions'))):
         if end is None:
             continue
         cursor = end[0]
+        if end[1] is None:
+            continue                  # an out-of-range terminal date: this batch's end, untimeable
         span = end[1] - b['start']
         if span <= 0:
             continue                  # end before start: an out-of-order pairing, never a sample
         if span > 12 * 3600:
             continue                  # owner think-time or an overnight stall
-        spans.append(span)
+        out.append(span)
+    return out
+spans = []
+for led in sorted(glob.glob(os.path.join(d, '*.dismissed-decisions'))):
+    try:
+        spans.extend(run_spans(led))
+    except Exception:
+        continue                      # an unreadable / unparseable ledger or run file: skip that run
 def fmt(s):
     m = int((s + 30) // 60)
     return '%dh%02dm' % (m // 60, m % 60) if m >= 60 else '%dm' % m

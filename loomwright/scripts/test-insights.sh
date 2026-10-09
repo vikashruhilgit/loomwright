@@ -15,7 +15,8 @@
 # headline counting over the all-runs denominator plus the measured-subset parenthetical
 # + era table + pointer line and NO inlined per-run table; no-usable-records,
 # builder-absent, and garbage-emitting-builder degradations — all rendering the one-line
-# "no data" note without ever failing the dashboard build).
+# "no data" note without ever failing the dashboard build), and per-line tolerance of a
+# truncated / non-object session-log line (session_end + item_timing readers).
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hermetic-test-env.sh"
 set -uo pipefail
@@ -858,6 +859,23 @@ grep -qF "| Findings per item (new, all iterations) | 2.5 |" "$fd" 2>/dev/null &
 rm -f "$FM/.supervisor/logs/fm-a.jsonl" "$FM/.supervisor/logs/fm-b.jsonl"; ( cd "$FM" && bash "$BUILD" >/dev/null 2>&1 )
 grep -qF "| First-pass PASS rate (Phase 4.5 iteration 1) | not recorded |" "$fd" 2>/dev/null && grep -qF "| Findings per item (new, all iterations) | not recorded |" "$fd" 2>/dev/null && ok "metric absent ⇒ 'not recorded'" || no "absent metric not rendered as 'not recorded'"
 rm -rf "$FM"
+
+echo "== E. malformed / non-object session-log lines are skipped per line (fix-now E) =="
+# A killed session's truncated last line, or a bare non-object line, must not abort the whole read:
+# it once dropped the session_end after it (Sessions undercounted) and every later item_timing row.
+ML="$(mktemp -d)"; ( cd "$ML" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$ML/.supervisor/logs"
+printf '%s\n' '{"event":"item_timing","ts":"2026-10-0' \
+  '{"ts":"2026-10-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS","heal_iterations":0}' > "$ML/.supervisor/logs/ml-a.jsonl"
+printf '%s\n' '{"ts":"2026-10-02T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS","heal_iterations":0}' \
+  '42' \
+  '{"event":"item_timing","ts":"2026-10-02T12:00:00Z","pr_url":"https://x/12","item":{"pick_to_park":{"seconds":600},"owner_seconds":null,"machine_seconds":null,"owner_exact_share":null}}' > "$ML/.supervisor/logs/ml-b.jsonl"
+( cd "$ML" && bash "$BUILD" >/dev/null 2>&1 ); rc=$?
+md="$ML/.supervisor/insights/dashboard.md"
+grep -qF "| Sessions | 2 |" "$md" 2>/dev/null && ok "a truncated line BEFORE a session_end does not drop that session (2 sessions)" || no "sessions after a malformed line: $(grep -F '| Sessions |' "$md" 2>/dev/null)"
+grep -qF "| https://x/12 | 10m 0s | not recorded | not recorded | not recorded |" "$md" 2>/dev/null && ok "item_timing after a truncated + a non-object line still renders" || no "item_timing lost after malformed lines: $(grep -F 'item_timing' "$md" 2>/dev/null | head -2)"
+[ "$rc" -eq 0 ] && ok "build-insights exits 0 over malformed lines" || no "rc=$rc"
+rm -rf "$ML"
 
 echo
 echo "RESULT: $pass passed, $fail failed"

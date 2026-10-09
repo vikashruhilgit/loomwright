@@ -50,15 +50,32 @@ set -u
 trap 'exit 0' EXIT
 
 RUN="" SESSION="" LOGS="" CI_RUNS="" TREES="" GIT_RANGE="" BRANCH=""
+# flagval <flag> [<next>...] — VAL = the flag's value, NSHIFT = args consumed.
+# A value that starts with `--` is never taken (an empty value rendered as
+# nothing would otherwise swallow the next flag): the flag keeps its default
+# and the `--…` arg is parsed as a flag.
+flagval() {
+  VAL=""; NSHIFT=1
+  [ $# -ge 2 ] || return 0
+  case "$2" in
+    --*) echo "phase-timing: $1 has no value (next arg '$2' is a flag) — keeping the default" >&2 ;;
+    *) VAL="$2"; NSHIFT=2 ;;
+  esac
+}
 while [ $# -gt 0 ]; do
   case "$1" in
-    --run) RUN="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
-    --session) SESSION="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
-    --logs-dir) LOGS="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
-    --ci-runs) CI_RUNS="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
-    --trees) TREES="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
-    --git-range) GIT_RANGE="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
-    --branch) BRANCH="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
+    --run|--session|--logs-dir|--ci-runs|--trees|--git-range|--branch)
+      flagval "$@"
+      case "$1" in
+        --run) RUN="$VAL" ;;
+        --session) SESSION="$VAL" ;;
+        --logs-dir) LOGS="$VAL" ;;
+        --ci-runs) CI_RUNS="$VAL" ;;
+        --trees) TREES="$VAL" ;;
+        --git-range) GIT_RANGE="$VAL" ;;
+        --branch) BRANCH="$VAL" ;;
+      esac
+      shift "$NSHIFT" ;;
     *) shift ;;
   esac
 done

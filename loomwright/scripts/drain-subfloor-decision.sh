@@ -27,6 +27,9 @@
 #      "auto_fixable": [{"severity": "LOW", ...}, ...], "severity_floor": "HIGH"}
 #   --rules-failed-seen   ids remembered from an earlier `fail` (empty = none).
 #   --checks-ever-fixed   required-check names a prior fix cycle targeted.
+#   An empty list is OMITTED or passed as a quoted "". A value that starts
+#   with `--` is never taken as a flag's value: that flag keeps its default
+#   (empty), a reason goes to stderr, and the `--…` arg is parsed as a flag.
 #   The wait line's failing names come from its `red_names=` field (pass
 #   `--names` to wait-for-checks.sh); absent ⇒ no failing names known.
 #
@@ -129,13 +132,32 @@ fi
 
 # ---- decide ------------------------------------------------------------------
 SHA=""; WAIT_LINE=""; HAVE_WAIT=0; RULES=""; RULES_SEEN=""; EVER_FIXED=""
+# flagval <flag> [<next>...] — sets VAL to the flag's value and NSHIFT to how
+# many args it consumed. A value-taking flag never swallows a following
+# `--flag` (an empty list rendered as nothing — `--rules-failed-seen
+# --checks-ever-fixed ci` — would otherwise eat the next flag and drop its
+# value): the flag keeps its default (empty) and the next arg is parsed as a
+# flag. A legitimately empty value is passed as a quoted "".
+flagval() {
+  VAL=""; NSHIFT=1
+  [ $# -ge 2 ] || return 0
+  case "$2" in
+    --*) reason "$1 has no value (next arg '$2' is a flag) — keeping the default" ;;
+    *) VAL="$2"; NSHIFT=2 ;;
+  esac
+}
 while [ $# -gt 0 ]; do
   case "$1" in
-    --sha) SHA="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
-    --wait-line) WAIT_LINE="${2:-}"; HAVE_WAIT=1; shift; [ $# -gt 0 ] && shift ;;
-    --rules) RULES="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
-    --rules-failed-seen) RULES_SEEN="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
-    --checks-ever-fixed) EVER_FIXED="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
+    --sha|--wait-line|--rules|--rules-failed-seen|--checks-ever-fixed)
+      flagval "$@"
+      case "$1" in
+        --sha) SHA="$VAL" ;;
+        --wait-line) WAIT_LINE="$VAL"; HAVE_WAIT=1 ;;
+        --rules) RULES="$VAL" ;;
+        --rules-failed-seen) RULES_SEEN="$VAL" ;;
+        --checks-ever-fixed) EVER_FIXED="$VAL" ;;
+      esac
+      shift "$NSHIFT" ;;
     *) shift ;;
   esac
 done

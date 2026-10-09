@@ -24,6 +24,8 @@
 #       mirrors the sentinel `brief` convention (one sentence, no second copy of the rules).
 #   (d) the Self-Heal Miss-Class Checklist names `brief_conformance`.
 #   (e) the DIFFERENT-LENS DIRECTIVE parenthetical class list names `brief_conformance`.
+#   (p) mirror parity: every backtick-slugged checklist class (`own conventions`, `brief_conformance`,
+#       `deviations`, …) is named by BOTH restated lists, and pr-postmortem points instead of restating.
 #   (m) MUTATION CONTROL: delete the prompt line from a COPY of the skill; gate the mutant on
 #       non-empty + differs-from-original; (a) against the mutant MUST fail. Without this, (a) could
 #       be green while asserting nothing.
@@ -200,6 +202,38 @@ lens_line="$(grep -F 'Self-Heal Miss-Class Checklist regardless of repo' "$SKILL
 case "$lens_line" in
   *'brief_conformance'*) ok "(e) DIFFERENT-LENS DIRECTIVE class list names brief_conformance" ;;
   *) no "(e) DIFFERENT-LENS DIRECTIVE class list does not name brief_conformance" ;;
+esac
+
+# ---- (p) mirror parity: EVERY slugged class of the checklist is named by each restated list -------
+# The checklist is the authority; the DIFFERENT-LENS DIRECTIVE line and the code-reviewer Self-heal
+# lens paragraph restate its class list (pinned above), and pr-postmortem's self_heal_miss points at
+# it instead of restating it. A class added to the checklist (e.g. `own conventions`, AC-IQ01b) and
+# not to a restated list is exactly the restated-list drift the checklist itself names.
+POSTMORTEM="$PLUGIN_ROOT/skills/pr-postmortem/SKILL.md"
+cl_slugs="$(awk '
+  /^## Self-Heal Miss-Class Checklist/ { in_sec = 1; next }
+  in_sec && /^## / { in_sec = 0 }
+  in_sec && /^- \[ \] \*\*/ { print }
+' "$CHECKLIST" | sed -n 's/^- \[ \] \*\*[^(]*(`\([^`]*\)` — .*/\1/p')"
+rev_lens="$(grep -F 'Self-heal lens' "$REVIEWER" | head -1 || true)"
+parity_ok=1; n_slugs=0
+while IFS= read -r slug; do
+  [ -n "$slug" ] || continue
+  n_slugs=$((n_slugs + 1))
+  case "$lens_line" in *"\`$slug\`"*) ;; *) parity_ok=0; no "(p) DIFFERENT-LENS DIRECTIVE class list does not name \`$slug\`" ;; esac
+  case "$rev_lens" in *"\`$slug\`"*) ;; *) parity_ok=0; no "(p) agents/code-reviewer.md Self-heal lens does not name \`$slug\`" ;; esac
+done <<EOF_SLUGS
+$cl_slugs
+EOF_SLUGS
+if [ "$n_slugs" -ge 3 ] && [ "$parity_ok" -eq 1 ]; then
+  ok "(p) all $n_slugs slugged checklist classes are named by both restated lists"
+elif [ "$n_slugs" -lt 3 ]; then
+  no "(p) only $n_slugs slugged classes parsed from the checklist (expected own conventions / brief_conformance / deviations) — the parser is vacuous"
+fi
+pm_line="$(grep -F 'Set `self_heal_miss: true`' "$POSTMORTEM" | head -1 || true)"
+case "$pm_line" in
+  *'skills/quality-checklist/SKILL.md'*'Self-Heal Miss-Class Checklist'*'not restated here'*) ok "(p) pr-postmortem self_heal_miss points at the checklist instead of restating its classes" ;;
+  *) no "(p) pr-postmortem self_heal_miss restates the class list (or lost its pointer): ${pm_line:0:160}" ;;
 esac
 
 # ---- (m) MUTATION CONTROL: (a) must go RED when the prompt line is deleted ----------------------

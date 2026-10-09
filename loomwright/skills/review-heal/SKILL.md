@@ -359,6 +359,8 @@ while result starts with "CONTINUE":       # per-call ceiling hit, TOTAL budget 
 # Each call's tool timeout: >= call-max + one interval and < 600000 ms (e.g. 580000). --bound is the
 # TOTAL across calls: the first call persists an absolute deadline, --continue reads it and never
 # resets it (unreadable ⇒ ELAPSED … pending=unreadable_deadline, fail-CLOSED). A new SHA = fresh bound.
+# A call that drops --continue while that deadline is unexpired KEEPS it (stderr warning) — dropping
+# the flag never earns a fresh total; only an explicit --restart replaces an unexpired deadline.
 # The final line is exactly ONE of:
 #   SETTLED sha=<sha> required=<green|red|unknown> review_producing=<settled|elapsed>
 #   ELAPSED sha=<sha> required=<green|red|pending|unknown> review_producing=<settled|elapsed> pending=<...>
@@ -736,6 +738,9 @@ loop:
     rules_gate = rules_after.verdict
     out = drain-subfloor-decision.sh decide <round.json> --sha <pushed_sha> --wait-line "<line>" \
             --rules <rules_after.verdict> --rules-failed-seen <ids,…> --checks-ever-fixed <names,…>
+    # An EMPTY list is OMITTED (drop the flag) or passed as a quoted "" — never rendered as nothing, which
+    # would leave the flag followed directly by the next `--flag` (the script refuses a `--…` value: that
+    # flag keeps its empty default and logs a reason to stderr, so the next flag's value is never lost).
     # ACT ON THE PRINTED LINE ONLY — exactly one of:
     #   READY sub_floor_converged sub_floor_fixed=<json>  ⇒ decision = READY; termination_reason = "sub_floor_converged"
     #       (NOT auto-merge-eligible, AC9 — automate-loop §10 cond 1); sub_floor_fixed = <json> VERBATIM (this round

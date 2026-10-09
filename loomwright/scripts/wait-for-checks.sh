@@ -25,7 +25,7 @@
 # USAGE
 #   wait-for-checks.sh <pr_url> --sha <sha> --bound <seconds> \
 #       [--interval <s>] [--required-only | --review-check-pattern <glob>] \
-#       [--names] [--call-max <s> [--continue]]
+#       [--names] [--call-max <s> [--continue | --restart]]
 #
 #   <pr_url>       the PR being waited on (any bare positional argument).
 #   --sha <sha>    the commit the caller is waiting for. A rollup reported
@@ -69,8 +69,14 @@
 #                  `date +%s`) in ${CHECK_WAIT_DIR:-.supervisor/check-wait}/
 #                  <key-hash>.json, key = (pr_url, --sha, scope), hashed like
 #                  drain-rounds.sh's pr_hash. A call WITHOUT --continue starts a
-#                  fresh deadline (now + --bound); a call WITH --continue reads
-#                  it and NEVER rewrites it — missing/garbage state there is
+#                  fresh deadline (now + --bound) — UNLESS an unexpired deadline
+#                  for the same key is already persisted: then it KEEPS that
+#                  deadline and warns on stderr (a caller that drops --continue
+#                  mid-loop must never earn a fresh total; fail-CLOSED toward
+#                  the bound). --restart deliberately replaces an unexpired
+#                  deadline; an expired or unreadable one is always replaced. A
+#                  call WITH --continue reads the deadline and NEVER rewrites it
+#                  (--restart is ignored there) — missing/garbage state there is
 #                  fail-CLOSED: `ELAPSED … pending=unreadable_deadline`, never a
 #                  fresh budget. A different --sha is a different key. The state
 #                  file is removed on SETTLED/ELAPSED. A non-numeric --call-max
@@ -134,6 +140,7 @@ HAVE_PATTERN=0
 NAMES=0
 CALL_MAX=""
 CONTINUE=0
+RESTART=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -159,6 +166,8 @@ while [ $# -gt 0 ]; do
       CALL_MAX="${1#--call-max=}"; shift ;;
     --continue)
       CONTINUE=1; shift ;;
+    --restart)
+      RESTART=1; shift ;;
     --review-check-pattern)
       REVIEW_PATTERN="${2:-}"; HAVE_PATTERN=1; shift; [ $# -gt 0 ] && shift ;;
     --review-check-pattern=*)
@@ -230,10 +239,25 @@ if [ -n "$CALL_MAX" ]; then
         exit 0 ;;
     esac
   else
-    DEADLINE=$((_now + BOUND))
-    mkdir -p "$_dir" 2>/dev/null || true
-    printf '{"deadline":%s,"sha":"%s","scope":"%s"}\n' "$DEADLINE" "$SHA" "$_scope" > "$STATE_FILE" 2>/dev/null \
-      || log "could not persist the deadline to $STATE_FILE (a --continue call will fail closed)"
+    # A first call. An UNEXPIRED deadline already persisted for this key means
+    # a resumable wait is in flight (most likely the caller dropped --continue):
+    # keep it — a fresh total would make the wait unbounded. Only --restart
+    # replaces it; an expired or unreadable one is replaced as before.
+    _kept=""
+    if [ "$RESTART" -eq 0 ]; then
+      _kept="$("$JQ_BIN" -r '.deadline | select(type == "number" and . == floor) | tostring' "$STATE_FILE" 2>/dev/null || true)"
+      case "$_kept" in ''|*[!0-9]*) _kept="" ;; esac
+      [ -n "$_kept" ] && [ "$_kept" -le "$_now" ] && _kept=""
+    fi
+    if [ -n "$_kept" ]; then
+      DEADLINE="$_kept"
+      log "an unexpired deadline for this (pr, sha, scope) is in flight — keeping it ($((DEADLINE - _now)) s left); pass --continue to resume, --restart to replace it"
+    else
+      DEADLINE=$((_now + BOUND))
+      mkdir -p "$_dir" 2>/dev/null || true
+      printf '{"deadline":%s,"sha":"%s","scope":"%s"}\n' "$DEADLINE" "$SHA" "$_scope" > "$STATE_FILE" 2>/dev/null \
+        || log "could not persist the deadline to $STATE_FILE (a --continue call will fail closed)"
+    fi
   fi
 fi
 

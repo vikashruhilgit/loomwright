@@ -50,8 +50,10 @@ for f in "${files[@]}"; do
   # the session_end event (see docs/RESULT_SCHEMAS.md §"session_end JSONL hard-signal fields").
   # Field names are a hard contract with ST3 (writer) — do NOT rename. Older logs lack them, so
   # each defaults to null and renders as "not reported this session".
-  jq -c --arg sid "$sid" '
-    select(.event=="session_end")
+  # -R + fromjson?: a malformed / non-object line anywhere in the log is skipped per line — a plain
+  # `jq -c` aborts at it and drops the session_end after it (and the metrics it carries).
+  jq -Rc --arg sid "$sid" '
+    fromjson? | select(type=="object" and .event=="session_end")
     | {sid:$sid, ts:(.ts//""), status:(.status//"unknown"), branch:(.branch//""),
        pr_url:(.pr_url//""), heal_decision:(.heal_decision//""),
        heal_iterations:(.heal_iterations//null), rubric_score:(.rubric_score//null),
@@ -211,7 +213,9 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
       "| Completion (→ session_end) | \(fmt(med($r|map(.supervisor.completion.seconds)))) | \(fmt($L.supervisor.completion.seconds)) |"
   ' "${wc_tmp:-/dev/null}" 2>/dev/null
   echo
-  wc_items="$(cat "$LOGS_DIR"/*.jsonl 2>/dev/null | jq -c 'select(.event=="item_timing")' 2>/dev/null)"
+  # Per-line tolerant (fromjson?): a truncated / non-object line (a killed session's last line)
+  # is skipped, never an abort that drops every later item_timing row.
+  wc_items="$(cat "$LOGS_DIR"/*.jsonl 2>/dev/null | jq -Rc 'fromjson? | select(type=="object" and .event=="item_timing")' 2>/dev/null)"
   if [ -n "$wc_items" ]; then
     printf '%s\n' "$wc_items" | jq -rs '
       def fmt(s): if s == null then "not recorded" else "\((s/60)|floor)m \(s % 60)s" end;

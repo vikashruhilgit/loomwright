@@ -866,6 +866,22 @@ cost_mut() { # <label> <pattern of the drop line> <dir> — the drop's guard lin
 }
 cost_mut end-before-start-drop 'if span <= 0:' "$CD/ooo" "$COST_DEF"
 cost_mut over-12h-drop 'if span > 12 * 3600:' "$CD/six" "$c_six"
+# C9 (fix-now D) — an out-of-range date (the TS / LINE regexes accept 2026-13-40) in ONE sibling
+# ledger or run file skips that row / batch only; it never raises and discards every other run's sample.
+mkdir -p "$CD/badrow" "$CD/badend" "$CD/badmix"
+cp "$CD/six/$R5".* "$CD/badrow/"; cp "$CD/six/$R5".* "$CD/badend/"; cp "$CD/six/$R5".* "$CD/badmix/"
+cost_led "$CD/badrow" automate-2026-11-03-000000 automate-2026-11-03-000000--b-000000--dismissed-0000eeee.md fix-now 2026-13-40T00:00:00Z
+printf '%s\n' '- 2026-11-03T11:00:00Z fix-now re-drain READY (converged, 1 rounds, 0 fix cycles)' | cost_run "$CD/badrow" automate-2026-11-03-000000
+cost_led "$CD/badend" automate-2026-11-03-000000 automate-2026-11-03-000000--b-000000--dismissed-0000eeee.md fix-now 2026-11-03T10:00:00Z
+printf '%s\n' '- 2026-10-99T11:00:00Z fix-now re-drain READY (converged, 1 rounds, 0 fix cycles)' | cost_run "$CD/badend" automate-2026-11-03-000000
+cost_led "$CD/badmix" automate-2026-11-04-000000 automate-2026-11-04-000000--m-000000--dismissed-0000ffff.md fix-now 2026-13-40T00:00:00Z
+cost_led "$CD/badmix" automate-2026-11-04-000000 automate-2026-11-04-000000--m-000000--dismissed-0000ffff.md fix-now 2026-11-04T10:00:00Z
+printf '%s\n' '- 2026-11-04T11:00:00Z fix-now re-drain READY (converged, 1 rounds, 0 fix cycles)' | cost_run "$CD/badmix" automate-2026-11-04-000000
+C_R5="fix_now_cost: ≈ 2h21m (median of 1 recorded fix-now re-drain in this repo, range 2h21m–2h21m)"
+[ "$(cost_of "$CD/badrow")" = "$C_R5" ] && ok "C9 a bad-date ledger row in a sibling ledger is skipped; the good run's sample survives" || no "C9 bad row: '$(cost_of "$CD/badrow")'"
+[ "$(cost_of "$CD/badend")" = "$C_R5" ] && ok "C9 a bad-date terminal line ends its batch with no sample; the good run's sample survives" || no "C9 bad terminal: '$(cost_of "$CD/badend")'"
+[ "$(cost_of "$CD/badmix")" = "fix_now_cost: ≈ 1h41m (median of 2 recorded fix-now re-drains in this repo, range 1h00m–2h21m)" ] \
+  && ok "C9 a bad-date row beside a good row in ONE ledger skips the row only (both runs sampled)" || no "C9 mixed ledger: '$(cost_of "$CD/badmix")'"
 # C8 — the prose the loop executes (SKILL §6 steps 2/3, §1.5 row, the schema mirror, the command bullet).
 SUB2="$(first_line "$SUBF" "2. **Interactive**")"; SUB3="$(first_line "$SUBF" "3. **Any \`fix-now\` answer")"
 case "$SUB2" in *"automate-helpers.sh dismissed-cost <runfile>"*"≈ <estimate> wall-clock: ONE owner-requested fix pass + full re-drain + re-park (<basis>)"*"0 min now (+ a future queue item)"*'**Drop** reads "0 min"'*) ok "C8 §6 step 2 runs dismissed-cost and puts the cost in every fix-now option; follow-up '0 min now', drop '0 min'" ;; *) no "C8 §6 step 2 cost prose missing" ;; esac

@@ -6,7 +6,7 @@ T01 — the drain's sub-floor stop decision is a script. `drain-subfloor-decisio
 
 T02 — every fix-now prompt at the dismissed-findings decision shows a derived wall-clock cost estimate, read from the `dismissed-cost` estimator in `automate-dismissed.sh`.
 
-T03 — the scoped check-wait stays under the 600 s foreground cap. `wait-for-checks.sh --call-max` resumes across calls against a persisted total deadline; without the flag its output is byte-identical and it writes no state. Its state directory has a retention-sweep row.
+T03 — the scoped check-wait stays under the 600 s foreground cap. `wait-for-checks.sh --call-max` resumes across calls against a persisted total deadline (a call that drops `--continue` keeps an unexpired deadline; only `--restart` replaces it); without the flag its output is byte-identical and it writes no state. Its state directory has a retention-sweep row.
 
 T04 — phase timing. `phase-timing.sh` derives per-phase wall-clock and machine-versus-owner time from local logs. `/insights` gains a Wall-clock section, and closeout appends one `item_timing` event. A new post-call hook leaf records the answered question, `pr_created` is logged on PR creation, the dismissed Progress line is timestamped, and each ci-local log carries the HEAD sha and branch.
 
