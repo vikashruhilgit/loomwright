@@ -357,12 +357,28 @@
     {
       "blocking": false,
       "event": "PostToolUse",
+      "matcher": "AskUserQuestion",
+      "script": "scripts/emit-lifecycle.sh",
+      "scripts": [
+        "scripts/emit-lifecycle.sh"
+      ],
+      "source": "hooks.PostToolUse[0].hooks[0]",
+      "type": "command",
+      "writes": [
+        ".supervisor/logs/.lifecycle-asked-ids",
+        ".supervisor/logs/.lifecycle-heartbeat-debounce-<agent>",
+        ".supervisor/logs/<session>.jsonl"
+      ]
+    },
+    {
+      "blocking": false,
+      "event": "PostToolUse",
       "matcher": "Bash",
       "script": "scripts/hook-dispatch-on-pr-create.sh",
       "scripts": [
         "scripts/hook-dispatch-on-pr-create.sh"
       ],
-      "source": "hooks.PostToolUse[0].hooks[0]",
+      "source": "hooks.PostToolUse[1].hooks[0]",
       "type": "command",
       "writes": [
         "unknown"
@@ -376,7 +392,7 @@
       "scripts": [
         "scripts/reproject-state-on-terminal.sh"
       ],
-      "source": "hooks.PostToolUse[0].hooks[1]",
+      "source": "hooks.PostToolUse[1].hooks[1]",
       "type": "command",
       "writes": [
         ".supervisor/state.md"
@@ -390,7 +406,7 @@
       "scripts": [
         "scripts/worktree-audit.sh"
       ],
-      "source": "hooks.PostToolUse[0].hooks[2]",
+      "source": "hooks.PostToolUse[1].hooks[2]",
       "type": "command",
       "writes": [
         ".supervisor/logs/worktrees.log"
@@ -404,7 +420,7 @@
       "scripts": [
         "scripts/emit-lifecycle.sh"
       ],
-      "source": "hooks.PostToolUse[0].hooks[3]",
+      "source": "hooks.PostToolUse[1].hooks[3]",
       "type": "command",
       "writes": [
         ".supervisor/logs/.lifecycle-asked-ids",
@@ -420,7 +436,7 @@
       "scripts": [
         "scripts/emit-agent-identity.sh"
       ],
-      "source": "hooks.PostToolUse[2].hooks[0]",
+      "source": "hooks.PostToolUse[3].hooks[0]",
       "type": "command",
       "writes": [
         ".supervisor/logs/<session>.jsonl"
@@ -434,7 +450,7 @@
       "scripts": [
         "scripts/emit-lifecycle.sh"
       ],
-      "source": "hooks.PostToolUse[2].hooks[1]",
+      "source": "hooks.PostToolUse[3].hooks[1]",
       "type": "command",
       "writes": [
         ".supervisor/logs/.lifecycle-asked-ids",
@@ -450,7 +466,7 @@
       "scripts": [
         "scripts/emit-lifecycle.sh"
       ],
-      "source": "hooks.PostToolUse[2].hooks[2]",
+      "source": "hooks.PostToolUse[3].hooks[2]",
       "type": "command",
       "writes": [
         ".supervisor/logs/.lifecycle-asked-ids",
@@ -466,7 +482,7 @@
       "scripts": [
         "scripts/seed-run-owner.sh"
       ],
-      "source": "hooks.PostToolUse[1].hooks[0]",
+      "source": "hooks.PostToolUse[2].hooks[0]",
       "type": "command",
       "writes": [
         ".supervisor/logs/<session>.owner"
@@ -480,7 +496,7 @@
       "scripts": [
         "scripts/emit-lifecycle.sh"
       ],
-      "source": "hooks.PostToolUse[1].hooks[1]",
+      "source": "hooks.PostToolUse[2].hooks[1]",
       "type": "command",
       "writes": [
         ".supervisor/logs/.lifecycle-asked-ids",
