@@ -47,6 +47,7 @@
   lane-status      [<parent_runfile>] [--json] [--watch] [--leaks [--snapshot]] [--resources | --tokens]  # parallel-automate/05: delegated to automate-lanes.sh — one line per lane (state, item, PR, question, CI slot, readiness); --json adds machine state; fail-SAFE observer (exit 0)
   lane-feed        <lane_dir|L<n>> [--follow]         # parallel-automate/05: delegated to automate-lanes.sh — readable narration of the lane's stream log
   lane-readiness   <lane_dir|L<n>>                    # parallel-automate/05: delegated to automate-lanes.sh — writes <run_id>.merge-readiness.md (PASS/FAIL/NOT-RUN per check; advisory, never merges)
+  lane-park-notify <runfile>                          # parallel-automate/24: delegated to automate-lanes.sh — a lane's ready_for_release park notify: desktop + `automate_ready_for_release` webhook ("do not merge yet — wave open"), both fail-SAFE, + one ## Progress line naming what each channel actually delivered; always exits 0
   merged          — PR is MERGED (gh state==MERGED or mergedAt non-null);
   awaiting_merge  — PR is OPEN/unmerged; item stays awaiting_merge even if the
   gone            — PR is CLOSED-unmerged (neither merged nor open).

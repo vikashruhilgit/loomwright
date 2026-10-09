@@ -135,10 +135,47 @@ v14.2.1.
 **no** `usage`, `input_tokens`, `output_tokens`, `cache_read_input_tokens`,
 `cache_creation_input_tokens`, or nested `usage` object. Exact token counts
 are not available on the hook fire. The plugin therefore records an additive
-`token_ledger` JSONL event that prefers real usage fields when present and
-falls back to a **transcript-byte proxy** when they are absent (the expected
-path today). The proxy is **never** labelled as tokens and **never** invents
-token counts.
+`token_ledger` JSONL event that prefers real usage fields when the payload
+carries them, else reads the REAL usage from the subagent's own transcript
+(parallel-automate/24 F8, below), and falls back to a **transcript-byte
+proxy** only when neither is readable. The proxy is **never** labelled as
+tokens and **never** invents token counts.
+
+**Transcript usage (`"usage_source":"transcript"`, parallel-automate/24 F8).**
+Until this landed every ledger line was a proxy (the payload never carries
+usage), so `read-token-ledger.sh` summed `TOTAL=0` on every run, sequential and
+lane alike, and `--max-tokens` could never park (evidence: the 43 most recent
+`token_ledger` lines on the primary checkout were all `proxy:true`; pa/23's run
+read `TOTAL=0 EVENTS=7`). The emitter now reads the payload's agent transcript path — the
+subagent's own `subagents/agent-<id>.jsonl`, **never** `transcript_path` (the
+main session's transcript) — whose `type:"assistant"` lines carry
+`message.usage`. Those lines repeat once per streamed content block and are
+NOT identical: `output_tokens` is a stream-start placeholder until the final
+line, the one with a non-null `message.stop_reason`. Per distinct `message.id`
+the emitter counts that final line when present, else the per-field MAX over
+the id's lines (never the first line), and writes the four TOP-LEVEL integers
+`input_tokens`, `output_tokens`, `cache_read_input_tokens`,
+`cache_creation_input_tokens` (the reader ignores a nested `usage` object; the
+transcript's non-numeric sub-objects are dropped), plus `usage_source`,
+`usage_messages` (ids counted), `usage_last_message_id` (the last entry WITH a
+`message.id`) and, when id-less lines follow it, `usage_anon_after` (how many).
+Those two are the resume watermark — a POSITION, so a transcript whose newest
+line has no id still records one. A **resumed** agent's next stop counts only
+the entries after the watermark of the last transcript-sourced line the same
+`agent_id` wrote to the same log, so earlier messages are not counted again (a
+repeat stop with no new message writes no line). The watermark read, the count
+and the append are ONE critical section under the per-log lock, so concurrent
+firings of one completion sum its transcript once, in one line, whatever their
+`ts`. Streaming, bounded parse (a transcript over 256 MiB, an
+unreadable one, or one with no usage lines ⇒ the proxy line); the emitter still
+always exits 0. **Honest limits:** output tokens of a message whose final line
+is absent (common in older transcripts) are UNDER-counted (its max placeholder
+is counted); a resumed agent whose earlier line landed in a different log is
+counted again; and the ledger still does not see Claude Code's own
+`general-purpose` subagents (no matcher of this plugin's), the main thread's own tokens,
+CI-side `claude-review` spend, or a `--parallel` coordinator's own run.
+`TOTAL` includes cache-read tokens, usually its largest part
+(`docs/ARCHITECTURE_CONTRACTS.md` §"Token ceiling").
 
 **Emitter:** `${CLAUDE_PLUGIN_ROOT}/scripts/emit-token-ledger.sh` — fail-SAFE,
 always exits 0. Reads SubagentStop JSON from stdin; appends **one** additive
@@ -185,8 +222,11 @@ by the **plugin** session id (e.g. `supervisor-2026-07-07-fable-parity`). To kee
 |-------|------|---------|
 | `session_id` | always (when emitted) | Plugin session id when an active `state.md` run is present; else the Claude Code UUID. Log filename key. |
 | `cc_session_id` | when SubagentStop carries `session_id` | Claude Code UUID retained for debug / cross-tool correlation |
-| `proxy` | always | `false` when any real usage signal is present; `true` for the transcript-byte fallback |
-| `usage` / `input_tokens` / `output_tokens` / `cache_*` | usage present only | Copied from the payload as-is — never invented |
+| `proxy` | always | `false` when any real usage signal is present (payload or transcript); `true` for the transcript-byte fallback |
+| `usage` / `input_tokens` / `output_tokens` / `cache_*` | payload usage present only | Copied from the payload as-is — never invented |
+| `usage_source` | transcript usage only | `"transcript"` — the four top-level integer fields were summed from the agent's own transcript, once per `message.id` (see "Transcript usage" above) |
+| `input_tokens` / `output_tokens` / `cache_read_input_tokens` / `cache_creation_input_tokens` | transcript usage only | Integers — the per-id sum for the messages counted at this stop |
+| `usage_messages`, `usage_last_message_id`, `usage_anon_after` | transcript usage only | How many entries this stop counted; the last entry with a `message.id`, and the count of id-less entries after it (omitted when 0) — together the resume watermark |
 | `token_proxy_kind` | proxy path only | Closed value today: `"transcript_bytes"` |
 | `token_proxy_transcript_bytes` | proxy path only | Byte size of `agent_transcript_path` (preferred) or `transcript_path` via `os.path.getsize` only |
 | `agent_type`, `agent_id`, `ts` | optional / when present | Identity + UTC ISO timestamp; **omitted when absent** (never the literal `"unknown"`) |
@@ -202,20 +242,28 @@ by the **plugin** session id (e.g. `supervisor-2026-07-07-fable-parity`). To kee
 job 04 (graph/brain context attribution). Leave room in readers; the emitter
 MUST NOT write this key today.
 
-**Hook coverage:** the emitter is chained on the **same** `type: command`
-hook lines that already run `send-telemetry.sh` (stdin fan-out — both scripts
-see the payload; chaining onto an existing hook line adds no new hook
-entry — see `loomwright/docs/HOOKS.md` §"Hook Table" for the authoritative,
-current count):
+**Hook coverage:** every agent this plugin ships runs the emitter on its own
+`SubagentStop` matcher (`loomwright/docs/HOOKS.md` §"Hook Table" is the
+authoritative wiring; `scripts/test-token-ledger.sh` case 26 asserts the
+coverage against `agents/*.md` frontmatter `name:`, so an agent added without it
+fails CI). It is chained onto an existing `type: command` line where one already
+reads the payload (stdin fan-out, `payload=$(cat)`), else it is that matcher's
+own line:
 
-| Matcher | Emits `token_ledger`? |
-|---------|----------------------|
-| `loomwright:code-reviewer` | yes |
-| `loomwright:qa-executor` | yes |
-| `loomwright:supervisor-runner` | yes |
-| `loomwright:worker` | **no** — its SubagentStop hooks are validator/progress-event command hooks; no telemetry command hook |
-| `loomwright:execute-manager` | **no** — its only SubagentStop hook is the validator command hook; no telemetry command hook (and no progress-event hook either — `emit-progress-event.sh` is on the `loomwright:worker` matcher above, not this one) |
-| `loomwright:plan-reviewer` / `loomwright:launch-pad-runner` | no |
+| Matcher | Emits `token_ledger`? | How |
+|---------|----------------------|-----|
+| `loomwright:code-reviewer`, `loomwright:qa-executor`, `loomwright:supervisor-runner` | yes | chained after `send-telemetry.sh` |
+| `loomwright:worker` | yes (since the PR #435 fix-now — before it worker spend, usually the largest share, was never ledgered) | chained after `emit-progress-event.sh`, in the leaf AFTER `validate-worker-result.py`'s own leaf |
+| the other ten (`context-keeper`, `execute-manager`, `launch-pad-runner`, `orchestrator`, `plan-reviewer`, `product-owner`, `qa-strategist`, `red-team-reviewer`, `review-pr-runner`, `rubric-grader`) | yes | the matcher's own line (v15.60.0) |
+
+Claude Code's own `general-purpose` subagents have no matcher here and are not
+ledgered. **A rejected worker stop still writes its line:** the runtime runs a
+matcher's hooks concurrently, so the ledger never waits on (or blocks) the
+validator's `decision: block`; the tokens of the rejected attempt were spent,
+and the retried stop counts only the messages after that line's watermark
+(above), so a reject-and-retry is counted once. The emitter's bounded lock wait
+(at most ~3 s, then it appends unguarded) is the only latency it can add to a
+stop.
 
 Self-test: `scripts/test-token-ledger.sh` (fixtures under
 `scripts/token-ledger-fixtures/`).
@@ -995,9 +1043,10 @@ typed agents were never duplicated.
 
 **Open question — why 2 and not 3, ASKED OF A TOPOLOGY THAT NO LONGER EXISTS.**
 Everything in this subsection was measured when three blocks were registered;
-since v15.60.0 there are thirteen, so the ratio it investigates does not
+since v15.60.0 there were thirteen, and fourteen since the PR #435 fix-now
+added `loomwright:worker`, so the ratio it investigates does not
 describe the current system and the question is not re-answered here — nobody
-has re-measured at thirteen. It is kept rather than deleted because the
+has re-measured at fourteen. It is kept rather than deleted because the
 reasoning below is still the best account of how these blocks interact, and
 because the guard it belongs to never depended on the answer: it keys on
 byte-identity, not on a duplicate count. At three blocks, only two
@@ -2011,6 +2060,53 @@ line). There is no opt-in flag: the webhook half is gated solely by
 the desktop half by `notify-desktop.sh`'s own opt-out
 (`LOOMWRIGHT_DESKTOP_NOTIFICATIONS=0`). No change to
 `send-webhook.sh` itself or its payload schema.
+
+### `/automate` lane park gate event (parallel-automate/24)
+
+A further ADDITIVE value, `automate_ready_for_release`, fired by ONE helper —
+`automate-helpers.sh lane-park-notify <the lane's run file>` (implemented in
+`scripts/automate-lanes.sh` `lanes_park_notify`) — at a `--parallel` lane's
+`ready_for_release` park (`skills/automate-loop/SKILL.md` §14 "Terminal
+park"). Same two channels as the merge watcher's `notify_as()`: a synthetic
+`Notification` payload (`notification_type` = `automate_ready_for_release`,
+`message` = the `--context` string) piped to `notify-desktop.sh`, and
+`send-webhook.sh --event-type gate --gate-type automate_ready_for_release
+--context <msg>`; both fail-SAFE, `--iteration`/`--session-id` not passed.
+
+| `gate_type` | Firing site | When (and `--context`) | Fires at most |
+|---|---|---|---|
+| `automate_ready_for_release` | `automate-lanes.sh` `lanes_park_notify` (`lane-park-notify`), called by the lane at its park | The lane's run file reads status and `pause_reason` `ready_for_release`. `"<pr_url> READY — do not merge yet — wave open (/automate item <item>, run <lane run_id>)"` | once per call — the lane calls it once at its park; a run file not at that park ⇒ `skipped`, nothing sent |
+
+Unlike the merge watcher, the helper then appends ONE `## Progress` line naming
+what each channel actually did, read from observable outcomes only (both
+notifiers are silent on stdout). `desktop:` is exactly one of —
+
+- `sent` — `notify-desktop.sh` wrote its `notify group=` audit line to
+  `.supervisor/logs/notifications.log` **and** the platform notifier it
+  dispatches to is present (Darwin: `osascript` on `PATH`, or `terminal-notifier`
+  on `PATH` with a click action other than `none` — `notify-desktop.sh` uses it
+  only then, so `LOOMWRIGHT_NOTIFY_CLICK=off` or a missing `notify-click-target.sh`
+  leaves only `osascript`; Linux: `notify-send` on `PATH` plus `DISPLAY` or
+  `WAYLAND_DISPLAY`).
+  The audit line alone proves nothing: `notify-desktop.sh` writes it on every
+  host BEFORE its platform dispatch. The OS banner itself stays best-effort.
+- `disabled (LOOMWRIGHT_DESKTOP_NOTIFICATIONS=0)`
+- `suppressed (no audit line in .supervisor/logs/notifications.log — debounced or skipped by notify-desktop.sh)`
+- `failed (no OS notifier on PATH)` — the audit line appeared but no notifier
+  exists for this OS (Darwin without `osascript` and without a usable
+  `terminal-notifier` — absent, or click action `none` — Linux without
+  `notify-send`, any other OS)
+- `failed (no display for notify-send)` — Linux, `notify-send` present, neither
+  `DISPLAY` nor `WAYLAND_DISPLAY` set (`notify-desktop.sh` skips it there)
+- `failed (notify-desktop.sh absent)` / `failed (payload not built — jq)`
+
+`webhook:` — a `LOOMWRIGHT_WEBHOOK_DRY_RUN=1` probe
+first (the payload prints only when a URL resolves) — `ignored
+(repo_webhook_ignored slug=… — no user-scope egress grant)`, `not configured`,
+`attempted` (POST sent; `send-webhook.sh` never reports the HTTP result, so the
+line never says `sent`), or `failed (<its stderr line>)`. Self-test:
+`scripts/test-automate-lanes.sh` group AA (stubbed notifiers via
+`LOOMWRIGHT_LANES_NOTIFY_DESKTOP` / `LOOMWRIGHT_LANES_SEND_WEBHOOK`).
 
 **Cross-references:** `scripts/automate-merge-watch.sh` (header + `notify()`),
 `skills/automate-loop/SKILL.md` §6, `scripts/test-automate-trail.sh` (asserts

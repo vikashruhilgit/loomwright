@@ -316,7 +316,7 @@
     "loomwright/scripts/test-setup-ui.sh": 1,
     "loomwright/scripts/test-stamp-requirement-status.sh": 1,
     "loomwright/scripts/test-telemetry.sh": 15,
-    "loomwright/scripts/test-token-ledger.sh": 42,
+    "loomwright/scripts/test-token-ledger.sh": 43,
     "loomwright/scripts/test-validate-code-review-result.sh": 12,
     "loomwright/scripts/test-validate-entry.sh": 12,
     "loomwright/scripts/test-verify-walkthrough.sh": 1,
@@ -368,10 +368,10 @@
     "loomwright/scripts/fixtures/subagentstop-maxturns-probe.json": 12,
     "loomwright/scripts/guard-finalize-publish.sh": 3,
     "loomwright/scripts/test-guard-finalize-publish.sh": 1,
-    "loomwright/scripts/automate-lanes.sh": 32,
+    "loomwright/scripts/automate-lanes.sh": 34,
     "loomwright/scripts/fixtures/automate-helpers-help.golden": 1,
     "loomwright/scripts/lane-sampler.sh": 1,
-    "loomwright/scripts/test-automate-lanes.sh": 33
+    "loomwright/scripts/test-automate-lanes.sh": 34
   },
   "allowance_reasons_note": "One-line reason per path, REQUIRED for every allowance that is new or higher than the base manifest's (base = $VENDOR_COUPLING_BASE, else origin/main; read with `git show <base>:<this file's repo-relative path>`). The reason must be ADDED or CHANGED versus the base: an inherited, unchanged reason does not justify a new raise, so a reason written for one raise never pre-authorises the next. A key with no matching `allowances` entry, or a value that is not a non-empty one-line string, is an ERROR \u2014 this map is self-cleaning like the allowance table. When the base is unresolvable the gate prints `raise_check: skipped (no base)`; CI fetches the base and sets VENDOR_COUPLING_REQUIRE_BASE=1 so it never skips there. The entries introduced by the schema-2 re-baseline (agnostic-phase1/01) say which newly counted token classes or which newly counted body moved the path; the re-baseline added no reference anywhere, it only made existing ones visible (this manifest's own entry was re-measured after later note edits in the same change). Reasons are compared NORMALISED (trimmed, internal whitespace collapsed to one space), so a whitespace-only edit of an inherited reason is still inherited and certifies nothing.",
   "allowance_reasons": {
@@ -529,7 +529,7 @@
     "loomwright/scripts/test-setup-ui.sh": "re-baseline (agnostic-phase1/01): newly counted token classes: hook_protocol; measured, no reference added",
     "loomwright/scripts/test-stamp-requirement-status.sh": "re-baseline (agnostic-phase1/01): newly counted token classes: hook_protocol; measured, no reference added",
     "loomwright/scripts/test-telemetry.sh": "re-baseline (agnostic-phase1/01): newly counted token classes: hook_protocol; measured, no reference added",
-    "loomwright/scripts/test-token-ledger.sh": "re-baseline (agnostic-phase1/01): newly counted token classes: hook_protocol; measured, no reference added",
+    "loomwright/scripts/test-token-ledger.sh": "re-baseline (agnostic-phase1/01): newly counted token classes: hook_protocol; measured, no reference added; +1 parallel-automate/24 F8: case 24 builds its transcript-usage hook payload once (tu_payload)",
     "loomwright/scripts/test-validate-code-review-result.sh": "re-baseline (agnostic-phase1/01): newly counted token classes: hook_protocol; measured, no reference added",
     "loomwright/scripts/test-verify-walkthrough.sh": "re-baseline (agnostic-phase1/01): newly counted token classes: orchestration; measured, no reference added",
     "loomwright/scripts/test-webhook.sh": "re-baseline (agnostic-phase1/01): newly counted token classes: ask_user, hook_protocol; measured, no reference added",
@@ -568,10 +568,10 @@
     "loomwright/scripts/fixtures/subagentstop-maxturns-probe.json": "new by automate-followups/33: a pinned runtime probe fixture \u2014 it records the hook payload shapes it observed, so it names them by design; measured",
     "loomwright/scripts/guard-finalize-publish.sh": "new by automate-followups/33: a pre-tool-use deny gate must emit the runtime's documented deny shape; measured",
     "loomwright/scripts/test-guard-finalize-publish.sh": "new by automate-followups/33: asserts the guard's documented deny shape; measured",
-    "loomwright/scripts/automate-lanes.sh": "new file, parallel-automate/05 lane coordinator: pins --plugin-dir to the coordinator's plugin root, merges the lane's ask-user relay hook entries, and spawns/parses the headless lane session (measured)",
+    "loomwright/scripts/automate-lanes.sh": "new file, parallel-automate/05 lane coordinator: pins --plugin-dir to the coordinator's plugin root, merges the lane's ask-user relay hook entries, and spawns/parses the headless lane session (measured); +2 parallel-automate/24 re-drain round 1: lane-park-notify's click-action mirror passes the session-id and entrypoint env inputs to notify-click-target.sh exactly as notify-desktop.sh does, so `desktop: sent` matches its real Darwin dispatch",
     "loomwright/scripts/fixtures/automate-helpers-help.golden": "new allowance, parallel-automate/05: golden copy of automate-helpers.sh --help, which now carries the relay-hook arm's ask-user tool name (ask_user=1)",
     "loomwright/scripts/lane-sampler.sh": "new file, parallel-automate/05 fleet sampler: one plugin-root reference to resolve its sibling helpers (install_root=1, measured)",
-    "loomwright/scripts/test-automate-lanes.sh": "new file, parallel-automate/05 hermetic lane tests: stub the headless session, the ask-user relay hook payloads and the plugin root (measured); +1 drain round 1: the comma-label multiSelect leg (W6) names the deferred ask-user tool in its stub result line; +1 owner fix-now FN1: the linked-worktree relay-hook leg (X) builds its own hook payload once (xhook)"
+    "loomwright/scripts/test-automate-lanes.sh": "new file, parallel-automate/05 hermetic lane tests: stub the headless session, the ask-user relay hook payloads and the plugin root (measured); +1 drain round 1: the comma-label multiSelect leg (W6) names the deferred ask-user tool in its stub result line; +1 owner fix-now FN1: the linked-worktree relay-hook leg (X) builds its own hook payload once (xhook); +1 parallel-automate/24 F8: the lane-ledger leg (AA-F8) builds its transcript-usage hook payload once"
   },
   "policy_reasons_note": "One-line reasons for policy changes that make the gate count LESS, keyed by a namespaced id, REQUIRED (added or changed versus the base manifest, compared normalised exactly like allowance_reasons) whenever the change is made: `exempt:<path>` when a path that held a base allowance above zero still exists but is now ADAPTER, newly ADAPTER_FRONTMATTER, or outside the scanned set; `token:<token>` when a token the base declared (in token_classes or the retired flat list) is declared by no class any more; `bound:max_frontmatter_lines` when the frontmatter bound is raised. Without this map those moves would absorb coupling growth with no reason at all, because the allowance table never sees them. An entry certifies nothing once the base carries it unchanged, so a stale one is harmless and may be pruned; an unknown namespace or a malformed value is an ERROR.",
   "policy_reasons": {}
