@@ -1,6 +1,6 @@
 # 01 — S3 validation throwaway item A (pa/05 Validation 4)
 
-## Status: pending
+## Status: done_with_escalation — ABANDONED (- [x] .supervisor/requirements/s3-validation/01-scratch-doc-a.md  # abandoned: throwaway pa/05 Validation 4/5 item; PR #429 closed unmerged by design)
 
 ## Depends on
 none
