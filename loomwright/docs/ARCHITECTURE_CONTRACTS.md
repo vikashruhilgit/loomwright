@@ -364,7 +364,7 @@ session-local state, not committed). Self-tests live in `scripts/test-system-con
 |-------|----------|------------|
 | Supervisor | `maxTurns: 60` (harness ceiling) + internal 50 tool-call budget | Checkpoint and halt |
 | Execute Manager | 80 | Return EXECUTE_CHECKPOINT |
-| Worker | 40 | Return WORKER_RESULT status=failed |
+| Worker | 100 (raised from 40: a measured worker run needed 82 tool calls / 79 assistant messages and was resumed; the self-review stage needs headroom) | Return WORKER_RESULT status=failed |
 | Code Reviewer | 40 | Return partial review |
 | Context-Keeper | 3 | Fail (caller retries once) |
 | Launch Pad | 55 | Return partial brief with LOW confidence |

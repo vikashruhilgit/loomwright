@@ -60,6 +60,16 @@
 #                        instant can race the ledger trim and lose one id —
 #                        that only lets a later replay of it emit again. The
 #                        Notification seam (no $2) is never de-duplicated.
+#   answered           — the question tool's post-call hook (iq02 Part T04, 3a;
+#                        leaf in hooks.json): the owner ANSWERED. Writes `state: working` with
+#                        `reason: answered` (additive reason on a working row;
+#                        `state` vocabulary unchanged) and the payload's
+#                        `tool_use_id` when it carries one — the ask_user
+#                        `waiting` row carries the same id, so a reader pairs
+#                        them by id, else by order. NOT debounced (the
+#                        debounce is heartbeat-only). One row per id via its
+#                        OWN ledger `$LOG_DIR/.lifecycle-answered-ids` (never
+#                        the ask ledger — a shared file would drop the row).
 #   heartbeat         — PostToolUse[Bash|Write|Edit|Task]. Debounced PER
 #                        DERIVED AGENT ID (never per matcher block) via a
 #                        single shared marker file under `.supervisor/logs/`,
@@ -161,7 +171,7 @@ trap 'exit 0' EXIT
 # ---- Subcommand dispatch ------------------------------------------------------
 LIFECYCLE_SUBCOMMAND="${1:-}"
 case "$LIFECYCLE_SUBCOMMAND" in
-  waiting|heartbeat|failed|ended) ;;
+  waiting|heartbeat|failed|ended|answered) ;;
   *) exit 0 ;;
 esac
 LIFECYCLE_EXTRA_ARG="${2:-}"
@@ -269,6 +279,15 @@ if [ "$LIFECYCLE_SUBCOMMAND" = "waiting" ] && [ "$LIFECYCLE_EXTRA_ARG" = "ask_us
     exit 0
   fi
 fi
+ANSWERED_IDS_FILE="$LOG_DIR/.lifecycle-answered-ids"
+ANSWERED_TOOL_USE_ID=""
+if [ "$LIFECYCLE_SUBCOMMAND" = "answered" ]; then
+  ANSWERED_TOOL_USE_ID="$(printf '%s' "$INPUT" | jq -r 'if (.tool_use_id | type) == "string" then .tool_use_id else empty end' 2>/dev/null | tr -cd 'A-Za-z0-9_-' 2>/dev/null || true)"
+  if [ -n "$ANSWERED_TOOL_USE_ID" ] && [ -f "$ANSWERED_IDS_FILE" ] \
+     && grep -qxF -e "$ANSWERED_TOOL_USE_ID" "$ANSWERED_IDS_FILE" 2>/dev/null; then
+    exit 0
+  fi
+fi
 
 # ---- Resolve plugin session id from state.md (active run only) --------------
 PLUGIN_SESSION_ID=""
@@ -333,7 +352,7 @@ if not log_session_id:
 subcommand = os.environ.get("LIFECYCLE_SUBCOMMAND", "")
 extra_arg = os.environ.get("LIFECYCLE_EXTRA_ARG", "")
 
-STATE_BY_SUBCOMMAND = {"waiting": "waiting", "heartbeat": "working", "failed": "failed", "ended": "ended"}
+STATE_BY_SUBCOMMAND = {"waiting": "waiting", "heartbeat": "working", "failed": "failed", "ended": "ended", "answered": "working"}
 state = STATE_BY_SUBCOMMAND.get(subcommand)
 if not state:
     sys.exit(0)
@@ -427,6 +446,8 @@ if subcommand == "waiting":
         if not reason:
             reason = "unknown"
     event["reason"] = reason
+elif subcommand == "answered":
+    event["reason"] = "answered"
 elif subcommand == "failed":
     error_value = payload.get("error")
     event["reason"] = error_value if (isinstance(error_value, str) and error_value) else "unknown"
@@ -438,6 +459,11 @@ elif subcommand == "ended":
     event["seam"] = ended_seam
     event["reason"] = ended_reason
 # heartbeat carries no additional fields beyond state/session/agent identity.
+# ask_user waiting + answered rows carry the payload tool_use_id (pairing key).
+if subcommand == "answered" or (subcommand == "waiting" and extra_arg == "ask_user"):
+    tool_use_id = payload.get("tool_use_id")
+    if isinstance(tool_use_id, str) and tool_use_id:
+        event["tool_use_id"] = tool_use_id
 
 branch = os.environ.get("SESSION_BRANCH", "")
 if branch:
@@ -491,6 +517,14 @@ if [ -n "$ASK_TOOL_USE_ID" ]; then
       { mv -f "$ASK_IDS_FILE.tmp.$$" "$ASK_IDS_FILE"; } 2>/dev/null || true
     fi
     { rm -f "$ASK_IDS_FILE.tmp.$$"; } 2>/dev/null || true
+  fi
+fi
+if [ -n "$ANSWERED_TOOL_USE_ID" ]; then
+  if { printf '%s\n' "$ANSWERED_TOOL_USE_ID" >> "$ANSWERED_IDS_FILE"; } 2>/dev/null; then
+    if { tail -n 200 "$ANSWERED_IDS_FILE" > "$ANSWERED_IDS_FILE.tmp.$$"; } 2>/dev/null; then
+      { mv -f "$ANSWERED_IDS_FILE.tmp.$$" "$ANSWERED_IDS_FILE"; } 2>/dev/null || true
+    fi
+    { rm -f "$ANSWERED_IDS_FILE.tmp.$$"; } 2>/dev/null || true
   fi
 fi
 

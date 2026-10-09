@@ -320,6 +320,8 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 
     **Emission:** when ≥1 ref is found, emit `### Cited-line premise check` under the Phase 3 output (below) with ONE table row PER extracted ref (`ref | resolves | premise | deciding line | as of`) — never collapse multiple refs into one row. When 0 refs are found, emit **NOTHING** — no heading, no "none" line (same convention as the `- **Source requirement:**` Environment line). EVERY **STALE** row (there may be more than one) is additionally carried forward to the Phase 5 Risk Assessment as its OWN **MEDIUM** row with `source: "Cited-line premise (Phase 3)"` (see Phase 5 action 4b) — one Risk Assessment row per STALE ref, never combined — this is a RISK row, not a Plan Reviewer finding, and it can never change the GO/CAUTION/NO-GO verdict or block save.
 
+11. **Touched-file invariants (conditional — whenever the File Impact Map modifies ≥1 existing script):** for each modified file, `Read` it and record what the change must keep or reuse: its guards and fail-safe rules (exit codes, `|| true`, closed key sets, locks), its own conventions and helpers (the idiom the change must reuse rather than reinvent), every producer/consumer contract the change must mirror exactly (read the other side too), which matchers/callers fire it when it is a hook or emitter, and the tests that pin its text (`grep -rlF` the file's name under the test directories). Quote each as a literal you just read — the anchor must be `grep -F`-findable. Format and authoring rules: `skills/supervisor-readiness/SKILL.md` §"Touched-file invariants" (reference it, do not restate it); Phase 5 emits the section; Plan Reviewer Criterion 18 fails a brief that needs it and lacks it. Only creates, or only non-script edits → skip silently and emit no section.
+
 **Output:**
 ```markdown
 ## Phase 3: ANALYZE
@@ -511,6 +513,7 @@ Subtask 2 (independent)
 4. Add risk assessment and mitigation. For each CAUTION finding from Phase 2.5, add a Risk Assessment row with source "Feasibility (Phase 2.5)" — Impact MEDIUM by default, HIGH if scope-related. If Phase 2.5 returned NO-GO (user overridden), all NO-GO findings become HIGH risks.
 4a. **Prior-churn risk row (conditional, from the Phase 3 churn consult — action 0b).** When the Phase 3 prior-churn ledger consult surfaced prior churn on a touched path, add a Risk Assessment row with `source: "Prior churn (postmortem ledger)"`. Derive the Impact from the signal — **HIGH** when a `self_heal_miss` recurred on a touched file (the self-heal gate previously let an issue through there), else **MEDIUM** (a recurring root-cause class on a touched path) or **LOW** (an isolated prior round). Write the Mitigation so it names the recurring root-cause class(es) surfaced by the reader, telling workers/reviewers what to watch for on that area. When the consult surfaced nothing, add no row. This row is **advisory context only** — it never changes the GO/CAUTION/NO-GO verdict and never blocks save.
 4b. **Cited-line premise risk row (conditional, from the Phase 3 cited-line premise check — action 10).** When the Phase 3 `### Cited-line premise check` subsection surfaced ≥1 **STALE** row, add ONE Risk Assessment row PER STALE ref (never one combined row for multiple) with `source: "Cited-line premise (Phase 3)"`, Impact **MEDIUM** (fixed — not derived), naming that ref and the file it no longer holds at. When the check surfaced no STALE row (including when the subsection is entirely absent — 0 refs cited), add no row. This row is **advisory context only** — it never changes the GO/CAUTION/NO-GO verdict and never blocks save.
+4c. **Touched-file invariants (conditional, from Phase 3 action 11):** emit the `## Touched-file invariants` section immediately before `## Subtask Structure`, stamped with the `Base commit` sha. When action 11 skipped, emit no section.
 5. If Phase 2.5 ran, include a `## Feasibility` section in the brief (verdict + checks table — see `skills/supervisor-readiness/SKILL.md`)
 6. **Executable Acceptance — `corpus-task:`-only when machine-authored; emit it for plugin-self / doc-surface briefs.** **NEVER emit `cmd:` / bare-shell bullets** — those run arbitrary shell in Supervisor Phase 4.5 and are reserved for human authorship; Plan Reviewer Criterion 14 flags them and Supervisor skips them on the unattended path anyway (machine-authored-brief convention; see `skills/supervisor-readiness/SKILL.md` §"`## Executable Acceptance`"). **Affirmative rule (v14.21.0)** — emit the section when BOTH conditions hold:
    - **(a)** the target IS this plugin's own repo — detected via `loomwright/.claude-plugin/plugin.json` present; AND
@@ -630,7 +633,7 @@ Task(
 Project CLAUDE.md context:
 {relevant patterns, tech stack, directory structure — max 500 tokens}
 
-Check all 17 review criteria. Output a PLAN_REVIEW_RESULT block.",
+Check all 18 review criteria. Output a PLAN_REVIEW_RESULT block.",
   subagent_type: "loomwright:plan-reviewer"
 )
 ```

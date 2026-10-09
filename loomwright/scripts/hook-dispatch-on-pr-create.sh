@@ -153,6 +153,40 @@ if [ -z "$PR_URL" ]; then
   exit 0
 fi
 
+# ---- pr_created event (iq02 T04 3c) — RECORD ONLY, never alters dispatch ----
+# One {event:"pr_created", ts, url, session_id[, cc_session_id]} line appended to
+# the session log, resolved the way emit-lifecycle.sh resolves it (main worktree
+# root via loom-log-owner.sh; pre-existing .supervisor/ only; active state.md
+# session id behind the run-ownership gate, else the payload session id). Runs in
+# a subshell, all output discarded, `|| true`: nothing here can change the gate
+# below or this script's exit status. phase-timing.sh reads it as the FINALIZE end.
+emit_pr_created() (
+  . "$SCRIPT_DIR/loom-log-owner.sh" 2>/dev/null || exit 0
+  root="$(loom_main_root)" || exit 0
+  [ -d "$root/.supervisor" ] || exit 0
+  logs="$root/.supervisor/logs"; st="$root/.supervisor/state.md"; sid=""
+  cc="$(printf '%s' "$INPUT" | jq -r '.session_id // empty' 2>/dev/null | tr -cd 'A-Za-z0-9_-')"
+  if [ -f "$st" ]; then
+    sid="$(sed -nE 's/^- session_id:[[:space:]]*//p' "$st" 2>/dev/null | head -1 | tr -cd 'A-Za-z0-9_-')"
+    case "$(sed -nE 's/^- status:[[:space:]]*//p' "$st" 2>/dev/null | head -1)" in
+      running|checkpoint) ;;
+      *) sid="" ;;
+    esac
+  fi
+  if [ -n "$sid" ]; then
+    owner="$(loom_log_owner "$logs/$sid.jsonl" 2>/dev/null | tr -cd 'A-Za-z0-9_-')"
+    if [ -n "$owner" ] && [ "$owner" != "$cc" ]; then sid=""; fi
+  fi
+  [ -n "$sid" ] || sid="$cc"
+  [ -n "$sid" ] || exit 0
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" || exit 0
+  line="$(jq -nc --arg ts "$ts" --arg url "$PR_URL" --arg sid "$sid" --arg cc "$cc" \
+    '{event:"pr_created",ts:$ts,url:$url,session_id:$sid} + (if $cc == "" then {} else {cc_session_id:$cc} end)')" || exit 0
+  mkdir -p "$logs" 2>/dev/null || exit 0
+  { printf '%s\n' "$line" >> "$logs/$sid.jsonl"; } 2>/dev/null
+)
+emit_pr_created >/dev/null 2>&1 || true
+
 # ---- SESSION-SCOPE GATE (AC5) ----------------------------------------------
 # Dispatch ONLY when gate (i) holds AND authorization is established from ONE
 # coherent source (state.md active-source OR a UNIQUE autonomous state.json).

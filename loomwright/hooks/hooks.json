@@ -202,6 +202,15 @@
     ],
     "PostToolUse": [
       {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/emit-lifecycle.sh\" answered || true"
+          }
+        ]
+      },
+      {
         "matcher": "Bash",
         "hooks": [
           {
